@@ -17,7 +17,8 @@ program-id. userfnrecv.
 *> move to it (2023 14.9.25.4), an arithmetic statement's as each is
 *> accessed (14.7.7 rule 4b), a DIVIDE's dividend as each is determined
 *> and its REMAINDER after the quotient is stored (14.9.12.4), READ
-*> INTO's after the record is read (14.9.30.4).  So a function in a
+*> INTO's after the record is read (14.9.30.4), SET's immediately before
+*> each is changed (14.9.39.4).  So a function in a
 *> receiver's subscript sees what the statement has stored so far:
 *> MOVE 2 TO N EL(IDX(N)) moves to EL(2) (cobol ISSUES-121).
 environment division.
@@ -39,6 +40,8 @@ working-storage section.
     05  el   pic 9(3) occurs 5 value 0.
 01  tx.
     05  ex   pic x(5) occurs 5 value spaces.
+01  t2.
+    05  e2   pic 9(3) occurs 5 indexed by ix.
 01  q        pic 9(3).
 01  rm       pic 9(3).
 procedure division.
@@ -59,6 +62,10 @@ main.
     move 1 to n move zeros to tb
     divide 7 by 2 giving n remainder el(function idx(n))
     display "remainder: " n " " el(1) " " el(2) " " el(3)
+    move 1 to n move zeros to tb
+    set ix to 3
+    set n el(function idx(n)) to ix
+    display "set: " n " " el(1) " " el(2) " " el(3)
     open output f
     move 3 to f-n move "abc" to f-t write f-rec
     close f

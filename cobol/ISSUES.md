@@ -5178,3 +5178,41 @@ SYSERR, NO ADVANCING) and 2002/userfnrecv (MOVE, ADD, COMPUTE, DIVIDE
 INTO, REMAINDER, READ INTO: each receiver's subscript a function of an
 item the statement has just stored); GnuCOBOL agrees with both, line
 for line.
+
+**The rest of the receivers; EVALUATE's subject, once.**  Reading each
+statement's own rules before finishing:
+
+- SET: each receiver is identified immediately before it is changed
+  (2023 14.9.39.4; X3.23-1985 the same).  Its receivers are read as
+  scans and recv_calls makes their calls at each store: SET N EL(F(N))
+  TO IX sets EL(3) when IX is 3.
+- STRING and UNSTRING were listed above as not yet right, wrongly.
+  X3.23-1985 (XVII-68, substantive changes 33 and 34) has their
+  subscripting evaluated once, immediately before the statement -- a
+  change from the 1974 standard, where it was undefined or done before
+  each transfer -- and 2023 gives them no rule of their own, so 14.6.4.
+  Calls first is what both say.
+- PERFORM VARYING: the item's subscripting is evaluated each time it is
+  set or augmented (X3.23-1985 XVII-64, substantive change 27; 2023
+  14.9.28.4 rule 12).  A call made once cannot do that, so a user
+  function in the item's subscript is refused, as BY's and an AFTER's
+  FROM already are (bad/std2002-fn-varying-item).
+- The exception-checking PERFORM stays as it is: no operands, and its
+  code is its source order.
+
+An EVALUATE subject that is an arithmetic expression or a numeric
+function was evaluated again for each WHEN, twice for a THRU -- the last
+case of "a subject is evaluated once" (2023 14.9.13.4 rule 3c;
+X3.23-1985 EVALUATE general rule 1c).  With FUNCTION RANDOM it shows:
+EVALUATE FUNCTION INTEGER(FUNCTION RANDOM * 6) + 1 with WHEN 1 ... WHEN
+6 matched no face 184 times in 600, a new roll for each WHEN.  Now the
+subject is evaluated at the beginning, its value taken off the numeric
+stack into a compiler-made record (cob_nsave, in the wide form whichever
+stack it came from) and pushed again for each comparison
+(cob_npush_saved); a numeric function alone is treated as an expression
+of one operand.  libcob gains those two functions and their wide
+variants (the kit and the images want a refresh).  CCVS-85's IF module
+tests its functions through EVALUATE ... WHEN x THRU y, so 38 programs'
+code changed; the reports are identical.  GnuCOBOL rolls again for each
+WHEN too: 148 of 600 on no face.  Test free/evalonce (.oracle-expected,
+docs/oracles.md).  Left: an alphanumeric function subject.

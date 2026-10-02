@@ -119,10 +119,18 @@ for in the commit -- plus all the usual gates.
      it is, for receiving items -- a MOVE's immediately before the move
      to it, an arithmetic statement's as each is accessed, a DIVIDE's
      dividend and REMAINDER, READ and RETURN INTO after the record is
-     read.  Those are read as scans and their calls made in place where
-     the item is stored (recv_calls), on the stack's stores.  Not yet
-     so: SET's receivers, UNSTRING's, a PERFORM VARYING item -- their
-     calls are made first.
+     read, SET's immediately before each is changed.  Those are read as
+     scans and their calls made in place where the item is stored
+     (recv_calls), on the stack's stores.  STRING's and UNSTRING's
+     identifiers are evaluated once, before the statement (X3.23-1985
+     XVII-68, substantive changes 33 and 34; 2023 has no rule of their
+     own, so 14.6.4), which calls-first already is.  A PERFORM VARYING
+     item's subscripting is evaluated each time it is set or augmented:
+     a user function there is refused, as BY's is.
+   - EVALUATE's subject, once: an arithmetic expression or a numeric
+     function is evaluated at the beginning and its value kept
+     (cob_nsave) for every WHEN to compare against (cob_npush_saved);
+     it was evaluated again for each WHEN, twice for a THRU.
    - PERFORM (done 2026-10-01): its phrases, then an inline body's
      statements as a Block, read before the loop's code (Body.blk;
      the exception-checking PERFORM is still its own path).  Then the
@@ -144,6 +152,35 @@ for in the commit -- plus all the usual gates.
      once, where they are written, and their code cut out as a `Block`
      and put after the loop -- a nested statement list as a node of
      already-made code, which serves until every verb is a node.
+
+## Where it stands (2026-10-01)
+
+Done: steps 1 to 3, and step 4 for every verb that has operands or
+nested statements.  What still reads the source more than once, and
+stays:
+
+- Decisions.  A recursive-descent parser looks ahead to choose a
+  production, and here a few of those looks are dry parses that emit
+  nothing and are thrown away: is a subscript an expression
+  (sub_is_expr), is SET's operand one (set_at_expr), does a condition's
+  operand begin a boolean expression, is an EVALUATE subject a
+  condition.  Nothing is kept from them and no call is made in them.
+- The exception-checking PERFORM (2002).  It has no operands, and its
+  code is its source order -- the statements, the WHEN handlers, FINALLY.
+  Its one look ahead (ecp_scan) reads the WHEN phrases' exception-names,
+  which must be on before the statements above them are compiled.
+- ADDRESS OF in a CALL argument makes its pointer record where it is
+  read; a call read after it still goes first.
+
+Known and left: an alphanumeric function as an EVALUATE subject
+(FUNCTION CURRENT-DATE, say) is still evaluated for each WHEN; with
+EC-DATA-INCOMPATIBLE checking on, a receiver's incompatible-data check
+identifies it early, so a function in its subscript is called first.
+
+Openings the nodes leave, none taken: a loop item kept in a register
+across the body; the out-of-line PERFORM's cob_perform_push and
+cob_perform_exit calls; statement nodes proper (the Blocks hold code,
+not trees), which an optimizer would want and nothing else has needed.
 
 Nothing here is an optimizer.  An SSA layer was considered and set aside
 (2026-10-01): most COBOL time is in libcob, little COBOL data can live in

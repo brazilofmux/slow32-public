@@ -343,12 +343,12 @@ static void parse_set(void)
             int line = cur()->line;
             if (g_std < 2002) die_at(line, "ADDRESS OF is COBOL 2002; compile with -std=2002");
             advance(); advance();
-            parse_ref(&rs[nr]);
+            g_noemit++; parse_ref(&rs[nr]); g_noemit--;
             Sym *x = rs[nr].sym;
             if (rs[nr].nsub || rs[nr].rm || x->parent >= 0 || !(x->is_based || x->is_linkage))
                 die_at(line, "SET ADDRESS OF '%s': it is a BASED entry, or a LINKAGE record at level 01 or 77 (2023 14.9.39.3 rule 18)", x->name);
             raddr[nr] = 1;
-        } else parse_ref(&rs[nr]);
+        } else { g_noemit++; parse_ref(&rs[nr]); g_noemit--; }   /* a receiver: identified immediately before it is changed (2023 14.9.39.4), its calls then (recv_calls) */
         if (raddr[nr] || (!rs[nr].sym->is_group && rs[nr].sym->usage == U_POINTER)) nptr++;
         nr++;
     }
@@ -362,6 +362,7 @@ static void parse_set(void)
         emit_ptr_value(&v, "r1");
         emit("\tstw sp+%d, r1", SLOT_A);
         for (int i = 0; i < nr; i++) {
+            recv_calls(&rs[i]);
             if (raddr[i]) emit_la("r3", g_sym[rs[i].sym->record].label);
             else emit_ref_addr(&rs[i], "r3");
             emit("\tldw r1, sp+%d", SLOT_A);
@@ -379,6 +380,7 @@ static void parse_set(void)
         emit_incompat(&v);
         for (int i = 0; i < nr; i++) {
             if (raddr[i]) die_at(rs[i].line, "SET ADDRESS OF ... UP or DOWN: set a pointer item instead (2023 14.9.39 format 10)");
+            recv_calls(&rs[i]);
             emit_push(&v); emit_call("cob_pop_int");
             emit("\tstw sp+%d, r1", SLOT_A);
             emit_ref_addr(&rs[i], "r3");
@@ -404,6 +406,7 @@ static void parse_set(void)
                 if (!c->is_cond) die_at(rs[i].line, "'%s' is not a condition-name", c->name);
                 Opnd v = lit_opnd(c->cv_lo[0]);
                 if (c->cv_all & 1u) v.kind = O_ALL;
+                recv_calls(&rs[i]);
                 Ref p = rs[i]; p.sym = &g_sym[c->parent];
                 set_cond_move(&v, &p);
             }
@@ -418,6 +421,7 @@ static void parse_set(void)
                 if (!c->is_cond) die_at(rs[i].line, "'%s' is not a condition-name", c->name);
                 if (!c->cv_false) die_at(rs[i].line, "SET '%s' TO FALSE: its VALUE clause has no FALSE phrase (2023 14.9.39.3 rule 7)", c->name);
                 Opnd v = lit_opnd(c->cv_false);
+                recv_calls(&rs[i]);
                 Ref p = rs[i]; p.sym = &g_sym[c->parent];
                 set_cond_move(&v, &p);
             }
@@ -464,6 +468,7 @@ static void parse_set(void)
             int Lskip = new_label();
             emit_set_value(&v, Lskip);
             for (int i = 0; i < nr; i++) {
+                recv_calls(&rs[i]);
                 emit_ref_addr(&rs[i], "r3");
                 emit("\tldw r1, sp+%d", SLOT_A);
                 emit("\tstw r3+0, r1");
@@ -471,7 +476,7 @@ static void parse_set(void)
             emit_label(Lskip);
             return;
         }
-        for (int i = 0; i < nr; i++) emit_move(&v, &rs[i]);
+        for (int i = 0; i < nr; i++) { recv_calls(&rs[i]); emit_move(&v, &rs[i]); }
         return;
     }
     int down = 0;
@@ -497,6 +502,7 @@ static void parse_set(void)
         int Lskip = new_label();
         emit_set_value(&v, Lskip);
         for (int i = 0; i < nr; i++) {
+            recv_calls(&rs[i]);
             emit_ref_addr(&rs[i], "r3");
             emit("\tldw r2, r3+0");
             emit("\tldw r1, sp+%d", SLOT_A);
@@ -508,6 +514,7 @@ static void parse_set(void)
     }
     emit_incompat(&v); emit_incompat_refs(rs, nr);      /* the receivers are summed too */
     for (int i = 0; i < nr; i++) {
+        recv_calls(&rs[i]);
         Opnd ops[1] = { v };
         int hot = opnd_hot_int(&v) && ref_hot_store(&rs[i], down, ops_all_nonneg(ops, 1));
         int rd[1] = { 0 };

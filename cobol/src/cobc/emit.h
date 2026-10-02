@@ -367,7 +367,8 @@ static const char *wide_fn(const char *fn)
         { "cob_nsub", "cob_wsub" }, { "cob_nmul", "cob_wmul" }, { "cob_ndiv", "cob_wdiv" }, { "cob_nneg", "cob_wneg" }, { "cob_nabs", "cob_wabs" },
         { "cob_ntrunc", "cob_wtrunc" }, { "cob_npow", "cob_wpow" }, { "cob_ncmp", "cob_wcmp" },
         { "cob_top_store", "cob_wtop_store" }, { "cob_top_addto", "cob_wtop_addto" }, { "cob_top_subfrom", "cob_wtop_subfrom" },
-        { "cob_drop", "cob_wdrop" }, { "cob_pop_int", "cob_wpop_int" }, { "cob_pop_pos", "cob_wpop_pos" }, { NULL, NULL } };
+        { "cob_drop", "cob_wdrop" }, { "cob_pop_int", "cob_wpop_int" }, { "cob_pop_pos", "cob_wpop_pos" },
+        { "cob_nsave", "cob_wnsave" }, { "cob_npush_saved", "cob_wnpush_saved" }, { NULL, NULL } };
     for (int i = 0; map[i][0]; i++) if (!strcmp(fn, map[i][0])) {
         if (g_fstmt && !strcmp(map[i][1], "cob_wpush")) return "cob_fpush";
         if (g_fstmt && !strcmp(map[i][1], "cob_wpush_lit")) return "cob_fpush_lit";

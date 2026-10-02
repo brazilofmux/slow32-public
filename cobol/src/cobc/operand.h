@@ -120,6 +120,8 @@ typedef struct Opnd_ {
     int fsaved;                              /* O_FUNC evaluated already: 1 + the label of its result's copy (MOVE, general rule 1) */
     int fwnum;                               /* O_FUNC: an exact numeric function on the wide stack, its result described at run time (docs/wide.md) */
     const char *fname;                       /* O_FUNC: the intrinsic's name, for messages */
+    Sym *nsave;                              /* O_EXPR evaluated already: the record holding its value (an EVALUATE
+                                              * subject, evaluated once; cob_nsave, cob_npush_saved) */
     struct UCall_ *uc;                       /* a user function's result met while scanning ahead: the call,
                                               * made when an expression holding it is emitted (ucall_make) */
 } Opnd;

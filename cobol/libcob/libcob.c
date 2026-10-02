@@ -1914,6 +1914,21 @@ int cob_wtop_addto(void *p, const cob_desc *d, int opts) { return w_top_addsub(p
 int cob_wtop_subfrom(void *p, const cob_desc *d, int opts) { return w_top_addsub(p, d, opts, 1); }
 void cob_wdrop(void) { if (wsp) wsp--; div0 = 0; }
 
+/* A value taken off the numeric stack into a buffer of the program's, and
+ * pushed again from it as often as wanted: an EVALUATE subject is
+ * evaluated once, at the beginning (2023 14.9.13.4 rule 3), and compared
+ * with each WHEN's objects.  Kept in the wide form whichever stack it
+ * came from, so it goes back onto either. */
+void cob_nsave(cob_wnum *b) { if (!nsp) return; nsp--; w_from_i64(b, nstk[nsp].v, nstk[nsp].scale); }
+void cob_wnsave(cob_wnum *b) { if (!wsp) return; *b = wstk[--wsp]; }
+void cob_npush_saved(const cob_wnum *b)
+{
+    cob_wnum w = *b;
+    nstk_room();
+    nstk[nsp].v = w_to_i64(&w); nstk[nsp].scale = w.scale; nsp++;
+}
+void cob_wnpush_saved(const cob_wnum *b) { wstk_room(); wstk[wsp++] = *b; }
+
 /* subscripts: the integer value of an item */
 int cob_load_int(const void *p, const cob_desc *d)
 {

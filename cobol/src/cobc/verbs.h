@@ -31,6 +31,40 @@ static int at_relational(void)
     return 0;
 }
 
+/* An EVALUATE subject that is an arithmetic expression or a numeric
+ * function is assigned its value at the beginning (2023 14.9.13.4 rule
+ * 3c), once: every WHEN compares against that value.  Evaluated again
+ * for each WHEN -- twice for a THRU -- EVALUATE FUNCTION INTEGER
+ * (FUNCTION RANDOM * 6) + 1 rolled a new die for each of WHEN 1 ... WHEN
+ * 6, and a third of the time matched none.  The value is taken off the
+ * numeric stack into a compiler-made record and pushed again from it
+ * (cob_nsave, cob_npush_saved). */
+static void evaluate_subject_once(Opnd *o)
+{
+    if (o->kind == O_FUNC && opnd_fn_numeric(o)) {
+        /* a numeric function alone: as an expression of one operand */
+        Expr *e = ex_node(0, NULL, NULL);
+        e->o = ex_alloc(sizeof *e->o); *e->o = *o;
+        int sw = g_saw_wide, sf = g_saw_float; g_saw_wide = g_saw_float = 0;
+        g_noemit++; emit_push(e->o); g_noemit--;        /* what a scan of it notes: its width */
+        e->wide = g_saw_wide; e->flt = g_saw_float;
+        g_saw_wide |= sw; g_saw_float |= sf;
+        Opnd x; memset(&x, 0, sizeof x);
+        x.kind = O_EXPR; x.line = o->line; x.ex = e; x.wide = e->wide; x.flt = e->flt;
+        *o = x;
+    }
+    if (o->kind != O_EXPR) return;
+    FDesc fd; memset(&fd, 0, sizeof fd); fd.group = 1; fd.size = 64;       /* a cob_wnum, with room */
+    Sym *t = ftemp_new(&fd, o->line);
+    int was = g_wide;
+    g_wide = was || opnds_wide(o, 1);
+    emit_push_opnd(o);
+    emit_item_addr("r3", t, t->offset);
+    emit_call("cob_nsave");
+    g_wide = was; if (!was) g_fstmt = 0;
+    o->nsave = t;
+}
+
 static void parse_evaluate(void)
 {
     Subject subj[8]; int ns = 0, subj_lit[8];
@@ -71,7 +105,10 @@ static void parse_evaluate(void)
                 Cond *sc = subj[ns].c;
                 if (sc->uc1 > sc->uc0) { emit_ucalls(sc->uc0, sc->uc1); sc->uc0 = sc->uc1 = 0; }
             }
-            else ucall_make(&subj[ns].o);           /* an operand: its calls made here, at the start */
+            else {
+                ucall_make(&subj[ns].o);            /* an operand: its calls made here, at the start */
+                evaluate_subject_once(&subj[ns].o);
+            }
         }
         ns++;
         if (!accept_word("also")) break;

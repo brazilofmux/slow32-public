@@ -228,9 +228,15 @@ static int expr_names(const Expr *e, SymVisit f, const void *cx)
     return expr_names(e->l, f, cx) || (e->r && expr_names(e->r, f, cx));
 }
 
+static void emit_item_addr(const char *reg, Sym *s, int off);
 static void emit_push_opnd(Opnd *o)
 {
     if (o->kind != O_EXPR) { emit_push(o); return; }
+    if (o->nsave) {                             /* its value, kept from the one evaluation */
+        emit_item_addr("r3", o->nsave, o->nsave->offset);
+        emit_call("cob_npush_saved");
+        return;
+    }
     emit_expr(o->ex);
 }
 

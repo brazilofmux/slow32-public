@@ -3,4 +3,5 @@ add: 000 000 002
 compute: 000 000 000 004
 divide into: 00 004 008 008
 remainder: 03 000 000 001
+set: 03 000 000 003
 read into: [     ] [03abc]

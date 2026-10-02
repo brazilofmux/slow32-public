@@ -666,7 +666,14 @@ static void parse_perform(void)
         kind = PF_VARYING;
         for (;;) {
             if (nv >= 8) die_at(cur()->line, "more than eight VARYING/AFTER levels");
+            /* the item's subscripting is evaluated each time it is set or
+             * augmented (X3.23-1985 XVII-64, substantive change 27; 2023
+             * 14.9.28.4 rule 12): a
+             * user function there would be called at every step, which a
+             * call made once cannot do -- refused, as BY's is */
+            g_ufn_forbid = "the subscript of a PERFORM VARYING item";
             parse_ref(&v[nv].var);
+            g_ufn_forbid = NULL;
             if (!is_numeric_sym(v[nv].var.sym)) die_at(v[nv].var.line, "the VARYING item must be numeric");
             expect_word("from");
             /* an AFTER's FROM is evaluated at every reset and BY at every
