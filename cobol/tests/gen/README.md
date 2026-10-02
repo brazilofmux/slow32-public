@@ -55,7 +55,14 @@ standard leaves most of that undefined and the runtime's rulings are
 its own, so GnuCOBOL is not asked: run it with `GEN=perf` under
 `run-self.sh`.
 
-`gen-checked.py SEED`, `gen-pos.py` and `gen-perf.py` are run through
+`gen-lit.py SEED` moves numeric literals -- fitting, too long, with a
+fraction the item cuts, signed into unsigned, zero -- to numeric items of
+every usage and picture, and prints each item's value and every byte it
+occupies. The compiler works such a store out when compiling; the bytes
+must be the runtime's. Run it with `GEN=lit` under `run-self.sh` (a dump
+of binary items is this machine's, so GnuCOBOL is not asked).
+
+`gen-checked.py SEED`, `gen-pos.py`, `gen-perf.py` and `gen-lit.py` are run through
 `run-self.sh REV FIRST COUNT`: the compiler and runtime as of a git
 revision and the ones in the tree, every program's output the same
 bytes (a run is capped, so a program a broken runtime sends round for

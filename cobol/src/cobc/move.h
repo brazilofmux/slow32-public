@@ -34,6 +34,41 @@
 #define COPY_INLINE_MAX 8
 #endif
 
+/* ---- a numeric literal to a numeric item: its bytes, known here --------
+ * MOVE 1 TO X stores the same bytes every time it runs, and what they are
+ * is the store's business: its truncation, its sign, its usage.  The
+ * store is a kernel (libcob/kern.h), a file made to be compiled wherever
+ * its answer is wanted -- into the runtime, into the DBT as the native
+ * side of the hook -- so it is compiled in here too, run on the literal
+ * while compiling, and the item is given the bytes it left.  The runtime's
+ * cob_put_num_x does this and nothing else for a descriptor the kernel
+ * takes (cob_k_put_ok) whose picture has no P; anything else is left to
+ * it.  The same bytes by construction: tests/kern-differential.sh holds
+ * the guest's kernel and the host's to each other.  (docs/performance.md:
+ * 3.9 million such stores in csv2fw, each a call through the hook.) */
+#include "../../libcob/kern.h"
+static int move_desc(Sym *d);
+static int move_lit_bytes(const Opnd *src, Sym *d, unsigned char *out, int *n)
+{
+    if (src->kind != O_NUM || d->is_group || d->pi.category != PIC_NUMERIC || d->any_len || strchr(d->pi.pat, 'P')) return 0;
+    if (src->num.ndigits > 18 || src->num.scale < 0 || src->num.scale > 18) return 0;
+    int di = move_desc(d);
+    const Desc *dd = &g_desc[di];
+    if (dd->cat != COB_NUM || dd->anylen || dd->size < 1 || dd->size > 32 || strchr(dd->picstr, 'P')) return 0;
+    cob_kdesc kd; memset(&kd, 0, sizeof kd);
+    kd.cat = dd->cat; kd.usage = dd->usage; kd.digits = dd->digits; kd.scale = dd->scale;
+    kd.flags = dd->flags; kd.flags2 = dd->flags2; kd.size = (unsigned)dd->size;
+    if (!cob_k_put_ok(&kd)) return 0;
+    /* twice, over different contents: the store must write every byte */
+    unsigned char a[32], b[32];
+    memset(a, 0x00, sizeof a); memset(b, 0xFF, sizeof b);
+    long long v = numlit_scaled(&src->num);
+    if (cob_k_put_num(a, &kd, dd->digits, v, src->num.scale, 0) || cob_k_put_num(b, &kd, dd->digits, v, src->num.scale, 0)) return 0;
+    if (memcmp(a, b, (size_t)dd->size)) return 0;
+    memcpy(out, a, (size_t)dd->size); *n = dd->size;
+    return 1;
+}
+
 static void emit_copy_fixed(const Arg *a, int n)
 {
     if (n <= 0) return;
@@ -502,6 +537,29 @@ static void emit_move(Opnd *src, Ref *dst)
             Arg a[3] = { arg_ref(dst), len, arg_imm(src->kind == O_ALL ? (unsigned char)src->tok->s[0] : fig_byte(src->tok->s)) };
             emit_args(a, 3); emit_call("cob_fill"); return;
         }
+        if (!g_nohx && src->kind == O_REF && !src->ref.sym->is_cond) {
+            /* bytes to bytes with a length only known when running -- a part
+             * with a computed or omitted length, either side or both; a
+             * shorter sender, which pads: the alphanumeric move itself
+             * (cob_move_alnum is what cob_move makes of two alphanumeric
+             * descriptors), the parts' lengths checked as their descriptors
+             * would have been, and no descriptor built */
+            const Ref *sr = &src->ref; Sym *s = sr->sym;
+            int sdi = sym_desc(s), ddi = sym_desc(d);       /* both made before either is pointed at: making one may move the table */
+            const Desc *sdd = &g_desc[sdi], *ddd = &g_desc[ddi];
+            int s_ok = sr->rm ? (!sr->rm_nat && !sr->rm_bit && !sr->rm_odo && !sr->bitsub && !sym_bitlike(s) && !s->any_len &&
+                                 sdd->cat != COB_BOOLEAN && sdd->cat != COB_NATIONAL && sdd->usage != COB_U_NATIONAL)
+                              : (!is_numeric_sym(s) && !s->is_group && s->pi.category == PIC_ALPHANUMERIC && !sym_bitlike(s) && !s->any_len);
+            int d_ok = dst->rm ? (!dst->rm_nat && !dst->rm_bit && !dst->rm_odo && !dst->bitsub && !sym_bitlike(d) && !d->any_len &&
+                                  ddd->cat != COB_BOOLEAN && ddd->cat != COB_NATIONAL && ddd->usage != COB_U_NATIONAL)
+                               : (!dnum && !d->is_group && d->pi.category == PIC_ALPHANUMERIC && !d->just && !sym_bitlike(d) && !d->any_len);
+            if (s_ok && d_ok) {
+                Arg m[4] = { arg_ref(sr), sr->rm ? (sr->rm_len ? arg_imm((long)sr->rm_len) : arg_rlenc(sr)) : arg_imm(s->size),
+                             arg_ref(dst), dst->rm ? (dst->rm_len ? arg_imm((long)dst->rm_len) : arg_rlenc(dst)) : arg_imm(d->size) };
+                emit_args(m, 4); emit_li("r7", 0); emit_call("cob_move_alnum");
+                return;
+            }
+        }
         Arg a[4];
         opnd_args(src, &a[0], &a[1], ref_static_len(dst) > 0 ? ref_static_len(dst) : 1, dnum && !dst->rm);
         a[2] = arg_ref(dst);
@@ -605,6 +663,14 @@ static void emit_move(Opnd *src, Ref *dst)
         emit("\tldw r1, sp+%d", SLOT_A);
         emit_store_int(d, "r3", "r1");
         return;
+    }
+    {   /* a literal: the bytes the store would leave, copied */
+        unsigned char lb[32]; int ln;
+        if (!g_nohx && !dst->rm && move_lit_bytes(src, d, lb, &ln)) {
+            Arg c[2] = { arg_ref(dst), arg_label(lit_label(lb, ln)) };
+            emit_copy_fixed(c, ln);
+            return;
+        }
     }
     if (dx_move(src, dst)) return;              /* numeric to numeric: fetch and store, without cob_move's dispatch */
     Arg a[4]; Arg da = arg_ref(dst), dd = arg_desc(move_desc(d));

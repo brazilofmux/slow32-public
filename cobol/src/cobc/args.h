@@ -3,7 +3,7 @@
 
 /* ---- argument staging ------------------------------------------------- */
 
-enum { A_REF, A_LABEL, A_DESC, A_IMM, A_FUNC, A_VALUE, A_RDESC, A_RLEN, A_CONTENT, A_FDESC, A_FLEN };
+enum { A_REF, A_LABEL, A_DESC, A_IMM, A_FUNC, A_VALUE, A_RDESC, A_RLEN, A_CONTENT, A_FDESC, A_FLEN, A_RLENC };
 typedef struct { int kind; const Ref *ref; const char *label; int desc; long imm; Opnd *fn; } Arg;
 static Arg arg_func(Opnd *o)       { Arg a = { A_FUNC, 0, 0, 0, 0, o }; return a; }
 static Arg arg_value(Opnd *o)      { Arg a = { A_VALUE, 0, 0, 0, 0, o }; return a; }
@@ -12,6 +12,7 @@ static Arg arg_fdesc(Opnd *o)      { Arg a = { A_FDESC, 0, 0, 0, 0, o }; return 
 static Arg arg_flen(Opnd *o)       { Arg a = { A_FLEN, 0, 0, 0, 0, o }; return a; }    /* ... and its length in bytes */
 static Arg arg_rdesc(const Ref *r) { Arg a = { A_RDESC, r, 0, 0, 0, 0 }; return a; }
 static Arg arg_rlen(const Ref *r)  { Arg a = { A_RLEN, r, 0, 0, 0, 0 }; return a; }
+static Arg arg_rlenc(const Ref *r) { Arg a = { A_RLENC, r, 0, 0, 0, 0 }; return a; }   /* the part's length, the part checked (cob_refmod_len_chk) */
 static void opnd_args(Opnd *o, Arg *addr, Arg *desc, int other_size, int other_numeric);
 static int g_slot_base;             /* staged operands of nested evaluations use higher slots */
 
@@ -108,13 +109,13 @@ static void emit_args(const Arg *a, int n)
             emit_ref_addr(a[i].ref, "r1");
             emit("\tstw sp+%d, r1", SLOT(base + i));
             slotted[i] = 1;
-        } else if (a[i].kind == A_RDESC || a[i].kind == A_RLEN) {
+        } else if (a[i].kind == A_RDESC || a[i].kind == A_RLEN || a[i].kind == A_RLENC) {
             const Ref *r = a[i].ref;
             emit_rm_start_len(r, base + i);
             emit("\tadd r4, r1, r0");
             emit("\tldw r5, sp+%d", SLOT(base + i));
             emit_desc_addr("r3", r->bitsub ? bitarray_desc(r->sym) : sym_desc(r->sym));
-            emit_call(a[i].kind == A_RDESC ? "cob_refmod_desc" : "cob_refmod_len");
+            emit_call(a[i].kind == A_RDESC ? "cob_refmod_desc" : a[i].kind == A_RLENC ? "cob_refmod_len_chk" : "cob_refmod_len");
             emit("\tstw sp+%d, r1", SLOT(base + i));
             slotted[i] = 1;
         } else if (a[i].kind == A_CONTENT) {

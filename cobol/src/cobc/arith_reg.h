@@ -90,6 +90,19 @@ static int hn_fn(const Opnd *o, int (*leaf)(const Opnd *))
         if (d > -2 && d < 2) return -2;
         return hn_new(o->fnid == COB_FN_MOD ? 'M' : 'R', hn_arg(o->fargs[0], leaf), hn_arg(o->fargs[1], leaf), NULL);
     }
+    case COB_FN_MAX: case COB_FN_MIN: {
+        /* the greatest or least of its arguments: op 'G' or 'L' over two
+         * at a time, in the order written (a table's ALL is not taken) */
+        int n = -2;
+        for (int i = 0; i < o->nfargs; i++) {
+            if (o->fargs[i]->all_sub) return -2;
+            int a = hn_arg(o->fargs[i], leaf);
+            if (a < 0) return -2;
+            n = i ? hn_new(o->fnid == COB_FN_MAX ? 'G' : 'L', n, a, NULL) : a;
+            if (n < 0) return -2;
+        }
+        return n;
+    }
     case COB_FN_INTEGER: case COB_FN_INTEGER_PART: case COB_FN_ABS:
         if (o->nfargs != 1) return -2;
         return hn_new(o->fnid == COB_FN_INTEGER ? 'I' : o->fnid == COB_FN_ABS ? 'A' : 'T', hn_arg(o->fargs[0], leaf), -1, NULL);
@@ -151,6 +164,7 @@ static long double hx_bound(int n, int *wide, int *inner, int *neg, int top)
         long double x = hx_bound(h->l, wide, inner, neg, 0), y = hx_bound(h->r, wide, inner, neg, 0);
         if (h->op == '/') { if (!top) *inner = 1; b = x; }
         else if (h->op == '*') b = x * y;
+        else if (h->op == 'G' || h->op == 'L') b = x > y ? x : y;
         else { b = x + y; if (h->op == '-') *neg = 1; }
     }
     if (b > 2147483647.0L) *wide = 1;
@@ -189,6 +203,13 @@ static void hx_emit(int n, int slow)
     emit("\tadd r2, r1, r0");
     emit("\tldw r1, sp+%d", SLOT(t));
     g_slot_base--;
+    if (h->op == 'G' || h->op == 'L') {            /* keep r1 unless r2 is the greater (the less) */
+        int L = new_label();
+        if (h->op == 'G') emit("\tbge r1, r2, .L%d", L); else emit("\tbge r2, r1, .L%d", L);
+        emit("\tadd r1, r2, r0");
+        emit_label(L);
+        return;
+    }
     if (slow < 0) { emit("\t%s r1, r1, r2", h->op == '+' ? "add" : h->op == '-' ? "sub" : "mul"); return; }
     if (h->op == '*') {                             /* the high word must be the low word's sign */
         emit("\tmul r3, r1, r2");
@@ -299,37 +320,63 @@ static int hx_leaf_ref(const Ref *r)
 /* A subscript's or a reference modification's expression in registers
  * (emit_ref_addr, emit_expr_pos_push): integer items and literals whose
  * every intermediate fits a word, so the value is the one the stack
- * would hand to cob_pop_int.  No leaf may need r11 for its own address:
- * the expression is computed while the reference it belongs to holds
- * its offset there.  The nodes go after whatever tree g_hn holds -- this
- * runs while a statement's own tree is being emitted -- and are given
- * back; asked twice (when the position would be pushed, and when it is
- * taken) it answers the same. */
-static int pos_reg_tree(Expr *e)
+ * would hand to cob_pop_int.  The expression is wanted while the
+ * reference it belongs to holds its offset in r11, so: kind 1, no
+ * operand needs r11 for its own address, and the value is computed
+ * where it is taken; kind 2, an operand is itself subscripted, and the
+ * value is computed before the reference's offset begins and waits in a
+ * frame slot (where the stack's push was).  The nodes go after whatever
+ * tree g_hn holds -- this runs while a statement's own tree is being
+ * emitted -- and are given back; asked again, it answers the same. */
+static int pos_reg_tree(Expr *e, int *kind, int *depth)
 {
-    if (g_nohx || !e || e->wide || e->flt || ec_on_name("EC-DATA-INCOMPATIBLE")) return -1;
+    /* (an expression marked wide may be so for a function the tree takes --
+     * MIN and MAX's results are wide ones; the leaves decide) */
+    if (g_nohx || !e || e->flt || ec_on_name("EC-DATA-INCOMPATIBLE")) return -1;
     int first = g_nhn, root = hn_tree(e, hx_leaf);
     if (root < 0) return -1;
+    *kind = 1;
     for (int i = first; i < g_nhn; i++)
-        if (!g_hn[i].op && g_hn[i].o.kind == O_REF && (ref_has_runtime_sub(&g_hn[i].o.ref) || ref_needs_call(&g_hn[i].o.ref))) return -1;
+        if (!g_hn[i].op && g_hn[i].o.kind == O_REF && (ref_has_runtime_sub(&g_hn[i].o.ref) || ref_needs_call(&g_hn[i].o.ref))) *kind = 2;
     int wide = 0, inner = 0, neg = 0;
     hx_bound(root, &wide, &inner, &neg, 0);
     if (wide || inner) return -1;
-    if (g_slot_base + hn_depth(root, 1) + 1 > NSLOTS) return -1;
+    *depth = hn_depth(root, 1);
     return root;
 }
-static int pos_reg_ok(Expr *e)
+/* 0: the stack's; 1: computed where taken; 2: computed first, kept in a
+ * slot.  Decided once for each position, with room in the frame for the
+ * slots a reference's other positions may come to hold before this one
+ * is computed. */
+static int pos_reg_kind(Expr *e)
 {
-    int first = g_nhn, ok = pos_reg_tree(e) >= 0;
+    int first = g_nhn, kind = 0, depth = 0, ok = pos_reg_tree(e, &kind, &depth) >= 0;
     g_nhn = first;
-    return ok;
+    if (ok && g_slot_base + depth + MAXDIM + 3 > NSLOTS) ok = 0;
+    return ok ? kind : 0;
 }
 static void pos_reg_emit(Expr *e)
 {
-    int first = g_nhn, root = pos_reg_tree(e);
+    int first = g_nhn, kind, depth, root = pos_reg_tree(e, &kind, &depth);
     if (root < 0) die_at(cur()->line, "internal: a position's expression changed its mind");
     g_hn_busy++; hx_emit(root, -1); g_hn_busy--;
     g_nhn = first;
+}
+
+/* a position computed first: its slot (the frame's slots are a stack, and
+ * emit_ref_addr takes its positions in the reverse of the order it made them) */
+static int pos_reg_early(Expr *e)
+{
+    pos_reg_emit(e);
+    int t = g_slot_base++;
+    emit("\tstw sp+%d, r1", SLOT(t));
+    return t;
+}
+static void pos_reg_take(int slot)
+{
+    if (slot != g_slot_base - 1) die_at(cur()->line, "internal: a position's slot taken out of order");
+    emit("\tldw r1, sp+%d", SLOT(slot));
+    g_slot_base--;
 }
 
 /* ---- decimal arithmetic in registers -----------------------------------
@@ -485,6 +532,7 @@ static int dx_check(int n, int top)
     bl = dx_scaled(bl, sc - sl, &tl); br = dx_scaled(br, sc - sr, &tr);
     if (tl < 0 || tr < 0 || ((tl || tr) && !g_dx_chk)) return 0;
     g_dx_tests += (tl != 0) + (tr != 0);
+    if (h->op == 'G' || h->op == 'L') { g_dsc[n] = sc; g_dbd[n] = bl > br ? bl : br; return 1; }   /* one of the two, aligned */
     g_dsc[n] = sc; g_dbd[n] = bl + br;
     if (g_dbd[n] < DX_LIM) return 1;
     if (!g_dx_chk) return 0;
@@ -634,6 +682,20 @@ static void dx_emit(int n)
         if (tr > 0) dx_fit("r5", "r6", tr);
         if (sl < sr) emit_scale64("r1", "r2", sr - sl);
         if (sr < sl) emit_scale64("r5", "r6", sl - sr);
+        if (h->op == 'G' || h->op == 'L') {
+            /* r5:r6 takes r1:r2's place when it is the greater (the less):
+             * the high words signed, the low ones unsigned when those tie */
+            const char *al = h->op == 'G' ? "r1" : "r5", *ah = h->op == 'G' ? "r2" : "r6";
+            const char *bl2 = h->op == 'G' ? "r5" : "r1", *bh = h->op == 'G' ? "r6" : "r2";
+            int Ltake = new_label(), Lkeep = new_label();
+            emit("\tblt %s, %s, .L%d", ah, bh, Ltake);
+            emit("\tbne %s, %s, .L%d", ah, bh, Lkeep);
+            emit("\tbgeu %s, %s, .L%d", al, bl2, Lkeep);
+            emit_label(Ltake);
+            emit("\tadd r1, r5, r0"); emit("\tadd r2, r6, r0");
+            emit_label(Lkeep);
+            return;
+        }
         if (bl + br >= DX_LIM) {                    /* each side below 2^62, so the sum fits */
             if (bl > DX_B62) dx_fit("r1", "r2", 62);
             if (br > DX_B62) dx_fit("r5", "r6", 62);
@@ -668,7 +730,8 @@ static int g_dx_movestore;              /* dx_move's store: move_desc, not sym_d
 static void dx_put_call(const Sym *d)
 {
     emit_desc_addr("r4", g_dx_movestore ? move_desc((Sym *)d) : sym_desc((Sym *)d));
-    if (g_desc[sym_desc((Sym *)d)].cat == COB_NUM_ED) {
+    int di = sym_desc((Sym *)d);
+    if (g_desc[di].cat == COB_NUM_ED) {
         emit_la("r9", "cob_locale_word"); emit("\tldw r9, r9+0");
         emit_call("cob_put_edited");
     } else emit_call("cob_put_num_x");

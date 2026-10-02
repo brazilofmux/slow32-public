@@ -5776,6 +5776,19 @@ const cob_desc *cob_refmod_desc(const cob_desc *base, int start, int len)
     return d;
 }
 
+/* The length in bytes of a part of an item of single-byte characters,
+ * the part checked as cob_refmod_desc checks it: for the move of bytes
+ * the compiler makes of a part with a computed or omitted length, which
+ * needs the length and no descriptor (docs/performance.md). */
+int cob_refmod_len_chk(const cob_desc *base, int start, int len)
+{
+    int chars = (int)base->size;
+    if (start < 1 || start > chars) cob_fatal("reference modification: start is outside the item");
+    if (len == 0) len = chars - start + 1;
+    if (len < 1 || start - 1 + len > chars) cob_fatal("reference modification: length is outside the item");
+    return len;
+}
+
 /* the part's length in bytes */
 int cob_refmod_len(const cob_desc *base, int start, int len)
 {

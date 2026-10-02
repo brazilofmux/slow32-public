@@ -1017,26 +1017,37 @@ static void emit_pop_pos(void) { emit_call(ec_on_name("EC-BOUND-REF-MOD") ? "cob
  * them uses r11, the register the outer reference's offset accumulates
  * in -- so the start is evaluated before that begins, and waits on the
  * numeric stack (a subscript's cob_load_int leaves the stack alone). */
-/* A position the integer register path takes (pos_reg_ok, arith_reg.h:
- * integer items and literals, every intermediate in a word, no leaf
- * whose own address uses r11) is not pushed at all: it is computed into
- * r1 where it is taken, and no stack is involved -- a(i + 1:n) made two
- * runtime calls and a fetch through the stack for each of i + 1 and n. */
+/* A position the integer register path takes (pos_reg_kind,
+ * arith_reg.h: integer items and literals, every intermediate in a word)
+ * is not pushed on the numeric stack: it is computed into r1 where it is
+ * taken -- or, when one of its operands is itself subscripted and so
+ * needs r11, computed here, before the reference's offset begins, and
+ * kept in a frame slot until it is taken.  a(i + 1:n) made two runtime
+ * calls and a fetch through the stack for each of i + 1 and n. */
 static int g_pos_was, g_pos_wasf;
-static Expr *g_pos_reg;                 /* the position held is this expression, to compute when taken */
-static int pos_reg_ok(Expr *e);
+static Expr *g_pos_reg;                 /* the position held is this expression, to compute when taken ... */
+static int g_pos_slot = -1;             /* ... or its value, in this frame slot */
+static int pos_reg_kind(Expr *e);
 static void pos_reg_emit(Expr *e);
+static int pos_reg_early(Expr *e);      /* arith_reg.h: computed first, kept in a frame slot ... */
+static void pos_reg_take(int slot);     /* ... and taken */
 static void emit_expr_pos_push(Expr *e)
 {
-    int was = g_wide, wasf = g_fstmt;
-    if (pos_reg_ok(e)) { g_pos_was = was; g_pos_wasf = wasf; g_pos_reg = e; return; }
+    int was = g_wide, wasf = g_fstmt, kind = pos_reg_kind(e);
+    if (kind == 1) { g_pos_was = was; g_pos_wasf = wasf; g_pos_reg = e; g_pos_slot = -1; return; }
+    if (kind == 2) { int t = pos_reg_early(e); g_pos_was = was; g_pos_wasf = wasf; g_pos_reg = e; g_pos_slot = t; return; }
     if (e->wide || e->flt) { g_wide = 1; if (e->flt) g_fstmt = 1; }
     emit_expr(e);
-    g_pos_was = was; g_pos_wasf = wasf; g_pos_reg = NULL;   /* after the expression's own references have used them */
+    g_pos_was = was; g_pos_wasf = wasf; g_pos_reg = NULL; g_pos_slot = -1;   /* after the expression's own references have used them */
 }
 static void emit_expr_pos_pop(void)
 {
-    if (g_pos_reg) { Expr *e = g_pos_reg; g_pos_reg = NULL; pos_reg_emit(e); return; }
+    if (g_pos_reg) {
+        Expr *e = g_pos_reg; int t = g_pos_slot;
+        g_pos_reg = NULL; g_pos_slot = -1;
+        if (t >= 0) pos_reg_take(t); else pos_reg_emit(e);
+        return;
+    }
     emit_pop_pos();
     g_wide = g_pos_was; g_fstmt = g_pos_wasf;
 }
@@ -1087,10 +1098,14 @@ static void emit_ref_addr(const Ref *r, const char *reg)
     /* expression subscripts likewise, each evaluated to an integer and
      * left on the numeric stack -- last first, so they come off in order
      * -- above the start, which comes off after them */
-    int pw = g_pos_was, pwf = g_pos_wasf; Expr *pr = g_pos_reg;
+    int pw = g_pos_was, pwf = g_pos_wasf, pslot = g_pos_slot; Expr *pr = g_pos_reg;
+    int skind[MAXDIM], sslot[MAXDIM];           /* an expression subscript: how it is computed; its slot */
     for (int i = r->nsub - 1; i >= 0; i--) {
+        skind[i] = 0; sslot[i] = -1;
         if (r->sub[i].sym != &g_subx) continue;
-        if (pos_reg_ok(r->sub[i].x)) continue;      /* computed where it is used, below */
+        skind[i] = pos_reg_kind(r->sub[i].x);
+        if (skind[i] == 1) continue;                /* computed where it is used, below */
+        if (skind[i] == 2) { sslot[i] = pos_reg_early(r->sub[i].x); continue; }
         int w = g_wide, f = g_fstmt, chk = ec_on_name("EC-BOUND-SUBSCRIPT");
         emit_expr_pos_push(r->sub[i].x);
         emit_call(chk ? "cob_pop_pos" : "cob_pop_int");
@@ -1108,13 +1123,15 @@ static void emit_ref_addr(const Ref *r, const char *reg)
         }
         emit("\tadd r3, r1, r0"); emit("\tsrai r4, r1, 31"); emit_li("r5", 0); emit_call("cob_push_lit");
     }
-    g_pos_was = pw; g_pos_wasf = pwf; g_pos_reg = pr;
+    g_pos_was = pw; g_pos_wasf = pwf; g_pos_reg = pr; g_pos_slot = pslot;
     if (runtime) emit("\tadd r11, r0, r0");
     for (int i = 0; i < r->nsub; i++) {
         if (!r->sub[i].sym) continue;
         Sym *ss = r->sub[i].sym;
         if (ss == &g_subx) {
-            if (pos_reg_ok(r->sub[i].x)) pos_reg_emit(r->sub[i].x);    /* an integer: nothing to check but its range */
+            /* in registers it is an integer: nothing to check but its range */
+            if (skind[i] == 2) pos_reg_take(sslot[i]);
+            else if (skind[i] == 1) pos_reg_emit(r->sub[i].x);
             else emit_call("cob_pop_int");
         } else if (is_hot_int(ss)) {
             emit_item_addr("r1", ss, ss->offset);

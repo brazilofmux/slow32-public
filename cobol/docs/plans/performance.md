@@ -68,21 +68,25 @@ From the batch's own profile (csv2fw is 60% of it;
 - Out-of-line PERFORM: a cell for each paragraph makes the push and the
   exit constant, and an exit nobody waits on costs no call.
 
-csv2fw 1.20 s -> 0.68 with these and the positions.  Next, from what is
-left of it:
-
-- FUNCTION MIN and MAX of integers as nodes of the register trees: in a
-  length (`t(1:FUNCTION MIN(n, 4096))`) they are the wide stack's.
-- A reference-modified alphanumeric move with a computed length: a
-  copy with padding, not two descriptors and the general MOVE.
+- FUNCTION MIN and MAX of integers as nodes of the register trees.
+- A reference-modified alphanumeric move with a computed length: the
+  alphanumeric move itself, no descriptors.
 - A position whose operand is itself subscripted: computed before the
   reference's own offset begins, kept in the frame.
+- A numeric literal moved to an item: its bytes, from the store's
+  kernel compiled into the compiler.
+
+csv2fw 1.20 s -> 0.42 with all of it.  Next:
+
 - fwrite and fread of a few bytes in the C library (runtime/): a short
   path when the buffer has room.  It is every program's library, so it
-  is its own step.
-- A numeric literal moved to an item: its bytes are known when
-  compiling (the kernels, compiled into the compiler, say what they
-  are).
+  is its own step, with the platform's gates.
+- PERFORM in line: the push and the exit are constant now but still two
+  calls.
+- A class test of one character (`x(i:1) IS NUMERIC`) in line.
+- The generated code: a COMP item's load is twelve instructions (it is
+  big-endian); a statement fetches what the statement before stored.
+  Stage 3 and stage 4, below.
 - The SEARCH loops: the serial step and the binary probe.
 - A user function's activation (cob_act_enter, cob_act_leave).
 - INSPECT and UNSTRING in the runtime; the wide stack's MOD.

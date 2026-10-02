@@ -9,8 +9,8 @@ computed in 64 bits, each operation's inputs tested, with the wide
 stack's code behind the tests.  The two must store the same value, so
 this writes such statements -- products and sums of items of up to 18
 digits, in DISPLAY, BINARY, PACKED-DECIMAL and COMP-5, scaled and not;
-literal multipliers; FUNCTION MOD, ABS, INTEGER and INTEGER-PART over
-them; FUNCTION NUMVAL of one character, a digit or not; unary minus;
+literal multipliers; FUNCTION MOD, ABS, INTEGER, INTEGER-PART, MAX and
+MIN over them; FUNCTION NUMVAL of one character, a digit or not; unary minus;
 ROUNDED receivers -- and gives the operands values on
 both sides of every test: small ones, ones at 2^30, 2^31 and 2^62 and
 either side of them, and the largest their pictures hold.  No SIZE ERROR
@@ -103,7 +103,7 @@ def main():
         a, b, c = r.sample(big + small, 3)
         i1, i2 = r.sample(ints, 2)
         res = r.choice(recv)
-        shape = r.randrange(15)
+        shape = r.randrange(18)
         ops = [a, b, c]
         if shape == 0:
             e = "%s * %s" % (a.name, b.name)
@@ -141,6 +141,13 @@ def main():
                 v = r.choice([10**18 - 1, 10**18 - 1, 999999999999999998, 6 * 10**17, 2**59, r.randint(0, 10**18 - 1), r.randint(0, 9999)])
                 neg = "-" if o.signed and v and r.random() < 0.5 else ""
                 w("    MOVE %s%d TO %s" % (neg, v, o.name))
+        elif shape == 15:
+            e = "FUNCTION %s(%s, %s) * %s" % (r.choice(["MAX", "MIN"]), a.name, b.name, lit())
+            ops = [a, b]
+        elif shape == 16:
+            e = "FUNCTION %s(%s, %s, %s) + %s" % (r.choice(["MAX", "MIN"]), a.name, lit(), b.name, c.name)
+        elif shape == 17:
+            e = "FUNCTION MIN(%s * %s, FUNCTION MAX(%s, %s - %s))" % (a.name, lit(), b.name, c.name, a.name)
         elif shape == 13:
             # a number read a digit at a time: NUMVAL of one character, which
             # is a digit nearly always -- and now and then is not

@@ -951,7 +951,8 @@ static int cmp_is_bytewise(Opnd *x, Opnd *y)
         (b->pi.category == PIC_ALPHANUMERIC || b->pi.category == PIC_ALPHABETIC) && !b->pi.edited)
         return 1;
     if (sym_desc(a) != sym_desc(b)) return 0;
-    const Desc *d = &g_desc[sym_desc(a)];
+    int di = sym_desc(a);                        /* made first: making it may move the table */
+    const Desc *d = &g_desc[di];
     if (d->cat != COB_NUM || d->usage != COB_U_DISPLAY) return 0;
     if (d->flags & (COB_F_SIGNED | COB_F_SEPLEAD | COB_F_SEPTRAIL | COB_F_LEAD | COB_F_BLANKZ)) return 0;
     if (d->picstr[0]) return 0;          /* an edited picture, or P scaling */

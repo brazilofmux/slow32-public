@@ -520,3 +520,73 @@ its COMP items are big-endian, twelve instructions a load); fwrite in
 the C library (91 instructions a byte); FUNCTION MIN in a length, still
 the wide stack's (half a million times); a reference-modified move
 through two descriptors; positions whose operand is itself subscripted.
+
+**MIN and MAX in the register trees.** `t(1:FUNCTION MIN(n, 4096))`
+keeps a length inside its item, and MIN's result is a wide one: the
+length was the wide stack's, a thousand instructions, half a million
+times. FUNCTION MAX and MIN of integers are nodes of the integer tree
+now (keep one operand unless the other is the greater, or the less),
+and of the decimal tree, where the two are aligned to one scale first
+and compared as 64-bit values; an argument that is a table's ALL is
+left to the runtime. csv2fw 0.68 s -> 0.55. `gen-pos.py` and
+`gen-checked.py` have the shapes; three mutants caught (the two
+exchanged, in each tree; the low words compared as signed).
+
+**A part moved to a part.** `MOVE a(p:n) TO b(q:m)` with a computed or
+omitted length built a descriptor for each part and called the general
+MOVE, which looked at the two descriptors and called the alphanumeric
+move. Now the compiler calls the alphanumeric move itself, with the
+lengths; a computed length is checked as its descriptor's was (the
+start and the length inside the item, or the run stops) by a routine
+that returns the length and builds nothing. Three mutants caught.
+
+**A position whose operand is subscripted.** `x(n(i) + 1:len(k))`
+stayed with the stack: the operand's own address needs the register
+the outer reference's offset is in. Such a position is now computed
+before that offset begins, into a frame slot, and taken from there
+(the stack's push was at the same place, for the same reason). Two
+mutants caught.
+
+**A literal moved to an item.** `MOVE 1 TO X` stores the same bytes
+every time, and went through the numeric store every time -- a call
+across the hook, about ten nanoseconds, 3.9 million times in csv2fw.
+What the bytes are is the store's business (its truncation, its sign,
+the usage), and the store is a kernel, `libcob/kern.h`, a file written
+to be compiled wherever its answer is wanted. So the compiler includes
+it too, runs it on the literal while compiling, and copies the bytes it
+left: for any descriptor the kernel takes, a picture without P, a
+literal of up to 18 digits. The same bytes by construction, and
+`tests/kern-differential.sh` holds the guest's kernel to the host's.
+`tests/gen/gen-lit.py` moves literals that fit and that do not into
+items of every usage and prints every byte: 60 programs through the
+compiler before and after, the same; three mutants caught. csv2fw
+0.48 s -> 0.42.
+
+A compiler bug met on the way, older than the day: `&g_desc[sym_desc(s)]`
+reads the table's address and calls a function that may move the table,
+in an order C does not fix. The new move tripped it (the harness's
+exception-sites gate: the compiler crashed on one statement); two older
+places had the same expression. All three take the index first now, and
+the compiler built with the address and undefined-behavior sanitizers
+compiles every test, majesty's sources and 125 generated programs
+clean.
+
+**Where it stands.** csv2fw 1.20 s -> 0.42, and the batch 2.0 s ->
+1.2; csv2fw's instructions outside the hooks from 7.4 thousand million
+to under 3. What is left of it is the program's own code (half), fwrite
+in the C library, PERFORM's two calls, and the class test of one
+character. The kernels and jerm, this morning and now, under the DBT:
+
+| workload | morning | now | what moved it |
+|---|---|---|---|
+| karith | 506 ms | 434 | division to the digits kept |
+| kmove | 609 | 390 | division; moves that are copies |
+| kedit | 579 | 573 | |
+| kstring | 249 | 249 | |
+| ksearch | 265 | 264 | |
+| kseq | 294 | 219 | division; READ and WRITE as small entries |
+| kidx | 393 | 386 | |
+| ksort | 975 | 475 | checked 64-bit arithmetic |
+| kreport | 350 | 328 | |
+| jerm | 438 | 440 | (a line-sequential WRITE is one call longer) |
+| csv2fw | 1,200 | 420 | everything from "the batch itself" down |

@@ -108,7 +108,7 @@ def main():
 
         def expr(v, depth=0):
             """an expression whose value is v (v >= 0)"""
-            c = r.randrange(14 if depth == 0 else 9)
+            c = r.randrange(17 if depth == 0 else 9)
             if c == 0 or (c == 1 and v > 9999):
                 return item(v, True)            # alone it is a subscript of the 1985 form: an integer item
             if c == 1:
@@ -138,6 +138,12 @@ def main():
                 if 1 <= v <= NN:
                     return "N(%s)" % expr(v, 1)
                 return item(v, True)
+            if c == 14:      # the least of the value and something larger: a length kept inside its item
+                return "function min(%s, %s)" % (item(v, True), r.choice([str(v + r.randint(0, 50)), item(v + r.randint(0, 9), True)]))
+            if c == 15:
+                return "function max(%s, %s)" % (r.choice([str(r.randint(0, v)), item(r.randint(0, v), True)]), item(v, True))
+            if c == 16:
+                return "function min(%s + %s, %d)" % (item(v, True), item(r.randint(0, 3), True), v)
             if c == 12:
                 if 2 <= v <= NN + 1:
                     return "N(%s) + 1" % item(v - 1, True)
@@ -153,7 +159,7 @@ def main():
                 a = r.randint(1, 3); return "%s - %d" % (item(v + a, True), a)
             return item(v, True)
 
-        shape = r.randrange(13)
+        shape = r.randrange(15)
         tail = []
         if shape == 0:
             s = r.randint(1, XLEN); l = r.randint(1, XLEN + 1 - s)
@@ -191,13 +197,19 @@ def main():
         elif shape == 11:
             s = r.randint(1, XLEN - 1); l = r.randint(1, XLEN + 1 - s)
             st = "move X(%s:%s) to W(%s:%s)" % (expr(s), expr(l), expr(r.randint(1, XLEN + 1 - l)), expr(l)); tail = ['display "%d " W' % k]
+        elif shape == 13:    # an item to a part: padded when the part is the longer
+            s = r.randint(1, XLEN - 1); l = r.randint(1, XLEN + 1 - s)
+            st = "move T(%s) to X(%s:%s)" % (sub85(r.randint(1, NT)), expr(s), expr(l)); tail = ['display "%d " X' % k]
+        elif shape == 14:    # a part to the end of the item, to a part to the end
+            s = r.randint(1, XLEN); d = r.randint(1, XLEN)
+            st = "move X(%s:) to W(%s:)" % (expr(s), expr(d)); tail = ['display "%d " W' % k]
         else:
             i = r.randint(1, R); j = r.randint(1, C)
             st = 'move "%s" to CL(%s, %s)' % ("".join(r.choice("JKL") for _ in range(3)), expr(i), expr(j))
             tail = ['display "%d " RW(%d)' % (k, i)]
         for name, v in used.items():
             w("    move %d to %s" % (v, name))
-        if shape in (0, 1, 3, 4, 5, 6, 10, 11):
+        if shape in (0, 1, 3, 4, 5, 6, 10, 11, 14):
             w("    move spaces to W")
         w("    " + st)
         for t in tail:

@@ -5321,3 +5321,18 @@ caught in all, CCVS-85 identical, all gates.  A mistake on the way: one
 array of exit cells for the file, where paragraph numbers begin again
 at each program -- CCVS-85's IC module found it, the generator had not,
 and now would.
+
+Sixth.  FUNCTION MAX and MIN are nodes of both register trees (a length
+kept inside its item by MIN was the wide stack's); a part moved to a
+part with a computed length is the alphanumeric move called directly,
+its length checked as the descriptor's was; a position with a
+subscripted operand is computed before the reference's offset begins;
+and a numeric literal moved to an item is the bytes the store's own
+kernel leaves, the kernel compiled into the compiler and run while
+compiling.  csv2fw 1.20 s -> 0.42.  Checks: gen-pos.py and
+gen-checked.py extended, tests/gen/gen-lit.py (every usage, every byte
+printed), eleven mutants caught, CCVS-85 identical, all gates.  Found:
+`&g_desc[sym_desc(s)]` -- the table's address read and a call that may
+move the table, unsequenced; three places, one of them new.  The
+compiler now passes a sanitizer build over every test, majesty's
+sources and generated programs.
