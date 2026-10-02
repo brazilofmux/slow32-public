@@ -863,7 +863,7 @@ static int ref_needs_call(const Ref *r)
  * only known at run time */
 static int ref_static_len(const Ref *r)
 {
-    if (g_cen_on) cen_pin(r->sym, "length");    /* how many bytes it has is asked: as it is written */
+    if (g_cen_on && !g_cen_quiet) cen_pin(r->sym, "length");    /* how many bytes it has is asked: as it is written */
     if (!r->rm) return r->sym->size;
     if (r->rm_bit) return r->rm_start ? (int)((r->sym->bitoff + r->rm_start - 1) % 8 + r->rm_len + 7) / 8   /* the bytes the bits span */
                                       : (int)(r->rm_len + 7) / 8 + 1;                                          /* at most, from a computed bit */

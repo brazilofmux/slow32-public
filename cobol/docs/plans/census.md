@@ -154,18 +154,26 @@ already, so a chosen layout starts where the written one did.
 - LOCAL-STORAGE items are sorted like WORKING-STORAGE ones.  Standing
   alone, they are the easiest case of all: an activation's own value.
 
-## Step 2: integers written the machine's way (2026-10-02)
+## Step 2: numbers written the machine's way (2026-10-02)
 
-An integer that stands alone, and whose every use is a use of its
-number, is no longer stored as its entry says.  An unsigned DISPLAY
-integer of nine digits or fewer becomes a binary one -- a byte for one
-digit, two bytes for two or three, four from there up -- in the first
-bytes of the place it had; a COMP item of a word or less keeps its
-bytes and loses its byte order.  Its picture still says how many
-digits it holds: a store truncates to them and a size error is raised
-by them, as before.  The record keeps its length and every other item
-its place.  `-fno-native-items` (or `S32_NATIVE_ITEMS=0` in the
-environment) leaves every item as written.
+A number that stands alone, and whose every use is a use of its
+number, is no longer stored as its entry says.  A DISPLAY or COMP-3
+item of eighteen digits or fewer, with decimal places or without,
+signed or not, becomes a binary one of the size a COMP item of its
+picture has -- two bytes to four digits, four to nine, eight to
+eighteen -- in the first bytes of the place it had; a COMP item keeps
+its bytes and loses its byte order.  Its picture still says how many
+digits it holds and where its point is: a store truncates and rounds
+to them and a size error is raised by them, as before.  The record
+keeps its length and every other item its place.  `-fno-native-items`
+(or `S32_NATIVE_ITEMS=0` in the environment) leaves every item as
+written.
+
+In place means the item's own bytes must be enough.  A DISPLAY item's
+always are; a packed item of five digits has three bytes where four
+are wanted, and one of ten to thirteen digits has six or seven where
+eight are: those stay as written until an item can be moved out of its
+record.
 
 ### What must be true of the item
 
@@ -203,6 +211,8 @@ takes its bytes.  So:
   ZERO, or it has none; no group over it has a VALUE; it redefines
   nothing (an item laid over an alphanumeric one starts as spaces);
   its condition-names' values are numbers.
+- Its sign, if it has one, is on its last digit (no SIGN LEADING or
+  SEPARATE), and its picture has no P.
 - Not in a table, not LOCAL-STORAGE, not GLOBAL: not yet.
 
 ### How the compiler comes to know before it writes
@@ -220,50 +230,91 @@ written, so its messages are about what was written.
 
 ### What it bought
 
-4,554 items in the corpora are written the machine's way: 11.9% of the
-named items, 13.6% of the references (3,690 DISPLAY, 864 COMP).  Of the
-integers of those kinds that are not, by references: a partner that
-must stay as written 6,570, a named group 4,331, storage not the
-program's 3,679, an address given away 2,506, a use of the bytes
-1,873, a used redefinition 1,442.
+7,211 items in the corpora are written the machine's way: 18.8% of the
+named items, 23.8% of the references -- 4,419 DISPLAY integers, 571
+DISPLAY numbers with decimal places, 1,154 packed items, 1,067 COMP
+items.  In the Open Systems suite it is 23.6% of
+the references, most of them packed.
 
-| | before | after |
-|---|---:|---:|
-| csv2fw, instructions | 3.955 G | 3.873 G |
-| csv2fw, slow32-dbt | 272 ms | 266 ms |
-| kseq | 205 ms | 198 ms |
-| kstring | 252 ms | 246 ms |
-| ksearch | 252 ms | 248 ms |
-| kreport | 317 ms | 312 ms |
-| karith, kedit, kidx, kmove, ksort | | under 1% |
+| | as written | the machine's way | |
+|---|---:|---:|---:|
+| kmove | 370 ms | 263 ms | -29% |
+| karith | 403 ms | 321 ms | -20% |
+| kseq | 199 ms | 165 ms | -17% |
+| kedit | 561 ms | 471 ms | -16% |
+| kstring | 250 ms | 224 ms | -10% |
+| ksearch | 249 ms | 242 ms | -3% |
+| kidx | 377 ms | 369 ms | -2% |
+| kreport | 313 ms | 308 ms | -2% |
+| ksort | 471 ms | 466 ms | -1% |
+| csv2fw | 271 ms | 265 ms | -2% |
+| majesty's batch, 28 runs | 613 ms | 601 ms | -2% |
 
-It is a small gain, and the measurement says why.  Stage 3 had
-already put the hot integers in registers; what is left of them is the
-store.  The weight of these programs is elsewhere:
+Integers alone gave the kernels 0.3 to 3.8% (stage 3 had already put
+the hot ones in registers); the rest is decimals.  karith's items are
+COMP-3 and signed DISPLAY with decimal places, every one standing
+alone: 11.16 G instructions as written, 8.31 G now.
 
-- **Decimals.**  karith's items are COMP-3 and signed DISPLAY with
-  decimal places, every one standing alone.  Declared as COMP in the
-  machine's byte order instead -- what this step would make of them --
-  the kernel runs 8.31 G instructions for 11.13 G and 329 ms for 410:
-  a fifth of its time is how its numbers are written.
-- **The arithmetic itself.**  The other four fifths are not
-  representation.  After that change each pass of karith's loop is
-  still 4,155 instructions for seven statements: 327 of generated
-  code, a 152-instruction division routine, and the rest inside the
-  runtime's get and put kernels (which the DBT runs natively, so they
-  cost less than they count).  Equivalent C is a few dozen
-  instructions and some 64-bit divisions.  That is the lowering's
-  work, not the data's.
+majesty's batch moves little, and the census says why: 46 of its
+items change.  Its amounts are packed with eleven digits -- six bytes,
+where a binary item of eleven digits wants eight -- so 131 items (745
+references) are of a kind not taken in place; its other integers are
+mostly held by storage (LINKAGE, records) and by partners.  And its
+time is csv2fw's text and each short run's translation.
+
+What keeps a number of these kinds as written, all corpora, by
+references: storage not the program's 8,383; a partner that must stay
+as written 7,443; a named group 6,118; a kind not taken in place
+5,695; a use of its bytes 3,819; an address given away 3,105; a used
+redefinition 1,839.
+
+The arithmetic itself is what is left in karith: 4,155 instructions a
+pass for seven statements -- 327 of generated code, a 152-instruction
+division routine, and the rest inside the runtime's get and put
+kernels (which the DBT runs natively, so they cost less than they
+count).  Equivalent C is a few dozen instructions and some 64-bit
+divisions.  That is the lowering's work, not the data's.
+
+### What the tests for it found
+
+- **An item laid over another starts as the other was left.**  `01 X
+  PIC X.  01 N REDEFINES X PIC 9.` begins as a space.  Every gate
+  passed with N changed; the generator's first forty programs did not.
+- **DIVIDE ... GIVING an operand, with REMAINDER** (a defect of the
+  compiler, not of this step).  The numeric stack's path stored the
+  quotient and then worked the remainder out from the operands again
+  -- one of which was now the quotient: `DIVIDE D INTO 10 GIVING D
+  REMAINDER R` with D = 4 left R = 0.  The register path, which the
+  same statement takes once its items are binary, left 2, and the two
+  compiles of one program disagreed.  The operand's value is now kept
+  before the quotient is stored (`tests/free/divremgiving`; GnuCOBOL
+  agrees with every line).
+- **DECIMAL-POINT IS COMMA and DISPLAY of a packed or binary number**
+  (a defect of the runtime).  It showed a period where a DISPLAY item
+  shows the comma (`tests/free/dpcommausage`; GnuCOBOL shows the
+  comma).
+- **`ADD P TO P R`** (a defect of the compiler).  The in-line decimal
+  add read its operand again for each receiver, so R got P as the
+  statement had just left it; every other path adds P as it was, which
+  is what the text says of a statement with several results
+  (X3.23-1985 6.4.6).  The harness's own `free/hotdec` held the wrong
+  line -- GnuCOBOL's, which reads the operand again too
+  (`docs/oracles.md`).  With the operand among several receivers the
+  in-line add now leaves the statement to the path that keeps the
+  value.
+
+Each of the three defects was one statement compiled two ways by the
+same compiler, with the two disagreeing: the kind of fault a compiler
+with several paths for one statement has, and that changing how the
+operands are written brings out.
 
 ### What checks it
 
 - The same compiler with `-fno-native-items` is the oracle.
-  `tests/gen/gen-native.py` writes items alone and not, used as
-  numbers and as bytes in every way above, and prints them; 300
-  programs agree (harness gen/native runs 60), and so do forty
-  programs of each of the other eleven generators.  Its first forty
-  programs found the rule about REDEFINES, which every gate had
-  passed without.
+  `tests/gen/gen-native.py` writes items of every kind taken, alone
+  and not, used as numbers and as bytes in every way above, and prints
+  them; 300 programs agree (harness gen/native runs 60), and so do
+  forty programs of each of the other eleven generators.
 - `tests/census_test.c` (harness gate 1h): the rule about addresses,
   on events written for it -- the register used in between, the
   address formed twice, a routine taking another register, code cut
@@ -280,18 +331,18 @@ Staged; each step is measured before the next is begun.
 
 1. **The census** -- this.
 2. **A representation of its own for items standing alone, in the
-   emitter as it is.**  Done for integers of a word or less (above).
-   Next, by what the measurement says:
-   - *Decimals.*  A packed or DISPLAY item with decimal places as a
-     scaled binary integer of four or eight bytes.  Where the bytes it
-     has are too few (a packed item of ten to thirteen digits has six
-     or seven) it is moved out of its record to a cell of its own,
-     which is the transformation in full: the record keeps a hole
-     nobody looks at.
+   emitter as it is.**  Done for numbers to eighteen digits, in place
+   (above).  Next, by what the measurement says:
+   - *Out of the record.*  Where the bytes an item has are too few (a
+     packed item of five digits, or of ten to thirteen -- majesty's
+     amounts; 5,695 references are to numbers of a kind not taken in
+     place) it is moved to a cell of its own, which is the
+     transformation in full: the record keeps a hole nobody looks at.
    - *Tables* whose rows are never moved whole, *LOCAL-STORAGE*, and
      items under a group named only by INITIALIZE.
-   - *Partners.*  The largest single reason an integer stays as
-     written is an item of the same picture it is copied to or from.
+   - *Partners.*  After storage that is not the program's, the
+     largest reason a number stays as written is an item of the same
+     picture it is copied to or from.
      Whether a copy between two numeric items of one description must
      carry bytes that are not a number is a ruling, not an analysis
      (IBM's NUMPROC(PFD) is the same question).

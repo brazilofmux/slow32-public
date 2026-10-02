@@ -657,7 +657,7 @@ static void emit_scaled(unsigned long long mag, int neg, int digits, int scale, 
     if (is_signed) out_char(neg ? '-' : '+');
     mag_to_digits(mag, d, digits);
     for (int i = 0; i < digits; i++) {
-        if (scale > 0 && i == digits - scale) out_char('.');
+        if (scale > 0 && i == digits - scale) out_char(cob_dp_comma ? ',' : '.');   /* as a DISPLAY item's (DECIMAL-POINT IS COMMA) */
         out_char(d[i]);
     }
 }

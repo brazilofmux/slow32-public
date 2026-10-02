@@ -6,9 +6,10 @@ some not, used as numbers and used as bytes
     gen-native.py SEED [STATEMENTS] > prog.cbl
 
 An item that stands alone and is only ever used as a number is written
-the machine's way (src/cobc/native.h; docs/plans/census.md): an unsigned
-DISPLAY integer as a binary one, a COMP item in the machine's byte
-order.  Nothing a program prints may change with that.  What decides it
+the machine's way (src/cobc/native.h; docs/plans/census.md): a DISPLAY
+or COMP-3 number as a binary one, a COMP item in the machine's byte
+order -- integers and numbers with decimal places, signed and not, to
+eighteen digits.  Nothing a program prints may change with that.  What decides it
 is everything this generator writes:
 
 - items at level 77 and 01, and under groups that are named by a
@@ -43,31 +44,41 @@ def main():
     w = out.append
 
     # ---- the items ------------------------------------------------------
-    items = []      # (name, digits, signed, usage)
+    items = []      # (name, digits, signed, usage, scale)
     data = []
 
-    def pic(d, sg, us):
-        return "pic %s9(%d)%s" % ("s" if sg else "", d, " comp" if us == "comp" else "")
+    def pic(d, sg, us, sc=0):
+        body = "9(%d)" % d if not sc else ("9(%d)v9(%d)" % (d - sc, sc) if d > sc else "v9(%d)" % sc)
+        return "pic %s%s%s" % ("s" if sg else "", body, {"display": "", "comp": " comp", "comp-3": " comp-3"}[us])
 
-    def new_item(prefix, d=None, us=None, sg=None):
+    def new_item(prefix, d=None, us=None, sg=None, sc=None):
         n = "%s%d" % (prefix, len(items))
-        d = d or r.choice([1, 1, 2, 2, 3, 4, 4, 5, 6, 7, 8, 9, 9])
-        us = us or r.choice(["display", "display", "display", "comp"])
+        fixed = d is not None
+        us = us or r.choice(["display", "display", "display", "comp", "comp-3", "comp-3"])
         if sg is None:
-            sg = us == "comp" and r.random() < 0.5
-        items.append((n, d, sg, us))
+            sg = r.random() < (0.5 if us != "display" else 0.3)
+        if sc is None:
+            sc = 0 if fixed or r.random() < 0.6 else r.choice([1, 2, 2, 4])
+        if not fixed:
+            d = r.choice([1, 1, 2, 2, 3, 4, 4, 5, 6, 7, 8, 9, 9, 10, 11, 12, 13, 14, 15, 17, 18]) if us != "comp" or sc else r.choice([1, 2, 3, 4, 4, 5, 7, 9, 9])
+            if sc and d < sc:
+                d = sc + r.randint(0, 3)
+        items.append((n, d, sg, us, sc))
         return n, d, sg, us
+
+    def num(d, sc, neg=False):
+        v = "%0*d" % (d, r.randrange(10 ** min(d, 17)))
+        t = (v[:d - sc].lstrip("0") or "0") + ("." + v[d - sc:] if sc else "")
+        return ("-" if neg else "") + t
 
     def value(d, sg, us="comp"):
         c = r.randrange(5)
+        sc = items[-1][4]
         if c == 0:
             return ""
         if c == 1:
             return " value zero"
-        v = r.randrange(10 ** d)
-        if sg and r.random() < 0.4:
-            return " value -%d" % v
-        return " value %d" % v
+        return " value %s" % num(d, sc, sg and r.random() < 0.4)
 
     def cond88(name, d):
         k = r.randrange(4)
@@ -85,18 +96,20 @@ def main():
     for _ in range(r.randint(5, 8)):
         n, d, sg, us = new_item("w")
         lv = r.choice(["77", "01"])
-        data.append("%s %s %s%s." % (lv, n, pic(d, sg, us), value(d, sg, us)))
+        data.append("%s %s %s%s." % (lv, n, pic(d, sg, us, items[-1][4]), value(d, sg, us)))
         if r.random() < 0.35:
-            c = cond88(n, d)
+            c = cond88(n, d) if not items[-1][4] and d <= 9 else []
             data.extend(c)
             conds.extend(x.split()[1] for x in c)
     for d in (4, 2):
-        if r.random() < 0.6:
+        if r.random() < 0.9:
             n, d, sg, us = new_item("w", d=d, us="display", sg=False)
             data.append("77 %s %s%s." % (n, pic(d, sg, us), value(d, sg, us)))
     # pairs of one description (moved and compared byte for byte)
     for _ in range(r.randint(1, 2)):
-        n, d, sg, us = new_item("w", us="display", sg=False)
+        n, d, sg, us = new_item("w", us="display", sg=False, sc=0)
+        d = min(d, 9)
+        items[-1] = (n, d, sg, us, 0)
         data.append("77 %s %s%s." % (n, pic(d, sg, us), value(d, sg)))
         n2, _, _, _ = new_item("w", d=d, us="display", sg=False)
         data.append("77 %s %s%s." % (n2, pic(d, sg, us), value(d, sg)))
@@ -111,11 +124,11 @@ def main():
         size = 0
         for _ in range(r.randint(2, 4)):
             n, d, sg, us = new_item("m")
-            lines.append("    05 %s %s%s." % (n, pic(d, sg, us), "" if gval else value(d, sg)))
+            lines.append("    05 %s %s%s." % (n, pic(d, sg, us, items[-1][4]), "" if gval else value(d, sg)))
             mem.append(n)
-            size += d if us == "display" else (2 if d <= 4 else 4)
+            size += d
         if gval:
-            data.append("01 %s value all \"%s\"." % (gn, r.choice("0379 "))) if all(i[3] == "display" for i in items[-len(mem):]) else data.append("01 %s." % gn)
+            data.append("01 %s value all \"%s\"." % (gn, r.choice("0379 "))) if all(i[3] == "display" and not i[2] for i in items[-len(mem):]) else data.append("01 %s." % gn)
         else:
             data.append("01 %s." % gn)
         data.extend(lines)
@@ -123,7 +136,7 @@ def main():
     # a redefinition: characters over a number, or a number over characters
     rd = []
     for k in range(r.randint(1, 2)):
-        n, d, sg, us = new_item("r", us="display", sg=False)
+        n, d, sg, us = new_item("r", us="display", sg=False, sc=0)
         used = r.random() < 0.5
         c = r.randrange(3)
         if c == 0:
@@ -144,24 +157,33 @@ def main():
     data.append("01 an3 pic x(6) value \" 12 4 \".")
     data.append("01 ed1 pic zzz,zzz,zz9.")
     data.append("01 ed2 pic -(9)9.")
+    data.append("01 ed3 pic -(11)9.9(4).")
+    data.append("01 pk pic s9(7)v99 comp-3.")
     data.append("01 buf pic x(30).")
     data.append("01 tbl.")
     data.append("    05 te pic 9(3) occurs 9.")
+    data.append("77 cq4 pic 9(4) value 12.")      # only ever compared with the record's fields, and given numbers
+    data.append("77 cq2 pic 9(2).")
     data.append("77 tix pic 9(2) comp.")
     data.append("77 guard pic 9(4) comp.")
 
     names = [i[0] for i in items]
     info = dict((i[0], i) for i in items)
-    disp_unsigned = [i[0] for i in items if i[3] == "display" and not i[2]]
+    disp_unsigned = [i[0] for i in items if i[3] == "display" and not i[2] and not i[4]]
+    ints = [i[0] for i in items if not i[4] and i[1] <= 9]          # may be a subscript, a pointer, a count
+    disp = [i[0] for i in items if i[3] == "display" and not i[4]]
 
     def any_item():
         return r.choice(names)
 
     def lit(d, signed=False):
         v = r.randrange(10 ** r.randint(1, min(d + 1, 9)))
+        t = "%d" % v
+        if r.random() < 0.25:
+            t += ".%0*d" % (r.choice([1, 2, 3]), r.randrange(100))
         if signed and r.random() < 0.3:
-            return "-%d" % v
-        return "%d" % v
+            return "-" + t
+        return t
 
     def show():
         w("    display \"--\"")
@@ -173,11 +195,12 @@ def main():
         for n, d, used in rd:
             if used:
                 w("    display \"<\" %sx \">\"" % n)
-        w("    display \"[\" dirty \"] [\" an1 \"] [\" an2 \"] [\" ed1 \"] [\" ed2 \"] [\" buf \"]\"")
+        w("    display cq4 \" \" cq2")
+        w("    display \"[\" dirty \"] [\" an1 \"] [\" an2 \"] [\" ed1 \"] [\" ed2 \"] [\" ed3 \"] [\" buf \"] \" pk")
 
     def stmt(ind):
         p = " " * ind
-        k = r.randrange(46)
+        k = r.randrange(48)
         a = any_item(); b = any_item()
         da = info[a][1]; db = info[b][1]
         if k < 5:
@@ -217,23 +240,25 @@ def main():
             else:
                 w("%sset %s to true" % (p, c))
         elif k < 24:
-            w("%sperform varying %s from 1 by 1 until %s > 3" % (p, a, a) if da >= 1 else p + "continue")
+            x = r.choice(ints) if ints else a
+            w("%sperform varying %s from 1 by 1 until %s > 3" % (p, x, x))
             w("%s    add 1 to guard" % p)
-            w("%s    add %s to te(%s)" % (p, a, a))
+            w("%s    add %s to te(%s)" % (p, x, x)) if x in ints else w("%s    add %s to pk" % (p, x))
             w("%send-perform" % p)
         elif k < 25:
             w("%smove %d to tix" % (p, r.randint(1, 9)))
             w("%smove %s to te(tix)" % (p, a))
             w("%sadd te(tix) to %s" % (p, b))
-        elif k < 26:
-            w("%sif %s > 0 and %s < 10" % (p, a, a))
-            w("%s    move %s to te(%s)" % (p, lit(3), a))
-            w("%s    display \"te \" te(%s)" % (p, a))
+        elif k < 26 and ints:
+            x = r.choice(ints)
+            w("%sif %s > 0 and %s < 10" % (p, x, x))
+            w("%s    move %s to te(%s)" % (p, r.randrange(1000), x))
+            w("%s    display \"te \" te(%s)" % (p, x))
             w("%send-if" % p)
         elif k < 28:
-            w("%smove %s to %s" % (p, a, r.choice(["an1", "ed1", "ed2", "buf"])))
+            w("%smove %s to %s" % (p, a, r.choice(["an1", "ed1", "ed2", "ed3", "buf", "pk"] if not info[a][4] else ["ed1", "ed2", "ed3", "pk"])))
         elif k < 30:
-            w("%smove %s to %s" % (p, r.choice(["an2", "an3", "d1", "d2", "d3"]), a))
+            w("%smove %s to %s" % (p, r.choice(["an2", "an3", "d1", "d2", "d3", "pk", "ed3"]), a))
         elif k < 31 and r.random() < 0.35:
             # an item's bytes, as they are, to a group and from one
             c = r.randrange(3)
@@ -243,19 +268,27 @@ def main():
                 w("%smove \"%s\" to dirty" % (p, "".join(r.choice("0123456789") for _ in range(9))))
                 w("%smove dirty to %s" % (p, a))
             else:
-                w("%smove %s to buf(1:9)" % (p, a)) if info[a][3] == "display" else w("%smove %s to dirty" % (p, a))
-        elif k < 31:
-            w("%smove spaces to dirty" % p)
-            x4 = [i[0] for i in items if i[1] == 4 and i[3] == "display" and not i[2]]
-            x2 = [i[0] for i in items if i[1] == 2 and i[3] == "display" and not i[2]]
+                w("%smove %s to buf(1:9)" % (p, a)) if info[a][3] == "display" and not info[a][4] else w("%smove %s to dirty" % (p, a))
+        elif k < 31 or (k == 31 and r.random() < 0.5) or k >= 46:
+            w("%smove %s to dirty" % (p, r.choice(["spaces", "spaces", "\" 1 3 5 \"", "all \"7\""])))
+            for x, f in (("cq4", "d1"), ("cq2", "d2")):
+                if r.random() < 0.6:
+                    w("%smove %s to %s" % (p, r.choice(["0", "0", "1", "77"]), x))
+                    w("%sif %s %s %s display \"%s is\" else display \"%s is not\" end-if" % (p, x, r.choice(["=", ">", "<", "not <", "not ="]), f, x, x))
+            x4 = [i[0] for i in items if i[1] == 4 and i[3] == "display" and not i[2] and not i[4]]
+            x2 = [i[0] for i in items if i[1] == 2 and i[3] == "display" and not i[2] and not i[4]]
             for xs, f in ((x4, "d1"), (x2, "d2")):
                 if xs and r.random() < 0.7:
                     x = r.choice(xs)
-                    w("%smove 0 to %s" % (p, x))
+                    w("%smove %s to %s" % (p, r.choice(["0", "0", "1", "7777"]), x))
                     w("%sif %s %s %s display \"%s eq %s\" else display \"%s ne %s\" end-if" % (p, x, r.choice(["=", "=", ">", "<", "not <"]), f, x, f, x, f))
-                    if r.random() < 0.5:
+                    if r.random() < 0.7:
                         w("%smove %s to %s" % (p, f, x))
                         w("%sdisplay \"<\" %s \">\"" % (p, x))
+                        if len(xs) > 1:
+                            y = r.choice(xs)
+                            w("%smove %s to %s" % (p, x, y))
+                            w("%sdisplay \"<\" %s \">\"" % (p, y))
         elif k < 32:
             w("%smove %s to d1" % (p, a))
             w("%smove %s to d2" % (p, b))
@@ -268,7 +301,7 @@ def main():
                 elif c == 1:
                     w("%smove %s to buf" % (p, gn))
                 elif c == 2:
-                    w("%smove all \"3\" to %s" % (p, gn)) if all(info[m][3] == "display" for m in mem) else w("%sinitialize %s" % (p, gn))
+                    w("%smove all \"3\" to %s" % (p, gn)) if all(info[m][3] == "display" and not info[m][2] for m in mem) else w("%sinitialize %s" % (p, gn))
                 else:
                     w("%sif %s = spaces display \"sp\" end-if" % (p, gn))
         elif k < 34:
@@ -301,15 +334,26 @@ def main():
             else:
                 w("%smove function length(%s) to tix" % (p, x))
                 w("%sdisplay \"len \" tix" % p)
-        elif k < 37:
-            w("%smove 1 to %s" % (p, a))
+        elif k < 37 and ints:
+            x = r.choice(ints)
+            w("%smove 1 to %s" % (p, x))
             w("%smove spaces to buf" % p)
-            w("%sstring \"abc\" \"de\" delimited by size into buf with pointer %s" % (p, a)) if da >= 2 else w("%scontinue" % p)
-        elif k < 38:
-            w("%smove 0 to %s" % (p, a))
-            w("%sinspect an3 tallying %s for all \" \"" % (p, a))
+            w("%sstring \"abc\" \"de\" delimited by size into buf with pointer %s" % (p, x)) if info[x][1] >= 2 else w("%scontinue" % p)
+        elif k < 38 and ints:
+            x = r.choice(ints)
+            w("%smove 0 to %s" % (p, x))
+            w("%sinspect an3 tallying %s for all \" \"" % (p, x))
         elif k < 39:
-            w("%sinitialize %s" % (p, a))
+            c = r.randrange(4)
+            if c == 0:
+                w("%sinitialize %s" % (p, a))
+            elif c == 1:
+                w("%sif %s is %s display \"sign %s\" end-if" % (p, a, r.choice(["positive", "negative", "zero", "not zero"]), a))
+            elif c == 2 and disp:
+                x = r.choice(disp)
+                w("%smove %s to buf(1:%d)" % (p, x, info[x][1]))
+            else:
+                w("%ssubtract %s from %s" % (p, lit(da), a))
         elif k < 41:
             w("%sdisplay \"%s=\" %s \" %s=\" %s" % (p, a, a, b, b))
         elif k < 43:
@@ -317,7 +361,15 @@ def main():
             stmt(ind + 4)
             w("%send-perform" % p)
         elif k < 44:
-            w("%smove %s to %s %s" % (p, a, b, any_item()))
+            c = r.randrange(4)
+            if c == 0:
+                w("%smove %s to %s %s" % (p, a, b, any_item()))
+            elif c == 1:
+                w("%sadd %s to %s %s" % (p, a, a, b))             # the operand's value as it was, for every receiver
+            elif c == 2:
+                w("%ssubtract %s from %s %s %s" % (p, a, b, a, any_item()))
+            else:
+                w("%sadd %s %s to %s %s" % (p, a, b, b, a))
         else:
             w("%sadd %s %s giving %s" % (p, a, lit(db), b))
 

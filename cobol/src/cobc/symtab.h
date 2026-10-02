@@ -260,6 +260,7 @@ static void cen_ref(const Sym *s)
 typedef struct { const Sym *s; char reg[4]; int at; } CenPend;
 static CenPend g_cen_pend[32]; static int g_cen_npend;      /* addresses formed, not yet accounted for: whose, in which register, where in the code */
 static int g_cen_hold;                                      /* >0: addresses formed now are accounted for by the one forming them */
+static int g_cen_quiet;                                     /* >0: a length asked now is asked for nothing an item's form can change */
 static char g_cen_why[64][28]; static int g_cen_nwhy;       /* what pinned: a routine's name, "inline/VERB", ... */
 static struct { int a, b; } *g_cen_edge; static int g_cen_nedge, g_cen_edgecap;   /* a copied to b byte for byte: one form for both */
 static char **g_asm; static int g_nasm;                     /* (the code, emit.h) */

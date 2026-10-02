@@ -1116,7 +1116,15 @@ static void parse_multiply(void)
  * quotient as it would be stored *before* ROUNDED -- the quotient
  * truncated to the receiver's decimals (X3.23 6.9.4), recomputed here
  * rather than read back from the receiver */
-static void emit_remainder(Opnd *dividend, Ref *q, int q_rounded, Opnd *divisor, int size_err, const Ref *rem)
+/* an operand of the division, or its value kept from before the quotient
+ * was stored (emit_divide_giving) */
+static void emit_push_kept(Opnd *o, Sym *kept)
+{
+    if (!kept) { emit_push(o); return; }
+    emit_item_addr("r3", kept, kept->offset);
+    emit_call("cob_npush_saved");
+}
+static void emit_remainder(Opnd *dividend, Ref *q, int q_rounded, Opnd *divisor, int size_err, const Ref *rem, Sym *kdividend, Sym *kdivisor)
 {
     if (!rem) return;
     {   /* Micro Focus: formats 4 and 5 take no floating-point item */
@@ -1145,8 +1153,8 @@ static void emit_remainder(Opnd *dividend, Ref *q, int q_rounded, Opnd *divisor,
         int qs = q->sym->pi.scale > 0 ? q->sym->pi.scale : 0;
         if ((di + vf + 1) + vi + qs + vf > 18) g_wide = 1;
     }
-    emit_push(dividend);
-    emit_push(dividend); emit_push(divisor); emit_call("cob_ndiv");
+    emit_push_kept(dividend, kdividend);
+    emit_push_kept(dividend, kdividend); emit_push_kept(divisor, kdivisor); emit_call("cob_ndiv");
     emit_li("r3", q->sym->pi.scale); emit_call("cob_ntrunc");
     /* COBOL 85: the quotient (identifier-3), or the intermediate field
      * with its presence or absence of a sign -- an unsigned quotient
@@ -1156,7 +1164,7 @@ static void emit_remainder(Opnd *dividend, Ref *q, int q_rounded, Opnd *divisor,
      * as its text says; CCVS is silent, and GnuCOBOL takes the signed
      * quotient under 85 too (docs/oracles.md, free/divremu) */
     if (!q->sym->pi.is_signed && g_std < 2002) emit_call("cob_nabs");
-    emit_push(divisor); emit_call("cob_nmul");
+    emit_push_kept(divisor, kdivisor); emit_call("cob_nmul");
     emit_call("cob_nsub");
     /* ON SIZE ERROR: a quotient that overflowed leaves the remainder alone;
      * a remainder that overflows is the statement's size error too */
@@ -1215,9 +1223,28 @@ static void emit_divide_giving(Arith *st, Opnd *dividend, Opnd *divisor)
     if (!mode && !rr) { g_nhn = 0; dxr = hn_new('/', dx_leaf(dividend), dx_leaf(divisor), NULL); }
     if (!mode && !rr && dx_ok(dxr, rs, nr, size_err)) dx_store(dxr, rs, rd, nr);
     else if (mode != 1) {
+        /* The remainder is of the dividend and the divisor as they were:
+         * when the quotient's item is one of them (DIVIDE D INTO N GIVING
+         * D REMAINDER R), its value is kept before the quotient is stored
+         * over it.  The remainder was worked out from the quotient where
+         * the divisor had been -- 10 / 4 left 0, not 2 (tests/gen/
+         * gen-native.py found it; tests/free/divremgiving). */
+        Sym *kd[2] = { NULL, NULL };
+        if (rr)
+            for (int k = 0; k < 2; k++) {
+                Opnd *o = k ? divisor : dividend;
+                int same = 0;
+                for (int i = 0; i < nr; i++) if (o->kind == O_REF && o->ref.sym == rs[i].sym) same = 1;
+                if (!same) continue;
+                FDesc fd; memset(&fd, 0, sizeof fd); fd.group = 1; fd.size = 64;       /* a cob_wnum, with room */
+                kd[k] = ftemp_new(&fd, o->line);
+                emit_push(o);
+                emit_item_addr("r3", kd[k], kd[k]->offset);
+                emit_call("cob_nsave");
+            }
         emit_push(dividend); emit_push(divisor); emit_call("cob_ndiv");
         emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
-        emit_remainder(dividend, &rs[0], rd[0], divisor, size_err, rr);
+        emit_remainder(dividend, &rs[0], rd[0], divisor, size_err, rr, kd[0], kd[1]);
     }
     if (mode == 2) emit_label(Ldone);
     g_wide = 0; g_fstmt = 0;

@@ -8,13 +8,14 @@
 
 /* An item that stands alone, and whose every use is a use of its number
  * (census.h: cen_native_cand), has no layout the program can observe.
- * It is given the machine's: an unsigned DISPLAY integer becomes a
- * binary one of a byte, two or four, in the first bytes of the place it
- * had; a COMP item keeps its bytes and loses its byte order.  Its
- * picture still says how many digits it holds -- a store truncates and a
- * size error is raised as before -- and everything that takes an item by
- * its descriptor is told the truth about it.  The record keeps its
- * length and every other item its place.
+ * It is given the machine's: a DISPLAY or COMP-3 number becomes a binary
+ * one, of the size a COMP item of its picture has, in the first bytes of
+ * the place it had (cen_native_size); a COMP item keeps its bytes and
+ * loses its byte order.  Its picture still says how many digits it holds
+ * and where its point is -- a store truncates and a size error is raised
+ * as before -- and everything that takes an item by its descriptor is
+ * told the truth about it.  The record keeps its length and every other
+ * item its place.
  *
  * The verdict needs the whole PROCEDURE DIVISION, and the code of its
  * first statement needs the verdict.  The emitter writes code as it
@@ -84,11 +85,10 @@ static void native_prepass(void)
 
 static void native_flip(Sym *s)
 {
-    if (is_display_int(s)) {
-        int d = s->pi.digits;
-        s->usage = U_BINARY; s->has_usage = 1;
-        s->size = d >= 4 ? 4 : d >= 2 ? 2 : 1;      /* 9 fits a byte, 999 two, 999,999,999 four: each within the item's own bytes */
-    }
+    int size = cen_native_size(s);
+    if (!size) { fprintf(stderr, "s32-cobc: internal: '%s' cannot be written the machine's way\n", s->name); fail(); }
+    s->usage = U_BINARY; s->has_usage = 1;
+    s->size = size;                     /* within the item's own bytes */
     s->native = 1; s->desc_id = -1;
     Sym *rec = &g_sym[s->record];
     if (rec->image) init_elem(s, rec->image + s->offset, 1);

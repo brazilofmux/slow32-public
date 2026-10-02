@@ -1054,44 +1054,54 @@ was of a number would not work it out at all.
   the line is gone.
 
 
-## 2026-10-02, evening: integers that stand alone, written the machine's way
+## 2026-10-02, evening: numbers that stand alone, written the machine's way
 
 The first step of the road to HIR that changes code
 (`docs/plans/census.md`, step 2; cobol ISSUES-123).  The census found
-that half of what the statements name stands alone.  An integer among
+that half of what the statements name stands alone.  A number among
 those whose every use is a use of its number -- no statement takes its
-bytes -- is now stored as a binary word in the machine's byte order,
-whatever its entry says: `PIC 9(4)` is four bytes of binary, not four
-digits, and a COMP item is not swapped on its way in and out.  The
-picture still limits it.  4,554 items in the corpora, 13.6% of the
-references; 20 in csv2fw.
+bytes -- is now stored as a binary integer in the machine's byte
+order, whatever its entry says: `PIC 9(4)` is two bytes of binary, not
+four digits; `PIC S9(7)V99 COMP-3` is a word holding hundredths; a COMP
+item is not swapped on its way in and out.  The picture still limits
+it, rounds it and places its point.  7,211 items in the corpora, 23.8%
+of the references.
 
-| | before | after |
-|---|---:|---:|
-| csv2fw, instructions | 3.955 G | 3.873 G |
-| csv2fw | 272 ms | 266 ms |
-| kseq | 205 ms | 198 ms |
-| kstring | 252 ms | 246 ms |
-| ksearch | 252 ms | 248 ms |
-| kreport | 317 ms | 312 ms |
-| karith, kedit, kidx, kmove, ksort | | under 1% |
+| | as written | the machine's way | |
+|---|---:|---:|---:|
+| kmove | 370 ms | 263 ms | -29% |
+| karith | 403 ms | 321 ms | -20% |
+| kseq | 199 ms | 165 ms | -17% |
+| kedit | 561 ms | 471 ms | -16% |
+| kstring | 250 ms | 224 ms | -10% |
+| ksearch | 249 ms | 242 ms | -3% |
+| kidx | 377 ms | 369 ms | -2% |
+| kreport | 313 ms | 308 ms | -2% |
+| ksort | 471 ms | 466 ms | -1% |
+| csv2fw | 271 ms | 265 ms | -2% |
+| majesty's batch, 28 runs | 613 ms | 601 ms | -2% |
 
-A small gain, and expected to be once stage 3 had the hot integers in
-registers: what was left of an integer's cost was its store.  The step
-is the mechanism -- which items, decided how, known when -- and the
-measurement of what to give it next:
+It came in two parts, and the first was the smaller.  Integers alone
+gave the kernels 0.3 to 3.8% and csv2fw 2% (3.955 G instructions to
+3.873 G): stage 3 had already put the hot integers in registers, and
+what was left of an integer's cost was its store.  Decimals are the
+rest: karith's COMP-3 and signed DISPLAY items, every one standing
+alone, 11.16 G instructions to 8.31 G.
 
-- karith with its COMP-3 and DISPLAY decimals declared COMP in the
-  machine's order runs 8.31 G instructions for 11.13 G and 329 ms for
-  410.  A fifth of that kernel is how its numbers are written, and
-  every one of its items stands alone.
-- What remains then is 4,155 instructions a pass for seven statements:
-  the arithmetic, done by pushing and popping a stack of 64-bit
-  numbers through the runtime.  That is not the data's to fix.
+The batch moves little.  46 of majesty's items change; its amounts are
+packed items of eleven digits, six bytes where a binary item of eleven
+digits wants eight, and this step changes an item only within the
+bytes it has.  Moving an item out of its record is the next step
+(`docs/plans/census.md`), and it reaches 745 of majesty's references.
+
+What is then left in karith is the arithmetic: 4,155 instructions a
+pass for seven statements, pushed and popped through the runtime's
+stack of 64-bit numbers.  That is not the data's to fix.
 
 `-fno-native-items` turns it off; `S32_NATIVE_TRACE=1` lists the items
 changed; `S32_CEN_TRACE=1` (with the switch off) says what pinned each
-item that was not, and at which statement.
+item that was not, and at which statement; `tests/census.sh` counts
+them over every corpus, with what kept the others.
 
 ### How it knows
 
@@ -1108,13 +1118,32 @@ it is a use of the number; followed by anything else it is a use of
 the bytes.  Two items of one description that are copied or compared
 byte for byte change together or not at all.
 
+### What the tests for it found
+
+Besides its own first mistake (an item laid over an alphanumeric one
+starts as spaces, which every gate passed and the generator's first
+forty programs did not), three defects that were there before it, each
+found because one program compiled two ways disagreed:
+
+- `DIVIDE D INTO N GIVING D REMAINDER R`: the stack's path worked the
+  remainder out after storing the quotient over the divisor, and left
+  0 where 10 / 4 leaves 2.  `tests/free/divremgiving`.
+- DISPLAY of a packed or binary number under DECIMAL-POINT IS COMMA
+  showed a period.  `tests/free/dpcommausage`.
+- `ADD P TO P R`: the in-line decimal add read P again for R, after
+  storing P; the other paths add P as it was (X3.23-1985 6.4.6).
+  `tests/free/hotdec` had the wrong line.
+
+GnuCOBOL agrees with the first two tests, and with the old line of the
+third: it reads the operand again (`docs/oracles.md`).
+
 ### What checks it
 
-- `-fno-native-items` is the oracle: `tests/gen/gen-native.py`, 300
-  programs the same both ways, 60 of them in the harness (gen/native);
-  the other eleven generators, forty programs each, the same.
+- `-fno-native-items` is the oracle: `tests/gen/gen-native.py`,
+  300 programs the same both ways, 60 of them in the harness
+  (gen/native); the other eleven generators, forty programs each, the
+  same.
 - `tests/census_test.c`, harness gate 1h: the address rule on events
   written for it, 38 checks.
 - Mutants: cobol ISSUES-123.
-- Off, it changes nothing: 1,506 programs compile to the assembly they
-  did before.
+- Off, it changes nothing but the repairs of those defects.

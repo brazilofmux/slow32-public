@@ -143,23 +143,48 @@ static int cen_value_is_number(const Sym *s)
 
 /* May item i be written the machine's way?  It stands alone (nothing
  * named over it, its storage the program's own and its address kept by
- * nobody), it is an integer a word holds -- an unsigned DISPLAY one of
- * nine digits or fewer, or a COMP one -- every use of it is a use of
- * its number (no pin), and its first bytes come from nowhere but a
+ * nobody), it is a number of a kind taken (cen_native_size), every use
+ * of it is a use of its number (no pin), and its first bytes come from
+ * nowhere but a
  * numeric VALUE of its own or none: not from a group's VALUE over it,
  * not from the VALUE of something that redefines it, and it redefines
  * nothing (an item laid over another starts with what the other was
  * given, which for an alphanumeric one is spaces).
  * Its condition-names' values are numbers. */
+/* The bytes item s takes written the machine's way, or 0: it is not of
+ * a kind taken, or its own bytes are too few.  The kinds: a number of 18
+ * digits or fewer with no P in its picture -- DISPLAY with its sign, if
+ * it has one, on its last digit; COMP-3; COMP (which keeps its size).
+ * The form: binary of two bytes to four digits, four to nine, eight to
+ * eighteen, as a COMP item of that picture has -- or one byte, for an
+ * integer of one or two digits whose place is one byte.  A packed item
+ * of five digits, or of ten to thirteen, has three bytes, or six or
+ * seven, where four or eight are wanted: it stays as written. */
+static int cen_native_size(const Sym *s)
+{
+    if (s->is_group || s->pi.category != PIC_NUMERIC || s->pi.edited || strchr(s->pi.pat, 'P')) return 0;
+    if (s->sign_sep || s->sign_lead || s->blank_zero || s->just || s->sync || s->uvar != UV_NONE) return 0;
+    int d = s->pi.digits, have;
+    if (d < 1 || d > 18 || s->pi.scale < 0 || s->pi.scale > d) return 0;
+    if (s->usage == U_BINARY) return sym_be(s) && (s->size == 2 || s->size == 4 || s->size == 8) ? s->size : 0;
+    if (s->usage == U_DISPLAY) { if (s->size != d) return 0; have = d; }
+    else if (s->usage == U_PACKED) { if (s->size != d / 2 + 1) return 0; have = s->size; }
+    else return 0;
+    int need = d <= 4 ? 2 : d <= 9 ? 4 : 8;
+    if (need <= have) return need;
+    return d <= 2 && s->pi.scale == 0 && have == 1 ? 1 : 0;
+}
+
 static const char *cen_native_cand(int i, int group, int alias)
 {
     Sym *s = &g_sym[i];
     Cen *c = &g_cen[i];
     if (s->is_group || s->is_cond || s->is_index || s->is_filler || s->is_rename || s->is_ftemp || s->is_rc) return "-";
-    if (!(is_display_int(s) || (is_hot_int(s) && s->usage == U_BINARY && sym_be(s) && s->uvar == UV_NONE))) return "-";
+    if (s->pi.category != PIC_NUMERIC || (s->usage != U_DISPLAY && s->usage != U_PACKED && !(s->usage == U_BINARY && sym_be(s)))) return "-";
+    if (!cen_native_size(s)) return "kind";
     if (s->occurs || s->ndims || s->record < 0) return "table";
     Sym *rec = &g_sym[s->record];
-    if (rec->fd >= 0 || rec_indirect(rec) || s->any_len || s->is_global || s->sync) return "storage";
+    if (rec->fd >= 0 || rec_indirect(rec) || s->any_len || s->is_global) return "storage";
     if (!c->refs) return "unnamed";
     if (group) return "group";
     if (alias) return "alias";

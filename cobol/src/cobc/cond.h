@@ -829,11 +829,24 @@ static void emit_cond_value(Cond *c)
          * is national itself: HIGH-VALUE is U+FFFF, not the byte FF */
         if (opnd_is_national(&c->x)) nat_fig_opnd(&c->y, opnd_size_bound(&c->x));
         if (opnd_is_national(&c->y)) nat_fig_opnd(&c->x, opnd_size_bound(&c->y));
+        /* two numbers -- numeric items, numeric literals, ZERO beside one of
+         * them (the number: opnd_args): cob_cmp compares their values, and
+         * the lengths asked for below expand nothing */
+        int vx = c->x.kind == O_REF && !c->x.ref.rm && is_numeric_sym(c->x.ref.sym);
+        int vy = c->y.kind == O_REF && !c->y.ref.rm && is_numeric_sym(c->y.ref.sym);
+        int zx = c->x.kind == O_FIG && !strncmp(c->x.tok->s, "zero", 4), zy = c->y.kind == O_FIG && !strncmp(c->y.tok->s, "zero", 4);
+        int numbers = (vx || vy) && (vx || c->x.kind == O_NUM || zx) && (vy || c->y.kind == O_NUM || zy);
+        if (numbers) g_cen_quiet++;
         int xs = opnd_size_bound(&c->x), ys = opnd_size_bound(&c->y);
+        if (numbers) g_cen_quiet--;
         int xn = opnd_numeric(&c->x), yn = opnd_numeric(&c->y);
         opnd_args(&c->x, &a[0], &a[1], ys, yn);
         opnd_args(&c->y, &a[2], &a[3], xs, xn);
         emit_args(a, 4);
+        if (numbers) {
+            if (vx) cen_bless(c->x.ref.sym);
+            if (vy) cen_bless(c->y.ref.sym);
+        }
         emit_call("cob_cmp");
         switch (c->op) {
         case R_EQ: emit("\tseq r1, r1, r0"); break;

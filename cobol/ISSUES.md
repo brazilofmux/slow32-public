@@ -5514,3 +5514,48 @@ INITIALIZE; and the largest reason an integer stays as written, a
 partner of the same picture that must (6,570 references), which is a
 ruling about what a copy between numeric items carries, not an
 analysis.
+
+Third (2026-10-02): decimals too.  The kinds taken are now any DISPLAY
+or COMP-3 number of eighteen digits or fewer with no P in its picture
+and its sign, if any, on its last digit, and any COMP item: written as
+binary of the size a COMP item of the picture has (two, four or eight
+bytes; one byte for an integer of one or two digits in a one-byte
+place), where the item's own bytes are enough (`cen_native_size`).  A
+packed item of five digits, or of ten to thirteen, has too few and
+stays as written.  A relation between two numbers that goes to
+`cob_cmp` is a use of the numbers.
+
+7,211 items in the corpora, 23.8% of the references.  kmove -29%,
+karith -20% (11.16 G instructions -> 8.31 G), kseq -17%, kedit -16%,
+kstring -10%, the others 1 to 3%; csv2fw and majesty's batch -2%
+(majesty's amounts are packed items of eleven digits: 131 items, 745
+references, of a kind not taken in place).
+
+Three defects that were there before, each found because one statement
+compiled two ways gave two answers:
+
+- `DIVIDE D INTO N GIVING D REMAINDER R` on the numeric stack's path:
+  the remainder was worked out after the quotient was stored over the
+  divisor (or the dividend), from the quotient.  10 / 4 left 0.  The
+  operand's value is kept first (`emit_divide_giving`, `cob_nsave`).
+  `tests/free/divremgiving`; GnuCOBOL agrees.
+- DISPLAY of a COMP-3 or COMP number with decimal places under
+  DECIMAL-POINT IS COMMA showed a period (libcob `emit_scaled`).
+  `tests/free/dpcommausage`; GnuCOBOL agrees.
+- `ADD P TO P R`, P and R DISPLAY or COMP-3 of one scale: the in-line
+  decimal add read P again for R after storing P, giving R the doubled
+  P.  The text takes the operand's value to a temporary first
+  (X3.23-1985 6.4.6, multiple results in arithmetic statements,
+  VI-69), and every other path does.  `tests/free/hotdec` held
+  GnuCOBOL's line, which is the re-read one; it now holds the text's,
+  with GnuCOBOL's kept as its documented divergence
+  (`docs/oracles.md`).
+
+Checks: `tests/gen/gen-native.py` writes every kind taken, with signs
+and decimal places, and operands that are also receivers; 300 programs
+the same with the switch on and off.  Forty-six mutants of the verdict
+and the pins: 22 caught by the generator; of the 24 that were not, 14
+leave another guard on the same use standing, 2 guard VALUEs the
+compiler refuses, 2 are the unit test's, 4 widen something no generated
+statement reaches, 1 is the harness's (a program with errors), and 1
+lets a class test through, which changes no output.

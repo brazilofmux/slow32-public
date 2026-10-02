@@ -572,6 +572,12 @@ static int dec_add_ok(Opnd *ops, int n, Ref *rs, int nr, int size_err)
     for (int i = 0; i < nr; i++) {
         if (!sym_dec_ok(rs[i].sym) || !ref_dec_addr_ok(&rs[i])) return 0;
         if (rs[i].sym->pi.scale != ops[0].ref.sym->pi.scale) return 0;
+        /* the operand is read for each receiver here, and the statement is
+         * as if its value went to a temporary first (X3.23-1985 6.4.6,
+         * multiple results): ADD A TO A B adds A as it was to B.  With the
+         * operand among several receivers, the path that keeps it does it
+         * (ADD p TO p r gave r the doubled p; tests/free/hotdec) */
+        if (nr > 1 && rs[i].sym == ops[0].ref.sym) return 0;
     }
     return 1;
 }

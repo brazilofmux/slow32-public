@@ -1,0 +1,13 @@
+divisor packed   +000002 0002
+divisor binary   +000002 0002
+divisor display  +000002 0002
+dividend display +000002 0003
+dividend packed  +000002 0003
+BY, dividend     +000002 0003
+BY, divisor      +000002 0003
+decimals         +0003.60 00.00
+both             +000001 0000
+a table element  0002 0002
+with the phrase  +000002 0002
+zero divisor
+zero             +000000 0077

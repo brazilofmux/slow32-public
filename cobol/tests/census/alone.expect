@@ -5,7 +5,7 @@ alone	13	77	unused	scalar	working	display-int	display	9(4)	4	0	unref	-	-	-	-	-	u
 alone	14	1	fs1	scalar	working	alnum	display	xx	2	0	runtime	-	-	-	-	-	-
 alone	16	5	c-a	scalar	working	binary-int	comp	9(4)	2	1	-	ADD	-	-	v	-	y
 alone	17	5	c-b	scalar	working	display-int	display	9(5)	5	1	-	ADD	-	-	-	-	y
-alone	18	5	c-c	scalar	working	packed-dec	comp-3	s9(7)v99	5	1	-	MOVE	-	-	-	-	-
+alone	18	5	c-c	scalar	working	packed-dec	comp-3	s9(7)v99	5	1	-	MOVE	-	-	-	-	y
 alone	20	5	i-a	scalar	working	display-int	display	9(4)	4	1	group	MOVE	INITIALIZE	-	-	-	group
 alone	21	5	i-b	scalar	working	alnum	display	x(10)	10	1	group	MOVE	INITIALIZE	-	-	cob_move_alnum	-
 alone	23	5	m-a	scalar	working	display-int	display	9(4)	4	1	group	MOVE	MOVE	-	-	-	group
