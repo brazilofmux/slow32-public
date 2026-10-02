@@ -125,9 +125,21 @@ static void native_flip(Sym *s)
         s->record = sym_idx(g_nat_cells); s->offset = off; s->native = 2;     /* (its condition-names are reached through it) */
     }
     Sym *rec = &g_sym[s->record];
-    if (rec->image) init_elem(s, rec->image + s->offset, 1);
+    if (rec->image) {
+        /* its first value, written the new way: at every occurrence, for
+         * an element of a table */
+        int k[MAXDIM] = { 0 };
+        for (;;) {
+            int off = s->offset, d = s->ndims - 1;
+            for (int q = 0; q < s->ndims; q++) off += k[q] * s->dim_stride[q];
+            init_elem(s, rec->image + off, 1);
+            while (d >= 0 && ++k[d] == s->dim_count[d]) k[d--] = 0;
+            if (d < 0) break;
+        }
+    }
     if (getenv("S32_NATIVE_TRACE"))
-        fprintf(stderr, "native: %s (line %d): %d byte%s%s\n", s->name, s->line, s->size, s->size == 1 ? "" : "s", inplace ? "" : ", out of its record");
+        fprintf(stderr, "native: %s (line %d): %d byte%s%s%s\n", s->name, s->line, s->size, s->size == 1 ? "" : "s", inplace ? "" : ", out of its record",
+                s->ndims ? ", each occurrence" : "");
 }
 
 /* a unit's DATA DIVISION is laid out, no statement is compiled yet */

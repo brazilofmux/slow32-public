@@ -1066,22 +1066,23 @@ four digits; `PIC S9(7)V99 COMP-3` is a word holding hundredths; a COMP
 item is not swapped on its way in and out.  The picture still limits
 it, rounds it and places its point.  An item whose own bytes are too
 few for that (a packed one of eleven digits has six, and wants eight)
-gets a cell outside its record.  7,496 items in the corpora, 24.8% of
-the references.
+gets a cell outside its record; an element of a table is changed where
+it is, every occurrence.  7,609 items in the corpora, 25.6% of the
+references.
 
 | | as written | the machine's way | |
 |---|---:|---:|---:|
-| kmove | 370 ms | 263 ms | -29% |
-| karith | 403 ms | 321 ms | -20% |
-| kseq | 199 ms | 165 ms | -17% |
-| kedit | 561 ms | 471 ms | -16% |
-| kstring | 250 ms | 224 ms | -10% |
-| ksearch | 249 ms | 242 ms | -3% |
-| kidx | 377 ms | 369 ms | -2% |
-| kreport | 313 ms | 308 ms | -2% |
-| ksort | 471 ms | 466 ms | -1% |
-| csv2fw | 271 ms | 265 ms | -2% |
-| majesty's batch, 28 runs | 628 ms | 606 ms | -3.5% |
+| kmove | 381 ms | 271 ms | -29% |
+| karith | 419 ms | 336 ms | -20% |
+| kseq | 205 ms | 167 ms | -18% |
+| kedit | 573 ms | 484 ms | -16% |
+| kstring | 258 ms | 233 ms | -10% |
+| kreport | 321 ms | 305 ms | -5% |
+| ksearch | 258 ms | 249 ms | -3% |
+| kidx | 393 ms | 390 ms | -1% |
+| ksort | 490 ms | 489 ms | 0% |
+| csv2fw | 279 ms | 255 ms | -9% |
+| majesty's batch, 28 runs | 621 ms | 583 ms | -6% |
 
 It came in two parts, and the first was the smaller.  Integers alone
 gave the kernels 0.3 to 3.8% and csv2fw 2% (3.955 G instructions to
@@ -1090,12 +1091,14 @@ what was left of an integer's cost was its store.  Decimals are the
 rest: karith's COMP-3 and signed DISPLAY items, every one standing
 alone, 11.16 G instructions to 8.31 G.
 
-The batch moves little.  110 of majesty's items change, 15.7% of its
-references -- its amounts, packed items of eleven digits, once they
-could leave their records and a report's SOURCE was taken for the use
-of a number that it is.  The rest are held by partners, named groups
-and LINKAGE; and the batch's time is csv2fw's text and each short
-run's translation.
+The batch moves less than the kernels.  118 of majesty's items change,
+19.4% of its references -- its amounts, packed items of eleven digits,
+once they could leave their records and a report's SOURCE was taken
+for the use of a number that it is; and csv2fw's tables, the COMP
+table its hot loop walks no longer swapped at each access (3.955 G
+instructions to 3.794 G).  The rest are held by partners, named groups
+and LINKAGE; and what is left of the batch's time is csv2fw's text and
+each short run's translation.
 
 What is then left in karith is the arithmetic: 4,155 instructions a
 pass for seven statements, pushed and popped through the runtime's

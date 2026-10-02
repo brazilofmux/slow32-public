@@ -173,7 +173,11 @@ static void emit_args(const Arg *a, int n)
     }
     for (int i = 0; i < n; i++) {
         const char *reg = argreg(i);
-        if (slotted[i]) { emit("\tldw %s, sp+%d", reg, SLOT(base + i)); continue; }
+        if (slotted[i]) {
+            emit("\tldw %s, sp+%d", reg, SLOT(base + i));
+            if (g_cen_on && a[i].kind == A_REF) cen_moved(a[i].ref->sym, reg);      /* the address formed above, back from its slot */
+            continue;
+        }
         switch (a[i].kind) {
         case A_REF:   emit_ref_addr(a[i].ref, reg); break;
         case A_LABEL: emit_la(reg, a[i].label); break;

@@ -1218,7 +1218,7 @@ static void emit_ref_addr(const Ref *r, const char *reg)
     }
 addr_done:
     emit_item_addr(reg, s, off);
-    if (runtime) { emit("\tadd %s, %s, r11", reg, reg); g_la.sym = -1; }     /* an element's address: not a constant */
+    if (runtime) { emit("\tadd %s, %s, r11", reg, reg); g_la.sym = -1; if (g_cen_on && !r->rm) cen_reformed(s, reg); }     /* an element's address: not a constant */
     if (r->rm) g_la.sym = -1;                                                   /* a part's: not the item */
 }
 

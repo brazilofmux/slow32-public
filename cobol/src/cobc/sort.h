@@ -83,6 +83,7 @@ static void parse_sort_table(int line)
     snprintf(nm, sizeof nm, "%s", cur()->s); advance();
     while ((at_word("of") || at_word("in")) && peek(1)->kind == T_WORD && nq < 8) { advance(); snprintf(qb[nq], 64, "%s", cur()->s); qv[nq] = qb[nq]; nq++; advance(); }
     g_cen_ctx = CEN_PLAIN; tr.sym = sym_lookup(nm, qv, nq, tr.line); g_cen_ctx = 0;
+    if (g_cen_on) cen_pin(tr.sym, "SORT");          /* the table's entries, moved whole */
     if (at_op("(")) die_at(tr.line, "SORT '%s': a table SORT of a table inside another table is not implemented", nm);
     Sym *e = tr.sym;
     if (!e->occurs) die_at(tr.line, "SORT '%s': a table SORT names an entry with an OCCURS clause (2023 14.9.40.3 rule 13)", e->name);

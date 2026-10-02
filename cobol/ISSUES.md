@@ -5578,3 +5578,22 @@ of it (the cell's offset, its size, its record, the image, too few
 bytes taken for enough), all caught, and a sixth that showed a loop
 which did nothing, now gone; all gates, majesty's reports
 byte-identical with their sources changed.
+
+Fifth (2026-10-02): tables.  An element of a table is taken where it
+is: each occurrence written the machine's way in its own bytes, the
+table's stride unchanged (it is the entries' size, kept apart from the
+item's).  Not when the table's length varies, nor when SEARCH or SORT
+names the table, nor -- as for any item -- when a row or the table is
+named as a whole.  Two rules about addresses came with it: an
+element's address is whole once its index is added (`cen_reformed`),
+and an address parked in the frame while other arguments are worked
+out is the same address when it comes back (`cen_moved`).
+
+7,609 items, 25.6% of the references.  csv2fw 3.955 G instructions ->
+3.794 G and 279 ms -> 255: the COMP table its hot loop walks.
+majesty's batch 621 ms -> 583 with everything of this entry; kreport
+-5%.  Checks: `gen-native.py` writes a table of rows, a searched
+table, subscripts literal and not; 200 programs the same on and off;
+`tests/census_test.c` 45 checks (the two rules: four more mutants, all
+caught); mutants of the table's image and of an element given one cell
+for every occurrence, caught.

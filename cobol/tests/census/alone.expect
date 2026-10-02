@@ -15,10 +15,10 @@ alone	27	5	b-num	scalar	working	display-int	display	9(8)	8	1	alias,redefines	DIS
 alone	28	5	b-other	scalar	working	alnum	display	x(4)	4	0	alias,unref	-	-	MOVE	-	-	-
 alone	29	5	b-only	scalar	working	display-int	display	9(4)	4	1	redefines	MOVE	-	-	-	-	redefines
 alone	31	1	ix	scalar	working	index-name	index	-	4	2	subscript	DISPLAY,SET	-	-	-	-	-
-alone	32	10	r-key	table	working	display-int	display	9(3)	3	1	-	MOVE	-	-	-	inline/MOVE	table
+alone	32	10	r-key	table	working	display-int	display	9(3)	3	1	-	MOVE	-	-	-	-	y
 alone	33	10	r-val	table	working	alnum	display	x(5)	5	1	alias	MOVE	-	DISPLAY	-	cob_move_alnum	-
-alone	34	10	r-alt	table	working	display-int	display	9(5)	5	1	alias,redefines	DISPLAY	-	MOVE	-	cob_display_nl	table
-alone	37	10	q-key	table	working	display-int	display	9(3)	3	1	-	MOVE	-	-	-	inline/MOVE	table
+alone	34	10	r-alt	table	working	display-int	display	9(5)	5	1	alias,redefines	DISPLAY	-	MOVE	-	-	alias
+alone	37	10	q-key	table	working	display-int	display	9(3)	3	1	-	MOVE	-	-	-	-	y
 alone	38	10	q-val	table	working	alnum	display	x(5)	5	1	-	DISPLAY	-	-	-	-	-
 alone	40	5	rn-a	scalar	working	alnum	display	x(2)	2	1	alias	DISPLAY	-	MOVE	-	-	-
 alone	41	5	rn-b	scalar	working	alnum	display	x(2)	2	0	alias,unref	-	-	MOVE	-	-	-

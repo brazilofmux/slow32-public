@@ -85,6 +85,23 @@ int main(void)
     begin(); form(X, "r3"); g_nasm = 0; cen_valued(X, "r3"); check("the code cut away since the address was formed", X, 1);
     begin(); g_noemit = 1; form(X, "r3"); cen_valued(X, "r3"); g_noemit = 0; check("while scanning ahead: nothing to read, nothing held against it", X, 0);
 
+    /* an element of a table: its index added to the address, which is whole after that */
+    begin(); form(X, "r3"); emit("\tadd r3, r3, r11"); cen_reformed(X, "r3"); cen_valued(X, "r3");
+    check("an element's address, its index added, then a load", X, 0);
+    begin(); form(X, "r3"); emit("\tadd r3, r3, r11"); cen_reformed(X, "r3"); emit("\tldbu r1, r3+0"); cen_valued(X, "r3");
+    check("... a byte read through it after that", X, 1);
+    begin(); form(X, "r3"); emit("\tadd r3, r3, r11"); cen_reformed(X, "r4"); cen_valued(X, "r3");
+    check("... the index added to another register's address", X, 1);
+    /* an address parked in the frame and brought back as an argument */
+    begin(); form(X, "r1"); emit("\tstw sp+72, r1"); emit("\taddi r1, r0, 5"); emit("\tldw r3, sp+72"); cen_moved(X, "r3");
+    cen_called("cob_push"); check("an address back from its slot, to a routine that takes the number", X, 0);
+    begin(); form(X, "r1"); emit("\tstw sp+72, r1"); emit("\tldw r4, sp+72"); cen_moved(X, "r4");
+    cen_called("cob_push"); check("... back in a register that is not the routine's first", X, 1);
+    begin(); form(X, "r1"); emit("\tstw sp+72, r1"); emit("\tldw r3, sp+72"); cen_moved(X, "r3"); emit("\taddi r3, r3, 1");
+    cen_called("cob_push"); check("... and moved on before the call", X, 1);
+    begin(); form(X, "r1"); emit("\tstw sp+72, r1"); emit("\tldw r3, sp+72"); cen_moved(X, "r3");
+    cen_called("memcpy"); check("... to a routine that takes bytes", X, 1);
+
     /* every name owes an address */
     g_ntok = 100;
     begin(); g_tp = 10; cen_ref(X); cen_stmt_owed(0, 0, 1); check("named, its address never formed", X, 1);

@@ -187,7 +187,15 @@ static const char *cen_native_cand(int i, int group, int alias)
     if (s->is_group || s->is_cond || s->is_index || s->is_filler || s->is_rename || s->is_ftemp || s->is_rc) return "-";
     if (s->pi.category != PIC_NUMERIC || (s->usage != U_DISPLAY && s->usage != U_PACKED && !(s->usage == U_BINARY && sym_be(s)))) return "-";
     if (!cen_native_size(s, NULL)) return "kind";
-    if (s->occurs || s->ndims || s->record < 0) return "table";
+    if (s->record < 0) return "-";
+    if (s->ndims) {
+        /* an element of a table: where it is, each occurrence in its own
+         * bytes (the table's stride is its entries', not the item's size);
+         * not of a table whose length varies */
+        int inplace; cen_native_size(s, &inplace);
+        if (!inplace) return "table";
+        for (int p = i; p >= 0; p = g_sym[p].parent) if (g_sym[p].odo_dep[0]) return "table";
+    }
     Sym *rec = &g_sym[s->record];
     if (rec->fd >= 0 || rec_indirect(rec) || s->any_len || s->is_global) return "storage";
     if (!c->refs) return "unnamed";

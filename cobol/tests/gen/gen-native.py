@@ -162,6 +162,22 @@ def main():
     data.append("01 buf pic x(30).")
     data.append("01 tbl.")
     data.append("    05 te pic 9(3) occurs 9.")
+    # a table of rows: its fields used as numbers; the row, now and then, as bytes
+    tf = []
+    data.append("01 tb2.")
+    data.append("    05 row occurs 4.")
+    for _ in range(r.randint(2, 3)):
+        n, d, sg, us = new_item("t")
+        it = items.pop()
+        n = "tf%d" % len(tf)
+        tf.append((n,) + it[1:])
+        data.append("        10 %s %s." % (n, pic(d, sg, us, tf[-1][4])))
+    data.append("        10 tx pic x(3).")
+    row_named = r.random() < 0.3
+    # a table that is searched, in some programs: its entries taken at their size
+    searched = r.random() < 0.4
+    data.append("01 tb3.")
+    data.append("    05 ts pic 9(%d)%s occurs 6 indexed by ix." % (r.choice([2, 3, 5]), r.choice(["", " comp-3"])))
     data.append("77 cq4 pic 9(4) value 12.")      # only ever compared with the record's fields, and given numbers
     data.append("77 cq2 pic 9(2).")
     data.append("77 tix pic 9(2) comp.")
@@ -196,11 +212,16 @@ def main():
             if used:
                 w("    display \"<\" %sx \">\"" % n)
         w("    display cq4 \" \" cq2")
+        for t in tf:
+            w("    display " + " \" \" ".join("%s(%d)" % (t[0], q) for q in range(1, 5)))
+        w("    display " + " \" \" ".join("ts(%d)" % q for q in range(1, 7)))
+        if row_named:
+            w("    display \"{\" row(2) \"}\"")
         w("    display \"[\" dirty \"] [\" an1 \"] [\" an2 \"] [\" ed1 \"] [\" ed2 \"] [\" ed3 \"] [\" buf \"] \" pk")
 
     def stmt(ind):
         p = " " * ind
-        k = r.randrange(48)
+        k = r.randrange(54)
         a = any_item(); b = any_item()
         da = info[a][1]; db = info[b][1]
         if k < 5:
@@ -269,6 +290,37 @@ def main():
                 w("%smove dirty to %s" % (p, a))
             else:
                 w("%smove %s to buf(1:9)" % (p, a)) if info[a][3] == "display" and not info[a][4] else w("%smove %s to dirty" % (p, a))
+        elif k >= 48:
+            # the table's fields: numbers at a subscript
+            t = r.choice(tf); u = r.choice(tf)
+            sub1 = r.choice(["tix", "tix", str(r.randint(1, 4))])
+            w("%smove %d to tix" % (p, r.randint(1, 4)))
+            c = r.randrange(9)
+            if c == 0:
+                w("%sadd %s to %s(%s)" % (p, a, t[0], sub1))
+            elif c == 1:
+                w("%smove %s(%s) to %s" % (p, t[0], sub1, a))
+            elif c == 2:
+                w("%scompute %s(%s)%s = %s + %s(tix) * 2" % (p, t[0], sub1, r.choice(["", " rounded"]), a, u[0]))
+            elif c == 3:
+                w("%sif %s(%s) %s %s(tix) display \"t\" else display \"f\" end-if" % (p, t[0], sub1, r.choice([">", "=", "<", "not ="]), u[0]))
+            elif c == 4:
+                w("%smove %s to %s(%s)" % (p, lit(t[1], t[2]), t[0], sub1))
+            elif c == 5:
+                w("%sperform varying tix from 1 by 1 until tix > 4" % p)
+                w("%s    add %s to %s(tix)" % (p, lit(3), t[0]))
+                w("%send-perform" % p)
+            elif c == 7 or (c == 6 and not row_named):
+                q = r.randint(1, 6)
+                w("%smove %d to ts(%d)" % (p, r.randrange(100), q))
+                w("%sadd %s to ts(%d)" % (p, lit(2), r.randint(1, 6)))
+                if searched:
+                    w("%sset ix to 1" % p)
+                    w("%ssearch ts at end display \"none\" when ts(ix) = %d display \"found \" ts(ix) end-search" % (p, r.randrange(100)))
+            elif c == 6 and row_named:
+                w("%s%s" % (p, r.choice(["move row(tix) to buf", "initialize row(tix)", "move spaces to row(tix)", "move row(1) to row(tix)"])))
+            else:
+                w("%smove %s(%s) to %s(tix)" % (p, t[0], sub1, u[0]))
         elif k < 31 or (k == 31 and r.random() < 0.5) or k >= 46:
             w("%smove %s to dirty" % (p, r.choice(["spaces", "spaces", "\" 1 3 5 \"", "all \"7\""])))
             for x, f in (("cq4", "d1"), ("cq2", "d2")):

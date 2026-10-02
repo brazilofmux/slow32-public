@@ -217,7 +217,11 @@ takes its bytes.  So:
   its condition-names' values are numbers.
 - Its sign, if it has one, is on its last digit (no SIGN LEADING or
   SEPARATE), and its picture has no P.
-- Not in a table, not LOCAL-STORAGE, not GLOBAL: not yet.
+- An element of a table is taken where it is, every occurrence in its
+  own bytes (the table's stride is its entries', not the item's size),
+  when the table's length does not vary and nothing names the table as
+  a whole (SEARCH, SORT) or a row of it.
+- Not LOCAL-STORAGE, not GLOBAL: not yet.
 
 ### How the compiler comes to know before it writes
 
@@ -234,45 +238,48 @@ written, so its messages are about what was written.
 
 ### What it bought
 
-7,496 items in the corpora are written the machine's way: 19.5% of the
-named items, 24.8% of the references -- 4,430 DISPLAY integers, 577
-DISPLAY numbers with decimal places, 1,422 packed items, 1,067 COMP
-items.  In the Open Systems suite it is 27.1% of the references, most
-of them packed; in the harness's programs 38.5%.
+7,609 items in the corpora are written the machine's way: 19.8% of the
+named items, 25.6% of the references -- 4,468 DISPLAY integers, 590
+DISPLAY numbers with decimal places, 1,463 packed items, 1,088 COMP
+items.
 
 | | as written | the machine's way | |
 |---|---:|---:|---:|
-| kmove | 370 ms | 263 ms | -29% |
-| karith | 403 ms | 321 ms | -20% |
-| kseq | 199 ms | 165 ms | -17% |
-| kedit | 561 ms | 471 ms | -16% |
-| kstring | 250 ms | 224 ms | -10% |
-| ksearch | 249 ms | 242 ms | -3% |
-| kidx | 377 ms | 369 ms | -2% |
-| kreport | 313 ms | 308 ms | -2% |
-| ksort | 471 ms | 466 ms | -1% |
-| csv2fw | 271 ms | 265 ms | -2% |
-| majesty's batch, 28 runs | 628 ms | 606 ms | -3.5% |
+| kmove | 381 ms | 271 ms | -29% |
+| karith | 419 ms | 336 ms | -20% |
+| kseq | 205 ms | 167 ms | -18% |
+| kedit | 573 ms | 484 ms | -16% |
+| kstring | 258 ms | 233 ms | -10% |
+| kreport | 321 ms | 305 ms | -5% |
+| ksearch | 258 ms | 249 ms | -3% |
+| kidx | 393 ms | 390 ms | -1% |
+| ksort | 490 ms | 489 ms | 0% |
+| csv2fw | 279 ms | 255 ms | -9% |
+| majesty's batch, 28 runs | 621 ms | 583 ms | -6% |
 
 Integers alone gave the kernels 0.3 to 3.8% (stage 3 had already put
 the hot ones in registers); the rest is decimals.  karith's items are
 COMP-3 and signed DISPLAY with decimal places, every one standing
 alone: 11.16 G instructions as written, 8.31 G now.
 
-majesty's batch moves little, and the census says why.  Its amounts
-are packed items of eleven digits, six bytes where a binary item of
-eleven digits wants eight: in place, 46 of its items changed.  Moved
-out of their records, and with a report's SOURCE taken for the use of
-a number that it is (the Report Writer moves it to the print line),
-110 do: 15.7% of its references.  The rest are held by partners (424
-references), named groups, and storage that is LINKAGE or a record's.
-And its time is csv2fw's text and each short run's translation.
+majesty's batch moves less than the kernels, and the census says why.
+Its amounts are packed items of eleven digits, six bytes where a
+binary item of eleven digits wants eight: in place, 46 of its items
+changed.  Moved out of their records, with a report's SOURCE taken for
+the use of a number that it is (the Report Writer moves it to the
+print line), and with tables, 118 do: 19.4% of its references.  The
+rest are held by partners (392 references), named groups, and storage
+that is LINKAGE or a record's.  csv2fw's gain is its tables: the COMP
+table its hot loop walks is no longer swapped at each access (3.955 G
+instructions to 3.794 G).  What is left of the batch's time is
+csv2fw's text and each short run's translation.
 
 What keeps a number of these kinds as written, all corpora, by
-references: storage not the program's 9,877; a partner that must stay
-as written 7,756; a named group 6,290; a use of its bytes 3,752; an
-address given away 3,118; a used redefinition 1,841; a kind not taken
-(SIGN LEADING or SEPARATE, P, more than eighteen digits) 1,375.
+references: storage not the program's 10,963; a named group 9,176
+(tables' rows among them); a partner that must stay as written 7,868;
+a use of its bytes 3,857; an address given away 3,123; a used
+redefinition 1,937; a kind not taken (SIGN LEADING or SEPARATE, P,
+more than eighteen digits) 1,375.
 
 The arithmetic itself is what is left in karith: 4,155 instructions a
 pass for seven statements -- 327 of generated code, a 152-instruction
@@ -340,8 +347,8 @@ Staged; each step is measured before the next is begun.
    emitter as it is.**  Done for numbers to eighteen digits, in place
    or in a cell outside the record (above).  What is left of it, by
    what the measurement says:
-   - *Tables* whose rows are never moved whole, *LOCAL-STORAGE*, and
-     items under a group named only by INITIALIZE.
+   - *LOCAL-STORAGE*, items under a group named only by INITIALIZE,
+     and a table's rows named only to be initialized or searched.
    - *Partners.*  After storage that is not the program's, the
      largest reason a number stays as written is an item of the same
      picture it is copied to or from.

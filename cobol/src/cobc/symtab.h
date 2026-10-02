@@ -298,6 +298,19 @@ static int cen_untouched(int at, const char *reg)
             if (!(q[n] >= '0' && q[n] <= '9') && !(q > g_asm[i] && (isalnum((unsigned char)q[-1]) || q[-1] == '_' || q[-1] == '.'))) return 0;
     return 1;
 }
+/* s's address in reg was an element's, and its index has now been added:
+ * the address is whole from here */
+static void cen_reformed(const Sym *s, const char *reg)
+{
+    for (int i = g_cen_npend - 1; i >= 0; i--)
+        if (g_cen_pend[i].s == s && !strcmp(g_cen_pend[i].reg, reg)) { g_cen_pend[i].at = g_nasm; return; }
+}
+/* s's address, parked in the frame since it was formed, is now in reg */
+static void cen_moved(const Sym *s, const char *reg)
+{
+    for (int i = g_cen_npend - 1; i >= 0; i--)
+        if (g_cen_pend[i].s == s) { snprintf(g_cen_pend[i].reg, sizeof g_cen_pend[i].reg, "%s", reg); g_cen_pend[i].at = g_nasm; return; }
+}
 static void cen_drop(int i) { for (; i + 1 < g_cen_npend; i++) g_cen_pend[i] = g_cen_pend[i + 1]; g_cen_npend--; }
 /* the address of s in reg is used now for a load or a store of its
  * value: the latest one formed there, and nothing has used the register
