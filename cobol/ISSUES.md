@@ -5217,3 +5217,35 @@ tests its functions through EVALUATE ... WHEN x THRU y, so 38 programs'
 code changed; the reports are identical.  GnuCOBOL rolls again for each
 WHEN too: 148 of 600 on no face.  Test free/evalonce (.oracle-expected,
 docs/oracles.md).  Left: an alphanumeric function subject.
+
+**The two gaps left, closed.**
+
+An alphanumeric, national or boolean function as an EVALUATE subject
+was still evaluated for each WHEN.  MOVE's way of keeping a function's
+value for several receivers (a copy of the bytes, fsaved) is not enough
+here: a result of run-time length (TRIM) has its length in the runtime's
+"result just evaluated" state, and a WHEN's own objects may evaluate
+functions in between.  So the subject's result is kept with that length
+in a compiler-made record (cob_fn_keep) and made the result just
+evaluated again before each comparison (cob_fn_kept); emit_fn_value,
+which every use of a function operand goes through, does that for an
+operand with a kept result.  The functions being deterministic, the
+output cannot show "once"; the code does (in 2002/evalfunc, cob_fn_trim
+is called 7 times where it was 12), and the test has a WHEN whose object
+is a shorter result before one that needs the subject's own length --
+without the length restored it takes WHEN OTHER (mutation-tested).
+GnuCOBOL agrees with the test.
+
+With EC-DATA-INCOMPATIBLE checked, a receiver that is summed too (ADD a
+TO b; SUBTRACT, MULTIPLY BY, DIVIDE INTO) had its content checked before
+the arithmetic, which formed its address, which made a call in its
+subscript -- first, not at the receiver's access.  Worse than the plan
+said: ADD 2 TO N EL(F(N)) added to EL(1); DIVIDE 2 INTO N EL(F(N))
+checked an element outside the table and raised the condition.  The
+check for a receiver with a call still to make now waits for its access
+(recv_access: the calls, then the check).  Test 2002/userfnrecvec (no
+oracle): the four verbs as 2002/userfnrecv has them, checked, and a
+receiver holding "1a3" still caught, there.
+
+No program of the snapshot changes: none has such a subject or such a
+receiver.

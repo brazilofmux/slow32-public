@@ -130,7 +130,9 @@ for in the commit -- plus all the usual gates.
    - EVALUATE's subject, once: an arithmetic expression or a numeric
      function is evaluated at the beginning and its value kept
      (cob_nsave) for every WHEN to compare against (cob_npush_saved);
-     it was evaluated again for each WHEN, twice for a THRU.
+     it was evaluated again for each WHEN, twice for a THRU.  Any other
+     function's result is kept with its run-time length (cob_fn_keep)
+     and made the result just evaluated again (cob_fn_kept).
    - PERFORM (done 2026-10-01): its phrases, then an inline body's
      statements as a Block, read before the loop's code (Body.blk;
      the exception-checking PERFORM is still its own path).  Then the
@@ -172,10 +174,12 @@ stays:
 - ADDRESS OF in a CALL argument makes its pointer record where it is
   read; a call read after it still goes first.
 
-Known and left: an alphanumeric function as an EVALUATE subject
-(FUNCTION CURRENT-DATE, say) is still evaluated for each WHEN; with
-EC-DATA-INCOMPATIBLE checking on, a receiver's incompatible-data check
-identifies it early, so a function in its subscript is called first.
+The two gaps left at first are closed: an alphanumeric, national or
+boolean function as an EVALUATE subject is evaluated once, its result
+and run-time length kept (cob_fn_keep, cob_fn_kept); and with
+EC-DATA-INCOMPATIBLE checking on, a receiver whose subscript has a call
+to make is checked where it is accessed, not before the statement
+(recv_access).
 
 Openings the nodes leave, none taken: a loop item kept in a register
 across the body; the out-of-line PERFORM's cob_perform_push and

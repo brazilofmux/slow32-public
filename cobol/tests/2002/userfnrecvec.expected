@@ -1,0 +1,5 @@
+add: 000 000 002
+subtract: 01 000 000 007
+multiply: 02 000 008 000
+divide: 04 000 004
+declarative: EC-DATA-INCOMPATIBLE           

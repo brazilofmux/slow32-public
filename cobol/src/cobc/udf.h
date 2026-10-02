@@ -466,6 +466,11 @@ static void emit_fn_rm_check(void)
  * its full width, the address then moved to a reference modification's part */
 static void emit_fn_value(Opnd *f)
 {
+    if (f->fkept) {                             /* kept from its one evaluation: the result again, and its length */
+        emit_item_addr("r3", f->fkept, f->fkept->offset);
+        emit_call("cob_fn_kept");
+        return;
+    }
     if (!f->ffull) { emit_fn_value_raw(f); return; }
     int part = f->fsize;
     if (f->frm < 0) {

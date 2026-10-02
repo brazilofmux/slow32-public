@@ -53,6 +53,22 @@ static void evaluate_subject_once(Opnd *o)
         x.kind = O_EXPR; x.line = o->line; x.ex = e; x.wide = e->wide; x.flt = e->flt;
         *o = x;
     }
+    if (o->kind == O_FUNC) {
+        /* an alphanumeric, national or boolean function: its result kept,
+         * bytes and run-time length, and made the result just evaluated
+         * again for each comparison (cob_fn_keep, cob_fn_kept) -- a WHEN's
+         * objects may evaluate functions of their own in between */
+        int sz = o->fsize > 0 ? o->fsize : 1;
+        FDesc kd; memset(&kd, 0, sizeof kd); kd.group = 1; kd.size = 4 + sz;
+        Sym *k = ftemp_new(&kd, o->line);
+        emit_fn_value(o);
+        emit("\tadd r4, r1, r0");
+        emit_item_addr("r3", k, k->offset);
+        emit_li("r5", sz);
+        emit_call("cob_fn_keep");
+        o->fkept = k;
+        return;
+    }
     if (o->kind != O_EXPR) return;
     FDesc fd; memset(&fd, 0, sizeof fd); fd.group = 1; fd.size = 64;       /* a cob_wnum, with room */
     Sym *t = ftemp_new(&fd, o->line);

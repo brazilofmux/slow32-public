@@ -321,6 +321,7 @@ static int rnd_opts(int r) { return r == 1 ? 1 : (r & 0xF0); }
 /* the hot sum is a literal that fits an addi: the store adds it as an
  * immediate, no SLOT_A (every PERFORM VARYING and SEARCH step is ADD 1) */
 static int g_addk_on; static long g_addk;
+static void recv_access(Ref *r, int reads);
 static void emit_store_receivers(Ref *rs, int *rounded, int nr, int hot, int giving, int subtract, int size_err,
                                  long long sum_mag, int sum_nonneg)
 {
@@ -328,7 +329,7 @@ static void emit_store_receivers(Ref *rs, int *rounded, int nr, int hot, int giv
     if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
     for (int i = 0; i < nr; i++) {
         int opts = rnd_opts(rounded[i]) | (size_err ? 2 : 0);
-        recv_calls(&rs[i]);                     /* identified as it is accessed */
+        recv_access(&rs[i], !giving);           /* identified as it is accessed */
         if (hot) {
             Sym *d = rs[i].sym;
             emit_ref_addr(&rs[i], "r3");
@@ -618,9 +619,24 @@ static void emit_incompat_sym(Sym *s, int line)
 {
     Opnd o; memset(&o, 0, sizeof o); o.kind = O_REF; o.ref.sym = s; o.ref.line = line; o.line = line; emit_incompat(&o);
 }
+static void emit_incompat_ref(const Ref *r)
+{
+    Opnd o; memset(&o, 0, sizeof o); o.kind = O_REF; o.ref = *r; o.line = r->line; emit_incompat(&o);
+}
+/* the receivers that are summed too, checked before the arithmetic -- but
+ * one whose subscript still has a call to make is identified only as it
+ * is accessed (recv_calls), so its check waits for that (recv_access) */
 static void emit_incompat_refs(const Ref *rs, int nr)
 {
-    for (int k = 0; k < nr; k++) { Opnd o; memset(&o, 0, sizeof o); o.kind = O_REF; o.ref = rs[k]; o.line = rs[k].line; emit_incompat(&o); }
+    for (int k = 0; k < nr; k++) if (!ref_pending(&rs[k])) emit_incompat_ref(&rs[k]);
+}
+/* a receiver about to be accessed: its calls made, and, when its content
+ * is read too (ADD a TO b), the incompatible-data check that waited */
+static void recv_access(Ref *r, int reads)
+{
+    if (!ref_pending(r)) return;
+    recv_calls(r);
+    if (reads) emit_incompat_ref(r);
 }
 
 /* the composite of operands (X3.23-1985 6.4.4 rule 2; 2023 14.7.7 rule

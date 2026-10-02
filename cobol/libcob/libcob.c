@@ -3564,6 +3564,24 @@ const cob_desc *cob_fn_var_desc(int national)
     return d;
 }
 
+/* A function's result kept in a record of the program's -- its bytes, and
+ * the length a result of run-time length has -- and made "the result just
+ * evaluated" again from it as often as wanted: an alphanumeric, national
+ * or boolean function as an EVALUATE subject is evaluated once (2023
+ * 14.9.13.4 rule 3), and each WHEN compares against it, whatever
+ * functions its objects evaluate in between.  rec: the length, then size
+ * bytes. */
+void cob_fn_keep(char *rec, const char *val, int size)
+{
+    memcpy(rec, &fn_var_len, sizeof fn_var_len);
+    memcpy(rec + sizeof fn_var_len, val, (size_t)size);
+}
+char *cob_fn_kept(char *rec)
+{
+    memcpy(&fn_var_len, rec, sizeof fn_var_len);
+    return rec + sizeof fn_var_len;
+}
+
 /* LENGTH (characters) or BYTE-LENGTH of the result just evaluated */
 /* a length in bytes as nine digits, of characters when national */
 char *cob_fn_len_digits(int bytes, int national)
