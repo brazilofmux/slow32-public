@@ -93,6 +93,11 @@ struct _FILE {
 
 typedef struct _FILE FILE;
 
+#define ATEXIT_MAX 32       /* the standard asks for at least 32 */
+typedef void (*atexit_fn_t)(void);          /* a typedef: stage07 reads no array-of-function-pointer declarator */
+static atexit_fn_t _atexit_fn[ATEXIT_MAX];
+static int _atexit_n;
+
 static struct _FILE _file_pool[FILE_POOL_SIZE];
 static struct _FILE _stdin_file;
 static struct _FILE _stdout_file;
@@ -469,6 +474,71 @@ FILE *fopen(const char *path, const char *mode) {
     return fp;
 }
 
+/* a stream on a descriptor already open.  0, 1 and 2 have theirs. */
+FILE *fdopen(int fd, const char *mode) {
+    FILE *fp;
+    int flags;
+    int oflags;
+
+    oflags = 0;
+    flags = s_mode(mode, &oflags);
+    if (!flags || fd < 0) return (FILE *)0;
+    if (fd <= 2) {
+        fp = s_of(fd);
+        if (fp) return fp;
+    }
+    fp = s_attach(fd, flags);
+    if (!fp) return (FILE *)0;
+    if (mode[0] == 'a' && !(flags & FLAG_READ)) lseek(fd, 0, SEEK_END);
+    return fp;
+}
+
+/* the same stream on another file: what it held is sent, its file is
+ * closed, and the stream begins again on the new one.  When the new
+ * file does not open the stream is closed. */
+FILE *freopen(const char *path, const char *mode, FILE *fp) {
+    int flags;
+    int oflags;
+    int fd;
+    int old;
+    int std;
+
+    if (!fp) return (FILE *)0;
+    std = (fp == stdin || fp == stdout || fp == stderr);
+    oflags = 0;
+    flags = 0;
+    if (mode) flags = s_mode(mode, &oflags);
+    s_flush(fp);
+    old = fp->fd;
+    if (old >= 0) {
+        close(old);
+        if (!std && old < FD_TABLE_SIZE && _fd_stream[old] == fp) _fd_stream[old] = (FILE *)0;
+    }
+    if (fp->ownbuf && fp->buf) free(fp->buf);
+    fd = -1;
+    if (flags && path) fd = open(path, oflags);
+    if (fd < 0) {
+        if (std) {
+            s_init(fp, -1, 0, BUF_NONE);
+        } else {
+            fp->used = 0;
+            fp->fd = -1;
+            fp->buf = (char *)0;
+        }
+        return (FILE *)0;
+    }
+    s_init(fp, fd, flags, BUF_FULL);
+    if (fp == stdout) {
+        fp->buf = _stdout_buf;
+        fp->bsize = STDIO_BUFSZ;
+    }
+    /* a standard stream is still found under 0, 1 or 2, where the fd
+     * functions and the table look for it; and under its new number */
+    if (fd < FD_TABLE_SIZE) _fd_stream[fd] = fp;
+    if (mode[0] == 'a' && !(flags & FLAG_READ)) lseek(fd, 0, SEEK_END);
+    return fp;
+}
+
 int fflush(FILE *fp) {
     if (!fp) {
         s_flush_all();
@@ -614,14 +684,6 @@ int fileno(FILE *fp) {
     return fp->fd;
 }
 
-void perror(const char *s) {
-    if (s && *s) {
-        fputs(s, stderr);
-        fputs(": ", stderr);
-    }
-    fputs("error\n", stderr);
-}
-
 /* one character back: the next read gets it first */
 int ungetc(int c, FILE *fp) {
     if (c == -1 || !fp || fp->unget >= 0) return -1;
@@ -648,10 +710,6 @@ int setvbuf(FILE *fp, char *buf, int mode, unsigned int size) {
         fp->bsize = (int)size;
     }
     return 0;
-}
-
-FILE *tmpfile(void) {
-    return (FILE *)0;
 }
 
 int remove(const char *path) {
@@ -682,7 +740,31 @@ void fput_uint(FILE *fp, unsigned int val) {
  * it; the bare halt this replaces left there whatever the last call had
  * returned) */
 void exit(int status) {
+    atexit_fn_t fn;
+    /* the last registered first; one that registers another has it run next */
+    while (_atexit_n > 0) {
+        _atexit_n = _atexit_n - 1;
+        fn = _atexit_fn[_atexit_n];
+        fn();
+    }
     s_flush_all();
+    __s32_halt(status);
+}
+
+/* the functions exit calls on the way out, in the reverse of this order */
+int atexit(atexit_fn_t fn) {
+    if (_atexit_n >= ATEXIT_MAX) return -1;
+    _atexit_fn[_atexit_n] = fn;
+    _atexit_n = _atexit_n + 1;
+    return 0;
+}
+
+/* the run ends here and now: no atexit functions, nothing flushed */
+void _exit(int status) {
+    __s32_halt(status);
+}
+
+void _Exit(int status) {
     __s32_halt(status);
 }
 

@@ -5,6 +5,12 @@
  * Implementation in libc_a64/signal_stubs.c — currently no-op stubs;
  * signals will not actually fire, which is fine for initial bring-up
  * (default kernel actions still terminate the process on faults).
+ *
+ * On SLOW-32 (libc/posix_proc.c) signal and raise are real, and they
+ * are all there is: nothing outside the program sends it a signal, so
+ * a handler runs when the program raises the signal itself (raise,
+ * abort).  sigaction, kill and the signal sets are the cross
+ * compilers' libraries' only.
  */
 #ifndef _SIGNAL_H
 #define _SIGNAL_H
@@ -21,6 +27,8 @@ typedef unsigned long sigset_t;
 #define SIGILL   4
 #define SIGABRT  6
 #define SIGBUS   7
+#define SIGFPE   8
+#define SIGKILL  9
 #define SIGSEGV 11
 #define SIGALRM 14
 #define SIGTERM 15
@@ -34,8 +42,11 @@ typedef unsigned long sigset_t;
 typedef void (*sighandler_t)(int);
 
 /* Special handler values. */
+typedef sighandler_t sig_handler_t;
+
 #define SIG_DFL ((sighandler_t)0)
 #define SIG_IGN ((sighandler_t)1)
+#define SIG_ERR ((sighandler_t)-1)
 
 /* siginfo_t — only the fields dbt.c reads (via si_addr in the
    x86_64-only block we don't compile). Keep the struct big enough

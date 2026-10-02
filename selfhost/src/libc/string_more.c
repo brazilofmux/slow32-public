@@ -144,7 +144,7 @@ int atoi(char *s) {
     int neg;
     int val;
     neg = 0;
-    while (*s == 32 || *s == 9 || *s == 10) s = s + 1;
+    while (*s == 32 || (*s >= 9 && *s <= 13)) s = s + 1;     /* the white space isspace knows */
     if (*s == 45) { neg = 1; s = s + 1; }
     else if (*s == 43) s = s + 1;
     val = 0;

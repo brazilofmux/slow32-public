@@ -701,7 +701,9 @@ usleep:
     lui r1, %hi(__mmio_base+16396)
     addi r1, r1, %lo(__mmio_base+16396)
     stw r1, r11, 0
-    addi r3, r0, 11
+    # SLEEP is request 0x31.  (This said 11, which is FLUSH: usleep
+    # returned at once and nothing in the self-hosted world ever slept.)
+    addi r3, r0, 49
     addi r4, r0, 16
     add r5, r11, r0
     add r6, r11, r0

@@ -2557,8 +2557,8 @@ differentials; SQLite built by stage08; bootstrap purity.
 cc-a64 share): moving those means the two cross libcs too, and a run on
 each of their hosts.  Its file I/O is bare open/read/write on purpose.
 
-**Seen on the way, not fixed here: stage07 compiles 32-bit unsigned
-division and remainder as signed.**  `v / 10` and `v % 10` with `v`
+**Seen on the way, not fixed here (fixed since: ISSUES-77): stage07
+compiles 32-bit unsigned division and remainder as signed.**  `v / 10` and `v % 10` with `v`
 unsigned are a `div` and a `rem`; stage08 calls `__udivsi3` /
 `__umodsi3` (hir_lower.h, hl_udivmod32), stage07 has no such lowering.
 Wrong for any value of 2^31 or more: `fprintf(f, "%u", 4000000000u)`
@@ -2566,3 +2566,294 @@ from the stage07-built printf prints `UNSNQPUNQ`.  The stage07
 differential has never shown it because nothing the tools compute
 reaches 2^31.  It is the frozen compiler's, repairable in place.
 
+### 75. [RESOLVED 2026-10-02] stage08 libc: the rest of the library -- what was missing, what was pretend, and three compiler defects behind it
+
+ISSUES-73 made stdio real.  This is the same tour of everything else.
+
+**What was there.**  An inventory of the library against its headers and
+against the clang runtime: 29 functions declared and not defined; 80
+defined and not declared (every caller of `acos` or `atan2` got an `int`
+back in place of its `double`); and of what a hosted C library has, none
+of `setjmp`/`longjmp`, `raise`, `atexit`, `abs`, `labs`, `atol`, `div`,
+`ldiv`, `rand`, `srand`, `strnlen`, `strpbrk`, `strtok`, `strtok_r`,
+`memrchr`, `strcoll`, `strxfrm`, `strerror`, `mktime`, `asctime`,
+`ctime`, `difftime`, `strftime`, `clock`, `clock_gettime`, `nanosleep`,
+`sleep`, `fdopen`, `freopen`, `getline`, `fgetpos`, `fsetpos`, `setbuf`,
+`isblank`, `iscntrl`, `isgraph`, `fabsf`.  And among what was there,
+pretence: `signal` accepted a handler and forgot it, `abort` was
+`exit(134)`, `tmpfile` returned NULL, `perror` printed "error", `strtol`
+knew nothing of overflow, `atoi` skipped three of the six white-space
+characters, and `usleep` sent the host request number 11 -- FLUSH -- so
+nothing built against this library had ever slept.
+
+**The check, first.**  `regression/run-libc-differential.sh` compared the
+two libraries with each other.  Two libraries written in one tree can be
+wrong the same way -- and where one source is compiled into both, their
+agreement says nothing about the library at all.  So it has a third leg:
+a test marked HOSTLEG is also built with the host's compiler against the
+host's C library, and both libraries must print what that prints.  All
+three run in one time zone, one with daylight time.  Fourteen new tests,
+ten of them with the host leg; a test of this kind prints only what the
+standard fixes (nothing that depends on the width of `long`, on a
+locale, on the words of an error message).
+
+The third leg found the clang runtime wrong where the two had agreed, or
+would have: `strtol`'s overflow and "0x", `mktime`, `strftime`,
+`freopen`, `strcasecmp`, `RAND_MAX`.  Those are runtime ISSUES-21 to 27.
+
+**What the library has now.**
+
+- `<stdlib.h>`: `strtol` as the standard has it (the value gathered
+  below zero, so no test needs a wider type); `atoi`'s white space; `atexit` (32, the last registered first,
+  one registered on the way out run next), `_Exit`, `_exit`; `abs`,
+  `labs`, `atol`, `div`, `ldiv`, `system`; `rand` and `srand`, number for
+  number the clang runtime's, so a program prints one sequence whichever
+  compiler built it.
+- `<signal.h>`: `signal` and `raise` for real -- a table, the handler
+  called with the signal's number before `raise` returns, `SIG_IGN`
+  honoured, the default action the end of the run with 128 + the number
+  -- and `abort` through `SIGABRT`, running no `atexit` function.
+  Nothing outside the program sends it a signal, so this is all there
+  is; it is what the standard requires.
+- `<string.h>`: `strnlen`, `strpbrk`, `strtok`, `strtok_r`, `memrchr`,
+  `strcoll`, `strxfrm`; `strerror` with the words a Linux library uses.
+- `<time.h>`: `mktime` (localtime's inverse, fields brought into range),
+  `asctime`, `ctime`, `difftime`, `strftime` with every conversion C99
+  names, `gmtime_r`, `localtime_r`, `clock` (the time since the first
+  call: the host reports no processor time), `clock_gettime`,
+  `nanosleep`, `sleep`.
+- `<stdio.h>`: `fdopen`, `freopen` (the same `FILE`, so stdout stays
+  stdout), `tmpfile` (made, opened and unlinked), `getline`, `getdelim`,
+  `fgetpos`, `fsetpos`, `setbuf`, `perror` through `strerror`.
+- `<setjmp.h>`: `setjmp` and `longjmp`.
+- `<ctype.h>`: `isblank`, `iscntrl`, `isgraph`, `isascii`, `toascii`.
+- The headers say what the library is: `const` where the standard has
+  it, `size_t` and `void *` for `fread`/`fwrite`, declarations for the
+  transcendentals, `qsort`, `bsearch`, the `v*printf` family, `sscanf`.
+
+**One source where there was none.**  `mktime` and its family, and
+`strerror`, were missing here and wrong or absent there, so each is
+written once -- `runtime/time_std.c`, `runtime/strerror.c` -- and built
+into both libraries, as dtoa and printf already are; the host leg is
+what checks them.  `setjmp.s` is the clang runtime's, respelled in the
+operand form both assemblers read (its object is the same bytes).  The
+rest is this library's own: `libc/string_std.c`, `stdlib_std.c`,
+`stdio_std.c`, built in phase 2 only, and additions to the files stage07
+also compiles, kept to what it compiles.
+
+**The compiler, 1: a function that calls setjmp.**  The library had no
+`setjmp`, so no program this compiler built had called it, and the first
+one to do so counted 0, 0, 0 in a `volatile int`.  `volatile` is read
+and dropped; the local was in a callee-saved register, which `longjmp`
+puts back as it was when `setjmp` was called.  A function that calls
+`setjmp` now keeps its named locals in memory -- all of them, which
+gives volatile ones what they are owed and the rest more -- including
+the high word of a `long long` or `double`, which is a slot the SSA pass
+makes for itself and which went on living in a register after the first
+fix (the test that found it: a `volatile long long` total of
+60000000000 came back 34230196224).  Two things share storage between
+values whose lifetimes are disjoint along the paths the flow graph has,
+and the way back from `longjmp` is not one of them: spilled values'
+slots (GitHub issue 77), and the frame space of a block that has ended.
+Neither is shared in such a function.  `src/hir_ssa.h`,
+`stage08/hir_regalloc.h`, `src/parser.h`; `tests/test_setjmp.c`.
+
+**The compiler, 2: an array of a typedef'd array type.**  `typedef int
+jmp_buf[21]; jmp_buf handlers[4];` was four pointers: sixteen bytes for
+336, and `setjmp(handlers[n])` stored through whatever a zeroed word
+pointed at.  A typedef of an array type is spelled, inside the compiler,
+as a pointer to the element with the dimension on the side, and every
+declarator but the plain `jmp_buf env;` lost the dimension -- at file
+scope, in a function, as a `static` in a function (one pointer), as a
+structure member.  Nothing said so.  Each is now the two-dimensional
+array it is, the typedef's dimension the inner one.
+
+**The compiler, 3: sizeof.**  `sizeof(jmp_buf)` was 4 for the same
+reason; `sizeof a[i]` of any two-dimensional array was 4, the row having
+decayed before sizeof saw it; `sizeof(int[5])` did not parse.  All three
+are the array's size.  `tests/test_typedef_array.c`.
+
+**What a real strtol broke.**  s32-as read its literals with `strtol`,
+and its expression reader takes a minus sign itself and negates what
+follows: `.word -2147483648` was `-(strtol("2147483648"))`, right only
+because the library's `strtol` let 2^31 wrap.  The standard's clamps, and
+the word assembled as 0x80000001.  The stage08 suite stayed green, and
+both kit differentials; the assembler differential
+(`run-as-differential.sh`, the host assembler as oracle) said so, on the
+one test in its corpus with that constant.  The assembler has its own
+reader now, `as_word`, which says what it means: a 32-bit word, written
+signed or unsigned, taken modulo 2^32.
+
+**What the test for that found.**  Three faults put into `as_word` by
+hand all passed the assembler differential: compiler output is decimal,
+one value a line, and reaches the reader by one path.  So the
+differential has a generated case with a word in every spelling --
+signed and unsigned, hexadecimal in both cases, octal, at and around
+2^31 and 2^32-1, as data and as immediates -- and the two assemblers
+disagreed on it at once, on something else: **`.word` with more than
+seven values assembled the first seven and said nothing about the
+rest.**  A line was split into an array of eight tokens by a loop that
+stopped at eight.  The deployed kit's assembler does it too; stage08 cc
+writes one value a line, so nothing it produced ever lost any.  The
+token array grows.  And a file the differential writes for both
+assemblers is one both must take: for those a rejection is a failure,
+where it was a skip.
+
+That one-line change to `handle()` is what ISSUES-76 is about.
+
+**What new names broke.**  SQLite's shell port carried its own `system`
+and `atexit` because the libraries had none, and the link reported them
+twice.  The port's are removed (its `atexit` kept what was registered
+and nothing ever ran it).  And `system` is a file of its own in both
+libraries, so an archive member of its own: a program that brings one
+links, and uses its own.
+
+**Also found.**  `build-s12cc.sh` assembled the library under `set -e`
+without guarding the assembler's exit: when `setjmp.s` did not assemble
+the script ended without a word.  It says which file.
+
+**Not done.**
+
+- `scanf` and `fscanf`: `sscanf` scans a string, and reading a stream
+  needs it rewritten over a character source.  Locales other than "C",
+  wide and multibyte characters, `tmpnam`, memory streams.
+- `errno` after a failed open is EIO whatever the host said: the request
+  carries no error number back.
+- `time_t` is 32 bits here and 64 in the clang runtime.
+- Above 127 the two libraries' `<ctype.h>` differ on purpose that is
+  nobody's: the clang runtime's tables are Latin-1, this library's
+  functions are the "C" locale's.  The test stops at 127.
+- stages 05 to 07 carry the same `usleep` (request 11) in their own
+  `mmio_no_start.s`.  Nothing in them sleeps; they are left as they are.
+- `fseek` and `ftell` are declared with `int` where the standard has
+  `long`: one type on SLOW-32, and the cross compilers' libraries, which
+  share these headers, define them with `int` on machines where `long`
+  is wider.
+
+**Checked.**  `run-libc-differential.sh`: 20 tests agree, ten of them
+with the host's library as well, three with their output written down
+(`.expect`: where the host cannot be asked and both libraries build the
+code from one source, a test without one compares that source with
+itself -- two faults put into `strtoul` and `strftime` passed for that
+reason until those files existed).
+
+Faults put in by hand, one at a time, each with the build and the check
+its change calls for: 107 across this library, the clang runtime, the
+shared sources, the compiler, stage07 and the assembler.  The first
+pass, of 95, let twelve through.  Seven were tests that did not look --
+week 53 of a leap year that begins on a Wednesday, a zone offset with
+minutes in it, `freopen` onto a descriptor with another number,
+`strtoul` at exactly 2^32, three in the assembler's literal reader --
+and each is caught now.  One was a comparison that could never be true,
+which is removed.  Two were the harness's own: a build that did not
+rebuild, and a compile error that left the previous run's binary to be
+run again.  (A thirteenth made a test loop for ever and stalled the run:
+the differential has a time limit per test now.)  Two remain, and are
+not defects: `fdopen`'s mode, which
+no test can tell from another while neither library refuses a write to
+a stream opened for reading (the host refuses the transfer when the
+buffer is sent); and the allocator's refusal to share spill slots in a
+function that calls `setjmp`, which with every named local in memory
+has nothing left to protect today.
+
+Gates: stage07 55/55; stage08 108/108 with the fixed point; the kit,
+kit-tools and stage07 differentials; libc, linker and assembler
+differentials; SQLite built by stage08; libutf; LLVM interop; ABI
+conformance; bootstrap purity; the host build of the front end; cc-x64
+builds itself and what it compiles; cc-a64's suite on an arm64 host
+(38/38).  And for the clang runtime's side: regression 100/100, the
+engine differential (its four documented divergences), Fortran 30/30,
+the COBOL harness 790 with majesty and CCVS unchanged, the dBASE reports
+byte-identical before and after, mdfix's 95 runs.
+
+Not run: anything cc-x64 built.  That wants an x86-64 Linux host.
+
+### 76. [RESOLVED 2026-10-02] stage07: a tail call handed its callee a pointer into the frame it had just popped (the assembler's "spurious symbol")
+
+Since 2026-09 the self-hosted assembler's relocation tables have been
+fixed arrays with a note beside them: converting them to grow on demand
+made the assembler emit one spurious symbol -- in stage07-compiled
+builds only, and only once a table actually grew.  A month of work got
+as far as "stage07 miscompiles `handle()`" (splicing stage08's code for
+that one function into stage07's assembly fixed it) and stopped there,
+with a list of things it was not: not frame under-allocation, not the
+allocator, not reproducible in a small program.
+
+ISSUES-75 changed one declaration in `handle()` -- an array of eight
+token pointers became a pointer -- and the next build of the stage08
+compiler did not link: five unresolved symbols with unprintable names.
+
+**From the artifact.**  The five names were the same four bytes, F0 FE
+FF 0F: the address 0x0FFFFEF0, a place on the stack.  Each came with one
+JAL relocation, at a text offset where the source has an ordinary `jal
+r0, .Lnnn`.  So a label's name had been read from memory that held a
+stack pointer where the name's characters should be.  The same source
+built natively assembles the same input to the very object the deployed
+assembler writes: the source is right.  And stage07's code for
+`handle()`'s `jal` case ends
+
+    addi r5, r30, -200          # sym, a local array
+    ...                         # restore the saved registers
+    addi r29, r29, 1444         # pop handle()'s frame
+    jal  r0, add_reloc_ex       # and jump
+
+`return add_reloc_ex(S32O_REL_JAL, off, sym, rel_add);` as a tail call:
+the frame is popped first, and `sym` is in it.  `add_reloc_ex` and what
+it calls build their frames from where `handle()`'s began.  The usual
+chain under it is shallow -- a few small frames, which stop short of the
+array -- and the name is read intact.  When a table grows the chain
+goes through `realloc` and `malloc`, reaches the array, and leaves a
+saved register where the name was.  Every recorded symptom is that:
+only `handle()` (the one function that passes a local array to a call
+it returns), only on growth, sensitive to anything that moves a frame --
+which is why reordering hid it, why swapping the allocator moved it, and
+why a small reproducer with small frames was clean.
+
+**The repair** is stage08's, which met the same thing in its own parser
+(`return parse_assign(p, var.text)`) and has refused such tail calls
+since: before a function's code is written, scan it for a local's
+address used as anything but the address of a load or store, or passed
+to a call; if there is one, make no tail calls from that function.
+Ported to `stage07/hir_codegen.h` as it stands.  stage07's code for the
+assembler goes from 38 tail calls to 1 (`add_reloc`, which passes on
+only what it was given).
+
+`tests/test_tail_escape.c`, in stage07's suite and stage08's: a local
+array, a pointer to one, and an address computed from one, each passed
+to a returned call whose callee writes a frame as large over where it
+was before looking; a function with nothing of the kind, which stays a
+tail call.  It fails at its first check under the compiler before the
+repair.
+
+The assembler's tables can grow now.  That conversion is not made here.
+
+**What kept it hidden for a month** is worth a line.  The evidence was
+gathered where the symptom was -- the assembler's tables, its allocator,
+its frames -- by probes that moved the frames they measured.  It was
+found from the other end: the garbage itself said "this was a stack
+address", and the compiler's output for the one line that passes that
+address said the rest.
+
+### 77. [RESOLVED 2026-10-02] stage07: 32-bit unsigned division and remainder were signed
+
+Recorded in ISSUES-74 as seen and not fixed.  SLOW-32's `div` and `rem`
+are signed, and stage07 used them whatever the operands' type:
+`4000000000u / 10` was -29496729, and the `printf` stage07 builds for
+the stage08 compiler and tools printed `%u` of 4000000000 as
+`UNSNQPUNQ`.  stage08 has called `__udivsi3` / `__umodsi3` for unsigned
+operands since Doom's `hash % numlumps`; stage07 had no such lowering.
+
+Ported: `hl_udivmod32` and its two uses (the binary operator and the
+compound assignment) into `stage07/hir_lower.h`, and the two routines
+into `stage07/builtins64.s` for programs linked against this stage's own
+runtime (stage08's build links stage08's, which had them).
+
+`tests/test_udiv32.c`, in both suites: dividends and divisors at and
+above 2^31, the compound forms, signed division left signed, the
+narrower unsigned types (which promote to int), and the decimal
+conversion that showed it.  It fails at its first check under the
+compiler before the repair.
+
+`stage07/Makefile` did not list the `hir*.h` files among the compiler's
+sources, so `make` after an edit to the code generator rebuilt nothing;
+it lists everything `s12cc.c` includes.

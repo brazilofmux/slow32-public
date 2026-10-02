@@ -147,8 +147,12 @@ assemble "$WORKDIR/g1-s32-as.s" "$WORKDIR/g1-s32-as.s32o" "$WORKDIR/g1-s32-as.as
 
 assemble_gen1() {
     local src="$1" obj="$2" log="$3"
+    # set +e around the run: under -e a failing assembler ended the script
+    # on the spot, before the message below could say which file it was
+    set +e
     timeout "${SELFHOST_TIMEOUT:-1200}" "$EMU" "$STAGE8_AS" "$src" "$obj" >"$log" 2>&1
     local rc=$?
+    set -e
     if [[ $rc -ne 0 ]]; then
         echo "assemble (stage08 as) failed (rc=$rc): $src" >&2
         tail -n 5 "$log" >&2
@@ -203,7 +207,10 @@ rm -f "$LIBC_OUT_DIR/posix_more.s32o"
 # bytes.  stage07's s32-as predates relaxation and silently wraps the
 # displacement -- dtoa_r got a truncated branch and snprintf("%f")
 
-for name in string_extra string_more ctype convert stdio malloc posix_fs posix_time posix_math posix_proc string_case qsort math_hw; do
+# string_std, stdlib_std, stdio_std: the rest of <string.h>, <stdlib.h> and
+# <stdio.h> (selfhost ISSUES-75).  Phase 2 only, like string_case and qsort:
+# nothing the compiler or the tools call.
+for name in string_extra string_more ctype convert stdio malloc posix_fs posix_time posix_math posix_proc string_case qsort math_hw string_std stdlib_std stdio_std system; do
     compile_gen1 "$LIBC_DIR/${name}.c" "$WORKDIR/g1_${name}.s" "$WORKDIR/g1_${name}.cc.log"
     assemble_gen1 "$WORKDIR/g1_${name}.s" "$LIBC_OUT_DIR/${name}.s32o" "$WORKDIR/g1_${name}.as.log"
 done
@@ -233,6 +240,18 @@ assemble_gen1 "$WORKDIR/g1_sscanf.s" "$LIBC_OUT_DIR/sscanf.s32o" "$WORKDIR/g1_ss
 compile_gen1 "$RUNTIME_DIR/convert_extra.c" "$WORKDIR/g1_convert_extra.s" "$WORKDIR/g1_convert_extra.cc.log"     "-I$SCRIPT_DIR/include"
 assemble_gen1 "$WORKDIR/g1_convert_extra.s" "$LIBC_OUT_DIR/convert_extra.s32o" "$WORKDIR/g1_convert_extra.as.log"
 compile_gen1 "$LIBC_DIR/strtod.c" "$WORKDIR/g1_strtod.s" "$WORKDIR/g1_strtod.cc.log"     "-I$SCRIPT_DIR/include"
+# strerror, and mktime / strftime / asctime / ctime / difftime: one source
+# for this library and the clang runtime (ISSUES-75), so a program says the
+# same thing whichever compiler built it; regression/run-libc-differential.sh
+# holds both builds to the host's C library.
+compile_gen1 "$RUNTIME_DIR/strerror.c" "$WORKDIR/g1_strerror.s" "$WORKDIR/g1_strerror.cc.log"     "-I$SCRIPT_DIR/include"
+assemble_gen1 "$WORKDIR/g1_strerror.s" "$LIBC_OUT_DIR/strerror.s32o" "$WORKDIR/g1_strerror.as.log"
+compile_gen1 "$RUNTIME_DIR/time_std.c" "$WORKDIR/g1_time_std.s" "$WORKDIR/g1_time_std.cc.log"     "-I$SCRIPT_DIR/include"
+assemble_gen1 "$WORKDIR/g1_time_std.s" "$LIBC_OUT_DIR/time_std.s32o" "$WORKDIR/g1_time_std.as.log"
+# setjmp / longjmp: the clang runtime's, as it stands -- hand-written
+# assembly that saves the registers a callee keeps, which are the same
+# r11-r28 under both compilers.
+assemble_gen1 "$RUNTIME_DIR/setjmp.s" "$LIBC_OUT_DIR/setjmp.s32o" "$WORKDIR/g1_setjmp.as.log"
 # Soft-float transcendentals (pow, exp, log, sin, ...) and their CORDIC
 # core, from the clang runtime: regal calls pow.  slow32-dbt hot-swaps
 # these by name where it has native versions.

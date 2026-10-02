@@ -7,3 +7,10 @@ double __fp64_sqrt(double x);
 float __fp32_sqrt(float x);
 double sqrt(double x) { return __fp64_sqrt(x); }
 float sqrtf(float x) { return __fp32_sqrt(x); }
+
+/* fabsf beside fabs (posix_math.c); -0.0f comes back positive */
+float fabsf(float x) {
+    if (x < 0) return -x;
+    if (x == 0) return 0.0f;
+    return x;
+}

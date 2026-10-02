@@ -25,6 +25,8 @@ long  sysconf(int name);
 int   getpid(void);
 int   isatty(int fd);
 int   unlink(char *path);
+unsigned int sleep(unsigned int seconds);
+int   usleep(unsigned int usec);
 
 int access(const char *path, int mode);
 int ftruncate(int fd, int length);

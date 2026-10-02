@@ -36,6 +36,37 @@ float  ldexpf(float x, int e);
 float  frexpf(float x, int *e);
 float  modff(float x, float *iptr);
 
+/* The rest of what the library defines (runtime/math_soft.c, built into
+ * the self-hosted library too).  Until 2026-10 these had no declaration
+ * here, and a caller got an int back in place of its double. */
+double asin(double x);
+double acos(double x);
+double atan(double x);
+double atan2(double y, double x);
+double sinh(double x);
+double cosh(double x);
+double tanh(double x);
+double log10(double x);
+double log2(double x);
+double cbrt(double x);
+double round(double x);
+double trunc(double x);
+double copysign(double x, double y);
+
+float  asinf(float x);
+float  acosf(float x);
+float  atanf(float x);
+float  atan2f(float y, float x);
+float  sinhf(float x);
+float  coshf(float x);
+float  tanhf(float x);
+float  log10f(float x);
+float  log2f(float x);
+float  cbrtf(float x);
+float  roundf(float x);
+float  truncf(float x);
+float  copysignf(float x, float y);
+
 int    isnan(double x);
 int    isinf(double x);
 int    isfinite(double x);

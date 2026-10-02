@@ -1,4 +1,4 @@
-/* stdlib.h -- s12cc-compatible stub */
+/* stdlib.h -- the self-hosted library's (also the cross compilers') */
 #ifndef _STDLIB_H
 #define _STDLIB_H
 
@@ -13,18 +13,38 @@ void *calloc(size_t nmemb, size_t size);
 void *realloc(void *ptr, size_t size);
 
 void exit(int status);
+void _Exit(int status);
 void abort(void);
+int atexit(void (*function)(void));
+int system(const char *command);
+char *getenv(const char *name);
 
 int abs(int n);
-int atoi(char *nptr);
-long strtol(char *nptr, char **endptr, int base);
+long labs(long n);
+long long llabs(long long n);
 
-int rand(void);
-void srand(unsigned int seed);
+typedef struct { int quot; int rem; } div_t;
+typedef struct { long quot; long rem; } ldiv_t;
+div_t div(int numer, int denom);
+ldiv_t ldiv(long numer, long denom);
 
-char *getenv(const char *name);
+int atoi(const char *nptr);
+long atol(const char *nptr);
+long long atoll(const char *nptr);
+double atof(const char *s);
+long strtol(const char *nptr, char **endptr, int base);
+unsigned long strtoul(const char *nptr, char **endptr, int base);
 long long strtoll(const char *s, char **end, int base);
 unsigned long long strtoull(const char *s, char **end, int base);
 double strtod(const char *s, char **end);
-double atof(const char *s);
+
+/* rand's values are the top 16 bits of its state, as the clang runtime's are */
+#define RAND_MAX 0xFFFF
+int rand(void);
+void srand(unsigned int seed);
+
+void qsort(void *base, size_t nmemb, size_t size, int (*compar)(const void *, const void *));
+void qsort_r(void *base, size_t nmemb, size_t size, int (*compar)(const void *, const void *, void *), void *arg);
+void *bsearch(const void *key, const void *base, size_t nmemb, size_t size,
+              int (*compar)(const void *, const void *));
 #endif

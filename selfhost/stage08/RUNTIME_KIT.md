@@ -393,6 +393,50 @@ library might trip on:
 
 A kit built before this change has the unbuffered library.
 
+## The rest of the library (2026-10)
+
+As of selfhost ISSUES-75 `libc.s32a` has the functions a C program
+expects of a hosted library, and the ones it already had behave as the
+standard says.  New: `setjmp`/`longjmp`; `signal`/`raise` (a handler
+runs when the program raises the signal -- nothing else sends one), and
+`abort` through `SIGABRT`; `atexit`, `_Exit`, `_exit`; `abs`, `labs`,
+`atol`, `div`, `ldiv`, `rand`, `srand`, `system`; `strnlen`, `strpbrk`,
+`strtok`, `strtok_r`, `memrchr`, `strcoll`, `strxfrm`, `strerror`;
+`mktime`, `asctime`, `ctime`, `difftime`, `strftime`, `gmtime_r`,
+`localtime_r`, `clock`, `clock_gettime`, `nanosleep`, `sleep`; `fdopen`,
+`freopen`, `tmpfile`, `getline`, `getdelim`, `fgetpos`, `fsetpos`,
+`setbuf`; `isblank`, `iscntrl`, `isgraph`, `isascii`, `toascii`;
+`fabsf`.  `<setjmp.h>` and `<strings.h>` are new headers, and `<math.h>`
+declares the transcendentals the library always defined.
+
+What a program written against the old library might trip on:
+
+- `strtol` clamps at the ends of `long` and sets `ERANGE`; "0x" with no
+  hexadecimal digit after it is the number 0 followed by an x;
+- `abort` ends the run with status 134 through `SIGABRT`'s handler, and
+  runs no `atexit` function (it was `exit(134)`);
+- `usleep` sleeps.  (It sent the wrong request and returned at once.)
+- `perror` says what `errno` means; it said "error";
+- `RAND_MAX` is 65535, which is what `rand` returns up to.
+
+Not there: `scanf`/`fscanf` (`sscanf` is), locales other than "C", wide
+and multibyte characters, `tmpnam`, memory streams.  `time_t` is 32 bits.
+
+The tools, at the same time:
+
+- `s32-as` takes any number of values on a `.word`, `.half` or `.quad`
+  line.  It assembled the first seven and dropped the rest without a
+  word (stage08 cc writes one value a line; hand-written assembly need
+  not).
+- `cc.s32x` keeps the locals of a function that calls `setjmp` in memory,
+  so they hold what was last stored when `longjmp` comes back; lays out
+  an array of a typedef'd array type (`jmp_buf handlers[4]`) as the
+  two-dimensional array it is, where it made four pointers; and gives
+  `sizeof` of such a type, of an array's row, and of `int[5]` the
+  array's size.
+
+A kit built before this change has none of the above.
+
 ## Regenerating
 
 From `slow-32/selfhost/stage08` after `make`, into the kit at `~/s32x/selfhost/`:

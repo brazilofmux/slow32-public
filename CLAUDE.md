@@ -317,8 +317,10 @@ cd ~/slow-32/regression && ./run-kit-tools-differential.sh
 # varies the COMPILER. stage07 is the frozen compiler that builds stage08's
 # libc and tools, is never exercised directly, and so its bugs surface as
 # downstream mysteries (the spurious-symbol bug went unexplained for weeks;
-# the decisive experiment turned out to be one line -- compile the same
-# source with stage08 cc instead). This builds stage08's tools twice, once
+# the experiment that put it on stage07 turned out to be one line -- compile
+# the same source with stage08 cc instead -- and the cause, found a month
+# later, a tail call out of a function that had passed its callee the
+# address of a local: selfhost ISSUES-76). This builds stage08's tools twice, once
 # with each compiler, under the same emulator, and byte-compares what the
 # two tool sets produce. Mutation-tested: the reloc conversion stage07
 # miscompiles shows up as "s32-as -> .s32o: 16956 bytes differ". Run it
@@ -334,6 +336,17 @@ cd ~/slow-32/regression && ./run-stage07-differential.sh
 # spelling SQLite uses, and sqlite3.c stopped compiling with run-tests.sh
 # still 60/60. ~2 minutes.
 cd ~/slow-32/sqlite && ./check-stage08.sh
+
+# And for a C LIBRARY change -- either one: the tree has two, runtime/
+# (clang-built programs) and selfhost/stage08/libc (the kit's), with some
+# sources built into both (printf, dtoa, time_std.c, strerror.c).  Each
+# test is built against both and the outputs must match; a test marked
+# HOSTLEG is also built with the host's compiler and libc, and both
+# libraries must print what that prints -- two libraries from one tree
+# agree on their shared mistakes (2026-10: strtol overflow, mktime,
+# strftime, freopen were wrong in runtime/ with the two in agreement).
+# Arguments name tests; none runs all.  ~1 minute.
+cd ~/slow-32/regression && ./run-libc-differential.sh
 
 # Analyze binaries
 ./tools/utilities/slow32dump file.s32o    # Dump object file

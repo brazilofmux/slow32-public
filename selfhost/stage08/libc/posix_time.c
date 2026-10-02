@@ -1,4 +1,5 @@
-/* posix_time.c -- time, gmtime/localtime, gettimeofday, getrusage.
+/* posix_time.c -- time, gmtime/localtime, gettimeofday, getrusage,
+ * clock, clock_gettime, nanosleep, sleep.
  * Split from posix_more.c (GitHub issue 65).  Plain C: stage07 compiles
  * this libc too. */
 
@@ -9,6 +10,8 @@ int s32_mmio_request(unsigned int opcode, unsigned int length,
 #define MMIO_DATA           (__s32_mmio_data())
 #define MMIO_OP_GETTIME     0x30
 #define MMIO_OP_GETTZ       0x35
+
+extern int errno;
 
 /* The reply is seconds_lo, seconds_hi, nanoseconds, reserved. */
 long time(long *t) {
@@ -133,11 +136,17 @@ int __s32_query_tz(long when, long *gmtoff, int *isdst, char *abbrev) {
     return 0;
 }
 
+struct tm *gmtime_r(const long *t, struct tm *r) {
+    return pm_gmtime_r(*t, r);
+}
+
 struct tm *gmtime(const long *t) {
     return pm_gmtime_r(*t, &pm_tm);
 }
 
-struct tm *localtime(const long *t) {
+/* the zone's name is kept in one place for every result: it is the
+ * zone's, not the call's (tzname, where there is one, is the same) */
+struct tm *localtime_r(const long *t, struct tm *r) {
     long gmtoff;
     int isdst;
     char abbrev[8];
@@ -146,11 +155,11 @@ struct tm *localtime(const long *t) {
     isdst = 0;
     abbrev[0] = 0;
     if (__s32_query_tz(*t, &gmtoff, &isdst, abbrev) != 0) {
-        return pm_gmtime_r(*t, &pm_tm);      /* no zone service: UTC */
+        return pm_gmtime_r(*t, r);           /* no zone service: UTC */
     }
-    pm_gmtime_r(*t + gmtoff, &pm_tm);
-    pm_tm.tm_isdst = isdst;
-    pm_tm.tm_gmtoff = gmtoff;
+    pm_gmtime_r(*t + gmtoff, r);
+    r->tm_isdst = isdst;
+    r->tm_gmtoff = gmtoff;
     if (abbrev[0]) {
         i = 0;
         while (i < 7 && abbrev[i]) {
@@ -158,11 +167,15 @@ struct tm *localtime(const long *t) {
             i = i + 1;
         }
         pm_zone[i] = 0;
-        pm_tm.tm_zone = pm_zone;
+        r->tm_zone = pm_zone;
     } else {
-        pm_tm.tm_zone = "UTC";
+        r->tm_zone = "UTC";
     }
-    return &pm_tm;
+    return r;
+}
+
+struct tm *localtime(const long *t) {
+    return localtime_r(t, &pm_tm);
 }
 
 struct pm_timeval { long tv_sec; long tv_usec; };
@@ -189,6 +202,73 @@ int gettimeofday(struct pm_timeval *tv, void *tz) {
     if (tv) {
         tv->tv_sec = (long)p[0];
         tv->tv_usec = (long)(p[2] / 1000u);
+    }
+    return 0;
+}
+
+struct pm_timespec { long tv_sec; long tv_nsec; };
+
+/* one clock: the host's, by the same request as time() */
+int clock_gettime(int clk, struct pm_timespec *ts) {
+    unsigned int *p;
+    (void)clk;
+    if (s32_mmio_request(MMIO_OP_GETTIME, 16, 0, 0) == -1) return -1;
+    p = (unsigned int *)MMIO_DATA;
+    if (ts) {
+        ts->tv_sec = (long)p[0];
+        ts->tv_nsec = (long)p[2];
+    }
+    return 0;
+}
+
+/* clock: the processor time a program used is not something the host
+ * reports, so this is the time that passed since the first call --
+ * the standard fixes only differences between calls, and those are
+ * right for a program that has the machine to itself.  Microseconds
+ * (CLOCKS_PER_SEC is 1000000), wrapping after about 71 minutes as
+ * POSIX's 32-bit clock_t does. */
+static int pm_clock_set;
+static long pm_clock_sec;
+static long pm_clock_nsec;
+
+unsigned long clock(void) {
+    struct pm_timespec now;
+    if (clock_gettime(0, &now) != 0) return (unsigned long)-1;
+    if (!pm_clock_set) {
+        pm_clock_set = 1;
+        pm_clock_sec = now.tv_sec;
+        pm_clock_nsec = now.tv_nsec;
+    }
+    return (unsigned long)(now.tv_sec - pm_clock_sec) * 1000000u + (unsigned long)((now.tv_nsec - pm_clock_nsec) / 1000);
+}
+
+int usleep(unsigned int usec);
+
+/* nanosleep and sleep over usleep (mmio_no_start.s); nothing interrupts a
+ * sleep here, so nothing is ever left over */
+int nanosleep(const struct pm_timespec *req, struct pm_timespec *rem) {
+    long sec;
+    if (!req || req->tv_sec < 0 || req->tv_nsec < 0 || req->tv_nsec >= 1000000000) {
+        errno = 22;
+        return -1;
+    }
+    sec = req->tv_sec;
+    while (sec > 0) {
+        usleep(1000000);
+        sec = sec - 1;
+    }
+    if (req->tv_nsec > 0) usleep((unsigned int)((req->tv_nsec + 999) / 1000));
+    if (rem) {
+        rem->tv_sec = 0;
+        rem->tv_nsec = 0;
+    }
+    return 0;
+}
+
+unsigned int sleep(unsigned int seconds) {
+    while (seconds > 0) {
+        usleep(1000000);
+        seconds = seconds - 1;
     }
     return 0;
 }

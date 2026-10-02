@@ -3,7 +3,10 @@
 #define _SYS_TYPES_H
 #include <stddef.h>
 #include <stdint.h>
+#ifndef _SSIZE_T_DEFINED
+#define _SSIZE_T_DEFINED
 typedef int32_t  ssize_t;
+#endif
 typedef int64_t  off_t;
 typedef uint32_t mode_t;
 typedef int32_t  pid_t;

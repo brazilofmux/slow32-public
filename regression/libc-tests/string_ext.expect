@@ -1,0 +1,30 @@
+memrchr 7
+memrchr 4
+memrchr 0
+memrchr -1
+memrchr -1
+memrchr 9
+strcasestr World
+strcasestr Hello, World
+strcasestr (null)
+strerror(0) = Success
+strerror(1) = Operation not permitted
+strerror(2) = No such file or directory
+strerror(5) = Input/output error
+strerror(9) = Bad file descriptor
+strerror(12) = Cannot allocate memory
+strerror(13) = Permission denied
+strerror(17) = File exists
+strerror(20) = Not a directory
+strerror(21) = Is a directory
+strerror(22) = Invalid argument
+strerror(33) = Numerical argument out of domain
+strerror(34) = Numerical result out of range
+strerror(38) = Function not implemented
+strerror(9999) = Unknown error 9999
+strerror(-1) = Unknown error -1
+perror: No such file or directory
+a longer prefix: Numerical result out of range
+Permission denied
+Invalid argument
+no error: Success

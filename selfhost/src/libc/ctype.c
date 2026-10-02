@@ -69,3 +69,29 @@ int toupper(int c) {
     if (c >= 97 && c <= 122) return c - 32;
     return c;
 }
+
+int isblank(int c) {
+    if (c == 32) return 1;
+    if (c == 9) return 1;
+    return 0;
+}
+
+int iscntrl(int c) {
+    if (c >= 0 && c <= 31) return 1;
+    if (c == 127) return 1;
+    return 0;
+}
+
+int isgraph(int c) {
+    if (c >= 33 && c <= 126) return 1;
+    return 0;
+}
+
+int isascii(int c) {
+    if (c >= 0 && c <= 127) return 1;
+    return 0;
+}
+
+int toascii(int c) {
+    return c & 127;
+}

@@ -1,0 +1,25 @@
+sizeof long 4 LONG_MAX 2147483647
+strtol[2147483647,10] = 2147483647 consumed=10 erange=0
+strtol[2147483648,10] = 2147483647 consumed=10 erange=1
+strtol[-2147483648,10] = -2147483648 consumed=11 erange=0
+strtol[-2147483649,10] = -2147483648 consumed=11 erange=1
+strtol[99999999999999999999,10] = 2147483647 consumed=20 erange=1
+strtol[-99999999999999999999xyz,10] = -2147483648 consumed=21 erange=1
+strtol[0x80000000,0] = 2147483647 consumed=10 erange=1
+strtol[0x7fffffff,0] = 2147483647 consumed=10 erange=0
+strtol[zzzzzzzz,36] = 2147483647 consumed=8 erange=1
+strtol[11111111111111111111111111111111,2] = 2147483647 consumed=32 erange=1
+strtol[1111111111111111111111111111111,2] = 2147483647 consumed=31 erange=0
+strtoul[4294967295,10] = 4294967295 consumed=10 erange=0
+strtoul[4294967296,10] = 4294967295 consumed=10 erange=1
+strtoul[-1,10] = 4294967295 consumed=2 erange=0
+strtoul[-4294967295,10] = 1 consumed=11 erange=0
+strtoul[-4294967296,10] = 4294967295 consumed=11 erange=1
+strtoul[0x100000000,0] = 4294967295 consumed=11 erange=1
+strtoul[99999999999,10] = 4294967295 consumed=11 erange=1
+atoi at the limits 2147483647 -2147483648
+system(0): 0 (there is no command processor), system("ls"): -1
+RAND_MAX 65535
+rand 16838 38526 10113 50283 63819 38395
+srand(12345) 54236 42756 54885 3498 49695 16045
+srand(-1) 48697 4409 9862 59486 8713 60994
