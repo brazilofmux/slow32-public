@@ -47,12 +47,23 @@ expression subscript is not in the 85 text). Under `run-gen.sh` it keeps
 every intermediate result at zero or above: GnuCOBOL computes a position
 in an unsigned BINARY operand's type (`docs/oracles.md`, 2002/refmodneg).
 
-`gen-checked.py SEED` and `gen-pos.py` are also run through
-`run-self.sh REV FIRST COUNT`: the compiler as of a git revision and the
-one in `out/`, every program's output the same bytes. That is the check
-for a change that alters generated code on purpose, where the compiler
-before the change is the oracle (`gen-checked.py`: statements whose
-stores the standard leaves undefined, so GnuCOBOL cannot judge them).
+`gen-perf.py SEED` writes programs of out-of-line PERFORMs behaving as
+old programs do: GO TO in and out of what is being performed, exits
+fallen through, contained programs and a second program in the file
+that leave from the middle of a PERFORM, a program calling itself. The
+standard leaves most of that undefined and the runtime's rulings are
+its own, so GnuCOBOL is not asked: run it with `GEN=perf` under
+`run-self.sh`.
+
+`gen-checked.py SEED`, `gen-pos.py` and `gen-perf.py` are run through
+`run-self.sh REV FIRST COUNT`: the compiler and runtime as of a git
+revision and the ones in the tree, every program's output the same
+bytes (a run is capped, so a program a broken runtime sends round for
+ever differs instead of hanging the batch). That is the check for a
+change that alters generated code or the runtime on purpose, where what
+came before the change is the oracle (`gen-checked.py`: statements
+whose stores the standard leaves undefined, so GnuCOBOL cannot judge
+them).
 
 ## References: the text, executable
 

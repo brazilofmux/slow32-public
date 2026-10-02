@@ -1961,10 +1961,23 @@ int cob_load_int(const void *p, const cob_desc *d)
  * of every paragraph and section asks whether it is the top exit and, if
  * so, pops and returns there.  Nested and recursive PERFORMs behave like
  * GnuCOBOL's frame stack, not like a single exit cell. */
-typedef struct { int exit_id; void *ret; } cob_frame;
+/* An exit is named by its cell, a word of the compiled program's own for
+ * each paragraph and section: it holds the place (from 1) of the topmost
+ * frame waiting on that exit, 0 when there is none, and each frame keeps
+ * what the cell held before it.  So "is this exit being performed" is one
+ * load -- the end of every paragraph asks it, and most are told no without
+ * a call -- where it was a search of the activation's frames, in PERFORM
+ * and at every paragraph's end (csv2fw, a byte at a time through three
+ * levels of PERFORM: 6% of the program; docs/performance.md). */
+typedef struct { int *cell; void *ret; int prev; } cob_frame;
 static cob_frame *pstk;                 /* grows, as recursion deepens it */
 static int psp, pcap;
 static int pbase;       /* the first frame of the running program's activation */
+/* frames k and above are abandoned: each exit's cell back to what it held */
+static void pframes_drop(int k)
+{
+    while (psp > k) { psp--; *pstk[psp].cell = pstk[psp].prev; }
+}
 
 /* Paragraph ids are numbered from 1 in every program, so the frames of a
  * calling program must be out of reach of the called one: without this, a
@@ -1975,7 +1988,7 @@ static int pbase;       /* the first frame of the running program's activation *
  * a RECURSIVE program's activations are kept apart the same way. */
 static int prog_depth;          /* program activations under way: the first is the run unit's own */
 int cob_perform_enter(void) { int old = pbase; pbase = psp; prog_depth++; return old; }
-void cob_perform_leave(int old) { psp = pbase; pbase = old; prog_depth--; }
+void cob_perform_leave(int old) { pframes_drop(pbase); pbase = old; prog_depth--; }
 /* is the running program under the control of a calling one (EXIT
  * PROGRAM: X3.23-1985 general rule 1, 2023 14.9.14.4 rule 2) */
 int cob_called(void) { return prog_depth > 1; }
@@ -2183,22 +2196,24 @@ void cob_act_leave(int *desc, void *block)
     free(block);
 }
 
-void cob_perform_push(int exit_id, void *ret)
+void cob_perform_push(int *cell, void *ret)
 {
     /* A range already on the stack was left by a GO TO (GLENTER: the S
      * command inside PERFORM 600-GET-ENTRY THRU 690-GET-EXIT goes back to
      * the screen); COBOL forbids performing an active range, so that frame
      * and everything above it are abandoned.  Replacing it keeps the stack
      * bounded by the number of distinct ranges, as the per-paragraph return
-     * slots of the classic runtimes are. */
-    for (int k = psp - 1; k >= pbase; k--)
-        if (pstk[k].exit_id == exit_id) { psp = k; break; }
+     * slots of the classic runtimes are.  A frame at or below the base is
+     * another activation's (a recursive program's caller): not this one's. */
+    int k = *cell;
+    if (k > pbase) pframes_drop(k - 1);
     if (psp == pcap) {
         pcap = pcap ? 2 * pcap : 256;
         pstk = realloc(pstk, (size_t)pcap * sizeof *pstk);
         if (!pstk) cob_fatal("PERFORM stack: out of memory");
     }
-    pstk[psp].exit_id = exit_id; pstk[psp].ret = ret; psp++;
+    pstk[psp].cell = cell; pstk[psp].ret = ret; pstk[psp].prev = *cell; psp++;
+    *cell = psp;
 }
 
 /* a USE declarative performed for an exception condition: one already
@@ -2209,23 +2224,26 @@ void cob_perform_push(int exit_id, void *ret)
  * ISSUES-94 E14) */
 void cob_ec_raise(const char *name, const char *stmt, const char *loc, const char *file);
 void cob_ec_abort(void);
-void cob_use_push(int exit_id, void *ret)
+void cob_use_push(int *cell, void *ret)
 {
-    for (int k = psp - 1; k >= pbase; k--)
-        if (pstk[k].exit_id == exit_id) { cob_ec_raise("EC-FLOW-USE", 0, 0, 0); cob_ec_abort(); }
-    cob_perform_push(exit_id, ret);
+    if (*cell > pbase) { cob_ec_raise("EC-FLOW-USE", 0, 0, 0); cob_ec_abort(); }
+    cob_perform_push(cell, ret);
 }
 
-void *cob_perform_exit(int id)
+void *cob_perform_exit(int *cell)
 {
-    /* The innermost frame first; below it only when a GO TO left a performed
-     * paragraph for the enclosing range's exit (Open Systems PAPOST: 745's
-     * INVALID KEY GO TO 750 inside PERFORM 705 THRU 750).  The abandoned
-     * frames above the match are dropped, as the per-paragraph return slots
-     * of the classic runtimes would have them. */
-    for (int k = psp - 1; k >= pbase; k--)
-        if (pstk[k].exit_id == id) { void *r = pstk[k].ret; psp = k; return r; }
-    return 0;
+    /* The innermost frame, usually; one below it only when a GO TO left a
+     * performed paragraph for the enclosing range's exit (Open Systems
+     * PAPOST: 745's INVALID KEY GO TO 750 inside PERFORM 705 THRU 750).
+     * The abandoned frames above the match are dropped, as the
+     * per-paragraph return slots of the classic runtimes would have them.
+     * The compiled code calls only when the cell is not zero; a frame of
+     * another activation is not this one's exit. */
+    int k = *cell;
+    if (k <= pbase) return 0;
+    void *r = pstk[k - 1].ret;
+    pframes_drop(k - 1);
+    return r;
 }
 
 /* ====================================================================== */
@@ -2594,7 +2612,26 @@ int cob_read_prev(cob_file *f)
     return 0;
 }
 
+/* A small entry, as cob_write's: the next record of a fixed-length
+ * sequential file open for input, when the runtime's block buffer
+ * holds all of it.  Filling the buffer, the end, a short last record and
+ * everything else are the rest's. */
+static __attribute__((noinline)) int cob_read_rest(cob_file *f);
 int cob_read(cob_file *f)
+{
+    if (f->org == COB_ORG_SEQ && f->open_mode == COB_OPEN_INPUT && f->rbuf && !f->varying && !f->reversed && !f->code_in) {
+        unsigned n = f->recsize;
+        if (f->rlen - f->rpos >= n) {
+            if (n == 1) f->record[0] = f->rbuf[f->rpos]; else memcpy(f->record, f->rbuf + f->rpos, n);
+            f->rpos += n; f->fpos += n; f->last_len = n;
+            io_st[0] = io_st[1] = '0';
+            if (f->status) { f->status[0] = '0'; f->status[1] = '0'; }
+            return 0;
+        }
+    }
+    return cob_read_rest(f);
+}
+static __attribute__((noinline)) int cob_read_rest(cob_file *f)
 {
     if (!f->open_mode) return file_result(f, "47", "READ of a file not open");
     if (f->open_mode == COB_OPEN_OUTPUT || f->open_mode == COB_OPEN_EXTEND)
@@ -2645,7 +2682,32 @@ int cob_read(cob_file *f)
         return file_result(f, "00", "");
     }
     if (f->org == COB_ORG_SEQ) {
-        size_t got = fread(rec, 1, n, fp);
+        size_t got;
+        if (f->open_mode == COB_OPEN_INPUT && n <= COB_RBUF / 4) {
+            /* open for input only, so nothing else moves the file's
+             * position: records out of the runtime's own block buffer, as
+             * the line sequential read below has them.  A short record
+             * through fread is a hundred-odd instructions before a byte
+             * moves, and a program that reads a file a character at a time
+             * pays that for every character (docs/performance.md). */
+            if (!f->rbuf) { f->rbuf = malloc(COB_RBUF); f->rpos = f->rlen = 0; if (!f->rbuf) cob_fatal("out of memory"); }
+            unsigned have = f->rlen - f->rpos;
+            if (have < n) {
+                if (have) memmove(f->rbuf, f->rbuf + f->rpos, have);
+                f->rpos = 0;
+                f->rlen = have + (unsigned)fread(f->rbuf + have, 1, COB_RBUF - have, fp);
+                have = f->rlen;
+            }
+            got = have < n ? have : n;
+            if (got == 1) rec[0] = f->rbuf[f->rpos]; else if (got) memcpy(rec, f->rbuf + f->rpos, got);
+            f->rpos += (unsigned)got;
+            if (got == n && !f->code_in) {
+                f->fpos += n; f->last_len = n;
+                io_st[0] = io_st[1] = '0';
+                if (f->status) { f->status[0] = '0'; f->status[1] = '0'; }
+                return 0;
+            }
+        } else got = fread(rec, 1, n, fp);
         if (got == 0) { f->at_eof = 1; f->eof_seen = 1; f->last_len = 0; return file_result(f, "10", ""); }
         cs_in(f, rec, (unsigned)got);
         f->fpos += (unsigned)got;
@@ -2763,7 +2825,30 @@ static int lin_write(cob_file *f, int before, int after)
 /* before/after: extra newlines around the record (ADVANCING); reclen:
  * the size of the 01 the WRITE named, which is the length of a mode-V
  * record unless DEPENDING ON says otherwise */
+/* The entry is small on purpose.  The rest of WRITE -- the print file's
+ * carriage, the variable records, the other organizations -- needs a
+ * frame of seventeen saved registers, and a function pays for its frame
+ * whichever path it takes: a one-byte record cost eighty instructions
+ * before fwrite was called (docs/performance.md). */
+static __attribute__((noinline)) int cob_write_rest(cob_file *f, int before, int after, int reclen);
 int cob_write(cob_file *f, int before, int after, int reclen)
+{
+    if (f->org == COB_ORG_SEQ && !f->varying && !f->linage && !f->code_out &&
+        (f->open_mode == COB_OPEN_OUTPUT || f->open_mode == COB_OPEN_EXTEND)) {
+        /* a fixed-length record of a sequential file open for output: the
+         * common WRITE (the same code as the COB_ORG_SEQ case of the rest) */
+        unsigned n = f->recsize;
+        if (fwrite(f->record, 1, n, (FILE *)f->fp) == n) {
+            f->fpos += n; f->last_len = 0;
+            io_st[0] = io_st[1] = '0';
+            if (f->status) { f->status[0] = '0'; f->status[1] = '0'; }
+            return 0;
+        }
+        return file_result(f, write_fail_st(), "write failed");
+    }
+    return cob_write_rest(f, before, after, reclen);
+}
+static __attribute__((noinline)) int cob_write_rest(cob_file *f, int before, int after, int reclen)
 {
     if (!f->open_mode) return file_result(f, "48", "WRITE of a file not open");
     if (f->open_mode == COB_OPEN_INPUT) return file_result(f, "48", "WRITE of a file open for input");

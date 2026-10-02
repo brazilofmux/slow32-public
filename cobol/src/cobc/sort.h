@@ -295,7 +295,7 @@ static void emit_body(Body *b)
     if (!b->inline_body) {
         int Lret = new_label();
         char lab[32]; snprintf(lab, sizeof lab, ".L%d", Lret);
-        emit_li("r3", b->thru ? b->thru->id : b->from->id);
+        emit_para_cell("r3", g_unit, b->thru ? b->thru->id : b->from->id);
         emit_la("r4", lab);
         emit_call("cob_perform_push");
         emit("\tjal r0, .Lp%d_%d", g_unit, b->from->id);

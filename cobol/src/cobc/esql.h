@@ -1092,8 +1092,12 @@ static void parse_statement_1(void)
 
 static void emit_exit_check(int id)
 {
+    /* is this exit being performed?  Its cell says (emit_para_cell): zero,
+     * and control falls through with no call */
     int Ln = new_label();
-    emit_li("r3", id);
+    emit_para_cell("r3", g_unit, id);
+    emit("\tldw r1, r3+0");
+    emit("\tbeq r1, r0, .L%d", Ln);
     emit_call("cob_perform_exit");
     emit("\tbeq r1, r0, .L%d", Ln);
     emit("\tjalr r0, r1, 0");
@@ -1613,6 +1617,7 @@ static void parse_procedure_division(void)
     if (cur_sec >= 0) { end_sec_label(); emit_exit_check(cur_sec); }
     sort_proc_check();
 
+    emit_para_cells();                          /* this program's exit cells: its ids end at g_npara */
     emit(".Lgb%d:", g_unit);
     if (has_ext_file)
         for (int i = g_file_base; i < g_nfile; i++) {

@@ -433,3 +433,90 @@ the part runs to the end of the receiver; as a leftmost position or a
 subscript the same expression is an invalid address and the program
 dies (tests/2002/refmodneg, refmodnegp; docs/oracles.md). The old and
 the new compiler agree on those too. CCVS-85: the same report.
+
+**A number read a digit at a time.** The quarter of csv2fw that was one
+statement: `v = v * 10 + FUNCTION NUMVAL(t(p:1))`, `v` an 18-digit
+item. NUMVAL's value can be anything -- a fraction, a sign -- so its
+result was a wide one and the statement the wide stack's, 8,000
+instructions for a multiply and an add. NUMVAL of one character is a
+leaf of the checked arithmetic now: a digit is its value, in line; any
+other character sends the statement to the stack's code, which judges
+it as before. With the product's test (`v` fits 58 bits) the statement
+is ninety instructions and two crossings. csv2fw 0.90 s -> 0.78.
+`tests/gen/gen-checked.py` gained the shape, with characters that are
+not digits one time in five (three mutants caught: the test dropped,
+the digit off by one, the scale wrong); `tests/free/numvaldigit` reads
+numbers of one to eighteen digits into binary, packed and DISPLAY
+items, and GnuCOBOL agrees.
+
+**The byte files.** READ of a fixed-length record went to the C
+library's fread for each record, a hundred instructions before a byte
+moves, and WRITE and READ both ran their whole prologue -- seventeen
+saved registers, for the print file's carriage and the variable
+records' code that share the function -- whichever path they took. Now
+cob_read and cob_write are small entries: a sequential file open for
+input is read through the runtime's own block buffer (the one the
+line-sequential read has), and when the buffer holds the record the
+entry moves it and returns; a fixed-length record to a file open for
+output goes from the entry straight to fwrite. Everything else -- the
+refill, the end, a short last record, every other organization -- is
+the rest, out of line, as it was. kseq 324 ms -> 237; csv2fw's READ and
+WRITE about half what they were. A line-sequential WRITE pays one call
+more than before (jerm: a half of one percent). `tests/free/seqblock`
+is the check: records of seven bytes, which straddle every refill of an
+8,192-byte block; the same file read ten bytes at a time, with a short
+last record (04), the end (10) and a READ past it (46); one byte at a
+time; EXTEND and the file read again. GnuCOBOL agrees, and three
+mutants of the buffer are caught by it (the carry at a refill dropped;
+a short record taken for a whole one; the entry ignoring how much is
+left).
+
+**PERFORM.** The runtime keeps the PERFORMs under way as frames, and
+both ends searched them: cob_perform_push looked through the
+activation's frames for the range already being performed (a GO TO out
+of a range abandons its frame when the range is performed again), and
+the code at the end of every paragraph called cob_perform_exit, which
+looked through them for that paragraph. Now each paragraph and section
+has a cell -- a word of the program's own -- holding the place of the
+frame waiting on its exit, and each frame keeps what the cell held
+before it. "Is this exit being performed" is one load: the end of a
+paragraph reads its cell in line and calls only when it is not zero;
+the push and the exit go to their frame without a search. The frames'
+rules are what they were -- what a GO TO abandons, an exit nobody waits
+on falling through, each activation's frames its own -- because the
+cells are only an index into the same stack, unwound with it.
+
+They are not what the kernels' loops spend time on (those are inline
+PERFORMs); csv2fw performs five million times, and its push went from
+60 instructions to 43 and its exit from 20 a paragraph to 4 where
+nothing waits. With the files, csv2fw 0.78 s -> 0.68.
+
+The check is `tests/gen/gen-perf.py`: programs that do nothing but
+PERFORM, GO TO in and out of what is being performed, fall through
+exits, call two contained programs and a second program in the file
+that do the same and leave from the middle, and call themselves; every
+paragraph counts a step and the run stops at 600. The trace through the
+compiler and runtime before the change and after: 60 programs the same
+(`GEN=perf tests/gen/run-self.sh`, which now builds the runtime of the
+old revision too -- the two compilers ask different things of it).
+Seven mutants, all caught: the exit not restoring the cells above it
+(18 of 40 programs), the push not abandoning an active range (4), the
+return of a called program not unwinding (7), another activation's
+frame taken for this one's at the exit (3) and at the push (8), the
+cells too few (30), one array of cells for the whole file (13). The
+last two are there because of a mistake: the first version kept one
+array for the file, sized by the last program's paragraphs -- and
+paragraph numbers begin again at each program and are shared by
+contained programs that are siblings. The generator had one contained
+program, smaller than its parent, and saw nothing; CCVS-85's IC module
+(ten programs that would not run) did. The generator now has what
+would have shown it, and the compiler checks every cell it names
+against its program's count.
+
+csv2fw after the day's work: 1.20 s -> 0.68; the batch 2.0 s -> 1.56.
+Its guest instructions went from 7.4 to about 3.9 thousand million.
+What is left, by the same profile: the program's own code (a third --
+its COMP items are big-endian, twelve instructions a load); fwrite in
+the C library (91 instructions a byte); FUNCTION MIN in a length, still
+the wide stack's (half a million times); a reference-modified move
+through two descriptors; positions whose operand is itself subscripted.

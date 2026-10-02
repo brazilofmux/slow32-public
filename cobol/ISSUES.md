@@ -5303,3 +5303,21 @@ gen/pos), CCVS-85 identical.  GnuCOBOL computes a position in an
 unsigned BINARY operand's type: 8 - 9 + 2 wraps (tests/2002/refmodneg,
 refmodnegp; docs/oracles.md).  The DIVIDE ... REMAINDER item is dropped
 from the plan: on binary items it was in registers already.
+
+Fifth, the rest of that profile.  NUMVAL of one character is a leaf of
+the checked arithmetic (a digit in line, anything else the stack's):
+the statement that was a quarter of csv2fw went from 8,000 instructions
+to ninety.  READ and WRITE are small entries -- a fixed sequential READ
+out of the runtime's block buffer, the common WRITE straight to fwrite
+-- with the rest out of line (kseq 324 ms -> 237).  PERFORM keeps a
+cell for each paragraph, the place of the frame waiting on its exit:
+the push and the exit no longer search, and the end of a paragraph
+nobody is performing costs a load, not a call; the frames' rules are
+unchanged.  csv2fw 1.20 s -> 0.68, the batch 2.0 s -> 1.56.  Checks:
+gen-checked.py's NUMVAL shapes, free/numvaldigit, free/seqblock,
+tests/gen/gen-perf.py (PERFORM, GO TO, contained and recursive
+programs; old against new, with the runtime of each), thirteen mutants
+caught in all, CCVS-85 identical, all gates.  A mistake on the way: one
+array of exit cells for the file, where paragraph numbers begin again
+at each program -- CCVS-85's IC module found it, the generator had not,
+and now would.

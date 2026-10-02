@@ -125,7 +125,7 @@ static void emit_report_group(Report *r, RGroup *g)
     if (g->use_sec >= 0) {
         int Lret = new_label();
         char lab[32]; snprintf(lab, sizeof lab, ".L%d", Lret);
-        emit_li("r3", g->use_sec);
+        emit_para_cell("r3", g_unit, g->use_sec);
         emit_la("r4", lab);
         emit_call("cob_perform_push");
         emit("\tjal r0, .Lp%d_%d", g_unit, g->use_sec);

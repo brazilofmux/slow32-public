@@ -644,7 +644,7 @@ static void emit_use_dispatch(File *f, int has_clause)
         int Lnext = new_label(), Lret = new_label();
         char lab[32]; snprintf(lab, sizeof lab, ".L%d", Lret);
         if (c[i]->mode) { emit_li("r2", c[i]->mode); emit("\tbne r12, r2, .L%d", Lnext); }
-        emit_li("r3", c[i]->sec);
+        emit_para_cell("r3", c[i]->unit, c[i]->sec);
         emit_la("r4", lab);
         emit_call("cob_perform_push");
         emit("\tjal r0, .Lp%d_%d", c[i]->unit, c[i]->sec);

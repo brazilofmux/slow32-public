@@ -121,6 +121,40 @@ static Para *para_add(const char *name, const char *oname, int is_section, int l
     return p;
 }
 
+/* reg = the address of a paragraph's or section's exit cell: a word each,
+ * an array for each program (.Lpx<unit>, written where its procedure
+ * division ends), which the runtime keeps -- the place of the PERFORM
+ * frame waiting on that exit, or zero (libcob, cob_perform_push).  Ids
+ * are a program's own: they begin again at the next program in the file,
+ * and a contained program's are given to the one after it, so the unit
+ * is part of the name -- a containing program's USE procedure is
+ * performed from the contained one by its own unit's cell. */
+static int *g_px_max, *g_px_size, g_px_cap;     /* by unit: the largest id asked for; the cells written (0: not yet) */
+static void px_room(int unit)
+{
+    if (unit < g_px_cap) return;
+    int n = unit + 16;
+    g_px_max = realloc(g_px_max, n * sizeof *g_px_max); g_px_size = realloc(g_px_size, n * sizeof *g_px_size);
+    if (!g_px_max || !g_px_size) die_at(cur()->line, "out of memory");
+    for (int i = g_px_cap; i < n; i++) g_px_max[i] = g_px_size[i] = 0;
+    g_px_cap = n;
+}
+static void emit_para_cell(const char *reg, int unit, int id)
+{
+    px_room(unit);
+    if (id < 1 || (g_px_size[unit] && id >= g_px_size[unit])) die_at(cur()->line, "internal: a paragraph's exit cell outside its program's");
+    if (id > g_px_max[unit]) g_px_max[unit] = id;
+    char l[32]; snprintf(l, sizeof l, ".Lpx%d", unit);
+    emit_la_off(reg, l, 4 * id);
+}
+/* the cells of the program whose procedure division ends here */
+static void emit_para_cells(void)
+{
+    px_room(g_unit);
+    if (g_px_max[g_unit] > g_npara) die_at(cur()->line, "internal: a paragraph's exit cell outside its program's");
+    g_px_size[g_unit] = g_npara + 1;
+    emit("\t.data"); emit("\t.p2align 2"); emit(".Lpx%d:", g_unit); emit("\t.space %d", 4 * (g_npara + 1)); emit("\t.text");
+}
 static void emit_para_label(Para *p) { emit(".Lp%d_%d:\t# %s%s", g_unit, p->id, p->name, p->is_section ? " section" : ""); }
 
 /* prescan the Procedure Division for paragraph and section headers */

@@ -143,7 +143,7 @@ static void emit_ec_dispatch(int i)
     if (sec >= 0) {
         int Lret = new_label();
         char lab[32]; snprintf(lab, sizeof lab, ".L%d", Lret);
-        emit_li("r3", sec);
+        emit_para_cell("r3", g_unit, sec);
         emit_la("r4", lab);
         emit_call("cob_use_push");                  /* EC-FLOW-USE when it is active already (E14) */
         emit("\tjal r0, .Lp%d_%d", g_unit, sec);

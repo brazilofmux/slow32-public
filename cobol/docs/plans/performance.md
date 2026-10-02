@@ -58,16 +58,28 @@ One routine or one code shape at a time, each a contained change.
 - A subscript's or a reference modification's expression in registers;
   a DISPLAY subscript's digits in line (done: csv2fw 1.20 s -> 0.90).
 
-Next, from the batch's own profile (csv2fw is 60% of it;
-`docs/performance.md`, "the batch itself"):
+From the batch's own profile (csv2fw is 60% of it;
+`docs/performance.md`, "the batch itself"), done:
 
-- `v = v * 10 + FUNCTION NUMVAL(one character)`: a function of one
-  digit as a leaf of the checked arithmetic.  A quarter of csv2fw.
-- The byte files: READ and WRITE of a short fixed record of a
-  sequential file -- the runtime's own block buffer for the read, as
-  the line-sequential read has; the checks decided at OPEN.
-- Out-of-line PERFORM: the push and the exit each search the
-  activation's frames; a cell per paragraph makes both constant.
+- `v = v * 10 + FUNCTION NUMVAL(one character)`: a digit as a leaf of
+  the checked arithmetic.
+- The byte files: READ of a fixed-length sequential record out of the
+  runtime's block buffer; READ and WRITE as small entries.
+- Out-of-line PERFORM: a cell for each paragraph makes the push and the
+  exit constant, and an exit nobody waits on costs no call.
+
+csv2fw 1.20 s -> 0.68 with these and the positions.  Next, from what is
+left of it:
+
+- FUNCTION MIN and MAX of integers as nodes of the register trees: in a
+  length (`t(1:FUNCTION MIN(n, 4096))`) they are the wide stack's.
+- A reference-modified alphanumeric move with a computed length: a
+  copy with padding, not two descriptors and the general MOVE.
+- A position whose operand is itself subscripted: computed before the
+  reference's own offset begins, kept in the frame.
+- fwrite and fread of a few bytes in the C library (runtime/): a short
+  path when the buffer has room.  It is every program's library, so it
+  is its own step.
 - A numeric literal moved to an item: its bytes are known when
   compiling (the kernels, compiled into the compiler, say what they
   are).
