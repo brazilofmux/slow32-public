@@ -28,6 +28,12 @@ what it bought.  This is the plan it is measured against.
 
 ## Where the time is (2026-10-01)
 
+Two measurements.  The kernels of `bench/vs` and jerm, below; and the
+batch they stand in for, which is one program more than any other
+(csv2fw: byte files, positions, one wide statement) and reads
+differently.  The batch decides what is next; the kernels say what a
+change did to everything else.
+
 Under the DBT, over the nine kernels and jerm: generated code is a
 fifth to a quarter of the wall time where arithmetic and moves dominate
 (all of it only in a search loop); the largest share is inside the
@@ -49,11 +55,28 @@ One routine or one code shape at a time, each a contained change.
   tested, the wide stack's code behind the tests (ksort 972 ms -> 475).
   Not yet: MULTIPLY ... GIVING and the other arithmetic verbs' own
   paths; a division inside such a statement; a SIZE ERROR phrase.
-- DIVIDE ... GIVING ... REMAINDER on packed and display items: in
-  registers, one division.
+- A subscript's or a reference modification's expression in registers;
+  a DISPLAY subscript's digits in line (done: csv2fw 1.20 s -> 0.90).
+
+Next, from the batch's own profile (csv2fw is 60% of it;
+`docs/performance.md`, "the batch itself"):
+
+- `v = v * 10 + FUNCTION NUMVAL(one character)`: a function of one
+  digit as a leaf of the checked arithmetic.  A quarter of csv2fw.
+- The byte files: READ and WRITE of a short fixed record of a
+  sequential file -- the runtime's own block buffer for the read, as
+  the line-sequential read has; the checks decided at OPEN.
+- Out-of-line PERFORM: the push and the exit each search the
+  activation's frames; a cell per paragraph makes both constant.
+- A numeric literal moved to an item: its bytes are known when
+  compiling (the kernels, compiled into the compiler, say what they
+  are).
 - The SEARCH loops: the serial step and the binary probe.
 - A user function's activation (cob_act_enter, cob_act_leave).
 - INSPECT and UNSTRING in the runtime; the wide stack's MOD.
+
+Dropped: DIVIDE ... GIVING ... REMAINDER in registers.  On binary items
+it already is; no workload has it on packed or DISPLAY ones.
 
 ### 2. Operation-level hooks
 

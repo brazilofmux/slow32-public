@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""prof.py prog.s32x prog.prof NAMES [generated-symbol ...] [-n N]
+"""prof.py prog.s32x prog.prof NAMES [generated-symbol ...] [-n N] [-l N]
 
 Symbolize a `slow32 -p` profile (instructions executed per code address)
 and say where a COBOL program's instructions go: its own generated code,
 libcob, the C library -- and, apart, what the DBT runs natively (the
 hooked numeric and edit kernels, mem*), which costs the guest nothing
 there.  "Guest-only" is the rest: what the DBT actually translates.
+
+With -l N, and a program compiled -fprofile-lines, the N source lines
+whose statements' own code ran the most instructions, and how many
+times each was begun (a line's runtime calls are not in its count: read
+them off the statement).
 
 Symbols come from the .s32x's .symtab.  NAMES lists libcob's functions
 (prof.sh writes it, with a libcob whose every function, static ones too,
@@ -42,12 +47,24 @@ for v, n in syms:
     addr.append(v); names.append(n)
 libcob = set(open(namesf).read().split())
 tot = collections.Counter(); total = 0
+# -fprofile-lines labels (__ln_<line>_<seq>): a statement's instructions
+# count for the program they are in, and per line apart
+owner = []; last = '?'
+for n in names:
+    if not n.startswith('__ln_'): last = n
+    owner.append(last)
+lines = collections.Counter(); runs = collections.Counter(); calls = collections.Counter()
 for line in open(pf):
     a, c = line.split(); a = int(a, 16); c = int(c)
     k = bisect.bisect_right(addr, a) - 1
     n = names[k] if k >= 0 else '?'
+    if n.startswith('__ln_'):
+        ln = int(n.split('_')[3]); lines[ln] += c
+        if addr[k] == a: runs[ln] += c
+        n = owner[k]
     if n.startswith('__p_'): n = n[4:]
     tot[n] += c; total += c
+    if k >= 0 and addr[k] == a: calls[n] += c           # its first instruction: times entered
 HOOKED = {'cob_k_get_num','cob_k_put_num','cob_k_put_scale','cob_k_get_edited','cob_k_put_edited','cob_k_get_ok','cob_k_put_ok','cob_k_ed_ok',
           'cob_get_num','cob_get_num_impl','cob_put_num_x','cob_put_num_x_impl','cob_get_edited','cob_get_edited_impl','cob_put_edited','cob_put_edited_impl',
           'cob_edit_apply','cob_deedit','strchr',
@@ -58,6 +75,7 @@ def cat(n):
     if n in gen: return 'generated'
     return 'libc/rt'
 gen = set(a for a in sys.argv[4:] if not a.startswith('-') and not a.isdigit())
+L = int(sys.argv[sys.argv.index('-l') + 1]) if '-l' in sys.argv else 0
 cats = collections.Counter()
 for n, c in tot.items(): cats[cat(n)] += c
 guest = total - cats['native']
@@ -66,5 +84,12 @@ for k in ('generated', 'libcob', 'libc/rt'): print('  %-10s %5.1f%% of guest-onl
 k = 0
 for n, c in tot.most_common():
     if cat(n) == 'native': continue
-    print('  %5.1f%%  %-10s %s' % (100.0 * c / guest, cat(n), n)); k += 1
+    print('  %5.1f%%  %-10s %-24s %10d calls, %d each' % (100.0 * c / guest, cat(n), n, calls[n], c // calls[n] if calls[n] else 0)); k += 1
     if k >= N: break
+if L and lines:
+    print('  lines of the program, by their own code:')
+    for ln, c in lines.most_common(L): print('  %5.1f%%  line %-5d begun %d times' % (100.0 * c / guest, ln, runs[ln]))
+if '-N' in sys.argv:
+    print('  native under the DBT:')
+    for n, c in tot.most_common():
+        if cat(n) == 'native': print('          %-24s %10d calls' % (n, calls[n]))

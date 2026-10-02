@@ -282,6 +282,42 @@ static int hx_leaf_ref(const Ref *r)
     return hx_leaf(&o);
 }
 
+/* A subscript's or a reference modification's expression in registers
+ * (emit_ref_addr, emit_expr_pos_push): integer items and literals whose
+ * every intermediate fits a word, so the value is the one the stack
+ * would hand to cob_pop_int.  No leaf may need r11 for its own address:
+ * the expression is computed while the reference it belongs to holds
+ * its offset there.  The nodes go after whatever tree g_hn holds -- this
+ * runs while a statement's own tree is being emitted -- and are given
+ * back; asked twice (when the position would be pushed, and when it is
+ * taken) it answers the same. */
+static int pos_reg_tree(Expr *e)
+{
+    if (g_nohx || !e || e->wide || e->flt || ec_on_name("EC-DATA-INCOMPATIBLE")) return -1;
+    int first = g_nhn, root = hn_tree(e, hx_leaf);
+    if (root < 0) return -1;
+    for (int i = first; i < g_nhn; i++)
+        if (!g_hn[i].op && g_hn[i].o.kind == O_REF && (ref_has_runtime_sub(&g_hn[i].o.ref) || ref_needs_call(&g_hn[i].o.ref))) return -1;
+    int wide = 0, inner = 0, neg = 0;
+    hx_bound(root, &wide, &inner, &neg, 0);
+    if (wide || inner) return -1;
+    if (g_slot_base + hn_depth(root, 1) + 1 > NSLOTS) return -1;
+    return root;
+}
+static int pos_reg_ok(Expr *e)
+{
+    int first = g_nhn, ok = pos_reg_tree(e) >= 0;
+    g_nhn = first;
+    return ok;
+}
+static void pos_reg_emit(Expr *e)
+{
+    int first = g_nhn, root = pos_reg_tree(e);
+    if (root < 0) die_at(cur()->line, "internal: a position's expression changed its mind");
+    g_hn_busy++; hx_emit(root, -1); g_hn_busy--;
+    g_nhn = first;
+}
+
 /* ---- decimal arithmetic in registers -----------------------------------
  * What the integer path above cannot take -- decimals, packed and DISPLAY
  * items of up to 18 digits, ROUNDED -- computed as 64-bit scaled integers

@@ -25,6 +25,13 @@ static void parse_statement(void)
     CallList outer_calls = g_stmt_calls; int outer_on = g_stmt_calls_on, outer_hold = g_stmt_calls_hold;
     memset(&g_stmt_calls, 0, sizeof g_stmt_calls); g_stmt_calls_on = 1; g_stmt_calls_hold = 0;
     int b0 = block_begin();
+    if (g_proflines && !g_noemit) {
+        /* -fprofile-lines: a global label where each statement's code
+         * begins, for bench/prof.py to attribute instructions to lines */
+        static int seq;
+        emit("\t.globl __ln_%d_%d", cur()->line, seq);
+        emit("__ln_%d_%d:", cur()->line, seq); seq++;
+    }
     parse_statement_1();
     if (g_stmt_convcheck) {
         int Lok = new_label();

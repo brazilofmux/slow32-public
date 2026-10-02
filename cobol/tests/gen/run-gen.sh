@@ -1,9 +1,10 @@
 #!/bin/bash
 # run-gen.sh FIRST COUNT [STATEMENTS] -- differential testing on generated
 # programs: gen-$GEN.py (GEN=arith, the default, edit, cond, string,
-# table or flow) seeds
+# table, flow or pos) seeds
 # FIRST..FIRST+COUNT-1, each built and run
-# here (compile.sh, slow32-fast) and under GnuCOBOL -std=cobol85 (the
+# here (compile.sh, slow32-fast) and under GnuCOBOL -std=cobol85 (pos:
+# -std=2002 here and the oracle's default dialect; the
 # harness's oracle images, one container for the whole batch), output
 # compared line by line.  Prints one line per seed and keeps the work
 # directory (under cobol/out, which the container can mount) only when
@@ -18,6 +19,10 @@ NSTMT=${3:-60}
 GEN=${GEN:-arith}
 ENGINE=$(command -v podman || command -v docker)
 EMU="$ROOT/tools/emulator/slow32-fast"
+STD=85; OSTD=cobol85
+# expression subscripts are COBOL 2002; the oracle's strict 2002 has no
+# COMP-3 or COMP-5, so it takes its default dialect there
+[ "$GEN" = pos ] && { STD=2002; OSTD=default; export GENPOS_NEG=0; }   # and no intermediate below zero: the oracle wraps it (2002/refmodneg)
 
 mkdir -p "$CDIR/out"
 W="$(mktemp -d "$CDIR/out/gen.XXXXXX")"
@@ -25,7 +30,7 @@ last=$((FIRST + COUNT - 1))
 
 for s in $(seq "$FIRST" "$last"); do
     python3 "$HERE/gen-$GEN.py" "$s" "$NSTMT" > "$W/g$s.cbl" 2> "$W/g$s.ref"
-    if "$CDIR/compile.sh" -free -std=85 "$W/g$s.cbl" -o "$W/g$s.s32x" > "$W/g$s.cclog" 2>&1; then
+    if "$CDIR/compile.sh" -free -std=$STD "$W/g$s.cbl" -o "$W/g$s.s32x" > "$W/g$s.cclog" 2>&1; then
         (cd "$W" && "$EMU" "g$s.s32x" 2>/dev/null) | sed '/^Starting execution at PC/,$d' > "$W/g$s.out" || true   # in $W: gen-flow writes a file
     else
         echo "BUILD-FAILED" > "$W/g$s.out"
@@ -35,7 +40,7 @@ done
 # the oracle: one container builds and runs the whole batch
 "$ENGINE" run --rm -v "$ROOT:$ROOT" -w "$W" gnucobol:4.0-builder sh -c "
 for s in \$(seq $FIRST $last); do
-    if cobc -x -std=cobol85 -free g\$s.cbl -o g\$s.orc > g\$s.orclog 2>&1; then
+    if cobc -x -std=$OSTD -free g\$s.cbl -o g\$s.orc > g\$s.orclog 2>&1; then
         ./g\$s.orc > g\$s.orcout 2>/dev/null || true
     else
         echo BUILD-FAILED > g\$s.orcout

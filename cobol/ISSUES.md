@@ -5288,3 +5288,18 @@ cleared the sign of a negative value whose kept digits are zero, where
 the narrow store and GnuCOBOL keep it (2023 14.9.25.4); the wide store
 keeps it now, and DISPLAY shows a zoned zero as `+` (free/negzero).
 run-self.sh counted two refusals as an agreement; fixed.
+
+Fourth: measured the batch itself, not its stand-ins.  Majesty's
+month-end run is 2.0 s under the DBT and csv2fw is 1.2 s of it; its
+profile (bench/prof.py now counts calls, and -fprofile-lines attributes
+instructions to source lines) is a wide COMPUTE, positions through the
+stack, byte files and PERFORM -- not what the kernels showed.  First of
+those: a subscript's or reference modification's integer expression is
+computed in registers where it is used, and a DISPLAY subscript's
+digits are read in line.  csv2fw 1.20 s -> 0.90, the same bytes out.
+Checked by tests/gen/gen-pos.py through the compiler before and after
+(100 programs; four mutants caught) and against GnuCOBOL (Gate 7's
+gen/pos), CCVS-85 identical.  GnuCOBOL computes a position in an
+unsigned BINARY operand's type: 8 - 9 + 2 wraps (tests/2002/refmodneg,
+refmodnegp; docs/oracles.md).  The DIVIDE ... REMAINDER item is dropped
+from the plan: on binary items it was in registers already.

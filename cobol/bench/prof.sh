@@ -3,7 +3,8 @@
 # instructions go: built against a libcob whose every function is
 # labelled, run under the reference interpreter with -p, and symbolized
 # by prof.py.  The program runs in a work directory of its own (files it
-# writes land there); PROF_KEEP=1 keeps it, TOP=n lists n symbols.
+# writes land there); PROF_KEEP=1 keeps it, TOP=n lists n symbols,
+# LINES=n the n source lines whose own code ran most (-fprofile-lines).
 #
 #   bench/prof.sh -free bench/vs/karith.cbl
 #   TOP=20 bench/prof.sh -free -std=2002 prog.cbl sub.cbl
@@ -34,6 +35,6 @@ PY
 srcs=(); for a in "$@"; do case "$a" in *.cbl|*.cob|*.CBL|*.COB) srcs+=("$a") ;; esac; done
 [ ${#srcs[@]} -gt 0 ] || { echo "usage: prof.sh [flags] prog.cbl [sources...]" >&2; exit 2; }
 gen=$(cat "${srcs[@]}" | grep -ai 'program-id\|function-id' | sed -E 's/.*-[iI][dD]\.? *([A-Za-z0-9_-]+).*/\1/' | tr 'A-Z-' 'a-z_' | sort -u | tr '\n' ' ')
-S32_LIBCOB="$W/libcob-p.s32o" "$C/compile.sh" "$@" -o "$W/prog.s32x" >/dev/null
+S32_LIBCOB="$W/libcob-p.s32o" "$C/compile.sh" ${LINES:+-fprofile-lines} "$@" -o "$W/prog.s32x" >/dev/null
 (cd "$W" && "$ROOT/tools/emulator/slow32" -p prog.prof prog.s32x > prog.out 2>&1) || true
-python3 "$HERE/prof.py" "$W/prog.s32x" "$W/prog.prof" "$W/libcob.names" $gen main -n "${TOP:-12}"
+python3 "$HERE/prof.py" "$W/prog.s32x" "$W/prog.prof" "$W/libcob.names" $gen main -n "${TOP:-12}" ${LINES:+-l "$LINES"}

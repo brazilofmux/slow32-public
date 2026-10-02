@@ -38,6 +38,22 @@ starts there, not at 1) and SEARCH ALL on an ascending unique key. It
 also writes MOVEs from, to and between variable-length groups whose
 OCCURS DEPENDING ON item is outside the group. Run it with `GEN=table`.
 
+`gen-pos.py SEED` covers computed positions: subscripts and reference
+modification whose values are expressions, over operands of sixteen
+usages and pictures, with every position in range by construction (the
+position is chosen first, the operands' values worked back from it).
+Run it with `GEN=pos`; both sides compile it as COBOL 2002 (an
+expression subscript is not in the 85 text). Under `run-gen.sh` it keeps
+every intermediate result at zero or above: GnuCOBOL computes a position
+in an unsigned BINARY operand's type (`docs/oracles.md`, 2002/refmodneg).
+
+`gen-checked.py SEED` and `gen-pos.py` are also run through
+`run-self.sh REV FIRST COUNT`: the compiler as of a git revision and the
+one in `out/`, every program's output the same bytes. That is the check
+for a change that alters generated code on purpose, where the compiler
+before the change is the oracle (`gen-checked.py`: statements whose
+stores the standard leaves undefined, so GnuCOBOL cannot judge them).
+
 ## References: the text, executable
 
 Every generator also writes each statement's expected line to

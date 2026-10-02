@@ -282,8 +282,11 @@ cuts it to the receiver's scale. The register path knows the receivers:
 for a ROUNDED one) and makes no more -- each digit is exact, so the
 store gets the same digits. Output byte-identical; karith 503 ms ->
 439, kmove 605 -> 501, kseq 295 -> 265. What is left of ndiv_core in
-karith is DIVIDE ... GIVING ... REMAINDER on packed items, which takes
-the stack and divides twice.
+karith is that one division, `i * 3.25 / 8` a statement. (This note
+first blamed karith's DIVIDE ... GIVING ... REMAINDER: wrong -- its
+items are COMP, and the integer register path already takes it, as it
+takes jerm's. No workload here has that statement on packed or DISPLAY
+items, so it is no longer on the plan.)
 
 **Moves the compiler can count.** kmove's loop called the runtime's
 MOVE three times for what are byte copies: a four-byte part of an item
@@ -361,3 +364,72 @@ the narrow store did and what GnuCOBOL does; the wide store cleared the
 sign when the kept digits were zero, and no longer does.  DISPLAY of a
 signed zoned item whose digits are zero prints `+`, as GnuCOBOL prints
 it, whichever sign the item holds.  `tests/free/negzero`.
+
+## 2026-10-01: the batch itself -- where a real program's time goes
+
+The kernels are stand-ins. The program they stand in for is majesty's
+month-end batch: 28 runs of 26 programs, 2.0 s under the DBT -- and
+1.2 s of it is one program, csv2fw, which turns the exported CSV files
+into fixed-width ones a byte at a time: READ a one-byte record, a state
+table, reference modification by a computed position, WRITE a one-byte
+record. Its profile is not the kernels':
+
+| what | share of the guest-only instructions |
+|---|---|
+| one COMPUTE on the wide stack (`v = v * 10 + NUMVAL(a digit)`, `v` an 18-digit item), 230,000 times | 25% |
+| positions through the stack: cob_push, cob_pop_int, cob_load_int | 20% |
+| the byte files: cob_read, cob_write and the C library under them | 21% |
+| generated code | 18% |
+| out-of-line PERFORM: cob_perform_push, cob_perform_exit | 6% |
+
+and behind the second line, 24.8 million fetches through the numeric
+hook, native but each a crossing.
+
+**The tool grew two things for this.** `bench/prof.py` now prints how
+often each routine was entered and what a call costs (the count at its
+first instruction), and with `-fprofile-lines` -- a compiler option that
+puts a global label where each statement's code begins -- `LINES=n
+bench/prof.sh` lists the source lines whose own code ran most and how
+many times each was begun. That is how one line of 896 was found to be
+a quarter of the program.
+
+**Positions in registers.** A subscript, a leftmost position or a
+length that is an expression went through the runtime's stack: each
+operand pushed (a call, and inside it a fetch through the hook), the
+operations called, the value popped as an integer -- for `t(i + 1)`,
+for `x(p:1)`, for a start that is one COMP item. And a subscript that
+is an unsigned DISPLAY item was a call to cob_load_int, though a
+condition on the same item already read its digits in line. Now an
+expression over integer items and literals whose every intermediate
+fits a word is computed by the integer register path where the
+position is used (pos_reg_ok, arith_reg.h): the same value the stack
+handed to cob_pop_int, since both are exact. What stays with the stack:
+a packed or a signed DISPLAY operand, a decimal place, a division, an
+operand that is itself subscripted (it would need the register the
+outer reference's offset is in), and everything when
+EC-DATA-INCOMPATIBLE is checked. A DISPLAY subscript's digits are read
+in line.
+
+csv2fw 1.20 s -> 0.90 under the DBT, its output files the same bytes;
+the kernels are unchanged (their subscripts were COMP items already).
+
+How it was checked. `tests/gen/gen-pos.py` writes references of every
+such kind -- an item, a table, a table of two dimensions, a numeric
+table; the position an expression over items of sixteen usages and
+pictures on both sides of the line; a part of a subscripted element; an
+operand itself subscripted -- each position chosen first and its
+operands' values worked back from it, so every one is in range. 100
+programs through the compiler before and after (`GEN=pos
+tests/gen/run-self.sh`): the same. Four mutants of the change, all
+caught: the value off by one (20 of 20 programs), the test for a
+subscripted operand dropped (29 of 30), the pending position forgotten
+across an element's subscripts (10 of 30), the DISPLAY subscript off by
+one (20 of 20). 60 programs against GnuCOBOL (`GEN=pos
+tests/gen/run-gen.sh`; Gate 7 now runs 40): agree -- once the generator
+was told to keep intermediates at zero or above, because GnuCOBOL does
+not: `x(2:a - b + c)` with 8, 9 and 2, `b` an unsigned BINARY item, is
+a part of length 1, and GnuCOBOL computes the difference unsigned, so
+the part runs to the end of the receiver; as a leftmost position or a
+subscript the same expression is an invalid address and the program
+dies (tests/2002/refmodneg, refmodnegp; docs/oracles.md). The old and
+the new compiler agree on those too. CCVS-85: the same report.

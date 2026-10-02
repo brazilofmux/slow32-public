@@ -8,7 +8,8 @@
 # say the code differs, and runs only what the corpus has; the compiler
 # before the change is the oracle here, on as many programs as asked for.
 # No container needed.  GEN as run-gen.sh (arith, edit, cond, string,
-# table, flow, checked; default flow); STD=85 or 2002 (checked: 2002).
+# table, flow, checked, pos; default flow); STD=85 or 2002 (checked and
+# pos: 2002).
 # Keeps the work directory when anything differs.  A program neither
 # compiler builds is a failure, not an agreement: two refusals compare
 # equal and say nothing.
@@ -22,7 +23,7 @@ COUNT=${3:?usage: run-self.sh REV FIRST COUNT [STATEMENTS]}
 NSTMT=${4:-30}
 GEN=${GEN:-flow}
 EMU="$ROOT/tools/emulator/slow32-fast"
-STD=${STD:-85}; [ "$GEN" = checked ] && STD=${STD_CHECKED:-2002}
+STD=${STD:-85}; case "$GEN" in checked|pos) STD=2002 ;; esac
 
 mkdir -p "$CDIR/out"
 W="$(mktemp -d "$CDIR/out/self.XXXXXX")"
