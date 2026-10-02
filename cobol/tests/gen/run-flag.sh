@@ -21,11 +21,14 @@ GEN=${GEN:-loop}
 EMU="$ROOT/tools/emulator/slow32-fast"
 STD=${STD:-85}; case "$GEN" in loop|checked|pos|perf|lit|native) STD=2002 ;; esac
 
+command -v python3 >/dev/null 2>&1 || { echo "run-flag.sh: no python3 to write the programs with"; exit 2; }
 mkdir -p "$CDIR/out"
 W="$(mktemp -d "$CDIR/out/flag.XXXXXX")"
 last=$((FIRST + COUNT - 1)); bad=0; lines=0
 for s in $(seq "$FIRST" "$last"); do
-    python3 "$HERE/gen-$GEN.py" "$s" ${4:+"$4"} > "$W/g$s.cbl" 2> /dev/null
+    if ! python3 "$HERE/gen-$GEN.py" "$s" ${4:+"$4"} > "$W/g$s.cbl" 2> "$W/g$s.genlog"; then
+        echo "seed $s: GENERATOR FAILED ($(head -c 100 "$W/g$s.genlog" | tr '\n' ' '))"; bad=$((bad + 1)); continue
+    fi
     for v in with without; do
         mkdir -p "$W/$v$s"
         f=""; [ $v = with ] || f="$FLAG"

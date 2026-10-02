@@ -169,7 +169,7 @@ fi
 # Gates 1 and 1b build host programs.  Without a host C compiler (the
 # slow32:cobol image has none) they are SKIPPED, and the summary says so:
 # a run that silently dropped two gates would read as a full one.
-SKIPPED=""
+SKIPPED=""; GEN_SKIPPED=""
 if ! command -v "$HOSTCC" >/dev/null 2>&1; then
     SKIPPED=" pictest bt_test wide_test scram_test"
     echo "SKIP  pictest  (no host C compiler: $HOSTCC)"
@@ -581,29 +581,34 @@ else
     GEN_NOTE="cobol: GENERATED PROGRAMS NOT RUN -- they need the oracle's container image (tests/gen/README.md)"
 fi
 
-# ... and one generator that needs no oracle: the loops' items in
-# registers (src/cobc/loopreg.h) and not, the same compiler both times
-# (gen/run-flag.sh)
-fout="$(GEN=loop "$HERE/gen/run-flag.sh" -fno-loop-reg 1 60 2>&1 | tail -1)"
-case "$fout" in
-    "all 60 the same"*) report "gen/loop" 0 "60 programs, with the registers and without" ;;
-    *)                  report "gen/loop" 1 "$fout" ;;
-esac
-# ... and the values held outside loops alone (-fno-avail-reg), on other seeds
-fout="$(GEN=loop "$HERE/gen/run-flag.sh" -fno-avail-reg 101 60 2>&1 | tail -1)"
-case "$fout" in
-    "all 60 the same"*) report "gen/held" 0 "60 programs, with values held between statements and without" ;;
-    *)                  report "gen/held" 1 "$fout" ;;
-esac
-
-# ... and the items written the machine's way (src/cobc/native.h) and as
-# their entries say (-fno-native-items): a generator of its own, of items
-# used as numbers and used as bytes
-fout="$(GEN=native "$HERE/gen/run-flag.sh" -fno-native-items 1 60 2>&1 | tail -1)"
-case "$fout" in
-    "all 60 the same"*) report "gen/native" 0 "60 programs, with items written the machine's way and as written" ;;
-    *)                  report "gen/native" 1 "$fout" ;;
-esac
+# ... and the generators that need no oracle, the same compiler both times
+# (gen/run-flag.sh): the loops' items in registers (src/cobc/loopreg.h)
+# and not; the values held outside loops alone (-fno-avail-reg), on other
+# seeds; and the items written the machine's way (src/cobc/native.h) and
+# as their entries say.  They need python3 to write the programs, which
+# the slow32:cobol image does not carry: without it they are skipped and
+# said to be, as the host-compiler gates are (a missing generator made an
+# empty program and a bare FAIL, and cost the build fleet a round).
+if command -v python3 >/dev/null 2>&1; then
+    fout="$(GEN=loop "$HERE/gen/run-flag.sh" -fno-loop-reg 1 60 2>&1 | tail -1)"
+    case "$fout" in
+        "all 60 the same"*) report "gen/loop" 0 "60 programs, with the registers and without" ;;
+        *)                  report "gen/loop" 1 "$fout" ;;
+    esac
+    fout="$(GEN=loop "$HERE/gen/run-flag.sh" -fno-avail-reg 101 60 2>&1 | tail -1)"
+    case "$fout" in
+        "all 60 the same"*) report "gen/held" 0 "60 programs, with values held between statements and without" ;;
+        *)                  report "gen/held" 1 "$fout" ;;
+    esac
+    fout="$(GEN=native "$HERE/gen/run-flag.sh" -fno-native-items 1 60 2>&1 | tail -1)"
+    case "$fout" in
+        "all 60 the same"*) report "gen/native" 0 "60 programs, with items written the machine's way and as written" ;;
+        *)                  report "gen/native" 1 "$fout" ;;
+    esac
+else
+    for g in gen/loop gen/held gen/native; do echo "SKIP  $g  (no python3 to write the programs)"; done
+    GEN_SKIPPED=" gen/loop gen/held gen/native"
+fi
 
 # Gate 8 (sanitizers): the compiler itself, built with the address and
 # undefined-behavior sanitizers, over every source there is (sanitize.sh)
@@ -635,4 +640,5 @@ fi
 [ -z "$GEN_NOTE" ] || echo "$GEN_NOTE"
 [ -z "$SAN_NOTE" ] || echo "$SAN_NOTE"
 [ -z "$SKIPPED" ] || echo "cobol: SKIPPED:$SKIPPED -- no C compiler for them here; this is not a full run"
+[ -z "${GEN_SKIPPED:-}" ] || echo "cobol: SKIPPED:$GEN_SKIPPED -- no python3 for them here; this is not a full run"
 [ "$FAIL" = "0" ]
