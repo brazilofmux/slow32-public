@@ -96,6 +96,10 @@ runtime/*.llc.s
 cobol/libcob/*.s32o
 cobol/libcob/*.ll
 cobol/libcob/*.s
+# ...but entries.s is written by hand, not generated: libcob/build.sh cats it
+# onto the compiler's assembly.  It is the only tracked .s here, so it has to
+# come back after the glob above (last match wins), as forth/kernel.s does.
+!cobol/libcob/entries.s
 
 # libf77 outputs (rebuilt in the fortran-builder stage with the image's clang)
 fortran/runtime/*.s32o
