@@ -27,6 +27,7 @@ FILE *stderr = &_stderr;
 static int has_direct_read = 1;
 
 int fflush(FILE *stream);
+int fseek(FILE *stream, long offset, int whence);
 
 // Internal: Flush write buffer
 static int internal_flush(FILE *stream) {
@@ -127,7 +128,12 @@ FILE *fopen(const char *pathname, const char *mode) {
     if (fd < 0) return NULL;
 
     f = fdopen(fd, mode);
-    if (!f) s32_mmio_request(S32_MMIO_OP_CLOSE, 0u, 0u, fd);
+    if (!f) { s32_mmio_request(S32_MMIO_OP_CLOSE, 0u, 0u, fd); return NULL; }
+    /* "a": every write goes to the end, so that is where the stream is.
+     * The host appends whatever its position says, but ftell counts from
+     * that position, and reported the bytes written since the open as if
+     * the file had been empty.  ("a+" reads from the beginning: left.) */
+    if ((flags & FLAG_APPEND) && !(flags & FLAG_READ)) fseek(f, 0, SEEK_END);
     return f;
 }
 
@@ -143,7 +149,47 @@ FILE *freopen(const char *pathname, const char *mode, FILE *stream) {
     return fopen(pathname, mode);
 }
 
+/* fwrite, fread and fputc are short entries in front of the general
+ * routines, as fgetc is.  A byte to or from a fully buffered stream whose
+ * buffer has the room, or the byte, is a store and a count: the entry
+ * does that and nothing else, so it needs no registers saved (a function
+ * pays for its whole frame on every path, and the general fwrite was 91
+ * instructions for one byte).  A few bytes are a memcpy and a count, one
+ * call further on (fwrite_more, fread_more).  Everything else -- an
+ * unbuffered or line-buffered stream, a memory stream, a buffer about to
+ * fill, a stream with read-ahead in its buffer, an element count whose
+ * product could overflow -- is the general routine's, unchanged.  The
+ * short paths leave the buffer short of full, so the flush stays in one
+ * place. */
+static size_t fwrite_general(const void *ptr, size_t size, size_t nmemb, FILE *stream);
+
+static __attribute__((noinline)) size_t fwrite_more(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
+    if (stream && ptr && stream->mode == _IOFBF && stream->buffer && stream->buf_len == 0 &&
+        !(stream->flags & FLAG_MEMSTREAM) && (size == 1 || nmemb == 1)) {
+        size_t total = size == 1 ? nmemb : size, pos = stream->buf_pos;
+        if (total != 0 && pos < stream->buf_size && total < stream->buf_size - pos) {
+            memcpy(stream->buffer + pos, ptr, total);
+            stream->buf_pos = pos + total;
+            return nmemb;
+        }
+    }
+    return fwrite_general(ptr, size, nmemb, stream);
+}
+
 size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
+    if (size == 1 && nmemb == 1 && stream && ptr && stream->mode == _IOFBF && stream->buffer &&
+        stream->buf_len == 0 && !(stream->flags & FLAG_MEMSTREAM)) {
+        size_t pos = stream->buf_pos;
+        if (pos + 1 < stream->buf_size) {
+            stream->buffer[pos] = *(const char *)ptr;
+            stream->buf_pos = pos + 1;
+            return 1;
+        }
+    }
+    return fwrite_more(ptr, size, nmemb, stream);
+}
+
+static size_t fwrite_general(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
     if (!stream || !ptr) return 0;
     size_t total_bytes = size * nmemb;
     if (total_bytes == 0) return 0;
@@ -182,6 +228,17 @@ size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
          return size == 1 ? bytes_written : bytes_written / size;
     }
     
+    if (stream->buf_len > 0) {
+        /* The buffer holds read-ahead, and this is a write.  C allows output
+         * directly after input that met end-of-file, and there the bytes
+         * went into the reader's buffer and were never flushed: lost.  The
+         * buffer becomes the writer's, and the host goes back over what was
+         * read ahead but not read (none, at end-of-file), so the write
+         * lands where the program is. */
+        if (stream->buf_len != stream->buf_pos || stream->ungetc_char >= 0) fseek(stream, 0, SEEK_CUR);
+        else { stream->buf_pos = 0; stream->buf_len = 0; }
+    }
+
     const unsigned char *src = ptr;
     size_t bytes_processed = 0;
     
@@ -257,7 +314,32 @@ int getchar(void) {
     return (int)data_buffer[0];
 }
 
+static size_t fread_general(void *ptr, size_t size, size_t nmemb, FILE *stream);
+
+/* the bytes are in the buffer: copy them (see fwrite) */
+static __attribute__((noinline)) size_t fread_more(void *ptr, size_t size, size_t nmemb, FILE *stream) {
+    if (stream && ptr && stream->ungetc_char < 0 && stream->buf_pos < stream->buf_len &&
+        !(stream->flags & FLAG_MEMSTREAM) && (size == 1 || nmemb == 1)) {
+        size_t total = size == 1 ? nmemb : size, pos = stream->buf_pos;
+        if (total != 0 && total <= stream->buf_len - pos) {
+            memcpy(ptr, stream->buffer + pos, total);
+            stream->buf_pos = pos + total;
+            return nmemb;
+        }
+    }
+    return fread_general(ptr, size, nmemb, stream);
+}
+
 size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
+    if (size == 1 && nmemb == 1 && stream && ptr && stream->ungetc_char < 0 &&
+        stream->buf_pos < stream->buf_len && !(stream->flags & FLAG_MEMSTREAM)) {
+        *(char *)ptr = stream->buffer[stream->buf_pos++];
+        return 1;
+    }
+    return fread_more(ptr, size, nmemb, stream);
+}
+
+static size_t fread_general(void *ptr, size_t size, size_t nmemb, FILE *stream) {
     if (!stream || !ptr) return 0;
     size_t total = size * nmemb;
     if (total == 0) return 0;
@@ -381,10 +463,23 @@ int getc(FILE *stream) {
     return fgetc(stream);
 }
 
-int fputc(int c, FILE *stream) {
+static __attribute__((noinline)) int fputc_general(int c, FILE *stream) {
     unsigned char ch = c;
-    if (fwrite(&ch, 1, 1, stream) != 1) return EOF;
+    if (fwrite_general(&ch, 1, 1, stream) != 1) return EOF;
     return c;
+}
+
+int fputc(int c, FILE *stream) {
+    /* a byte into a buffer with room for more than one (see fwrite) */
+    if (stream->mode == _IOFBF && stream->buffer && stream->buf_len == 0 && !(stream->flags & FLAG_MEMSTREAM)) {
+        size_t pos = stream->buf_pos;
+        if (pos + 1 < stream->buf_size) {
+            stream->buffer[pos] = (char)c;
+            stream->buf_pos = pos + 1;
+            return c;
+        }
+    }
+    return fputc_general(c, stream);
 }
 
 int putc(int c, FILE *stream) {
@@ -428,6 +523,14 @@ int fseek(FILE *stream, long offset, int whence) {
     if (stream->flags & FLAG_MEMSTREAM)
         return __memstream_seek(stream, offset, whence);
 
+    /* SEEK_CUR counts from where the program is, and the host is further
+     * on by whatever was read ahead into the buffer (and a character put
+     * back is one the program has not read): fseek(f, 0, SEEK_CUR) after a
+     * buffered read landed at the end of the buffer, not at the reader */
+    if (whence == SEEK_CUR) {
+        if (stream->buf_len > 0) offset -= (long)(stream->buf_len - stream->buf_pos);
+        if (stream->ungetc_char >= 0) offset -= 1;
+    }
     fflush(stream);
     stream->buf_pos = 0;
     stream->buf_len = 0;

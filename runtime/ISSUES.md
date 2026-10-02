@@ -111,3 +111,72 @@ Found while verifying a stage08 regression test by `echo $?`: every hand
 check agreed with itself and disagreed with the stage08 runner (which links
 the stage08 libc). The runner was right. The regression suite compares
 stdout, so it never noticed either.
+
+### 14. stdio's short entries (2026-10-01)
+
+`fwrite` and `fread` each had one body: a byte written to a buffered file
+ran the whole of it -- 91 instructions, most of them the frame and the
+tests for cases it was not -- and `fputc` was `fwrite` of one byte. A
+COBOL program that writes a file a character at a time (majesty's csv2fw:
+4.4 million one-byte records) spent a seventh of its instructions there
+(`cobol/docs/performance.md`).
+
+Now each is a short entry in front of the general routine, as `fgetc`
+already was. One byte to or from a fully buffered stream whose buffer has
+the room, or the byte, is done in the entry, which saves no registers (28
+instructions for `fwrite`); a few bytes are a `memcpy` and a count one call
+on (`fwrite_more`, `fread_more`); `fputc` stores its byte itself. Anything
+else is the general routine's, unchanged: an unbuffered or line-buffered
+stream, a memory stream, a buffer about to fill, read-ahead in the buffer,
+an element count whose product could overflow. The short paths leave the
+buffer short of full, so there is still one place that flushes.
+
+Tests, all in `regression/tests`: `stdio-short-paths` -- random writes,
+reads, seeks, `ungetc`, sizes either side of the 4096-byte buffer, against
+a model in memory, every count, position and byte checked (the same
+program on the host's C library prints the same lines); `stdio-line-order`
+-- stdout and stderr on one device, a line out before the stderr line
+after it, which is the line-buffered stream's flush the entries must not
+skip. Fifteen mutants of the entries and the fixes below, all caught.
+Gates: the regression suite, the cross-engine differential, the libc
+differential, SQLite's acceptance, Fortran's suite, every COBOL gate, the
+dBASE interpreter over majesty's reports (the same bytes), mdfix's 95-run
+parity harness.
+
+### 15. Output after input that met end-of-file was lost (Resolved 2026-10-01)
+
+C allows output directly after input when the input met end-of-file, with
+no positioning call between. Here the stream's one buffer still held the
+reader's bytes (`buf_len` > 0), `fwrite` put the new bytes into it, and
+`internal_flush` only writes a buffer it takes for the writer's (`buf_len`
+== 0): `fputs` after reading `abc` to the end left `abc`. `fwrite` now
+hands the buffer over first, and puts the host's position back over
+anything read ahead but not read. Found writing the test for 14;
+`regression/tests/stdio-turn`.
+
+### 16. `fseek(f, n, SEEK_CUR)` counted from the read-ahead (Resolved 2026-10-01)
+
+The host's position is the end of what was read into the buffer, and the
+seek was passed through relative to that: after one `fgetc` of a 100-byte
+file, `fseek(f, 0, SEEK_CUR)` went to byte 100. The offset is now taken
+from where the program is -- less the read-ahead, and less one for a
+character put back (`ftell` already counted both). `stdio-turn`, and the
+random seeks of `stdio-short-paths`.
+
+### 17. `ftell` on a stream opened for append (Resolved 2026-10-01)
+
+`fopen(..., "a")` left the host's position at zero; writes went to the end
+all the same, but `ftell` counted from zero and reported the bytes written
+since the open as if the file had been empty. An append stream is now
+positioned at the end when it is opened (`"a+"`, which reads from the
+beginning, is left). `stdio-short-paths` found it once its seeks were in.
+
+### 18. The self-hosted libc's stdio has no buffer at all (Open)
+
+Not this library: `selfhost/stage08/libc/stdio.c`, which the kit's tools
+link. Every `fputc`, `fwrite`, `fgetc` and `fread` there is a `write` or
+`read` -- a request to the host for each call. Noted while looking for
+where a second copy of 14 would be needed (it is not: programs built by
+`cobol/compile.sh` link this directory's archive on every host). A buffer
+there is the same kind of win for cc, as and ld on the emulator.
+

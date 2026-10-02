@@ -1,0 +1,5 @@
+written: 424619 bytes, sum 1106386406, errors 0
+read back: errors 0
+appended: 628757 bytes, sum 901643447, errors 0
+in place: 628757 bytes, sum 2293598336, errors 0
+stdio short paths: all checks passed
