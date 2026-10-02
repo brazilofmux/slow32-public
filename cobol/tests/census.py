@@ -38,7 +38,7 @@ import sys
 from collections import Counter, defaultdict
 
 FIELDS = ["unit", "line", "level", "name", "shape", "section", "category", "usage", "picture",
-          "size", "refs", "flags", "verbs", "gverbs", "averbs", "value"]
+          "size", "refs", "flags", "verbs", "gverbs", "averbs", "value", "pins", "native"]
 VERDICTS = ["alone", "group, item by item", "group", "alias", "address", "storage", "not named"]
 NUMERIC = {"binary-int", "binary-int8", "binary-dec", "binary-other", "display-int", "display-sint",
            "display-dec", "packed-int", "packed-dec", "float", "national-num"}
@@ -149,6 +149,29 @@ def report(name, items):
                 tail = "   %d / %d" % (c[2], c[3]) if cat in NUMERIC else ""
                 print("    %-16s %8d %s   %9d %s%s" % (cat, c[0], pct(c[0], ai), c[1], pct(c[1], ar), tail))
             print()
+    # written the machine's way (src/cobc/native.h): the compiler's own verdict
+    nat = [it for it in items if it.get("native") == "y"]
+    named = [it for it in items if it["verdict"] != "not named" and it["category"] != "index-name"]
+    if nat:
+        tr = sum(it["refs"] for it in named)
+        print("    written the machine's way: %d items (%s of the named), %d references (%s)"
+              % (len(nat), pct(len(nat), len(named)).strip(), sum(it["refs"] for it in nat), pct(sum(it["refs"] for it in nat), tr).strip()))
+        c = Counter(it["category"] for it in nat)
+        print("        " + ", ".join("%s %d" % kv for kv in c.most_common()))
+        held = [it for it in items if it.get("native") not in ("y", "-", "table", "unnamed")]
+        if held:
+            c = Counter(); ci = Counter(); p = Counter()
+            for it in held:
+                c[it["native"]] += it["refs"]; ci[it["native"]] += 1
+                if it["native"] == "bytes":
+                    for w in set(it["pins"].split(",")) - {"-"}:
+                        p[w.split("/")[0] if w.startswith(("inline/", "noaddr/")) else w] += it["refs"]
+            print("        integers of those kinds, not in tables, left as written: %d items, %d references, kept by:"
+                  % (len(held), sum(it["refs"] for it in held)))
+            print("        " + ", ".join("%s %d (%d)" % (k, ci[k], c[k]) for k, _ in c.most_common()))
+            if p:
+                print("        'bytes', by what used them (references): " + ", ".join("%s %d" % kv for kv in p.most_common(10)))
+        print()
     ix = [it for it in items if it["category"] == "index-name"]
     if ix:
         print("    index-names (the compiler's own cells already): %d, %d references\n" % (len(ix), sum(it["refs"] for it in ix)))

@@ -1179,6 +1179,7 @@ static void compile_nested_unit(void)
     parse_identification_division();
     parse_environment_division();
     parse_data_division();
+    native_apply();
     if (!at_word("procedure")) die_at(cur()->line, "expected PROCEDURE DIVISION, found %s", tok_desc(cur()));
     parse_procedure_division();
     g_in_proc = in_proc; memcpy(g_cur_stmt, cur_stmt, sizeof cur_stmt);

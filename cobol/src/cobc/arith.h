@@ -439,6 +439,7 @@ static void emit_mul10(const char *acc)
 static void emit_dec_load(Sym *s, const char *areg, const char *hi, const char *lo, const char *sg)
 {
     int D = s->pi.digits, split = D > 9 ? D - 9 : 0;
+    cen_bless(s);                               /* its number, digit by digit (its store, emit_dec_store, uses the same address) */
     emit("\tadd %s, r0, r0", hi);
     emit("\tadd %s, r0, r0", lo);
     if (s->usage == U_DISPLAY) {

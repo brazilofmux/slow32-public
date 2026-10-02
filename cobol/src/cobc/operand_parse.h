@@ -863,6 +863,7 @@ static int ref_needs_call(const Ref *r)
  * only known at run time */
 static int ref_static_len(const Ref *r)
 {
+    if (g_cen_on) cen_pin(r->sym, "length");    /* how many bytes it has is asked: as it is written */
     if (!r->rm) return r->sym->size;
     if (r->rm_bit) return r->rm_start ? (int)((r->sym->bitoff + r->rm_start - 1) % 8 + r->rm_len + 7) / 8   /* the bytes the bits span */
                                       : (int)(r->rm_len + 7) / 8 + 1;                                          /* at most, from a computed bit */
@@ -889,6 +890,7 @@ static void emit_load_int(Sym *s, const char *areg, const char *dreg)
      * stores of those are not marked: what they leave is the store's own
      * business, and a register is not trusted to follow it) */
     int m = mark_unit('L', (int)(s - g_sym), dreg, areg);
+    cen_valued(s, areg);
     emit_load_int_1(s, areg, dreg);
     mark_end(m);
 }
@@ -928,6 +930,7 @@ static void emit_store_int_1(Sym *s, const char *areg, const char *vreg);
 static void emit_store_int(Sym *s, const char *areg, const char *vreg)
 {
     int m = is_display_int(s) ? 0 : mark_unit('S', (int)(s - g_sym), vreg, areg);
+    cen_valued(s, areg);
     emit_store_int_1(s, areg, vreg);
     mark_end(m);
 }
@@ -961,6 +964,7 @@ static void emit_item_addr(const char *reg, Sym *s, int off)
          * the item's own and not an element's or a part's */
         g_la.sym = off == s->offset ? (int)(s - g_sym) : -1; g_la.off = off;
         snprintf(g_la.reg, sizeof g_la.reg, "%s", reg);
+        cen_formed(s, reg);
         return;
     }
     emit_la(reg, rec->label);
@@ -982,6 +986,7 @@ static void emit_item_addr(const char *reg, Sym *s, int off)
     }
     if (off >= -2048 && off <= 2047) { if (off) emit("\taddi %s, %s, %d", reg, reg, off); }
     else { emit_li("r2", off); emit("\tadd %s, %s, r2", reg, reg); }
+    cen_formed(s, reg);
 }
 
 static int ref_has_runtime_sub(const Ref *r)

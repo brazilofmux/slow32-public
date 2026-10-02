@@ -88,6 +88,7 @@ typedef struct Sym {
     int  is_global;                 /* GLOBAL (or under a GLOBAL item / a GLOBAL FD): contained programs see it */
     int  is_external;               /* EXTERNAL record (or a record of an EXTERNAL FD): storage shared by name, through a cell */
     int  is_rename;                 /* level 66: another name for a range of the record, resolved after layout */
+    int  native;                    /* stands alone, and is written the machine's way in place of the way its entry says (native.h) */
     char rn_a[64], rn_b[64]; char rn_aq[8][64], rn_bq[8][64]; int rn_naq, rn_nbq;
     /* records */
     unsigned char *image; int image_size;
@@ -102,7 +103,7 @@ typedef struct Sym {
  * order.  COMP-5, the native usages and RETURN-CODE (a C int the run unit
  * shares) are always the machine's order. */
 static int g_bin_native;
-static int sym_be(const Sym *s) { return (s->usage == U_BINARY && !s->is_rc && !g_bin_native) || s->uvar == UV_COMPX; }   /* COMP-X always (MF) */
+static int sym_be(const Sym *s) { return (s->usage == U_BINARY && !s->is_rc && !g_bin_native && !s->native) || s->uvar == UV_COMPX; }   /* COMP-X always (MF) */
 static int sym_in_strong(const Sym *s);
 static Sym *odo_table_for(Sym *s);
 static void value_rules(void);
@@ -191,14 +192,19 @@ enum { CEN_RM = 1,          /* reference-modified: its bytes are looked at */
        CEN_HDR = 2048,      /* in the PROCEDURE DIVISION header */
        CEN_ODO = 4096,      /* the object of an OCCURS DEPENDING ON */
        CEN_PLAIN = 8192 };  /* (g_cen_ctx only: a use like any other) */
-typedef struct { int refs; unsigned flags; unsigned long long verbs; } Cen;
-static const char *g_cen_dir;                   /* where the census is written; NULL, none is taken */
+typedef struct { int refs; unsigned flags; unsigned long long verbs, pins; } Cen;
+static const char *g_cen_dir;                   /* where the census is written, or NULL */
+static int g_cen_on;                            /* the census is being taken: for that directory, or to choose representations (native.h) */
 static Cen *g_cen; static int g_cen_cap;        /* by symbol index */
 static int *g_cen_tok; static int g_cen_ntok;   /* by token index: 1 + the symbol counted there, so a statement parsed twice counts once */
 static unsigned g_cen_ctx;                      /* how the names being resolved are used, when not as operands */
 static int g_cen_in_ref;                        /* inside parse_ref */
 static char g_cen_verb[64][16]; static int g_cen_nverb;
 static char g_cur_stmt[16];                     /* (defined with the statement's state) */
+static const Tok *g_stmt_tok;                   /* (likewise: the statement's first token) */
+static int *g_cen_named, g_cen_nnamed, g_cen_namedcap;     /* the items named since the outermost statement began, one entry a name */
+static int *g_cen_addr, g_cen_naddr, g_cen_addrcap;        /* ... and the items whose address was formed, one entry a time */
+static int g_noemit;                                        /* (emit.h) */
 static Cen *cen_of(const Sym *s)
 {
     int i = (int)(s - g_sym);
@@ -213,7 +219,7 @@ static Cen *cen_of(const Sym *s)
 }
 static void cen_flag(const Sym *s, unsigned f)
 {
-    if (g_cen_dir && s >= g_sym && s < g_sym + g_nsym) cen_of(s)->flags |= f;
+    if (g_cen_on && s >= g_sym && s < g_sym + g_nsym) cen_of(s)->flags |= f;
 }
 /* a name resolved for a statement */
 static void cen_ref(const Sym *s)
@@ -229,10 +235,131 @@ static void cen_ref(const Sym *s)
         g_cen_tok[g_tp] = (int)(s - g_sym) + 1;
     }
     c->refs++;
+    {   /* named in this statement: its address is owed (cen_stmt_owed) */
+        const Sym *it = s->is_cond && s->parent >= 0 ? &g_sym[s->parent] : s;
+        if (g_cen_nnamed == g_cen_namedcap) { g_cen_namedcap = g_cen_namedcap ? 2 * g_cen_namedcap : 256; g_cen_named = realloc(g_cen_named, (size_t)g_cen_namedcap * sizeof *g_cen_named); }
+        g_cen_named[g_cen_nnamed++] = (int)(it - g_sym);
+    }
     int v = 0;
     while (v < g_cen_nverb && strcmp(g_cen_verb[v], g_cur_stmt)) v++;
     if (v == g_cen_nverb && v < 63) snprintf(g_cen_verb[g_cen_nverb++], 16, "%s", g_cur_stmt[0] ? g_cur_stmt : "-");
     c->verbs |= 1ULL << (v < 63 ? v : 63);
+}
+
+/* What is done with an item's bytes.  The census above says who can
+ * reach an item; this says whether the ones who do care how it is
+ * written.  An item's address is formed in one place (emit_item_addr).
+ * What follows decides: a load or a store of its value in line
+ * (emit_load_int, emit_store_int) is a use of the number and of nothing
+ * else; a call of a runtime routine known to read or write it as a
+ * number, by its own descriptor, likewise (cen_value_fn); anything else
+ * -- another routine, bytes copied in line, the statement ending with
+ * the address unused -- is a use of the bytes, and the item is pinned to
+ * the form it was written in, with what did it.  What is not known to
+ * be a use of the number is taken for a use of the bytes. */
+typedef struct { const Sym *s; char reg[4]; int at; } CenPend;
+static CenPend g_cen_pend[32]; static int g_cen_npend;      /* addresses formed, not yet accounted for: whose, in which register, where in the code */
+static int g_cen_hold;                                      /* >0: addresses formed now are accounted for by the one forming them */
+static char g_cen_why[64][28]; static int g_cen_nwhy;       /* what pinned: a routine's name, "inline/VERB", ... */
+static struct { int a, b; } *g_cen_edge; static int g_cen_nedge, g_cen_edgecap;   /* a copied to b byte for byte: one form for both */
+static char **g_asm; static int g_nasm;                     /* (the code, emit.h) */
+static void cen_pin(const Sym *s, const char *why)
+{
+    if (!(s >= g_sym && s < g_sym + g_nsym)) return;
+    static int trace = -1;
+    if (trace < 0) trace = getenv("S32_CEN_TRACE") != NULL;      /* with -fno-native-items: the child's stderr goes nowhere */
+    if (trace) fprintf(stderr, "census: %s pinned by %s (line %d)\n", s->name, why, g_stmt_tok ? g_stmt_tok->line : 0);
+    int v = 0;
+    while (v < g_cen_nwhy && strcmp(g_cen_why[v], why)) v++;
+    if (v == g_cen_nwhy && v < 63) snprintf(g_cen_why[g_cen_nwhy++], sizeof g_cen_why[0], "%s", why);
+    cen_of(s)->pins |= 1ULL << (v < 63 ? v : 63);
+}
+/* s's address has just been put in reg */
+static void cen_formed(const Sym *s, const char *reg)
+{
+    if (!g_cen_on) return;
+    if (!g_noemit) {
+        if (g_cen_naddr == g_cen_addrcap) { g_cen_addrcap = g_cen_addrcap ? 2 * g_cen_addrcap : 256; g_cen_addr = realloc(g_cen_addr, (size_t)g_cen_addrcap * sizeof *g_cen_addr); }
+        g_cen_addr[g_cen_naddr++] = (int)(s - g_sym);
+    }
+    if (g_cen_hold) return;
+    if (g_cen_npend == 32) { cen_pin(s, "many"); return; }
+    CenPend *p = &g_cen_pend[g_cen_npend++];
+    p->s = s; p->at = g_nasm; snprintf(p->reg, sizeof p->reg, "%s", reg);
+}
+/* has the code since line `at` left reg alone: not named in any line */
+static int cen_untouched(int at, const char *reg)
+{
+    if (at > g_nasm) return 0;                  /* the code was cut away since: not known */
+    size_t n = strlen(reg);
+    for (int i = at; i < g_nasm; i++)
+        for (const char *q = g_asm[i]; g_asm[i][0] != '#' && (q = strstr(q, reg)) != NULL; q += n)
+            if (!(q[n] >= '0' && q[n] <= '9') && !(q > g_asm[i] && (isalnum((unsigned char)q[-1]) || q[-1] == '_' || q[-1] == '.'))) return 0;
+    return 1;
+}
+static void cen_drop(int i) { for (; i + 1 < g_cen_npend; i++) g_cen_pend[i] = g_cen_pend[i + 1]; g_cen_npend--; }
+/* the address of s in reg is used now for a load or a store of its
+ * value: the latest one formed there, and nothing has used the register
+ * since */
+static void cen_valued(const Sym *s, const char *reg)
+{
+    for (int i = g_cen_npend - 1; i >= 0; i--)
+        if (g_cen_pend[i].s == s && !strcmp(g_cen_pend[i].reg, reg)) {
+            if (cen_untouched(g_cen_pend[i].at, reg)) cen_drop(i);
+            return;
+        }
+}
+/* the one emitting knows the latest address of s formed goes to a use
+ * of its value */
+static void cen_bless(const Sym *s)
+{
+    for (int i = g_cen_npend - 1; i >= 0; i--)
+        if (g_cen_pend[i].s == s) { cen_drop(i); return; }
+}
+static int cen_value_fn(const char *fn);
+static void cen_called(const char *fn)
+{
+    if (!g_cen_npend) return;
+    if (cen_value_fn(fn)) {
+        /* the item is the first argument: the latest address formed in r3 */
+        for (int i = g_cen_npend - 1; i >= 0; i--)
+            if (!strcmp(g_cen_pend[i].reg, "r3")) {
+                if (cen_untouched(g_cen_pend[i].at, "r3")) cen_drop(i);
+                break;
+            }
+        return;
+    }
+    for (int i = 0; i < g_cen_npend; i++) cen_pin(g_cen_pend[i].s, fn);
+    g_cen_npend = 0;
+}
+static void cen_stmt_end(void)
+{
+    char why[28]; snprintf(why, sizeof why, "inline/%s", g_cur_stmt);
+    for (int i = 0; i < g_cen_npend; i++) cen_pin(g_cen_pend[i].s, why);
+    g_cen_npend = 0;
+}
+/* A statement that names an item and never forms its address has used
+ * something else of it -- its length, its description -- and that is
+ * not its number: every name owes an address.  n0, a0: where the
+ * statement's names and addresses begin. */
+static void cen_stmt_owed(int n0, int a0, int outermost)
+{
+    for (int i = n0; i < g_cen_nnamed; i++) {
+        int s = g_cen_named[i], named = 0, formed = 0, first = 1;
+        for (int k = n0; k < g_cen_nnamed; k++) if (g_cen_named[k] == s) { if (k < i) first = 0; named++; }
+        if (!first) continue;
+        for (int k = a0; k < g_cen_naddr; k++) if (g_cen_addr[k] == s) formed++;
+        if (formed < named) { char why[28]; snprintf(why, sizeof why, "noaddr/%s", g_cur_stmt); cen_pin(&g_sym[s], why); }
+    }
+    if (outermost) g_cen_nnamed = g_cen_naddr = 0;
+}
+/* a's bytes are copied to b's as they are (a MOVE between items of one
+ * description): the two are written the same way, whichever way */
+static void cen_same(const Sym *a, const Sym *b)
+{
+    if (!g_cen_on) return;
+    if (g_cen_nedge == g_cen_edgecap) { g_cen_edgecap = g_cen_edgecap ? 2 * g_cen_edgecap : 64; g_cen_edge = realloc(g_cen_edge, (size_t)g_cen_edgecap * sizeof *g_cen_edge); }
+    g_cen_edge[g_cen_nedge].a = (int)(a - g_sym); g_cen_edge[g_cen_nedge].b = (int)(b - g_sym); g_cen_nedge++;
 }
 
 static int g_lk_check;              /* -std=85, in a PROCEDURE DIVISION after its USING: references to LINKAGE are checked */
@@ -274,7 +401,7 @@ static Sym *sym_lookup(const char *name, char **quals, int nq, int line)
     }
     if (nfound > 1) die_at(line, "'%s' is ambiguous; qualify it with OF/IN", name);
     if (g_lk_check && g_in_proc && found->is_linkage) lk_reference(found, line);
-    if (g_cen_dir && g_in_proc) cen_ref(found);
+    if (g_cen_on && g_in_proc) cen_ref(found);
     return found;
 }
 

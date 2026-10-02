@@ -1051,6 +1051,7 @@ static void emit_display_encode(int n, const char *areg, const char *vreg)
 static void emit_display_value(const Ref *r)
 {
     emit_ref_addr(r, "r3");
+    cen_valued(r->sym, "r3");
     emit_display_decode(r->sym->pi.digits, "r3", "r1");
 }
 

@@ -387,6 +387,8 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-fno-hot-arith")) g_nohx = 1;
         else if (!strcmp(argv[i], "-fno-loop-reg")) g_noloopreg = 1;
         else if (!strcmp(argv[i], "-fno-avail-reg")) g_noavailreg = 1;
+        else if (!strcmp(argv[i], "-fno-native-items")) g_native_on = 0;
+        else if (!strcmp(argv[i], "-fnative-items")) g_native_on = 1;
         else if (!strcmp(argv[i], "-fprofile-lines")) g_proflines = 1;
         else if (!strcmp(argv[i], "-dialect=mf")) g_dialect_mf = 1;
         else if (!strncmp(argv[i], "-dialect=", 9)) { fprintf(stderr, "s32-cobc: %s: the one dialect is mf (docs/behavior-points.md)\n", argv[i]); return 2; }
@@ -410,6 +412,11 @@ int main(int argc, char **argv)
     g_file = in;
     g_cen_dir = getenv("S32_CENSUS_DIR");
     if (g_cen_dir && !g_cen_dir[0]) g_cen_dir = NULL;
+    if (g_cen_dir) g_cen_on = 1;
+    {   /* S32_NATIVE_ITEMS=0: -fno-native-items for every compile of a build that passes no flags through */
+        const char *e = getenv("S32_NATIVE_ITEMS");
+        if (e && !strcmp(e, "0")) g_native_on = 0;
+    }
 
     char outbuf[1024];
     if (!out) {
@@ -429,9 +436,10 @@ int main(int argc, char **argv)
     if (g_free && g_std < 2002 && g_ntok) bp(BP_E11_FREE_FORMAT, g_tok[0].line);
     expand_types();
     prog_tree_scan();
+    native_prepass();
 
     if (g_fnsig_only) g_noemit = 1;         /* signatures only: no code, no output file */
-    else {
+    else if (!g_native_child) {
         g_out = fopen(out, "w");
         if (!g_out) { fprintf(stderr, "s32-cobc: cannot write %s\n", out); return 1; }
         g_out_path = out;
@@ -449,6 +457,7 @@ int main(int argc, char **argv)
         parse_identification_division();
         parse_environment_division();
         parse_data_division();
+        native_apply();
         if (!at_word("procedure")) die_at(cur()->line, "expected PROCEDURE DIVISION, found %s", tok_desc(cur()));
         parse_procedure_division();
         if (!g_nerrors && !g_fnsig_only) emit_unit_data();   /* nothing is generated once anything has failed */
@@ -456,6 +465,7 @@ int main(int argc, char **argv)
         if (!g_saw_end_program) die_at(cur()->line, "unexpected %s after the program (a further program needs END PROGRAM before it)", tok_desc(cur()));
         g_unit = ++g_unit_counter;
     }
+    if (g_native_child) _exit(0);           /* the census is taken: the parent has it */
     if (g_nerrors) fail();
     if (g_fnsig_only) return 0;
     emit_rodata();

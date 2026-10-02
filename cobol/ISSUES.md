@@ -5460,3 +5460,57 @@ storage that is a file's or a caller's (17.1%), an address given away
 changes no code: 1,506 programs compile to the same assembly with it
 on (`tests/asm-snapshot.sh`).  Harness gate 1g: two programs holding
 every shape that decides a verdict, against the lines expected.
+
+Second (2026-10-02): integers that stand alone are written the
+machine's way (`src/cobc/native.h`; the plan's step 2).  An unsigned
+DISPLAY integer of nine digits or fewer is stored as a binary byte,
+halfword or word in the first bytes of its place, a COMP item of a word
+or less in the machine's byte order; the picture still limits it.  The
+item must stand alone, start as a number, and have every use of it be
+a use of its number: an address formed and followed by anything but a
+load or store of the value, or a runtime routine read for this and
+listed (`cen_value_fn`), pins the item, as does a statement that names
+it without forming its address, or a rule that wants DISPLAY; two
+items of one description copied or compared byte for byte (GitHub #27)
+change together or not at all.  What is not known to be a use of the
+number is taken for a use of the bytes.  The verdict needs the whole
+PROCEDURE DIVISION, so a child of the compiler (`fork`) takes the
+census of the program as written and the parent changes the items
+before it compiles a statement.
+
+4,554 items in the corpora, 13.6% of the references.  csv2fw 3.955 G
+instructions -> 3.873 G, 272 ms -> 266; kseq -3.8%, kstring -2.2%,
+ksearch -1.6%, kreport -1.5%, the other kernels under 1%.  Small,
+because stage 3 already held the hot integers in registers; the
+measurement of what is next is in `docs/plans/census.md`: karith's
+decimals as binary are a fifth of its time, and the rest is the
+arithmetic's code.
+
+Checks.  `-fno-native-items` is the oracle: `tests/gen/gen-native.py`,
+300 programs the same both ways (harness gen/native: 60), and forty of
+each of the other eleven generators.  `tests/census_test.c` (gate 1h):
+the address rule on events written for it, 38 checks; 17 mutants of
+it, 15 caught, 2 that change nothing an item can show.  Forty-two
+mutants of the verdict and of the pins against the generator: 20
+caught.  Of the 22 that were not: 13 leave another guard on the same
+use standing (a group's VALUE is also an overlapping VALUE; STRING's
+operand is pinned by the rule, by its routine and by its length being
+asked) -- with the guards on VALUE, on LENGTH, on UNSTRING or on
+reference modification removed together, the generator fails; 2 guard
+VALUEs the
+compiler refuses before they are reached; 2 are the unit test's
+(caught there); 3 widen a blessing no generated statement reaches; 1
+is the harness's (a program with errors compiles as written:
+bad/unstring-operands); and 1 lets a class test through, which changes
+no output -- an item that only ever holds a number is always NUMERIC.
+The generator's first forty programs found a hole every gate had
+passed: an item laid over an alphanumeric one starts as spaces.
+With the switch off, 1,506 programs compile to the assembly they did
+before (`tests/asm-snapshot.sh`).
+
+Not done: decimals (scaled binary, moved out of the record where the
+bytes are too few), tables, LOCAL-STORAGE, groups named only by
+INITIALIZE; and the largest reason an integer stays as written, a
+partner of the same picture that must (6,570 references), which is a
+ruling about what a copy between numeric items carries, not an
+analysis.

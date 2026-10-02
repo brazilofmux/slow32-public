@@ -18,6 +18,7 @@ static void str_operand(const Opnd *o)
     if (x->usage != U_DISPLAY && x->usage != U_NATIONAL)
         die_at(o->line, "STRING: '%s' is USAGE %s; an operand is usage display%s (%s)", x->name, usage_name(x->usage), e85 ? "" : " or national",
                e85 ? "X3.23-1985 STRING rule 2" : "2023 14.9.43.3 rule 1");
+    if (is_numeric_sym(x)) cen_pin(x, "STRING");    /* its characters */
     if (!o->ref.rm && is_numeric_sym(x) && !is_int_item(x))
         die_at(o->line, "STRING: '%s' is numeric but not an integer without P (%s)", x->name, e85 ? "X3.23-1985 STRING rule 6" : "2023 14.9.43.3 rule 8");
 }
@@ -170,6 +171,7 @@ static void unstr_receiver(const Ref *r)
     const char *rule = e85 ? "X3.23-1985 UNSTRING rule 3" : "2023 14.9.48.3 rule 4";
     int ok = x->usage == U_DISPLAY ? (c == PIC_ALPHABETIC || c == PIC_ALPHANUMERIC || c == PIC_NUMERIC)
            : x->usage == U_NATIONAL ? (c == PIC_NATIONAL || c == PIC_NUMERIC) : 0;
+    if (ok && c == PIC_NUMERIC) cen_pin(x, "UNSTRING");     /* a receiver is usage display */
     if (!ok)
         die_at(r->line, "UNSTRING: the receiver '%s' is %s%s; a receiver is alphabetic, alphanumeric or numeric%s (%s)", x->name,
                x->usage != U_DISPLAY && x->usage != U_NATIONAL ? "USAGE " : "", x->usage != U_DISPLAY && x->usage != U_NATIONAL ? usage_name(x->usage) : pic_category_name(c),

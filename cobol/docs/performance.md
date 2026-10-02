@@ -1053,3 +1053,68 @@ was of a number would not work it out at all.
   caught; the one that survived removed a line that did nothing, and
   the line is gone.
 
+
+## 2026-10-02, evening: integers that stand alone, written the machine's way
+
+The first step of the road to HIR that changes code
+(`docs/plans/census.md`, step 2; cobol ISSUES-123).  The census found
+that half of what the statements name stands alone.  An integer among
+those whose every use is a use of its number -- no statement takes its
+bytes -- is now stored as a binary word in the machine's byte order,
+whatever its entry says: `PIC 9(4)` is four bytes of binary, not four
+digits, and a COMP item is not swapped on its way in and out.  The
+picture still limits it.  4,554 items in the corpora, 13.6% of the
+references; 20 in csv2fw.
+
+| | before | after |
+|---|---:|---:|
+| csv2fw, instructions | 3.955 G | 3.873 G |
+| csv2fw | 272 ms | 266 ms |
+| kseq | 205 ms | 198 ms |
+| kstring | 252 ms | 246 ms |
+| ksearch | 252 ms | 248 ms |
+| kreport | 317 ms | 312 ms |
+| karith, kedit, kidx, kmove, ksort | | under 1% |
+
+A small gain, and expected to be once stage 3 had the hot integers in
+registers: what was left of an integer's cost was its store.  The step
+is the mechanism -- which items, decided how, known when -- and the
+measurement of what to give it next:
+
+- karith with its COMP-3 and DISPLAY decimals declared COMP in the
+  machine's order runs 8.31 G instructions for 11.13 G and 329 ms for
+  410.  A fifth of that kernel is how its numbers are written, and
+  every one of its items stands alone.
+- What remains then is 4,155 instructions a pass for seven statements:
+  the arithmetic, done by pushing and popping a stack of 64-bit
+  numbers through the runtime.  That is not the data's to fix.
+
+`-fno-native-items` turns it off; `S32_NATIVE_TRACE=1` lists the items
+changed; `S32_CEN_TRACE=1` (with the switch off) says what pinned each
+item that was not, and at which statement.
+
+### How it knows
+
+The compiler emits as it reads, and whether an item may change is
+known only at the program's end.  The compiler forks: the child
+compiles the program as written with the census on and sends back the
+items; the parent changes them before any statement is compiled.
+
+An item may change when it stands alone (the census), starts as a
+number, and every use of it is a use of its number.  The last is
+decided where the item's address is formed: followed by a load or
+store of its value, or by a runtime routine that takes it as a number,
+it is a use of the number; followed by anything else it is a use of
+the bytes.  Two items of one description that are copied or compared
+byte for byte change together or not at all.
+
+### What checks it
+
+- `-fno-native-items` is the oracle: `tests/gen/gen-native.py`, 300
+  programs the same both ways, 60 of them in the harness (gen/native);
+  the other eleven generators, forty programs each, the same.
+- `tests/census_test.c`, harness gate 1h: the address rule on events
+  written for it, 38 checks.
+- Mutants: cobol ISSUES-123.
+- Off, it changes nothing: 1,506 programs compile to the assembly they
+  did before.

@@ -324,7 +324,7 @@ static void parse_ref_1(Ref *r);
 /* an identifier: parsed, and counted by the census */
 static void parse_ref(Ref *r)
 {
-    if (!g_cen_dir) { parse_ref_1(r); return; }
+    if (!g_cen_on) { parse_ref_1(r); return; }
     unsigned ctx = g_cen_ctx;
     g_cen_ctx = 0; g_cen_in_ref++;
     parse_ref_1(r);

@@ -458,7 +458,8 @@ static void emit_move(Opnd *src, Ref *dst)
     if (src->kind == O_REF && !src->ref.rm && !dst->rm && !src->ref.sym->is_cond &&
         sym_desc(src->ref.sym) == sym_desc(d)) {
         Arg a[2] = { arg_ref(dst), arg_ref(&src->ref) };
-        emit_copy_fixed(a, d->size);
+        cen_same(src->ref.sym, d);              /* the bytes as they are: both written one way */
+        g_cen_hold++; emit_copy_fixed(a, d->size); g_cen_hold--;
         return;
     }
     if (src->kind == O_REF && src->ref.sym->is_group && !src->ref.rm && !dst->rm && !src->ref.sym->is_cond) {
@@ -624,7 +625,9 @@ static void emit_move(Opnd *src, Ref *dst)
                 return;
             }
             Arg a[4] = { arg_ref(&src->ref), arg_desc(sym_desc(s)), arg_ref(dst), arg_desc(sym_desc(d)) };
-            emit_args(a, 4); emit_call("cob_move");
+            emit_args(a, 4);
+            if (is_numeric_sym(s) && d->pi.category == PIC_ALPHANUMERIC && !sym_bitlike(d) && d->usage == U_DISPLAY) cen_bless(s);   /* its digits, made of its value (num_to_digits) */
+            emit_call("cob_move");
             return;
         }
         }
@@ -637,6 +640,7 @@ static void emit_move(Opnd *src, Ref *dst)
         return;
     }
     if (src->kind == O_FIG || src->kind == O_ALL) {
+        cen_pin(d, "figurative");                   /* filled, as many characters as it has */
         if (d->usage != U_DISPLAY) die_at(src->line, "%s cannot be moved to the %s item '%s'", src->tok->s, usage_name(d->usage), d->name);
         if (src->kind == O_ALL) { emit_move_all_numeric(src, dst, d->size); return; }
         Arg a[3] = { arg_ref(dst), arg_imm(d->size), arg_imm(fig_byte(src->tok->s)) };
@@ -668,7 +672,7 @@ static void emit_move(Opnd *src, Ref *dst)
         unsigned char lb[32]; int ln;
         if (!g_nohx && !dst->rm && move_lit_bytes(src, d, lb, &ln)) {
             Arg c[2] = { arg_ref(dst), arg_label(lit_label(lb, ln)) };
-            emit_copy_fixed(c, ln);
+            g_cen_hold++; emit_copy_fixed(c, ln); g_cen_hold--;     /* a number stored: its bytes worked out here */
             return;
         }
     }
@@ -677,6 +681,9 @@ static void emit_move(Opnd *src, Ref *dst)
     opnd_args(src, &a[0], &a[1], d->size, 1);
     a[2] = da; a[3] = dd;
     emit_args(a, 4);
+    /* a numeric receiver: cob_move stores a number in it, from a number or from text read as one */
+    cen_bless(d);
+    if (src->kind == O_REF && is_numeric_sym(src->ref.sym) && !src->ref.rm) cen_bless(src->ref.sym);
     emit_call("cob_move");
 }
 

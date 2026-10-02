@@ -32,7 +32,12 @@ static void parse_statement(void)
         emit("\t.globl __ln_%d_%d", cur()->line, seq);
         emit("__ln_%d_%d:", cur()->line, seq); seq++;
     }
+    static int cen_depth;
+    int cn0 = g_cen_nnamed, ca0 = g_cen_naddr;
+    cen_depth++;
     parse_statement_1();
+    cen_depth--;
+    if (g_cen_on) { cen_stmt_end(); cen_stmt_owed(cn0, ca0, cen_depth == 0); }
     if (g_stmt_convcheck) {
         int Lok = new_label();
         emit_call("cob_fn_conv_bad");

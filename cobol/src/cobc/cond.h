@@ -119,6 +119,7 @@ static void rel_rules(const Opnd *x, const Opnd *y, int line)
         if (!integer)
             die_at(line, "a noninteger numeric operand is not compared with a nonnumeric one (%s)",
                    g_std < 2002 ? "X3.23-1985 6.3.1.1.2 (3)" : "2023 8.8.4.2.5");
+        if (n->kind == O_REF) cen_pin(n->ref.sym, "nonnumeric");    /* compared as characters */
         if (n->kind == O_REF && n->ref.sym->usage != U_DISPLAY && n->ref.sym->usage != U_NATIONAL)
             die_at(line, "'%s' is compared with a nonnumeric operand, so it must be of usage DISPLAY (%s)", n->ref.sym->name,
                    g_std < 2002 ? "X3.23-1985 6.3.1.1.2: the same usage" : "2023 8.8.4.2.5");
@@ -755,10 +756,13 @@ static void emit_cond_value(Cond *c)
         if (g_slot_base >= NSLOTS) die_at(c->x.line, "internal: no frame slot for a compare");
         int t = g_slot_base++;
         Opnd *ox = &c->x, *oy = &c->y;
+        int same = ox->kind == O_REF && oy->kind == O_REF && cmp_is_bytewise(ox, oy);
+        if (same) { cen_same(ox->ref.sym, oy->ref.sym); g_cen_hold++; }     /* two items of one description: equal bytes, equal values -- if both are written one way */
         if (ox->kind == O_REF) emit_ref_addr(&ox->ref, "r3"); else emit_la("r3", lit_label((const unsigned char *)ox->tok->s, ox->tok->len));
         emit("\tstw sp+%d, r3", SLOT(t));
         if (oy->kind == O_REF) emit_ref_addr(&oy->ref, "r4"); else emit_la("r4", lit_label((const unsigned char *)oy->tok->s, oy->tok->len));
         emit("\tldw r3, sp+%d", SLOT(t));
+        if (same) g_cen_hold--;
         g_slot_base--;
         emit("\tadd r1, r0, r0");
         for (long o = 0; o < n; ) {
@@ -776,7 +780,11 @@ static void emit_cond_value(Cond *c)
             a[k] = o->kind == O_REF ? arg_ref(&o->ref) : arg_label(lit_label((const unsigned char *)o->tok->s, o->tok->len));
         }
         a[2] = arg_imm(c->x.kind == O_REF && !c->x.ref.rm ? (long)c->x.ref.sym->size : c->x.kind == O_REF ? (long)c->x.ref.rm_len : c->x.tok->len);
-        emit_args(a, 3); emit_call("memcmp");
+        int same = cmp_is_bytewise(&c->x, &c->y);
+        if (same) { cen_same(c->x.ref.sym, c->y.ref.sym); g_cen_hold++; }
+        emit_args(a, 3);
+        if (same) g_cen_hold--;
+        emit_call("memcmp");
         switch (c->op) {
         case R_EQ: emit("\tseq r1, r1, r0"); break;
         case R_NE: emit("\tsne r1, r1, r0"); break;

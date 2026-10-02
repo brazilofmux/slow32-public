@@ -154,20 +154,147 @@ already, so a chosen layout starts where the written one did.
 - LOCAL-STORAGE items are sorted like WORKING-STORAGE ones.  Standing
   alone, they are the easiest case of all: an activation's own value.
 
+## Step 2: integers written the machine's way (2026-10-02)
+
+An integer that stands alone, and whose every use is a use of its
+number, is no longer stored as its entry says.  An unsigned DISPLAY
+integer of nine digits or fewer becomes a binary one -- a byte for one
+digit, two bytes for two or three, four from there up -- in the first
+bytes of the place it had; a COMP item of a word or less keeps its
+bytes and loses its byte order.  Its picture still says how many
+digits it holds: a store truncates to them and a size error is raised
+by them, as before.  The record keeps its length and every other item
+its place.  `-fno-native-items` (or `S32_NATIVE_ITEMS=0` in the
+environment) leaves every item as written.
+
+### What must be true of the item
+
+Standing alone is not enough.  `MOVE SPACES TO WS-N` is written, and a
+blank field moved to an item of the same picture arrives blank and is
+printed blank (the bytes are copied as they are: GitHub #27).  A
+program can see how an item is written through any statement that
+takes its bytes.  So:
+
+- **Every use is of its number.**  The item's address is formed in one
+  place in the compiler (`emit_item_addr`).  What follows decides: a
+  load or a store of its value in line (`emit_load_int`,
+  `emit_store_int`, the in-line decimal add), or a call of a runtime
+  routine read for this and known to take the item by its own
+  descriptor as a number -- `cob_push`, `cob_load_int`, `cob_get_num`,
+  the stores, `cob_display_field`, and `cob_move` where a number comes
+  out or goes in.  Anything else -- another routine, bytes copied or
+  compared in line, the statement ending with the address unused --
+  **pins** the item to the form it was written in.  What is not known
+  to be a use of the number is taken for a use of the bytes; a use
+  nobody thought of costs a speed-up, not a wrong answer.
+- **Every name owes an address.**  `FUNCTION LENGTH (X)` forms no
+  address and depends on how X is written.  A statement that names an
+  item more often than it forms its address pins it; and asking for an
+  item's length in bytes pins it wherever that is asked.
+- **Where the rules want DISPLAY, it stays DISPLAY.**  STRING's and
+  INSPECT's operands, UNSTRING's receivers, an item compared with a
+  nonnumeric operand or filled by a figurative constant or ALL literal.
+- **Items copied or compared byte for byte are written one way.**  A
+  MOVE between two items of one description copies the bytes, and a
+  relation between them compares the bytes; both take the machine's
+  form or neither does, so one that must stay as written keeps its
+  partners with it.
+- **It starts as a number.**  Its own VALUE is a numeric literal or
+  ZERO, or it has none; no group over it has a VALUE; it redefines
+  nothing (an item laid over an alphanumeric one starts as spaces);
+  its condition-names' values are numbers.
+- Not in a table, not LOCAL-STORAGE, not GLOBAL: not yet.
+
+### How the compiler comes to know before it writes
+
+The verdict needs the whole PROCEDURE DIVISION and the first
+statement's code needs the verdict, and the emitter writes code as it
+reads.  So the program is read twice: once by a child of the compiler
+(`fork`), which compiles it as written with the census on and sends
+back the items that may change, and once by the compiler itself, with
+those items changed before any statement is compiled
+(`src/cobc/native.h`).  The child is the whole compiler with nothing
+to undo.  When a unit is a tree before it is code, the tree will be
+asked instead and this goes.  A program with errors is compiled as
+written, so its messages are about what was written.
+
+### What it bought
+
+4,554 items in the corpora are written the machine's way: 11.9% of the
+named items, 13.6% of the references (3,690 DISPLAY, 864 COMP).  Of the
+integers of those kinds that are not, by references: a partner that
+must stay as written 6,570, a named group 4,331, storage not the
+program's 3,679, an address given away 2,506, a use of the bytes
+1,873, a used redefinition 1,442.
+
+| | before | after |
+|---|---:|---:|
+| csv2fw, instructions | 3.955 G | 3.873 G |
+| csv2fw, slow32-dbt | 272 ms | 266 ms |
+| kseq | 205 ms | 198 ms |
+| kstring | 252 ms | 246 ms |
+| ksearch | 252 ms | 248 ms |
+| kreport | 317 ms | 312 ms |
+| karith, kedit, kidx, kmove, ksort | | under 1% |
+
+It is a small gain, and the measurement says why.  Stage 3 had
+already put the hot integers in registers; what is left of them is the
+store.  The weight of these programs is elsewhere:
+
+- **Decimals.**  karith's items are COMP-3 and signed DISPLAY with
+  decimal places, every one standing alone.  Declared as COMP in the
+  machine's byte order instead -- what this step would make of them --
+  the kernel runs 8.31 G instructions for 11.13 G and 329 ms for 410:
+  a fifth of its time is how its numbers are written.
+- **The arithmetic itself.**  The other four fifths are not
+  representation.  After that change each pass of karith's loop is
+  still 4,155 instructions for seven statements: 327 of generated
+  code, a 152-instruction division routine, and the rest inside the
+  runtime's get and put kernels (which the DBT runs natively, so they
+  cost less than they count).  Equivalent C is a few dozen
+  instructions and some 64-bit divisions.  That is the lowering's
+  work, not the data's.
+
+### What checks it
+
+- The same compiler with `-fno-native-items` is the oracle.
+  `tests/gen/gen-native.py` writes items alone and not, used as
+  numbers and as bytes in every way above, and prints them; 300
+  programs agree (harness gen/native runs 60), and so do forty
+  programs of each of the other eleven generators.  Its first forty
+  programs found the rule about REDEFINES, which every gate had
+  passed without.
+- `tests/census_test.c` (harness gate 1h): the rule about addresses,
+  on events written for it -- the register used in between, the
+  address formed twice, a routine taking another register, code cut
+  away, a name with no address.  38 checks; of seventeen mutants of the
+  rule fifteen fail it, and the other two change nothing an item can
+  show.
+- Mutants of the verdict: see cobol ISSUES-123.
+- With the switch off, 1,506 programs compile to the assembly they did
+  before any of this.
+
 ## What follows
 
 Staged; each step is measured before the next is begun.
 
 1. **The census** -- this.
 2. **A representation of its own for items standing alone, in the
-   emitter as it is.**  An unsigned DISPLAY integer or a COMP item kept
-   as a native word in memory: no decode, no byte swap, no encode; the
-   written form is made only where a statement wants bytes (DISPLAY,
-   STRING, a MOVE to an alphanumeric item).  The analysis of stage 3
-   (`loopreg.h`) already holds such values in registers across a loop
-   and a unit; with a native cell under it, its stores are one word.
-   This is the step that says what the transformation is worth before
-   any back end is changed.
+   emitter as it is.**  Done for integers of a word or less (above).
+   Next, by what the measurement says:
+   - *Decimals.*  A packed or DISPLAY item with decimal places as a
+     scaled binary integer of four or eight bytes.  Where the bytes it
+     has are too few (a packed item of ten to thirteen digits has six
+     or seven) it is moved out of its record to a cell of its own,
+     which is the transformation in full: the record keeps a hole
+     nobody looks at.
+   - *Tables* whose rows are never moved whole, *LOCAL-STORAGE*, and
+     items under a group named only by INITIALIZE.
+   - *Partners.*  The largest single reason an integer stays as
+     written is an item of the same picture it is copied to or from.
+     Whether a copy between two numeric items of one description must
+     carry bytes that are not a number is a ruling, not an analysis
+     (IBM's NUMPROC(PFD) is the same question).
 3. **PERFORM classified.**  Which paragraphs are entered only by
    PERFORM, from where, and whether a range is ever fallen into or left
    by GO TO: the facts that let a paragraph be a procedure, or a block

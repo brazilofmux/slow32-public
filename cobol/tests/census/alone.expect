@@ -1,33 +1,33 @@
 #file	alone.cbl
-alone	10	1	f1-rec	scalar	file	alnum	display	x(20)	20	0	unref	-	-	-	-
-alone	12	77	n	scalar	working	binary-int	comp	9(4)	2	8	subscript	ADD,MOVE,PERFORM	-	-	-
-alone	13	77	unused	scalar	working	display-int	display	9(4)	4	0	unref	-	-	-	-
-alone	14	1	fs1	scalar	working	alnum	display	xx	2	0	runtime	-	-	-	-
-alone	16	5	c-a	scalar	working	binary-int	comp	9(4)	2	1	-	ADD	-	-	v
-alone	17	5	c-b	scalar	working	display-int	display	9(5)	5	1	-	ADD	-	-	-
-alone	18	5	c-c	scalar	working	packed-dec	comp-3	s9(7)v99	5	1	-	MOVE	-	-	-
-alone	20	5	i-a	scalar	working	display-int	display	9(4)	4	1	group	MOVE	INITIALIZE	-	-
-alone	21	5	i-b	scalar	working	alnum	display	x(10)	10	1	group	MOVE	INITIALIZE	-	-
-alone	23	5	m-a	scalar	working	display-int	display	9(4)	4	1	group	MOVE	MOVE	-	-
-alone	24	5	m-b	scalar	working	alnum	display	x(3)	3	0	group,unref	-	MOVE	-	-
-alone	26	5	b-text	scalar	working	alnum	display	x(8)	8	1	alias	MOVE	-	DISPLAY	-
-alone	27	5	b-num	scalar	working	display-int	display	9(8)	8	1	alias,redefines	DISPLAY	-	MOVE	-
-alone	28	5	b-other	scalar	working	alnum	display	x(4)	4	0	alias,unref	-	-	MOVE	-
-alone	29	5	b-only	scalar	working	display-int	display	9(4)	4	1	redefines	MOVE	-	-	-
-alone	31	1	ix	scalar	working	index-name	index	-	4	2	subscript	DISPLAY,SET	-	-	-
-alone	32	10	r-key	table	working	display-int	display	9(3)	3	1	-	MOVE	-	-	-
-alone	33	10	r-val	table	working	alnum	display	x(5)	5	1	alias	MOVE	-	DISPLAY	-
-alone	34	10	r-alt	table	working	display-int	display	9(5)	5	1	alias,redefines	DISPLAY	-	MOVE	-
-alone	37	10	q-key	table	working	display-int	display	9(3)	3	1	-	MOVE	-	-	-
-alone	38	10	q-val	table	working	alnum	display	x(5)	5	1	-	DISPLAY	-	-	-
-alone	40	5	rn-a	scalar	working	alnum	display	x(2)	2	1	alias	DISPLAY	-	MOVE	-
-alone	41	5	rn-b	scalar	working	alnum	display	x(2)	2	0	alias,unref	-	-	MOVE	-
-alone	42	5	rn-c	scalar	working	alnum	display	x(2)	2	2	-	MOVE,DISPLAY	-	-	-
-alone	44	1	flag	scalar	working	alnum-1	display	x	1	1	cond	IF	-	-	-
-alone	46	1	arg1	scalar	working	binary-int	comp	9(4)	2	1	call	CALL	-	-	-
-alone	47	1	arg2	scalar	working	binary-int	comp	9(4)	2	1	-	CALL	-	-	-
-alone	48	1	txt	scalar	working	alnum	display	x(30)	30	1	refmod	MOVE	-	-	-
-alone	49	1	clsd	scalar	working	display-int	display	9(3)	3	1	class	IF	-	-	-
-alone	50	1	odo-n	scalar	working	display-int	display	9(2)	2	1	odo	MOVE	-	-	-
-alone	52	5	odo-e	table	working	alnum-1	display	x	1	1	-	DISPLAY	-	-	-
-alone	54	1	ls-n	scalar	local	binary-int	comp	9(4)	2	1	-	MOVE	-	-	-
+alone	10	1	f1-rec	scalar	file	alnum	display	x(20)	20	0	unref	-	-	-	-	-	-
+alone	12	77	n	scalar	working	binary-int	comp	9(4)	2	8	subscript	ADD,MOVE,PERFORM	-	-	-	-	y
+alone	13	77	unused	scalar	working	display-int	display	9(4)	4	0	unref	-	-	-	-	-	unnamed
+alone	14	1	fs1	scalar	working	alnum	display	xx	2	0	runtime	-	-	-	-	-	-
+alone	16	5	c-a	scalar	working	binary-int	comp	9(4)	2	1	-	ADD	-	-	v	-	y
+alone	17	5	c-b	scalar	working	display-int	display	9(5)	5	1	-	ADD	-	-	-	-	y
+alone	18	5	c-c	scalar	working	packed-dec	comp-3	s9(7)v99	5	1	-	MOVE	-	-	-	-	-
+alone	20	5	i-a	scalar	working	display-int	display	9(4)	4	1	group	MOVE	INITIALIZE	-	-	-	group
+alone	21	5	i-b	scalar	working	alnum	display	x(10)	10	1	group	MOVE	INITIALIZE	-	-	cob_move_alnum	-
+alone	23	5	m-a	scalar	working	display-int	display	9(4)	4	1	group	MOVE	MOVE	-	-	-	group
+alone	24	5	m-b	scalar	working	alnum	display	x(3)	3	0	group,unref	-	MOVE	-	-	-	-
+alone	26	5	b-text	scalar	working	alnum	display	x(8)	8	1	alias	MOVE	-	DISPLAY	-	inline/MOVE	-
+alone	27	5	b-num	scalar	working	display-int	display	9(8)	8	1	alias,redefines	DISPLAY	-	MOVE	-	-	alias
+alone	28	5	b-other	scalar	working	alnum	display	x(4)	4	0	alias,unref	-	-	MOVE	-	-	-
+alone	29	5	b-only	scalar	working	display-int	display	9(4)	4	1	redefines	MOVE	-	-	-	-	redefines
+alone	31	1	ix	scalar	working	index-name	index	-	4	2	subscript	DISPLAY,SET	-	-	-	-	-
+alone	32	10	r-key	table	working	display-int	display	9(3)	3	1	-	MOVE	-	-	-	inline/MOVE	table
+alone	33	10	r-val	table	working	alnum	display	x(5)	5	1	alias	MOVE	-	DISPLAY	-	cob_move_alnum	-
+alone	34	10	r-alt	table	working	display-int	display	9(5)	5	1	alias,redefines	DISPLAY	-	MOVE	-	cob_display_nl	table
+alone	37	10	q-key	table	working	display-int	display	9(3)	3	1	-	MOVE	-	-	-	inline/MOVE	table
+alone	38	10	q-val	table	working	alnum	display	x(5)	5	1	-	DISPLAY	-	-	-	-	-
+alone	40	5	rn-a	scalar	working	alnum	display	x(2)	2	1	alias	DISPLAY	-	MOVE	-	-	-
+alone	41	5	rn-b	scalar	working	alnum	display	x(2)	2	0	alias,unref	-	-	MOVE	-	-	-
+alone	42	5	rn-c	scalar	working	alnum	display	x(2)	2	2	-	MOVE,DISPLAY	-	-	-	inline/MOVE	-
+alone	44	1	flag	scalar	working	alnum-1	display	x	1	1	cond	IF	-	-	-	inline/IF	-
+alone	46	1	arg1	scalar	working	binary-int	comp	9(4)	2	1	call	CALL	-	-	-	length,cob_content_pop	address
+alone	47	1	arg2	scalar	working	binary-int	comp	9(4)	2	1	-	CALL	-	-	-	length,cob_content_push	bytes
+alone	48	1	txt	scalar	working	alnum	display	x(30)	30	1	refmod	MOVE	-	-	-	inline/MOVE	-
+alone	49	1	clsd	scalar	working	display-int	display	9(3)	3	1	class	IF	-	-	-	cob_class	address
+alone	50	1	odo-n	scalar	working	display-int	display	9(2)	2	1	odo	MOVE	-	-	-	-	address
+alone	52	5	odo-e	table	working	alnum-1	display	x	1	1	-	DISPLAY	-	-	-	-	-
+alone	54	1	ls-n	scalar	local	binary-int	comp	9(4)	2	1	-	MOVE	-	-	-	-	storage

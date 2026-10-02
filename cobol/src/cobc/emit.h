@@ -378,7 +378,7 @@ static const char *wide_fn(const char *fn)
     }
     return fn;
 }
-static void emit_call(const char *fn) { if (g_wide) fn = wide_fn(fn); emit("\tjal r31, %s", fn); }
+static void emit_call(const char *fn) { if (g_cen_on) cen_called(fn); if (g_wide) fn = wide_fn(fn); emit("\tjal r31, %s", fn); }
 static void emit_jump(int label) { emit("\tjal r0, .L%d", label); }
 static void emit_label(int label) { emit(".L%d:", label); }
 

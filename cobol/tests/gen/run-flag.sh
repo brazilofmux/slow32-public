@@ -1,7 +1,7 @@
 #!/bin/bash
 # run-flag.sh FLAG FIRST COUNT [N] -- generated programs through one
 # compiler twice: as it is, and with FLAG (a compiler option that turns a
-# rewrite off: -fno-loop-reg, -fno-hot-arith).  Each program is built and
+# rewrite off: -fno-loop-reg, -fno-hot-arith, -fno-native-items).  Each program is built and
 # run both ways (slow32-fast, each in a directory of its own, for the
 # files it writes) and must print the same bytes.  The check for a
 # rewrite that is meant to change nothing a program can see: the code
@@ -19,7 +19,7 @@ FIRST=${2:?usage: run-flag.sh FLAG FIRST COUNT [N]}
 COUNT=${3:?usage: run-flag.sh FLAG FIRST COUNT [N]}
 GEN=${GEN:-loop}
 EMU="$ROOT/tools/emulator/slow32-fast"
-STD=${STD:-85}; case "$GEN" in loop|checked|pos|perf|lit) STD=2002 ;; esac
+STD=${STD:-85}; case "$GEN" in loop|checked|pos|perf|lit|native) STD=2002 ;; esac
 
 mkdir -p "$CDIR/out"
 W="$(mktemp -d "$CDIR/out/flag.XXXXXX")"
@@ -31,7 +31,7 @@ for s in $(seq "$FIRST" "$last"); do
         f=""; [ $v = with ] || f="$FLAG"
         if "$CDIR/compile.sh" -free -std=$STD $f "$W/g$s.cbl" -o "$W/$v$s/g.s32x" > "$W/$v$s/cc.log" 2>&1; then
             # capped: a program that never ends differs, it does not hang the batch
-            (cd "$W/$v$s" && "$EMU" -c 2000000000 g.s32x 2>/dev/null | sed '/^Starting execution at PC/,$d' > out.txt) || true
+            (cd "$W/$v$s" && "$EMU" -c 2000000000 g.s32x 2>/dev/null | LC_ALL=C sed '/^Starting execution at PC/,$d' > out.txt) || true
         else
             echo BUILD-FAILED > "$W/$v$s/out.txt"
         fi

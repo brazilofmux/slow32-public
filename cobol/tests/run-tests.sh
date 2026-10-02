@@ -226,6 +226,20 @@ if [ -z "$SKIPPED" ]; then
     fi
 fi
 
+# --- Gate 1h: what is done with an item's bytes (src/cobc/symtab.h) -----
+# The rule that decides whether an item may be written the machine's way
+# (src/cobc/native.h), on events written for it: the cases it must
+# refuse and the compiler does not happen to emit
+if [ -z "$SKIPPED" ]; then
+    if ! "$HOSTCC" -std=gnu99 -O1 -w -o "$W/census_test" "$HERE/census_test.c" "$CDIR/src/picture.c" "$CDIR/src/picture_scan.c" 2>"$W/cc.log"; then
+        report "census_test" 1 "host build"
+    elif "$W/census_test" > "$W/census_test.out" 2>&1; then
+        report "census_test" 0 "$(tail -1 "$W/census_test.out" | sed 's/^census_test: //')"
+    else
+        report "census_test" 1 "$(grep -m1 FAIL "$W/census_test.out")"
+    fi
+fi
+
 # --- Gate 1g: the census (src/cobc/census.h, docs/plans/census.md) ------
 # Which items stand alone, on two programs written to hold every shape
 # that decides it: groups named and not, redefinitions named and not,
@@ -580,6 +594,15 @@ fout="$(GEN=loop "$HERE/gen/run-flag.sh" -fno-avail-reg 101 60 2>&1 | tail -1)"
 case "$fout" in
     "all 60 the same"*) report "gen/held" 0 "60 programs, with values held between statements and without" ;;
     *)                  report "gen/held" 1 "$fout" ;;
+esac
+
+# ... and the items written the machine's way (src/cobc/native.h) and as
+# their entries say (-fno-native-items): a generator of its own, of items
+# used as numbers and used as bytes
+fout="$(GEN=native "$HERE/gen/run-flag.sh" -fno-native-items 1 60 2>&1 | tail -1)"
+case "$fout" in
+    "all 60 the same"*) report "gen/native" 0 "60 programs, with items written the machine's way and as written" ;;
+    *)                  report "gen/native" 1 "$fout" ;;
 esac
 
 # Gate 8 (sanitizers): the compiler itself, built with the address and

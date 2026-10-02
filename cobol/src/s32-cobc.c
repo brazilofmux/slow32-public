@@ -52,6 +52,7 @@
 #include <limits.h>
 #include <strings.h>
 #include <sys/mman.h>
+#include <sys/wait.h>
 #include "picture.h"
 #include "../libcob/wide.h"    /* 31 digits: the runtime's 128-bit arithmetic, for VALUE and literals */
 #include "../libcob/cobrt.h"
@@ -95,6 +96,7 @@
 #include "cobc/verbs.h"
 #include "cobc/dispatch.h"
 #include "cobc/census.h"
+#include "cobc/native.h"
 #include "cobc/esql.h"
 #include "cobc/divisions.h"
 #include "cobc/driver.h"

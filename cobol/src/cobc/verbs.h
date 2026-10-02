@@ -274,6 +274,7 @@ static void insp_operand(const Opnd *o)
     const Sym *x = o->ref.sym;
     if (x->is_group && !o->ref.rm)
         die_at(o->line, "INSPECT: '%s' is a group; an operand is an elementary item (%s)", x->name, e85 ? "X3.23-1985 INSPECT rule 2" : "2023 14.9.22.3 rule 2");
+    if (!x->is_group) cen_pin(x, "INSPECT");
     if (!x->is_group && x->usage != U_DISPLAY && x->usage != U_NATIONAL)
         die_at(o->line, "INSPECT: '%s' is USAGE %s; an operand is usage display%s (%s)", x->name, usage_name(x->usage), e85 ? "" : " or national",
                e85 ? "X3.23-1985 INSPECT rule 2" : "2023 14.9.22.3 rule 2");
@@ -375,6 +376,7 @@ static void parse_inspect_1(void)
         /* a numeric USAGE NATIONAL item's characters are national too */
         { Opnd io; memset(&io, 0, sizeof io); io.kind = O_REF; io.ref = item; io.line = item.line; no_bits(&io, "INSPECT"); }
         if (item.sym->strong) die_at(item.line, "INSPECT of a strongly-typed group (2023 14.9.22.3 rule 1)");
+        cen_pin(item.sym, "INSPECT");
         if (!item.sym->is_group && !item.rm && item.sym->usage != U_DISPLAY && item.sym->usage != U_NATIONAL)
             die_at(item.line, "INSPECT of '%s', USAGE %s: the item is usage display%s, or a group (%s)", item.sym->name, usage_name(item.sym->usage),
                    g_std < 2002 ? "" : " or national", g_std < 2002 ? "X3.23-1985 INSPECT rule 1" : "2023 14.9.22.3 rule 1");
@@ -769,6 +771,7 @@ static void parse_initialize(void)
                 if (a) { part.rm = 1; part.rm_start = a + 1; part.rm_len = b - a; part.rm_lx = NULL; part.rm_nat = 0; }   /* bytes */
                 Arg args[3] = { arg_ref(&part), arg_label(lit_label(tmp.image + a, b - a)), arg_imm(b - a) };
                 emit_args(args, 3);
+                if (!t->is_group && is_numeric_sym(t)) cen_bless(t);        /* a numeric item: zero, stored */
                 emit_call("memcpy");
                 a = b;
             }

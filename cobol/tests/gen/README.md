@@ -221,6 +221,17 @@ SEARCH and SEARCH ALL found nothing else.
   edition as its text says, so s32-cobc now follows 85 under `-std=85`.
   Tests: free/divremu and 2002/divremu. The case was found by arith85.py.
 
+`gen-native.py SEED [STATEMENTS]` writes integer items, some standing
+alone and some under groups a statement names, redefined, with VALUEs
+and condition-names, and uses them as numbers (the arithmetic verbs,
+MOVE of numbers, relations, subscripts, PERFORM VARYING, STRING's
+POINTER, DISPLAY) and as bytes (a MOVE from an alphanumeric item or a
+record of spaces, to and from a group, a figurative constant, a
+nonnumeric relation, a class test, reference modification, STRING,
+UNSTRING, INSPECT, LENGTH) -- for the items the compiler writes the
+machine's way (`src/cobc/native.h`, `docs/plans/census.md`).  It runs
+through `run-flag.sh -fno-native-items`; the harness runs 60 (gen/native).
+
 `gen-loop.py SEED [LOOPS]` writes in-line loops over binary items whose
 bodies change those items in every way that is not a store to the item
 by name -- redefinitions, the group, a table over it, a performed
