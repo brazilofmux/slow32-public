@@ -1,0 +1,22 @@
+a redefinition:      0004 passes, I 0006
+the group moved to:  0004 passes, I 0007 N 0006
+initialized:         0005 passes, I 0004 N 0003
+a byte of the group: 0003 passes, I 0006
+its first byte:      0002 passes, I 0259
+a table over them:   0002 passes, I 0005 N 0003
+a paragraph:         0003 passes, I 0006
+READ INTO:           0009 passes, I 0010 N 0009
+the record area:     0003 passes, I 0004 bound 0003
+the status, a number: +000000032 2336
+ROUNDED:             0003 passes, I 0006
+STRING's pointer:    0003 passes, P 0010 [ab ab ab    ]
+a BASED item on it:  0003 passes, I 0006
+a BASED group:       0004 passes, I 0007 N 0006
+a long element:      0003 passes, BI 0006
+the relative key:    0003 passes, RK 0003
+LINAGE-COUNTER:      0003 passes, at 0000000004
+the bound lowered:   0003 passes, I 0004 N 0003
+a store that wraps:  +24464 +000048928
+one byte, its picture: 03 +000000396
+one byte, past it:   088 +000000432
+four deep:           +000070828 0004 0004 0003 0003

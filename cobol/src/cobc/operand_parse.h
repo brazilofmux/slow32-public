@@ -880,7 +880,15 @@ static int opnd_display_int(Opnd *o);
  * r3 and up.  So the address is used up first and the bytes are put right
  * in registers: for a word, b0 into the top, the other three below it
  * reversed ([b0 b3 b2 b1]), then b1 and b3 exchanged by xor. */
+static void emit_load_int_1(Sym *s, const char *areg, const char *dreg);
 static void emit_load_int(Sym *s, const char *areg, const char *dreg)
+{
+    /* a binary item at a constant address: marked, for loopreg.h */
+    int m = is_display_int(s) ? (g_mark_v = 0) : mark_unit('L', (int)(s - g_sym), dreg, areg);
+    emit_load_int_1(s, areg, dreg);
+    mark_end(m);
+}
+static void emit_load_int_1(Sym *s, const char *areg, const char *dreg)
 {
     if (is_display_int(s)) { emit_display_decode(s->pi.digits, areg, dreg); return; }
     int sg = s->pi.is_signed;
@@ -912,7 +920,14 @@ static void emit_load_int(Sym *s, const char *areg, const char *dreg)
     else emit("\tldw %s, %s+0", dreg, areg);
 }
 
+static void emit_store_int_1(Sym *s, const char *areg, const char *vreg);
 static void emit_store_int(Sym *s, const char *areg, const char *vreg)
+{
+    int m = is_display_int(s) ? 0 : mark_unit('S', (int)(s - g_sym), vreg, areg);
+    emit_store_int_1(s, areg, vreg);
+    mark_end(m);
+}
+static void emit_store_int_1(Sym *s, const char *areg, const char *vreg)
 {
     if (is_display_int(s)) { emit_display_encode(s->pi.digits, areg, vreg); return; }
     if (sym_be(s) && s->size > 1) {             /* big-endian: the low byte last; vreg kept */
@@ -936,7 +951,14 @@ static void emit_item_addr(const char *reg, Sym *s, int off)
     Sym *rec = &g_sym[s->record];
     if (rec->ftemp_scan && !g_noemit)
         die_at(rec->line, "internal: a user function's result from a scan-ahead was used without its call (a statement keeps scanned operands)");
-    if (!rec_indirect(rec)) { emit_la_off(reg, rec->label, off); return; }
+    if (!rec_indirect(rec)) {
+        emit_la_off(reg, rec->label, off);
+        /* a constant address: noted, for the marks (emit.h) -- when it is
+         * the item's own and not an element's or a part's */
+        g_la.sym = off == s->offset ? (int)(s - g_sym) : -1; g_la.off = off;
+        snprintf(g_la.reg, sizeof g_la.reg, "%s", reg);
+        return;
+    }
     emit_la(reg, rec->label);
     emit("\tldw %s, %s+0", reg, reg);
     if (rec->param_opt && strcmp(g_cur_stmt, "CALL") && ec_on_name("EC-PROGRAM-ARG-OMITTED")) {
@@ -1187,7 +1209,8 @@ static void emit_ref_addr(const Ref *r, const char *reg)
     }
 addr_done:
     emit_item_addr(reg, s, off);
-    if (runtime) emit("\tadd %s, %s, r11", reg, reg);
+    if (runtime) { emit("\tadd %s, %s, r11", reg, reg); g_la.sym = -1; }     /* an element's address: not a constant */
+    if (r->rm) g_la.sym = -1;                                                   /* a part's: not the item */
 }
 
 /* a data-pointer value (2023 8.4.3.11; 14.9.39 formats 7 and 10): ADDRESS

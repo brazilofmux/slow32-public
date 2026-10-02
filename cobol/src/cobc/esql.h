@@ -1172,7 +1172,7 @@ static void compile_nested_unit(void)
     int in_proc = g_in_proc; char cur_stmt[16]; memcpy(cur_stmt, g_cur_stmt, sizeof cur_stmt);
     /* the enclosing program's frame, returning item and RETURN-CODE use:
      * its epilogue is emitted after this unit is compiled */
-    int frame = g_frame, uses_rc = g_uses_rc; Sym *prog_ret = g_prog_ret;
+    int frame = g_frame, uses_rc = g_uses_rc, lr_used = g_lr_used; Sym *prog_ret = g_prog_ret;
     g_in_proc = 0;
     parse_identification_division();
     parse_environment_division();
@@ -1180,7 +1180,7 @@ static void compile_nested_unit(void)
     if (!at_word("procedure")) die_at(cur()->line, "expected PROCEDURE DIVISION, found %s", tok_desc(cur()));
     parse_procedure_division();
     g_in_proc = in_proc; memcpy(g_cur_stmt, cur_stmt, sizeof cur_stmt);
-    g_frame = frame; g_uses_rc = uses_rc; g_prog_ret = prog_ret;
+    g_frame = frame; g_uses_rc = uses_rc; g_prog_ret = prog_ret; g_lr_used = lr_used;
     emit_unit_data();
     if (!g_saw_end_program) die_at(cur()->line, "a contained program needs its END PROGRAM");
 
@@ -1246,6 +1246,7 @@ static void parse_procedure_division(void)
     g_cur_stmt[0] = 0; g_in_proc = 1;
     g_lk_check = 0;                     /* until this division's USING is known */
     g_uses_rc = 0;
+    g_lr_used = 0;
     for (int k = g_tp; k < g_ntok && !(g_tok[k].kind == T_WORD && !strcmp(g_tok[k].s, "end") && k + 1 < g_ntok && is_word(&g_tok[k + 1], "program")); k++)
         if (g_tok[k].kind == T_WORD && !strcmp(g_tok[k].s, "return-code")) { g_uses_rc = !sym_lookup_quiet("return-code"); break; }
     /* USING [BY REFERENCE] [OPTIONAL] data-name ... | BY VALUE data-name ...
@@ -1346,6 +1347,7 @@ static void parse_procedure_division(void)
     emit("\tstw sp+4, r11");
     emit("\tstw sp+%d, r12", SLOT_R12);
     emit("\tstw sp+%d, r13", SLOT_R13);
+    emit("#@P %d", g_unit);            /* where the saves of loopreg.h's registers go, once it is known which */
     /* the caller's addresses go into the LINKAGE cells, first: every call
      * below clobbers the argument registers (a USING program with DECIMAL-
      * POINT IS COMMA, CURRENCY SIGN, a COLLATING SEQUENCE or IS INITIAL
@@ -1644,6 +1646,7 @@ static void parse_procedure_division(void)
     }
     if (g_uses_rc) { emit_la("r1", "cob_return_code"); emit("\tldw r1, r1+0"); }   /* RETURN-CODE, to the caller */
     else emit("\taddi r1, r0, 0");
+    lr_unit_saves(); lr_unit_restores();
     emit("\tldw r13, sp+%d", SLOT_R13);
     emit("\tldw r12, sp+%d", SLOT_R12);
     emit("\tldw r11, sp+4");

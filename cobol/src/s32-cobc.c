@@ -49,6 +49,7 @@
 #include <setjmp.h>
 #include <unistd.h>
 #include <ctype.h>
+#include <limits.h>
 #include <strings.h>
 #include <sys/mman.h>
 #include "picture.h"
@@ -83,6 +84,7 @@
 #include "cobc/arith_reg.h"
 #include "cobc/expr.h"
 #include "cobc/control.h"
+#include "cobc/loopreg.h"
 #include "cobc/sort.h"
 #include "cobc/goto_set.h"
 #include "cobc/fileio.h"

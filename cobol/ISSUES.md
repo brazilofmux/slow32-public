@@ -5399,3 +5399,25 @@ the runtime's share of csv2fw has no routine left above six percent of
 the program; seven tenths of it is the generated code, which is stage
 3 of the plan.
 
+Tenth (2026-10-02): stage 3 of the plan, begun.  Inside an in-line
+PERFORM's loop a binary item is kept in a callee-saved register as well
+as in storage (`src/cobc/loopreg.h`): the emitters mark their loads and
+stores of whole integer items, and once a loop's code is all there a
+pass reads it -- addresses followed through registers and the frame, a
+table of what the runtime's routines store through, everything else
+taken for "anything" -- and gives a register to each item nothing else
+can store into.  The frame is 16 bytes larger (four save slots; a unit
+saves the ones it uses).  csv2fw 291 ms -> 283; karith, kmove, kedit,
+kseq 1.6 to 3.6% faster; the old-style corpora have no such loops.
+
+Checks: `tests/loopreg_test.c` (the reading, on lines written for it:
+104 checks, harness gate 1f), 2002/loopitems, free/calleesaved
+extended, `tests/gen/gen-loop.py` with the rewrite on and off
+(`tests/gen/run-flag.sh`, harness gen/loop), the marks alone shown to
+change no line of 1,504 programs (`tests/asm-snapshot.sh`).  Forty-one
+mutants, all caught -- twenty of the first forty only once the unit
+test existed, and the unit test found a hole in the reading (a marked
+store whose mark did not hold was not counted against its item).
+`-fno-loop-reg` turns it off; `S32_LR_TRACE=1` says what each loop kept
+and what refused the rest.
+

@@ -856,3 +856,94 @@ second time with the in-line forms off, so the two are compared on
 each.  Twenty mutants of the emitted tests and of the runtime's loop,
 all caught.
 
+## 2026-10-02: stage 3 begun -- a loop's items in registers
+
+With the runtime's routines small, seven tenths of csv2fw is the
+program's own code, and the code is verbose in one way above all: a
+COMP item is loaded from storage wherever it is used -- its address and
+a byte swap, six instructions -- and a loop loads its own item to test
+it, to step it and wherever the body mentions it.  The loop that writes
+csv2fw's output a byte at a time was 57 instructions a byte before the
+WRITE's 27.
+
+Inside an in-line PERFORM's loop, a binary item is now kept in a
+callee-saved register (r14 to r17) as well as in storage
+(`src/cobc/loopreg.h`).  A load is a copy; a store is the store and a
+copy, the register made what a load of the bytes stored would give.
+Storage stays current, so anything that reads the item some other way
+reads it right, and nothing has to be done where the loop is left.
+What has to be ruled out is anything that could change the item some
+other way, behind the register.
+
+**That is decided from the code, not from the statements.**  The loop's
+lines are read once they are all there, following what each register
+and frame word holds as far as "an address in this record": a store
+through an address is a store into that record (two records never share
+storage -- a redefinition has its subject's label, and an item reached
+through a cell, LINKAGE or BASED or EXTERNAL, is an address nobody
+knows); a call is what a table says its routine may store through, and
+a routine not in the table may store anywhere; a jump to anything but a
+label of the compiler's own, a jump through a register, an instruction
+not listed -- anything may have happened.  An out-of-line PERFORM, a
+CALL, a declarative are all of that last kind.  At a label reached only
+from above, what is known is what every way in agrees on; at any other,
+nothing.  An item none of it can touch gets a register, loaded once
+where the loop is entered.
+
+The emitters only leave marks in the line stream (`#@L`, `#@S`, never
+written out): "these lines load this item", "these store it".  A mark is
+a claim, checked against the lines under it before it is acted on, so a
+wrong mark costs the rewrite and nothing else -- and the one way a
+wrong mark could have cost more was found by the unit test, below.
+
+The output loop is 41 instructions a byte.  csv2fw 291 ms -> 283 (the
+same compiler with `-fno-loop-reg`, alternating; the same bytes out);
+karith -3.6%, kmove -2.6%, kedit -1.9%, kseq -1.6%, the other kernels
+unmoved.  It is where in-line loops over binary items are: five of
+majesty's programs, a few of the X-COBOL ones, none of CCVS-85 or the
+Open Systems suite, whose loops are performed paragraphs counted in
+DISPLAY items.
+
+### What checks it
+
+- `tests/loopreg_test.c` (the harness's gate 1f): the reading itself,
+  given lines written for it -- 104 checks.  Most of what it must refuse
+  the compiler does not emit today: a register holding one address by
+  one path and another by the other, a store through a register left
+  from before a call, a label reached from below.  The first mutation
+  run said so: twenty of forty mutants of the analysis survived every
+  COBOL program there was.
+- `tests/2002/loopitems`: each way of changing a loop's item behind its
+  name, on the loop's second pass -- a redefinition, the group (moved to,
+  initialized, one byte), a table over it, a performed paragraph, READ
+  INTO, the record area, a FILE STATUS, ROUNDED, STRING's pointer, a
+  BASED item and a BASED group at its address, a long element, a
+  RELATIVE KEY, LINAGE-COUNTER -- and the stores the register follows.
+- `tests/gen/gen-loop.py` through `tests/gen/run-flag.sh -fno-loop-reg`
+  (the harness's gen/loop): generated loops of every form, nested, whose
+  bodies do all of the above at random; the same compiler with the
+  rewrite off is the oracle.
+- `free/calleesaved`: C holds values in r14 to r17 across a call into a
+  program whose loops use all four.
+- Every program of the harness a second time under `-fno-hot-arith`,
+  which leaves the rewrite out.
+
+Forty-one mutants, all caught in the end.  The unit test found one
+defect in the reading as first written: a marked store whose mark did
+not hold was left alone -- rightly -- but not counted against its item,
+which could then have been kept in a register that store went behind.
+
+### What it is not yet
+
+- DISPLAY integers (a loop counter `PIC 9(4)` is fifteen instructions to
+  load): the same marks, when the store's contract is nailed down.
+- The item left in its register and stored only where the loop is left.
+- Straight-line code.  The same reading says where an item's value is
+  still in hand from the statement before; that is stage 3's second
+  step, and it does not need a loop.
+- A loop whose body is a performed paragraph: the body is somewhere
+  else, and may do anything.
+
+`S32_LR_TRACE=1` makes the compiler say, for each loop, which items it
+kept and which line refused the others.
+

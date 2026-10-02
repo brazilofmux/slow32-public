@@ -136,10 +136,28 @@ REFERENCE.  Staged:
 3. a loop's items: the VARYING item and what the body only reads, kept
    in registers across the body, stored at its exits.
 
-The front-end pass left statements as code in Blocks, not as trees.
-Stage 3 wants trees: a statement's operands and effect kept until its
-code is made.  That is its first piece of work, verb by verb, as the
-pass went.
+Begun 2026-10-02 with the third (`src/cobc/loopreg.h`;
+`docs/performance.md`), and not the way this section first proposed.
+The statements were not made into trees.  The code is read instead,
+after it is made: the emitters mark where an integer item is loaded and
+stored, and a pass over a loop's lines follows addresses through
+registers and decides, conservatively, what nothing else can store
+into.  The overlap relation is that reading -- "an address in this
+record", record labels never sharing storage -- and is tested as a
+piece (`tests/loopreg_test.c`).  Done: binary items in in-line loops,
+storage kept current.  Next, in this order:
+
+- the second step with the same reading: an item's value still in hand
+  from an earlier load or store in straight-line code (availability,
+  merged at forward labels as addresses already are);
+- DISPLAY integers as items;
+- the item stored only at the loop's exits.
+
+Then stage 4's question is ripe: what is left is the shape of each
+statement's own code -- values through frame slots, a comparison made
+into 0 or 1 and then branched on, a register allocation that is the
+emitter's habit -- which is an instruction selector's and an
+allocator's work, not a peephole's.
 
 ### 4. The generated code itself
 

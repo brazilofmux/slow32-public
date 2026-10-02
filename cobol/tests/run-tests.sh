@@ -212,6 +212,20 @@ if [ -z "$SKIPPED" ]; then
     fi
 fi
 
+# --- Gate 1f: the loop analysis (host, src/cobc/loopreg.h) --------------
+# The reading of a loop's code that decides what may be kept in a register
+# across it, on lines written for it: what it must refuse and the compiler
+# does not happen to emit
+if [ -z "$SKIPPED" ]; then
+    if ! "$HOSTCC" -std=gnu99 -O1 -w -o "$W/loopreg_test" "$HERE/loopreg_test.c" "$CDIR/src/picture.c" "$CDIR/src/picture_scan.c" 2>"$W/cc.log"; then
+        report "loopreg_test" 1 "host build"
+    elif "$W/loopreg_test" > "$W/loopreg.out" 2>&1; then
+        report "loopreg_test" 0 "$(tail -1 "$W/loopreg.out" | sed 's/^loopreg_test: //')"
+    else
+        report "loopreg_test" 1 "$(grep -m1 FAIL "$W/loopreg.out")"
+    fi
+fi
+
 # --- Gate 1d: the DBT hooks over libcob/kern.h (docs/dbt-hooks.md) ------
 # slow32-fast (no hooks) against slow32-dbt (hooks) on random descriptors;
 # needs both engines built in the tree.
@@ -536,6 +550,15 @@ if [ "$ORACLE_ENGINE" = podman ] || [ "$ORACLE_ENGINE" = docker ]; then
 else
     GEN_NOTE="cobol: GENERATED PROGRAMS NOT RUN -- they need the oracle's container image (tests/gen/README.md)"
 fi
+
+# ... and one generator that needs no oracle: the loops' items in
+# registers (src/cobc/loopreg.h) and not, the same compiler both times
+# (gen/run-flag.sh)
+fout="$(GEN=loop "$HERE/gen/run-flag.sh" -fno-loop-reg 1 60 2>&1 | tail -1)"
+case "$fout" in
+    "all 60 the same"*) report "gen/loop" 0 "60 programs, with the registers and without" ;;
+    *)                  report "gen/loop" 1 "$fout" ;;
+esac
 
 # Gate 8 (sanitizers): the compiler itself, built with the address and
 # undefined-behavior sanitizers, over every source there is (sanitize.sh)

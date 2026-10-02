@@ -221,3 +221,12 @@ SEARCH and SEARCH ALL found nothing else.
   edition as its text says, so s32-cobc now follows 85 under `-std=85`.
   Tests: free/divremu and 2002/divremu. The case was found by arith85.py.
 
+`gen-loop.py SEED [LOOPS]` writes in-line loops over binary items whose
+bodies change those items in every way that is not a store to the item
+by name -- redefinitions, the group, a table over it, a performed
+paragraph, READ INTO, a FILE STATUS, the runtime's stores -- for the
+registers a loop's items are kept in (`src/cobc/loopreg.h`).  It runs
+through `run-flag.sh FLAG FIRST COUNT`: the same compiler twice, as it
+is and with FLAG (`-fno-loop-reg`), the two programs printing the same
+bytes.  The harness runs 60 of them (gen/loop); no container is needed.
+

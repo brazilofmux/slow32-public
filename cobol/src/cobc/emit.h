@@ -124,7 +124,8 @@ static void relax_branches(void)
         if (islong[i] && line_branch(g_asm[i], op, ops, target)) {
             int L = new_label();
             fprintf(g_out, "\t%s %s, .L%d\n\tjal r0, %s\n.L%d:\n", branch_inverse(op), ops, L, target, L);
-        } else fprintf(g_out, "%s\n", g_asm[i]);
+        } else if (g_asm[i][0] == '#' && g_asm[i][1] == '@') continue;     /* a mark (below): the compiler's own note */
+        else fprintf(g_out, "%s\n", g_asm[i]);
     }
     free(islong); free(pos); free(labels);
 }
@@ -381,6 +382,35 @@ static void emit_call(const char *fn) { if (g_wide) fn = wide_fn(fn); emit("\tja
 static void emit_jump(int label) { emit("\tjal r0, .L%d", label); }
 static void emit_label(int label) { emit(".L%d:", label); }
 
+/* Marks.  A line "#@..." in the stream is a note the compiler leaves for
+ * itself and never writes out (relax_branches): where an integer item is
+ * loaded or stored whole, at an address that is a constant, and where an
+ * in-line loop begins and ends.  loopreg.h reads them, once a loop's code
+ * is all there, to keep such items in registers across the loop.
+ *
+ *   #@L sym off dreg areg [v]   the lines to the next "#@." load item sym
+ *                               (at off in its record) from the address in
+ *                               areg into dreg; v: the address is wanted
+ *                               for nothing else
+ *   #@S sym off vreg areg       ... store vreg into it
+ *   #@.                         the end of either
+ *   #@R<  #@R>                  a loop's code, from after its item is set
+ *
+ * A mark claims; loopreg.h checks each claim against the lines themselves
+ * before it acts on one. */
+static struct { char reg[8]; int sym; int off; } g_la = { "", -1, 0 };   /* the last constant address formed (emit_item_addr) */
+static int g_mark_off;              /* >0: no marks (loopreg.h's own code; -fno-hot-arith; -fno-loop-reg) */
+static int g_mark_v;                /* the next load is of the value alone (emit_hot_value) */
+static int g_noloopreg;             /* -fno-loop-reg: no items in registers across loops */
+static int mark_unit(int kind, int sym, const char *vreg, const char *areg)
+{
+    int v = g_mark_v; g_mark_v = 0;
+    if (g_noemit || g_mark_off || g_nohx || g_noloopreg || g_la.sym != sym || strcmp(g_la.reg, areg)) return 0;
+    emit("#@%c %d %d %s %s%s", kind, sym, g_la.off, vreg, areg, v ? " v" : "");
+    return 1;
+}
+static void mark_end(int m) { if (m) emit("#@."); }
+
 /* A stretch of code taken out of the stream and put back elsewhere: a
  * statement's nested statements are parsed once, where they are written,
  * their code made there and cut out, and placed where the statement
@@ -409,7 +439,9 @@ static int block_is_jump(const Block *b, char *t, int cap)
 /* does the block end in an unconditional jump?  nothing falls out of it */
 static int block_ends_jump(const Block *b)
 {
-    return b->n > 0 && (!strncmp(b->line[b->n - 1], "\tjal r0, ", 9) || !strncmp(b->line[b->n - 1], "\tjalr r0, ", 10));
+    int n = b->n;
+    while (n > 0 && b->line[n - 1][0] == '#' && b->line[n - 1][1] == '@') n--;      /* marks (below) are not code */
+    return n > 0 && (!strncmp(b->line[n - 1], "\tjal r0, ", 9) || !strncmp(b->line[n - 1], "\tjalr r0, ", 10));
 }
 /* the lines emitted since from that branch or jump to .L<L>: to target
  * instead (L is never defined) */
@@ -546,8 +578,9 @@ static void emit_bytes(const unsigned char *b, int n)
     }
 }
 
-/* frame: sp+0 lr, sp+4 r11, sp+8.. operand slots, three scratch words, the slots named below; r12/r13 at SLOT_R12/SLOT_R13 */
-#define FRAME       120
+/* frame: sp+0 lr, sp+4 r11, sp+8.. operand slots, three scratch words, the slots named below; r12/r13 at SLOT_R12/SLOT_R13;
+ * 116 to 128 the registers loopreg.h keeps items in (SLOT_LR), saved when a unit uses them */
+#define FRAME       136
 static int g_frame = FRAME;
 static Sym *g_prog_ret;
 static int g_uses_rc;               /* this unit names RETURN-CODE: its CALLs set it, its exit returns it */             /* a program's PROCEDURE DIVISION RETURNING item (-std=2002) */         /* this unit's frame: FRAME and its BY VALUE parameters' storage */

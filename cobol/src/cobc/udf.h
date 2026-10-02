@@ -1094,6 +1094,7 @@ static void emit_hot_value(Opnd *o)
     if (o->kind == O_NUM) { emit_li("r1", (long)numlit_int(&o->num)); return; }
     if (o->kind == O_FIG) { emit_li("r1", 0); return; }
     emit_ref_addr(&o->ref, "r3");
+    g_mark_v = 1;               /* r1 is all this is for: r3 is nobody's afterwards */
     emit_load_int(o->ref.sym, "r3", "r1");
 }
 

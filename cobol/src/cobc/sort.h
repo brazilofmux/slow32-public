@@ -311,6 +311,7 @@ static void emit_body(Body *b)
 static void parse_inline_body(Body *b)
 {
     b->Lcycle = -1;
+    g_inline_depth++;                   /* loops in it wait for this one's code (loopreg.h) */
     if (b->Lexit < 0) b->blk = parse_block();
     else {
         b->Lcycle = new_label();
@@ -318,6 +319,7 @@ static void parse_inline_body(Body *b)
         b->blk = parse_block();
         g_npstk--;
     }
+    g_inline_depth--;
     expect_word("end-perform");
 }
 
@@ -364,6 +366,7 @@ static void emit_varying(Vary *v, int nv, int level, Body *body, int test_after)
 {
     Vary *x = &v[level];
     emit_vary_init(x);
+    if (body->inline_body) lr_begin();          /* the loop, its item set: a region (loopreg.h) */
     if (test_after) {
         int Ltop = new_label(), Lend = new_label();
         emit_label(Ltop);
@@ -383,6 +386,7 @@ static void emit_varying(Vary *v, int nv, int level, Body *body, int test_after)
         emit_label(Ltest);
         cond_jump_false(x->until, Lbody);
     }
+    if (body->inline_body) lr_end();
     /* an inner item goes back to its FROM when its condition is true and
      * the outer one is augmented (6.20.4), so it reads FROM at the end */
     if (level > 0) emit_vary_init(x);
@@ -399,6 +403,7 @@ static void emit_varying(Vary *v, int nv, int level, Body *body, int test_after)
 static void emit_varying_test_after(Vary *v, int nv, Body *body)
 {
     for (int k = 0; k < nv; k++) emit_vary_init(&v[k]);
+    if (body->inline_body) lr_begin();
     int Ltop = new_label();
     emit_label(Ltop);
     emit_body(body);
@@ -410,6 +415,7 @@ static void emit_varying_test_after(Vary *v, int nv, Body *body)
         emit_jump(Ltop);
         emit_label(Ldone);
     }
+    if (body->inline_body) lr_end();
 }
 
 /* is the operand at the cursor followed by TIMES?  (a data-name may carry
@@ -708,6 +714,7 @@ static void parse_perform(void)
     }
     if (body.inline_body) parse_inline_body(&body);
 
+    int lay0 = g_nasm;                  /* the statement's code from here: its loops' regions (loopreg.h) */
     switch (kind) {
     case PF_UNTIL_EXIT: {
         /* UNTIL EXIT: a condition that never holds (14.9.28.4 rule 11); an
@@ -720,11 +727,13 @@ static void parse_perform(void)
     }
     case PF_UNTIL: {
         int Lbody = new_label(), Ltest = new_label();
+        if (body.inline_body) lr_begin();
         if (!test_after) emit_jump(Ltest);      /* WITH TEST AFTER falls into the body */
         emit_label(Lbody);
         emit_body(&body);
         emit_label(Ltest);
         cond_jump_false(c, Lbody);
+        if (body.inline_body) lr_end();
         break;
     }
     case PF_VARYING:
@@ -748,6 +757,7 @@ static void parse_perform(void)
         /* the count left to do, in r1 at the test: the whole count coming
          * in, one less after each execution of the body */
         int Lbody = new_label(), Ltest = new_label();
+        if (body.inline_body) lr_begin();       /* (r1, the count, is live here: what a region loads its items with leaves it alone) */
         emit_jump(Ltest);
         emit_label(Lbody);
         emit_body(&body);
@@ -757,6 +767,7 @@ static void parse_perform(void)
         emit("\tstw r2+0, r1");
         emit_label(Ltest);
         emit("\tblt r0, r1, .L%d", Lbody);
+        if (body.inline_body) lr_end();
         break;
     }
     default:
@@ -764,6 +775,7 @@ static void parse_perform(void)
         break;
     }
     if (body.inline_body && body.Lexit >= 0) emit_label(body.Lexit);
+    if (body.inline_body && !g_inline_depth) lr_run(lay0);     /* the outermost in-line PERFORM: its loops, and those in them */
     /* an out-of-line PERFORM has no END-PERFORM: the next one belongs to
      * whatever inline PERFORM encloses this statement */
 }
