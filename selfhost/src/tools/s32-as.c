@@ -10,7 +10,7 @@ void exit(int status);
 #include "s32vec.h"
 
 #define MAX_LINE 65536
-#define MAX_TOK 8
+#define MAX_TOK 8       /* a line's tokens to begin with; the array grows */
 #define MAX_LBL 32768
 #define MAX_REL 65536
 #define MAX_SYM 32768
@@ -141,13 +141,34 @@ void strip_comment(char *s) {
     }
 }
 
-int split(char *s, char **tok) {
+/* A line's tokens, as many as it has.  This was an array of eight and
+ * a loop that stopped at eight: `.word` with more than seven values
+ * assembled the first seven and said nothing about the rest (stage08 cc
+ * writes one value a line, so nothing it produced ever lost any; the
+ * literal case in regression/run-as-differential.sh found it). */
+static char **g_tok;
+static int g_tok_cap;
+
+int split(char *s) {
     int n;
     n = 0;
-    while (*s && n < MAX_TOK) {
+    while (*s) {
         while (*s == ' ' || *s == '\t' || *s == ',') s = s + 1;
         if (*s == 0) break;
-        tok[n] = s;
+        if (n >= g_tok_cap) {
+            if (g_tok_cap == 0) {
+                g_tok_cap = MAX_TOK;
+                g_tok = (char **)malloc(g_tok_cap * 8);        /* 8: a pointer's size where this is built natively */
+            } else {
+                g_tok_cap = g_tok_cap * 2;
+                g_tok = (char **)realloc((char *)g_tok, g_tok_cap * 8);
+            }
+            if (!g_tok) {
+                fputs("s32-as: out of memory for a line's tokens\n", stderr);
+                exit(1);
+            }
+        }
+        g_tok[n] = s;
         n = n + 1;
         while (*s && *s != ' ' && *s != '\t' && *s != ',') s = s + 1;
         if (*s == 0) break;
@@ -170,10 +191,62 @@ int parse_reg(char *s) {
     return v;
 }
 
+/* A literal as the assembler means it: a 32-bit word, written as a
+ * signed or an unsigned number -- 4294967295 and -1 are the same word,
+ * and so are 0x80000000 and -2147483648.  strtol is not that: it reads
+ * a long and clamps at its ends, so 4294967295 is LONG_MAX.  (This
+ * called strtol while the library's strtol let a value wrap; when the
+ * library's became the standard's -- selfhost ISSUES-75 -- every word
+ * above 2^31 assembled as 0x7FFFFFFF.)  A decimal, 0x hexadecimal or
+ * 0 octal number with an optional sign; the value is taken modulo
+ * 2^32, as the host assembler's (int32_t)strtol on a 64-bit long is. */
+int as_word(char *s, char **end) {
+    char *p;
+    int neg;
+    int base;
+    int d;
+    int any;
+    unsigned int v;
+
+    p = s;
+    neg = 0;
+    while (*p == ' ' || *p == '\t') p = p + 1;
+    if (*p == '-') { neg = 1; p = p + 1; }
+    else if (*p == '+') p = p + 1;
+    base = 10;
+    if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) {
+        d = p[2];
+        if ((d >= '0' && d <= '9') || (d >= 'a' && d <= 'f') || (d >= 'A' && d <= 'F')) {
+            base = 16;
+            p = p + 2;
+        }
+    } else if (p[0] == '0') {
+        base = 8;
+    }
+    v = 0;
+    any = 0;
+    while (1) {
+        if (*p >= '0' && *p <= '9') d = *p - '0';
+        else if (*p >= 'a' && *p <= 'f') d = *p - 'a' + 10;
+        else if (*p >= 'A' && *p <= 'F') d = *p - 'A' + 10;
+        else break;
+        if (d >= base) break;
+        v = v * base + d;
+        any = 1;
+        p = p + 1;
+    }
+    if (end) {
+        if (any) *end = p;
+        else *end = s;
+    }
+    if (neg) return (int)(0 - v);
+    return (int)v;
+}
+
 int parse_num(char *s, int *ok) {
     char *e;
     int v;
-    v = strtol(s, &e, 0);
+    v = as_word(s, &e);
     if (*s == 0 || *e != 0) { *ok = 0; return 0; }
     *ok = 1;
     return v;
@@ -226,7 +299,7 @@ static int ex_factor_abs(char *s, int *p, int *ok) {
     }
 
     if ((s[*p] >= '0' && s[*p] <= '9')) {
-        v = strtol(s + *p, &e, 0);
+        v = as_word(s + *p, &e);
         if (e == s + *p) { *ok = 0; return 0; }
         *p = *p + (e - (s + *p));
         return sign * v;
@@ -565,7 +638,7 @@ int emit_byte_list(char *p) {
     while (1) {
         while (*p == ' ' || *p == '\t' || *p == ',') p = p + 1;
         if (*p == 0) return 0;
-        v = strtol(p, &e, 0);
+        v = as_word(p, &e);
         if (e == p || (*e != 0 && *e != ',' && *e != ' ' && *e != '\t')) return -1;
         if (emit8(v & 255) != 0) return -1;
         p = e;
@@ -578,7 +651,7 @@ int emit_word_list(char *p) {
     while (1) {
         while (*p == ' ' || *p == '\t' || *p == ',') p = p + 1;
         if (*p == 0) return 0;
-        v = strtol(p, &e, 0);
+        v = as_word(p, &e);
         if (e == p || (*e != 0 && *e != ',' && *e != ' ' && *e != '\t')) return -1;
         if (emit32(v) != 0) return -1;
         p = e;
@@ -590,73 +663,17 @@ int emit_word_list(char *p) {
  * have moved it.  Cheap, and it removes a whole class of stale-base
  * hazard from the conversions that follow.
  *
- * Converting the RELOCATION tables as well makes the assembler emit one
- * spurious symbol -- but only in stage07-compiled, on-target builds, and
- * only once the reloc array actually grows (131 relocations fail, 57 do
- * not).  The tables stay fixed until this is fixed properly; they are
- * only 23% used.  Do not "fix" it by reordering: reordering hides it,
- * which is not the same thing.
- *
- * 2026-09-01, NARROWED but NOT root-caused.  Established facts, all
- * from artifacts rather than instrumentation:
- *
- *  - The symbol is not "empty".  Its name is the single byte 0x04, which
- *    dumps render as blank.  The string table grows by 2 bytes (one char
- *    + NUL), not 1.  Probes testing for an empty name therefore never
- *    fire -- that mis-description cost two rounds of debugging.
- *  - The SAME converted source compiled by the CURRENT stage08 cc is
- *    byte-identical to the unconverted build; only stage07-generated
- *    code is wrong.  So this is CODEGEN, not assembler logic, and the
- *    fix belongs in stage07 (repair in place), not in this file.
- *  - One extra symbol comes with exactly one extra relocation.
- *
- * Retracted: an earlier version of this note claimed the cause was a
- * stack frame overlap, on the strength of printing &li in add_reloc_ex
- * and comparing it with handle's locals.  That evidence does not hold up
- * -- taking &li forces a spill and changes the frame, a minimal stage07
- * test of caller/callee frame ordering is CORRECT, and the emulator
- * watchpoint contradicts the probe's own byte readings.  Do not build on
- * it.
- *
- * What also did NOT reproduce, so do not re-try these: a faithful
- * minimal reproducer (sv_grow + five parallel int tables + a pointer
- * argument held live across the growth call, 300 iterations) is clean
- * under stage07.  The trigger needs handle()'s real size and call graph.
- *
- * 2026-09-01, BISECTED to a single function.  Both bisects were
- * mutation-controlled (the unswapped baseline reproduces):
- *
- *  - Per-OBJECT, linking the stage07 build with one stage08 object swapped
- *    in: swapping s32-as.s32o alone FIXES it.  All seven libc objects
- *    (string_extra, string_more, ctype, convert, stdio, malloc, start)
- *    leave it broken, so the runtime is not implicated.  Swapping malloc
- *    yields a THIRD output size rather than a fix -- it moves the symptom,
- *    consistent with a fault sensitive to allocation layout, which is what
- *    made this look like an allocator problem for so long.
- *  - Per-FUNCTION, splicing stage08's code for one function into stage07's
- *    assembly: handle() FIXES it.  add_reloc_ex and grow_rel -- the two
- *    functions the conversion actually touches -- do NOT.  get_lbl moves
- *    the symptom without fixing it.
- *
- * So stage07 miscompiles handle(), and the conversion is only the trigger:
- * it adds the first call that perturbs whatever handle() gets wrong.
- *
- * NOT the cause, checked: frame under-allocation.  Both compilers are
- * self-consistent -- stage07 allocates 1468 bytes and uses offsets down to
- * -1468, stage08 allocates 580 and uses down to -580.
- *
- * The lead worth following: in handle(), stage07 uses 238 distinct stack
- * slots to stage08's 17 (326 vs 25 frame stores, 973 vs 338 reloads) and
- * emits 8968 lines against 5822.  It is spilling nearly everything in this
- * one very large function, so its spill/reload path is where to look.
- *
- * Method notes for whoever picks this up: source-level probes are
- * UNRELIABLE here -- the probe's own output calls (fdputs/fdputuint then) write to the
- * same stack addresses being examined, and probe readings disagreed with
- * the watchpoint.  Prefer artifact diffing and the emulator watchpoint,
- * and note the watchpoint prints to STDERR (2>/dev/null silently hides
- * it).  A 9-line .s file with one %hi/%lo pair and a jal is enough to
- * trigger the first growth, which makes watch runs fast.
+ * The RELOCATION tables are still fixed arrays, for a reason that is
+ * gone.  Converting them made the assembler emit one spurious symbol --
+ * in stage07-compiled builds only, and only once a table actually grew
+ * -- and for a month (2026-09) that was bisected as far as "stage07
+ * miscompiles handle()" and no further.  It was a tail call: stage07
+ * compiled `return add_reloc_ex(typ, off, sym, add)` as a jump, popping
+ * handle()'s frame first, with `sym` a local array in that frame.  The
+ * name survived the shallow call chain under add_reloc_ex and was
+ * overwritten by the deep one a table's growth takes.  stage07 no
+ * longer makes a tail call from a function whose locals' addresses
+ * escape (selfhost ISSUES-76), so the conversion can be made.
  */
 static void mark_refd(int li) {
     g_lbl_refd[li] = 1;
@@ -874,7 +891,7 @@ int parse_section_kind(char *name, char *flags, char *stype, int cur_sec) {
 }
 
 int handle(char *line) {
-    char *tok[8];
+    char **tok;
     int n;
     char *c;
     int ok;
@@ -953,7 +970,8 @@ int handle(char *line) {
         return 0;
     }
 
-    n = split(line, tok);
+    n = split(line);
+    tok = g_tok;
     if (n == 0) return 0;
 
     if (tok[0][0] == '.') {

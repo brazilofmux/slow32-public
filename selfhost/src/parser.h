@@ -219,6 +219,7 @@ static int   ps_nlocals;
 static int   ps_stack;                /* current stack allocation */
 static int   ps_stack_max;            /* high-water mark (fn->locals_size) */
 static int   ps_lslot[P_MAX_LOCALS];  /* per-declaration id; never reused */
+static int   ps_fn_setjmp;            /* the function being parsed has called setjmp */
 static int   ps_slot_gen;
 static int   ps_li_slot;              /* slot_id of the local being initialized */
 static int   ps_nparams;              /* params in current func */
@@ -1157,6 +1158,7 @@ static int parse_type(void) {
                     int bf_byte_off;
                     int bf_bit_off;
                     int ptr_row_cols;
+                    int td_inner;
 
                     if (first_decl) {
                         dty = mty;
@@ -1327,11 +1329,19 @@ static int parse_type(void) {
                     arr_count = 0;
                     arr_ndims = 0;
                     arr_last = 0;
+                    td_inner = 0;
                     if (mtdac > 0 && lex_tok != TK_LBRACK) {
                         /* typedef byte sha1_digest_t[20]; member of that
                          * type is a real array member (net_defs). */
                         arr_count = mtdac;
                         arr_ndims = 1;
+                        member_ty = ty_deref(member_ty);
+                    } else if (mtdac > 0 && member_ty == mty) {
+                        /* ...and an array of it -- jmp_buf handlers[4] --
+                         * is a two-dimensional array of its element type,
+                         * the typedef's dimension the inner one.  (It was
+                         * taken for an array of pointers.) */
+                        td_inner = mtdac;
                         member_ty = ty_deref(member_ty);
                     }
                     while (lex_tok == TK_LBRACK) {
@@ -1355,6 +1365,11 @@ static int parse_type(void) {
                         arr_count = arr_count * arr_last;
                         arr_ndims = arr_ndims + 1;
                         expect(TK_RBRACK);
+                    }
+                    if (td_inner > 0 && !flex_member) {
+                        arr_count = arr_count * td_inner;
+                        arr_last = td_inner;
+                        arr_ndims = arr_ndims + 1;
                     }
                     if (arr_ndims > 2) {
                         p_error("arrays of more than 2 dimensions unsupported");
@@ -1459,6 +1474,7 @@ static int parse_type(void) {
                     int member_ty;
                     int bf_width;
                     int ptr_row_cols;
+                    int td_inner;
 
                     if (first_decl) {
                         dty = mty;
@@ -2028,6 +2044,29 @@ static int parse_offsetof_value(void) {
     return stm_off[omi];
 }
 
+/* sizeof ( type-name ), cursor after the type parse_type read (ty, and
+ * tdn its ps_type_arrcount): a typedef'd array type is its whole array
+ * -- sizeof(jmp_buf) was 4, the size of the pointer such a type is
+ * spelled as -- and an abstract array declarator multiplies:
+ * sizeof(int[5]), sizeof(jmp_buf[4]). */
+static int ps_abstract_fnptr(int ty);
+static int ps_sizeof_type_tail(int ty, int tdn) {
+    int v;
+    if (tdn > 0 && ty_is_ptr(ty) && lex_tok != TK_LPAREN) {
+        v = ty_size(ty_deref(ty)) * tdn;
+    } else {
+        ty = ps_abstract_fnptr(ty);
+        skip_decl_qualifiers();
+        v = ty_size(ty);
+    }
+    while (lex_tok == TK_LBRACK) {
+        next();
+        v = v * parse_const_int();
+        expect(TK_RBRACK);
+    }
+    return v;
+}
+
 /* After a type in a cast or sizeof: an abstract function-pointer
  * declarator, T (*)(params) or T (**)(params) -- SQLite's
  * (void(*)(void*))0 -- is an opaque pointer here. */
@@ -2090,12 +2129,14 @@ static int parse_const_primary(void) {
         }
         expect(TK_LPAREN);
         if (is_type()) {
+            int sz_tdn;
+            int sz_v;
             ty = parse_type();
-            while (lex_tok == TK_STAR) { ty = ty + TY_PTR; next(); skip_decl_qualifiers(); }
-            ty = ps_abstract_fnptr(ty);
-            skip_decl_qualifiers();
+            sz_tdn = ps_type_arrcount;
+            while (lex_tok == TK_STAR) { ty = ty + TY_PTR; sz_tdn = 0; next(); skip_decl_qualifiers(); }
+            sz_v = ps_sizeof_type_tail(ty, sz_tdn);
             expect(TK_RPAREN);
-            return ty_size(ty);
+            return sz_v;
         }
         /* sizeof(expression) in a constant context -- global initializers
          * like `sizeof(tab) / sizeof(tab[0])` (rogue's mon_table_len).
@@ -3823,6 +3864,9 @@ static Node *parse_primary(void) {
             }
             expect(TK_RPAREN);
             n = nd_call(nm, head, nargs);
+            if (strcmp(nm, "setjmp") == 0 || strcmp(nm, "_setjmp") == 0 ||
+                strcmp(nm, "sigsetjmp") == 0 || strcmp(nm, "__sigsetjmp") == 0)
+                ps_fn_setjmp = 1;
             n->ty = find_func_type(nm);
             /* __builtin_sqrt[f]: the lowering emits HI_FSQRT, but the call
              * node's type was the implicit int of an undeclared function, so
@@ -3947,7 +3991,9 @@ static Node *parse_primary(void) {
         }
         expect(TK_LPAREN);
         if (is_type()) {
-            v = ty_size(ps_abstract_fnptr(parse_type()));
+            int sz_ty;
+            sz_ty = parse_type();
+            v = ps_sizeof_type_tail(sz_ty, ps_type_arrcount);
         } else {
             n = parse_expr();
             v = ps_sizeof_node(n);
@@ -4020,8 +4066,13 @@ static Node *parse_postfix(void) {
                 /* First index of a 2D array: row address, no load.
                  * arr[i][j] => *((arr + i*cols) + j); the element-size
                  * scaling of both additions stays in codegen. */
-                idx = nd_binop(TK_STAR, idx, nd_num(n->arr_cols));
-                n = nd_binop(TK_PLUS, n, idx);
+                {
+                    int row_cols;
+                    row_cols = n->arr_cols;
+                    idx = nd_binop(TK_STAR, idx, nd_num(row_cols));
+                    n = nd_binop(TK_PLUS, n, idx);
+                    n->arr_cols = row_cols;     /* sizeof a[i] is a row, not a pointer */
+                }
             } else if ((n->kind == ND_MEMBER || n->kind == ND_VAR) && !n->is_array &&
                        n->arr_cols > 0 && ty_is_ptr(n->ty)) {
                 /* Pointer-to-array member: p[i] selects row i — scale
@@ -4781,11 +4832,25 @@ static Node *parse_compound_literal_expr(int ty, int arr_count) {
 
 /* The dimensions of a block-scope array declarator, cursor on `[`.
  * Two dimensions at most; a second one must be sized. */
+static int ps_decl_inner;
+
 static void parse_local_array_dims(int *pcount, int *plcols2) {
     int count;
     int count2;
     int lcols2;
+    int inner;
 
+    /* A declarator of a typedef'd array type brings that typedef's
+     * dimension with it (ps_decl_inner, set where the declaration's
+     * type was read): alone it is the array's, and under dimensions of
+     * the declarator's own it is the innermost. */
+    inner = ps_decl_inner;
+    ps_decl_inner = 0;
+    if (lex_tok != TK_LBRACK) {
+        *pcount = inner;
+        *plcols2 = 0;
+        return;
+    }
     next();
     count = -1;
     if (lex_tok != TK_RBRACK) {
@@ -4808,6 +4873,13 @@ static void parse_local_array_dims(int *pcount, int *plcols2) {
         }
         lcols2 = count2;
         if (count >= 0) count = count * count2;
+    }
+    if (inner > 0) {
+        if (lcols2 != 0) {
+            p_error("arrays of more than 2 dimensions unsupported");
+        }
+        lcols2 = inner;
+        if (count >= 0) count = count * inner;
     }
     *pcount = count;
     *plcols2 = lcols2;
@@ -4837,7 +4909,7 @@ static Node *parse_local_declarator(char *nm, int ty) {
     int slen;
     char *sp;
 
-    if (lex_tok == TK_LBRACK) {
+    if (lex_tok == TK_LBRACK || ps_decl_inner > 0) {
         parse_local_array_dims(&count, &lcols2);
         head = NULL;
         if (lex_tok == TK_ASSIGN) {
@@ -5113,6 +5185,7 @@ static void parse_typedef_decl(void) {
 
 static Node *parse_stmt(void) {
     int tdac;
+    int td_elem;
     Node *n;
     Node *c;
     Node *t;
@@ -5292,7 +5365,7 @@ static Node *parse_stmt(void) {
         /* body */
         t = parse_stmt();
         ps_nlocals = ci;
-        ps_stack = ci_stack;
+        if (!ps_fn_setjmp) ps_stack = ci_stack;
         return nd_for(n, c, e, t);
     }
 
@@ -5393,6 +5466,7 @@ static Node *parse_stmt(void) {
         was_enum = (lex_tok == TK_ENUM);
         ty = parse_type();
         tdac = ps_type_arrcount;
+        td_elem = -1;
         skip_decl_qualifiers();
         /* Bare tag definition as a statement: `enum { A, B };` or
            `struct S { ... };` -- no declarator follows. */
@@ -5596,6 +5670,26 @@ local_plain_name:
             return nd_block(NULL);
         }
 
+        /* Any other declarator of a typedef'd array type: an array of
+         * it (jmp_buf handlers[4]), a static one (static jmp_buf env;),
+         * one with an initializer.  The element type is the typedef's,
+         * and its dimension goes with the declarator
+         * (parse_local_array_dims).  These were taken for pointers --
+         * the typedef's type is spelled elem + TY_PTR -- so an array of
+         * four jmp_bufs was four words, and a static one was one. */
+        ps_decl_inner = 0;
+        if (tdac > 0 && is_extern && lex_tok == TK_SEMI) {
+            add_extern_global(nm, ty, ty_size(ty_deref(ty)) * tdac);
+            next();
+            return nd_block(NULL);
+        }
+        if (tdac > 0 && !is_extern &&
+            (lex_tok == TK_LBRACK || lex_tok == TK_SEMI || lex_tok == TK_ASSIGN || lex_tok == TK_COMMA)) {
+            ty = ty_deref(ty);
+            ps_decl_inner = tdac;
+            td_elem = ty;
+        }
+
         /* Statement-scope function PROTOTYPE (doom's wi_stuff declares
          * `void WI_unloadData(void);` inside a function).  Skip the
          * parameter list; calls resolve like any direct call. */
@@ -5630,7 +5724,7 @@ local_plain_name:
         }
 
         /* Static local scalar: emit as global with mangled name */
-        if (is_static && lex_tok != TK_LBRACK) {
+        if (is_static && lex_tok != TK_LBRACK && ps_decl_inner == 0) {
             ps_mangle_static(ps_cur_func, nm);
             sl_gi = add_global(ps_sl_buf, ty,
                                ty_is_struct(ty) ? ty_size(ty) : 0);
@@ -5724,7 +5818,7 @@ local_plain_name:
         }
 
         /* Static local array: emit as global with mangled name */
-        if (lex_tok == TK_LBRACK && is_static) {
+        if ((lex_tok == TK_LBRACK || ps_decl_inner > 0) && is_static) {
           /* A static array declarator list: `static char a[4096],
            * b[4096];` (regal's test_keyword.c).  Each name gets its own
            * mangled global; the list stays arrays. */
@@ -5836,6 +5930,11 @@ local_plain_name:
             if (lex_tok != TK_COMMA) break;
             next();
             ty = base;
+            if (tdac > 0 && td_elem >= 0 && lex_tok != TK_STAR) {
+                /* the next name is of the typedef'd array type too */
+                ty = td_elem;
+                ps_decl_inner = tdac;
+            }
             while (lex_tok == TK_STAR) { ty = ty + TY_PTR; next(); skip_decl_qualifiers(); }
             skip_decl_qualifiers();
             if (lex_tok != TK_IDENT) break;
@@ -5904,7 +6003,11 @@ static Node *parse_block(void) {
     }
     expect(TK_RBRACE);
     ps_nlocals = saved_nlocals;
-    ps_stack = saved_stack;
+    /* a block's frame space goes back for the next block to use -- but
+     * not once the function has called setjmp: a longjmp may come back
+     * into this block after a later one has run, and what this one's
+     * locals held must still be there */
+    if (!ps_fn_setjmp) ps_stack = saved_stack;
     return nd_block(head);
 }
 
@@ -5937,6 +6040,7 @@ static Node *parse_top_decl(void) {
     int i;
     int count;
     int g2cols;
+    int gtdac;
     int was_enum;
     int neg;
     int idx;
@@ -6004,6 +6108,7 @@ static Node *parse_top_decl(void) {
     was_enum = (lex_tok == TK_ENUM);
     ty = parse_type();
     g2cols = ps_type_arrcount;  /* reuse: typedef'd array element count */
+    gtdac = 0;
     ps_pending_retfpbase = ps_type_fpbase;
     ps_pending_retfpn = ps_type_fpn;
     skip_decl_qualifiers();
@@ -6142,6 +6247,7 @@ plain_name:
         next();
         return NULL;
     }
+    gtdac = g2cols;         /* a typedef'd array type's own dimension, if it is one */
     g2cols = 0;
     xty = ty;
 
@@ -6246,6 +6352,19 @@ plain_name:
             g2cols = parse_const_int();
             if (count >= 0) count = count * g2cols;
             expect(TK_RBRACK);
+        }
+        if (gtdac > 0 && xty == ty) {
+            /* An array of a typedef'd array type -- jmp_buf handlers[4]
+             * -- is a two-dimensional array of the typedef's element
+             * type, its dimension the inner one.  (It was taken for an
+             * array of pointers: sixteen bytes for four jmp_bufs.) */
+            if (g2cols != 0) {
+                p_error("arrays of more than 2 dimensions unsupported");
+                return NULL;
+            }
+            g2cols = gtdac;
+            if (count >= 0) count = count * g2cols;
+            xty = ty_deref(ty);
         }
         skip_gnu_decl_suffixes();
 array_after_brackets:
@@ -6353,6 +6472,7 @@ function_decl:
         i = i + 1;
     }
     ps_nlocals = 0;
+    ps_fn_setjmp = 0;
     ps_stack = 8;  /* reserve 8 bytes: saved r31 + saved r30 */
     ps_stack_max = 8;
     ps_slot_gen = 0;

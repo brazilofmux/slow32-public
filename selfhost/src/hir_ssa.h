@@ -55,6 +55,30 @@ static int ssa_dfc[HIR_MAX_BLOCK];
 #define SSA_MAX_PROMO 4096   /* was 256 */
 static int ssa_promo[SSA_MAX_PROMO];
 static int ssa_npromo;
+
+/* The function calls setjmp.  A longjmp brings control back to that
+ * call with the callee-saved registers as they were when setjmp was
+ * first called and memory as it is now -- so a local kept in a register
+ * goes back to an old value, and one kept in memory does not.  The
+ * standard asks only that volatile locals keep what was last stored;
+ * here every named local of such a function stays in memory, which
+ * gives volatile ones what they are owed and the rest more.  The
+ * allocator, for its part, gives each spilled value a slot of its own
+ * in such a function (hir_regalloc.h): a slot shared by two values with
+ * disjoint lifetimes is disjoint only along paths the flow graph has,
+ * and the way back from longjmp is not one of them.  (selfhost
+ * ISSUES-75: the library had no setjmp until then, so no program this
+ * compiler built had called it.) */
+static int ssa_fn_setjmp;
+
+static int ssa_is_setjmp_name(char *nm) {
+    if (nm == NULL) return 0;
+    if (strcmp(nm, "setjmp") == 0) return 1;
+    if (strcmp(nm, "_setjmp") == 0) return 1;
+    if (strcmp(nm, "sigsetjmp") == 0) return 1;
+    if (strcmp(nm, "__sigsetjmp") == 0) return 1;
+    return 0;
+}
 static int ssa_phi_base; /* h_ninst before phi insertion */
 
 /* --- PHI optimization (linked lists per block) --- */
@@ -481,6 +505,23 @@ static void ssa_find_promo(void) {
     while (i < hl_nalloca) {
         ok[i] = 1;
         i = i + 1;
+    }
+
+    /* A function that calls setjmp keeps its named locals in memory
+     * (slot ids are the parser's, one per declaration; 0 is a temp of
+     * the lowering's own, which does not live across a statement). */
+    ssa_fn_setjmp = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_CALL && ssa_is_setjmp_name(h_name[i])) ssa_fn_setjmp = 1;
+        i = i + 1;
+    }
+    if (ssa_fn_setjmp) {
+        i = 0;
+        while (i < hl_nalloca) {
+            if (hl_aslot[i] != 0) ok[i] = 0;
+            i = i + 1;
+        }
     }
 
     /* Scan instructions for non-promotable uses */
@@ -1072,6 +1113,7 @@ static void ssa_split_pair_allocas(void) {
         h_no_remat[ah] = 0;
         h_ninst = h_ninst + 1;
         hl_aoff[hl_nalloca] = hl_aoff[j] + 4;
+        hl_aslot[hl_nalloca] = hl_aslot[j];     /* the half of a named local is that local's (ssa_find_promo asks) */
         hl_ainst[hl_nalloca] = ah;
         hl_nalloca = hl_nalloca + 1;
 

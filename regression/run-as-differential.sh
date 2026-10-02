@@ -110,6 +110,44 @@ if [ ${#corpus[@]} -eq 0 ]; then
     } > "$W/gen_manylabels.s"
     corpus+=("$W/gen_manylabels.s")
 
+    # A generated LITERAL case: a 32-bit word in every spelling -- signed
+    # and unsigned decimal, hexadecimal in both cases, octal, at and
+    # around 2^31 and 2^32-1 -- as data and as immediates.  Compiler
+    # output has almost none of these (stage08 cc writes decimal, and
+    # one test in ten has a word past 2^31), and the self-hosted
+    # assembler reads its literals with a reader of its own (as_word,
+    # selfhost ISSUES-75), which the corpus above exercised through one
+    # path only: three faults put into it by hand all passed.
+    {
+        echo ".data"
+        echo ".globl lits"
+        echo "lits:"
+        echo "    .word 0, 1, -1, 9, -9, 2147483647, 2147483648, 2147483649, 4294967295"
+        echo "    .word -2147483647, -2147483648, 4294967294, 1000000000, -1000000000"
+        echo "    .word 0x0, 0x1, 0x7fffffff, 0x80000000, 0x80000001, 0xFFFFFFFF, 0xdeadBEEF, 0XabcDEF01"
+        echo "    .word 00, 07, 017, 0777, 037777777777"
+        echo "    .word -0x10, -017, +5, +0x20"
+        echo "    .byte 0, 1, 127, 128, 255, -1, -128, 0x7f, 0xff, 0x80, 010, 0377"
+        echo ".text"
+        echo ".globl litcode"
+        echo "litcode:"
+        echo "    addi r1, r0, -16"
+        echo "    addi r1, r0, 16"
+        echo "    addi r1, r0, 0x10"
+        echo "    addi r1, r0, -0x10"
+        echo "    addi r1, r0, 017"
+        echo "    addi r1, r0, 2047"
+        echo "    addi r1, r0, -2048"
+        echo "    lui r2, 524288"
+        echo "    lui r2, 0x80000"
+        echo "    lui r2, 0xFFFFF"
+        echo "    ori r3, r3, 0xfff"
+        echo "    ldw r4, r29, -8"
+        echo "    stw r29, r4, 0x7fc"
+        echo "    jalr r0, r31, 0"
+    } > "$W/gen_literals.s"
+    corpus+=("$W/gen_literals.s")
+
     # ...and stage08 cc's own output, the other producer.
     if [ -f "$ROOT/selfhost/stage08/cc.s32x" ]; then
         n=0
@@ -129,10 +167,16 @@ pass=0; fail=0; skip=0
 for f in "${corpus[@]}"; do
     [ -f "$f" ] || continue
     b="$(basename "$f")"
+    # a file this script wrote for both assemblers is one both must take:
+    # for those a rejection is a failure, not a skip
+    must=0; case "$b" in gen_*) must=1;; esac
     if ! "$HOST_AS" "$f" "$W/h.o" >/dev/null 2>&1 || [ ! -s "$W/h.o" ]; then
+        if [ $must = 1 ]; then printf "  %-28s FAIL (host assembler rejects)\n" "$b"; fail=$((fail+1)); continue; fi
         printf "  %-28s SKIP (host assembler rejects)\n" "$b"; skip=$((skip+1)); continue
     fi
+    rm -f "$W/s.o"
     if ! timeout 600 "$EMU" "$SELF_AS" "$f" "$W/s.o" >/dev/null 2>&1 || [ ! -s "$W/s.o" ]; then
+        if [ $must = 1 ]; then printf "  %-28s FAIL (selfhost assembler rejects)\n" "$b"; fail=$((fail+1)); continue; fi
         printf "  %-28s SKIP (selfhost assembler rejects)\n" "$b"; skip=$((skip+1)); continue
     fi
     canon "$W/h.o" "$W/h.txt"

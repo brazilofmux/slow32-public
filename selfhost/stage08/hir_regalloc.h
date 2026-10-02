@@ -887,6 +887,10 @@ static void ra_assign_spill_slots(void) {
              * reload feeding the def that would overwrite it). */
             k = 0;
             while (k < nslot && ra_slot_end[k] >= p) k = k + 1;
+            /* ...but not in a function that calls setjmp: lifetimes are
+             * disjoint only along the paths the flow graph has, and the
+             * way back from longjmp is not one (hir_ssa.h) */
+            if (ssa_fn_setjmp) k = nslot;
             if (k == nslot) nslot = nslot + 1;
             ra_slot_end[k] = e;
             ra_spill_off[v] = 0 - (base + 4 * (k + 1));
