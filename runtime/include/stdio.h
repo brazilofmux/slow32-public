@@ -41,6 +41,45 @@ typedef struct FILE {
     struct FILE *next_open;
 } FILE;
 
+/* For a caller that writes very many very small records and cannot afford
+ * a call for each (the COBOL runtime's WRITE of a one-byte record, four
+ * million times in one program): the stream's own buffer, to store into.
+ *
+ * __s32_out_plain: this stream takes that -- fully buffered, its buffer
+ * allocated, a file and not a memory stream, nothing read ahead in the
+ * buffer.  That is settled when the stream is opened and stays so for a
+ * stream opened for output only ("w", "a") that setvbuf is not called on,
+ * so it is asked once.
+ *
+ * __s32_out_room: where the next n bytes of such a stream go, the stream
+ * moved past them -- or NULL when the buffer has not the room, and the
+ * caller calls fwrite, which is where a buffer is emptied and where a
+ * write fails.  __s32_out_byte: one byte stored, or 0 for the same reason.
+ * The tests are fwrite's own (stdio.c), so the buffer is emptied at the
+ * same byte either way.
+ *
+ * The two values are stdio.c's, which asserts they are. */
+#define __S32_STREAM_ROOM 1
+#define __S32_MODE_FULL 2          /* FILE.mode of a fully buffered stream */
+#define __S32_FLAG_MEM  0x80       /* FILE.flags of a memory stream */
+static inline int __s32_out_plain(const FILE *s)
+{
+    return s->mode == __S32_MODE_FULL && s->buffer != 0 && s->buf_len == 0 &&
+           !(s->flags & __S32_FLAG_MEM) && s->buf_pos <= s->buf_size;
+}
+static inline char *__s32_out_room(FILE *s, size_t n)
+{
+    size_t pos = s->buf_pos;
+    if (n < s->buf_size - pos) { s->buf_pos = pos + n; return s->buffer + pos; }
+    return 0;
+}
+static inline int __s32_out_byte(FILE *s, int c)
+{
+    size_t pos = s->buf_pos;
+    if (pos + 1 < s->buf_size) { s->buffer[pos] = (char)c; s->buf_pos = pos + 1; return 1; }
+    return 0;
+}
+
 extern FILE *stdin;
 extern FILE *stdout;
 extern FILE *stderr;

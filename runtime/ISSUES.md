@@ -299,3 +299,33 @@ Still open: `clock` returns 0; `scanf` and `fscanf` are declared and not
 defined; the `<ctype.h>` tables are Latin-1, which is not the "C"
 locale's answer above 127 (the self-hosted library's functions are
 ASCII), and `tolower` applied bytewise to UTF-8 text changes lead bytes.
+
+### 28. `fwrite` counted bytes as written whose flush had just failed (Resolved 2026-10-02)
+
+Buffered output is sent when the buffer fills, and the general `fwrite`
+counted a request's bytes as it put them in the buffer -- before the
+send.  A request that ended exactly where the buffer did was therefore
+reported whole when the device refused the lot: `fwrite` returned its
+full count, `fputc` its character, and only `ferror` knew.  A request
+that ran past the end of the buffer came back short, which is why the
+long records of the COBOL fault tests had always shown their 34.  A
+program writing one byte at a time to a full device lost 4,096 of them
+and was told nothing; so was one whose records divide 4,096.
+
+The bytes just put in the buffer are not counted when the send fails
+(the self-hosted library's `s_write` already did this).
+
+Found by the test written for the COBOL runtime's one-byte WRITE
+(`cobol/tests/free/faultbyte`), which expected the 4,096th record to
+take status 34 and saw 5,000 take 00.  `regression/libc-tests/stdio_fault`
+is the library's own: `fwrite` of one byte, `fputc`, and `fwrite` of a
+hundred, each under a refused write (`.fault` beside a test is the
+emulator's `S32_FAULT`, new in `run-libc-differential.sh`); the two
+libraries agree, and a `.expect` says what on.
+
+`<stdio.h>` also grew three inlines for a caller that cannot afford a
+call a byte -- `__s32_out_plain`, `__s32_out_room`, `__s32_out_byte`:
+the stream's own buffer to store into, with `fwrite`'s tests, so the
+buffer is sent at the same byte either way (the COBOL runtime's WRITE;
+`cobol/docs/performance.md`).  `stdio.c` asserts the two constants the
+header repeats.

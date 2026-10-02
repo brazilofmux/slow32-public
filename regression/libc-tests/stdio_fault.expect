@@ -1,0 +1,6 @@
+fwrite of one byte: 1 failed, the first the 4096th; error 1
+fclose 0, in the file 904
+fputc: 1 failed, the first the 4096th; error 1
+fclose 0, in the file 904
+fwrite of a hundred: 1 failed, the first the 41th; error 1
+fclose 0, in the file 1900

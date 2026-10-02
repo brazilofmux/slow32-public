@@ -99,11 +99,15 @@ for src in "$HERE"/libc-tests/*.c; do
     # in the scratch directory: a test that writes files leaves them there
     # ... and one with a .in beside it reads that as its standard input
     in=/dev/null; [ -f "${src%.c}.in" ] && in="${src%.c}.in"
+    # ... and one with a .fault beside it runs with that in S32_FAULT: the
+    # emulator fails the requests it names (tools/emulator/mmio_ring.c).
+    # The host cannot be asked, so such a test has a .expect
+    fault=""; [ -f "${src%.c}.fault" ] && fault="$(cat "${src%.c}.fault")"
     # ... and under a time limit: a library fault that makes a test loop
     # (getline returning 0 at end of file, say) is a failure, not a gate
     # that never ends
-    (cd "$W" && timeout "$TLIMIT" "$RUN" -q "$W/c.s32x" < "$in" 2>&1 | grep -av "^HALT" > "$W/c.out"; [ "${PIPESTATUS[0]}" = 124 ] && echo "TIMED OUT after ${TLIMIT}s" >> "$W/c.out")
-    (cd "$W" && timeout "$TLIMIT" "$RUN" -q "$W/s.s32x" < "$in" 2>&1 | grep -av "^HALT" > "$W/s.out"; [ "${PIPESTATUS[0]}" = 124 ] && echo "TIMED OUT after ${TLIMIT}s" >> "$W/s.out")
+    (cd "$W" && S32_FAULT="$fault" timeout "$TLIMIT" "$RUN" -q "$W/c.s32x" < "$in" 2>&1 | grep -av "^HALT" > "$W/c.out"; [ "${PIPESTATUS[0]}" = 124 ] && echo "TIMED OUT after ${TLIMIT}s" >> "$W/c.out")
+    (cd "$W" && S32_FAULT="$fault" timeout "$TLIMIT" "$RUN" -q "$W/s.s32x" < "$in" 2>&1 | grep -av "^HALT" > "$W/s.out"; [ "${PIPESTATUS[0]}" = 124 ] && echo "TIMED OUT after ${TLIMIT}s" >> "$W/s.out")
     legs=""
     if head -5 "$src" | grep -q HOSTLEG; then
         rm -f "$W/h" "$W/h.out"

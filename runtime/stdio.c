@@ -14,6 +14,11 @@
 #define _IOLBF 1
 #define _IOFBF 2
 
+/* <stdio.h> tells a caller that stores into the buffer itself
+ * (__s32_out_plain) what these two are */
+_Static_assert(_IOFBF == __S32_MODE_FULL, "stdio.h: __S32_MODE_FULL");
+_Static_assert(FLAG_MEMSTREAM == __S32_FLAG_MEM, "stdio.h: __S32_FLAG_MEM");
+
 #define STDIO_BUF_SIZE 4096
 
 // Initializers must match struct FILE layout in stdio.h
@@ -344,7 +349,13 @@ static size_t fwrite_general(const void *ptr, size_t size, size_t nmemb, FILE *s
         bytes_processed += chunk;
         
         if (stream->buf_pos == stream->buf_size) {
-            if (internal_flush(stream) == EOF) break;
+            /* The bytes just put in the buffer were in the write that
+             * failed: they are not written.  (Counted, a request that
+             * filled the buffer exactly reported all of itself written
+             * while the device took none of it -- a program writing one
+             * byte at a time to a full device lost a buffer of them and
+             * was told nothing: runtime ISSUES-28.) */
+            if (internal_flush(stream) == EOF) { bytes_processed -= chunk; break; }
         }
     }
     
