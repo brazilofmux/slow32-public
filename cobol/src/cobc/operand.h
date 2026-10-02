@@ -320,7 +320,22 @@ static void index_ref_check(const Ref *r)
            x->usage == U_INDEX ? (g_std < 2002 ? "X3.23-1985 USAGE syntax rule 5" : "2023 13.18.60.3 rule 10") : "2023 13.18.60.3 rules 8-9");
 }
 
+static void parse_ref_1(Ref *r);
+/* an identifier: parsed, and counted by the census */
 static void parse_ref(Ref *r)
+{
+    if (!g_cen_dir) { parse_ref_1(r); return; }
+    unsigned ctx = g_cen_ctx;
+    g_cen_ctx = 0; g_cen_in_ref++;
+    parse_ref_1(r);
+    g_cen_in_ref--; g_cen_ctx = ctx;
+    if (r->user_rm) cen_flag(r->sym, CEN_RM);
+    if (!g_in_proc) { cen_flag(r->sym, CEN_DD); if (r->sym >= g_sym && r->sym < g_sym + g_nsym) cen_of(r->sym)->refs++; }
+    if (ctx) cen_flag(r->sym, ctx & ~(unsigned)CEN_PLAIN);
+    for (int k = 0; k < r->nsub; k++) if (r->sub[k].sym) cen_flag(r->sub[k].sym, CEN_SUB);
+}
+
+static void parse_ref_1(Ref *r)
 {
     memset(r, 0, sizeof *r);
     Tok *t = cur();

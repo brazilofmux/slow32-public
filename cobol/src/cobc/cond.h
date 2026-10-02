@@ -482,6 +482,7 @@ static Cond *parse_simple(void)
             if (x.ref.sym->usage == U_FLOAT) die_at(line, "the floating-point item '%s' takes no class condition (Micro Focus: class condition rules)", x.ref.sym->name);
             if (klass == -2 && is_numeric_sym(x.ref.sym)) die_at(line, "BOOLEAN is no class test for the numeric item '%s' (2023 8.8.4.4.3 rule 5)", x.ref.sym->name);
             advance();
+            cen_flag(x.ref.sym, CEN_CLASS);
             Cond *c = cond_new(C_CLASS); c->x = x; c->klass = klass; c->neg = neg;
             return c;
         }

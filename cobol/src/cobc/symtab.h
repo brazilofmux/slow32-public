@@ -170,6 +170,71 @@ static const char *file_name_of(int fd);                /* the FD's file-name (F
 
 static char g_poison[64][64]; static int g_npoison;   /* names whose uses fail quietly: data entries dropped after an error, a refused module's registers */
 
+/* ---- the census (S32_CENSUS_DIR; docs/plans/census.md) ----------------
+ * Which items stand alone: named by statements, and no group over them,
+ * no redefinition or renaming of them, named by any; their storage not
+ * another program's, their address given to nobody.  Such an item's
+ * layout is the compiler's to choose.  Every name a statement resolves
+ * is counted here, with how it was named; census_unit (census.h) sorts
+ * the unit's items at its end.  Nothing of it reaches the code. */
+enum { CEN_RM = 1,          /* reference-modified: its bytes are looked at */
+       CEN_CALL = 2,        /* an argument BY REFERENCE, or a RETURNING item: another program has its address */
+       CEN_ADDR = 4,        /* ADDRESS OF */
+       CEN_PTR = 8,         /* the runtime keeps its address: FILE STATUS, RELATIVE KEY, ASSIGN, DEPENDING ON of a record, LINAGE, CRT STATUS, a report's CONTROL */
+       CEN_DD = 16,         /* named by a DATA DIVISION clause: a screen item's FROM, TO or USING */
+       CEN_SQL = 32,        /* a host variable, or SQLCODE, SQLSTATE and the SQLCA's fields */
+       CEN_CLASS = 64,      /* class-tested: its bytes are looked at */
+       CEN_OTHER = 128,     /* named by a statement in a way nothing here knows */
+       CEN_SUB = 256,       /* a subscript */
+       CEN_COND = 512,      /* through a condition-name of it */
+       CEN_INNER = 1024,    /* by a contained program */
+       CEN_HDR = 2048,      /* in the PROCEDURE DIVISION header */
+       CEN_ODO = 4096,      /* the object of an OCCURS DEPENDING ON */
+       CEN_PLAIN = 8192 };  /* (g_cen_ctx only: a use like any other) */
+typedef struct { int refs; unsigned flags; unsigned long long verbs; } Cen;
+static const char *g_cen_dir;                   /* where the census is written; NULL, none is taken */
+static Cen *g_cen; static int g_cen_cap;        /* by symbol index */
+static int *g_cen_tok; static int g_cen_ntok;   /* by token index: 1 + the symbol counted there, so a statement parsed twice counts once */
+static unsigned g_cen_ctx;                      /* how the names being resolved are used, when not as operands */
+static int g_cen_in_ref;                        /* inside parse_ref */
+static char g_cen_verb[64][16]; static int g_cen_nverb;
+static char g_cur_stmt[16];                     /* (defined with the statement's state) */
+static Cen *cen_of(const Sym *s)
+{
+    int i = (int)(s - g_sym);
+    if (i >= g_cen_cap) {
+        int n = g_cen_cap ? g_cen_cap : 4096;
+        while (n <= i) n *= 2;
+        g_cen = realloc(g_cen, (size_t)n * sizeof *g_cen);
+        memset(g_cen + g_cen_cap, 0, (size_t)(n - g_cen_cap) * sizeof *g_cen);
+        g_cen_cap = n;
+    }
+    return &g_cen[i];
+}
+static void cen_flag(const Sym *s, unsigned f)
+{
+    if (g_cen_dir && s >= g_sym && s < g_sym + g_nsym) cen_of(s)->flags |= f;
+}
+/* a name resolved for a statement */
+static void cen_ref(const Sym *s)
+{
+    Cen *c = cen_of(s);
+    if (!g_cur_stmt[0]) c->flags |= CEN_HDR;
+    else if (g_cen_ctx) c->flags |= g_cen_ctx & ~(unsigned)CEN_PLAIN;
+    else if (!g_cen_in_ref) c->flags |= CEN_OTHER;
+    if (s - g_sym < g_sym_base) c->flags |= CEN_INNER;
+    if (!g_cen_tok) { g_cen_ntok = g_ntok + 1; g_cen_tok = calloc((size_t)g_cen_ntok, sizeof *g_cen_tok); }
+    if (g_tp < g_cen_ntok) {
+        if (g_cen_tok[g_tp] == (int)(s - g_sym) + 1) return;
+        g_cen_tok[g_tp] = (int)(s - g_sym) + 1;
+    }
+    c->refs++;
+    int v = 0;
+    while (v < g_cen_nverb && strcmp(g_cen_verb[v], g_cur_stmt)) v++;
+    if (v == g_cen_nverb && v < 63) snprintf(g_cen_verb[g_cen_nverb++], 16, "%s", g_cur_stmt[0] ? g_cur_stmt : "-");
+    c->verbs |= 1ULL << (v < 63 ? v : 63);
+}
+
 static int g_lk_check;              /* -std=85, in a PROCEDURE DIVISION after its USING: references to LINKAGE are checked */
 static int g_lk_using[32], g_lk_nusing;   /* that division's USING records, by index */
 static int g_in_proc;               /* (defined with the PROCEDURE DIVISION's state) */
@@ -209,6 +274,7 @@ static Sym *sym_lookup(const char *name, char **quals, int nq, int line)
     }
     if (nfound > 1) die_at(line, "'%s' is ambiguous; qualify it with OF/IN", name);
     if (g_lk_check && g_in_proc && found->is_linkage) lk_reference(found, line);
+    if (g_cen_dir && g_in_proc) cen_ref(found);
     return found;
 }
 

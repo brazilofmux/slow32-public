@@ -278,7 +278,7 @@ static void parse_accept_positioned(Ref *r)
         else { f->pi = r->sym->pi; snprintf(f->pic, sizeof f->pic, "%s", r->sym->pic); }
     }
     if (g_crt_status_name[0]) {                 /* the ACCEPT's ending goes to the CRT STATUS item */
-        Sym *cs = sym_lookup(g_crt_status_name, NULL, 0, r->line);
+        g_cen_ctx = CEN_PTR; Sym *cs = sym_lookup(g_crt_status_name, NULL, 0, r->line); g_cen_ctx = 0;
         if (rec_indirect(&g_sym[cs->record])) die_at(r->line, "a %s item cannot be the CRT STATUS yet", indirect_kind(&g_sym[cs->record]));
         char b[80]; snprintf(b, sizeof b, "%s+%d", g_sym[cs->record].label, cs->offset);
         emit_la("r3", b);
@@ -317,7 +317,7 @@ static void parse_accept_1(void)
             advance();
             emit_screen_dyn_fill(scp, sfirst, scount);
             if (g_crt_status_name[0]) {                 /* the ACCEPT's ending goes to the CRT STATUS item */
-                Sym *cs = sym_lookup(g_crt_status_name, NULL, 0, t->line);
+                g_cen_ctx = CEN_PTR; Sym *cs = sym_lookup(g_crt_status_name, NULL, 0, t->line); g_cen_ctx = 0;
                 if (rec_indirect(&g_sym[cs->record])) die_at(t->line, "a %s item cannot be the CRT STATUS yet", indirect_kind(&g_sym[cs->record]));
                 char b[80]; snprintf(b, sizeof b, "%s+%d", g_sym[cs->record].label, cs->offset);
                 emit_la("r3", b);

@@ -169,7 +169,7 @@ static void emit_ucall(const UCall *u0)
     FnSig *f = &g_fnsig[u->sig];
     Ref refs[9]; Arg a[9];
     for (int k = 0; k < u->nargs; k++) {
-        if (u->byref[k]) { refs[k] = u->arg[k].ref; continue; }
+        if (u->byref[k]) { refs[k] = u->arg[k].ref; cen_flag(refs[k].sym, CEN_CALL); continue; }
         refs[k] = ftemp_ref(u->ctmp[k], u->line);
         if (u->arg[k].kind == O_EXPR) {
             int rd[1] = { 0 };

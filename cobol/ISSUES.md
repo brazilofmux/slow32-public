@@ -5435,3 +5435,28 @@ Checks: 40 more unit cases (144), 2002/heldvalues, the generator's
 straight runs under both switches (harness gen/loop, gen/held), 54
 mutants (53 caught, one showing a line that did nothing, removed).
 
+
+### 123. The road to HIR: which items stand alone (2026-10-02, in progress)
+
+The plan's stage 4 -- the generated code itself, by way of stage08's
+HIR -- is decided on (`docs/plans/performance.md`), and what such a
+back end can do depends on what it is told about the data.  An item
+reached only by its own name has no layout anyone can observe, and may
+be given one of the compiler's choosing.  `docs/plans/census.md` is the
+plan; its steps are the census, a native representation for those
+items in the emitter as it is, PERFORM classified, the lowering.
+
+First (2026-10-02): the census.  `S32_CENSUS_DIR=dir` makes any compile
+leave a line per elementary item: what it is, how the statements named
+it, and by which statements the groups over it and the redefinitions
+of it were named (`src/cobc/census.h`; the counting is in `sym_lookup`
+and `parse_ref`).  `tests/census.py` draws the verdicts, `tests/census.sh`
+runs every corpus.  Over 1,434 programs and 35,269 named items not in
+tables: 39.8% stand alone and take 49.5% of the references (majesty
+55.3%, Open Systems 54.6%, CCVS-85 46.2%; csv2fw 500 of 528).  What
+refuses the rest is a named group over the item (25.6% of references),
+storage that is a file's or a caller's (17.1%), an address given away
+(4.2%), and last a redefinition that is used (2.0%).  The census
+changes no code: 1,506 programs compile to the same assembly with it
+on (`tests/asm-snapshot.sh`).  Harness gate 1g: two programs holding
+every shape that decides a verdict, against the lines expected.

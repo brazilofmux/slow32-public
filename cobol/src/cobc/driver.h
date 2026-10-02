@@ -408,6 +408,8 @@ int main(int argc, char **argv)
     }
     if (!in) usage();
     g_file = in;
+    g_cen_dir = getenv("S32_CENSUS_DIR");
+    if (g_cen_dir && !g_cen_dir[0]) g_cen_dir = NULL;
 
     char outbuf[1024];
     if (!out) {

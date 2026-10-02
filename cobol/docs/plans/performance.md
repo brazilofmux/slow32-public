@@ -172,6 +172,14 @@ it); lowering COBOL's binary arithmetic and control flow to HIR is the
 alternative to growing an optimizer here, to be decided when stage 3
 is measured.
 
+Decided (2026-10-02): that is the road.  What such a back end can do
+depends on what it is told about the data, so the road starts at the
+DATA DIVISION -- which items stand alone, and may be given a
+representation of the compiler's choosing -- and `census.md` is its
+plan: the census (taken: half of what the code names stands alone), a
+native representation for those items in the emitter as it is, PERFORM
+classified, then the lowering.
+
 ## Not performance, kept beside it
 
 The compliance queue is unchanged by this plan: COBOL 74 behavior

@@ -94,6 +94,7 @@
 #include "cobc/helpers.h"
 #include "cobc/verbs.h"
 #include "cobc/dispatch.h"
+#include "cobc/census.h"
 #include "cobc/esql.h"
 #include "cobc/divisions.h"
 #include "cobc/driver.h"

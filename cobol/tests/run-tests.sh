@@ -226,6 +226,22 @@ if [ -z "$SKIPPED" ]; then
     fi
 fi
 
+# --- Gate 1g: the census (src/cobc/census.h, docs/plans/census.md) ------
+# Which items stand alone, on two programs written to hold every shape
+# that decides it: groups named and not, redefinitions named and not,
+# records redefining records, tables in tables, renamings, a GLOBAL item
+# a contained program names, CALL arguments by reference and by content
+for n in alone shapes; do
+    mkdir -p "$W/census-$n"
+    if ! (cd "$HERE/census" && S32_CENSUS_DIR="$W/census-$n" "$COBC" -free -std=2002 "$n.cbl" -o "$W/census-$n/$n.s") >"$W/census-$n/err" 2>&1; then
+        report "census/$n" 1 "compile"
+    elif cat "$W/census-$n"/*.census | diff - "$HERE/census/$n.expect" >"$W/census-$n/diff" 2>&1; then
+        report "census/$n" 0 "$(($(wc -l < "$HERE/census/$n.expect") - 1)) items"
+    else
+        report "census/$n" 1 "$(grep -m1 '^[<>]' "$W/census-$n/diff" | cut -c1-80)"
+    fi
+done
+
 # --- Gate 1d: the DBT hooks over libcob/kern.h (docs/dbt-hooks.md) ------
 # slow32-fast (no hooks) against slow32-dbt (hooks) on random descriptors;
 # needs both engines built in the tree.

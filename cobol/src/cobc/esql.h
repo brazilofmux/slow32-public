@@ -205,7 +205,7 @@ static int sql_find(const char *text, int from, const char *w)
 static Sym *sql_sym(const char *name, const char *qual, int line)
 {
     char *q[1] = { (char *)qual };
-    Sym *s = sym_lookup(name, q, qual[0] ? 1 : 0, line);
+    g_cen_ctx = CEN_SQL; Sym *s = sym_lookup(name, q, qual[0] ? 1 : 0, line); g_cen_ctx = 0;
     if (s->is_cond) die_at(line, "EXEC SQL: ':%s' is a condition-name, not a host variable", name);
     if (s->is_group) die_at(line, "EXEC SQL: ':%s' is a group; host structures are not implemented yet (docs/esql.md, phase 2)", name);
     if (s->ndims) die_at(line, "EXEC SQL: ':%s' is in a table; subscripted host variables are not implemented yet", name);
@@ -245,6 +245,7 @@ static void sql_emit_status(int line)
     for (int k = 0; k < 2; k++) {
         Sym *s = sym_lookup_quiet(nm[k]);
         if (!s || s->is_group || s->is_cond || s->ndims) continue;
+        cen_flag(s, CEN_SQL);
         Ref r; memset(&r, 0, sizeof r); r.sym = s; r.line = line;
         Arg a[2] = { arg_ref(&r), arg_desc(sym_desc(r.sym)) };
         emit_args(a, 2);
@@ -257,6 +258,7 @@ static void sql_emit_status(int line)
     for (int k = 0; fld[k]; k++) {
         Sym *s = sym_lookup_quiet(fld[k]);
         if (!s || s->is_group || s->is_cond) continue;
+        cen_flag(s, CEN_SQL);
         Ref r; memset(&r, 0, sizeof r); r.sym = s; r.line = line;
         if (k == 2) { if (s->ndims != 1) continue; r.nsub = 1; r.sub[0].sym = NULL; r.sub[0].lit = 3; }
         else if (s->ndims) continue;
@@ -1647,6 +1649,7 @@ static void parse_procedure_division(void)
     if (g_uses_rc) { emit_la("r1", "cob_return_code"); emit("\tldw r1, r1+0"); }   /* RETURN-CODE, to the caller */
     else emit("\taddi r1, r0, 0");
     lr_unit(); lr_unit_saves(); lr_unit_restores();
+    census_unit();
     emit("\tldw r13, sp+%d", SLOT_R13);
     emit("\tldw r12, sp+%d", SLOT_R12);
     emit("\tldw r11, sp+4");

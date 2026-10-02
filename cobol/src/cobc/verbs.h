@@ -908,7 +908,7 @@ static void parse_search(void)
     Tok *tt = cur();
     if (tt->kind != T_WORD) die_at(tt->line, "SEARCH needs a table name");
     Ref t; memset(&t, 0, sizeof t); t.line = tt->line;
-    t.sym = sym_lookup(tt->s, NULL, 0, tt->line); advance();
+    g_cen_ctx = CEN_PLAIN; t.sym = sym_lookup(tt->s, NULL, 0, tt->line); g_cen_ctx = 0; advance();
     Sym *tbl = t.sym;
     if (!tbl->occurs) die_at(t.line, "SEARCH needs a table (an item with OCCURS)");
     if (cur()->kind == T_LP) die_at(t.line, "SEARCH names the table without subscripts");

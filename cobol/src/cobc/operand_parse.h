@@ -535,6 +535,7 @@ static void parse_operand_raw_1(Opnd *o)
         o->kind = O_ADDR;
         parse_ref(&o->ref);
         const Sym *x = o->ref.sym;
+        cen_flag(x, CEN_ADDR);
         if (x->is_cond || x->is_index) die_at(o->line, "ADDRESS OF '%s': it is not a data item", x->name);
         if (x->strong == 0 && !x->is_group && sym_in_strong(x))
             die_at(o->line, "ADDRESS OF '%s': an item inside a strongly-typed group (2023 8.4.3.11 rule 2)", x->name);

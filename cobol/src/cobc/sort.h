@@ -82,7 +82,7 @@ static void parse_sort_table(int line)
     char nm[64], qb[8][64]; char *qv[8]; int nq = 0;
     snprintf(nm, sizeof nm, "%s", cur()->s); advance();
     while ((at_word("of") || at_word("in")) && peek(1)->kind == T_WORD && nq < 8) { advance(); snprintf(qb[nq], 64, "%s", cur()->s); qv[nq] = qb[nq]; nq++; advance(); }
-    tr.sym = sym_lookup(nm, qv, nq, tr.line);
+    g_cen_ctx = CEN_PLAIN; tr.sym = sym_lookup(nm, qv, nq, tr.line); g_cen_ctx = 0;
     if (at_op("(")) die_at(tr.line, "SORT '%s': a table SORT of a table inside another table is not implemented", nm);
     Sym *e = tr.sym;
     if (!e->occurs) die_at(tr.line, "SORT '%s': a table SORT names an entry with an OCCURS clause (2023 14.9.40.3 rule 13)", e->name);
@@ -105,7 +105,7 @@ static void parse_sort_table(int line)
                 die_at(cur()->line, "SORT key '%s' has an OCCURS clause or is in a table inside '%s' (2023 14.9.40.3 rule 14e)", q->name, e->name);
             int save = g_noemit; g_noemit++;
             Ref k; memset(&k, 0, sizeof k);
-            k.sym = sym_lookup(cur()->s, NULL, 0, cur()->line); k.line = cur()->line; advance();
+            g_cen_ctx = CEN_PLAIN; k.sym = sym_lookup(cur()->s, NULL, 0, cur()->line); g_cen_ctx = 0; k.line = cur()->line; advance();
             while (accept_word("of") || accept_word("in")) advance();
             g_noemit = save;
             if (at_op("(")) die_at(k.line, "SORT key '%s' is written without subscripts (2023 14.9.40.3 rule 14b)", k.sym->name);

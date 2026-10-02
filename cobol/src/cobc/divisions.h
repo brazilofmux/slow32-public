@@ -845,6 +845,7 @@ static void parse_rd(void)
             while (cur()->kind == T_WORD && !at_word("page") && !at_word("heading") && !at_word("first") && !at_word("last") && !at_word("footing") && !at_word("code")) {
                 if (r->nctl == 8) die_at(t->line, "more than 8 control levels");
                 Sym *c = sym_lookup(cur()->s, NULL, 0, t->line); advance();
+                cen_flag(c, CEN_PTR);
                 for (int q = 0; q < r->nctl; q++)
                     if (r->ctl_sym[q] == sym_idx(c)) die_at(t->line, "CONTROL names '%s' twice; each data-name a different item (X3.23-1985 XIII 3.7.3 rule 2)", c->name);
                 r->ctl_sym[r->nctl] = sym_idx(c);

@@ -167,6 +167,7 @@ static void parse_call(void)
                     if (o->ref.sym->is_cond) die_at(o->line, "a condition-name cannot be passed");
                     if (sym_bitlike(o->ref.sym)) bit_arg_check(&o->ref);
                     a[n] = arg_ref(&o->ref);
+                    cen_flag(o->ref.sym, CEN_CALL);
                 }
                 else if (o->kind == O_STR) a[n] = arg_label(lit_label((unsigned char *)o->tok->s, o->tok->len));
                 else if (o->kind == O_NUM) a[n] = arg_label(call_num_lit_label(&o->num));
@@ -178,7 +179,7 @@ static void parse_call(void)
     Ref ret; int has_ret = 0;
     if (accept_word("returning") || accept_word("giving")) {
         if (g_std < 2002) bp(BP_E9_CALL_VALUE, cur()->line);
-        parse_ref(&ret); has_ret = 1;
+        parse_ref(&ret); has_ret = 1; cen_flag(ret.sym, CEN_CALL);
         if (ret.sym->is_cond) die_at(ret.line, "RETURNING '%s': a condition-name receives nothing", ret.sym->name);
         if (g_std < 2002 && !is_int_item(ret.sym)) die_at(ret.line, "RETURNING '%s' must be an integer item (the C ABI returns a word)", ret.sym->name);
     }
