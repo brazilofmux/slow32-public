@@ -326,9 +326,11 @@ if [[ -f "$BUILTINS_FP64_SRC" ]]; then
     [[ -s "$WORKDIR/builtins_fp64.s32o" ]] || { echo "failed to assemble builtins_fp64" >&2; exit 1; }
 fi
 
-# Build libc with stage07 compiler
+# Build libc with stage07 compiler (printf_varargs: the tools built from
+# it below print their numbers with fprintf)
 LIBC_OBJS=""
-for name in string_extra string_more ctype convert stdio malloc posix_fs posix_time posix_math posix_proc; do
+TOOL_INC="-I$SCRIPT_DIR/include"    # the tools are C against stage08's <stdio.h>
+for name in string_extra string_more ctype convert stdio malloc posix_fs posix_time posix_math posix_proc printf_varargs; do
     run_exe "$STAGE7_CC" "$WORKDIR/${name}.cc.log" "$LIBC_DIR/${name}.c" "$WORKDIR/${name}.s"
     [[ -s "$WORKDIR/${name}.s" ]] || { echo "failed to compile ${name}.c" >&2; exit 1; }
     run_exe "$AS_EXE" "$WORKDIR/${name}.as.log" "$WORKDIR/${name}.s" "$WORKDIR/${name}.s32o"
@@ -356,7 +358,7 @@ fi
 # a stage08 assembler built here with stage07's compiler -- stage07 output,
 # so stage07 tools may build it; the same step build-s12cc.sh takes.
 BIG_AS="$WORKDIR/big-s32-as.s32x"
-run_exe "$STAGE7_CC" "$WORKDIR/big-s32-as.cc.log" "$SCRIPT_DIR/tools/s32-as.c" "$WORKDIR/big-s32-as.s"
+run_exe "$STAGE7_CC" "$WORKDIR/big-s32-as.cc.log" "$TOOL_INC" "$SCRIPT_DIR/tools/s32-as.c" "$WORKDIR/big-s32-as.s"
 [[ -s "$WORKDIR/big-s32-as.s" ]] || { echo "failed to compile tools/s32-as.c for the big assembler" >&2; exit 1; }
 run_exe "$AS_EXE" "$WORKDIR/big-s32-as.as.log" "$WORKDIR/big-s32-as.s" "$WORKDIR/big-s32-as.s32o"
 [[ -s "$WORKDIR/big-s32-as.s32o" ]] || { echo "failed to assemble the big assembler" >&2; exit 1; }
@@ -854,7 +856,7 @@ if [[ "$RUN_FIXED_POINT" -eq 1 && -s "$GEN1_CC_EXE" ]]; then
     # assembler first and assemble gen2/gen3 with it; gen1 itself is
     # stage07 output and stays with stage07 tools.
     FP_AS_EXE="$WORKDIR/fp-s32-as.s32x"
-    run_exe "$STAGE7_CC" "$WORKDIR/fp-s32-as-compile.log" "$SCRIPT_DIR/tools/s32-as.c" "$WORKDIR/fp-s32-as.s"
+    run_exe "$STAGE7_CC" "$WORKDIR/fp-s32-as-compile.log" "$TOOL_INC" "$SCRIPT_DIR/tools/s32-as.c" "$WORKDIR/fp-s32-as.s"
     if [[ -s "$WORKDIR/fp-s32-as.s" ]]; then
         run_exe "$AS_EXE" "$WORKDIR/fp-s32-as-assemble.log" "$WORKDIR/fp-s32-as.s" "$WORKDIR/fp-s32-as.s32o"
         run_exe "$LD_EXE" "$WORKDIR/fp-s32-as-link.log" \
@@ -1093,7 +1095,7 @@ STAGE_LD_SRC="$SCRIPT_DIR/tools/s32-ld.c"
 
 # Build assembler
 TOTAL=$((TOTAL + 1))
-run_exe "$STAGE7_CC" "$WORKDIR/s32-as-compile.log" "$STAGE_AS_SRC" "$WORKDIR/s32-as.s"
+run_exe "$STAGE7_CC" "$WORKDIR/s32-as-compile.log" "$TOOL_INC" "$STAGE_AS_SRC" "$WORKDIR/s32-as.s"
 if [[ ! -s "$WORKDIR/s32-as.s" ]]; then
     printf "  %-30s FAIL (compile)\n" "s32-as-build:"
     tail -n 20 "$WORKDIR/s32-as-compile.log" >&2
@@ -1120,7 +1122,7 @@ fi
 
 # Build archiver
 TOTAL=$((TOTAL + 1))
-run_exe "$STAGE7_CC" "$WORKDIR/s32-ar-compile.log" "$STAGE_AR_SRC" "$WORKDIR/s32-ar.s"
+run_exe "$STAGE7_CC" "$WORKDIR/s32-ar-compile.log" "$TOOL_INC" "$STAGE_AR_SRC" "$WORKDIR/s32-ar.s"
 if [[ ! -s "$WORKDIR/s32-ar.s" ]]; then
     printf "  %-30s FAIL (compile)\n" "s32-ar-build:"
     tail -n 20 "$WORKDIR/s32-ar-compile.log" >&2
@@ -1147,7 +1149,7 @@ fi
 
 # Build linker
 TOTAL=$((TOTAL + 1))
-run_exe "$STAGE7_CC" "$WORKDIR/s32-ld-compile.log" "$STAGE_LD_SRC" "$WORKDIR/s32-ld.s"
+run_exe "$STAGE7_CC" "$WORKDIR/s32-ld-compile.log" "$TOOL_INC" "$STAGE_LD_SRC" "$WORKDIR/s32-ld.s"
 if [[ ! -s "$WORKDIR/s32-ld.s" ]]; then
     printf "  %-30s FAIL (compile)\n" "s32-ld-build:"
     tail -n 20 "$WORKDIR/s32-ld-compile.log" >&2

@@ -63,10 +63,16 @@ fi
 
 cd "$ROOT_DIR"
 
+# The tools are C against <stdio.h>, and that is stage08's: its include
+# directory goes ahead of the bootstrap compiler's own (stage07's stdio.h
+# is older and declares less).
+TOOL_INC="-I$SCRIPT_DIR/include"
+
 compile() {
     local src="$1" asm="$2" log="$3"
+    shift 3                     # anything more is for the compiler (the tools pass TOOL_INC; the libc does not)
     set +e
-    timeout "${SELFHOST_TIMEOUT:-1200}" "$EMU" "$STAGE7_CC" "$src" "$asm" >"$log" 2>&1
+    timeout "${SELFHOST_TIMEOUT:-1200}" "$EMU" "$STAGE7_CC" "$@" "$src" "$asm" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
@@ -114,7 +120,8 @@ assemble "$SCRIPT_DIR/builtins64.s" "$WORKDIR/builtins64.s32o" "$WORKDIR/builtin
 # --- Build libc (compiled by stage07 s12cc) ---
 echo "[2/5] Build libc"
 LIBC_OBJS=""
-for name in string_extra string_more ctype convert stdio malloc; do
+# printf_varargs: the tools print their numbers with fprintf
+for name in string_extra string_more ctype convert stdio malloc printf_varargs; do
     compile "$LIBC_DIR/${name}.c" "$WORKDIR/${name}.s" "$WORKDIR/${name}.cc.log"
     assemble "$WORKDIR/${name}.s" "$WORKDIR/${name}.s32o" "$WORKDIR/${name}.as.log"
     LIBC_OBJS="$LIBC_OBJS $WORKDIR/${name}.s32o"
@@ -124,7 +131,7 @@ assemble "$WORKDIR/start.s" "$WORKDIR/start.s32o" "$WORKDIR/start.as.log"
 
 # --- Build assembler ---
 echo "[3/5] Build s32-as.s32x"
-compile "$TOOLS_DIR/s32-as.c" "$WORKDIR/s32-as.s" "$WORKDIR/s32-as.cc.log"
+compile "$TOOLS_DIR/s32-as.c" "$WORKDIR/s32-as.s" "$WORKDIR/s32-as.cc.log" "$TOOL_INC"
 assemble "$WORKDIR/s32-as.s" "$WORKDIR/s32-as.s32o" "$WORKDIR/s32-as.as.log"
 link_exe "$WORKDIR/s32-as.link.log" -o "$OUT_DIR/s32-as.s32x" --mmio 64K \
     "$WORKDIR/crt0.s32o" "$WORKDIR/s32-as.s32o" "$WORKDIR/start.s32o" \
@@ -136,7 +143,7 @@ echo "  OK: s32-as.s32x ($(wc -c < "$OUT_DIR/s32-as.s32x") bytes)"
 
 # --- Build archiver ---
 echo "[4/5] Build s32-ar.s32x"
-compile "$TOOLS_DIR/s32-ar.c" "$WORKDIR/s32-ar.s" "$WORKDIR/s32-ar.cc.log"
+compile "$TOOLS_DIR/s32-ar.c" "$WORKDIR/s32-ar.s" "$WORKDIR/s32-ar.cc.log" "$TOOL_INC"
 assemble "$WORKDIR/s32-ar.s" "$WORKDIR/s32-ar.s32o" "$WORKDIR/s32-ar.as.log"
 link_exe "$WORKDIR/s32-ar.link.log" -o "$OUT_DIR/s32-ar.s32x" --mmio 64K \
     "$WORKDIR/crt0.s32o" "$WORKDIR/s32-ar.s32o" "$WORKDIR/start.s32o" \
@@ -148,7 +155,7 @@ echo "  OK: s32-ar.s32x ($(wc -c < "$OUT_DIR/s32-ar.s32x") bytes)"
 
 # --- Build linker ---
 echo "[5/7] Build s32-ld.s32x"
-compile "$TOOLS_DIR/s32-ld.c" "$WORKDIR/s32-ld.s" "$WORKDIR/s32-ld.cc.log"
+compile "$TOOLS_DIR/s32-ld.c" "$WORKDIR/s32-ld.s" "$WORKDIR/s32-ld.cc.log" "$TOOL_INC"
 assemble "$WORKDIR/s32-ld.s" "$WORKDIR/s32-ld.s32o" "$WORKDIR/s32-ld.as.log"
 link_exe "$WORKDIR/s32-ld.link.log" -o "$OUT_DIR/s32-ld.s32x" --mmio 64K \
     "$WORKDIR/crt0.s32o" "$WORKDIR/s32-ld.s32o" "$WORKDIR/start.s32o" \
@@ -160,7 +167,7 @@ echo "  OK: s32-ld.s32x ($(wc -c < "$OUT_DIR/s32-ld.s32x") bytes)"
 
 # --- Build dumper ---
 echo "[6/7] Build slow32dump.s32x"
-compile "$TOOLS_DIR/slow32dump.c" "$WORKDIR/slow32dump.s" "$WORKDIR/slow32dump.cc.log"
+compile "$TOOLS_DIR/slow32dump.c" "$WORKDIR/slow32dump.s" "$WORKDIR/slow32dump.cc.log" "$TOOL_INC"
 assemble "$WORKDIR/slow32dump.s" "$WORKDIR/slow32dump.s32o" "$WORKDIR/slow32dump.as.log"
 link_exe "$WORKDIR/slow32dump.link.log" -o "$OUT_DIR/slow32dump.s32x" --mmio 64K \
     "$WORKDIR/crt0.s32o" "$WORKDIR/slow32dump.s32o" "$WORKDIR/start.s32o" \
@@ -172,7 +179,7 @@ echo "  OK: slow32dump.s32x ($(wc -c < "$OUT_DIR/slow32dump.s32x") bytes)"
 
 # --- Build disassembler ---
 echo "[7/7] Build slow32dis.s32x"
-compile "$TOOLS_DIR/slow32dis.c" "$WORKDIR/slow32dis.s" "$WORKDIR/slow32dis.cc.log"
+compile "$TOOLS_DIR/slow32dis.c" "$WORKDIR/slow32dis.s" "$WORKDIR/slow32dis.cc.log" "$TOOL_INC"
 assemble "$WORKDIR/slow32dis.s" "$WORKDIR/slow32dis.s32o" "$WORKDIR/slow32dis.as.log"
 link_exe "$WORKDIR/slow32dis.link.log" -o "$OUT_DIR/slow32dis.s32x" --mmio 64K \
     "$WORKDIR/crt0.s32o" "$WORKDIR/slow32dis.s32o" "$WORKDIR/start.s32o" \

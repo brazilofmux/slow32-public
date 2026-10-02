@@ -378,8 +378,8 @@ kit is not in git.
 `libc.s32a`'s stdio is a real one as of selfhost ISSUES-73: stdout is line
 buffered, stderr is not buffered, files are fully buffered, and `exit`
 (or returning from `main`) writes what the streams still hold.  The
-fd-named functions the tools use (`fdputc`, `fdgetc`, ...) are the same
-streams by descriptor.  Three things a program written against the old
+fd-named functions (`fdputc`, `fdgetc`, ...) are the same streams by
+descriptor; the tools themselves are on `<stdio.h>` since ISSUES-74.  Three things a program written against the old
 library might trip on:
 
 - a program that ends by a `halt` instruction of its own, or by a fault,

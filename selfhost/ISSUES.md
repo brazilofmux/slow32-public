@@ -2503,3 +2503,66 @@ conformance; bootstrap purity.
 Not done: the kit in `~/s32x` and the images are from before this; the
 tools still call the fd-named functions; `tmpfile` is still a stub.
 
+### 74. [RESOLVED 2026-10-02] stage08's tools are C against <stdio.h>: the fd-named calls are gone from them
+
+s32-as, s32-ar, s32-ld, slow32dump and slow32dis were written over
+`fdopen_path` / `fdputc` / `fdgetc` / `fdwrite` / `fdread` / `fdseek` /
+`fdtell` with `int` descriptors -- a port made when the compilers had no
+`FILE *` (ISSUES-73 has the history), and kept long after they did:
+s32-ar.c's own header lists "FILE * -> int fd" among its porting changes.
+451 call sites.  Since ISSUES-73 both sets of names are the same streams,
+so moving off them changes no behaviour, and they are moved:
+
+    fdopen_path -> fopen     fdclose -> fclose    fdseek -> fseek
+    fdputc -> fputc          fdgetc  -> fgetc     fdtell -> ftell
+    fdputs -> fputs          fdgets  -> fgets
+    fdwrite -> fwrite        fdread  -> fread
+    fdputuint(f, v) -> fprintf(f, "%u", v)
+    the descriptors 1 and 2 -> stdout and stderr; int handles -> FILE *
+
+The rewrite was mechanical (a script, kept to the call sites; comments
+and strings untouched), and the handles were then retyped with the host's
+compiler as the checker: each tool compiled against stage08's headers
+with int/pointer conversions as errors, until none.
+
+The tools include `<stdio.h>` -- stage08's, so the builds that use the
+stage07 compiler pass `-I stage08/include` for them (stage07's own stdio.h
+declares less), and link `printf_varargs` for the one fprintf.  `NULL`,
+`EOF`, `SEEK_*` come from the header, no longer from each tool's own
+defines.  The hand-written prototypes for the string and allocation
+functions stay: they are `int`-sized on purpose, and stage08's string.h
+is not.
+
+`tools/host-shim.c` is deleted: it implemented the fd names over POSIX
+descriptors so a tool could be built natively, and the tools now build
+natively as they are (`cc -w s32-as.c`).
+
+**Found by it.**  Every open in the tools is followed by `if (!f)` -- the
+test for a null `FILE *`, carried through the port to descriptors, where
+failure is -1 and the test is never true.  A file that was not there was
+never reported: `slow32dis no-such-file` printed nothing.  It is the
+right test again: "cannot open input".
+
+**Checked.**  The tools before and after, over the same inputs (the
+compiler's own 117,783-line assembly; an executable; the libc's objects):
+the object, the archive, its listing and its extracted members, two
+linked executables, the disassembly and the dumps are the same bytes,
+and so are the messages.  The natively built s32-as writes the same
+object as the guest's.  Gates: stage08 104/104 with the fixed point; the
+kit, kit-tools and stage07 differentials; libc, linker and assembler
+differentials; SQLite built by stage08; bootstrap purity.
+
+**Not done.**  The compiler's own diagnostics still say `fdputs(msg, 2)`
+(s12cc.c, hir_codegen.h, and the front end in `src/` that cc-x64 and
+cc-a64 share): moving those means the two cross libcs too, and a run on
+each of their hosts.  Its file I/O is bare open/read/write on purpose.
+
+**Seen on the way, not fixed here: stage07 compiles 32-bit unsigned
+division and remainder as signed.**  `v / 10` and `v % 10` with `v`
+unsigned are a `div` and a `rem`; stage08 calls `__udivsi3` /
+`__umodsi3` (hir_lower.h, hl_udivmod32), stage07 has no such lowering.
+Wrong for any value of 2^31 or more: `fprintf(f, "%u", 4000000000u)`
+from the stage07-built printf prints `UNSNQPUNQ`.  The stage07
+differential has never shown it because nothing the tools compute
+reaches 2^31.  It is the frozen compiler's, repairable in place.
+

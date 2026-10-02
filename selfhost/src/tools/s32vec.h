@@ -32,9 +32,9 @@
 #define SV_MAX_ELEMS 268435456
 
 static void sv_oom(char *what) {
-    fdputs("s32: out of memory growing ", 2);
-    fdputs(what, 2);
-    fdputc('\n', 2);
+    fputs("s32: out of memory growing ", stderr);
+    fputs(what, stderr);
+    fputc('\n', stderr);
     exit(1);
 }
 

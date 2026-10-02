@@ -122,7 +122,8 @@ fi
 # --- Build libc (compiled by stage07 s12cc) ---
 echo "[2/4] Build libc"
 LIBC_OBJS=""
-for name in string_extra string_more ctype convert stdio malloc posix_fs posix_time posix_math posix_proc; do
+# printf_varargs: the assembler built below prints its numbers with fprintf
+for name in string_extra string_more ctype convert stdio malloc posix_fs posix_time posix_math posix_proc printf_varargs; do
     compile "$LIBC_DIR/${name}.c" "$WORKDIR/${name}.s" "$WORKDIR/${name}.cc.log"
     assemble "$WORKDIR/${name}.s" "$WORKDIR/${name}.s32o" "$WORKDIR/${name}.as.log"
     LIBC_OBJS="$LIBC_OBJS $WORKDIR/${name}.s32o"
@@ -136,7 +137,7 @@ assemble "$WORKDIR/start.s" "$WORKDIR/start.s32o" "$WORKDIR/start.as.log"
 # for everything gen1 compiles.  Same rule as run-tests.sh's
 # fixed-point gate: stage08 codegen requires stage08 tool features.
 STAGE8_AS="$WORKDIR/g1-s32-as.s32x"
-"$EMU" "$STAGE7_CC" "$SCRIPT_DIR/tools/s32-as.c" "$WORKDIR/g1-s32-as.s" >"$WORKDIR/g1-s32-as.cc.log" 2>&1
+"$EMU" "$STAGE7_CC" "-I$SCRIPT_DIR/include" "$SCRIPT_DIR/tools/s32-as.c" "$WORKDIR/g1-s32-as.s" >"$WORKDIR/g1-s32-as.cc.log" 2>&1   # the tools are C against stage08's <stdio.h>
 assemble "$WORKDIR/g1-s32-as.s" "$WORKDIR/g1-s32-as.s32o" "$WORKDIR/g1-s32-as.as.log"
 "$EMU" "$STAGE7_LD" -o "$STAGE8_AS" --mmio 64K \
     "$WORKDIR/crt0.s32o" "$WORKDIR/g1-s32-as.s32o" "$WORKDIR/start.s32o" \

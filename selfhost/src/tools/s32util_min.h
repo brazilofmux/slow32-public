@@ -1,10 +1,9 @@
 /* s32util_min.h -- minimal libc + format constants for selfhost utility tools */
 
 
-#define NULL 0
-#define EOF -1
-#define SEEK_SET 0
-#define SEEK_END 2
+/* FILE, the streams, NULL, EOF and SEEK_* are <stdio.h>'s (stage08's: the
+ * build passes its include directory to whichever compiler builds this) */
+#include <stdio.h>
 
 #define S32O_MAGIC 0x5333324F
 #define S32X_MAGIC 0x53333258
@@ -72,16 +71,6 @@ char *memset(char *dst, int c, int n);
 int strcmp(char *a, char *b);
 int strlen(char *s);
 
-int fdopen_path(char *path, char *mode);
-int fdclose(int f);
-int fdseek(int f, int off, int whence);
-int fdtell(int f);
-int fdgetc(int f);
-int fdread(char *buf, int sz, int count, int f);
-int fdwrite(char *buf, int sz, int count, int f);
-int fdputc(int c, int f);
-int fdputs(char *s, int f);
-int fdputuint(int f, int v);
 
 char *malloc(int n);
 void free(char *p);

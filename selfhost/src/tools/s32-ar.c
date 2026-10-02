@@ -5,7 +5,9 @@
  *
  * Porting changes from s32-ar.c:
  *   - uint8_t/uint32_t/int32_t/size_t/long -> int or char
- *   - FILE * -> int fd (uses fdopen_path/fdputs/etc.)
+ *   - (FILE * was int fd here, over fdopen_path/fdputs/etc., until 2026-10:
+ *     the early compilers had no FILE *.  It is <stdio.h> again -- selfhost
+ *     ISSUES-74.)
  *   - const removed from variables
  *   - static removed from functions
  *   - Block-scoped declarations hoisted to function scope
@@ -14,8 +16,6 @@
  *   - (void)x casts removed
  *   - 0xFFFFFFFFu replaced with -1
  *   - u suffixes removed from integer literals
- *   - putchar(ch) replaced with fdputc(ch, 1)
- *   - uses fd-based I/O (fdputs, fdputc, fdopen_path, etc.)
  */
 
 #include "s32ar_min.h"
@@ -169,16 +169,16 @@ void ensure_sidx(int need) {
 
 /* --- Helper functions --- */
 
-void w16(int f, int v) {
-    fdputc(v & 255, f);
-    fdputc((v >> 8) & 255, f);
+void w16(FILE *f, int v) {
+    fputc(v & 255, f);
+    fputc((v >> 8) & 255, f);
 }
 
-void w32(int f, int v) {
-    fdputc(v & 255, f);
-    fdputc((v >> 8) & 255, f);
-    fdputc((v >> 16) & 255, f);
-    fdputc((v >> 24) & 255, f);
+void w32(FILE *f, int v) {
+    fputc(v & 255, f);
+    fputc((v >> 8) & 255, f);
+    fputc((v >> 16) & 255, f);
+    fputc((v >> 24) & 255, f);
 }
 
 int r32(char *p) {
@@ -225,11 +225,11 @@ int align4(int off) {
     return off;
 }
 
-void pad4(int out) {
+void pad4(FILE *out) {
     int pos;
-    pos = fdtell(out);
+    pos = ftell(out);
     while ((pos & 3) != 0) {
-        fdputc(0, out);
+        fputc(0, out);
         pos = pos + 1;
     }
 }
@@ -247,29 +247,29 @@ char *basename_ptr(char *path) {
 }
 
 int count_file_bytes(char *path, int *out_size) {
-    int f;
+    FILE *f;
     int total;
     int ch;
-    f = fdopen_path(path, "rb");
+    f = fopen(path, "rb");
     if (!f) return 0;
     total = 0;
     while (1) {
-        ch = fdgetc(f);
+        ch = fgetc(f);
         if (ch == EOF) break;
         total = total + 1;
     }
-    fdclose(f);
+    fclose(f);
     *out_size = total;
     return 1;
 }
 
 int validate_s32o_file(char *path) {
-    int f;
+    FILE *f;
     char buf[4];
-    f = fdopen_path(path, "rb");
+    f = fopen(path, "rb");
     if (!f) return 0;
-    if (fdread(buf, 1, 4, f) != 4) { fdclose(f); return 0; }
-    fdclose(f);
+    if (fread(buf, 1, 4, f) != 4) { fclose(f); return 0; }
+    fclose(f);
     return r32(buf) == S32O_MAGIC;
 }
 
@@ -307,30 +307,30 @@ int find_member_by_name(char *name, int nmembers) {
     return -1;
 }
 
-int copy_member_file(int out, char *path) {
-    int in;
+int copy_member_file(FILE *out, char *path) {
+    FILE *in;
     int ch;
-    in = fdopen_path(path, "rb");
+    in = fopen(path, "rb");
     if (!in) return 0;
     while (1) {
-        ch = fdgetc(in);
+        ch = fgetc(in);
         if (ch == EOF) break;
-        if (fdputc(ch, out) == EOF) {
-            fdclose(in);
+        if (fputc(ch, out) == EOF) {
+            fclose(in);
             return 0;
         }
     }
-    fdclose(in);
+    fclose(in);
     return 1;
 }
 
-int copy_member_data(int out, int midx) {
+int copy_member_data(FILE *out, int midx) {
     if (g_members[midx].src_kind == SRC_FILE) {
         return copy_member_file(out, g_members[midx].path);
     }
     if (g_members[midx].src_kind == SRC_BUFFER) {
         if (g_members[midx].src_off + g_members[midx].size > g_data_used) return 0;
-        return fdwrite(g_data + g_members[midx].src_off, 1, g_members[midx].size, out) == g_members[midx].size;
+        return fwrite(g_data + g_members[midx].src_off, 1, g_members[midx].size, out) == g_members[midx].size;
     }
     return 0;
 }
@@ -338,7 +338,7 @@ int copy_member_data(int out, int midx) {
 /* --- Archive reading --- */
 
 int load_archive_view(char *archive_path, int *out_nmembers, int *out_file_size, int *out_str_size) {
-    int in;
+    FILE *in;
     int end_pos;
     int file_size;
     int in_nmembers;
@@ -351,29 +351,29 @@ int load_archive_view(char *archive_path, int *out_nmembers, int *out_file_size,
     int data_off;
     int size;
 
-    in = fdopen_path(archive_path, "rb");
+    in = fopen(archive_path, "rb");
     if (!in) return 0;
-    if (fdseek(in, 0, SEEK_END) < 0) {
-        fdclose(in);
+    if (fseek(in, 0, SEEK_END) < 0) {
+        fclose(in);
         return 0;
     }
-    end_pos = fdtell(in);
+    end_pos = ftell(in);
     if (end_pos < 32) {
-        fdclose(in);
+        fclose(in);
         return 0;
     }
     file_size = end_pos;
-    if (fdseek(in, 0, SEEK_SET) < 0) {
-        fdclose(in);
+    if (fseek(in, 0, SEEK_SET) < 0) {
+        fclose(in);
         return 0;
     }
-    if (fdread(g_hdr, 1, 32, in) != 32) {
-        fdclose(in);
+    if (fread(g_hdr, 1, 32, in) != 32) {
+        fclose(in);
         return 0;
     }
 
     if (g_hdr[0] != 'A' || g_hdr[1] != '2' || g_hdr[2] != '3' || g_hdr[3] != 'S') {
-        fdclose(in);
+        fclose(in);
         return 0;
     }
 
@@ -383,27 +383,27 @@ int load_archive_view(char *archive_path, int *out_nmembers, int *out_file_size,
     in_str_sz = r32(g_hdr + 28);
 
     if (in_nmembers < 0 || in_nmembers > (file_size / 24)) {
-        fdclose(in);
+        fclose(in);
         return 0;
     }
     if (!in_bounds(in_mem_off, in_nmembers * 24, file_size)) {
-        fdclose(in);
+        fclose(in);
         return 0;
     }
     if (!in_bounds(in_str_off, in_str_sz, file_size)) {
-        fdclose(in);
+        fclose(in);
         return 0;
     }
 
-    if (fdseek(in, in_str_off, SEEK_SET) < 0) {
-        fdclose(in);
+    if (fseek(in, in_str_off, SEEK_SET) < 0) {
+        fclose(in);
         return 0;
     }
     ensure_arc_strtab(in_str_sz + 1);
     ensure_arc_members(in_nmembers + 1);
     if (in_str_sz > 0) {
-        if (fdread(g_arc_strtab, 1, in_str_sz, in) != in_str_sz) {
-            fdclose(in);
+        if (fread(g_arc_strtab, 1, in_str_sz, in) != in_str_sz) {
+            fclose(in);
             return 0;
         }
     }
@@ -411,12 +411,12 @@ int load_archive_view(char *archive_path, int *out_nmembers, int *out_file_size,
     i = 0;
     while (i < in_nmembers) {
         ent_off = in_mem_off + i * 24;
-        if (fdseek(in, ent_off, SEEK_SET) < 0) {
-            fdclose(in);
+        if (fseek(in, ent_off, SEEK_SET) < 0) {
+            fclose(in);
             return 0;
         }
-        if (fdread(g_ent, 1, 24, in) != 24) {
-            fdclose(in);
+        if (fread(g_ent, 1, 24, in) != 24) {
+            fclose(in);
             return 0;
         }
 
@@ -425,11 +425,11 @@ int load_archive_view(char *archive_path, int *out_nmembers, int *out_file_size,
         size = r32(g_ent + 8);
 
         if (name_off >= in_str_sz) {
-            fdclose(in);
+            fclose(in);
             return 0;
         }
         if (!in_bounds(data_off, size, file_size)) {
-            fdclose(in);
+            fclose(in);
             return 0;
         }
 
@@ -440,7 +440,7 @@ int load_archive_view(char *archive_path, int *out_nmembers, int *out_file_size,
         i = i + 1;
     }
 
-    fdclose(in);
+    fclose(in);
     *out_nmembers = in_nmembers;
     *out_file_size = file_size;
     *out_str_size = in_str_sz;
@@ -458,10 +458,10 @@ int list_archive(char *archive_path) {
     i = 0;
     while (i < nmembers) {
         name = g_arc_strtab + g_arc_members[i].name_off;
-        fdputuint(1, g_arc_members[i].size);
-        fdputc(' ', 1);
-        fdputs(name, 1);
-        fdputc('\n', 1);
+        fprintf(stdout, "%u", g_arc_members[i].size);
+        fputc(' ', stdout);
+        fputs(name, stdout);
+        fputc('\n', stdout);
         i = i + 1;
     }
     return 1;
@@ -472,41 +472,41 @@ int list_archive(char *archive_path) {
 int extract_one(char *archive_path, int midx) {
     char *name;
     char *out_name;
-    int in;
-    int out;
+    FILE *in;
+    FILE *out;
     int i;
     int ch;
 
     name = g_arc_strtab + g_arc_members[midx].name_off;
     out_name = basename_ptr(name);
-    in = fdopen_path(archive_path, "rb");
+    in = fopen(archive_path, "rb");
     if (!in) return 0;
-    if (fdseek(in, g_arc_members[midx].data_off, SEEK_SET) < 0) {
-        fdclose(in);
+    if (fseek(in, g_arc_members[midx].data_off, SEEK_SET) < 0) {
+        fclose(in);
         return 0;
     }
-    out = fdopen_path(out_name, "wb");
+    out = fopen(out_name, "wb");
     if (!out) {
-        fdclose(in);
+        fclose(in);
         return 0;
     }
     i = 0;
     while (i < g_arc_members[midx].size) {
-        ch = fdgetc(in);
+        ch = fgetc(in);
         if (ch == EOF) {
-            fdclose(out);
-            fdclose(in);
+            fclose(out);
+            fclose(in);
             return 0;
         }
-        if (fdputc(ch, out) == EOF) {
-            fdclose(out);
-            fdclose(in);
+        if (fputc(ch, out) == EOF) {
+            fclose(out);
+            fclose(in);
             return 0;
         }
         i = i + 1;
     }
-    fdclose(out);
-    fdclose(in);
+    fclose(out);
+    fclose(in);
     return 1;
 }
 
@@ -562,27 +562,27 @@ int extract_archive(char *archive_path, int reqc, char **reqv) {
 /* --- Print --- */
 
 int print_one(char *archive_path, int midx) {
-    int in;
+    FILE *in;
     int i;
     int ch;
 
-    in = fdopen_path(archive_path, "rb");
+    in = fopen(archive_path, "rb");
     if (!in) return 0;
-    if (fdseek(in, g_arc_members[midx].data_off, SEEK_SET) < 0) {
-        fdclose(in);
+    if (fseek(in, g_arc_members[midx].data_off, SEEK_SET) < 0) {
+        fclose(in);
         return 0;
     }
     i = 0;
     while (i < g_arc_members[midx].size) {
-        ch = fdgetc(in);
+        ch = fgetc(in);
         if (ch == EOF) {
-            fdclose(in);
+            fclose(in);
             return 0;
         }
-        fdputc(ch, 1);
+        fputc(ch, stdout);
         i = i + 1;
     }
-    fdclose(in);
+    fclose(in);
     return 1;
 }
 
@@ -628,26 +628,26 @@ int print_archive(char *archive_path, int reqc, char **reqv) {
 /* --- Symbol index building (NEW) --- */
 
 int load_file_to_data(int midx) {
-    int f;
+    FILE *f;
     int ch;
     int off;
     int sz;
 
     if (g_members[midx].src_kind != SRC_FILE) return 1;
 
-    f = fdopen_path(g_members[midx].path, "rb");
+    f = fopen(g_members[midx].path, "rb");
     if (!f) return 0;
 
     off = g_data_used;
     sz = 0;
     while (1) {
-        ch = fdgetc(f);
+        ch = fgetc(f);
         if (ch == EOF) break;
         if (off + sz + 1 > g_data_cap) ensure_data(off + sz + 1);
         g_data[off + sz] = ch;
         sz = sz + 1;
     }
-    fdclose(f);
+    fclose(f);
 
     g_members[midx].src_kind = SRC_BUFFER;
     g_members[midx].src_off = off;
@@ -742,7 +742,7 @@ int build_symbol_index(int nmembers, int *str_used) {
 /* --- Archive writing --- */
 
 int write_archive(char *out_path, int nmembers, int str_used) {
-    int out;
+    FILE *out;
     int nsymbols;
     int sym_off;
     int mem_off;
@@ -763,17 +763,17 @@ int write_archive(char *out_path, int nmembers, int str_used) {
         i = i + 1;
     }
 
-    out = fdopen_path(out_path, "wb");
+    out = fopen(out_path, "wb");
     if (!out) return 0;
 
     /* Header: "A23S" magic */
-    fdputc('A', out);
-    fdputc('2', out);
-    fdputc('3', out);
-    fdputc('S', out);
+    fputc('A', out);
+    fputc('2', out);
+    fputc('3', out);
+    fputc('S', out);
     w16(out, 1);       /* version */
-    fdputc(1, out);     /* endian */
-    fdputc(0, out);     /* reserved */
+    fputc(1, out);     /* endian */
+    fputc(0, out);     /* reserved */
     w32(out, nmembers);
     w32(out, mem_off);
     w32(out, nsymbols);
@@ -803,8 +803,8 @@ int write_archive(char *out_path, int nmembers, int str_used) {
 
     /* String table */
     if (str_used > 0) {
-        if (fdwrite(g_strtab, 1, str_used, out) != str_used) {
-            fdclose(out);
+        if (fwrite(g_strtab, 1, str_used, out) != str_used) {
+            fclose(out);
             return 0;
         }
     }
@@ -814,21 +814,21 @@ int write_archive(char *out_path, int nmembers, int str_used) {
     i = 0;
     while (i < nmembers) {
         if (!copy_member_data(out, i)) {
-            fdclose(out);
+            fclose(out);
             return 0;
         }
         pad4(out);
         i = i + 1;
     }
 
-    if (fdclose(out) != 0) return 0;
+    if (fclose(out) != 0) return 0;
     return 1;
 }
 
 /* --- Load existing archive (for replace/delete/move) --- */
 
 int load_existing_archive(char *archive_path, int *nmembers, int *str_used) {
-    int in;
+    FILE *in;
     int end_pos;
     int file_size;
     int in_nmembers;
@@ -843,29 +843,29 @@ int load_existing_archive(char *archive_path, int *nmembers, int *str_used) {
     int off;
     int n;
 
-    in = fdopen_path(archive_path, "rb");
+    in = fopen(archive_path, "rb");
     if (!in) return 0;
-    if (fdseek(in, 0, SEEK_END) < 0) {
-        fdclose(in);
+    if (fseek(in, 0, SEEK_END) < 0) {
+        fclose(in);
         return 0;
     }
-    end_pos = fdtell(in);
+    end_pos = ftell(in);
     if (end_pos < 32) {
-        fdclose(in);
+        fclose(in);
         return 0;
     }
     file_size = end_pos;
-    if (fdseek(in, 0, SEEK_SET) < 0) {
-        fdclose(in);
+    if (fseek(in, 0, SEEK_SET) < 0) {
+        fclose(in);
         return 0;
     }
-    if (fdread(g_hdr, 1, 32, in) != 32) {
-        fdclose(in);
+    if (fread(g_hdr, 1, 32, in) != 32) {
+        fclose(in);
         return 0;
     }
 
     if (g_hdr[0] != 'A' || g_hdr[1] != '2' || g_hdr[2] != '3' || g_hdr[3] != 'S') {
-        fdclose(in);
+        fclose(in);
         return 0;
     }
 
@@ -875,28 +875,28 @@ int load_existing_archive(char *archive_path, int *nmembers, int *str_used) {
     in_str_sz = r32(g_hdr + 28);
 
     if (in_nmembers < 0 || in_nmembers > (file_size / 24)) {
-        fdclose(in);
+        fclose(in);
         return 0;
     }
     if (!in_bounds(in_mem_off, in_nmembers * 24, file_size)) {
-        fdclose(in);
+        fclose(in);
         return 0;
     }
     if (!in_bounds(in_str_off, in_str_sz, file_size)) {
-        fdclose(in);
+        fclose(in);
         return 0;
     }
 
-    if (fdseek(in, in_str_off, SEEK_SET) < 0) {
-        fdclose(in);
+    if (fseek(in, in_str_off, SEEK_SET) < 0) {
+        fclose(in);
         return 0;
     }
     ensure_old_strtab(in_str_sz + 1);
     ensure_members(in_nmembers + 1);
     ensure_members_tmp(in_nmembers + 1);
     if (in_str_sz > 0) {
-        if (fdread(g_old_strtab, 1, in_str_sz, in) != in_str_sz) {
-            fdclose(in);
+        if (fread(g_old_strtab, 1, in_str_sz, in) != in_str_sz) {
+            fclose(in);
             return 0;
         }
     }
@@ -905,12 +905,12 @@ int load_existing_archive(char *archive_path, int *nmembers, int *str_used) {
     i = 0;
     while (i < in_nmembers) {
         ent_off = in_mem_off + i * 24;
-        if (fdseek(in, ent_off, SEEK_SET) < 0) {
-            fdclose(in);
+        if (fseek(in, ent_off, SEEK_SET) < 0) {
+            fclose(in);
             return 0;
         }
-        if (fdread(g_ent, 1, 24, in) != 24) {
-            fdclose(in);
+        if (fread(g_ent, 1, 24, in) != 24) {
+            fclose(in);
             return 0;
         }
 
@@ -919,28 +919,28 @@ int load_existing_archive(char *archive_path, int *nmembers, int *str_used) {
         size = r32(g_ent + 8);
 
         if (name_off >= in_str_sz) {
-            fdclose(in);
+            fclose(in);
             return 0;
         }
         if (!in_bounds(data_off, size, file_size)) {
-            fdclose(in);
+            fclose(in);
             return 0;
         }
         ensure_data(g_data_used + size + 1);
-        if (fdseek(in, data_off, SEEK_SET) < 0) {
-            fdclose(in);
+        if (fseek(in, data_off, SEEK_SET) < 0) {
+            fclose(in);
             return 0;
         }
         if (size > 0) {
-            if (fdread(g_data + g_data_used, 1, size, in) != size) {
-                fdclose(in);
+            if (fread(g_data + g_data_used, 1, size, in) != size) {
+                fclose(in);
                 return 0;
             }
         }
 
         off = append_strtab(g_old_strtab + name_off, str_used);
         if (off == -1) {
-            fdclose(in);
+            fclose(in);
             return 0;
         }
 
@@ -956,7 +956,7 @@ int load_existing_archive(char *archive_path, int *nmembers, int *str_used) {
         i = i + 1;
     }
 
-    fdclose(in);
+    fclose(in);
     *nmembers = n;
     return 1;
 }
@@ -1143,7 +1143,7 @@ int main(int argc, char **argv) {
     str_used = 1;
 
     if (argc < 3) {
-        fdputs("Usage: s32-ar <operation> archive [files...]\n", 2);
+        fputs("Usage: s32-ar <operation> archive [files...]\n", stderr);
         return 1;
     }
     cmd = argv[1];
@@ -1152,54 +1152,54 @@ int main(int argc, char **argv) {
     if (has_flag(cmd, 't')) {
         if (argc != 3) return 1;
         if (!list_archive(archive)) {
-            fdputs("Error: failed to list archive\n", 2);
+            fputs("Error: failed to list archive\n", stderr);
             return 1;
         }
         return 0;
     }
     if (has_flag(cmd, 'x')) {
         if (!extract_archive(archive, argc - 3, argv + 3)) {
-            fdputs("Error: extract failed\n", 2);
+            fputs("Error: extract failed\n", stderr);
             return 1;
         }
         return 0;
     }
     if (has_flag(cmd, 'p')) {
         if (!print_archive(archive, argc - 3, argv + 3)) {
-            fdputs("Error: print failed\n", 2);
+            fputs("Error: print failed\n", stderr);
             return 1;
         }
         return 0;
     }
     if (has_flag(cmd, 'd')) {
         if (argc < 4) {
-            fdputs("Error: no members specified for delete\n", 2);
+            fputs("Error: no members specified for delete\n", stderr);
             return 1;
         }
         if (!delete_members(archive, argc - 3, argv + 3)) {
-            fdputs("Error: delete failed\n", 2);
+            fputs("Error: delete failed\n", stderr);
             return 1;
         }
         return 0;
     }
     if (has_flag(cmd, 'm')) {
         if (argc < 4) {
-            fdputs("Error: no members specified for move\n", 2);
+            fputs("Error: no members specified for move\n", stderr);
             return 1;
         }
         if (!move_members(archive, argc - 3, argv + 3)) {
-            fdputs("Error: move failed\n", 2);
+            fputs("Error: move failed\n", stderr);
             return 1;
         }
         return 0;
     }
 
     if (argc < 4) {
-        fdputs("Error: no files specified\n", 2);
+        fputs("Error: no files specified\n", stderr);
         return 1;
     }
     if (!has_flag(cmd, 'c') && !has_flag(cmd, 'r')) {
-        fdputs("Error: unknown operation\n", 2);
+        fputs("Error: unknown operation\n", stderr);
         return 1;
     }
 
@@ -1218,16 +1218,16 @@ int main(int argc, char **argv) {
         name = basename_ptr(path);
 
         if (!count_file_bytes(path, &size)) {
-            fdputs("Error: cannot open: ", 2);
-            fdputs(path, 2);
-            fdputc('\n', 2);
+            fputs("Error: cannot open: ", stderr);
+            fputs(path, stderr);
+            fputc('\n', stderr);
             return 1;
         }
 
         if (!validate_s32o_file(path)) {
-            fdputs("Error: not a valid .s32o: ", 2);
-            fdputs(path, 2);
-            fdputc('\n', 2);
+            fputs("Error: not a valid .s32o: ", stderr);
+            fputs(path, stderr);
+            fputc('\n', stderr);
             return 1;
         }
 
@@ -1266,7 +1266,7 @@ int main(int argc, char **argv) {
     build_symbol_index(nmembers, &str_used);
 
     if (!write_archive(archive, nmembers, str_used)) {
-        fdputs("Error: failed to write archive\n", 2);
+        fputs("Error: failed to write archive\n", stderr);
         return 1;
     }
     return 0;

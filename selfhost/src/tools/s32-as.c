@@ -108,8 +108,8 @@ static char g_str[131072];
 #define G_LINE_SIZE 1024
 static char g_line[G_LINE_SIZE];
 static int g_ssz;
-static int g_in;
-static int g_out;
+static FILE *g_in;
+static FILE *g_out;
 
 static char g_lin_plus[128];
 static char g_lin_minus[128];
@@ -464,7 +464,7 @@ static void ht_rebuild(int newcap) {
     if (g_lbl_ht == 0) g_lbl_ht = (int *)malloc(newcap * 4);
     else g_lbl_ht = (int *)realloc((char *)g_lbl_ht, newcap * 4);
     if (g_lbl_ht == 0) {
-        fdputs("s32-as: out of memory (label hash)\n", 2);
+        fputs("s32-as: out of memory (label hash)\n", stderr);
         exit(1);
     }
     g_lbl_ht_cap = newcap;
@@ -651,7 +651,7 @@ int emit_word_list(char *p) {
  * one very large function, so its spill/reload path is where to look.
  *
  * Method notes for whoever picks this up: source-level probes are
- * UNRELIABLE here -- the probe's own fdputs/fdputuint calls write to the
+ * UNRELIABLE here -- the probe's own output calls (fdputs/fdputuint then) write to the
  * same stack addresses being examined, and probe readings disagreed with
  * the watchpoint.  Prefer artifact diffing and the emulator watchpoint,
  * and note the watchpoint prints to STDERR (2>/dev/null silently hides
@@ -1529,15 +1529,15 @@ int s_add(char *s) {
 }
 
 void w16(int v) {
-    fdputc(v & 255, g_out);
-    fdputc((v >> 8) & 255, g_out);
+    fputc(v & 255, g_out);
+    fputc((v >> 8) & 255, g_out);
 }
 
 void w32(int v) {
-    fdputc(v & 255, g_out);
-    fdputc((v >> 8) & 255, g_out);
-    fdputc((v >> 16) & 255, g_out);
-    fdputc((v >> 24) & 255, g_out);
+    fputc(v & 255, g_out);
+    fputc((v >> 8) & 255, g_out);
+    fputc((v >> 16) & 255, g_out);
+    fputc((v >> 24) & 255, g_out);
 }
 
 int build_syms(int text_idx, int rodata_idx, int data_idx, int init_array_idx, int bss_idx) {
@@ -1619,9 +1619,9 @@ int relax_text_branches() {
             /* Alignment padding stronger than one word is already
              * materialized; a 4-byte insertion below it would break it. */
             if (g_text_has_strict_align && off + 4 <= g_text_strict_align_max) {
-                fdputs("s32-as: cannot relax branch below .align > 4 in .text: ", 2);
-                fdputs(g_lbl_name_pool + g_lbl_name_off[li], 2);
-                fdputc(10, 2);
+                fputs("s32-as: cannot relax branch below .align > 4 in .text: ", stderr);
+                fputs(g_lbl_name_pool + g_lbl_name_off[li], stderr);
+                fputc(10, stderr);
                 return -1;
             }
             g_text = sv_grow(g_text, &g_text_cap, g_tsz + 4, 1, "text");
@@ -1712,9 +1712,9 @@ int resolve_local_text_relocs() {
                  * host slow32asm has always range-checked; this
                  * assembler let a 60KB function jump garbage). */
                 if (disp < -4096 || disp > 4094) {
-                    fdputs("s32-as: branch offset out of range (+/-4096): ", 2);
-                    fdputs(g_lbl_name_pool + g_lbl_name_off[li], 2);
-                    fdputc(10, 2);
+                    fputs("s32-as: branch offset out of range (+/-4096): ", stderr);
+                    fputs(g_lbl_name_pool + g_lbl_name_off[li], stderr);
+                    fputc(10, stderr);
                     return -1;
                 }
                 patched = enc_b(0, rs1, rs2, disp);
@@ -1724,9 +1724,9 @@ int resolve_local_text_relocs() {
                 inst = rd32(g_text + off);
                 rd = (inst >> 7) & 31;
                 if (disp < -1048576 || disp > 1048574) {
-                    fdputs("s32-as: jal offset out of range (+/-1MB): ", 2);
-                    fdputs(g_lbl_name_pool + g_lbl_name_off[li], 2);
-                    fdputc(10, 2);
+                    fputs("s32-as: jal offset out of range (+/-1MB): ", stderr);
+                    fputs(g_lbl_name_pool + g_lbl_name_off[li], stderr);
+                    fputc(10, stderr);
                     return -1;
                 }
                 patched = enc_j(0, rd, disp);
@@ -1929,13 +1929,13 @@ int write_obj(char *out) {
     if (data_idx) { data_data_off = off; off = off + g_dsz; }
     if (init_array_idx) { init_array_data_off = off; off = off + g_isz; }
 
-    g_out = fdopen_path(out, "wb");
+    g_out = fopen(out, "wb");
     if (!g_out) return -1;
 
     v = S32O_MAGIC; w32(v);
     w16(1);
-    fdputc(S32_ENDIAN_LITTLE, g_out);
-    fdputc(S32_MACHINE_SLOW32, g_out);
+    fputc(S32_ENDIAN_LITTLE, g_out);
+    fputc(S32_MACHINE_SLOW32, g_out);
     v = 0; w32(v);
     v = nsec; w32(v);
     v = sec_off; w32(v);
@@ -2000,8 +2000,8 @@ int write_obj(char *out) {
         v = g_sym_name[i]; w32(v);
         v = g_sym_val[i]; w32(v);
         w16(g_sym_sec[i]);
-        fdputc(S32O_SYM_NOTYPE, g_out);
-        fdputc(g_sym_bind[i], g_out);
+        fputc(S32O_SYM_NOTYPE, g_out);
+        fputc(g_sym_bind[i], g_out);
         v = 0; w32(v);
     }
 
@@ -2046,14 +2046,14 @@ int write_obj(char *out) {
         }
     }
 
-    fdwrite(g_str, 1, g_ssz, g_out);
-    while ((fdtell(g_out) & 3) != 0) fdputc(0, g_out);
-    if (g_tsz) fdwrite(g_text, 1, g_tsz, g_out);
-    if (g_rsz) fdwrite(g_rodata, 1, g_rsz, g_out);
-    if (g_dsz) fdwrite(g_data, 1, g_dsz, g_out);
-    if (g_isz) fdwrite(g_init_array, 1, g_isz, g_out);
+    fwrite(g_str, 1, g_ssz, g_out);
+    while ((ftell(g_out) & 3) != 0) fputc(0, g_out);
+    if (g_tsz) fwrite(g_text, 1, g_tsz, g_out);
+    if (g_rsz) fwrite(g_rodata, 1, g_rsz, g_out);
+    if (g_dsz) fwrite(g_data, 1, g_dsz, g_out);
+    if (g_isz) fwrite(g_init_array, 1, g_isz, g_out);
 
-    fdclose(g_out);
+    fclose(g_out);
     g_out = 0;
     return 0;
 }
@@ -2063,47 +2063,47 @@ int main(int argc, char **argv) {
     lno = 0;
 
     if (argc != 3) {
-        fdputs("Usage: s32-as <input.s> <output.s32o>\n", 2);
+        fputs("Usage: s32-as <input.s> <output.s32o>\n", stderr);
         return 1;
     }
 
-    g_in = fdopen_path(argv[1], "rb");
+    g_in = fopen(argv[1], "rb");
     if (!g_in) {
-        fdputs("cannot open input\n", 2);
+        fputs("cannot open input\n", stderr);
         return 1;
     }
 
-    while (fdgets(g_line, G_LINE_SIZE, g_in)) {
+    while (fgets(g_line, G_LINE_SIZE, g_in)) {
         lno = lno + 1;
         if (handle(g_line) != 0) {
-            fdputs("assemble error at line ", 2);
-            fdputuint(2, lno);
-            fdputc('\n', 2);
-            fdclose(g_in);
+            fputs("assemble error at line ", stderr);
+            fprintf(stderr, "%u", lno);
+            fputc('\n', stderr);
+            fclose(g_in);
             g_in = 0;
             return 1;
         }
     }
-    fdclose(g_in);
+    fclose(g_in);
     g_in = 0;
 
     if (relax_text_branches() != 0) {
-        fdputs("branch relaxation failed\n", 2);
+        fputs("branch relaxation failed\n", stderr);
         return 1;
     }
 
     if (resolve_diff_fixups() != 0) {
-        fdputs("resolve label-diff fixups failed\n", 2);
+        fputs("resolve label-diff fixups failed\n", stderr);
         return 1;
     }
 
     if (resolve_local_text_relocs() != 0) {
-        fdputs("resolve local text relocations failed\n", 2);
+        fputs("resolve local text relocations failed\n", stderr);
         return 1;
     }
 
     if (write_obj(argv[2]) != 0) {
-        fdputs("write object failed\n", 2);
+        fputs("write object failed\n", stderr);
         return 1;
     }
     return 0;
