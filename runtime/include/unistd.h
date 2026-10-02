@@ -13,6 +13,9 @@ extern "C" {
 #define W_OK 2  // Write permission
 #define R_OK 4  // Read permission
 
+// The end, here and now: no atexit functions, nothing flushed
+void _exit(int status);
+
 // Sleep functions
 unsigned int sleep(unsigned int seconds);
 int usleep(unsigned int usec);

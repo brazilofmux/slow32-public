@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <errno.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -122,49 +123,47 @@ void *bsearch(const void *key, const void *base, size_t nmemb, size_t size,
     return NULL;
 }
 
-// String to long conversion with error checking
+// String to long conversion, as the standard has it: the white space
+// isspace knows, a 0x that is a prefix only before a hexadecimal digit, a
+// value past either end of long clamped there with ERANGE (every digit
+// consumed all the same), the end pointer left at the start when nothing
+// was converted.  The value is gathered below zero: a negative long has
+// one more value than a positive one, so every number that fits can be
+// reached that way.
 long strtol(const char *nptr, char **endptr, int base) {
     const char *s = nptr;
-    const char *digits_start;
-    long result = 0;
-    int sign = 1;
-    int found_digit = 0;
+    const char *after = 0;      // past the last digit taken
+    long acc = 0;
+    int neg = 0, over = 0;
 
-    // Skip whitespace
+    if (base != 0 && (base < 2 || base > 36)) {
+        errno = EINVAL;
+        if (endptr) *endptr = (char *)nptr;
+        return 0;
+    }
+
     while (*s == ' ' || (*s >= '\t' && *s <= '\r')) s++;
 
-    // Handle sign
     if (*s == '-') {
-        sign = -1;
+        neg = 1;
         s++;
     } else if (*s == '+') {
         s++;
     }
 
-    // Handle base
-    if (base == 0) {
-        if (*s == '0') {
-            s++;
-            if (*s == 'x' || *s == 'X') {
-                base = 16;
-                s++;
-            } else {
-                base = 8;
-                // The leading '0' counts as a digit
-                found_digit = 1;
-            }
-        } else {
-            base = 10;
-        }
-    } else if (base == 16) {
-        if (*s == '0' && (s[1] == 'x' || s[1] == 'X')) {
+    if ((base == 0 || base == 16) && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
+        int c = s[2];
+        if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
             s += 2;
+            base = 16;
         }
     }
+    if (base == 0) base = (*s == '0') ? 8 : 10;
 
-    // Convert digits
-    digits_start = s;
-    while (*s) {
+    long limit = neg ? (-2147483647L - 1) : -2147483647L;
+    long multmin = limit / base;
+
+    for (;; s++) {
         int digit;
         if (*s >= '0' && *s <= '9') {
             digit = *s - '0';
@@ -175,20 +174,26 @@ long strtol(const char *nptr, char **endptr, int base) {
         } else {
             break;
         }
-
         if (digit >= base) break;
 
-        found_digit = 1;
-        result = result * base + digit;
-        s++;
+        if (!over) {
+            if (acc < multmin) {
+                over = 1;
+            } else {
+                acc *= base;
+                if (acc < limit + digit) over = 1;
+                else acc -= digit;
+            }
+        }
+        after = s + 1;
     }
 
-    if (endptr) {
-        // Per C standard: if no conversion performed, set endptr to nptr
-        *endptr = found_digit ? (char *)s : (char *)nptr;
+    if (endptr) *endptr = (char *)(after ? after : nptr);
+    if (over) {
+        errno = ERANGE;
+        return neg ? limit : -limit;
     }
-
-    return result * sign;
+    return neg ? acc : -acc;
 }
 
 // strtoul is now in convert_extra.c

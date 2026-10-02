@@ -3,83 +3,73 @@
 #include <ctype.h>
 #include "convert.h"
 
+#include <errno.h>
+
 // Define limits since we can't include standard limits.h
 #define ULONG_MAX 0xFFFFFFFFUL
 
-// strtoul - convert string to unsigned long
-unsigned long strtoul(const char *nptr, char **endptr, int base) {
-    const char *s = nptr;
-    unsigned long result = 0;
-    unsigned long cutoff;
-    int cutlim;
-    int c;
-    int neg = 0;
-    int any = 0;
-    
-    // Skip whitespace
-    while (isspace(*s)) s++;
-    
-    // Check for sign
+/* What every strto* begins with: the white space isspace knows, a sign,
+ * and the prefix the base allows -- 0x or 0X for 16 (or 0), but only
+ * before a hexadecimal digit: in "0x" and "0xg" the number is the 0 and
+ * the x is what follows it.  Returns where the digits begin, with the
+ * base settled; 0 for a base that is none (EINVAL). */
+static int digit_of(int c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'Z') return c - 'A' + 10;
+    return 99;
+}
+
+static const char *scan_prefix(const char *s, int *base, int *neg) {
+    *neg = 0;
+    if (*base != 0 && (*base < 2 || *base > 36)) {
+        errno = EINVAL;
+        return 0;
+    }
+    while (*s == ' ' || (*s >= '\t' && *s <= '\r')) s++;
     if (*s == '-') {
-        neg = 1;
+        *neg = 1;
         s++;
     } else if (*s == '+') {
         s++;
     }
-    
-    // Determine base
-    if ((base == 0 || base == 16) && *s == '0' && (s[1] == 'x' || s[1] == 'X')) {
+    if ((*base == 0 || *base == 16) && s[0] == '0' && (s[1] == 'x' || s[1] == 'X') && digit_of(s[2]) < 16) {
         s += 2;
-        base = 16;
-    } else if (base == 0) {
-        base = (*s == '0') ? 8 : 10;
+        *base = 16;
+    } else if (*base == 0) {
+        *base = (*s == '0') ? 8 : 10;
     }
-    
-    // Check base validity
-    if (base < 2 || base > 36) {
+    return s;
+}
+
+// strtoul - convert string to unsigned long.  Every digit is consumed
+// even when the value has passed ULONG_MAX (the result is then
+// ULONG_MAX, with ERANGE); a minus sign negates the value as unsigned.
+unsigned long strtoul(const char *nptr, char **endptr, int base) {
+    unsigned long result = 0;
+    unsigned long cutoff;
+    unsigned int cutlim;
+    int neg, any = 0, over = 0, d;
+    const char *s = scan_prefix(nptr, &base, &neg);
+
+    if (!s) {
         if (endptr) *endptr = (char *)nptr;
         return 0;
     }
-    
-    // Calculate overflow cutoff values
-    cutoff = ULONG_MAX / base;
-    cutlim = ULONG_MAX % base;
-    
-    // Process digits
-    while ((c = *s) != '\0') {
-        if (isdigit(c)) {
-            c -= '0';
-        } else if (isalpha(c)) {
-            c = toupper(c) - 'A' + 10;
-        } else {
-            break;
-        }
-        
-        if (c >= base) break;
-        
-        // Check for overflow
-        if (result > cutoff || (result == cutoff && c > cutlim)) {
-            result = ULONG_MAX;
-            any = -1;
-            break;
-        }
-        
-        result = result * base + c;
+    cutoff = ULONG_MAX / (unsigned int)base;
+    cutlim = ULONG_MAX % (unsigned int)base;
+    while ((d = digit_of(*s)) < base) {
+        if (result > cutoff || (result == cutoff && (unsigned int)d > cutlim)) over = 1;
+        else result = result * base + d;
         any = 1;
         s++;
     }
-    
-    if (any < 0) {
-        result = ULONG_MAX;
-    } else if (neg) {
-        result = -result;
+    if (endptr) *endptr = (char *)(any ? s : nptr);
+    if (over) {
+        errno = ERANGE;
+        return ULONG_MAX;
     }
-    
-    if (endptr) {
-        *endptr = (char *)(any ? s : nptr);
-    }
-    
-    return result;
+    return neg ? 0u - result : result;
 }
 
 // itoa - convert integer to string (non-standard but useful)
@@ -183,143 +173,75 @@ char *utoa(unsigned int value, char *str, int base) {
 }
 
 // strtoull - convert string to unsigned 64-bit integer
+#define ULLONG_MAX_VAL 0xFFFFFFFFFFFFFFFFULL
+#define LLONG_MAX_VAL  0x7FFFFFFFFFFFFFFFLL
+#define LLONG_MIN_VAL  (-LLONG_MAX_VAL - 1LL)
+
+/* The digits, gathered up to `limit` (2^63-1 or more: strtoll's or
+ * strtoull's): 0 when they fit, 1 when the value passed it (every digit
+ * is consumed all the same).  The test divides, so it is made only near
+ * the top: below 2^57 one more digit of any base leaves the value under
+ * 2^63, which is under any limit this is given. */
+static int scan_digits64(const char **sp, int base, unsigned long long limit,
+                         unsigned long long *value, int *any) {
+    const char *s = *sp;
+    unsigned long long acc = 0;
+    int over = 0, d;
+
+    *any = 0;
+    while ((d = digit_of(*s)) < base) {
+        if (!over) {
+            if (acc >> 57) {
+                if (acc > (limit - d) / base) over = 1;
+                else acc = acc * base + d;
+            } else {
+                acc = acc * base + d;
+            }
+        }
+        *any = 1;
+        s++;
+    }
+    *sp = s;
+    *value = acc;
+    return over;
+}
+
 unsigned long long strtoull(const char *nptr, char **endptr, int base) {
-    const char *s = nptr;
-    unsigned long long result = 0;
-    unsigned long long cutoff;
-    int cutlim;
-    int c;
-    int neg = 0;
-    int any = 0;
+    unsigned long long result;
+    int neg, any, over;
+    const char *s = scan_prefix(nptr, &base, &neg);
 
-    while (isspace(*s)) s++;
-
-    if (*s == '-') {
-        neg = 1;
-        s++;
-    } else if (*s == '+') {
-        s++;
-    }
-
-    if ((base == 0 || base == 16) && *s == '0' && (s[1] == 'x' || s[1] == 'X')) {
-        s += 2;
-        base = 16;
-    } else if (base == 0) {
-        base = (*s == '0') ? 8 : 10;
-    }
-
-    if (base < 2 || base > 36) {
+    if (!s) {
         if (endptr) *endptr = (char *)nptr;
         return 0;
     }
-
-    #define ULLONG_MAX_VAL 0xFFFFFFFFFFFFFFFFULL
-    cutoff = ULLONG_MAX_VAL / base;
-    cutlim = ULLONG_MAX_VAL % base;
-
-    while ((c = *s) != '\0') {
-        if (isdigit(c)) {
-            c -= '0';
-        } else if (isalpha(c)) {
-            c = toupper(c) - 'A' + 10;
-        } else {
-            break;
-        }
-
-        if (c >= base) break;
-
-        if (result > cutoff || (result == cutoff && c > cutlim)) {
-            result = ULLONG_MAX_VAL;
-            any = -1;
-            break;
-        }
-
-        result = result * base + c;
-        any = 1;
-        s++;
+    over = scan_digits64(&s, base, ULLONG_MAX_VAL, &result, &any);
+    if (endptr) *endptr = (char *)(any ? s : nptr);
+    if (over) {
+        errno = ERANGE;
+        return ULLONG_MAX_VAL;
     }
-
-    if (any < 0) {
-        result = ULLONG_MAX_VAL;
-    } else if (neg) {
-        result = -result;
-    }
-
-    if (endptr) {
-        *endptr = (char *)(any ? s : nptr);
-    }
-
-    return result;
+    return neg ? 0ULL - result : result;
 }
 
 // strtoll - convert string to signed 64-bit integer
 long long strtoll(const char *nptr, char **endptr, int base) {
-    const char *s = nptr;
-    unsigned long long acc = 0;
-    int neg = 0;
-    int any = 0;
-    int c;
+    unsigned long long acc;
+    int neg, any, over;
+    const char *s = scan_prefix(nptr, &base, &neg);
 
-    while (isspace(*s)) s++;
-
-    if (*s == '-') {
-        neg = 1;
-        s++;
-    } else if (*s == '+') {
-        s++;
-    }
-
-    if ((base == 0 || base == 16) && *s == '0' && (s[1] == 'x' || s[1] == 'X')) {
-        s += 2;
-        base = 16;
-    } else if (base == 0) {
-        base = (*s == '0') ? 8 : 10;
-    }
-
-    if (base < 2 || base > 36) {
+    if (!s) {
         if (endptr) *endptr = (char *)nptr;
         return 0;
     }
-
-    #define LLONG_MAX_VAL  0x7FFFFFFFFFFFFFFFLL
-    #define LLONG_MIN_VAL  (-LLONG_MAX_VAL - 1LL)
-    unsigned long long limit = neg ?
-        ((unsigned long long)LLONG_MAX_VAL + 1) :
-        (unsigned long long)LLONG_MAX_VAL;
-    unsigned long long cutoff = limit / base;
-    int cutlim = limit % base;
-
-    while ((c = *s) != '\0') {
-        if (isdigit(c)) {
-            c -= '0';
-        } else if (isalpha(c)) {
-            c = toupper(c) - 'A' + 10;
-        } else {
-            break;
-        }
-
-        if (c >= base) break;
-
-        if (acc > cutoff || (acc == cutoff && c > cutlim)) {
-            acc = limit;
-            any = -1;
-            break;
-        }
-
-        acc = acc * base + c;
-        any = 1;
-        s++;
-    }
-
-    if (endptr) {
-        *endptr = (char *)(any ? s : nptr);
-    }
-
-    if (any < 0) {
+    /* a negative number has one more value than a positive one */
+    over = scan_digits64(&s, base, (unsigned long long)LLONG_MAX_VAL + (neg ? 1u : 0u), &acc, &any);
+    if (endptr) *endptr = (char *)(any ? s : nptr);
+    if (over) {
+        errno = ERANGE;
         return neg ? LLONG_MIN_VAL : LLONG_MAX_VAL;
     }
-
-    return neg ? -(long long)acc : (long long)acc;
+    return neg ? (long long)(0ULL - acc) : (long long)acc;
 }
 
 // atoll

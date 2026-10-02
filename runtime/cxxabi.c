@@ -27,7 +27,7 @@ void *__dso_handle = 0;
  * Static Destructor Registration
  * ======================================================================== */
 
-#define ATEXIT_MAX 32
+#define ATEXIT_MAX 64       /* the standard asks for 32 atexit functions; static destructors share the list */
 
 struct atexit_entry {
     void (*destructor)(void *);
@@ -56,6 +56,16 @@ int __cxa_atexit(void (*destructor)(void *), void *arg, void *dso_handle) {
 }
 
 /*
+ * atexit - C's registration: the same list, so functions and static
+ * destructors run in the reverse of the order they were registered in,
+ * interleaved as they were registered.  The function takes no argument;
+ * it is called with one it does not look at.
+ */
+int atexit(void (*function)(void)) {
+    return __cxa_atexit((void (*)(void *))function, 0, 0);
+}
+
+/*
  * __cxa_finalize - Run registered destructors
  *
  * If dso_handle is NULL, runs all destructors.
@@ -63,6 +73,15 @@ int __cxa_atexit(void (*destructor)(void *), void *arg, void *dso_handle) {
  * Called from exit() or when a shared library is unloaded.
  */
 void __cxa_finalize(void *dso_handle) {
+    if (dso_handle == 0) {
+        /* exit: the last registered first -- and one that registers
+         * another on its way out has it run next */
+        while (atexit_count > 0) {
+            struct atexit_entry e = atexit_list[--atexit_count];
+            if (e.destructor) e.destructor(e.arg);
+        }
+        return;
+    }
     for (int i = atexit_count - 1; i >= 0; i--) {
         if (dso_handle == 0 || atexit_list[i].dso_handle == dso_handle) {
             if (atexit_list[i].destructor) {

@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <signal.h>
 
 #include "mmio_ring.h"
 
@@ -11,13 +12,8 @@ extern void __cxa_finalize(void *dso_handle);
  * stdio does not link it. */
 void (*__stdio_exit_hook)(void);
 
-void exit(int status) {
-    __cxa_finalize(0);
-    if (__stdio_exit_hook) {
-        void (*hook)(void) = __stdio_exit_hook;
-        __stdio_exit_hook = 0;
-        hook();
-    }
+static void halt_with(int status) __attribute__((noreturn));
+static void halt_with(int status) {
     unsigned int req_head = S32_MMIO_REQ_HEAD;
     unsigned int req_tail = S32_MMIO_REQ_TAIL;
     volatile unsigned int *req_ring = S32_MMIO_REQ_RING;
@@ -38,6 +34,43 @@ void exit(int status) {
     while (1) yield();
 }
 
+static void flush_stdio(void) {
+    if (__stdio_exit_hook) {
+        void (*hook)(void) = __stdio_exit_hook;
+        __stdio_exit_hook = 0;
+        hook();
+    }
+}
+
+/* atexit functions and static destructors (cxxabi.c keeps both in one
+ * list), then what the streams hold, then the end */
+void exit(int status) {
+    __cxa_finalize(0);
+    flush_stdio();
+    halt_with(status);
+}
+
+/* the end, here and now: no atexit functions, nothing flushed */
+void _exit(int status) {
+    halt_with(status);
+}
+
+void _Exit(int status) {
+    halt_with(status);
+}
+
+/* a signal's default action (signal.c): what was written is sent -- the
+ * standard leaves that to the library -- but this is not exit, and no
+ * atexit function runs */
+void __s32_killed(int sig) {
+    flush_stdio();
+    halt_with(128 + sig);
+}
+
+/* abort raises SIGABRT; a handler that returns does not save the program */
 void abort(void) {
-    exit(EXIT_FAILURE);
+    raise(SIGABRT);
+    signal(SIGABRT, SIG_DFL);
+    raise(SIGABRT);
+    halt_with(128 + SIGABRT);
 }

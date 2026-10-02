@@ -26,7 +26,8 @@ LIBC_CORE_OBJS = string.s32o string_extra.s32o \
                  malloc.s32o stdlib.s32o stdlib_extra.s32o stdlib_utils.s32o \
                  convert.s32o convert_extra.s32o ctype.s32o \
                  printf_enhanced.s32o start.s32o yield.s32o \
-                 cxxabi.s32o time_extra.s32o time_stubs.s32o math_int.s32o dtoa.s32o errno.s32o \
+                 cxxabi.s32o time_extra.s32o time_stubs.s32o time_std.s32o math_int.s32o dtoa.s32o errno.s32o \
+                 strerror.s32o signal.s32o system.s32o \
                  setjmp.s32o emutls.s32o atomic.s32o \
                  unwind.s32o unwind_asm.s32o cxa_exception.s32o cxa_personality.s32o \
                  cxa_typeinfo.s32o
@@ -69,7 +70,8 @@ C_SOURCES = printf_enhanced.c convert.c builtins.c string.c malloc.c stdlib_util
             debug_char.c yield.c putchar.c mmio_request.c time_mmio.c \
             stat_mmio.c stat_stub.c start.c args_mmio.c args_stub.c \
             exit_mmio.c exit_debug.c envp_mmio.c envp_stub.c \
-            cxxabi.c time_extra.c time_stubs.c time_tz_stub.c math_int.c dtoa.c errno.c \
+            cxxabi.c time_extra.c time_stubs.c time_std.c time_tz_stub.c math_int.c dtoa.c errno.c \
+            strerror.c signal.c system.c \
             emutls.c atomic.c \
             fs_mmio.c fs_stub.c dirent_mmio.c dirent_stub.c \
             term_mmio.c term_stub.c net_mmio.c net_stub.c \

@@ -139,49 +139,29 @@ char *strtok_r(char *str, const char *delim, char **saveptr) {
     return start;
 }
 
-// Case-insensitive string comparison
+// Case-insensitive string comparison: the bytes as unsigned char, as
+// lower case (so 'A' and 'a' both sort after '[')
+static int lower_of(unsigned char c) {
+    return (c >= 'A' && c <= 'Z') ? c + 32 : c;
+}
+
 int strcasecmp(const char *s1, const char *s2) {
-    while (*s1 && *s2) {
-        int c1 = *s1;
-        int c2 = *s2;
-        
-        // Convert to lowercase for comparison
-        if (c1 >= 'A' && c1 <= 'Z') c1 += 32;
-        if (c2 >= 'A' && c2 <= 'Z') c2 += 32;
-        
-        if (c1 != c2) {
-            return c1 - c2;
-        }
-        
-        s1++;
-        s2++;
+    for (;; s1++, s2++) {
+        int c1 = lower_of((unsigned char)*s1);
+        int c2 = lower_of((unsigned char)*s2);
+        if (c1 != c2) return c1 - c2;
+        if (c1 == 0) return 0;
     }
-    
-    return *s1 - *s2;
 }
 
 int strncasecmp(const char *s1, const char *s2, size_t n) {
-    while (n-- && *s1 && *s2) {
-        int c1 = *s1;
-        int c2 = *s2;
-        
-        // Convert to lowercase for comparison
-        if (c1 >= 'A' && c1 <= 'Z') c1 += 32;
-        if (c2 >= 'A' && c2 <= 'Z') c2 += 32;
-        
-        if (c1 != c2) {
-            return c1 - c2;
-        }
-        
-        s1++;
-        s2++;
+    for (; n > 0; n--, s1++, s2++) {
+        int c1 = lower_of((unsigned char)*s1);
+        int c2 = lower_of((unsigned char)*s2);
+        if (c1 != c2) return c1 - c2;
+        if (c1 == 0) return 0;
     }
-    
-    if (n == (size_t)-1) {
-        return 0;
-    }
-    
-    return *s1 - *s2;
+    return 0;
 }
 
 // Search for byte in memory (reverse)
@@ -220,8 +200,15 @@ int strcoll(const char *s1, const char *s2) {
     return strcmp(s1, s2);
 }
 
-// strerror - return string describing error number
-char *strerror(int errnum) {
-    (void)errnum;
-    return "error";
+// strxfrm - the one locale is "C": a string's transformed form is the string
+size_t strxfrm(char *dest, const char *src, size_t n) {
+    size_t len = strlen(src);
+    if (n > 0) {
+        size_t i = 0;
+        for (; i < n - 1 && i < len; i++) dest[i] = src[i];
+        dest[i] = '\0';
+    }
+    return len;
 }
+
+// strerror is strerror.c's (one table for this library and the self-hosted one)

@@ -88,8 +88,14 @@ int ungetc(int c, FILE *stream);
 int setvbuf(FILE *stream, char *buf, int mode, size_t size);
 FILE *tmpfile(void);
 
+typedef long fpos_t;
+int fgetpos(FILE *stream, fpos_t *pos);
+int fsetpos(FILE *stream, const fpos_t *pos);
+void setbuf(FILE *stream, char *buf);
+
 // POSIX line input (MMIO libc)
 ssize_t getline(char **lineptr, size_t *n, FILE *stream);
+ssize_t getdelim(char **lineptr, size_t *n, int delim, FILE *stream);
 
 // POSIX memory streams (MMIO libc, memstream.c). See that file for the
 // exact subset of semantics supported.

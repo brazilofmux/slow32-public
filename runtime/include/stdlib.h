@@ -12,7 +12,10 @@ void *calloc(size_t nmemb, size_t size);
 void *realloc(void *ptr, size_t size);
 
 void exit(int status);
+void _Exit(int status);
 void abort(void);
+int atexit(void (*function)(void));
+int system(const char *command);
 
 int abs(int n);
 long labs(long n);
@@ -43,7 +46,10 @@ ldiv_t ldiv(long numer, long denom);
 
 int rand(void);
 void srand(unsigned int seed);
-#define RAND_MAX 0x7FFFFFFF
+/* rand's values are the top 16 bits of its state: 0..65535.  (This said
+ * 0x7FFFFFFF until 2026-10, which rand never came near: a program that
+ * scaled by RAND_MAX got numbers in the bottom 1/32768 of its range.) */
+#define RAND_MAX 0xFFFF
 
 char *getenv(const char *name);
 

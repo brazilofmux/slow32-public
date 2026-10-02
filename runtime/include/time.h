@@ -45,9 +45,12 @@ int nanosleep(const struct timespec *req, struct timespec *rem);
 
 // Time conversion. gmtime is UTC; localtime applies the host timezone offset
 // reported by the GETTZ MMIO op (falls back to UTC when MMIO is unavailable).
-// mktime treats its argument as UTC (i.e. inverse of gmtime).
+// mktime is localtime's inverse: it takes local time, brings the fields into
+// range, and fills in the day of the week and of the year (time_std.c).
 struct tm *gmtime(const time_t *timer);
 struct tm *localtime(const time_t *timer);
+struct tm *gmtime_r(const time_t *timer, struct tm *result);
+struct tm *localtime_r(const time_t *timer, struct tm *result);
 time_t mktime(struct tm *tm);
 
 // Internal: query the host timezone for the given UTC instant. Returns 0 and

@@ -201,3 +201,101 @@ the buffer.  Output waiting in stdout is now sent before stdin is read
 (`getchar`, and everything that reads stdin through it).
 `regression/tests/stdio-prompt`; `regression/libc-tests/stdio_prompt.c`
 holds both libraries to it.
+
+### 21. `strtol`, `strtoul`, `strtoll`, `strtoull`: overflow, and "0x" (Resolved 2026-10-02)
+
+Found when the libc differential got a third leg, the host's C library
+(selfhost ISSUES-75): the two libraries here agreed with each other and
+were both wrong.
+
+- `strtol` had no overflow handling at all: "2147483648" came back as
+  -2147483648 and "99999999999999999999" as 1661992959, `errno` untouched.
+- `strtoul`, `strtoll` and `strtoull` stopped at the digit that
+  overflowed, so the end pointer was left in the middle of the number,
+  and none of them set `ERANGE`.
+- All four took "0x" as a prefix whatever followed.  It is one only
+  before a hexadecimal digit: in "0x" and "0xg" the number is the 0, and
+  the end pointer is at the x.  They converted nothing and left the end
+  pointer at the start.
+- A base that is none (1, 37) sets `EINVAL`.
+
+`strtol` gathers its value below zero, where a `long` has one more value
+than above it, so no test needs a wider type.  The 64-bit pair share one
+scan that divides only when the value is within a digit of the top.
+`regression/libc-tests/stdlib_misc.c` (against the host too) and
+`stdlib_long32.c` (the 32-bit clamps, which are this machine's).
+
+### 22. `mktime` took its argument for UTC and did not normalize; `strftime` (Resolved 2026-10-02)
+
+`mktime` is `localtime`'s inverse.  Here it was `gmtime`'s -- the header
+said so -- and it summed the fields as they stood: `tm_mon = 14` indexed
+past the month table, `tm_mday = 0` was not the last day of the month
+before, and nothing was written back but `tm_wday` and `tm_yday`.  A
+program that did `localtime`, changed a field and called `mktime` was
+off by the zone's offset.
+
+`strftime` returned the number of bytes it had managed to store when the
+result did not fit (the standard: 0), wrote `%c` with a zero-padded day
+(the C locale's is `%e`), and had no `%G`, `%g`, `%U`, `%V`, `%W` or
+`%r`.
+
+Both are now `time_std.c`, with `asctime`, `ctime` and `difftime`: one
+source, built into this library and into the self-hosted one, which had
+none of them.  `mktime` finds the instant by asking the host's zone
+rules (`__s32_query_tz`) for the offset, twice, and settles the hour a
+zone repeats by the caller's `tm_isdst`.  `gmtime_r` and `localtime_r`
+are public.  `regression/libc-tests/time_conv.c` holds both builds to
+the host's library in a zone with daylight time: 19 instants each way,
+ten days across every conversion C99 names, the week-number rules at
+six year boundaries, fields out of range in every direction.
+
+### 23. `RAND_MAX` was 2^31-1; `rand` returns 16 bits (Resolved 2026-10-02)
+
+`rand` returns the top 16 bits of a 32-bit state, 0..65535, and
+`RAND_MAX` said 0x7FFFFFFF: `rand() / (RAND_MAX + 1.0)` was never above
+0.00003, and `rand() > RAND_MAX / 2` was never true.  The sequence is
+unchanged -- programs print the numbers they printed -- and `RAND_MAX`
+is 0xFFFF.  `stdlib_misc.c` asks that about half of a thousand values
+lie above half of `RAND_MAX`.
+
+### 24. `strerror` returned "error" for everything; `perror` printed it (Resolved 2026-10-02)
+
+`strerror.c`: the words a Linux C library uses for the numbers in
+`<errno.h>`, "Unknown error N" for the rest.  One source for both
+libraries.  `perror` prints `strerror(errno)`.
+
+### 25. `freopen` did not reopen; a closed standard stream kept its buffer (Resolved 2026-10-02)
+
+`freopen` closed the stream and returned whatever `fopen` gave -- a
+different `FILE`, except by the accident of `malloc` handing back the
+block just freed.  For a standard stream it closed nothing and returned
+the new stream: after `freopen("out", "w", stdout)`, `printf` wrote where
+it always had.  It is the same `FILE` on the new file now, and a stream
+whose new file does not open is closed.
+
+`fclose(stdout)` freed the buffer and left the pointer: a later `printf`
+wrote into freed memory.  A closed standard stream has no buffer and no
+descriptor.
+
+### 26. `strcasecmp` and `strncasecmp` compared bytes as signed (Resolved 2026-10-02)
+
+"a\x80" sorted before "a\x7f".  They compare as `unsigned char`, as
+`strcmp` does.
+
+### 27. New in the library (2026-10-02)
+
+What a hosted C library has and this one did not: `signal` and `raise`
+(`signal.c`: a handler runs when the program raises the signal; nothing
+else sends one; `signal` in `<signal.h>` was an inline that ignored its
+arguments), `abort` through `SIGABRT` -- it was `exit(1)`, which ran
+static destructors; it ends the run with 134 and runs nothing --
+`atexit` (the list `__cxa_atexit` keeps), `_Exit` and `_exit`, `tmpfile`
+(it returned NULL), `getdelim`, `fgetpos`, `fsetpos`, `setbuf`,
+`strxfrm`, `system` (there is no command processor: it says so).
+`setjmp.s` is written in the operand form both assemblers read, since
+the self-hosted library assembles it too; the object is the same bytes.
+
+Still open: `clock` returns 0; `scanf` and `fscanf` are declared and not
+defined; the `<ctype.h>` tables are Latin-1, which is not the "C"
+locale's answer above 127 (the self-hosted library's functions are
+ASCII), and `tolower` applied bytewise to UTF-8 text changes lead bytes.

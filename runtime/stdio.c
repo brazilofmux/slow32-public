@@ -4,6 +4,8 @@
 #include <stdarg.h>
 #include <stdint.h>
 #include <unistd.h>
+#include <errno.h>
+#include <time.h>
 
 #include "mmio_ring.h"
 #include "stdio_impl.h"
@@ -107,6 +109,13 @@ int fclose(FILE *stream) {
     
     if (stream != stdin && stream != stdout && stream != stderr) {
         free(stream);
+    } else {
+        /* a standard stream stays what it is, closed: its buffer is gone,
+         * and a later write must not go into where it was */
+        stream->buffer = NULL;
+        stream->buf_size = stream->buf_pos = stream->buf_len = 0;
+        stream->mode = _IONBF;
+        stream->fd = -1;
     }
     
     return (result < 0 || flushed == EOF) ? EOF : 0;
@@ -163,16 +172,71 @@ FILE *fopen(const char *pathname, const char *mode) {
     return f;
 }
 
+/* The same stream on another file: what it held is sent, its file is
+ * closed, and the stream -- the same FILE, so stdout stays stdout --
+ * begins again on the new one.  When the new file does not open the
+ * stream is closed.  (Until 2026-10 this closed the stream and returned
+ * a new one from fopen: freopen(..., stdout) left printf writing where
+ * it had been.) */
 FILE *freopen(const char *pathname, const char *mode, FILE *stream) {
-    if (stream && stream != stdin && stream != stdout && stream != stderr) {
-        fclose(stream);
-    }
+    if (!stream) return NULL;
     if (pathname == NULL) {
         /* Per C standard, pathname==NULL means change mode of existing stream.
            On bare metal, just return the stream unchanged. */
         return stream;
     }
-    return fopen(pathname, mode);
+    if (stream->flags & FLAG_MEMSTREAM) {
+        fclose(stream);
+        return fopen(pathname, mode);
+    }
+
+    int standard = (stream == stdin || stream == stdout || stream == stderr);
+    fflush(stream);
+    if (stream->fd >= 0) s32_mmio_request(S32_MMIO_OP_CLOSE, 0u, 0u, stream->fd);
+
+    int flags = mode_to_flags(mode);
+    size_t len = strlen(pathname);
+    volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
+    memcpy((void *)data_buffer, pathname, len + 1);
+    int fd = s32_mmio_request(S32_MMIO_OP_OPEN, len + 1u, 0u, flags);
+
+    if (fd < 0) {
+        for (FILE **pp = &open_list; *pp; pp = &(*pp)->next_open)
+            if (*pp == stream) { *pp = stream->next_open; break; }
+        if (stream->buffer) free(stream->buffer);
+        stream->buffer = NULL;
+        stream->buf_size = stream->buf_pos = stream->buf_len = 0;
+        if (standard) {
+            stream->fd = -1;
+            stream->flags = 0;
+            stream->mode = _IONBF;
+        } else {
+            free(stream);
+        }
+        return NULL;
+    }
+
+    stream->fd = fd;
+    stream->flags = flags;
+    stream->error = 0;
+    stream->eof = 0;
+    stream->buf_pos = 0;
+    stream->buf_len = 0;
+    stream->ungetc_char = -1;
+    if (!stream->buffer) {
+        stream->buffer = malloc(STDIO_BUF_SIZE);
+        stream->buf_size = stream->buffer ? STDIO_BUF_SIZE : 0;
+    }
+    stream->mode = stream->buffer ? _IOFBF : _IONBF;
+    int listed = 0;
+    for (FILE *f = open_list; f; f = f->next_open) if (f == stream) listed = 1;
+    if (!listed) {
+        stream->next_open = open_list;
+        open_list = stream;
+    }
+    __stdio_exit_hook = stdio_at_exit;
+    if ((flags & FLAG_APPEND) && !(flags & FLAG_READ)) fseek(stream, 0, SEEK_END);
+    return stream;
 }
 
 /* fwrite, fread and fputc are short entries in front of the general
@@ -637,7 +701,8 @@ void perror(const char *s) {
         fputs(s, stderr);
         fputs(": ", stderr);
     }
-    fputs("error\n", stderr);
+    fputs(strerror(errno), stderr);
+    fputc('\n', stderr);
 }
 
 int ungetc(int c, FILE *stream) {
@@ -664,11 +729,33 @@ int setvbuf(FILE *stream, char *buf, int mode, size_t size) {
     return 0;
 }
 
+/* A file for reading and writing that has no name: it is made under a
+ * name nothing else has, opened, and unlinked at once, so it is gone
+ * when it is closed or the run ends.  (The host keeps an unlinked file
+ * as long as it is open; one that does not leaves the file behind.) */
 FILE *tmpfile(void) {
-    return NULL; /* not supported */
+    static unsigned int serial;
+    char name[64];
+
+    for (int tries = 0; tries < 16; tries++) {
+        struct timespec ts = {0, 0};
+        clock_gettime(CLOCK_REALTIME, &ts);
+        serial++;
+        snprintf(name, sizeof name, "%ss32tmp-%08lx%08lx-%u", tries < 8 ? "/tmp/" : "",
+                 (unsigned long)ts.tv_sec, (unsigned long)ts.tv_nsec, serial);
+        if (access(name, F_OK) == 0) continue;          /* someone's: another name */
+        FILE *fp = fopen(name, "w+");
+        if (fp) {
+            unlink(name);
+            return fp;
+        }
+    }
+    return NULL;
 }
 
-ssize_t getline(char **lineptr, size_t *n, FILE *stream) {
+/* A whole line, however long, its delimiter with it: the buffer is the
+ * caller's to free, and is made or grown here as the line needs. */
+ssize_t getdelim(char **lineptr, size_t *n, int delim, FILE *stream) {
     size_t used = 0;
     int c;
 
@@ -688,10 +775,32 @@ ssize_t getline(char **lineptr, size_t *n, FILE *stream) {
             *n = ncap;
         }
         (*lineptr)[used++] = (char)c;
-        if (c == '\n') break;
+        if (c == delim) break;
     }
 
     if (used == 0) return -1;   /* EOF (or error) before any byte */
     (*lineptr)[used] = '\0';
     return (ssize_t)used;
+}
+
+ssize_t getline(char **lineptr, size_t *n, FILE *stream) {
+    return getdelim(lineptr, n, '\n', stream);
+}
+
+int fgetpos(FILE *stream, fpos_t *pos) {
+    long at = ftell(stream);
+    if (at < 0) return -1;
+    *pos = at;
+    return 0;
+}
+
+int fsetpos(FILE *stream, const fpos_t *pos) {
+    return fseek(stream, *pos, SEEK_SET);
+}
+
+/* setvbuf with the two choices there were before it */
+void setbuf(FILE *stream, char *buf) {
+    /* the public numbers (see setvbuf): 0 full, 2 none */
+    if (buf) setvbuf(stream, buf, 0, BUFSIZ);
+    else setvbuf(stream, NULL, 2, 0);
 }
