@@ -336,6 +336,35 @@ static void parse_compute(void)
             return;
         }
     }
+    if (g_wide && !g_nohx && !flt && !refs_wide(rs, nr) && !(g_xd_div && round_wide(rs, rd, nr))) {
+        /* wide only because an intermediate could pass 18 digits by the
+         * pictures: in 64 bits with tests, the wide stack's code behind
+         * them (checked arithmetic, arith_reg.h) */
+        g_wide = 0;
+        g_nhn = 0; int root = hn_tree(e, dx_leaf);
+        g_dx_chk = 1; g_dx_tests = 0;
+        int ok = dx_ok(root, rs, nr, size_err);
+        g_dx_chk = 0;
+        if (ok) {
+            if (!g_dx_tests) dx_store(root, rs, rd, nr);        /* the bounds prove it after all */
+            else {
+                int Lslow = new_label(), Ldone = new_label();
+                g_dx_slow = Lslow;
+                dx_store(root, rs, rd, nr);
+                g_dx_slow = -1;
+                emit_jump(Ldone);
+                emit_label(Lslow);
+                g_wide = 1;
+                emit_expr(e);
+                emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
+                g_wide = 0; g_fstmt = 0;
+                emit_label(Ldone);
+            }
+            emit_size_phrases(&ph);
+            return;
+        }
+        g_wide = 1;
+    }
     emit_expr(e);
     emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
     g_wide = 0; g_fstmt = 0;

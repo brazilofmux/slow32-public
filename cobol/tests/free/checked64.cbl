@@ -1,0 +1,62 @@
+IDENTIFICATION DIVISION.
+PROGRAM-ID. CHECKED64.
+*> Checked 64-bit arithmetic (docs/plans/performance.md; cobol ISSUES-122).
+*> A product or sum that could pass 18 digits by its pictures is computed
+*> in 64 bits, its inputs tested as it runs, and only a value too large
+*> goes to the wide stack.  Each line here is one such statement at a
+*> value on one side or the other of a test, reduced by FUNCTION MOD so
+*> the result is defined; both paths give the same, and GnuCOBOL agrees.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+01  SEED    PIC 9(18) BINARY VALUE 12345.
+01  I       PIC 9(4) BINARY.
+01  A       PIC S9(18).
+01  B       PIC S9(18) PACKED-DECIMAL.
+01  C       PIC S9(18) BINARY.
+01  D       PIC S9(15)V99 VALUE 0.
+01  R       PIC S9(18).
+01  M       PIC 9(10) VALUE 1000000007.
+PROCEDURE DIVISION.
+MAIN.
+    PERFORM VARYING I FROM 1 BY 1 UNTIL I > 5
+        COMPUTE SEED = FUNCTION MOD(SEED * 1103515245 + 12345, 2147483648)
+        DISPLAY "seed " I ": " SEED
+    END-PERFORM
+    *> a literal multiplier of 31 bits: the item fits below 2^31, or not
+    MOVE 2147483647 TO A PERFORM LIT-PRODUCT
+    MOVE 2147483648 TO A PERFORM LIT-PRODUCT
+    MOVE -2147483648 TO A PERFORM LIT-PRODUCT
+    MOVE -2147483649 TO A PERFORM LIT-PRODUCT
+    MOVE 999999999999999999 TO A PERFORM LIT-PRODUCT
+    *> two items: each below 2^30, or not
+    MOVE 1073741823 TO A MOVE 1073741823 TO B PERFORM ITEM-PRODUCT
+    MOVE 1073741824 TO A MOVE 1073741823 TO B PERFORM ITEM-PRODUCT
+    MOVE 1073741823 TO A MOVE -1073741825 TO B PERFORM ITEM-PRODUCT
+    MOVE 3037000500 TO A MOVE 3037000500 TO B PERFORM ITEM-PRODUCT
+    MOVE -999999999999999999 TO A MOVE 999999999999999999 TO B PERFORM ITEM-PRODUCT
+    MOVE 7 TO A MOVE -3 TO B PERFORM ITEM-PRODUCT
+    *> scaling: an integer beside two decimals is the integer times 100
+    MOVE 12.34 TO D
+    MOVE 46116860184273879 TO C PERFORM SCALED-SUM
+    MOVE 46116860184273880 TO C PERFORM SCALED-SUM
+    MOVE 999999999999999999 TO C PERFORM SCALED-SUM
+    MOVE -5 TO C PERFORM SCALED-SUM
+    *> a sum of two products the pictures bound, whose sum they do not
+    MOVE 999999999999999999 TO A MOVE 999999999999999999 TO B PERFORM PRODUCT-SUM
+    MOVE 600000000000000000 TO A MOVE -600000000000000000 TO B PERFORM PRODUCT-SUM
+    MOVE 100 TO A MOVE 200 TO B PERFORM PRODUCT-SUM
+    STOP RUN.
+LIT-PRODUCT.
+    COMPUTE R = FUNCTION MOD(A * 1103515245 + 12345, M)
+    DISPLAY "literal product, a = " A ": " R.
+ITEM-PRODUCT.
+    COMPUTE R = FUNCTION MOD(A * B, M)
+    DISPLAY "item product, a = " A " b = " B ": " R.
+SCALED-SUM.
+    COMPUTE R = C + D
+    DISPLAY "scaled sum, c = " C ": " R.
+PRODUCT-SUM.
+    COMPUTE R = FUNCTION MOD(A * 7 + B * 5, M)
+    DISPLAY "product sum, a = " A " b = " B ": " R
+    COMPUTE R = FUNCTION MOD(A * 7 - B * 5, M)
+    DISPLAY "product difference: " R.

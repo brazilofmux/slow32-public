@@ -44,14 +44,11 @@ One routine or one code shape at a time, each a contained change.
 
 - Division stops at the digits the receivers keep (done).
 - Moves whose lengths the compiler can count are copies (done).
-- **Checked 64-bit arithmetic.**  The register path takes a statement
-  only when the pictures prove every intermediate fits in 64 bits; a
-  PIC 9(18) item times anything does not, and goes to the wide stack
-  whatever its value (ksort: 77% of its time).  As the integer path
-  does for a word: compute in 64 bits, test each multiplication and
-  scaling for overflow, branch to the wide stack's code only when one
-  happens.  Generous pictures holding small values are the common case
-  in real programs.
+- Checked 64-bit arithmetic, for COMPUTE (done): a statement the
+  pictures cannot prove is computed in 64 bits, each operation's inputs
+  tested, the wide stack's code behind the tests (ksort 972 ms -> 475).
+  Not yet: MULTIPLY ... GIVING and the other arithmetic verbs' own
+  paths; a division inside such a statement; a SIZE ERROR phrase.
 - DIVIDE ... GIVING ... REMAINDER on packed and display items: in
   registers, one division.
 - The SEARCH loops: the serial step and the binary probe.

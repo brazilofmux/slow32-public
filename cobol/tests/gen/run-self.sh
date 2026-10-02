@@ -8,8 +8,10 @@
 # say the code differs, and runs only what the corpus has; the compiler
 # before the change is the oracle here, on as many programs as asked for.
 # No container needed.  GEN as run-gen.sh (arith, edit, cond, string,
-# table, flow; default flow).  Keeps the work directory when anything
-# differs.
+# table, flow, checked; default flow); STD=85 or 2002 (checked: 2002).
+# Keeps the work directory when anything differs.  A program neither
+# compiler builds is a failure, not an agreement: two refusals compare
+# equal and say nothing.
 set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CDIR="$(cd "$HERE/../.." && pwd)"
@@ -20,7 +22,7 @@ COUNT=${3:?usage: run-self.sh REV FIRST COUNT [STATEMENTS]}
 NSTMT=${4:-30}
 GEN=${GEN:-flow}
 EMU="$ROOT/tools/emulator/slow32-fast"
-STD=85
+STD=${STD:-85}; [ "$GEN" = checked ] && STD=${STD_CHECKED:-2002}
 
 mkdir -p "$CDIR/out"
 W="$(mktemp -d "$CDIR/out/self.XXXXXX")"
@@ -41,7 +43,9 @@ for s in $(seq "$FIRST" "$last"); do
             echo BUILD-FAILED > "$W/$v$s/out.txt"
         fi
     done
-    if cmp -s "$W/old$s/out.txt" "$W/new$s/out.txt"; then
+    if grep -q BUILD-FAILED "$W/old$s/out.txt" "$W/new$s/out.txt"; then
+        echo "seed $s: BUILD FAILED ($(grep -h -m1 error "$W/new$s/cc.log" "$W/old$s/cc.log" | head -1 | cut -c1-100))"; bad=$((bad + 1))
+    elif cmp -s "$W/old$s/out.txt" "$W/new$s/out.txt"; then
         echo "seed $s: same ($(wc -l < "$W/new$s/out.txt" | tr -d ' ') lines)"
         rm -rf "$W/old$s" "$W/new$s" "$W/g$s.cbl"
     else

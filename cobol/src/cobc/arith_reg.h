@@ -312,6 +312,65 @@ static int dx_leaf_ok(const Opnd *o)
 static int dx_leaf(const Opnd *o);
 static long double dx_p10(int k) { long double r = 1; while (k-- > 0) r *= 10; return r; }
 #define DX_LIM 9.0e18L
+/* Checked 64-bit arithmetic (docs/plans/performance.md).  The pictures
+ * prove a bound for every intermediate, and where the bound stays below
+ * 9*10^18 the tree is computed in 64 bits with no test at all.  Where it
+ * does not -- a PIC 9(18) item times anything -- the value is tested as
+ * it runs: g_dx_chk lets the analysis accept such a node, counting the
+ * tests it will need (g_dx_tests), and the code tests the operation's
+ * inputs and branches to g_dx_slow, the statement's wide-stack code, when
+ * one is too large for the result to be sure of fitting.  The tests come
+ * before anything is stored, and + - * are exact on both paths, so the
+ * two store the same value.  A division stays with the stack.
+ *
+ * A test is on magnitude in bits: fit N is -2^N <= v < 2^N.  Before a
+ * product with a literal c, or a scaling by 10^k, the other operand fits
+ * 62 - bits(c); before a product of two items, each fits 30.  A tested
+ * result is below 2^62 in magnitude (its bound is DX_B62, and means
+ * that).  Before a sum that could pass 9*10^18, each side whose bound is
+ * above 2^62 fits 62, so the sum fits.  A bound of DX_ANY is "any 64-bit
+ * value". */
+#define DX_B62 4611686018427387904.0L
+#define DX_ANY 9223372036854775808.0L
+static int g_dx_chk;                    /* the analysis may accept nodes that need a test */
+static int g_dx_tests;                  /* ... and counts them */
+static int g_dx_slow = -1;              /* the label a failed test goes to, while such a tree is emitted */
+static long double dx_p2(int k) { long double r = 1; while (k-- > 0) r *= 2; return r; }
+/* the bits of a magnitude: the least b with m < 2^b */
+static int dx_bits(long double m) { int b = 0; long double p = 1; while (p <= m && b < 70) { p *= 2; b++; } return b; }
+static int dx_is_lit(int n) { return !g_hn[n].op && g_hn[n].o.kind == O_NUM; }
+static long double dx_lit_mag(int n) { long long v = numlit_scaled(&g_hn[n].o.num); return v < 0 ? -(long double)v : (long double)v; }
+/* the test a product needs on each side: 0 none, else N of "fit N"; -1
+ * when no test makes it safe.  Both zero when the bounds prove it. */
+static int dx_mul_tests(int l, int r, int *tl, int *tr)
+{
+    long double bl = g_dbd[l], br = g_dbd[r];
+    *tl = *tr = 0;
+    if (bl * br < DX_LIM) return 1;
+    if (dx_is_lit(r) || dx_is_lit(l)) {
+        int lit = dx_is_lit(r) ? r : l, other = lit == r ? l : r;
+        int n = 62 - dx_bits(dx_lit_mag(lit));
+        if (n < 1) return 0;
+        if (g_dbd[other] >= dx_p2(n)) { if (other == l) *tl = n; else *tr = n; }
+        return 1;
+    }
+    if (bl >= dx_p2(30)) *tl = 30;
+    if (br >= dx_p2(30)) *tr = 30;
+    return 1;
+}
+/* a side of a sum scaled up by k digits: its bound after, and the test it
+ * needs before (0 none, -1 no test makes it safe) */
+static long double dx_scaled(long double b, int k, int *test)
+{
+    *test = 0;
+    if (k <= 0) return b;
+    long double s = b * dx_p10(k);
+    if (s < DX_LIM) return s;
+    int n = 62 - dx_bits(dx_p10(k));
+    if (n < 1) { *test = -1; return s; }
+    *test = n;
+    return DX_B62;
+}
 /* scale and bound of node n (the bound in units of its scale); 0 when the
  * stack could answer otherwise */
 static int dx_check(int n, int top)
@@ -325,12 +384,24 @@ static int dx_check(int n, int top)
         g_dsc[n] = s->pi.scale;
         if (sym_notrunc(s)) g_dbd[n] = s->size >= 8 ? DX_LIM : dx_p10(0) * (long double)(1ULL << (8 * s->size));
         else g_dbd[n] = dx_p10(s->pi.digits) - 1;
-        return g_dbd[n] < DX_LIM;
+        if (g_dbd[n] < DX_LIM) return 1;
+        /* eight bytes of binary: any 64-bit value when signed (an unsigned
+         * one can pass 2^63, which the fetch cannot return) */
+        if (!g_dx_chk || !s->pi.is_signed) return 0;
+        g_dbd[n] = DX_ANY;
+        return 1;
     }
-    if (h->op == 'n' || h->op == 'A') { if (!dx_check(h->l, 0)) return 0; g_dsc[n] = g_dsc[h->l]; g_dbd[n] = g_dbd[h->l]; return 1; }
+    if (h->op == 'n' || h->op == 'A') {
+        if (!dx_check(h->l, 0)) return 0;
+        g_dsc[n] = g_dsc[h->l]; g_dbd[n] = g_dbd[h->l];
+        if (g_dbd[n] >= DX_ANY) { g_dx_tests++; g_dbd[n] = DX_B62; }       /* the one value whose negation does not fit */
+        return 1;
+    }
     if (h->op == 'I' || h->op == 'T') {                 /* to an integer: the bound shrinks by the scale, plus one for the floor */
         if (!dx_check(h->l, 0)) return 0;
-        g_dsc[n] = 0; g_dbd[n] = g_dbd[h->l] / dx_p10(g_dsc[h->l]) + 1;
+        long double b = g_dbd[h->l];
+        if (b >= DX_ANY) { g_dx_tests++; b = DX_B62; }
+        g_dsc[n] = 0; g_dbd[n] = b / dx_p10(g_dsc[h->l]) + 1;
         return 1;
     }
     if (h->op == 'M' || h->op == 'R') {                 /* integers only; the divisor a literal */
@@ -339,19 +410,54 @@ static int dx_check(int n, int top)
         g_dsc[n] = 0; g_dbd[n] = (long double)(d < 0 ? -d : d) - 1;
         return 1;
     }
+    int tests0 = g_dx_tests;
     if (!dx_check(h->l, 0) || !dx_check(h->r, 0)) return 0;
     int sl = g_dsc[h->l], sr = g_dsc[h->r];
     long double bl = g_dbd[h->l], br = g_dbd[h->r];
-    if (h->op == '/') { if (!top) return 0; g_dsc[n] = -1; g_dbd[n] = 0; return 1; }
+    if (h->op == '/') {
+        /* at the top only, and the stack's own division: with operands
+         * the pictures bound, none of them tested */
+        if (!top || g_dx_tests != tests0 || bl >= DX_LIM || br >= DX_LIM) return 0;
+        g_dsc[n] = -1; g_dbd[n] = 0; return 1;
+    }
     if (h->op == '*') {
         if (sl + sr > 18) return 0;
+        int tl, tr;
+        if (!dx_mul_tests(h->l, h->r, &tl, &tr)) return 0;
+        if ((tl || tr) && !g_dx_chk) return 0;
+        g_dx_tests += (tl != 0) + (tr != 0);
         g_dsc[n] = sl + sr; g_dbd[n] = bl * br;
-        return g_dbd[n] < DX_LIM;
+        if (g_dbd[n] >= DX_LIM) { if (!g_dx_chk) return 0; g_dbd[n] = DX_B62; }    /* tested: below 2^62 */
+        return 1;
     }
-    int sc = sl > sr ? sl : sr;
-    bl *= dx_p10(sc - sl); br *= dx_p10(sc - sr);
+    int sc = sl > sr ? sl : sr, tl, tr;
+    bl = dx_scaled(bl, sc - sl, &tl); br = dx_scaled(br, sc - sr, &tr);
+    if (tl < 0 || tr < 0 || ((tl || tr) && !g_dx_chk)) return 0;
+    g_dx_tests += (tl != 0) + (tr != 0);
     g_dsc[n] = sc; g_dbd[n] = bl + br;
-    return bl < DX_LIM && br < DX_LIM && g_dbd[n] < DX_LIM;
+    if (g_dbd[n] < DX_LIM) return 1;
+    if (!g_dx_chk) return 0;
+    /* each side below 2^62, by its bound or by a test: the sum fits */
+    if (bl > DX_B62) g_dx_tests++;
+    if (br > DX_B62) g_dx_tests++;
+    if (g_dbd[n] > DX_ANY) g_dbd[n] = DX_ANY;
+    return 1;
+}
+/* fit n: branch to the slow code unless -2^n <= the pair < 2^n */
+static void dx_fit(const char *lo, const char *hi, int n)
+{
+    if (g_dx_slow < 0) die_at(cur()->line, "internal: a checked operation outside a checked statement");
+    if (n >= 63) return;
+    if (n >= 32) {
+        emit("\tsrai r8, %s, %d", hi, n - 32);
+    } else {
+        emit("\tsrai r8, %s, 31", lo);
+        emit("\tbne r8, %s, .L%d", hi, g_dx_slow);
+        emit("\tsrai r8, %s, %d", lo, n);
+    }
+    emit("\taddi r8, r8, 1");
+    emit_li("r9", 2);
+    emit("\tbgeu r8, r9, .L%d", g_dx_slow);
 }
 /* x = x * y, 64 bits, pairs of registers; r7-r9 scratch */
 static void emit_mul64(const char *xl, const char *xh, const char *yl, const char *yh)
@@ -395,6 +501,7 @@ static void dx_emit(int n)
         return;
     }
     dx_emit(h->l);
+    if ((h->op == 'A' || h->op == 'n' || h->op == 'I' || h->op == 'T') && g_dbd[h->l] >= DX_ANY) dx_fit("r1", "r2", 62);
     if (h->op == 'A') {
         int L = new_label();
         emit("\tbge r2, r0, .L%d", L);
@@ -450,9 +557,26 @@ static void dx_emit(int n)
     emit("\tldw r1, sp+%d", SLOT(t)); emit("\tldw r2, sp+%d", SLOT(t + 1));
     g_slot_base -= 2;
     int sl = g_dsc[h->l], sr = g_dsc[h->r];
-    if (h->op == '*') { emit_mul64("r1", "r2", "r5", "r6"); return; }
-    if (sl < sr) emit_scale64("r1", "r2", sr - sl);
-    if (sr < sl) emit_scale64("r5", "r6", sl - sr);
+    if (h->op == '*') {
+        int tl, tr;
+        dx_mul_tests(h->l, h->r, &tl, &tr);
+        if (tl) dx_fit("r1", "r2", tl);
+        if (tr) dx_fit("r5", "r6", tr);
+        emit_mul64("r1", "r2", "r5", "r6");
+        return;
+    }
+    {
+        int sc = sl > sr ? sl : sr, tl, tr;
+        long double bl = dx_scaled(g_dbd[h->l], sc - sl, &tl), br = dx_scaled(g_dbd[h->r], sc - sr, &tr);
+        if (tl > 0) dx_fit("r1", "r2", tl);
+        if (tr > 0) dx_fit("r5", "r6", tr);
+        if (sl < sr) emit_scale64("r1", "r2", sr - sl);
+        if (sr < sl) emit_scale64("r5", "r6", sl - sr);
+        if (bl + br >= DX_LIM) {                    /* each side below 2^62, so the sum fits */
+            if (bl > DX_B62) dx_fit("r1", "r2", 62);
+            if (br > DX_B62) dx_fit("r5", "r6", 62);
+        }
+    }
     if (h->op == '+') {
         emit("\tadd r7, r1, r5"); emit("\tsltu r8, r7, r1");
         emit("\tadd r2, r2, r6"); emit("\tadd r2, r2, r8"); emit("\tadd r1, r7, r0");

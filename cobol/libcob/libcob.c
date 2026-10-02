@@ -553,8 +553,11 @@ int cob_wput_x(void *vp, const cob_desc *d, const cob_wnum *win, int opts)
         for (int i = 0; i < L - eff; i++) if (D[i] != '0') { if (opts & 2) return 1; break; }
         for (int i = 0; i < L - eff; i++) D[i] = '0';
     }
+    /* a value the receiver's digits cut to zero keeps its sign, as the
+     * 64-bit store keeps it (cob_k_put_scale): the sign of the numeric
+     * value is represented in a signed receiver (2023 14.9.25.4, MOVE) --
+     * and the two stores give one statement one answer (ISSUES-122) */
     zero = 1; for (int i = 0; i < L; i++) if (D[i] != '0') { zero = 0; break; }
-    if (zero) neg = 0;
     if ((d->flags & COB_F_NOTRUNC) && (opts & 2)) {
         /* a native binary (BINARY-DOUBLE): the field's capacity is the limit */
         for (int i = 0; i < L - 38; i++) if (D[i] != '0') return 1;
@@ -685,7 +688,12 @@ void cob_display_field(const void *vp, const cob_desc *d)
         int sk = (d->flags & COB_F_LEAD) ? 0 : n - 1;
         unsigned char last = p[sk];
         int neg = (d->flags & COB_F_SIGNED) && last >= 'p' && last <= 'y';
-        if (d->flags & COB_F_SIGNED) out_char(neg ? '-' : '+');
+        /* zero is one value whatever sign it is stored with (2023 8.8.4.2.2):
+         * shown "+", as the packed and binary items' values are -- a negative
+         * value cut to zero by its receiver keeps its sign in storage */
+        int nz = 0;
+        for (int i = 0; i < n && !nz; i++) { unsigned char c = p[i]; if (i == sk && neg) c = (unsigned char)(c - 'p' + '0'); nz = c != '0'; }
+        if (d->flags & COB_F_SIGNED) out_char(neg && nz ? '-' : '+');
         for (int i = 0; i < n; i++) {
             if (d->scale > 0 && i == n - d->scale) out_char(cob_dp_comma ? ',' : '.');
             unsigned char c = p[i];

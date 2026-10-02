@@ -307,3 +307,57 @@ takes a statement only when the pictures prove every intermediate fits;
 the plan's answer (docs/plans/performance.md) is the path the integer
 one already has for a word: compute in 64 bits, test for overflow, and
 fall to the wide stack only when it happens.
+
+**Checked 64-bit arithmetic.**  A COMPUTE whose pictures do not prove
+that every intermediate fits in 64 bits is now computed in 64 bits all
+the same, with each operation's inputs tested as it runs, and the
+wide stack's code for the statement kept behind the tests.  A test is
+on magnitude in bits ("fit N": -2^N <= v < 2^N, four or six
+instructions): before a product with a literal, or a scaling by a power
+of ten, the other operand fits 62 less the constant's bits; before a
+product of two items each fits 30; before a sum that could pass
+9*10^18, each side that could be above 2^62 fits 62.  A test that the
+pictures make unnecessary is not emitted, and a statement none of whose
+operations needs one is the unchecked path it always was.  All the
+tests come before anything is stored, and addition, subtraction and
+multiplication are exact on both paths, so the two store the same
+value; a division inside such a statement, a SIZE ERROR phrase, a
+floating operand or a receiver of more than 18 digits leaves the
+statement on the stack as before.  An eight-byte signed binary item
+without truncation (COMP-5) is now a leaf of this path as well: any
+64-bit value, tested where it is used.
+
+ksort 972 ms -> 475, the same output: its generator's five statements a
+record now run in registers, and no test in them ever fails.  The other
+kernels and jerm are unchanged by it (they had no such statement).
+Over the snapshot's programs 21 changed.
+
+How it was checked.  `tests/gen/gen-checked.py` writes such statements
+-- thirteen shapes over DISPLAY, BINARY, PACKED-DECIMAL and COMP-5
+items of up to 18 digits, with values on both sides of every test: at
+2^30, 2^31 and 2^62 and either side of them, and the largest the
+pictures hold -- and `GEN=checked tests/gen/run-self.sh` runs each
+program through the compiler before the change and after: 150 programs
+of 40 statements, the same bytes.  The check itself was tested by
+breaking the compiler five ways: a test that never branches (32 of 60
+programs differ), the item-product test loosened (3), the scaling test
+(15), the literal-product test (9), the sum test (3).  The last two
+found nothing at first: the generator had no product of a large item
+with a large literal summed with another, and gained a shape for it.
+`run-self.sh` also counted a program neither compiler would build as an
+agreement; it is a failure now.  `tests/wide-differential.sh`: 800
+statements agree with GnuCOBOL.  CCVS-85: 348 programs, the same report
+before and after.  `tests/free/checked64` holds the edges by hand, and
+prints the same with `-fno-hot-arith` and under GnuCOBOL.
+
+**The sign of a value truncated to zero.**  The first run of the
+generated programs differed in one place, and the difference was older
+than the change: -4611686018427387904 stored to a signed three-digit
+DISPLAY item was `000` with a negative sign by the register path's
+store and with a positive one by the wide stack's.  The store keeps
+the low-order digits and the sign of the value (2023 14.9.25.4, the
+MOVE rules: a signed receiver represents the value's sign), which is what
+the narrow store did and what GnuCOBOL does; the wide store cleared the
+sign when the kept digits were zero, and no longer does.  DISPLAY of a
+signed zoned item whose digits are zero prints `+`, as GnuCOBOL prints
+it, whichever sign the item holds.  `tests/free/negzero`.

@@ -5273,3 +5273,18 @@ cob_xdiv, which the compiler no longer calls, is removed: nothing is
 released, so nothing is kept for old objects.  docs/plans/performance.md
 is the staged plan: opportunistic work where the profile points,
 operation-level hooks, values across statements, the generated code.
+
+Third: checked 64-bit arithmetic.  A COMPUTE the pictures cannot prove
+to fit in 64 bits -- a PIC 9(18) item times anything -- went to the wide
+stack whatever its values.  It is now computed in 64 bits with each
+operation's inputs tested (magnitude in bits: before a product, a
+scaling, a sum that could pass 9*10^18), the wide stack's code behind
+the tests, both storing the same value.  ksort 972 ms -> 475.  Checked
+by tests/gen/gen-checked.py through the compiler before and after (150
+programs; five mutants of the tests all caught, two only after the
+generator gained a shape), tests/wide-differential.sh against GnuCOBOL,
+CCVS-85 identical, free/checked64.  Found on the way: the wide store
+cleared the sign of a negative value whose kept digits are zero, where
+the narrow store and GnuCOBOL keep it (2023 14.9.25.4); the wide store
+keeps it now, and DISPLAY shows a zoned zero as `+` (free/negzero).
+run-self.sh counted two refusals as an agreement; fixed.
