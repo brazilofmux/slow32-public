@@ -5347,3 +5347,45 @@ after input that met end-of-file, lost; SEEK_CUR counted from the
 read-ahead; ftell on an append stream from zero).  The platform's gates
 ran with ours: regression 97, the cross-engine differential, SQLite,
 Fortran, dBASE over majesty's reports, mdfix.
+
+Eighth (2026-10-02).  PERFORM's push and the exit's pop are written out
+by hand, with no frame: 43 and 30 instructions -> 17 and 16 (csv2fw 421
+ms -> 391).  The LLVM backend learned tail calls (`llvm-backend/`;
+csv2fw 351 -> 338 with nothing changed here), which is what lets an
+entry with no call on its short path be C.  And READ and WRITE of a
+fixed-length sequential record ask about the file once: four flag bytes
+at the end of the file's block, set by the first record and cleared at
+CLOSE; a one-byte record is then 28 instructions to read and 27 to
+write, which were 55, and 52 and fwrite's 26 -- the WRITE storing into
+the C library's stream buffer through three inlines of `<stdio.h>`.
+The last I-O status is one word, zero for 00.  csv2fw 333 ms -> 290;
+1.20 s when this began.  `docs/performance.md` has each.
+
+Found on the way, by the tests written for it.  A full device was not
+reported to a program whose records end where the stream's buffer does
+-- every one-byte WRITE took 00 and 4,096 records were gone: the C
+library's `fwrite` (runtime ISSUES-28), repaired.  And the runtime did
+not build with the self-hosted compiler, the fallback of a machine
+without LLVM (`cctool.sh`): libcob.c's file-scope asm of the same
+morning (now `libcob/entries.s`, appended as the hook thunks are), and
+in esql.c a local named for a typedef, which stage08 cc misread
+(selfhost ISSUES-78), repaired in the compiler.
+`tests/selfhost-libcob.sh` builds the runtime that way and runs the
+suite's programs against it; it is one of the gates now.
+
+Checks: free/seqbyte, 2002/seqbyteec, free/faultbyte, free/codesetrecs
+(new), free/seqblock, free/faultwrite.  Forty-eight mutants of the new
+paths, the status word, the header's inlines, the library's repair and
+the compiler's extra word: thirty-seven caught -- six of them only
+after 2002/seqbyteec was rewritten (a successful statement's status is
+read only under EC-I-O-WARNING checking, which the first draft did not
+turn on) and free/codesetrecs written (no test wrote a second record
+through a CODE-SET).  The eleven that survive change nothing a program
+can see: the file position and the last record length kept on the short
+paths, which nothing reads for a file that is on them (six); the flags
+never set, which is only slower (two); the read flags left set at
+CLOSE, harmless because CLOSE also empties the buffer they guard (two);
+and a truncation test that the count beside it implies (one).  CCVS-85
+identical; all gates, and the platform's, since the C library and its
+header changed.
+

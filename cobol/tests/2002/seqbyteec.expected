@@ -1,0 +1,21 @@
+open, 05:
+  EC-I-O declarative: EC-I-O-WARNING status 05
+a byte written
+  EC-I-O declarative: EC-I-O-WARNING status 05
+four written
+open, 05:
+  EC-I-O declarative: EC-I-O-WARNING status 05
+a byte written
+  EC-I-O declarative: EC-I-O-WARNING status 05
+four written
+  EC-I-O declarative: EC-I-O-WARNING status 05
+a byte read: 2
+  EC-I-O declarative: EC-I-O-WARNING status 05
+four read: more
+  EC-I-O declarative: EC-I-O-WARNING status 05
+a byte read: 2
+  EC-I-O declarative: EC-I-O-WARNING status 05
+four read: more
+past the end of b1, no phrase:
+  EC-I-O declarative: EC-I-O-AT-END  status 10
+done

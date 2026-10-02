@@ -105,6 +105,8 @@ under `docs/`.
                       applied and reversed; compiled into libcob and
                       into slow32-dbt
     libcob/libcob.c   guest runtime, built by the SLOW-32 C toolchain
+    libcob/entries.s  the runtime's entries written out by hand (PERFORM's
+                      push and exit), appended to libcob.c's assembly
     libcob/casemap.h  Unicode simple case mappings for UPPER-CASE and
                       LOWER-CASE, generated and checked in;
                       gen_casemap.py regenerates it from libutf's
@@ -137,6 +139,9 @@ PATH install (optional, for majesty and friends):
                                                  # gnucobol:4.0-builder/-runtime
                                                  # (podman/docker), or a host cobc
     ./tests/majesty-functions.sh                 # 2002 functions on real code
+    ./tests/selfhost-libcob.sh                   # the runtime built by the self-hosted
+                                                 # cc (the build of a machine without
+                                                 # LLVM), the suite's programs run on it
 
 `s32-cobc [-free|-fixed] [-std=85|-std=2002] [-warn-74] [-fnsig] [-o out.s] source.cbl`.
 `-std=2002` adds the COBOL 2002 modules landed so far (docs/standards.md,

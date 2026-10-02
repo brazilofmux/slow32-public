@@ -83,11 +83,11 @@ csv2fw 1.20 s -> 0.42 with all of it.  Next:
 - (Done, another way: the push and the exit written out as frameless
   entries, 43 and 30 instructions -> 17 and 16; csv2fw 421 ms -> 391.
   In line they would save the call and return only.)
-- READ and WRITE of a fixed-length sequential record: one flag set at
-  OPEN in place of five tests a record, and the byte stored in the
-  stream's buffer without the call.  In C: the backend makes tail calls
-  since 2026-10-02, so an entry with no call on its short path has no
-  frame.
+- (Done: READ and WRITE of a fixed-length sequential record ask about
+  the file once -- flags left by the first record, cleared at CLOSE --
+  and a one-byte record is stored in, or taken from, a buffer with no
+  call and no frame: 55 instructions -> 28, and 52 + fwrite's 26 -> 27.
+  In C; the backend makes tail calls.  csv2fw 333 ms -> 290.)
 - A class test of one character (`x(i:1) IS NUMERIC`) in line.
 - The generated code: a COMP item's load is twelve instructions (it is
   big-endian); a statement fetches what the statement before stored.

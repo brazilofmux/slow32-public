@@ -102,6 +102,14 @@ typedef struct {
     const unsigned int *split;      /* indexed: Micro Focus split keys (-dialect=mf), or 0 -- the number of
                                        keys, then for each: its place in the record area's tail, its number
                                        of parts, and each part's offset and length */
+    /* The runtime's: what READ and WRITE found out about this file the
+     * first time, so that the next four million do not ask again
+     * (libcob.c, "the short entries").  All zero while the file is closed.
+     * fast_r: a fixed-length sequential file open for input, its records
+     * coming out of rbuf with nothing to translate; fast_r1: and they are
+     * one byte long.  fast_w, fast_w1: the same for output, the records
+     * going into the stream's own buffer. */
+    unsigned char fast_r1, fast_r, fast_w1, fast_w;
 } cob_file;
 
 

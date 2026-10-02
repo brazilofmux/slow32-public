@@ -712,3 +712,117 @@ through a pointer; eight arguments out of a frame past the 12-bit
 offset; a pointer kept across a call and then jumped through.  The
 regression suite compiled everything at -O0, where no tail call is
 formed; a test can now ask for a level (`clang-opt`).
+
+## 2026-10-02, last: READ and WRITE ask once
+
+csv2fw reads its input a character at a time and writes its output the
+same way: 2.6 million READs and 4.4 million WRITEs of a one-byte record,
+16% of its instructions in `cob_read`, `cob_write` and the `fwrite`
+behind the second.  A READ was 55 instructions and a WRITE 52 and
+`fwrite`'s 26, and most of each was questions whose answers do not
+change between OPEN and CLOSE: the organization, the open mode,
+variable records, REVERSED, CODE-SET, LINAGE, what kind of stream the C
+library gave.
+
+They are asked once.  The first record of a file goes the whole way
+round; what that finds is left in four flag bytes at the end of the
+file's block (a word the compiler now emits, the runtime's alone), and
+CLOSE takes them away.  After that
+
+- `cob_read`, `cob_write`: a one-byte record.  One flag, one test that
+  the buffer has the byte or the room, the byte, the position, the
+  status.  No call, so -- the backend making tail calls -- no frame:
+  28 instructions and 27.
+- `cob_read_n`, `cob_write_n`: any other fixed length; the same with a
+  `memcpy`, and the small frame that needs.
+- `cob_read_rest`, `cob_write_rest`: everything else, and whatever the
+  buffer cannot settle -- filling it, the end of the file, a short last
+  record, a stream that has to be emptied.
+
+Each is a jump from the one before with its arguments where they were.
+
+A WRITE on the short path stores into the C library's own stream
+buffer.  `<stdio.h>` has three inlines for that (`__s32_out_plain`,
+`__s32_out_room`, `__s32_out_byte`; `runtime/include/stdio.h`), with
+`fwrite`'s own tests: the same bytes at the same places, and when there
+is no room the record goes through `fwrite`, which empties the buffer
+at the same record it always did -- so a full device is reported by the
+same WRITE as before.  Built against some other C library, every record
+goes through `fwrite`.
+
+The status every I-O statement leaves for EC-I-O checking was two
+characters in two separate globals to the compiler's eye -- seven
+instructions to say "00".  It is one word that is zero for 00: three.
+
+csv2fw 333 ms -> 290 (alternating runs; the same bytes out); its
+instructions outside the DBT's native routines 2.33 G -> 2.03 G.  kseq,
+whose records are longer, 208 ms -> 199.  The other kernels did not
+move.  Where csv2fw is now:
+
+    71.3%  the program's own code
+     5.9%  cob_write            4,401,094 calls, 26 each
+     4.7%  cob_perform_push     5,351,231 calls, 17 each
+     4.2%  cob_perform_exit                      16 each
+     3.6%  cob_read             2,635,661 calls, 27 each
+     3.5%  cob_class              884,525 calls, 81 each
+     2.1%  cob_refmod_len_chk   1,341,526 calls, 32 each
+
+The runtime is 28% of it and no one routine is a tenth of that.  What
+is left is the generated code: stage 3 and stage 4 of the plan.
+
+### What the tests for it found
+
+**A full device went unreported.**  `free/faultbyte` writes one-byte
+records to a device that refuses the first write, and expected the
+4,096th WRITE -- the one whose byte fills the stream's buffer -- to take
+34.  All 5,000 took 00, and the file held 904 records.  Not the new
+code: the C library's `fwrite` counted a request's bytes as written
+before the send they were part of had failed, when the request ended
+exactly at the end of the buffer (runtime ISSUES-28).  `free/faultwrite`
+had 1,000-byte records, which run past the end and had always come back
+short.  Repaired in `runtime/stdio.c`; the library's own test is
+`regression/libc-tests/stdio_fault`.
+
+**The runtime no longer built without LLVM.**  `cctool.sh` falls back
+to the self-hosted stage08 cc where there is no clang.  The PERFORM
+entries of this morning were a file-scope `asm` in libcob.c, which that
+compiler does not have; they are `libcob/entries.s` now, appended to
+the compiler's assembly as the hook thunks are.  And `esql.c` had not
+compiled there since the PostgreSQL work: a local `host` under the
+file's own `host` typedef, which stage08 cc read as a cast (selfhost
+ISSUES-78; repaired in the compiler).  No gate ran that path.
+`tests/selfhost-libcob.sh` does: the runtime built by the self-hosted
+compiler into a directory of its own, and every program of the suite
+run against it.
+
+### Tests
+
+`free/seqbyte`: more one-byte records than the buffers hold, written
+and read, every byte checked, the FILE STATUS item set to something
+else before each statement; the same bytes as nine-byte records, one
+straddling every buffer and the last short; EXTEND; nine-byte records
+out and bytes in; a file with no status item; and one connector closed
+and opened the other way round, with the wrong statement in the middle
+of a run of right ones (47, 48).  `2002/seqbyteec`: an invalid key
+condition on another file between short-path statements, under EC-I-O
+checking -- the status they leave must raise nothing.
+`free/faultbyte`: the full device, one-byte records and records that
+fill the buffer exactly.  `free/codesetrecs`: a file with a CODE-SET is
+not on the short paths -- its second record is translated as its first
+is.
+
+Forty-eight mutants -- of the entries, the flags, the status word, the
+three inlines, the library's repair, the compiler's extra word.
+Thirty-seven are caught.  Six of those were not at first: a successful
+statement's status is read only under EC-I-O-WARNING checking, which
+the first `seqbyteec` did not turn on, and nothing wrote a second
+record through a CODE-SET.  The eleven that survive change nothing a
+program can see: the file position and the last record length, kept on
+the short paths though nothing reads them for a file that is on those
+paths (REWRITE needs I-O, REVERSED and variable records never get
+there) -- six; the flags never set, which is only slower -- two; the
+read flags left set at CLOSE, harmless because CLOSE empties the buffer
+they guard -- two; a truncation test the count beside it implies -- one.
+The position and the length stay: three instructions a record buy the
+fields meaning what their comments say.
+

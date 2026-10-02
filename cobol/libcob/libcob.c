@@ -1979,7 +1979,10 @@ struct cob_pf {
     int sp, cap;            /* +4, +8 */
     int base;               /* +12: the first frame of the running program's activation */
 };
-struct cob_pf cob_pf;       /* named, and not static: the entries below are written against its layout */
+struct cob_pf cob_pf;       /* named, and not static: the entries (entries.s) are written against its layout */
+/* ... which a compiler that lays either out differently must not get past */
+typedef char cob_frame_is_16_bytes[sizeof(cob_frame) == 16 ? 1 : -1];
+typedef char cob_pf_is_4_words[sizeof(struct cob_pf) == 16 ? 1 : -1];
 #define pf    cob_pf
 #define pstk  pf.stk
 #define psp   pf.sp
@@ -2014,7 +2017,7 @@ static char *fn_buffer(int n);
 static char ec_last[31], ec_stmt[63];
 static const char *ec_loc, *ec_file;   /* EXCEPTION-LOCATION's string (WITH LOCATION), EC-I-O's file-name */
 static char ec_io[2];                   /* EC-I-O's I-O status */
-static char io_st[2];
+static unsigned io_stw;                 /* the last I-O statement's status (below) */
 static int ec_any;
 
 void cob_ec_raise(const char *name, const char *stmt, const char *loc, const char *file)
@@ -2023,7 +2026,7 @@ void cob_ec_raise(const char *name, const char *stmt, const char *loc, const cha
     for (int i = 0; name[i] && i < 31; i++) ec_last[i] = (char)toupper((unsigned char)name[i]);
     if (stmt) for (int i = 0; stmt[i] && i < 63; i++) ec_stmt[i] = stmt[i];
     ec_loc = loc; ec_file = file;
-    if (file) { ec_io[0] = io_st[0]; ec_io[1] = io_st[1]; }
+    if (file) { ec_io[0] = (char)('0' + (io_stw >> 8)); ec_io[1] = (char)('0' + (io_stw & 255)); }
     ec_any = 1;
 }
 
@@ -2217,68 +2220,16 @@ void cob_act_leave(int *desc, void *block)
  * performs a paragraph for each byte it reads.  Written as entries of
  * their own the C compiler still gave each a frame and three instructions
  * for every word of the stack's state (28 and 25), so they are written
- * out: 18 and 16, no frame, the general routine a jump away with the
- * arguments where they were.
+ * out: 17 and 16, no frame, the general routine a jump away with the
+ * arguments where they were.  They are in entries.s, which build.sh
+ * appends to this file's assembly: the self-hosted cc builds this runtime
+ * where there is no LLVM (cctool.sh), and it has no file-scope asm.
  *
  *   void  cob_perform_push(int *cell, void *ret);
  *   void *cob_perform_exit(int *cell);     the place to return to, or 0
  */
 void cob_perform_push_rest(int *cell, void *ret);
 void *cob_perform_exit_rest(int *cell);
-__asm__(
-"	.text\n"
-"	.globl	cob_perform_push\n"
-"	.p2align	2\n"
-"	.type	cob_perform_push,@function\n"
-"cob_perform_push:\n"
-"	lui r5, %hi(cob_pf)\n"
-"	addi r5, r5, %lo(cob_pf)\n"
-"	ldw r1, r3+0\n"               /* what the exit's cell holds: a frame of its own, or none */
-"	ldw r6, r5+12\n"              /* base */
-"	ldw r7, r5+4\n"               /* sp */
-"	bgt r1, r6, .Lcob_push_rest\n" /* the range is under way in this activation */
-"	ldw r8, r5+8\n"               /* cap */
-"	beq r7, r8, .Lcob_push_rest\n" /* the stack is full */
-"	ldw r9, r5+0\n"
-"	slli r2, r7, 4\n"
-"	add r2, r9, r2\n"
-"	stw r2+0, r3\n"               /* the frame: the cell, where to return, what the cell held */
-"	stw r2+4, r4\n"
-"	stw r2+8, r1\n"
-"	addi r7, r7, 1\n"
-"	stw r5+4, r7\n"
-"	stw r3+0, r7\n"
-"	jalr r0, r31, 0\n"
-".Lcob_push_rest:\n"
-"	jal r0, cob_perform_push_rest\n"
-"	.size	cob_perform_push, .-cob_perform_push\n"
-"	.globl	cob_perform_exit\n"
-"	.p2align	2\n"
-"	.type	cob_perform_exit,@function\n"
-"cob_perform_exit:\n"
-"	lui r5, %hi(cob_pf)\n"
-"	addi r5, r5, %lo(cob_pf)\n"
-"	ldw r2, r3+0\n"
-"	ldw r6, r5+12\n"              /* base */
-"	ldw r7, r5+4\n"               /* sp */
-"	ble r2, r6, .Lcob_exit_none\n" /* another activation's frame is not this one's exit */
-"	bne r2, r7, .Lcob_exit_rest\n" /* not the innermost frame: some are abandoned */
-"	ldw r9, r5+0\n"
-"	addi r7, r7, -1\n"
-"	slli r1, r7, 4\n"
-"	add r9, r9, r1\n"
-"	stw r5+4, r7\n"
-"	ldw r1, r9+8\n"               /* what the cell held before this frame */
-"	stw r3+0, r1\n"
-"	ldw r1, r9+4\n"               /* where to return */
-"	jalr r0, r31, 0\n"
-".Lcob_exit_none:\n"
-"	addi r1, r0, 0\n"
-"	jalr r0, r31, 0\n"
-".Lcob_exit_rest:\n"
-"	jal r0, cob_perform_exit_rest\n"
-"	.size	cob_perform_exit, .-cob_perform_exit\n"
-);
 void cob_perform_push(int *cell, void *ret);
 
 void cob_perform_push_rest(int *cell, void *ret)
@@ -2380,13 +2331,16 @@ int cob_open_mode(cob_file *f) { return f->open_mode ? (int)f->open_mode : (int)
  * a FILE STATUS, 3 an error with no FILE STATUS to record it -- the
  * compiler runs a USE procedure if one applies, else cob_io_unhandled. */
 static char cob_last_st[3]; static const char *cob_last_op = "";
-static char io_st[2] = { '0', '0' };    /* every I-O statement's status, for EC-I-O */
+/* Every I-O statement's status, for EC-I-O: one word that is zero for 00
+ * -- each character less '0', the first above the second -- so that the
+ * short entries of READ and WRITE say "fine" with one store. */
+static unsigned io_stw;
 /* the last I-O status's class for EC-I-O (cobol ISSUES-58): its first digit,
  * or -1 for 00 */
-int cob_io_class(void) { return io_st[0] == '0' && io_st[1] == '0' ? -1 : io_st[0] - '0'; }
+int cob_io_class(void) { return io_stw == 0 ? -1 : (int)(io_stw >> 8); }
 static int file_result(cob_file *f, const char *st, const char *what)
 {
-    io_st[0] = st[0]; io_st[1] = st[1];
+    io_stw = ((unsigned)(unsigned char)(st[0] - '0') << 8) | (unsigned char)(st[1] - '0');
     set_status(f, st);
     if (st[0] == '0') return 0;
     if (st[0] == '1' || st[0] == '2') return 1;      /* at end; the invalid key condition */
@@ -2533,6 +2487,7 @@ int cob_close(cob_file *f)
     errno = 0;
     if (f->fp) bad = fclose((FILE *)f->fp) != 0;
     f->fp = 0; f->open_mode = 0; f->at_eof = 0;
+    f->fast_r1 = f->fast_r = f->fast_w1 = f->fast_w = 0;     /* READ and WRITE ask again */
     if (f->rbuf) { free(f->rbuf); f->rbuf = 0; }
     f->rpos = f->rlen = 0;
     return file_result(f, bad ? "30" : "00", bad ? "close: buffered records not written" : "");
@@ -2572,7 +2527,7 @@ static int ls_read_national(cob_file *f)
     int r = cob_read(f);
     f->record = rec; f->recsize = n; f->varying = v;
     if (f->last_len == 0 && f->at_eof) { free(t); return r; }   /* 10, 46: nothing read */
-    int trunc = io_st[0] == '0' && io_st[1] == '4';
+    int trunc = io_stw == 4;                                    /* 04 */
     unsigned short *u = malloc((size_t)(cap + 1) * sizeof *u); if (!u) cob_fatal("out of memory");
     int save = nat_bad; nat_bad = 0;
     int k = utf8_to_nat((const unsigned char *)t, (int)f->last_len, u, (int)cap);
@@ -2697,20 +2652,67 @@ int cob_read_prev(cob_file *f)
     return 0;
 }
 
-/* A small entry, as cob_write's: the next record of a fixed-length
- * sequential file open for input, when the runtime's block buffer
- * holds all of it.  Filling the buffer, the end, a short last record and
- * everything else are the rest's. */
+/* The short entries of READ and WRITE.  A program that reads a file a
+ * character at a time and writes another the same way (majesty's CSV
+ * converter: 2.6 million READs, 4.4 million WRITEs) is in these two
+ * routines for every byte, and what a record costs is what is asked about
+ * the file before a byte moves.  So it is asked once.  The first record
+ * goes the whole way round -- the organization, the open mode, variable
+ * records, REVERSED, CODE-SET, LINAGE, what kind of stream the libc gave
+ * -- and what that found is left in the file's fast_ flags; CLOSE takes
+ * them away.  After that
+ *
+ *   cob_read, cob_write    a one-byte record: one flag, one test that
+ *                          the buffer has the byte (or the room), the
+ *                          byte, the counts, the status.  No call, so no
+ *                          frame: 28 and 27 instructions, which were 55,
+ *                          and 52 and fwrite's 26.
+ *   cob_read_n, _write_n   any other fixed length: the same with a
+ *                          memcpy, and a frame for it.
+ *   cob_read_rest, ...     everything else, and whatever the buffer
+ *                          cannot settle: filling it, the end, a short
+ *                          last record, a stream that must be emptied
+ *                          (fwrite's, where a full device is found out).
+ *
+ * Each is a jump from the one before with the arguments where they were
+ * (the backend makes tail calls), so the routine with seventeen saved
+ * registers is paid for only when it runs.
+ *
+ * A WRITE stores into the stream's own buffer (__s32_out_room,
+ * <stdio.h>): the same bytes at the same places fwrite would put them,
+ * the buffer emptied by fwrite at the same record. */
+#ifndef __S32_STREAM_ROOM       /* some other C library: every record through fwrite */
+#define __s32_out_plain(s) 1
+#define __s32_out_room(s, n) ((char *)0)
+#define __s32_out_byte(s, c) 0
+#endif
+static __attribute__((noinline)) int cob_read_n(cob_file *f);
 static __attribute__((noinline)) int cob_read_rest(cob_file *f);
 int cob_read(cob_file *f)
 {
-    if (f->org == COB_ORG_SEQ && f->open_mode == COB_OPEN_INPUT && f->rbuf && !f->varying && !f->reversed && !f->code_in) {
+    if (f->fast_r1) {
+        unsigned pos = f->rpos;
+        if (pos != f->rlen) {
+            f->record[0] = f->rbuf[pos];
+            char *st = f->status;
+            f->rpos = pos + 1; f->fpos++; f->last_len = 1;
+            io_stw = 0;
+            if (st) { st[0] = '0'; st[1] = '0'; }
+            return 0;
+        }
+    }
+    return cob_read_n(f);
+}
+static __attribute__((noinline)) int cob_read_n(cob_file *f)
+{
+    if (f->fast_r) {
         unsigned n = f->recsize;
         if (f->rlen - f->rpos >= n) {
-            if (n == 1) f->record[0] = f->rbuf[f->rpos]; else memcpy(f->record, f->rbuf + f->rpos, n);
+            memcpy(f->record, f->rbuf + f->rpos, n);
+            char *st = f->status;
             f->rpos += n; f->fpos += n; f->last_len = n;
-            io_st[0] = io_st[1] = '0';
-            if (f->status) { f->status[0] = '0'; f->status[1] = '0'; }
+            io_stw = 0;
+            if (st) { st[0] = '0'; st[1] = '0'; }
             return 0;
         }
     }
@@ -2787,8 +2789,10 @@ static __attribute__((noinline)) int cob_read_rest(cob_file *f)
             if (got == 1) rec[0] = f->rbuf[f->rpos]; else if (got) memcpy(rec, f->rbuf + f->rpos, got);
             f->rpos += (unsigned)got;
             if (got == n && !f->code_in) {
+                /* and the next one need not come this far (the short entries) */
+                f->fast_r = 1; if (n == 1) f->fast_r1 = 1;
                 f->fpos += n; f->last_len = n;
-                io_st[0] = io_st[1] = '0';
+                io_stw = 0;
                 if (f->status) { f->status[0] = '0'; f->status[1] = '0'; }
                 return 0;
             }
@@ -2910,26 +2914,39 @@ static int lin_write(cob_file *f, int before, int after)
 /* before/after: extra newlines around the record (ADVANCING); reclen:
  * the size of the 01 the WRITE named, which is the length of a mode-V
  * record unless DEPENDING ON says otherwise */
-/* The entry is small on purpose.  The rest of WRITE -- the print file's
- * carriage, the variable records, the other organizations -- needs a
- * frame of seventeen saved registers, and a function pays for its frame
- * whichever path it takes: a one-byte record cost eighty instructions
- * before fwrite was called (docs/performance.md). */
+/* The short entries: see cob_read.  (The rest of WRITE -- the print
+ * file's carriage, the variable records, the other organizations -- needs
+ * a frame of seventeen saved registers, and a function pays for its frame
+ * whichever path it takes: docs/performance.md.) */
+static __attribute__((noinline)) int cob_write_n(cob_file *f, int before, int after, int reclen);
 static __attribute__((noinline)) int cob_write_rest(cob_file *f, int before, int after, int reclen);
 int cob_write(cob_file *f, int before, int after, int reclen)
 {
-    if (f->org == COB_ORG_SEQ && !f->varying && !f->linage && !f->code_out &&
-        (f->open_mode == COB_OPEN_OUTPUT || f->open_mode == COB_OPEN_EXTEND)) {
-        /* a fixed-length record of a sequential file open for output: the
-         * common WRITE (the same code as the COB_ORG_SEQ case of the rest) */
-        unsigned n = f->recsize;
-        if (fwrite(f->record, 1, n, (FILE *)f->fp) == n) {
-            f->fpos += n; f->last_len = 0;
-            io_st[0] = io_st[1] = '0';
-            if (f->status) { f->status[0] = '0'; f->status[1] = '0'; }
+    if (f->fast_w1) {
+        /* (last_len, the length the last READ delivered, is 0 since OPEN:
+         * nothing is read from a file open for output) */
+        if (__s32_out_byte((FILE *)f->fp, f->record[0])) {
+            char *st = f->status;
+            f->fpos++;
+            io_stw = 0;
+            if (st) { st[0] = '0'; st[1] = '0'; }
             return 0;
         }
-        return file_result(f, write_fail_st(), "write failed");
+    }
+    return cob_write_n(f, before, after, reclen);
+}
+static __attribute__((noinline)) int cob_write_n(cob_file *f, int before, int after, int reclen)
+{
+    if (f->fast_w) {
+        unsigned n = f->recsize;
+        char *p = __s32_out_room((FILE *)f->fp, n);
+        if (p) memcpy(p, f->record, n);
+        else if (fwrite(f->record, 1, n, (FILE *)f->fp) != n) return file_result(f, write_fail_st(), "write failed");
+        char *st = f->status;
+        f->fpos += n;
+        io_stw = 0;
+        if (st) { st[0] = '0'; st[1] = '0'; }
+        return 0;
     }
     return cob_write_rest(f, before, after, reclen);
 }
@@ -2961,6 +2978,10 @@ static __attribute__((noinline)) int cob_write_rest(cob_file *f, int before, int
     if (f->org == COB_ORG_SEQ) {
         if (fwrite(cs_out(f, rec, n), 1, n, fp) != n) return file_result(f, write_fail_st(), "write failed");
         f->fpos += n; f->last_len = 0;
+        /* a fixed-length record, open OUTPUT or EXTEND (the tests above),
+         * nothing to translate, a stream that can be stored into: the next
+         * one need not come this far (the short entries) */
+        if (!f->code_out && __s32_out_plain(fp)) { f->fast_w = 1; if (n == 1) f->fast_w1 = 1; }
         return file_result(f, "00", "");
     }
     /* A print file is a line printer (cobol ISSUES-46).  The cursor sits on

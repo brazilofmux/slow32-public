@@ -1,0 +1,14 @@
+one byte, raw: 193 194 195 196 197 240                                     
+five bytes, raw: 193 167 167 167 193 
+five bytes, raw: 194 167 167 167 194 
+five bytes, raw: 195 167 167 167 195 
+five bytes, raw: 196 167 167 167 196 
+five bytes, raw: 197 167 167 167 197 
+five bytes, raw: 240 167 167 167 240 
+one byte, through CODE-SET: ABCDE0
+five bytes, through CODE-SET: AxxxA
+five bytes, through CODE-SET: BxxxB
+five bytes, through CODE-SET: CxxxC
+five bytes, through CODE-SET: DxxxD
+five bytes, through CODE-SET: ExxxE
+five bytes, through CODE-SET: 0xxx0

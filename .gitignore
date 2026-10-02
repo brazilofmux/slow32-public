@@ -234,6 +234,7 @@ doom/.savegame/
 # cobol compiler output and host binary
 cobol/out/
 cobol/libcob/*.s
+!cobol/libcob/entries.s
 cobol/bench/tmp/
 dfsort/out/
 dfsort/tests/tmp/

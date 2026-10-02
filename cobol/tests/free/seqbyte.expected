@@ -1,0 +1,17 @@
+wrote 10007, statuses not 00: 0000000 close 00
+bytes 0010007 wrong 0000000 statuses 0000000 end 10
+past the end 46
+short record 0001112
+nines 0001112 wrong 0000000 statuses 0000000 end 10
+bytes 0014107 wrong 0000000 statuses 0000000 end 10
+past the end 46
+bytes 0009000 wrong 0000000 statuses 0000000 end 10
+past the end 46
+READ, open for output: 47
+and the next WRITE: 00
+read b 00
+WRITE, open for input: 48
+and the next READ: c 00
+the end 10
+four bytes of nine: 04 [abcd]
+no status item: 0005000 wrong 0000000
