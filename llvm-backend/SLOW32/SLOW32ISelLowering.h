@@ -2,6 +2,7 @@
 #define LLVM_LIB_TARGET_SLOW32_SLOW32ISELLOWERING_H
 
 #include "SLOW32.h"
+#include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/TargetLowering.h"
 #include "llvm/IR/RuntimeLibcalls.h"
 
@@ -21,6 +22,7 @@ enum NodeType {
   BR_GTU, // Unsigned greater-than
   BR_LEU, // Unsigned less-or-equal
   CALL,   // Function call
+  TAIL,   // Tail call: the frame is popped, then a jump to the callee
   HI,     // High 20 bits of an address
   LO,     // Low 12 bits of an address
   BuildPairF64,  // Combine two i32 into one f64 (via stack)
@@ -103,6 +105,13 @@ public:
 
   SDValue LowerCall(TargetLowering::CallLoweringInfo &CLI,
                    SmallVectorImpl<SDValue> &InVals) const override;
+
+  // A call in tail position that the middle end marked `tail` may be a
+  // jump; isEligibleForTailCallOptimization says which ones are.
+  bool mayBeEmittedAsTailCall(const CallInst *CI) const override;
+  bool isEligibleForTailCallOptimization(
+      CCState &CCInfo, CallLoweringInfo &CLI, MachineFunction &MF,
+      const SmallVectorImpl<CCValAssign> &ArgLocs) const;
 
   // Memory operation optimizations
   EVT getOptimalMemOpType(LLVMContext &Context, const MemOp &Op,

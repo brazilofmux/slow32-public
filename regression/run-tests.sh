@@ -124,8 +124,17 @@ run_test() {
             return
         fi
 
+        # Tests are compiled at -O0 unless they say otherwise: a file
+        # named clang-opt holds the level (-O2).  At -O0 clang marks no
+        # call `tail` and inlines nothing, so what the backend does with
+        # optimized IR -- tail calls, for one -- is not reached without it.
+        local clang_opt="-O0"
+        if [ -f "$test_path/clang-opt" ]; then
+            clang_opt="$(tr -d ' \n' < "$test_path/clang-opt")"
+        fi
+
         # Compile: C -> LLVM IR (with our runtime includes)
-        if ! $CLANG -target slow32-unknown-none -S -emit-llvm -O0 \
+        if ! $CLANG -target slow32-unknown-none -S -emit-llvm $clang_opt \
              -I"$SLOW32_BASE/runtime/include" \
              "$test_path/test.c" -o "$result_path/test.ll" 2>"$result_path/compile.err"; then
             echo -e "${RED}FAIL${NC} (compile)"
@@ -159,7 +168,7 @@ run_test() {
         [ "$(basename "$extra_c")" = "test.c" ] && continue
         local base
         base="$(basename "$extra_c" .c)"
-        if ! $CLANG -target slow32-unknown-none -S -emit-llvm -O0 \
+        if ! $CLANG -target slow32-unknown-none -S -emit-llvm ${clang_opt:--O0} \
              -I"$SLOW32_BASE/runtime/include" \
              "$extra_c" -o "$result_path/$base.ll" 2>>"$result_path/compile.err"; then
             echo -e "${RED}FAIL${NC} (compile $base.c)"

@@ -571,12 +571,17 @@ void SLOW32MCCodeEmitter::encodeInstruction(const MCInst &MI,
     Binary = encodeJType(0x40, 31, MI, 0, Fixups);
     break;
   case SLOW32::BR:
+  case SLOW32::TAIL_JAL:
     Binary = encodeJType(0x40, 0, MI, 0, Fixups);
     break;
 
   case SLOW32::JALR:
   case SLOW32::JALR_CALLR:
     Binary = encodeJalr(0x41, MI, Fixups);
+    break;
+  case SLOW32::TAIL_JALR:
+    // An indirect tail call: jalr r0, r2, 0.
+    Binary = encodeRetLike(0x41, 0, 2, 0);
     break;
   case SLOW32::BRIND_JALR:
     // Indirect branch: jalr r0, rs1, 0 (discard the return address).

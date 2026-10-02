@@ -346,6 +346,52 @@ public:
       ReplaceNode(N, CallNode);
       return;
     }
+    case SLOW32ISD::TAIL: {
+      // A tail call: the callee (when it is a symbol), then the registers
+      // the glued copies set -- the arguments, and r2 when the callee is
+      // reached through a pointer -- as implicit uses, so they are live up
+      // to the jump; then chain and glue.
+      SDLoc DL(N);
+      SDValue Callee = N->getOperand(1);
+      bool Direct = Callee.getOpcode() == ISD::TargetGlobalAddress ||
+                    Callee.getOpcode() == ISD::TargetExternalSymbol;
+      assert((Direct || (isa<RegisterSDNode>(Callee) &&
+                         cast<RegisterSDNode>(Callee)->getReg() ==
+                             SLOW32::R2)) &&
+             "an indirect tail call's target must be in r2");
+
+      SmallVector<SDValue, 8> Ops;
+      if (Direct)
+        Ops.push_back(Callee);
+
+      bool HasGlue = N->getOperand(N->getNumOperands() - 1).getValueType() ==
+                     MVT::Glue;
+      if (HasGlue) {
+        SDNode *Current = N->getOperand(N->getNumOperands() - 1).getNode();
+        while (Current && Current->getOpcode() == ISD::CopyToReg) {
+          if (auto *RegNode = dyn_cast<RegisterSDNode>(Current->getOperand(1))) {
+            unsigned Reg = RegNode->getReg();
+            if ((Reg >= SLOW32::R3 && Reg <= SLOW32::R10) || Reg == SLOW32::R2)
+              Ops.push_back(CurDAG->getRegister(Reg, MVT::i32));
+          }
+          if (Current->getNumOperands() >= 4 &&
+              Current->getOperand(3).getValueType() == MVT::Glue)
+            Current = Current->getOperand(3).getNode();
+          else
+            break;
+        }
+      }
+
+      Ops.push_back(N->getOperand(0));
+      if (HasGlue)
+        Ops.push_back(N->getOperand(N->getNumOperands() - 1));
+
+      MachineSDNode *TailNode = CurDAG->getMachineNode(
+          Direct ? SLOW32::PseudoTAIL : SLOW32::PseudoTAILIndirect, DL,
+          MVT::Other, MVT::Glue, Ops);
+      ReplaceNode(N, TailNode);
+      return;
+    }
     case SLOW32ISD::RET_FLAG: {
       // Select between RET and RET64 based on whether R2 is live
       // Look at the glue chain to see if R2 was set

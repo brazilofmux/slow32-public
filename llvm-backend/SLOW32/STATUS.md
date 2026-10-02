@@ -31,6 +31,11 @@ Last Reviewed: 2026-08-08
   below LR/FP saves.
 - Integer/logic/shift/memory; mul/mulh when `+m`; native signed/unsigned branches.
 - Call/return ABI with r1/r2 and r3–r10 pairs; sret demotion; varargs f64 straddle.
+- Tail calls (`SLOW32ISD::TAIL`): a call in tail position is `jal r0, sym`
+  (or `jalr r0, r2, 0` through a pointer) after the epilogue, when every
+  argument is in a register and there is no byval, no struct return, and
+  the caller is not variadic.  A function whose only call is a tail call
+  has no frame.  `musttail` is honoured or is a fatal error.
 - Globals/JT/CPI/blockaddr via `LOAD_ADDR` → `%hi`/`%lo`; jump tables via
   Expand → load + `BRIND` (`jalr`).
 - Long-branch relaxation PostRA-only (AsmPrinter asserts if a long-branch
@@ -55,6 +60,10 @@ Last Reviewed: 2026-08-08
 - ~~Duplicate signed `extload` / inverted LoadStorePat / ADDC stubs~~ — removed.
 - ~~R30/R31 double-spilled~~ — omitted from CSR; prologue owns them.
 - Handwritten asm that triggers MC branch relaxation must treat `r2` as clobbered.
+- `r2` has two jobs: the long-branch scratch, and the carrier of an
+  indirect tail call's target across the epilogue.  They cannot meet -- the
+  copy into `r2` is glued to the jump that ends its block -- but anything
+  new that wants `r2` has to know about both.
 
 ## Regression Tests
 ```
@@ -64,9 +73,22 @@ Last Reviewed: 2026-08-08
 Coverage: addressing, branches (PC+4), long-branch `%hi`/`%lo`, jump tables,
 varargs/f64 straddle, atomics+emutls, bitint, large frames, extload zext,
 elf relocs, fp encoding, optional FP, SELECT optsize, memcpy/memmove/memset
-names, i64/i32 udiv libcalls, `+m` feature, CFI smoke.
+names, i64/i32 udiv libcalls, `+m` feature, CFI smoke, tail calls
+(`tail-call.ll`: what is one and what is not, the epilogue before the jump,
+a kept pointer moved to `r2`, a frame past the 12-bit offset).
 
 ## Future Opportunities
+- Fold `%lo` into the load or store that uses the address: a word of a
+  global is `lui` + `addi` + `ldw` today, three instructions for two.
+  Loads can take the existing LO12 relocation; a store's immediate is
+  split, and needs a relocation kind the assembler and linker do not have.
+- Shrink-wrapping: a function with a call on some path saves the return
+  address on every path.  Tail calls remove the commonest case (a short
+  path, and "otherwise the general routine"); the rest wants the
+  prologue placed where it is needed.
+- Callee-saved registers are spilled at the top of the frame: in a frame
+  past 2 KB each save and restore is three instructions of address
+  arithmetic.  Nearer the stack pointer they would be one.
 - Soft-float libcall completeness when `-mattr=-f` (ensure full RTLIB map).
 - f64 / GPRPair inline-asm constraint if external asm needs it.
 - Schedule model tuning against the soft-core pipeline.

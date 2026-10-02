@@ -85,7 +85,9 @@ csv2fw 1.20 s -> 0.42 with all of it.  Next:
   In line they would save the call and return only.)
 - READ and WRITE of a fixed-length sequential record: one flag set at
   OPEN in place of five tests a record, and the byte stored in the
-  stream's buffer without the call.
+  stream's buffer without the call.  In C: the backend makes tail calls
+  since 2026-10-02, so an entry with no call on its short path has no
+  frame.
 - A class test of one character (`x(i:1) IS NUMERIC`) in line.
 - The generated code: a COMP item's load is twelve instructions (it is
   big-endian); a statement fetches what the statement before stored.

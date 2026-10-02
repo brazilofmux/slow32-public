@@ -679,3 +679,36 @@ call into the C library to store a byte in a buffer.  That is next.
 And it says the backend wants tail calls: with them an entry that ends
 in "otherwise, the general routine" has no call in it and no frame, in
 C.
+
+## 2026-10-02, later: the backend makes tail calls
+
+The last paragraph, done.  The SLOW-32 LLVM backend (`llvm-backend/`)
+now lowers a call in tail position to a jump -- `jal r0, sym`, or `jalr
+r0, r2, 0` through a pointer -- after the epilogue, when every argument
+is in a register, nothing is passed by value or returned through a
+hidden pointer, and the caller is not variadic.  A function whose only
+call is a tail call has no frame at all, which is what every "short
+path, otherwise the general routine" entry in the C library and in
+libcob wanted: fwrite's is 26 instructions where it was 30, with
+nothing rearranged.
+
+With no change here: csv2fw 351 ms -> 338 (alternating runs, the
+libraries before and after), the same bytes out.  libcob is 0.5% larger
+-- a tail call carries its own copy of the epilogue.
+
+It also changes what the next step should be.  READ and WRITE of a
+fixed-length record can be entries in C now: one flag settled at OPEN,
+the byte stored in the stream's buffer, no call on the short path and
+so no frame.  The two PERFORM entries stay written out for the present:
+in C they are 24 and 22 instructions to the 17 and 16, because the
+backend forms the address of each word of a global structure
+separately -- three instructions a word, where one address and four
+offsets would do.  That is the next thing the backend wants
+(`llvm-backend/SLOW32/STATUS.md`, Future Opportunities).
+
+`regression/tests/feature-tail-call` runs it: a million activations of
+mutual recursion on a stack that holds a few thousand, direct and
+through a pointer; eight arguments out of a frame past the 12-bit
+offset; a pointer kept across a call and then jumped through.  The
+regression suite compiled everything at -O0, where no tail call is
+formed; a test can now ask for a level (`clang-opt`).

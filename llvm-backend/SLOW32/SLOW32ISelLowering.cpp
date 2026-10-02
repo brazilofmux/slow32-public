@@ -9,6 +9,7 @@
 #include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/Debug.h"
@@ -452,6 +453,7 @@ const char *SLOW32TargetLowering::getTargetNodeName(unsigned Opcode) const {
   case SLOW32ISD::BR_GTU: return "SLOW32ISD::BR_GTU";
   case SLOW32ISD::BR_LEU: return "SLOW32ISD::BR_LEU";
   case SLOW32ISD::CALL: return "SLOW32ISD::CALL";
+  case SLOW32ISD::TAIL: return "SLOW32ISD::TAIL";
   case SLOW32ISD::HI: return "SLOW32ISD::HI";
   case SLOW32ISD::LO: return "SLOW32ISD::LO";
   case SLOW32ISD::BuildPairF64: return "SLOW32ISD::BuildPairF64";
@@ -1432,6 +1434,60 @@ SDValue SLOW32TargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CC,
   return DAG.getNode(SLOW32ISD::RET_FLAG, DL, MVT::Other, Chain, Glue);
 }
 
+bool SLOW32TargetLowering::mayBeEmittedAsTailCall(const CallInst *CI) const {
+  return CI->isTailCall();
+}
+
+/// Can this call, which is in tail position, be a jump?
+///
+/// The caller's frame is popped before control reaches the callee, so
+/// nothing the callee is handed may live in it, and the callee must find
+/// the stack as the caller found it:
+///   - every argument in a register (no outgoing stack arguments: they
+///     would be written into space the epilogue gives back);
+///   - no byval argument (its copy is a local of the caller's);
+///   - no struct return on either side (the hidden pointer's object);
+/// An indirect callee's address is carried in r2 (LowerCall), the one
+/// register that is neither restored by the epilogue nor an argument's.
+/// A variadic caller keeps a register save area below its incoming stack
+/// pointer; it is left alone.  The middle end has already established that
+/// no pointer into the caller's frame reaches the callee (that is what
+/// `tail` on the call means) and that the value returned is the callee's.
+bool SLOW32TargetLowering::isEligibleForTailCallOptimization(
+    CCState &CCInfo, CallLoweringInfo &CLI, MachineFunction &MF,
+    const SmallVectorImpl<CCValAssign> &ArgLocs) const {
+  const Function &Caller = MF.getFunction();
+
+  if (Caller.getFnAttribute("disable-tail-calls").getValueAsBool())
+    return false;
+  // One argument assignment serves every calling convention here, so a
+  // different one on the callee (the optimizer makes internal functions
+  // fastcc) matters only if it preserved fewer registers than the caller
+  // must.
+  if (CLI.CallConv != Caller.getCallingConv()) {
+    const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
+    const uint32_t *CallerPreserved =
+        TRI->getCallPreservedMask(MF, Caller.getCallingConv());
+    const uint32_t *CalleePreserved =
+        TRI->getCallPreservedMask(MF, CLI.CallConv);
+    if (!TRI->regmaskSubsetEqual(CallerPreserved, CalleePreserved))
+      return false;
+  }
+  if (Caller.isVarArg())
+    return false;
+  if (Caller.hasStructRetAttr())
+    return false;
+  for (const ISD::OutputArg &Out : CLI.Outs)
+    if (Out.Flags.isByVal() || Out.Flags.isSRet())
+      return false;
+  if (CCInfo.getStackSize() != 0)
+    return false;
+  for (const CCValAssign &VA : ArgLocs)
+    if (!VA.isRegLoc() || VA.getLocInfo() == CCValAssign::Indirect)
+      return false;
+  return true;
+}
+
 SDValue SLOW32TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
                                         SmallVectorImpl<SDValue> &InVals) const {
   SelectionDAG &DAG = CLI.DAG;
@@ -1441,8 +1497,7 @@ SDValue SLOW32TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   CallingConv::ID CallConv = CLI.CallConv;
   bool IsVarArg = CLI.IsVarArg;
 
-  if (CLI.IsTailCall)
-    CLI.IsTailCall = false;
+  bool &IsTailCall = CLI.IsTailCall;
 
   MachineFunction &MF = DAG.getMachineFunction();
   MachineFrameInfo &MFI = MF.getFrameInfo();
@@ -1452,6 +1507,12 @@ SDValue SLOW32TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   CCState CCInfo(CallConv, IsVarArg, MF, ArgLocs, *DAG.getContext());
   CCInfo.AnalyzeCallOperands(CLI.Outs,
                              IsVarArg ? CC_SLOW32_VarArgCall : CC_SLOW32);
+
+  if (IsTailCall)
+    IsTailCall = isEligibleForTailCallOptimization(CCInfo, CLI, MF, ArgLocs);
+  if (!IsTailCall && CLI.CB && CLI.CB->isMustTailCall())
+    report_fatal_error("failed to perform tail call elimination on a call "
+                       "site marked musttail");
 
   unsigned StackSize = CCInfo.getStackSize();
 
@@ -1482,7 +1543,12 @@ SDValue SLOW32TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     Chain = DAG.getNode(ISD::TokenFactor, DL, MVT::Other, MemOps);
   }
 
-  Chain = DAG.getCALLSEQ_START(Chain, StackSize, 0, DL);
+  // A tail call adjusts no stack: it has no stack arguments, and a
+  // CALLSEQ pair would make the function look as if it made a call (and
+  // so save its return address, which is the frame a tail call is for
+  // doing without).
+  if (!IsTailCall)
+    Chain = DAG.getCALLSEQ_START(Chain, StackSize, 0, DL);
 
   SmallVector<std::pair<unsigned, SDValue>, 8> RegsToPass;
   SmallVector<SDValue, 8> StackStores;
@@ -1617,11 +1683,32 @@ SDValue SLOW32TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   } else if (auto *ES = dyn_cast<ExternalSymbolSDNode>(Callee)) {
     Callee = DAG.getTargetExternalSymbol(ES->getSymbol(), PtrVT,
                                          ES->getTargetFlags());
+  } else if (IsTailCall) {
+    // An indirect tail call: the callee's address has to survive the
+    // epilogue, which restores every callee-saved register, and cannot
+    // sit in an argument register.  r2 is neither.  It is reserved (the
+    // long-branch scratch), so nothing is allocated to it, and no long
+    // branch can fall between this copy and the jump: they are glued,
+    // and the jump ends the block.
+    Chain = DAG.getCopyToReg(Chain, DL, SLOW32::R2, Callee, InGlue);
+    InGlue = Chain.getValue(1);
+    Callee = DAG.getRegister(SLOW32::R2, PtrVT);
   }
 
   SmallVector<SDValue, 8> Ops;
   Ops.push_back(Chain);
   Ops.push_back(Callee);
+
+  SDVTList NodeTys = DAG.getVTList(MVT::Other, MVT::Glue);
+
+  if (IsTailCall) {
+    // Control does not come back: no register mask (nothing is live
+    // after it), no CALLSEQ_END, no copies of a result.
+    if (InGlue.getNode())
+      Ops.push_back(InGlue);
+    MFI.setHasTailCall();
+    return DAG.getNode(SLOW32ISD::TAIL, DL, NodeTys, Ops);
+  }
 
   const TargetRegisterInfo *TRI = DAG.getSubtarget().getRegisterInfo();
   const uint32_t *Mask = TRI->getCallPreservedMask(MF, CallConv);
@@ -1630,7 +1717,6 @@ SDValue SLOW32TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   if (InGlue.getNode())
     Ops.push_back(InGlue);
 
-  SDVTList NodeTys = DAG.getVTList(MVT::Other, MVT::Glue);
   Chain = DAG.getNode(SLOW32ISD::CALL, DL, NodeTys, Ops);
   SDValue Glue = Chain.getValue(1);
 

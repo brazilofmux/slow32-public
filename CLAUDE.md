@@ -70,6 +70,7 @@ make
 ✅ Native Clang target: `-target slow32-unknown-none` (note: single dash)  
 ✅ XORI instruction (opcode 0x1E) for XOR immediate operations
 ✅ LLVM backend updated for latest LLVM API (Sep 2025)
+✅ LLVM backend makes tail calls (Oct 2026): `jal r0, sym` / `jalr r0, r2, 0` after the epilogue; a function whose only call is a tail call has no frame
 ✅ Regression tests: ALL 62/62 PASSING (plus cross-engine differential harness)
 ✅ Runtime libraries built as archives: libs32.s32a (6KB), libc_debug.s32a (44KB), libc_mmio.s32a (72KB)
 ✅ Optimization passes fixed - no more LLC hangs

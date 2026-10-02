@@ -477,6 +477,40 @@ bool SLOW32InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     MI.eraseFromParent();
     return true;
   }
+  case SLOW32::PseudoTAIL: {
+    MachineBasicBlock &MBB = *MI.getParent();
+    const DebugLoc &DL = MI.getDebugLoc();
+
+    MachineInstrBuilder MIB =
+        BuildMI(MBB, MI, DL, get(SLOW32::TAIL_JAL)).add(MI.getOperand(0));
+
+    for (const MachineOperand &MO : MI.operands()) {
+      if (MO.isRegMask() || (MO.isReg() && MO.isImplicit()))
+        MIB.add(MO);
+    }
+
+    PropagateFlags(*MIB);
+    MI.eraseFromParent();
+    return true;
+  }
+  case SLOW32::PseudoTAILIndirect: {
+    MachineBasicBlock &MBB = *MI.getParent();
+    const DebugLoc &DL = MI.getDebugLoc();
+
+    MachineInstrBuilder MIB = BuildMI(MBB, MI, DL, get(SLOW32::TAIL_JALR));
+
+    // The argument registers; r2 and r29 are TAIL_JALR's own.
+    for (const MachineOperand &MO : MI.operands()) {
+      if (MO.isRegMask() || (MO.isReg() && MO.isImplicit() &&
+                             MO.getReg() != SLOW32::R2 &&
+                             MO.getReg() != SLOW32::R29))
+        MIB.add(MO);
+    }
+
+    PropagateFlags(*MIB);
+    MI.eraseFromParent();
+    return true;
+  }
   case SLOW32::JALR_CALL: {
     MachineBasicBlock &MBB = *MI.getParent();
     const DebugLoc &DL = MI.getDebugLoc();

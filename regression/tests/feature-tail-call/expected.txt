@@ -1,0 +1,9 @@
+even(1000000) 1 odd(1000000) 0 even(999999) 0
+through a pointer, a million deep: 1499999
+big frame 767
+big frame, indirect 599
+call then jump 33
+wide 21474836487
+entry short 97 general 130 calls 1
+variadic 42
+printf returned 12

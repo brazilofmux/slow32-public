@@ -211,6 +211,24 @@ let isCall = 1, Defs = [R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R31],
   def JALR_CALLR : S32Inst<(outs GPR:$rd), (ins GPR:$rs1), "jalr $rd, $rs1, 0">;
 }
 
+// A tail call, as it is emitted: a jump that links nothing.  It is a
+// call and a return at once -- a return, so the epilogue is placed before
+// it and the function is not counted as making a call; a call, so the
+// argument registers it carries as implicit uses mean what they say.  It
+// defines nothing here: the callee returns to this function's caller.
+let isCall = 1, isReturn = 1, isTerminator = 1, isBarrier = 1,
+    isNotDuplicable = 1, Uses = [R29],
+    hasSideEffects = 0, mayLoad = 0, mayStore = 0 in {
+  def TAIL_JAL : S32Inst<(outs), (ins i32imm:$sym), "jal r0, $sym">;
+}
+// ... and through a pointer: the address is in r2, put there before the
+// epilogue (SLOW32TargetLowering::LowerCall says why r2).
+let isCall = 1, isReturn = 1, isTerminator = 1, isBarrier = 1,
+    isNotDuplicable = 1, Uses = [R2, R29],
+    hasSideEffects = 0, mayLoad = 0, mayStore = 0 in {
+  def TAIL_JALR : S32Inst<(outs), (ins), "jalr r0, r2, 0">;
+}
+
 // Pattern for indirect branch (brind) - use JALR with R0 as link register
 // Since we don't need the return address, expand via pseudo to force rd = r0
 let isCodeGenOnly = 1, isPseudo = 1, isBranch = 1, isTerminator = 1, isBarrier = 1,
@@ -487,6 +505,8 @@ def SLOW32brleu : SDNode<"SLOW32ISD::BR_LEU", SDT_SLOW32BrCC, [SDNPHasChain]>;
 // Call node uses the SDT_SLOW32Call defined in InstrFormats.td
 def SLOW32call : SDNode<"SLOW32ISD::CALL", SDT_SLOW32Call,
                         [SDNPHasChain, SDNPOptInGlue, SDNPOutGlue, SDNPVariadic]>;
+def SLOW32tail : SDNode<"SLOW32ISD::TAIL", SDT_SLOW32Call,
+                        [SDNPHasChain, SDNPOptInGlue, SDNPOutGlue, SDNPVariadic]>;
 
 // Real, encodable (or at least printable) return insn
 // R1 is implicitly used for return values (may be undef for void)
@@ -696,6 +716,16 @@ let isCall = 1, Defs = [R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R31], usesCusto
 let isCall = 1, Defs = [R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R31], usesCustomInserter = 0,
     hasSideEffects = 0, mayLoad = 0, mayStore = 0, isCodeGenOnly = 1, isPseudo = 1 in {
   def JALR_CALL : S32Inst<(outs), (ins GPR:$rs1, variable_ops), "# JALR_CALL $rs1">;
+}
+
+// A direct tail call (SLOW32ISD::TAIL), selected by hand like the calls
+// above so that the argument registers ride along as implicit uses;
+// expanded after register allocation to TAIL_JAL.
+let isCall = 1, isReturn = 1, isTerminator = 1, isBarrier = 1,
+    isNotDuplicable = 1, usesCustomInserter = 0,
+    hasSideEffects = 0, mayLoad = 0, mayStore = 0, isCodeGenOnly = 1, isPseudo = 1 in {
+  def PseudoTAIL : S32Inst<(outs), (ins brtarget:$target, variable_ops), "# PseudoTAIL $target">;
+  def PseudoTAILIndirect : S32Inst<(outs), (ins variable_ops), "# PseudoTAILIndirect">;
 }
 
 // Note: Call patterns are handled manually in SLOW32ISelDAGToDAG.cpp
