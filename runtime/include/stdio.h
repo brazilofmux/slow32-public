@@ -37,6 +37,8 @@ typedef struct FILE {
     int ungetc_char;   /* -1 = empty, otherwise pushed-back character */
     // Memory-stream bookkeeping (memstream.c); NULL for ordinary files
     void *mem_cookie;
+    // The next open stream (stdio.c): exit sends what each still holds
+    struct FILE *next_open;
 } FILE;
 
 extern FILE *stdin;

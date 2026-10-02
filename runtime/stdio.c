@@ -63,8 +63,29 @@ static int internal_flush(FILE *stream) {
     return 0;
 }
 
+/* The streams fopen made and fclose has not closed, and what the end of
+ * the program does with them: a C program's buffered output is written
+ * when it exits, closed or not.  It was not -- exit went to the host with
+ * stdout's last partial line and every unclosed file's last block still
+ * here (the COBOL runtime closes its files at STOP RUN for this reason).
+ * exit_mmio.c calls through __stdio_exit_hook, set the first time a
+ * stream could be holding something. */
+static FILE *open_list;
+extern void (*__stdio_exit_hook)(void);
+
+static void stdio_at_exit(void) {
+    internal_flush(stdout);
+    for (FILE *f = open_list; f; f = f->next_open) internal_flush(f);
+}
+
+/* Output waiting in stdout is sent before input is asked of stdin, so a
+ * prompt with no newline is seen before its answer is awaited. */
+static void flush_before_input(void) {
+    if (stdout->buf_pos > 0 && stdout->buf_len == 0) internal_flush(stdout);
+}
+
 int fflush(FILE *stream) {
-    if (!stream) return 0;
+    if (!stream) { stdio_at_exit(); return 0; }
     if (stream->flags & FLAG_MEMSTREAM) return __memstream_flush(stream);
     return internal_flush(stream);
 }
@@ -79,6 +100,8 @@ int fclose(FILE *stream) {
     int flushed = fflush(stream);
     
     if (stream->buffer) free(stream->buffer);
+    for (FILE **pp = &open_list; *pp; pp = &(*pp)->next_open)
+        if (*pp == stream) { *pp = stream->next_open; break; }
     
     int result = s32_mmio_request(S32_MMIO_OP_CLOSE, 0u, 0u, stream->fd);
     
@@ -112,6 +135,9 @@ FILE *fdopen(int fd, const char *mode) {
     f->buffer = malloc(STDIO_BUF_SIZE);
     f->buf_size = f->buffer ? STDIO_BUF_SIZE : 0;
     if (!f->buffer) f->mode = _IONBF;
+    f->next_open = open_list;
+    open_list = f;
+    __stdio_exit_hook = stdio_at_exit;
     return f;
 }
 
@@ -198,6 +224,7 @@ static size_t fwrite_general(const void *ptr, size_t size, size_t nmemb, FILE *s
     
     // Lazy alloc for stdout
     if (stream == stdout && !stream->buffer && stream->mode != _IONBF) {
+        __stdio_exit_hook = stdio_at_exit;
         stream->buffer = malloc(STDIO_BUF_SIZE);
         stream->buf_size = stream->buffer ? STDIO_BUF_SIZE : 0;
         if (!stream->buffer) stream->mode = _IONBF;
@@ -308,6 +335,7 @@ static size_t fread_fill_buffer(FILE *stream) {
 }
 
 int getchar(void) {
+    flush_before_input();
     unsigned int result = (unsigned int)s32_mmio_request(S32_MMIO_OP_GETCHAR, 0u, 0u, 0u);
     if (result == 0xFFFFFFFF) return EOF;
     volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;

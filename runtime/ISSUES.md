@@ -171,12 +171,33 @@ since the open as if the file had been empty. An append stream is now
 positioned at the end when it is opened (`"a+"`, which reads from the
 beginning, is left). `stdio-short-paths` found it once its seeks were in.
 
-### 18. The self-hosted libc's stdio has no buffer at all (Open)
+### 18. The self-hosted libc's stdio had no buffer at all (Resolved 2026-10-01)
 
 Not this library: `selfhost/stage08/libc/stdio.c`, which the kit's tools
-link. Every `fputc`, `fwrite`, `fgetc` and `fread` there is a `write` or
-`read` -- a request to the host for each call. Noted while looking for
-where a second copy of 14 would be needed (it is not: programs built by
-`cobol/compile.sh` link this directory's archive on every host). A buffer
-there is the same kind of win for cc, as and ld on the emulator.
+link.  Every `fputc`, `fwrite`, `fgetc` and `fread` there was a `write` or
+`read` -- and so was every `fdputc` and `fdgetc`, which is what the tools
+actually call.  It is a real stdio now, held to this one by the libc
+differential: selfhost ISSUES-73.  (The first note here said the compiler
+would gain from it.  It does not: cc buffers its own output and made 517
+requests.  The assembler made 2.7 million.)
 
+### 19. `exit` did not write what stdio held (Resolved 2026-10-01)
+
+`exit_mmio.c` went to the host with stdout's last partial line and every
+unclosed file's last block still in their buffers: `printf("done")` at the
+end of main printed nothing, and a file not fclose'd lost its tail.  (The
+COBOL runtime closes its files at STOP RUN for exactly this.)  Streams are
+now kept on a list from fopen to fclose; `exit` calls through
+`__stdio_exit_hook`, which stdio sets the first time a stream could hold
+something -- a pointer, so a program that never touches stdio does not
+link it -- and `fflush(NULL)` sends the same streams.
+`regression/tests/stdio-exit-flush`, `stdio-exit-stdout`.
+
+### 20. A prompt was not seen before its answer was awaited (Resolved 2026-10-01)
+
+stdout is line buffered, and reading stdin did not send it: after
+`printf("name? ")` the program waited for input with the prompt still in
+the buffer.  Output waiting in stdout is now sent before stdin is read
+(`getchar`, and everything that reads stdin through it).
+`regression/tests/stdio-prompt`; `regression/libc-tests/stdio_prompt.c`
+holds both libraries to it.

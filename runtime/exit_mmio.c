@@ -5,8 +5,19 @@
 extern void yield(void);
 extern void __cxa_finalize(void *dso_handle);
 
+/* What stdio wants done when the program ends: stdio.c puts its routine
+ * here the first time a stream holds anything (send what the streams
+ * still hold).  A pointer, not a call, so a program that never touches
+ * stdio does not link it. */
+void (*__stdio_exit_hook)(void);
+
 void exit(int status) {
     __cxa_finalize(0);
+    if (__stdio_exit_hook) {
+        void (*hook)(void) = __stdio_exit_hook;
+        __stdio_exit_hook = 0;
+        hook();
+    }
     unsigned int req_head = S32_MMIO_REQ_HEAD;
     unsigned int req_tail = S32_MMIO_REQ_TAIL;
     volatile unsigned int *req_ring = S32_MMIO_REQ_RING;

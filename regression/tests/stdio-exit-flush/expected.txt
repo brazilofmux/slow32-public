@@ -1,0 +1,5 @@
+before the flush, a holds []
+after fflush(NULL), a holds [held in a's buffer]
+and b holds [held in b's buffer]
+the last line, in stdout's buffer until exit
+

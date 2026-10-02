@@ -1,0 +1,6 @@
+name? [read a line]
+hello, world
+one character? [read a character]
+x
+the rest? [read to the end]
+16 characters: yz and the rest
