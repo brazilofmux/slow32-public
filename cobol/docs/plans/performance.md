@@ -80,8 +80,12 @@ csv2fw 1.20 s -> 0.42 with all of it.  Next:
 
 - (Done: fwrite, fread and fputc in the C library have short entries
   -- runtime/ISSUES.md 14; csv2fw 0.42 s -> 0.37.)
-- PERFORM in line: the push and the exit are constant now but still two
-  calls.
+- (Done, another way: the push and the exit written out as frameless
+  entries, 43 and 30 instructions -> 17 and 16; csv2fw 421 ms -> 391.
+  In line they would save the call and return only.)
+- READ and WRITE of a fixed-length sequential record: one flag set at
+  OPEN in place of five tests a record, and the byte stored in the
+  stream's buffer without the call.
 - A class test of one character (`x(i:1) IS NUMERIC`) in line.
 - The generated code: a COMP item's load is twelve instructions (it is
   big-endian); a statement fetches what the statement before stored.

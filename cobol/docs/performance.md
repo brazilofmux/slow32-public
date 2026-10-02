@@ -618,3 +618,64 @@ bytes out), mdfix's parity harness, and everything here.
 The self-hosted libc, which the kit's own tools link, has no stdio
 buffer at all (`runtime/ISSUES.md` 18): not COBOL's library, but the
 same opening for the kit's compiler, assembler and linker.
+
+## 2026-10-02: PERFORM's push and exit, written out
+
+Measured again first, on the day's machine and the day's C library
+(which changed underneath: `runtime/ISSUES.md` 21 to 27; csv2fw built
+against the library before and after times the same, 414 ms and 413).
+The numbers below are from alternating runs of the two binaries, seven
+or nine of each, medians; this machine was about a tenth slower than
+when the table above was taken, so they are to be read against each
+other and not against it.
+
+csv2fw's profile, of the instructions that are not inside a hook:
+generated code 56%, cob_write 9%, **cob_perform_push 9% and
+cob_perform_exit 6%**, cob_read 6%, fwrite 5%.  The push and the exit
+were made constant on 2026-10-01 -- a cell for each exit -- but stayed
+43 and 30 instructions, 5.35 million times.
+
+Most of that was not the work.  The push is three stores and two
+counts; compiled, it saved five registers and the return address for a
+`realloc` it reaches once in a run, and formed each of the stack's four
+words' addresses separately.  The C compiler does that however the C is
+arranged: split into an entry and a rest, the entry still had a frame
+(the SLOW-32 backend makes no tail call, so the entry's call to the rest
+is a call, and a function with a call saves its return address) and
+still spent three instructions on every word (it takes a static
+structure apart into four variables).  28 and 25.
+
+So the two entries are written out, in `libcob.c` beside the general
+routines they stand in front of: no frame, the stack's words at offsets
+from one address, a frame of sixteen bytes so that its place is a
+shift, and the general routine a jump away with the arguments where
+they were.  **17 and 16 instructions.**  csv2fw 421 ms -> 391, a
+twelfth of its instructions gone; jerm 428 -> 423; the nine kernels,
+which perform nothing out of line, unchanged; every output the same
+bytes.
+
+Putting the same instructions in line at each PERFORM and each
+paragraph's end would save the call and the return and nothing else --
+the address of the stack's words has to be formed either way -- for
+some sixty bytes at every site.  Not done.
+
+`tests/gen/run-self.sh` with `GEN=perf`: 400 generated programs of
+PERFORMs left by GO TO, performed again, called through and recursed
+into, the same before and after.  Eight faults put into the two entries
+by hand: seven caught by 150 of those programs each.  The eighth -- the
+test for a full stack -- passed them all, because nothing filled it:
+256 frames is more than any of them leaves waiting.
+`tests/2002/performdeep` leaves 1,400 (a recursive program, two ranges
+under way in each of 700 activations), and that fault stops it.
+
+**What this says about the rest.**  cob_write (54) and cob_read (55)
+are entries of the same kind with the same frame on every path, and
+fwrite (30) under one of them; a WRITE of one byte is 84 instructions
+of library.  The frame is a few of them.  More are tests of what was
+settled when the file was opened -- its organization, its mode, whether
+it has a LINAGE or a code set -- asked again for every record, and the
+call into the C library to store a byte in a buffer.  That is next.
+
+And it says the backend wants tail calls: with them an entry that ends
+in "otherwise, the general routine" has no call in it and no frame, in
+C.

@@ -1969,10 +1969,22 @@ int cob_load_int(const void *p, const cob_desc *d)
  * a call -- where it was a search of the activation's frames, in PERFORM
  * and at every paragraph's end (csv2fw, a byte at a time through three
  * levels of PERFORM: 6% of the program; docs/performance.md). */
-typedef struct { int *cell; void *ret; int prev; } cob_frame;
-static cob_frame *pstk;                 /* grows, as recursion deepens it */
-static int psp, pcap;
-static int pbase;       /* the first frame of the running program's activation */
+/* A frame is sixteen bytes so that its place is a shift, and the stack's
+ * four words are one structure so that one address reaches them all:
+ * PERFORM and the exit it comes back through are counted in instructions
+ * (docs/performance.md, 2026-10-02). */
+typedef struct { int *cell; void *ret; int prev; int unused; } cob_frame;
+struct cob_pf {
+    cob_frame *stk;         /* +0: grows, as recursion deepens it */
+    int sp, cap;            /* +4, +8 */
+    int base;               /* +12: the first frame of the running program's activation */
+};
+struct cob_pf cob_pf;       /* named, and not static: the entries below are written against its layout */
+#define pf    cob_pf
+#define pstk  pf.stk
+#define psp   pf.sp
+#define pcap  pf.cap
+#define pbase pf.base
 /* frames k and above are abandoned: each exit's cell back to what it held */
 static void pframes_drop(int k)
 {
@@ -2196,7 +2208,80 @@ void cob_act_leave(int *desc, void *block)
     free(block);
 }
 
-void cob_perform_push(int *cell, void *ret)
+/* PERFORM's push and the exit's pop are small entries in front of the
+ * general routines, as READ and WRITE are: a range that is not under way,
+ * with room on the stack for its frame, is three stores and two counts,
+ * and an exit that is the innermost frame's is two loads and two stores.
+ * A function pays for its whole frame on every path, and compiled these
+ * were 43 and 30 instructions -- five million times in a program that
+ * performs a paragraph for each byte it reads.  Written as entries of
+ * their own the C compiler still gave each a frame and three instructions
+ * for every word of the stack's state (28 and 25), so they are written
+ * out: 18 and 16, no frame, the general routine a jump away with the
+ * arguments where they were.
+ *
+ *   void  cob_perform_push(int *cell, void *ret);
+ *   void *cob_perform_exit(int *cell);     the place to return to, or 0
+ */
+void cob_perform_push_rest(int *cell, void *ret);
+void *cob_perform_exit_rest(int *cell);
+__asm__(
+"	.text\n"
+"	.globl	cob_perform_push\n"
+"	.p2align	2\n"
+"	.type	cob_perform_push,@function\n"
+"cob_perform_push:\n"
+"	lui r5, %hi(cob_pf)\n"
+"	addi r5, r5, %lo(cob_pf)\n"
+"	ldw r1, r3+0\n"               /* what the exit's cell holds: a frame of its own, or none */
+"	ldw r6, r5+12\n"              /* base */
+"	ldw r7, r5+4\n"               /* sp */
+"	bgt r1, r6, .Lcob_push_rest\n" /* the range is under way in this activation */
+"	ldw r8, r5+8\n"               /* cap */
+"	beq r7, r8, .Lcob_push_rest\n" /* the stack is full */
+"	ldw r9, r5+0\n"
+"	slli r2, r7, 4\n"
+"	add r2, r9, r2\n"
+"	stw r2+0, r3\n"               /* the frame: the cell, where to return, what the cell held */
+"	stw r2+4, r4\n"
+"	stw r2+8, r1\n"
+"	addi r7, r7, 1\n"
+"	stw r5+4, r7\n"
+"	stw r3+0, r7\n"
+"	jalr r0, r31, 0\n"
+".Lcob_push_rest:\n"
+"	jal r0, cob_perform_push_rest\n"
+"	.size	cob_perform_push, .-cob_perform_push\n"
+"	.globl	cob_perform_exit\n"
+"	.p2align	2\n"
+"	.type	cob_perform_exit,@function\n"
+"cob_perform_exit:\n"
+"	lui r5, %hi(cob_pf)\n"
+"	addi r5, r5, %lo(cob_pf)\n"
+"	ldw r2, r3+0\n"
+"	ldw r6, r5+12\n"              /* base */
+"	ldw r7, r5+4\n"               /* sp */
+"	ble r2, r6, .Lcob_exit_none\n" /* another activation's frame is not this one's exit */
+"	bne r2, r7, .Lcob_exit_rest\n" /* not the innermost frame: some are abandoned */
+"	ldw r9, r5+0\n"
+"	addi r7, r7, -1\n"
+"	slli r1, r7, 4\n"
+"	add r9, r9, r1\n"
+"	stw r5+4, r7\n"
+"	ldw r1, r9+8\n"               /* what the cell held before this frame */
+"	stw r3+0, r1\n"
+"	ldw r1, r9+4\n"               /* where to return */
+"	jalr r0, r31, 0\n"
+".Lcob_exit_none:\n"
+"	addi r1, r0, 0\n"
+"	jalr r0, r31, 0\n"
+".Lcob_exit_rest:\n"
+"	jal r0, cob_perform_exit_rest\n"
+"	.size	cob_perform_exit, .-cob_perform_exit\n"
+);
+void cob_perform_push(int *cell, void *ret);
+
+void cob_perform_push_rest(int *cell, void *ret)
 {
     /* A range already on the stack was left by a GO TO (GLENTER: the S
      * command inside PERFORM 600-GET-ENTRY THRU 690-GET-EXIT goes back to
@@ -2230,7 +2315,7 @@ void cob_use_push(int *cell, void *ret)
     cob_perform_push(cell, ret);
 }
 
-void *cob_perform_exit(int *cell)
+void *cob_perform_exit_rest(int *cell)
 {
     /* The innermost frame, usually; one below it only when a GO TO left a
      * performed paragraph for the enclosing range's exit (Open Systems
