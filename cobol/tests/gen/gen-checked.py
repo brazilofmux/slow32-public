@@ -10,7 +10,8 @@ stack's code behind the tests.  The two must store the same value, so
 this writes such statements -- products and sums of items of up to 18
 digits, in DISPLAY, BINARY, PACKED-DECIMAL and COMP-5, scaled and not;
 literal multipliers; FUNCTION MOD, ABS, INTEGER and INTEGER-PART over
-them; unary minus; ROUNDED receivers -- and gives the operands values on
+them; FUNCTION NUMVAL of one character, a digit or not; unary minus;
+ROUNDED receivers -- and gives the operands values on
 both sides of every test: small ones, ones at 2^30, 2^31 and 2^62 and
 either side of them, and the largest their pictures hold.  No SIZE ERROR
 phrase: that takes the stack.  A value too large for its receiver is
@@ -89,6 +90,9 @@ def main():
     w("WORKING-STORAGE SECTION.")
     for it in big + small + ints + recv + wides:
         w("01  %s PIC %s USAGE %s." % (it.name, it.pic(), it.usage))
+    w('01  DG PIC X(16) VALUE "0123456789 -.A+9".')
+    w("01  DC PIC X.")
+    w("01  DP PIC 9(4) COMP.")
     w("PROCEDURE DIVISION.")
     w("MAIN.")
 
@@ -99,7 +103,7 @@ def main():
         a, b, c = r.sample(big + small, 3)
         i1, i2 = r.sample(ints, 2)
         res = r.choice(recv)
-        shape = r.randrange(13)
+        shape = r.randrange(15)
         ops = [a, b, c]
         if shape == 0:
             e = "%s * %s" % (a.name, b.name)
@@ -137,6 +141,17 @@ def main():
                 v = r.choice([10**18 - 1, 10**18 - 1, 999999999999999998, 6 * 10**17, 2**59, r.randint(0, 10**18 - 1), r.randint(0, 9999)])
                 neg = "-" if o.signed and v and r.random() < 0.5 else ""
                 w("    MOVE %s%d TO %s" % (neg, v, o.name))
+        elif shape == 13:
+            # a number read a digit at a time: NUMVAL of one character, which
+            # is a digit nearly always -- and now and then is not
+            pos = r.randint(1, 10) if r.random() < 0.8 else r.randint(11, 16)
+            w("    MOVE %d TO DP" % pos)
+            e = "%s * 10 + FUNCTION NUMVAL(DG(DP:1))" % a.name
+            ops = [a]
+        elif shape == 14:
+            w('    MOVE "%s" TO DC' % r.choice("0123456789012345678959 -"))
+            e = "FUNCTION NUMVAL(DC) + %s * %s" % (a.name, lit())
+            ops = [a]
         else:
             e = "FUNCTION INTEGER-PART(%s * %s) - %s * %s" % (a.name, lit(), b.name, c.name)
         for o in ops:

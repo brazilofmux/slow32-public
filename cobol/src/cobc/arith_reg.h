@@ -51,7 +51,7 @@ static int hn_new(char op, int l, int r, const Opnd *o)
 static int hn_depth(int n, int per)
 {
     HNode *h = &g_hn[n];
-    if (!h->op) return 0;
+    if (!h->op || h->op == 'V') return 0;
     int l = hn_depth(h->l, per);
     if (h->op == 'n' || h->op == 'I' || h->op == 'T' || h->op == 'A') return l;
     int r = hn_depth(h->r, per) + per;
@@ -66,8 +66,22 @@ static int hn_arg(Opnd *a, int (*leaf)(const Opnd *))
 {
     return a->kind == O_EXPR ? hn_tree(a->ex, leaf) : leaf(a);
 }
+static int g_dx_chk;                    /* the checked 64-bit analysis is under way (below) */
 static int hn_fn(const Opnd *o, int (*leaf)(const Opnd *))
 {
+    if (o->kind == O_FUNC && o->fkind == FK_ALNUM && o->fnid == -5 && g_dx_chk) {
+        /* NUMVAL of one character: op 'V', a leaf holding the function.
+         * A digit is its value; anything else is the runtime's to judge,
+         * so the node is a test and only a checked statement has it
+         * (v = v * 10 + NUMVAL(t(p:1)) is how a number is read by hand) */
+        const Opnd *a = o->nfargs == 1 ? o->fargs[0] : NULL;
+        if (!a || a->kind != O_REF || opnd_scanned(a) || ref_pending(&a->ref)) return -2;
+        const Ref *r = &a->ref;
+        if (r->rm ? (r->rm_len != 1 || r->rm_nat || r->rm_bit || r->rm_odo)
+                  : (r->sym->is_group || r->sym->size != 1 || r->sym->pi.category != PIC_ALPHANUMERIC || r->sym->usage != U_DISPLAY)) return -2;
+        if (r->rm && sym_is_national(r->sym)) return -2;
+        return hn_new('V', -1, -1, o);
+    }
     if (o->kind != O_FUNC || o->fkind != FK_NUMS) return -2;
     switch (o->fnid) {
     case COB_FN_MOD: case COB_FN_REM: {
@@ -368,7 +382,7 @@ static long double dx_p10(int k) { long double r = 1; while (k-- > 0) r *= 10; r
  * value". */
 #define DX_B62 4611686018427387904.0L
 #define DX_ANY 9223372036854775808.0L
-static int g_dx_chk;                    /* the analysis may accept nodes that need a test */
+/* g_dx_chk (above, where hn_fn reads it): the analysis may accept nodes that need a test */
 static int g_dx_tests;                  /* ... and counts them */
 static int g_dx_slow = -1;              /* the label a failed test goes to, while such a tree is emitted */
 static long double dx_p2(int k) { long double r = 1; while (k-- > 0) r *= 2; return r; }
@@ -427,6 +441,7 @@ static int dx_check(int n, int top)
         g_dbd[n] = DX_ANY;
         return 1;
     }
+    if (h->op == 'V') { g_dsc[n] = 0; g_dbd[n] = 9; g_dx_tests++; return g_dx_chk; }     /* a digit, tested */
     if (h->op == 'n' || h->op == 'A') {
         if (!dx_check(h->l, 0)) return 0;
         g_dsc[n] = g_dsc[h->l]; g_dbd[n] = g_dbd[h->l];
@@ -534,6 +549,17 @@ static void dx_emit(int n)
         if (o->ref.sym->pi.category == PIC_NUMERIC_EDITED) { dx_get_edited_call(o->ref.sym); return; }
         emit_desc_addr("r4", sym_desc(o->ref.sym));
         emit_call("cob_get_num");
+        return;
+    }
+    if (h->op == 'V') {
+        /* the character: a digit is the value, anything else the slow code's */
+        if (g_dx_slow < 0) die_at(cur()->line, "internal: a checked operation outside a checked statement");
+        emit_ref_addr(&h->o.fargs[0]->ref, "r3");
+        emit("\tldbu r1, r3+0");
+        emit("\taddi r1, r1, -48");
+        emit_li("r2", 10);
+        emit("\tbgeu r1, r2, .L%d", g_dx_slow);
+        emit("\tadd r2, r0, r0");
         return;
     }
     dx_emit(h->l);

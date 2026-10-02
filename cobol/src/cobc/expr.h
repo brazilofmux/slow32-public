@@ -341,8 +341,8 @@ static void parse_compute(void)
          * pictures: in 64 bits with tests, the wide stack's code behind
          * them (checked arithmetic, arith_reg.h) */
         g_wide = 0;
-        g_nhn = 0; int root = hn_tree(e, dx_leaf);
         g_dx_chk = 1; g_dx_tests = 0;
+        g_nhn = 0; int root = hn_tree(e, dx_leaf);
         int ok = dx_ok(root, rs, nr, size_err);
         g_dx_chk = 0;
         if (ok) {
