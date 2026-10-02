@@ -5183,7 +5183,8 @@ for line.
 statement's own rules before finishing:
 
 - SET: each receiver is identified immediately before it is changed
-  (2023 14.9.39.4; X3.23-1985 the same).  Its receivers are read as
+  (2023 14.9.39.4; X3.23-1985 SET general rule 3d -- db9926af's commit
+  message says 5d, a slip).  Its receivers are read as
   scans and recv_calls makes their calls at each store: SET N EL(F(N))
   TO IX sets EL(3) when IX is 3.
 - STRING and UNSTRING were listed above as not yet right, wrongly.
