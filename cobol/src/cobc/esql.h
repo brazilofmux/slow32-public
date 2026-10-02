@@ -1646,7 +1646,7 @@ static void parse_procedure_division(void)
     }
     if (g_uses_rc) { emit_la("r1", "cob_return_code"); emit("\tldw r1, r1+0"); }   /* RETURN-CODE, to the caller */
     else emit("\taddi r1, r0, 0");
-    lr_unit_saves(); lr_unit_restores();
+    lr_unit(); lr_unit_saves(); lr_unit_restores();
     emit("\tldw r13, sp+%d", SLOT_R13);
     emit("\tldw r12, sp+%d", SLOT_R12);
     emit("\tldw r11, sp+4");

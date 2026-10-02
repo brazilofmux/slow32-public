@@ -42,13 +42,25 @@
  * begins) the inner region is asked for next, with the registers still
  * free.
  *
- * -fno-loop-reg leaves all of it out, and -fno-hot-arith does: the
- * harness compiles every program both ways and compares what they print. */
+ * The same reading does a second thing, with no loop (lr_unit, at a
+ * unit's end, over all its code): it follows which item each of the four
+ * registers holds as the code is read -- an item loaded or stored is held
+ * from there until something may store into it, a label nothing is known
+ * at is passed, or a loop that owns the register begins -- and a load of
+ * an item that is held, by every way to that load, is a copy.  Nothing is
+ * refused here: what would have refused an item in a loop only ends its
+ * being held.  A load or a store puts its value in a register only when
+ * some later load takes it from there.
+ *
+ * -fno-loop-reg leaves all of it out, and -fno-hot-arith does;
+ * -fno-avail-reg leaves the second out.  The harness compiles every
+ * program with and without and compares what they print. */
 
 #define LR_NREG 4
 static const char *const lr_regname[LR_NREG] = { "r14", "r15", "r16", "r17" };
 #define SLOT_LR(i)  (116 + 4 * (i))     /* their places in the frame (emit.h, FRAME) */
 static int g_lr_used;                   /* which of them this unit's code uses: its entry saves those */
+static int g_noavailreg;                /* -fno-avail-reg: only the loops' items */
 static int g_inline_depth;              /* in-line PERFORM bodies being read (sort.h) */
 
 typedef struct { unsigned char k; char label[48]; long off; } LrVal;
@@ -212,8 +224,21 @@ static void lr_call(const char *fn, const LrVal *v, LrItem *it, int nit)
 
 static int lr_find(const LrItem *it, int nit, int sym, long off)
 {
-    for (int k = 0; k < nit; k++) if (it[k].sym == sym && it[k].off == off) return k;
+    for (int k = 0; k < nit; k++) if (it[k].label[0] && it[k].sym == sym && it[k].off == off) return k;
     return -1;
+}
+
+/* the item a mark names, if it is one this file keeps: a binary integer,
+ * or an unsigned DISPLAY one, at a constant address */
+static int lr_item(LrItem *x, int sym, long off)
+{
+    if (sym < 0 || sym >= g_nsym) return 0;
+    Sym *s = &g_sym[sym]; const Sym *rec = &g_sym[s->record];
+    if (!(is_hot_int(s) || is_display_int(s)) || rec_indirect(rec) || !rec->label[0] || strlen(rec->label) >= sizeof x->label) return 0;
+    memset(x, 0, sizeof *x);
+    x->sym = sym; x->off = off; x->size = s->size; x->reg = -1;
+    snprintf(x->label, sizeof x->label, "%s", rec->label);
+    return 1;
 }
 
 /* a mark's fields: "#@L sym off dreg areg [v]" */
@@ -244,7 +269,20 @@ static int lr_branch(const char *op) { return !strcmp(op, "beq") || !strcmp(op, 
  * those jumps and the line before agree on (lr_merge); at any other --
  * the top of a loop, a label whose address is taken, one nothing here
  * jumps to -- nothing. */
-typedef struct { LrVal reg[32], slot[64]; } LrState;
+#define LR_MAXDEF 4
+typedef struct {
+    LrVal reg[32], slot[64];
+    /* lr_unit's: the item each of the registers holds (label empty: none),
+     * the marked loads and stores that put it there (their lines), and
+     * when it was last wanted */
+    LrItem h[LR_NREG];
+    struct { int n, line[LR_MAXDEF]; unsigned stamp; } hd[LR_NREG];
+} LrState;
+/* lr_unit's notes, a line each: the register a load takes its item from
+ * (use), the one a load or a store leaves its item in (def), and whether
+ * anything took it from there (useful); the registers loops own where the
+ * reading is (resv), and a clock for "last wanted" */
+typedef struct { unsigned char *use, *def, *useful; int resv, rstk[16], nrstk; unsigned clock; } LrAvail;
 typedef struct { char name[24]; int def, nfwd, back; LrState *in; } LrLabel;
 
 static void lr_merge_val(LrVal *d, const LrVal *s)
@@ -257,6 +295,19 @@ static void lr_merge(LrState *d, const LrState *s)
 {
     for (int k = 0; k < 32; k++) lr_merge_val(&d->reg[k], &s->reg[k]);
     for (int k = 0; k < 64; k++) lr_merge_val(&d->slot[k], &s->slot[k]);
+    /* a register holds an item here when it holds it by both ways in --
+     * put there by any of the loads and stores of either */
+    for (int r = 0; r < LR_NREG; r++) {
+        if (!d->h[r].label[0]) continue;
+        if (!s->h[r].label[0] || d->h[r].sym != s->h[r].sym || d->h[r].off != s->h[r].off) { d->h[r].label[0] = 0; continue; }
+        for (int k = 0; k < s->hd[r].n && d->h[r].label[0]; k++) {
+            int j; for (j = 0; j < d->hd[r].n && d->hd[r].line[j] != s->hd[r].line[k]; j++) ;
+            if (j < d->hd[r].n) continue;
+            if (d->hd[r].n == LR_MAXDEF) d->h[r].label[0] = 0;          /* too many to keep track of: not held */
+            else d->hd[r].line[d->hd[r].n++] = s->hd[r].line[k];
+        }
+        if (s->hd[r].stamp > d->hd[r].stamp) d->hd[r].stamp = s->hd[r].stamp;
+    }
 }
 static LrLabel *lr_label(LrLabel *lb, int nlb, const char *name)
 {
@@ -272,13 +323,40 @@ static void lr_flow(LrLabel *lb, int nlb, const char *t, int at, const LrState *
     else lr_merge(L->in, st);
 }
 
-/* Read the region's lines [a, b): which items something else may store
- * into, and which marked loads and stores are what their marks say
- * (ok[i - a] for the mark at line i). */
-static void lr_scan(int a, int b, LrItem *it, int nit, unsigned char *ok)
+/* a register for an item about to be held: one that holds nothing, or
+ * the one whose item was wanted longest ago; -1 when loops own them all */
+static int lr_pick(const LrState *st, const LrAvail *av)
+{
+    int best = -1;
+    for (int r = 0; r < LR_NREG; r++) {
+        if (av->resv & (1 << r)) continue;
+        if (!st->h[r].label[0]) return r;
+        if (best < 0 || st->hd[r].stamp < st->hd[best].stamp) best = r;
+    }
+    return best;
+}
+
+/* after each line of a unit's reading: an item something may have stored
+ * into is not held any more */
+static void lr_sweep(const LrAvail *av, LrState *st)
+{
+    if (!av) return;
+    for (int r = 0; r < LR_NREG; r++) if (st->h[r].conflict) { st->h[r].label[0] = 0; st->h[r].conflict = 0; }
+}
+
+/* Read the lines [a, b).  For a loop's region (av NULL): which of the
+ * items it[] something else may store into, and which marked loads and
+ * stores are what their marks say (ok[i - a] for the mark at line i).
+ * For a unit (av): what the registers hold as the reading goes -- it[] is
+ * then the four held items themselves, an item stored into simply not
+ * held any more -- and av's notes of which loads take an item from a
+ * register and which loads and stores leave one there. */
+static void lr_scan(int a, int b, LrItem *it, int nit, unsigned char *ok, LrAvail *av)
 {
     LrState st; LrVal *reg = st.reg, *slot = st.slot;
     memset(&st, 0, sizeof st);
+    if (av) { it = st.h; nit = LR_NREG; }
+    LrItem gi; memset(&gi, 0, sizeof gi);          /* the item of the mark being read under */
     int cur = -1, curline = -1, good = 0, dead = 0; char ckind = 0, careg[8] = "";
     char name[128];
     /* the labels defined here, and how each is reached */
@@ -306,14 +384,31 @@ static void lr_scan(int a, int b, LrItem *it, int nit, unsigned char *ok)
             }
         }
     }
-    int trace = getenv("S32_LR_TRACE") != NULL;
-    for (int i = a; i < b; i++) {
+    int trace = !av && getenv("S32_LR_TRACE") != NULL;
+    for (int i = a; i < b; lr_sweep(av, &st), i++) {
         const char *l = g_asm[i];
         if (trace) g_lr_why = l;
         if (lr_is_mark(l)) {
             char kind, vreg[8], areg[8]; int sym, v; long off;
             if (l[2] == '.') {
-                if (curline >= 0 && good && cur >= 0) { ok[curline - a] = 1; if (ckind == 'L') it[cur].nl++; else it[cur].ns++; }
+                if (av && curline >= 0 && good) {
+                    if (ckind == 'L' && cur >= 0) {
+                        /* held: the load is a copy, and whatever put the item
+                         * there has earned its place */
+                        av->use[curline - a] = (unsigned char)(cur + 1);
+                        for (int k = 0; k < st.hd[cur].n; k++) av->useful[st.hd[cur].line[k] - a] = 1;
+                        st.hd[cur].stamp = ++av->clock;
+                    } else {
+                        /* loaded, or stored: held from here, in the register
+                         * it was in or one picked for it */
+                        int r = cur >= 0 ? cur : lr_pick(&st, av);
+                        if (r >= 0) {
+                            st.h[r] = gi; st.hd[r].n = 1; st.hd[r].line[0] = curline; st.hd[r].stamp = ++av->clock;
+                            av->def[curline - a] = (unsigned char)(r + 1);
+                        }
+                    }
+                }
+                else if (!av && curline >= 0 && good && cur >= 0) { ok[curline - a] = 1; if (ckind == 'L') it[cur].nl++; else it[cur].ns++; }
                 /* a store's mark that did not hold: its lines stay as they
                  * are, a store the register would not see */
                 else if (curline >= 0 && cur >= 0 && ckind == 'S') lr_refuse(&it[cur]);
@@ -323,7 +418,18 @@ static void lr_scan(int a, int b, LrItem *it, int nit, unsigned char *ok)
                 snprintf(careg, sizeof careg, "%s", areg);
                 /* the claim -- areg is this item's address -- is checked at
                  * each load and store under the mark, below */
-                if (cur < 0) good = 0;
+                if (av) { if (!lr_item(&gi, sym, off)) good = 0; }
+                else if (cur < 0) good = 0;
+                else gi = it[cur];
+            } else if (av && !strncmp(l, "#@K<", 4)) {
+                /* a loop that keeps items of its own in these registers:
+                 * they are its until it ends */
+                int m = atoi(l + 4);
+                if (av->nrstk == 16) m = (1 << LR_NREG) - 1; else av->rstk[av->nrstk++] = av->resv;
+                av->resv |= m;
+                for (int r = 0; r < LR_NREG; r++) if (av->resv & (1 << r)) st.h[r].label[0] = 0;
+            } else if (av && !strcmp(l, "#@K>")) {
+                if (av->nrstk) av->resv = av->rstk[--av->nrstk];       /* (its registers hold nothing: lr_pick gave it none) */
             }
             continue;
         }
@@ -350,8 +456,8 @@ static void lr_scan(int a, int b, LrItem *it, int nit, unsigned char *ok)
             const LrVal *bv = &reg[base];
             if (bv->k == LV_AT) {
                 int own = -1;
-                if (curline >= 0 && ckind == 'S' && cur >= 0 && base == lr_reg(careg) && !strcmp(bv->label, it[cur].label) &&
-                    bv->off == it[cur].off && disp >= 0 && disp + w <= it[cur].size) own = cur;
+                if (curline >= 0 && ckind == 'S' && good && base == lr_reg(careg) && !strcmp(bv->label, gi.label) &&
+                    bv->off == gi.off && disp >= 0 && disp + w <= gi.size) own = cur;      /* (cur -1: not one of it[], and nothing to spare) */
                 else if (curline >= 0) good = 0;
                 lr_store(it, nit, bv->label, bv->off + disp, bv->off + disp + w, own);
             } else {
@@ -367,8 +473,8 @@ static void lr_scan(int a, int b, LrItem *it, int nit, unsigned char *ok)
             if (curline >= 0) {
                 /* under a load's mark: from the item, and nowhere else */
                 const LrVal *bv = &reg[base];
-                if (!(ckind == 'L' && cur >= 0 && base == lr_reg(careg) && bv->k == LV_AT && !strcmp(bv->label, it[cur].label) &&
-                      bv->off == it[cur].off && disp >= 0 && disp < it[cur].size)) good = 0;
+                if (!(ckind == 'L' && good && base == lr_reg(careg) && bv->k == LV_AT && !strcmp(bv->label, gi.label) &&
+                      bv->off == gi.off && disp >= 0 && disp < gi.size)) good = 0;
             }
             LrVal nv; memset(&nv, 0, sizeof nv);
             if (base == 29 && !strcmp(x.op, "ldw") && disp >= 0 && disp < 256 && !(disp & 3)) nv = slot[disp / 4];
@@ -477,6 +583,37 @@ static char *lr_line(const char *fmt, ...)
     return xstrndup(buf, strlen(buf));
 }
 
+/* A marked load of x (its lines end at e, the region or unit at b) as a
+ * copy from the register rc.  The address before it -- out's last two
+ * lines, when they are that -- goes too when nothing else wants it: the
+ * mark's v is the emitter's word that it is wanted no further, taken
+ * where the lines cannot say. */
+static int lr_put_load(char **out, int no, const LrItem *x, const char *vreg, const char *areg, int v, int e, int b, const char *rc)
+{
+    char l1[160], l2[160];
+    if (x->off) { snprintf(l1, sizeof l1, "\tlui %s, %%hi(%s+%ld)", areg, x->label, x->off); snprintf(l2, sizeof l2, "\taddi %s, %s, %%lo(%s+%ld)", areg, areg, x->label, x->off); }
+    else { snprintf(l1, sizeof l1, "\tlui %s, %%hi(%s)", areg, x->label); snprintf(l2, sizeof l2, "\taddi %s, %s, %%lo(%s)", areg, areg, x->label); }
+    if (no >= 2 && !strcmp(out[no - 2], l1) && !strcmp(out[no - 1], l2)) {
+        int after = !strcmp(vreg, areg) ? 1 : lr_after(e + 1, b, lr_reg(areg));
+        if (after == 1 || (after == 2 && v)) no -= 2;
+    }
+    out[no++] = lr_line("\tadd %s, r0, %s", vreg, rc);
+    return no;
+}
+/* before a marked store of vreg into item s: rc made what a load of the
+ * item will give once it is stored -- the bytes stored, extended */
+static int lr_put_copy(char **out, int no, const Sym *s, const char *rc, const char *vreg)
+{
+    int sg = s->pi.is_signed;
+    if (s->size == 4) out[no++] = lr_line("\tadd %s, r0, %s", rc, vreg);
+    else if (s->size == 1 && !sg) out[no++] = lr_line("\tandi %s, %s, 255", rc, vreg);
+    else {
+        out[no++] = lr_line("\tslli %s, %s, %d", rc, vreg, 32 - 8 * s->size);
+        out[no++] = lr_line("\t%s %s, %s, %d", sg ? "srai" : "srli", rc, rc, 32 - 8 * s->size);
+    }
+    return no;
+}
+
 /* the region's lines [a, b) -- g_asm[a] its "#@R<", g_asm[b - 1] its
  * "#@R>" -- read and rewritten in place; returns how many lines longer
  * it is (shorter: negative).  used: the registers enclosing regions hold. */
@@ -486,18 +623,13 @@ static int lr_region(int a, int b, int used)
     for (int i = a; i < b; i++) {
         char kind, vreg[8], areg[8]; int sym, v; long off;
         if (!lr_mark(g_asm[i], &kind, &sym, &off, vreg, areg, &v)) continue;
-        if (sym < 0 || sym >= g_nsym || lr_find(it, nit, sym, off) >= 0 || nit == LR_MAXITEM) continue;
-        Sym *s = &g_sym[sym]; const Sym *rec = &g_sym[s->record];
-        if (!is_hot_int(s) || rec_indirect(rec) || strlen(rec->label) >= sizeof it[0].label) continue;
-        memset(&it[nit], 0, sizeof it[nit]);
-        it[nit].sym = sym; it[nit].off = off; it[nit].size = s->size; it[nit].reg = -1;
-        snprintf(it[nit].label, sizeof it[nit].label, "%s", rec->label);
+        if (lr_find(it, nit, sym, off) >= 0 || nit == LR_MAXITEM || !lr_item(&it[nit], sym, off)) continue;
         nit++;
     }
     int n0 = b - a, delta = 0, mine = 0;
     if (nit) {
         unsigned char *ok = calloc((size_t)n0, 1);
-        lr_scan(a, b, it, nit, ok);
+        lr_scan(a, b, it, nit, ok, NULL);
         /* the items worth a register, most loads first: a load saved is
          * three instructions and more, a store costs one or two */
         for (;;) {
@@ -535,38 +667,17 @@ static int lr_region(int a, int b, int used)
                 const char *rc = lr_regname[it[k].reg];
                 Sym *s = &g_sym[sym];
                 int e = i + 1; while (e < b && strcmp(g_asm[e], "#@.")) e++;       /* the unit's end */
-                if (kind == 'L') {
-                    /* the load is a copy; the address before it goes too when
-                     * nothing else wants it */
-                    char l1[160], l2[160];
-                    if (it[k].off) { snprintf(l1, sizeof l1, "\tlui %s, %%hi(%s+%ld)", areg, it[k].label, it[k].off); snprintf(l2, sizeof l2, "\taddi %s, %s, %%lo(%s+%ld)", areg, areg, it[k].label, it[k].off); }
-                    else { snprintf(l1, sizeof l1, "\tlui %s, %%hi(%s)", areg, it[k].label); snprintf(l2, sizeof l2, "\taddi %s, %s, %%lo(%s)", areg, areg, it[k].label); }
-                    if (no >= 2 && !strcmp(out[no - 2], l1) && !strcmp(out[no - 1], l2)) {
-                        /* (the mark's v is the emitter's word that the address
-                         * is wanted no further, taken where the lines cannot say) */
-                        int after = !strcmp(vreg, areg) ? 1 : lr_after(e + 1, b, lr_reg(areg));
-                        if (after == 1 || (after == 2 && v)) no -= 2;
-                    }
-                    out[no++] = lr_line("\tadd %s, r0, %s", vreg, rc);
-                    i = e;
-                } else {
-                    /* the store, and the register made what a load of the
-                     * item would now give: the bytes stored, extended */
-                    int sg = s->pi.is_signed;
-                    if (s->size == 4) out[no++] = lr_line("\tadd %s, r0, %s", rc, vreg);
-                    else if (s->size == 1 && !sg) out[no++] = lr_line("\tandi %s, %s, 255", rc, vreg);
-                    else {
-                        out[no++] = lr_line("\tslli %s, %s, %d", rc, vreg, 32 - 8 * s->size);
-                        out[no++] = lr_line("\t%s %s, %s, %d", sg ? "srai" : "srli", rc, rc, 32 - 8 * s->size);
-                    }
+                if (kind == 'L') no = lr_put_load(out, no, &it[k], vreg, areg, v, e, b, rc);
+                else {
+                    no = lr_put_copy(out, no, s, rc, vreg);
                     for (int j = i + 1; j < e; j++) out[no++] = g_asm[j];
-                    i = e;
                 }
+                i = e;
             }
-            /* the region's own marks go: it is done */
-            int w = 0;
-            for (int j = 0; j < no; j++) if (!((j == 0 || j == no - 1) && !strncmp(out[j], "#@R", 3))) out[w++] = out[j];
-            no = w;
+            /* the region is done: its marks become "a loop that owns these
+             * registers", for lr_unit */
+            out[0] = lr_line("#@K< %d", mine);
+            out[no - 1] = lr_line("#@K>");
             delta = no - n0;
             int tail = g_nasm - b;
             while (g_nasm + delta + 1 > g_asmcap) { g_asmcap = g_asmcap ? g_asmcap * 2 : 4096; g_asm = realloc(g_asm, (size_t)g_asmcap * sizeof *g_asm); }
@@ -580,7 +691,7 @@ static int lr_region(int a, int b, int used)
     }
     /* the regions inside it, with the registers that are left */
     int end = b + delta, depth = 0, start = -1;
-    for (int i = a + (mine ? 0 : 1); i < end - (mine ? 0 : 1); i++) {
+    for (int i = a + 1; i < end - 1; i++) {
         if (!strcmp(g_asm[i], "#@R<")) { if (depth++ == 0) start = i; }
         else if (!strcmp(g_asm[i], "#@R>") && depth > 0 && --depth == 0) {
             int dd = lr_region(start, i + 1, used | mine);
@@ -600,6 +711,51 @@ static void lr_run(int from)
         if (!strcmp(g_asm[i], "#@R<")) { if (depth++ == 0) start = i; }
         else if (!strcmp(g_asm[i], "#@R>") && depth > 0 && --depth == 0) i += lr_region(start, i + 1, 0);
     }
+}
+
+/* A unit's code is all there (from its "#@P" on): what its registers hold
+ * as the code is read, and the loads that can be copies.  Then the marks
+ * go -- a unit that holds this one would otherwise read them as its own. */
+static void lr_unit(void)
+{
+    char mark[24]; snprintf(mark, sizeof mark, "#@P %d", g_unit);
+    int a = -1, b = g_nasm;
+    for (int i = g_nasm - 1; i >= 0; i--) if (!strcmp(g_asm[i], mark)) { a = i + 1; break; }
+    if (a < 0) return;
+    int n0 = b - a, any = 0;
+    for (int i = a; i < b && !any; i++) any = lr_is_mark(g_asm[i]);
+    if (!any) return;
+    char **out = xmalloc((size_t)(3 * n0 + 8) * sizeof *out); int no = 0, used = 0;
+    if (!g_noavailreg && !g_noemit) {
+        LrAvail av; memset(&av, 0, sizeof av);
+        av.use = calloc((size_t)n0, 1); av.def = calloc((size_t)n0, 1); av.useful = calloc((size_t)n0, 1);
+        lr_scan(a, b, NULL, 0, NULL, &av);
+        for (int i = a; i < b; i++) {
+            char kind, vreg[8], areg[8]; int sym, v; long off;
+            LrItem x;
+            int u = av.use[i - a], d = av.useful[i - a] ? av.def[i - a] : 0;
+            if ((!u && !d) || !lr_mark(g_asm[i], &kind, &sym, &off, vreg, areg, &v) || !lr_item(&x, sym, off)) { out[no++] = g_asm[i]; continue; }
+            int e = i + 1; while (e < b && strcmp(g_asm[e], "#@.")) e++;
+            if (u) { no = lr_put_load(out, no, &x, vreg, areg, v, e, b, lr_regname[u - 1]); used |= 1 << (u - 1); }
+            else {
+                const char *rc = lr_regname[d - 1];
+                used |= 1 << (d - 1);
+                if (kind == 'S') no = lr_put_copy(out, no, &g_sym[sym], rc, vreg);
+                for (int j = i + 1; j < e; j++) out[no++] = g_asm[j];
+                if (kind == 'L') out[no++] = lr_line("\tadd %s, r0, %s", rc, vreg);       /* the value just loaded */
+            }
+            i = e;
+        }
+        free(av.use); free(av.def); free(av.useful);
+    } else for (int i = a; i < b; i++) out[no++] = g_asm[i];
+    /* the marks, read for the last time */
+    int w = 0;
+    for (int j = 0; j < no; j++) if (!lr_is_mark(out[j])) out[w++] = out[j];
+    while (a + w + 1 > g_asmcap) { g_asmcap = g_asmcap ? g_asmcap * 2 : 4096; g_asm = realloc(g_asm, (size_t)g_asmcap * sizeof *g_asm); }
+    memcpy(g_asm + a, out, (size_t)w * sizeof *out);
+    g_nasm = a + w;
+    free(out);
+    g_lr_used |= used;
 }
 
 /* a loop's code begins (after its item is set) and ends */

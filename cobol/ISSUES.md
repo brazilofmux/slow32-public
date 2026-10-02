@@ -5421,3 +5421,17 @@ store whose mark did not hold was not counted against its item).
 `-fno-loop-reg` turns it off; `S32_LR_TRACE=1` says what each loop kept
 and what refused the rest.
 
+Eleventh (2026-10-02): stage 3's second step.  The pass that reads a
+loop's code now reads a whole unit's as well and follows which item
+each of r14 to r17 holds: an item loaded or stored is held until
+something may store into it, a label nothing is known at, or a loop
+that owns the register; a load of a held item is a copy, and only the
+loads and stores some later load takes from pay for putting it there.
+Unsigned DISPLAY integers are held from their loads.  csv2fw 4.075 G
+instructions -> 3.955 G, 275 ms -> 271; and it reaches code the loop
+pass could not -- 127 of CCVS-85's programs, 107 of Open Systems',
+25 of majesty's.  `-fno-avail-reg` turns this step off alone.
+Checks: 40 more unit cases (144), 2002/heldvalues, the generator's
+straight runs under both switches (harness gen/loop, gen/held), 54
+mutants (53 caught, one showing a line that did nothing, removed).
+

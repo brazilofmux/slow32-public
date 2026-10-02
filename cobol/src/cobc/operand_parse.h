@@ -883,8 +883,11 @@ static int opnd_display_int(Opnd *o);
 static void emit_load_int_1(Sym *s, const char *areg, const char *dreg);
 static void emit_load_int(Sym *s, const char *areg, const char *dreg)
 {
-    /* a binary item at a constant address: marked, for loopreg.h */
-    int m = is_display_int(s) ? (g_mark_v = 0) : mark_unit('L', (int)(s - g_sym), dreg, areg);
+    /* an item at a constant address: marked, for loopreg.h -- a binary
+     * one, or an unsigned DISPLAY integer, whose value is its digits (the
+     * stores of those are not marked: what they leave is the store's own
+     * business, and a register is not trusted to follow it) */
+    int m = mark_unit('L', (int)(s - g_sym), dreg, areg);
     emit_load_int_1(s, areg, dreg);
     mark_end(m);
 }

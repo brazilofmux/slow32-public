@@ -228,5 +228,7 @@ paragraph, READ INTO, a FILE STATUS, the runtime's stores -- for the
 registers a loop's items are kept in (`src/cobc/loopreg.h`).  It runs
 through `run-flag.sh FLAG FIRST COUNT`: the same compiler twice, as it
 is and with FLAG (`-fno-loop-reg`), the two programs printing the same
-bytes.  The harness runs 60 of them (gen/loop); no container is needed.
+bytes.  The harness runs 60 of them (gen/loop), and 60 on other seeds
+with `-fno-avail-reg` (gen/held: the values held between statements,
+alone); no container is needed.
 

@@ -386,6 +386,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-fcomp1=float")) g_comp1 = 0;
         else if (!strcmp(argv[i], "-fno-hot-arith")) g_nohx = 1;
         else if (!strcmp(argv[i], "-fno-loop-reg")) g_noloopreg = 1;
+        else if (!strcmp(argv[i], "-fno-avail-reg")) g_noavailreg = 1;
         else if (!strcmp(argv[i], "-fprofile-lines")) g_proflines = 1;
         else if (!strcmp(argv[i], "-dialect=mf")) g_dialect_mf = 1;
         else if (!strncmp(argv[i], "-dialect=", 9)) { fprintf(stderr, "s32-cobc: %s: the one dialect is mf (docs/behavior-points.md)\n", argv[i]); return 2; }

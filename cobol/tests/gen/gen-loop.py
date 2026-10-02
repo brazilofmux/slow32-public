@@ -26,14 +26,21 @@ that is not a plain store to the item:
 - and by plain stores, which the register must follow: MOVE, ADD,
   SUBTRACT, COMPUTE, with and without truncation by the picture.
 
+Between the loops, and inside them, straight runs of the same statements
+with IFs whose two sides do different things to an item: the compiler
+also takes a load from a register when the item was loaded or stored
+earlier on every way to it and nothing since could have changed it.
+
 Items are COMP of two and four bytes, signed and not, COMP-5, one byte,
-alone at level 01 and inside groups beside other items.  Every loop
+and unsigned DISPLAY integers (kept by their digits), alone at level 01
+and inside groups beside other items.  Every loop
 counts its passes in a DISPLAY item and stops at a limit, so every
 program ends whatever the body did to the loop's own item; each loop
 prints its items when it is over, and now and then inside.
 
-The same compiler with the register rewrite off (-fno-loop-reg) is the
-oracle: the two programs must print the same bytes (run-flag.sh).
+The same compiler with the rewrite off (-fno-loop-reg; -fno-avail-reg
+for the second kind alone) is the oracle: the two programs must print
+the same bytes (run-flag.sh).
 """
 import random
 import sys
@@ -42,6 +49,7 @@ KINDS = [
     ("pic 9(4) comp", 9999), ("pic s9(4) comp", 9999), ("pic 9(9) comp", 99999), ("pic s9(9) comp", 99999),
     ("pic 9(4) comp-5", 9999), ("pic s9(4) comp-5", 9999), ("pic 9(9) comp-5", 99999),
     ("pic 9(2) comp", 99), ("pic 9(3) comp", 999), ("pic s9(8) comp", 99999),
+    ("pic 9(4)", 9999), ("pic 99", 99), ("pic 9(5)", 99999), ("pic 9", 9),
 ]
 FUEL = 60
 
@@ -85,6 +93,11 @@ def main():
     w("    05  GX1 pic xx.")
     w("    05  GT pic 9(4) comp occurs 2.")
     w("    05  filler pic x(6).")
+    # DISPLAY integers in a group, and the group as characters
+    w("01  DG.")
+    w("    05  D1 pic 99 value 0.")
+    w("    05  D2 pic 9(4) value 0.")
+    w("01  DX redefines DG pic x(6).")
     w("01  GZ.")
     w("    05  filler pic 9(4) comp value 3.")
     w("    05  filler pic s9(4) comp value 2.")
@@ -107,9 +120,10 @@ def main():
     w("01  TAL pic 9(4) comp value 0.")
     w("01  DSP pic 9(4) value 0.")
 
-    ints = [a[0] for a in alone] + ["G1", "G2", "G3", "G4", "G5", "K", "PTR", "TAL", "ST-N"]
+    ints = [a[0] for a in alone] + ["G1", "G2", "G3", "G4", "G5", "K", "PTR", "TAL", "ST-N", "D1", "D2"]
     caps = dict((a[0], a[2]) for a in alone)
-    caps.update({"G1": 9999, "G2": 9999, "G3": 9999, "G4": 99999, "G5": 9999, "K": 9999, "PTR": 9999, "TAL": 9999, "ST-N": 9999})
+    caps.update({"G1": 9999, "G2": 9999, "G3": 9999, "G4": 99999, "G5": 9999, "K": 9999, "PTR": 9999, "TAL": 9999, "ST-N": 9999,
+                 "D1": 99, "D2": 9999})
 
     w("procedure division.")
     w("main-para.")
@@ -144,7 +158,7 @@ def main():
 
     def writer(x, ind):
         """a statement that changes item x: plain stores and everything else"""
-        c = r.randrange(26)
+        c = r.randrange(30)
         v = val(min(caps.get(x, 99), 40))
         if c < 3:
             return "%sadd %d to %s" % (ind, r.randint(1, 3), x)
@@ -194,11 +208,43 @@ def main():
             return "%sif st = \"00\" add 1 to SUM2 else add 3 to SUM2 end-if" % ind
         if c == 24:
             return "%sif ST-N > 100 add 1 to SUM1 end-if" % ind
+        if c == 26:     # the DISPLAY group, as characters
+            return "%sif function mod(FUEL, 4) = 1 move \"%02d%04d\" to DX end-if" % (ind, val(20), val(40))
+        if c == 27:
+            return "%smove \"%d\" to DX(%d:1)" % (ind, val(9), r.choice([1, 2, 3, 6]))
+        if c == 28:
+            return "%sif function mod(FUEL, 9) = 2 move zeros to DG end-if" % ind
         return "%sadd 1 to %s %s" % (ind, x, r.choice(ints))
+
+    def run(ind, items=None):
+        """a straight run: readers and writers of a few items, and IFs whose sides differ"""
+        lines = []
+        xs = items or r.sample(ints, 2)
+        for _ in range(r.randint(3, 8)):
+            x = r.choice(xs) if r.random() < 0.7 else r.choice(ints)
+            c = r.random()
+            if c < 0.45:
+                lines.append(reader(x, ind))
+            elif c < 0.7:
+                lines.append(writer(x, ind))
+            elif c < 0.9:
+                cond = r.choice(["function mod(FUEL, 3) = 1", "%s > %d" % (x, val(9)), "SUM2 > 500"])
+                a = (writer if r.random() < 0.6 else reader)(x, ind + "    ")
+                b = (writer if r.random() < 0.4 else reader)(r.choice(xs), ind + "    ")
+                lines.append("%sif %s" % (ind, cond)); lines.append(a)
+                if r.random() < 0.7:
+                    lines.append("%selse" % ind); lines.append(b)
+                lines.append("%send-if" % ind)
+                lines.append(reader(x, ind))
+            else:
+                lines.append("%sadd 1 to FUEL" % ind)
+        return lines
 
     def body(items, depth, ind):
         """a loop's statements: the pass counted, then readers and writers of its items and of others"""
         lines = ["%sadd 1 to FUEL" % ind]
+        if r.random() < 0.3:
+            lines += run(ind, items)
         for _ in range(r.randint(1, 5)):
             x = r.choice(items) if r.random() < 0.6 else r.choice(ints)
             c = r.random()
@@ -248,10 +294,15 @@ def main():
 
     for n in range(nloops):
         w("    move 0 to FUEL")
+        for line in run("    "):
+            w(line)
         for line in loop(0, "    "):
             w(line)
+        if r.random() < 0.5:
+            for line in run("    "):
+                w(line)
         w('    display "%d: " %s' % (n, " \" \" ".join(r.sample(ints, 5))))
-        w('    display "   " SUM1 " " SUM2 " " G1 " " G2 " " G3 " " G4 " " G5 " " FUEL')
+        w('    display "   " SUM1 " " SUM2 " " G1 " " G2 " " G3 " " G4 " " G5 " " FUEL " " D1 " " D2')
     w("    close f1 f2")
     w("    stop run.")
     for p, x, k in paras:

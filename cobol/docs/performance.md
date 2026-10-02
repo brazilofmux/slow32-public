@@ -995,3 +995,61 @@ What that says:
 
 Each of the last two is a few percent of the batch.
 
+## 2026-10-02: stage 3, the second step -- a value still in hand
+
+The reading that decides a loop's registers follows addresses through
+the code.  The same pass over a whole unit (`lr_unit`, at the unit's
+end) follows one thing more: which item each of the four registers
+holds.  An item loaded, or stored by its marked store, is held from
+there.  It stops being held where something may store into it (the
+loop pass's rules, but here they end a holding where there they refused
+the item), at a label nothing is known at -- a paragraph, the top of a
+loop, the place a PERFORM comes back to -- and where a loop that owns
+the register begins.  At a label reached only from above it is held if
+it is held by every way in.  A load of an item that is held is a copy.
+
+Nothing is put in a register on speculation: the pass notes, for every
+load that takes its item from a register, the loads and stores that put
+it there, and only those get the instruction that does it.  When all
+four registers are spoken for, the item wanted longest ago gives its up.
+
+Unsigned DISPLAY integers are items now too, by their loads: the value
+of `PIC 99` is its digits, seven instructions to work out, and a
+program's state variables and subscripts are often that.  Their stores
+are not marked -- what a store of digits leaves is the store's own
+business -- so a DISPLAY item is held from a load until anything stores
+into it.
+
+csv2fw: 4.155 G instructions with none of stage 3, 4.075 G with the
+loops' registers, 3.955 G with this -- and 285 ms, 275, 271.  The
+kernels do not move but ksearch (-2.4%).  What changed more is where it
+reaches: loads taken from registers in 127 of CCVS-85's 370 programs
+and 107 of the Open Systems suite's 227, which the loop pass did not
+touch at all, and 25 of majesty's 57.
+
+In csv2fw's own hot paragraph it helps less than its share of loads
+would suggest, and the reason is the shape of the code: the state is
+read, then replaced by a table entry moved as two characters, then read
+again by each WHEN -- so it is worked out from its digits twice a
+character where it was five times, and a compiler that knew the move
+was of a number would not work it out at all.
+
+### What checks it
+
+- `tests/loopreg_test.c`: 40 more cases, of what each mark comes out as
+  -- taken from a register, left in one and taken later, left in one for
+  nothing, neither -- over stores, calls, joins where the ways in agree
+  and where they do not, loop tops, loops that own registers, five items
+  for four registers.  144 checks.
+- `tests/2002/heldvalues`: an item read, changed behind its name by each
+  of the ways `loopitems` uses, and read again; one side of an IF
+  changing it and the other not; DISPLAY items changed as characters.
+  GnuCOBOL agrees with every line.
+- `tests/gen/gen-loop.py` grew straight runs between and inside its
+  loops, IFs whose sides differ, and DISPLAY items; the harness runs it
+  with `-fno-loop-reg` (everything off) and, on other seeds, with
+  `-fno-avail-reg` (this step off).
+- Fifty-four mutants of the analysis as it now stands: fifty-three
+  caught; the one that survived removed a line that did nothing, and
+  the line is gone.
+

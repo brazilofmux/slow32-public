@@ -1,0 +1,23 @@
+a redefinition:      00001 00003
+the group moved to:  00001 00040
+initialized:         00001 00000
+a byte of the group: 00001 00004
+its first byte:      00001 00257
+a table over it:     00001 00007
+a paragraph:         00001 00003
+READ INTO:           00001 00021
+the record area:     00005 00023
+the status, a number: 31354 12336
+ROUNDED:             00001 00004
+STRING's pointer:    00001 00004
+a BASED item on it:  00001 00009
+the relative key:    00000 00002
+digits, as characters: 00012 00034
+the group of them:   05678 09999 0000
+ZEROS to the group:  00012 00000
+changed on one side: 00005
+... on the other:    00001
+stored on both:      00006
+read on both:        00001 00004
+past the picture:    00005 00010
+stored and read:     00005 00003 0009

@@ -559,6 +559,12 @@ case "$fout" in
     "all 60 the same"*) report "gen/loop" 0 "60 programs, with the registers and without" ;;
     *)                  report "gen/loop" 1 "$fout" ;;
 esac
+# ... and the values held outside loops alone (-fno-avail-reg), on other seeds
+fout="$(GEN=loop "$HERE/gen/run-flag.sh" -fno-avail-reg 101 60 2>&1 | tail -1)"
+case "$fout" in
+    "all 60 the same"*) report "gen/held" 0 "60 programs, with values held between statements and without" ;;
+    *)                  report "gen/held" 1 "$fout" ;;
+esac
 
 # Gate 8 (sanitizers): the compiler itself, built with the address and
 # undefined-behavior sanitizers, over every source there is (sanitize.sh)

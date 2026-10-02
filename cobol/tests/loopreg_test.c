@@ -134,7 +134,7 @@ int main(void)
         it[0].sym = 0;
         int nl = load(cases[c].code);
         unsigned char *ok = calloc((size_t)nl + 1, 1);
-        lr_scan(0, nl, it, nit, ok);
+        lr_scan(0, nl, it, nit, ok, NULL);
         for (int k = 0; k < nit; k++) {
             const Want *w = &cases[c].w[k];
             n++;
@@ -174,12 +174,94 @@ int main(void)
             it[4].sym = 9; it[4].off = 136; it[4].size = 4; it[4].reg = -1; snprintf(it[4].label, sizeof it[4].label, ".Lf0_0");
             int nl = load(fc[c].code);
             unsigned char *ok = calloc((size_t)nl + 1, 1);
-            lr_scan(0, nl, it, 5, ok);
+            lr_scan(0, nl, it, 5, ok, NULL);
             for (int k = 0; k < 5; k++) {
                 n++;
                 if (it[k].conflict != fc[c].c[k]) { printf("FAIL %s: item %d: conflict %d, want %d\n", fc[c].name, k, it[k].conflict, fc[c].c[k]); bad++; }
             }
             free(ok);
+        }
+    }
+    /* The unit's reading: what the registers hold.  Items: sym 0 at ws0_1
+     * (X), 1 at ws0_2 (Y), 2 to 5 at ws0_3 to ws0_6, all two-byte binary;
+     * sym 6 at ws0_7, two DISPLAY digits.  For each mark in the code, in
+     * order: U and the register a load takes its item from; D and the
+     * register a load or store leaves it in, taken from there later; d
+     * the same, never taken; - nothing. */
+    {
+        static Sym sy[8];
+        memset(sy, 0, sizeof sy);
+        g_sym = sy; g_nsym = 7; g_nfile = 0;
+        for (int k = 0; k < 7; k++) {
+            sy[k].record = k; sy[k].size = 2; sy[k].pi.category = PIC_NUMERIC; sy[k].pi.digits = k == 6 ? 2 : 4;
+            sy[k].usage = k == 6 ? U_DISPLAY : U_BINARY;
+            snprintf(sy[k].label, sizeof sy[k].label, "ws0_%d", k + 1);
+        }
+#define LA(n)   "\tlui r3, %hi(ws0_" #n ")\n\taddi r3, r3, %lo(ws0_" #n ")\n"
+#define LD(s)   "#@L " #s " 0 r1 r3\n\tldbu r2, r3+1\n\tldbu r1, r3+0\n\tslli r1, r1, 8\n\tor r1, r1, r2\n#@.\n"
+#define ST(s)   "#@S " #s " 0 r1 r3\n\tstb r3+1, r1\n\tsrli r2, r1, 8\n\tstb r3+0, r2\n#@.\n"
+#define LOADX   LA(1) LD(0)
+#define LOADY   LA(2) LD(1)
+        static const struct { const char *name, *code, *want; } ac[] = {
+            { "a load, and a load: the second from the register", LOADX LOADX, "D0 U0" },
+            { "three: one put, two taken", LOADX LOADX LOADX, "D0 U0 U0" },
+            { "a load nothing follows", LOADX, "d0" },
+            { "two items, two registers", LOADX LOADY LOADX LOADY, "D0 D1 U0 U1" },
+            { "a store between, unmarked", LOADX LA(1) "\tstb r3+0, r1\n" LOADX, "d0 d0" },
+            { "a store between, marked: held from the store", LOADX LA(1) ST(0) LOADX, "d0 D0 U0" },
+            { "a store to another item between", LOADX LA(2) "\tstb r3+0, r1\n" LOADX, "D0 U0" },
+            { "a marked store of another item", LOADX LA(2) ST(1) LOADX LOADY, "D0 D1 U0 U1" },
+            { "a store to an element of its record", LOADX LA(1) "\tadd r3, r3, r11\n\tstb r3+0, r1\n" LOADX, "d0 d0" },
+            { "a store who knows where: nothing is held", LOADX LOADY "\tstb r7+0, r1\n" LOADX LOADY, "d0 d1 d0 d1" },
+            { "a routine that stores nothing", LOADX "\tjal r31, cob_display_nl\n" LOADX, "D0 U0" },
+            { "a routine nobody lists", LOADX "\tjal r31, cob_accept\n" LOADX, "d0 d0" },
+            { "memcpy to the item", LOADX LA(1) "\tjal r31, memcpy\n" LOADX, "d0 d0" },
+            { "memcpy to another", LOADX LOADY LA(2) "\tjal r31, memcpy\n" LOADX LOADY, "D0 d1 U0 d1" },
+            { "a paragraph performed", LOADX "\tjal r0, .Lp0_3\n" LOADX, "d0 d0" },
+            { "a jump through a register", LOADX "\tjalr r0, r1, 0\n" LOADX, "d0 d0" },
+            { "a branch over nothing that matters", LOADX "\tbeq r1, r0, .L1\n\taddi r1, r1, 1\n.L1:\n" LOADX, "D0 U0" },
+            { "a branch over a store to it: not held by the one way", LOADX "\tbeq r1, r0, .L1\n" LA(1) "\tstb r3+0, r1\n.L1:\n" LOADX, "d0 d0" },
+            { "a branch over a marked store: held by both ways, put there by either", LOADX "\tbeq r1, r0, .L1\n" LA(1) ST(0) ".L1:\n" LOADX, "D0 D0 U0" },
+            { "loaded on each of two ways, then joined", "\tbeq r1, r0, .L8\n" LOADX "\tjal r0, .L9\n.L8:\n" LOADX ".L9:\n" LOADX, "D0 D0 U0" },
+            { "loaded on one of two ways only", "\tbeq r1, r0, .L8\n" LOADX ".L8:\n" LOADX, "d0 d0" },
+            { "two ways, a different item in the register by each", "\tbeq r1, r0, .L8\n" LOADX "\tjal r0, .L9\n.L8:\n" LOADY ".L9:\n" LOADX, "d0 d0 d0" },
+            { "the top of a loop: what was held coming in is not known to be held coming round", LOADX ".L3:\n" LOADX "\tbne r1, r0, .L3\n", "d0 d0" },
+            { "... inside one pass it is", ".L3:\n" LOADX LOADX "\tbne r1, r0, .L3\n", "D0 U0" },
+            { "a label nothing here jumps to", LOADX ".L6:\n" LOADX, "d0 d0" },
+            { "a profile's label", LOADX "__ln_12_3:\n" LOADX, "D0 U0" },
+            { "a loop that owns the register", LOADX "#@K< 1\n\taddi r1, r1, 1\n#@K>\n" LOADX, "d0 d0" },
+            { "... owns another", LOADX "#@K< 2\n\taddi r1, r1, 1\n#@K>\n" LOADX, "D0 U0" },
+            { "... inside it, the registers it does not own", "#@K< 1\n" LOADX LOADX "#@K>\n", "D1 U1" },
+            { "... all four: nothing is held inside", "#@K< 15\n" LOADX LOADX "#@K>\n", "- -" },
+            { "... one inside another, and after both", "#@K< 1\n#@K< 2\n" LOADX LOADX "#@K>\n" LOADX "#@K>\n" LOADX, "D2 U2 U2 U2" },      /* (held in a register neither owns: it stays held) */
+            { "... held in what an inner loop then owns", "#@K< 1\n" LOADX "#@K< 2\n" LOADX "#@K>\n" LOADX "#@K>\n", "d1 D2 U2" },      /* (lost at the inner loop, loaded again into one neither owns) */
+            { "five items: the one wanted longest ago gives up its register", LOADX LOADY LA(3) LD(2) LA(4) LD(3) LA(5) LD(4) LOADY LOADX, "d0 D1 d2 d3 d0 U1 d2" },
+            { "... an item just taken from is not the one", LOADX LOADY LA(3) LD(2) LA(4) LD(3) LOADX LA(5) LD(4) LOADX LOADY, "D0 d1 d2 d3 U0 d1 U0 d2" },
+            { "a load's mark on another item's address", LA(2) LD(0) LOADX, "- d0" },
+            { "a store's mark that does not hold: the item is not held after it", LOADX LA(2) ST(0) LOADX, "d0 - d0" },
+            { "a store's mark with a label in it", LOADX LA(1) "#@S 0 0 r1 r3\n\tstb r3+1, r1\n.L2:\n\tstb r3+0, r1\n#@.\n" LOADX, "d0 - d0" },
+            { "DISPLAY digits", LA(7) "#@L 6 0 r1 r3\n\tldbu r2, r3+0\n\tandi r2, r2, 15\n\tadd r1, r2, r0\n\tslli r2, r1, 3\n\tslli r1, r1, 1\n\tadd r1, r1, r2\n\tldbu r2, r3+1\n\tandi r2, r2, 15\n\tadd r1, r1, r2\n#@.\n"
+                                LA(7) "#@L 6 0 r1 r3\n\tldbu r2, r3+0\n\tandi r2, r2, 15\n\tadd r1, r2, r0\n#@.\n", "D0 U0" },
+            { "... a digit stored between", LA(7) "#@L 6 0 r1 r3\n\tldbu r1, r3+0\n#@.\n" LA(7) "\tstb r3+1, r2\n" LA(7) "#@L 6 0 r1 r3\n\tldbu r1, r3+0\n#@.\n", "d0 d0" },
+            { "a mark for an item there is none of", LA(1) "#@L 77 0 r1 r3\n\tldbu r1, r3+0\n#@.\n", "-" },
+        };
+        for (size_t c = 0; c < sizeof ac / sizeof *ac; c++) {
+            int nl = load(ac[c].code);
+            LrAvail av; memset(&av, 0, sizeof av);
+            av.use = calloc((size_t)nl + 1, 1); av.def = calloc((size_t)nl + 1, 1); av.useful = calloc((size_t)nl + 1, 1);
+            lr_scan(0, nl, NULL, 0, NULL, &av);
+            char got[256]; int g = 0;
+            for (int i = 0; i < nl; i++) {
+                if (strncmp(g_asm[i], "#@L", 3) && strncmp(g_asm[i], "#@S", 3)) continue;
+                if (g) got[g++] = ' ';
+                if (av.use[i]) g += sprintf(got + g, "U%d", av.use[i] - 1);
+                else if (av.def[i]) g += sprintf(got + g, "%c%d", av.useful[i] ? 'D' : 'd', av.def[i] - 1);
+                else got[g++] = '-';
+            }
+            got[g] = 0;
+            n++;
+            if (strcmp(got, ac[c].want)) { printf("FAIL held, %s: [%s], want [%s]\n", ac[c].name, got, ac[c].want); bad++; }
+            free(av.use); free(av.def); free(av.useful);
         }
     }
     printf("loopreg_test: %d checks, %d failed\n", n, bad);

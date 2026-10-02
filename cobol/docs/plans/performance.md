@@ -145,12 +145,15 @@ registers and decides, conservatively, what nothing else can store
 into.  The overlap relation is that reading -- "an address in this
 record", record labels never sharing storage -- and is tested as a
 piece (`tests/loopreg_test.c`).  Done: binary items in in-line loops,
-storage kept current.  Next, in this order:
+storage kept current; and the second step with the same reading -- an
+item's value still in hand from an earlier load or store, anywhere in a
+unit, held until something may store into it and merged at labels
+reached from above; unsigned DISPLAY integers held from their loads.
+Left of stage 3:
 
-- the second step with the same reading: an item's value still in hand
-  from an earlier load or store in straight-line code (availability,
-  merged at forward labels as addresses already are);
-- DISPLAY integers as items;
+- a DISPLAY item held from its store (the store's contract: is the
+  value inside the picture at every site?), and a move of digits known
+  to be a move of a number;
 - the item stored only at the loop's exits.
 
 Then stage 4's question is ripe: what is left is the shape of each
