@@ -5419,6 +5419,84 @@ static bool emit_native_memset_stub(translate_ctx_t *ctx, translated_block_t *bl
 // Emit a native strlen stub:
 //   guest r3=str → host strlen
 //   returns length in guest r1, jumps to guest r31
+// memchr stub
+// Guest: r3=s, r4=c, r5=n -> r1 = where the first c is in s[0..n), or 0
+// As translate_a64.c's emit_native_memchr_stub_a64: the search is over
+// what memory there is from s; not found, and the count wanted more than
+// that, is the fault the guest's own loop would take, a load at the first
+// address past memory.
+static bool emit_native_memchr_stub(translate_ctx_t *ctx, translated_block_t *block) {
+    emit_ctx_t *e = &ctx->emit;
+    dbt_cpu_state_t *cpu = ctx->cpu;
+    bool checked = !cpu->bounds_checks_disabled;
+
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(3));   // eax = s
+    emit_mov_r32_m32(e, RSI, RBP, GUEST_REG_OFFSET(4));   // esi = c
+    emit_mov_r32_m32(e, RDX, RBP, GUEST_REG_OFFSET(5));   // edx = n
+    emit_mov_r32_r32(e, RBX, RAX);                        // the guest address, kept across the call
+
+    // n == 0 reads nothing and finds nothing, whatever s is
+    emit_xor_r32_r32(e, RCX, RCX);
+    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RCX);
+    emit_test_r32_r32(e, RDX, RDX);
+    size_t done_patch = emit_offset(e) + 2;
+    emit_je_rel32(e, 0);
+
+    size_t fault_s_patch = 0, fault_end_patch = 0;
+    if (checked) {
+        emit_cmp_r32_imm32(e, RAX, (int32_t)cpu->mem_size);
+        fault_s_patch = emit_offset(e) + 2;
+        emit_jae_rel32(e, 0);                             // s itself is past memory
+        emit_mov_r32_imm32(e, RCX, cpu->mem_size);
+        emit_sub_r32_r32(e, RCX, RAX);                    // what memory there is from s
+        emit_cmp_r32_r32(e, RDX, RCX);
+        size_t fits_patch = emit_offset(e) + 2;
+        emit_jbe_rel32(e, 0);
+        emit_mov_r32_r32(e, RDX, RCX);
+        emit_patch_rel32(e, fits_patch, emit_offset(e));
+    }
+
+    // rdi = r14 + s
+    emit_mov_r64_r64(e, RDI, R14);
+    emit_byte(e, 0x48); emit_byte(e, 0x01); emit_byte(e, MODRM(MOD_DIRECT, RAX, RDI));
+    emit_push_r64(e, RAX);                                // align the stack for the call
+    emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)memchr);
+    emit_call_r64(e, RAX);
+    emit_pop_r64(e, RCX);
+    emit_test_r64_r64(e, RAX, RAX);
+    size_t notfound_patch = emit_offset(e) + 2;
+    emit_je_rel32(e, 0);
+    emit_byte(e, 0x4C); emit_byte(e, 0x29); emit_byte(e, 0xF0);   // sub rax, r14: a guest address again
+    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
+    emit_intrinsic_return(ctx);
+
+    // not found (r1 is 0 already): within the count, or out of memory first?
+    emit_patch_rel32(e, notfound_patch, emit_offset(e));
+    if (checked) {
+        emit_mov_r32_m32(e, RDX, RBP, GUEST_REG_OFFSET(5));
+        emit_mov_r32_imm32(e, RCX, cpu->mem_size);
+        emit_sub_r32_r32(e, RCX, RBX);
+        emit_cmp_r32_r32(e, RDX, RCX);
+        fault_end_patch = emit_offset(e) + 2;
+        emit_ja_rel32(e, 0);
+    }
+    emit_patch_rel32(e, done_patch, emit_offset(e));
+    emit_intrinsic_return(ctx);
+
+    if (checked) {
+        emit_patch_rel32(e, fault_s_patch, emit_offset(e));
+        emit_mov_r32_r32(e, RAX, RBX);
+        emit_exit_with_info_reg(ctx, EXIT_FAULT_LOAD, ctx->guest_pc, RAX);
+        emit_patch_rel32(e, fault_end_patch, emit_offset(e));
+        emit_mov_r32_imm32(e, RAX, cpu->mem_size);            // the first address past memory
+        emit_exit_with_info_reg(ctx, EXIT_FAULT_LOAD, ctx->guest_pc, RAX);
+    }
+
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
 static bool emit_native_strlen_stub(translate_ctx_t *ctx, translated_block_t *block) {
     emit_ctx_t *e = &ctx->emit;
     dbt_cpu_state_t *cpu = ctx->cpu;
@@ -6091,6 +6169,8 @@ static translated_block_t *try_emit_intrinsic(translate_ctx_t *ctx, uint32_t gue
         emitter = emit_native_memswap_stub;
     } else if (cpu->intrinsic_memcmp && guest_pc == cpu->intrinsic_memcmp) {
         emitter = emit_native_memcmp_stub;
+    } else if (cpu->intrinsic_memchr && guest_pc == cpu->intrinsic_memchr) {
+        emitter = emit_native_memchr_stub;
     } else {
         // Check math intercept table
         void *math_fn = NULL;

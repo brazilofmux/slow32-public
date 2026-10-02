@@ -57,7 +57,8 @@ finds them by name in the `.s32x` symbol table and translates each one
 as a stub that calls the host function and returns to r31. There are two
 kinds:
 
-- the byte intrinsics (memcpy, memset, memmove, strlen, memswap, memcmp),
+- the byte intrinsics (memcpy, memset, memmove, strlen, memswap, memcmp,
+  and memchr since 2026-10),
   each with its own emitter per host (translate.c, translate_a64.c);
 - the libm intercepts (`math_intercepts[]` in dbt.c): name, host
   function, and one of eleven register signatures (SIG_F64_F64, ...),

@@ -50,6 +50,7 @@ void shadow_init(shadow_state_t *s, dbt_cpu_state_t *cpu) {
     s->intrinsic_strlen  = cpu->intrinsic_strlen;
     s->intrinsic_memswap = cpu->intrinsic_memswap;
     s->intrinsic_memcmp  = cpu->intrinsic_memcmp;
+    s->intrinsic_memchr  = cpu->intrinsic_memchr;
 
     // Copy math intercept addresses
     s->num_intercepts = cpu->num_intercepts;
@@ -805,6 +806,7 @@ static bool is_intrinsic_block(shadow_state_t *s, uint32_t guest_pc) {
     if (guest_pc == s->intrinsic_strlen  && guest_pc != 0) return true;
     if (guest_pc == s->intrinsic_memswap && guest_pc != 0) return true;
     if (guest_pc == s->intrinsic_memcmp  && guest_pc != 0) return true;
+    if (guest_pc == s->intrinsic_memchr  && guest_pc != 0) return true;
     for (int i = 0; i < s->num_intercepts; i++) {
         if (s->intercept_addrs[i] == guest_pc) return true;
     }

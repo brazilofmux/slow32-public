@@ -3932,6 +3932,81 @@ static bool emit_native_memcmp_stub_a64(translate_ctx_t *ctx, translated_block_t
     return !e->overflow;
 }
 
+// memchr stub
+// Guest: r3=s, r4=c, r5=n -> r1 = where the first c is in s[0..n), or 0
+// The guest's memchr reads as far as the first match and no further, so a
+// count that reaches past the end of memory is a fault only when the byte
+// is not found before it (memchr(p, 0, SIZE_MAX) is how rawmemchr is
+// spelled).  So: the search is over what memory there is from s; not
+// found, and the count wanted more than that, is the fault the guest's
+// own loop would take -- a load at the first address past memory.  With
+// -U there are no checks, as in the other stubs.
+static bool emit_native_memchr_stub_a64(translate_ctx_t *ctx, translated_block_t *block) {
+    emit_ctx_t *e = &ctx->emit;
+    dbt_cpu_state_t *cpu = ctx->cpu;
+    bool checked = !cpu->bounds_checks_disabled;
+
+    emit_a64_stub_prologue(e);
+
+    emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(3));   // s
+    emit_ldr_w32_imm(e, W1, W20, GUEST_REG_OFFSET(4));   // c
+    emit_ldr_w32_imm(e, W2, W20, GUEST_REG_OFFSET(5));   // n
+    emit_mov_w32_w32(e, W23, W0);                        // the guest address, kept across the call
+
+    // n == 0 reads nothing and finds nothing, whatever s is
+    emit_mov_w32_imm32(e, W3, 0);
+    emit_str_w32_imm(e, W3, W20, GUEST_REG_OFFSET(1));
+    size_t done_patch = emit_offset(e);
+    emit_cbz_w32(e, W2, 0);
+
+    size_t fault_s_patch = 0, fault_end_patch = 0;
+    if (checked) {
+        emit_ldr_w32_imm(e, W3, W20, CPU_MEM_SIZE_OFFSET);
+        emit_cmp_w32_w32(e, W0, W3);
+        fault_s_patch = emit_offset(e);
+        emit_b_cond(e, COND_HS, 0);                      // s itself is past memory
+        emit_sub_w32(e, W4, W3, W0);                     // what memory there is from s
+        emit_cmp_w32_w32(e, W2, W4);
+        size_t fits_patch = emit_offset(e);
+        emit_b_cond(e, COND_LS, 0);
+        emit_mov_w32_w32(e, W2, W4);
+        patch_imm19_branches(e, &fits_patch, 1, emit_offset(e));
+    }
+
+    emit_add_x64_x64_w32_uxtw(e, W0, W21, W0);
+    emit_a64_call_host(e, (void *)memchr);
+    size_t notfound_patch = emit_offset(e);
+    emit_cbz_x64(e, W0, 0);
+    emit_sub_x64(e, W0, W0, W21);                        // a guest address again
+    emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(1));
+    emit_a64_stub_epilogue(ctx);
+
+    // not found (r1 is 0 already): within the count, or out of memory first?
+    patch_imm19_branches(e, &notfound_patch, 1, emit_offset(e));
+    if (checked) {
+        emit_ldr_w32_imm(e, W2, W20, GUEST_REG_OFFSET(5));
+        emit_ldr_w32_imm(e, W3, W20, CPU_MEM_SIZE_OFFSET);
+        emit_sub_w32(e, W4, W3, W23);
+        emit_cmp_w32_w32(e, W2, W4);
+        fault_end_patch = emit_offset(e);
+        emit_b_cond(e, COND_HI, 0);
+    }
+    patch_imm19_branches(e, &done_patch, 1, emit_offset(e));
+    emit_a64_stub_epilogue(ctx);
+
+    if (checked) {
+        patch_imm19_branches(e, &fault_s_patch, 1, emit_offset(e));
+        emit_a64_stub_fault_exit(ctx, EXIT_FAULT_LOAD, W23);
+        patch_imm19_branches(e, &fault_end_patch, 1, emit_offset(e));
+        emit_ldr_w32_imm(e, W23, W20, CPU_MEM_SIZE_OFFSET);     // the first address past memory
+        emit_a64_stub_fault_exit(ctx, EXIT_FAULT_LOAD, W23);
+    }
+
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
 // memset stub
 // Guest: r3=dest, r4=value(byte), r5=count, r1=return(dest)
 static bool emit_native_memset_stub_a64(translate_ctx_t *ctx, translated_block_t *block) {
@@ -4486,6 +4561,8 @@ static translated_block_t *try_emit_intrinsic_a64(translate_ctx_t *ctx, uint32_t
         emitter = emit_native_memswap_stub_a64;
     } else if (cpu->intrinsic_memcmp && guest_pc == cpu->intrinsic_memcmp) {
         emitter = emit_native_memcmp_stub_a64;
+    } else if (cpu->intrinsic_memchr && guest_pc == cpu->intrinsic_memchr) {
+        emitter = emit_native_memchr_stub_a64;
     } else {
         // Check math intercept table
         for (int i = 0; i < cpu->num_intercepts; i++) {
@@ -4535,6 +4612,7 @@ static translated_block_t *try_emit_intrinsic_a64(translate_ctx_t *ctx, uint32_t
     else if (emitter == emit_native_strlen_stub_a64) name = "strlen";
     else if (emitter == emit_native_memswap_stub_a64) name = "memswap";
     else if (emitter == emit_native_memcmp_stub_a64) name = "memcmp";
+    else if (emitter == emit_native_memchr_stub_a64) name = "memchr";
     else if (is_memmove) name = "memmove";
     else name = "memcpy";
 

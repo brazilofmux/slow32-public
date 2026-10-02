@@ -666,3 +666,40 @@ bits) now matches the native run under dbt-x64 with hooks on, and
 comp12, floatmf, intrinsics, fnreturn, fnargbad, fnvalues and intr2002
 from cobol/tests match slow32-fast.
 
+## 21. memchr Is a Native Routine (2026-10-02)
+
+Not a defect: an addition, recorded here because it is a stub on both
+hosts and the next reader of a fault in one will want to know what it
+promises.
+
+A line sequential READ in the COBOL runtime finds each record's end with
+`memchr` -- 379 guest instructions a record in the reports of majesty's
+batch, a sixth of what the largest of them executes.  `memcpy`,
+`memset`, `memmove`, `strlen`, `memswap` and `memcmp` were native;
+`memchr` was not.  It is now (`emit_native_memchr_stub` in translate.c,
+`emit_native_memchr_stub_a64` in translate_a64.c), found by name as the
+others are, and like them total: it cannot hand a case back.
+
+What it promises is the guest loop's behaviour, which reads as far as
+the first match and no further:
+
+- the search is over what memory there is from `s` -- a count that
+  reaches past the end of memory is not a fault when the byte is found
+  before it (`memchr(p, 0, SIZE_MAX)` is how a C library spells
+  rawmemchr);
+- not found, and the count wanted more than memory had: the fault the
+  guest's loop would take, a load at the first address past memory;
+- `s` itself past memory with a count: that fault, at `s`;
+- a count of zero reads nothing, whatever `s` is.
+
+Tests: `regression/tests/stdlib-memchr` prints what every kind of call
+returns (so the differential compares each engine's answer with the
+reference's loop), and `bug-dbt-intrinsic-bounds-memchr` and
+`-memchr-start` take the two faults.  Nine mutants of the arm64 stub,
+all caught.  The x86-64 stub was run as dbt-x64 (cc-x64's build) in an
+amd64 container under emulation on the arm64 Mac -- the three tests
+right, and wrong when the stub was broken on purpose -- but not on
+x86-64 hardware; the next builder run is that.  qemu has no such stub
+and walks the bytes, but says nothing at a fault, so the two fault
+tests join the known qemu-only divergences in `run-differential.sh`.
+

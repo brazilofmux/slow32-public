@@ -140,6 +140,7 @@ typedef struct {
     uint32_t intrinsic_strlen;
     uint32_t intrinsic_memswap;
     uint32_t intrinsic_memcmp;
+    uint32_t intrinsic_memchr;
     bool intrinsics_enabled;    // false to disable recognition (e.g., -I flag)
     uint8_t _pad5[3];
 

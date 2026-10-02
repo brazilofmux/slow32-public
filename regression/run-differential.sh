@@ -143,7 +143,13 @@ DIVERGED_TESTS=()
 # "fault addr=...". Still open (AUDIT-2026-08 "QEMU fault reporting"),
 # re-verified against a qemu built from bce30bac2c. When that lands, empty
 # this list again — and re-run this harness before believing it.
+# bug-dbt-intrinsic-bounds-memchr (2026-10) is the same thing seen from the
+# other side: qemu has no memchr stub and walks the bytes, and still says
+# nothing when the walk leaves memory; the DBT's stub and both interpreters
+# report the fault at the first address past it.
 KNOWN_DIVERGENT="bug-dbt-intrinsic-bounds
+bug-dbt-intrinsic-bounds-memchr
+bug-dbt-intrinsic-bounds-memchr-start
 bug-dbt-intrinsic-bounds-memcpy
 bug-dbt-intrinsic-bounds-memset
 bug-dbt-intrinsic-bounds-strlen"

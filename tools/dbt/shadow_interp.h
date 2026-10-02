@@ -113,6 +113,7 @@ typedef struct {
     uint32_t intrinsic_strlen;
     uint32_t intrinsic_memswap;
     uint32_t intrinsic_memcmp;
+    uint32_t intrinsic_memchr;
 
     // Math intercept addresses to skip
     uint32_t intercept_addrs[MAX_INTERCEPTS];

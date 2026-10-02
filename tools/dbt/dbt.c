@@ -1195,6 +1195,7 @@ bool dbt_load_s32x(dbt_cpu_state_t *cpu, const char *filename) {
             static const char *strlen_names[] = { "strlen", NULL };
             static const char *memswap_names[] = { "memswap", NULL };
             static const char *memcmp_names[] = { "memcmp", NULL };
+            static const char *memchr_names[] = { "memchr", NULL };
 
             for (const char **n = memcpy_names; *n; n++) {
                 uint32_t addr = s32x_symtab_lookup(&st, *n);
@@ -1230,8 +1231,14 @@ bool dbt_load_s32x(dbt_cpu_state_t *cpu, const char *filename) {
                 uint32_t addr = s32x_symtab_lookup(&st, *n);
                 if (addr) { cpu->intrinsic_memcmp = addr; break; }
             }
+            /* memchr likewise (emit_native_memchr_stub, _a64): a line
+             * sequential READ finds each record's end with it */
+            for (const char **n = memchr_names; *n; n++) {
+                uint32_t addr = s32x_symtab_lookup(&st, *n);
+                if (addr) { cpu->intrinsic_memchr = addr; break; }
+            }
 #else
-            (void)memcmp_names;
+            (void)memcmp_names; (void)memchr_names;
 #endif
 
             // Populate math function intercept table
@@ -2350,6 +2357,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "  Intrinsics:   enabled\n");
             if (cpu.intrinsic_memcpy)  fprintf(stderr, "    memcpy:  0x%08X\n", cpu.intrinsic_memcpy);
             if (cpu.intrinsic_memcmp)  fprintf(stderr, "    memcmp:  0x%08X\n", cpu.intrinsic_memcmp);
+            if (cpu.intrinsic_memchr)  fprintf(stderr, "    memchr:  0x%08X\n", cpu.intrinsic_memchr);
             if (cpu.intrinsic_memset)  fprintf(stderr, "    memset:  0x%08X\n", cpu.intrinsic_memset);
             if (cpu.intrinsic_memmove) fprintf(stderr, "    memmove: 0x%08X\n", cpu.intrinsic_memmove);
             if (cpu.intrinsic_strlen)  fprintf(stderr, "    strlen:  0x%08X\n", cpu.intrinsic_strlen);

@@ -1,0 +1,19 @@
+first byte                   0
+last byte                    299
+in the middle                150
+absent                       none
+twice: the first             150
+from past the first          200
+count zero                   none
+count zero, no memory        none
+one short of it              none
+exactly at it                150
+an int of more bits          150
+a negative int               150
+0x80                         77
+0xFF                         78
+0xFF as -1                   78
+zero                         79
+alignments and counts        1686662009
+count past memory            150
+... of zero bytes            79

@@ -66,9 +66,9 @@ SLOW-32 code to x86-64 (or AArch64) native code. Features include:
 - **Constant propagation / folding**: Eliminates redundant computation
 - **Bounds check elimination**: Removes redundant memory access checks
 - **Direct block chaining**: Patches jumps between translated blocks
-- **Intrinsic hooking**: Recognizes memcpy, memset, memmove, strlen, memswap
-  plus math functions (via symbol table lookup) and replaces them with native
-  host calls
+- **Intrinsic hooking**: Recognizes memcpy, memset, memmove, strlen, memswap,
+  memcmp and memchr plus math functions (via symbol table lookup) and replaces
+  them with native host calls
 
 It is faster than QEMU TCG (about 5× on `benchmark_core`,
 [benchmarks.md](benchmarks.md)) because it converts **larger**
