@@ -2857,3 +2857,43 @@ compiler before the repair.
 `stage07/Makefile` did not list the `hir*.h` files among the compiler's
 sources, so `make` after an edit to the code generator rebuilt nothing;
 it lists everything `s12cc.c` includes.
+
+### 78. [RESOLVED 2026-10-02] stage08 cc: a local object did not hide a typedef of the same name
+
+```c
+typedef struct { ... } host;            /* file scope */
+...
+    char host[128], addr[64];
+    snprintf(addr, sizeof addr, "%s", v && *v ? v : (host));
+```
+
+"Is this identifier a typedef name" was the only question `is_type`
+asked, so `(host)` was a cast and the expression after it did not
+parse: `error: unexpected token in expression`, reported at the macro
+that had produced the parentheses.  Where the cast did parse it changed
+the value -- `(port) - 1` was -1 converted to `port`, `sizeof(host)` the
+typedef's size and not the array's.  C99 6.2.1p4: the inner declaration
+hides the outer for the rest of its block.
+
+`is_type` now says no when the function being parsed has an object of
+that name in scope (`find_local`).  Only inside a body (`ps_in_body`):
+the table of locals still holds the last function's parameters while
+file-scope declarations are read, and `int pg_connect(const char *host,
+...)` followed by `static host g_in[128];` is exactly what the source
+that showed this does.  Typedef names declared inside a function are
+still file-wide here, as before.
+
+It surfaced in `cobol/libcob/esql.c`, which this compiler builds on a
+machine without LLVM (`cobol/cctool.sh`): the PostgreSQL connection
+code of 2026-09-30 has a local `host` under the file's `host` type, so
+that fallback had not built since.  Nothing had looked.
+`cobol/tests/selfhost-libcob.sh` looks now.
+
+`tests/test_typedef_shadow.c`: the cast that was not one, the value
+that changed, `sizeof`, a block where the name is hidden and the next
+where it is the type again, a parameter of the name, and the typedef at
+file scope after a function whose parameters had it -- an object, a
+member, a size, a cast, another function's parameter.  It does not
+compile under the compiler before the repair, nor under four mutants of
+it (the rule dropped, applied outside a body, the body never entered,
+never left); two of those passed until the file-scope uses were added.

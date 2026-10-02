@@ -7,6 +7,7 @@
 
 /* Forward declarations (needed for host GCC compilation of cross-compiler) */
 static int find_typedef(char *name);
+static int find_local(char *name);
 static Node *parse_unary(void);
 static int parse_string_literal(void);
 static int parse_const_int(void);
@@ -287,6 +288,7 @@ static int   ps_tdarr[PS_MAX_TYPEDEFS];  /* array typedefs: element count (0 = s
 static int   ps_tdfpbase[PS_MAX_TYPEDEFS]; /* function-pointer typedef: ps_fptypes base */
 static int   ps_tdfpn[PS_MAX_TYPEDEFS];
 static int   ps_ntypedefs;
+static int   ps_in_body;    /* parsing a function's body: its locals are in scope (is_type) */
 /* Set by parse_type: element count when the type came from an array
  * typedef (typedef byte sha1_digest_t[20]); a declaration of that
  * type must create a real array, not the decayed pointer (SHA1_Final
@@ -536,7 +538,17 @@ static int is_type(void) {
     if (is_gnu_qual_ident()) return 1;
     if (is_gnu_attr_ident()) return 1;
     if (is_gnu_typeof_ident()) return 1;
-    if (lex_tok == TK_IDENT && find_typedef(lex_str) >= 0) return 1;
+    if (lex_tok == TK_IDENT && find_typedef(lex_str) >= 0) {
+        /* ... unless the function being parsed has an object of that name
+         * in scope, which hides the typedef (C99 6.2.1p4): after
+         *     typedef struct { ... } host;
+         *     ... { char host[128]; ... x ? y : (host) ... }
+         * "(host)" is the array, and was read as a cast.  Only inside a
+         * body: the table still holds the last function's parameters
+         * while file-scope declarations are read. */
+        if (ps_in_body && find_local(lex_str) >= 0) return 0;
+        return 1;
+    }
     return 0;
 }
 
@@ -6751,7 +6763,9 @@ params_done:
     fn->is_static = is_static;
     fn->offset = ps_struct_ret ? ps_retptr_off : 0; /* hidden __retptr offset */
     ps_cur_func = fn->name;
+    ps_in_body = 1;
     fn->body = parse_block();
+    ps_in_body = 0;
     fn->locals_size = ps_stack_max;
 
     return fn;
