@@ -592,3 +592,29 @@ character. The kernels and jerm, this morning and now, under the DBT:
 | kreport | 350 | 328 | |
 | jerm | 438 | 440 | (a line-sequential WRITE is one call longer) |
 | csv2fw | 1,200 | 420 | everything from "the batch itself" down |
+
+## 2026-10-01, last: the C library's short entries
+
+What was left of csv2fw outside its own code was fwrite: 91
+instructions for each byte the program writes, in `runtime/stdio.c`,
+every clang-built program's library. fwrite, fread and fputc are now
+short entries in front of their general routines (as fgetc was): a byte
+into a buffered stream with room is 28 instructions (`runtime/ISSUES.md`
+14 has the design and its tests). csv2fw 0.42 s -> 0.37; jerm, which
+writes 400,000 lines, gets back the call it lost to the READ and WRITE
+entries.
+
+Three defects of the library were found by the test written for it and
+fixed with it (`runtime/ISSUES.md` 15 to 17): output directly after
+input that met end-of-file was lost; fseek from the current position
+counted from the buffer's read-ahead; ftell on an append stream counted
+from zero. None was on a path a COBOL program takes.
+
+It is a platform change, so the platform's gates ran: the regression
+suite (97), the cross-engine differential, SQLite's acceptance,
+Fortran's suite, the dBASE interpreter over majesty's reports (the same
+bytes out), mdfix's parity harness, and everything here.
+
+The self-hosted libc, which the kit's own tools link, has no stdio
+buffer at all (`runtime/ISSUES.md` 18): not COBOL's library, but the
+same opening for the kit's compiler, assembler and linker.

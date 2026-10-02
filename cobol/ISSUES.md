@@ -5336,3 +5336,14 @@ printed), eleven mutants caught, CCVS-85 identical, all gates.  Found:
 move the table, unsequenced; three places, one of them new.  The
 compiler now passes a sanitizer build over every test, majesty's
 sources and generated programs.
+
+Seventh, outside cobol/: the C library.  fwrite was 91 instructions for
+each byte csv2fw wrote; fwrite, fread and fputc in runtime/stdio.c are
+now short entries in front of their general routines, a byte into a
+buffered stream 28 instructions (runtime ISSUES-14).  csv2fw 0.42 s ->
+0.37 -- 1.20 when the day began.  The test written for it found three
+defects of the library, fixed with it (runtime ISSUES-15 to 17: output
+after input that met end-of-file, lost; SEEK_CUR counted from the
+read-ahead; ftell on an append stream from zero).  The platform's gates
+ran with ours: regression 97, the cross-engine differential, SQLite,
+Fortran, dBASE over majesty's reports, mdfix.

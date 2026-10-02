@@ -78,9 +78,8 @@ From the batch's own profile (csv2fw is 60% of it;
 
 csv2fw 1.20 s -> 0.42 with all of it.  Next:
 
-- fwrite and fread of a few bytes in the C library (runtime/): a short
-  path when the buffer has room.  It is every program's library, so it
-  is its own step, with the platform's gates.
+- (Done: fwrite, fread and fputc in the C library have short entries
+  -- runtime/ISSUES.md 14; csv2fw 0.42 s -> 0.37.)
 - PERFORM in line: the push and the exit are constant now but still two
   calls.
 - A class test of one character (`x(i:1) IS NUMERIC`) in line.
