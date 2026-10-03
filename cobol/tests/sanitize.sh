@@ -22,7 +22,10 @@ fi
 n=0; bad=0
 one() {   # one flags... file
     n=$((n + 1))
-    "$W/cobc" "$@" -o /dev/null > "$W/log" 2>&1 && return
+    # (detect_leaks=0: the compiler frees nothing at exit, by design, and
+    # LeakSanitizer -- on by default on Linux, off on macOS -- reported every
+    # program for it: 721 of 721 on kagura)
+    ASAN_OPTIONS="detect_leaks=0${ASAN_OPTIONS:+:$ASAN_OPTIONS}" "$W/cobc" "$@" -o /dev/null > "$W/log" 2>&1 && return
     if grep -q 'AddressSanitizer\|runtime error' "$W/log"; then
         bad=$((bad + 1)); echo "FINDING: ${*: -1}"; grep -m3 'ERROR\|runtime error\|#0 \|#1 ' "$W/log"
     fi

@@ -1164,7 +1164,7 @@ static void compile_nested_unit(void)
     memcpy(u->cls, g_class, sizeof u->cls); memcpy(u->sw, g_switch, sizeof u->sw); memcpy(u->alph, g_alphabet, sizeof u->alph);
     memcpy(u->mn, g_mnemonic, sizeof u->mn); memcpy(u->same, g_same, sizeof u->same); memcpy(u->nsame, g_nsame, sizeof u->nsame);
     u->nsorttab = g_nsorttab; u->sorttab = xmalloc((size_t)(g_nsorttab + 1) * sizeof *g_sorttab);
-    memcpy(u->sorttab, g_sorttab, (size_t)g_nsorttab * sizeof *g_sorttab);
+    if (g_nsorttab) memcpy(u->sorttab, g_sorttab, (size_t)g_nsorttab * sizeof *g_sorttab);   /* (g_sorttab is NULL until a SORT: memcpy's arguments are nonnull even for no bytes) */
     g_ustack[g_udepth++] = u;
 
     g_unit = ++g_unit_counter;
@@ -1207,7 +1207,7 @@ static void compile_nested_unit(void)
     memcpy(g_mnemonic, u->mn, sizeof g_mnemonic); memcpy(g_same, u->same, sizeof g_same); memcpy(g_nsame, u->nsame, sizeof g_nsame);
     g_nsorttab = u->nsorttab;
     if (g_nsorttab > g_sorttabcap) { g_sorttabcap = g_nsorttab; g_sorttab = realloc(g_sorttab, (size_t)g_sorttabcap * sizeof *g_sorttab); }
-    memcpy(g_sorttab, u->sorttab, (size_t)g_nsorttab * sizeof *g_sorttab);
+    if (g_nsorttab) memcpy(g_sorttab, u->sorttab, (size_t)g_nsorttab * sizeof *g_sorttab);
     free(u->sorttab); free(u);
 }
 

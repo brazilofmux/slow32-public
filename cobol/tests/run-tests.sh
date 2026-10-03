@@ -502,6 +502,10 @@ CCVS_NOTE=""
 CCVS_TREE=${CCVS85:-$HOME/gnucobol-svn/tests/cobol85}
 if [ "${CCVS:-1}" = 0 ]; then
     CCVS_NOTE="cobol: CCVS-85 NOT RUN -- switched off by CCVS=0"
+elif [ -d "$CCVS_TREE" ] && ! ls "$CCVS_TREE"/NC/*.CBL >/dev/null 2>&1; then
+    # the harness without the programs (no newcob.val split into NC/, SQ/ ...):
+    # nothing to run, which is not zero programs passing (kagura, 2026-10-03)
+    CCVS_NOTE="cobol: CCVS-85 NOT RUN -- $CCVS_TREE holds the harness but no split modules (NC/*.CBL)"
 elif [ -d "$CCVS_TREE" ]; then
     CCVS_KEEP=1 "$HERE/ccvs-run.sh" > "$W/ccvs.fast" 2>/dev/null
     cd1="$(ls -dt "$CDIR"/out/ccvsrun.* 2>/dev/null | head -1)"
