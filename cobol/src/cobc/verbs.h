@@ -81,9 +81,11 @@ static void evaluate_subject_once(Opnd *o)
     o->nsave = t;
 }
 
+static int lw_evaluate(int b0, const Block *pre, const Block *body, Cond **c, const int *other, int nwh);   /* lower.h */
 static void parse_evaluate(void)
 {
     Subject subj[8]; int ns = 0, subj_lit[8];
+    int lw_b0 = g_nasm;                     /* lower.h: code the subjects make from here keeps the statement text */
     int o85 = g_std < 2002;
     const char *r_cnt = o85 ? "X3.23-1985 EVALUATE syntax rule 5" : "2023 14.9.13.3 rule 2";
     const char *r_thru = o85 ? "X3.23-1985 EVALUATE syntax rule 4" : "2023 14.9.13.3 rule 4";
@@ -204,6 +206,13 @@ static void parse_evaluate(void)
         }
     }
     accept_word("end-evaluate");
+    {   /* an island's too (lower.h): its placeholder, then the text */
+        Block *pre = xmalloc((size_t)nwh * sizeof *pre), *body = xmalloc((size_t)nwh * sizeof *body);
+        Cond **cc = xmalloc((size_t)nwh * sizeof *cc); int *oth = xmalloc((size_t)nwh * sizeof *oth);
+        for (int i = 0; i < nwh; i++) { pre[i] = wh[i].pre; body[i] = wh[i].body; cc[i] = wh[i].c; oth[i] = wh[i].other; }
+        lw_evaluate(lw_b0, pre, body, cc, oth, nwh);
+        free(pre); free(body); free(cc); free(oth);
+    }
     /* laid out: each test falls to the next WHEN; a body that is one jump
      * (GO TO) is its test's own branch; the last body, and one that ends
      * in a jump, need no jump to the end */

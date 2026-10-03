@@ -5876,3 +5876,26 @@ narrowed sync and is -1.2% against no inlining after it.  Kernels: kmove
 EVALUATE text nodes (parse-byte's two), whose inner PERFORMs make them
 sync all 13 items each byte -- EVALUATE as an IF chain is next, then the
 item-per-paragraph refinement of the footprint.
+
+Fourteenth (2026-10-03): **EVALUATE as an IF chain** -- milestone 3's
+first verb.  parse_evaluate already shapes each WHEN as a condition over
+the subjects (TRUE/FALSE, ALSO, THRU, ANY, NOT, condition subjects) and a
+body; lw_evaluate (after the WHENs are read, before the layout) makes a
+chain of IF nodes, each WHEN's condition and body, the next WHEN its
+ELSE, WHEN OTHER the last ELSE.  The tests run in order before any body,
+so a subject is read once as the standard has it.  Not taken: a subject
+computed first (an expression or function: code before the node --
+gen-flow 6301, `EVALUATE V3 + -49`, a placeholder not first in its code),
+a WHEN whose objects made code (a user function), a body that is not all
+nodes.  With it parse-byte is all nodes, so csv2fw's per-byte path -- the
+READ loop, parse-byte and what it performs -- is one island: **3.628 ->
+3.275 G instructions (-13.7% from 3.794), 0.25 -> 0.18 s** under the DBT;
+perform push/exit 5.35 M -> 0.85 M calls; the island is ~94 instructions
+a byte where the text was ~400.  -fprofile-lines: a block's `__ln_`
+labels no longer keep it from folding, and a relabelled text node gets a
+fresh sequence number for each (the label is global).  What the profile
+leaves: cob_write (11%, a byte a call), cob_read (7%), the refmods with a
+computed length (`raw-text(1:function min(cur-len, 4096))`, per field;
+cob_refmod_len_chk 5%, cob_move_alnum 3%), and the IFs with GO TO.
+Twelve generators at both policies, the 40/25 sweep, native against
+-fno-native-items, all gates (harness 810).

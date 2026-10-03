@@ -190,8 +190,9 @@ static int lw_block_stmts(const Block *b, int *at, int *n)
 {
     *at = g_lw_nlist; *n = 0;
     for (int i = 0; i < b->n; i++) {
-        int st;
-        if (!lw_is_place(b->line[i], &st)) { g_lw_nlist = *at; return 0; }
+        int st; const char *l = b->line[i];
+        if (!l[0] || (l[0] == '#' && l[1] == '@') || !strncmp(l, "__ln_", 5) || !strncmp(l, "\t.globl __ln_", 13)) continue;   /* marks, -fprofile-lines' labels */
+        if (!lw_is_place(l, &st)) { g_lw_nlist = *at; return 0; }
         lw_list_add(st); (*n)++;
     }
     return 1;
@@ -915,6 +916,45 @@ static int lw_if(IfStmt *s)
     int st = lw_stmt(LS_IF, line);
     LStmt *x = &g_lw_s[st]; x->cond = c; x->body = b; x->nbody = nb; x->els = e; x->nels = ne;
     lw_place(st);
+    return 1;
+}
+
+/* EVALUATE: its WHENs read (verbs.h, each a condition over the subjects
+ * and a body), before its code -- a chain of IF nodes, each WHEN's
+ * condition and body, the next WHEN its ELSE, WHEN OTHER the last ELSE.
+ * The tests run in order before any body, so a subject is read once as
+ * the standard has it; a WHEN whose objects made code of their own (a
+ * user function's call, pre) is not taken. */
+static int lw_evaluate(int b0, const Block *pre, const Block *body, Cond **c, const int *other, int nwh)
+{
+    if (lw_off() || nwh == 0) return 0;
+    int line = cur()->line;
+    const char *why = lw_stmt_refused(0);
+    if (why) { lw_refuse(line, "EVALUATE", why); return 0; }
+    /* a subject computed first (an expression, a function) is code before
+     * the node: the statement stays text */
+    for (int i = b0; i < g_nasm; i++)
+        if (g_asm[i][0] == '\t' && g_asm[i][1] != '.' && g_asm[i][1] != '#') { lw_refuse(line, "EVALUATE", "a subject's code"); return 0; }
+    int nl0 = g_lw_nlist;
+    int cn[64], bat[64], bn[64];
+    if (nwh > 64) return 0;
+    for (int i = 0; i < nwh; i++) {
+        int code = 0; for (int j = 0; j < pre[i].n; j++) if (pre[i].line[j][0] == '\t' && pre[i].line[j][1] != '.') code = 1;
+        if (code) { lw_refuse(line, "EVALUATE", "a WHEN object's code"); g_lw_nlist = nl0; return 0; }
+        cn[i] = other[i] ? -1 : lw_cond(c[i]);
+        if (!other[i] && cn[i] < 0) { lw_refuse(line, "EVALUATE", "a WHEN's condition"); g_lw_nlist = nl0; return 0; }
+        if (!lw_block_stmts(&body[i], &bat[i], &bn[i])) { lw_refuse(line, "EVALUATE", "a statement in a WHEN"); g_lw_nlist = nl0; return 0; }
+    }
+    /* from the last WHEN back: each IF's ELSE is the chain after it */
+    int e = 0, ne = 0;
+    for (int i = nwh - 1; i >= 0; i--) {
+        if (other[i]) { e = bat[i]; ne = bn[i]; continue; }
+        int st = lw_stmt(LS_IF, line);
+        LStmt *x = &g_lw_s[st]; x->cond = cn[i]; x->body = bat[i]; x->nbody = bn[i]; x->els = e; x->nels = ne;
+        e = g_lw_nlist; lw_list_add(st); ne = 1;
+    }
+    if (ne != 1 || g_lw_s[g_lw_list[e]].kind != LS_IF) { g_lw_nlist = nl0; return 0; }   /* WHEN OTHER alone */
+    lw_place(g_lw_list[e]);
     return 1;
 }
 
@@ -1889,6 +1929,14 @@ static void lw_relabel(const Block *t, int (*emit_line)(const char *))
     for (int i = 0; i < t->n; i++) {
         const char *l = t->line[i];
         if (l[0] == '#' && l[1] == '@') continue;
+        /* -fprofile-lines' global label: a fresh sequence number each time
+         * the lines are emitted (prof.py reads the line number before it) */
+        if (!strncmp(l, "__ln_", 5) || !strncmp(l, "\t.globl __ln_", 13)) {
+            const char *p = strstr(l, "__ln_") + 5; char *e; long ln = strtol(p, &e, 10);
+            static int seq = 900000;
+            snprintf(buf, sizeof buf, l[0] == '\t' ? "\t.globl __ln_%ld_%d" : "__ln_%ld_%d:", ln, l[0] == '\t' ? seq + 1 : ++seq);
+            emit_line(buf); continue;
+        }
         if (!n) { emit_line(l); continue; }
         int k = 0;
         for (const char *p = l; *p && k < (int)sizeof buf - 16; ) {

@@ -248,9 +248,20 @@ wrapping receiver, where the island was right (it takes the checked
 word mode now).  A differential that breaks is a question for the
 oracle, not a verdict against the new side.
 
-Next on this path: EVALUATE as an IF chain (parse-byte's two EVALUATEs
-are text nodes with PERFORMs inside, so they still sync every item each
-byte); then the footprint by item per paragraph.
+### EVALUATE as an IF chain (2026-10-03): milestone 3 begins
+
+The first text verb lowered: parse_evaluate's WHENs are already a
+condition and a body each, and `lw_evaluate` chains them as IF nodes
+(the next WHEN the ELSE, WHEN OTHER the last).  A subject computed first
+-- an expression, a function -- is code before the node, so such an
+EVALUATE stays text.  With parse-byte all nodes, csv2fw's whole per-byte
+path is one island: 3.794 -> **3.275 G instructions, 0.25 -> 0.18 s**;
+~94 instructions a byte where the text was ~400.
+
+What the profile leaves, in order: cob_write a byte a call (the output
+loop's WRITE text node), cob_read, reference modification with a
+computed length (`x(1:function min(n, 4096))`, per field), the IFs whose
+branch is a GO TO, the footprint by item per paragraph.
 
 ## What follows
 
