@@ -73,9 +73,26 @@ for f in "${objs[@]+"${objs[@]}"}"; do link+=("$f"); done
 # EXEC SQL (docs/esql.md): the SQL runtime and SQLite, and room for them
 # -- only when a unit calls into it, so other programs stay as they were
 : "${S32_ESQL:=$HERE/libcob/esql.s32o}"
-: "${S32_SQLITE:=$ROOT/sqlite/out/libsqlite3.s32a}"
 sql=(); code=()
 if grep -q "cob_sql_" "$base".s "$base"-*.s 2>/dev/null; then
+    # sqlite/out is the LLVM build (sqlite/build.sh wants clang -target
+    # slow32), so a machine with the tree but no LLVM has nothing there.
+    # Fall back to the kit's prebuilt copy, the same way cctool.sh falls
+    # back to the kit's cc.s32x; S32_KIT comes from it, sourced above.
+    if [ -z "${S32_SQLITE:-}" ]; then
+        if [ -f "$ROOT/sqlite/out/libsqlite3.s32a" ]; then
+            S32_SQLITE="$ROOT/sqlite/out/libsqlite3.s32a"
+        else
+            S32_SQLITE="$S32_KIT/sqlite/libsqlite3.s32a"
+        fi
+    fi
+    [ -f "$S32_SQLITE" ] || {
+        echo "compile.sh: $main uses EXEC SQL and needs libsqlite3.s32a." >&2
+        echo "  not at $ROOT/sqlite/out/ (sqlite/build.sh builds it; needs LLVM)" >&2
+        echo "  nor at $S32_KIT/sqlite/ (the runtime kit)." >&2
+        echo "  Set S32_SQLITE to the library, or S32_KIT to a kit that has it." >&2
+        exit 1
+    }
     sql=("$S32_ESQL" "$S32_SQLITE"); code=(--code-size 2M)
 fi
 "$S32_LD" --mmio 64K --stack-size 256K --heap-size 64M ${code[@]+"${code[@]}"} -o "$out" "$S32_RT/crt0.s32o" "${link[@]}" \
