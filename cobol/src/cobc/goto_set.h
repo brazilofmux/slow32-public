@@ -28,6 +28,7 @@ static void goto_last_check(void)
                g_std < 2002 ? "X3.23-1985 GO TO syntax rule 2" : "2023 14.9.17.3 rule 2");
 }
 
+static int lw_go_to(int target);           /* lower.h */
 static void parse_goto(void)
 {
     if (g_in_finally) die_at(cur()->line, "GO TO in a FINALLY phrase: no statement there transfers control out of the PERFORM (2023 14.9.28.4 rule 16)");
@@ -71,6 +72,7 @@ static void parse_goto(void)
         return;
     }
     if (n != 1) die_at(cur()->line, "GO TO with several procedure-names needs DEPENDING ON");
+    lw_go_to(ps[0]->id);                    /* an island's too (lower.h): a branch, inside an inlined range that holds the target */
     emit("\tjal r0, .Lp%d_%d", g_unit, ps[0]->id);
     pc_goto(ps[0], "goto");
     goto_last_check();

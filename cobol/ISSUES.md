@@ -5899,3 +5899,34 @@ computed length (`raw-text(1:function min(cur-len, 4096))`, per field;
 cob_refmod_len_chk 5%, cob_move_alnum 3%), and the IFs with GO TO.
 Twelve generators at both policies, the 40/25 sweep, native against
 -fno-native-items, all gates (harness 810).
+
+Fifteenth (2026-10-03): **GO TO as a branch**, and a bound on inlining.
+The verb that kept most of majesty's paragraphs out of islands (92 IFs
+"a jump out", 101 "a statement in THEN", 75 GO TOs: `perform x thru
+x-exit` with `go to x-exit` inside) is a node now (lw_go_to, the plain
+form): inside an inlined PERFORM of a range that holds the target, a
+branch to the paragraph's block -- each paragraph of an inlined range is
+a block of its own, entered by falling through or by the branch
+(lw_gen_inlined; the GO TO nodes look the range up on a stack of
+contexts, grown as CCVS NC102A nests them past sixteen); anywhere else a
+run with a GO TO stays text (lw_gotos_ok, in the resolver and in the
+inlining's own admission).  Backward GO TOs make loops, which HIR takes.
+
+With GO TO in, convert-one and the emit-* paragraphs qualified and the
+whole program folded into islands of 1,500 statements and 22 items --
+csv2fw +16%.  The size cap (256) had been checked when each PERFORM was
+admitted, before the PERFORMs inside it were; now a second pass measures
+every inlined PERFORM with everything inside it inlined and sends the
+innermost one past the cap back to a text node, until nothing changes
+(the largest first was wrong: that is parse-byte itself).  Cap 128
+(`S32_HIR_INL=n`): csv2fw 64/128/256 give 3.28/3.26/3.18 G instructions,
+0.17 s all three; compile time is not a factor (0.1-0.3 s).
+
+majesty dropped dateutil.c the same day (cab1e31: the date wrappers are
+COBOL intrinsics): csv2fw is `csv2fw.cbl clinkages.cbl` now, 3.888 ->
+3.348 G with islands, 0.27 -> 0.18 s.  Its jerm leg in
+tests/majesty-functions.sh prints 302 lines where it printed 400,001:
+the driver's +-200,000-day sweep begins in 1479, outside the intrinsics'
+1601-9999, and jerm stops itself at its first year-end check -- on both
+sides, byte-identical, so the leg passes with next to nothing covered
+(the vacuity the differential method warns of).  majesty's to resolve.

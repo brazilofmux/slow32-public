@@ -42,7 +42,7 @@ typedef struct { char op; int l, r; int sym; int ref; long long k; int sc; long 
 /* a condition: cond.h's C_AND, C_OR, C_NOT, C_REL (op R_*; x, y values;
  * or, alnum, ax and ay operands in g_lw_o compared as bytes) */
 typedef struct { int kind; int a, b; int x, y; int op; int alnum, ax, ay; } LCond;
-enum { LS_STORE, LS_ADDTO, LS_IF, LS_LOOP, LS_AMOVE, LS_DISPLAY, LS_TEXT, LS_PHRASE };
+enum { LS_STORE, LS_ADDTO, LS_IF, LS_LOOP, LS_AMOVE, LS_DISPLAY, LS_TEXT, LS_PHRASE, LS_GOTO };
 typedef struct {
     int kind, line, para;               /* para: the paragraph it is in (id), -1 outside any */
     int expr;                           /* LS_STORE: the value; LS_ADDTO: the sum each receiver takes */
@@ -60,6 +60,8 @@ typedef struct {
     int nperf, perf0;                   /* LS_TEXT: the paragraph ranges it PERFORMs, in g_lw_perf from perf0 */
     int inl;                            /* LS_TEXT, a plain PERFORM of a range whose statements are all nodes: body is those statements, emitted in its place */
     int is_perform;                     /* LS_TEXT: the statement is a plain out-of-line PERFORM itself (not a statement with one inside) */
+    int inl_lo, inl_hi, *poff;          /* inl: the range, and where each paragraph's statements begin in body (poff[hi - lo + 1] = nbody) */
+    int gto;                            /* LS_GOTO: the target paragraph (id) */
     int phrase;                         /* LS_TEXT: its ON/NOT ON phrases (an LS_PHRASE), or -1: the call's value is the status word */
     int slot, on_one;                   /* LS_PHRASE: the status word's slot, and whether ON means 1 (else nonzero) */
     Block ptext;                        /* LS_TEXT with a phrase: the lines of the call alone */
@@ -916,6 +918,32 @@ static int lw_if(IfStmt *s)
     int st = lw_stmt(LS_IF, line);
     LStmt *x = &g_lw_s[st]; x->cond = c; x->body = b; x->nbody = nb; x->els = e; x->nels = ne;
     lw_place(st);
+    return 1;
+}
+
+/* GO TO a paragraph (goto_set.h, the plain form): a node whose code is a
+ * branch to the paragraph's block -- which exists only inside an inlined
+ * PERFORM of a range holding the target (lw_gen_inlined); a run with a
+ * GO TO anywhere else stays text */
+static int lw_go_to(int target)
+{
+    if (lw_off()) return 0;
+    int st = lw_stmt(LS_GOTO, cur()->line);
+    g_lw_s[st].gto = target;
+    lw_place(st);
+    return 1;
+}
+/* are the GO TOs among the statements (not inside inlined PERFORMs, which
+ * answered for their own) all to paragraphs lo..hi? */
+static int lw_gotos_ok(int at, int n, int lo, int hi)
+{
+    for (int i = 0; i < n; i++) {
+        const LStmt *s = &g_lw_s[g_lw_list[at + i]];
+        if (s->kind == LS_GOTO) { if (s->gto < lo || s->gto > hi) return 0; continue; }
+        if (s->kind == LS_TEXT && s->inl) continue;
+        if (!lw_gotos_ok(s->body, s->nbody, lo, hi) || !lw_gotos_ok(s->els, s->nels, lo, hi)) return 0;
+        if (s->kind == LS_TEXT && s->phrase >= 0) { const LStmt *ph = &g_lw_s[s->phrase]; if (!lw_gotos_ok(ph->body, ph->nbody, lo, hi) || !lw_gotos_ok(ph->els, ph->nels, lo, hi)) return 0; }
+    }
     return 1;
 }
 
@@ -2152,6 +2180,24 @@ static void lw_gen_loop_level(LStmt *s, int k)
     if (k > 0) lw_vary_init(s, k);
 }
 static void lw_gen_loop(LStmt *s) { lw_gen_loop_level(s, 0); }
+/* an inlined PERFORM: each paragraph of the range its own block, entered
+ * by falling through or by a GO TO node (the context the GO TOs look up) */
+static struct LwGctx { int lo, hi; int *blk; } *g_lw_gctx; static int g_lw_ngctx, g_lw_gcap;
+static void lw_gen_inlined(LStmt *s)
+{
+    int np = s->inl_hi - s->inl_lo + 1;
+    int *blk = xmalloc((size_t)np * sizeof *blk);
+    for (int k = 0; k < np; k++) blk[k] = hir_new_block();
+    LW_GROW(g_lw_gctx, g_lw_ngctx, g_lw_gcap);        /* (CCVS NC102A nests them past sixteen) */
+    g_lw_gctx[g_lw_ngctx].lo = s->inl_lo; g_lw_gctx[g_lw_ngctx].hi = s->inl_hi; g_lw_gctx[g_lw_ngctx].blk = blk; g_lw_ngctx++;
+    for (int k = 0; k < np; k++) {
+        lw_goto(blk[k]);
+        lw_begin_blk(blk[k]);
+        lw_gen_stmts(s->body + s->poff[k], s->poff[k + 1] - s->poff[k]);
+    }
+    g_lw_ngctx--;
+    free(blk);
+}
 static void lw_gen_stmts(int at, int n)
 {
     for (int i = 0; i < n && lw_blk_live; i++) {
@@ -2161,7 +2207,13 @@ static void lw_gen_stmts(int at, int n)
         case LS_ADDTO: lw_gen_addto(s); break;
         case LS_AMOVE: lw_gen_amove(s); break;
         case LS_DISPLAY: lw_gen_display(s); break;
-        case LS_TEXT: if (s->inl) lw_gen_stmts(s->body, s->nbody); else lw_gen_text(g_lw_list[at + i]); break;
+        case LS_TEXT: if (s->inl) lw_gen_inlined(s); else lw_gen_text(g_lw_list[at + i]); break;
+        case LS_GOTO: {
+            int k; for (k = g_lw_ngctx - 1; k >= 0 && (s->gto < g_lw_gctx[k].lo || s->gto > g_lw_gctx[k].hi); k--) ;
+            if (k < 0) die_at(s->line, "internal: a GO TO outside any inlined range holding its target reached an island");
+            lw_goto(g_lw_gctx[k].blk[s->gto - g_lw_gctx[k].lo]);
+            break;
+        }
         case LS_IF: {
             int b_then = hir_new_block(), b_else = hir_new_block(), b_join = hir_new_block();
             lw_cond_br(s->cond, b_then, b_else);
@@ -2366,16 +2418,43 @@ static void lw_inline_performs(void)
         if (lo < 1 || hi > g_npara || g_para[lo - 1].unit != g_unit) continue;
         if (!lw_range_returns(lo, hi)) continue;
         int at = g_lw_nlist, ok = 1;
-        for (int p = lo; p <= hi && ok; p++) ok = lw_para_nodes(p);
-        if (!ok) { g_lw_nlist = at; if (lw_trace()) fprintf(stderr, "hir: line %d PERFORM: not inlined: a paragraph of %s..%s holds code no node accounts for\n", s->line, g_para[lo - 1].name, g_para[hi - 1].name); continue; }
+        int *poff = xmalloc((size_t)(hi - lo + 2) * sizeof *poff);
+        for (int p = lo; p <= hi && ok; p++) { poff[p - lo] = g_lw_nlist - at; ok = lw_para_nodes(p); }
+        poff[hi - lo + 1] = g_lw_nlist - at;
+        if (!ok) { g_lw_nlist = at; free(poff); if (lw_trace()) fprintf(stderr, "hir: line %d PERFORM: not inlined: a paragraph of %s..%s holds code no node accounts for\n", s->line, g_para[lo - 1].name, g_para[hi - 1].name); continue; }
         int n = g_lw_nlist - at;
-        if (lw_reaches(at, n, k)) { g_lw_nlist = at; if (lw_trace()) fprintf(stderr, "hir: line %d PERFORM: not inlined: recursive\n", s->line); continue; }
-        int loops = 0, heavy = 0, nt0 = g_lw_ntext, np0 = g_lw_nperform, count = lw_count(at, n, &loops, &heavy);
-        g_lw_ntext = nt0; g_lw_nperform = np0;
-        if (count > 256) { g_lw_nlist = at; if (lw_trace()) fprintf(stderr, "hir: line %d PERFORM: not inlined: %d statements\n", s->line, count); continue; }
-        s->body = at; s->nbody = n; s->inl = 1;
-        if (lw_trace()) fprintf(stderr, "hir: line %d PERFORM %s%s%s: inlined, %d statement%s\n", s->line, g_para[lo - 1].name, hi > lo ? " THRU " : "", hi > lo ? g_para[hi - 1].name : "", count, count == 1 ? "" : "s");
+        if (!lw_gotos_ok(at, n, lo, hi)) { g_lw_nlist = at; free(poff); if (lw_trace()) fprintf(stderr, "hir: line %d PERFORM: not inlined: a GO TO out of %s..%s\n", s->line, g_para[lo - 1].name, g_para[hi - 1].name); continue; }
+        if (lw_reaches(at, n, k)) { g_lw_nlist = at; free(poff); if (lw_trace()) fprintf(stderr, "hir: line %d PERFORM: not inlined: recursive\n", s->line); continue; }
+        s->body = at; s->nbody = n; s->inl = 1; s->inl_lo = lo; s->inl_hi = hi; s->poff = poff;
     }
+    /* the size, with every PERFORM inside inlined too: the innermost one
+     * past the cap goes back to a text node, and the ones around it
+     * shrink -- until nothing changes.  Without this the whole program folded into one
+     * island of 1,500 statements and 22 items (csv2fw, +16%; 64, 128 and 256 are 3.28, 3.26 and 3.18 G there, 0.17 s all three). */
+    int cap = 128; { const char *e = getenv("S32_HIR_INL"); if (e && atoi(e) > 0) cap = atoi(e); }
+    for (int again = 1; again; ) {
+        again = 0;
+        int worst = -1, wcount = 0;
+        for (int k = 0; k < g_lw_ns; k++) {
+            LStmt *s = &g_lw_s[k];
+            if (s->kind != LS_TEXT || !s->inl) continue;
+            int loops = 0, heavy = 0, nt0 = g_lw_ntext, np0 = g_lw_nperform, count = lw_count(s->body, s->nbody, &loops, &heavy);
+            g_lw_ntext = nt0; g_lw_nperform = np0;
+            if (count > cap && (worst < 0 || count < wcount)) { worst = k; wcount = count; }   /* the smallest past the cap: innermost, so the ones around it shrink */
+        }
+        if (worst >= 0) {
+            LStmt *s = &g_lw_s[worst]; s->inl = 0; s->nbody = 0; again = 1;
+            if (lw_trace()) fprintf(stderr, "hir: line %d PERFORM: not inlined: %d statements (S32_HIR_INL=%d)\n", s->line, wcount, cap);
+        }
+    }
+    if (lw_trace())
+        for (int k = 0; k < g_lw_ns; k++) {
+            LStmt *s = &g_lw_s[k];
+            if (s->kind != LS_TEXT || !s->inl) continue;
+            int loops = 0, heavy = 0, nt0 = g_lw_ntext, np0 = g_lw_nperform, count = lw_count(s->body, s->nbody, &loops, &heavy);
+            g_lw_ntext = nt0; g_lw_nperform = np0;
+            fprintf(stderr, "hir: line %d PERFORM %s%s%s: inlined, %d statement%s\n", s->line, g_para[s->inl_lo - 1].name, s->inl_hi > s->inl_lo ? " THRU " : "", s->inl_hi > s->inl_lo ? g_para[s->inl_hi - 1].name : "", count, count == 1 ? "" : "s");
+        }
 }
 /* the in-line PERFORM whose code begins at lay0 folded into one node: the
  * line before is its placeholder (sort.h asks before resolving its text) */
@@ -2436,6 +2515,7 @@ static void lw_resolve_run(int at, int n)
     int loops = 0, heavy = 0, count = lw_count(at, n, &loops, &heavy), ntext = g_lw_ntext;
     int ob, oa = lw_only(&ob), run = g_lw_s[g_lw_list[at]].line;
     int skip = oa >= 0 && (run < oa || run > ob);
+    if (!lw_gotos_ok(at, n, 1, 0)) { skip = 1; if (lw_trace() && n > 1) fprintf(stderr, "hir: line %d: %d statements: a GO TO outside an inlined range\n", run, count); }
     /* text statements pay only inside a loop whose own statements
      * outnumber them three to one and whose items are in registers
      * (kreport's READ loop +4%, ksort's RETURN loop +3% as islands) */
@@ -2459,10 +2539,10 @@ static void lw_resolve_run(int at, int n)
     int i = 0;
     while (i < n) {
         int k = g_lw_list[at + i];
-        if (g_lw_s[k].kind == LS_TEXT) { lw_out_text(k); i++; continue; }
+        if (g_lw_s[k].kind == LS_TEXT || !lw_gotos_ok(at + i, 1, 1, 0)) { lw_out_text(k); i++; continue; }
         if (g_lw_s[k].kind == LS_LOOP) { lw_resolve_run(at + i, 1); i++; continue; }
         int j = i;
-        while (j < n && g_lw_s[g_lw_list[at + j]].kind != LS_TEXT && g_lw_s[g_lw_list[at + j]].kind != LS_LOOP) j++;
+        while (j < n && g_lw_s[g_lw_list[at + j]].kind != LS_TEXT && g_lw_s[g_lw_list[at + j]].kind != LS_LOOP && lw_gotos_ok(at + j, 1, 1, 0)) j++;
         if (j - i == n) {                       /* no piece smaller than the whole: its text */
             for (int q = 0; q < n; q++) lw_out_text(g_lw_list[at + q]);
             if (lw_trace()) fprintf(stderr, "hir: line %d: %d statement%s kept as text\n", g_lw_s[g_lw_list[at]].line, count, count == 1 ? "" : "s");

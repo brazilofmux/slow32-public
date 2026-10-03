@@ -258,10 +258,19 @@ EVALUATE stays text.  With parse-byte all nodes, csv2fw's whole per-byte
 path is one island: 3.794 -> **3.275 G instructions, 0.25 -> 0.18 s**;
 ~94 instructions a byte where the text was ~400.
 
+GO TO followed (2026-10-03): a node that is a branch to the target
+paragraph's block inside an inlined range holding it, text anywhere else
+-- each paragraph of an inlined range is a block, so backward GO TOs are
+loops.  It let the large paragraphs qualify, and the inlining had to be
+bounded properly: every inlined PERFORM measured with everything inside
+it inlined, the innermost past the cap (128, `S32_HIR_INL`) sent back to
+text until stable.
+
 What the profile leaves, in order: cob_write a byte a call (the output
 loop's WRITE text node), cob_read, reference modification with a
-computed length (`x(1:function min(n, 4096))`, per field), the IFs whose
-branch is a GO TO, the footprint by item per paragraph.
+computed length (`x(1:function min(n, 4096))`, per field), the footprint
+by item per paragraph; and on the kernels' side, the alnum MOVEs and
+compares the islands still refuse (the "MOVE: the sender" count).
 
 ## What follows
 
