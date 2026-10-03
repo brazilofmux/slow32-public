@@ -1,0 +1,20 @@
+#file	performs.cbl
+F	1	2	-1	once
+F	1	3	-1	varying
+F	1	5	6	once
+F	1	7	8	once
+G	1	9	goto
+P	1	main	para	0	0	8	jump
+P	2	init	para	0	0	14	fall
+G	3	4	goto
+P	3	body	para	0	0	16	fall
+P	4	skip-it	para	0	0	19	fall
+G	5	6	goto
+P	5	a	para	0	0	21	fall
+P	6	a-exit	para	0	0	25	fall
+G	7	9	goto
+P	7	b	para	0	0	27	fall
+P	8	b-exit	para	0	0	30	fall
+P	9	finish	para	0	0	32	stop
+P	10	orphan	para	0	0	34	fall
+U	performs	10

@@ -319,12 +319,13 @@ static void sql_emit_whenever(void)
     if (g_when.unit != g_unit) return;
     if (g_when.para[WH_ERROR][0] || g_when.para[WH_NOTFOUND][0]) {
         emit_call("cob_sql_code");
-        if (g_when.para[WH_ERROR][0]) emit("	blt r1, r0, .Lp%d_%d", g_unit, para_find(g_when.para[WH_ERROR])->id);
-        if (g_when.para[WH_NOTFOUND][0]) { emit_li("r2", 100); emit("	beq r1, r2, .Lp%d_%d", g_unit, para_find(g_when.para[WH_NOTFOUND])->id); }
+        if (g_when.para[WH_ERROR][0]) { emit("	blt r1, r0, .Lp%d_%d", g_unit, para_find(g_when.para[WH_ERROR])->id); pc_goto(para_find(g_when.para[WH_ERROR]), "sql"); }
+        if (g_when.para[WH_NOTFOUND][0]) { emit_li("r2", 100); emit("	beq r1, r2, .Lp%d_%d", g_unit, para_find(g_when.para[WH_NOTFOUND])->id); pc_goto(para_find(g_when.para[WH_NOTFOUND]), "sql"); }
     }
     if (g_when.para[WH_WARNING][0]) {
         emit_call("cob_sql_warn");
         emit("	bne r1, r0, .Lp%d_%d", g_unit, para_find(g_when.para[WH_WARNING])->id);
+        pc_goto(para_find(g_when.para[WH_WARNING]), "sql");
     }
 }
 
@@ -1078,6 +1079,7 @@ static void parse_statement_1(void)
             char cell[32], tgt[32];
             snprintf(cell, sizeof cell, ".Lalt%d_%d", g_unit, p1->id);
             snprintf(tgt, sizeof tgt, ".Lp%d_%d", g_unit, p2->id);
+            pc_goto_from(p1, p2, "alter");
             emit_la("r2", tgt); emit_la("r1", cell); emit("\tstw r1+0, r2");
             if (!(cur()->kind == T_WORD && !is_verb(cur()->s) && !is_terminator(cur()->s) && para_find(cur()->s))) break;
         }
@@ -1538,8 +1540,8 @@ static void parse_procedure_division(void)
         if (unit_start(t)) {
             /* a contained program: from here to END PROGRAM the text is nested
              * programs; the containing program's flow ends as at its last line */
-            if (cur_par >= 0) { end_par_label(); emit_exit_check(cur_par); }
-            if (cur_sec >= 0) { end_sec_label(); emit_exit_check(cur_sec); }
+            if (cur_par >= 0) { end_par_label(); pc_para_end(cur_par); emit_exit_check(cur_par); }
+            if (cur_sec >= 0) { end_sec_label(); pc_para_end(cur_sec); emit_exit_check(cur_sec); }
             cur_par = -1; cur_sec = -1; g_cur_sec_id = -1;
             emit("\tjal r0, .Lgb%d", g_unit);
             compile_nested_unit();
@@ -1548,8 +1550,8 @@ static void parse_procedure_division(void)
         }
         if (is_word(t, "end") && is_word(peek(1), "declaratives")) {
             if (!g_in_decl) die_at(t->line, "END DECLARATIVES without DECLARATIVES");
-            if (cur_par >= 0) { end_par_label(); emit_exit_check(cur_par); }
-            if (cur_sec >= 0) { end_sec_label(); emit_exit_check(cur_sec); }
+            if (cur_par >= 0) { end_par_label(); pc_para_end(cur_par); emit_exit_check(cur_par); }
+            if (cur_sec >= 0) { end_sec_label(); pc_para_end(cur_sec); emit_exit_check(cur_sec); }
             cur_par = -1; cur_sec = -1; g_cur_sec_id = -1;
             advance(); advance(); expect_period();
             emit_label(Ldecl_end); g_in_decl = 0;
@@ -1562,8 +1564,8 @@ static void parse_procedure_division(void)
             Para *p = is_word(peek(1), "section") ? para_find(t->s) : para_find_in(t->s, cur_sec >= 0 ? cur_sec : -1);
             if (!p) p = para_find(t->s);
             if (!p) die_at(t->line, "internal: paragraph '%s' not prescanned", t->s);
-            if (cur_par >= 0) { end_par_label(); emit_exit_check(cur_par); }
-            if (p->is_section && cur_sec >= 0) { end_sec_label(); emit_exit_check(cur_sec); }
+            if (cur_par >= 0) { end_par_label(); pc_para_end(cur_par); emit_exit_check(cur_par); }
+            if (p->is_section && cur_sec >= 0) { end_sec_label(); pc_para_end(cur_sec); emit_exit_check(cur_sec); }
             emit_para_label(p);
             g_cur_para = p;
             if (p->is_section) { cur_sec = p->id; cur_par = -1; g_cur_sec_id = p->id; } else cur_par = p->id;
@@ -1618,8 +1620,9 @@ static void parse_procedure_division(void)
         g_recover = outer;
         if (g_sentence_label >= 0) emit_label(g_sentence_label);
     }
-    if (cur_par >= 0) { end_par_label(); emit_exit_check(cur_par); }
-    if (cur_sec >= 0) { end_sec_label(); emit_exit_check(cur_sec); }
+    if (cur_par >= 0) { end_par_label(); pc_para_end(cur_par); emit_exit_check(cur_par); }
+    if (cur_sec >= 0) { end_sec_label(); pc_para_end(cur_sec); emit_exit_check(cur_sec); }
+    pc_unit();
     sort_proc_check();
 
     emit_para_cells();                          /* this program's exit cells: its ids end at g_npara */

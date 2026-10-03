@@ -85,6 +85,7 @@
 #include "cobc/arith_reg.h"
 #include "cobc/expr.h"
 #include "cobc/control.h"
+#include "cobc/pcensus.h"
 #include "cobc/loopreg.h"
 #include "cobc/sort.h"
 #include "cobc/goto_set.h"

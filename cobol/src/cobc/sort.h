@@ -714,6 +714,7 @@ static void parse_perform(void)
         expect_word("times");
     }
     if (body.inline_body) parse_inline_body(&body);
+    else pc_perform(body.from, body.thru, kind == PF_ONCE ? "once" : kind == PF_UNTIL ? "until" : kind == PF_VARYING ? "varying" : kind == PF_TIMES ? "times" : "exit");
 
     int lay0 = g_nasm;                  /* the statement's code from here: its loops' regions (loopreg.h) */
     switch (kind) {

@@ -5597,3 +5597,16 @@ table, subscripts literal and not; 200 programs the same on and off;
 `tests/census_test.c` 45 checks (the two rules: four more mutants, all
 caught); mutants of the table's image and of an element given one cell
 for every occurrence, caught.
+
+Sixth (2026-10-03): the PERFORM census (the plan's step 3, as analysis).
+`src/cobc/pcensus.h` writes, beside the item census, each paragraph with
+how its code ends, each out-of-line PERFORM with its range and form, each
+GO TO with its source (DEPENDING, ALTER, EXEC SQL WHENEVER too) and the
+declarative sections; `tests/performs.py` says which performed ranges are
+procedures -- entered at the top by PERFORM alone -- and what refuses the
+others (fallen into from in-line code, a GO TO in, a GO TO out, nested,
+overlapping), with "runs in line" a fixed point over the GO TOs.  Over
+1,245 units: 8,237 ranges, 49,272 PERFORMs, 91.6% of them to procedures
+(majesty 94%, CCVS 98%, X-COBOL 77%, Open Systems 37% -- the RM/COBOL-74
+corpus, 8,253 GO TOs and 253 ALTERs).  Harness gate 1g gained
+tests/census/performs.cbl; `tests/census.sh` prints both reports.

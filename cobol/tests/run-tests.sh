@@ -245,12 +245,16 @@ fi
 # that decides it: groups named and not, redefinitions named and not,
 # records redefining records, tables in tables, renamings, a GLOBAL item
 # a contained program names, CALL arguments by reference and by content
-for n in alone shapes; do
+# ... and performs.cbl for the PERFORM census (src/cobc/pcensus.h): a
+# mainline that leaves by GO TO, ranges performed and fallen into, GO TOs
+# within a range and out of one, a paragraph nothing reaches
+for n in alone shapes performs; do
     mkdir -p "$W/census-$n"
+    ext=census; [ $n = performs ] && ext=perform
     if ! (cd "$HERE/census" && S32_CENSUS_DIR="$W/census-$n" "$COBC" -free -std=2002 "$n.cbl" -o "$W/census-$n/$n.s") >"$W/census-$n/err" 2>&1; then
         report "census/$n" 1 "compile"
-    elif cat "$W/census-$n"/*.census | diff - "$HERE/census/$n.expect" >"$W/census-$n/diff" 2>&1; then
-        report "census/$n" 0 "$(($(wc -l < "$HERE/census/$n.expect") - 1)) items"
+    elif cat "$W/census-$n"/*.$ext | diff - "$HERE/census/$n.expect" >"$W/census-$n/diff" 2>&1; then
+        report "census/$n" 0 "$(($(wc -l < "$HERE/census/$n.expect") - 1)) lines"
     else
         report "census/$n" 1 "$(grep -m1 '^[<>]' "$W/census-$n/diff" | cut -c1-80)"
     fi

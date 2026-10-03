@@ -48,6 +48,7 @@ static void parse_goto(void)
         /* through the paragraph's cell, which ALTER rewrites */
         if (g_naltcell == 64) die_at(cur()->line, "too many altered paragraphs");
         g_altcell[g_naltcell].para = g_cur_para->id; g_altcell[g_naltcell].target = n ? ps[0]->id : -1; g_naltcell++;
+        if (n) pc_goto(ps[0], "goto");
         char lab[32]; snprintf(lab, sizeof lab, ".Lalt%d_%d", g_unit, g_cur_para->id);
         emit_la("r1", lab);
         emit("\tldw r1, r1+0");
@@ -65,11 +66,13 @@ static void parse_goto(void)
         for (int i = 0; i < n; i++) {
             emit_li("r2", i + 1);
             emit("\tbeq r1, r2, .Lp%d_%d", g_unit, ps[i]->id);
+            pc_goto(ps[i], "depending");
         }
         return;
     }
     if (n != 1) die_at(cur()->line, "GO TO with several procedure-names needs DEPENDING ON");
     emit("\tjal r0, .Lp%d_%d", g_unit, ps[0]->id);
+    pc_goto(ps[0], "goto");
     goto_last_check();
 }
 

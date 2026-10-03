@@ -10,6 +10,7 @@
 #   SNAP_SKIP="ccvs xcobol" census.sh      leave the slow corpora out
 #   tests/census.py DIR/census --by-file   afterwards: program by program
 #   tests/census.py DIR/census --items alone --corpus majesty
+#   tests/performs.py DIR/census --ranges "GO TO out" --corpus majesty
 set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
 if [ $# -ge 1 ]; then D="$1"; mkdir -p "$D"; else D="$(mktemp -d "${TMPDIR:-/tmp}/census.XXXXXX")"; fi
@@ -17,4 +18,5 @@ mkdir -p "$D/census" "$D/asm"
 S32_CENSUS_DIR="$D/census" "$HERE/asm-snapshot.sh" "$D/asm" >"$D/snapshot.log" 2>&1
 tail -1 "$D/snapshot.log" >&2
 python3 "$HERE/census.py" "$D/census"
+python3 "$HERE/performs.py" "$D/census"
 if [ $# -lt 1 ]; then rm -r "$D/census" "$D/asm"; rm "$D/snapshot.log"; rmdir "$D"; fi

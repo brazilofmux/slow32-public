@@ -338,6 +338,64 @@ operands are written brings out.
 - With the switch off, 1,506 programs compile to the assembly they did
   before any of this.
 
+## Step 3: PERFORM classified (2026-10-03)
+
+The same instrument, pointed at the PROCEDURE DIVISION.  A paragraph is
+a label; whether it may be a procedure depends on everything that names
+it, so the compiler writes the facts (`src/cobc/pcensus.h`: each
+paragraph and how its code ends -- falling through, a jump, STOP RUN;
+each out-of-line PERFORM with its range and form; each GO TO with its
+source, DEPENDING, ALTER and EXEC SQL WHENEVER included; the declarative
+sections) and `tests/performs.py` draws the verdicts.  Nothing changes
+in the code.
+
+A performed range (first paragraph to THRU paragraph, or a section) is a
+**procedure** when it is entered at its top by PERFORM and by nothing
+else: no GO TO from outside it reaches a paragraph of it, no GO TO
+inside it leaves it, the paragraph before it does not fall into it from
+code that runs in line, it is not the program's entry, and no other
+range partly overlaps it.  Whether code runs in line is a fixed point
+over the GO TOs: the entry does; a GO TO's target does when the GO TO
+comes from in-line code or from outside every range both are in (a GO
+TO into a range's own exit paragraph from inside it keeps control in the
+range); the paragraph after one that runs in line and falls through
+does.
+
+| | ranges | procedures | PERFORMs | to procedures |
+|---|---:|---:|---:|---:|
+| majesty | 239 | 92.9% | 446 | 94.2% |
+| CCVS-85 | 4,141 | 94.4% | 39,596 | 98.4% |
+| X-COBOL | 2,259 | 70.6% | 5,721 | 76.6% |
+| Open Systems | 1,517 | 33.9% | 3,341 | 37.0% |
+| all | 8,237 | 76.6% | 49,272 | 91.6% |
+
+- **PERFORM is a call, nine times in ten.**  In the working corpora and
+  in CCVS the ranges named are procedures; a GO TO within one (13.9% of
+  ranges, 4.0% of PERFORMs) is a branch inside the procedure, not a
+  reason against it.
+- **What refuses the rest, by ranges:** fallen into 13.8% (X-COBOL's
+  share is 28%: a mainline that ends without STOP RUN or GOBACK and
+  runs on into its own subroutines), GO TO out 7.4%, GO TO in 6.0%,
+  nested in another range 5.7%, overlapping 1.1%.
+- **The Open Systems suite is the other COBOL.**  RM/COBOL-74 style:
+  8,253 GO TOs against 3,341 PERFORMs; 253 ALTERs; a third of its
+  ranges are jumped into and a third jumped out of.  It is the corpus
+  that keeps the general mechanism honest -- a lowering that could only
+  do procedures would do a third of it.
+- **GO TO itself:** 26,815 in all; 19,421 from the mainline (the
+  program's own control flow, not a procedure's), 5,642 within every
+  range they are in, 1,086 leaving a range, 389 DEPENDING, 266 ALTER.
+- **Paragraphs:** 46,565; 12.3% are reached by nothing -- after a STOP
+  RUN, or a GO TO chain's leftovers.
+
+What the lowering takes from this: a procedure range becomes a
+function-like block with one entry and one return; a range that is
+fallen into or jumped into is a block whose paragraphs are labels of
+the unit's one function with the PERFORM return stack kept as it is
+(the `switch` on the entering PERFORM's number); a GO TO out of a range
+abandons frames exactly as the runtime does today.  Nothing here needs
+a construct HIR lacks.
+
 ## What follows
 
 Staged; each step is measured before the next is begun.
@@ -355,10 +413,9 @@ Staged; each step is measured before the next is begun.
      Whether a copy between two numeric items of one description must
      carry bytes that are not a number is a ruling, not an analysis
      (IBM's NUMPROC(PFD) is the same question).
-3. **PERFORM classified.**  Which paragraphs are entered only by
-   PERFORM, from where, and whether a range is ever fallen into or left
-   by GO TO: the facts that let a paragraph be a procedure, or a block
-   with a known set of returns, instead of an address in a cell.
+3. **PERFORM classified.**  Done as a census (above): 91.6% of
+   PERFORMs name a procedure; the facts per range are in the
+   `.perform` files for the lowering to read.
 4. **Lowering to HIR.**  Standing-alone items become HIR's own values
    (a non-escaping slot is promoted to SSA there already); the rest
    stay loads and stores at known addresses.  PERFORM needs nothing new
