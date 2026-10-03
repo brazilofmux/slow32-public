@@ -38,7 +38,7 @@ static int lw_only(int *b)
  * literal k, 'I' INTEGER, 'T' INTEGER-PART, 'A' ABS, 'G' MAX, 'L' MIN;
  * sc its scale, bd a bound on its magnitude in units of that scale, neg
  * whether it can be below zero */
-typedef struct { char op; int l, r; int sym; long long k; int sc; long double bd; int neg; } LNode;
+typedef struct { char op; int l, r; int sym; int ref; long long k; int sc; long double bd; int neg; } LNode;   /* ref: a subscripted item's reference in g_lw_o, else -1 */
 /* a condition: cond.h's C_AND, C_OR, C_NOT, C_REL (op R_*; x, y values;
  * or, alnum, ax and ay operands in g_lw_o compared as bytes) */
 typedef struct { int kind; int a, b; int x, y; int op; int alnum, ax, ay; } LCond;
@@ -48,6 +48,7 @@ typedef struct {
     int expr;                           /* LS_STORE: the value; LS_ADDTO: the sum each receiver takes */
     int need;                           /* LS_STORE with '/' at the root: fraction digits the quotient is made to */
     int nr; int rsym[MAXOPS]; unsigned char rnd[MAXOPS];
+    int rref[MAXOPS];                   /* a subscripted receiver's reference in g_lw_o, else -1 */
     int rem;                            /* LS_STORE of a quotient: the REMAINDER item, or -1 */
     int subtract;                       /* LS_ADDTO: SUBTRACT */
     int cond;                           /* LS_IF; LS_LOOP: UNTIL */
@@ -57,6 +58,8 @@ typedef struct {
     Block text;                         /* the statement's code by the text emitter, for a run that is no island */
     int cut;                            /* ... taken out of the stream (lw_stmt_text) */
     int nperf, perf0;                   /* LS_TEXT: the paragraph ranges it PERFORMs, in g_lw_perf from perf0 */
+    int inl;                            /* LS_TEXT, a plain PERFORM of a range whose statements are all nodes: body is those statements, emitted in its place */
+    int is_perform;                     /* LS_TEXT: the statement is a plain out-of-line PERFORM itself (not a statement with one inside) */
     int phrase;                         /* LS_TEXT: its ON/NOT ON phrases (an LS_PHRASE), or -1: the call's value is the status word */
     int slot, on_one;                   /* LS_PHRASE: the status word's slot, and whether ON means 1 (else nonzero) */
     Block ptext;                        /* LS_TEXT with a phrase: the lines of the call alone */
@@ -74,7 +77,7 @@ static int g_lw_nisland;                /* islands made so far, for their labels
 static int lw_node(char op, int l, int r, int sym, long long k, int sc, long double bd, int neg)
 {
     LW_GROW(g_lw_n, g_lw_nn, g_lw_ncap);
-    LNode *x = &g_lw_n[g_lw_nn]; x->op = op; x->l = l; x->r = r; x->sym = sym; x->k = k; x->sc = sc; x->bd = bd; x->neg = neg;
+    LNode *x = &g_lw_n[g_lw_nn]; x->op = op; x->l = l; x->r = r; x->sym = sym; x->ref = -1; x->k = k; x->sc = sc; x->bd = bd; x->neg = neg;
     return g_lw_nn++;
 }
 static int lw_cnode(int kind, int a, int b, int x, int y, int op)
@@ -91,8 +94,8 @@ static int lw_stmt(int kind, int line)
 }
 static void lw_list_add(int st) { LW_GROW(g_lw_list, g_lw_nlist, g_lw_lcap); g_lw_list[g_lw_nlist++] = st; }
 /* the ranges the statement being read PERFORMs out of line (emit_body notes them) */
-static struct { int lo, hi; } *g_lw_perf; static int g_lw_nperf, g_lw_pcap2;
-static void lw_note_perform(int lo, int hi) { LW_GROW(g_lw_perf, g_lw_nperf, g_lw_pcap2); g_lw_perf[g_lw_nperf].lo = lo; g_lw_perf[g_lw_nperf].hi = hi; g_lw_nperf++; }
+static struct { int lo, hi, once; } *g_lw_perf; static int g_lw_nperf, g_lw_pcap2;   /* once: a plain PERFORM of the range (sort.h's g_lw_pf_once) */
+static void lw_note_perform(int lo, int hi) { LW_GROW(g_lw_perf, g_lw_nperf, g_lw_pcap2); g_lw_perf[g_lw_nperf].lo = lo; g_lw_perf[g_lw_nperf].hi = hi; g_lw_perf[g_lw_nperf].once = g_lw_pf_once; g_lw_nperf++; }
 static int lw_opnd_keep(const Opnd *o) { LW_GROW(g_lw_o, g_lw_no, g_lw_ocap); g_lw_o[g_lw_no] = *o; return g_lw_no++; }
 static int lw_ref_keep(const Ref *r) { Opnd o; memset(&o, 0, sizeof o); o.kind = O_REF; o.ref = *r; o.line = r->line; return lw_opnd_keep(&o); }
 
@@ -129,7 +132,7 @@ static void lw_refuse(int line, const char *what, const char *why)
 static int lw_stmt_text(int b0)
 {
     int p = b0, st, last = -1;
-    while (p < g_nasm && !strncmp(g_asm[p], "__ln_", 5)) p++;
+    while (p < g_nasm && (!strncmp(g_asm[p], "__ln_", 5) || !strncmp(g_asm[p], "\t.globl __ln_", 13))) p++;
     /* the statement's own placeholders are the uncut ones; a statement
      * whose code begins with an inner statement's -- an exception-checking
      * PERFORM, whose body comes first -- is not lowered, and that one was
@@ -283,6 +286,16 @@ static int lw_text_ok(const Block *b, int line, const char *verb)
         const char *sp = strstr(l, "sp+");
         if (sp) { int n = atoi(sp + 3); if (n < 8 || n >= 84) { lw_refuse(line, verb, "a slot of the unit's"); return 0; } }
         if (strstr(l, " sp,") || !strncmp(l, "\taddi sp", 8)) { lw_refuse(line, verb, "the stack pointer"); return 0; }
+        /* r14-r28 are the island's callee-saved registers, where its values
+         * live across the node; the text emitter never names them -- except
+         * loopreg, which rewrote an in-line loop's lines before the
+         * statement's text was cut (gen-native 4401: w2's high word) */
+        for (const char *p = l; (p = strchr(p, 'r')) != NULL; p++) {
+            if (p > l && (isalnum((unsigned char)p[-1]) || p[-1] == '_' || p[-1] == '.')) continue;
+            if (p[1] < '0' || p[1] > '9') continue;
+            int r = atoi(p + 1); const char *e = p + 1; while (*e >= '0' && *e <= '9') e++;
+            if (!isalnum((unsigned char)*e) && *e != '_' && r >= 14 && r <= 28) { lw_refuse(line, verb, "a callee-saved register"); return 0; }
+        }
         char t[64];
         if (!lw_line_target(l, t, sizeof t)) continue;
         int k; for (k = 0; k < nd && strcmp(defs[k], t); k++) ;
@@ -369,6 +382,7 @@ static int lw_text_stmt(int b0, int perf0)
      * lines are the expansion, and with phrases end in the status word */
     int st = lw_stmt(LS_TEXT, line);
     LStmt *s = &g_lw_s[st]; s->cut = 1; s->perf0 = perf0; s->nperf = g_lw_nperf - perf0; s->phrase = ph;
+    s->is_perform = !strcmp(g_cur_stmt, "PERFORM") && g_lw_pf_once;    /* its own parse set the flag last: an in-line PERFORM around one resets it */
     s->ptext = t;
     if (ph < 0) s->text = raw;
     else {
@@ -406,10 +420,15 @@ static int lw_item_ok(const Ref *r)
  * subscripted, at a label's known offset, of a usage the register trees
  * take (dx_leaf_ok) -- and not COMP-X, whose MOVE has a descriptor of its
  * own (move_desc) */
+static int lw_sub_item_ok(Sym *s);
 static int lw_mem_ok(const Ref *r)
 {
     const Sym *s = r->sym;
-    if (s->native || r->rm || r->nsub || s->ndims || s->is_group || s->is_rc || s->lin_file >= 0 || s->rep_ctr >= 0 || s->is_index) return 0;
+    if ((s->native && !s->ndims) || r->rm || s->is_group || s->is_rc || s->lin_file >= 0 || s->rep_ctr >= 0 || s->is_index) return 0;
+    if (r->nsub != s->ndims || (r->nsub && (ec_on_name("EC-BOUND-SUBSCRIPT") || odo_table_for((Sym *)s)))) return 0;   /* an element: its address formed as lw_ref_addr forms it */
+    for (int k = 0; k < r->nsub; k++)
+        if (r->sub[k].sym == &g_subx || (r->sub[k].sym && !lw_sub_item_ok(r->sub[k].sym))) return 0;
+    if (s->native) return 1;                    /* a native table's element: a word in storage, loaded and stored as one */
     if (s->pi.category != PIC_NUMERIC && !(s->pi.category == PIC_NUMERIC_EDITED && s->usage == U_DISPLAY)) return 0;
     if (sym_wide(s) || s->pi.digits > 18 || s->pi.scale < 0 || strchr(s->pi.pat, 'P') || s->uvar != UV_NONE) return 0;
     switch (s->usage) {
@@ -432,6 +451,28 @@ static int lw_sub_item_ok(Sym *s)
 {
     Ref r; memset(&r, 0, sizeof r); r.sym = s; r.line = s->line;
     return s->pi.scale == 0 && !s->ndims && lw_opnd_item_ok(&r);
+}
+/* a reference modification's start expression the island can form: an
+ * integer item alone, or one plus or minus an integer literal; *sym and
+ * *adj are the item and the literal added */
+static int lw_rm_start_ok(const Expr *x, Sym **sym, long *adj)
+{
+    const Expr *leaf = x; *adj = 0;
+    if (x->op == '+' || x->op == '-') {
+        const Expr *l = x->l, *r = x->r;
+        if (!l || !r || l->op || r->op || !l->o || !r->o) return 0;
+        if (r->o->kind == O_NUM) { leaf = l; }
+        else if (x->op == '+' && l->o->kind == O_NUM) { leaf = r; r = l; }
+        else return 0;
+        if (!numlit_is_int(&r->o->num) || r->o->num.ndigits > 9) return 0;
+        long long k = numlit_int(&r->o->num); if (r->o->num.neg) k = -k;
+        *adj = x->op == '+' ? (long)k : -(long)k;
+    }
+    if (leaf->op || !leaf->o || leaf->o->kind != O_REF) return 0;
+    const Ref *lr = &leaf->o->ref;
+    if (lr->nsub || lr->rm || !lw_sub_item_ok(lr->sym)) return 0;
+    *sym = lr->sym;
+    return 1;
 }
 /* a reference whose address and length the island can form: its record
  * by label, each subscript a literal or an integer item, a reference
@@ -456,7 +497,9 @@ static int lw_bytes_ref_ok(const Ref *r, long *len)
     for (int k = 0; k < r->nsub; k++)
         if (r->sub[k].sym == &g_subx || (r->sub[k].sym && !lw_sub_item_ok(r->sub[k].sym))) return 0;
     if (r->rm) {
-        if (r->rm_nat || r->rm_bit || r->rm_odo || r->bitsub || r->rm_sx || r->rm_lx || r->rm_start <= 0 || r->rm_len <= 0) return 0;
+        if (r->rm_nat || r->rm_bit || r->rm_odo || r->bitsub || r->rm_lx || r->rm_len <= 0) return 0;
+        if (r->rm_sx) { Sym *ss; long adj; if (!lw_rm_start_ok(r->rm_sx, &ss, &adj)) return 0; }
+        else if (r->rm_start <= 0) return 0;
         if (ec_on_name("EC-BOUND-REF-MOD")) return 0;
         *len = r->rm_len;
         return 1;
@@ -507,7 +550,9 @@ static int lw_from_hn(int h)
         if (o->kind == O_FIG) return lw_node('k', -1, -1, -1, 0, 0, 0, 0);
         if (o->kind == O_NUM) { long long v = numlit_scaled(&o->num); return lw_node('k', -1, -1, -1, v, o->num.scale, v < 0 ? -(long double)v : (long double)v, v < 0); }
         const Sym *s = o->ref.sym;
-        return lw_node(0, -1, -1, (int)(s - g_sym), 0, s->pi.scale, g_dbd[h], s->pi.is_signed);
+        int n = lw_node(0, -1, -1, (int)(s - g_sym), 0, s->pi.scale, g_dbd[h], s->pi.is_signed);
+        if (o->ref.nsub) g_lw_n[n].ref = lw_opnd_keep(o);
+        return n;
     }
     if (x->op == 'n' || x->op == 'A' || x->op == 'I' || x->op == 'T') {
         int l = lw_from_hn(x->l);
@@ -647,13 +692,13 @@ static int lw_store_stmt(int expr, Ref *rs, int *rd, int nr, const Ref *rem, int
         if (!lw_div_shape(expr, need, &e, &sc, &bd)) { lw_refuse(line, verb, "the quotient's scale is the values'"); return 0; }
         if (rem) {
             int e2, down, sr; long double br;
-            if (!lw_recv_ok(rem)) { lw_refuse(line, verb, "the REMAINDER item"); return 0; }
+            if (!lw_recv_ok(rem) || rem->nsub) { lw_refuse(line, verb, "the REMAINDER item"); return 0; }
             if (!lw_rem_shape(expr, rs[0].sym, &e2, &down, &sr, &br)) { lw_refuse(line, verb, "the remainder's bound"); return 0; }
         }
     }
     int st = lw_stmt(LS_STORE, line);
     LStmt *s = &g_lw_s[st]; s->expr = expr; s->need = need; s->nr = nr; s->rem = rem ? (int)(rem->sym - g_sym) : -1;
-    for (int i = 0; i < nr; i++) { s->rsym[i] = (int)(rs[i].sym - g_sym); s->rnd[i] = (unsigned char)(rd[i] != 0); }
+    for (int i = 0; i < nr; i++) { s->rsym[i] = (int)(rs[i].sym - g_sym); s->rnd[i] = (unsigned char)(rd[i] != 0); s->rref[i] = rs[i].nsub ? lw_ref_keep(&rs[i]) : -1; }
     lw_place(st);
     return 1;
 }
@@ -688,7 +733,7 @@ static int lw_addto(int sum, Ref *rs, int *rd, int nr, int subtract, int line, c
     }
     int st = lw_stmt(LS_ADDTO, line);
     LStmt *s = &g_lw_s[st]; s->expr = sum; s->nr = nr; s->subtract = subtract;
-    for (int i = 0; i < nr; i++) { s->rsym[i] = (int)(rs[i].sym - g_sym); s->rnd[i] = (unsigned char)(rd[i] != 0); }
+    for (int i = 0; i < nr; i++) { s->rsym[i] = (int)(rs[i].sym - g_sym); s->rnd[i] = (unsigned char)(rd[i] != 0); s->rref[i] = rs[i].nsub ? lw_ref_keep(&rs[i]) : -1; }
     lw_place(st);
     return 1;
 }
@@ -876,7 +921,8 @@ static int lw_if(IfStmt *s)
 /* an in-line PERFORM VARYING (one level) or UNTIL, its body read */
 static int lw_perform(Vary *v, int nv, Cond *until, Body *body, int test_after)
 {
-    if (lw_off() || !body->inline_body) return 0;
+    if (!body->inline_body) return 0;
+    if (lw_off()) { if (lw_trace() && g_hir_on && !g_cen_on) fprintf(stderr, "hir: line %d PERFORM: not lowered: the hook is off (noemit %d, calls %d)\n", cur()->line, g_noemit, g_stmt_calls.n); return 0; }
     int line = cur()->line;
     const char *why = lw_stmt_refused(0);
     if (why) { lw_refuse(line, "PERFORM", why); return 0; }
@@ -884,7 +930,7 @@ static int lw_perform(Vary *v, int nv, Cond *until, Body *body, int test_after)
     if (v) {
         if (nv > 1 && test_after) { lw_refuse(line, "PERFORM", "AFTER with TEST AFTER"); return 0; }
         for (int k = 0; k < nv; k++) {
-            if (!lw_recv_ok(&v[k].var)) { lw_refuse(line, "PERFORM", "the VARYING item"); return 0; }
+            if (!lw_recv_ok(&v[k].var) || v[k].var.nsub) { lw_refuse(line, "PERFORM", "the VARYING item"); return 0; }
             var[k] = (int)(v[k].var.sym - g_sym);
             from[k] = lw_opnd(&v[k].from); by[k] = lw_opnd(&v[k].by);
             if (from[k] < 0 || by[k] < 0) { lw_refuse(line, "PERFORM", "FROM or BY"); return 0; }
@@ -940,19 +986,22 @@ static void lw_goto(int b) { if (lw_blk_live) hi_emit(HI_BR, TY_VOID, -1, -1, b,
 static void lw_brc(int c, int bt, int bf) { hi_emit(HI_BRC, TY_VOID, c, bt, bf, NULL); lw_blk_live = 0; }
 
 /* the island's items: found before any code, so their allocas come first */
+static int g_lw_items_closed;                   /* the entry loads are emitted: no item may join now */
 static int lw_item_slot(int sym)
 {
     for (int i = 0; i < g_lw_nitem; i++) if (g_lw_item[i].sym == sym) return i;
+    if (g_lw_items_closed) die_at(cur()->line, "internal: island item %s named by code the collector did not see", g_sym[sym].name);
     if (g_lw_nitem == 256) die_at(cur()->line, "internal: an island names too many items");
     LwItem *it = &g_lw_item[g_lw_nitem]; it->sym = sym; it->written = 0;
     it->a_lo = lw_alloca(); it->a_hi = g_sym[sym].size == 8 ? lw_alloca() : -1;
     return g_lw_nitem++;
 }
+static void lw_collect_opnd(int oi);
 static void lw_collect_node(int n)
 {
     if (n < 0) return;
     LNode *x = &g_lw_n[n];
-    if (!x->op) { if (g_sym[x->sym].native) lw_item_slot(x->sym); return; }
+    if (!x->op) { if (g_sym[x->sym].native && x->ref < 0) lw_item_slot(x->sym); lw_collect_opnd(x->ref); return; }   /* a native table's element is a word in storage, not an alloca */
     if (x->op == 'k') return;
     lw_collect_node(x->l); lw_collect_node(x->r);
 }
@@ -962,6 +1011,7 @@ static void lw_collect_opnd(int oi)
     const Opnd *o = &g_lw_o[oi];
     if (o->kind != O_REF) return;
     for (int k = 0; k < o->ref.nsub; k++) if (o->ref.sub[k].sym && o->ref.sub[k].sym->native) lw_item_slot((int)(o->ref.sub[k].sym - g_sym));
+    if (o->ref.rm && o->ref.rm_sx) { Sym *ss; long adj; if (lw_rm_start_ok(o->ref.rm_sx, &ss, &adj) && ss->native) lw_item_slot((int)(ss - g_sym)); }
 }
 static void lw_collect_cond(int c)
 {
@@ -981,14 +1031,14 @@ static void lw_collect_stmts(int at, int n)
     for (int i = 0; i < n; i++) {
         LStmt *s = &g_lw_s[g_lw_list[at + i]];
         if (s->expr >= 0) lw_collect_node(s->expr);
-        if (s->kind == LS_STORE || s->kind == LS_ADDTO) for (int k = 0; k < s->nr; k++) if (g_sym[s->rsym[k]].native) lw_item_written(s->rsym[k]);
+        if (s->kind == LS_STORE || s->kind == LS_ADDTO) for (int k = 0; k < s->nr; k++) { if (g_sym[s->rsym[k]].native && s->rref[k] < 0) lw_item_written(s->rsym[k]); lw_collect_opnd(s->rref[k]); }
         if (s->rem >= 0 && g_sym[s->rem].native) lw_item_written(s->rem);
         if (s->kind == LS_AMOVE) { lw_collect_opnd(s->asrc); for (int k = 0; k < s->nr; k++) lw_collect_opnd(s->adst[k]); }
         if (s->kind == LS_DISPLAY)
             for (int k = 0; k < s->nr; k++) {
                 lw_collect_opnd(s->adst[k]);
                 const Opnd *o = &g_lw_o[s->adst[k]];
-                if (o->kind == O_REF && o->ref.sym->native) lw_item_slot((int)(o->ref.sym - g_sym));
+                if (o->kind == O_REF && o->ref.sym->native && !o->ref.nsub) lw_item_slot((int)(o->ref.sym - g_sym));
             }
         if (s->cond >= 0) lw_collect_cond(s->cond);
         for (int k = 0; k < s->nv; k++) {
@@ -1012,9 +1062,11 @@ static int lw_item_ty(const Sym *s)
     int ty = s->size == 1 ? TY_CHAR : s->size == 2 ? TY_SHORT : TY_INT;
     return s->pi.is_signed || s->size == 4 ? ty : ty | TY_UNSIGNED;    /* an unsigned 9(9) is below 2^31 */
 }
+static const unsigned char *g_lw_touch;         /* which items the text node being emitted may touch (lw_gen_text), or NULL: all */
 static void lw_entry_loads(void)
 {
     for (int i = 0; i < g_lw_nitem; i++) {
+        if (g_lw_touch && !g_lw_touch[i]) continue;
         LwItem *it = &g_lw_item[i]; const Sym *s = &g_sym[it->sym];
         int a = lw_item_addr(s);
         hi_emit(HI_STORE, TY_INT, it->a_lo, hi_emit(HI_LOAD, lw_item_ty(s), a, -1, 0, NULL), 0, NULL);
@@ -1024,6 +1076,7 @@ static void lw_entry_loads(void)
 static void lw_exit_stores(void)
 {
     for (int i = 0; i < g_lw_nitem; i++) {
+        if (g_lw_touch && !g_lw_touch[i]) continue;
         LwItem *it = &g_lw_item[i]; const Sym *s = &g_sym[it->sym];
         if (!it->written) continue;
         int a = lw_item_addr(s);
@@ -1058,9 +1111,9 @@ static LV lw_call(const char *fn, int *args, int n)
  * called cob_get_num for it instead cost csv2fw 5% on its two-digit
  * state item */
 static int lw_dec_inline_ok(Sym *s) { return sym_dec_ok(s) && s->pi.digits <= 9; }
-static LV lw_dec_load(Sym *s)
+static LV lw_dec_load(Sym *s, int a)
 {
-    int D = s->pi.digits, a = lw_item_addr(s), v = -1, sg;
+    int D = s->pi.digits, v = -1, sg;
     if (s->usage == U_DISPLAY) {
         for (int d = 0; d < D; d++) {
             int b = hi_emit(HI_LOAD, TY_CHAR | TY_UNSIGNED, d ? hi_emit(HI_ADDI, TY_INT, a, -1, d, NULL) : a, -1, 0, NULL);
@@ -1087,12 +1140,22 @@ static LV lw_dec_load(Sym *s)
     LV r; r.lo = hi_emit(HI_SUB, TY_INT, hi_emit(HI_XOR, TY_INT, v, m, 0, NULL), m, 0, NULL); r.hi = -1;
     return r;
 }
-static LV lw_item_val(int sym)
+/* the address of a receiver or value: its reference's when subscripted */
+static int lw_ref_addr(const Ref *r);
+static int lw_sym_addr(int sym, int ref) { return ref >= 0 ? lw_ref_addr(&g_lw_o[ref].ref) : lw_item_addr(&g_sym[sym]); }
+static LV lw_item_val_ref(int sym, int ref)
 {
     Sym *s = &g_sym[sym];
+    if (s->native && ref >= 0) {               /* a native table's element */
+        int a = lw_sym_addr(sym, ref);
+        LV v; v.lo = hi_emit(HI_LOAD, lw_item_ty(s), a, -1, 0, NULL); v.hi = -1;
+        if (s->size == 8) v.hi = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, TY_INT, a, -1, 4, NULL), -1, 0, NULL);
+        return v;
+    }
     if (!s->native) {
-        if (lw_dec_inline_ok(s)) return lw_dec_load(s);
-        int a[3] = { lw_item_addr(s), lw_desc_addr(s), 0 };
+        int addr = lw_sym_addr(sym, ref);
+        if (lw_dec_inline_ok(s)) return lw_dec_load(s, addr);
+        int a[3] = { addr, lw_desc_addr(s), 0 };
         if (s->pi.category == PIC_NUMERIC_EDITED) { a[2] = lw_locale_word(); return lw_call("cob_get_edited", a, 3); }
         return lw_call("cob_get_num", a, 2);
     }
@@ -1101,6 +1164,7 @@ static LV lw_item_val(int sym)
     if (it->a_hi >= 0) v.hi = hi_emit(HI_LOAD, TY_INT, it->a_hi, -1, 0, NULL);
     return v;
 }
+static LV lw_item_val(int sym) { return lw_item_val_ref(sym, -1); }
 static void lw_item_set(int sym, LV v)
 {
     LwItem *it = &g_lw_item[lw_item_slot(sym)];
@@ -1110,11 +1174,11 @@ static void lw_item_set(int sym, LV v)
 }
 /* v at scale sc into an item in storage: the runtime's store, which
  * aligns, rounds, truncates and edits (cob_put_num_x; cob_put_edited) */
-static void lw_mem_store(int sym, int rounded, LV v, int sc)
+static void lw_mem_store(int sym, int ref, int rounded, LV v, int sc)
 {
     Sym *s = &g_sym[sym];
     v = lw_widen(v);
-    int a[7] = { lw_item_addr(s), lw_desc_addr(s), v.lo, v.hi, lw_iconst(sc), lw_iconst(rounded ? 1 : 0), 0 };
+    int a[7] = { lw_sym_addr(sym, ref), lw_desc_addr(s), v.lo, v.hi, lw_iconst(sc), lw_iconst(rounded ? 1 : 0), 0 };
     if (s->pi.category == PIC_NUMERIC_EDITED) { a[6] = lw_locale_word(); lw_call("cob_put_edited", a, 7); }
     else lw_call("cob_put_num_x", a, 6);
 }
@@ -1254,7 +1318,7 @@ static LV lw_val(int n)
     LNode *x = &g_lw_n[n];
     int wide = lw_wide_bd(x->bd);
     if (x->op == 'k') return lw_lit(x->k, wide);
-    if (!x->op) { LV v = lw_item_val(x->sym); if (!wide) v.hi = -1; return v; }
+    if (!x->op) { LV v = lw_item_val_ref(x->sym, x->ref); if (!wide) v.hi = -1; return v; }
     if (x->op == 'n') return lw_neg(lw_val(x->l), wide);
     LNode *a = &g_lw_n[x->l];
     if (x->op == 'A') return lw_abs(lw_val(x->l), lw_wide_bd(a->bd));
@@ -1343,13 +1407,50 @@ static LV lw_trunc_digits(LV v, int n, int wide, int neg)
 }
 
 /* v (scale sc, bound bd, neg) into the item: cob_k_put_scale written out */
-static void lw_store(int sym, int rounded, LV v, int sc, long double bd, int neg)
+static void lw_store_ref(int sym, int ref, int rounded, LV v, int sc, long double bd, int neg);
+static void lw_store(int sym, int rounded, LV v, int sc, long double bd, int neg) { lw_store_ref(sym, -1, rounded, v, sc, bd, neg); }
+/* |v| (a word, below 10^D) into a DISPLAY or packed item of D <= 9 digits
+ * at a: the digits by division, as the text's emit_dec_store writes them;
+ * the sign an overpunch on the last digit ('p'..'y'), or the C/D nibble */
+static void lw_dec_store(const Sym *d, int a, int mag, int neg)
+{
+    int D = d->pi.digits, ten = lw_iconst(10);
+    if (d->usage == U_DISPLAY) {
+        for (int k = D - 1; k >= 0; k--) {
+            int dig = k ? hi_emit(HI_REM, TY_INT | TY_UNSIGNED, mag, ten, 0, NULL) : mag;    /* the last division's quotient is the top digit */
+            int ch = hi_emit(HI_ADD, TY_INT, dig, lw_iconst(48), 0, NULL);
+            if (k == D - 1 && d->pi.is_signed) ch = hi_emit(HI_ADD, TY_INT, ch, hi_emit(HI_SLL, TY_INT, neg, lw_iconst(6), 0, NULL), 0, NULL);   /* + 64 when negative */
+            hi_emit(HI_STORE, TY_CHAR, k ? hi_emit(HI_ADDI, TY_INT, a, -1, k, NULL) : a, ch, 0, NULL);
+            if (k) mag = hi_emit(HI_DIV, TY_INT | TY_UNSIGNED, mag, ten, 0, NULL);
+        }
+        return;
+    }
+    /* packed: the sign nibble last, then digit pairs from the right; a
+     * zero pad nibble at the top when the digits do not fill the bytes */
+    int bytes = (int)d->size;
+    int sgn = d->pi.is_signed ? hi_emit(HI_ADD, TY_INT, lw_iconst(12), neg, 0, NULL) : lw_iconst(15);     /* C, D; F unsigned */
+    int lo = hi_emit(HI_REM, TY_INT | TY_UNSIGNED, mag, ten, 0, NULL); mag = hi_emit(HI_DIV, TY_INT | TY_UNSIGNED, mag, ten, 0, NULL);
+    hi_emit(HI_STORE, TY_CHAR, hi_emit(HI_ADDI, TY_INT, a, -1, bytes - 1, NULL), hi_emit(HI_OR, TY_INT, hi_emit(HI_SLL, TY_INT, lo, lw_iconst(4), 0, NULL), sgn, 0, NULL), 0, NULL);
+    int left = D - 1;
+    for (int b = bytes - 2; b >= 0; b--) {
+        int low = left > 0 ? hi_emit(HI_REM, TY_INT | TY_UNSIGNED, mag, ten, 0, NULL) : lw_iconst(0);
+        if (left > 0) mag = hi_emit(HI_DIV, TY_INT | TY_UNSIGNED, mag, ten, 0, NULL);
+        left--;
+        int high = left > 0 ? hi_emit(HI_REM, TY_INT | TY_UNSIGNED, mag, ten, 0, NULL) : lw_iconst(0);
+        if (left > 0) mag = hi_emit(HI_DIV, TY_INT | TY_UNSIGNED, mag, ten, 0, NULL);
+        left--;
+        hi_emit(HI_STORE, TY_CHAR, b ? hi_emit(HI_ADDI, TY_INT, a, -1, b, NULL) : a, hi_emit(HI_OR, TY_INT, hi_emit(HI_SLL, TY_INT, high, lw_iconst(4), 0, NULL), low, 0, NULL), 0, NULL);
+    }
+}
+static void lw_store_ref(int sym, int ref, int rounded, LV v, int sc, long double bd, int neg)
 {
     const Sym *d = &g_sym[sym];
-    if (!d->native) { lw_mem_store(sym, rounded, v, sc); return; }
+    int dec = !d->native && lw_dec_inline_ok((Sym *)d);     /* a short DISPLAY or packed item: aligned and truncated here, written digit by digit */
+    if (!d->native && !dec) { lw_mem_store(sym, ref, rounded, v, sc); return; }
     int eff = d->pi.digits, sd = d->pi.scale;
     int wide = lw_wide_bd(bd);
     if (wide) v = lw_widen(v);
+    int sg0 = -1;                                   /* dec: the sign, read where cob_k_put_scale reads it (below) */
     if (sc > sd) {
         int m = sc - sd; long long P = lw_p10(m);
         LV q, r = v;
@@ -1381,12 +1482,29 @@ static void lw_store(int sym, int rounded, LV v, int sc, long double bd, int neg
         }
         sc = sd;
     }
+    /* the sign is the value's after the scale is aligned and before the
+     * high digits are cut, as the runtime reads it (cob_k_put_scale): a
+     * value scaled down to nothing is +0 (gen-native 5024), one whose
+     * digits are all cut keeps its sign, a negative zero (gen-lit 4506) */
+    if (dec && neg) sg0 = hi_emit(HI_SLT, TY_INT, v.hi >= 0 ? v.hi : v.lo, lw_iconst(0), 0, NULL);   /* (a pair narrowed by the scaling has hi < 0 while wide still says pair) */
     {
         long double lim = dx_p10(eff);
         if (bd >= lim) { v = lw_trunc_digits(v, eff, wide, neg); bd = lim - 1; }
     }
+    if (dec) {
+        /* the magnitude, and the sign the value arrived with */
+        LV m = neg ? lw_abs(v, 0) : v;
+        lw_dec_store(d, lw_sym_addr(sym, ref), m.lo, sg0 >= 0 ? sg0 : lw_iconst(0));
+        return;
+    }
     if (!d->pi.is_signed && neg) v = lw_abs(v, wide);
     if (d->size < 8) v.hi = -1;                     /* the value fits the word (eff <= 9) */
+    if (ref >= 0) {                                 /* a native table's element: the word at its address */
+        int a = lw_sym_addr(sym, ref);
+        hi_emit(HI_STORE, lw_item_ty(d), a, v.lo, 0, NULL);
+        if (d->size == 8) hi_emit(HI_STORE, TY_INT, hi_emit(HI_ADDI, TY_INT, a, -1, 4, NULL), lw_widen(v).hi, 0, NULL);
+        return;
+    }
     lw_item_set(sym, v);
 }
 
@@ -1405,6 +1523,25 @@ static int lw_ref_addr(const Ref *r)
         if (r->sub[k].adj - 1) i = hi_emit(HI_ADDI, TY_INT, i, -1, (int)r->sub[k].adj - 1, NULL);
         if (s->dim_stride[k] != 1) i = hi_emit(HI_MUL, TY_INT, i, lw_iconst(s->dim_stride[k]), 0, NULL);
         a = hi_emit(HI_ADD, TY_INT, a, i, 0, NULL);
+    }
+    if (r->rm && r->rm_sx) {
+        /* a computed start: checked as the text has cob_refmod_len_chk
+         * check it -- 1 <= start and start - 1 + len <= the item's size --
+         * by one unsigned compare, the runtime's own check (and its
+         * message) on the branch that fails */
+        Sym *ss; long adj; lw_rm_start_ok(r->rm_sx, &ss, &adj);
+        LV sv = lw_item_val((int)(ss - g_sym)); sv.hi = -1;
+        int st = adj ? hi_emit(HI_ADDI, TY_INT, sv.lo, -1, (int)adj, NULL) : sv.lo;
+        int st0 = hi_emit(HI_ADDI, TY_INT, st, -1, -1, NULL);
+        int ok = hi_emit(HI_SLTU, TY_INT, st0, lw_iconst((int)(s->size - r->rm_len + 1)), 0, NULL);
+        int b_bad = hir_new_block(), b_ok = hir_new_block();
+        lw_brc(ok, b_ok, b_bad);
+        lw_begin_blk(b_bad);
+        { int args[3] = { lw_desc_addr(s), st, lw_iconst((int)r->rm_len) }; lw_call("cob_refmod_len_chk", args, 3); }
+        lw_goto(b_ok);
+        lw_begin_blk(b_ok);
+        if (off) a = hi_emit(HI_ADDI, TY_INT, a, -1, (int)off, NULL);
+        return hi_emit(HI_ADD, TY_INT, a, st0, 0, NULL);
     }
     if (r->rm) off += r->rm_start - 1;
     return off ? hi_emit(HI_ADDI, TY_INT, a, -1, (int)off, NULL) : a;
@@ -1533,7 +1670,7 @@ static void lw_gen_display(LStmt *s)
     for (int i = 0; i < s->nr; i++) {
         Opnd *o = &g_lw_o[s->adst[i]];
         if (o->kind == O_REF) {
-            if (o->ref.sym->native) lw_item_sync((int)(o->ref.sym - g_sym));
+            if (o->ref.sym->native && !o->ref.nsub) lw_item_sync((int)(o->ref.sym - g_sym));   /* (a native table's element lives in storage) */
             int d = o->ref.rm ? part_desc(&o->ref) : sym_desc(o->ref.sym);
             char b[32]; snprintf(b, sizeof b, ".Ld%d", d);
             int a[2] = { lw_ref_addr(&o->ref), hi_emit(HI_GADDR, TY_INT, -1, -1, 0, xstrndup(b, strlen(b))) };
@@ -1561,13 +1698,167 @@ static void lw_gen_display(LStmt *s)
  * loaded again -- the text may have read or written any of them */
 static int g_lw_has_text;                       /* this island has text statements: the frame and the registers it needs */
 static void lw_gen_stmts(int at, int n);
+/* does the text name the label -- as %hi(label), %lo(label+off): the
+ * only way code reaches a native item (census.h: no address of one is
+ * ever taken, none lies in a record anything else names) */
+static int lw_text_names(const Block *t, const char *label)
+{
+    size_t n = strlen(label);
+    for (int i = 0; i < t->n; i++)
+        for (const char *p = strstr(t->line[i], label); p; p = strstr(p + 1, label)) {
+            char c = p[n];
+            if (!(c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) return 1;
+        }
+    return 0;
+}
+typedef struct { char *name; char **line; int n; } LwPend;   /* an island's text, waiting for lw_flush */
+static LwPend *g_lw_pend; static int g_lw_npend, g_lw_pcap;
+/* does the code of paragraphs lo..hi name the label -- their own lines in
+ * the unit's text, the islands they call (whose lines wait in g_lw_pend),
+ * and the ranges they PERFORM, transitively?  The same argument as
+ * lw_text_names: a native item is reached by its label or not at all. */
+static int lw_line_names(const char *l, const char *label)
+{
+    Block t; t.line = (char **)&l; t.n = 1;
+    return lw_text_names(&t, label);
+}
+static int lw_opnd_names(int oi, int sym);
+static int lw_range_names_1(int lo, int hi, const char *label, int *seen, int nseen);
+/* does the node name item sym -- as a value, a receiver, a subscript, a
+ * displayed operand, in a text node's lines or the ranges it performs */
+static int lw_node_names(int n, int sym)
+{
+    if (n < 0) return 0;
+    const LNode *x = &g_lw_n[n];
+    if (!x->op) return x->sym == sym || (x->ref >= 0 && lw_opnd_names(x->ref, sym));
+    return lw_node_names(x->l, sym) || lw_node_names(x->r, sym);
+}
+static int lw_opnd_names(int oi, int sym)
+{
+    if (oi < 0) return 0;
+    const Opnd *o = &g_lw_o[oi];
+    if (o->kind != O_REF) return 0;
+    if (o->ref.sym == &g_sym[sym]) return 1;
+    for (int k = 0; k < o->ref.nsub; k++) if (o->ref.sub[k].sym == &g_sym[sym]) return 1;
+    if (o->ref.rm && o->ref.rm_sx) { Sym *ss; long adj; if (lw_rm_start_ok(o->ref.rm_sx, &ss, &adj) && ss == &g_sym[sym]) return 1; }
+    return 0;
+}
+static int lw_cond_names(int c, int sym)
+{
+    if (c < 0) return 0;
+    const LCond *x = &g_lw_c[c];
+    if (x->kind == C_REL) return x->alnum ? lw_opnd_names(x->ax, sym) || lw_opnd_names(x->ay, sym) : lw_node_names(x->x, sym) || lw_node_names(x->y, sym);
+    return lw_cond_names(x->a, sym) || (x->kind != C_NOT && lw_cond_names(x->b, sym));
+}
+static int lw_stmts_name(int at, int n, int sym, int *seen, int nseen);
+static int lw_stmt_names(int st, int sym, int *seen, int nseen)
+{
+    const LStmt *s = &g_lw_s[st];
+    if (lw_node_names(s->expr, sym) || lw_cond_names(s->cond, sym)) return 1;
+    if (s->kind == LS_STORE || s->kind == LS_ADDTO) for (int k = 0; k < s->nr; k++) if (s->rsym[k] == sym || lw_opnd_names(s->rref[k], sym)) return 1;
+    if (s->rem == sym) return 1;
+    if (s->kind == LS_AMOVE || s->kind == LS_DISPLAY) { if (lw_opnd_names(s->asrc, sym)) return 1; for (int k = 0; k < s->nr; k++) if (lw_opnd_names(s->adst[k], sym)) return 1; }
+    for (int k = 0; k < s->nv; k++) if (s->var[k] == sym || lw_node_names(s->from[k], sym) || lw_node_names(s->by[k], sym) || lw_cond_names(s->vcond[k], sym)) return 1;
+    if (s->kind == LS_TEXT && !s->inl) {
+        const char *label = g_sym[g_sym[sym].record].label;
+        if (lw_text_names(&s->ptext, label)) return 1;
+        for (int k = 0; k < s->nperf; k++)
+            if (lw_range_names_1(g_lw_perf[s->perf0 + k].lo, lw_range_hi(g_lw_perf[s->perf0 + k].lo, g_lw_perf[s->perf0 + k].hi), label, seen, nseen)) return 1;
+        if (s->phrase >= 0) { const LStmt *ph = &g_lw_s[s->phrase]; if (lw_stmts_name(ph->body, ph->nbody, sym, seen, nseen) || lw_stmts_name(ph->els, ph->nels, sym, seen, nseen)) return 1; }
+        return 0;
+    }
+    return lw_stmts_name(s->body, s->nbody, sym, seen, nseen) || lw_stmts_name(s->els, s->nels, sym, seen, nseen);
+}
+static int lw_stmts_name(int at, int n, int sym, int *seen, int nseen)
+{
+    for (int i = 0; i < n; i++) if (lw_stmt_names(g_lw_list[at + i], sym, seen, nseen)) return 1;
+    return 0;
+}
+/* the item whose record is labelled so, or -1: the range scan meets a
+ * placeholder and asks its node instead of giving up */
+static int lw_item_of_label(const char *label)
+{
+    for (int i = 0; i < g_lw_nitem; i++) if (!strcmp(g_sym[g_sym[g_lw_item[i].sym].record].label, label)) return g_lw_item[i].sym;
+    return -1;
+}
+static int lw_range_names_1(int lo, int hi, const char *label, int *seen, int nseen)
+{
+    if (lo < 1 || hi < lo || hi > g_npara) return 1;
+    for (int k = 0; k < nseen; k += 2) if (seen[k] == lo && seen[k + 1] == hi) return 0;
+    if (nseen + 2 > 64) return 1;
+    seen[nseen] = lo; seen[nseen + 1] = hi; nseen += 2;
+    for (int p = lo; p <= hi; p++) {
+        char lab[32]; snprintf(lab, sizeof lab, ".Lp%d_%d:", g_para[p - 1].unit, p);
+        char mark[16]; snprintf(mark, sizeof mark, "#@E %d", p);
+        int i = 0;
+        for (; i < g_nasm && strncmp(g_asm[i], lab, strlen(lab)); i++) ;
+        if (i == g_nasm) return 1;              /* not in the text (yet): anything */
+        for (i++; i < g_nasm && strcmp(g_asm[i], mark); i++) {
+            const char *l = g_asm[i];
+            if (lw_line_names(l, label)) return 1;
+            if (!strncmp(l, "\tjal r31, .Lisl", 15)) {
+                int k; for (k = 0; k < g_lw_npend && strcmp(g_lw_pend[k].name, l + 11); k++) ;
+                if (k == g_lw_npend) return 1;
+                Block t; t.line = g_lw_pend[k].line; t.n = g_lw_pend[k].n;
+                if (lw_text_names(&t, label)) return 1;
+            }
+            int st; if (lw_is_place(l, &st)) {              /* a placeholder not yet resolved: its node knows what it names */
+                int sym = lw_item_of_label(label);
+                if (sym < 0 || lw_stmt_names(st, sym, seen, nseen)) return 1;
+            }
+        }
+        if (i == g_nasm) return 1;
+    }
+    for (int k = 0; k < g_npcf; k++)
+        if (g_pcf[k].from >= lo && g_pcf[k].from <= hi && lw_range_names_1(g_pcf[k].lo, lw_range_hi(g_pcf[k].lo, g_pcf[k].thru), label, seen, nseen)) return 1;
+    return 0;
+}
+static int lw_range_names(int lo, int hi, const char *label) { int seen[64]; return lw_range_names_1(lo, hi, label, seen, 0); }
+/* is PERFORM record pf one of a node in the lists -- an ON/NOT ON block's
+ * own statement, generated as a branch, not the verb's own code */
+static int lw_perf_in_lists(int at, int n, int pf)
+{
+    for (int i = 0; i < n; i++) {
+        const LStmt *t = &g_lw_s[g_lw_list[at + i]];
+        if (t->kind == LS_TEXT && pf >= t->perf0 && pf < t->perf0 + t->nperf) return 1;
+        if (lw_perf_in_lists(t->body, t->nbody, pf) || lw_perf_in_lists(t->els, t->nels, pf)) return 1;
+    }
+    return 0;
+}
 static void lw_gen_text(int st)
 {
     LStmt *s = &g_lw_s[st];
+    /* the items the node may touch: those its lines name, and those the
+     * ranges its own code PERFORMs name (a phrase block's PERFORM is that
+     * block's node's); the rest stay in registers across it */
+    unsigned char touch[256];
+    int own[64], nown = 0;
+    for (int k = 0; k < s->nperf && nown < 64; k++) {
+        int pf = s->perf0 + k;
+        if (s->phrase >= 0) { const LStmt *ph = &g_lw_s[s->phrase]; if (lw_perf_in_lists(ph->body, ph->nbody, pf) || lw_perf_in_lists(ph->els, ph->nels, pf)) continue; }
+        own[nown++] = pf;
+    }
+    /* a runtime call may run a USE declarative (an I/O error, an EC): in a
+     * unit that has them, their sections' footprint is every such node's
+     * (free/faultbyte: the declarative displays the loop's own item) */
+    int decl = 0;
+    for (int u = 0; u < g_nuse && !decl; u++) if (g_use[u].unit == g_unit) decl = 1;
+    if (decl) { decl = 0; for (int i = 0; i < s->ptext.n && !decl; i++) decl = strncmp(s->ptext.line[i], "\tjal r31, cob_", 14) == 0; }
+    for (int i = 0; i < g_lw_nitem; i++) {
+        const char *label = g_sym[g_sym[g_lw_item[i].sym].record].label;
+        touch[i] = (unsigned char)lw_text_names(&s->ptext, label);
+        for (int k = 0; k < nown && !touch[i]; k++)
+            touch[i] = (unsigned char)lw_range_names(g_lw_perf[own[k]].lo, lw_range_hi(g_lw_perf[own[k]].lo, g_lw_perf[own[k]].hi), label);
+        for (int u = 0; decl && u < g_nuse && !touch[i]; u++)
+            if (g_use[u].unit == g_unit) touch[i] = (unsigned char)lw_range_names(g_use[u].sec, lw_range_hi(g_use[u].sec, -1), label);
+    }
+    g_lw_touch = touch;
+    if (lw_trace()) { int k = 0; for (int i = 0; i < g_lw_nitem; i++) k += touch[i]; fprintf(stderr, "hir: line %d text node: syncs %d of %d items%s\n", s->line, k, g_lw_nitem, nown ? " (performs)" : ""); }
     lw_exit_stores();
     char b[32]; snprintf(b, sizeof b, ".Ltext%d", st);
     LV v = lw_call(xstrndup(b, strlen(b)), NULL, 0);
     lw_entry_loads();
+    g_lw_touch = NULL;
     if (s->phrase < 0) return;
     /* the phrases: the status word the call returned, ON when it is 1
      * (on_one) or not 0, and the blocks */
@@ -1581,15 +1872,43 @@ static void lw_gen_text(int st)
 }
 /* the emitter's side (hcg_text_call): the lines, marks left out */
 static int lw_text_is(char *name) { return !strncmp(name, ".Ltext", 6); }
+/* the lines with every label they define renamed to a fresh one: a text
+ * node is emitted once per place it stands, and an inlined paragraph's
+ * nodes stand in two or more */
+static void lw_relabel(const Block *t, int (*emit_line)(const char *))
+{
+    int old[256], neu[256], n = 0;
+    for (int i = 0; i < t->n && n < 256; i++) {
+        const char *l = t->line[i];
+        if (l[0] == '.' && l[1] == 'L' && l[2] >= '0' && l[2] <= '9') {
+            char *e; long v = strtol(l + 2, &e, 10);
+            if (*e == ':') { old[n] = (int)v; neu[n] = new_label(); n++; }
+        }
+    }
+    char buf[4096];
+    for (int i = 0; i < t->n; i++) {
+        const char *l = t->line[i];
+        if (l[0] == '#' && l[1] == '@') continue;
+        if (!n) { emit_line(l); continue; }
+        int k = 0;
+        for (const char *p = l; *p && k < (int)sizeof buf - 16; ) {
+            if (p[0] == '.' && p[1] == 'L' && p[2] >= '0' && p[2] <= '9') {
+                char *e; long v = strtol(p + 2, &e, 10);
+                int j; for (j = 0; j < n && old[j] != (int)v; j++) ;
+                if (j < n) { k += snprintf(buf + k, sizeof buf - (size_t)k, ".L%d", neu[j]); p = e; continue; }
+            }
+            buf[k++] = *p++;
+        }
+        buf[k] = 0;
+        emit_line(buf);
+    }
+}
+static int lw_cg_line(const char *l) { cg_s((char *)l); cg_c(10); return 0; }
 static int lw_text_call(char *name)
 {
     if (!lw_text_is(name)) return 0;
     const LStmt *s = &g_lw_s[atoi(name + 6)];
-    const Block *t = &s->ptext;
-    for (int i = 0; i < t->n; i++) {
-        if (t->line[i][0] == '#' && t->line[i][1] == '@') continue;
-        cg_s(t->line[i]); cg_c(10);
-    }
+    lw_relabel(&s->ptext, lw_cg_line);
     return 1;
 }
 
@@ -1628,26 +1947,44 @@ static void lw_cond_br(int c, int bt, int bf)
 /* two items in storage with one descriptor: a MOVE between them is a copy
  * of the bytes, as the text emitter makes it (move.h, GitHub #27), not a
  * fetch and a store */
-static int lw_same_desc(Sym *a, Sym *b) { return !a->native && !b->native && sym_desc(a) == sym_desc(b); }
-static void lw_copy_bytes(const Sym *from, const Sym *to)
+static int lw_same_desc(Sym *a, Sym *b) { return !a->native && !b->native && sym_desc(a) == sym_desc(b) && a->size <= 4 * 64; }   /* (64: LW_MAXCHUNK, below) */
+/* the item's bytes at fa, loaded in chunks (values the receivers share:
+ * the sender is identified and read once, before the first receiver --
+ * MOVE te(b) TO b, ce(b); free/moveonce) */
+#define LW_MAXCHUNK 64
+static int lw_load_chunks(const Sym *from, int fa, int *val, int *ty)
 {
-    int fa = lw_item_addr(from), ta = lw_item_addr(to), n = from->size;
-    for (int o = 0; o < n; ) {
-        int w = n - o >= 4 ? 4 : n - o >= 2 ? 2 : 1, ty = w == 4 ? TY_INT : w == 2 ? TY_SHORT | TY_UNSIGNED : TY_CHAR | TY_UNSIGNED;
-        int sa = o ? hi_emit(HI_ADDI, TY_INT, fa, -1, o, NULL) : fa, da = o ? hi_emit(HI_ADDI, TY_INT, ta, -1, o, NULL) : ta;
-        hi_emit(HI_STORE, ty, da, hi_emit(HI_LOAD, ty, sa, -1, 0, NULL), 0, NULL);
-        o += w;
+    int n = from->size, k = 0;
+    for (int o = 0; o < n && k < LW_MAXCHUNK; ) {
+        int w = n - o >= 4 ? 4 : n - o >= 2 ? 2 : 1;
+        ty[k] = w == 4 ? TY_INT : w == 2 ? TY_SHORT | TY_UNSIGNED : TY_CHAR | TY_UNSIGNED;
+        val[k] = hi_emit(HI_LOAD, ty[k], o ? hi_emit(HI_ADDI, TY_INT, fa, -1, o, NULL) : fa, -1, 0, NULL);
+        o += w; k++;
+    }
+    return k;
+}
+static void lw_store_chunks(int ta, const int *val, const int *ty, int k)
+{
+    for (int i = 0, o = 0; i < k; i++) {
+        hi_emit(HI_STORE, ty[i], o ? hi_emit(HI_ADDI, TY_INT, ta, -1, o, NULL) : ta, val[i], 0, NULL);
+        o += ty_size(ty[i]);
     }
 }
 static void lw_gen_store(LStmt *s)
 {
     LNode *x = &g_lw_n[s->expr];
     if (x->op != '/') {
-        LV v; int have = 0;
+        /* the sender once, before any receiver: its value, and its bytes
+         * for a receiver of its own descriptor */
+        LV v; int have = 0, copy = 0, val[LW_MAXCHUNK], ty[LW_MAXCHUNK], nch = 0;
         for (int i = 0; i < s->nr; i++) {
-            if (!x->op && !s->rnd[i] && lw_same_desc(&g_sym[x->sym], &g_sym[s->rsym[i]])) { lw_copy_bytes(&g_sym[x->sym], &g_sym[s->rsym[i]]); continue; }
-            if (!have) { v = lw_val(s->expr); have = 1; }
-            lw_store(s->rsym[i], s->rnd[i], v, x->sc, x->bd, x->neg);
+            if (!x->op && !s->rnd[i] && lw_same_desc(&g_sym[x->sym], &g_sym[s->rsym[i]])) copy = 1; else have = 1;
+        }
+        if (copy) nch = lw_load_chunks(&g_sym[x->sym], lw_sym_addr(x->sym, x->ref), val, ty);
+        if (have) v = lw_val(s->expr);
+        for (int i = 0; i < s->nr; i++) {
+            if (!x->op && !s->rnd[i] && lw_same_desc(&g_sym[x->sym], &g_sym[s->rsym[i]])) { lw_store_chunks(lw_sym_addr(s->rsym[i], s->rref[i]), val, ty, nch); continue; }
+            lw_store_ref(s->rsym[i], s->rref[i], s->rnd[i], v, x->sc, x->bd, x->neg);
         }
         return;
     }
@@ -1668,7 +2005,7 @@ static void lw_gen_store(LStmt *s)
      * quotient is stored over one of them (tests/free/divremgiving) */
     LV a0 = s->rem >= 0 ? lw_val(x->l) : nv;
     LV q = lw_arith2('/', nv, dv, wide);
-    for (int i = 0; i < s->nr; i++) lw_store(s->rsym[i], s->rnd[i], q, sq, bq, x->neg);
+    for (int i = 0; i < s->nr; i++) lw_store_ref(s->rsym[i], s->rref[i], s->rnd[i], q, sq, bq, x->neg);
     if (s->rem >= 0) {
         /* the dividend less the divisor times the quotient cut to the
          * quotient item's decimals (lw_rem_shape) */
@@ -1711,11 +2048,11 @@ static void lw_gen_addto(LStmt *s)
         int sc = d->pi.scale > sum->sc ? d->pi.scale : sum->sc;
         long double bd = lw_sym_bd(d) * dx_p10(sc - d->pi.scale) + sum->bd * dx_p10(sc - sum->sc);
         int wide = lw_wide_bd(bd);
-        LV r = lw_item_val(s->rsym[i]);
+        LV r = lw_item_val_ref(s->rsym[i], s->rref[i]);
         if (!wide) r.hi = -1;
         r = lw_scale(r, sc - d->pi.scale, wide);
         LV t = lw_scale(sv, sc - sum->sc, wide);
-        lw_store(s->rsym[i], s->rnd[i], lw_arith2(s->subtract ? '-' : '+', r, t, wide), sc, bd, d->pi.is_signed || sum->neg || s->subtract);
+        lw_store_ref(s->rsym[i], s->rref[i], s->rnd[i], lw_arith2(s->subtract ? '-' : '+', r, t, wide), sc, bd, d->pi.is_signed || sum->neg || s->subtract);
     }
 }
 /* the VARYING item at level k set to its FROM; augmented by its BY */
@@ -1776,7 +2113,7 @@ static void lw_gen_stmts(int at, int n)
         case LS_ADDTO: lw_gen_addto(s); break;
         case LS_AMOVE: lw_gen_amove(s); break;
         case LS_DISPLAY: lw_gen_display(s); break;
-        case LS_TEXT: lw_gen_text(g_lw_list[at + i]); break;
+        case LS_TEXT: if (s->inl) lw_gen_stmts(s->body, s->nbody); else lw_gen_text(g_lw_list[at + i]); break;
         case LS_IF: {
             int b_then = hir_new_block(), b_else = hir_new_block(), b_join = hir_new_block();
             lw_cond_br(s->cond, b_then, b_else);
@@ -1799,10 +2136,11 @@ static void hl_func(Node *fn)
     hir_reset();
     hl_nalloca = 0; hl_temp_stack = 0; hl_nparams = 0; hl_param_nflat = 0;
     lw_frame = 8;                               /* the saved r31 and r30 (f77_contract.h tells why) */
-    g_lw_nitem = 0;
+    g_lw_nitem = 0; g_lw_items_closed = 0;
     int b = hir_new_block();
     lw_begin_blk(b);
     lw_collect_stmts(g_lw_at, g_lw_n_stmts);
+    g_lw_items_closed = 1;
     lw_entry_loads();
     lw_gen_stmts(g_lw_at, g_lw_n_stmts);
     if (lw_blk_live) { lw_exit_stores(); hi_emit(HI_RET, 0, -1, -1, 0, NULL); lw_blk_live = 0; }
@@ -1846,7 +2184,7 @@ static int lw_heavy_node(int n)
 {
     if (n < 0) return 0;
     LNode *x = &g_lw_n[n];
-    if (!x->op) return g_sym[x->sym].native && (x->sc > 0 || g_sym[x->sym].size == 8);   /* one in storage is the runtime's fetch either way */
+    if (!x->op) return g_sym[x->sym].native && x->ref < 0 && (x->sc > 0 || g_sym[x->sym].size == 8);   /* one in storage is the runtime's fetch either way */
     if (x->op == 'k') return x->sc > 0;
     if (x->sc > 0) return 1;
     return lw_heavy_node(x->l) || lw_heavy_node(x->r);
@@ -1864,11 +2202,12 @@ static int lw_count(int at, int n, int *loops, int *heavy)
     for (int i = 0; i < n; i++) {
         LStmt *s = &g_lw_s[g_lw_list[at + i]];
         c++;
-        if (s->kind == LS_TEXT) { g_lw_ntext++; if (s->nperf) g_lw_nperform++; if (s->phrase >= 0) { LStmt *ph = &g_lw_s[s->phrase]; c += lw_count(ph->body, ph->nbody, loops, heavy) + lw_count(ph->els, ph->nels, loops, heavy); } }
+        if (s->kind == LS_TEXT && s->inl) c--;                                  /* an inlined PERFORM is its body, counted below */
+        else if (s->kind == LS_TEXT) { g_lw_ntext++; if (s->nperf) g_lw_nperform++; if (s->phrase >= 0) { LStmt *ph = &g_lw_s[s->phrase]; c += lw_count(ph->body, ph->nbody, loops, heavy) + lw_count(ph->els, ph->nels, loops, heavy); } }
         if (s->kind == LS_LOOP) (*loops)++;
         if (s->expr >= 0 && lw_heavy_node(s->expr)) *heavy = 1;
         int numeric = s->kind == LS_STORE || s->kind == LS_ADDTO;         /* rsym is theirs; a MOVE of bytes or a DISPLAY has operands instead */
-        if (numeric) for (int k = 0; k < s->nr; k++) if (g_sym[s->rsym[k]].native && (s->rnd[k] || g_sym[s->rsym[k]].pi.scale > 0 || g_sym[s->rsym[k]].size == 8)) *heavy = 1;
+        if (numeric) for (int k = 0; k < s->nr; k++) if (g_sym[s->rsym[k]].native && s->rref[k] < 0 && (s->rnd[k] || g_sym[s->rsym[k]].pi.scale > 0 || g_sym[s->rsym[k]].size == 8)) *heavy = 1;
         /* a quotient with decimals, or rounded: the word path leaves it to the stack's division */
         if (s->expr >= 0 && g_lw_n[s->expr].op == '/')
             for (int k = 0; k < s->nr; k++) if (s->rnd[k] || g_sym[s->rsym[k]].pi.scale > 0) *heavy = 1;
@@ -1886,15 +2225,13 @@ static int lw_count(int at, int n, int *loops, int *heavy)
  * its unit-wide pass -- since a placeholder is an instruction nobody
  * lists, and would make it forget what the registers hold (csv2fw lost
  * 6% that way before this ran first). */
-typedef struct { char *name; char **line; int n; } LwPend;
-static LwPend *g_lw_pend; static int g_lw_npend, g_lw_pcap;
 /* does the run name a native item at all?  an island of none has nothing
  * to hold in registers */
 static int lw_node_native(int n)
 {
     if (n < 0) return 0;
     LNode *x = &g_lw_n[n];
-    if (!x->op) return g_sym[x->sym].native;
+    if (!x->op) return g_sym[x->sym].native && x->ref < 0;
     if (x->op == 'k') return 0;
     return lw_node_native(x->l) || lw_node_native(x->r);
 }
@@ -1909,7 +2246,7 @@ static int lw_native_items(int at, int n)
     for (int i = 0; i < n; i++) {
         LStmt *s = &g_lw_s[g_lw_list[at + i]];
         if (s->expr >= 0 && lw_node_native(s->expr)) return 1;
-        if (s->kind == LS_STORE || s->kind == LS_ADDTO) for (int k = 0; k < s->nr; k++) if (g_sym[s->rsym[k]].native) return 1;
+        if (s->kind == LS_STORE || s->kind == LS_ADDTO) for (int k = 0; k < s->nr; k++) if (g_sym[s->rsym[k]].native && s->rref[k] < 0) return 1;
         if (s->cond >= 0 && lw_cond_native(s->cond)) return 1;
         for (int k = 0; k < s->nv; k++) if (g_sym[s->var[k]].native || lw_node_native(s->from[k]) || lw_node_native(s->by[k]) || lw_cond_native(s->vcond[k])) return 1;
         if (lw_native_items(s->body, s->nbody) || lw_native_items(s->els, s->nels)) return 1;
@@ -1934,6 +2271,68 @@ static int lw_run_returns(int at, int n)
     }
     return 1;
 }
+/* ---- a PERFORM of a paragraph as the paragraph's own nodes ----------
+ * A plain PERFORM of a range (once, out of line) whose paragraphs hold
+ * nothing but nodes, and which comes back, is emitted as those nodes in
+ * its place -- no perform stack, and the items stay in registers across
+ * it.  The paragraph's own code stays for its other callers, and a text
+ * node among the shared statements is relabelled wherever it is emitted
+ * (lw_relabel).  Decided when the unit is read whole, before its runs are
+ * resolved: the paragraphs' placeholders are read off the text between
+ * the paragraph's label and its end mark (#@E, emit_exit_check). */
+static int lw_para_nodes(int id)
+{
+    char lab[32]; snprintf(lab, sizeof lab, ".Lp%d_%d:", g_unit, id);
+    char mark[16]; snprintf(mark, sizeof mark, "#@E %d", id);
+    int i = 0, st;
+    for (; i < g_nasm && strncmp(g_asm[i], lab, strlen(lab)); i++) ;
+    if (i == g_nasm) return 0;
+    for (i++; i < g_nasm && strcmp(g_asm[i], mark); i++) {
+        const char *l = g_asm[i];
+        if (lw_is_place(l, &st)) { lw_list_add(st); continue; }
+        if (!l[0] || (l[0] == '#' && l[1] == '@') || !strncmp(l, "__ln_", 5) || !strncmp(l, "\t.globl __ln_", 13)) continue;
+        return 0;                               /* code no node accounts for */
+    }
+    return i < g_nasm;
+}
+/* does the list reach statement target through the inlined PERFORMs' bodies? */
+static int lw_reaches(int at, int n, int target)
+{
+    for (int i = 0; i < n; i++) {
+        int k = g_lw_list[at + i]; LStmt *s = &g_lw_s[k];
+        if (k == target) return 1;
+        if (lw_reaches(s->body, s->nbody, target) || lw_reaches(s->els, s->nels, target)) return 1;
+        if (s->kind == LS_TEXT && s->phrase >= 0) { LStmt *ph = &g_lw_s[s->phrase]; if (lw_reaches(ph->body, ph->nbody, target) || lw_reaches(ph->els, ph->nels, target)) return 1; }
+    }
+    return 0;
+}
+static void lw_inline_performs(void)
+{
+    int only = -1;
+    { const char *e = getenv("S32_HIR_INLINE"); if (e) { only = atoi(e); if (!only) return; } }    /* S32_HIR_INLINE=0: no PERFORM is inlined; =line: that line's alone (bisection) */
+    for (int k = 0; k < g_lw_ns; k++) {
+        LStmt *s = &g_lw_s[k];
+        if (only > 0 && s->line != only) continue;
+        if (s->kind != LS_TEXT || !s->is_perform || s->inl || s->nperf != 1 || !g_lw_perf[s->perf0].once || s->phrase >= 0) continue;
+        int lo = g_lw_perf[s->perf0].lo, hi = lw_range_hi(lo, g_lw_perf[s->perf0].hi);
+        if (lo < 1 || hi > g_npara || g_para[lo - 1].unit != g_unit) continue;
+        if (!lw_range_returns(lo, hi)) continue;
+        int at = g_lw_nlist, ok = 1;
+        for (int p = lo; p <= hi && ok; p++) ok = lw_para_nodes(p);
+        if (!ok) { g_lw_nlist = at; if (lw_trace()) fprintf(stderr, "hir: line %d PERFORM: not inlined: a paragraph of %s..%s holds code no node accounts for\n", s->line, g_para[lo - 1].name, g_para[hi - 1].name); continue; }
+        int n = g_lw_nlist - at;
+        if (lw_reaches(at, n, k)) { g_lw_nlist = at; if (lw_trace()) fprintf(stderr, "hir: line %d PERFORM: not inlined: recursive\n", s->line); continue; }
+        int loops = 0, heavy = 0, nt0 = g_lw_ntext, np0 = g_lw_nperform, count = lw_count(at, n, &loops, &heavy);
+        g_lw_ntext = nt0; g_lw_nperform = np0;
+        if (count > 256) { g_lw_nlist = at; if (lw_trace()) fprintf(stderr, "hir: line %d PERFORM: not inlined: %d statements\n", s->line, count); continue; }
+        s->body = at; s->nbody = n; s->inl = 1;
+        if (lw_trace()) fprintf(stderr, "hir: line %d PERFORM %s%s%s: inlined, %d statement%s\n", s->line, g_para[lo - 1].name, hi > lo ? " THRU " : "", hi > lo ? g_para[hi - 1].name : "", count, count == 1 ? "" : "s");
+    }
+}
+/* the in-line PERFORM whose code begins at lay0 folded into one node: the
+ * line before is its placeholder (sort.h asks before resolving its text) */
+static int lw_loop_folded_at(int lay0) { int st; return lay0 > 0 && lw_is_place(g_asm[lay0 - 1], &st) && g_lw_s[st].kind == LS_LOOP; }
+
 static int g_lw_final;                          /* the unit is read whole: every PERFORM is known */
 static int g_lw_again;                          /* a pass restored text that holds placeholders: another pass */
 static void lw_resolve_1(int from);

@@ -5791,3 +5791,88 @@ the wrong answer; the inline load made the island right and broke the
 agreement.  Fixed in kern.h (the first byte's high nibble is no digit
 when the digits do not fill the nibbles; the DBT's hook takes the new
 kern.h by its tag), test free/packedpad (GnuCOBOL agrees).
+
+Thirteenth (2026-10-03): milestone 2's second half -- **a PERFORM of a
+paragraph as the paragraph's own nodes**, and what the real programs
+needed on the way.  csv2fw's profile (bench/prof.sh, -fprofile-lines now
+compatible with islands) said where the bytes go: 68% of the guest's
+instructions in the generated code, ~400 per CSV byte, in parse-byte and
+the paragraphs it performs, plus two perform push/exit pairs a byte.  So:
+
+- *Reference modification with a computed start* (`out-rec(out-i:1)`,
+  an integer item or item +/- literal) is an island's: the address formed
+  in line, the text's cob_refmod_len_chk check done as one unsigned
+  compare with the runtime's own check -- and message -- on the branch
+  that fails.  The collector did not look inside a start expression, so
+  the start item got an alloca with no entry load; now a new item after
+  the entry loads is an internal error (g_lw_items_closed).
+- *Subscripted items in storage* as values and receivers (LNode.ref,
+  LStmt.rref: the kept reference; lw_sym_addr forms the address), and
+  a *native table's element* as a word in storage (loaded and stored at
+  its address, never an alloca: `move stt-next(state + 1, byte-class +
+  1) to state`).
+- *The inline DISPLAY/packed store* (lw_dec_store, the mirror of
+  emit_dec_store: digits by division, the overpunch or C/D nibble), the
+  alignment and truncation shared with the native path.  The sign is
+  read where cob_k_put_scale reads it -- after the scale is aligned,
+  before the high digits are cut: a value scaled down to nothing is +0
+  (gen-native 5024), one whose digits are all cut stays a negative zero
+  (gen-lit 4506, 'p'); the generators found both ends of that rule.
+- *Inlining* (lw_inline_performs, at the unit's end before the runs are
+  resolved): a text node that is a plain PERFORM of a range (the verb
+  itself -- twice the IF around one and the in-line PERFORM around one
+  were taken for it, from their perform records -- so the flag comes from
+  the statement's own parse, sort.h's g_lw_pf_once), whose paragraphs hold
+  nothing but placeholders between their label and a new end mark (`#@E`,
+  emit_exit_check) and which comes back (lw_range_returns), gets the
+  paragraphs' statements as its body and is emitted as them: no perform
+  stack, the items in registers across.  The paragraph's own code stays
+  for its other callers; a text node emitted in more than one place has
+  its labels renamed at each (lw_relabel); recursion is refused by
+  reachability (lw_reaches); S32_HIR_INLINE=0 / =line bisects.  An
+  in-line loop that folded into one node is no longer resolved at its own
+  end (lw_loop_folded_at): its text is cut away with the node.
+- *Syncing only what a text node can touch.*  Inlining made the per-byte
+  island's items 13, and every text node stored and reloaded all of them
+  (csv2fw +5% with inlining at first).  A native item is reached by its
+  label or not at all (census.h: nothing takes its address, it lies in no
+  record anything else names), so a node touches an item only if its
+  lines name the record's label (lw_text_names), or a range its OWN code
+  performs does -- transitively through the ranges' lines, the islands
+  they call and their unresolved placeholders' nodes (lw_range_names,
+  lw_stmt_names); an ON/NOT ON block's PERFORM is that block's node's,
+  not the verb's.  The READ at csv2fw's loop head syncs 0 of 13.
+- Found by the generators on the way: (1) a text node's lines may name
+  r14-r28 -- loopreg rewrites an in-line loop before the statement's text
+  is cut -- and those are the island's callee-saved registers, where its
+  values live across the node; hidden while every item was reloaded after
+  every node, exposed by the narrowing (gen-native 4401, an 8-byte item's
+  high word); such a node is refused.  (2) The TEXT's hot word path took
+  "wrap" mode for a wide expression into a receiver that wraps, which is
+  right for + - * and wrong through a MOD or REM ((a mod b) mod 2^32 is
+  not (a mod 2^32) mod b): the island had it right and the text wrong
+  (gen-checked 4409, MOD(I00 * 100 + 54569, 1000000007) into a COMP-5,
+  HEAD too); now such a tree takes the checked word mode (ksearch's hash
+  loop unchanged, where a refusal had cost it 13%).
+
+  The harness added three more, each a rule the islands had to learn
+  from the text: a sender is identified and read ONCE, before the first
+  receiver (free/moveonce, `MOVE te(b) TO b, ce(b)`: the byte copy had
+  re-formed te(b)'s address after b changed -- the chunks are loaded
+  first now); a runtime call in a unit with USE declaratives may run them,
+  so their sections' footprint is every such node's (free/faultbyte: the
+  declarative displays the loop's own counter); and the sign of a pair
+  the scaling narrowed to a word was read off instruction -1 (gen-native
+  seed 19 under -fno-native-items: the generators' native/non-native axis
+  is a third differential, and found what the other two had not).
+
+Measured: csv2fw 3.794 -> **3.628 G instructions (-4.4%)**, 0.25 -> 0.23 s
+under the DBT, output byte-identical; inlining alone was +5% before the
+narrowed sync and is -1.2% against no inlining after it.  Kernels: kmove
+-62%, kseq -53%, kstring -14%, kreport -9%, ksort -5%, kidx -4%, karith
+-75%, kedit -26%, ksearch 0.  Twelve generators at both policies, a
+40/25-seed sweep of all twelve, 40 seeds of native against
+-fno-native-items; all gates (harness 810).  What keeps the per-byte path from more: the
+EVALUATE text nodes (parse-byte's two), whose inner PERFORMs make them
+sync all 13 items each byte -- EVALUATE as an IF chain is next, then the
+item-per-paragraph refinement of the footprint.

@@ -292,6 +292,8 @@ static void parse_return(void)
 }
 
 static void lw_note_perform(int lo, int thru);  /* lower.h */
+static int g_lw_pf_once;                        /* lower.h: the PERFORM being emitted is a plain one of a range */
+static int lw_loop_folded_at(int lay0);         /* lower.h */
 static void emit_body(Body *b)
 {
     if (!b->inline_body) {
@@ -718,7 +720,8 @@ static void parse_perform(void)
         expect_word("times");
     }
     if (body.inline_body) parse_inline_body(&body);
-    else pc_perform(body.from, body.thru, kind == PF_ONCE ? "once" : kind == PF_UNTIL ? "until" : kind == PF_VARYING ? "varying" : kind == PF_TIMES ? "times" : "exit");
+    g_lw_pf_once = kind == PF_ONCE && !body.inline_body;     /* lower.h: a plain PERFORM of a range, inlinable */
+    if (!body.inline_body) pc_perform(body.from, body.thru, kind == PF_ONCE ? "once" : kind == PF_UNTIL ? "until" : kind == PF_VARYING ? "varying" : kind == PF_TIMES ? "times" : "exit");
 
     if (kind == PF_VARYING || kind == PF_UNTIL) lw_perform(kind == PF_VARYING ? v : NULL, nv, c, &body, test_after);   /* an island's too (lower.h): its placeholder, then the text */
     int lay0 = g_nasm;                  /* the statement's code from here: its loops' regions (loopreg.h) */
@@ -782,7 +785,13 @@ static void parse_perform(void)
         break;
     }
     if (body.inline_body && body.Lexit >= 0) emit_label(body.Lexit);
-    if (body.inline_body && !g_inline_depth) { lw_resolve(lay0); lr_run(lay0); }     /* the outermost in-line PERFORM: its islands, then its loops and those in them */
+    if (body.inline_body && !g_inline_depth) {
+        /* the outermost in-line PERFORM: its islands, then its loops and those
+         * in them -- unless the whole loop is one node already: its text is
+         * then cut away with the node, and resolved only if it comes back */
+        if (!lw_loop_folded_at(lay0)) lw_resolve(lay0);
+        lr_run(lay0);
+    }
     /* an out-of-line PERFORM has no END-PERFORM: the next one belongs to
      * whatever inline PERFORM encloses this statement */
 }

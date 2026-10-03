@@ -1100,6 +1100,7 @@ static void emit_exit_check(int id)
 {
     /* is this exit being performed?  Its cell says (emit_para_cell): zero,
      * and control falls through with no call */
+    emit("#@E %d", id);                         /* a mark: the paragraph's statements end here (lower.h reads a paragraph's placeholders) */
     int Ln = new_label();
     emit_para_cell("r3", g_unit, id);
     emit("\tldw r1, r3+0");
@@ -1654,7 +1655,7 @@ static void parse_procedure_division(void)
     }
     if (g_uses_rc) { emit_la("r1", "cob_return_code"); emit("\tldw r1, r1+0"); }   /* RETURN-CODE, to the caller */
     else emit("\taddi r1, r0, 0");
-    g_lw_final = 1; lw_resolve(0); g_lw_final = 0;   /* the islands, before the code is read as code (lower.h) */
+    g_lw_final = 1; lw_inline_performs(); lw_resolve(0); g_lw_final = 0;   /* the islands, before the code is read as code (lower.h) */
     lr_unit(); lr_unit_saves(); lr_unit_restores();
     census_unit();
     emit("\tldw r13, sp+%d", SLOT_R13);

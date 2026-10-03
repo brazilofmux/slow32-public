@@ -161,6 +161,7 @@ static long double hx_mag(const Opnd *o)
     if (is_display_int(s) && !s->native) return 2 * (long double)pow10l(s->pi.digits) - 1;
     return (long double)pow10l(s->pi.digits) - 1;
 }
+static int g_hx_mod_wide;               /* hx_bound met a MOD or REM over a dividend past a word: checked, never wrapped */
 /* the bound of node n; *wide past a word somewhere, *inner a division
  * below the top, *neg a value that can be negative */
 static long double hx_bound(int n, int *wide, int *inner, int *neg, int top)
@@ -172,8 +173,13 @@ static long double hx_bound(int n, int *wide, int *inner, int *neg, int top)
     else if (h->op == 'I' || h->op == 'T') b = hx_bound(h->l, wide, inner, neg, 0);   /* an integer's own value */
     else if (h->op == 'A') { int ng = 0; b = hx_bound(h->l, wide, inner, &ng, 0); }
     else if (h->op == 'M' || h->op == 'R') {
-        int ng = 0; long long d = numlit_int(&g_hn[h->r].o.num);
-        hx_bound(h->l, wide, inner, h->op == 'R' ? neg : &ng, 0);
+        int ng = 0, w = 0; long long d = numlit_int(&g_hn[h->r].o.num);
+        hx_bound(h->l, &w, inner, h->op == 'R' ? neg : &ng, 0);
+        /* a dividend past a word: the word path may take it only checked
+         * (mode 2), not wrapped -- (a mod b) mod 2^32 is not (a mod 2^32)
+         * mod b, unlike a sum's or a product's, whatever the receiver does
+         * (gen-checked 4409: MOD(I00 * 100 + 54569, 1000000007) into a COMP-5) */
+        if (w) { *wide = 1; g_hx_mod_wide = 1; }
         if (h->op == 'M' && d < 0) *neg = 1;          /* MOD takes the divisor's sign, REM the dividend's */
         b = (long double)(d < 0 ? -d : d) - 1;
     }
@@ -256,6 +262,7 @@ static int hx_ok(int root, Ref *rs, int *rd, int nr, Ref *rem, int size_err, lon
     if (refs_pending(rs, nr) || (rem && ref_pending(rem))) return 0;   /* a receiver's call is made as it is stored: the stack's stores */
     if (g_slot_base + hn_depth(root, 1) + 2 > NSLOTS) return 0;     /* too deep for the frame: the stack */
     int wide = 0, inner = 0, neg = 0, div = g_hn[root].op == '/';
+    g_hx_mod_wide = 0;
     long double b = hx_bound(root, &wide, &inner, &neg, 1);
     if (inner) return 0;
     if (div) {
@@ -265,7 +272,7 @@ static int hx_ok(int root, Ref *rs, int *rd, int nr, Ref *rem, int size_err, lon
     }
     int mode = 1;
     if (wide) {                                     /* wrap if every receiver wraps as the stack's store does, else checked */
-        if (div || b >= 9.0e18L) mode = 2;
+        if (div || b >= 9.0e18L || g_hx_mod_wide) mode = 2;
         for (int i = 0; i < nr && mode == 1; i++) {
             Sym *d = rs[i].sym;
             if (!sym_notrunc(d) || !d->pi.is_signed || !is_hot_int(d)) mode = 2;

@@ -113,7 +113,9 @@ selfhost, listed in `src/hir/hir.h`), where stage08 calls `__muldi3`.
   refused (no loop, or none of its own; text more than a third; no
   native item; a PERFORM that may not come back).
   `S32_HIR_DUMP=.LislN`: that island's HIR as lowered and after the
-  optimizer.  `S32_HIR_MIN=n`: the run length that
+  optimizer.  `S32_HIR_INLINE=0` (no PERFORM inlined) or `=line` (that
+  line's alone).  The trace also says, per text node, how many of the
+  island's items it syncs.  `S32_HIR_MIN=n`: the run length that
   pays on its own (0: every run).  `S32_HIR_ONLY=a[-b]`: islands only
   of the runs beginning on those source lines -- bisect a differing
   program by line range down to the one island.
@@ -209,6 +211,46 @@ and, further on, the PERFORM UNTIL that drives it, as a loop in HIR
 calling the paragraph's function.  GO TO within the paragraph's range
 would be a branch inside the island; the PERFORM census already says
 which paragraphs are procedures.
+
+### The second half (2026-10-03): a PERFORM as its paragraph's nodes
+
+Done not as a function per paragraph but by **inlining**: a text node
+that is a plain `PERFORM range` (the verb itself, by the statement's own
+parse), whose paragraphs hold nothing but nodes between their label and
+their end mark (`#@E`), and which comes back, is emitted as the
+paragraphs' own nodes in its place (`lw_inline_performs`, at the unit's
+end before the runs are resolved).  No perform stack, no entry and exit
+of a function, the items in registers straight through; the paragraph's
+own code stays for whoever else reaches it, and a text node emitted in
+two places gets fresh labels at each (`lw_relabel`).  Recursion is
+refused by reachability; `S32_HIR_INLINE=0` or `=line` bisects.
+
+What it needed, each measured on csv2fw's per-byte path: reference
+modification with a computed start (one unsigned compare, the runtime's
+check on the failing branch), subscripted storage items and native
+tables' elements as values and receivers, the inline DISPLAY/packed
+store -- and above all **syncing only what a text node can touch**.  A
+native item is reached by its label or not at all (the census admits
+nothing else), so a node stores and reloads an item only if its lines
+name the item's record, or a range its own code performs does, found
+transitively through the ranges' text, the islands they call and their
+placeholders' nodes.  Without that, inlining made csv2fw 5% slower (13
+items synced round every text node, every byte); with it, csv2fw is
+3.794 -> 3.628 G instructions (-4.4%, 0.25 -> 0.23 s), and the kernels
+moved again (kmove -62%, kseq -53%, kstring -14%, kreport -9%).
+
+Two lessons the generators taught, both about the text: a text node's
+lines may use r14-r28 (loopreg rewrote the in-line loop before the
+statement's text was cut) and so clobber the island's live values --
+hidden while every item was reloaded after every node; and the text's
+own hot word path was wrong for MOD/REM over a wide dividend into a
+wrapping receiver, where the island was right (it takes the checked
+word mode now).  A differential that breaks is a question for the
+oracle, not a verdict against the new side.
+
+Next on this path: EVALUATE as an IF chain (parse-byte's two EVALUATEs
+are text nodes with PERFORMs inside, so they still sync every item each
+byte); then the footprint by item per paragraph.
 
 ## What follows
 
