@@ -1483,16 +1483,18 @@ static void lw_store(int sym, int rounded, LV v, int sc, long double bd, int neg
 /* |v| (a word, below 10^D) into a DISPLAY or packed item of D <= 9 digits
  * at a: the digits by division, as the text's emit_dec_store writes them;
  * the sign an overpunch on the last digit ('p'..'y'), or the C/D nibble */
+static int lw_div10(int m, int *r);
 static void lw_dec_store(const Sym *d, int a, int mag, int neg)
 {
-    int D = d->pi.digits, ten = lw_iconst(10);
+    int D = d->pi.digits;
     if (d->usage == U_DISPLAY) {
         for (int k = D - 1; k >= 0; k--) {
-            int dig = k ? hi_emit(HI_REM, TY_INT | TY_UNSIGNED, mag, ten, 0, NULL) : mag;    /* the last division's quotient is the top digit */
+            int dig, q = k ? lw_div10(mag, &dig) : -1;             /* the last division's quotient is the top digit */
+            if (!k) dig = mag;
             int ch = hi_emit(HI_ADD, TY_INT, dig, lw_iconst(48), 0, NULL);
             if (k == D - 1 && d->pi.is_signed) ch = hi_emit(HI_ADD, TY_INT, ch, hi_emit(HI_SLL, TY_INT, neg, lw_iconst(6), 0, NULL), 0, NULL);   /* + 64 when negative */
             hi_emit(HI_STORE, TY_CHAR, k ? hi_emit(HI_ADDI, TY_INT, a, -1, k, NULL) : a, ch, 0, NULL);
-            if (k) mag = hi_emit(HI_DIV, TY_INT | TY_UNSIGNED, mag, ten, 0, NULL);
+            if (k) mag = q;
         }
         return;
     }
@@ -1500,17 +1502,155 @@ static void lw_dec_store(const Sym *d, int a, int mag, int neg)
      * zero pad nibble at the top when the digits do not fill the bytes */
     int bytes = (int)d->size;
     int sgn = d->pi.is_signed ? hi_emit(HI_ADD, TY_INT, lw_iconst(12), neg, 0, NULL) : lw_iconst(15);     /* C, D; F unsigned */
-    int lo = hi_emit(HI_REM, TY_INT | TY_UNSIGNED, mag, ten, 0, NULL); mag = hi_emit(HI_DIV, TY_INT | TY_UNSIGNED, mag, ten, 0, NULL);
+    int lo; mag = lw_div10(mag, &lo);
     hi_emit(HI_STORE, TY_CHAR, hi_emit(HI_ADDI, TY_INT, a, -1, bytes - 1, NULL), hi_emit(HI_OR, TY_INT, hi_emit(HI_SLL, TY_INT, lo, lw_iconst(4), 0, NULL), sgn, 0, NULL), 0, NULL);
     int left = D - 1;
     for (int b = bytes - 2; b >= 0; b--) {
-        int low = left > 0 ? hi_emit(HI_REM, TY_INT | TY_UNSIGNED, mag, ten, 0, NULL) : lw_iconst(0);
-        if (left > 0) mag = hi_emit(HI_DIV, TY_INT | TY_UNSIGNED, mag, ten, 0, NULL);
+        int low = lw_iconst(0), high = lw_iconst(0);
+        if (left > 0) mag = lw_div10(mag, &low);
         left--;
-        int high = left > 0 ? hi_emit(HI_REM, TY_INT | TY_UNSIGNED, mag, ten, 0, NULL) : lw_iconst(0);
-        if (left > 0) mag = hi_emit(HI_DIV, TY_INT | TY_UNSIGNED, mag, ten, 0, NULL);
+        if (left > 0) mag = lw_div10(mag, &high);
         left--;
         hi_emit(HI_STORE, TY_CHAR, b ? hi_emit(HI_ADDI, TY_INT, a, -1, b, NULL) : a, hi_emit(HI_OR, TY_INT, hi_emit(HI_SLL, TY_INT, high, lw_iconst(4), 0, NULL), low, 0, NULL), 0, NULL);
+    }
+}
+/* ---- numeric editing in line (kern.h cob_edit_apply, per picture) ----
+ * A numeric-edited receiver whose picture holds 9 Z , . + - $ CR DB and
+ * V S (no * B 0 / P, no BLANK WHEN ZERO, no DECIMAL-POINT IS COMMA or
+ * CURRENCY SIGN) and at most nine digit positions is edited by code of
+ * its own: the digits by division, each position's byte from the
+ * picture -- the suppression state static where the picture decides it
+ * (a 9, the point), a value where the digits do -- and the floating
+ * symbol placed last.  The rules are cob_edit_apply's, position for
+ * position; kedit spent 0.33 of its 0.34 s in the runtime's walk. */
+static void lw_fill_n(int dst, long n, int c);
+static char lw_edit_fl(const char *pat)
+{
+    int cp = 0, cm = 0, cd = 0;
+    for (const char *p = pat; *p; p++) { if (*p == '+') cp++; else if (*p == '-') cm++; else if (*p == '$') cd++; }
+    return cp > 1 ? '+' : cm > 1 ? '-' : cd > 1 ? '$' : 0;
+}
+static int lw_edit_ok(const Sym *d)
+{
+    if (d->pi.category != PIC_NUMERIC_EDITED || d->usage != U_DISPLAY || d->blank_zero || g_dp_comma || g_currency) return 0;
+    if (d->pi.digits < 1 || d->pi.digits > 9 || d->sign_sep || d->sign_lead) return 0;
+    const char *pat = d->pi.pat; char fl = lw_edit_fl(pat); int npos = 0;
+    for (const char *p = pat; *p; p++) {
+        if (!strchr("9Z,.+-$CDVS", *p)) return 0;
+        if (*p == '9' || *p == 'Z' || (fl && *p == fl)) npos++;
+    }
+    if (fl) npos--;
+    return npos == d->pi.digits;
+}
+/* q = m / 10 and r = m % 10 for an unsigned word, by the reciprocal:
+ * mulhu by 0xCCCCCCCD then >> 3 (exact for every 32-bit m), where divu
+ * and remu are two hardware divisions each -- the digits of an edit cost
+ * kedit as much that way as the runtime's walk had */
+static int lw_div10(int m, int *r)
+{
+    static int way = -1; if (way < 0) { const char *e = getenv("S32_HIR_DIV10"); way = e ? atoi(e) : 1; }   /* =0: divu/remu, for the measurement */
+    if (!way) { int q = hi_emit(HI_DIV, TY_INT | TY_UNSIGNED, m, lw_iconst(10), 0, NULL); if (r) *r = hi_emit(HI_REM, TY_INT | TY_UNSIGNED, m, lw_iconst(10), 0, NULL); return q; }
+    int q = hi_emit(HI_SRL, TY_INT, hi_emit(HI_MULHU, TY_INT, m, lw_iconst((int)0xCCCCCCCD), 0, NULL), lw_iconst(3), 0, NULL);
+    if (r) *r = hi_emit(HI_SUB, TY_INT, m, hi_emit(HI_MUL, TY_INT, q, lw_iconst(10), 0, NULL), 0, NULL);
+    return q;
+}
+/* byte b to addr + o */
+static void lw_edit_put(int addr, int o, int b) { hi_emit(HI_STORE, TY_CHAR, o ? hi_emit(HI_ADDI, TY_INT, addr, -1, o, NULL) : addr, b, 0, NULL); }
+/* mag: the magnitude, a word of at most the picture's digits; neg: 1 when
+ * the value was negative (a value), or -1 when it never is */
+static void lw_edit_store(const Sym *d, int addr, int mag, int neg)
+{
+    const char *pat = d->pi.pat; char fl = lw_edit_fl(pat);
+    int npos = d->pi.digits, has9 = strchr(pat, '9') != NULL;
+    int dg[9], m = mag;
+    for (int j = npos - 1; j >= 0; j--) { if (j) m = lw_div10(m, &dg[j]); else dg[j] = m; }
+    int z = hi_emit(HI_SEQ, TY_INT, mag, lw_iconst(0), 0, NULL);
+    int negv = neg < 0 ? lw_iconst(0) : hi_emit(HI_AND, TY_INT, neg, hi_emit(HI_XOR, TY_INT, z, lw_iconst(1), 0, NULL), 0, NULL);   /* zero is positive */
+    /* the walk: sig the suppression state (-2 false, -1 true, else the
+     * value), fs the first significant position (-2 none yet, static >= 0,
+     * or fsv a value that is -1 for none) */
+    int sig = -2, fs = -2, fsv = -1, flpos = -1, instr = 0, fl_seen = 0, o = 0, di = 0;
+    for (const char *p = pat; *p; p++) {
+        char c = *p;
+        if ((fl && c == fl) || c == 'Z') {
+            if (fl && c == fl && !fl_seen) { fl_seen = 1; flpos = o; instr = 1; lw_edit_put(addr, o++, lw_iconst(' ')); continue; }
+            instr = 1;
+            int dv = dg[di++];
+            if (sig == -1) { lw_edit_put(addr, o++, hi_emit(HI_ADD, TY_INT, dv, lw_iconst('0'), 0, NULL)); continue; }
+            int nz = hi_emit(HI_SNE, TY_INT, dv, lw_iconst(0), 0, NULL);
+            int sv = sig == -2 ? nz : hi_emit(HI_OR, TY_INT, sig, nz, 0, NULL);
+            /* ' ' or the digit: 32 + sv * (16 + d) */
+            lw_edit_put(addr, o, hi_emit(HI_ADD, TY_INT, lw_iconst(' '), hi_emit(HI_MUL, TY_INT, sv, hi_emit(HI_ADD, TY_INT, dv, lw_iconst(16), 0, NULL), 0, NULL), 0, NULL));
+            /* first significant: o when it is this one, else as it was (-1 while none) */
+            int here = hi_emit(HI_SUB, TY_INT, hi_emit(HI_MUL, TY_INT, nz, lw_iconst(o + 1), 0, NULL), lw_iconst(1), 0, NULL);   /* nz ? o : -1 */
+            if (sig == -2) fsv = here;
+            else fsv = hi_emit(HI_ADD, TY_INT, fsv, hi_emit(HI_MUL, TY_INT, hi_emit(HI_XOR, TY_INT, sig, lw_iconst(1), 0, NULL), hi_emit(HI_ADD, TY_INT, here, lw_iconst(1), 0, NULL), 0, NULL), 0, NULL);   /* sig ? fsv : here (fsv is -1 when !sig) */
+            sig = sv; fs = -3;                      /* dynamic: fsv */
+            o++;
+            continue;
+        }
+        switch (c) {
+        case '9': {
+            int dv = dg[di++];
+            lw_edit_put(addr, o, hi_emit(HI_ADD, TY_INT, dv, lw_iconst('0'), 0, NULL));
+            if (sig == -2) fs = o;
+            else if (sig != -1) { fsv = hi_emit(HI_ADD, TY_INT, fsv, hi_emit(HI_MUL, TY_INT, hi_emit(HI_XOR, TY_INT, sig, lw_iconst(1), 0, NULL), lw_iconst(o + 1), 0, NULL), 0, NULL); fs = -3; }
+            sig = -1; o++;
+            break;
+        }
+        case '.':
+            lw_edit_put(addr, o, lw_iconst('.'));
+            if (sig == -2) fs = o;
+            else if (sig != -1) { fsv = hi_emit(HI_ADD, TY_INT, fsv, hi_emit(HI_MUL, TY_INT, hi_emit(HI_XOR, TY_INT, sig, lw_iconst(1), 0, NULL), lw_iconst(o + 1), 0, NULL), 0, NULL); fs = -3; }
+            sig = -1; o++;
+            break;
+        case ',':
+            if (sig == -1 || !instr) lw_edit_put(addr, o++, lw_iconst(','));
+            else if (sig == -2) lw_edit_put(addr, o++, lw_iconst(' '));
+            else lw_edit_put(addr, o++, hi_emit(HI_ADD, TY_INT, lw_iconst(' '), hi_emit(HI_MUL, TY_INT, sig, lw_iconst(12), 0, NULL), 0, NULL));
+            break;
+        case '+': lw_edit_put(addr, o++, hi_emit(HI_ADD, TY_INT, lw_iconst('+'), hi_emit(HI_MUL, TY_INT, negv, lw_iconst(2), 0, NULL), 0, NULL)); break;
+        case '-': lw_edit_put(addr, o++, hi_emit(HI_ADD, TY_INT, lw_iconst(' '), hi_emit(HI_MUL, TY_INT, negv, lw_iconst(13), 0, NULL), 0, NULL)); break;
+        case '$': lw_edit_put(addr, o++, lw_iconst('$')); break;
+        case 'C':
+            lw_edit_put(addr, o++, hi_emit(HI_ADD, TY_INT, lw_iconst(' '), hi_emit(HI_MUL, TY_INT, negv, lw_iconst('C' - ' '), 0, NULL), 0, NULL));
+            lw_edit_put(addr, o++, hi_emit(HI_ADD, TY_INT, lw_iconst(' '), hi_emit(HI_MUL, TY_INT, negv, lw_iconst('R' - ' '), 0, NULL), 0, NULL));
+            break;
+        case 'D':
+            lw_edit_put(addr, o++, hi_emit(HI_ADD, TY_INT, lw_iconst(' '), hi_emit(HI_MUL, TY_INT, negv, lw_iconst('D' - ' '), 0, NULL), 0, NULL));
+            lw_edit_put(addr, o++, hi_emit(HI_ADD, TY_INT, lw_iconst(' '), hi_emit(HI_MUL, TY_INT, negv, lw_iconst('B' - ' '), 0, NULL), 0, NULL));
+            break;
+        default: break;                             /* V S */
+        }
+    }
+    int width = o;
+    if (fl) {
+        /* the symbol immediately left of the first significant position,
+         * no further left than its own first; every position floating and
+         * the value zero: spaces throughout */
+        int symch = fl == '$' ? lw_iconst('$') : fl == '+' ? hi_emit(HI_ADD, TY_INT, lw_iconst('+'), hi_emit(HI_MUL, TY_INT, negv, lw_iconst(2), 0, NULL), 0, NULL)
+                                                           : hi_emit(HI_ADD, TY_INT, lw_iconst(' '), hi_emit(HI_MUL, TY_INT, negv, lw_iconst(13), 0, NULL), 0, NULL);
+        int pos;
+        if (fs >= 0) pos = lw_iconst(fs - 1 > flpos ? fs - 1 : flpos);
+        else {
+            int fm1 = hi_emit(HI_ADDI, TY_INT, fsv, -1, -1, NULL);
+            int lt = hi_emit(HI_SLT, TY_INT, fm1, lw_iconst(flpos), 0, NULL);      /* fm1 < flpos: flpos */
+            pos = hi_emit(HI_ADD, TY_INT, fm1, hi_emit(HI_MUL, TY_INT, lt, hi_emit(HI_SUB, TY_INT, lw_iconst(flpos), fm1, 0, NULL), 0, NULL), 0, NULL);
+        }
+        hi_emit(HI_STORE, TY_CHAR, hi_emit(HI_ADD, TY_INT, addr, pos, 0, NULL), symch, 0, NULL);
+        if (!has9) {
+            int b_sp = hir_new_block(), b_join = hir_new_block();
+            lw_brc(z, b_sp, b_join);                 /* (fsv < 0 only when every digit is zero: z says it) */
+            lw_begin_blk(b_sp); lw_fill_n(addr, width, ' '); lw_goto(b_join);
+            lw_begin_blk(b_join);
+        }
+        return;
+    }
+    if (!has9) {                                    /* all Z and the value zero: spaces throughout, the point too */
+        int b_sp = hir_new_block(), b_join = hir_new_block();
+        lw_brc(z, b_sp, b_join);
+        lw_begin_blk(b_sp); lw_fill_n(addr, width, ' '); lw_goto(b_join);
+        lw_begin_blk(b_join);
     }
 }
 static void lw_store_ref(int sym, int ref, int rounded, LV v, int sc, long double bd, int neg)
@@ -1521,7 +1661,8 @@ static void lw_store_ref(int sym, int ref, int rounded, LV v, int sc, long doubl
         hi_emit(HI_STORE, TY_INT, lw_sym_addr(sym, ref), v.lo, 0, NULL);
         return;
     }
-    int dec = !d->native && lw_dec_inline_ok((Sym *)d);     /* a short DISPLAY or packed item: aligned and truncated here, written digit by digit */
+    int ed = !d->native && lw_edit_ok(d);          /* a numeric-edited item of a picture edited in line (above) */
+    int dec = ed || (!d->native && lw_dec_inline_ok((Sym *)d));     /* a short DISPLAY or packed item: aligned and truncated here, written digit by digit */
     if (!d->native && !dec) { lw_mem_store(sym, ref, rounded, v, sc); return; }
     int eff = d->pi.digits, sd = d->pi.scale;
     int wide = lw_wide_bd(bd);
@@ -1570,7 +1711,8 @@ static void lw_store_ref(int sym, int ref, int rounded, LV v, int sc, long doubl
     if (dec) {
         /* the magnitude, and the sign the value arrived with */
         LV m = neg ? lw_abs(v, 0) : v;
-        lw_dec_store(d, lw_sym_addr(sym, ref), m.lo, sg0 >= 0 ? sg0 : lw_iconst(0));
+        if (ed) lw_edit_store(d, lw_sym_addr(sym, ref), m.lo, sg0);
+        else lw_dec_store(d, lw_sym_addr(sym, ref), m.lo, sg0 >= 0 ? sg0 : lw_iconst(0));
         return;
     }
     if (!d->pi.is_signed && neg) v = lw_abs(v, wide);

@@ -5969,3 +5969,32 @@ in csv2fw's output loop, 0.3% -- and would need a second copy of
 emit_use_dispatch (declaratives, the EC classes, the unhandled path).
 The 11% the profile shows for cob_write is its own 26 instructions per
 one-byte record, the short entry already; no call shape touches it.
+
+Eighteenth (2026-10-03): **numeric editing in line.**  kedit spent 0.33
+of its 0.34 s in cob_put_edited (native under the DBT: 45 ns an edit),
+the island's own work 0.01 s.  A numeric-edited receiver whose picture
+holds 9 Z , . + - $ CR DB (and V S) -- no * B 0 / P, no BLANK WHEN ZERO,
+no DECIMAL-POINT IS COMMA or CURRENCY SIGN -- with at most nine digit
+positions is edited by code of its own (lw_edit_store): the digits by
+division, each position's byte from the picture, the suppression state
+static where the picture decides it (a 9, the point) and a value where
+the digits do (' ' or the digit as 32 + s * (16 + d)), the first
+significant position carried the same way, the floating symbol placed
+last; a zero value in a picture without 9s is spaces.  The rules are
+cob_edit_apply's position for position (its comment block lists them);
+ten pictures over twelve values agree with the text, gen-edit at both
+policies, the harness.  The division by ten in all the inline stores is
+the reciprocal (mulhu 0xCCCCCCCD, srli 3; lw_div10, S32_HIR_DIV10=0 for
+the two hardware divisions).
+
+That change made kmove TWICE as slow under the DBT at 4% more
+instructions -- the DBT's block-length exit was never chained (DBT-22,
+fixed; mulh/mulhu through the register cache too).  With it: kedit 0.45
+-> **0.27 s (-40%)**, kreport -13%, kmove -61%, karith -61%, kseq -33%;
+csv2fw unchanged (0.18 s).  The remaining editing: check protection (*),
+B 0 / insertion, BLANK WHEN ZERO, the locale, more than nine digits,
+and de-editing (cob_get_edited, 30 ns; kedit's `move e1 to w`).
+
+Measured and declined this batch: WRITE/READ as direct calls (two
+instructions a record).  Port done: the x == 0 seq emission to stage08
+and fortran (589d3955).

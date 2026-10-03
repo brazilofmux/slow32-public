@@ -274,9 +274,15 @@ measured at two instructions a record and not built: cob_write's own 26
 per one-byte record is the runtime's short entry, which no call shape
 touches.
 
+Numeric editing in line followed (2026-10-03): the common pictures (9 Z
+, . + - $ CR DB, up to nine digits) edited by per-picture code, the
+rules cob_edit_apply's; kedit 0.45 -> 0.27 s, kreport -13%.  It found a
+DBT gap on the way (DBT-22: the block-length exit was never chained).
+
 What the profile leaves: the per-record runtime (cob_write, cob_read),
 STRING and the class conditions (text verbs, per field), the footprint by
-item per paragraph.  The gl programs are runtime-bound (SORT, memchr,
+item per paragraph, the rest of editing (*, B 0 /, BLANK WHEN ZERO, the
+locale, de-editing).  The gl programs are runtime-bound (SORT, memchr,
 read/write: generated code is 12% of gl034's guest instructions), so the
 batch's gain is csv2fw's.
 
