@@ -69,6 +69,12 @@ literals and ZERO:
 - IF with relation conditions on numbers, AND/OR/NOT.
 - FUNCTION MOD, REM, INTEGER, INTEGER-PART, ABS, MAX, MIN, as the
   register trees take them.
+- Alphanumeric MOVE and equality compare of lengths the compiler knows
+  (`lw_bytes_ref_ok`): subscripts literal or an integer item, reference
+  modification with literal positions, literals and SPACE/ZERO; the
+  receiver takes the sender's first bytes and spaces, a compare xor-s
+  chunks or calls memcmp.  Not ordering, not a collating sequence, not
+  JUSTIFIED, edited, national or bit items.
 - In-line PERFORM VARYING (AFTER too; TEST AFTER with one level) and
   PERFORM UNTIL.
 
@@ -115,12 +121,12 @@ selfhost, listed in `src/hir/hir.h`), where stage08 calls `__muldi3`.
 
 karith's loop is one island: 8.31 G instructions -> 2.35 G (-72%),
 0.32 s -> 0.155 under the DBT; what is left is the 64-bit division
-routines, which the DBT runs natively.  With items in storage and the
-functions taken: kmove -29% (0.28 -> 0.17 s), kedit -25% (0.52 ->
-0.38), kseq -20%, kreport -4%; ksearch, kidx, kstring, ksort and
-csv2fw unchanged (their loops hold statements the islands do not take:
-alphanumeric MOVEs and compares, SEARCH, READ, PERFORM of paragraphs);
-majesty's batch within its noise.
+routines, which the DBT runs natively.  With items in storage, the
+functions and the byte moves and compares taken, kmove's and kedit's
+loops are whole islands: kmove -42% (0.28 -> 0.12 s), kedit -26%,
+kseq -26%, kstring -6%, kreport -4%, ksort -3%, ksearch and kidx about
+even (their loops hold SEARCH, READ and PERFORM of paragraphs);
+csv2fw and majesty's batch within their noise.
 
 ## What follows
 
@@ -130,8 +136,9 @@ EVALUATE, alphanumeric MOVEs and compares, which no island takes; those
 need the plan's next milestone, procedures as functions and the unit as
 one HIR function, with the text emitter's verbs lowered one by one.
 Nearer: DISPLAY of a native item (the item stored before the call);
-alphanumeric MOVE and compare of fixed sizes as word copies and
-compares; MULH/MULHU upstream in selfhost -- the integer functions (MOD, REM, INTEGER, ABS, MAX,
+ordering compares of bytes; a checked word path for a product past a
+word (the text's hx mode 2), so a MOD of one need not be a 64-bit
+remainder -- the integer functions (MOD, REM, INTEGER, ABS, MAX,
 MIN) the register trees already take; non-native numeric operands
 fetched by `cob_get_num` inside an island; DISPLAY of a native item (the
 item stored before the call); then procedures as functions (the PERFORM

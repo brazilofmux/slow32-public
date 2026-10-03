@@ -5683,3 +5683,19 @@ product -- these kinds are its answer too, upstream).  A literal that
 fits a word is a word whatever width is asked, so a product with one
 is the two-instruction form.  karith 2.35 G -> 2.14 G (-74% from the
 text), kmove and kedit a little; the generators the same on and off.
+
+Tenth (2026-10-03): bytes.  An island takes alphanumeric MOVEs and
+equality compares whose every length the compiler knows: the address of
+a reference is formed in HIR (the record's label, the item's offset,
+each subscript -- a literal, or an integer item native or in storage --
+less one times its stride, a part's literal start), the receiver takes
+the sender's first bytes and spaces after them as cob_move_alnum does
+(a figurative fills), a compare xor-s the chunks of two operands of one
+length (memcmp past 16 bytes), a literal padded with spaces to the
+item's length as the comparison pads.  Not taken: ordering compares, a
+collating sequence, JUSTIFIED, edited or national or bit items,
+computed positions, an EC-BOUND check on.  With these, kmove's and
+kedit's loops are each one island: kmove 6.07 G -> 3.52 G (-42%; 0.28
+-> 0.12 s), kedit -26%, kseq -26%, kstring -6%, kreport -4%, ksort
+-3%; nothing slower.  The generators -- loop, pos, lit, native, perf,
+cond, table, string, edit -- the same on and off at both policies.

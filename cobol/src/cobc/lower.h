@@ -39,9 +39,10 @@ static int lw_only(int *b)
  * sc its scale, bd a bound on its magnitude in units of that scale, neg
  * whether it can be below zero */
 typedef struct { char op; int l, r; int sym; long long k; int sc; long double bd; int neg; } LNode;
-/* a condition: cond.h's C_AND, C_OR, C_NOT, C_REL (op R_*; x, y values) */
-typedef struct { int kind; int a, b; int x, y; int op; } LCond;
-enum { LS_STORE, LS_ADDTO, LS_IF, LS_LOOP };
+/* a condition: cond.h's C_AND, C_OR, C_NOT, C_REL (op R_*; x, y values;
+ * or, alnum, ax and ay operands in g_lw_o compared as bytes) */
+typedef struct { int kind; int a, b; int x, y; int op; int alnum, ax, ay; } LCond;
+enum { LS_STORE, LS_ADDTO, LS_IF, LS_LOOP, LS_AMOVE };
 typedef struct {
     int kind, line;
     int expr;                           /* LS_STORE: the value; LS_ADDTO: the sum each receiver takes */
@@ -52,6 +53,7 @@ typedef struct {
     int cond;                           /* LS_IF; LS_LOOP: UNTIL */
     int body, nbody, els, nels;         /* ranges of g_lw_list */
     int nv, var[8], from[8], by[8], vcond[8], test_after;   /* LS_LOOP: the VARYING levels (0: UNTIL alone, cond), each its item, FROM, BY and UNTIL */
+    int asrc, adst[MAXOPS];             /* LS_AMOVE: operands in g_lw_o -- the sender, the receivers (nr) */
     Block text;                         /* the statement's code by the text emitter, for a run that is no island */
     int cut;                            /* ... taken out of the stream (lw_stmt_text) */
 } LStmt;
@@ -60,6 +62,7 @@ static LNode *g_lw_n; static int g_lw_nn, g_lw_ncap;
 static LCond *g_lw_c; static int g_lw_nc, g_lw_ccap;
 static LStmt *g_lw_s; static int g_lw_ns, g_lw_scap;
 static int *g_lw_list; static int g_lw_nlist, g_lw_lcap;
+static Opnd *g_lw_o; static int g_lw_no, g_lw_ocap;       /* operands of bytes, kept whole */
 static int g_lw_nisland;                /* islands made so far, for their labels */
 
 #define LW_GROW(arr, n, cap) do { if ((n) == (cap)) { (cap) = (cap) ? 2 * (cap) : 64; (arr) = xrealloc((arr), (size_t)(cap) * sizeof *(arr)); } } while (0)
@@ -73,7 +76,7 @@ static int lw_node(char op, int l, int r, int sym, long long k, int sc, long dou
 static int lw_cnode(int kind, int a, int b, int x, int y, int op)
 {
     LW_GROW(g_lw_c, g_lw_nc, g_lw_ccap);
-    LCond *c = &g_lw_c[g_lw_nc]; c->kind = kind; c->a = a; c->b = b; c->x = x; c->y = y; c->op = op;
+    LCond *c = &g_lw_c[g_lw_nc]; c->kind = kind; c->a = a; c->b = b; c->x = x; c->y = y; c->op = op; c->alnum = 0; c->ax = c->ay = -1;
     return g_lw_nc++;
 }
 static int lw_stmt(int kind, int line)
@@ -83,6 +86,8 @@ static int lw_stmt(int kind, int line)
     return g_lw_ns++;
 }
 static void lw_list_add(int st) { LW_GROW(g_lw_list, g_lw_nlist, g_lw_lcap); g_lw_list[g_lw_nlist++] = st; }
+static int lw_opnd_keep(const Opnd *o) { LW_GROW(g_lw_o, g_lw_no, g_lw_ocap); g_lw_o[g_lw_no] = *o; return g_lw_no++; }
+static int lw_ref_keep(const Ref *r) { Opnd o; memset(&o, 0, sizeof o); o.kind = O_REF; o.ref = *r; o.line = r->line; return lw_opnd_keep(&o); }
 
 /* the statement's line in the text */
 static void lw_place(int st) { emit("\tisland %d", st); }
@@ -178,6 +183,66 @@ static int lw_mem_ok(const Ref *r)
     return 1;
 }
 static int lw_opnd_item_ok(const Ref *r) { return lw_item_ok(r) || lw_mem_ok(r); }
+
+/* ---- bytes: alphanumeric moves and compares of lengths the compiler
+ * knows (8.4.2.4.3: a reference-modified operand is alphanumeric
+ * whatever its item) ---- */
+
+/* an integer item a subscript may be: native or in storage, no decimals */
+static int lw_sub_item_ok(Sym *s)
+{
+    Ref r; memset(&r, 0, sizeof r); r.sym = s; r.line = s->line;
+    return s->pi.scale == 0 && !s->ndims && lw_opnd_item_ok(&r);
+}
+/* a reference whose address and length the island can form: its record
+ * by label, each subscript a literal or an integer item, a reference
+ * modification with literal positions, no EC-BOUND check on; *len the
+ * bytes.  A whole item is alphanumeric or alphabetic, or a group of fixed
+ * length; a part is any item's bytes. */
+static int lw_bytes_ref_ok(const Ref *r, long *len)
+{
+    Sym *s = r->sym;
+    if (s->is_cond || s->any_len || sym_bitlike(s) || s->natgroup || s->nat_usage || s->usage == U_NATIONAL || s->usage == U_BIT || s->is_index) return 0;
+    if (s->pi.category == PIC_NATIONAL || s->pi.category == PIC_BOOLEAN || s->is_rc || s->lin_file >= 0 || s->rep_ctr >= 0) return 0;
+    const Sym *rec = &g_sym[s->record];
+    if (rec_indirect(rec) || !rec->label[0] || rec->ftemp_scan || odo_table_for(s)) return 0;
+    if (r->nsub != s->ndims) return 0;
+    if (r->nsub && ec_on_name("EC-BOUND-SUBSCRIPT")) return 0;
+    for (int k = 0; k < r->nsub; k++)
+        if (r->sub[k].sym == &g_subx || (r->sub[k].sym && !lw_sub_item_ok(r->sub[k].sym))) return 0;
+    if (r->rm) {
+        if (r->rm_nat || r->rm_bit || r->rm_odo || r->bitsub || r->rm_sx || r->rm_lx || r->rm_start <= 0 || r->rm_len <= 0) return 0;
+        if (ec_on_name("EC-BOUND-REF-MOD")) return 0;
+        *len = r->rm_len;
+        return 1;
+    }
+    if (s->is_group) { if (has_odo(s) || s->bitgroup || s->strong) return 0; }
+    else if ((s->pi.category != PIC_ALPHANUMERIC && s->pi.category != PIC_ALPHABETIC) || s->pi.edited) return 0;
+    *len = s->size;
+    return 1;
+}
+/* a sending operand of bytes: a reference as above, a nonnumeric or
+ * integer literal, SPACE or ZERO (filling); *len its bytes (a figurative's
+ * is the receiver's) */
+static int lw_bytes_src_ok(const Opnd *o, long *len)
+{
+    if (opnd_scanned(o) || o->all_sub) return 0;
+    if (o->kind == O_REF) return lw_bytes_ref_ok(&o->ref, len);
+    if (o->kind == O_STR) { *len = o->tok->len; return *len > 0; }
+    if (o->kind == O_NUM) { *len = o->num.ndigits; return numlit_is_int(&o->num) && !o->folded && *len > 0; }
+    if (o->kind == O_FIG) { *len = 0; return !strncmp(o->tok->s, "space", 5) || !strncmp(o->tok->s, "zero", 4); }
+    return 0;
+}
+/* a receiving operand of bytes: a reference as above that is not a
+ * numeric or edited item taken whole, and not JUSTIFIED */
+static int lw_bytes_dst_ok(const Ref *r, long *len)
+{
+    Sym *d = r->sym;
+    if (!lw_bytes_ref_ok(r, len) || ref_pending(r)) return 0;
+    if (d->just) return 0;
+    if (!r->rm && !d->is_group && (is_numeric_sym(d) || d->pi.category == PIC_NUMERIC_EDITED || d->pi.category == PIC_ALPHANUMERIC_EDITED)) return 0;
+    return 1;
+}
 /* a leaf of a register tree (hn_tree): the item, a literal, ZERO */
 static int lw_leaf(const Opnd *o)
 {
@@ -431,13 +496,24 @@ static int lw_move(Opnd *src, Ref *dst, int n)
     if (lw_off()) return 0;
     const char *why = lw_stmt_refused(0);
     if (why) { lw_refuse(src->line, "MOVE", why); return 0; }
+    if (n > MAXOPS) return 0;
+    {   /* bytes to bytes, every length known */
+        long sl, dl; int bytes = lw_bytes_src_ok(src, &sl);
+        for (int i = 0; i < n && bytes; i++) bytes = lw_bytes_dst_ok(&dst[i], &dl);
+        if (bytes) {
+            int st = lw_stmt(LS_AMOVE, src->line);
+            LStmt *s = &g_lw_s[st]; s->asrc = lw_opnd_keep(src); s->nr = n;
+            for (int i = 0; i < n; i++) s->adst[i] = lw_ref_keep(&dst[i]);
+            lw_place(st);
+            return 1;
+        }
+    }
     if (src->kind != O_REF && src->kind != O_NUM && src->kind != O_FIG) return 0;
     if (src->kind == O_REF && !lw_opnd_item_ok(&src->ref)) { lw_refuse(src->line, "MOVE", "the sender"); return 0; }
     for (int i = 0; i < n; i++) if (!lw_recv_ok(&dst[i])) { lw_refuse(src->line, "MOVE", "a receiver"); return 0; }
     int x = lw_opnd(src);
     if (x < 0) { lw_refuse(src->line, "MOVE", "the sender"); return 0; }
     int rd[MAXOPS] = { 0 };
-    if (n > MAXOPS) return 0;
     return lw_store_stmt(x, dst, rd, n, NULL, src->line, "MOVE");
 }
 
@@ -452,6 +528,25 @@ static int lw_cond(Cond *c)
     }
     if (c->kind == C_NOT) { int a = lw_cond(c->a); return a < 0 ? -1 : lw_cnode(C_NOT, a, -1, -1, -1, 0); }
     if (c->kind != C_REL || c->ptr || c->bstack) return -1;
+    {   /* two operands of bytes, equal or not, under the native collating
+         * sequence: a literal shorter or longer than the item is padded with
+         * spaces here, as the comparison pads (8.8.4.1.2) */
+        long lx, ly;
+        int bx = c->x.kind != O_FIG && lw_bytes_src_ok(&c->x, &lx), by = c->y.kind != O_FIG && lw_bytes_src_ok(&c->y, &ly);
+        int fx = c->x.kind == O_FIG && lw_bytes_src_ok(&c->x, &lx), fy = c->y.kind == O_FIG && lw_bytes_src_ok(&c->y, &ly);
+        if ((bx || fx) && (by || fy) && (bx || by) && g_collate < 0 && (c->op == R_EQ || c->op == R_NE)) {
+            /* a whole numeric item is a number, compared as one */
+            int numx = c->x.kind == O_REF && !c->x.ref.rm && is_numeric_sym(c->x.ref.sym);
+            int numy = c->y.kind == O_REF && !c->y.ref.rm && is_numeric_sym(c->y.ref.sym);
+            int lit = (c->x.kind != O_REF) + (c->y.kind != O_REF);
+            if (!numx && !numy && lit < 2 && (lit || lx == ly)) {
+                int op = c->neg ? (c->op == R_EQ ? R_NE : R_EQ) : c->op;
+                int n = lw_cnode(C_REL, -1, -1, -1, -1, op);
+                g_lw_c[n].alnum = 1; g_lw_c[n].ax = lw_opnd_keep(&c->x); g_lw_c[n].ay = lw_opnd_keep(&c->y);
+                return n;
+            }
+        }
+    }
     int x = lw_opnd(&c->x); if (x < 0) return -1;
     int y = lw_opnd(&c->y); if (y < 0) return -1;
     /* the two aligned must be within bounds, as a sum's sides are */
@@ -578,9 +673,17 @@ static void lw_collect_node(int n)
     if (x->op == 'k') return;
     lw_collect_node(x->l); lw_collect_node(x->r);
 }
+static void lw_collect_opnd(int oi)
+{
+    if (oi < 0) return;
+    const Opnd *o = &g_lw_o[oi];
+    if (o->kind != O_REF) return;
+    for (int k = 0; k < o->ref.nsub; k++) if (o->ref.sub[k].sym && o->ref.sub[k].sym->native) lw_item_slot((int)(o->ref.sub[k].sym - g_sym));
+}
 static void lw_collect_cond(int c)
 {
     LCond *x = &g_lw_c[c];
+    if (x->kind == C_REL && x->alnum) { lw_collect_opnd(x->ax); lw_collect_opnd(x->ay); return; }
     if (x->kind == C_REL) { lw_collect_node(x->x); lw_collect_node(x->y); return; }
     lw_collect_cond(x->a);
     if (x->kind != C_NOT) lw_collect_cond(x->b);
@@ -592,6 +695,7 @@ static void lw_collect_stmts(int at, int n)
         if (s->expr >= 0) lw_collect_node(s->expr);
         for (int k = 0; k < s->nr; k++) if (g_sym[s->rsym[k]].native) lw_item_slot(s->rsym[k]);
         if (s->rem >= 0 && g_sym[s->rem].native) lw_item_slot(s->rem);
+        if (s->kind == LS_AMOVE) { lw_collect_opnd(s->asrc); for (int k = 0; k < s->nr; k++) lw_collect_opnd(s->adst[k]); }
         if (s->cond >= 0) lw_collect_cond(s->cond);
         for (int k = 0; k < s->nv; k++) {
             if (g_sym[s->var[k]].native) lw_item_slot(s->var[k]);
@@ -953,11 +1057,127 @@ static void lw_store(int sym, int rounded, LV v, int sc, long double bd, int neg
     lw_item_set(sym, v);
 }
 
+/* the address of a reference (lw_bytes_ref_ok): the record's label, the
+ * item's offset, each subscript less one times its stride, the part's
+ * start less one */
+static int lw_ref_addr(const Ref *r)
+{
+    Sym *s = r->sym;
+    long off = s->offset;
+    int a = hi_emit(HI_GADDR, TY_INT, -1, -1, 0, g_sym[s->record].label);
+    for (int k = 0; k < r->nsub; k++) {
+        if (!r->sub[k].sym) { off += (r->sub[k].lit - 1) * s->dim_stride[k]; continue; }
+        LV v = lw_item_val((int)(r->sub[k].sym - g_sym)); v.hi = -1;
+        int i = v.lo;
+        if (r->sub[k].adj - 1) i = hi_emit(HI_ADDI, TY_INT, i, -1, (int)r->sub[k].adj - 1, NULL);
+        if (s->dim_stride[k] != 1) i = hi_emit(HI_MUL, TY_INT, i, lw_iconst(s->dim_stride[k]), 0, NULL);
+        a = hi_emit(HI_ADD, TY_INT, a, i, 0, NULL);
+    }
+    if (r->rm) off += r->rm_start - 1;
+    return off ? hi_emit(HI_ADDI, TY_INT, a, -1, (int)off, NULL) : a;
+}
+/* the address of a sending operand's bytes and their count; a figurative
+ * constant has no address: *fill is its byte, and n is 0 */
+static int lw_bytes_src(const Opnd *o, long *n, int *fill)
+{
+    *fill = -1;
+    if (o->kind == O_REF) { long l = 0; lw_bytes_ref_ok(&o->ref, &l); *n = l; return lw_ref_addr(&o->ref); }
+    if (o->kind == O_FIG) { *n = 0; *fill = fig_byte(o->tok->s); return -1; }
+    const unsigned char *b = (const unsigned char *)(o->kind == O_NUM ? o->num.digits : o->tok->s);
+    *n = o->kind == O_NUM ? o->num.ndigits : o->tok->len;
+    const char *l = lit_label(b, (int)*n);
+    return hi_emit(HI_GADDR, TY_INT, -1, -1, 0, (char *)l);
+}
+#define LW_INLINE_BYTES 32
+static int lw_chunk_ty(int w) { return w == 4 ? TY_INT : w == 2 ? TY_SHORT | TY_UNSIGNED : TY_CHAR | TY_UNSIGNED; }
+static int lw_at(int a, long o) { return o ? hi_emit(HI_ADDI, TY_INT, a, -1, (int)o, NULL) : a; }
+/* n bytes from src to dst: loaded all, then stored, so an overlap is a
+ * memmove's; long ones by memcpy, as the text emitter copies them */
+static void lw_copy_n(int dst, int src, long n)
+{
+    if (n <= 0) return;
+    if (n > LW_INLINE_BYTES) { int a[3] = { dst, src, lw_iconst((int)n) }; lw_call("memcpy", a, 3); return; }
+    int vals[LW_INLINE_BYTES], offs[LW_INLINE_BYTES], ws[LW_INLINE_BYTES], k = 0;
+    for (long o = 0; o < n; ) {
+        int w = n - o >= 4 ? 4 : n - o >= 2 ? 2 : 1;
+        vals[k] = hi_emit(HI_LOAD, lw_chunk_ty(w), lw_at(src, o), -1, 0, NULL); offs[k] = (int)o; ws[k] = w; k++;
+        o += w;
+    }
+    for (int i = 0; i < k; i++) hi_emit(HI_STORE, lw_chunk_ty(ws[i]), lw_at(dst, offs[i]), vals[i], 0, NULL);
+}
+/* n bytes at dst set to c */
+static void lw_fill_n(int dst, long n, int c)
+{
+    if (n <= 0) return;
+    if (n > LW_INLINE_BYTES) { int a[3] = { dst, lw_iconst((int)n), lw_iconst(c) }; lw_call("cob_fill", a, 3); return; }
+    int w4 = -1, w2 = -1, w1 = -1;
+    for (long o = 0; o < n; ) {
+        int w = n - o >= 4 ? 4 : n - o >= 2 ? 2 : 1;
+        int *v = w == 4 ? &w4 : w == 2 ? &w2 : &w1;
+        if (*v < 0) *v = lw_iconst(w == 4 ? c * 0x01010101 : w == 2 ? c * 0x0101 : c);
+        hi_emit(HI_STORE, lw_chunk_ty(w), lw_at(dst, o), *v, 0, NULL);
+        o += w;
+    }
+}
+/* MOVE of bytes: the receiver takes the sender's first bytes, the rest
+ * spaces (cob_move_alnum, left-justified); a figurative fills it */
+static void lw_gen_amove(LStmt *s)
+{
+    const Opnd *src = &g_lw_o[s->asrc];
+    long sn; int fill; int sa = lw_bytes_src(src, &sn, &fill);
+    for (int i = 0; i < s->nr; i++) {
+        const Ref *d = &g_lw_o[s->adst[i]].ref;
+        long dn = 0; lw_bytes_ref_ok(d, &dn);
+        int da = lw_ref_addr(d);
+        if (fill >= 0) { lw_fill_n(da, dn, fill); continue; }
+        long n = sn < dn ? sn : dn;
+        lw_copy_n(da, sa, n);
+        lw_fill_n(lw_at(da, n), dn - n, ' ');
+    }
+}
+/* bytes equal or not: chunks xor-ed and or-ed together for a short
+ * operand, memcmp for a long one; a literal is padded with spaces to the
+ * item's length, or the item's bytes past the literal are spaces */
+static int lw_acmp_val(const LCond *c)
+{
+    const Opnd *x = &g_lw_o[c->ax], *y = &g_lw_o[c->ay];
+    if (x->kind != O_REF) { const Opnd *t = x; x = y; y = t; }         /* the item first */
+    long nx, ny; int fx, fy;
+    int ax = lw_bytes_src(x, &nx, &fx);
+    int ay = lw_bytes_src(y, &ny, &fy);
+    if (y->kind != O_REF) {
+        /* the literal, or the figurative, as nx bytes */
+        unsigned char *b = xmalloc((size_t)nx);
+        memset(b, fy >= 0 ? fy : ' ', (size_t)nx);
+        if (fy < 0) {
+            const unsigned char *lb = (const unsigned char *)(y->kind == O_NUM ? y->num.digits : y->tok->s);
+            memcpy(b, lb, (size_t)(ny < nx ? ny : nx));
+            for (long k = nx; k < ny; k++) if (lb[k] != ' ') { free(b); return lw_iconst(c->op == R_NE); }   /* longer than the item, and not spaces: never equal */
+        }
+        ay = hi_emit(HI_GADDR, TY_INT, -1, -1, 0, (char *)lit_label(b, (int)nx));
+        free(b); ny = nx;
+    }
+    long n = nx;
+    int d;
+    if (n > 16) { int a[3] = { ax, ay, lw_iconst((int)n) }; d = lw_call("memcmp", a, 3).lo; }
+    else {
+        d = -1;
+        for (long o = 0; o < n; ) {
+            int w = n - o >= 4 ? 4 : n - o >= 2 ? 2 : 1;
+            int t = hi_emit(HI_XOR, TY_INT, hi_emit(HI_LOAD, lw_chunk_ty(w), lw_at(ax, o), -1, 0, NULL), hi_emit(HI_LOAD, lw_chunk_ty(w), lw_at(ay, o), -1, 0, NULL), 0, NULL);
+            d = d < 0 ? t : hi_emit(HI_OR, TY_INT, d, t, 0, NULL);
+            o += w;
+        }
+    }
+    return hi_emit(c->op == R_EQ ? HI_SEQ : HI_SNE, TY_INT, d, lw_iconst(0), 0, NULL);
+}
+
 static void lw_gen_stmts(int at, int n);
 /* a condition's value, a word 0 or 1 */
 static int lw_cond_val(int c)
 {
     LCond *x = &g_lw_c[c];
+    if (x->kind == C_REL && x->alnum) return lw_acmp_val(x);
     if (x->kind == C_NOT) return hi_emit(HI_XOR, TY_INT, lw_cond_val(x->a), lw_iconst(1), 0, NULL);
     if (x->kind == C_AND || x->kind == C_OR)
         return hi_emit(x->kind == C_AND ? HI_AND : HI_OR, TY_INT, lw_cond_val(x->a), lw_cond_val(x->b), 0, NULL);
@@ -1118,6 +1338,7 @@ static void lw_gen_stmts(int at, int n)
         switch (s->kind) {
         case LS_STORE: lw_gen_store(s); break;
         case LS_ADDTO: lw_gen_addto(s); break;
+        case LS_AMOVE: lw_gen_amove(s); break;
         case LS_IF: {
             int c = lw_cond_val(s->cond);
             int b_then = hir_new_block(), b_else = hir_new_block(), b_join = hir_new_block();
@@ -1177,9 +1398,12 @@ static void lw_take_text(char ***out, int *no, int *cap)
  * does not take and sends through the runtime's fetch and store, where
  * an island computes in place (kedit's COMPUTE and ADD alone: -14%).
  * Over integers the text is already in place -- a product past a word
- * included, which it computes in a word with an overflow test where the
- * island calls for 64 bits (ksearch's MOD alone: +5%) -- and a statement
- * alone there costs the call (kmove +0.3%). */
+ * included, which it computes in a word with an overflow test and takes
+ * the slow path only when it overflows, where the island computes the
+ * pair and divides it by a routine (ksearch's MOD alone: +5%; with the
+ * product two instructions, still +4.6%: the remainder is the cost) --
+ * and a statement alone there costs the call (kmove +0.3%).  The
+ * island's own checked word path is a lever not pulled yet. */
 static int lw_heavy_node(int n)
 {
     if (n < 0) return 0;
@@ -1285,5 +1509,5 @@ static void lw_flush(void)
         for (int j = 0; j < pd->n; j++) emit("%s", pd->line[j]);
     }
     g_lw_npend = 0;
-    g_lw_nn = g_lw_nc = g_lw_ns = g_lw_nlist = 0;    /* the unit's nodes are spent */
+    g_lw_nn = g_lw_nc = g_lw_ns = g_lw_nlist = g_lw_no = 0;    /* the unit's nodes are spent */
 }
