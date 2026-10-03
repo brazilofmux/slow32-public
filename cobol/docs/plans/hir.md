@@ -44,7 +44,8 @@ placed (`Block`, `block_cut`, `block_put`).  The lowering keeps that:
   heavy -- decimals, an eight-byte item, ROUNDED, a quotient with
   decimals: what the text emitter's word path (`hx_*`) does not take and
   sends through the runtime -- or there are `S32_HIR_MIN` (default 4) of
-  them.  A statement alone over integers is already in place in the
+  them.  (Measured before MULH: a product past a word cost a call then;
+  it is two instructions now, and the criterion may be loosened again.)  A statement alone over integers is already in place in the
   text, a product past a word included (the word path tests for
   overflow; the island calls for 64 bits), and an island of it costs
   the call: kmove +0.3% with every run an island, ksearch +5% from one
@@ -89,7 +90,10 @@ The bounds are the ones `arith_reg.h` computes for the decimal register
 path (`dx_check`: `g_dsc`, `g_dbd`); the lowering reads them off the
 same `HNode` tree.  A node whose bound is below 2^31 is computed in a
 word; the rest in word pairs, as stage08 lowers `long long` (add with
-SLTU carry; mul, div and rem through `__muldi3`, `__divdi3`, `__moddi3`).
+SLTU carry; div and rem through `__divdi3`, `__moddi3`) -- except the
+product, which is MUL and MULH of two words, or MULHU and two MULs of
+pairs: the HIR copy gained the two kinds (its first divergence from
+selfhost, listed in `src/hir/hir.h`), where stage08 calls `__muldi3`.
 
 ## Switches and checks
 
@@ -127,8 +131,7 @@ need the plan's next milestone, procedures as functions and the unit as
 one HIR function, with the text emitter's verbs lowered one by one.
 Nearer: DISPLAY of a native item (the item stored before the call);
 alphanumeric MOVE and compare of fixed sizes as word copies and
-compares; MULH/MULHU kinds for the HIR copy (or upstream), so a product
-past a word is a word pair without a call -- the integer functions (MOD, REM, INTEGER, ABS, MAX,
+compares; MULH/MULHU upstream in selfhost -- the integer functions (MOD, REM, INTEGER, ABS, MAX,
 MIN) the register trees already take; non-native numeric operands
 fetched by `cob_get_num` inside an island; DISPLAY of a native item (the
 item stored before the call); then procedures as functions (the PERFORM

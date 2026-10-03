@@ -539,10 +539,13 @@ typedef struct { int sym, a_lo, a_hi, written; } LwItem;
 static LwItem g_lw_item[256]; static int g_lw_nitem;
 
 static int lw_iconst(int v) { return hi_emit(HI_ICONST, TY_INT, -1, -1, v, NULL); }
+/* a literal: a word when it fits one, whatever width is asked -- the
+ * pair operations widen what they are handed, and a product of two words
+ * is one MULH where a pair's is three multiplications */
 static LV lw_lit(long long v, int wide)
 {
     LV r; r.lo = lw_iconst((int)(unsigned)(unsigned long long)v); r.hi = -1;
-    if (wide) r.hi = lw_iconst((int)(unsigned)((unsigned long long)v >> 32));
+    if (wide && (v < -2147483647LL - 1 || v > 2147483647LL)) r.hi = lw_iconst((int)(unsigned)((unsigned long long)v >> 32));
     return r;
 }
 static LV lw_widen(LV v) { if (v.hi < 0) v.hi = hi_emit(HI_SRA, TY_INT, v.lo, lw_iconst(31), 0, NULL); return v; }
@@ -719,6 +722,23 @@ static LV lw_call64(const char *fn, LV a, LV b)
     r.hi = hi_emit(HI_CALLHI, TY_INT, r.lo, -1, 0, NULL);
     return r;
 }
+/* a 64-bit product: of two words (each the sign-extension of its lo),
+ * MUL and MULH; of pairs, the low 64 bits by MULHU and two MULs */
+static LV lw_mul64(LV a, LV b)
+{
+    LV r;
+    if (a.hi < 0 && b.hi < 0) {
+        r.lo = hi_emit(HI_MUL, TY_INT, a.lo, b.lo, 0, NULL);
+        r.hi = hi_emit(HI_MULH, TY_INT, a.lo, b.lo, 0, NULL);
+        return r;
+    }
+    a = lw_widen(a); b = lw_widen(b);
+    r.lo = hi_emit(HI_MUL, TY_INT, a.lo, b.lo, 0, NULL);
+    int h = hi_emit(HI_MULHU, TY_INT, a.lo, b.lo, 0, NULL);
+    h = hi_emit(HI_ADD, TY_INT, h, hi_emit(HI_MUL, TY_INT, a.lo, b.hi, 0, NULL), 0, NULL);
+    r.hi = hi_emit(HI_ADD, TY_INT, h, hi_emit(HI_MUL, TY_INT, a.hi, b.lo, 0, NULL), 0, NULL);
+    return r;
+}
 static LV lw_neg(LV v, int wide)
 {
     if (!wide) { LV r; r.lo = hi_emit(HI_SUB, TY_INT, lw_iconst(0), v.lo, 0, NULL); r.hi = -1; return r; }
@@ -735,7 +755,8 @@ static LV lw_arith2(char op, LV x, LV y, int wide)
     }
     if (op == '+') return lw_add64(x, y);
     if (op == '-') return lw_sub64(x, y);
-    return lw_call64(op == '*' ? "cob_mul64" : op == '/' ? "__divdi3" : "__moddi3", x, y);     /* (no __muldi3 in libs32: libcob's) */
+    if (op == '*') return lw_mul64(x, y);
+    return lw_call64(op == '/' ? "__divdi3" : "__moddi3", x, y);
 }
 static long long lw_p10(int k) { long long p = 1; while (k-- > 0) p *= 10; return p; }
 /* v times 10^k, the result wide when wide */
@@ -791,13 +812,10 @@ static LV lw_val_scaled(int n, int k, long double bd)
     if (k > 0 && x->op == 'k') return lw_lit(x->k * lw_p10(k), wide);
     if (k > 0 && x->op == '*' && (g_lw_n[x->l].op == 'k' || g_lw_n[x->r].op == 'k')) {
         int lit = g_lw_n[x->l].op == 'k' ? x->l : x->r, other = lit == x->l ? x->r : x->l;
-        LV o = lw_val(other);
-        if (wide) o = lw_widen(o);
-        return lw_arith2('*', o, lw_lit(g_lw_n[lit].k * lw_p10(k), wide), wide);
+        return lw_arith2('*', lw_val(other), lw_lit(g_lw_n[lit].k * lw_p10(k), wide), wide);
     }
-    LV v = lw_val(n);
-    if (wide) v = lw_widen(v);
-    return lw_scale(v, k, wide);
+    LV v = lw_scale(lw_val(n), k, wide);
+    return wide ? lw_widen(v) : v;
 }
 static LV lw_val(int n)
 {
@@ -812,7 +830,8 @@ static LV lw_val(int n)
         /* the remainder, the dividend's sign; MOD: a nonzero one of the
          * other sign than the divisor's takes the divisor */
         int w = lw_wide_bd(a->bd);
-        LV v = lw_val(x->l), d = lw_lit(x->k, w);
+        LV v = lw_val(x->l), d = lw_widen(lw_lit(x->k, w));
+        if (!w) d.hi = -1;
         LV r = lw_arith2('%', v, d, w);
         if (x->op == 'R') return r;
         int mask;
@@ -835,7 +854,8 @@ static LV lw_val(int n)
         long long P = lw_p10(a->sc);
         if (x->op == 'I') {
             int mask = hi_emit(HI_SRA, TY_INT, w ? lw_widen(v).hi : v.lo, lw_iconst(31), 0, NULL);
-            LV pm = lw_lit(P - 1, w);
+            LV pm = lw_widen(lw_lit(P - 1, w));
+            if (!w) pm.hi = -1;
             LV adj; adj.lo = hi_emit(HI_AND, TY_INT, pm.lo, mask, 0, NULL); adj.hi = w ? hi_emit(HI_AND, TY_INT, pm.hi, mask, 0, NULL) : -1;
             v = lw_arith2('-', v, adj, w);
         }
@@ -919,8 +939,8 @@ static void lw_store(int sym, int rounded, LV v, int sc, long double bd, int neg
             if (bd >= lim) { v = lw_trunc_digits(v, keep, wide); bd = lim - 1; }
             bd *= dx_p10(k);
             int w2 = lw_wide_bd(bd);
-            if (w2 && !wide) { v = lw_widen(v); wide = 1; }
-            v = lw_scale(v, k, wide);
+            v = lw_scale(v, k, w2);
+            if (w2) { v = lw_widen(v); wide = 1; }
         }
         sc = sd;
     }
@@ -1015,7 +1035,7 @@ static void lw_gen_store(LStmt *s)
         int ps = qs + b->sc;
         long double bp = bq2 * b->bd;
         int pw = lw_wide_bd(bp);
-        LV pv = lw_arith2('*', pw ? lw_widen(qt) : qt, pw ? lw_widen(dv) : dv, pw);
+        LV pv = lw_arith2('*', qt, dv, pw);
         int rw = lw_wide_bd(br);
         LV av = a0;
         if (rw) { av = lw_widen(av); pv = lw_widen(pv); }
@@ -1036,10 +1056,9 @@ static void lw_gen_addto(LStmt *s)
         long double bd = lw_sym_bd(d) * dx_p10(sc - d->pi.scale) + sum->bd * dx_p10(sc - sum->sc);
         int wide = lw_wide_bd(bd);
         LV r = lw_item_val(s->rsym[i]);
-        if (wide) r = lw_widen(r);
+        if (!wide) r.hi = -1;
         r = lw_scale(r, sc - d->pi.scale, wide);
-        LV t = sv; if (wide) t = lw_widen(t);
-        t = lw_scale(t, sc - sum->sc, wide);
+        LV t = lw_scale(sv, sc - sum->sc, wide);
         lw_store(s->rsym[i], s->rnd[i], lw_arith2(s->subtract ? '-' : '+', r, t, wide), sc, bd, d->pi.is_signed || sum->neg || s->subtract);
     }
 }
@@ -1051,7 +1070,7 @@ static void lw_vary_step(LStmt *s, int k)
     int sc = d->pi.scale > by->sc ? d->pi.scale : by->sc;
     long double bd = lw_sym_bd(d) * dx_p10(sc - d->pi.scale) + by->bd * dx_p10(sc - by->sc);
     int wide = lw_wide_bd(bd);
-    LV r = lw_item_val(s->var[k]); if (wide) r = lw_widen(r); else r.hi = -1;
+    LV r = lw_item_val(s->var[k]); if (!wide) r.hi = -1;
     r = lw_scale(r, sc - d->pi.scale, wide);
     LV t = lw_val_scaled(s->by[k], sc - by->sc, bd);
     lw_store(s->var[k], 0, lw_arith2('+', r, t, wide), sc, bd, d->pi.is_signed || by->neg);

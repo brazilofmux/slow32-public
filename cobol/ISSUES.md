@@ -5672,3 +5672,14 @@ placeholder, and the text was not cut -- it ran twice (2002/userfnarith);
 such statements stay text, and a placeholder found anywhere but first
 is an internal error now.  S32_HIR_ONLY=a[-b] makes islands of the runs
 beginning on those lines alone, for finding the one that is wrong.
+
+Ninth (2026-10-03): MULH and MULHU.  The HIR copy's first divergence
+from selfhost (listed at the top of src/hir/hir.h, each site marked):
+the high word of a product, signed and unsigned, as SLOW-32 has them.
+An island's 64-bit product is MUL and MULH of two words, or MULHU and
+two MULs of pairs, where it called libcob's cob_mul64 (now gone; libs32
+has no __muldi3, and stage08's C front end calls one for a long long
+product -- these kinds are its answer too, upstream).  A literal that
+fits a word is a word whatever width is asked, so a product with one
+is the two-instruction form.  karith 2.35 G -> 2.14 G (-74% from the
+text), kmove and kedit a little; the generators the same on and off.

@@ -22,7 +22,8 @@
  * Why a copy and not a symlink (docs/plans/census.md): selfhost must be
  * free to change its HIR without breaking s32-cobc, and selfhost never
  * depends on anything built elsewhere in the tree.  Fortran made the
- * same choice.  Re-sync deliberately, recording the vintage.
+ * same choice.  Re-sync deliberately, recording the vintage; the copy's
+ * divergences are listed at the top of hir/hir.h.
  *
  * What the backend writes (cg_out) is a function's text with 4-space
  * indents; hir_take_text() moves it into g_asm one line at a time with

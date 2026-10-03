@@ -2,7 +2,15 @@
  * cobol/ keeps its own copy by ruling (docs/plans/census.md): selfhost must be
  * free to evolve without breaking s32-cobc, and selfhost never depends on
  * anything built elsewhere in the tree.  Do NOT symlink this back.  Re-sync
- * deliberately, and record the new vintage here. */
+ * deliberately, and record the new vintage here.
+ *
+ * DIVERGENCES from the original, marked "DIVERGENCE (cobol" where they
+ * are, so a re-sync carries them over or upstream:
+ *   - HI_MULH, HI_MULHU (2026-10-03): the high word of a product, in
+ *     hir.h (the kinds, hi_is_binop), hir_opt.h (folding, CSE, src2),
+ *     hir_burg.h (patterns, names), hir_regalloc.h (src1 reuse),
+ *     hir_codegen.h (mulh, mulhu).  stage08's C front end calls
+ *     __muldi3 for a long long product and could use these instead. */
 /* hir.h -- High-level IR for s12cc
  *
  * Parallel-array instruction representation.
@@ -104,6 +112,17 @@
  * (hjt_base[]/hjt_span[]), NOT h_carg — h_carg entries are value
  * instructions that several passes rewrite, but these are block numbers. */
 #define HI_JMPTAB   70
+
+/* DIVERGENCE (cobol, port upstream candidate): the high word of a
+ * product, signed and unsigned -- SLOW-32's mulh and mulhu.  A 64-bit
+ * product is then lo = MUL, hi = MULH (both operands sign-extended words)
+ * or MULHU + two MULs (pairs), where the C front end calls __muldi3.
+ * Binary like ADD..SGEU, pure, CSE-able, reusing src1's register. */
+#define HI_MULH     71
+#define HI_MULHU    72
+/* a binary operation over two value operands (the ADD..SGEU range and
+ * the two above); the passes that classified by the range ask this */
+static int hi_is_binop(int k) { return (k >= HI_ADD && k <= HI_SGEU) || k == HI_MULH || k == HI_MULHU; }
 
 /* --- Limits --- */
 
@@ -377,7 +396,7 @@ static int hi_is_a64_cache_asm(int kind) {
 /* Is this instruction kind safe to hoist/CSE? Pure, non-faulting. */
 static int hi_is_pure(int k) {
     /* Binary arithmetic/logic/comparison, excluding DIV/REM */
-    if (k >= HI_ADD && k <= HI_SGEU) {
+    if (hi_is_binop(k)) {
         if (k == HI_DIV || k == HI_REM) return 0;
         return 1;
     }
