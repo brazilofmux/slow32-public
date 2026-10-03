@@ -266,11 +266,19 @@ bounded properly: every inlined PERFORM measured with everything inside
 it inlined, the innermost past the cap (128, `S32_HIR_INL`) sent back to
 text until stable.
 
-What the profile leaves, in order: cob_write a byte a call (the output
-loop's WRITE text node), cob_read, reference modification with a
-computed length (`x(1:function min(n, 4096))`, per field), the footprint
-by item per paragraph; and on the kernels' side, the alnum MOVEs and
-compares the islands still refuse (the "MOVE: the sender" count).
+Then index-names (a word holding the occurrence number: subscripts,
+values, VARYING) and reference modification with a computed start or
+length in a MOVE of bytes (any integer expression; the check in line,
+memcpy and cob_fill for the bytes).  WRITE/READ as direct calls were
+measured at two instructions a record and not built: cob_write's own 26
+per one-byte record is the runtime's short entry, which no call shape
+touches.
+
+What the profile leaves: the per-record runtime (cob_write, cob_read),
+STRING and the class conditions (text verbs, per field), the footprint by
+item per paragraph.  The gl programs are runtime-bound (SORT, memchr,
+read/write: generated code is 12% of gl034's guest instructions), so the
+batch's gain is csv2fw's.
 
 ## What follows
 

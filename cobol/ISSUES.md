@@ -5947,3 +5947,25 @@ tests/majesty-functions.sh: the jerm leg builds the original FUNCTION
 driver with today's range clamp (majesty c0ae220 made it for the CALL
 driver) and requires the sweep's length -- 355,504 lines, byte-identical
 with GnuCOBOL; 302 fails.  KEEP=1 keeps its work directory.
+
+Seventeenth (2026-10-03): **reference modification with a computed
+length or start** in a MOVE of bytes -- `raw-text(1:function min(cur-len,
+4096))`, `out-rec(fpos + fw - len:len)` -- any integer expression the
+island forms for either (lw_expr, a word; Ref.lw_startx/lw_lenx keep the
+nodes from the admission, since the >>TURN state and the arena have moved
+on by generation).  The length is checked where cob_refmod_len_chk
+checks it, one unsigned compare with the runtime's own check on the
+branch that fails; the bytes go by memcpy of the shorter length and
+cob_fill of the receiver's rest -- the runtime's cob_move_alnum in two
+calls, where the text made two calls and a check.  Compares and DISPLAY
+take known lengths only.  csv2fw 3.348 -> 3.316 G, 0.18 -> 0.17 s; the
+MOVEs it still refuses are 7.
+
+WRITE and READ as direct calls were measured and NOT built: on the
+success path the WRITE text node executes nine instructions round
+cob_write (five arguments, the call, the status stored and reloaded, the
+test) where a direct HIR call would execute seven -- two of ~50 a byte
+in csv2fw's output loop, 0.3% -- and would need a second copy of
+emit_use_dispatch (declaratives, the EC classes, the unhandled path).
+The 11% the profile shows for cob_write is its own 26 instructions per
+one-byte record, the short entry already; no call shape touches it.

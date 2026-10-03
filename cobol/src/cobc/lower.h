@@ -460,28 +460,6 @@ static int lw_sub_item_ok(Sym *s)
     if (s->is_index) return lw_mem_ok(&r);
     return s->pi.scale == 0 && !s->ndims && lw_opnd_item_ok(&r);
 }
-/* a reference modification's start expression the island can form: an
- * integer item alone, or one plus or minus an integer literal; *sym and
- * *adj are the item and the literal added */
-static int lw_rm_start_ok(const Expr *x, Sym **sym, long *adj)
-{
-    const Expr *leaf = x; *adj = 0;
-    if (x->op == '+' || x->op == '-') {
-        const Expr *l = x->l, *r = x->r;
-        if (!l || !r || l->op || r->op || !l->o || !r->o) return 0;
-        if (r->o->kind == O_NUM) { leaf = l; }
-        else if (x->op == '+' && l->o->kind == O_NUM) { leaf = r; r = l; }
-        else return 0;
-        if (!numlit_is_int(&r->o->num) || r->o->num.ndigits > 9) return 0;
-        long long k = numlit_int(&r->o->num); if (r->o->num.neg) k = -k;
-        *adj = x->op == '+' ? (long)k : -(long)k;
-    }
-    if (leaf->op || !leaf->o || leaf->o->kind != O_REF) return 0;
-    const Ref *lr = &leaf->o->ref;
-    if (lr->nsub || lr->rm || !lw_sub_item_ok(lr->sym)) return 0;
-    *sym = lr->sym;
-    return 1;
-}
 /* a reference whose address and length the island can form: its record
  * by label, each subscript a literal or an integer item, a reference
  * modification with literal positions, no EC-BOUND check on; *len the
@@ -493,6 +471,7 @@ static int g_lw_bytes_any;           /* a whole numeric item's bytes too (a byte
  * compile has moved on by then (2002/ecbound turns EC-BOUND on after a
  * statement an island took) */
 static long lw_bytes_len(const Ref *r) { return r->rm ? r->rm_len : r->sym->size; }
+static int lw_expr(Expr *e, int top_div);
 static int lw_bytes_ref_ok(const Ref *r, long *len)
 {
     Sym *s = r->sym;
@@ -505,10 +484,27 @@ static int lw_bytes_ref_ok(const Ref *r, long *len)
     for (int k = 0; k < r->nsub; k++)
         if (r->sub[k].sym == &g_subx || (r->sub[k].sym && !lw_sub_item_ok(r->sub[k].sym))) return 0;
     if (r->rm) {
-        if (r->rm_nat || r->rm_bit || r->rm_odo || r->bitsub || r->rm_lx || r->rm_len <= 0) return 0;
-        if (r->rm_sx) { Sym *ss; long adj; if (!lw_rm_start_ok(r->rm_sx, &ss, &adj)) return 0; }
+        if (r->rm_nat || r->rm_bit || r->rm_odo || r->bitsub) return 0;
+        if (r->rm_sx) {
+            /* a computed start: an integer expression the island can form, a
+             * word (an item, one +/- a literal, or more: `fpos + fw - len`) */
+            int x = lw_expr(r->rm_sx, 0);
+            if (x < 0 || g_lw_n[x].sc != 0 || g_lw_n[x].bd >= 2147483648.0L) return 0;
+            ((Ref *)r)->lw_startx = x + 1;
+        }
         else if (r->rm_start <= 0) return 0;
         if (ec_on_name("EC-BOUND-REF-MOD")) return 0;
+        if (r->rm_lx) {
+            /* a computed length: an integer expression the island can form,
+             * a word; its value is checked where the bytes are moved
+             * (lw_dyn_len).  *len = -1 says so; only a MOVE takes one. */
+            int x = lw_expr(r->rm_lx, 0);
+            if (x < 0 || g_lw_n[x].sc != 0 || g_lw_n[x].bd >= 2147483648.0L) return 0;
+            ((Ref *)r)->lw_lenx = x + 1;
+            *len = -1;
+            return 1;
+        }
+        if (r->rm_len <= 0) return 0;
         *len = r->rm_len;
         return 1;
     }
@@ -822,7 +818,7 @@ static int lw_disp_ref_ok(const Ref *r)
 {
     Sym *s = r->sym;
     long len;
-    if (r->rm) return lw_bytes_ref_ok(r, &len);
+    if (r->rm) return lw_bytes_ref_ok(r, &len) && len >= 0;
     if (s->is_cond || s->any_len || sym_bitlike(s) || s->natgroup || s->nat_usage || s->usage == U_NATIONAL || s->usage == U_BIT || s->is_index) return 0;
     if (s->pi.category == PIC_NATIONAL || s->pi.category == PIC_BOOLEAN || s->is_rc || s->lin_file >= 0 || s->rep_ctr >= 0 || s->usage == U_FLOAT) return 0;
     if (s->is_group && (has_odo(s) || s->bitgroup || s->strong)) return 0;
@@ -877,7 +873,7 @@ static int lw_cond(Cond *c)
         int bytewise = 0;
         if (c->x.kind == O_REF && c->y.kind == O_REF && !c->x.ref.rm && !c->y.ref.rm && cmp_is_bytewise(&c->x, &c->y)) {
             g_lw_bytes_any = 1;
-            bytewise = lw_bytes_ref_ok(&c->x.ref, &lx) && lw_bytes_ref_ok(&c->y.ref, &ly);
+            bytewise = lw_bytes_ref_ok(&c->x.ref, &lx) && lw_bytes_ref_ok(&c->y.ref, &ly) && lx >= 0 && ly >= 0;
             g_lw_bytes_any = 0;
         }
         int op = c->op;
@@ -1084,7 +1080,8 @@ static void lw_collect_opnd(int oi)
     const Opnd *o = &g_lw_o[oi];
     if (o->kind != O_REF) return;
     for (int k = 0; k < o->ref.nsub; k++) if (o->ref.sub[k].sym && o->ref.sub[k].sym->native) lw_item_slot((int)(o->ref.sub[k].sym - g_sym));
-    if (o->ref.rm && o->ref.rm_sx) { Sym *ss; long adj; if (lw_rm_start_ok(o->ref.rm_sx, &ss, &adj) && ss->native) lw_item_slot((int)(ss - g_sym)); }
+    if (o->ref.rm && o->ref.lw_startx) lw_collect_node(o->ref.lw_startx - 1);
+    if (o->ref.rm && o->ref.lw_lenx) lw_collect_node(o->ref.lw_lenx - 1);
 }
 static void lw_collect_cond(int c)
 {
@@ -1608,9 +1605,9 @@ static int lw_ref_addr(const Ref *r)
          * check it -- 1 <= start and start - 1 + len <= the item's size --
          * by one unsigned compare, the runtime's own check (and its
          * message) on the branch that fails */
-        Sym *ss; long adj; lw_rm_start_ok(r->rm_sx, &ss, &adj);
-        LV sv = lw_item_val((int)(ss - g_sym)); sv.hi = -1;
-        int st = adj ? hi_emit(HI_ADDI, TY_INT, sv.lo, -1, (int)adj, NULL) : sv.lo;
+        if (!r->lw_startx) die_at(r->line, "internal: a computed start the island did not admit");
+        LV sv = lw_val(r->lw_startx - 1); sv.hi = -1;
+        int st = sv.lo;
         int st0 = hi_emit(HI_ADDI, TY_INT, st, -1, -1, NULL);
         int ok = hi_emit(HI_SLTU, TY_INT, st0, lw_iconst((int)(s->size - r->rm_len + 1)), 0, NULL);
         int b_bad = hir_new_block(), b_ok = hir_new_block();
@@ -1670,19 +1667,67 @@ static void lw_fill_n(int dst, long n, int c)
 }
 /* MOVE of bytes: the receiver takes the sender's first bytes, the rest
  * spaces (cob_move_alnum, left-justified); a figurative fills it */
+/* a computed length as a value: checked as cob_refmod_len_chk checks it
+ * -- 1 <= len and start - 1 + len <= the item's size, the start already
+ * known valid -- by one unsigned compare, the runtime's check (and its
+ * message) on the branch that fails */
+static int lw_dyn_len(const Ref *r)
+{
+    const Sym *s = r->sym;
+    LV v = lw_val(r->lw_lenx - 1); v.hi = -1;
+    int start = -1;
+    if (r->rm_sx) { LV sv = lw_val(r->lw_startx - 1); start = sv.lo; }
+    else start = lw_iconst((int)r->rm_start);
+    int room = hi_emit(HI_SUB, TY_INT, lw_iconst((int)s->size + 1), start, 0, NULL);      /* size - (start - 1) */
+    int ok = hi_emit(HI_SLTU, TY_INT, hi_emit(HI_ADDI, TY_INT, v.lo, -1, -1, NULL), room, 0, NULL);
+    int b_bad = hir_new_block(), b_ok = hir_new_block();
+    lw_brc(ok, b_ok, b_bad);
+    lw_begin_blk(b_bad);
+    { int args[3] = { lw_desc_addr((Sym *)s), start, v.lo }; lw_call("cob_refmod_len_chk", args, 3); }
+    lw_goto(b_ok);
+    lw_begin_blk(b_ok);
+    return v.lo;
+}
+/* the smaller of two words, by a branch into a temporary */
+static int lw_min_val(int a, int b)
+{
+    int t = lw_alloca();
+    hi_emit(HI_STORE, TY_INT, t, a, 0, NULL);
+    int b_lt = hir_new_block(), b_join = hir_new_block();
+    lw_brc(hi_emit(HI_SLT, TY_INT, b, a, 0, NULL), b_lt, b_join);
+    lw_begin_blk(b_lt); hi_emit(HI_STORE, TY_INT, t, b, 0, NULL); lw_goto(b_join);
+    lw_begin_blk(b_join);
+    return hi_emit(HI_LOAD, TY_INT, t, -1, 0, NULL);
+}
 static void lw_gen_amove(LStmt *s)
 {
     const Opnd *src = &g_lw_o[s->asrc];
     long sn; int fill; int sa = lw_bytes_src(src, &sn, &fill);
+    int snv = -1;                               /* the sender's length as a value, when computed */
+    if (src->kind == O_REF && src->ref.rm && src->ref.lw_lenx) { snv = lw_dyn_len(&src->ref); sn = -1; }
     for (int i = 0; i < s->nr; i++) {
         const Ref *d = &g_lw_o[s->adst[i]].ref;
         if (g_lw_o[s->adst[i]].kind != O_REF || !d->sym) die_at(s->line, "internal: a MOVE of bytes lost its receiver (statement %d, operand %d of %d, kind %d)", (int)(s - g_lw_s), s->adst[i], g_lw_no, g_lw_o[s->adst[i]].kind);
         long dn = lw_bytes_len(d);
+        int dnv = -1;
+        if (d->rm && d->lw_lenx) { dnv = lw_dyn_len(d); dn = -1; }
         int da = lw_ref_addr(d);
-        if (fill >= 0) { lw_fill_n(da, dn, fill); continue; }
-        long n = sn < dn ? sn : dn;
-        lw_copy_n(da, sa, n);
-        lw_fill_n(lw_at(da, n), dn - n, ' ');
+        if (sn >= 0 && dn >= 0) {               /* both lengths known: in line */
+            if (fill >= 0) { lw_fill_n(da, dn, fill); continue; }
+            long n = sn < dn ? sn : dn;
+            lw_copy_n(da, sa, n);
+            lw_fill_n(lw_at(da, n), dn - n, ' ');
+            continue;
+        }
+        /* a length computed at run time: the shorter one's bytes by
+         * memcpy, the receiver's rest filled -- the runtime's own
+         * cob_move_alnum, in two calls (cob_fill of nothing is nothing) */
+        if (dnv < 0) dnv = lw_iconst((int)dn);
+        if (fill >= 0) { int a[3] = { da, dnv, lw_iconst(fill) }; lw_call("cob_fill", a, 3); continue; }
+        if (snv < 0) snv = lw_iconst((int)sn);
+        int k = lw_min_val(snv, dnv);
+        { int a[3] = { da, sa, k }; lw_call("memcpy", a, 3); }
+        { int a[3] = { hi_emit(HI_ADD, TY_INT, da, k, 0, NULL), hi_emit(HI_SUB, TY_INT, dnv, k, 0, NULL), lw_iconst(' ') }; lw_call("cob_fill", a, 3); }
     }
 }
 /* bytes equal or not: chunks xor-ed and or-ed together for a short
@@ -1819,7 +1864,8 @@ static int lw_opnd_names(int oi, int sym)
     if (o->kind != O_REF) return 0;
     if (o->ref.sym == &g_sym[sym]) return 1;
     for (int k = 0; k < o->ref.nsub; k++) if (o->ref.sub[k].sym == &g_sym[sym]) return 1;
-    if (o->ref.rm && o->ref.rm_sx) { Sym *ss; long adj; if (lw_rm_start_ok(o->ref.rm_sx, &ss, &adj) && ss == &g_sym[sym]) return 1; }
+    if (o->ref.rm && o->ref.lw_startx && lw_node_names(o->ref.lw_startx - 1, sym)) return 1;
+    if (o->ref.rm && o->ref.lw_lenx && lw_node_names(o->ref.lw_lenx - 1, sym)) return 1;
     return 0;
 }
 static int lw_cond_names(int c, int sym)

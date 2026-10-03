@@ -32,6 +32,7 @@ typedef struct Ref_ {
     int user_rm;                    /* the program wrote a reference modification (rm is also set for a bit-array element) */
     Expr *rm_sx, *rm_lx;            /* the start and length when expressions (rm_lx NULL: no length expression) */
     int rm_odo; Sym *odo_dep; int odo_base, odo_elem;   /* a whole group over an ODO table, sent at its current length */
+    int lw_lenx, lw_startx;         /* lower.h: a computed length's, a computed start's node + 1 when an island takes it, else 0 */
 } Ref;
 static void emit_refmod_check(const Ref *r, long len, int slot);
 /* the stand-in subscript symbol of an arithmetic-expression subscript
