@@ -1810,10 +1810,17 @@ static void run_dbt_stage4(dbt_cpu_state_t *cpu, block_cache_t *cache) {
     ctx.reg_cache_enabled = reg_cache_enabled;
     ctx.strict_carry = strict_carry_enabled;
     uint64_t dispatch_iter = 0;
+    /* SLOW32_DBT_DISPATCH_HIST=1: which guest PCs reach the dispatcher, and
+     * how often -- a block exit that is not chained shows here as a PC
+     * looked up once per execution (the COBOL islands' mulhu loop made
+     * three million lookups where the udiv one made six hundred) */
+    static uint32_t dh_pc[4096]; static uint64_t dh_n[4096]; int dh_on;
+    { const char *e = getenv("SLOW32_DBT_DISPATCH_HIST"); dh_on = e && e[0] && strcmp(e, "0") != 0; }
 
     while (!cpu->halted) {
         // Look up block in cache
         translated_block_t *block = cache_lookup(cache, cpu->pc);
+        if (dh_on) { uint32_t h = (cpu->pc >> 2) & 4095; for (int k = 0; k < 4096; k++) { uint32_t i = (h + k) & 4095; if (dh_n[i] == 0 || dh_pc[i] == cpu->pc) { dh_pc[i] = cpu->pc; dh_n[i]++; break; } } }
 
         if (!block) {
             // Reset superblock depth for new translation
@@ -1974,6 +1981,14 @@ static void run_dbt_stage4(dbt_cpu_state_t *cpu, block_cache_t *cache) {
                         cpu->exit_reason, cpu->pc);
                 cpu->halted = true;
                 break;
+        }
+    }
+    if (dh_on) {
+        fprintf(stderr, "--- Dispatcher lookups by guest PC (top 12) ---\n");
+        for (int r = 0; r < 12; r++) {
+            int best = -1; for (int k = 0; k < 4096; k++) if (dh_n[k] && (best < 0 || dh_n[k] > dh_n[best])) best = k;
+            if (best < 0) break;
+            fprintf(stderr, "  0x%08X  %" PRIu64 "\n", dh_pc[best], dh_n[best]); dh_n[best] = 0;
         }
     }
 }

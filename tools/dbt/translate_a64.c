@@ -2363,28 +2363,49 @@ void translate_mul(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     }
 }
 
+// MULH / MULHU: the 64-bit product in the X form of the destination, its
+// high word shifted down.  Through the register cache like MUL and DIV:
+// the memory round trip these made for every high word cost the COBOL
+// islands' division-by-ten (mulhu by the reciprocal) twice what two udivs
+// had (kmove 0.10 -> 0.21 s).
 void translate_mulh(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    // SMULL uses X-register result, must go through W0/W1 scratch
-    emit_load_guest_reg(ctx, W0, rs1);
-    emit_load_guest_reg(ctx, W1, rs2);
-    emit_smull(e, W0, W0, W1);
-    emit_asr_x64_imm(e, W0, W0, 32);
-    emit_store_guest_reg(ctx, rd, W0);
+    a64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != A64_NOREG) {
+        a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+        a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+        emit_smull(e, hd, s1, s2);
+        emit_asr_x64_imm(e, hd, hd, 32);
+        reg_cache_mark_written(ctx, rd);
+    } else {
+        emit_load_guest_reg(ctx, W0, rs1);
+        a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+        emit_smull(e, W0, W0, s2);
+        emit_asr_x64_imm(e, W0, W0, 32);
+        emit_store_guest_reg(ctx, rd, W0);
+    }
 }
 
 void translate_mulhu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    // UMULL uses X-register result, must go through scratch
-    emit_load_guest_reg(ctx, W0, rs1);
-    emit_load_guest_reg(ctx, W1, rs2);
-    emit_umull(e, W0, W0, W1);
-    emit_lsr_x64_imm(e, W0, W0, 32);
-    emit_store_guest_reg(ctx, rd, W0);
+    a64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != A64_NOREG) {
+        a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+        a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+        emit_umull(e, hd, s1, s2);
+        emit_lsr_x64_imm(e, hd, hd, 32);
+        reg_cache_mark_written(ctx, rd);
+    } else {
+        emit_load_guest_reg(ctx, W0, rs1);
+        a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+        emit_umull(e, W0, W0, s2);
+        emit_lsr_x64_imm(e, W0, W0, 32);
+        emit_store_guest_reg(ctx, rd, W0);
+    }
 }
 
 // ============================================================================
@@ -3568,8 +3589,13 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
         ctx->inst_count++;
     }
 
-    // Reached max instructions
-    emit_exit(ctx, EXIT_BLOCK_END, ctx->guest_pc);
+    // Reached max instructions: the next block begins at guest_pc, and the
+    // exit is a chainable one (a plain jump's), not a trip through the
+    // dispatcher -- which it was: a straight run past MAX_BLOCK_INSTS paid a
+    // lookup every time it executed (the COBOL islands' loop with the
+    // division-by-ten reciprocal: 3,000,000 lookups, 0.10 -> 0.21 s).
+    if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) ctx->block->exits[ctx->exit_idx].branch_pc = ctx->guest_pc;
+    emit_exit_chained(ctx, ctx->guest_pc, ctx->exit_idx++);
 
 block_done:
     if (ctx->block) {
@@ -4876,7 +4902,9 @@ retry_translate:
         ctx->inst_count++;
     }
 
-    emit_exit(ctx, EXIT_BLOCK_END, ctx->guest_pc);
+    // Reached max instructions: a chainable exit (see the stage-4 path above)
+    if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) ctx->block->exits[ctx->exit_idx].branch_pc = ctx->guest_pc;
+    emit_exit_chained(ctx, ctx->guest_pc, ctx->exit_idx++);
 
 cached_done:
     // Emit deferred side exits (superblock cold stubs)

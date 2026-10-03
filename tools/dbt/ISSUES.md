@@ -703,3 +703,38 @@ x86-64 hardware; the next builder run is that.  qemu has no such stub
 and walks the bytes, but says nothing at a fault, so the two fault
 tests join the known qemu-only divergences in `run-differential.sh`.
 
+
+## 22. The Block-Length Exit Was Never Chained (FIXED 2026-10-03)
+
+A translated block ends at a branch, a jump, a call -- or at
+`MAX_BLOCK_INSTS` (96), and that last exit was `emit_exit(EXIT_BLOCK_END)`:
+a return to the C dispatcher, which looks the next PC up and jumps to its
+block.  A straight run of code longer than 96 instructions therefore paid
+a dispatcher trip every time it executed, for the life of the process,
+while its branch exits were chained once and never again.
+
+Found by the COBOL islands: kmove's loop, 0.10 s under the DBT, became
+0.21 s when the compiler turned its divisions by ten into the reciprocal
+(mulhu, srli, mul, sub -- four instructions for two), though it ran only
+4% more instructions.  The DBT's statistics said why before the
+disassembly did: 3,000,000 cache lookups against 626, one per iteration,
+and a new knob (`SLOW32_DBT_DISPATCH_HIST=1`, printed with the statistics)
+named the PC -- the middle of straight-line code, 0x660, where nothing
+jumped.  The run had passed 96 instructions.
+
+Both translators' length exits (`translate_a64.c`, the stage-4 path and
+the cached-return one) are `emit_exit_chained` now, with the exit's
+branch_pc recorded: the same exit a plain jump makes, patched into a
+direct B when the next block exists.  kmove 0.21 -> 0.10 s; kedit's
+inline editing, 0.35 -> 0.27 s, had been paying the same.  The
+differential harnesses (run-differential, run-kit-differential,
+run-kit-tools-differential) all agree; the six qemu-only divergences are
+the known ones.  Also: MULH and MULHU go through the register cache like
+MUL and DIV (they loaded and stored the guest register file), and the
+histogram knob stays.
+
+Lesson, again: a `git stash` / `make` / `git stash pop` / `make` leaves
+the popped source with the same second's mtime as the object built from
+the stashed one, and `make` keeps the wrong binary.  Three differential
+runs went against HEAD's DBT before `touch` showed it.  Don't stash in
+this tree; build with the tree as it is.
