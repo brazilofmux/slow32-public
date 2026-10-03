@@ -12,6 +12,20 @@
 
 static char cg_out[CG_MAX_OUT];
 static int  cg_olen;
+
+/* DIVERGENCE (cobol, 2026-10-03; docs/plans/hir.md milestone 2): a front
+ * end that puts its own code inside a HIR function.
+ *   hcg_frame_reserve: bytes left free at the bottom of every frame, below
+ *     the backend's own slots, for code that addresses sp+0.. by itself
+ *     (COBOL's text statements use sp+8..sp+136).
+ *   hcg_text_call: asked at a call's emission with the callee's name;
+ *     returns 1 when it wrote the call itself (lines of text in place of
+ *     the jal).  hcg_text_is says which names are such, so they are never
+ *     tail calls.  Both NULL: the backend as it was. */
+static int hcg_frame_reserve;
+static int hcg_r30_keep;                /* r30 left out of the allocator's pool (text code scratches it) */
+static int (*hcg_text_call)(char *name);
+static int (*hcg_text_is)(char *name);
 static int  cg_fd = -1;
 static int  cg_long_calls;  /* -mlong-calls: direct calls form the address; a jal reaches +/-1MB, SQLite's library is 1.2MB */     /* the output file, once the driver has opened it: a full buffer is flushed to it */
 
@@ -2967,6 +2981,12 @@ static void hcg_inst(int idx) {
         if (imm_opp) hcg_stat_imm_opp_cmp = hcg_stat_imm_opp_cmp + 1;
         if (have_imm) {
             rd = hcg_dst(idx);
+            if (off == 0) {                      /* DIVERGENCE (cobol): x == 0 is seq against r0 alone; upstream xori-s by 0 first */
+                if (k == HI_SEQ) cg_rrr("seq", rd, rs1, 0);
+                else cg_rrr("sne", rd, rs1, 0);
+                hcg_maybe_spill(idx);
+                return;
+            }
             cg_rri("xori", rd, rs1, off);
             if (k == HI_SEQ) cg_rrr("seq", rd, rd, 0);
             else cg_rrr("sne", rd, rd, 0);
@@ -3455,7 +3475,7 @@ static void hcg_inst(int idx) {
          * stack spill (matches clang's CC_SLOW32). */
         nstk = hi_abi_assign(&h_carg_tag[base], nargs, hcg_argmap);
 
-        is_tail = (nstk == 0) && hcg_is_tailcall(idx);
+        is_tail = (nstk == 0) && hcg_is_tailcall(idx) && !(hcg_text_is && hcg_text_is(h_name[idx]));   /* DIVERGENCE (cobol): a text call stays in place */
 
         if (is_tail) {
             hcg_marshal_reg_args(base, nargs);
@@ -3480,7 +3500,9 @@ static void hcg_inst(int idx) {
         hcg_push_stack_args(base, nargs);
         hcg_marshal_reg_args(base, nargs);
 
-        if (cg_long_calls) {
+        if (hcg_text_call && hcg_text_call(h_name[idx])) {
+            /* DIVERGENCE (cobol): the front end's own lines stand for the call */
+        } else if (cg_long_calls) {
             /* r2 is free here: args sit in r3-r10, results come back in r1/r2 */
             hcg_la(2, h_name[idx]);
             cg_s("    jalr r31, r2, 0\n");
@@ -4072,7 +4094,7 @@ static void hcg_func(Node *fn) {
      * not need it as a frame pointer.  Varargs keeps r30 as FP.
      * Large frames that actually take the color omit FP too (li+sub). */
     ra_r30_alloc = 0;
-    if (!fn->is_varargs) ra_r30_alloc = 1;
+    if (!fn->is_varargs && !hcg_r30_keep) ra_r30_alloc = 1;     /* (hcg_r30_keep: DIVERGENCE, cobol) */
     /* Register allocation: assigns ra_reg[], ra_spill_off[],
      * callee-save info, and updates hl_temp_stack */
     if (getenv("HIR_RA_DEBUG")) {
@@ -4100,7 +4122,7 @@ static void hcg_func(Node *fn) {
 
     /* Compute frame size (hl_temp_stack includes spills + any callee-saves
      * the allocator could not avoid). */
-    fs = hl_temp_stack;
+    fs = hl_temp_stack + hcg_frame_reserve;     /* DIVERGENCE (cobol): the reserved bottom */
     fs = ((fs + 3) / 4) * 4;
     hcg_classify_frame(fn);
     if (hcg_frameless) fs = 0;

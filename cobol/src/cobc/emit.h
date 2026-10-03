@@ -519,9 +519,11 @@ static void calls_scope_end(CallList outer)
  * - on_one 1, an I-O status: ON when it is 1, NOT ON when it is 0, and
  *   neither when it is 2 (an error already reported) -- a test each. */
 typedef struct { int has_on, has_not; Block on, not_on; } Phrases;
+static int lw_phrases(const Phrases *p, int slot, int on_one);      /* lower.h: the phrases as an island's branches, or 0 */
 static void emit_phrases(const Phrases *p, int slot, int on_one)
 {
     if (!p->has_on && !p->has_not) return;
+    if (lw_phrases(p, slot, on_one)) return;
     char t[96];
     int Lend = new_label();
     if (slot >= 0) emit("\tldw r1, sp+%d", slot);

@@ -109,7 +109,11 @@ selfhost, listed in `src/hir/hir.h`), where stage08 calls `__muldi3`.
 
 - `-fno-hir`, `S32_HIR=0`: the lowering off, the text emitter alone.
   `S32_HIR_TRACE=1`: each statement taken or refused, and why; each run
-  made an island or kept as text.  `S32_HIR_MIN=n`: the run length that
+  made an island or kept as text, and why a run with text nodes was
+  refused (no loop, or none of its own; text more than a third; no
+  native item; a PERFORM that may not come back).
+  `S32_HIR_DUMP=.LislN`: that island's HIR as lowered and after the
+  optimizer.  `S32_HIR_MIN=n`: the run length that
   pays on its own (0: every run).  `S32_HIR_ONLY=a[-b]`: islands only
   of the runs beginning on those source lines -- bisect a differing
   program by line range down to the one island.
@@ -131,6 +135,80 @@ loops are whole islands: kmove -42% (0.28 -> 0.12 s), kedit -26%,
 kseq -26%, kstring -6%, kreport -4%, ksort -3%, ksearch and kidx about
 even (their loops hold SEARCH, READ and PERFORM of paragraphs);
 csv2fw and majesty's batch within their noise.
+
+## Milestone 2: text statements in islands; paragraphs as islands
+
+What keeps the real programs' loops in the text is not arithmetic but
+READ, WRITE, PERFORM of a paragraph, GENERATE, CALL -- verbs with text
+emitters that took months to get right and will not be rewritten as HIR
+one by one.  So an island takes them as they are: a **text statement**
+is a node whose code is the lines the text emitter wrote for it (kept
+already, `lw_stmt_text`), emitted in place as an opaque call.  What that
+needs, and where each piece sits:
+
+- *The frame.*  The text's code addresses its scratch at `sp+8..sp+136`
+  (`SLOT`, `SLOT_A..C`; emit.h FRAME).  An island with text statements
+  reserves the bottom FRAME bytes of its own frame for them: the
+  backend's frame grows by `hcg_frame_reserve` and every slot offset
+  moves up (hcg_slot_off goes through hcg_frame) -- one line in the
+  copy.  Statements that touch the unit's own slots (SLOT_PBASE, SLOT_ACT,
+  the saved registers) are not taken: GOBACK, EXIT PROGRAM, STOP RUN.
+- *The registers.*  Text code uses r1-r13, r30, r31 as scratch, never
+  r14-r28 (loopreg's r14-r17 only through marks, which are stripped from
+  a text node).  So a text node is a call that also clobbers r11-r13 and
+  r30: the allocator's callee pool starts at r14 in such an island
+  (`ra_callee_skip`), r30 stays out, and HI_CALL's crossing rules do the
+  rest.  The node is an HI_CALL of a name the emitter recognises
+  (`.Ltext<k>`): no marshalling, no jal, the lines instead.
+- *Control.*  A text node may not leave: every jump and branch in its
+  lines targets a label of its own, except PERFORM of a range the PERFORM
+  census calls a procedure (entered at its top by PERFORM alone, no GO
+  TO in or out, not fallen into, not overlapping) -- which returns to the
+  line after its jump.  The census is taken in the compiler now
+  (`pc_is_procedure`), from the same records `tests/performs.py` reads,
+  and known only when the unit is parsed: a run with such a node waits
+  for the unit's end to be resolved.  GO TO, EXIT PERFORM, NEXT SENTENCE,
+  an EC raise that branches to a handler, keep a run in the text.
+- *The items.*  A text node may read or write any item: the native items
+  an island holds are stored to their storage before it and loaded again
+  after it.  (The census could say which items a paragraph names; that
+  is the refinement.)
+- *Paragraphs.*  A paragraph that is a procedure and whose statements an
+  island takes becomes one island, called from where the paragraph's
+  code was; a PERFORM of it from another island is then a direct call,
+  without the perform stack.
+- *What pays.*  A loop of text statements alone is the text's; an
+  island is formed where the loop's own control, its IFs and arithmetic
+  are HIR's and the text nodes are a minority -- measured, as before.
+
+### Measured (2026-10-03): the first half, and what it says
+
+Text nodes are in: all of the above but the paragraphs, gated by the
+twelve generators on and off.  The measurement that mattered: the real
+programs' loops are `PERFORM paragraph UNTIL`, so their runs are in a
+loop that is not their own.  Counting them as loops (the census records
+whether a PERFORM iterates, `lw_para_looped` follows it transitively)
+made csv2fw 23 islands and **+5%** slower.  Three of the causes were the
+island's codegen, fixed and kept for every island -- a DISPLAY integer in
+storage fetched by `cob_get_num` where the text decodes it in line
+(`lw_dec_load`), AND/OR evaluating both sides where the text
+short-circuits (`lw_cond_br`), a literal's bytes loaded where an `xori`
+immediate serves, and `x == 0` as `xori; seq` in the backend copy; the
+truncation guard also takes |v| no more when the value cannot be negative.
+That brought csv2fw to **+0.2%**: at par.  What remains is the shape
+itself: a run that does not hold its loop loads its items at entry, syncs
+them round each text node and stores them at exit on every pass; the text
+does none of that.  So such runs stay text (the trace says so), and the
+kernels took the fixes: kmove -42 -> -50%, kseq -27 -> -32%, kstring -5
+-> -8%, kreport -2 -> -4.6%.
+
+The conclusion for the second half: the island must hold the whole
+paragraph -- one entry, one exit, the items in registers across every
+statement between, the syncs only round the text nodes that name them --
+and, further on, the PERFORM UNTIL that drives it, as a loop in HIR
+calling the paragraph's function.  GO TO within the paragraph's range
+would be a branch inside the island; the PERFORM census already says
+which paragraphs are procedures.
 
 ## What follows
 

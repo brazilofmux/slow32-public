@@ -6,12 +6,17 @@
  *
  * DIVERGENCES from the original, marked "DIVERGENCE (cobol" where they
  * are, so a re-sync carries them over or upstream:
+ *   - hcg_frame_reserve, hcg_text_call/hcg_text_is (hir_codegen.h) and
+ *     ra_callee_skip (hir_regalloc.h), 2026-10-03: a front end's own code
+ *     inside a HIR function (docs/plans/hir.md, milestone 2).
  *   - HI_MULH, HI_MULHU (2026-10-03): the high word of a product, in
  *     hir.h (the kinds, hi_is_binop), hir_opt.h (folding, CSE, src2),
  *     hir_burg.h (patterns, names), hir_regalloc.h (src1 reuse),
  *     hir_codegen.h (mulh, mulhu).  Ported upstream the same day
  *     (bcc42652, selfhost ISSUES-79): the next re-sync carries nothing
- *     for it but the hi_is_binop spelling. */
+ *     for it but the hi_is_binop spelling.
+ *   - SEQ/SNE against 0 (hir_codegen.h, 2026-10-03): seq/sne against r0
+ *     alone; upstream xori-s by 0 first.  Worth porting. */
 /* hir.h -- High-level IR for s12cc
  *
  * Parallel-array instruction representation.

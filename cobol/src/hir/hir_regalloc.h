@@ -61,6 +61,10 @@ static int ra_caller_saved_enabled_count = 8;  /* 0 = baseline (18 callee-saved 
  * On the omit-fp path it is an extra callee-saved GPR.  Set per
  * function before hir_regalloc(); ra_init_phys_regs rebuilds the map. */
 static int ra_r30_alloc;
+/* DIVERGENCE (cobol, 2026-10-03): the first callee-saved registers left
+ * out of the pool -- 3 leaves r11-r13 to code of the front end's own
+ * inside the function (COBOL's text statements scratch them) */
+static int ra_callee_skip;
 static int ra_ncal = 18;             /* 18 or 19; set by ra_init_phys_regs */
 static int ra_stat_r30;              /* values colored to r30 */
 
@@ -97,11 +101,11 @@ static void ra_init_phys_regs(void) {
     int ncal;
 
     /* Callee-saved pool: r11..r28 (indices 0..17), then r30 if enabled. */
-    for (i = 0; i < RA_NCALLEE; i = i + 1) {
-        ra_phys_reg[i] = RA_FIRST_REG + i;   /* 11 .. 28 */
+    for (i = 0; i < RA_NCALLEE - ra_callee_skip; i = i + 1) {
+        ra_phys_reg[i] = RA_FIRST_REG + ra_callee_skip + i;   /* 11 .. 28, or from r14 (DIVERGENCE, cobol) */
         ra_is_callee[i] = 1;
     }
-    ncal = RA_NCALLEE;
+    ncal = RA_NCALLEE - ra_callee_skip;
     if (ra_r30_alloc) {
         ra_phys_reg[ncal] = 30;
         ra_is_callee[ncal] = 1;

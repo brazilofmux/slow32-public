@@ -993,6 +993,7 @@ static void parse_statement_1(void)
             die_at(t->line, "GOBACK RAISING is not implemented yet (exception propagation to the caller, as EXIT PROGRAM RAISING)");
         if (at_word("with") && (is_word(peek(1), "error") || is_word(peek(1), "normal")))
             die_at(t->line, "GOBACK WITH ... STATUS is COBOL 2023 (14.9.18); not implemented -- STOP RUN WITH STATUS is 2002's");
+        pc_rec_leave();
         emit("\tjal r0, .Lgb%d", g_unit);
         return;
     }
@@ -1020,6 +1021,7 @@ static void parse_statement_1(void)
             /* a program no calling program controls continues past it
              * (X3.23-1985 EXIT PROGRAM general rule 1; 2023 14.9.14.4 rule 2) */
             emit_call("cob_called");
+            pc_rec_leave();
             emit("\tbne r1, r0, .Lgb%d", g_unit);
             return;
         }
@@ -1652,7 +1654,7 @@ static void parse_procedure_division(void)
     }
     if (g_uses_rc) { emit_la("r1", "cob_return_code"); emit("\tldw r1, r1+0"); }   /* RETURN-CODE, to the caller */
     else emit("\taddi r1, r0, 0");
-    lw_resolve(0);                              /* the islands, before the code is read as code (lower.h) */
+    g_lw_final = 1; lw_resolve(0); g_lw_final = 0;   /* the islands, before the code is read as code (lower.h) */
     lr_unit(); lr_unit_saves(); lr_unit_restores();
     census_unit();
     emit("\tldw r13, sp+%d", SLOT_R13);

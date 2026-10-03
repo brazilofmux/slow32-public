@@ -23,6 +23,23 @@
  * from-id is the paragraph the statement is in (-1 outside any). */
 
 static FILE *g_pc_out;
+static int g_inline_depth;                 /* loopreg.h's: in-line PERFORM bodies being read */
+
+/* The same facts kept in memory for this unit, whatever S32_CENSUS_DIR
+ * says: the lowering asks whether a performed range comes back
+ * (lower.h, lw_range_returns).  ids are paragraph ids (1-based). */
+static struct { int from, lo, thru, iter; } *g_pcf; static int g_npcf, g_pcf_cap;   /* out-of-line PERFORMs; iter: UNTIL/VARYING/TIMES, or issued inside an in-line loop */
+static struct { int from, target; } *g_pcg; static int g_npcg, g_pcg_cap;        /* GO TOs, of every kind */
+static int *g_pcl; static int g_npcl, g_pcl_cap;                                 /* paragraphs with a GOBACK or EXIT PROGRAM in them */
+static char *g_pce; static int g_pce_cap;                                        /* how each paragraph's code ends: 'f'all, 'j'ump, 's'top */
+#define PC_GROW(arr, n, cap) do { if ((n) == (cap)) { (cap) = (cap) ? 2 * (cap) : 64; (arr) = xrealloc((arr), (size_t)(cap) * sizeof *(arr)); } } while (0)
+static void pc_rec_leave(void)
+{
+    int id = g_cur_para ? g_cur_para->id : -1;
+    if (id < 0) return;
+    PC_GROW(g_pcl, g_npcl, g_pcl_cap); g_pcl[g_npcl++] = id;
+}
+
 static void pc_open(void)
 {
     if (g_pc_out || !g_cen_dir) return;
@@ -41,8 +58,7 @@ static int pc_here(void) { return g_cur_para ? g_cur_para->id : -1; }
  * what follows */
 static void pc_para_end(int id)
 {
-    if (!g_cen_on || !g_cen_dir || id < 0) return;
-    pc_open();
+    if (id < 0) return;
     const char *ends = "fall";
     for (int i = g_nasm - 1; i >= 0; i--) {
         const char *l = g_asm[i];
@@ -53,23 +69,34 @@ static void pc_para_end(int id)
         break;
     }
     Para *p = &g_para[id - 1];                 /* ids are 1-based (stmt.h) */
+    while (id >= g_pce_cap) { int c = g_pce_cap ? 2 * g_pce_cap : 256; g_pce = xrealloc(g_pce, (size_t)c); memset(g_pce + g_pce_cap, 'f', (size_t)(c - g_pce_cap)); g_pce_cap = c; }
+    g_pce[id] = ends[0];
+    if (!g_cen_on || !g_cen_dir) return;
+    pc_open();
     fprintf(g_pc_out, "P\t%d\t%s\t%s\t%d\t%d\t%d\t%s\n", p->id, p->name, p->is_section ? "section" : "para", p->section, p->in_decl, p->line, ends);
 }
 static void pc_perform(const Para *from, const Para *thru, const char *kind)
 {
-    if (!g_cen_on || !g_cen_dir || !from) return;
+    if (!from) return;
+    PC_GROW(g_pcf, g_npcf, g_pcf_cap); g_pcf[g_npcf].from = pc_here(); g_pcf[g_npcf].lo = from->id; g_pcf[g_npcf].thru = thru ? thru->id : -1;
+    g_pcf[g_npcf].iter = strcmp(kind, "once") != 0 || g_inline_depth > 0; g_npcf++;
+    if (!g_cen_on || !g_cen_dir) return;
     pc_open();
     fprintf(g_pc_out, "F\t%d\t%d\t%d\t%s\n", pc_here(), from->id, thru ? thru->id : -1, kind);
 }
 static void pc_goto(const Para *target, const char *kind)
 {
-    if (!g_cen_on || !g_cen_dir || !target) return;
+    if (!target) return;
+    PC_GROW(g_pcg, g_npcg, g_pcg_cap); g_pcg[g_npcg].from = pc_here(); g_pcg[g_npcg].target = target->id; g_npcg++;
+    if (!g_cen_on || !g_cen_dir) return;
     pc_open();
     fprintf(g_pc_out, "G\t%d\t%d\t%s\n", pc_here(), target->id, kind);
 }
 static void pc_goto_from(const Para *from, const Para *target, const char *kind)
 {
-    if (!g_cen_on || !g_cen_dir || !target) return;
+    if (!target) return;
+    PC_GROW(g_pcg, g_npcg, g_pcg_cap); g_pcg[g_npcg].from = from ? from->id : -1; g_pcg[g_npcg].target = target->id; g_npcg++;
+    if (!g_cen_on || !g_cen_dir) return;
     pc_open();
     fprintf(g_pc_out, "G\t%d\t%d\t%s\n", from ? from->id : -1, target->id, kind);
 }

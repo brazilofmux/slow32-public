@@ -162,9 +162,15 @@ KFN long long cob_k_get_num(const unsigned char *p, const cob_kdesc *d)
     }
     case K_U_PACKED: {
         int bytes = (int)d->size;
+        /* the high nibble of the first byte is a pad when the digits do not
+         * fill the nibbles (an even count with a sign, an odd one without):
+         * not a digit, whatever it holds -- content nobody promised (a group
+         * MOVE put '0' = 0x30 there) read as the picture reads it, as the
+         * compiler's in-line decoders and GnuCOBOL do (gen-native seed 51) */
+        unsigned b0 = 2 * bytes - ((d->flags2 & K_F2_NOSIGN) ? 0 : 1) - d->digits > 0 ? (p[0] & 15u) : p[0];
         if (d->flags2 & K_F2_NOSIGN) {                  /* COMP-6: every nibble a digit */
-            unsigned long long u = 0;
-            for (int i = 0; i < bytes; i++) u = u * 100 + (p[i] >> 4) * 10 + (p[i] & 15);
+            unsigned long long u = (b0 >> 4) * 10 + (b0 & 15);
+            for (int i = 1; i < bytes; i++) u = u * 100 + (p[i] >> 4) * 10 + (p[i] & 15);
             return (long long)u;
         }
         /* eight digits at a time in a 32-bit word (the flush into v kept
@@ -174,7 +180,7 @@ KFN long long cob_k_get_num(const unsigned char *p, const cob_kdesc *d)
         while (i < bytes - 1) {
             int len = bytes - 1 - i < 4 ? bytes - 1 - i : 4, stop = i + len;
             unsigned w = 0;
-            for (; i < stop; i++) w = w * 100 + (p[i] >> 4) * 10 + (p[i] & 15);
+            for (; i < stop; i++) { unsigned b = i ? p[i] : b0; w = w * 100 + (b >> 4) * 10 + (b & 15); }
             v = first ? (long long)w : v * pow10tab[2 * len] + w; first = 0;
         }
         v = v * 10 + (p[bytes - 1] >> 4);

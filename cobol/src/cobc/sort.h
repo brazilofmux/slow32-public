@@ -291,11 +291,13 @@ static void parse_return(void)
     parse_condition_clauses("at", "end", "end-return");
 }
 
+static void lw_note_perform(int lo, int thru);  /* lower.h */
 static void emit_body(Body *b)
 {
     if (!b->inline_body) {
         int Lret = new_label();
         char lab[32]; snprintf(lab, sizeof lab, ".L%d", Lret);
+        lw_note_perform(b->from->id, b->thru ? b->thru->id : -1);     /* lower.h: the statement performs this range */
         emit_para_cell("r3", g_unit, b->thru ? b->thru->id : b->from->id);
         emit_la("r4", lab);
         emit_call("cob_perform_push");

@@ -5722,3 +5722,72 @@ PERFORM, whose body comes first -- is not itself lowered: only uncut
 placeholders are a statement's own (2002/exitperform).  S32_HIR_DUMP=.LislN
 prints that island's HIR as lowered and after the optimizer.  Twelve
 generators the same on and off at both policies.
+
+Twelfth (2026-10-03): milestone 2's first half -- **text statements
+inside islands**.  A statement no hook lowers (READ, WRITE, PERFORM of a
+paragraph, STRING, CALL...) may be a node whose code is the lines the
+text emitter wrote for it, emitted in place as an opaque call
+(`.Ltext<k>`, written out by the backend's hcg_text_call hook; never a
+tail call).  What that needs is in `docs/plans/hir.md`: the island
+reserves the text's FRAME at the bottom of its own (hcg_frame_reserve,
+every slot offset moved up), keeps r30 and lets the allocator's pool
+start at r14 (ra_callee_skip), stores the native items before the node
+and loads them again after it.  Admission (lw_text_ok): every jump and
+branch target defined inside, no jalr, no call of a `.L` label, sp
+touched only in [8, 84) and never moved -- except `jal r0, .Lp...` right
+after cob_perform_push, a PERFORM of a range, taken when the range comes
+back: the PERFORM census (pcensus.h, kept in memory now) says no GOBACK
+or EXIT PROGRAM in it, no GO TO out of it, the same of every range it
+performs (lw_range_returns), and a run with such a node waits for the
+unit's end to be judged.  ON/NOT ON phrases: emit_phrases leaves a
+marker (`island-phrase`) and the node's call returns the status word,
+the blocks lowered as branches on it; a text node is refused the verbs
+that leave the unit or the frame (STOP, GOBACK, EXIT, GO, ALTER, RAISE,
+RESUME, CONTINUE).  Found on the way: a second tentative definition of
+`g_lw_no` (the output buffer's count) zeroed the operand arena under the
+kept byte MOVEs (an AMOVE's receiver index 83 of 20 operands); phrases
+reset the statement list to 0 when no ON block; natives written only in
+generation were not stored before a text node; a section's range ran
+past its unit's paragraphs after a contained program; islands' arenas
+were reset by a contained program's flush.
+
+Then the measurement that decides the policy.  The real programs' loops
+are `PERFORM paragraph UNTIL`, which the resolver did not count as a loop,
+so nothing was taken; the census gained `iter` (UNTIL/VARYING/TIMES, or
+issued inside an in-line loop) and lw_para_looped says whether a
+paragraph is performed in a loop, transitively -- and csv2fw with its 23
+such islands cost **+5%**.  Three causes, each fixed in the island's
+favour and kept, since they apply to every island: a DISPLAY integer in
+storage was fetched by cob_get_num where the text decodes it in line
+(lw_dec_load: digits by `andi 15`, the overpunch or D nibble the sign;
+sym_dec_ok items of <= 9 digits); AND/OR evaluated both operands where the
+text short-circuits (lw_cond_br); byte compares against a literal loaded
+the literal's bytes from .Lstr where an xori immediate serves, and the
+backend copy spelled `x == 0` as `xori x, 0; seq` (divergence, worth
+porting).  The truncation guard takes |v| no more when the value cannot
+be negative, else one unsigned compare in a word.  csv2fw then **+0.2%**:
+at par, not a win -- what remains is inherent to a run that does not
+hold its loop: items loaded at entry, synced round each text node and
+stored at exit on every pass, and the text does none of that.  So a run
+pays by its loop of its own, as before; the trace says "no loop of its
+own (its paragraph is performed in one)".  The fixes alone moved the
+kernels: kmove -41.8 -> **-50.0%**, kseq -27.1 -> -31.9, kstring -5.1 ->
+-8.1, kreport -2.0 -> -4.6 (karith -74.6, kedit -26.2, ksort -2.7, kidx
+-2.0, ksearch 0).  Twelve generators the same on and off at both
+policies.  The second half, paragraphs as islands -- the whole paragraph
+one function, so the items stay in registers across it and a PERFORM
+from another island is a call -- is where the real programs' time can
+move, and the next step.
+
+The gates on this batch found one program of gen/native's sixty
+differing, and the oracle sided with the island: `move dirty to w3` (a
+group into a `v9(4) COMP-3`) leaves 0x30 0x31 0x36 in the item, whose
+**pad nibble** is then 3, and `add w3 0 giving r16` stored "03" on
+every path through the runtime -- cob_k_get_num counted the pad nibble as
+a digit, where the compiler's in-line decoders (emit_dec_load, and now
+the island's lw_dec_load) and GnuCOBOL read the picture's digits alone.
+At HEAD the island fetched by cob_get_num too, so the two paths agreed on
+the wrong answer; the inline load made the island right and broke the
+agreement.  Fixed in kern.h (the first byte's high nibble is no digit
+when the digits do not fill the nibbles; the DBT's hook takes the new
+kern.h by its tag), test free/packedpad (GnuCOBOL agrees).

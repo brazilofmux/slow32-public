@@ -135,13 +135,30 @@ static int hn_tree(const Expr *e, int (*leaf)(const Opnd *))
 }
 static int hx_leaf(const Opnd *o);
 /* an operand's magnitude bound */
+/* An item's bound is its picture's only where its content is a number:
+ * a native item (native.h), whose every store is a number's; a literal.  A
+ * binary item in storage may hold what a group MOVE or a READ put there
+ * (MOVE SPACES TO a record with COMP fields is ordinary COBOL), so it is
+ * bounded by its bytes; a DISPLAY or packed one by the nibbles its
+ * characters decode to, twice its digits' worth.  The two paths that
+ * compute from the same operands -- this file's, and the islands'
+ * (lower.h) -- must agree on such content, and a bound that content can
+ * pass made them differ (tests/gen/gen-native, "dirty"). */
+#define DX_LIM 9.0e18L
+static long double sym_content_bound(const Sym *s)
+{
+    if (s->native) return (long double)pow10l(s->pi.digits) - 1;
+    if (s->usage == U_BINARY || sym_notrunc((Sym *)s)) return s->size >= 8 ? DX_LIM : (long double)(1ULL << (8 * s->size));
+    return 2 * (long double)pow10l(s->pi.digits) - 1;
+}
 static long double hx_mag(const Opnd *o)
 {
     if (o->kind == O_NUM) { long long v = numlit_int(&o->num); return v < 0 ? -(long double)v : (long double)v; }
     if (o->kind != O_REF) return 0;
     Sym *s = o->ref.sym;
-    if (!is_display_int(s) && (sym_notrunc(s) || s->pi.digits >= 10))
+    if (!is_display_int(s) && (sym_notrunc(s) || s->pi.digits >= 10 || (s->usage == U_BINARY && !s->native)))
         return s->size == 1 ? (s->pi.is_signed ? 128 : 255) : s->size == 2 ? (s->pi.is_signed ? 32768 : 65535) : 2147483647.0L;
+    if (is_display_int(s) && !s->native) return 2 * (long double)pow10l(s->pi.digits) - 1;
     return (long double)pow10l(s->pi.digits) - 1;
 }
 /* the bound of node n; *wide past a word somewhere, *inner a division
@@ -408,7 +425,6 @@ static int dx_leaf_ok(const Opnd *o)
 }
 static int dx_leaf(const Opnd *o);
 static long double dx_p10(int k) { long double r = 1; while (k-- > 0) r *= 10; return r; }
-#define DX_LIM 9.0e18L
 /* Checked 64-bit arithmetic (docs/plans/performance.md).  The pictures
  * prove a bound for every intermediate, and where the bound stays below
  * 9*10^18 the tree is computed in 64 bits with no test at all.  Where it
@@ -479,8 +495,7 @@ static int dx_check(int n, int top)
         if (o->kind == O_NUM) { long long v = numlit_scaled(&o->num); g_dsc[n] = o->num.scale; g_dbd[n] = v < 0 ? -(long double)v : v; return 1; }
         Sym *s = o->ref.sym;
         g_dsc[n] = s->pi.scale;
-        if (sym_notrunc(s)) g_dbd[n] = s->size >= 8 ? DX_LIM : dx_p10(0) * (long double)(1ULL << (8 * s->size));
-        else g_dbd[n] = dx_p10(s->pi.digits) - 1;
+        g_dbd[n] = sym_content_bound(s);
         if (g_dbd[n] < DX_LIM) return 1;
         /* eight bytes of binary: any 64-bit value when signed (an unsigned
          * one can pass 2^63, which the fetch cannot return) */

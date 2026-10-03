@@ -661,7 +661,10 @@ static void emit_move(Opnd *src, Ref *dst)
         Sym *s = src->ref.sym;
         emit_ref_addr(&src->ref, "r3");
         emit_load_int(s, "r3", "r1");
-        if (d->usage == U_BINARY && !(s->usage == U_BINARY && s->pi.digits <= d->pi.digits)) emit_trunc(d);
+        /* (a native receiver holds a number within its picture, always: a
+         * binary item in storage may not -- sym_content_bound -- so a MOVE
+         * from one truncates even at equal digits) */
+        if (d->usage == U_BINARY && !(s->usage == U_BINARY && s->pi.digits <= d->pi.digits && !(d->native && !s->native))) emit_trunc(d);
         emit("\tstw sp+%d, r1", SLOT_A);
         emit_ref_addr(dst, "r3");
         emit("\tldw r1, sp+%d", SLOT_A);

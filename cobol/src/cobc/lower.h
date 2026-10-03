@@ -42,9 +42,9 @@ typedef struct { char op; int l, r; int sym; long long k; int sc; long double bd
 /* a condition: cond.h's C_AND, C_OR, C_NOT, C_REL (op R_*; x, y values;
  * or, alnum, ax and ay operands in g_lw_o compared as bytes) */
 typedef struct { int kind; int a, b; int x, y; int op; int alnum, ax, ay; } LCond;
-enum { LS_STORE, LS_ADDTO, LS_IF, LS_LOOP, LS_AMOVE, LS_DISPLAY };
+enum { LS_STORE, LS_ADDTO, LS_IF, LS_LOOP, LS_AMOVE, LS_DISPLAY, LS_TEXT, LS_PHRASE };
 typedef struct {
-    int kind, line;
+    int kind, line, para;               /* para: the paragraph it is in (id), -1 outside any */
     int expr;                           /* LS_STORE: the value; LS_ADDTO: the sum each receiver takes */
     int need;                           /* LS_STORE with '/' at the root: fraction digits the quotient is made to */
     int nr; int rsym[MAXOPS]; unsigned char rnd[MAXOPS];
@@ -56,6 +56,10 @@ typedef struct {
     int asrc, adst[MAXOPS];             /* LS_AMOVE: operands in g_lw_o -- the sender, the receivers (nr); LS_DISPLAY: its operands (nr), asrc = NO ADVANCING */
     Block text;                         /* the statement's code by the text emitter, for a run that is no island */
     int cut;                            /* ... taken out of the stream (lw_stmt_text) */
+    int nperf, perf0;                   /* LS_TEXT: the paragraph ranges it PERFORMs, in g_lw_perf from perf0 */
+    int phrase;                         /* LS_TEXT: its ON/NOT ON phrases (an LS_PHRASE), or -1: the call's value is the status word */
+    int slot, on_one;                   /* LS_PHRASE: the status word's slot, and whether ON means 1 (else nonzero) */
+    Block ptext;                        /* LS_TEXT with a phrase: the lines of the call alone */
 } LStmt;
 
 static LNode *g_lw_n; static int g_lw_nn, g_lw_ncap;
@@ -82,15 +86,18 @@ static int lw_cnode(int kind, int a, int b, int x, int y, int op)
 static int lw_stmt(int kind, int line)
 {
     LW_GROW(g_lw_s, g_lw_ns, g_lw_scap);
-    LStmt *s = &g_lw_s[g_lw_ns]; memset(s, 0, sizeof *s); s->kind = kind; s->line = line; s->expr = s->cond = s->rem = -1;
+    LStmt *s = &g_lw_s[g_lw_ns]; memset(s, 0, sizeof *s); s->kind = kind; s->line = line; s->para = g_cur_para ? g_cur_para->id : -1; s->expr = s->cond = s->rem = s->phrase = -1;
     return g_lw_ns++;
 }
 static void lw_list_add(int st) { LW_GROW(g_lw_list, g_lw_nlist, g_lw_lcap); g_lw_list[g_lw_nlist++] = st; }
+/* the ranges the statement being read PERFORMs out of line (emit_body notes them) */
+static struct { int lo, hi; } *g_lw_perf; static int g_lw_nperf, g_lw_pcap2;
+static void lw_note_perform(int lo, int hi) { LW_GROW(g_lw_perf, g_lw_nperf, g_lw_pcap2); g_lw_perf[g_lw_nperf].lo = lo; g_lw_perf[g_lw_nperf].hi = hi; g_lw_nperf++; }
 static int lw_opnd_keep(const Opnd *o) { LW_GROW(g_lw_o, g_lw_no, g_lw_ocap); g_lw_o[g_lw_no] = *o; return g_lw_no++; }
 static int lw_ref_keep(const Ref *r) { Opnd o; memset(&o, 0, sizeof o); o.kind = O_REF; o.ref = *r; o.line = r->line; return lw_opnd_keep(&o); }
 
 /* the statement's line in the text */
-static void lw_place(int st) { if (lw_trace()) fprintf(stderr, "hir: line %d: statement %d\n", g_lw_s[st].line, st); emit("\tisland %d", st); }
+static void lw_place(int st) { if (lw_trace()) fprintf(stderr, "hir: line %d: statement %d kind %d\n", g_lw_s[st].line, st, g_lw_s[st].kind); emit("\tisland %d", st); }
 /* ... at line at of the stream, before code a statement wrote as it read
  * its operands (DISPLAY): the placeholder must come first */
 static void lw_place_at(int at, int st)
@@ -119,7 +126,7 @@ static void lw_refuse(int line, const char *what, const char *why)
  * that code is cut away and kept with the node, for a run that is no
  * island.  The lines from b0: placeholders (after a -fprofile-lines
  * label), then the text. */
-static void lw_stmt_text(int b0)
+static int lw_stmt_text(int b0)
 {
     int p = b0, st, last = -1;
     while (p < g_nasm && !strncmp(g_asm[p], "__ln_", 5)) p++;
@@ -141,27 +148,13 @@ static void lw_stmt_text(int b0)
         for (int i = p; i < g_nasm; i++)
             if (lw_is_place(g_asm[i], &st) && !g_lw_s[st].cut)
                 die_at(g_lw_s[st].line, "internal: a lowered statement's placeholder is not first in its code");
-        return;
+        return 0;
     }
-    if (p == g_nasm) return;
+    if (p == g_nasm) return 1;
     Block t = block_cut(p);
     g_lw_s[last].text = t;
+    return 1;
 }
-/* a block of placeholders as the text emitter would have written it:
- * each statement's kept text in its place */
-static Block lw_expand(const Block *b)
-{
-    int b0 = block_begin();
-    for (int i = 0; i < b->n; i++) {
-        int st;
-        if (lw_is_place(b->line[i], &st)) block_put(&g_lw_s[st].text);
-        else emit("%s", b->line[i]);
-    }
-    return block_cut(b0);
-}
-
-/* ---- what is taken ---------------------------------------------------- */
-
 /* every hook asks this first: the lowering is off, or this is a scan, or
  * the census is being taken (its reading of the text is the emitter's) */
 static int lw_off(void) { return !g_hir_on || g_noemit || g_cen_on || g_fnsig_only || g_nerrors || g_stmt_calls.n; }
@@ -170,6 +163,233 @@ static int lw_off(void) { return !g_hir_on || g_noemit || g_cen_on || g_fnsig_on
  * the island would compute with the result as the text does, twice over
  * (2002/userfnarith: the text was not cut, and both ran).  A statement
  * with a call keeps to the text.) */
+
+/* a block of placeholders as the text emitter would have written it:
+ * each statement's kept text in its place */
+static void lw_expand_into(const Block *b)
+{
+    for (int i = 0; i < b->n; i++) {
+        int st;
+        if (lw_is_place(b->line[i], &st)) lw_expand_into(&g_lw_s[st].text);     /* a statement's text may hold its inner statements' placeholders */
+        else emit("%s", b->line[i]);
+    }
+}
+static Block lw_expand(const Block *b)
+{
+    int b0 = block_begin();
+    lw_expand_into(b);
+    return block_cut(b0);
+}
+
+/* a block that is nothing but placeholders: its statements appended to
+ * g_lw_list, the range in *at, *n */
+static int lw_block_stmts(const Block *b, int *at, int *n)
+{
+    *at = g_lw_nlist; *n = 0;
+    for (int i = 0; i < b->n; i++) {
+        int st;
+        if (!lw_is_place(b->line[i], &st)) { g_lw_nlist = *at; return 0; }
+        lw_list_add(st); (*n)++;
+    }
+    return 1;
+}
+
+/* ---- text statements (docs/plans/hir.md, milestone 2) ------------------
+ * A statement no hook takes may still be an island's, as the lines the
+ * text emitter wrote for it: emitted in place as an opaque call, with
+ * the island's native items stored before it and loaded again after.
+ * Admitted when its code is self-contained: every jump or branch to a
+ * label of its own, no slot of the unit's (sp+8..sp+84 are a statement's
+ * scratch), no indirect jump -- except the PERFORM of a paragraph range,
+ * which jumps out and returns to the line after, and is admitted when
+ * the range comes back (lw_range_returns, decided when the unit is read). */
+
+/* does the range of paragraphs lo..hi (ids), PERFORMed, always come back
+ * to its PERFORM?  No GO TO out of it, no GOBACK or EXIT PROGRAM in it,
+ * and the same of every range it PERFORMs, transitively */
+static int lw_range_hi(int lo, int thru)
+{
+    int hi = thru >= 0 ? thru : lo;
+    const Para *p = &g_para[hi - 1];
+    if (p->is_section) {                        /* a section: through its last paragraph (the unit's own: contained programs' paragraphs lie between) */
+        for (int k = 0; k < g_npara; k++) if (g_para[k].unit == p->unit && g_para[k].section == p->id && g_para[k].id > hi) hi = g_para[k].id;
+    }
+    return hi;
+}
+static int lw_range_returns_1(int lo, int hi, int *seen, int nseen)
+{
+    if (lo < 1 || hi < lo || hi > g_npara) return 0;
+    for (int k = 0; k < nseen; k += 2) if (seen[k] == lo && seen[k + 1] == hi) return 1;   /* a recursion: already being judged */
+    if (nseen + 2 > 64) return 0;
+    seen[nseen] = lo; seen[nseen + 1] = hi; nseen += 2;
+    for (int k = 0; k < g_npcl; k++) if (g_pcl[k] >= lo && g_pcl[k] <= hi) return 0;
+    for (int k = 0; k < g_npcg; k++) if (g_pcg[k].from >= lo && g_pcg[k].from <= hi && (g_pcg[k].target < lo || g_pcg[k].target > hi)) return 0;
+    for (int k = 0; k < g_npcf; k++)
+        if (g_pcf[k].from >= lo && g_pcf[k].from <= hi && !lw_range_returns_1(g_pcf[k].lo, lw_range_hi(g_pcf[k].lo, g_pcf[k].thru), seen, nseen)) return 0;
+    return 1;
+}
+static int lw_range_returns(int lo, int hi)
+{
+    int seen[64], r = lw_range_returns_1(lo, hi, seen, 0);
+    if (lw_trace()) fprintf(stderr, "hir: range %d..%d (%s..%s) %s (%d performs, %d gotos, %d leaves known)\n", lo, hi, g_para[lo - 1].name, g_para[hi - 1].name, r ? "returns" : "may not return", g_npcf, g_npcg, g_npcl);
+    return r;
+}
+
+/* is paragraph p's code run more than once per entry to the unit, by
+ * the PERFORMs alone: a PERFORM reaching it that iterates (UNTIL,
+ * VARYING, TIMES) or is issued inside an in-line loop, or one issued from
+ * a paragraph that is itself looped -- transitively, a recursion counted
+ * as a loop.  GO TO loops are not seen (conservative: fewer islands). */
+static int lw_para_looped_1(int p, int *seen, int nseen)
+{
+    for (int k = 0; k < nseen; k++) if (seen[k] == p) return 1;
+    if (nseen >= 64) return 0;
+    seen[nseen++] = p;
+    for (int k = 0; k < g_npcf; k++) {
+        int lo = g_pcf[k].lo, hi = lw_range_hi(lo, g_pcf[k].thru);
+        if (p < lo || p > hi) continue;
+        if (g_pcf[k].iter) return 1;
+        if (g_pcf[k].from >= 1 && lw_para_looped_1(g_pcf[k].from, seen, nseen)) return 1;
+    }
+    return 0;
+}
+static int lw_para_looped(int p) { int seen[64]; return p >= 1 && lw_para_looped_1(p, seen, 0); }
+
+/* the label a line defines, the target a jump or branch names */
+static int lw_line_def(const char *l, char *name, int cap)
+{
+    if (l[0] == '\t' || l[0] == ' ' || l[0] == '#' || !l[0]) return 0;
+    const char *c = strchr(l, ':');
+    if (!c || c - l >= cap) return 0;
+    memcpy(name, l, (size_t)(c - l)); name[c - l] = 0;
+    return 1;
+}
+static int lw_line_target(const char *l, char *t, int cap)
+{
+    char op[8], ops[64];
+    if (!strncmp(l, "\tjal r0, ", 9)) { snprintf(t, (size_t)cap, "%s", l + 9); for (char *e = t; *e; e++) if (*e == ' ' || *e == '\t' || *e == '#') { *e = 0; break; } return 1; }
+    return line_branch(l, op, ops, t) ? 1 : 0;
+}
+/* is the statement's code self-contained?  *nperf: its PERFORMs of a range */
+static int lw_text_ok(const Block *b, int line, const char *verb)
+{
+    char defs[512][64]; int nd = 0;
+    for (int i = 0; i < b->n; i++) { char nm[64]; if (nd < 512 && lw_line_def(b->line[i], nm, sizeof nm)) snprintf(defs[nd++], 64, "%s", nm); }
+    for (int i = 0; i < b->n; i++) {
+        const char *l = b->line[i];
+        if (l[0] != '\t' || l[1] == '.' || l[1] == '#') continue;
+        if (!strncmp(l, "\tjalr ", 6)) { lw_refuse(line, verb, "an indirect jump"); return 0; }
+        if (!strncmp(l, "\tjal r31, .L", 12)) { lw_refuse(line, verb, "a call to a label"); return 0; }
+        const char *sp = strstr(l, "sp+");
+        if (sp) { int n = atoi(sp + 3); if (n < 8 || n >= 84) { lw_refuse(line, verb, "a slot of the unit's"); return 0; } }
+        if (strstr(l, " sp,") || !strncmp(l, "\taddi sp", 8)) { lw_refuse(line, verb, "the stack pointer"); return 0; }
+        char t[64];
+        if (!lw_line_target(l, t, sizeof t)) continue;
+        int k; for (k = 0; k < nd && strcmp(defs[k], t); k++) ;
+        if (k < nd) continue;
+        /* PERFORM of a range: its jump to the paragraph, after the push */
+        if (!strncmp(l, "\tjal r0, .Lp", 12) && i > 0 && !strcmp(b->line[i - 1], "\tjal r31, cob_perform_push")) continue;
+        lw_refuse(line, verb, "a jump out"); return 0;
+    }
+    return 1;
+}
+/* A statement's ON / NOT ON phrases (AT END, SIZE ERROR, ON EXCEPTION,
+ * OVERFLOW: emit_phrases) whose blocks are all placeholders: the
+ * statement's own code leaves its status word in a slot of the frame,
+ * and the branches on it are an island's -- an LS_PHRASE records the
+ * blocks, and one marker line stands where the branches would be.  The
+ * statement then becomes a text statement whose call returns the word
+ * (the lines end in a load of the slot into r1) and whose phrases are the
+ * island's blocks (lw_text_stmt).  Not for the STRING/UNSTRING OVERFLOW
+ * form, which has its value in r1 already (slot -1): the marker's load
+ * would be of nothing; that one keeps to the text. */
+static int lw_phrases(const Phrases *p, int slot, int on_one)
+{
+    if (lw_off() || slot < 0) return 0;
+    int b = 0, nb = 0, e = 0, ne = 0, n0 = g_lw_nlist;
+    if (p->has_on && !lw_block_stmts(&p->on, &b, &nb)) return 0;
+    if (p->has_not && !lw_block_stmts(&p->not_on, &e, &ne)) { g_lw_nlist = n0; return 0; }     /* (= b reset the list to 0 without an ON block: every earlier IF's branches pointed elsewhere) */
+    int st = lw_stmt(LS_PHRASE, cur()->line);
+    LStmt *s = &g_lw_s[st]; s->slot = slot; s->on_one = on_one;
+    s->body = b; s->nbody = p->has_on ? nb : 0; s->els = e; s->nels = p->has_not ? ne : 0;
+    s->text = p->has_on ? p->on : p->not_on;           /* (the blocks themselves, for the text laid out again: lw_phrases_text) */
+    s->ptext = p->has_not ? p->not_on : p->on;
+    s->asrc = p->has_on; s->rem = p->has_not;
+    emit("\tisland-phrase %d", st);
+    return 1;
+}
+/* the phrases as the text emitter would have laid them out, over the blocks' text */
+static Block lw_phrases_text(const LStmt *ph)
+{
+    Phrases p; memset(&p, 0, sizeof p);
+    p.has_on = ph->asrc; p.has_not = ph->rem;
+    if (p.has_on) p.on = ph->text;              /* the blocks as they are, placeholders inside: resolved when this text is laid out */
+    if (p.has_not) p.not_on = ph->ptext;
+    int b0 = block_begin();
+    int save = g_hir_on; g_hir_on = 0;          /* (the hook stays out of its own layout) */
+    emit_phrases(&p, ph->slot, ph->on_one);
+    g_hir_on = save;
+    return block_cut(b0);
+}
+static int lw_is_phrase_marker(const char *l, int *st)
+{
+    if (strncmp(l, "\tisland-phrase ", 15)) return 0;
+    char *e; long v = strtol(l + 15, &e, 10);
+    if (*e) return 0;
+    *st = (int)v;
+    return 1;
+}
+/* a statement not lowered, its code the lines from b0: a text node when
+ * admitted; its PERFORMs are g_lw_perf[perf0..] */
+static int lw_text_stmt(int b0, int perf0)
+{
+    if (g_nasm <= b0) return 0;
+    int line = g_stmt_tok ? g_stmt_tok->line : 0;
+    /* a phrase marker, which must be the statement's last line; the text
+     * laid out whole, for the text's own fallback */
+    int ph = -1, pst;
+    for (int i = b0; i < g_nasm; i++) if (lw_is_phrase_marker(g_asm[i], &pst)) { if (ph >= 0 || i != g_nasm - 1) ph = -2; else ph = pst; }
+    if (ph == -2) die_at(line, "internal: a statement's phrase marker is not its last line");
+    if (lw_off() || !strcmp(g_cur_stmt, "STOP") || !strcmp(g_cur_stmt, "GOBACK") || !strcmp(g_cur_stmt, "EXIT") || !strcmp(g_cur_stmt, "GO") ||
+        !strcmp(g_cur_stmt, "ALTER") || !strcmp(g_cur_stmt, "RAISE") || !strcmp(g_cur_stmt, "RESUME") || !strcmp(g_cur_stmt, "CONTINUE")) {
+        if (ph >= 0) { g_nasm--; Block t = lw_phrases_text(&g_lw_s[ph]); block_put(&t); free(t.line); }
+        return 0;
+    }
+    if (ph >= 0) g_nasm--;                      /* the marker */
+    Block raw = block_cut(b0);
+    Block t = lw_expand(&raw);                  /* the call's lines: inner statements' placeholders are their text */
+    if (!lw_text_ok(&t, line, g_cur_stmt)) {
+        block_put(&raw); free(raw.line); free(t.line);
+        if (ph >= 0) { Block pt = lw_phrases_text(&g_lw_s[ph]); block_put(&pt); free(pt.line); }
+        return 0;
+    }
+    /* kept: the raw lines, inner placeholders and all -- laid out again as
+     * text, the inner statements are resolved on their own (an island
+     * among them is not lost to the statement around it); the call's
+     * lines are the expansion, and with phrases end in the status word */
+    int st = lw_stmt(LS_TEXT, line);
+    LStmt *s = &g_lw_s[st]; s->cut = 1; s->perf0 = perf0; s->nperf = g_lw_nperf - perf0; s->phrase = ph;
+    s->ptext = t;
+    if (ph < 0) s->text = raw;
+    else {
+        char ld[32]; snprintf(ld, sizeof ld, "\tldw r1, sp+%d", g_lw_s[ph].slot);
+        int b1 = block_begin();
+        block_put(&t); emit("%s", ld);
+        s->ptext = block_cut(b1); free(t.line);
+        Block pt = lw_phrases_text(&g_lw_s[ph]);
+        int b2 = block_begin();
+        block_put(&raw); block_put(&pt);
+        s->text = block_cut(b2);
+        free(pt.line); free(raw.line);
+    }
+    if (lw_trace()) fprintf(stderr, "hir: line %d %s: a text statement (%d lines%s%s)\n", line, g_cur_stmt, t.n, s->nperf ? ", performs" : "", ph >= 0 ? ", phrases" : "");
+    lw_place(st);
+    return 1;
+}
+
+
+/* ---- what is taken ---------------------------------------------------- */
+
 
 /* an item the island may hold as a value: native, whole, not subscripted */
 static int lw_item_ok(const Ref *r)
@@ -634,18 +854,6 @@ static int lw_cond(Cond *c)
     return lw_cnode(C_REL, -1, -1, x, y, op);
 }
 
-/* a block that is nothing but placeholders: its statements appended to
- * g_lw_list, the range in *at, *n */
-static int lw_block_stmts(const Block *b, int *at, int *n)
-{
-    *at = g_lw_nlist; *n = 0;
-    for (int i = 0; i < b->n; i++) {
-        int st;
-        if (!lw_is_place(b->line[i], &st)) { g_lw_nlist = *at; return 0; }
-        lw_list_add(st); (*n)++;
-    }
-    return 1;
-}
 
 /* IF: its branches read, before its code */
 static int lw_if(IfStmt *s)
@@ -662,8 +870,6 @@ static int lw_if(IfStmt *s)
     int st = lw_stmt(LS_IF, line);
     LStmt *x = &g_lw_s[st]; x->cond = c; x->body = b; x->nbody = nb; x->els = e; x->nels = ne;
     lw_place(st);
-    s->then_b = lw_expand(&s->then_b);
-    if (s->has_else) s->else_b = lw_expand(&s->else_b);
     return 1;
 }
 
@@ -698,7 +904,6 @@ static int lw_perform(Vary *v, int nv, Cond *until, Body *body, int test_after)
     LStmt *x = &g_lw_s[st]; x->cond = c; x->body = b; x->nbody = nb; x->nv = nv; x->test_after = test_after;
     for (int k = 0; k < nv; k++) { x->var[k] = var[k]; x->from[k] = from[k]; x->by[k] = by[k]; x->vcond[k] = vcond[k]; }
     lw_place(st);
-    body->blk = lw_expand(&body->blk);
     return 1;
 }
 
@@ -766,13 +971,18 @@ static void lw_collect_cond(int c)
     lw_collect_cond(x->a);
     if (x->kind != C_NOT) lw_collect_cond(x->b);
 }
+/* an item the island writes somewhere: known before any code, so a text
+ * statement in the middle stores it before and loads it after (the flag
+ * set as the stores were made left a READ loop's totals unstored before
+ * its READ, and the reload after undid every ADD) */
+static void lw_item_written(int sym) { g_lw_item[lw_item_slot(sym)].written = 1; }
 static void lw_collect_stmts(int at, int n)
 {
     for (int i = 0; i < n; i++) {
         LStmt *s = &g_lw_s[g_lw_list[at + i]];
         if (s->expr >= 0) lw_collect_node(s->expr);
-        if (s->kind == LS_STORE || s->kind == LS_ADDTO) for (int k = 0; k < s->nr; k++) if (g_sym[s->rsym[k]].native) lw_item_slot(s->rsym[k]);
-        if (s->rem >= 0 && g_sym[s->rem].native) lw_item_slot(s->rem);
+        if (s->kind == LS_STORE || s->kind == LS_ADDTO) for (int k = 0; k < s->nr; k++) if (g_sym[s->rsym[k]].native) lw_item_written(s->rsym[k]);
+        if (s->rem >= 0 && g_sym[s->rem].native) lw_item_written(s->rem);
         if (s->kind == LS_AMOVE) { lw_collect_opnd(s->asrc); for (int k = 0; k < s->nr; k++) lw_collect_opnd(s->adst[k]); }
         if (s->kind == LS_DISPLAY)
             for (int k = 0; k < s->nr; k++) {
@@ -782,11 +992,12 @@ static void lw_collect_stmts(int at, int n)
             }
         if (s->cond >= 0) lw_collect_cond(s->cond);
         for (int k = 0; k < s->nv; k++) {
-            if (g_sym[s->var[k]].native) lw_item_slot(s->var[k]);
+            if (g_sym[s->var[k]].native) lw_item_written(s->var[k]);
             lw_collect_node(s->from[k]); lw_collect_node(s->by[k]); lw_collect_cond(s->vcond[k]);
         }
         lw_collect_stmts(s->body, s->nbody);
         lw_collect_stmts(s->els, s->nels);
+        if (s->kind == LS_TEXT && s->phrase >= 0) { LStmt *ph = &g_lw_s[s->phrase]; lw_collect_stmts(ph->body, ph->nbody); lw_collect_stmts(ph->els, ph->nels); }
     }
 }
 
@@ -840,10 +1051,47 @@ static LV lw_call(const char *fn, int *args, int n)
 }
 /* an item's value: a native one from its alloca, one in storage fetched
  * by the runtime, as the register trees fetch it (dx_emit) */
+/* a DISPLAY or packed integer of at most nine digits in storage, read
+ * digit by digit as the text's emit_dec_load reads it (any byte's low
+ * nibble a digit; a trailing overpunch 'p'..'y' or a D nibble the
+ * sign) -- the text's word path does this in line, and an island that
+ * called cob_get_num for it instead cost csv2fw 5% on its two-digit
+ * state item */
+static int lw_dec_inline_ok(Sym *s) { return sym_dec_ok(s) && s->pi.digits <= 9; }
+static LV lw_dec_load(Sym *s)
+{
+    int D = s->pi.digits, a = lw_item_addr(s), v = -1, sg;
+    if (s->usage == U_DISPLAY) {
+        for (int d = 0; d < D; d++) {
+            int b = hi_emit(HI_LOAD, TY_CHAR | TY_UNSIGNED, d ? hi_emit(HI_ADDI, TY_INT, a, -1, d, NULL) : a, -1, 0, NULL);
+            b = hi_emit(HI_AND, TY_INT, b, lw_iconst(15), 0, NULL);
+            v = v < 0 ? b : hi_emit(HI_ADD, TY_INT, hi_emit(HI_MUL, TY_INT, v, lw_iconst(10), 0, NULL), b, 0, NULL);
+        }
+        if (!s->pi.is_signed) { LV r; r.lo = v; r.hi = -1; return r; }
+        int last = hi_emit(HI_LOAD, TY_CHAR | TY_UNSIGNED, D > 1 ? hi_emit(HI_ADDI, TY_INT, a, -1, D - 1, NULL) : a, -1, 0, NULL);
+        sg = hi_emit(HI_SLTU, TY_INT, lw_iconst(111), last, 0, NULL);     /* 'p' (112) and above: negative */
+    } else {
+        int k0 = 2 * (int)s->size - 1 - D, cur = -1, byte = -1;
+        for (int d = 0; d < D; d++) {
+            int k = k0 + d, bi = k / 2;
+            if (bi != cur) { byte = hi_emit(HI_LOAD, TY_CHAR | TY_UNSIGNED, bi ? hi_emit(HI_ADDI, TY_INT, a, -1, bi, NULL) : a, -1, 0, NULL); cur = bi; }
+            int b = k % 2 == 0 ? hi_emit(HI_SRL, TY_INT, byte, lw_iconst(4), 0, NULL) : hi_emit(HI_AND, TY_INT, byte, lw_iconst(15), 0, NULL);
+            v = v < 0 ? b : hi_emit(HI_ADD, TY_INT, hi_emit(HI_MUL, TY_INT, v, lw_iconst(10), 0, NULL), b, 0, NULL);
+        }
+        if (!s->pi.is_signed) { LV r; r.lo = v; r.hi = -1; return r; }
+        if (cur != (int)s->size - 1) byte = hi_emit(HI_LOAD, TY_CHAR | TY_UNSIGNED, hi_emit(HI_ADDI, TY_INT, a, -1, (int)s->size - 1, NULL), -1, 0, NULL);
+        sg = hi_emit(HI_SEQ, TY_INT, hi_emit(HI_AND, TY_INT, byte, lw_iconst(15), 0, NULL), lw_iconst(13), 0, NULL);   /* the D nibble: negative */
+    }
+    /* v = sg ? -v : v, without a branch */
+    int m = hi_emit(HI_SUB, TY_INT, lw_iconst(0), sg, 0, NULL);
+    LV r; r.lo = hi_emit(HI_SUB, TY_INT, hi_emit(HI_XOR, TY_INT, v, m, 0, NULL), m, 0, NULL); r.hi = -1;
+    return r;
+}
 static LV lw_item_val(int sym)
 {
     Sym *s = &g_sym[sym];
     if (!s->native) {
+        if (lw_dec_inline_ok(s)) return lw_dec_load(s);
         int a[3] = { lw_item_addr(s), lw_desc_addr(s), 0 };
         if (s->pi.category == PIC_NUMERIC_EDITED) { a[2] = lw_locale_word(); return lw_call("cob_get_edited", a, 3); }
         return lw_call("cob_get_num", a, 2);
@@ -873,11 +1121,7 @@ static void lw_mem_store(int sym, int rounded, LV v, int sc)
 
 /* an item's bound, as dx_check has it: its picture's, or the binary
  * field's capacity when the usage keeps that (COMP-5) */
-static long double lw_sym_bd(const Sym *s)
-{
-    if (sym_notrunc((Sym *)s)) return s->size >= 8 ? DX_LIM : (long double)(1ULL << (8 * s->size));
-    return dx_p10(s->pi.digits) - 1;
-}
+static long double lw_sym_bd(const Sym *s) { return sym_content_bound(s); }
 
 /* ---- arithmetic on words and pairs ---- */
 
@@ -1073,14 +1317,19 @@ static LV lw_val(int n)
 /* v less its digits above the first n: the remainder by 10^n, taken only
  * when |v| reaches 10^n -- a value rarely does, and a 64-bit remainder is
  * a routine.  The join is a temporary the SSA pass promotes. */
-static LV lw_trunc_digits(LV v, int n, int wide)
+static LV lw_trunc_digits(LV v, int n, int wide, int neg)
 {
     LV lim = lw_lit(lw_p10(n), wide);
     int t_lo = lw_alloca(), t_hi = wide ? lw_alloca() : -1;
     if (wide) v = lw_widen(v);
     hi_emit(HI_STORE, TY_INT, t_lo, v.lo, 0, NULL);
     if (wide) hi_emit(HI_STORE, TY_INT, t_hi, v.hi, 0, NULL);
-    int over = lw_cmp(R_GE, lw_abs(v, wide), lim, wide);
+    int over;
+    if (!neg) over = lw_cmp(R_GE, v, lim, wide);                       /* never below zero: the value itself */
+    else if (!wide) {                                                   /* |v| >= 10^n, n <= 9: v + (10^n - 1) past 2*10^n - 2 unsigned (a negative v wraps high) */
+        int t = hi_emit(HI_ADD, TY_INT, v.lo, lw_iconst((int)(lw_p10(n) - 1)), 0, NULL);
+        over = hi_emit(HI_SGEU, TY_INT, t, lw_iconst((int)(2 * lw_p10(n) - 1)), 0, NULL);
+    } else over = lw_cmp(R_GE, lw_abs(v, wide), lim, wide);
     int b_cut = hir_new_block(), b_join = hir_new_block();
     lw_brc(over, b_cut, b_join);
     lw_begin_blk(b_cut);
@@ -1124,7 +1373,7 @@ static void lw_store(int sym, int rounded, LV v, int sc, long double bd, int neg
         if (keep <= 0) { v = lw_lit(0, 0); bd = 0; wide = 0; }
         else {
             long double lim = dx_p10(keep);
-            if (bd >= lim) { v = lw_trunc_digits(v, keep, wide); bd = lim - 1; }
+            if (bd >= lim) { v = lw_trunc_digits(v, keep, wide, neg); bd = lim - 1; }
             bd *= dx_p10(k);
             int w2 = lw_wide_bd(bd);
             v = lw_scale(v, k, w2);
@@ -1134,7 +1383,7 @@ static void lw_store(int sym, int rounded, LV v, int sc, long double bd, int neg
     }
     {
         long double lim = dx_p10(eff);
-        if (bd >= lim) { v = lw_trunc_digits(v, eff, wide); bd = lim - 1; }
+        if (bd >= lim) { v = lw_trunc_digits(v, eff, wide, neg); bd = lim - 1; }
     }
     if (!d->pi.is_signed && neg) v = lw_abs(v, wide);
     if (d->size < 8) v.hi = -1;                     /* the value fits the word (eff <= 9) */
@@ -1211,6 +1460,7 @@ static void lw_gen_amove(LStmt *s)
     long sn; int fill; int sa = lw_bytes_src(src, &sn, &fill);
     for (int i = 0; i < s->nr; i++) {
         const Ref *d = &g_lw_o[s->adst[i]].ref;
+        if (g_lw_o[s->adst[i]].kind != O_REF || !d->sym) die_at(s->line, "internal: a MOVE of bytes lost its receiver (statement %d, operand %d of %d, kind %d)", (int)(s - g_lw_s), s->adst[i], g_lw_no, g_lw_o[s->adst[i]].kind);
         long dn = lw_bytes_len(d);
         int da = lw_ref_addr(d);
         if (fill >= 0) { lw_fill_n(da, dn, fill); continue; }
@@ -1229,6 +1479,7 @@ static int lw_acmp_val(const LCond *c)
     long nx, ny; int fx, fy;
     int ax = lw_bytes_src(x, &nx, &fx);
     int ay = lw_bytes_src(y, &ny, &fy);
+    unsigned char *lit = NULL;                  /* the literal's bytes, compared as constants where small */
     if (y->kind != O_REF) {
         /* the literal, or the figurative, as nx bytes */
         unsigned char *b = xmalloc((size_t)nx);
@@ -1239,7 +1490,7 @@ static int lw_acmp_val(const LCond *c)
             for (long k = nx; k < ny; k++) if (lb[k] != ' ') { free(b); return lw_iconst(c->op == R_NE); }   /* longer than the item, and not spaces: never equal */
         }
         ay = hi_emit(HI_GADDR, TY_INT, -1, -1, 0, (char *)lit_label(b, (int)nx));
-        free(b); ny = nx;
+        lit = b; ny = nx;
     }
     long n = nx;
     int d;
@@ -1253,12 +1504,17 @@ static int lw_acmp_val(const LCond *c)
     else {
         d = -1;
         for (long o = 0; o < n; ) {
-            int w = n - o >= 4 ? 4 : n - o >= 2 ? 2 : 1;
-            int t = hi_emit(HI_XOR, TY_INT, hi_emit(HI_LOAD, lw_chunk_ty(w), lw_at(ax, o), -1, 0, NULL), hi_emit(HI_LOAD, lw_chunk_ty(w), lw_at(ay, o), -1, 0, NULL), 0, NULL);
+            int w = n - o >= 4 ? 4 : n - o >= 2 ? 2 : 1, yv;
+            unsigned k = 0;
+            if (lit) for (int j = w - 1; j >= 0; j--) k = (k << 8) | lit[o + j];       /* little-endian, as the load would read it */
+            if (lit && k < 4096) yv = lw_iconst((int)k);                               /* an xori immediate (the backend takes 12 bits unsigned) */
+            else yv = hi_emit(HI_LOAD, lw_chunk_ty(w), lw_at(ay, o), -1, 0, NULL);
+            int t = hi_emit(HI_XOR, TY_INT, hi_emit(HI_LOAD, lw_chunk_ty(w), lw_at(ax, o), -1, 0, NULL), yv, 0, NULL);
             d = d < 0 ? t : hi_emit(HI_OR, TY_INT, d, t, 0, NULL);
             o += w;
         }
     }
+    free(lit);
     return hi_emit(c->op == R_EQ ? HI_SEQ : HI_SNE, TY_INT, d, lw_iconst(0), 0, NULL);
 }
 
@@ -1300,7 +1556,43 @@ static void lw_gen_display(LStmt *s)
     if (!s->asrc) lw_call("cob_display_nl", NULL, 0);
 }
 
+/* a text statement: the island's items stored to their storage, the
+ * lines in place (an HI_CALL the emitter writes as them), the items
+ * loaded again -- the text may have read or written any of them */
+static int g_lw_has_text;                       /* this island has text statements: the frame and the registers it needs */
 static void lw_gen_stmts(int at, int n);
+static void lw_gen_text(int st)
+{
+    LStmt *s = &g_lw_s[st];
+    lw_exit_stores();
+    char b[32]; snprintf(b, sizeof b, ".Ltext%d", st);
+    LV v = lw_call(xstrndup(b, strlen(b)), NULL, 0);
+    lw_entry_loads();
+    if (s->phrase < 0) return;
+    /* the phrases: the status word the call returned, ON when it is 1
+     * (on_one) or not 0, and the blocks */
+    LStmt *ph = &g_lw_s[s->phrase];
+    int c = ph->on_one ? hi_emit(HI_SEQ, TY_INT, v.lo, lw_iconst(1), 0, NULL) : hi_emit(HI_SNE, TY_INT, v.lo, lw_iconst(0), 0, NULL);
+    int b_on = hir_new_block(), b_not = hir_new_block(), b_join = hir_new_block();
+    lw_brc(c, b_on, b_not);
+    lw_begin_blk(b_on); lw_gen_stmts(ph->body, ph->nbody); lw_goto(b_join);
+    lw_begin_blk(b_not); lw_gen_stmts(ph->els, ph->nels); lw_goto(b_join);
+    lw_begin_blk(b_join);
+}
+/* the emitter's side (hcg_text_call): the lines, marks left out */
+static int lw_text_is(char *name) { return !strncmp(name, ".Ltext", 6); }
+static int lw_text_call(char *name)
+{
+    if (!lw_text_is(name)) return 0;
+    const LStmt *s = &g_lw_s[atoi(name + 6)];
+    const Block *t = &s->ptext;
+    for (int i = 0; i < t->n; i++) {
+        if (t->line[i][0] == '#' && t->line[i][1] == '@') continue;
+        cg_s(t->line[i]); cg_c(10);
+    }
+    return 1;
+}
+
 /* a condition's value, a word 0 or 1 */
 static int lw_cond_val(int c)
 {
@@ -1314,6 +1606,22 @@ static int lw_cond_val(int c)
     long double bd = a->bd * dx_p10(sc - a->sc) + b->bd * dx_p10(sc - b->sc);
     LV l = lw_val_scaled(x->x, sc - a->sc, bd), r = lw_val_scaled(x->y, sc - b->sc, bd);
     return lw_cmp(x->op, l, r, lw_wide_bd(bd));
+}
+/* a branch on a condition: AND and OR short-circuit, as the text's
+ * emit_cond does -- the second operand is reached only when the first
+ * has not decided; NOT swaps the targets */
+static void lw_cond_br(int c, int bt, int bf)
+{
+    LCond *x = &g_lw_c[c];
+    if (x->kind == C_NOT) { lw_cond_br(x->a, bf, bt); return; }
+    if (x->kind == C_AND || x->kind == C_OR) {
+        int mid = hir_new_block();
+        if (x->kind == C_AND) lw_cond_br(x->a, mid, bf); else lw_cond_br(x->a, bt, mid);
+        lw_begin_blk(mid);
+        lw_cond_br(x->b, bt, bf);
+        return;
+    }
+    lw_brc(lw_cond_val(c), bt, bf);
 }
 /* the quotient at the root of a STORE: its value, scale and bound; the
  * stores it guards go in a block of their own, skipped for a zero divisor */
@@ -1439,7 +1747,7 @@ static void lw_gen_loop_level(LStmt *s, int k)
         lw_gen_stmts(s->body, s->nbody);
         if (lw_blk_live) {
             int b_step = hir_new_block();
-            lw_brc(lw_cond_val(cond), b_exit, b_step);
+            lw_cond_br(cond, b_exit, b_step);
             lw_begin_blk(b_step);
         }
     } else {
@@ -1453,7 +1761,7 @@ static void lw_gen_loop_level(LStmt *s, int k)
     else {
         lw_goto(b_test);
         lw_begin_blk(b_test);
-        lw_brc(lw_cond_val(cond), b_exit, b_body);
+        lw_cond_br(cond, b_exit, b_body);
     }
     lw_begin_blk(b_exit);
     if (k > 0) lw_vary_init(s, k);
@@ -1468,10 +1776,10 @@ static void lw_gen_stmts(int at, int n)
         case LS_ADDTO: lw_gen_addto(s); break;
         case LS_AMOVE: lw_gen_amove(s); break;
         case LS_DISPLAY: lw_gen_display(s); break;
+        case LS_TEXT: lw_gen_text(g_lw_list[at + i]); break;
         case LS_IF: {
-            int c = lw_cond_val(s->cond);
             int b_then = hir_new_block(), b_else = hir_new_block(), b_join = hir_new_block();
-            lw_brc(c, b_then, b_else);
+            lw_cond_br(s->cond, b_then, b_else);
             lw_begin_blk(b_then); lw_gen_stmts(s->body, s->nbody); lw_goto(b_join);
             lw_begin_blk(b_else); lw_gen_stmts(s->els, s->nels); lw_goto(b_join);
             lw_begin_blk(b_join);
@@ -1549,12 +1857,14 @@ static int lw_heavy_cond(int c)
     if (x->kind == C_REL) return lw_heavy_node(x->x) || lw_heavy_node(x->y);
     return lw_heavy_cond(x->a) || (x->kind != C_NOT && lw_heavy_cond(x->b));
 }
+static int g_lw_ntext, g_lw_nperform;           /* of the run being counted: text statements, and those that PERFORM */
 static int lw_count(int at, int n, int *loops, int *heavy)
 {
     int c = 0;
     for (int i = 0; i < n; i++) {
         LStmt *s = &g_lw_s[g_lw_list[at + i]];
         c++;
+        if (s->kind == LS_TEXT) { g_lw_ntext++; if (s->nperf) g_lw_nperform++; if (s->phrase >= 0) { LStmt *ph = &g_lw_s[s->phrase]; c += lw_count(ph->body, ph->nbody, loops, heavy) + lw_count(ph->els, ph->nels, loops, heavy); } }
         if (s->kind == LS_LOOP) (*loops)++;
         if (s->expr >= 0 && lw_heavy_node(s->expr)) *heavy = 1;
         int numeric = s->kind == LS_STORE || s->kind == LS_ADDTO;         /* rsym is theirs; a MOVE of bytes or a DISPLAY has operands instead */
@@ -1578,53 +1888,169 @@ static int lw_count(int at, int n, int *loops, int *heavy)
  * 6% that way before this ran first). */
 typedef struct { char *name; char **line; int n; } LwPend;
 static LwPend *g_lw_pend; static int g_lw_npend, g_lw_pcap;
+/* does the run name a native item at all?  an island of none has nothing
+ * to hold in registers */
+static int lw_node_native(int n)
+{
+    if (n < 0) return 0;
+    LNode *x = &g_lw_n[n];
+    if (!x->op) return g_sym[x->sym].native;
+    if (x->op == 'k') return 0;
+    return lw_node_native(x->l) || lw_node_native(x->r);
+}
+static int lw_cond_native(int c)
+{
+    LCond *x = &g_lw_c[c];
+    if (x->kind == C_REL) return x->alnum ? 0 : lw_node_native(x->x) || lw_node_native(x->y);
+    return lw_cond_native(x->a) || (x->kind != C_NOT && lw_cond_native(x->b));
+}
+static int lw_native_items(int at, int n)
+{
+    for (int i = 0; i < n; i++) {
+        LStmt *s = &g_lw_s[g_lw_list[at + i]];
+        if (s->expr >= 0 && lw_node_native(s->expr)) return 1;
+        if (s->kind == LS_STORE || s->kind == LS_ADDTO) for (int k = 0; k < s->nr; k++) if (g_sym[s->rsym[k]].native) return 1;
+        if (s->cond >= 0 && lw_cond_native(s->cond)) return 1;
+        for (int k = 0; k < s->nv; k++) if (g_sym[s->var[k]].native || lw_node_native(s->from[k]) || lw_node_native(s->by[k]) || lw_cond_native(s->vcond[k])) return 1;
+        if (lw_native_items(s->body, s->nbody) || lw_native_items(s->els, s->nels)) return 1;
+        if (s->kind == LS_TEXT && s->phrase >= 0) { LStmt *ph = &g_lw_s[s->phrase]; if (lw_native_items(ph->body, ph->nbody) || lw_native_items(ph->els, ph->nels)) return 1; }
+    }
+    return 0;
+}
+
+/* do the text statements of the run come back?  each PERFORMed range, by
+ * the census of the whole unit */
+static int lw_run_returns(int at, int n)
+{
+    for (int i = 0; i < n; i++) {
+        LStmt *s = &g_lw_s[g_lw_list[at + i]];
+        if (s->kind == LS_TEXT)
+            for (int k = 0; k < s->nperf; k++) {
+                int lo = g_lw_perf[s->perf0 + k].lo, hi = lw_range_hi(lo, g_lw_perf[s->perf0 + k].hi);
+                if (!lw_range_returns(lo, hi)) { if (lw_trace()) fprintf(stderr, "hir: line %d: PERFORM of a range that may not come back\n", s->line); return 0; }
+            }
+        if (!lw_run_returns(s->body, s->nbody) || !lw_run_returns(s->els, s->nels)) return 0;
+        if (s->kind == LS_TEXT && s->phrase >= 0) { LStmt *ph = &g_lw_s[s->phrase]; if (!lw_run_returns(ph->body, ph->nbody) || !lw_run_returns(ph->els, ph->nels)) return 0; }
+    }
+    return 1;
+}
+static int g_lw_final;                          /* the unit is read whole: every PERFORM is known */
+static int g_lw_again;                          /* a pass restored text that holds placeholders: another pass */
+static void lw_resolve_1(int from);
 static void lw_resolve(int from)
+{
+    do { g_lw_again = 0; lw_resolve_1(from); } while (g_lw_again);
+}
+/* the island for the statements g_lw_list[at..at+n): its text waits in
+ * g_lw_pend; the line that calls it is returned */
+static char *lw_make_island(int at, int n, int count, int ntext)
+{
+    char name[32]; snprintf(name, sizeof name, ".Lisl%d", g_lw_nisland++);
+    Node fn; memset(&fn, 0, sizeof fn);
+    fn.name = xstrndup(name, strlen(name)); fn.is_static = 1;
+    g_lw_at = at; g_lw_n_stmts = n;
+    hl_cur_fn_dbg = fn.name;
+    /* text statements inside: the bottom of the frame is theirs, and
+     * r11-r13, r30 (hir_contract.h: the backend's knobs) */
+    g_lw_has_text = ntext > 0;
+    hcg_frame_reserve = g_lw_has_text ? FRAME : 0;
+    ra_callee_skip = g_lw_has_text ? 3 : 0;
+    hcg_r30_keep = g_lw_has_text;
+    hcg_text_call = lw_text_call; hcg_text_is = lw_text_is;
+    hd_fn = getenv("S32_HIR_DUMP");            /* =.LislN: that island's HIR after the optimizer, to stderr (the backend's -dhir) */
+    cg_olen = 0; cg_njt = 0; cg_njt_ent = 0; cg_nfn = 0; cg_cur_fn = -1; cg_fd = -1;
+    hcg_func(&fn);
+    if (cg_njt) die_at(g_lw_s[g_lw_list[at]].line, "internal: an island made a jump table");
+    if (lw_trace()) fprintf(stderr, "hir: %s: %d statement%s (%d text) from line %d, %d item%s, %d HIR instructions\n", name, count, count == 1 ? "" : "s",
+                            ntext, g_lw_s[g_lw_list[at]].line, g_lw_nitem, g_lw_nitem == 1 ? "" : "s", h_ninst);
+    LW_GROW(g_lw_pend, g_lw_npend, g_lw_pcap);
+    LwPend *pd = &g_lw_pend[g_lw_npend++]; pd->name = fn.name; pd->line = NULL; pd->n = 0;
+    { int pc = 0; lw_take_text(&pd->line, &pd->n, &pc); }
+    char call[48]; snprintf(call, sizeof call, "\tjal r31, %s", name);
+    return xstrndup(call, strlen(call));
+}
+
+/* the lines a run of statements becomes, appended to out: an island's
+ * call when the run pays as one; else the run split -- each loop alone,
+ * each stretch free of text statements alone, a text statement as its
+ * text -- and each piece judged again; a statement alone that does not
+ * pay is its text, whose inner placeholders (if any) are resolved by the
+ * next pass (g_lw_again) */
+static char **g_lw_out; static int g_lw_nout, g_lw_ocap2;     /* (not g_lw_no: that is the operands' count, and one tentative definition joined them) */
+static void lw_out(char *l) { LW_GROW(g_lw_out, g_lw_nout, g_lw_ocap2); g_lw_out[g_lw_nout++] = l; }
+static void lw_out_text(int st)
+{
+    Block *t = &g_lw_s[st].text;
+    for (int j = 0; j < t->n; j++) { int st2; if (lw_is_place(t->line[j], &st2)) g_lw_again = 1; lw_out(t->line[j]); }
+}
+static void lw_resolve_run(int at, int n)
+{
+    g_lw_ntext = g_lw_nperform = 0;
+    int loops = 0, heavy = 0, count = lw_count(at, n, &loops, &heavy), ntext = g_lw_ntext;
+    int ob, oa = lw_only(&ob), run = g_lw_s[g_lw_list[at]].line;
+    int skip = oa >= 0 && (run < oa || run > ob);
+    /* text statements pay only inside a loop whose own statements
+     * outnumber them three to one and whose items are in registers
+     * (kreport's READ loop +4%, ksort's RETURN loop +3% as islands) */
+    if (ntext && !skip) {
+        /* a run in a paragraph that a PERFORM iterates is in a loop too, but
+         * not one of its own: it loads its items at entry, syncs them round
+         * each text node and stores them at exit every time, and the text
+         * does none of that -- measured at par at best (csv2fw +0.2% with
+         * its 23 such islands, after the inline DISPLAY load, short-circuit
+         * conditions and immediate compares were added for them) */
+        const char *why = !loops ? (g_lw_final && lw_para_looped(g_lw_s[g_lw_list[at]].para) ? "no loop of its own (its paragraph is performed in one)" : "no loop") : ntext * 3 > count ? "text statements more than a third" : !lw_native_items(at, n) ? "no native item" : !lw_run_returns(at, n) ? "a PERFORM may not come back" : NULL;
+        if (why) { skip = 1; if (lw_trace()) fprintf(stderr, "hir: line %d: %d statements, %d text: %s\n", run, count, ntext, why); }
+    }
+    if (!skip && (loops || heavy || count >= lw_min())) { lw_out(lw_make_island(at, n, count, ntext)); return; }
+    if (n == 1) {
+        if (lw_trace()) fprintf(stderr, "hir: line %d: %d statement%s kept as text\n", g_lw_s[g_lw_list[at]].line, count, count == 1 ? "" : "s");
+        lw_out_text(g_lw_list[at]);
+        return;
+    }
+    /* the pieces */
+    int i = 0;
+    while (i < n) {
+        int k = g_lw_list[at + i];
+        if (g_lw_s[k].kind == LS_TEXT) { lw_out_text(k); i++; continue; }
+        if (g_lw_s[k].kind == LS_LOOP) { lw_resolve_run(at + i, 1); i++; continue; }
+        int j = i;
+        while (j < n && g_lw_s[g_lw_list[at + j]].kind != LS_TEXT && g_lw_s[g_lw_list[at + j]].kind != LS_LOOP) j++;
+        if (j - i == n) {                       /* no piece smaller than the whole: its text */
+            for (int q = 0; q < n; q++) lw_out_text(g_lw_list[at + q]);
+            if (lw_trace()) fprintf(stderr, "hir: line %d: %d statement%s kept as text\n", g_lw_s[g_lw_list[at]].line, count, count == 1 ? "" : "s");
+            return;
+        }
+        lw_resolve_run(at + i, j - i);
+        i = j;
+    }
+}
+static void lw_resolve_1(int from)
 {
     int any = 0;
     for (int i = from; i < g_nasm && !any; i++) { int st; any = lw_is_place(g_asm[i], &st); }
     if (!any) return;
-    char **out = NULL; int no = 0, cap = 0;
-#define LW_OUT(l) do { if (no == cap) { cap = cap ? 2 * cap : 4096; out = xrealloc(out, (size_t)cap * sizeof *out); } out[no++] = (l); } while (0)
+    g_lw_nout = 0;
     for (int i = from; i < g_nasm; i++) {
         int st;
-        if (!lw_is_place(g_asm[i], &st)) { LW_OUT(g_asm[i]); continue; }
+        if (!lw_is_place(g_asm[i], &st)) { lw_out(g_asm[i]); continue; }
         int at = g_lw_nlist, n = 0;
-        for (; i < g_nasm && lw_is_place(g_asm[i], &st); i++) { lw_list_add(st); n++; if (lw_trace()) fprintf(stderr, "hir: resolve: statement %d at line %d of the stream\n", st, i); }
+        for (; i < g_nasm && lw_is_place(g_asm[i], &st); i++) { lw_list_add(st); n++; }
         i--;
-        int loops = 0, heavy = 0, count = lw_count(at, n, &loops, &heavy);
-        int ob, oa = lw_only(&ob), run = g_lw_s[g_lw_list[at]].line;
-        int skip = oa >= 0 && (run < oa || run > ob);
-        if (skip || (!loops && !heavy && count < lw_min())) {
-            /* not an island: the statements' own text */
-            if (lw_trace()) fprintf(stderr, "hir: line %d: %d statement%s kept as text\n", g_lw_s[g_lw_list[at]].line, count, count == 1 ? "" : "s");
-            for (int k = 0; k < n; k++) {
-                Block *t = &g_lw_s[g_lw_list[at + k]].text;
-                for (int j = 0; j < t->n; j++) LW_OUT(t->line[j]);
-            }
+        g_lw_ntext = g_lw_nperform = 0;
+        int loops = 0, heavy = 0; lw_count(at, n, &loops, &heavy);
+        if (g_lw_nperform && !g_lw_final) {
+            /* a PERFORM of a range: whether it comes back is known when the
+             * unit is read whole -- the placeholders wait */
+            g_lw_nlist = at;
+            for (int k = 0; k < n; k++) lw_out(g_asm[i - n + 1 + k]);
             continue;
         }
-        char name[32]; snprintf(name, sizeof name, ".Lisl%d", g_lw_nisland++);
-        Node fn; memset(&fn, 0, sizeof fn);
-        fn.name = xstrndup(name, strlen(name)); fn.is_static = 1;
-        g_lw_at = at; g_lw_n_stmts = n;
-        hl_cur_fn_dbg = fn.name;
-        hd_fn = getenv("S32_HIR_DUMP");            /* =.LislN: that island's HIR after the optimizer, to stderr (the backend's -dhir) */
-        cg_olen = 0; cg_njt = 0; cg_njt_ent = 0; cg_nfn = 0; cg_cur_fn = -1; cg_fd = -1;
-        hcg_func(&fn);
-        if (cg_njt) die_at(g_lw_s[g_lw_list[at]].line, "internal: an island made a jump table");
-        if (lw_trace()) fprintf(stderr, "hir: %s: %d statement%s from line %d, %d item%s, %d HIR instructions\n", name, count, count == 1 ? "" : "s",
-                                g_lw_s[g_lw_list[at]].line, g_lw_nitem, g_lw_nitem == 1 ? "" : "s", h_ninst);
-        LW_GROW(g_lw_pend, g_lw_npend, g_lw_pcap);
-        LwPend *pd = &g_lw_pend[g_lw_npend++]; pd->name = fn.name; pd->line = NULL; pd->n = 0;
-        { int pc = 0; lw_take_text(&pd->line, &pd->n, &pc); }
-        char call[48]; snprintf(call, sizeof call, "\tjal r31, %s", name);
-        LW_OUT(xstrndup(call, strlen(call)));
+        lw_resolve_run(at, n);
     }
-#undef LW_OUT
-    while (from + no > g_asmcap) { g_asmcap = g_asmcap ? 2 * g_asmcap : 4096; g_asm = xrealloc(g_asm, (size_t)g_asmcap * sizeof *g_asm); }
-    memcpy(g_asm + from, out, (size_t)no * sizeof *out);
-    g_nasm = from + no;
-    free(out);
+    while (from + g_lw_nout > g_asmcap) { g_asmcap = g_asmcap ? 2 * g_asmcap : 4096; g_asm = xrealloc(g_asm, (size_t)g_asmcap * sizeof *g_asm); }
+    memcpy(g_asm + from, g_lw_out, (size_t)g_lw_nout * sizeof *g_lw_out);
+    g_nasm = from + g_lw_nout;
 }
 
 /* the unit's code is complete and returned: the islands it calls follow
@@ -1641,5 +2067,8 @@ static void lw_flush(void)
         for (int j = 0; j < pd->n; j++) emit("%s", pd->line[j]);
     }
     g_lw_npend = 0;
-    g_lw_nn = g_lw_nc = g_lw_ns = g_lw_nlist = g_lw_no = 0;    /* the unit's nodes are spent */
+    /* (the nodes, operands and census records are kept: a contained
+     * program is compiled before its container's end, and the container's
+     * placeholders still name theirs; paragraph ids are unique across the
+     * units, so the census needs no fence either) */
 }
