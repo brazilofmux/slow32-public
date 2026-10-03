@@ -5,6 +5,7 @@
 
 static void parse_raise(void);
 static void parse_statement_1(void);
+static int g_hir_on; static void lw_stmt_text(int b0);     /* lower.h */
 
 /* a statement, then the EC-DATA-CONVERSION its conversion functions noted */
 static int g_para_body_tp = -1;     /* where the current paragraph's first sentence begins */
@@ -51,6 +52,7 @@ static void parse_statement(void)
         block_put(&body);
     }
     free(g_stmt_calls.b);
+    if (g_hir_on && !g_noemit) lw_stmt_text(b0);    /* a lowered statement: its text kept apart (lower.h) */
     g_stmt_calls = outer_calls; g_stmt_calls_on = outer_on; g_stmt_calls_hold = outer_hold;
     g_stmt_convcheck = outer;
     memcpy(g_cur_stmt, stmt, sizeof stmt); g_stmt_tok = stok;

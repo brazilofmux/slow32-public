@@ -416,7 +416,9 @@ Staged; each step is measured before the next is begun.
 3. **PERFORM classified.**  Done as a census (above): 91.6% of
    PERFORMs name a procedure; the facts per range are in the
    `.perform` files for the lowering to read.
-4. **Lowering to HIR.**  Standing-alone items become HIR's own values
+4. **Lowering to HIR.**  Begun 2026-10-03: `hir.md` is its plan, and
+   the first islands are in (`src/cobc/lower.h`, `src/hir/`).
+   Standing-alone items become HIR's own values
    (a non-escaping slot is promoted to SSA there already); the rest
    stay loads and stores at known addresses.  PERFORM needs nothing new
    of HIR: a unit is one function, a paragraph a label, and a

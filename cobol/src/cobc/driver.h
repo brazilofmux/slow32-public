@@ -389,6 +389,8 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-fno-avail-reg")) g_noavailreg = 1;
         else if (!strcmp(argv[i], "-fno-native-items")) g_native_on = 0;
         else if (!strcmp(argv[i], "-fnative-items")) g_native_on = 1;
+        else if (!strcmp(argv[i], "-fno-hir")) g_hir_on = 0;
+        else if (!strcmp(argv[i], "-fhir")) g_hir_on = 1;
         else if (!strcmp(argv[i], "-fprofile-lines")) g_proflines = 1;
         else if (!strcmp(argv[i], "-dialect=mf")) g_dialect_mf = 1;
         else if (!strncmp(argv[i], "-dialect=", 9)) { fprintf(stderr, "s32-cobc: %s: the one dialect is mf (docs/behavior-points.md)\n", argv[i]); return 2; }
@@ -416,6 +418,8 @@ int main(int argc, char **argv)
     {   /* S32_NATIVE_ITEMS=0: -fno-native-items for every compile of a build that passes no flags through */
         const char *e = getenv("S32_NATIVE_ITEMS");
         if (e && !strcmp(e, "0")) g_native_on = 0;
+        e = getenv("S32_HIR");                  /* S32_HIR=0: -fno-hir likewise */
+        if (e && !strcmp(e, "0")) g_hir_on = 0;
     }
 
     char outbuf[1024];

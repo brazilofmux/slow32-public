@@ -1652,6 +1652,7 @@ static void parse_procedure_division(void)
     }
     if (g_uses_rc) { emit_la("r1", "cob_return_code"); emit("\tldw r1, r1+0"); }   /* RETURN-CODE, to the caller */
     else emit("\taddi r1, r0, 0");
+    lw_resolve(0);                              /* the islands, before the code is read as code (lower.h) */
     lr_unit(); lr_unit_saves(); lr_unit_restores();
     census_unit();
     emit("\tldw r13, sp+%d", SLOT_R13);
@@ -1660,6 +1661,7 @@ static void parse_procedure_division(void)
     emit("\tldw lr, sp+0");
     emit("\taddi sp, sp, %d", g_frame);
     emit("\tjalr r0, r31, 0");
+    lw_flush();                                 /* the islands' code, after the unit's (lower.h) */
 
     /* the unit joins the program registry at start-up (CALL identifier);
      * a function is invoked, never CALLed, and does not */

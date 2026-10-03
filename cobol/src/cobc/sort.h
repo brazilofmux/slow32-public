@@ -622,6 +622,8 @@ static void varying_rules(const Ref *var, const Opnd *from, const Opnd *by)
     }
 }
 
+static int lw_perform(Vary *v, int nv, Cond *until, Body *body, int test_after);   /* lower.h */
+static void lw_resolve(int from);
 static void parse_perform(void)
 {
     Body body; memset(&body, 0, sizeof body);
@@ -716,6 +718,7 @@ static void parse_perform(void)
     if (body.inline_body) parse_inline_body(&body);
     else pc_perform(body.from, body.thru, kind == PF_ONCE ? "once" : kind == PF_UNTIL ? "until" : kind == PF_VARYING ? "varying" : kind == PF_TIMES ? "times" : "exit");
 
+    if (kind == PF_VARYING || kind == PF_UNTIL) lw_perform(kind == PF_VARYING ? v : NULL, nv, c, &body, test_after);   /* an island's too (lower.h): its placeholder, then the text */
     int lay0 = g_nasm;                  /* the statement's code from here: its loops' regions (loopreg.h) */
     switch (kind) {
     case PF_UNTIL_EXIT: {
@@ -777,7 +780,7 @@ static void parse_perform(void)
         break;
     }
     if (body.inline_body && body.Lexit >= 0) emit_label(body.Lexit);
-    if (body.inline_body && !g_inline_depth) lr_run(lay0);     /* the outermost in-line PERFORM: its loops, and those in them */
+    if (body.inline_body && !g_inline_depth) { lw_resolve(lay0); lr_run(lay0); }     /* the outermost in-line PERFORM: its islands, then its loops and those in them */
     /* an out-of-line PERFORM has no END-PERFORM: the next one belongs to
      * whatever inline PERFORM encloses this statement */
 }

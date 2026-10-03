@@ -89,6 +89,7 @@ static void emit_if(IfStmt *s)
     } else emit_label(Lelse);
 }
 
+static int lw_if(IfStmt *s);        /* lower.h */
 static void parse_if(void)
 {
     IfStmt s; memset(&s, 0, sizeof s);
@@ -99,6 +100,7 @@ static void parse_if(void)
     if ((s.then_ns || s.else_ns) && at_word("end-if"))
         die_at(cur()->line, "IF with NEXT SENTENCE ends at the period, not END-IF (%s)", g_std < 2002 ? "X3.23-1985 IF syntax rule 3" : "2023 14.9.19 format 2");
     accept_word("end-if");
+    lw_if(&s);                          /* an island's too (lower.h): its placeholder, then the text over the branches' text */
     emit_if(&s);
 }
 

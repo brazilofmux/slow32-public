@@ -588,8 +588,10 @@ fi
 # ... and the generators that need no oracle, the same compiler both times
 # (gen/run-flag.sh): the loops' items in registers (src/cobc/loopreg.h)
 # and not; the values held outside loops alone (-fno-avail-reg), on other
-# seeds; and the items written the machine's way (src/cobc/native.h) and
-# as their entries say.  They need python3 to write the programs, which
+# seeds; the items written the machine's way (src/cobc/native.h) and
+# as their entries say; and the statements compiled through HIR as
+# islands (src/cobc/lower.h) and by the text emitter, on the generator
+# whose programs have the most such statements.  They need python3 to write the programs, which
 # the slow32:cobol image does not carry: without it they are skipped and
 # said to be, as the host-compiler gates are (a missing generator made an
 # empty program and a bare FAIL, and cost the build fleet a round).
@@ -609,9 +611,14 @@ if command -v python3 >/dev/null 2>&1; then
         "all 60 the same"*) report "gen/native" 0 "60 programs, with items written the machine's way and as written" ;;
         *)                  report "gen/native" 1 "$fout" ;;
     esac
+    fout="$(GEN=loop "$HERE/gen/run-flag.sh" -fno-hir 201 60 2>&1 | tail -1)"
+    case "$fout" in
+        "all 60 the same"*) report "gen/hir" 0 "60 programs, with islands compiled through HIR and without" ;;
+        *)                  report "gen/hir" 1 "$fout" ;;
+    esac
 else
-    for g in gen/loop gen/held gen/native; do echo "SKIP  $g  (no python3 to write the programs)"; done
-    GEN_SKIPPED=" gen/loop gen/held gen/native"
+    for g in gen/loop gen/held gen/native gen/hir; do echo "SKIP  $g  (no python3 to write the programs)"; done
+    GEN_SKIPPED=" gen/loop gen/held gen/native gen/hir"
 fi
 
 # Gate 8 (sanitizers): the compiler itself, built with the address and

@@ -925,6 +925,7 @@ static void parse_add_node(Arith *st)
     st->size_err = at_size_error_clause() || ec_size_on();
 }
 
+static int lw_arith(Arith *st, char verb);      /* lower.h: the statement as an island's, or 0 */
 static void parse_add(void)
 {
     if (accept_word("corresponding") || accept_word("corr")) { parse_arith_corr(1, "to", "end-add"); return; }
@@ -934,6 +935,7 @@ static void parse_add(void)
      * not leave this statement's ROUNDED MODE behind them */
     int rmode = g_rmode; SizePh ph; parse_size_phrases(&ph, st.size_err, "end-add"); g_rmode = rmode;
     arith_calls(&st, 0);
+    lw_arith(&st, 'A');                         /* an island's too (lower.h) */
     Opnd *ops = st.ops; Ref *rs = st.rs; int *rd = st.rd;
     int n = st.n, nr = st.nr, giving = st.giving, comp = st.comp, size_err = st.size_err;
     for (int k = 0; k < n; k++) emit_incompat(&ops[k]);
@@ -997,6 +999,7 @@ static void parse_subtract(void)
     g_noemit++; parse_subtract_node(&st); g_noemit--;
     int rmode = g_rmode; SizePh ph; parse_size_phrases(&ph, st.size_err, "end-subtract"); g_rmode = rmode;
     arith_calls(&st, 0);
+    lw_arith(&st, 'S');
     Opnd *ops = st.ops; Ref *rs = st.rs; int *rd = st.rd; Opnd minuend = st.minuend;
     int n = st.n, nr = st.nr, giving = st.giving, size_err = st.size_err;
     {
@@ -1066,6 +1069,7 @@ static void parse_multiply(void)
     g_noemit++; parse_multiply_node(&st); g_noemit--;
     int rmode = g_rmode; SizePh ph; parse_size_phrases(&ph, st.size_err, "end-multiply"); g_rmode = rmode;
     arith_calls(&st, 1);
+    lw_arith(&st, 'M');
     Opnd a = st.a, b = st.b; Ref *rs = st.rs; int *rd = st.rd;
     int nr = st.nr, comp = st.comp, size_err = st.size_err;
     if (st.giving) {
@@ -1256,6 +1260,7 @@ static void parse_divide(void)
     g_noemit++; parse_divide_node(&st); g_noemit--;
     int rmode = g_rmode; SizePh ph; parse_size_phrases(&ph, st.size_err, "end-divide"); g_rmode = rmode;
     arith_calls(&st, 1);
+    lw_arith(&st, 'D');
     if (st.giving) {
         if (st.into) emit_divide_giving(&st, &st.b, &st.a); else emit_divide_giving(&st, &st.a, &st.b);
         emit_size_phrases(&ph);

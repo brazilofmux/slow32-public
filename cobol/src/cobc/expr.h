@@ -270,6 +270,7 @@ static int paren_is_condition(void)
     return 0;
 }
 
+static int lw_compute(Ref *rs, int *rd, int nr, Expr *e, int size_err);     /* lower.h */
 static void parse_compute(void)
 {
     Ref rs[MAXOPS]; int rd[MAXOPS];
@@ -312,6 +313,7 @@ static void parse_compute(void)
     int rmode = g_rmode; SizePh ph; parse_size_phrases(&ph, size_err, "end-compute"); g_rmode = rmode;
     g_wide = wide;
     if (flt) g_fstmt = 1;
+    lw_compute(rs, rd, nr, e, size_err);        /* an island's too (lower.h): its placeholder, then the text */
     if (!g_wide) {                              /* integers in a word */
         g_nhn = 0; int root = hn_tree(e, hx_leaf);
         long long bd; int nn;

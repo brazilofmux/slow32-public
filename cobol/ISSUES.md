@@ -5610,3 +5610,37 @@ overlapping), with "runs in line" a fixed point over the GO TOs.  Over
 (majesty 94%, CCVS 98%, X-COBOL 77%, Open Systems 37% -- the RM/COBOL-74
 corpus, 8,253 GO TOs and 253 ALTERs).  Harness gate 1g gained
 tests/census/performs.cbl; `tests/census.sh` prints both reports.
+
+Seventh (2026-10-03): the lowering begun -- step 4, `docs/plans/hir.md`.
+stage08's HIR back end is copied into `src/hir/` (the vintage in each
+file; `cobc/hir_contract.h` supplies the names the C front end did, as
+`fortran/src/f77_contract.h` does) and `cobc/lower.h` feeds it in
+islands: a statement over native items leaves one line, `\tisland N`,
+and a node; IF and in-line PERFORM VARYING/UNTIL whose blocks are all
+such lines fold in; at the unit's end each run of them is one HIR
+function, compiled through SSA, the optimizer, LICM, BURG and the
+register allocator, its text after the unit's, a `jal` where the run
+was.  The items are allocas, so across a lowered loop they are
+registers.  The arithmetic is the stack's written out (cob_k_put_scale,
+cob_xdivn, the REMAINDER rule), bounds from `arith_reg.h`'s dx_check:
+a word where the bound is below 2^31, pairs otherwise (cob_mul64 in
+libcob for the product -- libs32 has no __muldi3 and HIR no mulhu).
+Taken so far: COMPUTE, ADD, SUBTRACT, MULTIPLY, DIVIDE with REMAINDER,
+numeric MOVE, IF on numbers, PERFORM VARYING of one level and UNTIL.
+`-fno-hir` / `S32_HIR=0` leave it out; `S32_HIR_TRACE=1` says what was
+taken and what refused.  The statement's text is kept
+beside the node, and a run of placeholders is resolved before loopreg
+reads the code: an island where a loop or a heavy statement (decimals,
+a value past a word, a division, ROUNDED) is among them or there are
+S32_HIR_MIN of them, the statements' own text otherwise -- a statement
+alone over word integers costs the call (kmove +0.3%, csv2fw +6% while
+the placeholders were still in the text under loopreg).  karith's loop
+is one island: 8.31 G instructions -> 2.35 G, 0.32 s -> 0.155 under the
+DBT; what is left is the 64-bit division routines, which the DBT runs
+natively; kedit -14% from two statements alone; the other kernels and
+csv2fw unchanged to the instruction.  Checks: the `-fno-hir`
+differential over the native, loop, checked and perf generators
+(hundreds of islands, all the same; harness gate gen/hir); every gate.
+The harness found the one defect the generators had not: the REMAINDER
+of a DIVIDE whose quotient item is its dividend read the dividend after
+the store (free/divremgiving -- the text path's own old bug, met again).

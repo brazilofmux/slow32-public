@@ -1569,6 +1569,9 @@ void cob_ndiv(void)
  * stopping at need gives the store the same digits it would have cut the
  * longer quotient down to -- without making the rest. */
 int cob_xdiv_scale;
+/* a 64-bit product for the compiler's islands (cobc/lower.h): HIR has
+ * no mulhu, and libs32 no __muldi3 (clang makes mul/mulhu of this) */
+long long cob_mul64(long long a, long long b) { return a * b; }
 long long cob_xdivn(long long a, long long b, int sa, int sb, int need)
 {
     cob_num x = { a, sa }, y = { b, sb };

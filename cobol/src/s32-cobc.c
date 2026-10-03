@@ -72,6 +72,24 @@
 #include "cobc/data_rules.h"
 #include "cobc/layout.h"
 #include "cobc/emit.h"
+/* stage08's HIR backend, a copy (src/hir; the ruling and the contract are
+ * in cobc/hir_contract.h).  The lowering that feeds it is cobc/lower.h,
+ * after the statement compilers it reads. */
+#include "cobc/hir_contract.h"
+#pragma GCC diagnostic push            /* the copy is kept byte-comparable with its original, not warning-clean here */
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wunused-but-set-variable"
+#pragma GCC diagnostic ignored "-Wpointer-to-int-cast"
+#include "hir/hir.h"
+#include "hir/hir_ssa.h"
+#include "hir/hir_opt.h"
+#include "hir/hir_licm.h"
+#include "hir/hir_burg.h"
+#include "hir/hir_regalloc.h"
+#include "hir/hir_codegen.h"
+#pragma GCC diagnostic pop
 #include "cobc/operand.h"
 #include "cobc/const.h"
 #include "cobc/operand_parse.h"
@@ -96,6 +114,7 @@
 #include "cobc/helpers.h"
 #include "cobc/verbs.h"
 #include "cobc/dispatch.h"
+#include "cobc/lower.h"
 #include "cobc/census.h"
 #include "cobc/native.h"
 #include "cobc/esql.h"
