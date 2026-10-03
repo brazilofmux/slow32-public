@@ -1039,6 +1039,8 @@ static char *hcg_binop_name(int k) {
     if (k == HI_ADD)  return "add";
     if (k == HI_SUB)  return "sub";
     if (k == HI_MUL)  return "mul";
+    if (k == HI_MULH) return "mulh";
+    if (k == HI_MULHU) return "mulhu";
     if (k == HI_DIV)  return "div";
     if (k == HI_REM)  return "rem";
     if (k == HI_AND)  return "and";
@@ -2030,7 +2032,7 @@ static void hcg_inst(int idx) {
     }
 
     /* Binary arithmetic/logic/comparison */
-    if (k >= HI_ADD && k <= HI_SGEU) {
+    if (hi_is_binop(k)) {
         if (hcg_const_imm_inst(s1, &off) && off == 0) rs1 = 0;
         else rs1 = hcg_src(s1, 1);
         if (hcg_const_imm_inst(s2, &off) && off == 0) rs2 = 0;

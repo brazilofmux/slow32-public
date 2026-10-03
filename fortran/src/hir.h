@@ -105,6 +105,17 @@
  * instructions that several passes rewrite, but these are block numbers. */
 #define HI_JMPTAB   70
 
+/* The high word of a product, signed and unsigned -- SLOW-32's mulh and
+ * mulhu (selfhost bcc42652, selfhost ISSUES-79; here 2026-10-03 to keep
+ * the copy in step -- f77 has no 64-bit integer and emits neither yet).
+ * Binary like ADD..SGEU: pure, CSE-able, the result may reuse src1's
+ * register. */
+#define HI_MULH     71
+#define HI_MULHU    72
+/* a binary operation over two value operands (the ADD..SGEU range and
+ * the two above); the passes that classified by the range ask this */
+static int hi_is_binop(int k) { return (k >= HI_ADD && k <= HI_SGEU) || k == HI_MULH || k == HI_MULHU; }
+
 /* --- Limits --- */
 #define HIR_MAX_INST   16384
 #define HIR_MAX_BLOCK  2048
@@ -357,7 +368,7 @@ static int hi_is_a64_cache_asm(int kind) {
 /* Is this instruction kind safe to hoist/CSE? Pure, non-faulting. */
 static int hi_is_pure(int k) {
     /* Binary arithmetic/logic/comparison, excluding DIV/REM */
-    if (k >= HI_ADD && k <= HI_SGEU) {
+    if (hi_is_binop(k)) {
         if (k == HI_DIV || k == HI_REM) return 0;
         return 1;
     }

@@ -136,7 +136,7 @@ static int ra_get_phys(int slot) {
  * ops plus the dominant immediate form (ADDI).
  */
 static int ra_can_reuse_src1(int k) {
-    return (k >= HI_ADD && k <= HI_SRL) || k == HI_ADDI;
+    return (k >= HI_ADD && k <= HI_SRL) || k == HI_ADDI || k == HI_MULH || k == HI_MULHU;
 }
 
 /* Returns true if we are allowed to give this instruction a caller-saved
@@ -1299,7 +1299,7 @@ static void lv_build_edges(void) {
                         !(lv_live[lv_id[u] >> 5] & (1u << (lv_id[u] & 31)))) {
                         dying_ok = 0;
                         if (u == h_src1[inst] &&
-                            ((k >= HI_ADD && k <= HI_SRL) ||
+                            ((k >= HI_ADD && k <= HI_SRL) || k == HI_MULH || k == HI_MULHU ||
                              k == HI_ADDI || k == HI_COPY))
                             dying_ok = 1;
                         if (!dying_ok && gc_node[u] >= 0)
@@ -1460,7 +1460,7 @@ static void gc_build(void) {
              * DO loop's trip decrement emits, so without it every
              * counted loop paid one uncoalesceable copy per
              * iteration. */
-            if ((h_kind[inst] >= HI_ADD && h_kind[inst] <= HI_SRL) ||
+            if ((h_kind[inst] >= HI_ADD && h_kind[inst] <= HI_SRL) || h_kind[inst] == HI_MULH || h_kind[inst] == HI_MULHU ||
                 h_kind[inst] == HI_ADDI ||
                 h_kind[inst] == HI_COPY) {
                 int two_s1;
@@ -1498,7 +1498,7 @@ static void gc_find_moves(void) {
                 if (ns1 >= 0) gc_add_move(nd, ns1);
             }
         }
-        if (k >= HI_ADD && k <= HI_SRL) {
+        if ((k >= HI_ADD && k <= HI_SRL) || k == HI_MULH || k == HI_MULHU) {
             s1 = h_src1[inst];
             if (s1 >= 0) {
                 ns1 = gc_node[s1];
