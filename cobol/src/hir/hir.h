@@ -9,8 +9,9 @@
  *   - HI_MULH, HI_MULHU (2026-10-03): the high word of a product, in
  *     hir.h (the kinds, hi_is_binop), hir_opt.h (folding, CSE, src2),
  *     hir_burg.h (patterns, names), hir_regalloc.h (src1 reuse),
- *     hir_codegen.h (mulh, mulhu).  stage08's C front end calls
- *     __muldi3 for a long long product and could use these instead. */
+ *     hir_codegen.h (mulh, mulhu).  Ported upstream the same day
+ *     (bcc42652, selfhost ISSUES-79): the next re-sync carries nothing
+ *     for it but the hi_is_binop spelling. */
 /* hir.h -- High-level IR for s12cc
  *
  * Parallel-array instruction representation.
