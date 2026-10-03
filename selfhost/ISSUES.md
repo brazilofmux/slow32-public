@@ -2897,3 +2897,24 @@ member, a size, a cast, another function's parameter.  It does not
 compile under the compiler before the repair, nor under four mutants of
 it (the rule dropped, applied outside a body, the body never entered,
 never left); two of those passed until the file-scope uses were added.
+
+### 79. [RESOLVED 2026-10-03] stage08 cc: a long long product was a __muldi3 call
+
+HIR had no high-word multiply, so `a * b` on `long long` -- and
+`(long long)a * b` on two ints -- marshalled four words and called
+`__muldi3`, where SLOW-32 has mulh and mulhu.  The kinds came up from
+the COBOL front's copy of the HIR headers (`cobol/src/hir`, its islands
+needed them first): HI_MULH and HI_MULHU in hir.h with `hi_is_binop()`
+for the passes that classified binary operations by the ADD..SGEU
+range, folding and CSE in hir_opt.h, BURG patterns, the allocator's
+src1 reuse, mulh/mulhu in the emitter.  `hl_ll_mul` (hir_lower.h, both
+the binary and the compound-assignment paths) makes the product: MUL
+and MULH when both operands are sign-extended words (hl_widen64's SRA
+by 31), MUL and MULHU when zero-extended, else MULHU and two MULs for
+the low 64 bits of a pair product.  `(long long)a * b` is two
+instructions and a frameless leaf.  SQLite's stage08 build: 97 call
+sites became mulh, 226,664 static instructions -> 226,317, output
+identical; stage08 109/109 with the fixed point, host front ends, FP
+differential.  The 64-bit hosts' native path is untouched (the helpers
+sit outside its #ifndef).  The Fortran front's copy (fortran/src) does
+not have them yet.

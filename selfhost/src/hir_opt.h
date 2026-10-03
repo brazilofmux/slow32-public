@@ -26,7 +26,7 @@ static int ho_resolve(int inst) {
 
 /* Is src2 an instruction reference (not a block number)? */
 static int ho_src2_is_ref(int k) {
-    if (k >= HI_ADD && k <= HI_SGEU) return 1;
+    if (hi_is_binop(k)) return 1;
     if (k == HI_STORE) return 1;
     if (k == HI_RET) return 1;
     /* FP binary ops: FADD..FDIV, FEQ/FLT/FLE */
@@ -147,7 +147,7 @@ static int ho_const_fold(void) {
         k = h_kind[i];
 
         /* === Binop optimizations === */
-        if (k >= HI_ADD && k <= HI_SGEU) {
+        if (hi_is_binop(k)) {
             s1c = (h_src1[i] >= 0 && h_kind[h_src1[i]] == HI_ICONST);
             s2c = (h_src2[i] >= 0 && h_kind[h_src2[i]] == HI_ICONST);
 
@@ -167,6 +167,8 @@ static int ho_const_fold(void) {
                 if      (k == HI_ADD) result = a + b;
                 else if (k == HI_SUB) result = a - b;
                 else if (k == HI_MUL) result = a * b;
+                else if (k == HI_MULH) result = (int)(((long long)a * (long long)b) >> 32);
+                else if (k == HI_MULHU) result = (int)(((unsigned long long)(unsigned)a * (unsigned long long)(unsigned)b) >> 32);
                 else if (k == HI_DIV) {
                     if (b != 0) result = a / b; else can_fold = 0;
                 }
@@ -873,7 +875,7 @@ static int ho_cse_hash(int kind, int s1, int s2, int val) {
 
 static int ho_cse_eligible(int k) {
     /* Binary arithmetic/logic/comparison (not div/rem) */
-    if (k >= HI_ADD && k <= HI_SGEU && k != HI_DIV && k != HI_REM) return 1;
+    if (hi_is_binop(k) && k != HI_DIV && k != HI_REM) return 1;
     /* Unary */
     if (k == HI_NEG || k == HI_NOT || k == HI_BNOT) return 1;
     /* ADDI */

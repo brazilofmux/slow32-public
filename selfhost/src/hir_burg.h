@@ -175,6 +175,8 @@ static void bg_init(void) {
     bg_add_pat(BG_REG, HI_ADD,  BG_REG, BG_REG, 1);
     bg_add_pat(BG_REG, HI_SUB,  BG_REG, BG_REG, 1);
     bg_add_pat(BG_REG, HI_MUL,  BG_REG, BG_REG, 1);
+    bg_add_pat(BG_REG, HI_MULH, BG_REG, BG_REG, 1);
+    bg_add_pat(BG_REG, HI_MULHU, BG_REG, BG_REG, 1);
     bg_add_pat(BG_REG, HI_DIV,  BG_REG, BG_REG, 1);
     bg_add_pat(BG_REG, HI_REM,  BG_REG, BG_REG, 1);
     bg_add_pat(BG_REG, HI_AND,  BG_REG, BG_REG, 1);
@@ -330,7 +332,7 @@ static int bg_is_u12(int v) {
 
 /* Is src2 an instruction reference (not a block number)? */
 static int bg_src2_is_ref(int k) {
-    if (k >= HI_ADD && k <= HI_SGEU) return 1;
+    if (hi_is_binop(k)) return 1;
     if (k == HI_STORE) return 1;
     if (k == HI_RET) return 1;
     if (k >= HI_FADD && k <= HI_FDIV) return 1;
@@ -481,6 +483,8 @@ static char *bg_op_name(int op) {
     if (op == HI_ADD) return "add";
     if (op == HI_SUB) return "sub";
     if (op == HI_MUL) return "mul";
+    if (op == HI_MULH) return "mulh";
+    if (op == HI_MULHU) return "mulhu";
     if (op == HI_DIV) return "div";
     if (op == HI_REM) return "rem";
     if (op == HI_AND) return "and";

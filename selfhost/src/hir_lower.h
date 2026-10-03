@@ -1033,6 +1033,34 @@ static int hl_cond_val(Node *n) {
     return hl_truthy(n->ty, lv);
 }
 
+/* is hi the sign extension of lo -- SRA lo, 31 -- as hl_widen64 makes it?
+ * a zero: the zero extension it makes of an unsigned word */
+static int hl_is_sext_hi(int lo, int hi) {
+    if (hi < 0 || h_kind[hi] != HI_SRA || h_src1[hi] != lo) return 0;
+    return h_src2[hi] >= 0 && h_kind[h_src2[hi]] == HI_ICONST && h_val[h_src2[hi]] == 31;
+}
+static int hl_is_zext_hi(int hi) { return hi >= 0 && h_kind[hi] == HI_ICONST && h_val[hi] == 0; }
+/* the low 64 bits of a product of pairs: MULHU and two MULs; when both
+ * operands are sign-extended words (hl_widen64's SRA by 31), MUL and MULH
+ * alone, and zero-extended ones MUL and MULHU.  Was a __muldi3 call.
+ * Returns lo, hi in hl_hi. */
+static int hl_ll_mul(int lv, int lv_hi, int rv, int rv_hi) {
+    int r_lo;
+    int r_hi;
+    r_lo = hi_emit(HI_MUL, TY_INT, lv, rv, 0, NULL);
+    if (hl_is_sext_hi(lv, lv_hi) && hl_is_sext_hi(rv, rv_hi)) {
+        hl_hi = hi_emit(HI_MULH, TY_INT, lv, rv, 0, NULL);
+        return r_lo;
+    }
+    if (hl_is_zext_hi(lv_hi) && hl_is_zext_hi(rv_hi)) {
+        hl_hi = hi_emit(HI_MULHU, TY_INT, lv, rv, 0, NULL);
+        return r_lo;
+    }
+    r_hi = hi_emit(HI_MULHU, TY_INT, lv, rv, 0, NULL);
+    r_hi = hi_emit(HI_ADD, TY_INT, r_hi, hi_emit(HI_MUL, TY_INT, lv, rv_hi, 0, NULL), 0, NULL);
+    hl_hi = hi_emit(HI_ADD, TY_INT, r_hi, hi_emit(HI_MUL, TY_INT, lv_hi, rv, 0, NULL), 0, NULL);
+    return r_lo;
+}
 #ifndef S12CC_X64_HOST
 /* Pair llong binary op for the RMW paths (compound assign, ++/--),
  * mirroring the ND_BINOP pair lowering: result lo returned, hi left
@@ -1090,15 +1118,14 @@ static int hl_ll_op(int op, int uns, int lv, int lv_hi, int rv, int rv_hi) {
         hl_hi = hi_emit(HI_CALLHI, TY_INT, r_lo, -1, 0, NULL);
         return r_lo;
     }
-    /* mul / div / rem via libcalls */
+    if (op == TK_STAR) return hl_ll_mul(lv, lv_hi, rv, rv_hi);
+    /* div / rem via libcalls */
     cb = h_ncarg;
     h_carg[h_ncarg] = lv; h_ncarg = h_ncarg + 1;
     h_carg[h_ncarg] = lv_hi; h_ncarg = h_ncarg + 1;
     h_carg[h_ncarg] = rv; h_ncarg = h_ncarg + 1;
     h_carg[h_ncarg] = rv_hi; h_ncarg = h_ncarg + 1;
-    if (op == TK_STAR)
-        r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__muldi3");
-    else if (op == TK_SLASH)
+    if (op == TK_SLASH)
         r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, uns ? "__udivdi3" : "__divdi3");
     else if (op == TK_PERCENT)
         r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, uns ? "__umoddi3" : "__moddi3");
@@ -2241,18 +2268,8 @@ static int hl_expr(Node *n) {
                 tmp2 = hi_emit(HI_OR, TY_INT, hi_lt, tmp2, 0, NULL);
                 return hi_emit(HI_NOT, TY_INT, tmp2, -1, 0, NULL);
             }
-            /* Mul/Div/Rem/Shifts — emit CALL to helper */
-            if (n->op == TK_STAR) {
-                carg_base2 = h_ncarg;
-                h_carg[h_ncarg] = lv;      h_ncarg = h_ncarg + 1;
-                h_carg[h_ncarg] = lv_hi;   h_ncarg = h_ncarg + 1;
-                h_carg[h_ncarg] = rv;      h_ncarg = h_ncarg + 1;
-                h_carg[h_ncarg] = rv_hi;   h_ncarg = h_ncarg + 1;
-                r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__muldi3");
-                h_cbase[r_lo] = carg_base2;
-                hl_hi = hi_emit(HI_CALLHI, TY_INT, r_lo, -1, 0, NULL);
-                return r_lo;
-            }
+            /* Mul in instructions (hl_ll_mul); Div/Rem/Shifts -- a CALL to the helper */
+            if (n->op == TK_STAR) return hl_ll_mul(lv, lv_hi, rv, rv_hi);
             if (n->op == TK_SLASH) {
                 carg_base2 = h_ncarg;
                 h_carg[h_ncarg] = lv;      h_ncarg = h_ncarg + 1;
