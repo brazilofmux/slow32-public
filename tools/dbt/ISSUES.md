@@ -751,3 +751,24 @@ the popped source with the same second's mtime as the object built from
 the stashed one, and `make` keeps the wrong binary.  Three differential
 runs went against HEAD's DBT before `touch` showed it.  Don't stash in
 this tree; build with the tree as it is.
+
+## 23. FCVT_WU_S Wrong From 2^31 Up on x86-64 (FIXED 2026-10-03)
+
+`translate_fp_f32_cvt_wu_s` (float -> uint32, inline SSE since 8c85423f in
+February) used the 32-bit `cvttss2si`.  That instruction's range is
+int32, so every value in [2^31, 2^32) came back as 0x80000000, the
+"integer indefinite".  The comment above it said the 64-bit form was
+used and the low word kept; the code did not.  FCVT_WU_D goes through
+the C helper and was right; AArch64's `fcvtzu` was right.
+
+Nothing exercised the range on x86-64 hardware until
+selfhost/stage08/tests/test_fp_convert.c (Sep 30) check 16,
+`(unsigned)3.5e9f`, which wants 0xd09dc300.  On kagura it made
+run-kit-differential diverge (slow32-dbt exit 16 vs 0) and
+stage08/run-tests.sh 108/109, since kagura runs that suite under the
+DBT.  Found while validating DBT-22 there.
+
+Fix: `emit_cvttss2si_r64_xmm` (F3 REX.W 0F 2C /r) in emit_x64.h; the
+translator converts to 64 bits and stores the low word, exact over the
+whole uint32 range.  Out-of-range inputs are undefined in C and the
+test does not check them.

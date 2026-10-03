@@ -4784,9 +4784,10 @@ static void translate_fp_f32_cvt_wu_s(translate_ctx_t *ctx, uint8_t rd, uint8_t 
 
     emit_load_guest_reg(ctx, RAX, rs1);
     emit_movd_xmm_r32(e, 0, RAX);
-    // Use cvttss2si with 32-bit dest — values > INT32_MAX return 0x80000000
-    // which matches the hardware behavior for out-of-range unsigned conversion
-    emit_cvttss2si_r32_xmm(e, RAX, 0);
+    // 64-bit cvttss2si, low 32 bits stored: exact over the whole uint32
+    // range.  The 32-bit form returned 0x80000000 for every value in
+    // [2^31, 2^32) (DBT-23).
+    emit_cvttss2si_r64_xmm(e, RAX, 0);
     emit_store_guest_reg(ctx, rd, RAX);
 }
 

@@ -1085,6 +1085,17 @@ static inline void emit_cvttss2si_r32_xmm(emit_ctx_t *ctx, x64_reg_t r32, uint8_
     emit_byte(ctx, MODRM(MOD_DIRECT, r32 & 7, xmm & 7));
 }
 
+// cvttss2si r64, xmm  (F3 REX.W 0F 2C /r) — 64-bit destination
+static inline void emit_cvttss2si_r64_xmm(emit_ctx_t *ctx, x64_reg_t r64, uint8_t xmm) {
+    emit_byte(ctx, 0xF3);
+    uint8_t rex = REX_W;
+    if (r64 >= R8) rex |= REX_R;
+    emit_byte(ctx, REX_BASE | rex);
+    emit_byte(ctx, 0x0F);
+    emit_byte(ctx, 0x2C);
+    emit_byte(ctx, MODRM(MOD_DIRECT, r64 & 7, xmm & 7));
+}
+
 // cvtsi2ss xmm, r32  (F3 [REX] 0F 2A /r)
 static inline void emit_cvtsi2ss_xmm_r32(emit_ctx_t *ctx, uint8_t xmm, x64_reg_t r32) {
     emit_byte(ctx, 0xF3);
