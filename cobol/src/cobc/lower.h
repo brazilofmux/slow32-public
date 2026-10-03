@@ -42,7 +42,7 @@ typedef struct { char op; int l, r; int sym; long long k; int sc; long double bd
 /* a condition: cond.h's C_AND, C_OR, C_NOT, C_REL (op R_*; x, y values;
  * or, alnum, ax and ay operands in g_lw_o compared as bytes) */
 typedef struct { int kind; int a, b; int x, y; int op; int alnum, ax, ay; } LCond;
-enum { LS_STORE, LS_ADDTO, LS_IF, LS_LOOP, LS_AMOVE };
+enum { LS_STORE, LS_ADDTO, LS_IF, LS_LOOP, LS_AMOVE, LS_DISPLAY };
 typedef struct {
     int kind, line;
     int expr;                           /* LS_STORE: the value; LS_ADDTO: the sum each receiver takes */
@@ -53,7 +53,7 @@ typedef struct {
     int cond;                           /* LS_IF; LS_LOOP: UNTIL */
     int body, nbody, els, nels;         /* ranges of g_lw_list */
     int nv, var[8], from[8], by[8], vcond[8], test_after;   /* LS_LOOP: the VARYING levels (0: UNTIL alone, cond), each its item, FROM, BY and UNTIL */
-    int asrc, adst[MAXOPS];             /* LS_AMOVE: operands in g_lw_o -- the sender, the receivers (nr) */
+    int asrc, adst[MAXOPS];             /* LS_AMOVE: operands in g_lw_o -- the sender, the receivers (nr); LS_DISPLAY: its operands (nr), asrc = NO ADVANCING */
     Block text;                         /* the statement's code by the text emitter, for a run that is no island */
     int cut;                            /* ... taken out of the stream (lw_stmt_text) */
 } LStmt;
@@ -90,7 +90,16 @@ static int lw_opnd_keep(const Opnd *o) { LW_GROW(g_lw_o, g_lw_no, g_lw_ocap); g_
 static int lw_ref_keep(const Ref *r) { Opnd o; memset(&o, 0, sizeof o); o.kind = O_REF; o.ref = *r; o.line = r->line; return lw_opnd_keep(&o); }
 
 /* the statement's line in the text */
-static void lw_place(int st) { emit("\tisland %d", st); }
+static void lw_place(int st) { if (lw_trace()) fprintf(stderr, "hir: line %d: statement %d\n", g_lw_s[st].line, st); emit("\tisland %d", st); }
+/* ... at line at of the stream, before code a statement wrote as it read
+ * its operands (DISPLAY): the placeholder must come first */
+static void lw_place_at(int at, int st)
+{
+    char b[32]; snprintf(b, sizeof b, "\tisland %d", st);
+    if (lw_trace()) fprintf(stderr, "hir: line %d: statement %d (at %d of %d)\n", g_lw_s[st].line, st, at, g_nasm);
+    emit("%s", b);
+    if (at < g_nasm - 1) { char *l = g_asm[g_nasm - 1]; memmove(g_asm + at + 1, g_asm + at, (size_t)(g_nasm - 1 - at) * sizeof *g_asm); g_asm[at] = l; }
+}
 static int lw_is_place(const char *l, int *st)
 {
     if (strncmp(l, "\tisland ", 8)) return 0;
@@ -114,11 +123,21 @@ static void lw_stmt_text(int b0)
 {
     int p = b0, st, last = -1;
     while (p < g_nasm && !strncmp(g_asm[p], "__ln_", 5)) p++;
-    while (p < g_nasm && lw_is_place(g_asm[p], &st)) { last = st; g_lw_s[st].cut = 1; p++; }
+    /* the statement's own placeholders are the uncut ones; a statement
+     * whose code begins with an inner statement's -- an exception-checking
+     * PERFORM, whose body comes first -- is not lowered, and that one was
+     * cut when its own statement ended (2002/exitperform) */
+    while (p < g_nasm && lw_is_place(g_asm[p], &st) && !g_lw_s[st].cut) { last = st; g_lw_s[st].cut = 1; p++; }
     if (last < 0) {
         /* a statement not lowered: placeholders inside it are its inner
          * statements', cut already.  One of its own anywhere but first
          * would run twice, as text and as island. */
+        if (lw_trace() && p < g_nasm && g_hir_on) {
+            /* the verbs no hook takes, for the tally of what keeps a loop in the text */
+            static const char *hooked[] = { "COMPUTE", "ADD", "SUBTRACT", "MULTIPLY", "DIVIDE", "MOVE", "IF", NULL };
+            int k; for (k = 0; hooked[k] && strcmp(hooked[k], g_cur_stmt); k++) ;
+            if (!hooked[k]) fprintf(stderr, "hir: line %d %s: no hook%s\n", g_stmt_tok ? g_stmt_tok->line : 0, g_cur_stmt, g_inline_depth ? " (in a loop)" : "");
+        }
         for (int i = p; i < g_nasm; i++)
             if (lw_is_place(g_asm[i], &st) && !g_lw_s[st].cut)
                 die_at(g_lw_s[st].line, "internal: a lowered statement's placeholder is not first in its code");
@@ -199,6 +218,12 @@ static int lw_sub_item_ok(Sym *s)
  * modification with literal positions, no EC-BOUND check on; *len the
  * bytes.  A whole item is alphanumeric or alphabetic, or a group of fixed
  * length; a part is any item's bytes. */
+static int g_lw_bytes_any;           /* a whole numeric item's bytes too (a bytewise compare) */
+/* the bytes a reference has (lw_bytes_ref_ok admitted it): asked again
+ * when the island is made, with nothing else -- the >>TURN state of the
+ * compile has moved on by then (2002/ecbound turns EC-BOUND on after a
+ * statement an island took) */
+static long lw_bytes_len(const Ref *r) { return r->rm ? r->rm_len : r->sym->size; }
 static int lw_bytes_ref_ok(const Ref *r, long *len)
 {
     Sym *s = r->sym;
@@ -217,7 +242,7 @@ static int lw_bytes_ref_ok(const Ref *r, long *len)
         return 1;
     }
     if (s->is_group) { if (has_odo(s) || s->bitgroup || s->strong) return 0; }
-    else if ((s->pi.category != PIC_ALPHANUMERIC && s->pi.category != PIC_ALPHABETIC) || s->pi.edited) return 0;
+    else if ((s->pi.category != PIC_ALPHANUMERIC && s->pi.category != PIC_ALPHABETIC && !(g_lw_bytes_any && s->pi.category == PIC_NUMERIC)) || s->pi.edited) return 0;
     *len = s->size;
     return 1;
 }
@@ -517,6 +542,44 @@ static int lw_move(Opnd *src, Ref *dst, int n)
     return lw_store_stmt(x, dst, rd, n, NULL, src->line, "MOVE");
 }
 
+/* DISPLAY of literals and items, to the console, ADVANCING or not: its
+ * operands read (parse_display), its code written from line a0 on.  An
+ * item is displayed from its storage, so a native one is stored first. */
+static int lw_disp_ref_ok(const Ref *r)
+{
+    Sym *s = r->sym;
+    long len;
+    if (r->rm) return lw_bytes_ref_ok(r, &len);
+    if (s->is_cond || s->any_len || sym_bitlike(s) || s->natgroup || s->nat_usage || s->usage == U_NATIONAL || s->usage == U_BIT || s->is_index) return 0;
+    if (s->pi.category == PIC_NATIONAL || s->pi.category == PIC_BOOLEAN || s->is_rc || s->lin_file >= 0 || s->rep_ctr >= 0 || s->usage == U_FLOAT) return 0;
+    if (s->is_group && (has_odo(s) || s->bitgroup || s->strong)) return 0;
+    const Sym *rec = &g_sym[s->record];
+    if (rec_indirect(rec) || !rec->label[0] || rec->ftemp_scan || odo_table_for(s)) return 0;
+    if (r->nsub != s->ndims || (r->nsub && ec_on_name("EC-BOUND-SUBSCRIPT"))) return 0;
+    for (int k = 0; k < r->nsub; k++)
+        if (r->sub[k].sym == &g_subx || (r->sub[k].sym && !lw_sub_item_ok(r->sub[k].sym))) return 0;
+    return 1;
+}
+static int lw_display(Opnd *ops, int n, int no_adv, int a0)
+{
+    if (lw_off()) return 0;
+    const char *why = lw_stmt_refused(0);
+    if (why) { lw_refuse(ops[0].line, "DISPLAY", why); return 0; }
+    if (n > MAXOPS) return 0;
+    for (int i = 0; i < n; i++) {
+        Opnd *o = &ops[i];
+        int ok = !opnd_scanned(o) && !o->all_sub &&
+                 (o->kind == O_STR ? !o->tok->nat : o->kind == O_NUM ? !o->folded : o->kind == O_FIG || o->kind == O_ALL ? 1 :
+                  o->kind == O_REF ? lw_disp_ref_ok(&o->ref) : 0);
+        if (!ok) { lw_refuse(o->line, "DISPLAY", "an operand"); return 0; }
+    }
+    int st = lw_stmt(LS_DISPLAY, ops[0].line);
+    LStmt *s = &g_lw_s[st]; s->nr = n; s->asrc = no_adv;
+    for (int i = 0; i < n; i++) s->adst[i] = lw_opnd_keep(&ops[i]);
+    lw_place_at(a0, st);
+    return 1;
+}
+
 /* a condition as a node, -1 when not taken */
 static int lw_cond(Cond *c)
 {
@@ -528,25 +591,40 @@ static int lw_cond(Cond *c)
     }
     if (c->kind == C_NOT) { int a = lw_cond(c->a); return a < 0 ? -1 : lw_cnode(C_NOT, a, -1, -1, -1, 0); }
     if (c->kind != C_REL || c->ptr || c->bstack) return -1;
-    {   /* two operands of bytes, equal or not, under the native collating
-         * sequence: a literal shorter or longer than the item is padded with
-         * spaces here, as the comparison pads (8.8.4.1.2) */
+    {   /* two operands of bytes under the native collating sequence: equal
+         * or not, a literal shorter or longer than the item padded with
+         * spaces here, as the comparison pads (8.8.4.1.2); and any relation
+         * of two items the text emitter compares bytewise (cmp_is_bytewise:
+         * one length, or one descriptor -- two unsigned DISPLAY numbers
+         * among them, whose bytes order as their values do when both are
+         * numbers, and which the text compares as bytes whatever they hold) */
         long lx, ly;
         int bx = c->x.kind != O_FIG && lw_bytes_src_ok(&c->x, &lx), by = c->y.kind != O_FIG && lw_bytes_src_ok(&c->y, &ly);
         int fx = c->x.kind == O_FIG && lw_bytes_src_ok(&c->x, &lx), fy = c->y.kind == O_FIG && lw_bytes_src_ok(&c->y, &ly);
-        if ((bx || fx) && (by || fy) && (bx || by) && g_collate < 0 && (c->op == R_EQ || c->op == R_NE)) {
-            /* a whole numeric item is a number, compared as one */
+        int bytewise = 0;
+        if (c->x.kind == O_REF && c->y.kind == O_REF && !c->x.ref.rm && !c->y.ref.rm && cmp_is_bytewise(&c->x, &c->y)) {
+            g_lw_bytes_any = 1;
+            bytewise = lw_bytes_ref_ok(&c->x.ref, &lx) && lw_bytes_ref_ok(&c->y.ref, &ly);
+            g_lw_bytes_any = 0;
+        }
+        int op = c->op;
+        if (c->neg) op = op == R_EQ ? R_NE : op == R_NE ? R_EQ : op == R_LT ? R_GE : op == R_GE ? R_LT : op == R_GT ? R_LE : R_GT;
+        if (bytewise || ((bx || fx) && (by || fy) && (bx || by) && g_collate < 0 && (c->op == R_EQ || c->op == R_NE))) {
+            /* a whole numeric item is a number, compared as one, unless both are and of one description */
             int numx = c->x.kind == O_REF && !c->x.ref.rm && is_numeric_sym(c->x.ref.sym);
             int numy = c->y.kind == O_REF && !c->y.ref.rm && is_numeric_sym(c->y.ref.sym);
             int lit = (c->x.kind != O_REF) + (c->y.kind != O_REF);
-            if (!numx && !numy && lit < 2 && (lit || lx == ly)) {
-                int op = c->neg ? (c->op == R_EQ ? R_NE : R_EQ) : c->op;
+            if (bytewise || (!numx && !numy && lit < 2 && (lit || lx == ly))) {
                 int n = lw_cnode(C_REL, -1, -1, -1, -1, op);
                 g_lw_c[n].alnum = 1; g_lw_c[n].ax = lw_opnd_keep(&c->x); g_lw_c[n].ay = lw_opnd_keep(&c->y);
                 return n;
             }
         }
     }
+    /* a numeric-edited item is not numeric in a relation (8.8.4.1: the
+     * comparison is alphanumeric -- a condition-name over one, free/setcond) */
+    if (c->x.kind == O_REF && c->x.ref.sym->pi.category == PIC_NUMERIC_EDITED) return -1;
+    if (c->y.kind == O_REF && c->y.ref.sym->pi.category == PIC_NUMERIC_EDITED) return -1;
     int x = lw_opnd(&c->x); if (x < 0) return -1;
     int y = lw_opnd(&c->y); if (y < 0) return -1;
     /* the two aligned must be within bounds, as a sum's sides are */
@@ -693,9 +771,15 @@ static void lw_collect_stmts(int at, int n)
     for (int i = 0; i < n; i++) {
         LStmt *s = &g_lw_s[g_lw_list[at + i]];
         if (s->expr >= 0) lw_collect_node(s->expr);
-        for (int k = 0; k < s->nr; k++) if (g_sym[s->rsym[k]].native) lw_item_slot(s->rsym[k]);
+        if (s->kind == LS_STORE || s->kind == LS_ADDTO) for (int k = 0; k < s->nr; k++) if (g_sym[s->rsym[k]].native) lw_item_slot(s->rsym[k]);
         if (s->rem >= 0 && g_sym[s->rem].native) lw_item_slot(s->rem);
         if (s->kind == LS_AMOVE) { lw_collect_opnd(s->asrc); for (int k = 0; k < s->nr; k++) lw_collect_opnd(s->adst[k]); }
+        if (s->kind == LS_DISPLAY)
+            for (int k = 0; k < s->nr; k++) {
+                lw_collect_opnd(s->adst[k]);
+                const Opnd *o = &g_lw_o[s->adst[k]];
+                if (o->kind == O_REF && o->ref.sym->native) lw_item_slot((int)(o->ref.sym - g_sym));
+            }
         if (s->cond >= 0) lw_collect_cond(s->cond);
         for (int k = 0; k < s->nv; k++) {
             if (g_sym[s->var[k]].native) lw_item_slot(s->var[k]);
@@ -1081,7 +1165,7 @@ static int lw_ref_addr(const Ref *r)
 static int lw_bytes_src(const Opnd *o, long *n, int *fill)
 {
     *fill = -1;
-    if (o->kind == O_REF) { long l = 0; lw_bytes_ref_ok(&o->ref, &l); *n = l; return lw_ref_addr(&o->ref); }
+    if (o->kind == O_REF) { *n = lw_bytes_len(&o->ref); return lw_ref_addr(&o->ref); }
     if (o->kind == O_FIG) { *n = 0; *fill = fig_byte(o->tok->s); return -1; }
     const unsigned char *b = (const unsigned char *)(o->kind == O_NUM ? o->num.digits : o->tok->s);
     *n = o->kind == O_NUM ? o->num.ndigits : o->tok->len;
@@ -1127,7 +1211,7 @@ static void lw_gen_amove(LStmt *s)
     long sn; int fill; int sa = lw_bytes_src(src, &sn, &fill);
     for (int i = 0; i < s->nr; i++) {
         const Ref *d = &g_lw_o[s->adst[i]].ref;
-        long dn = 0; lw_bytes_ref_ok(d, &dn);
+        long dn = lw_bytes_len(d);
         int da = lw_ref_addr(d);
         if (fill >= 0) { lw_fill_n(da, dn, fill); continue; }
         long n = sn < dn ? sn : dn;
@@ -1159,6 +1243,12 @@ static int lw_acmp_val(const LCond *c)
     }
     long n = nx;
     int d;
+    if (c->op != R_EQ && c->op != R_NE) {
+        /* ordered, as the text does: memcmp's sign */
+        int a[3] = { ax, ay, lw_iconst((int)n) }; d = lw_call("memcmp", a, 3).lo;
+        int k = c->op == R_LT ? HI_SLT : c->op == R_GT ? HI_SGT : c->op == R_LE ? HI_SLE : HI_SGE;
+        return hi_emit(k, TY_INT, d, lw_iconst(0), 0, NULL);
+    }
     if (n > 16) { int a[3] = { ax, ay, lw_iconst((int)n) }; d = lw_call("memcmp", a, 3).lo; }
     else {
         d = -1;
@@ -1170,6 +1260,44 @@ static int lw_acmp_val(const LCond *c)
         }
     }
     return hi_emit(c->op == R_EQ ? HI_SEQ : HI_SNE, TY_INT, d, lw_iconst(0), 0, NULL);
+}
+
+/* a native item's storage brought up to date, for a routine that reads it */
+static void lw_item_sync(int sym)
+{
+    LwItem *it = &g_lw_item[lw_item_slot(sym)]; const Sym *s = &g_sym[sym];
+    if (!it->written) return;
+    int a = lw_item_addr(s);
+    hi_emit(HI_STORE, lw_item_ty(s), a, hi_emit(HI_LOAD, TY_INT, it->a_lo, -1, 0, NULL), 0, NULL);
+    if (it->a_hi >= 0) hi_emit(HI_STORE, TY_INT, hi_emit(HI_ADDI, TY_INT, a, -1, 4, NULL), hi_emit(HI_LOAD, TY_INT, it->a_hi, -1, 0, NULL), 0, NULL);
+}
+/* DISPLAY: each operand to the console as parse_display writes it, then the line's end */
+static void lw_gen_display(LStmt *s)
+{
+    for (int i = 0; i < s->nr; i++) {
+        Opnd *o = &g_lw_o[s->adst[i]];
+        if (o->kind == O_REF) {
+            if (o->ref.sym->native) lw_item_sync((int)(o->ref.sym - g_sym));
+            int d = o->ref.rm ? part_desc(&o->ref) : sym_desc(o->ref.sym);
+            char b[32]; snprintf(b, sizeof b, ".Ld%d", d);
+            int a[2] = { lw_ref_addr(&o->ref), hi_emit(HI_GADDR, TY_INT, -1, -1, 0, xstrndup(b, strlen(b))) };
+            lw_call("cob_display_field", a, 2);
+            continue;
+        }
+        unsigned char txt[64]; int k = 0; const unsigned char *b; 
+        if (o->kind == O_NUM) {
+            if (o->num.neg) txt[k++] = '-';
+            for (int j = 0; j < o->num.ndigits; j++) {
+                if (o->num.scale && j == o->num.ndigits - o->num.scale) txt[k++] = g_dp_comma ? ',' : '.';
+                txt[k++] = (unsigned char)o->num.digits[j];
+            }
+            b = txt;
+        } else if (o->kind == O_FIG) { txt[0] = (unsigned char)fig_byte(o->tok->s); k = 1; b = txt; }
+        else { b = (const unsigned char *)o->tok->s; k = o->tok->len; }      /* O_STR, O_ALL */
+        int a[2] = { hi_emit(HI_GADDR, TY_INT, -1, -1, 0, (char *)lit_label(b, k)), lw_iconst(k) };
+        lw_call("cob_display", a, 2);
+    }
+    if (!s->asrc) lw_call("cob_display_nl", NULL, 0);
 }
 
 static void lw_gen_stmts(int at, int n);
@@ -1339,6 +1467,7 @@ static void lw_gen_stmts(int at, int n)
         case LS_STORE: lw_gen_store(s); break;
         case LS_ADDTO: lw_gen_addto(s); break;
         case LS_AMOVE: lw_gen_amove(s); break;
+        case LS_DISPLAY: lw_gen_display(s); break;
         case LS_IF: {
             int c = lw_cond_val(s->cond);
             int b_then = hir_new_block(), b_else = hir_new_block(), b_join = hir_new_block();
@@ -1370,6 +1499,7 @@ static void hl_func(Node *fn)
     lw_gen_stmts(g_lw_at, g_lw_n_stmts);
     if (lw_blk_live) { lw_exit_stores(); hi_emit(HI_RET, 0, -1, -1, 0, NULL); lw_blk_live = 0; }
     fn->locals_size = lw_frame;
+    hir_dump("HIR0");                           /* S32_HIR_DUMP: as lowered, before the optimizer */
 }
 
 /* the backend's text, into lines of the unit's: its 4-space indent a
@@ -1427,7 +1557,8 @@ static int lw_count(int at, int n, int *loops, int *heavy)
         c++;
         if (s->kind == LS_LOOP) (*loops)++;
         if (s->expr >= 0 && lw_heavy_node(s->expr)) *heavy = 1;
-        for (int k = 0; k < s->nr; k++) if (g_sym[s->rsym[k]].native && (s->rnd[k] || g_sym[s->rsym[k]].pi.scale > 0 || g_sym[s->rsym[k]].size == 8)) *heavy = 1;
+        int numeric = s->kind == LS_STORE || s->kind == LS_ADDTO;         /* rsym is theirs; a MOVE of bytes or a DISPLAY has operands instead */
+        if (numeric) for (int k = 0; k < s->nr; k++) if (g_sym[s->rsym[k]].native && (s->rnd[k] || g_sym[s->rsym[k]].pi.scale > 0 || g_sym[s->rsym[k]].size == 8)) *heavy = 1;
         /* a quotient with decimals, or rounded: the word path leaves it to the stack's division */
         if (s->expr >= 0 && g_lw_n[s->expr].op == '/')
             for (int k = 0; k < s->nr; k++) if (s->rnd[k] || g_sym[s->rsym[k]].pi.scale > 0) *heavy = 1;
@@ -1458,7 +1589,7 @@ static void lw_resolve(int from)
         int st;
         if (!lw_is_place(g_asm[i], &st)) { LW_OUT(g_asm[i]); continue; }
         int at = g_lw_nlist, n = 0;
-        for (; i < g_nasm && lw_is_place(g_asm[i], &st); i++) { lw_list_add(st); n++; }
+        for (; i < g_nasm && lw_is_place(g_asm[i], &st); i++) { lw_list_add(st); n++; if (lw_trace()) fprintf(stderr, "hir: resolve: statement %d at line %d of the stream\n", st, i); }
         i--;
         int loops = 0, heavy = 0, count = lw_count(at, n, &loops, &heavy);
         int ob, oa = lw_only(&ob), run = g_lw_s[g_lw_list[at]].line;
@@ -1477,6 +1608,7 @@ static void lw_resolve(int from)
         fn.name = xstrndup(name, strlen(name)); fn.is_static = 1;
         g_lw_at = at; g_lw_n_stmts = n;
         hl_cur_fn_dbg = fn.name;
+        hd_fn = getenv("S32_HIR_DUMP");            /* =.LislN: that island's HIR after the optimizer, to stderr (the backend's -dhir) */
         cg_olen = 0; cg_njt = 0; cg_njt_ent = 0; cg_nfn = 0; cg_cur_fn = -1; cg_fd = -1;
         hcg_func(&fn);
         if (cg_njt) die_at(g_lw_s[g_lw_list[at]].line, "internal: an island made a jump table");

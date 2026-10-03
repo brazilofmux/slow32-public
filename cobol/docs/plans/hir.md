@@ -73,8 +73,12 @@ literals and ZERO:
   (`lw_bytes_ref_ok`): subscripts literal or an integer item, reference
   modification with literal positions, literals and SPACE/ZERO; the
   receiver takes the sender's first bytes and spaces, a compare xor-s
-  chunks or calls memcmp.  Not ordering, not a collating sequence, not
-  JUSTIFIED, edited, national or bit items.
+  chunks or calls memcmp; two items the text compares bytewise
+  (`cmp_is_bytewise`) are compared so, any relation.  Not ordering of
+  other bytes, not a collating sequence, not JUSTIFIED, edited, national
+  or bit items.
+- DISPLAY of literals and items to the console, ADVANCING or not (a
+  native item is stored to its storage before the call).
 - In-line PERFORM VARYING (AFTER too; TEST AFTER with one level) and
   PERFORM UNTIL.
 
@@ -135,8 +139,7 @@ programs' READ loops -- the loops hold READ, PERFORM of paragraphs,
 EVALUATE, alphanumeric MOVEs and compares, which no island takes; those
 need the plan's next milestone, procedures as functions and the unit as
 one HIR function, with the text emitter's verbs lowered one by one.
-Nearer: DISPLAY of a native item (the item stored before the call);
-ordering compares of bytes; a checked word path for a product past a
+Nearer: ordering compares of other bytes; a checked word path for a product past a
 word (the text's hx mode 2), so a MOD of one need not be a 64-bit
 remainder -- the integer functions (MOD, REM, INTEGER, ABS, MAX,
 MIN) the register trees already take; non-native numeric operands

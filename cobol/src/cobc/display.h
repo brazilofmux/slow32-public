@@ -442,10 +442,12 @@ static void env_text_args(Opnd *o, const char *what)
     die_at(o->line, "%s takes an alphanumeric literal or item (Micro Focus DISPLAY rule 6)", what);
 }
 
+static int lw_display(Opnd *ops, int n, int no_adv, int a0);     /* lower.h */
 static void parse_display(void)
 {
     int line = cur()->line;
-    int n = 0, no_adv = 0;
+    int n = 0, no_adv = 0, a0 = g_nasm;
+    Opnd lw_ops[16]; int lw_n = 0;     /* (MAXOPS, defined later) */
     if (cur()->kind == T_WORD) {
         char scrlab[40]; int sfirst, scount;
         Screen *scp = screen_ref(cur()->s, scrlab, sizeof scrlab, &sfirst, &scount);
@@ -518,6 +520,7 @@ static void parse_display(void)
         if (!at_operand() && !(t->kind == T_WORD && (is_figurative(t->s) || !strcmp(t->s, "all")))) break;
         Opnd o; parse_operand(&o);
         n++;
+        if (lw_n < 16) lw_ops[lw_n++] = o;
         switch (o.kind) {
         case O_STR: {
             if (o.tok->nat) {                       /* a national literal: written as UTF-8 */
@@ -558,4 +561,5 @@ static void parse_display(void)
     if (!n) die_at(line, "DISPLAY needs at least one operand");
     if (!no_adv) emit_call("cob_display_nl");
     if (to_err) { emit("\taddi r3, r0, 0"); emit_call("cob_display_err"); }
+    if (!to_err && lw_n == n) lw_display(lw_ops, n, no_adv, a0);     /* an island's too (lower.h): its placeholder first, then this text */
 }

@@ -5699,3 +5699,26 @@ kedit's loops are each one island: kmove 6.07 G -> 3.52 G (-42%; 0.28
 -> 0.12 s), kedit -26%, kseq -26%, kstring -6%, kreport -4%, ksort
 -3%; nothing slower.  The generators -- loop, pos, lit, native, perf,
 cond, table, string, edit -- the same on and off at both policies.
+
+Eleventh (2026-10-03): DISPLAY, and compares as the text makes them.
+DISPLAY of literals and items to the console (ADVANCING or not) is an
+island's: each operand the call parse_display makes, a native item
+stored to its storage first, since the routine reads it there.  It is
+the verb most often found in majesty's in-line loops with PERFORM of a
+paragraph (37 each), and the loops it kept in the text fold now.  Its
+differential found the next place the two paths read undefined content
+apart: two items of one descriptor -- unsigned DISPLAY numbers among
+them -- the text emitter compares as bytes whatever they hold
+(cmp_is_bytewise, GitHub #29), and an island compared as numbers; "0000"
+against spaces ordered differently.  An island now compares such items
+as the text does, by bytes, any relation (memcmp's sign for an ordered
+one).  The harness found three more: a numeric-edited item in a relation
+is not a number (8.8.4.1; a condition-name over one, free/setcond), the
+lengths and admission of a byte operand must not be asked again when the
+island is made, the compile's >>TURN state having moved on (2002/ecbound
+turns EC-BOUND on after a statement an island took), and a statement whose
+code begins with an inner statement's placeholder -- an exception-checking
+PERFORM, whose body comes first -- is not itself lowered: only uncut
+placeholders are a statement's own (2002/exitperform).  S32_HIR_DUMP=.LislN
+prints that island's HIR as lowered and after the optimizer.  Twelve
+generators the same on and off at both policies.
