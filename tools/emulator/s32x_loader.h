@@ -365,6 +365,7 @@ typedef struct {
 
 // Load symbol table from a .s32x file
 // Returns symbols array and string table; caller must free both.
+static s32x_symtab_result_t load_s32x_symtab(const char *filename) __attribute__((unused));
 static s32x_symtab_result_t load_s32x_symtab(const char *filename) {
     s32x_symtab_result_t result = {0};
 
@@ -478,6 +479,7 @@ static s32x_symtab_result_t load_s32x_symtab(const char *filename) {
 
 // Look up a symbol by name in a loaded symbol table
 // Returns the symbol value (address), or 0 if not found
+static uint32_t s32x_symtab_lookup(s32x_symtab_result_t *st, const char *name) __attribute__((unused));
 static uint32_t s32x_symtab_lookup(s32x_symtab_result_t *st, const char *name) {
     if (!st->symbols) return 0;
     for (uint32_t i = 0; i < st->num_symbols; i++) {
@@ -489,6 +491,7 @@ static uint32_t s32x_symtab_lookup(s32x_symtab_result_t *st, const char *name) {
 }
 
 // Free resources from symbol table loading
+static void s32x_symtab_free(s32x_symtab_result_t *st) __attribute__((unused));
 static void s32x_symtab_free(s32x_symtab_result_t *st) {
     free(st->symbols);
     st->symbols = NULL;

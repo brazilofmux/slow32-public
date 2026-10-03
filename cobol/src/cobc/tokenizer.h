@@ -58,7 +58,7 @@ static int utf8_to_utf16be(const unsigned char *p, int n, unsigned char *out)
 {
     int k = 0, i = 0;
     while (i < n) {
-        uint32_t cp;
+        uint32_t cp = 0;
         int len = (int)s32u_decode(p + i, (size_t)(n - i), &cp);
         if (cp == S32U_REPL && !(len == 3 && p[i] == 0xEF && p[i + 1] == 0xBF && p[i + 2] == 0xBD)) return -1;
         i += len;

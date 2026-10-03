@@ -262,7 +262,7 @@ int pic_analyse(const char *s, PicInfo *info)
     const char *bad = pic_rules(f, nf);
     if (!bad) bad = pic_precedence(f, nf, pmsg, sizeof pmsg);
     if (bad) {
-        snprintf(info->err, sizeof info->err, "PICTURE '%s': %s", s, bad);
+        snprintf(info->err, sizeof info->err, "PICTURE '%.*s': %.*s", 50, s, 60, bad);
         return -1;
     }
 

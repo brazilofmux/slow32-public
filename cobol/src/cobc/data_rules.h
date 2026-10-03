@@ -63,7 +63,8 @@ static void clause_rules_one(int i)
 }
 static void occurs_rules(void)
 {
-    for (int i = g_sym_base; i < g_nsym; i++) {
+    volatile int i;
+    for (i = g_sym_base; i < g_nsym; i++) {
         jmp_buf jb, *outer = g_recover;
         if (setjmp(jb)) { g_recover = outer; continue; }
         g_recover = &jb;
@@ -88,7 +89,8 @@ static int numlit_cmp(const NumLit *a, const NumLit *b)     /* the values' order
     numlit_align(a, dg, sc, x); numlit_align(b, dg, sc, y);
     int c = memcmp(x, y, (size_t)dg), na = a->neg, nb = b->neg;
     int za = 1, zb = 1; for (int i = 0; i < dg; i++) { if (x[i] != '0') za = 0; if (y[i] != '0') zb = 0; }
-    if (za) na = 0; if (zb) nb = 0;
+    if (za) na = 0;
+    if (zb) nb = 0;
     if (na != nb) return na ? -1 : 1;
     return na ? -c : c;
 }
@@ -137,7 +139,8 @@ static void value_rules_one(int i);
  * (ISSUES-41), as the records' images are */
 static void value_rules(void)
 {
-    for (int i = g_sym_base; i < g_nsym; i++) {
+    volatile int i;
+    for (i = g_sym_base; i < g_nsym; i++) {
         jmp_buf jb, *outer = g_recover;
         if (setjmp(jb)) { g_recover = outer; continue; }
         g_recover = &jb;

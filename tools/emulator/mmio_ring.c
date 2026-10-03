@@ -2639,11 +2639,14 @@ static void mmio_poll(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descript
         /* A prefixed stdin is readable now, whatever the real fd 0 says. */
         bool prefix_in = false;
         if (stdin_prefix_active()) {
-            for (int i = 0; i < np; i++) if (pf[i].fd == STDIN_FILENO) { prefix_in = true; timeout = 0; }
+            for (nfds_t i = 0; i < np; i++)
+                if (pf[i].fd == STDIN_FILENO) { prefix_in = true; timeout = 0; }
         }
         if (np > 0) while (poll(pf, np, timeout) == -1 && errno == EINTR) { }
-        if (prefix_in) for (int i = 0; i < np; i++) if (pf[i].fd == STDIN_FILENO) pf[i].revents |= POLLIN;
-        else if (timeout > 0) {
+        if (prefix_in) {
+            for (nfds_t i = 0; i < np; i++)
+                if (pf[i].fd == STDIN_FILENO) pf[i].revents |= POLLIN;
+        } else if (timeout > 0) {
             struct timespec ts = { timeout / 1000, (long)(timeout % 1000) * 1000000L };
             while (nanosleep(&ts, &ts) == -1 && errno == EINTR) { }
         }

@@ -112,7 +112,7 @@ static int   ps_nglobals;
 static unsigned char ps_ginit_pool[PS_MAX_INIT_POOL];
 static int ps_ginit_start[P_MAX_GLOBALS];
 static int ps_ginit_count[P_MAX_GLOBALS];
-static int ps_ginit_pool_len;
+static int ps_ginit_pool_len __attribute__((unused));
 
 #define GIRELOC_STRING 0
 #define GIRELOC_GLOBAL 1
@@ -132,7 +132,7 @@ static char lex_strpool[LEX_STRPOOL_MAX];
 static int  lex_str_off[LEX_MAX_STRINGS];
 static int  lex_str_len[LEX_MAX_STRINGS];
 static int  lex_str_count;
-static int  lex_strpool_len;
+static int  lex_strpool_len __attribute__((unused));
 
 /* the backend's labels are the unit's labels */
 static int cg_label(void) { return new_label(); }

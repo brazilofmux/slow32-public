@@ -178,7 +178,7 @@ static uint32_t ilp_u32max(uint32_t a, uint32_t b) { return a > b ? a : b; }
 /* Called once per retired instruction, BEFORE it executes (so cpu->regs
  * still holds the values the effective address is computed from). */
 static void ilp_record(const instruction_t *in, const uint32_t *regs, uint64_t icount) {
-    int op, fmt, lat, i, w;
+    int op, fmt, lat, i;
     int srcs[4], nsrc = 0;
     int dsts[2], ndst = 0;
     int is_ld, is_st, is_mem;
@@ -304,7 +304,6 @@ static void ilp_record(const instruction_t *in, const uint32_t *regs, uint64_t i
 static void ilp_report(void) {
     uint64_t n = g_ilp.analyzed;
     uint64_t mem = g_ilp.n_load + g_ilp.n_store;
-    int w;
     if (!n) { fprintf(stderr, "ilp: no instructions analyzed\n"); return; }
 
     printf("\n=== ILP limit study ===\n");

@@ -364,7 +364,9 @@ static void lr_scan(int a, int b, LrItem *it, int nit, unsigned char *ok, LrAvai
     for (int i = a; i < b; i++) {
         if (!line_label(g_asm[i], name, sizeof name) || strlen(name) >= sizeof lb[0].name) continue;
         if (nlb == lcap) { lcap = lcap ? 2 * lcap : 16; lb = xrealloc(lb, (size_t)lcap * sizeof *lb); }
-        memset(&lb[nlb], 0, sizeof lb[nlb]); snprintf(lb[nlb].name, sizeof lb[nlb].name, "%s", name); lb[nlb].def = i; nlb++;
+        memset(&lb[nlb], 0, sizeof lb[nlb]);
+        memcpy(lb[nlb].name, name, strlen(name) + 1);
+        lb[nlb].def = i; nlb++;
     }
     for (int i = a; i < b && nlb; i++) {
         LrIns x; const char *l = g_asm[i];
