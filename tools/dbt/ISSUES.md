@@ -733,10 +733,18 @@ the known ones.  Also: MULH and MULHU go through the register cache like
 MUL and DIV (they loaded and stored the guest register file), and the
 histogram knob stays.
 
-The x86-64 translator (translate.c) had the same exit and takes the same
-fix, which no machine here can run: the builder's amd64 differential is
-its test (as with DBT-16's x64 back-edge fix).  Its mulh/mulhu already
-went through the register cache.
+The x86-64 translator (translate.c) never had the problem where it
+matters: its cached path, `translate_block_cached`, has ended a long
+block with `emit_exit_chained` since 86944bee (January).  The change
+made there for DBT-22 (4e33aad7) landed in `translate_block`, which only
+stage 1 calls and where a chained exit returns to the dispatcher anyway
+(no cache): harmless, and it fixes nothing.  Validated on kagura
+(x86_64) by a peer session the same day: run-differential 104 agree,
+run-kit-tools 21 of 21, stage 1 against stage 4 on 98 binaries, and a
+probe whose loop is 250 straight-line addis -- 77 lookups over a million
+iterations, before and after.  The gap was AArch64's alone.  (The one
+kit-differential divergence there, test_fp_convert, is a different and
+older bug: FCVT_WU_S through the 32-bit cvttss2si on x86-64.)
 
 Lesson, again: a `git stash` / `make` / `git stash pop` / `make` leaves
 the popped source with the same second's mtime as the object built from

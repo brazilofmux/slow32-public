@@ -5212,9 +5212,10 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
     }
 
     // Reached max instructions: a chainable exit, the same a plain jump
-    // makes -- EXIT_BLOCK_END was a dispatcher trip every time a straight run
-    // past MAX_BLOCK_INSTS executed (DBT-22, found on AArch64; this is the
-    // same fix, unverified on x86-64 hardware until the next builder run)
+    // makes (DBT-22).  This is the stage-1 translator, where a chained exit
+    // returns to the dispatcher regardless; translate_block_cached, the
+    // default path, has done this since 86944bee -- x86-64 never had the
+    // gap AArch64 had.
     if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) ctx->block->exits[ctx->exit_idx].branch_pc = ctx->guest_pc;
     emit_exit_chained(ctx, ctx->guest_pc, ctx->exit_idx++);
 
