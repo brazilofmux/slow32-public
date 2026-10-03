@@ -186,6 +186,7 @@ test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
          $(OUT)/cc_proto_unnamed_exe \
          $(OUT)/cc_bool_exe $(OUT)/cc_ifdef_aarch64_exe \
          $(OUT)/cc_size_t_exe $(OUT)/cc_adj_string_exe \
+         $(OUT)/cc_llong_ginit_exe \
          $(OUT)/cc_struct_multi_decl_exe $(OUT)/cc_global_struct_table_exe \
          $(OUT)/cc_local_static_assert_exe $(OUT)/cc_fwd_struct_offsetof_exe \
          $(OUT)/cc_macro_paren_obj_exe $(OUT)/cc_macro_line_cont_exe \
@@ -217,6 +218,7 @@ test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
 	@$(OUT)/cc_ifdef_aarch64_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_ifdef_aarch64: ok (exit=1)"; else echo "cc_ifdef_aarch64: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@$(OUT)/cc_size_t_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_size_t:   ok (exit=1)";          else echo "cc_size_t:   FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@$(OUT)/cc_adj_string_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_adj_string: ok (exit=1)";      else echo "cc_adj_string: FAIL (exit=$$rc, expected 1)"; exit 1; fi
+	@$(OUT)/cc_llong_ginit_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_llong_ginit: ok (exit=1)";    else echo "cc_llong_ginit: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@$(OUT)/cc_struct_multi_decl_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_struct_multi_decl: ok (exit=1)"; else echo "cc_struct_multi_decl: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@$(OUT)/cc_global_struct_table_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_global_struct_table: ok (exit=1)"; else echo "cc_global_struct_table: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@$(OUT)/cc_local_static_assert_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_local_static_assert: ok (exit=1)"; else echo "cc_local_static_assert: FAIL (exit=$$rc, expected 1)"; exit 1; fi
@@ -427,6 +429,7 @@ clean:
 	      $(OUT)/cc_ifdef_aarch64.o $(OUT)/cc_ifdef_aarch64_exe \
 	      $(OUT)/cc_size_t.o $(OUT)/cc_size_t_exe \
 	      $(OUT)/cc_adj_string.o $(OUT)/cc_adj_string_exe \
+	      $(OUT)/cc_llong_ginit.o $(OUT)/cc_llong_ginit_exe \
 	      $(OUT)/cc_struct_multi_decl.o $(OUT)/cc_struct_multi_decl_exe \
 	      $(OUT)/cc_global_struct_table.o $(OUT)/cc_global_struct_table_exe \
 	      $(OUT)/cc_local_static_assert.o $(OUT)/cc_local_static_assert_exe \

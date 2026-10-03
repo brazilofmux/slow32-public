@@ -2918,3 +2918,23 @@ identical; stage08 109/109 with the fixed point, host front ends, FP
 differential.  The 64-bit hosts' native path is untouched (the helpers
 sit outside its #ifndef).  The Fortran front's copy (fortran/src) does
 not have them yet.
+
+### 80. [RESOLVED 2026-10-03, x64 half awaiting kagura] cc-x64 / cc-a64: a 64-bit global initializer kept only its low word
+
+GitHub issue 84, found by a peer session on kagura while it validated
+DBT-22.  `codegen_x64.h` and `codegen_a64.h` built a scalar global's data
+from `ps_ginit[i]` alone: `static long long sn = -2;` read
+0x00000000fffffffe, `0x9E3779B97F4A7C15ULL` lost its high word, and
+`1ULL << 32` -- a zero low word -- was taken for uninitialized and went to
+BSS as zero.  Since June; latent, because every 64-bit global in the DBT
+sources is zero-initialized and the x64 diff corpus had no such case.  The
+SLOW-32 backend has always emitted both words (hir_codegen.h), which is
+why stage08 itself never showed it.
+
+Both cross codegens carry the high word now (`cg_glob_init_hi`, for a
+`long long` scalar), and "has an initializer" asks both words.  Tests:
+`stage08-cross-a64/tests/cc_llong_ginit.c` in `make test`, and the same
+program as `stage08-cross-x64/diff-test/corpus/d39_llong_ginit.c`.  On
+real AArch64 Linux (podman) HEAD's cc-a64 exits 2 on it and the fixed one
+1, tree and HIR pipelines both; cc-x64's object was checked on the Mac to
+hold all four 64-bit values, and its execution is kagura's to confirm.

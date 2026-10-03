@@ -46,6 +46,7 @@ static int  cg_str_pool_used;
 static char *cg_glob_name[CG_MAX_GLOBALS];
 static int   cg_glob_size[CG_MAX_GLOBALS];
 static int   cg_glob_init[CG_MAX_GLOBALS]; /* scalar initial value, or string-pool idx if has_init==2 */
+static int   cg_glob_init_hi[CG_MAX_GLOBALS]; /* its high word, for a 64-bit scalar (ps_ginit_hi) */
 static int   cg_glob_has_init[CG_MAX_GLOBALS]; /* 0=BSS, 1=scalar, 2=string ptr, 3=array/struct (bytes from ps_ginit_pool) */
 static int   cg_glob_is_local[CG_MAX_GLOBALS]; /* 1 if `static` (file-local) */
 static int   cg_glob_psidx[CG_MAX_GLOBALS]; /* back-pointer to parser global index for ps_ginit_pool/ps_girel_* lookup */
@@ -1595,6 +1596,11 @@ static void gen_data_sections(Node *prog) {
                 if (cg_data_len < 65536) {
                     if (j < 4 && cg_glob_has_init[i] == 1) {
                         cg_data[cg_data_len] = (cg_glob_init[i] >> (j * 8)) & 0xFF;
+                    } else if (j < 8 && cg_glob_has_init[i] == 1) {
+                        /* the high word of a long long: it was dropped, so
+                         * `static long long x = -2;` read 0x00000000fffffffe
+                         * and 1ULL << 32 went to BSS as zero */
+                        cg_data[cg_data_len] = (cg_glob_init_hi[i] >> ((j - 4) * 8)) & 0xFF;
                     } else {
                         cg_data[cg_data_len] = 0;
                     }
@@ -1827,10 +1833,11 @@ static void collect_globals(Node *prog) {
             /* String-initialized (char *name = "...") */
             cg_glob_has_init[cg_nglobals] = 2; /* special: string init */
             cg_glob_init[cg_nglobals] = ps_gstr[i];
-        } else if (ps_ginit[i] != 0) {
-            /* Scalar with nonzero initial value */
+        } else if (ps_ginit[i] != 0 || (ty_is_llong(ps_gtype[i]) && ps_ginit_hi[i] != 0)) {
+            /* Scalar with nonzero initial value (either word of a long long) */
             cg_glob_has_init[cg_nglobals] = 1;
             cg_glob_init[cg_nglobals] = ps_ginit[i];
+            cg_glob_init_hi[cg_nglobals] = ty_is_llong(ps_gtype[i]) ? ps_ginit_hi[i] : 0;
         } else {
             /* Uninitialized (BSS) */
             cg_glob_has_init[cg_nglobals] = 0;

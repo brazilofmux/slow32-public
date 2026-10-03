@@ -59,6 +59,7 @@ static int  cg_str_pool_used;
 static char *cg_glob_name[CG_MAX_GLOBALS];
 static int   cg_glob_size[CG_MAX_GLOBALS];
 static int   cg_glob_init[CG_MAX_GLOBALS];
+static int   cg_glob_init_hi[CG_MAX_GLOBALS];   /* a 64-bit scalar's high word (ps_ginit_hi) */
 static int   cg_glob_has_init[CG_MAX_GLOBALS];   /* 0=BSS, 1=scalar, 2=string */
 static int   cg_glob_extern[CG_MAX_GLOBALS];     /* 1=undefined object symbol */
 static int   cg_nglobals;
@@ -1546,6 +1547,8 @@ static void gen_data_sections(Node *prog) {
                 if (cg_data_len < 65536) {
                     if (j < 4 && cg_glob_has_init[i] == 1)
                         cg_data[cg_data_len] = (cg_glob_init[i] >> (j * 8)) & 0xFF;
+                    else if (j < 8 && cg_glob_has_init[i] == 1)      /* a long long's high word (it was dropped) */
+                        cg_data[cg_data_len] = (cg_glob_init_hi[i] >> ((j - 4) * 8)) & 0xFF;
                     else
                         cg_data[cg_data_len] = 0;
                 }
@@ -1820,9 +1823,10 @@ static void collect_globals(Node *prog) {
         } else if (ps_gstr[i] >= 0) {
             cg_glob_has_init[cg_nglobals] = 2;
             cg_glob_init[cg_nglobals]     = ps_gstr[i];
-        } else if (ps_ginit[i] != 0) {
+        } else if (ps_ginit[i] != 0 || (ty_is_llong(ps_gtype[i]) && ps_ginit_hi[i] != 0)) {
             cg_glob_has_init[cg_nglobals] = 1;
             cg_glob_init[cg_nglobals]     = ps_ginit[i];
+            cg_glob_init_hi[cg_nglobals]  = ty_is_llong(ps_gtype[i]) ? ps_ginit_hi[i] : 0;
         } else {
             cg_glob_has_init[cg_nglobals] = 0;
             cg_glob_init[cg_nglobals]     = 0;
