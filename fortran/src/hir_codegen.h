@@ -1962,6 +1962,13 @@ static void hcg_inst(int idx) {
         if (imm_opp) hcg_stat_imm_opp_cmp = hcg_stat_imm_opp_cmp + 1;
         if (have_imm) {
             rd = hcg_dst(idx);
+            if (off == 0) {                      /* x == 0: seq against r0 alone, no xori by 0 first (from the COBOL copy) */
+                if (k == HI_SEQ) cg_rrr("seq", rd, rs1, 0);
+                else cg_rrr("sne", rd, rs1, 0);
+                hcg_stat_imm_hit_cmp = hcg_stat_imm_hit_cmp + 1;
+                hcg_maybe_spill(idx);
+                return;
+            }
             cg_rri("xori", rd, rs1, off);
             if (k == HI_SEQ) cg_rrr("seq", rd, rd, 0);
             else cg_rrr("sne", rd, rd, 0);

@@ -16,7 +16,8 @@
  *     (bcc42652, selfhost ISSUES-79): the next re-sync carries nothing
  *     for it but the hi_is_binop spelling.
  *   - SEQ/SNE against 0 (hir_codegen.h, 2026-10-03): seq/sne against r0
- *     alone; upstream xori-s by 0 first.  Worth porting. */
+ *     alone; upstream xori-ed by 0 first.  Ported to stage08 and fortran
+ *     the same day: the next re-sync carries nothing for it. */
 /* hir.h -- High-level IR for s12cc
  *
  * Parallel-array instruction representation.
