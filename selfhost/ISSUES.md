@@ -2919,7 +2919,7 @@ differential.  The 64-bit hosts' native path is untouched (the helpers
 sit outside its #ifndef).  The Fortran front's copy (fortran/src) does
 not have them yet.
 
-### 80. [RESOLVED 2026-10-03, x64 half awaiting kagura] cc-x64 / cc-a64: a 64-bit global initializer kept only its low word
+### 80. [RESOLVED 2026-10-03] cc-x64 / cc-a64: a 64-bit global initializer kept only its low word
 
 GitHub issue 84, found by a peer session on kagura while it validated
 DBT-22.  `codegen_x64.h` and `codegen_a64.h` built a scalar global's data
@@ -2937,4 +2937,9 @@ Both cross codegens carry the high word now (`cg_glob_init_hi`, for a
 program as `stage08-cross-x64/diff-test/corpus/d39_llong_ginit.c`.  On
 real AArch64 Linux (podman) HEAD's cc-a64 exits 2 on it and the fixed one
 1, tree and HIR pipelines both; cc-x64's object was checked on the Mac to
-hold all four 64-bit values, and its execution is kagura's to confirm.
+hold all four 64-bit values.  Confirmed on kagura (x86_64) the same day:
+diff-test 39/39 with d39 at exit 1 like gcc, twelve reproducers matching
+gcc (the ten with a 64-bit static or global failed before), a wider probe
+(INT64_MIN, `long` -3, `unsigned long` 0xFEDCBA9876543210, `size_t` 1<<32,
+a static double, a null pointer) matching too, and dbt-x64 and s32fast-hir
+rebuilt by it both giving 0x8d70b2b on benchmark_core.
