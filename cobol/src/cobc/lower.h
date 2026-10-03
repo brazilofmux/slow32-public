@@ -19,10 +19,23 @@ static int lw_trace(void) { static int t = -1; if (t < 0) t = getenv("S32_HIR_TR
  * emitter does in place (csv2fw's byte loop lost 6% to 52 such islands).
  * S32_HIR_MIN=n sets it; 0 is every run. */
 static int lw_min(void) { static int m = -1; if (m < 0) { const char *e = getenv("S32_HIR_MIN"); m = e ? atoi(e) : 4; } return m; }
+/* S32_HIR_ONLY=a[-b]: of the runs that would be islands, only those whose
+ * first statement is on source lines a to b are; for finding the one
+ * that is wrong */
+static int lw_only(int *b)
+{
+    static int lo = -2, hi = -2;
+    if (lo < -1) { const char *e = getenv("S32_HIR_ONLY"); lo = hi = e ? atoi(e) : -1; if (e && strchr(e, '-')) hi = atoi(strchr(e, '-') + 1); }
+    *b = hi; return lo;
+}
+
 
 /* ---- the statement form ---------------------------------------------- */
 
-/* a value: op 0 an item (sym), 'k' a literal (k at scale sc), + - * / n;
+/* a value: op 0 an item (sym; native, or in storage and fetched by the
+ * runtime), 'k' a literal (k at scale sc), + - * / n; the functions the
+ * register trees take (arith_reg.h hn_fn): 'M' MOD and 'R' REM by the
+ * literal k, 'I' INTEGER, 'T' INTEGER-PART, 'A' ABS, 'G' MAX, 'L' MIN;
  * sc its scale, bd a bound on its magnitude in units of that scale, neg
  * whether it can be below zero */
 typedef struct { char op; int l, r; int sym; long long k; int sc; long double bd; int neg; } LNode;
@@ -38,8 +51,9 @@ typedef struct {
     int subtract;                       /* LS_ADDTO: SUBTRACT */
     int cond;                           /* LS_IF; LS_LOOP: UNTIL */
     int body, nbody, els, nels;         /* ranges of g_lw_list */
-    int var, from, by, test_after;      /* LS_LOOP: the VARYING item (-1: none), FROM and BY values */
+    int nv, var[8], from[8], by[8], vcond[8], test_after;   /* LS_LOOP: the VARYING levels (0: UNTIL alone, cond), each its item, FROM, BY and UNTIL */
     Block text;                         /* the statement's code by the text emitter, for a run that is no island */
+    int cut;                            /* ... taken out of the stream (lw_stmt_text) */
 } LStmt;
 
 static LNode *g_lw_n; static int g_lw_nn, g_lw_ncap;
@@ -65,7 +79,7 @@ static int lw_cnode(int kind, int a, int b, int x, int y, int op)
 static int lw_stmt(int kind, int line)
 {
     LW_GROW(g_lw_s, g_lw_ns, g_lw_scap);
-    LStmt *s = &g_lw_s[g_lw_ns]; memset(s, 0, sizeof *s); s->kind = kind; s->line = line; s->var = -1; s->expr = s->cond = s->rem = -1;
+    LStmt *s = &g_lw_s[g_lw_ns]; memset(s, 0, sizeof *s); s->kind = kind; s->line = line; s->expr = s->cond = s->rem = -1;
     return g_lw_ns++;
 }
 static void lw_list_add(int st) { LW_GROW(g_lw_list, g_lw_nlist, g_lw_lcap); g_lw_list[g_lw_nlist++] = st; }
@@ -95,8 +109,17 @@ static void lw_stmt_text(int b0)
 {
     int p = b0, st, last = -1;
     while (p < g_nasm && !strncmp(g_asm[p], "__ln_", 5)) p++;
-    while (p < g_nasm && lw_is_place(g_asm[p], &st)) { last = st; p++; }
-    if (last < 0 || p == g_nasm) return;
+    while (p < g_nasm && lw_is_place(g_asm[p], &st)) { last = st; g_lw_s[st].cut = 1; p++; }
+    if (last < 0) {
+        /* a statement not lowered: placeholders inside it are its inner
+         * statements', cut already.  One of its own anywhere but first
+         * would run twice, as text and as island. */
+        for (int i = p; i < g_nasm; i++)
+            if (lw_is_place(g_asm[i], &st) && !g_lw_s[st].cut)
+                die_at(g_lw_s[st].line, "internal: a lowered statement's placeholder is not first in its code");
+        return;
+    }
+    if (p == g_nasm) return;
     Block t = block_cut(p);
     g_lw_s[last].text = t;
 }
@@ -117,7 +140,12 @@ static Block lw_expand(const Block *b)
 
 /* every hook asks this first: the lowering is off, or this is a scan, or
  * the census is being taken (its reading of the text is the emitter's) */
-static int lw_off(void) { return !g_hir_on || g_noemit || g_cen_on || g_fnsig_only || g_nerrors; }
+static int lw_off(void) { return !g_hir_on || g_noemit || g_cen_on || g_fnsig_only || g_nerrors || g_stmt_calls.n; }
+/* (g_stmt_calls.n: a user function's call was made for this statement;
+ * its code goes before the statement's -- before the placeholder -- and
+ * the island would compute with the result as the text does, twice over
+ * (2002/userfnarith: the text was not cut, and both ran).  A statement
+ * with a call keeps to the text.) */
 
 /* an item the island may hold as a value: native, whole, not subscripted */
 static int lw_item_ok(const Ref *r)
@@ -129,13 +157,34 @@ static int lw_item_ok(const Ref *r)
     if (rec_indirect(&g_sym[s->record])) return 0;
     return 1;
 }
+/* a numeric item in storage the runtime fetches and stores for the
+ * island (cob_get_num, cob_put_num_x; the edited forms): whole, not
+ * subscripted, at a label's known offset, of a usage the register trees
+ * take (dx_leaf_ok) -- and not COMP-X, whose MOVE has a descriptor of its
+ * own (move_desc) */
+static int lw_mem_ok(const Ref *r)
+{
+    const Sym *s = r->sym;
+    if (s->native || r->rm || r->nsub || s->ndims || s->is_group || s->is_rc || s->lin_file >= 0 || s->rep_ctr >= 0 || s->is_index) return 0;
+    if (s->pi.category != PIC_NUMERIC && !(s->pi.category == PIC_NUMERIC_EDITED && s->usage == U_DISPLAY)) return 0;
+    if (sym_wide(s) || s->pi.digits > 18 || s->pi.scale < 0 || strchr(s->pi.pat, 'P') || s->uvar != UV_NONE) return 0;
+    switch (s->usage) {
+    case U_DISPLAY: case U_BINARY: case U_PACKED: case U_COMP5: case U_SINT: case U_UINT:
+    case U_SSHORT: case U_USHORT: case U_BCHAR: case U_UBCHAR: break;
+    default: return 0;
+    }
+    const Sym *rec = &g_sym[s->record];
+    if (rec_indirect(rec) || !rec->label[0] || rec->ftemp_scan) return 0;
+    return 1;
+}
+static int lw_opnd_item_ok(const Ref *r) { return lw_item_ok(r) || lw_mem_ok(r); }
 /* a leaf of a register tree (hn_tree): the item, a literal, ZERO */
 static int lw_leaf(const Opnd *o)
 {
     if (opnd_scanned(o)) return -2;
     if (o->kind == O_FIG) return !strncmp(o->tok->s, "zero", 4) ? hn_new(0, -1, -1, o) : -2;
     if (o->kind == O_NUM) return o->num.ndigits <= 18 && o->num.scale >= 0 && o->num.scale <= 18 ? hn_new(0, -1, -1, o) : -2;
-    if (o->kind != O_REF || !lw_item_ok(&o->ref)) return -2;
+    if (o->kind != O_REF || !lw_opnd_item_ok(&o->ref)) return -2;
     return hn_new(0, -1, -1, o);
 }
 /* the tree at h (g_hn, bounds in g_dsc/g_dbd from dx_check) as nodes;
@@ -150,9 +199,22 @@ static int lw_from_hn(int h)
         const Sym *s = o->ref.sym;
         return lw_node(0, -1, -1, (int)(s - g_sym), 0, s->pi.scale, g_dbd[h], s->pi.is_signed);
     }
-    if (x->op == 'n') {
+    if (x->op == 'n' || x->op == 'A' || x->op == 'I' || x->op == 'T') {
         int l = lw_from_hn(x->l);
-        return l < 0 ? -1 : lw_node('n', l, -1, -1, 0, g_dsc[h], g_dbd[h], 1);
+        if (l < 0) return -1;
+        int neg = x->op == 'n' ? 1 : x->op == 'A' ? 0 : g_lw_n[l].neg;
+        return lw_node(x->op, l, -1, -1, 0, g_dsc[h], g_dbd[h], neg);
+    }
+    if (x->op == 'M' || x->op == 'R') {
+        int l = lw_from_hn(x->l);
+        if (l < 0) return -1;
+        long long d = numlit_int(&g_hn[x->r].o.num);
+        return lw_node(x->op, l, -1, -1, d, 0, g_dbd[h], x->op == 'M' ? d < 0 : g_lw_n[l].neg);
+    }
+    if (x->op == 'G' || x->op == 'L') {
+        int l = lw_from_hn(x->l); if (l < 0) return -1;
+        int r = lw_from_hn(x->r); if (r < 0) return -1;
+        return lw_node(x->op, l, r, -1, 0, g_dsc[h], g_dbd[h], g_lw_n[l].neg || g_lw_n[r].neg);
     }
     if (x->op != '+' && x->op != '-' && x->op != '*' && x->op != '/') return -1;
     int l = lw_from_hn(x->l); if (l < 0) return -1;
@@ -201,7 +263,7 @@ static int lw_binop(char op, int x, int y, int top)
     if (bl >= DX_LIM || br >= DX_LIM || bl + br >= DX_LIM) return -1;
     return lw_node(op, x, y, -1, 0, sc, bl + br, op == '-' || a->neg || b->neg);
 }
-static int lw_recv_ok(const Ref *r) { return lw_item_ok(r) && !ref_pending(r); }
+static int lw_recv_ok(const Ref *r) { return (lw_item_ok(r) || lw_mem_ok(r)) && !ref_pending(r); }
 
 /* a statement's standing refusals; what the verb is, for the trace */
 static const char *lw_stmt_refused(int size_err)
@@ -370,7 +432,7 @@ static int lw_move(Opnd *src, Ref *dst, int n)
     const char *why = lw_stmt_refused(0);
     if (why) { lw_refuse(src->line, "MOVE", why); return 0; }
     if (src->kind != O_REF && src->kind != O_NUM && src->kind != O_FIG) return 0;
-    if (src->kind == O_REF && !lw_item_ok(&src->ref)) { lw_refuse(src->line, "MOVE", "the sender"); return 0; }
+    if (src->kind == O_REF && !lw_opnd_item_ok(&src->ref)) { lw_refuse(src->line, "MOVE", "the sender"); return 0; }
     for (int i = 0; i < n; i++) if (!lw_recv_ok(&dst[i])) { lw_refuse(src->line, "MOVE", "a receiver"); return 0; }
     int x = lw_opnd(src);
     if (x < 0) { lw_refuse(src->line, "MOVE", "the sender"); return 0; }
@@ -439,23 +501,29 @@ static int lw_perform(Vary *v, int nv, Cond *until, Body *body, int test_after)
     int line = cur()->line;
     const char *why = lw_stmt_refused(0);
     if (why) { lw_refuse(line, "PERFORM", why); return 0; }
-    int var = -1, from = -1, by = -1;
+    int var[8], from[8], by[8], vcond[8], c = -1;
     if (v) {
-        if (nv != 1) { lw_refuse(line, "PERFORM", "AFTER"); return 0; }
-        if (!lw_recv_ok(&v[0].var)) { lw_refuse(line, "PERFORM", "the VARYING item"); return 0; }
-        var = (int)(v[0].var.sym - g_sym);
-        from = lw_opnd(&v[0].from); by = lw_opnd(&v[0].by);
-        if (from < 0 || by < 0) { lw_refuse(line, "PERFORM", "FROM or BY"); return 0; }
-        Opnd o; memset(&o, 0, sizeof o); o.kind = O_REF; o.ref = v[0].var; o.line = line;
-        if (lw_binop('+', lw_opnd(&o), by, 0) < 0) { lw_refuse(line, "PERFORM", "the step's bound"); return 0; }
-        until = v[0].until;
+        if (nv > 1 && test_after) { lw_refuse(line, "PERFORM", "AFTER with TEST AFTER"); return 0; }
+        for (int k = 0; k < nv; k++) {
+            if (!lw_recv_ok(&v[k].var)) { lw_refuse(line, "PERFORM", "the VARYING item"); return 0; }
+            var[k] = (int)(v[k].var.sym - g_sym);
+            from[k] = lw_opnd(&v[k].from); by[k] = lw_opnd(&v[k].by);
+            if (from[k] < 0 || by[k] < 0) { lw_refuse(line, "PERFORM", "FROM or BY"); return 0; }
+            Opnd o; memset(&o, 0, sizeof o); o.kind = O_REF; o.ref = v[k].var; o.line = line;
+            if (lw_binop('+', lw_opnd(&o), by[k], 0) < 0) { lw_refuse(line, "PERFORM", "the step's bound"); return 0; }
+            vcond[k] = lw_cond(v[k].until);
+            if (vcond[k] < 0) { lw_refuse(line, "PERFORM", "the condition"); return 0; }
+        }
+    } else {
+        nv = 0;
+        c = lw_cond(until);
+        if (c < 0) { lw_refuse(line, "PERFORM", "the condition"); return 0; }
     }
-    int c = lw_cond(until);
-    if (c < 0) { lw_refuse(line, "PERFORM", "the condition"); return 0; }
     int b, nb;
     if (!lw_block_stmts(&body->blk, &b, &nb)) { lw_refuse(line, "PERFORM", "a statement in the body"); return 0; }
     int st = lw_stmt(LS_LOOP, line);
-    LStmt *x = &g_lw_s[st]; x->cond = c; x->body = b; x->nbody = nb; x->var = var; x->from = from; x->by = by; x->test_after = test_after;
+    LStmt *x = &g_lw_s[st]; x->cond = c; x->body = b; x->nbody = nb; x->nv = nv; x->test_after = test_after;
+    for (int k = 0; k < nv; k++) { x->var[k] = var[k]; x->from[k] = from[k]; x->by[k] = by[k]; x->vcond[k] = vcond[k]; }
     lw_place(st);
     body->blk = lw_expand(&body->blk);
     return 1;
@@ -503,7 +571,8 @@ static void lw_collect_node(int n)
 {
     if (n < 0) return;
     LNode *x = &g_lw_n[n];
-    if (!x->op) { lw_item_slot(x->sym); return; }
+    if (!x->op) { if (g_sym[x->sym].native) lw_item_slot(x->sym); return; }
+    if (x->op == 'k') return;
     lw_collect_node(x->l); lw_collect_node(x->r);
 }
 static void lw_collect_cond(int c)
@@ -518,10 +587,13 @@ static void lw_collect_stmts(int at, int n)
     for (int i = 0; i < n; i++) {
         LStmt *s = &g_lw_s[g_lw_list[at + i]];
         if (s->expr >= 0) lw_collect_node(s->expr);
-        for (int k = 0; k < s->nr; k++) lw_item_slot(s->rsym[k]);
-        if (s->rem >= 0) lw_item_slot(s->rem);
+        for (int k = 0; k < s->nr; k++) if (g_sym[s->rsym[k]].native) lw_item_slot(s->rsym[k]);
+        if (s->rem >= 0 && g_sym[s->rem].native) lw_item_slot(s->rem);
         if (s->cond >= 0) lw_collect_cond(s->cond);
-        if (s->var >= 0) { lw_item_slot(s->var); lw_collect_node(s->from); lw_collect_node(s->by); }
+        for (int k = 0; k < s->nv; k++) {
+            if (g_sym[s->var[k]].native) lw_item_slot(s->var[k]);
+            lw_collect_node(s->from[k]); lw_collect_node(s->by[k]); lw_collect_cond(s->vcond[k]);
+        }
         lw_collect_stmts(s->body, s->nbody);
         lw_collect_stmts(s->els, s->nels);
     }
@@ -557,8 +629,34 @@ static void lw_exit_stores(void)
         if (it->a_hi >= 0) hi_emit(HI_STORE, TY_INT, hi_emit(HI_ADDI, TY_INT, a, -1, 4, NULL), hi_emit(HI_LOAD, TY_INT, it->a_hi, -1, 0, NULL), 0, NULL);
     }
 }
+static int lw_desc_addr(Sym *s)
+{
+    char b[32]; snprintf(b, sizeof b, ".Ld%d", sym_desc(s));
+    return hi_emit(HI_GADDR, TY_INT, -1, -1, 0, xstrndup(b, strlen(b)));
+}
+static int lw_locale_word(void)
+{
+    return hi_emit(HI_LOAD, TY_INT, hi_emit(HI_GADDR, TY_INT, -1, -1, 0, "cob_locale_word"), -1, 0, NULL);
+}
+static LV lw_call(const char *fn, int *args, int n)
+{
+    int cb = h_ncarg;
+    for (int i = 0; i < n; i++) h_carg[h_ncarg++] = args[i];
+    LV r; r.lo = hi_emit(HI_CALL, TY_INT, -1, -1, n, (char *)fn);
+    h_cbase[r.lo] = cb;
+    r.hi = hi_emit(HI_CALLHI, TY_INT, r.lo, -1, 0, NULL);
+    return r;
+}
+/* an item's value: a native one from its alloca, one in storage fetched
+ * by the runtime, as the register trees fetch it (dx_emit) */
 static LV lw_item_val(int sym)
 {
+    Sym *s = &g_sym[sym];
+    if (!s->native) {
+        int a[3] = { lw_item_addr(s), lw_desc_addr(s), 0 };
+        if (s->pi.category == PIC_NUMERIC_EDITED) { a[2] = lw_locale_word(); return lw_call("cob_get_edited", a, 3); }
+        return lw_call("cob_get_num", a, 2);
+    }
     LwItem *it = &g_lw_item[lw_item_slot(sym)];
     LV v; v.lo = hi_emit(HI_LOAD, TY_INT, it->a_lo, -1, 0, NULL); v.hi = -1;
     if (it->a_hi >= 0) v.hi = hi_emit(HI_LOAD, TY_INT, it->a_hi, -1, 0, NULL);
@@ -570,6 +668,24 @@ static void lw_item_set(int sym, LV v)
     it->written = 1;
     hi_emit(HI_STORE, TY_INT, it->a_lo, v.lo, 0, NULL);
     if (it->a_hi >= 0) hi_emit(HI_STORE, TY_INT, it->a_hi, lw_widen(v).hi, 0, NULL);
+}
+/* v at scale sc into an item in storage: the runtime's store, which
+ * aligns, rounds, truncates and edits (cob_put_num_x; cob_put_edited) */
+static void lw_mem_store(int sym, int rounded, LV v, int sc)
+{
+    Sym *s = &g_sym[sym];
+    v = lw_widen(v);
+    int a[7] = { lw_item_addr(s), lw_desc_addr(s), v.lo, v.hi, lw_iconst(sc), lw_iconst(rounded ? 1 : 0), 0 };
+    if (s->pi.category == PIC_NUMERIC_EDITED) { a[6] = lw_locale_word(); lw_call("cob_put_edited", a, 7); }
+    else lw_call("cob_put_num_x", a, 6);
+}
+
+/* an item's bound, as dx_check has it: its picture's, or the binary
+ * field's capacity when the usage keeps that (COMP-5) */
+static long double lw_sym_bd(const Sym *s)
+{
+    if (sym_notrunc((Sym *)s)) return s->size >= 8 ? DX_LIM : (long double)(1ULL << (8 * s->size));
+    return dx_p10(s->pi.digits) - 1;
 }
 
 /* ---- arithmetic on words and pairs ---- */
@@ -688,9 +804,57 @@ static LV lw_val(int n)
     LNode *x = &g_lw_n[n];
     int wide = lw_wide_bd(x->bd);
     if (x->op == 'k') return lw_lit(x->k, wide);
-    if (!x->op) return lw_item_val(x->sym);
+    if (!x->op) { LV v = lw_item_val(x->sym); if (!wide) v.hi = -1; return v; }
     if (x->op == 'n') return lw_neg(lw_val(x->l), wide);
-    LNode *a = &g_lw_n[x->l], *b = &g_lw_n[x->r];
+    LNode *a = &g_lw_n[x->l];
+    if (x->op == 'A') return lw_abs(lw_val(x->l), lw_wide_bd(a->bd));
+    if (x->op == 'R' || x->op == 'M') {
+        /* the remainder, the dividend's sign; MOD: a nonzero one of the
+         * other sign than the divisor's takes the divisor */
+        int w = lw_wide_bd(a->bd);
+        LV v = lw_val(x->l), d = lw_lit(x->k, w);
+        LV r = lw_arith2('%', v, d, w);
+        if (x->op == 'R') return r;
+        int mask;
+        if (x->k > 0) mask = hi_emit(HI_SRA, TY_INT, w ? r.hi : r.lo, lw_iconst(31), 0, NULL);          /* r < 0 */
+        else {
+            int gt;                                                                                 /* r > 0 */
+            if (!w) gt = hi_emit(HI_SGT, TY_INT, r.lo, lw_iconst(0), 0, NULL);
+            else gt = lw_cmp(R_GT, r, lw_lit(0, 1), 1);
+            mask = hi_emit(HI_SUB, TY_INT, lw_iconst(0), gt, 0, NULL);
+        }
+        LV adj; adj.lo = hi_emit(HI_AND, TY_INT, d.lo, mask, 0, NULL); adj.hi = w ? hi_emit(HI_AND, TY_INT, d.hi, mask, 0, NULL) : -1;
+        return lw_arith2('+', r, adj, w);
+    }
+    if (x->op == 'I' || x->op == 'T') {
+        /* to an integer: truncated; INTEGER is the floor, so a negative
+         * value less P - 1 first */
+        int w = lw_wide_bd(a->bd);
+        LV v = lw_val(x->l);
+        if (a->sc <= 0) return v;
+        long long P = lw_p10(a->sc);
+        if (x->op == 'I') {
+            int mask = hi_emit(HI_SRA, TY_INT, w ? lw_widen(v).hi : v.lo, lw_iconst(31), 0, NULL);
+            LV pm = lw_lit(P - 1, w);
+            LV adj; adj.lo = hi_emit(HI_AND, TY_INT, pm.lo, mask, 0, NULL); adj.hi = w ? hi_emit(HI_AND, TY_INT, pm.hi, mask, 0, NULL) : -1;
+            v = lw_arith2('-', v, adj, w);
+        }
+        return lw_arith2('/', v, lw_lit(P, w), w);
+    }
+    LNode *b = &g_lw_n[x->r];
+    if (x->op == 'G' || x->op == 'L') {
+        /* the greater (the less) of the two, aligned: taken by a mask */
+        long double bd = a->bd * dx_p10(x->sc - a->sc) + b->bd * dx_p10(x->sc - b->sc);
+        int w = lw_wide_bd(bd);
+        LV l = lw_val_scaled(x->l, x->sc - a->sc, bd), r = lw_val_scaled(x->r, x->sc - b->sc, bd);
+        if (w) { l = lw_widen(l); r = lw_widen(r); }
+        int c = lw_cmp(x->op == 'G' ? R_GT : R_LT, r, l, w);
+        int mask = hi_emit(HI_SUB, TY_INT, lw_iconst(0), c, 0, NULL);
+        LV o; o.lo = hi_emit(HI_XOR, TY_INT, l.lo, hi_emit(HI_AND, TY_INT, hi_emit(HI_XOR, TY_INT, l.lo, r.lo, 0, NULL), mask, 0, NULL), 0, NULL);
+        o.hi = w ? hi_emit(HI_XOR, TY_INT, l.hi, hi_emit(HI_AND, TY_INT, hi_emit(HI_XOR, TY_INT, l.hi, r.hi, 0, NULL), mask, 0, NULL), 0, NULL) : -1;
+        if (!wide) o.hi = -1;
+        return o;
+    }
     if (x->op == '*') return lw_arith2('*', lw_val(x->l), lw_val(x->r), wide);
     if (x->op == '/') die_at(cur()->line, "internal: a division below the root of an island's tree");
     /* + -: aligned to the larger scale */
@@ -725,6 +889,7 @@ static LV lw_trunc_digits(LV v, int n, int wide)
 static void lw_store(int sym, int rounded, LV v, int sc, long double bd, int neg)
 {
     const Sym *d = &g_sym[sym];
+    if (!d->native) { lw_mem_store(sym, rounded, v, sc); return; }
     int eff = d->pi.digits, sd = d->pi.scale;
     int wide = lw_wide_bd(bd);
     if (wide) v = lw_widen(v);
@@ -784,12 +949,30 @@ static int lw_cond_val(int c)
 }
 /* the quotient at the root of a STORE: its value, scale and bound; the
  * stores it guards go in a block of their own, skipped for a zero divisor */
+/* two items in storage with one descriptor: a MOVE between them is a copy
+ * of the bytes, as the text emitter makes it (move.h, GitHub #27), not a
+ * fetch and a store */
+static int lw_same_desc(Sym *a, Sym *b) { return !a->native && !b->native && sym_desc(a) == sym_desc(b); }
+static void lw_copy_bytes(const Sym *from, const Sym *to)
+{
+    int fa = lw_item_addr(from), ta = lw_item_addr(to), n = from->size;
+    for (int o = 0; o < n; ) {
+        int w = n - o >= 4 ? 4 : n - o >= 2 ? 2 : 1, ty = w == 4 ? TY_INT : w == 2 ? TY_SHORT | TY_UNSIGNED : TY_CHAR | TY_UNSIGNED;
+        int sa = o ? hi_emit(HI_ADDI, TY_INT, fa, -1, o, NULL) : fa, da = o ? hi_emit(HI_ADDI, TY_INT, ta, -1, o, NULL) : ta;
+        hi_emit(HI_STORE, ty, da, hi_emit(HI_LOAD, ty, sa, -1, 0, NULL), 0, NULL);
+        o += w;
+    }
+}
 static void lw_gen_store(LStmt *s)
 {
     LNode *x = &g_lw_n[s->expr];
     if (x->op != '/') {
-        LV v = lw_val(s->expr);
-        for (int i = 0; i < s->nr; i++) lw_store(s->rsym[i], s->rnd[i], v, x->sc, x->bd, x->neg);
+        LV v; int have = 0;
+        for (int i = 0; i < s->nr; i++) {
+            if (!x->op && !s->rnd[i] && lw_same_desc(&g_sym[x->sym], &g_sym[s->rsym[i]])) { lw_copy_bytes(&g_sym[x->sym], &g_sym[s->rsym[i]]); continue; }
+            if (!have) { v = lw_val(s->expr); have = 1; }
+            lw_store(s->rsym[i], s->rnd[i], v, x->sc, x->bd, x->neg);
+        }
         return;
     }
     int e, sq; long double bq;
@@ -850,7 +1033,7 @@ static void lw_gen_addto(LStmt *s)
     for (int i = 0; i < s->nr; i++) {
         const Sym *d = &g_sym[s->rsym[i]];
         int sc = d->pi.scale > sum->sc ? d->pi.scale : sum->sc;
-        long double bd = (dx_p10(d->pi.digits) - 1) * dx_p10(sc - d->pi.scale) + sum->bd * dx_p10(sc - sum->sc);
+        long double bd = lw_sym_bd(d) * dx_p10(sc - d->pi.scale) + sum->bd * dx_p10(sc - sum->sc);
         int wide = lw_wide_bd(bd);
         LV r = lw_item_val(s->rsym[i]);
         if (wide) r = lw_widen(r);
@@ -860,9 +1043,28 @@ static void lw_gen_addto(LStmt *s)
         lw_store(s->rsym[i], s->rnd[i], lw_arith2(s->subtract ? '-' : '+', r, t, wide), sc, bd, d->pi.is_signed || sum->neg || s->subtract);
     }
 }
-static void lw_gen_loop(LStmt *s)
+/* the VARYING item at level k set to its FROM; augmented by its BY */
+static void lw_vary_init(LStmt *s, int k) { LNode *f = &g_lw_n[s->from[k]]; lw_store(s->var[k], 0, lw_val(s->from[k]), f->sc, f->bd, f->neg); }
+static void lw_vary_step(LStmt *s, int k)
 {
-    if (s->var >= 0) { LNode *f = &g_lw_n[s->from]; lw_store(s->var, 0, lw_val(s->from), f->sc, f->bd, f->neg); }
+    const Sym *d = &g_sym[s->var[k]]; LNode *by = &g_lw_n[s->by[k]];
+    int sc = d->pi.scale > by->sc ? d->pi.scale : by->sc;
+    long double bd = lw_sym_bd(d) * dx_p10(sc - d->pi.scale) + by->bd * dx_p10(sc - by->sc);
+    int wide = lw_wide_bd(bd);
+    LV r = lw_item_val(s->var[k]); if (wide) r = lw_widen(r); else r.hi = -1;
+    r = lw_scale(r, sc - d->pi.scale, wide);
+    LV t = lw_val_scaled(s->by[k], sc - by->sc, bd);
+    lw_store(s->var[k], 0, lw_arith2('+', r, t, wide), sc, bd, d->pi.is_signed || by->neg);
+}
+/* a loop laid out as emit_varying does: one jump in to the test, then
+ * each iteration the body and the test's branch back; TEST AFTER the
+ * body first.  Level k of a VARYING ... AFTER: its item set, the levels
+ * inside it run as the body, and when its condition holds an inner item
+ * goes back to FROM (6.20.4) */
+static void lw_gen_loop_level(LStmt *s, int k)
+{
+    if (s->nv) lw_vary_init(s, k);
+    int cond = s->nv ? s->vcond[k] : s->cond;
     int b_body = hir_new_block(), b_exit = hir_new_block(), b_test = -1;
     if (s->test_after) {
         lw_goto(b_body);
@@ -870,34 +1072,26 @@ static void lw_gen_loop(LStmt *s)
         lw_gen_stmts(s->body, s->nbody);
         if (lw_blk_live) {
             int b_step = hir_new_block();
-            lw_brc(lw_cond_val(s->cond), b_exit, b_step);
+            lw_brc(lw_cond_val(cond), b_exit, b_step);
             lw_begin_blk(b_step);
         }
     } else {
         b_test = hir_new_block();
         lw_goto(b_test);
         lw_begin_blk(b_body);
-        lw_gen_stmts(s->body, s->nbody);
+        if (k + 1 < s->nv) lw_gen_loop_level(s, k + 1); else lw_gen_stmts(s->body, s->nbody);
     }
-    if (s->var >= 0 && lw_blk_live) {
-        const Sym *d = &g_sym[s->var]; LNode *by = &g_lw_n[s->by];
-        int sc = d->pi.scale > by->sc ? d->pi.scale : by->sc;
-        long double bd = (dx_p10(d->pi.digits) - 1) * dx_p10(sc - d->pi.scale) + by->bd * dx_p10(sc - by->sc);
-        int wide = lw_wide_bd(bd);
-        LV r = lw_item_val(s->var); if (wide) r = lw_widen(r);
-        r = lw_scale(r, sc - d->pi.scale, wide);
-        LV t = lw_val_scaled(s->by, sc - by->sc, bd);
-        lw_store(s->var, 0, lw_arith2('+', r, t, wide), sc, bd, d->pi.is_signed || by->neg);
-    }
+    if (s->nv && lw_blk_live) lw_vary_step(s, k);
     if (s->test_after) lw_goto(b_body);
     else {
-        /* the test, entered first and after each body */
         lw_goto(b_test);
         lw_begin_blk(b_test);
-        lw_brc(lw_cond_val(s->cond), b_exit, b_body);
+        lw_brc(lw_cond_val(cond), b_exit, b_body);
     }
     lw_begin_blk(b_exit);
+    if (k > 0) lw_vary_init(s, k);
 }
+static void lw_gen_loop(LStmt *s) { lw_gen_loop_level(s, 0); }
 static void lw_gen_stmts(int at, int n)
 {
     for (int i = 0; i < n && lw_blk_live; i++) {
@@ -959,18 +1153,22 @@ static void lw_take_text(char ***out, int *no, int *cap)
 }
 
 /* Does a run of statements pay as an island?  A loop among them, or
- * enough of them (lw_min), or one that is heavy: decimals, a value past a
- * word, a division or ROUNDED -- which the text emitter sends through
- * the runtime's fetch and store, where an island computes in place
- * (kedit's COMPUTE and ADD alone: -14%).  Over integers in a word the
- * text emitter is already in place, and a statement alone there costs
- * the call (kmove +0.3%). */
+ * enough of them (lw_min), or one that is heavy: decimals, an eight-byte
+ * item, ROUNDED -- what the text emitter's word path (arith_reg.h hx_*)
+ * does not take and sends through the runtime's fetch and store, where
+ * an island computes in place (kedit's COMPUTE and ADD alone: -14%).
+ * Over integers the text is already in place -- a product past a word
+ * included, which it computes in a word with an overflow test where the
+ * island calls for 64 bits (ksearch's MOD alone: +5%) -- and a statement
+ * alone there costs the call (kmove +0.3%). */
 static int lw_heavy_node(int n)
 {
     if (n < 0) return 0;
     LNode *x = &g_lw_n[n];
-    if (x->sc > 0 || x->bd >= LW_WORD || x->op == '/') return 1;
-    return x->op && x->op != 'k' && (lw_heavy_node(x->l) || lw_heavy_node(x->r));
+    if (!x->op) return g_sym[x->sym].native && (x->sc > 0 || g_sym[x->sym].size == 8);   /* one in storage is the runtime's fetch either way */
+    if (x->op == 'k') return x->sc > 0;
+    if (x->sc > 0) return 1;
+    return lw_heavy_node(x->l) || lw_heavy_node(x->r);
 }
 static int lw_heavy_cond(int c)
 {
@@ -986,7 +1184,10 @@ static int lw_count(int at, int n, int *loops, int *heavy)
         c++;
         if (s->kind == LS_LOOP) (*loops)++;
         if (s->expr >= 0 && lw_heavy_node(s->expr)) *heavy = 1;
-        for (int k = 0; k < s->nr; k++) if (s->rnd[k] || g_sym[s->rsym[k]].pi.scale > 0 || g_sym[s->rsym[k]].size == 8) *heavy = 1;
+        for (int k = 0; k < s->nr; k++) if (g_sym[s->rsym[k]].native && (s->rnd[k] || g_sym[s->rsym[k]].pi.scale > 0 || g_sym[s->rsym[k]].size == 8)) *heavy = 1;
+        /* a quotient with decimals, or rounded: the word path leaves it to the stack's division */
+        if (s->expr >= 0 && g_lw_n[s->expr].op == '/')
+            for (int k = 0; k < s->nr; k++) if (s->rnd[k] || g_sym[s->rsym[k]].pi.scale > 0) *heavy = 1;
         if (s->cond >= 0 && lw_heavy_cond(s->cond)) *heavy = 1;
         c += lw_count(s->body, s->nbody, loops, heavy) + lw_count(s->els, s->nels, loops, heavy);
     }
@@ -1017,7 +1218,9 @@ static void lw_resolve(int from)
         for (; i < g_nasm && lw_is_place(g_asm[i], &st); i++) { lw_list_add(st); n++; }
         i--;
         int loops = 0, heavy = 0, count = lw_count(at, n, &loops, &heavy);
-        if (!loops && !heavy && count < lw_min()) {
+        int ob, oa = lw_only(&ob), run = g_lw_s[g_lw_list[at]].line;
+        int skip = oa >= 0 && (run < oa || run > ob);
+        if (skip || (!loops && !heavy && count < lw_min())) {
             /* not an island: the statements' own text */
             if (lw_trace()) fprintf(stderr, "hir: line %d: %d statement%s kept as text\n", g_lw_s[g_lw_list[at]].line, count, count == 1 ? "" : "s");
             for (int k = 0; k < n; k++) {

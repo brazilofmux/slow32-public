@@ -1108,9 +1108,14 @@ static long pow10l(int n) { long v = 1; while (n-- > 0) v *= 10; return v; }
  * nonneg says r1 cannot be negative.  With a bound the divide usually goes:
  * a value that cannot reach the picture's limit needs no truncation at all,
  * and one that can pass it only once -- "ADD 1 TO" an item already inside
- * its picture, which is every PERFORM VARYING step -- wraps with a compare
- * and a subtract.  REM is a divide, ~30 cycles where the compare is one, and
- * it sat in the hottest loop COBOL has.  GitHub #27. */
+ * its picture, which is every PERFORM VARYING step -- tests with a compare
+ * and divides only when it has passed it.  REM is a divide, ~30 cycles where
+ * the compare is one, and it sat in the hottest loop COBOL has (GitHub
+ * #27).  The branch takes REM and not a subtract: the item is inside its
+ * picture only if everything that wrote it kept it there, and a group
+ * MOVE or a READ INTO over it does not -- 25455 in a PIC 9(4) COMP plus 1
+ * came out 15456 by one subtract, where the runtime's store (cob_put_num_x,
+ * and GnuCOBOL) makes 5456; the HIR islands' differential found it. */
 static void emit_trunc_bounded(Sym *s, long long bound, int nonneg)
 {
     int disp = is_display_int(s);
@@ -1124,7 +1129,7 @@ static void emit_trunc_bounded(Sym *s, long long bound, int nonneg)
     if (bound >= 0 && nonneg && bound < 2 * lim) {           /* at most one wrap */
         int L = new_label();
         emit("\tbltu r1, r2, .L%d", L);
-        emit("\tsub r1, r1, r2");
+        emit("\trem r1, r1, r2");
         emit_label(L);
         return;
     }

@@ -129,7 +129,12 @@ def main():
     w("main-para.")
     w("    open output f1")
     w("    perform varying K from 1 by 1 until K > 9")
-    w("        move K to f1-n  move \"record\" to f1-x  write f1-rec")
+    # the record is G's own first bytes (READ INTO G puts them back): a
+    # COMP item holding characters is content its picture does not
+    # describe, and what arithmetic makes of it is nobody's promise -- the
+    # text emitter's register path and the HIR islands made different
+    # numbers of "co" in a PIC 9(4) COMP, both within their rights
+    w("        move K to G1  move G to f1-rec  write f1-rec")
     w("    end-perform")
     w("    close f1")
     w("    open input f1")

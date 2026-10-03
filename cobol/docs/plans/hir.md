@@ -41,12 +41,14 @@ placed (`Block`, `block_cut`, `block_put`).  The lowering keeps that:
   read it cost csv2fw 6%: an instruction nobody lists makes it forget
   what the registers hold.
 - A run pays when a loop is among its statements, or one of them is
-  heavy -- decimals, a value past a word, a division, ROUNDED: what the
-  text emitter sends through the runtime's fetch and store -- or there
-  are `S32_HIR_MIN` (default 4) of them.  A statement alone over
-  integers in a word is already in place in the text, and an island of
-  it costs the call: kmove +0.3% with every run an island, kedit -14%
-  from its COMPUTE and ADD alone.
+  heavy -- decimals, an eight-byte item, ROUNDED, a quotient with
+  decimals: what the text emitter's word path (`hx_*`) does not take and
+  sends through the runtime -- or there are `S32_HIR_MIN` (default 4) of
+  them.  A statement alone over integers is already in place in the
+  text, a product past a word included (the word path tests for
+  overflow; the island calls for 64 bits), and an island of it costs
+  the call: kmove +0.3% with every run an island, ksearch +5% from one
+  MOD; kedit -14% from its COMPUTE and ADD alone.
 
 Inside an island every native item it names is an **alloca**: loaded
 from its storage on entry, stored back on exit if written.  SSA
@@ -55,14 +57,19 @@ are registers and nothing else -- the thing the census was for.
 
 ## What is lowered (milestone 1: karith's loop)
 
-Statements over native items, numeric literals and ZERO only:
+Statements over native items, numeric items in storage (fetched and
+stored by the runtime: `cob_get_num`, `cob_put_num_x`, the edited
+forms; a MOVE between two of one descriptor is a byte copy), numeric
+literals and ZERO:
 
 - COMPUTE, ADD (TO, GIVING), SUBTRACT (FROM, GIVING), MULTIPLY (BY,
   GIVING), DIVIDE (INTO, BY, GIVING; REMAINDER later), MOVE numeric to
   numeric, with ROUNDED; no SIZE ERROR, no ROUNDED MODE, no EC checks on.
 - IF with relation conditions on numbers, AND/OR/NOT.
-- In-line PERFORM VARYING (one level, TEST BEFORE or AFTER) and PERFORM
-  UNTIL.
+- FUNCTION MOD, REM, INTEGER, INTEGER-PART, ABS, MAX, MIN, as the
+  register trees take them.
+- In-line PERFORM VARYING (AFTER too; TEST AFTER with one level) and
+  PERFORM UNTIL.
 
 ## What the arithmetic must equal
 
@@ -89,7 +96,13 @@ SLTU carry; mul, div and rem through `__muldi3`, `__divdi3`, `__moddi3`).
 - `-fno-hir`, `S32_HIR=0`: the lowering off, the text emitter alone.
   `S32_HIR_TRACE=1`: each statement taken or refused, and why; each run
   made an island or kept as text.  `S32_HIR_MIN=n`: the run length that
-  pays on its own (0: every run).
+  pays on its own (0: every run).  `S32_HIR_ONLY=a[-b]`: islands only
+  of the runs beginning on those source lines -- bisect a differing
+  program by line range down to the one island.
+- Content a picture does not describe -- characters in a COMP item after
+  a group MOVE or READ INTO -- is nobody's promise: the text's word path
+  and an island may make different numbers of it (both compute from the
+  picture's bound).  The generators keep their numeric items numeric.
 - The on/off differential is the gate: `tests/gen/gen-native.py` with
   `-fno-hir` against the default, the harness with `S32_HIR=0`, and the
   kernel and majesty numbers before and after.
@@ -98,14 +111,24 @@ SLTU carry; mul, div and rem through `__muldi3`, `__divdi3`, `__moddi3`).
 
 karith's loop is one island: 8.31 G instructions -> 2.35 G (-72%),
 0.32 s -> 0.155 under the DBT; what is left is the 64-bit division
-routines, which the DBT runs natively.  kedit -14% (two heavy
-statements); the other kernels and csv2fw unchanged to the instruction
-(their loops hold statements the islands do not take yet); majesty's
-batch within its noise.
+routines, which the DBT runs natively.  With items in storage and the
+functions taken: kmove -29% (0.28 -> 0.17 s), kedit -25% (0.52 ->
+0.38), kseq -20%, kreport -4%; ksearch, kidx, kstring, ksort and
+csv2fw unchanged (their loops hold statements the islands do not take:
+alphanumeric MOVEs and compares, SEARCH, READ, PERFORM of paragraphs);
+majesty's batch within its noise.
 
 ## What follows
 
-The integer functions (MOD, REM, INTEGER, ABS, MAX,
+Where the real programs' time is -- csv2fw's byte loop, the report
+programs' READ loops -- the loops hold READ, PERFORM of paragraphs,
+EVALUATE, alphanumeric MOVEs and compares, which no island takes; those
+need the plan's next milestone, procedures as functions and the unit as
+one HIR function, with the text emitter's verbs lowered one by one.
+Nearer: DISPLAY of a native item (the item stored before the call);
+alphanumeric MOVE and compare of fixed sizes as word copies and
+compares; MULH/MULHU kinds for the HIR copy (or upstream), so a product
+past a word is a word pair without a call -- the integer functions (MOD, REM, INTEGER, ABS, MAX,
 MIN) the register trees already take; non-native numeric operands
 fetched by `cob_get_num` inside an island; DISPLAY of a native item (the
 item stored before the call); then procedures as functions (the PERFORM

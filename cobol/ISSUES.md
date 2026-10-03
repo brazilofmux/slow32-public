@@ -5644,3 +5644,31 @@ differential over the native, loop, checked and perf generators
 The harness found the one defect the generators had not: the REMAINDER
 of a DIVIDE whose quotient item is its dividend read the dividend after
 the store (free/divremgiving -- the text path's own old bug, met again).
+
+Eighth (2026-10-03): the islands widened.  Numeric items in storage --
+not standing alone -- are operands and receivers too, fetched and stored
+by the runtime as the register trees have them (cob_get_num,
+cob_put_num_x, the edited forms), and a MOVE between two with one
+descriptor is the byte copy the text emitter makes (GitHub #27); the
+functions the register trees take (MOD, REM, INTEGER, INTEGER-PART,
+ABS, MAX, MIN) are nodes; PERFORM VARYING takes AFTER.  What pays as an
+island is read again: a loop, or a statement the text emitter's word
+path would not take -- decimals, an eight-byte item, ROUNDED, a
+quotient with decimals -- or S32_HIR_MIN statements; a product past a
+word is not one (the word path tests for overflow where the island
+calls for 64 bits: ksearch's MOD alone cost 5%).  kmove 6.07 G
+instructions -> 4.30 (-29%; 0.28 s -> 0.17 under the DBT), kedit 12.59
+-> 9.41 (-25%; 0.52 -> 0.38), kseq -20%, kreport -4%, karith as before;
+ksearch, kidx, kstring, ksort unchanged.  Found on the way, each by a
+gate the generators had not reached: the text emitter's one-subtract
+truncation of a hot store assumed the item was inside its picture,
+which a group MOVE or READ INTO over a COMP item does not keep (25455 in
+a PIC 9(4) plus 1 made 15456; the branch takes REM now, at no cost to
+the common case), and gen-loop.py's record is G's own bytes so that
+READ INTO G puts numbers back; a COMP-5 receiver's bound in an island
+was its picture's, not its capacity (free/notrunc looped for ever); a
+statement with a user function's call has that call's code before its
+placeholder, and the text was not cut -- it ran twice (2002/userfnarith);
+such statements stay text, and a placeholder found anywhere but first
+is an internal error now.  S32_HIR_ONLY=a[-b] makes islands of the runs
+beginning on those lines alone, for finding the one that is wrong.

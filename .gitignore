@@ -233,6 +233,11 @@ doom/.savegame/
 
 # cobol compiler output and host binary
 cobol/out/
+# what the kernels write when run from cobol/ (bench/vs: kreport, kidx, kseq)
+cobol/krep*.dat
+cobol/krep.prn
+cobol/kidx.dat*
+cobol/kseq.dat
 cobol/libcob/*.s
 !cobol/libcob/entries.s
 cobol/bench/tmp/
