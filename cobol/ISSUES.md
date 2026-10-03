@@ -5930,3 +5930,20 @@ the driver's +-200,000-day sweep begins in 1479, outside the intrinsics'
 1601-9999, and jerm stops itself at its first year-end check -- on both
 sides, byte-identical, so the leg passes with next to nothing covered
 (the vacuity the differential method warns of).  majesty's to resolve.
+
+Sixteenth (2026-10-03): **index-names in islands.**  The MOVEs the
+islands still refused across majesty were mostly table elements
+subscripted by an INDEXED BY item (`class-name(cl)`, `yt-debits(yt-idx)`):
+an index-name is a word holding the occurrence number (the text
+multiplies it by the stride like any subscript), so it is read as one --
+a subscript, a value -- and PERFORM VARYING an index stores the word;
+never a receiver otherwise (SET is the verb).  With
+EC-RANGE-PERFORM-VARYING checking on the VARYING stays text: a FROM value
+that is not positive is the EC (2002/perfvary, which the gates caught).
+ksearch -18% (its SEARCH loop's subscripts).  The remaining refusals are
+clinkages.cbl's LINKAGE items, by design.
+
+tests/majesty-functions.sh: the jerm leg builds the original FUNCTION
+driver with today's range clamp (majesty c0ae220 made it for the CALL
+driver) and requires the sweep's length -- 355,504 lines, byte-identical
+with GnuCOBOL; 302 fails.  KEEP=1 keeps its work directory.

@@ -427,7 +427,11 @@ static int lw_sub_item_ok(Sym *s);
 static int lw_mem_ok(const Ref *r)
 {
     const Sym *s = r->sym;
-    if ((s->native && !s->ndims) || r->rm || s->is_group || s->is_rc || s->lin_file >= 0 || s->rep_ctr >= 0 || s->is_index) return 0;
+    if (s->is_index) {                          /* INDEXED BY: a word holding the occurrence number, read as one (a subscript, a value; never a receiver here) */
+        const Sym *rec = &g_sym[s->record];
+        return !r->rm && !r->nsub && s->size == 4 && s->record >= 0 && rec->label[0] && !rec_indirect(rec);
+    }
+    if ((s->native && !s->ndims) || r->rm || s->is_group || s->is_rc || s->lin_file >= 0 || s->rep_ctr >= 0) return 0;
     if (r->nsub != s->ndims || (r->nsub && (ec_on_name("EC-BOUND-SUBSCRIPT") || odo_table_for((Sym *)s)))) return 0;   /* an element: its address formed as lw_ref_addr forms it */
     for (int k = 0; k < r->nsub; k++)
         if (r->sub[k].sym == &g_subx || (r->sub[k].sym && !lw_sub_item_ok(r->sub[k].sym))) return 0;
@@ -453,6 +457,7 @@ static int lw_opnd_item_ok(const Ref *r) { return lw_item_ok(r) || lw_mem_ok(r);
 static int lw_sub_item_ok(Sym *s)
 {
     Ref r; memset(&r, 0, sizeof r); r.sym = s; r.line = s->line;
+    if (s->is_index) return lw_mem_ok(&r);
     return s->pi.scale == 0 && !s->ndims && lw_opnd_item_ok(&r);
 }
 /* a reference modification's start expression the island can form: an
@@ -621,7 +626,7 @@ static int lw_binop(char op, int x, int y, int top)
     if (bl >= DX_LIM || br >= DX_LIM || bl + br >= DX_LIM) return -1;
     return lw_node(op, x, y, -1, 0, sc, bl + br, op == '-' || a->neg || b->neg);
 }
-static int lw_recv_ok(const Ref *r) { return (lw_item_ok(r) || lw_mem_ok(r)) && !ref_pending(r); }
+static int lw_recv_ok(const Ref *r) { return !r->sym->is_index && (lw_item_ok(r) || lw_mem_ok(r)) && !ref_pending(r); }
 
 /* a statement's standing refusals; what the verb is, for the trace */
 static const char *lw_stmt_refused(int size_err)
@@ -998,7 +1003,7 @@ static int lw_perform(Vary *v, int nv, Cond *until, Body *body, int test_after)
     if (v) {
         if (nv > 1 && test_after) { lw_refuse(line, "PERFORM", "AFTER with TEST AFTER"); return 0; }
         for (int k = 0; k < nv; k++) {
-            if (!lw_recv_ok(&v[k].var) || v[k].var.nsub) { lw_refuse(line, "PERFORM", "the VARYING item"); return 0; }
+            if (!(lw_recv_ok(&v[k].var) || (v[k].var.sym->is_index && lw_mem_ok(&v[k].var) && !ec_on_name("EC-RANGE-PERFORM-VARYING"))) || v[k].var.nsub) { lw_refuse(line, "PERFORM", "the VARYING item"); return 0; }   /* an index-name FROM a value that is not positive is an EC with checking on (2002/perfvary) */
             var[k] = (int)(v[k].var.sym - g_sym);
             from[k] = lw_opnd(&v[k].from); by[k] = lw_opnd(&v[k].by);
             if (from[k] < 0 || by[k] < 0) { lw_refuse(line, "PERFORM", "FROM or BY"); return 0; }
@@ -1214,6 +1219,7 @@ static int lw_sym_addr(int sym, int ref) { return ref >= 0 ? lw_ref_addr(&g_lw_o
 static LV lw_item_val_ref(int sym, int ref)
 {
     Sym *s = &g_sym[sym];
+    if (s->is_index) { LV v; v.lo = hi_emit(HI_LOAD, TY_INT, lw_sym_addr(sym, ref), -1, 0, NULL); v.hi = -1; return v; }
     if (s->native && ref >= 0) {               /* a native table's element */
         int a = lw_sym_addr(sym, ref);
         LV v; v.lo = hi_emit(HI_LOAD, lw_item_ty(s), a, -1, 0, NULL); v.hi = -1;
@@ -1513,6 +1519,11 @@ static void lw_dec_store(const Sym *d, int a, int mag, int neg)
 static void lw_store_ref(int sym, int ref, int rounded, LV v, int sc, long double bd, int neg)
 {
     const Sym *d = &g_sym[sym];
+    if (d->is_index) {                              /* VARYING an index: the occurrence number, a word */
+        if (sc != 0) die_at(cur()->line, "internal: an island stores a scaled value into an index");
+        hi_emit(HI_STORE, TY_INT, lw_sym_addr(sym, ref), v.lo, 0, NULL);
+        return;
+    }
     int dec = !d->native && lw_dec_inline_ok((Sym *)d);     /* a short DISPLAY or packed item: aligned and truncated here, written digit by digit */
     if (!d->native && !dec) { lw_mem_store(sym, ref, rounded, v, sc); return; }
     int eff = d->pi.digits, sd = d->pi.scale;

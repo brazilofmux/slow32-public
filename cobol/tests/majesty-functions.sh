@@ -6,7 +6,7 @@
 # majesty's history, unchanged, and built twice -- s32-cobc -std=2002 and
 # the GnuCOBOL oracle -- and each pair must print the same bytes:
 #
-#   jerm       the family's driver: 400,001 dated lines around today
+#   jerm       the family's driver: every day from 1601 to 200,000 after today
 #   the trio   crgltrans, ldgltrans (COBOL 85, majesty's current source)
 #              and the original exgltrans, over 3,000 SYNTHETIC
 #              transactions generated here; each build keeps its own
@@ -20,7 +20,7 @@ MAJ="${MAJESTY:-$HOME/majesty}"; M="$MAJ/src"
 ENG=""; for e in podman docker; do command -v $e >/dev/null && { ENG=$e; break; }; done
 [ -n "$ENG" ] || { echo "majesty-functions: no podman or docker"; exit 2; }
 DBT="$ROOT/tools/dbt/slow32-dbt"
-W="$(mktemp -d)"; trap 'rm -rf "$W"' EXIT
+W="$(mktemp -d)"; [ -n "${KEEP:-}" ] && echo "work: $W" >&2 || trap 'rm -rf "$W"' EXIT
 fail=0
 
 # the originals, from the commit before the rewrite
@@ -28,6 +28,20 @@ O="$W/orig"; mkdir -p "$O"
 for f in $(git -C "$MAJ" show --name-only --format= e69e98b); do
     git -C "$MAJ" show "e69e98b^:$f" > "$O/$(basename "$f")" 2>/dev/null
 done
+# the original driver, with today's range: it sweeps from 1601 since the
+# date routines became the COBOL intrinsics (majesty c0ae220, whose jerm
+# CALLs the rewritten family; this one is the FUNCTION family's).  The
+# old sweep began in the 1400s and stopped itself at its first year-end
+# check: 302 lines on both sides, byte-identical, a pass that covered
+# nothing until the line count below was required.
+python3 - "$O/jerm.cbl" <<'PY'
+import sys
+p = sys.argv[1]; s = open(p).read()
+a = "    subtract 200000 from ld_today giving ld_lower.\n"
+assert s.count(a) == 1 and s.count("        if 0 < ld\n") == 1, "jerm.cbl is not the original the clamp expects"
+s = s.replace(a, a + "    if ld_lower < 0 move 0 to ld_lower end-if.\n").replace("        if 0 < ld\n", "        if 0 <= ld\n")
+open(p, "w").write(s)
+PY
 FAM="fielded_to_linear floor-div floor-divmod holidays isleapyear isvaliddate linear_to_fielded"
 
 # the oracle's tree: sources, copybooks, the C bridge
@@ -69,8 +83,10 @@ ours() { (cd "$S" && TZ=UTC "$DBT" "$1.s32x" 2>/dev/null) | grep -v '^\[DBT\]\|^
 gnu()  { "$ENG" run --rm -v "$G:/w" -w /w gnucobol:4.0-runtime "./$1" 2>&1; }
 
 ours jerm > "$S/jerm.out"; gnu jerm > "$G/jerm.out"
-if cmp -s "$S/jerm.txt" "$G/jerm.txt" && cmp -s "$S/jerm.out" "$G/jerm.out"; then
-    echo "PASS jerm: $(wc -l < "$S/jerm.txt" | tr -d ' ') lines, byte-identical"
+jl=$(wc -l < "$S/jerm.txt" | tr -d ' ')
+if [ "$jl" -lt 300000 ]; then echo "FAIL jerm: $jl lines (the sweep is 1601 to today + 200,000 days: well over 300,000)"; fail=1;
+elif cmp -s "$S/jerm.txt" "$G/jerm.txt" && cmp -s "$S/jerm.out" "$G/jerm.out"; then
+    echo "PASS jerm: $jl lines, byte-identical"
 else echo "FAIL jerm: output differs"; fail=1; fi
 for p in crgltrans ldgltrans exgltrans; do ours $p > "$S/$p.out"; gnu $p > "$G/$p.out"; done
 if cmp -s "$S/exgltrans.out" "$G/exgltrans.out" && cmp -s "$S/ldgltrans.out" "$G/ldgltrans.out"; then
