@@ -5211,8 +5211,12 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
         ctx->inst_count++;
     }
 
-    // Reached max instructions - exit with block end
-    emit_exit(ctx, EXIT_BLOCK_END, ctx->guest_pc);
+    // Reached max instructions: a chainable exit, the same a plain jump
+    // makes -- EXIT_BLOCK_END was a dispatcher trip every time a straight run
+    // past MAX_BLOCK_INSTS executed (DBT-22, found on AArch64; this is the
+    // same fix, unverified on x86-64 hardware until the next builder run)
+    if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) ctx->block->exits[ctx->exit_idx].branch_pc = ctx->guest_pc;
+    emit_exit_chained(ctx, ctx->guest_pc, ctx->exit_idx++);
 
 block_done:
     if (ctx->block) {

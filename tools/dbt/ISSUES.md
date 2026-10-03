@@ -733,6 +733,11 @@ the known ones.  Also: MULH and MULHU go through the register cache like
 MUL and DIV (they loaded and stored the guest register file), and the
 histogram knob stays.
 
+The x86-64 translator (translate.c) had the same exit and takes the same
+fix, which no machine here can run: the builder's amd64 differential is
+its test (as with DBT-16's x64 back-edge fix).  Its mulh/mulhu already
+went through the register cache.
+
 Lesson, again: a `git stash` / `make` / `git stash pop` / `make` leaves
 the popped source with the same second's mtime as the object built from
 the stashed one, and `make` keeps the wrong binary.  Three differential
