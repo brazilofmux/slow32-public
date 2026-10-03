@@ -18,7 +18,7 @@ FLAG=${1:?usage: run-flag.sh FLAG FIRST COUNT [N]}
 FIRST=${2:?usage: run-flag.sh FLAG FIRST COUNT [N]}
 COUNT=${3:?usage: run-flag.sh FLAG FIRST COUNT [N]}
 GEN=${GEN:-loop}
-EMU="$ROOT/tools/emulator/slow32-fast"
+EMU="${EMU:-$ROOT/tools/emulator/slow32-fast}"     # the image has it at /usr/local/bin and no tree build
 STD=${STD:-85}; case "$GEN" in loop|checked|pos|perf|lit|native) STD=2002 ;; esac
 
 command -v python3 >/dev/null 2>&1 || { echo "run-flag.sh: no python3 to write the programs with"; exit 2; }
@@ -34,7 +34,11 @@ for s in $(seq "$FIRST" "$last"); do
         f=""; [ $v = with ] || f="$FLAG"
         if "$CDIR/compile.sh" -free -std=$STD $f "$W/g$s.cbl" -o "$W/$v$s/g.s32x" > "$W/$v$s/cc.log" 2>&1; then
             # capped: a program that never ends differs, it does not hang the batch
-            (cd "$W/$v$s" && "$EMU" -c 2000000000 g.s32x 2>/dev/null | LC_ALL=C sed '/^Starting execution at PC/,$d' > out.txt) || true
+            # -q: the program's output alone.  Cutting the emulator's banner
+            # off with sed depended on where stdout buffering put it: on
+            # Linux it came first and took every line with it, and the two
+            # empty outputs agreed (builder-de, 2026-10-02).
+            (cd "$W/$v$s" && "$EMU" -q -c 2000000000 g.s32x > out.txt 2>/dev/null) || true
         else
             echo BUILD-FAILED > "$W/$v$s/out.txt"
         fi
@@ -48,4 +52,7 @@ for s in $(seq "$FIRST" "$last"); do
         echo "seed $s: DIFFERS"; bad=$((bad + 1))
     fi
 done
+# an agreement over nothing is not one: the programs print, so a run
+# that compared no lines did not run them
+if [ $bad = 0 ] && [ $lines = 0 ]; then echo "all $COUNT the same but NOTHING COMPARED (0 lines); kept $W"; exit 1; fi
 if [ $bad = 0 ]; then rm -rf "$W"; echo "all $COUNT the same ($lines lines)"; else echo "$bad of $COUNT differ; kept $W"; fi

@@ -23,8 +23,8 @@ FIRST=${2:?usage: run-self.sh REV FIRST COUNT [STATEMENTS]}
 COUNT=${3:?usage: run-self.sh REV FIRST COUNT [STATEMENTS]}
 NSTMT=${4:-30}
 GEN=${GEN:-flow}
-EMU="$ROOT/tools/emulator/slow32-fast"
-STD=${STD:-85}; case "$GEN" in checked|pos|perf|lit) STD=2002 ;; esac
+EMU="${EMU:-$ROOT/tools/emulator/slow32-fast}"
+STD=${STD:-85}; case "$GEN" in checked|pos|perf|lit|loop|native) STD=2002 ;; esac
 
 mkdir -p "$CDIR/out"
 W="$(mktemp -d "$CDIR/out/self.XXXXXX")"
@@ -40,6 +40,8 @@ ${CC:-cc} -std=c99 -O1 -w -o "$W/old/s32-cobc" "$W/old/cobol/src/s32-cobc.c" "$W
     OL="$W/old/cobol/libcob"
     tag=$(cksum < "$OL/kern.h" | awk '{printf "%08x", $1}')
     {
+        # the entries written out by hand (libcob/build.sh), when that revision has them
+        [ -f "$OL/entries.s" ] && cat "$OL/entries.s"
         printf '\t.text\n'
         for f in cob_get_num cob_put_num_x cob_get_edited cob_put_edited; do
             printf '\t.globl %s\n\t.globl __s32hk_%s_%s\n%s:\n__s32hk_%s_%s:\n\tjal r0, %s_impl\n' \
@@ -57,7 +59,7 @@ for s in $(seq "$FIRST" "$last"); do
         if [ $v = old ]; then c="$W/old/s32-cobc"; l="$W/old/cobol/libcob/libcob.s32o"; else c="$CDIR/out/s32-cobc"; l="$CDIR/libcob/libcob.s32o"; fi
         if S32_COBC="$c" S32_LIBCOB="$l" "$CDIR/compile.sh" -free -std=$STD "$W/g$s.cbl" -o "$W/$v$s/g.s32x" > "$W/$v$s/cc.log" 2>&1; then
             # capped: a program that never ends (a broken runtime can make one) differs, it does not hang the batch
-            (cd "$W/$v$s" && "$EMU" -c 2000000000 g.s32x 2>/dev/null | sed '/^Starting execution at PC/,$d' > out.txt) || true
+            (cd "$W/$v$s" && "$EMU" -q -c 2000000000 g.s32x > out.txt 2>/dev/null) || true     # -q: the program's output alone
         else
             echo BUILD-FAILED > "$W/$v$s/out.txt"
         fi

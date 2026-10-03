@@ -18,7 +18,7 @@ COUNT=${2:?usage: run-gen.sh FIRST COUNT [STATEMENTS]}
 NSTMT=${3:-60}
 GEN=${GEN:-arith}
 ENGINE=$(command -v podman || command -v docker)
-EMU="$ROOT/tools/emulator/slow32-fast"
+EMU="${EMU:-$ROOT/tools/emulator/slow32-fast}"
 STD=85; OSTD=cobol85
 # expression subscripts are COBOL 2002; the oracle's strict 2002 has no
 # COMP-3 or COMP-5, so it takes its default dialect there
@@ -31,7 +31,7 @@ last=$((FIRST + COUNT - 1))
 for s in $(seq "$FIRST" "$last"); do
     python3 "$HERE/gen-$GEN.py" "$s" "$NSTMT" > "$W/g$s.cbl" 2> "$W/g$s.ref"
     if "$CDIR/compile.sh" -free -std=$STD "$W/g$s.cbl" -o "$W/g$s.s32x" > "$W/g$s.cclog" 2>&1; then
-        (cd "$W" && "$EMU" "g$s.s32x" 2>/dev/null) | sed '/^Starting execution at PC/,$d' > "$W/g$s.out" || true   # in $W: gen-flow writes a file
+        (cd "$W" && "$EMU" -q "g$s.s32x" 2>/dev/null) > "$W/g$s.out" || true     # -q: the program's output alone   # in $W: gen-flow writes a file
     else
         echo "BUILD-FAILED" > "$W/g$s.out"
     fi
