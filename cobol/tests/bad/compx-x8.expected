@@ -1,1 +1,1 @@
-'i': PIC X(8) COMP-X is not implemented (up to seven bytes)
+'i': PIC X(8) COMP-X holds twenty digits, which need the wide arithmetic of -std=2002

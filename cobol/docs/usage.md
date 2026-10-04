@@ -47,8 +47,8 @@ little-endian.)
   `PIC X(n) COMP-5` takes 1 to 8 bytes: up to seven as an item of the
   digits they hold, and eight -- 2^64 - 1, twenty digits -- as BINARY-DOUBLE
   UNSIGNED, the same item, on the wide path, so -std=2002 (2002/comp5x8;
-  ISSUES-120). COMP-X's eight-byte X picture, big-endian, is not
-  implemented.
+  ISSUES-120). COMP-X's eight-byte X picture is that item big-endian, also
+  under -std=2002 (2002/mf-compx8; ISSUES-124).
 - **COMP-1 and COMP-2:** IEEE 754 single and double, 4 and 8 bytes, no
   PICTURE; FLOAT-SHORT and FLOAT-LONG are the 2002 names. The storage
   "can differ from operating system to operating system", which in
@@ -163,7 +163,8 @@ Each is a class E behavior point, as COMP-3 and COMP-5 are now.
   variant mark (`Sym.uvar`):
   - always big-endian, whatever `-fbinary-byteorder` says, as MF has it;
   - never signed;
-  - PIC X(n) up to seven bytes, taken as the 9s of 256^n - 1;
+  - PIC X(n) up to eight bytes: up to seven taken as the 9s of 256^n - 1,
+    eight as BINARY-DOUBLE UNSIGNED stored big-endian (-std=2002);
   - it shows, as COMP-5 does, at its capacity's width (three bytes, eight
     digits);
   - GnuCOBOL truncates COMP-X to the picture and shows the picture's

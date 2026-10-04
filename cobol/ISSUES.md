@@ -6064,6 +6064,17 @@ The sweep compiles -dialect=gnucobol from here on.
   the switch, an undeclared COB-CRT-STATUS is refused naming it rather
   than only "not declared".  Tests: free/gnu-crtstatus (0000 after
   Enter, 2005 after Escape), bad/cob-crt-status.  86 of 134.
+- **PIC X(8) COMP-X** (8 programs: CBL-FILE-SIZE in the block
+  CBL_CHECK_FILE_EXIST fills) was "not implemented (up to seven bytes)".
+  Micro Focus's COMP-X holds its field's capacity, so eight bytes hold
+  2^64 - 1, twenty digits: the wide item BINARY-DOUBLE UNSIGNED, as
+  PIC X(8) COMP-5 already was, in COMP-X's big-endian order -- so
+  -std=2002, as for COMP-5.  Checked byte by byte through a REDEFINES on
+  every path (HIR, -fno-hir, -fno-native-items, -fno-hot-arith) at 1,
+  2^32, 2^63 + 5, 2^64 - 1 and arithmetic across them.  GnuCOBOL -std=mf
+  gets the values past 2^63 wrong (docs/oracles.md).  Tests:
+  2002/mf-compx8; bad/compx-x8 (under 85, asks for 2002);
+  bad/std2002-compx-x9 (nine bytes, not implemented).
 
 Next, in order: the SCREEN SECTION BLANK SCREEN placement rule; COMP-X longer
 than seven bytes; PAGE LIMIT without a number; >>SOURCE FREE carried into

@@ -149,8 +149,19 @@ static void sym_finish(Sym *s)
                     s->size = 8; s->pi.digits = 20; s->pi.category = PIC_NUMERIC;
                     return;
                 }
-                if (n > 7) die_at(s->line, "'%s': PIC X(%d) %s is not implemented (up to %s)", s->name, n, un,
-                                  s->uvar == UV_COMPX ? "seven bytes" : "eight bytes");
+                if (n == 8 && s->uvar == UV_COMPX) {
+                    /* eight bytes big-endian: 2^64 - 1, twenty digits, the
+                     * same wide item as COMP-5's above in COMP-X's byte order
+                     * (sym_be: COMP-X always).  ACAS's CBL-FILE-SIZE, which
+                     * CBL_CHECK_FILE_EXIST fills (cobol ISSUES-124) */
+                    if (g_std < 2002)
+                        die_at(s->line, "'%s': PIC X(8) COMP-X holds twenty digits, which need the wide arithmetic of -std=2002 (docs/wide.md); compile with -std=2002", s->name);
+                    s->usage = U_UDBL; s->has_pic = 0; s->pic[0] = 0;
+                    memset(&s->pi, 0, sizeof s->pi);
+                    s->size = 8; s->pi.digits = 20; s->pi.category = PIC_NUMERIC;
+                    return;
+                }
+                if (n > 8) die_at(s->line, "'%s': PIC X(%d) %s is not implemented (up to eight bytes)", s->name, n, un);
                 static const int capd[8] = { 0, 3, 5, 8, 10, 13, 15, 17 };
                 snprintf(s->pic, sizeof s->pic, "9(%d)", capd[n]);
                 if (pic_analyse(s->pic, &s->pi) < 0) die_at(s->line, "internal: %s picture", un);
