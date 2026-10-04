@@ -6249,6 +6249,52 @@ question for the user.  ACAS itself: after adding accounts, Display in
 the same session finds nothing (we-error left 255 by its existence
 READ); a fresh session displays them.
 
+Running further (2026-10-04, later).  Enter now submits a screen ACCEPT
+from any field (465ac101), so the keystroke scripts are ~/acas/build/
+keys.py step lists, replayed from saved data directories (setup, purch,
+sales, posted).  ACAS runs from its ledgers directory, as
+install-ACAS.sh sets it up (error.txt there and in ACAS_BIN; maps99
+opens "error.txt" relative).  CALL "SYSTEM" (the lpr of a report) is
+runtime/system.c's stub, so print files stay as prt-n to be read.
+- **Ran correctly**: Purchase Ledger file creation and supplier set-up
+  (check digits by maps09); Stock item set-up and the stock report;
+  the Sales cycle -- customer, analysis codes, invoicing fixed data, an
+  invoice (net 15.00, VAT 3.00 at 20%, 18.00), the printed invoice,
+  the proof report, posting (sl055 analysis, sl060: balance 0.00 ->
+  18.00), the Aged Debtors report reconciling to 18.00, payment input
+  allocated to the invoice, payment proof, and cash posting (18.00 ->
+  0.00).  Nothing in s32-cobc or libcob needed changing for any of it.
+- **ACAS defects found by running**, each reproduced with a standalone
+  program under GnuCOBOL 3.2 and 4.0 (same result there) or explained;
+  worked around in ~/acas/build (patch-src.py's second section,
+  README-run.md), not in the compiler:
+  - gl030 without profit centres: pc-code stays spaces, a header is
+    written with its key ending "00" (through a numeric item) but read
+    with "  " (pc-code moved as a group): every sub-account is "Header
+    Missing".
+  - gl050 cannot end a batch: its Option box is displayed, never
+    accepted; Escape at an item's date re-asks it, Escape elsewhere
+    quits the batch (deletes its postings).  Left as found.
+  - sl055 on a fresh system: OPEN EXTEND of open-item file 2, which
+    does not exist; the file's USE AFTER ERROR declarative runs on the
+    35 and GOBACKs before the program's OPEN OUTPUT fallback.  Only
+    sl060, after a successful post, creates the file.
+  - The invoice file is two sizes: sl910 creates it through fdinv.cob
+    (134 bytes), sl055 and sl020 open it through fdinv2.cob, whose
+    invoice-header is 137 (its comment says 134; two 999v99 COMP items
+    are four bytes each).  The largest record is a fixed file attribute
+    (2023 9.1.6) and OPEN validates it here: status 39, and sl055's
+    posting loop then READs an unopened file (47, no AT END) forever.
+    GnuCOBOL does not validate it (2023 OPEN GR 10 leaves the choice to
+    the implementor) and rewrites 137-byte headers into the file.  Kept
+    strict; fdinv.cob made 137 in the patched copy.
+- How ACAS wants its input (not defects): amounts and accounts typed at
+  full width (an alphanumeric group with UPDATE overwrites from the
+  left); one-letter menus are AUTO; a supplier or customer key carries
+  its check digit on lookup; Escape on an invoice line abandons the
+  invoice, a blank product ends it; leave a ledger with X, since the
+  "posted" flags reach system.dat only then.
+
 Next, in order: the SCREEN SECTION BLANK SCREEN placement rule; COMP-X longer
 than seven bytes; PAGE LIMIT without a number; >>SOURCE FREE carried into
 copybooks (GnuCOBOL does; to be checked against the 2002/2014 texts).
