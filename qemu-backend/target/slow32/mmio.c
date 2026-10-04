@@ -1,5 +1,6 @@
 #include "qemu/osdep.h"
 #include "s32_errno.h"
+#include "s32_host_poll.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -1056,7 +1057,7 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
     }
     case S32_TERM_KEY_AVAIL: {
         struct pollfd pfd = { .fd = STDIN_FILENO, .events = POLLIN };
-        int ret = ts->key_pushback >= 0 ? 1 : poll(&pfd, 1, 0);
+        int ret = ts->key_pushback >= 0 ? 1 : s32_host_poll(&pfd, 1, 0);
         resp->status = (ts->key_pushback >= 0 ||
                         (ret > 0 && (pfd.revents & POLLIN))) ? 1 : 0;
         break;
@@ -1250,8 +1251,18 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
             if (mode == 1 || mode == 2) {
                 slow32_console_printf("\033[%d;%dH%s", r + 1, c + 1,
                                       mode == 1 ? "\033[K" : "\033[J");
-                slow32_term_blank_cells(ts->prev_cells, r * ts->cols + c,
-                                        mode == 1 ? (r + 1) * ts->cols : ncells);
+                /* clipped to the screen: the cursor may be off it */
+                int from = r * ts->cols + c;
+                int to = mode == 1 ? (r + 1) * ts->cols : ncells;
+                if (from < 0) {
+                    from = 0;
+                }
+                if (to > ncells) {
+                    to = ncells;
+                }
+                if (from < to) {
+                    slow32_term_blank_cells(ts->prev_cells, from, to);
+                }
                 out_row = r;
                 out_col = c;
             } else {
@@ -1829,7 +1840,7 @@ static bool slow32_fd_readable(int host_fd)
         return true;
     }
     struct pollfd p = { .fd = host_fd, .events = POLLIN };
-    int pr = poll(&p, 1, 0);
+    int pr = s32_host_poll(&p, 1, 0);
     if (pr < 0) {
         return true;
     }
@@ -2069,8 +2080,7 @@ static void slow32_mmio_handle_poll(Slow32MMIOContext *ctx,
             }
         }
         if (np > 0) {
-            while (poll(pf, np, timeout) == -1 && errno == EINTR) {
-            }
+            s32_host_poll(pf, np, timeout);
         } else if (timeout > 0) {
             g_usleep((gulong)timeout * 1000);
         }

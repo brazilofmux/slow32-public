@@ -76,7 +76,8 @@ Floating-point values live in the general registers:
   `(rN, rN+1)`: `rN` holds bits 31:0, `rN+1` holds bits 63:32. In every
   instruction that reads or writes a double, N must be **even** and less
   than 31. Odd N, or N = 31, is **Unspecified** (the reference
-  interpreter faults; other engines may not).
+  interpreter faults; other engines may not), and so is a double written
+  to the pair (r0, r1); the toolchain never uses either.
 - 64-bit integers handled by the float/int64 conversions use the same
   pairing: low word in `rN`, high word in `rN+1`.
 
@@ -362,7 +363,9 @@ Other flag bits (0x0002 EVT, 0x0004 TSR, 0x0008 DEBUG, 0x0010 STRIPPED,
 be zero; a machine may refuse an executable that sets one.
 
 A machine must refuse a file whose magic, version or machine field is
-wrong, and one whose `mem_size` exceeds 0x10000000.
+wrong, and one whose `mem_size` exceeds 0x10000000. Every executable has
+`mem_size` exactly 0x10000000; what a smaller value would mean is
+**Unspecified** (the stack is at the top of the 256 MB space regardless).
 
 ### 5.2 Section table (28 bytes per entry)
 
@@ -411,8 +414,9 @@ Every existing executable has this shape (values from a typical one):
 2. Set up the regions of 6.2, all zero-filled.
 3. For each section with `mem_size` > 0: if `size` > 0 and `offset` > 0,
    copy `size` bytes from the file at `offset` to memory at `vaddr`. The
-   remaining `mem_size − size` bytes stay zero. A section that does not
-   fit inside the regions of 6.2 makes the file invalid.
+   remaining `mem_size − size` bytes stay zero. Each section must lie
+   inside a single region of 6.2 (data, BSS and heap are one region); one
+   that does not makes the file invalid.
 4. Apply protection (6.3).
 5. Set every register to 0, then R[29] (the stack pointer) =
    `stack_base`. PC = `entry`; an entry at or beyond `code_limit` makes
@@ -540,6 +544,9 @@ Conventions for this section:
   **Implementation-defined** means existing binaries cannot depend on it.
 - `CAP` = 49152 (0xC000), the data-buffer capacity.
 - `off` in request tables is `request.offset`, which must be below CAP (see §8.2.4).
+- Where a table lists several errors and more than one applies to a
+  request, which one is reported is **Unspecified**; the guest libraries
+  never send such a request.
 
 
 ### 8.0 Two output paths that are not MMIO
@@ -1138,6 +1145,14 @@ negotiated range (§8.13) gets `status` ERR, `length` = `EINVAL`. This includes
 
 ### 8.12 Timers, posted reads, POLL and the DPC ring
 
+**Readiness.** An fd is *ready* when a read on it would not block: data is
+waiting, it is at end of file, or it is in an error state. A character
+device that is always readable, such as `/dev/null`, is ready; a terminal
+with no typed input is not. This is a property of the fd, not of any one
+host call: macOS's `poll(2)` reports POLLNVAL for character devices, and
+the reference host asks `select(2)` for those (`common/s32_host_poll.h`).
+POST_READ, POLL and the term service's KEY_AVAIL all use this definition.
+
 #### 8.12.1 DPC ring
 
 Host → guest queue of 64 descriptors at window offset `0x0800`, head at
@@ -1167,8 +1182,8 @@ never queues. Response `status` 0. Error `EINVAL` (id ≥ 8 or not armed —
 including one that already fired).
 
 Delivery: at each delivery step every armed timer whose deadline has passed
-is queued, earliest deadline first; its id becomes free when its entry is
-queued. If the ring is full the timer stays armed and is queued at a later
+is queued, earliest deadline first, and among equal deadlines the lowest id
+first; its id becomes free when its entry is queued. If the ring is full the timer stays armed and is queued at a later
 delivery step.
 
 #### 8.12.3 0x0E POST_READ
@@ -1182,11 +1197,15 @@ A read whose completion arrives as a DPC entry, not in the response.
 | Response | `status` 0 = accepted |
 | Errors | `EBADF` (fd not a byte stream), `EINVAL` (n = 0, D below the end of the code segment), `EAGAIN` (see below) |
 
-If the fd is readable now (host poll reports readable, hang-up or error) the
-host completes it immediately: it reads without blocking, in a loop, until n
-bytes, end of file, a short read, would-block, or an error, writing into guest
-memory at D; then queues `{0x0E, total, D, cookie}`. Errors are not reported;
-`total` is what was read before them (possibly 0). If the DPC ring is full at
+If the fd is ready now (8.12) the host completes it immediately: it reads
+without blocking, in chunks of at most 4096 bytes, until n bytes, end of
+file, a short read, would-block, or an error, storing each chunk into guest
+memory at D onward; then queues `{0x0E, total, D, cookie}`. Errors are not
+reported; `total` is the bytes stored before them (possibly 0). A chunk
+that cannot be stored (it reaches memory below `code_limit`, read-only data
+or an unmapped address) ends the read: `total` stops before it, and the
+bytes of that chunk, already taken from the fd, are lost. An immediate
+completion does not occupy one of the 8 pending slots. If the DPC ring is full at
 that moment: `EAGAIN`.
 
 Otherwise the read is kept pending in one of 8 slots (`EAGAIN` if a pending
@@ -1211,11 +1230,14 @@ Algorithm:
    (dropped silently if the ring is full).
 2. Deliver timers and posts.
 3. While the ring is empty: if no timer is armed, no post pending and k = 0,
-   fail with `EAGAIN`. Otherwise wait (host `poll`) on the fds of pending posts
-   and the named fds for readability, with a timeout until the earliest timer
+   fail with `EAGAIN`. Otherwise wait for any of the fds of pending posts
+   and the named fds to become ready (8.12), with a timeout until the earliest timer
    deadline (none if no timer; plain sleep if there are no fds). Then, for each
    named fd **not** owned by a pending post, queue `{0x34, 0, fd, why}` if
-   `why` ≠ 0. Then deliver timers and posts.
+   `why` ≠ 0. IN is set whenever the fd is ready; HUP and ERR are set when
+   the host reports them, and whether a pipe at end of file reports HUP as
+   well as IN depends on the host (**Unspecified**). Then deliver timers and
+   posts.
 4. Respond with the ring's entry count.
 
 A named fd that a pending POST_READ is reading never produces a readiness
@@ -1230,7 +1252,7 @@ allocates. Two services exist: `"term"` (15 opcodes, version 1) and `"tube"`
 
 #### 8.13.1 Wire format (as implemented)
 
-All five opcodes: request `length` = bytes of the service name including NUL
+SVC_REQUEST, SVC_RELEASE and SVC_QUERY: request `length` = bytes of the service name including NUL
 (1..32; the host appends a NUL, so the guest's own NUL is optional), name at `off`,
 `off + length ≤ CAP`, else `EINVAL`. The request `status` word is **ignored**
 (guests send 0). Results are returned **in the data buffer at `off`**; the
@@ -1266,7 +1288,8 @@ active sessions.
 `"term\0tube\0"` at `off` (names that do not fit are left out); response
 `length` = bytes written (10). Policy is not applied.
 
-**0xF4 SVC_VERSION.** Response `status` = 1 (protocol version), `length` 0.
+**0xF4 SVC_VERSION.** No name and no checks. Response `status` = 1 (protocol
+version), `length` 0.
 
 #### 8.13.2 Policy
 
@@ -1303,9 +1326,9 @@ unless noted; responses are `status` 0, `length` 0 unless noted.
 | 1 | GET_SIZE | `off` ≤ CAP−8 | Host terminal size now (of host stdout; 24×80 if unavailable): u32 rows, u32 cols at `off`; `length` 8. `EINVAL` if `off` > CAP−8. |
 | 2 | MOVE_CURSOR | `status` = row<<16 \| col, **1-based**, 16 bits each | Outside an update: emits `ESC [ row ; col H` (decimal, unclamped). Shadow cursor := (row−1, col−1). |
 | 3 | CLEAR | `status` = 0 screen, 1 to end of line, 2 to end of screen (other = 0) | Outside an update emits `ESC[2J ESC[H` / `ESC[K` / `ESC[J`; inside, records it (§8.14.3). Shadow clear (§8.14.2). |
-| 4 | SET_ATTR | `status` = SGR number | Outside an update emits `ESC [ status m` (decimal). Current attribute := status (low 8 bits kept in cells). Guests use 0 normal, 1 bold, 7 reverse. |
+| 4 | SET_ATTR | `status` = SGR number | Outside an update emits `ESC [ status m` (the whole 32-bit `status`, unsigned decimal). Current attribute := status; cells keep its low 8 bits, so END_UPDATE and RESTORE emit those. Guests use 0 normal, 1 bold, 7 reverse. |
 | 5 | READ_KEY | | Blocks for one byte of input (§8.14.4). `status` = byte, `length` 1, byte also at `off`. End of input: `status` `0xFFFFFFFD`. |
-| 6 | KEY_AVAIL | | `status` 1 if a byte can be read without blocking (a pushed-back byte, unread prefix bytes, or host stdin polls readable), else 0. Never blocks. |
+| 6 | KEY_AVAIL | | `status` 1 if a byte can be read without blocking (a pushed-back byte, unread prefix bytes, or host stdin is ready, 8.12), else 0. Never blocks. |
 | 7 | SET_COLOR | `status` = fg<<8 \| bg (8 bits each; ANSI 0–7) | Outside an update emits `ESC [ 3fg ; 4bg m` (decimal, unclamped). Current colours := fg, bg. |
 | 8 | PUTC | `status` low 8 bits = one byte | Outside an update: the byte to stdout. Always fed to the shadow (§8.14.2). |
 | 9 | PUTS | `length` = n, bytes at `off` | `min(n, CAP−off)` bytes; outside an update written to stdout; each fed to the shadow. |
@@ -1350,20 +1373,27 @@ that cut a sequence short is decoded again as the start of the next.
 - U+0009: cluster reset; col := (col + 8) rounded down to a multiple of 8;
   if col ≥ C: col := 0, row += 1.
 - Other U+0000–U+001F and U+007F: ignored (they still reach the terminal
-  outside an update). Note: the bytes of an escape sequence after the ESC are
+  outside an update). They do not step the cluster state, so they neither
+  break nor join a cluster. Note: the bytes of an escape sequence after the ESC are
   printable and enter the shadow as characters.
 - Anything else: a character, below.
 
 "Cluster reset" (also done by MOVE_CURSOR and CLEAR) discards the cluster
-being built and forgets the last cell.
+being built, forgets the last cell, and resets all the cluster state (the
+regional-indicator pairing and the GB11 emoji sequence tracking with it).
 
 **Clusters and widths.** Extended grapheme clusters follow UAX #29 for
 Unicode 16.0, rules GB3–GB13 evaluated in that order, **without GB9c**, with
 the cluster state carried code point by code point (GB11 tracks
 "ExtPict Extend* ZWJ"; GB12/13 pair regional indicators only when adjacent).
 Code point width: 0 for General_Category Mn, Me, Cf; otherwise 2 for
-East_Asian_Width W or F; otherwise 1 (Unicode 16.0 data; unlisted code points
-1). Cluster width: 2 if it starts with a regional indicator and has ≥ 2 code
+East_Asian_Width W or F; otherwise 1. The widths come from the data lines of
+Unicode 16.0's `EastAsianWidth.txt` only: the file's `# @missing` default
+assignments are not applied, so a code point with no data line (an
+unassigned code point, including the reserved ones in CJK blocks) is width
+1. Grapheme_Cluster_Break and Extended_Pictographic are Unicode 16.0's as
+well. (The reference's tables, `common/s32utf_tables.h`, are generated from
+libutf, which reads the files this way.) Cluster width: 2 if it starts with a regional indicator and has ≥ 2 code
 points; else 2 if it contains U+FE0F and its widest code point is < 2; else
 the widest code point's width. A cluster is "lone" if its first code point
 has Grapheme_Cluster_Break Extend or ZWJ.
@@ -1412,8 +1442,13 @@ Notation: `CUP(r,c)` = `ESC [ r ; c H` with decimal 1-based numbers;
 followed by the UTF-8 of each mark (surrogates/out-of-range as U+FFFD).
 
 **Recorded clears.** During an update each CLEAR is recorded as
-(mode, cursor row, cursor col at that moment), up to 8; a 9th collapses the
-record to a single full clear (mode 0), after which recording continues.
+(mode, cursor row, cursor col at that moment), up to 8. A 9th replaces the
+whole record with a single full clear (mode 0) and is not itself recorded;
+recording continues after it (so a 10th is the record's second entry).
+Blanking the snapshot for a recorded clear is clipped to the screen (the
+cursor may be off it), and does not apply the shadow clear's wide-character
+rule: if the range starts on a TAIL, its head stays in the snapshot and the
+diff repaints it.
 
 **END_UPDATE:**
 ```
@@ -1496,15 +1531,25 @@ the corrections below; read it with them applied.
    `S32_TUBE_DUMP` journal directory is active. STATUS bit 31 reflects a real
    viewer connection only.
 3. **OPEN does not read guest memory.** It only records the addresses; an
-   unreadable address fails the next PRESENT, not OPEN (§8.1 "Guest-memory walk"
-   says otherwise).
-4. **fb OPEN limits:** width 16..640, height 16..480, format 1, palette
-   address 4-byte aligned; the pixel address is not alignment-checked.
+   unreadable address fails the next PRESENT, not OPEN (TUBE.md section 1,
+   "Guest-memory walk", says otherwise).
+4. **OPEN parameter blocks:** vec takes none, and its OPEN requires
+   `length` 0 (else `EINVAL`). fb's is 20 bytes and ppu's 4: `length` must be
+   exactly that and `off + length` ≤ CAP, else `EINVAL`. fb limits: width
+   16..640, height 16..480, format 1, palette address 4-byte aligned; the
+   pixel address is not alignment-checked.
 5. **ppu PRESENT reads fixed-size tables:** register block 64 bytes, the
    **whole** pattern table (1024 tiles × 32 = 32768 bytes) every time,
-   nametable `nt_w × nt_h × 2` bytes, palettes 512 bytes, OAM 1024 bytes. All
-   must be readable (not in the code segment) or PRESENT fails with `EINVAL`.
-   `nt_w`/`nt_h` of 0 or > 128 → `EINVAL`.
+   nametable `nt_w × nt_h × 2` bytes, palettes 512 bytes, OAM 1024 bytes.
+   `nt_w`/`nt_h` of 0 or > 128 → `EINVAL`. Scrolling is unsigned 32-bit:
+   world x = (screen x + scroll_x) mod (nt_w × 8), likewise y. The 16×16
+   sprite flag (OAM flags bit 1, reserved) is ignored: every sprite is 8×8.
+   **Every mode's PRESENT refuses guest memory below `code_limit`**: a vec
+   list, fb pixels or palette, or any ppu table that starts there fails with
+   `EINVAL`, though the machine itself may read code (6.3). The rule is the
+   host's, for the reads and writes it makes in guest memory (POST_READ too;
+   the DBT's READ_DIRECT is the exception noted in 8.6): an access starting
+   below `code_limit` fails.
 6. **ppu background blend:** a background tile pixel with value ≠ 0 blends
    over `bg_color` with `a = palette.alpha` (no multiplier); sprites use
    `a = (sprite.alpha × palette.alpha) / 255`. Both use
@@ -1555,9 +1600,35 @@ reference, except where this document says **Unspecified**, and except
 for the host's own lines (7.3) and the wording of fault diagnostics
 (7.2).
 
-The tree checks this in two ways: `regression/run-differential.sh` runs
-104 executables on every engine and compares them with the reference
-(`SLOW32_FAST=<your engine>` substitutes an engine), and
+Some programs' output depends on their environment, which is therefore
+part of a conformance run. The reference conditions are the regression
+suite's (`regression/run-tests.sh`, one directory per test under
+`regression/tests/`):
+
+- **Standard input** is `/dev/null`, unless the test has a `stdin.sh`,
+  whose output is piped in (it may pause before writing, to give a program
+  an open pipe that is not yet readable).
+- **Arguments** are the lines of `args.txt`, if present; argv[0] is the
+  executable's path.
+- **Environment:** the host process's, plus `S32_TUBE_PORT` naming a port
+  file in the test's results directory, and, for a test with an
+  `expected.hash`, `S32_TUBE_DUMP` naming a journal directory (which sets
+  tube INFO bit 8, 8.15). A test with `inject.py` or `viewer` runs that
+  program alongside as the tube viewer. Nothing else is set; in
+  particular `TZ` is the host's, and output that depends on it (local
+  time) is not compared across hosts.
+- **Expected results** are `expected.txt` (standard output and standard
+  error together, after removing the host's lines of 7.3; `run-tests.sh`
+  compares it ignoring newlines and `PC=` values, the differential
+  byte for byte after its normalization), `expected_exit.txt` if the exit
+  status is not 0, and `expected.hash` for a tube journal.
+- **Working directory** is the one the harness is run from, normally
+  `regression/`; tests that create files use names of their own and remove
+  them.
+
+The tree checks conformance in two ways: `regression/run-differential.sh`
+runs every test on every engine under those conditions and compares each
+with the reference (`SLOW32_FAST=<your engine>` substitutes an engine), and
 `regression/run-kit-differential.sh` does the same for a corpus built by
 the self-hosted compiler, whose instruction choices differ.
 

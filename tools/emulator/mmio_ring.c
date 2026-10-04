@@ -3,6 +3,7 @@
 #include "slow32.h"
 #include "../../common/s32utf.h"
 #include "../../common/s32_errno.h"
+#include "../../common/s32_host_poll.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,6 +18,7 @@
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <poll.h>
+#include <sys/select.h>
 #include <time.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -797,7 +799,7 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
         case S32_TERM_KEY_AVAIL: {
             // Non-blocking poll: returns 1 if key available, 0 if not
             struct pollfd pfd = { .fd = STDIN_FILENO, .events = POLLIN };
-            int ret = ts->key_pushback >= 0 || stdin_prefix_active() ? 1 : poll(&pfd, 1, 0);
+            int ret = ts->key_pushback >= 0 || stdin_prefix_active() ? 1 : s32_host_poll(&pfd, 1, 0);
             resp->status = (ret > 0 && (ts->key_pushback >= 0 || stdin_prefix_active() || (pfd.revents & POLLIN))) ? 1 : 0;
             break;
         }
@@ -981,7 +983,13 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
                 int ncells = ts->rows * ts->cols;
                 if (mode == 1 || mode == 2) {
                     fprintf(stdout, "\033[%d;%dH%s", r + 1, c + 1, mode == 1 ? "\033[K" : "\033[J");
-                    term_blank_cells(ts->prev_cells, r * ts->cols + c, mode == 1 ? (r + 1) * ts->cols : ncells);
+                    // clipped to the screen, as the shadow clear is: the
+                    // cursor may be off it (row 0, or past the last row),
+                    // and this wrote outside the snapshot when it was
+                    int from = r * ts->cols + c, to = mode == 1 ? (r + 1) * ts->cols : ncells;
+                    if (from < 0) from = 0;
+                    if (to > ncells) to = ncells;
+                    if (from < to) term_blank_cells(ts->prev_cells, from, to);
                     out_row = r; out_col = c;
                 } else {
                     fprintf(stdout, "\033[2J\033[H");
@@ -2444,7 +2452,7 @@ static bool mmio_dpc_full(const mmio_ring_state_t *mmio) {
 static bool mmio_fd_readable(int host_fd) {
     if (host_fd < 0) return true;
     struct pollfd p = { .fd = host_fd, .events = POLLIN };
-    int pr = poll(&p, 1, 0);
+    int pr = s32_host_poll(&p, 1, 0);
     if (pr < 0) return true;
     return pr > 0 && (p.revents & (POLLIN | POLLHUP | POLLERR)) != 0;
 }
@@ -2668,7 +2676,7 @@ static void mmio_poll(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descript
          * every timed poll, a second full wait -- feature-dpc-poll lost a
          * line on one run in three (2026-10-03). */
         if (np > 0) {
-            while (poll(pf, np, timeout) == -1 && errno == EINTR) { }
+            s32_host_poll(pf, np, timeout);
         } else if (timeout > 0) {
             struct timespec ts = { timeout / 1000, (long)(timeout % 1000) * 1000000L };
             while (nanosleep(&ts, &ts) == -1 && errno == EINTR) { }
