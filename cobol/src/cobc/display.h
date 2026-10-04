@@ -352,6 +352,13 @@ static void parse_accept_1(void)
         if (scp) {
             advance();
             screen_at_origin(t->line);
+            int upd = 0;
+            if (accept_word("with")) {
+                /* WITH UPDATE (BP-G3): the TO fields start from their items */
+                if (!accept_word("update")) die_at(t->line, "ACCEPT of a screen WITH %s is not implemented (only UPDATE)", tok_desc(cur()));
+                bp(BP_G3_ACCEPT_SCREEN_UPDATE, t->line);
+                upd = 1;
+            }
             emit_screen_dyn_fill(scp, sfirst, scount);
             if (g_crt_status_name[0]) {                 /* the ACCEPT's ending goes to the CRT STATUS item */
                 g_cen_ctx = CEN_PTR; Sym *cs = sym_lookup(g_crt_status_name, NULL, 0, t->line); g_cen_ctx = 0;
@@ -362,6 +369,7 @@ static void parse_accept_1(void)
                 emit_la("r4", b);
                 emit_call("cob_crt_status");
             }
+            if (upd) emit_call("cob_scr_update_next");
             emit_la("r3", scrlab); emit_call("cob_screen_accept"); return;
         }
     }

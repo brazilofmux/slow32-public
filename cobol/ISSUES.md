@@ -6132,6 +6132,14 @@ is counted apart.  105 of the 128 built programs compile.
   placement ACAS gives a screen -- the screen is where its own clauses
   put it; another origin is refused as not implemented.  Tests:
   free/scrat (no oracle), bad/scr-at-offset.  108 of 125.
+- **ACCEPT screen-name WITH UPDATE** (sl180).  Micro Focus's UPDATE
+  belongs to ACCEPT of an item; on a screen it is GnuCOBOL's, so BP-G3
+  under -dialect=gnucobol: for that ACCEPT the screen's TO fields start
+  from their items' current values, as USING fields do -- a runtime flag
+  that scr_kind() reads and the ACCEPT clears.  (sl180's fields are all
+  USING already, so for ACAS it changes nothing.)  Tests:
+  free/gnu-scrupdate (Enter keeps "abc" with UPDATE, blanks it without),
+  bad/accept-screen-update.
 
 Next, in order: the SCREEN SECTION BLANK SCREEN placement rule; COMP-X longer
 than seven bytes; PAGE LIMIT without a number; >>SOURCE FREE carried into

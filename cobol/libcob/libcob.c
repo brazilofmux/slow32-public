@@ -5131,7 +5131,16 @@ void cbl_get_scr_size(unsigned char *lines, unsigned char *cols)
 /* the slot's kind, and its item: the high kind bit says the slot holds
  * the address of a cell the compiler fills at ACCEPT/DISPLAY (a
  * subscripted, LINKAGE or EXTERNAL item) */
-static int scr_kind(const cob_scr_field *f) { return f->kind & 0x7f; }
+/* ACCEPT screen-name WITH UPDATE (GnuCOBOL's; BP-G3): for that ACCEPT
+ * only, a TO field starts from its item's current value, as a USING
+ * field does -- it answers USING here */
+static int scr_update_once;
+void cob_scr_update_next(void) { scr_update_once = 1; }
+static int scr_kind(const cob_scr_field *f)
+{
+    int k = f->kind & 0x7f;
+    return k == COB_SCR_TO && scr_update_once ? COB_SCR_USING : k;
+}
 static void *scr_item(const cob_scr_field *f) { return (f->kind & 0x80) ? *(void **)f->item : f->item; }
 
 static int scr_has_attr(const cob_scr_field *f)
@@ -5554,7 +5563,13 @@ static int scr_may_leave(const scr_edit *e)
     return 1;
 }
 
+static void screen_accept(const cob_screen *s);
 void cob_screen_accept(const cob_screen *s)
+{
+    screen_accept(s);
+    scr_update_once = 0;
+}
+static void screen_accept(const cob_screen *s)
 {
     cob_screen_display(s);
     unsigned nin = 0;

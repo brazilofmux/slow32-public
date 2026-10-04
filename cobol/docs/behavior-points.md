@@ -214,6 +214,7 @@ dialect; `bad/` holds each point's refusal.
 |---|---|---|---|
 | BP-G1 | `SET ENVIRONMENT name TO value` | ACAS: COB_SCREEN_EXCEPTIONS, COB_SCREEN_ESC (25 programs) | taken: name and value without trailing spaces, as GnuCOBOL takes them, kept in the run unit's table where ACCEPT ... FROM ENVIRONMENT (BP-E31) reads first; no setenv. free/gnu-setenv (identical to GnuCOBOL); refused without the switch: bad/set-environment (ISSUES-124) |
 | BP-G2 | `COB-CRT-STATUS`, used and declared by no one | ACAS: tested against COB-SCR-ESC after its prompts (14 programs) | taken: an implicit WORKING-STORAGE item PIC 9(4), declared under the switch whether used or not (as GnuCOBOL does), and the CRT STATUS item when SPECIAL-NAMES names none. free/gnu-crtstatus (0000 after Enter, 2005 after Escape; no oracle, screens need a tty); without the switch the refusal names it: bad/cob-crt-status (ISSUES-124) |
+| BP-G3 | `ACCEPT screen-name WITH UPDATE` | ACAS: sl180 (its screen's fields are all USING already) | taken: for that ACCEPT the screen's TO fields start from their items' current values, as USING fields do (a runtime flag the ACCEPT clears); other WITH phrases on a screen ACCEPT are refused as not implemented. Micro Focus's UPDATE belongs to ACCEPT of an item. free/gnu-scrupdate (no oracle), bad/accept-screen-update (ISSUES-124) |
 
 ## Adding a point
 
