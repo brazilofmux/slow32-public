@@ -1212,8 +1212,21 @@ static void parse_screen_section(void)
         sc->line = line;
         snprintf(sc->name, sizeof sc->name, "%s", cur()->s); advance();
         if (sym_lookup_quiet(sc->name)) die_at(line, "'%s' is both a data item and a screen", sc->name);
+        sc->fg = sc->bg = 255;
         while (cur()->kind != T_PERIOD) {
             if (accept_word("blank")) { expect_word("screen"); sc->blank_screen = 1; continue; }
+            if (at_word("foreground-color") || at_word("foreground-colour") || at_word("background-color") || at_word("background-colour")) {
+                /* the 01 is a group like any other (2023 13.18.4.4 rule 3, 13.18.23.4 rule 3):
+                 * its colours are inherited by every entry below it */
+                Tok *t = cur(); advance();
+                int bg = t->s[0] == 'b' || t->s[0] == 'B';
+                accept_word("is");
+                if (cur()->kind != T_NUM) die_at(t->line, "expected a colour number 0-7 after %s", t->s);
+                int c = atoi(cur()->s); advance();
+                if (c < 0 || c > 7) die_at(t->line, "a screen colour is 0-7 (black, blue, green, cyan, red, magenta, yellow, white)");
+                if (bg) sc->bg = c; else sc->fg = c;
+                continue;
+            }
             die_at(cur()->line, "unexpected %s on screen '%s' (v1 takes BLANK SCREEN on the 01, fields below it)", tok_desc(cur()), sc->name);
         }
         expect_period();
@@ -1361,7 +1374,7 @@ static void parse_screen_section(void)
                  * children inherit it; its position anchors the first child */
                 if (gdepth == 16) die_at(fline, "screen groups nested more than 16 deep");
                 int pf = gdepth ? gstk[gdepth - 1].flags : 0;
-                int pfg = gdepth ? gstk[gdepth - 1].fg : 255, pbg = gdepth ? gstk[gdepth - 1].bg : 255;
+                int pfg = gdepth ? gstk[gdepth - 1].fg : sc->fg, pbg = gdepth ? gstk[gdepth - 1].bg : sc->bg;
                 gstk[gdepth].level = fl;
                 gstk[gdepth].flags = pf | f->flags;
                 gstk[gdepth].fg = f->fg != 255 ? f->fg : pfg;
@@ -1395,6 +1408,10 @@ static void parse_screen_section(void)
                 if (!f->line && gstk[gdepth - 1].line) f->line = gstk[gdepth - 1].line;
                 if (!f->col && gstk[gdepth - 1].col) f->col = gstk[gdepth - 1].col;
                 gstk[gdepth - 1].line = 0; gstk[gdepth - 1].col = 0;    /* the anchor is the first child's */
+            } else {
+                /* straight under the 01: its colours */
+                if (f->fg == 255) f->fg = sc->fg;
+                if (f->bg == 255) f->bg = sc->bg;
             }
             if (f->from_lit && !f->has_pic) die_at(fline, "a FROM/TO/USING slot needs a PICTURE");   /* rule 7: PICTURE with FROM */
             if (f->kind == COB_SCR_VALUE && f->has_pic) {

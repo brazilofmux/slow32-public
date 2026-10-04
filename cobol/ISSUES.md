@@ -6049,6 +6049,14 @@ Start: 5 of 134 compiled.
 
 The sweep compiles -dialect=gnucobol from here on.
 
+- **Colours on the 01 screen entry** (17 programs: "v1 takes BLANK
+  SCREEN on the 01").  The 01 is a group like any other, and a group's
+  BACKGROUND-COLOR and FOREGROUND-COLOR apply to each elementary item in
+  it (2023 13.18.4.4 rule 3, 13.18.23.4 rule 3) -- standard, so a fix.
+  The 01's colours are the base the nested groups compose over and the
+  fields straight under it take.  Test: free/scr01color (no oracle).
+  77 of 134.
+
 Next, in order: the SCREEN SECTION BLANK SCREEN placement rule; COMP-X longer
 than seven bytes; PAGE LIMIT without a number; >>SOURCE FREE carried into
 copybooks (GnuCOBOL does; to be checked against the 2002/2014 texts).

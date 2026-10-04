@@ -586,6 +586,7 @@ typedef struct { char name[64]; int first, count; } SGroup;   /* a named nested 
 typedef struct {
     char name[64];
     int line, blank_screen;
+    int fg, bg;                 /* the 01's FOREGROUND-/BACKGROUND-COLOR, 255 when not given: the base its entries inherit */
     SField *f; int nf, fcap;
     SGroup *sub; int nsub, subcap;
 } Screen;
