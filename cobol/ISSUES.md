@@ -6090,6 +6090,23 @@ The sweep compiles -dialect=gnucobol from here on.
   other way out.  VALUE OF stays refused: MF gives its FILE-ID a
   meaning, not yet implemented.  Tests: 2002/mf-labelrec (identical to
   GnuCOBOL), bad/std2002-labelrec.
+- **"05 COL 1" in a report group** (the 6 IRS report-writer variants):
+  the report entry's list of clause words had COLUMN but not COL, COLS
+  or COLUMNS (all four are the COLUMN clause's spellings, 2023
+  13.18.14.2 format 1), nor PRESENT or SIGN, so an entry starting with
+  one read the word as its name and stopped at the number.  The list
+  now has every word that starts one of the entry's clauses.  GnuCOBOL
+  4.0 makes the same mistake with COL and COLS, so these ACAS programs
+  do not compile with it either (they sit apart, in RW-programs/).
+  Test: free/rwcol (no oracle, for that reason).
+
+The sweep now compiles each program as its build does: IRS programs,
+and IRS's subroutines in common/ (irsub1-5, maps51; install-irs.sh
+preloads them), with incomplete_records_system's copybooks first, as
+comp-irs.sh has them by running there; everything else with copybooks/
+first.  Searching copybooks/ first for IRS code had picked its other
+wsfnctn.cob and made names ambiguous.  RW-programs/, in no build script,
+is counted apart.  105 of the 128 built programs compile.
 
 Next, in order: the SCREEN SECTION BLANK SCREEN placement rule; COMP-X longer
 than seven bytes; PAGE LIMIT without a number; >>SOURCE FREE carried into

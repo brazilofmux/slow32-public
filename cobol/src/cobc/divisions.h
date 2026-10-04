@@ -933,7 +933,11 @@ static void parse_rd(void)
         g->line = cur()->line;
         int has_type = 0, first = 1;
         int lstk[50], nlstk = 0;            /* the levels of the open entries that hold a LINE */
-        static const char *clause_words[] = { "type", "line", "next", "column", "pic", "picture", "source", "value", "just", "justified", "blank", "sum", "group", "usage", "display", NULL };
+        /* every word that starts one of the entry's clauses: anything else
+         * first is the entry's name ("05 COL 1" is a COLUMN clause, not an
+         * entry named COL -- ACAS, cobol ISSUES-124) */
+        static const char *clause_words[] = { "type", "line", "next", "column", "columns", "col", "cols", "pic", "picture", "source", "value",
+            "just", "justified", "blank", "sum", "group", "usage", "display", "present", "sign", NULL };
         for (;;) {
             int eline = cur()->line, lvl = 1;
             if (!first) {
