@@ -1,6 +1,8 @@
 #ifndef _ERRNO_H
 #define _ERRNO_H
 
+/* Linux's numbers: the host hands the guest these whatever it runs on
+ * (docs/SPEC.md 8.4.2), and runtime/strerror.c has a text for each. */
 extern int errno;
 
 #define EPERM 1
@@ -17,6 +19,7 @@ extern int errno;
 #define ENOMEM 12
 #define EACCES 13
 #define EFAULT 14
+#define ENOTBLK 15
 #define EBUSY 16
 #define EEXIST 17
 #define EXDEV 18
@@ -27,6 +30,7 @@ extern int errno;
 #define ENFILE 23
 #define EMFILE 24
 #define ENOTTY 25
+#define ETXTBSY 26
 #define EFBIG 27
 #define ENOSPC 28
 #define ESPIPE 29
@@ -35,23 +39,44 @@ extern int errno;
 #define EPIPE 32
 #define EDOM 33
 #define ERANGE 34
+#define EDEADLK 35
+#define ENAMETOOLONG 36
 #define ENOSYS 38
+#define ENOTEMPTY 39
+#define ELOOP 40
+#define EOVERFLOW 75
+#define EILSEQ 84
 #define ENOTSOCK 88
 #define EDESTADDRREQ 89
 #define EMSGSIZE 90
+#define EPROTOTYPE 91
+#define ENOPROTOOPT 92
 #define EPROTONOSUPPORT 93
+#define ESOCKTNOSUPPORT 94
 #define EOPNOTSUPP 95
 #define EAFNOSUPPORT 97
 #define EADDRINUSE 98
+#define EADDRNOTAVAIL 99
+#define ENETDOWN 100
 #define ENETUNREACH 101
+#define ENETRESET 102
+#define ECONNABORTED 103
 #define ECONNRESET 104
 #define ENOBUFS 105
 #define EISCONN 106
 #define ENOTCONN 107
+#define ESHUTDOWN 108
 #define ETIMEDOUT 110
 #define ECONNREFUSED 111
+#define EHOSTDOWN 112
 #define EHOSTUNREACH 113
 #define EALREADY 114
 #define EINPROGRESS 115
+#define ESTALE 116
+#define EDQUOT 122
+#define ECANCELED 125
+#define EWOULDBLOCK EAGAIN
+#define ENOTSUP EOPNOTSUPP
+#define EDEADLOCK EDEADLK
 
 #endif

@@ -2,6 +2,7 @@
 #include "mmio_ring.h"
 #include "slow32.h"
 #include "../../common/s32utf.h"
+#include "../../common/s32_errno.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -84,13 +85,15 @@ static int ends_with_ci(const char *s, const char *suf) {
 
 
 // Fail a request: status=ERR, length=positive errno for the guest.
+/* err is a host errno; the guest gets it in its own (Linux) numbering,
+ * whatever the host is (docs/SPEC.md 8.4.2) */
 static void mmio_fail(io_descriptor_t *resp, int err)
 {
     resp->status = S32_MMIO_STATUS_ERR;
     if (err <= 0 || err >= 4096) {
         err = EIO;
     }
-    resp->length = (uint32_t)err;
+    resp->length = (uint32_t)s32_errno_from_host(err);
 }
 
 // Snapshot walk of guest RAM. Prefer the sparse callback; fall back to a
@@ -2997,7 +3000,6 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             } else {
                 mmio_fail(&resp, errno > 0 ? errno : EIO);
             }
-            resp.length = 0;
             break;
         }
 
@@ -3052,7 +3054,6 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             } else {
                 mmio_fail(&resp, errno > 0 ? errno : EIO);
             }
-            resp.length = 0;
             break;
         }
 
@@ -3228,7 +3229,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             struct stat host_stat;
             memset(&host_stat, 0, sizeof(host_stat));
 
-            int rc = -1;
+            int rc = -1, serr = 0;
             if (req->status == S32_MMIO_STAT_PATH_SENTINEL) {
                 if (req->length == 0 || req->length > max_bytes) {
                     mmio_fail(&resp, EINVAL);
@@ -3244,13 +3245,24 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                 memcpy(path, mmio->data_buffer + offset, req->length);
                 path[req->length - 1u] = '\0';
                 rc = stat(path, &host_stat);
+                serr = errno;
                 free(path);
             } else {
-                rc = fstat((int)req->status, &host_stat);
+                /* the guest's fd, through the table: host fd numbers are
+                 * not the guest's once the host has opened anything */
+                int host_fd = host_fd_for_guest(mmio, req->status);
+                DIR *dir = host_fd < 0 ? host_dir_for_guest(mmio, req->status) : NULL;
+                if (dir) host_fd = dirfd(dir);
+                if (host_fd < 0) {
+                    mmio_fail(&resp, EBADF);
+                    break;
+                }
+                rc = fstat(host_fd, &host_stat);
+                serr = errno;
             }
 
             if (rc != 0) {
-                mmio_fail(&resp, EINVAL);
+                mmio_fail(&resp, serr > 0 ? serr : EIO);
                 break;
             }
 
@@ -3864,7 +3876,6 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             } else {
                 mmio_fail(&resp, errno > 0 ? errno : EIO);
             }
-            resp.length = 0;
             break;
         }
 
@@ -3911,7 +3922,6 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             } else {
                 mmio_fail(&resp, errno > 0 ? errno : EIO);
             }
-            resp.length = 0;
             break;
         }
 
@@ -3949,7 +3959,6 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             } else {
                 mmio_fail(&resp, errno > 0 ? errno : EIO);
             }
-            resp.length = 0;
             break;
         }
 
@@ -3984,7 +3993,6 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             } else {
                 mmio_fail(&resp, errno > 0 ? errno : EIO);
             }
-            resp.length = 0;
             break;
         }
 
@@ -4015,10 +4023,11 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             struct stat host_stat;
             memset(&host_stat, 0, sizeof(host_stat));
             int rc = lstat(path, &host_stat);
+            int lerr = errno;
             free(path);
 
             if (rc != 0) {
-                mmio_fail(&resp, EINVAL);
+                mmio_fail(&resp, lerr > 0 ? lerr : EIO);
                 break;
             }
 
@@ -4080,7 +4089,6 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             } else {
                 mmio_fail(&resp, errno > 0 ? errno : EIO);
             }
-            resp.length = 0;
             break;
         }
 
@@ -4115,7 +4123,6 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             } else {
                 mmio_fail(&resp, errno > 0 ? errno : EIO);
             }
-            resp.length = 0;
             break;
         }
 
@@ -4258,7 +4265,6 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             } else {
                 mmio_fail(&resp, errno > 0 ? errno : EIO);
             }
-            resp.length = 0;
             break;
         }
         case S32_MMIO_OP_REWINDDIR: {

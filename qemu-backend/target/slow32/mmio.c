@@ -1,4 +1,5 @@
 #include "qemu/osdep.h"
+#include "s32_errno.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -182,7 +183,8 @@ static inline void slow32_mmio_fail(Slow32MMIODesc *resp, int err)
     if (err <= 0 || err >= 4096) {
         err = EIO;
     }
-    resp->length = (uint32_t)err;
+    /* in the guest's (Linux) numbering whatever the host is */
+    resp->length = (uint32_t)s32_errno_from_host(err);
 }
 
 typedef struct s32_mmio_timepair64 {
@@ -2361,14 +2363,21 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
         int rc = 0;
         if (ctx->host_fd_owned[guest_fd]) {
             rc = close(host_fd);
+            if (rc != 0) {
+                rc = errno > 0 ? errno : EIO;   /* before deliver_posts can change errno */
+            }
         }
 
         ctx->host_fds[guest_fd] = -1;
         ctx->host_fd_owned[guest_fd] = false;
         slow32_deliver_posts(ctx, env);
 
-        resp->status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
-        resp->length = 0;
+        if (rc == 0) {
+            resp->status = S32_MMIO_STATUS_OK;
+            resp->length = 0;
+        } else {
+            slow32_mmio_fail(resp, rc);
+        }
         break;
     }
 
@@ -2412,14 +2421,14 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
             /* fstat by guest fd */
             int host_fd = slow32_mmio_host_fd_for_guest(ctx, req->status);
             if (host_fd < 0) {
-                slow32_mmio_fail(resp, EINVAL);
+                slow32_mmio_fail(resp, EBADF);
                 break;
             }
             rc = fstat(host_fd, &host_stat);
         }
 
         if (rc != 0) {
-            slow32_mmio_fail(resp, EINVAL);
+            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
             break;
         }
 
@@ -2543,8 +2552,12 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
         memcpy(&new_length, ctx->scratch, sizeof(uint32_t));
 
         int rc = ftruncate(host_fd, (off_t)new_length);
-        resp->status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
-        resp->length = 0;
+        if (rc == 0) {
+            resp->status = S32_MMIO_STATUS_OK;
+            resp->length = 0;
+        } else {
+            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
+        }
         break;
     }
 
@@ -2781,8 +2794,12 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
         ctx->scratch[req->length - 1] = '\0';
 
         int rc = unlink((char *)ctx->scratch);
-        resp->status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
-        resp->length = 0;
+        if (rc == 0) {
+            resp->status = S32_MMIO_STATUS_OK;
+            resp->length = 0;
+        } else {
+            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
+        }
         break;
     }
 
@@ -2806,8 +2823,12 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
         const char *newpath = (char *)ctx->scratch + old_len;
 
         int rc = rename(oldpath, newpath);
-        resp->status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
-        resp->length = 0;
+        if (rc == 0) {
+            resp->status = S32_MMIO_STATUS_OK;
+            resp->length = 0;
+        } else {
+            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
+        }
         break;
     }
 
@@ -2826,8 +2847,12 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
         }
 
         int rc = mkdir((char *)ctx->scratch, mode);
-        resp->status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
-        resp->length = 0;
+        if (rc == 0) {
+            resp->status = S32_MMIO_STATUS_OK;
+            resp->length = 0;
+        } else {
+            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
+        }
         break;
     }
 
@@ -2841,8 +2866,12 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
         ctx->scratch[req->length - 1] = '\0';
 
         int rc = rmdir((char *)ctx->scratch);
-        resp->status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
-        resp->length = 0;
+        if (rc == 0) {
+            resp->status = S32_MMIO_STATUS_OK;
+            resp->length = 0;
+        } else {
+            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
+        }
         break;
     }
 
@@ -2860,7 +2889,7 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
         int rc = lstat((char *)ctx->scratch, &host_stat);
 
         if (rc != 0) {
-            slow32_mmio_fail(resp, EINVAL);
+            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
             break;
         }
 
@@ -2910,8 +2939,12 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
 
         int mode = (int)req->status;
         int rc = access((char *)ctx->scratch, mode);
-        resp->status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
-        resp->length = 0;
+        if (rc == 0) {
+            resp->status = S32_MMIO_STATUS_OK;
+            resp->length = 0;
+        } else {
+            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
+        }
         break;
     }
 
@@ -2925,8 +2958,12 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
         ctx->scratch[req->length - 1] = '\0';
 
         int rc = chdir((char *)ctx->scratch);
-        resp->status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
-        resp->length = 0;
+        if (rc == 0) {
+            resp->status = S32_MMIO_STATUS_OK;
+            resp->length = 0;
+        } else {
+            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
+        }
         break;
     }
 

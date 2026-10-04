@@ -1,0 +1,8 @@
+ok unlink missing: No such file or directory
+ok stat missing: No such file or directory
+ok rmdir missing: No such file or directory
+ok mkdir existing: File exists
+ok rmdir non-empty: Directory not empty
+ok fstat: size 12
+ok fstat closed: Bad file descriptor
+errno-host: all tests passed

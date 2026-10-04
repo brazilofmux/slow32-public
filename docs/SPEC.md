@@ -14,10 +14,7 @@ is, marked **Quirk**, because existing executables depend on it. Where
 behaviour is genuinely not defined (the engines differ, or it was never
 pinned down), that is said plainly, marked **Unspecified** (section 8
 also says **Implementation-defined**, meaning the same), and programs
-must not depend on it. A few behaviours of the reference host produce
-values no program can meaningfully rely on (an errno number that depends
-on the host operating system, say); those are marked **Reference
-defect**, and the intended behaviour is specified.
+must not depend on it.
 
 Everything else under `docs/` is rationale, design history, or
 documentation of the toolchain. Where another document disagrees with
@@ -538,8 +535,6 @@ Conventions for this section:
 - "The host does X" is normative. **Quirk:** marks reference behaviour that
   looks unintended but is specified as-is because the machine is frozen.
   **Implementation-defined** means existing binaries cannot depend on it.
-  **Reference defect** marks a case where the reference host produces a value
-  no binary can meaningfully rely on; the intended behaviour is given.
 - `CAP` = 49152 (0xC000), the data-buffer capacity.
 - `off` in request tables is `request.offset mod CAP` (see §8.2.4).
 
@@ -740,9 +735,9 @@ helper sets `errno = EIO` on any ERR and `EINTR` on `0xFFFFFFFE`, ignoring
 length 0 (it is the C `EOF` value, not `STATUS_EOF`), so `runtime/`'s
 `getchar()` sets `errno = EIO` at EOF.
 
-**Quirk:** many failures report `EINVAL` regardless of the real cause (stat
-of a missing file, a bad seek on a pipe, policy denial, …); each opcode table
-lists them.
+**Quirk:** some failures report `EINVAL` regardless of the real cause (a bad
+seek on a pipe, policy denial, GETCWD, READDIR, GETENV of an unset name,
+…); each opcode table lists them.
 
 #### 8.4.2 Errno numbering
 
@@ -750,14 +745,11 @@ Errno values in responses use **Linux numbering** (the generic/x86 table
 below). The guest C libraries hard-code these numbers (`runtime/include/errno.h`,
 `selfhost/stage08/include/errno.h`).
 
-**Reference defect:** the reference host passes the host operating system's
-`errno` through unchanged. On a Linux host that is the table below. On a
-macOS/BSD host values 1–10, 12–34 coincide, but 11 is `EDEADLK` there, and
-`EAGAIN` is 35, and every value ≥ 35 differs (e.g. Darwin `ECONNREFUSED` 61,
-`EAFNOSUPPORT` 47, `ENOSYS` 78). A host must translate to the Linux numbers;
-the defect is visible today only on non-Linux hosts (`EAGAIN` from
-`POST_READ`/`POLL`/`TIMER_START`, socket errors, `ENAMETOOLONG`, `ELOOP`,
-`ENOTEMPTY`).
+A host on another operating system translates its errno values to these
+numbers (on macOS, for instance, `EAGAIN` is 35 and `ENOTEMPTY` 66; the guest
+must see 11 and 39). A host error with no entry in the table is reported as
+`EIO`. (The reference host does this through `common/s32_errno.h`; before
+2026-10-03 it passed a non-Linux host's numbers through untranslated.)
 
 Errno values the host produces itself: `EIO`, `ENOENT`, `EBADF`, `ENOMEM`,
 `EINVAL`, `EMFILE`, `EAGAIN`, `EPROTONOSUPPORT`, `EAFNOSUPPORT`. Any other
@@ -788,9 +780,11 @@ stat) and can be any errno that operation defines.
 | 18 | EXDEV | 38 | ENOSYS | 111 | ECONNREFUSED |
 | 19 | ENODEV | 39 | ENOTEMPTY | 112 | EHOSTDOWN |
 | | | 40 | ELOOP | 113 | EHOSTUNREACH |
-| | | 88 | ENOTSOCK | 114 | EALREADY |
-| | | 89 | EDESTADDRREQ | 115 | EINPROGRESS |
-| | | 90 | EMSGSIZE | 122 | EDQUOT |
+| | | 75 | EOVERFLOW | 114 | EALREADY |
+| | | 84 | EILSEQ | 115 | EINPROGRESS |
+| | | 88 | ENOTSOCK | 116 | ESTALE |
+| | | 89 | EDESTADDRREQ | 122 | EDQUOT |
+| | | 90 | EMSGSIZE | 125 | ECANCELED |
 | | | 91 | EPROTOTYPE | | |
 
 
@@ -952,14 +946,13 @@ reports them as errors.
 | Data in | path form: path at `off`; byte `length−1` replaced by NUL |
 | Response | `status` 0, `length` 112 |
 | Data out | `stat_result` (§8.6.1) at `off` (overwrites the path) |
-| Errors | `EINVAL` for everything: `CAP − off` < 112, path `length` = 0 or > `CAP − off`, **and any stat failure (including a missing file)** |
+| Errors | `EINVAL` (`CAP − off` < 112, path `length` = 0 or > `CAP − off`); fd form: `EBADF` if the guest fd is not open; stat/fstat errno (a missing file is `ENOENT`) |
 
-**Reference defect:** the fd form calls the host `fstat` on the host
-descriptor *whose number equals the guest fd*, without translating through
-the table. For 0–2 this is right; for other fds it is right only while guest
-and host numbering happen to coincide (they usually do in a simple program,
-since the emulator opens few descriptors of its own). Intended behaviour:
-stat the object the guest fd refers to.
+The fd form stats the object the guest fd refers to (a byte stream or a
+directory stream), through the descriptor table of 8.5. (Before 2026-10-03
+the reference host called `fstat` on the host descriptor with the guest's
+number, which was right only while the two numberings coincided, and
+reported every failure as `EINVAL`.)
 
 ##### 8.6.1 `stat_result` (112 bytes, packed)
 
@@ -1030,7 +1023,7 @@ Success: `status` 0, `length` 0. Failure: host errno, except where noted.
 | 0x21 | RENAME | `length` = total bytes; data `old\0new\0`; `status` = bytes of `old` **including** its NUL (= offset of `new`) | `EINVAL` if `status` = 0 or ≥ `length`. Host replaces byte `status−1` with NUL; `new` runs to the end of the payload. |
 | 0x22 | MKDIR | path; `status` = mode | mode 0 means 0755; subject to umask |
 | 0x23 | RMDIR | path | |
-| 0x24 | LSTAT | path; `status` ignored (guests send `0xFFFFFFFF`) | Like STAT but does not follow a final symlink. Requires `CAP − off ≥ 112`. Result: `status` 0, `length` 112, `stat_result` at `off`. **Any** lstat failure → `EINVAL`. |
+| 0x24 | LSTAT | path; `status` ignored (guests send `0xFFFFFFFF`) | Like STAT but does not follow a final symlink. Requires `CAP − off ≥ 112`. Result: `status` 0, `length` 112, `stat_result` at `off`. Failure: lstat errno (a missing file is `ENOENT`). |
 | 0x25 | ACCESS | path; `status` = mode: 0 F_OK, 1 X_OK, 2 W_OK, 4 R_OK (OR-able) | host `access` |
 | 0x26 | CHDIR | path | changes the host process's directory (affects all later relative paths, EXEC) |
 | 0x27 | GETCWD | `length` = buffer size (1..CAP) | Writes the NUL-terminated directory at `off`, at most `min(length, CAP−off)` bytes. Response `status` = `length` = string length **including** NUL. Any failure (e.g. too small) → `EINVAL`. |
