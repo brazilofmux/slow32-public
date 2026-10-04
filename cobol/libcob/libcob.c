@@ -50,6 +50,7 @@ void cob_wget(const void *vp, const cob_desc *d, cob_wnum *w);
 int cob_wput_x(void *vp, const cob_desc *d, const cob_wnum *win, int opts);
 #include <term.h>
 #include <time.h>
+#include <sys/stat.h>
 #include "xsort.h"
 #include "btree.h"
 #include "../../common/s32utf.h"   /* the one Unicode model: coding, width, clusters (cobol ISSUES-94) */
@@ -5126,6 +5127,48 @@ void cbl_get_scr_size(unsigned char *lines, unsigned char *cols)
     term_get_size(&r, &c);
     *lines = (unsigned char)(r > 255 ? 255 : r);
     *cols = (unsigned char)(c > 255 ? 255 : c);
+}
+
+/* CALL "C$JUSTIFY" USING item mode (BP-G7, compiled to this): the
+ * item's text without its leading and trailing spaces, put at the left,
+ * the right or the centre (the odd space to the right) of the item */
+void cob_c_justify(unsigned char *p, int len, int mode)
+{
+    int a = 0, b = len;
+    while (a < len && p[a] == ' ') a++;
+    while (b > a && p[b - 1] == ' ') b--;
+    int n = b - a, at = mode == 'L' ? 0 : mode == 'C' ? (len - n) / 2 : len - n;
+    if (n == 0 || at == a) return;
+    memmove(p + at, p + a, (size_t)n);
+    memset(p, ' ', (size_t)at);
+    memset(p + at + n, ' ', (size_t)(len - at - n));
+}
+
+/* CALL "CBL_CHECK_FILE_EXIST" USING name details (Micro Focus's library
+ * routine; ACAS asks it whether a backup script is there): the name ends
+ * at a space or a NUL.  0 and the details when the file is there --
+ * size PIC X(8) COMP-X, then day, month, year (two bytes), hour, minute,
+ * second, hundredths, all COMP-X -- or 35, as GnuCOBOL answers, when it
+ * is not. */
+int cbl_check_file_exist(const char *name, unsigned char *details)
+{
+    char path[1024]; int n = 0;
+    while (n < (int)sizeof path - 1 && name[n] && name[n] != ' ') { path[n] = name[n]; n++; }
+    path[n] = 0;
+    struct stat st;
+    if (!n || stat(path, &st) != 0) return 35;
+    unsigned long long size = (unsigned long long)st.st_size;
+    for (int i = 7; i >= 0; i--) { details[i] = (unsigned char)(size & 0xFF); size >>= 8; }
+    time_t t = (time_t)st.st_mtime;
+    struct tm *tm = localtime(&t);
+    if (tm) {
+        int y = tm->tm_year + 1900;
+        details[8] = (unsigned char)tm->tm_mday; details[9] = (unsigned char)(tm->tm_mon + 1);
+        details[10] = (unsigned char)(y >> 8); details[11] = (unsigned char)(y & 0xFF);
+        details[12] = (unsigned char)tm->tm_hour; details[13] = (unsigned char)tm->tm_min;
+        details[14] = (unsigned char)tm->tm_sec; details[15] = 0;
+    }
+    return 0;
 }
 
 /* the slot's kind, and its item: the high kind bit says the slot holds

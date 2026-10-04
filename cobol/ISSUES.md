@@ -6222,6 +6222,33 @@ not a key (gl030; GnuCOBOL compiles it and every READ fails, status 23).
   **107 of the 115 built programs compile; the eight left are the
   refusals ruled above, which need the ACAS source fixed.**
 
+Running ACAS (2026-10-04).  The user asked to run it.  The eight are
+fixed in a patched copy (~/acas/build/patch-src.py: the deleted folio
+zeroed and rewritten, pointers widened, the binary items moved through
+numeric ones, the redundant VALUE dropped, the non-key READ made a
+START on the record key), and all 115 link into one executable, ACAS.cbl
+the main program, the rest -m, so CALL identifier finds them through the
+registry (~/acas/build/build-s32.sh; drive.sh and screen.py replay keys
+and render the screen).  It took:
+- **s32-ld interior veneer islands**: the text outgrew a start and an
+  end island (tools/linker/ISSUES.md 11).
+- **CBL_CHECK_FILE_EXIST** in libcob (Micro Focus's library routine:
+  the name to a space or NUL; 0 and size/date/time COMP-X, or 35).
+- **C$JUSTIFY** (BP-G7).
+- **A numeric function beside ZERO**: ZERO was built as characters of
+  the function's size, so IF FUNCTION TEST-DATE-YYYYMMDD (d) NOT = ZERO
+  held for every date and sys002 refused 01/04/2026; a sign condition
+  refused a function outright.  Fixed (opnd_func_numeric); test
+  2002/funczero, GnuCOBOL 4.0 agrees.
+First-time setup runs end to end (system.dat, sys002's seven screens),
+the system menu, the General Ledger's start of day and menu, and gl030
+adds an account to ledger.dat and displays the chart.
+Open: our screen ACCEPT ends on Enter only at the last field (Enter
+moves on); GnuCOBOL and Micro Focus end it on Enter, Tab moving -- a
+question for the user.  ACAS itself: after adding accounts, Display in
+the same session finds nothing (we-error left 255 by its existence
+READ); a fresh session displays them.
+
 Next, in order: the SCREEN SECTION BLANK SCREEN placement rule; COMP-X longer
 than seven bytes; PAGE LIMIT without a number; >>SOURCE FREE carried into
 copybooks (GnuCOBOL does; to be checked against the 2002/2014 texts).

@@ -98,6 +98,24 @@ static void parse_call(void)
         parse_ref(&target); dynamic = 1;
         if (target.sym->is_cond) die_at(line, "CALL: a condition-name cannot name a program");
     } else die_at(line, "expected a program-name literal or an identifier after CALL");
+    if (!dynamic && g_dialect_gnu && !strcmp(name, "c$justify")) {
+        /* CALL "C$JUSTIFY" USING item ["L"|"R"|"C"] (BP-G7): ACUCOBOL's
+         * routine, which GnuCOBOL carries -- the item's text moved to
+         * the left, the right (the default) or the centre.  It needs the
+         * item's length, which a plain call does not pass, so it is done
+         * here; without -dialect=gnucobol it is an ordinary CALL. */
+        bp(BP_G7_C_JUSTIFY, line);
+        expect_word("using");
+        Opnd o; parse_operand(&o);
+        if (o.kind != O_REF) die_at(line, "C$JUSTIFY takes an alphanumeric item");
+        int mode = 'R';
+        if (cur()->kind == T_STR) { mode = toupper((unsigned char)cur()->s[0]); advance(); }
+        if (mode != 'L' && mode != 'R' && mode != 'C') die_at(line, "C$JUSTIFY takes \"L\", \"R\" or \"C\"");
+        accept_word("end-call");
+        Arg ja[3] = { arg_ref(&o.ref), arg_len(&o), arg_imm(mode) };
+        emit_args(ja, 3); emit_call("cob_c_justify");
+        return;
+    }
     /* a contained program of that name: its own entry when in scope; out
      * of scope, the name is an outermost program's, found (or not) at run
      * time like an identifier's (2023 8.4.6.3) */
