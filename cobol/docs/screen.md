@@ -158,7 +158,8 @@ notes ask, with GnuCOBOL nowhere in reach (its screens need a tty):
   the last, which ACAS's screens do not expect. REQUIRED and FULL hold
   the field the cursor is in against Enter as against Tab (2023
   13.18.47.4 rule 3, 13.18.26.4 rule 3). Escape abandons: no item is changed. End of input
-  submits (that is how the `.keys` files end).
+  (a `.keys` file running out) ends the run with a message and exit
+  status 2: a program that re-prompts would otherwise loop.
 - **Text fields** are edited where they sit: the buffer starts as the
   item's rendering (`USING`) or blanks (`TO`); typing overwrites at the
   cursor and moves right (stays on the last column when full; `AUTO`

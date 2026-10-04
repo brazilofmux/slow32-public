@@ -58,9 +58,9 @@ void term_cleanup(void) {
     term_initialized = 0;
 }
 
-void term_set_raw(int raw) {
-    if (!term_initialized) return;
-    s32_mmio_request(term_base_opcode + 0, 0, 0, (unsigned int)raw);
+int term_set_raw(int raw) {
+    if (!term_initialized) return -1;
+    return s32_mmio_request(term_base_opcode + 0, 0, 0, (unsigned int)raw) == 0 ? 0 : -1;
 }
 
 void term_get_size(int *rows, int *cols) {

@@ -8,8 +8,9 @@ int term_init(void) {
 void term_cleanup(void) {
 }
 
-void term_set_raw(int raw) {
+int term_set_raw(int raw) {
     (void)raw;
+    return -1;
 }
 
 void term_get_size(int *rows, int *cols) {

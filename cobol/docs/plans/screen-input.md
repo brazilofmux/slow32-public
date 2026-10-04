@@ -1,6 +1,6 @@
 # Screen input: a picture-driven field editor
 
-Status: step 0 done (2026-10-04); steps 1-6 to do.  The user accepted
+Status: steps 0 and 1 done (2026-10-04); steps 2-6 to do.  The user accepted
 the recommendations under "Decisions" on 2026-10-04.
 
 A screen is the first thing a person sees of a COBOL program, and the
@@ -337,8 +337,23 @@ against its rendered screen before it is accepted.
 
 0. **The oracle rig.**  DONE: the translator's key trace,
    `tests/adischeck.sh`, docs/adis-observed.md.
-1. **Keys and defects.**  The key decoder; the latent defects above; no
-   intended change of behaviour.  Gates as usual.
+1. **Keys and defects.**  DONE (2026-10-04).  The key decoder parses
+   escape sequences by ECMA-48's shape, so a sequence it does not know
+   (a modified key, a mouse report, a paste bracket) is swallowed whole;
+   a modified cursor key acts as the key.  `term_set_raw` now says
+   whether standard input is a terminal: at one, a lone ESC is told from
+   a sequence by a 50 ms wait (`term_wait_key`), and ESC with a key in
+   the same burst is Alt-key and ignored; from a file it is Escape and
+   then the key, as scripts need.  Fixed: a refused first key in a
+   numeric field cleared its value; digit buffers bounded at eighteen;
+   the decimal point's column under DECIMAL-POINT IS COMMA; a positioned
+   ACCEPT of a binary item took its storage size as its width; a plain
+   ACCEPT while the terminal is up read by stdio (now a key at a time,
+   echoed, with Backspace).  Found on the way and fixed: a positioned
+   DISPLAY of a binary or packed item was cut to its storage size (1234
+   in `9(4) COMP` showed `12`); a plain `ACCEPT A` followed without a
+   period by a statement with LINE or AT was compiled as positioned.
+   Tests: free/scrkeys, scrnumkeep, scrcomma, poscons, posbin, poscomp.
 2. **The core, text fields.**  The state machine and its host tests;
    the mask from the compiler; text fields to Micro Focus's defaults
    (class check, insert mode, Delete/clear/undo, restore buffer, PROMPT,

@@ -75,6 +75,7 @@ static void out_flush(void)
  * line down.  A SCREEN SECTION program (no positioned statement) keeps the
  * stdout stream it has always had. */
 static int term_up;                     /* defined with the terminal service below */
+static int scr_tty;                     /* standard input is a terminal (raw mode took): a person is typing */
 static int scr_rm_mode;                 /* set by the first positioned slot painted */
 static int scr_next_line;               /* the line a LINE-less statement takes; see scr_pos */
 static int con_col = 1, con_rows;
@@ -107,8 +108,10 @@ static void con_write(const char *p, int n)
     con_col += pend;
 }
 
+static char *out_cap; static int out_cap_n, out_cap_max;   /* DISPLAY's text taken into a screen slot (scr_render) */
 static void out_bytes(const char *p, int n)
 {
+    if (out_cap) { for (int i = 0; i < n && out_cap_n < out_cap_max; i++) out_cap[out_cap_n++] = p[i]; return; }
     if (term_up && scr_rm_mode) { con_write(p, n); return; }
     while (n > 0) {
         int room = (int)sizeof out_buf - out_n;
@@ -5106,17 +5109,17 @@ void cob_rw_terminate(cob_report *r)
 /* DISPLAY paints every slot; ACCEPT paints, then runs the focus loop
  * over the TO and USING slots in order (dBase Stage 4's READ, on the
  * same term service): printable keys overwrite and advance, Backspace
- * erases, Enter and Tab move to the next field, Escape ends the ACCEPT,
+ * erases, Tab moves to the next field, Escape and Enter end the ACCEPT,
  * AUTO advances when the field fills.  Each input field's text is then
  * MOVEd into its item through the ordinary conversion matrix.
- * UNDERLINE has no term.h attribute yet: painted plain (screen.md). */
+ * (Enter ends the ACCEPT from any field, Tab moves: docs/screen.md.) */
 
 static void term_need(void)
 {
     if (term_up) return;
     out_flush();
     if (term_init() != 0) cob_fatal("the terminal service is not available (run under an emulator with the term service)");
-    term_set_raw(1);
+    scr_tty = term_set_raw(1) == 0;
     term_up = 1;
 }
 
@@ -5224,6 +5227,15 @@ static void scr_render(const cob_scr_field *f, char *buf)
     if (scr_kind(f) == COB_SCR_VALUE) { memcpy(buf, f->value, f->width); return; }
     if (scr_kind(f) == COB_SCR_TO) { memset(buf, ' ', f->width); return; }
     if (f->rsv & COB_SR_DYNLEN) { memcpy(buf, scr_item(f), f->width); return; }   /* the part's own characters */
+    if (f->rsv & COB_SR_DISPVAL) {
+        /* a binary or packed item in a positioned DISPLAY: the text a
+         * plain DISPLAY writes for it (sign, digits, point), placed */
+        memset(buf, ' ', f->width);
+        out_cap = buf; out_cap_n = 0; out_cap_max = (int)f->width;
+        cob_display_field(scr_item(f), (const cob_desc *)f->item_desc);
+        out_cap = NULL;
+        return;
+    }
     cob_move(scr_item(f), (const cob_desc *)f->item_desc, buf, (const cob_desc *)f->pic);
 }
 
@@ -5356,13 +5368,65 @@ void cob_screen_display(const cob_screen *s)
  * codes of their own, above Unicode's range; a lone Escape is K_ESC. */
 enum { K_EOF = -1, K_ESC = 27, K_UP = 0x110001, K_DOWN, K_LEFT, K_RIGHT, K_HOME, K_END, K_DEL, K_BTAB, K_INS,
        K_PGUP, K_PGDN, K_F1, K_F12 = K_F1 + 11 };
+enum { KM_SHIFT = 1, KM_ALT = 2, KM_CTRL = 4 };  /* scr_mods: the modifiers a sequence carried (xterm's parameter, less one) */
 
 static int scr_pending = -2;                    /* a byte read past a lone Escape */
+static int scr_mods;
+
+/* An escape sequence, the ESC and its introducer ('[' or 'O') read:
+ * parameter bytes (digits, ';' between parameters, anything else in
+ * 30h-3Fh kept out of the numbers), intermediate bytes (20h-2Fh), and a
+ * final byte (40h-7Eh) -- ECMA-48's shape, so a sequence this does not
+ * know (a modified key, a mouse report, a paste bracket, CSI u) is
+ * swallowed whole and answers 0, never typed into the field.  The
+ * second parameter is the modifier (CSI 1;5C: Ctrl-Right), kept in
+ * scr_mods; the key is the unmodified one. */
+static int scr_sequence(void)
+{
+    int par[4] = { 0, 0, 0, 0 }, np = 0, priv = 0, d;
+    for (;;) {
+        d = term_getkey();
+        if (d < 0) { scr_pending = K_EOF; return 0; }
+        if (d >= '0' && d <= '9') { if (np < 4) par[np] = par[np] * 10 + (d - '0'); }
+        else if (d == ';') { if (np < 4) np++; }
+        else if (d >= 0x3A && d <= 0x3F) priv = 1;           /* : < = > ? */
+        else if (d >= 0x20 && d <= 0x2F) priv = 1;
+        else break;
+    }
+    if (priv) return 0;
+    scr_mods = par[1] > 1 ? (par[1] - 1) & 7 : 0;
+    switch (d) {
+    case 'A': return K_UP;
+    case 'B': return K_DOWN;
+    case 'C': return K_RIGHT;
+    case 'D': return K_LEFT;
+    case 'H': return K_HOME;
+    case 'F': return K_END;
+    case 'Z': scr_mods |= KM_SHIFT; return K_BTAB;
+    case 'P': case 'Q': case 'R': case 'S':
+        return K_F1 + (d - 'P');                             /* ESC O P..S, CSI 1;m P..S: F1-F4 */
+    case '~': {
+        int n = par[0];
+        if (n >= 11 && n <= 15) return K_F1 + (n - 11);          /* F1-F5 */
+        if (n >= 17 && n <= 21) return K_F1 + 5 + (n - 17);      /* F6-F10 */
+        if (n == 23 || n == 24) return K_F1 + 10 + (n - 23);     /* F11, F12 */
+        return n == 3 ? K_DEL : n == 1 || n == 7 ? K_HOME : n == 4 || n == 8 ? K_END : n == 2 ? K_INS
+             : n == 5 ? K_PGUP : n == 6 ? K_PGDN : 0;
+    }
+    default: return 0;
+    }
+}
+
+/* How long a byte may follow an ESC and still belong to it: a terminal
+ * sends a sequence in one burst, a person takes longer than this. */
+#define SCR_ESC_MS 50
 
 static int scr_key(void)
 {
-    if (scr_pending != -2) { int k = scr_pending; scr_pending = -2; return k; }
-    int k = term_getkey();
+    scr_mods = 0;
+    int k;
+    if (scr_pending != -2) { k = scr_pending; scr_pending = -2; if (k != 27) return k; }
+    else k = term_getkey();
     if (k == K_EOF) {
         /* a scripted run (keys on stdin) has run out: RM programs re-prompt
          * on a bad answer, so an ACCEPT that kept returning nothing would
@@ -5385,32 +5449,21 @@ static int scr_key(void)
         return u < least[need] || u > 0x10FFFF || (u >= 0xD800 && u <= 0xDFFF) ? 0xFFFD : (int)u;
     }
     if (k != 27) return k;
-    if (!term_kbhit()) return K_ESC;
+    /* ESC: the Escape key, or the start of a sequence.  At a terminal
+     * the rest of a sequence is on its way and arrives within
+     * SCR_ESC_MS; from a file or a pipe whatever follows is already
+     * there.  Nothing following is the Escape key. */
+    if (!(scr_tty ? term_wait_key(SCR_ESC_MS) : term_kbhit())) return K_ESC;
     int c = term_getkey();
-    if (c == '[' || c == 'O') {
-        int n = 0, d = term_getkey();
-        while (d >= '0' && d <= '9') { n = n * 10 + (d - '0'); d = term_getkey(); }
-        switch (d) {
-        case 'A': return K_UP;
-        case 'B': return K_DOWN;
-        case 'C': return K_RIGHT;
-        case 'D': return K_LEFT;
-        case 'H': return K_HOME;
-        case 'F': return K_END;
-        case 'Z': return K_BTAB;
-        case 'P': case 'Q': case 'R': case 'S':
-            return d == 'P' ? K_F1 : d == 'Q' ? K_F1 + 1 : d == 'R' ? K_F1 + 2 : K_F1 + 3;   /* ESC O P..S: F1-F4 */
-        case '~':
-            if (n >= 11 && n <= 15) return K_F1 + (n - 11);          /* F1-F5 */
-            if (n >= 17 && n <= 21) return K_F1 + 5 + (n - 17);      /* F6-F10 */
-            if (n == 23 || n == 24) return K_F1 + 10 + (n - 23);     /* F11, F12 */
-            return n == 3 ? K_DEL : n == 1 || n == 7 ? K_HOME : n == 4 || n == 8 ? K_END : n == 2 ? K_INS
-                 : n == 5 ? K_PGUP : n == 6 ? K_PGDN : 0;
-        default: return 0;
-        }
-    }
-    if (c == 9) return K_BTAB;                  /* ESC TAB: back-tab on terminals without a Shift-Tab */
-    scr_pending = c;                            /* a real Escape with the next keystroke behind it */
+    if (c < 0) { scr_pending = K_EOF; return K_ESC; }
+    if (c == '[' || c == 'O') return scr_sequence();
+    if (c == 9) { scr_mods = KM_SHIFT; return K_BTAB; }      /* ESC TAB: back-tab on terminals without a Shift-Tab */
+    if (c == 27) { scr_pending = 27; return K_ESC; }         /* Escape twice */
+    /* ESC and a key in one burst is Alt and that key at a terminal:
+     * nothing here takes it, and reading it as Escape would abandon the
+     * ACCEPT.  In a script it is the Escape key and then the next key. */
+    if (scr_tty) { scr_mods = KM_ALT; return 0; }
+    scr_pending = c;
     return K_ESC;
 }
 
@@ -5657,8 +5710,15 @@ static void screen_accept(const cob_screen *s)
         if (e->numeric) {
             const cob_desc *d = (const cob_desc *)f->pic;
             e->nf_max = d->scale; e->ni_max = d->digits - d->scale;
+            /* the value is held in 64 bits: eighteen digits, and the
+             * digit buffers are sized for them (a longer picture takes
+             * its low-order eighteen) */
+            if (e->nf_max > 18) e->nf_max = 18;
+            if (e->nf_max < 0) e->nf_max = 0;
+            if (e->ni_max + e->nf_max > 18) e->ni_max = 18 - e->nf_max;
+            if (e->ni_max < 0) e->ni_max = 0;
             e->point = -1;
-            if (d->pic) { const char *q = strchr(d->pic, '.'); if (q) e->point = (int)(q - d->pic); }
+            if (d->pic) { const char *q = strchr(d->pic, cob_dp_comma ? ',' : '.'); if (q) e->point = (int)(q - d->pic); }
             if (e->point < 0) e->point = d->scale ? (int)f->width - d->scale - 1 : (int)f->width;   /* an assumed point: the fraction's first column, less one */
             scr_num_load(e);
         }
@@ -5692,7 +5752,11 @@ static void screen_accept(const cob_screen *s)
         if (e->numeric) {
             const cob_desc *d = (const cob_desc *)f->pic;
             int dp = cob_dp_comma ? ',' : '.';
-            if ((key >= '0' && key <= '9') || key == dp || key == '-' || key == '+' || key == 8 || key == 127) {
+            /* the first key that changes the field replaces what it held --
+             * a key the field refuses (a point where there is no fraction,
+             * a sign on an unsigned picture) changes nothing */
+            if ((key >= '0' && key <= '9') || (key == dp && e->nf_max) ||
+                ((key == '-' || key == '+') && (d->flags & COB_F_SIGNED)) || key == 8 || key == 127) {
                 if (!e->touched) { e->ni = e->nf = 0; e->neg = 0; e->infrac = 0; e->touched = 1; }
             }
             if (key >= '0' && key <= '9') {
@@ -7012,11 +7076,51 @@ void cob_accept_scr_dim(int cols, void *p, const cob_desc *d)
 
 /* ACCEPT identifier: one line from standard input, without its newline,
  * moved as alphanumeric text.  At end of file the item is left as it was. */
+/* ... once the terminal is in use (a positioned or screen statement has
+ * run), the line is read a key at a time from the terminal service and
+ * echoed where the console's output stands: standard input is in raw
+ * mode there (Enter is a carriage return, nothing echoes), and stdio's
+ * read-ahead would take keys the next screen ACCEPT is owed.  Backspace
+ * takes back a character; Enter ends the line; other keys are ignored. */
+static int con_read_line(char *line, int cap)
+{
+    int n = 0, col0 = con_col, row = scr_next_line ? scr_next_line : 1;
+    term_gotoxy(row, con_col);
+    for (;;) {
+        int key = scr_key();
+        if (key == K_EOF || key == '\r' || key == '\n') break;
+        if (key == 8 || key == 127) {
+            if (!n) continue;
+            do n--; while (n > 0 && ((unsigned char)line[n] & 0xC0) == 0x80);    /* one character back */
+            int was = con_col;
+            con_col = col0; con_write(line, n);                                  /* where the text now ends */
+            int end = con_col;
+            term_gotoxy(row, end);
+            for (int k = end; k < was; k++) term_putc(' ');
+            term_gotoxy(row, end);
+            continue;
+        }
+        if (key < 32 || key >= 0x110000 || n + 4 >= cap) continue;
+        int at = n;
+        if (key < 0x80) line[n++] = (char)key;
+        else if (key < 0x800) { line[n++] = (char)(0xC0 | key >> 6); line[n++] = (char)(0x80 | (key & 0x3F)); }
+        else if (key < 0x10000) { line[n++] = (char)(0xE0 | key >> 12); line[n++] = (char)(0x80 | (key >> 6 & 0x3F)); line[n++] = (char)(0x80 | (key & 0x3F)); }
+        else { line[n++] = (char)(0xF0 | key >> 18); line[n++] = (char)(0x80 | (key >> 12 & 0x3F)); line[n++] = (char)(0x80 | (key >> 6 & 0x3F)); line[n++] = (char)(0x80 | (key & 0x3F)); }
+        con_write(line + at, n - at);
+    }
+    con_write("\n", 1);
+    return n;
+}
+
 void cob_accept_console(void *p, const cob_desc *d)
 {
     char line[4096];
-    if (!fgets(line, sizeof line, stdin)) return;
-    int n = (int)strlen(line);
+    int n;
+    if (term_up) n = con_read_line(line, (int)sizeof line);
+    else {
+        if (!fgets(line, sizeof line, stdin)) return;
+        n = (int)strlen(line);
+    }
     while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) n--;
     /* a line longer than a numeric DISPLAY item arrives as characters,
      * left-justified and truncated (what the NIST suite and GnuCOBOL do);

@@ -194,6 +194,20 @@ static void emit_pos_stmt(int si, const char *fn)
     emit_la("r3", lab); emit_call(fn);
 }
 
+/* the columns a plain DISPLAY of a binary or packed numeric item takes
+ * (libcob's cob_display_field: sign, digits, point), or 0 when the item
+ * is not one -- a DISPLAY-usage item is shown as it is stored */
+static int pos_display_width(Sym *s)
+{
+    static const int cap[9] = { 0, 3, 5, 8, 10, 13, 15, 17, 19 };
+    if (s->is_group || s->pi.category != PIC_NUMERIC) return 0;
+    if (s->usage == U_DISPLAY || s->usage == U_NATIONAL || s->usage == U_FLOAT || s->usage == U_POINTER) return 0;
+    if (s->pi.scale < 0 || strchr(s->pi.pat, 'P')) return 0;
+    int digits = sym_notrunc(s) ? (s->size >= 1 && s->size <= 8 ? cap[s->size] : 19) : s->pi.digits;
+    if (digits <= 0 || digits > 18) return 0;                /* wide items keep the old path */
+    return digits + (s->pi.is_signed ? 1 : 0) + (s->pi.scale > 0 ? 1 : 0);
+}
+
 static void parse_display_positioned(void)
 {
     int si = (int)(screen_synth() - g_screens);
@@ -237,6 +251,21 @@ static void parse_display_positioned(void)
                 f->pi.category = PIC_NATIONAL; f->pi.bytes = 2 * n;
                 if (!f->width) f->width = n;
                 break;
+            }
+            {
+                /* a binary or packed item: its storage is not its text.
+                 * Shown as a plain DISPLAY shows it -- a sign when it is
+                 * signed, its digits, a point when it has a fraction --
+                 * in a field of that many columns (it was cut to the
+                 * item's bytes: 1234 in PIC 9(4) COMP showed "12") */
+                Sym *ns = o.ref.sym;
+                int nw = pos_display_width(ns);
+                if (nw > 0) {
+                    f->dispval = 1;
+                    if (!f->width) f->width = nw;
+                    f->pi.category = PIC_ALPHANUMERIC; f->pi.bytes = f->width;
+                    break;
+                }
             }
             if (!f->width) f->width = !o.ref.sym->is_group && o.ref.sym->usage == U_NATIONAL ? o.ref.sym->size / 2 : o.ref.sym->size;
             f->pi.category = PIC_ALPHANUMERIC; f->pi.bytes = f->width;
@@ -297,7 +326,11 @@ static void parse_accept_positioned(Ref *r)
         f->pi.category = PIC_NATIONAL; f->pi.bytes = r->sym->size;
         if (!f->width) f->width = r->sym->size / 2;
     } else {
-        if (!f->width) f->width = !r->sym->is_group && r->sym->usage == U_NATIONAL ? r->sym->pi.bytes : r->sym->size;
+        /* the field is as wide as the item's picture: its storage size
+         * for a DISPLAY item, its picture's positions for a binary or
+         * packed one (PIC 9(4) COMP is four columns, not two) */
+        if (!f->width) f->width = !r->sym->is_group && r->sym->pi.bytes &&
+                                  r->sym->usage != U_DISPLAY ? r->sym->pi.bytes : r->sym->size;
         if (r->sym->is_group || !r->sym->pi.bytes) { f->pi.category = PIC_ALPHANUMERIC; f->pi.bytes = f->width; }
         else { f->pi = r->sym->pi; snprintf(f->pic, sizeof f->pic, "%s", r->sym->pic); }
     }
@@ -405,7 +438,10 @@ static void parse_accept_1(void)
     Ref r; parse_ref(&r);
     if (r.sym->strong) die_at(r.line, "ACCEPT into the strongly-typed group '%s' (2023 14.9.1.3 rule 1)", r.sym->name);
     int nat = ref_is_national(&r);
-    if (stmt_positioned()) {
+    /* the positioning words are looked for in this statement only: the
+     * item is read, so a verb or scope terminator here already begins
+     * what follows (ACCEPT A ACCEPT B LINE 3 made the first positioned) */
+    if (!(cur()->kind == T_WORD && (is_verb(cur()->s) || is_terminator(cur()->s))) && stmt_positioned()) {
         parse_accept_positioned(&r); return;
     }
     if (nat && ec_on_name("EC-DATA-CONVERSION")) {

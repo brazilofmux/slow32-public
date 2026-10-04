@@ -9,8 +9,10 @@ int  term_init(void);
 /* Release the terminal service and restore terminal state. */
 void term_cleanup(void);
 
-/* Set terminal mode: 1=raw, 0=cooked. */
-void term_set_raw(int raw);
+/* Set terminal mode: 1=raw, 0=cooked.  Returns 0, or -1 when standard
+ * input is not a terminal (a file or a pipe: there is no mode to set,
+ * and keys are read as they come). */
+int term_set_raw(int raw);
 
 /* Get terminal dimensions. */
 void term_get_size(int *rows, int *cols);

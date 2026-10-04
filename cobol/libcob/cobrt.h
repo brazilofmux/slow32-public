@@ -163,7 +163,7 @@ enum { COB_SF_HIGHLIGHT = 1, COB_SF_UNDERLINE = 2, COB_SF_AUTO = 4, COB_SF_REVER
  * ERASE_*: clear before painting; NOBEEP: no bell on a rejected key. */
 enum { COB_SX_POS = 1, COB_SX_PROMPT = 2, COB_SX_ERASE_EOS = 4, COB_SX_ERASE_EOL = 8,
        COB_SX_ERASE_ALL = 16, COB_SX_NOBEEP = 32, COB_SX_CONT = 64 };
-enum { COB_SR_DYNLEN = 1 };
+enum { COB_SR_DYNLEN = 1, COB_SR_DISPVAL = 2 };   /* DISPVAL: a FROM slot shows its item as a plain DISPLAY would */
 
 typedef struct {
     unsigned char kind, flags;

@@ -578,6 +578,7 @@ typedef struct {
 int ext, prompt;            /* positioned DISPLAY/ACCEPT: COB_SX_* bits, the PROMPT character */
 int natlit;                 /* a VALUE slot's literal is national: its columns are its display width */
 int dynlen;                 /* a positioned DISPLAY of a part of computed length: its width stored at run time */
+int dispval;                /* a positioned DISPLAY of a binary or packed item: shown as a plain DISPLAY shows it */
 struct Ref_ *line_r, *col_r, *at_r;   /* LINE / POSITION / AT given as identifiers, stored at run time */
 int idesc;                  /* the item a reference-modified part: its descriptor + 1 (the part's, not the item's) */
 int from_lit;               /* FROM literal-1: a VALUE slot that must have its PICTURE */
