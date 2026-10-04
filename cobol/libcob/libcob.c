@@ -29,6 +29,7 @@
 #include "cobrt.h"
 #include "wide.h"
 #include "kern.h"
+#include "scredit.h"                    /* the screen field editor's core (docs/plans/screen-input.md) */
 
 /* kern.h restates what it needs of cobrt.h; a disagreement fails here */
 typedef char kern_chk_desc[(sizeof(cob_desc) == sizeof(cob_kdesc) && offsetof(cob_desc, size) == offsetof(cob_kdesc, size) &&
@@ -5521,6 +5522,10 @@ typedef struct {
     int nat, nu, cap, ncl;
     unsigned char *u, *ut;
     cob_cluster *cl;
+    /* a text field: the core's description and state (scredit.h) */
+    int text;
+    se_field *sf;
+    se_state *ss;
 } scr_edit;
 
 static int nat_cols(const cob_cluster *c, int n) { int w = 0; for (int i = 0; i < n; i++) w += c[i].w; return w; }
@@ -5657,6 +5662,11 @@ static int scr_may_leave(const scr_edit *e)
         if ((f->flags & COB_SF_FULL) && n && !scr_nat_full(e)) return 0;
         return 1;
     }
+    if (e->text) {
+        if ((f->flags & COB_SF_REQUIRED) && !se_required_ok(e->sf, e->ss)) return 0;
+        if ((f->flags & COB_SF_FULL) && !se_full_ok(e->sf, e->ss)) return 0;
+        return 1;
+    }
     if (f->flags & COB_SF_REQUIRED) {
         if (e->numeric ? scr_num_value(e) == 0 : strspn(e->buf, " ") >= f->width) return 0;
     }
@@ -5665,6 +5675,36 @@ static int scr_may_leave(const scr_edit *e)
         if (n != 0 && n != f->width) return 0;
     }
     return 1;
+}
+
+/* a text field as the core has it: the prompt character after the data
+ * while the cursor is in the field (`cur`), spaces otherwise */
+static void scr_paint_edit(const scr_edit *e, int cur)
+{
+    char img[SE_MAXW];
+    int line, col;
+    se_image(e->sf, e->ss, img, cur);
+    scr_paint_begin(e->f, &line, &col);
+    scr_puts_n(img, e->f->width);
+    scr_paint_end(e->f, line, col);
+}
+
+/* The cursor goes from one input field to another: the field left is
+ * shown as it stands, the field entered starts its editing again (a
+ * text field keeps its text and takes the ACCEPT's insert mode;
+ * at_end: arriving by Left, at the end of its data). */
+static int scr_insert_mode;
+static void scr_move(scr_edit *ed, unsigned *cur, unsigned to, int at_end)
+{
+    scr_edit *from = &ed[*cur], *e = &ed[to];
+    if (from->text && to != *cur) { term_begin_update(); scr_paint_edit(from, 0); term_end_update(); }
+    *cur = to;
+    scr_focus(e);
+    if (e->text) {
+        se_reenter(e->sf, e->ss, at_end);
+        e->ss->insert = scr_insert_mode;
+        term_begin_update(); scr_paint_edit(e, 1); term_end_update();
+    }
 }
 
 static void screen_accept(const cob_screen *s);
@@ -5707,6 +5747,19 @@ static void screen_accept(const cob_screen *s)
         }
         scr_render(f, e->buf);
         e->numeric = scr_is_numeric(f);
+        if (!e->numeric) {
+            /* a text field: the core takes it from here.  An input slot
+             * carries its picture, a symbol a column, where a VALUE slot
+             * has its literal (X everywhere when there is none: a group,
+             * a part, a SIZE that is not the picture's). */
+            const char *mask = f->value;
+            e->text = 1;
+            e->sf = malloc(sizeof *e->sf); e->ss = calloc(1, sizeof *e->ss);
+            if (!e->sf || !e->ss) cob_fatal("out of memory");
+            se_field_init(e->sf, mask && strlen(mask) == f->width ? mask : NULL, (int)f->width,
+                          ((f->flags & COB_SF_SECURE) ? SE_F_SECURE : 0) | ((f->ext & COB_SX_PROMPT) ? 0 : SE_F_NOPROMPT), f->prompt);
+            se_enter(e->sf, e->ss, e->buf, 0);
+        }
         if (e->numeric) {
             const cob_desc *d = (const cob_desc *)f->pic;
             e->nf_max = d->scale; e->ni_max = d->digits - d->scale;
@@ -5725,10 +5778,12 @@ static void screen_accept(const cob_screen *s)
     }
     unsigned cur = 0;
     int done = 0, abandon = 0, fret = 0;
+    scr_insert_mode = 0;                        /* each ACCEPT starts in replace mode */
+    if (ed[0].text) { term_begin_update(); scr_paint_edit(&ed[0], 1); term_end_update(); }
     while (!done) {
         scr_edit *e = &ed[cur];
         const cob_scr_field *f = e->f;
-        { int ln, cl; scr_pos(f, &ln, &cl); term_gotoxy(ln, cl + (int)(e->numeric ? scr_num_cursor(e) : e->nat ? (unsigned)nat_cols(e->cl, (int)e->pos) : e->pos)); }
+        { int ln, cl; scr_pos(f, &ln, &cl); term_gotoxy(ln, cl + (int)(e->text ? (unsigned)se_cursor(e->sf, e->ss) : e->numeric ? scr_num_cursor(e) : e->nat ? (unsigned)nat_cols(e->cl, (int)e->pos) : e->pos)); }
         int key = scr_key();
         if (key == K_EOF) { done = 1; break; }
         if (key == K_ESC) { done = 1; abandon = 1; fret = 2005; break; }
@@ -5745,10 +5800,18 @@ static void screen_accept(const cob_screen *s)
         if (key == '\r' || key == '\n' || key == '\t' || key == K_DOWN) {
             if (!scr_may_leave(e)) { scr_beep_f(e->f); continue; }
             if (key == '\r' || key == '\n') { done = 1; continue; }
-            cur = cur + 1 < nin ? cur + 1 : 0; scr_focus(&ed[cur]);
+            scr_move(ed, &cur, cur + 1 < nin ? cur + 1 : 0, 0);
             continue;
         }
-        if (key == K_UP || key == K_BTAB) { cur = cur ? cur - 1 : nin - 1; scr_focus(&ed[cur]); continue; }
+        /* Up, Shift-Tab and Home leave the field as Tab does: REQUIRED and
+         * FULL refuse any cursor move out of it (2023 13.18.47.4 rule 3,
+         * 13.18.26.4 rule 3).  Home is the first field of the screen
+         * (ADIS's Home; its start-of-field has no key). */
+        if (key == K_UP || key == K_BTAB || key == K_HOME) {
+            if (!scr_may_leave(e)) { scr_beep_f(e->f); continue; }
+            scr_move(ed, &cur, key == K_HOME ? 0 : cur ? cur - 1 : nin - 1, 0);
+            continue;
+        }
         if (e->numeric) {
             const cob_desc *d = (const cob_desc *)f->pic;
             int dp = cob_dp_comma ? ',' : '.';
@@ -5765,7 +5828,7 @@ static void screen_accept(const cob_screen *s)
                 else { scr_beep_f(e->f); continue; }
                 scr_num_render(e); scr_paint_text(f, e->buf);
                 if ((f->flags & COB_SF_AUTO) && (e->infrac ? e->nf == e->nf_max : e->nf_max == 0 && e->ni == e->ni_max)) {
-                    if (cur + 1 < nin) { cur++; scr_focus(&ed[cur]); } else done = 1;
+                    if (cur + 1 < nin) scr_move(ed, &cur, cur + 1, 0); else done = 1;
                 }
                 continue;
             }
@@ -5780,7 +5843,7 @@ static void screen_accept(const cob_screen *s)
                 else if (e->ni) e->ni--;
                 scr_num_render(e); scr_paint_text(f, e->buf); continue;
             }
-            if (key == K_HOME) { e->ni = e->nf = 0; e->neg = 0; e->infrac = 0; e->touched = 1; scr_num_render(e); scr_paint_text(f, e->buf); continue; }
+            if (key == 24) { e->ni = e->nf = 0; e->neg = 0; e->infrac = 0; e->touched = 1; scr_num_render(e); scr_paint_text(f, e->buf); continue; }   /* Ctrl-X: clear the field */
             continue;                           /* other keys: nothing */
         }
         if (e->nat) {
@@ -5792,7 +5855,6 @@ static void screen_accept(const cob_screen *s)
                 else if (!scr_nat_full(e)) scr_nat_type(e, ' ');
                 scr_nat_clamp(e); continue;
             }
-            if (key == K_HOME) { e->pos = 0; continue; }
             if (key == K_END) { scr_nat_trim(e); e->pos = (unsigned)e->ncl; scr_nat_clamp(e); continue; }
             if (key == 8 || key == 127 || key == K_DEL) {
                 if (key != K_DEL && !e->pos) continue;
@@ -5807,44 +5869,47 @@ static void screen_accept(const cob_screen *s)
                 scr_paint_nat(f, e->u, e->cl, e->ncl);
                 if (scr_nat_full(e) && (f->flags & COB_SF_AUTO)) {
                     if (!scr_may_leave(e)) { scr_beep_f(e->f); scr_nat_clamp(e); continue; }
-                    if (cur + 1 < nin) { cur++; scr_focus(&ed[cur]); } else done = 1;
+                    if (cur + 1 < nin) scr_move(ed, &cur, cur + 1, 0); else done = 1;
                 }
                 scr_nat_clamp(e);
                 continue;
             }
             continue;
         }
-        /* a text field: edited where it sits */
-        if (key == K_LEFT) { if (e->pos) e->pos--; continue; }
-        if (key == K_RIGHT) { if (e->pos + 1 < f->width) e->pos++; continue; }
-        if (key == K_HOME) { e->pos = 0; continue; }
-        if (key == K_END) { unsigned n = f->width; while (n > 0 && e->buf[n - 1] == ' ') n--; e->pos = n < f->width ? n : f->width - 1; continue; }
-        if (key == 8 || key == 127) {
-            if (e->pos > 0) {
-                e->pos--;
-                memmove(e->buf + e->pos, e->buf + e->pos + 1, f->width - e->pos - 1);
-                e->buf[f->width - 1] = ' ';
-                scr_paint_text(f, e->buf);
+        /* a text field: the core edits it (scredit.h); here its keys are
+         * named, its verdicts acted on and the field repainted */
+        {
+            int fn, ch = 0;
+            if (key == K_LEFT) fn = SE_LEFT;
+            else if (key == K_RIGHT) fn = SE_RIGHT;
+            else if (key == K_END) fn = SE_END;
+            else if (key == 8 || key == 127) fn = SE_BACKSPACE;
+            else if (key == K_DEL) fn = SE_DELETE;
+            else if (key == K_INS) fn = SE_INSERT_TOGGLE;
+            else if (key == 24) fn = SE_CLEAR_FIELD;            /* Ctrl-X */
+            else if (key == 26) fn = SE_CLEAR_EOF;              /* Ctrl-Z */
+            else if (key == 1) fn = SE_UNDO;                    /* Ctrl-A */
+            else if (key == 15) fn = SE_INSERT_SPACE;           /* Ctrl-O */
+            else if (key == 18) fn = SE_RESTORE_CHAR;           /* Ctrl-R */
+            else if (key == 6) fn = SE_CHANGE_CASE;             /* Ctrl-F */
+            else if (key >= 32 && key < 127) { fn = SE_CHAR; ch = key; }
+            else continue;                                      /* other keys: nothing */
+            int v = se_key(e->sf, e->ss, fn, ch);
+            scr_insert_mode = e->ss->insert;
+            if (v == SE_REFUSED) { if (fn == SE_CHAR) scr_beep_f(f); continue; }   /* a character the picture does not take */
+            if (v == SE_OK || v == SE_FILLED) { term_begin_update(); scr_paint_edit(e, 1); term_end_update(); }
+            if (v == SE_FILLED && (f->flags & COB_SF_AUTO)) {
+                if (!scr_may_leave(e)) { scr_beep_f(f); continue; }
+                if (cur + 1 < nin) scr_move(ed, &cur, cur + 1, 0); else done = 1;
+            } else if (v == SE_GO_PREV || v == SE_GO_NEXT || v == SE_GO_LAST) {
+                /* Left at the first position, Right or End at the end of
+                 * the data: on into the neighbouring field, if there is one */
+                unsigned to = v == SE_GO_PREV ? cur - 1 : v == SE_GO_NEXT ? cur + 1 : nin - 1;
+                if ((v == SE_GO_PREV && cur == 0) || (v == SE_GO_NEXT && cur + 1 >= nin) || to == cur) continue;
+                if (!scr_may_leave(e)) { scr_beep_f(f); continue; }
+                scr_move(ed, &cur, to, v == SE_GO_PREV);
             }
-            continue;
         }
-        if (key == K_DEL) {
-            memmove(e->buf + e->pos, e->buf + e->pos + 1, f->width - e->pos - 1);
-            e->buf[f->width - 1] = ' ';
-            scr_paint_text(f, e->buf);
-            continue;
-        }
-        if (key >= 32 && key < 127) {
-            e->buf[e->pos] = (char)key;                 /* the cursor stands on pos already */
-            scr_attr(f); term_putc((f->flags & COB_SF_SECURE) ? '*' : key); scr_attr_off(f);
-            if (e->pos + 1 < f->width) e->pos++;
-            else if (f->flags & COB_SF_AUTO) {
-                if (!scr_may_leave(e)) { scr_beep_f(e->f); continue; }
-                if (cur + 1 < nin) { cur++; scr_focus(&ed[cur]); } else done = 1;
-            }
-            continue;
-        }
-        /* other control keys are ignored */
     }
     scr_set_status(fret);
     if (!abandon) {
@@ -5867,11 +5932,12 @@ static void screen_accept(const cob_screen *s)
             } else {
                 cob_desc td; memset(&td, 0, sizeof td);
                 td.cat = COB_ALNUM; td.usage = COB_U_DISPLAY; td.size = f->width;
+                if (e->text) se_text(e->sf, e->ss, e->buf);
                 cob_move(e->buf, &td, scr_item(f), (const cob_desc *)f->item_desc);
             }
         }
     }
-    for (unsigned i = 0; i < nin; i++) { free(ed[i].buf); free(ed[i].u); free(ed[i].ut); free(ed[i].cl); }
+    for (unsigned i = 0; i < nin; i++) { free(ed[i].buf); free(ed[i].u); free(ed[i].ut); free(ed[i].cl); free(ed[i].sf); free(ed[i].ss); }
     free(ed);
 }
 

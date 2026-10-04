@@ -257,7 +257,20 @@ static void emit_unit_data(void)
             emit("\t.short %d", f->line); emit("\t.short %d", f->col);
             emit("\t.byte %d,%d", f->fg, f->bg);   /* FOREGROUND-COLOR, BACKGROUND-COLOR (255: not given) */
             emit("\t.word %d", f->width);
-            if (f->kind == COB_SCR_VALUE) emit("\t.word %s", lit_label((unsigned char *)f->value->s, f->value->len)); else emit("\t.word 0");
+            if (f->kind == COB_SCR_VALUE) emit("\t.word %s", lit_label((unsigned char *)f->value->s, f->value->len));
+            else {
+                /* an input slot of a text picture: the picture a symbol a
+                 * column (XX/XX/XXXX, AAA99), for the editor to check each
+                 * key against and to keep the insertion characters
+                 * (libcob's scredit.h); 0 when the field is not as wide as
+                 * its picture, or is numeric or national */
+                char mask[SE_MAXW + 1];
+                int mw = (f->kind == COB_SCR_TO || f->kind == COB_SCR_USING) && f->has_pic && f->pic[0] &&
+                         (f->pi.category == PIC_ALPHANUMERIC || f->pi.category == PIC_ALPHABETIC || f->pi.category == PIC_ALPHANUMERIC_EDITED)
+                         ? se_expand_picture(f->pic, mask, SE_MAXW) : -1;
+                if (mw > 0 && mw == f->width) { mask[mw] = 0; emit("\t.word %s", lit_label((unsigned char *)mask, mw + 1)); }
+                else emit("\t.word 0");
+            }
             if (f->kind == COB_SCR_VALUE && f->natlit) emit("\t.word .Ld%d", nat_desc(f->value->len));   /* painted as national text */
             else if (f->has_pic) {
                 Desc d; memset(&d, 0, sizeof d);

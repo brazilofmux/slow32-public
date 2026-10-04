@@ -112,6 +112,8 @@ static int se_expand_picture(const char *pic, char *out, int cap)
     return n;
 }
 
+#ifndef SCREDIT_EXPAND_ONLY             /* the compiler takes se_expand_picture alone */
+
 /* A field from its expanded picture (`mask`, one symbol a column; NULL
  * or empty: X in every column). */
 static void se_field_init(se_field *f, const char *mask, int width, unsigned flags, int prompt)
@@ -395,5 +397,7 @@ static int se_key1(const se_field *f, se_state *s, int fn, int ch)
     }
     return SE_REFUSED;
 }
+
+#endif                                  /* SCREDIT_EXPAND_ONLY */
 
 #endif

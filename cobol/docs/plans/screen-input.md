@@ -1,6 +1,6 @@
 # Screen input: a picture-driven field editor
 
-Status: steps 0 and 1 done (2026-10-04); steps 2-6 to do.  The user accepted
+Status: steps 0, 1 and 2 done (2026-10-04); steps 3-6 to do.  The user accepted
 the recommendations under "Decisions" on 2026-10-04.
 
 A screen is the first thing a person sees of a COBOL program, and the
@@ -354,11 +354,20 @@ against its rendered screen before it is accepted.
    in `9(4) COMP` showed `12`); a plain `ACCEPT A` followed without a
    period by a statement with LINE or AT was compiled as positioned.
    Tests: free/scrkeys, scrnumkeep, scrcomma, poscons, posbin, poscomp.
-2. **The core, text fields.**  The state machine and its host tests;
-   the mask from the compiler; text fields to Micro Focus's defaults
-   (class check, insert mode, Delete/clear/undo, restore buffer, PROMPT,
-   end-of-field behaviour); the rendered-screen test mode; streams
-   regenerated.
+2. **The core, text fields.**  DONE (2026-10-04).  `libcob/scredit.h`
+   and its host test; text fields in libcob's screen ACCEPT go through
+   it; the compiler emits each input field's picture a symbol a column;
+   the key table (Insert, Delete, Ctrl-X/Z/A/O/R/F); cursor moves
+   between fields by Left, Right, End and Home; REQUIRED and FULL on
+   every move out.  Pinned by `tests/scredit-differential.sh` against
+   the oracle (1,258 of 1,260 random key strings) and by the table test
+   in the harness (`tests/scredit.txt`).  The seventeen screen tests'
+   streams were regenerated: fifteen with the same final screen, two
+   re-keyed for the new Right and End.  Not done here: the
+   rendered-screen test mode (the comparison was made with a scratch
+   tool; still wanted), the prompt character by default in SCREEN
+   SECTION fields (ADIS shows it always; kept off), national fields
+   through the core.
 3. **Numeric fields.**  Fixed-format behaviour by picture shape; sign;
    Delete, clear and undo; FULL for suppressed fields; BLANK WHEN ZERO
    while current; the silent cases settled by what MS COBOL 5 does,

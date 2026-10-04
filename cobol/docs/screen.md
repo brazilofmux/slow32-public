@@ -290,3 +290,44 @@ field does. The cursor moves by the columns each cluster takes. A
 character that would not fit the field's columns or its item's code
 units is refused with the beep. The terminal under it is the
 Unicode-aware term service (docs/SERVICE_NEGOTIATION.md).
+
+## Text fields through the editor core (2026-10-04)
+
+Step 2 of docs/plans/screen-input.md.  A text field (alphanumeric,
+alphabetic, alphanumeric-edited; national fields keep the cluster editor
+above, numeric fields theirs until step 3) is now edited by
+`libcob/scredit.h`: a state machine with no terminal in it, compiled
+into libcob and into a host test (`tests/scredit_test.c`).  Its
+behaviour is Micro Focus's ADIS in its default configuration, pinned
+key for key against Microsoft COBOL 5 by `tests/scredit-differential.sh`
+(1,258 of 1,260 random key strings agree; docs/adis-observed.md).
+
+- **Keys.** A character overtypes and the cursor moves right; Insert
+  toggles insert mode (a character pushes the rest right; what falls
+  off the end is kept and comes back when a Delete makes room).
+  Backspace in replace mode puts back what was overtyped; Delete closes
+  up.  Ctrl-X clears the field, Ctrl-Z from the cursor on, Ctrl-A puts
+  the field back as it was when the cursor entered it, Ctrl-O inserts a
+  space, Ctrl-R re-inserts the last deleted character, Ctrl-F changes a
+  letter's case.
+- **The cursor** does not go past the end of the data: Right there goes
+  to the next field, Left at the first position to the previous one (at
+  the end of its data), End to the end of the data and from there to the
+  last field, Home to the first field of the screen.  On the last
+  position of a full field it stays, and the next character overtypes.
+- **The picture is checked at each key** (2023 14.9.1.4 rule 20): a
+  `PIC A` position takes a letter or a space, a `9` position in a text
+  picture a digit; a refused character beeps.  The compiler passes each
+  input field's picture a symbol a column.
+- **Insertion characters are protected**: in `XX/XX/XXXX` the slashes
+  stay and the cursor skips them, so `04102026` is the date.  This is
+  the one place the editor is deliberately stricter than ADIS, which
+  treats such a picture as X(n).
+- **Leaving a field** by any cursor key is subject to REQUIRED and FULL
+  (2023 13.18.47.4 rule 3, 13.18.26.4 rule 3), not only by Tab and Enter.
+- The prompt character shows after the data only where the PROMPT
+  phrase asks for it (a positioned ACCEPT's); a SCREEN SECTION field
+  shows spaces, as before.  SECURE shows an asterisk a character.
+
+A numeric field's Home no longer zeroes it (Home is the first field);
+Ctrl-X does.

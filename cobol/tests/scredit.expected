@@ -1,0 +1,260 @@
+== X(6) ~  ~ abc{LEFT}{LEFT}Z{END}w
+(start)  [______]  1
+a        [a_____]  2
+b        [ab____]  3
+c        [abc___]  4
+LEFT     [abc___]  3
+LEFT     [abc___]  2
+Z        [aZc___]  3
+END      [aZc___]  4
+w        [aZcw__]  5
+ITEM=[aZcw  ]
+== X(6) ~  ~ abcdefgh
+(start)  [______]  1
+a        [a_____]  2
+b        [ab____]  3
+c        [abc___]  4
+d        [abcd__]  5
+e        [abcde_]  6
+f        [abcdef]  6
+g        [abcdeg]  6
+h        [abcdeh]  6
+ITEM=[abcdeh]
+== X(6) ~  ~ abcd{LEFT}{LEFT}{INS}XY{INS}Q
+(start)  [______]  1
+a        [a_____]  2
+b        [ab____]  3
+c        [abc___]  4
+d        [abcd__]  5
+LEFT     [abcd__]  4
+LEFT     [abcd__]  3
+INS      [abcd__]  3
+X        [abXcd_]  4
+Y        [abXYcd]  5
+INS      [abXYcd]  5
+Q        [abXYQd]  6
+ITEM=[abXYQd]
+== X(6) ~  ~ abcdef{HOME}{INS}XY
+(start)  [______]  1
+a        [a_____]  2
+b        [ab____]  3
+c        [abc___]  4
+d        [abcd__]  5
+e        [abcde_]  6
+f        [abcdef]  6
+HOME     [abcdef]  1
+INS      [abcdef]  1
+X        [Xabcde]  2
+Y        [XYabcd]  3
+ITEM=[XYabcd]
+== X(6) ~  ~ abcd{BS}{BS}xy{BS}
+(start)  [______]  1
+a        [a_____]  2
+b        [ab____]  3
+c        [abc___]  4
+d        [abcd__]  5
+BS       [abc___]  4
+BS       [ab____]  3
+x        [abx___]  4
+y        [abxy__]  5
+BS       [abx___]  4
+ITEM=[abx   ]
+== X(6) ~  ~ abcd{LEFT}{LEFT}{LEFT}{DEL}{DEL}{^R}
+(start)  [______]  1
+a        [a_____]  2
+b        [ab____]  3
+c        [abc___]  4
+d        [abcd__]  5
+LEFT     [abcd__]  4
+LEFT     [abcd__]  3
+LEFT     [abcd__]  2
+DEL      [acd___]  2
+DEL      [ad____]  2
+^R       [acd___]  2
+ITEM=[acd   ]
+== X(6) ~ hello ~ {RIGHT}{RIGHT}{^Z}{^A}{^X}Q
+(start)  [hello_]  1
+RIGHT    [hello_]  2
+RIGHT    [hello_]  3
+^Z       [he____]  3
+^A       [hello_]  1
+^X       [______]  1
+Q        [Q_____]  2
+ITEM=[Q     ]
+== X(6) ~ hello ~ ab{BS}{BS}
+(start)  [hello_]  1
+a        [aello_]  2
+b        [abllo_]  3
+BS       [aello_]  2
+BS       [hello_]  1
+ITEM=[hello ]
+== X(6) ~ hello ~ {RIGHT}{^F}{^O}
+(start)  [hello_]  1
+RIGHT    [hello_]  2
+^F       [hEllo_]  3
+^O       [hE llo]  3
+ITEM=[hE llo]
+== A(4) ~  ~ a1b-c d
+(start)  [____]  1
+a        [a___]  2
+1        [a___]  2
+b        [ab__]  3
+-        [ab__]  3
+c        [abc_]  4
+         [abc ]  4
+d        [abcd]  4
+ITEM=[abcd]
+== X(3) ~ xyz ~ 2{^O}{RIGHT}Y{DEL}
+(start)  [xyz]  1
+2        [2yz]  2
+^O       [2 y]  2
+RIGHT    [2 y]  3
+Y        [2 Y]  3
+DEL      [2 z]  3
+ITEM=[2 z]
+== X(3) ~  ~ X{END}1a{DEL}{BS}
+(start)  [___]  1
+X        [X__]  2
+END      [X__]  2
+1        [X1_]  3
+a        [X1a]  3
+DEL      [X1_]  3
+BS       [Xa_]  2
+ITEM=[Xa ]
+== X(1) ~ q ~ b{BS}{BS}X {RIGHT}{BS}c1{INS}{LEFT}Z
+(start)  [q]  1
+b        [b]  1
+BS       [q]  1
+BS       [q]  1
+X        [X]  1
+         [ ]  1
+RIGHT    [ ]  1
+BS       [X]  1
+c        [c]  1
+1        [1]  1
+INS      [1]  1
+LEFT     [1]  1
+Z        [Z]  1
+ITEM=[Z]
+== X(3) ~  ~ b2{^Z}  a{INS}b Xb{^R}{BS}Y
+(start)  [___]  1
+b        [b__]  2
+2        [b2_]  3
+^Z       [b2_]  3
+         [b2 ]  3
+         [b2 ]  3
+a        [b2a]  3
+INS      [b2a]  3
+b        [b2b]  3
+         [b2 ]  3
+X        [b2X]  3
+b        [b2b]  3
+^R       [b2 ]  3
+BS       [b2b]  3
+Y        [b2Y]  3
+ITEM=[b2Y]
+== A(4) ~ ab ~ c{^F}bZ{LEFT}{RIGHT}{INS} {DEL}{BS}Ya{DEL}{LEFT}
+(start)  [ab__]  1
+c        [cb__]  2
+^F       [cB__]  3
+b        [cBb_]  4
+Z        [cBbZ]  4
+LEFT     [cBbZ]  3
+RIGHT    [cBbZ]  4
+INS      [cBbZ]  4
+         [cBb ]  4
+DEL      [cBbZ]  4
+BS       [cBb_]  4
+Y        [cBbY]  4
+a        [cBba]  4
+DEL      [cBbY]  4
+LEFT     [cBbY]  3
+ITEM=[cBbY]
+== XX/XX/XXXX ~  ~ 04102026
+(start)  [__/__/____]  1
+0        [0_/__/____]  2
+4        [04/__/____]  4
+1        [04/1_/____]  5
+0        [04/10/____]  7
+2        [04/10/2___]  8
+0        [04/10/20__]  9
+2        [04/10/202_]  10
+6        [04/10/2026]  10
+ITEM=[04/10/2026]
+== XX/XX/XXXX ~  ~ 0410{LEFT}{LEFT}{LEFT}9{BS}{BS}{DEL}2026
+(start)  [__/__/____]  1
+0        [0_/__/____]  2
+4        [04/__/____]  4
+1        [04/1_/____]  5
+0        [04/10/____]  7
+LEFT     [04/10/____]  5
+LEFT     [04/10/____]  4
+LEFT     [04/10/____]  2
+9        [09/10/____]  4
+BS       [04/10/____]  2
+BS       [ 4/10/____]  1
+DEL      [41/0_/____]  1
+2        [21/0_/____]  2
+0        [20/0_/____]  4
+2        [20/2_/____]  5
+6        [20/26/____]  7
+ITEM=[20/26/    ]
+== XX/XX/XXXX ~  ~ 12345678{HOME}{INS}9{^X}7
+(start)  [__/__/____]  1
+1        [1_/__/____]  2
+2        [12/__/____]  4
+3        [12/3_/____]  5
+4        [12/34/____]  7
+5        [12/34/5___]  8
+6        [12/34/56__]  9
+7        [12/34/567_]  10
+8        [12/34/5678]  10
+HOME     [12/34/5678]  1
+INS      [12/34/5678]  1
+9        [91/23/4567]  2
+^X       [__/__/____]  1
+7        [7_/__/____]  2
+ITEM=[7 /  /    ]
+== 99/99/9999 ~  ~ 0a4b1c02026
+(start)  [__/__/____]  1
+0        [0_/__/____]  2
+a        [0_/__/____]  2
+4        [04/__/____]  4
+b        [04/__/____]  4
+1        [04/1_/____]  5
+c        [04/1_/____]  5
+0        [04/10/____]  7
+2        [04/10/2___]  8
+0        [04/10/20__]  9
+2        [04/10/202_]  10
+6        [04/10/2026]  10
+ITEM=[04/10/2026]
+== XXBXX ~  ~ abcd{LEFT}{LEFT}{LEFT}{DEL}
+(start)  [__ __]  1
+a        [a_ __]  2
+b        [ab __]  4
+c        [ab c_]  5
+d        [ab cd]  5
+LEFT     [ab cd]  4
+LEFT     [ab cd]  2
+LEFT     [ab cd]  1
+DEL      [bc d_]  1
+ITEM=[bc d ]
+== AA99 ~  ~ ab12{HOME}{INS}c
+(start)  [____]  1
+a        [a___]  2
+b        [ab__]  3
+1        [ab1_]  4
+2        [ab12]  4
+HOME     [ab12]  1
+INS      [ab12]  1
+c        [ab12]  1
+ITEM=[ab12]
+== AA99 ~  ~ a1b23
+(start)  [____]  1
+a        [a___]  2
+1        [a___]  2
+b        [ab__]  3
+2        [ab2_]  4
+3        [ab23]  4
+ITEM=[ab23]

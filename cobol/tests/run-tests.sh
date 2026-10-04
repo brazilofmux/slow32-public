@@ -171,7 +171,7 @@ fi
 # a run that silently dropped two gates would read as a full one.
 SKIPPED=""; GEN_SKIPPED=""
 if ! command -v "$HOSTCC" >/dev/null 2>&1; then
-    SKIPPED=" pictest bt_test wide_test scram_test"
+    SKIPPED=" pictest bt_test wide_test scredit_test scram_test"
     echo "SKIP  pictest  (no host C compiler: $HOSTCC)"
     echo "SKIP  bt_test  (no host C compiler: $HOSTCC)"
 elif ! "$HOSTCC" -std=c99 -I"$CDIR/src" -O1 -w -o "$W/pictest" "$HERE/pictest.c" \
@@ -196,6 +196,26 @@ if [ -z "$SKIPPED" ]; then
         report "wide_test" 0 "$(tail -1 "$W/wide.out" | sed 's/^wide_test: //')"
     else
         report "wide_test" 1 "$(tail -1 "$W/wide.out")"
+    fi
+fi
+
+# --- Gate 1i: the screen field editor's core (host, libcob/scredit.h) ---
+# tests/scredit.txt's pictures and keys through the core, the field and
+# cursor after every key against scredit.expected (docs/plans/
+# screen-input.md; scredit-differential.sh checks the same core against
+# Micro Focus's ADIS when the oracle rig is there)
+if [ -z "$SKIPPED" ]; then
+    if ! "$HOSTCC" -std=gnu99 -I"$CDIR/libcob" -O1 -w -o "$W/scredit_test" "$HERE/scredit_test.c" 2>"$W/cc.log"; then
+        report "scredit_test" 1 "host build"
+    else
+        grep -v '^#' "$HERE/scredit.txt" | while IFS='~' read -r pic val keys; do
+            echo "== $pic ~ $val ~ $keys"; "$W/scredit_test" "$pic" "$val" "$keys{ENTER}"
+        done > "$W/scredit.out" 2>&1
+        if cmp -s "$W/scredit.out" "$HERE/scredit.expected"; then
+            report "scredit_test" 0 "$(grep -c '^==' "$W/scredit.out") cases"
+        else
+            report "scredit_test" 1 "$(diff "$W/scredit.out" "$HERE/scredit.expected" | head -1)"
+        fi
     fi
 fi
 

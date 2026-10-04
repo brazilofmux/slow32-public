@@ -56,6 +56,8 @@
 #include "picture.h"
 #include "../libcob/wide.h"    /* 31 digits: the runtime's 128-bit arithmetic, for VALUE and literals */
 #include "../libcob/cobrt.h"
+#define SCREDIT_EXPAND_ONLY
+#include "../libcob/scredit.h"  /* se_expand_picture: a screen field's picture, a symbol a column */
 #include "../../common/s32utf.h"   /* the one Unicode model: coding, width, clusters (cobol ISSUES-94) */
 
 #define VERSION "0.63 (stage 63: IF module)"

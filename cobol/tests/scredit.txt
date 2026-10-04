@@ -1,0 +1,30 @@
+# scredit.txt -- the screen editor's core (libcob/scredit.h), cases for
+# tests/scredit_test: PICTURE ~ initial value ~ keys.  The expected
+# output (scredit.expected) is what the core does; for the pictures with
+# no insertion characters it is also, key for key, what Micro Focus's
+# ADIS does (tests/scredit-differential.sh checks that against the
+# oracle; these cases are among its fixed ones).  The edited pictures at
+# the end are where this editor is deliberately stricter than ADIS: the
+# insertion characters are protected and the cursor skips them.
+X(6)~~abc{LEFT}{LEFT}Z{END}w
+X(6)~~abcdefgh
+X(6)~~abcd{LEFT}{LEFT}{INS}XY{INS}Q
+X(6)~~abcdef{HOME}{INS}XY
+X(6)~~abcd{BS}{BS}xy{BS}
+X(6)~~abcd{LEFT}{LEFT}{LEFT}{DEL}{DEL}{^R}
+X(6)~hello~{RIGHT}{RIGHT}{^Z}{^A}{^X}Q
+X(6)~hello~ab{BS}{BS}
+X(6)~hello~{RIGHT}{^F}{^O}
+A(4)~~a1b-c d
+X(3)~xyz~2{^O}{RIGHT}Y{DEL}
+X(3)~~X{END}1a{DEL}{BS}
+X(1)~q~b{BS}{BS}X {RIGHT}{BS}c1{INS}{LEFT}Z
+X(3)~~b2{^Z}  a{INS}b Xb{^R}{BS}Y
+A(4)~ab~c{^F}bZ{LEFT}{RIGHT}{INS} {DEL}{BS}Ya{DEL}{LEFT}
+XX/XX/XXXX~~04102026
+XX/XX/XXXX~~0410{LEFT}{LEFT}{LEFT}9{BS}{BS}{DEL}2026
+XX/XX/XXXX~~12345678{HOME}{INS}9{^X}7
+99/99/9999~~0a4b1c02026
+XXBXX~~abcd{LEFT}{LEFT}{LEFT}{DEL}
+AA99~~ab12{HOME}{INS}c
+AA99~~a1b23

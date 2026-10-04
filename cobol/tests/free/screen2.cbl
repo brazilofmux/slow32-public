@@ -1,6 +1,7 @@
 *> The screen as docs/screen.md's "eventual target" has it: numeric
 *> fields edited on the decimal point (Z9.99 USING, 99 USING AUTO),
-*> a text field edited in place with the cursor keys, SECURE echoing
+*> a text field edited in place (Right, End to the end of its data,
+*> Left, Delete closing up), SECURE echoing
 *> stars, REQUIRED refusing to leave an empty field, UNDERLINE and
 *> colours painted, LINE PLUS / COLUMN PLUS placing slots.  The keys
 *> come from screen2.keys; the ANSI stream is the expected output.
