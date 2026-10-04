@@ -5998,3 +5998,35 @@ and de-editing (cob_get_edited, 30 ns; kedit's `move e1 to w`).
 Measured and declined this batch: WRITE/READ as direct calls (two
 instructions a record).  Port done: the x == 0 seq emission to stage08
 and fortran (589d3955).
+
+### 124. ACAS: a whole accounting suite written for GnuCOBOL (2026-10-04, in progress)
+
+Applewood Computers Accounting System 3.01.07 (SourceForge, GPL v2):
+134 main programs and 78 copybooks, about 100,000 lines -- sales,
+purchase, stock, general and incomplete-records ledgers -- written for
+GnuCOBOL, with SCREEN SECTION and ACCEPT/DISPLAY AT, Report Writer,
+indexed files, >>SOURCE FREE, COMP-5 and CBL_ routines.  Kept in
+~/acas, never in a git tree.  The sweep compiles every main program
+-free -std=2002 -I copybooks and records the first error; the blockers
+are taken one at a time, each with a test and all the gates.  Under the
+dialect rulings: what the standard allows and we refused is a fix; what
+it does not is a BP-E extension point.
+
+Start: 5 of 134 compiled.
+
+- **ASSIGN TO a LINKAGE item was refused** ("a LINKAGE item cannot name
+  a file") -- 65 programs, ACAS passing its file names to every
+  subprogram in a LINKAGE table.  The 2023 text forbids only an item of
+  the file's own record (12.4.5.2 rule 7), so this was a gap, not a
+  dialect question.  A LINKAGE, LOCAL-STORAGE or EXTERNAL name's address
+  is stored into the file at entry, as a FILE STATUS item's is (offset
+  24, beside status's 16), and saved per activation in a RECURSIVE
+  program; an item of ANY LENGTH is refused as not yet implemented.
+  Test: fixed/assignlk (a second CALL with a new name opens a new file;
+  identical to GnuCOBOL).  13 of 134.
+
+Next, in order: ACCEPT FROM ENVIRONMENT / ARGUMENT-VALUE / LINES /
+COLUMNS and DISPLAY ... WITH FOREGROUND-COLOR (X/Open extensions, BP-E
+points); the SCREEN SECTION BLANK SCREEN placement rule; COMP-X longer
+than seven bytes; PAGE LIMIT without a number; >>SOURCE FREE carried into
+copybooks (GnuCOBOL does; to be checked against the 2002/2014 texts).

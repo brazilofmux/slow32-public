@@ -761,8 +761,14 @@ static void finish_data_division(void)
         }
         if (f->assign_name[0]) {
             f->assign_sym = sym_lookup(f->assign_name, NULL, 0, f->line);
-            if (rec_indirect(&g_sym[f->assign_sym->record]))
-                die_at(f->line, "ASSIGN TO '%s': a %s item cannot name a file", f->assign_name, indirect_kind(&g_sym[f->assign_sym->record]));
+            /* a LINKAGE, LOCAL-STORAGE or EXTERNAL item names the file as well
+             * as any other (2023 12.4.5.2 rule 7 forbids only an item of the
+             * file's own record): its address goes into the file at entry,
+             * as a FILE STATUS item's does.  Its length must be known. */
+            if (f->assign_sym->any_len)
+                die_at(f->line, "ASSIGN TO '%s': an item of ANY LENGTH cannot name a file yet", f->assign_name);
+            if (f->assign_sym->record >= 0 && g_sym[f->assign_sym->record].fd == i)
+                die_at(f->line, "ASSIGN TO '%s': an item of the file's own record cannot name it (2023 12.4.5.2 rule 7)", f->assign_name);
             /* a group is alphanumeric by the standard's own rules: the suite
              * builds "GENTBL." + module suffix that way (GitHub #34) */
             if (!f->assign_sym->is_group && f->assign_sym->pi.category == PIC_NUMERIC)

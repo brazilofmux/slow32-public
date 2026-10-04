@@ -27,6 +27,8 @@ static void emit_act_desc(void)
             File *f = &g_files[i];
             if (f->status_sym && (g_sym[f->status_sym->record].is_linkage || g_sym[f->status_sym->record].is_local) && nw < 256)
                 snprintf(words[nw++], sizeof words[0], ".Lf%d_%d+16", f->unit, i);
+            if (f->assign_sym && (g_sym[f->assign_sym->record].is_linkage || g_sym[f->assign_sym->record].is_local) && nw < 256)
+                snprintf(words[nw++], sizeof words[0], ".Lf%d_%d+24", f->unit, i);
         }
         for (int k = 0; k < g_ncnt; k++)
             if (g_cnt_unit[k] == g_unit && nw < 256) snprintf(words[nw++], sizeof words[0], ".Lcnt%d", k);
@@ -134,7 +136,8 @@ static void emit_unit_data(void)
             emit("\t.word %s", lit_label(z, f->assign_lit->len + 1));
             free(z);
         } else emit("\t.word 0");
-        if (f->assign_sym) { emit("\t.word %s+%d", g_sym[f->assign_sym->record].label, f->assign_sym->offset); emit("\t.word %d", f->assign_sym->size); }
+        if (f->assign_sym && !rec_indirect(&g_sym[f->assign_sym->record])) { emit("\t.word %s+%d", g_sym[f->assign_sym->record].label, f->assign_sym->offset); emit("\t.word %d", f->assign_sym->size); }
+        else if (f->assign_sym) { emit("\t.word 0"); emit("\t.word %d", f->assign_sym->size); }   /* a LINKAGE or EXTERNAL name: its address is stored at entry */
         else { emit("\t.word 0"); emit("\t.word 0"); }
         emit("\t.word 0");
         emit("\t.word 0");

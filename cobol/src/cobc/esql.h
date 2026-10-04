@@ -1495,6 +1495,15 @@ static void parse_procedure_division(void)
         emit_la("r2", lab);
         emit("\tstw r2+16, r1");
     }
+    /* likewise an ASSIGN data-name there (its address is at 24) */
+    for (int i = g_file_base; i < g_nfile; i++) {
+        File *f = &g_files[i];
+        if (!f->assign_sym || !rec_indirect(&g_sym[f->assign_sym->record])) continue;
+        emit_item_addr("r1", f->assign_sym, f->assign_sym->offset);
+        char lab[32]; snprintf(lab, sizeof lab, ".Lf%d_%d", f->unit, i);
+        emit_la("r2", lab);
+        emit("\tstw r2+24, r1");
+    }
     /* EXTERNAL records: the block every program of this name shares (the
      * records of an EXTERNAL FD share one block under the file's name) */
     int has_ext_file = 0;
