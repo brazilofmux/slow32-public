@@ -710,9 +710,10 @@ the observable process exit code is therefore `r1 & 0xFF`. Guest conventions:
 On stopping, the host releases all negotiated services (§8.13: terminal mode
 restored; tube port file removed) and closes everything.
 
-Other stops (memory fault, cycle limit, assertion failure) also end with r1
-as the exit status; what is printed is host diagnostics (§8.16), not guest
-output.
+A fault ends with the fault status of 7.2 (139, 132 or 134), not r1. A
+stop the host imposes itself (the reference interpreter's `-c` cycle
+limit, a debugger) ends with r1. What is printed in either case is host
+diagnostics (§8.16), not guest output.
 
 
 ### 8.4 Status and errno
@@ -840,7 +841,7 @@ Request ignored. Response `status` 0.
 | | |
 |---|---|
 | Request | `length`, `status` ignored |
-| Action | read one byte from host standard input (§8.5 quirk) |
+| Action | read one byte from the host's standard input descriptor (§8.5) |
 | Response | byte read: `status` 0, `length` 1; end of input or error: `status` `0xFFFFFFFF`, `length` 0 |
 | Data out | the byte at `off` |
 
@@ -1489,8 +1490,8 @@ events (§8.15).
 the corrections below; read it with them applied.
 
 1. **Negotiation.** As §8.13: the reply is the 16-byte blob at `off`;
-   `opcode_count` 16. "One tube session per guest" is not enforced: a second
-   SVC_REQUEST for `"tube"` grants a second session (§8.13 quirk).
+   `opcode_count` 16. A second SVC_REQUEST for `"tube"` while one is active
+   is CONFLICT, which enforces TUBE.md's "one tube session per guest".
 2. **INFO bit 8** ("viewer attached") is also set whenever the
    `S32_TUBE_DUMP` journal directory is active. STATUS bit 31 reflects a real
    viewer connection only.
@@ -1596,15 +1597,16 @@ writing).
 
 **docs/mmio/opcode-map.md**
 - Range table, `0x80–0xEF`: "Guest-picked bases" — the host picks bases,
-  sequentially from 0x80.
+  the lowest free range from 0x80.
 - Range table, `0x60–0x7F` "Host environment": only 0x60–0x64 exist; the
-  `env` policy name covers 0x60–0x6F only.
+  `env` policy name covers 0x62–0x6F only (ARGS_INFO/ARGS_DATA are never
+  gated).
 - GETTIME, SLEEP, STAT: "errors clear `resp.length`" — on ERR `length` is the
   errno.
 - SLEEP: "`length` must be 16" — any `length` ≥ 16 is accepted. "We still lack
   a global `errno`" is obsolete.
-- STAT: omits that every stat failure is `EINVAL`, and that the fd form
-  stats the host descriptor with the guest's number (8.6 reference defect).
+- STAT: omits the errors (8.6: `EBADF` for a closed fd, otherwise the stat
+  errno).
 - EXEC: omits the `.s32x` suffix requirement, the 4095-byte payload limit,
   the 11-argument limit, and the results 127 (could not start) and 255
   (signal).
@@ -1620,9 +1622,8 @@ writing).
   `[result, base, count, version]` (16 bytes on grant, 4 bytes otherwise) with
   descriptor `status` 0.
 - "opcode_count (e.g. 8 — so term is 0x80-0x87)": term has 15 opcodes, tube 16.
-- Response codes: SVC_OK is not "at requested opcode base"; SVC_CONFLICT and
-  SVC_VERSION_ERR are never returned (re-requesting an active service grants a
-  second session).
+- Response codes: SVC_OK is not "at requested opcode base"; SVC_VERSION_ERR
+  is never returned.
 - "Versioning (Resolved)": the guest cannot request a minimum version.
 - "Host Policy": `--sandbox`, `--sandbox-off` and the policy file do not
   exist; options must precede the program path; there is no default-deny
@@ -1667,4 +1668,3 @@ writing).
   4-aligned.
 - §5: PRESENT always reads the full 32 KB pattern table; background tiles
   blend with `a = palette.alpha`.
-- §1 "One tube session per guest": not enforced.
