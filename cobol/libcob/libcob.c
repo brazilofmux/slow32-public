@@ -5180,6 +5180,7 @@ static void scr_render(const cob_scr_field *f, char *buf)
 {
     if (scr_kind(f) == COB_SCR_VALUE) { memcpy(buf, f->value, f->width); return; }
     if (scr_kind(f) == COB_SCR_TO) { memset(buf, ' ', f->width); return; }
+    if (f->rsv & COB_SR_DYNLEN) { memcpy(buf, scr_item(f), f->width); return; }   /* the part's own characters */
     cob_move(scr_item(f), (const cob_desc *)f->item_desc, buf, (const cob_desc *)f->pic);
 }
 

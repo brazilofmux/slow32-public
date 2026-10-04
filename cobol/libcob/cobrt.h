@@ -163,6 +163,7 @@ enum { COB_SF_HIGHLIGHT = 1, COB_SF_UNDERLINE = 2, COB_SF_AUTO = 4, COB_SF_REVER
  * ERASE_*: clear before painting; NOBEEP: no bell on a rejected key. */
 enum { COB_SX_POS = 1, COB_SX_PROMPT = 2, COB_SX_ERASE_EOS = 4, COB_SX_ERASE_EOL = 8,
        COB_SX_ERASE_ALL = 16, COB_SX_NOBEEP = 32, COB_SX_CONT = 64 };
+enum { COB_SR_DYNLEN = 1 };
 
 typedef struct {
     unsigned char kind, flags;
@@ -174,7 +175,7 @@ typedef struct {
     void *item;                  /* the FROM/TO/USING item */
     const void *item_desc;
     unsigned char ext, prompt;   /* COB_SX_* bits; the PROMPT character */
-    unsigned short rsv;
+    unsigned short rsv;          /* COB_SR_DYNLEN: a part of computed length, its bytes the field (width set by the statement) */
 } cob_scr_field;                 /* 32 bytes on the guest: the compiler lays slots out by that */
 
 void cob_scr_at(cob_scr_field *f, int rrcc);   /* AT rrcc from an identifier: line rr, column cc */

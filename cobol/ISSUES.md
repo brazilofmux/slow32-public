@@ -6213,6 +6213,14 @@ not a key (gl030; GnuCOBOL compiles it and every READ fails, status 23).
   other ten, eight are the refusals above; pl015 and sl020 are a
   positioned DISPLAY of a reference-modified part with a variable
   length, a compiler gap.
+- **A positioned DISPLAY of a part of computed length** (pl015, sl020:
+  `display line-7-19 (Screen-Start:Screen-End) at 0801`): the slot's
+  width is stored when the statement runs, as AT positions are, and the
+  runtime copies that many of the part's characters (COB_SR_DYNLEN in
+  the slot's reserved half-word).  DISPLAY only; ACCEPT of such a part,
+  and SIZE with one, stay refused.  Test: free/posrmlen.
+  **107 of the 115 built programs compile; the eight left are the
+  refusals ruled above, which need the ACAS source fixed.**
 
 Next, in order: the SCREEN SECTION BLANK SCREEN placement rule; COMP-X longer
 than seven bytes; PAGE LIMIT without a number; >>SOURCE FREE carried into

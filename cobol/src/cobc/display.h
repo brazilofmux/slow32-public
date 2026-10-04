@@ -188,6 +188,7 @@ static void emit_pos_stmt(int si, const char *fn)
         if (f->line_r) { emit_pos_int(f->line_r); emit_la_off("r2", rec, k * SCRF_SIZE + 2); emit("\tsth r2+0, r1"); }
         if (f->col_r)  { emit_pos_int(f->col_r);  emit_la_off("r2", rec, k * SCRF_SIZE + 4); emit("\tsth r2+0, r1"); }
         if (f->at_r)    { emit_pos_int(f->at_r); emit("\tadd r4, r0, r1"); emit_la_off("r3", rec, k * SCRF_SIZE); emit_call("cob_scr_at"); }
+        if (f->dynlen)  { emit_expr_pos(f->ref->rm_lx); emit_la_off("r2", rec, k * SCRF_SIZE + 8); emit("\tstw r2+0, r1"); }
     }
     char lab[48]; snprintf(lab, sizeof lab, ".Lscr%d_%d", g_unit, si);
     emit_la("r3", lab); emit_call(fn);
@@ -211,6 +212,16 @@ static void parse_display_positioned(void)
             f->kind = COB_SCR_FROM; f->item = o.ref.sym; f->dyn = 1;
             f->ref = xmalloc(sizeof *f->ref); *f->ref = o.ref;
             f->has_pic = 1;
+            if (o.ref.rm && o.ref.rm_lx && !o.ref.rm_bit && !o.ref.rm_nat && !sym_is_national(o.ref.sym)) {
+                /* a part of computed length (ACAS's pl015: line-7-19
+                 * (Screen-Start:Screen-End)): its characters, as many as
+                 * the length says when the statement runs, stored into
+                 * the slot's width (emit_pos_stmt); SIZE would fix it */
+                if (f->width) die_at(o.line, "SIZE with a reference-modified part of computed length is not implemented");
+                f->dynlen = 1;
+                f->pi.category = PIC_ALPHANUMERIC; f->pi.bytes = o.ref.sym->size;
+                break;
+            }
             if (o.ref.rm) {
                 /* a part: shown as its own characters (as ACCEPT's) */
                 sfield_part(f, &o.ref, o.line);
