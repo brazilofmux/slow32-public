@@ -6294,6 +6294,16 @@ runtime/system.c's stub, so print files stay as prt-n to be read.
   its check digit on lookup; Escape on an invoice line abandons the
   invoice, a blank product ends it; leave a ledger with X, since the
   "posted" flags reach system.dat only then.
+- **Purchase cycle**: analysis codes, a purchase invoice (40.00 + 8.00
+  VAT), its proof report, posting (pl055 creates the missing value
+  records with a PL201 note; pl060: supplier 0.00 -> 48.00), payment
+  input, proof and cash posting (48.00 -> 0.00) all run.  One more
+  ACAS defect: pl100 then fails "PL132 ... 22 Key Exists" writing its GL
+  batch header -- pl060 numbers ledger-2 batches from Next-Batch (2,
+  after Sales took 1), pl080/pl100 from BL-Next-Batch (also 2; its
+  copybook comment says "unused ?"), into the one batch file.  The
+  ledger itself is right; the payments' GL batch header is lost.  Not
+  worked around.
 
 Next, in order: the SCREEN SECTION BLANK SCREEN placement rule; COMP-X longer
 than seven bytes; PAGE LIMIT without a number; >>SOURCE FREE carried into
