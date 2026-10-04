@@ -553,6 +553,17 @@ static void finish_data_division(void)
         s->has_pic = 1; snprintf(s->pic, sizeof s->pic, "x(1024)");
         if (pic_analyse(s->pic, &s->pi) < 0) die_at(f->line, "internal: implicit ASSIGN item");
     }
+    /* COB-CRT-STATUS (BP-G2, -dialect=gnucobol only): GnuCOBOL declares it,
+     * PIC 9(4), and makes it the CRT STATUS when SPECIAL-NAMES names none.
+     * Declared whether or not it is used, as GnuCOBOL does. */
+    if (g_dialect_gnu && !sym_lookup_quiet("cob-crt-status")) {
+        Sym *s = sym_new();
+        snprintf(s->name, sizeof s->name, "cob-crt-status");
+        s->level = 1; s->line = 0; s->usage = U_DISPLAY;
+        s->has_pic = 1; snprintf(s->pic, sizeof s->pic, "9(4)");
+        if (pic_analyse(s->pic, &s->pi) < 0) die_at(0, "internal: implicit COB-CRT-STATUS");
+        if (!g_crt_status_name[0]) snprintf(g_crt_status_name, sizeof g_crt_status_name, "cob-crt-status");
+    }
     build_tree();
     /* GLOBAL reaches down: a GLOBAL item's subordinates and conditions, the
      * records of a GLOBAL FD (parents precede children in the table) */

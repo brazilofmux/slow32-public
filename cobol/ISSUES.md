@@ -6056,6 +6056,14 @@ The sweep compiles -dialect=gnucobol from here on.
   The 01's colours are the base the nested groups compose over and the
   fields straight under it take.  Test: free/scr01color (no oracle).
   77 of 134.
+- **COB-CRT-STATUS** (14 programs test it against COB-SCR-ESC):
+  GnuCOBOL's implicit CRT STATUS item, declared by no one -- GnuCOBOL's
+  alone, so class G, BP-G2.  Under -dialect=gnucobol an implicit
+  WORKING-STORAGE 01 PIC 9(4), declared whether used or not as GnuCOBOL
+  does, and the CRT STATUS item when SPECIAL-NAMES names none.  Without
+  the switch, an undeclared COB-CRT-STATUS is refused naming it rather
+  than only "not declared".  Tests: free/gnu-crtstatus (0000 after
+  Enter, 2005 after Escape), bad/cob-crt-status.  86 of 134.
 
 Next, in order: the SCREEN SECTION BLANK SCREEN placement rule; COMP-X longer
 than seven bytes; PAGE LIMIT without a number; >>SOURCE FREE carried into

@@ -411,6 +411,7 @@ static Sym *sym_lookup(const char *name, char **quals, int nq, int line)
         for (int i = 0; i < g_npoison; i++)
             if (!strcmp(g_poison[i], name) && g_recover) longjmp(*g_recover, 1);
         if (nq) die_at(line, "'%s' is not declared under '%s'", name, quals[0]);
+        if (!strcmp(name, "cob-crt-status")) bp(BP_G2_COB_CRT_STATUS, line);   /* GnuCOBOL's implicit one: name the switch */
         die_at(line, "'%s' is not declared", name);
     }
     if (nfound > 1) die_at(line, "'%s' is ambiguous; qualify it with OF/IN", name);
