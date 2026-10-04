@@ -6910,6 +6910,32 @@ int cob_env_accept_named(const char *np, int nn, void *p, const cob_desc *d)
     put_text(p, d, v, (int)strlen(v));
     return 0;
 }
+/* SET ENVIRONMENT name TO value (GnuCOBOL's; BP-E31): the name and the
+ * value both without their trailing spaces, as GnuCOBOL takes them --
+ * unlike DISPLAY UPON ENVIRONMENT-VALUE, which keeps them (MF DISPLAY rule
+ * 9).  Kept in the run unit's table like a DISPLAY's; no setenv. */
+int cob_env_set_named(const char *np, int nn, const char *vp, int vn)
+{
+    char name[256]; env_copy_name(name, np, nn);
+    while (vn > 0 && (vp[vn - 1] == ' ' || vp[vn - 1] == 0)) vn--;
+    env_set = realloc(env_set, (size_t)(env_nset + 1) * sizeof *env_set);
+    char *v = malloc((size_t)vn + 1), *k = malloc(strlen(name) + 1);
+    if (!env_set || !v || !k) return 1;
+    memcpy(v, vp, (size_t)vn); v[vn] = 0; strcpy(k, name);
+    env_set[env_nset].name = k; env_set[env_nset].value = v; env_nset++;
+    return 0;
+}
+
+/* ACCEPT ... FROM LINES | COLUMNS (X/Open's; BP-E32): the terminal's size,
+ * 24 by 80 when it has none (output not to a terminal) */
+void cob_accept_scr_dim(int cols, void *p, const cob_desc *d)
+{
+    int r = 24, c = 80;
+    term_get_size(&r, &c);
+    if (r <= 0) r = 24;
+    if (c <= 0) c = 80;
+    cob_put_num(p, d, cols ? c : r, 0);
+}
 
 /* ACCEPT identifier: one line from standard input, without its newline,
  * moved as alphanumeric text.  At end of file the item is left as it was. */

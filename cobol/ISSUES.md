@@ -6025,8 +6025,17 @@ Start: 5 of 134 compiled.
   Test: fixed/assignlk (a second CALL with a new name opens a new file;
   identical to GnuCOBOL).  13 of 134.
 
-Next, in order: ACCEPT FROM ENVIRONMENT / ARGUMENT-VALUE / LINES /
-COLUMNS and DISPLAY ... WITH FOREGROUND-COLOR (X/Open extensions, BP-E
-points); the SCREEN SECTION BLANK SCREEN placement rule; COMP-X longer
+- **SET ENVIRONMENT and ACCEPT FROM LINES / COLUMNS** (25 programs set
+  COB_SCREEN_EXCEPTIONS and friends; screens size themselves from the
+  terminal).  ACCEPT FROM ENVIRONMENT was already BP-E31; GnuCOBOL's SET
+  ENVIRONMENT name TO value joins it, name and value without trailing
+  spaces as GnuCOBOL takes them, kept in the run unit's table.  LINES and
+  COLUMNS are X/Open's, a new point BP-E32: the term service's size, 24
+  by 80 with no terminal.  Tests: free/setenv (identical to GnuCOBOL),
+  free/mf-scrdims (GnuCOBOL starts curses for them and stops with no
+  terminal: docs/oracles.md).  The programs these unblocked stop next at
+  WITH FOREGROUND-COLOR, so the count stays 13 of 134.
+
+Next, in order: DISPLAY/ACCEPT ... WITH FOREGROUND-COLOR (BP-E7); the SCREEN SECTION BLANK SCREEN placement rule; COMP-X longer
 than seven bytes; PAGE LIMIT without a number; >>SOURCE FREE carried into
 copybooks (GnuCOBOL does; to be checked against the 2002/2014 texts).

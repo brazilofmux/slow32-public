@@ -311,9 +311,27 @@ static void set_cond_move(Opnd *v, Ref *p)
     emit_move(v, p);
 }
 
+static void env_text_args(Opnd *o, const char *what);
 static void parse_set(void)
 {
     Ref rs[MAXOPS]; int nr = 0;
+    if (at_word("environment") && !sym_lookup_quiet("environment")) {
+        /* SET ENVIRONMENT name TO value (GnuCOBOL's; BP-E31): a variable
+         * the run unit's later ACCEPT ... FROM ENVIRONMENT reads */
+        int line = cur()->line;
+        bp(BP_E31_ENVIRONMENT, line);
+        advance();
+        Opnd no; parse_operand(&no);
+        env_text_args(&no, "SET ENVIRONMENT");
+        emit("\tstw sp+%d, r3", SLOT_A); emit("\tstw sp+%d, r4", SLOT_B);
+        expect_word("to");
+        Opnd vo; parse_operand(&vo);
+        env_text_args(&vo, "SET ENVIRONMENT ... TO");
+        emit("\tadd r5, r3, r0"); emit("\tadd r6, r4, r0");
+        emit("\tldw r3, sp+%d", SLOT_A); emit("\tldw r4, sp+%d", SLOT_B);
+        emit_call("cob_env_set_named");
+        return;
+    }
     if (g_std >= 2002 && at_word("last") && is_word(peek(1), "exception")) {
         /* SET LAST EXCEPTION TO OFF (2023 14.9.39): no exception condition exists */
         advance(); advance(); expect_word("to"); expect_word("off");

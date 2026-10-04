@@ -374,6 +374,17 @@ static void parse_accept_1(void)
             accept_word("end-accept");
             return;
         }
+        if ((at_word("lines") || at_word("columns")) && !mnemonic_kind(cur()->s)) {
+            /* the terminal's size (X/Open; BP-E32) */
+            if (!is_numeric_sym(r.sym)) die_at(r.line, "ACCEPT ... FROM %s needs a numeric item", at_word("lines") ? "LINES" : "COLUMNS");
+            bp(BP_E32_SCREEN_DIMS, r.line);
+            int cols = at_word("columns"); advance();
+            Arg a[3] = { arg_imm(cols), arg_ref(&r), arg_desc(sym_desc(r.sym)) };
+            emit_args(a, 3);
+            emit_call("cob_accept_scr_dim");
+            accept_word("end-accept");
+            return;
+        }
         if (at_word("date") || at_word("day") || at_word("time") || at_word("day-of-week")) {
             /* the unsigned integer of the text -- YYMMDD, YYDDD, HHMMSShh, 1 (Monday) to 7 -- by the MOVE rules */
             int which = at_word("date") ? 0 : at_word("day") ? 1 : at_word("time") ? 2 : 3;

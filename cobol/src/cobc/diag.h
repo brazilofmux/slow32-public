@@ -219,7 +219,7 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_E15_INIT_ODO, BP_E16_NUMERIC_KEY, BP_E17_NUMERIC_STATUS, BP_E18_NO_ATEND, BP_E19_LINESEQ_CLAUSES,
        BP_E20_LONG_LITERAL, BP_E21_EXIT_PROGRAM_NOT_LAST, BP_E22_SEPARATOR_SPACE, BP_E23_CONDNAME_GROUP,
        BP_E24_COMMENT_ENTRY_2002, BP_E25_CONSTANT_NO_AS, BP_E26_LEVEL_78, BP_E27_TRIM, BP_E28_ANY_LENGTH_OUTER, BP_E29_ROUNDED_MODE, BP_E30_DOLLAR_SET,
-       BP_D1_MF_NO_FILE_CONTROL, BP_D2_MF_SPLIT_KEY, BP_D3_MF_STOP_NOT_LAST, BP_D4_MF_EXIT_NOT_ALONE, BP_D5_MF_NO_FILE_SECTION, BP_D6_MF_ASSIGN_IMPLICIT, BP_D7_MF_VALUE_TRUNCATED, BP_E31_ENVIRONMENT,
+       BP_D1_MF_NO_FILE_CONTROL, BP_D2_MF_SPLIT_KEY, BP_D3_MF_STOP_NOT_LAST, BP_D4_MF_EXIT_NOT_ALONE, BP_D5_MF_NO_FILE_SECTION, BP_D6_MF_ASSIGN_IMPLICIT, BP_D7_MF_VALUE_TRUNCATED, BP_E31_ENVIRONMENT, BP_E32_SCREEN_DIMS,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -307,7 +307,8 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
     { "BP-D7", 'D', "a VALUE literal longer than its alphanumeric item, cut on the right to the item; the "
                     "standard refuses it (X3.23-1985 VALUE syntax rule 3; 2023 13.18.63.3 rule 4), as Micro Focus's reference does" },
     { "BP-E31", 'E', "ENVIRONMENT-NAME, ENVIRONMENT-VALUE and ACCEPT ... FROM ENVIRONMENT are X/Open's and Micro "
-                     "Focus's, not standard COBOL (the standard names devices through SPECIAL-NAMES)" },
+                     "Focus's, and SET ENVIRONMENT GnuCOBOL's, not standard COBOL (the standard names devices through SPECIAL-NAMES)" },
+    { "BP-E32", 'E', "ACCEPT ... FROM LINES and FROM COLUMNS, the terminal's size, are X/Open's, not standard COBOL" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
