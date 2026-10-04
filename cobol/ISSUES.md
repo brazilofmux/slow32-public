@@ -6304,6 +6304,14 @@ runtime/system.c's stub, so print files stay as prt-n to be read.
   copybook comment says "unused ?"), into the one batch file.  The
   ledger itself is right; the payments' GL batch header is lost.  Not
   worked around.
+- **Stock movements**: additions (100 -> 150, value 135.00) and
+  deductions (-> 120, value 108.00) post and read back.  A key of seven
+  characters or fewer is taken as the abbreviated (fast) key, by design.
+- **IRS** (its own executable, irs.cbl the main program): system set-up
+  as one screen ("Tab for next field, Ret. to Accept data" -- the
+  convention 465ac101 made ours), import of the shipped chart template
+  (160 accounts), default accounts, a posting, and a summary trial
+  balance that balances (45.00 / 45.00).  No defects found there.
 
 Next, in order: the SCREEN SECTION BLANK SCREEN placement rule; COMP-X longer
 than seven bytes; PAGE LIMIT without a number; >>SOURCE FREE carried into
