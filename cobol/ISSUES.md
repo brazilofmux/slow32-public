@@ -6177,6 +6177,25 @@ is counted apart.  105 of the 128 built programs compile.
   copybook from fixed source and fails under GnuCOBOL too.)  Test:
   fixed/tabcols.
 
+The user's rulings on what ACAS does against the standard (2026-10-04):
+SLOW-32 COBOL is the standard, strict by default, with dialect variance
+only behind switches -- no dialect of its own.  Refused in every
+dialect, so those ACAS lines need fixing in the source: DELETE on a
+sequential file (pl020, sl910; GnuCOBOL 3.2 compiles it and returns 91
+at run time, 4.0 refuses it), a STRING POINTER too small for its
+receiver (gl090a, sl190; 3.2 lets it wrap, 4.0 refuses), MOVE of a
+BINARY-LONG or BINARY-CHAR item to an alphanumeric one (pl030, pl950;
+GnuCOBOL moves its digits and drops the last: 12345 into X(8) is
+"00001234"), a VALUE inside a group with a VALUE (sl950; GnuCOBOL keeps
+the group's and ignores the other), and READ ... KEY IS an item that is
+not a key (gl030; GnuCOBOL compiles it and every READ fails, status 23).
+- **A named screen item with a PICTURE and no FROM, TO or USING, used
+  as its own storage** (sys002 MOVEs to screen-nos): GnuCOBOL's, not
+  Micro Focus's (its screen PICTURE clause requires one of the three),
+  so BP-G4 under -dialect=gnucobol: a WORKING-STORAGE item of its name
+  and picture, the slot USING it.  Tests: free/gnu-scritem,
+  bad/screen-item-storage.
+
 Next, in order: the SCREEN SECTION BLANK SCREEN placement rule; COMP-X longer
 than seven bytes; PAGE LIMIT without a number; >>SOURCE FREE carried into
 copybooks (GnuCOBOL does; to be checked against the 2002/2014 texts).

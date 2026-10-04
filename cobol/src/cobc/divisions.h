@@ -1265,7 +1265,7 @@ static void parse_screen_section(void)
                 int si = gstk[--gdepth].subidx;
                 if (si >= 0) sc->sub[si].count = sc->nf - sc->sub[si].first;
             }
-            char ename[64] = "";
+            char ename[64] = ""; int ename_tp = -1;   /* the name's token: an implicit USING refers to it (BP-G4) */
             int susage = 0;             /* USAGE: 1 DISPLAY, 2 NATIONAL; a group's reaches its children */
             if (cur()->kind == T_WORD && !at_word("blank") && !at_word("usage") && !at_word("line") && !at_word("column") && !at_word("col") &&
                 !at_word("value") && !at_word("pic") && !at_word("picture") && !at_word("highlight") && !at_word("underline") &&
@@ -1274,6 +1274,7 @@ static void parse_screen_section(void)
                 !at_word("beep") && !at_word("erase") && !at_word("foreground-color") && !at_word("background-color") &&
                 !at_word("occurs")) {
                 snprintf(ename, sizeof ename, "%s", cur()->s);
+                ename_tp = g_tp;
                 advance();                                       /* a name on the entry */
             }
             if (sc->nf == sc->fcap) { sc->fcap = sc->fcap ? sc->fcap * 2 : 16; sc->f = realloc(sc->f, sc->fcap * sizeof *sc->f); }
@@ -1433,6 +1434,23 @@ static void parse_screen_section(void)
                 }
                 gdepth++;
                 continue;
+            }
+            if (f->kind < 0 && f->has_pic && ename[0] && strcmp(ename, "filler") && ename_tp >= 0) {
+                /* a named item with a PICTURE and no FROM, TO or USING
+                 * (BP-G4, -dialect=gnucobol only): its own storage, as
+                 * GnuCOBOL gives every screen item -- an item of its name
+                 * and picture, the slot USING it (ACAS's sys002 MOVEs to
+                 * one).  Micro Focus's reference requires FROM, TO or
+                 * USING with a PICTURE (its screen PICTURE clause, rule 2). */
+                bp(BP_G4_SCREEN_ITEM_STORAGE, fline);
+                if (sym_lookup_quiet(ename)) die_at(fline, "'%s' is both a data item and a screen item", ename);
+                Sym *si = sym_new();
+                snprintf(si->name, sizeof si->name, "%s", ename);
+                si->level = 1; si->line = fline; si->has_pic = 1;
+                snprintf(si->pic, sizeof si->pic, "%s", f->pic);
+                si->pi = f->pi;
+                si->usage = f->pi.category == PIC_NATIONAL ? U_NATIONAL : U_DISPLAY;
+                f->kind = COB_SCR_USING; f->ref_tp = ename_tp;
             }
             if (f->kind < 0) die_at(fline, "a screen slot needs VALUE, or PIC with FROM, TO or USING");
             if (gdepth) {
