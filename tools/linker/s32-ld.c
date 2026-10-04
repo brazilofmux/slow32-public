@@ -47,6 +47,10 @@ typedef struct {
     uint8_t **section_data;  // Section data for archive members (NULL for regular files)
 } input_file_t;
 
+/* veneer islands per code section: start, end, and one between input
+ * sections about every megabyte (S32_ISLAND_STRIDE) */
+#define S32_MAX_ISLANDS 32
+
 // Section part (contribution from one input file)
 typedef struct {
     int file_idx;
@@ -73,9 +77,9 @@ typedef struct {
     /* Veneer islands (GitHub issue 74 / linker ISSUES-11): holes punched
      * in .text so an out-of-range JAL can jump to a nearby lui/addi/jalr
      * stub.  gap_off[] is in *original* packed-file coordinates. */
-    uint32_t gap_off[8];
-    uint32_t gap_size[8];
-    uint32_t gap_used[8];
+    uint32_t gap_off[S32_MAX_ISLANDS];
+    uint32_t gap_size[S32_MAX_ISLANDS];
+    uint32_t gap_used[S32_MAX_ISLANDS];
     int ngaps;
 } combined_section_t;
 
@@ -1796,7 +1800,7 @@ static void slide_addrs(linker_state_t *ld, uint32_t from, uint32_t delta) {
 
 static int insert_code_gap(linker_state_t *ld, combined_section_t *sec,
                            uint32_t orig_off, uint32_t gap_size) {
-    if (sec->ngaps >= 8) {
+    if (sec->ngaps >= S32_MAX_ISLANDS) {
         fprintf(stderr, "Error: too many JAL veneer islands\n");
         return -1;
     }
@@ -1821,7 +1825,13 @@ static int insert_code_gap(linker_state_t *ld, combined_section_t *sec,
 /* Islands at the start and end of .text — never in the middle of a
  * translation unit (sqlite3.c is one 1.2MB object).  A JAL from the
  * low half reaches the prepended pool; a JAL from the high half
- * reaches the appended pool.  GitHub issue 74. */
+ * reaches the appended pool.  GitHub issue 74.  Text longer than that
+ * reaches (ACAS: 107 COBOL programs in one executable) also gets an
+ * island between input sections whenever S32_ISLAND_STRIDE has passed
+ * since the last one, so every call site has one within reach below it
+ * -- still never inside a unit; a single unit longer than the stride
+ * can still fail, as before. */
+#define S32_ISLAND_STRIDE 0x000F0000u   /* 960KB: under the 1MB reach with an island's size to spare */
 static int jal_needs_islands(linker_state_t *ld, combined_section_t *sec) {
     for (int i = 0; i < ld->num_relocations; i++) {
         relocation_entry_t *rel = &ld->relocations[i];
@@ -1850,6 +1860,23 @@ static void insert_veneer_islands(linker_state_t *ld) {
      * a hole in the middle of a translation unit (sqlite3.c is 1.2MB). */
     if (insert_code_gap(ld, sec, orig, S32_VENEER_ISLAND) != 0) {
         exit(1);
+    }
+    /* interior islands, highest first: inserting one slides only what
+     * lies above it, so the lower boundaries keep their coordinates */
+    uint32_t cuts[S32_MAX_ISLANDS];
+    int ncut = 0;
+    uint32_t last = 0;
+    for (int i = 0; i < sec->num_parts && ncut < S32_MAX_ISLANDS - 2; i++) {
+        section_part_t *pt = &sec->parts[i];
+        if (pt->offset > last && pt->offset + pt->size - last > S32_ISLAND_STRIDE) {
+            cuts[ncut++] = pt->offset;
+            last = pt->offset;
+        }
+    }
+    for (int i = ncut - 1; i >= 0; i--) {
+        if (insert_code_gap(ld, sec, cuts[i], S32_VENEER_ISLAND) != 0) {
+            exit(1);
+        }
     }
     if (insert_code_gap(ld, sec, 0, S32_VENEER_ISLAND) != 0) {
         exit(1);

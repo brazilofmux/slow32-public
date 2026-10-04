@@ -94,3 +94,14 @@ tokenizer). Inclusive slide of that symbol; stage08 SQLite defaults to
 short `jal`. `LONGCALLS=-mlong-calls` on `sqlite/build-stage08.sh` is
 the instruction-count A/B (24,222 insns / 15% of the clang excess).
 
+
+Interior islands (2026-10-04): ACAS, 115 COBOL programs linked into one
+executable, has more text than a start and an end island reach, and
+failed with "no reachable veneer" at about a thousand call sites.  The
+linker now also punches an island between input sections whenever
+S32_ISLAND_STRIDE (960KB) has passed since the last one -- still never
+inside a unit -- inserted highest first so the lower boundaries keep
+their coordinates; up to S32_MAX_ISLANDS (32).  A single unit longer
+than the stride can still fail, as before.  test-veneer.sh's interior
+case (a call from the middle of three units) fails on the old linker
+and passes now.

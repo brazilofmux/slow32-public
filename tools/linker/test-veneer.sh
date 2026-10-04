@@ -38,6 +38,38 @@ grep -q 'JAL veneers' "$W/ld.err" || { echo "far JAL: expected veneer note" >&2;
 rc="$("$EMU" "$W/far.s32x" >/dev/null; echo $?)"
 [ "$rc" = 42 ] || { echo "far JAL: want rc=42 got $rc" >&2; exit 1; }
 
+# Interior islands (ACAS: 115 COBOL programs, more text than the start and
+# end islands cover): a call from the middle of three units, over 1MB
+# from both ends, reaches its target through an island between units.
+cat > "$W/u1.s" <<'EOF'
+.global _start
+.global f1
+_start:
+    jal r31, mid
+    halt
+f1:
+    addi r1, r0, 55
+    jalr r0, r31, 0
+.space 0xE0000
+EOF
+cat > "$W/u2.s" <<'EOF'
+.global mid
+.space 0x60000
+mid:
+    add r20, r31, r0
+    jal r31, f1
+    jalr r0, r20, 0
+.space 0xE0000
+EOF
+cat > "$W/u3.s" <<'EOF'
+.space 0xE0000
+EOF
+for u in u1 u2 u3; do "$AS" "$W/$u.s" "$W/$u.s32o" >/dev/null; done
+"$LD" --code-size 4M -o "$W/mid.s32x" "$W/u1.s32o" "$W/u2.s32o" "$W/u3.s32o" 2>"$W/ld3.err" ||
+    { echo "interior island: link failed" >&2; cat "$W/ld3.err" >&2; exit 1; }
+rc="$("$EMU" "$W/mid.s32x" >/dev/null; echo $?)"
+[ "$rc" = 55 ] || { echo "interior island: want rc=55 got $rc" >&2; exit 1; }
+
 # Prepend used to skip symbols sitting exactly at heap_base (__heap_start),
 # so malloc's arena started in .data.  The s32x header's heap_base and the
 # __heap_start symbol must stay in lockstep.
@@ -70,4 +102,4 @@ for k in range(sym_size // 16):
 sys.exit("no __heap_start")
 PY
 
-echo "OK: JAL veneers (near rc=7, far rc=42)"
+echo "OK: JAL veneers (near rc=7, far rc=42, interior rc=55)"
