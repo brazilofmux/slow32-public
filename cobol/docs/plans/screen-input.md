@@ -1,7 +1,7 @@
 # Screen input: a picture-driven field editor
 
-Status: PLAN (2026-10-04).  Nothing here is built yet.  The decisions
-marked **DECIDE** are the user's.
+Status: step 0 done (2026-10-04); steps 1-6 to do.  The user accepted
+the recommendations under "Decisions" on 2026-10-04.
 
 A screen is the first thing a person sees of a COBOL program, and the
 keystroke behaviour of ACCEPT is the part of it the language says least
@@ -69,17 +69,41 @@ reproduces the reference's `ZZZ99.99` example exactly:
 
 (The underscores are its prompt character in the suppressed positions.)
 
-So Micro Focus is an executable oracle here, not only a document: the
-"reference is silent" cases below are questions with answers, and the
-host table tests can be generated from what it does.  Two things the
-rig lacks, both small changes in ~/x86 (the user's project; its own
-rules apply):
+So Micro Focus is an executable oracle here, not only a document.  The
+rig is built (step 0, done 2026-10-04):
 
-- the **cursor position** in the dump (it is in the BIOS data area);
-- a dump **when the program next waits for a key with none queued**,
-  instead of replaying each prefix against a wall-clock limit (about
-  two seconds a prefix today; one case, the last fraction digit, shows
-  on screen only after the following key, which wants understanding).
+- the DOS translator has a **key trace** (`dos-monster -K FILE`): each
+  scripted key is released only when the program is idle waiting for
+  it, and the text screen and the cursor (cell and shape) are written
+  before each; no Ctrl-Z is fed at the end of the script (ADIS reads
+  Ctrl-Z as "clear to end of field", which spoiled the first dumps).
+  It also learned Shift-Tab (`ESC [ Z`).  A run of ten keys takes a
+  third of a second;
+- `tests/adischeck.sh PICTURE KEYS` writes the one-field program,
+  compiles and links it with ADIS, runs it under the trace and prints
+  the field and cursor after each key;
+- **docs/adis-observed.md** is the record: some seventy runs over the
+  picture shapes and keys this plan names, and what they show.
+
+What it showed that the reference does not say, and that the design
+below must follow:
+
+- **Numeric fields are edited as their edited image**, a digit position
+  at a time, not as a value.  The cursor starts on the first position
+  that is not suppressed; a digit there overtypes and moves right; on
+  the point a digit is inserted before it.  So `ZZ9.99`-shaped pictures
+  (one `9` before the point: the usual shape) come out calculator-style,
+  while `ZZZ99.99` and `9(5)` are typed left to right: **`5` Enter in
+  `ZZZ99.99` stores 50.00**, and only the decimal point key aligns.
+- Left and Right move among the digits, and a digit typed there
+  overtypes that position.
+- Sign keys, Backspace, Delete, clear and undo all have definite
+  behaviour (the record has each).
+- Esc and function keys do nothing by default in ADIS; the standard has
+  them end the ACCEPT, and that is what we keep.
+- One oddity not to copy: in a picture with no point, the image while
+  typing is drawn one position to the left with a prompt character in
+  the last position.
 
 ## What the standard fixes
 
@@ -247,15 +271,26 @@ Hundreds of such rows cost nothing to run and are where the behaviour
 is pinned.  The documented Micro Focus examples go in first; whatever
 MS COBOL 5 can be made to show goes in beside them.
 
-### Numeric fields stay value-based
+### Numeric fields: digits in picture positions
 
-The value-plus-render model is kept: it is what "re-edited through its
-picture after every key" means, it makes every editing symbol free, and
-it is the standard's NUMVAL/NUMVAL-C transfer by construction.  What
-changes is the cursor and the meaning of a digit key, which now depend
-on the picture's shape (no suppression: left to right, the point
-right-aligns; suppression: push left from the point), plus Delete,
-clear-field, clear-to-end and undo.
+The oracle settled this.  The state is the string of integer digits and
+the string of fraction digits *as they stand in the picture's digit
+positions* (so `5` typed on the first `9` of `ZZZ99.99` is the tens
+digit), a sign, and a cursor that is on a digit position or on the
+point.  After every key the image is produced by the ordinary editing
+code from that state -- zero suppression, floating insertion, check
+protection, commas, CR/DB cost the editor nothing -- and the cursor's
+column is found from the picture.  The transfer at the end is the
+value those digits spell: the standard's NUMVAL/NUMVAL-C by
+construction.
+
+The per-key rules are the ones in docs/adis-observed.md.  They are
+pinned by a **differential test against the oracle**: the host test
+program and `adischeck.sh` are run on the same picture and keys --
+the recorded batteries first, then random key strings over a list of
+picture shapes -- and the field and cursor after every key must match.
+The deliberate differences (function keys end the ACCEPT; the no-point
+drawing oddity; anything decided below) are listed in the test.
 
 ### Compiler side
 
@@ -300,11 +335,8 @@ against its rendered screen before it is accepted.
 
 ## Steps
 
-0. **The oracle rig.**  MS COBOL 5 can be driven (above).  Add the
-   cursor position and a dump-at-key-wait to the DOS translator; write
-   `tests/adischeck.sh` (a picture, an initial value and a key string
-   in; the field and cursor after each key out); run it over the
-   picture shapes and keys this plan names and record the tables.
+0. **The oracle rig.**  DONE: the translator's key trace,
+   `tests/adischeck.sh`, docs/adis-observed.md.
 1. **Keys and defects.**  The key decoder; the latent defects above; no
    intended change of behaviour.  Gates as usual.
 2. **The core, text fields.**  The state machine and its host tests;
@@ -331,7 +363,7 @@ gates and the clean room).  docs/screen.md is rewritten at step 3 to
 describe what was built; behavior-points.md gains a point for each
 choice that is ours and not the standard's or Micro Focus's.
 
-## Decisions wanted
+## Decisions (accepted 2026-10-04: the recommendations stand)
 
 - **DECIDE 1: plain numeric fields.**  Micro Focus types `9(5)` left to
   right and right-aligns on the decimal point key (12400, then `.`
@@ -339,7 +371,9 @@ choice that is ours and not the standard's or Micro Focus's.
   push in from the right).  Following Micro Focus changes how `99` and
   `9(5)` fields feel and two existing tests.  Recommendation: follow
   Micro Focus; it is the ruling, and it is what ACAS-era operators
-  expect.
+  expect.  *The oracle sharpened what this means: `5` Enter stores
+  50000 in `9(5)` and 50.00 in `ZZZ99.99`; pictures with a single `9`
+  before the point are unaffected.*
 - **DECIDE 2: alphanumeric-edited pictures (`XX/XX/XXXX`).**  Micro
   Focus treats them as X(n): the slashes can be typed over.  The
   standard says entered data shall be consistent with the PICTURE.
