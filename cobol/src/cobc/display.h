@@ -304,6 +304,29 @@ static void parse_display_positioned(void)
 
 static void parse_env_exception(void);
 static void env_text_args(Opnd *o, const char *what);
+
+/* the items SPECIAL-NAMES gives the terminal: the CRT STATUS the ACCEPT's
+ * ending goes to, the CURSOR item its cursor comes from and goes back to */
+static void emit_crt_item(const char *name, const char *what, const char *fn, int line)
+{
+    g_cen_ctx = CEN_PTR; Sym *cs = sym_lookup(name, NULL, 0, line); g_cen_ctx = 0;
+    if (rec_indirect(&g_sym[cs->record])) die_at(line, "a %s item cannot be the %s yet", indirect_kind(&g_sym[cs->record]), what);
+    char b[80]; snprintf(b, sizeof b, "%s+%d", g_sym[cs->record].label, cs->offset);
+    emit_la("r3", b);
+    snprintf(b, sizeof b, ".Ld%d", sym_desc(cs));
+    emit_la("r4", b);
+    emit_call(fn);
+}
+static void emit_crt_items(int line)
+{
+    if (g_crt_status_name[0]) emit_crt_item(g_crt_status_name, "CRT STATUS", "cob_crt_status", line);
+    if (g_cursor_name[0]) {
+        g_cen_ctx = CEN_PTR; Sym *cs = sym_lookup(g_cursor_name, NULL, 0, line); g_cen_ctx = 0;
+        if (cs->size != 6 || (!cs->is_group && (cs->usage != U_DISPLAY || cs->pi.category != PIC_NUMERIC || cs->pi.is_signed || cs->pi.scale)))
+            die_at(line, "the CURSOR item '%s' is six digits: an unsigned 9(6), or a group of two 9(3) (2023 12.3.7 rule 29)", cs->name);
+        emit_crt_item(g_cursor_name, "CURSOR", "cob_crt_cursor", line);
+    }
+}
 static void parse_accept_positioned(Ref *r)
 {
     int si = (int)(screen_synth() - g_screens);
@@ -332,18 +355,14 @@ static void parse_accept_positioned(Ref *r)
         if (!f->width) f->width = !r->sym->is_group && r->sym->pi.bytes &&
                                   r->sym->usage != U_DISPLAY ? r->sym->pi.bytes : r->sym->size;
         if (r->sym->is_group || !r->sym->pi.bytes) { f->pi.category = PIC_ALPHANUMERIC; f->pi.bytes = f->width; }
-        else { f->pi = r->sym->pi; snprintf(f->pic, sizeof f->pic, "%s", r->sym->pic); }
+        else {
+            f->pi = r->sym->pi; snprintf(f->pic, sizeof f->pic, "%s", r->sym->pic);
+            if (r->sym->usage == U_DISPLAY) { f->sign_lead = r->sym->sign_lead; f->sign_sep = r->sym->sign_sep; }   /* the item's SIGN is the field's */
+        }
     }
-    if (g_crt_status_name[0]) {                 /* the ACCEPT's ending goes to the CRT STATUS item */
-        g_cen_ctx = CEN_PTR; Sym *cs = sym_lookup(g_crt_status_name, NULL, 0, r->line); g_cen_ctx = 0;
-        if (rec_indirect(&g_sym[cs->record])) die_at(r->line, "a %s item cannot be the CRT STATUS yet", indirect_kind(&g_sym[cs->record]));
-        char b[80]; snprintf(b, sizeof b, "%s+%d", g_sym[cs->record].label, cs->offset);
-        emit_la("r3", b);
-        snprintf(b, sizeof b, ".Ld%d", sym_desc(cs));
-        emit_la("r4", b);
-        emit_call("cob_crt_status");
-    }
+    emit_crt_items(r->line);
     emit_pos_stmt(si, "cob_screen_accept");
+    parse_env_exception();                      /* a function key, or no field to accept into (rule 25) */
     accept_word("end-accept");
 }
 
@@ -422,17 +441,12 @@ static void parse_accept_1(void)
             screen_at_origin(t->line);
             int upd = screen_with_phrase(t->line, 1);    /* WITH UPDATE (BP-G3): the TO fields start from their items */
             emit_screen_dyn_fill(scp, sfirst, scount);
-            if (g_crt_status_name[0]) {                 /* the ACCEPT's ending goes to the CRT STATUS item */
-                g_cen_ctx = CEN_PTR; Sym *cs = sym_lookup(g_crt_status_name, NULL, 0, t->line); g_cen_ctx = 0;
-                if (rec_indirect(&g_sym[cs->record])) die_at(t->line, "a %s item cannot be the CRT STATUS yet", indirect_kind(&g_sym[cs->record]));
-                char b[80]; snprintf(b, sizeof b, "%s+%d", g_sym[cs->record].label, cs->offset);
-                emit_la("r3", b);
-                snprintf(b, sizeof b, ".Ld%d", sym_desc(cs));
-                emit_la("r4", b);
-                emit_call("cob_crt_status");
-            }
+            emit_crt_items(t->line);
             if (upd) emit_call("cob_scr_update_next");
-            emit_la("r3", scrlab); emit_call("cob_screen_accept"); return;
+            emit_la("r3", scrlab); emit_call("cob_screen_accept");
+            parse_env_exception();              /* a function key, or no input field (2023 14.9.1.4 rules 24-25) */
+            accept_word("end-accept");
+            return;
         }
     }
     Ref r; parse_ref(&r);

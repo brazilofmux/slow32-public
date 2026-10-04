@@ -384,3 +384,25 @@ otherwise.
 - **The value** passes between the item, the core and the picture as a
   DISPLAY number through `cob_move`: eighteen digits, any scale (a P
   picture is edited as its digit positions), any kind of item.
+
+## The standard's remainder (2026-10-04)
+
+Step 4 of docs/plans/screen-input.md.
+
+- **`CURSOR IS data-name`** (SPECIAL-NAMES, 2023 12.3.7): the cursor
+  locator, six digits, line then column.  Before an ACCEPT of a screen
+  it says where the cursor starts, when that is inside an input field;
+  afterwards it holds where the cursor stood when the terminating key
+  was pressed.
+- **`SIGN LEADING | TRAILING [SEPARATE]`** and **`JUSTIFIED`** on a
+  screen item.  A separate sign has its own column and is set by the
+  `-` and `+` keys from anywhere in the field.  A justified text field
+  is keyed from the left like any other and moves right when left.
+- **A numeric TO field** shows zeros through its picture when the
+  ACCEPT starts.
+- **Endings.**  Enter, or the last AUTO field filling: 0000.  A
+  function key: 1xxx or 2xxx.  A screen with no input item: 8000, with
+  no wait.  `ON EXCEPTION` takes everything but 0000; `NOT ON
+  EXCEPTION` takes 0000.
+- **FULL** on a numeric field wants zero, or every digit position of
+  the picture in use.

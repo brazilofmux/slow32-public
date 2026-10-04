@@ -1,6 +1,6 @@
 # Screen input: a picture-driven field editor
 
-Status: steps 0-3 done (2026-10-04); steps 4-6 to do.  The user accepted
+Status: steps 0-4 done (2026-10-04); steps 5-6 to do.  The user accepted
 the recommendations under "Decisions" on 2026-10-04.
 
 A screen is the first thing a person sees of a COBOL program, and the
@@ -390,10 +390,32 @@ against its rendered screen before it is accepted.
    moves in a numeric field; screen4: the cursor ends on the last digit,
    not after it).  Also here: the field the cursor is in when the ACCEPT
    ends is repainted as it is left.  Not done: FULL on numeric fields.
-4. **The standard's remainder.**  CURSOR IS and the cursor locator;
-   JUSTIFIED and SIGN in the SCREEN SECTION; initial ZEROS; 8000; ON
-   EXCEPTION; REQUIRED/FULL exactly as 13.18.47 and 13.18.26 have them;
-   field-to-field movement with Left/Right/Up/Down as in the table.
+4. **The standard's remainder.**  DONE (2026-10-04).
+   - `CURSOR IS` in SPECIAL-NAMES (12.3.7): the item must be six digits
+     (rule 29; the four-character form is refused); the cursor starts in
+     the input field the locator names, at that position of a text
+     field as far as its data goes, or in the first field when it names
+     none (14.9.1.4 rule 18); it is set when the ACCEPT ends to where
+     the cursor stood (rule 23, 9.2.5), not after status 8000.
+   - `SIGN [IS] LEADING | TRAILING [SEPARATE CHARACTER]` on a screen
+     item (13.18.52): the sign's own column, and the editor's sign keys;
+     a positioned ACCEPT takes its item's SIGN.  `JUSTIFIED` (13.18.32):
+     a text field's characters go right when the cursor leaves it.
+   - A numeric TO field of a screen starts as zeros through its picture
+     (rule 13); a positioned ACCEPT leaves what is on the screen.
+   - No input item: status 8000, at once (9.2.3; it used to wait for a
+     key).  `ON EXCEPTION` / `NOT ON EXCEPTION` / `END-ACCEPT` on an
+     ACCEPT of a screen and on a positioned ACCEPT: a function key,
+     Escape, or 8000 is the exception (rules 24-25).
+   - FULL on a numeric field: zero, or no suppressed digit position
+     (13.18.26.3 rule 3c).  REQUIRED and FULL were already checked on
+     every move out, and a function key bypasses them.
+   Tests: free/scrcursor, free/scrclauses, bad/cursor-item,
+   bad/screen-sign, bad/screen-full-just.  Not done: an unsigned picture
+   keeps no sign column for an S item with no SIGN clause (the
+   operational sign shows as it is stored, which the standard leaves to
+   the implementor: 13.18.52.4 rule 4); EC-SCREEN conditions; JUSTIFIED
+   on a national item (refused).
 5. **Cursor opcode.**  The term service change, spec first, then the
    insert-mode cursor.
 6. **Only on demand, behind `-dialect=mf`:** free-format entry and its

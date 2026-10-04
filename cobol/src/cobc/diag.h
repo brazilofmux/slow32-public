@@ -70,6 +70,7 @@ static int g_nalphabet;
 static int g_collate = -1;                  /* PROGRAM COLLATING SEQUENCE: an alphabet index, -1 native */
 static char g_collate_name[64];
 static char g_crt_status_name[64];   /* SPECIAL-NAMES CRT STATUS IS name */
+static char g_cursor_name[64];       /* SPECIAL-NAMES CURSOR IS name */
 /* g_lowval / g_highval (declared with fig_byte): LOW-VALUE / HIGH-VALUE under the program collating sequence */
 
 /* I-O-CONTROL SAME RECORD AREA FOR f1 f2 ...: the files share one record

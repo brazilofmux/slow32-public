@@ -5477,6 +5477,32 @@ static void *crt_item; static const cob_desc *crt_desc;
 
 void cob_crt_status(void *item, const void *desc) { crt_item = item; crt_desc = desc; }
 
+/* SPECIAL-NAMES' CURSOR IS item, the cursor locator (2023 9.2.5): line
+ * and column, three digits each.  The compiler names it before each
+ * ACCEPT. */
+static unsigned char *cursor_item;
+void cob_crt_cursor(void *item, const void *desc) { (void)desc; cursor_item = item; }
+static int scr_locator_get(int *line, int *col)
+{
+    if (!cursor_item) return 0;
+    int v[2] = { 0, 0 };
+    for (int k = 0; k < 2; k++)
+        for (int i = 0; i < 3; i++) {
+            unsigned char ch = cursor_item[k * 3 + i];
+            if (ch < '0' || ch > '9') return 0;
+            v[k] = v[k] * 10 + (ch - '0');
+        }
+    *line = v[0]; *col = v[1];
+    return 1;
+}
+static void scr_locator_set(int line, int col)
+{
+    if (!cursor_item) return;
+    int v[2] = { line, col };
+    for (int k = 0; k < 2; k++)
+        for (int i = 2; i >= 0; i--) { cursor_item[k * 3 + i] = (unsigned char)('0' + v[k] % 10); v[k] /= 10; }
+}
+
 static void scr_set_status(int fret)
 {
     if (!crt_item) return;
@@ -5750,11 +5776,28 @@ static int scr_may_leave(const scr_edit *e)
     if (f->flags & COB_SF_REQUIRED) {
         if (e->numeric ? scr_num_zero(e) : strspn(e->buf, " ") >= f->width) return 0;
     }
+    if ((f->flags & COB_SF_FULL) && e->numeric && !sn_full_ok(e->nf, e->ns)) return 0;
     if ((f->flags & COB_SF_FULL) && !e->numeric) {
         unsigned n = f->width; while (n > 0 && e->buf[n - 1] == ' ') n--;
         if (n != 0 && n != f->width) return 0;
     }
     return 1;
+}
+
+/* JUSTIFIED (2023 13.18.32): a text field's characters go to the right
+ * of the screen item when the cursor leaves it */
+static void scr_text_justify(scr_edit *e)
+{
+    const cob_desc *d = (const cob_desc *)e->f->pic;
+    if (!e->text || !d || !(d->flags & COB_F_JUST)) return;
+    unsigned w = e->f->width, n = w;
+    se_text(e->sf, e->ss, e->buf);
+    while (n > 0 && e->buf[n - 1] == ' ') n--;
+    if (n == 0 || n == w) return;
+    memmove(e->buf + (w - n), e->buf, n); memset(e->buf, ' ', w - n);
+    int ins = e->ss->insert;
+    se_enter(e->sf, e->ss, e->buf, 0);
+    e->ss->insert = ins;
 }
 
 /* a text field as the core has it: the prompt character after the data
@@ -5777,7 +5820,7 @@ static int scr_insert_mode;
 static void scr_move(scr_edit *ed, unsigned *cur, unsigned to, int at_end)
 {
     scr_edit *from = &ed[*cur], *e = &ed[to];
-    if (from->text && to != *cur) { term_begin_update(); scr_paint_edit(from, 0); term_end_update(); }
+    if (from->text && to != *cur) { scr_text_justify(from); term_begin_update(); scr_paint_edit(from, 0); term_end_update(); }
     if (from->numeric && to != *cur) { term_begin_update(); scr_num_paint(from, 0); term_end_update(); }
     *cur = to;
     scr_focus(e);
@@ -5798,21 +5841,25 @@ static void scr_move(scr_edit *ed, unsigned *cur, unsigned to, int at_end)
     }
 }
 
-static void screen_accept(const cob_screen *s);
-void cob_screen_accept(const cob_screen *s)
+/* Returns 1 for the endings ON EXCEPTION takes (2023 14.9.1.4 rule 25):
+ * a function key, or an ACCEPT that could not be made. */
+static int screen_accept(const cob_screen *s);
+int cob_screen_accept(const cob_screen *s)
 {
     scr_accepting = 1;
-    screen_accept(s);
+    int r = screen_accept(s);
     scr_accepting = 0;
     scr_update_once = 0;
+    cursor_item = NULL;
+    return r;
 }
-static void screen_accept(const cob_screen *s)
+static int screen_accept(const cob_screen *s)
 {
     cob_screen_display(s);
     unsigned nin = 0;
     for (unsigned i = 0; i < s->nfields; i++)
         if (scr_kind(&s->fields[i]) == COB_SCR_TO || scr_kind(&s->fields[i]) == COB_SCR_USING) nin++;
-    if (!nin) { scr_set_status(scr_key_status(scr_key())); return; }   /* nothing to type into: wait for a key */
+    if (!nin) { scr_set_status(8000); return 1; }   /* no input screen item: unsuccessful (2023 9.2.3) */
     scr_edit *ed = calloc(nin, sizeof *ed);
     if (!ed) cob_fatal("out of memory");
     unsigned k = 0;
@@ -5856,8 +5903,30 @@ static void screen_accept(const cob_screen *s)
     unsigned cur = 0;
     int done = 0, abandon = 0, fret = 0;
     scr_insert_mode = 0;                        /* each ACCEPT starts in replace mode */
-    if (ed[0].text) { term_begin_update(); scr_paint_edit(&ed[0], 1); term_end_update(); }
-    if (ed[0].numeric) { term_begin_update(); scr_num_paint(&ed[0], 1); term_end_update(); }
+    /* a numeric field with nothing to show starts as zeros (2023
+     * 14.9.1.4 rule 13), through its picture */
+    for (unsigned i = 0; i < nin; i++)
+        if (ed[i].numeric && scr_kind(ed[i].f) == COB_SCR_TO && !(ed[i].f->ext & COB_SX_POS)) {   /* a screen item's; a positioned ACCEPT leaves what is there */ term_begin_update(); scr_num_paint(&ed[i], 0); term_end_update(); }
+    /* the cursor starts in the first input field, or where the CURSOR
+     * item says when that is in one (rule 18) */
+    {
+        int ln, cl;
+        if (scr_locator_get(&ln, &cl))
+            for (unsigned i = 0; i < nin; i++) {
+                int fl, fc; scr_pos(ed[i].f, &fl, &fc);
+                if (ln != fl || cl < fc || cl >= fc + (int)ed[i].f->width) continue;
+                cur = i;
+                if (ed[i].text) {                       /* the position too, as far as the data goes */
+                    const se_field *F = ed[i].sf; se_state *S = ed[i].ss;
+                    int k = 0, n = se_len(F, S);
+                    while (k < F->nd - 1 && F->col[k] < cl - fc) k++;
+                    S->pos = k < n ? k : n < F->nd ? n : F->nd - 1;
+                }
+                break;
+            }
+    }
+    if (ed[cur].text) { term_begin_update(); scr_paint_edit(&ed[cur], 1); term_end_update(); }
+    if (ed[cur].numeric) { term_begin_update(); scr_num_paint(&ed[cur], 1); term_end_update(); }
     while (!done) {
         scr_edit *e = &ed[cur];
         const cob_scr_field *f = e->f;
@@ -5990,8 +6059,15 @@ static void screen_accept(const cob_screen *s)
             }
         }
     }
-    /* the field the cursor was in, as it is left */
+    /* the field the cursor was in, as it is left; the cursor locator is
+     * where the cursor stood when the key was pressed (2023 9.2.5) */
+    {
+        scr_edit *e = &ed[cur];
+        int ln, cl; scr_pos(e->f, &ln, &cl);
+        scr_locator_set(ln, cl + (int)(e->text ? (unsigned)se_cursor(e->sf, e->ss) : e->numeric ? scr_num_cursor(e) : e->nat ? (unsigned)nat_cols(e->cl, (int)e->pos) : e->pos));
+    }
     if (ed[cur].text || ed[cur].numeric) {
+        if (!abandon) scr_text_justify(&ed[cur]);
         term_begin_update();
         if (ed[cur].text) scr_paint_edit(&ed[cur], 0); else scr_num_paint(&ed[cur], 0);
         { int ln, cl; scr_pos(ed[cur].f, &ln, &cl); term_gotoxy(ln, cl + (int)(ed[cur].text ? (unsigned)se_cursor(ed[cur].sf, ed[cur].ss) : scr_num_cursor(&ed[cur]))); }   /* the cursor where the operator left it */
@@ -6023,6 +6099,7 @@ static void screen_accept(const cob_screen *s)
     }
     for (unsigned i = 0; i < nin; i++) { free(ed[i].buf); free(ed[i].u); free(ed[i].ut); free(ed[i].cl); free(ed[i].sf); free(ed[i].ss); free(ed[i].nf); free(ed[i].ns); }
     free(ed);
+    return fret != 0;
 }
 
 /* ====================================================================== */

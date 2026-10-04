@@ -571,6 +571,7 @@ typedef struct {
     int kind, flags, line, col, width, srcline, fg, bg;
     Tok *value;
     int has_pic; char pic[PIC_MAXPAT]; PicInfo pi; int blank_zero;
+    int sign_lead, sign_sep, has_sign, just;   /* SIGN [LEADING|TRAILING] [SEPARATE], JUSTIFIED */
     Sym *item;
     int ref_tp, dyn;            /* the reference's token position; dyn: its address is computed at ACCEPT/DISPLAY */
     struct Ref_ *ref;           /* ... the reference, parsed: at the statement, or at first use (sfield_resolve) */

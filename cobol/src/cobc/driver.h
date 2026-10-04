@@ -285,8 +285,11 @@ static void emit_unit_data(void)
                 d.usage = COB_U_DISPLAY; d.digits = (unsigned char)f->pi.digits; d.scale = (signed char)f->pi.scale;
                 if (f->pi.is_signed) d.flags |= COB_F_SIGNED;
                 if (f->blank_zero) d.flags |= COB_F_BLANKZ;
+                if (f->just) d.flags |= COB_F_JUST;
+                if (f->sign_sep) d.flags |= f->sign_lead ? COB_F_SEPLEAD : COB_F_SEPTRAIL;
+                else if (f->sign_lead) d.flags |= COB_F_LEAD;
                 if (f->pi.edited) snprintf(d.picstr, sizeof d.picstr, "%s", f->pi.pat);
-                d.size = f->pi.bytes;
+                d.size = f->pi.bytes + (f->sign_sep ? 1 : 0);
                 emit("\t.word .Ld%d", desc_add(&d));
             } else emit("\t.word 0");
             if (f->item && f->dyn) { emit("\t.word .Lsdyn%d_%d_%d", g_unit, i, k); emit("\t.word .Ld%d", f->idesc ? f->idesc - 1 : sym_desc(f->item)); }

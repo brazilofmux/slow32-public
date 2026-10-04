@@ -412,6 +412,13 @@ static void parse_environment_division(void)
                         }
                         continue;
                     }
+                    if (at_word("cursor") && (is_word(peek(1), "is") || peek(1)->kind == T_WORD)) {
+                        /* CURSOR IS data-name (2023 12.3.7): the cursor locator */
+                        advance(); accept_word("is");
+                        if (cur()->kind != T_WORD) die_at(cur()->line, "CURSOR IS needs a data-name");
+                        snprintf(g_cursor_name, sizeof g_cursor_name, "%s", cur()->s);
+                        advance(); continue;
+                    }
                     if (at_word("crt") && is_word(peek(1), "status")) {
                         advance(); advance(); accept_word("is");
                         if (cur()->kind != T_WORD) die_at(cur()->line, "CRT STATUS IS needs a data-name");
@@ -1387,6 +1394,15 @@ static void parse_screen_section(void)
                 if (accept_word("required")) { f->flags |= COB_SF_REQUIRED; continue; }
                 if (accept_word("full")) { f->flags |= COB_SF_FULL; continue; }
                 if (accept_word("lowlight")) { f->flags |= COB_SF_LOWLIGHT; continue; }
+                if (accept_word("just") || accept_word("justified")) { accept_word("right"); f->just = 1; continue; }
+                if (at_word("sign") || at_word("leading") || at_word("trailing")) {
+                    /* [SIGN IS] LEADING | TRAILING [SEPARATE CHARACTER] (2023 13.18.52) */
+                    if (accept_word("sign")) accept_word("is");
+                    if (accept_word("leading")) f->sign_lead = 1;
+                    else if (!accept_word("trailing")) die_at(t->line, "SIGN needs LEADING or TRAILING");
+                    if (accept_word("separate")) { accept_word("character"); f->sign_sep = 1; }
+                    f->has_sign = 1; continue;
+                }
                 if (accept_word("usage")) {
                     accept_word("is");
                     if (accept_word("national")) susage = 2;
@@ -1399,6 +1415,12 @@ static void parse_screen_section(void)
             expect_period();
             if (!susage && gdepth) susage = gstk[gdepth - 1].usage;
             if (f->has_pic && f->blank_zero) bwz_check("the screen field", &f->pi, 0, fline);
+            if (f->has_sign && !(f->has_pic && f->pi.category == PIC_NUMERIC && f->pi.is_signed))
+                die_at(fline, "SIGN is for a numeric screen item whose PICTURE has an S (2023 13.18.52.3 rule 1)");
+            if (f->just && f->has_pic && f->pi.category != PIC_ALPHANUMERIC && f->pi.category != PIC_ALPHABETIC)
+                die_at(fline, f->pi.category == PIC_NATIONAL ? "JUSTIFIED on a national screen item is not implemented"
+                                                             : "JUSTIFIED is for an alphabetic or alphanumeric item (2023 13.18.32.3 rule 3)");
+            if (f->just && (f->flags & COB_SF_FULL)) die_at(fline, "a screen item with FULL takes no JUSTIFIED (2023 13.18.60.3 rule 8)");
             if (f->has_pic && susage == 1 && f->pi.category == PIC_NATIONAL)
                 die_at(fline, "a screen item with a PICTURE of N takes only USAGE NATIONAL (2023 13.18.60.3 rule 20)");
             if (f->has_pic && susage == 2 && f->pi.category != PIC_NATIONAL)
@@ -1525,7 +1547,7 @@ static void parse_screen_section(void)
                     f->pi = it->pi; f->has_pic = 1;
                 }
                 if (!f->has_pic) die_at(fline, "a FROM/TO/USING slot needs a PICTURE");
-                f->width = sfield_cols(f);
+                f->width = sfield_cols(f) + (f->sign_sep ? 1 : 0);   /* SEPARATE: the sign its own column */
             }
             if (!f->line) f->line = prev ? prev->line : 1;        /* no LINE: the previous slot's line */
             if (!f->col) f->col = prev && prev->line == f->line ? prev->col + prev->width : 1;   /* no COLUMN: right after it */

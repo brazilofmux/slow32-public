@@ -434,6 +434,7 @@ typedef struct {
     short icol[SN_MAXD], fcol[SN_MAXD]; /* their columns */
     int pcol;                           /* the point's column, -1 when it has none (V, or no fraction) */
     int first9;                         /* the first integer position that is never suppressed (ni: none) */
+    int pic9;                           /* the same, as the picture has it (natural entry moves first9) */
     int has_sign;                       /* the picture can show a sign (an edited one) */
     int edited;
     int natural;                        /* keyed as a number is written: see sn_natural */
@@ -486,7 +487,7 @@ static int sn_field_init(sn_field *f, const char *pat, int floating, int edited)
         f->kind[c] = (floating && s == floating) ? 'F' : (s == ',' || s == 'B' || s == '0' || s == '/') ? ',' : 's';
         c++;
     }
-    f->first9 = first9 < 0 ? f->ni : first9;
+    f->first9 = f->pic9 = first9 < 0 ? f->ni : first9;
     f->width = c;
     strncpy(f->pat, pat, SN_MAXW);
     return 0;
@@ -514,6 +515,18 @@ static int sn_has_point(const sn_field *f) { return f->pcol >= 0 || f->first9 > 
  * style above (the observed behaviour of the 1993 runtime) are still
  * there for whoever moves the cursor onto a digit: it is overtyped. */
 static void sn_natural(sn_field *f) { f->natural = 1; f->first9 = f->ni; }
+
+/* FULL (2023 13.18.26.3 rule 3c): the value zero, or no digit position
+ * in which zero suppression has taken effect */
+static int sn_full_ok(const sn_field *f, const sn_state *s)
+{
+    int k = 0, z = 1;
+    for (int i = 0; i < f->ni; i++) if (s->id[i] != '0') { z = 0; break; }
+    for (int i = 0; z && i < f->nf; i++) if (s->fd[i] != '0') z = 0;
+    if (z) return 1;
+    while (k < f->ni && s->id[k] == '0') k++;
+    return k == 0 || f->pic9 == 0;
+}
 static int sn_point(const sn_field *f) { return f->pcol >= 0 || f->natural; }
 
 static void sn_snapshot(sn_state *s)

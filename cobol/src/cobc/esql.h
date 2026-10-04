@@ -1122,7 +1122,7 @@ struct UnitSave {
     char progid[64], progid_orig[64];
     int nreport, report_base, nscreen, screen_base, nclass, nswitch, nalphabet, nmnemonic, last_item, nsame_groups, collate, lowval, highval, cur_fd, in_linkage;
     char collate_name[64];
-    char crtname[64];
+    char crtname[64], cursorname[64];
     int nuse, in_decl, cur_sec_id, saw_end, initial, recursive, nsorttab;
     UseEntry use[64];
     File *io_file;
@@ -1159,6 +1159,7 @@ static void compile_nested_unit(void)
     u->lowval = g_lowval; u->highval = g_highval; u->cur_fd = g_cur_fd; u->in_linkage = g_in_linkage;
     memcpy(u->collate_name, g_collate_name, sizeof u->collate_name);
     memcpy(u->crtname, g_crt_status_name, sizeof u->crtname);
+    memcpy(u->cursorname, g_cursor_name, sizeof u->cursorname);
     u->nuse = g_nuse; memcpy(u->use, g_use, sizeof u->use); u->in_decl = g_in_decl; u->cur_sec_id = g_cur_sec_id;
     u->saw_end = g_saw_end_program; u->initial = g_initial; u->recursive = g_recursive; u->io_file = g_io_file;
     memcpy(u->cls, g_class, sizeof u->cls); memcpy(u->sw, g_switch, sizeof u->sw); memcpy(u->alph, g_alphabet, sizeof u->alph);
@@ -1172,7 +1173,7 @@ static void compile_nested_unit(void)
     g_sym_base = g_nsym; g_file_base = g_nfile; g_para_base = g_npara;
     /* the contained unit's own USE entries follow every enclosing unit's */
     g_report_base = g_nreport; g_screen_base = g_nscreen; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_last_item = -1;
-    g_nsame_groups = 0; g_npoison = 0; g_collate = -1; g_collate_name[0] = 0; g_crt_status_name[0] = 0; g_lowval = 0x00; g_highval = 0xFF; g_cur_fd = -1; g_in_linkage = 0;
+    g_nsame_groups = 0; g_npoison = 0; g_collate = -1; g_collate_name[0] = 0; g_crt_status_name[0] = 0; g_cursor_name[0] = 0; g_lowval = 0x00; g_highval = 0xFF; g_cur_fd = -1; g_in_linkage = 0;
     g_nsorttab = 0; g_initial = 0;
     /* a program contained in a recursive program is recursive (2023 11.10.4 rule 4) */
     g_recursive = u->recursive;
@@ -1201,6 +1202,7 @@ static void compile_nested_unit(void)
     g_lowval = u->lowval; g_highval = u->highval; g_cur_fd = u->cur_fd; g_in_linkage = u->in_linkage;
     memcpy(g_collate_name, u->collate_name, sizeof g_collate_name);
     memcpy(g_crt_status_name, u->crtname, sizeof g_crt_status_name);
+    memcpy(g_cursor_name, u->cursorname, sizeof g_cursor_name);
     g_nuse = u->nuse; memcpy(g_use, u->use, sizeof g_use); g_in_decl = u->in_decl; g_cur_sec_id = u->cur_sec_id;
     g_saw_end_program = u->saw_end; g_initial = u->initial; g_recursive = u->recursive; g_io_file = u->io_file;
     memcpy(g_class, u->cls, sizeof g_class); memcpy(g_switch, u->sw, sizeof g_switch); memcpy(g_alphabet, u->alph, sizeof g_alphabet);
