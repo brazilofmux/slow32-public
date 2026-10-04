@@ -18,15 +18,30 @@ FLAG=${1:?usage: run-flag.sh FLAG FIRST COUNT [N]}
 FIRST=${2:?usage: run-flag.sh FLAG FIRST COUNT [N]}
 COUNT=${3:?usage: run-flag.sh FLAG FIRST COUNT [N]}
 GEN=${GEN:-loop}
-EMU="${EMU:-$ROOT/tools/emulator/slow32-fast}"     # the image has it at /usr/local/bin and no tree build
+# FAST_EMU first: a caller that sets EMU for the rest of the suite (the
+# builder's cobol gate passes the reference interpreter) can still give
+# these 2 x COUNT programs the fast engine
+EMU="${FAST_EMU:-${EMU:-$ROOT/tools/emulator/slow32-fast}}"     # the image has it at /usr/local/bin and no tree build
 STD=${STD:-85}; case "$GEN" in loop|checked|pos|perf|lit|native) STD=2002 ;; esac
 
-command -v python3 >/dev/null 2>&1 || { echo "run-flag.sh: no python3 to write the programs with"; exit 2; }
+# GENDIR=<dir>: the programs were written elsewhere (the builder's host has
+# python3, the slow32:cobol image does not) as <dir>/$GEN-$SEED.cbl, and are
+# taken from there.  A missing one is a failure, never a reason to generate:
+# a seed the host skipped must show.  (The optional 4th argument goes to the
+# generator; a pre-generated name does not encode it, so GENDIR with a 4th
+# argument is refused rather than silently testing other programs.)
+if [ -n "${GENDIR:-}" ] && [ -n "${4:-}" ]; then echo "run-flag.sh: GENDIR holds programs by seed alone; a 4th argument ($4) is not in their names"; exit 2; fi
+[ -n "${GENDIR:-}" ] || command -v python3 >/dev/null 2>&1 || { echo "run-flag.sh: no python3 to write the programs with"; exit 2; }
 mkdir -p "$CDIR/out"
 W="$(mktemp -d "$CDIR/out/flag.XXXXXX")"
 last=$((FIRST + COUNT - 1)); bad=0; lines=0
 for s in $(seq "$FIRST" "$last"); do
-    if ! python3 "$HERE/gen-$GEN.py" "$s" ${4:+"$4"} > "$W/g$s.cbl" 2> "$W/g$s.genlog"; then
+    if [ -n "${GENDIR:-}" ]; then
+        if [ ! -s "$GENDIR/$GEN-$s.cbl" ]; then
+            echo "seed $s: NO PRE-GENERATED PROGRAM ($GENDIR/$GEN-$s.cbl is missing or empty)"; bad=$((bad + 1)); continue
+        fi
+        cp "$GENDIR/$GEN-$s.cbl" "$W/g$s.cbl"; : > "$W/g$s.genlog"
+    elif ! python3 "$HERE/gen-$GEN.py" "$s" ${4:+"$4"} > "$W/g$s.cbl" 2> "$W/g$s.genlog"; then
         echo "seed $s: GENERATOR FAILED ($(head -c 100 "$W/g$s.genlog" | tr '\n' ' '))"; bad=$((bad + 1)); continue
     fi
     for v in with without; do

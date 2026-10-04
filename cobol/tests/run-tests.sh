@@ -599,7 +599,7 @@ fi
 # the slow32:cobol image does not carry: without it they are skipped and
 # said to be, as the host-compiler gates are (a missing generator made an
 # empty program and a bare FAIL, and cost the build fleet a round).
-if command -v python3 >/dev/null 2>&1; then
+if command -v python3 >/dev/null 2>&1 || [ -n "${GENDIR:-}" ]; then      # GENDIR: the programs pre-generated (gen/run-flag.sh)
     fout="$(GEN=loop "$HERE/gen/run-flag.sh" -fno-loop-reg 1 60 2>&1 | tail -1)"
     case "$fout" in
         "all 60 the same"*) report "gen/loop" 0 "60 programs, with the registers and without" ;;
