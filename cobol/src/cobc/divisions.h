@@ -1203,6 +1203,21 @@ static void parse_rd(void)
     rw_layout_check(r, pg_given);
 }
 
+/* ERASE {EOL | EOS | END OF LINE | END OF SCREEN} (2023 13.18.21): the
+ * erase flag for the entry, the word ERASE already read */
+static int parse_erase_clause(int line)
+{
+    if (accept_word("eol")) return COB_SX_ERASE_EOL;
+    if (accept_word("eos")) return COB_SX_ERASE_EOS;
+    if (accept_word("end")) {
+        accept_word("of");
+        if (accept_word("line")) return COB_SX_ERASE_EOL;
+        if (accept_word("screen")) return COB_SX_ERASE_EOS;
+    }
+    die_at(line, "ERASE takes EOL, EOS, END OF LINE or END OF SCREEN (2023 13.18.21.2)");
+    return 0;
+}
+
 /* 01 screen-name. then slot entries at deeper levels, each with LINE /
  * COLUMN / VALUE / PIC FROM|TO|USING / attributes */
 static void parse_screen_section(void)
@@ -1217,8 +1232,12 @@ static void parse_screen_section(void)
         snprintf(sc->name, sizeof sc->name, "%s", cur()->s); advance();
         if (sym_lookup_quiet(sc->name)) die_at(line, "'%s' is both a data item and a screen", sc->name);
         sc->fg = sc->bg = 255;
+        /* an ERASE on a group clears from the group's position, which is
+         * its first field's: it waits for that field (13.18.21.4 rule 1) */
+        int pend_erase = 0;
         while (cur()->kind != T_PERIOD) {
             if (accept_word("blank")) { expect_word("screen"); sc->blank_screen = 1; continue; }
+            if (accept_word("erase")) { pend_erase |= parse_erase_clause(cur()->line); continue; }
             if (at_word("foreground-color") || at_word("foreground-colour") || at_word("background-color") || at_word("background-colour")) {
                 /* the 01 is a group like any other (2023 13.18.4.4 rule 3, 13.18.23.4 rule 3):
                  * its colours are inherited by every entry below it */
@@ -1353,7 +1372,7 @@ static void parse_screen_section(void)
                 if (accept_word("auto") || accept_word("auto-skip")) { f->flags |= COB_SF_AUTO; continue; }
                 if (accept_word("reverse-video")) { f->flags |= COB_SF_REVERSE; continue; }
                 if (accept_word("bell") || accept_word("beep") || accept_word("blink")) continue;   /* no bell, no blink: painted plain */
-                if (accept_word("erase")) { accept_word("eol"); accept_word("eos"); continue; }
+                if (accept_word("erase")) { f->ext |= parse_erase_clause(t->line); continue; }
                 if (accept_word("foreground-color") || accept_word("foreground-colour") || accept_word("background-color") || accept_word("background-colour")) {
                     int bg = t->s[0] == 'b';
                     accept_word("is");
@@ -1383,6 +1402,10 @@ static void parse_screen_section(void)
                 die_at(fline, "a screen item with a PICTURE of N takes only USAGE NATIONAL (2023 13.18.60.3 rule 20)");
             if (f->has_pic && susage == 2 && f->pi.category != PIC_NATIONAL)
                 die_at(fline, "USAGE NATIONAL on a screen item whose PICTURE is not N is not implemented");
+            if (f->kind < 0 && !f->has_pic && (f->ext & (COB_SX_ERASE_EOL | COB_SX_ERASE_EOS))) {
+                pend_erase |= f->ext & (COB_SX_ERASE_EOL | COB_SX_ERASE_EOS);   /* a group's ERASE: its first field's */
+                f->ext &= ~(COB_SX_ERASE_EOL | COB_SX_ERASE_EOS);
+            }
             if (blank_screen_entry && f->kind < 0 && !f->has_pic) continue;   /* just BLANK SCREEN */
             if (occ > 1 && f->kind < 0 && !f->has_pic) die_at(fline, "OCCURS on a screen group is not implemented");
             if (f->kind < 0 && !f->has_pic) {
@@ -1467,6 +1490,7 @@ static void parse_screen_section(void)
                 die_at(fline, "SECURE, REQUIRED and FULL belong to an input field (TO or USING)");
             if (occ > 1 && f->kind != COB_SCR_VALUE)
                 die_at(fline, "OCCURS on a FROM, TO or USING screen item (a table's elements, 2023 13.18.38.3 rule 13) is not implemented");
+            if (pend_erase) { f->ext |= pend_erase; pend_erase = 0; }
             sc->nf++;
             for (int k = 1; k < occ; k++) {
                 /* the next occurrence: the same entry, placed by the same

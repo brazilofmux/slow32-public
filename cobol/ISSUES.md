@@ -6140,6 +6140,16 @@ is counted apart.  105 of the 128 built programs compile.
   USING already, so for ACAS it changes nothing.)  Tests:
   free/gnu-scrupdate (Enter keeps "abc" with UPDATE, blanks it without),
   bad/accept-screen-update.
+- **ERASE in the SCREEN SECTION was parsed and ignored** (st010's 01
+  "erase eos" was refused outright).  2023 13.18.21: on DISPLAY, a
+  clearing from the entry's position to the end of the line or screen
+  before the entry is painted; during an ACCEPT of the screen, ignored.
+  Now: EOL, EOS, END OF LINE and END OF SCREEN set the field's erase
+  flag (the one positioned DISPLAY already uses); an ERASE on the 01 or
+  a group goes to its first field, whose position is the group's; and
+  the runtime skips a SCREEN SECTION field's erase through a screen
+  ACCEPT, a positioned field keeping its own.  Test: free/screrase (no
+  oracle).  110 of 125.
 
 Next, in order: the SCREEN SECTION BLANK SCREEN placement rule; COMP-X longer
 than seven bytes; PAGE LIMIT without a number; >>SOURCE FREE carried into

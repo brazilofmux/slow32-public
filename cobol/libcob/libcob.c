@@ -5210,13 +5210,20 @@ static int scr_is_nat(const cob_scr_field *f)
     return d && d->cat == COB_NATIONAL;
 }
 
+/* set through a screen ACCEPT: a SCREEN SECTION entry's ERASE is ignored
+ * during all of it (2023 13.18.21.4 rule 2).  A positioned field's erase
+ * (DISPLAY/ACCEPT ... AT ... WITH ERASE, BP-E7) is not the clause and
+ * keeps its effect. */
+static int scr_accepting;
+
 static void scr_paint_begin(const cob_scr_field *f, int *line, int *col)
 {
+    int erase = !scr_accepting || (f->ext & COB_SX_POS);
     scr_pos(f, line, col);
-    if (f->ext & COB_SX_ERASE_ALL) term_clear(0);
+    if (erase && (f->ext & COB_SX_ERASE_ALL)) term_clear(0);
     term_gotoxy(*line, *col);
-    if (f->ext & COB_SX_ERASE_EOS) term_clear(2);
-    else if (f->ext & COB_SX_ERASE_EOL) term_clear(1);
+    if (erase && (f->ext & COB_SX_ERASE_EOS)) term_clear(2);
+    else if (erase && (f->ext & COB_SX_ERASE_EOL)) term_clear(1);
     scr_attr(f);
 }
 
@@ -5566,7 +5573,9 @@ static int scr_may_leave(const scr_edit *e)
 static void screen_accept(const cob_screen *s);
 void cob_screen_accept(const cob_screen *s)
 {
+    scr_accepting = 1;
     screen_accept(s);
+    scr_accepting = 0;
     scr_update_once = 0;
 }
 static void screen_accept(const cob_screen *s)
