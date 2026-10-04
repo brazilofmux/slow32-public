@@ -168,7 +168,8 @@ notes ask, with GnuCOBOL nowhere in reach (its screens need a tty):
   non-blank character. `FULL` refuses to leave a field neither empty
   nor full; `REQUIRED` refuses to leave an empty one (a bell).
 - **Numeric fields** (a slot whose PICTURE is numeric or numeric-edited)
-  are edited on the point: digits typed before the point shift into the
+  (superseded 2026-10-04: see "Numeric fields through the editor core"
+  below) were edited on the point: digits typed before the point shift into the
   integer part, `.` (or `,` under `DECIMAL-POINT IS COMMA`) moves to the
   fraction, which fills left to right; `-` and `+` set the sign when the
   picture has one; Backspace takes the last digit back; Home clears.
@@ -331,3 +332,55 @@ key for key against Microsoft COBOL 5 by `tests/scredit-differential.sh`
 
 A numeric field's Home no longer zeroes it (Home is the first field);
 Ctrl-X does.
+
+## Numeric fields through the editor core (2026-10-04)
+
+Step 3 of the same plan; it replaces the "edited on the point"
+description under Stage 58 above.  A numeric or numeric-edited field is
+edited as digits standing in the picture's digit positions, by the
+`sn_*` half of `libcob/scredit.h`.  After every key the field is the
+picture's ordinary editing of those digits, so commas, floating signs
+and check protection move as the number grows.
+
+**A number is keyed as it is written** ("natural entry").  The core also
+has the fixed-position style of the 1993 Micro Focus runtime that was
+observed while building it -- the adding machine's, where `5` Enter in
+`ZZZ99.99` is 50.00 and only the point key aligns -- and that style is
+kept and tested (`tests/scrnum.txt`, `tests/scredit-differential.sh -N`,
+docs/adis-observed.md) because it is where the rules about pictures were
+learned.  The runtime does not use it: a positioned ACCEPT of a number
+has always been keyed naturally here, the programs of the Open Systems
+corpus are driven that way, and nothing since the adding machine expects
+otherwise.
+
+- **Entering a field** puts the cursor on the point (the last column of
+  a picture with no fraction).  The first digit, point or Backspace
+  replaces the value the field held; a cursor key first, and the value
+  is edited instead.  Enter alone keeps it.
+- **Digits** enter at the point and push the others left: `5` is 5.00 in
+  `ZZZ99.99`, `42` is 42 in `9(5)`.  When the integer part is full the
+  cursor goes into the fraction, across an assumed point too: `12345`
+  in `9(3)V99` is 123.45.  A full picture with no fraction refuses the
+  next digit.
+- **The point key** (`,` under DECIMAL-POINT IS COMMA) goes to the
+  fraction, which fills left to right; where there is no fraction it is
+  refused and the field is as it was.
+- **On a digit**, reached by Left or Right, a digit overtypes and the
+  cursor moves right.
+- **Keys**: `-` and `+` set the sign where the picture has one (an
+  edited sign, or `S`), from anywhere in the field and without
+  replacing the value; Backspace takes the last integer digit out at
+  the point, or zeroes the digit to the left elsewhere; Delete closes up
+  from the left; Ctrl-X zeroes the field, Ctrl-Z from the cursor on,
+  Ctrl-A puts back the value the field was entered with.  Left, Right
+  and End move within the field and then to the neighbour.
+- **While the cursor is in the field** the point and the fraction show
+  though the value is zero, a zero that has been keyed shows though the
+  picture would suppress it, and BLANK WHEN ZERO waits; when the field
+  is left it is the picture's editing of the value.
+- **AUTO** leaves when the last fraction digit, or the last digit of a
+  picture with none, has been typed.  **REQUIRED** wants a value that
+  is not zero.
+- **The value** passes between the item, the core and the picture as a
+  DISPLAY number through `cob_move`: eighteen digits, any scale (a P
+  picture is edited as its digit positions), any kind of item.

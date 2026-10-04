@@ -106,6 +106,50 @@ Rerun any of them: the line after `$` is the command.
   default in ADIS.  (The standard has a function key end the ACCEPT
   with status 1xxx, and that is what we keep.)
 
+## What the random runs added (numeric fields, 2026-10-04)
+
+(How this file was made, for the record: one-field programs of our own,
+compiled and run by the product, keys sent, the screen and cursor read
+back through our own DOS translator's trace.  Nothing of the product was
+disassembled or read.  What is here is evidence about how a picture
+shapes an editor; the runtime's numeric fields do not copy it -- see
+docs/screen.md, "natural entry".)
+
+Some 1,700 random key strings over thirty picture shapes
+(`tests/scredit-differential.sh -N`) turned up these, none of them in
+the tables below:
+
+- A zero typed into, or moved left into, a position the picture would
+  suppress is data: it shows (`06`) for as long as the cursor is in the
+  field, and digits typed on the point keep pushing it left.
+- The sign keys work only in a picture with a sign form (`-`, `+`, `CR`,
+  `DB`); `S9(3)` refuses them.
+- `9(3)V99` is two fields side by side.  A digit typed on the last
+  integer position stays there (the next overtypes it); the point key,
+  Right and Left cross; Backspace at the first fraction position does
+  nothing; Ctrl-A in either side puts back that side as it was when the
+  cursor came into it.
+- In the fraction, Right on the last digit first goes "off the end" of
+  it and only then to the next field; Backspace off the end zeroes the
+  digit the cursor is on.
+- Backspace on the point: while digits stand in suppressed positions the
+  last integer digit goes and the others move right; otherwise the digit
+  left of the point is zeroed and the cursor moves onto it.
+- Delete in the integer part takes the digit under the cursor out, the
+  digits to its left moving right, and the cursor moves right.
+- A picture with suppression and no point (`ZZ9`, `Z(5)`, `$$$9`): the
+  cursor past the digits is drawn on the last column with the digits one
+  position to the left.  The point key puts it on the last digit, "off
+  the end"; a digit then overtypes that digit and the flag stays through
+  the digits that follow.  Right or End with the cursor already past the
+  digits sets the same flag.  The first Backspace past the digits with
+  the flag set only clears it.  Full, the cursor is on the last digit:
+  Backspace takes that digit out, End leaves everything as it is.
+- The prompt character fills the suppressed positions left of the
+  digits; a floating string's first column takes it unless a digit
+  stands next to it, a fixed sign's column only when the next column has
+  it.
+
 ## The tables
 
 ### A zero-suppressed numeric field: the editing keys

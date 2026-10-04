@@ -398,6 +398,423 @@ static int se_key1(const se_field *f, se_state *s, int fn, int ch)
     return SE_REFUSED;
 }
 
+/* ======================================================================
+ * Numeric and numeric-edited fields.
+ *
+ * Such a field is edited as digits standing in the picture's digit
+ * positions: the state is the integer digits, the fraction digits, a
+ * sign, and where the shown digits begin; the image is those digits put
+ * through the picture by the ordinary editing code after every key (the
+ * caller does that: this file calls nothing); the cursor is on a digit
+ * position or on the point.
+ *
+ * Two styles of entry.  The fixed-position one is the adding machine's,
+ * and is what a 1993 Micro Focus runtime was observed to do, key by key,
+ * from the outside (docs/adis-observed.md; tests/scredit-differential.sh
+ * -N compares): the cursor starts on the first position that shows and
+ * digits overtype from there, so 5 Enter in ZZZ99.99 is 50.00; only the
+ * point key aligns; each side of an assumed point is a field of its own.
+ * It taught what a picture does to a state machine, and it is kept, and
+ * tested, as that.
+ *
+ * Natural entry (sn_natural) is what the runtime uses: a number is keyed
+ * as it is written.  Digits enter at the point and push left, the point
+ * key goes to the fraction, an assumed point is a point, and a full
+ * integer part carries the cursor into the fraction.  The cursor keys
+ * still reach every digit position, and a digit typed there overtypes.
+ * ====================================================================== */
+
+#define SN_MAXD 40
+#define SN_MAXW 80
+
+typedef struct {
+    int width;                          /* columns */
+    char pat[SN_MAXW + 1];              /* the flattened picture (picture.h) */
+    int ni, nf;                         /* integer and fraction digit positions */
+    short icol[SN_MAXD], fcol[SN_MAXD]; /* their columns */
+    int pcol;                           /* the point's column, -1 when it has none (V, or no fraction) */
+    int first9;                         /* the first integer position that is never suppressed (ni: none) */
+    int has_sign;                       /* the picture can show a sign (an edited one) */
+    int edited;
+    int natural;                        /* keyed as a number is written: see sn_natural */
+    char kind[SN_MAXW];                 /* each column: 'i' 'f' digit positions, '.' the point, ',' an insertion, 'F' the floating string's first, 's' a fixed sign or currency */
+} sn_field;
+
+typedef struct {
+    char id[SN_MAXD], fd[SN_MAXD];      /* the digits, '0'..'9' */
+    int neg;
+    int lead;                           /* the first integer position that shows: digits from here on are data, zeros too */
+    int frac;                           /* the cursor is in the fraction */
+    int pos;                            /* integer: 0..ni (ni: on the point); fraction: 0..nf-1 */
+    int off_end;                        /* on the last digit of its part, just typed: the next digit overtypes it */
+    char e_id[SN_MAXD], e_fd[SN_MAXD]; int e_neg, e_lead;
+    int touched;
+} sn_state;
+
+enum { SN_DIGIT = 1, SN_POINT, SN_MINUS, SN_PLUS, SN_LEFT, SN_RIGHT, SN_END, SN_BACKSPACE, SN_DELETE,
+       SN_CLEAR_FIELD, SN_CLEAR_EOF, SN_UNDO };
+enum { SN_OK = 0, SN_REFUSED, SN_GO_PREV, SN_GO_NEXT, SN_GO_LAST, SN_FILLED };
+
+/* The field from its flattened picture: `floating` is the picture's
+ * floating symbol or 0 (PicInfo.floating). */
+static int sn_field_init(sn_field *f, const char *pat, int floating, int edited)
+{
+    memset(f, 0, sizeof *f);
+    f->pcol = -1; f->edited = edited;
+    int c = 0, after = 0, seen_float = 0, nfl = 0;
+    for (const char *p = pat; *p; p++) if (floating && *p == floating) nfl++;
+    if (nfl < 2) floating = 0;                          /* one + - $ is a fixed insertion */
+    int first9 = -1;
+    for (const char *p = pat; *p; p++) {
+        char s = *p;
+        int digit = 0, fixed9 = 0;
+        if (c + 2 > SN_MAXW) return -1;
+        if (s == '9') { digit = 1; fixed9 = 1; }
+        else if (s == 'Z' || s == '*') digit = 1;
+        else if (floating && s == floating) { if (seen_float) digit = 1; seen_float = 1; }
+        if (s == 'V') { after = 1; continue; }
+        if (s == 'S') continue;
+        if (s == 'P') return -1;                        /* scaling positions: not edited here */
+        if (s == '.') { f->pcol = c; after = 1; f->kind[c] = '.'; c++; continue; }
+        if (digit) {
+            if (!after) { if (f->ni >= SN_MAXD) return -1; if (fixed9 && first9 < 0) first9 = f->ni; f->icol[f->ni++] = (short)c; f->kind[c] = 'i'; }
+            else { if (f->nf >= SN_MAXD) return -1; f->fcol[f->nf++] = (short)c; f->kind[c] = 'f'; }
+            c++; continue;
+        }
+        if (s == '+' || s == '-') f->has_sign = 1;
+        if (s == 'C' || s == 'D') { f->has_sign = 1; f->kind[c] = f->kind[c + 1] = 's'; c += 2; continue; }
+        f->kind[c] = (floating && s == floating) ? 'F' : (s == ',' || s == 'B' || s == '0' || s == '/') ? ',' : 's';
+        c++;
+    }
+    f->first9 = first9 < 0 ? f->ni : first9;
+    f->width = c;
+    strncpy(f->pat, pat, SN_MAXW);
+    return 0;
+}
+
+static int sn_firstsig(const sn_field *f, const sn_state *s)
+{
+    int k = 0;
+    while (k < f->ni && s->id[k] == '0') k++;
+    return k;
+}
+/* A picture with a point to stand on, or with suppressed positions and no
+ * point (ZZ9: the point is after the last digit), takes integer digits
+ * at the point, pushing left.  One with neither (9(5), 9(3)V99: ADIS
+ * takes the two sides of a V as two fields side by side) is typed over
+ * left to right, the cursor staying on its last digit. */
+static int sn_has_point(const sn_field *f) { return f->pcol >= 0 || f->first9 > 0; }
+
+/* Natural entry, which is what the runtime uses: the number is keyed the
+ * way it is written.  Every integer position takes digits at the point,
+ * whatever the picture suppresses, so 5 is 5 and not 50 in ZZZ99.99 or
+ * 50000 in 9(5); the point key goes to the fraction; an assumed point
+ * (9(3)V99) is a point like any other, and the integer part filling
+ * carries the cursor over it.  The fixed positions of the adding-machine
+ * style above (the observed behaviour of the 1993 runtime) are still
+ * there for whoever moves the cursor onto a digit: it is overtyped. */
+static void sn_natural(sn_field *f) { f->natural = 1; f->first9 = f->ni; }
+static int sn_point(const sn_field *f) { return f->pcol >= 0 || f->natural; }
+
+static void sn_snapshot(sn_state *s)
+{
+    memcpy(s->e_id, s->id, SN_MAXD); memcpy(s->e_fd, s->fd, SN_MAXD); s->e_neg = s->neg; s->e_lead = s->lead;
+}
+
+static void sn_home(const sn_field *f, sn_state *s)
+{
+    s->frac = 0; s->off_end = 0;
+    s->pos = s->lead;
+    if (s->pos >= f->ni && !sn_has_point(f)) s->pos = f->ni ? f->ni - 1 : 0;
+}
+
+/* digits: the item's value as ni+nf digits (leading zeros), neg its sign */
+static void sn_enter(const sn_field *f, sn_state *s, const char *digits, int neg)
+{
+    memset(s, 0, sizeof *s);
+    memcpy(s->id, digits, (size_t)f->ni); memcpy(s->fd, digits + f->ni, (size_t)f->nf);
+    s->neg = neg;
+    s->lead = sn_firstsig(f, s);
+    if (s->lead > f->first9) s->lead = f->first9;
+    sn_snapshot(s);
+    sn_home(f, s);
+}
+
+static void sn_digits(const sn_field *f, const sn_state *s, char *out)   /* ni+nf digits for the editing code */
+{
+    memcpy(out, s->id, (size_t)f->ni); memcpy(out + f->ni, s->fd, (size_t)f->nf);
+}
+
+static int sn_cursor(const sn_field *f, const sn_state *s)
+{
+    if (s->frac) return f->fcol[s->pos];
+    if (s->pos < f->ni) return f->icol[s->pos];
+    if (f->pcol >= 0) return f->pcol;
+    return f->ni ? f->icol[f->ni - 1] : 0;
+}
+
+/* A run of n digit positions with no suppression and no point to stand
+ * on -- 9(5), each side of 9(3)V99, 99/99/99 -- typed over left to
+ * right like text: the cursor stays on the last digit once it is typed
+ * (*off: off the end), the point key right-justifies what stands left of
+ * the cursor, Delete closes up from the left.  Returns SN_GO_PREV /
+ * SN_GO_NEXT when a move leaves the run, -1 for a key that is not its
+ * own to answer (sign, undo). */
+static int sn_plain(char *d, int n, int *pos, int *off, int fn, int ch)
+{
+    int was = *off;
+    *off = 0;
+    switch (fn) {
+    case SN_DIGIT:
+        d[*pos] = (char)ch;
+        if (*pos < n - 1) { (*pos)++; return SN_OK; }
+        *off = 1;
+        return SN_FILLED;
+    case SN_POINT: {
+        char t[SN_MAXD]; int k = *pos + (was ? 1 : 0);
+        memcpy(t, d, (size_t)k);
+        memset(d, '0', (size_t)n);
+        memcpy(d + n - k, t, (size_t)k);
+        *pos = n - 1; *off = 1;
+        return SN_OK;
+    }
+    case SN_LEFT:
+        if (*pos > 0) { (*pos)--; return SN_OK; }
+        return SN_GO_PREV;
+    case SN_RIGHT:
+        if (*pos < n - 1) { (*pos)++; return SN_OK; }
+        if (!was) { *off = 1; return SN_OK; }
+        *off = 1;
+        return SN_GO_NEXT;
+    case SN_END:
+        if (*pos >= n - 1) { *off = was; return SN_GO_LAST; }
+        *pos = n - 1;
+        return SN_OK;
+    case SN_BACKSPACE:
+        if (was) { d[*pos] = '0'; return SN_OK; }
+        if (*pos > 0) { (*pos)--; d[*pos] = '0'; return SN_OK; }
+        return SN_GO_PREV;
+    case SN_DELETE:
+        memmove(d + 1, d, (size_t)*pos); d[0] = '0';
+        if (*pos < n - 1) (*pos)++;
+        return SN_OK;
+    case SN_CLEAR_FIELD:
+        memset(d, '0', (size_t)n); *pos = 0;
+        return SN_OK;
+    case SN_CLEAR_EOF:
+        memset(d + *pos, '0', (size_t)(n - *pos));
+        return SN_OK;
+    }
+    *off = was;
+    return -1;
+}
+
+static int sn_key1(const sn_field *f, sn_state *s, int fn, int ch);
+static int sn_key(const sn_field *f, sn_state *s, int fn, int ch)
+{
+    int v;
+    /* natural entry: a full integer field takes no more digits at its end */
+    if (f->natural && fn == SN_DIGIT && !s->frac && f->nf == 0 && f->ni > 0 && s->lead == 0 && s->off_end && s->pos == f->ni - 1) return SN_REFUSED;
+    /* the same picture, the cursor past its digits or on the last of
+     * them: "off the end" is set by the point key, and by Right and End
+     * when the cursor is already past the digits; it stays through the
+     * digits typed after it, and the next Backspace past the digits is
+     * taken up undoing it */
+    if (!s->frac && f->pcol < 0 && f->first9 > 0 && f->nf == 0 && s->pos >= f->ni - 1) {
+        int off = s->off_end, at = s->pos;
+        if (off && at == f->ni && fn == SN_BACKSPACE) { s->off_end = 0; return SN_OK; }
+        v = sn_key1(f, s, fn, ch);
+        if (s->pos == f->ni) {
+            if (at == f->ni && (fn == SN_RIGHT || fn == SN_END)) s->off_end = 1;
+            else if (off && (fn == SN_DIGIT || (at == f->ni && (fn == SN_DELETE || fn == SN_CLEAR_EOF)))) s->off_end = 1;
+        }
+    } else
+        v = sn_key1(f, s, fn, ch);
+    /* a picture with no point to stand on (ZZ9), full: the cursor is on
+     * its last digit, off the end, not past it */
+    if (!s->frac && f->pcol < 0 && f->first9 > 0 && s->pos == f->ni && s->lead == 0 && f->ni > 0) {
+        s->pos = f->ni - 1; s->off_end = 1;
+        if (fn == SN_DIGIT && v == SN_OK) v = SN_FILLED;      /* its last digit taken */
+    }
+    return v;
+}
+
+static int sn_key1(const sn_field *f, sn_state *s, int fn, int ch)
+{
+    int ni = f->ni, nf = f->nf;
+    /* the plain runs: an integer part with no point and no suppression,
+     * and each side of a V */
+    if (fn != SN_MINUS && fn != SN_PLUS && fn != SN_UNDO) {
+        if (s->frac && !sn_point(f)) {
+            int v = sn_plain(s->fd, nf, &s->pos, &s->off_end, fn, ch);
+            if (v == SN_GO_PREV && ni > 0 && fn == SN_LEFT) {   /* back into the integer side, a field of its own (Backspace stays) */
+                sn_snapshot(s);
+                s->frac = 0; s->pos = ni - 1; s->off_end = 0;
+                return SN_OK;
+            }
+            if (v >= 0) { if (v == SN_OK || v == SN_FILLED) s->touched = 1; return fn == SN_BACKSPACE && v == SN_GO_PREV ? SN_REFUSED : v; }
+        } else if (!s->frac && !sn_has_point(f) && ni > 0) {
+            int was_pos = s->pos, was_off = s->off_end;
+            int v = sn_plain(s->id, ni, &s->pos, &s->off_end, fn, ch);
+            if (fn == SN_CLEAR_FIELD) { s->neg = 0; if (nf > 0 && f->pcol >= 0) memset(s->fd, '0', (size_t)nf); }
+            (void)was_off;
+            if (nf > 0 && (v == SN_GO_NEXT || fn == SN_POINT || (fn == SN_RIGHT && was_pos == ni - 1))) {
+                /* on into the fraction side */
+                sn_snapshot(s);
+                s->frac = 1; s->pos = 0; s->off_end = 0;
+                return SN_OK;
+            }
+            if (v >= 0) { if (v == SN_OK || v == SN_FILLED) s->touched = 1; return fn == SN_BACKSPACE && v == SN_GO_PREV ? SN_REFUSED : v; }
+        }
+    }
+    int off = s->off_end;
+    s->off_end = 0;
+    switch (fn) {
+    case SN_DIGIT:
+        if (s->frac) {
+            s->fd[s->pos] = (char)ch; s->touched = 1;
+            if (s->pos < nf - 1) { s->pos++; return SN_OK; }
+            s->off_end = 1;
+            return SN_FILLED;
+        }
+        if (s->pos < ni) {
+            s->id[s->pos] = (char)ch; s->touched = 1;
+            if (s->pos < s->lead) s->lead = s->pos;
+            if (!sn_has_point(f)) {
+                if (s->pos < ni - 1) { s->pos++; return SN_OK; }
+                s->off_end = 1;
+                return SN_FILLED;
+            }
+            s->pos++;
+            /* past the last integer position: on the point, or into the
+             * fraction when no more integer digits can be taken */
+            if (s->pos == ni && s->lead == 0 && sn_point(f) && nf > 0) { s->frac = 1; s->pos = 0; }
+            return SN_OK;
+        }
+        /* on the point: the digit goes in before it, the others move left */
+        if (s->lead > 0) {
+            memmove(s->id, s->id + 1, (size_t)(ni - 1));
+            s->id[ni - 1] = (char)ch; s->lead--; s->touched = 1;
+            if (s->lead == 0 && sn_point(f) && nf > 0) { s->frac = 1; s->pos = 0; }
+            return SN_OK;
+        }
+        /* the integer part is full: with a point to stand on the digit
+         * is refused; with none (ZZ9) it overtypes the last digit */
+        if (!sn_point(f) && ni > 0) { s->id[ni - 1] = (char)ch; s->touched = 1; return SN_FILLED; }
+        if (nf == 0 && ni > 0) { s->id[ni - 1] = (char)ch; s->touched = 1; return SN_FILLED; }
+        return SN_REFUSED;
+    case SN_POINT:
+        if (s->frac) { s->off_end = off; return SN_REFUSED; }
+        if (s->pos < ni) {
+            /* align: the digits left of the cursor, right-justified */
+            char t[SN_MAXD]; int n = s->pos + (off ? 1 : 0) - s->lead;   /* off the end: the last digit too */
+            if (n < 0) n = 0;
+            memcpy(t, s->id + s->lead, (size_t)n);
+            memset(s->id, '0', (size_t)ni);
+            memcpy(s->id + ni - n, t, (size_t)n);
+            s->lead = ni - n < f->first9 ? ni - n : f->first9;
+            s->touched = 1;
+        }
+        if (nf > 0) { if (!sn_point(f)) sn_snapshot(s); s->frac = 1; s->pos = 0; }
+        else { s->pos = ni - 1; s->off_end = 1; }           /* no fraction: onto the last digit, off the end */
+        return SN_OK;
+    case SN_MINUS: case SN_PLUS:
+        if (!f->has_sign) { s->off_end = off; return SN_REFUSED; }
+        s->neg = fn == SN_MINUS; s->touched = 1; s->off_end = off;
+        return SN_OK;
+    case SN_LEFT:
+        if (s->frac) {
+            if (s->pos > 0) { s->pos--; return SN_OK; }
+            if (ni == 0) return SN_GO_PREV;
+            if (!sn_point(f)) sn_snapshot(s);
+            s->frac = 0; s->pos = sn_point(f) ? ni : ni - 1;
+            return SN_OK;
+        }
+        if (s->pos > s->lead) { s->pos--; return SN_OK; }
+        return SN_GO_PREV;
+    case SN_RIGHT:
+        if (s->frac) {
+            if (s->pos < nf - 1) { s->pos++; return SN_OK; }
+            s->off_end = 1;                                 /* off the end of the fraction first */
+            return off ? SN_GO_NEXT : SN_OK;
+        }
+        if (s->pos < ni - 1 || (s->pos == ni - 1 && sn_has_point(f))) { s->pos++; return SN_OK; }
+        if (nf > 0) { if (!sn_point(f)) sn_snapshot(s); s->frac = 1; s->pos = 0; return SN_OK; }
+        s->off_end = off;
+        return SN_GO_NEXT;
+    case SN_END:
+        if (s->frac || (nf > 0 && sn_point(f))) {
+            if (s->frac && s->pos == nf - 1) return SN_GO_LAST;
+            s->frac = 1; s->pos = nf - 1;
+            return SN_OK;
+        }
+        if (s->pos >= ni - 1) { s->off_end = off; return SN_GO_LAST; }
+        s->pos = ni - 1;
+        return SN_OK;
+    case SN_BACKSPACE:
+        if (s->frac) {
+            if (off) { s->fd[s->pos] = '0'; s->touched = 1; return SN_OK; }
+            if (s->pos > 0) { s->pos--; s->fd[s->pos] = '0'; s->touched = 1; return SN_OK; }
+            if (ni == 0) return SN_REFUSED;
+            if (!sn_point(f)) sn_snapshot(s);
+            s->frac = 0; s->pos = sn_point(f) ? ni : ni - 1;
+            return SN_OK;
+        }
+        if (off && s->pos < ni) {
+            /* off the end of a full integer part with no point: the last
+             * digit goes, the others move right, the cursor is past them */
+            memmove(s->id + 1, s->id, (size_t)(ni - 1)); s->id[0] = '0';
+            if (s->lead < f->first9) s->lead++;
+            s->pos = ni; s->touched = 1;
+            return SN_OK;
+        }
+        if (s->pos == ni && ni > 0) {
+            if (s->lead < f->first9) {                  /* digits have grown into the suppressed positions */
+                memmove(s->id + 1, s->id, (size_t)(ni - 1)); s->id[0] = '0';
+                s->lead++; s->touched = 1;
+                return SN_OK;
+            }
+            if (ni - 1 < s->lead) return SN_REFUSED;
+            s->pos = ni - 1; s->id[s->pos] = '0'; s->touched = 1;
+            return SN_OK;
+        }
+        if (s->pos > s->lead) { s->pos--; s->id[s->pos] = '0'; s->touched = 1; return SN_OK; }
+        return SN_REFUSED;
+    case SN_DELETE:
+        if (s->frac) {
+            memmove(s->fd + s->pos, s->fd + s->pos + 1, (size_t)(nf - 1 - s->pos));
+            s->fd[nf - 1] = '0'; s->touched = 1;
+            return SN_OK;
+        }
+        if (s->pos >= ni) return SN_REFUSED;
+        memmove(s->id + 1, s->id, (size_t)s->pos); s->id[0] = '0';
+        if (s->lead < f->first9) s->lead++;
+        s->touched = 1;
+        s->pos++;
+        if (f->pcol < 0 && !(f->natural && nf > 0) && s->pos >= ni) s->pos = ni - 1;   /* no point to move onto: the last digit */
+        return SN_OK;
+    case SN_CLEAR_FIELD:
+        memset(s->id, '0', (size_t)ni); memset(s->fd, '0', (size_t)nf);
+        s->neg = 0; s->lead = f->first9; s->touched = 1;
+        sn_home(f, s);
+        return SN_OK;
+    case SN_CLEAR_EOF:
+        if (s->frac) memset(s->fd + s->pos, '0', (size_t)(nf - s->pos));
+        else {
+            if (s->pos < ni) memset(s->id + s->pos, '0', (size_t)(ni - s->pos));
+            if (sn_point(f)) memset(s->fd, '0', (size_t)nf);
+        }
+        s->touched = 1;
+        return SN_OK;
+    case SN_UNDO:
+        memcpy(s->id, s->e_id, SN_MAXD); memcpy(s->fd, s->e_fd, SN_MAXD); s->neg = s->e_neg; s->lead = s->e_lead;
+        if (s->frac && !sn_point(f)) { s->pos = 0; return SN_OK; }     /* the fraction of a V picture is a field of its own */
+        sn_home(f, s);
+        return SN_OK;
+    }
+    return SN_REFUSED;
+}
+
 #endif                                  /* SCREDIT_EXPAND_ONLY */
 
 #endif

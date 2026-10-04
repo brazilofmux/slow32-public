@@ -1,0 +1,75 @@
+# scrnum.txt -- the screen editor's core for numeric fields
+# (libcob/scredit.h), cases for tests/scrnum_test: PICTURE ~ initial
+# value ~ keys.  The cases down to the N: ones are the fixed-position
+# style, and are key for key what a 1993 Micro Focus runtime was
+# observed to do (tests/scredit-differential.sh -N; docs/adis-observed.md
+# has the rules).  The N: cases are natural entry, which is what the
+# runtime uses for every numeric field: ours, with no oracle.
+# digits overtype from the first position that shows; Enter does not align
+ZZZ99.99~~5
+ZZZ99.99~~1234{BS}5678
+ZZZ99.99~~12.5
+ZZZ99.99~12.5~7{RIGHT}{RIGHT}9
+# one 9 before the point: keyed like a calculator
+ZZ9.99~~123456
+ZZ9.99~~12{BS}{BS}{BS}7.5
+ZZ9.99~2.5~{DEL}4{^Z}
+# the point key right-justifies what stands left of the cursor
+999.99~~12.5
+9(5)~~12.
+9(5)~~.
+# a zero moved into a suppressed position is data
+ZZ9.99~~0061
+# signs: only where the picture has one
+-ZZ9.99~~12-.5+
+ZZ9.99-~~7-
+ZZ9.99CR~~7-
+ZZ9.99~~7-
++ZZ9.99~~-3
+# floating strings and check protection
+$$,$$9.99~~12345.67
+---9.99~~1{^X}-9{BS}963{RIGHT}
+***9.99~~42.{LEFT}{LEFT}{BS}
+# runs of 9s: typed over like text; each side of a V a field of its own
+9(5)~~123{LEFT}{LEFT}9{END}7
+9(3)V99~~12345{LEFT}{LEFT}{LEFT}6
+9(3)V99~2.5~1.7{^A}
+9(3)V99~2.5~0{RIGHT}{RIGHT}{BS}{BS}1{BS}28-6
+99/99/99~~311226
+# clear, clear to the end, undo
+ZZZ99.99~12.5~9{^A}
+ZZZ99.99~12.5~{RIGHT}{^Z}
+ZZZ99.99~12.5~{^X}7
+# no point to stand on: the cursor ends on the last digit, off the end
+ZZ9~~1234{BS}{BS}
+Z(5)~~12.{BS}{BS}
+Z(5)~~12.3{DEL}4{BS}{BS}
+Z(5)~~12.{RIGHT}3{BS}{BS}
+Z(5)~123~3025{BS}{RIGHT}{BS}7
+Z(5)~123~0.99..
+ZZZ,ZZ9~~40{END}95{BS}7
++++9~123~8.19{BS}32.3
+$$$9~~5.0369{END}{BS}4
+Z9~~42{LEFT}60.9{RIGHT}2{END}.
+# natural entry: a number is keyed as it is written
+N:ZZZ99.99~~5
+N:ZZZ99.99~~12.5
+N:ZZZ99.99~12.5~7
+N:ZZZ99.99~12.5~{LEFT}7
+N:ZZZ99.99~~1234567
+N:ZZZ99.99~~123456{BS}{BS}{BS}{BS}
+N:9(5)~~42
+N:9(5)~42~{LEFT}7
+N:9(5)~42~.
+N:9(5)~~1234567
+N:9(3)V99~~12345
+N:9(3)V99~~1.5{BS}{BS}{BS}7
+N:9(3)V99~2.5~{RIGHT}7{LEFT}{LEFT}{LEFT}9
+N:-ZZ9.99~12.5~-
+N:-ZZ9.99~~-7.25+
+N:ZZ9.99~12.5~{BS}
+N:ZZ9.99~12.5~{DEL}
+N:ZZ9.99~12.5~{^X}3{^A}
+N:$$,$$9.99~~1234.5{BS}{BS}{BS}
+N:ZZ9~~1234
+N:99/99/99~~311226

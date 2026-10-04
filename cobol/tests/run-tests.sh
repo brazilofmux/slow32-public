@@ -171,7 +171,7 @@ fi
 # a run that silently dropped two gates would read as a full one.
 SKIPPED=""; GEN_SKIPPED=""
 if ! command -v "$HOSTCC" >/dev/null 2>&1; then
-    SKIPPED=" pictest bt_test wide_test scredit_test scram_test"
+    SKIPPED=" pictest bt_test wide_test scredit_test scrnum_test scram_test"
     echo "SKIP  pictest  (no host C compiler: $HOSTCC)"
     echo "SKIP  bt_test  (no host C compiler: $HOSTCC)"
 elif ! "$HOSTCC" -std=c99 -I"$CDIR/src" -O1 -w -o "$W/pictest" "$HERE/pictest.c" \
@@ -215,6 +215,23 @@ if [ -z "$SKIPPED" ]; then
             report "scredit_test" 0 "$(grep -c '^==' "$W/scredit.out") cases"
         else
             report "scredit_test" 1 "$(diff "$W/scredit.out" "$HERE/scredit.expected" | head -1)"
+        fi
+    fi
+fi
+
+# --- Gate 1j: the same core's numeric fields (tests/scrnum.txt) ---------
+if [ -z "$SKIPPED" ]; then
+    if ! "$HOSTCC" -std=gnu99 -I"$CDIR/libcob" -I"$CDIR/src" -O1 -w -o "$W/scrnum_test" "$HERE/scrnum_test.c" \
+            "$CDIR/src/picture.c" "$CDIR/src/picture_scan.c" 2>"$W/cc.log"; then
+        report "scrnum_test" 1 "host build"
+    else
+        grep -v '^#' "$HERE/scrnum.txt" | while IFS='~' read -r pic val keys; do
+            echo "== $pic ~ $val ~ $keys"; "$W/scrnum_test" "$pic" "$val" "$keys{ENTER}"
+        done > "$W/scrnum.out" 2>&1
+        if cmp -s "$W/scrnum.out" "$HERE/scrnum.expected"; then
+            report "scrnum_test" 0 "$(grep -c '^==' "$W/scrnum.out") cases"
+        else
+            report "scrnum_test" 1 "$(diff "$W/scrnum.out" "$HERE/scrnum.expected" | head -1)"
         fi
     fi
 fi

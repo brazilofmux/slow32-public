@@ -5512,11 +5512,16 @@ static int scr_is_numeric(const cob_scr_field *f)
 /* the state of one input field under edit */
 typedef struct {
     const cob_scr_field *f;
-    char *buf;                 /* text: the characters; numeric: the rendering */
-    unsigned pos;              /* text: the cursor */
-    int numeric, neg, infrac, touched;
-    int ni, nf, ni_max, nf_max, point;   /* numeric: digits typed each side of the point, the capacities, the point's column */
-    char ibuf[20], fbuf[20];
+    char *buf;                 /* the field's columns as last rendered */
+    unsigned pos;              /* national: the cursor */
+    /* a numeric field: the core's description and state (scredit.h);
+     * tscale is the scale its digits are read at, cols whether the
+     * core's columns are the picture's (not for a P picture, or one the
+     * core does not take: the digits are then edited as a plain run) */
+    int numeric, tscale, cols;
+    int fresh;                 /* just entered: the first digit, point or Backspace replaces the value */
+    sn_field *nf;
+    sn_state *ns;
     /* national: the text's code units (u, nu of cap) and its clusters,
      * pos counting clusters; ut is the scratch copy an edit is built in */
     int nat, nu, cap, ncl;
@@ -5603,53 +5608,128 @@ static void scr_nat_delete(scr_edit *e, unsigned k)
     e->pos = k;
 }
 
-/* the numeric value the digits typed so far stand for, at the picture's scale */
-static long long scr_num_value(const scr_edit *e)
+/* A numeric field's digits pass between the item, the core and the
+ * picture as a DISPLAY number with a separate leading sign, moved by
+ * cob_move: any width the picture has, any scale, any item. */
+static void scr_num_desc(const scr_edit *e, cob_desc *t)
 {
-    long long v = 0;
-    for (int i = 0; i < e->ni; i++) v = v * 10 + (e->ibuf[i] - '0');
-    for (int i = 0; i < e->nf_max; i++) v = v * 10 + (i < e->nf ? e->fbuf[i] - '0' : 0);
-    return e->neg ? -v : v;
+    memset(t, 0, sizeof *t);
+    t->cat = COB_NUM; t->usage = COB_U_DISPLAY;
+    t->digits = (unsigned char)(e->nf->ni + e->nf->nf); t->scale = (signed char)e->tscale;
+    t->flags = COB_F_SIGNED | COB_F_SEPLEAD; t->size = 1u + t->digits;
 }
 
-static void scr_num_render(scr_edit *e)
+/* the field for the picture: the core's reading of an edited picture, or
+ * a run of 9s for a plain one */
+static void scr_num_field(scr_edit *e)
 {
-    const cob_desc *d = (const cob_desc *)e->f->pic;
-    cob_put_num_x(e->buf, d, scr_num_value(e), d->scale, 0);
+    const cob_scr_field *f = e->f;
+    const cob_desc *d = (const cob_desc *)f->pic;
+    char pat[2 * SN_MAXD + 8]; int n = 0;
+    e->nf = malloc(sizeof *e->nf); e->ns = calloc(1, sizeof *e->ns);
+    if (!e->nf || !e->ns) cob_fatal("out of memory");
+    if (d->cat == COB_NUM_ED && d->pic && !sn_field_init(e->nf, d->pic, cob_edit_floating(d->pic), 1) &&
+        e->nf->ni + e->nf->nf == d->digits && e->nf->nf == d->scale && e->nf->width == (int)f->width) {
+        e->tscale = d->scale; e->cols = 1;
+        sn_natural(e->nf);
+        return;
+    }
+    int plain = d->cat == COB_NUM && d->usage == COB_U_DISPLAY && d->scale >= 0 && d->scale <= d->digits && d->digits <= SN_MAXD;
+    int digits = d->digits && d->digits <= SN_MAXD ? d->digits : 1;
+    /* a P picture: the digit positions it has are its columns, read at
+     * the picture's scale */
+    if (!plain && d->cat == COB_NUM && d->usage == COB_U_DISPLAY && f->width && f->width <= SN_MAXD && !(d->flags & (COB_F_SEPLEAD | COB_F_SEPTRAIL)))
+        digits = (int)f->width;
+    int frac = plain ? d->scale : 0;
+    if (plain && (d->flags & COB_F_SEPLEAD)) pat[n++] = '+';
+    for (int i = 0; i < digits - frac; i++) pat[n++] = '9';
+    if (frac) pat[n++] = 'V';
+    for (int i = 0; i < frac; i++) pat[n++] = '9';
+    if (plain && (d->flags & COB_F_SEPTRAIL)) pat[n++] = '+';
+    pat[n] = 0;
+    sn_field_init(e->nf, pat, 0, 0);
+    e->nf->has_sign = (d->flags & COB_F_SIGNED) != 0;
+    sn_natural(e->nf);
+    e->tscale = plain ? frac : d->scale;
+    e->cols = plain && e->nf->width == (int)f->width;
 }
 
-/* the item's current value, as digits to edit in place */
+/* entering the field: the cursor on the point, the value there to be
+ * replaced by the first thing typed, or edited by moving into it */
+static void scr_num_start(scr_edit *e)
+{
+    e->ns->frac = 0; e->ns->pos = e->nf->ni; e->ns->off_end = 0;
+    if (e->nf->nf == 0 && e->nf->ni && e->ns->lead == 0) { e->ns->pos = e->nf->ni - 1; e->ns->off_end = 1; }   /* no fraction, and full: on the last digit */
+    e->fresh = 1;
+}
+
+/* the item's value into the core (a TO field starts from zero) */
 static void scr_num_load(scr_edit *e)
 {
-    const cob_desc *d = (const cob_desc *)e->f->pic;
-    long long v = scr_kind(e->f) == COB_SCR_USING ? cob_get_num(scr_item(e->f), (const cob_desc *)e->f->item_desc) : 0;
-    int is = ((const cob_desc *)e->f->item_desc)->scale;
-    if (scr_kind(e->f) == COB_SCR_USING && is != d->scale) v = is > d->scale ? div_pow10(v, is - d->scale, 0) : v * pow10tab[d->scale - is];
-    e->neg = v < 0 && (d->flags & COB_F_SIGNED);
-    unsigned long long mag = v < 0 ? 0 - (unsigned long long)v : (unsigned long long)v, fr;
-    unsigned long long ip = udiv_pow10(mag, d->scale, &fr);
-    char t[24]; mag_to_digits(ip, t, 20);
-    int k = 0; while (k < 20 && t[k] == '0') k++;
-    e->ni = 20 - k; if (e->ni > e->ni_max) { k += e->ni - e->ni_max; e->ni = e->ni_max; }
-    memcpy(e->ibuf, t + k, (size_t)e->ni);
-    e->nf = fr ? d->scale : 0;
-    if (e->nf) mag_to_digits(fr, e->fbuf, e->nf);
-    e->infrac = 0; e->touched = 0;
+    cob_desc t; char tb[2 * SN_MAXD + 2];
+    scr_num_desc(e, &t);
+    memset(tb, '0', sizeof tb); tb[0] = '+';
+    if (scr_kind(e->f) == COB_SCR_USING) cob_move(scr_item(e->f), (const cob_desc *)e->f->item_desc, tb, &t);
+    sn_enter(e->nf, e->ns, tb + 1, tb[0] == '-' && e->nf->has_sign);
+    scr_num_start(e);
+}
+
+/* The field's columns: the core's digits through the picture.  While the
+ * cursor is in it (cur) the field shows what is being keyed rather than
+ * the edited value: a zero typed into a suppressed position is there (it
+ * is data until the field is left), the point and the fraction stand
+ * though the value is zero, and BLANK WHEN ZERO waits. */
+static void scr_num_image(const scr_edit *e, char *out, int cur)
+{
+    const sn_field *F = e->nf; const sn_state *S = e->ns;
+    cob_desc t, dd = *(const cob_desc *)e->f->pic;
+    char tb[2 * SN_MAXD + 2];
+    scr_num_desc(e, &t);
+    sn_digits(F, S, tb + 1); tb[0] = S->neg ? '-' : '+';
+    int shown = cur && e->cols && F->edited && S->lead < F->ni && sn_firstsig(F, S) > S->lead;
+    if (shown) tb[1 + S->lead] = '1';                   /* edited as a digit that shows, then put back */
+    if (cur) dd.flags &= (unsigned char)~COB_F_BLANKZ;
+    cob_move(tb, &t, out, &dd);
+    if (shown) out[F->icol[S->lead]] = '0';
+    if (cur && e->cols && F->edited) {
+        if (F->pcol >= 0) out[F->pcol] = cob_dp_comma ? ',' : '.';
+        for (int j = 0; j < F->nf; j++) out[F->fcol[j]] = S->fd[j];
+    }
+}
+
+static void scr_num_paint(scr_edit *e, int cur)
+{
+    scr_num_image(e, e->buf, cur);
+    scr_paint_text(e->f, e->buf);
+}
+
+static void scr_num_store(const scr_edit *e)
+{
+    cob_desc t; char tb[2 * SN_MAXD + 2];
+    scr_num_desc(e, &t);
+    sn_digits(e->nf, e->ns, tb + 1); tb[0] = e->ns->neg ? '-' : '+';
+    cob_move(tb, &t, scr_item(e->f), (const cob_desc *)e->f->item_desc);
+}
+
+static int scr_num_zero(const scr_edit *e)
+{
+    char d[2 * SN_MAXD];
+    sn_digits(e->nf, e->ns, d);
+    for (int i = 0; i < e->nf->ni + e->nf->nf; i++) if (d[i] != '0') return 0;
+    return 1;
 }
 
 static unsigned scr_num_cursor(const scr_edit *e)
 {
-    unsigned w = e->f->width;
-    if (e->infrac) { unsigned c = (unsigned)e->point + 1 + (unsigned)e->nf; return c < w ? c : w - 1; }
-    if (e->nf_max == 0) return w - 1;
-    return (unsigned)e->point;
+    int c = sn_cursor(e->nf, e->ns);
+    if (!e->cols) { c += (int)e->f->width - e->nf->width; if (c < 0) c = 0; }   /* the digits taken as the field's last columns */
+    return (unsigned)c < e->f->width ? (unsigned)c : e->f->width - 1;
 }
 
 static void scr_beep_f(const cob_scr_field *f) { if (!(f->ext & COB_SX_NOBEEP)) term_putc(7); }   /* NO BEEP: silent */
 
-/* entering a field: the cursor at its start; a numeric field takes the
- * next digit as a fresh entry (Enter alone keeps what it shows) */
-static void scr_focus(scr_edit *e) { e->pos = 0; e->infrac = 0; e->touched = 0; }
+/* entering a field: the cursor at its start */
+static void scr_focus(scr_edit *e) { e->pos = 0; }
 
 /* leaving a field forwards: REQUIRED wants something in it, FULL wants it
  * empty or full */
@@ -5668,7 +5748,7 @@ static int scr_may_leave(const scr_edit *e)
         return 1;
     }
     if (f->flags & COB_SF_REQUIRED) {
-        if (e->numeric ? scr_num_value(e) == 0 : strspn(e->buf, " ") >= f->width) return 0;
+        if (e->numeric ? scr_num_zero(e) : strspn(e->buf, " ") >= f->width) return 0;
     }
     if ((f->flags & COB_SF_FULL) && !e->numeric) {
         unsigned n = f->width; while (n > 0 && e->buf[n - 1] == ' ') n--;
@@ -5698,8 +5778,19 @@ static void scr_move(scr_edit *ed, unsigned *cur, unsigned to, int at_end)
 {
     scr_edit *from = &ed[*cur], *e = &ed[to];
     if (from->text && to != *cur) { term_begin_update(); scr_paint_edit(from, 0); term_end_update(); }
+    if (from->numeric && to != *cur) { term_begin_update(); scr_num_paint(from, 0); term_end_update(); }
     *cur = to;
     scr_focus(e);
+    if (e->numeric) {
+        /* the field as it stands is what is edited now: its digits
+         * again from the first that shows (by Left: on its last) */
+        char d[2 * SN_MAXD]; int neg = e->ns->neg;
+        sn_digits(e->nf, e->ns, d);
+        sn_enter(e->nf, e->ns, d, neg);
+        scr_num_start(e);
+        if (at_end && e->nf->nf) { e->ns->frac = 1; e->ns->pos = e->nf->nf - 1; }
+        term_begin_update(); scr_num_paint(e, 1); term_end_update();
+    }
     if (e->text) {
         se_reenter(e->sf, e->ss, at_end);
         e->ss->insert = scr_insert_mode;
@@ -5760,26 +5851,13 @@ static void screen_accept(const cob_screen *s)
                           ((f->flags & COB_SF_SECURE) ? SE_F_SECURE : 0) | ((f->ext & COB_SX_PROMPT) ? 0 : SE_F_NOPROMPT), f->prompt);
             se_enter(e->sf, e->ss, e->buf, 0);
         }
-        if (e->numeric) {
-            const cob_desc *d = (const cob_desc *)f->pic;
-            e->nf_max = d->scale; e->ni_max = d->digits - d->scale;
-            /* the value is held in 64 bits: eighteen digits, and the
-             * digit buffers are sized for them (a longer picture takes
-             * its low-order eighteen) */
-            if (e->nf_max > 18) e->nf_max = 18;
-            if (e->nf_max < 0) e->nf_max = 0;
-            if (e->ni_max + e->nf_max > 18) e->ni_max = 18 - e->nf_max;
-            if (e->ni_max < 0) e->ni_max = 0;
-            e->point = -1;
-            if (d->pic) { const char *q = strchr(d->pic, cob_dp_comma ? ',' : '.'); if (q) e->point = (int)(q - d->pic); }
-            if (e->point < 0) e->point = d->scale ? (int)f->width - d->scale - 1 : (int)f->width;   /* an assumed point: the fraction's first column, less one */
-            scr_num_load(e);
-        }
+        if (e->numeric) { scr_num_field(e); scr_num_load(e); }
     }
     unsigned cur = 0;
     int done = 0, abandon = 0, fret = 0;
     scr_insert_mode = 0;                        /* each ACCEPT starts in replace mode */
     if (ed[0].text) { term_begin_update(); scr_paint_edit(&ed[0], 1); term_end_update(); }
+    if (ed[0].numeric) { term_begin_update(); scr_num_paint(&ed[0], 1); term_end_update(); }
     while (!done) {
         scr_edit *e = &ed[cur];
         const cob_scr_field *f = e->f;
@@ -5813,38 +5891,39 @@ static void screen_accept(const cob_screen *s)
             continue;
         }
         if (e->numeric) {
-            const cob_desc *d = (const cob_desc *)f->pic;
-            int dp = cob_dp_comma ? ',' : '.';
-            /* the first key that changes the field replaces what it held --
-             * a key the field refuses (a point where there is no fraction,
-             * a sign on an unsigned picture) changes nothing */
-            if ((key >= '0' && key <= '9') || (key == dp && e->nf_max) ||
-                ((key == '-' || key == '+') && (d->flags & COB_F_SIGNED)) || key == 8 || key == 127) {
-                if (!e->touched) { e->ni = e->nf = 0; e->neg = 0; e->infrac = 0; e->touched = 1; }
+            /* a numeric field: the core edits its digits (scredit.h) */
+            int fn, ch = 0;
+            if (key >= '0' && key <= '9') { fn = SN_DIGIT; ch = key; }
+            else if (key == (cob_dp_comma ? ',' : '.')) fn = SN_POINT;
+            else if (key == '-') fn = SN_MINUS;
+            else if (key == '+') fn = SN_PLUS;
+            else if (key == K_LEFT) fn = SN_LEFT;
+            else if (key == K_RIGHT) fn = SN_RIGHT;
+            else if (key == K_END) fn = SN_END;
+            else if (key == 8 || key == 127) fn = SN_BACKSPACE;
+            else if (key == K_DEL) fn = SN_DELETE;
+            else if (key == 24) fn = SN_CLEAR_FIELD;            /* Ctrl-X */
+            else if (key == 26) fn = SN_CLEAR_EOF;              /* Ctrl-Z */
+            else if (key == 1) fn = SN_UNDO;                    /* Ctrl-A */
+            else { if (key >= 32 && key < 127) scr_beep_f(f); continue; }   /* a character a number does not take */
+            /* a point where there is no fraction, a sign on an unsigned
+             * picture: refused, and the field is as it was */
+            if ((fn == SN_POINT && !e->nf->nf) || ((fn == SN_MINUS || fn == SN_PLUS) && !e->nf->has_sign)) { scr_beep_f(f); continue; }
+            if (e->fresh && (fn == SN_DIGIT || fn == SN_POINT || fn == SN_BACKSPACE)) sn_key(e->nf, e->ns, SN_CLEAR_FIELD, 0);
+            if (fn != SN_MINUS && fn != SN_PLUS) e->fresh = 0;
+            int v = sn_key(e->nf, e->ns, fn, ch);
+            if (v == SN_REFUSED) { if (fn == SN_DIGIT || fn == SN_POINT || fn == SN_MINUS || fn == SN_PLUS) scr_beep_f(f); continue; }
+            if (v == SN_OK || v == SN_FILLED) { term_begin_update(); scr_num_paint(e, 1); term_end_update(); }
+            if (v == SN_FILLED && (f->flags & COB_SF_AUTO)) {
+                if (!scr_may_leave(e)) { scr_beep_f(f); continue; }
+                if (cur + 1 < nin) scr_move(ed, &cur, cur + 1, 0); else done = 1;
+            } else if (v == SN_GO_PREV || v == SN_GO_NEXT || v == SN_GO_LAST) {
+                unsigned to = v == SN_GO_PREV ? cur - 1 : v == SN_GO_NEXT ? cur + 1 : nin - 1;
+                if ((v == SN_GO_PREV && cur == 0) || (v == SN_GO_NEXT && cur + 1 >= nin) || to == cur) continue;
+                if (!scr_may_leave(e)) { scr_beep_f(f); continue; }
+                scr_move(ed, &cur, to, v == SN_GO_PREV);
             }
-            if (key >= '0' && key <= '9') {
-                if (e->infrac) { if (e->nf < e->nf_max) e->fbuf[e->nf++] = (char)key; else { scr_beep_f(e->f); continue; } }
-                else if (e->ni < e->ni_max) e->ibuf[e->ni++] = (char)key;
-                else { scr_beep_f(e->f); continue; }
-                scr_num_render(e); scr_paint_text(f, e->buf);
-                if ((f->flags & COB_SF_AUTO) && (e->infrac ? e->nf == e->nf_max : e->nf_max == 0 && e->ni == e->ni_max)) {
-                    if (cur + 1 < nin) scr_move(ed, &cur, cur + 1, 0); else done = 1;
-                }
-                continue;
-            }
-            if (key == dp) { if (e->nf_max) e->infrac = 1; else scr_beep_f(e->f); continue; }
-            if (key == '-' || key == '+') {
-                if (!(d->flags & COB_F_SIGNED)) { scr_beep_f(e->f); continue; }
-                e->neg = key == '-' ? !e->neg : 0;
-                scr_num_render(e); scr_paint_text(f, e->buf); continue;
-            }
-            if (key == 8 || key == 127) {
-                if (e->infrac) { if (e->nf) e->nf--; else e->infrac = 0; }
-                else if (e->ni) e->ni--;
-                scr_num_render(e); scr_paint_text(f, e->buf); continue;
-            }
-            if (key == 24) { e->ni = e->nf = 0; e->neg = 0; e->infrac = 0; e->touched = 1; scr_num_render(e); scr_paint_text(f, e->buf); continue; }   /* Ctrl-X: clear the field */
-            continue;                           /* other keys: nothing */
+            continue;
         }
         if (e->nat) {
             /* a national field: edited a character (cluster) at a time,
@@ -5911,16 +5990,21 @@ static void screen_accept(const cob_screen *s)
             }
         }
     }
+    /* the field the cursor was in, as it is left */
+    if (ed[cur].text || ed[cur].numeric) {
+        term_begin_update();
+        if (ed[cur].text) scr_paint_edit(&ed[cur], 0); else scr_num_paint(&ed[cur], 0);
+        { int ln, cl; scr_pos(ed[cur].f, &ln, &cl); term_gotoxy(ln, cl + (int)(ed[cur].text ? (unsigned)se_cursor(ed[cur].sf, ed[cur].ss) : scr_num_cursor(&ed[cur]))); }   /* the cursor where the operator left it */
+        term_end_update();
+    }
     scr_set_status(fret);
     if (!abandon) {
         /* commit every input field into its item */
         for (unsigned i = 0; i < nin; i++) {
             scr_edit *e = &ed[i];
             const cob_scr_field *f = e->f;
-            if (e->numeric) {
-                const cob_desc *d = (const cob_desc *)f->pic;
-                cob_put_num(scr_item(f), (const cob_desc *)f->item_desc, scr_num_value(e), d->scale);
-            } else if (e->nat) {
+            if (e->numeric) scr_num_store(e);
+            else if (e->nat) {
                 cob_desc td; memset(&td, 0, sizeof td);
                 td.cat = COB_NATIONAL; td.usage = COB_U_DISPLAY; td.size = 2u * (unsigned)e->cap;
                 unsigned char *t = malloc(td.size ? td.size : 1);
@@ -5937,7 +6021,7 @@ static void screen_accept(const cob_screen *s)
             }
         }
     }
-    for (unsigned i = 0; i < nin; i++) { free(ed[i].buf); free(ed[i].u); free(ed[i].ut); free(ed[i].cl); free(ed[i].sf); free(ed[i].ss); }
+    for (unsigned i = 0; i < nin; i++) { free(ed[i].buf); free(ed[i].u); free(ed[i].ut); free(ed[i].cl); free(ed[i].sf); free(ed[i].ss); free(ed[i].nf); free(ed[i].ns); }
     free(ed);
 }
 

@@ -1,6 +1,6 @@
 # Screen input: a picture-driven field editor
 
-Status: steps 0, 1 and 2 done (2026-10-04); steps 3-6 to do.  The user accepted
+Status: steps 0-3 done (2026-10-04); steps 4-6 to do.  The user accepted
 the recommendations under "Decisions" on 2026-10-04.
 
 A screen is the first thing a person sees of a COBOL program, and the
@@ -368,10 +368,28 @@ against its rendered screen before it is accepted.
    tool; still wanted), the prompt character by default in SCREEN
    SECTION fields (ADIS shows it always; kept off), national fields
    through the core.
-3. **Numeric fields.**  Fixed-format behaviour by picture shape; sign;
-   Delete, clear and undo; FULL for suppressed fields; BLANK WHEN ZERO
-   while current; the silent cases settled by what MS COBOL 5 does,
-   and written down.
+3. **Numeric fields.**  DONE (2026-10-04).  The core's second half
+   (`sn_*` in `libcob/scredit.h`): the state is the digits in the
+   picture's digit positions, the image is the picture's editing of
+   them after every key.  libcob's old value editor is gone; digits pass
+   between the item, the core and the picture by `cob_move` through a
+   DISPLAY number, so any width, scale and item work, a P picture too.
+   The core has two styles.  The fixed-position one is what the oracle
+   was observed to do, and is pinned against it by
+   `tests/scredit-differential.sh -N`: the cases of `tests/scrnum.txt`
+   and, in the last run, 497 of 500 random ones over thirty picture
+   shapes (the three misses: End off the last integer digit of
+   `9(3)V99`, and the point key then Backspace in a nearly empty `Z9`;
+   not chased).  **The runtime uses the other, natural entry** -- see
+   the note under Decisions: the first full gate run showed the
+   positioned ACCEPTs of the Open Systems programs keyed as plain
+   numbers, as they always had been here, and the user's reading of the
+   fixed style as the adding machine's settled it.  Natural entry has
+   table cases (`N:` in scrnum.txt) and free/scrnumed; the old screen
+   tests keep their final screens (screen2 one key added: Left now
+   moves in a numeric field; screen4: the cursor ends on the last digit,
+   not after it).  Also here: the field the cursor is in when the ACCEPT
+   ends is repainted as it is left.  Not done: FULL on numeric fields.
 4. **The standard's remainder.**  CURSOR IS and the cursor locator;
    JUSTIFIED and SIGN in the SCREEN SECTION; initial ZEROS; 8000; ON
    EXCEPTION; REQUIRED/FULL exactly as 13.18.47 and 13.18.26 have them;
@@ -388,6 +406,14 @@ describe what was built; behavior-points.md gains a point for each
 choice that is ours and not the standard's or Micro Focus's.
 
 ## Decisions (accepted 2026-10-04: the recommendations stand)
+
+**Revised the same day, after step 3.**  The oracle is evidence of how
+COBOL's clauses shape an input state machine, gathered by running the
+product and watching its screen and nothing else; it is not a
+specification to match.  Where today's masked-input practice is better
+the editor follows that.  So decision 1 below is reversed: numeric
+fields are keyed naturally (`5` Enter is 5.00), not in the fixed
+positions of an adding machine.  Decisions 2 to 5 stand.
 
 - **DECIDE 1: plain numeric fields.**  Micro Focus types `9(5)` left to
   right and right-aligns on the decimal point key (12400, then `.`
