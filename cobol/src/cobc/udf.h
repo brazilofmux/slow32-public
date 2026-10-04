@@ -798,6 +798,16 @@ static int opnd_numeric(Opnd *o)
     return o->kind == O_NUM || o->kind == O_EXPR;
 }
 
+/* a function whose result is a number: ZERO beside it is the number 0,
+ * not a fill of its size, and a sign condition takes it (ACAS's maps04:
+ * IF FUNCTION TEST-DATE-YYYYMMDD (d) NOT = ZERO was true for every date) */
+static int opnd_func_numeric(const Opnd *o)
+{
+    if (o->kind != O_FUNC || o->fnat || o->fbool) return 0;
+    if (o->fwnum) return 1;
+    return o->fn == -1 ? o->fscale >= 0 : fn_is_numeric(o->fn);
+}
+
 /* the byte length of an operand as an Arg: a literal, or for a
  * reference-modified item whose length is an expression, evaluated */
 static Arg arg_len(Opnd *o)

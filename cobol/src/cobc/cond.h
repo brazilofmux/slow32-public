@@ -492,7 +492,7 @@ static Cond *parse_simple(void)
         else if (!strcmp(t->s, "negative")) sop = R_LT;
         else if (!strcmp(t->s, "zero") || !strcmp(t->s, "zeros") || !strcmp(t->s, "zeroes")) sop = R_EQ;
         if (sop >= 0) {
-            if (!opnd_numeric(&x)) {
+            if (!opnd_numeric(&x) && !opnd_func_numeric(&x)) {
                 if (sop != R_EQ) die_at(line, "a sign condition needs a numeric operand");
                 /* alphanumeric compared with ZERO: the figurative */
                 advance();
@@ -839,7 +839,7 @@ static void emit_cond_value(Cond *c)
         if (numbers) g_cen_quiet++;
         int xs = opnd_size_bound(&c->x), ys = opnd_size_bound(&c->y);
         if (numbers) g_cen_quiet--;
-        int xn = opnd_numeric(&c->x), yn = opnd_numeric(&c->y);
+        int xn = opnd_numeric(&c->x) || opnd_func_numeric(&c->x), yn = opnd_numeric(&c->y) || opnd_func_numeric(&c->y);
         opnd_args(&c->x, &a[0], &a[1], ys, yn);
         opnd_args(&c->y, &a[2], &a[3], xs, xn);
         emit_args(a, 4);
