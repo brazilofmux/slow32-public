@@ -5817,6 +5817,17 @@ static void scr_paint_edit(const scr_edit *e, int cur)
  * text field keeps its text and takes the ACCEPT's insert mode;
  * at_end: arriving by Left, at the end of its data). */
 static int scr_insert_mode;
+
+/* Insert mode shows in the cursor: a bar between characters, where
+ * replace mode has the terminal's own cursor on one (the term service's
+ * cursor style; a host without it leaves the cursor as it is). */
+static int scr_cursor_now = TERM_CURSOR_DEFAULT;
+static void scr_cursor_style(int style)
+{
+    if (style == scr_cursor_now) return;
+    scr_cursor_now = style;
+    term_set_cursor(style);
+}
 static void scr_move(scr_edit *ed, unsigned *cur, unsigned to, int at_end)
 {
     scr_edit *from = &ed[*cur], *e = &ed[to];
@@ -5931,6 +5942,7 @@ static int screen_accept(const cob_screen *s)
         scr_edit *e = &ed[cur];
         const cob_scr_field *f = e->f;
         { int ln, cl; scr_pos(f, &ln, &cl); term_gotoxy(ln, cl + (int)(e->text ? (unsigned)se_cursor(e->sf, e->ss) : e->numeric ? scr_num_cursor(e) : e->nat ? (unsigned)nat_cols(e->cl, (int)e->pos) : e->pos)); }
+        scr_cursor_style(e->text && e->ss->insert ? TERM_CURSOR_BAR : TERM_CURSOR_DEFAULT);
         int key = scr_key();
         if (key == K_EOF) { done = 1; break; }
         if (key == K_ESC) { done = 1; abandon = 1; fret = 2005; break; }
@@ -6059,6 +6071,7 @@ static int screen_accept(const cob_screen *s)
             }
         }
     }
+    scr_cursor_style(TERM_CURSOR_DEFAULT);
     /* the field the cursor was in, as it is left; the cursor locator is
      * where the cursor stood when the key was pressed (2023 9.2.5) */
     {

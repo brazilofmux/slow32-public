@@ -8,6 +8,11 @@ int term_init(void) {
 void term_cleanup(void) {
 }
 
+int term_set_cursor(int style) {
+    (void)style;
+    return -1;
+}
+
 int term_set_raw(int raw) {
     (void)raw;
     return -1;

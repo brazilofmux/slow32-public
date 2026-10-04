@@ -6316,3 +6316,33 @@ runtime/system.c's stub, so print files stay as prt-n to be read.
 Next, in order: the SCREEN SECTION BLANK SCREEN placement rule; COMP-X longer
 than seven bytes; PAGE LIMIT without a number; >>SOURCE FREE carried into
 copybooks (GnuCOBOL does; to be checked against the 2002/2014 texts).
+
+### 125. Screen input: the picture-driven editor (2026-10-04)
+
+The plan and its history are docs/plans/screen-input.md; what was built
+is docs/screen.md's last three sections.  Steps 0 to 5 are done: the
+oracle rig, the key decoder, the editor core for text and numeric
+fields (`libcob/scredit.h`), the standard's remainder (CURSOR IS, SIGN,
+JUSTIFIED, 8000, ON EXCEPTION), and the term service's cursor style.
+
+Open, each waiting for a program that asks:
+
+- **A signed picture with no SIGN clause** (`S9(3)` as a screen item)
+  shows its operational sign as it is stored: three columns, a negative
+  value's last digit overpunched.  The standard leaves the
+  representation to the implementor (2023 13.18.52.4 rule 4).  The 1993
+  Micro Focus runtime shows the same and cannot key a negative value at
+  all; here the sign keys work.  A visible sign needs a column, and a
+  column would move every such field on screens already laid out, so it
+  stays (ruled 2026-10-04): the program says `SIGN ... SEPARATE` or
+  uses an edited picture, and both work.
+- Micro Focus's free-format entry and its fill and justify phrases,
+  TIMEOUT, UPPER/LOWER, the three-byte CRT status, group-item ACCEPT:
+  step 6, only under `-dialect=mf` and only on demand.
+- EC-SCREEN exception conditions are not raised.  JUSTIFIED on a
+  national screen item is refused; national fields keep their own
+  cluster editor and do not go through the core.
+- The prompt character shows only where PROMPT is written.
+- The rendered-screen comparison used while changing the editor is a
+  scratch tool; a harness mode that compares final screens rather than
+  streams is still wanted.

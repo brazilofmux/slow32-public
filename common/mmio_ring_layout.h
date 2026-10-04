@@ -286,7 +286,8 @@ typedef struct s32_mmio_envp_info {
 #define S32_TERM_BEGIN_UPDATE 12  // Begin buffered update (shadow only, no stdout)
 #define S32_TERM_END_UPDATE   13  // End update: diff shadow vs prev, emit minimum ANSI
 #define S32_TERM_READ_CHAR    14  // Blocking read of one character, UTF-8 decoded: its code point
-#define S32_TERM_OPCODE_COUNT 15  // Total opcodes for term service
+#define S32_TERM_SET_CURSOR   15  // Cursor style: 0 hidden, 1 the terminal's own, 2 block, 3 underline, 4 bar (version 2)
+#define S32_TERM_OPCODE_COUNT 16  // Total opcodes for term service
 
 // Tube service opcode offsets (relative to negotiated base). 16-opcode
 // window; 6..15 reserved. See docs/TUBE.md.

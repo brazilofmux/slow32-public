@@ -7,6 +7,7 @@
 #include "include/s32dpc.h"
 
 static uint32_t term_base_opcode = 0;
+static uint32_t term_opcode_count = 0;   /* what the host granted: an older host has fewer (docs/SPEC.md 8.13) */
 static int term_initialized = 0;
 
 int term_init(void) {
@@ -37,6 +38,7 @@ int term_init(void) {
     }
 
     memcpy(&term_base_opcode, (const void *)(data_buffer + 4), 4);
+    memcpy(&term_opcode_count, (const void *)(data_buffer + 8), 4);
     term_initialized = 1;
     return 0;
 }
@@ -56,6 +58,11 @@ void term_cleanup(void) {
     /* SVC_RELEASE: opcode=0xF1 */
     s32_mmio_request(0xF1, name_len, 0, 0);
     term_initialized = 0;
+}
+
+int term_set_cursor(int style) {
+    if (!term_initialized || term_opcode_count <= 15) return -1;   /* a host from before the opcode */
+    return s32_mmio_request(term_base_opcode + 15, 0, 0, (unsigned int)style) == 0 ? 0 : -1;
 }
 
 int term_set_raw(int raw) {

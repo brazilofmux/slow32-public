@@ -406,3 +406,6 @@ Step 4 of docs/plans/screen-input.md.
   EXCEPTION` takes 0000.
 - **FULL** on a numeric field wants zero, or every digit position of
   the picture in use.
+- **Insert mode shows in the cursor**: a bar while it is on, the
+  terminal's own cursor otherwise (the term service's SET_CURSOR,
+  docs/SPEC.md 8.14.5; on a host without it the cursor does not change).

@@ -436,12 +436,24 @@ typedef struct {
     // A byte READ_CHAR took that belongs to the next read (it cut a UTF-8
     // sequence short); -1 when none
     int key_pushback;
+    // The cursor's style (SET_CURSOR; docs/SPEC.md 8.14.5): the terminal's,
+    // not the shadow's
+    int cursor_style;
 } term_state_t;
+
+// A cursor style's bytes: DECTCEM, and DECSCUSR's steady shapes
+static void term_emit_cursor(int style) {
+    static const int shape[5] = { 0, 0, 2, 4, 6 };
+    if (style == 0) fputs("\033[?25l", stdout);
+    else fprintf(stdout, "\033[?25h\033[%d q", shape[style]);
+    fflush(stdout);
+}
 
 static void *term_create(void) {
     term_state_t *ts = calloc(1, sizeof(term_state_t));
     if (!ts) return NULL;
     ts->key_pushback = -1;
+    ts->cursor_style = 1;
     if (isatty(STDIN_FILENO) && tcgetattr(STDIN_FILENO, &ts->saved_termios) == 0) {
         ts->termios_saved = true;
     }
@@ -476,6 +488,7 @@ static void term_cleanup(void *state) {
     if (ts->raw_mode && ts->termios_saved) {
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &ts->saved_termios);
     }
+    if (ts->cursor_style != 1) term_emit_cursor(1);    // the terminal gets its cursor back
     for (int i = 0; i < ts->save_depth; i++) {
         free(ts->save_stack[i].cells);
     }
@@ -1061,6 +1074,17 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
             fflush(stdout);
             free(ts->prev_cells);
             ts->prev_cells = NULL;
+            resp->status = S32_MMIO_STATUS_OK;
+            break;
+        }
+        case S32_TERM_SET_CURSOR: {
+            // status: the style; emitted at once, update or not
+            if (req->status > 4) {
+                mmio_fail(resp, EINVAL);
+                break;
+            }
+            ts->cursor_style = (int)req->status;
+            term_emit_cursor(ts->cursor_style);
             resp->status = S32_MMIO_STATUS_OK;
             break;
         }
@@ -2086,7 +2110,7 @@ static const builtin_service_t builtin_services[] = {
     {
         .name = "term",
         .opcode_count = S32_TERM_OPCODE_COUNT,
-        .version = 1,
+        .version = 2,
         .create = term_create,
         .cleanup = term_cleanup,
         .handle = term_handle,

@@ -245,6 +245,7 @@ The first service to implement via negotiation. Unlocks dBase III and INKEY$.
 | +12    | `TERM_BEGIN_UPDATE` | -                      | Buffer output in the shadow only |
 | +13    | `TERM_END_UPDATE` | -                        | Paint the difference from the last frame |
 | +14    | `TERM_READ_CHAR`  | -                        | Blocking read of one character, UTF-8 decoded to its code point |
+| +15    | `TERM_SET_CURSOR` | status = style 0-4       | Cursor style: hidden, the terminal's own, block, underline, bar (version 2; docs/SPEC.md 8.14.5) |
 
 Output is UTF-8. The host's shadow screen (what save/restore and the update
 diff work from) holds a grapheme cluster per cell as the terminal does: output

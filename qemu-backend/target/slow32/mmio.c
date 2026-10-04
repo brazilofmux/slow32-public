@@ -168,7 +168,8 @@ typedef struct QEMU_PACKED s32_mmio_sockaddr_in {
 #define S32_TERM_BEGIN_UPDATE 12
 #define S32_TERM_END_UPDATE   13
 #define S32_TERM_READ_CHAR    14
-#define S32_TERM_OPCODE_COUNT 15
+#define S32_TERM_SET_CURSOR   15
+#define S32_TERM_OPCODE_COUNT 16
 
 typedef struct Slow32MMIODesc {
     uint32_t opcode;
@@ -593,12 +594,15 @@ typedef struct {
     bool last_valid;
     /* a byte READ_CHAR took that belongs to the next read; -1 when none */
     int key_pushback;
+    /* the cursor's style (SET_CURSOR; docs/SPEC.md 8.14.5) */
+    int cursor_style;
 } Slow32TermState;
 
 static void *slow32_term_create(void)
 {
     Slow32TermState *ts = g_new0(Slow32TermState, 1);
     ts->key_pushback = -1;
+    ts->cursor_style = 1;
     if (isatty(STDIN_FILENO) &&
         tcgetattr(STDIN_FILENO, &ts->saved_termios) == 0) {
         ts->termios_saved = true;
@@ -629,6 +633,17 @@ static void *slow32_term_create(void)
     return ts;
 }
 
+/* a cursor style's bytes: DECTCEM, and DECSCUSR's steady shapes */
+static void slow32_term_emit_cursor(int style)
+{
+    static const int shape[5] = { 0, 0, 2, 4, 6 };
+    if (style == 0) {
+        slow32_console_printf("\033[?25l");
+    } else {
+        slow32_console_printf("\033[?25h\033[%d q", shape[style]);
+    }
+}
+
 static void slow32_term_cleanup(void *state)
 {
     Slow32TermState *ts = state;
@@ -637,6 +652,9 @@ static void slow32_term_cleanup(void *state)
     }
     if (ts->raw_mode && ts->termios_saved) {
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &ts->saved_termios);
+    }
+    if (ts->cursor_style != 1) {
+        slow32_term_emit_cursor(1);     /* the terminal gets its cursor back */
     }
     for (int i = 0; i < ts->save_depth; i++) {
         g_free(ts->save_stack[i].cells);
@@ -1351,6 +1369,17 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
         break;
     }
 
+    case S32_TERM_SET_CURSOR:
+        /* status: the style; emitted at once, update or not */
+        if (req->status > 4) {
+            slow32_mmio_fail(resp, EINVAL);
+            break;
+        }
+        ts->cursor_style = (int)req->status;
+        slow32_term_emit_cursor(ts->cursor_style);
+        resp->status = S32_MMIO_STATUS_OK;
+        break;
+
     default:
         slow32_mmio_fail(resp, EINVAL);
         break;
@@ -1375,7 +1404,7 @@ static const Slow32BuiltinService builtin_services[] = {
     {
         .name = "term",
         .opcode_count = S32_TERM_OPCODE_COUNT,
-        .version = 1,
+        .version = 2,
         .create = slow32_term_create,
         .cleanup = slow32_term_cleanup,
         .handle = slow32_term_handle,

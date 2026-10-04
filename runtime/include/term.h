@@ -14,6 +14,18 @@ void term_cleanup(void);
  * and keys are read as they come). */
 int term_set_raw(int raw);
 
+/* The cursor's style: TERM_CURSOR_HIDDEN, _DEFAULT (the terminal's own),
+ * _BLOCK, _UNDERLINE, _BAR.  Returns 0, or -1 when the host's term
+ * service has no such request (one from before 2026-10-04) or the style
+ * is not one of these; the cursor is then as it was.  The host puts the
+ * terminal's own cursor back when the service is released. */
+#define TERM_CURSOR_HIDDEN    0
+#define TERM_CURSOR_DEFAULT   1
+#define TERM_CURSOR_BLOCK     2
+#define TERM_CURSOR_UNDERLINE 3
+#define TERM_CURSOR_BAR       4
+int term_set_cursor(int style);
+
 /* Get terminal dimensions. */
 void term_get_size(int *rows, int *cols);
 

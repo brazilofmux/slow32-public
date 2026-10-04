@@ -1265,8 +1265,16 @@ entry; the post completion is the wake-up.
 ### 8.13 Service negotiation (0xF0–0xF4)
 
 Negotiated services are reached through opcodes 0x80–0xEF that the host
-allocates. Two services exist: `"term"` (15 opcodes, version 1) and `"tube"`
+allocates. Two services exist: `"term"` (16 opcodes, version 2) and `"tube"`
 (16 opcodes, version 1).
+
+A service grows by adding sub-opcodes at the end of its range and raising
+its version; nothing already defined changes.  A guest that wants a
+sub-opcode n added later shall check that the granted `opcode_count` is
+greater than n before using it, and do without it otherwise: a host
+built before the addition grants the shorter range, and an opcode past
+the range belongs to nobody (or to another session).  `"term"` version 1
+(before 2026-10-04) was sub-opcodes 0–14.
 
 #### 8.13.1 Wire format (as implemented)
 
@@ -1333,7 +1341,7 @@ denying `fs` or `env` leaves `printf` and `argv` working. A non-empty allow
 list denies every name not on it, including the fixed ones.
 
 
-### 8.14 Term service (`"term"`, 15 opcodes)
+### 8.14 Term service (`"term"`, 16 opcodes)
 
 Sub-opcodes (opcode = base + n). Requests carry arguments in `status`
 unless noted; responses are `status` 0, `length` 0 unless noted. For the
@@ -1357,11 +1365,13 @@ sub-opcodes that use the data buffer (GET_SIZE, READ_KEY, PUTS) an
 | 12 | BEGIN_UPDATE | | Snapshots the shadow, cursor, attribute and colours; starts an update (output suppressed). `EINVAL` if already in one. |
 | 13 | END_UPDATE | | Ends the update and paints the difference (§8.14.3). `EINVAL` if not in one. |
 | 14 | READ_CHAR | | Blocks for one UTF-8 character (§8.14.4). `status` = code point, `length` 0. End of input: `status` `0xFFFFFFFD`. |
+| 15 | SET_CURSOR | `status` = style: 0 hidden, 1 the terminal's own, 2 block, 3 underline, 4 bar | Version 2. Emits the style's bytes (§8.14.5) at once, inside an update as well as outside. Cursor style := status. `EINVAL`, and nothing emitted or changed, for any other value. |
 
-Unused sub-opcodes cannot occur (the range is exactly 15). All term output
+Unused sub-opcodes cannot occur (the range is exactly 16). All term output
 goes to host standard output and is flushed after every request; `ESC` is
 byte 0x1B. Session cleanup (release or exit) restores the saved termios if
-raw mode is on; it emits nothing.
+raw mode is on; it emits nothing, unless the cursor style is not 1, in
+which case it emits style 1's bytes (§8.14.5) and flushes.
 
 #### 8.14.1 The shadow model
 
@@ -1544,6 +1554,24 @@ otherwise `0xFFFFFFFD`. The term service's input is separate from tube key
 events (§8.15).
 
 
+#### 8.14.5 Cursor style
+
+The session keeps a cursor style, initially 1. It belongs to the terminal's
+cursor, not to the shadow: SAVE_SCREEN, RESTORE_SCREEN, BEGIN_UPDATE and
+END_UPDATE neither record nor emit it, and CLEAR does not reset it.
+SET_CURSOR emits, whether or not the style changes (`SP` is byte 0x20):
+
+| Style | Bytes |
+|---|---|
+| 0 hidden | `ESC [ ? 2 5 l` |
+| 1 the terminal's own | `ESC [ ? 2 5 h` `ESC [ 0 SP q` |
+| 2 block | `ESC [ ? 2 5 h` `ESC [ 2 SP q` |
+| 3 underline | `ESC [ ? 2 5 h` `ESC [ 4 SP q` |
+| 4 bar | `ESC [ ? 2 5 h` `ESC [ 6 SP q` |
+
+(DECTCEM and DECSCUSR; the shapes are the steady ones. What a terminal
+that knows neither does with them is presentation.)
+
 ### 8.15 Tube service (`"tube"`, 16 opcodes)
 
 `docs/TUBE.md` (v0.2) is accurate for the guest-visible surface except for
@@ -1719,7 +1747,7 @@ writing).
   version, word3 = SVC status`); it is a blob in the data buffer
   `[result, base, count, version]` (16 bytes on grant, 4 bytes otherwise) with
   descriptor `status` 0.
-- "opcode_count (e.g. 8 — so term is 0x80-0x87)": term has 15 opcodes, tube 16.
+- "opcode_count (e.g. 8 — so term is 0x80-0x87)": term has 16 opcodes (15 before 2026-10-04), tube 16.
 - Response codes: SVC_OK is not "at requested opcode base"; SVC_VERSION_ERR
   is never returned.
 - "Versioning (Resolved)": the guest cannot request a minimum version.

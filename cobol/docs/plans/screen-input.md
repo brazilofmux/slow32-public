@@ -1,6 +1,6 @@
 # Screen input: a picture-driven field editor
 
-Status: steps 0-4 done (2026-10-04); steps 5-6 to do.  The user accepted
+Status: steps 0-5 done (2026-10-04); step 6 only on demand.  The user accepted
 the recommendations under "Decisions" on 2026-10-04.
 
 A screen is the first thing a person sees of a COBOL program, and the
@@ -416,8 +416,16 @@ against its rendered screen before it is accepted.
    operational sign shows as it is stored, which the standard leaves to
    the implementor: 13.18.52.4 rule 4); EC-SCREEN conditions; JUSTIFIED
    on a national item (refused).
-5. **Cursor opcode.**  The term service change, spec first, then the
-   insert-mode cursor.
+5. **Cursor opcode.**  DONE (2026-10-04).  The term service is version
+   2: sub-opcode 15, SET_CURSOR (hidden, the terminal's own, block,
+   underline, bar), docs/SPEC.md 8.14 and 8.14.5, in the C engines'
+   host and QEMU's; `term_set_cursor` in the guest library, which reads
+   the granted opcode count and does nothing on a host from before the
+   request (8.13).  regression/tests/feature-term-cursor; the four
+   engines agree.  The screen editor shows insert mode as a bar and
+   puts the terminal's own cursor back in replace mode and when the
+   ACCEPT ends; nothing is emitted by a program that never presses
+   Insert.
 6. **Only on demand, behind `-dialect=mf`:** free-format entry and its
    fill/justify phrases, TIMEOUT, UPPER/LOWER, the three-byte CRT
    status, group-item ACCEPT.
