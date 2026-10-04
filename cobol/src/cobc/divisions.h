@@ -1252,7 +1252,8 @@ static void parse_screen_section(void)
                 !at_word("value") && !at_word("pic") && !at_word("picture") && !at_word("highlight") && !at_word("underline") &&
                 !at_word("auto") && !at_word("auto-skip") && !at_word("reverse-video") && !at_word("from") && !at_word("to") && !at_word("using") &&
                 !at_word("secure") && !at_word("required") && !at_word("full") && !at_word("lowlight") && !at_word("blink") && !at_word("bell") &&
-                !at_word("beep") && !at_word("erase") && !at_word("foreground-color") && !at_word("background-color")) {
+                !at_word("beep") && !at_word("erase") && !at_word("foreground-color") && !at_word("background-color") &&
+                !at_word("occurs")) {
                 snprintf(ename, sizeof ename, "%s", cur()->s);
                 advance();                                       /* a name on the entry */
             }
@@ -1262,8 +1263,18 @@ static void parse_screen_section(void)
             memset(f, 0, sizeof *f);
             f->srcline = fline; f->kind = -1; f->fg = 255; f->bg = 255;
             int blank_screen_entry = 0;
+            /* OCCURS n: n occurrences, each placed as though it had the same
+             * LINE and COLUMN clauses (2023 13.18.38.4 rule 6) -- so a LINE
+             * PLUS or COLUMN PLUS steps from the occurrence before */
+            int occ = 0, line_plus = -1, col_plus = -1;
             while (cur()->kind != T_PERIOD) {
                 Tok *t = cur();
+                if (accept_word("occurs")) {
+                    if (cur()->kind != T_NUM) die_at(t->line, "OCCURS in the SCREEN SECTION takes an integer (2023 13.18.38.3 rule 11)");
+                    occ = atoi(cur()->s); advance(); accept_word("times");
+                    if (occ < 1) die_at(t->line, "OCCURS needs at least one occurrence");
+                    continue;
+                }
                 if (accept_word("blank")) {
                     if (accept_word("screen")) { blank_screen_entry = 1; sc->blank_screen = 1; continue; }
                     if (accept_word("line")) die_at(t->line, "BLANK LINE is not implemented");
@@ -1275,7 +1286,7 @@ static void parse_screen_section(void)
                     if (accept_word("plus") || accept_word("+")) {       /* relative to the previous slot's line */
                         int n = 1;
                         if (cur()->kind == T_NUM) { n = atoi(cur()->s); advance(); }
-                        f->line = (prev ? prev->line : 0) + n; continue;
+                        f->line = (prev ? prev->line : 0) + n; line_plus = n; continue;
                     }
                     if (cur()->kind != T_NUM) die_at(t->line, "expected a number after LINE");
                     f->line = atoi(cur()->s); advance(); continue;
@@ -1285,7 +1296,7 @@ static void parse_screen_section(void)
                     if (accept_word("plus") || accept_word("+")) {       /* from the position after the previous slot, as GnuCOBOL counts */
                         int n = 1;
                         if (cur()->kind == T_NUM) { n = atoi(cur()->s); advance(); }
-                        f->col = (prev && (!f->line || f->line == prev->line) ? prev->col + prev->width : 0) + n; continue;
+                        f->col = (prev && (!f->line || f->line == prev->line) ? prev->col + prev->width : 0) + n; col_plus = n; continue;
                     }
                     if (cur()->kind != T_NUM) die_at(t->line, "expected a number after COLUMN");
                     f->col = atoi(cur()->s); advance(); continue;
@@ -1373,6 +1384,7 @@ static void parse_screen_section(void)
             if (f->has_pic && susage == 2 && f->pi.category != PIC_NATIONAL)
                 die_at(fline, "USAGE NATIONAL on a screen item whose PICTURE is not N is not implemented");
             if (blank_screen_entry && f->kind < 0 && !f->has_pic) continue;   /* just BLANK SCREEN */
+            if (occ > 1 && f->kind < 0 && !f->has_pic) die_at(fline, "OCCURS on a screen group is not implemented");
             if (f->kind < 0 && !f->has_pic) {
                 /* a group: its look composes over the enclosing one and its
                  * children inherit it; its position anchors the first child */
@@ -1453,7 +1465,19 @@ static void parse_screen_section(void)
             if (!f->col) f->col = prev && prev->line == f->line ? prev->col + prev->width : 1;   /* no COLUMN: right after it */
             if ((f->flags & (COB_SF_SECURE | COB_SF_REQUIRED | COB_SF_FULL)) && f->kind != COB_SCR_TO && f->kind != COB_SCR_USING)
                 die_at(fline, "SECURE, REQUIRED and FULL belong to an input field (TO or USING)");
+            if (occ > 1 && f->kind != COB_SCR_VALUE)
+                die_at(fline, "OCCURS on a FROM, TO or USING screen item (a table's elements, 2023 13.18.38.3 rule 13) is not implemented");
             sc->nf++;
+            for (int k = 1; k < occ; k++) {
+                /* the next occurrence: the same entry, placed by the same
+                 * clauses against the one before it */
+                if (sc->nf == sc->fcap) { sc->fcap = sc->fcap ? sc->fcap * 2 : 16; sc->f = realloc(sc->f, sc->fcap * sizeof *sc->f); }
+                SField *last = &sc->f[sc->nf - 1], *o = &sc->f[sc->nf];
+                *o = *last;
+                if (line_plus >= 0) o->line = last->line + line_plus;
+                if (col_plus >= 0) o->col = (line_plus < 0 ? last->col + last->width : o->col) + col_plus;
+                sc->nf++;
+            }
         }
         while (gdepth) {
             int si = gstk[--gdepth].subidx;

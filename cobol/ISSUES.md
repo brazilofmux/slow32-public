@@ -6115,6 +6115,17 @@ is counted apart.  105 of the 128 built programs compile.
   (identical to GnuCOBOL).  stockMT then stops at HV-ABREV-CHK2, a host
   variable whose declaration ACAS has commented out: it is one of the
   MySQL data-access modules (*MT.cbl), outside ACAS's default builds.
+- **OCCURS on a screen item** (irs010, irs020, irs030: "03 OCCURS 16
+  VALUE '[     ] ...' LINE PLUS 1 COL 2", a sixteen-line entry grid).
+  Each occurrence is placed as though it had the same LINE and COLUMN
+  clauses (2023 13.18.38.4 rule 6): the occurrences are slots appended
+  after the first, each a LINE PLUS (or COLUMN PLUS) step from the one
+  before, and a following LINE PLUS counts from the last.  For VALUE
+  items only: OCCURS on a FROM, TO or USING item (a table's elements,
+  13.18.38.3 rule 13) and on a group are refused as not implemented;
+  ACAS uses neither.  Test: free/scroccurs (no oracle).  The sweep's
+  report-writer exclusion now also matches stock/RW-Programs/.  107 of
+  the 125 built programs compile.
 
 Next, in order: the SCREEN SECTION BLANK SCREEN placement rule; COMP-X longer
 than seven bytes; PAGE LIMIT without a number; >>SOURCE FREE carried into
