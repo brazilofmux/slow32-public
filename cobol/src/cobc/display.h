@@ -343,6 +343,30 @@ static void screen_at_origin(int line)
         die_at(line, "a screen placed AT a position other than line 1, column 1 is not implemented");
 }
 
+/* ACCEPT or DISPLAY screen-name ... WITH attributes: GnuCOBOL takes the
+ * phrase and drops it (its cob_screen_display and cob_screen_accept get
+ * none of it); the standard's and Micro Focus's screen formats have no
+ * WITH (MF's WITH is its format 3, of an item).  Under -dialect=gnucobol
+ * it is read and ignored (BP-G6) -- but for ACCEPT's UPDATE, which is
+ * BP-G3 and returned as 1. */
+static int screen_with_phrase(int line, int is_accept)
+{
+    if (!at_word("with")) return 0;
+    int from = g_tp, upd = 0, other = 0;
+    SField dummy; memset(&dummy, 0, sizeof dummy); dummy.fg = dummy.bg = 255; dummy.kind = -1;
+    SField *save = g_pos_field;
+    parse_pos_clauses(&dummy, is_accept);
+    g_pos_field = save;
+    for (int k = from; k < g_tp; k++) {
+        if (is_word(&g_tok[k], "with")) continue;
+        if (is_accept && is_word(&g_tok[k], "update")) upd = 1;
+        else other = 1;
+    }
+    if (upd) bp(BP_G3_ACCEPT_SCREEN_UPDATE, line);
+    if (other) bp(BP_G6_SCREEN_WITH_IGNORED, line);
+    return upd;
+}
+
 static void parse_accept_1(void)
 {
     Tok *t = cur();
@@ -352,13 +376,7 @@ static void parse_accept_1(void)
         if (scp) {
             advance();
             screen_at_origin(t->line);
-            int upd = 0;
-            if (accept_word("with")) {
-                /* WITH UPDATE (BP-G3): the TO fields start from their items */
-                if (!accept_word("update")) die_at(t->line, "ACCEPT of a screen WITH %s is not implemented (only UPDATE)", tok_desc(cur()));
-                bp(BP_G3_ACCEPT_SCREEN_UPDATE, t->line);
-                upd = 1;
-            }
+            int upd = screen_with_phrase(t->line, 1);    /* WITH UPDATE (BP-G3): the TO fields start from their items */
             emit_screen_dyn_fill(scp, sfirst, scount);
             if (g_crt_status_name[0]) {                 /* the ACCEPT's ending goes to the CRT STATUS item */
                 g_cen_ctx = CEN_PTR; Sym *cs = sym_lookup(g_crt_status_name, NULL, 0, t->line); g_cen_ctx = 0;
@@ -507,7 +525,7 @@ static void parse_display(void)
     if (cur()->kind == T_WORD) {
         char scrlab[40]; int sfirst, scount;
         Screen *scp = screen_ref(cur()->s, scrlab, sizeof scrlab, &sfirst, &scount);
-        if (scp) { int sl = cur()->line; advance(); screen_at_origin(sl); emit_screen_dyn_fill(scp, sfirst, scount); emit_la("r3", scrlab); emit_call("cob_screen_display"); return; }
+        if (scp) { int sl = cur()->line; advance(); screen_at_origin(sl); screen_with_phrase(sl, 0); emit_screen_dyn_fill(scp, sfirst, scount); emit_la("r3", scrlab); emit_call("cob_screen_display"); return; }
     }
     /* DISPLAY n UPON ARGUMENT-NUMBER: the next ARGUMENT-VALUE will be n */
     if (stmt_positioned()) { parse_display_positioned(); return; }

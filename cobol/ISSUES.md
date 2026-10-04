@@ -6195,6 +6195,24 @@ not a key (gl030; GnuCOBOL compiles it and every READ fails, status 23).
   so BP-G4 under -dialect=gnucobol: a WORKING-STORAGE item of its name
   and picture, the slot USING it.  Tests: free/gnu-scritem,
   bad/screen-item-storage.
+- **A FROM, TO or USING screen item with no PICTURE** (sys002's
+  `03 using SL-VAT-Printed col 37.`): 2023 13.17.3 rule 7 wants the
+  PICTURE; Micro Focus's reference never offers the omission; GnuCOBOL
+  3.2 and 4.0 take the item's picture, silently, under -std=default and
+  -std=mf.  BP-G5 under -dialect=gnucobol: the item's PICTURE (a whole
+  item's, subscripted or not -- not a reference-modified part's).
+  Tests: free/gnu-scrnopic, bad/screen-slot-no-pic.
+- **A WITH phrase on DISPLAY or ACCEPT of a screen-name** (sys002:
+  `display user-data at 0101 with foreground-color 2`): neither the
+  standard's screen formats nor Micro Focus's format 2 have one (MF's
+  WITH is its format 3, of an item).  GnuCOBOL parses it and drops it:
+  nothing of it reaches cob_screen_display or cob_screen_accept.  BP-G6
+  under -dialect=gnucobol: read and ignored likewise; UPDATE among its
+  words stays BP-G3's.  Tests: free/gnu-scrwith, bad/screen-with.
+  With these sys002 compiles: 105 of the 115 built programs.  Of the
+  other ten, eight are the refusals above; pl015 and sl020 are a
+  positioned DISPLAY of a reference-modified part with a variable
+  length, a compiler gap.
 
 Next, in order: the SCREEN SECTION BLANK SCREEN placement rule; COMP-X longer
 than seven bytes; PAGE LIMIT without a number; >>SOURCE FREE carried into

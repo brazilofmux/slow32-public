@@ -1501,7 +1501,32 @@ static void parse_screen_section(void)
                 if (f->has_pic) die_at(fline, "a VALUE slot takes no PICTURE");
                 f->width = f->natlit ? nat_lit_cols((const unsigned char *)f->value->s, f->value->len) : f->value->len;
             }
-            else { if (!f->has_pic) die_at(fline, "a FROM/TO/USING slot needs a PICTURE"); f->width = sfield_cols(f); }
+            else {
+                if (!f->has_pic && f->ref_tp && !f->from_lit) {
+                    /* FROM, TO or USING with no PICTURE (BP-G5,
+                     * -dialect=gnucobol only): the field takes its item's
+                     * picture, as GnuCOBOL does (ACAS's sys002).  2023
+                     * 13.17.3 rule 7 wants the PICTURE written. */
+                    bp(BP_G5_SCREEN_SLOT_NO_PIC, fline);
+                    int save_tp = g_tp; g_tp = f->ref_tp;
+                    char *quals[8]; int nq = 0;
+                    const char *nm = cur()->s; advance();
+                    while ((at_word("of") || at_word("in")) && peek(1)->kind == T_WORD && nq < 8) { advance(); quals[nq++] = cur()->s; advance(); }
+                    if (cur()->kind == T_LP)
+                        for (int d = 0; cur()->kind != T_PERIOD; advance()) {
+                            if (cur()->kind == T_LP) d++;
+                            else if (cur()->kind == T_RP && !--d) break;
+                            else if (cur()->kind == T_COLON) die_at(fline, "a screen slot with no PICTURE takes a whole item's, not a part's");
+                        }
+                    Sym *it = sym_lookup(nm, quals, nq, fline);
+                    g_tp = save_tp;
+                    if (!it->has_pic) die_at(fline, "'%s' has no PICTURE for the screen slot to take; write one", it->name);
+                    snprintf(f->pic, sizeof f->pic, "%s", it->pic);
+                    f->pi = it->pi; f->has_pic = 1;
+                }
+                if (!f->has_pic) die_at(fline, "a FROM/TO/USING slot needs a PICTURE");
+                f->width = sfield_cols(f);
+            }
             if (!f->line) f->line = prev ? prev->line : 1;        /* no LINE: the previous slot's line */
             if (!f->col) f->col = prev && prev->line == f->line ? prev->col + prev->width : 1;   /* no COLUMN: right after it */
             if ((f->flags & (COB_SF_SECURE | COB_SF_REQUIRED | COB_SF_FULL)) && f->kind != COB_SCR_TO && f->kind != COB_SCR_USING)
