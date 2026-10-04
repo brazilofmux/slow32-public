@@ -38,7 +38,7 @@ typedef struct {
                              and P are kept so the editor knows where the
                              point is; CR/DB are 'C'/'D'. */
     int  patlen;
-    char err[128];    /* set when the picture cannot be handled */
+    char err[256];    /* set when the picture cannot be handled (room for the picture and the whole rule: 60 + 180 below) */
 } PicInfo;
 
 int pic_scan(const char *s, PicItem *out, int max, int *errpos);

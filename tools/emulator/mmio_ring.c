@@ -2642,13 +2642,22 @@ static void mmio_poll(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descript
             for (nfds_t i = 0; i < np; i++)
                 if (pf[i].fd == STDIN_FILENO) { prefix_in = true; timeout = 0; }
         }
-        if (np > 0) while (poll(pf, np, timeout) == -1 && errno == EINTR) { }
-        if (prefix_in) {
-            for (nfds_t i = 0; i < np; i++)
-                if (pf[i].fd == STDIN_FILENO) pf[i].revents |= POLLIN;
+        /* The wait: poll when there is anything to poll -- it waits the
+         * timeout itself -- and sleep the timeout only when there is not (a
+         * timer alone).  The sleep used to hang off a dangling else that
+         * bound to the inner `if` below, where timeout is always 0: it never
+         * ran, and a timer alone spun.  Braced "as indented" it ran after
+         * every timed poll, a second full wait -- feature-dpc-poll lost a
+         * line on one run in three (2026-10-03). */
+        if (np > 0) {
+            while (poll(pf, np, timeout) == -1 && errno == EINTR) { }
         } else if (timeout > 0) {
             struct timespec ts = { timeout / 1000, (long)(timeout % 1000) * 1000000L };
             while (nanosleep(&ts, &ts) == -1 && errno == EINTR) { }
+        }
+        if (prefix_in) {
+            for (nfds_t i = 0; i < np; i++)
+                if (pf[i].fd == STDIN_FILENO) pf[i].revents |= POLLIN;
         }
 
         for (uint32_t i = 0; i < nnamed; i++) {

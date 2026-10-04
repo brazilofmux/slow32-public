@@ -82,7 +82,9 @@
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #pragma GCC diagnostic ignored "-Wunused-but-set-variable"
 #pragma GCC diagnostic ignored "-Wpointer-to-int-cast"
+#if defined(__GNUC__) && !defined(__clang__)       /* gcc's own: clang warns about the pragma instead */
 #pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
 #include "hir/hir.h"
 #include "hir/hir_ssa.h"
 #include "hir/hir_opt.h"

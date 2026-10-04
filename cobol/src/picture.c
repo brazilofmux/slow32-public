@@ -262,7 +262,10 @@ int pic_analyse(const char *s, PicInfo *info)
     const char *bad = pic_rules(f, nf);
     if (!bad) bad = pic_precedence(f, nf, pmsg, sizeof pmsg);
     if (bad) {
-        snprintf(info->err, sizeof info->err, "PICTURE '%.*s': %.*s", 50, s, 60, bad);
+        /* bounded so the compiler can see it fits (-Wformat-truncation), and
+         * bounded generously: the rule is the message -- cut at 60 it lost its
+         * citation, and eleven bad/pic-* tests with it */
+        snprintf(info->err, sizeof info->err, "PICTURE '%.*s': %.*s", 60, s, 180, bad);
         return -1;
     }
 

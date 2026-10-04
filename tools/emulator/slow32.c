@@ -1067,7 +1067,7 @@ void cpu_step(cpu_state_t *cpu) {
     
     // Check cycle limit
     if (cpu->debug.max_cycles > 0 && cpu->cycle_count >= cpu->debug.max_cycles) {
-        printf("Cycle limit reached (%lu cycles)\n", cpu->debug.max_cycles);
+        printf("Cycle limit reached (%" PRIu64 " cycles)\n", cpu->debug.max_cycles);
         cpu->halted = true;
     }
 }

@@ -71,7 +71,7 @@ ZZ**9                ERROR PICTURE 'ZZ**9': Z and * exclude each other (2023 13.
 V++                  ERROR PICTURE 'V++': a floating insertion string starts left of the decimal point (2023 13.18.40.3 rule 29)
 ++Z                  ERROR PICTURE '++Z': one zero-suppression or floating insertion string at most (2023 13.18.40.3 rule 27)
 +P                   ERROR PICTURE '+P': it holds none of A, X, Z, 9 or *, nor two of +, - or the currency symbol (2023 13.18.40.3 rule 12a)
-ZZ.Z9                ERROR PICTURE 'ZZ.Z9': past the decimal point a zero-suppression or floating string takes every digit position (2023 13.18.40.5, the 
+ZZ.Z9                ERROR PICTURE 'ZZ.Z9': past the decimal point a zero-suppression or floating string takes every digit position (2023 13.18.40.5, the editing rules)
 9ZZ                  ERROR PICTURE '9ZZ': a 9 cannot precede a zero-suppression or floating insertion symbol (the precedence rules, 2023 13.18.40.6)
 99PPB                ERROR PICTURE '99PPB': B, 0 or / cannot follow P left of the point (the precedence rules, 2023 13.18.40.6 Table 10)
 PPV99                ERROR PICTURE 'PPV99': 9 cannot follow P left of the point (the precedence rules, 2023 13.18.40.6 Table 10)
