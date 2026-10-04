@@ -19,12 +19,14 @@ typedef struct {
     char *orig;                  /* T_WORD: as written, before lowercasing; 0 when the same */
     unsigned char boolv;         /* T_STR: a boolean literal, one character 0 or 1 per position (cobol ISSUES-76) */
     int strong;                  /* the strong-type marker expand_types() puts in an entry: its type key + 1 (cobol ISSUES-80) */
+    unsigned char ff;            /* read in free form: a COPY here starts its library text so (2023 7.3.24.3 rule 3); last, after the positional initializers' fields */
 } Tok;
 
 static Tok *g_tok;
 static int g_ntok, g_tcap;
 static int g_sql_declare;               /* between EXEC SQL BEGIN and END DECLARE SECTION */
 static int g_tok_dbg;
+static int g_tok_ff;             /* the format of the line being tokenized */
 
 static int g_pending_comma;
 
@@ -33,7 +35,7 @@ static Tok *push_tok(int kind, int line, const char *s, int len)
     if (g_ntok == g_tcap) { g_tcap = g_tcap ? g_tcap * 2 : 1024; g_tok = realloc(g_tok, g_tcap * sizeof *g_tok); }
     Tok *t = &g_tok[g_ntok++];
     t->after_comma = (unsigned char)g_pending_comma; g_pending_comma = 0;
-    t->kind = kind; t->line = line; t->s = xstrndup(s, len); t->len = len; t->file = g_tok_file; t->dbg = g_tok_dbg; t->nat = 0; t->orig = 0; t->boolv = 0; t->strong = 0;
+    t->kind = kind; t->line = line; t->s = xstrndup(s, len); t->len = len; t->file = g_tok_file; t->dbg = g_tok_dbg; t->ff = (unsigned char)g_tok_ff; t->nat = 0; t->orig = 0; t->boolv = 0; t->strong = 0;
     return t;
 }
 
@@ -134,7 +136,7 @@ static void tokenize_lines(SrcLine *lines, int nlines)
         const char *t = lines[li].text;
         int line = lines[li].line;
         const char *p = t;
-        g_tok_dbg = lines[li].dbg;
+        g_tok_dbg = lines[li].dbg; g_tok_ff = lines[li].ff;
         if (lines[li].file) g_tok_file = lines[li].file;
         if (lines[li].dir) { push_tok(T_DIR, line, t, (int)strlen(t)); continue; }
         while (*p) {

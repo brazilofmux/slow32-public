@@ -6150,6 +6150,32 @@ is counted apart.  105 of the 128 built programs compile.
   the runtime skips a SCREEN SECTION field's erase through a screen
   ACCEPT, a positioned field keeping its own.  Test: free/screrase (no
   oracle).  110 of 125.
+- **The source format did not carry into library text** -- the
+  question left open at the start.  ACAS starts every program
+  >>SOURCE FREE and writes 68 of its 72 copybooks free with no directive
+  of their own; s32-cobc read each copybook in the default format, so
+  the sweep had to force -free on everything.  2023 7.3.24.3 settles it:
+  library text starts in the format in effect at its COPY (rule 3), a
+  directive inside it lasts to its end (rule 5), and one on its first
+  line may be in either form (rule 4).  Each source line now records its
+  format, the text words and tokens carry it, and COPY (and EXEC SQL
+  INCLUDE) starts the reader in the COPY's format; a first-line SOURCE
+  directive is looked for before column 7 in fixed form.  Tests:
+  2002/copyformat (fixed after a directive, a copybook turning itself
+  free, fixed again after it; identical to GnuCOBOL), 2002/copyformat1
+  (rule 4; GnuCOBOL refuses the directive there, so no oracle).  The
+  sweep now passes no -free at all, as ACAS's builds don't.  And it
+  counts what ACAS's own build scripts compile (comp-all.sh and the six
+  */comp-*.sh: 115 programs) rather than every .cbl in the tree; the 19
+  others (report-writer variants, the MySQL data-access modules, one-off
+  conversions, mapser) are counted apart.  104 of the 115 compile.
+- **A tab in fixed-form source** (mapser: tabs at column 7) was an
+  unrecognised indicator.  The standard leaves tabs to the implementor;
+  GnuCOBOL and Micro Focus expand them to stops every eight columns, and
+  so does the reader now, counting columns in code points.  (mapser
+  itself, "not part of the open source version", then copies a free
+  copybook from fixed source and fails under GnuCOBOL too.)  Test:
+  fixed/tabcols.
 
 Next, in order: the SCREEN SECTION BLANK SCREEN placement rule; COMP-X longer
 than seven bytes; PAGE LIMIT without a number; >>SOURCE FREE carried into

@@ -114,6 +114,7 @@ typedef struct {
     char *s; int len;           /* as written */
     int line; const char *file;
     unsigned char kind, dbg, glued;   /* glued: no space before it on its line */
+    unsigned char ff;                 /* read in free form (a COPY here starts its library text so) */
 } TW;
 typedef struct { TW *w; int n, cap; } TWV;
 
@@ -156,7 +157,7 @@ static void tw_lex(const SrcLine *lines, int nlines, TWV *out)
     for (int li = 0; li < nlines; li++) {
         const SrcLine *L = &lines[li];
         TW t; memset(&t, 0, sizeof t);
-        t.line = L->line; t.file = L->file; t.dbg = (unsigned char)L->dbg;
+        t.line = L->line; t.file = L->file; t.dbg = (unsigned char)L->dbg; t.ff = (unsigned char)L->ff;
         if (L->dir) { t.kind = TW_DIR; t.s = L->text; t.len = (int)strlen(L->text); twv_push(out, t); continue; }
         const char *p = L->text;
         int glued = 0;
@@ -228,7 +229,7 @@ static void tw_lines(const TWV *v, SrcLine **out, int *nout)
         if (!join) {
             if (n == cap) { cap *= 2; ls = realloc(ls, (size_t)cap * sizeof *ls); }
             memset(&ls[n], 0, sizeof ls[n]);
-            ls[n].line = t->line; ls[n].file = t->file; ls[n].dbg = t->dbg;
+            ls[n].line = t->line; ls[n].file = t->file; ls[n].dbg = t->dbg; ls[n].ff = t->ff;
             n++;
             if (t->kind == TW_DIR) { ls[n - 1].text = xstrndup(t->s, t->len); ls[n - 1].dir = 1; continue; }
             open = 1; blen = 0;
@@ -398,7 +399,7 @@ static void tw_emit(TWV *out, TW *w, int n, int i, int end, const TWOp *op)
     if (op->kind == OP_PSEUDO) {
         for (int k = 0; k < op->nt; k++) {
             TW t = op->to[k];
-            t.line = m->line; t.file = m->file; t.dbg = m->dbg;
+            t.line = m->line; t.file = m->file; t.dbg = m->dbg; t.ff = m->ff;
             if (!emitted) t.glued = m->glued;
             twv_push(out, t); emitted = 1;
         }
@@ -471,8 +472,11 @@ static void tw_copy(TWV *in, TWV *out)
 
         SrcLine *lines; int n; char found[1200];
         char qual[512]; int ok = 0;
+        g_read_ff_start = 1 + t->ff;            /* the library text starts in the COPY's format */
         if (lib[0]) { snprintf(qual, sizeof qual, "%s/%s", lib, name); ok = copy_open(qual, &lines, &n, found, sizeof found); }
-        if (!ok && !copy_open(name, &lines, &n, found, sizeof found)) {
+        if (!ok) ok = copy_open(name, &lines, &n, found, sizeof found);
+        g_read_ff_start = 0;
+        if (!ok) {
             g_tok_file = t->file;
             die_at(t->line, "COPY: cannot find '%s' (looked beside the source and in the -I directories, as %s, %s.cpy, %s.cbl, %s.cob, and upper-cased)", name, name, name, name, name);
         }
@@ -604,7 +608,10 @@ static void expand_sql_includes(void)
             if (!nn) die_at(line, "EXEC SQL INCLUDE needs a member name");
             int j = i + 1 < g_ntok && g_tok[i + 1].kind == T_PERIOD ? i + 1 : i;
             SrcLine *lines; int n; char found[1200];
-            if (!copy_open(name, &lines, &n, found, sizeof found)) {
+            g_read_ff_start = 1 + g_tok[i].ff;
+            int inc_ok = copy_open(name, &lines, &n, found, sizeof found);
+            g_read_ff_start = 0;
+            if (!inc_ok) {
                 if (strcasecmp(name, "sqlca")) die_at(line, "EXEC SQL INCLUDE: cannot find '%s' (looked as COPY does)", name);
                 /* in the LINKAGE SECTION (a subprogram given its caller's
                  * SQLCA) without the VALUE clauses; and SQLCODE or SQLSTATE

@@ -612,8 +612,8 @@ static Opnd init_value_opnd(Sym *s)
 }
 static void init_elem2k(Sym *s, Ref *r, const InitSpec *sp)
 {
-    static Tok tz = { T_WORD, 0, "zero", 4, NULL, 0, 0, 0, 0, 0, 0 };
-    static Tok ts = { T_WORD, 0, "spaces", 6, NULL, 0, 0, 0, 0, 0, 0 };
+    static Tok tz = { T_WORD, 0, "zero", 4, NULL, 0, 0, 0, 0, 0, 0, 0 };
+    static Tok ts = { T_WORD, 0, "spaces", 6, NULL, 0, 0, 0, 0, 0, 0, 0 };
     int cat = init_cat(s);
     Opnd v; memset(&v, 0, sizeof v); v.line = r->line;
     int ptr_null = 0, have = 0;
@@ -714,8 +714,8 @@ static void parse_initialize_2002(Ref *rs, int n)
 static void parse_initialize(void)
 {
     Ref rs[MAXOPS]; int n = 0;
-    static Tok tok_zero = { T_WORD, 0, "zero", 4, NULL, 0, 0, 0, 0, 0, 0 };
-    static Tok tok_space = { T_WORD, 0, "spaces", 6, NULL, 0, 0, 0, 0, 0, 0 };
+    static Tok tok_zero = { T_WORD, 0, "zero", 4, NULL, 0, 0, 0, 0, 0, 0, 0 };
+    static Tok tok_space = { T_WORD, 0, "spaces", 6, NULL, 0, 0, 0, 0, 0, 0, 0 };
     Opnd fig_zero, fig_space; memset(&fig_zero, 0, sizeof fig_zero); memset(&fig_space, 0, sizeof fig_space);
     fig_zero.kind = O_FIG; fig_zero.tok = &tok_zero; fig_space.kind = O_FIG; fig_space.tok = &tok_space;
     while (at_operand() && !at_word("all") && !at_word("with") && !at_word("filler") && !at_word("then") && !is_word(peek(1), "to")) {

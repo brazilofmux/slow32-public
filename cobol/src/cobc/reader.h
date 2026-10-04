@@ -14,7 +14,7 @@
  * may be continued with the floating indicator "- or '- in either format
  * (cobol ISSUES-51). */
 
-typedef struct { char *text; int line; int dbg, dir; const char *file; } SrcLine;   /* dbg: a D in column 7; dir: a compiler directive kept for the parser; file: where it was read */
+typedef struct { char *text; int line; int dbg, dir; const char *file; int ff; } SrcLine;   /* dbg: a D in column 7; dir: a compiler directive kept for the parser; file: where it was read; ff: read in free form */
 static SrcLine *g_lines;
 static int g_nlines;
 
@@ -63,6 +63,7 @@ static int in_exec_sql(const SrcLine *lines, int n)
     return 0;
 }
 
+static int g_read_ff_start;      /* 0: the default format; else 1 + the format a COPY's library text starts in */
 static int read_lines(const char *path, SrcLine **out, int *nout)
 {
     FILE *f = fopen(path, "rb");
@@ -82,18 +83,47 @@ static int read_lines(const char *path, SrcLine **out, int *nout)
     g_tok_file = path;              /* an error while reading names this file */
     const char *fpath = xstrndup(path, (int)strlen(path));
     char *p = buf;
-    int free_form = g_free;         /* >>SOURCE FORMAT changes it for the rest of this text */
+    /* the format this text starts in: the compilation group's default, or
+     * for library text the format in effect at its COPY (2023 7.3.24.3
+     * rule 3); >>SOURCE FORMAT changes it for the rest of this text, and
+     * the COPY's own format is untouched by what happens here (rule 5) */
+    int free_form = g_read_ff_start ? g_read_ff_start - 1 : g_free;
     char pending = 0;               /* a literal continued by a floating indicator ("- or '-) */
     while (*p) {
         char *e = strchr(p, '\n');
         int len = e ? (int)(e - p) : (int)strlen(p);
         lineno++;
         if (len && p[len - 1] == '\r') len--;
+        if (!free_form && memchr(p, '\t', (size_t)len)) {
+            /* a tab in reference format: spaces to the next stop of every
+             * eight columns, as GnuCOBOL and Micro Focus read it (the
+             * standard leaves tabs to the implementor) -- ACAS's mapser
+             * starts lines with one at column 7 (cobol ISSUES-124).  The
+             * line is read from the expanded copy; e still ends it in buf */
+            static char *tabx; static size_t tabcap;
+            if ((size_t)len * 8 + 1 > tabcap) { tabcap = (size_t)len * 8 + 1; tabx = xrealloc(tabx, tabcap); }
+            size_t o = 0; int col = 0;
+            for (int i = 0; i < len; i++) {
+                unsigned char ch = (unsigned char)p[i];
+                if (ch == '\t') { do { tabx[o++] = ' '; col++; } while (col % 8); }
+                else { tabx[o++] = (char)ch; if ((ch & 0xC0) != 0x80) col++; }   /* columns are code points */
+            }
+            tabx[o] = 0;
+            p = tabx; len = (int)o;
+        }
         char *text = NULL; int dbg = 0;
         /* a compiler-directive line (COBOL 2002 7.3): >> as the first
          * non-blank, in free form anywhere, in fixed form from column 7 */
         {
             int from = free_form ? 0 : colb(p, len, 6);
+            if (!free_form && lineno == 1) {
+                /* a SOURCE FORMAT directive that is the first line of a
+                 * compilation group or of library text may be in either
+                 * form (2023 7.3.24.3 rule 4): in fixed form, before column 7 */
+                const char *q = p, *qe = p + len;
+                while (q < qe && *q == ' ') q++;
+                if (qe - q >= 8 && q[0] == '>' && q[1] == '>' && !strncasecmp(q + 2, "source", 6)) from = (int)(q - p);
+            }
             const char *d = p + (len > from ? from : len), *de = p + len;
             while (d < de && (*d == ' ' || *d == '\t')) d++;
             if (de - d >= 2 && d[0] == '>' && d[1] == '>') {
@@ -118,7 +148,7 @@ static int read_lines(const char *path, SrcLine **out, int *nout)
                     for (const char *q = t0; q + 1 < de; q++) if (q[0] == '*' && q[1] == '>') { cm = q; break; }
                     if (cm) tl = (int)(cm - t0);
                     if (n == cap) { cap *= 2; lines = realloc(lines, cap * sizeof *lines); }
-                    lines[n].text = xstrndup(t0, tl); lines[n].line = lineno; lines[n].dbg = 0; lines[n].dir = 1; lines[n].file = fpath;
+                    lines[n].text = xstrndup(t0, tl); lines[n].line = lineno; lines[n].dbg = 0; lines[n].dir = 1; lines[n].file = fpath; lines[n].ff = free_form;
                     n++;
                     if (!e) break;
                     p = e + 1;
@@ -306,7 +336,7 @@ static int read_lines(const char *path, SrcLine **out, int *nout)
             if (n == cap) { cap *= 2; lines = realloc(lines, cap * sizeof *lines); }
             lines[n].text = text;
             lines[n].line = lineno;
-            lines[n].dbg = dbg; lines[n].dir = 0; lines[n].file = fpath;
+            lines[n].dbg = dbg; lines[n].dir = 0; lines[n].file = fpath; lines[n].ff = free_form;
             n++;
         }
         if (!e) break;
