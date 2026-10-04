@@ -1,9 +1,10 @@
-*> SET ENVIRONMENT name TO value (GnuCOBOL's; BP-E31), read back by
+*> SET ENVIRONMENT name TO value (GnuCOBOL's own: BP-G1, only under
+*> -dialect=gnucobol), read back by
 *> ACCEPT ... FROM ENVIRONMENT, from a literal and from items with
 *> trailing spaces (GnuCOBOL drops them from both).  ACAS (cobol
 *> ISSUES-124) sets COB_SCREEN_ESC and friends this way.
 identification division.
-program-id. setenv.
+program-id. gnu-setenv.
 data division.
 working-storage section.
 01  ws-got     pic x(20).

@@ -316,10 +316,11 @@ static void parse_set(void)
 {
     Ref rs[MAXOPS]; int nr = 0;
     if (at_word("environment") && !sym_lookup_quiet("environment")) {
-        /* SET ENVIRONMENT name TO value (GnuCOBOL's; BP-E31): a variable
-         * the run unit's later ACCEPT ... FROM ENVIRONMENT reads */
+        /* SET ENVIRONMENT name TO value (GnuCOBOL's own; BP-G1, taken only
+         * under -dialect=gnucobol): a variable the run unit's later
+         * ACCEPT ... FROM ENVIRONMENT reads */
         int line = cur()->line;
-        bp(BP_E31_ENVIRONMENT, line);
+        bp(BP_G1_SET_ENVIRONMENT, line);
         advance();
         Opnd no; parse_operand(&no);
         env_text_args(&no, "SET ENVIRONMENT");

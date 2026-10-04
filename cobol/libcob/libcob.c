@@ -6910,7 +6910,7 @@ int cob_env_accept_named(const char *np, int nn, void *p, const cob_desc *d)
     put_text(p, d, v, (int)strlen(v));
     return 0;
 }
-/* SET ENVIRONMENT name TO value (GnuCOBOL's; BP-E31): the name and the
+/* SET ENVIRONMENT name TO value (GnuCOBOL's own; BP-G1): the name and the
  * value both without their trailing spaces, as GnuCOBOL takes them --
  * unlike DISPLAY UPON ENVIRONMENT-VALUE, which keeps them (MF DISPLAY rule
  * 9).  Kept in the run unit's table like a DISPLAY's; no setenv. */

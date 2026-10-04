@@ -396,7 +396,8 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-fhir")) g_hir_on = 1;
         else if (!strcmp(argv[i], "-fprofile-lines")) g_proflines = 1;
         else if (!strcmp(argv[i], "-dialect=mf")) g_dialect_mf = 1;
-        else if (!strncmp(argv[i], "-dialect=", 9)) { fprintf(stderr, "s32-cobc: %s: the one dialect is mf (docs/behavior-points.md)\n", argv[i]); return 2; }
+        else if (!strcmp(argv[i], "-dialect=gnucobol")) g_dialect_gnu = 1;
+        else if (!strncmp(argv[i], "-dialect=", 9)) { fprintf(stderr, "s32-cobc: %s: the dialects are mf and gnucobol (docs/behavior-points.md)\n", argv[i]); return 2; }
         else if (!strcmp(argv[i], "-std=85") || !strcmp(argv[i], "-std=cobol85")) g_std = 85;
         else if (!strcmp(argv[i], "-std=2002") || !strcmp(argv[i], "-std=cobol2002")) { g_std = 2002; pic_max_digits = 31; }
         else if (!strcmp(argv[i], "-std=74") || !strcmp(argv[i], "-std=cobol74")) {

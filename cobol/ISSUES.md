@@ -6027,15 +6027,28 @@ Start: 5 of 134 compiled.
 
 - **SET ENVIRONMENT and ACCEPT FROM LINES / COLUMNS** (25 programs set
   COB_SCREEN_EXCEPTIONS and friends; screens size themselves from the
-  terminal).  ACCEPT FROM ENVIRONMENT was already BP-E31; GnuCOBOL's SET
-  ENVIRONMENT name TO value joins it, name and value without trailing
-  spaces as GnuCOBOL takes them, kept in the run unit's table.  LINES and
+  terminal).  ACCEPT FROM ENVIRONMENT was already BP-E31.  GnuCOBOL's
+  SET ENVIRONMENT name TO value is GnuCOBOL's alone, and by the user's
+  ruling of 2026-10-04 a GnuCOBOL form is taken only under a switch,
+  never by default: it is BP-G1, the first point of a new class G
+  under -dialect=gnucobol (refused without it, naming the switch: test
+  bad/set-environment); name and value without trailing spaces as
+  GnuCOBOL takes them, kept in the run unit's table.  LINES and
   COLUMNS are X/Open's, a new point BP-E32: the term service's size, 24
-  by 80 with no terminal.  Tests: free/setenv (identical to GnuCOBOL),
+  by 80 with no terminal.  Tests: free/gnu-setenv (identical to GnuCOBOL),
   free/mf-scrdims (GnuCOBOL starts curses for them and stops with no
   terminal: docs/oracles.md).  The programs these unblocked stop next at
   WITH FOREGROUND-COLOR, so the count stays 13 of 134.
 
-Next, in order: DISPLAY/ACCEPT ... WITH FOREGROUND-COLOR (BP-E7); the SCREEN SECTION BLANK SCREEN placement rule; COMP-X longer
+- **FOREGROUND-COLOR / BACKGROUND-COLOR on a positioned DISPLAY or
+  ACCEPT** (71 programs; Micro Focus and X/Open, so with positioned I/O's
+  own BP-E7): a colour 0-7 as in the SCREEN SECTION, a level 78 name
+  arriving as its number (ACAS's screenio.cpy COB-COLOR-*).  The fields
+  already carried colours for the SCREEN SECTION; the clause was
+  missing.  Test: free/poscolor (the ANSI stream; no oracle).  69 of 134.
+
+The sweep compiles -dialect=gnucobol from here on.
+
+Next, in order: the SCREEN SECTION BLANK SCREEN placement rule; COMP-X longer
 than seven bytes; PAGE LIMIT without a number; >>SOURCE FREE carried into
 copybooks (GnuCOBOL does; to be checked against the 2002/2014 texts).

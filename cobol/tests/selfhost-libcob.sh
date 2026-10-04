@@ -54,6 +54,7 @@ for fmt in fixed free 2002; do
         flag="-$fmt"; std=""
         [ "$fmt" = 2002 ] && { flag="-free"; std="-std=2002"; }
         case "$name" in mf-*) std="$std -dialect=mf" ;; esac
+        case "$name" in gnu-*) std="$std -dialect=gnucobol" ;; esac
         extra=()
         if [ -f "${src%.cbl}.link" ]; then for e in $(cat "${src%.cbl}.link"); do extra+=("$HERE/$e"); done; fi
         if ! "$CDIR/compile.sh" $flag $std -I "$HERE/copy" "$src" "${extra[@]+"${extra[@]}"}" -o "$W/p.s32x" > "$W/p.log" 2>&1; then

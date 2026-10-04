@@ -1,6 +1,6 @@
 #!/bin/bash
 # compile.sh -- COBOL source(s), C source(s) and objects to a SLOW-32 executable.
-#   ./compile.sh [-free|-fixed] [-std=85|-std=2002] [-dialect=mf] [-fixed-columns=bytes] [-fbinary-byteorder=native] [-fprofile-lines] main.cbl [sub.cbl ...] [x.c ...] [x.s32o ...] [-I dir]... [-o prog.s32x]
+#   ./compile.sh [-free|-fixed] [-std=85|-std=2002] [-dialect=mf] [-dialect=gnucobol] [-fixed-columns=bytes] [-fbinary-byteorder=native] [-fprofile-lines] main.cbl [sub.cbl ...] [x.c ...] [x.s32o ...] [-I dir]... [-o prog.s32x]
 # The first .cbl is the main program; further .cbl are subprogram
 # modules (-m); .c files are built by the SLOW-32 C toolchain, which is
 # how dateutil.c joins gl030 (docs/lowering.md: one convention, the C

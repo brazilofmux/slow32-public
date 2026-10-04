@@ -220,6 +220,7 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_E20_LONG_LITERAL, BP_E21_EXIT_PROGRAM_NOT_LAST, BP_E22_SEPARATOR_SPACE, BP_E23_CONDNAME_GROUP,
        BP_E24_COMMENT_ENTRY_2002, BP_E25_CONSTANT_NO_AS, BP_E26_LEVEL_78, BP_E27_TRIM, BP_E28_ANY_LENGTH_OUTER, BP_E29_ROUNDED_MODE, BP_E30_DOLLAR_SET,
        BP_D1_MF_NO_FILE_CONTROL, BP_D2_MF_SPLIT_KEY, BP_D3_MF_STOP_NOT_LAST, BP_D4_MF_EXIT_NOT_ALONE, BP_D5_MF_NO_FILE_SECTION, BP_D6_MF_ASSIGN_IMPLICIT, BP_D7_MF_VALUE_TRUNCATED, BP_E31_ENVIRONMENT, BP_E32_SCREEN_DIMS,
+       BP_G1_SET_ENVIRONMENT,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -307,12 +308,15 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
     { "BP-D7", 'D', "a VALUE literal longer than its alphanumeric item, cut on the right to the item; the "
                     "standard refuses it (X3.23-1985 VALUE syntax rule 3; 2023 13.18.63.3 rule 4), as Micro Focus's reference does" },
     { "BP-E31", 'E', "ENVIRONMENT-NAME, ENVIRONMENT-VALUE and ACCEPT ... FROM ENVIRONMENT are X/Open's and Micro "
-                     "Focus's, and SET ENVIRONMENT GnuCOBOL's, not standard COBOL (the standard names devices through SPECIAL-NAMES)" },
+                     "Focus's, not standard COBOL (the standard names devices through SPECIAL-NAMES)" },
     { "BP-E32", 'E', "ACCEPT ... FROM LINES and FROM COLUMNS, the terminal's size, are X/Open's, not standard COBOL" },
+    { "BP-G1", 'G', "SET ENVIRONMENT name TO value is GnuCOBOL's own, not standard COBOL nor X/Open's (X/Open "
+                    "sets a variable with DISPLAY ... UPON ENVIRONMENT-NAME and ENVIRONMENT-VALUE)" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
 static int g_dialect_mf;             /* -dialect=mf: Micro Focus's own forms (class D points) are taken */
+static int g_dialect_gnu;            /* -dialect=gnucobol: GnuCOBOL's own forms (class G points) are taken -- never by default */
 static void bp(int point, int line)
 {
     static int last_point = -1, last_line = -1;
@@ -325,7 +329,10 @@ static void bp(int point, int line)
     /* class D: a dialect's own, taken only under its switch (-dialect=mf) */
     if (g_bp[point].cls == 'D' && !g_dialect_mf)
         die_at(line, "[%s] %s -- compile with -dialect=mf", g_bp[point].id, g_bp[point].msg);
-    if (g_bp[point].cls == 'E' || g_bp[point].cls == 'D' ? !g_warn_ext : !g_warn74) return;
+    /* class G: GnuCOBOL's own, taken only under -dialect=gnucobol */
+    if (g_bp[point].cls == 'G' && !g_dialect_gnu)
+        die_at(line, "[%s] %s -- compile with -dialect=gnucobol", g_bp[point].id, g_bp[point].msg);
+    if (g_bp[point].cls == 'E' || g_bp[point].cls == 'D' || g_bp[point].cls == 'G' ? !g_warn_ext : !g_warn74) return;
     if (point == last_point && line == last_line) return;     /* one per point per line */
     last_point = point; last_line = line;
     fprintf(stderr, "%s:%d: warning: [%s] %s\n", diag_file(line), line, g_bp[point].id, g_bp[point].msg);

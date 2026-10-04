@@ -300,6 +300,8 @@ for fmt in fixed free 2002; do
         [ "$fmt" = 2002 ] && { flag="-free"; stdflag="-std=2002"; ostd="-std=cobol2002"; }
         # mf-*: Micro Focus's dialect (-dialect=mf), the oracle in GnuCOBOL's -std=mf
         case "$name" in mf-*) stdflag="$stdflag -dialect=mf"; ostd="-std=mf" ;; esac
+        # gnu-*: GnuCOBOL's own forms (-dialect=gnucobol), the oracle in its default dialect
+        case "$name" in gnu-*) stdflag="$stdflag -dialect=gnucobol"; ostd="-std=default" ;; esac
         # a .link file beside the test names further sources (subprogram
         # .cbl, .c) relative to tests/, for us and for the oracle
         extra=(); needs_cc=0

@@ -118,6 +118,19 @@ static void parse_pos_clauses(SField *f, int is_accept)
         if (accept_word("required") || accept_word("empty-check")) { if (is_accept) f->flags |= COB_SF_REQUIRED; continue; }
         if (accept_word("full") || accept_word("length-check")) { if (is_accept) f->flags |= COB_SF_FULL; continue; }
         if (accept_word("underline")) { f->flags |= COB_SF_UNDERLINE; continue; }
+        if (at_word("foreground-color") || at_word("foreground-colour") || at_word("background-color") || at_word("background-colour")) {
+            /* a colour 0-7, as in the SCREEN SECTION (a level 78 or
+             * constant name arrives here as its number); positioned I/O
+             * is BP-E7's, and its colours with it */
+            Tok *t = cur(); advance();
+            int bg = t->s[0] == 'b' || t->s[0] == 'B';
+            accept_word("is");
+            if (cur()->kind != T_NUM) die_at(t->line, "%s takes a colour number 0-7 here; an identifier is not implemented", t->s);
+            int c = atoi(cur()->s); advance();
+            if (c < 0 || c > 7) die_at(t->line, "a screen colour is 0-7 (black, blue, green, cyan, red, magenta, yellow, white)");
+            if (bg) f->bg = c; else f->fg = c;
+            continue;
+        }
         if (accept_word("highlight")) { f->flags |= COB_SF_HIGHLIGHT; continue; }
         if (accept_word("lowlight")) { f->flags |= COB_SF_LOWLIGHT; continue; }
         if (accept_word("no")) { expect_word("beep"); f->ext |= COB_SX_NOBEEP; continue; }

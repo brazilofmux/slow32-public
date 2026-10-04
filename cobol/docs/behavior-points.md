@@ -22,6 +22,7 @@ Plan and reasoning: [standards.md](standards.md).
 | `-std=74` | refused: 74 programs compile as 85, and `-warn-74` flags where their meaning changed; full COBOL 74 is cobc370's job |
 | `-std=2002` | COBOL 2002, Stage B of standards.md (any other `-std` is refused) |
 | `-dialect=mf` | Micro Focus's own forms, the class D points below, are taken; without it each is refused naming the switch. The one dialect: by the user's ruling (2026-10-01) Micro Focus is the dialect a switch is for, its reference being written down as the standard is |
+| `-dialect=gnucobol` | GnuCOBOL's own forms, the class G points below, are taken; without it each is refused naming the switch. By the user's ruling (2026-10-04) a GnuCOBOL form is accepted only under this switch and is **never the default**: much of what is GnuCOBOL's alone is its C runtime showing through the language |
 | `-warn-74` | warns at every class M, O and N point below; never changes the output |
 | `-warn-extensions` | warns at every class E and D point that calls `bp()` (an extension to the standard the program is compiled for); never changes the output |
 
@@ -148,7 +149,7 @@ warns only under -std=85. Never changes the output.
 | BP-E28 | ANY LENGTH in an outermost program | X-COBOL's RSS reader and roguelike (logger, command-line-parser) | 2002 | 2023 13.18.2.3 rule 2 keeps it to functions and contained programs, since a plain CALL need not carry lengths; this compiler's CALL does (cob_call_lens), so it is taken, as Micro Focus and GnuCOBOL take it. A caller compiled -std=85 or C passes none, and the run stops naming the program (ISSUES-120) |
 | BP-E29 | ROUNDED MODE IS mode, COBOL 2014's (2023 14.7.4) | X-COBOL (a report program); majesty's gl008 had NEAREST-EVEN, rewritten in 85 arithmetic 2026-08-30 | 85, 2002 | beyond both editions; taken, all eight modes (docs/conformance/arithmetic.md) (ISSUES-120) |
 | BP-E30 | a `$SET` directive line, Micro Focus's (`$` in the indicator column; in free form the first non-blank, followed by a letter) | abrignoli_COBSOFT, 45 programs in X-COBOL, each beginning `$set sourceformat"free"` | 85, 2002 | SOURCEFORMAT"FREE"/"FIXED" (or `(FREE)`) switch the reference format as `>>SOURCE FORMAT` does; listing directives (LIST, FORM, ECHO, XREF, SETTINGS, WARNING and their NO forms, ...) have no effect; any other directive, and `$IF`/`$DISPLAY` lines, are refused by name, so nothing that changes a program's meaning is dropped (ISSUES-120) |
-| BP-E31 | `DISPLAY ... UPON ENVIRONMENT-NAME` / `ENVIRONMENT-VALUE`, `ACCEPT ... FROM ENVIRONMENT-VALUE`, `ACCEPT ... FROM ENVIRONMENT name`, with ON EXCEPTION; GnuCOBOL's `SET ENVIRONMENT name TO value` | X/Open and Micro Focus: abrignoli_COBSOFT (COMPUTERNAME), debinix_openjensen (the one-step form, 9 programs) | 85, 2002 | taken: MF's ACCEPT rules 8 and 56, DISPLAY rules 6-9 -- the exception when no name is chosen or no such variable, a value set with its trailing spaces; the guest libc has no setenv, so a value set is kept in a table the run unit reads first. free/envvar (GnuCOBOL differs, docs/oracles.md) (ISSUES-120); SET ENVIRONMENT (ACAS, ISSUES-124) takes the name and value without trailing spaces, as GnuCOBOL does: free/setenv |
+| BP-E31 | `DISPLAY ... UPON ENVIRONMENT-NAME` / `ENVIRONMENT-VALUE`, `ACCEPT ... FROM ENVIRONMENT-VALUE`, `ACCEPT ... FROM ENVIRONMENT name`, with ON EXCEPTION | X/Open and Micro Focus: abrignoli_COBSOFT (COMPUTERNAME), debinix_openjensen (the one-step form, 9 programs) | 85, 2002 | taken: MF's ACCEPT rules 8 and 56, DISPLAY rules 6-9 -- the exception when no name is chosen or no such variable, a value set with its trailing spaces; the guest libc has no setenv, so a value set is kept in a table the run unit reads first. free/envvar (GnuCOBOL differs, docs/oracles.md) (ISSUES-120) |
 | BP-E32 | `ACCEPT ... FROM LINES`, `ACCEPT ... FROM COLUMNS` | X/Open: ACAS (ISSUES-124) | 85, 2002 | taken: the terminal's size from the term service, 24 by 80 when there is none; free/mf-scrdims (GnuCOBOL stops without a terminal, docs/oracles.md) |
 
 
@@ -199,6 +200,19 @@ lines, `CALL ... ON OVERFLOW`, and a figurative constant moved to a
 numeric or numeric-edited item -- except `ALL` with a literal of digits
 to an integer item, which 2023 keeps as obsolete (BP-O9's case, now only for
 integers). docs/standards.md, "Later revisions", has the survey.
+
+## Class G — GnuCOBOL's own forms (`-dialect=gnucobol`)
+
+Forms only GnuCOBOL has -- neither the standard's nor X/Open's nor
+Micro Focus's -- met in programs written for it (ACAS, cobol
+ISSUES-124).  Taken only under `-dialect=gnucobol`, never by default;
+without the switch each is refused, the message naming it.  Tests named
+`gnu-*` compile under the switch, their oracle GnuCOBOL's default
+dialect; `bad/` holds each point's refusal.
+
+| id | construct | seen in | here |
+|---|---|---|---|
+| BP-G1 | `SET ENVIRONMENT name TO value` | ACAS: COB_SCREEN_EXCEPTIONS, COB_SCREEN_ESC (25 programs) | taken: name and value without trailing spaces, as GnuCOBOL takes them, kept in the run unit's table where ACCEPT ... FROM ENVIRONMENT (BP-E31) reads first; no setenv. free/gnu-setenv (identical to GnuCOBOL); refused without the switch: bad/set-environment (ISSUES-124) |
 
 ## Adding a point
 
