@@ -662,7 +662,15 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
                          uint32_t sub_opcode, io_descriptor_t *req,
                          io_descriptor_t *resp) {
     term_state_t *ts = (term_state_t *)state;
-    uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+    /* the sub-opcodes that use the data buffer: an offset past its end is
+     * EINVAL, as for the fixed opcodes (docs/SPEC.md 8.2.4) */
+    if (req->offset >= S32_MMIO_DATA_CAPACITY &&
+        (sub_opcode == S32_TERM_GET_SIZE || sub_opcode == S32_TERM_READ_KEY ||
+         sub_opcode == S32_TERM_PUTS)) {
+        mmio_fail(resp, EINVAL);
+        return;
+    }
+    uint32_t offset = req->offset;
 
     switch (sub_opcode) {
         case S32_TERM_SET_MODE: {

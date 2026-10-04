@@ -911,10 +911,19 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
 {
     Slow32TermState *ts = state;
 
+    /* the sub-opcodes that use the data buffer: an offset past its end is
+     * EINVAL, as for the fixed opcodes */
+    if (req->offset >= S32_MMIO_DATA_CAPACITY &&
+        (sub_opcode == S32_TERM_GET_SIZE || sub_opcode == S32_TERM_READ_KEY ||
+         sub_opcode == S32_TERM_PUTS)) {
+        slow32_mmio_fail(resp, EINVAL);
+        return;
+    }
+
     switch (sub_opcode) {
     case S32_TERM_SET_MODE: {
         if (!isatty(STDIN_FILENO)) {
-            resp->status = S32_MMIO_STATUS_ERR;
+            slow32_mmio_fail(resp, EINVAL);
             break;
         }
         if (req->status) {
@@ -1105,7 +1114,7 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
 
     case S32_TERM_SAVE_SCREEN: {
         if (!ts->cells || ts->save_depth >= TERM_MAX_SAVE_DEPTH) {
-            resp->status = S32_MMIO_STATUS_ERR;
+            slow32_mmio_fail(resp, EINVAL);
             break;
         }
         size_t ncells = (size_t)ts->rows * ts->cols;
@@ -1126,7 +1135,7 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
 
     case S32_TERM_RESTORE_SCREEN: {
         if (ts->save_depth <= 0) {
-            resp->status = S32_MMIO_STATUS_ERR;
+            slow32_mmio_fail(resp, EINVAL);
             break;
         }
         Slow32TermScreenSave *s = &ts->save_stack[--ts->save_depth];
@@ -1208,7 +1217,7 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
 
     case S32_TERM_BEGIN_UPDATE: {
         if (ts->in_update || !ts->cells) {
-            resp->status = S32_MMIO_STATUS_ERR;
+            slow32_mmio_fail(resp, EINVAL);
             break;
         }
         /* Snapshot current shadow buffer */
@@ -1216,7 +1225,7 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
         ts->prev_cells = g_memdup2(ts->cells,
                                     ncells * sizeof(Slow32TermCell));
         if (!ts->prev_cells) {
-            resp->status = S32_MMIO_STATUS_ERR;
+            slow32_mmio_fail(resp, EINVAL);
             break;
         }
         ts->prev_cur_row = ts->cur_row;
@@ -1232,7 +1241,7 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
 
     case S32_TERM_END_UPDATE: {
         if (!ts->in_update || !ts->prev_cells) {
-            resp->status = S32_MMIO_STATUS_ERR;
+            slow32_mmio_fail(resp, EINVAL);
             break;
         }
         ts->in_update = false;
@@ -1343,7 +1352,7 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
     }
 
     default:
-        resp->status = S32_MMIO_STATUS_ERR;
+        slow32_mmio_fail(resp, EINVAL);
         break;
     }
 }

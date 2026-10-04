@@ -508,10 +508,24 @@ exit 0.) A test harness that sees 132, 134 or 139 must decide from the
 diagnostic whether the program faulted or the host itself died of that
 signal.
 
-**Unspecified:** the wording of the diagnostic. The reference
-interpreter's forms are `Memory fault: Failed to read N bytes at 0xADDR
-(...)` and `Memory fault: Failed to write N bytes at 0xADDR (...)`; the
-test harness compares only the address.
+The diagnostic is one line on standard error. A machine should print the
+reference interpreter's forms, so that its output can be compared with
+the reference's (`%08X` is eight upper-case hex digits; what follows the
+address in parentheses is free-form and is not compared):
+
+| Fault | Line |
+|---|---|
+| load | `Memory fault: Failed to read N bytes at 0x%08X (PC=0x%08X SP=0x%08X)` |
+| store | `Memory fault: Failed to write N bytes at 0x%08X (PC=0x%08X SP=0x%08X)` |
+| fetch | `Execute fault: PC=0x%08X outside code segment [0, 0x%08X)` (the limit is `code_limit`) |
+| illegal opcode | `Unknown opcode: 0x%02X at PC=0x%08X` |
+| ASSERT_EQ | `Assertion failed: rA (0x%08X) != rB (0x%08X)` (A, B the register numbers, in decimal) |
+| double-precision register | `f64 register fault: rN is invalid (must be even, < 31) at PC=0x%08X` |
+
+The other engines word some of these differently, and the differential
+harness reduces every memory fault to its address and every illegal
+opcode to its PC before comparing; their exact wording is therefore
+**Unspecified**, and the table is the form to choose.
 
 Output the program wrote before the fault (by DEBUG or through the host
 interface) is kept.
@@ -1032,8 +1046,8 @@ Success: `status` 0, `length` 0. Failure: host errno, except where noted.
 | 0x2A | CLOSEDIR | `status` = directory fd | `EBADF` if not a directory stream. Frees the slot. |
 | 0x2B | REWINDDIR | `status` = directory fd | `EBADF` if not a directory stream. |
 
-A directory fd is not a byte stream: READ/WRITE on it give `EBADF`, CLOSE
-gives `EINVAL`.
+A directory fd is not a byte stream: READ, WRITE and CLOSE on it give
+`EBADF` (CLOSEDIR closes it).
 
 ##### 8.7.1 `dirent` (272 bytes, packed)
 
@@ -1125,7 +1139,7 @@ if it would exceed 128 KB the guest gets an empty environment.
 | Opcode | Name | Request | Response / data | Errors |
 |---|---|---|---|---|
 | 0x60 | ARGS_INFO | `length` ≥ 16 | info struct at `off`; `status` 0, `length` 16 | `EINVAL` (`length` < 16, `off` > CAP−16) |
-| 0x61 | ARGS_DATA | `length` = bytes wanted (≤ CAP); **`status` = byte offset into the blob** | copies `min(length, total − status)` blob bytes starting at blob offset `status` to `off`; `status` 0, `length` = bytes copied. `length` 0: `status` 0 with no checks | `EINVAL` (`length` > CAP, `off + length` > CAP, `status` > total) |
+| 0x61 | ARGS_DATA | `length` = bytes wanted (≤ CAP); **`status` = byte offset into the blob** | copies `min(length, total − status)` blob bytes starting at blob offset `status` to `off`; `status` 0, `length` = bytes copied. `length` 0: `status` 0 with no further checks (8.2.4's offset check still comes first) | `EINVAL` (`length` > CAP, `off + length` > CAP, `status` > total) |
 | 0x62 | ENVP_INFO | as ARGS_INFO | | |
 | 0x63 | ENVP_DATA | as ARGS_DATA, over the environment blob | | |
 | 0x64 | GETENV | `length` = bytes of name (NUL optional); name at `off` | value (not NUL-terminated) written at `off`, truncated to `CAP − off`; `status` = `length` = value bytes (0 for an empty value) | `EINVAL` (`length` 0 or > CAP, `off + length` > CAP); `ENOENT` (variable not set) |
@@ -1180,6 +1194,10 @@ Errors: `EINVAL` (`length` < 16, `off` > CAP−16, nanoseconds ≥ 10⁹);
 **0x33 TIMER_CANCEL.** Request `status` = id. Disarms it; a cancelled timer
 never queues. Response `status` 0. Error `EINVAL` (id ≥ 8 or not armed —
 including one that already fired).
+
+A delivery step delivers timers, then ready posted reads. CLOSE completes
+the posted reads that are ready (that fd's among them) but delivers no
+timers.
 
 Delivery: at each delivery step every armed timer whose deadline has passed
 is queued, earliest deadline first, and among equal deadlines the lowest id
@@ -1265,7 +1283,7 @@ response `status` is 0 except as noted.
 | policy denies the name | u32 `1` (DENIED) | 4 |
 | a session with that name is active | u32 `3` (CONFLICT) | 4 |
 | name is not a built-in service | u32 `2` (UNKNOWN) | 4 |
-| 16 sessions are active | u32 `4` (LIMIT) | 4 |
+| 16 sessions are active (with two services and CONFLICT, not reachable today) | u32 `4` (LIMIT) | 4 |
 | no free range of opcode-count opcodes below 0xF0 | u32 `4` (LIMIT) | 4 |
 | otherwise: grant | u32 ×4: `[0 (OK), base, opcode_count, version]` | 16 |
 
@@ -1318,7 +1336,9 @@ list denies every name not on it, including the fixed ones.
 ### 8.14 Term service (`"term"`, 15 opcodes)
 
 Sub-opcodes (opcode = base + n). Requests carry arguments in `status`
-unless noted; responses are `status` 0, `length` 0 unless noted.
+unless noted; responses are `status` 0, `length` 0 unless noted. For the
+sub-opcodes that use the data buffer (GET_SIZE, READ_KEY, PUTS) an
+`offset` ≥ CAP is `EINVAL`, as in 8.2.4.
 
 | n | Name | Request | Effect / response |
 |---|---|---|---|
@@ -1326,7 +1346,7 @@ unless noted; responses are `status` 0, `length` 0 unless noted.
 | 1 | GET_SIZE | `off` ≤ CAP−8 | Host terminal size now (of host stdout; 24×80 if unavailable): u32 rows, u32 cols at `off`; `length` 8. `EINVAL` if `off` > CAP−8. |
 | 2 | MOVE_CURSOR | `status` = row<<16 \| col, **1-based**, 16 bits each | Outside an update: emits `ESC [ row ; col H` (decimal, unclamped). Shadow cursor := (row−1, col−1). |
 | 3 | CLEAR | `status` = 0 screen, 1 to end of line, 2 to end of screen (other = 0) | Outside an update emits `ESC[2J ESC[H` / `ESC[K` / `ESC[J`; inside, records it (§8.14.3). Shadow clear (§8.14.2). |
-| 4 | SET_ATTR | `status` = SGR number | Outside an update emits `ESC [ status m` (the whole 32-bit `status`, unsigned decimal). Current attribute := status; cells keep its low 8 bits, so END_UPDATE and RESTORE emit those. Guests use 0 normal, 1 bold, 7 reverse. |
+| 4 | SET_ATTR | `status` = SGR number | Outside an update emits `ESC [ status m` (the whole 32-bit `status`, unsigned decimal). Current attribute := status; cells keep its low 8 bits, so END_UPDATE and RESTORE emit those. Guests use 0 normal, 1 bold, 7 reverse; what the repaint compares for a value above 255 is **Unspecified**. |
 | 5 | READ_KEY | | Blocks for one byte of input (§8.14.4). `status` = byte, `length` 1, byte also at `off`. End of input: `status` `0xFFFFFFFD`. |
 | 6 | KEY_AVAIL | | `status` 1 if a byte can be read without blocking (a pushed-back byte, unread prefix bytes, or host stdin is ready, 8.12), else 0. Never blocks. |
 | 7 | SET_COLOR | `status` = fg<<8 \| bg (8 bits each; ANSI 0–7) | Outside an update emits `ESC [ 3fg ; 4bg m` (decimal, unclamped). Current colours := fg, bg. |
@@ -1346,8 +1366,9 @@ raw mode is on; it emits nothing.
 #### 8.14.1 The shadow model
 
 The session keeps a **shadow screen**: R × C cells, where R, C are the host
-terminal size at SVC_REQUEST time, each clamped to 256 (24 × 80 if the size is
-unavailable or 0). The shadow never scrolls and never resizes. Each cell
+terminal size at SVC_REQUEST time, each clamped to 256; if the size is
+unavailable both are taken as 24 × 80, and a dimension reported as 0 is
+taken as 24 (rows) or 80 (columns) on its own. The shadow never scrolls and never resizes. Each cell
 holds: a base code point; up to 7 further code points ("marks") of its
 grapheme cluster; attribute (8 bits); fg, bg (8 bits each); and a width kind:
 NARROW, WIDE (first of two cells), or TAIL (second cell of a WIDE). Initial
@@ -1436,6 +1457,10 @@ initial cell value, so attr/fg/bg reset to 0/7/0.)
 
 #### 8.14.3 Repaint algorithms (exact output bytes)
 
+The shadow keeps one invariant these rely on: a TAIL cell always has its
+WIDE head immediately to its left (8.14.2 writes and blanks the two
+halves together), so END_UPDATE's step back from a TAIL lands on a WIDE.
+
 Notation: `CUP(r,c)` = `ESC [ r ; c H` with decimal 1-based numbers;
 `SGR(a)` = `ESC [ a m`; `COL(f,b)` = `ESC [ 3f ; 4b m` (f, b decimal);
 `EMIT(cell)` = nothing for a TAIL, else the UTF-8 of the base code point
@@ -1479,7 +1504,7 @@ if (current fg, bg) != (of, ob): output COL(current fg, current bg)
 output CUP(cursor row+1, cursor col+1); flush
 ```
 
-**RESTORE_SCREEN** outside an update (S = popped save; PR = min(S.R, R), PC = min(S.C, C)). Inside an update only the `shadow :=` and `cursor, attr, fg, bg :=` steps happen, with no output:
+**RESTORE_SCREEN** outside an update (S = popped save; PR = min(S.R, R), PC = min(S.C, C)). Inside an update only the `shadow :=` and `cursor, attr, fg, bg :=` steps happen, with no output. Either way the cluster state and the last cell (8.14.2) are left as they were:
 ```
 output "ESC[0m" "ESC[2J" "ESC[H"
 (pa, pf, pb) := (0, 7, 0)
@@ -1554,8 +1579,10 @@ the corrections below; read it with them applied.
    over `bg_color` with `a = palette.alpha` (no multiplier); sprites use
    `a = (sprite.alpha × palette.alpha) / 255`. Both use
    `out = (src × a + dst × (255 − a)) / 255` per channel, integer.
-7. **CLOSE also empties the key queue**; the `S32_TUBE_KEYS` file is
-   (re)loaded at every successful OPEN.
+7. **CLOSE also empties the key queue** and closes the viewer listener and
+   any viewer connection; the next OPEN listens afresh. The
+   `S32_TUBE_KEYS` file is loaded at every successful OPEN, its events
+   appended to the queue.
 8. **Headless behaviour:** OPEN always tries to listen on 127.0.0.1 port 0
    and writes the port file (`tube.port`, or `S32_TUBE_PORT`) when listening
    succeeds, viewer or not; a port file is therefore normally written even in
