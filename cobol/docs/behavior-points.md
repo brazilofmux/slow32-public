@@ -70,9 +70,9 @@ eighteen appears in ISO/IEC 1989:2023.
 | BP-O3 | `STOP literal` (item 16) | the literal is displayed and the run goes on |
 | BP-O4 | `OPEN ... REVERSED` (item 15) | implemented |
 | BP-O5 | `MEMORY SIZE` (item 4) | no effect |
-| BP-O6 | `LABEL RECORDS` (item 7) | no effect |
+| BP-O6 | `LABEL RECORDS` (item 7) | no effect; under -std=2002 refused, but kept under `-dialect=mf` (MF: documentary only), 2002/mf-labelrec, bad/std2002-labelrec (ISSUES-124) |
 | BP-O7 | `VALUE OF` (item 8) | no effect |
-| BP-O8 | `DATA RECORDS` (item 9) | no effect |
+| BP-O8 | `DATA RECORDS` (item 9) | no effect; under -std=2002 refused, but kept under `-dialect=mf` (MF: documentary only) (ISSUES-124) |
 | BP-O9 | `MOVE ALL` a literal of more than one character to a numeric or numeric-edited item (item 2) | implemented: the literal repeated to the item's character positions, then moved as an unsigned integer (IV-11; the text's example on XVII-82, `ALL "123"` to `99V99` giving 31.00) |
 | BP-O10 | `RERUN` (item 5) | no effect |
 | BP-O11 | `MULTIPLE FILE TAPE` (item 6) | no effect |

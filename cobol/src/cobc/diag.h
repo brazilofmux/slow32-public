@@ -326,8 +326,14 @@ static void bp(int point, int line)
      * no longer the language, whatever the warnings asked for */
     /* (not BP-O9: 2023 14.9.25.3 rule 5 permits an ALL literal of digits
      * to an integer item again, as an obsolete feature) */
-    if (g_std >= 2002 && point >= BP_O1_ALTER && point <= BP_O11_MULTIPLE_FILE && point != BP_O9_ALL_NUMERIC)
-        die_at(line, "[%s] %s (ISO/IEC 1989:2002 F.1); under -std=2002 it is refused -- compile with -std=85", g_bp[point].id, g_bp[point].msg);
+    /* (nor, under -dialect=mf, LABEL RECORDS and DATA RECORDS: Micro Focus
+     * keeps both as documentary only (its LABEL RECORDS and DATA RECORDS
+     * clauses, rule 1), so its programs carry them into 2002 code.  VALUE
+     * OF is not among them: MF's FILE-ID gives it a meaning.) */
+    int mf_documentary = g_dialect_mf && (point == BP_O6_LABEL_RECORDS || point == BP_O8_DATA_RECORDS);
+    if (g_std >= 2002 && point >= BP_O1_ALTER && point <= BP_O11_MULTIPLE_FILE && point != BP_O9_ALL_NUMERIC && !mf_documentary)
+        die_at(line, "[%s] %s (ISO/IEC 1989:2002 F.1); under -std=2002 it is refused -- compile with -std=85%s", g_bp[point].id, g_bp[point].msg,
+               point == BP_O6_LABEL_RECORDS || point == BP_O8_DATA_RECORDS ? ", or -dialect=mf, which keeps it as documentary" : "");
     /* class D: a dialect's own, taken only under its switch (-dialect=mf) */
     if (g_bp[point].cls == 'D' && !g_dialect_mf)
         die_at(line, "[%s] %s -- compile with -dialect=mf", g_bp[point].id, g_bp[point].msg);

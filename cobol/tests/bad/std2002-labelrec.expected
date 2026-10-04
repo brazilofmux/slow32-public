@@ -1,0 +1,1 @@
+LABEL RECORDS is obsolete in COBOL 85 and deleted in COBOL 2002; it has no effect here (ISO/IEC 1989:2002 F.1); under -std=2002 it is refused -- compile with -std=85, or -dialect=mf

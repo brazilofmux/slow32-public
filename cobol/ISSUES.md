@@ -6075,6 +6075,21 @@ The sweep compiles -dialect=gnucobol from here on.
   gets the values past 2^63 wrong (docs/oracles.md).  Tests:
   2002/mf-compx8; bad/compx-x8 (under 85, asks for 2002);
   bad/std2002-compx-x9 (nine bytes, not implemented).
+- **Undeclared ASSIGN names** (FILE-2 in gl080, gl100 and four more,
+  declared by no copybook the build uses and later MOVEd into): Micro
+  Focus's implicit declaration, already BP-D6 under -dialect=mf, which
+  GnuCOBOL follows too.  No code: ACAS compiles with both switches from
+  here on.  The sweep also searches incomplete_records_system for the
+  IRS report-writer variants and maps51, as the IRS build's working
+  directory does.  97 of 134.
+- **LABEL RECORDS and DATA RECORDS under -std=2002** (6 programs; ACAS
+  needs 2002 for the eight-byte COMP-X).  2002 deleted both; Micro
+  Focus keeps both as documentary only, so by the user's ruling
+  (2026-10-04) -dialect=mf keeps them under 2002, doing nothing, and
+  plain -std=2002 still refuses them -- now naming -dialect=mf as the
+  other way out.  VALUE OF stays refused: MF gives its FILE-ID a
+  meaning, not yet implemented.  Tests: 2002/mf-labelrec (identical to
+  GnuCOBOL), bad/std2002-labelrec.
 
 Next, in order: the SCREEN SECTION BLANK SCREEN placement rule; COMP-X longer
 than seven bytes; PAGE LIMIT without a number; >>SOURCE FREE carried into
