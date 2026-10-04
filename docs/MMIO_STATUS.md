@@ -1,5 +1,8 @@
 # MMIO Implementation Status
 
+> Status page; the protocol itself is specified in [SPEC.md](SPEC.md)
+> section 8, which is normative where this page differs (Appendix A).
+
 ## Current Status (Fully Implemented)
 
 MMIO is now functional in both `slow32` and `slow32-fast` emulators with linker-controlled configuration.

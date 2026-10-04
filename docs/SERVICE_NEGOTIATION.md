@@ -1,5 +1,11 @@
 # Service Negotiation Protocol
 
+> **Partly design history.** The negotiation wire format as built differs
+> from this page: the host ignores the requested base and picks it, and the
+> reply is a 16-byte blob in the data buffer, not descriptor words.
+> [SPEC.md](SPEC.md) sections 8.13-8.14 are normative; Appendix A lists the
+> differences.
+
 ## Motivation
 
 SLOW-32's MMIO layer currently hard-codes a fixed set of host services (stdio, files,

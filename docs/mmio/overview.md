@@ -1,5 +1,7 @@
 # SLOW-32 MMIO Device Framework Design
 
+> **Design history.**  [SPEC.md](../SPEC.md) section 8 is normative.
+
 **Superseded as a device-register map.** I/O is the ring in
 `common/mmio_ring_layout.h`, not a timer device at `0x10002000` with
 an interrupt-enable bit. The live registry is

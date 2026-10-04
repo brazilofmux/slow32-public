@@ -1,5 +1,9 @@
 # MMIO Console I/O
 
+> **Design history.** The window is at the header's `mmio_base`, not at
+> 0x10000000, and the data buffer is 48 KB.  [SPEC.md](SPEC.md) section 8 is
+> normative.
+
 The SLOW-32 MMIO system provides console I/O capabilities through a ring buffer interface, replacing the limited DEBUG instruction with full input/output functionality.
 
 ## Overview

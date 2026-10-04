@@ -1,5 +1,9 @@
 # MMIO Ring Buffer - Final Execution Model
 
+> **Design history.** The machine has no TRAP instruction; requests are
+> serviced at YIELD and HALT only.  [SPEC.md](../SPEC.md) section 8.3 is
+> normative.
+
 ## The Core Insight
 
 TRAP, YIELD, and HALT are all **synchronization points** where the emulator can:

@@ -1,5 +1,8 @@
 # MMIO Ring Buffer Execution Model - Design Review
 
+> **Design history** (a decision memo).  [SPEC.md](../SPEC.md) section 8 is
+> normative: no doorbell on REQ_HEAD writes; service at YIELD and HALT.
+
 ## The Problem
 
 We built beautiful ring buffers, but haven't addressed the fundamental execution model problem:

@@ -1,5 +1,9 @@
 # The Tube Service — Specification v0.2
 
+> Current for the tube service, with the corrections listed in
+> [SPEC.md](SPEC.md) section 8.15 (negotiation reply, headless port file,
+> OPEN not reading guest memory, and others).
+
 Wire-level spec for the `tube` graphics service. The product plan and
 the constitutional amendment live in
 [docs/plans/tube.md](plans/tube.md); this document is the layer below:

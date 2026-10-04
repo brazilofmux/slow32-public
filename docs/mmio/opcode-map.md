@@ -1,5 +1,9 @@
 # MMIO Opcode Map
 
+> The normative opcode definitions, with every payload byte by byte, are in
+> [SPEC.md](../SPEC.md) section 8.  This page is the registry overview;
+> SPEC.md Appendix A lists where it is wrong.
+
 Authority: `common/mmio_ring_layout.h`. This file is the human registry.
 A new opcode lands in the header first, then here.
 

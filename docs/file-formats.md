@@ -1,5 +1,15 @@
 # SLOW-32 File Format Specification
 
+> **For `.s32x`, [SPEC.md](SPEC.md) sections 5-7 are normative**: the header
+> fields as shipped executables use them, which sections load, the memory
+> regions and their protection.  The `.s32x` part of this page predates
+> them and keeps design-era material that no executable uses -- `mem_size`
+> 0, `data_limit` as the end of all data memory, the validation rules and
+> minimum sizes, the Exception Vector Table and TSR sections, and the
+> "Minimal .s32x File" example (whose structure sizes are wrong).  The
+> `.s32o` and `.s32a` parts are current and are the toolchain's, not the
+> machine's.
+
 ## Overview
 
 This document defines the binary file formats used by the SLOW-32 architecture:
@@ -49,9 +59,9 @@ typedef struct {
     // Memory layout configuration (new in v1)
     uint32_t code_limit;   // 0x20: End of code region (e.g., 0x00100000 for 1MB)
     uint32_t rodata_limit; // 0x24: End of read-only region (e.g., 0x00200000)
-    uint32_t data_limit;   // 0x28: End of data region (e.g., 0x10000000)
+    uint32_t data_limit;   // 0x28: End of initialized data + BSS (e.g., 0x00018E24)
     uint32_t stack_base;   // 0x2C: Initial stack pointer (e.g., 0x0FFFFFF0)
-    uint32_t mem_size;     // 0x30: Total memory to allocate (0 = use data_limit)
+    uint32_t mem_size;     // 0x30: Address-space size; 0x10000000 in every executable
     uint32_t heap_base;    // 0x34: Start of heap (0 = no heap)
     uint32_t stack_end;    // 0x38: Bottom of stack (stack grows down to here)
     uint32_t mmio_base;    // 0x3C: MMIO region base (if S32X_FLAG_MMIO set)

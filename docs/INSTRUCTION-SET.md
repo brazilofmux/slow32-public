@@ -1,5 +1,9 @@
 # SLOW-32 Instruction Set Reference
 
+> The normative definition of the machine is [SPEC.md](SPEC.md). This page is
+> the toolchain-facing summary (pseudo-instructions, directives, ABI); where
+> the two differ, SPEC.md is right.
+
 ## Overview
 This document tracks the implementation status of SLOW-32 instructions across all toolchain components. SLOW-32 is a 32-bit RISC ISA inspired by RISC-V, featuring 32 general-purpose registers and fixed-width 32-bit instructions.
 
@@ -74,9 +78,9 @@ Used for JAL. Immediates are encoded with a 21-bit signed offset (multiples of 2
 | XOR rd, rs1, rs2 | 0x02 | R | rd = rs1 ^ rs2 | ✅ | |
 | OR rd, rs1, rs2  | 0x03 | R | rd = rs1 \| rs2 | ✅ | |
 | AND rd, rs1, rs2 | 0x04 | R | rd = rs1 & rs2 | ✅ | |
-| ORI rd, rs1, imm | 0x11 | I | rd = rs1 \| imm | ✅ | |
-| ANDI rd, rs1, imm| 0x12 | I | rd = rs1 & imm | ✅ | |
-| XORI rd, rs1, imm| 0x1E | I | rd = rs1 ^ imm | ✅ | |
+| ORI rd, rs1, imm | 0x11 | I | rd = rs1 \| imm | ✅ | 12-bit imm, zero-extended |
+| ANDI rd, rs1, imm| 0x12 | I | rd = rs1 & imm | ✅ | 12-bit imm, zero-extended |
+| XORI rd, rs1, imm| 0x1E | I | rd = rs1 ^ imm | ✅ | 12-bit imm, zero-extended |
 
 ## Shift Instructions
 
@@ -98,7 +102,7 @@ Used for JAL. Immediates are encoded with a 21-bit signed offset (multiples of 2
 | SEQ rd, rs1, rs2 | 0x0E | R | rd = (rs1 == rs2) ? 1 : 0 | ✅ | Set equal |
 | SNE rd, rs1, rs2 | 0x0F | R | rd = (rs1 != rs2) ? 1 : 0 | ✅ | Set not equal |
 | SLTI rd, rs1, imm| 0x16 | I | rd = (rs1 < imm) ? 1 : 0 | ✅ | Signed |
-| SLTIU rd, rs1, imm| 0x17 | I | rd = (rs1 < imm) ? 1 : 0 | ✅ | Unsigned |
+| SLTIU rd, rs1, imm| 0x17 | I | rd = (rs1 < imm) ? 1 : 0 | ✅ | Unsigned; imm zero-extended |
 | SGT rd, rs1, rs2 | 0x18 | R | rd = (rs1 > rs2) ? 1 : 0 | ✅ | Signed |
 | SGTU rd, rs1, rs2| 0x19 | R | rd = (rs1 > rs2) ? 1 : 0 | ✅ | Unsigned |
 | SLE rd, rs1, rs2 | 0x1A | R | rd = (rs1 <= rs2) ? 1 : 0 | ✅ | Signed |
@@ -110,19 +114,19 @@ Used for JAL. Immediates are encoded with a 21-bit signed offset (multiples of 2
 
 | Instruction | Opcode | Format | Description | Status | Notes |
 |------------|--------|--------|-------------|--------|-------|
-| BEQ rs1, rs2, imm | 0x48 | B | if (rs1 == rs2) PC += imm | ✅ | |
-| BNE rs1, rs2, imm | 0x49 | B | if (rs1 != rs2) PC += imm | ✅ | |
-| BLT rs1, rs2, imm | 0x4A | B | if (rs1 < rs2) PC += imm | ✅ | Signed |
-| BGE rs1, rs2, imm | 0x4B | B | if (rs1 >= rs2) PC += imm | ✅ | Signed |
-| BLTU rs1, rs2, imm| 0x4C | B | if (rs1 < rs2) PC += imm | ✅ | Unsigned |
-| BGEU rs1, rs2, imm| 0x4D | B | if (rs1 >= rs2) PC += imm | ✅ | Unsigned |
+| BEQ rs1, rs2, imm | 0x48 | B | if (rs1 == rs2) PC = PC + 4 + imm | ✅ | |
+| BNE rs1, rs2, imm | 0x49 | B | if (rs1 != rs2) PC = PC + 4 + imm | ✅ | |
+| BLT rs1, rs2, imm | 0x4A | B | if (rs1 < rs2) PC = PC + 4 + imm | ✅ | Signed |
+| BGE rs1, rs2, imm | 0x4B | B | if (rs1 >= rs2) PC = PC + 4 + imm | ✅ | Signed |
+| BLTU rs1, rs2, imm| 0x4C | B | if (rs1 < rs2) PC = PC + 4 + imm | ✅ | Unsigned |
+| BGEU rs1, rs2, imm| 0x4D | B | if (rs1 >= rs2) PC = PC + 4 + imm | ✅ | Unsigned |
 
 ## Jump Instructions
 
 | Instruction | Opcode | Format | Description | Status | Notes |
 |------------|--------|--------|-------------|--------|-------|
-| JAL rd, imm      | 0x40 | J | rd = PC + 4; PC += imm | ✅ | |
-| JALR rd, rs1, imm | 0x41 | I | rd = PC + 4; PC = rs1 + imm | ✅ | |
+| JAL rd, imm      | 0x40 | J | rd = PC + 4; PC = PC + imm | ✅ | relative to the JAL itself, unlike branches |
+| JALR rd, rs1, imm | 0x41 | I | rd = PC + 4; PC = (rs1 + imm) & ~1 | ✅ | target read before rd is written |
 
 ## Memory Instructions
 
@@ -148,9 +152,9 @@ Used for JAL. Immediates are encoded with a 21-bit signed offset (multiples of 2
 | DEBUG rs1     | 0x52 | R | Output char in rs1 | ✅ | |
 | HALT          | 0x7F | - | Stop execution | ✅ | |
 
-## Floating-Point Instructions (Soft-Float in GPRs)
+## Floating-Point Instructions (in GPRs)
 
-SLOW-32 uses a soft-float architecture where floating-point values live in general-purpose registers. There is no separate FP register file.
+SLOW-32 has floating-point instructions that operate on values held in the general-purpose registers. There is no separate FP register file.
 
 - **f32** values occupy a single 32-bit register (IEEE 754 binary32 bit pattern).
 - **f64** values occupy a **register pair** `(rN, rN+1)` where `rN` holds the low 32 bits and `rN+1` holds the high 32 bits. For f64 instructions, the register number specified for rd/rs1/rs2 must be **even** (the odd partner is implicitly `reg+1`).
@@ -365,11 +369,12 @@ all execute it).
 > `memcpy` became word-at-a-time: it now relies on unaligned access, so
 > truncation would corrupt memory rather than merely run slowly.
 
-- **Code**: `0x00000000 - 0x000FFFFF` (1MB, Execute-only)
-- **Data**: `0x00100000 - 0x0FFFFFFF` (255MB, Read/Write)
-- **MMIO**: `0x10000000+`
-- **Stack**: Starts at `0x0FFFFFF0`, grows downward.
-- **W^X Protection**: Enforced via memory manager.
+The memory map comes from the executable's header, not from fixed
+addresses: code from 0 to `code_limit` (not writable), read-only data to
+`rodata_limit`, data to `data_limit`, then the heap, the 64 KB MMIO
+window at `header.mmio_base` (MMIO executables only), and the stack
+below `0x0FFFFFF0`.  The whole space is 256 MB.  SPEC.md section 6 has
+the exact regions.
 
 ## Performance
 

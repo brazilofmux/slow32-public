@@ -1,5 +1,11 @@
 # SLOW-32 Ring Buffer MMIO Design
 
+> **Design history.** The host interface as built is specified in
+> [SPEC.md](../SPEC.md) section 8; where this page differs, SPEC.md is right.
+> Several statements here are wrong for the shipped machine (absolute
+> addresses at 0x10000000, a 56 KB data buffer, `-errno` results, host
+> `O_*` flags, GETCHAR's return); SPEC.md Appendix A lists them.
+
 ## Overview
 High-performance I/O using ring buffers, inspired by modern NIC and NVMe designs.
 

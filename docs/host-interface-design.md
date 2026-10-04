@@ -1,5 +1,8 @@
 # SLOW-32 Host Interface Design
 
+> **Design history.** Its memory map, TRAP instruction and queue layout were
+> never built.  [SPEC.md](SPEC.md) sections 6 and 8 are normative.
+
 The instance/message-passing rule in “Multi-Instance vs
 Multi-Threading” still holds. Timers, DPCs, and the four hosting
 levels are [plans/dpc.md](plans/dpc.md) and
