@@ -5676,11 +5676,16 @@ static void screen_accept(const cob_screen *s)
             fret = scr_key_status(key);         /* an exception key ends the ACCEPT, the fields kept */
             done = 1; break;
         }
+        /* Enter is the terminator key from any field (2023 9.2.3, CRT
+         * status 0000: "the operator pressing the enter key"), as GnuCOBOL
+         * and Micro Focus have it; Tab and Down move to the next input
+         * field in the order the screen declares them (AUTO's "next input
+         * field declared"), wrapping.  REQUIRED and FULL hold the field the
+         * cursor is in (2023 13.18.47.4 rule 3, 13.18.26.4 rule 3). */
         if (key == '\r' || key == '\n' || key == '\t' || key == K_DOWN) {
             if (!scr_may_leave(e)) { scr_beep_f(e->f); continue; }
-            if (cur + 1 < nin) { cur++; scr_focus(&ed[cur]); }
-            else if (key == '\r' || key == '\n') done = 1;
-            else { cur = 0; scr_focus(&ed[0]); }
+            if (key == '\r' || key == '\n') { done = 1; continue; }
+            cur = cur + 1 < nin ? cur + 1 : 0; scr_focus(&ed[cur]);
             continue;
         }
         if (key == K_UP || key == K_BTAB) { cur = cur ? cur - 1 : nin - 1; scr_focus(&ed[cur]); continue; }

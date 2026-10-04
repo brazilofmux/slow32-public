@@ -106,6 +106,9 @@ screen does on those systems, and what this one should grow into:
 - **TAB order**: fields taken in declaration order; TAB and Enter move
   to the next.
 - **Enter as submit** on the last field (or a commit key).
+  *Superseded 2026-10-04 (the user's ruling, ACAS): Enter submits from
+  any field, as the standard has it (2023 9.2.3, CRT status 0000) and as
+  GnuCOBOL and Micro Focus do; Tab moves.  See "Order" below.*
 - **In-place editing**: numeric fields anchored on the decimal point,
   or right-aligned; text fields left-aligned; typing edits the value
   where it sits rather than clearing it.
@@ -127,8 +130,8 @@ slot's PICTURE descriptor, attribute flags. `DISPLAY screen` paints
 every slot inside `term_begin_update` / `term_end_update` (so the
 emulator emits only changed cells); `ACCEPT screen` paints, then runs
 the focus loop over the TO and USING slots in order: printable keys
-overwrite and advance, Backspace erases, Enter and TAB go to the next
-field (Enter on the last one submits), Escape or end of input ends
+overwrite and advance, Backspace erases, TAB goes to the next field,
+Enter submits from any field, Escape or end of input ends
 the ACCEPT, AUTO advances when the field fills; every input field's
 text is then `MOVE`d into its item through the ordinary conversion
 matrix -- which is where usescreen's `PIC X(6)` to `COMP-5` lands,
@@ -147,9 +150,14 @@ notes ask, with GnuCOBOL nowhere in reach (its screens need a tty):
   into codes (`scr_key`): arrows, Home/End, Delete, Shift-Tab (`ESC [
   Z`; `ESC TAB` on terminals without one). A lone Escape is told from
   a sequence by `term_kbhit`.
-- **Order.** Fields in declaration order. Enter, Tab and Down go to the
-  next; Enter on the last field submits, Tab and Down wrap; Up and
-  Shift-Tab go back. Escape abandons: no item is changed. End of input
+- **Order.** Fields in declaration order (AUTO's "next input field
+  declared"). Tab and Down go to the next, wrapping; Up and Shift-Tab
+  go back. **Enter submits from any field** (2023 9.2.3: status 0000 is
+  "the operator pressing the enter key"; GnuCOBOL and Micro Focus alike)
+  -- before 2026-10-04 it moved to the next field and submitted only on
+  the last, which ACAS's screens do not expect. REQUIRED and FULL hold
+  the field the cursor is in against Enter as against Tab (2023
+  13.18.47.4 rule 3, 13.18.26.4 rule 3). Escape abandons: no item is changed. End of input
   submits (that is how the `.keys` files end).
 - **Text fields** are edited where they sit: the buffer starts as the
   item's rendering (`USING`) or blanks (`TO`); typing overwrites at the
