@@ -205,7 +205,15 @@ int slow32_console_getchar(void)
     slow32_console_flush();
 
     if (!c->connected) {
-        return fgetc(stdin);
+        /*
+         * One byte from the descriptor, as READ on fd 0 reads it: a
+         * buffered stream here would read ahead of READ.
+         */
+        unsigned char pc;
+        ssize_t got;
+        while ((got = read(STDIN_FILENO, &pc, 1)) < 0 && errno == EINTR) {
+        }
+        return got == 1 ? (int)pc : EOF;
     }
 
     qemu_mutex_lock(&c->lock);
@@ -328,18 +336,49 @@ static bool slow32_cpu_tlb_fill(CPUState *cs, vaddr addr, int size,
         }
     }
 
+    /*
+     * The page is there but this access is not permitted on it: a store
+     * to code or rodata, or a fetch outside the code segment.
+     */
+    if ((access_type == MMU_DATA_STORE && !(prot & PAGE_WRITE)) ||
+        (access_type == MMU_DATA_LOAD && !(prot & PAGE_READ)) ||
+        (access_type == MMU_INST_FETCH && !(prot & PAGE_EXEC))) {
+        goto fault;
+    }
+
     tlb_set_page(cs, page, page, prot, mmu_idx, TARGET_PAGE_SIZE);
     return true;
 
 fault:
+    if (probe) {
+        return false;
+    }
     qemu_log_mask(LOG_GUEST_ERROR,
                   "slow32: invalid %s at 0x%08" PRIx64 "\n",
                   access_type == MMU_INST_FETCH ? "fetch" :
                   access_type == MMU_DATA_LOAD ? "load" : "store",
                   (uint64_t)addr);
-    env->halted = 1;
-    slow32_cpu_complete_halt(cpu);
-    cpu_loop_exit_restore(cs, retaddr);
+    /*
+     * A fault stops the machine with exit status 139 (SPEC 7.2) and the
+     * reference emulator's diagnostic, after the guest's own output.
+     */
+    if (retaddr) {
+        cpu_restore_state(cs, retaddr);
+    }
+    slow32_console_flush();
+    if (access_type == MMU_INST_FETCH) {
+        fprintf(stderr, "Execute fault: PC=0x%08" PRIX32
+                " outside code segment [0, 0x%08" PRIX32 ")\n",
+                (uint32_t)addr, env->code_limit);
+    } else {
+        fprintf(stderr, "Memory fault: Failed to %s %d bytes at 0x%08" PRIX32
+                " (PC=0x%08" PRIX32 " SP=0x%08" PRIX32 ")\n",
+                access_type == MMU_DATA_LOAD ? "read" : "write", size,
+                (uint32_t)addr, env->pc, env->regs[SLOW32_REG_SP]);
+    }
+    slow32_cpu_fault_halt(cpu, SLOW32_FAULT_MEMORY);
+    cpu_exit(cs);       /* stop here: the shutdown request is taken later */
+    cpu_loop_exit(cs);
 }
 
 static void slow32_cpu_do_interrupt(CPUState *cs)

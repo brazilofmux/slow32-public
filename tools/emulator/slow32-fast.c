@@ -96,6 +96,7 @@ struct fast_cpu_state {
     decoded_inst_t *decoded_code;
     uint32_t code_words;
     bool halted;
+    uint32_t fault_status;   // nonzero: stopped on a fault, and the exit status (SPEC.md 7.2)
     uint64_t cycle_count;
     uint64_t inst_count;
     
@@ -483,6 +484,7 @@ static void op_ldw(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
     if (!aligned(addr,4)) {
         fprintf(stderr, "Error: Unaligned read at 0x%08x\n", addr);
         cpu->halted = true;
+        cpu->fault_status = 139;
         return;
     }
     
@@ -498,6 +500,7 @@ static void op_ldw(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
     if (!mm_load_bytes_fast(cpu, addr, &value, sizeof(value))) {
         fprintf(stderr, "Error: Read out of bounds at 0x%08x\n", addr);
         cpu->halted = true;
+        cpu->fault_status = 139;
         return;
     }
     cpu->regs[inst->rd] = value;
@@ -510,6 +513,7 @@ static void op_ldh(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
     if (!aligned(addr,2)) {
         fprintf(stderr, "Error: Unaligned read at 0x%08x\n", addr);
         cpu->halted = true;
+        cpu->fault_status = 139;
         return;
     }
     if (is_mmio_addr(cpu, addr)) {
@@ -525,6 +529,7 @@ static void op_ldh(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
     if (!mm_load_bytes_fast(cpu, addr, &value, sizeof(value))) {
         fprintf(stderr, "Error: Read out of bounds at 0x%08x\n", addr);
         cpu->halted = true;
+        cpu->fault_status = 139;
         return;
     }
     cpu->regs[inst->rd] = (int32_t)(int16_t)value;
@@ -537,6 +542,7 @@ static void op_ldhu(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_
     if (!aligned(addr,2)) {
         fprintf(stderr, "Error: Unaligned read at 0x%08x\n", addr);
         cpu->halted = true;
+        cpu->fault_status = 139;
         return;
     }
     if (is_mmio_addr(cpu, addr)) {
@@ -552,6 +558,7 @@ static void op_ldhu(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_
     if (!mm_load_bytes_fast(cpu, addr, &value, sizeof(value))) {
         fprintf(stderr, "Error: Read out of bounds at 0x%08x\n", addr);
         cpu->halted = true;
+        cpu->fault_status = 139;
         return;
     }
     cpu->regs[inst->rd] = value;
@@ -574,6 +581,7 @@ static void op_ldb(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
     if (!mm_load_bytes_fast(cpu, addr, &value, sizeof(value))) {
         fprintf(stderr, "Error: Read out of bounds at 0x%08x\n", addr);
         cpu->halted = true;
+        cpu->fault_status = 139;
         return;
     }
     cpu->regs[inst->rd] = (int32_t)(int8_t)value;
@@ -596,6 +604,7 @@ static void op_ldbu(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_
     if (!mm_load_bytes_fast(cpu, addr, &value, sizeof(value))) {
         fprintf(stderr, "Error: Read out of bounds at 0x%08x\n", addr);
         cpu->halted = true;
+        cpu->fault_status = 139;
         return;
     }
     cpu->regs[inst->rd] = value;
@@ -608,6 +617,7 @@ static void op_stw(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
     if (!aligned(addr,4)) {
         fprintf(stderr, "Error: Unaligned write at 0x%08x\n", addr);
         cpu->halted = true;
+        cpu->fault_status = 139;
         return;
     }
     
@@ -623,6 +633,7 @@ static void op_stw(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
     if (!mm_store_bytes_fast(cpu, addr, &value, sizeof(value))) {
         fprintf(stderr, "Error: Write out of bounds or to protected memory at 0x%08x\n", addr);
         cpu->halted = true;
+        cpu->fault_status = 139;
         return;
     }
     cpu->cycle_count += 3;
@@ -634,6 +645,7 @@ static void op_sth(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
     if (!aligned(addr,2)) {
         fprintf(stderr, "Error: Unaligned write at 0x%08x\n", addr);
         cpu->halted = true;
+        cpu->fault_status = 139;
         return;
     }
     if (is_mmio_addr(cpu, addr)) {
@@ -645,6 +657,7 @@ static void op_sth(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
     if (!mm_store_bytes_fast(cpu, addr, &value, sizeof(value))) {
         fprintf(stderr, "Error: Write out of bounds or to protected memory at 0x%08x\n", addr);
         cpu->halted = true;
+        cpu->fault_status = 139;
         return;
     }
     cpu->cycle_count += 3;
@@ -665,6 +678,7 @@ static void op_stb(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
     if (!mm_store_bytes_fast(cpu, addr, &value, sizeof(value))) {
         fprintf(stderr, "Error: Write out of bounds or to protected memory at 0x%08x\n", addr);
         cpu->halted = true;
+        cpu->fault_status = 139;
         return;
     }
     cpu->cycle_count += 3;
@@ -737,6 +751,7 @@ static void op_assert_eq(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *
         fprintf(stderr, "ASSERT r%d==r%d failed @PC=%08x\n", 
                 inst->rs1, inst->rs2, cpu->pc);
         cpu->halted = true;
+        cpu->fault_status = 134;
         cpu->regs[1] = 0xDEADBEEF;
     }
 }
@@ -849,6 +864,7 @@ static inline void load_f64(fast_cpu_state_t *cpu, uint8_t reg, double *out) {
         fprintf(stderr, "f64 register fault: r%d is invalid (must be even, < 31) at PC=0x%08X\n",
                 reg, cpu->pc);
         cpu->halted = true;
+        cpu->fault_status = 132;
         return;
     }
 #endif
@@ -862,6 +878,7 @@ static inline void store_f64(fast_cpu_state_t *cpu, uint8_t reg, double val) {
         fprintf(stderr, "f64 register fault: r%d is invalid (must be even, < 31) at PC=0x%08X\n",
                 reg, cpu->pc);
         cpu->halted = true;
+        cpu->fault_status = 132;
         return;
     }
 #endif
@@ -1018,6 +1035,7 @@ static void op_invalid(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *ne
     UNUSED(inst);
     fprintf(stderr, "Invalid instruction at PC 0x%08x\n", cpu->pc);
     cpu->halted = true;
+    cpu->fault_status = 132;
 }
 
 // Get handler for opcode
@@ -1133,6 +1151,7 @@ static void predecode_program(fast_cpu_state_t *cpu, uint32_t code_size) {
         if (mm_read(&cpu->mm, pc, &raw, 4) != 0) {
             fprintf(stderr, "Error: Failed to read instruction at 0x%08x\n", pc);
             cpu->halted = true;
+            cpu->fault_status = 139;
             return;
         }
         decoded_inst_t *di = &cpu->decoded_code[i];
@@ -1246,6 +1265,7 @@ static inline void cpu_step_fast(fast_cpu_state_t *cpu) {
         fprintf(stderr, "Execute fault: PC=0x%08x outside code segment [0, 0x%08x)\n", 
                 cpu->pc, cpu->code_words << 2);
         cpu->halted = true;
+        cpu->fault_status = 139;
         return;
     }
     
@@ -1759,7 +1779,7 @@ int main(int argc, char **argv) {
     if (!quiet) {
         printf("HALT at PC 0x%08x\n", cpu.pc);
         printf("\nProgram halted.\n");
-        printf("Exit code: %d\n", cpu.regs[1]);
+        printf("Exit code: %d\n", cpu.fault_status ? (int)cpu.fault_status : (int)cpu.regs[1]);
         printf("Instructions executed: %" PRIu64 "\n", cpu.inst_count);
         printf("Simulated cycles: %" PRIu64 "\n", cpu.cycle_count);
         printf("Wall time: %.6f seconds\n", elapsed);
@@ -1787,5 +1807,5 @@ int main(int argc, char **argv) {
     }
     free(cpu.decoded_code);
     mm_destroy(&cpu.mm);
-    return cpu.regs[1];
+    return cpu.fault_status ? (int)cpu.fault_status : (int)cpu.regs[1];
 }

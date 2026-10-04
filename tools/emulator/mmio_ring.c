@@ -9,6 +9,7 @@
 #include <ctype.h>
 #include <unistd.h>
 #include <errno.h>
+#include <signal.h>
 #include <limits.h>
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -314,8 +315,10 @@ static int translate_open_flags(uint32_t guest_flags, bool *needs_mode) {
         return flags;
     }
 
-    *needs_mode = (guest_flags & O_CREAT) != 0;
-    return (int)guest_flags;
+    /* a bit the guest's encoding does not define: an error, never the
+     * host's own O_* (which differ between hosts) */
+    *needs_mode = false;
+    return -1;
 }
 
 // Debug tracing for argument MMIO operations (enabled via env var)
@@ -867,12 +870,15 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
                 break;
             }
             term_screen_save_t *s = &ts->save_stack[--ts->save_depth];
-            // Repaint: clear screen, then redraw all cells
-            fprintf(stdout, "\033[0m\033[2J\033[H");
-            int prev_attr = 0, prev_fg = 7, prev_bg = 0;
             int paint_rows = (s->rows < ts->rows) ? s->rows : ts->rows;
             int paint_cols = (s->cols < ts->cols) ? s->cols : ts->cols;
-            for (int r = 0; r < paint_rows; r++) {
+            // Inside an update only the shadow is restored: END_UPDATE
+            // paints the difference, like every other change made there.
+            bool paint = !ts->in_update;
+            // Repaint: clear screen, then redraw all cells
+            if (paint) fprintf(stdout, "\033[0m\033[2J\033[H");
+            int prev_attr = 0, prev_fg = 7, prev_bg = 0;
+            for (int r = 0; paint && r < paint_rows; r++) {
                 // Move to start of row
                 fprintf(stdout, "\033[%d;1H", r + 1);
                 int last_written_col = -1;
@@ -919,12 +925,14 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
             ts->cur_fg = s->cur_fg;
             ts->cur_bg = s->cur_bg;
             // Restore cursor position and attributes on terminal
-            fprintf(stdout, "\033[%um", (unsigned)ts->cur_attr);
-            fprintf(stdout, "\033[3%u;4%um",
-                    (unsigned)ts->cur_fg, (unsigned)ts->cur_bg);
-            fprintf(stdout, "\033[%d;%dH",
-                    ts->cur_row + 1, ts->cur_col + 1);
-            fflush(stdout);
+            if (paint) {
+                fprintf(stdout, "\033[%um", (unsigned)ts->cur_attr);
+                fprintf(stdout, "\033[3%u;4%um",
+                        (unsigned)ts->cur_fg, (unsigned)ts->cur_bg);
+                fprintf(stdout, "\033[%d;%dH",
+                        ts->cur_row + 1, ts->cur_col + 1);
+                fflush(stdout);
+            }
             free(s->cells);
             s->cells = NULL;
             resp->status = S32_MMIO_STATUS_OK;
@@ -2089,10 +2097,14 @@ static const builtin_service_t *find_builtin_service(const char *name) {
 }
 
 // Map legacy opcodes to service names for policy enforcement
-static const char *legacy_opcode_service(uint32_t opcode) {
+static const char *legacy_opcode_service(const io_descriptor_t *req) {
+    uint32_t opcode = req->opcode;
+    /* the standard streams are the program's, not the file system's: a
+     * policy that denies "fs" must not silence printf */
+    if ((opcode == 0x03 || opcode == 0x04) && req->status <= 2) return NULL;
+    if (opcode == 0x60 || opcode == 0x61) return NULL;  // ARGS_*: the command line, not the environment
     if (opcode >= 0x03 && opcode <= 0x07) return "fs";  // WRITE..SEEK
     if (opcode == 0x0A) return "fs";   // STAT
-    if (opcode == 0x0B) return "fs";   // FLUSH (file flush)
     if (opcode == 0x0C) return "fs";   // READ_DIRECT
     if (opcode == 0x0D) return "fs";   // FTRUNCATE
     if (opcode == 0x0E) return "fs";   // POST_READ (completion is a DPC)
@@ -2101,13 +2113,16 @@ static const char *legacy_opcode_service(uint32_t opcode) {
     if (opcode == 0x10) return "exec";
     if (opcode >= 0x40 && opcode <= 0x4F) return "net";
     if (opcode >= 0x60 && opcode <= 0x6F) return "env";
-    // 0x01 (PUTCHAR), 0x02 (GETCHAR), 0x09 (EXIT) always allowed
+    // 0x01 (PUTCHAR), 0x02 (GETCHAR), 0x09 (EXIT), 0x0B (FLUSH: host stdio only) always allowed
     return NULL;
 }
 
 // Initialize MMIO ring buffers
 void mmio_ring_init(mmio_ring_state_t *mmio) {
     maybe_init_trace_flag();
+    /* a write to a pipe or socket whose reader has gone is EPIPE for the
+     * guest, not a signal that kills the emulator */
+    signal(SIGPIPE, SIG_IGN);
     memset(mmio, 0, sizeof(mmio_ring_state_t));
     
     // Initialize indices
@@ -2763,20 +2778,50 @@ static int fault_check(const io_descriptor_t *req)
     return err;
 }
 
+/* the fixed opcodes whose offset word is a data-buffer offset (not a guest
+ * address -- READ_DIRECT, POST_READ -- and not unused) */
+static bool mmio_offset_is_buffer(uint32_t op) {
+    switch (op) {
+    case S32_MMIO_OP_PUTCHAR: case S32_MMIO_OP_GETCHAR: case S32_MMIO_OP_WRITE:
+    case S32_MMIO_OP_READ: case S32_MMIO_OP_OPEN: case S32_MMIO_OP_SEEK:
+    case S32_MMIO_OP_STAT: case S32_MMIO_OP_FTRUNCATE: case S32_MMIO_OP_EXEC:
+    case S32_MMIO_OP_UNLINK: case S32_MMIO_OP_RENAME: case S32_MMIO_OP_MKDIR:
+    case S32_MMIO_OP_RMDIR: case S32_MMIO_OP_LSTAT: case S32_MMIO_OP_ACCESS:
+    case S32_MMIO_OP_CHDIR: case S32_MMIO_OP_GETCWD: case S32_MMIO_OP_OPENDIR:
+    case S32_MMIO_OP_READDIR: case S32_MMIO_OP_GETTIME: case S32_MMIO_OP_SLEEP:
+    case S32_MMIO_OP_GETTZ: case S32_MMIO_OP_TIMER_START: case S32_MMIO_OP_POLL:
+    case S32_MMIO_OP_CONNECT: case S32_MMIO_OP_ACCEPT: case S32_MMIO_OP_SEND:
+    case S32_MMIO_OP_RECV: case S32_MMIO_OP_BIND: case S32_MMIO_OP_GETSOCKNAME:
+    case S32_MMIO_OP_ARGS_INFO: case S32_MMIO_OP_ARGS_DATA: case S32_MMIO_OP_ENVP_INFO:
+    case S32_MMIO_OP_ENVP_DATA: case S32_MMIO_OP_GETENV: case S32_MMIO_OP_SVC_REQUEST:
+    case S32_MMIO_OP_SVC_RELEASE: case S32_MMIO_OP_SVC_QUERY: case S32_MMIO_OP_SVC_LIST:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_descriptor_t *req) {
     io_descriptor_t resp = {0};
     resp.opcode = req->opcode;
     resp.offset = req->offset;
 
     // Policy gate: check legacy opcode against policy
-    const char *legacy_svc = legacy_opcode_service(req->opcode);
+    const char *legacy_svc = legacy_opcode_service(req);
     if (legacy_svc && !mmio_policy_allows(mmio, legacy_svc)) {
-        mmio_fail(&resp, EINVAL);
+        mmio_fail(&resp, EPERM);
         goto write_response;
     }
     {
         int ferr = fault_check(req);
         if (ferr) { mmio_fail(&resp, ferr); goto write_response; }
+    }
+    /* An offset into the data buffer must be inside it.  (The handlers
+     * reduce it mod the capacity, which used to make an offset past the
+     * end wrap around instead of failing.) */
+    if (req->offset >= S32_MMIO_DATA_CAPACITY && mmio_offset_is_buffer(req->opcode)) {
+        mmio_fail(&resp, EINVAL);
+        goto write_response;
     }
 
     switch (req->opcode) {
@@ -2800,8 +2845,12 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             uint32_t max_bytes = S32_MMIO_DATA_CAPACITY - offset;
             uint32_t to_write = req->length;
 
-            if (host_fd < 0 || to_write == 0 || to_write > S32_MMIO_DATA_CAPACITY) {
+            if (host_fd < 0 || to_write > S32_MMIO_DATA_CAPACITY) {
                 mmio_fail(&resp, host_fd < 0 ? EBADF : EINVAL);
+                break;
+            }
+            if (to_write == 0) {            /* write(2) of nothing: 0, not an error */
+                resp.length = resp.status = 0;
                 break;
             }
 
@@ -2827,7 +2876,11 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             uint32_t max_bytes = S32_MMIO_DATA_CAPACITY - offset;
             uint32_t to_read = req->length;
 
-            if (host_fd < 0 || to_read == 0 || to_read > S32_MMIO_DATA_CAPACITY) {
+            if (to_read == 0 && host_fd >= 0) {   /* read(2) of nothing: 0 */
+                resp.length = resp.status = 0;
+                break;
+            }
+            if (host_fd < 0 || to_read > S32_MMIO_DATA_CAPACITY) {
                 mmio_fail(&resp, host_fd < 0 ? EBADF : EINVAL);
                 if (trace_io_enabled) {
                     fprintf(stderr, "[MMIO] READ invalid fd=%d len=%u\n",
@@ -2940,11 +2993,15 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             }
 
             memcpy(path, mmio->data_buffer + offset, req->length);
-            path[req->length] = '\0';
-            path[req->length - 1u] = '\0';
+            path[req->length] = '\0';      /* the guest's NUL, or ours after its last byte */
 
             bool needs_mode = false;
             int flags = translate_open_flags(req->status, &needs_mode);
+            if (flags < 0) {
+                free(path);
+                mmio_fail(&resp, EINVAL);
+                break;
+            }
             int host_fd = needs_mode ? open(path, flags, 0644) : open(path, flags);
             free(path);
 
@@ -2960,7 +3017,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             int guest_fd = alloc_guest_fd(mmio, host_fd, true);
             if (guest_fd < 0) {
                 close(host_fd);
-                mmio_fail(&resp, EINVAL);
+                mmio_fail(&resp, EMFILE);
                 if (trace_io_enabled) {
                     fprintf(stderr, "[MMIO] OPEN no free guest fd (host_fd=%d)\n",
                             host_fd);
@@ -2980,7 +3037,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
         case S32_MMIO_OP_CLOSE: {
             uint32_t guest_fd = req->status;
             if (guest_fd >= S32_MMIO_MAX_FDS || mmio->host_fds[guest_fd] < 0) {
-                mmio_fail(&resp, EINVAL);
+                mmio_fail(&resp, EBADF);
                 break;
             }
 
@@ -3019,10 +3076,15 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             uint8_t whence_raw = mmio->data_buffer[offset];
             int32_t distance = 0;
             memcpy(&distance, mmio->data_buffer + offset + 4u, sizeof(int32_t));
-
-            off_t new_pos = lseek(host_fd, (off_t)distance, (int)whence_raw);
-            if (new_pos == (off_t)-1) {
+            if (whence_raw > 2) {
                 mmio_fail(&resp, EINVAL);
+                break;
+            }
+            static const int whence_host[3] = { SEEK_SET, SEEK_CUR, SEEK_END };
+
+            off_t new_pos = lseek(host_fd, (off_t)distance, whence_host[whence_raw]);
+            if (new_pos == (off_t)-1) {
+                mmio_fail(&resp, errno > 0 ? errno : EIO);   /* ESPIPE on a pipe */
                 break;
             }
 
@@ -3058,8 +3120,12 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
         }
 
         case S32_MMIO_OP_GETCHAR: {
+            /* one byte from the descriptor, as READ on fd 0 and the term
+             * service read it: a buffered stream here read ahead of them */
             unsigned char pc;
-            int ch = (stdin_prefix_read(&pc, 1) == 1) ? (int)pc : fgetc(stdin);
+            ssize_t got;
+            while ((got = host_read(STDIN_FILENO, &pc, 1)) < 0 && errno == EINTR) { }
+            int ch = got == 1 ? (int)pc : EOF;
             if (ch != EOF) {
                 mmio->data_buffer[req->offset % S32_MMIO_DATA_CAPACITY] = (uint8_t)ch;
                 resp.length = 1;
@@ -3114,7 +3180,8 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                 break;
             }
             if (stat(path, &sb) != 0 || !S_ISREG(sb.st_mode)) {
-                mmio_fail(&resp, errno > 0 ? errno : ENOENT);
+                /* there but not a regular file: EACCES, as execve says */
+                mmio_fail(&resp, stat(path, &sb) == 0 ? EACCES : (errno > 0 ? errno : ENOENT));
                 break;
             }
             p = path + strlen(path) + 1;
@@ -3236,14 +3303,14 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                     break;
                 }
 
-                char *path = (char *)malloc(req->length);
+                char *path = (char *)malloc(req->length + 1u);
                 if (!path) {
                     mmio_fail(&resp, EINVAL);
                     break;
                 }
 
                 memcpy(path, mmio->data_buffer + offset, req->length);
-                path[req->length - 1u] = '\0';
+                path[req->length] = '\0';   /* the guest's NUL, or ours after its last byte */
                 rc = stat(path, &host_stat);
                 serr = errno;
                 free(path);
@@ -3819,8 +3886,8 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                 if (trace_args_enabled) {
                     fprintf(stderr, "[MMIO TRACE] GETENV not found\n");
                 }
-                // Not found - return error status
-                mmio_fail(&resp, EINVAL);
+                // Not set
+                mmio_fail(&resp, ENOENT);
                 break;
             }
 
@@ -4140,7 +4207,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
 
             char *cwd = getcwd((char *)(mmio->data_buffer + offset), max_len);
             if (!cwd) {
-                mmio_fail(&resp, EINVAL);
+                mmio_fail(&resp, errno > 0 ? errno : EIO);   /* ERANGE: too small */
                 break;
             }
 
@@ -4199,7 +4266,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             DIR *host_dir = host_dir_for_guest(mmio, guest_fd);
 
             if (!host_dir) {
-                mmio_fail(&resp, EINVAL);
+                mmio_fail(&resp, EBADF);
                 break;
             }
 
@@ -4217,7 +4284,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                     resp.status = S32_MMIO_STATUS_EOF;
                     resp.length = 0;
                 } else {
-                    mmio_fail(&resp, EINVAL);
+                    mmio_fail(&resp, errno);
                 }
                 break;
             }
@@ -4297,9 +4364,9 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                 mmio_fail(&resp, EINVAL);
                 break;
             }
-            char svc_name[S32_SVC_MAX_NAME_LEN];
+            char svc_name[S32_SVC_MAX_NAME_LEN + 1];
             memcpy(svc_name, mmio->data_buffer + offset, req->length);
-            svc_name[req->length - 1] = '\0';
+            svc_name[req->length] = '\0';
 
             // Policy check
             if (!mmio_policy_allows(mmio, svc_name)) {
@@ -4310,15 +4377,21 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                 break;
             }
 
-            // Check if already active
+            // Already active: CONFLICT.  (The loop's break used to leave
+            // only the loop, and the request went on to grant a second
+            // session over the CONFLICT it had written.)
+            bool svc_active = false;
             for (int i = 0; i < mmio->num_services; i++) {
                 if (mmio->services[i].active && strcmp(mmio->services[i].name, svc_name) == 0) {
-                    uint32_t svc_result = S32_SVC_CONFLICT;
-                    memcpy(mmio->data_buffer + offset, &svc_result, 4);
-                    resp.length = 4;
-                    resp.status = S32_MMIO_STATUS_OK;
-                    break;
+                    svc_active = true;
                 }
+            }
+            if (svc_active) {
+                uint32_t svc_result = S32_SVC_CONFLICT;
+                memcpy(mmio->data_buffer + offset, &svc_result, 4);
+                resp.length = 4;
+                resp.status = S32_MMIO_STATUS_OK;
+                break;
             }
 
             // Find builtin service
@@ -4331,8 +4404,13 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                 break;
             }
 
-            // Check session limit
-            if (mmio->num_services >= S32_MAX_SERVICES) {
+            // A session slot: a released one, or a new one up to the limit
+            int slot = -1;
+            for (int i = 0; i < mmio->num_services; i++) {
+                if (!mmio->services[i].active) { slot = i; break; }
+            }
+            if (slot < 0 && mmio->num_services < S32_MAX_SERVICES) slot = mmio->num_services;
+            if (slot < 0) {
                 uint32_t svc_result = S32_SVC_LIMIT;
                 memcpy(mmio->data_buffer + offset, &svc_result, 4);
                 resp.length = 4;
@@ -4340,8 +4418,20 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                 break;
             }
 
-            // Allocate opcode range
-            uint32_t base = mmio->next_dynamic_opcode;
+            // The opcode range: the lowest base from 0x80 that overlaps no
+            // active session's (a released range is free again)
+            uint32_t base = 0x80;
+            for (bool moved = true; moved; ) {
+                moved = false;
+                for (int i = 0; i < mmio->num_services; i++) {
+                    const svc_session_t *o = &mmio->services[i];
+                    if (o->active && base < o->base_opcode + o->opcode_count &&
+                        o->base_opcode < base + builtin->opcode_count) {
+                        base = o->base_opcode + o->opcode_count;
+                        moved = true;
+                    }
+                }
+            }
             if (base + builtin->opcode_count > 0xF0) {
                 uint32_t svc_result = S32_SVC_LIMIT;
                 memcpy(mmio->data_buffer + offset, &svc_result, 4);
@@ -4354,7 +4444,8 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             void *svc_state = builtin->create ? builtin->create() : NULL;
 
             // Register session
-            svc_session_t *session = &mmio->services[mmio->num_services++];
+            if (slot == mmio->num_services) mmio->num_services++;
+            svc_session_t *session = &mmio->services[slot];
             session->active = true;
             size_t svc_name_len = strnlen(svc_name, S32_MAX_SVC_NAME - 1);
             memcpy(session->name, svc_name, svc_name_len);
@@ -4366,7 +4457,6 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             session->cleanup = builtin->cleanup;
             session->handle = builtin->handle;
 
-            mmio->next_dynamic_opcode = base + builtin->opcode_count;
 
             // Write response: [0]=OK, [4]=base, [8]=count, [12]=version
             uint32_t reply[4];
@@ -4393,9 +4483,9 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                 mmio_fail(&resp, EINVAL);
                 break;
             }
-            char svc_name[S32_SVC_MAX_NAME_LEN];
+            char svc_name[S32_SVC_MAX_NAME_LEN + 1];
             memcpy(svc_name, mmio->data_buffer + offset, req->length);
-            svc_name[req->length - 1] = '\0';
+            svc_name[req->length] = '\0';
 
             bool found = false;
             for (int i = 0; i < mmio->num_services; i++) {
@@ -4431,9 +4521,9 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                 mmio_fail(&resp, EINVAL);
                 break;
             }
-            char svc_name[S32_SVC_MAX_NAME_LEN];
+            char svc_name[S32_SVC_MAX_NAME_LEN + 1];
             memcpy(svc_name, mmio->data_buffer + offset, req->length);
-            svc_name[req->length - 1] = '\0';
+            svc_name[req->length] = '\0';
 
             uint32_t svc_result;
             const builtin_service_t *builtin = find_builtin_service(svc_name);
@@ -4512,11 +4602,17 @@ write_response:
 void mmio_ring_process(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu) {
     mmio_deliver_timers(mmio);
     mmio_deliver_posts(mmio);
-    while (!ring_empty(mmio->req_head, mmio->req_tail)) {
+    /* A request is taken only when its response has room: with the
+     * response ring full it stays queued for a later service point.  An
+     * EXIT ends the batch; requests after it are not performed. */
+    while (!ring_empty(mmio->req_head, mmio->req_tail) &&
+           !ring_full(mmio->resp_head, mmio->resp_tail)) {
         io_descriptor_t *req = &mmio->req_ring[mmio->req_tail];
+        bool is_exit = req->opcode == S32_MMIO_OP_EXIT;
         process_request(mmio, cpu, req);
         mmio->req_tail = ring_next(mmio->req_tail);
         mmio->total_requests++;
+        if (is_exit) break;
     }
     mmio_deliver_timers(mmio);   // a deadline that passed during a request (SLEEP) is queued before the guest resumes
     mmio_deliver_posts(mmio);

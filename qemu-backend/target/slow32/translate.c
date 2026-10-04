@@ -930,18 +930,16 @@ static bool translate_one(DisasContext *ctx, uint32_t raw)
 
     default:
         /*
-         * Unknown opcode: log, then take the same halt path as HALT so the
-         * vCPU actually requests a guest shutdown. Leaving halted=1 without
-         * that request parks the CPU forever waiting for an interrupt that
-         * this target never delivers.
+         * Unknown opcode: a fault when executed, not when translated
+         * (SPEC 4.6). The helper prints the reference's diagnostic and
+         * requests a guest shutdown with exit status 132. Leaving halted=1
+         * without that request parks the CPU forever waiting for an
+         * interrupt that this target never delivers.
          */
-        qemu_log_mask(LOG_GUEST_ERROR,
-                      "slow32: unknown opcode 0x%02x at PC=0x%08" PRIx64 "\n",
-                      opcode, (uint64_t)ctx->pc);
         gen_set_halted(1);
         commit_pc_const(ctx->pc);
         slow32_count_insns(ctx);
-        gen_helper_slow32_halt(tcg_env);
+        gen_helper_slow32_illegal(tcg_env, tcg_constant_i32(opcode));
         slow32_exit_tb(ctx);
         ctx->is_jmp = DISAS_EXIT;
         return false;

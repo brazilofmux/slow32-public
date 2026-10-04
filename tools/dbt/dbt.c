@@ -1486,11 +1486,19 @@ static void run_dbt_stage1(dbt_cpu_state_t *cpu) {
                 fprintf(stderr, "DBT: Memory fault at PC=0x%08X, addr=0x%08X\n",
                         cpu->pc, cpu->exit_info);
                 cpu->halted = true;
+                cpu->fault_status = 139;
+                break;
+
+            case EXIT_ILLEGAL:
+                fprintf(stderr, "DBT: Illegal instruction at PC=0x%08X\n", cpu->pc);
+                cpu->halted = true;
+                cpu->fault_status = 132;
                 break;
 
             case EXIT_ASSERT_FAIL:
                 fprintf(stderr, "DBT: ASSERT_EQ failed at PC=0x%08X\n", cpu->pc);
                 cpu->halted = true;
+                cpu->fault_status = 134;
                 break;
 
             default:
@@ -1601,11 +1609,19 @@ static void run_dbt_stage2(dbt_cpu_state_t *cpu, block_cache_t *cache) {
                 fprintf(stderr, "DBT: Memory fault at PC=0x%08X, addr=0x%08X\n",
                         cpu->pc, cpu->exit_info);
                 cpu->halted = true;
+                cpu->fault_status = 139;
+                break;
+
+            case EXIT_ILLEGAL:
+                fprintf(stderr, "DBT: Illegal instruction at PC=0x%08X\n", cpu->pc);
+                cpu->halted = true;
+                cpu->fault_status = 132;
                 break;
 
             case EXIT_ASSERT_FAIL:
                 fprintf(stderr, "DBT: ASSERT_EQ failed at PC=0x%08X\n", cpu->pc);
                 cpu->halted = true;
+                cpu->fault_status = 134;
                 break;
 
             default:
@@ -1763,11 +1779,19 @@ static void run_dbt_stage3(dbt_cpu_state_t *cpu, block_cache_t *cache) {
                             block->exit_count, block->side_exit_count);
                 }
                 cpu->halted = true;
+                cpu->fault_status = 139;
+                break;
+
+            case EXIT_ILLEGAL:
+                fprintf(stderr, "DBT: Illegal instruction at PC=0x%08X\n", cpu->pc);
+                cpu->halted = true;
+                cpu->fault_status = 132;
                 break;
 
             case EXIT_ASSERT_FAIL:
                 fprintf(stderr, "DBT: ASSERT_EQ failed at PC=0x%08X\n", cpu->pc);
                 cpu->halted = true;
+                cpu->fault_status = 134;
                 break;
 
             default:
@@ -1969,11 +1993,19 @@ static void run_dbt_stage4(dbt_cpu_state_t *cpu, block_cache_t *cache) {
                             block->exit_count, block->side_exit_count);
                 }
                 cpu->halted = true;
+                cpu->fault_status = 139;
+                break;
+
+            case EXIT_ILLEGAL:
+                fprintf(stderr, "DBT: Illegal instruction at PC=0x%08X\n", cpu->pc);
+                cpu->halted = true;
+                cpu->fault_status = 132;
                 break;
 
             case EXIT_ASSERT_FAIL:
                 fprintf(stderr, "DBT: ASSERT_EQ failed at PC=0x%08X\n", cpu->pc);
                 cpu->halted = true;
+                cpu->fault_status = 134;
                 break;
 
             default:
@@ -2622,7 +2654,7 @@ int main(int argc, char **argv) {
     g_dbt_block_size = 0;
 
     // Results
-    int exit_code = cpu.regs[REG_RV];
+    int exit_code = cpu.fault_status ? (int)cpu.fault_status : (int)cpu.regs[REG_RV];
     if (show_stats || verbose) {
         double elapsed = (end.tv_sec - start.tv_sec) +
                         (end.tv_nsec - start.tv_nsec) / 1e9;

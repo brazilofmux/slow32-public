@@ -269,7 +269,14 @@ run_test() {
         viewer_pid=""
     fi
 
-    if [ $emu_exit -ge 124 ]; then
+    # 128+N is also how the machine reports a guest fault (docs/SPEC.md
+    # 7.2: 132 illegal instruction, 134 failed ASSERT_EQ, 139 memory
+    # fault), so a test that expects one says so in expected_exit.txt.
+    local expected_fault=""
+    if [ -f "$test_path/expected_exit.txt" ]; then
+        expected_fault=$(tr -d ' \t\n' < "$test_path/expected_exit.txt")
+    fi
+    if [ $emu_exit -ge 124 ] && [ "$emu_exit" != "$expected_fault" ]; then
         echo -e "${RED}FAIL${NC} (timeout/crash, exit=$emu_exit)"
         FAILED=$((FAILED + 1))
     else

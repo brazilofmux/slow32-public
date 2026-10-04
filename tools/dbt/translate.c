@@ -5201,10 +5201,8 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
                 break;
 
             default:
-                // Unknown opcode - emit halt for now
-                fprintf(stderr, "DBT: Unknown opcode 0x%02X at PC 0x%08X\n",
-                        inst.opcode, ctx->guest_pc);
-                emit_exit(ctx, EXIT_HALT, ctx->guest_pc);
+                // Illegal opcode: a fault when executed (SPEC.md 4.6), not when translated
+                emit_exit(ctx, EXIT_ILLEGAL, ctx->guest_pc);
                 goto block_done;
         }
 
@@ -6646,10 +6644,8 @@ retry_translate:
                 break;
 
             default:
-                // Unknown opcode - emit halt for now
-                fprintf(stderr, "DBT: Unknown opcode 0x%02X at PC 0x%08X\n",
-                        inst.opcode, ctx->guest_pc);
-                emit_exit(ctx, EXIT_HALT, ctx->guest_pc);
+                // Illegal opcode: a fault when executed (SPEC.md 4.6), not when translated
+                emit_exit(ctx, EXIT_ILLEGAL, ctx->guest_pc);
                 goto cached_block_done;
         }
 

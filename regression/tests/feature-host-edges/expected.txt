@@ -1,0 +1,10 @@
+ok zero-length WRITE is 0
+ok path without its NUL opens the whole name
+ok unknown open flag is EINVAL
+ok offset past the buffer is EINVAL
+ok small getcwd is ERANGE
+ok getchar at end of input keeps errno
+ok term granted at 0x80
+ok term again is CONFLICT
+ok released range given out again
+host-edges: all tests passed

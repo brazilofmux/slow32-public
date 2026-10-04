@@ -23,13 +23,28 @@ void HELPER(slow32_yield)(CPUSlow32State *env)
 void slow32_cpu_complete_halt(Slow32CPU *cpu)
 {
     CPUState *cs = CPU(cpu);
-    /* Match the reference emulators: process exit status is guest r1. */
-    int exit_code = (int)cpu->env.regs[1];
+    /*
+     * Match the reference emulators: process exit status is guest r1,
+     * unless the machine stopped on a fault, which has its own status.
+     */
+    int exit_code = cpu->env.fault_status ? (int)cpu->env.fault_status
+                                          : (int)cpu->env.regs[1];
 
     slow32_console_flush();
     cs->halted = 1;
     qemu_system_shutdown_request_with_code(SHUTDOWN_CAUSE_GUEST_SHUTDOWN,
                                            exit_code);
+}
+
+/*
+ * Stop on a fault: the guest's output so far is flushed by the caller
+ * before its diagnostic, and the exit status is the fault's, not r1.
+ */
+void slow32_cpu_fault_halt(Slow32CPU *cpu, uint32_t status)
+{
+    cpu->env.fault_status = status;
+    cpu->env.halted = 1;
+    slow32_cpu_complete_halt(cpu);
 }
 
 void HELPER(slow32_halt)(CPUSlow32State *env)
@@ -49,14 +64,25 @@ void HELPER(slow32_assert_fail)(CPUSlow32State *env, uint32_t rs1, uint32_t a,
     Slow32CPU *cpu = SLOW32_CPU(cs);
 
     /*
-     * Match the reference emulator exactly: same stderr message, r1 (and
-     * therefore the process exit status) left untouched, and no MMIO ring
-     * processing on the way down.
+     * Match the reference emulator exactly: same stderr message, r1 left
+     * untouched, exit status 134, and no MMIO ring processing on the way
+     * down.
      */
+    slow32_console_flush();
     fprintf(stderr, "Assertion failed: r%u (0x%08X) != r%u (0x%08X)\n",
             rs1, a, rs2, b);
-    env->halted = 1;
-    slow32_cpu_complete_halt(cpu);
+    slow32_cpu_fault_halt(cpu, SLOW32_FAULT_ASSERT);
+    cpu_exit(cs);
+}
+
+void HELPER(slow32_illegal)(CPUSlow32State *env, uint32_t opcode)
+{
+    CPUState *cs = env_cpu(env);
+
+    /* Same words as the reference emulator; no MMIO ring processing. */
+    slow32_console_flush();
+    fprintf(stderr, "Unknown opcode: 0x%02X at PC=0x%08X\n", opcode, env->pc);
+    slow32_cpu_fault_halt(SLOW32_CPU(cs), SLOW32_FAULT_ILLEGAL);
     cpu_exit(cs);
 }
 
@@ -87,8 +113,10 @@ void HELPER(slow32_native_memcpy)(CPUSlow32State *env)
         uint32_t page_remain_src = TARGET_PAGE_SIZE - (src & ~TARGET_PAGE_MASK);
         uint32_t chunk = MIN(len, MIN(page_remain_dst, page_remain_src));
 
-        void *host_dst = probe_write(env, dst, chunk, 0, ra);
+        /* source first: a byte is loaded before it is stored, so a fault
+         * is reported where a byte-by-byte copy would take it */
         void *host_src = probe_read(env, src, chunk, 0, ra);
+        void *host_dst = probe_write(env, dst, chunk, 0, ra);
 
         if (likely(host_dst && host_src)) {
             memcpy(host_dst, host_src, chunk);
@@ -152,8 +180,8 @@ void HELPER(slow32_native_memmove)(CPUSlow32State *env)
             uint32_t page_s = TARGET_PAGE_SIZE - (s & ~TARGET_PAGE_MASK);
             uint32_t chunk = MIN(remaining, MIN(page_d, page_s));
 
+            void *host_s = probe_read(env, s, chunk, 0, ra);   /* as memcpy */
             void *host_d = probe_write(env, d, chunk, 0, ra);
-            void *host_s = probe_read(env, s, chunk, 0, ra);
 
             if (likely(host_d && host_s)) {
                 memcpy(host_d, host_s, chunk);

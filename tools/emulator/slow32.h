@@ -157,6 +157,7 @@ typedef struct cpu_state {
     uint64_t cycle_count;
     uint64_t inst_count;    // Instructions executed
     bool halted;
+    uint32_t fault_status;   // nonzero: stopped on a fault, and the exit status (SPEC.md 7.2)
     
     // Memory protection limits (from .s32x executable)
     uint32_t code_limit;    // End of execute-only region

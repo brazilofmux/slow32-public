@@ -52,6 +52,7 @@ typedef enum {
     EXIT_FAULT_STORE    = 7,    // Store fault
     EXIT_ASSERT_FAIL    = 8,    // ASSERT_EQ failed
     EXIT_BLOCK_END      = 9,    // Reached max instructions in block
+    EXIT_ILLEGAL        = 10,   // Illegal opcode, PC in cpu->pc
 } exit_reason_t;
 
 // Guest CPU state structure
@@ -71,8 +72,8 @@ typedef struct {
     // Offset: 0x88
     uint32_t exit_info;     // e.g., fault address, DEBUG char
 
-    // Padding for alignment
-    uint32_t _pad0;
+    // Offset: 0x8C
+    uint32_t fault_status;  // nonzero: stopped on a fault, and the exit status (SPEC.md 7.2)
 
     // Cycle counter (unused in DBT)
     // Offset: 0x90

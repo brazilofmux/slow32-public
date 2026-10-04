@@ -70,6 +70,8 @@ struct CPUArchState {
     uint32_t stack_top;
     uint32_t stack_end;
     uint32_t halted;
+    /* nonzero: stopped on a fault, and that is the exit status (SPEC 7.2) */
+    uint32_t fault_status;
     bool layout_defined;
 
     /* Intrinsic recognition: guest addresses of known functions (0 = none) */
@@ -115,6 +117,12 @@ void slow32_disas_set_info(const CPUState *cpu, disassemble_info *info);
 void slow32_handle_debug(uint32_t value);
 void slow32_handle_yield(Slow32CPU *cpu);
 void slow32_cpu_complete_halt(Slow32CPU *cpu);
+void slow32_cpu_fault_halt(Slow32CPU *cpu, uint32_t status);
+
+/* Fault exit statuses (SPEC 7.2): 128 + the host signal's number */
+#define SLOW32_FAULT_MEMORY   139   /* memory or fetch fault (SIGSEGV) */
+#define SLOW32_FAULT_ILLEGAL  132   /* illegal opcode (SIGILL) */
+#define SLOW32_FAULT_ASSERT   134   /* failed ASSERT_EQ (SIGABRT) */
 
 /* Guest console (DEBUG insn + MMIO PUTCHAR/terminal). Prefer serial_hd(0). */
 void slow32_console_open(Chardev *chr);

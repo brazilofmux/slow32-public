@@ -307,6 +307,7 @@ static uint32_t cpu_load(cpu_state_t *cpu, uint32_t addr, int size) {
         if (!cpu->mmio.enabled || !cpu->mmio.initialized) {
             fprintf(stderr, "MMIO fault: read at 0x%08X with MMIO disabled\n", addr);
             cpu->halted = true;
+            cpu->fault_status = 139;
             return 0;
         }
 
@@ -331,6 +332,7 @@ static uint32_t cpu_load(cpu_state_t *cpu, uint32_t addr, int size) {
                 size, addr, cpu->pc, cpu->regs[REG_SP]);
         cpu_crash_dump(cpu);
         cpu->halted = true;
+        cpu->fault_status = 139;
         return 0;
     }
     
@@ -350,6 +352,7 @@ static void cpu_store(cpu_state_t *cpu, uint32_t addr, uint32_t value, int size)
         if (!cpu->mmio.enabled || !cpu->mmio.initialized) {
             fprintf(stderr, "MMIO fault: write at 0x%08X with MMIO disabled\n", addr);
             cpu->halted = true;
+            cpu->fault_status = 139;
             return;
         }
 
@@ -392,6 +395,7 @@ static void cpu_store(cpu_state_t *cpu, uint32_t addr, uint32_t value, int size)
                 size, addr, cpu->pc, cpu->regs[REG_SP]);
         cpu_crash_dump(cpu);
         cpu->halted = true;
+        cpu->fault_status = 139;
     }
 }
 
@@ -434,6 +438,7 @@ static uint32_t cpu_fetch(cpu_state_t *cpu, uint32_t addr) {
         fprintf(stderr, "Execute fault: PC=0x%08X outside code segment [0, 0x%08X)\n", 
                 addr, cpu->code_limit);
         cpu->halted = true;
+        cpu->fault_status = 139;
         return 0;
     }
     
@@ -452,6 +457,7 @@ static uint32_t cpu_fetch(cpu_state_t *cpu, uint32_t addr) {
     if (mm_read(&cpu->mm, addr, &inst, 4) < 0) {
         fprintf(stderr, "Fetch fault: Cannot read instruction at 0x%08X\n", addr);
         cpu->halted = true;
+        cpu->fault_status = 139;
         return 0;
     }
     return inst;
@@ -459,6 +465,7 @@ static uint32_t cpu_fetch(cpu_state_t *cpu, uint32_t addr) {
 
 /* -p FILE: instructions executed at each code address, written at exit
  * as "addr count" lines (scripts/s32prof symbolizes them) */
+static bool g_quiet;   /* -q: the host prints nothing of its own on stdout */
 static uint64_t *g_pcprof;
 static const char *g_pcprof_path;
 
@@ -743,7 +750,7 @@ void cpu_step(cpu_state_t *cpu) {
                 mmio_cpu_iface_t iface = { .halted = &cpu->halted, .exit_status = &cpu->regs[1] };
                 mmio_ring_process(cpu->mmio.state, &iface);
             }
-            printf("HALT at PC=0x%08X\n", cpu->pc);
+            if (!g_quiet) printf("HALT at PC=0x%08X\n", cpu->pc);
             cpu->halted = true;
             break;
         case OP_ASSERT_EQ:
@@ -751,6 +758,7 @@ void cpu_step(cpu_state_t *cpu) {
                 fprintf(stderr, "Assertion failed: r%d (0x%08X) != r%d (0x%08X)\n",
                        inst.rs1, cpu->regs[inst.rs1], inst.rs2, cpu->regs[inst.rs2]);
                 cpu->halted = true;
+                cpu->fault_status = 134;
             }
             break;
             
@@ -857,6 +865,7 @@ void cpu_step(cpu_state_t *cpu) {
                 fprintf(stderr, "f64 register fault: r%d is invalid (must be even, < 31) at PC=0x%08X\n", \
                         (reg), cpu->pc); \
                 cpu->halted = true; \
+                cpu->fault_status = 132; \
                 break; \
             } \
         } while(0)
@@ -1044,6 +1053,7 @@ void cpu_step(cpu_state_t *cpu) {
         default:
             fprintf(stderr, "Unknown opcode: 0x%02X at PC=0x%08X\n", inst.opcode, cpu->pc);
             cpu->halted = true;
+            cpu->fault_status = 132;
             break;
     }
     
@@ -1205,6 +1215,7 @@ int main(int argc, char *argv[]) {
                 break;
             case 'q':
                 quiet = 1;
+                g_quiet = true;
                 break;
             case 'w': {
                 char *dash = strchr(optarg, '-');
@@ -1294,7 +1305,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    int exit_code = cpu.regs[1];
+    int exit_code = cpu.fault_status ? (int)cpu.fault_status : (int)cpu.regs[1];
     cpu_destroy(&cpu);
     return exit_code;
 }

@@ -93,6 +93,9 @@ normalize_output() {
         -e 's/^Error: .* out of bounds at \(0x[0-9A-Fa-f]*\).*/FAULT addr=\1/' \
         -e 's/^Error: .* out of bounds or to protected memory at \(0x[0-9A-Fa-f]*\).*/FAULT addr=\1/' \
         -e 's/^DBT: Memory fault at PC=[0-9xA-Fa-f]*, addr=\(0x[0-9A-Fa-f]*\).*/FAULT addr=\1/' \
+        -e 's/^Unknown opcode: 0x[0-9A-Fa-f]* at PC=\(0x[0-9A-Fa-f]*\).*/ILLEGAL pc=\1/' \
+        -e 's/^Invalid instruction at PC \(0x[0-9A-Fa-f]*\).*/ILLEGAL pc=\1/' \
+        -e 's/^DBT: Illegal instruction at PC=\(0x[0-9A-Fa-f]*\).*/ILLEGAL pc=\1/' \
         -e '/^Starting execution/d' \
         -e '/^MMIO enabled/d' \
         -e '/^HALT at/d' \
@@ -111,7 +114,7 @@ normalize_output() {
     | awk '
         # Engines print fault addresses in mixed hex case; fold canonicalized
         # fault lines to lowercase so 0x2000000F and 0x2000000f agree.
-        /^FAULT addr=/ { $0 = tolower($0) }
+        /^FAULT addr=/ || /^ILLEGAL pc=/ { $0 = tolower($0) }
         { lines[NR] = $0; if ($0 ~ /[^[:space:]]/) last = NR }
         END { for (i = 1; i <= last; i++) print lines[i] }
     '
@@ -134,25 +137,15 @@ DIVERGED_TESTS=()
 # Only honored under ALLOW_KNOWN_DIVERGENCES=1 (CI sets it) so that an
 # interactive run still reports them. A divergence outside this list always
 # fails, so a new bug cannot hide behind the allowlist.
-# History: bug-dbt-intrinsic-bounds* used to diverge on TWO engines. The DBT
-# half (A64 stubs stored EXIT_REASON into exit_info when info_reg was W0) was
-# fixed in translate_a64.c emit_a64_stub_fault_exit (Pack B, 2026-08) — the
-# DBT now matches the reference exactly, verified 2026-08-08. The remaining
-# divergence is qemu-only: qemu-system-slow32 exits silently on an
-# out-of-bounds intrinsic access where the reference prints
-# "fault addr=...". Still open (AUDIT-2026-08 "QEMU fault reporting"),
-# re-verified against a qemu built from bce30bac2c. When that lands, empty
-# this list again — and re-run this harness before believing it.
-# bug-dbt-intrinsic-bounds-memchr (2026-10) is the same thing seen from the
-# other side: qemu has no memchr stub and walks the bytes, and still says
-# nothing when the walk leaves memory; the DBT's stub and both interpreters
-# report the fault at the first address past it.
-KNOWN_DIVERGENT="bug-dbt-intrinsic-bounds
-bug-dbt-intrinsic-bounds-memchr
-bug-dbt-intrinsic-bounds-memchr-start
-bug-dbt-intrinsic-bounds-memcpy
-bug-dbt-intrinsic-bounds-memset
-bug-dbt-intrinsic-bounds-strlen"
+# History: bug-dbt-intrinsic-bounds* diverged on two engines.  The DBT half
+# (A64 stubs stored EXIT_REASON into exit_info) was fixed in Pack B,
+# 2026-08.  The qemu half -- qemu exited silently on an out-of-bounds
+# access, never refused a store into code, and probed memcpy's destination
+# before its source -- was fixed 2026-10-03 with the host-side pass
+# (docs/SPEC.md 7.2), and every engine now agrees on all of them.  Keep
+# this list empty; a divergence that has to be lived with goes here with
+# its reason, and the harness is rerun before believing it.
+KNOWN_DIVERGENT=""
 
 with_stdin() {
     # Run "$@" with the test's stdin: /dev/null, unless the test has a
@@ -224,8 +217,11 @@ run_test() {
     local ref_rc
     ref_rc=$(run_engine ref "$SLOW32" "$s32x" "$diff_dir/ref.out" "${run_args[@]}")
     normalize_output < "$diff_dir/ref.out" > "$diff_dir/ref.norm"
-    if [ "$ref_rc" -ge 124 ]; then
-        echo -e "${YELLOW}SKIP${NC} (reference timeout/crash, rc=$ref_rc)"
+    # Only a timeout (124) means the reference did not finish: 128+N is
+    # also a guest fault's exit status (docs/SPEC.md 7.2), and those are
+    # compared like any other result.
+    if [ "$ref_rc" -eq 124 ]; then
+        echo -e "${YELLOW}SKIP${NC} (reference timeout, rc=$ref_rc)"
         SKIPPED=$((SKIPPED + 1))
         return
     fi

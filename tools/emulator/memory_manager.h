@@ -159,27 +159,19 @@ __attribute__((unused)) static int mm_setup_from_s32x(memory_manager_t *mm,
         }
     }
 
-    // Read-write data segment
-    // Data starts immediately after rodata
-    if (data_limit > rodata_limit) {
-        if (!mm_allocate_region(mm, rodata_limit, data_limit - rodata_limit,
-                                PROT_READ | PROT_WRITE)) {
-            return -1;
-        }
-    }
-
-    // Heap region - from end of data to stack end
-    // Heap typically starts at 0x3000 in our memory layout
-    uint32_t heap_start = (data_limit + 0xFFF) & ~0xFFF;  // Round up to page
-    if (heap_start < 0x3000) heap_start = 0x3000;  // Minimum heap start
-
+    // Data, BSS and heap: one read-write region from rodata_limit up to
+    // the MMIO window (or the stack).  The heap used to start at
+    // data_limit rounded up to a page (and at least 0x3000) as a region of
+    // its own, which left the bytes in between unmapped and made an access
+    // straddling the two fault (docs/SPEC.md 6.2).
     uint32_t heap_limit = stack_end;
     if (mmio_size > 0 && mmio_base > 0 && mmio_base < heap_limit) {
         heap_limit = mmio_base;  // Stop heap before MMIO window
     }
-
-    if (heap_limit > heap_start) {
-        if (!mm_allocate_region(mm, heap_start, heap_limit - heap_start, PROT_READ | PROT_WRITE)) {
+    if (heap_limit < data_limit) heap_limit = data_limit;
+    if (heap_limit > rodata_limit) {
+        if (!mm_allocate_region(mm, rodata_limit, heap_limit - rodata_limit,
+                                PROT_READ | PROT_WRITE)) {
             return -1;
         }
     }

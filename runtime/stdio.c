@@ -411,8 +411,11 @@ static size_t fread_fill_buffer(FILE *stream) {
 
 int getchar(void) {
     flush_before_input();
+    /* GETCHAR says end of input as an error status with no errno, which
+     * the request helper turns into EIO: end of input is not an error */
+    int saved_errno = errno;
     unsigned int result = (unsigned int)s32_mmio_request(S32_MMIO_OP_GETCHAR, 0u, 0u, 0u);
-    if (result == 0xFFFFFFFF) return EOF;
+    if (result == 0xFFFFFFFF) { errno = saved_errno; return EOF; }
     volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
     return (int)data_buffer[0];
 }

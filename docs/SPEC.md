@@ -432,14 +432,14 @@ mapped:
 |---|---|---|---|
 | code | 0 | `code_limit` | execute, read |
 | read-only data | `code_limit` | `rodata_limit` | read |
-| data | `rodata_limit` | `data_limit` | read, write |
-| heap | H = `data_limit` rounded up to 4 KB, but at least 0x3000 | `mmio_base` if MMIO and `mmio_base` < `stack_end`, otherwise `stack_end` | read, write |
+| data, BSS and heap | `rodata_limit` | `mmio_base` if MMIO and `mmio_base` < `stack_end`, otherwise `stack_end` (never below `data_limit`) | read, write |
 | host window | `mmio_base` | `mmio_base` + 0x10000 | read, write (section 8); only with flag MMIO |
 | stack | `stack_end` | `stack_base` + 16 | read, write |
 
-**Quirk:** the heap region starts at `data_limit` rounded up, not at
-`heap_base` (the linker makes the two equal). The bytes between
-`data_limit` and the heap's start are not mapped.
+Data, BSS and heap are one region, so an access may straddle
+`data_limit` or `heap_base`. (Before 2026-10-03 the reference mapped the
+heap as a separate region from `data_limit` rounded up to 4 KB, leaving
+the bytes in between unmapped.)
 
 Any address outside these regions, including every address at or above
 `mem_size`, is unmapped. An access to an unmapped address faults.
@@ -495,10 +495,14 @@ invalid double-precision register. The faulting instruction has no
 effect. The machine stops, and the host writes a diagnostic to its
 standard error.
 
-**Quirk:** the exit status after a fault is whatever R[1] holds at that
-moment; the engines do not substitute a failure code. (A program that
-faults right after a call returning 0 exits with status 0.) Differential
-testing compares the diagnostic, not the status alone.
+The exit status after a fault is 128 plus the number of the POSIX signal a
+native process would have died of: **139** (SIGSEGV) for a memory, fetch or
+protection fault, **132** (SIGILL) for an illegal opcode or an invalid
+double-precision register, **134** (SIGABRT) for a failed ASSERT_EQ. (Before
+2026-10-03 the engines exited with whatever R[1] held, so a fault could
+exit 0.) A test harness that sees 132, 134 or 139 must decide from the
+diagnostic whether the program faulted or the host itself died of that
+signal.
 
 **Unspecified:** the wording of the diagnostic. The reference
 interpreter's forms are `Memory fault: Failed to read N bytes at 0xADDR
@@ -512,8 +516,7 @@ interface) is kept.
 
 The reference interpreter prints banner and statistics lines on standard
 output unless run with `-q` (`Starting execution`, `Program halted.`,
-`Instructions executed: ...` and similar), and `HALT at PC=...` at every
-HALT even with `-q`. They are
+`Instructions executed: ...`, `HALT at PC=...` and similar). They are
 the host's, not the program's; a conforming machine need not print them,
 and the test harness removes them before comparing.
 
@@ -536,7 +539,7 @@ Conventions for this section:
   looks unintended but is specified as-is because the machine is frozen.
   **Implementation-defined** means existing binaries cannot depend on it.
 - `CAP` = 49152 (0xC000), the data-buffer capacity.
-- `off` in request tables is `request.offset mod CAP` (see §8.2.4).
+- `off` in request tables is `request.offset`, which must be below CAP (see §8.2.4).
 
 
 ### 8.0 Two output paths that are not MMIO
@@ -646,10 +649,9 @@ Host, at each service point: for every request from `REQ_TAIL` up to (not
 including) `REQ_HEAD`, in order: perform it, write the response into entry
 `RESP_HEAD` and advance `RESP_HEAD`; then advance `REQ_TAIL`.
 
-**Quirk:** if the response ring is full when a response is produced, the
-response is silently discarded (the request is still consumed). The guest
-libraries never have more than one request outstanding, so this does not
-arise in practice.
+A request is taken only when the response ring has room for its response;
+while the response ring is full, requests stay queued for a later service
+point. (The guest libraries never have more than one request outstanding.)
 
 Several requests may be queued before one YIELD (they are performed in
 order). Each request sees the data buffer as left by the requests before it
@@ -659,9 +661,9 @@ issuing the next request.
 
 #### 8.2.4 The `offset` word
 
-For every opcode that uses the data buffer, the host first reduces
-`off = request.offset mod 49152`, then range-checks as the opcode table says.
-**Quirk:** an offset ≥ 48K wraps instead of failing.
+For every fixed opcode that uses the data buffer, an `offset` ≥ 49152 fails
+with `EINVAL` before anything else is done; then the opcode table's range
+checks apply. (Before 2026-10-03 the reference reduced it mod 49152.)
 
 Exceptions where `offset` is not a data-buffer offset: `READ_DIRECT` and
 `POST_READ` (a guest address), tube `PRESENT` (a generation number).
@@ -690,8 +692,8 @@ There are two ways, and existing binaries use both:
 - **`EXIT` request (opcode 0x09).** The host stores the request's `status`
   word into guest register **r1** and stops executing instructions after the
   current YIELD/HALT completes. A response `{0x09, 0, offset, status}` is
-  written. **Quirk:** requests queued after the EXIT in the same batch are
-  still performed. The `runtime/` C library's `exit()`/`_exit()` issue EXIT
+  written. Requests queued after the EXIT in the same batch are not
+  performed. The `runtime/` C library's `exit()`/`_exit()` issue EXIT
   (after running atexit handlers and flushing streams) and then loop on
   YIELD.
 - **`HALT` instruction.** The host first performs a service point (so queued
@@ -732,12 +734,14 @@ helper sets `errno = EIO` on any ERR and `EINTR` on `0xFFFFFFFE`, ignoring
 `length`.
 
 **Quirk:** `GETCHAR` at end of input returns status `0xFFFFFFFF` with
-length 0 (it is the C `EOF` value, not `STATUS_EOF`), so `runtime/`'s
-`getchar()` sets `errno = EIO` at EOF.
+length 0 (it is the C `EOF` value, not `STATUS_EOF`); existing binaries test
+for exactly that value, so it stays. The request helper turns length 0 into
+`EIO`; `runtime/`'s `getchar()` restores `errno` at end of input (since
+2026-10-03; binaries linked before keep `EIO`).
 
-**Quirk:** some failures report `EINVAL` regardless of the real cause (a bad
-seek on a pipe, policy denial, GETCWD, READDIR, GETENV of an unset name,
-…); each opcode table lists them.
+Failures report the cause's errno. `EINVAL` is reserved for a malformed
+request (a bad length or offset, an unknown flag or whence); a request the
+host's policy refuses is `EPERM` (8.13.2).
 
 #### 8.4.2 Errno numbering
 
@@ -810,13 +814,10 @@ standard streams, whatever the table says.
 Standard input is also reachable through `GETCHAR` and the term service. See
 §8.16 (`S32_STDIN_PREFIX`) for a host option that prepends a file to it.
 
-**Quirk:** `GETCHAR` reads host stdin through a host-side buffered stream
-(C `fgetc`), while `READ` on fd 0 and term key reads read the host
-descriptor directly. A program that mixes `getchar()` with `read`/`fread`
-on stdin can, on the reference host, lose bytes that the buffered stream read
-ahead (for a terminal in line mode the read-ahead is one line). Mixed use is
-implementation-defined; a host that serves both from one ordered byte stream
-is conforming.
+`GETCHAR`, `READ` on fd 0 and the term service's key reads all read the
+host's standard input descriptor directly, one ordered byte stream, so a
+program may mix them. (Before 2026-10-03 GETCHAR read through a host-side
+buffered stream that could read ahead of the others.)
 
 
 ### 8.6 Core I/O (0x00–0x10)
@@ -850,12 +851,11 @@ Request ignored. Response `status` 0.
 | Data in | n bytes at `off` |
 | Action | one host `write(2)` of `min(n, CAP − off)` bytes |
 | Response | `status` = `length` = bytes written (may be short) |
-| Errors | fd not a byte stream: `EBADF`; n = 0 or n > CAP: `EINVAL`; write failure: errno |
+| Errors | fd not a byte stream: `EBADF`; n > CAP: `EINVAL`; write failure: errno |
 
-**Quirk:** a zero-length WRITE fails with `EINVAL`. Writing to a pipe or
-socket whose reader has gone raises the host's `SIGPIPE` and, on the
-reference host, kills the emulator process (no handler is installed);
-implementation-defined.
+A zero-length WRITE on an open fd succeeds with 0. Writing to a pipe or
+socket whose reader has gone fails with `EPIPE`; the host ignores
+`SIGPIPE`.
 
 #### 0x04 READ, 0x44 RECV
 | | |
@@ -864,7 +864,7 @@ implementation-defined.
 | Action | one host `read(2)` of up to `min(n, CAP − off)` bytes (blocking) |
 | Response | `status` = `length` = bytes read; **0 = end of file** |
 | Data out | the bytes at `off` |
-| Errors | `EBADF` (fd not a byte stream), `EINVAL` (n = 0 or n > CAP), read errno |
+| Errors | `EBADF` (fd not a byte stream), `EINVAL` (n > CAP), read errno. n = 0 on an open fd: 0. |
 
 #### 0x0C READ_DIRECT (optional)
 | | |
@@ -885,10 +885,10 @@ no binary targets one.
 | | |
 |---|---|
 | Request | `status` = SLOW-32 open flags (below), `length` = bytes of path including its NUL |
-| Data in | path at `off`; the host replaces byte `length−1` with NUL |
+| Data in | path at `off`, `length` bytes; the host appends a NUL, so the guest's own NUL is optional |
 | Action | host `open(path, flags, 0644)` (mode only with CREAT; subject to the host umask) |
 | Response | `status` = new guest fd |
-| Errors | `EINVAL` (`length` = 0, `length` > CAP, `off + length` > CAP, no free slot), open errno |
+| Errors | `EINVAL` (`length` = 0, `length` > CAP, `off + length` > CAP, a flag bit outside `0x1F`); `EMFILE` (no free slot); open errno |
 
 SLOW-32 open flags (`runtime/include/fcntl.h`):
 
@@ -903,12 +903,6 @@ SLOW-32 open flags (`runtime/include/fcntl.h`):
 There is no EXCL. `fopen` maps `"r"` → 0x01, `"w"` → 0x1A, `"a"` → 0x0E,
 and `"+"` adds 0x03.
 
-**Quirk:** if any bit outside `0x1F` is set, the reference host passes the
-whole word to the host `open` as native host flags. Implementation-defined;
-no guest library sends such bits.
-
-**Quirk:** because byte `length−1` is overwritten, a path sent without its
-NUL loses its last character.
 
 #### 0x06 CLOSE
 | | |
@@ -916,7 +910,7 @@ NUL loses its last character.
 | Request | `status` = guest fd |
 | Action | close the host descriptor if the host opened it (not for 0–2); free the slot; then complete any posted read on that fd with 0 bytes (§8.12) |
 | Response | `status` 0 |
-| Errors | `EINVAL` (fd ≥ 128, slot free, or slot is a directory stream); host close errno (slot is freed anyway) |
+| Errors | `EBADF` (fd ≥ 128, slot free, or slot is a directory stream); host close errno (slot is freed anyway) |
 
 #### 0x07 SEEK
 | | |
@@ -925,10 +919,9 @@ NUL loses its last character.
 | Data in | byte `off+0` = whence (0 SET, 1 CUR, 2 END); bytes `off+1..3` ignored; i32 at `off+4` = distance |
 | Action | host `lseek(fd, distance, whence)` |
 | Response | `status` = new position, truncated to 32 bits |
-| Errors | `EBADF` (fd), `EINVAL` (`length` < 8, `off` > CAP−8, **any** lseek failure, incl. pipes) |
+| Errors | `EBADF` (fd), `EINVAL` (`length` < 8, `off` > CAP−8, whence > 2), lseek errno (`ESPIPE` on a pipe) |
 
-Implementation-defined: whence values other than 0–2 (passed to the host
-unchanged). Positions ≥ 2³¹ appear negative to the guest library, which
+Positions ≥ 2³¹ appear negative to the guest library, which
 reports them as errors.
 
 #### 0x0D FTRUNCATE
@@ -943,7 +936,7 @@ reports them as errors.
 | | |
 |---|---|
 | Request | path form: `status` = `0xFFFFFFFF`, `length` = path bytes incl. NUL; fd form: `status` = guest fd, `length` ignored |
-| Data in | path form: path at `off`; byte `length−1` replaced by NUL |
+| Data in | path form: path at `off`, `length` bytes; the host appends a NUL |
 | Response | `status` 0, `length` 112 |
 | Data out | `stat_result` (§8.6.1) at `off` (overwrites the path) |
 | Errors | `EINVAL` (`CAP − off` < 112, path `length` = 0 or > `CAP − off`); fd form: `EBADF` if the guest fd is not open; stat/fstat errno (a missing file is `ENOENT`) |
@@ -1002,12 +995,11 @@ Runs another SLOW-32 executable in a child host process and waits for it.
 | Data in | at `off`: `path\0arg1\0arg2\0…` (the child's argv[0] is `path`; arg1… are argv[1]…); the payload need not end in NUL |
 | Action | child = the same emulator (resolved path of the host's own argv[0], else env `S32_EMU`), run as `emu -q [--deny LIST] [--allow LIST] path arg1 …` with the parent's policy lists; host blocks in waitpid |
 | Response | `status` = child's exit code (0–255); 255 if the child died by a signal; 127 if the child could not be started or the given fd was not open |
-| Errors | `EINVAL` (`length` 0 or ≥ 4096, `off + length` > CAP, path empty, path not ending in `.s32x` (case-insensitive)); stat errno or `ENOENT` (path not a regular file); `ENOENT` (emulator path unknown); fork/waitpid errno |
+| Errors | `EINVAL` (`length` 0 or ≥ 4096, `off + length` > CAP, path empty, path not ending in `.s32x` (case-insensitive)); stat errno (no such file); `EACCES` (exists but is not a regular file); `ENOENT` (emulator path unknown); fork/waitpid errno |
 
 At most 11 arguments after the path are used; an empty string ends the list
 early. The child inherits the host environment and the current directory (as
-changed by `CHDIR`). **Quirk:** if `path` exists but is not a regular file,
-the errno reported is whatever the host last left (or `ENOENT`).
+changed by `CHDIR`).
 
 
 ### 8.7 Filesystem metadata (0x20–0x2B)
@@ -1026,9 +1018,9 @@ Success: `status` 0, `length` 0. Failure: host errno, except where noted.
 | 0x24 | LSTAT | path; `status` ignored (guests send `0xFFFFFFFF`) | Like STAT but does not follow a final symlink. Requires `CAP − off ≥ 112`. Result: `status` 0, `length` 112, `stat_result` at `off`. Failure: lstat errno (a missing file is `ENOENT`). |
 | 0x25 | ACCESS | path; `status` = mode: 0 F_OK, 1 X_OK, 2 W_OK, 4 R_OK (OR-able) | host `access` |
 | 0x26 | CHDIR | path | changes the host process's directory (affects all later relative paths, EXEC) |
-| 0x27 | GETCWD | `length` = buffer size (1..CAP) | Writes the NUL-terminated directory at `off`, at most `min(length, CAP−off)` bytes. Response `status` = `length` = string length **including** NUL. Any failure (e.g. too small) → `EINVAL`. |
+| 0x27 | GETCWD | `length` = buffer size (1..CAP) | Writes the NUL-terminated directory at `off`, at most `min(length, CAP−off)` bytes. Response `status` = `length` = string length **including** NUL. Failure: getcwd errno (`ERANGE` if too small). |
 | 0x28 | OPENDIR | path | Response `status` = guest fd of a directory stream (§8.5). `EMFILE` if no slot; opendir errno (or `ENOENT`). |
-| 0x29 | READDIR | `status` = directory fd | Requires `off ≤ CAP − 272`. Entry: `status` 0, `length` 272, `dirent` at `off`. End: `status` `0xFFFFFFFD`, `length` 0. Not a directory stream, or read error → `EINVAL`. Entries include `.` and `..`, in host order. |
+| 0x29 | READDIR | `status` = directory fd | Requires `off ≤ CAP − 272`. Entry: `status` 0, `length` 272, `dirent` at `off`. End: `status` `0xFFFFFFFD`, `length` 0. Not a directory stream → `EBADF`; read error → its errno. Entries include `.` and `..`, in host order. |
 | 0x2A | CLOSEDIR | `status` = directory fd | `EBADF` if not a directory stream. Frees the slot. |
 | 0x2B | REWINDDIR | `status` = directory fd | `EBADF` if not a directory stream. |
 
@@ -1128,7 +1120,7 @@ if it would exceed 128 KB the guest gets an empty environment.
 | 0x61 | ARGS_DATA | `length` = bytes wanted (≤ CAP); **`status` = byte offset into the blob** | copies `min(length, total − status)` blob bytes starting at blob offset `status` to `off`; `status` 0, `length` = bytes copied. `length` 0: `status` 0 with no checks | `EINVAL` (`length` > CAP, `off + length` > CAP, `status` > total) |
 | 0x62 | ENVP_INFO | as ARGS_INFO | | |
 | 0x63 | ENVP_DATA | as ARGS_DATA, over the environment blob | | |
-| 0x64 | GETENV | `length` = bytes of name (NUL optional); name at `off` | value (not NUL-terminated) written at `off`, truncated to `CAP − off`; `status` = `length` = value bytes (0 for an empty value) | `EINVAL` (`length` 0 or > CAP, `off + length` > CAP, **variable not set**) |
+| 0x64 | GETENV | `length` = bytes of name (NUL optional); name at `off` | value (not NUL-terminated) written at `off`, truncated to `CAP − off`; `status` = `length` = value bytes (0 for an empty value) | `EINVAL` (`length` 0 or > CAP, `off + length` > CAP); `ENOENT` (variable not set) |
 
 GETENV looks the name up in the host's live environment (the same contents
 as the environment blob). Guests fetch blobs in chunks of at most CAP
@@ -1238,7 +1230,7 @@ allocates. Two services exist: `"term"` (15 opcodes, version 1) and `"tube"`
 #### 8.13.1 Wire format (as implemented)
 
 All five opcodes: request `length` = bytes of the service name including NUL
-(1..32; the host replaces byte `length−1` with NUL), name at `off`,
+(1..32; the host appends a NUL, so the guest's own NUL is optional), name at `off`,
 `off + length ≤ CAP`, else `EINVAL`. The request `status` word is **ignored**
 (guests send 0). Results are returned **in the data buffer at `off`**; the
 response `status` is 0 except as noted.
@@ -1248,20 +1240,18 @@ response `status` is 0 except as noted.
 | Check | Data at `off` | Response `length` |
 |---|---|---|
 | policy denies the name | u32 `1` (DENIED) | 4 |
+| a session with that name is active | u32 `3` (CONFLICT) | 4 |
 | name is not a built-in service | u32 `2` (UNKNOWN) | 4 |
-| 16 sessions have been created in this run (released ones count) | u32 `4` (LIMIT) | 4 |
-| next base + opcode count > 0xF0 | u32 `4` (LIMIT) | 4 |
+| 16 sessions are active | u32 `4` (LIMIT) | 4 |
+| no free range of opcode-count opcodes below 0xF0 | u32 `4` (LIMIT) | 4 |
 | otherwise: grant | u32 ×4: `[0 (OK), base, opcode_count, version]` | 16 |
 
-The **host picks the base**: the first grant in a run gets 0x80, each later
-grant gets the previous base + previous count. Opcodes `base .. base+count−1`
-then route to the session (sub-opcode = opcode − base). Ranges are never
-reused, even after release. Codes 3 (CONFLICT) and 5 (VERSION_ERR) are
-defined but never produced.
-
-**Quirk:** requesting a name that is already active does not return CONFLICT
-(the check's result is overwritten): the host grants a second, independent
-session at a new base.
+The **host picks the base**: the lowest base from 0x80 whose range
+`base .. base+count−1` overlaps no active session's; a released range is
+free again. Opcodes in the range then route to the session (sub-opcode =
+opcode − base). Code 5 (VERSION_ERR) is defined but never produced.
+(Before 2026-10-03 a request for an active service granted a second
+session, and ranges and session slots were never reused.)
 
 **0xF1 SVC_RELEASE.** Destroys the oldest active session with that name
 (service cleanup runs); its opcodes then fail with `EINVAL`.
@@ -1285,20 +1275,20 @@ non-empty, allowed only if on it; otherwise allowed. By default everything is
 allowed.
 
 Fixed opcodes are subject to the same policy under these names; a denied
-request fails with `EINVAL`:
+request fails with `EPERM`:
 
 | Name | Opcodes |
 |---|---|
-| `fs` | 0x03–0x07, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x20–0x2B |
+| `fs` | 0x03–0x07 (but WRITE and READ on fds 0–2 are never gated), 0x0A, 0x0C, 0x0D, 0x0E, 0x20–0x2B |
 | `time` | 0x30–0x3F |
 | `exec` | 0x10 |
 | `net` | 0x40–0x4F |
-| `env` | 0x60–0x6F |
-| (never gated) | 0x00, 0x01, 0x02, 0x09, 0xF0–0xF4, negotiated opcodes |
+| `env` | 0x62–0x6F (the environment; not the arguments) |
+| (never gated) | 0x00, 0x01, 0x02, 0x09, 0x0B, 0x60, 0x61, 0xF0–0xF4, negotiated opcodes |
 
-Note `fs` includes WRITE/READ on fds 0–2: denying `fs` silences `printf`.
-Denying `env` makes argument fetching fail (guests then see argc 0). A
-non-empty allow list denies every name not on it, including the fixed ones.
+The standard streams and the command line belong to the program, so
+denying `fs` or `env` leaves `printf` and `argv` working. A non-empty allow
+list denies every name not on it, including the fixed ones.
 
 
 ### 8.14 Term service (`"term"`, 15 opcodes)
@@ -1319,7 +1309,7 @@ unless noted; responses are `status` 0, `length` 0 unless noted.
 | 8 | PUTC | `status` low 8 bits = one byte | Outside an update: the byte to stdout. Always fed to the shadow (§8.14.2). |
 | 9 | PUTS | `length` = n, bytes at `off` | `min(n, CAP−off)` bytes; outside an update written to stdout; each fed to the shadow. |
 | 10 | SAVE_SCREEN | | Pushes shadow cells, cursor, attribute, colours (stack depth 8; `EINVAL` when full). No output. |
-| 11 | RESTORE_SCREEN | | Pops and repaints (§8.14.3). `EINVAL` if the stack is empty. **Quirk:** emits even inside an update. |
+| 11 | RESTORE_SCREEN | | Pops and repaints (§8.14.3). Inside an update it restores the shadow only and emits nothing; END_UPDATE paints the difference. `EINVAL` if the stack is empty. |
 | 12 | BEGIN_UPDATE | | Snapshots the shadow, cursor, attribute and colours; starts an update (output suppressed). `EINVAL` if already in one. |
 | 13 | END_UPDATE | | Ends the update and paints the difference (§8.14.3). `EINVAL` if not in one. |
 | 14 | READ_CHAR | | Blocks for one UTF-8 character (§8.14.4). `status` = code point, `length` 0. End of input: `status` `0xFFFFFFFD`. |
@@ -1453,7 +1443,7 @@ if (current fg, bg) != (of, ob): output COL(current fg, current bg)
 output CUP(cursor row+1, cursor col+1); flush
 ```
 
-**RESTORE_SCREEN** (S = popped save; PR = min(S.R, R), PC = min(S.C, C)):
+**RESTORE_SCREEN** outside an update (S = popped save; PR = min(S.R, R), PC = min(S.C, C)). Inside an update only the `shadow :=` and `cursor, attr, fg, bg :=` steps happen, with no output:
 ```
 output "ESC[0m" "ESC[2J" "ESC[H"
 (pa, pf, pb) := (0, 7, 0)
@@ -1552,8 +1542,7 @@ These change what a guest observes but are chosen by whoever runs the host.
 
 Host diagnostics are not guest output and a host need not reproduce them.
 The reference hosts print a banner and statistics on standard output unless
-`-q`; the reference interpreter (`slow32`) also prints `HALT at PC=…` on
-standard output at every HALT instruction, even with `-q`.
+`-q` (the reference interpreter's `HALT at PC=…` line among them).
 
 ---
 
