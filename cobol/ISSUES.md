@@ -6126,6 +6126,12 @@ is counted apart.  105 of the 128 built programs compile.
   ACAS uses neither.  Test: free/scroccurs (no oracle).  The sweep's
   report-writer exclusion now also matches stock/RW-Programs/.  107 of
   the 125 built programs compile.
+- **DISPLAY / ACCEPT screen-name AT 0101** (irs030's heading screen).
+  2002's screen formats take an AT phrase placing the screen's origin.
+  At line 1, column 1 -- AT 0101 or AT LINE 1 COLUMN 1, the only
+  placement ACAS gives a screen -- the screen is where its own clauses
+  put it; another origin is refused as not implemented.  Tests:
+  free/scrat (no oracle), bad/scr-at-offset.  108 of 125.
 
 Next, in order: the SCREEN SECTION BLANK SCREEN placement rule; COMP-X longer
 than seven bytes; PAGE LIMIT without a number; >>SOURCE FREE carried into

@@ -320,6 +320,29 @@ static void parse_accept(void)
         emit_label(Lok);
     }
 }
+/* ACCEPT or DISPLAY screen-name AT ... (2002's screen formats take an
+ * AT phrase): the screen placed with its origin there.  At line 1,
+ * column 1 -- AT 0101 or AT LINE 1 COLUMN 1, the only placement ACAS
+ * uses (cobol ISSUES-124) -- the screen is where its own clauses put it;
+ * any other origin is not implemented. */
+static void screen_at_origin(int line)
+{
+    if (!accept_word("at")) return;
+    int l = -1, c = -1;
+    if (cur()->kind == T_NUM && strlen(cur()->s) == 4) {
+        int v = atoi(cur()->s); l = v / 100; c = v % 100; advance();
+    } else {
+        if (accept_word("line")) { accept_word("number"); if (cur()->kind == T_NUM) { l = atoi(cur()->s); advance(); } }
+        if (accept_word("column") || accept_word("col") || accept_word("position")) {
+            accept_word("number"); if (cur()->kind == T_NUM) { c = atoi(cur()->s); advance(); }
+        }
+        if (l < 0) l = 1;
+        if (c < 0) c = 1;
+    }
+    if (l != 1 || c != 1)
+        die_at(line, "a screen placed AT a position other than line 1, column 1 is not implemented");
+}
+
 static void parse_accept_1(void)
 {
     Tok *t = cur();
@@ -328,6 +351,7 @@ static void parse_accept_1(void)
         Screen *scp = screen_ref(t->s, scrlab, sizeof scrlab, &sfirst, &scount);
         if (scp) {
             advance();
+            screen_at_origin(t->line);
             emit_screen_dyn_fill(scp, sfirst, scount);
             if (g_crt_status_name[0]) {                 /* the ACCEPT's ending goes to the CRT STATUS item */
                 g_cen_ctx = CEN_PTR; Sym *cs = sym_lookup(g_crt_status_name, NULL, 0, t->line); g_cen_ctx = 0;
@@ -475,7 +499,7 @@ static void parse_display(void)
     if (cur()->kind == T_WORD) {
         char scrlab[40]; int sfirst, scount;
         Screen *scp = screen_ref(cur()->s, scrlab, sizeof scrlab, &sfirst, &scount);
-        if (scp) { advance(); emit_screen_dyn_fill(scp, sfirst, scount); emit_la("r3", scrlab); emit_call("cob_screen_display"); return; }
+        if (scp) { int sl = cur()->line; advance(); screen_at_origin(sl); emit_screen_dyn_fill(scp, sfirst, scount); emit_la("r3", scrlab); emit_call("cob_screen_display"); return; }
     }
     /* DISPLAY n UPON ARGUMENT-NUMBER: the next ARGUMENT-VALUE will be n */
     if (stmt_positioned()) { parse_display_positioned(); return; }
