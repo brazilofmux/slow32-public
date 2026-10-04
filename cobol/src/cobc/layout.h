@@ -565,12 +565,16 @@ static void finish_data_division(void)
         if (!g_crt_status_name[0]) snprintf(g_crt_status_name, sizeof g_crt_status_name, "cob-crt-status");
     }
     build_tree();
-    /* GLOBAL reaches down: a GLOBAL item's subordinates and conditions, the
-     * records of a GLOBAL FD (parents precede children in the table) */
+    /* GLOBAL reaches down: a GLOBAL item's subordinates, conditions and
+     * index-names, the records of a GLOBAL FD (parents precede children in
+     * the table) */
     for (int i = g_sym_base; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
         if (s->fd >= 0 && g_files[s->fd].global) s->is_global = 1;
         if (s->parent >= 0 && g_sym[s->parent].is_global) s->is_global = 1;
+        /* an index-name of a table in a global item is global too (2023
+         * 8.4.6.2.3); it is made after its table, whose attribute is set */
+        if (s->is_index && s->ix_table >= 0 && g_sym[s->ix_table].is_global) s->is_global = 1;
         if (s->fd >= 0 && g_files[s->fd].external && s->parent < 0) s->is_external = 1;
     }
     for (int i = g_file_base; i < g_nfile; i++)

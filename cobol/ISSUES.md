@@ -6107,6 +6107,14 @@ comp-irs.sh has them by running there; everything else with copybooks/
 first.  Searching copybooks/ first for IRS code had picked its other
 wsfnctn.cob and made names ambiguous.  RW-programs/, in no build script,
 is counted apart.  105 of the 128 built programs compile.
+- **Index-names of GLOBAL tables were local** (stockMT: KOR-x1, RG-x1,
+  INDEXED BY on tables in GLOBAL records, used from its nested
+  programs).  2023 8.4.6.2.3: an index-name of a table in a global item
+  is global, its scope the table's.  It now takes the table's attribute
+  where the GLOBAL attribute is passed down.  Test: free/globalidx
+  (identical to GnuCOBOL).  stockMT then stops at HV-ABREV-CHK2, a host
+  variable whose declaration ACAS has commented out: it is one of the
+  MySQL data-access modules (*MT.cbl), outside ACAS's default builds.
 
 Next, in order: the SCREEN SECTION BLANK SCREEN placement rule; COMP-X longer
 than seven bytes; PAGE LIMIT without a number; >>SOURCE FREE carried into
