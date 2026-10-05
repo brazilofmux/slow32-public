@@ -12,12 +12,30 @@
 #
 # Sourced by build.sh and compile.sh; both already set HERE and ROOT.
 #
-# Overrides: LLVM_BIN, S32_KIT (the runtime kit, default ~/s32x),
+# Which cc.s32x: the one S32_CC names; else the one in the kit S32_KIT
+# names, when the caller set S32_KIT; else the newer of the tree's own
+# (selfhost/stage08/cc.s32x, a build product: `make` there, or
+# selfhost/run-pipeline.sh) and the default kit's.  A machine that has
+# just built the self-hosted toolchain has the compiler this tree's C
+# needs; its ~/s32x may be a copy from weeks ago, and an old compiler
+# fails on new source in ways that name neither (a Raspberry Pi with a
+# September kit could not compile libcob's esql.c, 2026-10-04).
+#
+# Overrides: LLVM_BIN, S32_CC, S32_KIT (the runtime kit, default ~/s32x),
 # S32_EMU (the emulator); S32_AS and S32_RT_INCLUDE point at the
 # assembler and the runtime headers when they are not at their tree
 # paths (the slow32:cobol image installs them under /opt/slow32).
 
 : "${LLVM_BIN:=$HOME/llvm-project/build/bin}"
+if [ -z "${S32_CC:-}" ]; then
+    if [ -n "${S32_KIT:-}" ]; then
+        S32_CC="$S32_KIT/cc.s32x"                       # the caller's kit, as asked
+    else
+        S32_CC="$HOME/s32x/cc.s32x"
+        _tree="$ROOT/selfhost/stage08/cc.s32x"
+        if [ -f "$_tree" ] && { [ ! -f "$S32_CC" ] || [ "$_tree" -nt "$S32_CC" ]; }; then S32_CC="$_tree"; fi
+    fi
+fi
 : "${S32_KIT:=$HOME/s32x}"
 : "${OPT:=-O1}"
 : "${S32_AS:=$ROOT/tools/assembler/slow32asm}"
@@ -36,13 +54,10 @@ else
             [ -x "$cand" ] && { S32_EMU="$cand"; break; }
         done
     fi
-    # The kit's cc.s32x, not selfhost/stage08/cc.s32x in the tree: the
-    # in-tree copy is whatever was committed, and predates the argument
-    # marshalling fix of 2026-08-25 (RUNTIME_KIT.md, "Kit vintage").
-    # Having neither is not fatal here: a pure-COBOL build never asks for
-    # a C compiler (the slow32:cobol image has none).  s32_cc_obj refuses
-    # when it is actually asked.
-    if [ ! -f "$S32_KIT/cc.s32x" ] || [ ! -x "${S32_EMU:-}" ]; then
+    # Having no compiler is not fatal here: a pure-COBOL build never asks
+    # for a C compiler (the slow32:cobol image has none).  s32_cc_obj
+    # refuses when it is actually asked.
+    if [ ! -f "$S32_CC" ] || [ ! -x "${S32_EMU:-}" ]; then
         s32_cc_backend=none
     fi
 fi
@@ -60,15 +75,19 @@ s32_cc_obj() {
         # cc.s32x narrates its optimiser and selector counters on
         # stderr; keep them for a failure and drop them otherwise.
         _log="$_base.cclog"
-        if ! "$S32_EMU" "$S32_KIT/cc.s32x" -I"$S32_RT_INCLUDE" "$@" \
+        if ! "$S32_EMU" "$S32_CC" -I"$S32_RT_INCLUDE" "$@" \
                 "$_c" "$_base.s" >/dev/null 2>"$_log"; then
-            cat "$_log" >&2; rm -f "$_log"; return 1
+            cat "$_log" >&2; rm -f "$_log"
+            echo "cctool: $_c did not compile with $S32_CC" >&2
+            echo "  ($(date -r "$S32_CC" '+built %Y-%m-%d' 2>/dev/null || echo 'age unknown'); an old compiler fails on new source: rebuild selfhost/stage08, or refresh the kit)" >&2
+            return 1
         fi
         rm -f "$_log"
     else
         echo "cctool: no C compiler for SLOW-32 (needed for $_c)." >&2
         echo "  no clang at $LLVM_BIN/clang, and the self-hosted fallback needs" >&2
-        echo "  $S32_KIT/cc.s32x (set S32_KIT) and an emulator (set S32_EMU)." >&2
+        echo "  a cc.s32x -- $S32_CC is not there (build selfhost/stage08, or set" >&2
+        echo "  S32_KIT or S32_CC) -- and an emulator (set S32_EMU)." >&2
         echo "  In a container, .c inputs need slow32:toolchain, not slow32:cobol." >&2
         return 1
     fi
