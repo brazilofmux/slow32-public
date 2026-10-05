@@ -7,4 +7,8 @@ ok getchar at end of input keeps errno
 ok term granted at 0x80
 ok term again is CONFLICT
 ok released range given out again
+ok a grant that would not fit the buffer is refused
+ok and granted nothing
+ok a query whose answer would not fit is refused
 host-edges: all tests passed
+

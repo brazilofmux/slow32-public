@@ -4400,7 +4400,9 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                 break;
             }
             uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
-            if (offset + req->length > S32_MMIO_DATA_CAPACITY) {
+            // the name must be in the buffer, and so must the reply: 16
+            // bytes at the same offset (it used to be written past the end)
+            if (offset + req->length > S32_MMIO_DATA_CAPACITY || offset + 16 > S32_MMIO_DATA_CAPACITY) {
                 mmio_fail(&resp, EINVAL);
                 break;
             }
@@ -4557,7 +4559,8 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                 break;
             }
             uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
-            if (offset + req->length > S32_MMIO_DATA_CAPACITY) {
+            // the name, and the 4-byte reply at the same offset
+            if (offset + req->length > S32_MMIO_DATA_CAPACITY || offset + 4 > S32_MMIO_DATA_CAPACITY) {
                 mmio_fail(&resp, EINVAL);
                 break;
             }

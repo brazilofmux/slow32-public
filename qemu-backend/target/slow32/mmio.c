@@ -3222,6 +3222,12 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
             resp->status = S32_MMIO_STATUS_ERR;
             break;
         }
+        /* the name must be in the buffer, and so must the 16-byte reply */
+        if (req->offset + req->length > S32_MMIO_DATA_CAPACITY ||
+            req->offset + 16 > S32_MMIO_DATA_CAPACITY) {
+            slow32_mmio_fail(resp, EINVAL);
+            break;
+        }
 
         slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, req->length);
         ctx->scratch[req->length] = '\0';
@@ -3367,6 +3373,12 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
     case S32_MMIO_OP_SVC_QUERY: {
         if (req->length == 0 || req->length > S32_SVC_MAX_NAME_LEN) {
             resp->status = S32_MMIO_STATUS_ERR;
+            break;
+        }
+        /* the name must be in the buffer, and so must the 4-byte reply */
+        if (req->offset + req->length > S32_MMIO_DATA_CAPACITY ||
+            req->offset + 4 > S32_MMIO_DATA_CAPACITY) {
+            slow32_mmio_fail(resp, EINVAL);
             break;
         }
 

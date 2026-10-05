@@ -6336,9 +6336,10 @@ Open, each waiting for a program that asks:
   column would move every such field on screens already laid out, so it
   stays (ruled 2026-10-04): the program says `SIGN ... SEPARATE` or
   uses an edited picture, and both work.
-- Micro Focus's free-format entry and its fill and justify phrases,
-  TIMEOUT, UPPER/LOWER, the three-byte CRT status, group-item ACCEPT:
-  step 6, only under `-dialect=mf` and only on demand.
+- Not open: Micro Focus's free-format entry and its fill and justify
+  phrases, TIME-OUT, UPPER/LOWER, a checked three-byte CRT status, and
+  group-item ACCEPT were the plan's step 6, and are dropped (ruled
+  2026-10-04: no interest in them).
 - EC-SCREEN exception conditions are not raised.  JUSTIFIED on a
   national screen item is refused; national fields keep their own
   cluster editor and do not go through the core.

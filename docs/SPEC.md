@@ -1280,8 +1280,11 @@ the range belongs to nobody (or to another session).  `"term"` version 1
 
 SVC_REQUEST, SVC_RELEASE and SVC_QUERY: request `length` = bytes of the service name including NUL
 (1..32; the host appends a NUL, so the guest's own NUL is optional), name at `off`,
-`off + length ≤ CAP`, else `EINVAL`. The request `status` word is **ignored**
-(guests send 0). Results are returned **in the data buffer at `off`**; the
+`off + length ≤ CAP`, else `EINVAL`. The reply is written at the same `off` and
+must fit as well: SVC_REQUEST needs `off ≤ CAP−16` and SVC_QUERY `off ≤ CAP−4`,
+else `EINVAL` (before 2026-10-04 the reference wrote a reply past the end of
+the buffer). The name is the bytes up to the first NUL among the `length`
+bytes. The request `status` word is **ignored** (guests send 0). Results are returned **in the data buffer at `off`**; the
 response `status` is 0 except as noted.
 
 **0xF0 SVC_REQUEST.** The host checks, in this order:
@@ -1355,7 +1358,7 @@ sub-opcodes that use the data buffer (GET_SIZE, READ_KEY, PUTS) an
 | 2 | MOVE_CURSOR | `status` = row<<16 \| col, **1-based**, 16 bits each | Outside an update: emits `ESC [ row ; col H` (decimal, unclamped). Shadow cursor := (row−1, col−1). |
 | 3 | CLEAR | `status` = 0 screen, 1 to end of line, 2 to end of screen (other = 0) | Outside an update emits `ESC[2J ESC[H` / `ESC[K` / `ESC[J`; inside, records it (§8.14.3). Shadow clear (§8.14.2). |
 | 4 | SET_ATTR | `status` = SGR number | Outside an update emits `ESC [ status m` (the whole 32-bit `status`, unsigned decimal). Current attribute := status; cells keep its low 8 bits, so END_UPDATE and RESTORE emit those. Guests use 0 normal, 1 bold, 7 reverse; what the repaint compares for a value above 255 is **Unspecified**. |
-| 5 | READ_KEY | | Blocks for one byte of input (§8.14.4). `status` = byte, `length` 1, byte also at `off`. End of input: `status` `0xFFFFFFFD`. |
+| 5 | READ_KEY | | Blocks for one byte of input (§8.14.4). `status` = byte, `length` 1, byte also at `off`. End of input: `status` `0xFFFFFFFD`, `length` 0. |
 | 6 | KEY_AVAIL | | `status` 1 if a byte can be read without blocking (a pushed-back byte, unread prefix bytes, or host stdin is ready, 8.12), else 0. Never blocks. |
 | 7 | SET_COLOR | `status` = fg<<8 \| bg (8 bits each; ANSI 0–7) | Outside an update emits `ESC [ 3fg ; 4bg m` (decimal, unclamped). Current colours := fg, bg. |
 | 8 | PUTC | `status` low 8 bits = one byte | Outside an update: the byte to stdout. Always fed to the shadow (§8.14.2). |
@@ -1365,13 +1368,15 @@ sub-opcodes that use the data buffer (GET_SIZE, READ_KEY, PUTS) an
 | 12 | BEGIN_UPDATE | | Snapshots the shadow, cursor, attribute and colours; starts an update (output suppressed). `EINVAL` if already in one. |
 | 13 | END_UPDATE | | Ends the update and paints the difference (§8.14.3). `EINVAL` if not in one. |
 | 14 | READ_CHAR | | Blocks for one UTF-8 character (§8.14.4). `status` = code point, `length` 0. End of input: `status` `0xFFFFFFFD`. |
-| 15 | SET_CURSOR | `status` = style: 0 hidden, 1 the terminal's own, 2 block, 3 underline, 4 bar | Version 2. Emits the style's bytes (§8.14.5) at once, inside an update as well as outside. Cursor style := status. `EINVAL`, and nothing emitted or changed, for any other value. |
+| 15 | SET_CURSOR | `status` = style: 0 hidden, 1 the terminal's own, 2 block, 3 underline, 4 bar | Version 2. Emits the style's bytes (§8.14.5) at once, inside an update as well as outside. Cursor style := status. `EINVAL`, and nothing emitted or changed, for any other value of the whole 32-bit `status`. |
 
 Unused sub-opcodes cannot occur (the range is exactly 16). All term output
 goes to host standard output and is flushed after every request; `ESC` is
 byte 0x1B. Session cleanup (release or exit) restores the saved termios if
 raw mode is on; it emits nothing, unless the cursor style is not 1, in
-which case it emits style 1's bytes (§8.14.5) and flushes.
+which case it then emits style 1's bytes (§8.14.5) and flushes. (A guest
+that set style 1 itself has already emitted them.) An update still open
+at cleanup is dropped: nothing of it is painted.
 
 #### 8.14.1 The shadow model
 

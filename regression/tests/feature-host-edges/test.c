@@ -74,6 +74,19 @@ int main(void)
     ok(svc(0xF0, "term", &b2) == 0 && b2 == 0x80, "released range given out again");
     svc(0xF1, "term", NULL);
 
+    /* the reply is written where the name was: a name at the very end of
+     * the buffer leaves no room for it, and the request is refused (the
+     * host used to write the grant past the buffer's end) */
+    {
+        unsigned cap = S32_MMIO_DATA_CAPACITY, b3 = 0;
+        memcpy((void *)(d + cap - 5), "term", 5);
+        ok(s32_mmio_request(0xF0, 5u, cap - 5, 0u) == (int)S32_MMIO_STATUS_ERR, "a grant that would not fit the buffer is refused");
+        ok(svc(0xF0, "term", &b3) == 0 && b3 == 0x80, "and granted nothing");
+        svc(0xF1, "term", NULL);
+        memcpy((void *)(d + cap - 2), "t", 2);
+        ok(s32_mmio_request(0xF2, 2u, cap - 2, 0u) == (int)S32_MMIO_STATUS_ERR, "a query whose answer would not fit is refused");
+    }
+
     unlink(f);
     printf(fails ? "host-edges: FAILED\n" : "host-edges: all tests passed\n");
     return fails != 0;

@@ -1,6 +1,6 @@
 # Screen input: a picture-driven field editor
 
-Status: steps 0-5 done (2026-10-04); step 6 only on demand.  The user accepted
+Status: steps 0-5 done (2026-10-04); step 6 dropped (the user, the same day: no interest in the Micro Focus extras).  The user accepted
 the recommendations under "Decisions" on 2026-10-04.
 
 A screen is the first thing a person sees of a COBOL program, and the
@@ -426,7 +426,7 @@ against its rendered screen before it is accepted.
    puts the terminal's own cursor back in replace mode and when the
    ACCEPT ends; nothing is emitted by a program that never presses
    Insert.
-6. **Only on demand, behind `-dialect=mf`:** free-format entry and its
+6. **Dropped (2026-10-04).**  Was: only on demand, behind `-dialect=mf`, free-format entry and its
    fill/justify phrases, TIMEOUT, UPPER/LOWER, the three-byte CRT
    status, group-item ACCEPT.
 
