@@ -7,6 +7,11 @@ entries (3.2 FD, 3.3 BLOCK CONTAINS, 3.5 DATA RECORDS, 3.7 LINAGE, 3.8
 RECORD). 2023: 12.4.5 and its clauses, 13.4.5, 13.4.6, 13.18.10,
 13.18.34, 13.18.43.
 
+Not swept here: 12.4.5.9 LOCK MODE, 12.4.5.15 SHARING. The clauses
+parse; the statements that give them meaning (OPEN SHARING, READ WITH
+LOCK, RETRY) do not -- file sharing and record locking, optional since
+2014, docs/plans/standard-queue.md item 39.
+
 ## The file control entry
 
 | rule | paraphrase | disposition |

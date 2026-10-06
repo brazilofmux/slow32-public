@@ -110,6 +110,17 @@ COBOL 2002/2023 (Stage B):
   implemented, docs/conformance/initialize.md);
 - READ PREVIOUS of a sequential file (2002; io-statements.md; PREVIOUS
   of a relative or indexed file is implemented).
+- the 2002 Report Writer additions: PRESENT WHEN, VARYING, OCCURS in a
+  report group; COLUMN PLUS, LEFT, RIGHT, CENTER and several column
+  numbers (the 1985 module is implemented; docs/conformance/
+  reportwriter.md);
+- in a user-defined function: OMITTED arguments for OPTIONAL
+  parameters, and more than 7 USING items (CALL takes both; 32 USING
+  items is the CALL limit, section 4);
+- and some 2002-2023 constructs that still meet a parse error rather
+  than a refusal by name (docs/plans/standard-queue.md item 1 lists
+  them: START FIRST/LAST, OPEN SHARING, READ WITH LOCK, ASSIGN USING,
+  the OPTIONS paragraph, floating-point literals ...).
 
 ## 3. Out of scope, by ruling
 
@@ -133,10 +144,13 @@ Two ruled 2026-09-28:
   sorts and compares in EBCDIC order on any machine, and honoring that
   is what makes it correct. README ruling 5 ("No EBCDIC on this ISA")
   stays about data formats. Moves to class 2.
-- **Floating-point USAGE: COBOL 2014, under -std=2014.** FLOAT-SHORT,
-  FLOAT-LONG, FLOAT-EXTENDED and FLOAT-BINARY-32/64/128 are IEEE, which
-  SLOW-32 has in hardware; they may land early as the first piece of a
-  2014 switch. COMP-1 and COMP-2 (IBM hexadecimal float) stay out.
+- **Floating-point USAGE.** FLOAT-SHORT, FLOAT-LONG and FLOAT-EXTENDED
+  are COBOL 2002 (its USAGE clause), and -std=2002 takes them. The
+  IEEE usages FLOAT-BINARY-32/64/128 and FLOAT-DECIMAL-16/34 are COBOL
+  2014: the first piece of a -std=2014 switch (docs/plans/
+  standard-queue.md item 20); binary32 and binary64 are SLOW-32
+  hardware. COMP-1 and COMP-2 (IBM hexadecimal float) stay out.
+  (Corrected 2026-10-06: this entry called all six 2014.)
 
 ## 4. Implementation limits
 

@@ -6,6 +6,9 @@ statement. 2023: 14.9.20. The 1985 statement was implemented at Stage
 FILLER, `{ALL | category} TO VALUE`, THEN REPLACING, THEN TO DEFAULT --
 and checked the syntax rules of both editions.
 
+Not swept here: 11.9.10, the OPTIONS paragraph's INITIALIZE clause (COBOL 2023): the OPTIONS
+paragraph is not parsed (docs/plans/standard-queue.md items 16, 30).
+
 ## Syntax rules
 
 | rule | paraphrase | disposition |

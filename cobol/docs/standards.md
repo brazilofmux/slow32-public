@@ -307,19 +307,25 @@ refused with a message naming the switch.
   EXIT** (2026-09-28, ISSUES-90): 2023 14.9.14 formats 3-4 and 14.9.28
   general rule 11.
 - **VALIDATE: not built, by ruling** (2026-09-28). 2023 marks the
-  VALIDATE facility obsolete (Annex D.22) and its Annex E says it "has
-  not been implemented as of the writing of this revision by any COBOL
-  provider. Neither users nor implementors have indicated interest",
-  its future to be decided at the next revision. It stays refused by
-  name here until a program needs it.
+  VALIDATE facility obsolete (D.22), and its list of obsolete elements
+  (F.2 item 5) records that no COBOL provider has implemented it and
+  that neither users nor implementors have asked for it, its future to
+  be weighed at the next revision. It has been optional since 2014
+  (2014 A.4.13). It stays refused by name here until a program needs
+  it. (Corrected 2026-10-06: this entry placed the remark in Annex E
+  and quoted it; it is F.2's, paraphrased here.)
 
 ## Deferred — object orientation
 
 COBOL 2002's classes, `INVOKE`, interfaces, `FACTORY`, method
-overloading and object references. It is in the standard; almost no
-production code uses it; later revisions did not push it further.
-The objection is not to object orientation (C++ is fine) but to OO
-COBOL specifically: verbose on top of verbose.
+overloading and object references. It is in the standard, and it is
+still required: 2014 and 2023 make only multiple inheritance and
+parametric polymorphism optional (2023 A.4.10). So the deferral is the
+owner's, not the standard's. The reason is use: the industry never
+took it up for business code -- where it lives it is glue to Java and
+.NET, which a program on SLOW-32 has no use for -- and later revisions
+did not push it further. The objection is not to object orientation
+(C++ is fine) but to OO COBOL specifically: verbose on top of verbose.
 
 It waits until someone brings a program that needs it. By then Stages
 A and B give it a suite to land against. It also cannot compromise the
@@ -345,12 +351,17 @@ its changes from 2002, 2023's its changes from 2014. For Stage B:
   inline alternative to `USE` for exceptions. Stage B implements the
   2023 forms, not the 2002 ones.
 - **What is optional now.** 2014 made optional what 2002 required
-  (its E.2 item 23): screen handling, file sharing and record locking,
-  object orientation, Report Writer, the `RESUME` statement, and
-  others. 2023's optional list (A.4, pages 974-979) adds `VALIDATE`.
-  An implementation may omit these and still conform, so `VALIDATE`
-  moves down Stage B's order, and the object-orientation deferral
-  below now has the standard's own blessing.
+  (its E.2 item 23; the list is its A.4): screen handling, file
+  sharing and record locking, Report Writer, the `RESUME` statement,
+  `VALIDATE`, dynamic-capacity tables, locale support and others -- of
+  object orientation only multiple inheritance and parametric
+  polymorphism. 2023's list (A.4) adds Commit and Rollback and drops
+  ARITHMETIC IS STANDARD, which 2023 removed. An implementation may
+  omit these and still conform. The owner's ruling (2026-10-06) is to
+  implement everything standard regardless; the order is
+  docs/plans/standard-queue.md. (Corrected 2026-10-06: this said 2023
+  added VALIDATE, and that the standard made object orientation
+  optional.)
 - **What 2023 took out that 85 programs use.** Continuation of a word
   in fixed form, `CALL ... ON OVERFLOW`, and `CLOSE ... WITH LOCK` with
   status 38 are removed (E.2 item 1). So is a figurative constant moved

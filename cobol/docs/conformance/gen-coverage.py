@@ -106,7 +106,13 @@ def pages():
                 if re.search(r"(^|\W)\*{0,2}" + re.escape(m) + r"\*{0,2}\b", disp):
                     counts[m] += 1
                     break
-        out[fn] = (nums, counts, text)
+        # "Not swept here: 12.4.5.9, ..." -- sections a page names by an
+        # ancestor but does not sweep
+        excl = set()
+        for ln in text.splitlines():
+            if ln.startswith("Not swept here:"):
+                excl.update(re.findall(r"\b(?:1[0-6]|[7-9])\.\d+(?:\.\d+)*", ln))
+        out[fn] = (nums, counts, text, excl)
     return out
 
 
@@ -219,7 +225,7 @@ def main():
     rwords = {}
     for fn, (nums, words) in readme_sections().items():
         if fn in pg:
-            pg[fn] = (pg[fn][0] | nums, pg[fn][1], pg[fn][2])
+            pg[fn] = (pg[fn][0] | nums, pg[fn][1], pg[fn][2], pg[fn][3])
             rwords[fn] = words
 
     print("# Conformance coverage (generated)")
@@ -237,10 +243,11 @@ def main():
     tot = swept = 0
     rows = OrderedDict((c, []) for c in CLAUSES)
     for num, title in elems.items():
-        named = [fn for fn, (nums, _, _) in pg.items() if covered_by(num, nums)]
+        named = [fn for fn, (nums, _, _, _) in pg.items() if covered_by(num, nums)]
         kw = keyword(title)
         if not named and kw:
             named = [fn for fn, words in rwords.items() if kw in words]
+        named = [fn for fn in named if num not in pg[fn][3]]     # the page's "Not swept here"
         byname = []
         if title.endswith(" function") and os.path.exists(COBC):
             kind, why = probe_function(title[:-len(" function")], tmp)

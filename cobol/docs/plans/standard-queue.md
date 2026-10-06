@@ -45,7 +45,9 @@ note first.
 - Why first: every later item lands as "refused by name, then implemented"; this makes the start
   state true and refusals.md complete.
 
-**2. Correct the coverage matrix.** Ed. --; S; deps none.
+**2. Correct the coverage matrix.** Ed. --; S; deps none. DONE 2026-10-06: the eight contradictions
+below corrected in the docs and two compiler messages; group SYNCHRONIZED refused under -std=2002;
+the matrix's keyword and ancestor credits fixed (Report Writer's re-keying stays item 19f).
 - Today: `gen-coverage.py` credits by keyword and by "and its clauses". False credits found: 11.9.10
   (the OPTIONS paragraph's INITIALIZE clause) is credited to initialize.md, but the OPTIONS
   paragraph is not parsed at all; 12.4.5.9 LOCK MODE and 12.4.5.15 SHARING are credited to files.md,

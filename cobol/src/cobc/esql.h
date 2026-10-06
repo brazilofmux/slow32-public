@@ -820,7 +820,7 @@ static void parse_statement_1(void)
 
     if (g_std >= 2002 && !strcmp(v, "raise")) { advance(); parse_raise(); return; }
     if (g_std >= 2002 && !strcmp(v, "validate"))
-        die_at(t->line, "VALIDATE is not implemented: an obsolete facility no COBOL provider has implemented (2023 Annex D.22, Annex E; docs/standards.md)");
+        die_at(t->line, "VALIDATE is not implemented: an obsolete facility no COBOL provider has implemented (2023 D.22, F.2 item 5; docs/standards.md)");
     if (!strcmp(v, "raise")) die_at(t->line, "RAISE is COBOL 2002; compile with -std=2002");
     if (g_std >= 2002 && !strcmp(v, "resume"))
         die_at(t->line, "RESUME is not implemented (COBOL 2014 made it optional)");
@@ -1087,8 +1087,9 @@ static void parse_statement_1(void)
         }
         return;
     }
-    if (!strcmp(v, "enter") || !strcmp(v, "disable") || !strcmp(v, "enable") ||
-        !strcmp(v, "purge") || !strcmp(v, "receive") || !strcmp(v, "send"))
+    if (!strcmp(v, "receive") || !strcmp(v, "send"))
+        die_at(t->line, "%s: COBOL 85's Communication module is out by ruling, and COBOL 2023's asynchronous messaging (14.9.31, 14.9.38) is not implemented", v);
+    if (!strcmp(v, "enter") || !strcmp(v, "disable") || !strcmp(v, "enable") || !strcmp(v, "purge"))
         die_at(t->line, "%s is not supported (the Communication module is deliberately out)", v);
     if (is_terminator(v)) die_at(t->line, "'%s' without a matching statement", v);
     if (!strcmp(v, "identification") || !strcmp(v, "id") || unit_start(t))

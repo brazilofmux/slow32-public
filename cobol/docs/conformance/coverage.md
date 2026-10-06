@@ -15,13 +15,13 @@ carry the compiler's own reason.
 | 8 characters, names, data, expressions, conditions | 35 | 5 | 0 | 30 |
 | 9 files and objects, general | 0 | 0 | 0 | 0 |
 | 10 the compilation group | 2 | 0 | 0 | 2 |
-| 11 IDENTIFICATION DIVISION | 15 | 1 | 0 | 14 |
-| 12 ENVIRONMENT DIVISION | 22 | 15 | 0 | 7 |
+| 11 IDENTIFICATION DIVISION | 15 | 0 | 0 | 15 |
+| 12 ENVIRONMENT DIVISION | 22 | 13 | 0 | 9 |
 | 13 DATA DIVISION | 78 | 49 | 0 | 29 |
 | 14 PROCEDURE DIVISION | 54 | 42 | 7 | 5 |
 | 15 intrinsic functions | 94 | 73 | 21 | 0 |
 | 16 standard classes | 0 | 0 | 0 | 0 |
-| **all** | **324** | **189** | **28** | **107** |
+| **all** | **324** | **186** | **28** | **110** |
 
 ## 7 COPY, REPLACE and directives
 
@@ -115,7 +115,7 @@ carry the compiler's own reason.
 | 11.9.7 | ENTRY-CONVENTION clause | *unswept* | | | | | |
 | 11.9.8 | FLOAT-BINARY clause | *unswept* | | | | | |
 | 11.9.9 | FLOAT-DECIMAL clause | *unswept* | | | | | |
-| 11.9.10 | INITIALIZE clause | [initialize](initialize.md) | 8 | 5 | 0 | 1 | 0 |
+| 11.9.10 | INITIALIZE clause | *unswept* | | | | | |
 | 11.9.11 | INTERMEDIATE ROUNDING clause | *unswept* | | | | | |
 | 11.10 |  | *unswept* | | | | | |
 
@@ -135,13 +135,13 @@ carry the compiler's own reason.
 | 12.4.5.6 | ALTERNATE RECORD KEY clause | [files](files.md) | 1 | 18 | 0 | 0 | 0 |
 | 12.4.5.7 | COLLATING SEQUENCE clause | [files](files.md) | 1 | 18 | 0 | 0 | 0 |
 | 12.4.5.8 | FILE STATUS clause | [files](files.md) | 1 | 18 | 0 | 0 | 0 |
-| 12.4.5.9 | LOCK MODE clause | [files](files.md) | 1 | 18 | 0 | 0 | 0 |
+| 12.4.5.9 | LOCK MODE clause | *unswept* | | | | | |
 | 12.4.5.10 | ORGANIZATION clause | [files](files.md) | 1 | 18 | 0 | 0 | 0 |
 | 12.4.5.11 | RECORD DELIMITER clause | [files](files.md) | 1 | 18 | 0 | 0 | 0 |
 | 12.4.5.12 | RECORD KEY clause | [files](files.md) | 1 | 18 | 0 | 0 | 0 |
 | 12.4.5.13 | RELATIVE KEY clause | [files](files.md) | 1 | 18 | 0 | 0 | 0 |
 | 12.4.5.14 | RESERVE clause | [files](files.md) | 1 | 18 | 0 | 0 | 0 |
-| 12.4.5.15 | SHARING clause | [files](files.md) | 1 | 18 | 0 | 0 | 0 |
+| 12.4.5.15 | SHARING clause | *unswept* | | | | | |
 | 12.4.6 |  | *unswept* | | | | | |
 | 12.4.6.3 | APPLY COMMIT clause | *unswept* | | | | | |
 | 12.4.6.4 | SAME clause | *unswept* | | | | | |
@@ -266,14 +266,14 @@ carry the compiler's own reason.
 | 14.9.28 | PERFORM statement | [perform](perform.md) | 21 | 10 | 1 | 0 | 1 |
 | 14.9.29 | RAISE statement | [raise](raise.md) | 1 | 3 | 0 | 1 | 0 |
 | 14.9.30 | READ statement | [io-statements](io-statements.md) | 0 | 14 | 0 | 0 | 0 |
-| 14.9.31 | RECEIVE statement | **not implemented**: receive is not supported (the Communication module is deliberately out) | | | | | |
+| 14.9.31 | RECEIVE statement | **not implemented**: receive: COBOL 85's Communication module is out by ruling, and COBOL 2023's asynchronous messaging (14.9.31, 14.9.38) is not implemented | | | | | |
 | 14.9.32 | RELEASE statement | [sort](sort.md) | 3 | 12 | 0 | 0 | 0 |
 | 14.9.33 | RESUME statement | **not implemented**: RESUME is not implemented (COBOL 2014 made it optional) | | | | | |
 | 14.9.34 | RETURN statement | [sort](sort.md) | 3 | 12 | 0 | 0 | 0 |
 | 14.9.35 | REWRITE statement | [io-statements](io-statements.md) | 0 | 14 | 0 | 0 | 0 |
 | 14.9.36 | ROLLBACK statement | **not implemented**: ROLLBACK is COBOL 2023; not implemented | | | | | |
 | 14.9.37 | SEARCH statement | [search](search.md) | 7 | 10 | 0 | 0 | 0 |
-| 14.9.38 | SEND statement | **not implemented**: send is not supported (the Communication module is deliberately out) | | | | | |
+| 14.9.38 | SEND statement | **not implemented**: send: COBOL 85's Communication module is out by ruling, and COBOL 2023's asynchronous messaging (14.9.31, 14.9.38) is not implemented | | | | | |
 | 14.9.39 | SET statement | [set](set.md) | 14 | 8 | 0 | 0 | 1 |
 | 14.9.40 | SORT statement | [sort](sort.md) | 3 | 12 | 0 | 0 | 0 |
 | 14.9.41 | START statement | [io-statements](io-statements.md) | 0 | 14 | 0 | 0 | 0 |
@@ -285,7 +285,7 @@ carry the compiler's own reason.
 | 14.9.47 | UNLOCK statement | *unswept* (implemented) | | | | | |
 | 14.9.48 | UNSTRING statement | [string](string.md) | 3 | 20 | 0 | 2 | 0 |
 | 14.9.49 | USE statement | [use](use.md) | 14 | 11 | 1 | 2 | 2 |
-| 14.9.50 | VALIDATE statement | **not implemented**: VALIDATE is not implemented: an obsolete facility no COBOL provider has implemented (2023 Annex D.22, Annex E; docs/standards.md) | | | | | |
+| 14.9.50 | VALIDATE statement | **not implemented**: VALIDATE is not implemented: an obsolete facility no COBOL provider has implemented (2023 D.22, F.2 item 5; docs/standards.md) | | | | | |
 | 14.9.51 | WRITE statement | [io-statements](io-statements.md) | 0 | 14 | 0 | 0 | 0 |
 
 ## 15 intrinsic functions

@@ -51,8 +51,9 @@ static void clause_rules_one(int i)
     if (s->just && !s->is_group && s->pi.edited)
         die_at(s->line, "'%s' is %s; JUSTIFIED is not for an edited item (%s)", s->name, pic_category_name(s->pi.category),
                e85 ? "X3.23-1985 JUSTIFIED syntax rule 3" : "2023 13.18.32.3 rule 3");
-    if (e85 && s->sync && s->is_group)
-        die_at(s->line, "'%s' is a group; in COBOL 85 SYNCHRONIZED is for an elementary item, COBOL 2002 allows it (X3.23-1985 SYNCHRONIZED syntax rule 1)", s->name);
+    if (s->sync && s->is_group)          /* a group: COBOL 2023 (13.18.55.3 rule 1; E.3.2 item 6) */
+        die_at(s->line, "'%s' is a group; SYNCHRONIZED is for an elementary item until COBOL 2023 (%s)", s->name,
+               e85 ? "X3.23-1985 SYNCHRONIZED syntax rule 1" : "2002 13.16.53 rule 1, 2014 likewise");
     if (e85 && s->is_group && (s->sign_lead || s->sign_sep)) {
         int any = 0;
         for (int j = i + 1; j < g_nsym && !any; j++)
