@@ -156,6 +156,12 @@ prototype-typed pointers.
 
 **15. Floating-point literals and numeric-edited items.** 8.3.3.3, 13.18.40 (floating-point
 numeric-edited), 14.6.8.3-4; Ed. 2002; M; deps none.
+- Ruled 2026-10-06: the lexer moves to Ragel -G2 as part of this item, as picture.rl did for
+  PICTURE. One token grammar (8.3: words, literals and their prefixes, separators, the period
+  rule, floating-point literals) generating both the text-word scanner of copy.h (tw_lex) and the
+  token scanner of tokenizer.h, which today duplicate each other by hand. Outside the machine, as
+  now: reference format and continuation (reader.h), PICTURE strings (context after PIC), EXEC SQL
+  text, and DECIMAL-POINT IS COMMA's swap. The gates are the net.
 - Today: `FLOAT-SHORT` / `FLOAT-LONG` / `FLOAT-EXTENDED` are accepted under -std=2002, but `1.5E+3`
   is refused ("a period must be followed by a space") and `PIC +9.9(5)E+99` is refused ("not valid
   at character 8").
