@@ -226,9 +226,8 @@ deps 8 (prototypes), 9.
 
 **27. The 2014 date-and-time functions.** 15.17, 15.38-15.41, 15.48, 15.79, 15.80, 15.92; Ed. 2014;
 M; deps none.
-- Today: each "FUNCTION ... is COBOL 2014; not implemented". Note: refusals.md section 3 lists "the
-  COBOL 2014 and 2023 intrinsic functions" as out by ruling; the brief for this queue does not. The
-  owner should confirm before this and item 33 are started.
+- Today: each "FUNCTION ... is COBOL 2014; not implemented". In scope: the owner ruled on
+  2026-10-06 that everything standard holds (refusals.md section 3 amended).
 
 **28. Table SORT completion.** 14.9.40 (ALL subscript, nested tables); Ed. 2014; S-M; deps none.
 - Today: "a table SORT of a table inside another table is not implemented".
@@ -262,7 +261,7 @@ S; deps 30.
 
 **33. The 2023 functions.** 15.12 BASECONVERT, 15.18 CONCAT, 15.19 CONVERT, 15.37 FIND-STRING, 15.65
 MODULE-NAME, 15.83 SMALLEST-ALGEBRAIC, 15.87 SUBSTITUTE, and EXCEPTION-FILE(-N)'s optional argument;
-M; deps 30; ruling caveat as item 27.
+M; deps 30; in scope (see item 27).
 - Today: each "FUNCTION ... is COBOL 2023; not implemented".
 
 **34. 2023 directives.** 7.3.12 DISPLAY, 7.3.15 FLAG-14, 7.3.20 POP, 7.3.22 PUSH, 7.3.23
@@ -323,8 +322,7 @@ EC-BOUND-OVERFLOW/-SET/-TABLE-LIMIT, EC-FLOW-SEARCH; Ed. 2014; L.
 **45. Locale support and STANDARD-COMPARE.** A.4.9; 15.51-15.54, 15.85, LOCALE on UPPER-/LOWER-CASE
 and TEST-NUMVAL-C, SET formats 11-12, SPECIAL-NAMES LOCALE, PICTURE locale format, CHARACTER
 CLASSIFICATION; Ed. 2002; L. Today: functions refused naming "locale support" or "ISO/IEC 14651";
-SPECIAL-NAMES LOCALE and SET LOCALE refused. Listed as out by ruling in refusals.md section 3 --
-owner to confirm.
+SPECIAL-NAMES LOCALE and SET LOCALE refused. In scope (ruled 2026-10-06; see item 27).
 
 **46. Commit and rollback.** A.4.3; 9.1.18, 12.4.6.3 APPLY COMMIT, 14.9.7, 14.9.36,
 EC-FLOW-*-COMMIT/ROLLBACK; Ed. 2023; L.
@@ -341,6 +339,14 @@ format 17, EC-MCS-*; Ed. 2023; L.
 **49. Standard arithmetic modes.** A.3 items 1-3; 11.9.5 STANDARD-DECIMAL / STANDARD-BINARY; Ed.
 2014; L; deps 16, 20. STANDARD-BINARY is obsolete in 2023 (F.2 item 3) and, by the text, no provider
 has it: candidate for the same treatment as VALIDATE.
+
+**50. The screen behaviours that differ from the text** (docs/conformance/screen.md's three
+rulings). Ed. 2002; S each; deps none. By the owner's rule (everything standard holds) the text is
+the target: BLANK SCREEN ignored during an ACCEPT (13.18.7.4 rule 5); COLUMN PLUS 1 immediately
+after the item before (13.18.14.4 rule 15; today one column further, as GnuCOBOL counts); CRT
+STATUS an alphanumeric item of four characters (12.3.7.3 rule 30; today PIC 9(4) and Micro
+Focus's three bytes are taken too). Each changes what existing programs see, so each lands with the
+old behaviour kept under -dialect=gnucobol or -dialect=mf where a program needs it, as ACAS does.
 
 ## Out by ruling
 
@@ -392,5 +398,5 @@ CURSOR; EC-I-O-WARNING (2023; six tests); the 1985 Report Writer; SCREEN SECTION
    SEND/RECEIVE as the Communication module.
 7. refusals.md section 2 omits the 2002 Report Writer additions (in conformance/reportwriter.md),
    and every bare-parse-error gap of item 1.
-8. refusals.md section 3 rules the 2014/2023 functions and the locale functions out; this brief did
-   not list that ruling.
+8. refusals.md section 3 ruled the 2014/2023 functions and the locale functions out. Resolved
+   2026-10-06: the owner ruled everything standard in scope, and section 3 was amended.
