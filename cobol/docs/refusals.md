@@ -8,8 +8,10 @@ A refusal says one of four things, and the message should say which:
 2. **A gap in an edition this compiler targets** (-std=85 or
    -std=2002). The message says "not implemented".
 3. **Out of scope, by ruling.** Object orientation, the Communication
-   module, the Debug module, VALIDATE, and the functions of later
-   editions. The message names the ruling or the edition.
+   module, the Debug module and VALIDATE. The message names the ruling.
+   (The functions of later editions were here until 2026-10-06; the
+   owner ruled then that everything standard is in scope, so they are
+   class 2 gaps, queued in docs/plans/standard-queue.md.)
 4. **An implementation limit.** A fixed capacity that a program could
    in principle exceed.
 
@@ -117,8 +119,11 @@ COBOL 2002/2023 (Stage B):
 - USE FOR DEBUGGING and the >>D indicator (the Debug module, obsolete
   in 85 and removed in 2014).
 - VALIDATE (docs/standards.md).
-- The COBOL 2014 and 2023 intrinsic functions, and the locale
-  functions.
+
+In scope since 2026-10-06 (the owner: "everything standard holds"):
+the COBOL 2014 and 2023 intrinsic functions and locale support, once
+listed here. They are gaps in a targeted edition, refused as not
+implemented, and queued (docs/plans/standard-queue.md items 27, 33, 45).
 
 Two ruled 2026-09-28:
 
