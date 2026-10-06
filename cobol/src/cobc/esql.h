@@ -1340,6 +1340,8 @@ static void parse_procedure_division(void)
         fdesc_of(&f->ret, r);
         fnsig_write(f);
     }
+    if (at_word("raising"))
+        die_at(cur()->line, "PROCEDURE DIVISION ... RAISING is COBOL 2002 (2023 14.2); not implemented (exception propagation)");
     expect_period();
     if (g_fnsig_only) { skip_unit_body(); return; }
     prescan_paragraphs(g_tp);

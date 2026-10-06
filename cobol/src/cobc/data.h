@@ -633,6 +633,12 @@ static void parse_data_item1(void)
                            s->name, s->pic);
                 if (has1)
                     die_at(t->line, "'%s': PICTURE '%s': a boolean PICTURE holds only the symbol 1 (2023 13.18.40.4 rule 8)", s->name, s->pic);
+                {
+                    /* a floating-point numeric-edited PICTURE: mantissa, E, a sign, exponent (2023 13.18.40.2.2) */
+                    const char *pe = s->pic; int fl = 0;
+                    for (; *pe; pe++) if ((*pe == 'E' || *pe == 'e') && (pe[1] == '+' || pe[1] == '-') && pe > s->pic && strchr("9.V()+-", pe[-1])) fl = 1;
+                    if (fl) die_at(t->line, "'%s': a floating-point numeric-edited PICTURE is COBOL 2002 (2023 13.18.40); not implemented", s->name);
+                }
                 die_at(t->line, "'%s': %s", s->name, s->pi.err);
             }
             advance();
@@ -750,6 +756,7 @@ static void parse_data_item1(void)
         if (!strcmp(t->s, "occurs")) {
             advance();
             if (at_word("unbounded")) die_at(t->line, "OCCURS UNBOUNDED is COBOL 2002 (not in the 1985 text)");
+            if (at_word("dynamic")) die_at(t->line, "OCCURS DYNAMIC (a dynamic-capacity table) is COBOL 2014 (2023 13.18.38 format 4); not implemented");
             if (cur()->kind != T_NUM) die_at(t->line, "expected a count after OCCURS");
             s->occurs = atoi(cur()->s);
             advance();
@@ -904,6 +911,13 @@ static void parse_data_item1(void)
             if (g_std < 2002) die_at(t->line, "'%s': %s is COBOL 2002, not 85", s->name, what);
             die_at(t->line, "'%s': %s is not implemented", s->name, what);
         }
+        if (!strcmp(t->s, "aligned"))
+            die_at(t->line, "'%s': the ALIGNED clause is COBOL 2002 (2023 13.18.1); not implemented", s->name);
+        if (!strcmp(t->s, "program-pointer") || !strcmp(t->s, "function-pointer") || !strcmp(t->s, "message-tag"))
+            die_at(t->line, "'%s': USAGE %s is COBOL %s (2023 13.18.60); not implemented", s->name, t->s,
+                   t->s[0] == 'p' ? "2002" : t->s[0] == 'f' ? "2014" : "2023");
+        if (!strcmp(t->s, "no") && is_word(peek(1), "sign"))
+            die_at(t->line, "'%s': USAGE PACKED-DECIMAL NO SIGN is COBOL 2023 (13.18.60); not implemented", s->name);
         die_at(t->line, "unexpected %s in the description of '%s'", tok_desc(t), s->name);
     }
     expect_period();

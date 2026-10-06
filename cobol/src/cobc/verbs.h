@@ -367,6 +367,8 @@ static void parse_inspect_1(void)
     Opnd from, to; InspRange crg; memset(&crg, 0, sizeof crg);
     memset(&from, 0, sizeof from); memset(&to, 0, sizeof to);
 
+    if (at_word("backward") && peek(1)->kind == T_WORD && !is_verb(peek(1)->s))
+        die_at(cur()->line, "INSPECT BACKWARD is COBOL 2023 (14.9.22); not implemented");
     /* ---- the statement, read: no code ---- */
     g_noemit++;
     if (at_word("function") || (cur()->kind == T_WORD && ufn_named(cur()->s))) {

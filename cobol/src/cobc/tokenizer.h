@@ -288,7 +288,10 @@ static void tokenize_lines(SrcLine *lines, int nlines)
             if (isdigit(c) || signed_num || dot_num) {
                 const char *s = p + (signed_num ? 1 : 0), *e = s;
                 while (isdigit((unsigned char)*e)) e++;
-                if (*e == '.' && isdigit((unsigned char)e[1])) { e++; while (isdigit((unsigned char)*e)) e++; }
+                int had_point = 0;
+                if (*e == '.' && isdigit((unsigned char)e[1])) { e++; had_point = 1; while (isdigit((unsigned char)*e)) e++; }
+                if ((had_point || dot_num) && (*e == 'E' || *e == 'e') && (e[1] == '+' || e[1] == '-' || isdigit((unsigned char)e[1])))
+                    die_at(line, "floating-point literals (1.5E+3) are COBOL 2002 (2023 8.3.3.2.4); not implemented");
                 if (is_wordch((unsigned char)*e) && !signed_num) {
                     /* ".00-EXIT" is a period with no space after it, not a
                      * word: the loop below would take nothing, forever */

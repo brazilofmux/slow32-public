@@ -31,7 +31,13 @@ note first.
 
 ## Tier 1 -- finish what is started, and make the gap list honest
 
-**1. Name every gap.** Ed. 2002-2023; S; deps none.
+**1. Name every gap.** Ed. 2002-2023; S; deps none. DONE 2026-10-06: each construct below is
+refused by name, with a test in tests/bad (std2002-*), and so are ALPHABET FOR/IS LOCALE,
+CURRENCY with PICTURE SYMBOL, CONSTANT FROM, the float conditions (INFINITY ...), ADDRESS OF
+FUNCTION/PROGRAM, SET TO ENTRY, and OPEN f SHARING. Not changed, being unverified or not what the
+probe meant: COMMIT after DISPLAY on the next line (DISPLAY takes COMMIT as an operand), SORT of a
+table with no KEY data-name, PROGRAM COLLATING SEQUENCE NATIVE. SHARING and LOCK MODE in SELECT
+stay accepted and ignored (GitHub #34).
 - Today: about thirty constructs meet a bare parse error rather than a "not implemented" refusal,
   against refusals.md's own rule. Verified: `START f FIRST` ("'first' is not a COBOL verb"), `START
   ... WITH LENGTH`, `OPEN I-O SHARING ...`, `READ ... WITH LOCK`, `RETRY`, `WRITE FILE`, `REWRITE
@@ -350,11 +356,19 @@ STATUS an alphanumeric item of four characters (12.3.7.3 rule 30; today PIC 9(4)
 Focus's three bytes are taken too). Each changes what existing programs see, so each lands with the
 old behaviour kept under -dialect=gnucobol or -dialect=mf where a program needs it, as ACAS does.
 
+## Tier 6 -- object orientation, last
+
+**51. Object orientation.** 9.3, 11.3-11.8, 14.9.21 INVOKE and the rest of the OO module, RAISE of
+an exception object, USE AFTER EXCEPTION OBJECT, REPOSITORY class entries; Ed. 2002; L (a design
+note first). Required by the text: 2023 A.4.10 makes only multiple inheritance and parametric
+polymorphism optional. Ruled 2026-10-06: deferred, not excluded -- it comes after everything above,
+so that the standard is implemented as far as it can be. Its runtime (object references, dispatch,
+storage) lives in libcob above SLOW-32, as the rest does.
+
 ## Out by ruling
 
 | element | ruling |
 |---|---|
-| Object orientation: classes, INVOKE, interfaces, FACTORY, object references, methods, RAISE of an exception object, USE AFTER EXCEPTION OBJECT, REPOSITORY class entries | deferred until a program needs it (standards.md). Note: 2023 A.4.10 makes only multiple inheritance and parametric polymorphism optional; the rest of OO is required by the text, so this is the owner's deferral, not the standard's |
 | VALIDATE and its clauses (CLASS, DEFAULT, DESTINATION, INVALID, VALIDATE-STATUS, VALUE format 5) | not built: obsolete in 2023 (F.2 item 5), optional since 2014 (A.4.13 of 2014) |
 | The Communication module (ENTER, 85-style SEND/RECEIVE, CD) | out; removed by 2014 (E.2 item 19) |
 | The Debug module (USE FOR DEBUGGING, debugging lines, `>>D`) | out; removed by 2014 (E.2 item 19) |

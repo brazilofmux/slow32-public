@@ -315,6 +315,10 @@ static void env_text_args(Opnd *o, const char *what);
 static void parse_set(void)
 {
     Ref rs[MAXOPS]; int nr = 0;
+    if (at_word("content") && is_word(peek(1), "of") && !sym_lookup_quiet("content"))
+        die_at(cur()->line, "SET CONTENT OF is COBOL 2014 (2023 14.9.39 format 15); not implemented");
+    if (at_word("locale") && !sym_lookup_quiet("locale"))
+        die_at(cur()->line, "SET LOCALE is not implemented (locale support, 2023 14.9.39 format 11)");
     if (at_word("environment") && !sym_lookup_quiet("environment")) {
         /* SET ENVIRONMENT name TO value (GnuCOBOL's own; BP-G1, taken only
          * under -dialect=gnucobol): a variable the run unit's later
@@ -375,8 +379,12 @@ static void parse_set(void)
         } else { g_noemit++; parse_ref(&rs[nr]); g_noemit--; }   /* a receiver: identified immediately before it is changed (2023 14.9.39.4), its calls then (recv_calls) */
         if (raddr[nr] || (!rs[nr].sym->is_group && rs[nr].sym->usage == U_POINTER)) nptr++;
         nr++;
+        if (at_word("attribute"))
+            die_at(cur()->line, "SET ... ATTRIBUTE (a screen item's attributes, 2023 14.9.39 format 6) is not implemented");
     }
     if (!nr) die_at(cur()->line, "SET needs an item");
+    if (at_word("to") && is_word(peek(1), "entry"))
+        die_at(cur()->line, "SET ... TO ENTRY (a program-pointer, 2023 14.9.39 format 9) is not implemented");
     if (nptr && nptr != nr) die_at(rs[0].line, "SET: data-pointer receivers are not mixed with others");
     if (nptr && accept_word("to")) {
         /* format 7: the value once, then each receiver in order */

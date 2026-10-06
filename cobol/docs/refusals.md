@@ -117,10 +117,18 @@ COBOL 2002/2023 (Stage B):
 - in a user-defined function: OMITTED arguments for OPTIONAL
   parameters, and more than 7 USING items (CALL takes both; 32 USING
   items is the CALL limit, section 4);
-- and some 2002-2023 constructs that still meet a parse error rather
-  than a refusal by name (docs/plans/standard-queue.md item 1 lists
-  them: START FIRST/LAST, OPEN SHARING, READ WITH LOCK, ASSIGN USING,
-  the OPTIONS paragraph, floating-point literals ...).
+- the 2002-2023 constructs that used to meet a parse error and are now
+  refused by name (docs/plans/standard-queue.md item 1; tests/bad/
+  std2002-*): START FIRST/LAST and WITH LENGTH, START of a sequential
+  file, record locking and RETRY, OPEN SHARING, WRITE/REWRITE FILE,
+  DELETE FILE, WRITE with BEFORE and AFTER, ASSIGN USING, SUPPRESS WHEN,
+  FORMAT and SELECT WHEN, the OPTIONS paragraph, ALIGNED, USAGE
+  PROGRAM-POINTER / FUNCTION-POINTER / MESSAGE-TAG, PACKED-DECIMAL NO
+  SIGN, OCCURS DYNAMIC, floating-point literals and PICTUREs, the
+  floating-point conditions, XOR, INSPECT BACKWARD, SET CONTENT OF /
+  LOCALE / ATTRIBUTE / TO ENTRY, ADDRESS OF FUNCTION, PROCEDURE DIVISION
+  RAISING, CONSTANT FROM, currency strings and PICTURE SYMBOL, ALPHABET
+  FOR and IS LOCALE, and the ANYCASE and LOCALE function phrases.
 
 ## 3. Out of scope, by ruling
 

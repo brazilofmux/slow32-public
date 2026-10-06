@@ -284,8 +284,18 @@ static unsigned all_sub_ahead(void)
     return m;
 }
 
+/* An argument phrase of a function from a later edition: ANYCASE (NUMVAL-C,
+ * TEST-NUMVAL-C, 2014) and LOCALE (locale support), refused by name */
+static void fn_phrase_nyi(const char *fname)
+{
+    if ((at_word("anycase") || at_word("locale")) && !sym_lookup_quiet(cur()->s))
+        die_at(cur()->line, "FUNCTION %s: the %s phrase is not implemented (%s)", fname, at_word("anycase") ? "ANYCASE" : "LOCALE",
+               at_word("anycase") ? "COBOL 2014, 2023 15.68" : "locale support, 2023 15.1");
+}
+
 static Opnd *fn89_arg(const char *fname)
 {
+    fn_phrase_nyi(fname);
     Opnd *x = xmalloc(sizeof *x);
     unsigned mask = all_sub_ahead();
     if (mask) {
@@ -532,6 +542,9 @@ static void parse_operand_raw_1(Opnd *o)
         if (!g_cond_depth && strcmp(g_cur_stmt, "SET") && strcmp(g_cur_stmt, "CALL"))
             die_at(t->line, "ADDRESS OF is a sending operand of SET or CALL, or a relation's operand; not of %s", g_cur_stmt);
         advance(); advance();
+        if ((at_word("function") || at_word("program")) && !sym_lookup_quiet(cur()->s))
+            die_at(t->line, "ADDRESS OF %s is COBOL 2014 (2023 8.4.3.12, a %s-pointer's value); not implemented",
+                   at_word("function") ? "FUNCTION" : "PROGRAM", at_word("function") ? "function" : "program");
         o->kind = O_ADDR;
         parse_ref(&o->ref);
         const Sym *x = o->ref.sym;
@@ -740,7 +753,7 @@ static void parse_operand_raw_1(Opnd *o)
             advance();
             o->farg = fn89_arg(n->s);             /* an integer: an arithmetic expression too (15.3 rule 6) */
             fn_arg_check(o->farg, 'I', n->s, 1, n->line);
-            if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the function argument");
+            if (cur()->kind != T_RP) { fn_phrase_nyi(n->s); die_at(cur()->line, "expected ')' after the function argument"); }
             advance();
             o->kind = O_FUNC; o->fn = fn;
             o->fsize = fn == FN_DATEINT ? 8 : fn == FN_DAYINT ? 7 : 10;   /* DISPLAYed directly: yyyymmdd, yyyyddd, or ten digits, as GnuCOBOL shows them */
@@ -753,7 +766,7 @@ static void parse_operand_raw_1(Opnd *o)
             if (cur()->kind != T_LP) die_at(cur()->line, "expected '(' after FUNCTION LENGTH");
             advance();
             Opnd x; parse_operand(&x);
-            if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the function argument");
+            if (cur()->kind != T_RP) { fn_phrase_nyi(n->s); die_at(cur()->line, "expected ')' after the function argument"); }
             advance();
             if (x.kind != O_REF && x.kind != O_STR && x.kind != O_FUNC) die_at(n->line, "FUNCTION LENGTH takes an item or a literal");
             if (x.kind == O_FUNC && x.fvar) {       /* the length of a result known only at run time */
@@ -788,7 +801,7 @@ static void parse_operand_raw_1(Opnd *o)
             if (cur()->kind != T_LP) die_at(cur()->line, "expected '(' after FUNCTION %s", n->s);
             advance();
             Opnd x; parse_operand(&x);
-            if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the function argument");
+            if (cur()->kind != T_RP) { fn_phrase_nyi(n->s); die_at(cur()->line, "expected ')' after the function argument"); }
             advance();
             if (bytes) {
                 if (x.kind != O_REF && x.kind != O_STR && x.kind != O_FUNC) die_at(n->line, "FUNCTION BYTE-LENGTH takes an item or a literal");
@@ -823,7 +836,7 @@ static void parse_operand_raw_1(Opnd *o)
         if (o->farg->kind != O_REF && o->farg->kind != O_STR && o->farg->kind != O_FUNC)
             die_at(n->line, "FUNCTION %s takes an alphanumeric item or literal", n->s);
         fn_arg_check(o->farg, 'A', n->s, 1, n->line);
-        if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the function argument");
+        if (cur()->kind != T_RP) { fn_phrase_nyi(n->s); die_at(cur()->line, "expected ')' after the function argument"); }
         advance();
         o->kind = O_FUNC;
         Opnd *a = o->farg;

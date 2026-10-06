@@ -65,6 +65,8 @@ static void parse_identification_division(void)
         Tok *t = cur();
         int known = 0;
         for (int i = 0; paras[i]; i++) if (is_word(t, paras[i])) known = 1;
+        if (!known && is_word(t, "options"))
+            die_at(t->line, "the OPTIONS paragraph is COBOL 2002 (2023 11.9); not implemented");
         if (!known) die_at(t->line, "unexpected %s in the IDENTIFICATION DIVISION", tok_desc(t));
         /* deleted by 2002, and taken there as an extension: the
          * paragraphs are comments in any edition that had them */
@@ -135,6 +137,7 @@ static void parse_select(void)
         Tok *t = cur();
         if (t->kind != T_WORD) die_at(t->line, "unexpected %s in SELECT %s", tok_desc(t), f->name);
         if (accept_word("assign")) {
+            if (at_word("using")) die_at(cur()->line, "ASSIGN USING (a file-name in a data item) is COBOL 2002 (2023 12.4.5); not implemented");
             accept_word("to");
             if (cur()->kind == T_STR) { f->assign_lit = cur(); advance(); }
             else if (cur()->kind == T_PERIOD || at_word("file") || at_word("organization") || at_word("organisation") || at_word("access") || at_word("record") || at_word("status"))
@@ -261,6 +264,8 @@ static void parse_select(void)
             continue;
         }
         if (accept_word("reserve")) { while (cur()->kind != T_PERIOD && !at_word("organization") && !at_word("access") && !at_word("file")) advance(); continue; }
+        if (!strcmp(t->s, "suppress"))
+            die_at(t->line, "ALTERNATE RECORD KEY ... SUPPRESS WHEN is COBOL 2002 (2023 12.4.5.2); not implemented");
         die_at(t->line, "unexpected %s in SELECT %s", tok_desc(t), f->name);
     }
     expect_period();
@@ -441,7 +446,11 @@ static void parse_environment_division(void)
                         user_word(cur()->s, cur()->line, "an alphabet");
                         Alphabet *a = &g_alphabet[g_nalphabet++];
                         snprintf(a->name, sizeof a->name, "%s", cur()->s); advance();
+                        if (at_word("for") && (is_word(peek(1), "national") || is_word(peek(1), "alphanumeric")))
+                            die_at(cur()->line, "ALPHABET ... FOR %s is COBOL 2002 (2023 12.3.7); not implemented", is_word(peek(1), "national") ? "NATIONAL" : "ALPHANUMERIC");
                         accept_word("is");
+                        if (at_word("locale") || at_word("ucs-4") || at_word("utf-8") || at_word("utf-16"))
+                            die_at(cur()->line, "ALPHABET ... IS %s is COBOL 2002 (2023 12.3.7); not implemented", cur()->s);
                         if (accept_word("native") || accept_word("standard-1") || accept_word("standard-2")) a->native = 1;
                         else if (accept_word("ebcdic")) {
                             /* EBCDIC (the user's ruling of 2026-09-28): a collating sequence
@@ -704,6 +713,9 @@ static void parse_fd(void)
             }
             advance(); continue;
         }
+        if (!strcmp(t->s, "format") || (!strcmp(t->s, "select") && is_word(peek(1), "when")))
+            die_at(t->line, "the %s clause is COBOL 2002 (2023 %s); not implemented", !strcmp(t->s, "format") ? "FORMAT" : "SELECT WHEN",
+                   !strcmp(t->s, "format") ? "13.18.24" : "13.18.51");
         die_at(t->line, "unexpected %s in FD %s", tok_desc(t), f->name);
     }
     expect_period();

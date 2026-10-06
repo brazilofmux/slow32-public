@@ -247,6 +247,7 @@ static void parse_constant_entry(int line)
     else if (accept_word("global")) c.global = 1;
     }
     if (!mf && !accept_word("as")) {
+        if (at_word("from")) die_at(cur()->line, "'%s': CONSTANT ... FROM a compilation variable is COBOL 2023 (13.10); not implemented (it needs >>DEFINE)", name);
         if (cur()->kind != T_NUM && cur()->kind != T_STR) die_at(cur()->line, "expected AS in the constant entry of '%s'", name);
         bp(BP_E25_CONSTANT_NO_AS, cur()->line);
     }

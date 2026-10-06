@@ -20,6 +20,18 @@ static File *expect_file(void)
     return f;
 }
 
+/* The record-locking and retry phrases of the I-O statements (2023
+ * 14.7.9 RETRY, 9.1.16 record locking; optional since 2014): refused by
+ * name where they would stand, not met as "not a COBOL verb". */
+static void io_nyi(const char *stmt)
+{
+    if ((at_word("with") && (is_word(peek(1), "lock") || is_word(peek(1), "no"))) || at_word("lock") ||
+        (at_word("advancing") && is_word(peek(1), "on")) || (at_word("ignoring") && is_word(peek(1), "lock")))
+        die_at(cur()->line, "%s with a record-locking phrase is not implemented (file sharing and record locking, 2023 9.1.15-16)", stmt);
+    if (at_word("retry"))
+        die_at(cur()->line, "%s ... RETRY is not implemented (2023 14.7.9)", stmt);
+}
+
 static void parse_open(void)
 {
     int n = 0;
@@ -32,10 +44,14 @@ static void parse_open(void)
         else if (accept_word("i-o")) mode = COB_OPEN_IO;
         else if (accept_word("extend")) mode = COB_OPEN_EXTEND;
         else break;
+        if (at_word("sharing") || at_word("retry"))
+            die_at(cur()->line, "OPEN ... %s is not implemented (file sharing, 2023 9.1.15; RETRY, 14.7.9)", at_word("sharing") ? "SHARING" : "RETRY");
         while (cur()->kind == T_WORD && !at_word("input") && !at_word("output") && !at_word("i-o") &&
                !at_word("extend") && !is_verb(cur()->s) && !is_terminator(cur()->s)) {
             int fline = cur()->line;
             File *f = expect_file();
+            if (at_word("sharing") || at_word("retry"))
+                die_at(cur()->line, "OPEN ... %s is not implemented (file sharing, 2023 9.1.15; RETRY, 14.7.9)", at_word("sharing") ? "SHARING" : "RETRY");
             int reversed = 0, e85 = g_std < 2002, seq = f->org == COB_ORG_SEQ || f->org == COB_ORG_LINESEQ;
             if (f->report_name[0] && (mode == COB_OPEN_INPUT || mode == COB_OPEN_IO))
                 die_at(fline, "OPEN %s '%s': a report file is opened OUTPUT or EXTEND (%s)", mode == COB_OPEN_INPUT ? "INPUT" : "I-O", f->name,
@@ -172,6 +188,7 @@ static void parse_read(void)
         if (g_std >= 2002 && nrec > 1 && !alnum)
             die_at(into.line, "READ %s INTO '%s': with several record descriptions, the INTO item and every record are alphanumeric (2023 14.9.30.3 rule 1)", f->name, into.sym->name);
     }
+    io_nyi("READ");
     int keyed = 0, ki = 0;
     if (accept_word("key")) {
         accept_word("is");
@@ -182,6 +199,7 @@ static void parse_read(void)
         if (ki < 0 || klen) die_at(k.line, "READ ... KEY IS '%s': not the RECORD KEY or an ALTERNATE RECORD KEY of '%s'", k.sym->name, f->name);
         keyed = 1;
     }
+    io_nyi("READ");
     if (has_prev && keyed) die_at(cur()->line, "READ PREVIOUS names no KEY (2023 14.9.30 format 1)");
     has_next |= has_prev;                       /* a sequential read, backwards */
     if (f->org == COB_ORG_INDEXED) {
@@ -221,6 +239,7 @@ static void parse_read(void)
 
 static void parse_write(void)
 {
+    if (at_word("file")) die_at(cur()->line, "WRITE FILE is not implemented (2023 14.9.51 format 2; optional since 2014)");
     Ref rec; parse_ref(&rec);
     File *f = file_of_record(rec.sym, rec.line);
     if (f->org == COB_ORG_SORT) die_at(rec.line, "WRITE to the sort file '%s': use RELEASE inside the INPUT PROCEDURE", f->name);
@@ -252,6 +271,9 @@ static void parse_write(void)
         accept_word("line"); accept_word("lines");
     }
 advancing_done:;
+    if (at_word("before") || at_word("after"))
+        die_at(cur()->line, "WRITE with both BEFORE and AFTER ADVANCING is COBOL 2023 (14.9.51); not implemented");
+    io_nyi("WRITE");
     /* a BEFORE phrase on a print file (not LINAGE, which counts its own):
      * before = -3 marks it, so BEFORE 1 is not taken for AFTER 1 -- the
      * runtime's printer needs to know which side of the record the move
@@ -311,10 +333,12 @@ advancing_done:;
 /* REWRITE record [FROM x] [INVALID KEY ...] */
 static void parse_rewrite(void)
 {
+    if (at_word("file")) die_at(cur()->line, "REWRITE FILE is not implemented (2023 14.9.35 format 2; optional since 2014)");
     Ref rec; parse_ref(&rec);
     File *f = file_of_record(rec.sym, rec.line);
     if (f->org == COB_ORG_LINESEQ) die_at(rec.line, "REWRITE is not valid on a LINE SEQUENTIAL file");
     if (accept_word("from")) { Opnd src; parse_operand(&src); emit_move(&src, &rec); }
+    io_nyi("REWRITE");
     emit_file_addr("r3", f); emit_li("r4", rec.sym->size);
     emit_call("cob_rewrite");
     emit("\tstw sp+%d, r1", SLOT_C);
@@ -330,8 +354,10 @@ static void parse_rewrite(void)
 /* DELETE file [RECORD] [INVALID KEY ...] */
 static void parse_delete(void)
 {
+    if (at_word("file")) die_at(cur()->line, "DELETE FILE is COBOL 2023 (14.9.10 format 2); not implemented");
     File *f = expect_file();
     accept_word("record");
+    io_nyi("DELETE");
     if (f->org != COB_ORG_INDEXED && f->org != COB_ORG_RELATIVE) die_at(cur()->line, "DELETE needs an INDEXED or RELATIVE file");
     if (f->access == 0 && (at_word("invalid") || (at_word("not") && is_word(peek(1), "invalid"))))
         die_at(cur()->line, "DELETE '%s' in sequential access takes no INVALID KEY (%s)", f->name,
@@ -348,7 +374,11 @@ static void parse_delete(void)
 static void parse_start(void)
 {
     File *f = expect_file();
-    if (f->org != COB_ORG_INDEXED && f->org != COB_ORG_RELATIVE) die_at(cur()->line, "START needs an INDEXED or RELATIVE file");
+    if (at_word("first") || at_word("last"))
+        die_at(cur()->line, "START ... %s is COBOL 2002 (14.9.41); not implemented", at_word("first") ? "FIRST" : "LAST");
+    if (f->org != COB_ORG_INDEXED && f->org != COB_ORG_RELATIVE)
+        die_at(cur()->line, g_std < 2002 ? "START needs an INDEXED or RELATIVE file (X3.23-1985)"
+                                         : "START of a sequential file (COBOL 2002, with FIRST or LAST) is not implemented");
     if (f->access == 1) die_at(cur()->line, "START needs ACCESS SEQUENTIAL or DYNAMIC");
     int op = 0;                     /* = */
     int ki = 0, klen = 0;           /* the key: prime, or an alternate; a leading part's length */
@@ -370,6 +400,8 @@ static void parse_start(void)
             if (ki < 0) die_at(k.line, "START ... KEY IS '%s': not a key of '%s', nor an item that begins where one begins", k.sym->name, f->name);
         }
     }
+    if (at_word("with") && is_word(peek(1), "length")) die_at(cur()->line, "START ... WITH LENGTH is COBOL 2002 (14.9.41); not implemented");
+    io_nyi("START");
     emit_file_addr("r3", f);
     emit_li("r4", op); emit_li("r5", ki); emit_li("r6", klen);
     emit_call("cob_start");

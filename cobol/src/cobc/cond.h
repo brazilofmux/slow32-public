@@ -521,6 +521,13 @@ static Cond *parse_simple(void)
         if (x.kind == O_REF && x.ref.sym->is_cond) return cond_88(&x.ref, neg);
         if (g_abbr_op >= 0)             /* an object alone: the last relation's subject and operator */
             return cond_rel(&g_abbr_x, g_abbr_op, &x, g_abbr_neg ^ neg);
+        {
+            /* the floating-point conditions of COBOL 2014 (2023 8.8.4.3, 8.8.4.7) */
+            static const char *fw[] = { "infinity", "nan", "finite", "normal", "subnormal", "quiet", "signaling", "signalling", NULL };
+            for (int k = 0; fw[k]; k++)
+                if (at_word(fw[k]) && !sym_lookup_quiet(fw[k]))
+                    die_at(line, "the %s condition of a floating-point item is COBOL 2014 (2023 8.8.4); not implemented", cur()->s);
+        }
         if (x.kind == O_REF && !neg)
             die_at(line, "expected a relational operator after '%s'", x.ref.sym->name);
         die_at(line, "expected a relational operator, found %s", tok_desc(t));
@@ -570,6 +577,8 @@ static Cond *parse_cond(void)
     if (g_cond_depth++ == 0) g_abbr_op = -1;       /* a new condition: nothing to abbreviate yet */
     Cond *a = parse_and();
     while (accept_word("or")) a = cond_bin(C_OR, a, parse_and());
+    if ((at_word("xor") || at_word("exclusive-or")) && !sym_lookup_quiet(cur()->s))
+        die_at(cur()->line, "the logical operator %s is COBOL 2023 (8.7.6); not implemented", at_word("xor") ? "XOR" : "EXCLUSIVE-OR");
     g_cond_depth--;
     if (top && g_nucall > uc0) {
         /* user functions in the condition are called where it is evaluated,

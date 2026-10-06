@@ -59,7 +59,9 @@ static void apply_decimal_point(void)
         if (g_tok[j].kind == T_WORD && !strcmp(g_tok[j].s, "sign")) j++;
         if (j < g_ntok && g_tok[j].kind == T_WORD && !strcmp(g_tok[j].s, "is")) j++;
         if (j >= g_ntok || g_tok[j].kind != T_STR) die_at(g_tok[i].line, "CURRENCY SIGN needs a literal");
-        if (g_tok[j].len != 1) die_at(g_tok[j].line, "CURRENCY SIGN IS: the literal is one character");
+        if ((j + 1 < g_ntok && g_tok[j + 1].kind == T_WORD && (!strcmp(g_tok[j + 1].s, "with") || !strcmp(g_tok[j + 1].s, "picture"))) || g_tok[j].len != 1)
+            die_at(g_tok[j].line, g_tok[j].len != 1 ? "CURRENCY SIGN IS: a currency string of more than one character (COBOL 2002, with PICTURE SYMBOL) is not implemented"
+                                                    : "CURRENCY SIGN ... WITH PICTURE SYMBOL is COBOL 2002 (2023 12.3.7); not implemented");
         unsigned char c = (unsigned char)g_tok[j].s[0];
         if (isdigit(c) || c == ' ' || strchr("ABCDPRSVXZabcdprsvxz*+-,.;()\"/=", c))
             die_at(g_tok[j].line, "CURRENCY SIGN IS '%c': that character has a meaning of its own in a PICTURE", c);

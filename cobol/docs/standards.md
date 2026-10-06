@@ -327,6 +327,12 @@ took it up for business code -- where it lives it is glue to Java and
 did not push it further. The objection is not to object orientation
 (C++ is fine) but to OO COBOL specifically: verbose on top of verbose.
 
+Ruled 2026-10-06: deferred, not excluded. The owner means to be able to
+say the standard is implemented as far as it can be, and object
+orientation is part of it; it comes last, after everything else in
+docs/plans/standard-queue.md, as its own module with its own design
+note.
+
 It waits until someone brings a program that needs it. By then Stages
 A and B give it a suite to land against. It also cannot compromise the
 layer: object references, dispatch and whatever memory management it
