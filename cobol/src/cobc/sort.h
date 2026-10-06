@@ -471,10 +471,43 @@ static int ecp_scan(Ecp *e)
         if (common) { e->Lcommon = new_label(); continue; }
         if (e->nw == e->wcap) { e->wcap = e->wcap ? 2 * e->wcap : 8; e->w = xrealloc(e->w, (size_t)e->wcap * sizeof *e->w); }
         EcpWhen *w = &e->w[e->nw++]; memset(w, 0, sizeof *w); w->label = new_label();
+        /* WHEN EXCEPTION file-name-1 ... or an open mode (14.9.28 format 3): a
+         * file's I-O errors, chosen as a USE AFTER EXCEPTION PROCEDURE ON
+         * the file or the mode chooses them (14.9.49.4 rules 3a-b, 6).  An
+         * entry with no exception-name: ec -1, file the file's index, or
+         * -10 - the open mode */
+        {
+            int q = k + 2, mode = 0;
+            Tok *x = &g_tok[q];
+            if (is_word(x, "input")) mode = COB_OPEN_INPUT;
+            else if (is_word(x, "output")) mode = COB_OPEN_OUTPUT;
+            else if (is_word(x, "i-o") || is_word(x, "io")) mode = COB_OPEN_IO;
+            else if (is_word(x, "extend")) mode = COB_OPEN_EXTEND;
+            if (mode || (x->kind == T_WORD && strncmp(x->s, "ec-", 3) && file_find(x->s))) {
+                for (; q < g_ntok && g_tok[q].kind == T_WORD && !is_verb(g_tok[q].s); q++) {
+                    x = &g_tok[q];
+                    int fk;
+                    if (mode) { if (q > k + 2) break; fk = -10 - mode; }
+                    else {
+                        File *f = file_find(x->s);
+                        if (!f) break;
+                        if (f->org == COB_ORG_SORT) die_at(x->line, "'%s' is a sort or merge file (2023 14.9.49.3 rule 2)", f->name);
+                        fk = (int)(f - g_files);
+                    }
+                    for (int v = 0; v < e->nw; v++) for (int u = 0; u < e->w[v].n; u++)
+                        if (e->w[v].ec[u] < 0 && e->w[v].file[u] == fk)
+                            die_at(x->line, mode ? "the open mode %s appears twice in the WHEN phrases (2023 14.9.28.3 rule 14)"
+                                                 : "the file '%s' appears twice in the WHEN phrases (2023 14.9.28.3 rule 14)", x->s);
+                    if (w->n == w->cap) { w->cap = w->cap ? 2 * w->cap : 8; w->ec = xrealloc(w->ec, (size_t)w->cap * sizeof *w->ec); w->file = xrealloc(w->file, (size_t)w->cap * sizeof *w->file); }
+                    w->ec[w->n] = -1; w->file[w->n] = fk; w->n++;
+                }
+                continue;
+            }
+        }
         for (int q = k + 2; q < g_ntok && g_tok[q].kind == T_WORD && !is_verb(g_tok[q].s); q++) {
             Tok *x = &g_tok[q];
             if (strncmp(x->s, "ec-", 3))
-                die_at(x->line, "WHEN EXCEPTION with a file-name or an open mode is not implemented yet (exception-names, and name FILE file-name, are)");
+                die_at(x->line, "WHEN EXCEPTION names exception-names, file-names or an open mode, not '%s' (2023 14.9.28.2)", x->s);
             int i = ec_find(x->s, x->line);
             if (i < 0) die_at(x->line, "'%s' is not an exception-name", x->s);
             int file = -1;
@@ -526,7 +559,7 @@ static void parse_perform_ecp(void)
      * the implicit TURN enabled is not enabled any more (rule 22) */
     EcState pre; memset(&pre, 0, sizeof pre); ecs_copy(&pre, &g_ecs);
     int necu0 = g_necu;
-    for (int w = 0; w < e->nw; w++) for (int q = 0; q < e->w[w].n; q++) ecp_implicit_turn(e->w[w].ec[q], e->w[w].file[q], loc);
+    for (int w = 0; w < e->nw; w++) for (int q = 0; q < e->w[w].n; q++) if (e->w[w].ec[q] >= 0) ecp_implicit_turn(e->w[w].ec[q], e->w[w].file[q], loc);
     /* imperative-statement-1, a statement at a time: a raise resumes after
      * the statement it occurred in (rule 20) */
     int Lafter = new_label();

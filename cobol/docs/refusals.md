@@ -63,10 +63,12 @@ COBOL 2002/2023 (Stage B):
   data-division.md);
 - compiler directives other than >>SOURCE and >>TURN (>>DEFINE, >>IF,
   >>EVALUATE, ...);
-- exceptions: USE AFTER EXCEPTION CONDITION ... FILE, WHEN EXCEPTION
-  with a file-name or open mode, ON EXCEPTION on ACCEPT FROM
-  ARGUMENT-NUMBER, ARGUMENT-VALUE and COMMAND-LINE, EC-SCREEN, the rest
-  of Table 13's conditions (EC-DATA-INCOMPATIBLE is raised wherever
+- exceptions: EC-SCREEN and the rest of Table 13's conditions (USE
+  AFTER EXCEPTION CONDITION ... FILE and WHEN EXCEPTION with a
+  file-name or open mode since 2026-10-06; ON EXCEPTION on ACCEPT FROM
+  ARGUMENT-NUMBER, ARGUMENT-VALUE and COMMAND-LINE is not a gap of the
+  standard: those sources are X/Open's, in no ISO edition, and stay
+  refused until a program needs them; EC-DATA-INCOMPATIBLE is raised wherever
   numeric or boolean content is sent since ISSUES-101 and -103; ON
   EXCEPTION on an ACCEPT of a screen and on a positioned ACCEPT since
   ISSUES-125, and on ACCEPT FROM ENVIRONMENT since BP-E31);

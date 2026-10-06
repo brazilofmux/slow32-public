@@ -510,7 +510,27 @@ static void parse_use(void)
             int i = ec_find(cur()->s, cur()->line);
             if (i < 0) die_at(cur()->line, "'%s' is not an exception-name", cur()->s);
             advance();
-            if (at_word("file")) die_at(cur()->line, "USE AFTER EXCEPTION CONDITION ... FILE is not implemented yet");
+            if (at_word("file")) {
+                /* exception-name-2 FILE file-name-2 ... (format 3): an EC-I-O
+                 * condition of those files only (rules 13, 14) */
+                if (strncmp(ec_name(i), "EC-I-O", 6)) die_at(cur()->line, "FILE follows only an exception-name beginning EC-I-O (2023 14.9.49.3 rule 13)");
+                advance();
+                int nf = 0;
+                while (cur()->kind == T_WORD && file_find(cur()->s)) {
+                    File *f = expect_file();
+                    if (f->org == COB_ORG_SORT) die_at(line, "'%s' is a sort or merge file and takes no USE procedure (2023 14.9.49.3 rule 2)", f->name);
+                    for (int u = 0; u < g_nuse; u++)
+                        if (g_use[u].unit == g_unit && g_use[u].ec == i && g_use[u].file == f)
+                            die_at(line, "%s FILE %s is in two USE statements (2023 14.9.49.3 rule 14)", ec_name(i), f->name);
+                    if (g_nuse == 64) die_at(line, "too many USE procedures");
+                    g_use[g_nuse].sec = g_cur_sec_id; g_use[g_nuse].unit = g_unit; g_use[g_nuse].global = 0;
+                    g_use[g_nuse].mode = 0; g_use[g_nuse].file = f; g_use[g_nuse].ec = i;
+                    g_nuse++; nf++;
+                }
+                if (!nf) die_at(cur()->line, "USE AFTER %s FILE needs a file-name", ec_name(i));
+                any = 1;
+                continue;
+            }
             /* the same name in two USE statements is allowed: the first
              * in the source is the one selected (14.9.49.4 rule 3) */
             if (g_nuse == 64) die_at(line, "too many USE procedures");
@@ -541,7 +561,7 @@ static void parse_use(void)
                 die_at(line, "'%s' is a sort or merge file and takes no USE procedure (2023 14.9.49.3 rule 2)", f->name);
         }
         for (int i = 0; i < g_nuse; i++)
-            if (g_use[i].unit == g_unit && g_use[i].mode == mode && g_use[i].file == f)
+            if (g_use[i].unit == g_unit && g_use[i].ec < 0 && g_use[i].mode == mode && g_use[i].file == f)
                 die_at(line, mode ? "two USE procedures for the same open mode (2023 14.9.49.3 rule 7)" : "two USE procedures for file '%s' (2023 14.9.49.3 rule 8)", f ? f->name : "");
         if (g_nuse == 64) die_at(line, "too many USE procedures");
         g_use[g_nuse].sec = sec; g_use[g_nuse].unit = g_unit; g_use[g_nuse].global = global; g_use[g_nuse].mode = mode; g_use[g_nuse].file = f; g_use[g_nuse].ec = -1;
@@ -619,6 +639,35 @@ static void emit_use_dispatch(File *f, int has_clause)
         { "EC-I-O-AT-END", 1 }, { "EC-I-O-INVALID-KEY", 2 }, { "EC-I-O-PERMANENT-ERROR", 3 },
         { "EC-I-O-LOGIC-ERROR", 4 }, { "EC-I-O-RECORD-OPERATION", 5 }, { "EC-I-O-FILE-SHARING", 6 },
         { "EC-I-O-RECORD-CONTENT", 7 }, { "EC-I-O-IMP", 9 }, { NULL, 0 } };
+    /* WHEN EXCEPTION file-name-1 or an open mode, in the innermost
+     * exception-checking PERFORM that has one: the file's, else the
+     * mode's (14.9.49.4 rules 3a-b, 5) -- ahead of every USE, which the
+     * WHEN replaces (14.9.28 rule 17) */
+    for (int k = g_necp - 1; k >= 0; k--) {
+        Ecp *e = g_ecp[k];
+        int byfile = -1, bymode[8] = { 0 }, anym = 0;
+        for (int w = 0; w < e->nw; w++)
+            for (int q = 0; q < e->w[w].n; q++) {
+                if (e->w[w].ec[q] >= 0) continue;
+                int fk = e->w[w].file[q];
+                if (fk == fidx && byfile < 0) byfile = e->w[w].label;
+                if (fk <= -10 && -10 - fk < 8) { bymode[-10 - fk] = e->w[w].label; anym = 1; }
+            }
+        if (byfile < 0 && !anym) continue;
+        char lab[32]; snprintf(lab, sizeof lab, ".L%d", e->resume);
+        if (byfile < 0) { emit_file_addr("r3", f); emit_call("cob_open_mode"); emit("	add r12, r0, r1"); }
+        for (int m = 0; m < 8; m++) {
+            if (byfile < 0 && !bymode[m]) continue;
+            int Lnext = new_label();
+            if (byfile < 0) { emit_li("r2", m); emit("	bne r12, r2, .L%d", Lnext); }
+            emit_li("r3", e->id); emit_la("r4", lab); emit_li("r5", 0); emit("	add r6, sp, r0");
+            emit_call("cob_ecp_push");
+            emit_jump(byfile >= 0 ? byfile : bymode[m]);
+            emit_label(Lnext);
+            if (byfile >= 0) break;
+        }
+        break;                                          /* the innermost one that has any decides */
+    }
     /* inside imperative-statement-1 of an exception-checking PERFORM, a
      * condition a WHEN phrase takes goes there, and a USE procedure that
      * would match is ignored (14.9.28 rules 17, 18; cobol ISSUES-94 E8) */

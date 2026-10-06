@@ -22,7 +22,7 @@ and IC234A (USE GLOBAL across contained programs), the RW module.
 | 10 | no GENERATE, INITIATE or TERMINATE in a USE BEFORE REPORTING procedure | **refused**: bad/rw-use-generate -- accepted before this sweep |
 | 11 | a USE BEFORE REPORTING procedure alters no control item | **ruling**: not checked -- it would take a data-flow analysis of the declarative and everything it performs |
 | 12 | EC is EXCEPTION CONDITION | **test**: accepted (2002/ecio, ecraise) |
-| 13, 14 | FILE file-name-2 with an EC-I-O name; a pair once | **gap**: USE AFTER EXCEPTION CONDITION ... FILE is refused by name (docs/refusals.md) |
+| 13, 14 | FILE file-name-2 with an EC-I-O name; a pair once | **refused**: bad/std2002-use-file-io (rule 13), "is in two USE statements" (rule 14); **test**: 2002/usefile (2026-10-06) |
 | 15-17 | format 4, exception objects | **n/a**: object orientation |
 | format | format 3 takes no GLOBAL | **refused**: "USE GLOBAL is not allowed with EXCEPTION CONDITION", now citing the format |
 | -- | two format 3 USE statements naming the same exception-name | **test**: 2002/usedupec -- refused before this sweep, which no rule supports; general rule 3 takes the first in the source |
@@ -34,7 +34,7 @@ and IC234A (USE GLOBAL across contained programs), the RW module.
 | 1 | USE sets when declaratives run | **test**: CCVS SQ, 2002/ecraise |
 | 2 | an exception that would re-enter an active USE procedure is EC-FLOW-USE | **test**: 2002/ecflowuse (ISSUES-94 E14) |
 | 3a-b | format 1 USE statements first: the file's, then the open mode's | **test**: CCVS SQ121A-SQ135A; emit_use_dispatch's order |
-| 3c-d | format 3 with FILE | **gap** with syntax rules 13-14 |
+| 3c-d | format 3 with FILE: the file's level-3 name, then its level-2 name, before any USE naming no file | **test**: 2002/usefile |
 | 3e-g | format 3: the name, its group, EC-ALL | **test**: 2002/ecturn, usedupec |
 | 4 | contained programs: own declaratives first, then GLOBAL ones outward | **test**: free/nestuse, CCVS IC233A/IC234A |
 | 5 | a file-name USE over an open-mode USE | **test**: CCVS SQ module |

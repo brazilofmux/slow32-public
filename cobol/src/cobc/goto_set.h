@@ -142,9 +142,15 @@ static void emit_ec_dispatch(int i)
 {
     if (g_necp && ecp_dispatch(i)) return;          /* the WHEN takes it; USE does not (17) */
     int cand[3] = { i, ec_group(i), ec_find("EC-ALL", 0) }, sec = -1;
+    /* a USE naming the condition's file first, level 3 then level 2
+     * (14.9.49.4 rules 3c-d); then those naming no file (3e-g) */
+    for (int c = 0; c < 2 && sec < 0 && g_ec_fidx >= 0; c++)
+        for (int u = unit_use_own_from(); u < g_nuse; u++)
+            if (g_use[u].unit == g_unit && g_use[u].ec >= 0 && g_use[u].ec == cand[c] && g_use[u].file &&
+                (int)(g_use[u].file - g_files) == g_ec_fidx) { sec = g_use[u].sec; break; }
     for (int c = 0; c < 3 && sec < 0; c++)
         for (int u = unit_use_own_from(); u < g_nuse; u++)
-            if (g_use[u].unit == g_unit && g_use[u].ec >= 0 && g_use[u].ec == cand[c]) { sec = g_use[u].sec; break; }
+            if (g_use[u].unit == g_unit && g_use[u].ec >= 0 && !g_use[u].file && g_use[u].ec == cand[c]) { sec = g_use[u].sec; break; }
     if (sec >= 0) {
         int Lret = new_label();
         char lab[32]; snprintf(lab, sizeof lab, ".L%d", Lret);

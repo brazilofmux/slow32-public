@@ -1,0 +1,5 @@
+when f1
+after the read of f1
+when input
+after the read of f2
+done

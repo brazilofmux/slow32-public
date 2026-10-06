@@ -22,7 +22,7 @@ AFTER) -- all 348 programs match GnuCOBOL's tally.
 | 10 | THRU and THROUGH are the same | **test**: fixed/control |
 | 11 | a range that names a declarative procedure stays in one declarative section (85 rule 11) | **refused**: bad/perform-thru-decl -- not checked before this sweep |
 | 12, 13 | procedure-names in the same source element | **refused**: "'x' is not a paragraph or section" |
-| 14 | a file-name at most once in the WHEN phrases unless with an exception-name | **n/a** for now: WHEN with a file-name alone is a named gap (docs/refusals.md) |
+| 14 | a file-name at most once in the WHEN phrases unless with an exception-name | **refused**: bad/std2002-ecp-file-twice; WHEN EXCEPTION file-name or open mode **test**: 2002/ecpfile (2026-10-06): the file's WHEN, else the mode's, ahead of the USE procedure, resuming after the statement |
 | 15 | an exception-name once in the WHEN phrases, unless with different file-names | **refused**: bad/std2002-ecp-dup |
 | 16 | a WHEN file-name goes with an EC-I-O name | **refused**: bad/std2002-ecp-file-io |
 | 85 only | an in-line PERFORM VARYING takes no AFTER (X3.23-1985 rule 2; 2023 allows it) | **refused** under -std=85: bad/perform-inline-after-85 -- accepted before this sweep, and GnuCOBOL accepts it too; three of this project's own tests used it and were rewritten out-of-line. No Open Systems, CCVS or majesty program uses it |

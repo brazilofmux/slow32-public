@@ -1,0 +1,4 @@
+invalid-key, file f1
+any I-O condition, file f2
+plain invalid-key
+done 00 00 00

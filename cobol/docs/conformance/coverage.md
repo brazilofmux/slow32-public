@@ -263,7 +263,7 @@ carry the compiler's own reason.
 | 14.9.25 | MOVE statement | [move](move.md) | 12 | 10 | 0 | 9 | 0 |
 | 14.9.26 | MULTIPLY statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
 | 14.9.27 | OPEN statement | [io-statements](io-statements.md) | 0 | 14 | 0 | 0 | 0 |
-| 14.9.28 | PERFORM statement | [perform](perform.md) | 21 | 10 | 1 | 0 | 1 |
+| 14.9.28 | PERFORM statement | [perform](perform.md) | 22 | 10 | 0 | 0 | 1 |
 | 14.9.29 | RAISE statement | [raise](raise.md) | 1 | 3 | 0 | 1 | 0 |
 | 14.9.30 | READ statement | [io-statements](io-statements.md) | 0 | 14 | 0 | 0 | 0 |
 | 14.9.31 | RECEIVE statement | **not implemented**: receive: COBOL 85's Communication module is out by ruling, and COBOL 2023's asynchronous messaging (14.9.31, 14.9.38) is not implemented | | | | | |
@@ -284,7 +284,7 @@ carry the compiler's own reason.
 | 14.9.46 | TERMINATE statement | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
 | 14.9.47 | UNLOCK statement | *unswept* (implemented) | | | | | |
 | 14.9.48 | UNSTRING statement | [string](string.md) | 3 | 20 | 0 | 2 | 0 |
-| 14.9.49 | USE statement | [use](use.md) | 14 | 11 | 1 | 2 | 2 |
+| 14.9.49 | USE statement | [use](use.md) | 16 | 10 | 0 | 2 | 2 |
 | 14.9.50 | VALIDATE statement | **not implemented**: VALIDATE is not implemented: an obsolete facility no COBOL provider has implemented (2023 D.22, F.2 item 5; docs/standards.md) | | | | | |
 | 14.9.51 | WRITE statement | [io-statements](io-statements.md) | 0 | 14 | 0 | 0 | 0 |
 

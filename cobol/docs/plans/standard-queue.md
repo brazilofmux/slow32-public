@@ -80,7 +80,10 @@ EC-RAISING-*.
   step is an audit table, one row per name: raised where, tested by what, or why it cannot arise.
 - Why here: standards.md lists it as the module's open remainder.
 
-**5. Exception leftovers.** 14.9.49, 14.9.28 WHEN, 14.9.1; Ed. 2002/2023; S; deps none.
+**5. Exception leftovers.** 14.9.49, 14.9.28 WHEN, 14.9.1; Ed. 2002/2023; S; deps none. DONE
+2026-10-06: USE AFTER EC ... FILE and WHEN EXCEPTION file-name / open mode (2002/usefile,
+2002/ecpfile). The third piece was not standard: ACCEPT FROM ARGUMENT-NUMBER, ARGUMENT-VALUE and
+COMMAND-LINE are X/Open's and appear in no ISO edition, so their ON EXCEPTION stays refused.
 - Today: "USE AFTER EXCEPTION CONDITION ... FILE is not implemented yet"; "WHEN EXCEPTION with a
   file-name or an open mode is not implemented yet"; `ACCEPT ... FROM ARGUMENT-VALUE ON EXCEPTION`
   refused ("ACCEPT ... ON EXCEPTION is not implemented").
