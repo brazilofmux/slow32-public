@@ -465,6 +465,7 @@ static CVar *cvar_find(const char *nm)
 typedef struct { int parent, active, taken, eval, else_seen; CVal subj; int truth; int depth_at; } CondLevel;
 static CondLevel g_cond[64]; static int g_ncond;
 static int cond_active(void) { return !g_ncond || g_cond[g_ncond - 1].active; }
+static int g_in_unit;       /* the text words are inside a compilation unit: IDENTIFICATION DIVISION seen, its END not yet */
 
 /* a directive's text as tokens */
 typedef struct { char t; char *s; int len; } CTok;      /* t: 'w' word, 'n' number, 'a' alnum literal, 'b' boolean literal, 'o' operator */
@@ -701,6 +702,10 @@ static int cond_directive(const TW *t)
 {
     g_ctw = t;
     char *txt = xstrndup(t->s, t->len);
+    {   /* >>PAGE comment-text: not checked syntactically (7.3.19.3 rule 2) */
+        const char *q = txt; while (*q == ' ' || *q == '\t') q++;
+        if (!strncasecmp(q, "page", 4) && (!q[4] || q[4] == ' ' || q[4] == '\t')) return 1;
+    }
     ctok(txt);
     g_cp = 0;
     if (!g_nct) cdie("an empty compiler directive%s", "");
@@ -811,6 +816,31 @@ static int cond_directive(const TW *t)
         if (have) { c->v = v; c->defined = 1; } else c->defined = 0;   /* PARAMETER with no value: not defined (rule 4) */
         return 1;
     }
+    if (!strcasecmp(w, "listing")) {
+        /* no listing is produced, so the directive has no effect (7.3.18.3 rule 1) */
+        g_cp = 1;
+        if (!caccept("on")) caccept("off");
+        c_end("LISTING");
+        return 1;
+    }
+    if (!strcasecmp(w, "page")) return 1;       /* comment-text, unchecked; no listing (7.3.19) */
+    if (!strcasecmp(w, "leap-second")) {
+        /* the run-time clock reports POSIX time, which has no leap second:
+         * a seconds value is never above 59 either way (7.3.17.4 rules 2-7) */
+        g_cp = 1;
+        if (!caccept("on") && !caccept("off")) cdie(">>LEAP-SECOND takes ON or OFF (2023 7.3.17.2)%s", "");
+        c_end("LEAP-SECOND");
+        if (g_in_unit) cdie(">>LEAP-SECOND is written outside a compilation unit: before its IDENTIFICATION DIVISION, or after its END PROGRAM (2023 7.3.17.3 rule 1)%s", "");
+        return 1;
+    }
+    if (!strcasecmp(w, "call-convention")) {
+        /* COBOL, the default (7.3.9.3 rule 1), is the one convention here */
+        g_cp = 1;
+        if (!caccept("cobol")) cdie(ccur()->t ? ">>CALL-CONVENTION %s: the one call convention here is COBOL (2023 7.3.9.3 rule 2b leaves the others to the implementor)"
+                                               : ">>CALL-CONVENTION needs COBOL or a call-convention name%s", ccur()->t ? ccur()->s : "");
+        c_end("CALL-CONVENTION");
+        return 1;
+    }
     if (!strcasecmp(w, "turn")) return 0;
     if (!strcasecmp(w, "d")) cdie("the >>D debugging indicator is not implemented (debugging lines were removed in COBOL 2014)%s", "");
     cdie("the compiler directive >>%s is not implemented yet", w);
@@ -855,6 +885,13 @@ static void tw_copy(TWV *in, TWV *out)
             twv_push(out, *t); continue;        /* >>TURN, applied by the parser */
         }
         if (!cond_active()) continue;           /* omitted text (7.3.16.4 rules 2-3, 7.3.13.4 rules 4-6) */
+        if (!pt && t->kind == TW_WORD) {
+            /* where a compilation unit begins and ends, for the directives
+             * that stand outside one (LEAP-SECOND) */
+            int k = i + 1; while (k < in->n && in->w[k].kind == TW_SEP) k++;
+            if ((tw_is(t, "identification") || tw_is(t, "id")) && k < in->n && tw_is(&in->w[k], "division")) g_in_unit++;
+            if (tw_is(t, "end") && k < in->n && (tw_is(&in->w[k], "program") || tw_is(&in->w[k], "function")) && g_in_unit > 0) g_in_unit--;
+        }
         if (!pt) { int used = cv_constant_from(out, in->w, in->n, i); if (used) { i += used - 1; continue; } }
         if (t->kind == TW_PDELIM) pt = !pt;
         if (pt || !tw_is(t, "copy") || t->dbg) { twv_push(out, *t); continue; }   /* a COPY on a debugging line is a comment */

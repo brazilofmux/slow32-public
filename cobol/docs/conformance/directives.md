@@ -1,4 +1,4 @@
-# Conditional compilation: 7.3.5-7.3.8 and the DEFINE, EVALUATE and IF directives (7.3.11, 7.3.13, 7.3.16)
+# Compiler directives: conditional compilation (7.3.5-7.3.8, 7.3.11, 7.3.13, 7.3.16) and CALL-CONVENTION, LEAP-SECOND, LISTING, PAGE (7.3.9, 7.3.17-19)
 
 Swept 2026-10-06 (docs/plans/standard-queue.md item 6), when the three
 directives were implemented. ISO/IEC 1989:2023: 7.3.5 conditional
@@ -76,3 +76,19 @@ text; omitted text is dropped before REPLACE and the parser see it.
 | rule | paraphrase | disposition |
 |---|---|---|
 | format 2 | `01 name CONSTANT [IS GLOBAL] FROM compilation-variable` | **test**: 2002/condcomp (the value in effect where the entry stands); **refused** for a name no DEFINE made: bad/std2002-constant-from |
+
+## The small directives (7.3.9, 7.3.17, 7.3.18, 7.3.19)
+
+Implemented 2026-10-06 (standard-queue item 7). None of them changes
+the program here, for the reasons in the table; each is read and its
+syntax checked. Test: 2002/smalldir (GnuCOBOL 4 as the oracle).
+
+| rule | paraphrase | disposition |
+|---|---|---|
+| CALL-CONVENTION GR 1-2 | COBOL, the default, maps names as with no AS phrase; another name is the implementor's | **ruling**: COBOL is the one convention; any other name is refused, bad/std2002-call-convention |
+| CALL-CONVENTION GR 3 | the implementor may use it for other details | **n/a**: none |
+| LEAP-SECOND SR 1 | outside a compilation unit | **refused**: bad/std2002-leap-second-inside (a contained program's END PROGRAM does not end the containing unit) |
+| LEAP-SECOND GR 1-7 | ON: a 60th second may be reported; OFF: never | **ruling**: the run-time clock is POSIX time, which has no leap second; a seconds value is never above 59 with either |
+| LISTING GR 1 | no listing produced: the directive is ignored | **ruling**: no listing; ON or OFF checked, anything else refused (bad/std2002-listing-operand) |
+| LISTING GR 2-5 | listing rules | **n/a**: no listing |
+| PAGE SR 1-2, GR 1-3 | comment-text unchecked; no effect without a listing | **test**: 2002/smalldir (a quote left open in the comment-text) |

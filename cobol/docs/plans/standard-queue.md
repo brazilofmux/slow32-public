@@ -98,7 +98,9 @@ from -D; compile-time boolean expressions remain a gap.
   that select variants at compile time.
 
 **7. The small 2002 directives.** 7.3.9 CALL-CONVENTION, 7.3.17 LEAP-SECOND, 7.3.18 LISTING, 7.3.19
-PAGE; Ed. 2002; S; deps 6 (shared directive parser).
+PAGE; Ed. 2002; S; deps 6 (shared directive parser). DONE 2026-10-06 (directives.md): each read
+and checked, none with an effect here (no listing; POSIX time has no leap second; COBOL the one
+call convention).
 - Today: each refused by the generic directive message. LISTING and PAGE can be accepted without
   effect (no listing is produced); LEAP-SECOND needs a decision about the time service.
 - Why here: cheap once 6 exists.
