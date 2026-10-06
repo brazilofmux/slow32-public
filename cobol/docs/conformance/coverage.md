@@ -16,12 +16,12 @@ carry the compiler's own reason.
 | 9 files and objects, general | 0 | 0 | 0 | 0 |
 | 10 the compilation group | 2 | 0 | 0 | 2 |
 | 11 IDENTIFICATION DIVISION | 15 | 1 | 0 | 14 |
-| 12 ENVIRONMENT DIVISION | 22 | 13 | 0 | 9 |
-| 13 DATA DIVISION | 78 | 31 | 0 | 47 |
+| 12 ENVIRONMENT DIVISION | 22 | 15 | 0 | 7 |
+| 13 DATA DIVISION | 78 | 49 | 0 | 29 |
 | 14 PROCEDURE DIVISION | 54 | 42 | 7 | 5 |
 | 15 intrinsic functions | 94 | 73 | 21 | 0 |
 | 16 standard classes | 0 | 0 | 0 | 0 |
-| **all** | **324** | **169** | **28** | **127** |
+| **all** | **324** | **189** | **28** | **107** |
 
 ## 7 COPY, REPLACE and directives
 
@@ -123,10 +123,10 @@ carry the compiler's own reason.
 
 | section | element | page | test | refused | gap | n/a | ruling |
 |---|---|---|---|---|---|---|---|
-| 12.3 |  | *unswept* | | | | | |
+| 12.3 |  | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 12.3.5 |  | *unswept* | | | | | |
 | 12.3.6 |  | *unswept* | | | | | |
-| 12.3.7 |  | *unswept* | | | | | |
+| 12.3.7 |  | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 12.3.8 |  | *unswept* | | | | | |
 | 12.4 |  | [files](files.md) | 1 | 18 | 0 | 0 | 0 |
 | 12.4.4 |  | *unswept* | | | | | |
@@ -163,43 +163,43 @@ carry the compiler's own reason.
 | 13.14 |  | *unswept* | | | | | |
 | 13.15 |  | [data-division](data-division.md) | 26 | 36 | 5 | 1 | 4 |
 | 13.16 |  | [data-division](data-division.md) | 26 | 36 | 5 | 1 | 4 |
-| 13.17 |  | *unswept* | | | | | |
+| 13.17 |  | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.1 | ALIGNED clause | *unswept* | | | | | |
 | 13.18.2 | ANY LENGTH clause | [data-division](data-division.md) | 26 | 36 | 5 | 1 | 4 |
-| 13.18.3 | AUTO clause | *unswept* | | | | | |
-| 13.18.4 | BACKGROUND-COLOR clause | *unswept* | | | | | |
+| 13.18.3 | AUTO clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
+| 13.18.4 | BACKGROUND-COLOR clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.5 | BASED clause | *unswept* | | | | | |
-| 13.18.6 | BELL clause | *unswept* | | | | | |
-| 13.18.7 | BLANK clause | [picture](picture.md) | 9 | 24 | 0 | 6 | 0 |
+| 13.18.6 | BELL clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
+| 13.18.7 | BLANK clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.8 | BLANK WHEN ZERO clause | [picture](picture.md) | 9 | 24 | 0 | 6 | 0 |
-| 13.18.9 | BLINK clause | *unswept* | | | | | |
+| 13.18.9 | BLINK clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.10 | BLOCK CONTAINS clause | [files](files.md) | 1 | 18 | 0 | 0 | 0 |
 | 13.18.11 | CLASS clause | *unswept* | | | | | |
 | 13.18.12 | CODE clause | *unswept* | | | | | |
 | 13.18.13 | CODE-SET clause | [data-division](data-division.md) | 26 | 36 | 5 | 1 | 4 |
-| 13.18.14 | COLUMN clause | *unswept* | | | | | |
+| 13.18.14 | COLUMN clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.15 | CONSTANT RECORD clause | *unswept* | | | | | |
 | 13.18.16 | CONTROL clause | *unswept* | | | | | |
 | 13.18.17 | DEFAULT clause | *unswept* | | | | | |
 | 13.18.18 | DESTINATION clause | *unswept* | | | | | |
 | 13.18.19 | DYNAMIC LENGTH clause | *unswept* | | | | | |
 | 13.18.20 |  | [data-division](data-division.md) | 26 | 36 | 5 | 1 | 4 |
-| 13.18.21 | ERASE clause | *unswept* | | | | | |
+| 13.18.21 | ERASE clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.22 | EXTERNAL clause | [data-division](data-division.md) | 26 | 36 | 5 | 1 | 4 |
-| 13.18.23 | FOREGROUND-COLOR clause | *unswept* | | | | | |
+| 13.18.23 | FOREGROUND-COLOR clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.24 | FORMAT clause | *unswept* | | | | | |
-| 13.18.25 | FROM clause | *unswept* | | | | | |
-| 13.18.26 | FULL clause | *unswept* | | | | | |
+| 13.18.25 | FROM clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
+| 13.18.26 | FULL clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.27 | GLOBAL clause | [data-division](data-division.md) | 26 | 36 | 5 | 1 | 4 |
 | 13.18.28 | GROUP INDICATE clause | *unswept* | | | | | |
 | 13.18.29 | GROUP-USAGE clause | [national-boolean](national-boolean.md) | 15 | 13 | 0 | 0 | 1 |
-| 13.18.30 | HIGHLIGHT clause | *unswept* | | | | | |
+| 13.18.30 | HIGHLIGHT clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.31 | INVALID clause | *unswept* | | | | | |
 | 13.18.32 | JUSTIFIED clause | [clauses](clauses.md) | 0 | 8 | 0 | 0 | 0 |
 | 13.18.33 |  | [clauses](clauses.md) | 0 | 8 | 0 | 0 | 0 |
 | 13.18.34 | LINAGE clause | [files](files.md) | 1 | 18 | 0 | 0 | 0 |
-| 13.18.35 | LINE clause | *unswept* | | | | | |
-| 13.18.36 | LOWLIGHT clause | *unswept* | | | | | |
+| 13.18.35 | LINE clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
+| 13.18.36 | LOWLIGHT clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.37 | NEXT GROUP clause | *unswept* | | | | | |
 | 13.18.38 | OCCURS clause | [occurs](occurs.md) | 0 | 14 | 0 | 0 | 0 |
 | 13.18.39 | PAGE clause | *unswept* | | | | | |
@@ -210,21 +210,21 @@ carry the compiler's own reason.
 | 13.18.44 | REDEFINES clause | [redefines](redefines.md) | 1 | 9 | 0 | 1 | 0 |
 | 13.18.45 | RENAMES clause | [renames](renames.md) | 2 | 7 | 0 | 1 | 0 |
 | 13.18.46 | REPORT clause | *unswept* | | | | | |
-| 13.18.47 | REQUIRED clause | *unswept* | | | | | |
-| 13.18.48 | REVERSE-VIDEO clause | *unswept* | | | | | |
+| 13.18.47 | REQUIRED clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
+| 13.18.48 | REVERSE-VIDEO clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.49 | SAME AS clause | *unswept* | | | | | |
-| 13.18.50 | SECURE clause | *unswept* | | | | | |
+| 13.18.50 | SECURE clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.51 | SELECT WHEN clause | *unswept* | | | | | |
 | 13.18.52 | SIGN clause | [clauses](clauses.md) | 0 | 8 | 0 | 0 | 0 |
 | 13.18.53 | SOURCE clause | *unswept* | | | | | |
 | 13.18.54 | SUM clause | *unswept* | | | | | |
 | 13.18.55 | SYNCHRONIZED clause | [clauses](clauses.md) | 0 | 8 | 0 | 0 | 0 |
-| 13.18.56 | TO clause | [accept](accept.md) | 1 | 10 | 0 | 0 | 0 |
+| 13.18.56 | TO clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.57 | TYPE clause | *unswept* | | | | | |
 | 13.18.58 | TYPEDEF clause | *unswept* | | | | | |
-| 13.18.59 | UNDERLINE clause | *unswept* | | | | | |
+| 13.18.59 | UNDERLINE clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.60 | USAGE clause | [national-boolean](national-boolean.md), [usage](usage.md) | 24 | 22 | 0 | 3 | 3 |
-| 13.18.61 | USING clause | *unswept* | | | | | |
+| 13.18.61 | USING clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.62 | VALIDATE-STATUS clause | *unswept* | | | | | |
 | 13.18.63 | VALUE clause | [value](value.md) | 1 | 14 | 0 | 0 | 0 |
 | 13.18.64 | VARYING clause | *unswept* | | | | | |
@@ -236,7 +236,7 @@ carry the compiler's own reason.
 | 14.2 |  | [call](call.md) | 13 | 3 | 1 | 0 | 0 |
 | 14.7.4 | ROUNDED phrase | *unswept* | | | | | |
 | 14.7.9 | RETRY phrase | *unswept* | | | | | |
-| 14.9.1 | ACCEPT statement | [accept](accept.md) | 1 | 10 | 0 | 0 | 0 |
+| 14.9.1 | ACCEPT statement | [accept](accept.md), [screen](screen.md) | 41 | 32 | 11 | 1 | 4 |
 | 14.9.2 | ADD statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
 | 14.9.3 | ALLOCATE statement | *unswept* (implemented) | | | | | |
 | 14.9.4 | CALL statement | [call](call.md) | 13 | 3 | 1 | 0 | 0 |
@@ -246,7 +246,7 @@ carry the compiler's own reason.
 | 14.9.8 | COMPUTE statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
 | 14.9.9 | CONTINUE statement | [control](control.md) | 8 | 10 | 0 | 1 | 0 |
 | 14.9.10 | DELETE statement | [io-statements](io-statements.md) | 0 | 14 | 0 | 0 | 0 |
-| 14.9.11 | DISPLAY statement | [accept](accept.md) | 1 | 10 | 0 | 0 | 0 |
+| 14.9.11 | DISPLAY statement | [accept](accept.md), [screen](screen.md) | 41 | 32 | 11 | 1 | 4 |
 | 14.9.12 | DIVIDE statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
 | 14.9.13 | EVALUATE statement | [evaluate](evaluate.md) | 3 | 7 | 0 | 1 | 0 |
 | 14.9.14 | EXIT statement | [exit](exit.md) | 8 | 9 | 1 | 2 | 0 |

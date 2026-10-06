@@ -295,7 +295,7 @@ static void emit_unit_data(void)
             if (f->item && f->dyn) { emit("\t.word .Lsdyn%d_%d_%d", g_unit, i, k); emit("\t.word .Ld%d", f->idesc ? f->idesc - 1 : sym_desc(f->item)); }
             else if (f->item) { emit("\t.word %s+%ld", g_sym[f->item->record].label, f->stat_off); emit("\t.word .Ld%d", f->idesc ? f->idesc - 1 : sym_desc(f->item)); }
             else { emit("\t.word 0"); emit("\t.word 0"); }
-            emit("\t.byte %d,%d", f->ext, f->prompt ? f->prompt : '_'); emit("\t.short %d", (f->dynlen ? COB_SR_DYNLEN : 0) | (f->dispval ? COB_SR_DISPVAL : 0));   /* ext, prompt, rsv */
+            emit("\t.byte %d,%d", f->ext, f->prompt ? f->prompt : '_'); emit("\t.short %d", (f->dynlen ? COB_SR_DYNLEN : 0) | (f->dispval ? COB_SR_DISPVAL : 0) | (f->rsv & (COB_SR_BLINK | COB_SR_BELL)));   /* ext, prompt, rsv */
         }
         emit(".Lscr%d_%d:\t# screen %s", g_unit, i, sc->name);
         emit("\t.word %d", sc->nf);

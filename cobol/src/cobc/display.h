@@ -438,6 +438,14 @@ static void parse_accept_1(void)
         Screen *scp = screen_ref(t->s, scrlab, sizeof scrlab, &sfirst, &scount);
         if (scp) {
             advance();
+            /* a screen with output items and none for input is DISPLAYed,
+             * not ACCEPTed (2023 14.9.1.3 rule 4) */
+            int nin = 0, nout = 0;
+            for (int k = sfirst; k < sfirst + scount; k++) {
+                if (scp->f[k].kind == COB_SCR_TO || scp->f[k].kind == COB_SCR_USING) nin++;
+                else nout++;
+            }
+            if (nout && !nin) die_at(t->line, "ACCEPT of '%s', which has FROM or VALUE items and no TO or USING item (2023 14.9.1.3 rule 4)", t->s);
             screen_at_origin(t->line);
             int upd = screen_with_phrase(t->line, 1);    /* WITH UPDATE (BP-G3): the TO fields start from their items */
             emit_screen_dyn_fill(scp, sfirst, scount);

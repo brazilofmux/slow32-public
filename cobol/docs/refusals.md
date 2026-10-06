@@ -81,8 +81,12 @@ COBOL 2002/2023 (Stage B):
 - a TYPE that expands past level 49 (2023 13.18.57.4 rule 2c allows
   it);
 - a user-defined function in the places listed by g_ufn_forbid;
-- in the screen section: BLANK LINE; JUSTIFIED on a national item;
-  EC-SCREEN (above).  (CURSOR IS, SIGN, JUSTIFIED, status 8000 and ON
+- in the screen section (the list is docs/conformance/screen.md's
+  "Open"): GLOBAL; colours, LINE and COLUMN from an identifier; MINUS;
+  LINE and COLUMN phrases on ACCEPT and DISPLAY of a screen; ON
+  EXCEPTION on DISPLAY of a screen; OCCURS on a group or over FROM, TO,
+  USING items; FROM with TO in one entry; BLANK LINE; JUSTIFIED and
+  USAGE NATIONAL on national pictures; EC-SCREEN (above).  (CURSOR IS, SIGN, JUSTIFIED, status 8000 and ON
   EXCEPTION landed 2026-10-04, ISSUES-125.)  ACCEPT FROM the remaining
   sources; the SPECIAL-NAMES clauses not yet taken;
 - bits: OCCURS DEPENDING ON on a bit array, OCCURS on a bit group, a

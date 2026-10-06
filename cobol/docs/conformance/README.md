@@ -63,6 +63,7 @@ standard's titles or text:
 | 14.9.22 INSPECT, 14.9.43 STRING, 14.9.48 UNSTRING | [string.md](string.md) | 2026-09-29 |
 | 13.18.29 GROUP-USAGE, 13.18.60 USAGE BIT/NATIONAL, 13.18.40 PICTURE 1/N, 8.3.3.4-5 | [national-boolean.md](national-boolean.md) | 2026-09-29 |
 | 14.9.28 PERFORM | [perform.md](perform.md) | 2026-09-28 |
+| 13.17, 13.18.3, .4, .6, .7, .9, .14, .21, .23, .25, .26, .30, .35, .36, .47, .48, .50, .56, .59, .61 the screen section and its clauses; 14.9.1, 14.9.11 of a screen | [screen.md](screen.md) | 2026-10-06 |
 | 14.9.29 RAISE | [raise.md](raise.md) | 2026-09-28 |
 | 7.3.25 TURN | [turn.md](turn.md) | 2026-09-28 |
 | 14.9.49 USE | [use.md](use.md) | 2026-09-28 |

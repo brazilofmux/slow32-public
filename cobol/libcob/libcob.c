@@ -5192,7 +5192,7 @@ static void *scr_item(const cob_scr_field *f) { return (f->kind & 0x80) ? *(void
 
 static int scr_has_attr(const cob_scr_field *f)
 {
-    return (f->flags & (COB_SF_REVERSE | COB_SF_UNDERLINE | COB_SF_HIGHLIGHT | COB_SF_LOWLIGHT)) || f->fg != 255 || f->bg != 255;
+    return (f->flags & (COB_SF_REVERSE | COB_SF_UNDERLINE | COB_SF_HIGHLIGHT | COB_SF_LOWLIGHT)) || (f->rsv & COB_SR_BLINK) || f->fg != 255 || f->bg != 255;
 }
 
 /* COBOL's colour numbers (0 black, 1 blue, 2 green, 3 cyan, 4 red, 5
@@ -5206,6 +5206,7 @@ static void scr_attr(const cob_scr_field *f)
     else if (f->flags & COB_SF_UNDERLINE) term_set_attr(4);
     else if (f->flags & COB_SF_HIGHLIGHT) term_set_attr(1);
     else if (f->flags & COB_SF_LOWLIGHT) term_set_attr(2);
+    else if (f->rsv & COB_SR_BLINK) term_set_attr(5);
     else term_set_attr(0);
     if (f->fg != 255 || f->bg != 255) term_set_color(scr_ansi_colour(f->fg), scr_ansi_colour(f->bg));
 }
@@ -5357,6 +5358,11 @@ static void scr_paint_field(const cob_scr_field *f)
 void cob_screen_display(const cob_screen *s)
 {
     term_need();
+    /* BELL: the tone sounds once, at the start of a DISPLAY however many
+     * entries ask for it, and not for an ACCEPT (2023 13.18.6.4 rule 1) */
+    if (!scr_accepting)
+        for (unsigned i = 0; i < s->nfields; i++)
+            if (s->fields[i].rsv & COB_SR_BELL) { term_putc(7); break; }
     term_begin_update();
     if (s->blank_screen) term_clear(0);
     for (unsigned i = 0; i < s->nfields; i++) scr_paint_field(&s->fields[i]);

@@ -6,8 +6,9 @@
 *>      the locator is where the cursor stood (one to the right).
 *>   2  a locator that is in no input field: the first field, as if there
 *>      were no CURSOR clause.  F2 ends it: ON EXCEPTION, status 1002.
-*>   3  a screen with nothing to accept into: unsuccessful, 8000, ON
-*>      EXCEPTION, and no key is waited for.
+*>   3  a screen with nothing to accept into (only BLANK SCREEN: one with
+*>      FROM or VALUE items and no input is refused, 14.9.1.3 rule 4):
+*>      unsuccessful, 8000, ON EXCEPTION, and no key is waited for.
 *> The keys come from scrcursor.keys.
 *> No oracle: screens need a real tty.
 identification division.
@@ -29,7 +30,7 @@ screen section.
     05  line 2 column 5 pic x(5) using a.
     05  line 3 column 5 pic x(5) using b.
 01  s2.
-    05  line 2 column 20 value 'nothing here'.
+    05  blank screen.
 procedure division.
     display s1
     accept s1

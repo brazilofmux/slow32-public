@@ -583,6 +583,7 @@ int dispval;                /* a positioned DISPLAY of a binary or packed item: 
 struct Ref_ *line_r, *col_r, *at_r;   /* LINE / POSITION / AT given as identifiers, stored at run time */
 int idesc;                  /* the item a reference-modified part: its descriptor + 1 (the part's, not the item's) */
 int from_lit;               /* FROM literal-1: a VALUE slot that must have its PICTURE */
+int rsv;                    /* COB_SR_BELL, COB_SR_BLINK: clauses with no room in flags */
 } SField;
 
 typedef struct { char name[64]; int first, count; } SGroup;   /* a named nested group: a window into the slot table */
@@ -591,6 +592,7 @@ typedef struct {
     char name[64];
     int line, blank_screen;
     int fg, bg;                 /* the 01's FOREGROUND-/BACKGROUND-COLOR, 255 when not given: the base its entries inherit */
+    int flags, rsv;             /* the 01's attributes and input clauses (COB_SF_*, COB_SR_BELL/BLINK), inherited likewise */
     SField *f; int nf, fcap;
     SGroup *sub; int nsub, subcap;
 } Screen;

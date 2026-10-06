@@ -1225,6 +1225,24 @@ static int parse_erase_clause(int line)
     return 0;
 }
 
+/* Each clause of a screen description entry is written at most once in
+ * it (2023 13.17.2: every clause is one optional element of the format),
+ * and HIGHLIGHT and LOWLIGHT are alternatives of one element.  The bit
+ * for the word t names, or 0 for a word that begins no clause. */
+static unsigned scr_clause_bit(const char *t)
+{
+    static const char *const w[][3] = {
+        { "line" }, { "column", "col" }, { "blank" }, { "erase" }, { "bell", "beep" }, { "blink" },
+        { "highlight", "lowlight" }, { "reverse-video" }, { "underline" },
+        { "foreground-color", "foreground-colour" }, { "background-color", "background-colour" },
+        { "pic", "picture" }, { "value" }, { "justified", "just" }, { "sign", "leading", "trailing" },
+        { "full" }, { "auto", "auto-skip" }, { "secure" }, { "required" }, { "occurs" }, { "usage" },
+    };
+    for (unsigned i = 0; i < sizeof w / sizeof *w; i++)
+        for (int k = 0; k < 3 && w[i][k]; k++) if (!strcmp(t, w[i][k])) return 1u << i;
+    return 0;
+}
+
 /* 01 screen-name. then slot entries at deeper levels, each with LINE /
  * COLUMN / VALUE / PIC FROM|TO|USING / attributes */
 static void parse_screen_section(void)
@@ -1236,6 +1254,7 @@ static void parse_screen_section(void)
         Screen *sc = &g_screens[g_nscreen++];
         memset(sc, 0, sizeof *sc);
         sc->line = line;
+        user_word(cur()->s, line, "a screen");
         snprintf(sc->name, sizeof sc->name, "%s", cur()->s); advance();
         if (sym_lookup_quiet(sc->name)) die_at(line, "'%s' is both a data item and a screen", sc->name);
         sc->fg = sc->bg = 255;
@@ -1257,13 +1276,26 @@ static void parse_screen_section(void)
                 if (bg) sc->bg = c; else sc->fg = c;
                 continue;
             }
-            die_at(cur()->line, "unexpected %s on screen '%s' (v1 takes BLANK SCREEN on the 01, fields below it)", tok_desc(cur()), sc->name);
+            /* the 01 is a group like any other (2023 13.17.2 format 1):
+             * its attributes and input clauses reach the entries below */
+            if (accept_word("highlight")) { sc->flags |= COB_SF_HIGHLIGHT; continue; }
+            if (accept_word("lowlight")) { sc->flags |= COB_SF_LOWLIGHT; continue; }
+            if (accept_word("underline")) { sc->flags |= COB_SF_UNDERLINE; continue; }
+            if (accept_word("reverse-video")) { sc->flags |= COB_SF_REVERSE; continue; }
+            if (accept_word("auto") || accept_word("auto-skip")) { sc->flags |= COB_SF_AUTO; continue; }
+            if (accept_word("secure")) { sc->flags |= COB_SF_SECURE; continue; }
+            if (accept_word("required")) { sc->flags |= COB_SF_REQUIRED; continue; }
+            if (accept_word("full")) { sc->flags |= COB_SF_FULL; continue; }
+            if (accept_word("bell") || accept_word("beep")) { sc->rsv |= COB_SR_BELL; continue; }
+            if (accept_word("blink")) { sc->rsv |= COB_SR_BLINK; continue; }
+            if (at_word("global")) die_at(cur()->line, "GLOBAL on a screen is not implemented");
+            die_at(cur()->line, "unexpected %s on screen '%s'", tok_desc(cur()), sc->name);
         }
         expect_period();
         /* nested groups: a stack of the enclosing entries.  Each carries
          * the composed look (flags, colours) its children inherit, and
          * the group's LINE/COLUMN, which anchor its first child. */
-        struct { int level, flags, fg, bg, line, col, subidx, usage; } gstk[16];
+        struct { int level, flags, fg, bg, line, col, subidx, usage, rsv; } gstk[16];
         int gdepth = 0;
         while (cur()->kind == T_NUM && strcmp(cur()->s, "01")) {
             int fl = parse_level(); int fline = cur()->line; advance();
@@ -1294,8 +1326,21 @@ static void parse_screen_section(void)
              * LINE and COLUMN clauses (2023 13.18.38.4 rule 6) -- so a LINE
              * PLUS or COLUMN PLUS steps from the occurrence before */
             int occ = 0, line_plus = -1, col_plus = -1;
+            unsigned seen = 0;
             while (cur()->kind != T_PERIOD) {
                 Tok *t = cur();
+                if (t->kind == T_WORD) {
+                    unsigned b = scr_clause_bit(t->s);
+                    if (b & seen) {
+                        char up[32]; int i = 0;
+                        for (; t->s[i] && i < 31; i++) up[i] = (char)toupper((unsigned char)t->s[i]);
+                        up[i] = 0;
+                        die_at(t->line, b == scr_clause_bit("highlight") ? "HIGHLIGHT or LOWLIGHT is written once in a screen entry: they are one clause (2023 13.17.2)"
+                                                                         : "%s is written twice in one screen entry (2023 13.17.2)", up);
+                    }
+                    seen |= b;
+                }
+                if (t->kind == T_WORD && !strcmp(t->s, "global")) die_at(t->line, "GLOBAL on a screen item is not implemented");
                 if (accept_word("occurs")) {
                     if (cur()->kind != T_NUM) die_at(t->line, "OCCURS in the SCREEN SECTION takes an integer (2023 13.18.38.3 rule 11)");
                     occ = atoi(cur()->s); advance(); accept_word("times");
@@ -1330,7 +1375,9 @@ static void parse_screen_section(void)
                 }
                 if (accept_word("value")) {
                     accept_word("is");
-                    if (cur()->kind != T_STR) die_at(t->line, "a screen VALUE needs a nonnumeric literal");
+                    if (f->kind >= 0) die_at(t->line, "a screen entry has one of FROM, TO, USING and VALUE (2023 13.17.2)");
+                    if (cur()->kind != T_STR)
+                        die_at(t->line, "a screen VALUE is an alphanumeric or national literal, not a figurative constant or a number (2023 13.18.63.3 rule 15)");
                     f->value = cur(); f->natlit = cur()->nat; advance(); f->kind = COB_SCR_VALUE; continue;
                 }
                 if (accept_word("pic") || accept_word("picture")) {
@@ -1345,6 +1392,13 @@ static void parse_screen_section(void)
                 }
                 if (at_word("from") || at_word("to") || at_word("using")) {
                     int kind = at_word("from") ? COB_SCR_FROM : at_word("to") ? COB_SCR_TO : COB_SCR_USING;
+                    if (f->kind >= 0) {
+                        /* FROM with TO is one source-destination clause of the
+                         * format (13.17.2); anything else is one too many */
+                        int pair = (f->kind == COB_SCR_FROM && kind == COB_SCR_TO) || (f->kind == COB_SCR_TO && kind == COB_SCR_FROM);
+                        if (pair) die_at(t->line, "FROM and TO in one screen entry (shown from one item, keyed into another) is not implemented");
+                        die_at(t->line, "a screen entry has one of FROM, TO, USING and VALUE (2023 13.17.2)");
+                    }
                     advance();
                     if (kind == COB_SCR_FROM && (cur()->kind == T_STR || cur()->kind == T_NUM)) {
                         /* FROM literal-1 (2002 13.15.1): the literal through
@@ -1379,7 +1433,8 @@ static void parse_screen_section(void)
                 if (accept_word("underline")) { f->flags |= COB_SF_UNDERLINE; continue; }
                 if (accept_word("auto") || accept_word("auto-skip")) { f->flags |= COB_SF_AUTO; continue; }
                 if (accept_word("reverse-video")) { f->flags |= COB_SF_REVERSE; continue; }
-                if (accept_word("bell") || accept_word("beep") || accept_word("blink")) continue;   /* no bell, no blink: painted plain */
+                if (accept_word("bell") || accept_word("beep")) { f->rsv |= COB_SR_BELL; continue; }   /* a DISPLAY rings once (13.18.6.4 rule 1) */
+                if (accept_word("blink")) { f->rsv |= COB_SR_BLINK; continue; }
                 if (accept_word("erase")) { f->ext |= parse_erase_clause(t->line); continue; }
                 if (accept_word("foreground-color") || accept_word("foreground-colour") || accept_word("background-color") || accept_word("background-colour")) {
                     int bg = t->s[0] == 'b';
@@ -1429,16 +1484,25 @@ static void parse_screen_section(void)
                 pend_erase |= f->ext & (COB_SX_ERASE_EOL | COB_SX_ERASE_EOS);   /* a group's ERASE: its first field's */
                 f->ext &= ~(COB_SX_ERASE_EOL | COB_SX_ERASE_EOS);
             }
+            if (sc->nf == 0 && (line_plus >= 0 || col_plus >= 0))
+                die_at(fline, "LINE PLUS and COLUMN PLUS are relative to the screen item before, and the first item of a screen has none (2023 13.18.35.3 rule 13, 13.18.14.3 rule 13)");
             if (blank_screen_entry && f->kind < 0 && !f->has_pic) continue;   /* just BLANK SCREEN */
             if (occ > 1 && f->kind < 0 && !f->has_pic) die_at(fline, "OCCURS on a screen group is not implemented");
+            if (occ && line_plus < 0 && col_plus < 0 && (seen & (scr_clause_bit("line") | scr_clause_bit("col"))))
+                die_at(fline, "an OCCURS screen item with LINE or COLUMN places its occurrences with PLUS or MINUS in one of them (2023 13.18.38.3 rules 14, 15)");
+            if (f->kind < 0 && !f->has_pic && !f->value) {
+                if (f->just) die_at(fline, "JUSTIFIED is written on an elementary screen item only (2023 13.18.32.3 rule 1)");
+                if (f->blank_zero) die_at(fline, "BLANK WHEN ZERO is not a clause of a group screen item (2023 13.17.2 format 1)");
+            }
             if (f->kind < 0 && !f->has_pic) {
                 /* a group: its look composes over the enclosing one and its
                  * children inherit it; its position anchors the first child */
                 if (gdepth == 16) die_at(fline, "screen groups nested more than 16 deep");
-                int pf = gdepth ? gstk[gdepth - 1].flags : 0;
+                int pf = gdepth ? gstk[gdepth - 1].flags : sc->flags;
                 int pfg = gdepth ? gstk[gdepth - 1].fg : sc->fg, pbg = gdepth ? gstk[gdepth - 1].bg : sc->bg;
                 gstk[gdepth].level = fl;
                 gstk[gdepth].flags = pf | f->flags;
+                gstk[gdepth].rsv = (gdepth ? gstk[gdepth - 1].rsv : sc->rsv) | f->rsv;
                 gstk[gdepth].fg = f->fg != 255 ? f->fg : pfg;
                 gstk[gdepth].bg = f->bg != 255 ? f->bg : pbg;
                 gstk[gdepth].line = f->line; gstk[gdepth].col = f->col;
@@ -1481,14 +1545,22 @@ static void parse_screen_section(void)
                 int gf = gstk[gdepth - 1].flags;
                 if (f->kind != COB_SCR_TO && f->kind != COB_SCR_USING)
                     gf &= ~(COB_SF_AUTO | COB_SF_SECURE | COB_SF_REQUIRED | COB_SF_FULL);
+                if (f->just) gf &= ~COB_SF_FULL;              /* FULL at a group skips a JUSTIFIED item (13.18.26.3 rule 1) */
                 f->flags |= gf;
+                f->rsv |= gstk[gdepth - 1].rsv;
                 if (f->fg == 255) f->fg = gstk[gdepth - 1].fg;
                 if (f->bg == 255) f->bg = gstk[gdepth - 1].bg;
                 if (!f->line && gstk[gdepth - 1].line) f->line = gstk[gdepth - 1].line;
                 if (!f->col && gstk[gdepth - 1].col) f->col = gstk[gdepth - 1].col;
                 gstk[gdepth - 1].line = 0; gstk[gdepth - 1].col = 0;    /* the anchor is the first child's */
             } else {
-                /* straight under the 01: its colours */
+                /* straight under the 01: its colours and attributes */
+                int gf = sc->flags;
+                if (f->kind != COB_SCR_TO && f->kind != COB_SCR_USING)
+                    gf &= ~(COB_SF_AUTO | COB_SF_SECURE | COB_SF_REQUIRED | COB_SF_FULL);
+                if (f->just) gf &= ~COB_SF_FULL;
+                f->flags |= gf;
+                f->rsv |= sc->rsv;
                 if (f->fg == 255) f->fg = sc->fg;
                 if (f->bg == 255) f->bg = sc->bg;
             }
@@ -1550,9 +1622,13 @@ static void parse_screen_section(void)
                 f->width = sfield_cols(f) + (f->sign_sep ? 1 : 0);   /* SEPARATE: the sign its own column */
             }
             if (!f->line) f->line = prev ? prev->line : 1;        /* no LINE: the previous slot's line */
-            if (!f->col) f->col = prev && prev->line == f->line ? prev->col + prev->width : 1;   /* no COLUMN: right after it */
-            if ((f->flags & (COB_SF_SECURE | COB_SF_REQUIRED | COB_SF_FULL)) && f->kind != COB_SCR_TO && f->kind != COB_SCR_USING)
-                die_at(fline, "SECURE, REQUIRED and FULL belong to an input field (TO or USING)");
+            /* no COLUMN: column 1 when the entry has a LINE clause (13.18.14.4
+             * rule 16); with neither, right after the item before (rule 17b) */
+            if (!f->col) f->col = !(seen & scr_clause_bit("line")) && prev && prev->line == f->line ? prev->col + prev->width : 1;
+            /* SECURE, REQUIRED, FULL and AUTO on an item that takes no input
+             * have no effect (13.18.3.3 rule 2, 13.18.47.3 rule 1, 13.18.50.3
+             * rule 2): nothing forbids writing them */
+            if (f->kind != COB_SCR_TO && f->kind != COB_SCR_USING) f->flags &= ~(COB_SF_SECURE | COB_SF_REQUIRED | COB_SF_FULL | COB_SF_AUTO);
             if (occ > 1 && f->kind != COB_SCR_VALUE)
                 die_at(fline, "OCCURS on a FROM, TO or USING screen item (a table's elements, 2023 13.18.38.3 rule 13) is not implemented");
             if (pend_erase) { f->ext |= pend_erase; pend_erase = 0; }
