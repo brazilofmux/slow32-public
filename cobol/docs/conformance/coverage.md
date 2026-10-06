@@ -11,7 +11,7 @@ carry the compiler's own reason.
 
 | clause | elements | swept | not implemented | unswept |
 |---|---|---|---|---|
-| 7 COPY, REPLACE and directives | 24 | 4 | 0 | 20 |
+| 7 COPY, REPLACE and directives | 24 | 11 | 0 | 13 |
 | 8 characters, names, data, expressions, conditions | 35 | 5 | 0 | 30 |
 | 9 files and objects, general | 0 | 0 | 0 | 0 |
 | 10 the compilation group | 2 | 0 | 0 | 2 |
@@ -21,7 +21,7 @@ carry the compiler's own reason.
 | 14 PROCEDURE DIVISION | 54 | 42 | 7 | 5 |
 | 15 intrinsic functions | 94 | 73 | 21 | 0 |
 | 16 standard classes | 0 | 0 | 0 | 0 |
-| **all** | **324** | **186** | **28** | **110** |
+| **all** | **324** | **193** | **28** | **103** |
 
 ## 7 COPY, REPLACE and directives
 
@@ -29,19 +29,19 @@ carry the compiler's own reason.
 |---|---|---|---|---|---|---|---|
 | 7.2.3 | COPY statement | [copy](copy.md) | 14 | 6 | 0 | 0 | 0 |
 | 7.2.4 | REPLACE statement | [copy](copy.md) | 14 | 6 | 0 | 0 | 0 |
-| 7.3 |  | [turn](turn.md) | 8 | 4 | 0 | 0 | 1 |
-| 7.3.6 |  | *unswept* | | | | | |
-| 7.3.7 |  | *unswept* | | | | | |
-| 7.3.8 |  | *unswept* | | | | | |
-| 7.3.8.4 |  | *unswept* | | | | | |
+| 7.3 |  | [directives](directives.md), [turn](turn.md) | 34 | 14 | 0 | 0 | 2 |
+| 7.3.6 |  | [directives](directives.md) | 26 | 10 | 0 | 0 | 1 |
+| 7.3.7 |  | [directives](directives.md) | 26 | 10 | 0 | 0 | 1 |
+| 7.3.8 |  | [directives](directives.md) | 26 | 10 | 0 | 0 | 1 |
+| 7.3.8.4 |  | [directives](directives.md) | 26 | 10 | 0 | 0 | 1 |
 | 7.3.9 |  | *unswept* | | | | | |
 | 7.3.10 |  | *unswept* | | | | | |
-| 7.3.11 |  | *unswept* | | | | | |
+| 7.3.11 |  | [directives](directives.md) | 26 | 10 | 0 | 0 | 1 |
 | 7.3.12 |  | *unswept* | | | | | |
-| 7.3.13 |  | *unswept* | | | | | |
+| 7.3.13 |  | [directives](directives.md) | 26 | 10 | 0 | 0 | 1 |
 | 7.3.14 |  | *unswept* | | | | | |
 | 7.3.15 |  | *unswept* | | | | | |
-| 7.3.16 |  | *unswept* | | | | | |
+| 7.3.16 |  | [directives](directives.md) | 26 | 10 | 0 | 0 | 1 |
 | 7.3.17 |  | *unswept* | | | | | |
 | 7.3.18 |  | *unswept* | | | | | |
 | 7.3.19 |  | *unswept* | | | | | |
@@ -159,7 +159,7 @@ carry the compiler's own reason.
 | 13.7 |  | [data-division](data-division.md) | 26 | 36 | 5 | 1 | 4 |
 | 13.8 |  | *unswept* | | | | | |
 | 13.9 |  | *unswept* | | | | | |
-| 13.10 |  | [data-division](data-division.md) | 26 | 36 | 5 | 1 | 4 |
+| 13.10 |  | [data-division](data-division.md), [directives](directives.md) | 52 | 46 | 5 | 1 | 5 |
 | 13.14 |  | *unswept* | | | | | |
 | 13.15 |  | [data-division](data-division.md) | 26 | 36 | 5 | 1 | 4 |
 | 13.16 |  | [data-division](data-division.md) | 26 | 36 | 5 | 1 | 4 |

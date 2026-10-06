@@ -1,7 +1,8 @@
 identification division.
 program-id. dirx.
-*> Only >>SOURCE FORMAT is implemented of the compiler directives;
-*> conditional compilation (>>DEFINE, >>IF ...) is refused by name.
->>DEFINE DEBUGGING AS 1
+*> A compiler directive this compiler does not implement yet is refused
+*> by name (>>DEFINE, >>IF and >>EVALUATE are implemented since
+*> 2026-10-06; >>LISTING is queued with the small directives).
+>>LISTING OFF
 procedure division.
     stop run.

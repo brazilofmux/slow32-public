@@ -1,9 +1,10 @@
 identification division.
 program-id. p29.
-*> constant-from: refused by name (docs/plans/standard-queue.md item 1); it was a
-*> parse error naming something else.
+*> CONSTANT ... FROM names a compilation variable a >>DEFINE made (2023
+*> 13.10); a data item is not one.
 data division.
 working-storage section.
+01 a pic x.
 01 k constant from a.
 procedure division.
     display 'x'

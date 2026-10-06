@@ -90,7 +90,8 @@ COMMAND-LINE are X/Open's and appear in no ISO edition, so their ON EXCEPTION st
 - Why here: small, and closes the forms real programs write first.
 
 **6. Conditional compilation.** 7.3.5-7.3.8, 7.3.11 DEFINE, 7.3.13 EVALUATE, 7.3.16 IF; Ed. 2002; M;
-deps none.
+deps none. DONE 2026-10-06 (docs/conformance/directives.md): all three, CONSTANT FROM, PARAMETER
+from -D; compile-time boolean expressions remain a gap.
 - Today: ">>define / >>if is not implemented yet"; the constant entry's FROM form waits on it ("FROM
   compilation-variable-name needs >>DEFINE").
 - Why here: the most-used 2002 directive family, and a prerequisite for compiling real 2002+ sources

@@ -372,6 +372,7 @@ static void usage(void)
         "  -free    free format (GnuCOBOL -free; majesty)\n"
         "  -m       module: no main entry, every unit a subprogram\n"
         "  -I dir   where COPY looks for copybooks (repeatable)\n"
+        "  -D name[=value]  the value >>DEFINE name AS PARAMETER takes (repeatable; no value: 1)\n"
         "  -std=85  X3.23-1985 and the 1989 intrinsics; the default\n"
         "  -std=2002 add the COBOL 2002 modules landed so far (docs/standards.md, Stage B)\n"
         "  -fnsig   only write the user functions' .s32fn signature files (docs/functions.md)\n"
@@ -390,6 +391,8 @@ int main(int argc, char **argv)
         if (!strcmp(argv[i], "-free")) g_free = 1;
         else if (!strcmp(argv[i], "-fixed")) g_free = 0;
         else if (!strcmp(argv[i], "-m")) g_module = 1;
+        else if (!strcmp(argv[i], "-D") && i + 1 < argc) { if (g_ncv_param < 64) g_cv_param[g_ncv_param++] = argv[++i]; }   /* >>DEFINE ... PARAMETER's values */
+        else if (!strncmp(argv[i], "-D", 2) && argv[i][2]) { if (g_ncv_param < 64) g_cv_param[g_ncv_param++] = argv[i] + 2; }
         else if (!strcmp(argv[i], "-I") && i + 1 < argc) { if (g_nincdir < 16) g_incdirs[g_nincdir++] = argv[++i]; }
         else if (!strncmp(argv[i], "-I", 2) && argv[i][2]) { if (g_nincdir < 16) g_incdirs[g_nincdir++] = argv[i] + 2; }
         else if (!strcmp(argv[i], "-o") && i + 1 < argc) out = argv[++i];

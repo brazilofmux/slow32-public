@@ -440,11 +440,422 @@ static void tw_apply(TWV *out, TW *w, int n, const TWOp *ops, int nops)
  * 12), then the REPLACING phrase over the whole of it */
 static const char *g_copy_stack[16]; static int g_copy_depth;
 
+/* ---- conditional compilation: >>DEFINE, >>IF, >>EVALUATE (2023 7.3.5-8,
+ * 7.3.11, 7.3.13, 7.3.16) ----------------------------------------------
+ *
+ * Done in step 1, as the text words go by with their library text
+ * expanded in place: a directive applies to the text that follows it
+ * (7.3.4 rule 5), so a COPY in an omitted branch is never read, and a
+ * compilation variable defined in library text is known after it.  The
+ * conditional directives leave nothing behind; the omitted text is
+ * dropped.  Compile-time arithmetic is done in long double and the
+ * result truncated to its integer part (7.3.6.3 rules 2-3; documented
+ * in docs/conformance/directives.md). */
+typedef struct { char kind; long double n; char *s; int len; } CVal;   /* kind: 'n' numeric, 'a' alphanumeric, 'b' boolean */
+typedef struct { char name[64]; int defined; CVal v; } CVar;
+static CVar g_cvar[256]; static int g_ncvar;
+static const char *g_cv_param[64]; static int g_ncv_param;   /* -D name=value: the values PARAMETER takes */
+
+static CVar *cvar_find(const char *nm)
+{
+    for (int i = 0; i < g_ncvar; i++) if (!strcasecmp(g_cvar[i].name, nm)) return &g_cvar[i];
+    return NULL;
+}
+
+typedef struct { int parent, active, taken, eval, else_seen; CVal subj; int truth; int depth_at; } CondLevel;
+static CondLevel g_cond[64]; static int g_ncond;
+static int cond_active(void) { return !g_ncond || g_cond[g_ncond - 1].active; }
+
+/* a directive's text as tokens */
+typedef struct { char t; char *s; int len; } CTok;      /* t: 'w' word, 'n' number, 'a' alnum literal, 'b' boolean literal, 'o' operator */
+static CTok g_ct[128]; static int g_nct, g_cp; static const TW *g_ctw;
+
+static void cdie(const char *fmt, const char *a) { tw_die(g_ctw, fmt, a); }
+
+static void ctok(const char *p)
+{
+    g_nct = 0;
+    while (*p) {
+        if (*p == ' ' || *p == '\t') { p++; continue; }
+        if (p[0] == '*' && p[1] == '>') break;
+        if (g_nct == 128) cdie("a compiler directive too long to read%s", "");
+        CTok *t = &g_ct[g_nct++];
+        const char *s = p;
+        if ((*p == 'b' || *p == 'B') && (p[1] == '"' || p[1] == '\'')) {
+            char q = p[1]; p += 2; const char *b = p;
+            while (*p && *p != q) p++;
+            if (!*p) cdie("an unclosed literal in a compiler directive%s", "");
+            t->t = 'b'; t->s = xstrndup(b, (int)(p - b)); t->len = (int)(p - b); p++;
+            for (int i = 0; i < t->len; i++) if (t->s[i] != '0' && t->s[i] != '1') cdie("a boolean literal holds only 0 and 1%s", "");
+            continue;
+        }
+        if (*p == '"' || *p == '\'' || ((*p == 'x' || *p == 'X' || *p == 'n' || *p == 'N') && (p[1] == '"' || p[1] == '\''))) {
+            if (*p != '"' && *p != '\'') cdie("a hexadecimal or national literal in a compiler directive is not implemented%s", "");
+            char q = *p++; char buf[256]; int k = 0;
+            for (;;) {
+                if (!*p) cdie("an unclosed literal in a compiler directive%s", "");
+                if (*p == q) { if (p[1] == q) { if (k < 255) buf[k++] = q; p += 2; continue; } p++; break; }
+                if (k < 255) buf[k++] = *p;
+                p++;
+            }
+            t->t = 'a'; t->s = xstrndup(buf, k); t->len = k;
+            continue;
+        }
+        if (isdigit((unsigned char)*p) || (*p == '.' && isdigit((unsigned char)p[1]))) {
+            while (isdigit((unsigned char)*p) || (*p == '.' && isdigit((unsigned char)p[1]))) p++;
+            t->t = 'n'; t->s = xstrndup(s, (int)(p - s)); t->len = (int)(p - s);
+            continue;
+        }
+        if (isalpha((unsigned char)*p)) {
+            while (isalnum((unsigned char)*p) || *p == '-' || *p == '_') p++;
+            while (p > s && p[-1] == '-') p--;
+            t->t = 'w'; t->s = xstrndup(s, (int)(p - s)); t->len = (int)(p - s);
+            continue;
+        }
+        if ((p[0] == '<' && (p[1] == '=' || p[1] == '>')) || (p[0] == '>' && p[1] == '=')) p += 2;
+        else if (strchr("+-*/()=<>", *p)) p++;
+        else cdie("'%c' is not taken in a compiler directive", (char[]){ *p, 0 });
+        t->t = 'o'; t->s = xstrndup(s, (int)(p - s)); t->len = (int)(p - s);
+    }
+}
+static CTok *ccur(void) { static CTok eof = { 0, "", 0 }; return g_cp < g_nct ? &g_ct[g_cp] : &eof; }
+static int cword(const char *w) { CTok *t = ccur(); return t->t == 'w' && !strcasecmp(t->s, w); }
+static int cop(const char *o) { CTok *t = ccur(); return t->t == 'o' && !strcmp(t->s, o); }
+static int caccept(const char *w) { if (cword(w)) { g_cp++; return 1; } return 0; }
+
+/* a compile-time arithmetic expression (7.3.6): numeric literals and
+ * numeric compilation variables, + - * / and parentheses, no ** */
+static long double c_arith(void);
+static int c_operand(CVal *v);
+static long double c_prim(void)
+{
+    if (cop("(")) { g_cp++; long double x = c_arith(); if (!cop(")")) cdie("expected ')' in a compile-time expression%s", ""); g_cp++; return x; }
+    if (cop("+")) { g_cp++; return c_prim(); }
+    if (cop("-")) { g_cp++; return -c_prim(); }
+    CVal v;
+    if (!c_operand(&v) || v.kind != 'n') cdie("a compile-time arithmetic expression takes numeric literals and numeric compilation variables (2023 7.3.6.2 rule 1)%s", "");
+    return v.n;
+}
+static long double c_term(void)
+{
+    long double x = c_prim();
+    for (;;) {
+        if (cop("*")) { g_cp++; if (cop("*")) cdie("no exponentiation in a compile-time expression (2023 7.3.6.2 rule 1a)%s", ""); x *= c_prim(); }
+        else if (cop("/")) { g_cp++; long double y = c_prim(); if (y == 0) cdie("a division by zero in a compile-time expression (2023 7.3.6.2 rule 1c)%s", ""); x /= y; }
+        else return x;
+    }
+}
+static long double c_arith(void)
+{
+    long double x = c_term();
+    for (;;) {
+        if (cop("+")) { g_cp++; x += c_term(); }
+        else if (cop("-")) { g_cp++; x -= c_term(); }
+        else return x;
+    }
+}
+/* one literal or compilation variable, without consuming an operator */
+static int c_operand(CVal *v)
+{
+    CTok *t = ccur();
+    memset(v, 0, sizeof *v);
+    if (t->t == 'n') { v->kind = 'n'; v->n = strtold(t->s, NULL); g_cp++; return 1; }
+    if (t->t == 'a') { v->kind = 'a'; v->s = t->s; v->len = t->len; g_cp++; return 1; }
+    if (t->t == 'b') { v->kind = 'b'; v->s = t->s; v->len = t->len; g_cp++; return 1; }
+    if (t->t == 'w') {
+        CVar *c = cvar_find(t->s);
+        if (!c) cdie("'%s' is not a compilation variable (no >>DEFINE)", t->s);
+        if (!c->defined) cdie("'%s' is not defined here (a >>DEFINE ... OFF; 2023 7.3.11.4 rule 2)", t->s);
+        *v = c->v; g_cp++; return 1;
+    }
+    return 0;
+}
+/* a value: an arithmetic expression, or a literal or variable of another category */
+static void c_value(CVal *v)
+{
+    int save = g_cp;
+    CVal o;
+    if (c_operand(&o) && o.kind != 'n') { *v = o; return; }
+    g_cp = save;
+    v->kind = 'n'; v->n = c_arith(); v->s = NULL; v->len = 0;
+}
+static int c_eq(const CVal *a, const CVal *b)
+{
+    if (a->kind != b->kind) cdie("the operands of a compile-time comparison are of one category (2023 7.3.8.2 rule 1a)%s", "");
+    if (a->kind == 'n') return a->n == b->n;
+    return a->len == b->len && !memcmp(a->s, b->s, (size_t)a->len);     /* by encoding, unequal lengths unequal (7.3.8.3 rule 2) */
+}
+/* relational operator: 0 =, 1 >, 2 >=, 3 <, 4 <=, 5 <>; -1 none */
+static int c_relop(int *neg)
+{
+    *neg = 0;
+    int save = g_cp;
+    caccept("is");
+    if (caccept("not")) *neg = 1;
+    if (cop("=")) { g_cp++; return 0; }
+    if (cop("<>")) { g_cp++; return 5; }
+    if (cop(">=")) { g_cp++; return 2; }
+    if (cop("<=")) { g_cp++; return 4; }
+    if (cop(">")) { g_cp++; return 1; }
+    if (cop("<")) { g_cp++; return 3; }
+    if (caccept("equal")) { caccept("to"); return 0; }
+    if (caccept("greater")) { caccept("than"); if (caccept("or")) { if (!caccept("equal")) cdie("expected EQUAL%s", ""); caccept("to"); return 2; } return 1; }
+    if (caccept("less")) { caccept("than"); if (caccept("or")) { if (!caccept("equal")) cdie("expected EQUAL%s", ""); caccept("to"); return 4; } return 3; }
+    g_cp = save; *neg = 0;
+    return -1;
+}
+static int c_cond(void);
+static int c_simple(void)
+{
+    if (caccept("not")) return !c_simple();
+    if (cop("(")) {
+        /* a parenthesized condition, or an arithmetic expression that a relation compares */
+        int save = g_cp;
+        g_cp++;
+        int ok = 1, r = 0;
+        /* try the condition reading: it must close and not be followed by an operator */
+        int depth = 1, k = g_cp, has_rel = 0;
+        for (; k < g_nct && depth; k++) {
+            if (g_ct[k].t == 'o' && !strcmp(g_ct[k].s, "(")) depth++;
+            else if (g_ct[k].t == 'o' && !strcmp(g_ct[k].s, ")")) depth--;
+            else if (depth == 1 && ((g_ct[k].t == 'o' && strchr("=<>", g_ct[k].s[0])) ||
+                     (g_ct[k].t == 'w' && (!strcasecmp(g_ct[k].s, "and") || !strcasecmp(g_ct[k].s, "or") || !strcasecmp(g_ct[k].s, "defined") ||
+                                           !strcasecmp(g_ct[k].s, "equal") || !strcasecmp(g_ct[k].s, "greater") || !strcasecmp(g_ct[k].s, "less")))))
+                has_rel = 1;
+        }
+        if (has_rel) {
+            r = c_cond();
+            if (!cop(")")) cdie("expected ')' in a compile-time condition%s", "");
+            g_cp++;
+            (void)ok;
+            return r;
+        }
+        g_cp = save;                                    /* (arithmetic) relop ... */
+    }
+    if (ccur()->t == 'w' && g_cp + 1 < g_nct) {
+        int save = g_cp; g_cp++;
+        int neg = 0; caccept("is"); if (caccept("not")) neg = 1;
+        if (caccept("defined")) {
+            CVar *c = cvar_find(g_ct[save].s);
+            int d = c && c->defined;
+            return neg ? !d : d;
+        }
+        g_cp = save;
+    }
+    CVal a; c_value(&a);
+    int neg, op = c_relop(&neg);
+    if (op < 0) {
+        if (a.kind == 'b') { int any = 0; for (int i = 0; i < a.len; i++) if (a.s[i] == '1') any = 1; return any; }   /* a boolean condition (8.8.4.3) */
+        cdie("expected a relational operator in a compile-time condition%s", "");
+    }
+    CVal b; c_value(&b);
+    if (a.kind != 'n' && op != 0 && op != 5) cdie("only EQUAL and NOT EQUAL compare literals that are not numeric (2023 7.3.8.2 rule 1a2)%s", "");
+    int r;
+    if (a.kind == 'n' && b.kind == 'n')
+        r = op == 0 ? a.n == b.n : op == 1 ? a.n > b.n : op == 2 ? a.n >= b.n : op == 3 ? a.n < b.n : op == 4 ? a.n <= b.n : a.n != b.n;
+    else { r = c_eq(&a, &b); if (op == 5) r = !r; }
+    return neg ? !r : r;
+}
+static int c_and(void) { int r = c_simple(); while (caccept("and")) { int s2 = c_simple(); r = r && s2; } return r; }
+static int c_cond(void) { int r = c_and(); while (caccept("or")) { int s2 = c_and(); r = r || s2; } return r; }
+static void c_end(const char *what) { if (g_cp < g_nct) cdie("unexpected '%s' in the directive", ccur()->s), (void)what; }
+
+/* a CVal as the text a constant entry reads */
+static TW cval_tw(const TW *at, const CVal *v)
+{
+    TW t = *at; char buf[300];
+    if (v->kind == 'n') {
+        long double x = v->n; char *e;
+        snprintf(buf, sizeof buf, "%.18Lg", x);
+        if ((e = strchr(buf, 'e')) != NULL) cdie("a compilation variable's value out of range for a literal%s", "");
+        t.kind = TW_WORD;
+    } else if (v->kind == 'a') {
+        int k = 0; buf[k++] = '"';
+        for (int i = 0; i < v->len && k < 290; i++) { if (v->s[i] == '"') buf[k++] = '"'; buf[k++] = v->s[i]; }
+        buf[k++] = '"'; buf[k] = 0; t.kind = TW_LIT;
+    } else { snprintf(buf, sizeof buf, "b\"%.*s\"", v->len, v->s); t.kind = TW_LIT; }
+    t.s = xstrndup(buf, (int)strlen(buf)); t.len = (int)strlen(buf);
+    return t;
+}
+
+static int cv_param(const char *nm, CVal *v)
+{
+    for (int i = 0; i < g_ncv_param; i++) {
+        const char *e = strchr(g_cv_param[i], '=');
+        size_t l = e ? (size_t)(e - g_cv_param[i]) : strlen(g_cv_param[i]);
+        if (strlen(nm) != l || strncasecmp(nm, g_cv_param[i], l)) continue;
+        const char *val = e ? e + 1 : "1";
+        memset(v, 0, sizeof *v);
+        int num = *val != 0;
+        for (const char *q = val; *q; q++) if (!isdigit((unsigned char)*q) && !(*q == '.' && q > val) && !(q == val && (*q == '-' || *q == '+'))) num = 0;
+        if (num) { v->kind = 'n'; v->n = strtold(val, NULL); }
+        else { v->kind = 'a'; v->s = xstrndup(val, (int)strlen(val)); v->len = (int)strlen(val); }
+        return 1;
+    }
+    return 0;
+}
+
+/* a directive word on a TW_DIR line: 1 when it was a conditional one (or
+ * omitted), and is gone; 0 when it is to be kept (>>TURN) */
+static int cond_directive(const TW *t)
+{
+    g_ctw = t;
+    char *txt = xstrndup(t->s, t->len);
+    ctok(txt);
+    g_cp = 0;
+    if (!g_nct) cdie("an empty compiler directive%s", "");
+    CTok *k0 = &g_ct[0];
+    const char *w = k0->t == 'w' ? k0->s : "";
+    int act = cond_active();
+    if (!strcasecmp(w, "if")) {
+        g_cp = 1;
+        CondLevel *L = &g_cond[g_ncond];
+        if (g_ncond == 64) cdie(">>IF nests deeper than 64%s", "");
+        memset(L, 0, sizeof *L); L->parent = act; L->eval = 0; L->depth_at = g_copy_depth;
+        int r = act ? c_cond() : 0;
+        if (act) c_end("IF");
+        L->taken = r; L->active = act && r;
+        g_ncond++;
+        return 1;
+    }
+    if (!strcasecmp(w, "else")) {
+        if (!g_ncond || g_cond[g_ncond - 1].eval) cdie(">>ELSE without its >>IF%s", "");
+        CondLevel *L = &g_cond[g_ncond - 1];
+        if (L->else_seen) cdie("two >>ELSE in one >>IF%s", "");
+        if (L->depth_at != g_copy_depth) cdie("the phrases of an >>IF are all in one library text or all in source text (2023 7.3.16.3 rule 7)%s", "");
+        if (g_nct > 1) { g_cp = 1; c_end("ELSE"); }
+        L->else_seen = 1; L->active = L->parent && !L->taken;
+        return 1;
+    }
+    if (!strcasecmp(w, "end-if")) {
+        if (!g_ncond || g_cond[g_ncond - 1].eval) cdie(">>END-IF without its >>IF%s", "");
+        if (g_cond[g_ncond - 1].depth_at != g_copy_depth) cdie("the phrases of an >>IF are all in one library text or all in source text (2023 7.3.16.3 rule 7)%s", "");
+        if (g_nct > 1) { g_cp = 1; c_end("END-IF"); }
+        g_ncond--;
+        return 1;
+    }
+    if (!strcasecmp(w, "evaluate")) {
+        g_cp = 1;
+        if (g_ncond == 64) cdie(">>EVALUATE nests deeper than 64%s", "");
+        CondLevel *L = &g_cond[g_ncond];
+        memset(L, 0, sizeof *L); L->parent = act; L->eval = 1; L->depth_at = g_copy_depth;
+        if (act) {
+            if (cword("true") && g_nct == 2) { L->truth = 1; g_cp++; }
+            else c_value(&L->subj);
+            c_end("EVALUATE");
+        }
+        L->active = 0;                          /* nothing before the first >>WHEN */
+        g_ncond++;
+        return 1;
+    }
+    if (!strcasecmp(w, "when")) {
+        if (!g_ncond || !g_cond[g_ncond - 1].eval) cdie(">>WHEN without its >>EVALUATE%s", "");
+        CondLevel *L = &g_cond[g_ncond - 1];
+        if (L->depth_at != g_copy_depth) cdie("the phrases of an >>EVALUATE are all in one library text or all in source text (2023 7.3.13.3 rule 9)%s", "");
+        if (L->else_seen) cdie(">>WHEN after >>WHEN OTHER%s", "");
+        g_cp = 1;
+        if (cword("other") && g_nct == 2) { L->else_seen = 1; L->active = L->parent && !L->taken; if (L->active) L->taken = 1; return 1; }
+        int r = 0;
+        if (L->parent && !L->taken) {
+            if (L->truth) r = c_cond();
+            else {
+                CVal a; c_value(&a);
+                if (caccept("through") || caccept("thru")) {
+                    CVal b; c_value(&b);
+                    if (a.kind != 'n' || b.kind != 'n' || L->subj.kind != 'n') cdie("THROUGH takes numeric operands (2023 7.3.13.3 rule 12)%s", "");
+                    r = L->subj.n >= a.n && L->subj.n <= b.n;
+                } else r = c_eq(&L->subj, &a);
+            }
+            c_end("WHEN");
+        }
+        L->active = r;
+        if (r) L->taken = 1;
+        return 1;
+    }
+    if (!strcasecmp(w, "end-evaluate")) {
+        if (!g_ncond || !g_cond[g_ncond - 1].eval) cdie(">>END-EVALUATE without its >>EVALUATE%s", "");
+        if (g_cond[g_ncond - 1].depth_at != g_copy_depth) cdie("the phrases of an >>EVALUATE are all in one library text or all in source text (2023 7.3.13.3 rule 9)%s", "");
+        g_ncond--;
+        return 1;
+    }
+    if (!act) return 1;                         /* any other directive in omitted text is omitted */
+    if (!strcasecmp(w, "define")) {
+        g_cp = 1;
+        if (ccur()->t != 'w') cdie(">>DEFINE needs a compilation-variable name%s", "");
+        const char *nm = ccur()->s; g_cp++;
+        static const char *dirw[] = { "define", "if", "else", "end-if", "evaluate", "when", "end-evaluate", "turn", "source",
+                                      "as", "off", "override", "parameter", "defined", "true", "false", "other", NULL };
+        for (int i = 0; dirw[i]; i++) if (!strcasecmp(nm, dirw[i])) cdie("'%s' is a compiler-directive word, not a compilation variable (2023 7.3.11.3 rule 1)", nm);
+        CVar *c = cvar_find(nm);
+        caccept("as");
+        if (caccept("off")) { c_end("DEFINE"); if (c) c->defined = 0; return 1; }
+        CVal v; memset(&v, 0, sizeof v);
+        int have = 1;
+        if (caccept("parameter")) have = cv_param(nm, &v);
+        else {
+            int single = g_nct - g_cp == 1 || (g_nct - g_cp == 2 && cword("override"));
+            if (single && ccur()->t == 'n') { v.kind = 'n'; v.n = strtold(ccur()->s, NULL); g_cp++; }   /* one numeric literal: a literal (rule 5) */
+            else { c_value(&v); if (v.kind == 'n') { if (v.n > 9e18L || v.n < -9e18L) cdie("a compile-time result past 18 digits%s", ""); v.n = (long double)(long long)v.n; } }     /* an expression: its integer part (7.3.6.3 rule 3) */
+        }
+        int ovr = caccept("override");
+        c_end("DEFINE");
+        if (!c) {
+            if (g_ncvar == 256) cdie("more than 256 compilation variables%s", "");
+            c = &g_cvar[g_ncvar++]; memset(c, 0, sizeof *c);
+            snprintf(c->name, sizeof c->name, "%s", nm);
+        } else if (c->defined && !ovr && have) {
+            CVal old = c->v;
+            if (old.kind != v.kind || !c_eq(&old, &v))
+                cdie("'%s' is defined already, with another value: write OFF first, or OVERRIDE (2023 7.3.11.3 rule 2)", nm);
+        }
+        if (have) { c->v = v; c->defined = 1; } else c->defined = 0;   /* PARAMETER with no value: not defined (rule 4) */
+        return 1;
+    }
+    if (!strcasecmp(w, "turn")) return 0;
+    if (!strcasecmp(w, "d")) cdie("the >>D debugging indicator is not implemented (debugging lines were removed in COBOL 2014)%s", "");
+    cdie("the compiler directive >>%s is not implemented yet", w);
+    return 1;
+}
+
+/* the word "constant", then FROM a compilation variable: AS its value
+ * (13.10, format 2) -- the value in effect here */
+static int cv_constant_from(TWV *out, TW *in, int n, int i)
+{
+    if (!tw_is(&in[i], "from")) return 0;
+    int b = out->n - 1;
+    while (b >= 0 && out->w[b].kind == TW_SEP) b--;
+    if (b < 0 || !tw_is(&out->w[b], "constant")) {
+        if (b < 2 || !tw_is(&out->w[b], "global")) return 0;     /* CONSTANT IS GLOBAL FROM ... */
+        int c = b - 1; if (tw_is(&out->w[c], "is")) c--;
+        if (c < 0 || !tw_is(&out->w[c], "constant")) return 0;
+    }
+    int j = i + 1;
+    while (j < n && in[j].kind == TW_SEP) j++;
+    if (j >= n || in[j].kind != TW_WORD) return 0;
+    char nm[64]; snprintf(nm, sizeof nm, "%.*s", in[j].len > 63 ? 63 : in[j].len, in[j].s);
+    CVar *c = cvar_find(nm);
+    g_ctw = &in[j];
+    if (!c) cdie("'%s' is not a compilation variable: CONSTANT ... FROM names one a >>DEFINE made (2023 13.10)", nm);
+    if (!c->defined) cdie("'%s' is not defined here (2023 7.3.11.4 rule 2)", nm);
+    TW as = in[i]; as.s = "as"; as.len = 2;
+    twv_push(out, as);
+    twv_push(out, cval_tw(&in[j], &c->v));
+    return j - i + 1;
+}
+
+
+
 static void tw_copy(TWV *in, TWV *out)
 {
     int pt = 0;                                 /* inside pseudo-text */
     for (int i = 0; i < in->n; i++) {
         TW *t = &in->w[i];
+        if (t->kind == TW_DIR && !pt) {
+            if (cond_directive(t)) continue;    /* a conditional directive, or one in omitted text */
+            twv_push(out, *t); continue;        /* >>TURN, applied by the parser */
+        }
+        if (!cond_active()) continue;           /* omitted text (7.3.16.4 rules 2-3, 7.3.13.4 rules 4-6) */
+        if (!pt) { int used = cv_constant_from(out, in->w, in->n, i); if (used) { i += used - 1; continue; } }
         if (t->kind == TW_PDELIM) pt = !pt;
         if (pt || !tw_is(t, "copy") || t->dbg) { twv_push(out, *t); continue; }   /* a COPY on a debugging line is a comment */
         int j = i + 1;
@@ -487,7 +898,9 @@ static void tw_copy(TWV *in, TWV *out)
         TWV lib_w = { 0 }, lib_x = { 0 };
         tw_lex(lines, n, &lib_w);
         g_copy_stack[g_copy_depth++] = xstrndup(found, (int)strlen(found));
+        int nc0 = g_ncond;
         tw_copy(&lib_w, &lib_x);
+        if (g_ncond != nc0) tw_die(t, "COPY %s: the library text ends inside a >>IF or >>EVALUATE (2023 7.3.16.3 rule 7, 7.3.13.3 rule 9)", name);
         g_copy_depth--;
         int first = out->n;
         if (nops) tw_apply(out, lib_x.w, lib_x.n, ops, nops);
@@ -560,7 +973,10 @@ static void text_manipulation(SrcLine *lines, int n, SrcLine **out, int *nout, i
 {
     TWV a = { 0 }, b = { 0 };
     tw_lex(lines, n, &a);
+    int nc0 = g_ncond;
     tw_copy(&a, &b);
+    if (g_ncond != nc0 && b.n) tw_die(&b.w[b.n - 1], "the text ends inside a >>IF or >>EVALUATE (no >>END-IF or >>END-EVALUATE)%s", "");
+    else if (g_ncond != nc0) die_at(1, "the text ends inside a >>IF or >>EVALUATE (no >>END-IF or >>END-EVALUATE)");
     if (replace) { TWV c = { 0 }; tw_replace(&b, &c); free(b.w); b = c; }
     tw_lines(&b, out, nout);
     free(a.w); free(b.w);

@@ -61,8 +61,9 @@ COBOL 2002/2023 (Stage B):
   function (BY VALUE, OPTIONAL, OMITTED, program RETURNING, ANY LENGTH
   and stack arguments are implemented: docs/conformance/call.md,
   data-division.md);
-- compiler directives other than >>SOURCE and >>TURN (>>DEFINE, >>IF,
-  >>EVALUATE, ...);
+- compiler directives other than >>SOURCE, >>TURN, >>DEFINE, >>IF and
+  >>EVALUATE (those three since 2026-10-06, docs/conformance/
+  directives.md); and boolean expressions in a directive;
 - exceptions: EC-SCREEN and the rest of Table 13's conditions (USE
   AFTER EXCEPTION CONDITION ... FILE and WHEN EXCEPTION with a
   file-name or open mode since 2026-10-06; ON EXCEPTION on ACCEPT FROM

@@ -138,8 +138,11 @@ static int read_lines(const char *path, SrcLine **out, int *nout)
                     if (d + 1 < de && d[0] == '*' && d[1] == '>') break;      /* an inline comment ends it */
                 }
                 int k = 1;
-                if (nw && !strcmp(w[0], "turn")) {
-                    /* >>TURN: applied by the parser where it stands among the statements */
+                if (nw && strcmp(w[0], "source")) {
+                    /* every directive but SOURCE FORMAT goes on as a line of its own:
+                     * the conditional ones are evaluated with the library text in
+                     * place (copy.h, cond_directive), >>TURN is applied by the parser
+                     * where it stands among the statements */
                     const char *t0 = p + (len > from ? from : len);
                     while (*t0 == ' ' || *t0 == '\t') t0++;
                     t0 += 2;
