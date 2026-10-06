@@ -14,7 +14,8 @@ A refusal says one of four things, and the message should say which:
    in principle exceed.
 
 Surveyed 2026-09-28 against X3.23-1985 (FIPS 21-2) and ISO/IEC
-1989:2023. Line numbers drift; the messages are the index.
+1989:2023; section 2 checked again against the compiler's messages on
+2026-10-06. Line numbers drift; the messages are the index.
 
 ## 1. Forbidden by the standard
 
@@ -61,22 +62,29 @@ COBOL 2002/2023 (Stage B):
 - compiler directives other than >>SOURCE and >>TURN (>>DEFINE, >>IF,
   >>EVALUATE, ...);
 - exceptions: USE AFTER EXCEPTION CONDITION ... FILE, WHEN EXCEPTION
-  with a file-name or open mode, ACCEPT ... ON EXCEPTION, the rest of
-  Table 13's conditions (EC-DATA-INCOMPATIBLE is raised wherever
-  numeric or boolean content is sent since ISSUES-101 and -103);
+  with a file-name or open mode, ON EXCEPTION on ACCEPT FROM
+  ARGUMENT-NUMBER, ARGUMENT-VALUE and COMMAND-LINE, EC-SCREEN, the rest
+  of Table 13's conditions (EC-DATA-INCOMPATIBLE is raised wherever
+  numeric or boolean content is sent since ISSUES-101 and -103; ON
+  EXCEPTION on an ACCEPT of a screen and on a positioned ACCEPT since
+  ISSUES-125, and on ACCEPT FROM ENVIRONMENT since BP-E31);
 - a MOVE sender reference-modified with a computed length over an item
   that a receiver before the last changes (general rule 1 needs a
   snapshot of run-time length; docs/conformance/move.md);
-- reference modification in a screen item and in positioned DISPLAY
-  and ACCEPT; a reference-modified numeric receiver of national data;
+- reference modification with a computed length in a screen item and
+  in a positioned ACCEPT (a literal length is taken, and a positioned
+  DISPLAY takes a computed one: free/posrefmod); a reference-modified
+  numeric receiver of national data;
 - LENGTH OF, BYTE-LENGTH and other functions of a reference
   modification with a variable length; a function's reference
   modification with an expression length;
 - a TYPE that expands past level 49 (2023 13.18.57.4 rule 2c allows
   it);
 - a user-defined function in the places listed by g_ufn_forbid;
-- BLANK LINE in the screen section; ACCEPT FROM the remaining sources;
-  the SPECIAL-NAMES clauses not yet taken;
+- in the screen section: BLANK LINE; JUSTIFIED on a national item;
+  EC-SCREEN (above).  (CURSOR IS, SIGN, JUSTIFIED, status 8000 and ON
+  EXCEPTION landed 2026-10-04, ISSUES-125.)  ACCEPT FROM the remaining
+  sources; the SPECIAL-NAMES clauses not yet taken;
 - bits: OCCURS DEPENDING ON on a bit array, OCCURS on a bit group, a
   character item redefining a bit item that starts mid-byte;
 - EXIT PROGRAM RAISING and GOBACK RAISING: propagating an exception to
@@ -94,7 +102,8 @@ COBOL 2002/2023 (Stage B):
 - INITIALIZE of a reference-modified item with the COBOL 2002 phrases
   (WITH FILLER, TO VALUE, TO DEFAULT; the phrases themselves are
   implemented, docs/conformance/initialize.md);
-- READ PREVIOUS of a sequential file (2002; io-statements.md);
+- READ PREVIOUS of a sequential file (2002; io-statements.md; PREVIOUS
+  of a relative or indexed file is implemented).
 
 ## 3. Out of scope, by ruling
 
