@@ -13,9 +13,10 @@ if [ -z "${S32_HARNESS:-}" ] && [ -f "$lock" ] && kill -0 "$(cat "$lock" 2>/dev/
     exit 1
 fi
 CC="${CC:-cc}"
-# picture_scan.c is Ragel -G2 output: its fallthrough and unused state
-# constants are silenced in the file itself, so this line stays -Wall -Wextra.
+# picture_scan.c and lex_scan.c are Ragel -G2 output: their fallthrough and
+# unused state constants are silenced in the files themselves, so this line
+# stays -Wall -Wextra.
 $CC -std=c99 -O1 -Wall -Wextra -o "$HERE/out/s32-cobc" \
-    "$HERE/src/s32-cobc.c" "$HERE/src/picture.c" "$HERE/src/picture_scan.c"
+    "$HERE/src/s32-cobc.c" "$HERE/src/picture.c" "$HERE/src/picture_scan.c" "$HERE/src/lex_scan.c"
 echo "built: $HERE/out/s32-cobc"
 "$HERE/libcob/build.sh"

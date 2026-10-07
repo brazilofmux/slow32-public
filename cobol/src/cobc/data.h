@@ -624,6 +624,8 @@ static void parse_data_item1(void)
             pic_len_check(s->pic, t->line);
             if (nat_picture(s->pic, &s->pi, t->line)) { advance(); continue; }
             if (bool_picture(s->pic, &s->pi, t->line)) { advance(); continue; }
+            if (pic_analyse(s->pic, &s->pi) == 0 && s->pi.fpexp && g_std < 2002)
+                die_at(t->line, "'%s': a floating-point numeric-edited PICTURE is COBOL 2002 (2023 13.18.40.3 rule 13b); compile with -std=2002", s->name);
             if (pic_analyse(s->pic, &s->pi) < 0) {
                 /* a symbol 1 or N (not a repeat count) says which category
                  * was meant: name its rule (2023 13.18.40.4 rules 8-10) */
@@ -647,12 +649,6 @@ static void parse_data_item1(void)
                            s->name, s->pic);
                 if (has1)
                     die_at(t->line, "'%s': PICTURE '%s': a boolean PICTURE holds only the symbol 1 (2023 13.18.40.4 rule 8)", s->name, s->pic);
-                {
-                    /* a floating-point numeric-edited PICTURE: mantissa, E, a sign, exponent (2023 13.18.40.2.2) */
-                    const char *pe = s->pic; int fl = 0;
-                    for (; *pe; pe++) if ((*pe == 'E' || *pe == 'e') && (pe[1] == '+' || pe[1] == '-') && pe > s->pic && strchr("9.V()+-", pe[-1])) fl = 1;
-                    if (fl) die_at(t->line, "'%s': a floating-point numeric-edited PICTURE is COBOL 2002 (2023 13.18.40); not implemented", s->name);
-                }
                 die_at(t->line, "'%s': %s", s->name, s->pi.err);
             }
             advance();

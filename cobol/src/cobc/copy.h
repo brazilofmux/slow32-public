@@ -175,10 +175,6 @@ static int lit_prefix(const char *p)
     return -1;
 }
 
-/* a period, comma or semicolon is a separator before a space, the line's
- * end, or a closing pseudo-text delimiter (==... PIC 9(5).==) */
-static int sep_after(const char *q) { return !q[1] || q[1] == ' ' || q[1] == '\t' || (q[1] == '=' && q[2] == '='); }
-
 static void tw_lex(const SrcLine *lines, int nlines, TWV *out)
 {
     int sql = 0; char sq = 0;           /* inside EXEC SQL; the quote open there */
@@ -187,9 +183,9 @@ static void tw_lex(const SrcLine *lines, int nlines, TWV *out)
         TW t; memset(&t, 0, sizeof t);
         t.line = L->line; t.file = L->file; t.dbg = (unsigned char)L->dbg; t.ff = (unsigned char)L->ff;
         if (L->dir) { t.kind = TW_DIR; t.s = L->text; t.len = (int)strlen(L->text); twv_push(out, t); continue; }
-        const char *p = L->text;
-        int glued = 0;
-        while (*p) {
+        const char *p = L->text, *pe = p + strlen(p);
+        int glued = 0, run = 0;         /* run: the last word pushed is a run this lexeme may extend */
+        while (p < pe) {
             if (sql) {
                 /* EXEC SQL text: one opaque piece to END-EXEC or the line's
                  * end, quotes and -- comments respected as take_exec_sql does */
@@ -204,32 +200,38 @@ static void tw_lex(const SrcLine *lines, int nlines, TWV *out)
                     p++;
                 }
                 t.kind = TW_RAW; t.s = xstrndup(s, (int)(p - s)); t.len = (int)(p - s); t.glued = (unsigned char)glued;
-                twv_push(out, t); glued = 1;
+                twv_push(out, t); glued = 1; run = 0;
                 continue;
             }
-            if (*p == ' ' || *p == '\t') { glued = 0; p++; continue; }
-            if (p[0] == '*' && p[1] == '>') break;                      /* a comment to the end of the line */
-            const char *s = p;
-            int kind = TW_WORD, pl;
-            if (p[0] == '=' && p[1] == '=') { kind = TW_PDELIM; p += 2; }
-            else if (*p == '(' || *p == ')' || *p == ':') p++;
-            else if (*p == '.' && sep_after(p)) { kind = TW_PERIOD; p++; }
-            else if ((*p == ',' || *p == ';') && sep_after(p)) { kind = TW_SEP; p++; }
-            else if ((pl = lit_prefix(p)) >= 0) {
-                char q = p[pl];
-                p += pl + 1;
-                while (*p) {
-                    if (*p == q) { if (p[1] == q) { p += 2; continue; } p++; break; }
-                    p++;
-                }
-                kind = TW_LIT;
-            } else {
-                while (*p && *p != ' ' && *p != '\t' && *p != '(' && *p != ')' && *p != ':' && *p != '"' && *p != '\'' &&
-                       !(p[0] == '=' && p[1] == '=') && !(p[0] == '*' && p[1] == '>') &&
-                       !((*p == '.' || *p == ',' || *p == ';') && sep_after(p))) p++;
+            /* the scanner's lexemes (lex.rl): a literal with its delimiters,
+             * '(', ')', ':', == and a separating period, comma or semicolon
+             * are text-words of their own; everything else runs together to
+             * the next separator (7.2.2.5) */
+            Lexeme l;
+            lx_next(p, pe, &l);
+            if (l.kind == LX_SPACE) { glued = 0; run = 0; p += l.len; continue; }
+            if (l.kind == LX_COMMENT) break;                            /* a comment to the end of the line */
+            int kind = TW_WORD, own = 1;
+            switch (l.kind) {
+            case LX_PDELIM: kind = TW_PDELIM; break;
+            case LX_LP: case LX_RP: case LX_COLON: break;
+            case LX_PERIOD: kind = TW_PERIOD; break;
+            case LX_SEP: kind = TW_SEP; break;
+            case LX_LIT: kind = TW_LIT; break;
+            default: own = 0; break;                                    /* a word, a number, an operator, a tight period or comma, any other byte */
             }
-            t.kind = (unsigned char)kind; t.s = xstrndup(s, (int)(p - s)); t.len = (int)(p - s); t.glued = (unsigned char)glued;
-            twv_push(out, t); glued = 1;
+            if (!own && run) {
+                /* glued to the run before it: one text-word */
+                TW *w = &out->w[out->n - 1];
+                char *ns = xmalloc((size_t)w->len + (size_t)l.len + 1);
+                memcpy(ns, w->s, (size_t)w->len); memcpy(ns + w->len, l.s, (size_t)l.len); ns[w->len + l.len] = 0;
+                free(w->s); w->s = ns; w->len += l.len;
+                p += l.len;
+                continue;
+            }
+            t.kind = (unsigned char)kind; t.s = xstrndup(l.s, l.len); t.len = l.len; t.glued = (unsigned char)glued;
+            twv_push(out, t); glued = 1; run = !own;
+            p += l.len;
             if (kind == TW_WORD && tw_is(&out->w[out->n - 1], "sql")) {
                 int k = out->n - 2;
                 while (k >= 0 && out->w[k].kind == TW_DIR) k--;

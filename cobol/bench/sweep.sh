@@ -46,7 +46,7 @@ elapsed() {   # elapsed CMD ARG... -> wall seconds, three decimals
 printf '%-8s %14s %10s %10s\n' thresh 'fast insns' 'fast s' 'dbt s'
 for n in "${@:-0 8 16 24 40}"; do
     $CC -std=c99 -O1 -w -DCOPY_INLINE_MAX="$n" -I"$CDIR/src" -o "$CDIR/out/s32-cobc-sweep" \
-        "$CDIR/src/s32-cobc.c" "$CDIR/src/picture.c" "$CDIR/src/picture_scan.c"
+        "$CDIR/src/s32-cobc.c" "$CDIR/src/picture.c" "$CDIR/src/picture_scan.c" "$CDIR/src/lex_scan.c"
     "$CDIR/out/s32-cobc-sweep" -free -o "$base-$n.s" "$SRC"
     "$ROOT/tools/assembler/slow32asm" "$base-$n.s" "$base-$n.s32o" >/dev/null
     # builtins64.s32o supplies __muldi3 when libcob was built by the

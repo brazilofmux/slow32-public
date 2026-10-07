@@ -9,6 +9,7 @@
  */
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include "picture.h"
 
 static int fail(PicInfo *in, const char *msg)
@@ -198,11 +199,22 @@ static const char *pic_precedence(const char *f, int nf, char *msg, size_t msz)
 
 int pic_max_digits = 18;
 
+static int pic_analyse_fp(const char *s, PicInfo *info, const char *e);
 int pic_analyse(const char *s, PicInfo *info)
 {
     PicItem it[PIC_MAXITEM];
     int errpos = 0;
     memset(info, 0, sizeof *info);
+
+    /* a floating-point numeric-edited picture (2023 13.18.40.3 rule 13b):
+     * the significand, 'E', the exponent -- the E outside any repeat count */
+    {
+        int depth = 0;
+        for (const char *q = s; *q; q++) {
+            if (*q == '(') depth++; else if (*q == ')') depth--;
+            else if (depth == 0 && (*q == 'E' || *q == 'e')) return pic_analyse_fp(s, info, q);
+        }
+    }
 
     int n = pic_scan(s, it, PIC_MAXITEM, &errpos);
     if (n < 0) {
@@ -343,5 +355,44 @@ int pic_analyse(const char *s, PicInfo *info)
     info->category = info->edited ? PIC_NUMERIC_EDITED : PIC_NUMERIC;
     memcpy(info->pat, f, nf + 1);
     info->patlen = nf;
+    return 0;
+}
+
+/* the two parts of a floating-point numeric-edited picture, at e the 'E':
+ * the significand a numeric or numeric-edited picture for a fixed-point
+ * result without floating insertion or zero suppression with replacement,
+ * the exponent '+' and one to four 9s (2023 13.18.40.3 rule 13b); the
+ * item is numeric-edited, its digits and scale the significand's, its
+ * pattern the significand's then E, + and the exponent's 9s */
+static int pic_analyse_fp(const char *s, PicInfo *info, const char *e)
+{
+    char sig[PIC_MAXPAT];
+    size_t sl = (size_t)(e - s);
+    if (sl == 0 || sl >= sizeof sig) return fail(info, "a floating-point numeric-edited PICTURE needs a significand before the E (2023 13.18.40.3 rule 13b)");
+    memcpy(sig, s, sl); sig[sl] = 0;
+    PicInfo si;
+    if (pic_analyse(sig, &si) < 0) { snprintf(info->err, sizeof info->err, "%s", si.err); return -1; }
+    if (si.category != PIC_NUMERIC && si.category != PIC_NUMERIC_EDITED)
+        return fail(info, "the significand of a floating-point numeric-edited PICTURE is numeric or numeric-edited (2023 13.18.40.3 rule 13b)");
+    if (si.floating) return fail(info, "the significand of a floating-point numeric-edited PICTURE takes no floating insertion (2023 13.18.40.3 rule 13b)");
+    for (int i = 0; i < si.patlen; i++)
+        if (si.pat[i] == 'Z' || si.pat[i] == '*') return fail(info, "the significand of a floating-point numeric-edited PICTURE takes no zero suppression (2023 13.18.40.3 rule 13b)");
+    if (si.scale < 0 || (si.scale > 0 && si.scale > si.digits)) return fail(info, "the significand of a floating-point numeric-edited PICTURE takes no P (2023 13.18.40.3 rule 13b)");
+    /* the exponent: +9, +99, +999, +9999 or +9(n) */
+    const char *x = e + 1;
+    if (*x != '+') return fail(info, "the exponent of a floating-point numeric-edited PICTURE is '+' and one to four 9s (2023 13.18.40.3 rule 13b)");
+    x++;
+    int ne = 0;
+    if (*x == '9' && x[1] == '(') { ne = (int)strtol(x + 2, NULL, 10); const char *c = strchr(x, ')'); if (!c || c[1]) ne = 0; }
+    else { while (*x == '9') { ne++; x++; } if (*x) ne = 0; }
+    if (ne < 1 || ne > 4) return fail(info, "the exponent of a floating-point numeric-edited PICTURE is '+' and one to four 9s (2023 13.18.40.3 rule 13b)");
+    *info = si;
+    info->category = PIC_NUMERIC_EDITED; info->edited = 1; info->floating = 0;
+    info->bytes = si.bytes + 2 + ne;
+    info->fpexp = ne;
+    if (info->patlen + 2 + ne >= PIC_MAXPAT) return fail(info, "numeric PICTURE too long");
+    info->pat[info->patlen++] = 'E'; info->pat[info->patlen++] = '+';
+    for (int i = 0; i < ne; i++) info->pat[info->patlen++] = '9';
+    info->pat[info->patlen] = 0;
     return 0;
 }

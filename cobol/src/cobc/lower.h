@@ -1532,7 +1532,7 @@ static char lw_edit_fl(const char *pat)
 }
 static int lw_edit_ok(const Sym *d)
 {
-    if (d->pi.category != PIC_NUMERIC_EDITED || d->usage != U_DISPLAY || d->blank_zero || g_dp_comma || g_currency) return 0;
+    if (d->pi.category != PIC_NUMERIC_EDITED || d->usage != U_DISPLAY || d->blank_zero || g_dp_comma || g_currency || d->pi.fpexp) return 0;   /* a floating-point edited item: the runtime's */
     if (d->pi.digits < 1 || d->pi.digits > 9 || d->sign_sep || d->sign_lead) return 0;
     const char *pat = d->pi.pat; char fl = lw_edit_fl(pat); int npos = 0;
     for (const char *p = pat; *p; p++) {

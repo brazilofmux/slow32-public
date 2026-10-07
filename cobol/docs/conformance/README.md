@@ -43,6 +43,7 @@ standard's titles or text:
 | 14.7.7, ADD SUBTRACT MULTIPLY DIVIDE COMPUTE | [arithmetic.md](arithmetic.md) | 2026-09-29 |
 | 8.8.1 arithmetic expressions, native arithmetic | [expressions.md](expressions.md) | 2026-09-30 |
 | 8.8.4.2 relation conditions, abbreviated relations | [conditions.md](conditions.md) | 2026-09-30 |
+| 8.3.3.3 numeric literals, fixed-point and floating-point; the token scanner (lex.rl) | [lexical.md](lexical.md) | 2026-10-06 |
 | 8.4.3.3 reference-modification | [refmod.md](refmod.md) | 2026-10-06 |
 | 12.4.5, 13.4.5, RECORD, LINAGE: files | [files.md](files.md) | 2026-09-29 |
 | 14.9.6/.10/.27/.30/.35/.41/.51 the I-O statements | [io-statements.md](io-statements.md) | 2026-09-29 |

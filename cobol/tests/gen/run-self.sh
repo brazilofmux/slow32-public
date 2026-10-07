@@ -31,7 +31,7 @@ W="$(mktemp -d "$CDIR/out/self.XXXXXX")"
 # the compiler as of REV, built from its own sources
 mkdir -p "$W/old"
 git -C "$ROOT" archive "$REV" cobol/src cobol/libcob common | tar -x -C "$W/old"
-${CC:-cc} -std=c99 -O1 -w -o "$W/old/s32-cobc" "$W/old/cobol/src/s32-cobc.c" "$W/old/cobol/src/picture.c" "$W/old/cobol/src/picture_scan.c"
+${CC:-cc} -std=c99 -O1 -w -o "$W/old/s32-cobc" "$W/old/cobol/src/s32-cobc.c" "$W/old/cobol/src/picture.c" "$W/old/cobol/src/picture_scan.c" $(ls "$W/old/cobol/src/lex_scan.c" 2>/dev/null)   # the token scanner, from 2026-10-06
 # ... and the runtime as of REV, built as libcob/build.sh builds it: a
 # change in what the compiler asks of the runtime (a routine's arguments)
 # is then on both sides, each compiler with its own

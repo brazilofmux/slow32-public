@@ -498,6 +498,14 @@ void cob_wget(const void *vp, const cob_desc *d, cob_wnum *w)
             if (cob_currency_len > 1) cob_k_cs_shrink(sw, (int)d->size, cob_currency_str, cob_currency_len);
             p = sw;
         }
+        if (strchr(d->pic, 'E')) {
+            /* floating-point edited: the significand at the exponent's
+             * scale, which may be negative (trailing zeros) or past 38 */
+            int sc; n = cob_k_get_fpedited(p, d->pic, digs, &neg, &sc);
+            while (sc < 0 && n < 76) { digs[n++] = '0'; sc++; }
+            w->scale = sc;
+            if (sc > 38) { memset(w, 0, sizeof *w); w->scale = 0; return; }   /* smaller than a wide number tells: zero */
+        } else
         n = cob_deedit(d->pic, p, digs, &neg);
     } else switch (d->usage) {
     case COB_U_BINARY: {
@@ -573,6 +581,19 @@ int cob_wput_x(void *vp, const cob_desc *d, const cob_wnum *win, int opts)
     cob_wnum w = *win;
     int eff = d->digits;
     if (d->pic) for (const char *q = d->pic; *q; q++) if (*q == 'P') eff--;
+    if (d->cat == COB_NUM_ED && d->pic && strchr(d->pic, 'E') && !w.isf) {
+        /* a floating-point numeric-edited receiver takes the value's
+         * leading 18 digits at their scale (the kernel's edit works in
+         * 64 bits; the significand has at most that many positions) */
+        char ds[48]; int nd = 0;
+        { wl_t t[WL]; memcpy(t, w.m, sizeof t); char r[48]; int k = 0;
+          while (!mp_is_zero(t, WL) && k < 40) r[k++] = (char)('0' + mp_div_small(t, WL, 10));
+          while (k) ds[nd++] = r[--k]; }
+        long long v = 0; int take = nd > 18 ? 18 : nd;
+        for (int i = 0; i < take; i++) v = v * 10 + (ds[i] - '0');
+        if (w.neg) v = -v;
+        return cob_put_edited(vp, d, v, w.scale - (nd - take), opts, loc_word());
+    }
     int m = w.scale - d->scale;
     if (m > 0) {
         int half, nz, mode = (opts >> 4) & 15;

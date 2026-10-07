@@ -76,7 +76,7 @@ static void check_numeric_opnd(Opnd *o)
 /* push an operand onto the numeric stack */
 /* 31 digits in arithmetic: phase 2 of docs/wide.md; refused until then,
  * never computed in 64 bits and truncated */
-static int sym_wide(const Sym *s) { return !s->is_group && (s->pi.digits > 18 || (s->usage == U_BINARY && s->size > 8) || s->usage == U_FLOAT); }   /* a float computes on the wide stack, in double */
+static int sym_wide(const Sym *s) { return !s->is_group && (s->pi.digits > 18 || (s->usage == U_BINARY && s->size > 8) || s->usage == U_FLOAT || s->pi.fpexp); }   /* a float computes on the wide stack, in double; a floating-point edited item's value is unbounded by its digits, so it goes the wide way too */
 static void wide_arith_refuse(int line, const char *what)
 {
     die_at(line, "arithmetic on %s of more than 18 digits is not implemented yet (COBOL 2002's 31 digits: docs/wide.md, phase 2)", what);

@@ -175,7 +175,7 @@ if ! command -v "$HOSTCC" >/dev/null 2>&1; then
     echo "SKIP  pictest  (no host C compiler: $HOSTCC)"
     echo "SKIP  bt_test  (no host C compiler: $HOSTCC)"
 elif ! "$HOSTCC" -std=c99 -I"$CDIR/src" -O1 -w -o "$W/pictest" "$HERE/pictest.c" \
-        "$CDIR/src/picture.c" "$CDIR/src/picture_scan.c" 2>"$W/cc.log"; then
+        "$CDIR/src/picture.c" "$CDIR/src/picture_scan.c" "$CDIR/src/lex_scan.c" 2>"$W/cc.log"; then
     report "pictest" 1 "host build"
 else
     "$W/pictest" "$HERE/pictures.txt" > "$W/pictures.out" 2>&1
@@ -222,7 +222,7 @@ fi
 # --- Gate 1j: the same core's numeric fields (tests/scrnum.txt) ---------
 if [ -z "$SKIPPED" ]; then
     if ! "$HOSTCC" -std=gnu99 -I"$CDIR/libcob" -I"$CDIR/src" -O1 -w -o "$W/scrnum_test" "$HERE/scrnum_test.c" \
-            "$CDIR/src/picture.c" "$CDIR/src/picture_scan.c" 2>"$W/cc.log"; then
+            "$CDIR/src/picture.c" "$CDIR/src/picture_scan.c" "$CDIR/src/lex_scan.c" 2>"$W/cc.log"; then
         report "scrnum_test" 1 "host build"
     else
         grep -v '^#' "$HERE/scrnum.txt" | while IFS='~' read -r pic val keys; do
@@ -254,7 +254,7 @@ fi
 # across it, on lines written for it: what it must refuse and the compiler
 # does not happen to emit
 if [ -z "$SKIPPED" ]; then
-    if ! "$HOSTCC" -std=gnu99 -O1 -w -o "$W/loopreg_test" "$HERE/loopreg_test.c" "$CDIR/src/picture.c" "$CDIR/src/picture_scan.c" 2>"$W/cc.log"; then
+    if ! "$HOSTCC" -std=gnu99 -O1 -w -o "$W/loopreg_test" "$HERE/loopreg_test.c" "$CDIR/src/picture.c" "$CDIR/src/picture_scan.c" "$CDIR/src/lex_scan.c" 2>"$W/cc.log"; then
         report "loopreg_test" 1 "host build"
     elif "$W/loopreg_test" > "$W/loopreg.out" 2>&1; then
         report "loopreg_test" 0 "$(tail -1 "$W/loopreg.out" | sed 's/^loopreg_test: //')"
@@ -268,7 +268,7 @@ fi
 # (src/cobc/native.h), on events written for it: the cases it must
 # refuse and the compiler does not happen to emit
 if [ -z "$SKIPPED" ]; then
-    if ! "$HOSTCC" -std=gnu99 -O1 -w -o "$W/census_test" "$HERE/census_test.c" "$CDIR/src/picture.c" "$CDIR/src/picture_scan.c" 2>"$W/cc.log"; then
+    if ! "$HOSTCC" -std=gnu99 -O1 -w -o "$W/census_test" "$HERE/census_test.c" "$CDIR/src/picture.c" "$CDIR/src/picture_scan.c" "$CDIR/src/lex_scan.c" 2>"$W/cc.log"; then
         report "census_test" 1 "host build"
     elif "$W/census_test" > "$W/census_test.out" 2>&1; then
         report "census_test" 0 "$(tail -1 "$W/census_test.out" | sed 's/^census_test: //')"

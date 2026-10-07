@@ -54,6 +54,7 @@
 #include <sys/mman.h>
 #include <sys/wait.h>
 #include "picture.h"
+#include "lex.h"            /* the token scanner (lex.rl, Ragel -G2; lex_scan.c) */
 #include "../libcob/wide.h"    /* 31 digits: the runtime's 128-bit arithmetic, for VALUE and literals */
 #include "../libcob/cobrt.h"
 #define SCREDIT_EXPAND_ONLY

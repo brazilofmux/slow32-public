@@ -16,7 +16,7 @@
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"; C="$HERE/.."
 W="$(mktemp -d)"; trap 'rm -rf "$W"' EXIT
-if ! ${CC:-cc} -std=c99 -O0 -g -fsanitize=address,undefined -w -o "$W/cobc" "$C/src/s32-cobc.c" "$C/src/picture.c" "$C/src/picture_scan.c" 2> "$W/cc.log"; then
+if ! ${CC:-cc} -std=c99 -O0 -g -fsanitize=address,undefined -w -o "$W/cobc" "$C/src/s32-cobc.c" "$C/src/picture.c" "$C/src/picture_scan.c" "$C/src/lex_scan.c" 2> "$W/cc.log"; then
     echo "sanitize: NOT RUN -- this host's compiler builds no sanitizer binary ($(head -1 "$W/cc.log" | cut -c1-80))"; exit 2
 fi
 n=0; bad=0

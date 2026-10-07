@@ -96,6 +96,12 @@ under `docs/`.
     src/picture.rl    PICTURE scanner, Ragel -G2 (re-hosted from cobc370);
                       picture_scan.c is the generated output, checked in;
                       gen_picture.sh regenerates it
+    src/lex.rl        the token scanner, Ragel -G2 (standard-queue item 15):
+                      one grammar for 8.3's lexical elements, read one
+                      lexeme at a time by the text-word scanner (copy.h)
+                      and the tokenizer; lex_scan.c is the generated
+                      output, checked in; gen_lex.sh regenerates it; lex.h
+                      the lexeme kinds
     src/picture.c     PICTURE analysis: category, digits, scale, sign,
                       width, and the software edit descriptor
     libcob/cobrt.h    the field descriptor both sides read (cat, usage,

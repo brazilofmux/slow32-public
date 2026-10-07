@@ -203,7 +203,12 @@ default; ANYCASE on NUMVAL-C and TEST-NUMVAL-C. Ruling: one currency symbol per 
 ## Tier 2 -- whole 2002 features still missing (required, not optional)
 
 **15. Floating-point literals and numeric-edited items.** 8.3.3.3, 13.18.40 (floating-point
-numeric-edited), 14.6.8.3-4; Ed. 2002; M; deps none.
+numeric-edited), 14.6.8.3-4; Ed. 2002; M; deps none. DONE 2026-10-06 (lexical.md, picture.md;
+tests 2002/floatlit, fpedited): the lexer is Ragel -G2 (src/lex.rl, one grammar read by both the
+text-word scanner and the tokenizer -- the whole suite and the gates byte-identical through the
+change), floating-point literals written as the fixed-point value they are worth, floating-point
+numeric-edited pictures edited in the kernel (and read back), the item going the wide way in
+arithmetic.
 - Ruled 2026-10-06: the lexer moves to Ragel -G2 as part of this item, as picture.rl did for
   PICTURE. One token grammar (8.3: words, literals and their prefixes, separators, the period
   rule, floating-point literals) generating both the text-word scanner of copy.h (tw_lex) and the

@@ -551,12 +551,74 @@ KFN int cob_k_ed_ok(const cob_kdesc *d)
     return d->cat == K_NUM_ED && d->digits <= 18 && d->usage == K_U_DISPLAY;
 }
 
+/* ---- floating-point numeric-edited (2023 13.18.40.3 rule 13b) --------
+ * The PICTURE is a significand, 'E', '+' and one to four 9s.  A value is
+ * put with its exponent and significand adjusted so the significand's
+ * first digit is not zero (14.6.8.4): the significand takes the value's
+ * leading digits, as many as it has positions, truncated (ROUNDED: the
+ * next digit rounds); zero is all zeros with exponent +0.  An exponent
+ * the digits cannot hold is a size error. */
+KFN int cob_k_put_fpedited(unsigned char *p, const char *pic, int eff, long long v, int vscale, int opts, int locale)
+{
+    char sig[64]; int sl = 0;
+    while (pic[sl] && pic[sl] != 'E') sl++;
+    memcpy(sig, pic, (size_t)sl); sig[sl] = 0;
+    int ne = 0; for (const char *q = pic + sl + 2; *q == '9'; q++) ne++;
+    int ni = 0, nf = 0, pt = 0;                 /* the significand's integer and fraction digit positions */
+    for (int i = 0; i < sl; i++) { if (sig[i] == '.' || sig[i] == 'V') pt = 1; else if (sig[i] == '9') { if (pt) nf++; else ni++; } }
+    int neg = v < 0; unsigned long long mag = neg ? 0 - (unsigned long long)v : (unsigned long long)v;
+    char all[24]; int nd = 0;
+    if (mag) { char t[24]; int k = 0; while (mag) { t[k++] = (char)('0' + mag % 10); mag /= 10; } while (k) all[nd++] = t[--k]; }
+    char digs[40]; memset(digs, '0', sizeof digs);
+    int ex = 0;
+    if (nd) {
+        ex = nd - vscale - ni;                  /* the value is d.ddd * 10^ex with ni digits before the point */
+        for (int i = 0; i < ni + nf && i < nd; i++) digs[i] = all[i];
+        if ((opts & 1) && ni + nf < nd && all[ni + nf] >= '5') {      /* ROUNDED: the digit after the last */
+            int i = ni + nf - 1;
+            while (i >= 0 && digs[i] == '9') digs[i--] = '0';
+            if (i >= 0) digs[i]++;
+            else { digs[0] = '1'; ex++; }       /* 9.99 rounds to 10.0: one more exponent */
+        }
+    }
+    int ax = ex < 0 ? -ex : ex, lim = 1;
+    for (int i = 0; i < ne; i++) lim *= 10;
+    if (ax >= lim) return 1;                    /* the exponent does not fit: a size error */
+    int w = cob_edit_apply(sig, digs, neg && nd, 0, (char *)p);
+    p[w++] = 'E'; p[w++] = ex < 0 ? '-' : '+';
+    for (int i = ne - 1; i >= 0; i--) { p[w + i] = (unsigned char)('0' + ax % 10); ax /= 10; }
+    w += ne;
+    if (K_LOC_COMMA(locale)) for (int i = 0; i < w; i++) { if (p[i] == '.') p[i] = ','; else if (p[i] == ',') p[i] = '.'; }
+    (void)eff;
+    return 0;
+}
+/* the value of a floating-point numeric-edited item: the significand's
+ * digits and sign, times ten to the exponent -- as digits and a scale for
+ * the caller, which rejects what does not fit its number */
+KFN int cob_k_get_fpedited(const unsigned char *p, const char *pic, char *digs, int *neg, int *scale)
+{
+    char sig[64]; int sl = 0;
+    while (pic[sl] && pic[sl] != 'E') sl++;
+    memcpy(sig, pic, (size_t)sl); sig[sl] = 0;
+    int ne = 0; for (const char *q = pic + sl + 2; *q == '9'; q++) ne++;
+    int nf = 0, pt = 0, bw = 0;
+    for (int i = 0; i < sl; i++) { if (sig[i] == '.' || sig[i] == 'V') pt = 1; else if (sig[i] == '9' && pt) nf++; if (sig[i] != 'V' && sig[i] != 'S' && sig[i] != 'P') bw += (sig[i] == 'C' || sig[i] == 'D') ? 2 : 1; }
+    int n = cob_deedit(sig, p, digs, neg);
+    const unsigned char *x = p + bw + 1;         /* past the E */
+    int xneg = *x == '-', ex = 0; x++;
+    for (int i = 0; i < ne; i++) ex = ex * 10 + (x[i] >= '0' && x[i] <= '9' ? x[i] - '0' : 0);
+    if (xneg) ex = -ex;
+    *scale = nf - ex;
+    return n;
+}
+
 /* v (scaled by vscale) into a numeric-edited item: the scaling of
  * cob_k_put_scale, then the edit, then the locale's characters.  pic is
  * the item's PICTURE, eff its digit positions (less the P symbols). */
 KFN int cob_k_put_edited(unsigned char *p, const cob_kdesc *d, const char *pic, int eff,
                          long long v, int vscale, int opts, int locale)
 {
+    for (const char *q = pic; *q; q++) if (*q == 'E') return cob_k_put_fpedited(p, pic, eff, v, vscale, opts, locale);
     int neg; unsigned long long mag;
     if (cob_k_put_scale(d, eff, v, vscale, opts, &neg, &mag)) return 1;
     char digs[40];
@@ -590,6 +652,18 @@ KFN long long cob_k_get_edited(const unsigned char *p, const cob_kdesc *d, const
         if (cl > 1) cob_k_cs_shrink(sw, (int)d->size, cob_k_cs(pic), cl);
         p = sw;
     }
+    for (const char *q = pic; *q; q++)
+        if (*q == 'E') {
+            /* floating-point edited: the significand's digits at the
+             * exponent's scale, brought to the item's own (the
+             * descriptor's) by shifting -- what does not fit 18 digits
+             * saturates, as a double's integer part does */
+            int sc, n = cob_k_get_fpedited(p, pic, digs, &neg, &sc);
+            for (int i = 0; i < n; i++) v = v * 10 + (digs[i] - '0');
+            while (sc > d->scale && v) { v /= 10; sc--; }
+            while (sc < d->scale) { if (v > 922337203685477580LL) { v = 999999999999999999LL; break; } v *= 10; sc++; }
+            return neg ? k_neg((unsigned long long)v) : v;
+        }
     int n = cob_deedit(pic, p, digs, &neg);
     for (int i = 0; i < n; i++) v = v * 10 + (digs[i] - '0');
     return neg ? k_neg((unsigned long long)v) : v;

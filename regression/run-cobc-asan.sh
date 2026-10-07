@@ -67,7 +67,7 @@ W="$(mktemp -d "$CDIR/out/asan.XXXXXX")" || exit 2
 echo "Building s32-cobc with -fsanitize=address from $COBC_SRC"
 if ! "$CC" -std=c99 -O1 -g -w -fsanitize=address -I "$CDIR/src" \
         -o "$W/s32-cobc-asan" "$COBC_SRC" \
-        "$CDIR/src/picture.c" "$CDIR/src/picture_scan.c" 2>"$W/build.err"; then
+        "$CDIR/src/picture.c" "$CDIR/src/picture_scan.c" "$CDIR/src/lex_scan.c" 2>"$W/build.err"; then
     echo "${RED}compiler build failed${NC}" >&2; sed -n '1,20p' "$W/build.err" >&2; exit 2
 fi
 
