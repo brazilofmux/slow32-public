@@ -27,7 +27,7 @@ title.
 | SR 2 | RAISING names a level-3 exception-name; an EC-USER one is in the header's RAISING | **test**: 2002/ecraising (implemented 2026-10-06, standard-queue item 3); **refused**: bad/std2002-goback-raising |
 | SR 3-4 | RAISING identifier: an object reference | **n/a**: object orientation, deferred (refused by name) |
 | GR 1b | RAISING: the condition is raised in the caller if checking for it is enabled there, after the result is returned, and the caller continues as its CALL's rules say; LAST hands over the condition raised, EC-RAISING-NOT-SPECIFIED in place of an EC-USER one the header does not list, nothing when none is raised | **test**: 2002/ecraising: the caller's USE declarative (sub1), its WHEN (case last), the fatal end when neither (the checked case, run by hand); a caller not checking the condition ignores it (sub1 called with checking off); nspec, EC-RAISING-NOT-SPECIFIED. How: the callee leaves the name with libcob (`cob_ec_propagate`); every CALL and function invocation compiled at -std=2002 asks (`cob_ec_propagated`) for it against the caller's enabled names -- exact, then its level-2 group, then EC-ALL -- and dispatches as a raise of its own (`emit_ec_propagated`, control.h). RAISING LAST is for a declarative or a WHEN phrase (bad/std2002-exit-program-raising) |
-| WITH ... STATUS | 2023 | **refused**, naming 2023: bad/std2002-goback-status |
+| WITH ... STATUS (2023 GR 3) | in a program no caller controls, as STOP RUN with the status phrase; under a caller the return, the phrase idle | **implemented** under -std=2023 (queue item 31, 2026-10-07): 2023/stmts2023 (its `.exitcode` 7; a called program's GOBACK WITH STATUS 9 returns); **refused** under -std=2002 and -std=2014: bad/std2002-goback-status, bad/std2014-goback-status |
 | GR 1-3 | a called program returns; a main program operates as STOP RUN | **test**: free/dyncall and every subprogram test |
 
 ## CONTINUE (2023 14.9.9; 2002 14.8.8)
@@ -35,7 +35,7 @@ title.
 | rule | paraphrase | disposition |
 |---|---|---|
 | SR 1, GR 1 | a no-operation statement, wherever a statement may be | **test**: throughout (ecsites, the EVALUATE tests) |
-| AFTER ... SECONDS | 2023 | **refused**, naming 2023: bad/std2002-continue-after (it was "'after' is not a COBOL verb") |
+| AFTER ... SECONDS (GR 1-2) | the run suspended that long; the value in a 9(n)V9(m) temporary of the implementor's n and m; a negative value zero and EC-CONTINUE-LESS-THAN-ZERO, nonfatal | **implemented** under -std=2023 (queue item 31, 2026-10-07): 2023/stmts2023 (a hundredth, zero, -1 with the condition checked and a declarative); **ruling**: 9(9)V99, more is the maximum, the suspension the libc's nanosleep (the MMIO sleep service); **refused** under -std=2002 and -std=2014: bad/std2002-continue-after, bad/std2014-continue-after |
 
 ## CANCEL (2023 14.9.5; 2002 14.8.5; 1985 5.3)
 

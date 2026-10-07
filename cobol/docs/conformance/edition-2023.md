@@ -26,6 +26,23 @@ agrees); one bad test per point.
 | FLAG-85, FLAG-NATIVE-ARITHMETIC (item 21) | not implemented under any edition (directives.md) | the same |
 | ARITHMETIC IS STANDARD (item 21) | **refused** naming NATIVE (options.md) | the same |
 
+## The small 2023 statements (queue item 31, 2026-10-07)
+
+Each under `-std=2023`, refused naming the edition under 2002 and 2014
+(bad/std2002-* and bad/std2014-*); the rows are on the statements'
+pages. Tests 2023/stmts2023 (no oracle: GnuCOBOL 4 has none of these
+but a DELETE FILE spelt its own way), 2023/inspback (no oracle).
+
+| statement | where |
+|---|---|
+| XOR / EXCLUSIVE-OR (8.7.6, 8.8.4.9, 8.8.4.13) | conditions.md: desugared to AND, OR and NOT |
+| INSPECT BACKWARD (14.9.22.4 rule 3) | string.md: the scan from the right |
+| DELETE FILE [OVERRIDE] (14.9.10 format 2) | io-statements.md: `cob_delete_file` |
+| WRITE with both BEFORE and AFTER ADVANCING (14.9.51) | io-statements.md; a LINAGE-file defect found with it |
+| CONTINUE AFTER expression SECONDS (14.9.9), EC-CONTINUE-LESS-THAN-ZERO | control.md, exceptions.md |
+| GOBACK WITH {ERROR / NORMAL} STATUS (14.9.18 GR 3) | control.md: STOP RUN's status phrase when no caller controls the program |
+| USAGE PACKED-DECIMAL WITH NO SIGN (13.18.60 GR 25) | usage.md: the standard's COMP-6 |
+
 ## 11.9.10 OPTIONS INITIALIZE
 
 The clause names the fill byte every item without a VALUE in the named

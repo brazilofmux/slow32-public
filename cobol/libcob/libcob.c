@@ -3553,13 +3553,19 @@ static int lin_write(cob_file *f, int before, int after)
     f->lin_eop = 0;
     if (f->lin_needs_top) { lin_newlines(f, f->lin_top); f->lin_needs_top = 0; }
     if (before == 0 && after == 0) after = 1;               /* no ADVANCING phrase: BEFORE ADVANCING 1 */
+    /* a record's own newline is one line of movement: the BEFORE phrase's
+     * first line, or the AFTER phrase's.  After a WRITE whose BEFORE took
+     * it, an AFTER n is n whole lines (pr_state, the print file's cursor,
+     * says so for a LINAGE file; found with 2023's BEFORE and AFTER
+     * together, which puts both on one record) */
     if (before < 0) lin_new_page(f, f->lin_counter);       /* AFTER ADVANCING PAGE */
-    else if (before > 0) lin_lines_opt(f, (unsigned)before);
+    else if (before > 0) { if (f->pr_state) lin_newlines(f, 1); lin_lines_opt(f, (unsigned)before); }
+    f->pr_state = 0;
     /* the whole record, trailing spaces included (GnuCOBOL keeps them on a LINAGE file) */
     if (fwrite(rec, 1, n, fp) != n) return file_result(f, write_fail_st(), "write failed");
     fputc('\n', fp); f->fpos += n + 1;
     if (after < 0) lin_new_page(f, f->lin_counter);        /* BEFORE ADVANCING PAGE */
-    else if (after > 0) lin_lines_opt(f, (unsigned)after);
+    else if (after > 0) { lin_lines_opt(f, (unsigned)after); f->pr_state = 1; }
     f->last_len = 0;
     return file_result(f, "00", "");
 }
@@ -3573,6 +3579,11 @@ static int lin_write(cob_file *f, int before, int after)
  * whichever path it takes: docs/performance.md.) */
 static __attribute__((noinline)) int cob_write_n(cob_file *f, int before, int after, int reclen);
 static __attribute__((noinline)) int cob_write_rest(cob_file *f, int before, int after, int reclen);
+/* WRITE ... AFTER n BEFORE m (2023 14.9.51: both phrases): the BEFORE
+ * count for the next cob_write of a print file, whose encoding carries
+ * one phrase; a LINAGE file's write takes both counts itself */
+static int pr_also_before = -1;
+void cob_write_also_before(int n) { pr_also_before = n; }
 int cob_write(cob_file *f, int before, int after, int reclen)
 {
     if (f->fast_w1) {
@@ -3657,6 +3668,7 @@ static __attribute__((noinline)) int cob_write_rest(cob_file *f, int before, int
      * which prints as AFTER 1. */
     enum { PR_TOP, PR_FRESH, PR_OPEN, PR_INK };
     int is_before = before == -3 || (before == 0 && after != 0);
+    int also = pr_also_before; pr_also_before = -1;          /* BEFORE n beside an AFTER phrase (2023): the trailing move */
     int k = is_before ? after : before;
     int cnt = k == -1 ? -1 : k == -2 ? 0 : k + 1;
     if (before == 0 && after == 0) cnt = 1;
@@ -3678,7 +3690,7 @@ static __attribute__((noinline)) int cob_write_rest(cob_file *f, int before, int
     if (is_before) {
         if (cnt == -1) { PR_PUT('\n'); PR_PUT('\f'); st = PR_TOP; }
         else if (cnt > 0) { for (int i = 0; i < cnt; i++) PR_PUT('\n'); st = PR_FRESH; }
-    }
+    } else if (also > 0) { for (int i = 0; i < also; i++) PR_PUT('\n'); st = PR_FRESH; }
     #undef PR_PUT
     f->pr_state = st;
     f->last_len = 0;
@@ -6839,6 +6851,41 @@ int cob_pop_pos(void)
     }
     return cob_pop_int();
 }
+/* CONTINUE AFTER expression SECONDS (2023 14.9.9): the value on the
+ * numeric stack, in a 9(9)V99 temporary (the implementor's n and m, GR
+ * 1); more than 999,999,999 seconds is that; below zero is zero, and
+ * EC-CONTINUE-LESS-THAN-ZERO when checked (1 returned).  The suspension
+ * is the libc's nanosleep, the MMIO sleep service. */
+int cob_continue_after(void)
+{
+    if (nsp <= 0) cob_fatal("numeric stack underflow");
+    cob_num a = nstk[--nsp];
+    long long h = cob_rescale(a.v, a.scale, 2);             /* hundredths */
+    int neg = h < 0;
+    if (neg) h = 0;
+    if (h > 99999999999LL) h = 99999999999LL;
+    if (h > 0) { struct timespec ts; ts.tv_sec = (time_t)(h / 100); ts.tv_nsec = (long)(h % 100) * 10000000L; nanosleep(&ts, 0); }
+    return neg;
+}
+
+/* DELETE FILE [OVERRIDE] file-name (2023 14.9.10 format 2): the file
+ * removed from storage, and an indexed file's key file with it -- the
+ * connector not open (41 if it is), 00 or 05 when it is not there (GR
+ * 13, 14); 37 when the medium or the authority refuses (GR 16, 17); the
+ * fixed file attributes are not validated (GR 19: none are) */
+int cob_delete_file(cob_file *f, int override)
+{
+    (void)override;
+    if (f->open_mode) return file_result(f, "41", "DELETE FILE of an open file");
+    const char *name = file_name(f);
+    if (!*name) return file_result(f, "31", "the ASSIGN item holds no file name");
+    int r = remove(name);
+    if (r && errno == ENOENT) return file_result(f, "05", "");
+    if (r) return file_result(f, "37", "DELETE FILE: the file cannot be removed");
+    if (f->org == COB_ORG_INDEXED) remove(key_file_name(f));
+    return file_result(f, "00", "");
+}
+
 /* an intrinsic function's integer argument, computed: as cob_pop_int, a
  * fraction noted as an incorrect argument (2023 15.3 rule 6) */
 int cob_pop_fnint(void)
@@ -7066,14 +7113,40 @@ static struct {
     char *item; int n, np;
     struct { int tallying, kind, plen, lo, hi, done, count; const char *pat, *rep; } ph[32];
     char *real; int signpos, neg;       /* a signed DISPLAY item: inspected without its embedded sign */
+    int backward;                       /* INSPECT BACKWARD (2023 14.9.22.4 rule 3): the scan from the right */
 } cin;
+/* the rightmost occurrence of x in p[0..n), the window to the right of
+ * the position: BACKWARD's BEFORE and AFTER boundaries, found in the
+ * direction of the scan (2023 14.9.22.4 rule 3, note 1) */
+static int ci_rfind(const char *p, int n, const char *x, int xl)
+{
+    if (xl < 1) return -1;
+    for (int i = n - xl; i >= 0; i -= ci_w) if (!memcmp(p + i, x, xl)) return i;
+    return -1;
+}
+/* the range [lo, hi) a phrase's BEFORE / AFTER leave it, in the scan's direction */
+static void ci_range(int *lo, int *hi)
+{
+    *lo = 0; *hi = cin.n;
+    if (!cin.backward) {
+        if (ci_after) { int i = ci_find(cin.item, cin.n, ci_after, ci_alen); *lo = i < 0 ? cin.n : i + ci_alen; }
+        if (ci_before) { int i = ci_find(cin.item, cin.n, ci_before, ci_blen); if (i >= 0) *hi = i; }
+    } else {
+        /* AFTER x: the positions left of the rightmost x; BEFORE x: those right of it */
+        if (ci_after) { int i = ci_rfind(cin.item, cin.n, ci_after, ci_alen); *hi = i < 0 ? 0 : i; }
+        if (ci_before) { int i = ci_rfind(cin.item, cin.n, ci_before, ci_blen); if (i >= 0) *lo = i + ci_blen; }
+    }
+    if (*hi < *lo) *hi = *lo;
+    ci_before = ci_after = NULL; ci_blen = ci_alen = 0;
+}
+void cob_inspect_backward(void) { cin.backward = 1; }
 static char ci_copy[4096];
 /* a signed numeric DISPLAY item with the sign in a digit is inspected as
  * though it had been moved to an unsigned item of the same size (X3.23
  * INSPECT general rules); the sign goes back afterwards */
 void cob_inspect_begin(char *item, int n, const cob_desc *d)
 {
-    cin.item = item; cin.n = n; cin.np = 0; cin.real = NULL; cin.signpos = -1; cin.neg = 0;
+    cin.item = item; cin.n = n; cin.np = 0; cin.real = NULL; cin.signpos = -1; cin.neg = 0; cin.backward = 0;
     ci_w = d && (d->cat == COB_NATIONAL || d->usage == COB_U_NATIONAL) ? 2 : 1;     /* positions are characters (2023 14.9.22.4 rule 3) */
     if (d && d->cat == COB_NUM && d->usage == COB_U_DISPLAY && (d->flags & COB_F_SIGNED) && !(d->flags & (COB_F_SEPLEAD | COB_F_SEPTRAIL)) && n > 0 && n <= (int)sizeof ci_copy) {
         int sp = (d->flags & COB_F_LEAD) ? 0 : n - 1;
@@ -7086,11 +7159,7 @@ void cob_inspect_begin(char *item, int n, const cob_desc *d)
 void cob_inspect_phrase(int tallying, int kind, const char *pat, int plen, const char *rep)
 {
     if (cin.np == 32) cob_fatal("INSPECT: more than 32 phrases");
-    int lo = 0, hi = cin.n;
-    if (ci_after) { int i = ci_find(cin.item, cin.n, ci_after, ci_alen); lo = i < 0 ? cin.n : i + ci_alen; }
-    if (ci_before) { int i = ci_find(cin.item, cin.n, ci_before, ci_blen); if (i >= 0) hi = i; }
-    if (hi < lo) hi = lo;
-    ci_before = ci_after = NULL; ci_blen = ci_alen = 0;
+    int lo, hi; ci_range(&lo, &hi);
     cin.ph[cin.np].tallying = tallying; cin.ph[cin.np].kind = kind; cin.ph[cin.np].pat = pat;
     cin.ph[cin.np].plen = kind == 0 ? ci_w : plen; cin.ph[cin.np].rep = rep;
     cin.ph[cin.np].lo = lo; cin.ph[cin.np].hi = hi; cin.ph[cin.np].done = 0; cin.ph[cin.np].count = 0;
@@ -7106,6 +7175,32 @@ void cob_inspect_run(void)
     for (int k = 0; k < cin.np; k++) {
         if (cin.ph[k].kind == 2) leading = 1;
         if (cin.ph[k].kind > 1 || cin.ph[k].plen != 1 || cin.ph[k].lo != 0 || cin.ph[k].hi != cin.n) bytewise = 0;
+    }
+    if (cin.backward && !bytewise) {
+        /* BACKWARD (2023 14.9.22.4 rule 3): the leftmost position of the
+         * window walks from the right; a match's positions are taken, and
+         * no later window reaches into them (they all start further left,
+         * so the leftmost start taken so far bounds every window); LEADING
+         * ends at the first position of its range, from the right, the
+         * phrase does not take; FIRST takes once */
+        int min_taken = cin.n;
+        for (int pos = cin.n - ci_w; pos >= 0; ) {
+            int took = 0, taker = -1;
+            for (int k = 0; k < cin.np && !took; k++) {
+                if (cin.ph[k].done || pos < cin.ph[k].lo || pos + cin.ph[k].plen > cin.ph[k].hi || pos + cin.ph[k].plen > min_taken) continue;
+                int m = cin.ph[k].kind == 0 || !memcmp(cin.item + pos, cin.ph[k].pat, cin.ph[k].plen);
+                if (!m) continue;
+                if (cin.ph[k].tallying) cin.ph[k].count++;
+                else memcpy(cin.item + pos, cin.ph[k].rep, cin.ph[k].plen);
+                if (cin.ph[k].kind == 3) cin.ph[k].done = 1;
+                took = 1; taker = k; min_taken = pos;
+            }
+            if (leading)
+                for (int k = 0; k < cin.np; k++)
+                    if (cin.ph[k].kind == 2 && !cin.ph[k].done && pos + cin.ph[k].plen <= cin.ph[k].hi && taker != k) cin.ph[k].done = 1;
+            pos -= ci_w;
+        }
+        goto done;                              /* the forward passes below are not run */
     }
     if (bytewise) {
         /* every phrase CHARACTERS or ALL of one byte over the whole item:
@@ -7146,6 +7241,7 @@ void cob_inspect_run(void)
                 if (cin.ph[k].kind == 2 && !cin.ph[k].done && pos >= cin.ph[k].lo && taker != k) cin.ph[k].done = 1;
         pos += took ? took : ci_w;
     }
+done:
     if (cin.real) {
         memcpy(cin.real, cin.item, (size_t)cin.n);
         unsigned char c = (unsigned char)cin.real[cin.signpos];
@@ -7166,10 +7262,7 @@ void cob_inspect_convert(const char *from, int n, const char *to)
          * character for CONVERTING a-z.  A character that occurs twice in
          * FROM converts as its first occurrence does (the table is built
          * from the right, so the leftmost wins). */
-        int lo = 0, hi = cin.n;
-        if (ci_after) { int i = ci_find(cin.item, cin.n, ci_after, ci_alen); lo = i < 0 ? cin.n : i + ci_alen; }
-        if (ci_before) { int i = ci_find(cin.item, cin.n, ci_before, ci_blen); if (i >= 0) hi = i; }
-        ci_before = ci_after = NULL; ci_blen = ci_alen = 0;
+        int lo, hi; ci_range(&lo, &hi);
         /* the last table is kept: a loop converts with the same FROM and
          * TO every time, and comparing them is cheaper than a rebuild.
          * Their contents are compared, not their addresses, since either

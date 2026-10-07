@@ -47,6 +47,7 @@ typedef struct Sym {
     int  record;                    /* the 01/77 (or index) owning the storage */
     int  usage, has_usage, has_pic;
     int  uvar;                          /* UV_*: a usage's variant -- COMP-X (U_COMP5), unsigned COMP-6 (U_PACKED) */
+    int  nosign_clause;                 /* PACKED-DECIMAL WITH NO SIGN written (2023): an S in the picture is refused, not taken as COMP-3 */
     int  compx_x;                       /* COMP-X described with a PICTURE of X's: no digit limit */
     char pic[PIC_MAXPAT];
     PicInfo pi;

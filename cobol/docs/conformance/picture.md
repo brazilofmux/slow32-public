@@ -66,7 +66,7 @@ from 55; `tests/pictures.txt` keeps 42 of the cases in the harness.
 | 28 | one currency symbol character in a floating string | **ruling**: one currency symbol per source unit here, with or without PICTURE SYMBOL (12.3.7 rule 21 allows several, each with its own string: bad/std2002-currency-two) |
 | 29 | a floating string starts left of the point | **refused**: bad/pic-float-after-point |
 | 30 | no A or X with USAGE NATIONAL | **refused** (national-boolean sweep) |
-| 31 | S not with NO SIGN | **n/a**: 2014's |
+| 31 | S not with NO SIGN | **refused**: bad/std2023-packed-no-sign-s (2026-10-07; usage.md) |
 | 32-37 (format 2) | locale-based editing | **n/a**: the locale functions are out of scope by ruling |
 
 ## General rules

@@ -396,7 +396,9 @@ BP-R5 taken through 2014 and refused under 2023 (EXIT FUNCTION implemented with 
 figurative-constant moves were refused under every edition already, by ruling); OPTIONS
 INITIALIZE; SYNCHRONIZED on a group as 2023 has it (the note above was stale: -std=2002 refused it).
 
-**31. Small 2023 statements.** S each; deps 30.
+**31. Small 2023 statements.** S each; deps 30. DONE 2026-10-07 (edition-2023.md "The small 2023
+statements" and the statements' pages; tests 2023/stmts2023, 2023/inspback; eleven bad tests): all
+seven below. Found on the way: a LINAGE file's WRITE BEFORE n then WRITE AFTER m lost a line.
 - XOR / EXCLUSIVE-OR logical operator (8.7.6) -- bare parse error today.
 - INSPECT BACKWARD (14.9.22) -- bare parse error today.
 - DELETE FILE (14.9.10) -- bare parse error today.

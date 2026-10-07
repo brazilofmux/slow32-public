@@ -204,6 +204,7 @@ static void sym_finish(Sym *s)
     case U_PACKED:
         if (pi->category != PIC_NUMERIC)
             die_at(s->line, "'%s': USAGE PACKED-DECIMAL (COMP-3) needs a numeric PICTURE (2023 13.18.60.3 rule 3)", s->name);
+        if (s->uvar == UV_NOSIGN && pi->is_signed && s->nosign_clause) die_at(s->line, "'%s': PACKED-DECIMAL WITH NO SIGN takes a PICTURE without S (2023 13.18.60 GR 25)", s->name);
         if (s->uvar == UV_NOSIGN && pi->is_signed) s->uvar = UV_NONE;    /* signed COMP-6 is COMP-3 (MF COMP-6"2") */
         s->size = s->uvar == UV_NOSIGN ? (pi->digits + 1) / 2 : pi->digits / 2 + 1;
         break;
@@ -697,6 +698,16 @@ static void parse_data_item1(void)
         else if (!strcmp(t->s, "comp-3") || !strcmp(t->s, "computational-3") || !strcmp(t->s, "packed-decimal")) {
             if (strcmp(t->s, "packed-decimal")) bp(BP_E3_COMP_N, t->line);
             u = U_PACKED;
+            if (!strcmp(t->s, "packed-decimal") && (is_word(peek(1), "with") || is_word(peek(1), "no"))) {
+                /* PACKED-DECIMAL WITH NO SIGN (2023 13.18.60 GR 25): no sign
+                 * nibble, the picture without S -- the standard's spelling of
+                 * COMP-6 (docs/usage.md) */
+                if (g_std < 2023) die_at(t->line, "'%s': USAGE PACKED-DECIMAL WITH NO SIGN is COBOL 2023 (13.18.60); compile with -std=2023", s->name);
+                if (is_word(peek(1), "with")) advance();
+                if (!is_word(peek(1), "no") || !is_word(peek(2), "sign")) die_at(t->line, "'%s': PACKED-DECIMAL WITH NO SIGN: expected NO SIGN", s->name);
+                advance(); advance();
+                uv = UV_NOSIGN; s->nosign_clause = 1;
+            }
         }
         else if (!strcmp(t->s, "comp-5") || !strcmp(t->s, "computational-5")) { bp(BP_E3_COMP_N, t->line); u = U_COMP5; }
         else if (!strcmp(t->s, "binary-long") || !strcmp(t->s, "binary-short")) {
@@ -1024,7 +1035,7 @@ static void parse_data_item1(void)
         if (!strcmp(t->s, "message-tag"))
             die_at(t->line, "'%s': USAGE MESSAGE-TAG is COBOL 2023 (13.18.60); not implemented", s->name);
         if (!strcmp(t->s, "no") && is_word(peek(1), "sign"))
-            die_at(t->line, "'%s': USAGE PACKED-DECIMAL NO SIGN is COBOL 2023 (13.18.60); not implemented", s->name);
+            die_at(t->line, "'%s': NO SIGN follows USAGE PACKED-DECIMAL WITH (2023 13.18.60)", s->name);
         die_at(t->line, "unexpected %s in the description of '%s'", tok_desc(t), s->name);
     }
     expect_period();

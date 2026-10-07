@@ -1,0 +1,24 @@
+p6 12345 3; p3 -12345 3
+12346
+deleted f: 00
+deleted again: 05
+while open: 41
+both: 00 00
+open after delete: 35
+continued
+  EC-CONTINUE-LESS-THAN-ZERO
+nonfatal: continues EC-CONTINUE-LESS-THAN-ZERO     
+p: [one       ]
+p: [          ]
+p: [two       ]
+p: [          ]
+p: [three     ]
+p: [          ]
+p: [          ]
+p: [four      ]
+l: [one       ]
+l: [          ]
+l: [two       ]
+l: [          ]
+l: [three     ]
+back from the sub

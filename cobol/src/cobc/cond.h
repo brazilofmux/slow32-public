@@ -648,16 +648,32 @@ static Cond *parse_and(void)
     return a;
 }
 
+/* XOR / EXCLUSIVE-OR (2023 8.7.6, 8.8.4.9: between AND and OR in the
+ * order of evaluation, 8.8.4.13): one included condition true and not
+ * the other -- as the two combinations of AND, OR and NOT it is equal to,
+ * which every emitter and the island know */
+static int at_xor(void) { return (at_word("xor") || at_word("exclusive-or")) && !sym_lookup_quiet(cur()->s); }
+static Cond *parse_xor(void)
+{
+    Cond *a = parse_and();
+    while (at_xor()) {
+        if (g_std < 2023) die_at(cur()->line, "the logical operator %s is COBOL 2023 (8.7.6); compile with -std=2023", at_word("xor") ? "XOR" : "EXCLUSIVE-OR");
+        advance();
+        Cond *b = parse_and();
+        Cond *na = cond_new(C_NOT), *nb = cond_new(C_NOT); na->a = a; nb->a = b;
+        a = cond_bin(C_OR, cond_bin(C_AND, a, nb), cond_bin(C_AND, na, b));
+    }
+    return a;
+}
+
 static Cond *parse_cond(void)
 {
     int top = g_cond_depth == 0, uc0 = g_nucall;
     if (g_cond_depth++ == 0) g_abbr_op = -1;       /* a new condition: nothing to abbreviate yet */
-    Cond *a = parse_and();
-    while (accept_word("or")) a = cond_bin(C_OR, a, parse_and());
-    if ((at_word("xor") || at_word("exclusive-or")) && !sym_lookup_quiet(cur()->s))
-        die_at(cur()->line, "the logical operator %s is COBOL 2023 (8.7.6); not implemented", at_word("xor") ? "XOR" : "EXCLUSIVE-OR");
-    if (at_word("not") && !sym_lookup_quiet("not") && (is_word(peek(1), "or") || is_word(peek(1), "and")))
-        die_at(cur()->line, "NOT %s is not a permitted pair of elements (2023 8.8.4.11.3, table 5): a condition is followed by AND or OR", is_word(peek(1), "or") ? "OR" : "AND");
+    Cond *a = parse_xor();
+    while (accept_word("or")) a = cond_bin(C_OR, a, parse_xor());
+    if (at_word("not") && !sym_lookup_quiet("not") && (is_word(peek(1), "or") || is_word(peek(1), "and") || is_word(peek(1), "xor") || is_word(peek(1), "exclusive-or")))
+        die_at(cur()->line, "NOT %s is not a permitted pair of elements (2023 8.8.4.11.3, table 5): a condition is followed by AND, OR or XOR", is_word(peek(1), "or") ? "OR" : is_word(peek(1), "and") ? "AND" : "XOR");
     g_cond_depth--;
     if (top && g_nucall > uc0) {
         /* user functions in the condition are called where it is evaluated,

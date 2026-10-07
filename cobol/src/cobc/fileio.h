@@ -304,8 +304,31 @@ static void parse_write(void)
         accept_word("line"); accept_word("lines");
     }
 advancing_done:;
-    if (at_word("before") || at_word("after"))
-        die_at(cur()->line, "WRITE with both BEFORE and AFTER ADVANCING is COBOL 2023 (14.9.51); not implemented");
+    if (at_word("before") || at_word("after")) {
+        /* the other phrase too (2023 14.9.51 format; rule 17: not with
+         * PAGE): AFTER n moves before the record, BEFORE m after it.  A
+         * LINAGE file's write takes both counts; a print file's gets the
+         * BEFORE count by cob_write_also_before */
+        if (g_std < 2023) die_at(cur()->line, "WRITE with both BEFORE and AFTER ADVANCING is COBOL 2023 (14.9.51); compile with -std=2023");
+        int second_after = accept_word("after"); if (!second_after) accept_word("before");
+        if (second_after == after_kw) die_at(cur()->line, "WRITE: the %s phrase twice", second_after ? "AFTER" : "BEFORE");
+        if (before == -1 || after == -1 || at_word("page")) die_at(cur()->line, "WRITE: BEFORE and AFTER together, not with PAGE (2023 14.9.51.3 rule 17)");
+        accept_word("advancing");
+        if (dyn) die_at(cur()->line, "WRITE with both BEFORE and AFTER ADVANCING: the counts are integer literals here");
+        Opnd m; parse_operand(&m);
+        if (m.kind == O_FIG && !strncmp(m.tok->s, "zero", 4)) { m.kind = O_NUM; numlit_zero(&m.num); }
+        if (m.kind != O_NUM) die_at(m.line, "WRITE with both BEFORE and AFTER ADVANCING: the counts are integer literals here");
+        long v = (long)numlit_int(&m.num);
+        accept_word("line"); accept_word("lines");
+        if (f->linage) { if (second_after) before = (int)v; else after = (int)v; }
+        else {
+            /* the print file: the AFTER phrase's count by the usual encoding, the BEFORE's aside */
+            int aft = second_after ? (int)v : (after >= 0 ? after + 1 : 0), bef = second_after ? (after >= 0 ? after + 1 : 0) : (int)v;
+            if (after_kw) { aft = before >= 0 ? before + 1 : 0; bef = (int)v; }
+            before = aft ? aft - 1 : -2; after = 0; after_kw = 1;
+            emit_li("r3", bef); emit_call("cob_write_also_before");
+        }
+    }
     io_nyi("WRITE");
     /* a BEFORE phrase on a print file (not LINAGE, which counts its own):
      * before = -3 marks it, so BEFORE 1 is not taken for AFTER 1 -- the
@@ -390,7 +413,36 @@ static void parse_rewrite(void)
 /* DELETE file [RECORD] [INVALID KEY ...] */
 static void parse_delete(void)
 {
-    if (at_word("file")) die_at(cur()->line, "DELETE FILE is COBOL 2023 (14.9.10 format 2); not implemented");
+    if (at_word("file") && !file_find(cur()->s)) {
+        /* DELETE FILE [OVERRIDE] file-name ... [ON EXCEPTION] (2023 14.9.10
+         * format 2): each file removed from storage in turn (GR 12), the
+         * connector closed (41 if open), 05 when it is not there, 37 when it
+         * cannot be removed; OVERRIDE skips the fixed-attribute check, of
+         * which this runtime makes none (GR 19) */
+        if (g_std < 2023) die_at(cur()->line, "DELETE FILE is COBOL 2023 (14.9.10 format 2); compile with -std=2023");
+        advance();
+        int override = accept_word("override");
+        File *fs[16]; int n = 0;
+        while (cur()->kind == T_WORD && file_find(cur()->s)) {
+            if (n == 16) die_at(cur()->line, "DELETE FILE: more than 16 files");
+            fs[n] = expect_file();
+            if (fs[n]->org == COB_ORG_SORT) die_at(cur()->line, "DELETE FILE '%s': a sort-merge file is not deleted (2023 14.9.10.3 rule 3)", fs[n]->name);
+            n++;
+        }
+        if (!n) die_at(cur()->line, "DELETE FILE needs a file-name");
+        if (n > 1 && g_npstk && g_pstk[g_npstk - 1].Lcycle < 0) die_at(cur()->line, "DELETE FILE of several files is not in an exception-checking PERFORM (2023 14.9.10.3 rule 4)");
+        io_nyi("DELETE");
+        /* the result in SLOT_C: the last file's, an exception from any of them standing */
+        emit_li("r1", 0); emit("\tstw sp+%d, r1", SLOT_C);
+        for (int i = 0; i < n; i++) {
+            emit_file_addr("r3", fs[i]); emit_li("r4", override);
+            emit_call("cob_delete_file");
+            emit("\tldw r2, sp+%d", SLOT_C); emit("\tor r1, r1, r2"); emit("\tstw sp+%d, r1", SLOT_C);
+        }
+        g_io_file = fs[n - 1];
+        parse_condition_clauses("on", "exception", "end-delete");
+        return;
+    }
     File *f = expect_file();
     accept_word("record");
     io_nyi("DELETE");

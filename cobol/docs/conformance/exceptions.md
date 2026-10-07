@@ -55,7 +55,7 @@ queue item 4 continues with.
 | name | cat | disposition |
 |---|---|---|
 | EC-CONTINUE-IMP | Imp | **ruling**: no implementor-defined condition is defined here, so it never arises |
-| EC-CONTINUE-LESS-THAN-ZERO | NF | **n/a**: CONTINUE AFTER (queue item 31) |
+| EC-CONTINUE-LESS-THAN-ZERO | NF | **raised** by CONTINUE AFTER a negative value, under -std=2023 (queue item 31, 2026-10-07): 2023/stmts2023 |
 
 ## EC-DATA
 

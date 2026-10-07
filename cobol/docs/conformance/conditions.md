@@ -93,7 +93,7 @@ value, so -0.0 was not NEGATIVE), all fixed.
 | 8.8.4.7 GR 1 | format 1 by the value: POSITIVE > 0, NEGATIVE < 0, ZERO = 0 | **test**: `(fl) IS NEGATIVE` false for -0.0 |
 | 8.8.4.7 GR 2 | format 2 by the IEEE sign bit, whatever the value (-0.0 NEGATIVE, -INF, a NaN with the sign); ZERO when the value is zero of either sign | **test**: -0.0 NEGATIVE and ZERO, not POSITIVE -- went by value before this sweep |
 | 8.8.4.8 SR 1, GR 1-2 | IS OMITTED of a formal parameter: OMITTED written, a trailing argument left off, or the caller's own omitted parameter passed on | call.md (2002/fnproto, omitted); **refused** of an item that is not a parameter ("IS OMITTED tests a level 01 or 77 LINKAGE item") |
-| 8.8.4.9 | AND, OR, NOT; EXCLUSIVE-OR and XOR | **test**; XOR is 2023's, **gap** by name (docs/refusals.md) |
+| 8.8.4.9 | AND, OR, NOT; EXCLUSIVE-OR and XOR | **test**; XOR / EXCLUSIVE-OR **implemented** under -std=2023 (queue item 31, 2026-10-07) as the two combinations of AND, OR and NOT it equals, so every emitter and the island take it: 2023/inspback; **refused** under -std=2014: bad/std2014-xor; NOT XOR as NOT AND is: bad/std2023-not-xor |
 | 8.8.4.10 | NOT reverses; parentheses leave it | **test**: `NOT (a = 1 AND b = 1)` |
-| 8.8.4.11 precedence | NOT, AND, (XOR), OR; parentheses alter it | **test**: `a = 1 OR NOT b = 1 AND a = 0` true, `(a = 1 OR NOT b = 1) AND a = 0` false |
+| 8.8.4.11 precedence | NOT, AND, XOR, OR; parentheses alter it | **test**: `a = 1 OR NOT b = 1 AND a = 0` true, `(a = 1 OR NOT b = 1) AND a = 0` false; XOR between AND and OR: 2023/inspback (`one = 1 OR one = 2 XOR one = 1` true, `one = 1 XOR one = 1 AND one = 2` true) |
 | 8.8.4.11 table 5 | the permitted neighbours: OR NOT yes, NOT OR and NOT AND no, NOT ( yes, NOT NOT no; parentheses paired | **refused**: bad/std2002-cond-not-not, -cond-not-or -- NOT NOT was accepted before this sweep, NOT OR met "'not' is not a COBOL verb" |

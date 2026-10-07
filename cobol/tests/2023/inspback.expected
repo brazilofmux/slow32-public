@@ -1,0 +1,19 @@
+before 12: 02
+forward: 01
+after 12: 07
+all 12: 02
+AA in AAAAB: 02
+forward: 02
+leading A backward: 02
+forward: 03
+xAxB*C     
+*AxBxC     
+A12C21D12..
+a12c21D12EF
+A12C21d12ef
+xor tt false
+xor tf true
+xor ff false
+or binds looser: true
+and binds tighter: true
+three: false

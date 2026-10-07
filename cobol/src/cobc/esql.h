@@ -806,6 +806,32 @@ static void emit_sql_data(void)
     }
 }
 
+/* STOP RUN WITH {ERROR | NORMAL} STATUS [value] (2002 14.8.38; 2023
+ * 14.9.42), and GOBACK's status phrase (2023 14.9.18 GR 3) when no caller
+ * controls the program: the status to the operating system -- an integer
+ * its exit status, ERROR alone 1, NORMAL alone 0; an alphanumeric value to
+ * standard error, then 1 or 0 */
+static void emit_stop_status(Tok *t, int err)
+{
+    if (cur()->kind == T_PERIOD || cur()->kind == T_EOF || !at_operand() || is_verb(cur()->s)) { emit_li("r3", err); emit_call("cob_stop_run"); return; }
+    Opnd n; parse_operand(&n);
+    no_zero_lit(&n, "STOP RUN WITH STATUS", "2023 14.9.42.3 rule 4; 14.9.18.3 rule 8");
+    if (n.kind == O_NUM) {
+        if (!numlit_is_int(&n.num)) die_at(t->line, "STOP RUN WITH STATUS: a numeric literal is an integer (2023 14.9.42.3 rule 3)");
+        emit_li("r3", (long)numlit_int(&n.num)); emit_call("cob_stop_run");
+    } else if (n.kind == O_STR) {
+        Arg a[2] = { arg_label(lit_label((unsigned char *)n.tok->s, n.tok->len)), arg_imm(n.tok->len) };
+        emit_args(a, 2); emit_li("r5", err); emit_call("cob_stop_text");
+    } else if (n.kind == O_REF && !n.ref.rm && is_int_item(n.ref.sym)) {
+        Arg a[2] = { arg_ref(&n.ref), arg_desc(sym_desc(n.ref.sym)) };
+        emit_args(a, 2); emit_call("cob_load_int");
+        emit("\tadd r3, r0, r1"); emit_call("cob_stop_run");
+    } else if (n.kind == O_REF && (n.ref.sym->usage == U_DISPLAY || n.ref.sym->usage == U_NATIONAL) && !is_numeric_sym(n.ref.sym)) {
+        Arg a[2] = { arg_ref(&n.ref), arg_rlen(&n.ref) };
+        emit_args(a, 2); emit_li("r5", err); emit_call("cob_stop_text");
+    } else die_at(t->line, "STOP RUN WITH STATUS: an integer item, an item of usage display or national, or a literal (2023 14.9.42.3 rules 2-3)");
+}
+
 static void parse_statement_1(void)
 {
     apply_dirs();                           /* a >>TURN before this statement */
@@ -939,25 +965,7 @@ static void parse_statement_1(void)
             int err = 0;
             if (accept_word("error")) err = 1; else if (!accept_word("normal")) die_at(cur()->line, "STOP RUN WITH: expected ERROR or NORMAL");
             accept_word("status");
-            if (cur()->kind == T_PERIOD || cur()->kind == T_EOF || !at_operand() || is_verb(cur()->s)) { emit_li("r3", err); emit_call("cob_stop_run"); }
-            else {
-                Opnd n; parse_operand(&n);
-                no_zero_lit(&n, "STOP RUN WITH STATUS", "2023 14.9.42.3 rule 4");
-                if (n.kind == O_NUM) {
-                    if (!numlit_is_int(&n.num)) die_at(t->line, "STOP RUN WITH STATUS: a numeric literal is an integer (2023 14.9.42.3 rule 3)");
-                    emit_li("r3", (long)numlit_int(&n.num)); emit_call("cob_stop_run");
-                } else if (n.kind == O_STR) {
-                    Arg a[2] = { arg_label(lit_label((unsigned char *)n.tok->s, n.tok->len)), arg_imm(n.tok->len) };
-                    emit_args(a, 2); emit_li("r5", err); emit_call("cob_stop_text");
-                } else if (n.kind == O_REF && !n.ref.rm && is_int_item(n.ref.sym)) {
-                    Arg a[2] = { arg_ref(&n.ref), arg_desc(sym_desc(n.ref.sym)) };
-                    emit_args(a, 2); emit_call("cob_load_int");
-                    emit("\tadd r3, r0, r1"); emit_call("cob_stop_run");
-                } else if (n.kind == O_REF && (n.ref.sym->usage == U_DISPLAY || n.ref.sym->usage == U_NATIONAL) && !is_numeric_sym(n.ref.sym)) {
-                    Arg a[2] = { arg_ref(&n.ref), arg_rlen(&n.ref) };
-                    emit_args(a, 2); emit_li("r5", err); emit_call("cob_stop_text");
-                } else die_at(t->line, "STOP RUN WITH STATUS: an integer item, an item of usage display or national, or a literal (2023 14.9.42.3 rules 2-3)");
-            }
+            emit_stop_status(t, err);
             stop_last_check(t);
             return;
         }
@@ -998,18 +1006,42 @@ static void parse_statement_1(void)
             die_at(t->line, "GOBACK in a declarative whose USE statement says GLOBAL (2002 14.8.17.2 rule 1; 2023 14.9.18.3 rule 1)");
         advance();
         if (at_word("raising")) parse_raising_phrase(t->line);
-        if (at_word("with") && (is_word(peek(1), "error") || is_word(peek(1), "normal")))
-            die_at(t->line, "GOBACK WITH ... STATUS is COBOL 2023 (14.9.18); not implemented -- STOP RUN WITH STATUS is 2002's");
+        if (at_word("with") && (is_word(peek(1), "error") || is_word(peek(1), "normal"))) {
+            /* GOBACK WITH {ERROR | NORMAL} STATUS [value] (2023 14.9.18): in a
+             * program no caller controls, as STOP RUN with the status phrase
+             * (GR 3); under a caller the return, the phrase idle */
+            if (g_std < 2023) die_at(t->line, "GOBACK WITH ... STATUS is COBOL 2023 (14.9.18); compile with -std=2023 (STOP RUN WITH STATUS is 2002's)");
+            advance();
+            int err = accept_word("error"); if (!err) accept_word("normal");
+            accept_word("status");
+            int Lret = new_label();
+            emit_call("cob_called");
+            emit("\tbne r1, r0, .L%d", Lret);
+            emit_stop_status(t, err);
+            emit_label(Lret);
+        }
         pc_rec_leave();
         emit("\tjal r0, .Lgb%d", g_unit);
         return;
     }
     if (!strcmp(v, "continue")) {
         advance();
-        if (at_word("after")) {
-            int k = g_tp; while (k < g_ntok && g_tok[k].kind != T_PERIOD && !is_word(&g_tok[k], "seconds")) k++;
-            if (k < g_ntok && is_word(&g_tok[k], "seconds"))
-                die_at(t->line, "CONTINUE AFTER ... SECONDS is COBOL 2023 (14.9.9); not implemented");
+        if (at_word("after") && !sym_lookup_quiet("after")) {
+            /* CONTINUE AFTER arithmetic-expression SECONDS (2023 14.9.9): the
+             * run suspended that long; a negative value is zero and
+             * EC-CONTINUE-LESS-THAN-ZERO (GR 1), nonfatal */
+            if (g_std < 2023) die_at(t->line, "CONTINUE AFTER ... SECONDS is COBOL 2023 (14.9.9); compile with -std=2023");
+            advance();
+            Opnd n = expr_opnd(); check_numeric_opnd(&n);
+            expect_word("seconds");
+            emit_push_opnd(&n);
+            emit_call("cob_continue_after");
+            if (ec_on_name("EC-CONTINUE-LESS-THAN-ZERO")) {
+                int Lok = new_label();
+                emit("\tbeq r1, r0, .L%d", Lok);
+                emit_ec_raise(ec_find("EC-CONTINUE-LESS-THAN-ZERO", 0));
+                emit_label(Lok);
+            }
         }
         return;
     }

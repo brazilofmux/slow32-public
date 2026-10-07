@@ -24,7 +24,12 @@ under -std=85, the 2023 rule otherwise.
 | CONVERTING | the two operands the same size; a repeated FROM character's first occurrence wins | **test**: free/inspectrules (conv) |
 
 General rules (14.9.22.4), all **test**: free/inspectrules, the oracle
-agrees on every line -- one pass left to right with the first phrase
+agrees on every line -- one pass left to right (right to left under
+INSPECT BACKWARD, 2023 14.9.22.4 rule 3: implemented under -std=2023
+2026-10-07, queue item 31 -- the BEFORE and AFTER boundaries found in
+the scan's direction, the matching leftmost-first at each position, a
+match's positions never reused, LEADING and FIRST from the right;
+2023/inspback has the text's own example, no oracle) with the first phrase
 that matches taking the positions (overlapping patterns, competing
 phrases, their order); LEADING; FIRST; BEFORE and AFTER together;
 CHARACTERS in a range and mixed with other phrases; CONVERTING after a

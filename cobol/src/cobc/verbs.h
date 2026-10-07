@@ -389,8 +389,14 @@ static void parse_inspect_1(void)
     Opnd from, to; InspRange crg; memset(&crg, 0, sizeof crg);
     memset(&from, 0, sizeof from); memset(&to, 0, sizeof to);
 
-    if (at_word("backward") && peek(1)->kind == T_WORD && !is_verb(peek(1)->s))
-        die_at(cur()->line, "INSPECT BACKWARD is COBOL 2023 (14.9.22); not implemented");
+    int backward = 0;
+    if (at_word("backward") && !sym_lookup_quiet("backward") && peek(1)->kind == T_WORD && !is_verb(peek(1)->s)) {
+        /* INSPECT BACKWARD (2023 14.9.22.4 rule 3): the scan from the right,
+         * BEFORE and AFTER found in that direction, the matching itself
+         * leftmost-first at each position (note 2) */
+        if (g_std < 2023) die_at(cur()->line, "INSPECT BACKWARD is COBOL 2023 (14.9.22); compile with -std=2023");
+        backward = 1; advance();
+    }
     /* ---- the statement, read: no code ---- */
     g_noemit++;
     if (at_word("function") || (cur()->kind == T_WORD && ufn_named(cur()->s))) {
@@ -508,7 +514,7 @@ static void parse_inspect_1(void)
 #define INSP_BEGIN() do { \
         if (fsubj) { emit_str_arg(&fo); if (g_insp_nat) emit_desc_addr("r5", nat_desc(2)); else emit_li("r5", 0); } \
         else { Arg ba[3] = { arg_ref(&itemo.ref), arg_len(&itemo), itemo.ref.rm ? (g_insp_nat ? arg_desc(nat_desc(2)) : arg_imm(0)) : arg_desc(sym_desc(item.sym)) }; emit_args(ba, 3); } \
-        emit_call("cob_inspect_begin"); } while (0)
+        emit_call("cob_inspect_begin"); if (backward) emit_call("cob_inspect_backward"); } while (0)
     INSP_BEGIN();
     if (converting) {
         int fl = from.kind == O_FIG ? w : opnd_size(&from);
