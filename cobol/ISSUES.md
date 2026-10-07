@@ -6364,3 +6364,27 @@ concatenation, placed".  The fix is in display.h's positioned parse:
 gather the operands into one slot (a VALUE slot for literals only, a
 FROM slot with a compiler-made record otherwise), as the plain DISPLAY
 joins them.  Not a standard-queue item; queued here.
+
+### 127. gcobol as a second oracle (2026-10-07, queued)
+
+GnuCOBOL is the oracle (docs/oracles.md), and it has gaps the suite is
+now walking into: no FLOAT-BINARY usages (2014/floatbin has no oracle),
+no prototypes, no ADDRESS OF PROGRAM, a Report Writer that is
+4.0-early-dev, and its own reading where the text leaves a choice
+(docs/oracles.md's divergence table). gcobol -- GCC's COBOL front end,
+15.3.0 is the one consulted by hand so far (the overpunch compare
+above, 2026-09) -- is an independent implementation of the same
+standard, and where the two agree against us the case is nearly
+closed; where they disagree with each other the text decides, as it
+does now.
+
+The work: a `gcobol:15` builder/runtime image pair beside
+`gnucobol:4.0-*` (GCC 15 with `--enable-languages=cobol`, Linux only,
+amd64 and arm64), run-tests.sh taking it as an optional second oracle
+-- a test whose GnuCOBOL expectation is absent or documented as a
+divergence is compared with gcobol's output when the image is present,
+and a `.gcobol-expected` beside a test records a divergence from it as
+`.oracle-expected` does for GnuCOBOL; docs/oracles.md gets its section
+and a second divergence table. Start where GnuCOBOL cannot answer:
+tests/2014, the 2002 "no oracle" tests, the Report Writer page. Not
+a standard-queue item; queued here. Owner's ask (2026-10-07).
