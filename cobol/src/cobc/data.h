@@ -455,10 +455,10 @@ static int bool_picture(const char *pic, PicInfo *pi, int line)
  * PICTURE syntax rule 4), 50 in 2002 (13.16.38.2 rule 4); 2023 allows 63 */
 static void pic_len_check(const char *pic, int line)
 {
-    int lim = g_std < 2002 ? 30 : 50;
+    int lim = g_std < 2002 ? 30 : g_std < 2014 ? 50 : 63;      /* 2014 E.3 item 19: 50 became 63 */
     if ((int)strlen(pic) > lim)
         die_at(line, "the PICTURE '%s' has %d characters, more than %d (%s)", pic, (int)strlen(pic), lim,
-               g_std < 2002 ? "X3.23-1985 PICTURE syntax rule 4" : "2002 13.16.38.2 rule 4; 2023 allows 63");
+               g_std < 2002 ? "X3.23-1985 PICTURE syntax rule 4" : g_std < 2014 ? "2002 13.16.38.2 rule 4; 2014 allows 63" : "2023 13.18.40.3 rule 4");
 }
 
 /* BLANK WHEN ZERO: a numeric or numeric-edited item of usage display (or

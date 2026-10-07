@@ -20,6 +20,7 @@ typedef struct {
     unsigned char boolv;         /* T_STR: a boolean literal, one character 0 or 1 per position (cobol ISSUES-76) */
     int strong;                  /* the strong-type marker expand_types() puts in an entry: its type key + 1 (cobol ISSUES-80) */
     unsigned char ff;            /* read in free form: a COPY here starts its library text so (2023 7.3.24.3 rule 3); last, after the positional initializers' fields */
+    unsigned char hex;           /* T_STR: written as a hexadecimal literal X".." (CURRENCY SIGN refuses one as the symbol, 2014 E.2 item 10) */
 } Tok;
 
 static Tok *g_tok;
@@ -154,7 +155,7 @@ static char *numlit_float_fixed(const char *p, int n, int line)
     int lead = 0; while (lead < nd - scale - 1 && d[lead] == '0') lead++;
     while (scale > 0 && d[nd - 1] == '0') { nd--; scale--; }
     int ip = nd - lead - scale;
-    if (ip + scale > 31) die_at(line, "the floating-point literal's value has more than 31 digits (its exponent range here: 2023 8.3.3.3.3 rule 3)");
+    if ((ip > 0 ? ip : 0) + scale > 31) die_at(line, "the floating-point literal's value has more than 31 digits (its exponent range here: 2023 8.3.3.3.3 rule 3)");
     char *out = xmalloc(64); int o = 0;
     if (neg) out[o++] = '-';
     if (ip > 0) { memcpy(out + o, d + lead, (size_t)ip); o += ip; }
@@ -201,7 +202,7 @@ static void push_literal(const Lexeme *l, int line)
             if (h < 0 || lo < 0) die_at(line, "bad hexadecimal digit in literal");
             bytes[i / 2] = (char)(h * 16 + lo);
         }
-        push_tok(T_STR, line, bytes, n / 2);
+        push_tok(T_STR, line, bytes, n / 2)->hex = 1;
         free(bytes);
         return;
     }

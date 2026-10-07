@@ -94,7 +94,7 @@ static char g_prog_as[64];          /* the unit's own PROGRAM-ID ... AS literal 
  * compiled at -std=2002 writes; the REPOSITORY's PROGRAM names and their
  * AS literals */
 static FnSig g_pgsig[64]; static int g_npgsig;
-static int g_repo_all_intrinsic;    /* FUNCTION ALL INTRINSIC */
+/* g_repo_all_intrinsic: FUNCTION ALL INTRINSIC -- declared in diag.h for user_word */
 
 enum { O_REF, O_STR, O_NUM, O_FIG, O_ALL, O_EXPR, O_FUNC, O_BEXPR, O_ADDR };
 /* Where the text forbids a zero-length literal (2023 8.5.4 item 8; the

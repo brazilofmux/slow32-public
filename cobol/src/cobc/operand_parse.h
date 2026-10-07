@@ -346,7 +346,8 @@ static int fn89_known(const char *w)
         "date-of-integer", "day-of-integer", "integer-of-day", "length", "byte-length", "highest-algebraic",
         "lowest-algebraic", "exception-status", "exception-statement", "national-of", "display-of", "char-national",
         "exception-file", "exception-file-n", "exception-location", "exception-location-n",
-        "boolean-of-integer", "integer-of-boolean", NULL };
+        "boolean-of-integer", "integer-of-boolean", "trim",
+        "formatted-current-date", "formatted-date", "formatted-datetime", "formatted-time", NULL };   /* the 2014 ones: FUNCTION ALL INTRINSIC reserves them too (2014 E.2 item 13) */
     for (int i = 0; g_fn89[i].name; i++) if (!strcmp(w, g_fn89[i].name)) return 1;
     for (int i = 0; named[i]; i++) if (!strcmp(w, named[i])) return 1;
     return 0;

@@ -86,6 +86,7 @@ static void apply_decimal_point(void)
             memcpy(g_currency_str, lit->s, (size_t)lit->len); g_currency_str[lit->len] = 0; g_currency_len = lit->len;
             lit = &g_tok[k]; with_ps = 1;
         }
+        if (lit->hex && g_std >= 2014) die_at(lit->line, "CURRENCY SIGN IS: a hexadecimal literal is not the currency symbol, whose meaning is fixed at compile time (2014; 2023 12.3.7 rule 24)");
         if (lit->len != 1) die_at(lit->line, "CURRENCY SIGN IS: the currency symbol is one character; a longer currency string takes WITH PICTURE SYMBOL (2023 12.3.7 rules 22-23)");
         unsigned char c = (unsigned char)lit->s[0];
         if (isdigit(c) || c == ' ' || strchr("ABCDPRSVXZabcdprsvxz*+-,.;()\"/=", c))

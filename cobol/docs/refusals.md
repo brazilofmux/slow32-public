@@ -87,6 +87,10 @@ COBOL 2002/2023 (Stage B):
 - bits: a bit table inside an occurring bit group (two bit
   dimensions); a bit item's part at a computed position in a SCREEN
   SECTION item (docs/conformance/national-boolean.md);
+- a currency symbol from outside the COBOL character repertoire in a
+  PICTURE (2014 E.3 item 18): the picture scanner works in bytes, and a
+  multi-byte UTF-8 symbol is refused as "one character"; WITH PICTURE
+  SYMBOL gives such a currency its string (edition-2014.md);
 - RESUME (optional since 2014);
 - USAGE NATIONAL on a screen item whose PICTURE is not N
   (docs/conformance/national-boolean.md).

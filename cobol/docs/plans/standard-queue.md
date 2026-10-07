@@ -374,7 +374,13 @@ own omitted or ALL; the selected table sorted in place through the same cob_sort
 
 **29. 2014 behaviour-change audit.** 2014 E.2 items 1-29; Ed. 2014; S-M. One row per item: does
 -std=2002 already behave the 2014 way, and does it need a behavior point. Includes PICTURE length 63
-(E.3 19) and currency symbols outside the repertoire (E.3 7, 18) -- both unverified.
+(E.3 19) and currency symbols outside the repertoire (E.3 7, 18) -- both unverified. DONE 2026-10-07
+(docs/conformance/edition-2014.md, one row each; no behaviour point needed, every one is the
+edition's rule). Changed under -std=2014: CLOSE NO REWIND 07 (7), hex currency symbol refused (10),
+ALL INTRINSIC reserves the function names (13, and 2002's names under both editions), debugging
+lines / DEBUGGING MODE / PADDING refused (19), the 2014 reserved words (24), PICTURE 63 (E.3 19);
+E.3 18 (a currency symbol outside the repertoire) stays a gap. Found on the way: a float into a
+floating-point numeric-edited item lost its exponent; a 1.0E-200 literal overran the tokenizer.
 
 ## Tier 4 -- COBOL 2023 additions (introduce `-std=2023`)
 

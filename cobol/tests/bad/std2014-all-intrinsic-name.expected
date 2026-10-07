@@ -1,0 +1,1 @@
+'trim' is an intrinsic function's name, and the REPOSITORY says FUNCTION ALL INTRINSIC: it cannot name a data item (2023 12.3.8.3 rule 12; 2014 Annex E.2 item 13)

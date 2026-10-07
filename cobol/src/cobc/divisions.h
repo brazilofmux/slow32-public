@@ -378,6 +378,7 @@ static void parse_select(void)
             continue;
         }
         if (accept_word("padding")) {           /* PADDING CHARACTER: block padding, no blocks here */
+            if (g_std >= 2014) die_at(cur()->line, "the PADDING CHARACTER clause was removed from COBOL 2014 (2014 Annex E.2 item 19); compile with -std=2002 for it");
             accept_word("character"); accept_word("is");
             if (cur()->kind == T_STR || cur()->kind == T_WORD) advance();
             continue;

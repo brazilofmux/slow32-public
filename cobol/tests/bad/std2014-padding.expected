@@ -1,0 +1,1 @@
+the PADDING CHARACTER clause was removed from COBOL 2014 (2014 Annex E.2 item 19); compile with -std=2002 for it

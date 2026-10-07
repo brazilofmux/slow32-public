@@ -663,6 +663,15 @@ int cob_wput_x(void *vp, const cob_desc *d, const cob_wnum *win, int opts)
         return cob_wput_x(vp, d, &z, opts);
     }
     if (win->isf && !is_natnum(d)) {
+        if (d->cat == COB_NUM_ED && d->pic && strchr(d->pic, 'E')) {
+            /* a float into a floating-point numeric-edited item: its exact
+             * decimal digits with their exponent, not cut to the picture's
+             * fixed scale first (1.0E-30 went to zero that way; 2014 E.2
+             * item 11's underflow is the edit's to find) */
+            cob_wnum t;
+            if (w_from_dbl_q(&t, win->f)) return (opts & 2) ? 1 : 0;      /* an infinity or a NaN: no digits */
+            return cob_wput_x(vp, d, &t, opts);
+        }
         /* a float into a decimal item: to its scale (truncated, or ROUNDED),
          * then as a wide value; past 38 digits a size error */
         cob_wnum t;
@@ -3031,6 +3040,16 @@ int cob_unlock(cob_file *f)
     return file_result(f, "00", "");
 }
 
+/* CLOSE ... WITH NO REWIND on a file that is not on unit media: closed,
+ * and the I-O status 07 (2014; 2023 14.9.6.4, 9.1.13: successful, the
+ * phrase does not apply to the media) */
+int cob_close(cob_file *f);
+int cob_close_norewind(cob_file *f)
+{
+    int r = cob_close(f);
+    if (r) return r;
+    return file_result(f, "07", "");
+}
 /* CLOSE ... REEL/UNIT on a file that has no reels: 07 */
 int cob_close_reel(cob_file *f)
 {

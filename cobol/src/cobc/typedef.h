@@ -459,9 +459,11 @@ static void tokenize(void)
         int mode = 0, last = -1;
         for (int r = 0; r + 1 < g_ntok; r++)
             if (!g_tok[r].dbg && is_word(&g_tok[r], "debugging") && is_word(&g_tok[r + 1], "mode")) {
+                if (g_std >= 2014) die_at(g_tok[r].line, "WITH DEBUGGING MODE was removed from COBOL 2014 (2014 Annex E.2 item 19); compile with -std=2002 for it");
                 mode = 1; bp(BP_O12_DEBUG_LINES, g_tok[r].line);
             }
         for (int r = 0; r < g_ntok; r++) {
+            if (g_tok[r].dbg && g_std >= 2014) die_at(g_tok[r].line, "debugging lines (D in the indicator area) were removed from COBOL 2014 (2014 Annex E.2 item 19); compile with -std=2002 for them");
             if (g_tok[r].dbg && g_tok[r].line != last) { last = g_tok[r].line; if (!mode) bp(BP_O12_DEBUG_LINES, last); }
             if (g_tok[r].kind == T_DIR) {
                 /* a >>TURN: the parser applies it on reaching this point */

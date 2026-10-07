@@ -96,7 +96,8 @@ static void parse_close(void)
         int lock = 0, seq = f->org == COB_ORG_SEQ || f->org == COB_ORG_LINESEQ;
         const char *crule = g_std < 2002 ? "the X3.23-1985 relative and indexed CLOSE format" : "2023 14.9.6.3 rule 1";
         accept_word("with");
-        if (accept_word("no")) { accept_word("rewind"); if (!seq) die_at(cur()->line, "CLOSE ... NO REWIND '%s': for a sequential file (%s)", f->name, crule); }
+        int norewind = 0;
+        if (accept_word("no")) { accept_word("rewind"); norewind = 1; if (!seq) die_at(cur()->line, "CLOSE ... NO REWIND '%s': for a sequential file (%s)", f->name, crule); }
         if (!seq && (at_word("reel") || at_word("unit"))) die_at(cur()->line, "CLOSE %s '%s': for a sequential file (%s)", cur()->s, f->name, crule);
         if (accept_word("lock")) lock = 1;
         if (lock) { emit_file_addr("r3", f); emit_call("cob_close_lock"); emit("\tstw sp+%d, r1", SLOT_C); emit_use_dispatch(f, 0); n++; continue; }
@@ -115,7 +116,7 @@ static void parse_close(void)
                     emit_report_addr("r3", &g_reports[ri]);
                     emit_ec_query("EC-REPORT-NOT-TERMINATED", "cob_rw_active", 1);   /* the file closed with its report active (2023 14.9.6.4) */
                 }
-        emit_file_addr("r3", f); emit_call("cob_close");
+        emit_file_addr("r3", f); emit_call(norewind && g_std >= 2014 ? "cob_close_norewind" : "cob_close");
         emit("\tstw sp+%d, r1", SLOT_C); emit_use_dispatch(f, 0);
         n++;
     }

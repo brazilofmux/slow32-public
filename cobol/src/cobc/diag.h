@@ -373,9 +373,28 @@ static void bp(int point, int line)
  * accepted, as behavior point BP-N1.  Surveyed over majesty, the Open
  * Systems suite, CCVS-85 and the tests: no other reserved word is used
  * as a name anywhere (cobol ISSUES-43). */
+static int fn89_known(const char *w);
+static int g_repo_all_intrinsic;
 static void user_word(const char *w, int line, const char *what)
 {
     if (strchr(w, '_')) bp(BP_E13_UNDERSCORE, line);
+    /* the words COBOL 2014 reserved (2014 E.2 item 24), under -std=2014;
+     * 2002's additions stay unreserved (ISSUES-43's survey) */
+    static const char *const rw2014[] = { "farthest-from-zero", "float-binary-32", "float-binary-64", "float-binary-128",
+        "float-decimal-16", "float-decimal-34", "float-infinity", "float-not-a-number", "float-not-a-number-quiet",
+        "float-not-a-number-signaling", "function-pointer", "in-arithmetic-range", "nearest-to-zero", NULL };
+    if (g_std >= 2014) for (int i = 0; rw2014[i]; i++) if (!strcasecmp(w, rw2014[i]))
+        die_at(line, "'%s' is a reserved word of COBOL 2014 and cannot name %s (2014 Annex E.2 item 24)", w, what);
+    /* FUNCTION ALL INTRINSIC: the intrinsic functions' names are not
+     * user-defined words in its scope (2023 12.3.8.3 rule 12; 2014 E.2 item
+     * 13 adds the 2014 functions') */
+    static const char *const fn2014[] = { "trim", "combined-datetime", "formatted-current-date", "formatted-date", "formatted-datetime",
+        "formatted-time", "integer-of-formatted-date", "seconds-from-formatted-time", "seconds-past-midnight", "test-formatted-datetime", NULL };
+    int is2014 = 0;
+    for (int i = 0; fn2014[i]; i++) if (!strcasecmp(w, fn2014[i])) is2014 = 1;
+    if (g_repo_all_intrinsic && fn89_known(w) && (g_std >= 2014 || !is2014))
+        die_at(line, "'%s' is an intrinsic function's name, and the REPOSITORY says FUNCTION ALL INTRINSIC: it cannot name %s (2023 12.3.8.3 rule 12%s)", w, what,
+               is2014 ? "; 2014 Annex E.2 item 13" : "");
     if (!is_reserved85(w)) return;
     static const char *const n1[] = { "class", "other", "true", "false", "any", NULL };
     for (int i = 0; n1[i]; i++) if (!strcasecmp(w, n1[i])) { bp(BP_N1_RESERVED_NAME, line); return; }

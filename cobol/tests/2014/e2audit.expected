@@ -1,0 +1,10 @@
+close: 00
+close with no rewind: 07
+close reel: 07
+close: 00
+move float: +1.5E-20
+compute float: +1.5E-30
+move 1.5e-5: +1.5E-05
+move a decimal: +1.2E-06
+comma as a separator: 00
+63: 63 aaaa
