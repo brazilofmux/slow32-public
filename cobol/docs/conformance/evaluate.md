@@ -16,7 +16,7 @@ rules.
 | 85: 6b; 2023 Table 15 | a condition, TRUE or FALSE as an object only for a subject that is TRUE, FALSE or a condition | **refused** with the rule -- "WHEN a = 1" under an identifier subject was a parse error, "WHEN TRUE" said "'true' is not declared" |
 | 85: 6c | ANY for any subject | **test**: CCVS-85 |
 | format | each WHEN phrase (or run of them) followed by a statement; WHEN OTHER last | **refused**: bad/evaluate-rules -- a WHEN with no statement was accepted; a WHEN after WHEN OTHER gave "'when' without a matching statement" |
-| 2023 5, 7d, 8 | partial expressions (WHEN > 3) | **not implemented** (COBOL 2014), said so; under -std=85 "is COBOL 2014" |
+| 2023 5, 6e, 8; GR 7b.2 | partial expressions (WHEN > 3, WHEN NOT < 8, WHEN IS EQUAL TO 3, WHEN NUMERIC, WHEN POSITIVE): the object begins with a relational operator or a class or sign condition without its identifier; the subject goes to its left and the condition is evaluated; the subject an identifier or expression | **implemented** under -std=2014 (queue item 23, 2026-10-07): **test** 2014/partialwhen (GnuCOBOL agrees), abbreviated combinations included (WHEN > 3 AND < 5), a SPECIAL-NAMES class, partial objects under ALSO; **ruling**: WHEN ZERO stays the figurative constant (1985), WHEN IS ZERO is the sign condition; **refused**: a literal subject (bad/std2014-partial-literal-subject), the form under -std=2002 (bad/std2002-partial-when) |
 | 2023 3 | an alphabet on THRU | **n/a**: 2014's |
 
 ## IF

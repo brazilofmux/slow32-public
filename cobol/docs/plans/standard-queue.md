@@ -322,7 +322,9 @@ its arithmetic by the stack paths; DEFAULT ROUNDED was item 16's.
   processor-dependent.
 - Why here: the per-statement half exists.
 
-**23. EVALUATE partial expressions.** 14.9.13; Ed. 2014; S; deps none.
+**23. EVALUATE partial expressions.** 14.9.13; Ed. 2014; S; deps none. DONE 2026-10-07 (evaluate.md;
+test 2014/partialwhen, GnuCOBOL agrees): the subject supplied to the condition parser as the first
+simple condition's left operand, so relations, class and sign forms and their abbreviations follow.
 - Today: "a partial expression as a WHEN object (COBOL 2014) is not implemented".
 - Why here: common in modern code, isolated.
 

@@ -22,13 +22,20 @@ static int eval_numeric(const Opnd *o)
     return 0;
 }
 static int eval_literal(const Opnd *o) { return o->kind == O_NUM || o->kind == O_STR || o->kind == O_FIG || o->kind == O_ALL; }
+static int at_relational_tok(const Tok *t)
+{
+    static const char *w[] = { "greater", "less", "equal", "equals", "numeric", "alphabetic", "alphabetic-lower", "alphabetic-upper", "boolean",
+                               "positive", "negative", "farthest-from-zero", "nearest-to-zero", "in-arithmetic-range", "float-infinity",
+                               "float-not-a-number", "float-not-a-number-quiet", "float-not-a-number-signaling", NULL };   /* not ZERO: WHEN ZERO is a figurative constant */
+    if (t->kind == T_OP && (!strcmp(t->s, "=") || !strcmp(t->s, "<") || !strcmp(t->s, ">") || !strcmp(t->s, "<=") || !strcmp(t->s, ">=") || !strcmp(t->s, "<>"))) return 1;
+    if (t->kind != T_WORD) return 0;
+    for (int k = 0; w[k]; k++) if (!strcmp(t->s, w[k])) return 1;
+    for (int i = 0; i < g_nclass; i++) if (!strcmp(t->s, g_class[i].name)) return 1;   /* a SPECIAL-NAMES class */
+    return 0;
+}
 static int at_relational(void)
 {
-    static const char *w[] = { "greater", "less", "equal", "equals", "numeric", "alphabetic", "alphabetic-lower", "alphabetic-upper",
-                               "positive", "negative", NULL };     /* not ZERO: WHEN ZERO is a figurative constant */
-    if (at_op("=") || at_op("<") || at_op(">") || at_op("<=") || at_op(">=") || at_op("<>")) return 1;
-    for (int k = 0; w[k]; k++) if (at_word(w[k])) return 1;
-    return 0;
+    return at_relational_tok(cur());
 }
 
 /* An EVALUATE subject that is an arithmetic expression or a numeric
@@ -167,9 +174,23 @@ static void parse_evaluate(void)
                 } else {
                     if (at_word("true") || at_word("false"))
                         die_at(cur()->line, "WHEN %s goes with a subject that is TRUE, FALSE or a condition (%s)", at_word("true") ? "TRUE" : "FALSE", r_cond);
-                    if (at_relational())
-                        die_at(cur()->line, g_std < 2002 ? "a WHEN object that begins with a relation is COBOL 2014's partial expression"
-                                                         : "a partial expression as a WHEN object (COBOL 2014) is not implemented");
+                    /* a partial expression (2014; 2023 14.9.13.3 rules 5, 8): the
+                     * object begins with a relational operator, or a class or sign
+                     * condition without its identifier, [IS] [NOT] ahead of it;
+                     * the subject goes to its left and the condition is evaluated
+                     * (abbreviated combinations and all).  Not ZERO alone: WHEN
+                     * ZERO is the figurative constant, as in 1985 */
+                    if (at_relational() || (at_word("is") && (at_relational_tok(peek(1)) || is_word(peek(1), "zero") || (is_word(peek(1), "not") && (at_relational_tok(peek(2)) || is_word(peek(2), "zero"))))) ||
+                        (at_word("not") && at_relational_tok(peek(1)))) {   /* IS ZERO, IS NOT ZERO: the sign condition, the IS saying so */
+                        if (g_std < 2014) die_at(cur()->line, g_std < 2002 ? "a WHEN object that begins with a relation is COBOL 2014's partial expression; compile with -std=2014"
+                                                                             : "a partial expression as a WHEN object is COBOL 2014 (2023 14.9.13); compile with -std=2014");
+                        if (subj_lit[i]) die_at(cur()->line, "a partial expression goes with a subject that is an identifier or an expression, not a literal (2023 14.9.13.3 rule 6e)");
+                        g_cond_left = &subj[i].o;
+                        c = parse_cond();
+                        if (g_cond_left) die_at(cur()->line, "internal: the partial expression did not take its subject");
+                        if (c) all = all ? cond_bin(C_AND, all, c) : c;
+                        continue;
+                    }
                     int neg = accept_word("not");
                     Opnd x = parse_cond_operand();
                     if (at_relational())

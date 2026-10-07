@@ -434,10 +434,11 @@ static int parse_relop(void)
 static Opnd g_abbr_x; static int g_abbr_op = -1, g_abbr_neg;
 static int tok_is_relop(const Tok *t);
 
+static Opnd *g_cond_left;           /* a left operand supplied for the next simple condition: EVALUATE's partial expression (2023 14.9.13.3 rule 8), the subject ahead of the WHEN object */
 static Cond *parse_simple(void)
 {
     int line = cur()->line;
-    if (cur()->kind == T_WORD) {
+    if (!g_cond_left && cur()->kind == T_WORD) {
         SwitchName *m = switch_find(cur()->s);
         if (m && m->on >= 0) {      /* a switch-status condition-name */
             advance();
@@ -460,7 +461,9 @@ static Cond *parse_simple(void)
         g_abbr_op = op; g_abbr_neg = neg;
         return cond_rel(&g_abbr_x, op, &y, neg);
     }
-    Opnd x = parse_cond_operand();
+    Opnd x;
+    if (g_cond_left) { x = *g_cond_left; g_cond_left = NULL; }
+    else x = parse_cond_operand();
     accept_word("is");
     int neg = 0;
     if (accept_word("not")) neg = 1;

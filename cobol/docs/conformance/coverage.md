@@ -248,13 +248,13 @@ carry the compiler's own reason.
 | 14.9.10 | DELETE statement | [io-statements](io-statements.md) | 1 | 18 | 0 | 0 | 0 |
 | 14.9.11 | DISPLAY statement | [accept](accept.md), [screen](screen.md) | 41 | 32 | 11 | 1 | 4 |
 | 14.9.12 | DIVIDE statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
-| 14.9.13 | EVALUATE statement | [evaluate](evaluate.md) | 3 | 7 | 0 | 1 | 0 |
+| 14.9.13 | EVALUATE statement | [evaluate](evaluate.md) | 4 | 7 | 0 | 1 | 0 |
 | 14.9.14 | EXIT statement | [exit](exit.md) | 10 | 8 | 0 | 2 | 0 |
 | 14.9.15 | FREE statement | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 14.9.16 | GENERATE statement | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
 | 14.9.17 | GO TO statement | [accept](accept.md) | 1 | 10 | 0 | 0 | 0 |
 | 14.9.18 | GOBACK statement | [control](control.md) | 10 | 10 | 0 | 1 | 0 |
-| 14.9.19 | IF statement | [evaluate](evaluate.md) | 3 | 7 | 0 | 1 | 0 |
+| 14.9.19 | IF statement | [evaluate](evaluate.md) | 4 | 7 | 0 | 1 | 0 |
 | 14.9.20 | INITIALIZE statement | [initialize](initialize.md) | 8 | 5 | 0 | 1 | 0 |
 | 14.9.21 | INITIATE statement | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
 | 14.9.22 | INSPECT statement | [string](string.md) | 3 | 20 | 0 | 2 | 0 |
