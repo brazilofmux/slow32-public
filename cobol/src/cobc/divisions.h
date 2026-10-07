@@ -82,8 +82,23 @@ static void parse_options_paragraph(void)
             if (!n) die_at(cur()->line, "%s DEFAULT IS: expected %sHIGH-ORDER-LEFT or HIGH-ORDER-RIGHT", dec ? "FLOAT-DECIMAL" : "FLOAT-BINARY", dec ? "BINARY-ENCODING, DECIMAL-ENCODING, " : "");
             any = 1; continue;
         }
-        if (at_word("intermediate"))
-            die_at(cur()->line, "the INTERMEDIATE ROUNDING clause is COBOL 2014 (2023 11.9.11); not implemented");
+        if (at_word("intermediate")) {
+            /* INTERMEDIATE ROUNDING IS mode (2014; 2023 11.9.11): how the
+             * intermediates of this unit's arithmetic lose digits -- with
+             * NATIVE arithmetic the implementor's rule (GR 1): TRUNCATION,
+             * today's, unless the clause says otherwise; the runtime applies
+             * the mode where the stacks shed digits, and the unit's
+             * statements take the stack paths (docs/conformance/options.md) */
+            if (g_std < 2014) die_at(cur()->line, "the INTERMEDIATE ROUNDING clause is COBOL 2014 (2023 11.9.11); compile with -std=2014");
+            advance(); expect_word("rounding"); accept_word("is");
+            if (accept_word("truncation")) g_iround = 0;
+            else if (accept_word("nearest-away-from-zero")) g_iround = 1;
+            else if (accept_word("nearest-even")) g_iround = 2;
+            else if (accept_word("prohibited")) g_iround = 3;
+            else die_at(cur()->line, "INTERMEDIATE ROUNDING IS: expected NEAREST-AWAY-FROM-ZERO, NEAREST-EVEN, PROHIBITED or TRUNCATION, found %s", tok_desc(cur()));
+            if (g_iround) g_nohx = 1;           /* the register paths truncate: this unit's arithmetic goes by the stacks, which round as asked */
+            any = 1; continue;
+        }
         if (at_word("initialize"))
             die_at(cur()->line, "the OPTIONS INITIALIZE clause is COBOL 2023 (11.9.10); not implemented");
         break;

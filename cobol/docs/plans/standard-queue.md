@@ -314,7 +314,9 @@ FLOAT-SHORT/-LONG/COMP-2 take the floating-point forms.
 - Why here: the operations that make the IEEE usages usable.
 
 **22. Rounding options.** 11.9.6 DEFAULT ROUNDED, 11.9.11 INTERMEDIATE ROUNDING; Ed. 2014; S-M; deps
-16.
+16. DONE 2026-10-07 (options.md, docs/wide.md; test 2014/iround): INTERMEDIATE ROUNDING's four
+modes applied wherever the stacks shed digits, the unit's own by its activation descriptor,
+its arithmetic by the stack paths; DEFAULT ROUNDED was item 16's.
 - Today: DEFAULT ROUNDED came with item 16 (2026-10-06); INTERMEDIATE ROUNDING refused by name;
   `ROUNDED MODE IS` on a statement already works (BP-E29). A.3 makes both clauses
   processor-dependent.

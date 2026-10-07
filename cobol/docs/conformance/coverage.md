@@ -109,14 +109,14 @@ carry the compiler's own reason.
 | 11.6 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 11.7 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 11.8 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
-| 11.9 |  | [options](options.md) | 6 | 6 | 0 | 0 | 0 |
-| 11.9.5 | ARITHMETIC clause | [options](options.md) | 6 | 6 | 0 | 0 | 0 |
-| 11.9.6 | DEFAULT ROUNDED clause | [options](options.md) | 6 | 6 | 0 | 0 | 0 |
-| 11.9.7 | ENTRY-CONVENTION clause | [options](options.md) | 6 | 6 | 0 | 0 | 0 |
-| 11.9.8 | FLOAT-BINARY clause | [options](options.md) | 6 | 6 | 0 | 0 | 0 |
-| 11.9.9 | FLOAT-DECIMAL clause | [options](options.md) | 6 | 6 | 0 | 0 | 0 |
-| 11.9.10 | INITIALIZE clause | [options](options.md) | 6 | 6 | 0 | 0 | 0 |
-| 11.9.11 | INTERMEDIATE ROUNDING clause | [options](options.md) | 6 | 6 | 0 | 0 | 0 |
+| 11.9 |  | [options](options.md) | 7 | 6 | 0 | 0 | 0 |
+| 11.9.5 | ARITHMETIC clause | [options](options.md) | 7 | 6 | 0 | 0 | 0 |
+| 11.9.6 | DEFAULT ROUNDED clause | [options](options.md) | 7 | 6 | 0 | 0 | 0 |
+| 11.9.7 | ENTRY-CONVENTION clause | [options](options.md) | 7 | 6 | 0 | 0 | 0 |
+| 11.9.8 | FLOAT-BINARY clause | [options](options.md) | 7 | 6 | 0 | 0 | 0 |
+| 11.9.9 | FLOAT-DECIMAL clause | [options](options.md) | 7 | 6 | 0 | 0 | 0 |
+| 11.9.10 | INITIALIZE clause | [options](options.md) | 7 | 6 | 0 | 0 | 0 |
+| 11.9.11 | INTERMEDIATE ROUNDING clause | [options](options.md) | 7 | 6 | 0 | 0 | 0 |
 | 11.10 |  | [call](call.md) | 30 | 18 | 3 | 4 | 0 |
 
 ## 12 ENVIRONMENT DIVISION

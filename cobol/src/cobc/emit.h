@@ -365,7 +365,6 @@ static void emit_li(const char *rd, long v)
 static int g_wide;
 static int g_saw_wide;              /* an operand past 18 digits was met (set even under g_noemit) */
 static int g_saw_float;             /* a floating-point item was pushed (likewise) */
-static int g_nohx;                  /* -fno-hot-arith: the register paths and their peepholes off -- the code as before them (a differential's other side) */
 static int g_proflines;             /* -fprofile-lines: a global label at each statement, for bench/prof.py */
 static int g_fstmt;                 /* the wide statement computes in double: a float among its operands or
                                      * receivers, so every operand goes on the stack as a double (docs/usage.md) */

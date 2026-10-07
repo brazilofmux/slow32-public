@@ -1897,6 +1897,30 @@ static void align2(cob_num *a, cob_num *b)
 }
 
 static int div0;        /* a size error happened in this statement: 1 a zero divisor, 2 an i64 overflow */
+/* INTERMEDIATE ROUNDING (2014; 2023 11.9.11): how an intermediate loses
+ * the digits it cannot keep -- 0 TRUNCATION (the implementor's rule for
+ * NATIVE arithmetic, GR 1, and the one in effect unless a unit's OPTIONS
+ * paragraph says otherwise), 1 NEAREST-AWAY-FROM-ZERO, 2 NEAREST-EVEN, 3
+ * PROHIBITED (EC-SIZE-TRUNCATION: a size error, the statement's).  Set
+ * by the unit's activation descriptor on entry, the caller's restored on
+ * leaving.  Applied wherever the stacks shed digits: a quotient's last
+ * digit (narrow and wide), the operand fraction digits a multiplication
+ * sheds for room, the digits the wide stack sheds to align two scales or
+ * to fit 38. */
+static int cob_iround;
+static int iround_stack[256]; static int iround_sp;
+/* round up by one unit?  half: the first dropped digit against half a
+ * unit (1 above, 0 exactly half, -1 below); sticky: more dropped below
+ * it; odd: the kept value's last digit */
+static int iround_up(int half, int sticky, int odd)
+{
+    switch (cob_iround) {
+    case 1: return half >= 0;
+    case 2: return half > 0 || (half == 0 && (sticky || odd));
+    case 3: if (half >= 0 || sticky) div0 = 2; return 0;
+    default: return 0;
+    }
+}
 static int size_kind;   /* the last size error's kind, for EC-SIZE (cobol ISSUES-55): 1 zero divide, 2 overflow, 3 truncation, 4 exponentiation */
 int cob_size_kind(void) { return size_kind; }
 
@@ -1915,6 +1939,14 @@ void cob_nmul(void)
         cob_num *w = a->scale >= b->scale ? a : b;
         if (w->scale == 0) w = w == a ? b : a;
         if (w->scale == 0) break;                    /* nothing left to shed: the store's size error catches it */
+        if (cob_iround) {
+            /* the digit shed, rounded into what stays (each step on its own:
+             * the digits below it were already rounded away) */
+            long long d = w->v % 10; int neg = w->v < 0; if (neg) d = -d;
+            w->v /= 10; w->scale--;
+            if (iround_up(d > 5 ? 1 : d == 5 ? 0 : -1, 0, (int)((neg ? -w->v : w->v) & 1))) w->v += neg ? -1 : 1;
+            continue;
+        }
         w->v /= 10; w->scale--;
     }
     {
@@ -1998,6 +2030,10 @@ static int ndiv_core(cob_num *a, const cob_num *b, int need)
     if (scale < 0) {                            /* the divisor's scale exceeded the dividend's */
         while (scale < 0 && q < (unsigned long long)pow10tab[17]) { q *= 10; scale++; }
         if (scale < 0) { q = (unsigned long long)pow10tab[18]; scale = 0; }   /* beyond eighteen digits: a size error at the store */
+    }
+    if (cob_iround && r) {                      /* the fraction left over, against half the divisor */
+        int half = r > ub - r ? 1 : r == ub - r ? 0 : -1;
+        if (iround_up(half, half != 0, (int)(q & 1))) q++;   /* any remainder is something dropped (PROHIBITED) */
     }
     a->v = neg ? -(long long)q : (long long)q; a->scale = scale;
     return 0;
@@ -2170,10 +2206,14 @@ static int mp_ge_1e38(const wl_t *a, int n)
  * cannot (a size error) */
 static int w_fit_q(wl_t *a, int n, int *scale, int q)
 {
+    int first = -1, rest = 0;
     while (mp_ge_1e38(a, n)) {
         if (*scale <= 0 && !q) return 0;
-        mp_div_small(a, n, 10); (*scale)--;
+        wl_t r = mp_div_small(a, n, 10); (*scale)--;
+        if (first >= 0 && first) rest = 1;
+        first = (int)r;
     }
+    if (cob_iround && first >= 0 && iround_up(first > 5 ? 1 : first == 5 ? 0 : -1, rest, (int)(a[0] & 1))) mp_mul_small(a, n, 1, 1);
     return 1;
 }
 static int w_fit(wl_t *a, int n, int *scale) { return w_fit_q(a, n, scale, 0); }
@@ -2199,7 +2239,10 @@ static void w_align2(cob_wnum *a, cob_wnum *b)
     int k = hi->scale - lo->scale, room = 38 - w_ndigits(lo->m);
     int up = k < room ? k : room;
     if (up > 0) { w_scale_up(lo->m, up); lo->scale += up; }
-    if (hi->scale > lo->scale) { w_drop_digits(hi->m, WL, hi->scale - lo->scale, 0, 0); hi->scale = lo->scale; }
+    if (hi->scale > lo->scale) {
+        int half, nz; w_drop_digits(hi->m, WL, hi->scale - lo->scale, &half, &nz); hi->scale = lo->scale;
+        if (cob_iround && iround_up(half, nz && half < 0 ? 1 : 0, (int)(hi->m[0] & 1))) mp_mul_small(hi->m, WL, 1, 1);
+    }
 }
 
 static void w_addsub(cob_wnum *a, const cob_wnum *b0, int sub)
@@ -2231,7 +2274,10 @@ static void w_mul(cob_wnum *a, const cob_wnum *b)
     wl_t p[2 * WL];
     mp_mul(a->m, WL, b->m, WL, p);
     int scale = a->scale + b->scale, q = a->isq || b->isq;
-    while (scale > 38) { mp_div_small(p, 2 * WL, 10); scale--; }
+    if (scale > 38) {
+        int half, nz; w_drop_digits(p, 2 * WL, scale - 38, &half, &nz); scale = 38;
+        if (cob_iround && iround_up(half, nz && half < 0 ? 1 : 0, (int)(p[0] & 1))) mp_mul_small(p, 2 * WL, 1, 1);
+    }
     if (!w_fit_q(p, 2 * WL, &scale, q)) { div0 = 2; return; }
     memcpy(a->m, p, sizeof a->m);
     a->scale = scale;
@@ -2274,7 +2320,16 @@ static void w_div(cob_wnum *a, const cob_wnum *b)
     for (int i = 0; i < -k; i++) mp_mul_small(dv, 2 * WL, 10, 0);
     mp_divmod(n, dv, 2 * WL, q, r);                 /* a*10^k/b, or a/(b*10^-k): scale want either way */
     int scale = want;
-    while (scale > 38 && !fq) { mp_div_small(q, 2 * WL, 10); scale--; }
+    if (cob_iround && !mp_is_zero(r, 2 * WL) && scale <= 38) {
+        /* the remainder against half the divisor: 2r vs dv */
+        wl_t r2[2 * WL]; memcpy(r2, r, sizeof r2); mp_mul_small(r2, 2 * WL, 2, 0);
+        int c = mp_cmp(r2, dv, 2 * WL);
+        if (iround_up(c, c != 0, (int)(q[0] & 1))) mp_mul_small(q, 2 * WL, 1, 1);   /* a remainder is something dropped (PROHIBITED) */
+    }
+    if (scale > 38 && !fq) {
+        int half, nz; w_drop_digits(q, 2 * WL, scale - 38, &half, &nz); scale = 38;
+        if (cob_iround && iround_up(half, (nz && half < 0) || !mp_is_zero(r, 2 * WL) ? 1 : 0, (int)(q[0] & 1))) mp_mul_small(q, 2 * WL, 1, 1);
+    }
     if (!w_fit_q(q, 2 * WL, &scale, fq)) { div0 = 2; return; }
     int neg = a->neg != b->neg;
     memcpy(a->m, q, sizeof a->m); a->scale = scale;
@@ -2628,7 +2683,10 @@ static __attribute__((noinline)) void act_recursive_call(const cob_act_hdr *h)
 void *cob_act_enter(int *desc)
 {
     cob_act_hdr *h = (cob_act_hdr *)desc;
-    if (h->active && !h->recursive) act_recursive_call(h);    /* out of line: its buffer made every call's frame 224 bytes */
+    if (h->active && !(h->recursive & 1)) act_recursive_call(h);    /* out of line: its buffer made every call's frame 224 bytes */
+    /* the unit's INTERMEDIATE ROUNDING (bits 8- of the second word), the caller's kept for the leave */
+    if (iround_sp < 256) iround_stack[iround_sp++] = cob_iround;
+    cob_iround = h->recursive >> 8;
     int **words = (int **)(desc + 5);
     int *loc = desc + 5 + h->nwords, nl = loc[0];
     if (!h->active && h->cache) {
@@ -2670,6 +2728,7 @@ void cob_act_leave(int *desc, void *block)
 {
     cob_act_hdr *h = (cob_act_hdr *)desc;
     h->active--;
+    if (iround_sp > 0) cob_iround = iround_stack[--iround_sp];
     if (!block || block == h->cache) return;      /* the outermost: nothing saved, the block kept */
     int **words = (int **)(desc + 5);
     for (int k = 0; k < h->nwords; k++) *words[k] = ((int *)block)[k];

@@ -62,6 +62,26 @@ Each phase is gated like the sweeps: harness, CCVS-85, -std=85
 byte-identity, majesty and majesty-functions, the Open Systems papers,
 and GnuCOBOL as the oracle (it holds 38 digits).
 
+## Intermediate rounding (2014, queue item 22)
+
+The digits an intermediate sheds -- here, at `w_align2` (the larger
+scale cut to the smaller once the smaller has no room to scale up), in
+`w_mul` and `w_div` (a scale past 38; a quotient's remainder) and in
+`w_fit` (a magnitude past 38 digits), and on the narrow stack in
+`ndiv_core` (the quotient's remainder) and `cob_nmul` (an operand's
+fraction digits shed for room) -- are truncated, the implementor's rule
+for NATIVE arithmetic (2023 11.9.11 GR 1). A unit's OPTIONS
+INTERMEDIATE ROUNDING clause changes that for its own statements:
+`cob_iround`, set by the activation descriptor on entry and restored on
+leaving, and `iround_up()` at each of those sites decides the last kept
+digit from the first dropped one and whether more was dropped --
+NEAREST-AWAY-FROM-ZERO, NEAREST-EVEN, or PROHIBITED, which makes any
+drop a size error. The compiler's register paths truncate and are not
+taught the modes: a unit with the clause takes the stack paths
+(`g_nohx`, the `-fno-hot-arith` switch's flag), so the differential
+between the two paths that `ccvs/both-paths` keeps does not apply to
+such a unit.
+
 ## Status
 
 Phases 1 and 2 are done (ISSUES-117): 2002/wide1-3, and
