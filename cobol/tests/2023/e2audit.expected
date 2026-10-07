@@ -1,0 +1,10 @@
+[ab][abc-x-0- ]
+[xyxyxyxyxy]
+write 1 fs=00 linage-counter=0000000002
+write 2 fs=00 linage-counter=0000000003
+write 3 fs=00 linage-counter=0000000001
+write 4 fs=00 linage-counter=0000000002
+close: 00
+write: 00
+declarative for I-O: 23
+after rewrite without INVALID KEY: 23

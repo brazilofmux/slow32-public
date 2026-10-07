@@ -896,7 +896,10 @@ static int cond_directive(const TW *t)
         const char *nm = ccur()->s; g_cp++;
         static const char *dirw[] = { "define", "if", "else", "end-if", "evaluate", "when", "end-evaluate", "turn", "source",
                                       "as", "off", "override", "parameter", "defined", "true", "false", "other", NULL };
+        /* the compiler-directive words 2023 added (E.2 item 5), under -std=2023 */
+        static const char *dirw2023[] = { "cobol-words", "display", "flag-14", "i-o-status-04", "num-ed-zero-fig-constant", "pop", "push", "ref-mod-zero-length", "upon", NULL };
         for (int i = 0; dirw[i]; i++) if (!strcasecmp(nm, dirw[i])) cdie("'%s' is a compiler-directive word, not a compilation variable (2023 7.3.11.3 rule 1)", nm);
+        if (g_std >= 2023) for (int i = 0; dirw2023[i]; i++) if (!strcasecmp(nm, dirw2023[i])) cdie("'%s' is a compiler-directive word of COBOL 2023, not a compilation variable (2023 7.3.11.3 rule 1; E.2 item 5)", nm);
         CVar *c = cvar_find(nm);
         caccept("as");
         if (caccept("off")) { c_end("DEFINE"); if (c) c->defined = 0; return 1; }

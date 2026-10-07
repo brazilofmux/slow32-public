@@ -445,6 +445,11 @@ other I-O exceptions now reach USE declaratives when no phrase is given) may alr
 -std=2002 behaviour; items 15-18 (I-O status 04, 07, 0x, 37); item 20 (MERGE in an output
 procedure); item 26 (transfer-of-control checks); item 30 (WRITE end-of-page). Item 22 (READ
 PREVIOUS after OPEN) is already the implemented behaviour (ISSUES-116).
+**DONE 2026-10-07**: conformance/edition-2023-audit.md, one row per item. Three word lists
+changed under -std=2023 (items 5, 13, 25: directive words as compilation variables, the 2023
+function names under ALL INTRINSIC, the sixteen reserved words); the behaviour rows hold -- 19a is
+the 2023 reading under every edition (GnuCOBOL agrees), 20 refused under every edition; 26 a gap.
+Test 2023/e2audit; bad std2023-define-dirword, -all-intrinsic-name, -reserved-word.
 
 ## Tier 5 -- optional (2023 A.4) or processor-dependent (2023 A.3)
 

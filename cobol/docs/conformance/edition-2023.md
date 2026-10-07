@@ -2,9 +2,9 @@
 
 Started 2026-10-07 (docs/plans/standard-queue.md item 30). `-std=2023`
 takes everything `-std=2014` does (docs/standards.md) plus the 2023
-additions as they land, and refuses what 2023 removed. The rest of
-2023's Annex E.2 (items 2-30) is queue item 36; the 2023 statements,
-functions and directives are items 31-34.
+additions, and refuses what 2023 removed. The rest of 2023's Annex E.2
+(items 2-30) is audited in edition-2023-audit.md (item 36); the 2023
+statements, functions and directives are items 31-34 below.
 
 ## E.2 item 1 and item 21: the removals
 

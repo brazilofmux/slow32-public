@@ -477,16 +477,23 @@ static void user_word(const char *w, int line, const char *what)
         "float-not-a-number-signaling", "function-pointer", "in-arithmetic-range", "nearest-to-zero", NULL };
     if (g_std >= 2014) for (int i = 0; rw2014[i]; i++) if (!strcasecmp(w, rw2014[i]))
         die_at(line, "'%s' is a reserved word of COBOL 2014 and cannot name %s (2014 Annex E.2 item 24)", w, what);
+    /* the words COBOL 2023 reserved (2023 E.2 item 25), under -std=2023 */
+    static const char *const rw2023[] = { "b-shift-l", "b-shift-lc", "b-shift-r", "b-shift-rc", "commit", "editing", "end-receive", "end-send",
+        "exclusive-or", "finally", "location", "message-tag", "receive", "rollback", "send", "xor", NULL };
+    if (g_std >= 2023) for (int i = 0; rw2023[i]; i++) if (!strcasecmp(w, rw2023[i]))
+        die_at(line, "'%s' is a reserved word of COBOL 2023 and cannot name %s (2023 Annex E.2 item 25)", w, what);
     /* FUNCTION ALL INTRINSIC: the intrinsic functions' names are not
      * user-defined words in its scope (2023 12.3.8.3 rule 12; 2014 E.2 item
      * 13 adds the 2014 functions') */
     static const char *const fn2014[] = { "trim", "combined-datetime", "formatted-current-date", "formatted-date", "formatted-datetime",
         "formatted-time", "integer-of-formatted-date", "seconds-from-formatted-time", "seconds-past-midnight", "test-formatted-datetime", NULL };
-    int is2014 = 0;
+    static const char *const fn2023[] = { "baseconvert", "concat", "convert", "find-string", "module-name", "smallest-algebraic", "substitute", NULL };
+    int is2014 = 0, is2023 = 0;
     for (int i = 0; fn2014[i]; i++) if (!strcasecmp(w, fn2014[i])) is2014 = 1;
-    if (g_repo_all_intrinsic && fn89_known(w) && (g_std >= 2014 || !is2014))
+    for (int i = 0; fn2023[i]; i++) if (!strcasecmp(w, fn2023[i])) is2023 = 1;
+    if (g_repo_all_intrinsic && ((fn89_known(w) && (g_std >= 2014 || !is2014)) || (is2023 && g_std >= 2023)))
         die_at(line, "'%s' is an intrinsic function's name, and the REPOSITORY says FUNCTION ALL INTRINSIC: it cannot name %s (2023 12.3.8.3 rule 12%s)", w, what,
-               is2014 ? "; 2014 Annex E.2 item 13" : "");
+               is2023 ? "; 2023 Annex E.2 item 13" : is2014 ? "; 2014 Annex E.2 item 13" : "");
     if (!is_reserved85(w)) return;
     static const char *const n1[] = { "class", "other", "true", "false", "any", NULL };
     for (int i = 0; n1[i]; i++) if (!strcasecmp(w, n1[i])) { bp(BP_N1_RESERVED_NAME, line); return; }

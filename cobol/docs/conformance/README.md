@@ -76,3 +76,4 @@ standard's titles or text:
 | 14.9.49 USE | [use.md](use.md) | 2026-09-28 |
 | 2014 Annex E.2 items 1-29, E.3 items 7, 18, 19: the edition's substantive changes, under -std=2002 and -std=2014 | [edition-2014.md](edition-2014.md) | 2026-10-07 |
 | 2023 Annex E.2 items 1 and 21 (the removals, class R points), 11.9.10 OPTIONS INITIALIZE, 13.18.55 SYNCHRONIZED on a group, the 2023 statements, functions and directives (pointers); `-std=2023` | [edition-2023.md](edition-2023.md) | 2026-10-07 |
+| 2023 Annex E.2 items 2-30: the 2014-to-2023 behaviour changes, one row each under -std=2014 and -std=2023 | [edition-2023-audit.md](edition-2023-audit.md) | 2026-10-07 |
