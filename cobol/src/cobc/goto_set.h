@@ -463,14 +463,24 @@ static void parse_set(void)
         int vc = opnd_ptr_cat(&v);
         if (!vc)
             die_at(v.line, cat == 1 ? "SET of a data pointer takes ADDRESS OF, a pointer item or NULL (2023 14.9.39.3 rule 17)" :
+                           cat == 3 ? "SET of a function-pointer takes ADDRESS OF FUNCTION, a function-pointer item or NULL (2023 14.9.39.3 rule 20)" :
                            "SET of a program-pointer takes ADDRESS OF PROGRAM, a program-pointer item or NULL (2023 14.9.39.3 rule 21)");
         if (vc > 0 && vc != cat)
-            die_at(v.line, "SET: a %s value for a %s receiver (2023 14.9.39.3 rules 17, 21)", ptr_cat_name(vc), ptr_cat_name(cat));
+            die_at(v.line, "SET: a %s value for a %s receiver (2023 14.9.39.3 rules 17, 20, 21)", ptr_cat_name(vc), ptr_cat_name(cat));
         if (vc > 0 && cat == 2)
             for (int i = 0; i < nr; i++)
                 if (rs[i].sym->ptr_proto[0] && strcmp(rs[i].sym->ptr_proto, opnd_ptr_proto(&v)))
                     die_at(v.line, "SET '%s': restricted to the prototype %s, it takes NULL or a program-pointer value restricted to the same (2023 14.9.39.3 rule 22)",
                            rs[i].sym->name, rs[i].sym->ptr_proto);
+        if (vc > 0 && cat == 3)
+            /* format 8: the two prototypes have the same signature (rule
+             * 20) -- the same prototype here; an ADDRESS OF FUNCTION
+             * identifier carries none and is taken, the name being the
+             * program's business at run time */
+            for (int i = 0; i < nr; i++)
+                if (opnd_ptr_proto(&v)[0] && !fnsig_same(rs[i].sym->ptr_proto, opnd_ptr_proto(&v)))
+                    die_at(v.line, "SET '%s': a function-pointer TO %s takes NULL or a function-pointer value whose prototype has the same signature; %s's differs (2023 14.9.39.3 rule 20)",
+                           rs[i].sym->name, rs[i].sym->ptr_proto, opnd_ptr_proto(&v));
         emit_ptr_value(&v, "r1");
         emit("\tstw sp+%d, r1", SLOT_A);
         for (int i = 0; i < nr; i++) {

@@ -1349,6 +1349,34 @@ void cob_call_null_ptr(const char *item)
     char msg[200]; snprintf(msg, sizeof msg, "CALL %s: the program-pointer is NULL", item);
     cob_fatal(msg);
 }
+/* The function registry (2023 8.4.3.12 ADDRESS OF FUNCTION identifier):
+ * every function in the executable joins at start-up under its
+ * externalized name, as a program does the program registry; a name not
+ * there is NULL, EC-FUNCTION-NOT-FOUND when checked (rule 4).  A function
+ * is invoked by its prototype's name otherwise, linked by name. */
+static struct { const char *name; void *fn; } cob_fns[128]; static int cob_nfns;
+void cob_register_fn(const char *name, void *fn)
+{
+    if (cob_nfns == 128) cob_fatal("more than 128 functions in one executable");
+    cob_fns[cob_nfns].name = name; cob_fns[cob_nfns].fn = fn; cob_nfns++;
+}
+void *cob_resolve_fn(const unsigned char *p, int len)
+{
+    while (len > 0 && (p[len - 1] == ' ' || p[len - 1] == 0)) len--;
+    for (int i = 0; i < cob_nfns; i++) {
+        const char *n = cob_fns[i].name; int k = 0;
+        while (k < len && n[k] && tolower((unsigned char)n[k]) == tolower(p[k])) k++;
+        if (k == len && !n[k]) return cob_fns[i].fn;
+    }
+    return 0;
+}
+/* a function invoked through a function-pointer holding NULL, with
+ * EC-FUNCTION-PTR-NULL not checked: the run stops (2023 8.4.3.2.4 rule 6c, 6f) */
+void cob_fn_null_ptr(const char *item)
+{
+    char msg[200]; snprintf(msg, sizeof msg, "FUNCTION %s: the function-pointer is NULL", item);
+    cob_fatal(msg);
+}
 
 /* EXTERNAL: storage shared by name between the programs of one executable.
  * A record's block is made on first request (zeroed, as GnuCOBOL's); an

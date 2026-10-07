@@ -753,6 +753,20 @@ static void parse_data_item1(void)
             s->nat_usage = 1; advance(); continue;
         }
         else if (!strcmp(t->s, "pointer")) { if (g_std < 2002) bp(BP_E5_BINARY_2002, t->line); u = U_POINTER; }
+        else if (!strcmp(t->s, "function-pointer")) {
+            /* USAGE FUNCTION-POINTER TO function-prototype-name (2014; 2023
+             * 13.18.60, 8.5.2.7): a function's entry address, NULL or one
+             * ADDRESS OF FUNCTION gave it; the prototype's signature is the
+             * one an invocation through it is checked against, and the
+             * only kind of value it takes (GR 26) */
+            if (g_std < 2014) die_at(t->line, "'%s': USAGE FUNCTION-POINTER is COBOL 2014 (2023 13.18.60); compile with -std=2014", s->name);
+            u = U_POINTER; uv = UV_FPTR;
+            if (!is_word(peek(1), "to") || peek(2)->kind != T_WORD || !ufn_named(peek(2)->s))
+                die_at(t->line, "'%s': FUNCTION-POINTER TO names a function prototype of the REPOSITORY (2023 13.18.60 format)", s->name);
+            advance();
+            snprintf(s->ptr_proto, sizeof s->ptr_proto, "%s", peek(1)->s);
+            advance();
+        }
         else if (!strcmp(t->s, "program-pointer")) {
             /* USAGE PROGRAM-POINTER [TO program-prototype-name] (2023
              * 13.18.60): a program's entry address, NULL or one ADDRESS
@@ -1007,9 +1021,8 @@ static void parse_data_item1(void)
             if (g_std < 2002) die_at(t->line, "'%s': the ALIGNED clause is COBOL 2002 (2023 13.18.1); compile with -std=2002", s->name);
             s->aligned = 1; advance(); continue;
         }
-        if (!strcmp(t->s, "function-pointer") || !strcmp(t->s, "message-tag"))
-            die_at(t->line, "'%s': USAGE %s is COBOL %s (2023 13.18.60); not implemented", s->name, t->s,
-                   t->s[0] == 'f' ? "2014" : "2023");
+        if (!strcmp(t->s, "message-tag"))
+            die_at(t->line, "'%s': USAGE MESSAGE-TAG is COBOL 2023 (13.18.60); not implemented", s->name);
         if (!strcmp(t->s, "no") && is_word(peek(1), "sign"))
             die_at(t->line, "'%s': USAGE PACKED-DECIMAL NO SIGN is COBOL 2023 (13.18.60); not implemented", s->name);
         die_at(t->line, "unexpected %s in the description of '%s'", tok_desc(t), s->name);

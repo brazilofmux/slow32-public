@@ -348,7 +348,12 @@ EXTERNAL with it (a strongly typed TYPE) not implemented.
 - Today: "the CONSTANT RECORD clause is COBOL 2014, beyond -std=2002".
 
 **26. Function pointers.** 8.5.2.7, 8.4.3.12 (ADDRESS OF FUNCTION), 14.9.39 format 8; Ed. 2014; M;
-deps 8 (prototypes), 9.
+deps 8 (prototypes), 9. DONE 2026-10-07 (usage.md "FUNCTION-POINTER" rows; test 2014/fnpointer, no
+oracle: GnuCOBOL 4 has none; 11 bad tests): USAGE FUNCTION-POINTER TO prototype, ADDRESS OF
+FUNCTION by a prototype (linked by name) or an identifier (a function registry every function joins
+at start-up, NULL and EC-FUNCTION-NOT-FOUND when the name is not there), SET format 8 with rule 20
+by signature, the invocation pointer(arguments) through r12 with EC-FUNCTION-PTR-NULL, INITIALIZE's
+FUNCTION-POINTER category, the pointer relations.
 - Today: `USAGE FUNCTION-POINTER` and `ADDRESS OF FUNCTION` are bare parse errors.
 
 **27. The 2014 date-and-time functions.** 15.17, 15.38-15.41, 15.48, 15.79, 15.80, 15.92; Ed. 2014;

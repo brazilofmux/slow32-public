@@ -57,28 +57,28 @@ carry the compiler's own reason.
 | section | element | page | test | refused | gap | n/a | ruling |
 |---|---|---|---|---|---|---|---|
 | 8.1.3 |  | *unswept* | | | | | |
-| 8.3.3.2 |  | [identifiers](identifiers.md), [refmod](refmod.md) | 55 | 38 | 1 | 10 | 1 |
+| 8.3.3.2 |  | [identifiers](identifiers.md), [refmod](refmod.md) | 56 | 41 | 0 | 10 | 1 |
 | 8.3.3.4 |  | [national-boolean](national-boolean.md), [refmod](refmod.md) | 34 | 24 | 0 | 4 | 1 |
 | 8.3.3.5 |  | [national-boolean](national-boolean.md), [refmod](refmod.md) | 34 | 24 | 0 | 4 | 1 |
-| 8.3.3.6 |  | [identifiers](identifiers.md), [refmod](refmod.md) | 55 | 38 | 1 | 10 | 1 |
-| 8.4.2.2 |  | [identifiers](identifiers.md) | 36 | 27 | 1 | 6 | 1 |
-| 8.4.2.3 |  | [identifiers](identifiers.md) | 36 | 27 | 1 | 6 | 1 |
-| 8.4.3.1 |  | [identifiers](identifiers.md) | 36 | 27 | 1 | 6 | 1 |
-| 8.4.3.2 |  | [identifiers](identifiers.md) | 36 | 27 | 1 | 6 | 1 |
+| 8.3.3.6 |  | [identifiers](identifiers.md), [refmod](refmod.md) | 56 | 41 | 0 | 10 | 1 |
+| 8.4.2.2 |  | [identifiers](identifiers.md) | 37 | 30 | 0 | 6 | 1 |
+| 8.4.2.3 |  | [identifiers](identifiers.md) | 37 | 30 | 0 | 6 | 1 |
+| 8.4.3.1 |  | [identifiers](identifiers.md) | 37 | 30 | 0 | 6 | 1 |
+| 8.4.3.2 |  | [identifiers](identifiers.md) | 37 | 30 | 0 | 6 | 1 |
 | 8.4.3.3 |  | [refmod](refmod.md) | 19 | 11 | 0 | 4 | 0 |
-| 8.4.3.4 |  | [identifiers](identifiers.md) | 36 | 27 | 1 | 6 | 1 |
-| 8.4.3.5 |  | [identifiers](identifiers.md) | 36 | 27 | 1 | 6 | 1 |
-| 8.4.3.6 |  | [identifiers](identifiers.md) | 36 | 27 | 1 | 6 | 1 |
-| 8.4.3.7 |  | [identifiers](identifiers.md) | 36 | 27 | 1 | 6 | 1 |
-| 8.4.3.8 |  | [identifiers](identifiers.md) | 36 | 27 | 1 | 6 | 1 |
-| 8.4.3.9 |  | [identifiers](identifiers.md) | 36 | 27 | 1 | 6 | 1 |
-| 8.4.3.10 |  | [identifiers](identifiers.md) | 36 | 27 | 1 | 6 | 1 |
-| 8.4.3.11 |  | [identifiers](identifiers.md) | 36 | 27 | 1 | 6 | 1 |
-| 8.4.3.12 |  | [identifiers](identifiers.md) | 36 | 27 | 1 | 6 | 1 |
-| 8.4.3.13 |  | [usage](usage.md) | 15 | 10 | 0 | 1 | 3 |
-| 8.4.3.14 |  | [identifiers](identifiers.md) | 36 | 27 | 1 | 6 | 1 |
-| 8.4.3.15 |  | [identifiers](identifiers.md) | 36 | 27 | 1 | 6 | 1 |
-| 8.4.4 |  | [identifiers](identifiers.md) | 36 | 27 | 1 | 6 | 1 |
+| 8.4.3.4 |  | [identifiers](identifiers.md) | 37 | 30 | 0 | 6 | 1 |
+| 8.4.3.5 |  | [identifiers](identifiers.md) | 37 | 30 | 0 | 6 | 1 |
+| 8.4.3.6 |  | [identifiers](identifiers.md) | 37 | 30 | 0 | 6 | 1 |
+| 8.4.3.7 |  | [identifiers](identifiers.md) | 37 | 30 | 0 | 6 | 1 |
+| 8.4.3.8 |  | [identifiers](identifiers.md) | 37 | 30 | 0 | 6 | 1 |
+| 8.4.3.9 |  | [identifiers](identifiers.md) | 37 | 30 | 0 | 6 | 1 |
+| 8.4.3.10 |  | [identifiers](identifiers.md) | 37 | 30 | 0 | 6 | 1 |
+| 8.4.3.11 |  | [identifiers](identifiers.md) | 37 | 30 | 0 | 6 | 1 |
+| 8.4.3.12 |  | [identifiers](identifiers.md) | 37 | 30 | 0 | 6 | 1 |
+| 8.4.3.13 |  | [usage](usage.md) | 20 | 9 | 0 | 1 | 3 |
+| 8.4.3.14 |  | [identifiers](identifiers.md) | 37 | 30 | 0 | 6 | 1 |
+| 8.4.3.15 |  | [identifiers](identifiers.md) | 37 | 30 | 0 | 6 | 1 |
+| 8.4.4 |  | [identifiers](identifiers.md) | 37 | 30 | 0 | 6 | 1 |
 | 8.7.5 |  | [conditions](conditions.md) | 32 | 12 | 0 | 1 | 0 |
 | 8.8.3 |  | [expressions](expressions.md) | 11 | 2 | 0 | 0 | 0 |
 | 8.8.4.2 |  | [conditions](conditions.md) | 32 | 12 | 0 | 1 | 0 |
@@ -223,7 +223,7 @@ carry the compiler's own reason.
 | 13.18.57 | TYPE clause | [environment](environment.md), [reportwriter](reportwriter.md) | 29 | 71 | 3 | 3 | 4 |
 | 13.18.58 | TYPEDEF clause | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 13.18.59 | UNDERLINE clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
-| 13.18.60 | USAGE clause | [national-boolean](national-boolean.md), [usage](usage.md) | 30 | 23 | 0 | 1 | 4 |
+| 13.18.60 | USAGE clause | [national-boolean](national-boolean.md), [usage](usage.md) | 35 | 22 | 0 | 1 | 4 |
 | 13.18.61 | USING clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.62 | VALIDATE-STATUS clause | *unswept* | | | | | |
 | 13.18.63 | VALUE clause | [value](value.md) | 1 | 14 | 0 | 0 | 0 |
@@ -274,7 +274,7 @@ carry the compiler's own reason.
 | 14.9.36 | ROLLBACK statement | **not implemented**: ROLLBACK is COBOL 2023; not implemented | | | | | |
 | 14.9.37 | SEARCH statement | [search](search.md) | 7 | 10 | 0 | 0 | 0 |
 | 14.9.38 | SEND statement | **not implemented**: send: COBOL 85's Communication module is out by ruling, and COBOL 2023's asynchronous messaging (14.9.31, 14.9.38) is not implemented | | | | | |
-| 14.9.39 | SET statement | [set](set.md), [usage](usage.md) | 31 | 21 | 0 | 1 | 4 |
+| 14.9.39 | SET statement | [set](set.md), [usage](usage.md) | 36 | 20 | 0 | 1 | 4 |
 | 14.9.40 | SORT statement | [sort](sort.md) | 3 | 12 | 0 | 0 | 0 |
 | 14.9.41 | START statement | [io-statements](io-statements.md) | 1 | 18 | 0 | 0 | 0 |
 | 14.9.42 | STOP statement | [control](control.md) | 10 | 10 | 0 | 1 | 0 |

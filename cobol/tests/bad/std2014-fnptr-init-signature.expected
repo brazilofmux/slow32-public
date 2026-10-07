@@ -1,0 +1,1 @@
+INITIALIZE 'op' REPLACING FUNCTION-POINTER: a function-pointer TO binop takes a value whose prototype has the same signature; neg's differs (the implicit SET, 2023 14.9.39.3 rule 20)

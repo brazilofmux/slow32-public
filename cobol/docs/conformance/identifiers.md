@@ -101,8 +101,8 @@ identifier itself:
 |---|---|---|
 | SR 1 | not a receiving operand | **refused**: bad/std2002-fn-receiving -- was "'function' is not declared" |
 | SR 2 | FUNCTION may be omitted when the REPOSITORY names the function (or ALL INTRINSIC), or for a prototype or pointer; required otherwise | **test**: `REPOSITORY. FUNCTION UPPER-CASE INTRINSIC` then `upper-case(x)` (fn3 in the sweep; 2002/fnproto); **refused** without: bad/std2002-fn-no-function-word -- was "'upper-case' is not declared" |
-| SR 3-4 | a prototype of the REPOSITORY or the containing definition; a function-pointer item | call.md; function-pointers are item 26 (**gap**) |
-| SR 5 | a function-pointer needs the parentheses | item 26 |
+| SR 3-4 | a prototype of the REPOSITORY or the containing definition; a function-pointer item | call.md; a function-pointer item: usage.md "function-pointer-name (arguments)" (2026-10-07, queue item 26; 2014/fnpointer) |
+| SR 5 | a function-pointer needs the parentheses | **refused**: bad/std2014-fnptr-no-parens |
 | SR 6 | a left parenthesis after the name always opens the arguments | **test**: `FUNCTION RANDOM (A) B` takes A; `FUNCTION RANDOM ()`, `(FUNCTION RANDOM) (A)` (fn7 in the sweep) |
 | SR 7 | OMITTED not with an intrinsic | **refused**: bad/std2002-fn-omitted-intrinsic -- was "'omitted' is not declared" |
 | SR 8 | an argument an identifier, literal, boolean or arithmetic expression; the counts and classes by clause 15 or 14.8.2 | functions.md, call.md |
@@ -132,7 +132,7 @@ identifier itself:
 | rule | paraphrase | disposition |
 |---|---|---|
 | SR 1 | only with an item of class pointer or message-tag | **refused** with an alphanumeric receiver: bad/std2002-move-null-alnum -- accepted before this sweep; a pointer takes NULL by SET (set.md), MOVE keeps pointers out (14.9.25.3 rule 1) |
-| GR 1-3 | the null data, function and program address: a value no item, function or program has | **test**: `SET p TO NULL`, `p = NULL`; usage.md (program-pointers); function-pointers item 26 |
+| GR 1-3 | the null data, function and program address: a value no item, function or program has | **test**: `SET p TO NULL`, `p = NULL`; usage.md (program-pointers; function-pointers, 2014/fnpointer) |
 | GR 4 | the null message-tag | **n/a**: message tags are the Communication module's successor, out of scope (docs/standards.md) |
 
 ## 8.4.3.11 Data-address-identifier (ADDRESS OF)
@@ -149,8 +149,14 @@ identifier itself:
 
 ## 8.4.3.12 Function-address-identifier (ADDRESS OF FUNCTION)
 
-**gap**: queue item 26, refused by name (docs/refusals.md) with the
-function-pointer usage.
+Implemented 2026-10-07 (queue item 26), under -std=2014: the rows
+"ADDRESS OF FUNCTION" and "SET format 8" in usage.md. Test 2014/fnpointer.
+
+| rule | paraphrase | disposition |
+|---|---|---|
+| SR 1-2 | identifier-1 alphanumeric or national; the prototype one of the REPOSITORY | **refused**: bad/std2014-fnptr-address-item; a word that is neither is "not declared" |
+| SR 3 | not a receiving operand | **refused**: bad/std2014-fnptr-receiver |
+| GR 1-4 | the function's address, by the item's content (8.3.2.2: the externalized name) or the prototype's; restricted to the prototype; not found, NULL and EC-FUNCTION-NOT-FOUND | **test**: 2014/fnpointer (usage.md) |
 
 ## 8.4.3.14 LINAGE-COUNTER
 

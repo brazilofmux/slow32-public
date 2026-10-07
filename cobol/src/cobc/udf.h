@@ -165,6 +165,21 @@ static int fdesc_match(const FDesc *a, const FDesc *b)
            pa.bytes == pb.bytes && !strcmp(pa.pat, pb.pat);
 }
 
+/* two prototypes with the same signature (2023 14.9.39.3 rule 20; 14.8.2,
+ * 14.8.3): as many parameters, each conforming and passed the same way,
+ * OPTIONAL alike, the returning items conforming */
+static int fnsig_same(const char *a, const char *b)
+{
+    if (!strcmp(a, b)) return 1;
+    int ia = fnsig_find(a), ib = fnsig_find(b);
+    if (ia < 0 || ib < 0) return 0;
+    const FnSig *x = &g_fnsig[ia], *y = &g_fnsig[ib];
+    if (x->nparam != y->nparam || !fdesc_match(&x->ret, &y->ret)) return 0;
+    for (int k = 0; k < x->nparam; k++)
+        if (x->byval[k] != y->byval[k] || x->opt[k] != y->opt[k] || !fdesc_match(&x->param[k], &y->param[k])) return 0;
+    return 1;
+}
+
 /* is this word a user function this unit may invoke without FUNCTION? */
 static int ufn_named(const char *w)
 {
@@ -205,7 +220,7 @@ static Sym *ftemp_new(const FDesc *d, int line)
     return &g_sym[idx];
 }
 
-typedef struct UCall_ { int sig, nargs, line; Opnd arg[16]; int byref[16]; Sym *ctmp[16]; Sym *res; } UCall;   /* byref 2: OMITTED */
+typedef struct UCall_ { int sig, nargs, line; Opnd arg[16]; int byref[16]; Sym *ctmp[16]; Sym *res; int via_fp; Ref fp; } UCall;   /* byref 2: OMITTED; via_fp: invoked through the function-pointer fp */
 static UCall *g_ucall; static int g_ucap;
 static void ucall_bind(UCall *u, const char *name);
 static void ucall_emit(const UCall *u);
@@ -236,6 +251,18 @@ static void emit_ucall(const UCall *u0)
         } else emit_move(&u->arg[k], &refs[k]);
     }
     Ref rres = ftemp_ref(u->res, u->line);
+    if (u->via_fp) {
+        /* through a function-pointer (8.4.3.2.4 rule 6c): its value in r12
+         * (callee-saved, as CALL program-pointer keeps it) before the
+         * arguments are staged; NULL is EC-FUNCTION-PTR-NULL when checked,
+         * else the run stops */
+        int Lgo = new_label();
+        emit_ref_addr(&u->fp, "r3"); emit("\tldw r12, r3+0");
+        emit("\tbne r12, r0, .L%d", Lgo);
+        if (ec_on_name("EC-FUNCTION-PTR-NULL")) emit_ec_raise(ec_find("EC-FUNCTION-PTR-NULL", 0));
+        emit_la("r3", lit_label((const unsigned char *)u->fp.sym->name, (int)strlen(u->fp.sym->name) + 1)); emit_call("cob_fn_null_ptr");
+        emit_label(Lgo);
+    }
     int anyl = 0;
     for (int k = 0; k < u->nargs; k++) anyl |= f->param[k].size == -1;
     if (anyl) {
@@ -266,7 +293,7 @@ static void emit_ucall(const UCall *u0)
         emit("\taddi sp, sp, -%d", out);
         for (int k = 0; k < nx; k++) { emit("\tldw r1, sp+%d", out + SLOT(xbase + k)); emit("\tstw sp+%d, r1", 4 * k); }
     }
-    emit_call(f->link);
+    if (u->via_fp) emit("\tjalr r31, r12, 0"); else emit_call(f->link);
     if (nx) { emit("\taddi sp, sp, %d", out); g_slot_base = xbase; }
     if (g_std >= 2002) emit_ec_propagated();          /* a condition the function handed back (GOBACK RAISING; 14.9.18.4 rule 1b) */
 }
@@ -277,7 +304,17 @@ static void emit_ucalls(int from, int to)
 }
 
 /* name(args), the cursor past the name: the operand becomes the result */
-static void parse_ufunc(Opnd *o, const char *name, int line)
+static void parse_ufunc_1(Opnd *o, const char *name, int line, const Ref *fp);
+static void parse_ufunc(Opnd *o, const char *name, int line) { parse_ufunc_1(o, name, line, NULL); }
+/* function-pointer-name (arguments) (2014; 2023 8.4.3.2): the function
+ * the pointer holds, with the signature of the prototype the pointer is
+ * restricted to; the parentheses are required (rule 5) */
+static void parse_ufunc_fp(Opnd *o, const Ref *fp, int line)
+{
+    if (cur()->kind != T_LP) die_at(line, "'%s': a function-pointer is invoked with its arguments in parentheses, () with none (2023 8.4.3.2.3 rule 5)", fp->sym->name);
+    parse_ufunc_1(o, fp->sym->ptr_proto, line, fp);
+}
+static void parse_ufunc_1(Opnd *o, const char *name, int line, const Ref *fp)
 {
     int sig = fnsig_find(name);
     if (sig < 0)
@@ -285,6 +322,7 @@ static void parse_ufunc(Opnd *o, const char *name, int line)
                      "first (compile.sh does), so its %s.s32fn is beside the output or on -I", name, link_name(name));
     UCall u; memset(&u, 0, sizeof u);
     u.sig = sig; u.line = line;
+    if (fp) { u.via_fp = 1; u.fp = *fp; }
     if (cur()->kind == T_LP) {
         advance();
         while (cur()->kind != T_RP) {

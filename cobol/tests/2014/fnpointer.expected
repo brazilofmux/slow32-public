@@ -1,0 +1,14 @@
+op starts NULL
+plus: +0000013 +0000007
+times + 1: +0000043
+by name: +0000006
+op2: +0000030 +0000002
+equal pointers
+not null
+and plus
+-0000006 -0000001 +0000003
+[hello world ]
+sub: +0000042 -0000001
+unknown name is NULL
+initialized to NULL
+replaced

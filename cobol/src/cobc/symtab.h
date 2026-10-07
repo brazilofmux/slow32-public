@@ -468,6 +468,7 @@ static int repo_pg_find(const char *name)
     for (int i = 0; i < g_nrepo_pg; i++) if (!strcmp(g_repo_pg[i], name)) return i;
     return -1;
 }
+static int ufn_named(const char *w);   /* a REPOSITORY function's name, or this function's own (udf.h) */
 
 /* ---- files: SELECT + FD ------------------------------------------------ */
 

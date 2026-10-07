@@ -1,0 +1,1 @@
+SET 'op': a function-pointer TO binop takes NULL or a function-pointer value whose prototype has the same signature; neg's differs (2023 14.9.39.3 rule 20)

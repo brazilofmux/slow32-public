@@ -464,7 +464,11 @@ static int fn89_parse(Opnd *o, Tok *n)
 }
 
 static void parse_ufunc(Opnd *o, const char *name, int line);
+static void parse_ufunc_fp(Opnd *o, const Ref *fp, int line);
 static int ufn_named(const char *w);
+static int fnsig_find(const char *name0);
+static const char *fn_extname(const char *name);
+static const char *link_name(const char *name);
 /* a function this compiler does not have: the module or edition it needs */
 static void fn_refuse(Tok *n)
 {
@@ -535,12 +539,14 @@ static void algebraic_limit(Opnd *o, Opnd *x, int high, Tok *n)
 
 static void parse_operand_raw_1(Opnd *o);
 static int ref_has_runtime_sub(const Ref *r);
+static int sym_is_fptr(const Sym *s) { return s && !s->is_group && s->usage == U_POINTER && s->uvar == UV_FPTR; }
 static void parse_operand_raw(Opnd *o)
 {
     Tok *t = cur();
     int fn = t->kind == T_WORD && (!strcmp(t->s, "function") ||
              (!strcmp(t->s, "length") && g_tp + 1 < g_ntok && is_word(&g_tok[g_tp + 1], "of")) ||
-             ((ufn_named(t->s) || (g_repo_all_intrinsic && fn89_known(t->s))) && !sym_lookup_quiet(t->s)));
+             ((ufn_named(t->s) || (g_repo_all_intrinsic && fn89_known(t->s))) && !sym_lookup_quiet(t->s)) ||
+             (peek(1)->kind == T_LP && sym_is_fptr(sym_lookup_quiet(t->s))));
     int start = g_tp;
     g_fn_depth += fn;
     parse_operand_raw_1(o);
@@ -561,8 +567,29 @@ static void parse_operand_raw_1(Opnd *o)
         if (!g_cond_depth && strcmp(g_cur_stmt, "SET") && strcmp(g_cur_stmt, "CALL"))
             die_at(t->line, "ADDRESS OF is a sending operand of SET or CALL, or a relation's operand; not of %s", g_cur_stmt);
         advance(); advance();
-        if (at_word("function") && !sym_lookup_quiet(cur()->s))
-            die_at(t->line, "ADDRESS OF FUNCTION is COBOL 2014 (2023 8.4.3.12, a function-pointer's value); not implemented (docs/plans/standard-queue.md item 26)");
+        if (at_word("function") && !sym_lookup_quiet(cur()->s)) {
+            /* ADDRESS OF FUNCTION {prototype-name | identifier} (2014; 2023
+             * 8.4.3.12): a function-pointer value -- by a prototype-name the
+             * function's own entry, linked by name, the value restricted to
+             * that prototype (rule 3); by an identifier the name is looked
+             * up in the function registry at run time (NULL, and
+             * EC-FUNCTION-NOT-FOUND when checked, if it is not there) */
+            if (g_std < 2014) die_at(t->line, "ADDRESS OF FUNCTION is COBOL 2014 (2023 8.4.3.12); compile with -std=2014");
+            advance();
+            o->kind = O_ADDR; o->paddr = 2;
+            if (cur()->kind == T_WORD && !sym_lookup_quiet(cur()->s) && ufn_named(cur()->s)) {
+                if (fnsig_find(cur()->s) < 0)
+                    die_at(cur()->line, "ADDRESS OF FUNCTION %s: no signature for the function (its own compile writes one)", cur()->s);
+                o->pproto = xstrdup(cur()->s);
+                o->pname = xstrdup(fn_extname(cur()->s)); advance();
+            } else {
+                parse_ref(&o->ref);
+                const Sym *x = o->ref.sym;
+                if (x->is_group || (x->pi.category != PIC_ALPHANUMERIC && x->pi.category != PIC_NATIONAL))
+                    die_at(o->line, "ADDRESS OF FUNCTION '%s': an alphanumeric or national item holding the name, or a function-prototype-name of the REPOSITORY (2023 8.4.3.12.3 rules 1-2)", x->name);
+            }
+            return;
+        }
         if (at_word("program") && !sym_lookup_quiet(cur()->s)) {
             /* ADDRESS OF PROGRAM {identifier | literal | prototype-name}
              * (2023 8.4.3.13): a program-pointer value, the program found
@@ -624,6 +651,15 @@ static void parse_operand_raw_1(Opnd *o)
     if (t->kind == T_WORD && ufn_named(t->s) && !sym_lookup_quiet(t->s)) {
         advance(); parse_ufunc(o, t->s, t->line); return;
     }
+    /* function-pointer-name (arguments): the function the pointer holds
+     * (2014; 2023 8.4.3.2, FUNCTION optional by rule 2) */
+    if (t->kind == T_WORD && peek(1)->kind == T_LP) {
+        Sym *fs = sym_lookup_quiet(t->s);
+        if (fs && !fs->is_group && fs->usage == U_POINTER && fs->uvar == UV_FPTR) {
+            Ref fp; memset(&fp, 0, sizeof fp); fp.sym = fs; fp.line = t->line; advance();   /* the name alone: what follows is the arguments, not subscripts */
+            parse_ufunc_fp(o, &fp, t->line); return;
+        }
+    }
     /* FUNCTION ALL INTRINSIC: an intrinsic without the word FUNCTION too */
     int bare_fn = t->kind == T_WORD && g_repo_all_intrinsic && fn89_known(t->s) && !sym_lookup_quiet(t->s);
     if (t->kind == T_WORD && (!strcmp(t->s, "function") || bare_fn)) {
@@ -631,6 +667,8 @@ static void parse_operand_raw_1(Opnd *o)
         Tok *n = cur();
         if (n->kind != T_WORD) die_at(n->line, "expected an intrinsic function name");
         if (ufn_named(n->s)) { advance(); parse_ufunc(o, n->s, n->line); return; }
+        { Sym *fs = sym_lookup_quiet(n->s);
+          if (fs && !fs->is_group && fs->usage == U_POINTER && fs->uvar == UV_FPTR) { Ref fp; memset(&fp, 0, sizeof fp); fp.sym = fs; fp.line = n->line; advance(); parse_ufunc_fp(o, &fp, n->line); return; } }
         if (!strcmp(n->s, "when-compiled")) {
             advance();
             static Tok wc; static char wcbuf[22];
@@ -1342,6 +1380,21 @@ static void emit_ptr_value(const Opnd *o, const char *reg)
             int Lok = new_label();
             emit("\tbne r1, r0, .L%d", Lok);
             emit_ec_raise(ec_find("EC-PROGRAM-NOT-FOUND", 0));
+            emit_label(Lok);
+        }
+        if (strcmp(reg, "r1")) emit("\tadd %s, r1, r0", reg);
+        return;
+    }
+    if (o->kind == O_ADDR && o->paddr == 2) {
+        /* ADDRESS OF FUNCTION: the prototype's function, linked by name;
+         * an identifier's, from the function registry (8.4.3.12.4 rule 4) */
+        if (o->pproto) { emit_la(reg, link_name(o->pname)); return; }
+        emit_ref_addr(&o->ref, "r3"); emit_li("r4", o->ref.sym->size);
+        emit_call("cob_resolve_fn");
+        if (ec_on_name("EC-FUNCTION-NOT-FOUND")) {
+            int Lok = new_label();
+            emit("\tbne r1, r0, .L%d", Lok);
+            emit_ec_raise(ec_find("EC-FUNCTION-NOT-FOUND", 0));
             emit_label(Lok);
         }
         if (strcmp(reg, "r1")) emit("\tadd %s, r1, r0", reg);

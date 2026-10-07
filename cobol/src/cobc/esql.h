@@ -1789,7 +1789,29 @@ static void parse_procedure_division(void)
     lw_flush();                                 /* the islands' code, after the unit's (lower.h) */
 
     /* the unit joins the program registry at start-up (CALL identifier);
-     * a function is invoked, never CALLed, and does not */
+     * a function is invoked, never CALLed, and joins the function
+     * registry instead (ADDRESS OF FUNCTION identifier, 8.4.3.12) */
+    if (g_is_function && !(g_unit < g_npnode && g_pnode[g_unit].parent >= 0)) {
+        char nm[130]; const char *rn = g_fn_as[0] ? g_fn_as : g_progid;
+        int nl = (int)strlen(rn);
+        memcpy(nm, rn, (size_t)nl); nm[nl] = 0;
+        for (int i = 0; i < nl; i++) nm[i] = (char)tolower((unsigned char)nm[i]);
+        const char *nlab = lit_label((const unsigned char *)nm, nl + 1);
+        emit("\t.p2align 2");
+        emit(".Lreg%d:", g_unit);
+        emit("\taddi sp, sp, -8");
+        emit("\tstw sp+0, lr");
+        emit_la("r3", nlab);
+        emit_la("r4", entry);
+        emit_call("cob_register_fn");
+        emit("\tldw lr, sp+0");
+        emit("\taddi sp, sp, 8");
+        emit("\tjalr r0, r31, 0");
+        emit("\t.section .init_array");
+        emit("\t.p2align 2");
+        emit("\t.word .Lreg%d", g_unit);
+        emit("\t.text");
+    }
     if (!g_is_function) {
         char nm[130]; const char *rn = g_prog_as[0] ? g_prog_as : g_progid;   /* CALL finds it by its externalized name */
         int nl = (int)strlen(rn);
