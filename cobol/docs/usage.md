@@ -45,8 +45,17 @@ computation is decimal arithmetic rounded twice (into and out of the
 format) rather than IEEE binary arithmetic -- NATIVE arithmetic leaves
 the intermediates to the implementor (2023 8.8.1.3). A value past the
 format is a size error (the receiver unchanged); below it, a subnormal
-or zero. An infinity or NaN that reaches an item by other means (a
-REDEFINES) is not NUMERIC and reads as zero. DISPLAY shows the
+or zero. An infinity or NaN -- by a REDEFINES, or SET CONTENT OF ... TO
+FLOAT-INFINITY / FLOAT-NOT-A-NUMBER[-SIGNALING] (2014, queue item 21) --
+is not NUMERIC, not IN-ARITHMETIC-RANGE, reads as zero in arithmetic,
+and DISPLAYs as Inf or NaN with its sign; the FLOAT-* class conditions
+tell them apart, and FARTHEST-FROM-ZERO and NEAREST-TO-ZERO (the class
+conditions and SET CONTENT OF) are each format's largest finite value
+and smallest subnormal. IN-ARITHMETIC-RANGE is a ruling: NATIVE's
+intermediates (38 decimal digits, doubles, floating decimals of 38
+digits and any exponent) hold every finite value of every item, so the
+phrase changes nothing and the condition is true of every finite
+value. DISPLAY shows the
 software formats as their significant digits, one before the point, and
 a decimal exponent (`1.5E+00`, `3.333333333333333E-01`, `1E+3000`);
 GnuCOBOL shows them as the stored coefficient and exponent. A

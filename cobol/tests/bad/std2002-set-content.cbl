@@ -1,7 +1,7 @@
 identification division.
 program-id. p23.
-*> set-content: refused by name (docs/plans/standard-queue.md item 1); it was a
-*> parse error naming something else.
+*> SET CONTENT OF under -std=2002: format 15 is 2014's, and the refusal names
+*> the switch that takes it (item 21).
 data division.
 working-storage section.
 01 a usage float-long.

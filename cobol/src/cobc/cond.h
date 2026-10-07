@@ -473,6 +473,25 @@ static Cond *parse_simple(void)
         else if (!strcmp(t->s, "alphabetic-lower")) klass = 2;
         else if (!strcmp(t->s, "alphabetic-upper")) klass = 3;
         else if (g_std >= 2002 && !strcmp(t->s, "boolean")) klass = -2;     /* 2023 8.8.4.4: each position 0 or 1 */
+        else if (!strcmp(t->s, "farthest-from-zero") || !strcmp(t->s, "nearest-to-zero") || !strcmp(t->s, "in-arithmetic-range") ||
+                 !strcmp(t->s, "float-infinity") || !strcmp(t->s, "float-not-a-number") || !strcmp(t->s, "float-not-a-number-quiet") ||
+                 !strcmp(t->s, "float-not-a-number-signaling")) {
+            /* the 2014 class conditions (2023 8.8.4.4.3 rules 6-7, 8.8.4.4.4
+             * rules 3g-m): the numeric ones of any numeric item, the
+             * floating-point ones of a standard floating-point usage --
+             * FLOAT-SHORT, -LONG and COMP-2 taken as well, being IEEE here
+             * (docs/usage.md) */
+            if (g_std < 2014) die_at(line, "the %s condition is COBOL 2014 (2023 8.8.4.4); compile with -std=2014", tok_orig(t));
+            int fk = !strcmp(t->s, "farthest-from-zero") ? 10 : !strcmp(t->s, "nearest-to-zero") ? 11 : !strcmp(t->s, "in-arithmetic-range") ? 12 :
+                     !strcmp(t->s, "float-infinity") ? 13 : !strcmp(t->s, "float-not-a-number") ? 14 : !strcmp(t->s, "float-not-a-number-quiet") ? 15 : 16;
+            if (x.kind != O_REF || x.ref.rm || x.ref.sym->is_group || !is_numeric_sym(x.ref.sym))
+                die_at(line, "%s tests a numeric data item (2023 8.8.4.4.3 rule %d)", tok_orig(t), fk >= 13 ? 7 : 6);
+            if (fk >= 13 && x.ref.sym->usage != U_FLOAT && x.ref.sym->usage != U_DFLOAT)
+                die_at(line, "%s tests a floating-point item: '%s' is not one (2023 8.8.4.4.3 rule 7)", tok_orig(t), x.ref.sym->name);
+            advance();
+            Cond *c = cond_new(C_CLASS); c->x = x; c->klass = 200 + fk; c->neg = neg;   /* 200+: clear of the SPECIAL-NAMES classes (4 + i) and alphabets (100 + i) */
+            return c;
+        }
         else if (g_std >= 2002 && !strcmp(t->s, "omitted")) {
             /* the omitted-argument condition (2023 8.8.4.8): a USING
              * parameter whose argument was OMITTED or not passed */
@@ -572,11 +591,12 @@ static Cond *parse_simple(void)
         if (g_abbr_op >= 0)             /* an object alone: the last relation's subject and operator */
             return cond_rel(&g_abbr_x, g_abbr_op, &x, g_abbr_neg ^ neg);
         {
-            /* the floating-point conditions of COBOL 2014 (2023 8.8.4.3, 8.8.4.7) */
+            /* the floating-point conditions by other names: the standard's are
+             * FLOAT-INFINITY and FLOAT-NOT-A-NUMBER[-QUIET|-SIGNALING] (2023 8.8.4.4, 2014) */
             static const char *fw[] = { "infinity", "nan", "finite", "normal", "subnormal", "quiet", "signaling", "signalling", NULL };
             for (int k = 0; fw[k]; k++)
                 if (at_word(fw[k]) && !sym_lookup_quiet(fw[k]))
-                    die_at(line, "the %s condition of a floating-point item is COBOL 2014 (2023 8.8.4); not implemented", cur()->s);
+                    die_at(line, "IS %s is no condition: the floating-point class conditions are FLOAT-INFINITY, FLOAT-NOT-A-NUMBER, -QUIET and -SIGNALING (2023 8.8.4.4; -std=2014)", tok_orig(cur()));
         }
         if (x.kind == O_REF && !neg)
             die_at(line, "expected a relational operator after '%s'", x.ref.sym->name);
@@ -725,7 +745,11 @@ static void emit_cond_value(Cond *c)
     if (c->kind == C_CLASS) {
         Arg a[3]; Arg d;
         opnd_args(&c->x, &a[0], &d, 0, 0); a[1] = d;
-        if (c->klass >= 100) {  /* an alphabet-name: the characters it names */
+        if (c->klass >= 210 && c->klass <= 216) {   /* the 2014 numeric and floating-point classes (cob_class_2014's kinds 10-16) */
+            a[2] = arg_imm(c->klass - 200);
+            emit_args(a, 3);
+            emit_call("cob_class_2014");
+        } else if (c->klass >= 100) {  /* an alphabet-name: the characters it names */
             a[2] = arg_label(lit_label(g_alphabet[c->klass - 100].member, 256));
             emit_args(a, 3);
             emit_call("cob_class_user");

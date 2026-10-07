@@ -4,8 +4,9 @@ Swept 2026-09-30. X3.23-1985: 6.23 (VI-127..VI-129). 2002: 14.8.35.
 2023: 14.9.39. Formats 1-4 are the ones in 1985 and in real programs:
 index assignment, index arithmetic, switches and condition-names. The
 pointer formats are 2002's and were swept with them (pointerset,
-addressof); the object, locale, dynamic-length and message-tag formats
-belong to features ruled out.
+addressof); format 15, SET CONTENT OF (2014), is below; the object,
+locale, dynamic-length and message-tag formats belong to features ruled
+out or not yet taken.
 
 CCVS-85 tests all four formats (the NC SET, SEARCH and switch
 programs), and its totals held when the rules below were enforced, so
@@ -35,6 +36,16 @@ exception-sites gate (`SET ix TO n`, `ix` an index data item).
 | SR 5 | the mnemonic-name is a switch's | **test**: CCVS NC174A; any other word takes format 1's route and is refused there |
 | SR 6 | the condition-name has a conditional variable | **refused**: "'x' is not a condition-name" |
 | SR 7 | TO FALSE needs the FALSE phrase in the VALUE clause | **refused**: "its VALUE clause has no FALSE phrase"; **test**: 2002/condfalse |
+
+## Format 15, SET CONTENT OF (2014; 2023 14.9.39 format 15; queue item 21, 2026-10-07)
+
+| rule | paraphrase | disposition |
+|---|---|---|
+| SR 31 | FARTHEST-FROM-ZERO and NEAREST-TO-ZERO of a numeric item; SIGN required where the two extremes differ in magnitude | **refused**: bad/std2014-content-sign-required (a COMP-5 item: -32768 against +32767); a DISPLAY, packed or COMP item is symmetric and takes no SIGN |
+| SR 32 | FLOAT-INFINITY and the NaNs of a standard floating-point item | **refused**: bad/std2014-content-float-only; FLOAT-SHORT, -LONG and COMP-2 taken (the conditions' ruling, conditions.md) |
+| GR 32, 36 | the value farthest from zero, or the nonzero one nearest, the item permits; IN-ARITHMETIC-RANGE: the arithmetic's own where that is closer (farther); the sign by SIGN, positive otherwise | **test**: 2014/floatcontent -- 999.99, 9999 COMP, +99999 COMP-3, 99900 for 9(3)PP, +32767 / -32768 COMP-5, 3.4028235E38 and 1.4E-45 binary32, 1.797E308 and 4.94E-324 binary64, binary128's 1.189E4932 and 6.475E-4966, 9.999999999999999E384 and 1E-398 decimal64, decimal128's; **ruling**: IN-ARITHMETIC-RANGE changes nothing here (docs/usage.md) |
+| GR 33-35 | a canonical infinity, quiet NaN or signaling NaN of the item's format, the payload the implementor's (zero), the sign by SIGN | **test**: the bytes of binary128's infinity; each format's NaNs read back by the class conditions, DISPLAYed as Inf and NaN with the sign |
+| 2002 | SET CONTENT OF under -std=2002 | **refused** as 2014's: bad/std2002-set-content |
 
 ## General rules
 

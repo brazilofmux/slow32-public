@@ -1,0 +1,39 @@
+farthest  999.99 +999.99 9999 +99999 99900
+all farthest
+negative  -999.99
+ps farthest either sign
+nearest   000.01 -000.01 -00001 00100
+nearest either sign
+not farthest, in range
+comp-5    +32767
+comp-5 farthest
+comp-5    -32768
+comp-5 farthest, negative
+binary32   .34028235E 39
+binary64   .179769313486231571E 309
+binary128 1.18973149535723176508575932662800702E+4932
+decimal64 9.999999999999999E+384
+decimal128 9.999999999999999999999999999999999E+6144
+float-long  .179769313486231571E 309
+binaries farthest
+decimals farthest
+in range
+binary32   .14012985E-44
+binary64   .494065645841246544E-323
+binary128 6.47517511943802511092443895822764655E-4966
+decimal64 1E-398
+decimal128 1E-6176
+binaries nearest
+decimals nearest
+infinity  -Inf
+negative infinity
+not numeric, not in range
+nan       NaN
+quiet nan
+nan       -NaN
+signaling nan, negative
+float-long Inf
+float-long signaling nan
+binary32 quiet nan
+infinity bytes
+nan bytes differ

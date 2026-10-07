@@ -342,8 +342,43 @@ static void env_text_args(Opnd *o, const char *what);
 static void parse_set(void)
 {
     Ref rs[MAXOPS]; int nr = 0;
-    if (at_word("content") && is_word(peek(1), "of") && !sym_lookup_quiet("content"))
-        die_at(cur()->line, "SET CONTENT OF is COBOL 2014 (2023 14.9.39 format 15); not implemented");
+    if (at_word("content") && is_word(peek(1), "of") && !sym_lookup_quiet("content")) {
+        /* format 15 (2023 14.9.39): SET CONTENT OF item ... TO FARTHEST-FROM-ZERO
+         * | NEAREST-TO-ZERO [IN-ARITHMETIC-RANGE] [SIGN NEGATIVE|POSITIVE] |
+         * FLOAT-INFINITY | FLOAT-NOT-A-NUMBER | FLOAT-NOT-A-NUMBER-SIGNALING
+         * [SIGN ...]: the item's extreme or special values (cob_set_content) */
+        int line = cur()->line;
+        if (g_std < 2014) die_at(line, "SET CONTENT OF is COBOL 2014 (2023 14.9.39 format 15); compile with -std=2014");
+        advance(); advance();
+        while (cur()->kind == T_WORD && !at_word("to")) {
+            if (nr == MAXOPS) die_at(cur()->line, "too many SET receivers");
+            parse_ref(&rs[nr]); check_receiver(&rs[nr]); nr++;
+        }
+        if (!nr) die_at(line, "SET CONTENT OF names at least one item");
+        expect_word("to");
+        Tok *t = cur();
+        int what = at_word("farthest-from-zero") ? 1 : at_word("nearest-to-zero") ? 2 : at_word("float-infinity") ? 3 :
+                   at_word("float-not-a-number") ? 4 : at_word("float-not-a-number-signaling") ? 5 : 0;
+        if (!what) die_at(t->line, "SET CONTENT OF ... TO: expected FARTHEST-FROM-ZERO, NEAREST-TO-ZERO, FLOAT-INFINITY, FLOAT-NOT-A-NUMBER or FLOAT-NOT-A-NUMBER-SIGNALING, found %s", tok_desc(t));
+        advance();
+        int inrange = 0, sign = 0;
+        if (what <= 2 && accept_word("in-arithmetic-range")) inrange = 1;    /* changes nothing here: NATIVE's range holds every item's extreme (docs/usage.md) */
+        (void)inrange;
+        if (accept_word("sign")) { if (accept_word("negative")) sign = -1; else if (accept_word("positive")) sign = 1; else die_at(cur()->line, "SET CONTENT OF ... SIGN: NEGATIVE or POSITIVE"); }
+        for (int i = 0; i < nr; i++) {
+            Sym *s = rs[i].sym;
+            if (s->is_group || !is_numeric_sym(s) || rs[i].rm) die_at(rs[i].line, "SET CONTENT OF '%s': a numeric data item (2023 14.9.39.3 rule 31)", s->name);
+            if (what >= 3 && s->usage != U_FLOAT && s->usage != U_DFLOAT)
+                die_at(rs[i].line, "SET CONTENT OF '%s' TO %s: a floating-point item (2023 14.9.39.3 rule 32)", s->name, tok_orig(t));
+            /* rule 31: a signed item whose positive and negative extremes differ in magnitude -- two's complement -- names the SIGN */
+            if (what == 1 && !sign && s->pi.is_signed && (s->usage == U_COMP5 || usage_is_native(s->usage)))
+                die_at(rs[i].line, "SET CONTENT OF '%s' TO FARTHEST-FROM-ZERO: a two's-complement item's extremes differ in magnitude, so the SIGN phrase is required (2023 14.9.39.3 rule 31a)", s->name);
+            emit_ref_addr(&rs[i], "r3"); emit_desc_addr("r4", sym_desc(s));
+            emit_li("r5", what); emit_li("r6", sign);
+            emit_call("cob_set_content");
+        }
+        return;
+    }
     if (at_word("locale") && !sym_lookup_quiet("locale"))
         die_at(cur()->line, "SET LOCALE is not implemented (locale support, 2023 14.9.39 format 11)");
     if (at_word("environment") && !sym_lookup_quiet("environment")) {

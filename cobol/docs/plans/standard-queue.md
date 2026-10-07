@@ -306,7 +306,10 @@ unwarned under 2014.
 - Why here: the owner's own chosen entry point to 2014.
 
 **21. Float class, sign and content.** 8.8.4.3, 8.8.4.7, 14.9.39 format 15 (`SET CONTENT OF`); Ed.
-2014; M; deps 20.
+2014; M; deps 20. DONE 2026-10-07 (conditions.md, set.md, docs/usage.md; test 2014/floatcontent):
+the seven class conditions and SET CONTENT OF's five values with SIGN, over every numeric usage and
+every float format; the sign conditions were 19b's. Ruled: IN-ARITHMETIC-RANGE is a no-op here;
+FLOAT-SHORT/-LONG/COMP-2 take the floating-point forms.
 - Today: `IF a IS INFINITY` and `SET CONTENT OF a TO FARTHEST-FROM-ZERO` are bare parse errors.
 - Why here: the operations that make the IEEE usages usable.
 

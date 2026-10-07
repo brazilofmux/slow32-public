@@ -257,6 +257,7 @@ static int is_float(const cob_desc *d) { return d->usage == COB_U_FLOAT; }
  * ieee.h): FLOAT-DECIMAL-16/34 and FLOAT-BINARY-128, read into and
  * written from the wide decimal stack */
 static int is_sfloat(const cob_desc *d) { return d->usage == COB_U_SFLOAT; }
+static int fp_special_of(const void *vp, const cob_desc *d, int *neg);
 /* the hardware floats, in the machine's byte order unless the item says
  * HIGH-ORDER-LEFT (FLOAT-BINARY-32/64, 2023 13.18.60; COB_F2_BIGEND) */
 static double f_load(const void *p, const cob_desc *d)
@@ -419,6 +420,11 @@ static int fmt_float(double x, int nd, char *out)
 {
     char *o = out, dg[24];
     int e = 0;
+    if (x != x || x - x != 0) {         /* a NaN or an infinity (SET CONTENT OF, 2014): named, with its sign */
+        unsigned long long u; memcpy(&u, &x, 8);
+        const char *v = x != x ? ((u >> 63) ? "-NaN" : "NaN") : (x < 0 ? "-Inf" : "Inf");
+        memcpy(out, v, strlen(v)); return (int)strlen(v);
+    }
     *o++ = x < 0 ? '-' : ' ';
     *o++ = cob_dp_comma ? ',' : '.';
     double a = fabs(x);
@@ -847,7 +853,11 @@ void cob_display_field(const void *vp, const cob_desc *d)
     }
     if (d->cat != COB_NUM) { out_bytes((const char *)p, (int)d->size); return; }
     if (is_float(d)) { char t[40]; out_bytes(t, fmt_float(f_load(p, d), d->size == 4 ? 8 : 18, t)); return; }
-    if (is_sfloat(d)) { cob_wnum w; char t[64]; if (sf_load(p, d, &w) == 1) out_bytes(w.neg ? "-Inf" : "Inf", w.neg ? 4 : 3); else if (w.isq && 0) ; else out_bytes(t, sf_fmt(&w, t)); return; }
+    if (is_sfloat(d)) {
+        cob_wnum w; char t[64]; int neg, sp = fp_special_of(p, d, &neg);
+        if (sp) { const char *v = sp == 1 ? (neg ? "-Inf" : "Inf") : (neg ? "-NaN" : "NaN"); out_bytes(v, (int)strlen(v)); return; }
+        sf_load(p, d, &w); out_bytes(t, sf_fmt(&w, t)); return;
+    }
     if (d->flags & COB_F_INTFN) {                   /* an integer function's value, no leading zeros */
         char t[24]; long long v = cob_get_num(p, d);
         out_bytes(t, snprintf(t, sizeof t, "%lld", v));
@@ -1660,6 +1670,152 @@ int cob_class_bytes(const unsigned char *p, int n, int kind)
 
 /* a SPECIAL-NAMES CLASS: every character of the item is in the class's
  * 256-entry table (the compiler builds it from the literals and ranges) */
+/* ---- the 2014 numeric and floating-point class conditions, and SET
+ * CONTENT OF (2023 8.8.4.4, 14.9.39 format 15; docs/plans/standard-queue.md
+ * item 21) --------------------------------------------------------------
+ * The values a numeric item's specifications permit: the one farthest from
+ * zero and the nonzero one nearest to it.  A DISPLAY, packed or truncating
+ * binary item by its PICTURE (all nines; one in the last place); a
+ * capacity-limited binary (COMP-5, the native usages) by its bytes; the
+ * floats by their formats -- binary32/64 the largest finite and the
+ * smallest subnormal, the software formats theirs.  The mode of arithmetic
+ * (NATIVE: 38 decimal digits, doubles, floating decimals of 38 digits with
+ * any exponent) holds every one of them, so IN-ARITHMETIC-RANGE changes
+ * nothing here (a ruling, docs/usage.md). */
+
+/* the special values of the binary and decimal formats: what 1 infinity,
+ * 2 quiet NaN, 3 signaling NaN; neg the sign */
+static void fp_special(unsigned char *p, const cob_desc *d, int what, int neg)
+{
+    wl_t a[4] = { 0, 0, 0, 0 };
+    int size = (int)d->size, bigend = d->flags2 & COB_F2_BIGEND;
+    if (d->usage == COB_U_FLOAT || (d->flags2 & COB_F2_FBIN)) {
+        /* exponent all ones; the fraction 0, its top bit (quiet), or its lowest bit (signaling) */
+        int ebits = size == 4 ? 8 : size == 8 ? 11 : 15, fbits = size * 8 - 1 - ebits;
+        bits_put(a, fbits, ebits, (1u << ebits) - 1);
+        if (what == 2) bits_put(a, fbits - 1, 1, 1);
+        if (what == 3) bits_put(a, 0, 1, 1);
+    } else {
+        /* the five bits after the sign 11110 or 11111; the next bit marks a signaling NaN */
+        int top = size * 8 - 1;
+        bits_put(a, top - 5, 5, what == 1 ? 0x1E : 0x1F);
+        if (what == 3) bits_put(a, top - 6, 1, 1);
+    }
+    bits_put(a, size * 8 - 1, 1, (wl_t)(neg != 0));
+    ieee_store(p, size, bigend, a);
+}
+/* which special a float holds: 0 finite, 1 infinity, 2 quiet NaN, 3 signaling NaN; *neg its sign */
+static int fp_special_of(const void *vp, const cob_desc *d, int *neg)
+{
+    wl_t a[4] = { 0, 0, 0, 0 };
+    int size = (int)d->size, bigend = d->flags2 & COB_F2_BIGEND;
+    ieee_load(vp, size, bigend, a);
+    *neg = (int)bits_get(a, size * 8 - 1, 1);
+    if (d->usage == COB_U_FLOAT || (d->flags2 & COB_F2_FBIN)) {
+        int ebits = size == 4 ? 8 : size == 8 ? 11 : 15, fbits = size * 8 - 1 - ebits;
+        if (bits_get(a, fbits, ebits) != (1u << ebits) - 1) return 0;
+        wl_t f[4] = { 0, 0, 0, 0 };
+        for (int i = 0; i < fbits; i += 32) { int n = fbits - i < 32 ? fbits - i : 32; bits_put(f, i, n, bits_get(a, i, n)); }
+        if (mp_is_zero(f, 4)) return 1;
+        return bits_get(a, fbits - 1, 1) ? 2 : 3;
+    }
+    int top = size * 8 - 1;
+    unsigned comb = bits_get(a, top - 5, 5);
+    if ((comb & 0x1E) != 0x1E) return 0;
+    if (!(comb & 1)) return 1;
+    return bits_get(a, top - 6, 1) ? 3 : 2;
+}
+/* the value farthest from zero (far) or nearest to it a numeric item
+ * permits, as a wide number (positive) */
+static void num_extreme(const cob_desc *d, int far, cob_wnum *w)
+{
+    memset(w, 0, sizeof *w);
+    if (d->usage == COB_U_FLOAT) {
+        if (far) { w_set_f(w, d->size == 4 ? 3.4028234663852886e38 : 1.7976931348623157e308); return; }
+        if (d->size == 4) { w_set_f(w, 1.401298464324817e-45); return; }
+        /* 2^-1074: not a literal every libc parses; built */
+        { double x = 1; for (int i = 0; i < 1074; i++) x *= 0.5; w_set_f(w, x); return; }
+    }
+    if (d->usage == COB_U_SFLOAT) {
+        w->isq = 1; w->m[0] = 1;
+        if (d->flags2 & COB_F2_FBIN) {
+            if (far) { unsigned char b[16]; wl_t a[4] = { 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0x7FFEFFFFu }; ieee_store(b, 16, 0, a); int ng; bin128_decode(b, 0, w->m, &w->scale, &ng); }
+            else { unsigned char b[16]; wl_t a[4] = { 1, 0, 0, 0 }; ieee_store(b, 16, 0, a); int ng; bin128_decode(b, 0, w->m, &w->scale, &ng); }
+            return;
+        }
+        dec_fmt f = dec_format((int)d->size);
+        if (far) { wl_t one[WL] = { 1, 0, 0, 0 }; w_pow10(w->m, f.digits); mp_sub(w->m, one, WL); w->scale = -(f.emax - (f.digits - 1)); }   /* 10^digits - 1 at the top exponent */
+        else w->scale = -(f.emin - (f.digits - 1));                                                        /* 1 at the bottom one */
+        return;
+    }
+    if (d->usage == COB_U_BINARY && (d->flags & COB_F_NOTRUNC)) {
+        /* the bytes' capacity: 2^(bits-1) - 1 (the sign's own extra below zero is the SIGN phrase's business) */
+        if (far) { int bits = (int)d->size * 8 - ((d->flags & COB_F_SIGNED) ? 1 : 0); for (int i = 0; i < bits; i++) w->m[i / 32] |= 1u << (i % 32); }
+        else w->m[0] = 1;
+        w->scale = d->scale;
+        return;
+    }
+    int digits = eff_digits(d);
+    if (far) { wl_t one[WL] = { 1, 0, 0, 0 }; w_pow10(w->m, digits); mp_sub(w->m, one, WL); }
+    else w->m[0] = 1;
+    w->scale = d->scale;                /* P positions: the digits are the integer's own (eff_digits) */
+    if (d->scale < 0 && !far) { w_pow10(w->m, -d->scale); w->scale = 0; }
+}
+/* |the item's value| == the extreme?  The floats by their formats' own representations */
+static int num_is_extreme(const void *vp, const cob_desc *d, int far)
+{
+    cob_wnum v, e;
+    int neg;
+    if ((d->usage == COB_U_FLOAT || d->usage == COB_U_SFLOAT) && fp_special_of(vp, d, &neg)) return 0;
+    cob_wget(vp, d, &v);
+    if (v.isf) { double x = fabs(v.f); num_extreme(d, far, &e); return x == e.f; }
+    if (d->usage == COB_U_BINARY && (d->flags & COB_F_NOTRUNC) && far && v.neg) {
+        /* two's complement: the negative extreme is one farther */
+        wl_t one[WL] = { 1, 0, 0, 0 }; mp_sub(v.m, one, WL);
+    }
+    v.neg = 0;
+    num_extreme(d, far, &e);
+    return w_cmp_val(&v, &e) == 0;
+}
+/* the 2014 class conditions: 10 FARTHEST-FROM-ZERO, 11 NEAREST-TO-ZERO, 12
+ * IN-ARITHMETIC-RANGE, 13 FLOAT-INFINITY, 14 FLOAT-NOT-A-NUMBER, 15 -QUIET,
+ * 16 -SIGNALING */
+int cob_class_2014(const void *vp, const cob_desc *d, int kind)
+{
+    int neg, sp;
+    switch (kind) {
+    case 10: return num_is_extreme(vp, d, 1);
+    case 11: return num_is_extreme(vp, d, 0);
+    case 12:                            /* every finite value is within NATIVE's range */
+        if (d->usage == COB_U_FLOAT || d->usage == COB_U_SFLOAT) return fp_special_of(vp, d, &neg) == 0;
+        return 1;
+    default:
+        sp = fp_special_of(vp, d, &neg);
+        return kind == 13 ? sp == 1 : kind == 14 ? sp >= 2 : kind == 15 ? sp == 2 : sp == 3;
+    }
+}
+/* SET CONTENT OF item TO what (1 FARTHEST-FROM-ZERO, 2 NEAREST-TO-ZERO, 3
+ * FLOAT-INFINITY, 4 FLOAT-NOT-A-NUMBER, 5 -SIGNALING) SIGN sign (-1
+ * NEGATIVE, 1 POSITIVE, 0 none: positive) */
+void cob_set_content(void *vp, const cob_desc *d, int what, int sign)
+{
+    int neg = sign < 0;
+    if (what >= 3) { fp_special(vp, d, what - 2, neg); return; }
+    if (d->usage == COB_U_SFLOAT && (d->flags2 & COB_F2_FBIN)) {
+        /* binary128's extremes by their bits (a decimal of 36 digits would round) */
+        wl_t a[4] = { 1, 0, 0, 0 };
+        if (what == 1) { a[0] = a[1] = a[2] = 0xFFFFFFFFu; a[3] = 0x7FFEFFFFu; }
+        if (neg) a[3] |= 1u << 31;
+        ieee_store(vp, 16, d->flags2 & COB_F2_BIGEND, a);
+        return;
+    }
+    cob_wnum w; num_extreme(d, what == 1, &w);
+    if (d->usage == COB_U_BINARY && (d->flags & COB_F_NOTRUNC) && what == 1 && neg) { wl_t one[WL] = { 1, 0, 0, 0 }; mp_add(w.m, one, WL); }   /* -2^(bits-1) */
+    if (w.isf) { if (neg) w.f = -w.f; }
+    else w.neg = neg;
+    cob_wput_x(vp, d, &w, 0);
+}
+
 int cob_class_user(const void *vp, const cob_desc *d, const unsigned char *tab)
 {
     if (d->cat == COB_NATIONAL) {
