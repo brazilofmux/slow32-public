@@ -3645,6 +3645,8 @@ void cob_move_odo(const void *src, void *dst, int n, int dstlen, int base, int e
 }
 
 int cob_odo_length(int d, int base, int elem) { return d < 0 ? base : base + d * elem; }
+/* the table a bit array: base and the stride in bits, bits the element's; the bytes the whole spans */
+int cob_odo_length_bits(int d, int base, int stride, int bits) { return (base + (d > 0 ? (d - 1) * stride + bits : 0) + 7) / 8; }
 
 /* SPECIAL-NAMES SWITCH-1..8: from the environment at start (cob_init), then SET */
 int cob_switches[8];

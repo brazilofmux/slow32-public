@@ -83,8 +83,9 @@ COBOL 2002/2023 (Stage B):
   USAGE NATIONAL on national pictures; EC-SCREEN (above).  (CURSOR IS, SIGN, JUSTIFIED, status 8000 and ON
   EXCEPTION landed 2026-10-04, ISSUES-125.)  ACCEPT FROM the remaining
   sources; the SPECIAL-NAMES clauses not yet taken;
-- bits: OCCURS DEPENDING ON on a bit array, OCCURS on a bit group, a
-  character item redefining a bit item that starts mid-byte;
+- bits: a bit table inside an occurring bit group (two bit
+  dimensions); a bit item's part at a computed position in a SCREEN
+  SECTION item (docs/conformance/national-boolean.md);
 - the floating intrinsic functions (SQRT, LOG, the trigonometric ones,
   MEAN, MEDIAN, VARIANCE, STANDARD-DEVIATION, ANNUITY, PRESENT-VALUE) with
   arguments or results past 18 digits (docs/wide.md; the rest of 31-digit

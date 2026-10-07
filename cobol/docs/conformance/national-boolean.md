@@ -13,7 +13,7 @@ the literal limits, which 2014 and 2023 changed.
 | SR 1 | only on a group that is not strongly typed, not variable-length | **refused**: bad/std2002-natgroup-elem (an elementary item), bad/std2002-groupusage-strong -- a strongly-typed group was accepted before this sweep. Variable-length groups are 2014's: **n/a** |
 | SR 2 | BIT: no USAGE on the subject; subordinates usage bit and boolean; subordinate groups GROUP-USAGE BIT | **refused**: bad/std2002-groupusage-bit, std2002-bit-pic-x; a GROUP-USAGE NATIONAL group inside a bit group: bad/std2002-groupusage-mixed (was refused, but blamed an item below it under rule 3) |
 | SR 3 | NATIONAL: no USAGE on the subject; subordinates usage national; signed numerics SIGN SEPARATE; subordinate groups GROUP-USAGE NATIONAL | **refused**: bad/std2002-natgroup-usage, -natgroup-alnum, -natgroup-sign; a subordinate group with its own USAGE: bad/std2002-groupusage-subusage (was refused naming the wrong group and rule); a bit group inside a national group likewise now names rule 3 |
-| GR 1 | a bit group is a boolean item PIC 1(m), its items laid out by 8.5.1.6.3 | **test**: 2002/boolbit, bitredef |
+| GR 1 | a bit group is a boolean item PIC 1(m), its items laid out by 8.5.1.6.3 | **test**: 2002/boolbit, bitredef; with OCCURS, a bit item of m bits whose occurrences follow at the next bit, its items reached through its subscript: 2002/bitoccurs (2026-10-06, standard-queue item 12) |
 | GR 2 | a national group is a national item PIC N(m) | **test**: 2002/natgroup |
 | GR 3 | otherwise a group is alphanumeric | **test**: throughout |
 
@@ -54,6 +54,20 @@ the literal limits, which 2014 and 2023 changed.
 | N SR 3 | a doubled quotation symbol is one | **test**: 2002/natlitquote |
 | NX SR 4-5 | hexadecimal digits, the implementor's number per character | **ruling**: four, a UTF-16 code unit; **test**: 2002/natlitquote; other counts refused ("NX needs four hexadecimal digits") |
 | GR | class and category boolean or national; the run-time value | **test**: 2002/natlitquote, national, boolean |
+
+## The leftovers closed with standard-queue item 12 (2026-10-06)
+
+Test 2002/bitoccurs and 2002/posbits (no oracle: GnuCOBOL 4 has no
+USAGE BIT).
+
+| what | disposition |
+|---|---|
+| OCCURS on a bit group (13.18.29.4 rule 1b, 8.5.1.6.3) | **test**: 2002/bitoccurs -- an item has one bit dimension (its own occurrences', or an occurring bit group's above it: `bitdim`, `bitdim_stride`); a bit table inside an occurring bit group, two such dimensions, is refused |
+| an arithmetic-expression subscript of a bit item | **test**: 2002/bitoccurs (`on-f(i + 1)`, `arr(i + k)`, `more(k + 2)`) |
+| OCCURS DEPENDING ON a bit array (13.18.38) | **test**: 2002/bitoccurs: the group's length is the bytes its bits span (`cob_odo_length_bits`) |
+| a bit item's part, or a bit array's element, in a screen item; a bit item in a positioned DISPLAY or ACCEPT | **test**: 2002/posbits: a boolean field (PICTURE 1) of 0 and 1 characters, moved to and from the bits; a positioned DISPLAY of a whole bit item shows its positions (it showed the item's bytes); a part at a computed position in a SCREEN SECTION item is still refused |
+| BY CONTENT of a bit item's part | **test**: 2002/refmodbit (item 10); a part of computed length is still refused |
+| a character item redefining a bit item that starts inside a byte (13.18.44.4 rule 1) | **ruling**: refused (bad/std2002-bit-redef-byte). Storage association starts at the redefined item's first bit, and items of every other usage are byte-addressed here: a character item at a bit position would need every reference to it shifted. A bit item over a byte item, and a bit item over a bit item, take the rule |
 
 ## Rulings recorded
 

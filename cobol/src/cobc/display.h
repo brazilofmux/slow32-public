@@ -276,6 +276,12 @@ static void parse_display_positioned(void)
                     break;
                 }
             }
+            if (sym_bitlike(o.ref.sym)) {
+                /* a bit item or bit group: its boolean positions, 0 and 1 characters */
+                if (!f->width) f->width = o.ref.sym->bits;
+                f->pi.category = PIC_BOOLEAN; f->pi.bytes = f->width;
+                break;
+            }
             if (!f->width) f->width = !o.ref.sym->is_group && o.ref.sym->usage == U_NATIONAL ? o.ref.sym->size / 2 : o.ref.sym->size;
             f->pi.category = PIC_ALPHANUMERIC; f->pi.bytes = f->width;
             break;

@@ -32,6 +32,7 @@ typedef struct Ref_ {
     int user_rm;                    /* the program wrote a reference modification (rm is also set for a bit-array element) */
     Expr *rm_sx, *rm_lx;            /* the start and length when expressions (rm_lx NULL: no length expression) */
     int rm_odo; Sym *odo_dep; int odo_base, odo_elem;   /* a whole group over an ODO table, sent at its current length */
+    int odo_bits;                   /* ... the table a bit array: odo_base and odo_elem in bits, odo_bits the element's (cob_odo_length_bits) */
     int lw_lenx, lw_startx;         /* lower.h: a computed length's, a computed start's node + 1 when an island takes it, else 0 */
 } Ref;
 static void emit_refmod_check(const Ref *r, long len, int slot);
@@ -207,8 +208,11 @@ static int bool_desc(int len);
  * elements are reference-modified out of at run time */
 static int bitarray_desc(Sym *s)
 {
+    /* the bits the item's bit dimension spans: its own occurrences', or
+     * those of the occurring bit group above it */
     Desc d; memset(&d, 0, sizeof d);
-    d.cat = COB_BOOLEAN; d.usage = COB_U_BIT; d.size = bit_total(s); d.scale = (signed char)s->bitoff;
+    int span = s->bitdim >= 0 ? s->bitdim_stride * (s->dim_count[s->bitdim] - 1) + s->bits : bit_total(s);
+    d.cat = COB_BOOLEAN; d.usage = COB_U_BIT; d.size = span; d.scale = (signed char)s->bitoff;
     return desc_add(&d);
 }
 
@@ -291,12 +295,15 @@ static int sub_is_expr(void)
  * checked against the element's bits already. */
 static void ref_resolve_bits(Ref *r)
 {
-    if (r->sym->is_group || r->sym->usage != U_BIT || !r->sym->occurs || r->nsub != r->sym->ndims || !r->nsub) return;
-    int k = r->nsub - 1;
+    /* a bit item with a bit dimension -- a bit array's own, or an
+     * occurring bit group's above it (a bit group element is a bit item
+     * of the group's bits): the element's bits, (i - 1) * stride on */
+    if (!((!r->sym->is_group && r->sym->usage == U_BIT) || r->sym->bitgroup) || r->sym->bitdim < 0 || r->nsub != r->sym->ndims || !r->nsub) return;
+    int k = r->sym->bitdim;
     if (r->rm) r->bitu_start = r->rm_start;
     else { r->rm = 1; r->rm_len = r->sym->bits; r->rm_lx = NULL; r->bitu_start = 1; }
-    r->rm_bit = 1; r->bitsub = r->nsub;
-    r->rm_start = !r->sub[k].sym && r->bitu_start ? (r->sub[k].lit - 1) * bit_stride(r->sym) + r->bitu_start : 0;
+    r->rm_bit = 1; r->bitsub = k + 1;
+    r->rm_start = !r->sub[k].sym && r->bitu_start ? (r->sub[k].lit - 1) * r->sym->bitdim_stride + r->bitu_start : 0;
 }
 
 /* a bit data item passed BY REFERENCE starts a byte, with only literal
@@ -541,9 +548,6 @@ static void parse_ref_1(Ref *r)
         r->rm = 1; r->rm_start = 1; r->rm_len = 0; r->rm_lx = NULL;
         r->rm_nat = r->sym->pi.category == PIC_NATIONAL;
     }
-    for (int i = 0; i < r->nsub; i++)
-        if (r->sub[i].sym == &g_subx && (r->sym->usage == U_BIT || r->sym->bitgroup))
-            die_at(r->line, "'%s': an arithmetic-expression subscript of a bit data item is not implemented", r->sym->name);
     ref_resolve_bits(r);
     if (r->nsub != r->sym->ndims) {
         if (r->sym->ndims == 0) die_at(r->line, "'%s' is not a table item and takes no subscript", r->sym->name);

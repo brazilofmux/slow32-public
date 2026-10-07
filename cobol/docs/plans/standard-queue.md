@@ -168,7 +168,13 @@ EC-BOUND-PTR is a ruling: not raised, the machine faults instead.
   EC-BOUND-PTR; an FD with no record description under -std=2002.
 - Why here: each is a single clause in a module that otherwise works.
 
-**12. Bit-data leftovers.** 13.18.38, 13.18.44; Ed. 2002; S-M; deps none.
+**12. Bit-data leftovers.** 13.18.38, 13.18.44; Ed. 2002; S-M; deps none. DONE 2026-10-06
+(national-boolean.md's leftovers table; tests 2002/bitoccurs, posbits): OCCURS on a bit group (one
+bit dimension per item: its own or an occurring bit group's above it), expression subscripts of bit
+items, OCCURS DEPENDING ON a bit array, bit parts and elements in screen items and positioned
+DISPLAY/ACCEPT; BY CONTENT of a bit part came with item 10. A character item redefining a bit item
+that starts inside a byte is a ruling (refused). Still refused: a bit table inside an occurring bit
+group; a bit part at a computed position in a SCREEN SECTION item.
 - Today: "OCCURS DEPENDING ON a USAGE BIT item", "OCCURS on a bit group", "a character item at a bit
   position", "an arithmetic-expression subscript of a bit data item", "BY CONTENT of a
   reference-modified bit item", "a bit item's part in a screen item" -- all "not implemented".

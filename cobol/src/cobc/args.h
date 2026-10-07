@@ -70,7 +70,8 @@ static void emit_rm_start_len(const Ref *r, int slot)
         if (is_hot_int(r->odo_dep)) emit_hot_value(&po);
         else { Arg a[2] = { arg_ref(&po.ref), arg_desc(sym_desc(r->odo_dep)) }; emit_args(a, 2); emit_call("cob_load_int"); }
         emit("\tadd r3, r0, r1"); emit_li("r4", r->odo_base); emit_li("r5", r->odo_elem);
-        emit_call("cob_odo_length");
+        if (r->odo_bits) { emit_li("r6", r->odo_bits); emit_call("cob_odo_length_bits"); }
+        else emit_call("cob_odo_length");
         emit("\tstw sp+%d, r1", SLOT(slot));
         emit_li("r1", 1);
         return;

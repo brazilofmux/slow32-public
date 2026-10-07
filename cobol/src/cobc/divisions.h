@@ -1469,6 +1469,7 @@ static void parse_screen_section(void)
                     snprintf(f->pic, sizeof f->pic, "%s", cur()->s);
                     pic_len_check(f->pic, t->line);
                     if (nat_picture(f->pic, &f->pi, t->line)) { advance(); continue; }
+                    if (bool_picture(f->pic, &f->pi, t->line)) { advance(); continue; }   /* a boolean field: 0 and 1 characters, to and from a boolean item or a bit item's part */
                     if (pic_analyse(f->pic, &f->pi) < 0) die_at(t->line, "screen field: %s", f->pi.err);
                     advance(); continue;
                 }

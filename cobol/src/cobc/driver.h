@@ -281,6 +281,7 @@ static void emit_unit_data(void)
                 case PIC_ALPHANUMERIC: d.cat = COB_ALNUM; break;
                 case PIC_ALPHANUMERIC_EDITED: d.cat = COB_ALNUM_ED; break;
                 case PIC_NUMERIC: d.cat = COB_NUM; break;
+                case PIC_BOOLEAN: d.cat = COB_BOOLEAN; break;
                 default: d.cat = COB_NUM_ED; break;
                 }
                 d.usage = COB_U_DISPLAY; d.digits = (unsigned char)f->pi.digits; d.scale = (signed char)f->pi.scale;

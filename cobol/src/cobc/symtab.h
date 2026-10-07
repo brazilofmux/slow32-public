@@ -64,6 +64,7 @@ typedef struct Sym {
     int  aligned;                   /* ALIGNED (2023 13.18.1): a bit item or bit group on the first bit of a byte, each occurrence so */
     int  sign_lead, sign_sep;        /* SIGN IS LEADING/TRAILING [SEPARATE] */
     int  ndims, dim_count[MAXDIM], dim_stride[MAXDIM];
+    int  bitdim, bitdim_stride;     /* the dimension (or -1) whose occurrences follow at the next bit -- a bit array's own, or an occurring bit group's above it -- and its stride in bits */
     /* VALUE (elementary or group) */
     Tok *value_tok; int value_all, value_fig;
     /* level 88 */
@@ -159,7 +160,7 @@ static Sym *sym_new(void)
     Sym *s = &g_sym[g_nsym++];
     memset(s, 0, sizeof *s);
     s->parent = s->child = s->sibling = s->redefines = -1;
-    s->desc_id = -1; s->fd = -1; s->idx1 = -1; s->ix_table = -1; s->lin_file = -1; s->rep_ctr = -1;
+    s->desc_id = -1; s->fd = -1; s->idx1 = -1; s->ix_table = -1; s->lin_file = -1; s->rep_ctr = -1; s->bitdim = -1;
     return s;
 }
 

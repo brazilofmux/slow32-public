@@ -118,7 +118,6 @@ static void sym_finish(Sym *s)
         /* boolean positions as bits (2023 13.18.60); the bit offset and the
          * bytes spanned come with the layout (8.5.1.6.3) */
         if (pi->category != PIC_BOOLEAN) die_at(s->line, "'%s': USAGE BIT needs a boolean PICTURE (1) (2023 13.18.60.3 rule 5)", s->name);
-        if (s->occurs && s->odo_dep[0]) die_at(s->line, "'%s': OCCURS DEPENDING ON a USAGE BIT item is not implemented yet", s->name);
         s->bits = pi->bytes; s->size = (s->bits + 7) / 8;
         return;
     }

@@ -175,9 +175,11 @@ static int align_of(Sym *s)
 static int sym_bitlike(const Sym *s) { return (!s->is_group && s->usage == U_BIT) || s->bitgroup; }
 /* the bits a bit item or bit group takes, every occurrence of a bit
  * array's elements following one another (cobol ISSUES-84) */
-/* a bit array's occurrences follow at the next bit; ALIGNED, each on a byte (13.18.1.4 rule 2) */
+/* a bit array's occurrences follow at the next bit; ALIGNED, each on a
+ * byte (13.18.1.4 rule 2); an occurring bit group's likewise, the group
+ * being a bit item of its own bits (13.18.29.4 rule 1b) */
 static int bit_stride(const Sym *s) { return s->aligned ? (s->bits + 7) / 8 * 8 : s->bits; }
-static int bit_total(const Sym *s) { int n = !s->is_group && s->occurs ? s->occurs : 1; return bit_stride(s) * (n - 1) + s->bits; }
+static int bit_total(const Sym *s) { int n = (!s->is_group || s->bitgroup) && s->occurs ? s->occurs : 1; return bit_stride(s) * (n - 1) + s->bits; }
 static int g_lay_bit;                   /* the bit offset the next layout() call starts at */
 
 static int layout(int si, int base)
@@ -190,8 +192,6 @@ static int layout(int si, int base)
         if (s->usage == U_BIT) s->size = (s->bitoff + bit_total(s) + 7) / 8;
         return s->size;
     }
-    if (s->bitgroup && s->occurs)
-        die_at(s->line, "'%s': OCCURS on a bit group is not implemented yet", s->name);
     int off = base, end = base;
     /* bit items and bit groups that follow one another at a level take
      * the next bit position; anything else the next byte (8.5.1.6.3) --
@@ -244,21 +244,33 @@ static int layout(int si, int base)
     }
     if (s->bitgroup) s->bits = (off - base) * 8 + cur - s->bitoff;
     s->size = end - base;
+    if (s->bitgroup && s->occurs) s->size = (s->bitoff + bit_total(s) + 7) / 8;   /* the occurrences at the next bits: the bytes they span */
     return s->size;
 }
 
+static int g_set_bitdim, g_set_bitstride;     /* set_dims: the bit dimension in force above the entry being visited */
 static void set_dims(int si, int ndims, const int *counts, const int *strides)
 {
     Sym *s = &g_sym[si];
     int cnt[MAXDIM], str[MAXDIM];
     memcpy(cnt, counts, ndims * sizeof *cnt); memcpy(str, strides, ndims * sizeof *str);
+    int bitdim = ndims ? g_set_bitdim : -1, bitstride = ndims ? g_set_bitstride : 0;
     if (s->occurs) {
         if (ndims >= MAXDIM) die_at(s->line, "too many OCCURS levels");
-        cnt[ndims] = s->occurs; str[ndims] = (!s->is_group && s->usage == U_BIT) ? 0 : s->size; ndims++;   /* bits: the element is a bit position */
+        int bits = (!s->is_group && s->usage == U_BIT) || s->bitgroup;
+        if (bits) {
+            /* the occurrences follow at the next bit: one such dimension
+             * above an item (a bit array inside an occurring bit group
+             * would be two) */
+            if (bitdim >= 0) die_at(s->line, "'%s': a bit table inside an occurring bit group is not implemented", s->name);
+            bitdim = ndims; bitstride = bit_stride(s);
+        }
+        cnt[ndims] = s->occurs; str[ndims] = bits ? 0 : s->size; ndims++;   /* bits: the element is a bit position */
     }
-    s->ndims = ndims;
+    s->ndims = ndims; s->bitdim = bitdim; s->bitdim_stride = bitstride;
     memcpy(s->dim_count, cnt, ndims * sizeof *cnt); memcpy(s->dim_stride, str, ndims * sizeof *str);
-    for (int c = s->child; c >= 0; c = g_sym[c].sibling) set_dims(c, ndims, cnt, str);
+    g_set_bitdim = bitdim; g_set_bitstride = bitstride;
+    for (int c = s->child; c >= 0; c = g_sym[c].sibling) { g_set_bitdim = bitdim; g_set_bitstride = bitstride; set_dims(c, ndims, cnt, str); }
 }
 
 /* write VALUE / default initialisation for one instance of s at image+base */
@@ -467,10 +479,30 @@ static void init_elem(Sym *s, unsigned char *p, int defaults)
     }
 }
 
+/* a subtree's bit positions moved by k bits: an occurring bit group's
+ * occurrence (init_instance), then back */
+static void shift_bits(int si, int k)
+{
+    Sym *s = &g_sym[si];
+    long t = (long)s->offset * 8 + s->bitoff + k;
+    s->offset = (int)(t / 8); s->bitoff = (int)(t % 8);
+    for (int c = s->child; c >= 0; c = g_sym[c].sibling) shift_bits(c, k);
+}
 static void init_instance(Sym *rec, int si, int base, int defaults)
 {
     Sym *s = &g_sym[si];
     int n = s->occurs ? s->occurs : 1;
+    if (s->bitgroup && s->occurs) {
+        /* an occurring bit group: each occurrence at the next bits, the
+         * group's items shifted to it while it is initialized */
+        int off0 = s->offset;
+        for (int k = 0; k < n; k++) {
+            shift_bits(si, k * bit_stride(s));
+            init_one(rec, si, base + (s->offset - off0), defaults);
+            shift_bits(si, -k * bit_stride(s));
+        }
+        return;
+    }
     if (!s->is_group && s->usage == U_BIT) {
         /* a bit array: each occurrence at the next bits (cobol ISSUES-84) */
         int bo = s->bitoff;

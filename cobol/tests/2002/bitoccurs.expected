@@ -1,0 +1,8 @@
+flagsets:  111 10010 10110 10010 01
+items:     111 01 10
+rec bytes: 3
+arr:       001001110001
+odo:       101011011110
+length 3:  02
+length 1:  01
+length 5:  03

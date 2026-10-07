@@ -44,6 +44,15 @@ static Sym *odo_table_below(Sym *s);
  * comparison, DISPLAY: it becomes (1:length) computed at run time.
  * A receiving group is decided in emit_move: the current length too when
  * the DEPENDING ON item is outside it, the maximum when it is inside. */
+/* the group's length over its ODO table: the fixed part and the element,
+ * in bytes -- or, the table a bit array, in bits from the group's first
+ * byte (cob_odo_length_bits rounds the total up to bytes) */
+static void odo_ref_lengths(Ref *r, const Sym *g, const Sym *tbl)
+{
+    if (!tbl->is_group && tbl->usage == U_BIT) {
+        r->odo_base = (tbl->offset - g->offset) * 8 + tbl->bitoff; r->odo_elem = bit_stride(tbl); r->odo_bits = tbl->bits;
+    } else { r->odo_base = g->size - tbl->occurs * tbl->size; r->odo_elem = tbl->size; r->odo_bits = 0; }
+}
 static void operand_odo_length(Opnd *o)
 {
     if (o->kind != O_REF || o->ref.rm || o->ref.nsub) return;
@@ -56,7 +65,7 @@ static void operand_odo_length(Opnd *o)
             die_at(o->line, "'%s': items follow its OCCURS DEPENDING ON table (variable-location items are not implemented)", g->name);
     o->ref.rm = 1; o->ref.rm_start = 1; o->ref.rm_len = 0; o->ref.rm_lx = NULL;
     o->ref.rm_odo = 1; o->ref.odo_dep = tbl->odo_dep_sym;
-    o->ref.odo_base = g->size - tbl->occurs * tbl->size; o->ref.odo_elem = tbl->size;
+    odo_ref_lengths(&o->ref, g, tbl);
 }
 
 static void parse_operand_raw(Opnd *o);
@@ -1145,14 +1154,24 @@ static void emit_bitelem_start(const Ref *r, long chk, int slot, int pushed)
         if (ec_on_name("EC-BOUND-REF-MOD")) emit_refmod_check(r, chk, slot);
     }
     emit("	add r3, r1, r0"); emit("	srai r4, r1, 31"); emit_li("r5", 0); emit_call("cob_push_lit");
-    if (!r->sub[k].sym) { emit_li("r3", (r->sub[k].lit - 1) * bit_stride(s)); emit_li("r4", 0); emit_li("r5", 0); emit_call("cob_push_lit"); }
+    if (!r->sub[k].sym) { emit_li("r3", (r->sub[k].lit - 1) * s->bitdim_stride); emit_li("r4", 0); emit_li("r5", 0); emit_call("cob_push_lit"); }
+    else if (r->sub[k].sym == &g_subx) {
+        /* an arithmetic-expression subscript: its integer value (evaluated
+         * again here; its function calls were made once, before) */
+        emit_expr_pos(r->sub[k].x);
+        emit("\tadd r3, r1, r0"); emit("\tsrai r4, r1, 31"); emit_li("r5", 0); emit_call("cob_push_lit");
+        emit_li("r3", -1); emit_li("r4", -1); emit_li("r5", 0); emit_call("cob_push_lit");
+        emit_call("cob_nadd");
+        emit_li("r3", s->bitdim_stride); emit_li("r4", 0); emit_li("r5", 0); emit_call("cob_push_lit");
+        emit_call("cob_nmul");
+    }
     else {
         Sym *ss = r->sub[k].sym;
         emit_incompat_sym(ss, r->line);
         emit_item_addr("r3", ss, ss->offset); emit_desc_addr("r4", sym_desc(ss)); emit_call("cob_push");
         emit_li("r3", r->sub[k].adj - 1); emit("	srai r4, r3, 31"); emit_li("r5", 0); emit_call("cob_push_lit");
         emit_call("cob_nadd");
-        emit_li("r3", bit_stride(s)); emit_li("r4", 0); emit_li("r5", 0); emit_call("cob_push_lit");
+        emit_li("r3", s->bitdim_stride); emit_li("r4", 0); emit_li("r5", 0); emit_call("cob_push_lit");
         emit_call("cob_nmul");
     }
     emit_call("cob_nadd");
@@ -1334,7 +1353,15 @@ static int part_desc(const Ref *r);
  * or national -- the field reads and writes the part, not the item */
 static void sfield_part(SField *f, const Ref *r, int line)
 {
-    if (r->rm_bit) die_at(line, "a bit item's part in a screen item is not implemented");
+    if (r->rm_bit) {
+        /* a bit item's part, or a bit array's element: a boolean field of
+         * that many positions, moved to and from the bits as MOVE moves
+         * them (literal positions: part_desc; a computed subscript or
+         * start is refused) */
+        if (!r->rm_start) die_at(line, "a bit item's part at a computed position in a screen item is not implemented");
+        f->idesc = 1 + part_desc(r);
+        return;
+    }
     if (r->rm_lx || !r->rm_len) {
         /* a part of computed length (or to the item's end from a computed
          * start): its descriptor is its own, in .data, and the statement
@@ -1376,7 +1403,7 @@ static void sfield_resolve(SField *f)
     long off = rr.sym->offset;
     for (int si = 0; si < rr.nsub; si++)
         if (!rr.sub[si].sym) off += (rr.sub[si].lit - 1) * rr.sym->dim_stride[si];
-    if (rr.rm && rr.rm_start) off += (rr.rm_start - 1) * (rr.rm_nat ? 2 : 1);   /* a part at a literal start */
+    if (rr.rm && rr.rm_start) off += rr.rm_bit ? (rr.sym->bitoff + rr.rm_start - 1) / 8 : (rr.rm_start - 1) * (rr.rm_nat ? 2 : 1);   /* a part at a literal start: its byte */
     f->stat_off = off;
 }
 

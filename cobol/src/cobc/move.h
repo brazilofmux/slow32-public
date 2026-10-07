@@ -404,7 +404,7 @@ static void emit_move(Opnd *src, Ref *dst)
                     die_at(dst->line, "'%s': items follow its OCCURS DEPENDING ON table (variable-location items are not implemented)", d->name);
             dst->rm = 1; dst->rm_start = 1; dst->rm_len = 0; dst->rm_lx = NULL;
             dst->rm_odo = 1; dst->odo_dep = tbl->odo_dep_sym;
-            dst->odo_base = d->size - tbl->occurs * tbl->size; dst->odo_elem = tbl->size;
+            odo_ref_lengths(dst, d, tbl);
         } else {
             bp(BP_M2_ODO_RECEIVE, dst->line);   /* 3b: the maximum; COBOL 74 used the current length */
         }
