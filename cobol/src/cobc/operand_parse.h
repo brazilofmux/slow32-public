@@ -105,7 +105,7 @@ static void function_refmod(Opnd *o)
     long len = chars - start + 1; int given = 0;
     if (cur()->kind != T_RP) {
         if (cur()->kind != T_NUM || peek(1)->kind != T_RP)
-            die_at(line, "reference modification of a function with an expression length is not implemented yet");
+            die_at(line, "internal: a function's reference modification of literal start and non-literal length took the literal route");
         NumLit b; numlit_parse(cur(), &b);
         len = numlit_is_int(&b) && !b.neg ? (long)numlit_int(&b) : 0;
         if (len < 1 || start + len - 1 > chars) die_at(line, "the reference modification runs outside the function's %d characters", chars);
@@ -389,12 +389,12 @@ static int fn89_parse(Opnd *o, Tok *n)
         if (x->kind != O_REF && x->kind != O_STR && x->kind != O_FUNC)
             die_at(n->line, "FUNCTION %s takes an alphanumeric item or literal", n->s);
         if (o->fsize == 0) {
-            /* REVERSE: the argument's width -- a reference modification's
-             * own, which must be known here, as UPPER-CASE's is */
-            if (x->kind == O_REF && x->ref.rm && ref_static_len(&x->ref) <= 0)
-                die_at(n->line, "FUNCTION %s of a reference modification with a variable length is not implemented", n->s);
-            o->fsize = x->kind == O_REF ? (x->ref.rm ? ref_static_len(&x->ref) : (int)x->ref.sym->size)
-                     : x->kind == O_FUNC ? x->fsize : x->tok->len;
+            /* REVERSE: the argument's width -- a reference modification of
+             * computed length gives a result of run-time length, at most
+             * the item's (the runtime records the actual one) */
+            if (x->kind == O_REF && x->ref.rm && ref_static_len(&x->ref) <= 0) { o->fsize = (int)x->ref.sym->size; o->fvar = 1; }
+            else o->fsize = x->kind == O_REF ? (x->ref.rm ? ref_static_len(&x->ref) : (int)x->ref.sym->size)
+                          : x->kind == O_FUNC ? x->fsize : x->tok->len;
         }
     }
     if (g_fn89[f].kind == FK_NUMS &&
@@ -588,8 +588,15 @@ static void parse_operand_raw_1(Opnd *o)
         advance(); advance();
         Opnd x; parse_operand(&x);
         if (x.kind != O_REF) die_at(t->line, "LENGTH OF takes a data item");
+        if (x.kind == O_REF && x.ref.rm && !x.ref.rm_len) {
+            /* a part of computed length: its bytes, counted at run time as FUNCTION BYTE-LENGTH counts them */
+            Opnd *fx = xmalloc(sizeof *fx); *fx = x;
+            memset(o, 0, sizeof *o); o->kind = O_FUNC; o->fn = FN_RMLEN; o->farg = fx; o->fsize = 9;
+            o->fnid = 0; o->line = t->line;
+            return;
+        }
         int len = opnd_size(&x);
-        if (len < 0) die_at(t->line, "LENGTH OF a reference modification with a variable length is not implemented");
+        if (len < 0) die_at(t->line, "internal: LENGTH OF a part of unknown length");
         o->kind = O_NUM; numlit_from_int(&o->num, len); o->folded = 1; o->uc = x.uc;   /* a user function's call is still made */
         return;
     }
@@ -865,14 +872,14 @@ static void parse_operand_raw_1(Opnd *o)
         advance();
         o->kind = O_FUNC;
         Opnd *a = o->farg;
-        if (a->kind == O_REF && a->ref.rm && ref_static_len(&a->ref) <= 0)
-            die_at(n->line, "FUNCTION %s of a reference modification with a variable length is not implemented", n->s);
-        o->fsize = a->kind == O_REF ? (a->ref.rm ? ref_static_len(&a->ref) : (int)a->ref.sym->size)
+        int rmvar = a->kind == O_REF && a->ref.rm && ref_static_len(&a->ref) <= 0;   /* a part of computed length: a result of run-time length */
+        o->fsize = rmvar ? (int)a->ref.sym->size
+                 : a->kind == O_REF ? (a->ref.rm ? ref_static_len(&a->ref) : (int)a->ref.sym->size)
                  : a->kind == O_FUNC ? a->fsize : a->tok->len;
         /* a national argument, a national result (2002 15.78, 15.52); an
          * argument of run-time length, a result of the same length */
         o->fnat = opnd_is_national(a);
-        o->fvar = a->kind == O_FUNC && a->fvar;
+        o->fvar = (a->kind == O_FUNC && a->fvar) || rmvar;
         return;
     }
     if (t->kind == T_STR) { o->kind = O_STR; o->tok = t; advance(); return; }
@@ -1328,7 +1335,21 @@ static int part_desc(const Ref *r);
 static void sfield_part(SField *f, const Ref *r, int line)
 {
     if (r->rm_bit) die_at(line, "a bit item's part in a screen item is not implemented");
-    if (r->rm_lx || !r->rm_len) die_at(line, "a screen item's reference modification needs a literal length here");
+    if (r->rm_lx || !r->rm_len) {
+        /* a part of computed length (or to the item's end from a computed
+         * start): its descriptor is its own, in .data, and the statement
+         * stores the length into it before the screen is used
+         * (emit_screen_dyn_fill), as an ANY LENGTH item's is set at entry */
+        static int ndyn;
+        Desc d; memset(&d, 0, sizeof d);
+        d.cat = sym_is_boolean(r->sym) ? COB_BOOLEAN : r->rm_nat ? COB_NATIONAL : COB_ALNUM;
+        d.usage = r->rm_nat ? COB_U_NATIONAL : COB_U_DISPLAY;
+        d.size = (int)r->sym->size;
+        d.anylen = (1 << 30) + ndyn++;
+        f->idesc = 1 + desc_add(&d);
+        f->dyn = 1; f->dynpart = 1;
+        return;
+    }
     f->idesc = 1 + part_desc(r);
 }
 
@@ -1361,12 +1382,14 @@ static void sfield_resolve(SField *f)
 
 /* the screen window's dynamic slots: each reference's address, stored
  * into the slot's cell before the runtime paints or focuses the window */
+static void emit_dynpart_len(SField *f);
 static void emit_screen_dyn_fill(Screen *sc, int first, int count)
 {
     for (int k = first; k < first + count && k < sc->nf; k++) {
         SField *f = &sc->f[k];
         sfield_resolve(f);
         if (!f->dyn) continue;
+        if (f->dynpart) emit_dynpart_len(f);    /* the part's length in bytes, into its descriptor (args.h) */
         emit_ref_addr(f->ref, "r1");
         char cell[48]; snprintf(cell, sizeof cell, ".Lsdyn%d_%d_%d", g_unit, (int)(sc - g_screens), k);
         emit_la("r2", cell);

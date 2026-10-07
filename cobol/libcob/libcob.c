@@ -5313,7 +5313,14 @@ static void scr_render(const cob_scr_field *f, char *buf)
 {
     if (scr_kind(f) == COB_SCR_VALUE) { memcpy(buf, f->value, f->width); return; }
     if (scr_kind(f) == COB_SCR_TO) { memset(buf, ' ', f->width); return; }
-    if (f->rsv & COB_SR_DYNLEN) { memcpy(buf, scr_item(f), f->width); return; }   /* the part's own characters */
+    if (f->rsv & COB_SR_DYNLEN) {
+        /* the part's own characters; under SIZE, as many as the part has, then spaces */
+        unsigned n = f->rsv & COB_SR_DYNSIZE ? (unsigned)(uintptr_t)f->value : f->width;
+        if (n > f->width) n = f->width;
+        memcpy(buf, scr_item(f), n);
+        memset(buf + n, ' ', f->width - n);
+        return;
+    }
     if (f->rsv & COB_SR_DISPVAL) {
         /* a binary or packed item in a positioned DISPLAY: the text a
          * plain DISPLAY writes for it (sign, digits, point), placed */
@@ -7040,6 +7047,7 @@ char *cob_fn_reverse(const char *p, int n)
     char *b = fn_buffer((unsigned)n + 1);
     for (int i = 0; i < n; i++) b[i] = p[n - 1 - i];
     b[n] = 0;
+    fn_var_len = n;                             /* an argument of run-time length: the result's is the same */
     return b;
 }
 

@@ -188,7 +188,14 @@ static void emit_pos_stmt(int si, const char *fn)
         if (f->line_r) { emit_pos_int(f->line_r); emit_la_off("r2", rec, k * SCRF_SIZE + 2); emit("\tsth r2+0, r1"); }
         if (f->col_r)  { emit_pos_int(f->col_r);  emit_la_off("r2", rec, k * SCRF_SIZE + 4); emit("\tsth r2+0, r1"); }
         if (f->at_r)    { emit_pos_int(f->at_r); emit("\tadd r4, r0, r1"); emit_la_off("r3", rec, k * SCRF_SIZE); emit_call("cob_scr_at"); }
-        if (f->dynlen)  { emit_expr_pos(f->ref->rm_lx); emit_la_off("r2", rec, k * SCRF_SIZE + 8); emit("\tstw r2+0, r1"); }
+        if (f->dynlen) {
+            /* the part's length -- in columns, a national character two
+             * bytes -- into the width, or under SIZE into the value word */
+            Arg a[1] = { arg_rlen(f->ref) };
+            emit_args(a, 1);
+            if (f->ref->rm_nat) emit("\tsrli r3, r3, 1");
+            emit_la_off("r2", rec, k * SCRF_SIZE + (f->width ? 12 : 8)); emit("\tstw r2+0, r3");
+        }
     }
     char lab[48]; snprintf(lab, sizeof lab, ".Lscr%d_%d", g_unit, si);
     emit_la("r3", lab); emit_call(fn);
@@ -226,14 +233,16 @@ static void parse_display_positioned(void)
             f->kind = COB_SCR_FROM; f->item = o.ref.sym; f->dyn = 1;
             f->ref = xmalloc(sizeof *f->ref); *f->ref = o.ref;
             f->has_pic = 1;
-            if (o.ref.rm && o.ref.rm_lx && !o.ref.rm_bit && !o.ref.rm_nat && !sym_is_national(o.ref.sym)) {
+            if (o.ref.rm && (o.ref.rm_lx || !o.ref.rm_len) && !o.ref.rm_bit) {
                 /* a part of computed length (ACAS's pl015: line-7-19
-                 * (Screen-Start:Screen-End)): its characters, as many as
-                 * the length says when the statement runs, stored into
-                 * the slot's width (emit_pos_stmt); SIZE would fix it */
-                if (f->width) die_at(o.line, "SIZE with a reference-modified part of computed length is not implemented");
+                 * (Screen-Start:Screen-End)), or to the item's end from a
+                 * computed start: its characters, as many as the length
+                 * says when the statement runs, stored into the slot's
+                 * width (emit_pos_stmt); with SIZE, the width is SIZE's
+                 * and the part fills it from the left */
                 f->dynlen = 1;
-                f->pi.category = PIC_ALPHANUMERIC; f->pi.bytes = o.ref.sym->size;
+                if (o.ref.rm_nat) { f->pi.category = PIC_NATIONAL; f->pi.bytes = o.ref.sym->size; }
+                else { f->pi.category = PIC_ALPHANUMERIC; f->pi.bytes = o.ref.sym->size; }
                 break;
             }
             if (o.ref.rm) {
@@ -335,6 +344,15 @@ static void parse_accept_positioned(Ref *r)
     f->ref = xmalloc(sizeof *f->ref); *f->ref = *r;
     parse_pos_clauses(f, 1);
     f->has_pic = 1;
+    if (r->rm && (r->rm_lx || !r->rm_len) && !r->rm_bit) {
+        /* a part of computed length: the field as wide as the part is
+         * when the statement runs (emit_pos_stmt), keyed into the part
+         * through its writable descriptor (sfield_part) */
+        sfield_part(f, r, r->line);
+        f->dynlen = 1;
+        if (r->rm_nat) { f->pi.category = PIC_NATIONAL; f->pi.bytes = r->sym->size; }
+        else { f->pi.category = PIC_ALPHANUMERIC; f->pi.bytes = r->sym->size; }
+    } else
     if (r->rm) {
         /* a part (abrignoli_COBSOFT keys a CPF number into f-cpf(07:03)
          * and its neighbours): a field of the part's characters */

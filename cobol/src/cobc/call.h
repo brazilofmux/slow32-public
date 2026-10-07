@@ -246,7 +246,19 @@ static void parse_call(void)
             }
             if (mode == 1) {
                 if (o->kind == O_REF && o->ref.sym->is_cond) die_at(o->line, "a condition-name cannot be passed");
-                if (o->kind == O_REF && o->ref.rm && o->ref.rm_bit) die_at(o->line, "BY CONTENT of a reference-modified bit item is not implemented (its bits would need moving to a byte)");
+                if (o->kind == O_REF && o->ref.rm && o->ref.rm_bit) {
+                    /* a part of a bit item: its bits moved to a boolean
+                     * record on a byte boundary, which is the copy passed */
+                    if (!o->ref.rm_len) die_at(o->line, "BY CONTENT of a bit item's part of computed length is not implemented");
+                    FDesc fd; memset(&fd, 0, sizeof fd); fd.usage = U_BIT; fd.has_pic = 1; snprintf(fd.pic, sizeof fd.pic, "1(%ld)", o->ref.rm_len);
+                    fd.size = (int)((o->ref.rm_len + 7) / 8);
+                    Sym *c = ftemp_new(&fd, o->line);
+                    Ref cr = ftemp_ref(c, o->line);
+                    emit_move(o, &cr);
+                    memset(o, 0, sizeof *o); o->kind = O_REF; o->ref = cr; o->line = cr.line;
+                    a[n++] = arg_ref(&o->ref);
+                    continue;
+                }
                 if (!(o->kind == O_REF || o->kind == O_STR || o->kind == O_NUM)) die_at(o->line, "a CALL argument must be an item or a literal");
                 a[n] = arg_content(o); ncontent++;
             } else if (mode == 2) {

@@ -51,7 +51,7 @@ all closed 2026-09-28 (ISSUES-94, -95):
   reports to one file and INITIATE/TERMINATE of several reports, which
   were missing too;
 - INITIALIZE of a reference-modified item;
-- BY CONTENT of a reference-modified item (a bit part still refused);
+- BY CONTENT of a reference-modified item;
 - a REPORT SECTION in a contained program.
 
 COBOL 2002/2023 (Stage B):
@@ -72,16 +72,8 @@ COBOL 2002/2023 (Stage B):
   numeric or boolean content is sent since ISSUES-101 and -103; ON
   EXCEPTION on an ACCEPT of a screen and on a positioned ACCEPT since
   ISSUES-125, and on ACCEPT FROM ENVIRONMENT since BP-E31);
-- a MOVE sender reference-modified with a computed length over an item
-  that a receiver before the last changes (general rule 1 needs a
-  snapshot of run-time length; docs/conformance/move.md);
-- reference modification with a computed length in a screen item and
-  in a positioned ACCEPT (a literal length is taken, and a positioned
-  DISPLAY takes a computed one: free/posrefmod); a reference-modified
-  numeric receiver of national data;
-- LENGTH OF, BYTE-LENGTH and other functions of a reference
-  modification with a variable length; a function's reference
-  modification with an expression length;
+- BY CONTENT of a bit item's part of computed length (a part of
+  literal length is passed since 2026-10-06, docs/conformance/refmod.md);
 - a TYPE that expands past level 49 (2023 13.18.57.4 rule 2c allows
   it);
 - a user-defined function in the places listed by g_ufn_forbid;
@@ -105,9 +97,6 @@ COBOL 2002/2023 (Stage B):
 - a BASED entry in LOCAL-STORAGE and EC-BOUND-PTR
   (docs/conformance/usage.md; ALLOCATE ... INITIALIZED of a based
   record is implemented since ISSUES-104);
-- INITIALIZE of a reference-modified item with the COBOL 2002 phrases
-  (WITH FILLER, TO VALUE, TO DEFAULT; the phrases themselves are
-  implemented, docs/conformance/initialize.md);
 - READ PREVIOUS of a sequential file (2002; io-statements.md; PREVIOUS
   of a relative or indexed file is implemented).
 - the 2002 Report Writer additions: PRESENT WHEN, VARYING, OCCURS in a

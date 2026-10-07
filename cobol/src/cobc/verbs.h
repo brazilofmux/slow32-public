@@ -710,7 +710,23 @@ static void parse_initialize_2002(Ref *rs, int n)
     if (at_word("then") && is_word(peek(1), "to")) advance();
     if (at_word("to") && is_word(peek(1), "default")) { advance(); advance(); sp.deflt = 1; }
     for (int i = 0; i < n; i++) {
-        if (rs[i].user_rm) die_at(rs[i].line, "INITIALIZE of a reference-modified item with the COBOL 2002 phrases is not implemented");
+        if (rs[i].user_rm) {
+            /* a reference-modified item: an elementary item of its part's
+             * category (alphanumeric, national, boolean) with no VALUE
+             * clause -- a REPLACING of that category, else the category's
+             * default (TO DEFAULT, or no VALUE and no REPLACING phrase),
+             * else unchanged (14.9.20.4 rules 2-5; 8.4.3.3.4 rule 6) */
+            Sym *t = rs[i].sym;
+            int rcat = rs[i].rm_bit || t->pi.category == PIC_BOOLEAN ? PIC_BOOLEAN : rs[i].rm_nat ? PIC_NATIONAL : PIC_ALPHANUMERIC;
+            static Tok tz = { T_WORD, 0, "zero", 4, NULL, 0, 0, 0, 0, 0, 0, 0 };
+            static Tok ts = { T_WORD, 0, "spaces", 6, NULL, 0, 0, 0, 0, 0, 0, 0 };
+            Opnd v; memset(&v, 0, sizeof v); v.line = rs[i].line;
+            int have = 0;
+            for (int k = 0; k < sp.nrep; k++) if (sp.rep_cat[k] == rcat) { v = sp.rep_val[k]; have = 1; break; }
+            if (!have && (sp.deflt || (!sp.value && !sp.nrep))) { v.kind = O_FIG; v.tok = rcat == PIC_BOOLEAN ? &tz : &ts; have = 1; }
+            if (have) emit_move(&v, &rs[i]);
+            continue;
+        }
         long sub[MAXDIM];
         init_walk(rs[i].sym, &rs[i], &sp, sub, rs[i].nsub, rs[i].line, 1);
     }

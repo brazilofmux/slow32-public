@@ -12,7 +12,7 @@ carry the compiler's own reason.
 | clause | elements | swept | not implemented | unswept |
 |---|---|---|---|---|
 | 7 COPY, REPLACE and directives | 24 | 16 | 0 | 8 |
-| 8 characters, names, data, expressions, conditions | 35 | 6 | 0 | 29 |
+| 8 characters, names, data, expressions, conditions | 35 | 7 | 0 | 28 |
 | 9 files and objects, general | 0 | 0 | 0 | 0 |
 | 10 the compilation group | 2 | 0 | 0 | 2 |
 | 11 IDENTIFICATION DIVISION | 15 | 2 | 0 | 13 |
@@ -21,7 +21,7 @@ carry the compiler's own reason.
 | 14 PROCEDURE DIVISION | 54 | 42 | 7 | 5 |
 | 15 intrinsic functions | 94 | 73 | 21 | 0 |
 | 16 standard classes | 0 | 0 | 0 | 0 |
-| **all** | **324** | **203** | **28** | **93** |
+| **all** | **324** | **204** | **28** | **92** |
 
 ## 7 COPY, REPLACE and directives
 
@@ -65,7 +65,7 @@ carry the compiler's own reason.
 | 8.4.2.3 |  | *unswept* | | | | | |
 | 8.4.3.1 |  | *unswept* | | | | | |
 | 8.4.3.2 |  | *unswept* | | | | | |
-| 8.4.3.3 |  | *unswept* | | | | | |
+| 8.4.3.3 |  | [refmod](refmod.md) | 7 | 2 | 0 | 0 | 0 |
 | 8.4.3.4 |  | *unswept* | | | | | |
 | 8.4.3.5 |  | *unswept* | | | | | |
 | 8.4.3.6 |  | *unswept* | | | | | |

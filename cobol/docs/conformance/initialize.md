@@ -37,7 +37,9 @@ paragraph is not parsed (docs/plans/standard-queue.md items 16, 30).
 The 1985 forms (no phrase, or REPLACING alone) keep their own code path
 and are byte-identical to before; the 2002 phrases take a new walk
 (init_walk) that decides per elementary item. A reference-modified
-identifier-1 with the 2002 phrases is refused as not implemented.
+identifier-1 with the 2002 phrases is an elementary item of its part's
+category with no VALUE clause (since 2026-10-06, standard-queue item
+10; 2002/refmodrest; docs/conformance/refmod.md).
 An OCCURS DEPENDING ON table below identifier-1 is unrolled to its
 maximum, as the 1985 path does; GR 8's "the rules of the OCCURS clause
 for a receiving item" is not tested beyond that.

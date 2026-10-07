@@ -192,6 +192,17 @@ static void emit_args(const Arg *a, int n)
 /* r3 = an argument's address, r4 = its length in bytes: a reference
  * modification's own length, not the item's size (FUNCTION NUMVAL(t(p:1))
  * read t from p to its end until 2026-09-30) */
+/* a screen item's part of computed length: its bytes, stored into the
+ * part's writable descriptor before the screen is used (sfield_part) */
+static void emit_dynpart_len(SField *f)
+{
+    Arg a[1] = { arg_rlen(f->ref) };
+    emit_args(a, 1);
+    char dl[32]; snprintf(dl, sizeof dl, ".Ld%d+8", f->idesc - 1);
+    emit_la("r2", dl);
+    emit("\tstw r2+0, r3");
+}
+
 static void emit_ref_addr_len(Ref *r)
 {
     if (r->rm) { Arg a[2] = { arg_ref(r), arg_rlen(r) }; emit_args(a, 2); }

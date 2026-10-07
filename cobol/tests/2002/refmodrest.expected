@@ -1,0 +1,13 @@
+length of:    0005
+length():     0005
+byte-length:  0005
+upper-case:   ELLO      
+reverse:       olle     
+trim:         ello w    
+fn refmod:    ELLO W    
+fn refmod 2:  ELLO W    
+init filler:  h     world of cobol
+init replace: zz    world of cobol
+init default:       world of cobol
+move once:    [cd        ] [cd    ]
+move once 2:  [ab    ]

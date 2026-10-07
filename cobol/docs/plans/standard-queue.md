@@ -143,6 +143,11 @@ form; CALL through a data-pointer, accepted before, is refused.
 - Why here: a 2002 data category, required, and small.
 
 **10. Reference-modification leftovers.** 8.4.3.3, 14.9.25 GR 1, 14.9.20; Ed. 2002; M; deps none.
+DONE 2026-10-06 (docs/conformance/refmod.md, the first sweep of 8.4.3.3; tests 2002/refmodrest,
+refmodbit, free/posrefmod2): every hole in the "Today" list closed -- MOVE's rule 1 snapshot, the
+screen and positioned forms, LENGTH OF and the string functions of a computed part, INITIALIZE of a
+part with the 2002 phrases, BY CONTENT of a bit part; two of the messages named cases that could not
+arise (a function's refmod with an expression length, a national sender to a numeric part).
 - Today (refusals.md section 2, verified by message): MOVE with a computed-length sender a receiver
   changes; computed length in a screen item and positioned ACCEPT; LENGTH OF / BYTE-LENGTH / other
   functions of a variable-length refmod; a function's refmod with an expression length; INITIALIZE

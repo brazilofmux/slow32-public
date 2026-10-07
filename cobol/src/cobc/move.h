@@ -209,7 +209,7 @@ static int emit_move_national(Opnd *src, Ref *dst)
         if (is_numeric_sym(d) || d->pi.category == PIC_NUMERIC_EDITED) {
             /* national to numeric or numeric-edited: valid (the 14.9.25
              * table), the characters taken as for an alphanumeric sender */
-            if (dst->rm) die_at(dst->line, "a reference-modified numeric receiver of national data is not implemented");
+            if (dst->rm) die_at(dst->line, "internal: a reference-modified receiver is alphanumeric (8.4.3.3.4 rule 6), refused above for national data");
             Arg a[4];
             opnd_args(src, &a[0], &a[1], d->size, 1);
             a[2] = arg_ref(dst); a[3] = arg_desc(sym_desc(d));
@@ -897,17 +897,16 @@ static int rec_base(const Sym *s)
 /* 0: the sender is safe to identify again for each receiver; 1: copy it
  * to a compiler-made record first; 2: an OCCURS DEPENDING ON group,
  * whose DEPENDING ON item is copied instead (its length is a run-time
- * one, and the bytes stay where they are) */
+ * one, and the bytes stay where they are); 3: a part of computed
+ * length, its bytes and its length both copied */
 /* a reference modifier's length naming an item a receiver ahead of the
  * last shares storage with (move_needs_temp) */
-typedef struct { const Ref *dst; int n; int line; } MvShare;
+typedef struct { const Ref *dst; int n; int line; int shares; } MvShare;
 static int mv_shares(const Sym *s, const void *cx)
 {
-    const MvShare *m = cx;
+    MvShare *m = (MvShare *)cx;
     for (int i = 0; i < m->n - 1; i++)
-        if (rec_base(s) == rec_base(m->dst[i].sym))
-            die_at(m->line, "MOVE: the sender's reference modification uses '%s', which a receiver before the last changes; "
-                   "identifying the sender once (general rule 1) with a computed length is not implemented", s->name);
+        if (rec_base(s) == rec_base(m->dst[i].sym)) m->shares = 1;
     return 0;
 }
 static int move_needs_temp(const Opnd *src, const Ref *dst, int n)
@@ -928,9 +927,10 @@ static int move_needs_temp(const Opnd *src, const Ref *dst, int n)
      * done, so refused when a receiver ahead of the last shares storage
      * with an item the expressions name (docs/conformance/move.md) */
     if (r->rm && !r->rm_len && r->rm_lx) {
-        MvShare m = { dst, n, src->line };
+        MvShare m = { dst, n, src->line, 0 };
         if (r->rm_sx) expr_names(r->rm_sx, mv_shares, &m);
         expr_names(r->rm_lx, mv_shares, &m);
+        if (m.shares) return 3;
     }
     return 0;
 }
@@ -996,6 +996,26 @@ static void parse_move(void)
         Ref tr = ftemp_ref(t, src.line);
         emit_move(&src, &tr);
         Opnd o; memset(&o, 0, sizeof o); o.kind = O_REF; o.ref = tr; o.line = src.line;
+        src = o;
+    } else if (snap == 3) {
+        /* a part of computed length whose length names an item a
+         * receiver changes: the bytes into a record of the item's size,
+         * the length into an integer record, and the sender becomes that
+         * record's part of that length (general rule 1, the snapshot) */
+        FDesc fd; memset(&fd, 0, sizeof fd); fd.group = 1; fd.size = (int)src.ref.sym->size; snprintf(fd.pic, sizeof fd.pic, "-");
+        Sym *buf = ftemp_new(&fd, src.line);
+        FDesc ld; memset(&ld, 0, sizeof ld); ld.size = 4; ld.usage = U_SINT; snprintf(ld.pic, sizeof ld.pic, "-");
+        Sym *lt = ftemp_new(&ld, src.line);
+        emit_ref_addr_len(&src.ref);                       /* r3 the part, r4 its bytes */
+        emit("\tadd r5, r4, r0"); emit("\tadd r4, r3, r0");
+        emit_la("r1", g_sym[lt->record].label); emit("\tstw r1+0, r5");
+        emit_la("r3", g_sym[buf->record].label);
+        emit_call("memcpy");
+        Opnd *lo = xmalloc(sizeof *lo); lo->kind = O_REF; lo->ref = ftemp_ref(lt, src.line); lo->line = src.line;
+        Expr *lx = xmalloc(sizeof *lx); lx->o = lo;
+        Ref br = ftemp_ref(buf, src.line);
+        br.rm = 1; br.user_rm = 1; br.rm_start = 1; br.rm_len = 0; br.rm_sx = NULL; br.rm_lx = lx; br.rm_nat = src.ref.rm_nat;
+        Opnd o; memset(&o, 0, sizeof o); o.kind = O_REF; o.ref = br; o.line = src.line;
         src = o;
     }
     for (int i = 0; i < n; i++) {

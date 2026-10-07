@@ -192,7 +192,7 @@ static Sym *ftemp_new(const FDesc *d, int line)
         t->has_pic = 1; snprintf(t->pic, sizeof t->pic, "%s", d->pic);
         t->just = d->just; t->blank_zero = d->bwz; t->sign_lead = d->sign_lead; t->sign_sep = d->sign_sep;
     }
-    if (t->has_pic && pic_analyse(t->pic, &t->pi) < 0) die_at(line, "internal: function signature picture '%s': %s", t->pic, t->pi.err);
+    if (t->has_pic && !bool_picture(t->pic, &t->pi, line) && pic_analyse(t->pic, &t->pi) < 0) die_at(line, "internal: function signature picture '%s': %s", t->pic, t->pi.err);
     sym_finish(t);
     int zero[1] = { 0 };
     layout(idx, 0);
@@ -352,7 +352,7 @@ static void ucall_bind(UCall *u, const char *name)
             if (a->kind == O_REF && !a->ref.sym->is_ftemp) { u->byref[k] = 1; continue; }
             FDesc cd = f->param[k];
             int len = a->kind == O_STR ? a->tok->len : opnd_size(a);
-            if (len < 1) die_at(a->line, "argument %d of '%s': a length known only at run time is not implemented for an ANY LENGTH parameter", k + 1, name);
+            if (len < 1) die_at(a->line, "argument %d of '%s': a value of no length for an ANY LENGTH parameter", k + 1, name);
             cd.size = len; snprintf(cd.pic, sizeof cd.pic, "%c(%d)", pnat ? 'n' : 'x', pnat ? len / 2 : len);
             u->byref[k] = 0;
             u->ctmp[k] = ftemp_new(&cd, line);
