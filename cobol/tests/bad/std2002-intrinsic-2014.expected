@@ -1,1 +1,1 @@
-FUNCTION seconds-past-midnight is COBOL 2014; not implemented
+FUNCTION seconds-past-midnight is COBOL 2014; compile with -std=2014

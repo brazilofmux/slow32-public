@@ -136,12 +136,51 @@ Each rule below sets EC-ARGUMENT-FUNCTION, and each is a site in
 | REM (15.77) | argument-2 not zero | site |
 | SQRT (15.84) | zero or more | site |
 
+## The 2014 international date and time functions (2023 15.3.1-15.3.3, 15.17, 15.38-15.41, 15.48, 15.79, 15.80, 15.92)
+
+Implemented 2026-10-07 (standard-queue item 27), under -std=2014. Tests
+2014/dtformat (GnuCOBOL 4 agrees, except that it writes the decimal
+separator into the data of a basic fractional time format: docs/
+oracles.md), 2014/dtformat2 (no oracle: national formats, which GnuCOBOL
+refuses; DECIMAL-POINT IS COMMA; the current time's fraction and
+SECONDS-PAST-MIDNIGHT, which GnuCOBOL reads from the real clock;
+EC-ARGUMENT-FUNCTION); the clock pinned by COB_CURRENT_DATE, the offset
+then zero.
+
+How: libcob/dtfmt.h, included by the compiler and the runtime, parses a
+format into its kind (date, time, combined), basic or extended, the
+date's form (calendar, ordinal, week), the fraction digits, local / UTC
+/ offset, and the data's length. The compiler checks the format literal
+(argument-1 is a literal in every one of these functions) and sizes the
+result by it, national when the literal is; the runtime renders
+(`dt_render`) from an integer date, seconds past midnight at scale 9 and
+an offset in minutes, and scans (`dt_scan`) data by the format,
+returning the 1-based position of the first character at which an error
+can be seen. The clock is `cob_clock`'s: the libc `localtime`, which on
+SLOW-32 is the MMIO GETTZ service, so the local offset is the host's.
+
+| rule | paraphrase | disposition |
+|---|---|---|
+| 15.3.1.2-7 the six date formats | YYYYMMDD, YYYY-MM-DD; YYYYDDD, YYYY-DDD; YYYYWwwD, YYYY-Www-D; years 1601-9999, the week rules (week 1 holds January 4; 53 weeks when January 4 is a Sunday, or a Saturday in a leap year) | **test**: dtformat (2027-01-01 is 2026-W53-5, 2024-12-30 is 2025-W01-1; 2025-W53 refused at its second digit) |
+| 15.3.3 the time formats | hhmmss, hh:mm:ss, with a fraction (the separator in the extended data only; a period, or a comma under DECIMAL-POINT IS COMMA); local, Z, +hhmm / +hh:mm; a zero sign with zero subfields in sending data | **test**: dtformat, dtformat2 (the comma); **ruling**: the fraction may have any number of digits (the text asks for at least nine), the ninth and after rendered as zeros |
+| 15.3.3.7 combined formats | date T time, both basic or both extended | **test**; **refused**: bad/std2014-dtfmt-mixed |
+| 15.17 COMBINED-DATETIME | argument-1 + argument-2 / 100000 | **test**: dtformat (155508.452965) |
+| 15.38 FORMATTED-CURRENT-DATE | the current date and time by a combined format; the time's accuracy the implementor's | **test**: dtformat, dtformat2; **ruling**: to the hundredth of a second, as CURRENT-DATE |
+| 15.39-15.41 FORMATTED-DATE, -DATETIME, -TIME | a date, a date and a time, a time by a format; the offset argument at most 1439 in magnitude, only with a UTC or offset format, 0 when omitted; UTC: the time adjusted by the offset; an offset format: both written as given | **test**: dtformat; **ruling**: under a UTC format the date rolls with the adjusted time (a combined value is one instant); **refused**: bad/std2014-dtfmt-kind, -time-kind, -offset, -not-literal, -bad-format |
+| 15.48, 15.79 INTEGER-OF-FORMATTED-DATE, SECONDS-FROM-FORMATTED-TIME | the date, or H * 3600 + M * 60 + S, from data in the format (a combined format's other part validated, not used) | **test**: dtformat; data out of the format is EC-ARGUMENT-FUNCTION and 0 (dtformat2); **refused**: bad/std2014-dtfmt-type (the data of the format's type) |
+| 15.80 SECONDS-PAST-MIDNIGHT | the local time of day in seconds; the precision the implementor's | **test**: dtformat2; **ruling**: to the hundredth; never 86,400 or more (LEAP-SECOND is always off here, directives.md) |
+| 15.92 TEST-FORMATTED-DATETIME | 0, or the position of the first error | **test**: dtformat (the text's 20051314 -> 6 and 15990316 -> 2; a bad separator; February 29; a bad offset) |
+| 15.38.3 rule 1 and siblings | argument-1 a literal, alphanumeric or national; the result of its type | **test**: dtformat2 (national); **refused**: bad/std2014-dtfmt-not-literal |
+| 15.40.3 rule 6, 15.41.3 rule 5 | no offset argument with a local format | **refused**: bad/std2014-dtfmt-offset |
+| edition | 2014's | **refused** under -std=2002: bad/std2002-formatted-date, -combined-datetime |
+
 ## TRIM (2014; 2023 15.96), taken as BP-E27
 
 COBOL 2014's, beyond both editions this compiler implements; IBM, Micro
 Focus and GnuCOBOL all have it, and the X-COBOL survey met six programs
 that use it, so it is taken with a warning under `-warn-extensions`
-(ISSUES-120), the other 2014 functions still refused naming the edition.
+(ISSUES-120); the 2014 date and time functions came 2026-10-07 (above), the rest of 2014's
+still refused naming the edition.
 
 | rule | paraphrase | disposition |
 |---|---|---|

@@ -2,7 +2,8 @@
  * s32-cobc.c in order; not a header to include anywhere else. */
 
 enum { FN_UPPER, FN_LOWER, FN_CURDATE, FN_INTDATE, FN_DATEINT, FN_DAYINT, FN_INTDAY, FN_EXCSTATUS, FN_EXCSTMT,
-       FN_NATOF, FN_DISPOF, FN_CHARNAT, FN_VARLEN, FN_EXCFILE, FN_EXCLOC, FN_BOOLOFINT, FN_INTOFBOOL, FN_RMLEN, FN_TRIM };
+       FN_NATOF, FN_DISPOF, FN_CHARNAT, FN_VARLEN, FN_EXCFILE, FN_EXCLOC, FN_BOOLOFINT, FN_INTOFBOOL, FN_RMLEN, FN_TRIM,
+       FN_DTFMT };   /* FORMATTED-CURRENT-DATE, -DATE, -DATETIME, -TIME (2014): fnid 1-4, fargs[0] the format literal */
 /* the calendar functions (1989 addendum) take an integer and give one back;
  * the runtime renders the result as numeric DISPLAY digits in its buffer */
 static int fn_is_numeric(int fn) { return (fn >= FN_INTDATE && fn <= FN_INTDAY) || fn == FN_VARLEN || fn == FN_INTOFBOOL || fn == FN_RMLEN; }
@@ -186,6 +187,13 @@ static const struct { const char *name; int id, kind, scale, minargs, maxargs, f
     { "test-numval", -8, FK_ALNUM, 0, 1, 1, 19, 2002 },
     { "test-numval-c", -9, FK_ALNUM, 0, 1, 2, 19, 2002 },
     { "test-numval-f", -10, FK_ALNUM, 0, 1, 1, 19, 2002 },
+    /* COBOL 2014 (15.17, 15.48, 15.79, 15.80, 15.92; standard-queue item 27), under -std=2014; the
+     * three scanning ones take a format literal and an item of its type (ids -11 to -13) */
+    { "combined-datetime", COB_FN_COMBINED_DATETIME, FK_NUMS, 9, 2, 2, 19, 2014 },
+    { "seconds-past-midnight", COB_FN_SECONDS_PAST_MIDNIGHT, FK_NUMS, 9, 0, 0, 19, 2014 },
+    { "integer-of-formatted-date", -11, FK_ALNUM, 0, 2, 2, 19, 2014 },
+    { "seconds-from-formatted-time", -12, FK_ALNUM, 9, 2, 2, 19, 2014 },
+    { "test-formatted-datetime", -13, FK_ALNUM, 0, 2, 2, 19, 2014 },
     { NULL, 0, 0, 0, 0, 0, 0, 0 }
 };
 
@@ -344,12 +352,67 @@ static int fn89_known(const char *w)
     return 0;
 }
 
+/* a format literal of the 2014 date and time functions (15.3.1-15.3.3):
+ * alphanumeric or national; want 1 a date format (or combined), 2 a time
+ * format (or combined), 3 combined only, 0 any */
+static cob_dtfmt dtfmt_literal(const Opnd *x, const char *fn, int want)
+{
+    cob_dtfmt f;
+    char up[40]; snprintf(up, sizeof up, "%s", fn);
+    for (char *q = up; *q; q++) *q = (char)toupper((unsigned char)*q);
+    if (x->kind != O_STR || x->tok->boolv) die_at(x->line, "FUNCTION %s: argument 1 is an alphanumeric or national literal, the format (2023 15.38.3 rule 1 and its siblings)", up);
+    unsigned char nf[64]; int n = 0;
+    if (x->tok->nat) { for (int i = 0; i + 1 < x->tok->len && n < 63; i += 2) nf[n++] = x->tok->s[i] ? '?' : (unsigned char)x->tok->s[i + 1]; }
+    else { n = x->tok->len < 63 ? x->tok->len : 63; memcpy(nf, x->tok->s, (size_t)n); }
+    int e = cob_dtfmt_parse(nf, n, g_dp_comma, &f);
+    if (e) die_at(x->line, "FUNCTION %s: \"%.*s\" is not a date, time or combined date and time format (2023 15.3.1): position %d", up, n, (const char *)nf, e);
+    if (want == 1 && !(f.kind & 1)) die_at(x->line, "FUNCTION %s takes a date format, or a combined date and time format (2023 15.48.3 rule 2)", up);
+    if (want == 2 && !(f.kind & 2)) die_at(x->line, "FUNCTION %s takes a time format, or a combined date and time format (2023 15.79.3 rule 2)", up);
+    if (want == 3 && f.kind != 3) die_at(x->line, "FUNCTION %s takes a combined date and time format (2023 15.38.3 rule 2, 15.40.3 rule 2)", up);
+    if (want == 4 && f.kind != 1) die_at(x->line, "FUNCTION %s takes a date format (2023 15.39.3 rule 2)", up);
+    if (want == 5 && f.kind != 2) die_at(x->line, "FUNCTION %s takes a time format (2023 15.41.3 rule 2)", up);
+    return f;
+}
+
+/* FORMATTED-CURRENT-DATE (format), FORMATTED-DATE (format, date),
+ * FORMATTED-DATETIME (format, date, seconds [, offset]), FORMATTED-TIME
+ * (format, seconds [, offset]) (2014; 2023 15.38-15.41): a result of the
+ * data's length, national when the format is */
+static int dtfmt_parse_fn(Opnd *o, Tok *n)
+{
+    static const struct { const char *name; int which, want, minargs, maxargs; } t[] = {
+        { "formatted-current-date", 1, 3, 1, 1 }, { "formatted-date", 2, 4, 2, 2 },
+        { "formatted-datetime", 3, 3, 3, 4 }, { "formatted-time", 4, 5, 2, 3 }, { NULL, 0, 0, 0, 0 } };
+    int k = -1;
+    for (int i = 0; t[i].name; i++) if (!strcmp(n->s, t[i].name)) { k = i; break; }
+    if (k < 0) return 0;
+    if (g_std < 2014) die_at(n->line, "FUNCTION %s is COBOL 2014; compile with -std=2014", n->s);
+    advance();
+    if (cur()->kind != T_LP) die_at(cur()->line, "expected '(' after FUNCTION %s", n->s);
+    advance();
+    o->fargs = xmalloc(4 * sizeof *o->fargs); o->nfargs = 0;
+    while (cur()->kind != T_RP) {
+        if (o->nfargs == 4) die_at(n->line, "FUNCTION %s: too many arguments", n->s);
+        o->fargs[o->nfargs++] = fn89_arg(n->s);
+    }
+    advance();
+    if (o->nfargs < t[k].minargs || o->nfargs > t[k].maxargs)
+        die_at(n->line, "FUNCTION %s takes %d to %d arguments", n->s, t[k].minargs, t[k].maxargs);
+    cob_dtfmt f = dtfmt_literal(o->fargs[0], n->s, t[k].want);
+    for (int i = 1; i < o->nfargs; i++) fn_arg_check(o->fargs[i], 'N', n->s, i + 1, n->line);
+    if (o->nfargs == t[k].maxargs && t[k].which >= 3 && f.tz == 0)
+        die_at(n->line, "FUNCTION %s: the offset argument goes with a UTC or offset time format (2023 15.40.3 rule 6, 15.41.3 rule 5)", n->s);
+    o->kind = O_FUNC; o->fn = FN_DTFMT; o->fnid = t[k].which; o->line = n->line;
+    o->fnat = o->fargs[0]->tok->nat; o->fsize = f.len * (o->fnat ? 2 : 1);
+    return 1;
+}
+
 static int fn89_parse(Opnd *o, Tok *n)
 {
     int f = -1;
     for (int i = 0; g_fn89[i].name; i++) if (!strcmp(n->s, g_fn89[i].name)) { f = i; break; }
     if (f < 0) return 0;
-    if (g_fn89[f].std > g_std) die_at(n->line, "FUNCTION %s is COBOL 2002; compile with -std=2002", n->s);
+    if (g_fn89[f].std > g_std) die_at(n->line, "FUNCTION %s is COBOL %d; compile with -std=%d", n->s, g_fn89[f].std, g_fn89[f].std);
     advance();
     o->fnid = g_fn89[f].id; o->fkind = g_fn89[f].kind; o->fscale = g_fn89[f].scale;
     o->fsize = g_fn89[f].fsize; o->fn = -1;
@@ -377,7 +440,15 @@ static int fn89_parse(Opnd *o, Tok *n)
     {
         int id = g_fn89[f].id, kind = g_fn89[f].kind;
         int anyclass = id == COB_FN_MAX || id == COB_FN_MIN || id == COB_FN_ORD_MAX || id == COB_FN_ORD_MIN;
-        for (int i = 0; i < o->nfargs; i++) {
+        if (id <= -11) {
+            /* a format literal and data of its type (15.48.3, 15.79.3, 15.92.3) */
+            dtfmt_literal(o->fargs[0], n->s, id == -11 ? 1 : id == -12 ? 2 : 0);
+            int c = opnd_class(o->fargs[1]);
+            if ((o->fargs[0]->tok->nat ? c != 'X' : c != 'A') || o->fargs[1]->kind == O_NUM)
+                die_at(n->line, "FUNCTION %s: argument 2 is %s, the type of the format (2023 15.48.3 rule 3, 15.79.3 rule 3, 15.92.3 rule 2)", n->s,
+                       o->fargs[0]->tok->nat ? "national" : "alphanumeric");
+        }
+        for (int i = 0; id > -11 && i < o->nfargs; i++) {
             int want = kind == FK_ALNUM ? 'A' : kind == FK_INT ? 'I' : 'N';
             if (kind == FK_NUMS && (id == COB_FN_MOD || id == COB_FN_FACTORIAL || id == COB_FN_YEAR_TO_YYYY ||
                                     id == COB_FN_DATE_TO_YYYYMMDD || id == COB_FN_DAY_TO_YYYYDDD ||
@@ -400,7 +471,7 @@ static int fn89_parse(Opnd *o, Tok *n)
                 no_zero_lit(o->fargs[i], up, "2023 15.59.3, 15.63.3 rule 3; 15.71.3, 15.72.3 rule 2");
             }
         }
-        if (kind == FK_ALNUM && o->nfargs == 2 && (opnd_class(o->fargs[1]) != opnd_class(o->fargs[0])))
+        if (kind == FK_ALNUM && id > -11 && o->nfargs == 2 && (opnd_class(o->fargs[1]) != opnd_class(o->fargs[0])))
             die_at(n->line, "FUNCTION %s: argument 2 is of the same class as argument 1 (2023 15.68.3 rule 2)", n->s);
     }
     if (g_fn89[f].kind == FK_ALNUM) {
@@ -477,9 +548,7 @@ static void fn_refuse(Tok *n)
         { "locale-compare", "locale support" }, { "locale-date", "locale support" }, { "locale-time", "locale support" },
         { "locale-time-from-seconds", "locale support" }, { "standard-compare", "the ISO/IEC 14651 ordering" },
         { NULL, NULL } };
-    static const char *y2014[] = { "combined-datetime", "formatted-current-date", "formatted-date", "formatted-datetime",
-        "formatted-time", "integer-of-formatted-date", "seconds-from-formatted-time", "seconds-past-midnight",
-        "test-formatted-datetime", NULL };
+    static const char *y2014[] = { NULL };     /* the date and time functions came 2026-10-07 (item 27) */
     static const char *y2023[] = { "baseconvert", "concat", "convert", "find-string", "module-name",
         "smallest-algebraic", "substitute", NULL };
     for (int i = 0; later[i].name; i++)
@@ -849,6 +918,8 @@ static void parse_operand_raw_1(Opnd *o)
             o->fsize = fn == FN_DATEINT ? 8 : fn == FN_DAYINT ? 7 : 10;   /* DISPLAYed directly: yyyymmdd, yyyyddd, or ten digits, as GnuCOBOL shows them */
             return;
         } else if (fn89_parse(o, n)) {
+            return;
+        } else if (dtfmt_parse_fn(o, n)) {
             return;
         } else if (!strcmp(n->s, "length")) {
             /* known at compile time, except for a variable reference modification */

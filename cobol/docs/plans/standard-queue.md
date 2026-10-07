@@ -357,7 +357,12 @@ FUNCTION-POINTER category, the pointer relations.
 - Today: `USAGE FUNCTION-POINTER` and `ADDRESS OF FUNCTION` are bare parse errors.
 
 **27. The 2014 date-and-time functions.** 15.17, 15.38-15.41, 15.48, 15.79, 15.80, 15.92; Ed. 2014;
-M; deps none.
+M; deps none. DONE 2026-10-07 (functions.md "The 2014 international date and time functions";
+tests 2014/dtformat (GnuCOBOL agrees but for the basic fractional separator: docs/oracles.md),
+2014/dtformat2 (national, the comma, the clock's fraction, EC-ARGUMENT-FUNCTION); nine bad
+tests): the formats of 15.3.1-15.3.3 in one shared parser (libcob/dtfmt.h), rendering and
+scanning in libcob, TEST's position of the first error by the text's examples. Found on the way:
+a >>TURN after a 45296,5 under DECIMAL-POINT IS COMMA applied one statement late (2002/turncomma).
 - Today: each "FUNCTION ... is COBOL 2014; not implemented". In scope: the owner ruled on
   2026-10-06 that everything standard holds (refusals.md section 3 amended).
 

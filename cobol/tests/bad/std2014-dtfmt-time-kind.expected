@@ -1,0 +1,1 @@
+FUNCTION SECONDS-FROM-FORMATTED-TIME takes a time format, or a combined date and time format (2023 15.79.3 rule 2)

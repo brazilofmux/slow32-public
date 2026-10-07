@@ -19,9 +19,9 @@ carry the compiler's own reason.
 | 12 ENVIRONMENT DIVISION | 22 | 20 | 0 | 2 |
 | 13 DATA DIVISION | 78 | 67 | 0 | 11 |
 | 14 PROCEDURE DIVISION | 54 | 46 | 7 | 1 |
-| 15 intrinsic functions | 94 | 73 | 21 | 0 |
+| 15 intrinsic functions | 94 | 82 | 12 | 0 |
 | 16 standard classes | 0 | 0 | 0 | 0 |
-| **all** | **324** | **274** | **28** | **22** |
+| **all** | **324** | **283** | **19** | **22** |
 
 ## 7 COPY, REPLACE and directives
 
@@ -302,7 +302,7 @@ carry the compiler's own reason.
 | 15.14 | BYTE-LENGTH function | [functions](functions.md) (implemented) | | | | | |
 | 15.15 | CHAR function | [functions](functions.md) (implemented) | | | | | |
 | 15.16 | CHAR-NATIONAL function | [functions](functions.md) (implemented) | | | | | |
-| 15.17 | COMBINED-DATETIME function | **not implemented**: COBOL 2014; not implemented | | | | | |
+| 15.17 | COMBINED-DATETIME function | [functions](functions.md) (implemented) | | | | | |
 | 15.18 | CONCAT function | **not implemented**: COBOL 2023; not implemented | | | | | |
 | 15.19 | CONVERT function | **not implemented**: COBOL 2023; not implemented | | | | | |
 | 15.20 | COS function | [functions](functions.md) (implemented) | | | | | |
@@ -323,17 +323,17 @@ carry the compiler's own reason.
 | 15.35 | EXP10 function | [functions](functions.md) (implemented) | | | | | |
 | 15.36 | FACTORIAL function | [functions](functions.md) (implemented) | | | | | |
 | 15.37 | FIND-STRING function | **not implemented**: COBOL 2023; not implemented | | | | | |
-| 15.38 | FORMATTED-CURRENT-DATE function | **not implemented**: COBOL 2014; not implemented | | | | | |
-| 15.39 | FORMATTED-DATE function | **not implemented**: COBOL 2014; not implemented | | | | | |
-| 15.40 | FORMATTED-DATETIME function | **not implemented**: COBOL 2014; not implemented | | | | | |
-| 15.41 | FORMATTED-TIME function | **not implemented**: COBOL 2014; not implemented | | | | | |
+| 15.38 | FORMATTED-CURRENT-DATE function | [functions](functions.md) (implemented) | | | | | |
+| 15.39 | FORMATTED-DATE function | [functions](functions.md) (implemented) | | | | | |
+| 15.40 | FORMATTED-DATETIME function | [functions](functions.md) (implemented) | | | | | |
+| 15.41 | FORMATTED-TIME function | [functions](functions.md) (implemented) | | | | | |
 | 15.42 | FRACTION-PART function | [functions](functions.md) (implemented) | | | | | |
 | 15.43 | HIGHEST-ALGEBRAIC function | [functions](functions.md) (implemented) | | | | | |
 | 15.44 | INTEGER function | [functions](functions.md) (implemented) | | | | | |
 | 15.45 | INTEGER-OF-BOOLEAN function | [functions](functions.md) (implemented) | | | | | |
 | 15.46 | INTEGER-OF-DATE function | [functions](functions.md) (implemented) | | | | | |
 | 15.47 | INTEGER-OF-DAY function | [functions](functions.md) (implemented) | | | | | |
-| 15.48 | INTEGER-OF-FORMATTED-DATE function | **not implemented**: COBOL 2014; not implemented | | | | | |
+| 15.48 | INTEGER-OF-FORMATTED-DATE function | [functions](functions.md) (implemented) | | | | | |
 | 15.49 | INTEGER-PART function | [functions](functions.md) (implemented) | | | | | |
 | 15.50 | LENGTH function | [functions](functions.md) (implemented) | | | | | |
 | 15.51 | LOCALE-COMPARE function | **not implemented**: COBOL 2002 and needs locale support, not implemented yet | | | | | |
@@ -364,8 +364,8 @@ carry the compiler's own reason.
 | 15.76 | RANGE function | [functions](functions.md) (implemented) | | | | | |
 | 15.77 | REM function | [functions](functions.md) (implemented) | | | | | |
 | 15.78 | REVERSE function | [functions](functions.md) (implemented) | | | | | |
-| 15.79 | SECONDS-FROM-FORMATTED-TIME function | **not implemented**: COBOL 2014; not implemented | | | | | |
-| 15.80 | SECONDS-PAST-MIDNIGHT function | **not implemented**: COBOL 2014; not implemented | | | | | |
+| 15.79 | SECONDS-FROM-FORMATTED-TIME function | [functions](functions.md) (implemented) | | | | | |
+| 15.80 | SECONDS-PAST-MIDNIGHT function | [functions](functions.md) (implemented) | | | | | |
 | 15.81 | SIGN function | [functions](functions.md) (implemented) | | | | | |
 | 15.82 | SIN function | [functions](functions.md) (implemented) | | | | | |
 | 15.83 | SMALLEST-ALGEBRAIC function | **not implemented**: COBOL 2023; not implemented | | | | | |
@@ -377,7 +377,7 @@ carry the compiler's own reason.
 | 15.89 | TAN function | [functions](functions.md) (implemented) | | | | | |
 | 15.90 | TEST-DATE-YYYYMMDD function | [functions](functions.md) (implemented) | | | | | |
 | 15.91 | TEST-DAY-YYYYDDD function | [functions](functions.md) (implemented) | | | | | |
-| 15.92 | TEST-FORMATTED-DATETIME function | **not implemented**: COBOL 2014; not implemented | | | | | |
+| 15.92 | TEST-FORMATTED-DATETIME function | [functions](functions.md) (implemented) | | | | | |
 | 15.93 | TEST-NUMVAL function | [functions](functions.md) (implemented) | | | | | |
 | 15.94 | TEST-NUMVAL-C function | [functions](functions.md) (implemented) | | | | | |
 | 15.95 | TEST-NUMVAL-F function | [functions](functions.md) (implemented) | | | | | |

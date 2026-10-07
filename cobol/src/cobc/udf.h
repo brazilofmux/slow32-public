@@ -828,10 +828,19 @@ static void emit_fn_value_raw_1(Opnd *f)
             emit_call("cob_fn_currency_arg");
         }
         Opnd *ax = f->fargs[0];                         /* the string functions: r3 the argument, r4 its length */
+        if (f->fnid <= -11) {
+            /* INTEGER-OF-FORMATTED-DATE, SECONDS-FROM-FORMATTED-TIME,
+             * TEST-FORMATTED-DATETIME: the format first, then the data */
+            Opnd *fx = f->fargs[0];
+            emit_la("r3", lit_label((unsigned char *)fx->tok->s, fx->tok->len)); emit_li("r4", fx->tok->len); emit_li("r5", fx->tok->nat);
+            emit_call("cob_fn_dtfmt_arg");
+            ax = f->fargs[1];
+        }
         if (ax->kind == O_FUNC) { emit_fn_value(ax); emit("\tadd r3, r1, r0"); emit_li("r4", ax->fsize); }
         else if (ax->kind == O_REF) emit_ref_addr_len(&ax->ref);
         else { emit_la("r3", lit_label((unsigned char *)ax->tok->s, ax->tok->len)); emit_li("r4", ax->tok->len); }
         switch (f->fnid) {
+        case -11: case -12: case -13: emit_li("r5", -10 - f->fnid); emit_call("cob_fn_dtfmt_scan"); break;
         case -3: emit_call("cob_fn_ord"); break;
         case -4: emit_call("cob_fn_reverse"); break;
         case -7: emit_call("cob_fn_numval_f"); break;
@@ -842,6 +851,17 @@ static void emit_fn_value_raw_1(Opnd *f)
         return;
     }
     if (f->fn == FN_CURDATE) { emit_call("cob_fn_current_date"); return; }
+    if (f->fn == FN_DTFMT) {
+        /* the numeric arguments on the stack, then the format: the result
+         * is the data's length (operand_parse.h dtfmt_parse_fn) */
+        for (int i = 1; i < f->nfargs; i++) emit_push_opnd(f->fargs[i]);
+        Opnd *fx = f->fargs[0];
+        emit_li("r3", f->fnid);
+        emit_la("r4", lit_label((unsigned char *)fx->tok->s, fx->tok->len)); emit_li("r5", fx->tok->len); emit_li("r6", fx->tok->nat);
+        emit_li("r7", f->nfargs - 1);
+        emit_call("cob_fn_dtfmt");
+        return;
+    }
     if (f->fn == FN_EXCSTATUS) { emit_call("cob_fn_exception_status"); return; }
     if (f->fn == FN_EXCSTMT) { emit_call("cob_fn_exception_statement"); return; }
     if (f->fn == FN_EXCFILE || f->fn == FN_EXCLOC) {

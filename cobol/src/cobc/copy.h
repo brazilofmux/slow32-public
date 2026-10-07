@@ -34,6 +34,7 @@ static int copy_open(const char *name, SrcLine **lines, int *n, char *found, siz
 }
 
 static void join_concat(void);
+static struct { int pos; Tok tok; } *g_dir; static int g_ndir, g_dircap, g_ndir_done;   /* >>TURN directives, by token position */
 
 static int g_dp_comma;      /* SPECIAL-NAMES DECIMAL-POINT IS COMMA */
 static int g_currency;      /* SPECIAL-NAMES CURRENCY SIGN IS "c": the picture symbol standing for '$', 0 for '$' itself */
@@ -95,8 +96,13 @@ static void apply_decimal_point(void)
         if (g_currency_len == 1 && g_currency_str[0] == c) g_currency_len = 0;   /* the string is the symbol: as without the phrase */
     }
     int w = 0;
+    /* a joined literal drops a token: the positional directives recorded
+     * by token index (expand_types) move with the stream, or a >>TURN
+     * after a 45296,5 would apply one statement late */
+    int d = 0;
     for (int i = 0; i < g_ntok; i++) {
         Tok *t = &g_tok[i];
+        while (d < g_ndir && g_dir[d].pos <= i) { if (g_dir[d].pos == i) g_dir[d].pos = w; d++; }
         if (g_currency && t->kind == T_PIC && g_currency != '$')
             for (char *q = t->s; *q; q++) if (toupper((unsigned char)*q) == toupper(g_currency)) *q = '$';
         if (t->kind == T_OP && !strcmp(t->s, ",")) {
@@ -115,6 +121,7 @@ static void apply_decimal_point(void)
             for (char *q = t->s; *q; q++) { if (*q == '.') *q = ','; else if (*q == ',') *q = '.'; }
         g_tok[w++] = *t;
     }
+    while (d < g_ndir) { if (g_dir[d].pos >= g_ntok) g_dir[d].pos = w; d++; }
     g_ntok = w;
 }
 
@@ -1201,4 +1208,3 @@ static void strip_comment_entries(SrcLine *lines, int n)
 }
 
 static int is_word(Tok *t, const char *w);
-static struct { int pos; Tok tok; } *g_dir; static int g_ndir, g_dircap, g_ndir_done;   /* >>TURN directives, by token position */

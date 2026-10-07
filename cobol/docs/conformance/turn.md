@@ -21,6 +21,6 @@ Swept 2026-09-28 (ISSUES-96). COBOL 2002 and later.
 | 3 | a level-2 name is its level-3 names; with a file-name, each for that file | **test**: 2002/ecturn, ecturnfile |
 | 4 | EC-I-O-WARNING only by its own name (or a WHEN), on and off | **test**: 2002/ecio |
 | 5 | a TURN inside a statement applies from the next statement on, not to the statement's own phrases | **test**: 2002/ecturnstmt (a TURN in an IF's THEN branch applies to the RAISE after it and to the ELSE branch's, not to the one before) -- added by this sweep; the phrase case follows from checking being decided as each statement is compiled |
-| 6 | ON enables checking for what follows in the compilation group, for one file with a file-name | **test**: 2002/ecturn, ecturnfile |
+| 6 | ON enables checking for what follows in the compilation group, for one file with a file-name | **test**: 2002/ecturn, ecturnfile; 2002/turncomma -- a directive after a numeric literal written with the decimal comma (DECIMAL-POINT IS COMMA) applied one statement late until 2026-10-07: the directives are kept by token position, and the decimal-point pass joined `45296,5` into one token without moving them (copy.h `apply_decimal_point`; found by standard-queue item 27) |
 | 7 | LOCATION makes the location known; without it, the implementor says | **ruling**: without LOCATION, EXCEPTION-LOCATION is spaces and EXCEPTION-STATEMENT is not recorded (2002/ecloc) |
 | 8 | OFF disables likewise until an ON | **test**: 2002/ecturn |

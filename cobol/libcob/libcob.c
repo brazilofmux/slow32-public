@@ -29,6 +29,7 @@
 #include "cobrt.h"
 #include "wide.h"
 #include "ieee.h"
+#include "dtfmt.h"     /* the 2014 date and time formats (15.3.1-15.3.3), shared with the compiler */
 #include "kern.h"
 #include "scredit.h"                    /* the screen field editor's core (docs/plans/screen-input.md) */
 
@@ -7625,10 +7626,275 @@ char *cob_fn_num(int which, int n)
         res = fn_signed18(r);
         break;
     }
+    case COB_FN_COMBINED_DATETIME: {                   /* 2014; 2023 15.17: argument-1 + argument-2 / 100000 */
+        long dt = (long)(a[0].v / pow10tab[a[0].scale]);
+        if ((a[0].scale > 0 && a[0].v % pow10tab[a[0].scale]) || dt < 1 || dt > MAX_DAY) fn_argbad = 1;   /* integer date form */
+        long long sec9 = cob_rescale(a[1].v, a[1].scale, 9);
+        if (sec9 < 0 || sec9 >= 86400LL * 1000000000LL) fn_argbad = 1;              /* standard numeric time form */
+        res = fn_signed18(fn_argbad ? 0 : dt * 1000000000LL + sec9 / 100000);
+        break;
+    }
+    case COB_FN_SECONDS_PAST_MIDNIGHT: {               /* 15.80: the local time of day, to the hundredth */
+        struct tm t; int h; long g; cob_clock(&t, &h, &g);
+        res = fn_signed18(((long long)t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec) * 1000000000LL + (long long)h * 10000000LL);
+        break;
+    }
     default: cob_fatal("unknown intrinsic function");
     }
     nsp -= n;
     return res;
+}
+
+/* ---- the 2014 international date and time functions (15.38-15.41,
+ * 15.48, 15.79, 15.92) ------------------------------------------------- */
+
+/* integer date n: the day of the week, 1 Monday .. 7 Sunday (1601-01-01 was a Monday) */
+static int dt_dow(long n) { return (int)((n - 1) % 7) + 1; }
+/* the ISO week date of n: the week's Thursday names the year (15.3.1.7) */
+static void dt_to_week(long n, long *wy, int *ww, int *wd)
+{
+    int dow = dt_dow(n);
+    long thu = n + (4 - dow), y, m, d;
+    days_to_civil(thu, &y, &m, &d);
+    *wy = y; *ww = (int)((thu - civil_to_days(y, 1, 1)) / 7) + 1; *wd = dow;
+}
+/* the weeks of year y: 53 when January 4 is a Sunday, or a Saturday too in a leap year */
+static int dt_weeks(long y)
+{
+    int j4 = dt_dow(civil_to_days(y, 1, 4));
+    return j4 == 7 || (leap(y) && j4 == 6) ? 53 : 52;
+}
+static long dt_from_week(long y, int ww, int wd)
+{
+    long j4 = civil_to_days(y, 1, 4);
+    return j4 - (dt_dow(j4) - 1) + (ww - 1) * 7L + (wd - 1);
+}
+
+/* the format of the next scan, and the national flag (the data's bytes are
+ * UTF-16BE then, each unit one format character) */
+static cob_dtfmt dt_fmt; static int dt_fmt_nat;
+void cob_fn_dtfmt_arg(const unsigned char *f, int flen, int nat)
+{
+    unsigned char nf[64]; int n = 0;
+    if (nat) { for (int i = 0; i + 1 < flen && n < 63; i += 2) nf[n++] = f[i] ? '?' : f[i + 1]; }
+    else { n = flen < 63 ? flen : 63; memcpy(nf, f, (size_t)n); }
+    if (cob_dtfmt_parse(nf, n, cob_dp_comma, &dt_fmt)) cob_fatal("a date or time format the compiler did not check");
+    dt_fmt_nat = nat;
+}
+
+/* render: the date n (integer date form) and the time sec9 (seconds past
+ * midnight, scale 9) with the offset off (minutes from UTC) by the format;
+ * into out, len bytes of ASCII */
+static void dt_render(const cob_dtfmt *f, long n, long long sec9, int off, char *out)
+{
+    int o = 0;
+    #define D2(v) do { out[o++] = (char)('0' + (v) / 10 % 10); out[o++] = (char)('0' + (v) % 10); } while (0)
+    if (f->tz == 1 && (f->kind & 2)) {
+        /* UTC: the local time less the offset, the date rolling with it (15.40.4 rule 2) */
+        sec9 -= (long long)off * 60 * 1000000000LL;
+        while (sec9 < 0) { sec9 += 86400LL * 1000000000LL; n--; }
+        while (sec9 >= 86400LL * 1000000000LL) { sec9 -= 86400LL * 1000000000LL; n++; }
+    }
+    if (f->kind & 1) {
+        long y, m, d; days_to_civil(n, &y, &m, &d);
+        if (f->dkind == 3) { long wy; int ww, wd; dt_to_week(n, &wy, &ww, &wd); y = wy; m = ww; d = wd; }
+        D2(y / 100); D2(y % 100);
+        if (f->ext) out[o++] = '-';
+        if (f->dkind == 1) { D2(m); if (f->ext) out[o++] = '-'; D2(d); }
+        else if (f->dkind == 2) { long doy = n - civil_to_days(y, 1, 1) + 1; out[o++] = (char)('0' + doy / 100); D2(doy % 100); }
+        else { out[o++] = 'W'; D2(m); if (f->ext) out[o++] = '-'; out[o++] = (char)('0' + d); }
+        if (f->kind == 3) out[o++] = 'T';
+    }
+    if (f->kind & 2) {
+        long long s = sec9 / 1000000000LL, fr = sec9 % 1000000000LL;
+        D2(s / 3600); if (f->ext) out[o++] = ':'; D2(s / 60 % 60); if (f->ext) out[o++] = ':'; D2(s % 60);
+        if (f->frac) {
+            if (f->ext) out[o++] = cob_dp_comma ? ',' : '.';
+            char fd[10]; for (int i = 8; i >= 0; i--) { fd[i] = (char)('0' + fr % 10); fr /= 10; }
+            for (int i = 0; i < f->frac; i++) out[o++] = i < 9 ? fd[i] : '0';
+        }
+        if (f->tz == 1) out[o++] = 'Z';
+        else if (f->tz == 2) {
+            int a = off < 0 ? -off : off;
+            out[o++] = off < 0 ? '-' : '+';
+            D2(a / 60); if (f->ext) out[o++] = ':'; D2(a % 60);
+        }
+    }
+    #undef D2
+}
+
+/* the formatting functions: which 1 FORMATTED-CURRENT-DATE, 2 FORMATTED-
+ * DATE (date), 3 FORMATTED-DATETIME (date, seconds [, offset]), 4
+ * FORMATTED-TIME (seconds [, offset]); the n numeric arguments on the
+ * stack; the result the data's length, national when the format is */
+char *cob_fn_dtfmt(int which, const unsigned char *fmt, int flen, int nat, int n)
+{
+    cob_fn_dtfmt_arg(fmt, flen, nat);
+    cob_dtfmt *f = &dt_fmt;
+    cob_num *a = &nstk[nsp - n];
+    long dt = 1; long long sec9 = 0; int off = 0, k = 0;
+    if (which == 1) {
+        struct tm t; int h; long g; cob_clock(&t, &h, &g);
+        dt = civil_to_days(t.tm_year + 1900, t.tm_mon + 1, t.tm_mday);
+        sec9 = ((long long)t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec) * 1000000000LL + (long long)h * 10000000LL;
+        off = (int)(g / 60);
+    } else {
+        if (which != 4) {
+            dt = (long)(a[k].v / pow10tab[a[k].scale]);
+            if ((a[k].scale > 0 && a[k].v % pow10tab[a[k].scale]) || dt < 1 || dt > MAX_DAY) { fn_argbad = 1; dt = 1; }
+            k++;
+        }
+        if (which != 2) {
+            sec9 = cob_rescale(a[k].v, a[k].scale, 9);
+            if (sec9 < 0 || sec9 >= 86400LL * 1000000000LL) { fn_argbad = 1; sec9 = 0; }
+            k++;
+        }
+        if (k < n) {
+            off = (int)(a[k].v / pow10tab[a[k].scale]);
+            if ((a[k].scale > 0 && a[k].v % pow10tab[a[k].scale]) || off < -1439 || off > 1439) { fn_argbad = 1; off = 0; }
+        }
+    }
+    nsp -= n;
+    char tmp[64];
+    dt_render(f, dt, sec9, off, tmp);
+    char *b = fn_buffer(f->len * (nat ? 2 : 1));
+    if (nat) for (int i = 0; i < f->len; i++) { b[2 * i] = 0; b[2 * i + 1] = tmp[i]; }
+    else memcpy(b, tmp, (size_t)f->len);
+    return b;
+}
+
+/* scan data by the format set by cob_fn_dtfmt_arg: 0 and the values, or
+ * the 1-based position of the first character at which an error can be
+ * seen (15.92.4) */
+static int dt_scan(const cob_dtfmt *f, const unsigned char *p, int n, long *date, long long *sec9)
+{
+    int i = 0;                                  /* a shorter item: the missing positions are errors where they are reached */
+    #define DIG(k) ((i + (k) < n && p[i + (k)] >= '0' && p[i + (k)] <= '9') ? p[i + (k)] - '0' : -1)
+    #define LITC(c) do { if (i >= n || p[i] != (c)) return i + 1; i++; } while (0)
+    long y = 0, m = 0, d = 0; int ww = 0, wd = 0;
+    if (f->kind & 1) {
+        /* the year: more than 1600, at most 9999 -- the first digit that decides */
+        for (int k = 0; k < 4; k++) if (DIG(k) < 0) return i + k + 1;
+        y = DIG(0) * 1000 + DIG(1) * 100 + DIG(2) * 10 + DIG(3);
+        if (DIG(0) < 1) return i + 1;
+        if (DIG(0) == 1 && DIG(1) < 6) return i + 2;
+        if (y == 1600) return i + 4;
+        i += 4;
+        if (f->ext) LITC('-');
+        if (f->dkind == 1) {
+            if (DIG(0) < 0) return i + 1;
+            if (DIG(0) > 1) return i + 1;
+            if (DIG(1) < 0) return i + 2;
+            m = DIG(0) * 10 + DIG(1);
+            if (m < 1 || m > 12) return i + 2;
+            i += 2;
+            if (f->ext) LITC('-');
+            static const int md[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+            int mx = md[m - 1] + (m == 2 && leap(y));
+            if (DIG(0) < 0) return i + 1;
+            if (DIG(0) > 3) return i + 1;
+            if (DIG(1) < 0) return i + 2;
+            d = DIG(0) * 10 + DIG(1);
+            if (d < 1 || d > mx) return i + 2;
+            i += 2;
+            *date = civil_to_days(y, m, d);
+        } else if (f->dkind == 2) {
+            int mx = 365 + leap(y);
+            for (int k = 0; k < 3; k++) {
+                if (DIG(k) < 0) return i + k + 1;
+                long sofar = 0; for (int j = 0; j <= k; j++) sofar = sofar * 10 + DIG(j);
+                long pw = 1; for (int j = k + 1; j < 3; j++) pw *= 10;
+                if (sofar * pw > mx) return i + k + 1;                 /* too big already */
+                if (k == 2 && sofar == 0) return i + 3;
+            }
+            d = DIG(0) * 100 + DIG(1) * 10 + DIG(2);
+            i += 3;
+            *date = civil_to_days(y, 1, 1) + d - 1;
+        } else {
+            LITC('W');
+            int mx = dt_weeks(y);
+            if (DIG(0) < 0) return i + 1;
+            if (DIG(0) > 5) return i + 1;
+            if (DIG(1) < 0) return i + 2;
+            ww = DIG(0) * 10 + DIG(1);
+            if (ww < 1 || ww > mx) return i + 2;
+            i += 2;
+            if (f->ext) LITC('-');
+            if (DIG(0) < 1 || DIG(0) > 7) return i + 1;
+            wd = DIG(0);
+            i += 1;
+            *date = dt_from_week(y, ww, wd);
+        }
+        if (f->kind == 3) LITC('T');
+    }
+    if (f->kind & 2) {
+        if (DIG(0) < 0 || DIG(0) > 2) return i + 1;
+        if (DIG(1) < 0) return i + 2;
+        long h = DIG(0) * 10 + DIG(1);
+        if (h > 23) return i + 2;
+        i += 2;
+        if (f->ext) LITC(':');
+        if (DIG(0) < 0 || DIG(0) > 5) return i + 1;
+        if (DIG(1) < 0) return i + 2;
+        long mi = DIG(0) * 10 + DIG(1);
+        i += 2;
+        if (f->ext) LITC(':');
+        if (DIG(0) < 0 || DIG(0) > 5) return i + 1;
+        if (DIG(1) < 0) return i + 2;
+        long s = DIG(0) * 10 + DIG(1);
+        i += 2;
+        long long fr = 0; int fd = 0;
+        if (f->frac) {
+            if (f->ext) LITC(cob_dp_comma ? ',' : '.');
+            for (int k = 0; k < f->frac; k++) {
+                if (DIG(0) < 0) return i + 1;
+                if (fd < 9) { fr = fr * 10 + DIG(0); fd++; }
+                i++;
+            }
+            while (fd < 9) { fr *= 10; fd++; }
+        }
+        *sec9 = (h * 3600 + mi * 60 + s) * 1000000000LL + fr;
+        if (f->tz == 1) LITC('Z');
+        else if (f->tz == 2) {
+            if (i >= n || (p[i] != '+' && p[i] != '-' && p[i] != '0')) return i + 1;
+            int zero = p[i] == '0';
+            i++;
+            if (DIG(0) < 0 || DIG(0) > 2) return i + 1;
+            if (DIG(1) < 0) return i + 2;
+            long oh = DIG(0) * 10 + DIG(1);
+            if (zero && DIG(0)) return i + 1;             /* a zero sign: both subfields zero, the first digit that is not */
+            if (oh > 23 || (zero && oh)) return i + 2;
+            i += 2;
+            if (f->ext) LITC(':');
+            if (DIG(0) < 0 || DIG(0) > 5) return i + 1;
+            if (zero && DIG(0)) return i + 1;
+            if (DIG(1) < 0) return i + 2;
+            if (zero && DIG(1)) return i + 2;
+            i += 2;
+        }
+    }
+    #undef DIG
+    #undef LITC
+    return 0;
+}
+
+/* which: 1 INTEGER-OF-FORMATTED-DATE, 2 SECONDS-FROM-FORMATTED-TIME, 3
+ * TEST-FORMATTED-DATETIME; p[0..n) the data, in the format's type */
+char *cob_fn_dtfmt_scan(const unsigned char *p, int n, int which)
+{
+    unsigned char nb[128];
+    if (dt_fmt_nat) {
+        /* UTF-16BE: ASCII units narrowed, any other a character that fits no format */
+        int k = 0;
+        for (int i = 0; i + 1 < n && k < 127; i += 2) nb[k++] = p[i] ? '?' : p[i + 1];
+        p = nb; n = k;
+    } else if (n > 127) n = 127;
+    long date = 0; long long sec9 = 0;
+    int e = dt_scan(&dt_fmt, p, n, &date, &sec9);
+    if (which == 3) return fn_signed18(e);
+    if (e) { fn_argbad = 1; return fn_signed18(0); }
+    if (which == 1) return fn_signed18(date);
+    return fn_signed18(sec9);
 }
 
 /* MAX and MIN over alphanumeric arguments: the winning argument's
