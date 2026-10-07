@@ -65,13 +65,18 @@ the matrix's keyword and ancestor credits fixed (Report Writer's re-keying stays
 - Why here: the matrix is how this queue gets re-ranked; it must not over-report.
 
 **3. Exception propagation.** 14.9.14/14.9.18 RAISING, 14.2 header RAISING, 7.3.21 PROPAGATE; Ed.
-2002; M; deps none.
+2002; M; deps none. DONE 2026-10-06 (exit.md, control.md, call.md, directives.md; test
+2002/ecraising + lib/ecpropagate.cbl): EXIT PROGRAM / GOBACK RAISING exception-name and LAST, the
+header's RAISING list of EC-USER names, EC-RAISING-NOT-SPECIFIED, >>PROPAGATE ON/OFF. The
+callee leaves the name with libcob; every CALL and function invocation at -std=2002 asks for it
+against the caller's enabled names and dispatches it as a raise of its own. RAISING an object
+reference stays with object orientation (item 51).
 - Today: refused -- "EXIT PROGRAM RAISING is not implemented yet", "GOBACK RAISING ...",
   ">>propagate is not implemented yet"; `PROCEDURE DIVISION RAISING ec-size` is a bare parse error.
 - Why here: the last structural piece of the exception module, whose core landed (ISSUES-53 onward).
 
 **4. The rest of Table 13.** 14.6.13.1.6, Table 13; Ed. 2002 (+2014/2023 names); M; deps 3 for
-EC-RAISING-*. AUDITED 2026-10-06: docs/conformance/exceptions.md has every level-3 name's row.
+EC-RAISING-* (met). AUDITED 2026-10-06: docs/conformance/exceptions.md has every level-3 name's row.
 Raised then: EC-OVERFLOW-STRING/-UNSTRING, EC-RANGE-SEARCH-NO-MATCH, EC-FLOW-RELEASE/-RETURN/
 -REPORT, the five EC-SORT-MERGE-* that can arise, EC-REPORT-ACTIVE/-INACTIVE/-FILE-MODE/
 -NOT-TERMINATED. Still open here (the page's **gap** rows): EC-RANGE-INVALID, EC-I-O-EOP/

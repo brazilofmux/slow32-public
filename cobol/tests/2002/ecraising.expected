@@ -1,0 +1,11 @@
+caller's USE: EC-RANGE-SEARCH-NO-MATCH       
+after sub1
+in sub2
+caller's USE for EC-USER: EC-USER-OOPS                   
+after sub2
+in sub6
+after the divide in sub6 (no checking on)
+after sub6: nothing
+fatal case: last    
+sub3's declarative, handing it on
+caller's WHEN: EC-SIZE-ZERO-DIVIDE            

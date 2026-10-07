@@ -24,7 +24,9 @@ title.
 |---|---|---|
 | 1985 | no GOBACK | BP-E2: accepted, as IBM has it |
 | SR 1 | not in a declarative whose USE has GLOBAL | **refused**: bad/std2002-goback-global-use |
-| RAISING (2002) | an exception condition for the caller | **gap**: "GOBACK RAISING is not implemented yet", as EXIT PROGRAM RAISING; bad/std2002-goback-raising. It was refused as "'raising' is not a COBOL verb" |
+| SR 2 | RAISING names a level-3 exception-name; an EC-USER one is in the header's RAISING | **test**: 2002/ecraising (implemented 2026-10-06, standard-queue item 3); **refused**: bad/std2002-goback-raising |
+| SR 3-4 | RAISING identifier: an object reference | **n/a**: object orientation, deferred (refused by name) |
+| GR 1b | RAISING: the condition is raised in the caller if checking for it is enabled there, after the result is returned, and the caller continues as its CALL's rules say; LAST hands over the condition raised, EC-RAISING-NOT-SPECIFIED in place of an EC-USER one the header does not list, nothing when none is raised | **test**: 2002/ecraising: the caller's USE declarative (sub1), its WHEN (case last), the fatal end when neither (the checked case, run by hand); a caller not checking the condition ignores it (sub1 called with checking off); nspec, EC-RAISING-NOT-SPECIFIED. How: the callee leaves the name with libcob (`cob_ec_propagate`); every CALL and function invocation compiled at -std=2002 asks (`cob_ec_propagated`) for it against the caller's enabled names -- exact, then its level-2 group, then EC-ALL -- and dispatches as a raise of its own (`emit_ec_propagated`, control.h). RAISING LAST is for a declarative or a WHEN phrase (bad/std2002-exit-program-raising) |
 | WITH ... STATUS | 2023 | **refused**, naming 2023: bad/std2002-goback-status |
 | GR 1-3 | a called program returns; a main program operates as STOP RUN | **test**: free/dyncall and every subprogram test |
 

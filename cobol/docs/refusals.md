@@ -62,11 +62,10 @@ COBOL 2002/2023 (Stage B):
   and stack arguments are implemented: docs/conformance/call.md,
   data-division.md);
 - compiler directives other than >>SOURCE, >>TURN, >>DEFINE, >>IF,
-  >>EVALUATE, >>CALL-CONVENTION, >>LEAP-SECOND, >>LISTING and >>PAGE
-  (the last seven since 2026-10-06, docs/conformance/directives.md):
-  that is >>PROPAGATE (queue item 3) and 2023's COBOL-WORDS, DISPLAY,
-  FLAG-14, PUSH, POP and REF-MOD-ZERO-LENGTH (item 34); and boolean
-  expressions in a directive;
+  >>EVALUATE, >>CALL-CONVENTION, >>LEAP-SECOND, >>LISTING, >>PAGE and
+  >>PROPAGATE (the last eight since 2026-10-06, docs/conformance/directives.md):
+  that is 2023's COBOL-WORDS, DISPLAY, FLAG-14, PUSH, POP and
+  REF-MOD-ZERO-LENGTH (item 34); and boolean expressions in a directive;
 - exceptions: the conditions docs/conformance/exceptions.md marks
   **gap** -- EC-RANGE-INVALID, EC-I-O-EOP and -LINAGE, EC-FLOW-GLOBAL-*,
   EC-SCREEN-*, and those of features not built (USE AFTER EXCEPTION
@@ -101,8 +100,6 @@ COBOL 2002/2023 (Stage B):
   sources; the SPECIAL-NAMES clauses not yet taken;
 - bits: OCCURS DEPENDING ON on a bit array, OCCURS on a bit group, a
   character item redefining a bit item that starts mid-byte;
-- EXIT PROGRAM RAISING and GOBACK RAISING: propagating an exception to
-  the caller (docs/conformance/exit.md);
 - the floating intrinsic functions (SQRT, LOG, the trigonometric ones,
   MEAN, MEDIAN, VARIANCE, STANDARD-DEVIATION, ANNUITY, PRESENT-VALUE) with
   arguments or results past 18 digits (docs/wide.md; the rest of 31-digit
@@ -134,9 +131,9 @@ COBOL 2002/2023 (Stage B):
   PROGRAM-POINTER / FUNCTION-POINTER / MESSAGE-TAG, PACKED-DECIMAL NO
   SIGN, OCCURS DYNAMIC, floating-point literals and PICTUREs, the
   floating-point conditions, XOR, INSPECT BACKWARD, SET CONTENT OF /
-  LOCALE / ATTRIBUTE / TO ENTRY, ADDRESS OF FUNCTION, PROCEDURE DIVISION
-  RAISING, CONSTANT FROM, currency strings and PICTURE SYMBOL, ALPHABET
-  FOR and IS LOCALE, and the ANYCASE and LOCALE function phrases.
+  LOCALE / ATTRIBUTE / TO ENTRY, ADDRESS OF FUNCTION, currency strings
+  and PICTURE SYMBOL, ALPHABET FOR and IS LOCALE, and the ANYCASE and
+  LOCALE function phrases.
 
 ## 3. Out of scope, by ruling
 

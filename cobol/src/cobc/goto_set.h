@@ -159,6 +159,13 @@ static void emit_ec_dispatch(int i)
         emit_call("cob_use_push");                  /* EC-FLOW-USE when it is active already (E14) */
         emit("\tjal r0, .Lp%d_%d", g_unit, sec);
         emit_label(Lret);
+    } else if (g_propagate) {
+        /* >>PROPAGATE ON: a condition nothing here takes goes to the caller
+         * as GOBACK RAISING LAST EXCEPTION would hand it (7.3.21.4 rule 2) */
+        emit_ec_propagate(NULL);
+        pc_rec_leave();
+        emit("\tjal r0, .Lgb%d", g_unit);
+        return;
     }
     if (ec_fatal(i)) emit_call("cob_ec_abort");     /* abnormal run unit termination (14.6.12) */
 }

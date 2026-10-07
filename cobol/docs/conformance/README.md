@@ -67,5 +67,5 @@ standard's titles or text:
 | 14.9.29 RAISE | [raise.md](raise.md) | 2026-09-28 |
 | 7.3.25 TURN | [turn.md](turn.md) | 2026-09-28 |
 | 14.6.13.1.6 Table 13, every exception-name: raised where, or why not | [exceptions.md](exceptions.md) | 2026-10-06 |
-| 7.3.5, 7.3.6, 7.3.7, 7.3.8, 7.3.9, 7.3.11, 7.3.13, 7.3.16, 7.3.17, 7.3.18, 7.3.19 conditional compilation: DEFINE, EVALUATE, IF; CALL-CONVENTION, LEAP-SECOND, LISTING, PAGE | [directives.md](directives.md) | 2026-10-06 |
+| 7.3.5, 7.3.6, 7.3.7, 7.3.8, 7.3.9, 7.3.11, 7.3.13, 7.3.16, 7.3.17, 7.3.18, 7.3.19, 7.3.21 conditional compilation: DEFINE, EVALUATE, IF; CALL-CONVENTION, LEAP-SECOND, LISTING, PAGE; PROPAGATE | [directives.md](directives.md) | 2026-10-06 |
 | 14.9.49 USE | [use.md](use.md) | 2026-09-28 |

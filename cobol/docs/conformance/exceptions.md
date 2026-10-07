@@ -4,6 +4,8 @@ Swept 2026-10-06 (docs/plans/standard-queue.md item 4). ISO/IEC 1989:2023
 14.6.13.1.6, Table 13: every level-3 exception-name, its category
 (Fatal, NF nonfatal, Imp implementor-defined), where this compiler and
 runtime raise it, the test that shows it, or why it does not arise. The
+condition each name stands for is the table's own text, cited by
+name and not carried here. The
 level-1 and level-2 names (EC-ALL, EC-SIZE, ...) are groups and are
 covered by the `>>TURN`, `USE` and `RAISE` pages. The mechanism itself
 -- checking turned on by >>TURN or an exception-checking PERFORM, the
@@ -18,13 +20,13 @@ runtime only when its checking is on (`emit_ec_query`), so a program
 that turns nothing on runs as before; a fatal one found with checking
 off still stops the run with the runtime's own message, as it did.
 
-Counting: 133 level-3 names. 36 raised and shown by a test; 5 refused at
+Counting: 133 level-3 names. 37 raised and shown by a test; 7 refused at
 compile time instead, where the text's run-time condition is decided by
 the source; 22 the implementor's (`-IMP`), which this implementation
 never defines; 43 belong to features not built (object orientation,
 VALIDATE, messaging, locale, dynamic tables, commit, prototypes and
 pointers, IEEE float, the screen and 2002 Report Writer leftovers), each
-with its queue item; 4 rulings; 23 gaps, named in their rows, which
+with its queue item; 4 rulings; 20 gaps, named in their rows, which
 queue item 4 continues with.
 
 ## EC-ARGUMENT
@@ -81,8 +83,8 @@ queue item 4 continues with.
 |---|---|---|
 | EC-FLOW-APPLY-COMMIT | Fatal | **n/a**: commit and rollback (queue item 46) |
 | EC-FLOW-COMMIT | Fatal | **n/a**: queue item 46 |
-| EC-FLOW-GLOBAL-EXIT | Fatal | **gap**: EXIT PROGRAM in a GLOBAL declarative invoked for a contained program (queue item 4, next) |
-| EC-FLOW-GLOBAL-GOBACK | Fatal | **gap**: as EC-FLOW-GLOBAL-EXIT |
+| EC-FLOW-GLOBAL-EXIT | Fatal | **refused** at compile time: EXIT PROGRAM in a declarative whose USE is GLOBAL (14.9.14.3 rule 2); the run-time case -- the declarative invoked for a contained program -- cannot arise, as the statement is refused in it |
+| EC-FLOW-GLOBAL-GOBACK | Fatal | **refused** at compile time: GOBACK in a GLOBAL declarative (14.9.18.3 rule 1), likewise |
 | EC-FLOW-IMP | Imp | **ruling**: no implementor-defined condition is defined here, so it never arises |
 | EC-FLOW-RELEASE | Fatal | **test**: 2002/ecsort |
 | EC-FLOW-REPORT | Fatal | **test**: 2002/ecreport |
@@ -188,7 +190,7 @@ queue item 4 continues with.
 | name | cat | disposition |
 |---|---|---|
 | EC-RAISING-IMP | Imp | **ruling**: no implementor-defined condition is defined here, so it never arises |
-| EC-RAISING-NOT-SPECIFIED | Fatal | **n/a**: exception propagation (queue item 3) |
+| EC-RAISING-NOT-SPECIFIED | Fatal | **test**: 2002/ecraising (case nspec, run by hand): GOBACK RAISING LAST EXCEPTION of an EC-USER name the header's RAISING does not list |
 
 ## EC-RANGE
 

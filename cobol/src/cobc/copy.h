@@ -466,6 +466,7 @@ typedef struct { int parent, active, taken, eval, else_seen; CVal subj; int trut
 static CondLevel g_cond[64]; static int g_ncond;
 static int cond_active(void) { return !g_ncond || g_cond[g_ncond - 1].active; }
 static int g_in_unit;       /* the text words are inside a compilation unit: IDENTIFICATION DIVISION seen, its END not yet */
+static int g_propagate_dir; /* >>PROPAGATE ON in force (7.3.21.4 rules 1, 3-4) */
 
 /* a directive's text as tokens */
 typedef struct { char t; char *s; int len; } CTok;      /* t: 'w' word, 'n' number, 'a' alnum literal, 'b' boolean literal, 'o' operator */
@@ -841,6 +842,15 @@ static int cond_directive(const TW *t)
         c_end("CALL-CONVENTION");
         return 1;
     }
+    if (!strcasecmp(w, "propagate")) {
+        g_cp = 1;
+        int on = caccept("on");
+        if (!on && !caccept("off")) cdie(">>PROPAGATE takes ON or OFF (2023 7.3.21.2)%s", "");
+        c_end("PROPAGATE");
+        if (g_in_unit) cdie(">>PROPAGATE is written outside a compilation unit (2023 7.3.21.3 rule 1)%s", "");
+        g_propagate_dir = on;
+        return 1;
+    }
     if (!strcasecmp(w, "turn")) return 0;
     if (!strcasecmp(w, "d")) cdie("the >>D debugging indicator is not implemented (debugging lines were removed in COBOL 2014)%s", "");
     cdie("the compiler directive >>%s is not implemented yet", w);
@@ -889,7 +899,13 @@ static void tw_copy(TWV *in, TWV *out)
             /* where a compilation unit begins and ends, for the directives
              * that stand outside one (LEAP-SECOND) */
             int k = i + 1; while (k < in->n && in->w[k].kind == TW_SEP) k++;
-            if ((tw_is(t, "identification") || tw_is(t, "id")) && k < in->n && tw_is(&in->w[k], "division")) g_in_unit++;
+            if ((tw_is(t, "identification") || tw_is(t, "id")) && k < in->n && tw_is(&in->w[k], "division")) {
+                g_in_unit++;
+                if (g_propagate_dir) {           /* a mark the parser reads at the unit's start (apply_turn) */
+                    TW m = *t; m.kind = TW_DIR; m.s = "propagate-unit"; m.len = 14;
+                    twv_push(out, m);
+                }
+            }
             if (tw_is(t, "end") && k < in->n && (tw_is(&in->w[k], "program") || tw_is(&in->w[k], "function")) && g_in_unit > 0) g_in_unit--;
         }
         if (!pt) { int used = cv_constant_from(out, in->w, in->n, i); if (used) { i += used - 1; continue; } }

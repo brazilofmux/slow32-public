@@ -10,10 +10,10 @@ SECTION.
 |---|---|---|
 | 1 | a simple EXIT is a sentence by itself, the only one in its paragraph (85 rules 1-2 the same) | **refused**: bad/exit-not-alone -- was accepted before this sweep |
 | 2 | no EXIT PROGRAM in a declarative whose USE is GLOBAL (85 rule 2 the same) | **refused**: bad/exit-program-global -- was accepted before this sweep |
-| 3 | RAISING EXCEPTION names a level-3 exception-name; an EC-USER one must be in the RAISING phrase of the procedure division header | **gap**: EXIT PROGRAM RAISING is refused by name (bad/std2002-exit-program-raising); the propagation it needs is not implemented |
+| 3 | RAISING EXCEPTION names a level-3 exception-name; an EC-USER one must be in the RAISING phrase of the procedure division header | **test**: 2002/ecraising (implemented 2026-10-06, standard-queue item 3; the sub2 case, EXIT PROGRAM RAISING EC-USER-OOPS, which the header lists); **refused**: bad/std2002-goback-raising (an EC-USER name the header does not list), bad/std2002-procedure-raising (a header name that is not EC-USER) |
 | 4 | RAISING identifier-1 is a sending operand | **n/a**: an object reference -- object orientation, deferred |
 | 5 | identifier-1's object-reference constraints | **n/a**: object orientation |
-| 6 | RAISING LAST only in a declarative or a WHEN phrase | **gap**: as rule 3 |
+| 6 | RAISING LAST only in a declarative or a WHEN phrase | **refused**: bad/std2002-exit-program-raising; **test**: 2002/ecraising (GOBACK RAISING LAST in a declarative, cases last and nspec, run by hand) |
 | 7 | EXIT PROGRAM only in a program's procedure division | **refused**: bad/std2002-exit-program-function -- was accepted before this sweep |
 | 8 | EXIT PERFORM only inside an inline or exception-checking PERFORM; no CYCLE in the latter | **refused**: bad/std2002-exit-perform-outside, bad/std2002-exit-cycle-ecp |
 | 9 | EXIT SECTION only in a section | **refused**: bad/std2002-exit-section-nosec |
@@ -27,7 +27,7 @@ SECTION.
 |---|---|---|
 | 1 | a simple EXIT does nothing; it gives a point a procedure-name | **test**: fixed/exitprog (PERFORM ... THRU an EXIT paragraph) |
 | 2 | EXIT PROGRAM in a program no caller controls continues as CONTINUE (85 rule 1 the same) | **test**: fixed/exitprog, the oracle agreeing -- **fixed by this sweep**: it used to end the program. libcob counts activations (cob_called) |
-| 3 | in a called program, as GOBACK's rules 3-4 | **test**: fixed/exitprog (returns to the caller) |
+| 3 | in a called program, as GOBACK's rules 3-4 | **test**: fixed/exitprog (returns to the caller); with RAISING, as GOBACK's rule 1b (docs/conformance/control.md) |
 | 4 | EXIT PERFORM in an exception-checking PERFORM goes before FINALLY, or END-PERFORM | **test**: 2002/exitperform, 2002/ecpfatal2 |
 | 5a | EXIT PERFORM leaves the innermost inline PERFORM | **test**: 2002/exitperform |
 | 5b | EXIT PERFORM CYCLE ends this pass of it | **test**: 2002/exitperform |

@@ -347,6 +347,87 @@ static int ec_on_io(const char *name, int file);
 typedef struct { int *ec, *file, n, cap, label; } EcpWhen;
 typedef struct { EcpWhen *w; int nw, wcap, Lother, Lcommon, Lend, id, resume; } Ecp;
 static Ecp **g_ecp; static int g_necp, g_ecp_cap, g_ecp_handler;
+static int g_in_decl;
+/* the unit's PROCEDURE DIVISION ... RAISING list (the exception-names it
+ * may hand its caller; EC-USER ones are checked against it), and whether
+ * >>PROPAGATE ON was in force where the unit began */
+static int g_raising[32], g_nraising, g_propagate;
+/* the allowed list as a literal: NUL-separated names, a double NUL at the end */
+static const char *raising_pool(void)
+{
+    char buf[32 * 64]; int n = 0;
+    for (int i = 0; i < g_nraising; i++) { const char *nm = ec_name(g_raising[i]); size_t l = strlen(nm) + 1; memcpy(buf + n, nm, l); n += (int)l; }
+    buf[n++] = 0;
+    return lit_label((const unsigned char *)buf, n);
+}
+/* GOBACK RAISING / EXIT PROGRAM RAISING's hand-off to the caller:
+ * name NULL for LAST EXCEPTION */
+static void emit_ec_propagate(const char *name)
+{
+    if (name) emit_la("r3", lit_label((const unsigned char *)name, (int)strlen(name) + 1)); else emit_li("r3", 0);
+    emit_la("r4", raising_pool());
+    emit_call("cob_ec_propagate");
+}
+/* after a CALL or a function invocation returns: the condition the callee
+ * handed over, raised here as this unit's own when its checking is on
+ * (14.9.18.4 rule 1b) -- the names enabled here, one table, one call */
+static void emit_ec_propagated(void)
+{
+    int on[NEC + 64], n = 0;
+    for (int i = 0; i < NEC + g_necu; i++) {
+        if (ec_level(i) == 3) { if (g_ecs.on[i]) on[n++] = i; continue; }
+        /* a group (and EC-ALL) stands for the names the caller cannot know
+         * -- a user name the callee made up -- when the whole group is on:
+         * the runtime matches a propagated name by its group */
+        int all = 1, any = 0;
+        if (!strcmp(ec_name(i), "EC-USER")) { all = g_ecs.user_on; any = 1; }
+        else for (int j = 0; j < NEC + g_necu; j++) if (ec_level(j) == 3 && ec_group(j) == i) { any = 1; if (!g_ecs.on[j]) all = 0; }
+        if (ec_level(i) == 1) { all = 1; for (int j = 0; j < NEC + g_necu; j++) if (ec_level(j) == 3 && !g_ecs.on[j]) all = 0; any = 1; }
+        if (any && all) on[n++] = i;
+    }
+    if (!n) return;
+    char *buf = xmalloc((size_t)n * 64 + 1); int len = 0;
+    for (int k = 0; k < n; k++) { const char *nm = ec_name(on[k]); size_t l = strlen(nm) + 1; memcpy(buf + len, nm, l); len += (int)l; }
+    emit_la("r3", lit_label((const unsigned char *)buf, len)); emit_li("r4", n);
+    emit_call("cob_ec_propagated");
+    int Ldone = new_label();
+    emit("\tblt r1, r0, .L%d", Ldone);
+    for (int k = 0; k < n; k++) {
+        int Lnext = new_label();
+        emit_li("r2", k); emit("\tbne r1, r2, .L%d", Lnext);
+        emit_ec_dispatch(on[k]);                /* the runtime recorded the exact name; here its WHEN, USE or end */
+        emit_jump(Ldone);
+        emit_label(Lnext);
+    }
+    emit_label(Ldone);
+    free(buf);
+}
+/* RAISING {EXCEPTION exception-name | LAST EXCEPTION | identifier} on
+ * GOBACK (14.9.18) and EXIT PROGRAM (14.9.14 format 2) */
+static void parse_raising_phrase(int line)
+{
+    expect_word("raising");
+    if (g_std < 2002) die_at(line, "RAISING is COBOL 2002; compile with -std=2002");
+    if (accept_word("last")) {
+        accept_word("exception");
+        if (!g_in_decl && !g_ecp_handler) die_at(line, "RAISING LAST EXCEPTION is for a declarative procedure or a WHEN phrase (2023 14.9.18.3 rule 5)");
+        emit_ec_propagate(NULL);
+        return;
+    }
+    accept_word("exception");
+    if (cur()->kind != T_WORD || strncasecmp(cur()->s, "ec-", 3))
+        die_at(line, "RAISING an object reference is object orientation, not implemented; RAISING EXCEPTION exception-name is taken");
+    int i = ec_find(cur()->s, cur()->line);
+    if (i < 0) die_at(cur()->line, "'%s' is not an exception-name", cur()->s);
+    if (ec_level(i) != 3) die_at(cur()->line, "RAISING needs a level-3 exception-name, not %s (2023 14.9.18.3 rule 2)", ec_name(i));
+    if (!strncasecmp(ec_name(i), "EC-USER", 7)) {
+        int ok = 0;
+        for (int k = 0; k < g_nraising; k++) if (g_raising[k] == i) ok = 1;
+        if (!ok) die_at(cur()->line, "%s is not in this unit's PROCEDURE DIVISION RAISING phrase (2023 14.9.18.3 rule 2)", ec_name(i));
+    }
+    advance();
+    emit_ec_propagate(ec_name(i));
+}
 
 static void ecf_set(int c, int file, int on, int loc)
 {
@@ -404,6 +485,7 @@ static void ec_turn_c(int c, int file, int on, int loc)
 static void apply_turn(Tok *d)
 {
     char buf[512]; snprintf(buf, sizeof buf, "%s", d->s);
+    if (!strncasecmp(buf, "propagate-unit", 14)) { g_propagate = 1; return; }   /* copy.h's mark: >>PROPAGATE ON where this unit began */
     char *w[64]; int nw = 0;
     for (char *t = strtok(buf, " \t"); t && nw < 64; t = strtok(NULL, " \t")) w[nw++] = t;
     int k = 1, names[64], files[64], nn = 0;       /* w[0] is TURN */
@@ -462,7 +544,6 @@ static void apply_dirs(void)
 typedef struct { int sec, unit, global, mode; File *file; int ec; } UseEntry;   /* ec: an exception-name's index (USE AFTER EXCEPTION CONDITION), else -1 */
 static UseEntry g_use[64]; static int g_nuse;
 static struct { int unit, sec; int rep; } g_rwuse[16]; static int g_nrwuse;   /* USE BEFORE REPORTING sections: their report, for SUPPRESS */
-static int g_in_decl;
 
 /* USE [GLOBAL] AFTER [STANDARD] {ERROR|EXCEPTION} PROCEDURE [ON] {file... | INPUT | OUTPUT | I-O | EXTEND} */
 static void parse_use(void)

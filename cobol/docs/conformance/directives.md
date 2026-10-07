@@ -1,4 +1,4 @@
-# Compiler directives: conditional compilation (7.3.5-7.3.8, 7.3.11, 7.3.13, 7.3.16) and CALL-CONVENTION, LEAP-SECOND, LISTING, PAGE (7.3.9, 7.3.17-19)
+# Compiler directives: conditional compilation (7.3.5-7.3.8, 7.3.11, 7.3.13, 7.3.16), CALL-CONVENTION, LEAP-SECOND, LISTING, PAGE (7.3.9, 7.3.17-19) and PROPAGATE (7.3.21)
 
 Swept 2026-10-06 (docs/plans/standard-queue.md item 6), when the three
 directives were implemented. ISO/IEC 1989:2023: 7.3.5 conditional
@@ -92,3 +92,20 @@ syntax checked. Test: 2002/smalldir (GnuCOBOL 4 as the oracle).
 | LISTING GR 1 | no listing produced: the directive is ignored | **ruling**: no listing; ON or OFF checked, anything else refused (bad/std2002-listing-operand) |
 | LISTING GR 2-5 | listing rules | **n/a**: no listing |
 | PAGE SR 1-2, GR 1-3 | comment-text unchecked; no effect without a listing | **test**: 2002/smalldir (a quote left open in the comment-text) |
+
+## PROPAGATE (7.3.21)
+
+Implemented 2026-10-06 (standard-queue item 3, with EXIT PROGRAM and
+GOBACK RAISING: docs/conformance/exit.md, control.md). Test:
+2002/ecraising, case prop (run by hand: the propagated condition is fatal
+in the caller, which has no handler for it, so the run ends there as
+14.9.28 rule 20 says). The directive is read in the first text
+manipulation step, with the others; what it leaves for the parser is a
+mark at each unit that begins while it is on.
+
+| rule | paraphrase | disposition |
+|---|---|---|
+| SR 1 | not inside a compilation unit | **refused**: bad/std2002-propagate-inside |
+| GR 1, 3 | ON: propagation enabled for the units that follow, until OFF or the end of the group; OFF the reverse | **test**: 2002/ecraising (lib/ecpropagate.cbl: sub5 after `>>PROPAGATE ON`, sub6 before it, which does not propagate) |
+| GR 2 | a condition raised in such a unit and handled by neither a statement's exception phrase nor a declarative is propagated as GOBACK RAISING LAST in a declarative for it would | **test**: 2002/ecraising case prop: where the fatal end would be, the unit returns with the condition and the caller takes it up (goto_set.h `emit_ec_dispatch`, the `g_propagate` arm) |
+| GR 4 | the default is OFF | **test**: every other subprogram test |

@@ -2053,6 +2053,49 @@ void cob_ec_raise(const char *name, const char *stmt, const char *loc, const cha
 
 void cob_ec_clear(void) { ec_any = 0; }
 
+/* Exception propagation (2023 14.9.14 and 14.9.18, RAISING; 7.3.21
+ * PROPAGATE).  The ending program hands a condition to its caller:
+ * named, or LAST (the condition raised and not yet cleared, if any;
+ * name NULL).  An EC-USER name not in the header's RAISING list
+ * (allowed: NUL-separated, double NUL at the end) becomes
+ * EC-RAISING-NOT-SPECIFIED (14.9.18.4 rule 1b3a).  The caller, when any
+ * checking is on at its CALL, asks for the condition by its own table
+ * of names and raises it as its own. */
+static char ec_prop[64];
+void cob_ec_propagate(const char *name, const char *allowed)
+{
+    char nm[64]; int n = 0;
+    if (!name) {
+        if (!ec_any) return;                       /* LAST with nothing raised: ignored (rule 1b3b) */
+        for (; n < 63 && ec_last[n] != ' '; n++) nm[n] = ec_last[n];
+    } else for (; n < 63 && name[n]; n++) nm[n] = (char)toupper((unsigned char)name[n]);
+    nm[n] = 0;
+    if (!strncmp(nm, "EC-USER", 7)) {
+        int ok = 0;
+        for (const char *a = allowed; a && *a && !ok; a += strlen(a) + 1) if (!strcasecmp(a, nm)) ok = 1;
+        if (!ok) snprintf(nm, sizeof nm, "EC-RAISING-NOT-SPECIFIED");
+    }
+    snprintf(ec_prop, sizeof ec_prop, "%s", nm);
+}
+int cob_ec_propagated(const char *names, int n)
+{
+    if (!ec_prop[0]) return -1;
+    /* the caller's enabled names, every level: the condition itself,
+     * else its level-2 group (EC-USER-X under EC-USER), else EC-ALL --
+     * the caller may not know a user name the callee made up, and
+     * checking by the group is what lets it through (14.6.13.1.4) */
+    int r = -2, best = 9;
+    const char *p = names;
+    for (int i = 0; i < n; i++, p += strlen(p) + 1) {
+        size_t pl = strlen(p);
+        int rank = !strcasecmp(p, ec_prop) ? 0 : (!strncasecmp(p, ec_prop, pl) && ec_prop[pl] == '-') ? 1 : !strcasecmp(p, "EC-ALL") ? 2 : 9;
+        if (rank < best) { best = rank; r = i; }
+    }
+    if (r >= 0) cob_ec_raise(ec_prop, 0, 0, 0);    /* the exact name is the condition that exists */
+    ec_prop[0] = 0;
+    return r;
+}
+
 /* EC-BOUND-REF-MOD: 1 when (start:len) leaves an item of size bytes;
  * len -1 when the length was omitted (the rest of the item) */
 static int pos_nonint;

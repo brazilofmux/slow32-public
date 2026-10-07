@@ -328,6 +328,7 @@ static void parse_call(void)
         }
     }
     if (Lcobret >= 0) emit_label(Lcobret);
+    if (g_std >= 2002) emit_ec_propagated();          /* a condition the program handed back (14.9.18.4 rule 1b) */
     if (ecnf && !has_clause) emit_label(Lafter);    /* reached only past a raise that returned, which a fatal one never does */
     if (has_clause) {
         emit("\tstw sp+%d, r0", SLOT_C);

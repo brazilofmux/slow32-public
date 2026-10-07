@@ -192,6 +192,7 @@ static void emit_ucall(const UCall *u0)
     for (int k = 0; k <= u->nargs; k++) a[k] = arg_ref(&refs[k]);
     emit_args(a, u->nargs + 1);
     emit_call(f->link);
+    if (g_std >= 2002) emit_ec_propagated();          /* a condition the function handed back (GOBACK RAISING; 14.9.18.4 rule 1b) */
 }
 
 static void emit_ucalls(int from, int to)

@@ -989,8 +989,7 @@ static void parse_statement_1(void)
         if (g_in_decl && cur_use_is_global())
             die_at(t->line, "GOBACK in a declarative whose USE statement says GLOBAL (2002 14.8.17.2 rule 1; 2023 14.9.18.3 rule 1)");
         advance();
-        if (at_word("raising"))
-            die_at(t->line, "GOBACK RAISING is not implemented yet (exception propagation to the caller, as EXIT PROGRAM RAISING)");
+        if (at_word("raising")) parse_raising_phrase(t->line);
         if (at_word("with") && (is_word(peek(1), "error") || is_word(peek(1), "normal")))
             die_at(t->line, "GOBACK WITH ... STATUS is COBOL 2023 (14.9.18); not implemented -- STOP RUN WITH STATUS is 2002's");
         pc_rec_leave();
@@ -1010,8 +1009,7 @@ static void parse_statement_1(void)
         int exit_tp = g_tp;
         advance();
         if (accept_word("program")) {
-            if (at_word("raising"))
-                die_at(t->line, "EXIT PROGRAM RAISING is not implemented yet (exception propagation to the caller)");
+            if (at_word("raising")) parse_raising_phrase(t->line);
             if (g_is_function)
                 die_at(t->line, "EXIT PROGRAM is only in a program's procedure division, not a function's (2023 14.9.14.3 rule 7)");
             if (g_in_decl && cur_use_is_global())
@@ -1340,8 +1338,22 @@ static void parse_procedure_division(void)
         fdesc_of(&f->ret, r);
         fnsig_write(f);
     }
-    if (at_word("raising"))
-        die_at(cur()->line, "PROCEDURE DIVISION ... RAISING is COBOL 2002 (2023 14.2); not implemented (exception propagation)");
+    g_nraising = 0;
+    if (accept_word("raising")) {
+        /* RAISING exception-name ... (2023 14.2): what this unit may hand
+         * its caller; an EC-USER name raised must be here */
+        if (g_std < 2002) die_at(cur()->line, "PROCEDURE DIVISION RAISING is COBOL 2002; compile with -std=2002");
+        while (cur()->kind == T_WORD && cur()->kind != T_PERIOD) {
+            if (strncasecmp(cur()->s, "ec-", 3)) die_at(cur()->line, "RAISING an object reference is object orientation, not implemented; an exception-name is taken");
+            int i = ec_find(cur()->s, cur()->line);
+            if (i < 0) die_at(cur()->line, "'%s' is not an exception-name", cur()->s);
+            if (ec_level(i) != 3 || strncasecmp(ec_name(i), "EC-USER-", 8)) die_at(cur()->line, "RAISING names a level-3 EC-USER exception-name, not %s (2023 14.2.2 rule 7)", ec_name(i));
+            if (g_nraising == 32) die_at(cur()->line, "more than 32 names in RAISING");
+            g_raising[g_nraising++] = i;
+            advance();
+        }
+        if (!g_nraising) die_at(cur()->line, "RAISING needs an exception-name");
+    }
     expect_period();
     if (g_fnsig_only) { skip_unit_body(); return; }
     prescan_paragraphs(g_tp);
@@ -1545,6 +1557,7 @@ static void parse_procedure_division(void)
     g_cur_para = NULL;
     if (!g_udepth) g_nuse = 0;              /* a contained unit's USE entries follow the enclosing units' */
     g_cur_sec_id = -1; g_in_decl = 0;
+    g_propagate = 0; apply_dirs();          /* a >>PROPAGATE ON over this unit arrives as a directive at its start */
     if (accept_word("declaratives")) {
         /* the declarative sections are reached only through USE; jump over them */
         expect_period();

@@ -37,7 +37,8 @@ registry) predates the sweep and is not yet swept rule by rule.
 | SR 2 | BY VALUE parameters numeric or pointer (object: n/a) | **refused**: bad/std2002-using-value-alnum |
 | SR 3-4 | RETURNING in a function; allowed in a program | **test**: 2002/userfn, 2002/callreturning |
 | SR 5-6 | the returning item level 01/77 LINKAGE, not BASED or REDEFINES, not a parameter | **refused**: bad/std2002-returning-ws, -returning-using |
-| SR 7-13 | RAISING, object orientation | **n/a** (RAISING: the named EXIT RAISING gap) |
+| SR 7 | RAISING names level-3 EC-USER exception-names | **test**: 2002/ecraising (implemented 2026-10-06, standard-queue item 3: the names an EXIT PROGRAM / GOBACK RAISING of this unit may hand its caller, and what RAISING LAST turns into EC-RAISING-NOT-SPECIFIED); **refused**: bad/std2002-procedure-raising (a name that is not EC-USER), an object-class or interface name by name |
+| SR 8-13 | object orientation | **n/a** |
 | GR 2-4 | positional correspondence; OPTIONAL admits OMITTED; BY REFERENCE / BY VALUE carry over | **test**: 2002/callparams (the oracle agrees) |
 | GR 6-7 | the returning item is the caller's; its initial value undefined | **test**: 2002/callreturning |
 | GR 8-9 | by reference the same storage; by content a copy | **test**: throughout (CCVS IC) |
