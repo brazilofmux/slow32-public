@@ -259,7 +259,7 @@ carry the compiler's own reason.
 | 14.9.21 | INITIATE statement | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
 | 14.9.22 | INSPECT statement | [string](string.md) | 3 | 20 | 0 | 2 | 0 |
 | 14.9.23 | INVOKE statement | **not implemented**: INVOKE is object orientation, not implemented | | | | | |
-| 14.9.24 | MERGE statement | [sort](sort.md) | 3 | 12 | 0 | 0 | 0 |
+| 14.9.24 | MERGE statement | [sort](sort.md) | 4 | 11 | 0 | 0 | 0 |
 | 14.9.25 | MOVE statement | [move](move.md) | 14 | 9 | 0 | 8 | 0 |
 | 14.9.26 | MULTIPLY statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
 | 14.9.27 | OPEN statement | [io-statements](io-statements.md) | 1 | 18 | 0 | 0 | 0 |
@@ -267,15 +267,15 @@ carry the compiler's own reason.
 | 14.9.29 | RAISE statement | [raise](raise.md) | 1 | 3 | 0 | 1 | 0 |
 | 14.9.30 | READ statement | [io-statements](io-statements.md) | 1 | 18 | 0 | 0 | 0 |
 | 14.9.31 | RECEIVE statement | **not implemented**: receive: COBOL 85's Communication module is out by ruling, and COBOL 2023's asynchronous messaging (14.9.31, 14.9.38) is not implemented | | | | | |
-| 14.9.32 | RELEASE statement | [sort](sort.md) | 3 | 12 | 0 | 0 | 0 |
+| 14.9.32 | RELEASE statement | [sort](sort.md) | 4 | 11 | 0 | 0 | 0 |
 | 14.9.33 | RESUME statement | **not implemented**: RESUME is not implemented (COBOL 2014 made it optional) | | | | | |
-| 14.9.34 | RETURN statement | [sort](sort.md) | 3 | 12 | 0 | 0 | 0 |
+| 14.9.34 | RETURN statement | [sort](sort.md) | 4 | 11 | 0 | 0 | 0 |
 | 14.9.35 | REWRITE statement | [io-statements](io-statements.md) | 1 | 18 | 0 | 0 | 0 |
 | 14.9.36 | ROLLBACK statement | **not implemented**: ROLLBACK is COBOL 2023; not implemented | | | | | |
 | 14.9.37 | SEARCH statement | [search](search.md) | 7 | 10 | 0 | 0 | 0 |
 | 14.9.38 | SEND statement | **not implemented**: send: COBOL 85's Communication module is out by ruling, and COBOL 2023's asynchronous messaging (14.9.31, 14.9.38) is not implemented | | | | | |
 | 14.9.39 | SET statement | [set](set.md), [usage](usage.md) | 36 | 20 | 0 | 1 | 4 |
-| 14.9.40 | SORT statement | [sort](sort.md) | 3 | 12 | 0 | 0 | 0 |
+| 14.9.40 | SORT statement | [sort](sort.md) | 4 | 11 | 0 | 0 | 0 |
 | 14.9.41 | START statement | [io-statements](io-statements.md) | 1 | 18 | 0 | 0 | 0 |
 | 14.9.42 | STOP statement | [control](control.md) | 10 | 10 | 0 | 1 | 0 |
 | 14.9.43 | STRING statement | [string](string.md) | 3 | 20 | 0 | 2 | 0 |

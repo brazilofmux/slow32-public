@@ -366,7 +366,10 @@ a >>TURN after a 45296,5 under DECIMAL-POINT IS COMMA applied one statement late
 - Today: each "FUNCTION ... is COBOL 2014; not implemented". In scope: the owner ruled on
   2026-10-06 that everything standard holds (refusals.md section 3 amended).
 
-**28. Table SORT completion.** 14.9.40 (ALL subscript, nested tables); Ed. 2014; S-M; deps none.
+**28. Table SORT completion.** 14.9.40 (ALL subscript, nested tables); Ed. 2014; S-M; deps none. DONE
+2026-10-07 (sort.md rules 13-14; tests 2002/sortnested (GnuCOBOL agrees), 2002/sortall (no oracle:
+GnuCOBOL refuses ALL), bad/std2002-sort-nested): the table written with the outer subscripts, its
+own omitted or ALL; the selected table sorted in place through the same cob_sort_table.
 - Today: "a table SORT of a table inside another table is not implemented".
 
 **29. 2014 behaviour-change audit.** 2014 E.2 items 1-29; Ed. 2014; S-M. One row per item: does

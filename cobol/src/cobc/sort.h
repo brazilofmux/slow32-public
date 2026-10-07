@@ -76,18 +76,14 @@ static void sort_key_class(const Sym *k, int line, const char *rule)
  * (the DEPENDING ON count, or all) put in order in place */
 static void parse_sort_table(int line)
 {
-    /* data-name-2, written without subscripts: resolved by name and
-     * qualifiers, not by parse_ref, which asks for the subscripts */
-    Ref tr; memset(&tr, 0, sizeof tr); tr.line = cur()->line;
-    char nm[64], qb[8][64]; char *qv[8]; int nq = 0;
-    snprintf(nm, sizeof nm, "%s", cur()->s); advance();
-    while ((at_word("of") || at_word("in")) && peek(1)->kind == T_WORD && nq < 8) { advance(); snprintf(qb[nq], 64, "%s", cur()->s); qv[nq] = qb[nq]; nq++; advance(); }
-    g_cen_ctx = CEN_PLAIN; tr.sym = sym_lookup(nm, qv, nq, tr.line); g_cen_ctx = 0;
+    /* data-name-2: a table, written with the subscripts of the tables it
+     * is inside and its own omitted or ALL (2023 8.4.2.3.3 rules 5e, 6;
+     * standard-queue item 28) -- the one table of that many is sorted */
+    Ref tr;
+    g_sort_subj = 1; parse_ref(&tr); g_sort_subj = 0;
     if (g_cen_on) cen_pin(tr.sym, "SORT");          /* the table's entries, moved whole */
-    if (at_op("(")) die_at(tr.line, "SORT '%s': a table SORT of a table inside another table is not implemented", nm);
     Sym *e = tr.sym;
     if (!e->occurs) die_at(tr.line, "SORT '%s': a table SORT names an entry with an OCCURS clause (2023 14.9.40.3 rule 13)", e->name);
-    if (e->ndims != 1 || tr.nsub || tr.rm) die_at(tr.line, "SORT '%s': a table SORT of a table inside another table is not implemented", e->name);
     if (g_nsorttab == g_sorttabcap) { g_sorttabcap = g_sorttabcap ? g_sorttabcap * 2 : 4; g_sorttab = realloc(g_sorttab, g_sorttabcap * sizeof *g_sorttab); }
     SortTab *t = &g_sorttab[g_nsorttab++];
     memset(t, 0, sizeof *t); t->id = new_label();
@@ -102,17 +98,17 @@ static void parse_sort_table(int line)
         while (cur()->kind == T_WORD && !at_word("on") && !at_word("ascending") && !at_word("descending") &&
                !at_word("with") && !at_word("collating") && !at_word("sequence") && !is_verb(cur()->s) && !is_terminator(cur()->s)) {
             Sym *q = sym_lookup_quiet(cur()->s);
-            if (q && (q->ndims > 1 || (q->occurs && q != e)))
+            if (q && (q->ndims > e->ndims || (q->occurs && q != e)))
                 die_at(cur()->line, "SORT key '%s' has an OCCURS clause or is in a table inside '%s' (2023 14.9.40.3 rule 14e)", q->name, e->name);
             int save = g_noemit; g_noemit++;
             Ref k; memset(&k, 0, sizeof k);
             g_cen_ctx = CEN_PLAIN; k.sym = sym_lookup(cur()->s, NULL, 0, cur()->line); g_cen_ctx = 0; k.line = cur()->line; advance();
             while (accept_word("of") || accept_word("in")) advance();
             g_noemit = save;
-            if (at_op("(")) die_at(k.line, "SORT key '%s' is written without subscripts (2023 14.9.40.3 rule 14b)", k.sym->name);
+            if (cur()->kind == T_LP) die_at(k.line, "SORT key '%s' is written without subscripts (2023 14.9.40.3 rule 14b)", k.sym->name);
             if (!sym_under(sym_idx(k.sym), ei))
                 die_at(k.line, "SORT key '%s' is not '%s' or an item inside it (2023 14.9.40.3 rule 14a)", k.sym->name, e->name);
-            for (int a = k.sym->parent; a >= 0 && a != ei; a = g_sym[a].parent)
+            for (int a = k.sym == e ? -1 : k.sym->parent; a >= 0 && a != ei; a = g_sym[a].parent)   /* the key the table itself (GR 23): nothing between */
                 if (g_sym[a].occurs) die_at(k.line, "SORT key '%s' is inside '%s', which has an OCCURS clause (2023 14.9.40.3 rule 14e)", k.sym->name, g_sym[a].name);
             sort_key_class(k.sym, k.line, "2023 14.9.40.3 rule 14c");
             if (t->nk == 16) die_at(k.line, "too many SORT keys (16)");
@@ -133,8 +129,9 @@ static void parse_sort_table(int line)
     }
     if (accept_word("with")) { expect_word("duplicates"); accept_word("in"); accept_word("order"); }
     int coll = sort_collating("SORT");
-    /* the first occurrence's address, the count, the stride */
-    Ref first = tr; first.nsub = 1; first.sub[0].sym = NULL; first.sub[0].lit = 1; first.sub[0].adj = 0;
+    /* the first occurrence's address (the outer subscripts as written, its
+     * own 1), the count, the stride */
+    Ref first = tr; first.nsub = e->ndims; first.sub[e->ndims - 1].sym = NULL; first.sub[e->ndims - 1].lit = 1; first.sub[e->ndims - 1].adj = 0;
     if (e->odo_dep_sym) {
         Opnd d; memset(&d, 0, sizeof d); d.kind = O_REF; d.ref.sym = e->odo_dep_sym; d.ref.line = line; d.line = line;
         if (is_hot_int(e->odo_dep_sym)) emit_hot_value(&d);

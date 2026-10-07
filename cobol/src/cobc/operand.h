@@ -388,6 +388,7 @@ static void parse_ref(Ref *r)
 }
 
 static int fn89_known(const char *w);
+static int g_sort_subj;               /* parsing the table a SORT sorts: its own subscript omitted or ALL (parse_ref_1) */
 /* a structured constant, or an item inside one, named as a receiving
  * operand (2023 13.18.15.3 rule 2): refused at each statement that stores
  * into its operands; a store that got past them (through a pointer, a
@@ -523,8 +524,15 @@ static void parse_ref_1(Ref *r)
                     if (snq == 64) die_at(cur()->line, "more than 64 qualifiers on a subscript");
                     sq[snq++] = cur()->s; advance();
                 }
-                if (!strcmp(sname, "all") && !sym_lookup_quiet("all"))
+                if (!strcmp(sname, "all") && !sym_lookup_quiet("all")) {
+                    /* SORT's table, its rightmost subscript ALL: as if omitted
+                     * (2023 8.4.2.3.3 rule 6; 14.9.40 format 2) */
+                    if (g_sort_subj && cur()->kind == T_RP && r->nsub == r->sym->ndims - 1) { advance(); break; }
+                    if (g_sort_subj && cur()->kind == T_RP)
+                        die_at(st->line, "SORT '%s': ALL stands for the table's own subscript, the last; the %d table%s it is inside %s subscripted before it (2023 8.4.2.3.3 rules 5e, 6)",
+                               r->sym->name, r->sym->ndims - 1, r->sym->ndims == 2 ? "" : "s", r->sym->ndims == 2 ? "is" : "are");
                     die_at(st->line, "the subscript ALL is for a table in an intrinsic function's argument, and SORT's table format (2023 8.4.2.3.3 rules 6-7)");
+                }
                 Sym *ss = sym_lookup(sname, sq, snq, st->line);
                 if (!is_int_item(ss)) die_at(st->line, "the subscript '%s' must be an integer item", ss->name);
                 if (ss->ndims) die_at(st->line, "a subscript cannot itself be subscripted in COBOL 85");
@@ -619,6 +627,19 @@ static void parse_ref_1(Ref *r)
         r->rm_nat = r->sym->pi.category == PIC_NATIONAL;
     }
     ref_resolve_bits(r);
+    if (g_sort_subj) {
+        /* the table a SORT sorts: the subscripts of the tables it is inside,
+         * its own omitted or ALL (8.4.2.3.3 rule 5e); not reference-modified */
+        if (r->rm) die_at(r->line, "SORT '%s': the table sorted is not reference-modified (2023 14.9.40 format 2)", r->sym->name);
+        if (r->sym->ndims == 0) die_at(r->line, "SORT '%s': a table SORT names an entry with an OCCURS clause (2023 14.9.40.3 rule 13)", r->sym->name);
+        if (r->nsub != r->sym->ndims - 1)
+            die_at(r->line, "SORT '%s': a table inside %d other%s is written with %d subscript%s, the tables it is inside, its own omitted or ALL (2023 8.4.2.3.3 rule 5e)",
+                   r->sym->name, r->sym->ndims - 1, r->sym->ndims == 2 ? "" : "s", r->sym->ndims - 1, r->sym->ndims == 2 ? "" : "s");
+        for (int i = 0; i < r->nsub; i++)
+            if (!r->sub[i].sym && (r->sub[i].lit < 1 || r->sub[i].lit > r->sym->dim_count[i]))
+                die_at(r->line, "subscript %ld is outside OCCURS %d of '%s'", r->sub[i].lit, r->sym->dim_count[i], r->sym->name);
+        return;
+    }
     if (r->nsub != r->sym->ndims) {
         if (r->sym->ndims == 0) die_at(r->line, "'%s' is not a table item and takes no subscript", r->sym->name);
         die_at(r->line, "'%s' needs %d subscript%s, %d given", r->sym->name, r->sym->ndims,

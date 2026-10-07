@@ -1,0 +1,5 @@
+SORT 'cell': a table inside 1 other is written with 1 subscript, the tables it is inside, its own omitted or ALL (2023 8.4.2.3.3 rule 5e)
+SORT 'cell': a table inside 1 other is written with 1 subscript, the tables it is inside, its own omitted or ALL (2023 8.4.2.3.3 rule 5e)
+SORT 'cell': ALL stands for the table's own subscript, the last; the 1 table it is inside is subscripted before it (2023 8.4.2.3.3 rules 5e, 6)
+SORT key 'cv' is written without subscripts (2023 14.9.40.3 rule 14b)
+SORT 'cell': the table sorted is not reference-modified (2023 14.9.40 format 2)

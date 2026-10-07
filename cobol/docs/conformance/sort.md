@@ -34,8 +34,8 @@ once (cob_sort_table).
 
 | rule | paraphrase | disposition |
 |---|---|---|
-| 13 | the table is an entry with OCCURS | **refused** otherwise: bad/std2002-sort-table. A table inside another table: **not implemented** |
-| 14a-e | keys the entry or inside it, unsubscripted, not in a nested table, not boolean or pointer | **refused**: bad/std2002-sort-table |
+| 13 | the table is an entry with OCCURS; subscripted by 8.4.2.3 -- a table inside others is written with their subscripts and its own omitted, or ALL in its place (8.4.2.3.3 rules 5e, 6) | **test**: 2002/sortnested (two and three levels, a literal, an item and an index as the outer subscript; GnuCOBOL agrees), 2002/sortall (the ALL form; no oracle: GnuCOBOL 4 refuses ALL in a SORT) -- implemented 2026-10-07, standard-queue item 28 (`g_sort_subj`, operand.h: parse_ref takes one subscript fewer, or ALL last); **refused** otherwise: bad/std2002-sort-table, bad/std2002-sort-nested (too few or too many subscripts, ALL not last, a reference modification) |
+| 14a-e | keys the entry or inside it, unsubscripted, not in a nested table, not boolean or pointer | **refused**: bad/std2002-sort-table, bad/std2002-sort-nested (a subscripted key: the check compared the wrong token kind and never fired until item 28). A key that is the table itself, inside another table (GR 23), is taken: 2002/sortall |
 | 15 | no KEY phrase only if the OCCURS clause has KEYs; then those | **test**: 2002/sorttable (own key); **refused** otherwise |
 | GR 3c | WITH DUPLICATES: equal keys keep their order | **test**: 2002/sortdups -- no oracle: GnuCOBOL's table SORT reorders equal keys, with the phrase or without |
 | GR 4 | without DUPLICATES the order of equal keys is undefined | stable anyway |
