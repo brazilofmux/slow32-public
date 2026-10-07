@@ -11,9 +11,25 @@ static int sema_ret_ty;   /* current function's return type */
 
 /* --- Helpers --- */
 
+/* The integer promotions (C90 6.2.1.1): a char or short operand, signed
+ * or unsigned, is an int in any arithmetic, comparison, shift or unary
+ * minus -- so unsigned char - 48 is a signed int, and a ternary of it
+ * against -1 compares signed.  Issue 82: the unsigned flag of an
+ * unsigned char went straight into the result, and (c >= '0' && c <= '9'
+ * ? c - '0' : -1) < 0 was an unsigned compare, never true. */
+static int sema_promote(int ty) {
+    int base;
+    if (ty_is_ptr(ty)) return ty;
+    base = ty & TY_BASE_MASK;
+    if (base == TY_CHAR || base == TY_SHORT) return TY_INT;
+    return ty;
+}
+
 static int sema_arith_type(int lty, int rty) {
     if (ty_is_ptr(lty)) return lty;
     if (ty_is_ptr(rty)) return rty;
+    lty = sema_promote(lty);
+    rty = sema_promote(rty);
     /* Float promotion: double > float > long long > int */
     if (ty_is_double(lty) || ty_is_double(rty)) return TY_DOUBLE;
     if (ty_is_float(lty) || ty_is_float(rty)) return TY_FLOAT;
@@ -86,15 +102,16 @@ static void sema_expr(Node *n) {
         rty = n->rhs ? n->rhs->ty : TY_INT;
 
         if (sema_is_cmp(n->op)) {
-            /* Comparisons: result is int, but mark unsigned if either operand is */
+            /* Comparisons: result is int, but mark unsigned if either
+             * operand is -- after the integer promotions (sema_promote) */
             n->ty = TY_INT;
-            if ((lty & TY_UNSIGNED) || (rty & TY_UNSIGNED))
+            if ((sema_promote(lty) & TY_UNSIGNED) || (sema_promote(rty) & TY_UNSIGNED))
                 n->ty = TY_INT | TY_UNSIGNED;
         } else if (n->op == TK_LAND || n->op == TK_LOR) {
             n->ty = TY_INT;
         } else if (n->op == TK_LSHIFT || n->op == TK_RSHIFT) {
-            /* Shift: signedness from LHS */
-            n->ty = lty;
+            /* Shift: signedness from LHS, promoted */
+            n->ty = sema_promote(lty);
         } else {
             /* Arithmetic/bitwise: propagate unsigned */
             n->ty = sema_arith_type(lty, rty);
@@ -104,7 +121,7 @@ static void sema_expr(Node *n) {
 
     if (n->kind == ND_UNARY) {
         if (n->op == TK_MINUS || n->op == TK_TILDE) {
-            n->ty = n->lhs ? n->lhs->ty : TY_INT;
+            n->ty = n->lhs ? sema_promote(n->lhs->ty) : TY_INT;
         }
         /* !, *, & already typed correctly by parser */
         return;

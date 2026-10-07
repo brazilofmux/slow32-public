@@ -103,6 +103,16 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Fixed 2026-10-07, ninth batch.  In `cc.s32x` only; any libc member
+compiled from a source with such an expression is wrong until rebuilt:
+
+- **The integer promotions were skipped** (selfhost ISSUES-82).  An
+  `unsigned char` or `unsigned short` operand made its arithmetic,
+  comparison, shift or unary-minus result unsigned, so `(c >= '0' && c
+  <= '9' ? c - '0' : -1) < 0` was an unsigned compare, never true, and
+  `c > -1` false.  Silent, in any sign-sensitive use of such a result;
+  found by cobol's libcob (the 2014 date and time functions' scanner).
+
 Fixed 2026-10-07, eighth batch (`e98e1926`).  In `cc.s32x` only:
 
 - **A struct member read after a call took its address reloaded from

@@ -2983,3 +2983,34 @@ gives the load a different operand. Test
 `tests/test_member_addr_call.c` (exit 1 on the old compiler, 0 on
 this); stage08's suite with the self-rebuild gate; cobol's
 selfhost-libcob gate against the rebuilt kit.
+
+### 82. [RESOLVED 2026-10-07] stage08 cc: the integer promotions were skipped -- an unsigned char operand made the result unsigned
+
+Found 2026-10-07 by cobol's selfhost-libcob gate when libcob gained the
+2014 date and time functions (cobol queue item 27): TEST-FORMATTED-
+DATETIME("hhmmss.sss", "123456x78") returned 0 where the clang-built
+runtime returned 7, the position of the x. The reproducer:
+
+    static int g(const unsigned char *p)
+    { return ((p[0] >= '0' && p[0] <= '9' ? p[0] - '0' : -1) < 0); }
+
+gives 0 for "x" (clang: 1). The emitted compare is `sltiu r1, r1, 0`,
+an unsigned less-than-zero, never true: the ternary's type was taken as
+unsigned int because one branch is `unsigned char - '0'`, and
+`sema_arith_type` passed an operand's TY_UNSIGNED straight into the
+result. C's integer promotions come first (C90 6.2.1.1): a char or
+short, signed or unsigned, is an int in any arithmetic, comparison,
+shift or unary minus, and only an unsigned operand of int's rank or
+wider makes the result unsigned. The same flag reached comparisons
+(`unsigned char c; c > -1` was an unsigned compare, false), shifts
+(signedness from an unsigned char LHS) and unary minus and ~.
+
+How it hid: SQLite byte-identical, the COBOL corpus, 82 stage08 tests.
+An unsigned char - constant that is then compared against zero or a
+negative is rare in that code; the runtime's new scanner had it in a
+macro used at every digit. Fixed in sema.h: `sema_promote` applied in
+`sema_arith_type` (so the ternary and the arithmetic operators), the
+comparison rule, the shift rule and unary minus / ~. Test
+`tests/test_int_promote.c` (exit 1 on the old compiler, 0 on this, 0
+with clang); stage08's suite with the self-rebuild gate; cobol's
+selfhost-libcob gate against the rebuilt kit.
