@@ -4,7 +4,8 @@
 # Gate 1 (pictest): pic_analyse over tests/pictures.txt against an expected
 #   file checked by hand against the 1985 PICTURE clause text.
 # Gate 2 (programs): every tests/fixed/*.cbl and tests/free/*.cbl (and
-#   tests/2002/*.cbl, under -std=2002 and the oracle's -std=cobol2002) compiled by
+#   tests/2002/*.cbl, under -std=2002 and the oracle's -std=cobol2002; tests/2014/*.cbl
+#   likewise under -std=2014 and -std=cobol2014) compiled by
 #   s32-cobc, assembled, linked with libcob and the SLOW-32 libc, run on the
 #   emulator; stdout must match the .expected file.  The same source is also
 #   compiled and run under GnuCOBOL and diffed, so the .expected files are
@@ -171,7 +172,7 @@ fi
 # a run that silently dropped two gates would read as a full one.
 SKIPPED=""; GEN_SKIPPED=""
 if ! command -v "$HOSTCC" >/dev/null 2>&1; then
-    SKIPPED=" pictest bt_test wide_test scredit_test scrnum_test scram_test"
+    SKIPPED=" pictest bt_test wide_test ieee_test scredit_test scrnum_test scram_test"
     echo "SKIP  pictest  (no host C compiler: $HOSTCC)"
     echo "SKIP  bt_test  (no host C compiler: $HOSTCC)"
 elif ! "$HOSTCC" -std=c99 -I"$CDIR/src" -O1 -w -o "$W/pictest" "$HERE/pictest.c" \
@@ -196,6 +197,18 @@ if [ -z "$SKIPPED" ]; then
         report "wide_test" 0 "$(tail -1 "$W/wide.out" | sed 's/^wide_test: //')"
     else
         report "wide_test" 1 "$(tail -1 "$W/wide.out")"
+    fi
+    # --- Gate 1d: the IEEE formats (host, libcob/ieee.h) against the exact
+    # rational arithmetic of tests/ieee_vectors.py (binary128 both ways, the
+    # decimal formats in both encodings and byte orders)
+    if ! "$HOSTCC" -std=gnu99 -I"$CDIR/libcob" -O1 -w -o "$W/ieee_test" "$HERE/ieee_test.c" 2>"$W/cc.log"; then
+        report "ieee_test" 1 "host build"
+    elif ! python3 -I "$HERE/ieee_vectors.py" > "$W/ieee_vectors.txt" 2>"$W/ieee.err"; then
+        report "ieee_test" 1 "the vectors: $(tail -1 "$W/ieee.err")"
+    elif "$W/ieee_test" < "$W/ieee_vectors.txt" > "$W/ieee.out" 2>&1; then
+        report "ieee_test" 0 "$(tail -1 "$W/ieee.out" | sed 's/^ieee: //')"
+    else
+        report "ieee_test" 1 "$(tail -1 "$W/ieee.out")"
     fi
 fi
 
@@ -328,13 +341,14 @@ fi
 # --- Gate 2: programs --------------------------------------------------
 # tests/2002 is Stage B (docs/standards.md): free format, compiled with
 # -std=2002, the oracle with -std=cobol2002.  fixed/ and free/ are -std=85.
-for fmt in fixed free 2002; do
+for fmt in fixed free 2002 2014; do
     for src in "$HERE/$fmt"/*.cbl; do
         [ -e "$src" ] || continue
         name="$(basename "$src" .cbl)"
         exp="${src%.cbl}.expected"
         flag="-$fmt"; stdflag=""; ostd="-std=cobol85"
         [ "$fmt" = 2002 ] && { flag="-free"; stdflag="-std=2002"; ostd="-std=cobol2002"; }
+        [ "$fmt" = 2014 ] && { flag="-free"; stdflag="-std=2014"; ostd="-std=cobol2014"; }
         # mf-*: Micro Focus's dialect (-dialect=mf), the oracle in GnuCOBOL's -std=mf
         case "$name" in mf-*) stdflag="$stdflag -dialect=mf"; ostd="-std=mf" ;; esac
         # gnu-*: GnuCOBOL's own forms (-dialect=gnucobol), the oracle in its default dialect
@@ -458,7 +472,7 @@ for src in "$HERE/bad"/*.cbl; do
     exp="${src%.cbl}.expected"
     flag="-fixed"; grep -q "^identification division" "$src" && flag="-free"
     [ "$name" = "mixed-format" ] && flag="-fixed"
-    stdflag=""; case "$name" in std2002-*) stdflag="-std=2002" ;; esac   # a Stage B refusal
+    stdflag=""; case "$name" in std2002-*) stdflag="-std=2002" ;; std2014-*) stdflag="-std=2014" ;; esac   # a Stage B refusal; a 2014 one
     case "$name" in mf-*) stdflag="$stdflag -dialect=mf" ;; esac         # refused even under Micro Focus's dialect
     if "$COBC" $flag $stdflag -I "$HERE/copy" -o "$W/$name.s" "$src" 2>"$W/$name.err"; then
         report "bad/$name" 1 "was accepted"; continue

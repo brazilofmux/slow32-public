@@ -33,6 +33,7 @@ one() {   # one flags... file
 for f in "$HERE"/free/*.cbl; do one -free -I "$HERE/copy" "$f"; done
 for f in "$HERE"/fixed/*.cbl; do one -fixed -I "$HERE/copy" "$f"; done
 for f in "$HERE"/2002/*.cbl; do one -free -std=2002 -I "$HERE/copy" "$f"; done
+for f in "$HERE"/2014/*.cbl; do one -free -std=2014 -I "$HERE/copy" "$f"; done
 for g in "$HERE"/gen/gen-*.py; do
     for s in $(seq 1 20); do
         python3 "$g" "$s" > "$W/g.cbl" 2>/dev/null || continue

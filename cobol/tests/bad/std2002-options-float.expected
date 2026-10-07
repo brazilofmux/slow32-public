@@ -1,0 +1,1 @@
+the float-decimal clause is COBOL 2014 (2023 11.9.8-9), for the standard floating-point usages; compile with -std=2014

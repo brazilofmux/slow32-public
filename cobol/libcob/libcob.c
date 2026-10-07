@@ -28,6 +28,7 @@
 #include <errno.h>
 #include "cobrt.h"
 #include "wide.h"
+#include "ieee.h"
 #include "kern.h"
 #include "scredit.h"                    /* the screen field editor's core (docs/plans/screen-input.md) */
 
@@ -252,15 +253,92 @@ static int is_natnum(const cob_desc *d) { return d->usage == COB_U_NATIONAL || d
  * double (cob_wnum.isf); a store into a decimal item truncates, or rounds
  * under ROUNDED, to the item's scale, then stores as any wide value. */
 static int is_float(const cob_desc *d) { return d->usage == COB_U_FLOAT; }
+/* the standard floating-point formats held in software (COBOL 2014,
+ * ieee.h): FLOAT-DECIMAL-16/34 and FLOAT-BINARY-128, read into and
+ * written from the wide decimal stack */
+static int is_sfloat(const cob_desc *d) { return d->usage == COB_U_SFLOAT; }
+/* the hardware floats, in the machine's byte order unless the item says
+ * HIGH-ORDER-LEFT (FLOAT-BINARY-32/64, 2023 13.18.60; COB_F2_BIGEND) */
 static double f_load(const void *p, const cob_desc *d)
 {
-    if (d->size == 4) { float f; memcpy(&f, p, 4); return f; }
-    double x; memcpy(&x, p, 8); return x;
+    unsigned char b[8]; const unsigned char *q = p;
+    if (d->flags2 & COB_F2_BIGEND) { for (unsigned i = 0; i < d->size; i++) b[i] = q[d->size - 1 - i]; q = b; }
+    if (d->size == 4) { float f; memcpy(&f, q, 4); return f; }
+    double x; memcpy(&x, q, 8); return x;
 }
 static void f_store(void *p, const cob_desc *d, double x)
 {
-    if (d->size == 4) { float f = (float)x; memcpy(p, &f, 4); }
-    else memcpy(p, &x, 8);
+    unsigned char b[8];
+    if (d->size == 4) { float f = (float)x; memcpy(b, &f, 4); }
+    else memcpy(b, &x, 8);
+    unsigned char *q = p;
+    if (d->flags2 & COB_F2_BIGEND) for (unsigned i = 0; i < d->size; i++) q[i] = b[d->size - 1 - i];
+    else memcpy(q, b, d->size);
+}
+static int sf_load(const void *p, const cob_desc *d, cob_wnum *w)
+{
+    int neg, scale, r;
+    memset(w, 0, sizeof *w);
+    if (d->flags2 & COB_F2_FBIN) r = bin128_decode(p, d->flags2 & COB_F2_BIGEND, w->m, &scale, &neg);
+    else r = dec_decode(p, (int)d->size, d->flags2 & COB_F2_BIGEND, d->flags2 & COB_F2_DPD, w->m, &scale, &neg);
+    w->neg = neg && !mp_is_zero(w->m, WL); w->scale = scale; w->isq = 1;
+    if (r) { memset(w->m, 0, sizeof w->m); w->scale = 0; }   /* an infinity or a NaN: no number; zero here, the class condition says NUMERIC is false */
+    return r;
+}
+/* a double as a floating decimal of 36 digits: through binary128, which
+ * holds every double exactly */
+static int w_from_dbl_q(cob_wnum *w, double x)
+{
+    unsigned long long u; memcpy(&u, &x, 8);
+    int neg = (int)(u >> 63), e = (int)((u >> 52) & 0x7FF);
+    unsigned long long f = u & 0xFFFFFFFFFFFFFull;
+    memset(w, 0, sizeof *w); w->isq = 1;
+    if (e == 0x7FF) return 1;
+    int e128;
+    if (e == 0) {
+        if (!f) { w->neg = 0; return 0; }
+        e128 = 1 - 1023 + 16383;                    /* 0.f * 2^-1022 normalized */
+        while (!(f >> 52)) { f <<= 1; e128--; }
+        f &= 0xFFFFFFFFFFFFFull;
+    } else e128 = e - 1023 + 16383;
+    wl_t a[4] = { 0, 0, 0, 0 };
+    /* the 52 fraction bits at the top of binary128's 112 */
+    a[1] = (wl_t)(f << 28); a[2] = (wl_t)(f >> 4); a[3] = (wl_t)(f >> 36);
+    a[3] |= (wl_t)e128 << 16; if (neg) a[3] |= 1u << 31;
+    unsigned char b[16]; ieee_store(b, 16, 0, a);
+    int sneg, scale; bin128_decode(b, 0, w->m, &scale, &sneg);
+    w->neg = sneg && !mp_is_zero(w->m, WL); w->scale = scale; w->isq = 1;
+    return 0;
+}
+/* a wide value into a standard software float: nearest-even (IEEE's
+ * default, the standard usages' rounding); 1 when the value is past the
+ * format (a size error) */
+static int sf_store(void *p, const cob_desc *d, const cob_wnum *w0)
+{
+    cob_wnum w = *w0;
+    if (w.isf) { if (w_from_dbl_q(&w, w.f)) return 1; }
+    if (d->flags2 & COB_F2_FBIN) return bin128_encode(p, d->flags2 & COB_F2_BIGEND, w.m, w.scale, w.neg);
+    /* the scale in a local of its own: the kit's cc reloads a local
+     * struct's member from the wrong frame offset after a call takes its
+     * address (selfhost ISSUES-81) */
+    int sc = w.scale;
+    ieee_round_digits(w.m, &sc, d->size == 8 ? 16 : 34);
+    return dec_encode(p, (int)d->size, d->flags2 & COB_F2_BIGEND, d->flags2 & COB_F2_DPD, w.m, sc, w.neg);
+}
+/* DISPLAY of a standard float: the value's significant digits, one before
+ * the point, and a decimal exponent -- 1.5E+00, -2.25E-03, 0E+00 */
+static int sf_fmt(const cob_wnum *w, char *out)
+{
+    char d[40]; int n = w_to_digits(w->m, d, 39), o = 0;
+    if (!n) { memcpy(out, "0E+00", 5); return 5; }
+    const char *s = d + 39 - n;
+    int exp = n - 1 - w->scale, m = n;
+    while (m > 1 && s[m - 1] == '0') m--;           /* trailing zeros of the coefficient */
+    if (w->neg) out[o++] = '-';
+    out[o++] = s[0];
+    if (m > 1) { out[o++] = '.'; memcpy(out + o, s + 1, (size_t)(m - 1)); o += m - 1; }
+    o += sprintf(out + o, "E%c%02d", exp < 0 ? '-' : '+', exp < 0 ? -exp : exp);
+    return o;
 }
 static double pow10d(int k)
 {
@@ -275,6 +353,14 @@ static double w_to_dbl(const cob_wnum *w)
     if (w->isf) return w->f;
     double x = 0;
     int nd = w_ndigits(w->m), scale = w->scale;
+    if (w->isq && (scale < -300 || scale > 300 || scale < 0)) {
+        /* a floating value's exponent past a plain power of ten: digits and
+         * an exponent for the library's conversion */
+        char d[40], t[64]; int n = w_to_digits(w->m, d, 39);
+        if (!n) return 0;
+        snprintf(t, sizeof t, "%s%.*se%d", w->neg ? "-" : "", n, d + 39 - n, -scale);
+        return strtod(t, NULL);
+    }
     if (nd > 15 && scale > 0 && nd - 15 <= scale && scale - (nd - 15) <= 22) {
         /* to the nearest double in one rounding: the magnitude cut to 15
          * digits (exact in a double) by decimal division, rounded, then
@@ -404,6 +490,7 @@ long long cob_get_num_impl(const void *vp, const cob_desc *d)
 {
     const unsigned char *p = vp;
     if (cob_k_get_ok((const cob_kdesc *)d)) return cob_k_get_num(p, (const cob_kdesc *)d);
+    if (is_sfloat(d)) { cob_wnum w; sf_load(p, d, &w); if (w.scale > 0) w_drop_digits(w.m, WL, w.scale > 40 ? 40 : w.scale, 0, 0); else if (w.scale < 0 && !w_scale_up(w.m, -w.scale > 40 ? 40 : -w.scale)) return w.neg ? -9200000000000000000LL : 9200000000000000000LL; return w_fits_i64(&w) ? w_to_i64(&w) : w.neg ? -9200000000000000000LL : 9200000000000000000LL; }
     if (is_float(d)) {                              /* its integer part (the descriptor's scale is 0) */
         double x = f_load(p, d) * pow10d(d->scale);
         if (x != x) return 0;
@@ -442,6 +529,7 @@ static int eff_digits(const cob_desc *d)
 int cob_put_num_x_impl(void *vp, const cob_desc *d, long long v, int vscale, int opts)
 {
     if (is_float(d)) { f_store(vp, d, (double)v / pow10d(vscale)); return 0; }
+    if (is_sfloat(d)) { cob_wnum w; w_from_i64(&w, v, vscale); return sf_store(vp, d, &w) && (opts & 2); }
     if (cob_k_put_ok((const cob_kdesc *)d)) return cob_k_put_num(vp, (const cob_kdesc *)d, eff_digits(d), v, vscale, opts);
     if (d->digits > 18 || (d->usage == COB_U_BINARY && d->size > 8)) {
         if (is_wide(d)) { cob_wnum w; w_from_i64(&w, v, vscale); return cob_wput_x(vp, d, &w, opts); }
@@ -466,7 +554,7 @@ void cob_put_num(void *vp, const cob_desc *d, long long v, int vscale) { cob_put
  * with a sign and a scale; everything narrower keeps the 64-bit path. */
 static int is_wide(const cob_desc *d)
 {
-    return (d->cat == COB_NUM || d->cat == COB_NUM_ED) && (d->digits > 18 || (d->usage == COB_U_BINARY && d->size > 8));
+    return (d->cat == COB_NUM || d->cat == COB_NUM_ED) && (d->digits > 18 || (d->usage == COB_U_BINARY && d->size > 8) || d->usage == COB_U_SFLOAT);
 }
 
 /* any numeric item's value as a double (a float's own, a decimal's to
@@ -483,6 +571,7 @@ void cob_wget(const void *vp, const cob_desc *d, cob_wnum *w)
 {
     if (is_natnum(d)) { unsigned char b[NATNUM_MAX]; cob_desc nd; cob_wget(nat_narrow(vp, d, b, &nd), &nd, w); return; }
     if (is_float(d)) { w_set_f(w, f_load(vp, d)); return; }
+    if (is_sfloat(d)) { sf_load(vp, d, w); return; }
     const unsigned char *p = vp;
     char digs[80]; int n = 0, neg = 0;
     memset(w, 0, sizeof *w); w->scale = d->scale;
@@ -559,6 +648,13 @@ static int rmode_away(int mode, int cmp, int odd, int neg);
 int cob_wput_x(void *vp, const cob_desc *d, const cob_wnum *win, int opts)
 {
     if (is_float(d)) { f_store(vp, d, w_to_dbl(win)); return 0; }
+    if (is_sfloat(d)) return sf_store(vp, d, win) && (opts & 2);
+    if (win->isq && !win->isf && !is_natnum(d) && win->scale < d->scale - 60) {
+        /* a floating value far past any receiver's digits */
+        if (opts & 2) return 1;
+        cob_wnum z; memset(&z, 0, sizeof z); z.scale = d->scale;
+        return cob_wput_x(vp, d, &z, opts);
+    }
     if (win->isf && !is_natnum(d)) {
         /* a float into a decimal item: to its scale (truncated, or ROUNDED),
          * then as a wide value; past 38 digits a size error */
@@ -685,12 +781,25 @@ int cob_wput_x(void *vp, const cob_desc *d, const cob_wnum *win, int opts)
 }
 
 /* compare two wide values, -1 0 1 */
-static int w_cmp_val(const cob_wnum *a, const cob_wnum *b)
+static int w_cmp_val(const cob_wnum *a0, const cob_wnum *b0)
 {
+    cob_wnum qa, qb; const cob_wnum *a = a0, *b = b0;
+    if ((a->isq || b->isq) && (a->isf || b->isf)) {
+        /* a double beside a software float: both as floating decimals */
+        if (a->isf) { if (w_from_dbl_q(&qa, a->f)) qa = *a; a = &qa; }
+        if (b->isf) { if (w_from_dbl_q(&qb, b->f)) qb = *b; b = &qb; }
+    }
     if (a->isf || b->isf) { double x = w_to_dbl(a), y = w_to_dbl(b); return x < y ? -1 : x > y ? 1 : 0; }
     int za = mp_is_zero(a->m, WL), zb = mp_is_zero(b->m, WL);
     int na = a->neg && !za, nb = b->neg && !zb;
     if (na != nb) return na ? -1 : 1;
+    if (za != zb) return za ? (nb ? 1 : -1) : (na ? -1 : 1);
+    if (a->isq || b->isq) {
+        /* floating values: by their decimal exponents first, which keeps the
+         * alignment below within the limbs */
+        int ea = w_ndigits(a->m) - a->scale, eb = w_ndigits(b->m) - b->scale;
+        if (ea != eb) return (ea < eb) != na ? -1 : 1;
+    }
     wl_t x[2 * WL] = { 0 }, y[2 * WL] = { 0 };
     memcpy(x, a->m, sizeof a->m); memcpy(y, b->m, sizeof b->m);
     int s = a->scale > b->scale ? a->scale : b->scale;
@@ -738,6 +847,7 @@ void cob_display_field(const void *vp, const cob_desc *d)
     }
     if (d->cat != COB_NUM) { out_bytes((const char *)p, (int)d->size); return; }
     if (is_float(d)) { char t[40]; out_bytes(t, fmt_float(f_load(p, d), d->size == 4 ? 8 : 18, t)); return; }
+    if (is_sfloat(d)) { cob_wnum w; char t[64]; if (sf_load(p, d, &w) == 1) out_bytes(w.neg ? "-Inf" : "Inf", w.neg ? 4 : 3); else if (w.isq && 0) ; else out_bytes(t, sf_fmt(&w, t)); return; }
     if (d->flags & COB_F_INTFN) {                   /* an integer function's value, no leading zeros */
         char t[24]; long long v = cob_get_num(p, d);
         out_bytes(t, snprintf(t, sizeof t, "%lld", v));
@@ -1011,6 +1121,11 @@ void cob_move(const void *src, const cob_desc *sd, void *dst, const cob_desc *dd
         unsigned char *q = (unsigned char *)nat_narrow(dst, dd, b, &nd);
         cob_move(src, sd, q, &nd);
         nat_widen(dst, dd, q, (int)nd.size);
+        return;
+    }
+    if ((is_sfloat(sd) || is_sfloat(dd)) && is_numcat(sd) && is_numcat(dd)) {
+        /* a standard software float either side: through the wide value */
+        cob_wnum w; cob_wget(src, sd, &w); cob_wput_x(dst, dd, &w, 0);
         return;
     }
     if ((is_float(sd) || is_float(dd)) && is_numcat(sd) && is_numcat(dd)) {
@@ -1382,6 +1497,10 @@ int cob_cmp(const void *a, const cob_desc *ad, const void *b, const cob_desc *bd
 {
     if (is_natnum(ad)) { unsigned char t[NATNUM_MAX]; cob_desc nd; return cob_cmp(nat_narrow(a, ad, t, &nd), &nd, b, bd); }
     if (is_natnum(bd)) { unsigned char t[NATNUM_MAX]; cob_desc nd; return cob_cmp(a, ad, nat_narrow(b, bd, t, &nd), &nd); }
+    if ((is_sfloat(ad) || is_sfloat(bd)) && is_numcat(ad) && is_numcat(bd)) {   /* by the wide values */
+        cob_wnum x, y; cob_wget(a, ad, &x); cob_wget(b, bd, &y);
+        return w_cmp_val(&x, &y);
+    }
     if ((is_float(ad) || is_float(bd)) && is_numcat(ad) && is_numcat(bd)) {   /* in double (docs/usage.md) */
         double x = num_dbl(a, ad), y = num_dbl(b, bd);
         return x < y ? -1 : x > y ? 1 : 0;
@@ -1485,6 +1604,8 @@ int cob_class(const void *vp, const cob_desc *d, int kind)
             }
             return 1;
         }
+        if (d->usage == COB_U_SFLOAT) { cob_wnum w; return sf_load(p, d, &w) == 0; }   /* NUMERIC: a finite value (2023 8.8.4.4.4 rule 3n.1b) */
+        if (d->usage == COB_U_FLOAT) { double x = f_load(p, d); return x == x && x - x == 0; }   /* likewise: not a NaN, not an infinity */
         if (d->cat == COB_NUM && d->usage == COB_U_BINARY && !(d->flags & COB_F_NOTRUNC) && d->digits && d->digits < 19) {
             /* a binary of the standard's truncating kind (COMP, BINARY,
              * COMP-4): every bit pattern is a value, so NUMERIC asks
@@ -1824,7 +1945,7 @@ static int rmode_round(long long *v, int *vs, int ds, int mode)
 static int put_rmode(void *p, const cob_desc *d, long long v, int vs, int opts)
 {
     int mode = (opts >> 4) & 15;
-    if (mode && !is_float(d)) {
+    if (mode && !is_float(d) && !is_sfloat(d)) {
         if (rmode_round(&v, &vs, d->scale, mode)) return 1;
         opts &= ~0xF1;
     }
@@ -1891,14 +2012,15 @@ static int mp_ge_1e38(const wl_t *a, int n)
 
 /* keep a value below 10^38 digits by shedding fraction digits; 0 when it
  * cannot (a size error) */
-static int w_fit(wl_t *a, int n, int *scale)
+static int w_fit_q(wl_t *a, int n, int *scale, int q)
 {
     while (mp_ge_1e38(a, n)) {
-        if (*scale <= 0) return 0;
+        if (*scale <= 0 && !q) return 0;
         mp_div_small(a, n, 10); (*scale)--;
     }
     return 1;
 }
+static int w_fit(wl_t *a, int n, int *scale) { return w_fit_q(a, n, scale, 0); }
 
 void cob_wpush(const void *p, const cob_desc *d) { wstk_room(); cob_wget(p, d, &wstk[wsp++]); }
 void cob_wpush_lit(long long v, int scale) { wstk_room(); w_from_i64(&wstk[wsp++], v, scale); }
@@ -1906,6 +2028,11 @@ void cob_wpush_lit(long long v, int scale) { wstk_room(); w_from_i64(&wstk[wsp++
  * receivers, docs/usage.md): every operand goes on as a double */
 void cob_fpush(const void *p, const cob_desc *d) { wstk_room(); w_set_f(&wstk[wsp++], num_dbl(p, d)); }
 void cob_fpush_lit(long long v, int scale) { wstk_room(); w_set_f(&wstk[wsp++], (double)v / pow10d(scale)); }
+/* a statement that computes as floating decimals (a standard software
+ * float among its operands or receivers): every operand goes on marked
+ * so, and the stack sheds digits for room instead of a size error */
+void cob_qpush(const void *p, const cob_desc *d) { wstk_room(); cob_wget(p, d, &wstk[wsp]); if (!wstk[wsp].isf) wstk[wsp].isq = 1; wsp++; }
+void cob_qpush_lit(long long v, int scale) { wstk_room(); w_from_i64(&wstk[wsp++], v, scale); wstk[wsp - 1].isq = 1; }
 
 /* one scale for both: the smaller scaled up while it has room below 38
  * digits, the rest shed from the larger (as align2) */
@@ -1921,16 +2048,20 @@ static void w_align2(cob_wnum *a, cob_wnum *b)
 
 static void w_addsub(cob_wnum *a, const cob_wnum *b0, int sub)
 {
+    cob_wnum qb; if (b0->isf && a->isq && !w_from_dbl_q(&qb, b0->f)) b0 = &qb;
+    if (a->isf && b0->isq) { cob_wnum qa; if (!w_from_dbl_q(&qa, a->f)) *a = qa; }
     if (a->isf || b0->isf) { double x = w_to_dbl(a), y = w_to_dbl(b0); w_set_f(a, sub ? x - y : x + y); return; }
     cob_wnum b = *b0;
     if (sub) b.neg = !b.neg;
+    int q = a->isq || b.isq;
     w_align2(a, &b);
     if (a->neg == b.neg) {
         mp_add(a->m, b.m, WL);                      /* two below 10^38 fit 128 bits */
-        if (!w_fit(a->m, WL, &a->scale)) div0 = 2;
+        if (!w_fit_q(a->m, WL, &a->scale, q)) div0 = 2;
     } else if (mp_cmp(a->m, b.m, WL) >= 0) mp_sub(a->m, b.m, WL);
     else { wl_t t[WL]; memcpy(t, b.m, sizeof t); mp_sub(t, a->m, WL); memcpy(a->m, t, sizeof t); a->neg = b.neg; }
     if (mp_is_zero(a->m, WL)) a->neg = 0;
+    a->isq = q;
 }
 
 void cob_wadd(void) { w_addsub(&wstk[wsp - 2], &wstk[wsp - 1], 0); wsp--; }
@@ -1938,15 +2069,18 @@ void cob_wsub(void) { w_addsub(&wstk[wsp - 2], &wstk[wsp - 1], 1); wsp--; }
 
 static void w_mul(cob_wnum *a, const cob_wnum *b)
 {
+    cob_wnum qb; if (b->isf && a->isq && !w_from_dbl_q(&qb, b->f)) b = &qb;
+    if (a->isf && b->isq) { cob_wnum qa; if (!w_from_dbl_q(&qa, a->f)) *a = qa; }
     if (a->isf || b->isf) { w_set_f(a, w_to_dbl(a) * w_to_dbl(b)); return; }
     wl_t p[2 * WL];
     mp_mul(a->m, WL, b->m, WL, p);
-    int scale = a->scale + b->scale;
+    int scale = a->scale + b->scale, q = a->isq || b->isq;
     while (scale > 38) { mp_div_small(p, 2 * WL, 10); scale--; }
-    if (!w_fit(p, 2 * WL, &scale)) { div0 = 2; return; }
+    if (!w_fit_q(p, 2 * WL, &scale, q)) { div0 = 2; return; }
     memcpy(a->m, p, sizeof a->m);
     a->scale = scale;
     a->neg = a->neg != b->neg && !mp_is_zero(a->m, WL);
+    a->isq = q;
 }
 void cob_wmul(void) { w_mul(&wstk[wsp - 2], &wstk[wsp - 1]); wsp--; }
 
@@ -1955,30 +2089,41 @@ void cob_wmul(void) { w_mul(&wstk[wsp - 2], &wstk[wsp - 1]); wsp--; }
  * hold */
 static void w_div(cob_wnum *a, const cob_wnum *b)
 {
+    cob_wnum qb; if (b->isf && a->isq && !w_from_dbl_q(&qb, b->f)) b = &qb;
+    if (a->isf && b->isq) { cob_wnum qa; if (!w_from_dbl_q(&qa, a->f)) *a = qa; }
     if (a->isf || b->isf) {
         double y = w_to_dbl(b);
         if (y == 0) div0 = 1; else w_set_f(a, w_to_dbl(a) / y);
         return;
     }
     if (mp_is_zero(b->m, WL)) { div0 = 1; return; }
+    int fq = a->isq || b->isq;
     int want = (a->scale > b->scale ? a->scale : b->scale) + 6;
     if (want < 9) want = 9;
     if (want > 38) want = 38;
+    if (fq) {
+        /* a floating quotient: as many digits as 38 hold, from the operands'
+         * sizes (a 36-digit dividend over a 1-digit divisor wants them all) */
+        int na = w_ndigits(a->m), nb = w_ndigits(b->m);
+        want = a->scale - b->scale + 36 - na + nb;
+    }
     /* a * 10^k / b has the scale a.scale + k - b.scale = want */
     int k = want - a->scale + b->scale;
     wl_t n[2 * WL] = { 0 }, dv[2 * WL] = { 0 }, q[2 * WL], r[2 * WL];
     memcpy(n, a->m, sizeof a->m); memcpy(dv, b->m, sizeof b->m);
     int nd = w_ndigits(a->m);
     while (k > 0 && nd + k > 76) { k--; want--; }   /* the numerator stays within 256 bits */
+    if (fq && k < 0) { int nb = w_ndigits(b->m); while (k < 0 && nb - k > 76) { k++; want++; } }
     for (int i = 0; i < k; i++) mp_mul_small(n, 2 * WL, 10, 0);
     for (int i = 0; i < -k; i++) mp_mul_small(dv, 2 * WL, 10, 0);
     mp_divmod(n, dv, 2 * WL, q, r);                 /* a*10^k/b, or a/(b*10^-k): scale want either way */
     int scale = want;
-    while (scale > 38) { mp_div_small(q, 2 * WL, 10); scale--; }
-    if (!w_fit(q, 2 * WL, &scale)) { div0 = 2; return; }
+    while (scale > 38 && !fq) { mp_div_small(q, 2 * WL, 10); scale--; }
+    if (!w_fit_q(q, 2 * WL, &scale, fq)) { div0 = 2; return; }
     int neg = a->neg != b->neg;
     memcpy(a->m, q, sizeof a->m); a->scale = scale;
     a->neg = neg && !mp_is_zero(a->m, WL);
+    a->isq = fq;
 }
 void cob_wdiv(void) { w_div(&wstk[wsp - 2], &wstk[wsp - 1]); wsp--; }
 
@@ -3599,10 +3744,11 @@ static void sort_key_build(const cob_sorter *so, const char *rec, unsigned seq, 
             m[WL - 1] ^= 0x80000000u;
             for (int b = 0; b < 16; b++) o[b] = (unsigned char)(m[(15 - b) / 4] >> (8 * ((15 - b) % 4)));
             out += 16;
-        } else if (is_float(d)) {
+        } else if (is_float(d) || is_sfloat(d)) {
             /* a float: its double's bits, negatives complemented, positives
-             * with the sign bit set -- memcmp order is the numeric order */
-            double x = f_load(rec + k->offset, d); unsigned long long u;
+             * with the sign bit set -- memcmp order is the numeric order
+             * (a software float by its nearest double: 15 digits of order) */
+            double x = num_dbl(rec + k->offset, d); unsigned long long u;
             if (x == 0) x = 0;                      /* -0 sorts with 0 */
             memcpy(&u, &x, 8);
             u = (u >> 63) ? ~u : u | (1ULL << 63);

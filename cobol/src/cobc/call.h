@@ -263,7 +263,7 @@ static void parse_call(void)
                 a[n] = arg_content(o); ncontent++;
             } else if (mode == 2) {
                 if (o->kind == O_REF) {
-                    if (o->ref.sym->usage == U_FLOAT) die_at(o->line, "BY VALUE '%s': a floating-point item is not passed by value (Micro Focus: CALL rules)", o->ref.sym->name);
+                    if (o->ref.sym->usage == U_FLOAT || o->ref.sym->usage == U_DFLOAT) die_at(o->line, "BY VALUE '%s': a floating-point item is not passed by value (Micro Focus: CALL rules)", o->ref.sym->name);
                     if (!is_int_item(o->ref.sym)) die_at(o->line, "BY VALUE '%s' must be an integer item", o->ref.sym->name);
                     if (o->ref.sym->size > 4) die_at(o->line, "BY VALUE '%s': only items up to four bytes (a word) are passed by value", o->ref.sym->name);
                     a[n] = arg_value(o);

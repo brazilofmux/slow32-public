@@ -18,7 +18,8 @@ enum { COB_ALNUM = 0, COB_ALPHA = 1, COB_ALNUM_ED = 2, COB_NUM = 3, COB_NUM_ED =
 enum { COB_U_DISPLAY = 0, COB_U_BINARY = 1, COB_U_PACKED = 2,
        COB_U_NATIONAL = 3,   /* numeric, numeric-edited and boolean USAGE NATIONAL (cobol ISSUES-72) */
        COB_U_BIT = 4,        /* boolean USAGE BIT: size the bits, scale the first bit's place (cobol ISSUES-78) */
-       COB_U_FLOAT = 5 };    /* COMP-1 / COMP-2: IEEE single or double, size 4 or 8, the machine's byte order (docs/usage.md) */
+       COB_U_FLOAT = 5,      /* COMP-1 / COMP-2, FLOAT-SHORT/-LONG, FLOAT-BINARY-32/64: IEEE single or double, size 4 or 8, the machine's byte order unless COB_F2_BIGEND (docs/usage.md) */
+       COB_U_SFLOAT = 6 };   /* the software floating-point formats (2014): IEEE decimal64 (size 8) or decimal128 (16), BID unless COB_F2_DPD; binary128 (16) with COB_F2_FBIN; computed on the wide decimal stack */
 
 /* flags */
 enum {
@@ -36,7 +37,9 @@ enum {
     COB_F2_BIGEND  = 1,   /* COB_U_BINARY stored big-endian: COMP, BINARY, COMP-X (docs/usage.md) */
     COB_F2_NOSIGN  = 2,   /* COB_U_PACKED with no sign nibble: unsigned COMP-6 */
     COB_F2_TWOSC   = 4,   /* a MOVE's store: a negative value in two's complement, though unsigned (MF: COMP-X) */
-    COB_F2_SIZEDIG = 8    /* a capacity-limited binary whose size error is by its picture's digits (MF: 9(n) COMP-X) */
+    COB_F2_SIZEDIG = 8,   /* a capacity-limited binary whose size error is by its picture's digits (MF: 9(n) COMP-X) */
+    COB_F2_DPD     = 16,  /* a COB_U_SFLOAT decimal in the densely-packed-decimal encoding (DECIMAL-ENCODING); BID otherwise */
+    COB_F2_FBIN    = 32   /* a COB_U_SFLOAT that is binary128 (FLOAT-BINARY-128), not a decimal format */
 };
 
 /* a file, as SELECT/FD described it; built by the compiler in .data */

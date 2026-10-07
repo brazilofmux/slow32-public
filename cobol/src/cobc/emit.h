@@ -202,7 +202,14 @@ static int sym_desc(Sym *s)
         case U_PACKED: d.usage = COB_U_PACKED; break;
         case U_NATIONAL: d.usage = COB_U_NATIONAL; break;
         case U_FLOAT: d.usage = COB_U_FLOAT; break;
+        case U_DFLOAT: d.usage = COB_U_SFLOAT; break;
         default: d.usage = COB_U_BINARY; break;
+        }
+        if (s->usage == U_FLOAT || s->usage == U_DFLOAT) {
+            /* the standard floating-point usages' phrases (13.18.60): byte order, encoding, and binary128 among the software formats */
+            if (s->fbig) d.flags2 |= COB_F2_BIGEND;
+            if (s->fdpd) d.flags2 |= COB_F2_DPD;
+            if (s->uvar == UV_FB128) d.flags2 |= COB_F2_FBIN;
         }
         d.digits = (unsigned char)s->pi.digits; d.scale = (signed char)s->pi.scale;
         if (s->pi.is_signed) d.flags |= COB_F_SIGNED;
@@ -362,6 +369,9 @@ static int g_nohx;                  /* -fno-hot-arith: the register paths and th
 static int g_proflines;             /* -fprofile-lines: a global label at each statement, for bench/prof.py */
 static int g_fstmt;                 /* the wide statement computes in double: a float among its operands or
                                      * receivers, so every operand goes on the stack as a double (docs/usage.md) */
+static int g_qstmt;                 /* the wide statement computes as floating decimals: a standard software float (FLOAT-DECIMAL,
+                                     * FLOAT-BINARY-128) among its operands or receivers; every operand goes on the stack marked so */
+static int g_saw_qfloat;            /* such an item was pushed (as g_saw_float) */
 static const char *wide_fn(const char *fn)
 {
     static const char *map[][2] = {
@@ -374,6 +384,8 @@ static const char *wide_fn(const char *fn)
     for (int i = 0; map[i][0]; i++) if (!strcmp(fn, map[i][0])) {
         if (g_fstmt && !strcmp(map[i][1], "cob_wpush")) return "cob_fpush";
         if (g_fstmt && !strcmp(map[i][1], "cob_wpush_lit")) return "cob_fpush_lit";
+        if (g_qstmt && !strcmp(map[i][1], "cob_wpush")) return "cob_qpush";
+        if (g_qstmt && !strcmp(map[i][1], "cob_wpush_lit")) return "cob_qpush_lit";
         return map[i][1];
     }
     return fn;

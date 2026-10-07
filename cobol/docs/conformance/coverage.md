@@ -75,7 +75,7 @@ carry the compiler's own reason.
 | 8.4.3.10 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
 | 8.4.3.11 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
 | 8.4.3.12 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
-| 8.4.3.13 |  | [usage](usage.md) | 14 | 10 | 0 | 2 | 3 |
+| 8.4.3.13 |  | [usage](usage.md) | 15 | 9 | 0 | 2 | 3 |
 | 8.4.3.14 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
 | 8.4.3.15 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
 | 8.4.4 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
@@ -109,14 +109,14 @@ carry the compiler's own reason.
 | 11.6 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 11.7 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 11.8 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
-| 11.9 |  | [options](options.md) | 5 | 7 | 0 | 0 | 0 |
-| 11.9.5 | ARITHMETIC clause | [options](options.md) | 5 | 7 | 0 | 0 | 0 |
-| 11.9.6 | DEFAULT ROUNDED clause | [options](options.md) | 5 | 7 | 0 | 0 | 0 |
-| 11.9.7 | ENTRY-CONVENTION clause | [options](options.md) | 5 | 7 | 0 | 0 | 0 |
-| 11.9.8 | FLOAT-BINARY clause | [options](options.md) | 5 | 7 | 0 | 0 | 0 |
-| 11.9.9 | FLOAT-DECIMAL clause | [options](options.md) | 5 | 7 | 0 | 0 | 0 |
-| 11.9.10 | INITIALIZE clause | [options](options.md) | 5 | 7 | 0 | 0 | 0 |
-| 11.9.11 | INTERMEDIATE ROUNDING clause | [options](options.md) | 5 | 7 | 0 | 0 | 0 |
+| 11.9 |  | [options](options.md) | 6 | 6 | 0 | 0 | 0 |
+| 11.9.5 | ARITHMETIC clause | [options](options.md) | 6 | 6 | 0 | 0 | 0 |
+| 11.9.6 | DEFAULT ROUNDED clause | [options](options.md) | 6 | 6 | 0 | 0 | 0 |
+| 11.9.7 | ENTRY-CONVENTION clause | [options](options.md) | 6 | 6 | 0 | 0 | 0 |
+| 11.9.8 | FLOAT-BINARY clause | [options](options.md) | 6 | 6 | 0 | 0 | 0 |
+| 11.9.9 | FLOAT-DECIMAL clause | [options](options.md) | 6 | 6 | 0 | 0 | 0 |
+| 11.9.10 | INITIALIZE clause | [options](options.md) | 6 | 6 | 0 | 0 | 0 |
+| 11.9.11 | INTERMEDIATE ROUNDING clause | [options](options.md) | 6 | 6 | 0 | 0 | 0 |
 | 11.10 |  | [call](call.md) | 30 | 18 | 3 | 4 | 0 |
 
 ## 12 ENVIRONMENT DIVISION
@@ -223,7 +223,7 @@ carry the compiler's own reason.
 | 13.18.57 | TYPE clause | [environment](environment.md), [reportwriter](reportwriter.md) | 29 | 71 | 3 | 3 | 4 |
 | 13.18.58 | TYPEDEF clause | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 13.18.59 | UNDERLINE clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
-| 13.18.60 | USAGE clause | [national-boolean](national-boolean.md), [usage](usage.md) | 29 | 23 | 0 | 2 | 4 |
+| 13.18.60 | USAGE clause | [national-boolean](national-boolean.md), [usage](usage.md) | 30 | 22 | 0 | 2 | 4 |
 | 13.18.61 | USING clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.62 | VALIDATE-STATUS clause | *unswept* | | | | | |
 | 13.18.63 | VALUE clause | [value](value.md) | 1 | 14 | 0 | 0 | 0 |
@@ -274,7 +274,7 @@ carry the compiler's own reason.
 | 14.9.36 | ROLLBACK statement | **not implemented**: ROLLBACK is COBOL 2023; not implemented | | | | | |
 | 14.9.37 | SEARCH statement | [search](search.md) | 7 | 10 | 0 | 0 | 0 |
 | 14.9.38 | SEND statement | **not implemented**: send: COBOL 85's Communication module is out by ruling, and COBOL 2023's asynchronous messaging (14.9.31, 14.9.38) is not implemented | | | | | |
-| 14.9.39 | SET statement | [set](set.md), [usage](usage.md) | 28 | 18 | 0 | 2 | 4 |
+| 14.9.39 | SET statement | [set](set.md), [usage](usage.md) | 29 | 17 | 0 | 2 | 4 |
 | 14.9.40 | SORT statement | [sort](sort.md) | 3 | 12 | 0 | 0 | 0 |
 | 14.9.41 | START statement | [io-statements](io-statements.md) | 1 | 18 | 0 | 0 | 0 |
 | 14.9.42 | STOP statement | [control](control.md) | 10 | 10 | 0 | 1 | 0 |

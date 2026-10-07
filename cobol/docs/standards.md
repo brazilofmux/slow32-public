@@ -120,6 +120,11 @@ The focus a fork would give comes from a switch instead:
   did, that is the signal to reconsider the fork. Nothing known yet
   suggests they will.
 - If 2014 or 2023 earn a value later, they are more rows in the table.
+  **2014 did, 2026-10-07**: `-std=2014` exists, taking everything 2002
+  does plus the 2014 additions as they land (docs/plans/standard-queue.md
+  tier 3, item 20 first: the IEEE floating-point usages); `tests/2014/`
+  is its suite. The 2014 points taken early as extensions (BP-E27 TRIM,
+  BP-E29 ROUNDED MODE) are the language under it, no warning.
 
 **There is no `-std=74`, but 74-era programs are welcome.** The line is
 between 74 *programs* and 74 *semantics*.

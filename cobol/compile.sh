@@ -1,6 +1,6 @@
 #!/bin/bash
 # compile.sh -- COBOL source(s), C source(s) and objects to a SLOW-32 executable.
-#   ./compile.sh [-free|-fixed] [-std=85|-std=2002] [-dialect=mf] [-dialect=gnucobol] [-fixed-columns=bytes] [-fbinary-byteorder=native] [-fprofile-lines] [-D name=value]... main.cbl [sub.cbl ...] [x.c ...] [x.s32o ...] [-I dir]... [-o prog.s32x]
+#   ./compile.sh [-free|-fixed] [-std=85|-std=2002|-std=2014] [-dialect=mf] [-dialect=gnucobol] [-fixed-columns=bytes] [-fbinary-byteorder=native] [-fprofile-lines] [-D name=value]... main.cbl [sub.cbl ...] [x.c ...] [x.s32o ...] [-I dir]... [-o prog.s32x]
 # The first .cbl is the main program; further .cbl are subprogram
 # modules (-m); .c files are built by the SLOW-32 C toolchain, which is
 # how dateutil.c joins gl030 (docs/lowering.md: one convention, the C
@@ -46,7 +46,7 @@ link=()
 # COBOL 2002 user-defined functions: every source's signatures first (the
 # external repository, name.s32fn beside the output), so a caller finds a
 # function defined in any of the files, whatever their order
-if [ "$std" = "-std=2002" ]; then
+if [ "$std" = "-std=2002" ] || [ "$std" = "-std=2014" ]; then
     for f in "$main" "${subs[@]+"${subs[@]}"}"; do
         "$S32_COBC" $fmt $std $cols $incs -fnsig -o "$base.fnsig.s" "$f"
     done

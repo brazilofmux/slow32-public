@@ -76,6 +76,7 @@ static char g_cursor_name[64];       /* SPECIAL-NAMES CURSOR IS name */
 /* I-O-CONTROL SAME RECORD AREA FOR f1 f2 ...: the files share one record
  * area, so a record read from one is the record of the others */
 static int g_same[8][16], g_nsame[8], g_nsame_groups;
+static int g_float_bigend, g_float_dpd;      /* OPTIONS FLOAT-BINARY / FLOAT-DECIMAL DEFAULT (2023 11.9.8-9): HIGH-ORDER-LEFT; DECIMAL-ENCODING -- the unit's defaults for the standard floating-point usages (HIGH-ORDER-RIGHT, BINARY-ENCODING when none) */
 static int g_samefa[8][16], g_nsamefa[8], g_nsamefa_groups, g_samesa[8][16], g_nsamesa[8], g_nsamesa_groups, g_same_line;   /* SAME AREA and SAME SORT AREA clauses: checked against the FDs once they are in (2023 12.4.6.4.3 rules 5, 6, 8) */
 
 /* SPECIAL-NAMES SYSIN|SYSOUT|CONSOLE|SYSERR|FORMFEED IS mnemonic-name:
@@ -352,6 +353,8 @@ static void bp(int point, int line)
     /* class G: GnuCOBOL's own, taken only under -dialect=gnucobol */
     if (g_bp[point].cls == 'G' && !g_dialect_gnu)
         die_at(line, "[%s] %s -- compile with -dialect=gnucobol", g_bp[point].id, g_bp[point].msg);
+    /* 2014's own, taken early as extensions: under -std=2014 they are the language */
+    if (g_std >= 2014 && (point == BP_E27_TRIM || point == BP_E29_ROUNDED_MODE)) return;
     if (g_bp[point].cls == 'E' || g_bp[point].cls == 'D' || g_bp[point].cls == 'G' ? !g_warn_ext : !g_warn74) return;
     if (point == last_point && line == last_line) return;     /* one per point per line */
     last_point = point; last_line = line;

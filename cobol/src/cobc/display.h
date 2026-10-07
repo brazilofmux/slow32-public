@@ -208,7 +208,7 @@ static int pos_display_width(Sym *s)
 {
     static const int cap[9] = { 0, 3, 5, 8, 10, 13, 15, 17, 19 };
     if (s->is_group || s->pi.category != PIC_NUMERIC) return 0;
-    if (s->usage == U_DISPLAY || s->usage == U_NATIONAL || s->usage == U_FLOAT || s->usage == U_POINTER) return 0;
+    if (s->usage == U_DISPLAY || s->usage == U_NATIONAL || s->usage == U_FLOAT || s->usage == U_DFLOAT || s->usage == U_POINTER) return 0;
     if (s->pi.scale < 0 || strchr(s->pi.pat, 'P')) return 0;
     int digits = sym_notrunc(s) ? (s->size >= 1 && s->size <= 8 ? cap[s->size] : 19) : s->pi.digits;
     if (digits <= 0 || digits > 18) return 0;                /* wide items keep the old path */

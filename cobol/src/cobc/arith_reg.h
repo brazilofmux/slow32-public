@@ -984,7 +984,7 @@ static void parse_add(void)
     }
     emit_store_receivers(rs, rd, nr, hot, giving, 0, size_err, ops_sum_mag(ops, n), ops_all_nonneg(ops, n));
     g_addk_on = 0;
-    g_wide = 0; g_fstmt = 0;
+    g_wide = 0; g_fstmt = g_qstmt = 0;
     emit_size_phrases(&ph);
 }
 
@@ -1061,7 +1061,7 @@ static void parse_subtract(void)
         if (giving) emit_call("cob_nsub");
     }
     emit_store_receivers(rs, rd, nr, hot, giving, !giving, size_err, -1, 0);
-    g_wide = 0; g_fstmt = 0;
+    g_wide = 0; g_fstmt = g_qstmt = 0;
     emit_size_phrases(&ph);
 }
 
@@ -1109,7 +1109,7 @@ static void parse_multiply(void)
         emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
         }
         if (mode == 2) emit_label(Ldone);
-        g_wide = 0; g_fstmt = 0;
+        g_wide = 0; g_fstmt = g_qstmt = 0;
         emit_size_phrases(&ph);
         return;
     }
@@ -1133,7 +1133,7 @@ static void parse_multiply(void)
         emit_top_op(&rs[i], "cob_top_store", rnd_opts(rd[i]) | (size_err ? 2 : 0)); emit_call("cob_drop");
         if (mode == 2) emit_label(Ldone);
     }
-    g_wide = 0; g_fstmt = 0;
+    g_wide = 0; g_fstmt = g_qstmt = 0;
     emit_size_phrases(&ph);
 }
 
@@ -1199,7 +1199,7 @@ static void emit_remainder(Opnd *dividend, Ref *q, int q_rounded, Opnd *divisor,
     emit_top_op(&r, "cob_top_store", size_err ? 2 : 0);
     emit_label(Lskip);
     emit_call("cob_drop");
-    g_wide = was_wide; if (!was_wide) g_fstmt = 0;
+    g_wide = was_wide; if (!was_wide) g_fstmt = g_qstmt = 0;
 }
 
 /* DIVIDE a INTO b ... ; DIVIDE a INTO b GIVING c ... ; DIVIDE a BY b
@@ -1273,7 +1273,7 @@ static void emit_divide_giving(Arith *st, Opnd *dividend, Opnd *divisor)
         emit_remainder(dividend, &rs[0], rd[0], divisor, size_err, rr, kd[0], kd[1]);
     }
     if (mode == 2) emit_label(Ldone);
-    g_wide = 0; g_fstmt = 0;
+    g_wide = 0; g_fstmt = g_qstmt = 0;
 }
 
 static void parse_divide(void)
@@ -1309,6 +1309,6 @@ static void parse_divide(void)
         emit_top_op(&rs[i], "cob_top_store", rnd_opts(rd[i]) | (size_err ? 2 : 0)); emit_call("cob_drop");
         if (mode == 2) emit_label(Ldone);
     }
-    g_wide = 0; g_fstmt = 0;
+    g_wide = 0; g_fstmt = g_qstmt = 0;
     emit_size_phrases(&ph);
 }

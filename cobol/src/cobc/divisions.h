@@ -62,8 +62,26 @@ static void parse_options_paragraph(void)
             if (!accept_word("cobol")) die_at(cur()->line, "ENTRY-CONVENTION IS %s: COBOL is the one entry convention here (2023 11.9.7.4 rule 3)", tok_orig(cur()));
             any = 1; continue;
         }
-        if (at_word("float-binary") || at_word("float-decimal"))
-            die_at(cur()->line, "the %s clause is COBOL 2014 (2023 11.9.8-9), for the standard floating-point usages; not implemented", tok_orig(cur()));
+        if (at_word("float-binary") || at_word("float-decimal")) {
+            /* FLOAT-BINARY DEFAULT IS HIGH-ORDER-LEFT|RIGHT (11.9.8), FLOAT-DECIMAL
+             * DEFAULT IS [BINARY-ENCODING|DECIMAL-ENCODING] [HIGH-ORDER-LEFT|RIGHT]
+             * (11.9.9): the unit's defaults for the standard floating-point
+             * usages; the machine's order (HIGH-ORDER-RIGHT) and BINARY-
+             * ENCODING when the clause is absent (the implementor's choice) */
+            int dec = at_word("float-decimal");
+            if (g_std < 2014) die_at(cur()->line, "the %s clause is COBOL 2014 (2023 11.9.8-9), for the standard floating-point usages; compile with -std=2014", tok_orig(cur()));
+            advance(); expect_word("default"); accept_word("is");
+            int n = 0;
+            for (;;) {
+                if (accept_word("high-order-left")) { if (dec) g_float_dpd = (g_float_dpd & 1) | 2; else g_float_bigend = 1; n++; continue; }
+                if (accept_word("high-order-right")) { if (dec) g_float_dpd &= 1; else g_float_bigend = 0; n++; continue; }
+                if (dec && accept_word("binary-encoding")) { g_float_dpd &= 2; n++; continue; }
+                if (dec && accept_word("decimal-encoding")) { g_float_dpd |= 1; n++; continue; }
+                break;
+            }
+            if (!n) die_at(cur()->line, "%s DEFAULT IS: expected %sHIGH-ORDER-LEFT or HIGH-ORDER-RIGHT", dec ? "FLOAT-DECIMAL" : "FLOAT-BINARY", dec ? "BINARY-ENCODING, DECIMAL-ENCODING, " : "");
+            any = 1; continue;
+        }
         if (at_word("intermediate"))
             die_at(cur()->line, "the INTERMEDIATE ROUNDING clause is COBOL 2014 (2023 11.9.11); not implemented");
         if (at_word("initialize"))

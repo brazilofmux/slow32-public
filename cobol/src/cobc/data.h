@@ -42,15 +42,17 @@ static void sym_finish(Sym *s)
         if (flt) { u = s->usage = U_FLOAT; s->uvar = UV_FSHORT; }
         else s->uvar = UV_NONE;
     }
-    if (u == U_FLOAT) {
-        /* IEEE single or double; no PICTURE (MF), no editing clauses */
+    if (u == U_FLOAT || u == U_DFLOAT) {
+        /* IEEE single or double, or the software formats; no PICTURE (MF;
+         * 13.18.40.3 rule 1 for the standard usages), no editing clauses */
         if (s->has_pic) die_at(s->line, "'%s': a floating-point item takes no PICTURE%s", s->name,
                                s->uvar == UV_FLONG ? " (ACUCOBOL's decimal COMP-2 is not implemented)" : "");
         if (s->just || s->blank_zero || s->sign_lead || s->sign_sep)
             die_at(s->line, "'%s': a floating-point item takes no JUSTIFIED, BLANK WHEN ZERO or SIGN clause", s->name);
-        s->size = s->uvar == UV_FSHORT ? 4 : 8;
+        s->size = s->uvar == UV_FSHORT || s->uvar == UV_FB32 ? 4 : s->uvar == UV_FB128 || s->uvar == UV_FD34 ? 16 : 8;
         memset(&s->pi, 0, sizeof s->pi);
         s->pi.category = PIC_NUMERIC; s->pi.is_signed = 1; s->pi.digits = 18;   /* 18: the narrow paths' reading, an integer part */
+        if (u == U_DFLOAT) s->pi.digits = 34;           /* the wide path's reading: a wide item, whatever the format holds */
         return;
     }
     int native = usage_is_native(u);
@@ -217,10 +219,22 @@ static void store_numeric(Sym *s, const NumLit *n, unsigned char *p, int line)
     if (s->usage == U_FLOAT) {
         /* the literal to the nearest float or double, laid down in the
          * machine's order (the host that compiles is little-endian, as
-         * SLOW-32 is) */
+         * SLOW-32 is) -- or HIGH-ORDER-LEFT's */
         char t[128]; snprintf(t, sizeof t, "%s%.*se%d", n->neg ? "-" : "", n->ndigits, n->digits, -n->scale);
         double x = strtod(t, NULL);
-        if (s->size == 4) { float f = (float)x; memcpy(p, &f, 4); } else memcpy(p, &x, 8);
+        unsigned char b[8];
+        if (s->size == 4) { float f = (float)x; memcpy(b, &f, 4); } else memcpy(b, &x, 8);
+        if (s->fbig) for (int i = 0; i < s->size; i++) p[i] = b[s->size - 1 - i]; else memcpy(p, b, (size_t)s->size);
+        return;
+    }
+    if (s->usage == U_DFLOAT) {
+        /* the standard software formats (ieee.h): the literal's digits as a
+         * wide value, encoded nearest-even */
+        wl_t mag[WL]; w_from_digits(mag, n->digits, n->ndigits);
+        int r;
+        if (s->uvar == UV_FB128) r = bin128_encode(p, s->fbig, mag, n->scale, n->neg);
+        else { int sc = n->scale; ieee_round_digits(mag, &sc, s->uvar == UV_FD16 ? 16 : 34); r = dec_encode(p, s->size, s->fbig, s->fdpd, mag, sc, n->neg); }
+        if (r) die_at(line, "VALUE %s%.*s is past what '%s' holds", n->neg ? "-" : "", n->ndigits, n->digits, s->name);
         return;
     }
     const PicInfo *pi = &s->pi;
@@ -758,8 +772,32 @@ static void parse_data_item1(void)
             if (g_std < 2002) die_at(t->line, "USAGE %s is COBOL 2002; compile with -std=2002 (COMP-1 and COMP-2 are the same)", t->s);
             u = U_FLOAT; uv = t->s[6] == 's' ? UV_FSHORT : UV_FLONG;
         }
-        else if (!strncmp(t->s, "float-binary-", 13) || !strncmp(t->s, "float-decimal-", 14))
-            die_at(t->line, "USAGE %s is COBOL 2014 (ISO/IEC 60559 formats); not implemented", t->s);
+        else if (!strcmp(t->s, "float-binary-32") || !strcmp(t->s, "float-binary-64") || !strcmp(t->s, "float-binary-128") ||
+                 !strcmp(t->s, "float-decimal-16") || !strcmp(t->s, "float-decimal-34")) {
+            /* the standard floating-point usages (2014; 2023 13.18.60.4 rules
+             * 14-18): binary32 and binary64 are the hardware's, in a float or
+             * a double; binary128, decimal64 and decimal128 are software, on
+             * the wide decimal stack (docs/usage.md).  [endianness-phrase]
+             * and, for the decimals, [encoding-phrase] follow; the OPTIONS
+             * paragraph's defaults otherwise */
+            if (g_std < 2014) die_at(t->line, "USAGE %s is COBOL 2014 (ISO/IEC 60559's formats, 2023 13.18.60); compile with -std=2014", tok_orig(t));
+            int dec = t->s[6] == 'd';
+            u = dec || !strcmp(t->s, "float-binary-128") ? U_DFLOAT : U_FLOAT;
+            uv = !strcmp(t->s, "float-binary-32") ? UV_FB32 : !strcmp(t->s, "float-binary-64") ? UV_FB64 : !strcmp(t->s, "float-binary-128") ? UV_FB128
+               : !strcmp(t->s, "float-decimal-16") ? UV_FD16 : UV_FD34;
+            s->fbig = dec ? (g_float_dpd & 2) != 0 : g_float_bigend; s->fdpd = dec && (g_float_dpd & 1);
+            if (s->has_usage) die_at(t->line, "'%s' has two USAGE clauses", s->name);
+            s->usage = u; s->uvar = uv; s->has_usage = 1;
+            advance();
+            for (;;) {
+                if (accept_word("high-order-left")) { s->fbig = 1; continue; }
+                if (accept_word("high-order-right")) { s->fbig = 0; continue; }
+                if (dec && accept_word("binary-encoding")) { s->fdpd = 0; continue; }
+                if (dec && accept_word("decimal-encoding")) { s->fdpd = 1; continue; }
+                break;
+            }
+            continue;
+        }
         if (u >= 0) {
             if (s->has_usage) die_at(t->line, "'%s' has two USAGE clauses", s->name);
             s->usage = u; s->uvar = uv; s->has_usage = 1;

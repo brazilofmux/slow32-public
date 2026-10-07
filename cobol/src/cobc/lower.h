@@ -820,7 +820,7 @@ static int lw_disp_ref_ok(const Ref *r)
     long len;
     if (r->rm) return lw_bytes_ref_ok(r, &len) && len >= 0;
     if (s->is_cond || s->any_len || sym_bitlike(s) || s->natgroup || s->nat_usage || s->usage == U_NATIONAL || s->usage == U_BIT || s->is_index) return 0;
-    if (s->pi.category == PIC_NATIONAL || s->pi.category == PIC_BOOLEAN || s->is_rc || s->lin_file >= 0 || s->rep_ctr >= 0 || s->usage == U_FLOAT) return 0;
+    if (s->pi.category == PIC_NATIONAL || s->pi.category == PIC_BOOLEAN || s->is_rc || s->lin_file >= 0 || s->rep_ctr >= 0 || s->usage == U_FLOAT || s->usage == U_DFLOAT) return 0;
     if (s->is_group && (has_odo(s) || s->bitgroup || s->strong)) return 0;
     const Sym *rec = &g_sym[s->record];
     if (rec_indirect(rec) || !rec->label[0] || rec->ftemp_scan || odo_table_for(s)) return 0;

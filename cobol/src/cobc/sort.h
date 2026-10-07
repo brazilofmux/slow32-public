@@ -817,7 +817,7 @@ static void parse_perform(void)
         if (opnd_hot_int(&n)) emit_hot_value(&n);
         else {
             if (n.kind != O_REF) die_at(n.line, "TIMES needs an integer");
-            if (n.ref.sym->usage == U_FLOAT) die_at(n.line, "TIMES needs an integer, not the floating-point item '%s' (Micro Focus: PERFORM rules)", n.ref.sym->name);
+            if (n.ref.sym->usage == U_FLOAT || n.ref.sym->usage == U_DFLOAT) die_at(n.line, "TIMES needs an integer, not the floating-point item '%s' (Micro Focus: PERFORM rules)", n.ref.sym->name);
             Arg a[2] = { arg_ref(&n.ref), arg_desc(sym_desc(n.ref.sym)) };
             emit_args(a, 2); emit_call("cob_load_int");
         }

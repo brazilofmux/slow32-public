@@ -129,9 +129,10 @@ Two ruled 2026-09-28:
 - **Floating-point USAGE.** FLOAT-SHORT, FLOAT-LONG and FLOAT-EXTENDED
   are COBOL 2002 (its USAGE clause), and -std=2002 takes them. The
   IEEE usages FLOAT-BINARY-32/64/128 and FLOAT-DECIMAL-16/34 are COBOL
-  2014: the first piece of a -std=2014 switch (docs/plans/
-  standard-queue.md item 20); binary32 and binary64 are SLOW-32
-  hardware. COMP-1 and COMP-2 (IBM hexadecimal float) stay out.
+  2014: the first piece of the -std=2014 switch, which took them
+  2026-10-07 (docs/plans/standard-queue.md item 20; docs/usage.md) --
+  binary32 and binary64 on SLOW-32's hardware, the three others in
+  software. COMP-1 and COMP-2 (IBM hexadecimal float) stay out.
   (Corrected 2026-10-06: this entry called all six 2014.)
 
 Ruled 2026-10-07 (queue item 17): **READ PREVIOUS of a sequential file

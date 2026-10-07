@@ -283,7 +283,7 @@ static int set_kind(Sym *s)
 {
     if (s->is_index) return SK_INDEX;
     if (!s->is_group && s->usage == U_INDEX) return SK_IXD;
-    if (is_numeric_sym(s) && s->usage != U_FLOAT && s->pi.scale <= 0) return SK_INT;
+    if (is_numeric_sym(s) && s->usage != U_FLOAT && s->usage != U_DFLOAT && s->pi.scale <= 0) return SK_INT;
     return SK_OTHER;
 }
 
@@ -306,7 +306,7 @@ static int set_at_expr(int never)
 static void emit_set_value(Opnd *v, int Lskip)
 {
     int was = g_wide, wasf = g_fstmt, chk = ec_on_name("EC-BOUND-SUBSCRIPT");
-    if (opnds_wide(v, 1) || g_fstmt || (v->kind == O_FUNC && v->fwnum)) g_wide = 1;
+    if (opnds_wide(v, 1) || g_fstmt || g_qstmt || (v->kind == O_FUNC && v->fwnum)) g_wide = 1;
     emit_push_opnd(v);
     emit_call(chk ? "cob_pop_pos" : "cob_pop_int");
     g_wide = was; g_fstmt = wasf;

@@ -292,7 +292,12 @@ docs/conformance/ with every rule marked:
 ## Tier 3 -- COBOL 2014 additions (introduce `-std=2014`)
 
 **20. `-std=2014` and the IEEE usages.** 13.18.60 FLOAT-BINARY-32/64/128, FLOAT-DECIMAL-16/34,
-11.9.8-9 FLOAT-BINARY/FLOAT-DECIMAL clauses; Ed. 2014; binary M, decimal L; deps 15, 16.
+11.9.8-9 FLOAT-BINARY/FLOAT-DECIMAL clauses; Ed. 2014; binary M, decimal L; deps 15, 16. DONE
+2026-10-07 (usage.md, options.md, docs/usage.md; tests 2014/floatdec, floatbin; libcob/ieee.h with
+tests/ieee_test.c + ieee_vectors.py): the switch, with tests/2014; the five usages, binary32/64 on
+the hardware's floats, binary128, decimal64 and decimal128 in software on the wide stack's new
+floating mode; both encodings, both byte orders, the OPTIONS defaults; TRIM and ROUNDED MODE
+unwarned under 2014.
 - Today: "USAGE float-binary-64 is COBOL 2014 (ISO/IEC 60559 formats); not implemented". The owner's
   plan (refusals.md section 3) makes these the first piece of a 2014 switch. Binary32/64 are SLOW-32
   hardware; binary128 and both decimal formats need a software implementation. The switch should

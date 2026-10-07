@@ -56,6 +56,7 @@
 #include "picture.h"
 #include "lex.h"            /* the token scanner (lex.rl, Ragel -G2; lex_scan.c) */
 #include "../libcob/wide.h"    /* 31 digits: the runtime's 128-bit arithmetic, for VALUE and literals */
+#include "../libcob/ieee.h"    /* the standard floating-point formats (2014): a VALUE clause encoded at compile time */
 #include "../libcob/cobrt.h"
 #define SCREDIT_EXPAND_ONLY
 #include "../libcob/scredit.h"  /* se_expand_picture: a screen field's picture, a symbol a column */

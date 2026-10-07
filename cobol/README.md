@@ -125,6 +125,7 @@ under `docs/`.
                       bad/ programs that must be refused; pictures.txt;
                       data/ fixtures, copied fresh for every program run;
                       2002/ COBOL 2002 (Stage B) programs, run with -std=2002;
+                      2014/ COBOL 2014 additions, run with -std=2014;
                       warn/ -warn-74 behavior points; majesty-functions.sh
                       checks majesty's original 2002 functions vs GnuCOBOL
     build.sh          host build of s32-cobc + libcob
@@ -149,9 +150,10 @@ PATH install (optional, for majesty and friends):
                                                  # cc (the build of a machine without
                                                  # LLVM), the suite's programs run on it
 
-`s32-cobc [-free|-fixed] [-std=85|-std=2002] [-warn-74] [-fnsig] [-o out.s] source.cbl`.
+`s32-cobc [-free|-fixed] [-std=85|-std=2002|-std=2014] [-warn-74] [-fnsig] [-o out.s] source.cbl`.
 `-std=2002` adds the COBOL 2002 modules landed so far (docs/standards.md,
-Stage B); `-fnsig` only writes the user functions' signature files
+Stage B); `-std=2014` the 2014 additions as they land (docs/plans/standard-queue.md
+tier 3: the IEEE floating-point usages first); `-fnsig` only writes the user functions' signature files
 (docs/functions.md), which `compile.sh -std=2002` does first. Fixed format is the
 default (the standard's reference format); majesty passes `-free`,
 as it already does to GnuCOBOL.

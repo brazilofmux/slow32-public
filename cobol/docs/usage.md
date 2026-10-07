@@ -23,11 +23,36 @@ a dialect question, decided for preservation.
 | COMP-3, PACKED-DECIMAL | packed decimal, sign nibble C/D/F | digits/2 + 1 |
 | COMP-1 | with a PICTURE, RM/COBOL's binary integer (BP-E3); without one, MF's IEEE single (step 3); `-fcomp1=binary\|float` forces either | as COMP; 4 |
 | COMP-2, FLOAT-SHORT, FLOAT-LONG | IEEE double (FLOAT-SHORT single), no PICTURE (step 3); FLOAT-* under -std=2002 | 8 (4) |
+| FLOAT-BINARY-32, FLOAT-BINARY-64 | COBOL 2014 (-std=2014): IEEE binary32 and binary64, the hardware's, as FLOAT-SHORT and FLOAT-LONG -- the same arithmetic in double, MF's DISPLAY form; the byte order the item's endianness phrase or the OPTIONS FLOAT-BINARY default, else the machine's (HIGH-ORDER-RIGHT) | 4, 8 |
+| FLOAT-BINARY-128 | 2014: IEEE binary128 in software (libcob/ieee.h); the value read as a decimal of 36 significant digits, written back correctly rounded to nearest-even | 16 |
+| FLOAT-DECIMAL-16, FLOAT-DECIMAL-34 | 2014: IEEE decimal64 and decimal128, BID (BINARY-ENCODING, the default) or DPD (DECIMAL-ENCODING), the byte order as above; exact decimal values, 16 or 34 digits, exponents to 384 and 6144 | 8, 16 |
 | COMP-4 | BINARY (step 2) | as COMP |
 | COMP-X | MF's: unsigned, big-endian, the field's capacity the limit (step 2) | PIC X(n): n bytes; PIC 9(n): the fewest bytes holding n nines, 1-8 |
 | COMP-6 | unsigned packed decimal, no sign nibble; a signed one is COMP-3 (MF's default COMP-6"2"; step 2) | (digits + 1) / 2 |
 | COMP-N | not recognized | |
 | BINARY-CHAR/SHORT/LONG/DOUBLE, SIGNED-INT etc. | native binary | 1/2/4/8 |
+
+**The 2014 standard floating-point usages** (queue item 20, 2026-10-07).
+A statement with a FLOAT-DECIMAL or FLOAT-BINARY-128 operand or receiver
+computes on the wide decimal stack in a *floating* mode: every operand
+is read as a decimal (a binary value of either hardware or software
+format exactly, to 36 significant digits), the stack holds 38 digits and
+sheds low digits for room instead of reporting a size error, a quotient
+takes 36 digits, and the store rounds to the receiver's format
+(nearest-even, IEEE's default; ROUNDED MODE is not applied to these
+receivers). So 0.1 + 0.2 is 0.3 in decimal64, and a binary128
+computation is decimal arithmetic rounded twice (into and out of the
+format) rather than IEEE binary arithmetic -- NATIVE arithmetic leaves
+the intermediates to the implementor (2023 8.8.1.3). A value past the
+format is a size error (the receiver unchanged); below it, a subnormal
+or zero. An infinity or NaN that reaches an item by other means (a
+REDEFINES) is not NUMERIC and reads as zero. DISPLAY shows the
+software formats as their significant digits, one before the point, and
+a decimal exponent (`1.5E+00`, `3.333333333333333E-01`, `1E+3000`);
+GnuCOBOL shows them as the stored coefficient and exponent. A
+fractional power (2 ** 0.5) is still computed in double. The host test
+tests/ieee_test.c checks every encoding against exact rational
+arithmetic (tests/ieee_vectors.py).
 
 **Byte order** (step 1, done 2026-09-30): COMP, COMPUTATIONAL, BINARY and
 RM's COMP-1 are **big-endian**; `-fbinary-byteorder=native` keeps them

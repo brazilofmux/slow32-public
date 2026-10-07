@@ -129,10 +129,10 @@ static Expr *parse_expr(void)
  * for) -- known for itself, and seen by what it is part of as before */
 static Expr *scan_expr(void)
 {
-    int sw = g_saw_wide, sf = g_saw_float; g_saw_wide = g_saw_float = 0;
+    int sw = g_saw_wide, sf = g_saw_float, sq = g_saw_qfloat; g_saw_wide = g_saw_float = g_saw_qfloat = 0;
     g_noemit++; Expr *e = parse_expr(); g_noemit--;
-    e->wide = g_saw_wide; e->flt = g_saw_float;
-    g_saw_wide |= sw; g_saw_float |= sf;
+    e->wide = g_saw_wide; e->flt = g_saw_float; e->qflt = g_saw_qfloat;
+    g_saw_wide |= sw; g_saw_float |= sf; g_saw_qfloat |= sq;
     /* in a statement that emits as it reads, its user functions are called
      * now, where they are written (or queued with the condition being
      * read), not each time the expression's code is made; a scan's wait
@@ -147,7 +147,7 @@ static Opnd expr_opnd(void)
     Opnd o; memset(&o, 0, sizeof o);
     o.kind = O_EXPR; o.line = cur()->line;
     o.ex = scan_expr();
-    o.wide = o.ex->wide; o.flt = o.ex->flt;
+    o.wide = o.ex->wide; o.flt = o.ex->flt; o.qflt = o.ex->qflt;
     return o;
 }
 
@@ -301,12 +301,14 @@ static void parse_compute(void)
     /* the expression read once: whether it needs the wide stack, then the
      * code -- in registers where that is the stack's answer, else the
      * stack's -- all from the one tree */
-    int saw = g_saw_wide, sawf = g_saw_float; g_saw_wide = 0; g_saw_float = 0;
+    int saw = g_saw_wide, sawf = g_saw_float, sawq = g_saw_qfloat; g_saw_wide = 0; g_saw_float = 0; g_saw_qfloat = 0;
     g_xd_div = 0;
     g_noemit++; Expr *e = parse_expr(); g_noemit--;
     expr_calls(e);                              /* its user functions, before any path's code */
-    int wide = g_saw_wide || g_saw_float || refs_wide(rs, nr) || (g_xd_div && round_wide(rs, rd, nr)), flt = g_saw_float;
-    g_saw_wide = saw; g_saw_float = sawf;
+    int rw = refs_wide(rs, nr);                 /* first: it marks a float or software-float receiver's statement */
+    int wide = g_saw_wide || g_saw_float || g_saw_qfloat || rw || (g_xd_div && round_wide(rs, rd, nr)), flt = g_saw_float || g_fstmt;
+    if (g_saw_qfloat) g_qstmt = 1;
+    g_saw_wide = saw; g_saw_float = sawf; g_saw_qfloat = sawq;
     /* the SIZE ERROR phrases, before any code (their statements must not
      * leave this statement's ROUNDED MODE or width behind them) */
     int size_err = at_size_error_clause() || ec_size_on();
@@ -359,7 +361,7 @@ static void parse_compute(void)
                 g_wide = 1;
                 emit_expr(e);
                 emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
-                g_wide = 0; g_fstmt = 0;
+                g_wide = 0; g_fstmt = g_qstmt = 0;
                 emit_label(Ldone);
             }
             emit_size_phrases(&ph);
@@ -369,6 +371,6 @@ static void parse_compute(void)
     }
     emit_expr(e);
     emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
-    g_wide = 0; g_fstmt = 0;
+    g_wide = 0; g_fstmt = g_qstmt = 0;
     emit_size_phrases(&ph);
 }

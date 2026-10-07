@@ -23,7 +23,16 @@ static void accept_size_error_words(void)
  * each phrase's statements parsed once into a Block, read with the rest
  * of the statement before its code, and laid out after the stores */
 typedef struct { int size_err, has_on, has_not; Block on, not_on; } SizePh;
+static void parse_size_phrases_1(SizePh *p, int size_err, const char *end_word);
 static void parse_size_phrases(SizePh *p, int size_err, const char *end_word)
+{
+    /* the phrases' own statements neither take nor leave the statement's
+     * computing mode (a float or software float among its operands) */
+    int fs = g_fstmt, qs = g_qstmt;
+    parse_size_phrases_1(p, size_err, end_word);
+    g_fstmt = fs; g_qstmt = qs;
+}
+static void parse_size_phrases_1(SizePh *p, int size_err, const char *end_word)
 {
     memset(p, 0, sizeof *p);
     p->size_err = size_err;
@@ -88,6 +97,7 @@ static void emit_push(Opnd *o)
     int w = (o->kind == O_NUM && numlit_wide(&o->num)) || (o->kind == O_REF && !o->ref.rm && sym_wide(o->ref.sym));
     if (w || fn_inexact(o)) g_saw_wide = 1;
     if (o->kind == O_REF && o->ref.sym->usage == U_FLOAT) g_saw_float = 1;
+    if (o->kind == O_REF && o->ref.sym->usage == U_DFLOAT) g_saw_qfloat = 1;
     if (w && !g_wide && !g_noemit) wide_arith_refuse(o->line, o->kind == O_NUM ? "a literal" : "an item");
     if (g_wide && o->kind == O_NUM && numlit_wide(&o->num)) {
         int d; const char *l = num_lit_label(&o->num, &d);
@@ -661,7 +671,7 @@ static void recv_access(Ref *r, int reads)
 static void opnd_int_frac(const Opnd *o, int *in, int *fr)
 {
     int digits = -1, scale = 0;
-    if (o->kind == O_REF && o->ref.sym->usage == U_FLOAT) return;       /* no digits: a float is computed in double */
+    if (o->kind == O_REF && (o->ref.sym->usage == U_FLOAT || o->ref.sym->usage == U_DFLOAT)) return;   /* no digits: a float is computed in double, a standard software float on the floating wide stack */
     if (o->kind == O_REF && !o->ref.sym->is_group && (o->ref.sym->pi.category == PIC_NUMERIC || o->ref.sym->pi.category == PIC_NUMERIC_EDITED))
         { digits = o->ref.sym->pi.digits; scale = o->ref.sym->pi.scale; }
     else if (o->kind == O_NUM) { digits = o->num.ndigits; scale = o->num.scale; }
@@ -717,6 +727,8 @@ static int opnds_wide(const Opnd *ops, int n)
     for (int k = 0; k < n; k++)
         if ((ops[k].kind == O_REF && ops[k].ref.sym->usage == U_FLOAT) || (ops[k].kind == O_EXPR && ops[k].flt)) g_fstmt = 1;
     for (int k = 0; k < n; k++)
+        if ((ops[k].kind == O_REF && ops[k].ref.sym->usage == U_DFLOAT) || (ops[k].kind == O_EXPR && ops[k].qflt)) g_qstmt = 1;
+    for (int k = 0; k < n; k++)
         if ((ops[k].kind == O_REF && !ops[k].ref.rm && sym_wide(ops[k].ref.sym)) || (ops[k].kind == O_NUM && numlit_wide(&ops[k].num)) ||
             (ops[k].kind == O_EXPR && ops[k].wide) || fn_inexact(&ops[k])) return 1;
     return 0;
@@ -724,6 +736,7 @@ static int opnds_wide(const Opnd *ops, int n)
 static int refs_wide(const Ref *rs, int nr)
 {
     for (int k = 0; k < nr; k++) if (rs[k].sym->usage == U_FLOAT) g_fstmt = 1;
+    for (int k = 0; k < nr; k++) if (rs[k].sym->usage == U_DFLOAT) g_qstmt = 1;
     for (int k = 0; k < nr; k++) if (!rs[k].rm && sym_wide(rs[k].sym)) return 1;
     return 0;
 }

@@ -11,7 +11,8 @@ enum {
     U_NATIONAL,                     /* numeric and numeric-edited USAGE NATIONAL (cobol ISSUES-72); PIC N keeps U_DISPLAY */
     U_BIT,                          /* boolean USAGE BIT: bits, packed (cobol ISSUES-78) */
     U_SDBL, U_UDBL,                 /* BINARY-DOUBLE [UNSIGNED]: eight bytes, 19 (20) digits -- the wide path (docs/wide.md) */
-    U_FLOAT                         /* COMP-1 (no PICTURE), COMP-2, FLOAT-SHORT/-LONG: IEEE, size 4 or 8 (docs/usage.md) */
+    U_FLOAT,                        /* COMP-1 (no PICTURE), COMP-2, FLOAT-SHORT/-LONG, FLOAT-BINARY-32/64: IEEE binary32/64, the hardware's, size 4 or 8 (docs/usage.md) */
+    U_DFLOAT                        /* FLOAT-BINARY-128, FLOAT-DECIMAL-16/34 (2014): IEEE binary128, decimal64, decimal128 in software on the wide decimal stack, 16, 8 or 16 bytes (docs/usage.md) */
 };
 
 static const char *usage_name(int u)
@@ -25,6 +26,8 @@ static const char *usage_name(int u)
 enum { UV_NONE, UV_COMPX, UV_NOSIGN,     /* Sym.uvar (docs/usage.md) */
        UV_COMP1,                        /* COMP-1, until sym_finish sees whether a PICTURE came: RM's binary, or a float */
        UV_FSHORT, UV_FLONG,             /* U_FLOAT: four bytes or eight */
+       UV_FB32, UV_FB64,                /* U_FLOAT: FLOAT-BINARY-32/64 (2014), IEEE binary32/64 (13.18.60.4 rules 14-15) */
+       UV_FB128, UV_FD16, UV_FD34,      /* U_DFLOAT: FLOAT-BINARY-128, FLOAT-DECIMAL-16/34 (rules 16-18): IEEE binary128, decimal64, decimal128 */
        UV_PPTR, UV_FPTR };              /* U_POINTER: a program-pointer, a function-pointer (2023 13.18.60; ptr_proto its restriction) */
 static int g_comp1 = -1;                /* -fcomp1=binary (1) | float (0); -1: by its PICTURE */
 
@@ -61,6 +64,7 @@ typedef struct Sym {
     int  redefines;                 /* sym index, -1 */
     int  redef_clause;              /* ... from a REDEFINES clause, not a file's records sharing storage */
     int  sync, just, blank_zero;
+    int  fbig, fdpd;                /* a standard floating-point usage: HIGH-ORDER-LEFT; DECIMAL-ENCODING (13.18.60, the endianness and encoding phrases; the unit's OPTIONS defaults otherwise) */
     int  aligned;                   /* ALIGNED (2023 13.18.1): a bit item or bit group on the first bit of a byte, each occurrence so */
     int  sign_lead, sign_sep;        /* SIGN IS LEADING/TRAILING [SEPARATE] */
     int  ndims, dim_count[MAXDIM], dim_stride[MAXDIM];

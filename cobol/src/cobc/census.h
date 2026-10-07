@@ -102,6 +102,7 @@ static const char *cen_category(Sym *s)
     case U_POINTER: return "pointer";
     case U_INDEX:   return "usage-index";
     case U_FLOAT:   return "float";
+    case U_DFLOAT:  return "float";
     case U_BIT:     return "bit";
     default: break;
     }

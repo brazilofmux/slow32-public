@@ -15,7 +15,7 @@ typedef struct Expr {
     struct Expr *l, *r;
     struct Opnd_ *o;            /* a leaf's operand, as the scan parsed it */
     int tp;                     /* a leaf's first token */
-    int wide, flt;              /* scan_expr's: an operand past 18 digits, a float, inside it */
+    int wide, flt, qflt;        /* scan_expr's: an operand past 18 digits, a float, a standard software float, inside it */
 } Expr;
 
 typedef struct Ref_ {
@@ -121,6 +121,7 @@ typedef struct Opnd_ {
     int wide;           /* O_EXPR: an operand past 18 digits inside (docs/wide.md) */
     int folded;         /* O_NUM: a function or LENGTH OF the compiler evaluated -- written as a reference, not a literal */
     int flt;            /* O_EXPR: a floating-point item inside (docs/usage.md) */
+    int qflt;           /* O_EXPR: a standard software float inside (FLOAT-DECIMAL, FLOAT-BINARY-128) */
     int allfig;         /* O_FIG written ALL ZERO, ALL SPACES ...: not a numeric literal (2023 8.3.3.6.3 rule 1a) */
     Ref ref;
     Tok *tok;           /* O_STR / O_FIG / O_ALL's literal */
@@ -254,7 +255,7 @@ static int sym_notrunc(Sym *s) { return s->usage == U_COMP5 || usage_is_native(s
 static int is_hot_int(Sym *s)
 {
     if (s->is_group || s->pi.category != PIC_NUMERIC || s->pi.scale != 0) return 0;
-    if (s->usage == U_DISPLAY || s->usage == U_PACKED || s->usage == U_NATIONAL || s->usage == U_FLOAT) return 0;
+    if (s->usage == U_DISPLAY || s->usage == U_PACKED || s->usage == U_NATIONAL || s->usage == U_FLOAT || s->usage == U_DFLOAT) return 0;
     return s->size == 1 || s->size == 2 || s->size == 4;    /* not COMP-X's three bytes */
 }
 

@@ -201,6 +201,9 @@ numeric or numeric-edited item -- except `ALL` with a literal of digits
 to an integer item, which 2023 keeps as obsolete (BP-O9's case, now only for
 integers). docs/standards.md, "Later revisions", has the survey.
 
+Under -std=2014 (2026-10-07) BP-E27 and BP-E29 are the language and
+raise no warning; under -std=85 and -std=2002 they stay class E.
+
 ## Class G — GnuCOBOL's own forms (`-dialect=gnucobol`)
 
 Forms only GnuCOBOL has -- neither the standard's nor X/Open's nor

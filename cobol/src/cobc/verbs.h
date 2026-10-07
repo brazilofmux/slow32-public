@@ -980,7 +980,7 @@ static void parse_search(void)
                 for (int j = (int)(tbl - g_sym) + 1; j < g_nsym; j++) {
                     int in = 0;                          /* the key is the table entry's descendant */
                     for (int a2 = g_sym[j].parent; a2 >= 0 && !in; a2 = g_sym[a2].parent) in = &g_sym[a2] == tbl;
-                    if (in && !strcmp(g_sym[j].name, tbl->okey[k]) && g_sym[j].usage == U_FLOAT)
+                    if (in && !strcmp(g_sym[j].name, tbl->okey[k]) && (g_sym[j].usage == U_FLOAT || g_sym[j].usage == U_DFLOAT))
                         die_at(wline, "SEARCH ALL: the KEY '%s' is a floating-point item (Micro Focus: SEARCH rules)", g_sym[j].name);
                 }
             unsigned used = 0;

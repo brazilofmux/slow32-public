@@ -520,6 +520,7 @@ static Cond *parse_simple(void)
                 die_at(line, "NUMERIC tests a DISPLAY or NATIONAL item, or a numeric one: not '%s' (2023 8.8.4.4.3 rule 8)", cs->name);
             if (klass == 0 && !cs->is_group && cs->pi.category == PIC_BOOLEAN && cs->usage == U_BIT && !x.ref.rm)
                 die_at(line, "NUMERIC tests a DISPLAY or NATIONAL item, or a numeric one: not the bit item '%s' (2023 8.8.4.4.3 rule 8)", cs->name);
+            if (cs->usage == U_DFLOAT && klass != 0) die_at(line, "the floating-point item '%s' takes only the NUMERIC class condition (2023 8.8.4.4.3 rule 3)", cs->name);
             if (cs->usage == U_FLOAT && (klass != 0 || g_std < 2002))
                 die_at(line, g_std < 2002 ? "the floating-point item '%s' takes no class condition (Micro Focus: class condition rules)"
                                           : "the floating-point item '%s' takes only the NUMERIC class condition (2023 8.8.4.4.3 rule 3)", cs->name);
@@ -541,7 +542,7 @@ static Cond *parse_simple(void)
                 return cond_rel(&x, R_EQ, &z, neg);
             }
             advance();
-            if (x.kind == O_REF && x.ref.sym->usage == U_FLOAT && !x.ref.rm && sop != R_EQ) {
+            if (x.kind == O_REF && (x.ref.sym->usage == U_FLOAT || x.ref.sym->usage == U_DFLOAT) && !x.ref.rm && sop != R_EQ) {
                 /* format 2 (2023 8.8.4.7): a floating-point item named
                  * bare is tested by its sign bit -- -0.0 is NEGATIVE, as
                  * are -INF and a NaN with the sign set; in parentheses it
@@ -676,7 +677,7 @@ static void emit_cond_value(Cond *c)
          * POSITIVE when clear (-5) */
         Arg a[1] = { arg_ref(&c->x.ref) };
         emit_args(a, 1);
-        emit("\tldbu r1, r3+%d", c->x.ref.sym->size == 4 ? 3 : 7);
+        emit("\tldbu r1, r3+%d", c->x.ref.sym->fbig ? 0 : c->x.ref.sym->size - 1);   /* the sign bit's byte: the last in the machine's order, the first HIGH-ORDER-LEFT */
         emit("\tsrli r1, r1, 7");
         if ((c->klass == -5) != (c->neg != 0)) emit("\txori r1, r1, 1");
         return;
@@ -801,7 +802,7 @@ static void emit_cond_value(Cond *c)
         emit_push_opnd(&c->x);
         emit_push_opnd(&c->y);
         emit_call("cob_ncmp");
-        g_wide = was; if (!was) g_fstmt = 0;
+        g_wide = was; if (!was) g_fstmt = g_qstmt = 0;
         switch (c->op) {
         case R_EQ: emit("\tseq r1, r1, r0"); break;
         case R_NE: emit("\tsne r1, r1, r0"); break;

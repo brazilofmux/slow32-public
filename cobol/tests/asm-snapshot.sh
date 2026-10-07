@@ -27,14 +27,14 @@ one() {   # one out flags... -- source
 }
 
 # the harness's programs, with the flags run-tests.sh gives them
-for d in fixed free 2002 warn; do
+for d in fixed free 2002 2014 warn; do
     mkdir -p "$OUT/tests-$d"
     for src in "$HERE/$d"/*.cbl; do
         n=$(basename "$src" .cbl)
-        flags="-$d"; [ "$d" = 2002 ] && flags="-free -std=2002"
+        flags="-$d"; [ "$d" = 2002 ] && flags="-free -std=2002"; [ "$d" = 2014 ] && flags="-free -std=2014"
         if [ "$d" = warn ]; then
             flags="-fixed"; grep -q "^identification division" "$src" && flags="-free"
-            case "$n" in *std2002*) flags="$flags -std=2002" ;; esac
+            case "$n" in *std2002*) flags="$flags -std=2002" ;; *std2014*) flags="$flags -std=2014" ;; esac
         fi
         case "$n" in mf-*|*-mf-*|ext-mf*) flags="$flags -dialect=mf" ;; esac
         one "$OUT/tests-$d/$n" $flags -I "$HERE/copy" "$src"

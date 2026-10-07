@@ -2943,3 +2943,32 @@ gcc (the ten with a 64-bit static or global failed before), a wider probe
 (INT64_MIN, `long` -3, `unsigned long` 0xFEDCBA9876543210, `size_t` 1<<32,
 a static double, a null pointer) matching too, and dbt-x64 and s32fast-hir
 rebuilt by it both giving 0x8d70b2b on benchmark_core.
+
+### 81. stage08 cc: a struct member read after a call took its address reloads from the wrong frame offset
+
+Found 2026-10-07 by cobol's selfhost-libcob gate when libcob gained
+the IEEE formats (cobol queue item 20): a FLOAT-DECIMAL-16 value came
+back with its scale lost, and only in the runtime the kit's cc.s32x
+built. The reproducer is eleven lines:
+
+    typedef struct { unsigned m[4]; int neg; int scale; } W;
+    static void touch(int *scale) { if (*scale > 1000) *scale = 0; }
+    static void t3(void) { W w; w.scale = 3; touch(&w.scale); int k = w.scale; printf("%d\n", k); }
+
+prints 0 (clang: 3). The emitted code puts `w` at r29+8, stores the 3 at
+r29+28 (8 + the member's offset 20) and passes `addi r3, r29, 28` --
+right -- then reloads the member after the call with `ldw r4, r29, 40`:
+the member's offset 20 added to itself, or the struct's own offset lost.
+The same with the struct copied from a pointer (`W w = *w0`) and with
+`memcpy`; a plain local int, an array element (`&a[1]`), a member
+through a pointer (`&w->scale`) and a pointer variable (`int *p =
+&w.scale; touch(p)`) are all right -- it is the direct `&local.member`
+argument, and the read of that member after the call. Not the whole
+struct being address-taken: `&w` passed is fine (bt3 of the session).
+
+Worked around in cobol/libcob/libcob.c (sf_store copies the scale to a
+local int before `ieee_round_digits(w.m, &sc, ...)`), with a comment
+naming this issue; nothing else in libcob takes a local struct member's
+address as a call argument (grep). The repair belongs here: the
+address-taken member must spill the whole object, or the reload must
+use the object's frame offset.

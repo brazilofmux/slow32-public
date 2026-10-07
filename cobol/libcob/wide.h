@@ -17,7 +17,7 @@ typedef unsigned int wl_t;              /* one limb */
 
 /* isf: a floating-point value in f instead (COMP-1/COMP-2, docs/usage.md):
  * the wide stack computes in double once any operand is one */
-typedef struct { wl_t m[WL]; int neg; int scale; int isf; double f; } cob_wnum;
+typedef struct { wl_t m[WL]; int neg; int scale; int isf; double f; int isq; } cob_wnum;   /* isq: a standard floating-point format's value (decimal64/128, binary128, ieee.h): the stack sheds low digits for room rather than reporting a size error, the scale running negative */
 
 /* every function static, and unused ones no warning: each includer takes what it needs */
 #define WFN static __attribute__((unused))
@@ -161,7 +161,7 @@ WFN void w_from_i64(cob_wnum *w, long long v, int scale)
 {
     unsigned long long u = v < 0 ? 0 - (unsigned long long)v : (unsigned long long)v;
     w->m[0] = (wl_t)u; w->m[1] = (wl_t)(u >> 32); w->m[2] = w->m[3] = 0;
-    w->neg = v < 0; w->scale = scale; w->isf = 0;
+    w->neg = v < 0; w->scale = scale; w->isf = 0; w->isq = 0;
 }
 
 /* does the magnitude fit in 63 bits (for a narrow value)? */

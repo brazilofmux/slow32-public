@@ -379,6 +379,7 @@ static void usage(void)
         "  -D name[=value]  the value >>DEFINE name AS PARAMETER takes (repeatable; no value: 1)\n"
         "  -std=85  X3.23-1985 and the 1989 intrinsics; the default\n"
         "  -std=2002 add the COBOL 2002 modules landed so far (docs/standards.md, Stage B)\n"
+        "  -std=2014 and the COBOL 2014 additions landed so far: the IEEE floating-point usages (docs/plans/standard-queue.md)\n"
         "  -fnsig   only write the user functions' .s32fn signature files (docs/functions.md)\n"
         "  -fixed-columns=bytes  count reference-format columns in bytes, not characters (UTF-8 source)\n"
         "  -fbinary-byteorder=native  COMP/BINARY in SLOW-32's little-endian order, not big-endian (docs/usage.md)\n"
@@ -423,14 +424,16 @@ int main(int argc, char **argv)
         else if (!strncmp(argv[i], "-dialect=", 9)) { fprintf(stderr, "s32-cobc: %s: the dialects are mf and gnucobol (docs/behavior-points.md)\n", argv[i]); return 2; }
         else if (!strcmp(argv[i], "-std=85") || !strcmp(argv[i], "-std=cobol85")) g_std = 85;
         else if (!strcmp(argv[i], "-std=2002") || !strcmp(argv[i], "-std=cobol2002")) { g_std = 2002; pic_max_digits = 31; }
+        else if (!strcmp(argv[i], "-std=2014") || !strcmp(argv[i], "-std=cobol2014")) { g_std = 2014; pic_max_digits = 31; }
         else if (!strcmp(argv[i], "-std=74") || !strcmp(argv[i], "-std=cobol74")) {
             fprintf(stderr, "s32-cobc: there is no -std=74: 74 programs compile as 85, and -warn-74 flags where their "
                             "meaning changed; full COBOL 74 is cobc370's job (docs/standards.md)\n");
             return 2;
         }
         else if (!strncmp(argv[i], "-std=", 5)) {
-            fprintf(stderr, "s32-cobc: %s is not implemented; -std=85 (the default) and -std=2002 "
-                            "(COBOL 2002, Stage B of docs/standards.md, as its modules land)\n", argv[i]);
+            fprintf(stderr, "s32-cobc: %s is not implemented; -std=85 (the default), -std=2002 "
+                            "(COBOL 2002, Stage B of docs/standards.md) and -std=2014 (its additions as they land, "
+                            "docs/plans/standard-queue.md tier 3)\n", argv[i]);
             return 2;
         }
         else if (argv[i][0] == '-') usage();
@@ -483,7 +486,7 @@ int main(int argc, char **argv)
          * by END PROGRAM */
         g_nsym = 0; g_nfile = 0; g_npara = 0; g_nreport = 0; g_report_base = 0; g_nscreen = 0; g_screen_base = 0; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_last_item = -1;
         g_nsame_groups = 0; g_collate = -1; g_collate_name[0] = 0; g_lowval = 0x00; g_highval = 0xFF; g_cur_fd = -1; g_in_linkage = 0;
-        g_sym_base = g_file_base = g_para_base = 0; g_udepth = 0; g_nuse = 0; g_initial = 0; g_recursive = 0; g_nsymch = 0; g_default_rmode = 0;
+        g_sym_base = g_file_base = g_para_base = 0; g_udepth = 0; g_nuse = 0; g_initial = 0; g_recursive = 0; g_nsymch = 0; g_default_rmode = 0; g_float_bigend = 0; g_float_dpd = 0;
         g_in_proc = 0;
         parse_identification_division();
         parse_environment_division();
