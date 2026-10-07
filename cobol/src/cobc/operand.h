@@ -296,7 +296,7 @@ static void ref_resolve_bits(Ref *r)
     if (r->rm) r->bitu_start = r->rm_start;
     else { r->rm = 1; r->rm_len = r->sym->bits; r->rm_lx = NULL; r->bitu_start = 1; }
     r->rm_bit = 1; r->bitsub = r->nsub;
-    r->rm_start = !r->sub[k].sym && r->bitu_start ? (r->sub[k].lit - 1) * r->sym->bits + r->bitu_start : 0;
+    r->rm_start = !r->sub[k].sym && r->bitu_start ? (r->sub[k].lit - 1) * bit_stride(r->sym) + r->bitu_start : 0;
 }
 
 /* a bit data item passed BY REFERENCE starts a byte, with only literal

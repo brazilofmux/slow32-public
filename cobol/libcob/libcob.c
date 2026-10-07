@@ -2247,6 +2247,7 @@ void *cob_act_enter(int *desc)
         for (int k = 0; k < nl; k++) {
             const char *image = (const char *)(intptr_t)loc[1 + 3 * k + 1];
             if (image) memcpy(*(char **)(intptr_t)loc[1 + 3 * k], image, (size_t)loc[1 + 3 * k + 2]);
+            else if (!loc[1 + 3 * k + 2]) *(char **)(intptr_t)loc[1 + 3 * k] = 0;   /* a BASED entry: NULL again (8.6.5) */
         }
         return h->cache;
     }
@@ -2264,6 +2265,7 @@ void *cob_act_enter(int *desc)
         char **cell = (char **)(intptr_t)loc[1 + 3 * k];
         const char *image = (const char *)(intptr_t)loc[1 + 3 * k + 1];
         int n = loc[1 + 3 * k + 2];
+        if (!image && !n) { *cell = 0; continue; }   /* a BASED entry in LOCAL-STORAGE: its cell NULL at each activation (13.18.5.4 rule 2; 8.6.5) */
         at = (at + 7) & ~(size_t)7;
         if (image) memcpy(b + at, image, (size_t)n);  /* none for a function's result temporary */
         *cell = b + at;

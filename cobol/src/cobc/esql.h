@@ -1595,7 +1595,8 @@ static void parse_procedure_division(void)
         Sym *s = &g_sym[i];
         if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->rep_ctr >= 0 || !s->is_external) continue;
         char nm[80];
-        if (s->fd >= 0) snprintf(nm, sizeof nm, "file:%s", g_files[s->fd].name); else snprintf(nm, sizeof nm, "%s", s->name);
+        if (s->fd >= 0) snprintf(nm, sizeof nm, "file:%s", g_files[s->fd].name);
+        else snprintf(nm, sizeof nm, "%s", s->ext_as[0] ? s->ext_as : s->name);   /* AS literal: its externalized name */
         emit_la("r3", lit_label((const unsigned char *)nm, (int)strlen(nm) + 1));
         emit_li("r4", s->image_size);
         emit_call("cob_external");

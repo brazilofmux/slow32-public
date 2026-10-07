@@ -1145,14 +1145,14 @@ static void emit_bitelem_start(const Ref *r, long chk, int slot, int pushed)
         if (ec_on_name("EC-BOUND-REF-MOD")) emit_refmod_check(r, chk, slot);
     }
     emit("	add r3, r1, r0"); emit("	srai r4, r1, 31"); emit_li("r5", 0); emit_call("cob_push_lit");
-    if (!r->sub[k].sym) { emit_li("r3", (r->sub[k].lit - 1) * s->bits); emit_li("r4", 0); emit_li("r5", 0); emit_call("cob_push_lit"); }
+    if (!r->sub[k].sym) { emit_li("r3", (r->sub[k].lit - 1) * bit_stride(s)); emit_li("r4", 0); emit_li("r5", 0); emit_call("cob_push_lit"); }
     else {
         Sym *ss = r->sub[k].sym;
         emit_incompat_sym(ss, r->line);
         emit_item_addr("r3", ss, ss->offset); emit_desc_addr("r4", sym_desc(ss)); emit_call("cob_push");
         emit_li("r3", r->sub[k].adj - 1); emit("	srai r4, r3, 31"); emit_li("r5", 0); emit_call("cob_push_lit");
         emit_call("cob_nadd");
-        emit_li("r3", s->bits); emit_li("r4", 0); emit_li("r5", 0); emit_call("cob_push_lit");
+        emit_li("r3", bit_stride(s)); emit_li("r4", 0); emit_li("r5", 0); emit_call("cob_push_lit");
         emit_call("cob_nmul");
     }
     emit_call("cob_nadd");

@@ -176,6 +176,8 @@ static void parse_read(void)
     }
     int has_next = !has_prev && accept_word("next"); accept_word("record");
     Ref into; int has_into = 0;
+    if (f->implicit_rec && !at_word("into"))
+        die_at(cur()->line, "READ %s: the file has no record description entry, so READ takes an INTO phrase (2023 13.4.5.3 rule 3c)", f->name);
     if (accept_word("into")) {
         g_noemit++; parse_ref(&into); g_noemit--;     /* identified after the record is read (2023 14.9.30.4) */
         has_into = 1;
@@ -243,11 +245,30 @@ static void parse_read(void)
     }
 }
 
+/* WRITE FILE file-name FROM ... (14.9.51 rules 1, 7), REWRITE FILE
+ * likewise (14.9.35): the file's record area, which an FD with no record
+ * description has as a FILLER record (13.4.5.3 rule 3b) */
+static File *parse_file_phrase(Ref *rec, const char *verb)
+{
+    int line = cur()->line;
+    advance();
+    if (cur()->kind != T_WORD) die_at(line, "%s FILE needs a file-name", verb);
+    File *f = file_find(cur()->s);
+    if (!f) die_at(line, "%s FILE: '%s' is not a file", verb, cur()->s);
+    advance();
+    if (f->rec < 0) die_at(line, "%s FILE %s: the file has no record area", verb, f->name);
+    memset(rec, 0, sizeof *rec); rec->sym = &g_sym[f->rec]; rec->line = line; rec->rm_lx = NULL;
+    if (!at_word("from")) die_at(cur()->line, "%s FILE %s takes a FROM phrase (2023 14.9.51.3 rule 7)", verb, f->name);
+    return f;
+}
 static void parse_write(void)
 {
-    if (at_word("file")) die_at(cur()->line, "WRITE FILE is not implemented (2023 14.9.51 format 2; optional since 2014)");
-    Ref rec; parse_ref(&rec);
-    File *f = file_of_record(rec.sym, rec.line);
+    Ref rec; File *f;
+    if (at_word("file") && !sym_lookup_quiet("file")) f = parse_file_phrase(&rec, "WRITE");
+    else {
+        parse_ref(&rec);
+        f = file_of_record(rec.sym, rec.line);
+    }
     if (f->org == COB_ORG_SORT) die_at(rec.line, "WRITE to the sort file '%s': use RELEASE inside the INPUT PROCEDURE", f->name);
     if (accept_word("from")) {
         Opnd src; parse_operand(&src);
@@ -339,9 +360,12 @@ advancing_done:;
 /* REWRITE record [FROM x] [INVALID KEY ...] */
 static void parse_rewrite(void)
 {
-    if (at_word("file")) die_at(cur()->line, "REWRITE FILE is not implemented (2023 14.9.35 format 2; optional since 2014)");
-    Ref rec; parse_ref(&rec);
-    File *f = file_of_record(rec.sym, rec.line);
+    Ref rec; File *f;
+    if (at_word("file") && !sym_lookup_quiet("file")) f = parse_file_phrase(&rec, "REWRITE");
+    else {
+        parse_ref(&rec);
+        f = file_of_record(rec.sym, rec.line);
+    }
     if (f->org == COB_ORG_LINESEQ) die_at(rec.line, "REWRITE is not valid on a LINE SEQUENTIAL file");
     if (accept_word("from")) { Opnd src; parse_operand(&src); emit_move(&src, &rec); }
     io_nyi("REWRITE");

@@ -1,0 +1,1 @@
+READ f: the file has no record description entry, so READ takes an INTO phrase (2023 13.4.5.3 rule 3c)

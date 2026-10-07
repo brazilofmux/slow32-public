@@ -31,6 +31,8 @@ static int is_int_item(Sym *s);
 
 /* elementary size and numeric attributes */
 static void bwz_check(const char *name, const PicInfo *pi, int bad_usage, int line);
+static int bool_picture(const char *pic, PicInfo *pi, int line);
+static int nat_picture(const char *pic, PicInfo *pi, int line);
 static void sym_finish(Sym *s)
 {
     int u = s->usage;
@@ -53,8 +55,18 @@ static void sym_finish(Sym *s)
     }
     int native = usage_is_native(u);
 
-    if (!s->has_pic && !native && g_std >= 2002 && s->value_tok && s->value_tok->kind == T_STR)
-        die_at(s->line, "'%s' has no PICTURE clause: one implied by its VALUE literal (2002 13.13.2 rule 14; 2023 13.16.3 rule 9) is not implemented", s->name);
+    if (!s->has_pic && !native && g_std >= 2002 && s->value_tok && s->value_tok->kind == T_STR && !s->value_all && s->value_tok->len > 0) {
+        /* no PICTURE, but an alphanumeric, boolean or national literal in
+         * the VALUE clause: PICTURE X(length), 1(length) or N(length) is
+         * implied (2023 13.16.3 rule 9) */
+        Tok *v = s->value_tok;
+        int n = v->nat ? v->len / 2 : v->len;
+        s->has_pic = 1;
+        snprintf(s->pic, sizeof s->pic, "%c(%d)", v->boolv ? '1' : v->nat ? 'n' : 'x', n);
+        if (v->boolv) { if (!bool_picture(s->pic, &s->pi, s->line)) die_at(s->line, "internal: the implied boolean picture"); }
+        else if (v->nat) { if (!nat_picture(s->pic, &s->pi, s->line)) die_at(s->line, "internal: the implied national picture"); }
+        else if (pic_analyse(s->pic, &s->pi) < 0) die_at(s->line, "internal: the implied picture '%s': %s", s->pic, s->pi.err);
+    }
     if (!s->has_pic && !native)
         die_at(s->line, "'%s' has no PICTURE clause%s (%s)", s->name,
                s->level == 1 || s->level == 77 ? " (and no subordinate items: an empty group is RM/COBOL's, not taken -- docs/dialect.md)" : "",
@@ -361,7 +373,7 @@ static void parse_data_item(void)
         g_nsym = nsym; g_last_item = last;
         g_recover = outer;
         int lv = g_entry_level;
-        if ((lv >= 1 && lv <= 49) || lv == 77) {
+        if (lv >= 1 && lv != 66 && lv != 78 && lv != 88) {   /* a data item's level (an expansion's may pass 49) */
             /* a FILLER PIC X stands in its place, so the record keeps its
              * shape: a group whose only item failed is still a group */
             Sym *f = sym_new();
@@ -489,7 +501,8 @@ static void parse_data_item1(void)
         parse_constant_entry(line);
         return;
     }
-    if (!((level >= 1 && level <= 49) || level == 66 || level == 77 || level == 88))
+    if (!((level >= 1 && level <= 49) || level == 66 || level == 77 || level == 88) &&
+        !(level <= 99 && g_tok[g_tp - 1].orig && !strcmp(g_tok[g_tp - 1].orig, "\001xlevel")))   /* a TYPE's or SAME AS's expansion past 49 */
         die_at(line, "level number %d is not valid", level);
     if (level == 1 && g_std >= 2002 && is_word(peek(1), "constant") && !is_word(peek(2), "record")) {
         parse_constant_entry(line);
@@ -881,7 +894,6 @@ static void parse_data_item1(void)
              * data-address pointer, NULL until SET ADDRESS OF gives it one */
             if (g_std < 2002) die_at(t->line, "BASED is COBOL 2002; compile with -std=2002");
             if (level != 1 && level != 77) die_at(t->line, "'%s': BASED is for a level 01 or 77 entry here", s->name);
-            if (g_in_local) die_at(t->line, "'%s': a BASED entry in LOCAL-STORAGE is not implemented", s->name);
             advance(); s->is_based = 1; continue;
         }
         if (!strcmp(t->s, "just") || !strcmp(t->s, "justified")) {
@@ -905,16 +917,22 @@ static void parse_data_item1(void)
         if (!strcmp(t->s, "global")) { advance(); s->is_global = 1; continue; }
         if (!strcmp(t->s, "external")) {
             advance(); s->is_external = 1;
-            if (at_word("as"))
-                die_at(cur()->line, g_std < 2002 ? "EXTERNAL AS is not COBOL 85 (X3.23-1985 X-23)" :
-                       "'%s': EXTERNAL AS literal, an externalized name, is not implemented (2023 13.18.22)", s->name);
+            if (at_word("as")) {
+                /* AS literal: the externalized name the storage is shared
+                 * under (2023 13.18.22 rules 2-3) */
+                if (g_std < 2002) die_at(cur()->line, "EXTERNAL AS is not COBOL 85 (X3.23-1985 X-23)");
+                advance();
+                if (cur()->kind != T_STR || cur()->len == 0) die_at(cur()->line, "'%s': EXTERNAL AS takes a nonempty alphanumeric literal (2023 13.18.22.3 rule 3)", s->name);
+                snprintf(s->ext_as, sizeof s->ext_as, "%.*s", cur()->len < 63 ? cur()->len : 63, cur()->s);
+                advance();
+            }
             continue;
         }
         if (!strcmp(t->s, "constant") && is_word(peek(1), "record"))
             die_at(t->line, "'%s': the CONSTANT RECORD clause is COBOL 2014, beyond %s (2023 13.18.15)", s->name, g_std < 2002 ? "COBOL 85" : "-std=2002");
         if (!strcmp(t->s, "constant"))
             die_at(t->line, g_std < 2002 ? "a constant entry (level 01 CONSTANT) is COBOL 2002; compile with -std=2002" :
-                   "'%s': the constant entry (level 01 CONSTANT, 2023 13.10) is not implemented", s->name);
+                   "'%s': CONSTANT comes right after the name of a level 01 entry (2023 13.10)", s->name);
         if (!strcmp(t->s, "dynamic") && is_word(peek(1), "length"))
             die_at(t->line, "'%s': the DYNAMIC LENGTH clause is COBOL 2014, beyond %s (2023 13.18.19)", s->name, g_std < 2002 ? "COBOL 85" : "-std=2002");
         if (!strcmp(t->s, "any") && is_word(peek(1), "length") && g_std >= 2002) {
@@ -926,8 +944,13 @@ static void parse_data_item1(void)
             if (g_std < 2002) die_at(t->line, "'%s': %s is COBOL 2002, not 85", s->name, what);
             die_at(t->line, "'%s': %s is not implemented", s->name, what);
         }
-        if (!strcmp(t->s, "aligned"))
-            die_at(t->line, "'%s': the ALIGNED clause is COBOL 2002 (2023 13.18.1); not implemented", s->name);
+        if (!strcmp(t->s, "aligned")) {
+            /* ALIGNED (2023 13.18.1): a bit item or bit group at the first
+             * bit of the next byte, each occurrence so; checked once the
+             * usage is known (data_rules) */
+            if (g_std < 2002) die_at(t->line, "'%s': the ALIGNED clause is COBOL 2002 (2023 13.18.1); compile with -std=2002", s->name);
+            s->aligned = 1; advance(); continue;
+        }
         if (!strcmp(t->s, "function-pointer") || !strcmp(t->s, "message-tag"))
             die_at(t->line, "'%s': USAGE %s is COBOL %s (2023 13.18.60); not implemented", s->name, t->s,
                    t->s[0] == 'f' ? "2014" : "2023");

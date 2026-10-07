@@ -49,13 +49,13 @@ TYPE (docs/typedef.md).
 | 85 SR2; 2023 rule 4 | the data-name or FILLER first, REDEFINES immediately after it, the rest in any order | **refused**: bad/entry-rules -- REDEFINES after another clause was accepted |
 | 2002 13.13.2 and 2023 rule 4 | TYPEDEF immediately after the data-name | **refused**: bad/std2002-typedef-place (accepted before this sweep) |
 | 85 SR3; 2023 rule 8 | a PICTURE for every elementary item but an index item and a RENAMES subject; none for those (or the native usages) | **refused**: bad/no-picture, and "USAGE INDEX takes no PICTURE" (usage.md) |
-| 2023 rule 9 (2002 13.13.2 rule 14) | a PICTURE implied by an alphanumeric, boolean or national VALUE literal | **gap**: bad/std2002-implied-pic names it |
+| 2023 rule 9 (2002 13.13.2 rule 14) | a PICTURE implied by an alphanumeric, boolean or national VALUE literal | **test**: 2002/impliedpic (X(n), 1(n), N(n); implemented 2026-10-06, standard-queue item 11; no oracle: GnuCOBOL 4 requires the PICTURE) |
 | 2023 rule 10 | no VALUE on index, pointer, object items | **refused** ("a USAGE INDEX item takes no VALUE clause") |
 | 85 GR1; 2023 rule 11 | PICTURE, JUSTIFIED, BLANK WHEN ZERO (85: and SYNCHRONIZED) only for an elementary item | **refused**: bad/group-picture, bad/entry-rules (BLANK WHEN ZERO on a group, accepted before this sweep); JUSTIFIED and SYNCHRONIZED in clauses.md |
 | 2023 rules 3, 6, 13 | CONSTANT RECORD | **n/a** under -std=2002: COBOL 2014, refused naming it |
-| 2023 rule 12 | SAME AS | **gap**: refused naming it (2002) |
+| 2023 rule 12 | SAME AS | **test**: 2002/sameas (the 13.18.49 table below; implemented 2026-10-06, standard-queue item 11; GnuCOBOL 4 agrees) |
 | 2023 rules 14, 15 | TYPE and TYPEDEF combinations | docs/typedef.md |
-| 2023 rule 16 | BASED: level 01 or 77, in WORKING-STORAGE, LOCAL-STORAGE or LINKAGE | **refused** for the level; BASED in LOCAL-STORAGE is a **gap** |
+| 2023 rule 16 | BASED: level 01 or 77, in WORKING-STORAGE, LOCAL-STORAGE or LINKAGE | **refused** for the level; **test**: 2002/basedlocal (in LOCAL-STORAGE, its pointer NULL at each activation, 13.18.5.4 rule 2 and 8.6.5; implemented 2026-10-06; GnuCOBOL 4 keeps the outer activation's address: docs/oracles.md) |
 | 2023 rules 17, 18 | ANY LENGTH; DYNAMIC LENGTH | ANY LENGTH implemented 2026-10-01 (13.18.2 below); **n/a** (DYNAMIC LENGTH, 2014): refused naming it |
 | 2023 rule 19 | LOCALE in PICTURE | **gap**: refused naming it |
 | 2023 rules 20, 21 | PRESENT WHEN, PROPERTY | PRESENT WHEN is Report Writer's (reportwriter.md); PROPERTY **n/a** (object orientation) |
@@ -86,7 +86,7 @@ TYPE (docs/typedef.md).
 | 85 IPC SR2, EXTERNAL SR1; 2023 13.18.22.3 rule 1 | a level 01 entry in WORKING-STORAGE (or an FD) | **refused**: bad/external-rules -- a subordinate or LINKAGE entry was accepted |
 | 85 EXTERNAL SR2; 2023 rule 2 | each EXTERNAL name described once in a program | **refused**: bad/external-rules |
 | 85 EXTERNAL SR3 | no VALUE in or under an EXTERNAL record except on its 88s | **refused** under -std=85: bad/external-rules; 2002 lets INITIALIZE apply one (2023 13.18.63) |
-| 2023 rule 3 | EXTERNAL AS literal | **gap**: bad/std2002-external-as names it |
+| 2023 rule 3 | EXTERNAL AS literal | **test**: 2002/externalas (the externalized name the storage is shared under, GR 5; implemented 2026-10-06; GnuCOBOL 4 agrees); **refused**: a zero-length or non-alphanumeric literal |
 | 85 IPC SR3; 2023 13.16.3 rule 5 | not with REDEFINES (2002 on: nor BASED, TYPEDEF) | **refused**: bad/external-rules (REDEFINES), bad/std2002-external-based (accepted before this sweep) |
 | 85 IPC SR5; 2023 13.16.3 rule 7 | a data-name, not FILLER | **refused**: bad/external-rules |
 | 85 GR1-4 | one record per name across the run unit; a file connector | **test**: free/external, free/faultwrite |
@@ -140,3 +140,47 @@ at run time.
 | 2002 13.15.2 rule 7; GR 3 | an elementary screen item: PICTURE with FROM, TO or USING; PICTURE with a numeric VALUE; a VALUE literal, its PICTURE "may be omitted" (so it may be written) | **test**: free/scrpicval -- the literal in a field of the picture's size, padded with spaces, or cut on the right with a warning. It was "a VALUE slot takes no PICTURE" (ISSUES-120). A numeric VALUE with a numeric PICTURE is a **gap**, refused naming it |
 | 2002 13.15.1 (source-destination clauses) | FROM literal-1 | **test**: free/scrpicval -- the literal through the entry's PICTURE, as PICTURE with VALUE is; **refused** without a PICTURE: bad/screen-from-lit-nopic. It was "expected a data-name" (abrignoli_COBSOFT's `pic x(01) from "-"`). A numeric literal is a **gap** |
 
+
+## 13.18.49 SAME AS (implemented 2026-10-06, standard-queue item 11)
+
+Expanded over the tokens as TYPE is (src/cobc/typedef.h,
+`same_emit_entry`): the referenced entry's clauses in place of the
+clause, less CONSTANT RECORD, EXTERNAL, GLOBAL, REDEFINES and SELECT
+WHEN, its subordinates following with their levels adjusted. Test:
+2002/sameas (GnuCOBOL 4 agrees).
+
+| rule | paraphrase | disposition |
+|---|---|---|
+| SR 1 | data-name-1 not subject to an OCCURS clause | **refused**: bad/std2002-sameas-occurs |
+| SR 2 | the entry not followed by a subordinate or level 88 entry | **refused**: bad/std2002-sameas-sub |
+| SR 3 | no SAME AS back to the subject or its groups | the reference is to an entry before the subject, so it cannot name the subject; the expansion carries no SAME AS clause |
+| SR 4 | no TYPE back to the subject's record | **n/a**: TYPE clauses are expanded before (type_emit_entry), so the referenced entry holds none |
+| SR 5 | data-name-1's own description without OCCURS (its subordinates may have one) | **refused**: "its description has an OCCURS clause"; **test**: 2002/sameas (addr's subordinates under r-addr, itself under OCCURS) |
+| SR 6 | no OBJECT REFERENCE under a FILE SECTION subject | **n/a**: object orientation |
+| SR 7 | an elementary item, or a level 1 group, of the file, working-storage, local-storage or linkage section | **refused**: bad/std2002-sameas-level |
+| SR 8 | a level 77 subject takes an elementary item | **refused**: "a level 77 item takes an elementary item's description"; **test**: 2002/sameas (`77 total same as amount`) |
+| SR 9 | no GROUP-USAGE, SIGN or USAGE on a group above the subject | **gap**: not checked |
+| SR 10 | no CONSTANT RECORD on data-name-1 | **n/a**: CONSTANT RECORD is 2014's |
+| GR 1 | as though coded in place, less the excluded clauses | **test**: 2002/sameas |
+| GR 2 | a group: the same subordinates, levels adjusted, past 49 allowed | **test**: 2002/sameas (`48 d3 same as pr`, its subordinates at 50 and 51 -- an expansion's level past 49 is taken by the parser from an expansion only, kept clear of 66, 77 and 88; a TYPE expanding past 49 likewise, 13.18.57.4 rule 2c) |
+| GR 3-5 | a USAGE, GROUP-USAGE or SIGN clause of a group above data-name-1 carries to the subject | **gap**: not carried (the referenced entry is a level 1 item or an elementary one, whose own clauses are what it has) |
+
+## 13.18.1 ALIGNED (implemented 2026-10-06, standard-queue item 11)
+
+| rule | paraphrase | disposition |
+|---|---|---|
+| SR 1 | only for a bit group item or an elementary bit data item | **refused**: bad/std2002-aligned-nonbit |
+| GR 1, 3 | the item at the first bit of the next byte; without ALIGNED, 8.5.1.6.3's packing | **test**: 2002/aligned (no oracle: USAGE BIT) |
+| GR 2 | each occurrence of an aligned bit array on a byte | **test**: 2002/aligned (`d` occurs 3, bytes 2-4; `bit_stride`) |
+
+## 13.4.5.3 rule 3: an FD with no record description entry (implemented 2026-10-06)
+
+A FILLER record of the RECORD clause's size stands for the area
+(layout.h, `finish_data_division`). Test: 2002/fdnorec (no oracle:
+GnuCOBOL 4 requires a record description).
+
+| rule | paraphrase | disposition |
+|---|---|---|
+| 3a | a RECORD clause | **refused**: bad/std2002-fd-norec-nosize |
+| 3b | WRITE FILE file-name FROM and REWRITE FILE file-name FROM (14.9.51 and 14.9.35 format 2's FILE phrase, rule 7: FROM required) | **test**: 2002/fdnorec; **refused**: "WRITE FILE f takes a FROM phrase" |
+| 3c | READ ... INTO | **refused**: bad/std2002-fd-norec-read |

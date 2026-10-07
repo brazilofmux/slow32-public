@@ -22,6 +22,7 @@ rules.
 | WRITE (85 sequential 8; 2023 19) | END-OF-PAGE only with LINAGE | **refused** with the rule -- was a parse error |
 | WRITE (2023 3) | no ADVANCING on an indexed or relative file | **refused** -- AFTER ADVANCING 1 slipped through before, the check reading the newline count (zero) rather than the phrase |
 | WRITE, REWRITE | INVALID KEY only for indexed and relative files | **refused** |
+| WRITE, REWRITE (2023 format 2, the FILE phrase; rules 1, 7) | WRITE FILE file-name FROM, REWRITE FILE file-name FROM: the file's record area | **test**: 2002/fdnorec (implemented 2026-10-06, standard-queue item 11); **refused** without FROM |
 | REWRITE (85 relative 3; 2023 2) | no INVALID KEY for a relative file in sequential access | **refused**: bad/io-rules -- accepted before |
 | DELETE (85 1; 2023 1-2) | not for a sequential file; no INVALID KEY in sequential access | the first **refused** before; the second now (bad/io-rules) |
 | START (2023 1-8) | sequential or dynamic access; the key a record key, an item beginning where one does, or the RELATIVE KEY; no NOT = | **refused** (all held) |

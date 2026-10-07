@@ -61,6 +61,7 @@ typedef struct Sym {
     int  redefines;                 /* sym index, -1 */
     int  redef_clause;              /* ... from a REDEFINES clause, not a file's records sharing storage */
     int  sync, just, blank_zero;
+    int  aligned;                   /* ALIGNED (2023 13.18.1): a bit item or bit group on the first bit of a byte, each occurrence so */
     int  sign_lead, sign_sep;        /* SIGN IS LEADING/TRAILING [SEPARATE] */
     int  ndims, dim_count[MAXDIM], dim_stride[MAXDIM];
     /* VALUE (elementary or group) */
@@ -89,6 +90,7 @@ typedef struct Sym {
     int  ftemp_scan;                /* ... made while scanning ahead (no code): must never be emitted */
     int  is_global;                 /* GLOBAL (or under a GLOBAL item / a GLOBAL FD): contained programs see it */
     int  is_external;               /* EXTERNAL record (or a record of an EXTERNAL FD): storage shared by name, through a cell */
+    char ext_as[64];                /* EXTERNAL AS literal: the externalized name the storage is shared under (2023 13.18.22), or "" */
     int  is_rename;                 /* level 66: another name for a range of the record, resolved after layout */
     int  native;                    /* stands alone, and is written the machine's way in place of the way its entry says (native.h): 1 where it was, 2 in a cell outside its record */
     char rn_a[64], rn_b[64]; char rn_aq[8][64], rn_bq[8][64]; int rn_naq, rn_nbq;
@@ -493,6 +495,7 @@ typedef struct {
     int  codeset;                    /* FD CODE-SET: 1 + the alphabet index of a non-native code set, 0 native */
     int  fd_line;                    /* the line of its FD (or SD) entry, 0 before one is seen */
     int  block_given, rc_given, rc_varying_from, reserve_given;   /* BLOCK CONTAINS, RECORD CONTAINS written; RECORD VARYING FROM written */
+    int  implicit_rec;              /* no record description entry: a FILLER record stands for the area (2023 13.4.5.3 rule 3) */
     char data_rec[8][64]; int ndata_rec;           /* DATA RECORDS names (85 3.5), checked against the 01s */
     int  codeset_line;
 } File;

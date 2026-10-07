@@ -155,7 +155,13 @@ arise (a function's refmod with an expression length, a national sender to a num
 - Why here: each is a hole inside an implemented statement.
 
 **11. Data division leftovers.** 13.16 rule 9, 13.18.49, 13.18.1, 13.18.22, 13.10, 13.18.57,
-13.18.5, 13.4.5; Ed. 2002; M (splittable); deps 6 for constant FROM.
+13.18.5, 13.4.5; Ed. 2002; M (splittable); deps 6 for constant FROM. DONE 2026-10-06
+(data-division.md's new tables; tests 2002/sameas, impliedpic, aligned, externalas, basedlocal,
+fdnorec): the implied PICTURE, SAME AS (expanded over the tokens as TYPE is), ALIGNED (with
+occurrences on bytes), EXTERNAL AS, a TYPE or SAME AS expanding past level 49, BASED in
+LOCAL-STORAGE (NULL at each activation), an FD without a record description with WRITE FILE /
+REWRITE FILE ... FROM and READ INTO. The GLOBAL constant entry was already there (item 6).
+EC-BOUND-PTR is a ruling: not raised, the machine faults instead.
 - Today: implied PICTURE from a VALUE ("not implemented"); `SAME AS` ("not implemented"); `ALIGNED`
   (bare parse error); `EXTERNAL AS literal`; a `GLOBAL` constant entry ("the constant entry ... is
   not implemented"); a TYPE expanding past level 49; a BASED entry in LOCAL-STORAGE and

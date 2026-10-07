@@ -56,6 +56,7 @@ static void emit_act_desc(void)
         /* a function's result temporary is written by its call before it is
          * read: storage of its own per activation, no initial image to copy */
         emit("\t.word %s", s->label);
+        if (s->is_based) { emit("\t.word 0"); emit("\t.word 0"); continue; }   /* BASED: no copy, the cell NULL at each activation */
         if (s->is_ftemp) emit("\t.word 0"); else emit("\t.word %s_i", s->label);
         emit("\t.word %d", s->image_size);
     }
@@ -70,7 +71,7 @@ static void emit_unit_data(void)
     for (int i = g_sym_base; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
         if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->rep_ctr >= 0 || s->is_rc) continue;
-        if (s->is_local) {
+        if (s->is_local && !s->is_based) {
             /* a cell for the activation's copy, and the copy's initial state
              * (cob_act_enter makes a fresh one on every entry) */
             emit("\t.p2align 2");

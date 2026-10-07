@@ -51,6 +51,8 @@ static void clause_rules_one(int i)
     if (s->just && !s->is_group && s->pi.edited)
         die_at(s->line, "'%s' is %s; JUSTIFIED is not for an edited item (%s)", s->name, pic_category_name(s->pi.category),
                e85 ? "X3.23-1985 JUSTIFIED syntax rule 3" : "2023 13.18.32.3 rule 3");
+    if (s->aligned && !((!s->is_group && s->usage == U_BIT) || s->bitgroup))
+        die_at(s->line, "'%s': ALIGNED is for a bit group item or an elementary bit data item (2023 13.18.1.3 rule 1)", s->name);
     if (s->sync && s->is_group)          /* a group: COBOL 2023 (13.18.55.3 rule 1; E.3.2 item 6) */
         die_at(s->line, "'%s' is a group; SYNCHRONIZED is for an elementary item until COBOL 2023 (%s)", s->name,
                e85 ? "X3.23-1985 SYNCHRONIZED syntax rule 1" : "2002 13.16.53 rule 1, 2014 likewise");

@@ -175,7 +175,9 @@ static int align_of(Sym *s)
 static int sym_bitlike(const Sym *s) { return (!s->is_group && s->usage == U_BIT) || s->bitgroup; }
 /* the bits a bit item or bit group takes, every occurrence of a bit
  * array's elements following one another (cobol ISSUES-84) */
-static int bit_total(const Sym *s) { return s->bits * (!s->is_group && s->occurs ? s->occurs : 1); }
+/* a bit array's occurrences follow at the next bit; ALIGNED, each on a byte (13.18.1.4 rule 2) */
+static int bit_stride(const Sym *s) { return s->aligned ? (s->bits + 7) / 8 * 8 : s->bits; }
+static int bit_total(const Sym *s) { int n = !s->is_group && s->occurs ? s->occurs : 1; return bit_stride(s) * (n - 1) + s->bits; }
 static int g_lay_bit;                   /* the bit offset the next layout() call starts at */
 
 static int layout(int si, int base)
@@ -210,7 +212,7 @@ static int layout(int si, int base)
             if (sym_bitlike(ch)) g_lay_bit = sym_bitlike(t) ? t->bitoff : 0;
             else if (sym_bitlike(t) && t->bitoff)
                 die_at(ch->line, "'%s' redefines '%s', which starts inside a byte (its bit %d): a character item at a bit position is not implemented (13.18.44.4 rule 1)", ch->name, t->name, t->bitoff + 1);
-        } else if (isbit && run && !ch->sync && !ch->type_lvl1) {
+        } else if (isbit && run && !ch->sync && !ch->aligned && !ch->type_lvl1) {   /* ALIGNED: the next byte's first bit (13.18.1.4 rule 1) */
             cbase = off; g_lay_bit = cur;
         } else {
             if (run && cur) off++;          /* leave the partly used byte */
@@ -472,7 +474,7 @@ static void init_instance(Sym *rec, int si, int base, int defaults)
     if (!s->is_group && s->usage == U_BIT) {
         /* a bit array: each occurrence at the next bits (cobol ISSUES-84) */
         int bo = s->bitoff;
-        for (int k = 0; k < n; k++) { s->bitoff = bo + k * s->bits; init_one(rec, si, base, defaults); }
+        for (int k = 0; k < n; k++) { s->bitoff = bo + k * bit_stride(s); init_one(rec, si, base, defaults); }
         s->bitoff = bo;
         return;
     }
@@ -552,6 +554,21 @@ static void finish_data_division(void)
         s->level = 1; s->line = f->line; s->usage = U_DISPLAY;
         s->has_pic = 1; snprintf(s->pic, sizeof s->pic, "x(1024)");
         if (pic_analyse(s->pic, &s->pi) < 0) die_at(f->line, "internal: implicit ASSIGN item");
+    }
+    /* an FD with no record description entry (2023 13.4.5.3 rule 3): its
+     * RECORD clause gives the record area's size, and the file is read
+     * INTO and written FILE ... FROM -- a FILLER record of that size
+     * stands for the area, as every other 01 under the FD would */
+    for (int i = g_file_base; i < g_nfile; i++) {
+        File *f = &g_files[i];
+        if (f->rec >= 0 || f->report_name[0] || !f->fd_line || g_std < 2002 || f->org == COB_ORG_SORT) continue;
+        if (!f->maxlen) die_at(f->fd_line, "FD %s has no record description entry, so it needs a RECORD clause (2023 13.4.5.3 rule 3a)", f->name);
+        Sym *s = sym_new();
+        snprintf(s->name, sizeof s->name, "filler");
+        s->is_filler = 1; s->level = 1; s->line = f->fd_line; s->usage = U_DISPLAY;
+        s->has_pic = 1; snprintf(s->pic, sizeof s->pic, "x(%d)", f->maxlen);
+        if (pic_analyse(s->pic, &s->pi) < 0) die_at(f->fd_line, "internal: implicit record");
+        s->fd = i; f->rec = sym_idx(s); f->implicit_rec = 1;
     }
     /* COB-CRT-STATUS (BP-G2, -dialect=gnucobol only): GnuCOBOL declares it,
      * PIC 9(4), and makes it the CRT STATUS when SPECIAL-NAMES names none.
@@ -700,7 +717,7 @@ static void finish_data_division(void)
             Sym *q = sym_lookup_quiet(nm);
             int inrec = 0;                          /* a 02-49 item of that name in this record: the lookup below finds it */
             for (int j = g_sym_base; j < g_nsym && !inrec; j++)
-                if (!g_sym[j].is_cond && g_sym[j].level > 1 && g_sym[j].level < 50 && g_sym[j].record == s->record && !strcmp(g_sym[j].name, nm)) inrec = 1;
+                if (!g_sym[j].is_cond && g_sym[j].level > 1 && g_sym[j].level != 66 && g_sym[j].level != 77 && g_sym[j].level != 88 && g_sym[j].record == s->record && !strcmp(g_sym[j].name, nm)) inrec = 1;
             if (!inrec && (!strcmp(nm, rec->name) || (q && (q->level == 1 || q->level == 77) && !q->is_filler)))
                 die_at(s->line, "RENAMES '%s': '%s' is a level %02d entry; a RENAMES entry names items at levels 02-49 (%s)", s->name, nm,
                        !strcmp(nm, rec->name) ? rec->level : q->level, e85 ? "X3.23-1985 RENAMES syntax rule 4" : "2023 13.18.45.3 rule 5");
@@ -767,7 +784,7 @@ static void finish_data_division(void)
         if (f->rec < 0 && !f->report_name[0]) {
             if (!f->fd_line) die_at(f->line, "file '%s' has no FD", f->name);
             if (g_std < 2002) die_at(f->fd_line, "FD %s has no record description entry (X3.23-1985 file description syntax rule 3)", f->name);
-            die_at(f->fd_line, "FD %s without a record description entry (READ INTO, WRITE FILE ... FROM; 2023 13.4.5.3 rule 3) is not implemented", f->name);
+            die_at(f->fd_line, "internal: FD %s without a record description entry was not given its area", f->name);
         }
         for (int d = 0; d < f->ndata_rec; d++) {        /* DATA RECORDS names its own 01s (85 DATA RECORDS rule 1) */
             int ok = 0;

@@ -51,7 +51,6 @@ one strong type (14.9.4), and the rules for FD and SD records.
 ## Not implemented
 
 - A type declared after its use, or inside a group (only 01 and 77).
-- An expansion that would take a level past 49 (rule 2c allows it).
 - Types across separately compiled programs; a type is visible from its
   declaration to the end of the source file.
 

@@ -31,7 +31,7 @@ LOCK, RETRY) do not -- file sharing and record locking, optional since
 
 | rule | paraphrase | disposition |
 |---|---|---|
-| 85 FD rule 3; 2023 13.4.5.3 rule 3 | record descriptions follow (2023: or a RECORD clause, with READ INTO and WRITE FILE ... FROM) | **refused** under -std=85 with the rule (bad/fd-no-record; it said "file 'f' has no FD"); under -std=2002 **not implemented**, said so |
+| 85 FD rule 3; 2023 13.4.5.3 rule 3 | record descriptions follow (2023: or a RECORD clause, with READ INTO and WRITE FILE ... FROM) | **refused** under -std=85 with the rule (bad/fd-no-record; it said "file 'f' has no FD"); under -std=2002 **test**: 2002/fdnorec (docs/conformance/data-division.md, 2026-10-06) |
 | one FD per file | | **refused**: bad/fd-twice -- accepted before |
 | 2023 13.4.5.3 rule 4 | LINE SEQUENTIAL takes no BLOCK or RECORD CONTAINS | **extension** under -std=2002, BP-E19, as RESERVE above |
 | DATA RECORDS 1 (85) | the names are the FD's own 01 records | **refused**: bad/fd-data-records -- accepted before (the clause is obsolete, BP-O8) |

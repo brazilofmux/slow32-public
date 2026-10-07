@@ -74,8 +74,6 @@ COBOL 2002/2023 (Stage B):
   ISSUES-125, and on ACCEPT FROM ENVIRONMENT since BP-E31);
 - BY CONTENT of a bit item's part of computed length (a part of
   literal length is passed since 2026-10-06, docs/conformance/refmod.md);
-- a TYPE that expands past level 49 (2023 13.18.57.4 rule 2c allows
-  it);
 - a user-defined function in the places listed by g_ufn_forbid;
 - in the screen section (the list is docs/conformance/screen.md's
   "Open"): GLOBAL; colours, LINE and COLUMN from an identifier; MINUS;
@@ -94,9 +92,6 @@ COBOL 2002/2023 (Stage B):
 - RESUME (optional since 2014);
 - USAGE NATIONAL on a screen item whose PICTURE is not N
   (docs/conformance/national-boolean.md).
-- a BASED entry in LOCAL-STORAGE and EC-BOUND-PTR
-  (docs/conformance/usage.md; ALLOCATE ... INITIALIZED of a based
-  record is implemented since ISSUES-104);
 - READ PREVIOUS of a sequential file (2002; io-statements.md; PREVIOUS
   of a relative or indexed file is implemented).
 - the 2002 Report Writer additions: PRESENT WHEN, VARYING, OCCURS in a
@@ -106,9 +101,9 @@ COBOL 2002/2023 (Stage B):
 - the 2002-2023 constructs that used to meet a parse error and are now
   refused by name (docs/plans/standard-queue.md item 1; tests/bad/
   std2002-*): START FIRST/LAST and WITH LENGTH, START of a sequential
-  file, record locking and RETRY, OPEN SHARING, WRITE/REWRITE FILE,
+  file, record locking and RETRY, OPEN SHARING,
   DELETE FILE, WRITE with BEFORE and AFTER, ASSIGN USING, SUPPRESS WHEN,
-  FORMAT and SELECT WHEN, the OPTIONS paragraph, ALIGNED, USAGE
+  FORMAT and SELECT WHEN, the OPTIONS paragraph, USAGE
   FUNCTION-POINTER / MESSAGE-TAG, PACKED-DECIMAL NO
   SIGN, OCCURS DYNAMIC, floating-point literals and PICTUREs, the
   floating-point conditions, XOR, INSPECT BACKWARD, SET CONTENT OF /

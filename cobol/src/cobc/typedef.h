@@ -120,8 +120,21 @@ static Tok strong_tok(const Tok *like, int key)
 static Tok level_tok(const Tok *like, int level)
 {
     Tok t = *like; char b[8]; snprintf(b, sizeof b, "%02d", level);
-    t.kind = T_NUM; t.s = xstrndup(b, (int)strlen(b)); t.len = (int)strlen(b); t.orig = 0;
+    t.kind = T_NUM; t.s = xstrndup(b, (int)strlen(b)); t.len = (int)strlen(b); t.orig = level > 49 ? "\001xlevel" : 0;
     return t;
+}
+/* a subordinate's level in an expansion: the subject's level plus the
+ * relative one -- past 49 when the hierarchy is deep (13.18.57.4 rule
+ * 2c, 13.18.49.4 rule 2c), kept in order and clear of 66, 77 and 88;
+ * the parser takes such a level from an expansion only (data.h) */
+static int xlevel(int level, int rel, int line, const char *what)
+{
+    int lv = level + rel;
+    if (lv >= 66) lv++;
+    if (lv >= 77) lv++;
+    if (lv >= 88) lv++;
+    if (lv > 99) die_at(line, "%s expands past level 99 here", what);
+    return lv;
 }
 /* the words Report Writer's TYPE clause starts with (13.16.x TYPE) */
 static int rw_type_word(const char *w)
@@ -170,21 +183,109 @@ static void type_emit_entry(const Tok *tk, int a, int e, int level)
     if (level == 77 && used->nsub) die_at(tk[a].line, "a level 77 item takes an elementary type (2023 13.18.57.3 rule 7)");
     for (int k = 0; k < used->nsub; k++) {
         if (used->sublvl[k] >= 0) {
-            int lv = used->sublvl[k] >= 66 ? used->sublvl[k] : level + used->sublvl[k];
-            if (lv > 49 && lv < 66) die_at(tk[a].line, "the type '%s' expands past level 49 here, which is not implemented", used->name);
+            char what[80]; snprintf(what, sizeof what, "the type '%s'", used->name);
+            int lv = used->sublvl[k] >= 66 ? used->sublvl[k] : xlevel(level, used->sublvl[k], tk[a].line, what);
             Tok lt = level_tok(&used->sub[k], lv); xt_push(&lt);
         } else xt_push(&used->sub[k]);
     }
+}
+
+/* ---- SAME AS (2023 13.18.49) ----------------------------------------
+ * "as though the data description identified by data-name-1 had been
+ * coded in place of the SAME AS clause", without its level, name,
+ * CONSTANT RECORD, EXTERNAL, GLOBAL, REDEFINES and SELECT WHEN clauses,
+ * its subordinates following with their levels adjusted (general rules
+ * 1-2): expanded here, over the tokens, as TYPE is.  Every entry the
+ * pass emits is recorded by name and position in the output; the
+ * reference is to the latest entry of that name before the subject. */
+typedef struct { char name[64]; int level, at, occurs_above; } SameEntry;   /* at: the level token's position in g_xt */
+static SameEntry *g_sameas; static int g_nsameas, g_sameascap;
+static int g_same_stack[64], g_same_occ[64], g_same_depth;   /* the open groups' levels, and whether an OCCURS is in force at each */
+static void same_record(const char *name, int level, int at, int occurs)
+{
+    /* the open groups: those at or above this level are closed */
+    while (g_same_depth && g_same_stack[g_same_depth - 1] >= level) g_same_depth--;
+    int above = g_same_depth ? g_same_occ[g_same_depth - 1] : 0;
+    if (g_nsameas == g_sameascap) { g_sameascap = g_sameascap ? g_sameascap * 2 : 64; g_sameas = realloc(g_sameas, (size_t)g_sameascap * sizeof *g_sameas); }
+    snprintf(g_sameas[g_nsameas].name, sizeof g_sameas[0].name, "%s", name);
+    g_sameas[g_nsameas].level = level; g_sameas[g_nsameas].at = at; g_sameas[g_nsameas].occurs_above = above;
+    g_nsameas++;
+    if (g_same_depth < 64) { g_same_stack[g_same_depth] = level; g_same_occ[g_same_depth] = above || occurs; g_same_depth++; }
+}
+static SameEntry *same_find(const char *name)
+{
+    for (int i = g_nsameas - 1; i >= 0; i--) if (!strcmp(g_sameas[i].name, name)) return &g_sameas[i];
+    return NULL;
+}
+/* the entry [a, e] has a SAME AS clause at [si, si+2]: emit it expanded */
+static void same_emit_entry(const Tok *tk, int a, int e, int level, int si)
+{
+    const Tok *nm = &tk[si + 2];
+    if (nm->kind != T_WORD) die_at(tk[si].line, "SAME AS takes a data-name");
+    SameEntry *x = same_find(nm->s);
+    if (!x) die_at(nm->line, "SAME AS %s: no such entry before this one (2023 13.18.49)", nm->s);
+    if (x->occurs_above) die_at(nm->line, "SAME AS %s: it is subject to an OCCURS clause (2023 13.18.49.3 rule 1)", nm->s);
+    /* its clauses [c0, c1) and its subordinates [s0, s1), in the output so far */
+    int c0 = x->at + 2, c1 = c0;
+    while (c1 < g_nxt && g_xt[c1].kind != T_PERIOD) c1++;
+    int s0 = c1 + 1, s1 = s0;
+    while (s1 < g_nxt) {
+        int sl = tok_level(&g_xt[s1]);
+        if (sl < 0 || sl == 66 || sl == 77 || (sl != 88 && sl <= x->level)) break;
+        int se = s1; while (se < g_nxt && g_xt[se].kind != T_PERIOD) se++;
+        s1 = se + 1;
+    }
+    int group = 0;
+    for (int k = s0; k < s1; k++) if (tok_level(&g_xt[k]) >= 1 && tok_level(&g_xt[k]) < 66 && (k == s0 || g_xt[k - 1].kind == T_PERIOD)) group = 1;
+    if (group && x->level != 1) die_at(nm->line, "SAME AS %s: an elementary item, or a group at level 01 (2023 13.18.49.3 rule 7)", nm->s);
+    if (group && level == 77) die_at(nm->line, "SAME AS %s: a level 77 item takes an elementary item's description (2023 13.18.49.3 rule 8)", nm->s);
+    for (int k = c0; k < c1; k++) if (tok_is(&g_xt[k], "occurs")) die_at(nm->line, "SAME AS %s: its description has an OCCURS clause (2023 13.18.49.3 rule 5)", nm->s);
+    for (int k = c0; k < c1; k++) if (tok_is(&g_xt[k], "same") && k + 1 < c1 && tok_is(&g_xt[k + 1], "as")) die_at(nm->line, "internal: SAME AS %s: its description still holds a SAME AS clause", nm->s);
+    /* the subject: level, name, the referenced clauses (less the excluded
+     * ones), its own other clauses, the period */
+    xt_push(&tk[a]); xt_push(&tk[a + 1]);
+    if (group && level != 1 && level != 77) { Tok m = tk[si]; m.kind = T_WORD; m.s = "\001lvl1"; m.len = 5; m.orig = 0; xt_push(&m); }
+    for (int k = c0; k < c1; k++) {
+        Tok *c = &g_xt[k];
+        if (tok_is(c, "is") && k + 1 < c1 && (tok_is(&g_xt[k + 1], "external") || tok_is(&g_xt[k + 1], "global"))) continue;
+        if (tok_is(c, "external") || tok_is(c, "global")) {
+            if (k + 1 < c1 && tok_is(&g_xt[k + 1], "as")) k += 2;       /* EXTERNAL AS literal */
+            continue;
+        }
+        if (tok_is(c, "redefines")) { k++; continue; }
+        if (tok_is(c, "select") && k + 1 < c1 && tok_is(&g_xt[k + 1], "when")) {
+            /* SELECT WHEN {condition-name | OTHER} */
+            k += 2; continue;
+        }
+        if (tok_is(c, "constant") && k + 1 < c1 && tok_is(&g_xt[k + 1], "record")) { k++; continue; }
+        xt_push(c);
+    }
+    for (int i = a + 2; i <= e; i++) if (i < si || i > si + 2) xt_push(&tk[i]);
+    /* its subordinates, their levels relative to the referenced entry's */
+    char what[80]; snprintf(what, sizeof what, "SAME AS %s", nm->s);
+    for (int k = s0; k < s1; k++) {
+        int sl = tok_level(&g_xt[k]);
+        if (sl >= 1 && (k == s0 || g_xt[k - 1].kind == T_PERIOD)) {
+            Tok lt = level_tok(&g_xt[k], sl == 88 ? 88 : xlevel(level, sl - x->level, tk[a].line, what));
+            xt_push(&lt);
+        } else xt_push(&g_xt[k]);
+    }
+}
+static int entry_same_at(const Tok *tk, int a, int e)
+{
+    for (int i = a + 2; i < e; i++) if (tok_is(&tk[i], "same") && i + 2 < e && tok_is(&tk[i + 1], "as")) return i;
+    return -1;
 }
 static void expand_types(void)
 {
     if (g_std < 2002) return;
     int any = 0;
     for (int i = 0; i < g_ntok; i++)
-        if (tok_is(&g_tok[i], "typedef") || (tok_is(&g_tok[i], "type") && i + 1 < g_ntok && tok_is(&g_tok[i + 1], "to"))) { any = 1; break; }
+        if (tok_is(&g_tok[i], "typedef") || (tok_is(&g_tok[i], "type") && i + 1 < g_ntok && tok_is(&g_tok[i + 1], "to")) ||
+            (tok_is(&g_tok[i], "same") && i + 1 < g_ntok && tok_is(&g_tok[i + 1], "as"))) { any = 1; break; }
     if (!any) return;
     int *map = xmalloc((size_t)(g_ntok + 1) * sizeof *map);
-    g_nxt = 0; g_ntypes = 0;
+    g_nxt = 0; g_ntypes = 0; g_nsameas = 0; g_same_depth = 0;
     int in_data = 0;
     for (int i = 0; i < g_ntok; ) {
         Tok *t = &g_tok[i];
@@ -198,7 +299,18 @@ static void expand_types(void)
         for (int k = i + 1; k < e; k++) if (tok_is(&g_tok[k], "typedef")) td = k;
         if (td < 0) {
             for (int k = i; k <= e && k < g_ntok; k++) map[k] = g_nxt;
-            type_emit_entry(g_tok, i, e, lv);
+            int at = g_nxt, si = entry_same_at(g_tok, i, e);
+            if (si >= 0) {
+                /* SAME AS: not followed by a subordinate or 88 entry (13.18.49.3 rule 2) */
+                int j = e + 1, nl = j < g_ntok && g_tok[e].kind == T_PERIOD ? tok_level(&g_tok[j]) : -1;
+                if (nl == 88 || (nl > lv && nl < 66)) die_at(g_tok[j].line, "an entry with SAME AS is not followed by a subordinate or level 88 entry (2023 13.18.49.3 rule 2)");
+                same_emit_entry(g_tok, i, e, lv, si);
+            } else type_emit_entry(g_tok, i, e, lv);
+            if (lv != 66 && lv != 88 && g_tok[i + 1].kind == T_WORD) {
+                int occ = 0;
+                for (int k = i + 2; k < e; k++) occ |= tok_is(&g_tok[k], "occurs");
+                same_record(g_tok[i + 1].s, lv, at, occ);
+            }
             i = e + 1;
             continue;
         }

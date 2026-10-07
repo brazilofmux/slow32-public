@@ -1,0 +1,6 @@
+depth 0: b is NULL
+depth 0: b = world
+depth 1: b is NULL
+depth 1: b = world
+depth 2: b is NULL
+depth 2: b = world
