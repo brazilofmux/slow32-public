@@ -233,7 +233,13 @@ clause parsed -- ARITHMETIC IS NATIVE, ENTRY-CONVENTION IS COBOL and DEFAULT ROU
 - Why here: a 2002 paragraph that later editions keep extending.
 
 **17. START and READ positioning.** 14.9.41 (FIRST, LAST, WITH LENGTH, sequential files), 14.9.30
-PREVIOUS; Ed. 2002; S-M; deps 1.
+PREVIOUS; Ed. 2002; S-M; deps 1. DONE 2026-10-07 (io-statements.md; tests 2002/startfirst, startseq):
+START FIRST and LAST of indexed (by the prime key, which becomes the key of reference), relative
+(the first or last existing record) and sequential files (by position, variable-length records
+walked); WITH LENGTH arithmetic-expression, the leading characters of an indexed file's key, 23
+outside 1 to the key's length; READ PREVIOUS of a sequential file of fixed-length records, 46
+either way past the end. Ruled: READ PREVIOUS of variable-length sequential records refused (no
+fixed place to step back to); LINE SEQUENTIAL stays out of both.
 - Today: START FIRST/LAST and WITH LENGTH are bare parse errors; START on a sequential file refused;
   READ PREVIOUS of a sequential (not line sequential) file "not implemented" (refusals.md section
   2).

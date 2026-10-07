@@ -241,11 +241,11 @@ carry the compiler's own reason.
 | 14.9.3 | ALLOCATE statement | *unswept* (implemented) | | | | | |
 | 14.9.4 | CALL statement | [call](call.md) | 30 | 18 | 3 | 4 | 0 |
 | 14.9.5 | CANCEL statement | [control](control.md) | 10 | 10 | 0 | 1 | 0 |
-| 14.9.6 | CLOSE statement | [io-statements](io-statements.md) | 1 | 14 | 0 | 0 | 0 |
+| 14.9.6 | CLOSE statement | [io-statements](io-statements.md) | 1 | 18 | 0 | 0 | 0 |
 | 14.9.7 | COMMIT statement | **not implemented**: COMMIT is COBOL 2023; not implemented | | | | | |
 | 14.9.8 | COMPUTE statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
 | 14.9.9 | CONTINUE statement | [control](control.md) | 10 | 10 | 0 | 1 | 0 |
-| 14.9.10 | DELETE statement | [io-statements](io-statements.md) | 1 | 14 | 0 | 0 | 0 |
+| 14.9.10 | DELETE statement | [io-statements](io-statements.md) | 1 | 18 | 0 | 0 | 0 |
 | 14.9.11 | DISPLAY statement | [accept](accept.md), [screen](screen.md) | 41 | 32 | 11 | 1 | 4 |
 | 14.9.12 | DIVIDE statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
 | 14.9.13 | EVALUATE statement | [evaluate](evaluate.md) | 3 | 7 | 0 | 1 | 0 |
@@ -262,21 +262,21 @@ carry the compiler's own reason.
 | 14.9.24 | MERGE statement | [sort](sort.md) | 3 | 12 | 0 | 0 | 0 |
 | 14.9.25 | MOVE statement | [move](move.md) | 12 | 10 | 0 | 9 | 0 |
 | 14.9.26 | MULTIPLY statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
-| 14.9.27 | OPEN statement | [io-statements](io-statements.md) | 1 | 14 | 0 | 0 | 0 |
+| 14.9.27 | OPEN statement | [io-statements](io-statements.md) | 1 | 18 | 0 | 0 | 0 |
 | 14.9.28 | PERFORM statement | [perform](perform.md) | 22 | 10 | 0 | 0 | 1 |
 | 14.9.29 | RAISE statement | [raise](raise.md) | 1 | 3 | 0 | 1 | 0 |
-| 14.9.30 | READ statement | [io-statements](io-statements.md) | 1 | 14 | 0 | 0 | 0 |
+| 14.9.30 | READ statement | [io-statements](io-statements.md) | 1 | 18 | 0 | 0 | 0 |
 | 14.9.31 | RECEIVE statement | **not implemented**: receive: COBOL 85's Communication module is out by ruling, and COBOL 2023's asynchronous messaging (14.9.31, 14.9.38) is not implemented | | | | | |
 | 14.9.32 | RELEASE statement | [sort](sort.md) | 3 | 12 | 0 | 0 | 0 |
 | 14.9.33 | RESUME statement | **not implemented**: RESUME is not implemented (COBOL 2014 made it optional) | | | | | |
 | 14.9.34 | RETURN statement | [sort](sort.md) | 3 | 12 | 0 | 0 | 0 |
-| 14.9.35 | REWRITE statement | [io-statements](io-statements.md) | 1 | 14 | 0 | 0 | 0 |
+| 14.9.35 | REWRITE statement | [io-statements](io-statements.md) | 1 | 18 | 0 | 0 | 0 |
 | 14.9.36 | ROLLBACK statement | **not implemented**: ROLLBACK is COBOL 2023; not implemented | | | | | |
 | 14.9.37 | SEARCH statement | [search](search.md) | 7 | 10 | 0 | 0 | 0 |
 | 14.9.38 | SEND statement | **not implemented**: send: COBOL 85's Communication module is out by ruling, and COBOL 2023's asynchronous messaging (14.9.31, 14.9.38) is not implemented | | | | | |
 | 14.9.39 | SET statement | [set](set.md), [usage](usage.md) | 28 | 18 | 0 | 2 | 4 |
 | 14.9.40 | SORT statement | [sort](sort.md) | 3 | 12 | 0 | 0 | 0 |
-| 14.9.41 | START statement | [io-statements](io-statements.md) | 1 | 14 | 0 | 0 | 0 |
+| 14.9.41 | START statement | [io-statements](io-statements.md) | 1 | 18 | 0 | 0 | 0 |
 | 14.9.42 | STOP statement | [control](control.md) | 10 | 10 | 0 | 1 | 0 |
 | 14.9.43 | STRING statement | [string](string.md) | 3 | 20 | 0 | 2 | 0 |
 | 14.9.44 | SUBTRACT statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
@@ -286,7 +286,7 @@ carry the compiler's own reason.
 | 14.9.48 | UNSTRING statement | [string](string.md) | 3 | 20 | 0 | 2 | 0 |
 | 14.9.49 | USE statement | [use](use.md) | 16 | 10 | 0 | 2 | 2 |
 | 14.9.50 | VALIDATE statement | **not implemented**: VALIDATE is not implemented: an obsolete facility no COBOL provider has implemented (2023 D.22, F.2 item 5; docs/standards.md) | | | | | |
-| 14.9.51 | WRITE statement | [io-statements](io-statements.md) | 1 | 14 | 0 | 0 | 0 |
+| 14.9.51 | WRITE statement | [io-statements](io-statements.md) | 1 | 18 | 0 | 0 | 0 |
 
 ## 15 intrinsic functions
 

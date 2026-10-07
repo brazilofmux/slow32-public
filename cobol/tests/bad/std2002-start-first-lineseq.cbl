@@ -1,11 +1,11 @@
 identification division.
-program-id. p0.
-*> start-first: refused by name (docs/plans/standard-queue.md item 1); it was a
-*> parse error naming something else.
+program-id. p3.
+*> START FIRST of a line sequential file: its records have no fixed
+*> place; 2023 14.9.41 is for sequential, relative and indexed files.
 environment division.
 input-output section.
 file-control.
-    select f assign to "x.dat" organization indexed access dynamic record key r.
+    select f assign to "x.txt" organization line sequential.
 data division.
 file section.
 fd f.

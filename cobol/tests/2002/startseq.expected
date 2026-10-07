@@ -1,0 +1,26 @@
+read  rec 1
+last  00
+prev  rec 4
+prev  rec 3
+next  rec 4
+prev  rec 3
+prev  rec 2
+prev  rec 1
+prev  end 10
+prev  46
+next  46
+first 00
+next  rec 1
+prev  end 10
+prev  rec 1
+next  rec 2
+next  rec 3
+next  rec 4
+next  end 10
+prev  46
+empty 23
+empty 23
+vlast 00
+vnext 00 5 lmnop   
+vnext end 10
+vnext 00 3 abcop   

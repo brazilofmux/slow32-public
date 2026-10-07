@@ -174,6 +174,7 @@ static void emit_unit_data(void)
         } else { emit("\t.word 0"); emit("\t.word 0"); }
         if (f->nsplitw) emit("\t.word .Lspk%d_%d", f->unit, i); else emit("\t.word 0\t# no split keys");   /* split: the split keys' table */
         emit("\t.word 0");                                 /* fast_r1, fast_r, fast_w1, fast_w: the runtime's (READ and WRITE's short entries) */
+        emit("\t.word 0");                                 /* started: a sequential START FIRST/LAST positioned the file */
         if (f->external) { emit(".Lfx%d_%d:\t# the shared connector of EXTERNAL %s", f->unit, i, f->name); emit("\t.word 0"); }
     }
     /* CODE-SET: every elementary item of the file's records DISPLAY, a

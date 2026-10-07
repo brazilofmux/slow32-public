@@ -1,0 +1,34 @@
+first 00
+next  10ac 
+prev  end 10
+prev  46
+last  00
+prev  40bb 
+next  end 10
+next  46
+alt   40bbb
+prime 40bb 
+len1  00
+len1  30ab 
+len1  31aa 
+len2  00
+len2  31aa 
+len3  23
+len0  23
+len5  23
+empty 23
+empty 23
+first 00
+next  03 three 
+next  05 five  
+prev  05 five  
+next  00
+last  00
+prev  07 seven 
+prev  07 seven 
+prev  07 seven 
+next  07 seven 
+next  end 10
+prev  10
+empty 23
+empty 23

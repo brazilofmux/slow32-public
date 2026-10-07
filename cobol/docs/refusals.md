@@ -89,16 +89,13 @@ COBOL 2002/2023 (Stage B):
 - RESUME (optional since 2014);
 - USAGE NATIONAL on a screen item whose PICTURE is not N
   (docs/conformance/national-boolean.md).
-- READ PREVIOUS of a sequential file (2002; io-statements.md; PREVIOUS
-  of a relative or indexed file is implemented).
 - the 2002 Report Writer additions: PRESENT WHEN, VARYING, OCCURS in a
   report group; COLUMN PLUS, LEFT, RIGHT, CENTER and several column
   numbers (the 1985 module is implemented; docs/conformance/
   reportwriter.md);
 - the 2002-2023 constructs that used to meet a parse error and are now
   refused by name (docs/plans/standard-queue.md item 1; tests/bad/
-  std2002-*): START FIRST/LAST and WITH LENGTH, START of a sequential
-  file, record locking and RETRY, OPEN SHARING,
+  std2002-*): record locking and RETRY, OPEN SHARING,
   DELETE FILE, WRITE with BEFORE and AFTER, ASSIGN USING, SUPPRESS WHEN,
   FORMAT and SELECT WHEN, USAGE
   FUNCTION-POINTER / MESSAGE-TAG, PACKED-DECIMAL NO
@@ -136,6 +133,13 @@ Two ruled 2026-09-28:
   standard-queue.md item 20); binary32 and binary64 are SLOW-32
   hardware. COMP-1 and COMP-2 (IBM hexadecimal float) stay out.
   (Corrected 2026-10-06: this entry called all six 2014.)
+
+Ruled 2026-10-07 (queue item 17): **READ PREVIOUS of a sequential file
+of variable-length records** is refused (bad/std2002-readprev-varying).
+The record before the current one has no fixed place to step back to;
+2023 14.9.30 asks for it of every sequential file, and fixed-length
+records get it (docs/conformance/io-statements.md). START LAST of such
+a file walks its records and is taken.
 
 ## 4. Implementation limits
 

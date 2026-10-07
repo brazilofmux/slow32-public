@@ -1,7 +1,7 @@
 identification division.
 program-id. p2.
-*> start-seq: refused by name (docs/plans/standard-queue.md item 1); it was a
-*> parse error naming something else.
+*> START of a sequential file without FIRST or LAST: it has no key to
+*> start on (2023 14.9.41.3 rule 2).  With FIRST or LAST: 2002/startseq.
 environment division.
 input-output section.
 file-control.

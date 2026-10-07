@@ -110,6 +110,7 @@ typedef struct {
      * one byte long.  fast_w, fast_w1: the same for output, the records
      * going into the stream's own buffer. */
     unsigned char fast_r1, fast_r, fast_w1, fast_w;
+    unsigned int started;     /* sequential: a START positioned the file (FIRST, LAST): the next READ, NEXT or PREVIOUS, reads the record at fpos (14.9.41 GR 20-21) */
 } cob_file;
 
 

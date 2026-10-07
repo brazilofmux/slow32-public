@@ -1,7 +1,6 @@
 identification division.
-program-id. p1.
-*> start-length: refused by name (docs/plans/standard-queue.md item 1); it was a
-*> parse error naming something else.
+program-id. p5.
+*> START FIRST under -std=85: the phrase is COBOL 2002's (14.9.41).
 environment division.
 input-output section.
 file-control.
@@ -11,9 +10,8 @@ file section.
 fd f.
 01 r pic x(10).
 working-storage section.
-01 k pic 9 value 3.
 procedure division.
     open input f
-    start f key = r with length k
+    start f first
     close f
     goback.

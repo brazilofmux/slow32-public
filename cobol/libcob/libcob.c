@@ -2794,6 +2794,33 @@ static void cs_in(cob_file *f, char *rec, unsigned len)
 
 static int idx_read_prev(cob_file *f);
 static int rel_read_prev(cob_file *f);
+/* READ PREVIOUS of a sequential file of fixed-length records (2023
+ * 14.9.30): the record before the current one -- fpos stands past the
+ * current record, so the one before it starts two records back -- and
+ * it becomes the current one; after a START (started), the record at
+ * fpos itself (14.9.41 GR 20-21).  The input block buffer is given up:
+ * the position moves against it. */
+static int seq_read_prev(cob_file *f)
+{
+    FILE *fp = f->fp;
+    unsigned n = f->recsize;
+    if (f->varying) return file_result(f, "30", "READ PREVIOUS of variable-length records");
+    if (f->at_eof) { if (f->eof_seen) return file_result(f, "46", ""); f->eof_seen = 1; return file_result(f, "10", ""); }
+    if (f->rbuf) { f->rpos = f->rlen = 0; }
+    f->fast_r = f->fast_r1 = 0;
+    unsigned at;
+    if (f->started) { at = f->fpos; f->started = 0; }
+    else {
+        if (f->fpos < 2 * n) { f->at_eof = 1; f->eof_seen = 1; f->last_len = 0; return file_result(f, "10", ""); }
+        at = f->fpos - 2 * n;
+    }
+    fseek(fp, (long)at, 0);
+    if (fread(f->record, 1, n, fp) != n) return file_result(f, "30", "read");
+    cs_in(f, (char *)f->record, n);
+    f->fpos = at + n; f->last_len = n;
+    return file_result(f, "00", "");
+}
+
 int cob_read_prev(cob_file *f)
 {
     if (!f->open_mode) return file_result(f, "47", "READ of a file not open");
@@ -2801,9 +2828,43 @@ int cob_read_prev(cob_file *f)
         return file_result(f, "47", "READ of a file open for output");
     if (f->org == COB_ORG_INDEXED) return idx_read_prev(f);
     if (f->org == COB_ORG_RELATIVE) return rel_read_prev(f);
-    cob_fatal("READ PREVIOUS of a file that is neither indexed nor relative");
+    if (f->org == COB_ORG_SEQ) return seq_read_prev(f);
+    cob_fatal("READ PREVIOUS of a line sequential file");
     return 0;
 }
+
+/* START FIRST / LAST of a sequential file (14.9.41 GR 20-21): the file
+ * position at its first or last record, which the next READ, NEXT or
+ * PREVIOUS, reads; no records, 23.  Fixed-length records by size; RDW
+ * records by walking them. */
+static int seq_start(cob_file *f, int op)
+{
+    FILE *fp = f->fp;
+    unsigned n = f->recsize;
+    if (f->rbuf) { f->rpos = f->rlen = 0; }
+    f->fast_r = f->fast_r1 = 0;
+    fseek(fp, 0, 2);
+    long size = ftell(fp);
+    if (size <= 0) { fseek(fp, 0, 0); f->fpos = 0; return file_result(f, "23", ""); }
+    unsigned at = 0;
+    if (op == 6) {
+        if (!f->varying) at = (unsigned)((size - 1) / n * n);          /* the last record's start */
+        else {
+            unsigned pos = 0; unsigned char rdw[4];
+            fseek(fp, 0, 0);
+            for (;;) {
+                if (fread(rdw, 1, 4, fp) < 4) break;
+                unsigned len = ((unsigned)rdw[0] << 8) | rdw[1];
+                if (len < 4 || pos + len > (unsigned)size) break;
+                at = pos; pos += len; fseek(fp, (long)pos, 0);
+            }
+        }
+    }
+    fseek(fp, (long)at, 0);
+    f->fpos = at; f->started = 1; f->at_eof = 0; f->eof_seen = 0;
+    return file_result(f, "00", "");
+}
+
 
 /* The short entries of READ and WRITE.  A program that reads a file a
  * character at a time and writes another the same way (majesty's CSV
@@ -2923,6 +2984,7 @@ static __attribute__((noinline)) int cob_read_rest(cob_file *f)
     }
     if (f->org == COB_ORG_SEQ) {
         size_t got;
+        f->started = 0;                         /* a START's position: this read takes the record there, as any next one */
         if (f->open_mode == COB_OPEN_INPUT && n <= COB_RBUF / 4) {
             /* open for input only, so nothing else moves the file's
              * position: records out of the runtime's own block buffer, as
@@ -3403,8 +3465,16 @@ static int rel_delete(cob_file *f)
  * in the relation to the key; the key item is left alone */
 static int rel_start(cob_file *f, int op)
 {
-    long k = rel_key_value(f);
     unsigned count = rel_slot_count(f), found = 0;
+    if (op == 5 || op == 6) {
+        /* FIRST, LAST (GR 11-12): the first or last existing record */
+        if (op == 5) { for (unsigned n = 1; n <= count && !found; n++) if (rel_slot_get(f, n, 0) == 1) found = n; }
+        else { for (unsigned n = count; n >= 1 && !found; n--) if (rel_slot_get(f, n, 0) == 1) found = n; }
+        if (!found) return file_result(f, "23", "");
+        f->rel_pos = found; f->rel_last = 0; f->at_eof = 0;
+        return file_result(f, "00", "");
+    }
+    long k = rel_key_value(f);
     if (op == 3 || op == 4) {
         long from = op == 3 ? k - 1 : k;
         if (from > (long)count) from = (long)count;
@@ -4866,14 +4936,27 @@ static int idx_read_prev(cob_file *f)
 int cob_start(cob_file *f, int op, int ki, int len)
 {
     if (!f->open_mode) return file_result(f, "47", "START of a file not open");
+    if (f->open_mode == COB_OPEN_OUTPUT || f->open_mode == COB_OPEN_EXTEND) return file_result(f, "47", "START of a file not open for input or I-O");
+    int haslen = op & 0x100; op &= 0xff;        /* WITH LENGTH written: len is its value */
+    if (f->org == COB_ORG_SEQ) return seq_start(f, op);
     if (f->org == COB_ORG_RELATIVE) return rel_start(f, op);
     if (f->org != COB_ORG_INDEXED) cob_fatal("START on a file that is not INDEXED");
     split_fill(f);
     cob_idx *x = f->idx;
     if (!x) return file_result(f, "23", "");
     btf *b = &x->bt;
+    if (op == 5 || op == 6) {
+        /* FIRST, LAST (GR 18-19): the first or last record by the prime
+         * key, which becomes the key of reference */
+        unsigned page, ix; unsigned char zero[BT_KEYMAX + 4]; memset(zero, 0, sizeof zero);
+        int got = op == 5 ? bt_first_ge(b, 0, zero, b->k[0].klen + 4, &page, &ix) : bt_last(b, 0, &page, &ix);
+        if (!got) return file_result(f, "23", "");
+        x->ref = 0; idx_cursor_at(x, 0, page, ix); x->last_slot = -1; f->at_eof = 0; f->eof_seen = 0;
+        return file_result(f, "00", "");
+    }
     if (ki < 0 || (unsigned)ki >= b->nkeys) cob_fatal("START ... KEY: no such key");
     unsigned kl = b->k[ki].klen;
+    if (haslen && (len < 1 || (unsigned)len > kl)) return file_result(f, "23", "");   /* GR 14: a length outside 1 to the key's */
     unsigned n = (len > 0 && (unsigned)len < kl) ? (unsigned)len : kl;
     const unsigned char *k = (const unsigned char *)f->record + b->k[ki].off;
     unsigned char target[BT_KEYMAX + 4], ka[BT_KEYMAX + 4];

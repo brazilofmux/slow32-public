@@ -170,8 +170,8 @@ static void parse_read(void)
         if (g_std < 2002) die_at(cur()->line, "READ PREVIOUS is COBOL 2002; compile with -std=2002");
         if (f->org == COB_ORG_LINESEQ) die_at(cur()->line, "READ PREVIOUS of the LINE SEQUENTIAL file '%s' (2023 14.9.30.3 rule 7)", f->name);
         if (f->access == 1) die_at(cur()->line, "READ PREVIOUS of '%s', whose access mode is RANDOM (2023 14.9.30.3 rule 6)", f->name);
-        if (f->org != COB_ORG_INDEXED && f->org != COB_ORG_RELATIVE)
-            die_at(cur()->line, "READ PREVIOUS of the sequential file '%s' is not implemented", f->name);
+        if (f->org == COB_ORG_SEQ && f->varying)
+            die_at(cur()->line, "READ PREVIOUS of the sequential file '%s', whose records are of variable length: its records have no fixed place to step back to (a ruling; 2023 14.9.30)", f->name);
         advance(); has_prev = 1;
     }
     int has_next = !has_prev && accept_word("next"); accept_word("record");
@@ -404,15 +404,22 @@ static void parse_delete(void)
 static void parse_start(void)
 {
     File *f = expect_file();
-    if (at_word("first") || at_word("last"))
-        die_at(cur()->line, "START ... %s is COBOL 2002 (14.9.41); not implemented", at_word("first") ? "FIRST" : "LAST");
-    if (f->org != COB_ORG_INDEXED && f->org != COB_ORG_RELATIVE)
-        die_at(cur()->line, g_std < 2002 ? "START needs an INDEXED or RELATIVE file (X3.23-1985)"
-                                         : "START of a sequential file (COBOL 2002, with FIRST or LAST) is not implemented");
-    if (f->access == 1) die_at(cur()->line, "START needs ACCESS SEQUENTIAL or DYNAMIC");
-    int op = 0;                     /* = */
+    int op = 0;                     /* = ; 5 FIRST, 6 LAST */
     int ki = 0, klen = 0;           /* the key: prime, or an alternate; a leading part's length */
-    if (accept_word("key")) {
+    int firstlast = at_word("first") || at_word("last");
+    if (firstlast) {
+        /* FIRST, LAST (2023 14.9.41): the first or last record -- of a
+         * sequential file by position, of a relative file by number, of an
+         * indexed file by the prime key, which becomes the key of reference */
+        if (g_std < 2002) die_at(cur()->line, "START ... %s is COBOL 2002 (14.9.41); compile with -std=2002", at_word("first") ? "FIRST" : "LAST");
+        op = at_word("first") ? 5 : 6; advance();
+    }
+    if (f->org == COB_ORG_LINESEQ) die_at(cur()->line, "START of the LINE SEQUENTIAL file '%s': its records have no fixed place (2023 14.9.41 is for sequential, relative and indexed files)", f->name);
+    if (f->org != COB_ORG_INDEXED && f->org != COB_ORG_RELATIVE && !firstlast)
+        die_at(cur()->line, g_std < 2002 ? "START needs an INDEXED or RELATIVE file (X3.23-1985)"
+                                         : "START of the sequential file '%s' takes FIRST or LAST (2023 14.9.41.3 rule 2)", f->name);
+    if (f->access == 1) die_at(cur()->line, "START needs ACCESS SEQUENTIAL or DYNAMIC (2023 14.9.41.3 rule 1)");
+    if (!firstlast && accept_word("key")) {
         accept_word("is");
         int neg = 0;
         if (accept_word("not")) neg = 1;
@@ -430,10 +437,33 @@ static void parse_start(void)
             if (ki < 0) die_at(k.line, "START ... KEY IS '%s': not a key of '%s', nor an item that begins where one begins", k.sym->name, f->name);
         }
     }
-    if (at_word("with") && is_word(peek(1), "length")) die_at(cur()->line, "START ... WITH LENGTH is COBOL 2002 (14.9.41); not implemented");
+    Opnd wl; int haslen = 0;
+    if (!firstlast && (at_word("with") || at_word("length"))) {
+        /* WITH LENGTH arithmetic-expression (2023 14.9.41, GR 13-14): the
+         * characters of the key compared, an indexed file's (rule 8);
+         * outside 1 to the key's length, 23 at run time */
+        if (g_std < 2002) die_at(cur()->line, "START ... WITH LENGTH is COBOL 2002 (14.9.41); compile with -std=2002");
+        accept_word("with"); expect_word("length");
+        if (f->org != COB_ORG_INDEXED) die_at(cur()->line, "START ... WITH LENGTH is for an indexed file (2023 14.9.41.3 rule 8)");
+        int start = g_tp;
+        parse_operand(&wl);
+        if (at_arith_op()) wl = expr_opnd_after(&wl, start);
+        check_numeric_opnd(&wl);
+        haslen = 1;
+    }
     io_nyi("START");
+    if (haslen) {
+        /* the length to a slot first: the expression's code uses the
+         * argument registers */
+        Sym *ks = ki ? f->alt[ki - 1].sym : f->key_sym;
+        if (klen) die_at(wl.line, "START ... WITH LENGTH names the key's own length; the leading part of the key is already the length (2023 14.9.41.3 rule 8)");
+        emit_push_opnd(&wl); emit_call("cob_pop_int");
+        if (ks && sym_is_national(ks)) emit("\tadd r1, r1, r1");   /* a national key: the length counts character positions, two bytes each (GR 13) */
+        emit("\tstw sp+%d, r1", SLOT_A);
+    }
     emit_file_addr("r3", f);
-    emit_li("r4", op); emit_li("r5", ki); emit_li("r6", klen);
+    emit_li("r4", op | (haslen ? 0x100 : 0)); emit_li("r5", ki);
+    if (haslen) emit("\tldw r6, sp+%d", SLOT_A); else emit_li("r6", klen);
     emit_call("cob_start");
     emit("\tstw sp+%d, r1", SLOT_C);
     g_io_file = f;
