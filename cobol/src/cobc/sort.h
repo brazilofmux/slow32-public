@@ -199,6 +199,7 @@ static void parse_sort(void)
     File *named[32]; int nnamed = 0;
     const char *e85r = g_std < 2002 ? "X3.23-1985" : "2023";
     char tab[32]; snprintf(tab, sizeof tab, ".Lsk%d_%d", g_unit, t->id);
+    emit_ec_query("EC-SORT-MERGE-ACTIVE", "cob_sort_any_active", 1);  /* a SORT or MERGE under way already (2023 14.9.40.4 rule 2, 14.9.24.4) */
     emit_file_addr("r3", sd); emit_la("r4", tab); emit_li("r5", t->nk); emit_li("r6", dups);
     if (coll >= 0) { char al[32]; snprintf(al, sizeof al, ".Lalph%d_%d", g_unit, coll); emit_la("r7", al); } else emit_li("r7", 0);
     emit_call("cob_sort_begin");
@@ -215,7 +216,10 @@ static void parse_sort(void)
             if ((in->org == COB_ORG_RELATIVE || in->org == COB_ORG_INDEXED) && in->access == 1)
                 die_at(line, "%s USING '%s': a relative or indexed file here is in sequential or dynamic access (%s)", verb, in->name,
                        g_is_merge ? "2023 14.9.24.3 rule 13" : "2023 14.9.40.3 rule 12");
+            emit_file_addr("r3", in);
+            emit_ec_query("EC-SORT-MERGE-FILE-OPEN", "cob_open_mode", 1);   /* a USING file open when the sort begins (14.9.40.4, 14.9.24.4) */
             emit_file_addr("r3", sd); emit_file_addr("r4", in); emit_call(g_is_merge ? "cob_merge_using" : "cob_sort_using"); n++;
+            if (g_is_merge) emit_ec_query("EC-SORT-MERGE-SEQUENCE", "cob_merge_sequence_error", 1);   /* a USING file out of order (14.9.24.4 rule 6) */
         }
         if (!n) die_at(cur()->line, "expected a file-name after USING");
         if (g_is_merge && n < 2) die_at(line, "MERGE USING needs at least two files");
@@ -242,6 +246,8 @@ static void parse_sort(void)
                 (t->k[0].descending || t->k[0].offset != out->key_sym->offset - g_sym[out->rec].offset || t->k[0].size != out->key_sym->size))
                 die_at(line, "%s GIVING the indexed file '%s': the first key is ASCENDING and in the place of its RECORD KEY (%s)", verb, out->name,
                        g_std < 2002 ? (g_is_merge ? "X3.23-1985 MERGE syntax rule 10" : "X3.23-1985 SORT syntax rule 8") : g_is_merge ? "2023 14.9.24.3 rule 10" : "2023 14.9.40.3 rule 9");
+            emit_file_addr("r3", out);
+            emit_ec_query("EC-SORT-MERGE-FILE-OPEN", "cob_open_mode", 1);   /* a GIVING file open */
             emit_file_addr("r3", sd); emit_file_addr("r4", out); emit_call("cob_sort_giving"); n++;
         }
         if (!n) die_at(cur()->line, "expected a file-name after GIVING");
@@ -264,6 +270,8 @@ static void parse_release(void)
     if (f->org != COB_ORG_SORT) die_at(rec.line, "RELEASE '%s': the record must belong to an SD", rec.sym->name);
     if (accept_word("from")) { Opnd src; parse_operand(&src); emit_move(&src, &rec); }
     emit_file_addr("r3", f);
+    emit_ec_query("EC-FLOW-RELEASE", "cob_sort_under_way", 0);        /* RELEASE outside its SORT (2023 14.9.32.4 rule 1) */
+    emit_file_addr("r3", f);
     emit_call("cob_release");
 }
 
@@ -275,6 +283,10 @@ static void parse_return(void)
     accept_word("record");
     Ref into; int has_into = 0;
     if (accept_word("into")) { g_noemit++; parse_ref(&into); g_noemit--; has_into = 1; }   /* identified after the record is read */
+    emit_file_addr("r3", f);
+    emit_ec_query("EC-FLOW-RETURN", "cob_sort_under_way", 0);         /* RETURN outside its SORT or MERGE (2023 14.9.34.4 rule 1) */
+    emit_file_addr("r3", f);
+    emit_ec_query("EC-SORT-MERGE-RETURN", "cob_sort_at_end", 1);      /* a RETURN after the at end condition (14.9.34.4 rule 3) */
     emit_file_addr("r3", f);
     emit_call("cob_return");
     emit("\tstw sp+%d, r1", SLOT_C);

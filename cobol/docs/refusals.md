@@ -67,9 +67,11 @@ COBOL 2002/2023 (Stage B):
   that is >>PROPAGATE (queue item 3) and 2023's COBOL-WORDS, DISPLAY,
   FLAG-14, PUSH, POP and REF-MOD-ZERO-LENGTH (item 34); and boolean
   expressions in a directive;
-- exceptions: EC-SCREEN and the rest of Table 13's conditions (USE
-  AFTER EXCEPTION CONDITION ... FILE and WHEN EXCEPTION with a
-  file-name or open mode since 2026-10-06; ON EXCEPTION on ACCEPT FROM
+- exceptions: the conditions docs/conformance/exceptions.md marks
+  **gap** -- EC-RANGE-INVALID, EC-I-O-EOP and -LINAGE, EC-FLOW-GLOBAL-*,
+  EC-SCREEN-*, and those of features not built (USE AFTER EXCEPTION
+  CONDITION ... FILE and WHEN EXCEPTION with a file-name or open mode
+  since 2026-10-06, fourteen more conditions raised the same day; ON EXCEPTION on ACCEPT FROM
   ARGUMENT-NUMBER, ARGUMENT-VALUE and COMMAND-LINE is not a gap of the
   standard: those sources are X/Open's, in no ISO edition, and stay
   refused until a program needs them; EC-DATA-INCOMPATIBLE is raised wherever

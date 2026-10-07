@@ -1089,6 +1089,7 @@ static void parse_search(void)
 
     /* AT END */
     emit_label(Latend);
+    if (ec_on_name("EC-RANGE-SEARCH-NO-MATCH")) emit_ec_raise(ec_find("EC-RANGE-SEARCH-NO-MATCH", 0));   /* the search unsuccessful (2023 14.9.37.4) */
     if (has_atend) block_put(&atend);
     emit_jump(Lend);
     /* WHEN bodies */

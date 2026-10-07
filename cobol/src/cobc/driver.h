@@ -325,7 +325,7 @@ static void emit_unit_data(void)
         emit("\t.word %d", r->first_detail); emit("\t.word %d", r->last_detail);
         emit("\t.word 0"); emit("\t.word 0"); emit("\t.word 0");    /* line_counter (20), page_counter (24), body_seen */
         emit("\t.word %d", r->footing); emit("\t.word 0");           /* footing, page_started */
-        for (int w = 0; w < 6; w++) emit("\t.word 0");               /* first_gen brk next_line next_page suppress gi_pending */
+        for (int w = 0; w < 7; w++) emit("\t.word 0");               /* first_gen brk next_line next_page suppress gi_pending active */
     }
 }
 

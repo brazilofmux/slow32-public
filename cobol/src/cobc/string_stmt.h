@@ -138,6 +138,7 @@ static void parse_string_1(void)
         emit_call("cob_store_int");
     }
     Phrases ph;
+    emit_ec_query("EC-OVERFLOW-STRING", "cob_str_overflow", 1);       /* 2023 14.9.43.4 rule 8b; nonfatal: the phrase follows */
     if (parse_overflow_phrases(&ph)) { emit_call("cob_str_overflow"); emit_phrases(&ph, -1, 0); }
     accept_word("end-string");
 }
@@ -304,6 +305,7 @@ static void parse_unstring_1(void)
         emit_call("cob_store_int");
     }
     Phrases ph;
+    emit_ec_query("EC-OVERFLOW-UNSTRING", "cob_unstr_overflow", 1);   /* 2023 14.9.48.4 */
     if (parse_overflow_phrases(&ph)) { emit_call("cob_unstr_overflow"); emit_phrases(&ph, -1, 0); }
     accept_word("end-unstring");
 }

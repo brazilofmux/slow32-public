@@ -125,11 +125,13 @@ static void emit_report_group(Report *r, RGroup *g)
     if (g->use_sec >= 0) {
         int Lret = new_label();
         char lab[32]; snprintf(lab, sizeof lab, ".L%d", Lret);
+        emit_call("cob_rw_use_in");                   /* a GENERATE, INITIATE or TERMINATE reached from here is EC-FLOW-REPORT */
         emit_para_cell("r3", g_unit, g->use_sec);
         emit_la("r4", lab);
         emit_call("cob_perform_push");
         emit("\tjal r0, .Lp%d_%d", g_unit, g->use_sec);
         emit_label(Lret);
+        emit_call("cob_rw_use_out");
         Lsupp = new_label();
         emit_rw_ldw(r, RW_OFF_SUPPRESS, "r2");
         int Lrender = new_label();
@@ -295,6 +297,18 @@ static void parse_initiate(void)
     do {
         Report *r = expect_report();
         rw_check_code(r);
+        emit_ec_query("EC-FLOW-REPORT", "cob_rw_in_use", 1);         /* inside a USE BEFORE REPORTING procedure (2023 14.9.49.3 rule 10, 14.9.21.4) */
+        emit_report_addr("r3", r);
+        emit_ec_query("EC-REPORT-ACTIVE", "cob_rw_active", 1);       /* INITIATE of an active report (14.9.21.4 rule 1) */
+        if (ec_on_name("EC-REPORT-FILE-MODE")) {
+            /* the report's file not open OUTPUT or EXTEND (14.9.21.4 rule 2) */
+            int Lok = new_label();
+            emit_file_addr("r3", &g_files[r->file]); emit_call("cob_open_mode");
+            emit_li("r2", COB_OPEN_OUTPUT); emit("\tbeq r1, r2, .L%d", Lok);
+            emit_li("r2", COB_OPEN_EXTEND); emit("\tbeq r1, r2, .L%d", Lok);
+            emit_ec_raise(ec_find("EC-REPORT-FILE-MODE", 0));
+            emit_label(Lok);
+        }
         emit_report_addr("r3", r);
         emit_call("cob_rw_initiate");
         if (r->code_lit) emit_rw_code(r);
@@ -439,6 +453,9 @@ static void parse_terminate(void)
 static void parse_terminate_1(Report *r)
 {
     rw_resolve(r);
+    emit_ec_query("EC-FLOW-REPORT", "cob_rw_in_use", 1);
+    emit_report_addr("r3", r);
+    emit_ec_query("EC-REPORT-INACTIVE", "cob_rw_active", 0);        /* TERMINATE of an inactive report (2023 14.9.46.4 rule 1) */
     int Lend = new_label();
     emit_rw_ldw(r, RW_OFF_FIRST_GEN, "r2");
     emit("\tbeq r2, r0, .L%d", Lend);              /* no GENERATE ran: TERMINATE presents nothing */
@@ -480,12 +497,18 @@ static void parse_generate(void)
         if (ndet > 1 && g_std < 2002)          /* 1985's rule; 2002 and 2023 drop it */
             die_at(t->line, "GENERATE %s: the RD has %d DETAIL groups, one at most (X3.23-1985 XIII 4.3.3 rule 2b; 2002 allows more -- compile with -std=2002)", r->name, ndet);
         advance();
+        emit_ec_query("EC-FLOW-REPORT", "cob_rw_in_use", 1);
+        emit_report_addr("r3", r);
+        emit_ec_query("EC-REPORT-INACTIVE", "cob_rw_active", 0);    /* GENERATE for an inactive report (2023 14.9.16.4 rule 1) */
         if (r->code_tp) emit_rw_code(r);
         emit_rw_generate(r, NULL);                  /* GENERATE report-name: summary reporting */
         return;
     }
     if (g->type != RG_DETAIL) die_at(t->line, "GENERATE needs a DETAIL group or the report-name");
     advance();
+    emit_ec_query("EC-FLOW-REPORT", "cob_rw_in_use", 1);
+    emit_report_addr("r3", r);
+    emit_ec_query("EC-REPORT-INACTIVE", "cob_rw_active", 0);
     if (r->code_tp) emit_rw_code(r);
     emit_rw_generate(r, g);
 }

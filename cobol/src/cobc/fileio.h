@@ -105,6 +105,12 @@ static void parse_close(void)
             emit("\tstw sp+%d, r1", SLOT_C); emit_use_dispatch(f, 0);
             n++; continue;
         }
+        if (ec_on_name("EC-REPORT-NOT-TERMINATED"))
+            for (int ri = g_report_base; ri < g_nreport; ri++)
+                if (g_reports[ri].file == (int)(f - g_files)) {
+                    emit_report_addr("r3", &g_reports[ri]);
+                    emit_ec_query("EC-REPORT-NOT-TERMINATED", "cob_rw_active", 1);   /* the file closed with its report active (2023 14.9.6.4) */
+                }
         emit_file_addr("r3", f); emit_call("cob_close");
         emit("\tstw sp+%d, r1", SLOT_C); emit_use_dispatch(f, 0);
         n++;

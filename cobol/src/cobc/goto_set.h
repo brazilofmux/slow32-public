@@ -238,6 +238,20 @@ static void emit_ec_raise(int i)
     emit_ec_dispatch(i);
 }
 
+/* A condition the runtime detects: when its checking is on, ask the
+ * runtime (fn, with r3 set up by `args`) and raise it if the answer is
+ * nonzero (want 1) or zero (want 0).  Nothing is emitted when checking
+ * is off: the statement runs as before. */
+static void emit_ec_query(const char *name, const char *fn, int want)
+{
+    if (!ec_on_name(name)) return;
+    int Lok = new_label();
+    emit_call(fn);
+    emit(want ? "\tbeq r1, r0, .L%d" : "\tbne r1, r0, .L%d", Lok);
+    emit_ec_raise(ec_find(name, 0));
+    emit_label(Lok);
+}
+
 /* RAISE EXCEPTION exception-name (2023 14.9.29).  Everything is known here:
  * whether checking is on at this statement, the declarative that applies
  * (the name's own USE, its group's, EC-ALL's), and whether the condition

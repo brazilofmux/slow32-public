@@ -66,5 +66,6 @@ standard's titles or text:
 | 13.17, 13.18.3, .4, .6, .7, .9, .14, .21, .23, .25, .26, .30, .35, .36, .47, .48, .50, .56, .59, .61 the screen section and its clauses; 14.9.1, 14.9.11 of a screen | [screen.md](screen.md) | 2026-10-06 |
 | 14.9.29 RAISE | [raise.md](raise.md) | 2026-09-28 |
 | 7.3.25 TURN | [turn.md](turn.md) | 2026-09-28 |
+| 14.6.13.1.6 Table 13, every exception-name: raised where, or why not | [exceptions.md](exceptions.md) | 2026-10-06 |
 | 7.3.5, 7.3.6, 7.3.7, 7.3.8, 7.3.9, 7.3.11, 7.3.13, 7.3.16, 7.3.17, 7.3.18, 7.3.19 conditional compilation: DEFINE, EVALUATE, IF; CALL-CONVENTION, LEAP-SECOND, LISTING, PAGE | [directives.md](directives.md) | 2026-10-06 |
 | 14.9.49 USE | [use.md](use.md) | 2026-09-28 |

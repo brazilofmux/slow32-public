@@ -1,0 +1,7 @@
+declarative: EC-OVERFLOW-STRING             
+on overflow: abc
+declarative: EC-OVERFLOW-UNSTRING           
+unstring overflow
+declarative: EC-RANGE-SEARCH-NO-MATCH       
+search: at end
+overflow, checking off: ghi

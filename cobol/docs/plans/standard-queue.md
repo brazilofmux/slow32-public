@@ -71,7 +71,12 @@ the matrix's keyword and ancestor credits fixed (Report Writer's re-keying stays
 - Why here: the last structural piece of the exception module, whose core landed (ISSUES-53 onward).
 
 **4. The rest of Table 13.** 14.6.13.1.6, Table 13; Ed. 2002 (+2014/2023 names); M; deps 3 for
-EC-RAISING-*.
+EC-RAISING-*. AUDITED 2026-10-06: docs/conformance/exceptions.md has every level-3 name's row.
+Raised then: EC-OVERFLOW-STRING/-UNSTRING, EC-RANGE-SEARCH-NO-MATCH, EC-FLOW-RELEASE/-RETURN/
+-REPORT, the five EC-SORT-MERGE-* that can arise, EC-REPORT-ACTIVE/-INACTIVE/-FILE-MODE/
+-NOT-TERMINATED. Still open here (the page's **gap** rows): EC-RANGE-INVALID, EC-I-O-EOP/
+-EOP-OVERFLOW/-LINAGE, EC-FLOW-GLOBAL-EXIT/-GOBACK, EC-RANGE-INSPECT-SIZE at run time,
+EC-REPORT-PAGE-LIMIT at run time; the others wait on their features.
 - Today: 119 level-3 names are in `g_ec[]` (control.h). Verified by run: a STRING that overflows
   under `>>TURN EC-ALL CHECKING ON` does not raise EC-OVERFLOW-STRING. A name-search heuristic
   suggests EC-OVERFLOW-*, EC-RANGE-INSPECT-SIZE, EC-FLOW-GLOBAL-*, EC-FLOW-RELEASE/RETURN,

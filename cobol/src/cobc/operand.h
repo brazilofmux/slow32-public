@@ -53,6 +53,8 @@ static int ec_on_name(const char *name);
 struct Sym;
 static struct Sym *odo_table_for(struct Sym *s);
 static void emit_ec_raise(int i);
+static void emit_ec_query(const char *name, const char *fn, int want);
+static void emit_report_addr(const char *reg, Report *r);
 static int ec_find(const char *w, int line);
 static char g_cur_stmt[16];              /* the statement being compiled, for EXCEPTION-STATEMENT */
 static const Tok *g_stmt_tok;            /* its first token: the line EXCEPTION-LOCATION names */

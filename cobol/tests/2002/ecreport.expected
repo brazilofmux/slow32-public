@@ -1,0 +1,4 @@
+case: notterm 
+declarative: EC-REPORT-NOT-TERMINATED       
+after CLOSE
+end of notterm 

@@ -3433,6 +3433,7 @@ void cob_sort_table(char *base, int n, int stride, const cob_sort_key *keys, int
     free(kb); free(ix); free(copy);
 }
 
+static int cob_sorts_active;        /* sorts and merges under way (EC-SORT-MERGE-ACTIVE) */
 void cob_sort_begin(cob_file *sd, const cob_sort_key *keys, int nkeys, int dups, const unsigned char *coll)
 {
     (void)dups;
@@ -3445,6 +3446,7 @@ void cob_sort_begin(cob_file *sd, const cob_sort_key *keys, int nkeys, int dups,
     if (!so->kbuf) cob_fatal("SORT: out of memory");
     xs_init(&so->xs, so->klen + sd->recsize, so->klen, sort_budget(), sort_fan(), file_name(sd), cob_fatal);
     sd->idx = so; sd->open_mode = COB_OPEN_IO; sd->at_eof = 0;
+    cob_sorts_active++;
 }
 
 static cob_sorter *sorter_of(cob_file *sd, const char *what)
@@ -3452,6 +3454,17 @@ static cob_sorter *sorter_of(cob_file *sd, const char *what)
     if (sd->org != COB_ORG_SORT || !sd->idx) { char m[80]; snprintf(m, sizeof m, "%s outside a SORT of its SD", what); cob_fatal(m); }
     return (cob_sorter *)sd->idx;
 }
+/* what the compiler asks before RELEASE, RETURN, SORT and MERGE when a
+ * sort condition's checking is on: the SD's sort is under way (else
+ * EC-FLOW-RELEASE / -RETURN); its at end has been delivered
+ * (EC-SORT-MERGE-RETURN); any sort or merge is under way
+ * (EC-SORT-MERGE-ACTIVE); a MERGE USING file was out of order
+ * (EC-SORT-MERGE-SEQUENCE) */
+int cob_sort_under_way(cob_file *sd) { return sd->org == COB_ORG_SORT && sd->idx != NULL; }
+int cob_sort_at_end(cob_file *sd) { return sd->at_eof; }
+int cob_sort_any_active(void) { return cob_sorts_active; }
+static int cob_merge_seq_err;
+int cob_merge_sequence_error(void) { int e = cob_merge_seq_err; cob_merge_seq_err = 0; return e; }
 
 /* RELEASE: the SD's record area joins the set to be sorted */
 void cob_release(cob_file *sd)
@@ -3492,13 +3505,23 @@ void cob_merge_using(cob_file *sd, cob_file *in)
     cob_sorter *so = sorter_of(sd, "MERGE USING");
     xs_source_begin(&so->xs);
     if (cob_open(in, COB_OPEN_INPUT) == 2) cob_fatal("MERGE USING: cannot open the input file");
+    unsigned char *prev = malloc(so->klen); int have = 0;
     for (;;) {
         int r = cob_read(in);
         if (r == 1) break;
         if (r == 2) cob_fatal("MERGE USING: read failed");
         sort_copy(sd->record, sd->recsize, in->record, in->last_len ? in->last_len : in->recsize);
         cob_release(sd);
+        /* each USING file is in key order already (2023 14.9.24.4 rule 6):
+         * a record before its predecessor is EC-SORT-MERGE-SEQUENCE, which
+         * the compiler raises after this call when its checking is on;
+         * the keys compare by memcmp, the sequence number last */
+        if (prev) {
+            if (have && memcmp(prev, so->kbuf, so->klen - 4) > 0) cob_merge_seq_err = 1;
+            memcpy(prev, so->kbuf, so->klen); have = 1;
+        }
     }
+    free(prev);
     cob_close(in);
     xs_source_end(&so->xs);
 }
@@ -3557,6 +3580,7 @@ void cob_sort_end(cob_file *sd)
     free(so->giving);
     xs_free(&so->xs); free(so->kbuf); free(so);
     sd->idx = 0; sd->open_mode = 0;
+    if (cob_sorts_active) cob_sorts_active--;
 }
 
 /* MOVE of a group whose last child is an OCCURS DEPENDING ON table: the
@@ -4931,8 +4955,18 @@ static void rw_blank_to(cob_report *r, int line)   /* blank lines up to, not inc
 
 /* INITIATE: LINE-COUNTER 0, PAGE-COUNTER 1 (X3.23 VIII-53 3.2.4); the
  * first page is begun by the first GENERATE without counting again */
+/* The state the compiler asks about before raising a Report Writer or
+ * sort condition (2023 Table 13; the compiler emits the raise, so a
+ * condition whose checking is off costs nothing here) */
+int cob_rw_active(cob_report *r) { return r->active; }
+static int cob_rw_use_depth;        /* inside a USE BEFORE REPORTING procedure (EC-FLOW-REPORT) */
+void cob_rw_use_in(void) { cob_rw_use_depth++; }
+void cob_rw_use_out(void) { if (cob_rw_use_depth) cob_rw_use_depth--; }
+int cob_rw_in_use(void) { return cob_rw_use_depth; }
+
 void cob_rw_initiate(cob_report *r)
 {
+    r->active = 1;
     r->line_counter = 0; r->page_counter = 1; r->body_seen = 0; r->page_started = 0;
     r->first_gen = 0; r->brk = 0; r->next_line = 0; r->next_page = 0; r->suppress = 0;
     r->gi_pending = ~0;
@@ -5101,6 +5135,7 @@ void cob_rw_rf_begin(cob_report *r, int abs, int plus)
 void cob_rw_terminate(cob_report *r)
 {
     if (r->page_started) while (r->line_counter < r->page_limit) rw_put_line(r, "", 0);
+    r->active = 0;
 }
 
 /* ====================================================================== */

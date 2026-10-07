@@ -146,6 +146,7 @@ typedef struct {
     int next_page;            /* (52) NEXT GROUP NEXT PAGE (or an integer that did not fit) */
     int suppress;             /* (56) SUPPRESS PRINTING from a USE BEFORE REPORTING procedure */
     int gi_pending;           /* (60) GROUP INDICATE: bit k set = group k presents its indicated fields */
+    int active;               /* (64) INITIATEd and not yet TERMINATEd (EC-REPORT-ACTIVE, -INACTIVE, -NOT-TERMINATED) */
 } cob_report;
 
 /* a SCREEN SECTION 01: a table of slots (docs/screen.md).  kind: 0 VALUE,
