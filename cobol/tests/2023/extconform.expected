@@ -1,0 +1,5 @@
+open: 00
+write: 00
+sub read: 00 [record 3]
+sub read 9: 23
+after sub: fs=00 rk=0009

@@ -55,6 +55,15 @@ argument: functions.md "The 2023 functions" has the rows; tests
 COBOL-WORDS, DISPLAY, FLAG-14, PUSH and POP: directives.md "The 2023
 directives" has the rows; tests 2023/directives, warn/flag14-all.
 
+## EXTERNAL conformance checking (queue item 35, 2026-10-07)
+
+EC-EXTERNAL-DATA-MISMATCH, -FILE-MISMATCH and -FORMAT-CONFLICT raised
+at a program's entry when it checks them (14.8.4; E.2 items 9, 12, 24):
+data-division.md EXTERNAL and exceptions.md have the rows; tests
+2023/extconform, extformat, extdatamis, extfilemis. E.2 item 10
+(CONSTANT RECORD with EXTERNAL only strongly typed) is refused since item
+25 (bad/std2014-constrec-external).
+
 ## 11.9.10 OPTIONS INITIALIZE
 
 The clause names the fill byte every item without a VALUE in the named

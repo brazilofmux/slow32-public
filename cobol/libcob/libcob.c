@@ -1395,7 +1395,7 @@ void cob_fn_null_ptr(const char *item)
  * program entering sets the connector's FILE STATUS item to its own and
  * puts the previous one back on exit, so the statement's own program's
  * status is the one written. */
-static struct { const char *name; void *p; unsigned size; } cob_exts[128]; static int cob_nexts;
+static struct { const char *name; void *p; unsigned size; const char *sig; } cob_exts[128]; static int cob_nexts;
 void *cob_external(const char *name, unsigned size)
 {
     for (int i = 0; i < cob_nexts; i++)
@@ -1409,11 +1409,51 @@ void *cob_external(const char *name, unsigned size)
             return cob_exts[i].p;
         }
     if (cob_nexts == 128) cob_fatal("more than 128 EXTERNAL items");
-    cob_exts[cob_nexts].name = name; cob_exts[cob_nexts].p = calloc(size ? size : 1, 1); cob_exts[cob_nexts].size = size;
+    cob_exts[cob_nexts].name = name; cob_exts[cob_nexts].p = calloc(size ? size : 1, 1); cob_exts[cob_nexts].size = size; cob_exts[cob_nexts].sig = NULL;
     if (!cob_exts[cob_nexts].p) cob_fatal("out of memory for an EXTERNAL item");
     return cob_exts[cob_nexts++].p;
 }
-static struct { const char *name; cob_file *f; } cob_extf[64]; static int cob_nextf;
+/* EC-EXTERNAL conformance (2023 14.8.4; standard-queue item 35): the
+ * description a program gives an external record or file, as a string
+ * the compiler built, against the first entering program's -- the first
+ * to check records its own; 1 when they differ.  Called by a program
+ * whose checking is on, after cob_external / before cob_ext_file_enter */
+int cob_ext_sig(const char *name, const char *sig)
+{
+    for (int i = 0; i < cob_nexts; i++)
+        if (!strcmp(cob_exts[i].name, name)) {
+            if (!cob_exts[i].sig) { cob_exts[i].sig = sig; return 0; }
+            return strcmp(cob_exts[i].sig, sig) != 0;
+        }
+    return 0;
+}
+static struct { const char *name; cob_file *f; const char *sig; } cob_extf[64]; static int cob_nextf;
+int cob_ext_file_sig(const char *name, const char *sig)
+{
+    for (int i = 0; i < cob_nextf; i++)
+        if (!strcmp(cob_extf[i].name, name)) {
+            if (!cob_extf[i].sig) { cob_extf[i].sig = sig; return 0; }
+            return strcmp(cob_extf[i].sig, sig) != 0;
+        }
+    return 0;
+}
+/* 14.8.4.2: the FILE STATUS, RELATIVE KEY and LINAGE items of every
+ * program's entry for an external file are the same storage.  After
+ * cob_ext_file_enter: the connector's status item is this program's now,
+ * the previous one in saved_status */
+int cob_ext_file_items(const char *name, cob_file *mine)
+{
+    for (int i = 0; i < cob_nextf; i++)
+        if (!strcmp(cob_extf[i].name, name) && cob_extf[i].f) {
+            cob_file *f = cob_extf[i].f;
+            if (f == mine) return 0;
+            if (mine->saved_status != mine->status || f->rel_key != mine->rel_key) return 1;
+            if (f->linage && mine->linage)
+                for (int k = 0; k < 4; k++) if (((void *const *)f->linage)[3 * k + 1] != ((void *const *)mine->linage)[3 * k + 1]) return 1;
+            return 0;
+        }
+    return 0;
+}
 cob_file *cob_ext_file_enter(const char *name, cob_file *mine, void *rec)
 {
     for (int i = 0; i < cob_nextf; i++)
@@ -1424,7 +1464,7 @@ cob_file *cob_ext_file_enter(const char *name, cob_file *mine, void *rec)
         }
     if (cob_nextf == 64) cob_fatal("more than 64 EXTERNAL files");
     mine->record = rec;
-    cob_extf[cob_nextf].name = name; cob_extf[cob_nextf].f = mine; cob_nextf++;
+    cob_extf[cob_nextf].name = name; cob_extf[cob_nextf].f = mine; cob_extf[cob_nextf].sig = NULL; cob_nextf++;
     return mine;
 }
 void cob_ext_file_exit(const char *name, cob_file *mine)

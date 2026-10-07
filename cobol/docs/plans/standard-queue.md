@@ -431,7 +431,14 @@ are warnings with [F14-...] ids, the harness's gate 4 counting them; PUSH/POP ke
 directive at the stage that owns it (reader, text manipulation, parser).
 
 **35. EXTERNAL conformance checking.** EC-EXTERNAL-*; 2023 E.2 items 9, 10, 12, 24; M; deps 4.
-- Today: names are in the table; none raised (heuristic, unverified).
+**DONE 2026-10-07**: the three fatal conditions raised at a program's entry when it checks them,
+against the first entering program's description (a signature string per record and per file
+control entry, the items' addresses for 14.8.4.2); the checks emitted after the unit's declaratives
+so a USE AFTER EXCEPTION CONDITION takes them. Tests 2023/extconform, extformat, extdatamis,
+extfilemis; docs data-division.md, exceptions.md. Found on the way: a FILE STATUS in an EXTERNAL
+record was bound before the record's block was (reordered), and a RELATIVE KEY / LINAGE /
+DEPENDING ON item in an indirect record is bound at entry now instead of refused.
+- Was: names in the table; none raised.
 
 **36. 2023 behaviour-change audit.** 2023 E.2 items 2-30; S-M. Notable: item 19 (INVALID KEY and
 other I-O exceptions now reach USE declaratives when no phrase is given) may already differ from

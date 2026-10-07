@@ -983,7 +983,7 @@ static void finish_data_division(void)
             if (f->dep_sym->pi.is_signed || f->dep_sym->is_group || (f->dep_sym->record >= 0 && g_sym[f->dep_sym->record].fd >= 0))
                 die_at(f->line, "RECORD ... DEPENDING ON '%s': an elementary unsigned integer in WORKING-STORAGE, LOCAL-STORAGE or LINKAGE (%s)", f->dep_name,
                        g_std < 2002 ? "X3.23-1985 RECORD syntax rule 4" : "2023 13.18.43.3 rule 6");
-            if (rec_indirect(&g_sym[f->dep_sym->record]))
+            if (g_sym[f->dep_sym->record].is_based)     /* the others' addresses are taken at entry (esql.h); a BASED one moves */
                 die_at(f->line, "DEPENDING ON '%s' cannot be a %s item", f->dep_name, indirect_kind(&g_sym[f->dep_sym->record]));
             if (!f->maxlen) f->maxlen = f->recsize;
             if (f->maxlen > f->recsize) die_at(f->line, "FD %s: VARYING TO %d is larger than its record area (%d)", f->name, f->maxlen, f->recsize);
@@ -1032,7 +1032,7 @@ static void finish_data_division(void)
                     if (f->lin_sym[w]->pi.is_signed || f->lin_sym[w]->ndims)
                         die_at(f->line, "LINAGE: '%s' is %s; the LINAGE data-names are elementary unsigned integers, not in a table (%s)", f->lin_name[w],
                                f->lin_sym[w]->ndims ? "in a table" : "signed", g_std < 2002 ? "X3.23-1985 LINAGE syntax rule 1" : "2023 13.18.34.3 rules 1-2");
-                    if (rec_indirect(&g_sym[f->lin_sym[w]->record]))
+                    if (g_sym[f->lin_sym[w]->record].is_based)
                         die_at(f->line, "LINAGE: '%s' cannot be a %s item", f->lin_name[w], indirect_kind(&g_sym[f->lin_sym[w]->record]));
                 }
         }
@@ -1069,7 +1069,7 @@ static void finish_data_division(void)
                 if (!is_int_item(k)) die_at(f->line, "RELATIVE KEY '%s' must be an unsigned integer item", f->relkey_name);
                 if (f->rec >= 0 && k->record == g_sym[f->rec].record)
                     die_at(f->line, "RELATIVE KEY '%s' must not be an item of file '%s' (the record number lives outside the record)", f->relkey_name, f->name);
-                if (rec_indirect(&g_sym[k->record]))
+                if (g_sym[k->record].is_based)
                     die_at(f->line, "RELATIVE KEY '%s' cannot be a %s item", f->relkey_name, indirect_kind(&g_sym[k->record]));
                 f->relkey_sym = k;
             } else if (f->access != 0)

@@ -72,9 +72,9 @@ queue item 4 continues with.
 
 | name | cat | disposition |
 |---|---|---|
-| EC-EXTERNAL-DATA-MISMATCH | Fatal | **n/a**: EXTERNAL conformance checking (queue item 35) |
-| EC-EXTERNAL-FILE-MISMATCH | Fatal | **n/a**: queue item 35 |
-| EC-EXTERNAL-FORMAT-CONFLICT | Fatal | **n/a**: queue item 35 |
+| EC-EXTERNAL-DATA-MISMATCH | Fatal | **test**: 2023/extdatamis (the sub's FILE STATUS its own item, not the shared one); the FILE STATUS, RELATIVE KEY and LINAGE items of an external file the same storage in every program (14.8.4.2; implemented 2026-10-07, queue item 35; data-division.md EXTERNAL) |
+| EC-EXTERNAL-FILE-MISMATCH | Fatal | **test**: 2023/extfilemis (another access mode); the SELECT entries of an external file alike (12.4.5.3 rule 1) |
+| EC-EXTERNAL-FORMAT-CONFLICT | Fatal | **test**: 2023/extformat (a longer record; a declarative takes the condition, then the run unit ends); the descriptions of an external record alike (13.18.22.4 rule 6) |
 | EC-EXTERNAL-IMP | Imp | **ruling**: no implementor-defined condition is defined here, so it never arises |
 
 ## EC-FLOW

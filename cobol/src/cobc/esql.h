@@ -1319,6 +1319,52 @@ static void skip_unit_body(void)
     g_saw_end_program = 0;
 }
 
+/* EC-EXTERNAL conformance (2023 14.8.4; standard-queue item 35), with the
+ * conditions checked in this unit: each EXTERNAL record's description --
+ * its size and VALUE (13.18.22.4 rule 6) -- and each EXTERNAL file's
+ * control entry (12.4.5.3 rule 1) against the first entering program's,
+ * and the file's FILE STATUS, RELATIVE KEY and LINAGE items the same
+ * storage as its (14.8.4.2).  Emitted where the unit's USE procedures
+ * are known -- after its declaratives -- so a declarative can take the
+ * fatal condition before the run unit ends. */
+static void emit_external_checks(void)
+{
+    if (g_std < 2002) return;
+    if (ec_on_name("EC-EXTERNAL-FORMAT-CONFLICT"))
+        for (int i = g_sym_base; i < g_nsym; i++) {
+            Sym *s = &g_sym[i];
+            if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->rep_ctr >= 0 || !s->is_external || s->fd >= 0) continue;
+            char nm[80]; snprintf(nm, sizeof nm, "%s", s->ext_as[0] ? s->ext_as : s->name);
+            char sig[400]; int k = snprintf(sig, sizeof sig, "%d bytes", s->image_size);
+            if (s->value_tok) k += snprintf(sig + k, sizeof sig - (size_t)k, "; VALUE %s%.*s", s->value_all ? "ALL " : "",
+                                            s->value_tok->len > 200 ? 200 : s->value_tok->len, s->value_tok->s);
+            emit_la("r3", lit_label((const unsigned char *)nm, (int)strlen(nm) + 1));
+            emit_la("r4", lit_label((const unsigned char *)sig, (int)strlen(sig) + 1));
+            emit_ec_query("EC-EXTERNAL-FORMAT-CONFLICT", "cob_ext_sig", 1);
+        }
+    for (int i = g_file_base; i < g_nfile; i++) {
+        File *f = &g_files[i];
+        if (!f->external) continue;
+        const char *nlab = lit_label((const unsigned char *)f->name, (int)strlen(f->name) + 1);
+        char lab[32]; snprintf(lab, sizeof lab, ".Lf%d_%d", f->unit, i);
+        if (ec_on_name("EC-EXTERNAL-FILE-MISMATCH")) {
+            /* OPTIONAL, ASSIGN, organization, access, RELATIVE KEY and FILE STATUS
+             * written or not; RECORD DELIMITER, RESERVE and COLLATING SEQUENCE
+             * are not kept per file here */
+            char sig[400];
+            snprintf(sig, sizeof sig, "org %d; access %d; optional %d; assign %s%.*s; relative key %d; file status %d", f->org, f->access, f->optional,
+                     f->assign_lit ? "" : f->assign_name, f->assign_lit ? (f->assign_lit->len > 120 ? 120 : f->assign_lit->len) : 0, f->assign_lit ? f->assign_lit->s : "",
+                     f->relkey_sym != NULL, f->status_sym != NULL);
+            emit_la("r3", nlab); emit_la("r4", lit_label((const unsigned char *)sig, (int)strlen(sig) + 1));
+            emit_ec_query("EC-EXTERNAL-FILE-MISMATCH", "cob_ext_file_sig", 1);
+        }
+        if (ec_on_name("EC-EXTERNAL-DATA-MISMATCH")) {
+            emit_la("r3", nlab); emit_la("r4", lab);
+            emit_ec_query("EC-EXTERNAL-DATA-MISMATCH", "cob_ext_file_items", 1);
+        }
+    }
+}
+
 static void parse_procedure_division(void)
 {
     expect_word("procedure"); expect_word("division");
@@ -1640,17 +1686,51 @@ static void parse_procedure_division(void)
         emit_call("cob_set_currency_str"); emit("\tstw sp+%d, r1", SLOT_CUR);
     } else if (g_currency && g_currency != '$') { emit_li("r3", g_currency); emit_call("cob_set_currency"); emit("\tstw sp+%d, r1", SLOT_CUR); }
     if (g_initial) { char cl[32]; snprintf(cl, sizeof cl, ".Lcan%d", g_unit); emit_call(cl); }   /* INITIAL: as after CANCEL */
+    /* EXTERNAL records: the block every program of this name shares (the
+     * records of an EXTERNAL FD share one block under the file's name).
+     * With EC-EXTERNAL-FORMAT-CONFLICT checked (2023 14.8.4.3; 13.18.22.4
+     * rule 6), the record's description -- its size and its VALUE -- is
+     * compared with the first entering program's (cob_ext_sig) */
+    g_propagate = 0; apply_dirs();          /* the directives before the PROCEDURE DIVISION: >>TURN's checking state is wanted here; a >>PROPAGATE ON arrives as a directive at the unit's start */
+    for (int i = g_sym_base; i < g_nsym; i++) {
+        Sym *s = &g_sym[i];
+        if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->rep_ctr >= 0 || !s->is_external) continue;
+        char nm[80];
+        if (s->fd >= 0) snprintf(nm, sizeof nm, "file:%s", g_files[s->fd].name);
+        else snprintf(nm, sizeof nm, "%s", s->ext_as[0] ? s->ext_as : s->name);   /* AS literal: its externalized name */
+        const char *nlab = lit_label((const unsigned char *)nm, (int)strlen(nm) + 1);
+        emit_la("r3", nlab);
+        emit_li("r4", s->image_size);
+        emit_call("cob_external");
+        emit("\tadd r2, r0, r1");
+        emit_la("r1", s->label);
+        emit("\tstw r1+0, r2");
+        (void)nlab;
+    }
+    int has_ext_file = 0;
     /* a FILE STATUS item in the LINKAGE SECTION (or EXTERNAL): the image
-     * takes its address now that the cell is filled (status is at 16) */
+     * takes its address now that the cell is filled (status is at 16);
+     * a RELATIVE KEY (68), a RECORD VARYING DEPENDING ON item (60) and a
+     * LINAGE item there likewise (they were left as label+offset, the
+     * address of the cell, not of the item -- found with item 35) */
     for (int i = g_file_base; i < g_nfile; i++) {
         File *f = &g_files[i];
-        if (!f->status_sym) continue;
-        Sym *rec = &g_sym[f->status_sym->record];
-        if (!rec_indirect(rec)) continue;
-        emit_item_addr("r1", f->status_sym, f->status_sym->offset);
         char lab[32]; snprintf(lab, sizeof lab, ".Lf%d_%d", f->unit, i);
-        emit_la("r2", lab);
-        emit("\tstw r2+16, r1");
+        struct { Sym *sym; int at; } w[3] = { { f->status_sym, 16 }, { f->relkey_sym, 68 }, { f->dep_sym, 60 } };
+        for (int k = 0; k < 3; k++) {
+            if (!w[k].sym || !rec_indirect(&g_sym[w[k].sym->record])) continue;
+            emit_item_addr("r1", w[k].sym, w[k].sym->offset);
+            emit_la("r2", lab);
+            emit("\tstw r2+%d, r1", w[k].at);
+        }
+        if (f->linage)
+            for (int k = 0; k < 4; k++) {
+                if (!f->lin_sym[k] || !rec_indirect(&g_sym[f->lin_sym[k]->record])) continue;
+                emit_item_addr("r1", f->lin_sym[k], f->lin_sym[k]->offset);
+                snprintf(lab, sizeof lab, ".Llin%d_%d", g_unit, i);
+                emit_la("r2", lab);
+                emit("\tstw r2+%d, r1", 12 * k + 4);
+            }
     }
     /* likewise an ASSIGN data-name there (its address is at 24) */
     for (int i = g_file_base; i < g_nfile; i++) {
@@ -1661,29 +1741,14 @@ static void parse_procedure_division(void)
         emit_la("r2", lab);
         emit("\tstw r2+24, r1");
     }
-    /* EXTERNAL records: the block every program of this name shares (the
-     * records of an EXTERNAL FD share one block under the file's name) */
-    int has_ext_file = 0;
-    for (int i = g_sym_base; i < g_nsym; i++) {
-        Sym *s = &g_sym[i];
-        if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->rep_ctr >= 0 || !s->is_external) continue;
-        char nm[80];
-        if (s->fd >= 0) snprintf(nm, sizeof nm, "file:%s", g_files[s->fd].name);
-        else snprintf(nm, sizeof nm, "%s", s->ext_as[0] ? s->ext_as : s->name);   /* AS literal: its externalized name */
-        emit_la("r3", lit_label((const unsigned char *)nm, (int)strlen(nm) + 1));
-        emit_li("r4", s->image_size);
-        emit_call("cob_external");
-        emit("\tadd r2, r0, r1");
-        emit_la("r1", s->label);
-        emit("\tstw r1+0, r2");
-    }
     for (int i = g_file_base; i < g_nfile; i++) {
         File *f = &g_files[i];
         if (!f->external) continue;
         has_ext_file = 1;
         char nm[80]; snprintf(nm, sizeof nm, "%s", f->name);
-        emit_la("r3", lit_label((const unsigned char *)nm, (int)strlen(nm) + 1));
+        const char *nlab = lit_label((const unsigned char *)nm, (int)strlen(nm) + 1);
         char lab[32]; snprintf(lab, sizeof lab, ".Lf%d_%d", f->unit, i);
+        emit_la("r3", nlab);
         emit_la("r4", lab);
         if (f->rec >= 0) { emit_la("r5", g_sym[g_sym[f->rec].record].label); emit("\tldw r5, r5+0"); } else emit_li("r5", 0);
         emit_call("cob_ext_file_enter");
@@ -1698,7 +1763,8 @@ static void parse_procedure_division(void)
     g_cur_para = NULL;
     if (!g_udepth) g_nuse = 0;              /* a contained unit's USE entries follow the enclosing units' */
     g_cur_sec_id = -1; g_in_decl = 0;
-    g_propagate = 0; apply_dirs();          /* a >>PROPAGATE ON over this unit arrives as a directive at its start */
+    apply_dirs();                           /* (applied above already, before the EXTERNAL bindings) */
+    if (!at_word("declaratives")) emit_external_checks();
     if (accept_word("declaratives")) {
         /* the declarative sections are reached only through USE; jump over them */
         expect_period();
@@ -1726,6 +1792,7 @@ static void parse_procedure_division(void)
             cur_par = -1; cur_sec = -1; g_cur_sec_id = -1;
             advance(); advance(); expect_period();
             emit_label(Ldecl_end); g_in_decl = 0;
+            emit_external_checks();
             continue;
         }
 
