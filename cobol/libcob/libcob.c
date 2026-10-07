@@ -220,8 +220,8 @@ static int capacity_digits(unsigned size)
  * its arrays do not put a 350-byte frame under every numeric fetch. */
 /* the program's DECIMAL-POINT IS COMMA and CURRENCY SIGN, as the edited
  * kernels take them (kern.h K_LOC_*) */
-extern int cob_dp_comma, cob_currency;
-static int loc_word(void) { return (cob_dp_comma ? 1 : 0) | ((cob_currency & 255) << 8); }
+extern int cob_dp_comma, cob_currency, cob_currency_len;
+static int loc_word(void) { return (cob_dp_comma ? 1 : 0) | ((cob_currency & 255) << 8) | ((cob_currency_len & 255) << 16); }
 
 /* the numeric-edited fetch and store: hookable thunks (build.sh) in front
  * of these */
@@ -488,13 +488,14 @@ void cob_wget(const void *vp, const cob_desc *d, cob_wnum *w)
     memset(w, 0, sizeof *w); w->scale = d->scale;
     if (d->cat == COB_NUM_ED) {
         unsigned char sw[256];
-        if ((cob_dp_comma || cob_currency != '$') && d->size <= sizeof sw) {
+        if ((cob_dp_comma || cob_currency != '$' || cob_currency_len > 1) && d->size <= sizeof sw) {
             for (size_t i = 0; i < d->size; i++) {
                 unsigned char c = p[i];
                 if (cob_dp_comma) c = c == '.' ? ',' : c == ',' ? '.' : c;
-                if (cob_currency != '$' && c == (unsigned char)cob_currency) c = '$';
+                if (cob_currency_len <= 1 && cob_currency != '$' && c == (unsigned char)cob_currency) c = '$';
                 sw[i] = c;
             }
+            if (cob_currency_len > 1) cob_k_cs_shrink(sw, (int)d->size, cob_currency_str, cob_currency_len);
             p = sw;
         }
         n = cob_deedit(d->pic, p, digs, &neg);
@@ -613,7 +614,8 @@ int cob_wput_x(void *vp, const cob_desc *d, const cob_wnum *win, int opts)
         int nd = eff > 0 ? eff : 0;
         int w2 = cob_edit_apply(d->pic, D + L - nd, neg, d->flags & COB_F_BLANKZ, (char *)p);
         if (cob_dp_comma) for (int i = 0; i < w2; i++) { if (p[i] == '.') p[i] = ','; else if (p[i] == ',') p[i] = '.'; }
-        if (cob_currency != '$') for (int i = 0; i < w2; i++) if (p[i] == '$') p[i] = (unsigned char)cob_currency;
+        if (cob_currency_len > 1) cob_k_cs_expand(p, w2, cob_currency_str, cob_currency_len);
+        else if (cob_currency != '$') for (int i = 0; i < w2; i++) if (p[i] == '$') p[i] = (unsigned char)cob_currency;
         return 0;
     }
     switch (d->usage) {
@@ -1278,7 +1280,31 @@ int cob_locale_word = '$' << 8;
 int cob_set_decimal_point(int comma) { int old = cob_dp_comma; cob_dp_comma = comma; cob_locale_word = loc_word(); return old; }
 /* CURRENCY SIGN: the character printed where the picture says '$' */
 int cob_currency = '$';
-int cob_set_currency(int c) { int old = cob_currency; cob_currency = c ? c : '$'; cob_locale_word = loc_word(); return old; }
+/* CURRENCY SIGN IS "EUR" WITH PICTURE SYMBOL "$": the string (2023
+ * 12.3.7 rule 23), its length in the locale word; the string itself
+ * reaches the editor after each picture (kern.h) and NUMVAL-C from here */
+char cob_currency_str[32] = "$"; int cob_currency_len = 1;
+int cob_set_currency(int c) { int old = cob_currency; cob_currency = c ? c : '$'; cob_currency_str[0] = (char)cob_currency; cob_currency_str[1] = 0; cob_currency_len = 1; cob_locale_word = loc_word(); return old; }
+/* ... with a currency string: the symbol c and the string s of n bytes;
+ * the returned word restores both (cob_restore_currency) */
+int cob_set_currency_str(int c, const char *s, int n)
+{
+    int old = (cob_currency & 255) | (cob_currency_len << 8);
+    cob_currency = c ? c : '$';
+    if (n < 1 || n > 31) n = 1;
+    memcpy(cob_currency_str, s, (size_t)n); cob_currency_str[n] = 0; cob_currency_len = n;
+    cob_locale_word = loc_word();
+    return old;
+}
+void cob_restore_currency(int old)
+{
+    /* the symbol only: a program with a currency string is the outermost
+     * of its kind in practice; its caller's string, if any, is reset to
+     * the symbol it had (a caller using the same string sees no change) */
+    cob_currency = old & 255; cob_currency_len = 1;
+    cob_currency_str[0] = (char)cob_currency; cob_currency_str[1] = 0;
+    cob_locale_word = loc_word();
+}
 
 static int cmp_bytes(const unsigned char *a, int na, const unsigned char *b, int nb)
 {
@@ -7116,28 +7142,35 @@ char *cob_fn_reverse(const char *p, int n)
  * (TEST-NUMVAL's returned value, 15.75-15.77).  form 0 NUMVAL, 1
  * NUMVAL-C (a currency string, grouping commas), 2 NUMVAL-F (an exponent).
  * The value, when it conforms: v at scale sc, times 10**exp. */
-static const char *fn_cur_p; static int fn_cur_n;    /* NUMVAL-C argument-2, for the next call */
+static const char *fn_cur_p; static int fn_cur_n, fn_cur_ci;    /* NUMVAL-C argument-2, for the next call; ANYCASE */
 
-void cob_fn_currency_arg(const char *p, int n)
+void cob_fn_currency_arg(const char *p, int n, int anycase)
 {
     while (n > 0 && *p == ' ') { p++; n--; }
     while (n > 0 && p[n - 1] == ' ') n--;
-    fn_cur_p = p; fn_cur_n = n;
+    fn_cur_p = p; fn_cur_n = n; fn_cur_ci = anycase;
+}
+static int cs_match(const char *p, const char *cs, int n, int ci)
+{
+    for (int i = 0; i < n; i++)
+        if (ci ? tolower((unsigned char)p[i]) != tolower((unsigned char)cs[i]) : p[i] != cs[i]) return 0;
+    return 1;
 }
 
 static int numval_scan(const char *p, int n, int form, cob_wnum *wv, int *exp10)
 {
     char cs[64]; int csn;
+    int ci = fn_cur_ci;
     if (form == 1 && fn_cur_p) { csn = fn_cur_n < 63 ? fn_cur_n : 63; memcpy(cs, fn_cur_p, (size_t)csn); }
-    else { cs[0] = (char)cob_currency; csn = 1; }
-    fn_cur_p = 0;
+    else { csn = cob_currency_len; memcpy(cs, cob_currency_str, (size_t)csn); }   /* the program's currency string (15.65: the default) */
+    fn_cur_p = 0; fn_cur_ci = 0;
     int dp = cob_dp_comma ? ',' : '.', grp = cob_dp_comma ? '.' : ',';
     int i = 0, neg = 0, lead = 0, nd = 0, seen_pt = 0, scale = 0, any = 0;
     char dg[40]; int ndg = 0;                       /* the digits, up to 31 (15.54: the argument's limit) */
 #define SP() while (i < n && p[i] == ' ') i++
     SP();
     if (i < n && (p[i] == '+' || p[i] == '-')) { neg = p[i] == '-'; lead = 1; i++; SP(); }
-    if (form == 1 && csn && i + csn <= n && !memcmp(p + i, cs, (size_t)csn)) { i += csn; SP(); }
+    if (form == 1 && csn && i + csn <= n && cs_match(p + i, cs, csn, ci)) { i += csn; SP(); }
     /* the number: digits, one decimal separator, NUMVAL-C's grouping commas */
     int start = i;
     for (; i < n; i++) {

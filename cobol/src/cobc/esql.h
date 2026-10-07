@@ -1565,7 +1565,10 @@ static void parse_procedure_division(void)
         emit_la("r3", lab); emit_call("cob_set_collating"); emit("\tstw sp+%d, r1", SLOT_COLL);
     }
     if (g_dp_comma) { emit("\taddi r3, r0, 1"); emit_call("cob_set_decimal_point"); emit("\tstw sp+%d, r1", SLOT_DP); }
-    if (g_currency && g_currency != '$') { emit_li("r3", g_currency); emit_call("cob_set_currency"); emit("\tstw sp+%d, r1", SLOT_CUR); }
+    if (g_currency_len > 1) {
+        emit_li("r3", g_currency); emit_la("r4", lit_label((const unsigned char *)g_currency_str, g_currency_len)); emit_li("r5", g_currency_len);
+        emit_call("cob_set_currency_str"); emit("\tstw sp+%d, r1", SLOT_CUR);
+    } else if (g_currency && g_currency != '$') { emit_li("r3", g_currency); emit_call("cob_set_currency"); emit("\tstw sp+%d, r1", SLOT_CUR); }
     if (g_initial) { char cl[32]; snprintf(cl, sizeof cl, ".Lcan%d", g_unit); emit_call(cl); }   /* INITIAL: as after CANCEL */
     /* a FILE STATUS item in the LINKAGE SECTION (or EXTERNAL): the image
      * takes its address now that the cell is filled (status is at 16) */
@@ -1742,7 +1745,8 @@ static void parse_procedure_division(void)
     }
     if (g_collate >= 0) { emit("\tldw r3, sp+%d", SLOT_COLL); emit_call("cob_set_collating"); }
     if (g_dp_comma) { emit("\tldw r3, sp+%d", SLOT_DP); emit_call("cob_set_decimal_point"); }
-    if (g_currency && g_currency != '$') { emit("\tldw r3, sp+%d", SLOT_CUR); emit_call("cob_set_currency"); }
+    if (g_currency_len > 1) { emit("\tldw r3, sp+%d", SLOT_CUR); emit_call("cob_restore_currency"); }
+    else if (g_currency && g_currency != '$') { emit("\tldw r3, sp+%d", SLOT_CUR); emit_call("cob_set_currency"); }
     if (g_std >= 2002 && !g_is_function) {
         /* whether a result was put in place, for the caller's RETURNING */
         emit_la("r2", "cob_call_returned");

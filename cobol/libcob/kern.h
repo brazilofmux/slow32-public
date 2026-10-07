@@ -503,9 +503,48 @@ KFN int cob_deedit(const char *pat, const unsigned char *bytes, char *digs, int 
 
 /* ---- numeric-edited store and fetch ------------------------------------
  * The program's DECIMAL-POINT IS COMMA and CURRENCY SIGN choices come in
- * as locale: bit 0 the comma, bits 8-15 the currency character. */
+ * as locale: bit 0 the comma, bits 8-15 the currency symbol, bits 16-23
+ * the length of the currency string when it is more than one character
+ * (CURRENCY SIGN IS "EUR" WITH PICTURE SYMBOL "$", 2023 12.3.7) -- the
+ * string itself follows the PICTURE's terminating NUL, where the
+ * compiler puts it (driver.h), so a hook sees it in the same memory. */
 #define K_LOC_COMMA(l)    ((l) & 1)
 #define K_LOC_CURRENCY(l) (((l) >> 8) & 255)
+#define K_LOC_CURLEN(l)   (((l) >> 16) & 255)
+
+/* the currency string after the picture: pic's NUL, then n bytes */
+KFN const char *cob_k_cs(const char *pic) { while (*pic) pic++; return pic + 1; }
+/* the edited text's first '$' (the symbol as the editor writes it) made
+ * the currency string of n characters, the text after it moved right n -
+ * 1 (the item is that much wider: 13.18.40.4, cs); any later '$' the
+ * string's first character.  Returns the new width. */
+KFN int cob_k_cs_expand(unsigned char *p, int w, const char *cs, int n)
+{
+    int i = 0;
+    while (i < w && p[i] != '$') i++;
+    if (i == w) return w;
+    for (int k = w - 1; k > i; k--) p[k + n - 1] = p[k];
+    for (int k = 0; k < n; k++) p[i + k] = (unsigned char)cs[k];
+    w += n - 1;
+    for (int k = i + n; k < w; k++) if (p[k] == '$') p[k] = (unsigned char)cs[0];
+    return w;
+}
+/* the reverse, for de-editing: the string's first occurrence in the
+ * size bytes made one '$', the rest moved left; w the width that is
+ * left (size when the string is not there) */
+KFN int cob_k_cs_shrink(unsigned char *p, int size, const char *cs, int n)
+{
+    int i = 0;
+    while (i + n <= size) {
+        int k = 0; while (k < n && p[i + k] == (unsigned char)cs[k]) k++;
+        if (k == n) break;
+        i++;
+    }
+    if (i + n > size) return size;
+    p[i] = '$';
+    for (int k = i + n; k < size; k++) p[k - n + 1] = p[k];
+    return size - n + 1;
+}
 
 KFN int cob_k_ed_ok(const cob_kdesc *d)
 {
@@ -524,9 +563,10 @@ KFN int cob_k_put_edited(unsigned char *p, const cob_kdesc *d, const char *pic, 
     memset(digs, '0', sizeof digs);          /* a PICTURE with more positions than eff reads zeros, not the stack */
     mag_to_digits(mag, digs, eff > 38 ? 38 : eff);
     int w = cob_edit_apply(pic, digs, neg, d->flags & K_F_BLANKZ, (char *)p);
-    int cur = K_LOC_CURRENCY(locale);
+    int cur = K_LOC_CURRENCY(locale), cl = K_LOC_CURLEN(locale);
     if (K_LOC_COMMA(locale)) for (int i = 0; i < w; i++) { if (p[i] == '.') p[i] = ','; else if (p[i] == ',') p[i] = '.'; }
-    if (cur != '$') for (int i = 0; i < w; i++) if (p[i] == '$') p[i] = (unsigned char)cur;
+    if (cl > 1) cob_k_cs_expand(p, w, cob_k_cs(pic), cl);
+    else if (cur != '$') for (int i = 0; i < w; i++) if (p[i] == '$') p[i] = (unsigned char)cur;
     return 0;
 }
 
@@ -539,14 +579,15 @@ KFN long long cob_k_get_edited(const unsigned char *p, const cob_kdesc *d, const
     int neg = 0;
     char digs[40];
     unsigned char sw[256];
-    int cur = K_LOC_CURRENCY(locale);
-    if ((K_LOC_COMMA(locale) || cur != '$') && d->size <= sizeof sw) {     /* the bytes carry ',' for the point, c for '$': read them the other way round */
+    int cur = K_LOC_CURRENCY(locale), cl = K_LOC_CURLEN(locale);
+    if ((K_LOC_COMMA(locale) || cur != '$' || cl > 1) && d->size <= sizeof sw) {     /* the bytes carry ',' for the point, c for '$': read them the other way round */
         for (unsigned i = 0; i < d->size; i++) {
             unsigned char c = p[i];
             if (K_LOC_COMMA(locale)) c = c == '.' ? ',' : c == ',' ? '.' : c;
-            if (cur != '$' && c == (unsigned char)cur) c = '$';
+            if (cl <= 1 && cur != '$' && c == (unsigned char)cur) c = '$';
             sw[i] = c;
         }
+        if (cl > 1) cob_k_cs_shrink(sw, (int)d->size, cob_k_cs(pic), cl);
         p = sw;
     }
     int n = cob_deedit(pic, p, digs, &neg);

@@ -129,6 +129,7 @@ Each rule below sets EC-ARGUMENT-FUNCTION, and each is a site in
 | INTEGER-OF-DATE, INTEGER-OF-DAY (15.46, 15.47) | a valid date, the year from 1601 | site |
 | LOG, LOG10 (15.55, 15.56) | greater than zero | site |
 | MOD (15.64) | integers; argument-2 not zero | site |
+| NUMVAL-C, TEST-NUMVAL-C argument-2 ANYCASE (15.68, 15.94; 2014) | the currency string matched in either case | **test**: 2002/numvalanycase (implemented 2026-10-06, standard-queue item 14; no oracle: GnuCOBOL 4 has no ANYCASE); the LOCALE phrase stays with locale support (item 45) |
 | NUMVAL, NUMVAL-C, NUMVAL-F (15.67-15.69) | the formats | site. Unchecked, the value is still the digits read up to the first character out of place, as before this sweep; the rule leaves it to the implementor, and real programs may lean on it |
 | PRESENT-VALUE (15.74) | argument-1 greater than -1 | site |
 | RANDOM (15.75) | a seed of zero or a positive integer | site |

@@ -63,7 +63,7 @@ from 55; `tests/pictures.txt` keeps 42 of the cases in the harness.
 | 25 | a fixed + or - at an end | **refused**: bad/pic-fixed-sign-middle |
 | 26 | a fixed currency symbol at an end, beside a sign | **refused**: bad/pic-currency-middle |
 | 27 | one floating or zero-suppression string | **refused**: bad/pic-two-floating |
-| 28 | one currency symbol character in a floating string | **n/a**: one currency symbol per program here (PICTURE SYMBOL is not taken) |
+| 28 | one currency symbol character in a floating string | **ruling**: one currency symbol per source unit here, with or without PICTURE SYMBOL (12.3.7 rule 21 allows several, each with its own string: bad/std2002-currency-two) |
 | 29 | a floating string starts left of the point | **refused**: bad/pic-float-after-point |
 | 30 | no A or X with USAGE NATIONAL | **refused** (national-boolean sweep) |
 | 31 | S not with NO SIGN | **n/a**: 2014's |
@@ -78,6 +78,7 @@ from 55; `tests/pictures.txt` keeps 42 of the cases in the harness.
 | 13 | numeric-edited: the symbols allowed; S is not one | **refused**: pictures.txt; `S` with an editing symbol names 13.18.40.4 rule 13 |
 | editing (13.18.40.5) | simple, special, fixed and floating insertion; zero suppression and replacement; a Z past the point takes every digit | **test**: free/picedit (the oracle agrees), free/picmix, CCVS NC editing programs; **refused**: bad/pic-z-past-point, bad/pic-9-before-z |
 | 15 | VALIDATE | **n/a**: out of scope by ruling |
+| cs (13.18.40.4), 12.3.7 rules 22-23, 26-27 | the currency symbol stands for the currency string; the first occurrence adds the string's length to the item, each later one a character; a symbol of one character, not a PICTURE's own, not a digit; a string with no digit and none of + - , . * | **test**: 2002/currencystr (CURRENCY SIGN IS "EUR" WITH PICTURE SYMBOL "$": fixed and floating insertion, de-editing, a 31-digit item, NUMVAL-C's default; implemented 2026-10-06, standard-queue item 14; no oracle: GnuCOBOL 4 does not separate the string from the symbol); **refused**: bad/std2002-currency-digit, -currency-symbol-e. How: the symbol is '$' to the editor, the string follows the PICTURE's terminating NUL in the descriptor and its length rides in the locale word (kern.h cob_k_cs_expand / cob_k_cs_shrink), so the DBT's hooked kernel sees it too |
 
 ## 13.18.8 BLANK WHEN ZERO
 

@@ -146,6 +146,7 @@ typedef struct Opnd_ {
                                               * subject, evaluated once; cob_nsave, cob_npush_saved) */
     struct UCall_ *uc;                       /* a user function's result met while scanning ahead: the call,
                                               * made when an expression holding it is emitted (ucall_make) */
+    int fanycase;                            /* O_FUNC NUMVAL-C / TEST-NUMVAL-C: the ANYCASE phrase (2023 15.68) */
     int paddr;                               /* O_ADDR: 1 ADDRESS OF PROGRAM, 2 ADDRESS OF FUNCTION (2023 8.4.3.12-13); else a data address */
     const char *pname;                       /* O_ADDR program/function: the literal or prototype's externalized name; NULL: ref holds the name */
     const char *pproto;                      /* O_ADDR program/function by prototype: the prototype's name (a restricted pointer's value) */

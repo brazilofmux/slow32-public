@@ -786,6 +786,7 @@ static void emit_fn_value_raw_1(Opnd *f)
             if (cx->kind == O_STR) { emit_la("r3", lit_label((unsigned char *)cx->tok->s, cx->tok->len)); emit_li("r4", cx->tok->len); }
             else if (cx->kind == O_REF) emit_ref_addr_len(&cx->ref);
             else die_at(f->line, "FUNCTION NUMVAL-C: the currency string must be an item or a literal");
+            emit_li("r5", f->fanycase);
             emit_call("cob_fn_currency_arg");
         }
         Opnd *ax = f->fargs[0];                         /* the string functions: r3 the argument, r4 its length */

@@ -359,6 +359,14 @@ static int fn89_parse(Opnd *o, Tok *n)
         o->fargs = xmalloc(16 * sizeof *o->fargs);
         while (cur()->kind != T_RP) {
             if (o->nfargs == 16) die_at(n->line, "FUNCTION %s: more than 16 arguments", n->s);
+            if ((g_fn89[f].id == -6 || g_fn89[f].id == -9) && o->nfargs == 2 && at_word("anycase") && !sym_lookup_quiet("anycase")) {
+                /* NUMVAL-C (TEST-NUMVAL-C) argument-2 ANYCASE (2023 15.68, 15.94):
+                 * the currency string matched in either case */
+                if (g_std < 2002) die_at(cur()->line, "FUNCTION %s: ANYCASE is COBOL 2014; compile with -std=2002", n->s);
+                o->fanycase = 1; advance();
+                if (cur()->kind != T_RP) die_at(cur()->line, "FUNCTION %s: ANYCASE ends the arguments", n->s);
+                break;
+            }
             o->fargs[o->nfargs++] = fn89_arg(n->s);   /* the tokenizer drops the decorative commas */
         }
         advance();

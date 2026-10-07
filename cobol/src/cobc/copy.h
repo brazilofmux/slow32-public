@@ -37,6 +37,7 @@ static void join_concat(void);
 
 static int g_dp_comma;      /* SPECIAL-NAMES DECIMAL-POINT IS COMMA */
 static int g_currency;      /* SPECIAL-NAMES CURRENCY SIGN IS "c": the picture symbol standing for '$', 0 for '$' itself */
+static char g_currency_str[32]; static int g_currency_len;   /* ... WITH PICTURE SYMBOL: the currency string the symbol stands for (2023 12.3.7 rule 23), its length; 0: the symbol itself */
 
 /* DECIMAL-POINT IS COMMA swaps the roles of '.' and ',' in numeric
  * literals and pictures.  It may arrive by COPY (SM103A), so it is
@@ -53,20 +54,45 @@ static void apply_decimal_point(void)
     }
     /* CURRENCY [SIGN] [IS] "c": in every picture c stands for '$', which
      * is what the analyser and the editor read; the runtime prints c */
+    g_currency_len = 0;
     for (int i = 0; i + 1 < g_ntok; i++) {
         if (g_tok[i].kind != T_WORD || strcmp(g_tok[i].s, "currency")) continue;
         int j = i + 1;
         if (g_tok[j].kind == T_WORD && !strcmp(g_tok[j].s, "sign")) j++;
         if (j < g_ntok && g_tok[j].kind == T_WORD && !strcmp(g_tok[j].s, "is")) j++;
         if (j >= g_ntok || g_tok[j].kind != T_STR) die_at(g_tok[i].line, "CURRENCY SIGN needs a literal");
-        if ((j + 1 < g_ntok && g_tok[j + 1].kind == T_WORD && (!strcmp(g_tok[j + 1].s, "with") || !strcmp(g_tok[j + 1].s, "picture"))) || g_tok[j].len != 1)
-            die_at(g_tok[j].line, g_tok[j].len != 1 ? "CURRENCY SIGN IS: a currency string of more than one character (COBOL 2002, with PICTURE SYMBOL) is not implemented"
-                                                    : "CURRENCY SIGN ... WITH PICTURE SYMBOL is COBOL 2002 (2023 12.3.7); not implemented");
-        unsigned char c = (unsigned char)g_tok[j].s[0];
+        if (g_currency) die_at(g_tok[i].line, "a second CURRENCY SIGN clause: one currency symbol per source unit is implemented (2023 12.3.7 rule 21 allows more)");
+        Tok *lit = &g_tok[j];
+        int k = j + 1, with_ps = 0;
+        if (k < g_ntok && g_tok[k].kind == T_WORD && !strcmp(g_tok[k].s, "with")) k++;
+        if (k < g_ntok && g_tok[k].kind == T_WORD && !strcmp(g_tok[k].s, "picture")) {
+            /* WITH PICTURE SYMBOL literal-8 (2023 12.3.7 rules 23, 26-27):
+             * literal-7 the currency string, literal-8 the symbol */
+            k++;
+            /* the tokenizer took the word after PICTURE for a picture string */
+            if (!(k < g_ntok && (g_tok[k].kind == T_WORD || g_tok[k].kind == T_PIC) && !strcasecmp(g_tok[k].s, "symbol"))) die_at(g_tok[k].line, "expected SYMBOL after WITH PICTURE");
+            k++;
+            if (g_std < 2002) die_at(lit->line, "CURRENCY SIGN ... WITH PICTURE SYMBOL is COBOL 2002 (2023 12.3.7); compile with -std=2002");
+            if (k >= g_ntok || g_tok[k].kind != T_STR || g_tok[k].len != 1) die_at(g_tok[k].line, "PICTURE SYMBOL takes a literal of one character (2023 12.3.7 rule 26)");
+            if (lit->len < 1 || lit->len > 31) die_at(lit->line, "the currency string has 1 to 31 characters");
+            int nonsp = 0;
+            for (int q = 0; q < lit->len; q++) {
+                unsigned char c = (unsigned char)lit->s[q];
+                if (c != ' ') nonsp = 1;
+                if (isdigit(c) || strchr("+-,.*", c)) die_at(lit->line, "the currency string has no digit and none of + - , . * (2023 12.3.7 rule 23)");
+            }
+            if (!nonsp) die_at(lit->line, "the currency string has at least one character that is not a space (2023 12.3.7 rule 23)");
+            memcpy(g_currency_str, lit->s, (size_t)lit->len); g_currency_str[lit->len] = 0; g_currency_len = lit->len;
+            lit = &g_tok[k]; with_ps = 1;
+        }
+        if (lit->len != 1) die_at(lit->line, "CURRENCY SIGN IS: the currency symbol is one character; a longer currency string takes WITH PICTURE SYMBOL (2023 12.3.7 rules 22-23)");
+        unsigned char c = (unsigned char)lit->s[0];
         if (isdigit(c) || c == ' ' || strchr("ABCDPRSVXZabcdprsvxz*+-,.;()\"/=", c))
-            die_at(g_tok[j].line, "CURRENCY SIGN IS '%c': that character has a meaning of its own in a PICTURE", c);
+            die_at(lit->line, "CURRENCY SIGN IS '%c': that character has a meaning of its own in a PICTURE (2023 12.3.7 rule %s)", c, with_ps ? "27" : "22");
+        if (with_ps && (c == 'E' || c == 'e' || c == 'N' || c == 'n'))
+            die_at(lit->line, "PICTURE SYMBOL '%c': E and N have a meaning of their own in a PICTURE (2023 12.3.7 rule 27)", c);
         g_currency = c;
-        break;
+        if (g_currency_len == 1 && g_currency_str[0] == c) g_currency_len = 0;   /* the string is the symbol: as without the phrase */
     }
     int w = 0;
     for (int i = 0; i < g_ntok; i++) {

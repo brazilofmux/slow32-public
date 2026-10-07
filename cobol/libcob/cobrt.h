@@ -203,6 +203,7 @@ typedef struct {
 extern int cob_dp_comma;
 int cob_set_decimal_point(int comma);
 extern int cob_currency;
+extern char cob_currency_str[32]; extern int cob_currency_len;   /* CURRENCY SIGN IS literal WITH PICTURE SYMBOL: the string (2023 12.3.7) */
 int cob_set_currency(int c);
 
 #endif

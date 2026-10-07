@@ -189,7 +189,12 @@ significant digits by ruling; the soft libm's last digit is runtime ISSUES-29.
   PRESENT-VALUE refuse arguments or results past 18 digits (docs/wide.md).
 - Why here: the rest of 31-digit COBOL landed (ISSUES-117).
 
-**14. CURRENCY with PICTURE SYMBOL; ANYCASE.** 12.3.7, 15.68, 15.94; Ed. 2002; S; deps none.
+**14. CURRENCY with PICTURE SYMBOL; ANYCASE.** 12.3.7, 15.68, 15.94; Ed. 2002; S; deps none. DONE
+2026-10-06 (picture.md, functions.md; tests 2002/currencystr, numvalanycase): the currency string
+in the editor's kernel (kern.h, after the PICTURE's NUL, its length in the locale word -- the DBT
+rebuilt on the new tag), fixed and floating insertion, de-editing, the wide path, NUMVAL-C's
+default; ANYCASE on NUMVAL-C and TEST-NUMVAL-C. Ruling: one currency symbol per source unit (rule
+21 allows several).
 - Today: `CURRENCY SIGN IS "EUR" WITH PICTURE SYMBOL "$"` refused ("the literal is one character",
   then "SPECIAL-NAMES clause 'with'"); `NUMVAL-C(a "EUR" ANYCASE)` refused ("'anycase' is not
   declared").

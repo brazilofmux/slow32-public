@@ -104,9 +104,8 @@ COBOL 2002/2023 (Stage B):
   FUNCTION-POINTER / MESSAGE-TAG, PACKED-DECIMAL NO
   SIGN, OCCURS DYNAMIC, floating-point literals and PICTUREs, the
   floating-point conditions, XOR, INSPECT BACKWARD, SET CONTENT OF /
-  LOCALE / ATTRIBUTE, ADDRESS OF FUNCTION, currency strings
-  and PICTURE SYMBOL, ALPHABET FOR and IS LOCALE, and the ANYCASE and
-  LOCALE function phrases.
+  LOCALE / ATTRIBUTE, ADDRESS OF FUNCTION, ALPHABET FOR and IS LOCALE,
+  and the LOCALE function phrase.
 
 ## 3. Out of scope, by ruling
 

@@ -503,7 +503,9 @@ static void parse_environment_division(void)
                     if (accept_word("currency")) {            /* already applied to the pictures; see apply_decimal_point */
                         accept_word("sign"); accept_word("is");
                         if (cur()->kind != T_STR) die_at(cur()->line, "CURRENCY SIGN needs a literal");
-                        advance(); continue;
+                        advance();
+                        if (accept_word("with") || at_word("picture")) { expect_word("picture"); advance(); advance(); }   /* SYMBOL (a picture token) and the literal */
+                        continue;
                     }
                     if (accept_word("decimal-point")) {       /* already applied to the text; see apply_decimal_point */
                         accept_word("is");

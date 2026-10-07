@@ -347,6 +347,7 @@ static void emit_rodata(void)
         if (d->picstr[0]) {
             emit(".Lpic%d:", i);
             emit_bytes((unsigned char *)d->picstr, (int)strlen(d->picstr) + 1);
+            if (g_currency_len > 1 && strchr(d->picstr, '$')) emit_bytes((unsigned char *)g_currency_str, g_currency_len);   /* the currency string, where the editor finds it (kern.h cob_k_cs) */
         }
     }
     int nany = 0;

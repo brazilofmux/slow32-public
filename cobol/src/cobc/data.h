@@ -124,6 +124,8 @@ static void sym_finish(Sym *s)
     switch (u) {
     case U_DISPLAY: case U_NATIONAL:
         s->size = pi->bytes;
+        if (g_currency_len > 1 && pi->category == PIC_NUMERIC_EDITED && strchr(pi->pat, '$'))
+            s->size += g_currency_len - 1;          /* the first currency symbol is the string's length (13.18.40.4, cs) */
         if (!s->sign_lead && !s->sign_sep && pi->category == PIC_NUMERIC && pi->is_signed)
             for (int a = s->parent; a >= 0; a = g_sym[a].parent)          /* a group's SIGN clause reaches down */
                 if (g_sym[a].sign_lead || g_sym[a].sign_sep) { s->sign_lead = g_sym[a].sign_lead; s->sign_sep = g_sym[a].sign_sep; break; }

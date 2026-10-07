@@ -171,7 +171,7 @@ carry the compiler's own reason.
 | 13.18.5 | BASED clause | *unswept* | | | | | |
 | 13.18.6 | BELL clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.7 | BLANK clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
-| 13.18.8 | BLANK WHEN ZERO clause | [picture](picture.md) | 9 | 24 | 0 | 6 | 0 |
+| 13.18.8 | BLANK WHEN ZERO clause | [picture](picture.md) | 10 | 24 | 0 | 5 | 1 |
 | 13.18.9 | BLINK clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.10 | BLOCK CONTAINS clause | [files](files.md) | 2 | 17 | 0 | 0 | 0 |
 | 13.18.11 | CLASS clause | *unswept* | | | | | |
@@ -203,7 +203,7 @@ carry the compiler's own reason.
 | 13.18.37 | NEXT GROUP clause | *unswept* | | | | | |
 | 13.18.38 | OCCURS clause | [occurs](occurs.md) | 0 | 14 | 0 | 0 | 0 |
 | 13.18.39 | PAGE clause | [directives](directives.md) | 30 | 14 | 0 | 2 | 2 |
-| 13.18.40 | PICTURE clause | [national-boolean](national-boolean.md), [picture](picture.md) | 24 | 37 | 0 | 6 | 1 |
+| 13.18.40 | PICTURE clause | [national-boolean](national-boolean.md), [picture](picture.md) | 25 | 37 | 0 | 5 | 2 |
 | 13.18.41 | PRESENT WHEN clause | *unswept* | | | | | |
 | 13.18.42 | PROPERTY clause | *unswept* | | | | | |
 | 13.18.43 | RECORD clause | [files](files.md) | 2 | 17 | 0 | 0 | 0 |
