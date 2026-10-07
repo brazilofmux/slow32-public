@@ -6347,3 +6347,20 @@ Open, each waiting for a program that asks:
 - The rendered-screen comparison used while changing the editor is a
   scratch tool; a harness mode that compares final screens rather than
   streams is still wanted.
+
+### 126. Positioned DISPLAY with several operands positions the last one only (2026-10-06, open)
+
+`DISPLAY "[" s "]" AT LINE 8 COLUMN 1` writes `[` and `s` as a plain
+DISPLAY (no newline, wherever the cursor is) and positions `]` alone:
+the AT phrase is taken by the last operand's slot and the ones before
+it go the console way.  Noticed twice while writing tests for
+standard-queue items 10 and 12 (free/posrefmod2, 2002/posbits); the
+tests write one operand per statement.  Micro Focus and ACUCOBOL
+(docs/screen.md's sources) show the operands as one string at the
+position, and the standard's format (2023 14.9.12 format 2, DISPLAY
+... AT ... screen) names one `identifier-1 | literal-1` per statement,
+so the several-operand form is an extension whose meaning is "the
+concatenation, placed".  The fix is in display.h's positioned parse:
+gather the operands into one slot (a VALUE slot for literals only, a
+FROM slot with a compiler-made record otherwise), as the plain DISPLAY
+joins them.  Not a standard-queue item; queued here.

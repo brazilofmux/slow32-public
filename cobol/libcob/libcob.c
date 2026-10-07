@@ -274,8 +274,22 @@ static double w_to_dbl(const cob_wnum *w)
 {
     if (w->isf) return w->f;
     double x = 0;
+    int nd = w_ndigits(w->m), scale = w->scale;
+    if (nd > 15 && scale > 0 && nd - 15 <= scale && scale - (nd - 15) <= 22) {
+        /* to the nearest double in one rounding: the magnitude cut to 15
+         * digits (exact in a double) by decimal division, rounded, then
+         * divided by an exact power of ten (10^22 is the last) -- the
+         * limb sum divided by an inexact 10^37 rounded twice and missed
+         * the last digit of SIN's reduced argument */
+        cob_wnum t = *w; int k = nd - 15, half = 0, nz = 0;
+        w_drop_digits(t.m, WL, k, &half, &nz);
+        if (half > 0 || (half == 0 && (t.m[0] & 1))) mp_mul_small(t.m, WL, 1, 1);   /* half: 1 above, 0 exactly half (to even), -1 below */
+        for (int i = WL - 1; i >= 0; i--) x = x * 4294967296.0 + t.m[i];
+        x /= pow10d(scale - k);
+        return w->neg ? -x : x;
+    }
     for (int i = WL - 1; i >= 0; i--) x = x * 4294967296.0 + w->m[i];
-    x /= pow10d(w->scale);
+    x /= pow10d(scale);
     return w->neg ? -x : x;
 }
 /* x as a decimal of the given scale, truncated or rounded; high digits
@@ -283,15 +297,34 @@ static double w_to_dbl(const cob_wnum *w)
  * rest); 1 when x is not a number or past 10^38 */
 static int w_from_dbl(cob_wnum *w, double x, int scale, int rounded)
 {
+    /* exactly: x = mant * 2^e with mant below 2^53, so x * 10^scale is
+     * mant * 10^scale, then shifted by e bits -- worked in eight limbs,
+     * since mant * 10^30 passes 38 digits before the shift brings it
+     * back; the shift's remainder rounds or is dropped (the old way
+     * scaled in double and lost the digits past its 53 bits: 10^25 came
+     * out 10000000000000001606221131, not the double's own value) */
     memset(w, 0, sizeof *w);
-    double y = fabs(x) * pow10d(scale);
-    y = rounded ? floor(y + 0.5) : floor(y);
-    if (!(y < 1e38)) return 1;
-    const double two64 = 18446744073709551616.0;
-    double hi = floor(y / two64), lo = y - hi * two64;
-    unsigned long long l = (unsigned long long)lo, h = (unsigned long long)hi;
-    w->m[0] = (wl_t)l; w->m[1] = (wl_t)(l >> 32); w->m[2] = (wl_t)h; w->m[3] = (wl_t)(h >> 32);
-    w->neg = x < 0 && y != 0; w->scale = scale;
+    if (x != x || fabs(x) >= 1e38) return 1;
+    int e; double m = frexp(fabs(x), &e);
+    unsigned long long mant = (unsigned long long)ldexp(m, 53); e -= 53;
+    wl_t t[8]; memset(t, 0, sizeof t);
+    t[0] = (wl_t)mant; t[1] = (wl_t)(mant >> 32);
+    for (int k = scale; k > 0; ) { int c = k > 9 ? 9 : k; wl_t p = 1; for (int i = 0; i < c; i++) p *= 10; mp_mul_small(t, 8, p, 0); k -= c; }
+    while (e > 0) { int c = e > 31 ? 31 : e; mp_mul_small(t, 8, (wl_t)1u << c, 0); e -= c; }
+    int half = 0, sticky = 0;
+    while (e < 0) {
+        int c = -e > 31 ? 31 : -e;
+        wl_t r = mp_div_small(t, 8, (wl_t)1u << c);
+        if (-e - c == 0) { half = r >> (c - 1); sticky = sticky || (r & (((wl_t)1u << (c - 1)) - 1)); }   /* the last shift's remainder: its top bit, and the rest */
+        else sticky = sticky || r;
+        e += c;
+    }
+    if (rounded && half) mp_mul_small(t, 8, 1, 1);
+    (void)sticky;
+    for (int i = WL; i < 8; i++) if (t[i]) return 1;
+    memcpy(w->m, t, sizeof w->m);
+    if (w_ndigits(w->m) > 38) return 1;
+    w->neg = x < 0 && !mp_is_zero(w->m, WL); w->scale = scale;
     return 0;
 }
 /* MF's DISPLAY of a float, as the PICTURE -.9(8)E-99 (COMP-1) or
@@ -6846,6 +6879,24 @@ char *cob_fn_wnum(int which, int n, int fscale)
     }
     case COB_FN_SQRT: case COB_FN_LOG: case COB_FN_LOG10: case COB_FN_SIN: case COB_FN_COS: case COB_FN_TAN:
     case COB_FN_ASIN: case COB_FN_ACOS: case COB_FN_ATAN: case COB_FN_EXP: case COB_FN_EXP10: {
+        if ((which == COB_FN_SIN || which == COB_FN_COS || which == COB_FN_TAN) && !a[0].isf) {
+            /* the argument reduced to [0, 2 pi) in decimal first, the
+             * exact value's own period: a double holds 16 digits, and
+             * SIN(10 ** 24) is sin of 10 ** 24, not of the nearest double
+             * (-0.9964..., as GnuCOBOL's MPFR has it; the double's would
+             * be -0.5586...) */
+            static const char twopi_d[] = "62831853071795864769252867665590057684";   /* 2 pi to 38 digits */
+            cob_wnum tp, q, x = a[0];
+            memset(&tp, 0, sizeof tp); w_from_digits(tp.m, twopi_d, 38); tp.scale = 37;
+            int save = div0; div0 = 0;
+            q = x; w_div(&q, &tp);
+            if (!div0) {
+                int nz; w_drop_digits(q.m, WL, q.scale, 0, &nz); q.scale = 0;   /* the quotient's integer part (toward zero) */
+                w_mul(&q, &tp); w_addsub(&x, &q, 1);                           /* x - q * 2 pi: in (-2 pi, 2 pi) */
+                a[0] = x;
+            }
+            div0 = save;
+        }
         double x = w_to_dbl(&a[0]), y = 0;
         int bad = 0;
         switch (which) {

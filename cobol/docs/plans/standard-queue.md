@@ -180,7 +180,11 @@ group; a bit part at a computed position in a SCREEN SECTION item.
   reference-modified bit item", "a bit item's part in a screen item" -- all "not implemented".
 - Why here: finishes BOOLEAN part three.
 
-**13. 31-digit floating intrinsics.** 15.x; Ed. 2002 (31 digits); M; deps none.
+**13. 31-digit floating intrinsics.** 15.x; Ed. 2002 (31 digits); M; deps none. DONE 2026-10-06
+(docs/wide.md's last section; test 2002/widefloatfn): the queue's "Today" was already stale -- phase
+3 (ISSUES-117) had put them on the wide stack -- and what remained was exactness: SIN/COS/TAN reduce
+by 2 pi in decimal, double-to-wide is exact, wide-to-double is one rounding. Results are 15
+significant digits by ruling; the soft libm's last digit is runtime ISSUES-29.
 - Today: SQRT, LOG, trigonometric, MEAN, MEDIAN, VARIANCE, STANDARD-DEVIATION, ANNUITY,
   PRESENT-VALUE refuse arguments or results past 18 digits (docs/wide.md).
 - Why here: the rest of 31-digit COBOL landed (ISSUES-117).

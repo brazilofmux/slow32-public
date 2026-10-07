@@ -91,9 +91,30 @@ exact in 18 digits -- and the wide path itself got the common cases
 first: a division whose divisor fits a limb or whose operands fit 64
 bits, and digit conversion that stops when the value runs out.
 
-Not done: the floating functions (SQRT, LOG, the trigonometric ones,
-MEAN, MEDIAN, VARIANCE, STANDARD-DEVIATION, ANNUITY, PRESENT-VALUE) keep
-their S9(9)V9(9) double-precision result, and an argument whose integer
-part does not fit 64 bits stops the run with a message rather than
-compute a wrong value.
+The floating functions (SQRT, LOG, LOG10, the trigonometric ones,
+MEAN, MEDIAN, VARIANCE, STANDARD-DEVIATION, ANNUITY, PRESENT-VALUE,
+EXP, EXP10) take 31-digit arguments on the wide stack and give their
+result as wide as its value, computed in double and written to 15
+significant digits -- what a double holds, so EXP(LOG(5)) is 5 -- with
+zeros after (fn_dres). MEAN, MEDIAN and VARIANCE of exact arguments are
+exact, in decimal. Done 2026-10-06 (standard-queue item 13;
+2002/widefloatfn, GnuCOBOL 4 agreeing where its exact result and the 15
+digits coincide):
+
+- SIN, COS and TAN reduce the argument by 2 pi in decimal before the
+  double sees it, so SIN(10 ** 24) is sin of 10 ** 24 (-0.9964...), not
+  of the nearest double (-0.5586...).
+- A double becomes a wide number exactly (w_from_dbl: the mantissa and
+  the binary exponent, worked in eight limbs), so a float item of 10 **
+  25 stored into a 31-digit item is the double's own value,
+  10000000000000000905969664; the old conversion scaled in double and
+  lost the digits past its 53 bits.
+- A wide number becomes a double in one rounding (w_to_dbl: 15 digits
+  cut in decimal, then an exact power of ten).
+
+Rulings: a result's precision is the double's, 15 significant digits;
+the 15th is the soft libm's to lose on the interpreters (its exp, sin
+and tan reach about 1e-15 relative error; the DBT runs the host's libm,
+so the last digit can differ by engine: runtime ISSUES-29), and a test
+shows at most 13 significant digits of such a result.
 

@@ -86,10 +86,6 @@ COBOL 2002/2023 (Stage B):
 - bits: a bit table inside an occurring bit group (two bit
   dimensions); a bit item's part at a computed position in a SCREEN
   SECTION item (docs/conformance/national-boolean.md);
-- the floating intrinsic functions (SQRT, LOG, the trigonometric ones,
-  MEAN, MEDIAN, VARIANCE, STANDARD-DEVIATION, ANNUITY, PRESENT-VALUE) with
-  arguments or results past 18 digits (docs/wide.md; the rest of 31-digit
-  COBOL is implemented, ISSUES-117);
 - RESUME (optional since 2014);
 - USAGE NATIONAL on a screen item whose PICTURE is not N
   (docs/conformance/national-boolean.md).

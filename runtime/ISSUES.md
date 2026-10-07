@@ -329,3 +329,21 @@ the stream's own buffer to store into, with `fwrite`'s tests, so the
 buffer is sent at the same byte either way (the COBOL runtime's WRITE;
 `cobol/docs/performance.md`).  `stdio.c` asserts the two constants the
 header repeats.
+
+### 29. The soft libm's last digit (2026-10-06, open)
+
+`math_soft.c` computes exp, log, sin, cos, tan and atan by Taylor
+series after a one-constant range reduction (`x - k * LN2`, `fmod(x,
+TWO_PI)`, `cos(x) = sin(x + HALF_PI)`), and the results are off by up
+to about 1e-15 relative -- several ulps -- where a libm is expected to
+be within one.  Seen from COBOL (standard-queue item 13): `FUNCTION
+EXP(50)` gives 5.18470552858708e21 on the interpreters and
+5.18470552858707e21 (the right 15 digits) under the DBT, which runs the
+host's libm; cos(100) and tan(1e11) differ in the 15th digit likewise.
+The COBOL runtime rounds such results to 15 significant digits, so the
+error shows as the last digit flipping by engine.  The fix is a
+known-quality libm -- fdlibm's or musl's exp, log, sin/cos/tan with
+their kernels and two-constant (Cody-Waite) or Payne-Hanek reduction --
+in place of the series, for every language on the machine; sqrt is
+already the FPU's.  Until then tests print at most 13 significant
+digits of a transcendental result.
