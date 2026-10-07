@@ -1260,7 +1260,7 @@ static void parse_procedure_division(void)
         if (g_tok[k].kind == T_WORD && !strcmp(g_tok[k].s, "return-code")) { g_uses_rc = !sym_lookup_quiet("return-code"); break; }
     /* USING [BY REFERENCE] [OPTIONAL] data-name ... | BY VALUE data-name ...
      * (2023 14.2.1; the phrase carries over to the names after it) */
-    Sym *using[32]; int nusing = 0, uval[32], mode_val = 0;
+    Sym *using[32]; int nusing = 0, uval[32], fval[32], mode_val = 0;
     if (accept_word("using")) {
         while (cur()->kind == T_WORD && !at_word("returning")) {
             int opt = 0;
@@ -1275,8 +1275,8 @@ static void parse_procedure_division(void)
                 }
                 if (cur()->kind != T_WORD || at_word("returning")) break;
             }
-            if (nusing >= (g_is_function ? 7 : 32))
-                die_at(cur()->line, g_is_function ? "more than 7 USING items in a function are not implemented" :
+            if (nusing >= (g_is_function ? 16 : 32))
+                die_at(cur()->line, g_is_function ? "more than 16 USING items in a function (an implementation limit)" :
                                                     "more than 32 USING items (an implementation limit)");
             Sym *u = sym_lookup(cur()->s, NULL, 0, cur()->line);
             if (!g_sym[u->record].is_linkage || u->parent >= 0)
@@ -1287,9 +1287,14 @@ static void parse_procedure_division(void)
                 if (using[k] == u) die_at(cur()->line, "USING '%s' twice (2023 14.2.2 rule 1)", u->name);
             if (mode_val && (u->is_group || (u->pi.category != PIC_NUMERIC && u->usage != U_POINTER)))
                 die_at(cur()->line, "BY VALUE '%s': a numeric or pointer item (2023 14.2.2 rule 2)", u->name);
-            if (mode_val && g_is_function) die_at(cur()->line, "a BY VALUE parameter of a function is not implemented");
             u->param_opt = opt;
-            uval[nusing] = mode_val;
+            /* a function's BY VALUE parameter: the caller converts the
+             * argument into a copy described as the parameter is
+             * (14.8.2.3.3 rule 2) and passes that copy's address -- the
+             * same cell as a BY REFERENCE one, the copy being the
+             * caller's and discarded; fval marks it for the signature */
+            fval[nusing] = mode_val && g_is_function;
+            uval[nusing] = mode_val && !g_is_function;
             using[nusing++] = u;
             advance();
         }
@@ -1319,6 +1324,36 @@ static void parse_procedure_division(void)
         g_prog_ret = r;
         advance();
     }
+    if (!g_is_function && g_std >= 2002) {
+        /* the program's signature, for a CALL through a program-specifier
+         * (12.3.8; 14.8.2.3 rule 2): kept for this group, and -- an
+         * outermost definition -- written to the external repository */
+        FnSig sig, *f = &sig;
+        memset(f, 0, sizeof *f);
+        const char *ext = g_prog_as[0] ? g_prog_as : g_progid;
+        snprintf(f->name, sizeof f->name, "%s", g_progid);
+        snprintf(f->ext, sizeof f->ext, "%s", ext);
+        snprintf(f->link, sizeof f->link, "%s", link_name(ext));
+        f->nparam = nusing; f->proto = g_prototype;
+        for (int k = 0; k < nusing; k++) { fdesc_of(&f->param[k], using[k]); f->byval[k] = (unsigned char)uval[k]; f->opt[k] = (unsigned char)using[k]->param_opt; }
+        if (g_prog_ret) fdesc_of(&f->ret, g_prog_ret); else f->ret.size = 0;
+        int prev = -1;
+        for (int i = 0; i < g_npgsig; i++) if (!strcmp(g_pgsig[i].ext, f->ext)) prev = i;
+        if (prev >= 0 && g_pgsig[prev].proto) {
+            FnSig *p = &g_pgsig[prev];
+            if (p->nparam != f->nparam) die_at(cur()->line, "the program '%s' takes %d parameter%s, its prototype %d", g_progid, f->nparam, f->nparam == 1 ? "" : "s", p->nparam);
+            for (int k = 0; k < nusing; k++)
+                if (!fdesc_match(&p->param[k], &f->param[k]) || p->byval[k] != f->byval[k] || p->opt[k] != f->opt[k])
+                    die_at(using[k]->line, "the program '%s': parameter '%s' is not described as its prototype's is", g_progid, using[k]->name);
+            if (p->ret.size != f->ret.size || (f->ret.size && !fdesc_match(&p->ret, &f->ret)))
+                die_at(cur()->line, "the program '%s': RETURNING is not described as its prototype's is", g_progid);
+            *p = *f;
+        } else if (prev < 0 || g_udepth) {       /* a contained program's name may repeat in another outer program */
+            if (g_npgsig == 64) die_at(cur()->line, "more than 64 program signatures");
+            g_pgsig[g_npgsig++] = *f;
+        }
+        if (!g_prototype && !g_udepth) fnsig_write(f, "pg");
+    }
     if (g_is_function) {
         /* the function's result: a level 01 or 77 item; the caller passes
          * the address of its temporary after the arguments */
@@ -1328,15 +1363,34 @@ static void parse_procedure_division(void)
             die_at(cur()->line, "RETURNING '%s' must be a level 01 or 77 item of the LINKAGE SECTION, without REDEFINES (2023 14.2.2 rule 5)", r->name);
         g_returning = r;
         advance();
-        if (g_nfnsig == 128) die_at(cur()->line, "more than 128 user-defined functions");
-        FnSig *f = &g_fnsig[g_nfnsig++];
+        FnSig sig, *f = &sig;
         memset(f, 0, sizeof *f);
+        const char *ext = g_fn_as[0] ? g_fn_as : g_progid;
         snprintf(f->name, sizeof f->name, "%s", g_progid);
-        snprintf(f->link, sizeof f->link, "%s", link_name(g_progid));
-        f->nparam = nusing;
-        for (int k = 0; k < nusing; k++) fdesc_of(&f->param[k], using[k]);
+        snprintf(f->ext, sizeof f->ext, "%s", ext);
+        snprintf(f->link, sizeof f->link, "%s", link_name(ext));
+        f->nparam = nusing; f->proto = g_prototype;
+        for (int k = 0; k < nusing; k++) { fdesc_of(&f->param[k], using[k]); f->byval[k] = (unsigned char)fval[k]; f->opt[k] = (unsigned char)using[k]->param_opt; }
         fdesc_of(&f->ret, r);
-        fnsig_write(f);
+        int prev = -1;
+        for (int i = 0; i < g_nfnsig; i++) if (!strcmp(g_fnsig[i].ext, f->ext)) prev = i;
+        if (prev >= 0 && !g_fnsig[prev].proto)
+            die_at(cur()->line, "the function '%s' is defined twice in this compilation group", g_progid);
+        if (prev >= 0) {
+            /* the definition against its prototype: the same parameters,
+             * passed the same way, the same result */
+            FnSig *p = &g_fnsig[prev];
+            if (p->nparam != f->nparam) die_at(cur()->line, "the function '%s' takes %d parameter%s, its prototype %d", g_progid, f->nparam, f->nparam == 1 ? "" : "s", p->nparam);
+            for (int k = 0; k < nusing; k++)
+                if (!fdesc_match(&p->param[k], &f->param[k]) || p->byval[k] != f->byval[k] || p->opt[k] != f->opt[k])
+                    die_at(using[k]->line, "the function '%s': parameter '%s' is not described as its prototype's is", g_progid, using[k]->name);
+            if (!fdesc_match(&p->ret, &f->ret)) die_at(r->line, "the function '%s': RETURNING '%s' is not described as its prototype's is", g_progid, r->name);
+            *p = *f;
+        } else {
+            if (g_nfnsig == 128) die_at(cur()->line, "more than 128 user-defined functions");
+            g_fnsig[g_nfnsig++] = *f;
+        }
+        if (!g_prototype) fnsig_write(f, "fn");
     }
     g_nraising = 0;
     if (accept_word("raising")) {
@@ -1356,10 +1410,18 @@ static void parse_procedure_division(void)
     }
     expect_period();
     if (g_fnsig_only) { skip_unit_body(); return; }
+    if (g_prototype) {
+        /* a prototype's procedure division is its header (11.5 format 2, 11.10 format 2) */
+        if (!(at_word("end") && is_word(peek(1), g_is_function ? "function" : "program")))
+            die_at(cur()->line, "a %s prototype has no statements: END %s follows the PROCEDURE DIVISION header",
+                   g_is_function ? "function" : "program", g_is_function ? "FUNCTION" : "PROGRAM");
+        skip_unit_body();
+        return;
+    }
     prescan_paragraphs(g_tp);
 
     char entry[128];
-    snprintf(entry, sizeof entry, "%s", link_name(g_progid));   /* link_name's buffer is static; CALLs reuse it */
+    snprintf(entry, sizeof entry, "%s", link_name(g_fn_as[0] ? g_fn_as : g_prog_as[0] ? g_prog_as : g_progid));   /* the externalized name (AS literal); link_name's buffer is static, CALLs reuse it */
     int nested = g_unit < g_npnode && g_pnode[g_unit].parent >= 0;
     if (nested) snprintf(entry, sizeof entry, ".Lcp%d", g_unit);  /* a contained program: in scope only (8.4.6.3) */
     emit("\t.text");
@@ -1384,6 +1446,12 @@ static void parse_procedure_division(void)
         emit_la("r1", "cob_call_nargs"); emit("\tldw r2, r1+0"); emit("\tstw sp+%d, r2", SLOT_B);
         emit_li("r2", -1); emit("\tstw r1+0, r2");
     }
+    if (g_is_function) {
+        /* where the result goes: the caller's temporary, its address in
+         * cob_call_retaddr (as a program's RETURNING item's) */
+        emit_la("r1", "cob_call_retaddr"); emit("\tldw r2, r1+0"); emit("\tstw r1+0, r0");
+        emit("\tstw sp+%d, r2", SLOT_RET);
+    }
     if (g_prog_ret) {
         /* the caller's returning item; none (a CALL without RETURNING, or
          * from C): a scratch item of this unit's, the result discarded */
@@ -1404,7 +1472,6 @@ static void parse_procedure_division(void)
         /* the arguments wait in the frame while cob_act_enter saves the
          * cells they are about to overwrite (a RECURSIVE caller's own) */
         for (int i = 0; i < nreg; i++) emit("\tstw sp+%d, %s", SLOT(i), argreg(i));
-        if (g_is_function) emit("\tstw sp+%d, %s", SLOT_RET, argreg(nusing));   /* where the result goes */
         char lab[32]; snprintf(lab, sizeof lab, ".Lact%d", g_unit);
         emit_la("r3", lab); emit_call("cob_act_enter"); emit("\tstw sp+%d, r1", SLOT_ACT);
         for (int i = 0; i < nusing; i++) {
@@ -1635,7 +1702,7 @@ static void parse_procedure_division(void)
             ecs_copy(&g_ecs, &ecs0);
             for (int c = NEC + necu; c < NEC + g_necu; c++) { g_ecs.on[c] = (unsigned char)g_ecs.user_on; g_ecs.loc[c] = (unsigned char)g_ecs.user_loc; }
             g_necp = necp; g_ecp_handler = ecp_handler; g_npstk = npstk; g_in_finally = in_finally; g_in_ecp_when = in_ecpw; g_wide = 0; g_fstmt = 0; g_saw_wide = 0;
-            g_abbr_op = -1; g_sentence_label = -1; g_ufn_forbid = NULL;
+            g_abbr_op = -1; g_sentence_label = -1;
             memset(&g_stmt_calls, 0, sizeof g_stmt_calls); g_stmt_calls_on = 0; g_stmt_calls_hold = 0; g_hn_busy = 0;
             resync_sentence(start);
             continue;
@@ -1696,8 +1763,10 @@ static void parse_procedure_division(void)
     /* the unit joins the program registry at start-up (CALL identifier);
      * a function is invoked, never CALLed, and does not */
     if (!g_is_function) {
-        char nm[130]; int nl = (int)strlen(g_progid);
-        memcpy(nm, g_progid, (size_t)nl); nm[nl] = 0;
+        char nm[130]; const char *rn = g_prog_as[0] ? g_prog_as : g_progid;   /* CALL finds it by its externalized name */
+        int nl = (int)strlen(rn);
+        memcpy(nm, rn, (size_t)nl); nm[nl] = 0;
+        for (int i = 0; i < nl; i++) nm[i] = (char)tolower((unsigned char)nm[i]);
         const char *nlab = lit_label((const unsigned char *)nm, nl + 1);
         /* CANCEL: every WORKING-STORAGE record back to its initial state */
         emit("\t.p2align 2");

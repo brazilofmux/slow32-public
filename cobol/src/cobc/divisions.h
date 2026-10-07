@@ -18,7 +18,7 @@ static void parse_identification_division(void)
         die_at(cur()->line, "expected IDENTIFICATION DIVISION, found %s", tok_desc(cur()));
     else if (g_std < 2002)
         die_at(cur()->line, "a program without its IDENTIFICATION DIVISION header is COBOL 2002 (11.1.1); compile with -std=2002 -- X3.23-1985 requires the header");
-    g_is_function = 0; g_returning = NULL; g_nrepo_fn = 0; g_repo_all_intrinsic = 0;
+    g_is_function = 0; g_returning = NULL; g_nrepo_fn = 0; g_nrepo_pg = 0; g_repo_all_intrinsic = 0; g_fn_as[0] = 0; g_prog_as[0] = 0; g_prototype = 0;
     if (at_word("function-id")) {
         /* COBOL 2002 11.5: a user-defined function, always recursive */
         if (g_std < 2002) die_at(cur()->line, "FUNCTION-ID is COBOL 2002; compile with -std=2002 (docs/standards.md, Stage B)");
@@ -32,16 +32,36 @@ static void parse_identification_division(void)
     snprintf(g_progid_orig, sizeof g_progid_orig, "%s", tok_orig(cur()));
     advance();
     if (g_is_function) {
-        if (accept_word("as")) die_at(cur()->line, "FUNCTION-ID ... AS literal is not implemented yet");
-        if (accept_word("is") || at_word("prototype")) {
-            if (at_word("prototype")) die_at(cur()->line, "function prototypes (IS PROTOTYPE) are not implemented yet; the caller finds the definition's signature file");
-            die_at(cur()->line, "expected '.' after the function name, found %s", tok_desc(cur()));
+        if (accept_word("as")) {
+            /* AS literal (11.5): the name the function is externalized
+             * under -- its entry symbol and its signature file's */
+            if (cur()->kind != T_STR || cur()->len == 0) die_at(cur()->line, "FUNCTION-ID ... AS takes a nonempty alphanumeric literal (2023 11.5.3)");
+            snprintf(g_fn_as, sizeof g_fn_as, "%.*s", cur()->len < 63 ? cur()->len : 63, cur()->s);
+            advance();
         }
+        if (accept_word("is") || at_word("prototype")) {
+            if (!accept_word("prototype")) die_at(cur()->line, "expected PROTOTYPE after IS, found %s", tok_desc(cur()));
+            g_prototype = 1;              /* a signature for this group; no code (11.5 format 2) */
+        }
+    }
+    if (!g_is_function && at_word("as")) {
+        /* AS literal (11.10): the name the program is externalized under
+         * -- its entry symbol, its registry name and its signature file's */
+        if (g_std < 2002) die_at(cur()->line, "PROGRAM-ID ... AS literal is COBOL 2002; compile with -std=2002");
+        advance();
+        if (cur()->kind != T_STR || cur()->len == 0) die_at(cur()->line, "PROGRAM-ID ... AS takes a nonempty alphanumeric literal (2023 11.10.3 rule 1)");
+        snprintf(g_prog_as, sizeof g_prog_as, "%.*s", cur()->len < 63 ? cur()->len : 63, cur()->s);
+        advance();
     }
     accept_word("is");
     for (;;) {
         int line = cur()->line;
-        if (accept_word("initial")) {
+        if (!g_is_function && accept_word("prototype")) {
+            if (g_std < 2002) die_at(line, "program prototypes are COBOL 2002; compile with -std=2002");
+            if (g_udepth) die_at(line, "a program prototype is not contained in a program (2023 11.10 format 2)");
+            g_prototype = 1;              /* a signature for this group; no code (11.10 format 2) */
+        }
+        else if (accept_word("initial")) {
             g_initial = 1;                                       /* fresh WORKING-STORAGE on every CALL */
             if (g_recursive)
                 die_at(line, "INITIAL: a program that is, or is contained in, a RECURSIVE program cannot be INITIAL (2023 11.10.3 rule 5)");
@@ -277,9 +297,8 @@ static void parse_select(void)
 /* REPOSITORY (COBOL 2002 12.3.8): FUNCTION name ... makes user functions
  * invocable without the word FUNCTION; FUNCTION ALL INTRINSIC and
  * FUNCTION name ... INTRINSIC do the same for intrinsics. */
-static void parse_repository(void)
+static void parse_repository_functions(void)
 {
-    advance(); expect_period();
     while (at_word("function")) {
         int line = cur()->line;
         advance();
@@ -287,12 +306,30 @@ static void parse_repository(void)
         int first = g_nrepo_fn;
         while (cur()->kind == T_WORD && !at_word("function") && !at_word("intrinsic") && !at_division() &&
                !at_word("input-output") && !at_word("special-names") && !at_word("select")) {
-            if (at_word("as")) die_at(cur()->line, "REPOSITORY FUNCTION ... AS literal is not implemented yet");
             if (g_nrepo_fn == 32) die_at(cur()->line, "more than 32 functions in REPOSITORY");
-            snprintf(g_repo_fn[g_nrepo_fn++], sizeof g_repo_fn[0], "%s", cur()->s);
+            snprintf(g_repo_fn[g_nrepo_fn], sizeof g_repo_fn[0], "%s", cur()->s);
+            g_repo_fn_as[g_nrepo_fn][0] = 0;
             advance();
+            if (accept_word("as")) {
+                /* AS literal: the externalized name this one stands for (12.3.8 GR 2) */
+                if (cur()->kind != T_STR || cur()->len == 0) die_at(cur()->line, "REPOSITORY FUNCTION ... AS takes a nonempty alphanumeric literal (2023 12.3.8.3 rule 2)");
+                snprintf(g_repo_fn_as[g_nrepo_fn], sizeof g_repo_fn_as[0], "%.*s", cur()->len < 63 ? cur()->len : 63, cur()->s);
+                advance();
+            }
+            g_nrepo_fn++;
         }
         if (g_nrepo_fn == first) die_at(line, "REPOSITORY FUNCTION needs a function name, or ALL INTRINSIC");
+        if (!at_word("intrinsic") && g_nrepo_fn - first > 1)
+            die_at(line, "REPOSITORY FUNCTION names one user-defined function, with its own FUNCTION word (2023 12.3.8); a list of names is the intrinsic form, closed by INTRINSIC");
+        if (!at_word("intrinsic") && !g_fnsig_only)
+            /* 12.3.8.3 rule 10: a prototype or an earlier definition in
+             * this group, or the external repository; rule 11: the
+             * function's own name is ignored.  Not in the signature
+             * pass (-fnsig), which is what writes the repository */
+            for (int k = first; k < g_nrepo_fn; k++)
+                if (!(g_is_function && !strcmp(g_repo_fn[k], g_progid)) && fnsig_find(g_repo_fn[k]) < 0)
+                    die_at(line, "REPOSITORY FUNCTION %s: no prototype or earlier definition in this compilation group, and no %s.s32fn beside the output, beside the source or on -I (2023 12.3.8.3 rule 10)",
+                           g_repo_fn[k], link_name(fn_extname(g_repo_fn[k])));
         if (accept_word("intrinsic")) {
             /* intrinsics named individually: invocable without FUNCTION, like ALL INTRINSIC does for all */
             for (int k = first; k < g_nrepo_fn; k++) if (!fn89_known(g_repo_fn[k]))
@@ -301,9 +338,42 @@ static void parse_repository(void)
             g_nrepo_fn = first;
         }
     }
+}
+
+static void parse_repository(void)
+{
+    advance(); expect_period();
+    parse_repository_functions();
     for (;;) {
-        if (at_word("class") || at_word("interface") || at_word("program") || at_word("property"))
-            die_at(cur()->line, "REPOSITORY %s is object orientation or a program prototype, not implemented", cur()->s);
+        if (at_word("program")) {
+            /* PROGRAM name [AS literal] (12.3.8): a program-specifier, the
+             * name a CALL may use and whose signature it is checked
+             * against; rule 14: a prototype or earlier definition in this
+             * group, or the external repository; rule 15: this program's
+             * own name, or a containing program's, is ignored */
+            int line = cur()->line;
+            advance();
+            if (cur()->kind != T_WORD) die_at(line, "REPOSITORY PROGRAM needs a program-prototype-name");
+            if (g_nrepo_pg == 32) die_at(line, "more than 32 programs in REPOSITORY");
+            snprintf(g_repo_pg[g_nrepo_pg], sizeof g_repo_pg[0], "%s", cur()->s);
+            g_repo_pg_as[g_nrepo_pg][0] = 0;
+            advance();
+            if (accept_word("as")) {
+                if (cur()->kind != T_STR || cur()->len == 0) die_at(cur()->line, "REPOSITORY PROGRAM ... AS takes a nonempty alphanumeric literal (2023 12.3.8.3 rule 2)");
+                snprintf(g_repo_pg_as[g_nrepo_pg], sizeof g_repo_pg_as[0], "%.*s", cur()->len < 63 ? cur()->len : 63, cur()->s);
+                advance();
+            }
+            int own = !g_is_function && !strcmp(g_repo_pg[g_nrepo_pg], g_progid);
+            for (int k = 0; k < g_udepth; k++) own |= !strcmp(g_repo_pg[g_nrepo_pg], g_ustack[k]->progid);
+            g_nrepo_pg++;
+            if (!own && !g_fnsig_only && pgsig_find(g_repo_pg[g_nrepo_pg - 1]) < 0)
+                die_at(line, "REPOSITORY PROGRAM %s: no prototype or earlier definition in this compilation group, and no %s.s32pg beside the output, beside the source or on -I (2023 12.3.8.3 rule 14)",
+                       g_repo_pg[g_nrepo_pg - 1], link_name(pg_extname(g_repo_pg[g_nrepo_pg - 1])));
+            continue;
+        }
+        if (at_word("function")) { parse_repository_functions(); continue; }
+        if (at_word("class") || at_word("interface") || at_word("property"))
+            die_at(cur()->line, "REPOSITORY %s is object orientation, not implemented", cur()->s);
         break;
     }
     if (cur()->kind == T_PERIOD) advance();

@@ -6,7 +6,12 @@
 /* The external repository: name.s32fn, written by the function's own
  * compile (-fnsig, or any compile of it), found beside the output, beside
  * the source, or on -I.  One line per item: the RETURNING item, then each
- * parameter -- group size usage has_pic just bwz sign_lead sign_sep pic. */
+ * parameter -- group size usage has_pic just bwz sign_lead sign_sep pic
+ * byval opt.  Version 2 (2026-10-06): the result's address goes in
+ * cob_call_retaddr, as a program's RETURNING does, and the parameters
+ * take CALL's path -- eight registers, the rest on the stack; a version-1
+ * file is from the compiler that passed the result after the arguments,
+ * and its function is recompiled. */
 static const char *g_outdir = ".";
 
 static void fdesc_of(FDesc *d, const Sym *x)
@@ -17,53 +22,105 @@ static void fdesc_of(FDesc *d, const Sym *x)
     snprintf(d->pic, sizeof d->pic, "%s", x->has_pic ? x->pic : "-");
 }
 
-static void fnsig_path(char *out, size_t n, const char *dir, const char *name)
+/* kind: "fn" a function's, "pg" a program's (the same record) */
+static void fnsig_path(char *out, size_t n, const char *dir, const char *name, const char *kind)
 {
-    snprintf(out, n, "%s/%s.s32fn", dir, link_name(name));
+    snprintf(out, n, "%s/%s.s32%s", dir, link_name(name), kind);
 }
 
-static void fnsig_write(const FnSig *f)
+static void fnsig_write(const FnSig *f, const char *kind)
 {
-    char path[1100]; fnsig_path(path, sizeof path, g_outdir, f->name);
+    char path[1100]; fnsig_path(path, sizeof path, g_outdir, f->ext, kind);
     FILE *o = fopen(path, "w");
     if (!o) { fprintf(stderr, "s32-cobc: cannot write %s\n", path); fail(); }
-    fprintf(o, "s32fn 1 %s %s %d\n", f->name, f->link, f->nparam);
+    fprintf(o, "s32%s 2 %s %s %s %d\n", kind, f->name, f->ext, f->link, f->nparam);
     for (int k = -1; k < f->nparam; k++) {
         const FDesc *d = k < 0 ? &f->ret : &f->param[k];
-        fprintf(o, "%d %d %d %d %d %d %d %d %s\n", d->group, d->size, d->usage, d->has_pic, d->just, d->bwz, d->sign_lead, d->sign_sep, d->pic);
+        fprintf(o, "%d %d %d %d %d %d %d %d %s %d %d\n", d->group, d->size, d->usage, d->has_pic, d->just, d->bwz, d->sign_lead, d->sign_sep, d->pic,
+                k < 0 ? 0 : f->byval[k], k < 0 ? 0 : f->opt[k]);
     }
     fclose(o);
 }
 
-static int fnsig_read(const char *path, FnSig *f)
+static int fnsig_read(const char *path, FnSig *f, const char *kind)
 {
     FILE *in = fopen(path, "r");
     if (!in) return 0;
     memset(f, 0, sizeof *f);
-    int ok = fscanf(in, "s32fn 1 %63s %127s %d", f->name, f->link, &f->nparam) == 3 && f->nparam >= 0 && f->nparam <= 8;
+    int ver = 0; char magic[8];
+    int ok = fscanf(in, "%7s %d %63s", magic, &ver, f->name) == 3 && !strcmp(magic + 3, kind);
+    if (ok && ver != 2)
+        die_at(0, "%s is from an older compiler (version %d): recompile the function '%s' (its source first, as compile.sh does)", path, ver, f->name);
+    ok = ok && fscanf(in, "%63s %127s %d", f->ext, f->link, &f->nparam) == 3 && f->nparam >= 0 && f->nparam <= 16;
     for (int k = -1; ok && k < f->nparam; k++) {
         FDesc *d = k < 0 ? &f->ret : &f->param[k];
-        ok = fscanf(in, "%d %d %d %d %d %d %d %d %255s", &d->group, &d->size, &d->usage, &d->has_pic, &d->just, &d->bwz,
-                    &d->sign_lead, &d->sign_sep, d->pic) == 9;
+        int bv = 0, op = 0;
+        ok = fscanf(in, "%d %d %d %d %d %d %d %d %255s %d %d", &d->group, &d->size, &d->usage, &d->has_pic, &d->just, &d->bwz,
+                    &d->sign_lead, &d->sign_sep, d->pic, &bv, &op) == 11;
+        if (k >= 0) { f->byval[k] = (unsigned char)bv; f->opt[k] = (unsigned char)op; }
     }
     fclose(in);
     return ok;
 }
 
-/* the function's signature: defined earlier in this source, or from the repository */
-static int fnsig_find(const char *name)
+/* the externalized name a function is known by (11.5 GR 1, 12.3.8 GR 2):
+ * the unit's own AS literal, the REPOSITORY's FUNCTION name AS literal,
+ * else the name itself */
+static const char *fn_extname(const char *name)
 {
-    for (int i = 0; i < g_nfnsig; i++) if (!strcmp(g_fnsig[i].name, name)) return i;
+    if (g_is_function && !strcmp(name, g_progid) && g_fn_as[0]) return g_fn_as;
+    for (int i = 0; i < g_nrepo_fn; i++) if (!strcmp(g_repo_fn[i], name) && g_repo_fn_as[i][0]) return g_repo_fn_as[i];
+    return name;
+}
+
+/* the function's signature: defined earlier in this source, or from the
+ * repository -- by its externalized name (an AS literal's), else by the
+ * name itself, which a prototype or definition in this group also
+ * answers to (12.3.8.3 rule 10) */
+static int fnsig_find(const char *name0)
+{
+    const char *name = fn_extname(name0);
+    for (int i = 0; i < g_nfnsig; i++) if (!strcmp(g_fnsig[i].ext, name) || !strcmp(g_fnsig[i].name, name)) return i;
     char srcdir[1024]; snprintf(srcdir, sizeof srcdir, "%s", g_file);
     char *sl = strrchr(srcdir, '/'); if (sl) *sl = 0; else strcpy(srcdir, ".");
     for (int d = -2; d < g_nincdir; d++) {
         const char *dir = d == -2 ? g_outdir : d == -1 ? srcdir : g_incdirs[d];
-        char path[1100]; fnsig_path(path, sizeof path, dir, name);
+        char path[1100]; fnsig_path(path, sizeof path, dir, name, "fn");
         FnSig f;
-        if (fnsig_read(path, &f) && !strcmp(f.name, name)) {
+        if (fnsig_read(path, &f, "fn") && (!strcmp(f.ext, name) || !strcmp(f.name, name))) {
             if (g_nfnsig == 128) die_at(0, "more than 128 user-defined functions");
             g_fnsig[g_nfnsig] = f;
             return g_nfnsig++;
+        }
+    }
+    return -1;
+}
+
+/* a program's externalized name: its own AS literal, the REPOSITORY's
+ * PROGRAM name AS literal, else the name */
+static const char *pg_extname(const char *name)
+{
+    if (!g_is_function && !strcmp(name, g_progid) && g_prog_as[0]) return g_prog_as;
+    for (int i = 0; i < g_nrepo_pg; i++) if (!strcmp(g_repo_pg[i], name) && g_repo_pg_as[i][0]) return g_repo_pg_as[i];
+    return name;
+}
+
+/* a program's signature (12.3.8.3 rule 14): a prototype or definition
+ * in this group, else the external repository's name.s32pg */
+static int pgsig_find(const char *name0)
+{
+    const char *name = pg_extname(name0);
+    for (int i = 0; i < g_npgsig; i++) if (!strcmp(g_pgsig[i].ext, name) || !strcmp(g_pgsig[i].name, name)) return i;
+    char srcdir[1024]; snprintf(srcdir, sizeof srcdir, "%s", g_file);
+    char *sl = strrchr(srcdir, '/'); if (sl) *sl = 0; else strcpy(srcdir, ".");
+    for (int d = -2; d < g_nincdir; d++) {
+        const char *dir = d == -2 ? g_outdir : d == -1 ? srcdir : g_incdirs[d];
+        char path[1100]; fnsig_path(path, sizeof path, dir, name, "pg");
+        FnSig f;
+        if (fnsig_read(path, &f, "pg") && (!strcmp(f.ext, name) || !strcmp(f.name, name))) {
+            if (g_npgsig == 64) die_at(0, "more than 64 program signatures");
+            g_pgsig[g_npgsig] = f;
+            return g_npgsig++;
         }
     }
     return -1;
@@ -148,7 +205,7 @@ static Sym *ftemp_new(const FDesc *d, int line)
     return &g_sym[idx];
 }
 
-typedef struct UCall_ { int sig, nargs, line; Opnd arg[8]; int byref[8]; Sym *ctmp[8]; Sym *res; } UCall;
+typedef struct UCall_ { int sig, nargs, line; Opnd arg[16]; int byref[16]; Sym *ctmp[16]; Sym *res; } UCall;   /* byref 2: OMITTED */
 static UCall *g_ucall; static int g_ucap;
 static void ucall_bind(UCall *u, const char *name);
 static void ucall_emit(const UCall *u);
@@ -167,8 +224,9 @@ static void emit_ucall(const UCall *u0)
      * recording that call grows g_ucall, which u may point into */
     UCall c = *u0, *u = &c;
     FnSig *f = &g_fnsig[u->sig];
-    Ref refs[9]; Arg a[9];
+    Ref refs[17]; Arg a[17];
     for (int k = 0; k < u->nargs; k++) {
+        if (u->byref[k] == 2) { memset(&refs[k], 0, sizeof refs[k]); continue; }
         if (u->byref[k]) { refs[k] = u->arg[k].ref; cen_flag(refs[k].sym, CEN_CALL); continue; }
         refs[k] = ftemp_ref(u->ctmp[k], u->line);
         if (u->arg[k].kind == O_EXPR) {
@@ -177,21 +235,39 @@ static void emit_ucall(const UCall *u0)
             emit_store_receivers(&refs[k], rd, 1, 0, 1, 0, 0, -1, 0);
         } else emit_move(&u->arg[k], &refs[k]);
     }
-    refs[u->nargs] = ftemp_ref(u->res, u->line);
+    Ref rres = ftemp_ref(u->res, u->line);
     int anyl = 0;
     for (int k = 0; k < u->nargs; k++) anyl |= f->param[k].size == -1;
     if (anyl) {
         /* the arguments' lengths, for the ANY LENGTH parameters (as CALL) */
         for (int k = 0; k < u->nargs; k++) {
+            if (u->byref[k] == 2) { emit_la("r1", "cob_call_lens"); emit("\tstw r1+%d, r0", 4 * k); continue; }
             int sl = ref_static_len(&refs[k]);
             if (sl > 0) { emit_la("r1", "cob_call_lens"); emit_li("r2", sl); emit("\tstw r1+%d, r2", 4 * k); }
             else { Arg l[1] = { arg_rlen(&refs[k]) }; emit_args(l, 1); emit_la("r1", "cob_call_lens"); emit("\tstw r1+%d, r3", 4 * k); }
         }
         emit_la("r1", "cob_call_nlens"); emit_li("r2", u->nargs); emit("\tstw r1+0, r2");
     }
-    for (int k = 0; k <= u->nargs; k++) a[k] = arg_ref(&refs[k]);
-    emit_args(a, u->nargs + 1);
+    for (int k = 0; k < u->nargs; k++) a[k] = u->byref[k] == 2 ? arg_imm(0) : arg_ref(&refs[k]);
+    /* as CALL stages them: eight in registers, the rest on the stack
+     * above the callee's frame; the count and the result's address in
+     * the cells a program's CALL fills (the callee reads them at entry) */
+    int n = u->nargs, nx = n > 8 ? n - 8 : 0, xbase = g_slot_base, out = (nx * 4 + 7) & ~7;
+    emit_la("r1", "cob_call_nargs"); emit_li("r2", n); emit("\tstw r1+0, r2");
+    emit_ref_addr(&rres, "r2");
+    emit_la("r1", "cob_call_retaddr"); emit("\tstw r1+0, r2");
+    if (nx) {
+        g_slot_base += nx;
+        if (g_slot_base + 8 > NSLOTS) die_at(u->line, "internal: too many staged operands");
+        for (int k = 0; k < nx; k++) { emit_args(&a[8 + k], 1); emit("\tstw sp+%d, r3", SLOT(xbase + k)); }
+    }
+    emit_args(a, n > 8 ? 8 : n);
+    if (nx) {
+        emit("\taddi sp, sp, -%d", out);
+        for (int k = 0; k < nx; k++) { emit("\tldw r1, sp+%d", out + SLOT(xbase + k)); emit("\tstw sp+%d, r1", 4 * k); }
+    }
     emit_call(f->link);
+    if (nx) { emit("\taddi sp, sp, %d", out); g_slot_base = xbase; }
     if (g_std >= 2002) emit_ec_propagated();          /* a condition the function handed back (GOBACK RAISING; 14.9.18.4 rule 1b) */
 }
 
@@ -203,7 +279,6 @@ static void emit_ucalls(int from, int to)
 /* name(args), the cursor past the name: the operand becomes the result */
 static void parse_ufunc(Opnd *o, const char *name, int line)
 {
-    if (g_ufn_forbid) die_at(line, "a user-defined function in %s is not implemented yet", g_ufn_forbid);
     int sig = fnsig_find(name);
     if (sig < 0)
         die_at(line, "no signature for the function '%s': define it earlier in this source, or compile its own source "
@@ -214,8 +289,14 @@ static void parse_ufunc(Opnd *o, const char *name, int line)
         advance();
         while (cur()->kind != T_RP) {
             if (cur()->kind == T_EOF) die_at(line, "expected ')' after the arguments of '%s'", name);
-            if (at_word("omitted")) die_at(cur()->line, "OMITTED arguments (OPTIONAL parameters) are not implemented yet");
-            if (u.nargs == 8) die_at(line, "'%s': more than eight arguments", name);
+            if (u.nargs == 16) die_at(line, "'%s': more than sixteen arguments (an implementation limit)", name);
+            if (at_word("omitted")) {
+                /* OMITTED: no argument, a NULL address, for an OPTIONAL parameter (14.8.2.1) */
+                memset(&u.arg[u.nargs], 0, sizeof u.arg[0]); u.arg[u.nargs].line = cur()->line;
+                u.byref[u.nargs++] = 2;
+                advance();
+                continue;
+            }
             int start = g_tp;
             Opnd a; parse_operand(&a);
             if (at_arith_op()) a = expr_opnd_after(&a, start);
@@ -239,9 +320,27 @@ static void ucall_bind(UCall *u, const char *name)
 {
     int line = u->line;
     FnSig *f = &g_fnsig[u->sig];
-    if (u->nargs != f->nparam) die_at(line, "the function '%s' takes %d argument%s, not %d", name, f->nparam, f->nparam == 1 ? "" : "s", u->nargs);
+    /* as many arguments as parameters, but for trailing OPTIONAL ones left out (14.8.2.1) */
+    int need = f->nparam;
+    while (need > 0 && f->opt[need - 1]) need--;
+    if (u->nargs > f->nparam || u->nargs < need)
+        die_at(line, "the function '%s' takes %d argument%s%s, not %d", name, f->nparam, f->nparam == 1 ? "" : "s",
+               need < f->nparam ? " (the last ones OPTIONAL)" : "", u->nargs);
     for (int k = 0; k < u->nargs; k++) {
         Opnd *a = &u->arg[k];
+        if (u->byref[k] == 2) {
+            if (!f->opt[k]) die_at(a->line, "argument %d of '%s' is OMITTED, but the parameter is not OPTIONAL (2023 14.8.2.1)", k + 1, name);
+            continue;
+        }
+        if (f->byval[k]) {
+            /* BY VALUE: the argument converted to the parameter's
+             * description as COMPUTE (numeric) or MOVE would (14.8.2.3.3
+             * rule 2), into a copy the function takes the address of */
+            if (a->kind == O_REF && a->ref.sym->is_cond) die_at(a->line, "a condition-name cannot be passed");
+            u->byref[k] = 0;
+            u->ctmp[k] = ftemp_new(&f->param[k], line);
+            continue;
+        }
         if (f->param[k].size == -1) {
             /* an ANY LENGTH parameter (2023 13.18.2): an item of its class
              * by reference, whatever its length; a literal or a function

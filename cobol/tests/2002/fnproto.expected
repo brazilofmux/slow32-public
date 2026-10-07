@@ -1,0 +1,8 @@
+scale 7 1.5:   00010.5
+scale i d:     00017.5
+scale i+1 d/2: 00009.6
+opt-sum 1:     00001
+opt-sum 1 2:   00003
+opt-sum 1 2 3: 00006
+opt-sum 1 _ 3: 00004
+twelve:        1508

@@ -14,7 +14,7 @@
  * so only a CALL the scope rules let see it links to it; any other CALL of
  * that name means an outermost program of the name (rule 3), which is not
  * here -- the run unit's registry is asked, and has none. */
-typedef struct { char name[64]; int parent, outer, common, recursive, func; } ProgNode;
+typedef struct { char name[64], ext[64]; int parent, outer, common, recursive, func, proto; } ProgNode;   /* ext: its AS literal; proto: IS PROTOTYPE */
 static ProgNode g_pnode[4096]; static int g_npnode;
 static int g_any_nested;            /* any contained program in this source: scope tables wanted */
 static void prog_tree_scan(void)
@@ -41,6 +41,11 @@ static void prog_tree_scan(void)
         for (k++; k < g_ntok && g_tok[k].kind != T_PERIOD; k++) {
             if (is_word(&g_tok[k], "common")) n->common = 1;
             if (is_word(&g_tok[k], "recursive")) n->recursive = 1;
+            if (is_word(&g_tok[k], "prototype")) n->proto = 1;
+            if (is_word(&g_tok[k], "as") && k + 1 < g_ntok && g_tok[k + 1].kind == T_STR) {
+                snprintf(n->ext, sizeof n->ext, "%.*s", g_tok[k + 1].len > 63 ? 63 : g_tok[k + 1].len, g_tok[k + 1].s);
+                for (char *c = n->ext; *c; c++) *c = (char)tolower((unsigned char)*c);
+            }
         }
         /* a function is recursive; so is a program contained in a recursive one (2023 11.10.4 rule 4) */
         if (n->func || (n->parent >= 0 && g_pnode[n->parent].recursive)) n->recursive = 1;
@@ -70,7 +75,15 @@ static int pnode_find(int c, const char *name)
 {
     if (c < 0 || c >= g_npnode) return -1;
     for (int t = 0; t < g_npnode; t++)
-        if (g_pnode[t].parent >= 0 && g_pnode[t].outer == g_pnode[c].outer && !strcmp(g_pnode[t].name, name)) return t;
+        if (g_pnode[t].parent >= 0 && g_pnode[t].outer == g_pnode[c].outer && !g_pnode[t].proto &&
+            (!strcmp(g_pnode[t].name, name) || !strcmp(g_pnode[t].ext, name))) return t;
+    return -1;
+}
+
+/* the REPOSITORY's program-specifier of that name, or -1 */
+static int repo_pg_find(const char *name)
+{
+    for (int i = 0; i < g_nrepo_pg; i++) if (!strcmp(g_repo_pg[i], name)) return i;
     return -1;
 }
 
@@ -87,8 +100,17 @@ static void parse_call(void)
 {
     int line = cur()->line;
     Tok *t = cur();
-    char name[128]; Ref target; int dynamic = 0;
-    if (t->kind == T_STR) {
+    char name[128]; Ref target; int dynamic = 0, sig = -1, nested_as = 0;
+    int is_proto_name = t->kind == T_WORD && g_std >= 2002 && !sym_lookup_quiet(t->s) && repo_pg_find(t->s) >= 0;
+    if (is_proto_name) {
+        /* CALL program-prototype-name (14.9.4 format 2): the program
+         * externalized under the name the REPOSITORY gives it, its
+         * arguments checked and converted against its signature */
+        snprintf(name, sizeof name, "%s", pg_extname(t->s));
+        for (char *k = name; *k; k++) *k = (char)tolower((unsigned char)*k);
+        sig = pgsig_find(t->s);
+        advance();
+    } else if (t->kind == T_STR) {
         snprintf(name, sizeof name, "%.*s", t->len > 120 ? 120 : t->len, t->s);
         for (char *k = name; *k; k++) *k = (char)tolower((unsigned char)*k);
         advance();
@@ -98,6 +120,27 @@ static void parse_call(void)
         parse_ref(&target); dynamic = 1;
         if (target.sym->is_cond) die_at(line, "CALL: a condition-name cannot name a program");
     } else die_at(line, "expected a program-name literal or an identifier after CALL");
+    if (!is_proto_name && g_std >= 2002 && accept_word("as")) {
+        /* AS NESTED: the literal names a program in scope here (14.9.4.3
+         * rule 15), its signature known when it was defined earlier in
+         * the group; AS program-prototype-name: the signature the
+         * arguments are checked against (rule 16) */
+        if (accept_word("nested")) {
+            if (dynamic) die_at(line, "CALL ... AS NESTED names the program with a literal (2023 14.9.4.3 rule 15)");
+            if (g_is_function) die_at(line, "the NESTED phrase is a program definition's (2023 14.9.4.3 rule 13)");
+            if (pnode_find(g_unit, name) < 0) die_at(line, "CALL \"%s\" AS NESTED: no program of that name is contained in, or common to, this one (2023 14.9.4.3 rule 15)", name);
+            nested_as = 1;
+            for (int i = 0; i < g_npgsig; i++) if (!strcmp(g_pgsig[i].name, name) || !strcmp(g_pgsig[i].ext, name)) sig = i;
+        } else {
+            if (cur()->kind != T_WORD || repo_pg_find(cur()->s) < 0)
+                die_at(cur()->line, "CALL ... AS takes NESTED or a program-prototype-name of the REPOSITORY (2023 14.9.4.3 rule 16)");
+            sig = pgsig_find(cur()->s);
+            if (sig < 0) die_at(cur()->line, "no signature for the program prototype '%s'", cur()->s);
+            advance();
+        }
+    }
+    FnSig *ps = sig >= 0 ? &g_pgsig[sig] : NULL;
+    int omitted[16] = { 0 };
     if (!dynamic && g_dialect_gnu && !strcmp(name, "c$justify")) {
         /* CALL "C$JUSTIFY" USING item ["L"|"R"|"C"] (BP-G7): ACUCOBOL's
          * routine, which GnuCOBOL carries -- the item's text moved to
@@ -140,13 +183,49 @@ static void parse_call(void)
                 if (n >= 16) die_at(cur()->line, "more than 16 CALL arguments (an implementation limit)");
                 if (mode == 2) die_at(cur()->line, "OMITTED is a BY REFERENCE argument's (2023 14.9.4.2)");
                 advance();
+                omitted[n] = 1;
                 a[n++] = arg_imm(0);
                 continue;
             }
             if (!at_operand()) break;
             if (n >= 16) die_at(cur()->line, "more than 16 CALL arguments (an implementation limit)");
+            int ostart = g_tp;
             parse_operand(&ops[n]);
             Opnd *o = &ops[n];
+            if (ps && at_arith_op()) ops[n] = expr_opnd_after(o, ostart);   /* format 2: an expression, BY CONTENT (implied) or BY VALUE */
+            if (ps && n < ps->nparam && mode != 2 && !ps->byval[n] && !ps->param[n].group && ps->param[n].size != -1 &&
+                (mode == 1 || !(o->kind == O_REF && !o->ref.rm))) {
+                /* through a signature, BY CONTENT (or a literal or
+                 * expression) goes into a copy described as the parameter
+                 * is, converted as COMPUTE or MOVE would (14.8.2.3.3 rule
+                 * 2), and that copy's address is passed */
+                if (o->kind == O_ADDR) die_at(o->line, "ADDRESS OF is passed BY REFERENCE or BY VALUE");
+                Sym *c = ftemp_new(&ps->param[n], o->line);
+                Ref cr = ftemp_ref(c, o->line);
+                if (o->kind == O_EXPR) {
+                    int rd[1] = { 0 };
+                    emit_expr(o->ex);
+                    emit_store_receivers(&cr, rd, 1, 0, 1, 0, 0, -1, 0);
+                } else {
+                    if (o->kind == O_REF && o->ref.sym->is_cond) die_at(o->line, "a condition-name cannot be passed");
+                    emit_move(o, &cr);
+                }
+                memset(o, 0, sizeof *o); o->kind = O_REF; o->ref = cr; o->line = cr.line;
+                a[n++] = arg_ref(&o->ref);
+                continue;
+            }
+            if (ps && mode == 2 && o->kind == O_EXPR) {
+                /* BY VALUE of an expression: its integer value */
+                FDesc fd; memset(&fd, 0, sizeof fd); fd.size = 4; fd.usage = U_SINT; snprintf(fd.pic, sizeof fd.pic, "-");
+                Sym *c = ftemp_new(&fd, o->line);
+                Ref cr = ftemp_ref(c, o->line);
+                int rd[1] = { 0 };
+                emit_expr(o->ex);
+                emit_store_receivers(&cr, rd, 1, 0, 1, 0, 0, -1, 0);
+                memset(o, 0, sizeof *o); o->kind = O_REF; o->ref = cr; o->line = cr.line;
+                a[n++] = arg_value(o);
+                continue;
+            }
             if (o->kind == O_ADDR) {
                 /* the address, a word, BY VALUE; by reference or content,
                  * the unique data item ADDRESS OF creates (2023 8.4.3.11
@@ -194,10 +273,48 @@ static void parse_call(void)
             n++;
         }
     }
+    if (ps) {
+        /* against the signature (14.8.2): as many arguments as parameters
+         * but for trailing OPTIONAL ones; OMITTED for an OPTIONAL one; BY
+         * VALUE on both sides (14.9.4.3 rule 21); a BY REFERENCE argument
+         * described as the parameter is (14.8.2.3.2 rule 2), a group one
+         * at least as long (14.8.2.2 rule 1) */
+        int need = ps->nparam;
+        while (need > 0 && ps->opt[need - 1]) need--;
+        if (n > ps->nparam || n < need)
+            die_at(line, "the program '%s' takes %d argument%s%s, not %d", name, ps->nparam, ps->nparam == 1 ? "" : "s",
+                   need < ps->nparam ? " (the last ones OPTIONAL)" : "", n);
+        for (int k = 0; k < n; k++) {
+            if (omitted[k]) {
+                if (!ps->opt[k]) die_at(line, "argument %d of '%s' is OMITTED, but the parameter is not OPTIONAL (2023 14.9.4.3 rule 24)", k + 1, name);
+                continue;
+            }
+            if ((a[k].kind == A_VALUE || (a[k].kind == A_IMM)) != (ps->byval[k] != 0))
+                die_at(line, "argument %d of '%s' is BY %s, the parameter BY %s (2023 14.9.4.3 rules 19, 21)", k + 1, name,
+                       a[k].kind == A_VALUE || a[k].kind == A_IMM ? "VALUE" : "REFERENCE or CONTENT", ps->byval[k] ? "VALUE" : "REFERENCE");
+            if (a[k].kind != A_REF || ps->byval[k] || ps->param[k].size == -1) continue;
+            const Ref *r = a[k].ref;
+            if (r->sym->is_ftemp || r->rm) continue;
+            FDesc ad; fdesc_of(&ad, r->sym);
+            if (ps->param[k].group || ad.group) {
+                if (!(ps->param[k].group || ps->param[k].usage == U_DISPLAY) || ps->param[k].size > ad.size)
+                    die_at(line, "argument %d of '%s': the parameter is a group of %d bytes, longer than the %d of '%s' (2023 14.8.2.2 rule 1)",
+                           k + 1, name, ps->param[k].size, ad.size, r->sym->name);
+            } else if (!fdesc_match(&ad, &ps->param[k]))
+                die_at(line, "argument %d of '%s' must be described as the parameter is (PICTURE %s, %d bytes; 2023 14.8.2.3.2 rule 2), or go BY CONTENT",
+                       k + 1, name, ps->param[k].pic, ps->param[k].size);
+        }
+    }
     Ref ret; int has_ret = 0;
     if (accept_word("returning") || accept_word("giving")) {
         if (g_std < 2002) bp(BP_E9_CALL_VALUE, cur()->line);
         parse_ref(&ret); has_ret = 1; cen_flag(ret.sym, CEN_CALL);
+        if (ps && !g_is_function) {
+            /* the returning item as the signature describes it (14.8.3) */
+            FDesc rd; fdesc_of(&rd, ret.sym);
+            if (!ps->ret.size) die_at(ret.line, "RETURNING: the program '%s' has no RETURNING item (2023 14.8.3)", name);
+            if (!fdesc_match(&rd, &ps->ret)) die_at(ret.line, "RETURNING '%s' is not described as the program's returning item is (2023 14.8.3)", ret.sym->name);
+        }
         if (ret.sym->is_cond) die_at(ret.line, "RETURNING '%s': a condition-name receives nothing", ret.sym->name);
         if (g_std < 2002 && !is_int_item(ret.sym)) die_at(ret.line, "RETURNING '%s' must be an integer item (the C ABI returns a word)", ret.sym->name);
     }
@@ -290,6 +407,7 @@ static void parse_call(void)
         emit("\taddi sp, sp, -%d", out);
         for (int k = 0; k < nx; k++) { emit("\tldw r1, sp+%d", out + SLOT(xbase + k)); emit("\tstw sp+%d, r1", 4 * k); }
     }
+    (void)nested_as;
     if (dynamic || has_clause || ecnf) emit("\tjalr r31, r12, 0");
     else if (cp_direct) emit("\tjal r31, .Lcp%d", cpn);
     else emit("\tjal r31, %s", link_name(name));

@@ -487,7 +487,7 @@ int main(int argc, char **argv)
         native_apply();
         if (!at_word("procedure")) die_at(cur()->line, "expected PROCEDURE DIVISION, found %s", tok_desc(cur()));
         parse_procedure_division();
-        if (!g_nerrors && !g_fnsig_only) emit_unit_data();   /* nothing is generated once anything has failed */
+        if (!g_nerrors && !g_fnsig_only && !g_prototype) emit_unit_data();   /* nothing is generated once anything has failed; a prototype is a signature only */
         if (cur()->kind == T_EOF) break;
         if (!g_saw_end_program) die_at(cur()->line, "unexpected %s after the program (a further program needs END PROGRAM before it)", tok_desc(cur()));
         g_unit = ++g_unit_counter;

@@ -46,7 +46,6 @@ static void expr_calls(Expr *e);
 static void emit_expr(Expr *e);
 static void emit_ucalls(int from, int to);
 static int g_nucall;                    /* user-function calls recorded (cobol ISSUES-50) */
-static const char *g_ufn_forbid;        /* where a user function may not appear yet, or NULL */
 static int ec_size_on(void);
 static void emit_ec_size(void);
 static int ec_on_name(const char *name);
@@ -74,10 +73,25 @@ static Sym *g_returning;            /* the function's RETURNING item */
  * Known from a definition earlier in the source, or from the external
  * repository -- a name.s32fn file the function's own compile wrote. */
 typedef struct { int group, size, usage, has_pic, just, bwz, sign_lead, sign_sep; char pic[PIC_MAXPAT]; } FDesc;
-typedef struct { char name[64], link[128]; int nparam; FDesc param[8], ret; } FnSig;
+/* byval[k]: a BY VALUE parameter -- the argument is converted to its
+ * description, as COMPUTE would (14.8.2.3.3 rule 2a), and the copy's
+ * address passed; opt[k]: OPTIONAL, OMITTED or trailing and left out.
+ * proto: from a FUNCTION-ID ... IS PROTOTYPE in this group, the
+ * definition still to come. */
+typedef struct { char name[64], ext[64], link[128]; int nparam, proto; FDesc param[16], ret; unsigned char byval[16], opt[16]; } FnSig;   /* ext: the externalized name (AS literal, else name) */
 static FnSig g_fnsig[128]; static int g_nfnsig;
 /* the unit's REPOSITORY: functions named there are invoked without FUNCTION */
 static char g_repo_fn[32][64]; static int g_nrepo_fn;
+static char g_repo_fn_as[32][64];   /* FUNCTION name AS literal: the externalized name (12.3.8 GR 2) */
+static char g_fn_as[64];            /* the unit's own FUNCTION-ID ... AS literal (11.5 GR 1) */
+static int g_prototype;             /* FUNCTION-ID / PROGRAM-ID ... IS PROTOTYPE: a signature, no code */
+static char g_prog_as[64];          /* the unit's own PROGRAM-ID ... AS literal (11.10 GR 1) */
+/* program signatures (12.3.8 program-specifiers): a PROGRAM-ID ... IS
+ * PROTOTYPE or a definition in this group, or a name.s32pg file a program
+ * compiled at -std=2002 writes; the REPOSITORY's PROGRAM names and their
+ * AS literals */
+static FnSig g_pgsig[64]; static int g_npgsig;
+static char g_repo_pg[32][64], g_repo_pg_as[32][64]; static int g_nrepo_pg;
 static int g_repo_all_intrinsic;    /* FUNCTION ALL INTRINSIC */
 
 enum { O_REF, O_STR, O_NUM, O_FIG, O_ALL, O_EXPR, O_FUNC, O_BEXPR, O_ADDR };   /* O_ADDR: ADDRESS OF ref, a data-address identifier */   /* O_BEXPR: a boolean expression, bx, fsize its widest operand */

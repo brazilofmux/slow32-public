@@ -357,13 +357,23 @@ static void emit_add_to_ref(Opnd *by, Ref *var)
     g_wide = was; if (!was) g_fstmt = 0;
 }
 
-typedef struct { Ref var; Opnd from, by; Cond *until; } Vary;
+/* ucv/ucf/ucb: the user function calls in the item's subscripts, FROM
+ * and BY, recorded as a condition's are and made where each is
+ * evaluated -- the item's at every set and augmentation, FROM at every
+ * set, BY at every augmentation (2023 14.9.28.4 rules 7, 9, 12) */
+typedef struct { Ref var; Opnd from, by; Cond *until; int ucv0, ucv1, ucf0, ucf1, ucb0, ucb1; } Vary;
+static void vary_augment(Vary *x)
+{
+    emit_ucalls(x->ucv0, x->ucv1); emit_ucalls(x->ucb0, x->ucb1);
+    emit_add_to_ref(&x->by, &x->var);
+}
 
 /* an induction variable to its FROM value; an index-name set from an
  * identifier that is not positive is EC-RANGE-PERFORM-VARYING (2023
  * 14.9.28.4 rule 3) */
 static void emit_vary_init(Vary *x)
 {
+    emit_ucalls(x->ucv0, x->ucv1); emit_ucalls(x->ucf0, x->ucf1);
     if (x->var.sym->is_index && x->from.kind == O_REF && ec_on_name("EC-RANGE-PERFORM-VARYING")) {
         int Lok = new_label();
         Arg a[2] = { arg_ref(&x->from.ref), arg_desc(sym_desc(x->from.ref.sym)) };
@@ -399,7 +409,7 @@ static void emit_varying(Vary *v, int nv, int level, Body *body, int test_after)
         emit_label(Lbody);
         if (level + 1 < nv) emit_varying(v, nv, level + 1, body, test_after);
         else emit_body(body);
-        emit_add_to_ref(&x->by, &x->var);
+        vary_augment(x);
         emit_label(Ltest);
         cond_jump_false(x->until, Lbody);
     }
@@ -428,7 +438,7 @@ static void emit_varying_test_after(Vary *v, int nv, Body *body)
         int Ldone = new_label();
         cond_jump_true(v[k].until, Ldone);
         for (int j = k + 1; j < nv; j++) emit_vary_init(&v[j]);
-        emit_add_to_ref(&v[k].by, &v[k].var);
+        vary_augment(&v[k]);
         emit_jump(Ltop);
         emit_label(Ldone);
     }
@@ -726,27 +736,31 @@ static void parse_perform(void)
             if (nv >= 8) die_at(cur()->line, "more than eight VARYING/AFTER levels");
             /* the item's subscripting is evaluated each time it is set or
              * augmented (X3.23-1985 XVII-64, substantive change 27; 2023
-             * 14.9.28.4 rule 12): a
-             * user function there would be called at every step, which a
-             * call made once cannot do -- refused, as BY's is */
-            g_ufn_forbid = "the subscript of a PERFORM VARYING item";
+             * 14.9.28.4 rule 12), an AFTER's FROM at every reset and BY at
+             * every step: a user function in any of them is recorded as a
+             * condition's are (g_cond_depth) and made at each of those
+             * points (vary_augment, emit_vary_init), not where it is parsed */
+            g_cond_depth++;
+            v[nv].ucv0 = g_nucall;
             parse_ref(&v[nv].var);
-            g_ufn_forbid = NULL;
+            v[nv].ucv1 = g_nucall;
+            g_cond_depth--;
             if (!is_numeric_sym(v[nv].var.sym)) die_at(v[nv].var.line, "the VARYING item must be numeric");
             expect_word("from");
-            /* an AFTER's FROM is evaluated at every reset and BY at every
-             * step, not where they are parsed: a user function there waits
-             * for a deferred evaluation like a condition's */
-            if (nv > 0) g_ufn_forbid = "the FROM phrase of PERFORM ... AFTER";
+            g_cond_depth++;
+            v[nv].ucf0 = g_nucall;
             parse_operand(&v[nv].from); check_numeric_opnd(&v[nv].from);
-            g_ufn_forbid = NULL;
+            v[nv].ucf1 = g_nucall;
+            g_cond_depth--;
             if (nv > 0 && v[nv].from.kind == O_REF)          /* BP-M1: the 74/85 reset order shows here */
                 for (int k = 0; k < nv; k++)
                     if (v[k].var.sym == v[nv].from.ref.sym) { bp(BP_M1_VARYING_AFTER, v[nv].from.line); break; }
             expect_word("by");
-            g_ufn_forbid = "the BY phrase of PERFORM VARYING";
+            g_cond_depth++;
+            v[nv].ucb0 = g_nucall;
             parse_operand(&v[nv].by); check_numeric_opnd(&v[nv].by);
-            g_ufn_forbid = NULL;
+            v[nv].ucb1 = g_nucall;
+            g_cond_depth--;
             varying_rules(&v[nv].var, &v[nv].from, &v[nv].by);
             expect_word("until");
             if (at_word("exit"))

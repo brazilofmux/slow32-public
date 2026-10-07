@@ -1,0 +1,18 @@
+subscript, from, by:
+  base
+  pick
+body 1
+  pick
+  step
+body 2
+  pick
+  step
+after, with test after:
+  base
+body 1 1
+  step
+body 1 2
+  base
+body 2 1
+  step
+body 2 2

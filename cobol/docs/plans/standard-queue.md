@@ -115,7 +115,14 @@ call convention).
   effect (no listing is produced); LEAP-SECOND needs a decision about the time service.
 - Why here: cheap once 6 exists.
 
-**8. The rest of the CALL family.** 14.9.4, 11.5, 12.3.8, 14.8; Ed. 2002; M; deps none.
+**8. The rest of the CALL family.** 14.9.4, 11.5, 12.3.8, 14.8; Ed. 2002; M; deps none. DONE
+2026-10-06 (call.md; tests 2002/fnproto, pgproto, fnvarying): function and program prototypes
+(IS PROTOTYPE, the definition checked against it), FUNCTION-ID / PROGRAM-ID / REPOSITORY `AS
+literal`, REPOSITORY PROGRAM, CALL format 2 (prototype-name, AS prototype-name, AS NESTED) with
+14.8.2's conversion of BY CONTENT / BY VALUE arguments and expressions, BY VALUE and OPTIONAL
+parameters of a function, OMITTED arguments, sixteen function parameters (the result's address
+through cob_call_retaddr, signature file version 2), a user function in VARYING's subscript, FROM
+and BY. Left: NESTED to a program defined later in the group passes as format 1 (call.md's gap).
 - Today: "function prototypes (IS PROTOTYPE) are not implemented yet", "FUNCTION-ID ... AS literal",
   "REPOSITORY FUNCTION ... AS literal", "a BY VALUE parameter of a function", "OMITTED arguments
   (OPTIONAL parameters) are not implemented yet" (for functions; CALL has them), "a user-defined

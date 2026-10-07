@@ -56,11 +56,6 @@ all closed 2026-09-28 (ISSUES-94, -95):
 
 COBOL 2002/2023 (Stage B):
 
-- the rest of the CALL family: function and program prototypes,
-  FUNCTION-ID and REPOSITORY `AS literal`, BY VALUE parameters of a
-  function (BY VALUE, OPTIONAL, OMITTED, program RETURNING, ANY LENGTH
-  and stack arguments are implemented: docs/conformance/call.md,
-  data-division.md);
 - compiler directives other than >>SOURCE, >>TURN, >>DEFINE, >>IF,
   >>EVALUATE, >>CALL-CONVENTION, >>LEAP-SECOND, >>LISTING, >>PAGE and
   >>PROPAGATE (the last eight since 2026-10-06, docs/conformance/directives.md):
@@ -119,9 +114,6 @@ COBOL 2002/2023 (Stage B):
   report group; COLUMN PLUS, LEFT, RIGHT, CENTER and several column
   numbers (the 1985 module is implemented; docs/conformance/
   reportwriter.md);
-- in a user-defined function: OMITTED arguments for OPTIONAL
-  parameters, and more than 7 USING items (CALL takes both; 32 USING
-  items is the CALL limit, section 4);
 - the 2002-2023 constructs that used to meet a parse error and are now
   refused by name (docs/plans/standard-queue.md item 1; tests/bad/
   std2002-*): START FIRST/LAST and WITH LENGTH, START of a sequential

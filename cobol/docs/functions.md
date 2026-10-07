@@ -73,12 +73,15 @@ becomes the function's RETURNING item. The temporary is LOCAL-STORAGE
 in a program that can be re-entered (the same call site in two
 activations), static otherwise.
 
-**Not implemented yet, refused with a message:** prototypes (`IS
-PROTOTYPE`), function pointers, `AS literal`, BY VALUE parameters of a
-function. (A program's BY VALUE and OPTIONAL parameters, OMITTED
-arguments and PROCEDURE DIVISION RETURNING are implemented:
-docs/conformance/call.md; ANY LENGTH parameters, of functions and
-programs, are too: docs/conformance/data-division.md.)
+**Since 2026-10-06** (standard-queue item 8; docs/conformance/call.md):
+prototypes (`IS PROTOTYPE`), `AS literal`, BY VALUE and OPTIONAL
+parameters of a function, OMITTED arguments, sixteen parameters, and a
+user function in PERFORM VARYING's item subscript, FROM or BY. The
+result's address now goes in `cob_call_retaddr` as a program's
+RETURNING does, and the arguments take CALL's path; the signature file
+is version 2 (`s32fn 2`), and a version-1 file is refused with a
+request to recompile the function. Function pointers wait on
+standard-queue item 9.
 
 **Real code.** `tests/majesty-functions.sh` takes majesty's date family
 as it was written in COBOL 2002 -- twelve functions across seven files,

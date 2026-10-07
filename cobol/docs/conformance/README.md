@@ -39,7 +39,7 @@ standard's titles or text:
 | 14.9.14 EXIT | [exit.md](exit.md) | 2026-09-28 |
 | 13.18.40 PICTURE, 13.18.8 BLANK WHEN ZERO | [picture.md](picture.md) | 2026-09-29 |
 | 13.18.60 USAGE (the rest) | [usage.md](usage.md) | 2026-09-29 |
-| 14.2, 14.9.4 CALL parameters | [call.md](call.md) | 2026-09-29 |
+| 14.2, 14.9.4 CALL parameters, 14.8.2, 14.8.3; 11.5 FUNCTION-ID, 11.10 PROGRAM-ID, 12.3.8 REPOSITORY (prototypes, AS literal, 2026-10-06) | [call.md](call.md) | 2026-09-29 |
 | 14.7.7, ADD SUBTRACT MULTIPLY DIVIDE COMPUTE | [arithmetic.md](arithmetic.md) | 2026-09-29 |
 | 8.8.1 arithmetic expressions, native arithmetic | [expressions.md](expressions.md) | 2026-09-30 |
 | 8.8.4.2 relation conditions, abbreviated relations | [conditions.md](conditions.md) | 2026-09-30 |
