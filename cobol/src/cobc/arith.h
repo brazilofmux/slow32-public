@@ -269,26 +269,31 @@ static int parse_operand_list(Opnd *ops, int max)
 /* receivers, each with an optional ROUNDED; GIVING and COMPUTE receivers
  * may be numeric-edited */
 static int g_rmode;                     /* this statement has a ROUNDED MODE other than the default: the stack path */
+static int g_default_rmode;             /* OPTIONS DEFAULT ROUNDED MODE IS (2023 11.9.6): the mode of a ROUNDED without MODE, 1-8 as parse_rounded_mode counts them; 0 the standard's NEAREST-AWAY-FROM-ZERO */
 /* after ROUNDED: [MODE IS mode] (2014; 2023 14.7.4) -- 1 for plain
  * ROUNDED and NEAREST-AWAY-FROM-ZERO (the DEFAULT ROUNDED clause's
  * default, 11.9.6), 0 for TRUNCATION (as no ROUNDED, general rule 2), and
  * any other mode in bits 4-7 */
-static int parse_rounded_mode(void)
+static const char *g_rounding_modes[] = { "away-from-zero", "nearest-away-from-zero", "nearest-even", "nearest-toward-zero",
+                                          "prohibited", "toward-greater", "toward-lesser", "truncation", NULL };
+static int rounded_mode_code(int m)
 {
-    if (!at_word("mode")) return 1;
-    int line = cur()->line;
-    advance(); accept_word("is");
-    static const char *modes[] = { "away-from-zero", "nearest-away-from-zero", "nearest-even", "nearest-toward-zero",
-                                   "prohibited", "toward-greater", "toward-lesser", "truncation", NULL };
-    int m = 0;
-    for (int k = 0; modes[k]; k++) if (at_word(modes[k])) m = k + 1;
-    if (!m) die_at(cur()->line, "expected a rounding mode after ROUNDED MODE IS, found %s (2023 14.7.4.2)", tok_desc(cur()));
-    advance();
-    bp(BP_E29_ROUNDED_MODE, line);
-    if (m == 2) return 1;
+    if (m == 2 || m == 0) return 1;
     if (m == 8) return 0;
     g_rmode = 1;
     return m << 4;
+}
+static int parse_rounded_mode(void)
+{
+    if (!at_word("mode")) return rounded_mode_code(g_default_rmode);   /* no MODE: the OPTIONS paragraph's default, else the standard's (11.9.6.3 rule 2) */
+    int line = cur()->line;
+    advance(); accept_word("is");
+    int m = 0;
+    for (int k = 0; g_rounding_modes[k]; k++) if (at_word(g_rounding_modes[k])) m = k + 1;
+    if (!m) die_at(cur()->line, "expected a rounding mode after ROUNDED MODE IS, found %s (2023 14.7.4.2)", tok_desc(cur()));
+    advance();
+    bp(BP_E29_ROUNDED_MODE, line);
+    return rounded_mode_code(m);
 }
 
 static int parse_ref_list(Ref *rs, int *rounded, int max, int edited_ok)

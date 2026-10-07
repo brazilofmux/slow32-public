@@ -1,5 +1,5 @@
 
-#line 1 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 1 "lex.rl"
 /* lex.rl -- the COBOL token scanner, Ragel -G2 (docs/plans/standard-queue.md
  * item 15, ruled 2026-10-06): one grammar for 8.3's lexical elements that
  * both the text-word scanner of copy.h (COPY and REPLACE work on
@@ -28,7 +28,7 @@
 #endif
 
 
-#line 32 "/Users/sdennis/slow-32/cobol/src/lex_scan.c"
+#line 32 "lex_scan.c"
 static const int lexscan_start = 5;
 static const int lexscan_first_final = 5;
 static const int lexscan_error = -1;
@@ -36,7 +36,7 @@ static const int lexscan_error = -1;
 static const int lexscan_en_main = 5;
 
 
-#line 31 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 31 "lex.rl"
 
 
 /* is the text at q a separator's tail: the line's end, a space, a tab, or
@@ -58,11 +58,11 @@ int lx_next(const char *p0, const char *pe, Lexeme *out)
     out->s = p0; out->len = 1; out->kind = LX_OTHER;
 
     
-#line 120 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 120 "lex.rl"
 
 
     
-#line 66 "/Users/sdennis/slow-32/cobol/src/lex_scan.c"
+#line 66 "lex_scan.c"
 	{
 	cs = lexscan_start;
 	ts = 0;
@@ -70,16 +70,16 @@ int lx_next(const char *p0, const char *pe, Lexeme *out)
 	act = 0;
 	}
 
-#line 123 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 123 "lex.rl"
     
-#line 76 "/Users/sdennis/slow-32/cobol/src/lex_scan.c"
+#line 76 "lex_scan.c"
 	{
 	if ( p == pe )
 		goto _test_eof;
 	switch ( cs )
 	{
 tr0:
-#line 82 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 82 "lex.rl"
 	{{p = ((te))-1;}{
             out->kind = LX_LIT; out->len = (int)(te - ts);
             const char *q = ts; while (*q != '"' && *q != '\'') q++;
@@ -104,7 +104,7 @@ tr5:
 	}
 	goto st5;
 tr7:
-#line 94 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 94 "lex.rl"
 	{{p = ((te))-1;}{
             out->kind = LX_NUM; out->len = (int)(te - ts);
             for (const char *q = ts; q < te; q++) if (*q == 'e' || *q == 'E') { out->exp = 1; break; }
@@ -112,23 +112,23 @@ tr7:
         }}
 	goto st5;
 tr10:
-#line 101 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 101 "lex.rl"
 	{te = p+1;{ out->kind = LX_OTHER; out->len = 1; {p++; cs = 5; goto _out;} }}
 	goto st5;
 tr13:
-#line 100 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 100 "lex.rl"
 	{te = p+1;{ out->kind = LX_OP;   out->len = (int)(te - ts); {p++; cs = 5; goto _out;} }}
 	goto st5;
 tr15:
-#line 65 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 65 "lex.rl"
 	{te = p+1;{ out->kind = LX_LP;    out->len = 1; {p++; cs = 5; goto _out;} }}
 	goto st5;
 tr16:
-#line 66 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 66 "lex.rl"
 	{te = p+1;{ out->kind = LX_RP;    out->len = 1; {p++; cs = 5; goto _out;} }}
 	goto st5;
 tr19:
-#line 77 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 77 "lex.rl"
 	{te = p+1;{
             /* a comma or semicolon separates before a space; otherwise it
              * is tight to what follows (the tokenizer says what that means) */
@@ -136,15 +136,15 @@ tr19:
         }}
 	goto st5;
 tr22:
-#line 67 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 67 "lex.rl"
 	{te = p+1;{ out->kind = LX_COLON; out->len = 1; {p++; cs = 5; goto _out;} }}
 	goto st5;
 tr29:
-#line 62 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 62 "lex.rl"
 	{te = p;p--;{ out->kind = LX_SPACE;   out->len = (int)(te - ts); {p++; cs = 5; goto _out;} }}
 	goto st5;
 tr30:
-#line 88 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 88 "lex.rl"
 	{te = p;p--;{
             out->kind = LX_LIT; out->len = (int)(te - ts); out->bad = 1;
             const char *q = ts; while (*q != '"' && *q != '\'') q++;
@@ -153,7 +153,7 @@ tr30:
         }}
 	goto st5;
 tr31:
-#line 82 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 82 "lex.rl"
 	{te = p;p--;{
             out->kind = LX_LIT; out->len = (int)(te - ts);
             const char *q = ts; while (*q != '"' && *q != '\'') q++;
@@ -162,15 +162,15 @@ tr31:
         }}
 	goto st5;
 tr32:
-#line 100 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 100 "lex.rl"
 	{te = p;p--;{ out->kind = LX_OP;   out->len = (int)(te - ts); {p++; cs = 5; goto _out;} }}
 	goto st5;
 tr34:
-#line 63 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 63 "lex.rl"
 	{te = p;p--;{ out->kind = LX_COMMENT; out->len = (int)(te - ts); {p++; cs = 5; goto _out;} }}
 	goto st5;
 tr37:
-#line 94 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 94 "lex.rl"
 	{te = p;p--;{
             out->kind = LX_NUM; out->len = (int)(te - ts);
             for (const char *q = ts; q < te; q++) if (*q == 'e' || *q == 'E') { out->exp = 1; break; }
@@ -178,7 +178,7 @@ tr37:
         }}
 	goto st5;
 tr39:
-#line 68 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 68 "lex.rl"
 	{te = p;p--;{
             /* a period separates before a space, the line's end or ==; a
              * doubled one is one separator (RM's reader let "12370121.."
@@ -190,7 +190,7 @@ tr39:
         }}
 	goto st5;
 tr40:
-#line 68 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 68 "lex.rl"
 	{te = p+1;{
             /* a period separates before a space, the line's end or ==; a
              * doubled one is one separator (RM's reader let "12370121.."
@@ -202,11 +202,11 @@ tr40:
         }}
 	goto st5;
 tr41:
-#line 99 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 99 "lex.rl"
 	{te = p;p--;{ out->kind = LX_WORD; out->len = (int)(te - ts); {p++; cs = 5; goto _out;} }}
 	goto st5;
 tr42:
-#line 64 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 64 "lex.rl"
 	{te = p+1;{ out->kind = LX_PDELIM;  out->len = 2; {p++; cs = 5; goto _out;} }}
 	goto st5;
 st5:
@@ -217,7 +217,7 @@ st5:
 case 5:
 #line 1 "NONE"
 	{ts = p;}
-#line 221 "/Users/sdennis/slow-32/cobol/src/lex_scan.c"
+#line 221 "lex_scan.c"
 	switch( (*p) ) {
 		case 9: goto st6;
 		case 32: goto st6;
@@ -284,7 +284,7 @@ st8:
 	if ( ++p == pe )
 		goto _test_eof8;
 case 8:
-#line 288 "/Users/sdennis/slow-32/cobol/src/lex_scan.c"
+#line 288 "lex_scan.c"
 	if ( (*p) == 34 )
 		goto st0;
 	goto tr31;
@@ -310,7 +310,7 @@ st10:
 	if ( ++p == pe )
 		goto _test_eof10;
 case 10:
-#line 314 "/Users/sdennis/slow-32/cobol/src/lex_scan.c"
+#line 314 "lex_scan.c"
 	if ( (*p) == 39 )
 		goto st1;
 	goto tr31;
@@ -338,20 +338,20 @@ case 12:
 tr18:
 #line 1 "NONE"
 	{te = p+1;}
-#line 100 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 100 "lex.rl"
 	{act = 13;}
 	goto st13;
 tr36:
 #line 1 "NONE"
 	{te = p+1;}
-#line 94 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 94 "lex.rl"
 	{act = 11;}
 	goto st13;
 st13:
 	if ( ++p == pe )
 		goto _test_eof13;
 case 13:
-#line 355 "/Users/sdennis/slow-32/cobol/src/lex_scan.c"
+#line 355 "lex_scan.c"
 	if ( (*p) == 46 )
 		goto st2;
 	if ( 48 <= (*p) && (*p) <= 57 )
@@ -372,7 +372,7 @@ st14:
 	if ( ++p == pe )
 		goto _test_eof14;
 case 14:
-#line 376 "/Users/sdennis/slow-32/cobol/src/lex_scan.c"
+#line 376 "lex_scan.c"
 	switch( (*p) ) {
 		case 69: goto st3;
 		case 101: goto st3;
@@ -417,14 +417,14 @@ case 16:
 tr21:
 #line 1 "NONE"
 	{te = p+1;}
-#line 94 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 94 "lex.rl"
 	{act = 11;}
 	goto st17;
 st17:
 	if ( ++p == pe )
 		goto _test_eof17;
 case 17:
-#line 428 "/Users/sdennis/slow-32/cobol/src/lex_scan.c"
+#line 428 "lex_scan.c"
 	switch( (*p) ) {
 		case 45: goto st18;
 		case 46: goto st2;
@@ -576,7 +576,7 @@ case 23:
 	_out: {}
 	}
 
-#line 124 "/Users/sdennis/slow-32/cobol/src/lex.rl"
+#line 124 "lex.rl"
 
     (void)act; (void)eof; (void)cs;
     return out->kind;

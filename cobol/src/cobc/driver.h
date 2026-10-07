@@ -482,7 +482,7 @@ int main(int argc, char **argv)
          * by END PROGRAM */
         g_nsym = 0; g_nfile = 0; g_npara = 0; g_nreport = 0; g_report_base = 0; g_nscreen = 0; g_screen_base = 0; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_last_item = -1;
         g_nsame_groups = 0; g_collate = -1; g_collate_name[0] = 0; g_lowval = 0x00; g_highval = 0xFF; g_cur_fd = -1; g_in_linkage = 0;
-        g_sym_base = g_file_base = g_para_base = 0; g_udepth = 0; g_nuse = 0; g_initial = 0; g_recursive = 0; g_nsymch = 0;
+        g_sym_base = g_file_base = g_para_base = 0; g_udepth = 0; g_nuse = 0; g_initial = 0; g_recursive = 0; g_nsymch = 0; g_default_rmode = 0;
         g_in_proc = 0;
         parse_identification_division();
         parse_environment_division();

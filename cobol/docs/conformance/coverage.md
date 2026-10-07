@@ -15,13 +15,13 @@ carry the compiler's own reason.
 | 8 characters, names, data, expressions, conditions | 35 | 7 | 0 | 28 |
 | 9 files and objects, general | 0 | 0 | 0 | 0 |
 | 10 the compilation group | 2 | 0 | 0 | 2 |
-| 11 IDENTIFICATION DIVISION | 15 | 2 | 0 | 13 |
+| 11 IDENTIFICATION DIVISION | 15 | 10 | 0 | 5 |
 | 12 ENVIRONMENT DIVISION | 22 | 15 | 0 | 7 |
 | 13 DATA DIVISION | 78 | 52 | 0 | 26 |
 | 14 PROCEDURE DIVISION | 54 | 42 | 7 | 5 |
 | 15 intrinsic functions | 94 | 73 | 21 | 0 |
 | 16 standard classes | 0 | 0 | 0 | 0 |
-| **all** | **324** | **207** | **28** | **89** |
+| **all** | **324** | **215** | **28** | **81** |
 
 ## 7 COPY, REPLACE and directives
 
@@ -109,14 +109,14 @@ carry the compiler's own reason.
 | 11.6 |  | *unswept* | | | | | |
 | 11.7 |  | *unswept* | | | | | |
 | 11.8 |  | *unswept* | | | | | |
-| 11.9 |  | *unswept* | | | | | |
-| 11.9.5 | ARITHMETIC clause | *unswept* | | | | | |
-| 11.9.6 | DEFAULT ROUNDED clause | *unswept* | | | | | |
-| 11.9.7 | ENTRY-CONVENTION clause | *unswept* | | | | | |
-| 11.9.8 | FLOAT-BINARY clause | *unswept* | | | | | |
-| 11.9.9 | FLOAT-DECIMAL clause | *unswept* | | | | | |
-| 11.9.10 | INITIALIZE clause | *unswept* | | | | | |
-| 11.9.11 | INTERMEDIATE ROUNDING clause | *unswept* | | | | | |
+| 11.9 |  | [options](options.md) | 5 | 7 | 0 | 0 | 0 |
+| 11.9.5 | ARITHMETIC clause | [options](options.md) | 5 | 7 | 0 | 0 | 0 |
+| 11.9.6 | DEFAULT ROUNDED clause | [options](options.md) | 5 | 7 | 0 | 0 | 0 |
+| 11.9.7 | ENTRY-CONVENTION clause | [options](options.md) | 5 | 7 | 0 | 0 | 0 |
+| 11.9.8 | FLOAT-BINARY clause | [options](options.md) | 5 | 7 | 0 | 0 | 0 |
+| 11.9.9 | FLOAT-DECIMAL clause | [options](options.md) | 5 | 7 | 0 | 0 | 0 |
+| 11.9.10 | INITIALIZE clause | [options](options.md) | 5 | 7 | 0 | 0 | 0 |
+| 11.9.11 | INTERMEDIATE ROUNDING clause | [options](options.md) | 5 | 7 | 0 | 0 | 0 |
 | 11.10 |  | [call](call.md) | 30 | 18 | 3 | 4 | 0 |
 
 ## 12 ENVIRONMENT DIVISION

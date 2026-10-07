@@ -222,7 +222,11 @@ arithmetic.
   builds on it.
 
 **16. The OPTIONS paragraph.** 11.9, 11.9.5 ARITHMETIC (NATIVE), 11.9.7 ENTRY-CONVENTION; Ed. 2002;
-S-M; deps none.
+S-M; deps none. DONE 2026-10-06 (options.md; test 2002/optionspara): the paragraph with every
+clause parsed -- ARITHMETIC IS NATIVE, ENTRY-CONVENTION IS COBOL and DEFAULT ROUNDED MODE (item
+22's first half, inherited by contained programs) taken; STANDARD by name; STANDARD-BINARY/
+-DECIMAL, FLOAT-BINARY/-DECIMAL, INTERMEDIATE ROUNDING and INITIALIZE refused by name for items
+22, 20, 22 and 30.
 - Today: "unexpected 'options' in the IDENTIFICATION DIVISION". The 2014 and 2023 clauses (items 22,
   30) and 2023's INITIALIZE clause hang off it. ARITHMETIC IS STANDARD was made obsolete by 2014 and
   removed by 2023: take NATIVE, refuse STANDARD by name.
@@ -276,8 +280,9 @@ docs/conformance/ with every rule marked:
 
 **22. Rounding options.** 11.9.6 DEFAULT ROUNDED, 11.9.11 INTERMEDIATE ROUNDING; Ed. 2014; S-M; deps
 16.
-- Today: OPTIONS refused; `ROUNDED MODE IS` on a statement already works (BP-E29). A.3 makes both
-  clauses processor-dependent.
+- Today: DEFAULT ROUNDED came with item 16 (2026-10-06); INTERMEDIATE ROUNDING refused by name;
+  `ROUNDED MODE IS` on a statement already works (BP-E29). A.3 makes both clauses
+  processor-dependent.
 - Why here: the per-statement half exists.
 
 **23. EVALUATE partial expressions.** 14.9.13; Ed. 2014; S; deps none.

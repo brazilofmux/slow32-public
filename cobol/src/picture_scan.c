@@ -1,5 +1,5 @@
 
-#line 1 "/Users/sdennis/slow-32/cobol/src/picture.rl"
+#line 1 "picture.rl"
 /* picture.rl -- COBOL PICTURE scanner, Ragel -G2, feeding a hand-written
  * analyser.
  *
@@ -24,7 +24,7 @@
 #endif
 
 
-#line 23 "/Users/sdennis/slow-32/cobol/src/picture_scan.c"
+#line 28 "picture_scan.c"
 static const int picscan_start = 7;
 static const int picscan_first_final = 7;
 static const int picscan_error = 0;
@@ -32,7 +32,7 @@ static const int picscan_error = 0;
 static const int picscan_en_main = 7;
 
 
-#line 22 "/Users/sdennis/slow-32/cobol/src/picture.rl"
+#line 27 "picture.rl"
 
 
 /* Tokenise a PICTURE into (symbol, repeat) pairs.
@@ -47,11 +47,11 @@ int pic_scan(const char *s, PicItem *out, int max, int *errpos)
     *errpos = -1;
 
     
-#line 69 "/Users/sdennis/slow-32/cobol/src/picture.rl"
+#line 74 "picture.rl"
 
 
     
-#line 50 "/Users/sdennis/slow-32/cobol/src/picture_scan.c"
+#line 55 "picture_scan.c"
 	{
 	cs = picscan_start;
 	ts = 0;
@@ -59,16 +59,16 @@ int pic_scan(const char *s, PicItem *out, int max, int *errpos)
 	act = 0;
 	}
 
-#line 72 "/Users/sdennis/slow-32/cobol/src/picture.rl"
+#line 77 "picture.rl"
     
-#line 60 "/Users/sdennis/slow-32/cobol/src/picture_scan.c"
+#line 65 "picture_scan.c"
 	{
 	if ( p == pe )
 		goto _test_eof;
 	switch ( cs )
 	{
 tr0:
-#line 48 "/Users/sdennis/slow-32/cobol/src/picture.rl"
+#line 53 "picture.rl"
 	{{p = ((te))-1;}{
             if (count >= max) { *errpos = (int)(ts - s); return -1; }
             out[count].sym = (char)toupper((unsigned char)ts[0]);
@@ -77,7 +77,7 @@ tr0:
         }}
 	goto st7;
 tr2:
-#line 41 "/Users/sdennis/slow-32/cobol/src/picture.rl"
+#line 46 "picture.rl"
 	{te = p+1;{
             if (count >= max) { *errpos = (int)(ts - s); return -1; }
             out[count].sym = (char)toupper((unsigned char)ts[0]);
@@ -87,21 +87,21 @@ tr2:
         }}
 	goto st7;
 tr3:
-#line 54 "/Users/sdennis/slow-32/cobol/src/picture.rl"
+#line 59 "picture.rl"
 	{te = p+1;{
             if (count >= max) { *errpos = (int)(ts - s); return -1; }
             out[count].sym = 'C'; out[count].rep = 1; count++;
         }}
 	goto st7;
 tr5:
-#line 58 "/Users/sdennis/slow-32/cobol/src/picture.rl"
+#line 63 "picture.rl"
 	{te = p+1;{
             if (count >= max) { *errpos = (int)(ts - s); return -1; }
             out[count].sym = 'D'; out[count].rep = 1; count++;
         }}
 	goto st7;
 tr11:
-#line 48 "/Users/sdennis/slow-32/cobol/src/picture.rl"
+#line 53 "picture.rl"
 	{te = p;p--;{
             if (count >= max) { *errpos = (int)(ts - s); return -1; }
             out[count].sym = (char)toupper((unsigned char)ts[0]);
@@ -117,7 +117,7 @@ st7:
 case 7:
 #line 1 "NONE"
 	{ts = p;}
-#line 116 "/Users/sdennis/slow-32/cobol/src/picture_scan.c"
+#line 121 "picture_scan.c"
 	switch( (*p) ) {
 		case 36: goto tr6;
 		case 57: goto tr6;
@@ -156,7 +156,7 @@ st8:
 	if ( ++p == pe )
 		goto _test_eof8;
 case 8:
-#line 155 "/Users/sdennis/slow-32/cobol/src/picture_scan.c"
+#line 160 "picture_scan.c"
 	if ( (*p) == 40 )
 		goto st1;
 	goto tr11;
@@ -227,7 +227,7 @@ case 6:
 	_out: {}
 	}
 
-#line 73 "/Users/sdennis/slow-32/cobol/src/picture.rl"
+#line 78 "picture.rl"
 
     (void)act; (void)eof; (void)te;
     if (cs == picscan_error) { *errpos = (int)(p - s); return -1; }

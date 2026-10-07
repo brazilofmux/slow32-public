@@ -11,6 +11,63 @@ static int at_division(void)
            (at_word("environment") || at_word("data") || at_word("procedure"));
 }
 
+/* OPTIONS (2023 11.9): ARITHMETIC, DEFAULT ROUNDED, ENTRY-CONVENTION
+ * taken; the 2014 clauses FLOAT-BINARY, FLOAT-DECIMAL and INTERMEDIATE
+ * ROUNDING and 2023's INITIALIZE refused by name (standard-queue items
+ * 20, 22, 30).  The clauses hold for the contained programs too (11.9.4),
+ * so a contained program starts with its container's (esql.h UnitSave) */
+static void parse_options_paragraph(void)
+{
+    int line = cur()->line;
+    if (g_std < 2002) die_at(line, "the OPTIONS paragraph is COBOL 2002 (2023 11.9); compile with -std=2002");
+    advance(); expect_period();
+    int any = 0;
+    for (;;) {
+        if (accept_word("arithmetic")) {
+            /* NATIVE is this compiler's arithmetic (11.9.5.2 rule 1: the
+             * implementor's techniques, native arithmetic for the
+             * statements); STANDARD-DECIMAL and -BINARY (2014) define
+             * their intermediates (8.8.1.4-5): not those, so refused;
+             * 2002's STANDARD was made obsolete in 2014 and removed in 2023 */
+            accept_word("is");
+            if (accept_word("native")) { any = 1; continue; }
+            if (at_word("standard-decimal") || at_word("standard-binary"))
+                die_at(cur()->line, "ARITHMETIC IS %s (COBOL 2014; 2023 8.8.1.4-5) is not implemented: the intermediates here are NATIVE's", tok_orig(cur()));
+            if (at_word("standard"))
+                die_at(cur()->line, "ARITHMETIC IS STANDARD is COBOL 2002's, obsolete in 2014 and removed in 2023: write NATIVE");
+            die_at(cur()->line, "expected NATIVE after ARITHMETIC IS, found %s", tok_desc(cur()));
+        }
+        if (accept_word("default")) {
+            expect_word("rounded"); accept_word("mode"); accept_word("is");
+            int m = 0;
+            for (int k = 0; g_rounding_modes[k]; k++) if (at_word(g_rounding_modes[k])) m = k + 1;
+            if (!m) die_at(cur()->line, "expected a rounding mode after DEFAULT ROUNDED MODE IS, found %s (2023 11.9.6)", tok_desc(cur()));
+            bp(BP_E29_ROUNDED_MODE, cur()->line);       /* 2014's, as ROUNDED MODE IS */
+            advance();
+            g_default_rmode = m; any = 1;
+            continue;
+        }
+        if (accept_word("entry-convention")) {
+            /* COBOL is the one convention (as >>CALL-CONVENTION has it);
+             * the clause only in a function, a prototype or an outermost
+             * program (11.9.7.3 rule 1) */
+            accept_word("is");
+            if (g_udepth) die_at(cur()->line, "ENTRY-CONVENTION is not for a contained program (2023 11.9.7.3 rule 1)");
+            if (!accept_word("cobol")) die_at(cur()->line, "ENTRY-CONVENTION IS %s: COBOL is the one entry convention here (2023 11.9.7.4 rule 3)", tok_orig(cur()));
+            any = 1; continue;
+        }
+        if (at_word("float-binary") || at_word("float-decimal"))
+            die_at(cur()->line, "the %s clause is COBOL 2014 (2023 11.9.8-9), for the standard floating-point usages; not implemented", tok_orig(cur()));
+        if (at_word("intermediate"))
+            die_at(cur()->line, "the INTERMEDIATE ROUNDING clause is COBOL 2014 (2023 11.9.11); not implemented");
+        if (at_word("initialize"))
+            die_at(cur()->line, "the OPTIONS INITIALIZE clause is COBOL 2023 (11.9.10); not implemented");
+        break;
+    }
+    if (any) expect_period();                   /* a terminating period when any clause is written (11.9.3) */
+    else if (cur()->kind == T_PERIOD) advance();
+}
+
 static void parse_identification_division(void)
 {
     if (accept_word("identification") || accept_word("id")) { expect_word("division"); expect_period(); }
@@ -85,8 +142,7 @@ static void parse_identification_division(void)
         Tok *t = cur();
         int known = 0;
         for (int i = 0; paras[i]; i++) if (is_word(t, paras[i])) known = 1;
-        if (!known && is_word(t, "options"))
-            die_at(t->line, "the OPTIONS paragraph is COBOL 2002 (2023 11.9); not implemented");
+        if (!known && is_word(t, "options")) { parse_options_paragraph(); continue; }
         if (!known) die_at(t->line, "unexpected %s in the IDENTIFICATION DIVISION", tok_desc(t));
         /* deleted by 2002, and taken there as an extension: the
          * paragraphs are comments in any edition that had them */
