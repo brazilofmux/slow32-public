@@ -242,12 +242,21 @@ static jmp_buf *g_recover;           /* the loop that resumes after an error, or
 static int g_nerrors;
 static FILE *g_out;
 static const char *g_out_path;
-static void fail(void)
+/* fail and die_at never return: one exits, the other longjmps to the
+ * recovery loop or exits.  Saying so lets the compiler see that a case
+ * ending in die_at() does not fall through (gcc's -Wimplicit-fallthrough,
+ * part of -Wextra; clang's -Wextra does not include it). */
+#if defined(__GNUC__) || defined(__clang__)
+#define S32_NORETURN __attribute__((noreturn))
+#else
+#define S32_NORETURN
+#endif
+S32_NORETURN static void fail(void)
 {
     if (g_out) { fclose(g_out); g_out = NULL; if (g_out_path) unlink(g_out_path); }
     exit(1);
 }
-static void die_at(int line, const char *fmt, ...)
+S32_NORETURN static void die_at(int line, const char *fmt, ...)
 {
     va_list ap;
     fprintf(stderr, "%s:%d: error: ", diag_file(line), line);
