@@ -368,6 +368,15 @@ static void entry_rules(Sym *s, int level, int line)
                 die_at(line, "'%s' is described EXTERNAL twice in this program (%s)", s->name,
                        e85 ? "X3.23-1985 X-23, EXTERNAL syntax rule 2" : "2023 13.18.22.3 rule 2");
     }
+    if (s->is_constrec) {
+        if (level != 1) die_at(line, "'%s': CONSTANT RECORD is for a level 01 entry (2023 13.16.3 rule 6)", s->name);
+        if (!ws && !g_in_local) die_at(line, "'%s': CONSTANT RECORD is for the WORKING-STORAGE or LOCAL-STORAGE SECTION (2023 13.18.15.3 rule 1)", s->name);
+        if (s->redef_clause) die_at(line, "'%s': CONSTANT RECORD and REDEFINES cannot be in the same entry (2023 13.16.3 rule 3)", s->name);
+        if (s->is_based) die_at(line, "'%s': CONSTANT RECORD and BASED cannot be in the same entry (2023 13.16.3 rule 13)", s->name);
+        if (s->is_external) die_at(line, "'%s': CONSTANT RECORD with EXTERNAL needs a TYPE clause naming a strongly typed definition (2023 13.16.3 rule 13); not implemented", s->name);
+        if (s->any_len) die_at(line, "'%s': ANY LENGTH is not in a CONSTANT RECORD entry (2023 13.16.3 rule 13)", s->name);
+        s->is_local = 0;                /* a static item, always in its initial state (2023 8.6.4): one copy, not one per activation */
+    }
     if (s->is_global) {
         if (level != 1 || (e85 && (g_in_linkage || g_in_local)))
             die_at(line, "'%s': GLOBAL is for a level 01 entry in the %s (%s)", s->name,
@@ -903,7 +912,10 @@ static void parse_data_item1(void)
                 break;
             }
             int orig = prev >= 0 && g_sym[prev].redefines >= 0 && g_sym[prev].redef_clause ? g_sym[prev].redefines : prev;
-            if (orig >= 0 && !strcmp(g_sym[orig].name, cur()->s) && g_sym[orig].level == level) s->redefines = orig;
+            if (orig >= 0 && !strcmp(g_sym[orig].name, cur()->s) && g_sym[orig].level == level) {
+                if (g_sym[orig].is_constrec) die_at(t->line, "'%s' REDEFINES the CONSTANT RECORD '%s' (2023 13.18.44.3 rule 13)", s->name, cur()->s);
+                s->redefines = orig;
+            }
             else if (prev >= 0 && !strcmp(g_sym[prev].name, cur()->s) && g_sym[prev].level == level)
                 die_at(t->line, "'%s' REDEFINES '%s', itself a redefinition: name the entry that first described the storage, '%s' (%s)",
                        s->name, cur()->s, g_sym[orig].name, e85 ? "X3.23-1985 REDEFINES syntax rule 8" : "2023 13.18.44.3 rule 7");
@@ -965,8 +977,15 @@ static void parse_data_item1(void)
             }
             continue;
         }
-        if (!strcmp(t->s, "constant") && is_word(peek(1), "record"))
-            die_at(t->line, "'%s': the CONSTANT RECORD clause is COBOL 2014, beyond %s (2023 13.18.15)", s->name, g_std < 2002 ? "COBOL 85" : "-std=2002");
+        if (!strcmp(t->s, "constant") && is_word(peek(1), "record")) {
+            /* a structured constant (2023 13.18.15): the record's content is
+             * its initial state for good -- laid out in .rodata, where a
+             * store faults -- and no statement names it or a part of it
+             * as a receiving operand (rule 2; no_constrec_recv) */
+            if (g_std < 2014) die_at(t->line, "'%s': the CONSTANT RECORD clause is COBOL 2014 (2023 13.18.15); compile with -std=2014", s->name);
+            if (s->is_constrec) die_at(t->line, "'%s': CONSTANT RECORD twice", s->name);
+            s->is_constrec = 1; advance(); advance(); continue;
+        }
         if (!strcmp(t->s, "constant"))
             die_at(t->line, g_std < 2002 ? "a constant entry (level 01 CONSTANT) is COBOL 2002; compile with -std=2002" :
                    "'%s': CONSTANT comes right after the name of a level 01 entry (2023 13.10)", s->name);

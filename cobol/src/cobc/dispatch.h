@@ -80,7 +80,7 @@ static void parse_allocate(void)
     int init = accept_word("initialized");
     Ref ret; int has_ret = 0;
     if (accept_word("returning")) {
-        parse_ref(&ret); has_ret = 1;
+        parse_ref(&ret); has_ret = 1; no_constrec_recv(&ret, "ALLOCATE RETURNING");
         if (ret.sym->is_group || ret.sym->usage != U_POINTER)
             die_at(ret.line, "ALLOCATE RETURNING '%s': a data-pointer item (2002 14.8.3 rule 3)", ret.sym->name);
     }

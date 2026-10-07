@@ -1803,7 +1803,7 @@ static void parse_procedure_division(void)
         emit("\tstw sp+0, lr");
         for (int i = g_sym_base; i < g_nsym; i++) {
             Sym *s = &g_sym[i];
-            if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->rep_ctr >= 0 || rec_indirect(s) || s->is_rc) continue;
+            if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->rep_ctr >= 0 || rec_indirect(s) || s->is_rc || s->is_constrec) continue;
             emit_la("r3", s->label);
             char il[80]; snprintf(il, sizeof il, "%s_i", s->label);
             emit_la("r4", il);

@@ -78,6 +78,7 @@ typedef struct Sym {
     int  fd;                        /* file index for an 01 under an FD, else -1 */
     int  is_linkage;                /* a LINKAGE SECTION record: storage is the caller's */
     int  is_based;                  /* a BASED entry: reached through a cell SET ADDRESS OF fills, NULL at first (2002 8.6.4) */
+    int  is_constrec;               /* CONSTANT RECORD (2014; 2023 13.18.15): a structured constant, its storage in .rodata, never a receiving operand (the subordinates: constrec_of) */
     int  param_opt;                 /* a PROCEDURE DIVISION USING OPTIONAL parameter: its cell may be NULL (omitted) */
     int  any_len;                   /* ANY LENGTH (2002; 2023 13.18.2): its size the argument's, in a writable descriptor */
     char ptr_proto[64];             /* PROGRAM-POINTER TO / FUNCTION-POINTER TO: the prototype it is restricted to, or "" */

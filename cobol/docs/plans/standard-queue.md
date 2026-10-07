@@ -340,7 +340,11 @@ item's length at the part's address (2002/acceptrm).
 - Why here: 2014 introduced zero-length literals; 2023 completes them for reference modification.
 
 **25. Structured constants.** 13.18.15 CONSTANT RECORD; Ed. 2014; M; deps none (2023 E.2 item 10
-ties EXTERNAL use to strong typing).
+ties EXTERNAL use to strong typing). DONE 2026-10-07 (data-division.md "13.18.15 CONSTANT RECORD";
+test 2014/constrec, no oracle: GnuCOBOL 4 does not take the clause; 17 bad tests): the record laid
+out in .rodata, where a store faults; the receiving uses refused at each storing statement; the
+clause rules and those of OCCURS, REDEFINES, RENAMES, SAME AS, TYPEDEF and USAGE that name it;
+EXTERNAL with it (a strongly typed TYPE) not implemented.
 - Today: "the CONSTANT RECORD clause is COBOL 2014, beyond -std=2002".
 
 **26. Function pointers.** 8.5.2.7, 8.4.3.12 (ADDRESS OF FUNCTION), 14.9.39 format 8; Ed. 2014; M;

@@ -97,6 +97,17 @@ static void emit_unit_data(void)
             emit("\t.word 0");
             continue;
         }
+        if (s->is_constrec) {
+            /* a structured constant: its content is its initial state, read-
+             * only storage (a store there is a memory fault), nothing for
+             * CANCEL to restore */
+            emit("\t.section .rodata");
+            emit("\t.p2align 3");
+            emit("%s:\t# constant record %02d %s (%d bytes)", s->label, s->level, s->name, s->image_size);
+            emit_bytes(s->image, s->image_size);
+            emit("\t.data");
+            continue;
+        }
         emit("\t.p2align 3");
         emit("%s:\t# %02d %s (%d bytes)", s->label, s->level, s->name, s->image_size);
         emit_bytes(s->image, s->image_size);

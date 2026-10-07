@@ -14,7 +14,7 @@ the end.
 | 1 | no USAGE on a level 66 or 88 entry | **refused**: bad/usage-88 (was "expected a literal in the VALUE") |
 | 2 | a subordinate's USAGE is its group's | **refused**: "USAGE of 'a' contradicts the USAGE of its group" |
 | 3 | BINARY, COMP and PACKED-DECIMAL take a numeric picture, at any level they are written | **refused**: the message now cites the rule and names PACKED-DECIMAL, not only COMP-3 |
-| 4 | no INDEX or pointer in a CONSTANT RECORD | **n/a**: CONSTANT RECORD is 2014's |
+| 4 | no INDEX or pointer in a CONSTANT RECORD | **refused** (2026-10-07; data-division.md "13.18.15 CONSTANT RECORD") |
 | 6 | COMP is COMPUTATIONAL | **test**: throughout |
 | 8, 9 | a pointer is referenced only in CALL, INITIALIZE, SET, a relation condition, a function argument or a procedure division header | **refused**: bad/std2002-pointer-ref-display -- DISPLAY of a pointer was accepted before this sweep. ALLOCATE and FREE are not implemented |
 | 10 | an index data item is referenced only in SEARCH, SET, a relation condition, a function argument or a USING phrase (85 USAGE syntax rule 5) | **refused**: bad/index-ref-display, index-ref-arith -- DISPLAY, ADD and COMPUTE of one were accepted. MOVE refuses it with its own message (bad/move-index). EVALUATE is allowed, its subjects being compared as a relation is. Index-names (INDEXED BY) are not index data items and are not affected |

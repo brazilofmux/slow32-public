@@ -24,7 +24,7 @@ share storage through the same mechanism without one.
 | 2023 9 (85: 9) | no VALUE in the entry or below it, but at level 88 | **refused**: bad/redefines-value -- accepted before |
 | 2023 11 | data-name-2 may itself be under a redefinition | **accepted** |
 | 2023 12, 14 | no pointer (object, message-tag) item either side; no strongly-typed group | **refused**: bad/std2002-redefines-pointer (accepted before), bad/std2002-strong-redefines |
-| 2023 13, 16, 17 | CONSTANT RECORD, ANY LENGTH, variable-length groups | **n/a**: 2014's |
+| 2023 13, 16, 17 | CONSTANT RECORD, ANY LENGTH, variable-length groups | **refused**: bad/std2014-constrec-redefined (rule 13, 2026-10-07); ANY LENGTH and variable-length groups: 2014's |
 | 2023 15 | the same alignment | holds: a redefinition starts where data-name-2 does |
 | GR 1 | storage from the first bit of data-name-2 | **test**: the bit sweep's tests (bad/std2002-bit-redef-byte for the refused case) |
 

@@ -668,6 +668,15 @@ static void finish_data_division(void)
         }
         int r = i; while (g_sym[r].parent >= 0) r = g_sym[r].parent;
         s->record = r;
+        if (g_sym[r].is_constrec && r != i) {
+            /* inside a structured constant (2023 13.16.3 rule 13; 13.18.38.3
+             * rules 19, 23, 33; 13.18.60.3 rule 4): what would make its size
+             * or content vary, or point outside it */
+            if (s->odo_dep[0]) die_at(s->line, "'%s': OCCURS DEPENDING ON is not inside the CONSTANT RECORD '%s' (2023 13.18.38.3 rules 19, 23)", s->name, g_sym[r].name);
+            if (s->blank_zero) die_at(s->line, "'%s': BLANK WHEN ZERO is not inside the CONSTANT RECORD '%s' (2023 13.16.3 rule 13)", s->name, g_sym[r].name);
+            if (s->sync) die_at(s->line, "'%s': SYNCHRONIZED is not inside the CONSTANT RECORD '%s' (2023 13.16.3 rule 13)", s->name, g_sym[r].name);
+            if (s->usage == U_POINTER || s->usage == U_INDEX) die_at(s->line, "'%s': USAGE %s is not inside the CONSTANT RECORD '%s' (2023 13.18.60.3 rule 4)", s->name, s->usage == U_INDEX ? "INDEX" : "POINTER", g_sym[r].name);
+        }
     }
     /* SAME RECORD AREA: no GLOBAL on its files or their records
      * (X3.23-1985 X-24, GLOBAL syntax rule 3; 2023 13.18.27.3 rule 2) */
@@ -762,6 +771,7 @@ static void finish_data_division(void)
             Sym *x = chk[k];
             if (!x) continue;
             if (x->record != s->record) die_at(s->line, "RENAMES '%s': '%s' is not in the same record", s->name, x->name);
+            if (g_sym[x->record].is_constrec) die_at(s->line, "RENAMES '%s': '%s' is in the CONSTANT RECORD '%s' (2023 13.18.45.3 rule 6)", s->name, x->name, g_sym[x->record].name);
             if (x->level == 1 || x->level == 66 || x->level == 77 || x->is_cond) die_at(s->line, "RENAMES '%s': '%s' is not a level 02-49 item", s->name, x->name);
             if (sym_in_strong(x)) die_at(s->line, "RENAMES '%s': '%s' is in a strongly-typed group (2023 13.18.57.3 rule 3)", s->name, x->name);
             if (x->ndims) die_at(s->line, "RENAMES '%s': '%s' has OCCURS or lies in a table", s->name, x->name);

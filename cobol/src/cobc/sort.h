@@ -742,7 +742,7 @@ static void parse_perform(void)
              * points (vary_augment, emit_vary_init), not where it is parsed */
             g_cond_depth++;
             v[nv].ucv0 = g_nucall;
-            parse_ref(&v[nv].var);
+            parse_ref(&v[nv].var); no_constrec_recv(&v[nv].var, "PERFORM VARYING");
             v[nv].ucv1 = g_nucall;
             g_cond_depth--;
             if (!is_numeric_sym(v[nv].var.sym)) die_at(v[nv].var.line, "the VARYING item must be numeric");

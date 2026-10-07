@@ -1400,6 +1400,7 @@ static void sfield_resolve(SField *f)
     if (f->item || f->kind == COB_SCR_VALUE || f->kind < 0 || !f->ref_tp) return;
     int save_tp = g_tp; g_tp = f->ref_tp;
     Ref rr; parse_ref(&rr);
+    if (f->kind != COB_SCR_FROM) no_constrec_recv(&rr, f->kind == COB_SCR_TO ? "a screen item's TO" : "a screen item's USING");
     g_tp = save_tp;
     f->ref = xmalloc(sizeof *f->ref); *f->ref = rr;
     if (rr.rm) sfield_part(f, &rr, f->srcline);

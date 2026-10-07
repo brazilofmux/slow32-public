@@ -321,7 +321,7 @@ static void parse_call(void)
     Ref ret; int has_ret = 0;
     if (accept_word("returning") || accept_word("giving")) {
         if (g_std < 2002) bp(BP_E9_CALL_VALUE, cur()->line);
-        parse_ref(&ret); has_ret = 1; cen_flag(ret.sym, CEN_CALL);
+        parse_ref(&ret); has_ret = 1; cen_flag(ret.sym, CEN_CALL); no_constrec_recv(&ret, "CALL RETURNING");
         if (ps && !g_is_function) {
             /* the returning item as the signature describes it (14.8.3) */
             FDesc rd; fdesc_of(&rd, ret.sym);

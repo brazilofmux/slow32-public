@@ -276,6 +276,7 @@ static void same_emit_entry(const Tok *tk, int a, int e, int level, int si)
     if (group && x->level != 1) die_at(nm->line, "SAME AS %s: an elementary item, or a group at level 01 (2023 13.18.49.3 rule 7)", nm->s);
     if (group && level == 77) die_at(nm->line, "SAME AS %s: a level 77 item takes an elementary item's description (2023 13.18.49.3 rule 8)", nm->s);
     for (int k = c0; k < c1; k++) if (tok_is(&g_xt[k], "occurs")) die_at(nm->line, "SAME AS %s: its description has an OCCURS clause (2023 13.18.49.3 rule 5)", nm->s);
+    for (int k = c0; k + 1 < c1; k++) if (tok_is(&g_xt[k], "constant") && tok_is(&g_xt[k + 1], "record")) die_at(nm->line, "SAME AS %s: its description has a CONSTANT RECORD clause (2023 13.18.49.3 rule 10)", nm->s);
     for (int k = c0; k < c1; k++) if (tok_is(&g_xt[k], "same") && k + 1 < c1 && tok_is(&g_xt[k + 1], "as")) die_at(nm->line, "internal: SAME AS %s: its description still holds a SAME AS clause", nm->s);
     /* the subject: level, name, the referenced clauses (less the excluded
      * ones), its own other clauses, the period */
@@ -357,6 +358,7 @@ static void expand_types(void)
         if (!(td == i + 2 || (td == i + 3 && tok_is(&g_tok[i + 2], "is"))))
             die_at(g_tok[td].line, "'%s': TYPEDEF comes immediately after the data-name (2023 13.16.3 rule 4)", g_tok[i + 1].s);
         if (lv != 1 && lv != 77) die_at(t->line, "a type declaration here is a level 01 or 77 entry");
+        for (int k = i; k + 1 < e; k++) if (tok_is(&g_tok[k], "constant") && tok_is(&g_tok[k + 1], "record")) die_at(t->line, "'%s': TYPEDEF and CONSTANT RECORD cannot be in the same entry (2023 13.16.3 rule 13)", g_tok[i + 1].s);
         if (g_ntypes == g_typecap) { g_typecap = g_typecap ? g_typecap * 2 : 16; g_types = realloc(g_types, (size_t)g_typecap * sizeof *g_types); }
         TypeDef *ty = &g_types[g_ntypes]; memset(ty, 0, sizeof *ty);
         snprintf(ty->name, sizeof ty->name, "%s", g_tok[i + 1].s);

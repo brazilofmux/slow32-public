@@ -52,7 +52,7 @@ TYPE (docs/typedef.md).
 | 2023 rule 9 (2002 13.13.2 rule 14) | a PICTURE implied by an alphanumeric, boolean or national VALUE literal | **test**: 2002/impliedpic (X(n), 1(n), N(n); implemented 2026-10-06, standard-queue item 11; no oracle: GnuCOBOL 4 requires the PICTURE) |
 | 2023 rule 10 | no VALUE on index, pointer, object items | **refused** ("a USAGE INDEX item takes no VALUE clause") |
 | 85 GR1; 2023 rule 11 | PICTURE, JUSTIFIED, BLANK WHEN ZERO (85: and SYNCHRONIZED) only for an elementary item | **refused**: bad/group-picture, bad/entry-rules (BLANK WHEN ZERO on a group, accepted before this sweep); JUSTIFIED and SYNCHRONIZED in clauses.md |
-| 2023 rules 3, 6, 13 | CONSTANT RECORD | **n/a** under -std=2002: COBOL 2014, refused naming it |
+| 2023 rules 3, 6, 13 | CONSTANT RECORD: not with REDEFINES; level 01 only; not with ANY LENGTH, BASED, BLANK WHEN ZERO, DYNAMIC LENGTH, SYNCHRONIZED, TYPEDEF or the validation clauses, in it or under it; with EXTERNAL a strongly typed TYPE | **implemented** under -std=2014 (standard-queue item 25, 2026-10-07): the section below. **Refused**: bad/std2014-constrec-redefines, -level, -sync, -blank, -external (not implemented: the strongly typed TYPE); BASED by its own level rule; TYPEDEF in a type declaration; DYNAMIC LENGTH and validation are not implemented |
 | 2023 rule 12 | SAME AS | **test**: 2002/sameas (the 13.18.49 table below; implemented 2026-10-06, standard-queue item 11; GnuCOBOL 4 agrees) |
 | 2023 rules 14, 15 | TYPE and TYPEDEF combinations | docs/typedef.md |
 | 2023 rule 16 | BASED: level 01 or 77, in WORKING-STORAGE, LOCAL-STORAGE or LINKAGE | **refused** for the level; **test**: 2002/basedlocal (in LOCAL-STORAGE, its pointer NULL at each activation, 13.18.5.4 rule 2 and 8.6.5; implemented 2026-10-06; GnuCOBOL 4 keeps the outer activation's address: docs/oracles.md) |
@@ -141,6 +141,43 @@ at run time.
 | 2002 13.15.1 (source-destination clauses) | FROM literal-1 | **test**: free/scrpicval -- the literal through the entry's PICTURE, as PICTURE with VALUE is; **refused** without a PICTURE: bad/screen-from-lit-nopic. It was "expected a data-name" (abrignoli_COBSOFT's `pic x(01) from "-"`). A numeric literal is a **gap** |
 
 
+## 13.18.15 CONSTANT RECORD (implemented 2026-10-07, standard-queue item 25)
+
+A structured constant (2014; 2023 13.18.15, D.21): a level 01 record of
+the WORKING-STORAGE or LOCAL-STORAGE SECTION whose content is its
+initial state for good. Under -std=2014. Test 2014/constrec (no oracle:
+GnuCOBOL 4 does not take the clause).
+
+How: the record is laid out as any other and emitted into `.rodata`
+(driver.h), where the emulators fault a store; CANCEL and an INITIAL
+program's re-entry skip it (nothing to restore); one in LOCAL-STORAGE
+is static all the same (8.6.4: "always in initial state"), not copied
+per activation. Each statement that stores into an operand refuses an
+item whose record carries the clause (`no_constrec_recv`, operand.h):
+MOVE and whatever moves (READ and RETURN INTO, MOVE CORRESPONDING's
+pairs), the arithmetic statements and COMPUTE, SET (an index, a pointer,
+a condition-name TO TRUE), ACCEPT, STRING INTO and POINTER, UNSTRING's
+receivers, INSPECT REPLACING, CONVERTING and the TALLYING counter,
+INITIALIZE, PERFORM and SEARCH VARYING, CALL and ALLOCATE RETURNING, a
+screen item's TO and USING. What gets past them -- a store through a
+pointer SET to its address, a called program writing a BY REFERENCE
+argument, an EXEC SQL INTO -- is the memory fault; the text (D.21)
+prohibits those "indirect means" without a rule a compiler could check.
+
+| rule | paraphrase | disposition |
+|---|---|---|
+| SR 1 | WORKING-STORAGE or LOCAL-STORAGE only | **refused**: bad/std2014-constrec-linkage |
+| SR 2 | neither the record nor an item in it a receiving operand | **refused**: bad/std2014-constrec-receiver, -set-true, -initialize, -string, -inspect, -perform; the rest by the same check |
+| GR 1 | the content: as INITIALIZE WITH FILLER ALL TO VALUE THEN TO DEFAULT would leave it | **test**: 2014/constrec (the D.21 example: a binary item zero, DISPLAY items spaces, VALUEs kept, ALL "Q", a REDEFINES inside, a VALUE under OCCURS) |
+| 11.9.10.4 GR 7 | not re-initialized with the program | **test**: 2014/constrec (a LOCAL-STORAGE one across two calls) -- it cannot change, so there is nothing to do |
+| 13.18.38.3 SR 19, 23, 33 | no OCCURS DEPENDING ON, no dynamic-capacity table under it | **refused**: bad/std2014-constrec-odo; dynamic tables are not implemented |
+| 13.18.44.3 SR 13 | nothing REDEFINES it | **refused**: bad/std2014-constrec-redefined |
+| 13.18.45.3 SR 6 | no RENAMES into it | **refused**: bad/std2014-constrec-renames |
+| 13.18.49.3 SR 10 | no SAME AS it | **refused**: bad/std2014-constrec-same-as |
+| 13.18.60.3 SR 4 | no INDEX, POINTER, PROGRAM-POINTER, FUNCTION-POINTER item in it | **refused** by the layout check (a pointer below level 01 is refused by 13.18.60.3 rule 14 first) |
+| 8.4.3.11 SR 3 (ADDRESS OF) | not of a CONSTANT RECORD item | **ruling**: taken -- ADDRESS OF a constant's item is a pointer to read-only storage, a store through it faults; refusing it would also refuse the reading uses the text allows for a pointer |
+| 14.9.1 ... (the statements' own rules) | 14.9.20.3 INITIALIZE rule 1, 14.9.39.3 SET rules, 14.9.25.3 MOVE: not a receiving item | by SR 2's check |
+
 ## 13.18.49 SAME AS (implemented 2026-10-06, standard-queue item 11)
 
 Expanded over the tokens as TYPE is (src/cobc/typedef.h,
@@ -160,7 +197,7 @@ WHEN, its subordinates following with their levels adjusted. Test:
 | SR 7 | an elementary item, or a level 1 group, of the file, working-storage, local-storage or linkage section | **refused**: bad/std2002-sameas-level |
 | SR 8 | a level 77 subject takes an elementary item | **refused**: "a level 77 item takes an elementary item's description"; **test**: 2002/sameas (`77 total same as amount`) |
 | SR 9 | no GROUP-USAGE, SIGN or USAGE on a group above the subject | **gap**: not checked |
-| SR 10 | no CONSTANT RECORD on data-name-1 | **n/a**: CONSTANT RECORD is 2014's |
+| SR 10 | no CONSTANT RECORD on data-name-1 | **refused**: bad/std2014-constrec-same-as (2026-10-07) |
 | GR 1 | as though coded in place, less the excluded clauses | **test**: 2002/sameas |
 | GR 2 | a group: the same subordinates, levels adjusted, past 49 allowed | **test**: 2002/sameas (`48 d3 same as pr`, its subordinates at 50 and 51 -- an expansion's level past 49 is taken by the parser from an expansion only, kept clear of 66, 77 and 88; a TYPE expanding past 49 likewise, 13.18.57.4 rule 2c) |
 | GR 3-5 | a USAGE, GROUP-USAGE or SIGN clause of a group above data-name-1 carries to the subject | **gap**: not carried (the referenced entry is a level 1 item or an elementary one, whose own clauses are what it has) |

@@ -421,6 +421,7 @@ static void parse_inspect_1(void)
     if (fsubj && at_word("converting")) die_at(fline, "INSPECT CONVERTING of a function: %s", fwhy);
     if (accept_word("converting")) {
         converting = 1;
+        if (!fsubj) no_constrec_recv(&item, "INSPECT CONVERTING");
         parse_operand(&from); insp_operand(&from); expect_word("to"); parse_operand(&to);
         if (to.kind == O_REF) insp_operand(&to);
         int fl = from.kind == O_FIG ? w : opnd_size(&from), tl2 = to.kind == O_FIG ? w : opnd_size(&to);
@@ -429,7 +430,7 @@ static void parse_inspect_1(void)
     } else {
         if (accept_word("tallying")) {
             for (;;) {
-                Ref tally; parse_ref(&tally);
+                Ref tally; parse_ref(&tally); no_constrec_recv(&tally, "INSPECT TALLYING");
                 if (tally.sym->is_group || tally.sym->pi.category != PIC_NUMERIC)
                     die_at(tally.line, "the INSPECT tally '%s' is an elementary numeric item (2023 14.9.22.3 rule 5)", tally.sym->name);
                 expect_word("for");
@@ -458,6 +459,7 @@ static void parse_inspect_1(void)
         }
         if (fsubj && at_word("replacing")) die_at(fline, "INSPECT REPLACING of a function: %s", fwhy);
         if (accept_word("replacing")) {
+            if (!fsubj) no_constrec_recv(&item, "INSPECT REPLACING");
             for (;;) {
                 int kind = 0;
                 if (accept_word("characters")) kind = 0;
@@ -763,7 +765,7 @@ static void parse_initialize(void)
     fig_zero.kind = O_FIG; fig_zero.tok = &tok_zero; fig_space.kind = O_FIG; fig_space.tok = &tok_space;
     while (at_operand() && !at_word("all") && !at_word("with") && !at_word("filler") && !at_word("then") && !is_word(peek(1), "to")) {
         if (n >= MAXOPS) die_at(cur()->line, "too many items in INITIALIZE");
-        Ref *r = &rs[n]; parse_ref(r);
+        Ref *r = &rs[n]; parse_ref(r); no_constrec_recv(r, "INITIALIZE");
         if (r->sym->is_cond) die_at(r->line, "INITIALIZE of a condition-name");
         if (r->sym->is_rename)
             die_at(r->line, "INITIALIZE: '%s' is a RENAMES item (%s)", r->sym->name, g_std < 2002 ? "X3.23-1985 INITIALIZE syntax rule 6" : "2023 14.9.20.3 rule 5");
@@ -973,7 +975,7 @@ static void parse_search(void)
     Sym *ix = &g_sym[tbl->idx1];
     Ref ixr; memset(&ixr, 0, sizeof ixr); ixr.sym = ix; ixr.line = t.line;
     Ref vary; int has_vary = 0;
-    if (accept_word("varying")) { parse_ref(&vary); has_vary = 1; if (!is_int_item(vary.sym)) die_at(vary.line, "VARYING needs an integer or index item"); }
+    if (accept_word("varying")) { parse_ref(&vary); has_vary = 1; no_constrec_recv(&vary, "SEARCH VARYING"); if (!is_int_item(vary.sym)) die_at(vary.line, "VARYING needs an integer or index item"); }
     if (all && has_vary) die_at(t.line, "SEARCH ALL takes no VARYING");
     if (has_vary && vary.sym->is_index && vary.sym->ix_table == sym_idx(tbl)) {
         /* VARYING one of the table's own indexes: that index does the search */

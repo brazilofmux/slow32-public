@@ -74,7 +74,7 @@ static void parse_string_1(void)
      * omitted and takes SIZE, and taskdt does exactly that (dialect.md) */
     for (int i = 0; i < n; i++) if (!has_delim[i]) { memset(&delims[i], 0, sizeof delims[i]); delims[i].kind = O_ALL; has_delim[i] = 1; }
     expect_word("into");
-    Ref dst; parse_ref(&dst);
+    Ref dst; parse_ref(&dst); no_constrec_recv(&dst, "STRING INTO");
     /* the receiver: not edited, not JUSTIFIED (X3.23 6.24.2); a group is alphanumeric */
     if (!dst.sym->is_group && (dst.sym->pi.category == PIC_NUMERIC || dst.sym->pi.edited || dst.sym->just))
         die_at(dst.line, "the STRING receiver must be an alphanumeric item, not edited or JUSTIFIED");
@@ -92,6 +92,7 @@ static void parse_string_1(void)
     Ref ptr; int has_ptr = 0;
     if (accept_word("with")) { expect_word("pointer"); parse_ref(&ptr); has_ptr = 1; }
     else if (accept_word("pointer")) { parse_ref(&ptr); has_ptr = 1; }
+    if (has_ptr) no_constrec_recv(&ptr, "STRING POINTER");
     /* the POINTER: an elementary numeric integer without P, able to hold
      * one more than the receiver's length (85 rule 5; 2023 rule 7) */
     if (has_ptr && (ptr.sym->is_group || !is_int_item(ptr.sym))) die_at(ptr.line, "the POINTER must be an integer item");
@@ -214,15 +215,15 @@ static void parse_unstring_1(void)
     Ref rcv[MAXOPS], dlm[MAXOPS], cnt[MAXOPS]; int has_d[MAXOPS], has_c[MAXOPS], n = 0;
     while (at_operand() && cur()->kind == T_WORD && !at_word("with") && !at_word("pointer") && !at_word("tallying") && !at_word("on") && !at_word("overflow") && !at_word("not") && !at_word("end-unstring")) {
         if (n >= MAXOPS) die_at(cur()->line, "too many UNSTRING receivers");
-        parse_ref(&rcv[n]);
+        parse_ref(&rcv[n]); no_constrec_recv(&rcv[n], "UNSTRING INTO");
         if (rcv[n].sym->is_cond) die_at(rcv[n].line, "'%s' is a condition-name", rcv[n].sym->name);
         if (rcv[n].sym->strong)                   /* its category is its type (8.5.2.1) */
             die_at(rcv[n].line, "the strongly-typed group '%s' is not an UNSTRING receiver (2023 14.9.48.3 rule 4)", rcv[n].sym->name);
         unstr_receiver(&rcv[n]);
         has_d[n] = has_c[n] = 0;
         for (;;) {
-            if (accept_word("delimiter")) { accept_word("in"); parse_ref(&dlm[n]); has_d[n] = 1; unstr_alnum(&dlm[n], "the DELIMITER IN item"); continue; }
-            if (accept_word("count")) { accept_word("in"); parse_ref(&cnt[n]); has_c[n] = 1; if (!is_int_item(cnt[n].sym)) die_at(cnt[n].line, "COUNT IN needs an integer item"); continue; }
+            if (accept_word("delimiter")) { accept_word("in"); parse_ref(&dlm[n]); has_d[n] = 1; no_constrec_recv(&dlm[n], "UNSTRING DELIMITER IN"); unstr_alnum(&dlm[n], "the DELIMITER IN item"); continue; }
+            if (accept_word("count")) { accept_word("in"); parse_ref(&cnt[n]); has_c[n] = 1; no_constrec_recv(&cnt[n], "UNSTRING COUNT IN"); if (!is_int_item(cnt[n].sym)) die_at(cnt[n].line, "COUNT IN needs an integer item"); continue; }
             break;
         }
         if (has_d[n] && !nd) die_at(rcv[n].line, "DELIMITER IN without DELIMITED BY");
@@ -233,6 +234,7 @@ static void parse_unstring_1(void)
     Ref ptr; int has_ptr = 0;
     if (accept_word("with")) { expect_word("pointer"); parse_ref(&ptr); has_ptr = 1; }
     else if (accept_word("pointer")) { parse_ref(&ptr); has_ptr = 1; }
+    if (has_ptr) no_constrec_recv(&ptr, "UNSTRING POINTER");
     if (has_ptr && !is_int_item(ptr.sym)) die_at(ptr.line, "the POINTER must be an integer item");
     /* wide enough for one more than the sending item's length (85 rule 5; 2023 rule 6) */
     if (has_ptr && !sym_notrunc(ptr.sym) && !src.ref.rm) {
@@ -242,7 +244,7 @@ static void parse_unstring_1(void)
                    g_std < 2002 ? "X3.23-1985 UNSTRING rule 5" : "2023 14.9.48.3 rule 6");
     }
     Ref tly; int has_tly = 0;
-    if (accept_word("tallying")) { accept_word("in"); parse_ref(&tly); has_tly = 1; if (!is_int_item(tly.sym)) die_at(tly.line, "TALLYING IN needs an integer item"); }
+    if (accept_word("tallying")) { accept_word("in"); parse_ref(&tly); has_tly = 1; no_constrec_recv(&tly, "UNSTRING TALLYING"); if (!is_int_item(tly.sym)) die_at(tly.line, "TALLYING IN needs an integer item"); }
     /* national operands (cobol ISSUES-69): the source, the delimiters, the
      * receivers and DELIMITER IN items all national, or none */
     int nat = opnd_is_national(&src);

@@ -388,12 +388,25 @@ static void parse_ref(Ref *r)
 }
 
 static int fn89_known(const char *w);
+/* a structured constant, or an item inside one, named as a receiving
+ * operand (2023 13.18.15.3 rule 2): refused at each statement that stores
+ * into its operands; a store that got past them (through a pointer, a
+ * called program's BY REFERENCE argument) faults, the storage being
+ * read-only */
+static void no_constrec_recv(const Ref *r, const char *stmt)
+{
+    const Sym *s = r->sym;
+    if (!s || s->record < 0 || s->record >= g_nsym || !g_sym[s->record].is_constrec) return;
+    die_at(r->line, "%s%s'%s' is %sthe CONSTANT RECORD '%s', which no statement names as a receiving operand (2023 13.18.15.3 rule 2)",
+           stmt ? stmt : "", stmt ? ": " : "", s->name, s == &g_sym[s->record] ? "" : "in ", g_sym[s->record].name);
+}
 /* a receiving operand that the standard keeps read-only: LINAGE-COUNTER
  * (2023 8.4.3.14.3 rule 2), LINE-COUNTER (8.4.3.15.3 rule 3); PAGE-
  * COUNTER may be set (rule 1: any integer item's context) */
 static void check_receiver(const Ref *r)
 {
     const Sym *s = r->sym;
+    no_constrec_recv(r, NULL);
     if (s->lin_file >= 0) die_at(r->line, "LINAGE-COUNTER is not a receiving operand (2023 8.4.3.14.3 rule 2)");
     if (s->rep_ctr >= 0 && !strcmp(s->name, "line-counter")) die_at(r->line, "LINE-COUNTER is not a receiving operand (2023 8.4.3.15.3 rule 3)");
 }

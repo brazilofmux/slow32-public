@@ -14,6 +14,6 @@ Swept 2026-09-29 (ISSUES-106). X3.23-1985: 5.11, the RENAMES clause
 | 2023 10 | whole bytes | **refused** when a bit item starts or ends the range inside a byte -- not checked before |
 | 2023 11 (85: 8) | data-name-3 begins no earlier than data-name-2 and ends after it | **refused**: bad/renames-range (data-name-3 inside data-name-2, or ending before it) -- only "ends before data-name-2 begins" was refused before. **test**: free/renames2 (the oracle agrees), free/renames3: data-name-2 inside data-name-3 is legal by the text; no oracle, GnuCOBOL refuses a THRU item declared before data-name-2 |
 | GR | an elementary data-name-2 alone is an alias of its description; anything else a group | **test**: free/renames (the oracle agrees) |
-| 2023 6 | CONSTANT RECORD | **n/a**: 2014's |
+| 2023 6 | CONSTANT RECORD | **refused**: bad/std2014-constrec-renames (2026-10-07) |
 
 Nothing in CCVS-85, the Open Systems suite or majesty is affected.

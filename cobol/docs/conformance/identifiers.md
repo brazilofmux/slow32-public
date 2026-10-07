@@ -141,7 +141,7 @@ identifier itself:
 |---|---|---|
 | SR 1 | an item of the FILE, WORKING-STORAGE, LOCAL-STORAGE or LINKAGE SECTION | **test**: 2002/pointerset, 2002/basedlocal |
 | SR 2 | not an object reference nor an elementary item of a strongly-typed group | **refused**: "an item inside a strongly-typed group (2023 8.4.3.11 rule 2)" (bad/std2002-address-strong-elem); objects **n/a** |
-| SR 3 | not a CONSTANT RECORD item | CONSTANT RECORD is 2014's (queue item 23); refused as such |
+| SR 3 | not a CONSTANT RECORD item | **ruling** (2026-10-07, queue item 25): taken; the storage is read-only and a store through the pointer faults (data-division.md "13.18.15 CONSTANT RECORD") |
 | SR 4 | a bit item byte-aligned, its subscripts and start literal | **refused**: "a bit item not on a byte, or located at run time" (national-boolean.md) |
 | SR 5 | not a receiving operand | **refused**: `SET ADDRESS OF x TO p` for an item that is not BASED or a LINKAGE record (14.9.39.3 rule 18, set.md); `MOVE ADDRESS OF` refused |
 | SR 6 | not a dynamic-length item or a dynamic-capacity table's element | both 2014's (queue items 25, 24) |

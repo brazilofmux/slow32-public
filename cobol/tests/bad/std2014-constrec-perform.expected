@@ -1,0 +1,1 @@
+PERFORM VARYING: 'f2' is in the CONSTANT RECORD 'c', which no statement names as a receiving operand (2023 13.18.15.3 rule 2)

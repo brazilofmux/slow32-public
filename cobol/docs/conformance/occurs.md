@@ -23,6 +23,7 @@ read as three keys.
 | 2023 16 (85: 5) | 0 <= minimum < maximum | **refused**: bad/occurs-rules (3 TO 3) -- accepted before; a count below 1 in format 1 refused already |
 | 2023 17 (85: 6) | the DEPENDING ON item an integer | **refused** |
 | 2023 20 (85: 7) | the DEPENDING ON item not inside the table or after it in its record | **refused** |
+| 2023 19, 23, 33 | no format 2 (DEPENDING), no dynamic-capacity table in a CONSTANT RECORD | **refused**: bad/std2014-constrec-odo (2026-10-07, queue item 25); dynamic tables are not implemented |
 | 2023 22 (85: 10) | the table followed in its record only by its subordinates | **refused** (since ISSUES-95) |
 | 2023 24 | TO and DEPENDING together | **refused** ("OCCURS m TO n needs DEPENDING ON") |
 
