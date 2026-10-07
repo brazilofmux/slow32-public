@@ -1,0 +1,1 @@
+OPTIONS INITIALIZE ... TO: BINARY ZEROES, HIGH-VALUES, LOW-VALUES, SPACES, or a one-byte hexadecimal literal (2023 11.9.10.3 rule 1)

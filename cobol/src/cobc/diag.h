@@ -77,6 +77,7 @@ static char g_cursor_name[64];       /* SPECIAL-NAMES CURSOR IS name */
  * area, so a record read from one is the record of the others */
 static int g_same[8][16], g_nsame[8], g_nsame_groups;
 static int g_nohx;                           /* -fno-hot-arith: the register paths and their peepholes off -- the code as before them (a differential's other side); also a unit's INTERMEDIATE ROUNDING */
+static int g_init_fill_ws = -1, g_init_fill_ls = -1;   /* OPTIONS INITIALIZE (2023 11.9.10): the fill byte of a WORKING-STORAGE / LOCAL-STORAGE item with no VALUE, -1 none (the implementor's default) */
 static int g_iround;                         /* OPTIONS INTERMEDIATE ROUNDING (2023 11.9.11): 0 TRUNCATION (the default), 1 NEAREST-AWAY-FROM-ZERO, 2 NEAREST-EVEN, 3 PROHIBITED; in the activation descriptor's second word above bit 8 */
 static int g_refmod_zero;                    /* >>REF-MOD-ZERO-LENGTH ON is in effect: a reference modification may resolve to a zero-length item (2023 7.3.23; control.h) */
 static int g_nohx_cli;                       /* -fno-hot-arith as given: the unit's own INTERMEDIATE ROUNDING may add to it */
@@ -228,6 +229,7 @@ enum { BP_M1_VARYING_AFTER, BP_M2_ODO_RECEIVE,
        BP_E24_COMMENT_ENTRY_2002, BP_E25_CONSTANT_NO_AS, BP_E26_LEVEL_78, BP_E27_TRIM, BP_E28_ANY_LENGTH_OUTER, BP_E29_ROUNDED_MODE, BP_E30_DOLLAR_SET,
        BP_D1_MF_NO_FILE_CONTROL, BP_D2_MF_SPLIT_KEY, BP_D3_MF_STOP_NOT_LAST, BP_D4_MF_EXIT_NOT_ALONE, BP_D5_MF_NO_FILE_SECTION, BP_D6_MF_ASSIGN_IMPLICIT, BP_D7_MF_VALUE_TRUNCATED, BP_E31_ENVIRONMENT, BP_E32_SCREEN_DIMS,
        BP_G1_SET_ENVIRONMENT, BP_G2_COB_CRT_STATUS, BP_G3_ACCEPT_SCREEN_UPDATE, BP_G4_SCREEN_ITEM_STORAGE, BP_G5_SCREEN_SLOT_NO_PIC, BP_G6_SCREEN_WITH_IGNORED, BP_G7_C_JUSTIFY,
+       BP_R1_WORD_CONTINUATION, BP_R2_CALL_ON_OVERFLOW, BP_R3_CLOSE_WITH_LOCK, BP_R4_COPY_REPLACING_WORD, BP_R5_EXIT_FUNCTION,
        BP_COUNT };
 static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT] = {
     { "BP-M1", 'M', "this AFTER item's FROM reads an outer VARYING item: COBOL 85 augments the outer item before "
@@ -331,6 +333,13 @@ static const struct { const char *id; char cls; const char *msg; } g_bp[BP_COUNT
                     "does; the standard's screen formats and Micro Focus's have none (its WITH is for an item)" },
     { "BP-G7", 'G', "CALL \"C$JUSTIFY\" is ACUCOBOL's library routine, which GnuCOBOL carries; neither the standard "
                     "nor Micro Focus has it" },
+    /* class R: removed by COBOL 2023 (its Annex E.2 item 1), the language
+     * up to 2014; refused under -std=2023 */
+    { "BP-R1", 'R', "a COBOL word continued across fixed-form lines was removed by COBOL 2023 (Annex E.2 item 1; a literal may still be)" },
+    { "BP-R2", 'R', "CALL ... ON OVERFLOW was removed by COBOL 2023 (Annex E.2 item 1); ON EXCEPTION is the phrase" },
+    { "BP-R3", 'R', "CLOSE ... WITH LOCK, and its I-O status 38, were removed by COBOL 2023 (Annex E.2 item 1)" },
+    { "BP-R4", 'R', "a COPY REPLACING operand that is not pseudo-text (a word, an identifier or a literal) was removed by COBOL 2023 (Annex E.2 item 1); write ==text==" },
+    { "BP-R5", 'R', "EXIT FUNCTION and EXIT METHOD were removed by COBOL 2023 (Annex E.2 item 1); GOBACK is the statement" },
 };
 static int g_warn74;                 /* -warn-74: say where a 74-era program needs updating */
 static int g_warn_ext;               /* -warn-extensions: say where a program leaves the standard (class E) */
@@ -359,6 +368,11 @@ static void bp(int point, int line)
         die_at(line, "[%s] %s -- compile with -dialect=gnucobol", g_bp[point].id, g_bp[point].msg);
     /* 2014's own, taken early as extensions: under -std=2014 they are the language */
     if (g_std >= 2014 && (point == BP_E27_TRIM || point == BP_E29_ROUNDED_MODE)) return;
+    /* class R: the language through 2014, removed by 2023 (standard-queue item 30) */
+    if (g_bp[point].cls == 'R') {
+        if (g_std >= 2023) die_at(line, "[%s] %s -- under -std=2023 it is refused; compile with -std=2014", g_bp[point].id, g_bp[point].msg);
+        return;
+    }
     if (g_bp[point].cls == 'E' || g_bp[point].cls == 'D' || g_bp[point].cls == 'G' ? !g_warn_ext : !g_warn74) return;
     if (point == last_point && line == last_line) return;     /* one per point per line */
     last_point = point; last_line = line;

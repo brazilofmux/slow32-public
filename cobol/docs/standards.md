@@ -125,6 +125,12 @@ The focus a fork would give comes from a switch instead:
   tier 3, item 20 first: the IEEE floating-point usages); `tests/2014/`
   is its suite. The 2014 points taken early as extensions (BP-E27 TRIM,
   BP-E29 ROUNDED MODE) are the language under it, no warning.
+  **And 2023, 2026-10-07**: `-std=2023` takes everything 2014 does plus
+  the 2023 additions as they land (standard-queue.md tier 4, item 30
+  first: OPTIONS INITIALIZE, SYNCHRONIZED on a group), and refuses what
+  2023 removed -- the class R behaviour points (behavior-points.md),
+  the language through 2014 and silent there; `tests/2023/` is its
+  suite, GnuCOBOL's -std=cobol2014 its nearest oracle.
 
 **There is no `-std=74`, but 74-era programs are welcome.** The line is
 between 74 *programs* and 74 *semantics*.

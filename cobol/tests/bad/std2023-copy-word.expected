@@ -1,0 +1,1 @@
+[BP-R4] a COPY REPLACING operand that is not pseudo-text (a word, an identifier or a literal) was removed by COBOL 2023 (Annex E.2 item 1); write ==text== -- under -std=2023 it is refused; compile with -std=2014

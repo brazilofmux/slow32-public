@@ -5,7 +5,8 @@
 #   file checked by hand against the 1985 PICTURE clause text.
 # Gate 2 (programs): every tests/fixed/*.cbl and tests/free/*.cbl (and
 #   tests/2002/*.cbl, under -std=2002 and the oracle's -std=cobol2002; tests/2014/*.cbl
-#   likewise under -std=2014 and -std=cobol2014) compiled by
+#   likewise under -std=2014 and -std=cobol2014; tests/2023/*.cbl under -std=2023, the oracle's
+#   -std=cobol2014, its nearest) compiled by
 #   s32-cobc, assembled, linked with libcob and the SLOW-32 libc, run on the
 #   emulator; stdout must match the .expected file.  The same source is also
 #   compiled and run under GnuCOBOL and diffed, so the .expected files are
@@ -341,7 +342,7 @@ fi
 # --- Gate 2: programs --------------------------------------------------
 # tests/2002 is Stage B (docs/standards.md): free format, compiled with
 # -std=2002, the oracle with -std=cobol2002.  fixed/ and free/ are -std=85.
-for fmt in fixed free 2002 2014; do
+for fmt in fixed free 2002 2014 2023; do
     for src in "$HERE/$fmt"/*.cbl; do
         [ -e "$src" ] || continue
         name="$(basename "$src" .cbl)"
@@ -349,6 +350,7 @@ for fmt in fixed free 2002 2014; do
         flag="-$fmt"; stdflag=""; ostd="-std=cobol85"
         [ "$fmt" = 2002 ] && { flag="-free"; stdflag="-std=2002"; ostd="-std=cobol2002"; }
         [ "$fmt" = 2014 ] && { flag="-free"; stdflag="-std=2014"; ostd="-std=cobol2014"; }
+        [ "$fmt" = 2023 ] && { flag="-free"; stdflag="-std=2023"; ostd="-std=cobol2014"; }
         # mf-*: Micro Focus's dialect (-dialect=mf), the oracle in GnuCOBOL's -std=mf
         case "$name" in mf-*) stdflag="$stdflag -dialect=mf"; ostd="-std=mf" ;; esac
         # gnu-*: GnuCOBOL's own forms (-dialect=gnucobol), the oracle in its default dialect
@@ -472,7 +474,7 @@ for src in "$HERE/bad"/*.cbl; do
     exp="${src%.cbl}.expected"
     flag="-fixed"; grep -q "^identification division" "$src" && flag="-free"
     [ "$name" = "mixed-format" ] && flag="-fixed"
-    stdflag=""; case "$name" in std2002-*) stdflag="-std=2002" ;; std2014-*) stdflag="-std=2014" ;; esac   # a Stage B refusal; a 2014 one
+    stdflag=""; case "$name" in std2002-*) stdflag="-std=2002" ;; std2014-*) stdflag="-std=2014" ;; std2023-*) stdflag="-std=2023" ;; esac   # a Stage B refusal; a 2014 one; a 2023 one
     case "$name" in mf-*) stdflag="$stdflag -dialect=mf" ;; esac         # refused even under Micro Focus's dialect
     if "$COBC" $flag $stdflag -I "$HERE/copy" -o "$W/$name.s" "$src" 2>"$W/$name.err"; then
         report "bad/$name" 1 "was accepted"; continue

@@ -75,3 +75,4 @@ standard's titles or text:
 | 7.3.5, 7.3.6, 7.3.7, 7.3.8, 7.3.9, 7.3.11, 7.3.13, 7.3.16, 7.3.17, 7.3.18, 7.3.19, 7.3.21 conditional compilation: DEFINE, EVALUATE, IF; CALL-CONVENTION, LEAP-SECOND, LISTING, PAGE; PROPAGATE | [directives.md](directives.md) | 2026-10-06 |
 | 14.9.49 USE | [use.md](use.md) | 2026-09-28 |
 | 2014 Annex E.2 items 1-29, E.3 items 7, 18, 19: the edition's substantive changes, under -std=2002 and -std=2014 | [edition-2014.md](edition-2014.md) | 2026-10-07 |
+| 2023 Annex E.2 items 1 and 21 (the removals, class R points), 11.9.10 OPTIONS INITIALIZE, 13.18.55 SYNCHRONIZED on a group; `-std=2023` | [edition-2023.md](edition-2023.md) | 2026-10-07 |

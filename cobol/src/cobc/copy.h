@@ -367,6 +367,7 @@ static int tw_operands(const TWV *v, int *j, TWOp **ops, const TW *stmt, const c
                 const TW *a = *j < v->n ? &v->w[*j] : stmt;
                 if (a->kind != TW_WORD && a->kind != TW_LIT)
                     tw_die(stmt, "%s: expected a word, a literal or ==pseudo-text==", what);
+                bp(BP_R4_COPY_REPLACING_WORD, a->line);      /* removed by 2023 (Annex E.2 item 1) */
                 int s = (*j)++;
                 if (a->kind == TW_WORD) {
                     /* an identifier: qualifiers and a subscript list belong to it */

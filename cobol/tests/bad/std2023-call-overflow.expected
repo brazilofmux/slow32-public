@@ -1,0 +1,1 @@
+[BP-R2] CALL ... ON OVERFLOW was removed by COBOL 2023 (Annex E.2 item 1); ON EXCEPTION is the phrase -- under -std=2023 it is refused; compile with -std=2014

@@ -275,6 +275,7 @@ static void set_dims(int si, int ndims, const int *counts, const int *strides)
 
 /* write VALUE / default initialisation for one instance of s at image+base */
 static void init_instance(Sym *rec, int si, int base, int defaults);
+static int g_cur_rec_local, g_cur_rec_file;   /* the record whose image is being made: LOCAL-STORAGE's, a file's (OPTIONS INITIALIZE names sections) */
 
 /* a national figurative constant's character (2023 8.3.3.6) */
 static unsigned nat_fig(const char *w)
@@ -421,6 +422,8 @@ static void init_elem(Sym *s, unsigned char *p, int defaults)
         free(t);
         return;
     }
+    int ofill = g_cur_rec_local ? g_init_fill_ls : g_init_fill_ws;   /* OPTIONS INITIALIZE: the section's fill byte for an item with no VALUE */
+    if (defaults && ofill >= 0 && !s->value_tok && !g_cur_rec_file) { memset(p, ofill, s->size); return; }
     if (defaults) {
         if (s->usage == U_DISPLAY && !numeric) memset(p, ' ', s->size);
         else if (s->usage == U_DISPLAY) {
@@ -648,6 +651,13 @@ static void finish_data_division(void)
             snprintf(s->label, sizeof s->label, ".Lf%d_%d", g_files[s->lin_file].unit, s->lin_file);
             continue;
         }
+        /* SYNCHRONIZED on a group (2023 13.18.55.4 rule 1): as if on each
+         * elementary item below it, before the record is laid out */
+        if (g_std >= 2023)
+            for (int g = i; g < g_nsym && (g == i || g_sym[g].parent >= 0 || g_sym[g].is_cond); g++)
+                if (g_sym[g].is_group && g_sym[g].sync && !g_sym[g].is_cond)
+                    for (int j = g + 1; j < g_nsym; j++)
+                        if (!g_sym[j].is_cond && !g_sym[j].is_index && !g_sym[j].is_group && sym_under(j, g) && !g_sym[j].sync) g_sym[j].sync = g_sym[g].sync;
         layout(i, 0);
         set_dims(i, 0, zero, zero);
         s->record = i;
@@ -1011,6 +1021,7 @@ static void finish_data_division(void)
         if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->rep_ctr >= 0) continue;
         if (s->image_size < s->size) s->image_size = s->size;
         s->image = xmalloc(s->image_size);
+        g_cur_rec_local = s->is_local; g_cur_rec_file = s->fd >= 0;
         if (!s->is_linkage && !s->is_external) init_record(s, i, 1);
     }
     for (int i = g_sym_base; i < g_nsym; i++) {

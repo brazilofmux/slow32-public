@@ -53,9 +53,11 @@ static void clause_rules_one(int i)
                e85 ? "X3.23-1985 JUSTIFIED syntax rule 3" : "2023 13.18.32.3 rule 3");
     if (s->aligned && !((!s->is_group && s->usage == U_BIT) || s->bitgroup))
         die_at(s->line, "'%s': ALIGNED is for a bit group item or an elementary bit data item (2023 13.18.1.3 rule 1)", s->name);
-    if (s->sync && s->is_group)          /* a group: COBOL 2023 (13.18.55.3 rule 1; E.3.2 item 6) */
-        die_at(s->line, "'%s' is a group; SYNCHRONIZED is for an elementary item until COBOL 2023 (%s)", s->name,
-               e85 ? "X3.23-1985 SYNCHRONIZED syntax rule 1" : "2002 13.16.53 rule 1, 2014 likewise");
+    if (s->sync && s->is_group) {        /* a group: COBOL 2023 (13.18.55.3 rule 1; E.3.2 item 6): as if on each elementary item below (GR 1) */
+        if (g_std < 2023)
+            die_at(s->line, "'%s' is a group; SYNCHRONIZED is for an elementary item until COBOL 2023 (%s); compile with -std=2023", s->name,
+                   e85 ? "X3.23-1985 SYNCHRONIZED syntax rule 1" : "2002 13.16.53 rule 1, 2014 likewise");
+    }
     if (e85 && s->is_group && (s->sign_lead || s->sign_sep)) {
         int any = 0;
         for (int j = i + 1; j < g_nsym && !any; j++)

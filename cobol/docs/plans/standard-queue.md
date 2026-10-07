@@ -390,7 +390,11 @@ fixed form, CALL ON OVERFLOW, CLOSE WITH LOCK and status 38, figurative constant
 (except ALL digit-literal to integer, BP-O9), non-pseudo- text COPY REPLACING operands, EXIT
 FUNCTION/METHOD, QUOTE to numeric. The OPTIONS INITIALIZE clause (11.9.10) lands here too. Also:
 SYNCHRONIZED on a group is a 2023 addition (E.3.2 item 6; 2002 13.16.53 SR 1 says elementary only)
-but -std=2002 accepts it today.
+but -std=2002 accepts it today. DONE 2026-10-07 (docs/conformance/edition-2023.md; behavior-points.md
+class R; tests 2023/optinit, 2014/removed2023, fixed/wordcont; eight bad tests): -std=2023; BP-R1 to
+BP-R5 taken through 2014 and refused under 2023 (EXIT FUNCTION implemented with its point; the
+figurative-constant moves were refused under every edition already, by ruling); OPTIONS
+INITIALIZE; SYNCHRONIZED on a group as 2023 has it (the note above was stale: -std=2002 refused it).
 
 **31. Small 2023 statements.** S each; deps 30.
 - XOR / EXCLUSIVE-OR logical operator (8.7.6) -- bare parse error today.

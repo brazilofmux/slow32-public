@@ -1,0 +1,1 @@
+'g' is a group; SYNCHRONIZED is for an elementary item until COBOL 2023 (2002 13.16.53 rule 1, 2014 likewise); compile with -std=2023

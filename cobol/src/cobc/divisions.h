@@ -82,6 +82,34 @@ static void parse_options_paragraph(void)
             if (!n) die_at(cur()->line, "%s DEFAULT IS: expected %sHIGH-ORDER-LEFT or HIGH-ORDER-RIGHT", dec ? "FLOAT-DECIMAL" : "FLOAT-BINARY", dec ? "BINARY-ENCODING, DECIMAL-ENCODING, " : "");
             any = 1; continue;
         }
+        if (at_word("initialize") && !sym_lookup_quiet("initialize")) {
+            /* INITIALIZE {ALL | section ...} SECTION TO fill (2023 11.9.10): the
+             * byte every item of the section without a VALUE starts with --
+             * where the implementor's defaults (spaces, zeros by category)
+             * stood; a screen section has no storage of its own here */
+            if (g_std < 2023) die_at(cur()->line, "the OPTIONS INITIALIZE clause is COBOL 2023 (11.9.10); compile with -std=2023");
+            advance();
+            int ws = 0, ls = 0, n = 0;
+            for (;;) {
+                if (accept_word("all")) { ws = ls = 1; n++; }
+                else if (accept_word("working-storage")) { ws = 1; n++; }
+                else if (accept_word("local-storage")) { ls = 1; n++; }
+                else if (accept_word("screen")) { n++; }
+                else break;
+            }
+            if (!n) die_at(cur()->line, "OPTIONS INITIALIZE: expected ALL, WORKING-STORAGE, LOCAL-STORAGE or SCREEN");
+            accept_word("section"); expect_word("to");
+            int fill;
+            if (accept_word("binary")) { if (!accept_word("zeroes") && !accept_word("zeros")) die_at(cur()->line, "OPTIONS INITIALIZE: expected BINARY ZEROES"); fill = 0; }
+            else if (accept_word("high-values") || accept_word("high-value")) fill = 0xFF;
+            else if (accept_word("low-values") || accept_word("low-value")) fill = 0;
+            else if (accept_word("spaces") || accept_word("space")) fill = ' ';
+            else if (cur()->kind == T_STR && cur()->hex && cur()->len == 1) { fill = (unsigned char)cur()->s[0]; advance(); }
+            else die_at(cur()->line, "OPTIONS INITIALIZE ... TO: BINARY ZEROES, HIGH-VALUES, LOW-VALUES, SPACES, or a one-byte hexadecimal literal (2023 11.9.10.3 rule 1)");
+            if (ws) g_init_fill_ws = fill;
+            if (ls) g_init_fill_ls = fill;
+            any = 1; continue;
+        }
         if (at_word("intermediate")) {
             /* INTERMEDIATE ROUNDING IS mode (2014; 2023 11.9.11): how the
              * intermediates of this unit's arithmetic lose digits -- with

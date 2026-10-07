@@ -46,7 +46,7 @@ fi
 export S32_LIBCOB="$W/libcob.s32o" S32_ESQL="$W/esql.s32o"
 
 pass=0; fail=0
-for fmt in fixed free 2002 2014; do
+for fmt in fixed free 2002 2014 2023; do
     for src in "$HERE/$fmt"/*.cbl; do
         name="$(basename "$src" .cbl)"
         exp="${src%.cbl}.expected"
@@ -54,6 +54,7 @@ for fmt in fixed free 2002 2014; do
         flag="-$fmt"; std=""
         [ "$fmt" = 2002 ] && { flag="-free"; std="-std=2002"; }
         [ "$fmt" = 2014 ] && { flag="-free"; std="-std=2014"; }
+        [ "$fmt" = 2023 ] && { flag="-free"; std="-std=2023"; }
         case "$name" in mf-*) std="$std -dialect=mf" ;; esac
         case "$name" in gnu-*) std="$std -dialect=gnucobol" ;; esac
         extra=()

@@ -274,6 +274,11 @@ static int read_lines(const char *path, SrcLine **out, int *nout)
                     }
                     size_t pl = strlen(prev), cl = (size_t)(ce - c);
                     if (!open) while (pl > 0 && (prev[pl - 1] == ' ' || prev[pl - 1] == '\t')) pl--;
+                    /* outside a literal, a line whose last character and a
+                     * continuation whose first are both word characters join a
+                     * word: the continuation of COBOL words, removed by 2023 */
+                    if (!open && pl > 0 && cl > 0 && (isalnum((unsigned char)prev[pl - 1]) || prev[pl - 1] == '-') &&
+                        (isalnum((unsigned char)*c) || *c == '-')) bp(BP_R1_WORD_CONTINUATION, lineno);
                     char *joined = xmalloc(pl + cl + 1);
                     memcpy(joined, prev, pl); memcpy(joined + pl, c, cl); joined[pl + cl] = 0;
                     free(prev);

@@ -341,6 +341,7 @@ static void parse_call(void)
      * with checking on and no ON EXCEPTION phrase, the CALL resolves at run
      * time, and a missing program raises the condition (fatal) */
     int on_phrase = at_word("on") || at_word("exception") || at_word("overflow");
+    if (at_word("overflow") || (at_word("on") && is_word(peek(1), "overflow"))) bp(BP_R2_CALL_ON_OVERFLOW, cur()->line);
     int ecnf = !on_phrase && ec_on_name(dynamic == 3 ? "EC-PROGRAM-PTR-NULL" : "EC-PROGRAM-NOT-FOUND");
     int Lcall = new_label(), Lafter = new_label();
     char vis[32]; snprintf(vis, sizeof vis, ".Lvis%d", g_unit);

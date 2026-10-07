@@ -109,14 +109,14 @@ carry the compiler's own reason.
 | 11.6 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 11.7 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 11.8 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
-| 11.9 |  | [options](options.md) | 7 | 6 | 0 | 0 | 0 |
-| 11.9.5 | ARITHMETIC clause | [options](options.md) | 7 | 6 | 0 | 0 | 0 |
-| 11.9.6 | DEFAULT ROUNDED clause | [options](options.md) | 7 | 6 | 0 | 0 | 0 |
-| 11.9.7 | ENTRY-CONVENTION clause | [options](options.md) | 7 | 6 | 0 | 0 | 0 |
-| 11.9.8 | FLOAT-BINARY clause | [options](options.md) | 7 | 6 | 0 | 0 | 0 |
-| 11.9.9 | FLOAT-DECIMAL clause | [options](options.md) | 7 | 6 | 0 | 0 | 0 |
-| 11.9.10 | INITIALIZE clause | [options](options.md) | 7 | 6 | 0 | 0 | 0 |
-| 11.9.11 | INTERMEDIATE ROUNDING clause | [options](options.md) | 7 | 6 | 0 | 0 | 0 |
+| 11.9 |  | [edition-2023](edition-2023.md), [options](options.md) | 8 | 10 | 0 | 0 | 0 |
+| 11.9.5 | ARITHMETIC clause | [options](options.md) | 8 | 5 | 0 | 0 | 0 |
+| 11.9.6 | DEFAULT ROUNDED clause | [options](options.md) | 8 | 5 | 0 | 0 | 0 |
+| 11.9.7 | ENTRY-CONVENTION clause | [options](options.md) | 8 | 5 | 0 | 0 | 0 |
+| 11.9.8 | FLOAT-BINARY clause | [options](options.md) | 8 | 5 | 0 | 0 | 0 |
+| 11.9.9 | FLOAT-DECIMAL clause | [options](options.md) | 8 | 5 | 0 | 0 | 0 |
+| 11.9.10 | INITIALIZE clause | [edition-2023](edition-2023.md), [options](options.md) | 8 | 10 | 0 | 0 | 0 |
+| 11.9.11 | INTERMEDIATE ROUNDING clause | [options](options.md) | 8 | 5 | 0 | 0 | 0 |
 | 11.10 |  | [call](call.md) | 30 | 18 | 3 | 4 | 0 |
 
 ## 12 ENVIRONMENT DIVISION
@@ -195,8 +195,8 @@ carry the compiler's own reason.
 | 13.18.29 | GROUP-USAGE clause | [national-boolean](national-boolean.md) | 15 | 13 | 0 | 0 | 1 |
 | 13.18.30 | HIGHLIGHT clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.31 | INVALID clause | *unswept* | | | | | |
-| 13.18.32 | JUSTIFIED clause | [clauses](clauses.md) | 0 | 8 | 0 | 0 | 0 |
-| 13.18.33 |  | [clauses](clauses.md) | 0 | 8 | 0 | 0 | 0 |
+| 13.18.32 | JUSTIFIED clause | [clauses](clauses.md) | 1 | 7 | 0 | 0 | 0 |
+| 13.18.33 |  | [clauses](clauses.md) | 1 | 7 | 0 | 0 | 0 |
 | 13.18.34 | LINAGE clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
 | 13.18.35 | LINE clause | [reportwriter](reportwriter.md), [screen](screen.md) | 43 | 59 | 11 | 1 | 4 |
 | 13.18.36 | LOWLIGHT clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
@@ -215,10 +215,10 @@ carry the compiler's own reason.
 | 13.18.49 | SAME AS clause | [data-division](data-division.md) | 39 | 48 | 5 | 3 | 5 |
 | 13.18.50 | SECURE clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.51 | SELECT WHEN clause | *unswept* | | | | | |
-| 13.18.52 | SIGN clause | [clauses](clauses.md) | 0 | 8 | 0 | 0 | 0 |
+| 13.18.52 | SIGN clause | [clauses](clauses.md) | 1 | 7 | 0 | 0 | 0 |
 | 13.18.53 | SOURCE clause | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
 | 13.18.54 | SUM clause | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
-| 13.18.55 | SYNCHRONIZED clause | [clauses](clauses.md) | 0 | 8 | 0 | 0 | 0 |
+| 13.18.55 | SYNCHRONIZED clause | [clauses](clauses.md), [edition-2023](edition-2023.md) | 1 | 12 | 0 | 0 | 0 |
 | 13.18.56 | TO clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.57 | TYPE clause | [environment](environment.md), [reportwriter](reportwriter.md) | 29 | 71 | 3 | 3 | 4 |
 | 13.18.58 | TYPEDEF clause | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |

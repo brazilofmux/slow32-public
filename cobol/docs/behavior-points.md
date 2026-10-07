@@ -21,6 +21,8 @@ Plan and reasoning: [standards.md](standards.md).
 | `-std=85` (also `-std=cobol85`) | the default and the only standard implemented: X3.23-1985 and the X3.23a-1989 intrinsic functions |
 | `-std=74` | refused: 74 programs compile as 85, and `-warn-74` flags where their meaning changed; full COBOL 74 is cobc370's job |
 | `-std=2002` | COBOL 2002, Stage B of standards.md (any other `-std` is refused) |
+| `-std=2014` | COBOL 2014 (2026-10-07): 2002 and the 2014 additions as they land |
+| `-std=2023` | COBOL 2023 (2026-10-07): 2014 and the 2023 additions as they land; the class R points below are refused |
 | `-dialect=mf` | Micro Focus's own forms, the class D points below, are taken; without it each is refused naming the switch. The one dialect: by the user's ruling (2026-10-01) Micro Focus is the dialect a switch is for, its reference being written down as the standard is |
 | `-dialect=gnucobol` | GnuCOBOL's own forms, the class G points below, are taken; without it each is refused naming the switch. By the user's ruling (2026-10-04) a GnuCOBOL form is accepted only under this switch and is **never the default**: much of what is GnuCOBOL's alone is its C runtime showing through the language |
 | `-warn-74` | warns at every class M, O and N point below; never changes the output |
@@ -203,6 +205,25 @@ integers). docs/standards.md, "Later revisions", has the survey.
 
 Under -std=2014 (2026-10-07) BP-E27 and BP-E29 are the language and
 raise no warning; under -std=85 and -std=2002 they stay class E.
+
+## Class R — removed by COBOL 2023 (`-std=2023` refuses them)
+
+ISO/IEC 1989:2023 Annex E.2 item 1 removed seven elements that 2014 had
+not marked obsolete, and item 21 four it had. Each is the language under
+`-std=85`, `-std=2002` and `-std=2014`, taken silently (no flag warns of
+a standard form), and refused under `-std=2023`, the message naming
+`-std=2014`. Audited 2026-10-07 (standard-queue item 30; the 2023
+page, docs/conformance/edition-2023.md, has the rest of E.2).
+
+| id | construct | effect here |
+|---|---|---|
+| BP-R1 | a COBOL word continued across fixed-form lines (a hyphen in column 7 joining two word halves) | taken: the halves joined (reader.h); a literal continued is still the language. fixed/wordcont; bad/std2023-word-continuation |
+| BP-R2 | `CALL ... ON OVERFLOW` | taken as ON EXCEPTION. 2014/removed2023; bad/std2023-call-overflow |
+| BP-R3 | `CLOSE ... WITH LOCK`, and I-O status 38 on a later OPEN | taken (io-statements.md). 2014/removed2023; bad/std2023-close-lock |
+| BP-R4 | a COPY REPLACING operand that is a word, an identifier or a literal, not ==pseudo-text== | taken as pseudo-text of one text-word (copy.md). 2014/removed2023; bad/std2023-copy-word |
+| BP-R5 | `EXIT FUNCTION` (and `EXIT METHOD`, object orientation's, out of scope) | EXIT FUNCTION taken as a function's GOBACK (implemented with the point: it was not before). 2014/removed2023; bad/std2023-exit-function |
+| (no point) | the figurative constants SPACE, QUOTE, HIGH-VALUE, LOW-VALUE and ALL literal moved to a numeric or numeric-edited item (item 1; QUOTE was item 21's) | **refused** under every edition already, by the compiler's ruling (move.md rule 5); ALL digits to an integer item stays BP-O9 |
+| (no point) | FLAG-85, FLAG-NATIVE-ARITHMETIC, ARITHMETIC IS STANDARD (item 21) | not implemented under any edition (directives.md, options.md) |
 
 ## Class G — GnuCOBOL's own forms (`-dialect=gnucobol`)
 

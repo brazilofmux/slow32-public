@@ -99,6 +99,7 @@ static void parse_close(void)
         int norewind = 0;
         if (accept_word("no")) { accept_word("rewind"); norewind = 1; if (!seq) die_at(cur()->line, "CLOSE ... NO REWIND '%s': for a sequential file (%s)", f->name, crule); }
         if (!seq && (at_word("reel") || at_word("unit"))) die_at(cur()->line, "CLOSE %s '%s': for a sequential file (%s)", cur()->s, f->name, crule);
+        if (at_word("lock")) bp(BP_R3_CLOSE_WITH_LOCK, cur()->line);
         if (accept_word("lock")) lock = 1;
         if (lock) { emit_file_addr("r3", f); emit_call("cob_close_lock"); emit("\tstw sp+%d, r1", SLOT_C); emit_use_dispatch(f, 0); n++; continue; }
         if (accept_word("reel") || accept_word("unit")) {
