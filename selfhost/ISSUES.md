@@ -2944,7 +2944,7 @@ gcc (the ten with a 64-bit static or global failed before), a wider probe
 a static double, a null pointer) matching too, and dbt-x64 and s32fast-hir
 rebuilt by it both giving 0x8d70b2b on benchmark_core.
 
-### 81. stage08 cc: a struct member read after a call took its address reloads from the wrong frame offset
+### 81. [RESOLVED 2026-10-07] stage08 cc: a struct member read after a call took its address reloaded from the wrong frame offset
 
 Found 2026-10-07 by cobol's selfhost-libcob gate when libcob gained
 the IEEE formats (cobol queue item 20): a FLOAT-DECIMAL-16 value came
@@ -2966,9 +2966,20 @@ through a pointer (`&w->scale`) and a pointer variable (`int *p =
 argument, and the read of that member after the call. Not the whole
 struct being address-taken: `&w` passed is fine (bt3 of the session).
 
-Worked around in cobol/libcob/libcob.c (sf_store copies the scale to a
-local int before `ieee_round_digits(w.m, &sc, ...)`), with a comment
-naming this issue; nothing else in libcob takes a local struct member's
-address as a call argument (grep). The repair belongs here: the
-address-taken member must spill the whole object, or the reload must
-use the object's frame offset.
+Worked around in cobol/libcob/libcob.c the same day (sf_store copies the
+scale to a local int before `ieee_round_digits(w.m, &sc, ...)`; the
+form stays, it is fine code), then found and fixed here. The mechanism:
+the BURG selects the read as LOAD(faddr) while its operand is
+ADDI(alloca, 20), and takes the offset from `bg_foff[operand]` at
+emission; the register allocator's call-split (`ra_new_split_copy`)
+then replaces that operand with a fresh HI_COPY for the value's life
+after the call -- whose `bg_foff` it initialized to 0. So the fold stood
+and the offset was gone: fp + 0 + 20. The copy now carries its source's
+frame-address chain (`bg_foff`) and symbol-address chain (`bg_ssym`,
+`bg_soff`; the saddr path was guarded and merely lost its fold). Why
+only the direct `&local.member` form showed it: a plain local or an
+array element is not an ADDI chain, and `int *p = &w.scale; touch(p)`
+gives the load a different operand. Test
+`tests/test_member_addr_call.c` (exit 1 on the old compiler, 0 on
+this); stage08's suite with the self-rebuild gate; cobol's
+selfhost-libcob gate against the rebuilt kit.
