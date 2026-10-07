@@ -1,7 +1,8 @@
 identification division.
 program-id. p10.
-*> assign-using: refused by name (docs/plans/standard-queue.md item 1); it was a
-*> parse error naming something else.
+*> ASSIGN USING a data-name declared nowhere: the standard's form names
+*> an alphanumeric data item (2023 12.4.5.2 rule 7); the implicit
+*> declaration is Micro Focus's, for ASSIGN TO (BP-D6, -dialect=mf).
 environment division.
 input-output section.
 file-control.
@@ -11,7 +12,6 @@ file section.
 fd f.
 01 r pic x(10).
 working-storage section.
-01 k pic x(8) value 'x.dat'.
 procedure division.
-    display k
+    open input f
     goback.

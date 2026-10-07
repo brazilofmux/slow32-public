@@ -1,0 +1,10 @@
+blank  31
+one    first file          
+two    second file         
+rel b  01 one   
+rel a  02 two   
+idx b  k2bbbb
+idx a  k1aaaa
+sorted a   
+sorted b   
+sorted c   

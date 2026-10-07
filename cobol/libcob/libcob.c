@@ -2513,13 +2513,18 @@ void cob_io_unhandled(cob_file *f)
     cob_fatal(msg);
 }
 
+/* the file's name: the ASSIGN item's content, trailing spaces dropped
+ * (2023 12.4.5 GR 3b, dynamic assignment); all spaces, the literal when
+ * there is one (ASSIGN TO literal USING data-name: the literal is the
+ * name until the item is set -- the implementor's consistency rule), else
+ * "", which OPEN turns into 31 */
 static const char *file_name(cob_file *f)
 {
     static char name[256];
-    if (f->assign) return f->assign;
-    int n = (int)f->assign_len;
+    int n = f->assign_item ? (int)f->assign_len : 0;
     if (n > 255) n = 255;
     while (n > 0 && f->assign_item[n - 1] == ' ') n--;
+    if (n == 0) return f->assign ? f->assign : "";
     memcpy(name, f->assign_item, n); name[n] = 0;
     return name;
 }
@@ -2554,6 +2559,7 @@ int cob_open(cob_file *f, int mode)
     f->open_try = (unsigned)mode;
     if (f->open_mode) return file_result(f, "41", "OPEN of a file already open");
     remember_file(f);          /* every organisation: STOP RUN closes what is left open */
+    if (!*file_name(f)) return file_result(f, "31", "the ASSIGN item holds no file name");   /* 9.1.13.6 (2): dynamic assignment with nothing to go on */
     if (f->org == COB_ORG_INDEXED) return idx_open(f, mode);
     const char *name = file_name(f);
     const char *fm = mode == COB_OPEN_INPUT ? "rb" : mode == COB_OPEN_OUTPUT ? "wb"

@@ -577,6 +577,7 @@ static void finish_data_division(void)
     for (int i = g_file_base; i < g_nfile; i++) {
         File *f = &g_files[i];
         if (!f->assign_name[0] || sym_lookup_quiet(f->assign_name)) continue;
+        if (f->assign_using) die_at(f->line, "ASSIGN USING %s: no such data item (2023 12.4.5.2 rule 7 wants an alphanumeric item)", f->assign_name);
         int dup = 0;
         for (int j = g_file_base; j < i; j++) if (!strcmp(g_files[j].assign_name, f->assign_name)) dup = 1;
         if (dup) continue;
@@ -829,14 +830,15 @@ static void finish_data_division(void)
              * as any other (2023 12.4.5.2 rule 7 forbids only an item of the
              * file's own record): its address goes into the file at entry,
              * as a FILE STATUS item's does.  Its length must be known. */
+            const char *how = f->assign_using ? "USING" : "TO";
             if (f->assign_sym->any_len)
-                die_at(f->line, "ASSIGN TO '%s': an item of ANY LENGTH cannot name a file yet", f->assign_name);
+                die_at(f->line, "ASSIGN %s '%s': an item of ANY LENGTH cannot name a file yet", how, f->assign_name);
             if (f->assign_sym->record >= 0 && g_sym[f->assign_sym->record].fd == i)
-                die_at(f->line, "ASSIGN TO '%s': an item of the file's own record cannot name it (2023 12.4.5.2 rule 7)", f->assign_name);
+                die_at(f->line, "ASSIGN %s '%s': an item of the file's own record cannot name it (2023 12.4.5.2 rule 7)", how, f->assign_name);
             /* a group is alphanumeric by the standard's own rules: the suite
              * builds "GENTBL." + module suffix that way (GitHub #34) */
-            if (!f->assign_sym->is_group && f->assign_sym->pi.category == PIC_NUMERIC)
-                die_at(f->line, "ASSIGN TO '%s': the data-name must be alphanumeric", f->assign_name);
+            if (!f->assign_sym->is_group && (f->assign_using ? f->assign_sym->pi.category != PIC_ALPHANUMERIC : f->assign_sym->pi.category == PIC_NUMERIC))
+                die_at(f->line, "ASSIGN %s '%s': the data-name must be alphanumeric (2023 12.4.5.2 rule 7)", how, f->assign_name);
         }
         if (f->status_name[0]) {
             char *sq[1] = { f->status_qual };

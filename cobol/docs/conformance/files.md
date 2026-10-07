@@ -17,6 +17,8 @@ LOCK, RETRY) do not -- file sharing and record locking, optional since
 | rule | paraphrase | disposition |
 |---|---|---|
 | 2023 2-3 | one SELECT per file, and an FD or SD for it | **refused** ("SELECTed twice", "has no FD") |
+| 2023 12.4.5 ASSIGN USING data-name, 9.1.21 dynamic file assignment (2002) | the item's content when the OPEN, SORT or MERGE runs names the physical file (GR 3b): one connector, several files in turn; a MOVE takes effect at the next OPEN; the item alphanumeric and not of the file's own record (rule 7) | **implemented** (queue item 18): 2002/assignusing (line sequential, relative, indexed, an SD; GnuCOBOL agrees). Trailing spaces are dropped; all spaces, OPEN gives **31** (9.1.13.6 rule 2). **Refused**: an undeclared item (bad/std2002-assign-using-undeclared -- the implicit declaration is Micro Focus's, for ASSIGN TO, BP-D6), a numeric one (-numeric), one of the file's record (-ownrecord), the phrase under -std=85 (std85-assign-using). ASSIGN TO data-name, Micro Focus's spelling, is taken as before |
+| 2023 12.4.5 ASSIGN TO literal USING data-name (GR 3b, 4: the implementor's consistency rule) | **ruling**: the item names the file when it holds a name, the literal while the item holds spaces -- a default in the entry, overridden at run time | **implemented**: 2002/assignusing2 (no oracle: GnuCOBOL 4 does not take the two together) |
 | 2023 12.4.5.5.2 rule 2 (85: the sequential format) | no ACCESS RANDOM or DYNAMIC for a sequential file | **refused**: bad/select-access -- accepted before this sweep |
 | 2023 8 (85: the indexed format) | RECORD KEY only for an indexed file | **refused**: bad/select-record-key -- accepted before |
 | 2023 10 | RELATIVE KEY with random or dynamic access | **refused** |

@@ -213,9 +213,32 @@ static void parse_select(void)
         Tok *t = cur();
         if (t->kind != T_WORD) die_at(t->line, "unexpected %s in SELECT %s", tok_desc(t), f->name);
         if (accept_word("assign")) {
-            if (at_word("using")) die_at(cur()->line, "ASSIGN USING (a file-name in a data item) is COBOL 2002 (2023 12.4.5); not implemented");
+            /* ASSIGN {TO literal [USING data-name] | USING data-name} (2023
+             * 12.4.5, 9.1.21): USING is dynamic file assignment, the item's
+             * content at OPEN, SORT or MERGE naming the file; with a literal
+             * too, the item names it unless its content is spaces, when the
+             * literal does (the implementor's consistency rule, GR 3-4).
+             * ASSIGN TO data-name, Micro Focus's spelling of the same, is
+             * taken as before (BP-D6 when the item is declared nowhere). */
+            if (at_word("using")) {
+                if (g_std < 2002) die_at(cur()->line, "ASSIGN USING data-name is COBOL 2002 (2023 12.4.5); compile with -std=2002");
+                advance();
+                if (cur()->kind != T_WORD) die_at(cur()->line, "expected a data-name after ASSIGN USING");
+                snprintf(f->assign_name, sizeof f->assign_name, "%s", cur()->s); advance();
+                f->assign_using = 1; has_assign = 1;
+                continue;
+            }
             accept_word("to");
-            if (cur()->kind == T_STR) { f->assign_lit = cur(); advance(); }
+            if (cur()->kind == T_STR) {
+                f->assign_lit = cur(); advance();
+                if (at_word("using")) {
+                    if (g_std < 2002) die_at(cur()->line, "ASSIGN TO literal USING data-name is COBOL 2002 (2023 12.4.5); compile with -std=2002");
+                    advance();
+                    if (cur()->kind != T_WORD) die_at(cur()->line, "expected a data-name after ASSIGN ... USING");
+                    snprintf(f->assign_name, sizeof f->assign_name, "%s", cur()->s); advance();
+                    f->assign_using = 1;
+                }
+            }
             else if (cur()->kind == T_PERIOD || at_word("file") || at_word("organization") || at_word("organisation") || at_word("access") || at_word("record") || at_word("status"))
                 has_assign = -1;                        /* nothing named: allowed for an EXTERNAL file */
             else if (cur()->kind == T_WORD) {

@@ -96,7 +96,7 @@ COBOL 2002/2023 (Stage B):
 - the 2002-2023 constructs that used to meet a parse error and are now
   refused by name (docs/plans/standard-queue.md item 1; tests/bad/
   std2002-*): record locking and RETRY, OPEN SHARING,
-  DELETE FILE, WRITE with BEFORE and AFTER, ASSIGN USING, SUPPRESS WHEN,
+  DELETE FILE, WRITE with BEFORE and AFTER, SUPPRESS WHEN,
   FORMAT and SELECT WHEN, USAGE
   FUNCTION-POINTER / MESSAGE-TAG, PACKED-DECIMAL NO
   SIGN, OCCURS DYNAMIC, the

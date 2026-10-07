@@ -471,6 +471,7 @@ typedef struct {
     int  line, org, access, optional;
     Tok *assign_lit;                 /* ASSIGN TO literal ... */
     char assign_name[64];            /* ... or to a data-name */
+    int  assign_using;               /* ASSIGN USING data-name (2002): the name is the standard's dynamic assignment, declared or refused */
     char status_name[64], key_name[64], report_name[64];
     char (*report_more)[64]; int nreport_more;    /* REPORTS ARE: the names after the first */
     char status_qual[64];            /* FILE STATUS name OF group */

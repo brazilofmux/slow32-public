@@ -246,7 +246,11 @@ fixed place to step back to); LINE SEQUENTIAL stays out of both.
 - Why here: required 2002 I-O; the indexed runtime already has the positioning machinery for READ
   PREVIOUS.
 
-**18. Dynamic file assignment.** 9.1.21, 12.4.5 ASSIGN USING; Ed. 2002; S; deps none.
+**18. Dynamic file assignment.** 9.1.21, 12.4.5 ASSIGN USING; Ed. 2002; S; deps none. DONE
+2026-10-07 (files.md; tests 2002/assignusing, assignusing2): ASSIGN USING data-name, the item's
+content at OPEN, SORT or MERGE naming the file, 31 when it holds spaces; ASSIGN TO literal USING
+data-name, the literal until the item holds a name (ruling). The item must be declared,
+alphanumeric and outside the file's record.
 - Today: `ASSIGN USING k` refused ("unexpected 'k' in SELECT f"). `-dialect=mf` already takes an
   undeclared data-name in ASSIGN TO (BP-D6); the standard form is the same run-time path.
 - Why here: required, small, and the run-time path exists.

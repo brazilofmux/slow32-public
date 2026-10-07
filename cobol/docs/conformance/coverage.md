@@ -128,19 +128,19 @@ carry the compiler's own reason.
 | 12.3.6 |  | *unswept* | | | | | |
 | 12.3.7 |  | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 12.3.8 |  | [call](call.md) | 30 | 18 | 3 | 4 | 0 |
-| 12.4 |  | [files](files.md) | 2 | 17 | 0 | 0 | 0 |
+| 12.4 |  | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
 | 12.4.4 |  | *unswept* | | | | | |
-| 12.4.5 |  | [files](files.md) | 2 | 17 | 0 | 0 | 0 |
-| 12.4.5.5 |  | [files](files.md) | 2 | 17 | 0 | 0 | 0 |
-| 12.4.5.6 | ALTERNATE RECORD KEY clause | [files](files.md) | 2 | 17 | 0 | 0 | 0 |
-| 12.4.5.7 | COLLATING SEQUENCE clause | [files](files.md) | 2 | 17 | 0 | 0 | 0 |
-| 12.4.5.8 | FILE STATUS clause | [files](files.md) | 2 | 17 | 0 | 0 | 0 |
+| 12.4.5 |  | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
+| 12.4.5.5 |  | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
+| 12.4.5.6 | ALTERNATE RECORD KEY clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
+| 12.4.5.7 | COLLATING SEQUENCE clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
+| 12.4.5.8 | FILE STATUS clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
 | 12.4.5.9 | LOCK MODE clause | *unswept* | | | | | |
-| 12.4.5.10 | ORGANIZATION clause | [files](files.md) | 2 | 17 | 0 | 0 | 0 |
-| 12.4.5.11 | RECORD DELIMITER clause | [files](files.md) | 2 | 17 | 0 | 0 | 0 |
-| 12.4.5.12 | RECORD KEY clause | [files](files.md) | 2 | 17 | 0 | 0 | 0 |
-| 12.4.5.13 | RELATIVE KEY clause | [files](files.md) | 2 | 17 | 0 | 0 | 0 |
-| 12.4.5.14 | RESERVE clause | [files](files.md) | 2 | 17 | 0 | 0 | 0 |
+| 12.4.5.10 | ORGANIZATION clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
+| 12.4.5.11 | RECORD DELIMITER clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
+| 12.4.5.12 | RECORD KEY clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
+| 12.4.5.13 | RELATIVE KEY clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
+| 12.4.5.14 | RESERVE clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
 | 12.4.5.15 | SHARING clause | *unswept* | | | | | |
 | 12.4.6 |  | *unswept* | | | | | |
 | 12.4.6.3 | APPLY COMMIT clause | *unswept* | | | | | |
@@ -151,8 +151,8 @@ carry the compiler's own reason.
 | section | element | page | test | refused | gap | n/a | ruling |
 |---|---|---|---|---|---|---|---|
 | 13.2 |  | [data-division](data-division.md) | 37 | 40 | 5 | 4 | 4 |
-| 13.4 |  | [data-division](data-division.md), [files](files.md) | 39 | 57 | 5 | 4 | 4 |
-| 13.4.5 |  | [data-division](data-division.md), [files](files.md) | 39 | 57 | 5 | 4 | 4 |
+| 13.4 |  | [data-division](data-division.md), [files](files.md) | 39 | 58 | 5 | 4 | 4 |
+| 13.4.5 |  | [data-division](data-division.md), [files](files.md) | 39 | 58 | 5 | 4 | 4 |
 | 13.4.6 |  | *unswept* | | | | | |
 | 13.5 |  | [data-division](data-division.md) | 37 | 40 | 5 | 4 | 4 |
 | 13.6 |  | [data-division](data-division.md) | 37 | 40 | 5 | 4 | 4 |
@@ -173,7 +173,7 @@ carry the compiler's own reason.
 | 13.18.7 | BLANK clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.8 | BLANK WHEN ZERO clause | [picture](picture.md) | 11 | 24 | 0 | 5 | 1 |
 | 13.18.9 | BLINK clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
-| 13.18.10 | BLOCK CONTAINS clause | [files](files.md) | 2 | 17 | 0 | 0 | 0 |
+| 13.18.10 | BLOCK CONTAINS clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
 | 13.18.11 | CLASS clause | *unswept* | | | | | |
 | 13.18.12 | CODE clause | *unswept* | | | | | |
 | 13.18.13 | CODE-SET clause | [data-division](data-division.md) | 37 | 40 | 5 | 4 | 4 |
@@ -197,7 +197,7 @@ carry the compiler's own reason.
 | 13.18.31 | INVALID clause | *unswept* | | | | | |
 | 13.18.32 | JUSTIFIED clause | [clauses](clauses.md) | 0 | 8 | 0 | 0 | 0 |
 | 13.18.33 |  | [clauses](clauses.md) | 0 | 8 | 0 | 0 | 0 |
-| 13.18.34 | LINAGE clause | [files](files.md) | 2 | 17 | 0 | 0 | 0 |
+| 13.18.34 | LINAGE clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
 | 13.18.35 | LINE clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.36 | LOWLIGHT clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.37 | NEXT GROUP clause | *unswept* | | | | | |
@@ -206,7 +206,7 @@ carry the compiler's own reason.
 | 13.18.40 | PICTURE clause | [national-boolean](national-boolean.md), [picture](picture.md) | 26 | 37 | 0 | 5 | 2 |
 | 13.18.41 | PRESENT WHEN clause | *unswept* | | | | | |
 | 13.18.42 | PROPERTY clause | *unswept* | | | | | |
-| 13.18.43 | RECORD clause | [files](files.md) | 2 | 17 | 0 | 0 | 0 |
+| 13.18.43 | RECORD clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
 | 13.18.44 | REDEFINES clause | [redefines](redefines.md) | 1 | 9 | 0 | 1 | 0 |
 | 13.18.45 | RENAMES clause | [renames](renames.md) | 2 | 7 | 0 | 1 | 0 |
 | 13.18.46 | REPORT clause | *unswept* | | | | | |
