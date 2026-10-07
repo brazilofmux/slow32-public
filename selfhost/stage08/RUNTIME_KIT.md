@@ -103,6 +103,16 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Fixed 2026-10-07, eighth batch (`e98e1926`).  In `cc.s32x` only:
+
+- **A struct member read after a call took its address reloaded from
+  the wrong frame offset** (selfhost ISSUES-81).  `touch(&w.scale); k =
+  w.scale;` read past the struct: the register allocator's call-split
+  copy carried no frame-address chain, and the BURG's LOAD(faddr) fold
+  took its offset from the copy, 0.  Silent, in any value of a local
+  struct's member read after such a call; found by cobol's libcob
+  (`sf_store`), which carried a workaround for one day.
+
 Fixed 2026-09-29, seventh batch (`12d523f8`).  In `cc.s32x` only; the
 tools, `crt0.s32o` and every `libc.s32a` member rebuilt content-identical:
 
