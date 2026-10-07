@@ -482,14 +482,43 @@ static void ec_turn_c(int c, int file, int on, int loc)
 }
 
 /* >>TURN name [file-name] ... CHECKING {ON [WITH LOCATION] | OFF} (2023 7.3.25) */
+/* >>PUSH / >>POP of the positional directives (2023 7.3.22, 7.3.20): the
+ * checking state, REF-MOD-ZERO-LENGTH, FLAG-14 -- each its own stack */
+static EcState g_push_ecs[64]; static int g_npush_ecs;
+static int g_push_rmz[64], g_npush_rmz;
+static unsigned char g_push_f14[64][NF14]; static int g_npush_f14;
+static void push_dir_pos(const char *nm, int all, Tok *d)
+{
+    if (all || !strcasecmp(nm, "turn")) { if (g_npush_ecs == 64) die_at(d->line, ">>PUSH TURN nests deeper than 64"); ecs_copy(&g_push_ecs[g_npush_ecs++], &g_ecs); }
+    if (all || !strcasecmp(nm, "ref-mod-zero-length")) { if (g_npush_rmz == 64) die_at(d->line, ">>PUSH REF-MOD-ZERO-LENGTH nests deeper than 64"); g_push_rmz[g_npush_rmz++] = g_refmod_zero | (g_refmod_zero_set << 1); }
+    if (all || !strcasecmp(nm, "flag-14")) { if (g_npush_f14 == 64) die_at(d->line, ">>PUSH FLAG-14 nests deeper than 64"); memcpy(g_push_f14[g_npush_f14++], g_f14, sizeof g_f14); }
+}
+static void pop_dir_pos(const char *nm, int all, Tok *d)
+{
+    int did = 0;
+    if (all || !strcasecmp(nm, "turn")) { if (g_npush_ecs) { ecs_copy(&g_ecs, &g_push_ecs[--g_npush_ecs]); did = 1; } }
+    if (all || !strcasecmp(nm, "ref-mod-zero-length")) { if (g_npush_rmz) { int v = g_push_rmz[--g_npush_rmz]; g_refmod_zero = v & 1; g_refmod_zero_set = v >> 1; did = 1; } }
+    if (all || !strcasecmp(nm, "flag-14")) { if (g_npush_f14) { memcpy(g_f14, g_push_f14[--g_npush_f14], sizeof g_f14); did = 1; } }
+    if (!did && !all) warn_at(d->line, ">>POP %s: nothing was pushed (2023 7.3.20.4 rule 2)", nm);
+}
+
 static void apply_turn(Tok *d)
 {
     char buf[512]; snprintf(buf, sizeof buf, "%s", d->s);
     if (!strncasecmp(buf, "propagate-unit", 14)) { g_propagate = 1; return; }   /* copy.h's mark: >>PROPAGATE ON where this unit began */
+    if (!strncasecmp(buf, "flag-14", 7)) { const char *e = f14_set(buf, g_f14); if (e) die_at(d->line, "%s", e); return; }
+    if (!strncasecmp(buf, "push", 4) || !strncasecmp(buf, "pop", 3)) {
+        int push = tolower((unsigned char)buf[1]) == 'u';
+        const char *p = buf + (push ? 4 : 3); while (*p == ' ' || *p == '\t') p++;
+        char nm[64]; int k = 0; for (; *p && *p != ' ' && *p != '\t' && k < 63; p++) nm[k++] = (char)tolower((unsigned char)*p); nm[k] = 0;
+        int all = !strcmp(nm, "all");
+        if (push) push_dir_pos(nm, all, d); else pop_dir_pos(nm, all, d);
+        return;
+    }
     if (!strncasecmp(buf, "ref-mod-zero-length", 19)) {
         if (g_std < 2014) die_at(d->line, ">>REF-MOD-ZERO-LENGTH is COBOL 2023 (7.3.23), taken under -std=2014; compile with -std=2014");
         const char *p = buf + 19; while (*p == ' ' || *p == '\t') p++;
-        g_refmod_zero = !strncasecmp(p, "on", 2);
+        g_refmod_zero = !strncasecmp(p, "on", 2); g_refmod_zero_set = 1;
         return;
     }
     char *w[64]; int nw = 0;

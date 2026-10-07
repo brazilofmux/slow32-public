@@ -21,6 +21,7 @@ typedef struct {
     int strong;                  /* the strong-type marker expand_types() puts in an entry: its type key + 1 (cobol ISSUES-80) */
     unsigned char ff;            /* read in free form: a COPY here starts its library text so (2023 7.3.24.3 rule 3); last, after the positional initializers' fields */
     unsigned char hex;           /* T_STR: written as a hexadecimal literal X".." (CURRENCY SIGN refuses one as the symbol, 2014 E.2 item 10) */
+    unsigned char uw;            /* T_WORD: a user word by >>COBOL-WORDS UNDEFINE or SUBSTITUTE -- no keyword matches it (is_word) */
 } Tok;
 
 static Tok *g_tok;
@@ -36,7 +37,7 @@ static Tok *push_tok(int kind, int line, const char *s, int len)
     if (g_ntok == g_tcap) { g_tcap = g_tcap ? g_tcap * 2 : 1024; g_tok = realloc(g_tok, g_tcap * sizeof *g_tok); }
     Tok *t = &g_tok[g_ntok++];
     t->after_comma = (unsigned char)g_pending_comma; g_pending_comma = 0;
-    t->kind = kind; t->line = line; t->s = xstrndup(s, len); t->len = len; t->file = g_tok_file; t->dbg = g_tok_dbg; t->ff = (unsigned char)g_tok_ff; t->nat = 0; t->orig = 0; t->boolv = 0; t->strong = 0;
+    t->kind = kind; t->line = line; t->s = xstrndup(s, len); t->len = len; t->file = g_tok_file; t->dbg = g_tok_dbg; t->ff = (unsigned char)g_tok_ff; t->nat = 0; t->orig = 0; t->boolv = 0; t->strong = 0; t->hex = 0; t->uw = 0;   /* hex was left as the buffer had it (found with item 34) */
     return t;
 }
 
@@ -272,6 +273,21 @@ static void push_literal(const Lexeme *l, int line)
     }
 }
 
+/* >>COBOL-WORDS over one word (2023 7.3.10.4): a synonym or substitute
+ * becomes the standard word (its spelling kept in orig for messages); an
+ * undefined or substituted-for word is marked a user word */
+static void cobol_words_apply(Tok *w)
+{
+    for (int i = 0; i < g_ncw; i++) {
+        CobolWord *c = &g_cw[i];
+        if ((c->kind == CW_EQUATE || c->kind == CW_SUBSTITUTE) && !strcmp(w->s, c->b)) {
+            if (!w->orig) w->orig = w->s;
+            w->s = xstrndup(c->a, (int)strlen(c->a));
+            return;
+        }
+        if ((c->kind == CW_UNDEFINE || c->kind == CW_SUBSTITUTE) && !strcmp(w->s, c->a)) { w->uw = 1; return; }
+    }
+}
 static void tokenize_lines(SrcLine *lines, int nlines)
 {
     static int sql_decl_tok;    /* between EXEC SQL BEGIN and END DECLARE SECTION */
@@ -347,7 +363,8 @@ static void tokenize_lines(SrcLine *lines, int nlines)
                 if (sql_decl_tok) while (e < pe && *e == '.' && isalpha((unsigned char)e[1])) { e++; while (is_wordch((unsigned char)*e)) e++; }
                 Tok *w = push_tok(T_WORD, line, p, (int)(e - p));
                 word_lower(w);
-                if (!strcmp(w->s, "pic") || !strcmp(w->s, "picture")) pic_ctx = 1;
+                if (g_ncw) cobol_words_apply(w);
+                if (!w->uw && (!strcmp(w->s, "pic") || !strcmp(w->s, "picture"))) pic_ctx = 1;
                 next = e;
                 if (pic_ctx) {
                     const char *q = e;

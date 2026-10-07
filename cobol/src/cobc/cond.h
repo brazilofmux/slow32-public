@@ -433,6 +433,7 @@ static int parse_relop(void)
  * is the logical one. */
 static Opnd g_abbr_x; static int g_abbr_op = -1, g_abbr_neg;
 static int tok_is_relop(const Tok *t);
+static void f14_io_status(const Opnd *a, const Opnd *b, int line);
 
 static Opnd *g_cond_left;           /* a left operand supplied for the next simple condition: EVALUATE's partial expression (2023 14.9.13.3 rule 8), the subject ahead of the WHEN object */
 static Cond *parse_simple(void)
@@ -609,7 +610,25 @@ static Cond *parse_simple(void)
 
     g_abbr_x = x; g_abbr_op = op; g_abbr_neg = neg;
     rel_rules(&x, &y, line);
+    if (g_f14[F14_ST04] || g_f14[F14_ST07]) f14_io_status(&x, &y, line);
     return cond_rel(&x, op, &y, neg);
+}
+
+/* FLAG-14 I-O-STATUS-04 / -07 (2023 7.3.15.4 rules 4e-f): a FILE STATUS
+ * item compared with "04" or "07" -- statuses 2023 gives in new cases
+ * (E.2 items 7 and 11) */
+static void f14_io_status(const Opnd *a, const Opnd *b, int line)
+{
+    for (int pass = 0; pass < 2; pass++) {
+        const Opnd *item = pass ? b : a, *lit = pass ? a : b;
+        if (item->kind != O_REF || lit->kind != O_STR || lit->tok->len != 2 || lit->tok->nat) continue;
+        int is_status = 0;
+        for (int i = 0; i < g_nfile && !is_status; i++) if (g_files[i].status_sym == item->ref.sym) is_status = 1;
+        if (!is_status) continue;
+        if (!memcmp(lit->tok->s, "04", 2)) f14(F14_ST04, line, "a FILE STATUS tested for 04: 2023 sets it for a record of a length outside the FD's (E.2 item 7)");
+        if (!memcmp(lit->tok->s, "07", 2)) f14(F14_ST07, line, "a FILE STATUS tested for 07: 2023 sets it for a CLOSE phrase on a file not on unit media (E.2 item 11)");
+        return;
+    }
 }
 
 /* is t a relational operator's first word (X3.23-1985 VI-61: GREATER, >,

@@ -11,7 +11,7 @@ carry the compiler's own reason.
 
 | clause | elements | swept | not implemented | unswept |
 |---|---|---|---|---|
-| 7 COPY, REPLACE and directives | 24 | 17 | 0 | 7 |
+| 7 COPY, REPLACE and directives | 24 | 22 | 0 | 2 |
 | 8 characters, names, data, expressions, conditions | 35 | 34 | 0 | 1 |
 | 9 files and objects, general | 0 | 0 | 0 | 0 |
 | 10 the compilation group | 2 | 2 | 0 | 0 |
@@ -21,7 +21,7 @@ carry the compiler's own reason.
 | 14 PROCEDURE DIVISION | 54 | 46 | 7 | 1 |
 | 15 intrinsic functions | 94 | 89 | 5 | 0 |
 | 16 standard classes | 0 | 0 | 0 | 0 |
-| **all** | **324** | **290** | **12** | **22** |
+| **all** | **324** | **295** | **12** | **17** |
 
 ## 7 COPY, REPLACE and directives
 
@@ -29,26 +29,26 @@ carry the compiler's own reason.
 |---|---|---|---|---|---|---|---|
 | 7.2.3 | COPY statement | [copy](copy.md) | 14 | 6 | 0 | 0 | 0 |
 | 7.2.4 | REPLACE statement | [copy](copy.md) | 14 | 6 | 0 | 0 | 0 |
-| 7.3 |  | [directives](directives.md), [refmod](refmod.md), [turn](turn.md) | 59 | 30 | 0 | 6 | 3 |
-| 7.3.6 |  | [directives](directives.md) | 32 | 15 | 0 | 2 | 2 |
-| 7.3.7 |  | [directives](directives.md) | 32 | 15 | 0 | 2 | 2 |
-| 7.3.8 |  | [directives](directives.md) | 32 | 15 | 0 | 2 | 2 |
-| 7.3.8.4 |  | [directives](directives.md) | 32 | 15 | 0 | 2 | 2 |
-| 7.3.9 |  | [directives](directives.md) | 32 | 15 | 0 | 2 | 2 |
-| 7.3.10 |  | *unswept* | | | | | |
-| 7.3.11 |  | [directives](directives.md) | 32 | 15 | 0 | 2 | 2 |
-| 7.3.12 |  | *unswept* | | | | | |
-| 7.3.13 |  | [directives](directives.md) | 32 | 15 | 0 | 2 | 2 |
+| 7.3 |  | [directives](directives.md), [refmod](refmod.md), [turn](turn.md) | 79 | 35 | 2 | 7 | 3 |
+| 7.3.6 |  | [directives](directives.md) | 52 | 20 | 2 | 3 | 2 |
+| 7.3.7 |  | [directives](directives.md) | 52 | 20 | 2 | 3 | 2 |
+| 7.3.8 |  | [directives](directives.md) | 52 | 20 | 2 | 3 | 2 |
+| 7.3.8.4 |  | [directives](directives.md) | 52 | 20 | 2 | 3 | 2 |
+| 7.3.9 |  | [directives](directives.md) | 52 | 20 | 2 | 3 | 2 |
+| 7.3.10 |  | [directives](directives.md) | 52 | 20 | 2 | 3 | 2 |
+| 7.3.11 |  | [directives](directives.md) | 52 | 20 | 2 | 3 | 2 |
+| 7.3.12 |  | [directives](directives.md) | 52 | 20 | 2 | 3 | 2 |
+| 7.3.13 |  | [directives](directives.md) | 52 | 20 | 2 | 3 | 2 |
 | 7.3.14 |  | *unswept* | | | | | |
-| 7.3.15 |  | *unswept* | | | | | |
-| 7.3.16 |  | [directives](directives.md) | 32 | 15 | 0 | 2 | 2 |
-| 7.3.17 |  | [directives](directives.md) | 32 | 15 | 0 | 2 | 2 |
-| 7.3.18 |  | [directives](directives.md) | 32 | 15 | 0 | 2 | 2 |
-| 7.3.19 |  | [directives](directives.md) | 32 | 15 | 0 | 2 | 2 |
-| 7.3.20 |  | *unswept* | | | | | |
-| 7.3.21 |  | [directives](directives.md) | 32 | 15 | 0 | 2 | 2 |
-| 7.3.22 |  | *unswept* | | | | | |
-| 7.3.23 |  | [directives](directives.md), [refmod](refmod.md) | 51 | 26 | 0 | 6 | 2 |
+| 7.3.15 |  | [directives](directives.md) | 52 | 20 | 2 | 3 | 2 |
+| 7.3.16 |  | [directives](directives.md) | 52 | 20 | 2 | 3 | 2 |
+| 7.3.17 |  | [directives](directives.md) | 52 | 20 | 2 | 3 | 2 |
+| 7.3.18 |  | [directives](directives.md) | 52 | 20 | 2 | 3 | 2 |
+| 7.3.19 |  | [directives](directives.md) | 52 | 20 | 2 | 3 | 2 |
+| 7.3.20 |  | [directives](directives.md) | 52 | 20 | 2 | 3 | 2 |
+| 7.3.21 |  | [directives](directives.md) | 52 | 20 | 2 | 3 | 2 |
+| 7.3.22 |  | [directives](directives.md) | 52 | 20 | 2 | 3 | 2 |
+| 7.3.23 |  | [directives](directives.md), [refmod](refmod.md) | 71 | 31 | 2 | 7 | 2 |
 | 7.3.24 |  | *unswept* | | | | | |
 | 7.3.25 |  | [turn](turn.md) | 8 | 4 | 0 | 0 | 1 |
 
@@ -159,7 +159,7 @@ carry the compiler's own reason.
 | 13.7 |  | [data-division](data-division.md) | 39 | 48 | 5 | 3 | 5 |
 | 13.8 |  | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
 | 13.9 |  | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
-| 13.10 |  | [data-division](data-division.md), [directives](directives.md) | 71 | 63 | 5 | 5 | 7 |
+| 13.10 |  | [data-division](data-division.md), [directives](directives.md) | 91 | 68 | 7 | 6 | 7 |
 | 13.14 |  | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
 | 13.15 |  | [data-division](data-division.md), [reportwriter](reportwriter.md) | 42 | 85 | 5 | 3 | 5 |
 | 13.16 |  | [data-division](data-division.md) | 39 | 48 | 5 | 3 | 5 |

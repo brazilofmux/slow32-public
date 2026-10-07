@@ -51,6 +51,7 @@ static int at_operand(void)
     Tok *t = cur();
     if (t->kind == T_STR || t->kind == T_NUM) return 1;
     if (t->kind != T_WORD) return 0;
+    if (t->uw) return 1;                        /* a word >>COBOL-WORDS freed: a user word */
     if (is_verb(t->s) || is_terminator(t->s)) return 0;
     static const char *clause[] = { "to", "from", "by", "into", "giving", "rounded", "on",
         "size", "upon", "with", "thru", "through", "until", "varying", "times", "after",

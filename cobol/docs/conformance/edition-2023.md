@@ -50,6 +50,11 @@ SMALLEST-ALGEBRAIC, SUBSTITUTE and EXCEPTION-FILE(-N)'s file-name
 argument: functions.md "The 2023 functions" has the rows; tests
 2023/fn2023 and 2023/excfile (no oracle).
 
+## The 2023 directives (queue item 34, 2026-10-07)
+
+COBOL-WORDS, DISPLAY, FLAG-14, PUSH and POP: directives.md "The 2023
+directives" has the rows; tests 2023/directives, warn/flag14-all.
+
 ## 11.9.10 OPTIONS INITIALIZE
 
 The clause names the fill byte every item without a VALUE in the named

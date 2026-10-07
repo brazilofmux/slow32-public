@@ -476,6 +476,10 @@ static void init_elem(Sym *s, unsigned char *p, int defaults)
         /* ZERO for a numeric-edited item: the numeric literal zero, edited
          * (2023 13.18.63.3 rule 6; E.2 item 28); 1985 through 2014 a string
          * of zeros, the figurative moved as alphanumeric (2002 rule 8) */
+        if (s->pi.category == PIC_NUMERIC_EDITED && !strncmp(v->s, "zero", 4)) {
+            f14(F14_NUMED_ZERO, v->line, "VALUE ZERO of a numeric-edited item: 2023 edits the numeric zero where 2014 moved a string of zeros (E.2 item 28)");
+            f14(F14_VALUE_ZERO, v->line, "VALUE ZERO of a numeric-edited item: 2023 edits the numeric zero where 2014 moved a string of zeros (E.2 item 28)");
+        }
         if (s->pi.category == PIC_NUMERIC_EDITED && !strncmp(v->s, "zero", 4) && g_std >= 2023) { NumLit z; numlit_zero(&z); init_numed_value(s, p, &z, v); return; }
         if (numeric && s->blank_zero && !strncmp(v->s, "zero", 4)) { memset(p, ' ', s->size); return; }   /* a numeric item with BLANK WHEN ZERO is numeric-edited (13.18.8.4 rule 2): zero is spaces (GnuCOBOL agrees under 85) */
         if (numeric) {
@@ -486,7 +490,10 @@ static void init_elem(Sym *s, unsigned char *p, int defaults)
         return;
     }
     if (v->kind == T_NUM) {
-        if (s->pi.category == PIC_NUMERIC_EDITED) { NumLit n; numlit_parse(v, &n); init_numed_value(s, p, &n, v); return; }
+        if (s->pi.category == PIC_NUMERIC_EDITED) {
+            f14(F14_VALUE_EDIT, v->line, "a numeric literal as the VALUE of a numeric-edited item: 2023 edits it where 2014 wanted the literal written edited (E.2 item 27)");
+            NumLit n; numlit_parse(v, &n); init_numed_value(s, p, &n, v); return;
+        }
         if (!numeric) die_at(v->line, "a numeric VALUE is not valid for the alphanumeric item '%s'", s->name);
         NumLit n; numlit_parse(v, &n);
         store_numeric(s, &n, p, v->line);

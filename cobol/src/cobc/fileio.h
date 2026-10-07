@@ -132,6 +132,18 @@ static void io_phrase_required(File *f, const char *w, int line);
 static void parse_condition_clauses(const char *w1, const char *w2, const char *end_word)
 {
     int has_clause = at_word(w1) || at_word(w2);
+    if (g_f14[F14_IODECL] && !has_clause && !(at_word("not") && (is_word(peek(1), w1) || is_word(peek(1), w2)))) {
+        /* FLAG-14 I-O-DECLARATIVE (7.3.15.4 rule 4d): the phrase left out while
+         * a declarative for an open mode could take the condition -- INPUT
+         * or I-O for AT END, any for INVALID KEY */
+        int at_end = !strcmp(w1, "at");
+        for (int i = 0; i < g_nuse; i++)
+            if (g_use[i].ec < 0 && g_use[i].mode && (!at_end || g_use[i].mode == COB_OPEN_INPUT || g_use[i].mode == COB_OPEN_IO)) {
+                f14(F14_IODECL, cur()->line, "%s without %s while a USE procedure for an open mode is declared: 2023 runs the procedure for the condition (E.2 item 8)",
+                    at_end ? "READ" : "the statement", at_end ? "AT END" : "INVALID KEY");
+                break;
+            }
+    }
     if (g_io_file) emit_use_dispatch(g_io_file, has_clause);
     Phrases ph; memset(&ph, 0, sizeof ph);
     if (at_word(w1) || at_word(w2)) {
@@ -174,6 +186,7 @@ static void parse_read(void)
          * indexed or relative file in sequential or dynamic access
          * (2023 14.9.30.3 rules 6-7) */
         if (g_std < 2002) die_at(cur()->line, "READ PREVIOUS is COBOL 2002; compile with -std=2002");
+        f14(F14_READPREV, cur()->line, "READ PREVIOUS: 2023 changed its positioning after a START (E.2 item 16)");
         if (f->org == COB_ORG_LINESEQ) die_at(cur()->line, "READ PREVIOUS of the LINE SEQUENTIAL file '%s' (2023 14.9.30.3 rule 7)", f->name);
         if (f->access == 1) die_at(cur()->line, "READ PREVIOUS of '%s', whose access mode is RANDOM (2023 14.9.30.3 rule 6)", f->name);
         if (f->org == COB_ORG_SEQ && f->varying)
@@ -375,6 +388,8 @@ advancing_done:;
         /* [NOT] [AT] END-OF-PAGE (EOP): the runtime's verdict on this WRITE */
         for (int j = g_tp; j < g_ntok && g_tok[j].kind != T_PERIOD && !is_word(&g_tok[j], "end-write"); j++)
             if (is_word(&g_tok[j], "eop")) { free(g_tok[j].s); g_tok[j].s = xstrndup("end-of-page", 11); }
+        if (!(at_word("at") || at_word("end-of-page") || (at_word("not") && (is_word(peek(1), "at") || is_word(peek(1), "end-of-page")))))
+            f14(F14_WRITE_EOP, cur()->line, "WRITE to a LINAGE file without END-OF-PAGE: 2023 raises EC-I-O-EOP where the phrase could stand (E.2 item 20)");
         if (at_word("at") || at_word("end-of-page") || (at_word("not") && (is_word(peek(1), "at") || is_word(peek(1), "end-of-page")))) {
             emit_file_addr("r3", f);
             emit("\tldw r1, r3+%d", COB_FILE_LIN_COUNTER_OFF + 4);    /* lin_eop */

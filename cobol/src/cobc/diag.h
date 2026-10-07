@@ -80,6 +80,69 @@ static int g_nohx;                           /* -fno-hot-arith: the register pat
 static int g_init_fill_ws = -1, g_init_fill_ls = -1;   /* OPTIONS INITIALIZE (2023 11.9.10): the fill byte of a WORKING-STORAGE / LOCAL-STORAGE item with no VALUE, -1 none (the implementor's default) */
 static int g_iround;                         /* OPTIONS INTERMEDIATE ROUNDING (2023 11.9.11): 0 TRUNCATION (the default), 1 NEAREST-AWAY-FROM-ZERO, 2 NEAREST-EVEN, 3 PROHIBITED; in the activation descriptor's second word above bit 8 */
 static int g_refmod_zero;                    /* >>REF-MOD-ZERO-LENGTH ON is in effect: a reference modification may resolve to a zero-length item (2023 7.3.23; control.h) */
+static int g_refmod_zero_set;                /* ... and the directive has been written, ON or OFF (FLAG-14 REF-MOD-ZERO-LENGTH flags a reference modification while it has not) */
+
+/* >>FLAG-14 (2023 7.3.15; standard-queue item 34): the options, each a
+ * warning mechanism for a form 2023 changed from 2014 (E.2); the flags in
+ * force where the parser is (control.h apply_turn) and where the text
+ * manipulation is (copy.h: the EVALUATE directive, compile-time
+ * arithmetic are met there).  All off by default (rule 5). */
+enum { F14_ARITH, F14_EVALUATE, F14_IODECL, F14_ST04, F14_ST07, F14_NUMED_ZERO, F14_READPREV, F14_REFMOD0,
+       F14_VALUE_EDIT, F14_VALUE_FIGLEN, F14_VALUE_ZERO, F14_WRITE_EOP, NF14 };
+static const char *const g_f14_names[NF14] = { "compile-time-arithmetic-expressions", "evaluate", "i-o-declarative", "i-o-status-04",
+    "i-o-status-07", "num-ed-zero-figconst", "read-previous", "ref-mod-zero-length", "value-editing", "value-fig-con-length",
+    "value-zero", "write-end-of-page" };
+static unsigned char g_f14[NF14], g_f14_text[NF14];
+static void f14(int opt, int line, const char *fmt, ...)
+{
+    if (!g_f14[opt]) return;
+    char id[64]; int k = 0;
+    for (const char *p = g_f14_names[opt]; *p && k < 63; p++) id[k++] = (char)toupper((unsigned char)*p);
+    id[k] = 0;
+    va_list ap;
+    fprintf(stderr, "%s:%d: warning: [F14-%s] ", diag_file(line), line, id);
+    va_start(ap, fmt); vfprintf(stderr, fmt, ap); va_end(ap);
+    fprintf(stderr, " (2023 7.3.15.4)\n");
+}
+/* the directive's text after FLAG-14: options, then ON or OFF; ALL is every
+ * option.  Into flags; a bad word is the caller's error (returned) */
+static const char *f14_set(const char *text, unsigned char *flags)
+{
+    static char err[128];
+    char buf[512]; snprintf(buf, sizeof buf, "%s", text);
+    char *w[64]; int nw = 0;
+    for (char *t = strtok(buf, " \t"); t && nw < 64; t = strtok(NULL, " \t")) w[nw++] = t;
+    if (nw < 2) return ">>FLAG-14 takes options, then ON or OFF (2023 7.3.15.2)";
+    int on;
+    if (!strcasecmp(w[nw - 1], "on")) on = 1; else if (!strcasecmp(w[nw - 1], "off")) on = 0;
+    else return ">>FLAG-14 ends with ON or OFF (2023 7.3.15.2)";
+    unsigned char sel[NF14]; memset(sel, 0, sizeof sel);
+    for (int i = 1; i < nw - 1; i++) {
+        if (!strcasecmp(w[i], "all")) { memset(sel, 1, sizeof sel); continue; }
+        int k = -1;
+        for (int j = 0; j < NF14; j++) if (!strcasecmp(w[i], g_f14_names[j])) k = j;
+        if (!strcasecmp(w[i], "num-ed-zero-fig-constant")) k = F14_NUMED_ZERO;   /* rule 4g spells it so */
+        if (!strcasecmp(w[i], "value-fig-con-no-length") || !strcasecmp(w[i], "value-fig-con-no-lenth")) k = F14_VALUE_FIGLEN;   /* rule 4k */
+        if (k < 0) { snprintf(err, sizeof err, ">>FLAG-14: '%s' is not one of its options (2023 7.3.15.2)", w[i]); return err; }
+        sel[k] = 1;
+    }
+    if (nw == 2) return ">>FLAG-14 names an option, or ALL (2023 7.3.15.2)";
+    for (int j = 0; j < NF14; j++) if (sel[j]) flags[j] = (unsigned char)on;
+    return NULL;
+}
+
+/* >>COBOL-WORDS (2023 7.3.10; item 34): EQUATE a WITH b (b a synonym of
+ * a), UNDEFINE a (a a user word), SUBSTITUTE a BY b (b for a, a freed),
+ * RESERVE b (b no user word); the tokenizer rewrites the words
+ * (cobol_words_apply), user_word knows the freed and reserved ones */
+enum { CW_EQUATE = 1, CW_UNDEFINE, CW_SUBSTITUTE, CW_RESERVE };
+typedef struct { int kind; char a[64], b[64]; } CobolWord;
+static CobolWord g_cw[64]; static int g_ncw;
+static int cw_freed(const char *w)
+{
+    for (int i = 0; i < g_ncw; i++) if ((g_cw[i].kind == CW_UNDEFINE || g_cw[i].kind == CW_SUBSTITUTE) && !strcasecmp(w, g_cw[i].a)) return 1;
+    return 0;
+}
 static int g_nohx_cli;                       /* -fno-hot-arith as given: the unit's own INTERMEDIATE ROUNDING may add to it */
 static int g_float_bigend, g_float_dpd;      /* OPTIONS FLOAT-BINARY / FLOAT-DECIMAL DEFAULT (2023 11.9.8-9): HIGH-ORDER-LEFT; DECIMAL-ENCODING -- the unit's defaults for the standard floating-point usages (HIGH-ORDER-RIGHT, BINARY-ENCODING when none) */
 static int g_samefa[8][16], g_nsamefa[8], g_nsamefa_groups, g_samesa[8][16], g_nsamesa[8], g_nsamesa_groups, g_same_line;   /* SAME AREA and SAME SORT AREA clauses: checked against the FDs once they are in (2023 12.4.6.4.3 rules 5, 6, 8) */
@@ -392,6 +455,12 @@ static int g_repo_all_intrinsic;
 static void user_word(const char *w, int line, const char *what)
 {
     if (strchr(w, '_')) bp(BP_E13_UNDERSCORE, line);
+    if (g_ncw) {
+        if (cw_freed(w)) return;                    /* >>COBOL-WORDS UNDEFINE / SUBSTITUTE: a user word now (7.3.10.4 rules 3-4) */
+        for (int i = 0; i < g_ncw; i++)
+            if (g_cw[i].kind == CW_RESERVE && !strcasecmp(w, g_cw[i].a))
+                die_at(line, "'%s' is reserved by >>COBOL-WORDS RESERVE and cannot name %s (2023 7.3.10.4 rule 5)", w, what);
+    }
     /* the words COBOL 2014 reserved (2014 E.2 item 24), under -std=2014;
      * 2002's additions stay unreserved (ISSUES-43's survey) */
     static const char *const rw2014[] = { "farthest-from-zero", "float-binary-32", "float-binary-64", "float-binary-128",

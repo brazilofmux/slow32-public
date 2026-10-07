@@ -1,4 +1,4 @@
-# Compiler directives: conditional compilation (7.3.5-7.3.8, 7.3.11, 7.3.13, 7.3.16), CALL-CONVENTION, LEAP-SECOND, LISTING, PAGE (7.3.9, 7.3.17-19), PROPAGATE (7.3.21) and REF-MOD-ZERO-LENGTH (7.3.23)
+# Compiler directives: conditional compilation (7.3.5-7.3.8, 7.3.11, 7.3.13, 7.3.16), CALL-CONVENTION, LEAP-SECOND, LISTING, PAGE (7.3.9, 7.3.17-19), PROPAGATE (7.3.21), REF-MOD-ZERO-LENGTH (7.3.23), and the 2023 directives COBOL-WORDS (7.3.10), DISPLAY (7.3.12), FLAG-14 (7.3.15), POP and PUSH (7.3.20, 7.3.22)
 
 Swept 2026-10-06 (docs/plans/standard-queue.md item 6), when the three
 directives were implemented. ISO/IEC 1989:2023: 7.3.5 conditional
@@ -124,3 +124,90 @@ refmod.md, "8.5.4 Zero-length items". Tests 2014/zerolen, zerolen2.
 | 7.3.23.2 | ON or OFF | **refused**: bad/std2014-refmod-zero-arg; under -std=2002, bad/std2002-refmod-zero-directive |
 | 7.3.23.3 GR 1 | omitted or OFF: a reference modification of length zero is EC-BOUND-REF-MOD | **test**: 2014/zerolen2 (OFF after ON, checking on: the declarative runs); **refused** when the zero is written: bad/std2014-refmod-zero-written |
 | 7.3.23.1 | ON: a resultant item may be zero-length | **test**: 2014/zerolen (a computed zero, a table element's part), zerolen2 (a written `(3:0)`, national and boolean parts) |
+
+## The 2023 directives: COBOL-WORDS (7.3.10), DISPLAY (7.3.12), FLAG-14 (7.3.15), POP and PUSH (7.3.20, 7.3.22)
+
+Implemented 2026-10-07 (standard-queue item 34), each under `-std=2023`
+and refused naming the edition otherwise (bad/std2014-cobol-words,
+-flag-14, -push). Test 2023/directives (no oracle: GnuCOBOL 4 has none
+of these), warn/flag14-all (every FLAG-14 option flagged once at least;
+the harness's gate 4 knows `flag14-*`).
+
+### COBOL-WORDS (7.3.10)
+
+Read at the text manipulation stage into a table the tokenizer applies
+to every word after it (`cobol_words_apply`): a synonym (EQUATE) or a
+substitute (SUBSTITUTE) becomes the standard word, its spelling kept
+for messages; an undefined (UNDEFINE) or substituted-for word is marked
+a user word, which no keyword test matches (`is_word`, `at_operand`) and
+`user_word` lets through; a RESERVEd word is refused as a user-defined
+name. A directive affects no other directive (rule 6): the directive
+lines are read before the table applies.
+
+| rule | paraphrase | disposition |
+|---|---|---|
+| 7.3.10.3 rule 1 | before the first IDENTIFICATION DIVISION; any number of them | **test**: directives (four); **refused**: bad/std2023-cobol-words-late |
+| 7.3.10.3 rule 2 | alphanumeric literals, not hexadecimal, no space, case-insensitive | **refused**: bad/std2023-cobol-words-space, -literal; **gap**: a hexadecimal literal of the same bytes is taken |
+| 7.3.10.3 rule 3 | literal-1, -3, -4: a reserved word, a context-sensitive word or a function name | **gap**: the context-sensitive words are not tabled, so only the shape of a COBOL word is checked |
+| 7.3.10.3 rule 4 | literal-2, -5, -6: a user-defined word, not reserved | **refused**: bad/std2023-cobol-words-reserved (a reserved word), the shape of a COBOL word checked (8.3.1) |
+| 7.3.10.3 rule 5 | one word in one directive only | **refused**: bad/std2023-cobol-words-dup |
+| 7.3.10.4 rule 2 | EQUATE: a synonym | **test**: directives (`SHOW` for DISPLAY) |
+| 7.3.10.4 rule 3 | UNDEFINE: the word a user word | **test**: directives (an item named `page`) |
+| 7.3.10.4 rule 4 | SUBSTITUTE: the one word for the other, the other freed | **test**: directives (`DO` for PERFORM, an item named `perform`); **ruling**: a scope terminator is its own word (END-PERFORM stays END-PERFORM) |
+| 7.3.10.4 rule 5 | RESERVE: no user-defined word | **refused**: bad/std2023-cobol-words-reserve |
+
+### DISPLAY (7.3.12)
+
+No listing is produced, so the compile-time device is the standard
+error (rules 2, 5-6): one line per directive, `file:line: >>DISPLAY`
+and the operands in order (rules 1, 4), a number as %.18Lg, a literal
+as written. Probed by hand (the harness drops a test's stderr).
+
+| rule | paraphrase | disposition |
+|---|---|---|
+| 7.3.12.2-3 | literals, compile-time arithmetic and boolean expressions, PARAMETER variable-name; UPON device or LISTING | **test**: directives (`"k is " K " and " K * 2 + 1 UPON LISTING`); **refused**: bad/std2023-display-parameter |
+| 7.3.12.4 rule 3 | PARAMETER: the value from the environment (`-D name=value`), no transfer without one | probed: `-D BUILD=42` prints, an unknown name prints nothing |
+
+### FLAG-14 (7.3.15)
+
+A warning mechanism (rule 1) for the forms 2023 changed from 2014 (E.2):
+each option a flag the parser turns on and off where the directive
+stands (positional, as >>TURN), `[F14-OPTION]` in the warning's text so
+a test can count them; all off by default (rule 5); the directive is
+applied at every data entry too, so a VALUE option set before the data
+division is in force there. The two options the directive evaluates --
+EVALUATE and COMPILE-TIME-ARITHMETIC-EXPRESSIONS -- are met at the text
+manipulation stage, which keeps its own copy of the flags.
+
+| option (rule 4) | flagged | disposition |
+|---|---|---|
+| ALL | every option | **test**: warn/flag14-all |
+| COMPILE-TIME-ARITHMETIC-EXPRESSIONS | a compile-time division (E.2 item 6: the mode of arithmetic is the implementor's now; multiplication and addition are exact either way) | **test**: flag14-all |
+| EVALUATE | an >>EVALUATE with a >>WHEN and a >>WHEN OTHER | **test**: flag14-all |
+| I-O-DECLARATIVE | a statement that could take INVALID KEY without it, or a READ without AT END, while a USE procedure for an open mode (any; INPUT or I-O for AT END) is declared in the compilation group | **test**: flag14-all; **ruling**: any such declarative in the group, not only one that applies to the file |
+| I-O-STATUS-04, I-O-STATUS-07 | a FILE STATUS item compared with "04" or "07" | **test**: flag14-all |
+| NUM-ED-ZERO-FIGCONST, VALUE-ZERO | VALUE ZERO of a numeric-edited item (both options name it) | **test**: flag14-all (one item, both flagged); NUM-ED-ZERO-FIG-CONSTANT is taken as rule 4g spells it |
+| READ-PREVIOUS | a READ PREVIOUS | **test**: flag14-all |
+| REF-MOD-ZERO-LENGTH | a reference modification while no >>REF-MOD-ZERO-LENGTH has been written and EC-BOUND-REF-MOD is checked | **test**: flag14-all (flagged once; not after the directive is written) |
+| VALUE-EDITING | a numeric literal as the VALUE of a numeric-edited item | **test**: flag14-all |
+| VALUE-FIG-CON-LENGTH | a figurative constant as the VALUE of an item with no length | **n/a**: no item without a length takes a VALUE here (ANY LENGTH is LINKAGE's); the option is accepted and never flags; VALUE-FIG-CON-NO-LENGTH (rule 4k's spelling) taken too |
+| WRITE-END-OF-PAGE | a WRITE to a LINAGE file without END-OF-PAGE | **test**: flag14-all |
+| 7.3.15.2-3 | options then ON or OFF; between clauses or statements | **test**: flag14-all (two options turned off part way); **refused**: bad/std2023-flag-14-option, -onoff; **gap**: the position rule is not checked |
+
+### PUSH and POP (7.3.22, 7.3.20)
+
+Each directive's state is its own stack. DEFINE (the whole table of
+compilation variables), PROPAGATE and COBOL-WORDS are saved and restored
+at the text manipulation stage; SOURCE by the reader (the reference
+format); TURN (the checking state, `ecs_copy`), REF-MOD-ZERO-LENGTH and
+FLAG-14 by the parser where the directive stands. CALL-CONVENTION,
+LEAP-SECOND, LISTING and DISPLAY have no state here and are accepted.
+
+| rule | paraphrase | disposition |
+|---|---|---|
+| 7.3.22.3 rule 1, 7.3.20.3 rule 1 | not EVALUATE, IF, PAGE, POP or PUSH | **refused**: bad/std2023-push-if, -pop-unknown (not a directive) |
+| 7.3.22.4 rules 1, 3 | the state saved, the directive still in effect; every instance of a DEFINE | **test**: directives (K redefined under a PUSH, back after the POP) |
+| 7.3.20.4 rule 1 | restored | **test**: directives (TURN: checking off and back on; SOURCE: fixed and back to free) |
+| 7.3.20.4 rule 2 | a POP with nothing pushed: unsuccessful, warned of | **test**: directives (a warning on the standard error, the program compiles) |
+| 7.3.20.4 rule 3, 7.3.22.4 rule 2 | ALL | **test**: directives (PUSH ALL / POP ALL around a REF-MOD-ZERO-LENGTH ON) |
+| 7.3.22.3 rules 3-4, 7.3.20.3 rules 3-4 | ALL only in a compilation unit between clauses or statements; not in an exception-checking PERFORM | **gap**: not checked |

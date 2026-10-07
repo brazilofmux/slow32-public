@@ -88,6 +88,7 @@ static int read_lines(const char *path, SrcLine **out, int *nout)
      * rule 3); >>SOURCE FORMAT changes it for the rest of this text, and
      * the COPY's own format is untouched by what happens here (rule 5) */
     int free_form = g_read_ff_start ? g_read_ff_start - 1 : g_free;
+    int src_push[64], nsrc_push = 0;        /* >>PUSH SOURCE: the formats saved */
     char pending = 0;               /* a literal continued by a floating indicator ("- or '-) */
     while (*p) {
         char *e = strchr(p, '\n');
@@ -138,6 +139,12 @@ static int read_lines(const char *path, SrcLine **out, int *nout)
                     if (d + 1 < de && d[0] == '*' && d[1] == '>') break;      /* an inline comment ends it */
                 }
                 int k = 1;
+                if (nw >= 2 && (!strcmp(w[0], "push") || !strcmp(w[0], "pop")) && (!strcmp(w[1], "source") || !strcmp(w[1], "all"))) {
+                    /* >>PUSH / >>POP SOURCE (2023 7.3.22, 7.3.20): the reference
+                     * format is the reader's; the line goes on for the rest */
+                    if (!strcmp(w[0], "push")) { if (nsrc_push < 64) src_push[nsrc_push++] = free_form; }
+                    else if (nsrc_push) free_form = src_push[--nsrc_push];
+                }
                 if (nw && strcmp(w[0], "source")) {
                     /* every directive but SOURCE FORMAT goes on as a line of its own:
                      * the conditional ones are evaluated with the library text in

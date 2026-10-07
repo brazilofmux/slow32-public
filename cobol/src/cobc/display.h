@@ -40,7 +40,7 @@ static int stmt_positioned(void)
     for (int i = g_tp; i < g_ntok; i++) {
         Tok *t = &g_tok[i];
         if (t->kind == T_PERIOD || t->kind == T_EOF) return 0;
-        if (t->kind == T_WORD && i > g_tp && (is_verb(t->s) || is_terminator(t->s))) return 0;
+        if (t->kind == T_WORD && !t->uw && i > g_tp && (is_verb(t->s) || is_terminator(t->s))) return 0;
         if (t->kind == T_WORD) {
             /* the phrases of an enclosing statement end the DISPLAY/ACCEPT:
              * READ ... AT END DISPLAY x NOT AT END ..., COMPUTE ... ON SIZE
@@ -675,7 +675,7 @@ static void parse_display(void)
             to_err = d && d->kind == T_WORD && (!strcmp(d->s, "syserr") || !strcmp(d->s, "stderr") || mnemonic_kind(d->s) == 4);
             break;
         }
-        if (k > g_tp && (is_verb(t->s) || !strncmp(t->s, "end-", 4) || !strcmp(t->s, "else") || !strcmp(t->s, "when"))) break;
+        if (k > g_tp && !t->uw && (is_verb(t->s) || !strncmp(t->s, "end-", 4) || !strcmp(t->s, "else") || !strcmp(t->s, "when"))) break;
     }
     if (to_err) { emit("\taddi r3, r0, 1"); emit_call("cob_display_err"); }
     for (;;) {

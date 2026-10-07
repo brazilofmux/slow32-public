@@ -424,7 +424,11 @@ run-time-length results as TRIM does.
 
 **34. 2023 directives.** 7.3.12 DISPLAY, 7.3.15 FLAG-14, 7.3.20 POP, 7.3.22 PUSH, 7.3.23
 REF-MOD-ZERO-LENGTH (with 24), 7.3.10 COBOL-WORDS; S each except COBOL-WORDS (M: it edits the
-reserved-word table); deps 6.
+reserved-word table); deps 6. **DONE 2026-10-07** (conformance/directives.md "The 2023
+directives"; tests 2023/directives, warn/flag14-all; 15 bad tests). COBOL-WORDS is a table the
+tokenizer applies (a freed word carries a flag no keyword test matches); FLAG-14's twelve options
+are warnings with [F14-...] ids, the harness's gate 4 counting them; PUSH/POP keep a stack per
+directive at the stage that owns it (reader, text manipulation, parser).
 
 **35. EXTERNAL conformance checking.** EC-EXTERNAL-*; 2023 E.2 items 9, 10, 12, 24; M; deps 4.
 - Today: names are in the table; none raised (heuristic, unverified).

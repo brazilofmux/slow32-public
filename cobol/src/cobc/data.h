@@ -515,9 +515,11 @@ static int g_is_function;           /* (defined with the units, below) */
 static void parse_constant_entry(int line);
 static void const_pic_check(void);
 static int g_cpicbad[64], g_cpicbad_ci[64], g_ncpicbad;  /* PICTURE repetitions no constant could fill */
+static void apply_dirs(void);
 static void parse_data_item1(void)
 {
     int line = cur()->line;
+    apply_dirs();                           /* a >>FLAG-14 before this entry (its VALUE options; control.h) */
     int level = parse_level();
     if (level < 0) die_at(line, "expected a level number, found %s", tok_desc(cur()));
     advance();

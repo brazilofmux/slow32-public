@@ -1,8 +1,8 @@
 identification division.
 program-id. dirx.
-*> A compiler directive this compiler does not implement yet is refused
-*> by name (>>DEFINE, >>IF and >>EVALUATE are implemented since
-*> 2026-10-06; >>COBOL-WORDS is queued with the 2023 directives).
->>COBOL-WORDS RESERVE "XYZ"
+*> A compiler directive this compiler does not have is refused by name
+*> (every directive of 2023 7.3 is implemented since 2026-10-07; an
+*> implementor's directive by another name is not).
+>>FROBNICATE ON
 procedure division.
     stop run.

@@ -16,7 +16,7 @@ static const char *diag_file(int line)
 static Tok *peek(int k){ int i = g_tp + k; if (i >= g_ntok) i = g_ntok - 1; return &g_tok[i]; }
 static void advance(void) { if (g_tp < g_ntok - 1) g_tp++; }
 
-static int is_word(Tok *t, const char *w) { return t->kind == T_WORD && !strcmp(t->s, w); }
+static int is_word(Tok *t, const char *w) { return t->kind == T_WORD && !t->uw && !strcmp(t->s, w); }
 /* does a program unit begin at t: IDENTIFICATION DIVISION, or -- the
  * header being optional from 2002 on (11.1.1) -- PROGRAM-ID. or
  * FUNCTION-ID. itself */

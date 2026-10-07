@@ -597,6 +597,8 @@ static void parse_ref_1(Ref *r)
         }
         if (cur()->kind != T_COLON) die_at(cur()->line, "expected ':' in the reference modification");
         advance();
+        if (g_f14[F14_REFMOD0] && !g_refmod_zero_set && ec_on_name("EC-BOUND-REF-MOD"))
+            f14(F14_REFMOD0, cur()->line, "a reference modification with EC-BOUND-REF-MOD checked and no >>REF-MOD-ZERO-LENGTH written: 2023 lets a zero length through under the directive (E.2 item 15)");
         if (cur()->kind == T_RP) { /* (start:) runs to the end */ }
         else if (cur()->kind == T_NUM && peek(1)->kind == T_RP) {
             NumLit n; numlit_parse(cur(), &n);

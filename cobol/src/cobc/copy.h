@@ -499,10 +499,11 @@ static CVar *cvar_find(const char *nm)
     return NULL;
 }
 
-typedef struct { int parent, active, taken, eval, else_seen; CVal subj; int truth; int depth_at; } CondLevel;
+typedef struct { int parent, active, taken, eval, else_seen, when_seen; CVal subj; int truth; int depth_at; } CondLevel;
 static CondLevel g_cond[64]; static int g_ncond;
 static int cond_active(void) { return !g_ncond || g_cond[g_ncond - 1].active; }
 static int g_in_unit;       /* the text words are inside a compilation unit: IDENTIFICATION DIVISION seen, its END not yet */
+static int g_units_seen;    /* a compilation unit has begun: >>COBOL-WORDS comes before the first (2023 7.3.10.3 rule 1) */
 static int g_propagate_dir; /* >>PROPAGATE ON in force (7.3.21.4 rules 1, 3-4) */
 
 /* a directive's text as tokens */
@@ -510,6 +511,17 @@ typedef struct { char t; char *s; int len; } CTok;      /* t: 'w' word, 'n' numb
 static CTok g_ct[128]; static int g_nct, g_cp; static const TW *g_ctw;
 
 static void cdie(const char *fmt, const char *a) { tw_die(g_ctw, fmt, a); }
+/* a FLAG-14 warning at the text manipulation stage, at the directive under way */
+static void f14_text(int opt, const char *what)
+{
+    if (!g_f14_text[opt]) return;
+    unsigned char save[NF14]; memcpy(save, g_f14, sizeof save); memcpy(g_f14, g_f14_text, sizeof g_f14);
+    char id[64]; int k = 0;
+    for (const char *p = g_f14_names[opt]; *p && k < 63; p++) id[k++] = (char)toupper((unsigned char)*p);
+    id[k] = 0;
+    fprintf(stderr, "%s:%d: warning: [F14-%s] %s (2023 7.3.15.4)\n", g_ctw && g_ctw->file ? g_ctw->file : "", g_ctw ? g_ctw->line : 0, id, what);
+    memcpy(g_f14, save, sizeof g_f14);
+}
 
 static void ctok(const char *p)
 {
@@ -580,7 +592,11 @@ static long double c_term(void)
     long double x = c_prim();
     for (;;) {
         if (cop("*")) { g_cp++; if (cop("*")) cdie("no exponentiation in a compile-time expression (2023 7.3.6.2 rule 1a)%s", ""); x *= c_prim(); }
-        else if (cop("/")) { g_cp++; long double y = c_prim(); if (y == 0) cdie("a division by zero in a compile-time expression (2023 7.3.6.2 rule 1c)%s", ""); x /= y; }
+        else if (cop("/")) {
+            g_cp++; long double y = c_prim(); if (y == 0) cdie("a division by zero in a compile-time expression (2023 7.3.6.2 rule 1c)%s", "");
+            if (g_f14_text[F14_ARITH]) f14_text(F14_ARITH, "a compile-time division: the arithmetic mode and its intermediate results are the implementor's in 2023 (E.2 item 6)");
+            x /= y;
+        }
         else return x;
     }
 }
@@ -734,6 +750,53 @@ static int cv_param(const char *nm, CVal *v)
     return 0;
 }
 
+/* >>PUSH / >>POP (2023 7.3.22, 7.3.20) at the text manipulation stage: the
+ * states saved -- DEFINE (the whole table), PROPAGATE, COBOL-WORDS; the
+ * positional directives' (TURN, REF-MOD-ZERO-LENGTH, FLAG-14) are the
+ * parser's (control.h apply_turn), SOURCE the reader's */
+typedef struct { CVar *cv; int ncv; } CvarSave;
+static CvarSave g_push_cv[64]; static int g_npush_cv;
+static int g_push_prop[64], g_npush_prop;
+static struct { CobolWord *cw; int ncw; } g_push_cw[64]; static int g_npush_cw;
+static void push_dir_text(const char *name, int all)
+{
+    if (all || !strcasecmp(name, "define")) {
+        if (g_npush_cv == 64) cdie(">>PUSH DEFINE nests deeper than 64%s", "");
+        CvarSave *s = &g_push_cv[g_npush_cv++];
+        s->ncv = g_ncvar; s->cv = xmalloc((size_t)(g_ncvar ? g_ncvar : 1) * sizeof *s->cv);
+        memcpy(s->cv, g_cvar, (size_t)g_ncvar * sizeof *s->cv);
+    }
+    if (all || !strcasecmp(name, "propagate")) { if (g_npush_prop == 64) cdie(">>PUSH PROPAGATE nests deeper than 64%s", ""); g_push_prop[g_npush_prop++] = g_propagate_dir; }
+    if (all || !strcasecmp(name, "cobol-words")) {
+        if (g_npush_cw == 64) cdie(">>PUSH COBOL-WORDS nests deeper than 64%s", "");
+        g_push_cw[g_npush_cw].ncw = g_ncw; g_push_cw[g_npush_cw].cw = xmalloc((size_t)(g_ncw ? g_ncw : 1) * sizeof *g_cw);
+        memcpy(g_push_cw[g_npush_cw].cw, g_cw, (size_t)g_ncw * sizeof *g_cw); g_npush_cw++;
+    }
+}
+/* 1 when something was restored; a POP with nothing pushed is unsuccessful
+ * and warned of (7.3.20.4 rule 2) */
+static int pop_dir_text(const char *name, int all)
+{
+    int did = 0;
+    if (all || !strcasecmp(name, "define")) {
+        if (g_npush_cv) { CvarSave *s = &g_push_cv[--g_npush_cv]; g_ncvar = s->ncv; memcpy(g_cvar, s->cv, (size_t)s->ncv * sizeof *s->cv); free(s->cv); did = 1; }
+    }
+    if (all || !strcasecmp(name, "propagate")) { if (g_npush_prop) { g_propagate_dir = g_push_prop[--g_npush_prop]; did = 1; } }
+    if (all || !strcasecmp(name, "cobol-words")) {
+        if (g_npush_cw) { g_npush_cw--; g_ncw = g_push_cw[g_npush_cw].ncw; memcpy(g_cw, g_push_cw[g_npush_cw].cw, (size_t)g_ncw * sizeof *g_cw); free(g_push_cw[g_npush_cw].cw); did = 1; }
+    }
+    return did;
+}
+/* the directives PUSH and POP may name (7.3.20.3 rule 1, 7.3.22.3 rule 1):
+ * -1 unknown, 0 a text-stage or stateless one, 1 one the parser applies */
+static int push_dir_kind(const char *name)
+{
+    static const char *const text[] = { "define", "propagate", "cobol-words", "source", "call-convention", "leap-second", "listing", "display", "imp", NULL };
+    static const char *const pos[] = { "turn", "ref-mod-zero-length", "flag-14", NULL };
+    for (int i = 0; text[i]; i++) if (!strcasecmp(name, text[i])) return 0;
+    for (int i = 0; pos[i]; i++) if (!strcasecmp(name, pos[i])) return 1;
+    return -1;
+}
 /* a directive word on a TW_DIR line: 1 when it was a conditional one (or
  * omitted), and is gone; 0 when it is to be kept (>>TURN) */
 static int cond_directive(const TW *t)
@@ -797,7 +860,12 @@ static int cond_directive(const TW *t)
         if (L->depth_at != g_copy_depth) cdie("the phrases of an >>EVALUATE are all in one library text or all in source text (2023 7.3.13.3 rule 9)%s", "");
         if (L->else_seen) cdie(">>WHEN after >>WHEN OTHER%s", "");
         g_cp = 1;
-        if (cword("other") && g_nct == 2) { L->else_seen = 1; L->active = L->parent && !L->taken; if (L->active) L->taken = 1; return 1; }
+        if (cword("other") && g_nct == 2) {
+            L->else_seen = 1; L->active = L->parent && !L->taken; if (L->active) L->taken = 1;
+            if (g_f14_text[F14_EVALUATE] && L->when_seen) f14_text(F14_EVALUATE, ">>EVALUATE with both a >>WHEN and a >>WHEN OTHER");
+            return 1;
+        }
+        L->when_seen = 1;
         int r = 0;
         if (L->parent && !L->taken) {
             if (L->truth) r = c_cond();
@@ -889,6 +957,100 @@ static int cond_directive(const TW *t)
         return 1;
     }
     if (!strcasecmp(w, "turn")) return 0;
+    if (!strcasecmp(w, "display")) {
+        /* >>DISPLAY operand ... [UPON device | LISTING] (7.3.12): no listing
+         * is produced, so the compile-time device is the standard error,
+         * one line, the operands in order (rules 1, 2, 4); PARAMETER name
+         * is the variable's value from -D, nothing when it has none (rule 3) */
+        g_cp = 1;
+        char out[1024]; int o = 0; int any = 0;
+        while (g_cp < g_nct && !cword("upon")) {
+            CVal v; int have = 1;
+            if (caccept("parameter")) {
+                if (ccur()->t != 'w') cdie(">>DISPLAY PARAMETER needs a compilation-variable name%s", "");
+                have = cv_param(ccur()->s, &v); g_cp++;
+            } else c_value(&v);
+            if (!have) continue;
+            any = 1;
+            if (v.kind == 'n') o += snprintf(out + o, sizeof out - (size_t)o, "%.18Lg", v.n);
+            else for (int i = 0; i < v.len && o < (int)sizeof out - 1; i++) out[o++] = v.s[i];
+            if (o >= (int)sizeof out - 1) break;
+        }
+        out[o < (int)sizeof out ? o : (int)sizeof out - 1] = 0;
+        if (caccept("upon")) { if (!caccept("listing")) { if (ccur()->t != 'w') cdie(">>DISPLAY UPON needs LISTING or a device name%s", ""); g_cp++; } }
+        c_end("DISPLAY");
+        if (any) fprintf(stderr, "%s:%d: >>DISPLAY %s\n", t->file ? t->file : "", t->line, out);
+        return 1;
+    }
+    if (!strcasecmp(w, "flag-14")) {
+        /* >>FLAG-14 option ... ON|OFF (7.3.15): validated here, in force at
+         * this stage for the directives it flags, and kept for the parser
+         * as >>TURN is (apply_turn) for the rest */
+        if (g_std < 2023) cdie(">>FLAG-14 is COBOL 2023 (7.3.15); compile with -std=2023%s", "");
+        const char *e = f14_set(txt, g_f14_text);
+        if (e) cdie("%s", e);
+        return 0;
+    }
+    if (!strcasecmp(w, "push") || !strcasecmp(w, "pop")) {
+        /* >>PUSH / >>POP directive-name | ALL (7.3.22, 7.3.20) */
+        int push = !strcasecmp(w, "push");
+        if (g_std < 2023) cdie(">>%s is COBOL 2023 (7.3.20, 7.3.22); compile with -std=2023", push ? "PUSH" : "POP");
+        g_cp = 1;
+        if (ccur()->t != 'w') cdie(">>%s needs a directive-name or ALL (2023 7.3.20.2, 7.3.22.2)", push ? "PUSH" : "POP");
+        const char *nm = ccur()->s; g_cp++;
+        c_end(push ? "PUSH" : "POP");
+        int all = !strcasecmp(nm, "all");
+        int kind = all ? 1 : push_dir_kind(nm);
+        if (kind < 0) {
+            static const char *const no[] = { "evaluate", "if", "page", "pop", "push", "else", "end-if", "when", "end-evaluate", NULL };
+            for (int i = 0; no[i]; i++) if (!strcasecmp(nm, no[i])) cdie(">>%s names no EVALUATE, IF, PAGE, POP or PUSH directive (2023 7.3.20.3 rule 1, 7.3.22.3 rule 1)", push ? "PUSH" : "POP");
+            cdie("'%s' is not a compiler directive's name", nm);
+        }
+        if (push) push_dir_text(nm, all);
+        else if (!pop_dir_text(nm, all) && !all && kind == 0 && push_dir_kind(nm) == 0 &&
+                 (!strcasecmp(nm, "define") || !strcasecmp(nm, "propagate") || !strcasecmp(nm, "cobol-words")))
+            fprintf(stderr, "%s:%d: warning: >>POP %s: nothing was pushed (2023 7.3.20.4 rule 2)\n", t->file ? t->file : "", t->line, nm);
+        return kind == 0 ? 1 : 0;                   /* the parser's part (TURN, REF-MOD-ZERO-LENGTH, FLAG-14, ALL) stays in the text */
+    }
+    if (!strcasecmp(w, "cobol-words")) {
+        /* >>COBOL-WORDS EQUATE a WITH b | UNDEFINE a | SUBSTITUTE a BY b | RESERVE b (7.3.10) */
+        if (g_std < 2023) cdie(">>COBOL-WORDS is COBOL 2023 (7.3.10); compile with -std=2023%s", "");
+        if (g_in_unit || g_units_seen) cdie(">>COBOL-WORDS comes before the first IDENTIFICATION DIVISION of the compilation group (2023 7.3.10.3 rule 1)%s", "");
+        g_cp = 1;
+        int kind = caccept("equate") ? CW_EQUATE : caccept("undefine") ? CW_UNDEFINE : caccept("substitute") ? CW_SUBSTITUTE : caccept("reserve") ? CW_RESERVE : 0;
+        if (!kind) cdie(">>COBOL-WORDS takes EQUATE, UNDEFINE, SUBSTITUTE or RESERVE (2023 7.3.10.2)%s", "");
+        char lit[2][64]; int nl = 0;
+        for (int i = 0; i < (kind == CW_EQUATE || kind == CW_SUBSTITUTE ? 2 : 1); i++) {
+            if (i == 1 && !caccept(kind == CW_EQUATE ? "with" : "by")) cdie(">>COBOL-WORDS: expected %s between the two literals (2023 7.3.10.2)", kind == CW_EQUATE ? "WITH" : "BY");
+            CTok *c = ccur();
+            if (c->t != 'a') cdie(">>COBOL-WORDS: each operand is an alphanumeric literal (2023 7.3.10.3 rule 2)%s", "");
+            if (c->len < 1 || c->len > 63 || memchr(c->s, ' ', (size_t)c->len)) cdie(">>COBOL-WORDS: a literal is one COBOL word without a space (2023 7.3.10.3 rule 2)%s", "");
+            for (int k = 0; k < c->len; k++) lit[nl][k] = (char)tolower((unsigned char)c->s[k]);
+            lit[nl][c->len] = 0; nl++; g_cp++;
+        }
+        c_end("COBOL-WORDS");
+        /* the word freed or renamed (a, literal-1/3/4) is a reserved word,
+         * a context-sensitive word or a function name: the latter are not
+         * tabled, so only the shape is checked; the word brought in (b,
+         * literal-2/5/6) is a user-defined word, not reserved (rule 4) */
+        const char *a = kind == CW_RESERVE ? NULL : lit[0], *b = kind == CW_RESERVE ? lit[0] : kind == CW_UNDEFINE ? NULL : lit[1];
+        for (int i = 0; i < nl; i++) {
+            const char *s = lit[i]; int alpha = 0, n = (int)strlen(s);
+            for (int k = 0; k < n; k++) { if (isalpha((unsigned char)s[k])) alpha = 1; else if (!isdigit((unsigned char)s[k]) && s[k] != '-' && s[k] != '_') cdie(">>COBOL-WORDS: '%s' is not a COBOL word (2023 7.3.10.3 rules 3-4; 8.3.1)", s); }
+            if (!alpha || s[0] == '-' || s[n - 1] == '-') cdie(">>COBOL-WORDS: '%s' is not a COBOL word (2023 7.3.10.3 rules 3-4; 8.3.1)", s);
+        }
+        if (b && (is_reserved85(b) || fn89_known(b))) cdie(">>COBOL-WORDS: '%s' is a reserved word or an intrinsic function's name; the word brought in is a user-defined word (2023 7.3.10.3 rule 4)", b);
+        for (int i = 0; i < g_ncw; i++)
+            for (int j = 0; j < nl; j++)
+                if (!strcmp(lit[j], g_cw[i].a) || (g_cw[i].b[0] && !strcmp(lit[j], g_cw[i].b)))
+                    cdie(">>COBOL-WORDS: '%s' is in an earlier COBOL-WORDS directive (2023 7.3.10.3 rule 5)", lit[j]);
+        if (g_ncw == 64) cdie("more than 64 >>COBOL-WORDS directives%s", "");
+        CobolWord *c = &g_cw[g_ncw++]; memset(c, 0, sizeof *c);
+        c->kind = kind;
+        snprintf(c->a, sizeof c->a, "%s", a ? a : b);        /* RESERVE: the word in a */
+        if (a && b) snprintf(c->b, sizeof c->b, "%s", b);
+        return 1;
+    }
     if (!strcasecmp(w, "ref-mod-zero-length")) {
         /* >>REF-MOD-ZERO-LENGTH ON|OFF (2023 7.3.23): whether a reference
          * modification may resolve to a zero-length item; positional, kept
@@ -946,7 +1108,7 @@ static void tw_copy(TWV *in, TWV *out)
              * that stand outside one (LEAP-SECOND) */
             int k = i + 1; while (k < in->n && in->w[k].kind == TW_SEP) k++;
             if ((tw_is(t, "identification") || tw_is(t, "id")) && k < in->n && tw_is(&in->w[k], "division")) {
-                g_in_unit++;
+                g_in_unit++; g_units_seen++;
                 if (g_propagate_dir) {           /* a mark the parser reads at the unit's start (apply_turn) */
                     TW m = *t; m.kind = TW_DIR; m.s = "propagate-unit"; m.len = 14;
                     twv_push(out, m);

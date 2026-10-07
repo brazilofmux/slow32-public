@@ -24,7 +24,8 @@
 # Gate 4 (behavior points): every tests/warn/*.cbl must compile under
 #   -warn-74 with exactly the [BP-..] ids its .expected lists (an empty
 #   file: none), and must compile with no stderr at all without the flag.
-#   The ids are docs/behavior-points.md's.
+#   The ids are docs/behavior-points.md's.  flag14-*.cbl: >>FLAG-14's
+#   [F14-OPTION] warnings under -std=2023 (2023 7.3.15), no flag.
 # Both paths (in Gates 2 and 5): every program is compiled a second time
 #   with -fno-hot-arith, the register arithmetic and its peepholes off, and
 #   must print the same; CCVS runs twice and every program's tally, report
@@ -508,14 +509,18 @@ for src in "$HERE/warn"/*.cbl; do
     wflag="-warn-74"; case "$name" in ext-*) wflag="-warn-extensions" ;; esac
     stdflag=""; case "$name" in *std2002*) stdflag="-std=2002" ;; esac   # a point that exists only under 2002
     case "$name" in *-mf-*|mf-*|ext-mf*) stdflag="$stdflag -dialect=mf" ;; esac   # a dialect point (class D)
+    # flag14-*: >>FLAG-14's warnings (2023 7.3.15), [F14-OPTION] ids, the
+    # directive in the source turning them on -- no flag, no silent run
+    idpat='\[BP-[A-Z][0-9]*\]'; case "$name" in flag14-*) wflag=""; stdflag="-std=2023"; idpat='\[F14-[A-Z0-9-]*\]' ;; esac
     if ! "$COBC" $flag $stdflag $wflag -I "$HERE/copy" -o "$W/$name.s" "$src" 2>"$W/$name.warn"; then
         report "warn/$name" 1 "refused: $(head -1 "$W/$name.warn")"; continue
     fi
-    got="$(grep -o '\[BP-[A-Z][0-9]*\]' "$W/$name.warn" | sort -u)"
+    got="$(grep -o "$idpat" "$W/$name.warn" | sort -u)"
     want="$(sort -u "$exp")"
     if [ "$got" != "$want" ]; then
         report "warn/$name" 1 "ids: got [$(echo $got)] want [$(echo $want)]"; continue
     fi
+    case "$name" in flag14-*) report "warn/$name" 0 "$(echo $got | wc -w) option(s) flagged"; continue ;; esac
     "$COBC" $flag $stdflag -I "$HERE/copy" -o "$W/$name.s" "$src" 2>"$W/$name.quiet"
     # silent: no behavior point's warning without the flag (a warning the
     # compiler always gives -- BP-D7's cut literal -- is not one)
