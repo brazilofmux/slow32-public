@@ -269,6 +269,7 @@ static void parse_select(void)
             }
             accept_word("to");
             if (cur()->kind == T_STR) {
+                no_zero_tok(cur(), "ASSIGN TO", "2023 12.4.5.2 rule 4");
                 f->assign_lit = cur(); advance();
                 if (at_word("using")) {
                     if (g_std < 2002) die_at(cur()->line, "ASSIGN TO literal USING data-name is COBOL 2002 (2023 12.4.5); compile with -std=2002");
@@ -1668,6 +1669,7 @@ static void parse_screen_section(void)
                          * the entry's PICTURE -- a VALUE with a PICTURE, as
                          * the slot is finished below */
                         if (cur()->kind == T_NUM) die_at(t->line, "a screen FROM with a numeric literal is not implemented (2002 13.15.1)");
+                        no_zero_tok(cur(), "a screen FROM", "2023 13.18.25.3 rule 5");
                         f->kind = COB_SCR_VALUE; f->value = cur(); f->natlit = cur()->nat; f->from_lit = 1;
                         advance(); continue;
                     }

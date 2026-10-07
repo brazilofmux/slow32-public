@@ -397,6 +397,7 @@ static int fn89_parse(Opnd *o, Tok *n)
                 if (c == 'B' || c == 0 || c != c0)
                     die_at(n->line, "FUNCTION %s: its arguments are all numeric, all alphanumeric or all national (%s)", up,
                            g_std < 2002 ? "X3.23a-1989 MAX, MIN, ORD-MAX and ORD-MIN argument rules" : "2023 15.59.3 rule 2");
+                no_zero_lit(o->fargs[i], up, "2023 15.59.3, 15.63.3 rule 3; 15.71.3, 15.72.3 rule 2");
             }
         }
         if (kind == FK_ALNUM && o->nfargs == 2 && (opnd_class(o->fargs[1]) != opnd_class(o->fargs[0])))
@@ -682,6 +683,7 @@ static void parse_operand_raw_1(Opnd *o)
             advance();
             o->kind = O_FUNC; o->farg = a1; o->farg2 = a2; o->line = n->line;
             if (natof) {
+                no_zero_lit(a1, "FUNCTION NATIONAL-OF", "2023 15.66.3 rule 3");
                 if (opnd_is_national(a1) || a1->kind == O_NUM || (a1->kind == O_REF && is_numeric_sym(a1->ref.sym)))
                     die_at(n->line, "FUNCTION NATIONAL-OF takes an alphanumeric argument (15.66.3)");
                 if (a2 && !(opnd_is_national(a2) && a2->kind != O_FUNC && opnd_size(a2) == 2))

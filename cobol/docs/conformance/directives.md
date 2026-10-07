@@ -1,4 +1,4 @@
-# Compiler directives: conditional compilation (7.3.5-7.3.8, 7.3.11, 7.3.13, 7.3.16), CALL-CONVENTION, LEAP-SECOND, LISTING, PAGE (7.3.9, 7.3.17-19) and PROPAGATE (7.3.21)
+# Compiler directives: conditional compilation (7.3.5-7.3.8, 7.3.11, 7.3.13, 7.3.16), CALL-CONVENTION, LEAP-SECOND, LISTING, PAGE (7.3.9, 7.3.17-19), PROPAGATE (7.3.21) and REF-MOD-ZERO-LENGTH (7.3.23)
 
 Swept 2026-10-06 (docs/plans/standard-queue.md item 6), when the three
 directives were implemented. ISO/IEC 1989:2023: 7.3.5 conditional
@@ -109,3 +109,18 @@ mark at each unit that begins while it is on.
 | GR 1, 3 | ON: propagation enabled for the units that follow, until OFF or the end of the group; OFF the reverse | **test**: 2002/ecraising (lib/ecpropagate.cbl: sub5 after `>>PROPAGATE ON`, sub6 before it, which does not propagate) |
 | GR 2 | a condition raised in such a unit and handled by neither a statement's exception phrase nor a declarative is propagated as GOBACK RAISING LAST in a declarative for it would | **test**: 2002/ecraising case prop: where the fatal end would be, the unit returns with the condition and the caller takes it up (goto_set.h `emit_ec_dispatch`, the `g_propagate` arm) |
 | GR 4 | the default is OFF | **test**: every other subprogram test |
+
+## REF-MOD-ZERO-LENGTH (7.3.23)
+
+Implemented 2026-10-07 (standard-queue item 24), taken under -std=2014
+though 2023's: the zero-length items it completes are 2014's. Read with
+the directives and left in the stream for the parser as >>TURN is, so
+it is positional (control.h `apply_turn` sets `g_refmod_zero`). The
+semantics -- what a part of length zero is and does -- are in
+refmod.md, "8.5.4 Zero-length items". Tests 2014/zerolen, zerolen2.
+
+| rule | paraphrase | disposition |
+|---|---|---|
+| 7.3.23.2 | ON or OFF | **refused**: bad/std2014-refmod-zero-arg; under -std=2002, bad/std2002-refmod-zero-directive |
+| 7.3.23.3 GR 1 | omitted or OFF: a reference modification of length zero is EC-BOUND-REF-MOD | **test**: 2014/zerolen2 (OFF after ON, checking on: the declarative runs); **refused** when the zero is written: bad/std2014-refmod-zero-written |
+| 7.3.23.1 | ON: a resultant item may be zero-length | **test**: 2014/zerolen (a computed zero, a table element's part), zerolen2 (a written `(3:0)`, national and boolean parts) |

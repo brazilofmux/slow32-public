@@ -57,10 +57,11 @@ all closed 2026-09-28 (ISSUES-94, -95):
 COBOL 2002/2023 (Stage B):
 
 - compiler directives other than >>SOURCE, >>TURN, >>DEFINE, >>IF,
-  >>EVALUATE, >>CALL-CONVENTION, >>LEAP-SECOND, >>LISTING, >>PAGE and
-  >>PROPAGATE (the last eight since 2026-10-06, docs/conformance/directives.md):
-  that is 2023's COBOL-WORDS, DISPLAY, FLAG-14, PUSH, POP and
-  REF-MOD-ZERO-LENGTH (item 34); and boolean expressions in a directive;
+  >>EVALUATE, >>CALL-CONVENTION, >>LEAP-SECOND, >>LISTING, >>PAGE,
+  >>PROPAGATE (the last eight since 2026-10-06, docs/conformance/directives.md)
+  and >>REF-MOD-ZERO-LENGTH (2026-10-07, queue item 24, under -std=2014):
+  that is 2023's COBOL-WORDS, DISPLAY, FLAG-14, PUSH and POP; and boolean
+  expressions in a directive;
 - exceptions: the conditions docs/conformance/exceptions.md marks
   **gap** -- EC-RANGE-INVALID, EC-I-O-EOP and -LINAGE, EC-FLOW-GLOBAL-*,
   EC-SCREEN-*, and those of features not built (USE AFTER EXCEPTION

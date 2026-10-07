@@ -1,0 +1,24 @@
+[ ]
+length 1
+[]
+[     ]
+equal to spaces
+[        ]
+[ ab ]
+[][]
+length 5
+[][de]
+[][b][bc][bcd] 
+[        ]
+abcde
+abcde
+two zero-length operands are equal
+and equal to spaces
+and before a
+tally 000 abcde
+[abe*****]
+[e*******]
+[   ][   ] 00
+[   ][   ]
+upper [] reverse []
+off [bcde]

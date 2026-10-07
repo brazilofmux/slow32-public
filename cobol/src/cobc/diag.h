@@ -78,6 +78,7 @@ static char g_cursor_name[64];       /* SPECIAL-NAMES CURSOR IS name */
 static int g_same[8][16], g_nsame[8], g_nsame_groups;
 static int g_nohx;                           /* -fno-hot-arith: the register paths and their peepholes off -- the code as before them (a differential's other side); also a unit's INTERMEDIATE ROUNDING */
 static int g_iround;                         /* OPTIONS INTERMEDIATE ROUNDING (2023 11.9.11): 0 TRUNCATION (the default), 1 NEAREST-AWAY-FROM-ZERO, 2 NEAREST-EVEN, 3 PROHIBITED; in the activation descriptor's second word above bit 8 */
+static int g_refmod_zero;                    /* >>REF-MOD-ZERO-LENGTH ON is in effect: a reference modification may resolve to a zero-length item (2023 7.3.23; control.h) */
 static int g_nohx_cli;                       /* -fno-hot-arith as given: the unit's own INTERMEDIATE ROUNDING may add to it */
 static int g_float_bigend, g_float_dpd;      /* OPTIONS FLOAT-BINARY / FLOAT-DECIMAL DEFAULT (2023 11.9.8-9): HIGH-ORDER-LEFT; DECIMAL-ENCODING -- the unit's defaults for the standard floating-point usages (HIGH-ORDER-RIGHT, BINARY-ENCODING when none) */
 static int g_samefa[8][16], g_nsamefa[8], g_nsamefa_groups, g_samesa[8][16], g_nsamesa[8], g_nsamesa_groups, g_same_line;   /* SAME AREA and SAME SORT AREA clauses: checked against the FDs once they are in (2023 12.4.6.4.3 rules 5, 6, 8) */

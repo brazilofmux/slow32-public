@@ -300,6 +300,7 @@ static void insp_operand(const Opnd *o)
     int e85 = g_std < 2002;
     if (o->kind == O_ALL) die_at(o->line, "INSPECT: an ALL figurative constant is not an INSPECT operand (%s)", e85 ? "X3.23-1985 INSPECT rule 3" : "2023 14.9.22.3 rule 3");
     if (o->kind == O_NUM) die_at(o->line, "INSPECT: a numeric literal is not an INSPECT operand; write it as \"...\" (%s)", e85 ? "X3.23-1985 INSPECT rule 3" : "2023 14.9.22.3 rule 3");
+    no_zero_lit(o, "INSPECT", "2023 14.9.22.3 rule 3");
     if (o->kind != O_REF) return;
     const Sym *x = o->ref.sym;
     if (x->is_group && !o->ref.rm)
@@ -948,6 +949,7 @@ static void sa_validate(Cond *c, Sym *tbl, Sym *ix, unsigned *used, int line)
     if (kr->rm || kr->nsub != kr->sym->ndims || lv < 0 || lv >= kr->nsub || kr->sub[lv].sym != ix || kr->sub[lv].adj != 0)
         die_at(line, "SEARCH ALL ... WHEN: the key '%s' is subscripted by the table's first index '%s' at its level, without + or - (%s)",
                c->x.ref.sym->name, ix->name, r8);
+    no_zero_lit(&c->y, "SEARCH ALL ... WHEN", "2023 14.9.37.3 rule 13");
     if (ky >= 0 || sa_uses_index(&c->y, ix))
         die_at(line, "SEARCH ALL ... WHEN: the value compared with '%s' is neither a key of the table nor subscripted by '%s' (%s)",
                c->x.ref.sym->name, ix->name, r10);

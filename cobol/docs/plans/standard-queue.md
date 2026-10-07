@@ -329,7 +329,13 @@ simple condition's left operand, so relations, class and sign forms and their ab
 - Why here: common in modern code, isolated.
 
 **24. Zero-length items.** 8.3.3 (zero-length literals), 8.5.4, 7.3.23 REF-MOD-ZERO-LENGTH (2023);
-Ed. 2014/2023; M; deps 6 for the directive.
+Ed. 2014/2023; M; deps 6 for the directive. DONE 2026-10-07 (refmod.md "8.5.4 Zero-length items";
+tests 2014/zerolen (GnuCOBOL takes "" as one SPACE and a zero-length delimiter as matching
+everywhere: docs/oracles.md), 2014/zerolen2): the literals under -std=2014, the directive as a
+positional one, a part of length zero through its own runtime entries (`cob_refmod_desc_z` ...),
+the text's prohibitions each refused by rule (16 bad tests), class conditions of a zero-length
+item false. Found on the way: every ACCEPT ... FROM into a reference-modified item wrote the whole
+item's length at the part's address (2002/acceptrm).
 - Today: "a zero-length alphanumeric literal is COBOL 2014".
 - Why here: 2014 introduced zero-length literals; 2023 completes them for reference modification.
 

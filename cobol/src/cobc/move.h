@@ -793,6 +793,9 @@ static const char *move_invalid(const Opnd *src, const Ref *dst, char *msg)
                src->kind == O_ALL ? "ALL " : "", src->kind == O_ALL ? tok_desc(src->tok) : up, rn, d->name);
     }
     int s = MC_NONE;
+    if (src->kind == O_STR && src->tok->len == 0 && !src->tok->boolv && rnum)
+        MV_BAD("MOVE: a zero-length literal is the figurative constant SPACE (2023 14.9.25.4 rule 2), which cannot be moved to the %s item '%s' (14.9.25.3 rule 5)",
+               r == MC_NUMED ? "numeric-edited" : "numeric", d->name);
     if (src->kind == O_NUM) s = numlit_is_int(&src->num) ? MC_INT : MC_NONINT;
     else if (src->kind == O_STR) s = src->tok->boolv ? MC_NONE : src->tok->nat ? MC_NAT : MC_ALNUM;
     else if (sy && !sy->is_cond) s = move_cat_sym(sy, src->ref.rm);

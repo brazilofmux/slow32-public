@@ -880,6 +880,15 @@ static int cond_directive(const TW *t)
         return 1;
     }
     if (!strcasecmp(w, "turn")) return 0;
+    if (!strcasecmp(w, "ref-mod-zero-length")) {
+        /* >>REF-MOD-ZERO-LENGTH ON|OFF (2023 7.3.23): whether a reference
+         * modification may resolve to a zero-length item; positional, kept
+         * for the parser as >>TURN is (apply_dirs) */
+        g_cp = 1;
+        if (!caccept("on") && !caccept("off")) cdie(">>REF-MOD-ZERO-LENGTH takes ON or OFF (2023 7.3.23.2)%s", "");
+        c_end("REF-MOD-ZERO-LENGTH");
+        return 0;
+    }
     if (!strcasecmp(w, "d")) cdie("the >>D debugging indicator is not implemented (debugging lines were removed in COBOL 2014)%s", "");
     cdie("the compiler directive >>%s is not implemented yet", w);
     return 1;

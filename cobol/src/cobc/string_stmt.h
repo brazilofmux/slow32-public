@@ -62,6 +62,7 @@ static void parse_string_1(void)
             Opnd d; memset(&d, 0, sizeof d);
             if (accept_word("size")) d.kind = O_ALL;      /* stands for SIZE here */
             else { parse_operand(&d); str_operand(&d); if (d.kind != O_STR && d.kind != O_REF && d.kind != O_FIG) die_at(d.line, "DELIMITED BY needs SIZE, a literal or an item"); }
+            no_zero_lit(&d, "STRING ... DELIMITED BY", "2023 14.9.43.3 rule 3");
             for (int i = n - pending; i < n; i++) { delims[i] = d; has_delim[i] = 1; }
             pending = 0;
             continue;
@@ -204,6 +205,7 @@ static void parse_unstring_1(void)
             if (delims[nd].kind != O_STR && delims[nd].kind != O_REF && delims[nd].kind != O_FIG)
                 die_at(delims[nd].line, "DELIMITED BY needs a nonnumeric literal or an item (%s)", g_std < 2002 ? "X3.23-1985 UNSTRING rule 1" : "2023 14.9.48.3 rule 1");
             if (delims[nd].kind == O_REF) unstr_alnum(&delims[nd].ref, "the delimiter");
+            no_zero_lit(&delims[nd], "UNSTRING ... DELIMITED BY", "2023 14.9.48.3 rule 1");
             nd++;
             if (!accept_word("or")) break;
         }

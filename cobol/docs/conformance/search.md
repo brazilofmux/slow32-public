@@ -20,7 +20,7 @@ format allows only one form, and it is now enforced.
 | 2023 9 (85: 4) | condition-names of one value, for KEYs | **refused** (one of several values becomes an OR) |
 | 2023 10 (85: 4) | the values neither KEYs of the table nor subscripted by its first index | **refused** -- accepted before |
 | 2023 11 (85: 4) | the keys used a leading run of the KEY list | **refused** -- accepted and scanned before |
-| 2023 13 | no zero-length literals | **refused** (2014's literal) |
+| 2023 13 | no zero-length literals | **refused**: bad/std2014-zero-search; under -std=2002 the literal itself |
 
 ## General rules
 

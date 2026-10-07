@@ -69,6 +69,8 @@ static void sym_finish(Sym *s)
         else if (v->nat) { if (!nat_picture(s->pic, &s->pi, s->line)) die_at(s->line, "internal: the implied national picture"); }
         else if (pic_analyse(s->pic, &s->pi) < 0) die_at(s->line, "internal: the implied picture '%s': %s", s->pic, s->pi.err);
     }
+    if (!s->has_pic && !native && s->value_tok && s->value_tok->kind == T_STR && !s->value_all && s->value_tok->len == 0)
+        die_at(s->line, "'%s' has no PICTURE clause, and a zero-length VALUE implies none (2023 13.16.3 rule 9)", s->name);
     if (!s->has_pic && !native)
         die_at(s->line, "'%s' has no PICTURE clause%s (%s)", s->name,
                s->level == 1 || s->level == 77 ? " (and no subordinate items: an empty group is RM/COBOL's, not taken -- docs/dialect.md)" : "",

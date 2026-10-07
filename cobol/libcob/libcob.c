@@ -1591,6 +1591,7 @@ static int nat_class_bytes(const void *vp, const cob_desc *d, unsigned char **ou
 int cob_class_bytes(const unsigned char *p, int n, int kind);
 int cob_class(const void *vp, const cob_desc *d, int kind)
 {
+    if (d->size == 0) return 0;         /* a zero-length item is in no class (2023 8.8.4.4.4 rule 1) */
     if (is_natnum(d)) { unsigned char b[NATNUM_MAX]; cob_desc nd; return cob_class(nat_narrow(vp, d, b, &nd), &nd, kind); }
     if (d->cat == COB_NATIONAL && kind != 4) {
         unsigned char *b; cob_desc nd;
@@ -1653,6 +1654,7 @@ int cob_class(const void *vp, const cob_desc *d, int kind)
  * single character itself. */
 int cob_class_bytes(const unsigned char *p, int n, int kind)
 {
+    if (n == 0) return 0;               /* 8.8.4.4.4 rule 1 */
     if (kind == 0) {
         for (int i = 0; i < n; i++) if ((unsigned)(p[i] - '0') > 9) return 0;
         return 1;
@@ -1782,6 +1784,7 @@ static int num_is_extreme(const void *vp, const cob_desc *d, int far)
  * 16 -SIGNALING */
 int cob_class_2014(const void *vp, const cob_desc *d, int kind)
 {
+    if (d->size == 0) return 0;         /* 8.8.4.4.4 rule 1 */
     int neg, sp;
     switch (kind) {
     case 10: return num_is_extreme(vp, d, 1);
@@ -1818,6 +1821,7 @@ void cob_set_content(void *vp, const cob_desc *d, int what, int sign)
 
 int cob_class_user(const void *vp, const cob_desc *d, const unsigned char *tab)
 {
+    if (d->size == 0) return 0;         /* 8.8.4.4.4 rule 1 */
     if (d->cat == COB_NATIONAL) {
         unsigned char *b; cob_desc nd;
         if (!nat_class_bytes(vp, d, &b, &nd)) return 0;
@@ -6947,6 +6951,45 @@ int cob_refmod_len(const cob_desc *base, int start, int len)
     int nat = base->cat == COB_NATIONAL || base->usage == COB_U_NATIONAL;
     if (len == 0) len = (nat ? (int)base->size / 2 : (int)base->size) - start + 1;
     return nat ? 2 * len : len;
+}
+
+/* The same three under >>REF-MOD-ZERO-LENGTH ON (2023 7.3.23, 8.5.4): a
+ * length of zero is a zero-length part, not an omitted length (the
+ * compiler supplies an omitted one itself for these), and EC-BOUND-REF-MOD
+ * takes a start within the item, a length of zero or more, and the two
+ * within it (8.4.3.3.3 rule 1c) */
+const cob_desc *cob_refmod_desc_z(const cob_desc *base, int start, int len)
+{
+    int nat = base->cat == COB_NATIONAL || base->usage == COB_U_NATIONAL, chars = nat ? (int)base->size / 2 : (int)base->size;
+    if (start < 1 || start > chars) cob_fatal("reference modification: start is outside the item");
+    if (len < 0 || start - 1 + len > chars) cob_fatal("reference modification: length is outside the item");
+    if (len > 0) return cob_refmod_desc(base, start, len);
+    cob_desc *d = &rmdesc[rmrot++ & 7];
+    memset(d, 0, sizeof *d);
+    d->cat = base->cat == COB_BOOLEAN ? COB_BOOLEAN : nat ? COB_NATIONAL : COB_ALNUM;
+    d->usage = base->usage == COB_U_BIT ? COB_U_BIT : base->cat == COB_BOOLEAN && nat ? COB_U_NATIONAL : COB_U_DISPLAY;
+    d->size = 0;
+    return d;
+}
+int cob_refmod_len_chk_z(const cob_desc *base, int start, int len)
+{
+    int chars = (int)base->size;
+    if (start < 1 || start > chars) cob_fatal("reference modification: start is outside the item");
+    if (len < 0 || start - 1 + len > chars) cob_fatal("reference modification: length is outside the item");
+    return len;
+}
+int cob_refmod_len_z(const cob_desc *base, int start, int len)
+{
+    (void)start;
+    if (base->usage == COB_U_BIT) return len;
+    int nat = base->cat == COB_NATIONAL || base->usage == COB_U_NATIONAL;
+    return nat ? 2 * len : len;
+}
+int cob_bound_refmod_z(int start, int len, int size)
+{
+    if (pos_nonint) { pos_nonint = 0; return 1; }
+    if (start < 1 || start > size) return 1;
+    return len < 0 || start + len - 1 > size;
 }
 
 /* INSPECT, as X3.23 VIII (NC) describes it: one pass over the item, the

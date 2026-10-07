@@ -35,7 +35,7 @@ dropped.
 | SR 8 | FULL and JUSTIFIED not together | **refused**: bad/screen-full-just |
 | SR 9 | LOCALE with SIGN | **n/a**: PICTURE LOCALE is not implemented |
 | SR 10 | no PICTURE with an alphanumeric, boolean or national VALUE: the PICTURE implied | **test**: free/screen, 2002/natscreen |
-| SR 10 | not a zero-length literal | **refused** under -std=2002 (a zero-length literal is COBOL 2014) |
+| SR 10 | not a zero-length literal | **refused** by rule under -std=2014 (bad/std2014-zero-value-nopic is the data-division form); under -std=2002 the literal itself |
 | GR 1 (13.17.4) | a clause at the lowest level wins | **test**: free/scr01color (colours), free/scrattr |
 | GR 2 | HIGHLIGHT against LOWLIGHT at different levels: the lower wins | **ruling**: both flags are kept and HIGHLIGHT is painted; one attribute is painted per field (below) |
 | format 1 | JUSTIFIED, BLANK WHEN ZERO not on a group | **refused**: bad/screen-group-just -- accepted and ignored before |
@@ -69,7 +69,7 @@ dropped.
 | ERASE GR 1-2 | clears from the item's position on DISPLAY; ignored on ACCEPT | **test**: free/screrase (positioned ACCEPT keeps its ERASE: BP-E7) |
 | FROM SR 2 | a MOVE-compatible sender | **test**: free/screen; category clashes go through the MOVE rules at run time |
 | FROM SR 3 | under OCCURS, the identifier unsubscripted | **gap**: OCCURS on a FROM, TO or USING item is not implemented |
-| FROM SR 5 | not a zero-length literal | **refused** |
+| FROM SR 5 | not a zero-length literal | **refused** by rule (13.18.25.3 rule 5) |
 | FROM literal | FROM literal-1 | **test**: free/scrpicval (alphanumeric); a numeric literal is a **gap** |
 | FULL GR 1 | at a group, reaches the items that are not JUSTIFIED | **test**: free/scrclauses |
 | FULL GR 3a-b | text: all spaces, or the first and last positions filled | **test**: scredit_test (se_full_ok), free/scrclauses |

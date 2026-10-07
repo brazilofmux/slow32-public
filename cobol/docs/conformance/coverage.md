@@ -11,7 +11,7 @@ carry the compiler's own reason.
 
 | clause | elements | swept | not implemented | unswept |
 |---|---|---|---|---|
-| 7 COPY, REPLACE and directives | 24 | 16 | 0 | 8 |
+| 7 COPY, REPLACE and directives | 24 | 17 | 0 | 7 |
 | 8 characters, names, data, expressions, conditions | 35 | 34 | 0 | 1 |
 | 9 files and objects, general | 0 | 0 | 0 | 0 |
 | 10 the compilation group | 2 | 2 | 0 | 0 |
@@ -21,7 +21,7 @@ carry the compiler's own reason.
 | 14 PROCEDURE DIVISION | 54 | 46 | 7 | 1 |
 | 15 intrinsic functions | 94 | 73 | 21 | 0 |
 | 16 standard classes | 0 | 0 | 0 | 0 |
-| **all** | **324** | **272** | **28** | **24** |
+| **all** | **324** | **273** | **28** | **23** |
 
 ## 7 COPY, REPLACE and directives
 
@@ -29,26 +29,26 @@ carry the compiler's own reason.
 |---|---|---|---|---|---|---|---|
 | 7.2.3 | COPY statement | [copy](copy.md) | 14 | 6 | 0 | 0 | 0 |
 | 7.2.4 | REPLACE statement | [copy](copy.md) | 14 | 6 | 0 | 0 | 0 |
-| 7.3 |  | [directives](directives.md), [turn](turn.md) | 38 | 18 | 0 | 2 | 3 |
-| 7.3.6 |  | [directives](directives.md) | 30 | 14 | 0 | 2 | 2 |
-| 7.3.7 |  | [directives](directives.md) | 30 | 14 | 0 | 2 | 2 |
-| 7.3.8 |  | [directives](directives.md) | 30 | 14 | 0 | 2 | 2 |
-| 7.3.8.4 |  | [directives](directives.md) | 30 | 14 | 0 | 2 | 2 |
-| 7.3.9 |  | [directives](directives.md) | 30 | 14 | 0 | 2 | 2 |
+| 7.3 |  | [directives](directives.md), [refmod](refmod.md), [turn](turn.md) | 59 | 30 | 0 | 6 | 3 |
+| 7.3.6 |  | [directives](directives.md) | 32 | 15 | 0 | 2 | 2 |
+| 7.3.7 |  | [directives](directives.md) | 32 | 15 | 0 | 2 | 2 |
+| 7.3.8 |  | [directives](directives.md) | 32 | 15 | 0 | 2 | 2 |
+| 7.3.8.4 |  | [directives](directives.md) | 32 | 15 | 0 | 2 | 2 |
+| 7.3.9 |  | [directives](directives.md) | 32 | 15 | 0 | 2 | 2 |
 | 7.3.10 |  | *unswept* | | | | | |
-| 7.3.11 |  | [directives](directives.md) | 30 | 14 | 0 | 2 | 2 |
+| 7.3.11 |  | [directives](directives.md) | 32 | 15 | 0 | 2 | 2 |
 | 7.3.12 |  | *unswept* | | | | | |
-| 7.3.13 |  | [directives](directives.md) | 30 | 14 | 0 | 2 | 2 |
+| 7.3.13 |  | [directives](directives.md) | 32 | 15 | 0 | 2 | 2 |
 | 7.3.14 |  | *unswept* | | | | | |
 | 7.3.15 |  | *unswept* | | | | | |
-| 7.3.16 |  | [directives](directives.md) | 30 | 14 | 0 | 2 | 2 |
-| 7.3.17 |  | [directives](directives.md) | 30 | 14 | 0 | 2 | 2 |
-| 7.3.18 |  | [directives](directives.md) | 30 | 14 | 0 | 2 | 2 |
-| 7.3.19 |  | [directives](directives.md) | 30 | 14 | 0 | 2 | 2 |
+| 7.3.16 |  | [directives](directives.md) | 32 | 15 | 0 | 2 | 2 |
+| 7.3.17 |  | [directives](directives.md) | 32 | 15 | 0 | 2 | 2 |
+| 7.3.18 |  | [directives](directives.md) | 32 | 15 | 0 | 2 | 2 |
+| 7.3.19 |  | [directives](directives.md) | 32 | 15 | 0 | 2 | 2 |
 | 7.3.20 |  | *unswept* | | | | | |
-| 7.3.21 |  | [directives](directives.md) | 30 | 14 | 0 | 2 | 2 |
+| 7.3.21 |  | [directives](directives.md) | 32 | 15 | 0 | 2 | 2 |
 | 7.3.22 |  | *unswept* | | | | | |
-| 7.3.23 |  | *unswept* | | | | | |
+| 7.3.23 |  | [directives](directives.md), [refmod](refmod.md) | 51 | 26 | 0 | 6 | 2 |
 | 7.3.24 |  | *unswept* | | | | | |
 | 7.3.25 |  | [turn](turn.md) | 8 | 4 | 0 | 0 | 1 |
 
@@ -57,28 +57,28 @@ carry the compiler's own reason.
 | section | element | page | test | refused | gap | n/a | ruling |
 |---|---|---|---|---|---|---|---|
 | 8.1.3 |  | *unswept* | | | | | |
-| 8.3.3.2 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
-| 8.3.3.4 |  | [national-boolean](national-boolean.md) | 15 | 13 | 0 | 0 | 1 |
-| 8.3.3.5 |  | [national-boolean](national-boolean.md) | 15 | 13 | 0 | 0 | 1 |
-| 8.3.3.6 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
-| 8.4.2.2 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
-| 8.4.2.3 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
-| 8.4.3.1 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
-| 8.4.3.2 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
-| 8.4.3.3 |  | [refmod](refmod.md) | 7 | 2 | 0 | 0 | 0 |
-| 8.4.3.4 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
-| 8.4.3.5 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
-| 8.4.3.6 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
-| 8.4.3.7 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
-| 8.4.3.8 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
-| 8.4.3.9 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
-| 8.4.3.10 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
-| 8.4.3.11 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
-| 8.4.3.12 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
+| 8.3.3.2 |  | [identifiers](identifiers.md), [refmod](refmod.md) | 55 | 39 | 1 | 10 | 0 |
+| 8.3.3.4 |  | [national-boolean](national-boolean.md), [refmod](refmod.md) | 34 | 24 | 0 | 4 | 1 |
+| 8.3.3.5 |  | [national-boolean](national-boolean.md), [refmod](refmod.md) | 34 | 24 | 0 | 4 | 1 |
+| 8.3.3.6 |  | [identifiers](identifiers.md), [refmod](refmod.md) | 55 | 39 | 1 | 10 | 0 |
+| 8.4.2.2 |  | [identifiers](identifiers.md) | 36 | 28 | 1 | 6 | 0 |
+| 8.4.2.3 |  | [identifiers](identifiers.md) | 36 | 28 | 1 | 6 | 0 |
+| 8.4.3.1 |  | [identifiers](identifiers.md) | 36 | 28 | 1 | 6 | 0 |
+| 8.4.3.2 |  | [identifiers](identifiers.md) | 36 | 28 | 1 | 6 | 0 |
+| 8.4.3.3 |  | [refmod](refmod.md) | 19 | 11 | 0 | 4 | 0 |
+| 8.4.3.4 |  | [identifiers](identifiers.md) | 36 | 28 | 1 | 6 | 0 |
+| 8.4.3.5 |  | [identifiers](identifiers.md) | 36 | 28 | 1 | 6 | 0 |
+| 8.4.3.6 |  | [identifiers](identifiers.md) | 36 | 28 | 1 | 6 | 0 |
+| 8.4.3.7 |  | [identifiers](identifiers.md) | 36 | 28 | 1 | 6 | 0 |
+| 8.4.3.8 |  | [identifiers](identifiers.md) | 36 | 28 | 1 | 6 | 0 |
+| 8.4.3.9 |  | [identifiers](identifiers.md) | 36 | 28 | 1 | 6 | 0 |
+| 8.4.3.10 |  | [identifiers](identifiers.md) | 36 | 28 | 1 | 6 | 0 |
+| 8.4.3.11 |  | [identifiers](identifiers.md) | 36 | 28 | 1 | 6 | 0 |
+| 8.4.3.12 |  | [identifiers](identifiers.md) | 36 | 28 | 1 | 6 | 0 |
 | 8.4.3.13 |  | [usage](usage.md) | 15 | 9 | 0 | 2 | 3 |
-| 8.4.3.14 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
-| 8.4.3.15 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
-| 8.4.4 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
+| 8.4.3.14 |  | [identifiers](identifiers.md) | 36 | 28 | 1 | 6 | 0 |
+| 8.4.3.15 |  | [identifiers](identifiers.md) | 36 | 28 | 1 | 6 | 0 |
+| 8.4.4 |  | [identifiers](identifiers.md) | 36 | 28 | 1 | 6 | 0 |
 | 8.7.5 |  | [conditions](conditions.md) | 32 | 12 | 0 | 1 | 0 |
 | 8.8.3 |  | [expressions](expressions.md) | 11 | 2 | 0 | 0 | 0 |
 | 8.8.4.2 |  | [conditions](conditions.md) | 32 | 12 | 0 | 1 | 0 |
@@ -159,7 +159,7 @@ carry the compiler's own reason.
 | 13.7 |  | [data-division](data-division.md) | 37 | 40 | 5 | 4 | 4 |
 | 13.8 |  | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
 | 13.9 |  | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
-| 13.10 |  | [data-division](data-division.md), [directives](directives.md) | 67 | 54 | 5 | 6 | 6 |
+| 13.10 |  | [data-division](data-division.md), [directives](directives.md) | 69 | 55 | 5 | 6 | 6 |
 | 13.14 |  | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
 | 13.15 |  | [data-division](data-division.md), [reportwriter](reportwriter.md) | 40 | 77 | 5 | 4 | 4 |
 | 13.16 |  | [data-division](data-division.md) | 37 | 40 | 5 | 4 | 4 |
@@ -236,7 +236,7 @@ carry the compiler's own reason.
 | 14.2 |  | [call](call.md) | 30 | 18 | 3 | 4 | 0 |
 | 14.7.4 | ROUNDED phrase | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 14.7.9 | RETRY phrase | *unswept* | | | | | |
-| 14.9.1 | ACCEPT statement | [accept](accept.md), [screen](screen.md) | 41 | 32 | 11 | 1 | 4 |
+| 14.9.1 | ACCEPT statement | [accept](accept.md), [screen](screen.md) | 42 | 32 | 11 | 1 | 4 |
 | 14.9.2 | ADD statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
 | 14.9.3 | ALLOCATE statement | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 14.9.4 | CALL statement | [call](call.md) | 30 | 18 | 3 | 4 | 0 |
@@ -246,13 +246,13 @@ carry the compiler's own reason.
 | 14.9.8 | COMPUTE statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
 | 14.9.9 | CONTINUE statement | [control](control.md) | 10 | 10 | 0 | 1 | 0 |
 | 14.9.10 | DELETE statement | [io-statements](io-statements.md) | 1 | 18 | 0 | 0 | 0 |
-| 14.9.11 | DISPLAY statement | [accept](accept.md), [screen](screen.md) | 41 | 32 | 11 | 1 | 4 |
+| 14.9.11 | DISPLAY statement | [accept](accept.md), [screen](screen.md) | 42 | 32 | 11 | 1 | 4 |
 | 14.9.12 | DIVIDE statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
 | 14.9.13 | EVALUATE statement | [evaluate](evaluate.md) | 4 | 7 | 0 | 1 | 0 |
 | 14.9.14 | EXIT statement | [exit](exit.md) | 10 | 8 | 0 | 2 | 0 |
 | 14.9.15 | FREE statement | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 14.9.16 | GENERATE statement | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
-| 14.9.17 | GO TO statement | [accept](accept.md) | 1 | 10 | 0 | 0 | 0 |
+| 14.9.17 | GO TO statement | [accept](accept.md) | 2 | 10 | 0 | 0 | 0 |
 | 14.9.18 | GOBACK statement | [control](control.md) | 10 | 10 | 0 | 1 | 0 |
 | 14.9.19 | IF statement | [evaluate](evaluate.md) | 4 | 7 | 0 | 1 | 0 |
 | 14.9.20 | INITIALIZE statement | [initialize](initialize.md) | 8 | 5 | 0 | 1 | 0 |
@@ -260,7 +260,7 @@ carry the compiler's own reason.
 | 14.9.22 | INSPECT statement | [string](string.md) | 3 | 20 | 0 | 2 | 0 |
 | 14.9.23 | INVOKE statement | **not implemented**: INVOKE is object orientation, not implemented | | | | | |
 | 14.9.24 | MERGE statement | [sort](sort.md) | 3 | 12 | 0 | 0 | 0 |
-| 14.9.25 | MOVE statement | [move](move.md) | 12 | 10 | 0 | 9 | 0 |
+| 14.9.25 | MOVE statement | [move](move.md) | 14 | 9 | 0 | 8 | 0 |
 | 14.9.26 | MULTIPLY statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
 | 14.9.27 | OPEN statement | [io-statements](io-statements.md) | 1 | 18 | 0 | 0 | 0 |
 | 14.9.28 | PERFORM statement | [perform](perform.md) | 22 | 10 | 0 | 0 | 1 |

@@ -1,0 +1,19 @@
+[][][]
+[][] 0
+[    ]
+national: two zero-length operands are equal
+national: and equal to spaces
+[][ab]
+[][] 0
+boolean: two zero-length operands are equal
+boolean: and equal to zero
+00000000
+00000000
+[]
+a zero-length item is not alphabetic
+nor numeric
+not alphabetic-upper
+nor boolean
+[k*******]
+off: [bcde]
+[  EC-BOUND-REF-MOD

@@ -103,6 +103,7 @@ static void parse_call(void)
         sig = pgsig_find(t->s);
         advance();
     } else if (t->kind == T_STR) {
+        no_zero_tok(t, "CALL", "2023 14.9.4.3 rule 2");
         snprintf(name, sizeof name, "%.*s", t->len > 120 ? 120 : t->len, t->s);
         for (char *k = name; *k; k++) *k = (char)tolower((unsigned char)*k);
         advance();

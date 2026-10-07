@@ -887,6 +887,7 @@ static void parse_statement_1(void)
          * CALL finds it in its initial state: the registry's cancel routine */
         advance();
         if (cur()->kind == T_NUM) die_at(t->line, "CANCEL: literal-1 is an alphanumeric literal, a program-name (%s)", g_std < 2002 ? "X3.23-1985 CANCEL syntax rule 1" : "2023 14.9.5.3 rule 2");
+        no_zero_tok(cur(), "CANCEL", "2023 14.9.5.3 rule 2");
         while (cur()->kind == T_STR || (cur()->kind == T_WORD && !is_verb(cur()->s) && !is_terminator(cur()->s))) {
             if (cur()->kind == T_STR) { emit_la("r3", lit_label((const unsigned char *)cur()->s, cur()->len)); emit_li("r4", cur()->len); advance(); }
             else {
@@ -941,6 +942,7 @@ static void parse_statement_1(void)
             if (cur()->kind == T_PERIOD || cur()->kind == T_EOF || !at_operand() || is_verb(cur()->s)) { emit_li("r3", err); emit_call("cob_stop_run"); }
             else {
                 Opnd n; parse_operand(&n);
+                no_zero_lit(&n, "STOP RUN WITH STATUS", "2023 14.9.42.3 rule 4");
                 if (n.kind == O_NUM) {
                     if (!numlit_is_int(&n.num)) die_at(t->line, "STOP RUN WITH STATUS: a numeric literal is an integer (2023 14.9.42.3 rule 3)");
                     emit_li("r3", (long)numlit_int(&n.num)); emit_call("cob_stop_run");

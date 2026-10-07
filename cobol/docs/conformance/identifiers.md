@@ -29,8 +29,8 @@ Test 2002/identifiers exercises the behaviours; GnuCOBOL agrees.
 | SR 3-4 | two of the opening quotation symbol stand for one | **test**: `"a""b'c"`, `'a''b"c'` |
 | SR 5-6 | X"..." of hexadecimal digits, two to a character | **refused**: "bad hexadecimal digit", "needs an even number of digits" |
 | GR 1-2 | the delimiters are not part of the value; class and category alphanumeric | **test** |
-| GR 3 | no character: a zero-length literal (2014) | **refused** under -std=2002 as 2014's (queue item 23) |
-| GR 4-5 | X"" zero-length (2014); each pair one character | **refused** as 2014's; **test**: `X"414243"` |
+| GR 3 | no character: a zero-length literal (2014) | **test** under -std=2014: 2014/zerolen (refmod.md "8.5.4 Zero-length items"); **refused** under -std=2002 as 2014's: bad/std2002-zero-literal |
+| GR 4-5 | X"" zero-length (2014); each pair one character | **test**: `X""` under -std=2014 as GR 3; `X"414243"` |
 
 ## 8.3.3.6 Figurative constant values
 
@@ -38,7 +38,7 @@ Test 2002/identifiers exercises the behaviours; GnuCOBOL agrees.
 |---|---|---|
 | SR 1a | where a numeric literal is required, only ZERO, and without ALL | **refused**: bad/std2002-fig-all-zero-arith (`ADD ALL ZERO`) -- accepted before this sweep; `ADD SPACES` was refused already |
 | SR 1b | not where a rule prohibits a figurative constant | each statement's own rule (MOVE: move.md) |
-| SR 2 | ALL literal-1: an alphanumeric, boolean or national literal, not a figurative constant, not zero-length | **refused**: bad/std2002-fig-all-of-fig (`ALL ALL "a"`) -- was a parse error; a zero-length literal is 2014's |
+| SR 2 | ALL literal-1: an alphanumeric, boolean or national literal, not a figurative constant, not zero-length | **refused**: bad/std2002-fig-all-of-fig (`ALL ALL "a"`) -- was a parse error; `ALL ""` under -std=2014 likewise |
 | SR 3 | ALL literal-1 longer than one character not with a numeric or numeric-edited item | **refused** by MOVE (14.9.25.3 rule 5), except an ALL literal of digits to an integer item, which 2023's MOVE keeps as obsolete: BP-O9, a warning (docs/behavior-points.md) |
 | SR 4 | ALL symbolic-character from SPECIAL-NAMES | **test**: `ALL DASH` |
 | GR 1 | national where national is required; ZERO, SPACE, QUOTE are '0', space, '"' | national-boolean.md; **test** |

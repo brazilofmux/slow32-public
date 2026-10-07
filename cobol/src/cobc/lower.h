@@ -484,7 +484,7 @@ static int lw_bytes_ref_ok(const Ref *r, long *len)
     for (int k = 0; k < r->nsub; k++)
         if (r->sub[k].sym == &g_subx || (r->sub[k].sym && !lw_sub_item_ok(r->sub[k].sym))) return 0;
     if (r->rm) {
-        if (r->rm_nat || r->rm_bit || r->rm_odo || r->bitsub) return 0;
+        if (r->rm_nat || r->rm_bit || r->rm_odo || r->bitsub || r->rm_zero) return 0;
         if (r->rm_sx) {
             /* a computed start: an integer expression the island can form, a
              * word (an item, one +/- a literal, or more: `fpos + fw - len`) */

@@ -13,6 +13,7 @@ F.1 for what 2002 deleted.
 | ACCEPT 3 (2023; 85 GR 6, the MOVE rules) | DATE, DAY, TIME, DAY-OF-WEEK not into an alphabetic or boolean item | **refused**: bad/accept-rules -- accepted before |
 | DATE YYYYMMDD, DAY YYYYDDD (2002) | the four-digit year | **new**: 2002/acceptyyyy, the oracle agrees (the clock pinned by COB_CURRENT_DATE) -- was a parse error; under -std=85 "is COBOL 2002" |
 | ACCEPT 5, DISPLAY format 2 | LINE and COLUMN unsigned integers | **refused** (the screen work) |
+| ACCEPT GR 1 (2023 14.9.1.4) | the data to the receiving operand by its size | **test**: 2002/acceptrm (GnuCOBOL agrees) -- every FROM form passed the whole item's descriptor with a reference-modified receiver until 2026-10-07, so `ACCEPT X(2:2) FROM TIME` wrote four digits (found by standard-queue item 24; `accept_desc`, display.h) |
 
 ## GO TO and ALTER
 

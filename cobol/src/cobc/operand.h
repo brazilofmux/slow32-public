@@ -30,6 +30,7 @@ typedef struct Ref_ {
     int bitsub;                     /* a bit array's element: 1 + the subscript that picks it, as a bit position (cobol ISSUES-84) */
     long bitu_start;                /* ... and the start within the element: 1 without a reference modification, 0 computed (cobol ISSUES-93) */
     int user_rm;                    /* the program wrote a reference modification (rm is also set for a bit-array element) */
+    int rm_zero;                    /* >>REF-MOD-ZERO-LENGTH ON: the length, written 0 or computed, may be zero (a zero-length item, 2023 8.5.4); rm_len 0 then means zero, not omitted */
     Expr *rm_sx, *rm_lx;            /* the start and length when expressions (rm_lx NULL: no length expression) */
     int rm_odo; Sym *odo_dep; int odo_base, odo_elem;   /* a whole group over an ODO table, sent at its current length */
     int odo_bits;                   /* ... the table a bit array: odo_base and odo_elem in bits, odo_bits the element's (cob_odo_length_bits) */
@@ -95,7 +96,16 @@ static char g_prog_as[64];          /* the unit's own PROGRAM-ID ... AS literal 
 static FnSig g_pgsig[64]; static int g_npgsig;
 static int g_repo_all_intrinsic;    /* FUNCTION ALL INTRINSIC */
 
-enum { O_REF, O_STR, O_NUM, O_FIG, O_ALL, O_EXPR, O_FUNC, O_BEXPR, O_ADDR };   /* O_ADDR: ADDRESS OF ref, a data-address identifier */   /* O_BEXPR: a boolean expression, bx, fsize its widest operand */
+enum { O_REF, O_STR, O_NUM, O_FIG, O_ALL, O_EXPR, O_FUNC, O_BEXPR, O_ADDR };
+/* Where the text forbids a zero-length literal (2023 8.5.4 item 8; the
+ * rule named): the names of things, delimiters, patterns, the arguments
+ * a class is chosen from.  Under -std=85 and -std=2002 the tokenizer
+ * refused the literal already. */
+static void no_zero_tok(const Tok *t, const char *where, const char *rule)
+{
+    if (t->kind == T_STR && t->len == 0) die_at(t->line, "%s: a zero-length literal is not allowed here (%s)", where, rule);
+}
+   /* O_ADDR: ADDRESS OF ref, a data-address identifier */   /* O_BEXPR: a boolean expression, bx, fsize its widest operand */
 
 /* a boolean expression (2023 8.8.2), parsed once: an operand, or an
  * operator over one operand (B-NOT; a shift, with its count) or two */
@@ -153,6 +163,10 @@ typedef struct Opnd_ {
     const char *pname;                       /* O_ADDR program/function: the literal or prototype's externalized name; NULL: ref holds the name */
     const char *pproto;                      /* O_ADDR program/function by prototype: the prototype's name (a restricted pointer's value) */
 } Opnd;
+static void no_zero_lit(const Opnd *o, const char *where, const char *rule)
+{
+    if (o->kind == O_STR && o->tok) no_zero_tok(o->tok, where, rule);
+}
 typedef int (*SymVisit)(const Sym *s, const void *cx);
 static int expr_names(const Expr *e, SymVisit f, const void *cx);
 static int opnd_names(const Opnd *o, SymVisit f, const void *cx);
@@ -564,10 +578,14 @@ static void parse_ref_1(Ref *r)
         if (cur()->kind == T_RP) { /* (start:) runs to the end */ }
         else if (cur()->kind == T_NUM && peek(1)->kind == T_RP) {
             NumLit n; numlit_parse(cur(), &n);
-            if (!numlit_is_int(&n) || n.neg || numlit_int(&n) < 1) die_at(cur()->line, "the length of a reference modification must be a positive integer");
+            if (!numlit_is_int(&n) || n.neg || (numlit_int(&n) < 1 && !g_refmod_zero))
+                die_at(cur()->line, numlit_is_int(&n) && !n.neg && g_std >= 2014 ? "the length of a reference modification must be a positive integer (zero under >>REF-MOD-ZERO-LENGTH ON, 2023 7.3.23)"
+                                                                                   : "the length of a reference modification must be a positive integer");
             r->rm_len = (long)numlit_int(&n); advance();
+            if (r->rm_len == 0) r->rm_zero = 1;
         } else {
             r->rm_lx = scan_expr();
+            if (g_refmod_zero) r->rm_zero = 1;      /* a computed length may come out zero */
         }
         if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the reference modification");
         advance();
@@ -575,7 +593,7 @@ static void parse_ref_1(Ref *r)
         if (!r->sym->any_len) {                     /* its length is the argument's, known at run time */
             if (r->rm_start && r->rm_start > chars) die_at(r->line, "reference modification starts past the end of '%s'", r->sym->name);
             if (r->rm_start && r->rm_len && r->rm_start - 1 + r->rm_len > chars) die_at(r->line, "reference modification runs past the end of '%s'", r->sym->name);
-            if (r->rm_start && !r->rm_len && !r->rm_lx) r->rm_len = chars - r->rm_start + 1;
+            if (r->rm_start && !r->rm_len && !r->rm_lx && !r->rm_zero) r->rm_len = chars - r->rm_start + 1;
         }
     }
     if (r->sym->split_key && strcmp(g_cur_stmt, "READ") && strcmp(g_cur_stmt, "START"))

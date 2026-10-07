@@ -187,6 +187,7 @@ static void lr_call(const char *fn, const LrVal *v, LrItem *it, int nit)
     static const char *const none[] = {         /* read, compare, display, check; or never come back */
         "cob_cmp", "memcmp", "cob_get_num", "cob_load_int", "cob_display", "cob_display_nl", "cob_display_field",
         "cob_refmod_len", "cob_refmod_len_chk", "cob_refmod_desc", "cob_bound_refmod", "cob_class_bytes", "cob_class",
+        "cob_refmod_len_z", "cob_refmod_len_chk_z", "cob_refmod_desc_z", "cob_bound_refmod_z",
         "cob_push", "cob_push_lit", "cob_pop_int", "cob_pop_pos", "cob_io_unhandled", "cob_stop_run", "cob_get_edited",
         /* the arithmetic stacks' own work, and the compiler's 64-bit helpers */
         "cob_nadd", "cob_nsub", "cob_nmul", "cob_ndiv", "cob_nneg", "cob_ncmp", "cob_drop", "cob_xdivn",

@@ -183,7 +183,7 @@ static void push_literal(const Lexeme *l, int line)
     /* A zero-length literal is COBOL 2014's: 1985 has 1 through 160
      * characters, 2002 more than zero (8.3.1.2.1.2 rule 1, X"" too; .3.2
      * rule 1 boolean, .4.2 rule 1 national) */
-    #define NO_EMPTY_LIT(n, what, rule) do { if ((n) == 0) die_at(line, "a zero-length %s literal is COBOL 2014 (%s)", what, \
+    #define NO_EMPTY_LIT(n, what, rule) do { if ((n) == 0 && g_std < 2014) die_at(line, "a zero-length %s literal is COBOL 2014 (%s); compile with -std=2014", what, \
         g_std < 2002 ? "X3.23-1985: 1 through 160 characters" : rule); \
         if ((n) > 8191) die_at(line, "this %s literal has %d positions, more than 8,191, the most any edition allows (%s)", what, (int)(n), \
         g_std < 2002 ? "X3.23-1985 nonnumeric literals allow 160" : rule); \

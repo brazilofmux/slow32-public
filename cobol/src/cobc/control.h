@@ -486,6 +486,12 @@ static void apply_turn(Tok *d)
 {
     char buf[512]; snprintf(buf, sizeof buf, "%s", d->s);
     if (!strncasecmp(buf, "propagate-unit", 14)) { g_propagate = 1; return; }   /* copy.h's mark: >>PROPAGATE ON where this unit began */
+    if (!strncasecmp(buf, "ref-mod-zero-length", 19)) {
+        if (g_std < 2014) die_at(d->line, ">>REF-MOD-ZERO-LENGTH is COBOL 2023 (7.3.23), taken under -std=2014; compile with -std=2014");
+        const char *p = buf + 19; while (*p == ' ' || *p == '\t') p++;
+        g_refmod_zero = !strncasecmp(p, "on", 2);
+        return;
+    }
     char *w[64]; int nw = 0;
     for (char *t = strtok(buf, " \t"); t && nw < 64; t = strtok(NULL, " \t")) w[nw++] = t;
     int k = 1, names[64], files[64], nn = 0;       /* w[0] is TURN */

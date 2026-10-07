@@ -32,9 +32,79 @@ DISPLAY or ACCEPT of one has its width stored by the statement
 | rule | paraphrase | disposition |
 |---|---|---|
 | 1-4 | positions: boolean, alphanumeric or national; a DISPLAY item's alphanumeric positions, a NATIONAL item's national ones, numbered from 1 | **test**: 2002/refmodusage, natrefmod |
-| 5 | the unique data item: a subset of the item, from leftmost-position for length positions (bits of a bit item), to the end without a length; non-integer, zero or outside: EC-BOUND-REF-MOD | **test**: 2002/ecrefmod, fnrmpast, fnrmzero; free/lenrefmod; **refused** when the literal positions lie outside: bad/std2002-nat-refmod, bad/std2002-bitelem-refmod-past. REF-MOD-ZERO-LENGTH (2023) is standard-queue item 34 |
+| 5 | the unique data item: a subset of the item, from leftmost-position for length positions (bits of a bit item), to the end without a length; non-integer, zero or outside: EC-BOUND-REF-MOD | **test**: 2002/ecrefmod, fnrmpast, fnrmzero; free/lenrefmod; **refused** when the literal positions lie outside: bad/std2002-nat-refmod, bad/std2002-bitelem-refmod-past. A length of zero under REF-MOD-ZERO-LENGTH (2023): the section below |
 | 6 | an elementary item without JUSTIFIED, of the item's class and usage: an edited item's part alphanumeric (national), a numeric item's part alphanumeric (national under usage NATIONAL), a bit item's boolean | **test**: 2002/refmodusage; INITIALIZE of a part takes that category (2002/refmodrest); a national sender to a numeric item's part is refused as to any alphanumeric receiver (Table 16) |
 | 7 | in a function-identifier, the function's result is the item (the positions of a run-time-length result) | **test**: 2002/refmodrest (`FUNCTION UPPER-CASE (s)(i:n + 1)`), free/fnrefmod, 2002/fnrmpast |
+
+## 8.5.4 Zero-length items, 8.3.3 zero-length literals, 7.3.23 REF-MOD-ZERO-LENGTH (2014/2023)
+
+Implemented 2026-10-07 (standard-queue item 24), under -std=2014. Tests
+2014/zerolen (GnuCOBOL 4 as the oracle where it agrees: it takes `""`
+as one SPACE, FUNCTION LENGTH of a computed zero-length part as the
+whole item's, and a zero-length STRING or UNSTRING delimiter as
+matching at every position -- docs/oracles.md), 2014/zerolen2 (no
+oracle: a written `(3:0)`, national and boolean parts, the class
+conditions, the directive OFF). Sixteen bad tests, one per prohibition
+below.
+
+How: a literal with nothing between its delimiters is a token of length
+zero (tokenizer.h; refused as 2014's under -std=85 and -std=2002), and
+flows as any literal does -- `lit_label` of no bytes, a descriptor of
+size zero. `>>REF-MOD-ZERO-LENGTH` is read with the directives and left
+in the stream for the parser as `>>TURN` is (copy.h, control.h
+`apply_turn`), so it is positional: it sets `g_refmod_zero` for the
+statements after it. A reference modification parsed while it is on is
+marked `rm_zero`; its length, written 0 or computed, then means zero,
+not "to the end" (operand.h `parse_ref`, which supplies the omitted
+length itself for such a part), and the part goes through its own
+runtime entries, `cob_refmod_desc_z`, `cob_refmod_len_z`,
+`cob_refmod_len_chk_z` and `cob_bound_refmod_z` (libcob.c), which take
+0 as a length and check start within the item and start + length - 1
+within it (8.4.3.3.3 rule 5c). Such a part is kept off the in-line
+island (lower.h), which assumes a positive length. Everything else is
+what a descriptor of size zero does: MOVE from one fills the receiver
+with spaces (zeros for a boolean), MOVE to one stores nothing, two of
+them compare equal and one compares as spaces against a longer operand,
+DISPLAY transfers nothing, INSPECT finds nothing, STRING skips it as a
+source, UNSTRING ends at once from it, and a zero-length delimiter is
+ignored (the runtime's loops over its length). The class conditions
+return false for a size of zero (`cob_class`, `cob_class_bytes`,
+`cob_class_2014`, `cob_class_user`).
+
+| rule | paraphrase | disposition |
+|---|---|---|
+| 8.3.3.4.2 GR 3-5, 8.3.3.5.4 GR 3, .4.4 GR 4, .5.3 GR 4, 7 | `""`, `X""`, `N""`, `NX""`, `B""`, `BX""` are zero-length literals | **test**: 2014/zerolen (`""`), zerolen2 (`N""`, `B""`); **refused** under -std=2002: bad/std2002-zero-literal, bad/empty-literal (-std=85), bad/std2002-empty-boolean |
+| 8.3.3.6.3 SR 2 | ALL literal-1 not zero-length | **refused**: "ALL of a zero-length literal" (the figurative-constant sweep) |
+| 8.4.3.3.3 GR 5c, 7.3.23.3 GR 1 | length zero allowed only under REF-MOD-ZERO-LENGTH ON; otherwise EC-BOUND-REF-MOD | **test**: 2014/zerolen2 (ON then OFF, the exception under OFF with checking on); **refused**: bad/std2014-refmod-zero-written (a written 0 without the directive), bad/std2002-refmod-zero-directive (the directive is 2023's, taken under -std=2014), bad/std2014-refmod-zero-arg (ON or OFF) |
+| 8.4.3.3.3 GR 5b | leftmost-position still 1 to the item's positions | **test**: `x(5:0)` of X(5); `x(6:0)` is refused as before |
+| 8.5.4 | a zero-length item: a literal, a part under the directive (items 8-9); an ODO group of zero occurrences, ANY LENGTH, DYNAMIC LENGTH, a zero-length record, a function's zero-length result, a group of only dynamic-capacity tables (items 1-7) | **test**: items 8 and 9 here; a function's result (item 6): TRIM of spaces, zerolen; items 1-5 and 7 are each their own feature's (OCCURS DEPENDING ON of zero: occurs.md; ANY LENGTH: data-division.md; DYNAMIC LENGTH and dynamic-capacity tables: queue items 31-32; a zero-length record: files.md) |
+| 8.8.4.2 | two zero-length operands are equal; one against a longer operand is padded | **test**: zerolen, zerolen2 (alphanumeric, national, boolean) |
+| 8.8.4.4.4 GR 1 | a class condition of a zero-length item is false | **test**: zerolen2 (ALPHABETIC, NUMERIC, NOT ALPHABETIC-UPPER, BOOLEAN) |
+| 14.9.25.4 GR 2-3 | a zero-length alphanumeric or national literal moved is SPACE, a boolean one ZERO; a zero-length receiver is unchanged; a zero-length sending item as the literal | **test**: zerolen, zerolen2; **refused**: bad/std2014-zero-move-numeric (SPACE does not go to a numeric item, 14.9.25.3 rule 5) |
+| 14.9.11.4 GR 1 | DISPLAY transfers nothing for a zero-length operand | **test**: zerolen (`"[" "" "]"`) |
+| 14.9.1.4 GR 1 | ACCEPT into a zero-length item: the data ignored | **test**: by hand (ACCEPT x(1:n) FROM COMMAND-LINE); the receiver's own size through `accept_desc` (display.h), which also mends ACCEPT into any part -- below |
+| 14.9.22.3 SR 3, 14.9.22.4 GR 2 | INSPECT's literals not zero-length; a zero-length inspected item: nothing | **test**: zerolen; **refused**: bad/std2014-zero-inspect |
+| 14.9.43.3 SR 3, 14.9.43.4 | STRING's delimiter literal not zero-length; a zero-length source ignored, a zero-length delimiter item as SIZE (14.9.43.4 rule 3c) | **test**: zerolen; **refused**: bad/std2014-zero-delimiter |
+| 14.9.48.3 SR 1, 14.9.48.4 GR 2 | UNSTRING's delimiter literals not zero-length; a zero-length sender ends the statement (GR 2), a zero-length delimiter item ignored (GR 9) | **test**: zerolen; **refused**: bad/std2014-zero-unstring |
+| 14.9.4.3 SR 2, 14.9.5.3 SR 2 | CALL and CANCEL literal-1 not zero-length | **refused**: bad/std2014-zero-call, -zero-cancel |
+| 14.9.42.3 SR 4 (14.9.18.3 SR 8) | STOP RUN WITH ... STATUS literal not zero-length (GOBACK's the same; GOBACK WITH STATUS is not implemented) | **refused**: bad/std2014-zero-stop-status |
+| 14.9.37.3 SR 13 | SEARCH ALL's WHEN values not zero-length literals | **refused**: bad/std2014-zero-search |
+| 13.16.3 SR 9, 13.15.3 SR 14, 13.17.3 SR 10 | a VALUE literal implies a PICTURE only when it is not zero-length | **refused**: bad/std2014-zero-value-nopic (then rule 8: no PICTURE) |
+| 13.18.25.3 SR 5 | a screen FROM literal not zero-length | **refused** by rule |
+| 12.4.5.2 SR 4 | ASSIGN TO literal not zero-length | **refused**: bad/std2014-zero-assign |
+| 11.5.3, 11.10.3 SR 1, 13.18.22.3 SR 3 | FUNCTION-ID AS, PROGRAM-ID AS, EXTERNAL AS not zero-length | **refused** by rule (before this item) |
+| 15.59.3, 15.63.3 SR 3, 15.71.3, 15.72.3 SR 2, 15.66.3 SR 3 | MAX, MIN, ORD-MAX, ORD-MIN and NATIONAL-OF arguments not zero-length literals | **refused**: bad/std2014-zero-max, -zero-national-of |
+| 15.19.3, 15.85.3, 15.87.3 | CONVERT, STANDARD-COMPARE, SUBSTITUTE arguments not zero-length | **n/a**: the functions are not implemented (functions.md) |
+| 14.9.23.3 SR 2, 17 | INVOKE | **n/a**: object orientation is out of scope |
+| 14.9.32.3 SR 4 | RELEASE FROM literal not zero-length | **n/a**: RELEASE FROM takes an identifier here (14.9.32 format: 2023 admits a literal; not implemented) |
+| 13.18.62.3 SR 2 | VALIDATE-STATUS literal not zero-length | **n/a**: validation is not implemented |
+
+Found on the way: every ACCEPT ... FROM form passed the whole item's
+descriptor with a reference-modified receiver, so `ACCEPT X(2:2) FROM
+TIME` wrote four digits from position 2 and FROM COMMAND-LINE the
+item's full width. Fixed with `accept_desc` (display.h): the part's
+descriptor, as DISPLAY and MOVE have always had it. Test 2002/acceptrm
+(GnuCOBOL agrees).
 
 ## The leftovers closed with item 10 (2026-10-06)
 

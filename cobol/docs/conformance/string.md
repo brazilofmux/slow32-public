@@ -36,7 +36,7 @@ delimiter; TALLYING then REPLACING in one statement.
 |---|---|---|
 | 1 (85: 2) | literals nonnumeric; identifiers but the POINTER of usage display or national | **refused**: bad/string-operands (12, a COMP item); both accepted before this sweep |
 | 2 (85: 1) | no ALL figurative constant | **refused**: bad/string-operands (as a source and as a delimiter); accepted before |
-| 3 | no zero-length delimiter literal | **refused**: a zero-length literal is 2014's, refused where it is lexed |
+| 3 | no zero-length delimiter literal | **refused**: bad/std2014-zero-delimiter; a zero-length source is ignored and a zero-length delimiter item is SIZE (2014/zerolen; refmod.md "8.5.4 Zero-length items") |
 | 4 (85: 3) | the receiver not reference-modified | **refused**: bad/string-refmod-receiver |
 | 5 (85: 4) | the receiver not edited, not JUSTIFIED | **refused**: "the STRING receiver must be an alphanumeric item, not edited or JUSTIFIED" |
 | 6 | not a strongly-typed group | **refused**: "a strongly-typed group is not a STRING receiver" |
@@ -49,7 +49,7 @@ delimiter; TALLYING then REPLACING in one statement.
 
 | rule | paraphrase | disposition |
 |---|---|---|
-| 1 (85: 1) | delimiter literals nonnumeric, no ALL figurative, not zero-length | **refused**: bad/unstring-operands (5); ALL is the phrase keyword, not a figurative, here |
+| 1 (85: 1) | delimiter literals nonnumeric, no ALL figurative, not zero-length | **refused**: bad/unstring-operands (5), bad/std2014-zero-unstring; ALL is the phrase keyword, not a figurative, here. A zero-length sender ends the statement and a zero-length delimiter item is ignored (2014/zerolen) |
 | 2 (85: 2) | the sending item, identifier delimiters and DELIMITER IN items of category alphanumeric or national | **refused**: bad/unstring-operands (a numeric sender, delimiter, DELIMITER IN item); only a non-display numeric sender was refused before. A group or a reference-modified item is alphanumeric |
 | 3 | national all-or-none | **refused** (the national sweep): bad/std2002-nat-unstring-num |
 | 4 (85: 3) | a receiver: display and alphabetic, alphanumeric or numeric, or national and national or numeric; no P | **refused**: bad/unstring-operands (numeric-edited, 9PP); COMP, edited and P receivers were all accepted before |

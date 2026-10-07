@@ -395,6 +395,15 @@ static void parse_accept_1(void);
  * UTF-8 and is moved, so a byte that begins no UTF-8 character becomes
  * U+FFFD and, checked, EC-DATA-CONVERSION (as a MOVE, 14.9.25 rule 6) */
 static int g_accept_nat_check;
+/* an ACCEPT receiver's descriptor: the part's when it is reference-
+ * modified (the whole item's was passed before, writing its length at
+ * the part's address: ACCEPT X(2:2) FROM TIME took four positions) */
+static Arg accept_desc(const Ref *r)
+{
+    if (!r->rm) return arg_desc(sym_desc(r->sym));
+    if (r->rm_len && (r->rm_start || !r->rm_bit)) return arg_desc(part_desc(r));
+    return arg_rdesc(r);
+}
 static void parse_accept(void)
 {
     g_accept_nat_check = 0;
@@ -506,12 +515,12 @@ static void parse_accept_1(void)
                 Opnd no; parse_operand(&no);
                 env_text_args(&no, "ACCEPT ... FROM ENVIRONMENT");
                 emit("\tstw sp+%d, r3", SLOT_A); emit("\tstw sp+%d, r4", SLOT_B);
-                Arg a[2] = { arg_ref(&r), arg_desc(sym_desc(r.sym)) }; emit_args(a, 2);
+                Arg a[2] = { arg_ref(&r), accept_desc(&r) }; emit_args(a, 2);
                 emit("\tadd r5, r3, r0"); emit("\tadd r6, r4, r0");
                 emit("\tldw r3, sp+%d", SLOT_A); emit("\tldw r4, sp+%d", SLOT_B);
                 emit_call("cob_env_accept_named");
             } else {
-                Arg a[2] = { arg_ref(&r), arg_desc(sym_desc(r.sym)) }; emit_args(a, 2);
+                Arg a[2] = { arg_ref(&r), accept_desc(&r) }; emit_args(a, 2);
                 emit_call("cob_env_accept");
             }
             parse_env_exception();
@@ -523,7 +532,7 @@ static void parse_accept_1(void)
                            : at_word("argument-value") ? "cob_accept_argval" : "cob_accept_cmdline";
             if (at_word("argument-number") && !is_numeric_sym(r.sym)) die_at(r.line, "ACCEPT ... FROM ARGUMENT-NUMBER needs a numeric item");
             advance();
-            Arg a[2] = { arg_ref(&r), arg_desc(sym_desc(r.sym)) };
+            Arg a[2] = { arg_ref(&r), accept_desc(&r) };
             emit_args(a, 2);
             emit_call(fn);
             if (at_word("on") || at_word("exception") || at_word("not")) die_at(cur()->line, "ACCEPT ... ON EXCEPTION is not implemented");
@@ -535,7 +544,7 @@ static void parse_accept_1(void)
             if (!is_numeric_sym(r.sym)) die_at(r.line, "ACCEPT ... FROM %s needs a numeric item", at_word("lines") ? "LINES" : "COLUMNS");
             bp(BP_E32_SCREEN_DIMS, r.line);
             int cols = at_word("columns"); advance();
-            Arg a[3] = { arg_imm(cols), arg_ref(&r), arg_desc(sym_desc(r.sym)) };
+            Arg a[3] = { arg_imm(cols), arg_ref(&r), accept_desc(&r) };
             emit_args(a, 3);
             emit_call("cob_accept_scr_dim");
             accept_word("end-accept");
@@ -553,7 +562,7 @@ static void parse_accept_1(void)
             if (!r.rm && !r.sym->is_group && (r.sym->pi.category == PIC_ALPHABETIC || r.sym->pi.category == PIC_BOOLEAN || r.sym->usage == U_BIT))
                 die_at(r.line, "ACCEPT '%s' FROM DATE, DAY, TIME or DAY-OF-WEEK: an alphabetic or boolean item does not take the digits (%s)", r.sym->name,
                        g_std < 2002 ? "X3.23-1985 ACCEPT general rule 6: the MOVE rules" : "2023 14.9.1.3 rule 3");
-            Arg a[3] = { arg_imm(which), arg_ref(&r), arg_desc(sym_desc(r.sym)) };
+            Arg a[3] = { arg_imm(which), arg_ref(&r), accept_desc(&r) };
             emit_args(a, 3);
             emit_call("cob_accept_datetime");
             accept_word("end-accept");
@@ -561,7 +570,7 @@ static void parse_accept_1(void)
         }
         if (cur()->kind == T_WORD && mnemonic_kind(cur()->s) == 1) {
             advance();
-            Arg a[2] = { arg_ref(&r), arg_desc(sym_desc(r.sym)) };
+            Arg a[2] = { arg_ref(&r), accept_desc(&r) };
             emit_args(a, 2);
             emit_call("cob_accept_console");
             accept_word("end-accept");
@@ -574,7 +583,7 @@ static void parse_accept_1(void)
     }
     /* ACCEPT identifier: a line from standard input */
     {
-        Arg a[2] = { arg_ref(&r), arg_desc(sym_desc(r.sym)) };
+        Arg a[2] = { arg_ref(&r), accept_desc(&r) };
         emit_args(a, 2);
         emit_call("cob_accept_console");
         accept_word("end-accept");

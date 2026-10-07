@@ -55,7 +55,7 @@ static void emit_refmod_check(const Ref *r, long len, int slot)
         if (r->rm_nat) emit("\tsrai r5, r5, 1");
     } else
     emit_li("r5", r->rm_bit ? r->sym->bits : r->rm_nat ? r->sym->size / 2 : r->sym->size);   /* in character positions, or bits */
-    emit_call("cob_bound_refmod");
+    emit_call(r->rm_zero ? "cob_bound_refmod_z" : "cob_bound_refmod");
     emit("\tbeq r1, r0, .L%d", Lok);
     emit_ec_raise(ec_find("EC-BOUND-REF-MOD", 0));
     emit_label(Lok);
@@ -116,7 +116,8 @@ static void emit_args(const Arg *a, int n)
             emit("\tadd r4, r1, r0");
             emit("\tldw r5, sp+%d", SLOT(base + i));
             emit_desc_addr("r3", r->bitsub ? bitarray_desc(r->sym) : sym_desc(r->sym));
-            emit_call(a[i].kind == A_RDESC ? "cob_refmod_desc" : a[i].kind == A_RLENC ? "cob_refmod_len_chk" : "cob_refmod_len");
+            emit_call(a[i].kind == A_RDESC ? (r->rm_zero ? "cob_refmod_desc_z" : "cob_refmod_desc") :
+                      a[i].kind == A_RLENC ? (r->rm_zero ? "cob_refmod_len_chk_z" : "cob_refmod_len_chk") : r->rm_zero ? "cob_refmod_len_z" : "cob_refmod_len");
             emit("\tstw sp+%d, r1", SLOT(base + i));
             slotted[i] = 1;
         } else if (a[i].kind == A_CONTENT) {
@@ -132,7 +133,7 @@ static void emit_args(const Arg *a, int n)
                 emit("\tadd r4, r1, r0");
                 emit("\tldw r5, sp+%d", SLOT(base + i));
                 emit_desc_addr("r3", sym_desc(r->sym));
-                emit_call("cob_refmod_len");
+                emit_call(r->rm_zero ? "cob_refmod_len_z" : "cob_refmod_len");
                 emit("\tstw sp+%d, r1", SLOT(base + i));
                 emit_ref_addr(r, "r3");
                 emit("\tldw r4, sp+%d", SLOT(base + i));
