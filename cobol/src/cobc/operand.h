@@ -57,6 +57,7 @@ static void emit_report_addr(const char *reg, Report *r);
 static void emit_ec_propagated(void);
 static void emit_ec_dispatch(int i);
 static int ec_find(const char *w, int line);
+static const char *pg_extname(const char *name);
 static char g_cur_stmt[16];              /* the statement being compiled, for EXCEPTION-STATEMENT */
 static const Tok *g_stmt_tok;            /* its first token: the line EXCEPTION-LOCATION names */
 static const char *g_ec_file;            /* EC-I-O being raised: the file-name as written, for EXCEPTION-FILE */
@@ -91,7 +92,6 @@ static char g_prog_as[64];          /* the unit's own PROGRAM-ID ... AS literal 
  * compiled at -std=2002 writes; the REPOSITORY's PROGRAM names and their
  * AS literals */
 static FnSig g_pgsig[64]; static int g_npgsig;
-static char g_repo_pg[32][64], g_repo_pg_as[32][64]; static int g_nrepo_pg;
 static int g_repo_all_intrinsic;    /* FUNCTION ALL INTRINSIC */
 
 enum { O_REF, O_STR, O_NUM, O_FIG, O_ALL, O_EXPR, O_FUNC, O_BEXPR, O_ADDR };   /* O_ADDR: ADDRESS OF ref, a data-address identifier */   /* O_BEXPR: a boolean expression, bx, fsize its widest operand */
@@ -145,6 +145,9 @@ typedef struct Opnd_ {
                                               * subject, evaluated once; cob_nsave, cob_npush_saved) */
     struct UCall_ *uc;                       /* a user function's result met while scanning ahead: the call,
                                               * made when an expression holding it is emitted (ucall_make) */
+    int paddr;                               /* O_ADDR: 1 ADDRESS OF PROGRAM, 2 ADDRESS OF FUNCTION (2023 8.4.3.12-13); else a data address */
+    const char *pname;                       /* O_ADDR program/function: the literal or prototype's externalized name; NULL: ref holds the name */
+    const char *pproto;                      /* O_ADDR program/function by prototype: the prototype's name (a restricted pointer's value) */
 } Opnd;
 typedef int (*SymVisit)(const Sym *s, const void *cx);
 static int expr_names(const Expr *e, SymVisit f, const void *cx);

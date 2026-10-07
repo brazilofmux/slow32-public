@@ -1161,6 +1161,13 @@ void *cob_resolve_v(const unsigned char *p, int len, int must, void *const *vis)
     return 0;
 }
 void *cob_resolve(const unsigned char *p, int len, int must) { return cob_resolve_v(p, len, must, 0); }
+/* CALL through a program-pointer holding NULL, with no ON EXCEPTION and
+ * EC-PROGRAM-PTR-NULL not checked: the run stops (2023 14.9.4.4 rule 3h) */
+void cob_call_null_ptr(const char *item)
+{
+    char msg[200]; snprintf(msg, sizeof msg, "CALL %s: the program-pointer is NULL", item);
+    cob_fatal(msg);
+}
 
 /* EXTERNAL: storage shared by name between the programs of one executable.
  * A record's block is made on first request (zeroed, as GnuCOBOL's); an

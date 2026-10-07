@@ -595,14 +595,14 @@ static void init_cover(Sym *s, int top_off, int disp, unsigned char *cover, int 
  * and it has one (a pointer: NULL), else the REPLACING value for its
  * category, else its category's default (GR 6c) when TO DEFAULT is given
  * or neither VALUE nor REPLACING is -- or is left alone. */
-enum { IC_DPTR = 100, IC_NATED };           /* categories beyond PIC_*: data-pointer, national-edited */
+enum { IC_DPTR = 100, IC_NATED, IC_PPTR };  /* categories beyond PIC_*: data-pointer, national-edited, program-pointer */
 typedef struct {
     int filler, value, value_all, value_cat, deflt, nrep;
     int rep_cat[16]; Opnd rep_val[16];
 } InitSpec;
 static int init_cat(const Sym *s)
 {
-    if (s->usage == U_POINTER) return IC_DPTR;
+    if (s->usage == U_POINTER) return s->uvar == UV_PPTR ? IC_PPTR : IC_DPTR;
     if (s->pi.category == PIC_NATIONAL && s->pi.edited) return IC_NATED;
     return s->pi.category;
 }
@@ -620,17 +620,17 @@ static void init_elem2k(Sym *s, Ref *r, const InitSpec *sp)
     Opnd v; memset(&v, 0, sizeof v); v.line = r->line;
     int ptr_null = 0, have = 0;
     if (sp->value && (sp->value_all || sp->value_cat == cat)) {
-        if (cat == IC_DPTR) { ptr_null = 1; have = 1; }
+        if (cat == IC_DPTR || cat == IC_PPTR) { ptr_null = 1; have = 1; }
         else if (s->value_tok) { v = init_value_opnd(s); have = 1; }
     }
     if (!have) for (int k = 0; k < sp->nrep; k++) if (sp->rep_cat[k] == cat) { v = sp->rep_val[k]; have = 1; break; }
     if (!have && (sp->deflt || (!sp->value && !sp->nrep))) {
-        if (cat == IC_DPTR) ptr_null = 1;
+        if (cat == IC_DPTR || cat == IC_PPTR) ptr_null = 1;
         else { v.kind = O_FIG; v.tok = cat == PIC_NUMERIC || cat == PIC_NUMERIC_EDITED || cat == PIC_BOOLEAN ? &tz : &ts; }
         have = 1;
     }
     if (!have) return;
-    if (cat == IC_DPTR) {                       /* SET receiving-operand TO NULL, or TO the REPLACING pointer */
+    if (cat == IC_DPTR || cat == IC_PPTR) {     /* SET receiving-operand TO NULL, or TO the REPLACING pointer */
         if (ptr_null) emit_li("r1", 0);
         else emit_ptr_value(&v, "r1");
         emit("\tstw sp+%d, r1", SLOT_A);
@@ -668,10 +668,10 @@ static int init_cat_word(void)
     static const struct { const char *w; int c; } cw[] = {
         { "alphabetic", PIC_ALPHABETIC }, { "alphanumeric", PIC_ALPHANUMERIC }, { "alphanumeric-edited", PIC_ALPHANUMERIC_EDITED },
         { "numeric", PIC_NUMERIC }, { "numeric-edited", PIC_NUMERIC_EDITED }, { "national", PIC_NATIONAL },
-        { "national-edited", IC_NATED }, { "boolean", PIC_BOOLEAN }, { "data-pointer", IC_DPTR },
+        { "national-edited", IC_NATED }, { "boolean", PIC_BOOLEAN }, { "data-pointer", IC_DPTR }, { "program-pointer", IC_PPTR },
     };
     for (unsigned i = 0; i < sizeof cw / sizeof cw[0]; i++) if (at_word(cw[i].w)) return cw[i].c;
-    if (at_word("function-pointer") || at_word("program-pointer") || at_word("message-tag") || at_word("object-reference"))
+    if (at_word("function-pointer") || at_word("message-tag") || at_word("object-reference"))
         die_at(cur()->line, "INITIALIZE: the category %s is not implemented (no such items exist here)", cur()->s);
     return -1;
 }
@@ -694,8 +694,11 @@ static void parse_initialize_2002(Ref *rs, int n)
                 if (sp.rep_cat[k] == cat) die_at(line, "INITIALIZE REPLACING: a category named twice (2023 14.9.20.3 rule 6)");
             accept_word("data"); expect_word("by");
             Opnd value; parse_operand(&value);
-            if (cat == IC_DPTR) {
-                if (!opnd_is_ptr(&value)) die_at(line, "INITIALIZE REPLACING DATA-POINTER needs a pointer item, ADDRESS OF or NULL (2023 14.9.20.3 rules 3-4)");
+            if (cat == IC_DPTR || cat == IC_PPTR) {
+                int vc = opnd_ptr_cat(&value);
+                if (!vc || (vc > 0 && vc != (cat == IC_DPTR ? 1 : 2)))
+                    die_at(line, "INITIALIZE REPLACING %s needs a %s item, ADDRESS OF%s or NULL (2023 14.9.20.3 rules 3-4)",
+                           cat == IC_DPTR ? "DATA-POINTER" : "PROGRAM-POINTER", ptr_cat_name(cat == IC_DPTR ? 1 : 2), cat == IC_DPTR ? "" : " PROGRAM");
             } else if (value.kind != O_REF && value.kind != O_STR && value.kind != O_NUM && value.kind != O_FIG)
                 die_at(line, "INITIALIZE REPLACING ... BY needs an item or a literal");
             emit_incompat(&value);

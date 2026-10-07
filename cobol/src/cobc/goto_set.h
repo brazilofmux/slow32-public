@@ -411,13 +411,30 @@ static void parse_set(void)
     }
     if (!nr) die_at(cur()->line, "SET needs an item");
     if (at_word("to") && is_word(peek(1), "entry"))
-        die_at(cur()->line, "SET ... TO ENTRY (a program-pointer, 2023 14.9.39 format 9) is not implemented");
-    if (nptr && nptr != nr) die_at(rs[0].line, "SET: data-pointer receivers are not mixed with others");
+        die_at(cur()->line, "SET ... TO ENTRY is IBM's; the standard's program-pointer value is ADDRESS OF PROGRAM (2023 8.4.3.13, 14.9.39 format 9)");
+    if (nptr && nptr != nr) die_at(rs[0].line, "SET: pointer receivers are not mixed with others");
     if (nptr && accept_word("to")) {
-        /* format 7: the value once, then each receiver in order */
+        /* formats 7 and 9: the value once, then each receiver in order;
+         * the receivers of one category, the value of it or NULL (rules
+         * 17, 21); a restricted program-pointer takes NULL or a value
+         * restricted to the same prototype (rule 22) */
+        int cat = raddr[0] ? 1 : rs[0].sym->uvar == UV_PPTR ? 2 : rs[0].sym->uvar == UV_FPTR ? 3 : 1;
+        for (int i = 1; i < nr; i++) {
+            int c = raddr[i] ? 1 : rs[i].sym->uvar == UV_PPTR ? 2 : rs[i].sym->uvar == UV_FPTR ? 3 : 1;
+            if (c != cat) die_at(rs[i].line, "SET: '%s' is a %s among %s receivers (2023 14.9.39.3 rules 17, 21)", rs[i].sym->name, ptr_cat_name(c), ptr_cat_name(cat));
+        }
         Opnd v; parse_operand(&v);
-        if (!opnd_is_ptr(&v))
-            die_at(v.line, "SET of a data pointer takes ADDRESS OF, a pointer item or NULL (2023 14.9.39.3 rule 17)");
+        int vc = opnd_ptr_cat(&v);
+        if (!vc)
+            die_at(v.line, cat == 1 ? "SET of a data pointer takes ADDRESS OF, a pointer item or NULL (2023 14.9.39.3 rule 17)" :
+                           "SET of a program-pointer takes ADDRESS OF PROGRAM, a program-pointer item or NULL (2023 14.9.39.3 rule 21)");
+        if (vc > 0 && vc != cat)
+            die_at(v.line, "SET: a %s value for a %s receiver (2023 14.9.39.3 rules 17, 21)", ptr_cat_name(vc), ptr_cat_name(cat));
+        if (vc > 0 && cat == 2)
+            for (int i = 0; i < nr; i++)
+                if (rs[i].sym->ptr_proto[0] && strcmp(rs[i].sym->ptr_proto, opnd_ptr_proto(&v)))
+                    die_at(v.line, "SET '%s': restricted to the prototype %s, it takes NULL or a program-pointer value restricted to the same (2023 14.9.39.3 rule 22)",
+                           rs[i].sym->name, rs[i].sym->ptr_proto);
         emit_ptr_value(&v, "r1");
         emit("\tstw sp+%d, r1", SLOT_A);
         for (int i = 0; i < nr; i++) {

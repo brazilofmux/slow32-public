@@ -1,1 +1,1 @@
-SET ... TO ENTRY (a program-pointer
+SET ... TO ENTRY is IBM's; the standard's program-pointer value is ADDRESS OF PROGRAM

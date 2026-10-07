@@ -1,0 +1,1 @@
+SET 'pq': restricted to the prototype q, it takes NULL or a program-pointer value restricted to the same (2023 14.9.39.3 rule 22)

@@ -542,9 +542,34 @@ static void parse_operand_raw_1(Opnd *o)
         if (!g_cond_depth && strcmp(g_cur_stmt, "SET") && strcmp(g_cur_stmt, "CALL"))
             die_at(t->line, "ADDRESS OF is a sending operand of SET or CALL, or a relation's operand; not of %s", g_cur_stmt);
         advance(); advance();
-        if ((at_word("function") || at_word("program")) && !sym_lookup_quiet(cur()->s))
-            die_at(t->line, "ADDRESS OF %s is COBOL 2014 (2023 8.4.3.12, a %s-pointer's value); not implemented",
-                   at_word("function") ? "FUNCTION" : "PROGRAM", at_word("function") ? "function" : "program");
+        if (at_word("function") && !sym_lookup_quiet(cur()->s))
+            die_at(t->line, "ADDRESS OF FUNCTION is COBOL 2014 (2023 8.4.3.12, a function-pointer's value); not implemented (docs/plans/standard-queue.md item 26)");
+        if (at_word("program") && !sym_lookup_quiet(cur()->s)) {
+            /* ADDRESS OF PROGRAM {identifier | literal | prototype-name}
+             * (2023 8.4.3.13): a program-pointer value, the program found
+             * in the registry at run time (NULL, and EC-PROGRAM-NOT-FOUND
+             * when checked, if it is not there); by a prototype-name the
+             * value is restricted to that prototype (rule 3) */
+            advance();
+            o->kind = O_ADDR; o->paddr = 1;
+            if (cur()->kind == T_STR) {
+                if (cur()->len == 0) die_at(cur()->line, "ADDRESS OF PROGRAM: a literal of length zero (2023 8.4.3.13.3 rule 2)");
+                char *nm = xmalloc((size_t)cur()->len + 1); memcpy(nm, cur()->s, (size_t)cur()->len); nm[cur()->len] = 0;
+                for (char *k = nm; *k; k++) *k = (char)tolower((unsigned char)*k);
+                o->pname = nm; advance();
+            } else if (cur()->kind == T_WORD && !sym_lookup_quiet(cur()->s) && repo_pg_find(cur()->s) >= 0) {
+                o->pproto = xstrdup(cur()->s);
+                char *nm = xstrdup(pg_extname(cur()->s));
+                for (char *k = nm; *k; k++) *k = (char)tolower((unsigned char)*k);
+                o->pname = nm; advance();
+            } else {
+                parse_ref(&o->ref);
+                const Sym *x = o->ref.sym;
+                if (x->is_group || (x->pi.category != PIC_ALPHANUMERIC && x->pi.category != PIC_NATIONAL))
+                    die_at(o->line, "ADDRESS OF PROGRAM '%s': an alphanumeric or national item holding the name, a literal, or a program-prototype-name (2023 8.4.3.13)", x->name);
+            }
+            return;
+        }
         o->kind = O_ADDR;
         parse_ref(&o->ref);
         const Sym *x = o->ref.sym;
@@ -1237,6 +1262,25 @@ addr_done:
 
 /* a data-pointer value (2023 8.4.3.11; 14.9.39 formats 7 and 10): ADDRESS
  * OF an item, a pointer item's content, or NULL */
+/* a pointer operand's category (8.5.2): 0 not a pointer, 1 data-pointer,
+ * 2 program-pointer, 3 function-pointer, -1 NULL (any) */
+static int opnd_ptr_cat(const Opnd *o)
+{
+    if (o->kind == O_FIG && o->tok && !strcmp(o->tok->s, "null")) return -1;
+    if (o->kind == O_ADDR) return o->paddr ? 1 + o->paddr : 1;
+    if (o->kind == O_REF && !o->ref.sym->is_group && o->ref.sym->usage == U_POINTER)
+        return o->ref.sym->uvar == UV_PPTR ? 2 : o->ref.sym->uvar == UV_FPTR ? 3 : 1;
+    return 0;
+}
+/* the prototype a program- or function-pointer operand is restricted to, or "" */
+static const char *opnd_ptr_proto(const Opnd *o)
+{
+    if (o->kind == O_ADDR) return o->pproto ? o->pproto : "";
+    if (o->kind == O_REF) return o->ref.sym->ptr_proto;
+    return "";
+}
+static const char *ptr_cat_name(int c) { return c == 2 ? "program-pointer" : c == 3 ? "function-pointer" : "data-pointer"; }
+
 static int opnd_is_ptr(const Opnd *o)
 {
     return o->kind == O_ADDR || (o->kind == O_REF && !o->ref.sym->is_group && o->ref.sym->usage == U_POINTER) ||
@@ -1247,6 +1291,24 @@ static void emit_ptr_value(const Opnd *o, const char *reg)
 {
     if (o->kind == O_FIG) { emit("\tadd %s, r0, r0", reg); return; }
     if (o->kind == O_REF) { emit_ref_addr(&o->ref, "r3"); emit("\tldw %s, r3+0", reg); return; }
+    if (o->kind == O_ADDR && o->paddr == 1) {
+        /* ADDRESS OF PROGRAM: the registry's entry for the name, as CALL
+         * identifier finds it (a contained program by its scope); none:
+         * NULL, and EC-PROGRAM-NOT-FOUND when checked (8.4.3.13.4 rule 4) */
+        if (o->pname) { emit_la("r3", lit_label((const unsigned char *)o->pname, (int)strlen(o->pname))); emit_li("r4", (long)strlen(o->pname)); }
+        else { emit_ref_addr(&o->ref, "r3"); emit_li("r4", o->ref.sym->size); }
+        emit_li("r5", 0);
+        if (g_any_nested) { char vis[32]; snprintf(vis, sizeof vis, ".Lvis%d", g_unit); emit_la("r6", vis); emit_call("cob_resolve_v"); }
+        else emit_call("cob_resolve");
+        if (ec_on_name("EC-PROGRAM-NOT-FOUND")) {
+            int Lok = new_label();
+            emit("\tbne r1, r0, .L%d", Lok);
+            emit_ec_raise(ec_find("EC-PROGRAM-NOT-FOUND", 0));
+            emit_label(Lok);
+        }
+        if (strcmp(reg, "r1")) emit("\tadd %s, r1, r0", reg);
+        return;
+    }
     const Ref *r = &o->ref;
     Sym *rec = &g_sym[r->sym->record];
     if (rec == r->sym && rec_indirect(rec) && !r->nsub && !r->rm) {

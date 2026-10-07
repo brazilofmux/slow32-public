@@ -24,7 +24,8 @@ static const char *usage_name(int u)
 
 enum { UV_NONE, UV_COMPX, UV_NOSIGN,     /* Sym.uvar (docs/usage.md) */
        UV_COMP1,                        /* COMP-1, until sym_finish sees whether a PICTURE came: RM's binary, or a float */
-       UV_FSHORT, UV_FLONG };           /* U_FLOAT: four bytes or eight */
+       UV_FSHORT, UV_FLONG,             /* U_FLOAT: four bytes or eight */
+       UV_PPTR, UV_FPTR };              /* U_POINTER: a program-pointer, a function-pointer (2023 13.18.60; ptr_proto its restriction) */
 static int g_comp1 = -1;                /* -fcomp1=binary (1) | float (0); -1: by its PICTURE */
 
 static int usage_is_native(int u)
@@ -73,6 +74,7 @@ typedef struct Sym {
     int  is_based;                  /* a BASED entry: reached through a cell SET ADDRESS OF fills, NULL at first (2002 8.6.4) */
     int  param_opt;                 /* a PROCEDURE DIVISION USING OPTIONAL parameter: its cell may be NULL (omitted) */
     int  any_len;                   /* ANY LENGTH (2002; 2023 13.18.2): its size the argument's, in a writable descriptor */
+    char ptr_proto[64];             /* PROGRAM-POINTER TO / FUNCTION-POINTER TO: the prototype it is restricted to, or "" */
     int  split_key;                 /* a Micro Focus split key (BP-D2): its slot in the record area's tail */
     int  is_rc;                     /* RETURN-CODE: storage in libcob (cob_return_code), none of the unit's */
     int  is_local;                  /* a LOCAL-STORAGE record: storage is the activation's (COBOL 2002) */
@@ -449,6 +451,15 @@ static Sym *sym_lookup_quiet(const char *name)
 }
 
 static char g_progid[64], g_progid_orig[64];    /* the program-name, and as written */
+/* the REPOSITORY's PROGRAM names and their AS literals (12.3.8), known
+ * to the data division (PROGRAM-POINTER TO) before the statements */
+static char g_repo_pg[32][64], g_repo_pg_as[32][64]; static int g_nrepo_pg;
+static int g_any_nested;            /* any contained program in this source: scope tables wanted */
+static int repo_pg_find(const char *name)
+{
+    for (int i = 0; i < g_nrepo_pg; i++) if (!strcmp(g_repo_pg[i], name)) return i;
+    return -1;
+}
 
 /* ---- files: SELECT + FD ------------------------------------------------ */
 

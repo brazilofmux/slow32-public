@@ -88,7 +88,7 @@ repository's -- and converted where the standard converts them. Test:
 |---|---|---|
 | format 2 | BY CONTENT or BY VALUE may be an arithmetic expression | **test**: 2002/pgproto (`a + 1`, `b / 2` BY CONTENT; `b + 1` BY VALUE) |
 | SR 13 | NESTED only in a program definition | **refused**: "the NESTED phrase is a program definition's" |
-| SR 14 | a restricted program-pointer's prototype | **n/a** until program pointers (standard-queue item 9) |
+| SR 14 | a restricted program-pointer's prototype | **test**: 2002/pgpointer (CALL through a PROGRAM-POINTER TO greet checks and converts the arguments by greet's signature; docs/conformance/usage.md) |
 | SR 15 | NESTED: a literal, naming a contained or common program | **test**: 2002/pgproto (inner); **refused**: bad/std2002-call-nested-unknown, and an identifier with NESTED |
 | SR 16 | the prototype-name is a program-specifier of the REPOSITORY | **refused**: "CALL ... AS takes NESTED or a program-prototype-name of the REPOSITORY"; a bare word that is neither a data item nor a program-specifier is a plain CALL identifier error |
 | SR 17-18 | sending operands; no ANY LENGTH argument | **test**; ANY LENGTH as format 1 |

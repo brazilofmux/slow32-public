@@ -38,6 +38,8 @@ static int bool_len_dynamic(const Opnd *o)
 }
 static int sym_strong_has_boolean(Sym *g);
 static int opnd_is_ptr(const Opnd *o);
+static int opnd_ptr_cat(const Opnd *o);
+static const char *ptr_cat_name(int c);
 static Cond *cond_rel(Opnd *x, int op, Opnd *y, int neg)
 {
     {   /* data pointers (format 3): EQUAL or NOT EQUAL, and a pointer on
@@ -48,6 +50,11 @@ static Cond *cond_rel(Opnd *x, int op, Opnd *y, int neg)
                 die_at(x->line, "a data pointer is compared only with ADDRESS OF, a pointer item or NULL (2023 8.8.4.2.3 rule 5)");
             if (op != R_EQ && op != R_NE)
                 die_at(x->line, "data pointers are compared by EQUAL or NOT EQUAL only (2023 8.8.4.2.2 format 3)");
+            {   /* of one category: a program-pointer with a program-pointer (8.8.4.2.4), a data-pointer with a data-pointer */
+                int xc = opnd_ptr_cat(x), yc = opnd_ptr_cat(y);
+                if (xc > 0 && yc > 0 && xc != yc)
+                    die_at(x->line, "a %s is compared with a %s, not a %s (2023 8.8.4.2.3-4)", ptr_cat_name(xc), ptr_cat_name(xc), ptr_cat_name(yc));
+            }
             Cond *c = cond_new(C_REL);
             c->x = *x; c->y = *y; c->op = op; c->neg = neg; c->ptr = 1;
             return c;

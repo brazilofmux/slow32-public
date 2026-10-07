@@ -381,6 +381,13 @@ static void *xmalloc(size_t n)
     if (!p) { fprintf(stderr, "s32-cobc: out of memory\n"); exit(2); }
     return p;
 }
+static char *xstrdup(const char *s)
+{
+    size_t n = strlen(s) + 1;
+    char *p = xmalloc(n);
+    memcpy(p, s, n);
+    return p;
+}
 static void *xrealloc(void *p, size_t n)
 {
     p = realloc(p, n ? n : 1);

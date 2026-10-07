@@ -12,7 +12,7 @@ carry the compiler's own reason.
 | clause | elements | swept | not implemented | unswept |
 |---|---|---|---|---|
 | 7 COPY, REPLACE and directives | 24 | 16 | 0 | 8 |
-| 8 characters, names, data, expressions, conditions | 35 | 5 | 0 | 30 |
+| 8 characters, names, data, expressions, conditions | 35 | 6 | 0 | 29 |
 | 9 files and objects, general | 0 | 0 | 0 | 0 |
 | 10 the compilation group | 2 | 0 | 0 | 2 |
 | 11 IDENTIFICATION DIVISION | 15 | 2 | 0 | 13 |
@@ -21,7 +21,7 @@ carry the compiler's own reason.
 | 14 PROCEDURE DIVISION | 54 | 42 | 7 | 5 |
 | 15 intrinsic functions | 94 | 73 | 21 | 0 |
 | 16 standard classes | 0 | 0 | 0 | 0 |
-| **all** | **324** | **202** | **28** | **94** |
+| **all** | **324** | **203** | **28** | **93** |
 
 ## 7 COPY, REPLACE and directives
 
@@ -75,7 +75,7 @@ carry the compiler's own reason.
 | 8.4.3.10 |  | *unswept* | | | | | |
 | 8.4.3.11 |  | *unswept* | | | | | |
 | 8.4.3.12 |  | *unswept* | | | | | |
-| 8.4.3.13 |  | *unswept* | | | | | |
+| 8.4.3.13 |  | [usage](usage.md) | 14 | 10 | 0 | 2 | 3 |
 | 8.4.3.14 |  | *unswept* | | | | | |
 | 8.4.3.15 |  | *unswept* | | | | | |
 | 8.4.4 |  | *unswept* | | | | | |
@@ -105,7 +105,7 @@ carry the compiler's own reason.
 |---|---|---|---|---|---|---|---|
 | 11.3 |  | *unswept* | | | | | |
 | 11.4 |  | *unswept* | | | | | |
-| 11.5 |  | [call](call.md) | 29 | 17 | 3 | 5 | 0 |
+| 11.5 |  | [call](call.md) | 30 | 18 | 3 | 4 | 0 |
 | 11.6 |  | *unswept* | | | | | |
 | 11.7 |  | *unswept* | | | | | |
 | 11.8 |  | *unswept* | | | | | |
@@ -117,17 +117,17 @@ carry the compiler's own reason.
 | 11.9.9 | FLOAT-DECIMAL clause | *unswept* | | | | | |
 | 11.9.10 | INITIALIZE clause | *unswept* | | | | | |
 | 11.9.11 | INTERMEDIATE ROUNDING clause | *unswept* | | | | | |
-| 11.10 |  | [call](call.md) | 29 | 17 | 3 | 5 | 0 |
+| 11.10 |  | [call](call.md) | 30 | 18 | 3 | 4 | 0 |
 
 ## 12 ENVIRONMENT DIVISION
 
 | section | element | page | test | refused | gap | n/a | ruling |
 |---|---|---|---|---|---|---|---|
-| 12.3 |  | [call](call.md), [screen](screen.md) | 69 | 39 | 14 | 6 | 4 |
+| 12.3 |  | [call](call.md), [screen](screen.md) | 70 | 40 | 14 | 5 | 4 |
 | 12.3.5 |  | *unswept* | | | | | |
 | 12.3.6 |  | *unswept* | | | | | |
 | 12.3.7 |  | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
-| 12.3.8 |  | [call](call.md) | 29 | 17 | 3 | 5 | 0 |
+| 12.3.8 |  | [call](call.md) | 30 | 18 | 3 | 4 | 0 |
 | 12.4 |  | [files](files.md) | 1 | 18 | 0 | 0 | 0 |
 | 12.4.4 |  | *unswept* | | | | | |
 | 12.4.5 |  | [files](files.md) | 1 | 18 | 0 | 0 | 0 |
@@ -223,7 +223,7 @@ carry the compiler's own reason.
 | 13.18.57 | TYPE clause | *unswept* | | | | | |
 | 13.18.58 | TYPEDEF clause | *unswept* | | | | | |
 | 13.18.59 | UNDERLINE clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
-| 13.18.60 | USAGE clause | [national-boolean](national-boolean.md), [usage](usage.md) | 24 | 22 | 0 | 3 | 3 |
+| 13.18.60 | USAGE clause | [national-boolean](national-boolean.md), [usage](usage.md) | 29 | 23 | 0 | 2 | 4 |
 | 13.18.61 | USING clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.62 | VALIDATE-STATUS clause | *unswept* | | | | | |
 | 13.18.63 | VALUE clause | [value](value.md) | 1 | 14 | 0 | 0 | 0 |
@@ -233,13 +233,13 @@ carry the compiler's own reason.
 
 | section | element | page | test | refused | gap | n/a | ruling |
 |---|---|---|---|---|---|---|---|
-| 14.2 |  | [call](call.md) | 29 | 17 | 3 | 5 | 0 |
+| 14.2 |  | [call](call.md) | 30 | 18 | 3 | 4 | 0 |
 | 14.7.4 | ROUNDED phrase | *unswept* | | | | | |
 | 14.7.9 | RETRY phrase | *unswept* | | | | | |
 | 14.9.1 | ACCEPT statement | [accept](accept.md), [screen](screen.md) | 41 | 32 | 11 | 1 | 4 |
 | 14.9.2 | ADD statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
 | 14.9.3 | ALLOCATE statement | *unswept* (implemented) | | | | | |
-| 14.9.4 | CALL statement | [call](call.md) | 29 | 17 | 3 | 5 | 0 |
+| 14.9.4 | CALL statement | [call](call.md) | 30 | 18 | 3 | 4 | 0 |
 | 14.9.5 | CANCEL statement | [control](control.md) | 10 | 10 | 0 | 1 | 0 |
 | 14.9.6 | CLOSE statement | [io-statements](io-statements.md) | 0 | 14 | 0 | 0 | 0 |
 | 14.9.7 | COMMIT statement | **not implemented**: COMMIT is COBOL 2023; not implemented | | | | | |
@@ -274,7 +274,7 @@ carry the compiler's own reason.
 | 14.9.36 | ROLLBACK statement | **not implemented**: ROLLBACK is COBOL 2023; not implemented | | | | | |
 | 14.9.37 | SEARCH statement | [search](search.md) | 7 | 10 | 0 | 0 | 0 |
 | 14.9.38 | SEND statement | **not implemented**: send: COBOL 85's Communication module is out by ruling, and COBOL 2023's asynchronous messaging (14.9.31, 14.9.38) is not implemented | | | | | |
-| 14.9.39 | SET statement | [set](set.md) | 14 | 8 | 0 | 0 | 1 |
+| 14.9.39 | SET statement | [set](set.md), [usage](usage.md) | 28 | 18 | 0 | 2 | 4 |
 | 14.9.40 | SORT statement | [sort](sort.md) | 3 | 12 | 0 | 0 | 0 |
 | 14.9.41 | START statement | [io-statements](io-statements.md) | 0 | 14 | 0 | 0 | 0 |
 | 14.9.42 | STOP statement | [control](control.md) | 10 | 10 | 0 | 1 | 0 |

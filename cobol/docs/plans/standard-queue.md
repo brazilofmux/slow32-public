@@ -131,7 +131,12 @@ and BY. Left: NESTED to a program defined later in the group passes as format 1 
 - Why here: finishes the user-defined-function module already in use by majesty's date family.
 
 **9. Program pointers.** 8.5.2.15, 13.18.60, 14.9.39 format 9; Ed. 2002; S-M; deps 8 for
-prototype-typed pointers.
+prototype-typed pointers. DONE 2026-10-06 (usage.md's last table; test 2002/pgpointer): USAGE
+PROGRAM-POINTER [TO prototype], ADDRESS OF PROGRAM (literal, item, prototype-name; NULL and
+EC-PROGRAM-NOT-FOUND when not here), SET format 9 with the category and restriction rules, CALL
+through the pointer (EC-PROGRAM-PTR-NULL, ON EXCEPTION; a restricted one's arguments converted by
+the prototype), relations, INITIALIZE. SET ... TO ENTRY stays refused as IBM's, naming the standard's
+form; CALL through a data-pointer, accepted before, is refused.
 - Today: `USAGE PROGRAM-POINTER` refused ("unexpected 'program-pointer'"), `SET p TO ENTRY "x"`
   refused. CALL through a data pointer is accepted. INITIALIZE names the category but says "no such
   items exist here".

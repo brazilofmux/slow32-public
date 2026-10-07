@@ -16,7 +16,6 @@
  * here -- the run unit's registry is asked, and has none. */
 typedef struct { char name[64], ext[64]; int parent, outer, common, recursive, func, proto; } ProgNode;   /* ext: its AS literal; proto: IS PROTOTYPE */
 static ProgNode g_pnode[4096]; static int g_npnode;
-static int g_any_nested;            /* any contained program in this source: scope tables wanted */
 static void prog_tree_scan(void)
 {
     int stack[64], sp = 0;
@@ -80,13 +79,6 @@ static int pnode_find(int c, const char *name)
     return -1;
 }
 
-/* the REPOSITORY's program-specifier of that name, or -1 */
-static int repo_pg_find(const char *name)
-{
-    for (int i = 0; i < g_nrepo_pg; i++) if (!strcmp(g_repo_pg[i], name)) return i;
-    return -1;
-}
-
 static const char *link_name(const char *name)
 {
     static char b[128];
@@ -119,6 +111,14 @@ static void parse_call(void)
          * time against the registry every unit joins at start-up */
         parse_ref(&target); dynamic = 1;
         if (target.sym->is_cond) die_at(line, "CALL: a condition-name cannot name a program");
+        if (!target.sym->is_group && target.sym->usage == U_POINTER) {
+            /* CALL program-pointer: the entry it holds; NULL raises
+             * EC-PROGRAM-PTR-NULL (14.9.4.4 rule 3b); restricted to a
+             * prototype, its signature checks the arguments */
+            if (target.sym->uvar != UV_PPTR) die_at(line, "CALL '%s': a data-pointer does not name a program; a program-pointer does (2023 14.9.4)", target.sym->name);
+            dynamic = 3;
+            if (target.sym->ptr_proto[0]) sig = pgsig_find(target.sym->ptr_proto);
+        }
     } else die_at(line, "expected a program-name literal or an identifier after CALL");
     if (!is_proto_name && g_std >= 2002 && accept_word("as")) {
         /* AS NESTED: the literal names a program in scope here (14.9.4.3
@@ -328,10 +328,19 @@ static void parse_call(void)
      * with checking on and no ON EXCEPTION phrase, the CALL resolves at run
      * time, and a missing program raises the condition (fatal) */
     int on_phrase = at_word("on") || at_word("exception") || at_word("overflow");
-    int ecnf = !on_phrase && ec_on_name("EC-PROGRAM-NOT-FOUND");
+    int ecnf = !on_phrase && ec_on_name(dynamic == 3 ? "EC-PROGRAM-PTR-NULL" : "EC-PROGRAM-NOT-FOUND");
     int Lcall = new_label(), Lafter = new_label();
     char vis[32]; snprintf(vis, sizeof vis, ".Lvis%d", g_unit);
-    if (dynamic || has_clause || ecnf) {
+    if (dynamic == 3) {
+        /* the pointer's value; NULL: EC-PROGRAM-PTR-NULL when checked, the
+         * ON EXCEPTION phrase when written, else the run stops */
+        emit_ref_addr(&target, "r3"); emit("\tldw r12, r3+0");
+        emit("\tbne r12, r0, .L%d", Lcall);
+        if (ecnf) emit_ec_raise(ec_find("EC-PROGRAM-PTR-NULL", 0));
+        if (has_clause) { emit_li("r1", 1); emit("\tstw sp+%d, r1", SLOT_C); emit_jump(Lafter); }
+        else { emit_la("r3", lit_label((const unsigned char *)target.sym->name, (int)strlen(target.sym->name) + 1)); emit_call("cob_call_null_ptr"); }
+        emit_label(Lcall);
+    } else if (dynamic || has_clause || ecnf) {
         if (dynamic == 1) { emit_ref_addr(&target, "r3"); emit_li("r4", target.sym->size); }
         else { emit_la("r3", lit_label((const unsigned char *)t->s, t->len)); emit_li("r4", t->len); }
         emit_li("r5", !has_clause && !ecnf);            /* no clause: the runtime stops on a missing program */
@@ -346,7 +355,7 @@ static void parse_call(void)
             emit_label(Lcall);
         }
     }
-    if (ec_on_name("EC-PROGRAM-RECURSIVE-CALL")) {
+    if (ec_on_name("EC-PROGRAM-RECURSIVE-CALL") && dynamic != 3) {
         /* the called program active and not RECURSIVE (14.9.4 general rule
          * 3f): known here from its registered descriptor, before the call */
         int Lok = new_label();

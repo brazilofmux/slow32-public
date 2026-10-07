@@ -180,8 +180,8 @@ queue item 4 continues with.
 | EC-PROGRAM-ARG-OMITTED | Fatal | **test**: 2002/ecargomit |
 | EC-PROGRAM-CANCEL-ACTIVE | Fatal | **test**: 2002/cancelactive |
 | EC-PROGRAM-IMP | Imp | **ruling**: no implementor-defined condition is defined here, so it never arises |
-| EC-PROGRAM-NOT-FOUND | Fatal | **test**: 2002/ecpgm |
-| EC-PROGRAM-PTR-NULL | Fatal | **n/a**: program pointers (queue item 9) |
+| EC-PROGRAM-NOT-FOUND | Fatal | **test**: 2002/ecpgm; ADDRESS OF PROGRAM of a program not here, checked, run by hand (2002/pgpointer) |
+| EC-PROGRAM-PTR-NULL | Fatal | **test**: 2002/pgpointer's NULL CALL, checked, run by hand (docs/conformance/usage.md) |
 | EC-PROGRAM-RECURSIVE-CALL | Fatal | **test**: 2002/ecrecur, 2002/recnot |
 | EC-PROGRAM-RESOURCES | Fatal | **ruling**: cannot arise -- every program is linked into the one executable |
 
