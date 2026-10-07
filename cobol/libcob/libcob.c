@@ -1485,6 +1485,17 @@ int cob_class(const void *vp, const cob_desc *d, int kind)
             }
             return 1;
         }
+        if (d->cat == COB_NUM && d->usage == COB_U_BINARY && !(d->flags & COB_F_NOTRUNC) && d->digits && d->digits < 19) {
+            /* a binary of the standard's truncating kind (COMP, BINARY,
+             * COMP-4): every bit pattern is a value, so NUMERIC asks
+             * whether the value is within the PICTURE (2023 8.8.4.4.4
+             * rule 3n.1c); the capacity-limited usages (COMP-5, COMP-X)
+             * hold whatever their bytes say (docs/usage.md) */
+            long long v = cob_get_num(vp, d), lim = 1;
+            for (int i = 0; i < d->digits; i++) lim *= 10;
+            if (v < 0 && !(d->flags & COB_F_SIGNED)) return 0;
+            return v < lim && v > -lim;
+        }
         if (d->cat == COB_NUM && d->usage != COB_U_DISPLAY) return 1;
         int start = (d->flags & COB_F_SEPLEAD) ? 1 : 0, end = (d->flags & COB_F_SEPTRAIL) ? n - 1 : n;
         for (int i = start; i < end; i++) {
@@ -2617,6 +2628,15 @@ int cob_open(cob_file *f, int mode)
 }
 
 int cob_close(cob_file *f);
+
+/* UNLOCK file (2023 14.9.47): the record locks released -- there are
+ * none here, one user -- and the I-O status set (GR 3): 00 for an open
+ * file, 47 for one not open (GR 2) */
+int cob_unlock(cob_file *f)
+{
+    if (!f->open_mode) return file_result(f, "47", "UNLOCK of a file not open");
+    return file_result(f, "00", "");
+}
 
 /* CLOSE ... REEL/UNIT on a file that has no reels: 07 */
 int cob_close_reel(cob_file *f)

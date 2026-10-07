@@ -63,6 +63,7 @@ static void check_numeric_opnd(Opnd *o)
 {
     if (o->kind == O_STR || o->kind == O_ALL) die_at(o->line, "an arithmetic operand must be numeric");
     if (o->kind == O_FIG && strncmp(o->tok->s, "zero", 4)) die_at(o->line, "an arithmetic operand must be numeric");
+    if (o->kind == O_FIG && o->allfig) die_at(o->line, "where a numeric literal goes, ZERO is the one figurative constant, and without ALL (2023 8.3.3.6.3 rule 1a)");
     if (o->kind == O_REF && o->ref.rm) die_at(o->line, "a reference-modified item is not numeric");
     if (o->kind == O_REF && !is_numeric_sym(o->ref.sym)) die_at(o->line, "'%s' is not numeric", o->ref.sym->name);
     if (o->kind == O_FUNC && !opnd_fn_numeric(o)) {
@@ -331,6 +332,7 @@ static void emit_store_receivers(Ref *rs, int *rounded, int nr, int hot, int giv
                                  long long sum_mag, int sum_nonneg)
 {
     for (int i = 0; i < nr; i++) if (!g_wide && !rs[i].rm && sym_wide(rs[i].sym)) wide_arith_refuse(rs[i].line, "a receiver");
+    for (int i = 0; i < nr; i++) check_receiver(&rs[i]);
     if (size_err) emit("\tstw sp+%d, r0", SLOT_B);
     for (int i = 0; i < nr; i++) {
         int opts = rnd_opts(rounded[i]) | (size_err ? 2 : 0);

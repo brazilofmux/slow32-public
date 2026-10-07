@@ -367,6 +367,7 @@ static int fn89_parse(Opnd *o, Tok *n)
                 if (cur()->kind != T_RP) die_at(cur()->line, "FUNCTION %s: ANYCASE ends the arguments", n->s);
                 break;
             }
+            if (at_word("omitted") && !sym_lookup_quiet("omitted")) die_at(cur()->line, "FUNCTION %s: OMITTED is for a user-defined function's argument, not an intrinsic's (2023 8.4.3.2.3 rule 7)", n->s);
             o->fargs[o->nfargs++] = fn89_arg(n->s);   /* the tokenizer drops the decorative commas */
         }
         advance();
@@ -901,11 +902,12 @@ static void parse_operand_raw_1(Opnd *o)
     }
     if (t->kind == T_STR) { o->kind = O_STR; o->tok = t; advance(); return; }
     if (t->kind == T_NUM) { o->kind = O_NUM; numlit_parse(t, &o->num); advance(); return; }
-    if (t->kind == T_WORD && is_figurative(t->s)) { o->kind = O_FIG; o->tok = t; advance(); return; }
+    if (t->kind == T_WORD && is_figurative(t->s) && !(!strncmp(t->s, "null", 4) && sym_lookup_quiet(t->s))) { o->kind = O_FIG; o->tok = t; advance(); return; }   /* NULL is not an 85 word: a program of that era may name an item so (NIST SQL dml063) */
     if (t->kind == T_WORD && !strcmp(t->s, "all")) {
         advance();
         if (cur()->kind == T_STR) { o->kind = O_ALL; o->tok = cur(); advance(); return; }
-        if (cur()->kind == T_WORD && is_figurative(cur()->s)) { o->kind = O_FIG; o->tok = cur(); advance(); return; }
+        if (cur()->kind == T_WORD && is_figurative(cur()->s)) { o->kind = O_FIG; o->tok = cur(); o->allfig = 1; advance(); return; }
+        if (cur()->kind == T_WORD && !strcmp(cur()->s, "all")) die_at(t->line, "ALL takes a literal, not a figurative constant (2023 8.3.3.6.3 rule 2)");
         die_at(t->line, "expected a literal after ALL");
     }
     o->kind = O_REF;

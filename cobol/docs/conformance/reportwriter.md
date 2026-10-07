@@ -1,4 +1,4 @@
-# Report Writer: X3.23-1985 XIII
+# Report Writer: X3.23-1985 XIII; 2023 13.8, 13.14, 13.15, the report clauses, 14.9.16, 14.9.21, 14.9.45, 14.9.46
 
 Swept 2026-09-30, against the syntax rules of the 1985 module. The 2023
 text (13.18 and 14.9 for GENERATE, INITIATE, SUPPRESS and TERMINATE)
@@ -12,7 +12,7 @@ each matching GnuCOBOL's tally, and majesty's reports are unchanged.
 Until this sweep almost none of the rules were checked. The probes that
 found that are now thirty refusal tests, `tests/bad/rw85-*`.
 
-## RD entry (3.5-3.8)
+## RD entry (3.5-3.8; 2023 13.8 the report section, 13.14 the report description entry, 13.18.12 CODE, 13.18.16 CONTROL, 13.18.39 PAGE, 13.18.46 REPORT)
 
 | rule | paraphrase | disposition |
 |---|---|---|
@@ -25,7 +25,7 @@ found that are now thirty refusal tests, `tests/bad/rw85-*`.
 | 3.8 SR 8 | each group type within its region of the page (2002 and 2023 alike, with the same defaults: FIRST DETAIL omitted is HEADING, so a PAGE HEADING needs a FIRST DETAIL below it; 2002/natreport lacked one) | **refused** for absolute lines, and a group taller than its region: rw85-ph-outside-region, -de-outside-region, -pf-outside-region. The regions are those of the rule: RH from HEADING (to FIRST DETAIL - 1, or the page, on a page by itself), PH from HEADING to FIRST DETAIL - 1, CH and DE from FIRST DETAIL to LAST DETAIL, CF from FIRST DETAIL to FOOTING, PF from FOOTING + 1 to PAGE LIMIT, RF after FOOTING (or the page, on a page by itself) |
 | 3.8 SR 9 | every group fits on one page | as the region check |
 
-## Report group description entry (3.9) and its clauses
+## Report group description entry (3.9; 2023 13.15) and its clauses (13.18.14 COLUMN, 13.18.28 GROUP INDICATE, 13.18.35 LINE, 13.18.37 NEXT GROUP, 13.18.53 SOURCE, 13.18.54 SUM, 13.18.57 TYPE format 2)
 
 | rule | paraphrase | disposition |
 |---|---|---|
@@ -58,7 +58,7 @@ found that are now thirty refusal tests, `tests/bad/rw85-*`.
 | 3.21 SR 3 | USAGE DISPLAY (2002: or NATIONAL) | **refused**: bad/std2002-rw-usage |
 | 3.22 SR 2 | a VALUE fits its PICTURE | **refused**: rw85-value-too-long |
 
-## Statements (4.2-4.9)
+## Statements (4.2-4.9; 2023 14.9.16 GENERATE, 14.9.21 INITIATE, 14.9.45 SUPPRESS, 14.9.46 TERMINATE)
 
 | rule | paraphrase | disposition |
 |---|---|---|

@@ -481,7 +481,7 @@ static void parse_accept_1(void)
             return;
         }
     }
-    Ref r; parse_ref(&r);
+    Ref r; parse_ref(&r); check_receiver(&r);
     if (r.sym->strong) die_at(r.line, "ACCEPT into the strongly-typed group '%s' (2023 14.9.1.3 rule 1)", r.sym->name);
     int nat = ref_is_national(&r);
     /* the positioning words are looked for in this statement only: the

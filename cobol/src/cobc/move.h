@@ -388,6 +388,7 @@ static int sym_within(const Sym *s, const Sym *g)
 static void emit_move(Opnd *src, Ref *dst)
 {
     Sym *d = dst->sym;
+    check_receiver(dst);
     /* A receiving group over an OCCURS DEPENDING ON table (X3.23-1985
      * VI-27, OCCURS general rule 3): with the DEPENDING ON item outside
      * the group, only the part its value gives at the start of the
@@ -761,7 +762,13 @@ static const char *move_invalid(const Opnd *src, const Ref *dst, char *msg)
     if (r == MC_NONE) return NULL;
     if (src->kind == O_FIG || src->kind == O_ALL) {
         const char *w = src->tok->s;
-        if (src->kind == O_FIG && !strncmp(w, "null", 4)) return NULL;
+        if (src->kind == O_FIG && !strncmp(w, "null", 4)) {
+            /* NULL goes with an item of class pointer (2023 8.4.3.10.3 rule
+             * 1), and a pointer takes it by SET (14.9.25.3 rule 1 keeps pointers out of MOVE) */
+            if (d->usage != U_POINTER)
+                MV_BAD("MOVE: NULL is a pointer's value, not the %s item '%s''s (2023 8.4.3.10.3 rule 1)", d->is_group ? "group" : "alphanumeric", d->name);
+            return NULL;
+        }
         int zero = src->kind == O_FIG && !strncmp(w, "zero", 4);
         char up[64]; int n = 0;
         for (; w[n] && n < 63; n++) up[n] = (char)toupper((unsigned char)w[n]);

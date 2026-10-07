@@ -10,6 +10,11 @@ static int at_division(void)
     return cur()->kind == T_WORD && is_word(peek(1), "division") &&
            (at_word("environment") || at_word("data") || at_word("procedure"));
 }
+static int at_division_tok(Tok *t)
+{
+    return t->kind == T_WORD && is_word(t + 1, "division") &&
+           (is_word(t, "environment") || is_word(t, "data") || is_word(t, "procedure"));
+}
 
 /* OPTIONS (2023 11.9): ARITHMETIC, DEFAULT ROUNDED, ENTRY-CONVENTION
  * taken; the 2014 clauses FLOAT-BINARY, FLOAT-DECIMAL and INTERMEDIATE
@@ -23,6 +28,7 @@ static void parse_options_paragraph(void)
     advance(); expect_period();
     int any = 0;
     for (;;) {
+        if (at_word("arithmetic") && g_prototype) die_at(cur()->line, "a prototype's OPTIONS paragraph has no ARITHMETIC clause (2023 10.6.2 rule 4a)");
         if (accept_word("arithmetic")) {
             /* NATIVE is this compiler's arithmetic (11.9.5.2 rule 1: the
              * implementor's techniques, native arithmetic for the
@@ -465,15 +471,26 @@ static void parse_environment_division(void)
     if (accept_word("configuration")) {
         expect_word("section"); expect_period();
         for (;;) {
+            if (at_word("object-computer") && g_prototype) die_at(cur()->line, "a prototype has no OBJECT-COMPUTER paragraph (2023 10.6.2 rule 4b)");
             if (accept_word("source-computer") || accept_word("object-computer")) {
                 expect_period();
                 while ((cur()->kind == T_WORD || cur()->kind == T_NUM) && !at_word("special-names") && !at_word("input-output") && !at_word("repository") && !at_word("select") &&
                        !at_word("source-computer") && !at_word("object-computer") && !at_division()) {   /* MEMORY SIZE 64000 CHARACTERS: obsolete, no effect */
                     if (at_word("memory")) bp(BP_O5_MEMORY_SIZE, cur()->line);
+                    if (at_word("character") && is_word(peek(1), "classification"))
+                        die_at(cur()->line, "OBJECT-COMPUTER ... CHARACTER CLASSIFICATION (a locale's LC_CTYPE for the class conditions and the case functions) is COBOL 2002 (2023 12.3.6); not implemented (docs/plans/standard-queue.md item 45)");
                     if (accept_word("collating")) {         /* [PROGRAM] COLLATING SEQUENCE IS alphabet-name */
-                        accept_word("sequence"); accept_word("is");
+                        accept_word("sequence");
+                        if (at_word("for") && is_word(peek(1), "national"))
+                            die_at(cur()->line, "PROGRAM COLLATING SEQUENCE FOR NATIONAL (a national collating sequence) is COBOL 2002 (2023 12.3.6); not implemented");
+                        if (accept_word("for")) expect_word("alphanumeric");
+                        accept_word("is");
                         if (cur()->kind != T_WORD) die_at(cur()->line, "expected an alphabet-name after COLLATING SEQUENCE");
                         snprintf(g_collate_name, sizeof g_collate_name, "%s", cur()->s);
+                        if (is_word(peek(1), "for") && is_word(peek(2), "national"))
+                            die_at(peek(1)->line, "PROGRAM COLLATING SEQUENCE FOR NATIONAL (a national collating sequence) is COBOL 2002 (2023 12.3.6); not implemented");
+                        if (peek(1)->kind == T_WORD && !is_word(peek(1), "for") && !at_division_tok(peek(1)) && !is_word(peek(1), "special-names") && !is_word(peek(1), "input-output") && !is_word(peek(1), "repository") && !is_word(peek(1), "memory") && !is_word(peek(1), "segment-limit"))
+                            die_at(peek(1)->line, "PROGRAM COLLATING SEQUENCE names one alphabet for alphanumeric comparisons; a second is the national one, FOR NATIONAL (2023 12.3.6)");
                     }
                     advance();
                 }
@@ -484,6 +501,9 @@ static void parse_environment_division(void)
                 advance(); expect_period();
                 for (;;) {
                     if (cur()->kind == T_PERIOD) { advance(); continue; }
+                    if (g_prototype && cur()->kind == T_WORD && !at_word("alphabet") && !at_word("currency") && !at_word("decimal-point") && !at_word("locale") && !at_word("symbolic") &&
+                        !at_word("repository") && !at_word("input-output") && !at_word("data") && !at_word("procedure"))
+                        die_at(cur()->line, "a prototype's SPECIAL-NAMES paragraph takes ALPHABET, CURRENCY, DECIMAL-POINT, LOCALE and SYMBOLIC CHARACTERS, not %s (2023 10.6.2 rule 4c)", tok_orig(cur()));
                     if (accept_word("class")) {
                         if (cur()->kind != T_WORD) die_at(cur()->line, "expected a class-name after CLASS");
                         if (g_nclass == (int)(sizeof g_class / sizeof g_class[0])) die_at(cur()->line, "too many CLASS clauses");
@@ -602,6 +622,7 @@ static void parse_environment_division(void)
                         accept_word("is");
                         if (at_word("locale") || at_word("ucs-4") || at_word("utf-8") || at_word("utf-16"))
                             die_at(cur()->line, "ALPHABET ... IS %s is COBOL 2002 (2023 12.3.7); not implemented", cur()->s);
+                        memset(a->member, 1, 256);
                         if (accept_word("native") || accept_word("standard-1") || accept_word("standard-2")) a->native = 1;
                         else if (accept_word("ebcdic")) {
                             /* EBCDIC (the user's ruling of 2026-09-28): a collating sequence
@@ -644,6 +665,7 @@ static void parse_environment_division(void)
                             }
                             #undef ALPHA_CH
                             if (!any) die_at(cur()->line, "ALPHABET %s: expected NATIVE, STANDARD-1 or literals", a->name);
+                            for (int c = 0; c < 256; c++) a->member[c] = (unsigned char)(seen[c] != 0);
                             for (int c = 0; c < 256; c++) if (!seen[c]) a->rank[c] = (unsigned char)(rank < 255 ? rank++ : 255);
                         }
                         continue;
@@ -694,6 +716,7 @@ static void parse_environment_division(void)
         bp(BP_D1_MF_NO_FILE_CONTROL, cur()->line);
         while (accept_word("select")) parse_select();
     }
+    if (at_word("input-output") && g_prototype) die_at(cur()->line, "a prototype has no INPUT-OUTPUT SECTION (2023 10.6.2 rule 4d)");
     if (accept_word("input-output")) {
         expect_word("section"); expect_period();
         if (accept_word("file-control")) {
@@ -708,25 +731,68 @@ static void parse_environment_division(void)
              * RERUN and MULTIPLE FILE TAPE are hints for machines with tapes
              * and scarce memory, and are read past */
             expect_period();
+            /* the SAME clauses' rules (2023 12.4.6.4.3): each file in at
+             * most one file-area and one record-area clause (rule 7), a
+             * report file in a file-area clause only (5), a sort file not
+             * in one (6), a sort-merge-area clause naming a sort file (8),
+             * the file-area set within the record-area set it overlaps (9),
+             * a file-area set within the sort-merge sets its files are in (10) */
+            int (*fa)[16] = g_samefa, *nfa = g_nsamefa, nfag = 0, (*sa)[16] = g_samesa, *nsa = g_nsamesa, nsag = 0;
+            g_nsamefa_groups = g_nsamesa_groups = 0; g_same_line = cur()->line;
             while (!at_division() && cur()->kind != T_EOF) {
                 if (at_word("rerun")) bp(BP_O10_RERUN, cur()->line);
                 if (at_word("multiple") && is_word(cur() + 1, "file")) bp(BP_O11_MULTIPLE_FILE, cur()->line);
+                if (at_word("apply") && is_word(peek(1), "commit"))
+                    die_at(cur()->line, "APPLY COMMIT (the files and items COMMIT and ROLLBACK cover) is COBOL 2023 (12.4.6.3); not implemented");
                 if (accept_word("same")) {
-                    int is_record = accept_word("record");
-                    if (!is_record) { accept_word("sort"); accept_word("sort-merge"); }
+                    int line = cur()->line;
+                    int kind = accept_word("record") ? 1 : (accept_word("sort") || accept_word("sort-merge")) ? 2 : 0;   /* 0 file-area, 1 record-area, 2 sort-merge-area */
                     accept_word("area"); accept_word("for");
-                    int g = -1;
-                    if (is_record) {
-                        if (g_nsame_groups == 8) die_at(cur()->line, "too many SAME RECORD AREA clauses");
-                        g = g_nsame_groups++; g_nsame[g] = 0;
+                    int g = -1, (*set)[16] = NULL, *nset = NULL;
+                    if (kind == 1) {
+                        if (g_nsame_groups == 8) die_at(line, "too many SAME RECORD AREA clauses");
+                        g = g_nsame_groups++; g_nsame[g] = 0; set = &g_same[g]; nset = &g_nsame[g];
+                    } else if (kind == 0) {
+                        if (nfag == 8) die_at(line, "too many SAME AREA clauses");
+                        set = &fa[nfag]; nset = &nfa[nfag]; *nset = 0; nfag++;
+                    } else {
+                        if (nsag == 8) die_at(line, "too many SAME SORT AREA clauses");
+                        set = &sa[nsag]; nset = &nsa[nsag]; *nset = 0; nsag++;
                     }
-                    while (cur()->kind == T_WORD && file_find(cur()->s)) {
-                        if (g >= 0 && g_nsame[g] < 16) g_same[g][g_nsame[g]++] = (int)(file_find(cur()->s) - g_files);
+                    int n = 0;
+                    while (cur()->kind == T_WORD && !at_word("same") && !at_word("rerun") && !at_word("multiple") && !at_word("apply") && !at_division()) {
+                        File *f = file_find(cur()->s);
+                        if (!f) die_at(cur()->line, "SAME %sAREA: '%s' is not a file of this program's FILE-CONTROL paragraph (2023 12.4.6.4.3 rule 2)", kind == 1 ? "RECORD " : kind == 2 ? "SORT " : "", cur()->s);
+                        int fi = (int)(f - g_files);
+                        for (int i = 0; i < *nset; i++) if ((*set)[i] == fi) die_at(cur()->line, "SAME %sAREA names '%s' twice", kind == 1 ? "RECORD " : kind == 2 ? "SORT " : "", f->name);
+                        if (kind != 2) {
+                            int (*others)[16] = kind == 0 ? fa : g_same; int *nothers = kind == 0 ? nfa : g_nsame; int ng = kind == 0 ? nfag - 1 : g_nsame_groups - 1;
+                            for (int gg = 0; gg < ng; gg++) for (int i = 0; i < nothers[gg]; i++)
+                                if (others[gg][i] == fi) die_at(cur()->line, "SAME %sAREA: '%s' is in an earlier SAME %sAREA clause already; one of each kind (2023 12.4.6.4.3 rule 7)", kind == 1 ? "RECORD " : "", f->name, kind == 1 ? "RECORD " : "");
+                        }
+                        if (*nset < 16) (*set)[(*nset)++] = fi;
+                        n++;
                         advance();
                     }
+                    if (n < 2) die_at(line, "SAME %sAREA names at least two files", kind == 1 ? "RECORD " : kind == 2 ? "SORT " : "");
+                    if (kind == 0) g_nsamefa_groups = nfag; else if (kind == 2) g_nsamesa_groups = nsag;
                     continue;
                 }
                 advance();
+            }
+            /* rules 9 and 10: a file-area set overlapping a record-area or
+             * sort-merge-area set lies within it */
+            for (int a = 0; a < nfag; a++) {
+                for (int g = 0; g < g_nsame_groups; g++) {
+                    int overlap = 0, within = 1;
+                    for (int i = 0; i < nfa[a]; i++) { int in = 0; for (int j = 0; j < g_nsame[g]; j++) if (g_same[g][j] == fa[a][i]) in = 1; overlap |= in; within &= in; }
+                    if (overlap && !within) die_at(cur()->line, "SAME AREA and SAME RECORD AREA share a file: every file of the SAME AREA clause belongs in the SAME RECORD AREA clause too (2023 12.4.6.4.3 rule 9)");
+                }
+                for (int g = 0; g < nsag; g++) {
+                    int overlap = 0, within = 1;
+                    for (int i = 0; i < nfa[a]; i++) { int in = 0; for (int j = 0; j < nsa[g]; j++) if (sa[g][j] == fa[a][i]) in = 1; overlap |= in; within &= in; }
+                    if (overlap && !within) die_at(cur()->line, "SAME AREA and SAME SORT AREA share a file: every file of the SAME AREA clause belongs in the SAME SORT AREA clause too (2023 12.4.6.4.3 rule 10)");
+                }
             }
         }
     }
@@ -1820,6 +1886,7 @@ static void parse_screen_section(void)
 static void section_order(int *last, int rank, const char *name)
 {
     static const char *names[] = { "", "FILE", "WORKING-STORAGE", "LOCAL-STORAGE", "LINKAGE", "COMMUNICATION", "REPORT", "SCREEN" };
+    if (g_prototype && rank != 4) die_at(cur()->line, "a prototype's DATA DIVISION holds only a LINKAGE SECTION, not a %s SECTION (2023 10.6.2 rule 4e)", name);
     if (rank == *last)
         die_at(cur()->line, "a second %s SECTION (%s)", name,
                g_std < 2002 ? "X3.23-1985 IV-34, the DATA DIVISION's sections" : "2023 13.2.1");

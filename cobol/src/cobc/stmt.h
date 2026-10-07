@@ -93,14 +93,18 @@ static Para *para_find_in(const char *name, int section)
     return NULL;
 }
 
+static int g_para_ambiguous;        /* para_find: the name is in several sections, none the current one (2023 8.4.2.2 rule 6) */
 static Para *para_find(const char *name)
 {
-    Para *found = NULL;
+    Para *found = NULL; int n = 0;
+    g_para_ambiguous = 0;
     for (int i = g_para_base; i < g_npara; i++) {
         if (strcmp(g_para[i].name, name)) continue;
         if (g_para[i].is_section || g_para[i].section == g_cur_sec_id) return &g_para[i];
         if (!found) found = &g_para[i];
+        n++;
     }
+    if (n > 1) g_para_ambiguous = 1;
     return found;
 }
 
@@ -237,6 +241,7 @@ static Para *expect_para(void)
     } else {
         p = para_find(t->s);
         if (!p) die_at(t->line, "'%s' is not a paragraph or section", t->s);
+        if (g_para_ambiguous) die_at(t->line, "'%s' is a paragraph of several sections, and not of this one: qualify it with OF/IN section-name (2023 8.4.2.2 rule 6)", t->s);
     }
     advance();
     return p;

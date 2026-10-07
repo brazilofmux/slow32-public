@@ -492,6 +492,10 @@ int main(int argc, char **argv)
         if (!at_word("procedure")) die_at(cur()->line, "expected PROCEDURE DIVISION, found %s", tok_desc(cur()));
         parse_procedure_division();
         if (!g_nerrors && !g_fnsig_only && !g_prototype) emit_unit_data();   /* nothing is generated once anything has failed; a prototype is a signature only */
+        if (g_prototype && g_unit_defined) die_at(cur()->line, "the prototype '%s' follows a definition: prototypes precede every other source unit of the compilation group (2023 10.6.2 rule 1)", g_progid);
+        if (!g_prototype) g_unit_defined = 1;
+        if (g_unit_contains && !g_saw_end_program) die_at(cur()->line, "the program '%s' contains another and so needs its END PROGRAM (2023 10.7.3 rule 1)", g_progid);
+        g_unit_contains = 0;
         if (cur()->kind == T_EOF) break;
         if (!g_saw_end_program) die_at(cur()->line, "unexpected %s after the program (a further program needs END PROGRAM before it)", tok_desc(cur()));
         g_unit = ++g_unit_counter;

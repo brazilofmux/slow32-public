@@ -1,4 +1,4 @@
-# The screen section: 13.17, the screen clauses, ACCEPT and DISPLAY of a screen
+# The screen section: 13.9, 13.17, the screen clauses, ACCEPT and DISPLAY of a screen
 
 Swept 2026-10-06 (cobol ISSUES-125). ISO/IEC 1989:2023: 13.17 the
 screen description entry; the screen clauses 13.18.3 AUTO, .4

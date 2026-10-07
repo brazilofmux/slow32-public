@@ -1,0 +1,35 @@
+not alpha
+upper
+lower
+lower is alphabetic
+numeric part
+hexdig
+alf
+not alf
+n numeric
+nd numeric
+nb not numeric
+c3 numeric
+bl boolean
+x not boolean
+fl numeric
+comp out of picture
+comp-5 numeric
+trim numeric
+fn upper
+mid
+odd not low
+sw1 off
+sw1 on
+neg
+pos
+zero
+-0.0 negative
+-0.0 zero
+(-0.0) not negative
+(-0.0) not positive
+b1
+not not-b1
+not both
+prec ok
+paren ok

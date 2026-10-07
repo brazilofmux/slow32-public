@@ -484,11 +484,45 @@ static Cond *parse_simple(void)
         }
         if (klass < 0)
             for (int i = 0; i < g_nclass; i++) if (!strcmp(t->s, g_class[i].name)) klass = 4 + i;
+        if (klass < 0 && g_std >= 2002)
+            /* alphabet-name (2023 8.8.4.4): every character one the alphabet names */
+            for (int i = 0; i < g_nalphabet; i++) if (!strcmp(t->s, g_alphabet[i].name)) { klass = 100 + i; g_alphabet[i].used = 1; }
         if (klass >= 0 || klass == -2) {
+            if (x.kind == O_FUNC && !opnd_fn_numeric(&x)) {
+                /* an alphanumeric or national function's result (2023
+                 * 8.8.4.4.3 rule 3): its characters tested */
+                advance();
+                Cond *c = cond_new(C_CLASS); c->x = x; c->klass = klass; c->neg = neg;
+                return c;
+            }
             if (x.kind != O_REF) die_at(line, "a class condition needs a data item");
-            if (x.ref.sym->strong) die_at(line, "a strongly-typed group takes no class condition (2023 8.8.4.4.3 rule 1)");
-            if (x.ref.sym->usage == U_FLOAT) die_at(line, "the floating-point item '%s' takes no class condition (Micro Focus: class condition rules)", x.ref.sym->name);
-            if (klass == -2 && is_numeric_sym(x.ref.sym)) die_at(line, "BOOLEAN is no class test for the numeric item '%s' (2023 8.8.4.4.3 rule 5)", x.ref.sym->name);
+            Sym *cs = x.ref.sym;
+            const char *cw = klass == 0 ? "NUMERIC" : klass == 1 ? "ALPHABETIC" : klass == 2 ? "ALPHABETIC-LOWER" : klass == 3 ? "ALPHABETIC-UPPER" : klass == -2 ? "BOOLEAN" : t->s;
+            /* 2023 8.8.4.4.3: rule 1, the classes that have no characters
+             * to test; rule 3, the character tests want usage DISPLAY or
+             * NATIONAL; rules 4-5, not of a numeric, numeric-edited (or,
+             * but for BOOLEAN, boolean) item; rule 8, NUMERIC of a DISPLAY
+             * or NATIONAL item, or one of category numeric */
+            if (cs->strong) die_at(line, "a strongly-typed group takes no class condition (2023 8.8.4.4.3 rule 1)");
+            if (cs->usage == U_INDEX || cs->usage == U_POINTER || cs->is_index)
+                die_at(line, "the %s item '%s' takes no class condition (2023 8.8.4.4.3 rule 1)", cs->usage == U_POINTER ? "pointer" : "index", cs->name);
+            if (cs->is_group && has_odo(cs) && !x.ref.rm) die_at(line, "the variable-length group '%s' takes no class condition (2023 8.8.4.4.3 rule 1)", cs->name);
+            int disp = cs->is_group || cs->usage == U_DISPLAY || cs->usage == U_NATIONAL || cs->usage == U_BIT || sym_is_national(cs);
+            int numcat = !cs->is_group && (cs->pi.category == PIC_NUMERIC || cs->pi.category == PIC_NUMERIC_EDITED);
+            if (klass != 0 && !disp && !x.ref.rm)
+                die_at(line, "%s tests characters: '%s' is not of usage DISPLAY or NATIONAL (2023 8.8.4.4.3 rule 3)", cw, cs->name);
+            if (klass != 0 && klass != -2 && numcat && !x.ref.rm)
+                die_at(line, "%s is no class test for the %s item '%s' (2023 8.8.4.4.3 rule 4)", cw, cs->pi.category == PIC_NUMERIC ? "numeric" : "numeric-edited", cs->name);
+            if (klass != 0 && klass != -2 && !cs->is_group && cs->pi.category == PIC_BOOLEAN && !x.ref.rm)
+                die_at(line, "%s is no class test for the boolean item '%s' (2023 8.8.4.4.3 rule 4)", cw, cs->name);
+            if (klass == -2 && numcat) die_at(line, "BOOLEAN is no class test for the %s item '%s' (2023 8.8.4.4.3 rule 5)", cs->pi.category == PIC_NUMERIC ? "numeric" : "numeric-edited", cs->name);
+            if (klass == 0 && !disp && !numcat && !x.ref.rm)
+                die_at(line, "NUMERIC tests a DISPLAY or NATIONAL item, or a numeric one: not '%s' (2023 8.8.4.4.3 rule 8)", cs->name);
+            if (klass == 0 && !cs->is_group && cs->pi.category == PIC_BOOLEAN && cs->usage == U_BIT && !x.ref.rm)
+                die_at(line, "NUMERIC tests a DISPLAY or NATIONAL item, or a numeric one: not the bit item '%s' (2023 8.8.4.4.3 rule 8)", cs->name);
+            if (cs->usage == U_FLOAT && (klass != 0 || g_std < 2002))
+                die_at(line, g_std < 2002 ? "the floating-point item '%s' takes no class condition (Micro Focus: class condition rules)"
+                                          : "the floating-point item '%s' takes only the NUMERIC class condition (2023 8.8.4.4.3 rule 3)", cs->name);
             advance();
             cen_flag(x.ref.sym, CEN_CLASS);
             Cond *c = cond_new(C_CLASS); c->x = x; c->klass = klass; c->neg = neg;
@@ -507,6 +541,14 @@ static Cond *parse_simple(void)
                 return cond_rel(&x, R_EQ, &z, neg);
             }
             advance();
+            if (x.kind == O_REF && x.ref.sym->usage == U_FLOAT && !x.ref.rm && sop != R_EQ) {
+                /* format 2 (2023 8.8.4.7): a floating-point item named
+                 * bare is tested by its sign bit -- -0.0 is NEGATIVE, as
+                 * are -INF and a NaN with the sign set; in parentheses it
+                 * is an expression, tested by value (format 1) */
+                Cond *c = cond_new(C_CLASS); c->x = x; c->klass = sop == R_LT ? -4 : -5; c->neg = neg;
+                return c;
+            }
             Opnd z; memset(&z, 0, sizeof z); z.kind = O_NUM; numlit_zero(&z.num); z.line = line;
             return cond_rel(&x, sop, &z, neg);
         }
@@ -562,7 +604,11 @@ static Cond *parse_not(void)
      * VI-61 rule 1): parse_simple takes it, and records NOT with the
      * operator for the abbreviations that follow it */
     if (at_word("not") && g_abbr_op >= 0 && tok_is_relop(cur() + 1)) return parse_simple();
-    if (accept_word("not")) { Cond *c = cond_new(C_NOT); c->a = parse_not(); return c; }
+    if (accept_word("not")) {
+        if (at_word("not") && !sym_lookup_quiet("not")) die_at(cur()->line, "NOT NOT is not a permitted pair of elements (2023 8.8.4.11.3, table 5)");
+        if ((at_word("and") || at_word("or")) && !sym_lookup_quiet(cur()->s)) die_at(cur()->line, "NOT %s is not a permitted pair of elements (2023 8.8.4.11.3, table 5)", at_word("and") ? "AND" : "OR");
+        Cond *c = cond_new(C_NOT); c->a = parse_not(); return c;
+    }
     if (cur()->kind == T_LP && paren_is_condition()) {
         advance(); Cond *c = parse_cond();
         if (cur()->kind != T_RP) die_at(cur()->line, "expected ')'");
@@ -586,6 +632,8 @@ static Cond *parse_cond(void)
     while (accept_word("or")) a = cond_bin(C_OR, a, parse_and());
     if ((at_word("xor") || at_word("exclusive-or")) && !sym_lookup_quiet(cur()->s))
         die_at(cur()->line, "the logical operator %s is COBOL 2023 (8.7.6); not implemented", at_word("xor") ? "XOR" : "EXCLUSIVE-OR");
+    if (at_word("not") && !sym_lookup_quiet("not") && (is_word(peek(1), "or") || is_word(peek(1), "and")))
+        die_at(cur()->line, "NOT %s is not a permitted pair of elements (2023 8.8.4.11.3, table 5): a condition is followed by AND or OR", is_word(peek(1), "or") ? "OR" : "AND");
     g_cond_depth--;
     if (top && g_nucall > uc0) {
         /* user functions in the condition are called where it is evaluated,
@@ -605,7 +653,8 @@ static int class_bytes_ok(const Opnd *o)
     if (o->kind != O_REF || o->ref.sym->is_cond) return 0;
     const Ref *r = &o->ref; Sym *s = r->sym;
     if (r->rm) {
-        const Desc *d = &g_desc[sym_desc(s)];
+        int di = sym_desc(s);               /* first: it may allocate g_desc (the first descriptor of the unit) */
+        const Desc *d = &g_desc[di];
         return !r->rm_nat && !r->rm_bit && !r->rm_odo && !r->bitsub && !sym_bitlike(s) && !s->any_len &&
                d->cat != COB_BOOLEAN && d->cat != COB_NATIONAL && d->usage != COB_U_NATIONAL;
     }
@@ -620,6 +669,16 @@ static void emit_cond_value(Cond *c)
         emit_la("r3", "cob_switches");
         emit("\tldw r1, r3+%d", 4 * (c->klass - 1));
         if (c->neg) emit("\txori r1, r1, 1");
+        return;
+    }
+    if (c->kind == C_CLASS && (c->klass == -4 || c->klass == -5)) {
+        /* the sign bit of a floating-point item: NEGATIVE when set (-4),
+         * POSITIVE when clear (-5) */
+        Arg a[1] = { arg_ref(&c->x.ref) };
+        emit_args(a, 1);
+        emit("\tldbu r1, r3+%d", c->x.ref.sym->size == 4 ? 3 : 7);
+        emit("\tsrli r1, r1, 7");
+        if ((c->klass == -5) != (c->neg != 0)) emit("\txori r1, r1, 1");
         return;
     }
     if (c->kind == C_CLASS && c->klass == -3) {
@@ -665,7 +724,11 @@ static void emit_cond_value(Cond *c)
     if (c->kind == C_CLASS) {
         Arg a[3]; Arg d;
         opnd_args(&c->x, &a[0], &d, 0, 0); a[1] = d;
-        if (c->klass >= 4) {    /* a SPECIAL-NAMES class: its table */
+        if (c->klass >= 100) {  /* an alphabet-name: the characters it names */
+            a[2] = arg_label(lit_label(g_alphabet[c->klass - 100].member, 256));
+            emit_args(a, 3);
+            emit_call("cob_class_user");
+        } else if (c->klass >= 4) {    /* a SPECIAL-NAMES class: its table */
             a[2] = arg_label(lit_label(g_class[c->klass - 4].tab, 256));
             emit_args(a, 3);
             emit_call("cob_class_user");

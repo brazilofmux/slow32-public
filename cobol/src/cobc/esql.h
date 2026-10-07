@@ -916,8 +916,14 @@ static void parse_statement_1(void)
          * locking, released.  One user here: nothing was locked. */
         advance();
         if (cur()->kind != T_WORD) die_at(t->line, "UNLOCK needs a file-name");
+        File *uf = file_find(cur()->s);
+        if (!uf) die_at(cur()->line, "UNLOCK '%s': not a file (no SELECT)", cur()->s);
+        if (uf->org == COB_ORG_SORT) die_at(cur()->line, "UNLOCK of the sort file '%s' (2023 14.9.47.3 rule 1)", uf->name);
         advance();
         accept_word("all"); accept_word("record"); accept_word("records");
+        /* the file's I-O status is set (14.9.47.4 rule 3): 00 when open, 47 when not (rule 2) */
+        emit_file_addr("r3", uf);
+        emit_call("cob_unlock");
         return;
     }
     if (!strcmp(v, "stop")) {
@@ -1120,6 +1126,7 @@ struct UnitSave {
     int unit, sym_base, sym_end, file_base, file_end, para_base, para_end, use_end;
     char progid[64], progid_orig[64];
     int nreport, report_base, nscreen, screen_base, nclass, nswitch, nalphabet, nmnemonic, last_item, nsame_groups, collate, lowval, highval, cur_fd, in_linkage;
+    Alphabet alphabets[16];         /* the containing unit's alphabets: the contained one inherits its collating sequence (2023 12.3.6.4 rule 1) and may declare its own over them */
     char collate_name[64];
     char crtname[64], cursorname[64];
     int nuse, in_decl, cur_sec_id, saw_end, initial, recursive, nsorttab;
@@ -1147,14 +1154,18 @@ static void parse_procedure_division(void);
  * USE procedures.  The tables are shared: the contained unit's entries
  * are appended and cut back on its END PROGRAM; the USE entries of every
  * enclosing unit stay in g_use below this unit's own. */
+static int g_unit_contains;         /* the outermost unit contains a program: its END PROGRAM is required (2023 10.7.3 rule 1) */
+static int g_unit_defined;          /* a definition (not a prototype) has been seen: prototypes come first (10.6.2 rule 1) */
 static void compile_nested_unit(void)
 {
     if (g_udepth == 8) die_at(cur()->line, "programs nested more than 8 deep");
+    g_unit_contains = 1;
     UnitSave *u = xmalloc(sizeof *u);
     u->unit = g_unit; u->sym_base = g_sym_base; u->sym_end = g_nsym; u->file_base = g_file_base; u->file_end = g_nfile;
     u->para_base = g_para_base; u->para_end = g_npara; u->use_end = g_nuse;
     memcpy(u->progid, g_progid, sizeof u->progid); memcpy(u->progid_orig, g_progid_orig, sizeof u->progid_orig);
     u->nreport = g_nreport; u->report_base = g_report_base; u->nscreen = g_nscreen; u->screen_base = g_screen_base; u->nclass = g_nclass; u->nswitch = g_nswitch; u->nalphabet = g_nalphabet;
+    memcpy(u->alphabets, g_alphabet, sizeof u->alphabets);
     u->nmnemonic = g_nmnemonic; u->last_item = g_last_item; u->nsame_groups = g_nsame_groups; u->collate = g_collate;
     u->lowval = g_lowval; u->highval = g_highval; u->cur_fd = g_cur_fd; u->in_linkage = g_in_linkage;
     memcpy(u->collate_name, g_collate_name, sizeof u->collate_name);
@@ -1173,7 +1184,13 @@ static void compile_nested_unit(void)
     g_sym_base = g_nsym; g_file_base = g_nfile; g_para_base = g_npara;
     /* the contained unit's own USE entries follow every enclosing unit's */
     g_report_base = g_nreport; g_screen_base = g_nscreen; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_last_item = -1;
-    g_nsame_groups = 0; g_npoison = 0; g_collate = -1; g_collate_name[0] = 0; g_crt_status_name[0] = 0; g_cursor_name[0] = 0; g_lowval = 0x00; g_highval = 0xFF; g_cur_fd = -1; g_in_linkage = 0;
+    g_nsame_groups = 0; g_npoison = 0; g_collate_name[0] = 0; g_crt_status_name[0] = 0; g_cursor_name[0] = 0; g_cur_fd = -1; g_in_linkage = 0;
+    /* the PROGRAM COLLATING SEQUENCE, and HIGH-VALUE and LOW-VALUE with it,
+     * are the containing unit's unless this one names its own (2023
+     * 12.3.6.4 rule 1): the alphabet is carried down as the first of this
+     * unit's alphabets */
+    if (g_collate >= 0) { Alphabet inh = g_alphabet[g_collate]; g_alphabet[0] = inh; g_nalphabet = 1; g_collate = 0; }
+    else { g_lowval = 0x00; g_highval = 0xFF; }
     g_nsorttab = 0; g_initial = 0;
     /* a program contained in a recursive program is recursive (2023 11.10.4 rule 4) */
     g_recursive = u->recursive;
@@ -1198,6 +1215,7 @@ static void compile_nested_unit(void)
     g_para_base = u->para_base; g_npara = u->para_end;
     memcpy(g_progid, u->progid, sizeof g_progid); memcpy(g_progid_orig, u->progid_orig, sizeof g_progid_orig);
     g_nreport = u->nreport; g_report_base = u->report_base; g_nscreen = u->nscreen; g_screen_base = u->screen_base; g_nclass = u->nclass; g_nswitch = u->nswitch; g_nalphabet = u->nalphabet;
+    memcpy(g_alphabet, u->alphabets, sizeof u->alphabets);
     g_nmnemonic = u->nmnemonic; g_last_item = u->last_item; g_nsame_groups = u->nsame_groups; g_collate = u->collate;
     g_lowval = u->lowval; g_highval = u->highval; g_cur_fd = u->cur_fd; g_in_linkage = u->in_linkage;
     memcpy(g_collate_name, u->collate_name, sizeof g_collate_name);

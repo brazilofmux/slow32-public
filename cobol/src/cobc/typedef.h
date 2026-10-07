@@ -145,10 +145,25 @@ static int rw_type_word(const char *w)
 }
 /* one entry's tokens [a, e] (e its period) to the output, TYPE clauses
  * expanded; the expansion's subordinate entries follow, at level + rel */
+static int is_figurative(const char *w);
+static int g_tg_level[64], g_tg_usage[64], g_tg_depth;   /* the open groups of the pass: level, and whether the group (or one above it) has a USAGE, SIGN or GROUP-USAGE clause (13.18.57.3 rule 5) */
+static void type_group_note(const Tok *tk, int a, int e, int level)
+{
+    if (level == 66 || level == 88) return;
+    while (g_tg_depth && g_tg_level[g_tg_depth - 1] >= level) g_tg_depth--;
+    int above = g_tg_depth ? g_tg_usage[g_tg_depth - 1] : 0, own = 0;
+    for (int k = a + 2; k < e; k++)
+        if (tok_is(&tk[k], "usage") || tok_is(&tk[k], "sign") || tok_is(&tk[k], "group-usage") || tok_is(&tk[k], "comp") || tok_is(&tk[k], "comp-5") || tok_is(&tk[k], "binary") ||
+            tok_is(&tk[k], "packed-decimal") || tok_is(&tk[k], "comp-3") || tok_is(&tk[k], "display") || tok_is(&tk[k], "national") || tok_is(&tk[k], "bit")) own = 1;
+    if (g_tg_depth < 64) { g_tg_level[g_tg_depth] = level; g_tg_usage[g_tg_depth] = above || own; g_tg_depth++; }
+}
 static void type_emit_entry(const Tok *tk, int a, int e, int level)
 {
     /* the TYPE clause, if any: its type and its tokens [ti, tj] */
     TypeDef *used = NULL; int ti = -1, tj = -1;
+    /* the groups this entry is under (rule 5 asks about them) */
+    int tg_above = 0;
+    { int d = g_tg_depth; while (d && g_tg_level[d - 1] >= level) d--; tg_above = d ? g_tg_usage[d - 1] : 0; }
     for (int i = a + 2; i < e; i++) {
         if (!tok_is(&tk[i], "type") || i + 1 >= e) continue;
         int j = i + 1;
@@ -164,6 +179,17 @@ static void type_emit_entry(const Tok *tk, int a, int e, int level)
         used = ty; ti = i; tj = j;
     }
     if (!used) { for (int i = a; i <= e; i++) xt_push(&tk[i]); return; }
+    if (tg_above && level != 1 && level != 77)
+        die_at(tk[ti].line, "TYPE %s: a group above this entry has a GROUP-USAGE, SIGN or USAGE clause (2023 13.18.57.3 rule 5)", used->name);
+    /* not followed by a subordinate or level 88 entry (rule 2): the type's
+     * own subordinates follow, and a VALUE on the subject leaves the type's
+     * subordinate VALUEs out (13.18.57.4 rule 3) */
+    if (tk[e].kind == T_PERIOD) {
+        int nl = tok_level(&tk[e + 1]);
+        if (nl == 88 || (nl > level && nl < 66)) die_at(tk[e + 1].line, "an entry with a TYPE clause is not followed by a subordinate or level 88 entry (2023 13.18.57.3 rule 2)");
+    }
+    int subject_value = 0;
+    for (int i = a + 2; i < e; i++) if (tok_is(&tk[i], "value") || tok_is(&tk[i], "values")) subject_value = 1;
     /* the level and the name, then the type's clauses, then the entry's
      * own: where both say the same (VALUE), the entry's comes later and
      * is the one used (13.18.57.4 rule 3; cobol ISSUES-94 B9) */
@@ -181,11 +207,21 @@ static void type_emit_entry(const Tok *tk, int a, int e, int level)
     for (int k = 0; k < used->nclause; k++) xt_push(&used->clause[k]);
     for (int i = a + 2; i <= e; i++) if (i < ti || i > tj) xt_push(&tk[i]);
     if (level == 77 && used->nsub) die_at(tk[a].line, "a level 77 item takes an elementary type (2023 13.18.57.3 rule 7)");
+    int sublv = 0;
     for (int k = 0; k < used->nsub; k++) {
         if (used->sublvl[k] >= 0) {
             char what[80]; snprintf(what, sizeof what, "the type '%s'", used->name);
             int lv = used->sublvl[k] >= 66 ? used->sublvl[k] : xlevel(level, used->sublvl[k], tk[a].line, what);
+            sublv = used->sublvl[k];
             Tok lt = level_tok(&used->sub[k], lv); xt_push(&lt);
+        } else if (subject_value && sublv != 88 && (tok_is(&used->sub[k], "value") || tok_is(&used->sub[k], "values"))) {
+            /* the subordinate's VALUE: skipped, with its operands */
+            while (k + 1 < used->nsub) {
+                const Tok *n = &used->sub[k + 1];
+                if (n->kind == T_STR || n->kind == T_NUM || tok_is(n, "is") || tok_is(n, "are") || tok_is(n, "through") || tok_is(n, "thru") ||
+                    (n->kind == T_WORD && (is_figurative(n->s) || tok_is(n, "all")))) k++;
+                else break;
+            }
         } else xt_push(&used->sub[k]);
     }
 }
@@ -306,6 +342,7 @@ static void expand_types(void)
                 if (nl == 88 || (nl > lv && nl < 66)) die_at(g_tok[j].line, "an entry with SAME AS is not followed by a subordinate or level 88 entry (2023 13.18.49.3 rule 2)");
                 same_emit_entry(g_tok, i, e, lv, si);
             } else type_emit_entry(g_tok, i, e, lv);
+            type_group_note(g_tok, i, e, lv);
             if (lv != 66 && lv != 88 && g_tok[i + 1].kind == T_WORD) {
                 int occ = 0;
                 for (int k = i + 2; k < e; k++) occ |= tok_is(&g_tok[k], "occurs");

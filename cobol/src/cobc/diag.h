@@ -43,7 +43,7 @@ static SwitchName *switch_find(const char *name)
 /* SPECIAL-NAMES ALPHABET name IS STANDARD-1|NATIVE|...: only the native
  * (ASCII) sequence exists here; another alphabet is recorded and refused
  * where it would be used */
-typedef struct { char name[64]; int native, used, ebcdic; unsigned char rank[256]; } Alphabet;   /* ebcdic: ALPHABET ... IS EBCDIC, rank = the CP037 code */
+typedef struct { char name[64]; int native, used, ebcdic; unsigned char rank[256]; unsigned char member[256]; } Alphabet;   /* member: the characters the alphabet names (a class condition by alphabet-name, 2023 8.8.4.4.4 rule 3a); every one for NATIVE, STANDARD-1 and EBCDIC */   /* ebcdic: ALPHABET ... IS EBCDIC, rank = the CP037 code */
 /* ISO 8859-1 to EBCDIC code page 037 (US/Canada), IBM's reference EBCDIC:
  * ALPHABET ... IS EBCDIC collates by it and CODE-SET converts by it.
  * Generated from Python's cp037 codec; a bijection. */
@@ -76,6 +76,7 @@ static char g_cursor_name[64];       /* SPECIAL-NAMES CURSOR IS name */
 /* I-O-CONTROL SAME RECORD AREA FOR f1 f2 ...: the files share one record
  * area, so a record read from one is the record of the others */
 static int g_same[8][16], g_nsame[8], g_nsame_groups;
+static int g_samefa[8][16], g_nsamefa[8], g_nsamefa_groups, g_samesa[8][16], g_nsamesa[8], g_nsamesa_groups, g_same_line;   /* SAME AREA and SAME SORT AREA clauses: checked against the FDs once they are in (2023 12.4.6.4.3 rules 5, 6, 8) */
 
 /* SPECIAL-NAMES SYSIN|SYSOUT|CONSOLE|SYSERR|FORMFEED IS mnemonic-name:
  * kind 1 the console for ACCEPT, 2 the console for DISPLAY, 3 a page,

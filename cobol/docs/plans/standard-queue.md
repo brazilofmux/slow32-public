@@ -259,16 +259,33 @@ alphanumeric and outside the file's record.
 docs/conformance/ with every rule marked:
 - 19a. 8.3-8.4: literals, figurative constants, qualification, subscripts, identifiers, refmod,
   LINAGE-COUNTER, report counters, condition-names (coverage.md: 22 unswept elements in clause 8).
+  DONE 2026-10-07 (identifiers.md; test 2002/identifiers, twelve bad tests): eight unenforced
+  rules refused by name (ALL ZERO as a numeric literal, ALL of a figurative, an index-name on
+  another table, ALL and two-integer index subscripts, a function-identifier receiving, FUNCTION
+  omitted without a REPOSITORY, OMITTED to an intrinsic, MOVE NULL to an alphanumeric item,
+  LINAGE-COUNTER and LINE-COUNTER receiving) and one leniency closed (an unqualified paragraph-
+  name held by two sections, from outside both). The OO formats n/a by ruling.
 - 19b. 8.8.4.3-8.8.4.11 and 8.7.5: class, condition-name, switch, sign, omitted-argument, negated
-  and combined conditions.
-- 19c. 10.6, 10.7, 11.5, 11.10: compilation group, end markers, FUNCTION-ID, PROGRAM-ID.
+  and combined conditions. DONE 2026-10-07 (conditions.md; test 2002/condsweep, six bad tests):
+  class-condition rules 1, 3, 4, 5 enforced; a class condition of a function's result and by an
+  alphabet-name taken; NUMERIC of a truncating binary within its PICTURE; a float's bare sign test
+  by its sign bit; NOT NOT / NOT OR / NOT AND refused; a crash fixed (class test of a part, the
+  unit's first descriptor).
+- 19c. 10.6, 10.7, 11.5, 11.10: compilation group, end markers, FUNCTION-ID, PROGRAM-ID. DONE
+  2026-10-07 (environment.md; 11.5 and 11.10 were call.md's since item 8): prototypes first,
+  the prototype restrictions 4a-4e, a containing program's END PROGRAM required.
 - 19d. 12.3.5-12.3.8, 12.4.4, 12.4.6: SOURCE-/OBJECT-COMPUTER, SPECIAL-NAMES, REPOSITORY,
   FILE-CONTROL, I-O-CONTROL (SAME). Probe note: `OBJECT-COMPUTER ... CHARACTER CLASSIFICATION IS
-  LOCALE` is accepted silently (unverified whether parsed or skipped).
+  LOCALE` is accepted silently (unverified whether parsed or skipped). DONE 2026-10-07
+  (environment.md): it was skipped; refused by name now, with FOR NATIONAL and APPLY COMMIT;
+  the SAME clauses' rules 2-10 enforced; a contained program inherits the PROGRAM COLLATING
+  SEQUENCE (it did not).
 - 19e. 13.4.6 SD, 13.18.5 BASED, 13.18.57-58 TYPE/TYPEDEF, 14.7.4 ROUNDED, 14.9.3 ALLOCATE, 14.9.15
-  FREE, 14.9.47 UNLOCK (the last three implemented but unswept).
+  FREE, 14.9.47 UNLOCK (the last three implemented but unswept). DONE 2026-10-07
+  (environment.md): a sort file in no I-O statement, an SD with a record; TYPE rules 2 and 5
+  and the subject's own VALUE (GR 3); UNLOCK's I-O status, not of a sort file.
 - 19f. Re-key reportwriter.md to 2023 numbers (13.8, 13.14, 13.15 and the RW clauses), so the matrix
-  credits what was swept.
+  credits what was swept. DONE 2026-10-07: the headings name the 2023 sections (and screen.md 13.9).
 - Why here: CCVS tests acceptance, not refusal; every sweep so far found unenforced rules. Cheap,
   and it feeds tier 1.
 

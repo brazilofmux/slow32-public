@@ -404,6 +404,7 @@ static void parse_set(void)
                 die_at(line, "SET ADDRESS OF '%s': it is a BASED entry, or a LINKAGE record at level 01 or 77 (2023 14.9.39.3 rule 18)", x->name);
             raddr[nr] = 1;
         } else { g_noemit++; parse_ref(&rs[nr]); g_noemit--; }   /* a receiver: identified immediately before it is changed (2023 14.9.39.4), its calls then (recv_calls) */
+        check_receiver(&rs[nr]);
         if (raddr[nr] || (!rs[nr].sym->is_group && rs[nr].sym->usage == U_POINTER)) nptr++;
         nr++;
         if (at_word("attribute"))

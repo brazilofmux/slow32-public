@@ -16,6 +16,10 @@ static File *expect_file(void)
     if (t->kind != T_WORD) die_at(t->line, "expected a file-name, found %s", tok_desc(t));
     File *f = file_find(t->s);
     if (!f) die_at(t->line, "'%s' is not a file (no SELECT)", t->s);
+    /* a sort or merge file is SORT's and MERGE's, RELEASE's and RETURN's;
+     * no input-output statement names it (2023 13.4.6.3 rule 3) */
+    if (f->org == COB_ORG_SORT && strcmp(g_cur_stmt, "SORT") && strcmp(g_cur_stmt, "MERGE") && strcmp(g_cur_stmt, "RELEASE") && strcmp(g_cur_stmt, "RETURN") && strcmp(g_cur_stmt, "USE"))
+        die_at(t->line, "%s of the sort file '%s': a sort or merge file is named only by SORT, MERGE, RELEASE and RETURN (2023 13.4.6.3 rule 3)", g_cur_stmt, f->name);
     advance();
     return f;
 }

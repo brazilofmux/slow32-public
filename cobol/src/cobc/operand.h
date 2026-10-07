@@ -121,6 +121,7 @@ typedef struct Opnd_ {
     int wide;           /* O_EXPR: an operand past 18 digits inside (docs/wide.md) */
     int folded;         /* O_NUM: a function or LENGTH OF the compiler evaluated -- written as a reference, not a literal */
     int flt;            /* O_EXPR: a floating-point item inside (docs/usage.md) */
+    int allfig;         /* O_FIG written ALL ZERO, ALL SPACES ...: not a numeric literal (2023 8.3.3.6.3 rule 1a) */
     Ref ref;
     Tok *tok;           /* O_STR / O_FIG / O_ALL's literal */
     NumLit num;         /* O_NUM */
@@ -281,6 +282,12 @@ static int sub_is_expr(void)
     Tok *nx = &g_tok[simple];
     if (nx->kind != T_OP || !(!strcmp(nx->s, "+") || !strcmp(nx->s, "-") || !strcmp(nx->s, "*") ||
                               !strcmp(nx->s, "/") || !strcmp(nx->s, "**"))) return 0;
+    if (g_tok[g_tp].kind == T_WORD) {
+        /* an index-name begins no expression: its subscript form is the
+         * name and one integer, added or subtracted (2023 8.4.2.3) */
+        Sym *ix = sym_lookup_quiet(g_tok[g_tp].s);
+        if (ix && ix->is_index) die_at(nx->line, "an index-name subscript takes one integer, added or subtracted (2023 8.4.2.3)");
+    }
     int save = g_tp;
     g_noemit++; parse_expr(); g_noemit--;
     int end = g_tp; g_tp = save;
@@ -365,11 +372,25 @@ static void parse_ref(Ref *r)
     for (int k = 0; k < r->nsub; k++) if (r->sub[k].sym) cen_flag(r->sub[k].sym, CEN_SUB);
 }
 
+static int fn89_known(const char *w);
+/* a receiving operand that the standard keeps read-only: LINAGE-COUNTER
+ * (2023 8.4.3.14.3 rule 2), LINE-COUNTER (8.4.3.15.3 rule 3); PAGE-
+ * COUNTER may be set (rule 1: any integer item's context) */
+static void check_receiver(const Ref *r)
+{
+    const Sym *s = r->sym;
+    if (s->lin_file >= 0) die_at(r->line, "LINAGE-COUNTER is not a receiving operand (2023 8.4.3.14.3 rule 2)");
+    if (s->rep_ctr >= 0 && !strcmp(s->name, "line-counter")) die_at(r->line, "LINE-COUNTER is not a receiving operand (2023 8.4.3.15.3 rule 3)");
+}
 static void parse_ref_1(Ref *r)
 {
     memset(r, 0, sizeof *r);
     Tok *t = cur();
     if (t->kind != T_WORD) die_at(t->line, "expected a data-name, found %s", tok_desc(t));
+    if (!strcmp(t->s, "function") && peek(1)->kind == T_WORD && !sym_lookup_quiet("function"))
+        die_at(t->line, "a function-identifier is not a receiving operand (2023 8.4.3.2.3 rule 1)");
+    if (!sym_lookup_quiet(t->s) && fn89_known(t->s) && peek(1)->kind == T_LP)
+        die_at(t->line, "FUNCTION %s: the word FUNCTION is required unless the REPOSITORY names the function (2023 8.4.3.2.3 rule 2)", t->s);
     if (!strcmp(t->s, "return-code") && !sym_lookup_quiet("return-code")) {
         /* RETURN-CODE (IBM, Micro Focus): a signed binary word the run unit
          * shares, cob_return_code in libcob; a CALL sets it from what the
@@ -474,9 +495,23 @@ static void parse_ref_1(Ref *r)
                     if (snq == 64) die_at(cur()->line, "more than 64 qualifiers on a subscript");
                     sq[snq++] = cur()->s; advance();
                 }
+                if (!strcmp(sname, "all") && !sym_lookup_quiet("all"))
+                    die_at(st->line, "the subscript ALL is for a table in an intrinsic function's argument, and SORT's table format (2023 8.4.2.3.3 rules 6-7)");
                 Sym *ss = sym_lookup(sname, sq, snq, st->line);
                 if (!is_int_item(ss)) die_at(st->line, "the subscript '%s' must be an integer item", ss->name);
                 if (ss->ndims) die_at(st->line, "a subscript cannot itself be subscripted in COBOL 85");
+                if (ss->is_index && ss->ix_table >= 0) {
+                    /* an index-name subscripts the table it is declared on
+                     * (2023 8.4.2.3.3 rule 4): the OCCURS item of this
+                     * dimension, counted from the outermost, in r->sym's
+                     * hierarchy */
+                    int chain[MAXDIM], nch = 0;
+                    for (int p = sym_idx(r->sym); p >= 0; p = g_sym[p].parent) if (g_sym[p].occurs && nch < MAXDIM) chain[nch++] = p;
+                    int want = nch - 1 - r->nsub;          /* chain is innermost first */
+                    if (want >= 0 && chain[want] != ss->ix_table)
+                        die_at(st->line, "the index-name '%s' is an index of '%s', not of the table '%s' subscripts (2023 8.4.2.3.3 rule 4)",
+                               ss->name, g_sym[ss->ix_table].name, r->sym->name);
+                }
                 r->sub[r->nsub].sym = ss;
                 if (at_op("+") || at_op("-")) {
                     int neg = at_op("-"); advance();
@@ -484,6 +519,8 @@ static void parse_ref_1(Ref *r)
                     NumLit n; numlit_parse(cur(), &n);
                     r->sub[r->nsub].adj = neg ? -numlit_int(&n) : numlit_int(&n);
                     advance();
+                    if (ss->is_index && (at_op("+") || at_op("-")))
+                        die_at(cur()->line, "an index-name subscript takes one integer, added or subtracted (2023 8.4.2.3)");
                 }
             } else die_at(st->line, "expected a subscript, found %s", tok_desc(st));
             r->nsub++;

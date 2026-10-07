@@ -816,9 +816,32 @@ static void finish_data_division(void)
                    g_std < 2002 ? "X3.23-1985 sequential file control entry format" : "2023 12.4.5.5.2 rule 2");
         if (f->rec < 0 && !f->report_name[0]) {
             if (!f->fd_line) die_at(f->line, "file '%s' has no FD", f->name);
+            if (f->org == COB_ORG_SORT) die_at(f->fd_line, "SD %s has no record description entry (2023 13.4.6.3 rule 2)", f->name);
             if (g_std < 2002) die_at(f->fd_line, "FD %s has no record description entry (X3.23-1985 file description syntax rule 3)", f->name);
             die_at(f->fd_line, "internal: FD %s without a record description entry was not given its area", f->name);
         }
+        /* the SAME clauses' rules that wait for the FDs (2023 12.4.6.4.3):
+         * a sort file in no SAME AREA clause (rule 6), a report file in a
+         * SAME AREA clause only (5), a SAME SORT AREA clause naming a sort
+         * file (8); EXTERNAL files in none (3) */
+        for (int g = 0; g < g_nsamefa_groups; g++) for (int k = 0; k < g_nsamefa[g]; k++) if (g_samefa[g][k] == i) {
+            if (f->org == COB_ORG_SORT) die_at(g_same_line, "SAME AREA: '%s' is a sort file, which goes in SAME RECORD AREA or SAME SORT AREA (2023 12.4.6.4.3 rule 6)", f->name);
+            if (f->external) die_at(g_same_line, "SAME AREA: '%s' is an EXTERNAL file (2023 12.4.6.4.3 rule 3)", f->name);
+        }
+        for (int g = 0; g < g_nsame_groups; g++) for (int k = 0; k < g_nsame[g]; k++) if (g_same[g][k] == i) {
+            if (f->report_name[0]) die_at(g_same_line, "SAME RECORD AREA: '%s' is a report file, which goes in a SAME AREA clause only (2023 12.4.6.4.3 rule 5)", f->name);
+            if (f->external) die_at(g_same_line, "SAME RECORD AREA: '%s' is an EXTERNAL file (2023 12.4.6.4.3 rule 3)", f->name);
+        }
+        for (int g = 0; g < g_nsamesa_groups; g++) for (int k = 0; k < g_nsamesa[g]; k++) if (g_samesa[g][k] == i) {
+            if (f->report_name[0]) die_at(g_same_line, "SAME SORT AREA: '%s' is a report file, which goes in a SAME AREA clause only (2023 12.4.6.4.3 rule 5)", f->name);
+            if (f->external) die_at(g_same_line, "SAME SORT AREA: '%s' is an EXTERNAL file (2023 12.4.6.4.3 rule 3)", f->name);
+        }
+        if (i == g_nfile - 1)
+            for (int g = 0; g < g_nsamesa_groups; g++) {
+                int sortfile = 0;
+                for (int k = 0; k < g_nsamesa[g]; k++) if (g_files[g_samesa[g][k]].org == COB_ORG_SORT) sortfile = 1;
+                if (!sortfile) die_at(g_same_line, "SAME SORT AREA names no sort or merge file (2023 12.4.6.4.3 rule 8)");
+            }
         for (int d = 0; d < f->ndata_rec; d++) {        /* DATA RECORDS names its own 01s (85 DATA RECORDS rule 1) */
             int ok = 0;
             for (int j = 0; j < g_nsym && !ok; j++) if (g_sym[j].fd == i && g_sym[j].level == 1 && !strcmp(g_sym[j].name, f->data_rec[d])) ok = 1;

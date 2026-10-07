@@ -12,16 +12,16 @@ carry the compiler's own reason.
 | clause | elements | swept | not implemented | unswept |
 |---|---|---|---|---|
 | 7 COPY, REPLACE and directives | 24 | 16 | 0 | 8 |
-| 8 characters, names, data, expressions, conditions | 35 | 7 | 0 | 28 |
+| 8 characters, names, data, expressions, conditions | 35 | 34 | 0 | 1 |
 | 9 files and objects, general | 0 | 0 | 0 | 0 |
-| 10 the compilation group | 2 | 0 | 0 | 2 |
-| 11 IDENTIFICATION DIVISION | 15 | 10 | 0 | 5 |
-| 12 ENVIRONMENT DIVISION | 22 | 15 | 0 | 7 |
-| 13 DATA DIVISION | 78 | 52 | 0 | 26 |
-| 14 PROCEDURE DIVISION | 54 | 42 | 7 | 5 |
+| 10 the compilation group | 2 | 2 | 0 | 0 |
+| 11 IDENTIFICATION DIVISION | 15 | 15 | 0 | 0 |
+| 12 ENVIRONMENT DIVISION | 22 | 20 | 0 | 2 |
+| 13 DATA DIVISION | 78 | 66 | 0 | 12 |
+| 14 PROCEDURE DIVISION | 54 | 46 | 7 | 1 |
 | 15 intrinsic functions | 94 | 73 | 21 | 0 |
 | 16 standard classes | 0 | 0 | 0 | 0 |
-| **all** | **324** | **215** | **28** | **81** |
+| **all** | **324** | **272** | **28** | **24** |
 
 ## 7 COPY, REPLACE and directives
 
@@ -57,58 +57,58 @@ carry the compiler's own reason.
 | section | element | page | test | refused | gap | n/a | ruling |
 |---|---|---|---|---|---|---|---|
 | 8.1.3 |  | *unswept* | | | | | |
-| 8.3.3.2 |  | *unswept* | | | | | |
+| 8.3.3.2 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
 | 8.3.3.4 |  | [national-boolean](national-boolean.md) | 15 | 13 | 0 | 0 | 1 |
 | 8.3.3.5 |  | [national-boolean](national-boolean.md) | 15 | 13 | 0 | 0 | 1 |
-| 8.3.3.6 |  | *unswept* | | | | | |
-| 8.4.2.2 |  | *unswept* | | | | | |
-| 8.4.2.3 |  | *unswept* | | | | | |
-| 8.4.3.1 |  | *unswept* | | | | | |
-| 8.4.3.2 |  | *unswept* | | | | | |
+| 8.3.3.6 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
+| 8.4.2.2 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
+| 8.4.2.3 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
+| 8.4.3.1 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
+| 8.4.3.2 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
 | 8.4.3.3 |  | [refmod](refmod.md) | 7 | 2 | 0 | 0 | 0 |
-| 8.4.3.4 |  | *unswept* | | | | | |
-| 8.4.3.5 |  | *unswept* | | | | | |
-| 8.4.3.6 |  | *unswept* | | | | | |
-| 8.4.3.7 |  | *unswept* | | | | | |
-| 8.4.3.8 |  | *unswept* | | | | | |
-| 8.4.3.9 |  | *unswept* | | | | | |
-| 8.4.3.10 |  | *unswept* | | | | | |
-| 8.4.3.11 |  | *unswept* | | | | | |
-| 8.4.3.12 |  | *unswept* | | | | | |
+| 8.4.3.4 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
+| 8.4.3.5 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
+| 8.4.3.6 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
+| 8.4.3.7 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
+| 8.4.3.8 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
+| 8.4.3.9 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
+| 8.4.3.10 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
+| 8.4.3.11 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
+| 8.4.3.12 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
 | 8.4.3.13 |  | [usage](usage.md) | 14 | 10 | 0 | 2 | 3 |
-| 8.4.3.14 |  | *unswept* | | | | | |
-| 8.4.3.15 |  | *unswept* | | | | | |
-| 8.4.4 |  | *unswept* | | | | | |
-| 8.7.5 |  | *unswept* | | | | | |
+| 8.4.3.14 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
+| 8.4.3.15 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
+| 8.4.4 |  | [identifiers](identifiers.md) | 35 | 29 | 1 | 6 | 0 |
+| 8.7.5 |  | [conditions](conditions.md) | 31 | 12 | 1 | 1 | 0 |
 | 8.8.3 |  | [expressions](expressions.md) | 11 | 2 | 0 | 0 | 0 |
-| 8.8.4.2 |  | [conditions](conditions.md) | 11 | 4 | 0 | 1 | 0 |
-| 8.8.4.3 |  | *unswept* | | | | | |
-| 8.8.4.4 |  | *unswept* | | | | | |
-| 8.8.4.5 |  | *unswept* | | | | | |
-| 8.8.4.6 |  | *unswept* | | | | | |
-| 8.8.4.7 |  | *unswept* | | | | | |
-| 8.8.4.8 |  | *unswept* | | | | | |
-| 8.8.4.10 |  | *unswept* | | | | | |
-| 8.8.4.11 |  | *unswept* | | | | | |
-| 8.8.4.12 |  | [conditions](conditions.md) | 11 | 4 | 0 | 1 | 0 |
+| 8.8.4.2 |  | [conditions](conditions.md) | 31 | 12 | 1 | 1 | 0 |
+| 8.8.4.3 |  | [conditions](conditions.md) | 31 | 12 | 1 | 1 | 0 |
+| 8.8.4.4 |  | [conditions](conditions.md) | 31 | 12 | 1 | 1 | 0 |
+| 8.8.4.5 |  | [conditions](conditions.md) | 31 | 12 | 1 | 1 | 0 |
+| 8.8.4.6 |  | [conditions](conditions.md) | 31 | 12 | 1 | 1 | 0 |
+| 8.8.4.7 |  | [conditions](conditions.md) | 31 | 12 | 1 | 1 | 0 |
+| 8.8.4.8 |  | [conditions](conditions.md) | 31 | 12 | 1 | 1 | 0 |
+| 8.8.4.10 |  | [conditions](conditions.md) | 31 | 12 | 1 | 1 | 0 |
+| 8.8.4.11 |  | [conditions](conditions.md) | 31 | 12 | 1 | 1 | 0 |
+| 8.8.4.12 |  | [conditions](conditions.md) | 31 | 12 | 1 | 1 | 0 |
 
 ## 10 the compilation group
 
 | section | element | page | test | refused | gap | n/a | ruling |
 |---|---|---|---|---|---|---|---|
-| 10.6 |  | *unswept* | | | | | |
-| 10.7 |  | *unswept* | | | | | |
+| 10.6 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
+| 10.7 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 
 ## 11 IDENTIFICATION DIVISION
 
 | section | element | page | test | refused | gap | n/a | ruling |
 |---|---|---|---|---|---|---|---|
-| 11.3 |  | *unswept* | | | | | |
-| 11.4 |  | *unswept* | | | | | |
+| 11.3 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
+| 11.4 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 11.5 |  | [call](call.md) | 30 | 18 | 3 | 4 | 0 |
-| 11.6 |  | *unswept* | | | | | |
-| 11.7 |  | *unswept* | | | | | |
-| 11.8 |  | *unswept* | | | | | |
+| 11.6 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
+| 11.7 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
+| 11.8 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 11.9 |  | [options](options.md) | 5 | 7 | 0 | 0 | 0 |
 | 11.9.5 | ARITHMETIC clause | [options](options.md) | 5 | 7 | 0 | 0 | 0 |
 | 11.9.6 | DEFAULT ROUNDED clause | [options](options.md) | 5 | 7 | 0 | 0 | 0 |
@@ -123,13 +123,13 @@ carry the compiler's own reason.
 
 | section | element | page | test | refused | gap | n/a | ruling |
 |---|---|---|---|---|---|---|---|
-| 12.3 |  | [call](call.md), [screen](screen.md) | 70 | 40 | 14 | 5 | 4 |
-| 12.3.5 |  | *unswept* | | | | | |
-| 12.3.6 |  | *unswept* | | | | | |
+| 12.3 |  | [call](call.md), [environment](environment.md), [screen](screen.md) | 96 | 74 | 17 | 8 | 8 |
+| 12.3.5 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
+| 12.3.6 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 12.3.7 |  | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 12.3.8 |  | [call](call.md) | 30 | 18 | 3 | 4 | 0 |
-| 12.4 |  | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
-| 12.4.4 |  | *unswept* | | | | | |
+| 12.4 |  | [environment](environment.md), [files](files.md) | 28 | 52 | 3 | 3 | 4 |
+| 12.4.4 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 12.4.5 |  | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
 | 12.4.5.5 |  | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
 | 12.4.5.6 | ALTERNATE RECORD KEY clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
@@ -142,44 +142,44 @@ carry the compiler's own reason.
 | 12.4.5.13 | RELATIVE KEY clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
 | 12.4.5.14 | RESERVE clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
 | 12.4.5.15 | SHARING clause | *unswept* | | | | | |
-| 12.4.6 |  | *unswept* | | | | | |
-| 12.4.6.3 | APPLY COMMIT clause | *unswept* | | | | | |
-| 12.4.6.4 | SAME clause | [data-division](data-division.md) | 37 | 40 | 5 | 4 | 4 |
+| 12.4.6 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
+| 12.4.6.3 | APPLY COMMIT clause | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
+| 12.4.6.4 | SAME clause | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 
 ## 13 DATA DIVISION
 
 | section | element | page | test | refused | gap | n/a | ruling |
 |---|---|---|---|---|---|---|---|
 | 13.2 |  | [data-division](data-division.md) | 37 | 40 | 5 | 4 | 4 |
-| 13.4 |  | [data-division](data-division.md), [files](files.md) | 39 | 58 | 5 | 4 | 4 |
+| 13.4 |  | [data-division](data-division.md), [environment](environment.md), [files](files.md) | 65 | 92 | 8 | 7 | 8 |
 | 13.4.5 |  | [data-division](data-division.md), [files](files.md) | 39 | 58 | 5 | 4 | 4 |
-| 13.4.6 |  | *unswept* | | | | | |
+| 13.4.6 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 13.5 |  | [data-division](data-division.md) | 37 | 40 | 5 | 4 | 4 |
 | 13.6 |  | [data-division](data-division.md) | 37 | 40 | 5 | 4 | 4 |
 | 13.7 |  | [data-division](data-division.md) | 37 | 40 | 5 | 4 | 4 |
-| 13.8 |  | *unswept* | | | | | |
-| 13.9 |  | *unswept* | | | | | |
+| 13.8 |  | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
+| 13.9 |  | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.10 |  | [data-division](data-division.md), [directives](directives.md) | 67 | 54 | 5 | 6 | 6 |
-| 13.14 |  | *unswept* | | | | | |
-| 13.15 |  | [data-division](data-division.md) | 37 | 40 | 5 | 4 | 4 |
+| 13.14 |  | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
+| 13.15 |  | [data-division](data-division.md), [reportwriter](reportwriter.md) | 40 | 77 | 5 | 4 | 4 |
 | 13.16 |  | [data-division](data-division.md) | 37 | 40 | 5 | 4 | 4 |
 | 13.17 |  | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.1 | ALIGNED clause | [data-division](data-division.md) | 37 | 40 | 5 | 4 | 4 |
 | 13.18.2 | ANY LENGTH clause | [data-division](data-division.md) | 37 | 40 | 5 | 4 | 4 |
 | 13.18.3 | AUTO clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.4 | BACKGROUND-COLOR clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
-| 13.18.5 | BASED clause | *unswept* | | | | | |
+| 13.18.5 | BASED clause | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 13.18.6 | BELL clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.7 | BLANK clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.8 | BLANK WHEN ZERO clause | [picture](picture.md) | 11 | 24 | 0 | 5 | 1 |
 | 13.18.9 | BLINK clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.10 | BLOCK CONTAINS clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
 | 13.18.11 | CLASS clause | *unswept* | | | | | |
-| 13.18.12 | CODE clause | *unswept* | | | | | |
+| 13.18.12 | CODE clause | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
 | 13.18.13 | CODE-SET clause | [data-division](data-division.md) | 37 | 40 | 5 | 4 | 4 |
-| 13.18.14 | COLUMN clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
+| 13.18.14 | COLUMN clause | [reportwriter](reportwriter.md), [screen](screen.md) | 43 | 59 | 11 | 1 | 4 |
 | 13.18.15 | CONSTANT RECORD clause | *unswept* | | | | | |
-| 13.18.16 | CONTROL clause | *unswept* | | | | | |
+| 13.18.16 | CONTROL clause | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
 | 13.18.17 | DEFAULT clause | *unswept* | | | | | |
 | 13.18.18 | DESTINATION clause | *unswept* | | | | | |
 | 13.18.19 | DYNAMIC LENGTH clause | *unswept* | | | | | |
@@ -191,37 +191,37 @@ carry the compiler's own reason.
 | 13.18.25 | FROM clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.26 | FULL clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.27 | GLOBAL clause | [data-division](data-division.md) | 37 | 40 | 5 | 4 | 4 |
-| 13.18.28 | GROUP INDICATE clause | *unswept* | | | | | |
+| 13.18.28 | GROUP INDICATE clause | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
 | 13.18.29 | GROUP-USAGE clause | [national-boolean](national-boolean.md) | 15 | 13 | 0 | 0 | 1 |
 | 13.18.30 | HIGHLIGHT clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.31 | INVALID clause | *unswept* | | | | | |
 | 13.18.32 | JUSTIFIED clause | [clauses](clauses.md) | 0 | 8 | 0 | 0 | 0 |
 | 13.18.33 |  | [clauses](clauses.md) | 0 | 8 | 0 | 0 | 0 |
 | 13.18.34 | LINAGE clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
-| 13.18.35 | LINE clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
+| 13.18.35 | LINE clause | [reportwriter](reportwriter.md), [screen](screen.md) | 43 | 59 | 11 | 1 | 4 |
 | 13.18.36 | LOWLIGHT clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
-| 13.18.37 | NEXT GROUP clause | *unswept* | | | | | |
+| 13.18.37 | NEXT GROUP clause | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
 | 13.18.38 | OCCURS clause | [occurs](occurs.md) | 0 | 14 | 0 | 0 | 0 |
-| 13.18.39 | PAGE clause | [directives](directives.md) | 30 | 14 | 0 | 2 | 2 |
+| 13.18.39 | PAGE clause | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
 | 13.18.40 | PICTURE clause | [national-boolean](national-boolean.md), [picture](picture.md) | 26 | 37 | 0 | 5 | 2 |
 | 13.18.41 | PRESENT WHEN clause | *unswept* | | | | | |
 | 13.18.42 | PROPERTY clause | *unswept* | | | | | |
 | 13.18.43 | RECORD clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
 | 13.18.44 | REDEFINES clause | [redefines](redefines.md) | 1 | 9 | 0 | 1 | 0 |
 | 13.18.45 | RENAMES clause | [renames](renames.md) | 2 | 7 | 0 | 1 | 0 |
-| 13.18.46 | REPORT clause | *unswept* | | | | | |
+| 13.18.46 | REPORT clause | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
 | 13.18.47 | REQUIRED clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.48 | REVERSE-VIDEO clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.49 | SAME AS clause | [data-division](data-division.md) | 37 | 40 | 5 | 4 | 4 |
 | 13.18.50 | SECURE clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.51 | SELECT WHEN clause | *unswept* | | | | | |
 | 13.18.52 | SIGN clause | [clauses](clauses.md) | 0 | 8 | 0 | 0 | 0 |
-| 13.18.53 | SOURCE clause | *unswept* | | | | | |
-| 13.18.54 | SUM clause | *unswept* | | | | | |
+| 13.18.53 | SOURCE clause | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
+| 13.18.54 | SUM clause | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
 | 13.18.55 | SYNCHRONIZED clause | [clauses](clauses.md) | 0 | 8 | 0 | 0 | 0 |
 | 13.18.56 | TO clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
-| 13.18.57 | TYPE clause | *unswept* | | | | | |
-| 13.18.58 | TYPEDEF clause | *unswept* | | | | | |
+| 13.18.57 | TYPE clause | [environment](environment.md), [reportwriter](reportwriter.md) | 29 | 71 | 3 | 3 | 4 |
+| 13.18.58 | TYPEDEF clause | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 13.18.59 | UNDERLINE clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.60 | USAGE clause | [national-boolean](national-boolean.md), [usage](usage.md) | 29 | 23 | 0 | 2 | 4 |
 | 13.18.61 | USING clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
@@ -234,11 +234,11 @@ carry the compiler's own reason.
 | section | element | page | test | refused | gap | n/a | ruling |
 |---|---|---|---|---|---|---|---|
 | 14.2 |  | [call](call.md) | 30 | 18 | 3 | 4 | 0 |
-| 14.7.4 | ROUNDED phrase | *unswept* | | | | | |
+| 14.7.4 | ROUNDED phrase | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 14.7.9 | RETRY phrase | *unswept* | | | | | |
 | 14.9.1 | ACCEPT statement | [accept](accept.md), [screen](screen.md) | 41 | 32 | 11 | 1 | 4 |
 | 14.9.2 | ADD statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
-| 14.9.3 | ALLOCATE statement | *unswept* (implemented) | | | | | |
+| 14.9.3 | ALLOCATE statement | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 14.9.4 | CALL statement | [call](call.md) | 30 | 18 | 3 | 4 | 0 |
 | 14.9.5 | CANCEL statement | [control](control.md) | 10 | 10 | 0 | 1 | 0 |
 | 14.9.6 | CLOSE statement | [io-statements](io-statements.md) | 1 | 18 | 0 | 0 | 0 |
@@ -250,7 +250,7 @@ carry the compiler's own reason.
 | 14.9.12 | DIVIDE statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
 | 14.9.13 | EVALUATE statement | [evaluate](evaluate.md) | 3 | 7 | 0 | 1 | 0 |
 | 14.9.14 | EXIT statement | [exit](exit.md) | 10 | 8 | 0 | 2 | 0 |
-| 14.9.15 | FREE statement | *unswept* (implemented) | | | | | |
+| 14.9.15 | FREE statement | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 14.9.16 | GENERATE statement | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
 | 14.9.17 | GO TO statement | [accept](accept.md) | 1 | 10 | 0 | 0 | 0 |
 | 14.9.18 | GOBACK statement | [control](control.md) | 10 | 10 | 0 | 1 | 0 |
@@ -282,7 +282,7 @@ carry the compiler's own reason.
 | 14.9.44 | SUBTRACT statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
 | 14.9.45 | SUPPRESS statement | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
 | 14.9.46 | TERMINATE statement | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
-| 14.9.47 | UNLOCK statement | *unswept* (implemented) | | | | | |
+| 14.9.47 | UNLOCK statement | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 14.9.48 | UNSTRING statement | [string](string.md) | 3 | 20 | 0 | 2 | 0 |
 | 14.9.49 | USE statement | [use](use.md) | 16 | 10 | 0 | 2 | 2 |
 | 14.9.50 | VALIDATE statement | **not implemented**: VALIDATE is not implemented: an obsolete facility no COBOL provider has implemented (2023 D.22, F.2 item 5; docs/standards.md) | | | | | |
