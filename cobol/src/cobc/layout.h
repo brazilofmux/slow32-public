@@ -360,6 +360,42 @@ static void init_one(Sym *rec, int si, int base, int defaults)
 }
 
 /* an elementary item's initial value at p */
+/* a numeric literal for a numeric-edited item (2023 13.18.63.3 rule 6; E.3.3
+ * item 43: 2002 and 2014 wanted the literal written edited, their rule 8):
+ * edited as a MOVE would, by the runtime's own kernel
+ * compiled into the compiler, with no truncation of digits or sign allowed;
+ * the 1985 text wants the literal written edited.  ZERO is the literal zero. */
+static void init_numed_value(Sym *s, unsigned char *p, const NumLit *lit, Tok *v)
+{
+    /* a numeric literal for a numeric-edited item (2002 13.16.61.2
+     * rule 6; 2023 13.18.63.3 rule 6): edited as a MOVE would, by the
+     * runtime's own kernel compiled into the compiler, with no
+     * truncation of digits or sign allowed; the 1985 text wants the
+     * literal written edited */
+    if (g_std < 2023) die_at(v->line, g_std < 2002 ? "the VALUE of the numeric-edited item '%s' must be a nonnumeric literal (X3.23-1985 VALUE general rule 1b)"
+                                                    : "a numeric VALUE for the numeric-edited item '%s' is COBOL 2023 (13.18.63.3 rule 6; E.3.3 item 43): write it edited, as \"...\", or compile with -std=2023", s->name);
+    NumLit n = *lit;
+    if (n.ndigits > 18) die_at(v->line, "the VALUE of the numeric-edited item '%s' has more than 18 digits; write it edited, as \"...\"", s->name);
+    if (g_currency_len > 1) die_at(v->line, "a numeric VALUE for the numeric-edited item '%s' with a CURRENCY SIGN ... PICTURE SYMBOL string is not implemented; write it edited, as \"...\"", s->name);
+    if (strchr(s->pi.pat, 'E')) die_at(v->line, "a numeric VALUE for the floating-point numeric-edited item '%s' is not implemented; write it edited, as \"...\"", s->name);
+    long long val = numlit_scaled(&n);           /* signed already */
+    /* the integer digits that would be lost (13.18.63.3 rule 6: none) */
+    { long long ip = numlit_int(&n); if (ip < 0) ip = -ip; int id = 0; for (long long t = ip; t; t /= 10) id++;
+      if (id > s->pi.digits - s->pi.scale) die_at(v->line, "the VALUE %s of the numeric-edited item '%s' does not fit its %d integer digit%s (2023 13.18.63.3 rule 6: no truncation)", v->s, s->name, s->pi.digits - s->pi.scale, s->pi.digits - s->pi.scale == 1 ? "" : "s");
+      if (n.scale > s->pi.scale) { int extra = 0; for (int k = n.ndigits - 1; k >= n.ndigits - (n.scale - s->pi.scale) && k >= 0; k--) if (n.digits[k] != '0') extra = 1;
+          if (extra) die_at(v->line, "the VALUE %s of the numeric-edited item '%s' has more decimals than its %d (2023 13.18.63.3 rule 6: no truncation)", v->s, s->name, s->pi.scale); }
+      if (n.neg && !s->pi.is_signed && val) die_at(v->line, "the VALUE %s of the numeric-edited item '%s' is negative and the picture has no sign (2023 13.18.63.3 rule 6: no truncation of the sign)", v->s, s->name); }
+    cob_kdesc kd; memset(&kd, 0, sizeof kd);
+    kd.cat = K_NUM_ED; kd.usage = K_U_DISPLAY; kd.digits = (unsigned char)s->pi.digits; kd.scale = (signed char)s->pi.scale;
+    if (s->pi.is_signed) kd.flags |= K_F_SIGNED;
+    if (s->blank_zero) kd.flags |= K_F_BLANKZ;
+    kd.size = (unsigned)s->size;
+    int eff = s->pi.digits; for (const char *q = s->pi.pat; *q; q++) if (*q == 'P') eff--;
+    int loc = (g_dp_comma ? 1 : 0) | (((g_currency ? g_currency : '$') & 255) << 8);   /* the runtime's locale word: the currency symbol, $ by default */
+    if (cob_k_put_edited(p, &kd, s->pi.pat, eff, val, n.scale, 0, loc))
+        die_at(v->line, "the VALUE %s does not fit the numeric-edited item '%s' (2023 13.18.63.3 rule 6)", v->s, s->name);
+}
+
 static void init_elem(Sym *s, unsigned char *p, int defaults)
 {
     int numeric = is_numeric_sym(s);
@@ -437,6 +473,11 @@ static void init_elem(Sym *s, unsigned char *p, int defaults)
     Tok *v = s->value_tok;
     if (s->value_fig) {
         int fill = fig_byte(v->s);
+        /* ZERO for a numeric-edited item: the numeric literal zero, edited
+         * (2023 13.18.63.3 rule 6; E.2 item 28); 1985 through 2014 a string
+         * of zeros, the figurative moved as alphanumeric (2002 rule 8) */
+        if (s->pi.category == PIC_NUMERIC_EDITED && !strncmp(v->s, "zero", 4) && g_std >= 2023) { NumLit z; numlit_zero(&z); init_numed_value(s, p, &z, v); return; }
+        if (numeric && s->blank_zero && !strncmp(v->s, "zero", 4)) { memset(p, ' ', s->size); return; }   /* a numeric item with BLANK WHEN ZERO is numeric-edited (13.18.8.4 rule 2): zero is spaces (GnuCOBOL agrees under 85) */
         if (numeric) {
             if (!strncmp(v->s, "zero", 4)) { NumLit z; numlit_zero(&z); store_numeric(s, &z, p, v->line); }
             else if (s->usage == U_DISPLAY && (fill == ' ' || fill == 0 || fill == 0xFF)) memset(p, fill, s->size);
@@ -445,12 +486,11 @@ static void init_elem(Sym *s, unsigned char *p, int defaults)
         return;
     }
     if (v->kind == T_NUM) {
-        if (s->pi.category == PIC_NUMERIC_EDITED)
-            die_at(v->line, g_std < 2002 ? "the VALUE of the numeric-edited item '%s' must be a nonnumeric literal (X3.23-1985 VALUE general rule 1b)"
-                                         : "a numeric VALUE for the numeric-edited item '%s', edited as a MOVE would (2023 13.18.63.3 rule 6), is not implemented; write it edited, as \"...\"", s->name);
+        if (s->pi.category == PIC_NUMERIC_EDITED) { NumLit n; numlit_parse(v, &n); init_numed_value(s, p, &n, v); return; }
         if (!numeric) die_at(v->line, "a numeric VALUE is not valid for the alphanumeric item '%s'", s->name);
         NumLit n; numlit_parse(v, &n);
         store_numeric(s, &n, p, v->line);
+        if (s->blank_zero && numlit_scaled(&n) == 0) memset(p, ' ', s->size);   /* BLANK WHEN ZERO: as the MOVE of zero leaves it */
         return;
     }
     if (numeric && s->usage != U_DISPLAY)
@@ -479,6 +519,27 @@ static void init_elem(Sym *s, unsigned char *p, int defaults)
     } else {
         memcpy(p, v->s, v->len);
         memset(p + v->len, ' ', s->size - v->len);
+        if (s->pi.category == PIC_NUMERIC_EDITED && g_std >= 2023 && !v->nat && !strchr(s->pi.pat, 'E') && g_currency_len <= 1) {
+            /* 2023 13.18.63.3 rule 7 (E.2 items 27, 29): the literal conforms
+             * to the picture -- the editing symbols in it, each position what
+             * its symbol allows.  Decided by the kernel: the literal de-edited
+             * and edited again must give the literal back */
+            cob_kdesc kd; memset(&kd, 0, sizeof kd);
+            kd.cat = K_NUM_ED; kd.usage = K_U_DISPLAY; kd.digits = (unsigned char)s->pi.digits; kd.scale = (signed char)s->pi.scale;
+            if (s->pi.is_signed) kd.flags |= K_F_SIGNED;
+            if (s->blank_zero) kd.flags |= K_F_BLANKZ;
+            kd.size = (unsigned)s->size;
+            int eff = s->pi.digits; for (const char *q = s->pi.pat; *q; q++) if (*q == 'P') eff--;
+            int loc = (g_dp_comma ? 1 : 0) | (((g_currency ? g_currency : '$') & 255) << 8);   /* the runtime's locale word: the currency symbol, $ by default */
+            long long val = cob_k_get_edited(p, &kd, s->pi.pat, loc);
+            unsigned char again[256]; int ok = s->size <= (int)sizeof again;
+            if (ok) { memset(again, ' ', sizeof again); ok = !cob_k_put_edited(again, &kd, s->pi.pat, eff, val, s->pi.scale, 0, loc) && !memcmp(again, p, (size_t)s->size); }
+            if (!ok) {
+                int sp = 1; for (int i = 0; i < s->size; i++) if (p[i] != ' ') sp = 0;       /* all spaces: zero under BLANK WHEN ZERO */
+                if (!(sp && s->blank_zero))
+                    die_at(v->line, "the VALUE \"%.*s\" of the numeric-edited item '%s' is not its PICTURE %s edited (2023 13.18.63.3 rule 7; the editing symbols are written, E.2 items 27 and 29)", v->len, v->s, s->name, s->pic);
+            }
+        }
     }
 }
 

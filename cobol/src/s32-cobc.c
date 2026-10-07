@@ -58,6 +58,7 @@
 #include "../libcob/wide.h"    /* 31 digits: the runtime's 128-bit arithmetic, for VALUE and literals */
 #include "../libcob/ieee.h"    /* the standard floating-point formats (2014): a VALUE clause encoded at compile time */
 #include "../libcob/dtfmt.h"   /* the 2014 date and time formats: a format literal checked, the result sized */
+#include "../libcob/kern.h"    /* the editing kernel, host-compiled as the DBT compiles it: a numeric VALUE edited at compile time (13.18.63 rule 6) */
 #include "../libcob/cobrt.h"
 #define SCREDIT_EXPAND_ONLY
 #include "../libcob/scredit.h"  /* se_expand_picture: a screen field's picture, a symbol a column */

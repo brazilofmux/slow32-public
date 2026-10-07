@@ -226,7 +226,7 @@ carry the compiler's own reason.
 | 13.18.60 | USAGE clause | [national-boolean](national-boolean.md), [usage](usage.md) | 35 | 22 | 0 | 1 | 4 |
 | 13.18.61 | USING clause | [screen](screen.md) | 40 | 22 | 11 | 1 | 4 |
 | 13.18.62 | VALIDATE-STATUS clause | *unswept* | | | | | |
-| 13.18.63 | VALUE clause | [value](value.md) | 1 | 14 | 0 | 0 | 0 |
+| 13.18.63 | VALUE clause | [value](value.md) | 2 | 14 | 0 | 0 | 0 |
 | 13.18.64 | VARYING clause | *unswept* | | | | | |
 
 ## 14 PROCEDURE DIVISION

@@ -408,7 +408,9 @@ seven below. Found on the way: a LINAGE file's WRITE BEFORE n then WRITE AFTER m
 - USAGE PACKED-DECIMAL NO SIGN (13.18.60) -- bare parse error today.
 
 **32. VALUE rules for numeric-edited items.** 13.18.63 rule 6; 2023 E.2 items 27-29, E.3.3 item 43;
-S; deps 30.
+S; deps 30. DONE 2026-10-07 (value.md rules 6-7; test 2023/numedvalue, no oracle; six bad tests): the
+kernel compiled into the compiler edits the literal; ZERO the literal zero; an alphanumeric literal
+checked to be the picture edited; all under -std=2023, as E.3.3 item 43 dates them.
 - Today: "a numeric VALUE for the numeric-edited item ... is not implemented; write it edited".
 
 **33. The 2023 functions.** 15.12 BASECONVERT, 15.18 CONCAT, 15.19 CONVERT, 15.37 FIND-STRING, 15.65
