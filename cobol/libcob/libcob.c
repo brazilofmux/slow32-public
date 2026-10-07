@@ -2689,6 +2689,18 @@ char *cob_fn_exception_file(int national)
     return fn_var_result(t, n, national);
 }
 
+/* EXCEPTION-FILE[-N] (file-name) (2023 15.28.4 rule 2): the connector's
+ * last I-O status and its name as the SELECT clause wrote it; two spaces
+ * while it has never been accessed */
+char *cob_fn_exception_file_of(cob_file *f, const char *name, int national)
+{
+    char t[80]; int n = 2;
+    if (!f->last_st) { t[0] = t[1] = ' '; return fn_var_result(t, n, national); }
+    t[0] = (char)(f->last_st >> 8); t[1] = (char)f->last_st;
+    for (int i = 0; name[i] && n < (int)sizeof t; i++) t[n++] = name[i];
+    return fn_var_result(t, n, national);
+}
+
 /* EXCEPTION-LOCATION[-N] (2002 15.25, 15.26): "program; paragraph OF
  * section; line" when checking was turned on WITH LOCATION, else one
  * space -- this implementation saves no location without it */
@@ -2722,10 +2734,17 @@ static __attribute__((noinline)) void act_recursive_call(const cob_act_hdr *h)
     cob_fatal(m);
 }
 
+/* the names of the activations under way, outermost first (FUNCTION
+ * MODULE-NAME, 2023 15.65): pushed by cob_act_enter, popped by cob_act_leave */
+static const char *act_names[256]; static int act_depth;
 void *cob_act_enter(int *desc)
 {
     cob_act_hdr *h = (cob_act_hdr *)desc;
     if (h->active && !(h->recursive & 1)) act_recursive_call(h);    /* out of line: its buffer made every call's frame 224 bytes */
+    /* a contained program (bit 1) runs as part of its outermost program's
+     * module (15.65.4 rules 6, 7, 9): no module of its own on the stack */
+    if (act_depth < 256) act_names[act_depth] = (h->recursive & 2) ? NULL : h->name;
+    act_depth++;
     /* the unit's INTERMEDIATE ROUNDING (bits 8- of the second word), the caller's kept for the leave */
     if (iround_sp < 256) iround_stack[iround_sp++] = cob_iround;
     cob_iround = h->recursive >> 8;
@@ -2770,6 +2789,7 @@ void cob_act_leave(int *desc, void *block)
 {
     cob_act_hdr *h = (cob_act_hdr *)desc;
     h->active--;
+    if (act_depth > 0) act_depth--;
     if (iround_sp > 0) cob_iround = iround_stack[--iround_sp];
     if (!block || block == h->cache) return;      /* the outermost: nothing saved, the block kept */
     int **words = (int **)(desc + 5);
@@ -2881,6 +2901,7 @@ static const char *write_fail_st(void)
 static void set_status(cob_file *f, const char *st)
 {
     if (f->status) { f->status[0] = st[0]; f->status[1] = st[1]; }
+    f->last_st = 0x10000u | ((unsigned)(unsigned char)st[0] << 8) | (unsigned char)st[1];
 }
 
 /* 0 success, 1 at end / no record, 2 error.  A hard error with no FILE
@@ -4550,6 +4571,221 @@ char *cob_fn_trim(const char *p, int nbytes, const char *chars, int nchars, int 
     memcpy(b, p + a * u, (size_t)len);
     fn_var_len = len;
     return b;
+}
+
+/* ---- the 2023 functions (standard-queue item 33) ----------------------- */
+char *cob_fn_display_of(const char *p, int nbytes, const char *sub, int track);
+static int hexval(int c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    return -1;
+}
+
+/* string arguments handed over ahead of a call, oldest first (CONCAT's
+ * list, SUBSTITUTE's pairs, CONVERT's and BASECONVERT's argument) */
+static const char *sarg_p[64]; static int sarg_n[64], sarg_cnt;
+static char sarg_buf[16384]; static int sarg_used;      /* copies: a nested function's result does not outlive the next */
+int cob_fn_sarg_begin(void) { return sarg_cnt; }         /* a function's mark: it takes the arguments above it */
+void cob_fn_sarg(const char *p, int n)
+{
+    if (sarg_cnt == 64) cob_fatal("intrinsic function: more than 64 string arguments");
+    if (sarg_cnt == 0) sarg_used = 0;
+    if (sarg_used + n > (int)sizeof sarg_buf) cob_fatal("intrinsic function: string arguments longer than 16384 bytes");
+    memcpy(sarg_buf + sarg_used, p, (size_t)n);
+    sarg_p[sarg_cnt] = sarg_buf + sarg_used; sarg_n[sarg_cnt] = n; sarg_cnt++; sarg_used += n;
+}
+/* a national string's characters narrowed to bytes for the character
+ * functions (a unit above U+00FF becomes 0x7F, which matches nothing) */
+static int sarg_narrow(const char *p, int n, int nat, char *out, int cap)
+{
+    if (!nat) { int k = n < cap ? n : cap; memcpy(out, p, (size_t)k); return k; }
+    int k = 0;
+    for (int i = 0; i + 1 < n && k < cap; i += 2) out[k++] = p[i] ? 0x7F : p[i + 1];
+    return k;
+}
+static char *sarg_widen(const char *s, int n, int nat)
+{
+    if (!nat) { char *b = fn_buffer(n); memcpy(b, s, (size_t)n); fn_var_len = n; return b; }
+    char *b = fn_buffer(2 * n);
+    for (int i = 0; i < n; i++) { b[2 * i] = 0; b[2 * i + 1] = s[i]; }
+    fn_var_len = 2 * n;
+    return b;
+}
+
+/* BASECONVERT (15.12): the digits of argument-1 in base from, as digits in
+ * base to; 2 to 16, unequal; an invalid digit is EC-ARGUMENT-FUNCTION and
+ * a zero-length result */
+char *cob_fn_baseconvert(const char *p, int n, int nat, int from, int to)
+{
+    char s[512]; int k = sarg_narrow(p, n, nat, s, sizeof s);
+    if (from < 2 || from > 16 || to < 2 || to > 16 || from == to || n / (nat ? 2 : 1) > (int)sizeof s) { fn_argbad = 1; fn_var_len = 0; return fn_buffer(1); }
+    /* the value as a big number in base 1e9 is overkill: 8192 bits of result
+     * cap the input; a 512-digit input in base 2 is 512 bits -- long
+     * division digit by digit over a byte array of the input's digits */
+    unsigned char dig[512]; int nd = 0;
+    while (k > 0 && s[k - 1] == ' ') k--;
+    int i0 = 0; while (i0 < k && s[i0] == ' ') i0++;
+    for (int i = i0; i < k; i++) {
+        int c = (unsigned char)s[i], v;
+        if (c >= '0' && c <= '9') v = c - '0'; else if (c >= 'A' && c <= 'F') v = c - 'A' + 10; else if (c >= 'a' && c <= 'f') v = c - 'a' + 10; else v = 99;
+        if (v >= from) { fn_argbad = 1; fn_var_len = 0; return fn_buffer(1); }
+        dig[nd++] = (unsigned char)v;
+    }
+    if (!nd) { fn_argbad = 1; fn_var_len = 0; return fn_buffer(1); }
+    char out[2100]; int no = 0;
+    /* repeated division of the digit string by `to`, the remainders the result's digits from the right */
+    int start = 0;
+    while (start < nd && no < (int)sizeof out) {
+        int rem = 0;
+        for (int i = start; i < nd; i++) { int cur = rem * from + dig[i]; dig[i] = (unsigned char)(cur / to); rem = cur % to; }
+        out[no++] = "0123456789ABCDEF"[rem];
+        while (start < nd && dig[start] == 0) start++;
+    }
+    if (!no) out[no++] = '0';
+    char r[2100]; for (int i = 0; i < no; i++) r[i] = out[no - 1 - i];
+    return sarg_widen(r, no, nat);
+}
+
+/* CONCAT (15.18): the handed-over arguments in order; national when the
+ * compiler says so (every argument then is) */
+char *cob_fn_concat(int base, int nat)
+{
+    int total = 0;
+    for (int i = base; i < sarg_cnt; i++) total += sarg_n[i];
+    char *b = fn_buffer(total); int o = 0;
+    for (int i = base; i < sarg_cnt; i++) { memcpy(b + o, sarg_p[i], (size_t)sarg_n[i]); o += sarg_n[i]; }
+    sarg_cnt = base; fn_var_len = total; (void)nat;
+    return b;
+}
+
+/* CONVERT (15.19): from 1 ANUM, 2 NAT, 3 HEX, 4 ANY; to 1 ANUM, 2 NAT, 3
+ * ANUM HEX, 4 NAT HEX, 5 BYTE.  The bytes of argument-1 as the source
+ * format reads them, written as the destination format spells them */
+char *cob_fn_convert(const char *p, int n, int from, int to, int nat)
+{
+    static const char hx[] = "0123456789ABCDEF";
+    if (from == 3) {
+        /* hexadecimal digits (display or national: nat) to bytes */
+        char s[1024]; int k = sarg_narrow(p, n, nat, s, sizeof s);
+        unsigned char bytes[512]; int nb = 0;
+        if (k % 2 || n / (nat ? 2 : 1) > (int)sizeof s) { fn_argbad = 1; fn_var_len = 0; return fn_buffer(1); }
+        for (int i = 0; i + 1 < k; i += 2) {
+            int h = hexval(s[i]), l = hexval(s[i + 1]);
+            if (h < 0 || l < 0) { fn_argbad = 1; fn_var_len = 0; return fn_buffer(1); }
+            bytes[nb++] = (unsigned char)(h * 16 + l);
+        }
+        if (to == 2) {
+            /* HEX NAT: the bytes are UTF-16BE code units */
+            char *b = fn_buffer(nb); memcpy(b, bytes, (size_t)nb); fn_var_len = nb & ~1; return b;
+        }
+        char *b = fn_buffer(nb); memcpy(b, bytes, (size_t)nb); fn_var_len = nb; return b;   /* ANUM, BYTE: the bytes */
+    }
+    if (to == 3 || to == 4) {
+        /* the bytes as hexadecimal digits, alphanumeric or national */
+        int w = to == 4 ? 2 : 1;
+        char *b = fn_buffer(2 * n * w);
+        for (int i = 0; i < n; i++) {
+            unsigned char c = (unsigned char)p[i];
+            if (w == 1) { b[2 * i] = hx[c >> 4]; b[2 * i + 1] = hx[c & 15]; }
+            else { b[4 * i] = 0; b[4 * i + 1] = hx[c >> 4]; b[4 * i + 2] = 0; b[4 * i + 3] = hx[c & 15]; }
+        }
+        fn_var_len = 2 * n * w;
+        return b;
+    }
+    if (from == 1 && to == 2) return cob_fn_national_of(p, n, 0, 0);
+    if (from == 2 && to == 1) return cob_fn_display_of(p, n, 0, 0);
+    fn_argbad = 1; fn_var_len = 0; return fn_buffer(1);
+}
+
+/* FIND-STRING (15.37): the position of argument-2 in argument-1, the
+ * first or the last (last), after skip matches, letters in either case
+ * (anycase); 0 when none; characters, so a national position is a unit */
+static char *fn_digits(long v, int n);
+char *cob_fn_find_string(const char *p, int n, const char *q, int m, int nat, int last, int skip, int anycase)
+{
+    int u = nat ? 2 : 1;
+    if (n <= 0 || m <= 0 || m > n) return fn_digits(0, 9);
+    long found = 0; int seen = 0;
+    for (int i = 0; i + m <= n; i += u) {
+        int eq = 1;
+        for (int k = 0; k < m && eq; k++) {
+            unsigned char a = (unsigned char)p[i + k], b = (unsigned char)q[k];
+            if (anycase) { a = (unsigned char)tolower(a); b = (unsigned char)tolower(b); }
+            eq = a == b;
+        }
+        if (!eq) continue;
+        if (seen++ < skip) continue;
+        found = i / u + 1;
+        if (!last) break;
+    }
+    return fn_digits(found, 9);
+}
+
+/* MODULE-NAME (15.65): 1 ACTIVATING, 4 STACK, 5 TOP-LEVEL from the
+ * activations under way (CURRENT and NESTED are the compiler's); the
+ * externalized names, as the activation descriptors carry them */
+static int act_name_put(char *b, int o, const char *s)
+{
+    for (; *s && o < 2047; s++) b[o++] = (char)toupper((unsigned char)*s);
+    return o;
+}
+char *cob_fn_module_name(int which)
+{
+    char *b = fn_buffer(2048); int o = 0;
+    const char *mods[256]; int d = 0;              /* the modules: the activations that are outermost programs */
+    for (int i = 0; i < act_depth && i < 256; i++) if (act_names[i]) mods[d++] = act_names[i];
+    if (which == 1) {                               /* ACTIVATING: the main program's is a single space (rule 5) */
+        if (d <= 1) { b[0] = ' '; fn_var_len = 1; return b; }
+        fn_var_len = act_name_put(b, 0, mods[d - 2]); return b;
+    }
+    if (which == 5) {                               /* TOP-LEVEL */
+        if (!d) { b[0] = ' '; fn_var_len = 1; return b; }
+        fn_var_len = act_name_put(b, 0, mods[0]); return b;
+    }
+    for (int i = d - 1; i >= 0; i--) {              /* STACK: current first, the environment's single space last */
+        if (o + (int)strlen(mods[i]) + 2 > 2047) break;
+        o = act_name_put(b, o, mods[i]); b[o++] = ';';
+    }
+    b[o++] = ' ';
+    fn_var_len = o;
+    return b;
+}
+
+/* SUBSTITUTE (15.87): argument-1 with each (argument-2, argument-3) pair
+ * handed over substituted -- all occurrences, or the FIRST or the LAST
+ * (mode 1, 2), letters in either case under ANYCASE; each pair starts
+ * after the previous substitution's end */
+char *cob_fn_substitute(const char *p, int n, int nat, int mode, int anycase, int base)
+{
+    int u = nat ? 2 : 1;
+    if (n <= 0) { sarg_cnt = base; fn_argbad = 1; fn_var_len = 0; return fn_buffer(1); }
+    char *cur = fn_buffer(8192); memcpy(cur, p, (size_t)n); int cn = n;
+    char *alt = fn_buffer(8192);
+    int from = 0;                                   /* where this pair's search starts (rule 4) */
+    for (int k = base; k + 1 < sarg_cnt; k += 2) {
+        const char *a2 = sarg_p[k]; int l2 = sarg_n[k]; const char *a3 = sarg_p[k + 1]; int l3 = sarg_n[k + 1];
+        if (l2 <= 0) { sarg_cnt = base; fn_argbad = 1; fn_var_len = 0; return fn_buffer(1); }
+        int last_at = -1;                           /* LAST: the rightmost occurrence */
+        if (mode == 2) for (int i = from; i + l2 <= cn; i += u) {
+            int eq = 1; for (int j = 0; j < l2 && eq; j++) { unsigned char a = (unsigned char)cur[i + j], b = (unsigned char)a2[j]; if (anycase) { a = (unsigned char)tolower(a); b = (unsigned char)tolower(b); } eq = a == b; }
+            if (eq) last_at = i;
+        }
+        int o = 0, i = 0, done = 0, next_from = from;
+        for (; i < cn; ) {
+            int eq = !done && i >= from && i + l2 <= cn && (mode != 2 || i == last_at);
+            for (int j = 0; j < l2 && eq; j++) { unsigned char a = (unsigned char)cur[i + j], b = (unsigned char)a2[j]; if (anycase) { a = (unsigned char)tolower(a); b = (unsigned char)tolower(b); } eq = a == b; }
+            if (eq) {
+                if (o + l3 > 8192) cob_fatal("SUBSTITUTE: the result is longer than 8192 bytes");
+                memcpy(alt + o, a3, (size_t)l3); o += l3; i += l2; next_from = o;
+                if (mode) done = 1;
+            } else { if (o >= 8192) cob_fatal("SUBSTITUTE: the result is longer than 8192 bytes"); alt[o++] = cur[i++]; }
+        }
+        char *t = cur; cur = alt; alt = t; cn = o; from = next_from;
+    }
+    sarg_cnt = base; fn_var_len = cn;
+    return cur;
 }
 
 char *cob_fn_display_of(const char *p, int nbytes, const char *sub, int track)

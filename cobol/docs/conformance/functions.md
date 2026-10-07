@@ -174,6 +174,39 @@ SLOW-32 is the MMIO GETTZ service, so the local offset is the host's.
 | 15.40.3 rule 6, 15.41.3 rule 5 | no offset argument with a local format | **refused**: bad/std2014-dtfmt-offset |
 | edition | 2014's | **refused** under -std=2002: bad/std2002-formatted-date, -combined-datetime |
 
+## The 2023 functions (15.12, 15.18, 15.19, 15.28-15.29, 15.37, 15.65, 15.83, 15.87)
+
+Implemented 2026-10-07 (docs/plans/standard-queue.md item 33), each
+under `-std=2023` and refused naming the edition under 2002 and 2014
+(bad/std2014-concat, -find-string, -module-name, -smallest-algebraic,
+-exception-file-arg). The string functions give a result of run-time
+length in libcob's buffer, as TRIM does; their string arguments are
+items, literals or functions of class alphanumeric or national, all of
+one class. Test 2023/fn2023 (no oracle: GnuCOBOL 4 has none of these),
+2023/excfile.
+
+| rule | paraphrase | disposition |
+|---|---|---|
+| 15.12 BASECONVERT, rule 1 | argument-1 a DISPLAY or national item or literal; a base below 11 takes an unsigned integer too; the bases unequal integers 2 to 16 | **test**: fn2023 (255 -> FF, FF -> 11111111, 777 base 8 -> 511, an integer item); a numeric literal or unsigned integer DISPLAY item is its digits; **refused**: bad/std2023-baseconvert-base, -same, -signed (a literal base out of range or equal, a signed item); a base in an item is checked at run time: EC-ARGUMENT-FUNCTION and a zero-length result |
+| 15.12.3 rule 2 | the digits of the base, A-F for 10-15 | **test**: fn2023; lower-case letters taken; another character is EC-ARGUMENT-FUNCTION and a zero-length result |
+| 15.12.4 rule 1 | the value in the other base, upper-case A-F | **test**: fn2023; computed on the digit string, so a value past 64 bits converts |
+| 15.18 CONCAT, rules 1-2 | the arguments all alphanumeric or all national; an unsigned integer among them is its digits | **test**: fn2023 (a literal 42 and a 9(4) item: `42/0042`; a function inside, a CONCAT inside a CONCAT); **refused**: bad/std2023-concat-mixed, -signed. A numeric item is taken only as an unsigned integer of USAGE DISPLAY (its bytes are its digits) |
+| 15.18.4 | the arguments in order | **test**: fn2023 |
+| 15.19 CONVERT, 15.19.2 | ANY, ALPHANUMERIC / ANUM, HEX, NAT / NATIONAL as the source; ALPHANUMERIC / ANUM or NAT / NATIONAL each with or without HEX, or BYTE, as the destination | **test**: fn2023; **refused**: bad/std2023-convert-keyword |
+| 15.19.3 rules 1, 3, 8, 9 | argument-1 not zero-length; the formats differ; from ANY to a HEX format only; to BYTE from HEX only | **refused**: bad/std2023-convert-same, -any-dest, -byte-src; a zero-length literal by the operand check |
+| 15.19.3 rules 4-7 | HEX: hexadecimal digits of complete bytes, display or national; ANUM, NAT: strings of the class; ANY: any usage but index, pointer and the object kinds | **test**: fn2023; **refused**: bad/std2023-convert-any-dest covers a pointer by the same check; an odd count or a non-digit from HEX is EC-ARGUMENT-FUNCTION and a zero-length result |
+| 15.19.4 rules 1-5 | ANUM: the characters; ANUM HEX: the bytes as digits; NAT: national characters; NAT HEX: digits in national; BYTE: the bytes | **test**: fn2023 (`"AB"` -> 4142, X"4142" -> AB, a USAGE BIT 111 B"101" from ANY -> A0: the bits padded with zeros to the byte -- the text's note 3c says E0 for the same item, which is B"111"'s value, read as a slip; a DISPLAY boolean's bytes are its digits' codes). ANUM -> NAT is NATIONAL-OF and NAT -> ANUM is DISPLAY-OF without a substitution character (notes 1-2); **ruling**: a HEX -> NAT result of an odd byte count drops the last byte |
+| 15.28, 15.29 EXCEPTION-FILE, -N (file-name) | the connector's last I-O status and its name as the SELECT clause wrote it; two spaces while never accessed | **test**: 2023/excfile (a failed OPEN: `35InFile`; a closed-again file: `00Other`); the argument form under `-std=2023` only; **refused**: bad/std2023-exception-file-arg (not a file-name), bad/std2014-exception-file-arg. The form without an argument as before (exceptions.md) |
+| 15.37 FIND-STRING, rules 1-3 | argument-1 and -2 of one class; LAST; START AFTER argument-3 an integer, the matches to skip; ANYCASE | **test**: fn2023 (first, last, after 1, after 2 by `2` alone, ANYCASE, not found -> 0); **refused**: bad/std2023-find-string-numeric, -skip |
+| 15.37.4 | the position in characters, 0 when none | **test**: fn2023; an integer result as LENGTH is (DISPLAYed without leading zeros) |
+| 15.65 MODULE-NAME, rule 1 | NESTED only in a nested program | **refused**: bad/std2023-module-name-nested, -keyword |
+| 15.65.4 rules 1, 4 | a dynamic-length result; the form of the name the implementor's | **ruling**: the name as the PROGRAM-ID wrote it, upper-cased, of run-time length; no trailing spaces |
+| 15.65.4 rules 5-10 | ACTIVATING (a single space in the main program), CURRENT (the outermost program of the unit), NESTED, STACK (CURRENT first, ... TOP-LEVEL, then a single space), TOP-LEVEL | **test**: fn2023 (from the main program, a called program, a contained program, and a program called from the contained one); **ruling**: a contained program is part of its outermost program's module (rules 6, 7, 9): STACK does not list it and its ACTIVATING is the module's activator -- a single space in the main program's contained programs. The main program is the first activated (the run unit's), as 14.9.14.4 identifies it. CURRENT and NESTED are known when compiling and fold to literals |
+| 15.65.4 rule 2 | too long for the returned item: EC-BOUND-FUNC-RET-VALUE | **n/a**: the result is as long as its contents (2048 bytes bound the STACK) |
+| 15.83 SMALLEST-ALGEBRAIC, rules 1-4 | the smallest positive value a numeric or numeric-edited item can hold; floating-point by the argument's usage | **test**: fn2023 (S9(3)V99 -> 0.01, S9PP -> 100, COMP-5 -> 1); folded at compile time as HIGHEST-ALGEBRAIC is; **refused**: bad/std2023-smallest-float: a floating-point item (rule 4) -- the value is not a fixed-point literal |
+| 15.87 SUBSTITUTE, rules 1-2 | argument-1 and the pairs of one class; argument-2 not zero-length | **test**: fn2023; **refused**: bad/std2023-substitute-pair, -zero, -mixed; a zero-length argument-2 in an item is EC-ARGUMENT-FUNCTION and a zero-length result at run time |
+| 15.87.4 rules 1-4 | each pair in turn over the result of the last; every occurrence, or FIRST or LAST; ANYCASE; a pair's search starts after the previous substitution | **test**: fn2023 (`at` -> `og` all, FIRST, LAST; ANYCASE with two pairs; a growing result `aaaa` -> `bbbbbbbb`; a zero-length argument-3 deletes). The result is bounded at compile time by the pairs' growth ratios, 8190 bytes at most |
+
 ## TRIM (2014; 2023 15.96), taken as BP-E27
 
 COBOL 2014's, beyond both editions this compiler implements; IBM, Micro

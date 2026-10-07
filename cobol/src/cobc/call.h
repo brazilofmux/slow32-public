@@ -16,6 +16,8 @@
  * here -- the run unit's registry is asked, and has none. */
 typedef struct { char name[64], ext[64]; int parent, outer, common, recursive, func, proto; } ProgNode;   /* ext: its AS literal; proto: IS PROTOTYPE */
 static ProgNode g_pnode[4096]; static int g_npnode;
+static int unit_is_contained(int unit) { return unit < g_npnode && g_pnode[unit].parent >= 0; }
+static const char *unit_outer_name(int unit) { return unit < g_npnode ? g_pnode[g_pnode[unit].outer].name : g_progid; }
 static void prog_tree_scan(void)
 {
     int stack[64], sp = 0;

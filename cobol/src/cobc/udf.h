@@ -710,6 +710,7 @@ static void emit_fn_value_raw(Opnd *f)
         emit("\tadd r1, r12, r0");
     }
 }
+static void emit_file_addr(const char *reg, File *f);
 static void emit_fn_value_raw_1(Opnd *f)
 {
     Opnd *x = f->farg;
@@ -736,6 +737,61 @@ static void emit_fn_value_raw_1(Opnd *f)
         emit_call(f->fn == FN_NATOF ? "cob_fn_national_of" : "cob_fn_display_of");
         return;
     }
+    if (f->fn == FN_BASECONV) {
+        /* the bases first, into frame slots, then the digits */
+        int sf = g_slot_base++, st = g_slot_base++;
+        if (g_slot_base > NSLOTS) die_at(f->line, "internal: too many staged operands");
+        for (int i = 0; i < 2; i++) {
+            emit_push_opnd(f->fargs[i]); emit_call("cob_pop_int"); emit("\tstw sp+%d, r1", SLOT(i ? st : sf));
+        }
+        emit_str_arg(x);
+        emit_li("r5", f->fnat);
+        emit("\tldw r6, sp+%d", SLOT(sf)); emit("\tldw r7, sp+%d", SLOT(st));
+        g_slot_base -= 2;
+        emit_call("cob_fn_baseconvert");
+        return;
+    }
+    if (f->fn == FN_CONCAT || f->fn == FN_SUBST) {
+        /* the string arguments handed to libcob one by one above the
+         * mark it gives first (a CONCAT inside a CONCAT keeps its own) */
+        int sb = g_slot_base++;
+        if (g_slot_base > NSLOTS) die_at(f->line, "internal: too many staged operands");
+        emit_call("cob_fn_sarg_begin"); emit("\tstw sp+%d, r1", SLOT(sb));
+        for (int i = 0; i < f->nfargs; i++) { emit_str_arg(f->fargs[i]); emit_call("cob_fn_sarg"); }
+        if (f->fn == FN_CONCAT) {
+            emit("\tldw r3, sp+%d", SLOT(sb)); emit_li("r4", f->fnat);
+            emit_call("cob_fn_concat");
+        } else {
+            emit_str_arg(x);
+            emit_li("r5", f->fnat); emit_li("r6", f->fnid); emit_li("r7", f->fanycase);
+            emit("\tldw r8, sp+%d", SLOT(sb));
+            emit_call("cob_fn_substitute");
+        }
+        g_slot_base--;
+        return;
+    }
+    if (f->fn == FN_CONVERT) {
+        emit_str_arg(x);
+        emit_li("r5", f->fnid / 8); emit_li("r6", f->fnid % 8); emit_li("r7", f->fargnat);
+        emit_call("cob_fn_convert");
+        return;
+    }
+    if (f->fn == FN_FINDSTR) {
+        /* argument-3 (the matches to skip) and argument-2 into slots, then argument-1 */
+        int sk = g_slot_base++, qp = g_slot_base++, qn = g_slot_base++;
+        if (g_slot_base > NSLOTS) die_at(f->line, "internal: too many staged operands");
+        if (f->nfargs) { emit_push_opnd(f->fargs[0]); emit_call("cob_pop_int"); } else emit_li("r1", 0);
+        emit("\tstw sp+%d, r1", SLOT(sk));
+        emit_str_arg(f->farg2); emit("\tstw sp+%d, r3", SLOT(qp)); emit("\tstw sp+%d, r4", SLOT(qn));
+        emit_str_arg(x);
+        emit("\tldw r5, sp+%d", SLOT(qp)); emit("\tldw r6, sp+%d", SLOT(qn));
+        emit_li("r7", f->fargnat); emit_li("r8", f->fnid);
+        emit("\tldw r9, sp+%d", SLOT(sk)); emit_li("r10", f->fanycase);
+        g_slot_base -= 3;
+        emit_call("cob_fn_find_string");
+        return;
+    }
+    if (f->fn == FN_MODNAME) { emit_li("r3", f->fnid); emit_call("cob_fn_module_name"); return; }
     if (f->fn == FN_TRIM) {
         emit_str_arg(x);
         if (f->ftrim) { emit_la("r5", lit_label((unsigned char *)f->ftrim->s, f->ftrim->len)); emit_li("r6", f->ftrim->len / (f->fnat ? 2 : 1)); }
@@ -864,6 +920,14 @@ static void emit_fn_value_raw_1(Opnd *f)
     }
     if (f->fn == FN_EXCSTATUS) { emit_call("cob_fn_exception_status"); return; }
     if (f->fn == FN_EXCSTMT) { emit_call("cob_fn_exception_statement"); return; }
+    if (f->fn == FN_EXCFILE && f->nfargs) {
+        File *fl = (File *)f->fargs[0];
+        emit_file_addr("r3", fl);
+        emit_la("r4", lit_label((const unsigned char *)fl->oname, (int)strlen(fl->oname) + 1));
+        emit_li("r5", f->fnid);
+        emit_call("cob_fn_exception_file_of");
+        return;
+    }
     if (f->fn == FN_EXCFILE || f->fn == FN_EXCLOC) {
         emit_li("r3", f->fnid);
         emit_call(f->fn == FN_EXCFILE ? "cob_fn_exception_file" : "cob_fn_exception_location");

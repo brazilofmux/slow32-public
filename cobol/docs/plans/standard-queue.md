@@ -415,8 +415,12 @@ checked to be the picture edited; all under -std=2023, as E.3.3 item 43 dates th
 
 **33. The 2023 functions.** 15.12 BASECONVERT, 15.18 CONCAT, 15.19 CONVERT, 15.37 FIND-STRING, 15.65
 MODULE-NAME, 15.83 SMALLEST-ALGEBRAIC, 15.87 SUBSTITUTE, and EXCEPTION-FILE(-N)'s optional argument;
-M; deps 30; in scope (see item 27).
-- Today: each "FUNCTION ... is COBOL 2023; not implemented".
+M; deps 30; in scope (see item 27). **DONE 2026-10-07**: all eight under -std=2023
+(conformance/functions.md "The 2023 functions"; tests 2023/fn2023, 2023/excfile; 23 bad tests).
+MODULE-NAME's activation stack is the runtime's (cob_act_enter), a contained program part of its
+outermost program's module; SMALLEST-ALGEBRAIC folds at compile time; the string functions give
+run-time-length results as TRIM does.
+- Was: each "FUNCTION ... is COBOL 2023; not implemented".
 
 **34. 2023 directives.** 7.3.12 DISPLAY, 7.3.15 FLAG-14, 7.3.20 POP, 7.3.22 PUSH, 7.3.23
 REF-MOD-ZERO-LENGTH (with 24), 7.3.10 COBOL-WORDS; S each except COBOL-WORDS (M: it edits the

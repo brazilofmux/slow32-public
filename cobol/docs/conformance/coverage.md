@@ -19,9 +19,9 @@ carry the compiler's own reason.
 | 12 ENVIRONMENT DIVISION | 22 | 20 | 0 | 2 |
 | 13 DATA DIVISION | 78 | 67 | 0 | 11 |
 | 14 PROCEDURE DIVISION | 54 | 46 | 7 | 1 |
-| 15 intrinsic functions | 94 | 82 | 12 | 0 |
+| 15 intrinsic functions | 94 | 89 | 5 | 0 |
 | 16 standard classes | 0 | 0 | 0 | 0 |
-| **all** | **324** | **283** | **19** | **22** |
+| **all** | **324** | **290** | **12** | **22** |
 
 ## 7 COPY, REPLACE and directives
 
@@ -297,14 +297,14 @@ carry the compiler's own reason.
 | 15.9 | ANNUITY function | [functions](functions.md) (implemented) | | | | | |
 | 15.10 | ASIN function | [functions](functions.md) (implemented) | | | | | |
 | 15.11 | ATAN function | [functions](functions.md) (implemented) | | | | | |
-| 15.12 | BASECONVERT function | **not implemented**: COBOL 2023; not implemented | | | | | |
+| 15.12 | BASECONVERT function | [functions](functions.md) (implemented) | | | | | |
 | 15.13 | BOOLEAN-OF-INTEGER function | [functions](functions.md) (implemented) | | | | | |
 | 15.14 | BYTE-LENGTH function | [functions](functions.md) (implemented) | | | | | |
 | 15.15 | CHAR function | [functions](functions.md) (implemented) | | | | | |
 | 15.16 | CHAR-NATIONAL function | [functions](functions.md) (implemented) | | | | | |
 | 15.17 | COMBINED-DATETIME function | [functions](functions.md) (implemented) | | | | | |
-| 15.18 | CONCAT function | **not implemented**: COBOL 2023; not implemented | | | | | |
-| 15.19 | CONVERT function | **not implemented**: COBOL 2023; not implemented | | | | | |
+| 15.18 | CONCAT function | [functions](functions.md) (implemented) | | | | | |
+| 15.19 | CONVERT function | [functions](functions.md) (implemented) | | | | | |
 | 15.20 | COS function | [functions](functions.md) (implemented) | | | | | |
 | 15.21 | CURRENT-DATE function | [functions](functions.md) (implemented) | | | | | |
 | 15.22 | DATE-OF-INTEGER function | [functions](functions.md) (implemented) | | | | | |
@@ -322,7 +322,7 @@ carry the compiler's own reason.
 | 15.34 | EXP function | [functions](functions.md) (implemented) | | | | | |
 | 15.35 | EXP10 function | [functions](functions.md) (implemented) | | | | | |
 | 15.36 | FACTORIAL function | [functions](functions.md) (implemented) | | | | | |
-| 15.37 | FIND-STRING function | **not implemented**: COBOL 2023; not implemented | | | | | |
+| 15.37 | FIND-STRING function | [functions](functions.md) (implemented) | | | | | |
 | 15.38 | FORMATTED-CURRENT-DATE function | [functions](functions.md) (implemented) | | | | | |
 | 15.39 | FORMATTED-DATE function | [functions](functions.md) (implemented) | | | | | |
 | 15.40 | FORMATTED-DATETIME function | [functions](functions.md) (implemented) | | | | | |
@@ -350,7 +350,7 @@ carry the compiler's own reason.
 | 15.62 | MIDRANGE function | [functions](functions.md) (implemented) | | | | | |
 | 15.63 | MIN function | [functions](functions.md) (implemented) | | | | | |
 | 15.64 | MOD function | [functions](functions.md) (implemented) | | | | | |
-| 15.65 | MODULE-NAME function | **not implemented**: COBOL 2023; not implemented | | | | | |
+| 15.65 | MODULE-NAME function | [functions](functions.md) (implemented) | | | | | |
 | 15.66 | NATIONAL-OF function | [functions](functions.md) (implemented) | | | | | |
 | 15.67 | NUMVAL function | [functions](functions.md) (implemented) | | | | | |
 | 15.68 | NUMVAL-C function | [functions](functions.md) (implemented) | | | | | |
@@ -368,11 +368,11 @@ carry the compiler's own reason.
 | 15.80 | SECONDS-PAST-MIDNIGHT function | [functions](functions.md) (implemented) | | | | | |
 | 15.81 | SIGN function | [functions](functions.md) (implemented) | | | | | |
 | 15.82 | SIN function | [functions](functions.md) (implemented) | | | | | |
-| 15.83 | SMALLEST-ALGEBRAIC function | **not implemented**: COBOL 2023; not implemented | | | | | |
+| 15.83 | SMALLEST-ALGEBRAIC function | [functions](functions.md) (implemented) | | | | | |
 | 15.84 | SQRT function | [functions](functions.md) (implemented) | | | | | |
 | 15.85 | STANDARD-COMPARE function | **not implemented**: COBOL 2002 and needs the ISO/IEC 14651 ordering, not implemented yet | | | | | |
 | 15.86 | STANDARD-DEVIATION function | [functions](functions.md) (implemented) | | | | | |
-| 15.87 | SUBSTITUTE function | **not implemented**: COBOL 2023; not implemented | | | | | |
+| 15.87 | SUBSTITUTE function | [functions](functions.md) (implemented) | | | | | |
 | 15.88 | SUM function | [functions](functions.md) (implemented) | | | | | |
 | 15.89 | TAN function | [functions](functions.md) (implemented) | | | | | |
 | 15.90 | TEST-DATE-YYYYMMDD function | [functions](functions.md) (implemented) | | | | | |

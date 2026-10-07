@@ -119,8 +119,9 @@ COBOL 2002/2023 (Stage B):
 
 In scope since 2026-10-06 (the owner: "everything standard holds"):
 the COBOL 2014 and 2023 intrinsic functions and locale support, once
-listed here. They are gaps in a targeted edition, refused as not
-implemented, and queued (docs/plans/standard-queue.md items 27, 33, 45).
+listed here. The 2014 date and time functions came 2026-10-07 (queue
+item 27), the 2023 functions the same day (item 33); the locale
+functions are still refused as not implemented and queued (item 45).
 
 Two ruled 2026-09-28:
 

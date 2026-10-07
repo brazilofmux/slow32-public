@@ -43,6 +43,13 @@ but a DELETE FILE spelt its own way), 2023/inspback (no oracle).
 | GOBACK WITH {ERROR / NORMAL} STATUS (14.9.18 GR 3) | control.md: STOP RUN's status phrase when no caller controls the program |
 | USAGE PACKED-DECIMAL WITH NO SIGN (13.18.60 GR 25) | usage.md: the standard's COMP-6 |
 
+## The 2023 functions (queue item 33, 2026-10-07)
+
+BASECONVERT, CONCAT, CONVERT, FIND-STRING, MODULE-NAME,
+SMALLEST-ALGEBRAIC, SUBSTITUTE and EXCEPTION-FILE(-N)'s file-name
+argument: functions.md "The 2023 functions" has the rows; tests
+2023/fn2023 and 2023/excfile (no oracle).
+
 ## 11.9.10 OPTIONS INITIALIZE
 
 The clause names the fill byte every item without a VALUE in the named

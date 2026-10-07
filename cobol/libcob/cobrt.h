@@ -114,6 +114,7 @@ typedef struct {
      * going into the stream's own buffer. */
     unsigned char fast_r1, fast_r, fast_w1, fast_w;
     unsigned int started;     /* sequential: a START positioned the file (FIRST, LAST): the next READ, NEXT or PREVIOUS, reads the record at fpos (14.9.41 GR 20-21) */
+    unsigned int last_st;     /* the last I-O status of this connector, 0x10000 | its two characters; 0 never accessed (FUNCTION EXCEPTION-FILE (file-name), 2023 15.28.4 rule 2) */
 } cob_file;
 
 

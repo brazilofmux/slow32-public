@@ -3,10 +3,18 @@
 
 enum { FN_UPPER, FN_LOWER, FN_CURDATE, FN_INTDATE, FN_DATEINT, FN_DAYINT, FN_INTDAY, FN_EXCSTATUS, FN_EXCSTMT,
        FN_NATOF, FN_DISPOF, FN_CHARNAT, FN_VARLEN, FN_EXCFILE, FN_EXCLOC, FN_BOOLOFINT, FN_INTOFBOOL, FN_RMLEN, FN_TRIM,
-       FN_DTFMT };   /* FORMATTED-CURRENT-DATE, -DATE, -DATETIME, -TIME (2014): fnid 1-4, fargs[0] the format literal */
+       FN_DTFMT,     /* FORMATTED-CURRENT-DATE, -DATE, -DATETIME, -TIME (2014): fnid 1-4, fargs[0] the format literal */
+       /* the 2023 functions (standard-queue item 33): the string ones give a
+        * run-time-length result, FIND-STRING an integer */
+       FN_BASECONV,  /* BASECONVERT: farg the digits, fargs[0..1] the bases */
+       FN_CONCAT,    /* CONCAT: fargs the list */
+       FN_CONVERT,   /* CONVERT: farg, fnid = source * 8 + destination (1 ANUM, 2 NAT, 3 HEX / ANUM HEX, 4 ANY / NAT HEX, 5 BYTE) */
+       FN_FINDSTR,   /* FIND-STRING: farg, farg2 the string sought, fargs[0] the START AFTER count or NULL; fnid bit 0 LAST; fanycase */
+       FN_MODNAME,   /* MODULE-NAME: fnid 1 ACTIVATING, 4 STACK, 5 TOP-LEVEL (CURRENT and NESTED fold to a literal) */
+       FN_SUBST };   /* SUBSTITUTE: farg, fargs the (argument-2, argument-3) pairs; fnid 0 all, 1 FIRST, 2 LAST; fanycase */
 /* the calendar functions (1989 addendum) take an integer and give one back;
  * the runtime renders the result as numeric DISPLAY digits in its buffer */
-static int fn_is_numeric(int fn) { return (fn >= FN_INTDATE && fn <= FN_INTDAY) || fn == FN_VARLEN || fn == FN_INTOFBOOL || fn == FN_RMLEN; }
+static int fn_is_numeric(int fn) { return (fn >= FN_INTDATE && fn <= FN_INTDAY) || fn == FN_VARLEN || fn == FN_INTOFBOOL || fn == FN_RMLEN || fn == FN_FINDSTR; }
 static int num_desc(int digits);
 /* a run-time integer result (LENGTH of a run-time length, INTEGER-OF-
  * BOOLEAN): DISPLAYed as its value, no leading zeros, as a compile-time
@@ -14,7 +22,7 @@ static int num_desc(int digits);
 static int fn_num_desc(const Opnd *o)
 {
     int d = num_desc(o->fsize);
-    if (o->fn != FN_VARLEN && o->fn != FN_RMLEN && o->fn != FN_INTOFBOOL) return d;
+    if (o->fn != FN_VARLEN && o->fn != FN_RMLEN && o->fn != FN_INTOFBOOL && o->fn != FN_FINDSTR) return d;
     Desc x = g_desc[d]; x.flags |= COB_F_INTFN;
     return desc_add(&x);
 }
@@ -550,13 +558,223 @@ static void fn_refuse(Tok *n)
         { "locale-time-from-seconds", "locale support" }, { "standard-compare", "the ISO/IEC 14651 ordering" },
         { NULL, NULL } };
     static const char *y2014[] = { NULL };     /* the date and time functions came 2026-10-07 (item 27) */
-    static const char *y2023[] = { "baseconvert", "concat", "convert", "find-string", "module-name",
-        "smallest-algebraic", "substitute", NULL };
+    static const char *y2023[] = { NULL };     /* the seven 2023 functions came 2026-10-07 (item 33) */
     for (int i = 0; later[i].name; i++)
         if (!strcmp(n->s, later[i].name)) die_at(n->line, "FUNCTION %s is COBOL 2002 and needs %s, not implemented yet", n->s, later[i].why);
     for (int i = 0; y2014[i]; i++) if (!strcmp(n->s, y2014[i])) die_at(n->line, "FUNCTION %s is COBOL 2014; not implemented", n->s);
     for (int i = 0; y2023[i]; i++) if (!strcmp(n->s, y2023[i])) die_at(n->line, "FUNCTION %s is COBOL 2023; not implemented", n->s);
     die_at(n->line, "FUNCTION %s is not an intrinsic function", n->s);
+}
+
+/* ---- the 2023 string functions (standard-queue item 33) ----------------
+ * BASECONVERT (15.12), CONCAT (15.18), CONVERT (15.19), FIND-STRING
+ * (15.37), MODULE-NAME (15.65), SUBSTITUTE (15.87): each under -std=2023.
+ * The string arguments are items, literals or functions of class
+ * alphanumeric or national, every one of the function's class; libcob
+ * gives the result in its buffer with its run-time length (fvar). */
+static int fn_arg_is_string(const Opnd *a)
+{
+    if (a->kind == O_STR) return !a->tok->boolv;
+    if (a->kind == O_FUNC) return !fn_is_numeric(a->fn) && !a->fbool && a->fn != -1;
+    if (a->kind == O_REF) return !a->ref.sym->is_group ? !(is_numeric_sym(a->ref.sym) || sym_is_boolean(a->ref.sym) || a->ref.sym->pi.category == PIC_NUMERIC_EDITED) : 1;
+    return 0;
+}
+static int fn_arg_width(Opnd *a) { int w = a->kind == O_FUNC ? a->fsize : opnd_size(a); return w < 1 ? 1 : w; }
+static void fn_string_arg(Opnd *a, int nat, const char *fname, const char *rule)
+{
+    char up[32]; int k = 0;
+    for (; fname[k] && k < 31; k++) up[k] = (char)toupper((unsigned char)fname[k]);
+    up[k] = 0;
+    if (!fn_arg_is_string(a)) die_at(a->line, "FUNCTION %s: each argument is alphanumeric or national (%s)", up, rule);
+    if (opnd_is_national(a) != nat) die_at(a->line, "FUNCTION %s: the arguments are all alphanumeric or all national (%s)", up, rule);
+}
+static Tok *str_tok(const char *s, int len)
+{
+    Tok *t = xmalloc(sizeof *t); memset(t, 0, sizeof *t);
+    t->kind = T_STR; t->s = xmalloc((size_t)len + 1); memcpy(t->s, s, (size_t)len); t->s[len] = 0; t->len = len;
+    return t;
+}
+static void fn_result(Opnd *o, Tok *n, int fn, Opnd *a1, int nat, int fsize)
+{
+    memset(o, 0, sizeof *o); o->kind = O_FUNC; o->fn = fn; o->farg = a1; o->line = n->line;
+    o->fvar = 1; o->fnat = nat; o->fsize = fsize;
+    if (o->fsize > 8190) die_at(n->line, "FUNCTION %s: the result could exceed 8190 bytes", n->s);
+}
+static int unit_is_contained(int unit);                  /* call.h: a program contained in another */
+static const char *unit_outer_name(int unit);            /* call.h: the outermost program's name, as written (lower-cased) */
+static int parse_fn2023(Opnd *o, Tok *n)
+{
+    static const char *names[] = { "baseconvert", "concat", "convert", "find-string", "module-name", "substitute", NULL };
+    int which = -1;
+    for (int i = 0; names[i]; i++) if (!strcmp(n->s, names[i])) which = i;
+    if (which < 0) return 0;
+    if (g_std < 2023) die_at(n->line, "FUNCTION %s is COBOL 2023; compile with -std=2023", n->s);
+    advance();
+    if (which == 4) {
+        /* MODULE-NAME: a keyword, no parentheses */
+        static const struct { const char *w; int id; } kw[] = { { "activating", 1 }, { "current", 2 }, { "nested", 3 }, { "stack", 4 }, { "top-level", 5 }, { NULL, 0 } };
+        int paren = cur()->kind == T_LP; if (paren) advance();
+        int id = 0;
+        for (int i = 0; kw[i].w; i++) if (accept_word(kw[i].w)) id = kw[i].id;
+        if (!id) die_at(cur()->line, "FUNCTION MODULE-NAME takes ACTIVATING, CURRENT, NESTED, STACK or TOP-LEVEL (2023 15.65.2)");
+        if (paren) { if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the keyword of FUNCTION MODULE-NAME"); advance(); }
+        int nested = unit_is_contained(g_unit);
+        if (id == 3 && !nested) die_at(n->line, "FUNCTION MODULE-NAME NESTED is written only in a nested program (2023 15.65.3 rule 1)");
+        if (id == 2 || id == 3) {
+            /* the name as the PROGRAM-ID has it, upper-cased, known here:
+             * the outermost program of this compilation unit (rule 7), or
+             * this nested one (rule 8) */
+            const char *nm = id == 3 ? g_progid : unit_outer_name(g_unit);
+            char up[80]; int k = 0;
+            for (; nm[k] && k < 79; k++) up[k] = (char)toupper((unsigned char)nm[k]);
+            memset(o, 0, sizeof *o); o->kind = O_STR; o->line = n->line; o->tok = str_tok(up, k);
+            return 1;
+        }
+        fn_result(o, n, FN_MODNAME, NULL, 0, 2048);
+        o->fnid = id;
+        return 1;
+    }
+    if (cur()->kind != T_LP) die_at(cur()->line, "expected '(' after FUNCTION %s", n->s);
+    advance();
+    Opnd *a1 = xmalloc(sizeof *a1); parse_operand(a1);
+    int nat = opnd_is_national(a1);
+    if (which == 0) {
+        /* BASECONVERT (argument-1 base-from base-to): argument-1's digits
+         * in the one base as digits in the other; a result of up to four
+         * digits per digit (base 16 to base 2).  An unsigned integer of
+         * USAGE DISPLAY, or a literal, is its digits (rule 1) */
+        if (a1->kind == O_NUM) {
+            if (!numlit_is_int(&a1->num) || a1->num.neg) die_at(a1->line, "FUNCTION BASECONVERT: a numeric argument-1 is an unsigned integer (2023 15.12.3 rule 1)");
+            char d[40]; int k = snprintf(d, sizeof d, "%lld", (long long)numlit_int(&a1->num));
+            memset(a1, 0, sizeof *a1); a1->kind = O_STR; a1->tok = str_tok(d, k); a1->line = n->line;
+        } else if (a1->kind == O_REF && !a1->ref.sym->is_group && is_numeric_sym(a1->ref.sym)) {
+            if (!is_int_item(a1->ref.sym) || a1->ref.sym->pi.is_signed || a1->ref.sym->usage != U_DISPLAY)
+                die_at(a1->line, "FUNCTION BASECONVERT: a numeric argument-1 is an unsigned integer of USAGE DISPLAY (2023 15.12.3 rule 1)");
+        } else fn_string_arg(a1, nat, n->s, "2023 15.12.3 rule 1");
+        Opnd *b[2];
+        for (int i = 0; i < 2; i++) {
+            b[i] = xmalloc(sizeof *b[i]); parse_operand(b[i]);
+            if (!((b[i]->kind == O_NUM && numlit_is_int(&b[i]->num) && !b[i]->num.neg) || (b[i]->kind == O_REF && is_int_item(b[i]->ref.sym)) || b[i]->kind == O_EXPR))
+                die_at(b[i]->line, "FUNCTION BASECONVERT: each base is an integer from 2 to 16 (2023 15.12.3 rules 2-3)");
+            if (b[i]->kind == O_NUM && (numlit_int(&b[i]->num) < 2 || numlit_int(&b[i]->num) > 16))
+                die_at(b[i]->line, "FUNCTION BASECONVERT: each base is an integer from 2 to 16 (2023 15.12.3 rules 2-3)");
+        }
+        if (b[0]->kind == O_NUM && b[1]->kind == O_NUM && numlit_int(&b[0]->num) == numlit_int(&b[1]->num))
+            die_at(n->line, "FUNCTION BASECONVERT: the two bases differ (2023 15.12.3 rule 4)");
+        if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the arguments of FUNCTION BASECONVERT");
+        advance();
+        fn_result(o, n, FN_BASECONV, a1, nat, 4 * fn_arg_width(a1));
+        o->fargs = xmalloc(2 * sizeof *o->fargs); o->fargs[0] = b[0]; o->fargs[1] = b[1]; o->nfargs = 2;
+        return 1;
+    }
+    if (which == 1) {
+        /* CONCAT (argument-1 ...): the arguments in order; an unsigned
+         * integer among them is its digits (15.18.3 rule 2) */
+        Opnd **args = xmalloc(64 * sizeof *args); int na = 0; int total = 0;
+        for (;;) {
+            Opnd *a = na ? xmalloc(sizeof *a) : a1;
+            if (na) parse_operand(a);
+            if (a->kind == O_NUM) {
+                if (!numlit_is_int(&a->num) || a->num.neg) die_at(a->line, "FUNCTION CONCAT: a numeric argument is an unsigned integer (2023 15.18.3 rule 2)");
+                char d[40]; int k = snprintf(d, sizeof d, "%lld", (long long)numlit_int(&a->num));
+                memset(a, 0, sizeof *a); a->kind = O_STR; a->tok = str_tok(d, k); a->line = n->line;
+            } else if (a->kind == O_REF && !a->ref.sym->is_group && is_numeric_sym(a->ref.sym)) {
+                if (!is_int_item(a->ref.sym) || a->ref.sym->pi.is_signed || a->ref.sym->usage != U_DISPLAY)
+                    die_at(a->line, "FUNCTION CONCAT: a numeric argument is an unsigned integer of USAGE DISPLAY (2023 15.18.3 rule 2)");
+            } else fn_string_arg(a, na ? opnd_is_national(args[0]) : opnd_is_national(a), n->s, "2023 15.18.3 rule 1");
+            if (na == 64) die_at(a->line, "FUNCTION CONCAT: more than 64 arguments");
+            args[na++] = a; total += fn_arg_width(a);
+            if (cur()->kind == T_RP) break;
+        }
+        advance();
+        nat = opnd_is_national(args[0]);
+        for (int i = 1; i < na; i++) if (opnd_is_national(args[i]) != nat) die_at(args[i]->line, "FUNCTION CONCAT: the arguments are all alphanumeric or all national (2023 15.18.3 rule 1)");
+        fn_result(o, n, FN_CONCAT, NULL, nat, total);
+        o->fargs = args; o->nfargs = na;
+        return 1;
+    }
+    if (which == 2) {
+        /* CONVERT (argument-1 source destination): 1 ANUM, 2 NAT, 3 HEX, 4
+         * ANY as the source; 1 ANUM, 2 NAT, 3 ANUM HEX, 4 NAT HEX, 5 BYTE
+         * as the destination */
+        int src = 0, dst = 0;
+        if (accept_word("any")) src = 4; else if (accept_word("hex")) src = 3;
+        else if (accept_word("anum") || accept_word("alphanumeric")) src = 1;
+        else if (accept_word("nat") || accept_word("national")) src = 2;
+        else die_at(cur()->line, "FUNCTION CONVERT: the source format is ANY, ALPHANUMERIC, ANUM, HEX, NAT or NATIONAL (2023 15.19.2)");
+        if (accept_word("byte")) dst = 5;
+        else if (accept_word("anum") || accept_word("alphanumeric")) dst = accept_word("hex") ? 3 : 1;
+        else if (accept_word("nat") || accept_word("national")) dst = accept_word("hex") ? 4 : 2;
+        else die_at(cur()->line, "FUNCTION CONVERT: the destination format is ALPHANUMERIC, ANUM, NAT or NATIONAL, each with or without HEX, or BYTE (2023 15.19.2)");
+        if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the arguments of FUNCTION CONVERT");
+        advance();
+        no_zero_lit(a1, "FUNCTION CONVERT's argument", "2023 15.19.3 rule 1");
+        if (src == 4) {
+            if (dst != 3 && dst != 4) die_at(n->line, "FUNCTION CONVERT: from ANY the destination is ANUM HEX or NAT HEX (2023 15.19.3 rule 8)");
+            if (a1->kind == O_REF && !a1->ref.sym->is_group && (a1->ref.sym->usage == U_POINTER || a1->ref.sym->usage == U_INDEX))
+                die_at(a1->line, "FUNCTION CONVERT: ANY takes no pointer or index item (2023 15.19.3 rule 7)");
+            if (a1->kind == O_NUM || a1->kind == O_EXPR || a1->kind == O_FIG || a1->kind == O_ALL) die_at(a1->line, "FUNCTION CONVERT: ANY takes an item or a literal");
+        } else if (src == 3) {
+            if (!fn_arg_is_string(a1)) die_at(a1->line, "FUNCTION CONVERT: from HEX argument-1 is a string of hexadecimal digits (2023 15.19.3 rule 4)");
+        } else {
+            if (dst == 5) die_at(n->line, "FUNCTION CONVERT: to BYTE the source is HEX (2023 15.19.3 rule 9)");
+            fn_string_arg(a1, src == 2, n->s, "2023 15.19.3 rules 5-6");
+            if ((src == 1 && dst == 1) || (src == 2 && dst == 2)) die_at(n->line, "FUNCTION CONVERT: the source and destination formats differ (2023 15.19.3 rule 3)");
+        }
+        int w = fn_arg_width(a1), rn = dst == 2 || dst == 4;
+        int fsize = dst == 3 ? 2 * w : dst == 4 ? 4 * w : src == 3 ? (w + 1) / 2 : src == 1 ? 2 * w : 3 * ((w + 1) / 2);
+        fn_result(o, n, FN_CONVERT, a1, rn, fsize);
+        o->fnid = src * 8 + dst; o->fargnat = nat;
+        return 1;
+    }
+    if (which == 3) {
+        /* FIND-STRING (argument-1 argument-2 [LAST] [[START AFTER] argument-3] [ANYCASE]) */
+        fn_string_arg(a1, nat, n->s, "2023 15.37.3 rule 1");
+        Opnd *a2 = xmalloc(sizeof *a2); parse_operand(a2);
+        fn_string_arg(a2, nat, n->s, "2023 15.37.3 rule 1");
+        int last = 0, anycase = 0; Opnd *skip = NULL;
+        if (accept_word("last")) last = 1;
+        if (cur()->kind != T_RP && !at_word("anycase")) {
+            if (accept_word("start")) { if (!accept_word("after")) die_at(cur()->line, "expected AFTER after START in FUNCTION FIND-STRING"); }
+            skip = xmalloc(sizeof *skip); parse_operand(skip);
+            if (!((skip->kind == O_NUM && numlit_is_int(&skip->num) && !skip->num.neg) || (skip->kind == O_REF && is_int_item(skip->ref.sym)) || skip->kind == O_EXPR))
+                die_at(skip->line, "FUNCTION FIND-STRING: argument-3 is an integer, zero or more (2023 15.37.3 rule 3)");
+        }
+        if (accept_word("anycase")) anycase = 1;
+        if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the arguments of FUNCTION FIND-STRING");
+        advance();
+        memset(o, 0, sizeof *o); o->kind = O_FUNC; o->fn = FN_FINDSTR; o->farg = a1; o->farg2 = a2; o->line = n->line;
+        o->fsize = 9; o->fnid = last; o->fanycase = anycase;
+        o->fargs = xmalloc(sizeof *o->fargs); o->fargs[0] = skip; o->nfargs = skip ? 1 : 0;
+        o->fargnat = nat;                                 /* a position counts characters */
+        return 1;
+    }
+    /* SUBSTITUTE (argument-1 [ANYCASE] [FIRST | LAST] argument-2 argument-3 ...) */
+    fn_string_arg(a1, nat, n->s, "2023 15.87.3 rule 1");
+    int anycase = accept_word("anycase"), mode = 0;
+    if (accept_word("first")) mode = 1; else if (accept_word("last")) mode = 2;
+    Opnd **pairs = xmalloc(64 * sizeof *pairs); int np = 0;
+    int w = fn_arg_width(a1), grow = 1;
+    while (cur()->kind != T_RP) {
+        if (np == 64) die_at(cur()->line, "FUNCTION SUBSTITUTE: more than 32 pairs of arguments");
+        Opnd *a2 = xmalloc(sizeof *a2); parse_operand(a2);
+        fn_string_arg(a2, nat, n->s, "2023 15.87.3 rule 1");
+        no_zero_lit(a2, "FUNCTION SUBSTITUTE's argument-2", "2023 15.87.3 rule 2");
+        if (cur()->kind == T_RP) die_at(cur()->line, "FUNCTION SUBSTITUTE: argument-2 and argument-3 come in pairs (2023 15.87.2)");
+        Opnd *a3 = xmalloc(sizeof *a3); parse_operand(a3);
+        fn_string_arg(a3, nat, n->s, "2023 15.87.3 rule 1");
+        pairs[np++] = a2; pairs[np++] = a3;
+        /* the result's bound: each pair can grow the text by its ratio */
+        int l2 = a2->kind == O_STR ? a2->tok->len : 1, l3 = fn_arg_width(a3);
+        int g = (l3 + l2 - 1) / l2; if (g < 1) g = 1;
+        if (grow < 8190 / w + 1) grow *= g > 1 ? g : 1;
+    }
+    if (!np) die_at(cur()->line, "FUNCTION SUBSTITUTE: at least one pair of arguments (2023 15.87.2)");
+    advance();
+    long bound = (long)w * grow; if (bound > 8190) bound = 8190;
+    fn_result(o, n, FN_SUBST, a1, nat, (int)bound);
+    o->fargs = pairs; o->nfargs = np; o->fnid = mode; o->fanycase = anycase;
+    return 1;
 }
 
 /* HIGHEST-ALGEBRAIC / LOWEST-ALGEBRAIC (2002 15.33, 15.46): the extreme
@@ -605,6 +823,36 @@ static void algebraic_limit(Opnd *o, Opnd *x, int high, Tok *n)
     if (nd == 0) o->num.digits[nd++] = '0';
     o->num.ndigits = nd; o->num.scale = scale;
     if (!high) { if (a->pi.is_signed) o->num.neg = 1; else { o->num.ndigits = 1; o->num.digits[0] = '0'; o->num.scale = 0; } }
+}
+
+/* SMALLEST-ALGEBRAIC (2023 15.83): the smallest positive value the
+ * argument can hold -- one in its last digit position (rule 2: a P
+ * position is a digit of value zero, so S9PP gives 100); a binary
+ * usage's is 1; a floating-point argument is refused (rule 4: the result
+ * could not be written as a fixed-point literal) */
+static void algebraic_smallest(Opnd *o, Opnd *x, Tok *n)
+{
+    if (x->kind != O_REF || x->ref.rm) die_at(n->line, "FUNCTION %s takes a numeric or numeric-edited item", n->s);
+    Sym *a = x->ref.sym;
+    if (!a->is_group && (a->usage == U_FLOAT || a->usage == U_DFLOAT))
+        die_at(n->line, "FUNCTION SMALLEST-ALGEBRAIC of a floating-point item is not implemented (2023 15.83.3 rule 4)");
+    memset(o, 0, sizeof *o); o->kind = O_NUM; o->line = n->line; o->folded = 1; o->uc = x->uc;
+    o->num.ndigits = 1; o->num.digits[0] = '1'; o->num.scale = 0;
+    if (!a->has_pic) {
+        if (a->is_group || (a->usage != U_BCHAR && a->usage != U_UBCHAR && a->usage != U_SSHORT && a->usage != U_USHORT &&
+                            a->usage != U_SINT && a->usage != U_UINT && a->usage != U_SDBL && a->usage != U_UDBL))
+            die_at(n->line, "FUNCTION %s takes a numeric or numeric-edited item", n->s);
+        return;
+    }
+    if (a->pi.category != PIC_NUMERIC && a->pi.category != PIC_NUMERIC_EDITED) die_at(n->line, "FUNCTION %s takes a numeric or numeric-edited item", n->s);
+    int digits = a->pi.digits, scale = a->pi.scale;
+    if (scale < 0) { for (int i = 0; i < -scale; i++) o->num.digits[o->num.ndigits++] = '0'; return; }   /* trailing P: 1 followed by zeros */
+    (void)digits;
+    /* 0.0...01 with the picture's scale (leading P included: V PP9 is 0.001) */
+    o->num.ndigits = 0;
+    for (int i = 0; i < scale; i++) o->num.digits[o->num.ndigits++] = '0';
+    o->num.digits[o->num.ndigits++] = '1';
+    o->num.scale = scale;
 }
 
 static void parse_operand_raw_1(Opnd *o);
@@ -814,6 +1062,7 @@ static void parse_operand_raw_1(Opnd *o)
             if (o->fsize > 8190) die_at(n->line, "FUNCTION %s: the result could exceed 8190 bytes", n->s);
             return;
         }
+        else if (parse_fn2023(o, n)) return;
         else if (!strcmp(n->s, "trim")) {
             /* TRIM (2014; 2023 15.96): argument-1 [LEADING | TRAILING]
              * [argument-2 ...], the characters to delete, a space by
@@ -898,6 +1147,19 @@ static void parse_operand_raw_1(Opnd *o)
             advance();
             o->kind = O_FUNC; o->fn = file ? FN_EXCFILE : FN_EXCLOC; o->fvar = 1; o->fnat = nat; o->fnid = nat;
             o->fsize = (file ? 2 + 64 : 255) * (nat ? 2 : 1);   /* the file-name, the location string: their bounds */
+            if (file && cur()->kind == T_LP) {
+                /* (file-name): that connector's last status (2023 15.28.4 rule 2) */
+                if (g_std < 2023) die_at(cur()->line, "FUNCTION %s with a file-name is COBOL 2023; compile with -std=2023", n->s);
+                advance();
+                Tok *fw = cur();
+                File *f = fw->kind == T_WORD ? file_find(fw->s) : NULL;
+                if (!f) die_at(fw->line, "FUNCTION EXCEPTION-FILE%s: the argument is a file-name (2023 15.28.3 rule 1)", nat ? "-N" : "");
+                advance();
+                if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the file-name of FUNCTION %s", n->s);
+                advance();
+                o->fname = n->s; o->fkept = NULL; o->uc = NULL;
+                o->fargs = xmalloc(sizeof *o->fargs); o->fargs[0] = (Opnd *)f; o->nfargs = 1;   /* the File, carried to the emitter */
+            }
             return;
         }
         else if (!strcmp(n->s, "current-date")) {
@@ -955,10 +1217,11 @@ static void parse_operand_raw_1(Opnd *o)
             o->kind = O_NUM; numlit_from_int(&o->num, len); o->folded = 1; o->uc = x.uc;   /* a user function's call is still made */
             return;
         }
-        else if (!strcmp(n->s, "byte-length") || !strcmp(n->s, "highest-algebraic") || !strcmp(n->s, "lowest-algebraic")) {
+        else if (!strcmp(n->s, "byte-length") || !strcmp(n->s, "highest-algebraic") || !strcmp(n->s, "lowest-algebraic") || !strcmp(n->s, "smallest-algebraic")) {
             /* COBOL 2002, known from the argument's description at compile time */
             if (g_std < 2002) die_at(n->line, "FUNCTION %s is COBOL 2002; compile with -std=2002", n->s);
-            int bytes = !strcmp(n->s, "byte-length"), high = !strcmp(n->s, "highest-algebraic");
+            int bytes = !strcmp(n->s, "byte-length"), high = !strcmp(n->s, "highest-algebraic"), small = !strcmp(n->s, "smallest-algebraic");
+            if (small && g_std < 2023) die_at(n->line, "FUNCTION %s is COBOL 2023; compile with -std=2023", n->s);
             advance();
             if (cur()->kind != T_LP) die_at(cur()->line, "expected '(' after FUNCTION %s", n->s);
             advance();
@@ -986,6 +1249,7 @@ static void parse_operand_raw_1(Opnd *o)
                 o->kind = O_NUM; numlit_from_int(&o->num, len); o->folded = 1; o->uc = x.uc;   /* a user function's call is still made */
                 return;
             }
+            if (small) { algebraic_smallest(o, &x, n); return; }
             algebraic_limit(o, &x, high, n);
             return;
         }

@@ -44,7 +44,7 @@ static void emit_act_desc(void)
     emit("\t.p2align 2");
     emit(".Lact%d:\t# activation descriptor", g_unit);
     emit("\t.word 0");                              /* active instances */
-    emit("\t.word %d", g_recursive | (g_iround << 8));   /* bit 0 RECURSIVE; bits 8-: INTERMEDIATE ROUNDING's mode */
+    emit("\t.word %d", g_recursive | (unit_is_contained(g_unit) << 1) | (g_iround << 8));   /* bit 0 RECURSIVE; bit 1 a contained program; bits 8-: INTERMEDIATE ROUNDING's mode */
     emit("\t.word %s", nlab);
     emit("\t.word 0");                              /* the outermost activation's block, kept (cob_act_enter) */
     emit("\t.word %d", nw);
@@ -186,6 +186,7 @@ static void emit_unit_data(void)
         if (f->nsplitw) emit("\t.word .Lspk%d_%d", f->unit, i); else emit("\t.word 0\t# no split keys");   /* split: the split keys' table */
         emit("\t.word 0");                                 /* fast_r1, fast_r, fast_w1, fast_w: the runtime's (READ and WRITE's short entries) */
         emit("\t.word 0");                                 /* started: a sequential START FIRST/LAST positioned the file */
+        emit("\t.word 0");                                 /* last_st: the connector's last I-O status (FUNCTION EXCEPTION-FILE (file-name)) */
         if (f->external) { emit(".Lfx%d_%d:\t# the shared connector of EXTERNAL %s", f->unit, i, f->name); emit("\t.word 0"); }
     }
     /* CODE-SET: every elementary item of the file's records DISPLAY, a
