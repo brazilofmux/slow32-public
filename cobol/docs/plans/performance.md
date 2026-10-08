@@ -160,6 +160,12 @@ Left of stage 3:
   to be a move of a number;
 - the item stored only at the loop's exits.
 
+In the islands the same question is the optimizer's: `ho_mem_avail`
+(2026-10-08) keeps a loaded or stored location known across blocks and
+across calls that cannot touch it; what is left there is a phi at the
+joins and the byte read out of a known halfword
+(`docs/performance.md`).
+
 Then stage 4's question is ripe: what is left is the shape of each
 statement's own code -- values through frame slots, a comparison made
 into 0 or 1 and then branched on, a register allocation that is the

@@ -20,7 +20,11 @@
  *     the same day: the next re-sync carries nothing for it.
  *   - ra_new_split_copy carries bg_foff/bg_ssym/bg_soff from its source
  *     (hir_regalloc.h, selfhost ISSUES-81, upstream e98e1926): ported
- *     here 2026-10-07, so a re-sync carries nothing for it. */
+ *     here 2026-10-07, so a re-sync carries nothing for it.
+ *   - ho_mem_avail (hir_opt.h, 2026-10-08; ho_mask bit 2048): loads
+ *     known by location across blocks, intersection over predecessors;
+ *     calls kill all but what ho_call_effect's named callees write.
+ *     An upstream candidate (the names would be the C library's). */
 /* hir.h -- High-level IR for s12cc
  *
  * Parallel-array instruction representation.

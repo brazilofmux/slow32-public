@@ -1197,6 +1197,262 @@ static int ho_mem_fwd(void) {
 }
 
 /* ----------------------------------------------------------------
+ * Available loads across blocks.  DIVERGENCE (cobol, 2026-10-08; an
+ * upstream candidate, nothing in it is COBOL's but ho_call_effect's
+ * names).
+ *
+ * ho_mem_fwd above forwards within a block and keys by the address
+ * VALUE, so two GADDRs of one item are two addresses and nothing
+ * survives a call.  This pass keys by LOCATION -- a frame slot or a
+ * global symbol, a byte offset, a width -- and carries what is known
+ * across the CFG: a location's value is available at a block's entry
+ * when every predecessor's exit knows the same SSA value for it (no phi
+ * is made; a value known differently on two paths is dropped).  A STORE
+ * kills the locations it may overlap (ho_may_alias's rules: two
+ * symbols never share storage, an unknown base may be anything) and
+ * makes its own known; a call kills everything but what a known callee
+ * leaves alone (ho_call_effect); a LOAD of a known location becomes a
+ * COPY.  The forward dataflow is the usual one for available
+ * expressions -- OUT starts at TOP, intersection over predecessors,
+ * reverse postorder to a fixpoint -- and a stale CFG edge (a branch
+ * simplified earlier in the iteration) can only add a predecessor,
+ * which is conservative.
+ * ---------------------------------------------------------------- */
+#define HA_W 32                       /* locations known per block, at most */
+static int  ha_base[HIR_MAX_BLOCK * HA_W];   /* an HI_ALLOCA, or the canonical HI_GADDR of the symbol */
+static int  ha_off[HIR_MAX_BLOCK * HA_W];
+static int  ha_sz[HIR_MAX_BLOCK * HA_W];
+static int  ha_ty[HIR_MAX_BLOCK * HA_W];
+static int  ha_val[HIR_MAX_BLOCK * HA_W];
+static int  ha_cnt[HIR_MAX_BLOCK];           /* OUT[b]: entries, or -1 = TOP (not yet computed) */
+static int  ha_stat_avail;                   /* loads made copies */
+/* the working table: IN of the block being transferred */
+static int  hw_base[HA_W], hw_off[HA_W], hw_sz[HA_W], hw_ty[HA_W], hw_val[HA_W], hw_cnt;
+/* the canonical GADDR of a symbol: the first seen with that name */
+#define HA_MAX_SYM 512
+static int  ha_sym_id[HA_MAX_SYM]; static int ha_nsym;
+static int ha_canon(int gaddr) {
+    int k;
+    k = 0;
+    while (k < ha_nsym) {
+        if (ha_sym_id[k] == gaddr) return gaddr;
+        if (h_name[ha_sym_id[k]] != NULL && h_name[gaddr] != NULL && strcmp(h_name[ha_sym_id[k]], h_name[gaddr]) == 0) return ha_sym_id[k];
+        k = k + 1;
+    }
+    if (ha_nsym < HA_MAX_SYM) { ha_sym_id[ha_nsym] = gaddr; ha_nsym = ha_nsym + 1; return gaddr; }
+    return -1;                                /* too many symbols: this one is not tracked */
+}
+/* the location of an access: 2 = known (base canonical, offset exact),
+ * 1 = the base known but not the offset (a computed position inside one
+ * item: a subscript, a reference modification), 0 = unknown */
+static int ha_base_of(int id, int depth) {
+    int k; int b;
+    while (id >= 0 && depth < 64) {
+        k = h_kind[id];
+        if (k == HI_ALLOCA || k == HI_GADDR) return id;
+        if (k == HI_ADDI || k == HI_COPY) { id = h_src1[id]; }
+        else if (k == HI_ADD) {
+            b = ha_base_of(h_src1[id], depth + 1);
+            if (b >= 0) return b;
+            id = h_src2[id];
+        } else return -1;
+        depth = depth + 1;
+    }
+    return -1;
+}
+static int ha_loc(int addr, int *base, int *off) {
+    int kind;
+    kind = ho_addr_resolve(addr, base, off);
+    if (kind == 0) {
+        *base = ha_base_of(addr, 0); *off = 0;
+        if (*base < 0) return 0;
+        if (h_kind[*base] == HI_GADDR) { *base = ha_canon(*base); if (*base < 0) return 0; }
+        return 1;
+    }
+    if (kind == 2) { *base = ha_canon(*base); if (*base < 0) return 0; }
+    return 2;
+}
+static int hw_find(int base, int off, int sz, int ty) {
+    int k;
+    k = 0;
+    while (k < hw_cnt) {
+        if (hw_base[k] == base && hw_off[k] == off && hw_sz[k] == sz && hw_ty[k] == ty) return k;
+        k = k + 1;
+    }
+    return -1;
+}
+static void hw_del(int k) {
+    hw_cnt = hw_cnt - 1;
+    hw_base[k] = hw_base[hw_cnt]; hw_off[k] = hw_off[hw_cnt]; hw_sz[k] = hw_sz[hw_cnt]; hw_ty[k] = hw_ty[hw_cnt]; hw_val[k] = hw_val[hw_cnt];
+}
+/* a write of sz bytes at (base, off) -- sz < 0: any bytes of base; base < 0: anywhere */
+static void hw_kill(int base, int off, int sz) {
+    int k;
+    if (base < 0) { hw_cnt = 0; return; }
+    k = 0;
+    while (k < hw_cnt) {
+        if (hw_base[k] == base && (sz < 0 || (off < hw_off[k] + hw_sz[k] && hw_off[k] < off + sz))) hw_del(k);
+        else k = k + 1;
+    }
+}
+static void hw_put(int base, int off, int sz, int ty, int val) {
+    int k;
+    k = hw_find(base, off, sz, ty);
+    if (k >= 0) { hw_val[k] = val; return; }
+    if (hw_cnt < HA_W) { hw_base[hw_cnt] = base; hw_off[hw_cnt] = off; hw_sz[hw_cnt] = sz; hw_ty[hw_cnt] = ty; hw_val[hw_cnt] = val; hw_cnt = hw_cnt + 1; }
+}
+/* What a call may write.  0: anything.  1: nothing (a check that raises
+ * or returns).  2: its first argument's bytes, the count its third
+ * argument (memcpy, memmove).  3: the count its second (cob_fill).  The
+ * names are libcob's and the C library's; a front end that emits others
+ * gets 0 for them, which is right. */
+static int ho_call_effect(int i) {
+    char *n;
+    if (h_kind[i] != HI_CALL || h_name[i] == NULL) return 0;
+    n = h_name[i];
+    if (strcmp(n, "memcpy") == 0 || strcmp(n, "memmove") == 0) return 2;
+    if (strcmp(n, "cob_fill") == 0) return 3;
+    if (strcmp(n, "cob_refmod_len_chk") == 0 || strcmp(n, "cob_refmod_len") == 0 || strcmp(n, "memcmp") == 0) return 1;
+    return 0;
+}
+/* the write of a call with effect 2 or 3 applied to the table */
+static void hw_call_kill(int i, int eff) {
+    int base; int off; int a; int nv; int n;
+    if (h_val[i] < (eff == 2 ? 3 : 2)) { hw_cnt = 0; return; }
+    a = h_carg[h_cbase[i]];
+    nv = h_carg[h_cbase[i] + (eff == 2 ? 2 : 1)];
+    eff = ha_loc(a, &base, &off);
+    if (eff == 0) { hw_cnt = 0; return; }
+    n = -1;
+    if (eff == 2 && nv >= 0 && h_kind[nv] == HI_ICONST && h_val[nv] >= 0) n = h_val[nv];
+    hw_kill(base, off, n);
+}
+/* the block's instructions over the working table; rewrite: a known
+ * load becomes a COPY (returns how many) */
+static int ha_transfer(int b, int rewrite) {
+    int i; int end; int k; int addr; int base; int off; int sz; int eff; int made;
+    made = 0;
+    i = bb_start[b]; end = bb_end[b];
+    if (i < 0) return 0;
+    while (i < end) {
+        k = h_kind[i];
+        if (k == HI_LOAD) {
+            addr = h_src1[i]; sz = ho_acc_size(h_ty[i]);
+            if (ha_loc(addr, &base, &off) == 2) {
+                int e;
+                e = hw_find(base, off, sz, h_ty[i]);
+                if (e >= 0 && hw_val[e] != i) {
+                    if (rewrite) {
+                        h_kind[i] = HI_COPY; h_src1[i] = hw_val[e]; h_src2[i] = -1;
+                        made = made + 1; ha_stat_avail = ha_stat_avail + 1;
+                    }
+                } else if (e < 0) hw_put(base, off, sz, h_ty[i], i);
+            }
+        } else if (k == HI_STORE) {
+            addr = h_src1[i]; sz = ho_acc_size(h_ty[i]);
+            eff = ha_loc(addr, &base, &off);
+            if (eff == 2) { hw_kill(base, off, sz); hw_put(base, off, sz, h_ty[i], h_src2[i]); }
+            else if (eff == 1) hw_kill(base, 0, -1);  /* somewhere in that item: all of it forgotten */
+            else hw_cnt = 0;
+        } else if (k == HI_CALL || k == HI_CALLP || k == HI_A64_DBT_TRAMPOLINE || hi_is_a64_cache_asm(k) ||
+                   k == HI_X64_DBT_TRAMPOLINE || k == HI_X64_RDTSC) {
+            eff = ho_call_effect(i);
+            if (eff == 0) hw_cnt = 0;
+            else if (eff >= 2) hw_call_kill(i, eff);
+        }
+        i = i + 1;
+    }
+    return made;
+}
+static void ha_save_out(int b) {
+    int k; int o;
+    o = b * HA_W;
+    k = 0;
+    while (k < hw_cnt) { ha_base[o + k] = hw_base[k]; ha_off[o + k] = hw_off[k]; ha_sz[o + k] = hw_sz[k]; ha_ty[o + k] = hw_ty[k]; ha_val[o + k] = hw_val[k]; k = k + 1; }
+    ha_cnt[b] = hw_cnt;
+}
+/* is the working table the same set as OUT[b]? */
+static int ha_same_out(int b) {
+    int k; int o; int j; int found;
+    if (ha_cnt[b] != hw_cnt) return 0;
+    o = b * HA_W;
+    k = 0;
+    while (k < hw_cnt) {
+        found = 0; j = 0;
+        while (j < ha_cnt[b] && !found) {
+            if (ha_base[o + j] == hw_base[k] && ha_off[o + j] == hw_off[k] && ha_sz[o + j] == hw_sz[k] && ha_ty[o + j] == hw_ty[k] && ha_val[o + j] == hw_val[k]) found = 1;
+            j = j + 1;
+        }
+        if (!found) return 0;
+        k = k + 1;
+    }
+    return 1;
+}
+/* IN[b] into the working table: the intersection of the predecessors'
+ * OUTs that are not TOP; returns 0 when every predecessor is TOP (or
+ * there is none and b is not the entry) */
+static int ha_load_in(int b) {
+    int p; int pi; int first; int k; int o; int j; int found;
+    hw_cnt = 0;
+    if (b == 0) return 1;
+    first = 1;
+    pi = 0;
+    while (pi < ssa_npred[b]) {
+        p = ssa_pred[ssa_pbase[b] + pi];
+        pi = pi + 1;
+        if (p < 0 || p >= bb_nblk || ha_cnt[p] < 0 || bb_start[p] < 0) continue;
+        o = p * HA_W;
+        if (first) {
+            k = 0;
+            while (k < ha_cnt[p]) { hw_base[k] = ha_base[o + k]; hw_off[k] = ha_off[o + k]; hw_sz[k] = ha_sz[o + k]; hw_ty[k] = ha_ty[o + k]; hw_val[k] = ha_val[o + k]; k = k + 1; }
+            hw_cnt = ha_cnt[p];
+            first = 0;
+        } else {
+            k = 0;
+            while (k < hw_cnt) {
+                found = 0; j = 0;
+                while (j < ha_cnt[p] && !found) {
+                    if (ha_base[o + j] == hw_base[k] && ha_off[o + j] == hw_off[k] && ha_sz[o + j] == hw_sz[k] && ha_ty[o + j] == hw_ty[k] && ha_val[o + j] == hw_val[k]) found = 1;
+                    j = j + 1;
+                }
+                if (found) k = k + 1; else hw_del(k);
+            }
+        }
+    }
+    return !first;
+}
+static int ho_mem_avail(void) {
+    int b; int ri; int iter; int changed; int made;
+    if (bb_nblk < 2 || ssa_rpo_cnt <= 0) return 0;
+    ha_nsym = 0;
+    b = 0;
+    while (b < bb_nblk) { ha_cnt[b] = -1; b = b + 1; }
+    iter = 0; changed = 1;
+    while (changed && iter < 32) {
+        changed = 0;
+        ri = 0;
+        while (ri < ssa_rpo_cnt) {
+            b = ssa_rpo_ord[ri]; ri = ri + 1;
+            if (b < 0 || b >= bb_nblk || bb_start[b] < 0) continue;
+            if (!ha_load_in(b)) continue;             /* TOP in, TOP out: wait for a predecessor */
+            ha_transfer(b, 0);
+            if (ha_cnt[b] < 0 || !ha_same_out(b)) { ha_save_out(b); changed = 1; }
+        }
+        iter = iter + 1;
+    }
+    if (changed) return 0;                            /* no fixpoint: leave the code as it is */
+    made = 0;
+    ri = 0;
+    while (ri < ssa_rpo_cnt) {
+        b = ssa_rpo_ord[ri]; ri = ri + 1;
+        if (b < 0 || b >= bb_nblk || bb_start[b] < 0) continue;
+        if (!ha_load_in(b)) continue;
+        made = made + ha_transfer(b, 1);
+    }
+    return made > 0;
+}
+
+/* ----------------------------------------------------------------
  * Single-store alloca promotion (mem2reg, trivial case)
  *
  * The lowering emits `STORE alloca, PARAM` at function entry for every
@@ -1435,6 +1691,7 @@ static void hir_opt(void) {
         if (ho_mask & 32)  changed = changed | ho_phi_simplify();
         if (ho_mask & 64)  changed = changed | ho_dse_pass();
         if (ho_mask & 128) changed = changed | ho_mem_fwd();
+        if (ho_mask & 2048) changed = changed | ho_mem_avail();  /* DIVERGENCE (cobol): loads across blocks */
         if (ho_mask & 256) changed = changed | ho_promote_single_store_alloca();
         if (ho_mask & 512) changed = changed | ho_dce();
         iter = iter + 1;

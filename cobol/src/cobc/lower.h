@@ -2697,6 +2697,7 @@ static char *lw_make_island(int at, int n, int count, int ntext)
     hcg_r30_keep = g_lw_has_text;
     hcg_text_call = lw_text_call; hcg_text_is = lw_text_is;
     hd_fn = getenv("S32_HIR_DUMP");            /* =.LislN: that island's HIR after the optimizer, to stderr (the backend's -dhir) */
+    if (getenv("S32_HIR_OPT_MASK")) ho_mask = atoi(getenv("S32_HIR_OPT_MASK"));   /* the optimizer's passes by bit (hir_opt.h), to measure one apart: all but the available-loads pass is 63487 */
     cg_olen = 0; cg_njt = 0; cg_njt_ent = 0; cg_nfn = 0; cg_cur_fn = -1; cg_fd = -1;
     hcg_func(&fn);
     if (cg_njt) die_at(g_lw_s[g_lw_list[at]].line, "internal: an island made a jump table");

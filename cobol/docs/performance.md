@@ -1319,3 +1319,63 @@ one byte short) is caught -- the kernel being one source on both sides,
 the differential tests the crossing, not the algorithm, which the
 gates' SORT tests, CCVS's SM module and majesty's byte-identical reports
 test.  Then the three engine differentials and every COBOL gate.
+
+## 2026-10-08: loads known across blocks
+
+The second item the user ordered after the hot-spot map: the island
+reloads an item at every use.  The HIR optimizer had a forwarding pass
+(`ho_mem_fwd`), but within a block only, keyed by the address *value*
+-- two `gaddr` of one item are two addresses -- and cleared at every
+call.  csv2fw's per-byte path is 190 blocks with a call in most of them.
+
+`ho_mem_avail` (src/hir/hir_opt.h, the copy's divergence list; an
+upstream candidate) keys what is known by LOCATION -- a frame slot or a
+global symbol, a byte offset, a width -- and carries it across the CFG
+as available expressions are carried: OUT starts at top, a block's
+entry knows what every predecessor's exit knows with the SAME SSA value
+(no phi is made), reverse postorder to a fixpoint, then a load of a
+known location becomes a COPY.  A store kills what it may overlap by
+`ho_may_alias`'s rules -- two symbols never share storage, which holds
+because a redefining item has no label of its own (layout.h) -- and a
+store at a computed position inside an item (`raw-text(raw-len:1)`)
+forgets that item alone, where before it was unknown and forgot
+everything.  A call kills everything except what a known callee leaves
+alone: `cob_refmod_len_chk`, `cob_refmod_len`, `memcmp` write nothing;
+`memcpy`, `memmove`, `cob_fill` write their destination, of a constant
+count when it is one.  Text nodes and the rest kill all.
+
+Measured on csv2fw, both sides built against today's libcob (a pass
+switched off by `S32_HIR_OPT_MASK=63487`, the knob added for the
+purpose), alternating under one DBT:
+
+    the per-byte island's loads     68  ->  44
+    instructions             3,299,762,755  ->  3,244,824,786   -1.7%
+    time                               202 ms  ->  196 ms        -3%
+
+A load costs the DBT more than its instruction count says (an address
+translation and a bounds check per access), so the time moves more
+than the count.
+
+What the pass does not reach, in order of value:
+
+- **Joins.** After an EVALUATE arm that stores `f-owned`, the join sees
+  two values for it and drops the location; the next arm reloads.  A phi
+  at the join would keep it (load PRE).  Most of the 44 are these.
+- **Partial forwarding.** `state` is stored as two bytes and read a
+  byte at a time (the DISPLAY decode); the store's value is known but
+  the byte loads do not match its width.  Extracting the byte from the
+  known halfword is a shift and a mask, which needs an instruction
+  inserted mid-block, which the optimizer's block ranges do not allow.
+- **Text nodes.** After a `.Ltext` call the natives it may touch are
+  reloaded by design.
+
+### A measurement trap, recorded
+
+The hook tag is the checksum of `kern.h`.  Adding the sort kernel
+changed it, and every `.s32x` built before -- the four csv2fw builds
+kept for A/B -- lost its COBOL hooks under the rebuilt DBT: 176 ms
+became 216 with nothing else different.  An A/B across a kern.h change
+must rebuild both sides; `slow32-dbt -s` shows "Hooks: 4" (the
+builtins alone) when a binary's tag is stale.  Majesty's programs were
+rebuilt (`s32x/build.sh`); the fleet's images are built with their
+DBT, so they stay consistent.
