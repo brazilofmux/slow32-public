@@ -1,3 +1,4 @@
+*> No gcobol: the test depends on COB_CURRENT_DATE, the command line as GnuCOBOL counts it, or a print device -- the harness skips it there.
 identification division.
 program-id. fixclock.
 *> COB_CURRENT_DATE fixes the clock (cobol ISSUES-45): the .env beside

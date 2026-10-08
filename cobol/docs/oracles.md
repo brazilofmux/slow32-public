@@ -358,9 +358,69 @@ each a question of which side the text is on; the three looked at first
 all went against gcobol, GnuCOBOL and this compiler agreeing: `COMPUTE m
 ROUNDED = 7 / 2` gives 3 there (fixed/compute), `-0,5` under
 DECIMAL-POINT IS COMMA reads as -0,05 (free/dpcomma), ADD CORRESPONDING
-leaves a field 9 that should be 0 (free/corr). The rest of the list is
-work in hand: each disagreement to be classified -- gcobol's, a
-documented divergence (`.gcobol-expected`), or ours -- and the
-strict mode turned on once the list is understood. Where gcobol is
-wrong, the finding goes upstream (the user's standing wish for cobc370
-bugs applies here too).
+leaves a field 9 that should be 0 (free/corr). The survey of the 66 follows; strict mode stays off until the
+`.gcobol-expected` files for the implementor-defined class are written.
+Where gcobol is wrong, the finding goes upstream (the user's standing
+wish for cobc370 bugs applies here too).
+
+### The 66 disagreements, classified (2026-10-07)
+
+Classes: **G** gcobol wrong or lacking where the text, GnuCOBOL and this
+compiler agree (candidates for a GCC bug report); **I** implementor-
+defined, both answers allowed (a `.gcobol-expected` can record gcobol's);
+**E** the environment (the clock, the command line, a device: marked "no
+gcobol" in the test); **T** the text sides with this compiler against
+BOTH oracles (checked against the text, kept). None so far is ours. A
+G row rests on the test having been written against the text and
+agreeing with GnuCOBOL; compute, dpcomma, corr, rmode, hotfn, dtformat
+and negzero were re-read against the text today, the rest were not.
+
+| class | tests | what gcobol does |
+|---|---|---|
+| G | compute, heldvalues | ROUNDED ignored: `COMPUTE m ROUNDED = 7 / 2` gives 3; DIVIDE ... REMAINDER likewise |
+| G | edit, picedit | the editing symbols CR and DB inserted in the picture's case (`567cr`); the text inserts CR and DB |
+| G | dpcomma | under DECIMAL-POINT IS COMMA the literal `-0,5` reads as -0,05 |
+| G | corr | ADD CORRESPONDING leaves a field unchanged that should go to 0 |
+| G | divremgiving, divremse, divremu, remrnd | REMAINDER zeroed on a size error, and computed from the rounded quotient (the text: from the truncated one); a negative remainder's sign lost |
+| G | altkey, idxbig | I-O status 02 (a duplicate alternate key) not set; 00 instead |
+| G | seqblock, seqbyte | I-O status 04 (a record shorter or longer than the FD) not set; the short record read as 00 |
+| G | relative | status 23 where 24 (boundary violation, relative) is the text's; a relative WRITE's key handling |
+| G | codesetrecs, ebcdic | CODE-SET ignored: the bytes written are the native ones |
+| G | copyquote | REPLACE ... BY ignored (or quote matching in pseudo-text) |
+| G | moveall, moverules | MOVE ALL "7" TO a 9(3) item gives 007 (the 1985 repetition rule, BP-O9, gives 777) |
+| G | moveonce | a reference-modified receiver with a subscripted length evaluated twice |
+| G | casermod | a function result reference-modified keeps the result's full width |
+| G | cmpbytes | comparisons of unequal-length alphanumeric items with high-values padding wrong |
+| G | stringrules | STRING ... ON OVERFLOW: the receiver changed and the pointer advanced although the overflow is detected |
+| G | unstring | UNSTRING ... DELIMITER IN leaves the delimiter items blank |
+| G | searchrules | SEARCH ALL finds the last of equal keys where the text leaves it unspecified -- our `bar` vs its `end`: **I** on a second look |
+| G | setcond | SET condition-name TO TRUE with a numeric-edited VALUE moves the wrong value; `[ 12.5   ]` becomes `[    0.00]` |
+| G | cancelrules | CANCEL leaves the program's files open: the reopen gives 41 (14.9.5.4 rule 4 closes them) |
+| G | addressofarg | CALL ... BY REFERENCE ADDRESS OF item: the callee sees nothing |
+| G | basedlocal | a BASED item is not NULL before ALLOCATE |
+| G | allocinit | ALLOCATE ... INITIALIZED sizes the area by the first item only |
+| G | init2002 | INITIALIZE WITH FILLER / REPLACING / DEFAULT: FILLER items left, REPLACING categories mixed |
+| G | recnot | a RECURSIVE program's second entry runs the first's statements again |
+| G | rmode | ROUNDED MODE TOWARD-GREATER of 0.001 gives 0 (1 is the text's) |
+| G | hotfn | FUNCTION MOD(8, -4) gives -4 (0) |
+| G | startfirst | START FIRST / LAST and READ PREVIOUS stop early |
+| G | userfnonce, userfnrecv, userfnsub | user-defined functions: compiled, but silent or wrong (most others ICE) |
+| G | wide1, wide2 | arithmetic past 18 digits silently zero or truncated (31-digit items are the text's) |
+| G | numvaldigit | NUMVAL of a 19-digit string wrong |
+| G | lineseq | a READ of a line sequential record into a numeric field leaves it blank |
+| G | tabcols | a tab in a line sequential record not expanded to its column |
+| G | picmix | an alphanumeric-edited picture's insertion with a numeric MOVE |
+| G | floatext | FLOAT-EXTENDED's value lost |
+| G | fnargbad | SQRT(-1) returns -1 where the function's value is undefined and EC-ARGUMENT-FUNCTION raised: **I** strictly, the value being implementor's |
+| T | dtformat | FORMATTED-TIME in a basic format writes the decimal separator (`123456.50`): 15.3.3.2 says it does not appear in basic data -- GnuCOBOL does the same (its .oracle-expected); the TEST-FORMATTED-DATETIME positions differ too |
+| T | negzero | a zero with a negative sign: inconsistent there (display `0000`, sign-separate `-0000`); here the stored sign is kept and DISPLAY shows `+` (cobol ISSUES-122, GnuCOBOL agrees byte for byte) |
+| I | arith, hotarith, hotarith2, hotdec, hotmuldiv, hotwrap, notrunc | a result past the receiver with no SIZE ERROR phrase: gcobol keeps what the binary item can hold, this compiler and GnuCOBOL truncate to the picture (the text leaves it undefined) |
+| I | comp12, datefn, divremu's display, returncode | DISPLAY of a floating-point item (`1.5` vs `.15000000E 01`), of an integer function (`+1` vs `0000000001`); RETURN-CODE's size (9(4) vs 9(9)) |
+| I | packedpad | an invalid nibble in a COMP-3 item: both answers are the implementor's |
+| I | copybook | a COPY REPLACING that lands in a picture: the edited picture's form |
+| E | fixclock, acceptyyyy | COB_CURRENT_DATE is GnuCOBOL's; gcobol reads the real clock -- marked "no gcobol" |
+| E | args | ARGUMENT-NUMBER counts the program name there (an extension's semantics) -- "no gcobol" |
+| E | printer | the print device's spacing -- "no gcobol" |
+
+The refusals (70) are listed above by kind; none is a program this
+compiler should refuse.

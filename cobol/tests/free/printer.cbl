@@ -1,3 +1,4 @@
+*> No gcobol: the test depends on COB_CURRENT_DATE, the command line as GnuCOBOL counts it, or a print device -- the harness skips it there.
 identification division.
 program-id. printer.
 *> A print file is a line printer (cobol ISSUES-46): the cursor sits on

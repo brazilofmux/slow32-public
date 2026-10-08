@@ -1,3 +1,4 @@
+*> No gcobol: the test depends on COB_CURRENT_DATE, the command line as GnuCOBOL counts it, or a print device -- the harness skips it there.
 *> ACCEPT ... FROM DATE YYYYMMDD and DAY YYYYDDD (COBOL 2002; 2023
 *> 14.9.1.4): the four-digit year, beside the two-digit forms.  The
 *> clock is pinned by acceptyyyy.env.  docs/conformance/accept.md

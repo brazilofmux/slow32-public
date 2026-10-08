@@ -1,3 +1,4 @@
+*> No gcobol: the test depends on COB_CURRENT_DATE, the command line as GnuCOBOL counts it, or a print device -- the harness skips it there.
 *> The command line, GnuCOBOL's implementor module: ARGUMENT-NUMBER is
 *> the count, ARGUMENT-VALUE the arguments in turn, DISPLAY n UPON
 *> ARGUMENT-NUMBER repositions, past the end leaves the item alone,
