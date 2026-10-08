@@ -54,10 +54,10 @@ HDRS = cpu_state.h $(ARCH_HDRS) translate.h block_cache.h dbt_limits.h shadow_in
 # is built (runtime/Makefile).  A source that is not here leaves its tag
 # empty and its routines unhooked.
 HK_SRC_BUILTINS = $(wildcard ../../runtime/builtins.c)
-HK_TAG_BUILTINS := $(if $(HK_SRC_BUILTINS),$(shell cksum < $(HK_SRC_BUILTINS) | awk '{printf "%08x", $$1}'))
+HK_TAG_BUILTINS := $(if $(HK_SRC_BUILTINS),$(shell printf '%08x' $$(cksum < $(HK_SRC_BUILTINS) | cut -d' ' -f1)))
 
 HK_SRC_COBKERN = $(wildcard ../../cobol/libcob/kern.h)
-HK_TAG_COBKERN := $(if $(HK_SRC_COBKERN),$(shell cksum < $(HK_SRC_COBKERN) | awk '{printf "%08x", $$1}'))
+HK_TAG_COBKERN := $(if $(HK_SRC_COBKERN),$(shell printf '%08x' $$(cksum < $(HK_SRC_COBKERN) | cut -d' ' -f1)))
 
 hooks.o: hooks.c $(HDRS) $(HK_SRC_BUILTINS) $(HK_SRC_COBKERN)
 	$(CC) $(CFLAGS) -DHK_TAG_BUILTINS='"$(HK_TAG_BUILTINS)"' -DHK_TAG_COBKERN='"$(HK_TAG_COBKERN)"' -c -o $@ $<

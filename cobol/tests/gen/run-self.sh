@@ -38,7 +38,7 @@ ${CC:-cc} -std=c99 -O1 -w -o "$W/old/s32-cobc" "$W/old/cobol/src/s32-cobc.c" "$W
 (
     . "$ROOT/cobol/cctool.sh"
     OL="$W/old/cobol/libcob"
-    tag=$(cksum < "$OL/kern.h" | awk '{printf "%08x", $1}')
+    tag=$(printf '%08x' "$(cksum < "$OL/kern.h" | cut -d' ' -f1)")
     {
         # the entries written out by hand (libcob/build.sh), when that revision has them
         [ -f "$OL/entries.s" ] && cat "$OL/entries.s"
