@@ -3719,7 +3719,7 @@ static int cob_read_1(cob_file *f)
 }
 static __attribute__((noinline)) int cob_read_n(cob_file *f)
 {
-    if (f->fast_r) {
+    if (f->fast_r == 1) {
         unsigned n = f->recsize;
         if (f->rlen - f->rpos >= n) {
             memcpy(f->record, f->rbuf + f->rpos, n);
@@ -3729,6 +3729,27 @@ static __attribute__((noinline)) int cob_read_n(cob_file *f)
             if (st) { st[0] = '0'; st[1] = '0'; }
             return 0;
         }
+    } else if (f->fast_r == 2) {
+        /* a plain line sequential file open for input (cob_read_rest set
+         * the flag on its first record): a line that ends inside the block
+         * buffer and fits the record, which is nearly every one -- the
+         * bytes, a CR before the LF dropped, the rest spaces, 00.  A line
+         * cut by the buffer's end, a long line (04, or 06 under rule 15)
+         * and the end of the file go the long way, as before. */
+        unsigned n = f->recsize, have = f->rlen - f->rpos;
+        unsigned char *s = (unsigned char *)f->rbuf + f->rpos, *e = have ? memchr(s, '\n', have) : NULL;
+        if (e && (unsigned)(e - s) <= n) {
+            unsigned take = (unsigned)(e - s), len = take;
+            if (len && s[len - 1] == '\r') len--;
+            memcpy(f->record, s, len);
+            if (len < n) memset(f->record + len, ' ', n - len);
+            char *st = f->status;
+            f->rpos += take + 1; f->fpos += take + 1; f->last_len = len;
+            io_stw = 0;
+            if (st) { st[0] = '0'; st[1] = '0'; }
+            return 0;
+        }
+        f->fast_r = 0;                          /* a long line, or the buffer's end: the long way, which sets the flag again at the next line that fits (a file of long lines would otherwise search each twice) */
     }
     return cob_read_rest(f);
 }
@@ -3863,6 +3884,10 @@ static __attribute__((noinline)) int cob_read_rest(cob_file *f)
     if (i > 0 && rec[i - 1] == '\r') i--;
     f->last_len = i;
     if (i < n) memset(rec + i, ' ', n - i);
+    /* the next record need not come this far (cob_read_n's line sequential
+     * short path): a plain file -- not national, not a national read's
+     * inner call (varying 3), no lock mode -- open for input */
+    if (!truncated && f->open_mode == COB_OPEN_INPUT && (f->varying & 3) == 0 && !lk_locks_effective(f)) f->fast_r = 2;
     return file_result(f, truncated ? "04" : "00", "");
 }
 
@@ -3957,7 +3982,8 @@ static __attribute__((noinline)) int cob_write_rest(cob_file *f, int before, int
 /* WRITE ... AFTER n BEFORE m (2023 14.9.51: both phrases): the BEFORE
  * count for the next cob_write of a print file, whose encoding carries
  * one phrase; a LINAGE file's write takes both counts itself */
-static int pr_also_before = -1;
+
+static int pr_also_before = -1;                 /* a WRITE's BEFORE n beside its AFTER phrase (2023) */
 void cob_write_also_before(int n) { pr_also_before = n; }
 static int cob_write_1(cob_file *f, int before, int after, int reclen);
 int cob_write(cob_file *f, int before, int after, int reclen)
@@ -4003,9 +4029,25 @@ static int cob_write_1(cob_file *f, int before, int after, int reclen)
     }
     return cob_write_n(f, before, after, reclen);
 }
+/* the record without its trailing spaces: a word at a time from the end
+ * (unaligned loads are the machine's, docs/SPEC.md), then the bytes */
+/* (word loads at any address: the machine permits them (docs/SPEC.md),
+ * both compilers emit ldw for the cast, and memcpy(&w, p, 4) is a call
+ * under the -fno-builtin libcob is built with) */
+static inline unsigned ls_trim(const char *rec, unsigned n)
+{
+    while (n >= 16) {                           /* a print line is mostly its trailing spaces: 16 at a time */
+        const unsigned *w = (const unsigned *)(rec + n - 16);
+        if ((w[0] ^ 0x20202020u) | (w[1] ^ 0x20202020u) | (w[2] ^ 0x20202020u) | (w[3] ^ 0x20202020u)) break;
+        n -= 16;
+    }
+    while (n >= 4 && *(const unsigned *)(rec + n - 4) == 0x20202020u) n -= 4;
+    while (n > 0 && rec[n - 1] == ' ') n--;
+    return n;
+}
 static __attribute__((noinline)) int cob_write_n(cob_file *f, int before, int after, int reclen)
 {
-    if (f->fast_w) {
+    if (f->fast_w == 1) {
         unsigned n = f->recsize;
         char *p = __s32_out_room((FILE *)f->fp, n);
         if (p) memcpy(p, f->record, n);
@@ -4014,6 +4056,32 @@ static __attribute__((noinline)) int cob_write_n(cob_file *f, int before, int af
         f->fpos += n;
         io_stw = 0;
         if (st) { st[0] = '0'; st[1] = '0'; }
+        return 0;
+    }
+    if (f->fast_w == 2 && before == 0 && after == 0 && pr_also_before == -1) {
+        /* a plain WRITE to a line sequential file (cob_write_rest set the
+         * flag on its first): the print-file rule for AFTER 1 -- a newline
+         * unless the file is at its top, the record without its trailing
+         * spaces, the cursor left on the ink.  The same steps as the long
+         * path's, for this case alone. */
+        FILE *fp = (FILE *)f->fp;
+        unsigned st = f->pr_state;
+        if (st != 0) {                          /* PR_TOP: the first line needs no newline before it */
+            if (!__s32_out_byte(fp, '\n') && fputc('\n', fp) == EOF) return file_result(f, write_fail_st(), "write failed");
+            f->fpos++;
+        }
+        unsigned n = ls_trim(f->record, f->recsize);
+        if (n) {
+            char *p = __s32_out_room(fp, n);
+            if (p) memcpy(p, f->record, n);
+            else if (fwrite(f->record, 1, n, fp) != n) return file_result(f, write_fail_st(), "write failed");
+            f->fpos += n;
+            f->pr_state = 3;                    /* PR_INK */
+        } else f->pr_state = 2;                 /* PR_OPEN */
+        char *sb = f->status;
+        f->last_len = 0;
+        io_stw = 0;
+        if (sb) { sb[0] = '0'; sb[1] = '0'; }
         return 0;
     }
     return cob_write_rest(f, before, after, reclen);
@@ -4087,7 +4155,7 @@ static __attribute__((noinline)) int cob_write_rest(cob_file *f, int before, int
         if (st == PR_INK) PR_PUT('\r');
         else st = PR_OPEN;
     }
-    while (n > 0 && rec[n - 1] == ' ') n--;
+    n = ls_trim(rec, n);
     if (n && fwrite(rec, 1, n, fp) != n) return file_result(f, write_fail_st(), "write failed");
     f->fpos += n;
     if (n) st = PR_INK;
@@ -4098,6 +4166,9 @@ static __attribute__((noinline)) int cob_write_rest(cob_file *f, int before, int
     #undef PR_PUT
     f->pr_state = st;
     f->last_len = 0;
+    /* the next plain WRITE need not come this far (cob_write_n's line
+     * sequential short path), the states PR_TOP..PR_INK being 0..3 there */
+    if ((f->varying & 3) == 0 && !lk_locks_effective(f)) f->fast_w = 2;   /* (varying 3: a national WRITE's inner call with its UTF-8 copy -- the flag would skip the conversion next time) */
     return file_result(f, "00", "");
 }
 

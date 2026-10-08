@@ -1424,3 +1424,53 @@ part moved into (the fill stands), nested arms with one path uncovered,
 a loop in between, and ZEROS with a shorter sender (the move's own
 padding decides).  The HIR build, the text build and the held-fill-off
 build print the same bytes, which are the expected file.
+
+## 2026-10-08: line sequential records, the short way
+
+The reports' profile after the sort went native (gl034, guest-only
+instructions): `cob_read_rest` 167 a record, `cob_write_rest` 147 plus
+`fwrite` 54 and `fputc` 20 -- the line sequential paths, which had no
+short entry of the kind the fixed-length records got on 2026-10-02.
+Most of each is the long function's frame (twenty saved registers) and
+the tests on the way to the case that always happens.
+
+Two short paths in `cob_read_n` and `cob_write_n`, each taken when the
+long path has set the flag on the file's first record (`fast_r`,
+`fast_w` = 2 -- the fixed-record paths are 1):
+
+- READ: a plain line sequential file open for input, a line that ends
+  inside the block buffer and fits the record.  `memchr` for the
+  newline, the bytes copied, a CR before the LF dropped, the rest
+  spaces, 00.  A line cut by the buffer's end, a long line (04, or 06
+  under rule 15) and the end of the file go the long way, which sets
+  the flag again at the next line that fits.
+- WRITE: a plain WRITE (no ADVANCING phrase, no BEFORE beside an AFTER)
+  to a line sequential file, the print-file rule for AFTER 1: a newline
+  unless the file is at its top, the record without its trailing
+  spaces, the cursor left on the ink -- the long path's own steps, for
+  this case alone.
+
+The trailing spaces are trimmed sixteen bytes at a time by word loads
+at any address, which the machine permits (docs/SPEC.md).  Not
+`memcpy(&w, p, 4)`: libcob is compiled with `-fno-builtin`, under which
+clang keeps that a call -- 264 of them in libcob.s today, each a
+crossing -- where a plain `*(const unsigned *)p` is one `ldw` from both
+compilers (stage08's does not parse an `aligned(1)` attribute in a
+typedef, which the selfhost-libcob gate said).  The first attempt did
+the memcpy and made the reports slower; the second is faster than the
+byte loop it replaced.  The gates also caught the WRITE flag being set
+by a national file's inner call (its UTF-8 copy, `varying` 3), which
+would have skipped the conversion from the second record on:
+2002/natfiles and 2002/lsrule15, byte for byte.
+
+Batch instruction counts, before and after (the per-run counter):
+
+    gl037 -7.6%   gl043 -7.1%   gl033 -6.9%   gl042 -6.9%
+    gl041 -3.8%   gl035 -3.7%   gl034 -3.3%   gl038 -2.4%
+    the batch -2.1% (csv2fw, which has no line sequential file, 0)
+
+What remains per record in the reports, in order: `sort_key_build` 230
+(a twenty-one-register frame for two alphanumeric keys: the wide and
+floating-point key paths inlined into it), the indexed READ (gl035:
+`cob_read_key_1` 145, `idx_find` 142, `bt_read` 73, `bt_pin` 61 a call),
+`cob_return` 55, `cob_release` 52, `file_result` 32.

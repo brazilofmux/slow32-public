@@ -111,7 +111,9 @@ typedef struct {
      * fast_r: a fixed-length sequential file open for input, its records
      * coming out of rbuf with nothing to translate; fast_r1: and they are
      * one byte long.  fast_w, fast_w1: the same for output, the records
-     * going into the stream's own buffer. */
+     * going into the stream's own buffer.  fast_r, fast_w = 2: a plain
+     * line sequential file, whose lines take cob_read_n's and
+     * cob_write_n's short paths (2026-10-08). */
     unsigned char fast_r1, fast_r, fast_w1, fast_w;
     unsigned int started;     /* sequential: a START positioned the file (FIRST, LAST): the next READ, NEXT or PREVIOUS, reads the record at fpos (14.9.41 GR 20-21) */
     unsigned int last_st;     /* the last I-O status of this connector, 0x10000 | its two characters; 0 never accessed (FUNCTION EXCEPTION-FILE (file-name), 2023 15.28.4 rule 2) */
