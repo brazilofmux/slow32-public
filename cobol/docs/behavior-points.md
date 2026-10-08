@@ -225,6 +225,20 @@ page, docs/conformance/edition-2023.md, has the rest of E.2).
 | (no point) | the figurative constants SPACE, QUOTE, HIGH-VALUE, LOW-VALUE and ALL literal moved to a numeric or numeric-edited item (item 1; QUOTE was item 21's) | **refused** under every edition already, by the compiler's ruling (move.md rule 5); ALL digits to an integer item stays BP-O9 |
 | (no point) | FLAG-85, FLAG-NATIVE-ARITHMETIC, ARITHMETIC IS STANDARD (item 21) | not implemented under any edition (directives.md, options.md) |
 
+## Dialect behaviours (no point: nothing is refused)
+
+Three screen behaviours where the text and the dialects count differently
+(docs/conformance/screen.md; standard-queue item 50, 2026-10-07). The text's
+reading is the default; under `-dialect=gnucobol` or `-dialect=mf` the
+dialect's, so a program written for either sees what it expects. No
+behaviour point: both forms compile, the switch chooses the count.
+
+| behaviour | the text (default) | -dialect=gnucobol / -dialect=mf |
+|---|---|---|
+| BLANK SCREEN during an ACCEPT (13.18.7.3 rule 5) | ignored: the ACCEPT paints without clearing | the screen is cleared on the ACCEPT too |
+| COLUMN PLUS n (13.18.14.4 rule 15) | PLUS 1 is immediately after the item before: n - 1 blank columns | n blank columns |
+| the CRT STATUS item (12.3.7.3 rule 30) | an alphanumeric item of four characters | PIC 9(4) as well; Micro Focus's three-byte item under -dialect=mf alone |
+
 ## Class G — GnuCOBOL's own forms (`-dialect=gnucobol`)
 
 Forms only GnuCOBOL has -- neither the standard's nor X/Open's nor

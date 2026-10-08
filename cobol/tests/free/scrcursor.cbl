@@ -21,7 +21,7 @@ special-names.
 data division.
 working-storage section.
 01  cur-pos pic 9(6) value 003007.
-01  crt pic 9(4).
+01  crt pic x(4).
 01  a pic x(5) value 'first'.
 01  b pic x(5) value 'abcde'.
 01  how pic x(4).

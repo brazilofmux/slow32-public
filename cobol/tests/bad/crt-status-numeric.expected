@@ -1,0 +1,1 @@
+the CRT STATUS item 'ws-crt' is an alphanumeric item of four characters (2023 12.3.7.3 rule 30); PIC 9(4) is GnuCOBOL's and Micro Focus's: compile with -dialect=gnucobol or -dialect=mf

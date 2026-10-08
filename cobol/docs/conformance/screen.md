@@ -56,13 +56,13 @@ dropped.
 | BELL GR 2 | at a group, reaches its items | **test**: free/scrattr (inherited through the 01's rsv bits; implementation shared with BLINK) |
 | BLANK GR 1 | BLANK LINE clears the line first | **gap**: BLANK LINE is refused as not implemented |
 | BLANK GR 2-4 | BLANK SCREEN clears and homes; with a colour, sets the screen's default colours | **test** (clear): free/screen2; the default-colour part is a **gap** |
-| BLANK GR 5 | BLANK ignored during an ACCEPT | **gap**: an ACCEPT paints its screen with BLANK SCREEN's clear; changing it changes every program that ACCEPTs a screen it never DISPLAYed -- for the owner to rule |
+| BLANK GR 5 | BLANK ignored during an ACCEPT | **test**: free/scrrulings (ruled 2026-10-07, standard-queue item 50: the ACCEPT paints without clearing, the DISPLAY after it clears). GnuCOBOL and Micro Focus clear on the ACCEPT too, kept under -dialect=gnucobol and -dialect=mf (free/gnu-scrrulings; libcob's blank_screen 2) -- ACAS ACCEPTs screens it never DISPLAYed |
 | BLINK GR 1-2 | the characters blink | **test**: free/scrattr (SGR 5) -- read and dropped before |
 | COLUMN SR 12 | identifier-1 | **gap**: only an integer is taken |
 | COLUMN SR 13, LINE SR 13 | no PLUS or MINUS on the first item | **refused**: bad/screen-plus-first -- accepted before |
 | COLUMN, LINE: MINUS | MINUS | **gap**: "expected a number" |
 | COLUMN GR 13-14 | the column within the screen record | **test**: free/screen |
-| COLUMN GR 15 | PLUS n from the end of the item before: PLUS 1 is immediately after | **ruling**: here PLUS n is n columns after the item's last, so PLUS 1 leaves one blank column, as GnuCOBOL counts -- one more than the text. To be ruled; changing it moves every screen written with PLUS |
+| COLUMN GR 15 | PLUS n from the end of the item before: PLUS 1 is immediately after | **test**: free/scrrulings (ruled 2026-10-07, item 50: PLUS n leaves n - 1 blank columns); GnuCOBOL and Micro Focus count PLUS n as n columns beyond the end, kept under their switches (free/gnu-scrrulings); **refused**: PLUS 0 |
 | COLUMN GR 16-17, LINE GR 13 | COLUMN 1 when only LINE is given; neither: the line before, immediately after the item before | **test**: free/scrlinecol -- LINE alone on the line of the item before used to follow it, not start at column 1 |
 | COLUMN GR 18-19, LINE GR 14 | column 0, or past the terminal: EC-SCREEN-STARTING-COLUMN / -LINE-NUMBER, the item left out | **gap**: no EC-SCREEN condition is raised; column 0 paints at column 1 |
 | ERASE SR 1-2 | EOL, EOS | **test**: free/screrase |
@@ -116,7 +116,7 @@ dropped.
 | rule | paraphrase | disposition |
 |---|---|---|
 | SR 29 | CURSOR: six digits, or two three-digit items, in working- or local-storage | **refused** for any other size: bad/cursor-item; **test**: free/scrcursor |
-| SR 30 | CRT STATUS: alphanumeric, four characters | **ruling**: PIC X(4) is taken, and so are PIC 9(4) (what GnuCOBOL and Micro Focus programs declare; ACAS) and Micro Focus's three-byte item. A candidate for the strictness queue: the 9(4) form under a dialect switch |
+| SR 30 | CRT STATUS: alphanumeric, four characters | **test**: free/scrrulings (PIC X(4); ruled 2026-10-07, item 50); **refused**: bad/crt-status-numeric (PIC 9(4), what GnuCOBOL's and Micro Focus's programs declare, taken under -dialect=gnucobol and -dialect=mf: free/gnu-scrrulings; BP-G2's implicit COB-CRT-STATUS is one), bad/crt-status-three and gnu-crt-status-three (Micro Focus's three-byte item, under -dialect=mf only) |
 | GR 16, 9.2.3 | the CRT status values 0000, 1xxx, 2xxx, 8000, 8001, 9xxx | **test**: free/scrcursor, free/gnu-crtstatus; 8001 cannot arise (above) |
 
 ## Open, from this sweep
@@ -129,5 +129,10 @@ FROM numeric literal; BLANK LINE; BLANK SCREEN's default colours; the
 EC-SCREEN conditions; combined display attributes; boolean screen input;
 JUSTIFIED and USAGE NATIONAL on national pictures.
 
-Three for a ruling: BLANK SCREEN during an ACCEPT (13.18.7.4 rule 5),
-the PLUS column count (13.18.14.4 rule 15), and the 9(4) CRT STATUS item.
+The three rulings of 2026-10-07 (standard-queue item 50) -- BLANK SCREEN
+during an ACCEPT (13.18.7.3 rule 5), the PLUS column count (13.18.14.4
+rule 15), the CRT STATUS item (12.3.7.3 rule 30) -- follow the text by
+default, the dialects' behaviour under -dialect=gnucobol and -dialect=mf
+(docs/behavior-points.md, "dialect behaviours"); the screen tests that
+relied on the old count or clear were re-recorded (screen2-5, scrcursor,
+screen, natscreen: a DISPLAY's clear now comes from the DISPLAY alone).

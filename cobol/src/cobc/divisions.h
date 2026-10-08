@@ -1657,10 +1657,15 @@ static void parse_screen_section(void)
                 }
                 if (accept_word("column") || accept_word("col")) {
                     accept_word("number"); accept_word("is");
-                    if (accept_word("plus") || accept_word("+")) {       /* from the position after the previous slot, as GnuCOBOL counts */
+                    if (accept_word("plus") || accept_word("+")) {
+                        /* relative to the end of the item before: PLUS 1 is immediately
+                         * after it (2023 13.18.14.4 rule 15); GnuCOBOL and Micro Focus
+                         * count PLUS n as n columns beyond that, kept under their switches */
                         int n = 1;
                         if (cur()->kind == T_NUM) { n = atoi(cur()->s); advance(); }
-                        f->col = (prev && (!f->line || f->line == prev->line) ? prev->col + prev->width : 0) + n; col_plus = n; continue;
+                        if (n < 1) die_at(t->line, "COLUMN PLUS takes a positive integer (2023 13.18.14.3 rule 12)");
+                        int step = g_dialect_gnu || g_dialect_mf ? n : n - 1;
+                        f->col = (prev && (!f->line || f->line == prev->line) ? prev->col + prev->width : 0) + step; col_plus = step; continue;
                     }
                     if (cur()->kind != T_NUM) die_at(t->line, "expected a number after COLUMN");
                     f->col = atoi(cur()->s); advance(); continue;

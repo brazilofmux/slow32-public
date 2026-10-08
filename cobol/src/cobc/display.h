@@ -334,7 +334,20 @@ static void emit_crt_item(const char *name, const char *what, const char *fn, in
 }
 static void emit_crt_items(int line)
 {
-    if (g_crt_status_name[0]) emit_crt_item(g_crt_status_name, "CRT STATUS", "cob_crt_status", line);
+    if (g_crt_status_name[0]) {
+        /* an alphanumeric item of four characters (2023 12.3.7.3 rule 30);
+         * PIC 9(4), what GnuCOBOL's and Micro Focus's programs declare, under
+         * their switches, and Micro Focus's three-byte item under its own */
+        g_cen_ctx = CEN_PTR; Sym *cs = sym_lookup(g_crt_status_name, NULL, 0, line); g_cen_ctx = 0;
+        int alnum4 = !cs->is_group && cs->size == 4 && cs->pi.category == PIC_ALPHANUMERIC;
+        int num4 = !cs->is_group && cs->size == 4 && cs->pi.category == PIC_NUMERIC && cs->usage == U_DISPLAY && !cs->pi.is_signed && !cs->pi.scale;
+        int mf3 = cs->size == 3;
+        if (!alnum4 && !((g_dialect_gnu || g_dialect_mf) && num4) && !(g_dialect_mf && mf3))
+            die_at(line, "the CRT STATUS item '%s' is an alphanumeric item of four characters (2023 12.3.7.3 rule 30)%s", cs->name,
+                   num4 ? "; PIC 9(4) is GnuCOBOL's and Micro Focus's: compile with -dialect=gnucobol or -dialect=mf" :
+                   mf3 ? "; a three-byte item is Micro Focus's: compile with -dialect=mf" : "");
+        emit_crt_item(g_crt_status_name, "CRT STATUS", "cob_crt_status", line);
+    }
     if (g_cursor_name[0]) {
         g_cen_ctx = CEN_PTR; Sym *cs = sym_lookup(g_cursor_name, NULL, 0, line); g_cen_ctx = 0;
         if (cs->size != 6 || (!cs->is_group && (cs->usage != U_DISPLAY || cs->pi.category != PIC_NUMERIC || cs->pi.is_signed || cs->pi.scale)))

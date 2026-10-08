@@ -477,6 +477,7 @@ for src in "$HERE/bad"/*.cbl; do
     [ "$name" = "mixed-format" ] && flag="-fixed"
     stdflag=""; case "$name" in std2002-*) stdflag="-std=2002" ;; std2014-*) stdflag="-std=2014" ;; std2023-*) stdflag="-std=2023" ;; esac   # a Stage B refusal; a 2014 one; a 2023 one
     case "$name" in mf-*) stdflag="$stdflag -dialect=mf" ;; esac         # refused even under Micro Focus's dialect
+    case "$name" in gnu-*) stdflag="$stdflag -dialect=gnucobol" ;; esac  # refused even under GnuCOBOL's
     if "$COBC" $flag $stdflag -I "$HERE/copy" -o "$W/$name.s" "$src" 2>"$W/$name.err"; then
         report "bad/$name" 1 "was accepted"; continue
     fi

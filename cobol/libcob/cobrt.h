@@ -190,7 +190,7 @@ void cob_scr_at(cob_scr_field *f, int rrcc);   /* AT rrcc from an identifier: li
 
 typedef struct {
     unsigned int nfields;
-    unsigned int blank_screen;
+    unsigned int blank_screen;   /* BLANK SCREEN: 1 clears on a DISPLAY; 2 (a dialect's count, -dialect=gnucobol/mf) on an ACCEPT as well -- 2023 13.18.7.3 rule 5 ignores it there */
     cob_scr_field *fields;
 } cob_screen;
 

@@ -6361,7 +6361,7 @@ void cob_screen_display(const cob_screen *s)
         for (unsigned i = 0; i < s->nfields; i++)
             if (s->fields[i].rsv & COB_SR_BELL) { term_putc(7); break; }
     term_begin_update();
-    if (s->blank_screen) term_clear(0);
+    if (s->blank_screen && (!scr_accepting || s->blank_screen == 2)) term_clear(0);   /* BLANK ignored during an ACCEPT (2023 13.18.7.3 rule 5), unless the dialect's */
     for (unsigned i = 0; i < s->nfields; i++) scr_paint_field(&s->fields[i]);
     term_end_update();
 }

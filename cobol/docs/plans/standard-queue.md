@@ -531,6 +531,10 @@ after the item before (13.18.14.4 rule 15; today one column further, as GnuCOBOL
 STATUS an alphanumeric item of four characters (12.3.7.3 rule 30; today PIC 9(4) and Micro
 Focus's three bytes are taken too). Each changes what existing programs see, so each lands with the
 old behaviour kept under -dialect=gnucobol or -dialect=mf where a program needs it, as ACAS does.
+**DONE 2026-10-07**: the three follow the text by default, the dialects' count under their switches
+(screen.md rows; behavior-points.md "dialect behaviours"; tests free/scrrulings, gnu-scrrulings; bad
+crt-status-numeric, -three, gnu-crt-status-three; seven screen tests re-recorded for the ACCEPT that no
+longer clears and the PLUS count).
 
 ## Tier 6 -- object orientation, last
 

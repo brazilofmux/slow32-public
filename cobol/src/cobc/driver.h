@@ -314,7 +314,7 @@ static void emit_unit_data(void)
         }
         emit(".Lscr%d_%d:\t# screen %s", g_unit, i, sc->name);
         emit("\t.word %d", sc->nf);
-        emit("\t.word %d", sc->blank_screen);
+        emit("\t.word %d", sc->blank_screen ? (g_dialect_gnu || g_dialect_mf ? 2 : 1) : 0);   /* 2: cleared on an ACCEPT too, as GnuCOBOL and Micro Focus do (screen.md ruling) */
         emit("\t.word .Lscrf%d_%d", g_unit, i);
         for (int j = 0; j < sc->nsub; j++) {                  /* a named group: a window into the same slots */
             emit(".Lscrg%d_%d_%d:\t# screen %s group %s", g_unit, i, j, sc->name, sc->sub[j].name);

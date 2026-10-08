@@ -1,0 +1,1 @@
+the CRT STATUS item 'ws-crt' is an alphanumeric item of four characters (2023 12.3.7.3 rule 30); a three-byte item is Micro Focus's: compile with -dialect=mf

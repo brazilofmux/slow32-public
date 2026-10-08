@@ -11,7 +11,7 @@ special-names.
     crt status is ws-crt.
 data division.
 working-storage section.
-77  ws-crt  pic 9(4) value 9999.
+77  ws-crt  pic x(4) value "9999".
 77  fld     pic x(3) value 'abc'.
 screen section.
 01  sc.
