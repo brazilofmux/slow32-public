@@ -18,6 +18,14 @@
 #   (cobc) and gnucobol:4.0-runtime (the built program), under podman or
 #   docker, with the repo bind-mounted at its own path.  A host cobc, if
 #   one exists, is used instead.  No oracle at all is reported, not hidden.
+#   A SECOND oracle, gcobol (GCC 15's COBOL front end, the gcobol:15 image
+#   from ~/gnucobol/gcobol), compiles and runs the same program when its
+#   image is present: its agreement is a note, its disagreement or refusal
+#   is counted and listed (the run's gcobol-differs.txt is printed at the
+#   end) but does not fail the test -- gcobol is young and its gaps are
+#   being surveyed (docs/oracles.md); GCOBOL=strict makes them failures,
+#   GCOBOL=0 leaves it out.  A test's "no gcobol" comment skips it alone;
+#   .gcobol-expected beside a test holds a documented gcobol divergence.
 # Gate 3 (refusals): every tests/bad/*.cbl must be refused with exactly one
 #   error per line of its .expected, each containing that line's text, and
 #   leave no output file.  Unimplemented is a diagnostic, never silence.
@@ -98,6 +106,15 @@ else
     done
 fi
 
+# the second oracle: gcobol (GCC 15), one image that compiles and runs
+GCOBOL_ENGINE=""
+if [ "${GCOBOL:-1}" != 0 ]; then
+    for e in podman docker; do
+        if command -v "$e" >/dev/null 2>&1 && "$e" image inspect gcobol:15 >/dev/null 2>&1; then GCOBOL_ENGINE="$e"; break; fi
+    done
+fi
+GC_AGREE=0; GC_DIFF=0; GC_REFUSED=0; GC_SKIP=0
+
 # The work directory lives under cobol/out (gitignored), not /tmp: a
 # container engine on macOS can bind-mount the home directory but not
 # /tmp, and the oracle compiles and runs inside the container on the
@@ -127,6 +144,36 @@ oracle_run() {  # oracle_run prog.orc [args...]: run the oracle's program in $W/
 # (timeout: an oracle that hangs -- GnuCOBOL 4.0-early-dev does on an OPEN
 # failure without FILE STATUS inside a contained program -- counts as a
 # disagreement, not a stalled harness)
+gcobol_cc() {   # gcobol_cc out [gcobol args...]: compile under gcobol, cwd $W
+    out="$1"; shift
+    "$GCOBOL_ENGINE" run --rm -v "$ROOT:$ROOT" -w "$W" gcobol:15 gcobol "$@" -o "$out"
+}
+gcobol_run() {  # gcobol_run prog [args...]: in $W/run, stdin from $keys
+    local ef=(); for x in ${PROG_ENV[@]+"${PROG_ENV[@]}"}; do ef+=(-e "$x"); done
+    "$GCOBOL_ENGINE" run --rm -i ${ef[@]+"${ef[@]}"} -v "$ROOT:$ROOT" -w "$W/run" gcobol:15 timeout 60 "$@" < "$keys"
+}
+# the second oracle on one test: a note for the report, the counts kept;
+# GCOBOL=strict turns a disagreement or refusal into a failure (returns 1)
+gcobol_check() {   # gcobol_check name src flag exp extra...
+    local name="$1" src="$2" flag="$3" exp="$4"; shift 4
+    local gflag="-ffree-form"; [ "$flag" = "-fixed" ] && gflag="-ffixed-form"
+    if grep -qi "no gcobol" "$src"; then GC_SKIP=$((GC_SKIP+1)); GC_NOTE="gcobol skipped"; return 0; fi
+    if ! gcobol_cc "$W/$name.gc" $gflag -I "$HERE/copy" "$src" "$@" >"$W/$name.gclog" 2>&1; then
+        GC_REFUSED=$((GC_REFUSED+1)); GC_NOTE="gcobol refused it"
+        echo "$name: refused: $(grep -m1 -i error "$W/$name.gclog" | cut -c1-100)" >> "$W/gcobol-differs.txt"
+        [ "${GCOBOL:-1}" = strict ] && return 1; return 0
+    fi
+    fresh_workdir
+    gcobol_run "$W/$name.gc" $PROG_ARGS > "$W/$name.gcout" 2>/dev/null
+    local gexp="$exp"; [ -f "${src%.cbl}.gcobol-expected" ] && gexp="${src%.cbl}.gcobol-expected"
+    if diff -q "$W/$name.gcout" "$gexp" >/dev/null; then
+        GC_AGREE=$((GC_AGREE+1)); GC_NOTE="gcobol agrees"; [ "$gexp" != "$exp" ] && GC_NOTE="gcobol agrees with its documented divergence"
+        return 0
+    fi
+    GC_DIFF=$((GC_DIFF+1)); GC_NOTE="gcobol differs"
+    { echo "$name: differs:"; diff "$exp" "$W/$name.gcout" | head -6; } >> "$W/gcobol-differs.txt"
+    [ "${GCOBOL:-1}" = strict ] && return 1; return 0
+}
 
 PASS=0; FAIL=0
 
@@ -464,6 +511,12 @@ JSON
                 continue
             fi
         fi
+        if [ -n "$GCOBOL_ENGINE" ] && [ "$ORACLE_SKIP" = 0 ]; then
+            if ! gcobol_check "$name" "$src" "$flag" "$exp" "${extra[@]+"${extra[@]}"}"; then
+                report "$fmt/$name" 1 "$GC_NOTE (GCOBOL=strict)"; tail -7 "$W/gcobol-differs.txt"; continue
+            fi
+            note="${note:+$note; }$GC_NOTE"
+        fi
         report "$fmt/$name" 0 "$note"
     done
 done
@@ -706,6 +759,12 @@ case "$ORACLE_ENGINE" in
     host) echo "cobol: oracle is the host cobc" ;;
     *)    echo "cobol: oracle is gnucobol:4.0-builder / $ORACLE_RUN_IMAGE under $ORACLE_ENGINE" ;;
 esac
+if [ -n "$GCOBOL_ENGINE" ]; then
+    echo "cobol: second oracle gcobol:15 under $GCOBOL_ENGINE: $GC_AGREE agree, $GC_DIFF differ, $GC_REFUSED refused, $GC_SKIP skipped${GC_DIFF:+}"
+    if [ -s "$W/gcobol-differs.txt" ]; then cp "$W/gcobol-differs.txt" "$CDIR/out/gcobol-differs.txt"; echo "cobol: gcobol's disagreements are in out/gcobol-differs.txt"; fi
+elif [ "${GCOBOL:-1}" != 0 ]; then
+    echo "cobol: no gcobol:15 image: the second oracle was not consulted"
+fi
 if [ "${ORACLE:-1}" = 0 ]; then
     echo "cobol: $PASS passed, $FAIL failed (ORACLE=0: expected output only, GnuCOBOL not consulted)"
 else

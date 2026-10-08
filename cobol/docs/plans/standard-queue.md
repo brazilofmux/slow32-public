@@ -487,6 +487,13 @@ premise is gone); 8 bad tests.
 SHARING, READ/WRITE WITH [NO] LOCK, EC-I-O-FILE-SHARING; Ed. 2002; L; deps 1.
 - Today: LOCK MODE and SHARING clauses parse; every statement-level form is a bare parse error. One
   run unit per engine makes the semantics mostly local, but the statuses and RETRY need defining.
+- **Ruling 2026-10-07**: at a minimum the syntax and the statuses (9.1.15-16), with the locks kept
+  in the run unit; staged slowly. Locking is real on every host (byte-range locks on Windows, FreeBSD,
+  macOS, Linux), two slow32-dbt instances can run at once, and the emulator may one day run several
+  SLOW-32 instances (one per thread) with cooperative multi-tasking -- so the semantics *might* later
+  move out to the host emulator, which can keep coherence across instances; the file system may be
+  SMB or NFS besides. The round trip costs, and it multiplies the test matrix, which is why it is
+  staged, not built at once.
 
 **40. WRITE FILE and REWRITE FILE.** A.4.13; 14.9.35, 14.9.51; Ed. 2002; S; deps 11 (FD without
 record description). **DONE 2026-10-07**: the FILE phrase itself came with item 11 (2026-10-06); the
@@ -497,6 +504,7 @@ at run time, a record of the file written as itself -- completes it (io-statemen
 
 **41. FORMAT and SELECT WHEN.** A.4.8; 13.18.24, 13.18.51; Ed. 2002; M.
 - Today: "unexpected 'format' in FD".
+- **Ruling 2026-10-07: deferred** (not of interest).
 
 **42. RESUME.** A.4.12; 14.9.33; Ed. 2002; S-M; deps 3. **DONE 2026-10-07**: AT NEXT STATEMENT
 from a declarative (the section's exit, with a mark that lets a fatal condition's return go on) and
@@ -507,6 +515,8 @@ dropped (conformance/resume.md; test 2002/resume; 5 bad tests).
 **43. Dynamic-length items.** A.4.5; 13.18.19, SPECIAL-NAMES DYNAMIC LENGTH STRUCTURE, SET format
 16; Ed. 2014; L.
 - Today: "the DYNAMIC LENGTH clause is COBOL 2014, beyond -std=2002".
+- 2026-10-07: interesting, but large (it touches every move and compare path); no ruling yet, stays
+  queued behind the smaller items.
 
 **44. Dynamic-capacity tables.** A.4.4; 13.18.38 format 4, SET format 14,
 EC-BOUND-OVERFLOW/-SET/-TABLE-LIMIT, EC-FLOW-SEARCH; Ed. 2014; L.
@@ -516,10 +526,17 @@ EC-BOUND-OVERFLOW/-SET/-TABLE-LIMIT, EC-FLOW-SEARCH; Ed. 2014; L.
 and TEST-NUMVAL-C, SET formats 11-12, SPECIAL-NAMES LOCALE, PICTURE locale format, CHARACTER
 CLASSIFICATION; Ed. 2002; L. Today: functions refused naming "locale support" or "ISO/IEC 14651";
 SPECIAL-NAMES LOCALE and SET LOCALE refused. In scope (ruled 2026-10-06; see item 27).
+- **Ruling 2026-10-07**: yes, interesting. The right way runs through libutf itself supporting locales
+  -- generate every locale's tables, then a mechanism to patch/stitch the working tables for the
+  requested one -- which is several layers of work there before this item can lean on it (libutf
+  carries the DUCET collation tables STANDARD-COMPARE wants).
 
 **46. Commit and rollback.** A.4.3; 9.1.18, 12.4.6.3 APPLY COMMIT, 14.9.7, 14.9.36,
 EC-FLOW-*-COMMIT/ROLLBACK; Ed. 2023; L.
 - Today: "COMMIT is COBOL 2023; not implemented".
+- **Ruling 2026-10-07**: ESQL (the database's transactions) is the right answer to commit and
+  rollback; a ROLLBACK of a WRITE to a sequential file would need a separate undo journal. Not
+  pursued for the file layer.
 
 **47. Extended letters.** A.4.6; 8.1.3; Ed. 2002; S-M. Unverified what the tokenizer accepts in
 user-defined words today (national literals and UTF-8 data work; names were not probed).
@@ -532,10 +549,15 @@ a word.
 format 17, EC-MCS-*; Ed. 2023; L.
 - Today: refused as "the Communication module" (mislabelled, item 2). Processor-dependent: needs a
   run-unit-to-run-unit channel the MMIO rings do not have; owner's call.
+- **Ruling 2026-10-07: deferred, likely never** -- COBOL is not the tool for this; SLOW-32 has
+  sockets, but nothing shaped like these channels. The refusal's wording should name the item, not
+  the Communication module (a small fix when next in that code).
 
 **49. Standard arithmetic modes.** A.3 items 1-3; 11.9.5 STANDARD-DECIMAL / STANDARD-BINARY; Ed.
 2014; L; deps 16, 20. STANDARD-BINARY is obsolete in 2023 (F.2 item 3) and, by the text, no provider
 has it: candidate for the same treatment as VALIDATE.
+- **Ruling 2026-10-07**: STANDARD-BINARY no (as VALIDATE); STANDARD-DECIMAL stays queued (the wide
+  decimal stack is the natural home).
 
 **50. The screen behaviours that differ from the text** (docs/conformance/screen.md's three
 rulings). Ed. 2002; S each; deps none. By the owner's rule (everything standard holds) the text is
@@ -548,6 +570,12 @@ old behaviour kept under -dialect=gnucobol or -dialect=mf where a program needs 
 (screen.md rows; behavior-points.md "dialect behaviours"; tests free/scrrulings, gnu-scrrulings; bad
 crt-status-numeric, -three, gnu-crt-status-three; seven screen tests re-recorded for the ACCEPT that no
 longer clears and the PLUS count).
+
+## A second oracle (2026-10-07)
+
+gcobol (GCC 15) joined GnuCOBOL as an oracle on the owner's ruling (docs/oracles.md "A second
+oracle"): image gcobol:15, the harness's gate 2 running every program under it, informational
+until its disagreements are classified (125 agree / 66 differ / 70 refused on the first run).
 
 ## Tier 6 -- object orientation, last
 

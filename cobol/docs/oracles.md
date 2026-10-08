@@ -328,3 +328,39 @@ supported"), and for a report with PRESENT WHEN on a line or a CONTROL
 FOOTING, or a multiple COLUMN clause, generates C that its own compile
 step rejects (`rf_2 undeclared`, `f_27 undeclared`). Test 2002/rw2002 is
 reviewed by hand against the text (standard-queue item 37).
+
+## A second oracle: gcobol (GCC 15's COBOL front end; 2026-10-07)
+
+Ruled 2026-10-07: gcobol -- GCC's COBOL front end, "another gcc,
+welcome" -- joins GnuCOBOL as an oracle. The image is `gcobol:15`, built
+from Fedora 42's `gcc-gcobol` package by ~/gnucobol/gcobol/15/daily.sh
+(one image compiles and runs: the programs need libgcobol). The harness
+compiles and runs every gate-2 program under it after GnuCOBOL's check
+(`gcobol_check` in tests/run-tests.sh; `-ffree-form` / `-ffixed-form`
+by the test's form, its default dialect): agreement is a note on the
+PASS, a disagreement or a refusal is counted and listed in
+`out/gcobol-differs.txt` but does not fail the test -- gcobol is young,
+and the survey below is what the first run found. `GCOBOL=strict` makes
+them failures; `GCOBOL=0` leaves the oracle out; a test whose comments
+say "no gcobol" is skipped by it alone, and a `.gcobol-expected` beside
+a test holds a documented gcobol divergence (none yet).
+
+The first run (gcobol 15.2.1, 261 programs the oracles see): **125
+agree, 66 differ, 70 refused**. The refusals are gcobol's gaps or ours
+to keep: every Report Writer program (`cobol1: failed compiling`), every
+user-defined function (internal compiler errors), the Micro Focus
+dialect tests (expected), COMP-X / COMP-N / COMP-5 with X pictures,
+floating-point literals (`1.5E3 is not a numeric literal`), LENGTH OF
+("not ISO syntax"), FUNCTION TRIM of a literal, the `&` concatenation
+operator, EXTERNAL AS, >>LEAP-SECOND, zero-length literals, a
+reference-modified ACCEPT, nested-table SORT. The 66 disagreements are
+each a question of which side the text is on; the three looked at first
+all went against gcobol, GnuCOBOL and this compiler agreeing: `COMPUTE m
+ROUNDED = 7 / 2` gives 3 there (fixed/compute), `-0,5` under
+DECIMAL-POINT IS COMMA reads as -0,05 (free/dpcomma), ADD CORRESPONDING
+leaves a field 9 that should be 0 (free/corr). The rest of the list is
+work in hand: each disagreement to be classified -- gcobol's, a
+documented divergence (`.gcobol-expected`), or ours -- and the
+strict mode turned on once the list is understood. Where gcobol is
+wrong, the finding goes upstream (the user's standing wish for cobc370
+bugs applies here too).
