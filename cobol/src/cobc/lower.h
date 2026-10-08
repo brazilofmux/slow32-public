@@ -1793,6 +1793,18 @@ static void lw_copy_n(int dst, int src, long n)
     }
     for (int i = 0; i < k; i++) hi_emit(HI_STORE, lw_chunk_ty(ws[i]), lw_at(dst, offs[i]), vals[i], 0, NULL);
 }
+/* n bytes of a literal stored at dst as immediates: the literal's label
+ * need not be loaded (a one-byte MOVE "n" TO X was gaddr, load, store) */
+static void lw_store_lit_n(int dst, const unsigned char *b, long n)
+{
+    for (long o = 0; o < n; ) {
+        int w = n - o >= 4 ? 4 : n - o >= 2 ? 2 : 1;
+        unsigned k = 0;
+        for (int j = w - 1; j >= 0; j--) k = (k << 8) | b[o + j];       /* little-endian, as the store writes it */
+        hi_emit(HI_STORE, lw_chunk_ty(w), lw_at(dst, o), lw_iconst((int)k), 0, NULL);
+        o += w;
+    }
+}
 /* n bytes at dst set to c */
 static void lw_fill_n(int dst, long n, int c)
 {
@@ -1845,6 +1857,7 @@ static void lw_gen_amove(LStmt *s)
 {
     const Opnd *src = &g_lw_o[s->asrc];
     long sn; int fill; int sa = lw_bytes_src(src, &sn, &fill);
+    const unsigned char *lb = src->kind == O_STR ? (const unsigned char *)src->tok->s : src->kind == O_NUM ? (const unsigned char *)src->num.digits : NULL;
     int snv = -1;                               /* the sender's length as a value, when computed */
     if (src->kind == O_REF && src->ref.rm && src->ref.lw_lenx) { snv = lw_dyn_len(&src->ref); sn = -1; }
     for (int i = 0; i < s->nr; i++) {
@@ -1857,7 +1870,8 @@ static void lw_gen_amove(LStmt *s)
         if (sn >= 0 && dn >= 0) {               /* both lengths known: in line */
             if (fill >= 0) { lw_fill_n(da, dn, fill); continue; }
             long n = sn < dn ? sn : dn;
-            lw_copy_n(da, sa, n);
+            if (lb && n <= LW_INLINE_BYTES) lw_store_lit_n(da, lb, n);
+            else lw_copy_n(da, sa, n);
             lw_fill_n(lw_at(da, n), dn - n, ' ');
             continue;
         }
