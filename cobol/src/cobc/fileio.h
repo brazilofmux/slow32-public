@@ -27,7 +27,7 @@ static File *expect_file(void)
 /* The record-locking and retry phrases of the I-O statements (2023
  * 14.7.9 RETRY, 9.1.16 record locking; optional since 2014): refused by
  * name where they would stand, not met as "not a COBOL verb". */
-static void parse_io_phrases(File *f, int allow, int is_read);
+static void parse_io_phrases(File *f, int allow);
 /* the locking and RETRY phrases of a statement, by what its format allows (parse_io_phrases, below) */
 static void io_phrases(const char *stmt, File *f)
 {
@@ -35,7 +35,7 @@ static void io_phrases(const char *stmt, File *f)
     if (at_word("lock")) die_at(cur()->line, "%s: the phrase is WITH LOCK (2023 14.9.30.2)", stmt);
     if (!(allow & 1) && at_word("with") && (is_word(peek(1), "lock") || is_word(peek(1), "no")))
         die_at(cur()->line, "%s takes no LOCK phrase: RETRY is its only locking phrase (2023 14.9.10.2, 14.9.41.2)", stmt);
-    parse_io_phrases(f, allow, !strcmp(stmt, "READ"));
+    parse_io_phrases(f, allow);
 }
 
 /* The locking phrases of an I-O statement (2023 14.9.30 formats: WITH
@@ -45,7 +45,7 @@ static void io_phrases(const char *stmt, File *f)
  * (cob_io_set, read and cleared by it).  allow: bit 0 LOCK/NO LOCK, bit 1
  * IGNORING LOCK, bit 2 ADVANCING ON LOCK, bit 3 SHARING. */
 static int g_io_adv_lock;                      /* the line of a READ's ADVANCING ON LOCK, checked once its format is known */
-static void parse_io_phrases(File *f, int allow, int is_read)
+static void parse_io_phrases(File *f, int allow)
 {
     unsigned flags = 0; int times = 0, secs = 0, forever = 0, any = 0;
     Opnd rtimes, rsecs; int have_times = 0, have_secs = 0;
@@ -121,12 +121,12 @@ static void parse_open(void)
          * phrases apply to each file of this mode; their flags are handed to
          * libcob before each OPEN */
         int ph_tp = -1;
-        if (at_word("sharing") || at_word("retry")) { ph_tp = g_tp; g_noemit++; parse_io_phrases(NULL, 8, 0); g_noemit--; }
+        if (at_word("sharing") || at_word("retry")) { ph_tp = g_tp; g_noemit++; parse_io_phrases(NULL, 8); g_noemit--; }
         while (cur()->kind == T_WORD && !at_word("input") && !at_word("output") && !at_word("i-o") &&
                !at_word("extend") && !is_verb(cur()->s) && !is_terminator(cur()->s)) {
             int fline = cur()->line;
             File *f = expect_file();
-            if (ph_tp >= 0) { int save = g_tp; g_tp = ph_tp; parse_io_phrases(f, 8, 0); g_tp = save; }
+            if (ph_tp >= 0) { int save = g_tp; g_tp = ph_tp; parse_io_phrases(f, 8); g_tp = save; }
             int reversed = 0, e85 = g_std < 2002, seq = f->org == COB_ORG_SEQ || f->org == COB_ORG_LINESEQ;
             if (f->report_name[0] && (mode == COB_OPEN_INPUT || mode == COB_OPEN_IO))
                 die_at(fline, "OPEN %s '%s': a report file is opened OUTPUT or EXTEND (%s)", mode == COB_OPEN_INPUT ? "INPUT" : "I-O", f->name,

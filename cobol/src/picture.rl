@@ -23,16 +23,25 @@
 
 %%{
     machine picscan;
+    # Bytes, not chars, as lex.rl: without this Ragel takes plain char,
+    # signed, and a range above 0x7F would be baked in as negative
+    # constants that never match where char is unsigned (Linux aarch64,
+    # the fleet's arm64 -- the extended-letter bug of 67c60f8a).  Nothing
+    # in this machine is above 0x7F today; this keeps it that way by
+    # construction rather than by luck.
+    alphtype unsigned char;
     write data;
 }%%
 
 /* Tokenise a PICTURE into (symbol, repeat) pairs.
  * Returns the number of items, or -1 with *errpos set to the offending byte.
  * CR and DB collapse to the single symbols 'C' and 'D'. */
-int pic_scan(const char *s, PicItem *out, int max, int *errpos)
+int pic_scan(const char *s0, PicItem *out, int max, int *errpos)
 {
-    const char *p = s, *pe = s + strlen(s), *eof = pe;
-    const char *ts, *te;
+    /* the interface is char, as its callers' strings are; the machine reads bytes */
+    const unsigned char *s = (const unsigned char *)s0;
+    const unsigned char *p = s, *pe = s + strlen(s0), *eof = pe;
+    const unsigned char *ts, *te;
     int cs, act, count = 0;
 
     *errpos = -1;
@@ -45,14 +54,14 @@ int pic_scan(const char *s, PicItem *out, int max, int *errpos)
 
         action emit_rep {
             if (count >= max) { *errpos = (int)(ts - s); return -1; }
-            out[count].sym = (char)toupper((unsigned char)ts[0]);
-            out[count].rep = (int)strtol(ts + 2, NULL, 10);
+            out[count].sym = (char)toupper(ts[0]);
+            out[count].rep = (int)strtol((const char *)ts + 2, NULL, 10);
             if (out[count].rep < 1) { *errpos = (int)(ts - s); return -1; }
             count++;
         }
         action emit_one {
             if (count >= max) { *errpos = (int)(ts - s); return -1; }
-            out[count].sym = (char)toupper((unsigned char)ts[0]);
+            out[count].sym = (char)toupper(ts[0]);
             out[count].rep = 1;
             count++;
         }
