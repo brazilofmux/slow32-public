@@ -608,6 +608,12 @@ int idesc;                  /* the item a reference-modified part: its descripto
 int dynpart;                /* ... of computed length: the descriptor is writable, its size stored by the statement */
 int from_lit;               /* FROM literal-1: a VALUE slot that must have its PICTURE */
 int rsv;                    /* COB_SR_BELL, COB_SR_BLINK: clauses with no room in flags */
+struct Ref_ *fg_r, *bg_r;   /* FOREGROUND-/BACKGROUND-COLOR identifier-1 (13.18.4.2): stored at run time */
+int line_rel, col_rel;      /* LINE / COLUMN PLUS (1) or MINUS (-1) with an identifier in line_r / col_r: relative to the slot before, computed at run time */
+int line_rel_n, col_rel_n;  /* ... or with an integer after a slot placed at run time: the step (a line count; columns from the slot's last), computed at run time too */
+int dynpos;                 /* the line or column is stored at run time (an identifier here, or a relative step from a slot that is) */
+int samepos;                /* the TO twin of FROM x TO y: at its FROM's place, copied at run time when that is computed */
+int occ_k;                  /* an OCCURS occurrence: 1 + its number, the subscript the FROM/TO/USING item takes (13.18.38.3 rule 13) */
 } SField;
 
 typedef struct { char name[64]; int first, count; } SGroup;   /* a named nested group: a window into the slot table */
@@ -615,10 +621,12 @@ typedef struct { char name[64]; int first, count; } SGroup;   /* a named nested 
 typedef struct {
     char name[64];
     int line, blank_screen;
+    int bs_fg, bs_bg;           /* the colours written on the BLANK SCREEN entry (13.18.7.3 rules 3-4: the screen's defaults), 255 none */
     int fg, bg;                 /* the 01's FOREGROUND-/BACKGROUND-COLOR, 255 when not given: the base its entries inherit */
     int flags, rsv;             /* the 01's attributes and input clauses (COB_SF_*, COB_SR_BELL/BLINK), inherited likewise */
     SField *f; int nf, fcap;
     SGroup *sub; int nsub, subcap;
+    int global, unit;           /* GLOBAL (13.18.27): the screen is a contained program's too; unit: the program that declares it (its labels') */
 } Screen;
 
 static Screen *g_screens; static int g_nscreen, g_scrcap;
@@ -627,6 +635,7 @@ static int g_screen_base;   /* the unit's screens start here (contained programs
 static Screen *screen_find(const char *name)
 {
     for (int i = g_screen_base; i < g_nscreen; i++) if (!strcmp(g_screens[i].name, name)) return &g_screens[i];
+    for (int i = g_screen_base - 1; i >= 0; i--) if (g_screens[i].global && !strcmp(g_screens[i].name, name)) return &g_screens[i];   /* a containing program's GLOBAL screen */
     return NULL;
 }
 
@@ -635,11 +644,11 @@ static Screen *screen_find(const char *name)
 static Screen *screen_ref(const char *name, char *lab, size_t n, int *first, int *count)
 {
     Screen *sc = screen_find(name);
-    if (sc) { snprintf(lab, n, ".Lscr%d_%d", g_unit, (int)(sc - g_screens)); *first = 0; *count = sc->nf; return sc; }
-    for (int i = g_screen_base; i < g_nscreen; i++)
+    if (sc) { snprintf(lab, n, ".Lscr%d_%d", sc->unit, (int)(sc - g_screens)); *first = 0; *count = sc->nf; return sc; }
+    for (int i = g_nscreen - 1; i >= 0; i--)
         for (int j = 0; j < g_screens[i].nsub; j++)
-            if (!strcmp(g_screens[i].sub[j].name, name)) {
-                snprintf(lab, n, ".Lscrg%d_%d_%d", g_unit, i, j);
+            if ((i >= g_screen_base || g_screens[i].global) && !strcmp(g_screens[i].sub[j].name, name)) {
+                snprintf(lab, n, ".Lscrg%d_%d_%d", g_screens[i].unit, i, j);
                 *first = g_screens[i].sub[j].first; *count = g_screens[i].sub[j].count;
                 return &g_screens[i];
             }

@@ -381,9 +381,56 @@ static void set_cond_move(Opnd *v, Ref *p)
 }
 
 static void env_text_args(Opnd *o, const char *what);
+/* SET screen-name-1 ATTRIBUTE {BELL | BLINK | HIGHLIGHT | LOWLIGHT |
+ * REVERSE-VIDEO | UNDERLINE} {ON | OFF} ... (2023 14.9.39 format 6; rules
+ * 15-16): the bits of every slot of the screen or group changed in place
+ * (the slot table is writable), so the next DISPLAY or ACCEPT paints
+ * them so */
+static void parse_set_attribute(Screen *sc, int first, int count, int line)
+{
+    expect_word("attribute");
+    unsigned seen = 0; int hl = 0, any = 0;
+    while (cur()->kind == T_WORD && !is_verb(cur()->s)) {
+        static const struct { const char *w; int flags, rsv; } at[] = {
+            { "bell", 0, COB_SR_BELL }, { "beep", 0, COB_SR_BELL }, { "blink", 0, COB_SR_BLINK }, { "highlight", COB_SF_HIGHLIGHT, 0 },
+            { "lowlight", COB_SF_LOWLIGHT, 0 }, { "reverse-video", COB_SF_REVERSE, 0 }, { "underline", COB_SF_UNDERLINE, 0 }, { NULL, 0, 0 } };
+        int k = -1;
+        for (int i = 0; at[i].w; i++) if (at_word(at[i].w)) k = i;
+        if (k < 0) break;
+        Tok *t = cur(); advance();
+        unsigned bit = (unsigned)(at[k].flags | (at[k].rsv << 8));
+        if (seen & bit) die_at(t->line, "SET ATTRIBUTE: %s twice (2023 14.9.39.3 rule 15)", tok_orig(t));
+        seen |= bit;
+        if (at[k].flags & (COB_SF_HIGHLIGHT | COB_SF_LOWLIGHT)) { if (hl) die_at(t->line, "SET ATTRIBUTE: HIGHLIGHT and LOWLIGHT in one statement (2023 14.9.39.3 rule 16)"); hl = 1; }
+        int on;
+        if (accept_word("on")) on = 1; else if (accept_word("off")) on = 0; else die_at(cur()->line, "SET ATTRIBUTE %s needs ON or OFF (2023 14.9.39 format 6)", tok_orig(t));
+        char rec[48]; snprintf(rec, sizeof rec, ".Lscrf%d_%d", sc->unit, (int)(sc - g_screens));
+        for (int i = first; i < first + count && i < sc->nf; i++) {
+            if (at[k].flags) {
+                emit_la_off("r2", rec, i * SCRF_SIZE + 1); emit("\tldbu r1, r2+0");
+                if (on) emit("\tori r1, r1, %d", at[k].flags); else emit("\tandi r1, r1, %d", 255 & ~at[k].flags);
+                emit("\tstb r2+0, r1");
+            } else {
+                emit_la_off("r2", rec, i * SCRF_SIZE + 30); emit("\tldhu r1, r2+0");
+                if (on) emit("\tori r1, r1, %d", at[k].rsv); else emit("\tandi r1, r1, %d", 0xFFFF & ~at[k].rsv);
+                emit("\tsth r2+0, r1");
+            }
+        }
+        any = 1;
+    }
+    if (!any) die_at(line, "SET ATTRIBUTE names BELL, BLINK, HIGHLIGHT, LOWLIGHT, REVERSE-VIDEO or UNDERLINE (2023 14.9.39 format 6)");
+}
 static void parse_set(void)
 {
     Ref rs[MAXOPS]; int nr = 0;
+    if (cur()->kind == T_WORD && is_word(peek(1), "attribute") && !sym_lookup_quiet(cur()->s)) {
+        char lab[40]; int first, count; int line = cur()->line;
+        Screen *sc = screen_ref(cur()->s, lab, sizeof lab, &first, &count);
+        if (!sc) die_at(line, "SET %s ATTRIBUTE: '%s' is not a screen-name (2023 14.9.39 format 6)", cur()->s, cur()->s);
+        advance();
+        parse_set_attribute(sc, first, count, line);
+        return;
+    }
     if (at_word("content") && is_word(peek(1), "of") && !sym_lookup_quiet("content")) {
         /* format 15 (2023 14.9.39): SET CONTENT OF item ... TO FARTHEST-FROM-ZERO
          * | NEAREST-TO-ZERO [IN-ARITHMETIC-RANGE] [SIGN NEGATIVE|POSITIVE] |

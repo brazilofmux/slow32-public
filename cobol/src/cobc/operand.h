@@ -390,6 +390,7 @@ static void parse_ref(Ref *r)
 
 static int fn89_known(const char *w);
 static int g_sort_subj;               /* parsing the table a SORT sorts: its own subscript omitted or ALL (parse_ref_1) */
+static long g_scr_occ;                /* a screen item under OCCURS (2023 13.18.38.3 rule 13): the occurrence, the last subscript its FROM/TO/USING item is written without */
 /* a structured constant, or an item inside one, named as a receiving
  * operand (2023 13.18.15.3 rule 2): refused at each statement that stores
  * into its operands; a store that got past them (through a pointer, a
@@ -643,6 +644,7 @@ static void parse_ref_1(Ref *r)
                 die_at(r->line, "subscript %ld is outside OCCURS %d of '%s'", r->sub[i].lit, r->sym->dim_count[i], r->sym->name);
         return;
     }
+    if (g_scr_occ && r->nsub == r->sym->ndims - 1) { r->sub[r->nsub].sym = NULL; r->sub[r->nsub].lit = g_scr_occ; r->sub[r->nsub].adj = 0; r->sub[r->nsub].x = NULL; r->nsub++; }
     if (r->nsub != r->sym->ndims) {
         if (r->sym->ndims == 0) die_at(r->line, "'%s' is not a table item and takes no subscript", r->sym->name);
         die_at(r->line, "'%s' needs %d subscript%s, %d given", r->sym->name, r->sym->ndims,

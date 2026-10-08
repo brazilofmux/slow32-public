@@ -6189,23 +6189,32 @@ static int scr_has_attr(const cob_scr_field *f)
  * magenta, 6 yellow, 7 white) to ANSI's (1 red, 4 blue); 9 = default */
 static int scr_ansi_colour(unsigned c) { static const int m[8] = { 0, 4, 2, 6, 1, 5, 3, 7 }; return c < 8 ? m[c] : 9; }
 
+/* BLANK SCREEN with a colour: the screen's default colours until the next
+ * such entry (13.18.7.3 rules 3-4); a field with no colour of its own
+ * takes them */
+static int scr_def_fg = 255, scr_def_bg = 255;
 static void scr_attr(const cob_scr_field *f)
 {
-    if (!scr_has_attr(f)) return;
+    int fg = f->fg != 255 ? f->fg : scr_def_fg, bg = f->bg != 255 ? f->bg : scr_def_bg;
+    if (!scr_has_attr(f) && fg == 255 && bg == 255) return;
+    /* one attribute per field: the term service's cell carries one, so the
+     * clauses written together (13.17.2 allows it) are painted by rank --
+     * REVERSE-VIDEO, UNDERLINE, HIGHLIGHT, LOWLIGHT, BLINK (screen.md) */
     if (f->flags & COB_SF_REVERSE) term_set_attr(7);
     else if (f->flags & COB_SF_UNDERLINE) term_set_attr(4);
     else if (f->flags & COB_SF_HIGHLIGHT) term_set_attr(1);
     else if (f->flags & COB_SF_LOWLIGHT) term_set_attr(2);
     else if (f->rsv & COB_SR_BLINK) term_set_attr(5);
     else term_set_attr(0);
-    if (f->fg != 255 || f->bg != 255) term_set_color(scr_ansi_colour(f->fg), scr_ansi_colour(f->bg));
+    if (fg != 255 || bg != 255) term_set_color(scr_ansi_colour(fg), scr_ansi_colour(bg));
 }
 
 static void scr_attr_off(const cob_scr_field *f)
 {
-    if (!scr_has_attr(f)) return;
+    int fg = f->fg != 255 ? f->fg : scr_def_fg, bg = f->bg != 255 ? f->bg : scr_def_bg;
+    if (!scr_has_attr(f) && fg == 255 && bg == 255) return;
     term_set_attr(0);
-    if (f->fg != 255 || f->bg != 255) term_set_color(9, 9);
+    if (fg != 255 || bg != 255) term_set_color(9, 9);
 }
 
 static void scr_puts_n(const char *p, unsigned n)
@@ -6217,6 +6226,7 @@ static void scr_puts_n(const char *p, unsigned n)
 static void scr_render(const cob_scr_field *f, char *buf)
 {
     if (scr_kind(f) == COB_SCR_VALUE) { memcpy(buf, f->value, f->width); return; }
+    if ((f->rsv & COB_SR_FROMTO) && scr_kind(f) == COB_SCR_TO) { scr_render(f - 1, buf); return; }   /* FROM x TO y: shown from x */
     if (scr_kind(f) == COB_SCR_TO) { memset(buf, ' ', f->width); return; }
     if (f->rsv & COB_SR_DYNLEN) {
         /* the part's own characters; under SIZE, as many as the part has, then spaces */
@@ -6243,10 +6253,42 @@ static void scr_render(const cob_scr_field *f, char *buf)
  * the slot painted before it.  A SCREEN SECTION slot keeps its numbers. */
 static int scr_last_line = 1, scr_last_col = 1, scr_last_width = 0;   /* scr_next_line: above, with the console path */
 
+static int scr_off_line, scr_off_col;           /* the screen record's placing (cob_screen.line_off/col_off), while its statement runs */
+static int scr_errs;                            /* COB_SCR_E_* found by the statement under way */
+static int scr_rows = 24, scr_cols = 80;
+static unsigned char scr_cells[256][64];        /* the cells this statement painted, for EC-SCREEN-FIELD-OVERLAP (14.9.11.4 rule 13) */
+static void scr_stmt_begin(const cob_screen *s)
+{
+    scr_off_line = s->line_off; scr_off_col = s->col_off; scr_errs = 0;
+    memset(scr_cells, 0, sizeof scr_cells);
+    term_get_size(&scr_rows, &scr_cols);
+    if (scr_rows < 1) scr_rows = 24;
+    if (scr_cols < 1) scr_cols = 80;
+}
+/* a field's cells claimed; a cell claimed already in this statement is an overlap */
+static void scr_claim(int line, int col, unsigned width)
+{
+    if (line < 1 || line > 256) return;
+    for (unsigned i = 0; i < width; i++) {
+        int c = col + (int)i;
+        if (c < 1 || c > 512) break;
+        unsigned char *b = &scr_cells[line - 1][(c - 1) >> 3]; unsigned m = 1u << ((c - 1) & 7);
+        if (*b & m) scr_errs |= COB_SCR_E_FIELD_OVERLAP;
+        *b |= (unsigned char)m;
+    }
+}
+/* a SCREEN SECTION field outside the terminal (13.18.14.4 rules 18-19, 13.18.35.4 rule 14): column 0 is painted at 1 and noted; a line outside leaves the field out */
+static int scr_field_out(const cob_scr_field *f, int line, int col)
+{
+    if (f->ext & COB_SX_POS) return 0;
+    if (col < 1) scr_errs |= COB_SCR_E_STARTING_COLUMN;
+    if (line < 1 || line > scr_rows) { scr_errs |= COB_SCR_E_LINE_NUMBER; return 1; }
+    return 0;
+}
 static void scr_pos(const cob_scr_field *f, int *line, int *col)
 {
     *line = f->line; *col = f->col;
-    if (!(f->ext & COB_SX_POS)) return;
+    if (!(f->ext & COB_SX_POS)) { *line += scr_off_line; *col += scr_off_col; if (*col < 1 && *line >= 1) *col = 1; return; }
     if (f->ext & COB_SX_CONT) { if (!*line) *line = scr_last_line; if (!*col) *col = scr_last_col + scr_last_width; }
     if (!*line) *line = scr_next_line ? scr_next_line : 1;
     if (!*col) *col = 1;
@@ -6276,6 +6318,7 @@ static void scr_paint_begin(const cob_scr_field *f, int *line, int *col)
     int erase = !scr_accepting || (f->ext & COB_SX_POS);
     scr_pos(f, line, col);
     if (erase && (f->ext & COB_SX_ERASE_ALL)) term_clear(0);
+    if (erase && (f->rsv & COB_SR_BLANK_LINE)) { term_gotoxy(*line, 1); term_clear(1); }   /* BLANK LINE: the whole line first (13.18.7.3 rule 1; ignored on an ACCEPT, rule 5) */
     term_gotoxy(*line, *col);
     if (erase && (f->ext & COB_SX_ERASE_EOS)) term_clear(2);
     else if (erase && (f->ext & COB_SX_ERASE_EOL)) term_clear(1);
@@ -6352,19 +6395,48 @@ static void scr_paint_field(const cob_scr_field *f)
     scr_paint_text(f, buf);
 }
 
-void cob_screen_display(const cob_screen *s)
+static void scr_paint_fields(const cob_screen *s)
+{
+    for (unsigned i = 0; i < s->nfields; i++) {
+        const cob_scr_field *f = &s->fields[i];
+        if (f->rsv & COB_SR_BLANK_SCREEN) {
+            /* the BLANK SCREEN entry's colours are the screen's defaults from here on */
+            if (f->fg != 255) scr_def_fg = f->fg;
+            if (f->bg != 255) scr_def_bg = f->bg;
+            if (!f->width) continue;
+        }
+        int line, col; scr_pos(f, &line, &col);
+        if (scr_field_out(f, line, col)) continue;
+        if (!(f->ext & COB_SX_POS)) scr_claim(line, col, f->width);
+        scr_paint_field(f);
+    }
+}
+int cob_screen_display(const cob_screen *s)
 {
     term_need();
+    if (!scr_accepting) scr_stmt_begin(s);
     /* BELL: the tone sounds once, at the start of a DISPLAY however many
      * entries ask for it, and not for an ACCEPT (2023 13.18.6.4 rule 1) */
     if (!scr_accepting)
         for (unsigned i = 0; i < s->nfields; i++)
             if (s->fields[i].rsv & COB_SR_BELL) { term_putc(7); break; }
     term_begin_update();
-    if (s->blank_screen && (!scr_accepting || s->blank_screen == 2)) term_clear(0);   /* BLANK ignored during an ACCEPT (2023 13.18.7.3 rule 5), unless the dialect's */
-    for (unsigned i = 0; i < s->nfields; i++) scr_paint_field(&s->fields[i]);
+    if ((s->blank_screen & 3) && (!scr_accepting || (s->blank_screen & 3) == 2)) {
+        /* BLANK SCREEN clears and homes (13.18.7.3 rule 2) in the default
+         * colours its entry sets (rules 3-4; the word's bytes 1 and 2 carry
+         * them, 1 + the colour); ignored during an ACCEPT (rule 5), unless
+         * the dialect's */
+        if ((s->blank_screen >> 8) & 255) scr_def_fg = ((s->blank_screen >> 8) & 255) - 1;
+        if ((s->blank_screen >> 16) & 255) scr_def_bg = ((s->blank_screen >> 16) & 255) - 1;
+        if (scr_def_fg != 255 || scr_def_bg != 255) term_set_color(scr_ansi_colour(scr_def_fg), scr_ansi_colour(scr_def_bg));
+        term_clear(0);
+    }
+    scr_paint_fields(s);
     term_end_update();
+    return scr_errs;
 }
+/* the conditions the last screen statement found (COB_SCR_E_*) */
+int cob_screen_errs(void) { return scr_errs; }
 
 /* ---- the focus loop (docs/screen.md, "the eventual target") ------------ */
 /* Keys: the terminal's characters -- UTF-8 decoded, a byte that is not
@@ -6699,6 +6771,7 @@ static void scr_num_load(scr_edit *e)
     scr_num_desc(e, &t);
     memset(tb, '0', sizeof tb); tb[0] = '+';
     if (scr_kind(e->f) == COB_SCR_USING) cob_move(scr_item(e->f), (const cob_desc *)e->f->item_desc, tb, &t);
+    else if (e->f->rsv & COB_SR_FROMTO) cob_move(scr_item(e->f - 1), (const cob_desc *)(e->f - 1)->item_desc, tb, &t);   /* FROM x TO y: starts from x */
     sn_enter(e->nf, e->ns, tb + 1, tb[0] == '-' && e->nf->has_sign);
     scr_num_start(e);
 }
@@ -6869,6 +6942,8 @@ int cob_screen_accept(const cob_screen *s)
 }
 static int screen_accept(const cob_screen *s)
 {
+    term_need();
+    scr_stmt_begin(s);
     cob_screen_display(s);
     unsigned nin = 0;
     for (unsigned i = 0; i < s->nfields; i++)

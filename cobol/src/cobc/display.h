@@ -145,6 +145,7 @@ static Screen *screen_synth(void)
     if (g_nscreen == g_scrcap) { g_scrcap = g_scrcap ? g_scrcap * 2 : 4; g_screens = realloc(g_screens, g_scrcap * sizeof *g_screens); }
     Screen *sc = &g_screens[g_nscreen++];
     memset(sc, 0, sizeof *sc);
+    sc->unit = g_unit;
     snprintf(sc->name, sizeof sc->name, "(positioned %d)", g_nscreen);   /* not a word: screen_ref never matches it */
     return sc;
 }
@@ -182,7 +183,7 @@ static void emit_pos_stmt(int si, const char *fn)
 {
     Screen *sc = &g_screens[si];
     emit_screen_dyn_fill(sc, 0, sc->nf);
-    char rec[48]; snprintf(rec, sizeof rec, ".Lscrf%d_%d", g_unit, si);
+    char rec[48]; snprintf(rec, sizeof rec, ".Lscrf%d_%d", sc->unit, si);
     for (int k = 0; k < sc->nf; k++) {
         SField *f = &sc->f[k];
         if (f->line_r) { emit_pos_int(f->line_r); emit_la_off("r2", rec, k * SCRF_SIZE + 2); emit("\tsth r2+0, r1"); }
@@ -197,7 +198,7 @@ static void emit_pos_stmt(int si, const char *fn)
             emit_la_off("r2", rec, k * SCRF_SIZE + (f->width ? 12 : 8)); emit("\tstw r2+0, r3");
         }
     }
-    char lab[48]; snprintf(lab, sizeof lab, ".Lscr%d_%d", g_unit, si);
+    char lab[48]; snprintf(lab, sizeof lab, ".Lscr%d_%d", sc->unit, si);
     emit_la("r3", lab); emit_call(fn);
 }
 
@@ -434,22 +435,108 @@ static void parse_accept(void)
  * column 1 -- AT 0101 or AT LINE 1 COLUMN 1, the only placement ACAS
  * uses (cobol ISSUES-124) -- the screen is where its own clauses put it;
  * any other origin is not implemented. */
-static void screen_at_origin(int line)
+static void screen_at_origin(int line, const char *scrlab)
 {
-    if (!accept_word("at")) return;
-    int l = -1, c = -1;
-    if (cur()->kind == T_NUM && strlen(cur()->s) == 4) {
-        int v = atoi(cur()->s); l = v / 100; c = v % 100; advance();
-    } else {
-        if (accept_word("line")) { accept_word("number"); if (cur()->kind == T_NUM) { l = atoi(cur()->s); advance(); } }
-        if (accept_word("column") || accept_word("col") || accept_word("position")) {
-            accept_word("number"); if (cur()->kind == T_NUM) { c = atoi(cur()->s); advance(); }
+    /* the screen record's placing (2023 14.9.1.2 format 4, 14.9.11.2 format
+     * 2; 14.9.1.3 rule 5: unsigned integers, literals or items): stored in
+     * the record's line_off / col_off (cob_screen, offsets 12 and 16) as
+     * offsets from (1, 1) -- zero when the phrase is absent */
+    int l = 1, c = 1; Ref *lr = NULL, *cr = NULL;
+    if (accept_word("at")) {
+        if (cur()->kind == T_NUM && strlen(cur()->s) == 4) {
+            int v = atoi(cur()->s); l = v / 100; c = v % 100; advance();
+        } else if (cur()->kind == T_WORD && !at_word("line") && !at_word("column") && !at_word("col") && !at_word("position") && !is_verb(cur()->s)) {
+            lr = cr = xmalloc(sizeof *lr); parse_ref(lr); l = c = -2;    /* AT identifier: rrcc */
+            if (!is_int_item(lr->sym)) die_at(line, "AT needs an unsigned integer item of four digits (line and column)");
+        } else {
+            if (accept_word("line")) {
+                accept_word("number");
+                if (cur()->kind == T_NUM) { l = atoi(cur()->s); advance(); }
+                else { lr = xmalloc(sizeof *lr); parse_ref(lr); if (!is_int_item(lr->sym)) die_at(line, "AT LINE needs an unsigned integer (2023 14.9.1.3 rule 5)"); }
+            }
+            if (accept_word("column") || accept_word("col") || accept_word("position")) {
+                accept_word("number");
+                if (cur()->kind == T_NUM) { c = atoi(cur()->s); advance(); }
+                else { cr = xmalloc(sizeof *cr); parse_ref(cr); if (!is_int_item(cr->sym)) die_at(line, "AT COLUMN needs an unsigned integer (2023 14.9.1.3 rule 5)"); }
+            }
         }
-        if (l < 0) l = 1;
-        if (c < 0) c = 1;
     }
-    if (l != 1 || c != 1)
-        die_at(line, "a screen placed AT a position other than line 1, column 1 is not implemented");
+    if (lr && lr == cr) {
+        /* rrcc: the line is the hundreds, the column the rest */
+        emit_pos_int(lr); emit_li("r2", 100); emit("\tdiv r3, r1, r2"); emit("\trem r4, r1, r2");
+        emit("\taddi r3, r3, -1"); emit("\taddi r4, r4, -1");
+        emit_la("r2", scrlab); emit("\tstw r2+12, r3"); emit("\tstw r2+16, r4");
+        return;
+    }
+    if (lr) { emit_pos_int(lr); emit("\taddi r1, r1, -1"); } else emit_li("r1", l - 1);
+    emit_la("r2", scrlab); emit("\tstw r2+12, r1");
+    if (cr) { emit_pos_int(cr); emit("\taddi r1, r1, -1"); } else emit_li("r1", c - 1);
+    emit_la("r2", scrlab); emit("\tstw r2+16, r1");
+}
+
+/* the screen's run-time clauses before a statement paints it: LINE,
+ * COLUMN and the colours given as identifiers (13.18.14.2, 13.18.35.2,
+ * 13.18.4.2), PLUS and MINUS counting from the slot before */
+static void emit_screen_dyn_pos(Screen *sc, int first, int count)
+{
+    char rec[48]; snprintf(rec, sizeof rec, ".Lscrf%d_%d", sc->unit, (int)(sc - g_screens));
+    for (int k = first; k < first + count && k < sc->nf; k++) {
+        SField *f = &sc->f[k];
+        if (f->ext & COB_SX_POS) continue;          /* a positioned statement's slot: emit_pos_stmt's */
+        if (f->samepos && k > 0) {                  /* the TO twin of FROM x TO y: its FROM's line and column */
+            emit_la_off("r2", rec, (k - 1) * SCRF_SIZE + 2); emit("\tldw r1, r2+0");   /* line and column, one word */
+            emit_la_off("r2", rec, k * SCRF_SIZE + 2); emit("\tstw r2+0, r1");
+            continue;
+        }
+        if (f->line_r) {
+            emit_pos_int(f->line_r);
+            if (f->line_rel && k > 0) { emit_la_off("r2", rec, (k - 1) * SCRF_SIZE + 2); emit("\tldhu r2, r2+0"); emit(f->line_rel > 0 ? "\tadd r1, r2, r1" : "\tsub r1, r2, r1"); }
+            emit_la_off("r2", rec, k * SCRF_SIZE + 2); emit("\tsth r2+0, r1");
+        } else if (f->line_rel_n && k > 0) {
+            emit_la_off("r2", rec, (k - 1) * SCRF_SIZE + 2); emit("\tldhu r1, r2+0"); emit("\taddi r1, r1, %d", f->line_rel_n);
+            emit_la_off("r2", rec, k * SCRF_SIZE + 2); emit("\tsth r2+0, r1");
+        } else if (f->dynpos && k > 0 && !f->line_r) {
+            /* no LINE clause after a slot placed at run time: its line */
+            emit_la_off("r2", rec, (k - 1) * SCRF_SIZE + 2); emit("\tldhu r1, r2+0");
+            emit_la_off("r2", rec, k * SCRF_SIZE + 2); emit("\tsth r2+0, r1");
+        }
+        if (f->col_r || f->col_rel_n) {
+            /* from the last column of the slot before: PLUS n lands n past it, MINUS n that many back */
+            if (f->col_r) emit_pos_int(f->col_r); else emit_li("r1", f->col_rel_n);
+            if ((f->col_rel || f->col_rel_n) && k > 0) {
+                SField *p = &sc->f[k - 1];
+                emit_la_off("r2", rec, (k - 1) * SCRF_SIZE + 4); emit("\tldhu r2, r2+0");
+                emit("\taddi r2, r2, %d", p->width - 1 + (f->col_r && f->col_rel > 0 && (g_dialect_gnu || g_dialect_mf) ? 1 : 0));
+                emit(f->col_r && f->col_rel < 0 ? "\tsub r1, r2, r1" : "\tadd r1, r2, r1");
+            }
+            emit_la_off("r2", rec, k * SCRF_SIZE + 4); emit("\tsth r2+0, r1");
+        }
+        if (f->fg_r) { emit_pos_int(f->fg_r); emit_la_off("r2", rec, k * SCRF_SIZE + 6); emit("\tstb r2+0, r1"); }
+        if (f->bg_r) { emit_pos_int(f->bg_r); emit_la_off("r2", rec, k * SCRF_SIZE + 7); emit("\tstb r2+0, r1"); }
+    }
+}
+
+/* after a screen statement: the EC-SCREEN conditions it found, raised when
+ * checked (r1 holds libcob's COB_SCR_E_* bits; nonfatal, so the statement
+ * stands), then r1 is 0 or the bits for ON EXCEPTION */
+static void emit_screen_errs(void)
+{
+    static const struct { const char *name; int bit; } ecs[] = {
+        { "EC-SCREEN-STARTING-COLUMN", COB_SCR_E_STARTING_COLUMN }, { "EC-SCREEN-LINE-NUMBER", COB_SCR_E_LINE_NUMBER },
+        { "EC-SCREEN-FIELD-OVERLAP", COB_SCR_E_FIELD_OVERLAP }, { NULL, 0 } };
+    int any = 0;
+    for (int i = 0; ecs[i].name; i++) if (ec_on_name(ecs[i].name)) any = 1;
+    if (!any) return;
+    emit("\tadd r12, r1, r0");
+    for (int i = 0; ecs[i].name; i++) {
+        if (!ec_on_name(ecs[i].name)) continue;
+        int Lnext = new_label();
+        emit("\tandi r1, r12, %d", ecs[i].bit);
+        emit("\tbeq r1, r0, .L%d", Lnext);
+        emit_ec_raise(ec_find(ecs[i].name, 0));
+        emit_label(Lnext);
+    }
+    emit("\tadd r1, r12, r0");
 }
 
 /* ACCEPT or DISPLAY screen-name ... WITH attributes: GnuCOBOL takes the
@@ -492,12 +579,15 @@ static void parse_accept_1(void)
                 else nout++;
             }
             if (nout && !nin) die_at(t->line, "ACCEPT of '%s', which has FROM or VALUE items and no TO or USING item (2023 14.9.1.3 rule 4)", t->s);
-            screen_at_origin(t->line);
+            screen_at_origin(t->line, scrlab);
             int upd = screen_with_phrase(t->line, 1);    /* WITH UPDATE (BP-G3): the TO fields start from their items */
-            emit_screen_dyn_fill(scp, sfirst, scount);
+            emit_screen_dyn_fill(scp, sfirst, scount); emit_screen_dyn_pos(scp, sfirst, scount);
             emit_crt_items(t->line);
             if (upd) emit_call("cob_scr_update_next");
             emit_la("r3", scrlab); emit_call("cob_screen_accept");
+            if (ec_on_name("EC-SCREEN-STARTING-COLUMN") || ec_on_name("EC-SCREEN-LINE-NUMBER") || ec_on_name("EC-SCREEN-FIELD-OVERLAP")) {
+                emit("\tadd r13, r1, r0"); emit_call("cob_screen_errs"); emit_screen_errs(); emit("\tadd r1, r13, r0");
+            }
             parse_env_exception();              /* a function key, or no input field (2023 14.9.1.4 rules 24-25) */
             accept_word("end-accept");
             return;
@@ -640,7 +730,16 @@ static void parse_display(void)
     if (cur()->kind == T_WORD) {
         char scrlab[40]; int sfirst, scount;
         Screen *scp = screen_ref(cur()->s, scrlab, sizeof scrlab, &sfirst, &scount);
-        if (scp) { int sl = cur()->line; advance(); screen_at_origin(sl); screen_with_phrase(sl, 0); emit_screen_dyn_fill(scp, sfirst, scount); emit_la("r3", scrlab); emit_call("cob_screen_display"); return; }
+        if (scp) {
+            int sl = cur()->line; advance();
+            screen_at_origin(sl, scrlab); screen_with_phrase(sl, 0);
+            emit_screen_dyn_fill(scp, sfirst, scount); emit_screen_dyn_pos(scp, sfirst, scount);
+            emit_la("r3", scrlab); emit_call("cob_screen_display");
+            emit_screen_errs();
+            parse_env_exception();                  /* ON EXCEPTION: a condition the screen raised (2023 14.9.11.2 format 2, GR 18-19) */
+            accept_word("end-display");
+            return;
+        }
     }
     /* DISPLAY n UPON ARGUMENT-NUMBER: the next ARGUMENT-VALUE will be n */
     if (stmt_positioned()) { parse_display_positioned(); return; }

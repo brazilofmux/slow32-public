@@ -1537,6 +1537,7 @@ static void parse_procedure_division(void)
         return;
     }
     prescan_paragraphs(g_tp);
+    screen_global_resolve();                /* a GLOBAL screen's items, bound in this program's scope (operand_parse.h) */
 
     char entry[128];
     snprintf(entry, sizeof entry, "%s", link_name(g_fn_as[0] ? g_fn_as : g_prog_as[0] ? g_prog_as : g_progid));   /* the externalized name (AS literal); link_name's buffer is static, CALLs reuse it */

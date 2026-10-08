@@ -310,17 +310,20 @@ static void emit_unit_data(void)
             if (f->item && f->dyn) { emit("\t.word .Lsdyn%d_%d_%d", g_unit, i, k); emit("\t.word .Ld%d", f->idesc ? f->idesc - 1 : sym_desc(f->item)); }
             else if (f->item) { emit("\t.word %s+%ld", g_sym[f->item->record].label, f->stat_off); emit("\t.word .Ld%d", f->idesc ? f->idesc - 1 : sym_desc(f->item)); }
             else { emit("\t.word 0"); emit("\t.word 0"); }
-            emit("\t.byte %d,%d", f->ext, f->prompt ? f->prompt : '_'); emit("\t.short %d", (f->dynlen ? COB_SR_DYNLEN : 0) | (f->dynlen && f->width ? COB_SR_DYNSIZE : 0) | (f->dispval ? COB_SR_DISPVAL : 0) | (f->rsv & (COB_SR_BLINK | COB_SR_BELL)));   /* ext, prompt, rsv */
+            emit("\t.byte %d,%d", f->ext, f->prompt ? f->prompt : '_'); emit("\t.short %d", (f->dynlen ? COB_SR_DYNLEN : 0) | (f->dynlen && f->width ? COB_SR_DYNSIZE : 0) | (f->dispval ? COB_SR_DISPVAL : 0) | (f->rsv & (COB_SR_BLINK | COB_SR_BELL | COB_SR_FROMTO | COB_SR_BLANK_LINE)));   /* ext, prompt, rsv */
         }
         emit(".Lscr%d_%d:\t# screen %s", g_unit, i, sc->name);
         emit("\t.word %d", sc->nf);
-        emit("\t.word %d", sc->blank_screen ? (g_dialect_gnu || g_dialect_mf ? 2 : 1) : 0);   /* 2: cleared on an ACCEPT too, as GnuCOBOL and Micro Focus do (screen.md ruling) */
+        emit("\t.word %d", (sc->blank_screen ? (g_dialect_gnu || g_dialect_mf ? 2 : 1) : 0)   /* 2: cleared on an ACCEPT too, as GnuCOBOL and Micro Focus do (screen.md ruling) */
+                            | ((sc->bs_fg != 255 ? sc->bs_fg + 1 : 0) << 8) | ((sc->bs_bg != 255 ? sc->bs_bg + 1 : 0) << 16));   /* the BLANK SCREEN entry's colours, the screen's defaults */
         emit("\t.word .Lscrf%d_%d", g_unit, i);
+        emit("\t.word 0"); emit("\t.word 0");                 /* line_off, col_off: the AT phrase's placing, stored by the statement */
         for (int j = 0; j < sc->nsub; j++) {                  /* a named group: a window into the same slots */
             emit(".Lscrg%d_%d_%d:\t# screen %s group %s", g_unit, i, j, sc->name, sc->sub[j].name);
             emit("\t.word %d", sc->sub[j].count);
             emit("\t.word 0");
             emit("\t.word .Lscrf%d_%d+%d", g_unit, i, sc->sub[j].first * SCRF_SIZE);
+            emit("\t.word 0"); emit("\t.word 0");             /* line_off, col_off */
         }
         for (int k = 0; k < sc->nf; k++)
             if (sc->f[k].dyn) { emit(".Lsdyn%d_%d_%d:\t# %s: the address, computed at ACCEPT/DISPLAY", g_unit, i, k, sc->f[k].item->name); emit("\t.word 0"); }

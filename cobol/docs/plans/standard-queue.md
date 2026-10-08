@@ -469,6 +469,16 @@ deps 19f.
   literal; BLANK LINE; BLANK SCREEN's default colours; EC-SCREEN; combined attributes; national
   JUSTIFIED and USAGE NATIONAL; plus `SET ... ATTRIBUTE` (a bare parse error). Three rulings are
   open there: BLANK SCREEN during ACCEPT, the PLUS column count, the 9(4) CRT STATUS item.
+**DONE 2026-10-07** (the rulings with item 50): identifiers for LINE, COLUMN and the colours (stored
+at run time, PLUS/MINUS from the slot before), MINUS, AT LINE/COLUMN on ACCEPT and DISPLAY of a
+screen (offsets in the screen record), DISPLAY ... ON EXCEPTION with EC-SCREEN-STARTING-COLUMN,
+-LINE-NUMBER, -FIELD-OVERLAP found by libcob, FROM x TO y (two slots at one place), a numeric FROM
+literal through the picture, BLANK LINE, BLANK SCREEN's default colours, OCCURS over FROM/TO/USING
+(the implied subscript), GLOBAL screens (resolved in the declaring program), SET ... ATTRIBUTE.
+Left: OCCURS on a group, identifiers under OCCURS, combined attributes (the term service paints one
+per cell), boolean input, national JUSTIFIED/USAGE NATIONAL, EC-SCREEN-ITEM-TRUNCATED (screen.md
+"Open"). Tests 2002/screenmore, screenglobal, free/scrfromto and scratoff (were bad tests whose
+premise is gone); 8 bad tests.
 
 **39. File sharing and record locking.** A.4.7; 9.1.15-16, 12.4.5.9, 12.4.5.15, 14.7.9 RETRY, OPEN
 SHARING, READ/WRITE WITH [NO] LOCK, EC-I-O-FILE-SHARING; Ed. 2002; L; deps 1.

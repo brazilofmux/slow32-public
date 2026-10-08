@@ -1537,6 +1537,16 @@ static unsigned scr_clause_bit(const char *t)
 
 /* 01 screen-name. then slot entries at deeper levels, each with LINE /
  * COLUMN / VALUE / PIC FROM|TO|USING / attributes */
+/* a screen clause's identifier-1 (LINE, COLUMN, FOREGROUND-/BACKGROUND-COLOR;
+ * 13.18.4.2, 13.18.14.2, 13.18.35.2): an unsigned integer item, declared
+ * before the SCREEN SECTION; read when the statement runs */
+static struct Ref_ *scr_pos_ident(int line, const char *what)
+{
+    Ref *r = xmalloc(sizeof *r); parse_ref(r);
+    if (!is_int_item(r->sym) || r->sym->pi.is_signed)
+        die_at(line, "%s identifier-1 is an unsigned integer item (2023 13.18.14.3 rule 12)", what);
+    return r;
+}
 static void parse_screen_section(void)
 {
     while (cur()->kind == T_NUM && !strcmp(cur()->s, "01")) {
@@ -1545,11 +1555,11 @@ static void parse_screen_section(void)
         if (g_nscreen == g_scrcap) { g_scrcap = g_scrcap ? g_scrcap * 2 : 4; g_screens = realloc(g_screens, g_scrcap * sizeof *g_screens); }
         Screen *sc = &g_screens[g_nscreen++];
         memset(sc, 0, sizeof *sc);
-        sc->line = line;
+        sc->line = line; sc->unit = g_unit;
         user_word(cur()->s, line, "a screen");
         snprintf(sc->name, sizeof sc->name, "%s", cur()->s); advance();
         if (sym_lookup_quiet(sc->name)) die_at(line, "'%s' is both a data item and a screen", sc->name);
-        sc->fg = sc->bg = 255;
+        sc->fg = sc->bg = 255; sc->bs_fg = sc->bs_bg = 255;
         /* an ERASE on a group clears from the group's position, which is
          * its first field's: it waits for that field (13.18.21.4 rule 1) */
         int pend_erase = 0;
@@ -1580,7 +1590,14 @@ static void parse_screen_section(void)
             if (accept_word("full")) { sc->flags |= COB_SF_FULL; continue; }
             if (accept_word("bell") || accept_word("beep")) { sc->rsv |= COB_SR_BELL; continue; }
             if (accept_word("blink")) { sc->rsv |= COB_SR_BLINK; continue; }
-            if (at_word("global")) die_at(cur()->line, "GLOBAL on a screen is not implemented");
+            if (accept_word("is") && !at_word("global")) die_at(cur()->line, "unexpected IS on screen '%s'", sc->name);
+            if (accept_word("global")) {
+                /* GLOBAL (13.18.27; 13.17.3 rule 2): the screen-name is a contained
+                 * program's too.  Its items are resolved before this program's
+                 * procedure division (screen_global_resolve), in its own scope */
+                if (g_std < 2002) die_at(cur()->line, "GLOBAL on a screen is COBOL 2002; compile with -std=2002");
+                sc->global = 1; continue;
+            }
             die_at(cur()->line, "unexpected %s on screen '%s'", tok_desc(cur()), sc->name);
         }
         expect_period();
@@ -1617,7 +1634,7 @@ static void parse_screen_section(void)
             /* OCCURS n: n occurrences, each placed as though it had the same
              * LINE and COLUMN clauses (2023 13.18.38.4 rule 6) -- so a LINE
              * PLUS or COLUMN PLUS steps from the occurrence before */
-            int occ = 0, line_plus = -1, col_plus = -1;
+            int occ = 0, line_plus = 0, col_plus = 0, line_rel_set = 0, col_rel_set = 0, fromto = 0, fromto_tp = -1;
             unsigned seen = 0;
             while (cur()->kind != T_PERIOD) {
                 Tok *t = cur();
@@ -1632,7 +1649,7 @@ static void parse_screen_section(void)
                     }
                     seen |= b;
                 }
-                if (t->kind == T_WORD && !strcmp(t->s, "global")) die_at(t->line, "GLOBAL on a screen item is not implemented");
+                if (t->kind == T_WORD && !strcmp(t->s, "global")) die_at(t->line, "GLOBAL is written on a level 01 screen entry only (2023 13.17.3 rule 2)");
                 if (accept_word("occurs")) {
                     if (cur()->kind != T_NUM) die_at(t->line, "OCCURS in the SCREEN SECTION takes an integer (2023 13.18.38.3 rule 11)");
                     occ = atoi(cur()->s); advance(); accept_word("times");
@@ -1641,33 +1658,54 @@ static void parse_screen_section(void)
                 }
                 if (accept_word("blank")) {
                     if (accept_word("screen")) { blank_screen_entry = 1; sc->blank_screen = 1; continue; }
-                    if (accept_word("line")) die_at(t->line, "BLANK LINE is not implemented");
+                    if (accept_word("line")) { f->rsv |= COB_SR_BLANK_LINE; continue; }   /* the line cleared before the field (13.18.7.3 rule 1) */
                     accept_word("when"); if (!(accept_word("zero") || accept_word("zeros") || accept_word("zeroes"))) die_at(t->line, "expected ZERO after BLANK WHEN");
                     f->blank_zero = 1; continue;
                 }
                 if (accept_word("line")) {
                     accept_word("number"); accept_word("is");
-                    if (accept_word("plus") || accept_word("+")) {       /* relative to the previous slot's line */
+                    int rel = (accept_word("plus") || accept_word("+")) ? 1 : (accept_word("minus") || accept_word("-")) ? -1 : 0;   /* relative to the previous slot's line (13.18.35.4) */
+                    if (cur()->kind == T_WORD && !is_verb(cur()->s)) {
+                        /* identifier-1 (13.18.35.2): an unsigned integer item, read when the statement runs */
+                        if (rel && occ) die_at(t->line, "LINE PLUS/MINUS identifier with OCCURS is not implemented");
+                        f->line_r = scr_pos_ident(t->line, "LINE"); f->line_rel = rel; f->line = prev ? prev->line : 1; f->dynpos = 1; continue;
+                    }
+                    if (rel) {
                         int n = 1;
                         if (cur()->kind == T_NUM) { n = atoi(cur()->s); advance(); }
-                        f->line = (prev ? prev->line : 0) + n; line_plus = n; continue;
+                        f->line = (prev ? prev->line : 0) + rel * n; line_plus = rel * n; line_rel_set = 1;
+                        if (prev && prev->dynpos) { f->line_rel_n = rel * n; f->dynpos = 1; }   /* after a slot placed at run time: so is this */
+                        else if (f->line < 1 && rel < 0) die_at(t->line, "LINE MINUS %d puts the item above line 1", n);
+                        continue;
                     }
-                    if (cur()->kind != T_NUM) die_at(t->line, "expected a number after LINE");
+                    if (cur()->kind != T_NUM) die_at(t->line, "expected a number or an identifier after LINE");
                     f->line = atoi(cur()->s); advance(); continue;
                 }
                 if (accept_word("column") || accept_word("col")) {
                     accept_word("number"); accept_word("is");
-                    if (accept_word("plus") || accept_word("+")) {
+                    int rel = (accept_word("plus") || accept_word("+")) ? 1 : (accept_word("minus") || accept_word("-")) ? -1 : 0;
+                    if (cur()->kind == T_WORD && !is_verb(cur()->s)) {
+                        /* identifier-1 (13.18.14.2): read when the statement runs; PLUS and
+                         * MINUS then count from the end of the slot before (rule 15) */
+                        if (rel && occ) die_at(t->line, "COLUMN PLUS/MINUS identifier with OCCURS is not implemented");
+                        f->col_r = scr_pos_ident(t->line, "COLUMN"); f->col_rel = rel; f->col = 1; f->dynpos = 1; continue;
+                    }
+                    if (rel) {
                         /* relative to the end of the item before: PLUS 1 is immediately
-                         * after it (2023 13.18.14.4 rule 15); GnuCOBOL and Micro Focus
-                         * count PLUS n as n columns beyond that, kept under their switches */
+                         * after it (2023 13.18.14.4 rule 15), MINUS n that many columns
+                         * back from its last; GnuCOBOL and Micro Focus count PLUS n as n
+                         * columns beyond the end, kept under their switches */
                         int n = 1;
                         if (cur()->kind == T_NUM) { n = atoi(cur()->s); advance(); }
-                        if (n < 1) die_at(t->line, "COLUMN PLUS takes a positive integer (2023 13.18.14.3 rule 12)");
-                        int step = g_dialect_gnu || g_dialect_mf ? n : n - 1;
-                        f->col = (prev && (!f->line || f->line == prev->line) ? prev->col + prev->width : 0) + step; col_plus = step; continue;
+                        if (n < 1) die_at(t->line, "COLUMN %s takes a positive integer (2023 13.18.14.3 rule 12)", rel > 0 ? "PLUS" : "MINUS");
+                        int step = rel > 0 ? (g_dialect_gnu || g_dialect_mf ? n : n - 1) : -n - 1;
+                        if (!prev) die_at(t->line, "LINE PLUS and COLUMN PLUS or MINUS are relative to the screen item before, and the first item of a screen has none (2023 13.18.35.3 rule 13, 13.18.14.3 rule 13)");
+                        f->col = (prev && (!f->line || f->line == prev->line) ? prev->col + prev->width : 0) + step; col_plus = step; col_rel_set = 1;
+                        if (prev && prev->dynpos) { f->col_rel_n = step + 1; f->dynpos = 1; if (f->col < 1) f->col = 1; }   /* from the slot before's last column, at run time */
+                        else if (f->col < 1) die_at(t->line, "COLUMN MINUS %d puts the item before column 1", n);
+                        continue;
                     }
-                    if (cur()->kind != T_NUM) die_at(t->line, "expected a number after COLUMN");
+                    if (cur()->kind != T_NUM) die_at(t->line, "expected a number or an identifier after COLUMN");
                     f->col = atoi(cur()->s); advance(); continue;
                 }
                 if (accept_word("value")) {
@@ -1694,17 +1732,31 @@ static void parse_screen_section(void)
                         /* FROM with TO is one source-destination clause of the
                          * format (13.17.2); anything else is one too many */
                         int pair = (f->kind == COB_SCR_FROM && kind == COB_SCR_TO) || (f->kind == COB_SCR_TO && kind == COB_SCR_FROM);
-                        if (pair) die_at(t->line, "FROM and TO in one screen entry (shown from one item, keyed into another) is not implemented");
-                        die_at(t->line, "a screen entry has one of FROM, TO, USING and VALUE (2023 13.17.2)");
+                        if (f->from_lit && kind == COB_SCR_TO) die_at(t->line, "FROM literal with TO: the literal is shown and nothing keyed; write VALUE (2023 13.17.2)");
+                        if (!pair) die_at(t->line, "a screen entry has one of FROM, TO, USING and VALUE (2023 13.17.2)");
+                        /* FROM x TO y: shown from x, keyed into y (13.17.2, one
+                         * source-destination clause).  Two slots at one place: the
+                         * FROM, then the TO marked FROMTO, whose initial content is the
+                         * FROM's (libcob scr_render) */
+                        if (f->from_lit) die_at(t->line, "FROM literal with TO: the literal is shown and nothing keyed; write VALUE (2023 13.17.2)");
+                        if (occ) die_at(t->line, "FROM with TO under OCCURS is not implemented");
+                        advance();
+                        fromto = 1; fromto_tp = g_tp;
+                        if (f->kind == COB_SCR_TO) { f->kind = COB_SCR_FROM; fromto_tp = f->ref_tp; f->ref_tp = g_tp; }   /* TO y FROM x: the FROM slot first, the TO after it */
+                        if (cur()->kind != T_WORD) die_at(t->line, "expected a data-name");
+                        advance();
+                        while ((at_word("of") || at_word("in")) && peek(1)->kind == T_WORD) { advance(); advance(); }
+                        if (cur()->kind == T_LP) { int d = 0; do { if (cur()->kind == T_LP) d++; else if (cur()->kind == T_RP) d--; advance(); } while (d && cur()->kind != T_PERIOD); }
+                        if (cur()->kind == T_LP) { int d = 0; do { if (cur()->kind == T_LP) d++; else if (cur()->kind == T_RP) d--; advance(); } while (d && cur()->kind != T_PERIOD); }
+                        continue;
                     }
                     advance();
                     if (kind == COB_SCR_FROM && (cur()->kind == T_STR || cur()->kind == T_NUM)) {
                         /* FROM literal-1 (2002 13.15.1): the literal through
                          * the entry's PICTURE -- a VALUE with a PICTURE, as
                          * the slot is finished below */
-                        if (cur()->kind == T_NUM) die_at(t->line, "a screen FROM with a numeric literal is not implemented (2002 13.15.1)");
-                        no_zero_tok(cur(), "a screen FROM", "2023 13.18.25.3 rule 5");
-                        f->kind = COB_SCR_VALUE; f->value = cur(); f->natlit = cur()->nat; f->from_lit = 1;
+                        if (cur()->kind != T_NUM) no_zero_tok(cur(), "a screen FROM", "2023 13.18.25.3 rule 5");
+                        f->kind = COB_SCR_VALUE; f->value = cur(); f->natlit = cur()->kind == T_STR && cur()->nat; f->from_lit = cur()->kind == T_NUM ? 2 : 1;   /* 2: numeric, edited through the PICTURE below */
                         advance(); continue;
                     }
                     /* the reference's tokens are recorded and skipped, as
@@ -1738,7 +1790,13 @@ static void parse_screen_section(void)
                 if (accept_word("foreground-color") || accept_word("foreground-colour") || accept_word("background-color") || accept_word("background-colour")) {
                     int bg = t->s[0] == 'b';
                     accept_word("is");
-                    if (cur()->kind != T_NUM) die_at(t->line, "expected a colour number 0-7 after %s", t->s);
+                    if (cur()->kind == T_WORD && !is_verb(cur()->s)) {
+                        /* identifier-1 (13.18.4.2, 13.18.23.2): an unsigned integer item, read when the statement runs */
+                        if (occ) die_at(t->line, "a colour identifier with OCCURS is not implemented");
+                        if (bg) f->bg_r = scr_pos_ident(t->line, "BACKGROUND-COLOR"); else f->fg_r = scr_pos_ident(t->line, "FOREGROUND-COLOR");
+                        continue;
+                    }
+                    if (cur()->kind != T_NUM) die_at(t->line, "expected a colour number 0-7 or an identifier after %s", t->s);
                     int c = atoi(cur()->s); advance();
                     if (c < 0 || c > 7) die_at(t->line, "a screen colour is 0-7 (black, blue, green, cyan, red, magenta, yellow, white)");
                     if (bg) f->bg = c; else f->fg = c;
@@ -1783,11 +1841,13 @@ static void parse_screen_section(void)
                 pend_erase |= f->ext & (COB_SX_ERASE_EOL | COB_SX_ERASE_EOS);   /* a group's ERASE: its first field's */
                 f->ext &= ~(COB_SX_ERASE_EOL | COB_SX_ERASE_EOS);
             }
-            if (sc->nf == 0 && (line_plus >= 0 || col_plus >= 0))
+            if (sc->nf == 0 && (line_rel_set || col_rel_set || (f->line_r && f->line_rel) || (f->col_r && f->col_rel)))
                 die_at(fline, "LINE PLUS and COLUMN PLUS are relative to the screen item before, and the first item of a screen has none (2023 13.18.35.3 rule 13, 13.18.14.3 rule 13)");
+            if (blank_screen_entry) { if (f->fg != 255) sc->bs_fg = f->fg; if (f->bg != 255) sc->bs_bg = f->bg; }   /* its colours: the screen's defaults (13.18.7.3 rules 3-4) */
             if (blank_screen_entry && f->kind < 0 && !f->has_pic) continue;   /* just BLANK SCREEN */
             if (occ > 1 && f->kind < 0 && !f->has_pic) die_at(fline, "OCCURS on a screen group is not implemented");
-            if (occ && line_plus < 0 && col_plus < 0 && (seen & (scr_clause_bit("line") | scr_clause_bit("col"))))
+            if (occ && (f->line_r || f->col_r || f->fg_r || f->bg_r)) die_at(fline, "an identifier for LINE, COLUMN or a colour with OCCURS is not implemented");
+            if (occ && !line_rel_set && !col_rel_set && (seen & (scr_clause_bit("line") | scr_clause_bit("col"))))
                 die_at(fline, "an OCCURS screen item with LINE or COLUMN places its occurrences with PLUS or MINUS in one of them (2023 13.18.38.3 rules 14, 15)");
             if (f->kind < 0 && !f->has_pic && !f->value) {
                 if (f->just) die_at(fline, "JUSTIFIED is written on an elementary screen item only (2023 13.18.32.3 rule 1)");
@@ -1872,6 +1932,25 @@ static void parse_screen_section(void)
                  * the right, which is warned */
                 int pnat = f->pi.category == PIC_NATIONAL;
                 const char *what = f->from_lit ? "FROM" : "VALUE";
+                if (f->from_lit == 2) {
+                    /* FROM numeric-literal (13.18.25.2): the literal as a MOVE puts it
+                     * into an item of the field's PICTURE -- a numeric one's digits
+                     * (store_numeric), a numeric-edited one edited (init_numed_value) */
+                    if (f->pi.category != PIC_NUMERIC && f->pi.category != PIC_NUMERIC_EDITED)
+                        die_at(fline, "a screen FROM with a numeric literal needs a numeric or numeric-edited PICTURE (2023 13.18.25.3 rule 4)");
+                    Sym tmp; memset(&tmp, 0, sizeof tmp);
+                    snprintf(tmp.name, sizeof tmp.name, "%s", ename[0] ? ename : "the screen FROM");
+                    tmp.has_pic = 1; tmp.pi = f->pi; tmp.usage = U_DISPLAY; tmp.size = f->pi.bytes + (f->sign_sep ? 1 : 0);
+                    tmp.sign_lead = f->sign_lead; tmp.sign_sep = f->sign_sep; tmp.blank_zero = f->blank_zero; tmp.line = fline;
+                    snprintf(tmp.pic, sizeof tmp.pic, "%s", f->pic);
+                    NumLit n; numlit_parse(f->value, &n);
+                    unsigned char *b = xmalloc((size_t)tmp.size + 1); memset(b, '0', (size_t)tmp.size); b[tmp.size] = 0;
+                    if (f->pi.category == PIC_NUMERIC_EDITED) { int save = g_std; g_std = 2023; init_numed_value(&tmp, b, &n, f->value); g_std = save; }
+                    else store_numeric(&tmp, &n, b, fline);
+                    Tok *v = xmalloc(sizeof *v); *v = *f->value; v->kind = T_STR; v->s = (char *)b; v->len = tmp.size; v->nat = 0;
+                    f->value = v; f->has_pic = 0; f->width = tmp.size;
+                }
+                else {
                 if (f->pi.category != PIC_ALPHANUMERIC && f->pi.category != PIC_ALPHABETIC && !pnat)
                     die_at(fline, "a screen %s literal with a numeric or edited PICTURE is not implemented (2002 13.15.2 rule 7)", what);
                 if (pnat != !!f->natlit)
@@ -1889,12 +1968,12 @@ static void parse_screen_section(void)
                 b[cols * u] = 0;
                 v->s = b; v->len = cols * u;
                 f->value = v; f->has_pic = 0;
+                }
             }
             if (f->kind == COB_SCR_VALUE) {
                 if (f->has_pic) die_at(fline, "a VALUE slot takes no PICTURE");
                 f->width = f->natlit ? nat_lit_cols((const unsigned char *)f->value->s, f->value->len) : f->value->len;
-            }
-            else {
+            } else {
                 if (!f->has_pic && f->ref_tp && !f->from_lit) {
                     /* FROM, TO or USING with no PICTURE (BP-G5,
                      * -dialect=gnucobol only): the field takes its item's
@@ -1927,19 +2006,40 @@ static void parse_screen_section(void)
             /* SECURE, REQUIRED, FULL and AUTO on an item that takes no input
              * have no effect (13.18.3.3 rule 2, 13.18.47.3 rule 1, 13.18.50.3
              * rule 2): nothing forbids writing them */
+            int flags_in = f->flags;                                 /* before the strip: the TO twin of FROM x TO y keeps the input clauses */
             if (f->kind != COB_SCR_TO && f->kind != COB_SCR_USING) f->flags &= ~(COB_SF_SECURE | COB_SF_REQUIRED | COB_SF_FULL | COB_SF_AUTO);
-            if (occ > 1 && f->kind != COB_SCR_VALUE)
-                die_at(fline, "OCCURS on a FROM, TO or USING screen item (a table's elements, 2023 13.18.38.3 rule 13) is not implemented");
+            if (occ && f->kind != COB_SCR_VALUE) {
+                /* OCCURS on a FROM, TO or USING item: each occurrence its element,
+                 * the item a table element written without the subscript the
+                 * OCCURS supplies (13.18.38.3 rule 13; sfield_resolve) -- said here, once */
+                Sym *it = f->ref_tp > 0 ? sym_lookup_quiet(g_tok[f->ref_tp].s) : NULL;
+                int in_table = 0;
+                for (Sym *q = it; q; q = q->parent >= 0 ? &g_sym[q->parent] : NULL) if (q->occurs) in_table = 1;   /* the layout's ndims is not computed yet: the clauses are */
+                if (it && !in_table) die_at(fline, "'%s' under a screen OCCURS is a table element written without its subscript (2023 13.18.38.3 rule 13)", it->name);
+                f->occ_k = 1;
+            }
             if (pend_erase) { f->ext |= pend_erase; pend_erase = 0; }
             sc->nf++;
+            if (fromto) {
+                /* the TO slot of FROM x TO y, at the same place with the same picture */
+                if (sc->nf == sc->fcap) { sc->fcap = sc->fcap ? sc->fcap * 2 : 16; sc->f = realloc(sc->f, sc->fcap * sizeof *sc->f); }
+                SField *second = &sc->f[sc->nf], *first = &sc->f[sc->nf - 1];
+                *second = *first;
+                second->kind = COB_SCR_TO; second->ref_tp = fromto_tp; second->rsv |= COB_SR_FROMTO; second->flags = flags_in;
+                second->ref = NULL; second->item = NULL; second->dyn = 0; second->stat_off = 0; second->ext &= ~(COB_SX_ERASE_EOL | COB_SX_ERASE_EOS | COB_SX_ERASE_ALL);
+                second->line_r = second->col_r = NULL; second->line_rel = second->col_rel = 0; second->line_rel_n = second->col_rel_n = 0;
+                second->samepos = first->dynpos;        /* where the FROM is, copied at run time when that is computed */
+                sc->nf++;
+            }
             for (int k = 1; k < occ; k++) {
                 /* the next occurrence: the same entry, placed by the same
                  * clauses against the one before it */
                 if (sc->nf == sc->fcap) { sc->fcap = sc->fcap ? sc->fcap * 2 : 16; sc->f = realloc(sc->f, sc->fcap * sizeof *sc->f); }
                 SField *last = &sc->f[sc->nf - 1], *o = &sc->f[sc->nf];
                 *o = *last;
-                if (line_plus >= 0) o->line = last->line + line_plus;
-                if (col_plus >= 0) o->col = (line_plus < 0 ? last->col + last->width : o->col) + col_plus;
+                if (line_rel_set) o->line = last->line + line_plus;
+                if (col_rel_set) o->col = (!line_rel_set ? last->col + last->width : o->col) + col_plus;
+                if (o->occ_k) o->occ_k = k + 1;
                 sc->nf++;
             }
         }

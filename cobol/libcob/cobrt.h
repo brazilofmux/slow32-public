@@ -171,7 +171,8 @@ enum { COB_SF_HIGHLIGHT = 1, COB_SF_UNDERLINE = 2, COB_SF_AUTO = 4, COB_SF_REVER
  * ERASE_*: clear before painting; NOBEEP: no bell on a rejected key. */
 enum { COB_SX_POS = 1, COB_SX_PROMPT = 2, COB_SX_ERASE_EOS = 4, COB_SX_ERASE_EOL = 8,
        COB_SX_ERASE_ALL = 16, COB_SX_NOBEEP = 32, COB_SX_CONT = 64 };
-enum { COB_SR_DYNLEN = 1, COB_SR_DISPVAL = 2, COB_SR_BLINK = 4, COB_SR_BELL = 8, COB_SR_DYNSIZE = 16 };   /* DISPVAL: a FROM slot shows its item as a plain DISPLAY would; BLINK, BELL: those clauses; DYNSIZE: DYNLEN under SIZE -- the width is SIZE's, the part's length in the value word */
+enum { COB_SR_DYNLEN = 1, COB_SR_DISPVAL = 2, COB_SR_BLINK = 4, COB_SR_BELL = 8, COB_SR_DYNSIZE = 16,
+       COB_SR_FROMTO = 32, COB_SR_BLANK_LINE = 64, COB_SR_BLANK_SCREEN = 128 };   /* FROMTO: a TO slot whose initial content is the FROM slot's before it (FROM x TO y, 13.17.2); BLANK_LINE: the line cleared before the field is painted on a DISPLAY (13.18.7.3 rule 1); BLANK_SCREEN: the entry that carries BLANK SCREEN, its colours the screen's defaults (rules 3-4) */   /* DISPVAL: a FROM slot shows its item as a plain DISPLAY would; BLINK, BELL: those clauses; DYNSIZE: DYNLEN under SIZE -- the width is SIZE's, the part's length in the value word */
 
 typedef struct {
     unsigned char kind, flags;
@@ -192,7 +193,11 @@ typedef struct {
     unsigned int nfields;
     unsigned int blank_screen;   /* BLANK SCREEN: 1 clears on a DISPLAY; 2 (a dialect's count, -dialect=gnucobol/mf) on an ACCEPT as well -- 2023 13.18.7.3 rule 5 ignores it there */
     cob_scr_field *fields;
+    int line_off, col_off;       /* ACCEPT/DISPLAY screen-name AT LINE l COLUMN c (14.9.1.2 format 4, 14.9.11.2 format 2): the screen record placed at (l, c), as offsets from (1, 1); the statement stores them */
 } cob_screen;
+/* what a screen statement found (2023 9.2.x; EC-SCREEN): bits the compiler
+ * raises as conditions when they are checked, and DISPLAY's ON EXCEPTION */
+enum { COB_SCR_E_STARTING_COLUMN = 1, COB_SCR_E_LINE_NUMBER = 2, COB_SCR_E_FIELD_OVERLAP = 4, COB_SCR_E_ITEM_VALUE = 8 };
 
 typedef struct {
     unsigned char cat;

@@ -1788,7 +1788,10 @@ static void sfield_resolve(SField *f)
 {
     if (f->item || f->kind == COB_SCR_VALUE || f->kind < 0 || !f->ref_tp) return;
     int save_tp = g_tp; g_tp = f->ref_tp;
+    g_scr_occ = f->occ_k;                       /* OCCURS: the item is this occurrence's element */
     Ref rr; parse_ref(&rr);
+    g_scr_occ = 0;
+    if (f->occ_k && rr.sym->ndims == 0) die_at(f->srcline, "'%s' under a screen OCCURS is a table element written without its subscript (2023 13.18.38.3 rule 13)", rr.sym->name);
     if (f->kind != COB_SCR_FROM) no_constrec_recv(&rr, f->kind == COB_SCR_TO ? "a screen item's TO" : "a screen item's USING");
     g_tp = save_tp;
     f->ref = xmalloc(sizeof *f->ref); *f->ref = rr;
@@ -1812,6 +1815,20 @@ static void sfield_resolve(SField *f)
 /* the screen window's dynamic slots: each reference's address, stored
  * into the slot's cell before the runtime paints or focuses the window */
 static void emit_dynpart_len(SField *f);
+/* a GLOBAL screen's references are the declaring program's: resolved
+ * before its procedure division, in its own scope, so a contained program
+ * finds them bound (13.18.27; 13.17.3 rule 2) */
+static void screen_global_resolve(void)
+{
+    for (int i = g_screen_base; i < g_nscreen; i++) {
+        Screen *sc = &g_screens[i];
+        if (!sc->global) continue;
+        for (int k = 0; k < sc->nf; k++) {
+            sfield_resolve(&sc->f[k]);
+            if (sc->f[k].dyn) die_at(sc->f[k].srcline, "a GLOBAL screen's item '%s' has a run-time address (a subscript, or a LINKAGE or EXTERNAL record): not implemented", sc->f[k].item->name);
+        }
+    }
+}
 static void emit_screen_dyn_fill(Screen *sc, int first, int count)
 {
     for (int k = first; k < first + count && k < sc->nf; k++) {
@@ -1820,7 +1837,7 @@ static void emit_screen_dyn_fill(Screen *sc, int first, int count)
         if (!f->dyn) continue;
         if (f->dynpart) emit_dynpart_len(f);    /* the part's length in bytes, into its descriptor (args.h) */
         emit_ref_addr(f->ref, "r1");
-        char cell[48]; snprintf(cell, sizeof cell, ".Lsdyn%d_%d_%d", g_unit, (int)(sc - g_screens), k);
+        char cell[48]; snprintf(cell, sizeof cell, ".Lsdyn%d_%d_%d", sc->unit, (int)(sc - g_screens), k);
         emit_la("r2", cell);
         emit("\tstw r2+0, r1");
     }

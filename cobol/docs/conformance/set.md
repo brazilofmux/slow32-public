@@ -37,6 +37,13 @@ exception-sites gate (`SET ix TO n`, `ix` an index data item).
 | SR 6 | the condition-name has a conditional variable | **refused**: "'x' is not a condition-name" |
 | SR 7 | TO FALSE needs the FALSE phrase in the VALUE clause | **refused**: "its VALUE clause has no FALSE phrase"; **test**: 2002/condfalse |
 
+## Format 6, SET screen-name ATTRIBUTE (2002; 2023 14.9.39 format 6; queue item 38, 2026-10-07)
+
+| rule | paraphrase | disposition |
+|---|---|---|
+| format 6 | BELL, BLINK, HIGHLIGHT, LOWLIGHT, REVERSE-VIDEO, UNDERLINE, each ON or OFF, of a screen or a named group | **test**: 2002/screenglobal (screen.md has the row); the slots' bits are changed in place, the next DISPLAY or ACCEPT paints them so |
+| SR 15, 16 | an attribute once; not HIGHLIGHT with LOWLIGHT | **refused**: bad/std2002-screen-set-attr-twice, -hl |
+
 ## Format 15, SET CONTENT OF (2014; 2023 14.9.39 format 15; queue item 21, 2026-10-07)
 
 | rule | paraphrase | disposition |
