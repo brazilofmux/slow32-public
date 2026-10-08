@@ -1,0 +1,17 @@
+identification division.
+program-id. p-std2002-resume-when-proc.
+*> RESUME in a WHEN phrase takes NEXT STATEMENT (14.9.33.3 rule 1).
+data division.
+working-storage section.
+01 t pic x(5) value "abcde".
+01 n pic 9 value 9.
+procedure division.
+
+main section.
+    >>turn ec-bound-ref-mod checking on
+    perform
+        move t(n:1) to t
+    when exception ec-bound-ref-mod
+        resume at main
+    end-perform.
+    stop run.

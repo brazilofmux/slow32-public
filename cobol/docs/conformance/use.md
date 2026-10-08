@@ -12,7 +12,7 @@ and IC234A (USE GLOBAL across contained programs), the RW module.
 |---|---|---|
 | 1 | USE immediately follows its section header in the declaratives, a sentence by itself | **refused**: bad/use-not-first, bad/use-not-alone -- neither checked before this sweep ("USE must be the first sentence" was said only with no section at all) |
 | 2 | no sort or merge file in USE | **refused**: bad/use-sort-file -- accepted before this sweep |
-| 3 | a declarative procedure refers to no nondeclarative procedure (except in RESUME) | **refused**: bad/use-refers-main (GO TO, PERFORM, ALTER) -- accepted before this sweep; RESUME is a named gap |
+| 3 | a declarative procedure refers to no nondeclarative procedure (except in RESUME) | **refused**: bad/use-refers-main (GO TO, PERFORM, ALTER) -- accepted before this sweep; RESUME AT procedure-name is the exception (resume.md, 2026-10-07) |
 | 4 | a declarative procedure is named from another section, or from outside the declaratives, only by PERFORM | **refused**: bad/use-goto-into -- accepted before this sweep |
 | 5 | the files need not share organization or access | **test**: CCVS SQ module |
 | 6 | ERROR and EXCEPTION are the same in format 1 | **test**: accepted (the parser takes either) |

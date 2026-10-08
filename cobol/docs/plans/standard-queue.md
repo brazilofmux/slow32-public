@@ -485,8 +485,11 @@ at run time, a record of the file written as itself -- completes it (io-statemen
 **41. FORMAT and SELECT WHEN.** A.4.8; 13.18.24, 13.18.51; Ed. 2002; M.
 - Today: "unexpected 'format' in FD".
 
-**42. RESUME.** A.4.12; 14.9.33; Ed. 2002; S-M; deps 3.
-- Today: "RESUME is not implemented (COBOL 2014 made it optional)".
+**42. RESUME.** A.4.12; 14.9.33; Ed. 2002; S-M; deps 3. **DONE 2026-10-07**: AT NEXT STATEMENT
+from a declarative (the section's exit, with a mark that lets a fatal condition's return go on) and
+from a WHEN phrase (the phrase's return); AT procedure-name a GO TO with the declarative's frame
+dropped (conformance/resume.md; test 2002/resume; 5 bad tests).
+- Was: "RESUME is not implemented (COBOL 2014 made it optional)".
 
 **43. Dynamic-length items.** A.4.5; 13.18.19, SPECIAL-NAMES DYNAMIC LENGTH STRUCTURE, SET format
 16; Ed. 2014; L.

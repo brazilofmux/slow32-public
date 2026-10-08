@@ -167,7 +167,49 @@ static void emit_ec_dispatch(int i)
         emit("\tjal r0, .Lgb%d", g_unit);
         return;
     }
-    if (ec_fatal(i)) emit_call("cob_ec_abort");     /* abnormal run unit termination (14.6.12) */
+    if (ec_fatal(i)) emit_call(sec >= 0 ? "cob_ec_abort_unless_resumed" : "cob_ec_abort");   /* abnormal run unit termination (14.6.12), unless the declarative left by RESUME */
+}
+
+/* RESUME AT {NEXT STATEMENT | procedure-name} (2023 14.9.33): in a
+ * declarative, or in a WHEN phrase of an exception-checking PERFORM (NEXT
+ * STATEMENT only, rule 1).  NEXT STATEMENT leaves the procedure as its
+ * end would -- the declarative section's exit, the phrase's return to its
+ * resume point -- with the mark that lets a fatal condition's return go
+ * on instead of ending the run (cob_resume_mark).  A procedure-name is a
+ * GO TO out of the declarative, its PERFORM frame dropped first. */
+static void parse_resume(void)
+{
+    int line = cur()->line;
+    accept_word("at");
+    int next = 0;
+    if (accept_word("next")) { expect_word("statement"); next = 1; }
+    if (g_in_ecp_when) {
+        if (!next) die_at(line, "RESUME in a WHEN phrase of an exception-checking PERFORM takes NEXT STATEMENT (2023 14.9.33.3 rule 1)");
+        if (!g_ecp_when_cur) die_at(line, "internal: RESUME in a WHEN phrase without its PERFORM");
+        emit_call("cob_resume_mark");
+        emit_li("r3", g_ecp_when_cur->id);
+        emit("\tadd r4, sp, r0");
+        emit_call("cob_ecp_pop");
+        emit("\tjalr r0, r1, 0");
+        return;
+    }
+    if (!g_in_decl || g_cur_sec_id < 0) die_at(line, "RESUME is written in a declarative, or in a WHEN phrase of an exception-checking PERFORM (2023 14.9.33.3 rule 1)");
+    for (int u = 0; u < g_nuse; u++)
+        if (g_use[u].unit == g_unit && g_use[u].sec == g_cur_sec_id && g_use[u].global)
+            die_at(line, "RESUME in a declarative whose USE is GLOBAL (2023 14.9.33.3 rule 2)");
+    if (next) {
+        emit_call("cob_resume_mark");
+        if (g_exit_sec_label < 0) g_exit_sec_label = new_label();   /* as EXIT SECTION: the section's exit returns to the statement's end */
+        emit_jump(g_exit_sec_label);
+        return;
+    }
+    if (!at_para_name(cur()) || !para_find(cur()->s)) die_at(cur()->line, "RESUME AT needs NEXT STATEMENT or a procedure-name (2023 14.9.33.2)");
+    Para *p = expect_para();
+    if (para_decl_sec(p) >= 0) die_at(line, "RESUME AT names a procedure in the nondeclarative part (2023 14.9.33.3 rule 3)");
+    emit_para_cell("r3", g_unit, g_cur_sec_id);         /* the declarative's frame, abandoned */
+    emit_call("cob_perform_exit");
+    emit("\tjal r0, .Lp%d_%d", g_unit, p->id);
+    pc_goto(p, "goto");
 }
 
 /* EC-SIZE (cobol ISSUES-55): with checking on for any of the conditions a

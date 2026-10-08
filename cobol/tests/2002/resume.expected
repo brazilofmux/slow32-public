@@ -1,0 +1,9 @@
+declarative: EC-BOUND-REF-MOD               
+after the first raise, cnt=1
+declarative: EC-BOUND-REF-MOD               
+recovery: cnt=2
+when: EC-SIZE-ZERO-DIVIDE            
+after the divide: k=007
+when: EC-SIZE-ZERO-DIVIDE            
+after the compute
+done

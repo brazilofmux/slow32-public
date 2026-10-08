@@ -2683,11 +2683,22 @@ void cob_ecp_push(int id, void *resume, int fatal, void *frame)
 }
 /* the end of the last phrase: where to resume; a fatal condition ends
  * the run instead (14.6.13.1.3 rule 4) */
+/* RESUME (2023 14.9.33): a declarative or a WHEN phrase that leaves by
+ * RESUME AT NEXT STATEMENT recovers from the condition, a fatal one too
+ * -- the mark is read where the return would end the run */
+static int ec_resumed;
+void cob_resume_mark(void) { ec_resumed = 1; }
+void cob_ec_abort_unless_resumed(void)
+{
+    if (ec_resumed) { ec_resumed = 0; return; }
+    cob_ec_abort();
+}
 void *cob_ecp_pop(int id, void *frame)
 {
     if (!necps || ecps[necps - 1].id != id || ecps[necps - 1].frame != frame) cob_fatal("exception-checking PERFORM: no raise to return to");
     struct ecp_ent e = ecps[--necps];
-    if (e.fatal) cob_ec_abort();
+    if (e.fatal && !ec_resumed) cob_ec_abort();
+    ec_resumed = 0;
     return e.resume;
 }
 /* the end of the PERFORM: a raise whose phrase left by EXIT PERFORM is

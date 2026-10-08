@@ -848,8 +848,10 @@ static void parse_statement_1(void)
     if (g_std >= 2002 && !strcmp(v, "validate"))
         die_at(t->line, "VALIDATE is not implemented: an obsolete facility no COBOL provider has implemented (2023 D.22, F.2 item 5; docs/standards.md)");
     if (!strcmp(v, "raise")) die_at(t->line, "RAISE is COBOL 2002; compile with -std=2002");
-    if (g_std >= 2002 && !strcmp(v, "resume"))
-        die_at(t->line, "RESUME is not implemented (COBOL 2014 made it optional)");
+    if (!strcmp(v, "resume")) {
+        if (g_std < 2002) die_at(t->line, "RESUME is COBOL 2002; compile with -std=2002");
+        advance(); parse_resume(); return;
+    }
     /* refused by name, as the other gaps are: they were "not a COBOL verb"
      * (docs/conformance/coverage.md found them) */
     if (g_std >= 2002 && (!strcmp(v, "commit") || !strcmp(v, "rollback")))

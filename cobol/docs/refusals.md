@@ -91,7 +91,6 @@ COBOL 2002/2023 (Stage B):
   PICTURE (2014 E.3 item 18): the picture scanner works in bytes, and a
   multi-byte UTF-8 symbol is refused as "one character"; WITH PICTURE
   SYMBOL gives such a currency its string (edition-2014.md);
-- RESUME (optional since 2014);
 - USAGE NATIONAL on a screen item whose PICTURE is not N
   (docs/conformance/national-boolean.md).
 - the 2002 Report Writer additions: PRESENT WHEN, VARYING, OCCURS in a
