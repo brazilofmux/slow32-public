@@ -63,11 +63,51 @@ static void odo_ref_lengths(Ref *r, const Sym *g, const Sym *tbl)
     } else { r->odo_base = g->size - tbl->occurs * tbl->size; r->odo_elem = tbl->size; r->odo_bits = 0; }
 }
 static int g_call_byref;                        /* parsing a CALL's BY REFERENCE argument */
+static int g_vlg_ok;                            /* parsing MOVE's or a relation's operands: a variable-length group may be one (decided at emission against the other operand) */
+static int g_vlg_tables[64], g_nvlg_tables;     /* the groups whose shape tables this unit emits (.Lvlg<unit>_<sym>) */
+/* A variable-length group's shape (2023 8.5.1.12): its bytes, then each
+ * dynamic part -- a dynamic-capacity table or a dynamic-length item, every
+ * occurrence of one under a fixed table -- as (offset, kind, descriptor
+ * label), in offset order.  Two groups match when the shapes are the same
+ * but for the parts' own limits; the runtime moves or compares by it. */
+typedef struct { int off, kind, sym; } VlgPart;
+static int vlg_parts_walk(Sym *s, int base, VlgPart *out, int n, int max)
+{
+    for (int c = s->child; c >= 0; c = g_sym[c].sibling) {
+        Sym *k = &g_sym[c];
+        if (k->is_cond || k->is_index || k->redefines >= 0) continue;
+        int reps = (k->occurs && !k->dyn) ? k->occurs : 1, step = k->dyn ? 0 : k->dynl ? (int)sizeof(cob_dyn) : k->size;
+        for (int r = 0; r < reps; r++) {
+            int off = base + (k->offset - s->offset) + r * step;
+            if (k->dyn || k->dynl) { if (n < max) { out[n].off = off; out[n].kind = k->dyn ? 1 : 2; out[n].sym = c; } n++; }
+            else if (k->is_group) n = vlg_parts_walk(k, off, out, n, max);
+        }
+    }
+    return n;
+}
+static int vlg_parts(Sym *g, VlgPart *out, int max)
+{
+    int n = vlg_parts_walk(g, 0, out, 0, max);
+    for (int i = 1; i < n && i < max; i++) for (int j = i; j > 0 && out[j - 1].off > out[j].off; j--) { VlgPart t = out[j]; out[j] = out[j - 1]; out[j - 1] = t; }
+    return n;
+}
+static int vlg_same_shape(Sym *a, Sym *b)
+{
+    VlgPart pa[64], pb[64]; int na = vlg_parts(a, pa, 64), nb = vlg_parts(b, pb, 64);
+    if (a->size != b->size || na != nb || na > 64) return 0;
+    for (int i = 0; i < na; i++) {
+        Sym *x = &g_sym[pa[i].sym], *y = &g_sym[pb[i].sym];
+        if (pa[i].off != pb[i].off || pa[i].kind != pb[i].kind) return 0;
+        if (x->dyn && (x->size != y->size || (x->dyn_init != y->dyn_init))) return 0;   /* the elements' bytes; INITIALIZED decides a new element's content */
+        if (x->dynl && (x->pi.category == PIC_NATIONAL) != (y->pi.category == PIC_NATIONAL)) return 0;
+    }
+    return 1;
+}
 static void operand_odo_length(Opnd *o)
 {
     if (o->kind != O_REF || o->ref.rm || o->ref.nsub) return;
     Sym *g = o->ref.sym;
-    if (g->is_group && vlen_below(g) && !g_call_byref)
+    if (g->is_group && vlen_below(g) && !g_call_byref && !g_vlg_ok)
         die_at(o->line, "'%s' is a variable-length group -- it holds the %s '%s' -- and this stage does not move, compare or send one whole (2023 8.5.1.12, 14.6.9); name its items",
                g->name, vlen_below(g)->dyn ? "dynamic-capacity table" : "dynamic-length item", vlen_below(g)->name);
     if (!g->is_group || !has_odo(g)) return;

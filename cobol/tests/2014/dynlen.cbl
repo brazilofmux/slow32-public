@@ -9,7 +9,9 @@ program-id. dynlen.
 *> FUNCTION LENGTH / BYTE-LENGTH count it; SET SIZE OF pads with spaces or
 *> cuts; INITIALIZE makes it empty; a VALUE is its initial content; under
 *> OCCURS each occurrence has its own length; items beside it keep their
-*> place.  No oracle: GnuCOBOL 4 has no DYNAMIC LENGTH.  No gcobol either.
+*> place.  INSPECT REPLACING and CONVERTING work in place at the current
+*> length; STRING INTO grows the item under its pointer, UNSTRING INTO and
+*> ACCEPT make the examined characters or the line its content.  No oracle: GnuCOBOL 4 has no DYNAMIC LENGTH.  No gcobol either.
 environment division.
 configuration section.
 special-names.
@@ -26,7 +28,7 @@ working-storage section.
    05 d pic x dynamic length occurs 3.
    05 z pic x(2) value "zz".
 01 i pic 9(4).
-01 w pic x(12).
+01 w pic x(20).
 01 num pic 9(5) value 42.
 01 sgn pic s9(3) value -7.
 procedure division.
@@ -87,5 +89,25 @@ procedure division.
     move 0 to i.
     inspect s tallying i for all "l".
     display "tallying: " i.
+    inspect s replacing all "l" by "L".
+    display "replacing: [" s "] len=" function length(s).
+    inspect s converting "aeiou" to "AEIOU".
+    display "converting: [" s "]".
+    move "ab" to s.
+    string "cd" "efg" delimited by size into s.
+    display "string into: [" s "] len=" function length(s) " (the pointer from 1: the content replaced from there, grown)".
+    move 3 to i.
+    string "XYZ" delimited by size into s with pointer i.
+    display "string with pointer 3: [" s "] len=" function length(s) " p=" i.
+    move 9 to i.
+    string "!" delimited by size into s with pointer i.
+    display "string with pointer 9: [" s "] len=" function length(s) " (a gap of spaces)".
+    move "alpha,beta gamma" to w.
+    unstring w delimited by "," or " " into s t.
+    display "unstring: s=[" s "] " function length(s) " t=[" t "] " function length(t).
+    accept s.
+    display "accept: [" s "] len=" function length(s).
+    accept t.
+    display "accept empty line: [" t "] len=" function length(t).
     display "u: len=" function length(u) " [" u "]".
     stop run.

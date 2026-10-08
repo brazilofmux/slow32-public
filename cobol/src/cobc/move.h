@@ -414,9 +414,21 @@ static void emit_move(Opnd *src, Ref *dst)
 {
     Sym *d = dst->sym;
     check_receiver(dst);
-    if (d->is_group && !dst->rm && vlen_below(d))
-        die_at(dst->line, "MOVE to '%s': a variable-length group -- it holds the %s '%s' -- is not moved whole in this stage (2023 8.5.1.12, 14.6.9); name its items",
-               d->name, vlen_below(d)->dyn ? "dynamic-capacity table" : "dynamic-length item", vlen_below(d)->name);
+    if ((d->is_group && !dst->rm && vlen_below(d)) || (src->kind == O_REF && src->ref.sym->is_group && !src->ref.rm && !src->ref.nsub && vlen_below(src->ref.sym))) {
+        /* a variable-length group, whole (8.5.1.12, 14.6.9.2): to or from a
+         * group of the same shape, the runtime copying the fixed bytes and
+         * each dynamic part by its rules; anything else is refused */
+        Sym *sg = src->kind == O_REF && src->ref.sym->is_group && !src->ref.rm && !src->ref.nsub ? src->ref.sym : NULL;
+        if (!sg || !d->is_group || dst->rm || !vlg_same_shape(sg, d))
+            die_at(dst->line, "MOVE %s%s TO '%s': a variable-length group (it holds the %s '%s') is moved whole only to or from a group of the same shape -- the same bytes, the same dynamic parts at the same places (2023 8.5.1.12 compatibility, this stage); name its items otherwise",
+                   sg ? sg->name : "", sg ? "" : "...", d->name, vlen_below(d) ? (vlen_below(d)->dyn ? "dynamic-capacity table" : "dynamic-length item") : (vlen_below(sg)->dyn ? "dynamic-capacity table" : "dynamic-length item"),
+                   vlen_below(d) ? vlen_below(d)->name : vlen_below(sg)->name);
+        g_vlg_tables[g_nvlg_tables < 64 ? g_nvlg_tables++ : 63] = sym_idx(d);
+        char tl[32]; snprintf(tl, sizeof tl, ".Lvlg%d_%d", g_unit, sym_idx(d));
+        Arg a[3] = { arg_ref(dst), arg_ref(&src->ref), arg_label(tl) };
+        emit_args(a, 3); emit_call("cob_vlg_move");
+        return;
+    }
     if (d->dynl && !dst->user_rm) {
         /* a dynamic-length item receives the whole sending operand: its
          * content and its length (8.5.1.10.4); a figurative constant is one
@@ -1008,7 +1020,7 @@ static void parse_move(void)
      * the sender as a scan, so a user function in it is called below,
      * where the statement's code begins */
     g_noemit++;
-    Opnd src; parse_operand(&src);
+    Opnd src; g_vlg_ok++; parse_operand(&src); g_vlg_ok--;   /* a variable-length group may be sent whole, to one of its shape */
     expect_word("to");
     int n = 0, cap = 0;
     Ref *dst = NULL;

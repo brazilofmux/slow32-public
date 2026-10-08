@@ -8,7 +8,7 @@ empty: s=[] len=0
 numeric: s=[00042] len=5
 signed: s=[007] len=3
 from item: s=[abc] len=3
-to fixed: w=[abc         ]
+to fixed: w=[abc                 ]
 compare equal
 compare with trailing space equal (standard padding)
 compare not equal
@@ -27,4 +27,12 @@ table: d(1)=[one] d(2)=[two] d(3)=[] lens 3 0 a=abc z=zz
 initialize g: d(1)=[] len=0 a=[   ]
 initialize d(2): len=0
 tallying: 0002
+replacing: [taLLy me] len=8
+converting: [tALLy mE]
+string into: [cdefg] len=5 (the pointer from 1: the content replaced from there, grown)
+string with pointer 3: [cdXYZ] len=5 p=0006
+string with pointer 9: [cdXYZ   !] len=9 (a gap of spaces)
+unstring: s=[alpha] 5 t=[beta] 4
+accept: [typed line] len=10
+accept empty line: [] len=0
 u: len=0 []

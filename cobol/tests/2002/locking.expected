@@ -27,6 +27,11 @@ f1 read 02 (f2's rewrite released 02): 00
 f1 read 03 (f2's new lock): 51
 f1 read 03 (f2's plain read released it): 00
 f1 read 01 (f2 closed): 00
+-- indexed: one image for the two connectors
+f1 reads 04 that f2 wrote: 00 [fourth]
+f1 reads 02 after f2's rewrite: 00 [SECOND]
+f2 reads 04 after f1's delete: 23
+f2 first after start: 00 01
 -- indexed: automatic
 f3 (automatic) read 02: 00
 f2 read 02 while f3 holds it: 51
@@ -48,6 +53,7 @@ rb delete 5: 51
 rb write 7 (slot taken): 22
 rb write 301 with lock: 00
 ra read 301 (rb holds it): 51
+ra reads 301 that rb wrote (ignoring its lock): 00 [new ]
 rc (automatic, multiple) read 5 held by ra: 51
 rb read 6 (rc holds 6 and 8): 51
 rb read 8: 51

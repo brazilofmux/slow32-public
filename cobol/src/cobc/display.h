@@ -356,8 +356,26 @@ static void emit_crt_items(int line)
         emit_crt_item(g_cursor_name, "CURSOR", "cob_crt_cursor", line);
     }
 }
+static Arg accept_desc(const Ref *r);
+/* a line from the console into the item -- a dynamic-length item takes it
+ * as its content and length (8.5.1.10.4) */
+static void emit_accept_console(Ref *r)
+{
+    if (r->sym->dynl && !r->user_rm) {
+        Ref slot = *r; slot.rm = 0; slot.rm_dynl = 0; slot.rm_zero = 0; slot.rm_start = 0; slot.rm_len = 0;
+        char dl[32]; snprintf(dl, sizeof dl, ".Ldynl%d_%d", g_unit, r->sym->dynl_id);
+        Arg a[2] = { arg_ref(&slot), arg_label(dl) };
+        emit_args(a, 2);
+        emit_call("cob_accept_console_dynl");
+        return;
+    }
+    Arg a[2] = { arg_ref(r), accept_desc(r) };
+    emit_args(a, 2);
+    emit_call("cob_accept_console");
+}
 static void parse_accept_positioned(Ref *r)
 {
+    if (r->sym->dynl) die_at(r->line, "ACCEPT of the dynamic-length item '%s' at a screen position: a screen slot is a fixed field; ACCEPT it from the console, or a fixed item and MOVE", r->sym->name);
     int si = (int)(screen_synth() - g_screens);
     SField *f = screen_synth_field(&g_screens[si]);
     f->kind = COB_SCR_TO; f->item = r->sym; f->dyn = 1;
@@ -595,7 +613,7 @@ static void parse_accept_1(void)
     }
     Ref r; parse_ref(&r); check_receiver(&r);
     if (r.sym->strong) die_at(r.line, "ACCEPT into the strongly-typed group '%s' (2023 14.9.1.3 rule 1)", r.sym->name);
-    if (r.sym->dynl) die_at(r.line, "ACCEPT into the dynamic-length item '%s' is not implemented in this stage", r.sym->name);
+
     int nat = ref_is_national(&r);
     /* the positioning words are looked for in this statement only: the
      * item is read, so a verb or scope terminator here already begins
@@ -674,9 +692,7 @@ static void parse_accept_1(void)
         }
         if (cur()->kind == T_WORD && mnemonic_kind(cur()->s) == 1) {
             advance();
-            Arg a[2] = { arg_ref(&r), accept_desc(&r) };
-            emit_args(a, 2);
-            emit_call("cob_accept_console");
+            emit_accept_console(&r);
             accept_word("end-accept");
             return;
         }
@@ -687,9 +703,7 @@ static void parse_accept_1(void)
     }
     /* ACCEPT identifier: a line from standard input */
     {
-        Arg a[2] = { arg_ref(&r), accept_desc(&r) };
-        emit_args(a, 2);
-        emit_call("cob_accept_console");
+        emit_accept_console(&r);
         accept_word("end-accept");
     }
 }

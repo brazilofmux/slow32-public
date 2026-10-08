@@ -506,8 +506,8 @@ SHARING, READ/WRITE WITH [NO] LOCK, EC-I-O-FILE-SHARING; Ed. 2002; L; deps 1.
   effect; the checks among the file connectors of one run unit -- Table 19 at OPEN (61), DELETE FILE
   (62), a record locked by another connector (51), the limits (53/54); the implementor's default is
   no checks and no locks, so older programs are untouched. Tests 2002/locking, 2023/lockdel, ten bad.
-  Later stages: a shared data image per physical file (two updating connectors on one indexed file
-  each cache their own pages today), then locks across run units (the host's, or the emulator's).
+  **Stage 2 DONE 2026-10-08**: one image per physical indexed file, the connectors cursors on it
+  (locking.md). Later: locks across run units (the host's, or the emulator's).
 
 **40. WRITE FILE and REWRITE FILE.** A.4.13; 14.9.35, 14.9.51; Ed. 2002; S; deps 11 (FD without
 record description). **DONE 2026-10-07**: the FILE phrase itself came with item 11 (2026-10-06); the
@@ -536,9 +536,11 @@ dropped (conformance/resume.md; test 2002/resume; 5 bad tests).
   shared with item 44, every reference a whole-item reference modification of the current length (the
   ANY LENGTH mechanism, so sending, comparing, parts and FUNCTION LENGTH needed no code), MOVE and SET
   SIZE OF setting the length, VALUE, INITIALIZE, OCCURS, BY REFERENCE, CANCEL. It did not touch every
-  move and compare path after all: the length rides in the reference. Left as gaps, each refused by
-  name: STRING INTO, UNSTRING INTO, ACCEPT into and INSPECT REPLACING of such an item; a variable-length
-  group moved whole; the item in the FILE SECTION; the PREFIXED / DELIMITED layout in storage.
+  move and compare path after all: the length rides in the reference. Stage 2 (2026-10-08, the same day):
+  STRING INTO, UNSTRING INTO, a console ACCEPT and INSPECT REPLACING / CONVERTING of such an item; a
+  variable-length group moved or compared whole with one of its shape. Left as gaps, each refused by name:
+  an ACCEPT at a screen position; unlike variable-length groups; the item in the FILE SECTION; the PREFIXED
+  / DELIMITED layout in storage.
 
 **44. Dynamic-capacity tables.** A.4.4; 13.18.38 format 4, SET format 14,
 EC-BOUND-OVERFLOW/-SET/-TABLE-LIMIT, EC-FLOW-SEARCH; Ed. 2014; L.
@@ -546,10 +548,12 @@ EC-BOUND-OVERFLOW/-SET/-TABLE-LIMIT, EC-FLOW-SEARCH; Ed. 2014; L.
 - **DONE 2026-10-08** (docs/conformance/occurs.md, format 4; set.md, format 14): OCCURS DYNAMIC with
   CAPACITY IN, FROM, TO, INITIALIZED, KEY and INDEXED BY; the slot-and-heap representation; stores
   make elements, reads past the capacity are EC-BOUND-SUBSCRIPT; SET TO/UP BY/DOWN BY; EC-BOUND-
-  OVERFLOW, -SET, -TABLE-LIMIT; INITIALIZE, SEARCH, SORT, ALL, CANCEL, LINKAGE. Left as gaps, each
-  refused by name: a dynamic table inside a table (either way round), a variable-length group moved
-  or compared whole (8.5.1.12 compatibility), INITIALIZE REPLACING over such a group, EC-FLOW-SEARCH
-  at run time (compile-time only), reclaiming a LOCAL-STORAGE table's elements at exit.
+  OVERFLOW, -SET, -TABLE-LIMIT; INITIALIZE, SEARCH, SORT, ALL, CANCEL, LINKAGE. Stage 2 (2026-10-08):
+  a variable-length group moved or compared whole with one of its shape (14.6.9.2-3; the runtime's
+  cob_vlg_move / cob_vlg_cmp over the compiler's shape table). Left as gaps, each refused by name: a
+  dynamic table inside a table (either way round), unlike variable-length groups (the text's positional
+  correspondence), INITIALIZE REPLACING over such a group, EC-FLOW-SEARCH at run time (compile-time
+  only), reclaiming a LOCAL-STORAGE table's elements at exit.
 
 **45. Locale support and STANDARD-COMPARE.** A.4.9; 15.51-15.54, 15.85, LOCALE on UPPER-/LOWER-CASE
 and TEST-NUMVAL-C, SET formats 11-12, SPECIAL-NAMES LOCALE, PICTURE locale format, CHARACTER

@@ -344,7 +344,9 @@ static void bool_push(Opnd *o)
 }
 
 /* a condition operand: a plain operand, or an arithmetic expression */
-static Opnd parse_cond_operand(void)
+static Opnd parse_cond_operand_1(void);
+static Opnd parse_cond_operand(void) { g_vlg_ok++; Opnd o = parse_cond_operand_1(); g_vlg_ok--; return o; }   /* a variable-length group may be compared whole, with one of its shape */
+static Opnd parse_cond_operand_1(void)
 {
     if (g_std >= 2002) {
         /* a boolean expression: B-NOT, a parenthesis holding a boolean
@@ -982,6 +984,18 @@ static void emit_cond_value(Cond *c)
         int xs = opnd_size_bound(&c->x), ys = opnd_size_bound(&c->y);
         if (numbers) g_cen_quiet--;
         int xn = opnd_numeric(&c->x) || opnd_func_numeric(&c->x), yn = opnd_numeric(&c->y) || opnd_func_numeric(&c->y);
+        Sym *gx = c->x.kind == O_REF && c->x.ref.sym->is_group && !c->x.ref.rm && !c->x.ref.nsub && vlen_below(c->x.ref.sym) ? c->x.ref.sym : NULL;
+        Sym *gy = c->y.kind == O_REF && c->y.ref.sym->is_group && !c->y.ref.rm && !c->y.ref.nsub && vlen_below(c->y.ref.sym) ? c->y.ref.sym : NULL;
+        if (gx || gy) {
+            /* variable-length groups compared whole (8.5.1.12, 14.6.9.3): both
+             * of one shape, by the runtime; the result as cob_cmp's */
+            if (!gx || !gy || !vlg_same_shape(gx, gy))
+                die_at(c->x.line, "'%s' is a variable-length group: it is compared whole only with a group of the same shape (2023 8.5.1.12 compatibility, this stage); compare its items otherwise", (gx ? gx : gy)->name);
+            g_vlg_tables[g_nvlg_tables < 64 ? g_nvlg_tables++ : 63] = sym_idx(gx);
+            char tl[32]; snprintf(tl, sizeof tl, ".Lvlg%d_%d", g_unit, sym_idx(gx));
+            Arg v[3] = { arg_ref(&c->x.ref), arg_ref(&c->y.ref), arg_label(tl) };
+            emit_args(v, 3); emit_call("cob_vlg_cmp");
+        } else {
         opnd_args(&c->x, &a[0], &a[1], ys, yn);
         opnd_args(&c->y, &a[2], &a[3], xs, xn);
         emit_args(a, 4);
@@ -990,6 +1004,7 @@ static void emit_cond_value(Cond *c)
             if (vy) cen_bless(c->y.ref.sym);
         }
         emit_call("cob_cmp");
+        }
         switch (c->op) {
         case R_EQ: emit("\tseq r1, r1, r0"); break;
         case R_NE: emit("\tsne r1, r1, r0"); break;

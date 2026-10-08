@@ -445,12 +445,7 @@ static void parse_inspect_1(void)
         g_insp_nat = sym_is_national(item.sym) || (!item.sym->is_group && item.sym->usage == U_NATIONAL);
         itemo = ref_opnd(&item);
         operand_odo_length(&itemo);             /* a group over an ODO table is inspected at its current length */
-        if (item.sym->dynl) {
-            int j = g_tp;
-            for (; j < g_ntok && g_tok[j].kind != T_PERIOD && !(g_tok[j].kind == T_WORD && is_verb(g_tok[j].s) && !is_word(&g_tok[j], "inspect")); j++)
-                if (is_word(&g_tok[j], "replacing") || is_word(&g_tok[j], "converting"))
-                    die_at(item.line, "INSPECT '%s' REPLACING or CONVERTING: a dynamic-length item is inspected (TALLYING) but not changed in place in this stage", item.sym->name);
-        }
+
     }
     int w = g_insp_nat ? 2 : 1;             /* a character's bytes */
     if (fsubj && at_word("converting")) die_at(fline, "INSPECT CONVERTING of a function: %s", fwhy);

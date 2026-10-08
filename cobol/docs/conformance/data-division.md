@@ -264,7 +264,7 @@ has DYNAMIC LENGTH).
 | 13.16.3 rule 13 | not in a CONSTANT RECORD | **refused**: bad/std2014-dynl-constrec |
 | 13.18.32.3 rule 4; 13.16.3 rule 18 | no JUSTIFIED, no clause but PICTURE, USAGE, VALUE | **refused**: bad/std2014-dynl-justified |
 | 14.9.25.3 rule 10 | a national item to an alphanumeric one | **refused** as for any item (FUNCTION DISPLAY-OF; dynlen) |
-| 8.5.1.12, 14.6.9 | a variable-length group moved or compared whole | **gap** in this stage: **refused** (bad/std2014-dynl-group-move) |
-| 14.9.44, 14.9.48, 14.9.1, 14.9.22 | STRING INTO, UNSTRING INTO, ACCEPT into, INSPECT REPLACING / CONVERTING of a dynamic-length item | **gap** in this stage: **refused** by name (bad/std2014-dynl-string-into, -dynl-unstring-into, -dynl-accept, -dynl-inspect-replacing); INSPECT TALLYING is fine (dynlen) |
+| 8.5.1.12, 14.6.9 | a variable-length group moved or compared whole | **implemented** for two groups of one shape (occurs.md's row; 2014/vlgroup, with the items under OCCURS); unlike groups **refused** (bad/std2014-dynl-group-move) |
+| 14.9.44, 14.9.48, 14.9.1, 14.9.22 | STRING INTO, UNSTRING INTO, ACCEPT into, INSPECT REPLACING / CONVERTING of a dynamic-length item | **implemented** (stage 2, 2026-10-08; 2014/dynlen): INSPECT works in place at the current length; STRING INTO grows the item under its pointer (a gap before the pointer is spaces), the length the farthest position written; UNSTRING INTO and a console ACCEPT make the examined characters or the line its content. An ACCEPT at a screen position stays **refused** (a screen slot is a fixed field) |
 | 8.5.1.10.3 | in the FILE SECTION | **gap** in this stage: **refused** (the record would hold the slot, not the characters) |
 | 15.65 MODULE-NAME | returns a dynamic-length item | the function's result is fixed-length here, trailing spaces trimmed by the caller's TRIM (functions.md) |

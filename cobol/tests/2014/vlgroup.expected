@@ -1,0 +1,9 @@
+g2: aa c2=0000000003 112233 s2=[hello] len=5 zz
+g1 = g2
+g1 not = g2 after k2(4)
+g1 < g2
+equal again after set c2 to 3
+g1 < g2 by s
+empty t1 vs three: not equal
+g4: [one] [second] m3!
+g3 = g4

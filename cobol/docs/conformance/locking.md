@@ -75,14 +75,22 @@ run unit -- every status there is 00. Bad: std2002-lock-multiple-seq,
 | 14.7.9 | RETRY n TIMES / FOR n SECONDS / FOREVER on OPEN, READ, WRITE, REWRITE, DELETE, START; n a literal, item or expression | **implemented** as the text allows an implementor whose locks cannot change between attempts: TIMES retries at once; FOR waits the seconds (at most 60) and reports; FOREVER waits the implementor's maximum, 60 s, and reports -- then **51** or **61** as without the phrase |
 | 14.7.9 | RETRY under -std=85 | **refused**: bad/retry-std85 |
 
+## Stage 2 (2026-10-08): one image per physical file
+
+Two connectors of the run unit open on one indexed file share one image
+of it -- the key file's tree and its page cache, the data file's slots in
+memory, the one stream (libcob `idx_sh`, found by the assigned name;
+`cob_idx` is now the connector's cursor alone) -- so a record written,
+rewritten or deleted through one is what the other reads, and START
+sees it (2002/locking, "one image for the two connectors"). An OPEN
+OUTPUT starts an image of its own: the file is new. A relative file was
+coherent already (each operation seeks its slot). A **sequential** file's
+records appended through one connector reach another's READ when the
+writer closes (stdio's buffer): the text leaves the moment to the
+implementor, and that is where it is here.
+
 ## Left for a later stage
 
-- **Coherence of two updating connectors on one indexed file.** Each
-  connector carries its own B-tree page cache, so a record one writes is
-  not seen by another opened earlier, and two writers would damage the
-  file. The statuses above are right; the data path is not shared. A
-  shared image per physical file is the natural next stage, and the
-  precondition for taking the locks to the host.
 - **Locks across run units**: the host's byte-range locks, or the
   emulator's when it runs several instances (the ruling).
 - **APPLY COMMIT**, COMMIT and ROLLBACK (queue item 46: ESQL, not files)

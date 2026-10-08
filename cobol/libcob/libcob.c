@@ -4594,7 +4594,7 @@ int cob_switches[8];
 
 /* w: a character's bytes, 2 when the operands are national (cobol
  * ISSUES-69); pos is a byte position, POINTER counts characters */
-static struct { char *dst; int dlen, pos, overflow, w; } cs;
+static struct { char *dst; int dlen, pos, overflow, w;  cob_dyn *dyn; const cob_dynl_desc *dynt; } cs;
 
 /* pos is the 1-based POINTER value, 1 when there is none.  One out of
  * range is the overflow only when a character comes to be moved: the
@@ -4604,10 +4604,26 @@ static struct { char *dst; int dlen, pos, overflow, w; } cs;
  * moves and the POINTER keeps its value (rule 7).  A POINTER below 1
  * breaks rule 5, which the text leaves undefined: the overflow at once,
  * as GnuCOBOL and Micro Focus give it. */
+/* the dynamic-length items' entries (below, with the tables) */
+static int dynl_resize(cob_dyn *d, const cob_dynl_desc *t, unsigned n);
+unsigned char *cob_dynl_data(cob_dyn *d, const cob_dynl_desc *t);
+void cob_dynl_move(cob_dyn *d, const cob_dynl_desc *t, const void *src, const cob_desc *sd);
+int cob_dynl_size(cob_dyn *d, const cob_dynl_desc *t, long n);
 void cob_str_begin(char *dst, int dlen, int pos)
 {
     cs.dst = dst; cs.dlen = dlen; cs.overflow = pos < 1; cs.w = 1;
-    cs.pos = pos;
+    cs.pos = pos; cs.dyn = 0;
+}
+/* STRING INTO a dynamic-length item (8.5.1.10.4 read for a receiver that
+ * is written by position): the characters land in the item's own buffer,
+ * which grows as the pointer passes its end, up to the limit (the
+ * overflow past that); the length becomes the farthest position written */
+void cob_str_begin_dynl(cob_dyn *d, const cob_dynl_desc *t, int pos)
+{
+    cs.dyn = d; cs.dynt = t; cs.w = t->nat ? 2 : 1;
+    cob_dynl_data(d, t);
+    cs.dst = (char *)d->elems; cs.dlen = (int)((t->limit ? t->limit : COB_DYNL_MAX) * cs.w);
+    cs.overflow = pos < 1; cs.pos = t->nat ? 2 * (pos - 1) + 1 : pos;
 }
 
 void cob_str_begin_nat(char *dst, int dlen, int pos)
@@ -4630,6 +4646,16 @@ void cob_str_src(const char *s, int n, const char *delim, int dn)
      * character that did not fit, having moved the ones before it) */
     int chars = take / w, room = cs.pos >= 1 && cs.pos - 1 <= cs.dlen ? (cs.dlen - (cs.pos - 1)) / w : 0;
     int moved = chars < room ? chars : room;
+    if (cs.dyn && moved > 0) {
+        /* the item grown to hold them (spaces fill a gap before the pointer) */
+        unsigned need = (unsigned)(cs.pos - 1 + moved * w) / (unsigned)w, old = cs.dyn->cap;
+        if (need > old) {
+            if (!dynl_resize(cs.dyn, cs.dynt, need)) cob_fatal("EC-STORAGE-NOT-AVAIL: no storage for a dynamic-length item");
+            for (unsigned k = old * (unsigned)w; k < need * (unsigned)w; k++) cs.dyn->elems[k] = (unsigned char)((w == 2 && !(k & 1)) ? 0 : ' ');
+            cs.dyn->cap = need;
+        }
+        cs.dst = (char *)cs.dyn->elems;
+    }
     if (moved > 0) memcpy(cs.dst + cs.pos - 1, s, (size_t)(moved * w));
     cs.pos += moved * w;
     if (chars > room) cs.overflow = 1;
@@ -4670,16 +4696,27 @@ void cob_unstr_delim(const char *p, int n, int all)
     if (cu.nd == 16) cob_fatal("UNSTRING: more than 16 delimiters");
     cu.d[cu.nd].p = p; cu.d[cu.nd].n = n; cu.d[cu.nd].all = all; cu.nd++;
 }
+static void unstr_into_1(void *dst, const cob_desc *dd, cob_dyn *dyn, const cob_dynl_desc *dynt, void *ddst, const cob_desc *ddd, void *cdst, const cob_desc *cdd);
 void cob_unstr_into(void *dst, const cob_desc *dd, void *ddst, const cob_desc *ddd, void *cdst, const cob_desc *cdd)
+{
+    unstr_into_1(dst, dd, 0, 0, ddst, ddd, cdst, cdd);
+}
+/* ... INTO a dynamic-length item: the examined characters become its content and length (8.5.1.10.4) */
+void cob_unstr_into_dynl(cob_dyn *d, const cob_dynl_desc *t, void *ddst, const cob_desc *ddd, void *cdst, const cob_desc *cdd)
+{
+    unstr_into_1(0, 0, d, t, ddst, ddd, cdst, cdd);
+}
+static void unstr_into_1(void *dst, const cob_desc *dd, cob_dyn *dyn, const cob_dynl_desc *dynt, void *ddst, const cob_desc *ddd, void *cdst, const cob_desc *cdd)
 {
     if (cu.overflow || cu.pos > cu.slen) return;
     int start = cu.pos - 1, i = start, hit = -1;
     if (cu.nd == 0) {
         /* no DELIMITED BY: as many characters as the receiver holds (one
          * fewer for a separate sign), each cu.w bytes of the source (2023
-         * 14.9.48.4 rule 11b: size in character positions; ISSUES-94 N5) */
-        int chars = dd->cat == COB_NATIONAL || dd->usage == COB_U_NATIONAL ? (int)dd->size / 2 : (int)dd->size;
-        int room = chars - ((dd->flags & (COB_F_SEPLEAD | COB_F_SEPTRAIL)) ? 1 : 0);
+         * 14.9.48.4 rule 11b: size in character positions; ISSUES-94 N5);
+         * a dynamic-length receiver takes the rest, to its limit */
+        int chars = dyn ? (int)(dynt->limit ? dynt->limit : COB_DYNL_MAX) : dd->cat == COB_NATIONAL || dd->usage == COB_U_NATIONAL ? (int)dd->size / 2 : (int)dd->size;
+        int room = chars - ((!dyn && (dd->flags & (COB_F_SEPLEAD | COB_F_SEPTRAIL))) ? 1 : 0);
         if (room < 0) room = 0;
         i = start + room * cu.w; if (i > cu.slen) i = cu.slen;
     } else if (cu.nd == 1 && cu.d[0].n == 1 && cu.w == 1) {
@@ -4696,7 +4733,8 @@ void cob_unstr_into(void *dst, const cob_desc *dd, void *ddst, const cob_desc *d
     }
     int k = i - start;                          /* the examined bytes */
     cob_desc sd; memset(&sd, 0, sizeof sd); sd.cat = cu.w == 2 ? COB_NATIONAL : COB_ALNUM; sd.size = (unsigned)k;
-    if (k) cob_move(cu.src + start, &sd, dst, dd);
+    if (dyn) { if (k) cob_dynl_move(dyn, dynt, cu.src + start, &sd); else cob_dynl_size(dyn, dynt, 0); }
+    else if (k) cob_move(cu.src + start, &sd, dst, dd);
     else { sd.cat = COB_ALNUM; sd.size = 1; cob_move(dd->cat == COB_NUM || dd->cat == COB_NUM_ED ? "0" : " ", &sd, dst, dd); sd.cat = cu.w == 2 ? COB_NATIONAL : COB_ALNUM; }
     if (cdst) cob_put_num(cdst, cdd, k / cu.w, 0);  /* COUNT IN: characters */
     if (hit >= 0) {
@@ -5400,8 +5438,27 @@ typedef struct {
  * come back in arrival order, and the status codes follow the 1985 text.
  * The cursor is the (key, arrival) of the next entry to deliver, so a
  * WRITE, REWRITE or DELETE between two READ NEXTs needs no fixing up. */
-typedef struct {
+/* The physical file's image, one per path however many connectors are
+ * open on it (cobol queue item 39, stage 2): the key file's tree and its
+ * page cache, the data file's slots in memory, the one stream and its
+ * position.  Two connectors of the run unit on one indexed file then see
+ * each other's records; before this each had a tree and a cache of its
+ * own, and a record written through one was invisible to the other.  A
+ * connector keeps its own cursor (below).  An OPEN OUTPUT always starts
+ * an image of its own: the file is new. */
+typedef struct idx_sh {
+    char *path;
     btf bt;                 /* the key file: bt.k[0] the prime key, bt.k[i] the i-th alternate */
+    unsigned char *cache;   /* the data file's slots in memory (write-through), or 0 */
+    unsigned cache_slots;   /* slots the cache holds */
+    long fpos;              /* the stream's position, -1 unknown: a write to the next slot needs no seek */
+    FILE *fp;               /* the data file */
+    int refs;               /* connectors open on it */
+    struct idx_sh *next;
+} idx_sh;
+static idx_sh *idx_shared;
+typedef struct {
+    idx_sh *sh;             /* the file's image, shared */
     int ref;                /* key of reference: 0 the prime key, i the i-th alternate */
     int have_cur;           /* the cursor is set (else READ NEXT starts at the front) */
     unsigned char cur[BT_KEYMAX + 4];   /* next (key, arrival) to deliver, inclusive */
@@ -5409,9 +5466,6 @@ typedef struct {
     int last_slot;          /* slot the last READ delivered, for REWRITE/DELETE; -1 */
     unsigned char *tmp;     /* a record's worth of scratch */
     btpos hint;             /* where the last lookup landed (bt_first_ge_near) */
-    unsigned char *cache;   /* the data file's slots in memory (write-through), or 0 */
-    unsigned cache_slots;   /* slots the cache holds */
-    long fpos;              /* the stream's position, -1 unknown: a write to the next slot needs no seek */
 } cob_idx;
 
 #define KEYMAGIC1 "S32KEY01"
@@ -5444,12 +5498,12 @@ static const char *key_file_name(cob_file *f)
 static int slot_read_to(cob_file *f, unsigned slot, unsigned char *buf)
 {
     cob_idx *x = f->idx;
-    if (x && x->cache && slot < x->cache_slots) { memcpy(buf, x->cache + (size_t)slot * f->recsize, f->recsize); return 1; }
+    if (x && x->sh->cache && slot < x->sh->cache_slots) { memcpy(buf, x->sh->cache + (size_t)slot * f->recsize, f->recsize); return 1; }
     FILE *fp = (FILE *)f->fp;
     long at = (long)slot * (long)f->recsize;
-    if (!x || x->fpos != at) { if (fseek(fp, at, 0) != 0) return 0; }
+    if (!x || x->sh->fpos != at) { if (fseek(fp, at, 0) != 0) return 0; }
     int ok = fread(buf, 1, f->recsize, fp) == f->recsize;
-    if (x) x->fpos = ok ? at + (long)f->recsize : -1;
+    if (x) x->sh->fpos = ok ? at + (long)f->recsize : -1;
     return ok;
 }
 static int slot_read(cob_file *f, unsigned slot) { return slot_read_to(f, slot, (unsigned char *)f->record); }
@@ -5461,20 +5515,20 @@ static int slot_write(cob_file *f, unsigned slot)
     /* a seek flushes the stream: 24,584 records written in slot order used
      * to be 24,584 seeks and as many short writes.  The position is tracked
      * so the common case, the next slot, is one buffered fwrite. */
-    if (!x || x->fpos != at) { if (fseek(fp, at, 0) != 0) return 0; }
-    if (fwrite(f->record, 1, f->recsize, fp) != f->recsize) { if (x) x->fpos = -1; return 0; }
+    if (!x || x->sh->fpos != at) { if (fseek(fp, at, 0) != 0) return 0; }
+    if (fwrite(f->record, 1, f->recsize, fp) != f->recsize) { if (x) x->sh->fpos = -1; return 0; }
     if (x) {
-        x->fpos = at + (long)f->recsize;
-        if (x->cache) {
-            if (slot >= x->cache_slots) {              /* grow, or give the cache up */
-                unsigned want = x->cache_slots ? x->cache_slots : 256;
+        x->sh->fpos = at + (long)f->recsize;
+        if (x->sh->cache) {
+            if (slot >= x->sh->cache_slots) {              /* grow, or give the cache up */
+                unsigned want = x->sh->cache_slots ? x->sh->cache_slots : 256;
                 while (want <= slot) want *= 2;
                 size_t heap = (size_t)(__heap_end - __heap_start);
-                unsigned char *nc = (size_t)want * f->recsize <= heap / 4 ? realloc(x->cache, (size_t)want * f->recsize) : 0;
-                if (!nc) { free(x->cache); x->cache = 0; x->cache_slots = 0; return 1; }
-                x->cache = nc; x->cache_slots = want;
+                unsigned char *nc = (size_t)want * f->recsize <= heap / 4 ? realloc(x->sh->cache, (size_t)want * f->recsize) : 0;
+                if (!nc) { free(x->sh->cache); x->sh->cache = 0; x->sh->cache_slots = 0; return 1; }
+                x->sh->cache = nc; x->sh->cache_slots = want;
             }
-            memcpy(x->cache + (size_t)slot * f->recsize, f->record, f->recsize);
+            memcpy(x->sh->cache + (size_t)slot * f->recsize, f->record, f->recsize);
         }
     }
     return 1;
@@ -5495,7 +5549,7 @@ static void idx_cache_load(cob_file *f, cob_idx *x)
     unsigned char *c = malloc(bytes ? bytes : 1);
     if (!c) { fseek(fp, 0, 0); return; }
     if (fseek(fp, 0, 0) != 0 || (bytes && fread(c, 1, bytes, fp) != bytes)) { free(c); fseek(fp, 0, 0); return; }
-    x->cache = c; x->cache_slots = slots; x->fpos = -1;
+    x->sh->cache = c; x->sh->cache_slots = slots; x->sh->fpos = -1;
 }
 
 /* The page cache: S32_INDEX_CACHE pages, else a sixteenth of the heap the
@@ -5596,7 +5650,7 @@ static int old_load(cob_file *f, FILE *kf, const unsigned char *h, cob_ktab *pri
 /* the alternate trees from the records the prime tree names */
 static void idx_alt_rebuild(cob_file *f, cob_idx *x)
 {
-    btf *b = &x->bt;
+    btf *b = &x->sh->bt;
     unsigned char zero[BT_KEYMAX + 4], ka[BT_KEYMAX + 4];
     memset(zero, 0, sizeof zero);
     unsigned page, ix;
@@ -5619,8 +5673,8 @@ static int idx_migrate(cob_file *f, cob_idx *x, FILE *kf, const unsigned char *h
     if (!ok) { free(prime.e); if (alt) { for (unsigned a = 0; a < f->naltkeys; a++) free(alt[a].e); free(alt); } return 0; }
     btkey keys[BT_MAXKEYS];
     unsigned nkeys = idx_fd_keys(f, keys);
-    if (!bt_create(&x->bt, key_file_name(f), idx_cache_pages(), f->recsize, f->keyoff, f->keylen, keys, nkeys, cob_fatal)) return 0;
-    btf *b = &x->bt;
+    if (!bt_create(&x->sh->bt, key_file_name(f), idx_cache_pages(), f->recsize, f->keyoff, f->keylen, keys, nkeys, cob_fatal)) return 0;
+    btf *b = &x->sh->bt;
     b->nslots = nslots; b->seq = seq;
     unsigned maxslot = nslots;
     for (unsigned i = 0; i < prime.count; i++) if (tab_slot(&prime, i) >= maxslot) maxslot = tab_slot(&prime, i) + 1;
@@ -5650,7 +5704,7 @@ static int idx_migrate(cob_file *f, cob_idx *x, FILE *kf, const unsigned char *h
  * from its prime tree and the records */
 static int idx_rekey(cob_file *f, cob_idx *x)
 {
-    btf old = x->bt;
+    btf old = x->sh->bt;
     char tmpname[320];
     snprintf(tmpname, sizeof tmpname, "%s.new", key_file_name(f));
     btkey keys[BT_MAXKEYS];
@@ -5669,20 +5723,20 @@ static int idx_rekey(cob_file *f, cob_idx *x)
         } while (bt_step(&old, &page, &ix));
     }
     bt_close(&old, 0);
-    x->bt = nb;
+    x->sh->bt = nb;
     idx_alt_rebuild(f, x);
-    bt_close(&x->bt, 1);
+    bt_close(&x->sh->bt, 1);
     if (rename(tmpname, key_file_name(f)) != 0) return 0;
-    return bt_open(&x->bt, key_file_name(f), 0, idx_cache_pages(), cob_fatal);
+    return bt_open(&x->sh->bt, key_file_name(f), 0, idx_cache_pages(), cob_fatal);
 }
 
 /* the key file for an existing data file: ours, or an old one converted; 0 = 39 */
 static int idx_load(cob_file *f, cob_idx *x, int rdonly)
 {
     const char *kn = key_file_name(f);
-    if (bt_open(&x->bt, kn, rdonly, idx_cache_pages(), cob_fatal)) {
-        if (idx_keys_match(f, &x->bt)) return 1;
-        if (x->bt.recsize != f->recsize || x->bt.keyoff != f->keyoff || x->bt.keylen != f->keylen) { bt_close(&x->bt, 0); return 0; }
+    if (bt_open(&x->sh->bt, kn, rdonly, idx_cache_pages(), cob_fatal)) {
+        if (idx_keys_match(f, &x->sh->bt)) return 1;
+        if (x->sh->bt.recsize != f->recsize || x->sh->bt.keyoff != f->keyoff || x->sh->bt.keylen != f->keylen) { bt_close(&x->sh->bt, 0); return 0; }
         return idx_rekey(f, x);                       /* the alternates changed under the file */
     }
     FILE *kf = fopen(kn, "rb");
@@ -5692,22 +5746,41 @@ static int idx_load(cob_file *f, cob_idx *x, int rdonly)
     return idx_migrate(f, x, kf, h);
 }
 
-static cob_idx *idx_new(cob_file *f)
+/* a connector's cursor over a fresh image of the file at path */
+static cob_idx *idx_new(cob_file *f, const char *path)
 {
     cob_idx *x = calloc(1, sizeof *x);
-    if (!x) cob_fatal("out of memory");
-    x->bt.fd = -1; x->fpos = -1;
+    idx_sh *sh = calloc(1, sizeof *sh);
+    if (!x || !sh) cob_fatal("out of memory");
+    size_t n = strlen(path); sh->path = malloc(n + 1); if (!sh->path) cob_fatal("out of memory"); memcpy(sh->path, path, n + 1);
+    sh->bt.fd = -1; sh->fpos = -1; sh->refs = 1;
+    x->sh = sh;
     x->last_slot = -1; x->ref = 0; x->have_cur = 0;
     x->tmp = malloc(f->recsize ? f->recsize : 1);
     if (!x->tmp) cob_fatal("out of memory");
     return x;
 }
-
-static void idx_free(cob_idx *x)
+/* the image another connector of the run unit has open on path, or 0 */
+static idx_sh *idx_find_shared(const char *path)
+{
+    for (idx_sh *h = idx_shared; h; h = h->next) if (!strcmp(h->path, path)) return h;
+    return 0;
+}
+static void idx_publish(idx_sh *sh) { sh->next = idx_shared; idx_shared = sh; }
+/* the connector's cursor released; the image too when it was the last
+ * connector on it (the tree saved when `save`), the stream closed */
+static void idx_free(cob_idx *x, int save)
 {
     if (!x) return;
-    if (x->bt.fd >= 0) bt_close(&x->bt, 0);
-    free(x->cache); free(x->tmp); free(x);
+    idx_sh *sh = x->sh;
+    if (sh && --sh->refs <= 0) {
+        if (sh->bt.fd >= 0) bt_close(&sh->bt, save);
+        if (sh->fp) fclose(sh->fp);
+        free(sh->cache); free(sh->path);
+        for (idx_sh **p = &idx_shared; *p; p = &(*p)->next) if (*p == sh) { *p = sh->next; break; }
+        free(sh);
+    }
+    free(x->tmp); free(x);
 }
 
 static int idx_open(cob_file *f, int mode)
@@ -5716,36 +5789,52 @@ static int idx_open(cob_file *f, int mode)
     if (f->keylen == 0 || f->keylen > BT_KEYMAX) cob_fatal("RECORD KEY must be 1 to 255 bytes");
     if (f->naltkeys > BT_MAXKEYS - 1) cob_fatal("more than 16 ALTERNATE RECORD KEYs");
     if (f->locked) return file_result(f, "38", "OPEN of a file closed WITH LOCK");
-    cob_idx *x = idx_new(f);
+    idx_sh *have = mode == COB_OPEN_OUTPUT ? 0 : idx_find_shared(name);
+    if (have) {
+        /* another connector has the file open: its image, one cursor more */
+        if (have->bt.recsize != f->recsize || have->bt.keyoff != f->keyoff || have->bt.keylen != f->keylen)
+            return file_result(f, "39", "another connector has the file open with a different record or key");
+        cob_idx *x = calloc(1, sizeof *x);
+        if (!x) cob_fatal("out of memory");
+        x->sh = have; have->refs++;
+        x->last_slot = -1; x->ref = 0; x->have_cur = 0;
+        x->tmp = malloc(f->recsize ? f->recsize : 1);
+        if (!x->tmp) cob_fatal("out of memory");
+        f->fp = have->fp; f->idx = x; f->open_mode = (unsigned char)mode; f->at_eof = 0; f->eof_seen = 0;
+        return file_result(f, "00", name);
+    }
+    cob_idx *x = idx_new(f, name);
     FILE *fp;
     errno = 0;
     if (mode == COB_OPEN_OUTPUT) {
         fp = fopen(name, "w+b");
-        if (!fp) { idx_free(x); return file_result(f, open_fail_st(errno), name); }
+        if (!fp) { idx_free(x, 0); return file_result(f, open_fail_st(errno), name); }
         btkey keys[BT_MAXKEYS];
         unsigned nkeys = idx_fd_keys(f, keys);
-        if (!bt_create(&x->bt, key_file_name(f), idx_cache_pages(), f->recsize, f->keyoff, f->keylen, keys, nkeys, cob_fatal)) { fclose(fp); idx_free(x); return file_result(f, "30", "key file"); }
+        if (!bt_create(&x->sh->bt, key_file_name(f), idx_cache_pages(), f->recsize, f->keyoff, f->keylen, keys, nkeys, cob_fatal)) { fclose(fp); idx_free(x, 0); return file_result(f, "30", "key file"); }
     } else {
         fp = fopen(name, mode == COB_OPEN_INPUT ? "rb" : "r+b");
         if (!fp && errno && errno != ENOENT) {      /* there, but not to be opened so: never taken for absent */
-            idx_free(x); return file_result(f, open_fail_st(errno), name);
+            idx_free(x, 0); return file_result(f, open_fail_st(errno), name);
         }
         if (!fp) {
-            if (!f->optional) { idx_free(x); return file_result(f, "35", name); }
-            if (mode == COB_OPEN_INPUT) { idx_free(x); f->open_mode = (unsigned char)mode; f->fp = 0; f->at_eof = 1; return file_result(f, "05", name); }
+            if (!f->optional) { idx_free(x, 0); return file_result(f, "35", name); }
+            if (mode == COB_OPEN_INPUT) { idx_free(x, 0); f->open_mode = (unsigned char)mode; f->fp = 0; f->at_eof = 1; return file_result(f, "05", name); }
             /* OPTIONAL, absent, I-O or EXTEND: the file comes into being, empty */
             fp = fopen(name, "w+b");
-            if (!fp) { idx_free(x); return file_result(f, "30", name); }
+            if (!fp) { idx_free(x, 0); return file_result(f, "30", name); }
             btkey keys[BT_MAXKEYS];
             unsigned nkeys = idx_fd_keys(f, keys);
-            if (!bt_create(&x->bt, key_file_name(f), idx_cache_pages(), f->recsize, f->keyoff, f->keylen, keys, nkeys, cob_fatal)) { fclose(fp); idx_free(x); return file_result(f, "30", "key file"); }
+            if (!bt_create(&x->sh->bt, key_file_name(f), idx_cache_pages(), f->recsize, f->keyoff, f->keylen, keys, nkeys, cob_fatal)) { fclose(fp); idx_free(x, 0); return file_result(f, "30", "key file"); }
+            x->sh->fp = fp; idx_publish(x->sh);
             f->fp = fp; f->idx = x; f->open_mode = (unsigned char)mode; f->at_eof = 0; f->eof_seen = 0;
             return file_result(f, "05", name);
         }
         f->fp = fp;
-        if (!idx_load(f, x, 0)) { fclose(fp); f->fp = 0; idx_free(x); return file_result(f, "39", "key file missing or does not match the FD"); }
+        if (!idx_load(f, x, 0)) { fclose(fp); f->fp = 0; idx_free(x, 0); return file_result(f, "39", "key file missing or does not match the FD"); }
         idx_cache_load(f, x);
     }
+    x->sh->fp = fp; idx_publish(x->sh);
     f->fp = fp; f->idx = x; f->open_mode = (unsigned char)mode; f->at_eof = 0; f->eof_seen = 0;
     return file_result(f, "00", name);
 }
@@ -5755,11 +5844,8 @@ static int idx_close(cob_file *f)
     cob_idx *x = f->idx;
     if (x && getenv("S32_IDX_STATS"))
         fprintf(stderr, "libcob: %s: %lu keyed lookups, %lu near the last one, %lu full descents\n", file_name(f), x->hint.n_look, x->hint.n_near, x->hint.n_full);
-    if (x) {
-        if (x->bt.fd >= 0) bt_close(&x->bt, 1);
-        idx_free(x);
-    }
-    if (f->fp) fclose((FILE *)f->fp);
+    if (x) idx_free(x, 1);                    /* the stream closes with the image, when this was its last connector */
+    else if (f->fp) fclose((FILE *)f->fp);
     f->fp = 0; f->idx = 0; f->open_mode = 0; f->at_eof = 0;
     return file_result(f, "00", "key file");
 }
@@ -5767,7 +5853,7 @@ static int idx_close(cob_file *f)
 /* the first entry of key ki whose key equals k (on the whole key); page/ix out */
 static int idx_find(cob_idx *x, unsigned ki, const unsigned char *k, unsigned *page, unsigned *ix)
 {
-    btf *b = &x->bt;
+    btf *b = &x->sh->bt;
     unsigned kl = b->k[ki].klen;
     unsigned char ka[BT_KEYMAX + 4];
     memcpy(ka, k, kl); memset(ka + kl, 0, 4);
@@ -5781,7 +5867,7 @@ static int idx_find(cob_idx *x, unsigned ki, const unsigned char *k, unsigned *p
  * 02 is remembered */
 static int alt_check(cob_idx *x, const unsigned char *rec, unsigned skip, int *dup02)
 {
-    btf *b = &x->bt;
+    btf *b = &x->sh->bt;
     for (unsigned a = 1; a < b->nkeys; a++) {
         unsigned page, ix, kl = b->k[a].klen;
         if (!idx_find(x, a, rec + b->k[a].off, &page, &ix)) continue;
@@ -5802,13 +5888,13 @@ static int alt_check(cob_idx *x, const unsigned char *rec, unsigned skip, int *d
 /* the cursor: deliver from (key, arrival) on */
 static void idx_cursor_at(cob_idx *x, unsigned ki, unsigned page, unsigned ix)
 {
-    bt_read(&x->bt, ki, page, ix, x->cur);
+    bt_read(&x->sh->bt, ki, page, ix, x->cur);
     x->have_cur = 1; x->cur_at = 1;
 }
 /* ... after the entry just delivered */
 static void idx_cursor_after(cob_idx *x, unsigned ki, const unsigned char *ka)
 {
-    unsigned kl = x->bt.k[ki].klen;
+    unsigned kl = x->sh->bt.k[ki].klen;
     memcpy(x->cur, ka, kl + 4);
     bt_putbe(x->cur + kl, bt_getbe(ka + kl) + 1);
     x->have_cur = 1; x->cur_at = 0;
@@ -5838,7 +5924,7 @@ static int idx_write(cob_file *f)
     split_fill(f);
     cob_idx *x = f->idx;
     if (!x) return file_result(f, "48", "WRITE to an OPTIONAL file that is absent");
-    btf *b = &x->bt;
+    btf *b = &x->sh->bt;
     const unsigned char *k = (const unsigned char *)f->record + f->keyoff;
     unsigned page, ix;
     if (f->access == 0 && b->k[0].count) {                       /* sequential access: keys must ascend */
@@ -5881,7 +5967,7 @@ static int cob_read_key_1(cob_file *f, int ki)
     split_fill(f);
     cob_idx *x = f->idx;
     if (!x) return file_result(f, "23", "");
-    btf *b = &x->bt;
+    btf *b = &x->sh->bt;
     if (ki < 0 || (unsigned)ki >= b->nkeys) cob_fatal("READ ... KEY: no such key");
     unsigned kl = b->k[ki].klen, page, ix;
     unsigned char key[BT_KEYMAX], ka[BT_KEYMAX + 4], nk[BT_KEYMAX + 4];
@@ -5901,7 +5987,7 @@ static int idx_read_next(cob_file *f)
     cob_idx *x = f->idx;
     if (!x) return file_result(f, "10", "");
     if (f->at_eof) { if (f->eof_seen) return file_result(f, "46", ""); f->eof_seen = 1; return file_result(f, "10", ""); }
-    btf *b = &x->bt;
+    btf *b = &x->sh->bt;
     unsigned ki = (unsigned)x->ref, kl = b->k[ki].klen, page, ix;
     if (!x->have_cur) { memset(x->cur, 0, kl + 4); x->have_cur = 1; }
     if (!bt_first_ge(b, ki, x->cur, kl + 4, &page, &ix)) { f->at_eof = 1; f->eof_seen = 1; x->last_slot = -1; return file_result(f, "10", ""); }
@@ -5926,7 +6012,7 @@ static int idx_read_prev(cob_file *f)
     if (!x) return file_result(f, "10", "");
     if (f->at_eof) { if (f->eof_seen) return file_result(f, "46", ""); f->eof_seen = 1; return file_result(f, "10", ""); }
     if (!x->have_cur) { f->at_eof = 1; f->eof_seen = 1; x->last_slot = -1; return file_result(f, "10", ""); }
-    btf *b = &x->bt;
+    btf *b = &x->sh->bt;
     unsigned ki = (unsigned)x->ref, kl = b->k[ki].klen, page, ix;
     unsigned char bound[BT_KEYMAX + 4], ka[BT_KEYMAX + 4], pk[BT_KEYMAX + 4];
     memcpy(bound, x->cur, kl + 4);
@@ -5964,7 +6050,7 @@ static int cob_start_1(cob_file *f, int op, int ki, int len)
     split_fill(f);
     cob_idx *x = f->idx;
     if (!x) return file_result(f, "23", "");
-    btf *b = &x->bt;
+    btf *b = &x->sh->bt;
     if (op == 5 || op == 6) {
         /* FIRST, LAST (GR 18-19): the first or last record by the prime
          * key, which becomes the key of reference */
@@ -6008,7 +6094,7 @@ static int idx_rewrite(cob_file *f)
 {
     split_fill(f);
     cob_idx *x = f->idx;
-    btf *b = &x->bt;
+    btf *b = &x->sh->bt;
     const unsigned char *k = (const unsigned char *)f->record + f->keyoff;
     unsigned page, ix;
     int found = idx_find(x, 0, k, &page, &ix);
@@ -6101,7 +6187,7 @@ static int cob_delete_1(cob_file *f)
     if (f->org != COB_ORG_INDEXED) cob_fatal("DELETE on a file that is not INDEXED");
     split_fill(f);
     cob_idx *x = f->idx;
-    btf *b = &x->bt;
+    btf *b = &x->sh->bt;
     unsigned slot, page, ix;
     if (f->access == 0) {
         if (x->last_slot < 0) return file_result(f, "43", "");
@@ -7757,6 +7843,80 @@ void cob_dyn_fill(cob_dyn *d, const cob_dyn_desc *t, int values)
 /* the elements given up: CANCEL, before the record's image is restored */
 void cob_dyn_free(cob_dyn *d) { free(d->elems); d->elems = 0; d->cap = 0; }
 
+/* Variable-length groups moved or compared whole (2023 8.5.1.12, 14.6.9;
+ * cobol queue item 44, stage 2): the compiler admits two groups of one
+ * shape and hands their shape -- the group's bytes, then each dynamic part
+ * as (offset, kind, descriptor), in offset order -- and the runtime copies
+ * or compares the fixed bytes between the parts and each part by its own
+ * rules: a dynamic-capacity table element for element, the receiver
+ * taking the sender's capacity (14.6.9.2); a dynamic-length item its
+ * content and length (8.5.1.10.4); a comparison runs the shorter against
+ * spaces (14.6.9.3). */
+enum { VLG_DYN = 1, VLG_DYNL = 2 };
+static int vlg_cmp_bytes(const unsigned char *a, unsigned na, const unsigned char *b, unsigned nb, int nat)
+{
+    unsigned n = na < nb ? na : nb;
+    int c = n ? memcmp(a, b, n) : 0;
+    if (c) return c < 0 ? -1 : 1;
+    const unsigned char *rest = na > nb ? a + n : b + n; unsigned rn = na > nb ? na - n : nb - n;
+    for (unsigned k = 0; k < rn; k++) {
+        unsigned char sp = (nat && !(k & 1)) ? 0 : ' ';
+        if (rest[k] != sp) return (rest[k] < sp) == (na > nb) ? -1 : 1;
+    }
+    return 0;
+}
+void cob_vlg_move(unsigned char *dst, const unsigned char *src, const unsigned *tab)
+{
+    unsigned size = tab[0], np = tab[1], at = 0;
+    for (unsigned i = 0; i < np; i++) {
+        unsigned off = tab[2 + 3 * i], kind = tab[3 + 3 * i]; const void *desc = (const void *)(size_t)tab[4 + 3 * i];
+        if (off > at) memcpy(dst + at, src + at, off - at);
+        cob_dyn *d = (cob_dyn *)(dst + off); const cob_dyn *s = (const cob_dyn *)(src + off);
+        if (kind == VLG_DYN) {
+            const cob_dyn_desc *t = desc;
+            unsigned char *se = s->elems; unsigned n = s->cap;
+            if (!se && n) se = cob_dyn_elem((cob_dyn *)s, t, 1, 0, 3) == dyn_scratch ? 0 : s->elems;   /* the sender's initial elements made */
+            free(d->elems); d->elems = 0; d->cap = 0;
+            if (n) {
+                d->elems = malloc((size_t)n * t->elem); if (!d->elems) cob_fatal("EC-BOUND-TABLE-LIMIT: no storage for a dynamic-capacity table");
+                if (se) memcpy(d->elems, se, (size_t)n * t->elem); else for (unsigned k = 0; k < n; k++) memcpy(d->elems + (size_t)k * t->elem, (t->flags & COB_DYN_INITIALIZED) ? t->image : t->image0, t->elem);
+                d->cap = n;
+            }
+        } else {
+            const cob_dynl_desc *t = desc;
+            unsigned w = t->nat ? 2 : 1;
+            const unsigned char *sc = cob_dynl_data((cob_dyn *)s, t); unsigned n = s->cap;
+            cob_desc sd; memset(&sd, 0, sizeof sd); sd.cat = t->nat ? COB_NATIONAL : COB_ALNUM; sd.usage = COB_U_DISPLAY; sd.size = n * w;
+            if (n) cob_dynl_move(d, t, sc, &sd); else cob_dynl_size(d, t, 0);
+        }
+        at = off + (unsigned)sizeof(cob_dyn);
+    }
+    if (size > at) memcpy(dst + at, src + at, size - at);
+}
+int cob_vlg_cmp(const unsigned char *a, const unsigned char *b, const unsigned *tab)
+{
+    unsigned size = tab[0], np = tab[1], at = 0;
+    for (unsigned i = 0; i < np; i++) {
+        unsigned off = tab[2 + 3 * i], kind = tab[3 + 3 * i]; const void *desc = (const void *)(size_t)tab[4 + 3 * i];
+        if (off > at) { int c = memcmp(a + at, b + at, off - at); if (c) return c < 0 ? -1 : 1; }
+        cob_dyn *x = (cob_dyn *)(a + off), *y = (cob_dyn *)(b + off);
+        if (kind == VLG_DYN) {
+            const cob_dyn_desc *t = desc;
+            const unsigned char *xe = x->cap ? cob_dyn_elem(x, t, 1, 0, 3) : 0, *ye = y->cap ? cob_dyn_elem(y, t, 1, 0, 3) : 0;
+            int c = vlg_cmp_bytes(xe ? xe : (const unsigned char *)"", x->cap * t->elem, ye ? ye : (const unsigned char *)"", y->cap * t->elem, 0);
+            if (c) return c;
+        } else {
+            const cob_dynl_desc *t = desc; unsigned w = t->nat ? 2 : 1;
+            const unsigned char *xc = cob_dynl_data(x, t), *yc = cob_dynl_data(y, t);
+            int c = vlg_cmp_bytes(xc, x->cap * w, yc, y->cap * w, (int)t->nat);
+            if (c) return c;
+        }
+        at = off + (unsigned)sizeof(cob_dyn);
+    }
+    if (size > at) { int c = memcmp(a + at, b + at, size - at); if (c) return c < 0 ? -1 : 1; }
+    return 0;
+}
+
 /* ---- dynamic-length elementary items (2023 13.18.19, 8.5.1.10) ---------- */
 
 static unsigned dynl_last;                       /* the length cob_dynl_data last found (EC-BOUND-REF-MOD's bound) */
@@ -9338,6 +9498,16 @@ static int con_read_line(char *line, int cap)
     return n;
 }
 
+/* ACCEPT a dynamic-length item from the console: the line is its content (8.5.1.10.4) */
+void cob_accept_console_dynl(cob_dyn *dd, const cob_dynl_desc *t)
+{
+    char line[4096]; int n;
+    if (term_up) n = con_read_line(line, (int)sizeof line);
+    else { if (!fgets(line, sizeof line, stdin)) return; n = (int)strlen(line); }
+    while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) n--;
+    cob_desc sd; memset(&sd, 0, sizeof sd); sd.cat = COB_ALNUM; sd.size = (unsigned)n;
+    if (n) cob_dynl_move(dd, t, line, &sd); else cob_dynl_size(dd, t, 0);
+}
 void cob_accept_console(void *p, const cob_desc *d)
 {
     char line[4096];

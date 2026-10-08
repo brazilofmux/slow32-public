@@ -75,7 +75,7 @@ static void parse_string_1(void)
     for (int i = 0; i < n; i++) if (!has_delim[i]) { memset(&delims[i], 0, sizeof delims[i]); delims[i].kind = O_ALL; has_delim[i] = 1; }
     expect_word("into");
     Ref dst; parse_ref(&dst); no_constrec_recv(&dst, "STRING INTO");
-    if (dst.sym->dynl) die_at(dst.line, "STRING INTO '%s': a dynamic-length item as the STRING receiver is not implemented in this stage (MOVE and SET SIZE OF set its length)", dst.sym->name);
+    int dyn_dst = dst.sym->dynl && !dst.user_rm;    /* a dynamic-length receiver: the item grows under the pointer */
     /* the receiver: not edited, not JUSTIFIED (X3.23 6.24.2); a group is alphanumeric */
     if (!dst.sym->is_group && (dst.sym->pi.category == PIC_NUMERIC || dst.sym->pi.edited || dst.sym->just))
         die_at(dst.line, "the STRING receiver must be an alphanumeric item, not edited or JUSTIFIED");
@@ -110,10 +110,19 @@ static void parse_string_1(void)
         else { Arg a[2] = { arg_ref(&ptr), arg_desc(sym_desc(ptr.sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
         emit("\tstw sp+%d, r1", SLOT_C);
     }
-    Arg b[2] = { arg_ref(&dst), arg_imm(dst.sym->size) };
-    emit_args(b, 2);
-    if (has_ptr) emit("\tldw r5, sp+%d", SLOT_C); else emit_li("r5", 1);
-    emit_call(nat ? "cob_str_begin_nat" : "cob_str_begin");
+    if (dyn_dst) {
+        Ref slot = dst; slot.rm = 0; slot.rm_dynl = 0; slot.rm_zero = 0; slot.rm_start = 0; slot.rm_len = 0;
+        char dl[32]; snprintf(dl, sizeof dl, ".Ldynl%d_%d", g_unit, dst.sym->dynl_id);
+        Arg b[2] = { arg_ref(&slot), arg_label(dl) };
+        emit_args(b, 2);
+        if (has_ptr) emit("\tldw r5, sp+%d", SLOT_C); else emit_li("r5", 1);
+        emit_call("cob_str_begin_dynl");
+    } else {
+        Arg b[2] = { arg_ref(&dst), arg_imm(dst.sym->size) };
+        emit_args(b, 2);
+        if (has_ptr) emit("\tldw r5, sp+%d", SLOT_C); else emit_li("r5", 1);
+        emit_call(nat ? "cob_str_begin_nat" : "cob_str_begin");
+    }
 
     for (int i = 0; i < n; i++) {
         Arg a[4]; Arg dd;
@@ -217,7 +226,6 @@ static void parse_unstring_1(void)
     while (at_operand() && cur()->kind == T_WORD && !at_word("with") && !at_word("pointer") && !at_word("tallying") && !at_word("on") && !at_word("overflow") && !at_word("not") && !at_word("end-unstring")) {
         if (n >= MAXOPS) die_at(cur()->line, "too many UNSTRING receivers");
         parse_ref(&rcv[n]); no_constrec_recv(&rcv[n], "UNSTRING INTO");
-        if (rcv[n].sym->dynl) die_at(rcv[n].line, "UNSTRING INTO '%s': a dynamic-length item as an UNSTRING receiver is not implemented in this stage", rcv[n].sym->name);
         if (rcv[n].sym->is_cond) die_at(rcv[n].line, "'%s' is a condition-name", rcv[n].sym->name);
         if (rcv[n].sym->strong)                   /* its category is its type (8.5.2.1) */
             die_at(rcv[n].line, "the strongly-typed group '%s' is not an UNSTRING receiver (2023 14.9.48.3 rule 4)", rcv[n].sym->name);
@@ -282,12 +290,17 @@ static void parse_unstring_1(void)
         emit_call("cob_unstr_delim");
     }
     for (int i = 0; i < n; i++) {
-        Arg a[6];
-        a[0] = arg_ref(&rcv[i]); a[1] = arg_desc(sym_desc(rcv[i].sym));
+        Arg a[6]; Ref slot; char dl[32];
+        int dyn = rcv[i].sym->dynl && !rcv[i].user_rm;   /* a dynamic-length receiver: the examined characters, as its content */
+        if (dyn) {
+            slot = rcv[i]; slot.rm = 0; slot.rm_dynl = 0; slot.rm_zero = 0; slot.rm_start = 0; slot.rm_len = 0;
+            snprintf(dl, sizeof dl, ".Ldynl%d_%d", g_unit, rcv[i].sym->dynl_id);
+            a[0] = arg_ref(&slot); a[1] = arg_label(dl);
+        } else { a[0] = arg_ref(&rcv[i]); a[1] = arg_desc(sym_desc(rcv[i].sym)); }
         if (has_d[i]) { a[2] = arg_ref(&dlm[i]); a[3] = arg_desc(sym_desc(dlm[i].sym)); } else { a[2] = arg_imm(0); a[3] = arg_imm(0); }
         if (has_c[i]) { a[4] = arg_ref(&cnt[i]); a[5] = arg_desc(sym_desc(cnt[i].sym)); } else { a[4] = arg_imm(0); a[5] = arg_imm(0); }
         emit_args(a, 6);
-        emit_call("cob_unstr_into");
+        emit_call(dyn ? "cob_unstr_into_dynl" : "cob_unstr_into");
     }
     if (has_ptr) {
         emit_call("cob_unstr_pointer");

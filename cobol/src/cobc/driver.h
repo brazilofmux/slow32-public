@@ -294,6 +294,25 @@ static void emit_unit_data(void)
         emit("\t.word %s", lit_label((const unsigned char *)s->name, (int)strlen(s->name) + 1));
         emit("\t.data");
     }
+    /* variable-length groups moved or compared whole: each shape once */
+    for (int i = 0; i < g_nvlg_tables; i++) {
+        int dup = 0; for (int j = 0; j < i; j++) if (g_vlg_tables[j] == g_vlg_tables[i]) dup = 1;
+        if (dup) continue;
+        Sym *g = &g_sym[g_vlg_tables[i]];
+        VlgPart parts[64]; int np = vlg_parts(g, parts, 64);
+        emit("\t.section .rodata");
+        emit("\t.p2align 2");
+        emit(".Lvlg%d_%d:\t# the shape of %s: bytes, parts, (offset, kind, descriptor)...", g_unit, g_vlg_tables[i], g->name);
+        emit("\t.word %d", g->size);
+        emit("\t.word %d", np);
+        for (int k = 0; k < np; k++) {
+            Sym *x = &g_sym[parts[k].sym];
+            emit("\t.word %d", parts[k].off); emit("\t.word %d", parts[k].kind);
+            if (x->dyn) emit("\t.word .Ldyn%d_%d", g_unit, x->dyn_id); else emit("\t.word .Ldynl%d_%d", g_unit, x->dynl_id);
+        }
+        emit("\t.data");
+    }
+    g_nvlg_tables = 0;
     for (int i = 0; i < g_nsorttab; i++) {
         SortTab *t = &g_sorttab[i];
         emit("\t.p2align 2");

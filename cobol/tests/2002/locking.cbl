@@ -2,7 +2,8 @@ identification division.
 program-id. locking.
 *> File sharing and record locking within the run unit (2023 9.1.15, 9.1.16,
 *> 12.4.5.9, 12.4.5.15, Table 19; 14.7.9 RETRY; the LOCK phrases of READ,
-*> WRITE, REWRITE; UNLOCK): several connectors on one physical file.
+*> WRITE, REWRITE; UNLOCK): several connectors on one physical file, which
+*> share one image of it (a record one writes, the other reads; stage 2).
 *> No oracle: GnuCOBOL's sharing checks and locks are between processes,
 *> none within one run unit, so every status here is 00 there.  No gcobol.
 environment division.
@@ -152,6 +153,21 @@ procedure division.
     move "01" to k1. read f1.
     display "f1 read 01 (f2 closed): " s1.
     close f1.
+    display "-- indexed: one image for the two connectors".
+    open i-o f1. open i-o f2.
+    move "04" to k2. move "fourth" to d2. write r2.
+    move "04" to k1. read f1.
+    display "f1 reads 04 that f2 wrote: " s1 " [" d1 "]".
+    move "02" to k2. read f2. move "SECOND" to d2. rewrite r2.
+    move "02" to k1. read f1.
+    display "f1 reads 02 after f2's rewrite: " s1 " [" d1 "]".
+    move "04" to k1. delete f1 record.
+    move "04" to k2. read f2.
+    display "f2 reads 04 after f1's delete: " s2.
+    move "00" to k2. start f2 key > k2. read f2 next.
+    display "f2 first after start: " s2 " " k2.
+    move "second" to d2. rewrite r2.
+    close f1. close f2.
     display "-- indexed: automatic".
     open i-o f3. open i-o f2.
     move "02" to k3. read f3.
@@ -212,6 +228,8 @@ procedure division.
     display "rb write 301 with lock: " sb.
     move 301 to rka. read ra.
     display "ra read 301 (rb holds it): " sa.
+    move 301 to rka. read ra ignoring lock.
+    display "ra reads 301 that rb wrote (ignoring its lock): " sa " [" rra "]".
     move 5 to rkc. read rc.
     display "rc (automatic, multiple) read 5 held by ra: " sc.
     move 6 to rkc. read rc.
