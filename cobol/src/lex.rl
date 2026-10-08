@@ -27,12 +27,19 @@
 
 %%{
     machine lexscan;
+    # Bytes, not chars. Without this Ragel takes plain char, which it treats
+    # as signed, and bakes the UTF-8 ranges in as negative constants
+    # (0xC2..0xDF becomes -62..-33). That only works where char is signed --
+    # x86-64 and Apple arm64 -- and on Linux aarch64, where char is unsigned,
+    # no byte above 0x7F ever matched: every extended letter fell through to
+    # LX_OTHER and the tokenizer died on "unexpected character".
+    alphtype unsigned char;
     write data;
 }%%
 
 /* is the text at q a separator's tail: the line's end, a space, a tab, or
  * a closing pseudo-text delimiter (==... PIC 9(5).==) */
-static int lx_sep_tail(const char *q, const char *pe)
+static int lx_sep_tail(const unsigned char *q, const unsigned char *pe)
 {
     return q >= pe || *q == ' ' || *q == '\t' || (q + 1 < pe && q[0] == '=' && q[1] == '=');
 }
@@ -40,10 +47,13 @@ static int lx_sep_tail(const char *q, const char *pe)
 /* the lexeme at p (p < pe): kind, text and length; the literal's prefix
  * length; whether a number carries an exponent.  Every byte is some
  * lexeme (LX_OTHER when nothing else), so the callers always advance. */
-int lx_next(const char *p0, const char *pe, Lexeme *out)
+int lx_next(const char *p0, const char *pe0, Lexeme *out)
 {
-    const char *p = p0, *eof = pe;
-    const char *ts, *te;
+    /* the interface is char, as its callers' buffers are; the machine reads
+     * bytes (alphtype unsigned char above) */
+    const unsigned char *p = (const unsigned char *)p0;
+    const unsigned char *pe = (const unsigned char *)pe0, *eof = pe;
+    const unsigned char *ts, *te;
     int cs, act;
     memset(out, 0, sizeof *out);
     out->s = p0; out->len = 1; out->kind = LX_OTHER;
@@ -85,19 +95,19 @@ int lx_next(const char *p0, const char *pe, Lexeme *out)
         }
         action lx_lit {
             out->kind = LX_LIT; out->len = (int)(te - ts);
-            const char *q = ts; while (*q != '"' && *q != '\'') q++;
+            const unsigned char *q = ts; while (*q != '"' && *q != '\'') q++;
             out->prefix = (int)(q - ts);
             fbreak;
         }
         action lx_unterm {
             out->kind = LX_LIT; out->len = (int)(te - ts); out->bad = 1;
-            const char *q = ts; while (*q != '"' && *q != '\'') q++;
+            const unsigned char *q = ts; while (*q != '"' && *q != '\'') q++;
             out->prefix = (int)(q - ts);
             fbreak;
         }
         action lx_num {
             out->kind = LX_NUM; out->len = (int)(te - ts);
-            for (const char *q = ts; q < te; q++) if (*q == 'e' || *q == 'E') { out->exp = 1; break; }
+            for (const unsigned char *q = ts; q < te; q++) if (*q == 'e' || *q == 'E') { out->exp = 1; break; }
             fbreak;
         }
         action lx_word    { out->kind = LX_WORD; out->len = (int)(te - ts); fbreak; }
