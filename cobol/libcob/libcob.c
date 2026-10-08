@@ -3068,7 +3068,10 @@ void cob_io_set(unsigned flags, int times, int secs_scaled, int forever)   /* se
 {
     cob_io_opt.flags = flags; cob_io_opt.times = times; cob_io_opt.secs = secs_scaled / 100.0; cob_io_opt.forever = forever; cob_io_opt.set = 1;
 }
-static void lk_opt_clear(void) { if (cob_io_opt.set) memset(&cob_io_opt, 0, sizeof cob_io_opt); }
+static void lk_opt_clear(void)      /* field by field: a memset call would give the short entries a frame */
+{
+    if (cob_io_opt.set) { cob_io_opt.flags = 0; cob_io_opt.times = 0; cob_io_opt.secs = 0; cob_io_opt.forever = 0; cob_io_opt.set = 0; }
+}
 static int lk_sharing(const cob_file *f) { return (int)(f->lk_state & 15); }
 static int lk_lockmode(const cob_file *f) { return (int)((f->share_lock >> 4) & 15); }
 static int lk_multiple(const cob_file *f) { return (int)((f->share_lock >> 8) & 1); }
@@ -3383,6 +3386,8 @@ static int ls_rule15(const cob_file *f) { return f->org == COB_ORG_LINESEQ && (f
 static int ls_read_national_r15(cob_file *f);
 static int cob_read_1(cob_file *f);
 static int cob_write_1(cob_file *f, int before, int after, int reclen);
+static int cob_read_slow(cob_file *f);
+static int cob_write_slow(cob_file *f, int before, int after, int reclen);
 
 static int ls_read_national(cob_file *f)
 {
@@ -3639,7 +3644,39 @@ static __attribute__((noinline)) int cob_read_rest(cob_file *f);
 static int cob_read_1(cob_file *f);
 int cob_read(cob_file *f)
 {
-    if (!lk_active) { int rc = cob_read_1(f); lk_opt_clear(); return rc; }
+    /* the one-byte short entry first (fast_r1 is set only for a connector
+     * the lock layer has nothing to do for, so the layer is not consulted;
+     * the statement's own phrases, if any, are still cleared) */
+    if (f->fast_r1) {
+        unsigned pos = f->rpos;
+        if (pos != f->rlen) {
+            f->record[0] = f->rbuf[pos];
+            char *st = f->status;
+            f->rpos = pos + 1; f->fpos++; f->last_len = 1;
+            io_stw = 0;
+            if (st) { st[0] = '0'; st[1] = '0'; }
+            return 0;
+        }
+    }
+    return cob_read_slow(f);                    /* a tail call: this entry keeps no frame */
+}
+/* a READ with phrases (RETRY, ADVANCING ON LOCK, ...): the compiler calls
+ * this, so that the entry above never has to ask whether options are set */
+int cob_read_opt(cob_file *f) { return cob_read_slow(f); }
+/* (noinline: inlined, the lock loop's registers would give cob_read a
+ * 21-register frame that its one-byte path pays too) */
+static int cob_read_lk(cob_file *f);
+static __attribute__((noinline)) int cob_read_slow(cob_file *f)
+{
+    /* a connector the lock layer has nothing to do for -- the layer is off,
+     * or this file has no lock mode (majesty's SHARING WITH ALL OTHER turns
+     * the layer on and gives its files none): the options are the layer's
+     * alone, cleared first so the read is a tail call */
+    if (!lk_locks_effective(f)) { lk_opt_clear(); return cob_read_1(f); }
+    return cob_read_lk(f);
+}
+static __attribute__((noinline)) int cob_read_lk(cob_file *f)
+{
     /* a sequential READ: the record read may be another connector's locked
      * one -- 51, or the next under ADVANCING ON LOCK, or no matter under
      * IGNORING LOCK (14.9.30.4 rule 12) */
@@ -3758,8 +3795,11 @@ static __attribute__((noinline)) int cob_read_rest(cob_file *f)
             if (got == 1) rec[0] = f->rbuf[f->rpos]; else if (got) memcpy(rec, f->rbuf + f->rpos, got);
             f->rpos += (unsigned)got;
             if (got == n && !f->code_in) {
-                /* and the next one need not come this far (the short entries) */
-                f->fast_r = 1; if (n == 1) f->fast_r1 = 1;
+                /* and the next one need not come this far (the short entries;
+                 * not for a connector the lock layer checks: those entries
+                 * skip it -- item 39 had put the layer in front of them and
+                 * cost csv2fw 7% of its instructions, performance.md) */
+                if (!lk_locks_effective(f)) { f->fast_r = 1; if (n == 1) f->fast_r1 = 1; }
                 f->fpos += n; f->last_len = n;
                 io_stw = 0;
                 if (f->status) { f->status[0] = '0'; f->status[1] = '0'; }
@@ -3913,7 +3953,26 @@ void cob_write_also_before(int n) { pr_also_before = n; }
 static int cob_write_1(cob_file *f, int before, int after, int reclen);
 int cob_write(cob_file *f, int before, int after, int reclen)
 {
-    if (!lk_active) { int rc = cob_write_1(f, before, after, reclen); lk_opt_clear(); return rc; }
+    if (f->fast_w1) {                           /* the one-byte short entry, as cob_read's */
+        if (__s32_out_byte((FILE *)f->fp, f->record[0])) {
+            char *st = f->status;
+            f->fpos++;
+            io_stw = 0;
+            if (st) { st[0] = '0'; st[1] = '0'; }
+            return 0;
+        }
+    }
+    return cob_write_slow(f, before, after, reclen);
+}
+int cob_write_opt(cob_file *f, int before, int after, int reclen) { return cob_write_slow(f, before, after, reclen); }
+static int cob_write_lk(cob_file *f, int before, int after, int reclen);
+static __attribute__((noinline)) int cob_write_slow(cob_file *f, int before, int after, int reclen)
+{
+    if (!lk_locks_effective(f)) { lk_opt_clear(); return cob_write_1(f, before, after, reclen); }
+    return cob_write_lk(f, before, after, reclen);
+}
+static __attribute__((noinline)) int cob_write_lk(cob_file *f, int before, int after, int reclen)
+{
     if (f->open_mode && lk_before(f)) { int rc = lk_result_51(f); lk_opt_clear(); return rc; }
     int rc = cob_write_1(f, before, after, reclen);
     rc = lk_after(f, 0, rc);
@@ -3981,7 +4040,7 @@ static __attribute__((noinline)) int cob_write_rest(cob_file *f, int before, int
         /* a fixed-length record, open OUTPUT or EXTEND (the tests above),
          * nothing to translate, a stream that can be stored into: the next
          * one need not come this far (the short entries) */
-        if (!f->code_out && __s32_out_plain(fp)) { f->fast_w = 1; if (n == 1) f->fast_w1 = 1; }
+        if (!f->code_out && __s32_out_plain(fp) && !lk_locks_effective(f)) { f->fast_w = 1; if (n == 1) f->fast_w1 = 1; }
         return file_result(f, "00", "");
     }
     /* A print file is a line printer (cobol ISSUES-46).  The cursor sits on

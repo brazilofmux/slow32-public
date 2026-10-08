@@ -68,11 +68,11 @@ for line in open(pf):
 HOOKED = {'cob_k_get_num','cob_k_put_num','cob_k_put_scale','cob_k_get_edited','cob_k_put_edited','cob_k_get_ok','cob_k_put_ok','cob_k_ed_ok',
           'cob_get_num','cob_get_num_impl','cob_put_num_x','cob_put_num_x_impl','cob_get_edited','cob_get_edited_impl','cob_put_edited','cob_put_edited_impl',
           'cob_edit_apply','cob_deedit','strchr',
-          'memcpy','memset','memmove','memcmp','strlen','strcpy','strcmp','memswap','llvm.memcpy.p0.p0.i32','llvm.memset.p0.i32','llvm.memmove.p0.p0.i32'}
+          'memcpy','memset','memmove','memcmp','strlen','strcpy','strcmp','memswap','memchr','llvm.memcpy.p0.p0.i32','llvm.memset.p0.i32','llvm.memmove.p0.p0.i32'}
 def cat(n):
     if n in HOOKED or n.startswith('__s32hk_'): return 'native'
     if n in libcob: return 'libcob'
-    if n in gen: return 'generated'
+    if n in gen or n.startswith('__isl_'): return 'generated'
     return 'libc/rt'
 gen = set(a for a in sys.argv[4:] if not a.startswith('-') and not a.isdigit())
 L = int(sys.argv[sys.argv.index('-l') + 1]) if '-l' in sys.argv else 0

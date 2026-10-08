@@ -45,6 +45,8 @@ static void io_phrases(const char *stmt, File *f)
  * (cob_io_set, read and cleared by it).  allow: bit 0 LOCK/NO LOCK, bit 1
  * IGNORING LOCK, bit 2 ADVANCING ON LOCK, bit 3 SHARING. */
 static int g_io_adv_lock;                      /* the line of a READ's ADVANCING ON LOCK, checked once its format is known */
+static int g_io_phr;                           /* the statement being emitted carried phrases (cob_io_set was emitted): READ/WRITE
+                                                * call the _opt entries, which read and clear them; the short entries never look */
 static void parse_io_phrases(File *f, int allow)
 {
     unsigned flags = 0; int times = 0, secs = 0, forever = 0, any = 0;
@@ -103,6 +105,7 @@ static void parse_io_phrases(File *f, int allow)
     } else emit_li("r5", secs);
     emit_li("r3", (long)flags); emit_li("r6", forever);
     emit_call("cob_io_set");
+    if (!g_noemit) g_io_phr = 1;
 }
 
 static void parse_open(void)
@@ -315,7 +318,8 @@ static void parse_read(void)
 
     g_io_file = f;
     emit_file_addr("r3", f); emit_li("r4", ki);
-    emit_call(keyed ? "cob_read_key" : has_prev ? "cob_read_prev" : "cob_read");
+    emit_call(keyed ? "cob_read_key" : has_prev ? "cob_read_prev" : g_io_phr ? "cob_read_opt" : "cob_read");
+    g_io_phr = 0;
     emit("\tstw sp+%d, r1", SLOT_C);
     if (has_into) {
         int Lskip = new_label();
@@ -480,7 +484,8 @@ advancing_done:;
     if (wlen >= 0) emit_li("r6", wlen);     /* the 01 named: a mode-V record's length; WRITE FILE FROM: the sending item's */
     else emit("\tldw r6, sp+%d", SLOT(lslot));
     if (lslot >= 0) g_slot_base--;
-    emit_call("cob_write");
+    emit_call(g_io_phr ? "cob_write_opt" : "cob_write");
+    g_io_phr = 0;
     emit("\tstw sp+%d, r1", SLOT_C);
     g_io_file = f;
     if (f->linage && (ec_on_name("EC-I-O-EOP") || ec_on_name("EC-I-O-EOP-OVERFLOW") || ec_on_name("EC-I-O-LINAGE"))) {

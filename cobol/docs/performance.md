@@ -1153,3 +1153,128 @@ third: it reads the operand again (`docs/oracles.md`).
   written for it, 38 checks.
 - Mutants: cobol ISSUES-123.
 - Off, it changes nothing but the repairs of those defects.
+
+## 2026-10-08: the lock layer in front of the short entries
+
+**Measured first.**  The month-end batch, each emulator run timed
+around the DBT's process (28 runs): 616 ms, csv2fw 250 of them as the
+batch runs it (concurrently with the C++ side; 215 alone), gl034 45,
+gl038 42, gl035 40.  csv2fw was 0.17 s on 2026-10-03.  Built again with
+the compiler and runtime of that day (a worktree at 74d17831) and run
+alternately with today's under one DBT:
+
+    74d17831   3,295,159,176 instructions   198 ms
+    today      3,546,139,630                215 ms     +7.6%, +8.6%
+
+**What it was.**  Queue item 39 put the record-lock layer in front of
+`cob_read` and `cob_write`: the one-byte short entries of 2026-10-02
+(28 and 27 instructions, no frame) became an inner function behind a
+test of `lk_active`, a loop whose registers the compiler inlined into
+the entry, and a clear of the statement's options -- 80 and 50
+instructions a byte, with a 21-register prologue on every path.  The
+profile said so at once (`cob_read 2,635,661 calls, 80 each`); the
+differential against the old build said how much.
+
+**The repair, in four steps, each counted** (csv2fw, instructions):
+
+1. the one-byte path first in the entry, before the lock test:
+   3,510,976,964 -- the entry still paid the frame the inlined loop
+   wanted;
+2. the lock loop in its own `noinline` function, the entry a tail call
+   to it: 3,357,168,567 -- the entry now saves `lr` only, for the
+   `memset` that cleared the options;
+3. the options cleared field by field: 3,333,422,677 -- the entry has
+   no frame, but tests `cob_io_opt.set` on every byte;
+4. a READ or WRITE that carries lock phrases calls `cob_read_opt` /
+   `cob_write_opt` (the compiler knows: it emitted `cob_io_set`), so
+   the plain entries never ask: 3,300,881,285, 29 and 28 instructions.
+
+Then the report programs: majesty's `SHARING WITH ALL OTHER` turns the
+layer on for the whole run unit, and every READ and WRITE of every
+file -- none with a lock mode -- went through the loop and `lk_after`
+(359 instructions, 12 saved registers), `lk_before`.  The slow entries
+now test `lk_locks_effective` first and tail-call the inner read or
+write for a file the layer has nothing to do for, the loops a function
+further down: gl033 -6.2%, gl045 -4.0%, gl034 -3.0%, gl043 -2.3%,
+gl042 -2.2%, the rest -0.7 to -1.8%; the batch -1.0% beyond csv2fw.
+
+    csv2fw, alternating with 74d17831's build:   198 ms  ->  176 ms
+
+Twenty milliseconds under the old build at the same instruction count:
+the DBT of 2026-10-06 (DBT-22's chaining) and the layout.
+
+**Lesson.**  A runtime entry on the hot path has a contract that is
+not written anywhere: frameless, no call before the fast return, a tail
+call out.  The lock layer kept the semantics and broke the contract,
+and the gates -- which count nothing -- said yes.  The fix is a
+reading of `libcob.s` for the two entries (`cob_read:` must open with
+the `fast_r1` test, no `addi sp`), which this page now records as the
+check; a gate that counts csv2fw's instructions against a bound would
+have caught it the same day.
+
+### Where csv2fw's time goes now
+
+Guest instructions (`bench/prof.sh` through the batch, so the program
+reads majesty's data), 3.21 G: 68.6% run natively under the DBT -- the
+memsets and memcpys and the numeric hooks -- and 1.01 G are translated:
+
+    39.2%  the per-byte island (__isl_0)      2,724,017 calls, 145 each
+    11.8%  cob_write                          4,401,094 calls,  26 each
+    10.0%  the write loop's island (__isl_21)  4,401,094 calls,  22 each
+     7.7%  the program's text                 4,632,217 calls,  16 each
+     7.3%  cob_read                           2,635,661 calls,  27 each
+     6.3%  __isl_9 (parse-amount)               845,690 calls,  75 each
+     5.5%  __isl_11                             919,376 calls,  60 each
+     1.8%  cob_refmod_len_chk                   564,328 calls,  32 each
+     1.7%  cob_class_bytes                      335,284 calls,  50 each
+     1.4%  cob_fn_integer_of_date                57,666 calls, 238 each
+
+and the host's time, sampled (`sample` on the DBT, 106 samples): 80
+in translated code, 15 in `memset`, 7 in the numeric hooks, 2 in
+`memmove`.  The memsets are the program's: `MOVE SPACES TO
+FLD-TEXT(k)` and then `MOVE OWN-TEXT(1:n) TO FLD-TEXT(k)` fill a
+4096-byte item twice a field, 535,100 and 514,888 fills of 4 KB -- a
+seventh of the run, and not the compiler's to remove (the first fill
+is dead only when the second runs).  The hooks are 870,000 crossings
+of a fetch or a store; stage 2's whole-operation hooks would halve
+them.
+
+The per-byte island is 1,254 HIR instructions in 190 blocks and runs
+145 a byte.  Read for waste: every item is loaded from storage at each
+use (149 `gaddr`, 82 loads for a handful of items -- `state`,
+`f-seen`, `f-owned`, `byte-class` -- the optimizer does not keep a
+loaded value across a store to another item); `state` is PIC 99
+DISPLAY and is decoded (`and 15`, `mul 10`, `add`) at each of its
+reads, because its partner `stt-next` is DISPLAY and the census keeps
+the pair as written; a one-byte literal moved to an item is loaded
+from its label (`gaddr .Lstr0; load; store`) where an immediate would
+do; and the address of every global is a `lui` (205 of the island's
+1,127 instructions), the same page over and over.  Those are the next
+levers in the generated code, in that order of ease.
+
+### The report programs
+
+gl034 (the largest, 42 ms): 461 M instructions, 68.6% native (memchr
+is a native routine of the DBT now, and counted so); of the 145 M
+translated: the SORT's merge 19.9% and its key building 8.9%,
+`cob_read_rest` 6.5% and `cob_write_rest` 5.8% (line sequential
+records, 167 and 147 instructions each), the lock layer 12% before
+today's fix, the program's own code 10.9%.  The SORT -- a key image
+built per record, a merge comparing them -- is the one COBOL-shaped
+routine here that would make a natural native hook; the rest is
+small.
+
+### Tools
+
+`bench/emu-standin.py` stands in for the emulator in a script that
+runs many programs (majesty's `batch.sh` takes `S32_EMU`): per run, the
+DBT's process timed (`MODE=time`), or the instruction count under
+`slow32-fast` (`MODE=count`), or one named program run under the
+reference interpreter's profiler in the batch's own directory with the
+batch's own arguments (`MODE=prof`), which is how the profiles above
+were taken.  `bench/sites.py prog.s32x prog.prof` is the call-site
+profile: every `jal` in the text with its count, the function it is
+in and its source line, so a runtime routine's callers are told apart.
+Islands carry a global alias under `-fprofile-lines` (`__isl_N`), so
+`prof.py` tells them apart; and `memchr` is counted among the DBT's
+native routines, as it has been since 282eb903.

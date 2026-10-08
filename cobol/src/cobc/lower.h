@@ -2790,7 +2790,16 @@ static void lw_flush(void)
         int used = 0;
         for (int i = 0; i < g_nasm && !used; i++) used = !strcmp(g_asm[i], call);
         if (!used) { if (lw_trace()) fprintf(stderr, "hir: %s: called by nothing, dropped\n", pd->name); continue; }
-        for (int j = 0; j < pd->n; j++) emit("%s", pd->line[j]);
+        for (int j = 0; j < pd->n; j++) {
+            emit("%s", pd->line[j]);
+            /* -fprofile-lines: a global alias on the island's label, so that
+             * bench/prof.py can tell the islands apart (a .L label is not in
+             * the symbol table) */
+            if (g_proflines && pd->line[j][0] == '.' && !strncmp(pd->line[j], pd->name, strlen(pd->name)) && pd->line[j][strlen(pd->name)] == ':') {
+                emit("\t.globl __isl_%s", pd->name + 5);
+                emit("__isl_%s:", pd->name + 5);
+            }
+        }
     }
     g_lw_npend = 0;
     /* (the nodes, operands and census records are kept: a contained
