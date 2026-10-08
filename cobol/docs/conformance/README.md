@@ -58,10 +58,10 @@ standard's titles or text:
 | 14.9.42 STOP, 14.9.18 GOBACK, 14.9.9 CONTINUE, 14.9.5 CANCEL | [control.md](control.md) | 2026-09-30 |
 | 15 intrinsic functions | [functions.md](functions.md) | 2026-09-30 |
 | 7.2 COPY and REPLACE (text manipulation) | [copy.md](copy.md) | 2026-09-30 |
-| 14.9.39 SET (formats 1-4) | [set.md](set.md) | 2026-09-30 |
+| 14.9.39 SET (formats 1-4; format 14, the dynamic-capacity table's, and 15, CONTENT OF, 2014) | [set.md](set.md) | 2026-10-08 |
 | 14.9.40, .24, .32, .34 SORT, MERGE, RELEASE, RETURN | [sort.md](sort.md) | 2026-09-29 |
 | 13.18.32, .33, .52, .55 JUSTIFIED, level-number, SIGN, SYNCHRONIZED | [clauses.md](clauses.md) | 2026-09-29 |
-| 13.18.38 OCCURS | [occurs.md](occurs.md) | 2026-09-29 |
+| 13.18.38 OCCURS; 8.5.1.9 dynamic-capacity tables (format 4, 2026-10-08) | [occurs.md](occurs.md) | 2026-10-08 |
 | 13.2, 13.5, 13.6, 13.7, 13.10, 13.11, 13.13, 13.16, 13.18.13, .20, .22, .27 the sections, the data description entry, CODE-SET, FILLER, EXTERNAL, GLOBAL; 13.18.49 SAME AS, 13.18.1 ALIGNED (2026-10-06) | [data-division.md](data-division.md) | 2026-09-30 |
 | 13.18.44 REDEFINES | [redefines.md](redefines.md) | 2026-09-29 |
 | 13.18.45 RENAMES | [renames.md](renames.md) | 2026-09-29 |

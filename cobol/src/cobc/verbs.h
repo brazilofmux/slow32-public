@@ -576,10 +576,11 @@ static void parse_inspect_1(void)
  * receiver's own subscripts leading, the rest unrolled at compile time */
 static void init_replace_walk(Sym *s, const Ref *base, int cat, Opnd *value, long *sub, int nsub, int line, int bits_only)
 {
-    if (s->is_cond || s->is_index || s->redefines >= 0) return;
+    if (s->is_cond || s->is_index || s->redefines >= 0 || s->dyn) return;
     if (s->is_group) {
         for (int c = s->child; c >= 0; c = g_sym[c].sibling) {
             Sym *k = &g_sym[c];
+            if (k->dyn) continue;                   /* filled apart (init_dyn_fill) */
             if (k->occurs) {
                 /* one more dimension: every occurrence (a bit array's
                  * elements too, their bits found by ref_resolve_bits) */
@@ -605,7 +606,7 @@ static void init_replace_walk(Sym *s, const Ref *base, int cat, Opnd *value, lon
  * with their neighbours and are set by MOVE instead (ISSUES-94 B1). */
 static void init_cover(Sym *s, int top_off, int disp, unsigned char *cover, int limit, int is_top)
 {
-    if (s->is_cond || s->is_index) return;
+    if (s->is_cond || s->is_index || s->dyn) return;        /* a dynamic table's slot stays; its elements are filled apart */
     if (!is_top && s->redefines >= 0) return;
     if (s->bitgroup || (!s->is_group && s->usage == U_BIT)) return;
     int reps = (!is_top && s->occurs) ? s->occurs : 1;
@@ -674,13 +675,35 @@ static void init_elem2k(Sym *s, Ref *r, const InitSpec *sp)
     }
     emit_move(&v, r);
 }
+/* INITIALIZE of a group holding dynamic-capacity tables (14.9.20.4 rule
+ * 10): each table's elements up to its capacity to their initial state --
+ * the VALUE clauses' when the statement says ALL TO VALUE, the categories'
+ * defaults otherwise -- the capacity unchanged.  The statement's other
+ * phrases (REPLACING, a category's VALUE) do not reach the elements in
+ * this stage: refused. */
+static void init_dyn_fill(Sym *g, int values, int line)
+{
+    for (int c = g->child; c >= 0; c = g_sym[c].sibling) {
+        Sym *k = &g_sym[c];
+        if (k->is_cond || k->is_index) continue;
+        if (k->dyn) {
+            emit_item_addr("r3", k, k->offset);
+            char dl[32]; snprintf(dl, sizeof dl, ".Ldyn%d_%d", g_unit, k->dyn_id);
+            emit_la("r4", dl); emit_li("r5", values);
+            emit_call("cob_dyn_fill");
+            (void)line;
+        } else if (k->is_group && !k->occurs) init_dyn_fill(k, values, line);
+        else if (k->is_group && dyn_table_below(k)) die_at(line, "INITIALIZE: the dynamic-capacity table '%s' is inside the table '%s'", dyn_table_below(k)->name, k->name);
+    }
+}
 static void init_walk(Sym *s, const Ref *base, const InitSpec *sp, long *sub, int nsub, int line, int is_top)
 {
-    if (s->is_cond || s->is_index || s->usage == U_INDEX) return;
+    if (s->is_cond || s->is_index || s->usage == U_INDEX || s->dyn) return;
     if (!is_top && s->redefines >= 0) return;
     if (s->is_group) {
         for (int c = s->child; c >= 0; c = g_sym[c].sibling) {
             Sym *k = &g_sym[c];
+            if (k->dyn) continue;                   /* filled apart (init_dyn_fill) */
             if (k->occurs) {
                 if (nsub >= MAXDIM) die_at(line, "INITIALIZE: too many dimensions");
                 for (long i = 1; i <= k->occurs; i++) { sub[nsub] = i; init_walk(k, base, sp, sub, nsub + 1, line, 0); }
@@ -763,6 +786,12 @@ static void parse_initialize_2002(Ref *rs, int n)
         }
         long sub[MAXDIM];
         init_walk(rs[i].sym, &rs[i], &sp, sub, rs[i].nsub, rs[i].line, 1);
+        Sym *t = rs[i].sym;
+        if (t->is_group && dyn_table_below(t)) {
+            if (sp.nrep || (sp.value && !sp.value_all))
+                die_at(rs[i].line, "INITIALIZE '%s': the group holds the dynamic-capacity table '%s', whose elements this stage initializes only to their initial state (no REPLACING, no category VALUE)", t->name, dyn_table_below(t)->name);
+            init_dyn_fill(t, sp.value ? 1 : 0, rs[i].line);
+        }
     }
 }
 
@@ -846,6 +875,7 @@ static void parse_initialize(void)
                 init_replace_walk(t, r, PIC_NUMERIC_EDITED, &fig_zero, sub, r->nsub, r->line, 0);
                 init_replace_walk(t, r, PIC_ALPHANUMERIC_EDITED, &fig_space, sub, r->nsub, r->line, 0);
                 init_replace_walk(t, r, PIC_BOOLEAN, &fig_zero, sub, r->nsub, r->line, 1);   /* bit items, a MOVE each */
+                if (dyn_table_below(t)) init_dyn_fill(t, 0, r->line);
             } else if (t->pi.category == PIC_NUMERIC_EDITED) emit_move(&fig_zero, r);
             else if (t->pi.category == PIC_ALPHANUMERIC_EDITED) emit_move(&fig_space, r);
             else if (t->usage == U_BIT) emit_move(&fig_zero, r);
@@ -873,6 +903,8 @@ static void parse_initialize(void)
             emit_incompat(&value);
             for (int i = 0; i < n; i++) {
                 Sym *t = rs[i].sym;
+                if (t->is_group && dyn_table_below(t))
+                    die_at(rs[i].line, "INITIALIZE '%s' REPLACING: the group holds the dynamic-capacity table '%s', whose elements this stage initializes only to their initial state (INITIALIZE without REPLACING, or ... ALL TO VALUE)", t->name, dyn_table_below(t)->name);
                 long sub[MAXDIM];
                 for (int k = 0; k < rs[i].nsub && k < MAXDIM; k++) sub[k] = 0;
                 int rcat = rs[i].user_rm ? (rs[i].rm_bit || t->pi.category == PIC_BOOLEAN ? PIC_BOOLEAN : rs[i].rm_nat ? PIC_NATIONAL : PIC_ALPHANUMERIC)
@@ -981,6 +1013,12 @@ static void parse_search(void)
     if (g_cen_on) cen_pin(t.sym, "SEARCH");         /* the table as entries of its size */
     Sym *tbl = t.sym;
     if (!tbl->occurs) die_at(t.line, "SEARCH needs a table (an item with OCCURS)");
+    if (tbl->dyn) {
+        /* a dynamic-capacity table: searched to its capacity; its capacity
+         * is not SET within the statement (14.9.39.4 rule 31) */
+        if (g_nsearch_dyn == 16) die_at(t.line, "SEARCH statements nested too deep");
+        g_search_dyn[g_nsearch_dyn++] = tbl;
+    }
     if (cur()->kind == T_LP) die_at(t.line, "SEARCH names the table without subscripts");
     if (tbl->idx1 < 0) die_at(t.line, "SEARCH needs the table to have INDEXED BY");
     Sym *ix = &g_sym[tbl->idx1];
@@ -1057,11 +1095,7 @@ static void parse_search(void)
             int lo = SLOT(base), hi = SLOT(base + 1), mid = SLOT(base + 2);
             int Ltop = new_label(), Lup = new_label(), Ldown = new_label();
             emit_li("r1", 1); emit("\tstw sp+%d, r1", lo);
-            if (tbl->odo_dep_sym) {
-                Opnd d; memset(&d, 0, sizeof d); d.kind = O_REF; d.ref.sym = tbl->odo_dep_sym; d.ref.line = t.line;
-                if (is_hot_int(tbl->odo_dep_sym)) emit_hot_value(&d);
-                else { Arg a[2] = { arg_ref(&d.ref), arg_desc(sym_desc(tbl->odo_dep_sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
-            } else emit_li("r1", tbl->occurs);
+            emit_table_count(tbl, t.line);
             emit("\tstw sp+%d, r1", hi);
             emit_label(Ltop);
             emit("\tldw r1, sp+%d", lo); emit("\tldw r2, sp+%d", hi);
@@ -1103,11 +1137,7 @@ static void parse_search(void)
             emit_hot_value(&ixo);
             emit("\tstw sp+%d, r1", SLOT_A);
             emit("\tbge r0, r1, .L%d", Lbad);                  /* 0 or less */
-            if (tbl->odo_dep_sym) {
-                Opnd d; memset(&d, 0, sizeof d); d.kind = O_REF; d.ref.sym = tbl->odo_dep_sym; d.ref.line = t.line;
-                if (is_hot_int(tbl->odo_dep_sym)) emit_hot_value(&d);
-                else { Arg a[2] = { arg_ref(&d.ref), arg_desc(sym_desc(tbl->odo_dep_sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
-            } else emit_li("r1", tbl->occurs);
+            emit_table_count(tbl, t.line);
             emit("\tldw r2, sp+%d", SLOT_A);
             emit("\tslt r1, r1, r2");
             emit("\tbeq r1, r0, .L%d", Lok);
@@ -1120,16 +1150,12 @@ static void parse_search(void)
         /* at end when the index passes the bound */
         Opnd ixo; memset(&ixo, 0, sizeof ixo); ixo.kind = O_REF; ixo.ref = ixr; ixo.line = t.line;
         emit_hot_value(&ixo);
-        if (!tbl->odo_dep_sym && !g_nohx) {          /* a fixed bound: no spill */
+        if (!tbl->odo_dep_sym && !tbl->dyn && !g_nohx) {          /* a fixed bound: no spill */
             emit_li("r2", tbl->occurs);
             emit("\tslt r1, r2, r1");               /* bound < index */
         } else {
             emit("\tstw sp+%d, r1", SLOT_A);
-            if (tbl->odo_dep_sym) {
-                Opnd d; memset(&d, 0, sizeof d); d.kind = O_REF; d.ref.sym = tbl->odo_dep_sym; d.ref.line = t.line;
-                if (is_hot_int(tbl->odo_dep_sym)) emit_hot_value(&d);
-                else { Arg a[2] = { arg_ref(&d.ref), arg_desc(sym_desc(tbl->odo_dep_sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
-            } else emit_li("r1", tbl->occurs);
+            emit_table_count(tbl, t.line);
             emit("\tldw r2, sp+%d", SLOT_A);
             emit("\tslt r1, r1, r2");                /* bound < index */
         }
@@ -1155,6 +1181,7 @@ static void parse_search(void)
         emit_jump(Lend);
     }
     emit_label(Lend);
+    if (tbl->dyn) g_nsearch_dyn--;
     if (at_word("end-search") && next_sent)
         die_at(cur()->line, "SEARCH with NEXT SENTENCE ends at the period, not END-SEARCH (%s)", g_std < 2002 ? "X3.23-1985 SEARCH syntax rule 5" : "2023 14.9.37.3 rule 4");
     accept_word("end-search");

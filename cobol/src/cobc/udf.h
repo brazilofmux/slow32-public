@@ -543,14 +543,16 @@ static int g_stmt_convcheck;            /* this statement evaluated a checked NA
 static Sym *odo_table_for(Sym *s);
 static void emit_all_elements(Opnd *ax, int alnum, int cslot)
 {
-    Sym *s = ax->ref.sym, *ot = odo_table_for(s);
+    Sym *s = ax->ref.sym, *ot = odo_table_for(s), *dt = dyn_table_for(s);
     int odim = ot && ot->odo_dep_sym ? ot->ndims - 1 : -1;
     int base = g_slot_base, ks[MAXDIM], nk = 0;
     for (int k = 0; k < ax->ref.nsub; k++) if (ax->all_sub & (1u << k)) ks[nk++] = k;
     int B = g_slot_base++, I[MAXDIM];
     for (int q = 0; q < nk; q++) I[q] = g_slot_base++;
     if (g_slot_base > NSLOTS) die_at(ax->line, "internal: too many staged operands");
+    g_dyn_quiet = dt != NULL;                   /* element 1 as the base: with no elements the stand-in, and no condition */
     emit_ref_addr(&ax->ref, "r3");
+    g_dyn_quiet = 0;
     emit("\tstw sp+%d, r3", SLOT(B));
     int Ltop[MAXDIM], Lend[MAXDIM];
     for (int q = 0; q < nk; q++) {
@@ -562,7 +564,8 @@ static void emit_all_elements(Opnd *ax, int alnum, int cslot)
             if (is_hot_int(d)) { emit_item_addr("r1", d, d->offset); emit_load_int(d, "r1", "r1"); }
             else { emit_item_addr("r3", d, d->offset); emit_desc_addr("r4", sym_desc(d)); emit_call("cob_load_int"); }
             emit("\tadd r2, r1, r0");
-        } else emit_li("r2", s->dim_count[ks[q]]);
+        } else if (dt && ks[q] == 0) { emit_item_addr("r2", dt, dt->offset + 4); emit("\tldw r2, r2+0"); }   /* the capacity (8.4.2.3.3: ALL runs to it) */
+        else emit_li("r2", s->dim_count[ks[q]]);
         emit("\tldw r1, sp+%d", SLOT(I[q]));
         emit("\tbge r1, r2, .L%d", Lend[q]);
     }

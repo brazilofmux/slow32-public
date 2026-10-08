@@ -161,6 +161,7 @@ static void build_tree(void)
 
 static int align_of(Sym *s)
 {
+    if (s->dyn) return 4;                       /* the slot's two words */
     if (!s->sync || s->is_group) return 1;
     switch (s->usage) {
     case U_BINARY: case U_COMP5: case U_SINT: case U_UINT: case U_SSHORT: case U_USHORT:
@@ -229,7 +230,7 @@ static int layout(int si, int base)
             cend = cbase + (tot + 7) / 8;
             if (ch->sync) { off = cend; cur = 0; run = 0; }
         } else {
-            cend = cbase + (sym_bitlike(ch) ? sz : sz * (ch->occurs ? ch->occurs : 1));   /* a bit item's size spans its occurrences */
+            cend = cbase + (ch->dyn ? (int)sizeof(cob_dyn) : sym_bitlike(ch) ? sz : sz * (ch->occurs ? ch->occurs : 1));   /* a bit item's size spans its occurrences; a dynamic table is its slot */
             if (ch->redefines < 0) off = cend;
             else if (!sym_bitlike(ch) && run) {
                 /* a character item, REDEFINES or not, ends a run of bits: the
@@ -265,7 +266,7 @@ static void set_dims(int si, int ndims, const int *counts, const int *strides)
             if (bitdim >= 0) die_at(s->line, "'%s': a bit table inside an occurring bit group is not implemented", s->name);
             bitdim = ndims; bitstride = bit_stride(s);
         }
-        cnt[ndims] = s->occurs; str[ndims] = bits ? 0 : s->size; ndims++;   /* bits: the element is a bit position */
+        cnt[ndims] = s->dyn ? INT_MAX : s->occurs; str[ndims] = bits ? 0 : s->size; ndims++;   /* bits: the element is a bit position; a dynamic table: any subscript, checked at run time */
     }
     s->ndims = ndims; s->bitdim = bitdim; s->bitdim_stride = bitstride;
     memcpy(s->dim_count, cnt, ndims * sizeof *cnt); memcpy(s->dim_stride, str, ndims * sizeof *str);
@@ -559,9 +560,18 @@ static void shift_bits(int si, int k)
     s->offset = (int)(t / 8); s->bitoff = (int)(t % 8);
     for (int c = s->child; c >= 0; c = g_sym[c].sibling) shift_bits(c, k);
 }
+static int g_dyn_template;                    /* building a dynamic table's element image: the table's entry is one element at base */
 static void init_instance(Sym *rec, int si, int base, int defaults)
 {
     Sym *s = &g_sym[si];
+    if (s->dyn && !g_dyn_template) {
+        /* the slot: no elements yet, the minimum capacity (13.18.63.4 rule 6
+         * of the initial state; cob_dyn_elem makes them at the first touch) */
+        unsigned char *p = rec->image + base;
+        memset(p, 0, 4); unsigned m = (unsigned)s->dyn_cap0;
+        p[4] = (unsigned char)m; p[5] = (unsigned char)(m >> 8); p[6] = (unsigned char)(m >> 16); p[7] = (unsigned char)(m >> 24);
+        return;
+    }
     int n = s->occurs ? s->occurs : 1;
     if (s->bitgroup && s->occurs) {
         /* an occurring bit group: each occurrence at the next bits, the
@@ -787,6 +797,8 @@ static void finish_data_division(void)
         if (o->occurs)
             die_at(s->line, "'%s' REDEFINES '%s', which has an OCCURS clause; redefine an item containing the table, or one inside it (%s)",
                    s->name, o->name, e85 ? "X3.23-1985 REDEFINES syntax rule 5" : "2023 13.18.44.3 rule 5");
+        if (dyn_table_for(s) || dyn_table_for(o) || (s->is_group && dyn_table_below(s)) || (o->is_group && dyn_table_below(o)))
+            die_at(s->line, "'%s' REDEFINES '%s': neither may be, or hold, a dynamic-capacity table (2023 13.18.44.3 rule 17)", s->name, o->name);
         if (odo_table_for(s) != odo_table_for(o) || (s->is_group && odo_table_below(s)))
             die_at(s->line, "'%s' REDEFINES '%s': neither may include an OCCURS DEPENDING ON table (%s)",
                    s->name, o->name, e85 ? "X3.23-1985 REDEFINES syntax rule 5" : "2023 13.18.44.3 rule 5");
@@ -895,6 +907,46 @@ static void finish_data_division(void)
                 if (g_sym[c].level != 88 && g_sym[c].level != 66)
                     die_at(g_sym[c].line, "'%s' follows the OCCURS DEPENDING ON table '%s' in its record, which only the table's own subordinate entries may (2023 13.18.38.3 rule 22)",
                            g_sym[c].name, s->name);
+    }
+    /* dynamic-capacity tables (2023 13.18.38 format 4): the CAPACITY IN
+     * item -- a numeric item of the table's level, the slot's second word,
+     * found by name and by the table's qualifiers (13.18.38.3 rule 30), a
+     * sending operand but for SET (rule 32) -- the rules this stage keeps
+     * to, and an element's initial state for INITIALIZED and INITIALIZE */
+    for (int i = g_sym_base; i < g_nsym; i++) {
+        Sym *s = &g_sym[i];
+        if (!s->dyn) continue;
+        int dyn_cap0 = s->dyn_min;
+        for (Sym *k = s->parent >= 0 ? &g_sym[s->parent] : NULL; k; k = k->parent >= 0 ? &g_sym[k->parent] : NULL)
+            if (k->occurs) die_at(s->line, "'%s': a dynamic-capacity table inside the table '%s' is not implemented (2023 8.5.1.9.1 allows it); this stage takes a dynamic table as the outermost dimension", s->name, k->name);
+        Sym *below = dyn_table_below(s);
+        if (below) die_at(below->line, "'%s': a dynamic-capacity table inside the dynamic-capacity table '%s' is not implemented (2023 8.5.1.9.1 allows it)", below->name, s->name);
+        if (g_sym[s->record].is_constrec) die_at(s->line, "'%s': a dynamic-capacity table in the CONSTANT RECORD '%s' (2023 13.18.38.3 rule 33)", s->name, g_sym[s->record].name);
+        if (s->redefines >= 0) die_at(s->line, "'%s': a dynamic-capacity table does not REDEFINES (2023 13.18.44.3 rule 17)", s->name);
+        for (int j = i; j < g_nsym; j++)
+            if (!g_sym[j].is_cond && !g_sym[j].is_index && sym_under(j, i) && g_sym[j].value_tok) { if (s->dyn_to) dyn_cap0 = s->dyn_to; break; }
+        s->dyn_cap0 = dyn_cap0; s->dyn_id = i - g_sym_base;
+        if (s->dyn_cap[0]) {
+            Sym *dup = sym_lookup_quiet(s->dyn_cap);
+            if (dup) die_at(s->line, "CAPACITY IN %s: the name is defined elsewhere, at line %d (2023 13.18.38.3 rule 30)", s->dyn_cap, dup->line);
+            Sym *c = sym_new(); s = &g_sym[i];   /* sym_new may move the array */
+            snprintf(c->name, sizeof c->name, "%s", s->dyn_cap);
+            c->line = s->line; c->level = s->level; c->parent = s->parent; c->record = s->record;
+            c->offset = s->offset + 4; c->size = 4;
+            c->usage = U_UINT; c->has_usage = 1; c->pi.category = PIC_NUMERIC; c->pi.digits = 10;
+            c->cap_of = i; c->is_global = s->is_global;
+            s->dyn_cap_sym = sym_idx(c);
+        }
+        /* an element's initial state: INITIALIZE WITH FILLER ALL TO VALUE THEN TO DEFAULT (8.5.1.9.5) */
+        Sym tmp; memset(&tmp, 0, sizeof tmp);
+        tmp.image = xmalloc(s->size); tmp.image_size = s->size;
+        g_dyn_template = 1;
+        init_record(&tmp, i, 1);
+        s->dyn_image = tmp.image;
+        tmp.image = xmalloc(s->size);
+        g_no_values = 1; init_record(&tmp, i, 1); g_no_values = 0;
+        g_dyn_template = 0;
+        s->dyn_image0 = tmp.image;
     }
     /* files: names, status, the record area */
     for (int i = g_file_base; i < g_nfile; i++) {

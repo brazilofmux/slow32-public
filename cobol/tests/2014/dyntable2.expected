@@ -1,0 +1,14 @@
+cap=0000000002 alice  2 005010005 / bob    1 005
+alice is big
+bob is not
+refmod: [nXYody] cap=0000000003
+string: [caroly] p=0006 cap=0000000004
+add: 012 cap=0000000005
+sum of kinds: 00003
+  sub: lcap=0000000005 alice  010
+  sub stored 6: lcap=0000000006
+after sub: cap=0000000006 frank  total=00099
+  own: call 1 ocap=0000000002 ot(1)=01 ot(2)=01
+  own: call 2 ocap=0000000003 ot(1)=02 ot(2)=01
+  own: call 1 ocap=0000000002 ot(1)=01 ot(2)=01
+done

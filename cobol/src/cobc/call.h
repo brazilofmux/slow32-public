@@ -197,7 +197,9 @@ static void parse_call(void)
             if (!at_operand()) break;
             if (n >= 16) die_at(cur()->line, "more than 16 CALL arguments (an implementation limit)");
             int ostart = g_tp;
+            g_call_byref = mode == 0;               /* BY REFERENCE: a variable-length group goes by its address, slot and all */
             parse_operand(&ops[n]);
+            g_call_byref = 0;
             Opnd *o = &ops[n];
             if (ps && at_arith_op()) ops[n] = expr_opnd_after(o, ostart);   /* format 2: an expression, BY CONTENT (implied) or BY VALUE */
             if (ps && n < ps->nparam && mode != 2 && !ps->byval[n] && !ps->param[n].group && ps->param[n].size != -1 &&

@@ -58,6 +58,20 @@ typedef struct Sym {
     int  occurs;                    /* 0 = no OCCURS; with DEPENDING ON, the maximum */
     int  nokey; char okey[8][64]; unsigned char okey_desc[8];   /* OCCURS ASCENDING/DESCENDING KEY: names in order, 1 = descending (SEARCH ALL) */
     int  odo_min; char odo_dep[64]; struct Sym *odo_dep_sym;   /* OCCURS m TO n DEPENDING ON */
+    /* OCCURS DYNAMIC (2014; 2023 13.18.38 format 4, 8.5.1.9): a dynamic-
+     * capacity table.  In its record the entry is an 8-byte slot (cob_dyn:
+     * the elements' address, the current capacity); the elements live on
+     * the heap, one after another, and are reached through cob_dyn_elem.
+     * occurs is 1 (a table), dim_count INT_MAX (any literal subscript),
+     * size the element's */
+    int  dyn;                       /* 1: a dynamic-capacity table */
+    int  dyn_min, dyn_to, dyn_init; /* FROM (the minimum, 0 unless written), TO (the expected capacity, 0 none), INITIALIZED */
+    char dyn_cap[64]; int dyn_cap_sym;   /* CAPACITY IN data-name-3: the implicit item's name and its Sym (-1 none) */
+    int  dyn_id;                    /* its descriptor's number in the unit (.Ldyn<unit>_<id>), -1 */
+    int  dyn_cap0;                  /* the initial capacity: the minimum, or the expected one when a VALUE clause reaches the elements (13.18.63.4 rule 16b) */
+    unsigned char *dyn_image;       /* an element's initial state (its VALUE clauses, the defaults elsewhere): INITIALIZED's and INITIALIZE ... TO VALUE's */
+    unsigned char *dyn_image0;      /* ... the categories' defaults alone: INITIALIZE without phrases */
+    int  cap_of;                    /* a CAPACITY IN item: the table it counts (-1 otherwise); a sending operand only, SET's receiver */
     int  idx1;                      /* the table's first INDEXED BY item, or -1 */
     int  ix_table;                  /* an index item: the table it indexes */
     int  lin_file;                  /* LINAGE-COUNTER of file lin_file (a cell in its cob_file), -1 otherwise */
@@ -117,6 +131,8 @@ static int g_bin_native;
 static int sym_be(const Sym *s) { return (s->usage == U_BINARY && !s->is_rc && !g_bin_native && !s->native) || s->uvar == UV_COMPX; }   /* COMP-X always (MF) */
 static int sym_in_strong(const Sym *s);
 static Sym *odo_table_for(Sym *s);
+static Sym *dyn_table_for(Sym *s);     /* the dynamic-capacity table s is, or is in, or NULL */
+static Sym *dyn_table_below(Sym *s);   /* a dynamic-capacity table below a group, at any depth, or NULL */
 static void value_rules(void);
 static void occurs_rules(void);
 static Sym *odo_table_below(Sym *s);
@@ -167,6 +183,7 @@ static Sym *sym_new(void)
     memset(s, 0, sizeof *s);
     s->parent = s->child = s->sibling = s->redefines = -1;
     s->desc_id = -1; s->fd = -1; s->idx1 = -1; s->ix_table = -1; s->lin_file = -1; s->rep_ctr = -1; s->bitdim = -1;
+    s->dyn_cap_sym = -1; s->dyn_id = -1; s->cap_of = -1;
     return s;
 }
 

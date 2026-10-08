@@ -35,6 +35,7 @@ typedef struct Ref_ {
     int rm_odo; Sym *odo_dep; int odo_base, odo_elem;   /* a whole group over an ODO table, sent at its current length */
     int odo_bits;                   /* ... the table a bit array: odo_base and odo_elem in bits, odo_bits the element's (cob_odo_length_bits) */
     int lw_lenx, lw_startx;         /* lower.h: a computed length's, a computed start's node + 1 when an island takes it, else 0 */
+    int recv;                       /* a receiving operand (set where the statements name one): an element of a dynamic-capacity table past its capacity is made, not refused (2023 8.5.1.9.3) */
 } Ref;
 static void emit_refmod_check(const Ref *r, long len, int slot);
 /* the stand-in subscript symbol of an arithmetic-expression subscript
@@ -396,9 +397,14 @@ static long g_scr_occ;                /* a screen item under OCCURS (2023 13.18.
  * into its operands; a store that got past them (through a pointer, a
  * called program's BY REFERENCE argument) faults, the storage being
  * read-only */
+static int g_set_capacity;                     /* parsing SET capacity-name ...: the one receiving use of a CAPACITY IN item */
 static void no_constrec_recv(const Ref *r, const char *stmt)
 {
     const Sym *s = r->sym;
+    ((Ref *)r)->recv = 1;                       /* every statement that stores into an operand comes through here */
+    if (s && s->cap_of >= 0 && !g_set_capacity)
+        die_at(r->line, "%s%s'%s' is the CAPACITY of the dynamic-capacity table '%s': a sending operand, set only by SET (2023 13.18.38.3 rule 32)",
+               stmt ? stmt : "", stmt ? ": " : "", s->name, g_sym[s->cap_of].name);
     if (!s || s->record < 0 || s->record >= g_nsym || !g_sym[s->record].is_constrec) return;
     die_at(r->line, "%s%s'%s' is %sthe CONSTANT RECORD '%s', which no statement names as a receiving operand (2023 13.18.15.3 rule 2)",
            stmt ? stmt : "", stmt ? ": " : "", s->name, s == &g_sym[s->record] ? "" : "in ", g_sym[s->record].name);

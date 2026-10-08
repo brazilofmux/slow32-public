@@ -1,0 +1,31 @@
+start: cap=0000000005 ecap=0000000002 qcap=0000000000 head=aaa tail=zzz
+store 1: cap=0000000005 k(1)=011 v(1)=one 
+store 3: k(2)=007 v(2)=init k(3)=033 v(3)=init
+neighbours intact: aaa/zzz
+v(i): two 
+store 5: cap=0000000005 k(4)=007 k(5)=055
+  nonfatal: EC-BOUND-OVERFLOW cap=0000000006
+store 6 past the expected 5: cap=0000000006 k(6)=066
+store 7, already past: cap=0000000007
+set cap to 3: cap=0000000003 k(3)=033
+set cap up by 2: cap=0000000005 k(5)=007 (made again, initialized)
+set cap down by 10: cap=0000000000 (the minimum)
+  nonfatal: EC-BOUND-SET cap=0000000009
+set cap to i=9: cap=0000000009
+  nonfatal: EC-BOUND-SET cap=0000000008
+set cap to i * 2: cap=0000000008
+u: ecap=0000000002 e(1)=[  ] e(2)=[  ] (the minimum, defaults)
+u stored: ecap=0000000003 abcdef
+down to the minimum: ecap=0000000002
+initialize g: cap=0000000008 k(1)=000 v(1)=[    ] head=[   ]
+all to value: k(1)=007 v(1)=[init] head=[aaa]
+k(1..8): 001002003004005006007008
+max k: +000000008.000000000 sum k: +000000036.000000000
+serial: found k=6 at 0006 v=F   
+serial: 99 not found, cap=0000000008
+binary: found 7 at 0007
+binary: 9 not found (past the capacity)
+sort q descending: 09070501 qcap=0000000004
+sort q ascending: 01050709
+end: aaazzz
+  declarative: EC-BOUND-SUBSCRIPT

@@ -195,7 +195,7 @@ static const char *cen_native_cand(int i, int group, int alias)
          * not of a table whose length varies */
         int inplace; cen_native_size(s, &inplace);
         if (!inplace) return "table";
-        for (int p = i; p >= 0; p = g_sym[p].parent) if (g_sym[p].odo_dep[0]) return "table";
+        for (int p = i; p >= 0; p = g_sym[p].parent) if (g_sym[p].odo_dep[0] || g_sym[p].dyn) return "table";
     }
     Sym *rec = &g_sym[s->record];
     if (rec->fd >= 0 || rec_indirect(rec) || s->any_len || s->is_global) return "storage";

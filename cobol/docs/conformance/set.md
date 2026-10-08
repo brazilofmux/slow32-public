@@ -4,9 +4,10 @@ Swept 2026-09-30. X3.23-1985: 6.23 (VI-127..VI-129). 2002: 14.8.35.
 2023: 14.9.39. Formats 1-4 are the ones in 1985 and in real programs:
 index assignment, index arithmetic, switches and condition-names. The
 pointer formats are 2002's and were swept with them (pointerset,
-addressof); format 15, SET CONTENT OF (2014), is below; the object,
-locale, dynamic-length and message-tag formats belong to features ruled
-out or not yet taken.
+addressof); format 15, SET CONTENT OF (2014), is below, and format 14,
+the dynamic-capacity table's (2014; 2026-10-08, queue item 44); the
+object, locale, dynamic-length and message-tag formats belong to
+features ruled out or not yet taken.
 
 CCVS-85 tests all four formats (the NC SET, SEARCH and switch
 programs), and its totals held when the rules below were enforced, so
@@ -76,3 +77,13 @@ Found on the way: a MOVE to a reference-modified edited item edited
 the value, though a reference-modified item is alphanumeric
 (8.4.2.4.3). SET TO TRUE's fix depends on that, and the MOVE is fixed
 with it.
+
+## Format 14: SET capacity-name TO / UP BY / DOWN BY (2014; 2023 14.9.39)
+
+| rule | paraphrase | disposition |
+|---|---|---|
+| SR 29 | data-name-2 is a CAPACITY IN item | **implemented**: the one receiving use of the item (occurs.md); UP BY / DOWN BY on any other integer item stays refused (bad/std2014-dyn-set-not-cap) |
+| SR 30 | integer-1 nonnegative; with TO, not below the minimum nor above the expected capacity | **refused**: bad/std2014-dyn-set-negative, -dyn-set-above-to, -dyn-set-below-from |
+| GR 29 | an expression that is not a nonnegative integer: EC-BOUND-SUBSCRIPT, the statement unsuccessful | **implemented** (cob_dyn_set) |
+| GR 30 | TO / UP / DOWN computed; past the implementor's maximum EC-BOUND-TABLE-LIMIT and unchanged; past the expected capacity EC-BOUND-SET (nonfatal, set all the same); below the minimum, the minimum; new occurrences initialized as 8.5.1.9.5 | **implemented**: 2014/dyntable (TO 3, UP BY 2 with the element remade and initialized, DOWN BY 10 to the minimum, TO i = 9 and TO i * 2 raising EC-BOUND-SET) |
+| GR 31 | not during a SEARCH of the same table: EC-FLOW-SEARCH | **refused** at compile time when the SET is written inside the SEARCH statement (bad/std2014-dyn-set-in-search); a SET reached from a WHEN body through PERFORM is not detected (**gap**: the run-time condition is not kept) |

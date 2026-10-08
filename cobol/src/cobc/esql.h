@@ -941,8 +941,8 @@ static void parse_statement_1(void)
     if (!strcmp(v, "go")) { advance(); parse_goto(); return; }
     if (!strcmp(v, "set")) { advance(); parse_set(); return; }
     if (!strcmp(v, "unlock")) {
-        /* UNLOCK file [RECORD|RECORDS|ALL RECORDS]: RM/COBOL's record
-         * locking, released.  One user here: nothing was locked. */
+        /* UNLOCK file [RECORD|RECORDS|ALL RECORDS] (2023 14.9.47): the
+         * connector's record locks released (docs/conformance/locking.md) */
         advance();
         if (cur()->kind != T_WORD) die_at(t->line, "UNLOCK needs a file-name");
         File *uf = file_find(cur()->s);
@@ -1943,6 +1943,8 @@ static void parse_procedure_division(void)
         for (int i = g_sym_base; i < g_nsym; i++) {
             Sym *s = &g_sym[i];
             if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->rep_ctr >= 0 || rec_indirect(s) || s->is_rc || s->is_constrec) continue;
+            for (int j = i + 1; j < g_nsym; j++)          /* its dynamic-capacity tables' elements given up first (14.9.5.4 rule 2) */
+                if (g_sym[j].dyn && g_sym[j].record == i) { emit_la_off("r3", s->label, g_sym[j].offset); emit_call("cob_dyn_free"); }
             emit_la("r3", s->label);
             char il[80]; snprintf(il, sizeof il, "%s_i", s->label);
             emit_la("r4", il);

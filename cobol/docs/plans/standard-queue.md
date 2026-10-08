@@ -528,6 +528,13 @@ dropped (conformance/resume.md; test 2002/resume; 5 bad tests).
 **44. Dynamic-capacity tables.** A.4.4; 13.18.38 format 4, SET format 14,
 EC-BOUND-OVERFLOW/-SET/-TABLE-LIMIT, EC-FLOW-SEARCH; Ed. 2014; L.
 - Today: "expected a count after OCCURS" (bare).
+- **DONE 2026-10-08** (docs/conformance/occurs.md, format 4; set.md, format 14): OCCURS DYNAMIC with
+  CAPACITY IN, FROM, TO, INITIALIZED, KEY and INDEXED BY; the slot-and-heap representation; stores
+  make elements, reads past the capacity are EC-BOUND-SUBSCRIPT; SET TO/UP BY/DOWN BY; EC-BOUND-
+  OVERFLOW, -SET, -TABLE-LIMIT; INITIALIZE, SEARCH, SORT, ALL, CANCEL, LINKAGE. Left as gaps, each
+  refused by name: a dynamic table inside a table (either way round), a variable-length group moved
+  or compared whole (8.5.1.12 compatibility), INITIALIZE REPLACING over such a group, EC-FLOW-SEARCH
+  at run time (compile-time only), reclaiming a LOCAL-STORAGE table's elements at exit.
 
 **45. Locale support and STANDARD-COMPARE.** A.4.9; 15.51-15.54, 15.85, LOCALE on UPPER-/LOWER-CASE
 and TEST-NUMVAL-C, SET formats 11-12, SPECIAL-NAMES LOCALE, PICTURE locale format, CHARACTER

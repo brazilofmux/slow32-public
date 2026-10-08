@@ -1,1 +1,1 @@
-OCCURS DYNAMIC (a dynamic-capacity table) is COBOL 2014
+OCCURS DYNAMIC (a dynamic-capacity table) is COBOL 2014 (2023 13.18.38 format 4); compile with -std=2014

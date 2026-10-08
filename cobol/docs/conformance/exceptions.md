@@ -24,7 +24,7 @@ Counting: 133 level-3 names. 37 raised and shown by a test; 7 refused at
 compile time instead, where the text's run-time condition is decided by
 the source; 22 the implementor's (`-IMP`), which this implementation
 never defines; 43 belong to features not built (object orientation,
-VALIDATE, messaging, locale, dynamic tables, commit, prototypes and
+VALIDATE, messaging, locale, commit, prototypes and
 pointers, IEEE float, the screen and 2002 Report Writer leftovers), each
 with its queue item; 4 rulings; 20 gaps, named in their rows, which
 queue item 4 continues with.
@@ -43,12 +43,12 @@ queue item 4 continues with.
 | EC-BOUND-FUNC-RET-VALUE | NF | **ruling**: cannot arise -- a function's temporary is sized to its result (docs/functions.md) |
 | EC-BOUND-IMP | Imp | **ruling**: no implementor-defined condition is defined here, so it never arises |
 | EC-BOUND-ODO | Fatal | **test**: 2002/ecodo |
-| EC-BOUND-OVERFLOW | NF | **n/a**: dynamic-capacity tables (queue item 44) |
+| EC-BOUND-OVERFLOW | NF | a dynamic-capacity table's expected capacity first exceeded by a store (occurs.md; 2014/dyntable) |
 | EC-BOUND-PTR | Fatal | **gap**: queue item 11 |
 | EC-BOUND-REF-MOD | Fatal | **test**: 2002/ecrefmod, 2002/fnrmpast, 2002/fnrmzero |
-| EC-BOUND-SET | NF | **n/a**: dynamic-capacity tables (queue item 44) |
+| EC-BOUND-SET | NF | SET of a dynamic-capacity table's capacity past its expected capacity (set.md; 2014/dyntable) |
 | EC-BOUND-SUBSCRIPT | Fatal | **test**: 2002/ecbound, 2002/ecperform, 2002/ecpfatal |
-| EC-BOUND-TABLE-LIMIT | Fatal | **n/a**: dynamic-capacity tables (queue item 44) |
+| EC-BOUND-TABLE-LIMIT | Fatal | a dynamic-capacity table past the implementor's maximum, 16,777,215 occurrences, or past the storage there is; raised when checked, fatal in the runtime otherwise; no test drives it |
 
 ## EC-CONTINUE
 
@@ -90,7 +90,7 @@ queue item 4 continues with.
 | EC-FLOW-REPORT | Fatal | **test**: 2002/ecreport |
 | EC-FLOW-RETURN | Fatal | **test**: 2002/ecsort |
 | EC-FLOW-ROLLBACK | Fatal | **n/a**: queue item 46 |
-| EC-FLOW-SEARCH | Fatal | **n/a**: dynamic-capacity tables (queue item 44) |
+| EC-FLOW-SEARCH | Fatal | SET of a capacity during a SEARCH of its table: **refused** at compile time when written inside the SEARCH (bad/std2014-dyn-set-in-search); not kept at run time (set.md) |
 | EC-FLOW-USE | Fatal | **test**: 2002/ecflowuse |
 
 ## EC-FUNCTION

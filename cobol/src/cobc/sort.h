@@ -132,14 +132,12 @@ static void parse_sort_table(int line)
     /* the first occurrence's address (the outer subscripts as written, its
      * own 1), the count, the stride */
     Ref first = tr; first.nsub = e->ndims; first.sub[e->ndims - 1].sym = NULL; first.sub[e->ndims - 1].lit = 1; first.sub[e->ndims - 1].adj = 0;
-    if (e->odo_dep_sym) {
-        Opnd d; memset(&d, 0, sizeof d); d.kind = O_REF; d.ref.sym = e->odo_dep_sym; d.ref.line = line; d.line = line;
-        if (is_hot_int(e->odo_dep_sym)) emit_hot_value(&d);
-        else { Arg a[2] = { arg_ref(&d.ref), arg_desc(sym_desc(e->odo_dep_sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
-    } else emit_li("r1", e->occurs);
+    emit_table_count(e, line);
     emit("\tstw sp+%d, r1", SLOT_A);
     char tab[32]; snprintf(tab, sizeof tab, ".Lsk%d_%d", g_unit, t->id);
+    g_dyn_quiet = e->dyn;                        /* a dynamic table's element 1: with none, the stand-in and a count of 0 */
     emit_ref_addr(&first, "r3");
+    g_dyn_quiet = 0;
     emit("\tldw r4, sp+%d", SLOT_A);
     emit_li("r5", e->size);
     emit_la("r6", tab); emit_li("r7", t->nk);

@@ -7653,6 +7653,94 @@ int cob_call_returned;
  * unit holds, so FREE can tell allocated storage from anything else */
 static void **alloc_blk; static int alloc_n, alloc_cap;
 
+/* ---- dynamic-capacity tables (2023 13.18.38 format 4, 8.5.1.9) -------- */
+
+static int dyn_st;                               /* the last operation's condition (cob_dyn_status) */
+static unsigned char *dyn_scratch; static unsigned dyn_scratch_n;
+/* elements to make the capacity n: the block grown, the new elements
+ * their initial state (the descriptor's image under INITIALIZED, else
+ * zero bytes -- the text leaves them undefined).  0, or COB_DYN_LIMIT. */
+static int dyn_grow(cob_dyn *d, const cob_dyn_desc *t, unsigned n)
+{
+    if (n > COB_DYN_MAX) return COB_DYN_LIMIT;
+    unsigned have = d->elems ? d->cap : 0;         /* elements that exist; a fresh slot has its capacity and no elements yet */
+    if (n > have) {
+        size_t sz = (size_t)n * t->elem;
+        unsigned char *b = d->elems ? realloc(d->elems, sz ? sz : 1) : malloc(sz ? sz : 1);
+        if (!b) return COB_DYN_LIMIT;
+        d->elems = b;
+        /* the new elements' content: their VALUEs under INITIALIZED (8.5.1.9.5);
+         * undefined otherwise by the text -- here the categories' defaults,
+         * so a PIC X element reads as spaces and a numeric one as zero */
+        for (unsigned k = have; k < n; k++) memcpy(b + (size_t)k * t->elem, (t->flags & COB_DYN_INITIALIZED) ? t->image : t->image0, t->elem);
+    }
+    d->cap = n;
+    return 0;
+}
+/* the address of element n (from 1).  As a receiving item (recv) a
+ * subscript past the capacity creates the elements up to it (8.5.1.9.3),
+ * EC-BOUND-OVERFLOW when that passes the expected capacity for the first
+ * time, EC-BOUND-TABLE-LIMIT (fatal, the table unchanged) past the
+ * implementor's; as a sending item it is EC-BOUND-SUBSCRIPT (8.5.1.9.2),
+ * as is any subscript below 1.  The address is always one that can be
+ * read: a scratch element of spaces stands in when there is none.
+ * chk: bit 0 the caller checks EC-BOUND-TABLE-LIMIT (else it is fatal
+ * here), bit 1 EC-BOUND-SUBSCRIPT likewise (else a message and the stand-in). */
+unsigned char *cob_dyn_elem(cob_dyn *d, const cob_dyn_desc *t, int n, int recv, int chk)
+{
+    dyn_st = COB_DYN_OK;
+    if (n >= 1 && (unsigned)n <= d->cap) {
+        if (!d->elems && dyn_grow(d, t, d->cap)) goto limit;     /* the initial elements, made at the first touch */
+        return d->elems + (size_t)(n - 1) * t->elem;
+    }
+    if (recv && n >= 1) {
+        unsigned before = d->cap; int st = dyn_grow(d, t, (unsigned)n);
+        if (st) goto limit;
+        if (t->expected && (unsigned)n > t->expected && before <= t->expected) dyn_st = COB_DYN_OVERFLOW;
+        return d->elems + (size_t)(n - 1) * t->elem;
+    }
+    dyn_st = COB_DYN_SUBSCRIPT;
+    if (!(chk & 2)) fprintf(stderr, "libcob: subscript %d of the dynamic-capacity table %s is outside its capacity %u\n", n, t->name, d->cap);
+scratch:
+    if (dyn_scratch_n < t->elem) { free(dyn_scratch); dyn_scratch = malloc(t->elem); dyn_scratch_n = dyn_scratch ? t->elem : 0; if (!dyn_scratch) cob_fatal("out of memory"); }
+    memset(dyn_scratch, ' ', t->elem);
+    return dyn_scratch;
+limit:
+    dyn_st = COB_DYN_LIMIT;
+    if (!(chk & 1)) { char m[160]; snprintf(m, sizeof m, "EC-BOUND-TABLE-LIMIT: the dynamic-capacity table %s cannot grow to %d elements", t->name, n); cob_fatal(m); }
+    goto scratch;
+}
+int cob_dyn_status(void) { return dyn_st; }
+/* SET capacity TO / UP BY / DOWN BY v (14.9.39 format 14, rules 29-31):
+ * below the minimum the minimum; past the expected capacity EC-BOUND-SET
+ * (set all the same); past the implementor's EC-BOUND-TABLE-LIMIT, the
+ * capacity unchanged; a negative v EC-BOUND-SUBSCRIPT, nothing done */
+int cob_dyn_set(cob_dyn *d, const cob_dyn_desc *t, int mode, long v)
+{
+    dyn_st = COB_DYN_OK;
+    if (v < 0) return dyn_st = COB_DYN_SUBSCRIPT;
+    long n = mode == 0 ? v : mode == 1 ? (long)d->cap + v : (long)d->cap - v;
+    if (n < (long)t->min) n = t->min;
+    if (n > COB_DYN_MAX) return dyn_st = COB_DYN_LIMIT;
+    if ((unsigned)n > d->cap || !d->elems) {
+        if (dyn_grow(d, t, (unsigned)n)) return dyn_st = COB_DYN_LIMIT;
+    } else d->cap = (unsigned)n;                   /* the higher occurrences deleted (8.5.1.9.4); the block kept, as the note allows */
+    if (t->expected && (unsigned)n > t->expected) dyn_st = COB_DYN_SET;
+    return dyn_st;
+}
+/* INITIALIZE of a group holding the table (14.9.20.4 rule 10): every
+ * element up to the current capacity to its initial state -- the VALUE
+ * clauses' under ALL TO VALUE (values 1), the categories' defaults
+ * otherwise -- the capacity unchanged */
+void cob_dyn_fill(cob_dyn *d, const cob_dyn_desc *t, int values)
+{
+    if (!d->elems && d->cap && dyn_grow(d, t, d->cap)) cob_fatal("EC-BOUND-TABLE-LIMIT: no storage for a dynamic-capacity table");
+    const unsigned char *im = values ? t->image : t->image0;
+    for (unsigned k = 0; k < d->cap && d->elems; k++) memcpy(d->elems + (size_t)k * t->elem, im, t->elem);
+}
+/* the elements given up: CANCEL, before the record's image is restored */
+void cob_dyn_free(cob_dyn *d) { free(d->elems); d->elems = 0; d->cap = 0; }
+
 void *cob_allocate(int n)
 {
     if (n <= 0) return NULL;                    /* GR 2: NULL, no exception */

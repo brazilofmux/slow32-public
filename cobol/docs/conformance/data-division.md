@@ -173,7 +173,7 @@ prohibits those "indirect means" without a rule a compiler could check.
 | SR 2 | neither the record nor an item in it a receiving operand | **refused**: bad/std2014-constrec-receiver, -set-true, -initialize, -string, -inspect, -perform; the rest by the same check |
 | GR 1 | the content: as INITIALIZE WITH FILLER ALL TO VALUE THEN TO DEFAULT would leave it | **test**: 2014/constrec (the D.21 example: a binary item zero, DISPLAY items spaces, VALUEs kept, ALL "Q", a REDEFINES inside, a VALUE under OCCURS) |
 | 11.9.10.4 GR 7 | not re-initialized with the program | **test**: 2014/constrec (a LOCAL-STORAGE one across two calls) -- it cannot change, so there is nothing to do |
-| 13.18.38.3 SR 19, 23, 33 | no OCCURS DEPENDING ON, no dynamic-capacity table under it | **refused**: bad/std2014-constrec-odo; dynamic tables are not implemented |
+| 13.18.38.3 SR 19, 23, 33 | no OCCURS DEPENDING ON, no dynamic-capacity table under it | **refused**: bad/std2014-constrec-odo, bad/std2014-dyn-constrec (2026-10-08) |
 | 13.18.44.3 SR 13 | nothing REDEFINES it | **refused**: bad/std2014-constrec-redefined |
 | 13.18.45.3 SR 6 | no RENAMES into it | **refused**: bad/std2014-constrec-renames |
 | 13.18.49.3 SR 10 | no SAME AS it | **refused**: bad/std2014-constrec-same-as |

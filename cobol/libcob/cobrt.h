@@ -118,6 +118,28 @@ typedef struct {
     unsigned int share_lock;  /* the file control entry's SHARING (bits 0-3: 0 none, 1 ALL OTHER, 2 NO OTHER, 3 READ ONLY) and LOCK MODE (bits 4-7: 0 none, 1 MANUAL, 2 AUTOMATIC; bit 8 MULTIPLE) -- 2023 12.4.5.15, 12.4.5.9 */
     unsigned int lk_state;    /* the runtime's: the sharing mode this opening took (bits 0-3), the physical file's slot + 1 (bits 8-) */
 } cob_file;
+
+/* A dynamic-capacity table (2023 13.18.38 format 4, 8.5.1.9): in its
+ * record the entry is this 8-byte slot -- the elements' address and the
+ * current capacity -- and the elements live on the heap, one after
+ * another, so an element's address is elems + (n - 1) * elem.  A slot
+ * whose elems is 0 with a capacity has that many elements still to be
+ * made (the initial state: the minimum capacity); cob_dyn_elem makes
+ * them.  The descriptor is the compiler's, read-only; busy counts the
+ * SEARCH statements under way on the table (EC-FLOW-SEARCH). */
+typedef struct { unsigned char *elems; unsigned cap; } cob_dyn;
+typedef struct {
+    unsigned elem;               /* an element's bytes */
+    unsigned min, expected;      /* FROM, TO (0: none) */
+    unsigned flags;              /* COB_DYN_INITIALIZED */
+    const unsigned char *image;  /* a new element's initial state: INITIALIZE WITH FILLER ALL TO VALUE THEN TO DEFAULT (8.5.1.9.5) */
+    const unsigned char *image0; /* ... and the categories' defaults alone, what an INITIALIZE without phrases gives */
+    const char *name;            /* for messages */
+} cob_dyn_desc;
+enum { COB_DYN_INITIALIZED = 1 };
+#define COB_DYN_MAX 16777215     /* the implementor's maximum capacity (13.18.38.3 rule 29; A.3 item 60) */
+/* cob_dyn_status after cob_dyn_elem or cob_dyn_set: the condition met */
+enum { COB_DYN_OK = 0, COB_DYN_SUBSCRIPT = 1, COB_DYN_OVERFLOW = 2, COB_DYN_LIMIT = 3, COB_DYN_SET = 5 };
 /* the phrases of one I-O statement (2023 14.9.30 formats, 14.7.9 RETRY,
  * 14.9.27 SHARING): set by the compiler just before the call, read and
  * cleared by it (cob_io_set) */

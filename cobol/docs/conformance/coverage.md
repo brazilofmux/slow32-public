@@ -201,7 +201,7 @@ carry the compiler's own reason.
 | 13.18.35 | LINE clause | [reportwriter](reportwriter.md), [screen](screen.md) | 67 | 55 | 2 | 1 | 3 |
 | 13.18.36 | LOWLIGHT clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
 | 13.18.37 | NEXT GROUP clause | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
-| 13.18.38 | OCCURS clause | [occurs](occurs.md), [reportwriter](reportwriter.md) | 10 | 52 | 1 | 0 | 0 |
+| 13.18.38 | OCCURS clause | [occurs](occurs.md), [reportwriter](reportwriter.md) | 12 | 61 | 1 | 0 | 0 |
 | 13.18.39 | PAGE clause | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
 | 13.18.40 | PICTURE clause | [national-boolean](national-boolean.md), [picture](picture.md) | 26 | 38 | 0 | 4 | 2 |
 | 13.18.41 | PRESENT WHEN clause | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
@@ -274,7 +274,7 @@ carry the compiler's own reason.
 | 14.9.36 | ROLLBACK statement | **not implemented**: ROLLBACK is COBOL 2023; not implemented | | | | | |
 | 14.9.37 | SEARCH statement | [search](search.md) | 7 | 10 | 0 | 0 | 0 |
 | 14.9.38 | SEND statement | **not implemented**: send: COBOL 85's Communication module is out by ruling, and COBOL 2023's asynchronous messaging (14.9.31, 14.9.38) is not implemented | | | | | |
-| 14.9.39 | SET statement | [screen](screen.md), [set](set.md), [usage](usage.md) | 94 | 39 | 1 | 2 | 7 |
+| 14.9.39 | SET statement | [occurs](occurs.md), [screen](screen.md), [set](set.md), [usage](usage.md) | 96 | 66 | 1 | 2 | 7 |
 | 14.9.40 | SORT statement | [sort](sort.md) | 4 | 11 | 0 | 0 | 0 |
 | 14.9.41 | START statement | [io-statements](io-statements.md) | 2 | 20 | 0 | 0 | 0 |
 | 14.9.42 | STOP statement | [control](control.md) | 10 | 10 | 0 | 1 | 0 |

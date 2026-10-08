@@ -86,6 +86,22 @@ static void emit_copy_fixed(const Arg *a, int n)
 
 /* does a group's length depend on an OCCURS DEPENDING ON below it?  One
  * occurrence of the table itself (always subscripted) is fixed-length. */
+/* the dynamic-capacity table s is, or is inside (2023 8.5.1.9), or NULL */
+static Sym *dyn_table_for(Sym *s)
+{
+    for (Sym *k = s; k; k = k->parent >= 0 ? &g_sym[k->parent] : NULL) if (k->dyn) return k;
+    return NULL;
+}
+/* a dynamic-capacity table below a group, at any depth, or NULL */
+static Sym *dyn_table_below(Sym *s)
+{
+    for (int c = s->child; c >= 0; c = g_sym[c].sibling) {
+        if (g_sym[c].dyn) return &g_sym[c];
+        Sym *t = dyn_table_below(&g_sym[c]);
+        if (t) return t;
+    }
+    return NULL;
+}
 static int has_odo(Sym *s)
 {
     for (int c = s->child; c >= 0; c = g_sym[c].sibling)
@@ -389,6 +405,8 @@ static void emit_move(Opnd *src, Ref *dst)
 {
     Sym *d = dst->sym;
     check_receiver(dst);
+    if (d->is_group && !dst->rm && dyn_table_below(d))
+        die_at(dst->line, "MOVE to '%s': a variable-length group -- it holds the dynamic-capacity table '%s' -- is not moved whole in this stage (2023 8.5.1.12, 14.6.9); name its items", d->name, dyn_table_below(d)->name);
     /* A receiving group over an OCCURS DEPENDING ON table (X3.23-1985
      * VI-27, OCCURS general rule 3): with the DEPENDING ON item outside
      * the group, only the part its value gives at the start of the

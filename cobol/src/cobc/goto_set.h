@@ -420,9 +420,51 @@ static void parse_set_attribute(Screen *sc, int first, int count, int line)
     }
     if (!any) die_at(line, "SET ATTRIBUTE names BELL, BLINK, HIGHLIGHT, LOWLIGHT, REVERSE-VIDEO or UNDERLINE (2023 14.9.39 format 6)");
 }
+static Sym *g_search_dyn[16]; static int g_nsearch_dyn;   /* the dynamic tables whose SEARCH is being parsed (EC-FLOW-SEARCH, decided here) */
 static void parse_set(void)
 {
     Ref rs[MAXOPS]; int nr = 0;
+    if (cur()->kind == T_WORD && sym_lookup_quiet(cur()->s) && sym_lookup_quiet(cur()->s)->cap_of >= 0) {
+        /* format 14 (2023 14.9.39): SET capacity-name TO | UP BY | DOWN BY
+         * integer or expression -- the dynamic-capacity table's capacity
+         * (rules 29-31; 8.5.1.9.4): clamped to its minimum, EC-BOUND-SET
+         * past its expected capacity, EC-BOUND-TABLE-LIMIT past the
+         * implementor's (unchanged), a negative value EC-BOUND-SUBSCRIPT */
+        g_set_capacity = 1;
+        Ref r; parse_ref(&r); no_constrec_recv(&r, "SET");
+        g_set_capacity = 0;
+        Sym *tbl = &g_sym[r.sym->cap_of];
+        for (int k = 0; k < g_nsearch_dyn; k++)
+            if (g_search_dyn[k] == tbl) die_at(r.line, "SET %s inside a SEARCH of its table '%s': the capacity is not changed during a SEARCH of the table (2023 14.9.39.4 rule 31, EC-FLOW-SEARCH)", r.sym->name, tbl->name);
+        int mode = accept_word("to") ? 0 : accept_word("up") ? 1 : accept_word("down") ? 2 : -1;
+        if (mode < 0) die_at(cur()->line, "SET %s: expected TO, UP BY or DOWN BY (2023 14.9.39 format 14)", r.sym->name);
+        if (mode) expect_word("by");
+        if (cur()->kind == T_NUM && peek(1)->kind != T_OP) {
+            Tok *v = cur();
+            if (strpbrk(v->s, ".,") || v->s[0] == '-') die_at(v->line, "SET %s: integer-1 is a nonnegative integer (2023 14.9.39.3 rule 30)", r.sym->name);
+            long n = atol(v->s); advance();
+            if (mode == 0 && (n < tbl->dyn_min || (tbl->dyn_to && n > tbl->dyn_to)))
+                die_at(v->line, "SET %s TO %ld: not less than the table's minimum %d%s%d (2023 14.9.39.3 rule 30)", r.sym->name, n, tbl->dyn_min,
+                       tbl->dyn_to ? " and not greater than its expected capacity " : "", tbl->dyn_to ? tbl->dyn_to : 0);
+            emit_li("r6", n);
+        } else {
+            Expr *e = parse_expr();
+            emit_expr(e); emit_call("cob_pop_int"); emit("\tadd r6, r1, r0");
+        }
+        emit_item_addr("r3", tbl, tbl->offset);
+        char dl[32]; snprintf(dl, sizeof dl, ".Ldyn%d_%d", g_unit, tbl->dyn_id);
+        emit_la("r4", dl); emit_li("r5", mode);
+        emit_call("cob_dyn_set");
+        int c1 = ec_on_name("EC-BOUND-SUBSCRIPT"), c3 = ec_on_name("EC-BOUND-TABLE-LIMIT"), c5 = ec_on_name("EC-BOUND-SET");
+        if (c1 || c3 || c5) {
+            int Lok = new_label();
+            if (c1) { int Ln = new_label(); emit_li("r2", COB_DYN_SUBSCRIPT); emit("\tbne r1, r2, .L%d", Ln); emit_ec_raise(ec_find("EC-BOUND-SUBSCRIPT", 0)); emit_jump(Lok); emit_label(Ln); }
+            if (c3) { int Ln = new_label(); emit_li("r2", COB_DYN_LIMIT); emit("\tbne r1, r2, .L%d", Ln); emit_ec_raise(ec_find("EC-BOUND-TABLE-LIMIT", 0)); emit_jump(Lok); emit_label(Ln); }
+            if (c5) { int Ln = new_label(); emit_li("r2", COB_DYN_SET); emit("\tbne r1, r2, .L%d", Ln); emit_ec_raise(ec_find("EC-BOUND-SET", 0)); emit_label(Ln); }
+            emit_label(Lok);
+        }
+        return;
+    }
     if (cur()->kind == T_WORD && is_word(peek(1), "attribute") && !sym_lookup_quiet(cur()->s)) {
         char lab[40]; int first, count; int line = cur()->line;
         Screen *sc = screen_ref(cur()->s, lab, sizeof lab, &first, &count);

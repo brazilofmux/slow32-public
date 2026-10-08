@@ -857,7 +857,36 @@ static void parse_data_item1(void)
         if (!strcmp(t->s, "occurs")) {
             advance();
             if (at_word("unbounded")) die_at(t->line, "OCCURS UNBOUNDED is COBOL 2002 (not in the 1985 text)");
-            if (at_word("dynamic")) die_at(t->line, "OCCURS DYNAMIC (a dynamic-capacity table) is COBOL 2014 (2023 13.18.38 format 4); not implemented");
+            if (at_word("dynamic")) {
+                /* format 4 (2014; 2023 13.18.38, 8.5.1.9): a dynamic-capacity
+                 * table -- the current capacity grows as elements are stored
+                 * and is set by SET; the FROM phrase its minimum, TO the
+                 * expected capacity it may exceed with EC-BOUND-OVERFLOW */
+                if (g_std < 2014) die_at(t->line, "OCCURS DYNAMIC (a dynamic-capacity table) is COBOL 2014 (2023 13.18.38 format 4); compile with -std=2014");
+                advance();
+                s->dyn = 1; s->occurs = 1;
+                for (;;) {
+                    if (accept_word("capacity")) {
+                        accept_word("in");
+                        if (cur()->kind != T_WORD) die_at(t->line, "OCCURS DYNAMIC CAPACITY IN: expected a data-name, found %s", tok_desc(cur()));
+                        if (s->dyn_cap[0]) die_at(t->line, "'%s': OCCURS DYNAMIC names its CAPACITY twice", s->name);
+                        user_word(cur()->s, cur()->line, "a capacity");
+                        snprintf(s->dyn_cap, sizeof s->dyn_cap, "%s", cur()->s); advance();
+                    } else if (accept_word("from")) {
+                        if (cur()->kind != T_NUM || strpbrk(cur()->s, ".-,") ) die_at(t->line, "OCCURS DYNAMIC FROM: a nonnegative integer (2023 13.18.38.3 rule 28)");
+                        s->dyn_min = atoi(cur()->s); advance();
+                    } else if (accept_word("to")) {
+                        if (cur()->kind != T_NUM || strpbrk(cur()->s, ".-,") || atoi(cur()->s) < 1) die_at(t->line, "OCCURS DYNAMIC TO: a positive integer, the expected capacity (2023 13.18.38.3 rule 28)");
+                        s->dyn_to = atoi(cur()->s); advance();
+                    } else if (accept_word("initialized")) s->dyn_init = 1;
+                    else break;
+                }
+                if (s->dyn_to && s->dyn_min >= s->dyn_to)
+                    die_at(t->line, "'%s': OCCURS DYNAMIC FROM %d TO %d: the expected capacity must be greater than the minimum (2023 13.18.38.3 rule 28)", s->name, s->dyn_min, s->dyn_to);
+                if (s->dyn_min > COB_DYN_MAX || s->dyn_to > COB_DYN_MAX)
+                    die_at(t->line, "'%s': OCCURS DYNAMIC: FROM and TO are at most %d, this implementor's maximum capacity (2023 13.18.38.3 rule 29)", s->name, COB_DYN_MAX);
+                goto occurs_keys;
+            }
             if (cur()->kind != T_NUM) die_at(t->line, "expected a count after OCCURS");
             s->occurs = atoi(cur()->s);
             advance();
@@ -876,6 +905,7 @@ static void parse_data_item1(void)
                 snprintf(s->odo_dep, sizeof s->odo_dep, "%s", cur()->s); advance();
             }
             accept_word("times");
+        occurs_keys:
             for (;;) {
                 int desc = at_word("descending");
                 if (accept_word("ascending") || accept_word("descending")) {
@@ -916,6 +946,7 @@ static void parse_data_item1(void)
                 break;
             }
             if (s->occurs < 1) die_at(t->line, "OCCURS needs a count of at least 1");
+            if (s->dyn && g_cur_fd >= 0) die_at(t->line, "'%s': a dynamic-capacity table is not in the FILE SECTION (2023 8.5.1.9.1)", s->name);
             continue;
         }
         if (!strcmp(t->s, "redefines")) {

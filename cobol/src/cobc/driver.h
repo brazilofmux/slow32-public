@@ -255,6 +255,28 @@ static void emit_unit_data(void)
         emit(".Lspk%d_%d:\t# split keys of %s: count, then slot, parts, (offset, length)...", f->unit, i, f->name);
         for (int k = 0; k < f->nsplitw; k++) emit("\t.word %d", f->splitw[k]);
     }
+    /* dynamic-capacity tables: each one's descriptor (cob_dyn_desc) and
+     * an element's initial state, read-only; its SEARCH count in .data */
+    for (int i = g_sym_base; i < g_nsym; i++) {
+        Sym *s = &g_sym[i];
+        if (!s->dyn || s->dyn_id < 0) continue;
+        emit("\t.section .rodata");
+        emit("\t.p2align 2");
+        emit(".Ldyni%d_%d:\t# %s: an element's initial state, its VALUEs", g_unit, s->dyn_id, s->name);
+        emit_bytes(s->dyn_image, s->size);
+        emit(".Ldynz%d_%d:\t# ... the categories' defaults", g_unit, s->dyn_id);
+        emit_bytes(s->dyn_image0, s->size);
+        emit("\t.p2align 2");
+        emit(".Ldyn%d_%d:\t# dynamic-capacity table %s: element size, FROM, TO, flags, the two images, name", g_unit, s->dyn_id, s->name);
+        emit("\t.word %d", s->size);
+        emit("\t.word %d", s->dyn_min);
+        emit("\t.word %d", s->dyn_to);
+        emit("\t.word %d", s->dyn_init ? COB_DYN_INITIALIZED : 0);
+        emit("\t.word .Ldyni%d_%d", g_unit, s->dyn_id);
+        emit("\t.word .Ldynz%d_%d", g_unit, s->dyn_id);
+        emit("\t.word %s", lit_label((const unsigned char *)s->name, (int)strlen(s->name) + 1));
+        emit("\t.data");
+    }
     for (int i = 0; i < g_nsorttab; i++) {
         SortTab *t = &g_sorttab[i];
         emit("\t.p2align 2");

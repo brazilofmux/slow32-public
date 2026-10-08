@@ -98,8 +98,7 @@ COBOL 2002/2023 (Stage B):
   std2002-*): SUPPRESS WHEN,
   FORMAT and SELECT WHEN, USAGE
   MESSAGE-TAG,
-  OCCURS DYNAMIC, SET
-  LOCALE / ATTRIBUTE, ALPHABET FOR and IS LOCALE,
+  SET LOCALE, ALPHABET FOR and IS LOCALE,
   and the LOCALE function phrase.
 
 ## 3. Out of scope, by ruling

@@ -62,10 +62,13 @@ static void odo_ref_lengths(Ref *r, const Sym *g, const Sym *tbl)
         r->odo_base = (tbl->offset - g->offset) * 8 + tbl->bitoff; r->odo_elem = bit_stride(tbl); r->odo_bits = tbl->bits;
     } else { r->odo_base = g->size - tbl->occurs * tbl->size; r->odo_elem = tbl->size; r->odo_bits = 0; }
 }
+static int g_call_byref;                        /* parsing a CALL's BY REFERENCE argument */
 static void operand_odo_length(Opnd *o)
 {
     if (o->kind != O_REF || o->ref.rm || o->ref.nsub) return;
     Sym *g = o->ref.sym;
+    if (g->is_group && dyn_table_below(g) && !g_call_byref)
+        die_at(o->line, "'%s' is a variable-length group -- it holds the dynamic-capacity table '%s' -- and this stage does not move, compare or send one whole (2023 8.5.1.12, 14.6.9); name its items", g->name, dyn_table_below(g)->name);
     if (!g->is_group || !has_odo(g)) return;
     Sym *tbl = odo_table_below(g);
     if (!tbl || !tbl->odo_dep_sym) return;
@@ -1292,6 +1295,7 @@ static void parse_operand_raw_1(Opnd *o)
 
 static int ref_needs_call(const Ref *r)
 {
+    if (dyn_table_for(r->sym)) return 1;        /* cob_dyn_elem finds, or makes, the element */
     for (int i = 0; i < r->nsub; i++)
         if (r->sub[i].sym && !is_hot_int(r->sub[i].sym)) return 1;
     if (r->rm && !r->rm_start) return 1;           /* the start is an expression */
@@ -1564,13 +1568,30 @@ static void emit_bitelem_start(const Ref *r, long chk, int slot, int pushed)
     emit_call("cob_pop_int");
 }
 
+/* r1 = a table's current number of occurrences: OCCURS, the DEPENDING ON
+ * item's value, or a dynamic-capacity table's capacity (SEARCH, SORT) */
+static void emit_table_count(Sym *tbl, int line)
+{
+    if (tbl->dyn) { emit_item_addr("r1", tbl, tbl->offset + 4); emit("\tldw r1, r1+0"); return; }
+    (void)line;
+    if (tbl->odo_dep_sym) {
+        Sym *d = tbl->odo_dep_sym;
+        if (is_hot_int(d)) { emit_item_addr("r1", d, d->offset); emit_load_int(d, "r1", "r1"); }
+        else { emit_item_addr("r3", d, d->offset); emit_desc_addr("r4", sym_desc(d)); emit_call("cob_load_int"); }
+        return;
+    }
+    emit_li("r1", tbl->occurs);
+}
+static int g_dyn_quiet;                         /* emit_ref_addr of a dynamic table's element 1 as a base: no condition, the stand-in when there is none */
 static void emit_ref_addr(const Ref *r, const char *reg)
 {
     Sym *s = r->sym;
     if (ec_on_name("EC-BOUND-ODO")) emit_odo_check(s);
     int off = s->offset;
     int runtime = ref_has_runtime_sub(r);
-    for (int i = 0; i < r->nsub; i++)
+    Sym *dt = dyn_table_for(s);                 /* an element of a dynamic-capacity table: dimension 0 is the table's, reached through cob_dyn_elem */
+    if (dt) { off -= dt->offset; runtime = 1; }
+    for (int i = dt ? 1 : 0; i < r->nsub; i++)
         if (!r->sub[i].sym) off += (int)(r->sub[i].lit - 1) * s->dim_stride[i];
     if (r->rm && r->rm_start) off += r->rm_bit ? (s->bitoff + (int)r->rm_start - 1) / 8 : ((int)r->rm_start - 1) * (r->rm_nat ? 2 : 1);
     /* a start expression first: its operands' addressing would clobber r11 */
@@ -1607,8 +1628,9 @@ static void emit_ref_addr(const Ref *r, const char *reg)
     g_pos_was = pw; g_pos_wasf = pwf; g_pos_reg = pr; g_pos_slot = pslot;
     if (runtime) emit("\tadd r11, r0, r0");
     for (int i = 0; i < r->nsub; i++) {
-        if (!r->sub[i].sym) continue;
+        if (!r->sub[i].sym && !(dt && i == 0)) continue;
         Sym *ss = r->sub[i].sym;
+        if (dt && i == 0 && !ss) { emit_li("r1", (long)r->sub[i].lit); goto dyn_sub; }
         if (ss == &g_subx) {
             /* in registers it is an integer: nothing to check but its range */
             if (skind[i] == 2) pos_reg_take(sslot[i]);
@@ -1630,6 +1652,36 @@ static void emit_ref_addr(const Ref *r, const char *reg)
             emit_call("cob_load_int");
         }
         long adj = r->sub[i].adj - 1;
+        if (dt && i == 0) {
+            /* the dynamic table's own dimension: the occurrence number to
+             * cob_dyn_elem, which gives the element's address -- made, as a
+             * receiving item, when it is past the capacity (8.5.1.9.3), the
+             * stand-in and a condition otherwise.  The element's address
+             * goes to r11 for the dimensions inside it; the conditions are
+             * raised here when they are checked, else left to the runtime
+             * (EC-BOUND-TABLE-LIMIT fatal there, EC-BOUND-SUBSCRIPT a note) */
+            if (adj + 1) emit("\taddi r1, r1, %ld", adj + 1);
+        dyn_sub:
+            emit("\tadd r11, r1, r0");             /* r11 has nothing yet: this is dimension 0 */
+            emit_item_addr("r3", dt, dt->offset);
+            char dl[32]; snprintf(dl, sizeof dl, ".Ldyn%d_%d", g_unit, dt->dyn_id);
+            emit_la("r4", dl);
+            emit("\tadd r5, r11, r0");
+            int chk_lim = !g_dyn_quiet && ec_on_name("EC-BOUND-TABLE-LIMIT"), chk_sub = g_dyn_quiet || ec_on_name("EC-BOUND-SUBSCRIPT"), chk_ovf = !g_dyn_quiet && ec_on_name("EC-BOUND-OVERFLOW");
+            emit_li("r6", r->recv && !g_dyn_quiet ? 1 : 0);
+            emit_li("r7", (chk_lim ? 1 : 0) | (chk_sub ? 2 : 0));
+            emit_call("cob_dyn_elem");
+            emit("\tadd r11, r1, r0");
+            if (chk_lim || chk_ovf || (chk_sub && !g_dyn_quiet)) {
+                emit_call("cob_dyn_status");
+                int Lok = new_label();
+                if (chk_sub && !g_dyn_quiet) { int Ln = new_label(); emit_li("r2", COB_DYN_SUBSCRIPT); emit("\tbne r1, r2, .L%d", Ln); emit_ec_raise(ec_find("EC-BOUND-SUBSCRIPT", 0)); emit_jump(Lok); emit_label(Ln); }
+                if (chk_lim) { int Ln = new_label(); emit_li("r2", COB_DYN_LIMIT); emit("\tbne r1, r2, .L%d", Ln); emit_ec_raise(ec_find("EC-BOUND-TABLE-LIMIT", 0)); emit_jump(Lok); emit_label(Ln); }
+                if (chk_ovf) { int Ln = new_label(); emit_li("r2", COB_DYN_OVERFLOW); emit("\tbne r1, r2, .L%d", Ln); emit_ec_raise(ec_find("EC-BOUND-OVERFLOW", 0)); emit_label(Ln); }
+                emit_label(Lok);
+            }
+            continue;
+        }
         if (adj) emit("\taddi r1, r1, %ld", adj);
         if (ec_on_name("EC-BOUND-SUBSCRIPT")) {
             /* the occurrence number, now less one, must be below the
@@ -1667,6 +1719,14 @@ static void emit_ref_addr(const Ref *r, const char *reg)
         emit("\tadd r11, r11, r1");
     }
 addr_done:
+    if (dt) {
+        /* the element's address is in r11; the item's place in it, and the
+         * dimensions inside it, are the offset and the rest of the sum */
+        if (off >= -2048 && off <= 2047) emit("\taddi %s, r11, %d", reg, off); else { emit_li("r2", off); emit("\tadd %s, r11, r2", reg); }
+        g_la.sym = -1; if (g_cen_on) cen_reformed(s, reg);
+        if (r->rm) g_la.sym = -1;
+        return;
+    }
     emit_item_addr(reg, s, off);
     if (runtime) { emit("\tadd %s, %s, r11", reg, reg); g_la.sym = -1; if (g_cen_on && !r->rm) cen_reformed(s, reg); }     /* an element's address: not a constant */
     if (r->rm) g_la.sym = -1;                                                   /* a part's: not the item */
