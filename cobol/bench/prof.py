@@ -67,7 +67,7 @@ for line in open(pf):
     if k >= 0 and addr[k] == a: calls[n] += c           # its first instruction: times entered
 HOOKED = {'cob_k_get_num','cob_k_put_num','cob_k_put_scale','cob_k_get_edited','cob_k_put_edited','cob_k_get_ok','cob_k_put_ok','cob_k_ed_ok',
           'cob_get_num','cob_get_num_impl','cob_put_num_x','cob_put_num_x_impl','cob_get_edited','cob_get_edited_impl','cob_put_edited','cob_put_edited_impl',
-          'cob_edit_apply','cob_deedit','strchr',
+          'cob_edit_apply','cob_deedit','strchr','cob_sort_run','cob_sort_run_impl','cob_k_sort_run','k_keycmp',
           'memcpy','memset','memmove','memcmp','strlen','strcpy','strcmp','memswap','memchr','llvm.memcpy.p0.p0.i32','llvm.memset.p0.i32','llvm.memmove.p0.p0.i32'}
 def cat(n):
     if n in HOOKED or n.startswith('__s32hk_'): return 'native'

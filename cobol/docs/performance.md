@@ -1379,3 +1379,48 @@ must rebuild both sides; `slow32-dbt -s` shows "Hooks: 4" (the
 builtins alone) when a binary's tag is stale.  Majesty's programs were
 rebuilt (`s32x/build.sh`); the fleet's images are built with their
 DBT, so they stay consistent.
+
+## 2026-10-08: the fill held back until a path needs it
+
+What a crossing costs, measured at last (a C program under the DBT, ten
+million iterations, the bare loop subtracted): a native `memcpy` or
+`memset` of 8 bytes 3.2 ns, a guest call 2.5, an inline 8-byte copy 0.7
+-- so the crossing is cheap, barely a call.  The bytes are not: a
+`memset` of 4 KB is 41 ns, and csv2fw does 1,050,000 of them, two per
+field (`MOVE SPACES TO FLD-TEXT(k)`, then `MOVE OWN-TEXT(1:n) TO
+FLD-TEXT(k)`, whose padding fills the rest again).  Some 43 ms of its
+196.
+
+The first fill is dead wherever the second move runs, and the second
+move is conditional (`IF CUR-LEN > 0`), so the fill is dead on some
+paths and needed on others: partial dead-store elimination, by sinking.
+The lowering now holds such a fill back (`lower.h`, `pf_*`): a MOVE of
+a figurative constant to one whole item, its subscripts items or
+literals, is not emitted where it stands.  Statement by statement after
+it: a MOVE into the whole of the same item that puts what the fill
+would have -- a figurative sender, or any sender when the fill is
+spaces (an alphanumeric MOVE pads with spaces), or a sender at least as
+long -- makes the fill dead; a statement that may read or write the
+item's record or write one of its subscripts, a loop, a text node, a
+GO TO, an operand this reading does not analyse, or the end of an IF
+arm or of the run, has the fill emitted before it.  An IF takes the held
+fill down both arms; each arm settles it.  Sound by construction: no
+path observes the fill's absence.  `S32_HIR_HOLDFILL=0` emits every
+fill where it is written; the trace counts "fills held back: N dead
+under a covering move, M emitted where a path needed them" per island.
+
+    csv2fw   instructions  3,244,824,786 -> 2,304,117,102   -29%
+             DBT, alternating      196 ms  ->  171 ms       -13%
+             output byte-identical
+
+(The instruction count falls further than the time: under the reference
+interpreter the 4 KB fill is a thousand guest instructions; under the
+DBT it is one native call.)
+
+`tests/free/holdfill` pins the rule's edges inside an island: a covered
+fill, one arm covering, a DISPLAY in between (which must show the fill),
+a subscript changed in between (the fill lands on the old element), a
+part moved into (the fill stands), nested arms with one path uncovered,
+a loop in between, and ZEROS with a shorter sender (the move's own
+padding decides).  The HIR build, the text build and the held-fill-off
+build print the same bytes, which are the expected file.

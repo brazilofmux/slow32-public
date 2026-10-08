@@ -160,7 +160,11 @@ Left of stage 3:
   to be a move of a number;
 - the item stored only at the loop's exits.
 
-In the islands the same question is the optimizer's: `ho_mem_avail`
+A store the next statement makes dead on some paths and not others --
+`MOVE SPACES TO X` before a conditional `MOVE Y(1:N) TO X` -- is held
+back and sunk to the paths that need it (`lower.h` pf_*, 2026-10-08;
+csv2fw -29% of its instructions).  In the islands the loads' side of
+the same question is the optimizer's: `ho_mem_avail`
 (2026-10-08) keeps a loaded or stored location known across blocks and
 across calls that cannot touch it; what is left there is a phi at the
 joins and the byte read out of a known halfword

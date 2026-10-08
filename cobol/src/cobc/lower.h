@@ -2411,10 +2411,133 @@ static void lw_gen_inlined(LStmt *s)
     g_lw_ngctx--;
     free(blk);
 }
+/* ---- a MOVE SPACES held back until a path needs it ------------------ */
+/* MOVE SPACES TO X, then MOVE Y(1:N) TO X: the fill is dead wherever the
+ * second move runs, since an alphanumeric MOVE into the whole of X pads
+ * the rest with spaces -- and csv2fw does this for every field, 4 KB a
+ * fill, a fifth of its time under the DBT (performance.md 2026-10-08).
+ * The generator holds such a fill back and emits it only on a path that
+ * reaches, without a covering move, a statement that may read or write
+ * X's record or write X's subscripts, a loop, a text node, a GO TO, the
+ * end of an IF arm or of the run.  Sound by construction: every path
+ * from the held statement either meets a covering move (which writes
+ * what the fill would have, spaces included) or gets the fill before
+ * anything could observe its absence. */
+static int g_pf = -1;                       /* the held statement (an index into g_lw_s), or -1 */
+static int pf_off(void) { static int v = -1; if (v < 0) { const char *e = getenv("S32_HIR_HOLDFILL"); v = e && *e == '0'; } return v; }   /* S32_HIR_HOLDFILL=0: every fill where it is written */
+static int g_pf_dead, g_pf_kept;            /* for the trace */
+
+static int pf_candidate(const LStmt *s)
+{
+    if (s->kind != LS_AMOVE || s->nr != 1) return 0;
+    const Opnd *src = &g_lw_o[s->asrc]; if (src->kind != O_FIG || src->allfig) return 0;
+    const Opnd *d = &g_lw_o[s->adst[0]]; if (d->kind != O_REF || !d->ref.sym || d->ref.rm) return 0;
+    for (int k = 0; k < d->ref.nsub; k++) if (d->ref.sub[k].sym == &g_subx) return 0;   /* an expression subscript is not compared */
+    return 1;
+}
+static int pf_same_ref(const Ref *a, const Ref *b)
+{
+    if (a->sym != b->sym || a->nsub != b->nsub || a->rm || b->rm) return 0;
+    for (int k = 0; k < a->nsub; k++)
+        if (a->sub[k].sym != b->sub[k].sym || a->sub[k].lit != b->sub[k].lit || a->sub[k].adj != b->sub[k].adj || a->sub[k].sym == &g_subx) return 0;
+    return 1;
+}
+/* does the statement move into the whole of the held item what the fill
+ * would have put there?  A figurative sender: yes.  Else the move pads
+ * with spaces, so yes when the held fill is spaces, or when the sender
+ * is at least as long */
+static int pf_covers(const LStmt *s)
+{
+    const LStmt *h = &g_lw_s[g_pf];
+    const Ref *hd = &g_lw_o[h->adst[0]].ref;
+    if (s->kind != LS_AMOVE) return 0;
+    int hit = 0;
+    for (int k = 0; k < s->nr; k++) { const Opnd *d = &g_lw_o[s->adst[k]]; if (d->kind == O_REF && pf_same_ref(&d->ref, hd)) hit = 1; }
+    if (!hit) return 0;
+    const Opnd *src = &g_lw_o[s->asrc];
+    if (src->kind == O_FIG) return 1;
+    if (fig_byte(g_lw_o[h->asrc].tok->s) == ' ') return 1;
+    long sn = src->kind == O_REF ? (src->ref.rm && src->ref.lw_lenx ? -1 : lw_bytes_len(&src->ref)) : src->kind == O_STR || src->kind == O_ALL ? src->tok->len : src->kind == O_NUM ? src->num.ndigits : -1;
+    return sn >= 0 && sn >= (long)hd->sym->size;
+}
+/* may the statement read or write the held item's record, or write one
+ * of its subscripts?  Conservative: a kind not analysed here says yes */
+static int pf_hit;
+static void pf_sym(const Sym *s, int written)
+{
+    const Ref *hd = &g_lw_o[g_lw_s[g_pf].adst[0]].ref;
+    if (!s || s == &g_subx) return;
+    if (s->record == hd->sym->record) pf_hit = 1;
+    if (written) for (int k = 0; k < hd->nsub; k++) if (s == hd->sub[k].sym) pf_hit = 1;
+}
+static void pf_opnd(int oi, int written)
+{
+    if (oi < 0) return;
+    const Opnd *o = &g_lw_o[oi];
+    if (o->kind != O_REF) return;
+    pf_sym(o->ref.sym, written);
+    for (int k = 0; k < o->ref.nsub; k++) pf_sym(o->ref.sub[k].sym, 0);
+    if (o->ref.rm && (o->ref.rm_sx || o->ref.rm_lx || o->ref.lw_startx || o->ref.lw_lenx)) pf_hit = 1;   /* a computed part: its expression's items are not walked here */
+}
+static void pf_node(int n)
+{
+    if (n < 0) return;
+    const LNode *x = &g_lw_n[n];
+    if (!x->op) { pf_sym(&g_sym[x->sym], 0); pf_opnd(x->ref, 0); return; }
+    if (x->op == 'k') return;
+    pf_node(x->l); pf_node(x->r);
+}
+static void pf_cond(int c)
+{
+    if (c < 0) return;
+    const LCond *x = &g_lw_c[c];
+    if (x->kind == C_REL && x->alnum) { pf_opnd(x->ax, 0); pf_opnd(x->ay, 0); return; }
+    if (x->kind == C_REL) { pf_node(x->x); pf_node(x->y); return; }
+    pf_cond(x->a);
+    if (x->kind != C_NOT) pf_cond(x->b);
+}
+static int pf_touches(const LStmt *s)
+{
+    pf_hit = 0;
+    switch (s->kind) {
+    case LS_STORE: case LS_ADDTO:
+        pf_node(s->expr);
+        for (int k = 0; k < s->nr; k++) { pf_sym(&g_sym[s->rsym[k]], 1); pf_opnd(s->rref[k], 1); }
+        if (s->rem >= 0) pf_sym(&g_sym[s->rem], 1);
+        return pf_hit;
+    case LS_AMOVE:
+        pf_opnd(s->asrc, 0);
+        for (int k = 0; k < s->nr; k++) pf_opnd(s->adst[k], 1);
+        return pf_hit;
+    case LS_DISPLAY:
+        for (int k = 0; k < s->nr; k++) pf_opnd(s->adst[k], 0);
+        return pf_hit;
+    case LS_IF:
+        pf_cond(s->cond);                       /* the arms are generated with the fill still held */
+        return pf_hit;
+    default:
+        return 1;                               /* a loop, a text node, a GO TO: the fill is emitted first */
+    }
+}
+static void lw_gen_amove(LStmt *s);
+static void pf_flush(void)
+{
+    if (g_pf < 0) return;
+    LStmt *h = &g_lw_s[g_pf]; g_pf = -1;
+    if (!lw_blk_live) return;
+    g_pf_kept++;
+    lw_gen_amove(h);
+}
+
 static void lw_gen_stmts(int at, int n)
 {
     for (int i = 0; i < n && lw_blk_live; i++) {
         LStmt *s = &g_lw_s[g_lw_list[at + i]];
+        if (g_pf >= 0) {
+            if (pf_covers(s)) { g_pf = -1; g_pf_dead++; }
+            else if (pf_touches(s)) pf_flush();
+        }
+        if (g_pf < 0 && pf_candidate(s) && !pf_off()) { g_pf = g_lw_list[at + i]; continue; }
         switch (s->kind) {
         case LS_STORE: lw_gen_store(s); break;
         case LS_ADDTO: lw_gen_addto(s); break;
@@ -2429,15 +2552,17 @@ static void lw_gen_stmts(int at, int n)
         }
         case LS_IF: {
             int b_then = hir_new_block(), b_else = hir_new_block(), b_join = hir_new_block();
+            int held = g_pf; g_pf = -1;         /* a held fill goes down both arms; each emits it where it must */
             lw_cond_br(s->cond, b_then, b_else);
-            lw_begin_blk(b_then); lw_gen_stmts(s->body, s->nbody); lw_goto(b_join);
-            lw_begin_blk(b_else); lw_gen_stmts(s->els, s->nels); lw_goto(b_join);
+            lw_begin_blk(b_then); g_pf = held; lw_gen_stmts(s->body, s->nbody); pf_flush(); lw_goto(b_join);
+            lw_begin_blk(b_else); g_pf = held; lw_gen_stmts(s->els, s->nels); pf_flush(); lw_goto(b_join);
             lw_begin_blk(b_join);
             break;
         }
         case LS_LOOP: lw_gen_loop(s); break;
         }
     }
+    pf_flush();                                 /* nothing held flows out of a run, an arm or a body */
 }
 
 /* the island's statements in g_lw_list[at .. at+n): the lowering the
@@ -2455,7 +2580,9 @@ static void hl_func(Node *fn)
     lw_collect_stmts(g_lw_at, g_lw_n_stmts);
     g_lw_items_closed = 1;
     lw_entry_loads();
+    g_pf = -1; g_pf_dead = g_pf_kept = 0;
     lw_gen_stmts(g_lw_at, g_lw_n_stmts);
+    if ((g_pf_dead || g_pf_kept) && lw_trace()) fprintf(stderr, "hir: %s: fills held back: %d dead under a covering move, %d emitted where a path needed them\n", hl_cur_fn_dbg ? hl_cur_fn_dbg : "?", g_pf_dead, g_pf_kept);
     if (lw_blk_live) { lw_exit_stores(); hi_emit(HI_RET, 0, -1, -1, 0, NULL); lw_blk_live = 0; }
     fn->locals_size = lw_frame;
     hir_dump("HIR0");                           /* S32_HIR_DUMP: as lowered, before the optimizer */
