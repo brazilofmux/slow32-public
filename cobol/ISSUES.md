@@ -6388,3 +6388,35 @@ and a `.gcobol-expected` beside a test records a divergence from it as
 and a second divergence table. Start where GnuCOBOL cannot answer:
 tests/2014, the 2002 "no oracle" tests, the Report Writer page. Not
 a standard-queue item; queued here. Owner's ask (2026-10-07).
+
+### 128. The national audit (2026-10-08)
+
+The user's concern after the standard queue: national is easy to say,
+hard to get right -- display width, UTF-8 code points, UTF-16 code
+units with surrogates, COBOL's size/space/length and the clean
+truncation of what does not fit, all at once; libutf is trusted, our
+use of it and the UTF-16BE layer are the suspects. Done as a generator
+with the text's code-unit model as its own reference
+(tests/gen/gen-national.py, run-ref.sh; harness gate gen/national),
+since no oracle has UTF-16 national data. Some 400 programs agreed; what the
+generator's pool did not reach was probed by hand (supplementary
+letters with a case, REVERSE, TRIM, files, a report line, console
+ACCEPT).
+
+Found: the 1989-table functions -- ORD, REVERSE, NUMVAL, NUMVAL-C,
+NUMVAL-F, TEST-NUMVAL(-C, -F) -- admitted a national argument (15.3
+rule 2) and read its bytes. ORD gave the high byte plus one, REVERSE
+reversed the bytes and typed its result alphanumeric (so DISPLAY-OF of
+it was refused), the NUMVAL family read zero and TEST-NUMVAL said 1.
+Fixed: `fargnat` on the fn89 operand, `cob_fn_ord_nat`,
+`cob_fn_reverse_nat` (a surrogate pair kept in its order), and a
+narrowing step (`fn_narrow`: a code unit under 256 as that byte, any
+other 0xFF, so positions are preserved) in front of the NUMVAL
+scanners and the NUMVAL-C currency argument. Test 2014/natfuncs2;
+docs/national.md "Audit"; functions.md 15.3 row.
+
+Not a defect, raised as a ruling: truncation by position parts a
+surrogate pair, as the text has it (8.5.1.4); dropping the pair whole
+would be a documented deviation. The generator counts these cases
+("split"); the user decides.
+

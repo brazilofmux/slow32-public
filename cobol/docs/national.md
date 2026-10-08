@@ -244,6 +244,54 @@ its other case takes the same number of UTF-8 bytes (e-acute does;
 dotless i, two bytes against I's one, does not), and a byte that begins
 no UTF-8 character is left alone. For ASCII text nothing changes.
 
+## Audit (2026-10-08)
+
+The user's concern, after the standard queue: national is easy to say
+and hard to get right -- the intersection of display width, UTF-8 code
+points, UTF-16 code units with surrogates, COBOL's own size, space and
+length, and truncation that does not break the Unicode. libutf is
+trusted; the suspects are our use of it and the UTF-16BE path.
+
+The audit is `tests/gen/gen-national.py` with `tests/gen/run-ref.sh`
+(tests/gen/README.md): a generator whose character pool spans every
+intersection, with the text's code-unit model written out beside it as
+the reference (no oracle has UTF-16 national data). Some 400 programs of 40
+to 60 statements agreed with the model byte for byte, over 400 of their
+reference lines parting a surrogate pair. Found, and fixed the same day:
+
+- **ORD, REVERSE, NUMVAL, NUMVAL-C, NUMVAL-F, TEST-NUMVAL(-C, -F) on a
+  national argument.** The 1989 table's functions accepted a national
+  argument (15.3 rule 2 admits one) and read its bytes: ORD gave the
+  high byte plus one, REVERSE reversed the bytes and called the result
+  alphanumeric, the NUMVAL family read zero from the UTF-16 digits and
+  TEST-NUMVAL said 1. Now ORD is the code unit plus one (the national
+  collating sequence, 15.70), REVERSE returns national (15.79), and the
+  NUMVAL family reads the text narrowed a character to a byte, so a
+  position it reports is the same position. Test: 2014/natfuncs2.
+- **REVERSE keeps a surrogate pair in its order.** The text counts the
+  pair as two positions; reversing them would make two lone surrogates
+  of one character, and no conforming program can tell the two readings
+  apart except by taking the result to pieces. The generator's model
+  says the same.
+
+Confirmed right, by the generator or by hand: truncation and padding by
+positions in MOVE, STRING, UNSTRING and ACCEPT; reference modification
+of a lone surrogate (U+FFFD on DISPLAY); UPPER-CASE and LOWER-CASE of a
+supplementary letter (Deseret) as one character; TRIM to a zero-length
+result; the report column rule with a wide character that would cross
+the field's last column, and with a parted pair (U+FFFD, one column);
+line sequential WRITE of a parted pair (status 71) and READ of a
+supplementary character; record sequential round trip.
+
+Left as the text has it, the user's to change: **truncation by code
+unit parts a surrogate pair** (8.5.1.4: a position is a code unit, and
+MOVE truncates by positions). `MOVE N"ab😀" TO PIC N(3)` leaves `ab` and
+a lone high surrogate, which displays as U+FFFD and which a line
+sequential WRITE refuses. Dropping the whole pair instead would keep
+the Unicode whole at the cost of a position of space, and would be a
+documented deviation. Until that ruling, the generator counts these
+cases and the runtime does what the text says.
+
 ## Oracle
 
 None. GnuCOBOL 4.0-early-dev marks its national data unfinished, and

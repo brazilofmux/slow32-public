@@ -539,6 +539,12 @@ static int fn89_parse(Opnd *o, Tok *n)
             else o->fsize = x->kind == O_REF ? (x->ref.rm ? ref_static_len(&x->ref) : (int)x->ref.sym->size)
                           : x->kind == O_FUNC ? x->fsize : x->tok->len;
         }
+        /* a national argument (15.3 rule 2 admits one): ORD's position is in
+         * the national collating sequence, REVERSE's result is national (15.70,
+         * 15.79), and the NUMVAL family reads national digits -- the runtime
+         * is told (national audit, 2026-10-08: it read the bytes before) */
+        o->fargnat = opnd_is_national(x);
+        if (o->fnid == -4) o->fnat = o->fargnat;
     }
     if (g_fn89[f].kind == FK_NUMS &&
         (o->fnid == COB_FN_MAX || o->fnid == COB_FN_MIN || o->fnid == COB_FN_ORD_MAX || o->fnid == COB_FN_ORD_MIN)) {

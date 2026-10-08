@@ -734,9 +734,18 @@ if command -v python3 >/dev/null 2>&1 || [ -n "${GENDIR:-}" ]; then      # GENDI
         "all 60 the same"*) report "gen/hir" 0 "60 programs, with islands compiled through HIR and without" ;;
         *)                  report "gen/hir" 1 "$fout" ;;
     esac
+    # national data against the text's code-unit model written out in the
+    # generator itself (gen-national.py; no oracle has UTF-16 national data)
+    if command -v python3 >/dev/null 2>&1 || [ -f "${GENDIR:-/nonexistent}/national-1.ref" ]; then
+        fout="$(GEN=national "$HERE/gen/run-ref.sh" 1 40 40 2>&1 | tail -1)"
+        case "$fout" in
+            "40 of 40 agree"*) report "gen/national" 0 "40 programs against the code-unit model (${fout#40 of 40 agree, })" ;;
+            *)                 report "gen/national" 1 "$fout" ;;
+        esac
+    else echo "SKIP  gen/national  (no python3, and GENDIR holds no national-N.ref)"; GEN_SKIPPED="${GEN_SKIPPED:-} gen/national"; fi
 else
-    for g in gen/loop gen/held gen/native gen/hir; do echo "SKIP  $g  (no python3 to write the programs)"; done
-    GEN_SKIPPED=" gen/loop gen/held gen/native gen/hir"
+    for g in gen/loop gen/held gen/native gen/hir gen/national; do echo "SKIP  $g  (no python3 to write the programs)"; done
+    GEN_SKIPPED=" gen/loop gen/held gen/native gen/hir gen/national"
 fi
 
 # Gate 8 (sanitizers): the compiler itself, built with the address and

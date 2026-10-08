@@ -106,6 +106,7 @@ ALL there.
 | rule | paraphrase | disposition |
 |---|---|---|
 | 1-2 alphabetic, alphanumeric | an item of class alphabetic or alphanumeric, or a literal | **refused**: bad/fn-alnum-arg (UPPER-CASE of a numeric item), bad/std2002-fn-numval-numeric; ORD, REVERSE, NUMVAL, NUMVAL-C, NUMVAL-F and the TEST-NUMVALs likewise |
+| 2 national | an item of class national, or a national literal, where a function admits one | ORD (the code unit plus one), REVERSE (a national result, a surrogate pair kept in order), NUMVAL, NUMVAL-C, NUMVAL-F and the TEST-NUMVALs (the digits read as national text, a position in positions): 2014/natfuncs2. Before the 2026-10-08 audit they read the bytes (docs/national.md "Audit") |
 | 6 integer | an integer item, or an expression that always gives an integer | **refused** for an item or literal that is not one: bad/fn-integer-arg, bad/fn-integer-literal. An expression is checked at run time: a fraction is an incorrect argument. MOD, FACTORIAL, CHAR, ANNUITY's second, RANDOM, the calendar functions, YEAR-TO-YYYY, DATE-TO-YYYYMMDD, DAY-TO-YYYYDDD and the TEST-DATE/TEST-DAY functions |
 | 10 numeric | an arithmetic expression or a numeric item | **refused**: bad/fn-numeric-arg |
 | MAX, MIN, ORD-MAX, ORD-MIN | one class throughout, alphabetic mixing with alphanumeric; not boolean (15.59.3, 15.63.3, 15.71.3, 15.72.3) | **refused**: bad/fn-max-mixed |

@@ -9082,12 +9082,59 @@ char *cob_fn_ord(const char *p)
     return fn_signed18((unsigned char)p[0] + 1);
 }
 
+/* ORD of a national character: its position in the national collating
+ * sequence, which is code unit order (15.70; national.md) */
+char *cob_fn_ord_nat(const char *p)
+{
+    return fn_signed18((int)s32u_u16_at((const unsigned char *)p, 0) + 1);
+}
+
 char *cob_fn_reverse(const char *p, int n)
 {
     char *b = fn_buffer((unsigned)n + 1);
     for (int i = 0; i < n; i++) b[i] = p[n - 1 - i];
     b[n] = 0;
     fn_var_len = n;                             /* an argument of run-time length: the result's is the same */
+    return b;
+}
+
+/* REVERSE of national text: the characters in reverse order by code
+ * unit, a surrogate pair kept in its order so the pair's character
+ * survives (the text counts the pair as two positions; reversing them
+ * would make two lone surrogates of a character, national.md) */
+char *cob_fn_reverse_nat(const char *p, int n)
+{
+    const unsigned char *u = (const unsigned char *)p;
+    char *b = fn_buffer((unsigned)n + 1);
+    int units = n / 2, o = 0;
+    for (int i = units; i > 0; ) {
+        int k = 1;
+        if (i >= 2) {
+            unsigned lo = s32u_u16_at(u, i - 1), hi = s32u_u16_at(u, i - 2);
+            if (lo >= 0xDC00 && lo <= 0xDFFF && hi >= 0xD800 && hi <= 0xDBFF) k = 2;
+        }
+        i -= k;
+        memcpy(b + o, u + 2 * i, (size_t)k * 2); o += k * 2;
+    }
+    b[n] = 0;
+    fn_var_len = n;
+    return b;
+}
+
+/* The NUMVAL family on a national argument: the text narrowed to one
+ * byte a character -- a code unit under 256 as that byte, any other as
+ * 0xFF, which no format admits -- so the scanners read it as they read
+ * alphanumeric text and a position they report is the same position.
+ * Two buffers: the currency string must outlive the argument's. */
+static char fn_narrow_buf[2][4096];
+static const char *fn_narrow(const char *p, int *n, int which)
+{
+    const unsigned char *u = (const unsigned char *)p;
+    int units = *n / 2;
+    if (units > (int)sizeof fn_narrow_buf[0]) units = (int)sizeof fn_narrow_buf[0];
+    char *b = fn_narrow_buf[which];
+    for (int i = 0; i < units; i++) { unsigned c = s32u_u16_at(u, (size_t)i); b[i] = c < 256 ? (char)c : (char)0xFF; }
+    *n = units;
     return b;
 }
 
@@ -9103,8 +9150,9 @@ char *cob_fn_reverse(const char *p, int n)
  * The value, when it conforms: v at scale sc, times 10**exp. */
 static const char *fn_cur_p; static int fn_cur_n, fn_cur_ci;    /* NUMVAL-C argument-2, for the next call; ANYCASE */
 
-void cob_fn_currency_arg(const char *p, int n, int anycase)
+void cob_fn_currency_arg(const char *p, int n, int anycase, int nat)
 {
+    if (nat) p = fn_narrow(p, &n, 1);
     while (n > 0 && *p == ' ') { p++; n--; }
     while (n > 0 && p[n - 1] == ' ') n--;
     fn_cur_p = p; fn_cur_n = n; fn_cur_ci = anycase;
@@ -9180,14 +9228,16 @@ int cob_fn_test_numval_pos(const char *p, int n, int form)
     return numval_scan(p, n, form, &w, &e);
 }
 
-char *cob_fn_test_numval(const char *p, int n, int form)
+char *cob_fn_test_numval(const char *p, int n, int form, int nat)
 {
+    if (nat) p = fn_narrow(p, &n, 0);
     return fn_signed18(cob_fn_test_numval_pos(p, n, form));
 }
 
-char *cob_fn_numval_f(const char *p, int n)
+char *cob_fn_numval_f(const char *p, int n, int nat)
 {
     cob_wnum w; int e;
+    if (nat) p = fn_narrow(p, &n, 0);
     if (numval_scan(p, n, 2, &w, &e)) { fn_argbad = 1; w_from_i64(&w, 0, 0); return fn_wresult(&w, 9); }
     /* the value times 10**e: the scale moves, and a negative one is made
      * up with zeros while 38 digits hold them */
@@ -9200,8 +9250,9 @@ char *cob_fn_numval_f(const char *p, int n)
     return fn_wresult(&w, 9);
 }
 
-char *cob_fn_numval(const char *p, int n, int cform)
+char *cob_fn_numval(const char *p, int n, int cform, int nat)
 {
+    if (nat) p = fn_narrow(p, &n, 0);
     if (cform && fn_cur_p) {
         /* NUMVAL-C with argument-2, a currency string of any length:
          * the format scanner, which TEST-NUMVAL-C shares */

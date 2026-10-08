@@ -243,3 +243,31 @@ bytes.  The harness runs 60 of them (gen/loop), and 60 on other seeds
 with `-fno-avail-reg` (gen/held: the values held between statements,
 alone); no container is needed.
 
+`gen-national.py SEED [STATEMENTS]` writes a COBOL 2014 program over
+national (PIC N) items and, on stderr, the output the text's code-unit
+model gives it: a national character position is one UTF-16 code unit,
+a supplementary character two, alphanumeric text is UTF-8, a receiver is
+filled and truncated by positions (JUSTIFIED on the left), reference
+modification, LENGTH, INSPECT, STRING and UNSTRING count positions,
+DISPLAY-OF gives UTF-8 with a lone surrogate as U+FFFD, comparison pads
+with spaces and orders by code unit (2023 8.5.1.4, 8.4.2.4, 14.6.8,
+15.26, 15.70; docs/national.md).  The character pool mixes one-, two-
+and three-byte UTF-8 characters, East Asian wide ones, surrogate pairs
+(emoji, a CJK extension B ideograph) and a combining mark, so every
+intersection -- UTF-8 length, UTF-16 units, code points, display width,
+COBOL positions -- is in play.  It covers MOVE both ways, reference
+modification as sender and receiver, relations (national with national
+and with alphanumeric), INSPECT TALLYING/REPLACING/CONVERTING, STRING,
+UNSTRING with COUNT IN, UPPER-CASE, NATIONAL-OF and DISPLAY-OF, numeric
+USAGE NATIONAL, REVERSE, ORD, TRIM, NUMVAL and TEST-NUMVAL.  A reference
+line ending in " split" marks a case where the model's truncation parts
+a surrogate pair, so those are counted apart.  It runs through
+`run-ref.sh FIRST COUNT [STATEMENTS]` (GEN=national), which builds each
+program (-std=2014), runs it and requires its output to equal the
+reference byte for byte -- no oracle: GnuCOBOL's national data is not
+UTF-16.  The harness runs 40 (gen/national); under GENDIR the fleet's
+pre-generated `national-SEED.cbl` and `national-SEED.ref` are used
+(both files, the program from stdout and the reference from stderr,
+made with the gate's statement count, 40).  The 2026-10-08 audit:
+docs/national.md "Audit".
+

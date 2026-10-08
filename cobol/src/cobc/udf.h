@@ -883,7 +883,7 @@ static void emit_fn_value_raw_1(Opnd *f)
             if (cx->kind == O_STR) { emit_la("r3", lit_label((unsigned char *)cx->tok->s, cx->tok->len)); emit_li("r4", cx->tok->len); }
             else if (cx->kind == O_REF) emit_ref_addr_len(&cx->ref);
             else die_at(f->line, "FUNCTION NUMVAL-C: the currency string must be an item or a literal");
-            emit_li("r5", f->fanycase);
+            emit_li("r5", f->fanycase); emit_li("r6", opnd_is_national(cx));
             emit_call("cob_fn_currency_arg");
         }
         Opnd *ax = f->fargs[0];                         /* the string functions: r3 the argument, r4 its length */
@@ -900,12 +900,12 @@ static void emit_fn_value_raw_1(Opnd *f)
         else { emit_la("r3", lit_label((unsigned char *)ax->tok->s, ax->tok->len)); emit_li("r4", ax->tok->len); }
         switch (f->fnid) {
         case -11: case -12: case -13: emit_li("r5", -10 - f->fnid); emit_call("cob_fn_dtfmt_scan"); break;
-        case -3: emit_call("cob_fn_ord"); break;
-        case -4: emit_call("cob_fn_reverse"); break;
-        case -7: emit_call("cob_fn_numval_f"); break;
+        case -3: emit_call(f->fargnat ? "cob_fn_ord_nat" : "cob_fn_ord"); break;
+        case -4: emit_call(f->fargnat ? "cob_fn_reverse_nat" : "cob_fn_reverse"); break;
+        case -7: emit_li("r5", f->fargnat); emit_call("cob_fn_numval_f"); break;
         case -8: case -9: case -10:
-            emit_li("r5", f->fnid == -8 ? 0 : f->fnid == -9 ? 1 : 2); emit_call("cob_fn_test_numval"); break;
-        default: emit_li("r5", f->fnid == -6); emit_call("cob_fn_numval"); break;
+            emit_li("r5", f->fnid == -8 ? 0 : f->fnid == -9 ? 1 : 2); emit_li("r6", f->fargnat); emit_call("cob_fn_test_numval"); break;
+        default: emit_li("r5", f->fnid == -6); emit_li("r6", f->fargnat); emit_call("cob_fn_numval"); break;
         }
         return;
     }
