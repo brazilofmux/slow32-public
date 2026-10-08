@@ -510,6 +510,10 @@ EC-FLOW-*-COMMIT/ROLLBACK; Ed. 2023; L.
 
 **47. Extended letters.** A.4.6; 8.1.3; Ed. 2002; S-M. Unverified what the tokenizer accepts in
 user-defined words today (national literals and UTF-8 data work; names were not probed).
+**DONE 2026-10-07**: Annex B's two sets as compressed DFAs over UTF-8 (libutf's gen/classify),
+case folded through the simple pairs, program-names externalized by bytes (conformance/lexical.md;
+tests 2002/extlet, fixed/extfixed; 5 bad tests). Was: the scanner refused any byte beyond ASCII in
+a word.
 
 **48. Asynchronous messaging.** A.3 item 4; 14.9.31 RECEIVE, 14.9.38 SEND, USAGE MESSAGE-TAG, SET
 format 17, EC-MCS-*; Ed. 2023; L.

@@ -12,7 +12,7 @@ carry the compiler's own reason.
 | clause | elements | swept | not implemented | unswept |
 |---|---|---|---|---|
 | 7 COPY, REPLACE and directives | 24 | 22 | 0 | 2 |
-| 8 characters, names, data, expressions, conditions | 35 | 34 | 0 | 1 |
+| 8 characters, names, data, expressions, conditions | 35 | 35 | 0 | 0 |
 | 9 files and objects, general | 0 | 0 | 0 | 0 |
 | 10 the compilation group | 2 | 2 | 0 | 0 |
 | 11 IDENTIFICATION DIVISION | 15 | 15 | 0 | 0 |
@@ -21,7 +21,7 @@ carry the compiler's own reason.
 | 14 PROCEDURE DIVISION | 54 | 47 | 6 | 1 |
 | 15 intrinsic functions | 94 | 89 | 5 | 0 |
 | 16 standard classes | 0 | 0 | 0 | 0 |
-| **all** | **324** | **296** | **11** | **17** |
+| **all** | **324** | **297** | **11** | **16** |
 
 ## 7 COPY, REPLACE and directives
 
@@ -56,7 +56,7 @@ carry the compiler's own reason.
 
 | section | element | page | test | refused | gap | n/a | ruling |
 |---|---|---|---|---|---|---|---|
-| 8.1.3 |  | *unswept* | | | | | |
+| 8.1.3 |  | [lexical](lexical.md) | 10 | 6 | 0 | 0 | 0 |
 | 8.3.3.2 |  | [identifiers](identifiers.md), [refmod](refmod.md) | 56 | 41 | 0 | 10 | 1 |
 | 8.3.3.4 |  | [national-boolean](national-boolean.md), [refmod](refmod.md) | 34 | 24 | 0 | 4 | 1 |
 | 8.3.3.5 |  | [national-boolean](national-boolean.md), [refmod](refmod.md) | 34 | 24 | 0 | 4 | 1 |

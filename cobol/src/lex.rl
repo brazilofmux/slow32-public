@@ -53,11 +53,15 @@ int lx_next(const char *p0, const char *pe, Lexeme *out)
         quote2 = "'" ( [^'] | "''" )* "'";
         unterm = ( '"' [^"]* ) | ( "'" [^']* );
         prefix = ( [nN] [xX]? | [bB] [xX]? | [gG] [xX]? | [xX] | [zZ] | [uU] );
-        wordch = alnum | '-' | '_';
+        # an extended letter (2023 8.1.3, Annex B): any UTF-8 sequence of two to
+        # four bytes; the tokenizer checks the code point against Annex B
+        ext    = ( 0xC2..0xDF 0x80..0xBF ) | ( 0xE0..0xEF 0x80..0xBF 0x80..0xBF ) | ( 0xF0..0xF4 0x80..0xBF 0x80..0xBF 0x80..0xBF );
+        letter = alpha | ext;
+        wordch = alnum | ext | '-' | '_';
         fixed  = ( digit+ ( '.' digit+ )? ) | ( '.' digit+ );
         expo   = [eE] [+\-]? digit+;
         # 0100-MAIN, 9000-END: digits followed by a word character are a word
-        word   = ( alpha wordch* ) | ( digit+ ( alpha | '-' | '_' ) wordch* );
+        word   = ( letter wordch* ) | ( digit+ ( letter | '-' | '_' ) wordch* );
 
         action lx_space   { out->kind = LX_SPACE;   out->len = (int)(te - ts); fbreak; }
         action lx_comment { out->kind = LX_COMMENT; out->len = (int)(te - ts); fbreak; }

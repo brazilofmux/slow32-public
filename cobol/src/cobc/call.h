@@ -38,14 +38,14 @@ static void prog_tree_scan(void)
         if (k < g_ntok && g_tok[k].kind == T_PERIOD) k++;
         if (k < g_ntok && (g_tok[k].kind == T_WORD || g_tok[k].kind == T_STR))
             snprintf(n->name, sizeof n->name, "%.*s", g_tok[k].len > 63 ? 63 : g_tok[k].len, g_tok[k].s);
-        for (char *c = n->name; *c; c++) *c = (char)tolower((unsigned char)*c);
+        str_fold(n->name);
         for (k++; k < g_ntok && g_tok[k].kind != T_PERIOD; k++) {
             if (is_word(&g_tok[k], "common")) n->common = 1;
             if (is_word(&g_tok[k], "recursive")) n->recursive = 1;
             if (is_word(&g_tok[k], "prototype")) n->proto = 1;
             if (is_word(&g_tok[k], "as") && k + 1 < g_ntok && g_tok[k + 1].kind == T_STR) {
                 snprintf(n->ext, sizeof n->ext, "%.*s", g_tok[k + 1].len > 63 ? 63 : g_tok[k + 1].len, g_tok[k + 1].s);
-                for (char *c = n->ext; *c; c++) *c = (char)tolower((unsigned char)*c);
+                str_fold(n->ext);
             }
         }
         /* a function is recursive; so is a program contained in a recursive one (2023 11.10.4 rule 4) */
@@ -85,7 +85,11 @@ static const char *link_name(const char *name)
 {
     static char b[128];
     int n = 0;
-    for (const char *p = name; *p && n < 120; p++) b[n++] = (isalnum((unsigned char)*p) || *p == '_') ? *p : '_';
+    for (const char *p = name; *p && n < 116; p++) {
+        if (isalnum((unsigned char)*p) || *p == '_') b[n++] = *p;
+        else if ((unsigned char)*p & 0x80) n += snprintf(b + n, sizeof b - (size_t)n, "_%02x", (unsigned char)*p);   /* an extended letter's bytes, distinct */
+        else b[n++] = '_';
+    }
     b[n] = 0;
     return b;
 }
@@ -101,13 +105,13 @@ static void parse_call(void)
          * externalized under the name the REPOSITORY gives it, its
          * arguments checked and converted against its signature */
         snprintf(name, sizeof name, "%s", pg_extname(t->s));
-        for (char *k = name; *k; k++) *k = (char)tolower((unsigned char)*k);
+        str_fold(name);
         sig = pgsig_find(t->s);
         advance();
     } else if (t->kind == T_STR) {
         no_zero_tok(t, "CALL", "2023 14.9.4.3 rule 2");
         snprintf(name, sizeof name, "%.*s", t->len > 120 ? 120 : t->len, t->s);
-        for (char *k = name; *k; k++) *k = (char)tolower((unsigned char)*k);
+        str_fold(name);
         advance();
     } else if (t->kind == T_WORD) {
         /* CALL identifier: the item names the program; resolved at run

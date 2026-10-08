@@ -41,14 +41,126 @@ static Tok *push_tok(int kind, int line, const char *s, int len)
     return t;
 }
 
-static int is_wordch(int c) { return isalnum(c) || c == '-' || c == '_'; }
+static int is_wordch(int c) { return isalnum(c) || c == '-' || c == '_' || (c & 0x80); }
+
+/* ---- extended letters (2023 8.1.3, Annex B; standard-queue item 47) ----
+ * A user-defined word may hold the letters of other scripts: the
+ * scanner takes any UTF-8 sequence as a word character, and the tokenizer
+ * checks each code point against Annex B's two sets (xid_table.h) -- the
+ * start characters anywhere, the others not first -- and refuses the
+ * rest (U+00D7, U+037A, a symbol).  KATAKANA MIDDLE DOT is medial (B.3
+ * item 3).  Words are matched without regard to case: the simple
+ * one-to-one case pairs of Latin-1, Latin Extended-A, Greek and Cyrillic
+ * fold to their lowercase (14.1 general case mappings; the two 2023 E.2
+ * item 14 deleted are not pairs here); other scripts have no case. */
+#include "xid_tables.h"
+/* one code point's UTF-8 bytes through a membership DFA (libutf's reader):
+ * 1 a member, 0 not; the first accepting state decides */
+static int xid_dfa(const unsigned char *itt, const unsigned short *sot, const unsigned short *sbt, int accept_start,
+                   const unsigned char *p, int n)
+{
+    int st = 0;
+    for (int i = 0; i < n && st < accept_start; i++) {
+        unsigned char col = itt[p[i]]; unsigned short off = sot[st];
+        for (;;) {
+            int y = sbt[off];
+            if (y < 128) {
+                if (col < y) { st = sbt[off + 1]; break; }
+                col = (unsigned char)(col - y); off = (unsigned short)(off + 2);
+            } else {
+                y = 256 - y;
+                if (col < y) { st = sbt[off + col + 1]; break; }
+                col = (unsigned char)(col - y); off = (unsigned short)(off + y + 1);
+            }
+        }
+    }
+    return st >= accept_start ? st - accept_start : 0;
+}
+/* the sequence's class: 1 a start character, 2 a continue character, 0 neither */
+static int xid_class(const unsigned char *p, int n)
+{
+    if (xid_dfa(xid_start_itt, xid_start_sot, xid_start_sbt, XID_START_ACCEPTING_STATES_START, p, n)) return 1;
+    if (xid_dfa(xid_cont_itt, xid_cont_sot, xid_cont_sbt, XID_CONT_ACCEPTING_STATES_START, p, n)) return 2;
+    return 0;
+}
+/* the code point at p (a UTF-8 sequence the scanner accepted), its length in *len */
+static unsigned utf8_cp(const unsigned char *p, int *len)
+{
+    if (p[0] < 0xC0) { *len = 1; return p[0]; }
+    if (p[0] < 0xE0) { *len = 2; return ((unsigned)(p[0] & 0x1F) << 6) | (p[1] & 0x3F); }
+    if (p[0] < 0xF0) { *len = 3; return ((unsigned)(p[0] & 0x0F) << 12) | ((unsigned)(p[1] & 0x3F) << 6) | (p[2] & 0x3F); }
+    *len = 4; return ((unsigned)(p[0] & 0x07) << 18) | ((unsigned)(p[1] & 0x3F) << 12) | ((unsigned)(p[2] & 0x3F) << 6) | (p[3] & 0x3F);
+}
+/* the lowercase of an extended letter's code point, or itself */
+static unsigned ext_lower(unsigned cp)
+{
+    if (cp >= 0xC0 && cp <= 0xDE && cp != 0xD7) return cp + 0x20;           /* Latin-1 Supplement */
+    if (cp >= 0x100 && cp <= 0x137 && !(cp & 1) && cp != 0x130) return cp + 1;   /* Latin Extended-A, the pairs (İ excepted: no simple pair) */
+    if (cp >= 0x139 && cp <= 0x148 && (cp & 1)) return cp + 1;
+    if (cp >= 0x14A && cp <= 0x177 && !(cp & 1)) return cp + 1;
+    if (cp == 0x178) return 0xFF;
+    if (cp >= 0x179 && cp <= 0x17E && (cp & 1)) return cp + 1;
+    if (cp >= 0x391 && cp <= 0x3A9 && cp != 0x3A2) return cp + 0x20;        /* Greek, and its accented capitals */
+    if (cp == 0x386) return 0x3AC;
+    if (cp >= 0x388 && cp <= 0x38A) return cp + 0x25;
+    if (cp == 0x38C) return 0x3CC;
+    if (cp == 0x38E || cp == 0x38F) return cp + 0x3F;
+    if (cp >= 0x410 && cp <= 0x42F) return cp + 0x20;                       /* Cyrillic */
+    if (cp >= 0x400 && cp <= 0x40F) return cp + 0x50;
+    return cp;
+}
+static int utf8_put(unsigned cp, char *o)
+{
+    if (cp < 0x80) { o[0] = (char)cp; return 1; }
+    if (cp < 0x800) { o[0] = (char)(0xC0 | (cp >> 6)); o[1] = (char)(0x80 | (cp & 0x3F)); return 2; }
+    if (cp < 0x10000) { o[0] = (char)(0xE0 | (cp >> 12)); o[1] = (char)(0x80 | ((cp >> 6) & 0x3F)); o[2] = (char)(0x80 | (cp & 0x3F)); return 3; }
+    o[0] = (char)(0xF0 | (cp >> 18)); o[1] = (char)(0x80 | ((cp >> 12) & 0x3F)); o[2] = (char)(0x80 | ((cp >> 6) & 0x3F)); o[3] = (char)(0x80 | (cp & 0x3F)); return 4;
+}
+/* a name's text folded to lowercase in place: ASCII and the extended
+ * letters' pairs (a program-name literal against a PROGRAM-ID's word); the
+ * pairs keep their byte length */
+static void str_fold(char *s)
+{
+    for (unsigned char *k = (unsigned char *)s; *k; ) {
+        if (*k < 0x80) { *k = (unsigned char)tolower(*k); k++; continue; }
+        int len; unsigned cp = utf8_cp(k, &len), lc = ext_lower(cp);
+        if (lc != cp) utf8_put(lc, (char *)k);
+        k += len;
+    }
+}
+/* a word with bytes beyond ASCII: each code point one of Annex B's, in
+ * its place; the word's text folded to lowercase */
+static void word_extended(Tok *w)
+{
+    const unsigned char *p = (const unsigned char *)w->s;
+    int n = (int)strlen(w->s), i = 0, first = 1, lower = 0;
+    char *out = xmalloc((size_t)n + 1); int o = 0;
+    while (i < n) {
+        int len; unsigned cp = utf8_cp(p + i, &len);
+        if (i + len > n) die_at(w->line, "'%s': a UTF-8 sequence cut short", w->s);
+        int last = i + len >= n;
+        if (cp >= 0x80) {
+            int cls = xid_class(p + i, len);
+            if (cp == 0x30FB && (first || last)) die_at(w->line, "'%s': KATAKANA MIDDLE DOT (U+30FB) is neither the first nor the last character of a user-defined word (2023 Annex B item 3)", w->s);
+            else if (cp != 0x30FB && !cls) die_at(w->line, "'%s': U+%04X is not a character of a user-defined word (2023 8.1.3, Annex B)", w->s, cp);
+            else if (cls == 2 && first) die_at(w->line, "'%s': U+%04X does not begin a user-defined word (2023 Annex B item 2)", w->s, cp);
+            unsigned lc = ext_lower(cp);
+            if (lc != cp) lower = 1;
+            o += utf8_put(lc, out + o);
+        } else { if (isupper(cp)) lower = 1; out[o++] = (char)tolower((int)cp); }
+        i += len; first = 0;
+    }
+    out[o] = 0;
+    if (lower) { w->orig = w->s; w->s = out; } else free(out);
+}
 
 /* a word is matched lowercased; its spelling is kept for the names the
  * program can see at run time (EXCEPTION-LOCATION, EXCEPTION-FILE) */
 static void word_lower(Tok *w)
 {
-    int up = 0;
-    for (char *k = w->s; *k; k++) if (isupper((unsigned char)*k)) up = 1;
+    int up = 0, ext = 0;
+    for (char *k = w->s; *k; k++) { if (isupper((unsigned char)*k)) up = 1; if (*k & 0x80) ext = 1; }
+    if (ext) { word_extended(w); return; }
     if (!up) return;
     w->orig = xstrndup(w->s, (int)strlen(w->s));
     for (char *k = w->s; *k; k++) *k = (char)tolower((unsigned char)*k);

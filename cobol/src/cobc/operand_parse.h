@@ -919,12 +919,12 @@ static void parse_operand_raw_1(Opnd *o)
             if (cur()->kind == T_STR) {
                 if (cur()->len == 0) die_at(cur()->line, "ADDRESS OF PROGRAM: a literal of length zero (2023 8.4.3.13.3 rule 2)");
                 char *nm = xmalloc((size_t)cur()->len + 1); memcpy(nm, cur()->s, (size_t)cur()->len); nm[cur()->len] = 0;
-                for (char *k = nm; *k; k++) *k = (char)tolower((unsigned char)*k);
+                str_fold(nm);
                 o->pname = nm; advance();
             } else if (cur()->kind == T_WORD && !sym_lookup_quiet(cur()->s) && repo_pg_find(cur()->s) >= 0) {
                 o->pproto = xstrdup(cur()->s);
                 char *nm = xstrdup(pg_extname(cur()->s));
-                for (char *k = nm; *k; k++) *k = (char)tolower((unsigned char)*k);
+                str_fold(nm);
                 o->pname = nm; advance();
             } else {
                 parse_ref(&o->ref);
