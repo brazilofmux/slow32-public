@@ -76,7 +76,14 @@ reference stays with object orientation (item 51).
 - Why here: the last structural piece of the exception module, whose core landed (ISSUES-53 onward).
 
 **4. The rest of Table 13.** 14.6.13.1.6, Table 13; Ed. 2002 (+2014/2023 names); M; deps 3 for
-EC-RAISING-* (met). AUDITED 2026-10-06: docs/conformance/exceptions.md has every level-3 name's row.
+EC-RAISING-* (met). **DONE 2026-10-08**: EC-I-O-EOP / -EOP-OVERFLOW (both causes of the end-of-page
+condition, with or without the phrase), EC-I-O-LINAGE (the values checked at OPEN and each new page;
+fatal at the WRITE, LINAGE-COUNTER 0 until CLOSE), EC-RANGE-INVALID (THRU reversed, then the empty
+range), run-time EC-RANGE-INSPECT-SIZE (computed-length operands compared), EC-FLOW-GLOBAL-GOBACK and
+-EXIT at run time (a GLOBAL declarative's depth kept by the runtime), tests for I-O class 4 and
+EC-SORT-MERGE-ACTIVE (2002/eceop, ecrange, ecglobal, ecglobex, eclogic, ecsortact). Still gaps, each
+waiting on its feature: the IEEE conditions, pointer bounds, a report group taller than its page at run
+time, EC-REPORT-SUM-SIZE, EC-SCREEN-ITEM-TRUNCATED, I-O class 7 (exceptions.md). AUDITED 2026-10-06: docs/conformance/exceptions.md has every level-3 name's row.
 Raised then: EC-OVERFLOW-STRING/-UNSTRING, EC-RANGE-SEARCH-NO-MATCH, EC-FLOW-RELEASE/-RETURN/
 -REPORT, the five EC-SORT-MERGE-* that can arise, EC-REPORT-ACTIVE/-INACTIVE/-FILE-MODE/
 -NOT-TERMINATED. Still open here (the page's **gap** rows): EC-RANGE-INVALID, EC-I-O-EOP/

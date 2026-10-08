@@ -73,7 +73,7 @@ standard's titles or text:
 | 14.9.29 RAISE | [raise.md](raise.md) | 2026-09-28 |
 | 14.9.33 RESUME | [resume.md](resume.md) | 2026-10-07 |
 | 7.3.25 TURN | [turn.md](turn.md) | 2026-09-28 |
-| 14.6.13.1.6 Table 13, every exception-name: raised where, or why not | [exceptions.md](exceptions.md) | 2026-10-06 |
+| 14.6.13.1.6 Table 13, every exception-name: raised where, or why not | [exceptions.md](exceptions.md) | 2026-10-08 |
 | 7.3.5, 7.3.6, 7.3.7, 7.3.8, 7.3.9, 7.3.11, 7.3.13, 7.3.16, 7.3.17, 7.3.18, 7.3.19, 7.3.21 conditional compilation: DEFINE, EVALUATE, IF; CALL-CONVENTION, LEAP-SECOND, LISTING, PAGE; PROPAGATE; 7.3.23 REF-MOD-ZERO-LENGTH; 7.3.10, 7.3.12, 7.3.15, 7.3.20, 7.3.22 COBOL-WORDS, DISPLAY, FLAG-14, POP, PUSH | [directives.md](directives.md) | 2026-10-07 |
 | 14.9.49 USE | [use.md](use.md) | 2026-09-28 |
 | 2014 Annex E.2 items 1-29, E.3 items 7, 18, 19: the edition's substantive changes, under -std=2002 and -std=2014 | [edition-2014.md](edition-2014.md) | 2026-10-07 |

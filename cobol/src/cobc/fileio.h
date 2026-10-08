@@ -483,6 +483,20 @@ advancing_done:;
     emit_call("cob_write");
     emit("\tstw sp+%d, r1", SLOT_C);
     g_io_file = f;
+    if (f->linage && (ec_on_name("EC-I-O-EOP") || ec_on_name("EC-I-O-EOP-OVERFLOW") || ec_on_name("EC-I-O-LINAGE"))) {
+        /* the WRITE's verdict (lin_eop): the footing reached is EC-I-O-EOP,
+         * the page overflowed EC-I-O-EOP-OVERFLOW (14.9.51.4 rule 27a, with
+         * or without an END-OF-PAGE phrase), the LINAGE values out of range
+         * EC-I-O-LINAGE (13.18.34.4 rule 6, fatal) */
+        int Lok = new_label();
+        emit_file_addr("r3", f);
+        emit("\tldw r13, r3+%d", COB_FILE_LIN_COUNTER_OFF + 4);
+        emit("\tbeq r13, r0, .L%d", Lok);
+        if (ec_on_name("EC-I-O-LINAGE")) { int Ln = new_label(); emit("\tandi r1, r13, 4"); emit("\tbeq r1, r0, .L%d", Ln); emit_ec_raise(ec_find("EC-I-O-LINAGE", 0)); emit_jump(Lok); emit_label(Ln); }
+        if (ec_on_name("EC-I-O-EOP-OVERFLOW")) { int Ln = new_label(); emit("\tandi r1, r13, 2"); emit("\tbeq r1, r0, .L%d", Ln); emit_ec_raise(ec_find("EC-I-O-EOP-OVERFLOW", 0)); emit_jump(Lok); emit_label(Ln); }
+        if (ec_on_name("EC-I-O-EOP")) { int Ln = new_label(); emit("\tandi r1, r13, 1"); emit("\tbeq r1, r0, .L%d", Ln); emit_ec_raise(ec_find("EC-I-O-EOP", 0)); emit_label(Ln); }
+        emit_label(Lok);
+    }
     if (!f->linage && (at_word("eop") || at_word("end-of-page") || (at_word("at") && (is_word(peek(1), "eop") || is_word(peek(1), "end-of-page"))) ||
                        (at_word("not") && (is_word(peek(1), "eop") || is_word(peek(1), "end-of-page") || is_word(peek(1), "at")))))
         die_at(cur()->line, "END-OF-PAGE on '%s', whose FD has no LINAGE clause (%s)", f->name, g_std < 2002 ? "X3.23-1985 sequential WRITE syntax rule 8" : "2023 14.9.51.3 rule 19");
@@ -498,7 +512,8 @@ advancing_done:;
             f14(F14_WRITE_EOP, cur()->line, "WRITE to a LINAGE file without END-OF-PAGE: 2023 raises EC-I-O-EOP where the phrase could stand (E.2 item 20)");
         if (at_word("at") || at_word("end-of-page") || (at_word("not") && (is_word(peek(1), "at") || is_word(peek(1), "end-of-page")))) {
             emit_file_addr("r3", f);
-            emit("\tldw r1, r3+%d", COB_FILE_LIN_COUNTER_OFF + 4);    /* lin_eop */
+            emit("\tldw r1, r3+%d", COB_FILE_LIN_COUNTER_OFF + 4);    /* lin_eop: the footing or the overflow (bits 0-1) */
+            emit("\tandi r1, r1, 3"); emit("\tsne r1, r1, r0");
             emit("\tstw sp+%d, r1", SLOT_C);
             g_io_file = NULL;
             parse_condition_clauses("at", "end-of-page", "end-write");

@@ -26,8 +26,17 @@ the source; 22 the implementor's (`-IMP`), which this implementation
 never defines; 43 belong to features not built (object orientation,
 VALIDATE, messaging, locale, commit, prototypes and
 pointers, IEEE float, the screen and 2002 Report Writer leftovers), each
-with its queue item; 4 rulings; 20 gaps, named in their rows, which
-queue item 4 continues with.
+with its queue item; 4 rulings; and the gaps, named in their rows:
+queue item 4 (2026-10-08) closed the ones a statement here could raise
+-- EC-I-O-EOP, -EOP-OVERFLOW and -LINAGE, EC-RANGE-INVALID, run-time
+EC-RANGE-INSPECT-SIZE, EC-FLOW-GLOBAL-GOBACK and -EXIT -- and gave the
+untested classes their tests (I-O class 4, EC-SORT-MERGE-ACTIVE); what
+remains waits on a feature (the IEEE conditions, pointer bounds, a
+report group taller than its page at run time, a sum counter's
+overflow, a screen item truncated, I-O class 7). One rule of the
+dispatch is worth knowing: a condition raised inside a declarative
+section finds only the USE procedures declared before it in the source
+(the dispatch is bound where the statement is written; ecglobal).
 
 ## EC-ARGUMENT
 
@@ -44,7 +53,7 @@ queue item 4 continues with.
 | EC-BOUND-IMP | Imp | **ruling**: no implementor-defined condition is defined here, so it never arises |
 | EC-BOUND-ODO | Fatal | **test**: 2002/ecodo |
 | EC-BOUND-OVERFLOW | NF | a dynamic-capacity table's expected capacity first exceeded by a store (occurs.md; 2014/dyntable) |
-| EC-BOUND-PTR | Fatal | **gap**: queue item 11 |
+| EC-BOUND-PTR | Fatal | **gap**: pointer SET UP/DOWN and pointer arithmetic are unchecked (no bounds are known for a data-pointer here) |
 | EC-BOUND-REF-MOD | Fatal | **test**: 2002/ecrefmod, 2002/fnrmpast, 2002/fnrmzero |
 | EC-BOUND-SET | NF | SET of a dynamic-capacity table's capacity past its expected capacity (set.md; 2014/dyntable) |
 | EC-BOUND-SUBSCRIPT | Fatal | **test**: 2002/ecbound, 2002/ecperform, 2002/ecpfatal |
@@ -64,7 +73,7 @@ queue item 4 continues with.
 | EC-DATA-CONVERSION | NF | **test**: 2002/nataccept, 2002/natconv, 2002/natfuncs |
 | EC-DATA-INCOMPATIBLE | Fatal | **test**: 2002/ecincompat, 2002/ecincompat2, 2002/userfnrecvec |
 | EC-DATA-IMP | Imp | **ruling**: no implementor-defined condition is defined here, so it never arises |
-| EC-DATA-NOT-FINITE | Fatal | **gap**: the IEEE usages (queue items 15, 20-21) |
+| EC-DATA-NOT-FINITE | Fatal | **gap**: a floating-point item holding an infinity or a NaN is read without the check (the IEEE usages, items 15 and 20-21, store what they are given) |
 | EC-DATA-OVERFLOW | Fatal | **gap**: as EC-DATA-NOT-FINITE |
 | EC-DATA-PTR-NULL | Fatal | **test**: 2002/ecptrnull |
 
@@ -83,8 +92,8 @@ queue item 4 continues with.
 |---|---|---|
 | EC-FLOW-APPLY-COMMIT | Fatal | **n/a**: commit and rollback (queue item 46) |
 | EC-FLOW-COMMIT | Fatal | **n/a**: queue item 46 |
-| EC-FLOW-GLOBAL-EXIT | Fatal | **refused** at compile time: EXIT PROGRAM in a declarative whose USE is GLOBAL (14.9.14.3 rule 2); the run-time case -- the declarative invoked for a contained program -- cannot arise, as the statement is refused in it |
-| EC-FLOW-GLOBAL-GOBACK | Fatal | **refused** at compile time: GOBACK in a GLOBAL declarative (14.9.18.3 rule 1), likewise |
+| EC-FLOW-GLOBAL-EXIT | Fatal | **refused** at compile time when written in a declarative whose USE is GLOBAL (14.9.14.3 rule 2); **test**: 2002/ecglobex -- reached at run time while such a declarative is under way (through a PERFORM of a paragraph in another declarative section), the condition, fatal (2026-10-08) |
+| EC-FLOW-GLOBAL-GOBACK | Fatal | **refused** at compile time when written in a GLOBAL declarative (14.9.18.3 rule 1); **test**: 2002/ecglobal -- reached at run time while one is under way, the condition of 14.9.18.4 rule 6, fatal (2026-10-08) |
 | EC-FLOW-IMP | Imp | **ruling**: no implementor-defined condition is defined here, so it never arises |
 | EC-FLOW-RELEASE | Fatal | **test**: 2002/ecsort |
 | EC-FLOW-REPORT | Fatal | **test**: 2002/ecreport |
@@ -108,15 +117,15 @@ queue item 4 continues with.
 | name | cat | disposition |
 |---|---|---|
 | EC-I-O-AT-END | NF | **test**: 2002/ecio, 2002/ecpreview, 2002/ecturnfile |
-| EC-I-O-EOP | NF | **gap**: the end-of-page condition is the WRITE's EOP phrase only (queue item 4, next) |
-| EC-I-O-EOP-OVERFLOW | NF | **gap**: as EC-I-O-EOP |
+| EC-I-O-EOP | NF | **test**: 2002/eceop -- a WRITE on a LINAGE file that reaches the footing area (14.9.51.4 rule 27a), with or without an END-OF-PAGE phrase (2026-10-08) |
+| EC-I-O-EOP-OVERFLOW | NF | **test**: 2002/eceop -- a WRITE that passes the page body (rule 26a), the device on the next page's first line (2026-10-08) |
 | EC-I-O-FILE-SHARING | NF | raised from I-O status class 6: **61** at an OPEN Table 19 refuses beside another connector of the run unit, **62** at DELETE FILE of a file open through another (locking.md; 2002/locking, 2023/lockdel) |
 | EC-I-O-IMP | Imp | **ruling**: no implementor-defined condition is defined here, so it never arises |
 | EC-I-O-INVALID-KEY | NF | **test**: 2002/usefile |
-| EC-I-O-LINAGE | Fatal | **gap**: a LINAGE value out of range is not detected (queue item 4, next) |
-| EC-I-O-LOGIC-ERROR | Fatal | raised from I-O status class 4; **gap**: no test drives that class (2002/ecio drives 1, 3 and the warning) |
+| EC-I-O-LINAGE | Fatal | **test**: 2002/eceop -- the LINAGE items say a page of 0 lines, or a footing outside 1..page size (13.18.34.4 rule 6): at the WRITE, fatal; nothing written, LINAGE-COUNTER 0, and every later WRITE until CLOSE the same (2026-10-08) |
+| EC-I-O-LOGIC-ERROR | Fatal | raised from I-O status class 4; **test**: 2002/eclogic (41, an OPEN of a file already open; EXCEPTION-FILE names it) (2026-10-08) |
 | EC-I-O-PERMANENT-ERROR | Fatal | **test**: 2002/ecio |
-| EC-I-O-RECORD-CONTENT | Fatal | raised from I-O status class 7; **gap**: no test drives that class |
+| EC-I-O-RECORD-CONTENT | Fatal | raised from I-O status class 7; **gap**: no test drives that class -- the one producer here is 71, a national record whose text holds a lone surrogate and so has no UTF-8 form on a LINE SEQUENTIAL file |
 | EC-I-O-RECORD-OPERATION | NF | raised from I-O status class 5: **51** a record locked by another connector of the run unit, **53**/**54** the lock limits (locking.md; 2002/locking) |
 | EC-I-O-WARNING | NF | **test**: 2002/ecio, 2002/ecturn, 2002/seqbyteec |
 
@@ -198,10 +207,10 @@ queue item 4 continues with.
 |---|---|---|
 | EC-RANGE-IMP | Imp | **ruling**: no implementor-defined condition is defined here, so it never arises |
 | EC-RANGE-INDEX | Fatal | **ruling**: no range is enforced on an index value; an element outside the table is EC-BOUND-SUBSCRIPT when used |
-| EC-RANGE-INSPECT-SIZE | Fatal | **refused** at compile time where the sizes are known (INSPECT REPLACING operands of unequal size); a run-time size (a reference-modified operand of computed length) is a **gap** |
-| EC-RANGE-INVALID | NF | **gap**: EVALUATE ... THROUGH with its ends reversed is an empty range, no condition (queue item 4, next) |
+| EC-RANGE-INSPECT-SIZE | Fatal | **refused** at compile time where the sizes are known (INSPECT REPLACING or CONVERTING operands of unequal size); **test**: 2002/ecrange -- a reference-modified operand of computed length compared at run time (14.9.22.4 rules 14, 22), fatal (2026-10-08) |
+| EC-RANGE-INVALID | NF | **test**: 2002/ecrange -- EVALUATE ... WHEN x THRU y with x above y (14.7.8): the condition, nonfatal, then the empty range (2026-10-08) |
 | EC-RANGE-PERFORM-VARYING | Fatal | **test**: 2002/perfvary |
-| EC-RANGE-PTR | Fatal | **gap**: pointer SET UP/DOWN is unchecked (with EC-BOUND-PTR, queue item 11) |
+| EC-RANGE-PTR | Fatal | **gap**: pointer SET UP/DOWN is unchecked (with EC-BOUND-PTR) |
 | EC-RANGE-SEARCH-INDEX | NF | **test**: 2002/ecsearchidx |
 | EC-RANGE-SEARCH-NO-MATCH | NF | **test**: 2002/ecovfstr |
 
@@ -216,38 +225,38 @@ queue item 4 continues with.
 | EC-REPORT-INACTIVE | Fatal | **test**: 2002/ecreport |
 | EC-REPORT-LINE-OVERLAP | NF | **refused** at compile time: overlapping lines in a report group |
 | EC-REPORT-NOT-TERMINATED | NF | **test**: 2002/ecreport |
-| EC-REPORT-PAGE-LIMIT | NF | **refused** at compile time for absolute lines; a group taller than its region at run time is a **gap** |
+| EC-REPORT-PAGE-LIMIT | NF | **refused** at compile time for absolute lines; a group taller than its region at run time (PRESENT WHEN, OCCURS ... DEPENDING, item 37's forms) is a **gap**: the engine starts a new page and goes on |
 | EC-REPORT-PAGE-WIDTH | NF | **refused** at compile time: an item past the page width |
-| EC-REPORT-SUM-SIZE | Fatal | **gap**: a sum counter overflow is truncated silently (queue item 37, with the 2002 Report Writer) |
+| EC-REPORT-SUM-SIZE | Fatal | **gap**: a sum counter overflow is truncated silently (the 2002 Report Writer, item 37, left it so) |
 | EC-REPORT-VARYING | Fatal | **n/a**: VARYING in a report group is the 2002 Report Writer (queue item 37) |
 
 ## EC-SCREEN
 
 | name | cat | disposition |
 |---|---|---|
-| EC-SCREEN-FIELD-OVERLAP | NF | **gap** (docs/conformance/screen.md, queue item 38) |
+| EC-SCREEN-FIELD-OVERLAP | NF | **test**: 2002/screenmore (queue item 38, 2026-10-07; docs/conformance/screen.md) |
 | EC-SCREEN-IMP | Imp | **ruling**: no implementor-defined condition is defined here, so it never arises |
-| EC-SCREEN-ITEM-TRUNCATED | NF | **gap** (screen.md) |
-| EC-SCREEN-LINE-NUMBER | NF | **gap** (screen.md) |
-| EC-SCREEN-STARTING-COLUMN | NF | **gap** (screen.md) |
+| EC-SCREEN-ITEM-TRUNCATED | NF | **gap** (screen.md: nothing is truncated there) |
+| EC-SCREEN-LINE-NUMBER | NF | **test**: 2002/screenmore (queue item 38; screen.md) |
+| EC-SCREEN-STARTING-COLUMN | NF | **test**: 2002/screenmore (queue item 38; screen.md) |
 
 ## EC-SIZE
 
 | name | cat | disposition |
 |---|---|---|
-| EC-SIZE-ADDRESS | Fatal | **gap**: pointer arithmetic is unchecked (queue item 11) |
+| EC-SIZE-ADDRESS | Fatal | **gap**: pointer arithmetic is unchecked (with EC-BOUND-PTR) |
 | EC-SIZE-EXPONENTIATION | Fatal | **test**: 2002/ecsizeexp |
 | EC-SIZE-IMP | Imp | **ruling**: no implementor-defined condition is defined here, so it never arises |
 | EC-SIZE-OVERFLOW | Fatal | **test**: 2002/ecovfl, 2002/ecsizeexp, 2002/ecraise |
 | EC-SIZE-TRUNCATION | Fatal | **test**: 2002/ecsize |
-| EC-SIZE-UNDERFLOW | Fatal | **gap**: floating-point underflow (queue items 15, 20-21) |
+| EC-SIZE-UNDERFLOW | Fatal | **gap**: floating-point underflow is not detected (the IEEE usages, items 15 and 20-21) |
 | EC-SIZE-ZERO-DIVIDE | Fatal | **test**: 2002/eczdiv |
 
 ## EC-SORT-MERGE
 
 | name | cat | disposition |
 |---|---|---|
-| EC-SORT-MERGE-ACTIVE | Fatal | raised before a SORT or MERGE while one is under way; **gap**: no test drives it (a nested SORT needs an INPUT PROCEDURE that sorts) |
+| EC-SORT-MERGE-ACTIVE | Fatal | raised before a SORT or MERGE while one is under way; **test**: 2002/ecsortact -- a SORT in a program CALLed from the first SORT's INPUT PROCEDURE (within one program 14.9.40.3 rule 3 refuses it at compile time), fatal (2026-10-08) |
 | EC-SORT-MERGE-FILE-OPEN | Fatal | **test**: 2002/ecsort |
 | EC-SORT-MERGE-IMP | Imp | **ruling**: no implementor-defined condition is defined here, so it never arises |
 | EC-SORT-MERGE-RELEASE | Fatal | **ruling**: cannot arise -- the released record is the SD's own record area, always its full size |

@@ -811,11 +811,13 @@ static void emit_use_dispatch(File *f, int has_clause)
         int Lnext = new_label(), Lret = new_label();
         char lab[32]; snprintf(lab, sizeof lab, ".L%d", Lret);
         if (c[i]->mode) { emit_li("r2", c[i]->mode); emit("\tbne r12, r2, .L%d", Lnext); }
+        if (c[i]->global) { emit_li("r3", 1); emit_call("cob_use_global"); }   /* a GLOBAL declarative under way: GOBACK and EXIT PROGRAM inside it are conditions */
         emit_para_cell("r3", c[i]->unit, c[i]->sec);
         emit_la("r4", lab);
         emit_call("cob_perform_push");
         emit("\tjal r0, .Lp%d_%d", c[i]->unit, c[i]->sec);
         emit_label(Lret);
+        if (c[i]->global) { emit_li("r3", -1); emit_call("cob_use_global"); }
         emit_jump(Ldone);
         emit_label(Lnext);
     }

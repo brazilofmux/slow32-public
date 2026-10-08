@@ -1,0 +1,3 @@
+  input procedure: calling a program that sorts
+  sortsub: sorting s2
+  fatal in sortsub: EC-SORT-MERGE-ACTIVE

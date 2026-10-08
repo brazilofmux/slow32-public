@@ -1,0 +1,7 @@
+  nonfatal: EC-RANGE-INVALID
+in 1 thru 9
+  nonfatal: EC-RANGE-INVALID
+other
+in 2 thru 6: fine
+equal sizes: xycabcabca
+  fatal: EC-RANGE-INSPECT-SIZE

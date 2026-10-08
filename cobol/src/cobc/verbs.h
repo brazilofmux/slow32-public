@@ -200,6 +200,15 @@ static void parse_evaluate(void)
                         int cx = eval_numeric(&x), cy = eval_numeric(&y);
                         if (cx >= 0 && cy >= 0 && cx != cy)
                             die_at(y.line, "WHEN ... THRU: the two ends are of the same class, both numeric or neither (%s)", r_thru);
+                        if (ec_on_name("EC-RANGE-INVALID")) {
+                            /* the starting value above the ending one: the condition,
+                             * nonfatal, then an empty range (14.7.8), which the test
+                             * below is of itself */
+                            int Lok = new_label();
+                            cond_jump_false(cond_rel(&x, R_GT, &y, 0), Lok);
+                            emit_ec_raise(ec_find("EC-RANGE-INVALID", 0));
+                            emit_label(Lok);
+                        }
                         c = cond_bin(C_AND, cond_rel(&subj[i].o, R_GE, &x, 0), cond_rel(&subj[i].o, R_LE, &y, 0));
                     } else {
                         if (subj_lit[i] && eval_literal(&subj[i].o) && eval_literal(&x))
@@ -269,6 +278,20 @@ static int g_insp_nat;                  /* the inspected item is national (cobol
 /* a pattern operand: address and length as Args.  Beside a national item
  * every operand is national, and a figurative constant is one national
  * character (2023 14.9.22.3 rules 3 and 4) */
+static void pattern_args(Opnd *o, Arg *addr, Arg *len);
+/* EC-RANGE-INSPECT-SIZE at run time (14.9.22.4 rules 14, 22): the two
+ * operands' lengths, one of them computed, compared; fatal when unequal */
+static void insp_size_check(Opnd *a, Opnd *b)
+{
+    if (!ec_on_name("EC-RANGE-INSPECT-SIZE")) return;
+    Arg da, db, la[2];
+    pattern_args(a, &da, &la[0]); pattern_args(b, &db, &la[1]);
+    emit_args(la, 2);
+    int Lok = new_label();
+    emit("\tbeq r3, r4, .L%d", Lok);
+    emit_ec_raise(ec_find("EC-RANGE-INSPECT-SIZE", 0));
+    emit_label(Lok);
+}
 static void pattern_args(Opnd *o, Arg *addr, Arg *len)
 {
     if (o->kind == O_FIG && g_insp_nat) {
@@ -320,7 +343,7 @@ static void insp_operand(const Opnd *o)
  * ISSUES-121).  So every operand is read as a scan, the calls are made
  * first (2023 14.6.4), and then the runtime's sequence is emitted whole. */
 typedef struct { int hb, ha; Opnd before, after; } InspRange;
-typedef struct { int kind; Opnd pat, rep; InspRange rg; Ref tally; } InspPh;   /* kind: 0 CHARACTERS, 1 ALL, 2 LEADING, 3 FIRST */
+typedef struct { int kind; Opnd pat, rep; InspRange rg; Ref tally; int szchk; } InspPh;   /* kind: 0 CHARACTERS, 1 ALL, 2 LEADING, 3 FIRST; szchk: a length computed, compared at run time */
 
 static void parse_inspect_range(InspRange *g)
 {
@@ -385,7 +408,7 @@ static void parse_inspect_1(void)
     int fsubj = 0, fline = cur()->line;
     const char *fwhy = "a function-identifier is not a receiving operand (2023 8.4.3.2.3 rule 1); only TALLYING inspects one";
     static InspPh tl[32], rp[32];           /* the TALLYING and the REPLACING phrases */
-    int ntl = 0, nrp = 0, converting = 0;
+    int ntl = 0, nrp = 0, converting = 0, conv_szchk = 0;
     Opnd from, to; InspRange crg; memset(&crg, 0, sizeof crg);
     memset(&from, 0, sizeof from); memset(&to, 0, sizeof to);
 
@@ -438,6 +461,7 @@ static void parse_inspect_1(void)
         if (to.kind == O_REF) insp_operand(&to);
         int fl = from.kind == O_FIG ? w : opnd_size(&from), tl2 = to.kind == O_FIG ? w : opnd_size(&to);
         if (fl > 0 && tl2 > 0 && fl != tl2 && to.kind != O_FIG) die_at(to.line, "INSPECT CONVERTING: the two operands must be the same length");
+        conv_szchk = (fl < 0 || tl2 < 0) && to.kind != O_FIG;
         parse_inspect_range(&crg);
     } else {
         if (accept_word("tallying")) {
@@ -494,6 +518,7 @@ static void parse_inspect_1(void)
                     if (kind) {
                         int pl = ph->pat.kind == O_FIG ? w : opnd_size(&ph->pat), rl = ph->rep.kind == O_FIG ? w : opnd_size(&ph->rep);
                         if (pl > 0 && rl > 0 && pl != rl) die_at(ph->rep.line, "INSPECT REPLACING: the two operands must be the same length");
+                        ph->szchk = (pl < 0 || rl < 0) && ph->rep.kind != O_FIG && ph->pat.kind != O_FIG;
                     }
                     parse_inspect_range(&ph->rg);
                     nrp++;
@@ -535,6 +560,7 @@ static void parse_inspect_1(void)
         } else pattern_args(&to, &a[2], &x);
         pattern_args(&from, &a[0], &a[1]);
         emit_args(a, 3);
+        if (conv_szchk) insp_size_check(&from, &to);
         emit_call("cob_inspect_convert");
         emit_call("cob_inspect_run");
         return;
@@ -560,6 +586,7 @@ static void parse_inspect_1(void)
     }
     for (int i = 0; i < nrp; i++) {
         InspPh *ph = &rp[i];
+        if (ph->szchk) insp_size_check(&ph->pat, &ph->rep);
         emit_inspect_range(&ph->rg);
         Arg a[5];
         a[0] = arg_imm(0); a[1] = arg_imm(ph->kind);

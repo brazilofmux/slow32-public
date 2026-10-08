@@ -1007,6 +1007,15 @@ static void parse_statement_1(void)
         if (g_in_decl && cur_use_is_global())
             die_at(t->line, "GOBACK in a declarative whose USE statement says GLOBAL (2002 14.8.17.2 rule 1; 2023 14.9.18.3 rule 1)");
         advance();
+        if (ec_on_name("EC-FLOW-GLOBAL-GOBACK")) {
+            /* reached within a GLOBAL declarative all the same, through a
+             * PERFORM (14.9.18.4 rule 6): the condition, fatal */
+            int Lok = new_label();
+            emit_call("cob_in_global_use");
+            emit("\tbeq r1, r0, .L%d", Lok);
+            emit_ec_raise(ec_find("EC-FLOW-GLOBAL-GOBACK", 0));
+            emit_label(Lok);
+        }
         if (at_word("raising")) parse_raising_phrase(t->line);
         if (at_word("with") && (is_word(peek(1), "error") || is_word(peek(1), "normal"))) {
             /* GOBACK WITH {ERROR | NORMAL} STATUS [value] (2023 14.9.18): in a
@@ -1056,6 +1065,13 @@ static void parse_statement_1(void)
                 die_at(t->line, "EXIT PROGRAM is only in a program's procedure division, not a function's (2023 14.9.14.3 rule 7)");
             if (g_in_decl && cur_use_is_global())
                 die_at(t->line, "EXIT PROGRAM in a declarative procedure whose USE is GLOBAL (X3.23-1985 EXIT PROGRAM rule 2; 2023 14.9.14.3 rule 2)");
+            if (ec_on_name("EC-FLOW-GLOBAL-EXIT")) {   /* reached within one through a PERFORM: the condition (Table 13), fatal */
+                int Lok = new_label();
+                emit_call("cob_in_global_use");
+                emit("\tbeq r1, r0, .L%d", Lok);
+                emit_ec_raise(ec_find("EC-FLOW-GLOBAL-EXIT", 0));
+                emit_label(Lok);
+            }
             if (g_std < 2002 && cur()->kind == T_WORD && is_verb(cur()->s))
                 bp(BP_E21_EXIT_PROGRAM_NOT_LAST, t->line);   /* the NIST SQL suite's dml116s: EXIT PROGRAM then STOP RUN */
             /* a program no calling program controls continues past it

@@ -2897,6 +2897,12 @@ void cob_perform_push_rest(int *cell, void *ret)
  * ISSUES-94 E14) */
 void cob_ec_raise(const char *name, const char *stmt, const char *loc, const char *file);
 void cob_ec_abort(void);
+/* the GLOBAL declaratives under way (USE ... GLOBAL): a GOBACK or EXIT
+ * PROGRAM reached inside one is EC-FLOW-GLOBAL-GOBACK / -EXIT
+ * (14.9.18.4 rule 6; Table 13) */
+static int use_global_depth;
+void cob_use_global(int d) { use_global_depth += d; if (use_global_depth < 0) use_global_depth = 0; }
+int cob_in_global_use(void) { return use_global_depth > 0; }
 void cob_use_push(int *cell, void *ret)
 {
     if (*cell > pbase) { cob_ec_raise("EC-FLOW-USE", 0, 0, 0); cob_ec_abort(); }
@@ -3289,7 +3295,7 @@ static int cob_open_1(cob_file *f, int mode)
     }
     f->fp = fp; f->open_mode = (unsigned char)mode;
     if (mode == COB_OPEN_EXTEND && fseek(fp, 0, 2) == 0) { long e = ftell(fp); f->fpos = e > 0 ? (unsigned)e : 0; }
-    if (f->linage) { lin_values(f); f->lin_counter = 1; f->lin_needs_top = 1; f->lin_eop = 0; }
+    if (f->linage) { f->lin_needs_top = 1; lin_values(f); if (!(f->lin_needs_top & 2)) f->lin_counter = 1; f->lin_eop = 0; }
     return file_result(f, "00", name);
 }
 
@@ -3827,9 +3833,18 @@ static unsigned lin_value(cob_file *f, int which)
     return t[0];
 }
 
+/* lin_needs_top: bit 0 the top margin is still to be written; bit 1 the
+ * LINAGE values failed 13.18.34.4 rule 6 (the page size not above zero, or
+ * the footing start outside 1..page size): EC-I-O-LINAGE, which stays
+ * until the file is closed, LINAGE-COUNTER 0, nothing written.
+ * lin_eop: bit 0 the footing reached (EC-I-O-EOP), bit 1 the page
+ * overflowed (EC-I-O-EOP-OVERFLOW), bit 2 the LINAGE condition above */
 static void lin_values(cob_file *f)
 {
     f->lin_lines = lin_value(f, 0); f->lin_foot = lin_value(f, 1); f->lin_top = lin_value(f, 2); f->lin_bot = lin_value(f, 3);
+    const unsigned *t = (const unsigned *)f->linage;
+    int foot_written = t[3] || t[4];          /* a FOOTING phrase: its literal or its item */
+    if (f->lin_lines < 1 || (foot_written && (f->lin_foot < 1 || f->lin_foot > f->lin_lines))) { f->lin_needs_top |= 2; f->lin_counter = 0; }
     if (f->lin_lines < 1) f->lin_lines = 1;
     if (f->lin_foot > f->lin_lines) f->lin_foot = 0;
 }
@@ -3850,8 +3865,8 @@ static void lin_lines_opt(cob_file *f, unsigned n)
 {
     unsigned was = f->lin_counter;
     f->lin_counter += n;
-    if (f->lin_foot && f->lin_counter >= f->lin_foot) f->lin_eop = 1;
-    if (f->lin_counter > f->lin_lines) { f->lin_eop = 1; lin_new_page(f, was); }
+    if (f->lin_foot && f->lin_counter >= f->lin_foot && f->lin_counter <= f->lin_lines) f->lin_eop |= 1;
+    if (f->lin_counter > f->lin_lines) { f->lin_eop |= 2; lin_new_page(f, was); }
     else if (n > 1) lin_newlines(f, n - 1);
 }
 
@@ -3861,7 +3876,8 @@ static int lin_write(cob_file *f, int before, int after)
     const char *rec = f->record;
     unsigned n = f->recsize;
     f->lin_eop = 0;
-    if (f->lin_needs_top) { lin_newlines(f, f->lin_top); f->lin_needs_top = 0; }
+    if (f->lin_needs_top & 2) { f->lin_eop = 4; f->lin_counter = 0; f->last_len = 0; return file_result(f, "00", ""); }   /* EC-I-O-LINAGE: until the file is closed */
+    if (f->lin_needs_top & 1) { lin_newlines(f, f->lin_top); f->lin_needs_top &= ~1u; }
     if (before == 0 && after == 0) after = 1;               /* no ADVANCING phrase: BEFORE ADVANCING 1 */
     /* a record's own newline is one line of movement: the BEFORE phrase's
      * first line, or the AFTER phrase's.  After a WRITE whose BEFORE took

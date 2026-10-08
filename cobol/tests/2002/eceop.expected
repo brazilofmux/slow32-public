@@ -1,0 +1,16 @@
+wrote 1 counter=0000000002
+  nonfatal: EC-I-O-EOP counter=0000000003
+  phrase: eop after line 2
+wrote 2 counter=0000000003
+  nonfatal: EC-I-O-EOP counter=0000000004
+  phrase: eop after line 3
+wrote 3 counter=0000000004
+  nonfatal: EC-I-O-EOP-OVERFLOW counter=0000000001
+  phrase: eop after line 4
+wrote 4 counter=0000000001
+wrote 5 counter=0000000002
+  nonfatal: EC-I-O-EOP counter=0000000003
+  phrase: eop after line 6
+wrote 6 counter=0000000003
+q open, counter=0000000000
+  fatal: EC-I-O-LINAGE counter=0000000000
