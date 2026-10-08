@@ -424,6 +424,42 @@ static Sym *g_search_dyn[16]; static int g_nsearch_dyn;   /* the dynamic tables 
 static void parse_set(void)
 {
     Ref rs[MAXOPS]; int nr = 0;
+    if (at_word("size") && is_word(peek(1), "of") && !sym_lookup_quiet("size")) {
+        /* format 16 (2023 14.9.39): SET SIZE OF dynamic-length-item TO integer |
+         * expression -- its length (rules 33-34, 37-39): characters added are
+         * spaces; a negative value is length 0 and EC-STORAGE-NOT-AVAIL, one
+         * past the maximum is the maximum and the condition */
+        int line = cur()->line;
+        if (g_std < 2014) die_at(line, "SET SIZE OF is COBOL 2014 (2023 14.9.39 format 16); compile with -std=2014");
+        advance(); advance();
+        Ref r; parse_ref(&r); no_constrec_recv(&r, "SET SIZE OF");
+        if (!r.sym->dynl || r.user_rm) die_at(r.line, "SET SIZE OF '%s': a dynamic-length elementary item, whole (2023 14.9.39.3 rule 33)", r.sym->name);
+        expect_word("to");
+        Ref slot = r; slot.rm = 0; slot.rm_dynl = 0; slot.rm_start = 0; slot.rm_len = 0;
+        if (cur()->kind == T_NUM && peek(1)->kind != T_OP) {
+            Tok *v = cur();
+            if (strpbrk(v->s, ".,") || v->s[0] == '-') die_at(v->line, "SET SIZE OF %s: integer-2 is a nonnegative integer (2023 14.9.39.3 rule 34)", r.sym->name);
+            long n = atol(v->s); advance();
+            long lim = r.sym->dynl_limit ? r.sym->dynl_limit : COB_DYNL_MAX;
+            if (n > lim) die_at(v->line, "SET SIZE OF %s TO %ld: above its maximum size %ld (2023 14.9.39.3 rule 34)", r.sym->name, n, lim);
+            emit_li("r5", n);
+        } else {
+            Expr *e = parse_expr();
+            emit_expr(e); emit_call("cob_pop_int"); emit("\tadd r5, r1, r0");
+        }
+        emit("\tstw sp+%d, r5", SLOT_A);
+        emit_ref_addr(&slot, "r3");
+        char dl[32]; snprintf(dl, sizeof dl, ".Ldynl%d_%d", g_unit, r.sym->dynl_id);
+        emit_la("r4", dl); emit("\tldw r5, sp+%d", SLOT_A);
+        emit_call("cob_dynl_size");
+        if (ec_on_name("EC-STORAGE-NOT-AVAIL")) {
+            int Lok = new_label();
+            emit("\tbeq r1, r0, .L%d", Lok);
+            emit_ec_raise(ec_find("EC-STORAGE-NOT-AVAIL", 0));
+            emit_label(Lok);
+        }
+        return;
+    }
     if (cur()->kind == T_WORD && sym_lookup_quiet(cur()->s) && sym_lookup_quiet(cur()->s)->cap_of >= 0) {
         /* format 14 (2023 14.9.39): SET capacity-name TO | UP BY | DOWN BY
          * integer or expression -- the dynamic-capacity table's capacity

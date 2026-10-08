@@ -17,11 +17,11 @@ carry the compiler's own reason.
 | 10 the compilation group | 2 | 2 | 0 | 0 |
 | 11 IDENTIFICATION DIVISION | 15 | 15 | 0 | 0 |
 | 12 ENVIRONMENT DIVISION | 22 | 22 | 0 | 0 |
-| 13 DATA DIVISION | 78 | 69 | 0 | 9 |
+| 13 DATA DIVISION | 78 | 70 | 0 | 8 |
 | 14 PROCEDURE DIVISION | 54 | 48 | 6 | 0 |
 | 15 intrinsic functions | 94 | 89 | 5 | 0 |
 | 16 standard classes | 0 | 0 | 0 | 0 |
-| **all** | **324** | **302** | **11** | **11** |
+| **all** | **324** | **303** | **11** | **10** |
 
 ## 7 COPY, REPLACE and directives
 
@@ -123,10 +123,10 @@ carry the compiler's own reason.
 
 | section | element | page | test | refused | gap | n/a | ruling |
 |---|---|---|---|---|---|---|---|
-| 12.3 |  | [call](call.md), [environment](environment.md), [screen](screen.md) | 113 | 70 | 7 | 8 | 7 |
+| 12.3 |  | [call](call.md), [data-division](data-division.md), [environment](environment.md), [screen](screen.md) | 155 | 133 | 12 | 11 | 12 |
 | 12.3.5 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 12.3.6 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
-| 12.3.7 |  | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
+| 12.3.7 |  | [data-division](data-division.md), [screen](screen.md) | 99 | 81 | 6 | 4 | 8 |
 | 12.3.8 |  | [call](call.md) | 30 | 18 | 3 | 4 | 0 |
 | 12.4 |  | [environment](environment.md), [files](files.md), [locking](locking.md) | 29 | 60 | 3 | 3 | 4 |
 | 12.4.4 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
@@ -150,22 +150,22 @@ carry the compiler's own reason.
 
 | section | element | page | test | refused | gap | n/a | ruling |
 |---|---|---|---|---|---|---|---|
-| 13.2 |  | [data-division](data-division.md) | 42 | 48 | 5 | 3 | 5 |
-| 13.4 |  | [data-division](data-division.md), [environment](environment.md), [files](files.md) | 70 | 100 | 8 | 6 | 9 |
-| 13.4.5 |  | [data-division](data-division.md), [files](files.md) | 44 | 66 | 5 | 3 | 5 |
+| 13.2 |  | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
+| 13.4 |  | [data-division](data-division.md), [environment](environment.md), [files](files.md) | 70 | 115 | 8 | 6 | 9 |
+| 13.4.5 |  | [data-division](data-division.md), [files](files.md) | 44 | 81 | 5 | 3 | 5 |
 | 13.4.6 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
-| 13.5 |  | [data-division](data-division.md) | 42 | 48 | 5 | 3 | 5 |
-| 13.6 |  | [data-division](data-division.md) | 42 | 48 | 5 | 3 | 5 |
-| 13.7 |  | [data-division](data-division.md) | 42 | 48 | 5 | 3 | 5 |
+| 13.5 |  | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
+| 13.6 |  | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
+| 13.7 |  | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
 | 13.8 |  | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
 | 13.9 |  | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
-| 13.10 |  | [data-division](data-division.md), [directives](directives.md) | 94 | 68 | 7 | 6 | 7 |
+| 13.10 |  | [data-division](data-division.md), [directives](directives.md) | 94 | 83 | 7 | 6 | 7 |
 | 13.14 |  | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
-| 13.15 |  | [data-division](data-division.md), [reportwriter](reportwriter.md) | 52 | 85 | 6 | 3 | 5 |
-| 13.16 |  | [data-division](data-division.md) | 42 | 48 | 5 | 3 | 5 |
+| 13.15 |  | [data-division](data-division.md), [reportwriter](reportwriter.md) | 52 | 100 | 6 | 3 | 5 |
+| 13.16 |  | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
 | 13.17 |  | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
-| 13.18.1 | ALIGNED clause | [data-division](data-division.md) | 42 | 48 | 5 | 3 | 5 |
-| 13.18.2 | ANY LENGTH clause | [data-division](data-division.md) | 42 | 48 | 5 | 3 | 5 |
+| 13.18.1 | ALIGNED clause | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
+| 13.18.2 | ANY LENGTH clause | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
 | 13.18.3 | AUTO clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
 | 13.18.4 | BACKGROUND-COLOR clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
 | 13.18.5 | BASED clause | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
@@ -176,21 +176,21 @@ carry the compiler's own reason.
 | 13.18.10 | BLOCK CONTAINS clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
 | 13.18.11 | CLASS clause | *unswept* | | | | | |
 | 13.18.12 | CODE clause | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
-| 13.18.13 | CODE-SET clause | [data-division](data-division.md) | 42 | 48 | 5 | 3 | 5 |
+| 13.18.13 | CODE-SET clause | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
 | 13.18.14 | COLUMN clause | [reportwriter](reportwriter.md), [screen](screen.md) | 67 | 55 | 2 | 1 | 3 |
-| 13.18.15 | CONSTANT RECORD clause | [data-division](data-division.md) | 42 | 48 | 5 | 3 | 5 |
+| 13.18.15 | CONSTANT RECORD clause | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
 | 13.18.16 | CONTROL clause | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
 | 13.18.17 | DEFAULT clause | *unswept* | | | | | |
 | 13.18.18 | DESTINATION clause | *unswept* | | | | | |
-| 13.18.19 | DYNAMIC LENGTH clause | *unswept* | | | | | |
-| 13.18.20 |  | [data-division](data-division.md) | 42 | 48 | 5 | 3 | 5 |
+| 13.18.19 | DYNAMIC LENGTH clause | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
+| 13.18.20 |  | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
 | 13.18.21 | ERASE clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
-| 13.18.22 | EXTERNAL clause | [data-division](data-division.md) | 42 | 48 | 5 | 3 | 5 |
+| 13.18.22 | EXTERNAL clause | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
 | 13.18.23 | FOREGROUND-COLOR clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
 | 13.18.24 | FORMAT clause | *unswept* | | | | | |
 | 13.18.25 | FROM clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
 | 13.18.26 | FULL clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
-| 13.18.27 | GLOBAL clause | [data-division](data-division.md) | 42 | 48 | 5 | 3 | 5 |
+| 13.18.27 | GLOBAL clause | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
 | 13.18.28 | GROUP INDICATE clause | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
 | 13.18.29 | GROUP-USAGE clause | [national-boolean](national-boolean.md) | 15 | 13 | 0 | 0 | 1 |
 | 13.18.30 | HIGHLIGHT clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
@@ -212,7 +212,7 @@ carry the compiler's own reason.
 | 13.18.46 | REPORT clause | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
 | 13.18.47 | REQUIRED clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
 | 13.18.48 | REVERSE-VIDEO clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
-| 13.18.49 | SAME AS clause | [data-division](data-division.md) | 42 | 48 | 5 | 3 | 5 |
+| 13.18.49 | SAME AS clause | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
 | 13.18.50 | SECURE clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
 | 13.18.51 | SELECT WHEN clause | *unswept* | | | | | |
 | 13.18.52 | SIGN clause | [clauses](clauses.md) | 1 | 7 | 0 | 0 | 0 |
@@ -274,7 +274,7 @@ carry the compiler's own reason.
 | 14.9.36 | ROLLBACK statement | **not implemented**: ROLLBACK is COBOL 2023; not implemented | | | | | |
 | 14.9.37 | SEARCH statement | [search](search.md) | 7 | 10 | 0 | 0 | 0 |
 | 14.9.38 | SEND statement | **not implemented**: send: COBOL 85's Communication module is out by ruling, and COBOL 2023's asynchronous messaging (14.9.31, 14.9.38) is not implemented | | | | | |
-| 14.9.39 | SET statement | [occurs](occurs.md), [screen](screen.md), [set](set.md), [usage](usage.md) | 96 | 66 | 1 | 2 | 7 |
+| 14.9.39 | SET statement | [occurs](occurs.md), [screen](screen.md), [set](set.md), [usage](usage.md) | 96 | 68 | 1 | 2 | 7 |
 | 14.9.40 | SORT statement | [sort](sort.md) | 4 | 11 | 0 | 0 | 0 |
 | 14.9.41 | START statement | [io-statements](io-statements.md) | 2 | 20 | 0 | 0 | 0 |
 | 14.9.42 | STOP statement | [control](control.md) | 10 | 10 | 0 | 1 | 0 |

@@ -75,6 +75,7 @@ static void parse_string_1(void)
     for (int i = 0; i < n; i++) if (!has_delim[i]) { memset(&delims[i], 0, sizeof delims[i]); delims[i].kind = O_ALL; has_delim[i] = 1; }
     expect_word("into");
     Ref dst; parse_ref(&dst); no_constrec_recv(&dst, "STRING INTO");
+    if (dst.sym->dynl) die_at(dst.line, "STRING INTO '%s': a dynamic-length item as the STRING receiver is not implemented in this stage (MOVE and SET SIZE OF set its length)", dst.sym->name);
     /* the receiver: not edited, not JUSTIFIED (X3.23 6.24.2); a group is alphanumeric */
     if (!dst.sym->is_group && (dst.sym->pi.category == PIC_NUMERIC || dst.sym->pi.edited || dst.sym->just))
         die_at(dst.line, "the STRING receiver must be an alphanumeric item, not edited or JUSTIFIED");
@@ -216,6 +217,7 @@ static void parse_unstring_1(void)
     while (at_operand() && cur()->kind == T_WORD && !at_word("with") && !at_word("pointer") && !at_word("tallying") && !at_word("on") && !at_word("overflow") && !at_word("not") && !at_word("end-unstring")) {
         if (n >= MAXOPS) die_at(cur()->line, "too many UNSTRING receivers");
         parse_ref(&rcv[n]); no_constrec_recv(&rcv[n], "UNSTRING INTO");
+        if (rcv[n].sym->dynl) die_at(rcv[n].line, "UNSTRING INTO '%s': a dynamic-length item as an UNSTRING receiver is not implemented in this stage", rcv[n].sym->name);
         if (rcv[n].sym->is_cond) die_at(rcv[n].line, "'%s' is a condition-name", rcv[n].sym->name);
         if (rcv[n].sym->strong)                   /* its category is its type (8.5.2.1) */
             die_at(rcv[n].line, "the strongly-typed group '%s' is not an UNSTRING receiver (2023 14.9.48.3 rule 4)", rcv[n].sym->name);

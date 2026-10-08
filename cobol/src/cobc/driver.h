@@ -277,6 +277,23 @@ static void emit_unit_data(void)
         emit("\t.word %s", lit_label((const unsigned char *)s->name, (int)strlen(s->name) + 1));
         emit("\t.data");
     }
+    /* dynamic-length items: each one's descriptor (cob_dynl_desc) and its VALUE's bytes */
+    for (int i = g_sym_base; i < g_nsym; i++) {
+        Sym *s = &g_sym[i];
+        if (!s->dynl || s->dynl_id < 0) continue;
+        unsigned char *vb; int vn = dynl_value_bytes(s, &vb);
+        emit("\t.section .rodata");
+        if (vn) { emit(".Ldynlv%d_%d:\t# %s: its VALUE", g_unit, s->dynl_id, s->name); emit_bytes(vb, vn); }
+        free(vb);
+        emit("\t.p2align 2");
+        emit(".Ldynl%d_%d:\t# dynamic-length item %s: limit, national, value, its bytes, name", g_unit, s->dynl_id, s->name);
+        emit("\t.word %d", s->dynl_limit);
+        emit("\t.word %d", s->pi.category == PIC_NATIONAL);
+        if (vn) emit("\t.word .Ldynlv%d_%d", g_unit, s->dynl_id); else emit("\t.word 0");
+        emit("\t.word %d", vn);
+        emit("\t.word %s", lit_label((const unsigned char *)s->name, (int)strlen(s->name) + 1));
+        emit("\t.data");
+    }
     for (int i = 0; i < g_nsorttab; i++) {
         SortTab *t = &g_sorttab[i];
         emit("\t.p2align 2");

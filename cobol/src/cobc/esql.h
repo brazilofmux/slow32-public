@@ -1945,6 +1945,16 @@ static void parse_procedure_division(void)
             if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->rep_ctr >= 0 || rec_indirect(s) || s->is_rc || s->is_constrec) continue;
             for (int j = i + 1; j < g_nsym; j++)          /* its dynamic-capacity tables' elements given up first (14.9.5.4 rule 2) */
                 if (g_sym[j].dyn && g_sym[j].record == i) { emit_la_off("r3", s->label, g_sym[j].offset); emit_call("cob_dyn_free"); }
+                else if (g_sym[j].dynl && g_sym[j].record == i && !g_sym[j].ndims) { emit_la_off("r3", s->label, g_sym[j].offset); emit_call("cob_dyn_free"); }
+                else if (g_sym[j].dynl && g_sym[j].record == i) {   /* every occurrence's slot */
+                    int cnt[MAXDIM]; long tot = 1; for (int q = 0; q < g_sym[j].ndims; q++) { cnt[q] = g_sym[j].dim_count[q]; tot *= cnt[q]; }
+                    int k[MAXDIM] = { 0 };
+                    for (long n = 0; n < tot; n++) {
+                        int off = g_sym[j].offset; for (int q = 0; q < g_sym[j].ndims; q++) off += k[q] * g_sym[j].dim_stride[q];
+                        emit_la_off("r3", s->label, off); emit_call("cob_dyn_free");
+                        int q = g_sym[j].ndims - 1; while (q >= 0 && ++k[q] == cnt[q]) k[q--] = 0;
+                    }
+                }
             emit_la("r3", s->label);
             char il[80]; snprintf(il, sizeof il, "%s_i", s->label);
             emit_la("r4", il);

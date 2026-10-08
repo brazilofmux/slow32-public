@@ -56,7 +56,7 @@ TYPE (docs/typedef.md).
 | 2023 rule 12 | SAME AS | **test**: 2002/sameas (the 13.18.49 table below; implemented 2026-10-06, standard-queue item 11; GnuCOBOL 4 agrees) |
 | 2023 rules 14, 15 | TYPE and TYPEDEF combinations | docs/typedef.md |
 | 2023 rule 16 | BASED: level 01 or 77, in WORKING-STORAGE, LOCAL-STORAGE or LINKAGE | **refused** for the level; **test**: 2002/basedlocal (in LOCAL-STORAGE, its pointer NULL at each activation, 13.18.5.4 rule 2 and 8.6.5; implemented 2026-10-06; GnuCOBOL 4 keeps the outer activation's address: docs/oracles.md) |
-| 2023 rules 17, 18 | ANY LENGTH; DYNAMIC LENGTH | ANY LENGTH implemented 2026-10-01 (13.18.2 below); **n/a** (DYNAMIC LENGTH, 2014): refused naming it |
+| 2023 rules 17, 18 | ANY LENGTH; DYNAMIC LENGTH | ANY LENGTH implemented 2026-10-01 (13.18.2 below); DYNAMIC LENGTH implemented 2026-10-08 (13.18.19 below, queue item 43): with it only PICTURE, USAGE and VALUE, **refused** otherwise (bad/std2014-dynl-justified) |
 | 2023 rule 19 | LOCALE in PICTURE | **gap**: refused naming it |
 | 2023 rules 20, 21 | PRESENT WHEN, PROPERTY | PRESENT WHEN is Report Writer's (reportwriter.md); PROPERTY **n/a** (object orientation) |
 | 85 SR4; 2023 rule 22 | THRU and THROUGH | **test**: free/renames, the 88 VALUE tests |
@@ -224,3 +224,47 @@ GnuCOBOL 4 requires a record description).
 | 3a | a RECORD clause | **refused**: bad/std2002-fd-norec-nosize |
 | 3b | WRITE FILE file-name FROM and REWRITE FILE file-name FROM (14.9.51 and 14.9.35 format 2's FILE phrase, rule 7: FROM required) | **test**: 2002/fdnorec; **refused**: "WRITE FILE f takes a FROM phrase" |
 | 3c | READ ... INTO | **refused**: bad/std2002-fd-norec-read |
+
+## 13.18.19 DYNAMIC LENGTH; 12.3.7 DYNAMIC LENGTH STRUCTURE; 8.5.1.10 (2014)
+
+Implemented 2026-10-08 (queue item 43). The item's entry is the same
+8-byte slot a dynamic-capacity table has (libcob `cob_dyn`: the
+characters' address, the current length), the characters on the heap;
+every reference to the item is a whole-item reference modification whose
+length is read from the slot (`Ref.rm_dynl`), the mechanism an ANY
+LENGTH item's descriptor already gave the statements, so DISPLAY, a
+comparison, STRING's sending operand, a function argument, MOVE from it,
+reference modification of it and FUNCTION LENGTH / BYTE-LENGTH all take
+its current length with no code of their own. A MOVE to it, and SET SIZE
+OF, set the length. The structure-names of SPECIAL-NAMES are accepted
+and bound; the item is not laid out as PREFIXED or DELIMITED bytes in
+storage (it is a slot), which matters only for interchange through a
+record -- and a dynamic-length item in the FILE SECTION is refused in
+this stage. The implementor's maximum length is 16,777,215 characters.
+Tests 2014/dynlen, 2014/dynlen2 (no oracle: neither GnuCOBOL 4 nor gcobol
+has DYNAMIC LENGTH).
+
+| rule | paraphrase | disposition |
+|---|---|---|
+| 13.18.19.2 | DYNAMIC LENGTH [structure-name] [LIMIT IS n] | **implemented** under -std=2014; **refused** under -std=2002 naming the switch (bad/std2002-dynamic-length) |
+| 13.18.19.3 rule 1 | PICTURE one X or N | **refused** otherwise, and a USAGE other than DISPLAY or NATIONAL (bad/std2014-dynl-pic, -dynl-usage) |
+| 13.18.19.3 rules 2-3 | the structure-name one of SPECIAL-NAMES'; none: the implementor's structure | **refused** when unknown (bad/std2014-dynl-struct-unknown); the implementor's structure is the slot either way |
+| 13.18.19.3 rule 4 | LIMIT within the structure's maximum | **refused**: bad/std2014-dynl-limit-struct (70000 under SHORT PREFIXED's 65535) |
+| 13.18.19.4 rule 2 | LIMIT the most it holds; none: the implementor's | **implemented**: dynlen's `t` cut at 10; **refused** above 16,777,215 (bad/std2014-dynl-limit-max) |
+| 12.3.7 rules 18-19 | DYNAMIC LENGTH STRUCTURE name IS [SIGNED] [SHORT] PREFIXED / DELIMITED; the length field's range by the table | **implemented** as names with their maxima (2147483647, 4294967295, 32767, 65535 / unlimited), eight of them; a name twice **refused** (bad/std2014-dynl-struct-dup) |
+| 8.5.1.10.4 | sending or reference-modified: a fixed item of the current length | **implemented**: dynlen (DISPLAY, compares, parts with literal and computed positions, FUNCTION UPPER-CASE/TRIM, INSPECT TALLYING, MOVE from it) |
+| 8.5.1.10.4 | receiving, not reference-modified: the new content is the sending operand's, the length its; zero length for a zero-length sender; a figurative constant as 8.3.3.6 GR 3 (one character); cut on the right at the maximum | **implemented** for MOVE and what MOVEs (READ INTO): dynlen (text, a shorter text, SPACES, ALL "ab", "", a numeric, a signed numeric, an item); a receiving part (`s(1:2)`) is a part as any item's |
+| 8.5.1.10.4; 14.9.39 format 16, rules 33-34, 37-39 | SET SIZE OF item TO n: spaces added; a negative n length 0 and EC-STORAGE-NOT-AVAIL; past the maximum, the maximum and the condition | **implemented**: dynlen (5, 8, i + 1), dynlen2 (-2 and 20 under LIMIT 8, the declarative runs); literals checked at compile time (bad/std2014-dynl-set-negative, -dynl-set-above); not a dynamic-length item **refused** (bad/std2014-dynl-set-not) |
+| 13.18.63.4 rule 7; 13.18.63.4, 8.6.4 | VALUE: the initial content and length; none: zero | **implemented**: dynlen's `t`, dynlen2's `f` (SPACE: one character), `ot` under OCCURS; CANCEL puts them back (dynlen2's dl2own) |
+| 14.9.20.4 rule 7 | INITIALIZE: the length set to zero | **implemented**: the item, and every one under a group, each occurrence (dynlen) |
+| 8.5.1.11.2 | its neighbours keep their places | **implemented**: dynlen's `g` (a, d occurs 3, z) |
+| 8.5.1.11.3; 14.9.4 | passed BY REFERENCE: the slot | **implemented**: dynlen2 (the item itself, and a group holding one; the called program sets the length) |
+| 8.4.3.11.3 rule 6 | no ADDRESS OF a dynamic-length item, nor of an item under a group holding one | **refused**: bad/std2014-dynl-address-of |
+| 13.18.44.3 rule 12 | REDEFINES of or by one | **refused**: bad/std2014-dynl-redefines |
+| 13.16.3 rule 13 | not in a CONSTANT RECORD | **refused**: bad/std2014-dynl-constrec |
+| 13.18.32.3 rule 4; 13.16.3 rule 18 | no JUSTIFIED, no clause but PICTURE, USAGE, VALUE | **refused**: bad/std2014-dynl-justified |
+| 14.9.25.3 rule 10 | a national item to an alphanumeric one | **refused** as for any item (FUNCTION DISPLAY-OF; dynlen) |
+| 8.5.1.12, 14.6.9 | a variable-length group moved or compared whole | **gap** in this stage: **refused** (bad/std2014-dynl-group-move) |
+| 14.9.44, 14.9.48, 14.9.1, 14.9.22 | STRING INTO, UNSTRING INTO, ACCEPT into, INSPECT REPLACING / CONVERTING of a dynamic-length item | **gap** in this stage: **refused** by name (bad/std2014-dynl-string-into, -dynl-unstring-into, -dynl-accept, -dynl-inspect-replacing); INSPECT TALLYING is fine (dynlen) |
+| 8.5.1.10.3 | in the FILE SECTION | **gap** in this stage: **refused** (the record would hold the slot, not the characters) |
+| 15.65 MODULE-NAME | returns a dynamic-length item | the function's result is fixed-length here, trailing spaces trimmed by the caller's TRIM (functions.md) |

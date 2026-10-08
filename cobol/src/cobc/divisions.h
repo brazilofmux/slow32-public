@@ -660,6 +660,27 @@ static void parse_environment_division(void)
                         }
                         continue;
                     }
+                    if (at_word("dynamic") && is_word(peek(1), "length")) {
+                        /* DYNAMIC LENGTH STRUCTURE name IS [SIGNED] [SHORT] PREFIXED | DELIMITED
+                         * (2014; 2023 12.3.7, rules 18-19): the name, and the greatest
+                         * length its form allows (rule 18's table); the item itself is a
+                         * slot and heap storage here, whatever its structure says */
+                        if (g_std < 2014) die_at(cur()->line, "DYNAMIC LENGTH STRUCTURE is COBOL 2014 (2023 12.3.7); compile with -std=2014");
+                        advance(); advance(); expect_word("structure");
+                        if (cur()->kind != T_WORD) die_at(cur()->line, "DYNAMIC LENGTH STRUCTURE needs a name");
+                        if (g_ndynls == 8) die_at(cur()->line, "too many DYNAMIC LENGTH STRUCTURE clauses (8)");
+                        for (int k = 0; k < g_ndynls; k++) if (!strcmp(g_dynls[k].name, cur()->s)) die_at(cur()->line, "DYNAMIC LENGTH STRUCTURE %s is declared twice", cur()->s);
+                        user_word(cur()->s, cur()->line, "a dynamic-length structure");
+                        snprintf(g_dynls[g_ndynls].name, sizeof g_dynls[0].name, "%s", cur()->s); advance();
+                        accept_word("is");
+                        int sgn = accept_word("signed"), sht = accept_word("short");
+                        if (accept_word("prefixed")) g_dynls[g_ndynls].max = sht ? (sgn ? 32767u : 65535u) : (sgn ? 2147483647u : 4294967295u);
+                        else if (accept_word("delimited")) { if (sgn || sht) die_at(cur()->line, "DYNAMIC LENGTH STRUCTURE: SIGNED and SHORT go with PREFIXED (2023 12.3.7)"); g_dynls[g_ndynls].max = COB_DYNL_MAX; }
+                        else die_at(cur()->line, "DYNAMIC LENGTH STRUCTURE %s IS: expected PREFIXED or DELIMITED (2023 12.3.7)", g_dynls[g_ndynls].name);
+                        if (g_dynls[g_ndynls].max > COB_DYNL_MAX) g_dynls[g_ndynls].max = COB_DYNL_MAX;   /* the implementor's maximum is the lesser (8.5.1.10.1) */
+                        g_ndynls++;
+                        continue;
+                    }
                     if (at_word("cursor") && (is_word(peek(1), "is") || peek(1)->kind == T_WORD)) {
                         /* CURSOR IS data-name (2023 12.3.7): the cursor locator */
                         advance(); accept_word("is");

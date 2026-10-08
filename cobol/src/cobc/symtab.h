@@ -72,6 +72,16 @@ typedef struct Sym {
     unsigned char *dyn_image;       /* an element's initial state (its VALUE clauses, the defaults elsewhere): INITIALIZED's and INITIALIZE ... TO VALUE's */
     unsigned char *dyn_image0;      /* ... the categories' defaults alone: INITIALIZE without phrases */
     int  cap_of;                    /* a CAPACITY IN item: the table it counts (-1 otherwise); a sending operand only, SET's receiver */
+    /* DYNAMIC LENGTH (2014; 2023 13.18.19, 8.5.1.10): an alphanumeric or
+     * national item whose length is its content's.  The same 8-byte slot
+     * (the characters' address, the length); every reference to it is a
+     * whole-item reference modification whose length is read from the slot
+     * (Ref.rm_dynl), as an ANY LENGTH item's is read from its descriptor;
+     * size is the limit in bytes, the descriptor's */
+    int  dynl;                      /* 1: a dynamic-length elementary item */
+    int  dynl_limit;                /* LIMIT, characters (0: the implementor's maximum) */
+    char dynl_struct[64];           /* its dynamic-length-structure-name, or "" */
+    int  dynl_id;                   /* its descriptor's number in the unit (.Ldynl<unit>_<id>) */
     int  idx1;                      /* the table's first INDEXED BY item, or -1 */
     int  ix_table;                  /* an index item: the table it indexes */
     int  lin_file;                  /* LINAGE-COUNTER of file lin_file (a cell in its cob_file), -1 otherwise */
@@ -133,6 +143,10 @@ static int sym_in_strong(const Sym *s);
 static Sym *odo_table_for(Sym *s);
 static Sym *dyn_table_for(Sym *s);     /* the dynamic-capacity table s is, or is in, or NULL */
 static Sym *dyn_table_below(Sym *s);   /* a dynamic-capacity table below a group, at any depth, or NULL */
+static Sym *vlen_below(Sym *s);        /* a dynamic-capacity table or dynamic-length item below a group: the group is variable-length (8.5.1.12) */
+/* SPECIAL-NAMES DYNAMIC LENGTH STRUCTURE name IS [SIGNED] [SHORT] PREFIXED | DELIMITED (2023 12.3.7): the
+ * names, and the greatest length each allows (the structure itself is not laid out: the item is a slot) */
+static struct { char name[64]; unsigned max; } g_dynls[8]; static int g_ndynls;
 static void value_rules(void);
 static void occurs_rules(void);
 static Sym *odo_table_below(Sym *s);
@@ -183,7 +197,7 @@ static Sym *sym_new(void)
     memset(s, 0, sizeof *s);
     s->parent = s->child = s->sibling = s->redefines = -1;
     s->desc_id = -1; s->fd = -1; s->idx1 = -1; s->ix_table = -1; s->lin_file = -1; s->rep_ctr = -1; s->bitdim = -1;
-    s->dyn_cap_sym = -1; s->dyn_id = -1; s->cap_of = -1;
+    s->dyn_cap_sym = -1; s->dyn_id = -1; s->cap_of = -1; s->dynl_id = -1;
     return s;
 }
 

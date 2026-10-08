@@ -67,8 +67,9 @@ static void operand_odo_length(Opnd *o)
 {
     if (o->kind != O_REF || o->ref.rm || o->ref.nsub) return;
     Sym *g = o->ref.sym;
-    if (g->is_group && dyn_table_below(g) && !g_call_byref)
-        die_at(o->line, "'%s' is a variable-length group -- it holds the dynamic-capacity table '%s' -- and this stage does not move, compare or send one whole (2023 8.5.1.12, 14.6.9); name its items", g->name, dyn_table_below(g)->name);
+    if (g->is_group && vlen_below(g) && !g_call_byref)
+        die_at(o->line, "'%s' is a variable-length group -- it holds the %s '%s' -- and this stage does not move, compare or send one whole (2023 8.5.1.12, 14.6.9); name its items",
+               g->name, vlen_below(g)->dyn ? "dynamic-capacity table" : "dynamic-length item", vlen_below(g)->name);
     if (!g->is_group || !has_odo(g)) return;
     Sym *tbl = odo_table_below(g);
     if (!tbl || !tbl->odo_dep_sym) return;
@@ -942,6 +943,15 @@ static void parse_operand_raw_1(Opnd *o)
         const Sym *x = o->ref.sym;
         cen_flag(x, CEN_ADDR);
         if (x->is_cond || x->is_index) die_at(o->line, "ADDRESS OF '%s': it is not a data item", x->name);
+        /* 8.4.3.11.3 rule 6: not a dynamic-length item, not an element of a
+         * dynamic-capacity table or an item under one, not an item under a
+         * group holding a dynamic-length item (their places move) */
+        if (x->dynl) die_at(o->line, "ADDRESS OF '%s': not a dynamic-length item (2023 8.4.3.11.3 rule 6)", x->name);
+        if (dyn_table_for((Sym *)x)) die_at(o->line, "ADDRESS OF '%s': not an element of the dynamic-capacity table '%s', nor an item under one (2023 8.4.3.11.3 rule 6)", x->name, dyn_table_for((Sym *)x)->name);
+        for (const Sym *g = x->parent >= 0 ? &g_sym[x->parent] : NULL; g; g = g->parent >= 0 ? &g_sym[g->parent] : NULL) {
+            Sym *v = vlen_below((Sym *)g);
+            if (v && v->dynl) die_at(o->line, "ADDRESS OF '%s': it is under the group '%s', which holds the dynamic-length item '%s' (2023 8.4.3.11.3 rule 6)", x->name, g->name, v->name);
+        }
         if (x->strong == 0 && !x->is_group && sym_in_strong(x))
             die_at(o->line, "ADDRESS OF '%s': an item inside a strongly-typed group (2023 8.4.3.11 rule 2)", x->name);
         if (sym_bitlike(x) && ((x->bitoff % 8) || ref_has_runtime_sub(&o->ref) || o->ref.rm))
@@ -1296,6 +1306,7 @@ static void parse_operand_raw_1(Opnd *o)
 static int ref_needs_call(const Ref *r)
 {
     if (dyn_table_for(r->sym)) return 1;        /* cob_dyn_elem finds, or makes, the element */
+    if (r->rm_dynl) return 1;                   /* cob_dynl_data gives the characters */
     for (int i = 0; i < r->nsub; i++)
         if (r->sub[i].sym && !is_hot_int(r->sub[i].sym)) return 1;
     if (r->rm && !r->rm_start) return 1;           /* the start is an expression */
@@ -1586,6 +1597,28 @@ static int g_dyn_quiet;                         /* emit_ref_addr of a dynamic ta
 static void emit_ref_addr(const Ref *r, const char *reg)
 {
     Sym *s = r->sym;
+    if (r->rm_dynl) {
+        /* a dynamic-length item's characters: the slot's address as for any
+         * item (subscripts and all), its content from cob_dynl_data (the
+         * VALUE laid down at the first touch), then the part's start */
+        Ref q = *r; q.rm = 0; q.rm_dynl = 0; q.rm_start = 0; q.rm_len = 0; q.rm_sx = q.rm_lx = NULL; q.user_rm = 0;
+        emit_ref_addr(&q, "r3");
+        char dl[32]; snprintf(dl, sizeof dl, ".Ldynl%d_%d", g_unit, s->dynl_id);
+        emit_la("r4", dl);
+        emit_call("cob_dynl_data");
+        int w = r->rm_nat ? 2 : 1;
+        if (r->rm_start) { long o = (r->rm_start - 1) * w; if (o) emit("\taddi %s, r1, %ld", reg, o); else if (strcmp(reg, "r1")) emit("\tadd %s, r1, r0", reg); }
+        else {
+            emit("\tadd r11, r1, r0");
+            emit_expr_pos_push(r->rm_sx); emit_expr_pos_pop();
+            if (ec_on_name("EC-BOUND-REF-MOD")) emit_refmod_check(r, r->rm_len ? (long)r->rm_len : r->rm_lx ? -3 : -1, 0);
+            emit("\taddi r1, r1, -1");
+            if (w == 2) emit("\tadd r1, r1, r1");
+            emit("\tadd %s, r11, r1", reg);
+        }
+        g_la.sym = -1; if (g_cen_on) cen_reformed(s, reg);
+        return;
+    }
     if (ec_on_name("EC-BOUND-ODO")) emit_odo_check(s);
     int off = s->offset;
     int runtime = ref_has_runtime_sub(r);

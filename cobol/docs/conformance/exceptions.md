@@ -260,7 +260,7 @@ queue item 4 continues with.
 |---|---|---|
 | EC-STORAGE-IMP | Imp | **ruling**: no implementor-defined condition is defined here, so it never arises |
 | EC-STORAGE-NOT-ALLOC | NF | **test**: 2002/allocfree |
-| EC-STORAGE-NOT-AVAIL | NF | raised when ALLOCATE gets no storage; **gap**: no test can ask for more than the heap gives deterministically |
+| EC-STORAGE-NOT-AVAIL | NF | raised when ALLOCATE gets no storage (no test can ask for more than the heap gives deterministically); and by SET SIZE OF a dynamic-length item to a negative size or one past its LIMIT (2014/dynlen2, through a declarative) |
 
 ## EC-VALIDATE
 

@@ -140,6 +140,18 @@ enum { COB_DYN_INITIALIZED = 1 };
 #define COB_DYN_MAX 16777215     /* the implementor's maximum capacity (13.18.38.3 rule 29; A.3 item 60) */
 /* cob_dyn_status after cob_dyn_elem or cob_dyn_set: the condition met */
 enum { COB_DYN_OK = 0, COB_DYN_SUBSCRIPT = 1, COB_DYN_OVERFLOW = 2, COB_DYN_LIMIT = 3, COB_DYN_SET = 5 };
+/* A dynamic-length elementary item (2023 13.18.19, 8.5.1.10): the same
+ * slot (cob_dyn: the characters' address, the current length in
+ * characters), the characters on the heap; a slot with no address and a
+ * length has its VALUE still to be laid down (the initial state). */
+typedef struct {
+    unsigned limit;              /* LIMIT, in characters (the implementor's maximum when none) */
+    unsigned nat;                /* PIC N: two bytes a character, big-endian UTF-16 */
+    const unsigned char *value;  /* the VALUE clause's content, or 0 */
+    unsigned vlen;               /* ... its bytes */
+    const char *name;
+} cob_dynl_desc;
+#define COB_DYNL_MAX 16777215    /* the implementor's maximum length, characters (13.18.19.4 rule 2) */
 /* the phrases of one I-O statement (2023 14.9.30 formats, 14.7.9 RETRY,
  * 14.9.27 SHARING): set by the compiler just before the call, read and
  * cleared by it (cob_io_set) */

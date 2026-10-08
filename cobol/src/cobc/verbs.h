@@ -422,6 +422,12 @@ static void parse_inspect_1(void)
         g_insp_nat = sym_is_national(item.sym) || (!item.sym->is_group && item.sym->usage == U_NATIONAL);
         itemo = ref_opnd(&item);
         operand_odo_length(&itemo);             /* a group over an ODO table is inspected at its current length */
+        if (item.sym->dynl) {
+            int j = g_tp;
+            for (; j < g_ntok && g_tok[j].kind != T_PERIOD && !(g_tok[j].kind == T_WORD && is_verb(g_tok[j].s) && !is_word(&g_tok[j], "inspect")); j++)
+                if (is_word(&g_tok[j], "replacing") || is_word(&g_tok[j], "converting"))
+                    die_at(item.line, "INSPECT '%s' REPLACING or CONVERTING: a dynamic-length item is inspected (TALLYING) but not changed in place in this stage", item.sym->name);
+        }
     }
     int w = g_insp_nat ? 2 : 1;             /* a character's bytes */
     if (fsubj && at_word("converting")) die_at(fline, "INSPECT CONVERTING of a function: %s", fwhy);
@@ -576,7 +582,7 @@ static void parse_inspect_1(void)
  * receiver's own subscripts leading, the rest unrolled at compile time */
 static void init_replace_walk(Sym *s, const Ref *base, int cat, Opnd *value, long *sub, int nsub, int line, int bits_only)
 {
-    if (s->is_cond || s->is_index || s->redefines >= 0 || s->dyn) return;
+    if (s->is_cond || s->is_index || s->redefines >= 0 || s->dyn || s->dynl) return;
     if (s->is_group) {
         for (int c = s->child; c >= 0; c = g_sym[c].sibling) {
             Sym *k = &g_sym[c];
@@ -606,7 +612,7 @@ static void init_replace_walk(Sym *s, const Ref *base, int cat, Opnd *value, lon
  * with their neighbours and are set by MOVE instead (ISSUES-94 B1). */
 static void init_cover(Sym *s, int top_off, int disp, unsigned char *cover, int limit, int is_top)
 {
-    if (s->is_cond || s->is_index || s->dyn) return;        /* a dynamic table's slot stays; its elements are filled apart */
+    if (s->is_cond || s->is_index || s->dyn || s->dynl) return;   /* a dynamic table's slot stays, its elements are filled apart; a dynamic-length item's length is set to zero apart */
     if (!is_top && s->redefines >= 0) return;
     if (s->bitgroup || (!s->is_group && s->usage == U_BIT)) return;
     int reps = (!is_top && s->occurs) ? s->occurs : 1;
@@ -681,6 +687,29 @@ static void init_elem2k(Sym *s, Ref *r, const InitSpec *sp)
  * defaults otherwise -- the capacity unchanged.  The statement's other
  * phrases (REPLACING, a category's VALUE) do not reach the elements in
  * this stage: refused. */
+/* a dynamic-length item's length set to zero (14.9.20.4 rule 7): the item named, or every one under the group, each occurrence */
+static void init_dynl_zero(Sym *k, const Ref *base, long *sub, int nsub, int line)
+{
+    Ref r; memset(&r, 0, sizeof r); r.sym = k; r.line = line; r.nsub = nsub;
+    for (int i = 0; i < nsub; i++) { if (base && i < base->nsub) r.sub[i] = base->sub[i]; else { r.sub[i].sym = NULL; r.sub[i].lit = sub[i]; r.sub[i].adj = 0; } }
+    if (nsub != k->ndims) die_at(line, "INITIALIZE: '%s' needs %d subscripts", k->name, k->ndims);
+    char dl[32]; snprintf(dl, sizeof dl, ".Ldynl%d_%d", g_unit, k->dynl_id);
+    Arg a[2] = { arg_ref(&r), arg_label(dl) }; emit_args(a, 2); emit_li("r5", 0); emit_call("cob_dynl_size");
+}
+static void init_dynl_walk(Sym *s, const Ref *base, long *sub, int nsub, int line)
+{
+    for (int c = s->child; c >= 0; c = g_sym[c].sibling) {
+        Sym *k = &g_sym[c];
+        if (k->is_cond || k->is_index || k->redefines >= 0) continue;
+        if (k->dynl) {
+            if (k->occurs) { if (nsub >= MAXDIM) die_at(line, "INITIALIZE: too many dimensions"); for (long i = 1; i <= k->occurs; i++) { sub[nsub] = i; init_dynl_zero(k, base, sub, nsub + 1, line); } }
+            else init_dynl_zero(k, base, sub, nsub, line);
+        } else if (k->is_group) {
+            if (k->occurs) { if (nsub >= MAXDIM) die_at(line, "INITIALIZE: too many dimensions"); for (long i = 1; i <= k->occurs; i++) { sub[nsub] = i; init_dynl_walk(k, base, sub, nsub + 1, line); } }
+            else init_dynl_walk(k, base, sub, nsub, line);
+        }
+    }
+}
 static void init_dyn_fill(Sym *g, int values, int line)
 {
     for (int c = g->child; c >= 0; c = g_sym[c].sibling) {
@@ -700,6 +729,7 @@ static void init_walk(Sym *s, const Ref *base, const InitSpec *sp, long *sub, in
 {
     if (s->is_cond || s->is_index || s->usage == U_INDEX || s->dyn) return;
     if (!is_top && s->redefines >= 0) return;
+    if (s->dynl) { if (is_top) { Ref r = *base; init_dynl_zero(s, &r, sub, nsub, line); } return; }   /* its length to zero (14.9.20.4 rule 7); under a group, init_dynl_walk's */
     if (s->is_group) {
         for (int c = s->child; c >= 0; c = g_sym[c].sibling) {
             Sym *k = &g_sym[c];
@@ -787,6 +817,7 @@ static void parse_initialize_2002(Ref *rs, int n)
         long sub[MAXDIM];
         init_walk(rs[i].sym, &rs[i], &sp, sub, rs[i].nsub, rs[i].line, 1);
         Sym *t = rs[i].sym;
+        if (t->is_group && vlen_below(t)) { long sub2[MAXDIM]; for (int q = 0; q < rs[i].nsub; q++) sub2[q] = 0; init_dynl_walk(t, &rs[i], sub2, rs[i].nsub, rs[i].line); }
         if (t->is_group && dyn_table_below(t)) {
             if (sp.nrep || (sp.value && !sp.value_all))
                 die_at(rs[i].line, "INITIALIZE '%s': the group holds the dynamic-capacity table '%s', whose elements this stage initializes only to their initial state (no REPLACING, no category VALUE)", t->name, dyn_table_below(t)->name);
@@ -850,6 +881,7 @@ static void parse_initialize(void)
                 emit_move(r->rm_bit || t->pi.category == PIC_BOOLEAN ? &fig_zero : &fig_space, r);
                 continue;
             }
+            if (t->dynl) { long sub0[MAXDIM]; init_dynl_zero(t, r, sub0, r->nsub, r->line); continue; }   /* its length to zero (14.9.20.4 rule 7) */
             if (r->rm) { emit_move(&fig_zero, r); continue; }      /* a bit array's element */
             Sym tmp; memset(&tmp, 0, sizeof tmp);
             tmp.image = xmalloc(t->size); tmp.image_size = t->size;
@@ -876,6 +908,7 @@ static void parse_initialize(void)
                 init_replace_walk(t, r, PIC_ALPHANUMERIC_EDITED, &fig_space, sub, r->nsub, r->line, 0);
                 init_replace_walk(t, r, PIC_BOOLEAN, &fig_zero, sub, r->nsub, r->line, 1);   /* bit items, a MOVE each */
                 if (dyn_table_below(t)) init_dyn_fill(t, 0, r->line);
+                if (vlen_below(t)) { long sub2[MAXDIM]; for (int q = 0; q < r->nsub; q++) sub2[q] = 0; init_dynl_walk(t, r, sub2, r->nsub, r->line); }
             } else if (t->pi.category == PIC_NUMERIC_EDITED) emit_move(&fig_zero, r);
             else if (t->pi.category == PIC_ALPHANUMERIC_EDITED) emit_move(&fig_space, r);
             else if (t->usage == U_BIT) emit_move(&fig_zero, r);

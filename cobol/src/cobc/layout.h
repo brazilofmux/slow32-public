@@ -161,7 +161,7 @@ static void build_tree(void)
 
 static int align_of(Sym *s)
 {
-    if (s->dyn) return 4;                       /* the slot's two words */
+    if (s->dyn || s->dynl) return 4;            /* the slot's two words */
     if (!s->sync || s->is_group) return 1;
     switch (s->usage) {
     case U_BINARY: case U_COMP5: case U_SINT: case U_UINT: case U_SSHORT: case U_USHORT:
@@ -230,7 +230,7 @@ static int layout(int si, int base)
             cend = cbase + (tot + 7) / 8;
             if (ch->sync) { off = cend; cur = 0; run = 0; }
         } else {
-            cend = cbase + (ch->dyn ? (int)sizeof(cob_dyn) : sym_bitlike(ch) ? sz : sz * (ch->occurs ? ch->occurs : 1));   /* a bit item's size spans its occurrences; a dynamic table is its slot */
+            cend = cbase + (ch->dyn ? (int)sizeof(cob_dyn) : ch->dynl ? (int)sizeof(cob_dyn) * (ch->occurs ? ch->occurs : 1) : sym_bitlike(ch) ? sz : sz * (ch->occurs ? ch->occurs : 1));   /* a bit item's size spans its occurrences; a dynamic table is its slot, a dynamic-length item a slot an occurrence */
             if (ch->redefines < 0) off = cend;
             else if (!sym_bitlike(ch) && run) {
                 /* a character item, REDEFINES or not, ends a run of bits: the
@@ -266,7 +266,7 @@ static void set_dims(int si, int ndims, const int *counts, const int *strides)
             if (bitdim >= 0) die_at(s->line, "'%s': a bit table inside an occurring bit group is not implemented", s->name);
             bitdim = ndims; bitstride = bit_stride(s);
         }
-        cnt[ndims] = s->dyn ? INT_MAX : s->occurs; str[ndims] = bits ? 0 : s->size; ndims++;   /* bits: the element is a bit position; a dynamic table: any subscript, checked at run time */
+        cnt[ndims] = s->dyn ? INT_MAX : s->occurs; str[ndims] = bits ? 0 : s->dynl ? (int)sizeof(cob_dyn) : s->size; ndims++;   /* bits: the element is a bit position; a dynamic table: any subscript, checked at run time; a dynamic-length item: its slots */
     }
     s->ndims = ndims; s->bitdim = bitdim; s->bitdim_stride = bitstride;
     memcpy(s->dim_count, cnt, ndims * sizeof *cnt); memcpy(s->dim_stride, str, ndims * sizeof *str);
@@ -561,9 +561,38 @@ static void shift_bits(int si, int k)
     for (int c = s->child; c >= 0; c = g_sym[c].sibling) shift_bits(c, k);
 }
 static int g_dyn_template;                    /* building a dynamic table's element image: the table's entry is one element at base */
+/* a dynamic-length item's VALUE: its length in characters, the literal's bytes in the item's form (national: UTF-16BE) */
+static int dynl_value_bytes(Sym *s, unsigned char **out)
+{
+    Tok *v = s->value_tok;
+    if (!v) { *out = NULL; return 0; }
+    if (s->value_fig) {                         /* one character (8.3.3.6.4 rule 3b) */
+        unsigned char *b = xmalloc(2);
+        if (s->pi.category == PIC_NATIONAL) { unsigned u = nat_fig(v->s); b[0] = (unsigned char)(u >> 8); b[1] = (unsigned char)u; *out = b; return 2; }
+        b[0] = (unsigned char)fig_byte(v->s); *out = b; return 1;
+    }
+    if (s->pi.category == PIC_NATIONAL && !v->nat) {
+        unsigned char *b = xmalloc((size_t)v->len * 4 + 2); int n = utf8_to_utf16be((const unsigned char *)v->s, v->len, b);
+        if (n < 0) die_at(v->line, "'%s': the VALUE of a national item must be UTF-8 text", s->name);
+        *out = b; return n;
+    }
+    unsigned char *b = xmalloc((size_t)v->len + 1); memcpy(b, v->s, (size_t)v->len); *out = b; return v->len;
+}
 static void init_instance(Sym *rec, int si, int base, int defaults)
 {
     Sym *s = &g_sym[si];
+    if (s->dynl) {
+        /* the slot: no characters yet, the VALUE's length (the characters are
+         * laid down at the first touch), or 0 (13.18.63.4 rule 7) */
+        int n = s->occurs ? s->occurs : 1;
+        for (int k = 0; k < n; k++) {
+            unsigned char *p = rec->image + base + k * (int)sizeof(cob_dyn);
+            memset(p, 0, 4); unsigned m = 0;
+            if (s->value_tok && !g_no_values) { unsigned char *b; int n = dynl_value_bytes(s, &b); free(b); m = (unsigned)n / (s->pi.category == PIC_NATIONAL ? 2u : 1u); }
+            p[4] = (unsigned char)m; p[5] = (unsigned char)(m >> 8); p[6] = (unsigned char)(m >> 16); p[7] = (unsigned char)(m >> 24);
+        }
+        return;
+    }
     if (s->dyn && !g_dyn_template) {
         /* the slot: no elements yet, the minimum capacity (13.18.63.4 rule 6
          * of the initial state; cob_dyn_elem makes them at the first touch) */
@@ -799,6 +828,8 @@ static void finish_data_division(void)
                    s->name, o->name, e85 ? "X3.23-1985 REDEFINES syntax rule 5" : "2023 13.18.44.3 rule 5");
         if (dyn_table_for(s) || dyn_table_for(o) || (s->is_group && dyn_table_below(s)) || (o->is_group && dyn_table_below(o)))
             die_at(s->line, "'%s' REDEFINES '%s': neither may be, or hold, a dynamic-capacity table (2023 13.18.44.3 rule 17)", s->name, o->name);
+        if (s->dynl || o->dynl || (s->is_group && vlen_below(s)) || (o->is_group && vlen_below(o)))
+            die_at(s->line, "'%s' REDEFINES '%s': neither may be a dynamic-length item or a variable-length group (2023 13.18.44.3 rule 12)", s->name, o->name);
         if (odo_table_for(s) != odo_table_for(o) || (s->is_group && odo_table_below(s)))
             die_at(s->line, "'%s' REDEFINES '%s': neither may include an OCCURS DEPENDING ON table (%s)",
                    s->name, o->name, e85 ? "X3.23-1985 REDEFINES syntax rule 5" : "2023 13.18.44.3 rule 5");
@@ -907,6 +938,26 @@ static void finish_data_division(void)
                 if (g_sym[c].level != 88 && g_sym[c].level != 66)
                     die_at(g_sym[c].line, "'%s' follows the OCCURS DEPENDING ON table '%s' in its record, which only the table's own subordinate entries may (2023 13.18.38.3 rule 22)",
                            g_sym[c].name, s->name);
+    }
+    /* dynamic-length elementary items (2023 13.18.19): PICTURE one X or N
+     * (rule 1), USAGE DISPLAY or NATIONAL, no other clause but VALUE
+     * (13.16.3 rule 18), not in the FILE SECTION (this stage), not in a
+     * CONSTANT RECORD (13.18.15.3 rule 13); the size the descriptor
+     * carries is the limit */
+    for (int i = g_sym_base; i < g_nsym; i++) {
+        Sym *s = &g_sym[i];
+        if (!s->dynl) continue;
+        if (s->is_group || !s->has_pic || !(!strcasecmp(s->pic, "x") || !strcasecmp(s->pic, "x(1)") || !strcasecmp(s->pic, "n") || !strcasecmp(s->pic, "n(1)")) ||
+            (s->has_usage && s->usage != U_DISPLAY && s->usage != U_NATIONAL))
+            die_at(s->line, "'%s': DYNAMIC LENGTH takes PICTURE X or N, one symbol, USAGE DISPLAY or NATIONAL (2023 13.18.19.3 rule 1)", s->name);
+        if (s->just || s->blank_zero || s->sync || s->sign_lead || s->sign_sep || s->aligned || s->redefines >= 0 || s->any_len || s->is_based)
+            die_at(s->line, "'%s': with DYNAMIC LENGTH the only other clauses are PICTURE, USAGE and VALUE (2023 13.16.3 rule 18%s)", s->name, s->just ? "; 13.18.32.3 rule 4" : "");
+        if (s->fd >= 0 || g_sym[s->record].fd >= 0) die_at(s->line, "'%s': a dynamic-length item in the FILE SECTION is not implemented (its record would hold a slot, not the characters)", s->name);
+        if (g_sym[s->record].is_constrec) die_at(s->line, "'%s': DYNAMIC LENGTH is not in a CONSTANT RECORD entry (2023 13.16.3 rule 13)", s->name);
+        if (s->value_tok && !s->value_fig && s->value_tok->kind != T_STR) die_at(s->value_tok->line, "'%s': the VALUE of a dynamic-length item is an alphanumeric or national literal", s->name);
+        unsigned lim = (unsigned)(s->dynl_limit ? s->dynl_limit : COB_DYNL_MAX);
+        s->size = (int)(lim * (s->pi.category == PIC_NATIONAL ? 2u : 1u));   /* the descriptor's size: the most it can hold */
+        s->dynl_id = i - g_sym_base;
     }
     /* dynamic-capacity tables (2023 13.18.38 format 4): the CAPACITY IN
      * item -- a numeric item of the table's level, the slot's second word,
@@ -1141,7 +1192,8 @@ static void finish_data_division(void)
     for (int i = g_sym_base; i < g_nsym; i++) {
         Sym *s = &g_sym[i];
         if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->rep_ctr >= 0) continue;
-        if (s->image_size < s->size) s->image_size = s->size;
+        int store = s->dynl ? (int)sizeof(cob_dyn) * (s->occurs ? s->occurs : 1) : s->size;   /* a dynamic-length item's record is its slot */
+        if (s->image_size < store) s->image_size = store;
         s->image = xmalloc(s->image_size);
         g_cur_rec_local = s->is_local; g_cur_rec_file = s->fd >= 0;
         if (!s->is_linkage && !s->is_external) init_record(s, i, 1);

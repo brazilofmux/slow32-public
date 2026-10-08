@@ -431,7 +431,7 @@ static int lw_mem_ok(const Ref *r)
         const Sym *rec = &g_sym[s->record];
         return !r->rm && !r->nsub && s->size == 4 && s->record >= 0 && rec->label[0] && !rec_indirect(rec);
     }
-    if ((s->native && !s->ndims) || r->rm || s->is_group || s->is_rc || s->lin_file >= 0 || s->rep_ctr >= 0) return 0;
+    if ((s->native && !s->ndims) || r->rm || s->is_group || s->is_rc || s->lin_file >= 0 || s->rep_ctr >= 0 || s->dynl) return 0;
     if (r->nsub != s->ndims || (r->nsub && (ec_on_name("EC-BOUND-SUBSCRIPT") || (odo_table_for((Sym *)s) || dyn_table_for((Sym *)s))))) return 0;   /* an element: its address formed as lw_ref_addr forms it */
     for (int k = 0; k < r->nsub; k++)
         if (r->sub[k].sym == &g_subx || (r->sub[k].sym && !lw_sub_item_ok(r->sub[k].sym))) return 0;
@@ -475,7 +475,7 @@ static int lw_expr(Expr *e, int top_div);
 static int lw_bytes_ref_ok(const Ref *r, long *len)
 {
     Sym *s = r->sym;
-    if (s->is_cond || s->any_len || sym_bitlike(s) || s->natgroup || s->nat_usage || s->usage == U_NATIONAL || s->usage == U_BIT || s->is_index) return 0;
+    if (s->is_cond || s->any_len || s->dynl || sym_bitlike(s) || s->natgroup || s->nat_usage || s->usage == U_NATIONAL || s->usage == U_BIT || s->is_index) return 0;
     if (s->pi.category == PIC_NATIONAL || s->pi.category == PIC_BOOLEAN || s->is_rc || s->lin_file >= 0 || s->rep_ctr >= 0) return 0;
     const Sym *rec = &g_sym[s->record];
     if (rec_indirect(rec) || !rec->label[0] || rec->ftemp_scan || odo_table_for(s) || dyn_table_for(s)) return 0;
@@ -819,7 +819,7 @@ static int lw_disp_ref_ok(const Ref *r)
     Sym *s = r->sym;
     long len;
     if (r->rm) return lw_bytes_ref_ok(r, &len) && len >= 0;
-    if (s->is_cond || s->any_len || sym_bitlike(s) || s->natgroup || s->nat_usage || s->usage == U_NATIONAL || s->usage == U_BIT || s->is_index) return 0;
+    if (s->is_cond || s->any_len || s->dynl || sym_bitlike(s) || s->natgroup || s->nat_usage || s->usage == U_NATIONAL || s->usage == U_BIT || s->is_index) return 0;
     if (s->pi.category == PIC_NATIONAL || s->pi.category == PIC_BOOLEAN || s->is_rc || s->lin_file >= 0 || s->rep_ctr >= 0 || s->usage == U_FLOAT || s->usage == U_DFLOAT) return 0;
     if (s->is_group && (has_odo(s) || s->bitgroup || s->strong)) return 0;
     const Sym *rec = &g_sym[s->record];

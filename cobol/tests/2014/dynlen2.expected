@@ -1,0 +1,13 @@
+value space: f=[ ] len=1
+size 5: q=[abc  ] len=5
+  nonfatal: EC-STORAGE-NOT-AVAIL len=0
+size -2: q=[] len=0
+  nonfatal: EC-STORAGE-NOT-AVAIL len=8
+size 20 (limit 8): q=[        ] len=8
+  sub: ld=[hello] len=5 ldd=[hello] lk=07 le=ee
+  sub set: ld=[changed by s] len=12
+after sub: d=[changed by s] len=12 k=09 e=ee
+  own: call 1 ot(1)=[init] ot(2)=[init]
+  own: call 2 ot(1)=[first] ot(2)=[init+]
+  own: call 1 ot(1)=[init] ot(2)=[init]
+done

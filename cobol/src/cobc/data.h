@@ -1047,8 +1047,30 @@ static void parse_data_item1(void)
         if (!strcmp(t->s, "constant"))
             die_at(t->line, g_std < 2002 ? "a constant entry (level 01 CONSTANT) is COBOL 2002; compile with -std=2002" :
                    "'%s': CONSTANT comes right after the name of a level 01 entry (2023 13.10)", s->name);
-        if (!strcmp(t->s, "dynamic") && is_word(peek(1), "length"))
-            die_at(t->line, "'%s': the DYNAMIC LENGTH clause is COBOL 2014, beyond %s (2023 13.18.19)", s->name, g_std < 2002 ? "COBOL 85" : "-std=2002");
+        if (!strcmp(t->s, "dynamic") && is_word(peek(1), "length")) {
+            /* DYNAMIC LENGTH [structure-name] [LIMIT IS n] (2014; 2023 13.18.19) */
+            if (g_std < 2014) die_at(t->line, "'%s': the DYNAMIC LENGTH clause is COBOL 2014 (2023 13.18.19); compile with -std=2014", s->name);
+            advance(); advance();
+            if (s->dynl) die_at(t->line, "'%s' has two DYNAMIC LENGTH clauses", s->name);
+            s->dynl = 1;
+            if (cur()->kind == T_WORD && !at_word("limit")) {
+                /* a structure-name: one declared in SPECIAL-NAMES (rule 2); any other word is the next clause */
+                int k; for (k = 0; k < g_ndynls && strcmp(g_dynls[k].name, cur()->s); k++) ;
+                if (k < g_ndynls) { snprintf(s->dynl_struct, sizeof s->dynl_struct, "%s", cur()->s); advance(); }
+                else if (!at_word("pic") && !at_word("picture") && !at_word("value") && !at_word("values") && !at_word("usage") && !at_word("display") && !at_word("national") &&
+                         !at_word("occurs") && !at_word("redefines") && !at_word("sign") && !at_word("justified") && !at_word("just") && !at_word("blank") &&
+                         !at_word("synchronized") && !at_word("sync") && !at_word("global") && !at_word("external") && !at_word("based") && !at_word("aligned") && !at_word("is"))
+                    die_at(cur()->line, "'%s': DYNAMIC LENGTH %s: no DYNAMIC LENGTH STRUCTURE of that name in SPECIAL-NAMES (2023 13.18.19.3 rule 2)", s->name, cur()->s);
+            }
+            if (accept_word("limit")) {
+                accept_word("is");
+                if (cur()->kind != T_NUM || strpbrk(cur()->s, ".,-") || atoi(cur()->s) < 1) die_at(t->line, "'%s': DYNAMIC LENGTH LIMIT IS takes a positive integer", s->name);
+                s->dynl_limit = atoi(cur()->s); advance();
+                if (s->dynl_limit > COB_DYNL_MAX) die_at(t->line, "'%s': DYNAMIC LENGTH LIMIT %d is above this implementor's maximum %d (2023 13.18.19.4 rule 2)", s->name, s->dynl_limit, COB_DYNL_MAX);
+                if (s->dynl_struct[0]) { int k = 0; while (strcmp(g_dynls[k].name, s->dynl_struct)) k++; if ((unsigned)s->dynl_limit > g_dynls[k].max) die_at(t->line, "'%s': LIMIT %d is above the %u that the structure %s allows (2023 13.18.19.3 rule 4)", s->name, s->dynl_limit, g_dynls[k].max, s->dynl_struct); }
+            }
+            continue;
+        }
         if (!strcmp(t->s, "any") && is_word(peek(1), "length") && g_std >= 2002) {
             advance(); advance(); s->any_len = 1; continue;
         }

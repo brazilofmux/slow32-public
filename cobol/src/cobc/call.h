@@ -201,6 +201,11 @@ static void parse_call(void)
             parse_operand(&ops[n]);
             g_call_byref = 0;
             Opnd *o = &ops[n];
+            if (mode == 0 && o->kind == O_REF && o->ref.rm_dynl && !o->ref.user_rm) {
+                /* a dynamic-length item BY REFERENCE: its slot goes, and the called
+                 * program's item reads and sets the length there (8.5.1.11.3) */
+                o->ref.rm = 0; o->ref.rm_dynl = 0; o->ref.rm_zero = 0; o->ref.rm_start = 0; o->ref.rm_len = 0;
+            }
             if (ps && at_arith_op()) ops[n] = expr_opnd_after(o, ostart);   /* format 2: an expression, BY CONTENT (implied) or BY VALUE */
             if (ps && n < ps->nparam && mode != 2 && !ps->byval[n] && !ps->param[n].group && ps->param[n].size != -1 &&
                 (mode == 1 || !(o->kind == O_REF && !o->ref.rm))) {

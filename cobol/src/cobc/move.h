@@ -102,6 +102,15 @@ static Sym *dyn_table_below(Sym *s)
     }
     return NULL;
 }
+static Sym *vlen_below(Sym *s)
+{
+    for (int c = s->child; c >= 0; c = g_sym[c].sibling) {
+        if (g_sym[c].dyn || g_sym[c].dynl) return &g_sym[c];
+        Sym *t = vlen_below(&g_sym[c]);
+        if (t) return t;
+    }
+    return NULL;
+}
 static int has_odo(Sym *s)
 {
     for (int c = s->child; c >= 0; c = g_sym[c].sibling)
@@ -405,8 +414,32 @@ static void emit_move(Opnd *src, Ref *dst)
 {
     Sym *d = dst->sym;
     check_receiver(dst);
-    if (d->is_group && !dst->rm && dyn_table_below(d))
-        die_at(dst->line, "MOVE to '%s': a variable-length group -- it holds the dynamic-capacity table '%s' -- is not moved whole in this stage (2023 8.5.1.12, 14.6.9); name its items", d->name, dyn_table_below(d)->name);
+    if (d->is_group && !dst->rm && vlen_below(d))
+        die_at(dst->line, "MOVE to '%s': a variable-length group -- it holds the %s '%s' -- is not moved whole in this stage (2023 8.5.1.12, 14.6.9); name its items",
+               d->name, vlen_below(d)->dyn ? "dynamic-capacity table" : "dynamic-length item", vlen_below(d)->name);
+    if (d->dynl && !dst->user_rm) {
+        /* a dynamic-length item receives the whole sending operand: its
+         * content and its length (8.5.1.10.4); a figurative constant is one
+         * character, ALL literal the literal (8.3.3.6.4 rule 3), a zero-length
+         * literal leaves it empty (14.9.25.4 rule 2) */
+        Ref slot = *dst; slot.rm = 0; slot.rm_dynl = 0; slot.rm_start = 0; slot.rm_len = 0; slot.rm_sx = slot.rm_lx = NULL;
+        char dl[32]; snprintf(dl, sizeof dl, ".Ldynl%d_%d", g_unit, d->dynl_id);
+        if ((src->kind == O_STR && src->tok->len == 0)) {
+            Arg a[2] = { arg_ref(&slot), arg_label(dl) }; emit_args(a, 2); emit_li("r5", 0); emit_call("cob_dynl_size");
+            return;
+        }
+        Arg a[4]; a[0] = arg_ref(&slot); a[1] = arg_label(dl);
+        if (src->kind == O_FIG) {
+            unsigned char one[2]; int n;
+            if (d->pi.category == PIC_NATIONAL) { unsigned u = nat_fig(src->tok->s); one[0] = (unsigned char)(u >> 8); one[1] = (unsigned char)u; n = 2; }
+            else { one[0] = (unsigned char)fig_byte(src->tok->s); n = 1; }
+            a[2] = arg_label(lit_label(one, n)); a[3] = arg_desc(n == 2 ? nat_desc(2) : str_desc(1));
+        } else if (src->kind == O_ALL) {
+            a[2] = arg_label(lit_label((const unsigned char *)src->tok->s, src->tok->len)); a[3] = arg_desc(src->tok->nat ? nat_desc(src->tok->len) : str_desc(src->tok->len));
+        } else opnd_args(src, &a[2], &a[3], 0, 0);
+        emit_args(a, 4); emit_call("cob_dynl_move");
+        return;
+    }
     /* A receiving group over an OCCURS DEPENDING ON table (X3.23-1985
      * VI-27, OCCURS general rule 3): with the DEPENDING ON item outside
      * the group, only the part its value gives at the start of the

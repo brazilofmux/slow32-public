@@ -23,7 +23,7 @@ Status, 2026-10-07:
   of the 2023 text's 324 numbered elements are covered (302 as of
   this date). The work queue is
   [docs/plans/standard-queue.md](docs/plans/standard-queue.md): 51
-  items, taken in order, 43 of them done (file sharing in its first
+  items, taken in order, 44 of them done (file sharing in its first
   stage); the rest are ruled, staged or deferred there.
 - **Real programs, byte for byte.** majesty (the user's ledger) runs
   its month-end on SLOW-32 from the database to the reports; the Open

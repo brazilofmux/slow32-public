@@ -7741,6 +7741,78 @@ void cob_dyn_fill(cob_dyn *d, const cob_dyn_desc *t, int values)
 /* the elements given up: CANCEL, before the record's image is restored */
 void cob_dyn_free(cob_dyn *d) { free(d->elems); d->elems = 0; d->cap = 0; }
 
+/* ---- dynamic-length elementary items (2023 13.18.19, 8.5.1.10) ---------- */
+
+static unsigned dynl_last;                       /* the length cob_dynl_data last found (EC-BOUND-REF-MOD's bound) */
+static unsigned char dynl_none[2];               /* an empty item's address */
+/* the characters, n of them, in a block that holds them: grown or shrunk;
+ * 0 on failure (the item unchanged) */
+static int dynl_resize(cob_dyn *d, const cob_dynl_desc *t, unsigned n)
+{
+    unsigned w = t->nat ? 2 : 1;
+    unsigned char *b = realloc(d->elems, (size_t)n * w + 1);
+    if (!b) return 0;
+    d->elems = b;
+    return 1;
+}
+/* the item's characters, its VALUE laid down at the first touch; the
+ * length is left in dynl_last */
+unsigned char *cob_dynl_data(cob_dyn *d, const cob_dynl_desc *t)
+{
+    if (!d->elems && d->cap) {
+        unsigned w = t->nat ? 2 : 1;
+        if (!dynl_resize(d, t, d->cap)) cob_fatal("EC-STORAGE-NOT-AVAIL: no storage for a dynamic-length item");
+        unsigned n = t->value ? (t->vlen < d->cap * w ? t->vlen : d->cap * w) : 0;
+        if (n) memcpy(d->elems, t->value, n);
+        for (unsigned k = n; k < d->cap * w; k++) d->elems[k] = (unsigned char)((t->nat && !(k & 1)) ? 0 : ' ');
+    }
+    dynl_last = d->cap;
+    return d->elems ? d->elems : dynl_none;
+}
+unsigned cob_dynl_last_len(void) { return dynl_last; }
+int cob_dynl_rem(int len, int start) { int n = len - start + 1; return n < 0 ? 0 : n; }
+/* SET SIZE OF item TO n (14.9.39 format 14, rules 37-39): a negative n is
+ * length 0 and EC-STORAGE-NOT-AVAIL; past the maximum, the maximum and the
+ * condition; the characters added are spaces.  Returns 1 when the condition
+ * exists. */
+int cob_dynl_size(cob_dyn *d, const cob_dynl_desc *t, long n)
+{
+    int ec = 0;
+    unsigned w = t->nat ? 2 : 1, max = t->limit ? t->limit : COB_DYNL_MAX;
+    if (n < 0) { n = 0; ec = 1; }
+    if ((unsigned long)n > max) { n = max; ec = 1; }
+    cob_dynl_data(d, t);                          /* the VALUE first, when it is still owed */
+    unsigned old = d->cap;
+    if (!dynl_resize(d, t, (unsigned)n)) return 1;
+    for (unsigned k = old * w; k < (unsigned)n * w; k++) d->elems[k] = (unsigned char)((t->nat && !(k & 1)) ? 0 : ' ');
+    d->cap = (unsigned)n;
+    return ec;
+}
+/* a MOVE to the item (8.5.1.10.4): the new content is the sending
+ * operand's, converted as a MOVE to an alphanumeric or national item of
+ * that many characters would convert it; the new length is the content's,
+ * cut at the maximum on the right */
+void cob_dynl_move(cob_dyn *d, const cob_dynl_desc *t, const void *src, const cob_desc *sd)
+{
+    unsigned w = t->nat ? 2 : 1, max = t->limit ? t->limit : COB_DYNL_MAX;
+    int snat = sd->cat == COB_NATIONAL || sd->usage == COB_U_NATIONAL;
+    unsigned n = snat ? sd->size / 2 : sd->cat == COB_NUM ? sd->digits : sd->size;   /* the sending operand's characters */
+    if (t->nat && !snat && sd->cat != COB_NUM && sd->cat != COB_NUM_ED) {
+        /* alphanumeric text to a national item: its UTF-8 characters (a byte
+         * that begins none counts as one, the U+FFFD it becomes) */
+        const unsigned char *p = src; n = 0;
+        for (unsigned k = 0; k < sd->size; k++) if ((p[k] & 0xC0) != 0x80) n++;
+    }
+    if (n > max) n = max;
+    cob_dynl_data(d, t);
+    if (!dynl_resize(d, t, n)) cob_fatal("EC-STORAGE-NOT-AVAIL: no storage for a dynamic-length item");
+    d->cap = n;
+    if (!n) return;
+    cob_desc dd; memset(&dd, 0, sizeof dd);
+    dd.cat = t->nat ? COB_NATIONAL : COB_ALNUM; dd.usage = COB_U_DISPLAY; dd.size = n * w;
+    cob_move(src, sd, d->elems, &dd);
+}
+
 void *cob_allocate(int n)
 {
     if (n <= 0) return NULL;                    /* GR 2: NULL, no exception */

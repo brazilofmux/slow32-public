@@ -36,6 +36,7 @@ typedef struct Ref_ {
     int odo_bits;                   /* ... the table a bit array: odo_base and odo_elem in bits, odo_bits the element's (cob_odo_length_bits) */
     int lw_lenx, lw_startx;         /* lower.h: a computed length's, a computed start's node + 1 when an island takes it, else 0 */
     int recv;                       /* a receiving operand (set where the statements name one): an element of a dynamic-capacity table past its capacity is made, not refused (2023 8.5.1.9.3) */
+    int rm_dynl;                    /* a dynamic-length item's characters: the address is the slot's content, the length (when none is written) the slot's (2023 8.5.1.10.4) */
 } Ref;
 static void emit_refmod_check(const Ref *r, long len, int slot);
 /* the stand-in subscript symbol of an arithmetic-expression subscript
@@ -621,7 +622,7 @@ static void parse_ref_1(Ref *r)
         if (cur()->kind != T_RP) die_at(cur()->line, "expected ')' after the reference modification");
         advance();
         long chars = r->rm_bit ? r->sym->bits : r->rm_nat ? r->sym->size / 2 : r->sym->size;
-        if (!r->sym->any_len) {                     /* its length is the argument's, known at run time */
+        if (!r->sym->any_len && !r->sym->dynl) {    /* its length is the argument's, or its content's, known at run time */
             if (r->rm_start && r->rm_start > chars) die_at(r->line, "reference modification starts past the end of '%s'", r->sym->name);
             if (r->rm_start && r->rm_len && r->rm_start - 1 + r->rm_len > chars) die_at(r->line, "reference modification runs past the end of '%s'", r->sym->name);
             if (r->rm_start && !r->rm_len && !r->rm_lx && !r->rm_zero) r->rm_len = chars - r->rm_start + 1;
@@ -629,6 +630,13 @@ static void parse_ref_1(Ref *r)
     }
     if (r->sym->split_key && strcmp(g_cur_stmt, "READ") && strcmp(g_cur_stmt, "START"))
         die_at(r->line, "'%s' is a record-key-name (a split key): READ and START name it, and no other statement (2002 14.8.29, 14.8.37; Micro Focus SELECT rule 22)", r->sym->name);
+    if (r->sym->dynl) {
+        /* a dynamic-length item: its characters, to its current length, or
+         * the part written -- either way reached through the slot */
+        if (!r->rm) { r->rm = 1; r->rm_start = 1; r->rm_len = 0; r->rm_lx = NULL; r->rm_nat = r->sym->pi.category == PIC_NATIONAL; }
+        r->rm_dynl = 1;
+        if (!r->rm_len && !r->rm_lx) r->rm_zero = 1;   /* the length computed from the slot may be zero: the zero-length forms of the runtime's checks */
+    }
     if (r->sym->any_len && !r->rm) {
         /* the whole ANY LENGTH item: (1:), to the end its descriptor gives
          * at run time, so every statement takes its length as it takes a

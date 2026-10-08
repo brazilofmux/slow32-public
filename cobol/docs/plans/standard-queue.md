@@ -524,6 +524,14 @@ dropped (conformance/resume.md; test 2002/resume; 5 bad tests).
 - Today: "the DYNAMIC LENGTH clause is COBOL 2014, beyond -std=2002".
 - 2026-10-07: interesting, but large (it touches every move and compare path); no ruling yet, stays
   queued behind the smaller items.
+- **DONE 2026-10-08** (docs/conformance/data-division.md, 13.18.19; set.md, format 16): the clause with
+  its structure-name and LIMIT, SPECIAL-NAMES DYNAMIC LENGTH STRUCTURE, the slot-and-heap representation
+  shared with item 44, every reference a whole-item reference modification of the current length (the
+  ANY LENGTH mechanism, so sending, comparing, parts and FUNCTION LENGTH needed no code), MOVE and SET
+  SIZE OF setting the length, VALUE, INITIALIZE, OCCURS, BY REFERENCE, CANCEL. It did not touch every
+  move and compare path after all: the length rides in the reference. Left as gaps, each refused by
+  name: STRING INTO, UNSTRING INTO, ACCEPT into and INSPECT REPLACING of such an item; a variable-length
+  group moved whole; the item in the FILE SECTION; the PREFIXED / DELIMITED layout in storage.
 
 **44. Dynamic-capacity tables.** A.4.4; 13.18.38 format 4, SET format 14,
 EC-BOUND-OVERFLOW/-SET/-TABLE-LIMIT, EC-FLOW-SEARCH; Ed. 2014; L.

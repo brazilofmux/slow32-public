@@ -49,7 +49,11 @@ static void emit_refmod_check(const Ref *r, long len, int slot)
     emit("\tadd r3, r1, r0");
     if (len == -2) emit("\tldw r4, sp+%d", SLOT(slot));
     else emit_li("r4", len == -3 ? -1 : len);    /* -3: computed, and checked with the length */
-    if (r->sym->any_len) {
+    if (r->rm_dynl) {
+        emit_call("cob_dynl_last_len"); emit("\tadd r5, r1, r0");   /* the current length, as cob_dynl_data found it */
+        emit("\tadd r3, r12, r0");
+        if (len == -2) emit("\tldw r4, sp+%d", SLOT(slot)); else emit_li("r4", len == -3 ? -1 : len);
+    } else if (r->sym->any_len) {
         /* the size the argument gave it, in its descriptor */
         emit_desc_addr("r5", sym_desc(r->sym)); emit("\tldw r5, r5+8");
         if (r->rm_nat) emit("\tsrai r5, r5, 1");
@@ -64,6 +68,19 @@ static void emit_refmod_check(const Ref *r, long len, int slot)
 
 static void emit_rm_start_len(const Ref *r, int slot)
 {
+    if (r->rm_dynl && !r->rm_len && !r->rm_lx) {
+        /* to the end of a dynamic-length item: its current length (the slot's
+         * second word) less the start before it */
+        Ref q = *r; q.rm = 0; q.rm_dynl = 0; q.rm_start = 0; q.rm_sx = q.rm_lx = NULL; q.user_rm = 0;
+        emit_ref_addr(&q, "r3");
+        emit("\tldw r3, r3+4");
+        if (r->rm_start) emit_li("r4", r->rm_start);
+        else { emit("\tadd r12, r3, r0"); emit_expr_pos(r->rm_sx); emit("\tadd r4, r1, r0"); emit("\tadd r3, r12, r0"); }
+        emit_call("cob_dynl_rem");                  /* the characters from the start to the end, none below zero */
+        emit("\tstw sp+%d, r1", SLOT(slot));
+        if (r->rm_start) emit_li("r1", r->rm_start); else emit_expr_pos(r->rm_sx);
+        return;
+    }
     if (r->rm_odo) {
         /* the group's current length: base + DEPENDING ON x element */
         Opnd po; memset(&po, 0, sizeof po); po.kind = O_REF; po.ref.sym = r->odo_dep; po.ref.line = r->line;
