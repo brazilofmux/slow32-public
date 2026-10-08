@@ -4813,6 +4813,21 @@ static __attribute__((noinline)) void cs_str_grow(int moved, int w)
     }
     cs.dst = (char *)cs.dyn->elems;
 }
+/* a source DELIMITED BY SIZE into a plain receiver -- what a STRING of
+ * literals and items is, source after source: the bytes that fit, the
+ * pointer moved, overflow when some did not.  cob_str_src (below) with
+ * its delimiter scan and dynamic-length growth was 73 instructions a
+ * source and kstring has four a statement (performance.md 2026-10-08) */
+__attribute__((noinline)) void cob_str_src(const char *s, int n, const char *delim, int dn);   /* (noinline: inlined here it gave this entry its frame) */
+void cob_str_src_size(const char *s, int n)
+{
+    if (cs.overflow || cs.dyn || cs.w != 1) { cob_str_src(s, n, NULL, 0); return; }
+    int room = cs.pos >= 1 && cs.pos - 1 <= cs.dlen ? cs.dlen - (cs.pos - 1) : 0;
+    int moved = n < room ? n : room;
+    if (moved > 0) memcpy(cs.dst + cs.pos - 1, s, (size_t)moved);
+    cs.pos += moved;
+    if (n > room) cs.overflow = 1;
+}
 void cob_str_src(const char *s, int n, const char *delim, int dn)
 {
     if (cs.overflow) return;

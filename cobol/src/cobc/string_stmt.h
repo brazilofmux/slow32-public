@@ -135,6 +135,7 @@ static void parse_string_1(void)
             a[1] = arg_len(&srcs[i]);
         }
         Opnd *d = &delims[i];
+        if (d->kind == O_ALL && !nat && !dyn_dst) { emit_args(a, 2); emit_call("cob_str_src_size"); continue; }   /* DELIMITED BY SIZE: the short entry */
         if (d->kind == O_ALL) { a[2] = arg_imm(0); a[3] = arg_imm(0); }
         else if (d->kind == O_FIG) fig_char_args(d, nat, &a[2], &a[3]);
         else { Arg x; opnd_args(d, &a[2], &x, 0, 0); a[3] = arg_len(d); }

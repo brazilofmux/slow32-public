@@ -1586,7 +1586,13 @@ statement across four calls.  Four changes:
     (GnuCOBOL 3.2: 140)
 
 The kernel differential covers the two sweeps (40 random runs each,
-hooks called, declined 0).  Left in kstring: `cob_str_src` 73 a source
-(four a STRING), the UNSTRING entries (92 and 191), the program's own
-code 18%.  The STRING statement in line in the islands is the next
-step, if kstring is to pass GnuCOBOL.
+hooks called, declined 0).  Then `cob_str_src_size`: a STRING source
+DELIMITED BY SIZE into a plain receiver, which the compiler emits for
+that case (string_stmt.h), 73 -> 55 instructions a source -- and no
+leaner from here: the LLVM backend splits the runtime's `cs` state
+into separate globals, three instructions a field, and saves seven
+registers around a `memcpy`.  kstring 2,561 -> 1,910 M instructions,
+~235 -> 162 ms; GnuCOBOL 3.2 is 140.  Left: the UNSTRING entry (121
+a receiver, the same frame cost), the program's own code 20%, and the
+backend's two items -- shrink-wrapping and a struct addressed by one
+base -- which would take a fifth off every libcob entry at once.
