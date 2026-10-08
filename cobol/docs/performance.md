@@ -1278,3 +1278,44 @@ in and its source line, so a runtime routine's callers are told apart.
 Islands carry a global alias under `-fprofile-lines` (`__isl_N`), so
 `prof.py` tells them apart; and `memchr` is counted among the DBT's
 native routines, as it has been since 282eb903.
+
+## 2026-10-08: the SORT's run as a native hook
+
+The report programs' profile pointed at one COBOL-shaped routine: the
+merge sort over a run of released records, `xs_merge_sort`, 20% of
+gl034's translated instructions, with a `memcmp` crossing to the host
+for every comparison -- 55,826 records, some 900,000 comparisons.  The
+user's framing: hot spots that are candidates for a DBT hook running
+specialized native code, "making the processor more COBOL friendly".
+
+`cob_sort_run(buf, esize, klen, n, order, tmp)` is the fourth hook
+(docs/dbt-hooks.md step 4): the n entries of a run, each a normalized
+key of klen bytes before its record, and the stable ascending order of
+their indices.  The kernel in `libcob/kern.h` is a bottom-up merge with
+an inline byte compare; compiled into libcob it is the guest's
+reference (`cob_sort_run_impl`, which xsort.h now calls in place of its
+own recursive merge -- the same order, as every stable sort gives), and
+compiled into slow32-dbt it is the hook: the DBT resolves the three
+guest ranges once and sorts the whole run in one crossing.  A run too
+large for the guest's memory, misaligned index arrays, a key longer
+than the entry: declined, and the guest sorts.  The key build stays in
+the guest -- 230 instructions a record is under the cost of a crossing
+that copies the key descriptors out.
+
+Measured, the month-end batch timed per run, medians of three batches,
+before and after rebuilding majesty's programs against the new libcob,
+the same DBT:
+
+    gl038    50.8 ms  ->  36.2      -29%
+    gl036    34.5     ->  26.1      -24%
+    gl034    46.5     ->  38.7      -17%
+    gl035    38.0     ->  34.6       -9%
+    batch   565.5     -> 498.0      -12%     (616 this morning, before the lock-layer fix)
+
+Checks: `tests/kern-differential.sh` drives the routine over 40 random
+runs with many equal keys under slow32-fast and slow32-dbt (the hook
+called 40 times, declined 0), and a mutant of the host side (the key
+one byte short) is caught -- the kernel being one source on both sides,
+the differential tests the crossing, not the algorithm, which the
+gates' SORT tests, CCVS's SM module and majesty's byte-identical reports
+test.  Then the three engine differentials and every COBOL gate.

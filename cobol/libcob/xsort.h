@@ -88,10 +88,17 @@ static void xs_init(xsort *xs, unsigned esize, unsigned klen, size_t budget, uns
     xs_alloc_run(xs);
 }
 
+/* XS_SORT_RUN(buf, esize, klen, n, order, tmp), when the including file
+ * defines it, sorts the run (libcob: cob_sort_run, kern.h's kernel, a
+ * native routine under the DBT); otherwise the merge above does */
 static void xs_sort_run(xsort *xs)
 {
+#ifdef XS_SORT_RUN
+    XS_SORT_RUN(xs->buf, xs->esize, xs->klen, xs->n, xs->order, xs->tmp);
+#else
     for (unsigned i = 0; i < xs->n; i++) xs->order[i] = i;
     xs_merge_sort(xs, xs->order, xs->tmp, 0, xs->n);
+#endif
 }
 
 static char *xs_run_name(xsort *xs)

@@ -28,6 +28,9 @@
  *       as cob_put_num_x, locale in r9 (K_LOC_*)
  *   long long cob_get_edited(const void *p, const cob_desc *d, int locale)
  *       r3 = p, r4 = d, r5 = locale; the result in r1:r2
+ *   void cob_sort_run(const void *buf, unsigned esize, unsigned klen, unsigned n, unsigned *order, unsigned *tmp)
+ *       r3 = buf, r4 = esize, r5 = klen, r6 = n, r7 = order, r8 = tmp; no result
+ *       (the SORT's run: the stable order of n entries by their key bytes)
  * A hook takes a descriptor when cob_k_get_ok / cob_k_put_ok / cob_k_ed_ok
  * say so, and declines everything else to the _impl, which is the
  * reference. */
@@ -667,6 +670,39 @@ KFN long long cob_k_get_edited(const unsigned char *p, const cob_kdesc *d, const
     int n = cob_deedit(pic, p, digs, &neg);
     for (int i = 0; i < n; i++) v = v * 10 + (digs[i] - '0');
     return neg ? k_neg((unsigned long long)v) : v;
+}
+
+/* ---- the SORT's run (xsort.h; docs/dbt-hooks.md step 4) -------------- */
+
+/* The n entries at buf, esize bytes each, begin with a klen-byte key whose
+ * unsigned byte order is the sort order (libcob's normalized key, the
+ * arrival number its last four bytes, so no two keys are equal).  order[]
+ * receives the entries' indices in ascending key order; tmp[] is n
+ * unsigned of scratch.  A bottom-up merge, stable (the left run's entry
+ * goes first on a tie), so its order is the one every stable sort gives.
+ * Under the DBT the whole sort is one crossing; the guest's own copy is
+ * the reference.  No size_t: the two sides' differ. */
+KFN int k_keycmp(const unsigned char *a, const unsigned char *b, unsigned n)
+{
+    for (unsigned i = 0; i < n; i++) if (a[i] != b[i]) return a[i] < b[i] ? -1 : 1;
+    return 0;
+}
+KFN void cob_k_sort_run(const unsigned char *buf, unsigned esize, unsigned klen, unsigned n, unsigned *order, unsigned *tmp)
+{
+    for (unsigned i = 0; i < n; i++) order[i] = i;
+    unsigned *src = order, *dst = tmp;
+    for (unsigned w = 1; w < n; w *= 2) {
+        for (unsigned lo = 0; lo < n; lo += 2 * w) {
+            unsigned mid = lo + w < n ? lo + w : n, hi = lo + 2 * w < n ? lo + 2 * w : n;
+            unsigned i = lo, j = mid, k = lo;
+            while (i < mid && j < hi)
+                dst[k++] = k_keycmp(buf + (unsigned long long)src[i] * esize, buf + (unsigned long long)src[j] * esize, klen) <= 0 ? src[i++] : src[j++];
+            while (i < mid) dst[k++] = src[i++];
+            while (j < hi) dst[k++] = src[j++];
+        }
+        unsigned *t = src; src = dst; dst = t;
+    }
+    if (src != order) memcpy(order, src, (unsigned long long)n * sizeof *order);
 }
 
 #endif

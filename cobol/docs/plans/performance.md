@@ -116,6 +116,10 @@ into the DBT; a content tag; a thunk that declines):
 - a numeric compare of two items;
 - later, as the profile says: the wide stack's kernels, the string
   statements' (their state made the caller's, so a kernel can be pure).
+- Done first, 2026-10-08, because the batch's profile said so: the
+  SORT's run (`cob_sort_run`), the whole merge in one crossing where
+  every comparison had been one; the reports -9 to -29%
+  (`docs/performance.md`).
 
 Each needs the kernel differential (`tests/kern-differential.sh`) and
 a run on both hosts.  A kernel changes the tag: libcob and the DBT are

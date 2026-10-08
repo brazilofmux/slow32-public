@@ -54,6 +54,8 @@ int cob_wput_x(void *vp, const cob_desc *d, const cob_wnum *win, int opts);
 #include <term.h>
 #include <time.h>
 #include <sys/stat.h>
+void cob_sort_run(const unsigned char *buf, unsigned esize, unsigned klen, unsigned n, unsigned *order, unsigned *tmp);   /* the thunk (build.sh) */
+#define XS_SORT_RUN cob_sort_run
 #include "xsort.h"
 #include "btree.h"
 #include "../../common/s32utf.h"   /* the one Unicode model: coding, width, clusters (cobol ISSUES-94) */
@@ -533,6 +535,13 @@ static int eff_digits(const cob_desc *d)
  * error (nothing stored), else 0.
  * cob_put_num_x is a hookable thunk (build.sh, docs/dbt-hooks.md) in front
  * of this: the kernel's descriptors go to kern.h, the rest are here */
+/* the SORT's run sorted: kern.h's kernel, as the guest's reference for
+ * the hook of the same name (xsort.h calls cob_sort_run) */
+void cob_sort_run_impl(const unsigned char *buf, unsigned esize, unsigned klen, unsigned n, unsigned *order, unsigned *tmp)
+{
+    cob_k_sort_run(buf, esize, klen, n, order, tmp);
+}
+
 int cob_put_num_x_impl(void *vp, const cob_desc *d, long long v, int vscale, int opts)
 {
     if (is_float(d)) { f_store(vp, d, (double)v / pow10d(vscale)); return 0; }

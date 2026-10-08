@@ -14,6 +14,7 @@
 
 long long cob_get_num(const void *p, const cob_desc *d);
 int cob_put_num_x(void *p, const cob_desc *d, long long v, int vscale, int opts);
+void cob_sort_run(const unsigned char *buf, unsigned esize, unsigned klen, unsigned n, unsigned *order, unsigned *tmp);
 int cob_set_decimal_point(int comma);
 int cob_set_currency(int c);
 
@@ -164,6 +165,21 @@ int main(void)
         printf("\n");
 #endif
         for (int i = 0; i < (int)sizeof buf; i++) mix(buf[i]);
+    }
+    /* the SORT's run (cob_sort_run): random entries with many equal keys,
+     * the order they sort into -- the hook's pointer resolution and
+     * writes against the guest's own copy of the kernel */
+    for (int it = 0; it < 40; it++) {
+        static unsigned char ebuf[320 * 32]; static unsigned order[320], tmp[320];
+        unsigned n = 1 + rn(300), klen = 1 + rn(12), esize = klen + rn(20);
+        for (unsigned i = 0; i < n * esize; i++) ebuf[i] = (unsigned char)(rn(3) == 0 ? rn(256) : rn(4));
+        cob_sort_run(ebuf, esize, klen, n, order, tmp);
+        for (unsigned i = 0; i < n; i++) mix(order[i]);
+        if (it < 3) {
+            printf("sort n %u klen %u esize %u ->", n, klen, esize);
+            for (unsigned i = 0; i < (n < 8 ? n : 8); i++) printf(" %u", order[i]);
+            printf("\n");
+        }
     }
     printf("kern_diff: %d cases, hash %016llx\n", N, h);
     printf("kern_diff: done\n");

@@ -191,6 +191,24 @@ typedef struct {
     int (*fn)(dbt_cpu_state_t *cpu, uint8_t *mem);
 } hook_def_t;
 
+#if HAVE_COBKERN
+// void cob_sort_run(const void *buf, unsigned esize, unsigned klen, unsigned n, unsigned *order, unsigned *tmp)
+// The SORT's run sorted in one crossing: the entries read, the two index
+// arrays written, all through hk_ptr.  The arrays are the guest's 32-bit
+// little-endian words, which is what the host (x86-64, AArch64) writes.
+static int hk_cob_sort_run(dbt_cpu_state_t *cpu, uint8_t *mem)
+{
+    uint32_t esize = R(4), klen = R(5), n = R(6);
+    if (!n || !esize || klen > esize || (uint64_t)n * esize > cpu->mem_size) return HK_DECLINE;
+    if ((R(7) & 3) || (R(8) & 3)) return HK_DECLINE;
+    const unsigned char *buf = hk_ptr(cpu, mem, R(3), (uint32_t)((uint64_t)n * esize), 0);
+    unsigned *order = hk_ptr(cpu, mem, R(7), n * 4, 1), *tmp = hk_ptr(cpu, mem, R(8), n * 4, 1);
+    if (!buf || !order || !tmp) return HK_DECLINE;
+    cob_k_sort_run(buf, esize, klen, n, order, tmp);
+    return HK_DONE;
+}
+#endif
+
 static const hook_def_t hook_defs[] = {
     { "__udivdi3", HK_TAG_BUILTINS, hk_udivdi3 },
     { "__umoddi3", HK_TAG_BUILTINS, hk_umoddi3 },
@@ -201,6 +219,7 @@ static const hook_def_t hook_defs[] = {
     { "cob_put_num_x", HK_TAG_COBKERN, hk_cob_put_num_x },
     { "cob_get_edited", HK_TAG_COBKERN, hk_cob_get_edited },
     { "cob_put_edited", HK_TAG_COBKERN, hk_cob_put_edited },
+    { "cob_sort_run",   HK_TAG_COBKERN, hk_cob_sort_run },
 #endif
 };
 #define NDEFS ((int)(sizeof hook_defs / sizeof hook_defs[0]))

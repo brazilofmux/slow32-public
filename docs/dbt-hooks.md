@@ -32,6 +32,18 @@ engine gets.
   cob_cmp's alphanumeric path and INSPECT's phrase table both depend on
   libcob globals, which no hook may read.
 
+- **Step 4** (2026-10-08): the SORT's run.  `cob_sort_run(buf, esize,
+  klen, n, order, tmp)` sorts a run of entries by their normalized key
+  bytes -- `kern.h`'s bottom-up stable merge, compiled into libcob as
+  the reference and into the DBT as the hook, one crossing for the whole
+  sort where the guest merge made one `memcmp` crossing per comparison.
+  The profile of the month-end reports asked for it (gl034: the merge
+  and the key build were 29% of the translated instructions,
+  cobol/docs/performance.md 2026-10-08).  The key build stays in the
+  guest: 230 instructions a record is under the cost of a crossing that
+  copies the key descriptors out.  Majesty's reports: gl038 -29%, gl036
+  -24%, gl034 -17%, the batch -12%.
+
 `cobol/tests/kern-differential.sh` is the hook gate (harness gate 1d).
 
 Running it on the other host found two platform bugs that no gate had
