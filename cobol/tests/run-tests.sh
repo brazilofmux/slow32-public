@@ -14,7 +14,9 @@
 #   -std=cobol85 for portable programs; a program whose first comment names
 #   "default dialect" uses GnuCOBOL's default, because it exercises
 #   implementor usages -std=cobol85 rejects).  GnuCOBOL is no longer
-#   installed on any host: the oracle is the gnucobol:4.0-builder image
+#   installed on any host: the oracle is the gnucobol:$ORACLE_TAG-builder image
+#   (ORACLE_TAG=4.0, trunk, by default; 3.3 for the 3.x branch -- docs/oracles.md
+#   says which revision each is; GCOBOL_IMAGE=gcobol:17 likewise for the second)
 #   (cobc) and gnucobol:4.0-runtime (the built program), under podman or
 #   docker, with the repo bind-mounted at its own path.  A host cobc, if
 #   one exists, is used instead.  No oracle at all is reported, not hidden.
@@ -90,6 +92,11 @@ HAVE_S32_CC=0
 # summary line says so -- an ORACLE=0 run must not be mistakable in a log
 # for a full one, which is the same trap as an oracle that refuses and
 # reports a pass.
+# Which oracle images: gnucobol:$ORACLE_TAG-builder and -runtime (4.0 = the
+# trunk build, 3.3 = the 3.x branch; docs/oracles.md says which revisions),
+# and the gcobol image (gcobol:15 by default; 17 is the one upstream backports to)
+: "${ORACLE_TAG:=4.0}"
+: "${GCOBOL_IMAGE:=gcobol:15}"
 ORACLE_ENGINE=""
 if [ "${ORACLE:-1}" = 0 ]; then
     :
@@ -97,10 +104,10 @@ elif command -v cobc >/dev/null 2>&1; then
     ORACLE_ENGINE=host
 else
     for e in podman docker; do
-        if command -v "$e" >/dev/null 2>&1 && "$e" image inspect gnucobol:4.0-builder >/dev/null 2>&1; then
+        if command -v "$e" >/dev/null 2>&1 && "$e" image inspect "gnucobol:$ORACLE_TAG-builder" >/dev/null 2>&1; then
             ORACLE_ENGINE="$e"
-            ORACLE_RUN_IMAGE=gnucobol:4.0-builder
-            "$e" image inspect gnucobol:4.0-runtime >/dev/null 2>&1 && ORACLE_RUN_IMAGE=gnucobol:4.0-runtime
+            ORACLE_RUN_IMAGE="gnucobol:$ORACLE_TAG-builder"
+            "$e" image inspect "gnucobol:$ORACLE_TAG-runtime" >/dev/null 2>&1 && ORACLE_RUN_IMAGE="gnucobol:$ORACLE_TAG-runtime"
             break
         fi
     done
@@ -110,7 +117,7 @@ fi
 GCOBOL_ENGINE=""
 if [ "${GCOBOL:-1}" != 0 ]; then
     for e in podman docker; do
-        if command -v "$e" >/dev/null 2>&1 && "$e" image inspect gcobol:15 >/dev/null 2>&1; then GCOBOL_ENGINE="$e"; break; fi
+        if command -v "$e" >/dev/null 2>&1 && "$e" image inspect "$GCOBOL_IMAGE" >/dev/null 2>&1; then GCOBOL_ENGINE="$e"; break; fi
     done
 fi
 GC_AGREE=0; GC_DIFF=0; GC_REFUSED=0; GC_SKIP=0
@@ -130,7 +137,7 @@ oracle_cc() {   # oracle_cc out.orc [cobc args...]: compile under GnuCOBOL, cwd 
     out="$1"; shift
     case "$ORACLE_ENGINE" in
         host) (cd "$W" && cobc -x "$@" -o "$out") ;;
-        *)    "$ORACLE_ENGINE" run --rm -v "$ROOT:$ROOT" -w "$W" gnucobol:4.0-builder cobc -x "$@" -o "$out" ;;
+        *)    "$ORACLE_ENGINE" run --rm -v "$ROOT:$ROOT" -w "$W" "gnucobol:$ORACLE_TAG-builder" cobc -x "$@" -o "$out" ;;
     esac
 }
 oracle_run() {  # oracle_run prog.orc [args...]: run the oracle's program in $W/run,
@@ -146,11 +153,11 @@ oracle_run() {  # oracle_run prog.orc [args...]: run the oracle's program in $W/
 # disagreement, not a stalled harness)
 gcobol_cc() {   # gcobol_cc out [gcobol args...]: compile under gcobol, cwd $W
     out="$1"; shift
-    "$GCOBOL_ENGINE" run --rm -v "$ROOT:$ROOT" -w "$W" gcobol:15 gcobol "$@" -o "$out"
+    "$GCOBOL_ENGINE" run --rm -v "$ROOT:$ROOT" -w "$W" "$GCOBOL_IMAGE" gcobol "$@" -o "$out"
 }
 gcobol_run() {  # gcobol_run prog [args...]: in $W/run, stdin from $keys
     local ef=(); for x in ${PROG_ENV[@]+"${PROG_ENV[@]}"}; do ef+=(-e "$x"); done
-    "$GCOBOL_ENGINE" run --rm -i ${ef[@]+"${ef[@]}"} -v "$ROOT:$ROOT" -w "$W/run" gcobol:15 timeout 60 "$@" < "$keys"
+    "$GCOBOL_ENGINE" run --rm -i ${ef[@]+"${ef[@]}"} -v "$ROOT:$ROOT" -w "$W/run" "$GCOBOL_IMAGE" timeout 60 "$@" < "$keys"
 }
 # the second oracle on one test: a note for the report, the counts kept;
 # GCOBOL=strict turns a disagreement or refusal into a failure (returns 1)
@@ -763,16 +770,16 @@ case "$ORACLE_ENGINE" in
     "")   if [ "${ORACLE:-1}" = 0 ]; then
               echo "cobol: NO ORACLE -- switched off by ORACLE=0; .expected files were checked against us alone"
           else
-              echo "cobol: NO ORACLE -- neither a host cobc nor a gnucobol:4.0-builder image; .expected files were checked against us alone"
+              echo "cobol: NO ORACLE -- neither a host cobc nor a gnucobol:$ORACLE_TAG-builder image; .expected files were checked against us alone"
           fi ;;
     host) echo "cobol: oracle is the host cobc" ;;
-    *)    echo "cobol: oracle is gnucobol:4.0-builder / $ORACLE_RUN_IMAGE under $ORACLE_ENGINE" ;;
+    *)    echo "cobol: oracle is gnucobol:$ORACLE_TAG-builder / $ORACLE_RUN_IMAGE under $ORACLE_ENGINE" ;;
 esac
 if [ -n "$GCOBOL_ENGINE" ]; then
-    echo "cobol: second oracle gcobol:15 under $GCOBOL_ENGINE: $GC_AGREE agree, $GC_DIFF differ, $GC_REFUSED refused, $GC_SKIP skipped${GC_DIFF:+}"
+    echo "cobol: second oracle $GCOBOL_IMAGE under $GCOBOL_ENGINE: $GC_AGREE agree, $GC_DIFF differ, $GC_REFUSED refused, $GC_SKIP skipped${GC_DIFF:+}"
     if [ -s "$W/gcobol-differs.txt" ]; then cp "$W/gcobol-differs.txt" "$CDIR/out/gcobol-differs.txt"; echo "cobol: gcobol's disagreements are in out/gcobol-differs.txt"; fi
 elif [ "${GCOBOL:-1}" != 0 ]; then
-    echo "cobol: no gcobol:15 image: the second oracle was not consulted"
+    echo "cobol: no $GCOBOL_IMAGE image: the second oracle was not consulted"
 fi
 if [ "${ORACLE:-1}" = 0 ]; then
     echo "cobol: $PASS passed, $FAIL failed (ORACLE=0: expected output only, GnuCOBOL not consulted)"

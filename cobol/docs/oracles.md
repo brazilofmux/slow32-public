@@ -26,6 +26,26 @@ than passing quietly on `.expected` alone.
 
 ## The GnuCOBOL that made the oracles
 
+Two images, each recording its own provenance in
+`/usr/local/share/gnucobol/SOURCE` (built by ~/builder, 2026-10-08;
+before that day the "4.0" oracle was trunk r5627, the GitMensch CI
+build 4.0-dev.758 of 2025-12-08, which Simon Sobisch rightly asked us
+to say):
+
+- `gnucobol:4.0-builder` / `-runtime`: **GnuCOBOL 4.0-early-dev, trunk
+  r5725 (2026-10-05)**, with one local patch, a NULL guard in
+  `libcob/common.c` before `memcmp(p + 1, "bin"/"lib")`.  The harness's
+  default (`ORACLE_TAG=4.0`).
+- `gnucobol:3.3-builder` / `-runtime`: **GnuCOBOL 3.3-dev, the 3.x branch
+  at r5729 (2026-10-06)**, no patches.  `ORACLE_TAG=3.3 tests/run-tests.sh`
+  runs the whole harness against it.
+
+Both are `cobc` under Alpine (aarch64 here, amd64 on the fleet), configured
+`--with-indexed=db --with-json=cjson`.  The second oracle, gcobol, is
+`gcobol:15` by default and `GCOBOL_IMAGE=gcobol:17` names GCC 17's, the
+line upstream backports COBOL fixes to (Simon's advice, 2026-10-08);
+that image is amd64 and runs natively on kagura.
+
 `cobc (GnuCOBOL) 4.0-early-dev.0`, invoked by majesty as
 
     cobc -free -O3 -m -fimplicit-init -I../copy
@@ -97,7 +117,7 @@ the text's answer and a `.oracle-expected` file beside it carries
 GnuCOBOL's, so the harness still checks both (it reports "oracle
 agrees with its documented divergence").
 
-| test | statement | text | GnuCOBOL 4.0-early-dev |
+| test | statement | text | GnuCOBOL 4.0-early-dev (trunk r5725; "Recheck" below says where 3.3-dev r5729 differs) |
 |---|---|---|---|
 | `fixed/indexed` | `REWRITE` of an absent key, ACCESS DYNAMIC | status **23** (record not found; 21 is the *sequential-access* sequence error) | 21 |
 | `free/vrec` | `WRITE` with `DEPENDING ON` past `RECORD IS VARYING ... TO n` | status **44**, nothing written | clamps to n, status 00 |
@@ -163,6 +183,77 @@ agrees with its documented divergence").
 | `free/mf-scrdims` (ISSUES 124) | ACCEPT ... FROM LINES and FROM COLUMNS with no terminal | the terminal's size, 24 by 80 when there is none (BP-E32) | starts curses, cannot with no terminal, and stops the program before any output |
 | `2002/mf-compx8` (ISSUES 124) | PIC X(8) COMP-X given values past 2^63 by COMPUTE | the field's capacity, 2^64 - 1, big-endian (MF's COMP-X rules) | refuses a numeric literal past 2^63 - 1, and computes 2^63 + 5 as 2^63 - 5 and 2^64 - 1 as 1 |
 | `2002/refmodneg`, `2002/refmodnegp` (found by tests/gen/gen-pos.py; the second has no oracle) | a length, a leftmost position or a subscript whose expression has an intermediate result below zero and an unsigned BINARY operand: `x(2:a - b + c)` with 8, 9 and 2 | the expression's value, 1 (leftmost-position and length are arithmetic expressions, 2023 8.4.3.3.3 syntax rule 4; 8.8.1): a part of one character | the difference computed unsigned: the part runs to the receiver's length, past the item; as a position or a subscript, an invalid address (SIGSEGV). With `b` signed, or in DISPLAY, it agrees |
+
+## Recheck against the current heads (2026-10-08)
+
+Simon Sobisch, sent the table above, asked two things: what our "4.0"
+is, and whether each row still holds against 3.3-dev and current
+trunk, so that no one spends time on a divergence already fixed.  The
+answer to the first is in "The GnuCOBOL that made the oracles": the
+table was made against trunk r5627 (a CI build of 2025-12-08); the
+oracle is now trunk r5725 (2026-10-05) and, beside it, the 3.x branch
+at r5729 (2026-10-06), each image carrying its provenance.  For the
+second, the whole harness ran against each head (`tests/run-tests.sh`,
+then `ORACLE_TAG=3.3 tests/run-tests.sh`), each row's test with the
+flags the row was established with; the harness compares GnuCOBOL's
+output with the row's recorded one, so a row that still holds reports
+"oracle agrees with its documented divergence", one that moved
+reports a difference, and one whose divergence is gone produces the
+standard's output.  The "(no oracle)" rows, which the harness does not
+hand to GnuCOBOL, were compiled and run under each head by hand, and
+the "(not a test)" rows were probed with small programs.
+
+**Trunk r5725: every row reproduces.**  Nothing in the table above is
+fixed on trunk; the column header now says which trunk.
+
+**3.3-dev r5729** is a different compiler in places, and the branch has
+fixes trunk lacks:
+
+| test | 3.3-dev r5729 |
+|---|---|
+| `free/comp5x`, `2002/comp5x8` | **fixed**: `PIC XX COMP-5` holding 258 is `02 01`, and the eight-byte one holds all twenty digits, little-endian -- the standard's (Micro Focus's) reading.  Trunk still writes them big-endian and loses the twentieth digit. |
+| `2002/refmodneg` | **fixed**: the expression's value, 1, as the text has it.  Trunk still computes the difference unsigned (and `2002/refmodnegp`, which was refused, now compiles on trunk and dies with SIGSEGV; on 3.3 it compiles and prints the text's answer). |
+| `free/altkey` (and `free/idxbig`, not in the table) | **changed**: status **00** on every READ that delivers a duplicate alternate key where trunk gives 02 only after a READ NEXT; neither is the text's 02 throughout. |
+| `free/notrunc` | **changed**: 4294967294 in all three forms (in place, GIVING, COMPUTE) where trunk gave it in place only; still not the magnitude. |
+| `2002/userfn`, `2002/userfnnest`, `2002/userfnonce` | **changed**: an expression as a user function's argument is still passed wrongly, with other values (+18000 and +27400 for `twice(a + 4)` and `twice(-7)`; +22000 for the nested call; +03004 for the side-effect case) where trunk gave 0, 1400, 0, 4. |
+| `free/compn`, `free/compxmf` | **changed in detail**: `COMP-X` still truncated to the picture and the negative MOVE still the magnitude, but `ADD 50` to 90 shows 00 (trunk 40), the displays drop the leading zeros, and the nine-digit `COMP-X` shows `4660` for 04660. |
+| `free/rwsign` | **changed**: a SUM entry without COLUMN is presented twice, at column 1 and at its position, where trunk presents it at column 1. |
+| `2002/fnvarying` | **refused**: `STEP` is a reserved word in 3.3 (the test's user function is named `step`); the row's behaviour could not be rechecked there. |
+| `free/nestuse` (no oracle) | **fixed** on 3.3, the text's output exactly; trunk no longer hangs after the GLOBAL USE procedure but drops the line the procedure's caller should print after it. |
+| `fixed/rwcode` (no oracle) | compiles on both heads now; the print file is still empty for a report with a CODE clause. |
+| `free/progscope` (no oracle) | both heads: ON EXCEPTION taken after CALLs that succeeded, a containing program called from inside it although not COMMON, and a SIGSEGV at the end. |
+| `2002/condcomp`, `fixed/utf8cols`, `2002/movecorr`, `2002/concatfig`, `free/numalnum` (no oracle) | still refused on both heads, the same messages. |
+| the four "(not a test)" rows | probed, both heads: the mode-V length still excludes its header; a relative slot still carries an 8-byte native length; a numeric literal CALL argument is still a 4-byte binary (big-endian on trunk, `0042`; little-endian on 3.3, `2400`); `CALL "twice"` of a program named `TWICE` is still not found. |
+| the pictures chart | not rechecked (7,368 generated pictures; `tests/pictures.txt` is the 4.0 run). |
+
+Found by the same run, outside the table -- places where the 3.x
+branch disagrees with us while trunk agrees (so with the 2002/2014
+text as we read it), each worth a look upstream:
+
+- `fixed/report`: `RD ... LAST DETAIL 11` refused, "unsigned integer
+  value expected".
+- `free/casermod`, `free/curdate`, `2002/anylen`, `2002/trim`: an
+  integer intrinsic function (LENGTH, a date part) displayed at nine
+  digits, `000000005` for 5.
+- `free/datefn`: INTEGER-OF-DATE and its kin displayed at nine digits
+  where trunk shows ten.
+- `free/ebcdic`: a CODE-SET EBCDIC file reads back other bytes (142 021
+  010 ... for 200 197 211 ...).
+- `free/printer`: WRITE ADVANCING to a line sequential print file lays
+  the lines out differently (the first three on one line, tabs between).
+- `free/relative`: no status 23 for the REWRITE of an empty slot.
+- `free/seqblock`, `free/seqbyte`: no status 04 for a short record.
+- `2002/wide1`, `2002/wide2`: no 31-digit binary items ("binary field
+  cannot be larger than 18 digits") -- a 2002 feature the branch lacks.
+
+Two upstream build notes from the images' builder, not about the
+language: r5729's `libcob/mlio.c` needs `-Wno-incompatible-pointer-types`
+under GCC 14 or later with libxml2 2.12 or later (`const xmlError *`
+callbacks), and `doc/cobcinfo.sh`'s awk regex is rejected by BusyBox awk.
+
+gcobol was not rechecked: Simon's advice is GCC 17 (no backports before
+it), and that image is amd64, for kagura; `GCOBOL_IMAGE=gcobol:17` names
+it when it runs there.
 
 ## A second witness: Microsoft COBOL 5.0 (2026-09-30)
 
