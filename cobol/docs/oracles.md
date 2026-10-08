@@ -28,9 +28,8 @@ than passing quietly on `.expected` alone.
 
 Two images, each recording its own provenance in
 `/usr/local/share/gnucobol/SOURCE` (built by ~/builder, 2026-10-08;
-before that day the "4.0" oracle was trunk r5627, the GitMensch CI
-build 4.0-dev.758 of 2025-12-08, which Simon Sobisch rightly asked us
-to say):
+before that day the "4.0" oracle was trunk r5627 (last changed
+2025-12-08), which Simon Sobisch rightly asked us to say):
 
 - `gnucobol:4.0-builder` / `-runtime`: **GnuCOBOL 4.0-early-dev, trunk
   r5725 (2026-10-05)**, with one local patch, a NULL guard in
@@ -190,7 +189,7 @@ Simon Sobisch, sent the table above, asked two things: what our "4.0"
 is, and whether each row still holds against 3.3-dev and current
 trunk, so that no one spends time on a divergence already fixed.  The
 answer to the first is in "The GnuCOBOL that made the oracles": the
-table was made against trunk r5627 (a CI build of 2025-12-08); the
+table was made against trunk r5627 (last changed 2025-12-08); the
 oracle is now trunk r5725 (2026-10-05) and, beside it, the 3.x branch
 at r5729 (2026-10-06), each image carrying its provenance.  For the
 second, the whole harness ran against each head (`tests/run-tests.sh`,
