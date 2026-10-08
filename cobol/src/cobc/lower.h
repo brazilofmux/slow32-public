@@ -565,6 +565,7 @@ static int lw_from_hn(int h)
         return lw_node(x->op, l, -1, -1, 0, g_dsc[h], g_dbd[h], neg);
     }
     if (x->op == 'M' || x->op == 'R') {
+        if (!dx_is_lit(x->r)) return -1;             /* an item divisor: the text's checked path (a zero test it has, the island has not) */
         int l = lw_from_hn(x->l);
         if (l < 0) return -1;
         long long d = numlit_int(&g_hn[x->r].o.num);

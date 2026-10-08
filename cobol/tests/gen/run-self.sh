@@ -43,7 +43,9 @@ ${CC:-cc} -std=c99 -O1 -w -o "$W/old/s32-cobc" "$W/old/cobol/src/s32-cobc.c" "$W
         # the entries written out by hand (libcob/build.sh), when that revision has them
         [ -f "$OL/entries.s" ] && cat "$OL/entries.s"
         printf '\t.text\n'
-        for f in cob_get_num cob_put_num_x cob_get_edited cob_put_edited; do
+        # the hookable routines as that revision's build.sh lists them (the four of 2026-09-29 when it has no list)
+        names=$(grep -o 'for f in cob_[a-z_ ]*; do' "$OL/build.sh" 2>/dev/null | head -1 | sed 's/for f in //; s/; do//')
+        for f in ${names:-cob_get_num cob_put_num_x cob_get_edited cob_put_edited}; do
             printf '\t.globl %s\n\t.globl __s32hk_%s_%s\n%s:\n__s32hk_%s_%s:\n\tjal r0, %s_impl\n' \
                 "$f" "$f" "$tag" "$f" "$f" "$tag" "$f"
         done

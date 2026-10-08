@@ -44,6 +44,17 @@ engine gets.
   copies the key descriptors out.  Majesty's reports: gl038 -29%, gl036
   -24%, gl034 -17%, the batch -12%.
 
+- **Step 5** (2026-10-08): INSPECT's byte sweeps, `cob_bytes_xlat` (a
+  256-byte table over the item: CONVERTING) and `cob_bytes_sweep` (the
+  one-byte TALLYING/REPLACING phrases, a table naming the phrase a byte
+  belongs to, counts and replacement bytes per phrase).  kstring's
+  INSPECTs were 348 and 510 guest instructions each; the sweep is one
+  crossing now, and the setup around it one call for the plain forms
+  (cobol/docs/performance.md).  Measured first, for the rule it gives:
+  a crossing is 3 ns (a guest call 2.5), so a hook pays only for work
+  of tens of nanoseconds or more -- a whole sweep, a whole sort, not a
+  fetch.
+
 `cobol/tests/kern-differential.sh` is the hook gate (harness gate 1d).
 
 Running it on the other host found two platform bugs that no gate had

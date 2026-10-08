@@ -315,6 +315,7 @@ static void parse_compute(void)
     int rmode = g_rmode; SizePh ph; parse_size_phrases(&ph, size_err, "end-compute"); g_rmode = rmode;
     g_wide = wide;
     if (flt) g_fstmt = 1;
+    g_hn_wants_chk = 0;
     lw_compute(rs, rd, nr, e, size_err);        /* an island's too (lower.h): its placeholder, then the text */
     if (!g_wide) {                              /* integers in a word */
         g_nhn = 0; int root = hn_tree(e, hx_leaf);
@@ -340,10 +341,12 @@ static void parse_compute(void)
             return;
         }
     }
-    if (g_wide && !g_nohx && !flt && !refs_wide(rs, nr) && !(g_xd_div && round_wide(rs, rd, nr))) {
+    if ((g_wide || g_hn_wants_chk) && !g_nohx && !flt && !refs_wide(rs, nr) && !(g_xd_div && round_wide(rs, rd, nr))) {
         /* wide only because an intermediate could pass 18 digits by the
-         * pictures: in 64 bits with tests, the wide stack's code behind
-         * them (checked arithmetic, arith_reg.h) */
+         * pictures -- or not wide, but a MOD or REM by an item, which only
+         * the checked path takes: in 64 bits with tests, the stack's code
+         * behind them (checked arithmetic, arith_reg.h) */
+        int was_wide = g_wide;
         g_wide = 0;
         g_dx_chk = 1; g_dx_tests = 0;
         g_nhn = 0; int root = hn_tree(e, dx_leaf);
@@ -358,7 +361,7 @@ static void parse_compute(void)
                 g_dx_slow = -1;
                 emit_jump(Ldone);
                 emit_label(Lslow);
-                g_wide = 1;
+                g_wide = was_wide;
                 emit_expr(e);
                 emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);
                 g_wide = 0; g_fstmt = g_qstmt = 0;
@@ -367,7 +370,7 @@ static void parse_compute(void)
             emit_size_phrases(&ph);
             return;
         }
-        g_wide = 1;
+        g_wide = was_wide;
     }
     emit_expr(e);
     emit_store_receivers(rs, rd, nr, 0, 1, 0, size_err, -1, 0);

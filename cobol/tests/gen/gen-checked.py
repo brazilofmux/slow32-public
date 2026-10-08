@@ -103,7 +103,7 @@ def main():
         a, b, c = r.sample(big + small, 3)
         i1, i2 = r.sample(ints, 2)
         res = r.choice(recv)
-        shape = r.randrange(18)
+        shape = r.randrange(20)
         ops = [a, b, c]
         if shape == 0:
             e = "%s * %s" % (a.name, b.name)
@@ -122,6 +122,13 @@ def main():
             ops = [i1]
         elif shape == 7:
             e = "FUNCTION MOD(%s * %s + %s, %s)" % (i1.name, i2.name, lit(), r.choice([7, 1000003, 2147483648]))
+            ops = [i1, i2]
+        elif shape == 18:
+            # MOD by an ITEM (2026-10-08): the checked path with a zero test; a zero divisor is the stack's answer on both sides
+            e = "FUNCTION MOD(%s * %s + %s, %s)" % (i1.name, lit(), r.randint(0, 99999), i2.name)
+            ops = [i1, i2]
+        elif shape == 19:
+            e = "FUNCTION REM(%s * %s + %s, %s)" % (i1.name, i2.name, lit(), i2.name)
             ops = [i1, i2]
         elif shape == 8:
             e = "FUNCTION ABS(%s * %s - %s)" % (a.name, b.name, c.name)

@@ -541,6 +541,28 @@ static void parse_inspect_1(void)
         if (fsubj) { emit_str_arg(&fo); if (g_insp_nat) emit_desc_addr("r5", nat_desc(2)); else emit_li("r5", 0); } \
         else { Arg ba[3] = { arg_ref(&itemo.ref), arg_len(&itemo), itemo.ref.rm ? (g_insp_nat ? arg_desc(nat_desc(2)) : arg_imm(0)) : arg_desc(sym_desc(item.sym)) }; emit_args(ba, 3); } \
         emit_call("cob_inspect_begin"); if (backward) emit_call("cob_inspect_backward"); } while (0)
+    /* the plain forms, one call (performance.md 2026-10-08): an alphanumeric
+     * item or part, no BEFORE/AFTER, not BACKWARD, single-byte characters --
+     * CONVERTING literal TO literal, or one TALLYING phrase FOR CHARACTERS
+     * or FOR ALL of one byte, a literal; the runtime drives the sweep kernel */
+    int plain = !fsubj && !g_insp_nat && !backward && w == 1 && (itemo.ref.rm || !is_numeric_sym(item.sym));
+    if (plain && converting && !crg.hb && !crg.ha && !conv_szchk && from.kind == O_STR && to.kind == O_STR && from.tok->len == to.tok->len && from.tok->len > 0) {
+        Arg a[5], x;
+        a[0] = arg_ref(&itemo.ref); a[1] = arg_len(&itemo);
+        pattern_args(&from, &a[2], &a[3]); pattern_args(&to, &a[4], &x);
+        emit_args(a, 5);
+        emit_call("cob_inspect_convert_plain");
+        return;
+    }
+    if (plain && !converting && !nrp && ntl == 1 && !tl[0].rg.hb && !tl[0].rg.ha &&
+        (tl[0].kind == 0 || (tl[0].kind == 1 && tl[0].pat.kind == O_STR && tl[0].pat.tok->len == 1))) {
+        Arg a[4] = { arg_ref(&itemo.ref), arg_len(&itemo), arg_imm(tl[0].kind), arg_imm(tl[0].kind ? (unsigned char)tl[0].pat.tok->s[0] : 0) };
+        emit_args(a, 4);
+        emit_call("cob_inspect_tally_plain");
+        Ref tallies1[1]; int ph1[1] = { 0 }; tallies1[0] = tl[0].tally;
+        emit_inspect_tallies(tallies1, ph1, 1);
+        return;
+    }
     INSP_BEGIN();
     if (converting) {
         int fl = from.kind == O_FIG ? w : opnd_size(&from);

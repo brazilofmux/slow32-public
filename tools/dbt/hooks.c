@@ -207,6 +207,31 @@ static int hk_cob_sort_run(dbt_cpu_state_t *cpu, uint8_t *mem)
     cob_k_sort_run(buf, esize, klen, n, order, tmp);
     return HK_DONE;
 }
+// void cob_bytes_xlat(unsigned char *p, int n, const unsigned char *tab)
+static int hk_cob_bytes_xlat(dbt_cpu_state_t *cpu, uint8_t *mem)
+{
+    int32_t n = (int32_t)R(4);
+    if (n <= 0) return HK_DECLINE;
+    unsigned char *p = hk_ptr(cpu, mem, R(3), (uint32_t)n, 1);
+    const unsigned char *tab = hk_ptr(cpu, mem, R(5), 256, 0);
+    if (!p || !tab) return HK_DECLINE;
+    cob_k_bytes_xlat(p, n, tab);
+    return HK_DONE;
+}
+// void cob_bytes_sweep(unsigned char *p, int n, const unsigned char *who, const unsigned char *rep, const unsigned char *tally, int *cnt, int np)
+static int hk_cob_bytes_sweep(dbt_cpu_state_t *cpu, uint8_t *mem)
+{
+    int32_t n = (int32_t)R(4), np = (int32_t)R(9);
+    if (n <= 0 || np <= 0 || np > 255 || (R(8) & 3)) return HK_DECLINE;
+    unsigned char *p = hk_ptr(cpu, mem, R(3), (uint32_t)n, 1);
+    const unsigned char *who = hk_ptr(cpu, mem, R(5), 256, 0), *rep = hk_ptr(cpu, mem, R(6), (uint32_t)np, 0), *tally = hk_ptr(cpu, mem, R(7), (uint32_t)np, 0);
+    int *cnt = hk_ptr(cpu, mem, R(8), (uint32_t)np * 4, 1);
+    if (!p || !who || !rep || !tally || !cnt) return HK_DECLINE;
+    // who[] must name phrases below np, else the kernel would read past rep/tally/cnt
+    for (int b = 0; b < 256; b++) if (who[b] != 255 && who[b] >= np) return HK_DECLINE;
+    cob_k_bytes_sweep(p, n, who, rep, tally, cnt, np);
+    return HK_DONE;
+}
 #endif
 
 static const hook_def_t hook_defs[] = {
@@ -220,6 +245,8 @@ static const hook_def_t hook_defs[] = {
     { "cob_get_edited", HK_TAG_COBKERN, hk_cob_get_edited },
     { "cob_put_edited", HK_TAG_COBKERN, hk_cob_put_edited },
     { "cob_sort_run",   HK_TAG_COBKERN, hk_cob_sort_run },
+    { "cob_bytes_xlat", HK_TAG_COBKERN, hk_cob_bytes_xlat },
+    { "cob_bytes_sweep", HK_TAG_COBKERN, hk_cob_bytes_sweep },
 #endif
 };
 #define NDEFS ((int)(sizeof hook_defs / sizeof hook_defs[0]))

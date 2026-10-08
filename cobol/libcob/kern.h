@@ -31,6 +31,11 @@
  *   void cob_sort_run(const void *buf, unsigned esize, unsigned klen, unsigned n, unsigned *order, unsigned *tmp)
  *       r3 = buf, r4 = esize, r5 = klen, r6 = n, r7 = order, r8 = tmp; no result
  *       (the SORT's run: the stable order of n entries by their key bytes)
+ *   void cob_bytes_xlat(unsigned char *p, int n, const unsigned char *tab)
+ *       r3 = p, r4 = n, r5 = tab (256 bytes): p[i] = tab[p[i]] -- INSPECT CONVERTING
+ *   void cob_bytes_sweep(unsigned char *p, int n, const unsigned char *who, const unsigned char *rep, const unsigned char *tally, int *cnt, int np)
+ *       r3 = p, r4 = n, r5 = who (256: the phrase a byte belongs to, 255 none), r6 = rep[np], r7 = tally[np], r8 = cnt[np], r9 = np:
+ *       INSPECT's one-byte TALLYING / REPLACING phrases over the whole item, one sweep
  * A hook takes a descriptor when cob_k_get_ok / cob_k_put_ok / cob_k_ed_ok
  * say so, and declines everything else to the _impl, which is the
  * reference. */
@@ -703,6 +708,28 @@ KFN void cob_k_sort_run(const unsigned char *buf, unsigned esize, unsigned klen,
         unsigned *t = src; src = dst; dst = t;
     }
     if (src != order) memcpy(order, src, (unsigned long long)n * sizeof *order);
+}
+
+/* ---- INSPECT's byte sweeps (libcob.c cob_inspect_run, cob_inspect_convert;
+ * docs/dbt-hooks.md step 5) -------------------------------------------- */
+
+/* CONVERTING over single-byte characters: every byte through the table */
+KFN void cob_k_bytes_xlat(unsigned char *p, int n, const unsigned char *tab)
+{
+    for (int i = 0; i < n; i++) p[i] = tab[p[i]];
+}
+/* TALLYING / REPLACING phrases that are each CHARACTERS or ALL of one byte
+ * over the whole item: who[b] is the phrase byte b belongs to (255: none),
+ * a tallying phrase counts it in cnt[k], a replacing one writes rep[k] */
+KFN void cob_k_bytes_sweep(unsigned char *p, int n, const unsigned char *who, const unsigned char *rep, const unsigned char *tally, int *cnt, int np)
+{
+    (void)np;
+    for (int i = 0; i < n; i++) {
+        int k = who[p[i]];
+        if (k == 255) continue;
+        if (tally[k]) cnt[k]++;
+        else p[i] = rep[k];
+    }
 }
 
 #endif

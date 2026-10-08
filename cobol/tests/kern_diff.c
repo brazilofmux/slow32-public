@@ -15,6 +15,8 @@
 long long cob_get_num(const void *p, const cob_desc *d);
 int cob_put_num_x(void *p, const cob_desc *d, long long v, int vscale, int opts);
 void cob_sort_run(const unsigned char *buf, unsigned esize, unsigned klen, unsigned n, unsigned *order, unsigned *tmp);
+void cob_bytes_xlat(unsigned char *p, int n, const unsigned char *tab);
+void cob_bytes_sweep(unsigned char *p, int n, const unsigned char *who, const unsigned char *rep, const unsigned char *tally, int *cnt, int np);
 int cob_set_decimal_point(int comma);
 int cob_set_currency(int c);
 
@@ -180,6 +182,20 @@ int main(void)
             for (unsigned i = 0; i < (n < 8 ? n : 8); i++) printf(" %u", order[i]);
             printf("\n");
         }
+    }
+    /* INSPECT's byte sweeps: random text, a random table, random phrases */
+    for (int it = 0; it < 40; it++) {
+        static unsigned char text[300], tab[256], who[256], rep[8], tally[8]; static int cnt[8];
+        int n = 1 + (int)rn(300), np = 1 + (int)rn(8);
+        for (int i = 0; i < n; i++) text[i] = (unsigned char)(rn(2) ? 'a' + rn(26) : rn(256));
+        for (int c = 0; c < 256; c++) { tab[c] = (unsigned char)(rn(4) ? c : rn(256)); who[c] = (unsigned char)(rn(3) ? 255 : rn((unsigned)np)); }
+        for (int k = 0; k < np; k++) { rep[k] = (unsigned char)rn(256); tally[k] = (unsigned char)rn(2); cnt[k] = (int)rn(1000); }
+        cob_bytes_xlat(text, n, tab);
+        for (int i = 0; i < n; i++) mix(text[i]);
+        cob_bytes_sweep(text, n, who, rep, tally, cnt, np);
+        for (int i = 0; i < n; i++) mix(text[i]);
+        for (int k = 0; k < np; k++) mix((unsigned long long)cnt[k]);
+        if (it < 2) { printf("sweep n %d np %d ->", n, np); for (int k = 0; k < np; k++) printf(" %d", cnt[k]); printf(" [%.8s]\n", text); }
     }
     printf("kern_diff: %d cases, hash %016llx\n", N, h);
     printf("kern_diff: done\n");

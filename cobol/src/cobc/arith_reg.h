@@ -31,6 +31,7 @@
  * statement (emit_expr makes the call, ucall_make) */
 static int opnd_scanned(const Opnd *o) { return o->uc || (o->kind == O_REF && g_sym[o->ref.sym->record].ftemp_scan); }
 typedef struct { char op; int l, r; Opnd o; } HNode;
+static int dx_is_lit(int n);
 static int hn_depth(int n, int per);   /* op: 0 leaf, + - * /, 'n' negate */
 #define MAXHN 64
 static HNode g_hn[MAXHN]; static int g_nhn;
@@ -55,6 +56,7 @@ static int hn_depth(int n, int per)
     int l = hn_depth(h->l, per);
     if (h->op == 'n' || h->op == 'I' || h->op == 'T' || h->op == 'A') return l;
     int r = hn_depth(h->r, per) + per;
+    if ((h->op == 'M' || h->op == 'R') && !dx_is_lit(h->r)) r += per;   /* the divisor kept beside the dividend */
     return l > r ? l : r;
 }
 /* FUNCTION MOD / REM / INTEGER / INTEGER-PART / ABS as a node of a
@@ -67,6 +69,7 @@ static int hn_arg(Opnd *a, int (*leaf)(const Opnd *))
     return a->kind == O_EXPR ? hn_tree(a->ex, leaf) : leaf(a);
 }
 static int g_dx_chk;                    /* the checked 64-bit analysis is under way (below) */
+static int g_hn_wants_chk;              /* a tree was refused only for want of it: MOD or REM by an item (expr.h then tries the checked path) */
 static int hn_fn(const Opnd *o, int (*leaf)(const Opnd *))
 {
     if (o->kind == O_FUNC && o->fkind == FK_ALNUM && o->fnid == -5 && g_dx_chk) {
@@ -85,7 +88,18 @@ static int hn_fn(const Opnd *o, int (*leaf)(const Opnd *))
     if (o->kind != O_FUNC || o->fkind != FK_NUMS) return -2;
     switch (o->fnid) {
     case COB_FN_MOD: case COB_FN_REM: {
-        if (o->nfargs != 2 || o->fargs[1]->kind != O_NUM || !numlit_is_int(&o->fargs[1]->num)) return -2;
+        if (o->nfargs != 2) return -2;
+        if (o->fargs[1]->kind != O_NUM) {
+            /* an item divisor: the checked path alone takes it (dx_check asks
+             * for an integer and counts a test: zero goes to the stack's code,
+             * which says what MOD by zero is).  kidx's MOD(i * 7919, n) was
+             * 1,500 instructions on the wide stack (performance.md 2026-10-08) */
+            if (!g_dx_chk) { g_hn_wants_chk = 1; return -2; }
+            int r = hn_arg(o->fargs[1], leaf);
+            if (r < 0 || g_hn[r].op) return -2;
+            return hn_new(o->fnid == COB_FN_MOD ? 'M' : 'R', hn_arg(o->fargs[0], leaf), r, NULL);
+        }
+        if (!numlit_is_int(&o->fargs[1]->num)) return -2;
         long long d = numlit_int(&o->fargs[1]->num);
         if (d > -2 && d < 2) return -2;
         return hn_new(o->fnid == COB_FN_MOD ? 'M' : 'R', hn_arg(o->fargs[0], leaf), hn_arg(o->fargs[1], leaf), NULL);
@@ -173,7 +187,9 @@ static long double hx_bound(int n, int *wide, int *inner, int *neg, int top)
     else if (h->op == 'I' || h->op == 'T') b = hx_bound(h->l, wide, inner, neg, 0);   /* an integer's own value */
     else if (h->op == 'A') { int ng = 0; b = hx_bound(h->l, wide, inner, &ng, 0); }
     else if (h->op == 'M' || h->op == 'R') {
-        int ng = 0, w = 0; long long d = numlit_int(&g_hn[h->r].o.num);
+        int ng = 0, w = 0; long long d;
+        if (!dx_is_lit(h->r)) die_at(cur()->line, "internal: a MOD by an item in the word path");
+        d = numlit_int(&g_hn[h->r].o.num);
         hx_bound(h->l, &w, inner, h->op == 'R' ? neg : &ng, 0);
         /* a dividend past a word: the word path may take it only checked
          * (mode 2), not wrapped -- (a mod b) mod 2^32 is not (a mod 2^32)
@@ -524,8 +540,14 @@ static int dx_check(int n, int top)
         g_dsc[n] = 0; g_dbd[n] = b / dx_p10(g_dsc[h->l]) + 1;
         return 1;
     }
-    if (h->op == 'M' || h->op == 'R') {                 /* integers only; the divisor a literal */
+    if (h->op == 'M' || h->op == 'R') {                 /* integers only; the divisor a literal, or an item with a test */
         if (!dx_check(h->l, 0) || g_dsc[h->l] != 0) return 0;
+        if (!dx_is_lit(h->r)) {
+            if (!g_dx_chk || !dx_check(h->r, 0) || g_dsc[h->r] != 0) return 0;
+            g_dx_tests++;                               /* the divisor is not zero */
+            g_dsc[n] = 0; g_dbd[n] = g_dbd[h->r];       /* |remainder| < |divisor| */
+            return 1;
+        }
         long long d = numlit_int(&g_hn[h->r].o.num);
         g_dsc[n] = 0; g_dbd[n] = (long double)(d < 0 ? -d : d) - 1;
         return 1;
@@ -657,6 +679,36 @@ static void dx_emit(int n)
         emit("\tadd r3, r1, r0"); emit("\tadd r4, r2, r0");
         emit_li64("r5", "r6", p);
         emit_call("__divdi3");
+        return;
+    }
+    if ((h->op == 'M' || h->op == 'R') && !dx_is_lit(h->r)) {
+        /* an item divisor: the dividend kept, the divisor computed and
+         * tested for zero (the stack's code answers that), the remainder by
+         * __moddi3 with the dividend's sign; MOD then takes the divisor's */
+        if (g_dx_slow < 0) die_at(cur()->line, "internal: a checked operation outside a checked statement");
+        if (g_slot_base + 4 > NSLOTS) die_at(cur()->line, "internal: an arithmetic expression nests too deeply for the frame");
+        int t = g_slot_base; g_slot_base += 4;
+        emit("\tstw sp+%d, r1", SLOT(t)); emit("\tstw sp+%d, r2", SLOT(t + 1));
+        dx_emit(h->r);
+        emit("\tor r8, r1, r2");
+        emit("\tbeq r8, r0, .L%d", g_dx_slow);
+        emit("\tstw sp+%d, r1", SLOT(t + 2)); emit("\tstw sp+%d, r2", SLOT(t + 3));
+        emit("\tadd r5, r1, r0"); emit("\tadd r6, r2, r0");
+        emit("\tldw r3, sp+%d", SLOT(t)); emit("\tldw r4, sp+%d", SLOT(t + 1));
+        emit_call("__moddi3");
+        if (h->op == 'M') {                             /* floor: a nonzero remainder of the other sign takes the divisor */
+            int L = new_label();
+            emit("\tor r7, r1, r2");
+            emit("\tbeq r7, r0, .L%d", L);
+            emit("\tldw r6, sp+%d", SLOT(t + 3));
+            emit("\txor r7, r2, r6");
+            emit("\tbge r7, r0, .L%d", L);
+            emit("\tldw r5, sp+%d", SLOT(t + 2));
+            emit("\tadd r7, r1, r5"); emit("\tsltu r8, r7, r1");
+            emit("\tadd r2, r2, r6"); emit("\tadd r2, r2, r8"); emit("\tadd r1, r7, r0");
+            emit_label(L);
+        }
+        g_slot_base -= 4;
         return;
     }
     if (h->op == 'M' || h->op == 'R') {

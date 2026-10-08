@@ -1528,3 +1528,65 @@ design; phis at the joins for the loads (3%); the byte out of a known
 halfword for the DISPLAY `state` (3%); the one-byte WRITE's fast path
 in line in the island and the status test after each READ/WRITE call
 (8 instructions where one would do; 2-3% each).
+
+## 2026-10-08, afternoon: kstring and kidx, the two kernels behind GnuCOBOL
+
+The nine kernels against GnuCOBOL at lunch: faster on seven, behind on
+kstring (1.6x) and kidx (1.17x, and slower than on 2026-10-02).  The
+user: faster on everything, if possible.  Profiles first.
+
+**kidx** (guest-only instructions): a quarter in wide decimal
+arithmetic for `COMPUTE K = FUNCTION MOD(I * 7919, N) + 1` -- the
+register trees took MOD only by a literal, and a function argument goes
+wide -- and the B-tree pinning a page 12.7 times a record, descending
+four times, with 1.4 file requests a record.  The index cache was the
+answer to the second: `S32_INDEX_CACHE` swept, 0.38 s at the default
+(a cap of 256 pages, 1 MB), 0.25 at 1024, 0.24 at 4096; the cap is now
+4096, the heap's sixteenth still the rule.  For the first, MOD and REM
+by an item in the checked 64-bit path (arith_reg.h): the divisor is a
+leaf with a test for zero, which sends the statement to the stack's
+code, whose answer for a zero divisor stands; MOD takes the divisor's
+sign by a 64-bit add when the remainder's sign differs; and COMPUTE now
+tries the checked path when a tree was refused only for want of it
+(`g_hn_wants_chk`), not only when an intermediate could pass 18 digits.
+The islands refuse an item divisor (they have no slow path).
+`tests/free/moditem` pins signs, zero, 18-digit dividends, inside and
+outside a loop, against `-fno-hot-arith` and `-fno-hir`;
+`gen-checked.py` has two shapes with item divisors, 60 programs the
+same as HEAD's compiler.
+
+    kidx   4,168,254,502 -> 2,311,355,641 instructions   393 -> 186 ms
+
+**kstring** was all libcob's string runtime: INSPECT's general pass 348
+a call, CONVERTING 510, UNSTRING's receivers through the general
+`cob_move` (352 for the numeric one, 158 for the others), STRING's
+source step 87, and some 330 instructions of INSPECT setup per
+statement across four calls.  Four changes:
+
+- the byte sweeps as hooks (docs/dbt-hooks.md step 5): `cob_bytes_xlat`
+  (CONVERTING's table over the item) and `cob_bytes_sweep` (the
+  one-byte TALLYING/REPLACING phrases by a 256-entry table), kern.h
+  kernels compiled into libcob and the DBT, one crossing an INSPECT;
+- the plain INSPECT forms as one call: an alphanumeric item or part, no
+  BEFORE/AFTER, not BACKWARD -- CONVERTING literal TO literal
+  (`cob_inspect_convert_plain`, the table kept across calls with the
+  same literals), one TALLYING phrase FOR CHARACTERS or FOR ALL of one
+  byte (`cob_inspect_tally_plain`, its count into phrase 0 for the
+  compiler's ADD);
+- UNSTRING's common receiver first: one delimiter of one byte, not ALL,
+  an alphanumeric or an unsigned DISPLAY integer receiver, no DELIMITER
+  IN or COUNT IN -- `memchr`, the bytes and spaces, out of the general
+  routine's twenty-register frame;
+- `cob_move` of digits-only text into an unsigned DISPLAY integer: the
+  rightmost digits that fit, zeros before them (what the reading and
+  `cob_put_num` store), 352 instructions to a copy; and `cob_str_src`'s
+  dynamic-length growth out of its frame (16 saved registers to 9).
+
+    kstring   2,561,126,373 -> 1,927,626,552 instructions   ~235 -> 168 ms
+    (GnuCOBOL 3.2: 140)
+
+The kernel differential covers the two sweeps (40 random runs each,
+hooks called, declined 0).  Left in kstring: `cob_str_src` 73 a source
+(four a STRING), the UNSTRING entries (92 and 191), the program's own
+code 18%.  The STRING statement in line in the islands is the next
+step, if kstring is to pass GnuCOBOL.

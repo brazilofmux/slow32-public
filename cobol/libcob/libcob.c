@@ -541,6 +541,14 @@ void cob_sort_run_impl(const unsigned char *buf, unsigned esize, unsigned klen, 
 {
     cob_k_sort_run(buf, esize, klen, n, order, tmp);
 }
+/* INSPECT's byte sweeps, likewise (cob_inspect_convert, cob_inspect_run) */
+void cob_bytes_xlat(unsigned char *p, int n, const unsigned char *tab);
+void cob_bytes_sweep(unsigned char *p, int n, const unsigned char *who, const unsigned char *rep, const unsigned char *tally, int *cnt, int np);
+void cob_bytes_xlat_impl(unsigned char *p, int n, const unsigned char *tab) { cob_k_bytes_xlat(p, n, tab); }
+void cob_bytes_sweep_impl(unsigned char *p, int n, const unsigned char *who, const unsigned char *rep, const unsigned char *tally, int *cnt, int np)
+{
+    cob_k_bytes_sweep(p, n, who, rep, tally, cnt, np);
+}
 
 int cob_put_num_x_impl(void *vp, const cob_desc *d, long long v, int vscale, int opts)
 {
@@ -1250,6 +1258,20 @@ void cob_move(const void *src, const cob_desc *sd, void *dst, const cob_desc *dd
      * relies on exactly this. */
     const char *s = src;
     unsigned n = sd->size, i = 0;
+    if (dd->usage == COB_U_DISPLAY && dd->scale == 0 && !dd->flags && dd->cat == COB_NUM && n > 0) {
+        /* the common shape -- an unsigned DISPLAY integer receiver, the
+         * text all digits (UNSTRING's fields, a READ record's columns): the
+         * rightmost digits that fit, zeros before them, which is what the
+         * reading below and cob_put_num would store (kstring's cob_move
+         * was 352 instructions a call, performance.md 2026-10-08) */
+        unsigned k = 0; while (k < n && s[k] >= '0' && s[k] <= '9') k++;
+        if (k == n) {
+            unsigned ds = dd->size, m = n < ds ? n : ds;
+            memcpy((char *)dst + ds - m, s + n - m, m);
+            if (m < ds) memset(dst, '0', ds - m);
+            return;
+        }
+    }
     while (i < n && s[i] == ' ') i++;
     int neg = 0;
     if (i < n && (s[i] == '+' || s[i] == '-')) { neg = (s[i] == '-'); i++; }
@@ -4778,6 +4800,19 @@ void cob_str_begin_nat(char *dst, int dlen, int pos)
 }
 
 /* delim of length dn; dn == 0 means DELIMITED BY SIZE */
+/* a dynamic-length receiver grown to hold the characters (spaces fill a
+ * gap before the pointer); out of cob_str_src's frame, which every source
+ * of every STRING pays (sixteen saved registers with this inlined) */
+static __attribute__((noinline)) void cs_str_grow(int moved, int w)
+{
+    unsigned need = (unsigned)(cs.pos - 1 + moved * w) / (unsigned)w, old = cs.dyn->cap;
+    if (need > old) {
+        if (!dynl_resize(cs.dyn, cs.dynt, need)) cob_fatal("EC-STORAGE-NOT-AVAIL: no storage for a dynamic-length item");
+        for (unsigned k = old * (unsigned)w; k < need * (unsigned)w; k++) cs.dyn->elems[k] = (unsigned char)((w == 2 && !(k & 1)) ? 0 : ' ');
+        cs.dyn->cap = need;
+    }
+    cs.dst = (char *)cs.dyn->elems;
+}
 void cob_str_src(const char *s, int n, const char *delim, int dn)
 {
     if (cs.overflow) return;
@@ -4791,16 +4826,7 @@ void cob_str_src(const char *s, int n, const char *delim, int dn)
      * character that did not fit, having moved the ones before it) */
     int chars = take / w, room = cs.pos >= 1 && cs.pos - 1 <= cs.dlen ? (cs.dlen - (cs.pos - 1)) / w : 0;
     int moved = chars < room ? chars : room;
-    if (cs.dyn && moved > 0) {
-        /* the item grown to hold them (spaces fill a gap before the pointer) */
-        unsigned need = (unsigned)(cs.pos - 1 + moved * w) / (unsigned)w, old = cs.dyn->cap;
-        if (need > old) {
-            if (!dynl_resize(cs.dyn, cs.dynt, need)) cob_fatal("EC-STORAGE-NOT-AVAIL: no storage for a dynamic-length item");
-            for (unsigned k = old * (unsigned)w; k < need * (unsigned)w; k++) cs.dyn->elems[k] = (unsigned char)((w == 2 && !(k & 1)) ? 0 : ' ');
-            cs.dyn->cap = need;
-        }
-        cs.dst = (char *)cs.dyn->elems;
-    }
+    if (cs.dyn && moved > 0) cs_str_grow(moved, w);
     if (moved > 0) memcpy(cs.dst + cs.pos - 1, s, (size_t)(moved * w));
     cs.pos += moved * w;
     if (chars > room) cs.overflow = 1;
@@ -4851,7 +4877,31 @@ void cob_unstr_into_dynl(cob_dyn *d, const cob_dynl_desc *t, void *ddst, const c
 {
     unstr_into_1(0, 0, d, t, ddst, ddd, cdst, cdd);
 }
+static __attribute__((noinline)) void unstr_into_slow(void *dst, const cob_desc *dd, cob_dyn *dyn, const cob_dynl_desc *dynt, void *ddst, const cob_desc *ddd, void *cdst, const cob_desc *cdd);
+/* the common receiver first: one delimiter of one byte, not ALL, an
+ * alphanumeric receiver with neither DELIMITER IN nor COUNT IN -- memchr
+ * for the delimiter, the bytes and spaces, the pointer moved; the general
+ * routine (below, out of this frame) for the rest.  kstring's UNSTRING
+ * was 193 instructions a receiver (performance.md 2026-10-08) */
 static void unstr_into_1(void *dst, const cob_desc *dd, cob_dyn *dyn, const cob_dynl_desc *dynt, void *ddst, const cob_desc *ddd, void *cdst, const cob_desc *cdd)
+{
+    int plain_num = dd->cat == COB_NUM && dd->usage == COB_U_DISPLAY && !dd->flags && dd->scale == 0;   /* cob_move's digits path takes it; "0" when nothing was examined */
+    if (!dyn && !ddst && !cdst && cu.nd == 1 && cu.d[0].n == 1 && !cu.d[0].all && cu.w == 1 && ((dd->cat == COB_ALNUM && !(dd->flags & COB_F_JUST)) || plain_num) &&
+        !cu.overflow && cu.pos <= cu.slen) {
+        int start = cu.pos - 1;
+        const char *e = memchr(cu.src + start, cu.d[0].p[0], (size_t)(cu.slen - start));
+        int i = e ? (int)(e - cu.src) : cu.slen, k = i - start;
+        if (plain_num) {
+            if (k) { cob_desc sd; memset(&sd, 0, sizeof sd); sd.cat = COB_ALNUM; sd.size = (unsigned)k; cob_move(cu.src + start, &sd, dst, dd); }
+            else memset(dst, '0', dd->size);
+        } else if (k) cob_move_alnum(cu.src + start, k, dst, (int)dd->size, 0); else memset(dst, ' ', dd->size);
+        cu.pos = i + (e ? 1 : 0) + 1;
+        cu.tally++; cu.moved = 1;
+        return;
+    }
+    unstr_into_slow(dst, dd, dyn, dynt, ddst, ddd, cdst, cdd);
+}
+static __attribute__((noinline)) void unstr_into_slow(void *dst, const cob_desc *dd, cob_dyn *dyn, const cob_dynl_desc *dynt, void *ddst, const cob_desc *ddd, void *cdst, const cob_desc *cdd)
 {
     if (cu.overflow || cu.pos > cu.slen) return;
     int start = cu.pos - 1, i = start, hit = -1;
@@ -4879,6 +4929,7 @@ static void unstr_into_1(void *dst, const cob_desc *dd, cob_dyn *dyn, const cob_
     int k = i - start;                          /* the examined bytes */
     cob_desc sd; memset(&sd, 0, sizeof sd); sd.cat = cu.w == 2 ? COB_NATIONAL : COB_ALNUM; sd.size = (unsigned)k;
     if (dyn) { if (k) cob_dynl_move(dyn, dynt, cu.src + start, &sd); else cob_dynl_size(dyn, dynt, 0); }
+    else if (k && cu.w == 1 && dd->cat == COB_ALNUM && !(dd->flags & COB_F_JUST)) cob_move_alnum(cu.src + start, k, dst, (int)dd->size, 0);   /* the common receiver: bytes and spaces, not cob_move's 158 instructions */
     else if (k) cob_move(cu.src + start, &sd, dst, dd);
     else { sd.cat = COB_ALNUM; sd.size = 1; cob_move(dd->cat == COB_NUM || dd->cat == COB_NUM_ED ? "0" : " ", &sd, dst, dd); sd.cat = cu.w == 2 ? COB_NATIONAL : COB_ALNUM; }
     if (cdst) cob_put_num(cdst, cdd, k / cu.w, 0);  /* COUNT IN: characters */
@@ -5703,9 +5754,13 @@ static unsigned idx_cache_pages(void)
 {
     const char *e = getenv("S32_INDEX_CACHE");
     if (e && *e) { unsigned v = (unsigned)atoi(e); return v < BT_MINCACHE ? BT_MINCACHE : v; }
+    /* a sixteenth of the heap, at most 16 MB: the cap was 256 pages (1 MB),
+     * and kidx -- 100,000 records, a 6.4 MB file, random keys -- spent a
+     * third of its time reading pages back in (0.38 s; 0.25 at 1024 pages,
+     * 0.24 at 4096; performance.md 2026-10-08) */
     size_t heap = (size_t)(__heap_end - __heap_start);
     unsigned n = (unsigned)(heap / 16 / BT_PAGE);
-    return n < BT_MINCACHE ? BT_MINCACHE : n > 256 ? 256 : n;
+    return n < BT_MINCACHE ? BT_MINCACHE : n > 4096 ? 4096 : n;
 }
 
 /* the keys as the FD declares them: bt.k[0] prime, then the alternates */
@@ -8304,6 +8359,31 @@ static void ci_range(int *lo, int *hi)
     ci_before = ci_after = NULL; ci_blen = ci_alen = 0;
 }
 void cob_inspect_backward(void) { cin.backward = 1; }
+/* the plain forms the compiler emits as one call (verbs.h): an
+ * alphanumeric item or part, no BEFORE/AFTER, not BACKWARD, single-byte
+ * characters.  CONVERTING literal TO literal: the table (kept across
+ * calls with the same literals) and the sweep kernel; one TALLYING phrase
+ * FOR CHARACTERS or FOR ALL of one byte: the count into phrase 0, which
+ * cob_inspect_count(0) then hands the compiler's ADD. */
+void cob_inspect_convert_plain(char *item, int n, const char *from, int fl, const char *to)
+{
+    static unsigned char tab[256], cfrom[256], cto[256]; static int cn = -1;
+    if (!(fl == cn && fl <= 256 && !memcmp(from, cfrom, (size_t)fl) && !memcmp(to, cto, (size_t)fl))) {
+        for (int c = 0; c < 256; c++) tab[c] = (unsigned char)c;
+        for (int i = fl - 1; i >= 0; i--) tab[(unsigned char)from[i]] = (unsigned char)to[i];
+        if (fl <= 256) { memcpy(cfrom, from, (size_t)fl); memcpy(cto, to, (size_t)fl); cn = fl; } else cn = -1;
+    }
+    if (n > 0) cob_bytes_xlat((unsigned char *)item, n, tab);
+}
+void cob_inspect_tally_plain(char *item, int n, int kind, int c)
+{
+    cin.np = 1; cin.ph[0].tallying = 1; cin.ph[0].kind = kind; cin.ph[0].done = 0; cin.ph[0].count = 0;
+    if (kind == 0) { cin.ph[0].count = n; return; }
+    unsigned char who[256]; memset(who, 0xFF, sizeof who); who[(unsigned char)c] = 0;
+    unsigned char rep = 0, tally = 1; int cnt = 0;
+    if (n > 0) cob_bytes_sweep((unsigned char *)item, n, who, &rep, &tally, &cnt, 1);
+    cin.ph[0].count = cnt;
+}
 static char ci_copy[4096];
 /* a signed numeric DISPLAY item with the sign in a digit is inspected as
  * though it had been moved to an unsigned item of the same size (X3.23
@@ -8377,13 +8457,13 @@ void cob_inspect_run(void)
             if (cin.ph[k].kind == 0) { for (int c = 0; c < 256; c++) if (who[c] == 0xFF) who[c] = (unsigned char)k; }
             else if (who[(unsigned char)cin.ph[k].pat[0]] == 0xFF) who[(unsigned char)cin.ph[k].pat[0]] = (unsigned char)k;
         }
-        unsigned char *p = (unsigned char *)cin.item;
-        for (int pos = 0; pos < cin.n; pos++) {
-            int k = who[p[pos]];
-            if (k == 0xFF) continue;
-            if (cin.ph[k].tallying) cin.ph[k].count++;
-            else p[pos] = (unsigned char)cin.ph[k].rep[0];
-        }
+        /* the sweep itself is a hookable routine (kern.h): native under the
+         * DBT, one crossing for the item (kstring: 348 instructions an
+         * INSPECT before, performance.md 2026-10-08) */
+        unsigned char rep[32], tally[32]; int cnt[32];
+        for (int k = 0; k < cin.np; k++) { rep[k] = (unsigned char)(cin.ph[k].rep ? cin.ph[k].rep[0] : 0); tally[k] = (unsigned char)(cin.ph[k].tallying != 0); cnt[k] = cin.ph[k].count; }
+        cob_bytes_sweep((unsigned char *)cin.item, cin.n, who, rep, tally, cnt, cin.np);
+        for (int k = 0; k < cin.np; k++) cin.ph[k].count = cnt[k];
     }
     for (int pos = 0; !bytewise && cin.np && pos < cin.n; ) {
         int took = 0, taker = -1;
@@ -8437,8 +8517,7 @@ void cob_inspect_convert(const char *from, int n, const char *to)
             for (int i = n - 1; i >= 0; i--) tab[(unsigned char)from[i]] = (unsigned char)to[i];
             if (n <= 256) { memcpy(cfrom, from, (size_t)n); memcpy(cto, to, (size_t)n); cn = n; } else cn = -1;
         }
-        unsigned char *p = (unsigned char *)cin.item;
-        for (int i = lo; i < hi; i++) p[i] = tab[p[i]];
+        if (hi > lo) cob_bytes_xlat((unsigned char *)cin.item + lo, hi - lo, tab);   /* hookable (kern.h) */
         return;
     }
     const char *bp = ci_before, *ap = ci_after; int bl = ci_blen, al = ci_alen;
