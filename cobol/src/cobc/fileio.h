@@ -280,16 +280,47 @@ static File *parse_file_phrase(Ref *rec, const char *verb)
     if (!at_word("from")) die_at(cur()->line, "%s FILE %s takes a FROM phrase (2023 14.9.51.3 rule 7)", verb, f->name);
     return f;
 }
+/* the FROM of WRITE FILE / REWRITE FILE (2023 14.9.51.4 rules 7-8,
+ * 14.9.35.4): a record of the file itself is written as itself; anything
+ * else is moved to an implicit record of its own description, so the
+ * record written has the sending item's length -- known here, or a
+ * run-time-length function's taken after the move.  Returns the static
+ * length, or -1 with the length in the slot */
+static int file_phrase_from(File *f, Ref *rec, int slot)
+{
+    accept_word("from");
+    Opnd src; parse_operand(&src);
+    if (src.kind == O_REF && !src.ref.rm && !src.ref.nsub && src.ref.sym->parent < 0 && src.ref.sym->fd == (int)(f - g_files)) {
+        *rec = src.ref;                         /* rule 7: WRITE record-name */
+        return rec->sym->size;
+    }
+    if (src.kind == O_FIG || src.kind == O_ALL) die_at(src.line, "WRITE FILE ... FROM takes no figurative constant (2023 14.9.51.3 rule 7b)");
+    if (src.kind == O_NUM || src.kind == O_EXPR) die_at(src.line, "WRITE FILE ... FROM takes an alphanumeric, boolean or national item, literal or function (2023 14.9.51.3 rules 7, 10)");
+    emit_move(&src, rec);
+    if (!f->varying) return rec->sym->size;    /* a fixed-length file: the record area, padded by the move */
+    if (src.kind == O_FUNC && src.fvar) {
+        emit_call("cob_fn_last_len"); emit("\tstw sp+%d, r1", SLOT(slot));
+        return -1;
+    }
+    int n = opnd_size(&src);
+    if (n < 1) die_at(src.line, "WRITE FILE ... FROM: the sending item's length is not known here");
+    return n;
+}
 static void parse_write(void)
 {
     Ref rec; File *f;
-    if (at_word("file") && !sym_lookup_quiet("file")) f = parse_file_phrase(&rec, "WRITE");
+    int file_phrase = at_word("file") && !sym_lookup_quiet("file");
+    if (file_phrase) f = parse_file_phrase(&rec, "WRITE");
     else {
         parse_ref(&rec);
         f = file_of_record(rec.sym, rec.line);
     }
     if (f->org == COB_ORG_SORT) die_at(rec.line, "WRITE to the sort file '%s': use RELEASE inside the INPUT PROCEDURE", f->name);
-    if (accept_word("from")) {
+    int wlen = rec.sym->size, lslot = -1;
+    if (file_phrase) {
+        lslot = g_slot_base++; if (g_slot_base > NSLOTS) die_at(rec.line, "internal: too many staged operands");
+        wlen = file_phrase_from(f, &rec, lslot);
+    } else if (accept_word("from")) {
         Opnd src; parse_operand(&src);
         emit_move(&src, &rec);
     }
@@ -373,7 +404,9 @@ advancing_done:;
     } else {
         emit_file_addr("r3", f); emit_li("r4", before); emit_li("r5", after);
     }
-    emit_li("r6", rec.sym->size);          /* the 01 named: a mode-V record's length */
+    if (wlen >= 0) emit_li("r6", wlen);     /* the 01 named: a mode-V record's length; WRITE FILE FROM: the sending item's */
+    else emit("\tldw r6, sp+%d", SLOT(lslot));
+    if (lslot >= 0) g_slot_base--;
     emit_call("cob_write");
     emit("\tstw sp+%d, r1", SLOT_C);
     g_io_file = f;
@@ -405,15 +438,22 @@ advancing_done:;
 static void parse_rewrite(void)
 {
     Ref rec; File *f;
-    if (at_word("file") && !sym_lookup_quiet("file")) f = parse_file_phrase(&rec, "REWRITE");
+    int file_phrase = at_word("file") && !sym_lookup_quiet("file");
+    if (file_phrase) f = parse_file_phrase(&rec, "REWRITE");
     else {
         parse_ref(&rec);
         f = file_of_record(rec.sym, rec.line);
     }
     if (f->org == COB_ORG_LINESEQ) die_at(rec.line, "REWRITE is not valid on a LINE SEQUENTIAL file");
-    if (accept_word("from")) { Opnd src; parse_operand(&src); emit_move(&src, &rec); }
+    int wlen = rec.sym->size, lslot = -1;
+    if (file_phrase) {
+        lslot = g_slot_base++; if (g_slot_base > NSLOTS) die_at(rec.line, "internal: too many staged operands");
+        wlen = file_phrase_from(f, &rec, lslot);
+    } else if (accept_word("from")) { Opnd src; parse_operand(&src); emit_move(&src, &rec); }
     io_nyi("REWRITE");
-    emit_file_addr("r3", f); emit_li("r4", rec.sym->size);
+    emit_file_addr("r3", f);
+    if (wlen >= 0) emit_li("r4", wlen); else emit("\tldw r4, sp+%d", SLOT(lslot));
+    if (lslot >= 0) g_slot_base--;
     emit_call("cob_rewrite");
     emit("\tstw sp+%d, r1", SLOT_C);
     g_io_file = f;

@@ -1,0 +1,7 @@
+len 05 [abcde]
+len 12 [twelve chars]
+len 07 [xyz1234]
+len 07 [trimmed]
+len 20 [trimmed             ]
+[abcde   ]
+[REWRITE!]

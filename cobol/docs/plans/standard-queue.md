@@ -476,8 +476,11 @@ SHARING, READ/WRITE WITH [NO] LOCK, EC-I-O-FILE-SHARING; Ed. 2002; L; deps 1.
   run unit per engine makes the semantics mostly local, but the statuses and RETRY need defining.
 
 **40. WRITE FILE and REWRITE FILE.** A.4.13; 14.9.35, 14.9.51; Ed. 2002; S; deps 11 (FD without
-record description).
-- Today: bare parse error.
+record description). **DONE 2026-10-07**: the FILE phrase itself came with item 11 (2026-10-06); the
+implicit record of GR 8 -- the sending item's length on a RECORD VARYING file, a function result's
+at run time, a record of the file written as itself -- completes it (io-statements.md; test
+2002/writefile; bad std2002-write-file-figurative, -numeric).
+- Was: bare parse error.
 
 **41. FORMAT and SELECT WHEN.** A.4.8; 13.18.24, 13.18.51; Ed. 2002; M.
 - Today: "unexpected 'format' in FD".
