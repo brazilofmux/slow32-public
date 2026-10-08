@@ -17,7 +17,10 @@
  *     for it but the hi_is_binop spelling.
  *   - SEQ/SNE against 0 (hir_codegen.h, 2026-10-03): seq/sne against r0
  *     alone; upstream xori-ed by 0 first.  Ported to stage08 and fortran
- *     the same day: the next re-sync carries nothing for it. */
+ *     the same day: the next re-sync carries nothing for it.
+ *   - ra_new_split_copy carries bg_foff/bg_ssym/bg_soff from its source
+ *     (hir_regalloc.h, selfhost ISSUES-81, upstream e98e1926): ported
+ *     here 2026-10-07, so a re-sync carries nothing for it. */
 /* hir.h -- High-level IR for s12cc
  *
  * Parallel-array instruction representation.

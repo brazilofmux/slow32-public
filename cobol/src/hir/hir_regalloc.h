@@ -3075,9 +3075,16 @@ static int ra_new_split_copy(int src, int blk) {
     bg_sel[cl] = -1;
     bg_uses[cl] = 0;
     bg_fold[cl] = 0;
-    bg_foff[cl] = 0;
-    bg_ssym[cl] = -1;     /* 0 would mean "instruction 0" */
-    bg_soff[cl] = 0;
+    /* The copy is the same value as its source, so a frame-address or
+     * symbol-address chain carries through it: a use the BURG matched
+     * as LOAD(faddr) or STORE(faddr) before this split still reads its
+     * offset from the operand (bg_foff), which was 0 here and sent the
+     * reload of `w.scale` after `touch(&w.scale)` to fp+0+20 instead
+     * of the struct's slot (selfhost ISSUES-81, e98e1926; ported here
+     * 2026-10-07). */
+    bg_foff[cl] = bg_foff[src];
+    bg_ssym[cl] = bg_ssym[src];
+    bg_soff[cl] = bg_soff[src];
     bg_iconst_seen_use[cl] = 0;
     bg_iconst_seen_nonimm[cl] = 0;
     licm_next[cl] = -1;
