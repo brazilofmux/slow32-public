@@ -1474,3 +1474,57 @@ What remains per record in the reports, in order: `sort_key_build` 230
 floating-point key paths inlined into it), the indexed READ (gl035:
 `cob_read_key_1` 145, `idx_find` 142, `bt_read` 73, `bt_pin` 61 a call),
 `cob_return` 55, `cob_release` 52, `file_result` 32.
+
+## 2026-10-08, evening: measured and declined
+
+Three things the profile pointed at, each measured to a number and
+left alone, so the next pass does not measure them again:
+
+- **The hook crossings.**  csv2fw makes 3.5 million crossings to native
+  routines a run (memset, memcpy, the numeric hooks).  Measured at 3 ns
+  each (ten million `memcpy` calls of 8 bytes under the DBT, the bare
+  loop subtracted; a guest call is 2.5 ns, an inline 8-byte copy 0.7).
+  That is 10 ms of 160, and halving it with whole-operation hooks
+  (stage 2's numeric MOVE as one crossing) would buy 1.6%.  Stage 2 is
+  not worth building for this workload.
+- **The per-record runtime of the reports.**  After the sort went native
+  and the line sequential paths got their short entries, what is left
+  per record is `sort_key_build` (230, now 161: the wide and float key
+  forms moved out of its frame, which still saves twenty registers for
+  the loops' live values), the indexed READ chain (`cob_read_key_1`
+  145, `idx_find` 142, `bt_read` 73, `bt_pin` 61), `cob_return` 55,
+  `cob_release` 52, `file_result` 32.  Each is 1-2% of its program;
+  the split of `sort_key_build` moved gl034 by 0.1%.
+- **Process startup.**  The batch is 28 emulator runs; an empty program
+  takes 2.82 ms wall.  A C program that links libm takes 2.28 ms to
+  spawn on this machine, so the DBT's own startup -- the 256 MB and 32
+  MB mappings, the block tables, loading a 511 KB program, 580 page
+  faults against the C program's 230 -- is about half a millisecond a
+  run, 3% of the batch at the very most.  Not worth a DBT change and
+  the three differentials it costs.  The spawn floor itself (dyld and
+  the kernel) is 13% of the batch and is the operating system's.
+- **Translation.**  The DBT's `-p` had put translation at a quarter of
+  each report's run.  A host time profile of the DBT (Instruments'
+  command-line tracer, inlining off so the translator's functions show,
+  four reports pooled) finds translated code at 44%, the sort's key
+  compare at 12%, record copies and the I/O syscalls, and the
+  translator's own functions in single samples.  The `-p` attribution
+  was not to be trusted; translation is not a lever here.
+
+Where the day ended, the batch timed per run:
+
+    this morning     616 ms    (the lock layer in front of the short entries)
+    cc74a549         565       the entries restored
+    049f67bf         498       the SORT's run as a native hook
+    4dd9ba2c, 8acdfca5 476     the fill held back; line sequential short paths
+
+csv2fw 250 -> 161 ms inside the batch; gl034 46 -> 38; gl038 51 -> 35.
+
+What is left, by estimated size on csv2fw: a base register for the
+data page (a fifth of the island's instructions are `lui` of the same
+page; a day's work in the HIR copy, 5-10%); the second 4 KB fill per
+field, the MOVE's own padding, 13% of the run and the program's by
+design; phis at the joins for the loads (3%); the byte out of a known
+halfword for the DISPLAY `state` (3%); the one-byte WRITE's fast path
+in line in the island and the status test after each READ/WRITE call
+(8 instructions where one would do; 2-3% each).

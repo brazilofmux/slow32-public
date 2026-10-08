@@ -4482,6 +4482,29 @@ static unsigned sort_klen(const cob_sorter *so)
     return k;
 }
 
+/* the two rare key forms, kept out of sort_key_build's frame: inlined, their
+ * registers gave every RELEASE a twenty-one-register prologue (2026-10-08) */
+static __attribute__((noinline)) void sort_key_wide(const char *p, const cob_desc *d, unsigned char *o)
+{
+    /* past 18 digits: the 128-bit two's complement, sign bit flipped,
+     * big-endian -- memcmp order is the numeric order */
+    cob_wnum w; cob_wget(p, d, &w);
+    wl_t m[WL]; memcpy(m, w.m, sizeof m);
+    if (w.neg) { for (int j = 0; j < WL; j++) m[j] = ~m[j]; wl_t one[WL] = { 1, 0, 0, 0 }; mp_add(m, one, WL); }
+    m[WL - 1] ^= 0x80000000u;
+    for (int b = 0; b < 16; b++) o[b] = (unsigned char)(m[(15 - b) / 4] >> (8 * ((15 - b) % 4)));
+}
+static __attribute__((noinline)) void sort_key_float(const char *p, const cob_desc *d, unsigned char *o)
+{
+    /* a float: its double's bits, negatives complemented, positives with
+     * the sign bit set -- memcmp order is the numeric order (a software
+     * float by its nearest double: 15 digits of order) */
+    double x = num_dbl(p, d); unsigned long long u;
+    if (x == 0) x = 0;                          /* -0 sorts with 0 */
+    memcpy(&u, &x, 8);
+    u = (u >> 63) ? ~u : u | (1ULL << 63);
+    for (int b = 7; b >= 0; b--) { o[b] = (unsigned char)u; u >>= 8; }
+}
 static void sort_key_build(const cob_sorter *so, const char *rec, unsigned seq, unsigned char *out)
 {
     const unsigned char *t = so->coll ? so->coll : cob_collating;
@@ -4489,26 +4512,9 @@ static void sort_key_build(const cob_sorter *so, const char *rec, unsigned seq, 
         const cob_sort_key *k = &so->keys[i];
         const cob_desc *d = k->desc;
         unsigned char *o = out;
-        if ((d->cat == COB_NUM || d->cat == COB_NUM_ED) && is_wide(d)) {
-            /* past 18 digits: the 128-bit two's complement, sign bit
-             * flipped, big-endian -- memcmp order is the numeric order */
-            cob_wnum w; cob_wget(rec + k->offset, d, &w);
-            wl_t m[WL]; memcpy(m, w.m, sizeof m);
-            if (w.neg) { for (int j = 0; j < WL; j++) m[j] = ~m[j]; wl_t one[WL] = { 1, 0, 0, 0 }; mp_add(m, one, WL); }
-            m[WL - 1] ^= 0x80000000u;
-            for (int b = 0; b < 16; b++) o[b] = (unsigned char)(m[(15 - b) / 4] >> (8 * ((15 - b) % 4)));
-            out += 16;
-        } else if (is_float(d) || is_sfloat(d)) {
-            /* a float: its double's bits, negatives complemented, positives
-             * with the sign bit set -- memcmp order is the numeric order
-             * (a software float by its nearest double: 15 digits of order) */
-            double x = num_dbl(rec + k->offset, d); unsigned long long u;
-            if (x == 0) x = 0;                      /* -0 sorts with 0 */
-            memcpy(&u, &x, 8);
-            u = (u >> 63) ? ~u : u | (1ULL << 63);
-            for (int b = 7; b >= 0; b--) { o[b] = (unsigned char)u; u >>= 8; }
-            out += 8;
-        } else if (d->cat == COB_NUM || d->cat == COB_NUM_ED) {
+        if ((d->cat == COB_NUM || d->cat == COB_NUM_ED) && is_wide(d)) { sort_key_wide(rec + k->offset, d, o); out += 16; }
+        else if (is_float(d) || is_sfloat(d)) { sort_key_float(rec + k->offset, d, o); out += 8; }
+        else if (d->cat == COB_NUM || d->cat == COB_NUM_ED) {
             unsigned long long u = (unsigned long long)cob_get_num(rec + k->offset, d) ^ (1ULL << 63);
             for (int b = 7; b >= 0; b--) { o[b] = (unsigned char)u; u >>= 8; }
             out += 8;
