@@ -504,6 +504,7 @@ typedef struct {
     int  codeset;                    /* FD CODE-SET: 1 + the alphabet index of a non-native code set, 0 native */
     int  fd_line;                    /* the line of its FD (or SD) entry, 0 before one is seen */
     int  block_given, rc_given, rc_varying_from, reserve_given;   /* BLOCK CONTAINS, RECORD CONTAINS written; RECORD VARYING FROM written */
+    int  sharing, lockmode, lockmulti;   /* SHARING WITH (1 ALL OTHER, 2 NO OTHER, 3 READ ONLY); LOCK MODE (1 MANUAL, 2 AUTOMATIC) [WITH LOCK ON MULTIPLE RECORDS] (2023 12.4.5.15, 12.4.5.9; item 39) */
     int  implicit_rec;              /* no record description entry: a FILLER record stands for the area (2023 13.4.5.3 rule 3) */
     char data_rec[8][64]; int ndata_rec;           /* DATA RECORDS names (85 3.5), checked against the 01s */
     int  codeset_line;

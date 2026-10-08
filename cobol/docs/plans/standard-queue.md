@@ -494,6 +494,13 @@ SHARING, READ/WRITE WITH [NO] LOCK, EC-I-O-FILE-SHARING; Ed. 2002; L; deps 1.
   move out to the host emulator, which can keep coherence across instances; the file system may be
   SMB or NFS besides. The round trip costs, and it multiplies the test matrix, which is why it is
   staged, not built at once.
+- **Stage 1 DONE 2026-10-07** (docs/conformance/locking.md): the clauses, OPEN's SHARING phrase,
+  READ's four phrases, WRITE/REWRITE WITH [NO] LOCK, RETRY on the six statements, UNLOCK with
+  effect; the checks among the file connectors of one run unit -- Table 19 at OPEN (61), DELETE FILE
+  (62), a record locked by another connector (51), the limits (53/54); the implementor's default is
+  no checks and no locks, so older programs are untouched. Tests 2002/locking, 2023/lockdel, ten bad.
+  Later stages: a shared data image per physical file (two updating connectors on one indexed file
+  each cache their own pages today), then locks across run units (the host's, or the emulator's).
 
 **40. WRITE FILE and REWRITE FILE.** A.4.13; 14.9.35, 14.9.51; Ed. 2002; S; deps 11 (FD without
 record description). **DONE 2026-10-07**: the FILE phrase itself came with item 11 (2026-10-06); the

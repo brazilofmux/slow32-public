@@ -16,12 +16,12 @@ carry the compiler's own reason.
 | 9 files and objects, general | 0 | 0 | 0 | 0 |
 | 10 the compilation group | 2 | 2 | 0 | 0 |
 | 11 IDENTIFICATION DIVISION | 15 | 15 | 0 | 0 |
-| 12 ENVIRONMENT DIVISION | 22 | 20 | 0 | 2 |
+| 12 ENVIRONMENT DIVISION | 22 | 22 | 0 | 0 |
 | 13 DATA DIVISION | 78 | 69 | 0 | 9 |
-| 14 PROCEDURE DIVISION | 54 | 47 | 6 | 1 |
+| 14 PROCEDURE DIVISION | 54 | 48 | 6 | 0 |
 | 15 intrinsic functions | 94 | 89 | 5 | 0 |
 | 16 standard classes | 0 | 0 | 0 | 0 |
-| **all** | **324** | **299** | **11** | **14** |
+| **all** | **324** | **302** | **11** | **11** |
 
 ## 7 COPY, REPLACE and directives
 
@@ -128,20 +128,20 @@ carry the compiler's own reason.
 | 12.3.6 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 12.3.7 |  | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
 | 12.3.8 |  | [call](call.md) | 30 | 18 | 3 | 4 | 0 |
-| 12.4 |  | [environment](environment.md), [files](files.md) | 28 | 52 | 3 | 3 | 4 |
+| 12.4 |  | [environment](environment.md), [files](files.md), [locking](locking.md) | 29 | 60 | 3 | 3 | 4 |
 | 12.4.4 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
-| 12.4.5 |  | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
+| 12.4.5 |  | [files](files.md), [locking](locking.md) | 3 | 26 | 0 | 0 | 0 |
 | 12.4.5.5 |  | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
 | 12.4.5.6 | ALTERNATE RECORD KEY clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
 | 12.4.5.7 | COLLATING SEQUENCE clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
 | 12.4.5.8 | FILE STATUS clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
-| 12.4.5.9 | LOCK MODE clause | *unswept* | | | | | |
+| 12.4.5.9 | LOCK MODE clause | [locking](locking.md) | 1 | 8 | 0 | 0 | 0 |
 | 12.4.5.10 | ORGANIZATION clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
 | 12.4.5.11 | RECORD DELIMITER clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
 | 12.4.5.12 | RECORD KEY clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
 | 12.4.5.13 | RELATIVE KEY clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
 | 12.4.5.14 | RESERVE clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
-| 12.4.5.15 | SHARING clause | *unswept* | | | | | |
+| 12.4.5.15 | SHARING clause | [locking](locking.md) | 1 | 8 | 0 | 0 | 0 |
 | 12.4.6 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 12.4.6.3 | APPLY COMMIT clause | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 12.4.6.4 | SAME clause | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
@@ -235,7 +235,7 @@ carry the compiler's own reason.
 |---|---|---|---|---|---|---|---|
 | 14.2 |  | [call](call.md) | 30 | 18 | 3 | 4 | 0 |
 | 14.7.4 | ROUNDED phrase | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
-| 14.7.9 | RETRY phrase | *unswept* | | | | | |
+| 14.7.9 | RETRY phrase | [locking](locking.md) | 1 | 8 | 0 | 0 | 0 |
 | 14.9.1 | ACCEPT statement | [accept](accept.md), [screen](screen.md) | 59 | 28 | 1 | 1 | 3 |
 | 14.9.2 | ADD statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
 | 14.9.3 | ALLOCATE statement | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
@@ -262,15 +262,15 @@ carry the compiler's own reason.
 | 14.9.24 | MERGE statement | [sort](sort.md) | 4 | 11 | 0 | 0 | 0 |
 | 14.9.25 | MOVE statement | [move](move.md) | 14 | 9 | 0 | 8 | 0 |
 | 14.9.26 | MULTIPLY statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
-| 14.9.27 | OPEN statement | [io-statements](io-statements.md) | 2 | 20 | 0 | 0 | 0 |
+| 14.9.27 | OPEN statement | [io-statements](io-statements.md), [locking](locking.md) | 3 | 28 | 0 | 0 | 0 |
 | 14.9.28 | PERFORM statement | [perform](perform.md) | 22 | 10 | 0 | 0 | 1 |
 | 14.9.29 | RAISE statement | [raise](raise.md) | 1 | 3 | 0 | 1 | 0 |
-| 14.9.30 | READ statement | [io-statements](io-statements.md) | 2 | 20 | 0 | 0 | 0 |
+| 14.9.30 | READ statement | [io-statements](io-statements.md), [locking](locking.md) | 3 | 28 | 0 | 0 | 0 |
 | 14.9.31 | RECEIVE statement | **not implemented**: receive: COBOL 85's Communication module is out by ruling, and COBOL 2023's asynchronous messaging (14.9.31, 14.9.38) is not implemented | | | | | |
 | 14.9.32 | RELEASE statement | [sort](sort.md) | 4 | 11 | 0 | 0 | 0 |
 | 14.9.33 | RESUME statement | [resume](resume.md) | 2 | 4 | 0 | 1 | 0 |
 | 14.9.34 | RETURN statement | [sort](sort.md) | 4 | 11 | 0 | 0 | 0 |
-| 14.9.35 | REWRITE statement | [io-statements](io-statements.md) | 2 | 20 | 0 | 0 | 0 |
+| 14.9.35 | REWRITE statement | [io-statements](io-statements.md), [locking](locking.md) | 3 | 28 | 0 | 0 | 0 |
 | 14.9.36 | ROLLBACK statement | **not implemented**: ROLLBACK is COBOL 2023; not implemented | | | | | |
 | 14.9.37 | SEARCH statement | [search](search.md) | 7 | 10 | 0 | 0 | 0 |
 | 14.9.38 | SEND statement | **not implemented**: send: COBOL 85's Communication module is out by ruling, and COBOL 2023's asynchronous messaging (14.9.31, 14.9.38) is not implemented | | | | | |
@@ -286,7 +286,7 @@ carry the compiler's own reason.
 | 14.9.48 | UNSTRING statement | [string](string.md) | 3 | 20 | 0 | 2 | 0 |
 | 14.9.49 | USE statement | [use](use.md) | 16 | 10 | 0 | 2 | 2 |
 | 14.9.50 | VALIDATE statement | **not implemented**: VALIDATE is not implemented: an obsolete facility no COBOL provider has implemented (2023 D.22, F.2 item 5; docs/standards.md) | | | | | |
-| 14.9.51 | WRITE statement | [io-statements](io-statements.md) | 2 | 20 | 0 | 0 | 0 |
+| 14.9.51 | WRITE statement | [io-statements](io-statements.md), [locking](locking.md) | 3 | 28 | 0 | 0 | 0 |
 
 ## 15 intrinsic functions
 

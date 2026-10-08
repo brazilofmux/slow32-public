@@ -1,7 +1,6 @@
 identification division.
-program-id. p4.
-*> read-retry: refused by name (docs/plans/standard-queue.md item 1); it was a
-*> parse error naming something else.
+program-id. p-retry-std85.
+*> RETRY is COBOL 2002 (14.7.9).
 environment division.
 input-output section.
 file-control.
@@ -13,6 +12,6 @@ fd f.
 working-storage section.
 procedure division.
     open i-o f
-    read f retry 3 times
+    read f retry 2 times
     close f
     goback.

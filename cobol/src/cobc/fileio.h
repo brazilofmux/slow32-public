@@ -27,13 +27,82 @@ static File *expect_file(void)
 /* The record-locking and retry phrases of the I-O statements (2023
  * 14.7.9 RETRY, 9.1.16 record locking; optional since 2014): refused by
  * name where they would stand, not met as "not a COBOL verb". */
-static void io_nyi(const char *stmt)
+static void parse_io_phrases(File *f, int allow, int is_read);
+/* the locking and RETRY phrases of a statement, by what its format allows (parse_io_phrases, below) */
+static void io_phrases(const char *stmt, File *f)
 {
-    if ((at_word("with") && (is_word(peek(1), "lock") || is_word(peek(1), "no"))) || at_word("lock") ||
-        (at_word("advancing") && is_word(peek(1), "on")) || (at_word("ignoring") && is_word(peek(1), "lock")))
-        die_at(cur()->line, "%s with a record-locking phrase is not implemented (file sharing and record locking, 2023 9.1.15-16)", stmt);
-    if (at_word("retry"))
-        die_at(cur()->line, "%s ... RETRY is not implemented (2023 14.7.9)", stmt);
+    int allow = !strcmp(stmt, "READ") ? 7 : !strcmp(stmt, "WRITE") || !strcmp(stmt, "REWRITE") ? 1 : 0;   /* DELETE and START: RETRY alone */
+    if (at_word("lock")) die_at(cur()->line, "%s: the phrase is WITH LOCK (2023 14.9.30.2)", stmt);
+    if (!(allow & 1) && at_word("with") && (is_word(peek(1), "lock") || is_word(peek(1), "no")))
+        die_at(cur()->line, "%s takes no LOCK phrase: RETRY is its only locking phrase (2023 14.9.10.2, 14.9.41.2)", stmt);
+    parse_io_phrases(f, allow, !strcmp(stmt, "READ"));
+}
+
+/* The locking phrases of an I-O statement (2023 14.9.30 formats: WITH
+ * LOCK, WITH NO LOCK, IGNORING LOCK, ADVANCING ON LOCK; 14.7.9 RETRY n
+ * TIMES / FOR n SECONDS / FOREVER; OPEN's SHARING WITH ...): read in any
+ * order, their flags handed to libcob just before the operation
+ * (cob_io_set, read and cleared by it).  allow: bit 0 LOCK/NO LOCK, bit 1
+ * IGNORING LOCK, bit 2 ADVANCING ON LOCK, bit 3 SHARING. */
+static int g_io_adv_lock;                      /* the line of a READ's ADVANCING ON LOCK, checked once its format is known */
+static void parse_io_phrases(File *f, int allow, int is_read)
+{
+    unsigned flags = 0; int times = 0, secs = 0, forever = 0, any = 0;
+    Opnd rtimes, rsecs; int have_times = 0, have_secs = 0;
+    for (;;) {
+        Tok *t = cur();
+        if ((allow & 1) && at_word("with") && (is_word(peek(1), "lock") || (is_word(peek(1), "no") && is_word(peek(2), "lock")))) {
+            if (g_std < 2002) die_at(t->line, "WITH LOCK / WITH NO LOCK is COBOL 2002; compile with -std=2002");
+            advance();
+            if (accept_word("no")) { expect_word("lock"); flags |= COB_IO_NOLOCK; } else { expect_word("lock"); flags |= COB_IO_LOCK; }
+            if ((flags & COB_IO_LOCK) && (flags & COB_IO_NOLOCK)) die_at(t->line, "WITH LOCK and WITH NO LOCK in one statement");
+            if (f && f->lockmode == 2) die_at(t->line, "'%s' takes no LOCK phrase: its LOCK MODE is AUTOMATIC (2023 14.9.30.3 rule 4, 14.9.35.3 rule 4, 14.9.51.3 rule 22)", f->name);
+            any = 1; continue;
+        }
+        if ((allow & 2) && accept_word("ignoring")) {
+            if (g_std < 2002) die_at(t->line, "IGNORING LOCK is COBOL 2002; compile with -std=2002");
+            expect_word("lock"); flags |= COB_IO_IGNORE_LOCK;
+            if (f && f->lockmode == 2) die_at(t->line, "a READ of '%s' takes no IGNORING LOCK: its LOCK MODE is AUTOMATIC (2023 14.9.30.3 rule 4)", f->name);
+            any = 1; continue;
+        }
+        if ((allow & 4) && at_word("advancing") && is_word(peek(1), "on")) {
+            if (g_std < 2002) die_at(t->line, "ADVANCING ON LOCK is COBOL 2002; compile with -std=2002");
+            advance(); advance(); expect_word("lock"); flags |= COB_IO_ADV_LOCK; g_io_adv_lock = t->line; any = 1; continue;
+        }
+        if ((allow & 8) && accept_word("sharing")) {
+            if (g_std < 2002) die_at(t->line, "OPEN ... SHARING is COBOL 2002; compile with -std=2002");
+            accept_word("with");
+            int m = accept_word("all") ? 1 : accept_word("no") ? 2 : accept_word("read") ? 3 : 0;
+            if (!m) die_at(t->line, "SHARING WITH takes ALL OTHER, NO OTHER or READ ONLY (2023 14.9.27.2)");
+            if (m == 3) accept_word("only"); else accept_word("other");
+            flags |= (unsigned)m << COB_IO_SHARE_SHIFT; any = 1; continue;
+        }
+        if (accept_word("retry")) {
+            if (g_std < 2002) die_at(t->line, "RETRY is COBOL 2002; compile with -std=2002");
+            if (accept_word("forever")) forever = 1;
+            else if (accept_word("for")) { parse_operand(&rsecs); expect_word("seconds"); have_secs = 1; }
+            else { parse_operand(&rtimes); expect_word("times"); have_times = 1; }
+            any = 1; continue;
+        }
+        break;
+    }
+    if ((flags & COB_IO_IGNORE_LOCK) && (flags & (COB_IO_LOCK | COB_IO_NOLOCK))) die_at(cur()->line, "IGNORING LOCK is not written with a LOCK phrase (2023 14.9.30.3 rule 3)");
+    if (!any) return;
+    /* the counts: literals here, an item or expression computed into r4/r5 (hundredths of a second for FOR) */
+    if (have_times) {
+        if (rtimes.kind == O_NUM) { emit_li("r4", (long)numlit_int(&rtimes.num)); }
+        else { emit_push_opnd(&rtimes); emit_call("cob_pop_int"); emit("\tadd r4, r1, r0"); }
+    } else emit_li("r4", times);
+    if (have_secs) {
+        if (rsecs.kind == O_NUM) {
+            long long v = numlit_scaled(&rsecs.num); int sc = rsecs.num.scale;
+            while (sc < 2) { v *= 10; sc++; }
+            while (sc > 2) { v /= 10; sc--; }
+            emit_li("r5", (long)v);
+        } else { emit_push_opnd(&rsecs); emit_call("cob_pop_hundredths"); emit("\tadd r5, r1, r0"); }
+    } else emit_li("r5", secs);
+    emit_li("r3", (long)flags); emit_li("r6", forever);
+    emit_call("cob_io_set");
 }
 
 static void parse_open(void)
@@ -48,14 +117,16 @@ static void parse_open(void)
         else if (accept_word("i-o")) mode = COB_OPEN_IO;
         else if (accept_word("extend")) mode = COB_OPEN_EXTEND;
         else break;
-        if (at_word("sharing") || at_word("retry"))
-            die_at(cur()->line, "OPEN ... %s is not implemented (file sharing, 2023 9.1.15; RETRY, 14.7.9)", at_word("sharing") ? "SHARING" : "RETRY");
+        /* [SHARING WITH ...] [RETRY ...] before the file-names (14.9.27.2): the
+         * phrases apply to each file of this mode; their flags are handed to
+         * libcob before each OPEN */
+        int ph_tp = -1;
+        if (at_word("sharing") || at_word("retry")) { ph_tp = g_tp; g_noemit++; parse_io_phrases(NULL, 8, 0); g_noemit--; }
         while (cur()->kind == T_WORD && !at_word("input") && !at_word("output") && !at_word("i-o") &&
                !at_word("extend") && !is_verb(cur()->s) && !is_terminator(cur()->s)) {
             int fline = cur()->line;
             File *f = expect_file();
-            if (at_word("sharing") || at_word("retry"))
-                die_at(cur()->line, "OPEN ... %s is not implemented (file sharing, 2023 9.1.15; RETRY, 14.7.9)", at_word("sharing") ? "SHARING" : "RETRY");
+            if (ph_tp >= 0) { int save = g_tp; g_tp = ph_tp; parse_io_phrases(f, 8, 0); g_tp = save; }
             int reversed = 0, e85 = g_std < 2002, seq = f->org == COB_ORG_SEQ || f->org == COB_ORG_LINESEQ;
             if (f->report_name[0] && (mode == COB_OPEN_INPUT || mode == COB_OPEN_IO))
                 die_at(fline, "OPEN %s '%s': a report file is opened OUTPUT or EXTEND (%s)", mode == COB_OPEN_INPUT ? "INPUT" : "I-O", f->name,
@@ -215,7 +286,8 @@ static void parse_read(void)
         if (g_std >= 2002 && nrec > 1 && !alnum)
             die_at(into.line, "READ %s INTO '%s': with several record descriptions, the INTO item and every record are alphanumeric (2023 14.9.30.3 rule 1)", f->name, into.sym->name);
     }
-    io_nyi("READ");
+    g_io_adv_lock = 0;
+    io_phrases("READ", f);
     int keyed = 0, ki = 0;
     if (accept_word("key")) {
         accept_word("is");
@@ -226,7 +298,7 @@ static void parse_read(void)
         if (ki < 0 || klen) die_at(k.line, "READ ... KEY IS '%s': not the RECORD KEY or an ALTERNATE RECORD KEY of '%s'", k.sym->name, f->name);
         keyed = 1;
     }
-    io_nyi("READ");
+    io_phrases("READ", f);
     if (has_prev && keyed) die_at(cur()->line, "READ PREVIOUS names no KEY (2023 14.9.30 format 1)");
     has_next |= has_prev;                       /* a sequential read, backwards */
     if (f->org == COB_ORG_INDEXED) {
@@ -239,6 +311,7 @@ static void parse_read(void)
         if (has_next && f->access == 1) die_at(cur()->line, "READ NEXT needs ACCESS SEQUENTIAL or DYNAMIC");
         if (!has_next && f->access != 0) keyed = 1;
     } else if (keyed) die_at(cur()->line, "READ ... KEY needs an INDEXED file");
+    if (g_io_adv_lock && keyed) die_at(g_io_adv_lock, "ADVANCING ON LOCK is for a sequential READ (2023 14.9.30 format 1): a keyed READ of '%s' names its record", f->name);
 
     g_io_file = f;
     emit_file_addr("r3", f); emit_li("r4", ki);
@@ -373,7 +446,7 @@ advancing_done:;
             emit_li("r3", bef); emit_call("cob_write_also_before");
         }
     }
-    io_nyi("WRITE");
+    io_phrases("WRITE", f);
     /* a BEFORE phrase on a print file (not LINAGE, which counts its own):
      * before = -3 marks it, so BEFORE 1 is not taken for AFTER 1 -- the
      * runtime's printer needs to know which side of the record the move
@@ -450,7 +523,7 @@ static void parse_rewrite(void)
         lslot = g_slot_base++; if (g_slot_base > NSLOTS) die_at(rec.line, "internal: too many staged operands");
         wlen = file_phrase_from(f, &rec, lslot);
     } else if (accept_word("from")) { Opnd src; parse_operand(&src); emit_move(&src, &rec); }
-    io_nyi("REWRITE");
+    io_phrases("REWRITE", f);
     emit_file_addr("r3", f);
     if (wlen >= 0) emit_li("r4", wlen); else emit("\tldw r4, sp+%d", SLOT(lslot));
     if (lslot >= 0) g_slot_base--;
@@ -486,7 +559,7 @@ static void parse_delete(void)
         }
         if (!n) die_at(cur()->line, "DELETE FILE needs a file-name");
         if (n > 1 && g_npstk && g_pstk[g_npstk - 1].Lcycle < 0) die_at(cur()->line, "DELETE FILE of several files is not in an exception-checking PERFORM (2023 14.9.10.3 rule 4)");
-        io_nyi("DELETE");
+        io_phrases("DELETE FILE", NULL);
         /* the result in SLOT_C: the last file's, an exception from any of them standing */
         emit_li("r1", 0); emit("\tstw sp+%d, r1", SLOT_C);
         for (int i = 0; i < n; i++) {
@@ -500,7 +573,7 @@ static void parse_delete(void)
     }
     File *f = expect_file();
     accept_word("record");
-    io_nyi("DELETE");
+    io_phrases("DELETE", f);
     if (f->org != COB_ORG_INDEXED && f->org != COB_ORG_RELATIVE) die_at(cur()->line, "DELETE needs an INDEXED or RELATIVE file");
     if (f->access == 0 && (at_word("invalid") || (at_word("not") && is_word(peek(1), "invalid"))))
         die_at(cur()->line, "DELETE '%s' in sequential access takes no INVALID KEY (%s)", f->name,
@@ -564,7 +637,7 @@ static void parse_start(void)
         check_numeric_opnd(&wl);
         haslen = 1;
     }
-    io_nyi("START");
+    io_phrases("START", f);
     if (haslen) {
         /* the length to a slot first: the expression's code uses the
          * argument registers */

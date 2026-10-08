@@ -115,7 +115,13 @@ typedef struct {
     unsigned char fast_r1, fast_r, fast_w1, fast_w;
     unsigned int started;     /* sequential: a START positioned the file (FIRST, LAST): the next READ, NEXT or PREVIOUS, reads the record at fpos (14.9.41 GR 20-21) */
     unsigned int last_st;     /* the last I-O status of this connector, 0x10000 | its two characters; 0 never accessed (FUNCTION EXCEPTION-FILE (file-name), 2023 15.28.4 rule 2) */
+    unsigned int share_lock;  /* the file control entry's SHARING (bits 0-3: 0 none, 1 ALL OTHER, 2 NO OTHER, 3 READ ONLY) and LOCK MODE (bits 4-7: 0 none, 1 MANUAL, 2 AUTOMATIC; bit 8 MULTIPLE) -- 2023 12.4.5.15, 12.4.5.9 */
+    unsigned int lk_state;    /* the runtime's: the sharing mode this opening took (bits 0-3), the physical file's slot + 1 (bits 8-) */
 } cob_file;
+/* the phrases of one I-O statement (2023 14.9.30 formats, 14.7.9 RETRY,
+ * 14.9.27 SHARING): set by the compiler just before the call, read and
+ * cleared by it (cob_io_set) */
+enum { COB_IO_LOCK = 1, COB_IO_NOLOCK = 2, COB_IO_IGNORE_LOCK = 4, COB_IO_ADV_LOCK = 8, COB_IO_SHARE_SHIFT = 8 };
 
 
 /* FUNCTION: the numeric intrinsics cob_fn_num computes over the top n

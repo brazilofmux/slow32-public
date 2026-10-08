@@ -50,6 +50,7 @@ standard's titles or text:
 | 8.3.3.2, 8.3.3.6 literals and figurative constants; 8.4.2.2 qualification, 8.4.2.3 subscripts, 8.4.3.1-2, .10-.12, .14-.15 identifiers, 8.4.4 condition-name | [identifiers.md](identifiers.md) | 2026-10-07 |
 | 12.4.5, 13.4.5, RECORD, LINAGE: files | [files.md](files.md) | 2026-09-29 |
 | 14.9.6/.10/.27/.30/.35/.41/.51 the I-O statements | [io-statements.md](io-statements.md) | 2026-09-29 |
+| 9.1.15, 9.1.16, 12.4.5.9, 12.4.5.15 file sharing and record locking; 14.7.9 RETRY; the LOCK phrases of OPEN, READ, WRITE, REWRITE | [locking.md](locking.md) | 2026-10-07 |
 | 14.9.20 INITIALIZE | [initialize.md](initialize.md) | 2026-09-29 |
 | 14.9.25 MOVE | [move.md](move.md) | 2026-09-29 |
 | 14.9.37 SEARCH | [search.md](search.md) | 2026-09-29 |

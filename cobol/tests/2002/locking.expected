@@ -1,0 +1,66 @@
+-- indexed: sharing modes (Table 19)
+open f1 00 f2 00
+open f4 (no other) while open elsewhere: 61
+open output f2 (already open): 41
+open output f2 while f1 open: 61
+-- indexed: manual locks, f1 on multiple records
+f1 read 01 with lock: 00
+f2 read 01: 51
+f2 read 01 retry 2 times: 51
+f2 read 01 retry for 0.01 seconds: 51
+f2 read 01 ignoring lock: 00 [first ]
+f2 read 02: 00
+f2 read 03 (f1 holds 01 and 03): 51
+f2 rewrite 03: 51
+f2 delete 03: 51
+f2 start 03 (START sees no locks): 00
+f1 reads its own locked 01: 00
+f1 read 03 with no lock (frees 03 alone): 00
+f2 read 03 now: 00
+f2 read 01 still: 51
+unlock f1: 00
+f2 read 01 after unlock: 00
+-- indexed: f2 single record, a lock on REWRITE
+f1 read 02 (f2 holds it): 51
+f2 rewrite 03 with lock: 00
+f1 read 02 (f2's rewrite released 02): 00
+f1 read 03 (f2's new lock): 51
+f1 read 03 (f2's plain read released it): 00
+f1 read 01 (f2 closed): 00
+-- indexed: automatic
+f3 (automatic) read 02: 00
+f2 read 02 while f3 holds it: 51
+f3 read 01 (single: 02 released): 00
+f2 read 02 now: 00
+f2 rewrite 01 (f3 holds it): 51
+f2 delete 01 (f3 holds it): 51
+-- indexed: read only, and a SHARING clause without LOCK MODE
+open i-o f1 while f5 read only: 61
+open input f1 while f5 read only: 00
+f6 (no LOCK MODE) reads f2's locked 01: 00
+open i-o f1 while f2 opened SHARING WITH READ ONLY: 61
+open input f1 while f2 opened SHARING WITH NO OTHER: 61
+-- relative: the record is its number
+rb read 5 (ra holds it): 51
+rb read 6: 00
+rb rewrite 5: 51
+rb delete 5: 51
+rb write 7 (slot taken): 22
+rb write 301 with lock: 00
+ra read 301 (rb holds it): 51
+rc (automatic, multiple) read 5 held by ra: 51
+rb read 6 (rc holds 6 and 8): 51
+rb read 8: 51
+rb read 6 after rc's UNLOCK: 00
+-- relative: the limits
+ra locking 281 more: 0027 refused, last 54
+ra lock 256th: 54
+rb read 10 after ra closed: 00
+-- sequential: ADVANCING ON LOCK
+qa holds the second: bbbb
+qb first: 00 aaaa
+qb second: 51
+qb second advancing on lock: 00 cccc
+qb fourth: 00 dddd
+qb at end: 10
+open input while open EXTEND (all other): 00

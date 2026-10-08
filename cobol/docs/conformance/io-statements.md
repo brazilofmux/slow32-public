@@ -5,7 +5,10 @@ Indexed I-O modules' statements. 2023: 14.9.6, .10, .27, .30, .35,
 .41, .51. The general rules (I-O status, positioning, the AT END and
 INVALID KEY conditions) are exercised at length by CCVS-85's SQ, RL
 and IX programs, which match GnuCOBOL; this sweep went after the syntax
-rules.
+rules. The statements' sharing and locking phrases (OPEN SHARING, READ
+WITH LOCK / NO LOCK / IGNORING LOCK / ADVANCING ON LOCK, WRITE and
+REWRITE WITH [NO] LOCK, RETRY) and the statuses 51, 53, 54, 61, 62 are
+on [locking.md](locking.md) (2026-10-07).
 
 | rule | paraphrase | disposition |
 |---|---|---|

@@ -418,17 +418,28 @@ static void parse_select(void)
             continue;
         }
         if (accept_word("sharing")) {
-            /* SHARING WITH ALL OTHER: accepted and ignored on this machine */
+            /* SHARING WITH {ALL OTHER | NO OTHER | READ ONLY} (2023 12.4.5.15): the
+             * sharing mode of every OPEN without a SHARING phrase (9.1.15) */
+            if (g_std < 2002) bp(BP_E33_SHARING_85, t->line);   /* majesty's 85 programs carry it (GnuCOBOL takes it) */
             accept_word("with");
-            if (accept_word("all")) accept_word("other");
-            else if (accept_word("no")) accept_word("other");
-            else if (accept_word("read")) accept_word("only");
+            if (accept_word("all")) { accept_word("other"); f->sharing = 1; }
+            else if (accept_word("no")) { accept_word("other"); f->sharing = 2; }
+            else if (accept_word("read")) { accept_word("only"); f->sharing = 3; }
+            else die_at(t->line, "SHARING WITH takes ALL OTHER, NO OTHER or READ ONLY (2023 12.4.5.15.2)");
             continue;
         }
         if (accept_word("lock")) {
+            /* LOCK MODE IS {MANUAL | AUTOMATIC} [WITH LOCK ON [MULTIPLE] RECORD(S)] (2023 12.4.5.9) */
+            if (g_std < 2002) bp(BP_E33_SHARING_85, t->line);
             accept_word("mode"); accept_word("is");
-            while (cur()->kind == T_WORD && !at_word("assign") && !at_word("organization") &&
-                   !at_word("access") && !at_word("file") && !at_word("record") && !at_word("sharing")) advance();
+            if (accept_word("manual")) f->lockmode = 1;
+            else if (accept_word("automatic")) f->lockmode = 2;
+            else die_at(t->line, "LOCK MODE IS takes MANUAL or AUTOMATIC (2023 12.4.5.9.2)");
+            if (accept_word("with") || at_word("lock")) {
+                expect_word("lock"); accept_word("on");
+                if (accept_word("multiple")) f->lockmulti = 1;
+                if (!accept_word("record") && !accept_word("records")) die_at(t->line, "LOCK MODE ... WITH LOCK ON [MULTIPLE] RECORD or RECORDS (2023 12.4.5.9.2)");
+            }
             continue;
         }
         if (accept_word("reserve")) { while (cur()->kind != T_PERIOD && !at_word("organization") && !at_word("access") && !at_word("file")) advance(); continue; }

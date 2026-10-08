@@ -150,5 +150,5 @@ rules. Here, the clauses' own rules:
 |---|---|---|
 | SR 1 | not a sort or merge file | **refused**: bad/std2002-unlock-sortfile -- accepted before this sweep |
 | SR 2 | not a file under APPLY COMMIT | n/a while APPLY COMMIT is a gap |
-| GR 1 | the file's record locks released, locks or none | **test**: nothing is locked here (one user; file sharing and record locking are item 39) |
+| GR 1 | the file's record locks released, locks or none | **test**: nothing is locked here; with locks, 2002/locking (locking.md) -- another connector reads the record UNLOCK freed |
 | GR 2-3 | the file open; the I-O status set | **test**: 00 open, **47** not open -- no status was set before this sweep (RM/COBOL's statement, read past) |

@@ -95,8 +95,7 @@ COBOL 2002/2023 (Stage B):
   (docs/conformance/national-boolean.md).
 - the 2002-2023 constructs that used to meet a parse error and are now
   refused by name (docs/plans/standard-queue.md item 1; tests/bad/
-  std2002-*): record locking and RETRY, OPEN SHARING,
-  SUPPRESS WHEN,
+  std2002-*): SUPPRESS WHEN,
   FORMAT and SELECT WHEN, USAGE
   MESSAGE-TAG,
   OCCURS DYNAMIC, SET

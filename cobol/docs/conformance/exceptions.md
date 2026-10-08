@@ -110,14 +110,14 @@ queue item 4 continues with.
 | EC-I-O-AT-END | NF | **test**: 2002/ecio, 2002/ecpreview, 2002/ecturnfile |
 | EC-I-O-EOP | NF | **gap**: the end-of-page condition is the WRITE's EOP phrase only (queue item 4, next) |
 | EC-I-O-EOP-OVERFLOW | NF | **gap**: as EC-I-O-EOP |
-| EC-I-O-FILE-SHARING | NF | raised from I-O status class 6; **gap**: no statement here produces that class (file sharing, queue item 39) |
+| EC-I-O-FILE-SHARING | NF | raised from I-O status class 6: **61** at an OPEN Table 19 refuses beside another connector of the run unit, **62** at DELETE FILE of a file open through another (locking.md; 2002/locking, 2023/lockdel) |
 | EC-I-O-IMP | Imp | **ruling**: no implementor-defined condition is defined here, so it never arises |
 | EC-I-O-INVALID-KEY | NF | **test**: 2002/usefile |
 | EC-I-O-LINAGE | Fatal | **gap**: a LINAGE value out of range is not detected (queue item 4, next) |
 | EC-I-O-LOGIC-ERROR | Fatal | raised from I-O status class 4; **gap**: no test drives that class (2002/ecio drives 1, 3 and the warning) |
 | EC-I-O-PERMANENT-ERROR | Fatal | **test**: 2002/ecio |
 | EC-I-O-RECORD-CONTENT | Fatal | raised from I-O status class 7; **gap**: no test drives that class |
-| EC-I-O-RECORD-OPERATION | NF | raised from I-O status class 5; **gap**: no test drives that class |
+| EC-I-O-RECORD-OPERATION | NF | raised from I-O status class 5: **51** a record locked by another connector of the run unit, **53**/**54** the lock limits (locking.md; 2002/locking) |
 | EC-I-O-WARNING | NF | **test**: 2002/ecio, 2002/ecturn, 2002/seqbyteec |
 
 ## EC-LOCALE

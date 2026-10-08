@@ -1,7 +1,6 @@
 identification division.
-program-id. p5.
-*> open-sharing: refused by name (docs/plans/standard-queue.md item 1); it was a
-*> parse error naming something else.
+program-id. p-sharing-std85.
+*> OPEN's SHARING phrase is COBOL 2002 (14.9.27); the clause itself is BP-E33.
 environment division.
 input-output section.
 file-control.
@@ -12,6 +11,6 @@ fd f.
 01 r pic x(10).
 working-storage section.
 procedure division.
-    open i-o sharing with no other f
+    open i-o sharing with all other f
     close f
     goback.

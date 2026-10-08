@@ -22,6 +22,14 @@
 > feature requests; split keys and embedded SQL, for instance, arrive
 > only if a program here needs them.
 
+(Both examples have since arrived, and on those terms: embedded SQL
+when majesty's PostgreSQL export moved onto SLOW-32 and the NIST SQL
+Test Suite was there to gate it (docs/esql.md, 2026-09-29); split keys
+with the Micro Focus programs that write them, where they turned out to
+be the standard's own `SOURCE IS` first and the dialect's `=` spelling
+second (conformance/files.md, 2026-10-01). The rule stands; the
+examples were the next two programs' needs.)
+
 Written 2026-09-27. This is the direction for `./cobol` after v1, and
 the reasoning behind it.
 
@@ -107,6 +115,9 @@ The focus a fork would give comes from a switch instead:
 |---|---|---|
 | `-std=85` | X3.23-1985, the X3.23a-1989 intrinsics, and the implementor extensions already taken (free format, `SCREEN SECTION`, RM/COBOL positioned I/O, `USAGE POINTER`, the C-ABI `CALL`) | 2002 constructs, with a message naming the standard they need |
 | `-std=2002` | all of the above, plus each Stage B module as it lands | modules not yet implemented, with a message, and OO |
+| `-std=2014` (2026-10-07, queue item 20) | all of the above, plus 2014's additions as they land: the IEEE floating-point usages first | the same |
+| `-std=2023` (2026-10-07, queue item 30) | all of the above, plus 2023's; the `>>FLAG-14` warnings | what 2023 removed from 2014 (conformance/edition-2023.md), and the same |
+| `-dialect=mf`, `-dialect=gnucobol` (2026-10-01, 2026-10-04) | orthogonal to `-std`: Micro Focus's and GnuCOBOL's own forms (behavior-points.md classes D and G), refused without the switch naming it | -- |
 
 - **`-std=85` is the default**, and majesty and CCVS-85 stay pinned to
   it. Nothing Stage B adds can change what an 85 program compiles to.
@@ -119,7 +130,10 @@ The focus a fork would give comes from a switch instead:
   recorded here. If those ever pile up the way the 74/85 differences
   did, that is the signal to reconsider the fork. Nothing known yet
   suggests they will.
-- If 2014 or 2023 earn a value later, they are more rows in the table.
+- 2014 and 2023 earned their values on 2026-10-07 (items 20 and 30), once the queue
+  (docs/plans/standard-queue.md) made the current text the target: two
+  more rows in the table, each accepting the one before, and each the
+  place that edition's *removals* go behind the switch.
   **2014 did, 2026-10-07**: `-std=2014` exists, taking everything 2002
   does plus the 2014 additions as they land (docs/plans/standard-queue.md
   tier 3, item 20 first: the IEEE floating-point usages); `tests/2014/`

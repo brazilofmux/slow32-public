@@ -902,6 +902,8 @@ static void finish_data_division(void)
         if ((f->org == COB_ORG_SEQ || f->org == COB_ORG_LINESEQ) && f->access)
             die_at(f->line, "file '%s' is sequential: ACCESS %s is for a relative or indexed file (%s)", f->name, f->access == 1 ? "RANDOM" : "DYNAMIC",
                    g_std < 2002 ? "X3.23-1985 sequential file control entry format" : "2023 12.4.5.5.2 rule 2");
+        if (f->lockmulti && (f->org == COB_ORG_SEQ || f->org == COB_ORG_LINESEQ || f->access == 0))
+            die_at(f->line, "file '%s': LOCK ON MULTIPLE RECORDS is not for a sequential file or sequential access (2023 12.4.5.9.3 rule 2)", f->name);
         if (f->rec < 0 && !f->report_name[0]) {
             if (!f->fd_line) die_at(f->line, "file '%s' has no FD", f->name);
             if (f->org == COB_ORG_SORT) die_at(f->fd_line, "SD %s has no record description entry (2023 13.4.6.3 rule 2)", f->name);

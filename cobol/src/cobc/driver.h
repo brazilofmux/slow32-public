@@ -187,6 +187,8 @@ static void emit_unit_data(void)
         emit("\t.word 0");                                 /* fast_r1, fast_r, fast_w1, fast_w: the runtime's (READ and WRITE's short entries) */
         emit("\t.word 0");                                 /* started: a sequential START FIRST/LAST positioned the file */
         emit("\t.word 0");                                 /* last_st: the connector's last I-O status (FUNCTION EXCEPTION-FILE (file-name)) */
+        emit("\t.word %d", f->sharing | (f->lockmode << 4) | (f->lockmulti << 8));   /* share_lock: SHARING, LOCK MODE (2023 12.4.5.15, 12.4.5.9) */
+        emit("\t.word 0");                                 /* lk_state: the runtime's */
         if (f->external) { emit(".Lfx%d_%d:\t# the shared connector of EXTERNAL %s", f->unit, i, f->name); emit("\t.word 0"); }
     }
     /* CODE-SET: every elementary item of the file's records DISPLAY, a

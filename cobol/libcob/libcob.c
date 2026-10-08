@@ -3027,13 +3027,205 @@ static int rel_start(cob_file *f, int op);
 static unsigned rel_slot_size(cob_file *f);
 static void lin_values(cob_file *f);
 
+
+/* ---- file sharing and record locking (2023 9.1.15-16; standard-queue
+ * item 39, stage 1): the syntax, the statuses, and the semantics within
+ * this run unit.  Every connector that opens with a sharing mode -- the
+ * file control entry's SHARING clause, the OPEN's SHARING phrase, or a
+ * LOCK MODE clause -- registers the physical file it holds (by its
+ * assigned name), and an OPEN through another connector is checked
+ * against the registered ones (9.1.13.9: status 61, the five cases of
+ * Table 19).  Record locks are a table of (physical file, connector,
+ * record identity): the relative record number, an indexed record's
+ * primary key, a sequential record's position.  A record locked by
+ * another connector is a record operation conflict, status 51, for READ
+ * (but IGNORING LOCK, and ADVANCING ON LOCK, which skips it), REWRITE,
+ * DELETE, WRITE and START; the connector that holds the lock reads its
+ * own record freely.  AUTOMATIC locks what READ reads, MANUAL locks on
+ * the LOCK phrase; single-record locking frees the previous lock at the
+ * next I-O statement but START, MULTIPLE keeps them until UNLOCK or
+ * CLOSE.  Limits: 255 locks per connector (status 54), 1024 per run unit
+ * (53).  RETRY: the locks are this run unit's own, so a retry cannot
+ * succeed -- TIMES re-attempts at once, FOR n SECONDS waits that long
+ * attempting, FOREVER is capped at 60 seconds, the implementor's maximum.
+ * The locks live in this process: a second run unit on the same file,
+ * or one on SMB or NFS, is not seen -- the owner's ruling stages that
+ * out, the host emulator being where coherence across instances would
+ * live (docs/plans/standard-queue.md item 39). */
+#define LK_PER_CONNECTOR 255
+#define LK_PER_RUN_UNIT 1024
+static struct { const char *path; int nconn; } lk_files[64]; static int lk_nfiles;
+static struct { int fid; cob_file *owner; unsigned char key[64]; unsigned klen; } lk_locks[LK_PER_RUN_UNIT]; static int lk_nlocks;
+static int lk_active;                           /* any connector open with a sharing mode or lock mode: the checks run */
+static struct { unsigned flags; int times; double secs; int forever; int set; } cob_io_opt;
+void cob_io_set(unsigned flags, int times, int secs_scaled, int forever)   /* secs_scaled: hundredths */
+{
+    cob_io_opt.flags = flags; cob_io_opt.times = times; cob_io_opt.secs = secs_scaled / 100.0; cob_io_opt.forever = forever; cob_io_opt.set = 1;
+}
+static void lk_opt_clear(void) { if (cob_io_opt.set) memset(&cob_io_opt, 0, sizeof cob_io_opt); }
+static int lk_sharing(const cob_file *f) { return (int)(f->lk_state & 15); }
+static int lk_lockmode(const cob_file *f) { return (int)((f->share_lock >> 4) & 15); }
+static int lk_multiple(const cob_file *f) { return (int)((f->share_lock >> 8) & 1); }
+static int lk_fid(const cob_file *f) { return (int)(f->lk_state >> 8) - 1; }
+/* the physical file's slot by its assigned name, made when absent */
+static int lk_file_slot(cob_file *f)
+{
+    const char *p = file_name(f);
+    for (int i = 0; i < lk_nfiles; i++) if (!strcmp(lk_files[i].path, p)) return i;
+    if (lk_nfiles == 64) cob_fatal("more than 64 shared files");
+    size_t n = strlen(p); char *q = malloc(n + 1); if (!q) cob_fatal("out of memory"); memcpy(q, p, n + 1);
+    lk_files[lk_nfiles].path = q; lk_files[lk_nfiles].nconn = 0;
+    return lk_nfiles++;
+}
+/* the sharing mode this OPEN takes: the phrase, else the clause, else the
+ * implementor's -- no sharing checks and no record locks (9.1.15, 12.4.5.9.4
+ * rule 1b2), so a program that writes neither sees nothing of this */
+static int lk_open_sharing(cob_file *f)
+{
+    int ph = (int)((cob_io_opt.flags >> COB_IO_SHARE_SHIFT) & 15);
+    if (ph) return ph;
+    int cl = (int)(f->share_lock & 15);
+    if (cl) return cl;
+    return lk_lockmode(f) ? 1 : 0;              /* LOCK MODE alone: sharing with all other, record locks in effect */
+}
+/* Table 19 / 9.1.13.9 rule 1: may this OPEN proceed beside the connectors
+ * already open on the physical file?  0, or 61 */
+/* every registered connector, for the open check and DELETE FILE */
+static cob_file *lk_conns[256]; static int lk_nconns;
+static int lk_open_conflict(cob_file *f, int fid, int mode, int sharing)
+{
+    for (int i = 0; i < lk_nconns; i++) {
+        cob_file *o = lk_conns[i];
+        if (o == f || lk_fid(o) != fid || !o->open_mode) continue;
+        int osh = lk_sharing(o), om = (int)o->open_mode;
+        if (osh == 2) return 61;                /* a: open there with no other */
+        if (sharing == 2) return 61;            /* b: this one wants no other */
+        if (osh == 3 && (mode == COB_OPEN_IO || mode == COB_OPEN_EXTEND)) return 61;   /* c: read only there, I-O or EXTEND here */
+        if (sharing == 3 && (om == COB_OPEN_IO || om == COB_OPEN_EXTEND)) return 61;   /* d */
+        if (mode == COB_OPEN_OUTPUT) return 61; /* e: OUTPUT while open elsewhere */
+        if (om == COB_OPEN_OUTPUT) return 61;   /* the mirror of e: open elsewhere for OUTPUT */
+    }
+    return 0;
+}
+static void lk_release_all(cob_file *f)
+{
+    int k = 0;
+    for (int i = 0; i < lk_nlocks; i++) if (lk_locks[i].owner != f) lk_locks[k++] = lk_locks[i];
+    lk_nlocks = k;
+}
+static int lk_count(cob_file *f) { int n = 0; for (int i = 0; i < lk_nlocks; i++) if (lk_locks[i].owner == f) n++; return n; }
+/* the identity of the record an operation concerns: the relative record
+ * number (the RELATIVE KEY item before a keyed operation, the number read
+ * after a sequential one), an indexed record's primary key bytes, a
+ * sequential record's position */
+static unsigned lk_key_of(cob_file *f, int after_read, unsigned char *key)
+{
+    if (f->org == COB_ORG_RELATIVE) {
+        unsigned n = after_read ? f->rel_last : (f->rel_key ? (unsigned)cob_get_num(f->rel_key, (const cob_desc *)f->rel_key_desc) : f->rel_pos);
+        memcpy(key, &n, 4); return 4;
+    }
+    if (f->org == COB_ORG_INDEXED) {
+        unsigned n = f->keylen > 60 ? 60 : f->keylen;
+        memcpy(key, f->record + f->keyoff, n); return n;
+    }
+    unsigned pos = f->fpos; memcpy(key, &pos, 4); return 4;
+}
+static int lk_find(int fid, const unsigned char *key, unsigned klen)
+{
+    for (int i = 0; i < lk_nlocks; i++)
+        if (lk_locks[i].fid == fid && lk_locks[i].klen == klen && !memcmp(lk_locks[i].key, key, klen)) return i;
+    return -1;
+}
+/* is the record locked by another connector? */
+static int lk_conflict(cob_file *f, const unsigned char *key, unsigned klen)
+{
+    int i = lk_find(lk_fid(f), key, klen);
+    return i >= 0 && lk_locks[i].owner != f;
+}
+/* lock a record for f: 0, or the status that refuses (53, 54) */
+static int lk_lock(cob_file *f, const unsigned char *key, unsigned klen)
+{
+    int i = lk_find(lk_fid(f), key, klen);
+    if (i >= 0 && lk_locks[i].owner == f) return 0;
+    if (!lk_multiple(f)) lk_release_all(f);     /* single-record locking: the one before goes */
+    if (lk_count(f) >= LK_PER_CONNECTOR) return 54;
+    if (lk_nlocks >= LK_PER_RUN_UNIT) return 53;
+    lk_locks[lk_nlocks].fid = lk_fid(f); lk_locks[lk_nlocks].owner = f; lk_locks[lk_nlocks].klen = klen; memcpy(lk_locks[lk_nlocks].key, key, klen); lk_nlocks++;
+    return 0;
+}
+/* a connector's locks are held while it works (9.1.16): record locks are
+ * in effect only under sharing with read only or all other (12.4.5.9.4
+ * rule 3), and set by AUTOMATIC's READ or MANUAL's LOCK phrase */
+static int lk_locks_effective(const cob_file *f) { return lk_active && lk_fid(f) >= 0 && lk_sharing(f) != 2 && lk_lockmode(f) != 0; }
+/* RETRY (14.7.9): the attempts, in-process, between which nothing can
+ * change; the wait is honoured all the same */
+static int lk_retry(void)
+{
+    if (!cob_io_opt.set) return 0;
+    if (cob_io_opt.forever) { struct timespec ts = { 60, 0 }; nanosleep(&ts, NULL); return 0; }
+    if (cob_io_opt.secs > 0) { double s = cob_io_opt.secs > 60 ? 60 : cob_io_opt.secs; struct timespec ts; ts.tv_sec = (time_t)s; ts.tv_nsec = (long)((s - (double)ts.tv_sec) * 1e9); nanosleep(&ts, NULL); }
+    return 0;
+}
+static int lk_result_51(cob_file *f) { lk_retry(); return file_result(f, "51", "record locked by another file connector"); }
+/* before an operation that names its record (keyed READ, REWRITE, DELETE,
+ * WRITE, START): a lock by another connector is 51 */
+static int lk_before(cob_file *f)
+{
+    if (!lk_locks_effective(f) || (cob_io_opt.flags & COB_IO_IGNORE_LOCK)) return 0;
+    unsigned char key[64]; unsigned klen = lk_key_of(f, 0, key);
+    return lk_conflict(f, key, klen) ? 51 : 0;
+}
+/* after a successful operation: AUTOMATIC's READ, or a LOCK phrase, locks
+ * the record; NO LOCK on a READ frees the connector's (single) lock */
+static int lk_after(cob_file *f, int is_read, int rc)
+{
+    if (!lk_locks_effective(f)) return rc;
+    if (rc != 0 && rc != 1) return rc;          /* (1: the statement's own condition, a lock still set under AUTOMATIC? no record) */
+    if (rc == 1) return rc;
+    unsigned char key[64]; unsigned klen = lk_key_of(f, is_read, key);
+    unsigned fl = cob_io_opt.flags;
+    if (fl & COB_IO_NOLOCK) {                   /* 14.9.30.4 rule 11b: under multiple-record locking NO LOCK frees this record's lock, if this connector's */
+        if (!lk_multiple(f)) lk_release_all(f);
+        else { int i = lk_find(lk_fid(f), key, klen); if (i >= 0 && lk_locks[i].owner == f) lk_locks[i] = lk_locks[--lk_nlocks]; }
+        return rc;
+    }
+    int want = (fl & COB_IO_LOCK) || (is_read && lk_lockmode(f) == 2 && !(fl & COB_IO_IGNORE_LOCK));
+    if (!want) { if (!lk_multiple(f)) lk_release_all(f); return rc; }   /* single-record locking: any I-O statement but START releases the previous lock (12.4.5.9.4 rule 6) */
+    int st = lk_lock(f, key, klen);
+    if (st) { char s[3]; snprintf(s, sizeof s, "%d", st); return file_result(f, s, "record lock limit reached"); }
+    return rc;
+}
+
+static int cob_open_1(cob_file *f, int mode);
 int cob_open(cob_file *f, int mode)
+{
+    /* the sharing mode this opening takes, checked against the connectors open on the physical file (9.1.15; Table 19) */
+    int sharing = lk_open_sharing(f);
+    if (f->open_mode) { int rc = cob_open_1(f, mode); lk_opt_clear(); return rc; }   /* 41: this connector's own state stays */
+    unsigned lk = 0;
+    if (sharing || lk_active) {
+        int fid = lk_file_slot(f);
+        int st = lk_open_conflict(f, fid, mode & 7, sharing);
+        if (st) { lk_retry(); lk_opt_clear(); return file_result(f, "61", "file sharing conflict"); }
+        lk = (unsigned)sharing | ((unsigned)(fid + 1) << 8);
+    }
+    f->lk_state = lk;
+    int rc = cob_open_1(f, mode);
+    if (rc == 0 && f->open_mode && (sharing || lk_active)) {
+        lk_active = 1;
+        int k = 0; for (int i = 0; i < lk_nconns; i++) if (lk_conns[i] != f) lk_conns[k++] = lk_conns[i]; lk_nconns = k;
+        if (lk_nconns < 256) lk_conns[lk_nconns++] = f;
+    }
+    lk_opt_clear();
+    return rc;
+}
+static int cob_open_1(cob_file *f, int mode)
 {
     int reversed = mode & 8; mode &= 7;
     f->reversed = 0;
     if (reversed) {
         if (f->org != COB_ORG_SEQ || f->varying) cob_fatal("OPEN REVERSED needs a sequential file of fixed-length records");
-        int rc = cob_open(f, mode);
+        int rc = cob_open_1(f, mode);
         if (rc == 0 && f->fp) {
             fseek((FILE *)f->fp, 0, 2);
             long end = ftell((FILE *)f->fp);
@@ -3103,14 +3295,6 @@ int cob_open(cob_file *f, int mode)
 
 int cob_close(cob_file *f);
 
-/* UNLOCK file (2023 14.9.47): the record locks released -- there are
- * none here, one user -- and the I-O status set (GR 3): 00 for an open
- * file, 47 for one not open (GR 2) */
-int cob_unlock(cob_file *f)
-{
-    if (!f->open_mode) return file_result(f, "47", "UNLOCK of a file not open");
-    return file_result(f, "00", "");
-}
 
 /* CLOSE ... WITH NO REWIND on a file that is not on unit media: closed,
  * and the I-O status 07 (2014; 2023 14.9.6.4, 9.1.13: successful, the
@@ -3137,7 +3321,19 @@ int cob_close_lock(cob_file *f)
     return r;
 }
 
+static int cob_close_1(cob_file *f);
 int cob_close(cob_file *f)
+{
+    int rc = cob_close_1(f);
+    if (lk_active) {                           /* the file lock and the record locks go with the connector (9.1.15, 9.1.16) */
+        lk_release_all(f);
+        int k = 0; for (int i = 0; i < lk_nconns; i++) if (lk_conns[i] != f) lk_conns[k++] = lk_conns[i]; lk_nconns = k;
+        f->lk_state = 0;
+    }
+    lk_opt_clear();
+    return rc;
+}
+static int cob_close_1(cob_file *f)
 {
     if (!f->open_mode) return file_result(f, "42", "CLOSE of a file not open");
     if (f->org == COB_ORG_INDEXED) return idx_close(f);
@@ -3179,6 +3375,8 @@ static int ls_national(cob_file *f) { return f->org == COB_ORG_LINESEQ && (f->va
  * and the status is 04, as GnuCOBOL does and majesty reads. */
 static int ls_rule15(const cob_file *f) { return f->org == COB_ORG_LINESEQ && (f->varying & 4); }
 static int ls_read_national_r15(cob_file *f);
+static int cob_read_1(cob_file *f);
+static int cob_write_1(cob_file *f, int before, int after, int reclen);
 
 static int ls_read_national(cob_file *f)
 {
@@ -3187,7 +3385,7 @@ static int ls_read_national(cob_file *f)
     char *t = malloc(cap); if (!t) cob_fatal("out of memory");
     unsigned v = f->varying;
     f->record = t; f->recsize = cap; f->varying = 3;
-    int r = cob_read(f);
+    int r = cob_read_1(f);                                 /* inside the lock layer's call already */
     f->record = rec; f->recsize = n; f->varying = v;
     if (f->last_len == 0 && f->at_eof) { free(t); return r; }   /* 10, 46: nothing read */
     int trunc = io_stw == 4;                                    /* 04 */
@@ -3279,7 +3477,7 @@ static int ls_write_national(cob_file *f, int before, int after, int reclen)
     char *save = f->record;
     unsigned v = f->varying;
     f->record = t; f->recsize = k; f->varying = 3;
-    int r = cob_write(f, before, after, reclen);
+    int r = cob_write_1(f, before, after, reclen);         /* inside the lock layer's call already */
     f->record = save; f->recsize = n; f->varying = v;
     free(t);
     return r;
@@ -3331,7 +3529,27 @@ static int seq_read_prev(cob_file *f)
     return file_result(f, "00", "");
 }
 
+static int cob_read_prev_1(cob_file *f);
 int cob_read_prev(cob_file *f)
+{
+    if (!lk_active) { int rc = cob_read_prev_1(f); lk_opt_clear(); return rc; }
+    /* a sequential READ: the record read may be another connector's locked
+     * one -- 51, or the next under ADVANCING ON LOCK, or no matter under
+     * IGNORING LOCK (14.9.30.4 rule 12) */
+    int rc;
+    for (;;) {
+        rc = cob_read_prev_1(f);
+        if (rc != 0 || !lk_locks_effective(f) || (cob_io_opt.flags & COB_IO_IGNORE_LOCK)) break;
+        unsigned char key[64]; unsigned klen = lk_key_of(f, 1, key);
+        if (!lk_conflict(f, key, klen)) break;
+        if (cob_io_opt.flags & COB_IO_ADV_LOCK) continue;
+        rc = lk_result_51(f); lk_opt_clear(); return rc;
+    }
+    rc = lk_after(f, 1, rc);
+    lk_opt_clear();
+    return rc;
+}
+static int cob_read_prev_1(cob_file *f)
 {
     if (!f->open_mode) return file_result(f, "47", "READ of a file not open");
     if (f->open_mode == COB_OPEN_OUTPUT || f->open_mode == COB_OPEN_EXTEND)
@@ -3412,7 +3630,27 @@ static int seq_start(cob_file *f, int op)
 #endif
 static __attribute__((noinline)) int cob_read_n(cob_file *f);
 static __attribute__((noinline)) int cob_read_rest(cob_file *f);
+static int cob_read_1(cob_file *f);
 int cob_read(cob_file *f)
+{
+    if (!lk_active) { int rc = cob_read_1(f); lk_opt_clear(); return rc; }
+    /* a sequential READ: the record read may be another connector's locked
+     * one -- 51, or the next under ADVANCING ON LOCK, or no matter under
+     * IGNORING LOCK (14.9.30.4 rule 12) */
+    int rc;
+    for (;;) {
+        rc = cob_read_1(f);
+        if (rc != 0 || !lk_locks_effective(f) || (cob_io_opt.flags & COB_IO_IGNORE_LOCK)) break;
+        unsigned char key[64]; unsigned klen = lk_key_of(f, 1, key);
+        if (!lk_conflict(f, key, klen)) break;
+        if (cob_io_opt.flags & COB_IO_ADV_LOCK) continue;
+        rc = lk_result_51(f); lk_opt_clear(); return rc;
+    }
+    rc = lk_after(f, 1, rc);
+    lk_opt_clear();
+    return rc;
+}
+static int cob_read_1(cob_file *f)
 {
     if (f->fast_r1) {
         unsigned pos = f->rpos;
@@ -3656,7 +3894,17 @@ static __attribute__((noinline)) int cob_write_rest(cob_file *f, int before, int
  * one phrase; a LINAGE file's write takes both counts itself */
 static int pr_also_before = -1;
 void cob_write_also_before(int n) { pr_also_before = n; }
+static int cob_write_1(cob_file *f, int before, int after, int reclen);
 int cob_write(cob_file *f, int before, int after, int reclen)
+{
+    if (!lk_active) { int rc = cob_write_1(f, before, after, reclen); lk_opt_clear(); return rc; }
+    if (f->open_mode && lk_before(f)) { int rc = lk_result_51(f); lk_opt_clear(); return rc; }
+    int rc = cob_write_1(f, before, after, reclen);
+    rc = lk_after(f, 0, rc);
+    lk_opt_clear();
+    return rc;
+}
+static int cob_write_1(cob_file *f, int before, int after, int reclen)
 {
     if (f->fast_w1) {
         /* (last_len, the length the last READ delivered, is 0 since OPEN:
@@ -5599,7 +5847,17 @@ static int idx_write(cob_file *f)
 /* READ with KEY (random): by the prime key (ki 0) or an alternate (ki i),
  * whose value is what the record's field holds; that key becomes the key
  * of reference.  02: another record has the same alternate key. */
+static int cob_read_key_1(cob_file *f, int ki);
 int cob_read_key(cob_file *f, int ki)
+{
+    if (!lk_active) { int rc = cob_read_key_1(f, ki); lk_opt_clear(); return rc; }
+    if (f->open_mode && lk_before(f)) { int rc = lk_result_51(f); lk_opt_clear(); return rc; }
+    int rc = cob_read_key_1(f, ki);
+    rc = lk_after(f, 1, rc);
+    lk_opt_clear();
+    return rc;
+}
+static int cob_read_key_1(cob_file *f, int ki)
 {
     if (!f->open_mode) return file_result(f, "47", "READ of a file not open");
     if (f->org == COB_ORG_RELATIVE) return rel_read_key(f);
@@ -5671,7 +5929,15 @@ static int idx_read_prev(cob_file *f)
  * key's length: a data item that begins where the key begins) with the
  * record area's.  op: 0 =, 1 >, 2 >=, 3 <, 4 <=.  The key becomes the
  * key of reference. */
+static int cob_start_1(cob_file *f, int op, int ki, int len);
 int cob_start(cob_file *f, int op, int ki, int len)
+{
+    /* START neither detects, acquires nor releases record locks (14.9.41.4 rule 3); RETRY is its only phrase */
+    int rc = cob_start_1(f, op, ki, len);
+    lk_opt_clear();
+    return rc;
+}
+static int cob_start_1(cob_file *f, int op, int ki, int len)
 {
     if (!f->open_mode) return file_result(f, "47", "START of a file not open");
     if (f->open_mode == COB_OPEN_OUTPUT || f->open_mode == COB_OPEN_EXTEND) return file_result(f, "47", "START of a file not open for input or I-O");
@@ -5756,7 +6022,17 @@ static int idx_rewrite(cob_file *f)
 
 /* REWRITE: indexed by key; sequential in place after a READ, by the
  * position libcob kept */
+static int cob_rewrite_1(cob_file *f, int reclen);
 int cob_rewrite(cob_file *f, int reclen)
+{
+    if (!lk_active) { int rc = cob_rewrite_1(f, reclen); lk_opt_clear(); return rc; }
+    if (f->open_mode && lk_before(f)) { int rc = lk_result_51(f); lk_opt_clear(); return rc; }
+    int rc = cob_rewrite_1(f, reclen);
+    rc = lk_after(f, 0, rc);
+    lk_opt_clear();
+    return rc;
+}
+static int cob_rewrite_1(cob_file *f, int reclen)
 {
     if (!f->open_mode) return file_result(f, "49", "REWRITE of a file not open");
     if (f->open_mode != COB_OPEN_IO) return file_result(f, "49", "REWRITE needs OPEN I-O");
@@ -5791,7 +6067,17 @@ int cob_rewrite(cob_file *f, int reclen)
 /* DELETE: the record whose prime key is in the record area (random) or
  * the one last read (sequential access); every key forgets it and the
  * slot is free for a later WRITE */
+static int cob_delete_1(cob_file *f);
 int cob_delete(cob_file *f)
+{
+    if (!lk_active) { int rc = cob_delete_1(f); lk_opt_clear(); return rc; }
+    if (f->open_mode && lk_before(f)) { int rc = lk_result_51(f); lk_opt_clear(); return rc; }
+    int rc = cob_delete_1(f);
+    rc = lk_after(f, 0, rc);
+    lk_opt_clear();
+    return rc;
+}
+static int cob_delete_1(cob_file *f)
 {
     if (!f->open_mode) return file_result(f, "49", "DELETE of a file not open");
     if (f->open_mode != COB_OPEN_IO) return file_result(f, "49", "DELETE needs OPEN I-O");
@@ -7252,10 +7538,22 @@ int cob_delete_file(cob_file *f, int override)
     if (f->open_mode) return file_result(f, "41", "DELETE FILE of an open file");
     const char *name = file_name(f);
     if (!*name) return file_result(f, "31", "the ASSIGN item holds no file name");
+    if (lk_active)                              /* open through another connector: a file sharing conflict (9.1.13.9 rule 2) */
+        for (int i = 0; i < lk_nconns; i++)
+            if (lk_conns[i] != f && lk_conns[i]->open_mode && !strcmp(file_name(lk_conns[i]), name)) { lk_retry(); lk_opt_clear(); return file_result(f, "62", "DELETE FILE of a file open through another file connector"); }
+    lk_opt_clear();
     int r = remove(name);
     if (r && errno == ENOENT) return file_result(f, "05", "");
     if (r) return file_result(f, "37", "DELETE FILE: the file cannot be removed");
     if (f->org == COB_ORG_INDEXED) remove(key_file_name(f));
+    return file_result(f, "00", "");
+}
+/* UNLOCK file-name [RECORD | RECORDS] (2023 14.9.47): the connector's
+ * record locks released, whether it holds any or not; the file is open */
+int cob_unlock(cob_file *f)
+{
+    if (!f->open_mode) return file_result(f, "47", "UNLOCK of a file not open");
+    if (lk_active) lk_release_all(f);
     return file_result(f, "00", "");
 }
 
@@ -7300,6 +7598,18 @@ int cob_pop_int(void)
     return (int)v;
 }
 
+/* the stack top in hundredths (RETRY FOR n SECONDS: the timeout to two
+ * decimals, the implementor's m of 14.7.9.3 rule 2), truncated */
+int cob_pop_hundredths(void)
+{
+    if (nsp <= 0) cob_fatal("numeric stack underflow");
+    cob_num *a = &nstk[--nsp];
+    long long v = a->v;
+    if (a->scale > 2) v = div_pow10(v, a->scale - 2, 0);
+    else for (int k = a->scale; k < 2; k++) v *= 10;
+    if (v > 100 * 3600) v = 100 * 3600;
+    return (int)v;
+}
 /* ALLOCATE's byte count (2002 14.8.3 GR 1): an arithmetic expression's
  * value, a fraction rounded up */
 int cob_pop_alloc_size(void)

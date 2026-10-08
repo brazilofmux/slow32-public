@@ -1,0 +1,6 @@
+delete file while open elsewhere: 62
+open output with retry: 61
+open i-o with retry: 00
+the file is still there: 00 one 
+delete file closed: 00
+open after delete: 35
