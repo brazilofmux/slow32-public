@@ -112,11 +112,59 @@ static void emit_page_advance(Report *r)
  * are DETAIL, CONTROL HEADING and CONTROL FOOTING (X3.23 VIII); a
  * CONTROL FOOTING's bound is the RD FOOTING line, the others' LAST
  * DETAIL -- the runtime reads the kind from is_body (1 or 2). */
+/* COBOL 2002's Report Writer clauses at emission (standard-queue item 37):
+ * PRESENT WHEN's condition, parsed at its recorded position and branched
+ * on; VARYING's item set FROM before the first repetition and stepped BY
+ * after each; an OCCURS count, or the DEPENDING ON item's value */
+static void rw_present(int tp, int Lskip)
+{
+    int save = g_tp; g_tp = tp;
+    Cond *c = parse_cond();
+    g_tp = save;
+    cond_jump_false(c, Lskip);
+}
+static void rw_vary_set(int sym, int tp, int step)
+{
+    if (!sym) return;
+    Ref rs; memset(&rs, 0, sizeof rs); rs.sym = &g_sym[sym]; rs.line = rs.sym->line;
+    int rounded = 0;
+    if (tp) { int save = g_tp; g_tp = tp; Expr *e = parse_expr(); g_tp = save; emit_expr(e); }
+    else { NumLit one; numlit_from_int(&one, 1); Opnd o; memset(&o, 0, sizeof o); o.kind = O_NUM; o.num = one; o.line = rs.line; emit_push_opnd(&o); }
+    emit_store_receivers(&rs, &rounded, 1, 0, !step, 0, 0, -1, 0);   /* FROM: stored; BY: added */
+}
+/* the repetitions of an OCCURS: n, or at run time the DEPENDING ON item's
+ * value -- the k-th repetition (from 1) is skipped to Lend when it is past
+ * the count */
+static void rw_occ_check(int dep_tp, int k, int Lend)
+{
+    if (!dep_tp) return;
+    int save = g_tp; g_tp = dep_tp;
+    Ref dr; parse_ref(&dr);
+    g_tp = save;
+    Opnd o; memset(&o, 0, sizeof o); o.kind = O_REF; o.ref = dr; o.line = dr.line;
+    emit_incompat(&o);
+    { Arg a[2] = { arg_ref(&dr), arg_desc(sym_desc(dr.sym)) }; emit_args(a, 2); emit_call("cob_load_int"); }
+    emit_li("r2", k);
+    emit("\tblt r1, r2, .L%d", Lend);
+}
+/* the leftmost column of a printable item (2023 13.18.14.4 rule 6): the
+ * number as LEFT, RIGHT or CENTER names it */
+static int rw_left_col(const RField *f, int number)
+{
+    int w = rfield_cols(f);
+    if (f->col_mode == 1) return number - w + 1;
+    if (f->col_mode == 2) return (w & 1) ? number - (w - 1) / 2 : number - w / 2 + 1;
+    return number;
+}
+static void emit_report_field(Report *r, RGroup *g, RField *f, int col, int rel);
+static void emit_report_group_tail(Report *r, RGroup *g, int is_body, int Lsupp);
 static void emit_report_group(Report *r, RGroup *g)
 {
     int is_body = g->type == RG_DETAIL || g->type == RG_CONTROL_HEADING ? 1
                 : g->type == RG_CONTROL_FOOTING ? 2 : 0;
     int Lsupp = -1;
+    int Lgroup_absent = -1;
+    if (g->present_tp) { Lgroup_absent = new_label(); rw_present(g->present_tp, Lgroup_absent); }   /* PRESENT WHEN on the 01: the group omitted (13.18.41.4 rule 2b) */
     if (g->type == RG_REPORT_FOOTING && g->nl) {
         emit_report_addr("r3", r);
         emit_li("r4", g->l[0].abs); emit_li("r5", g->l[0].plus);
@@ -142,12 +190,25 @@ static void emit_report_group(Report *r, RGroup *g)
     }
     for (int i = 0; i < g->nl; i++) {
         RLine *ln = &g->l[i];
+        /* the line's repetitions (2002): a multiple LINE clause's numbers, or
+         * OCCURS (vertical, STEP or the relative number); VARYING stepped
+         * between; PRESENT WHEN on the entry skips the line */
+        int reps = ln->nlines ? ln->nlines : ln->occ ? (ln->occ_to ? ln->occ_to : ln->occ) : 1;
+        int Lline_end = new_label();
+        rw_vary_set(ln->vary_sym, ln->vary_from_tp, 0);
+        for (int rep = 0; rep < reps; rep++) {
+        int Lrep_end = new_label();
+        if (rep > 0 && ln->occ_to) rw_occ_check(ln->occ_dep_tp, rep + 1, Lline_end);
+        if (ln->present_tp) rw_present(ln->present_tp, Lrep_end);
+        int labs = ln->abs, lplus = ln->plus;
+        if (ln->nlines) { if (ln->lines[rep] < 0) { labs = 0; lplus = -ln->lines[rep]; } else { labs = ln->lines[rep]; lplus = 0; } }
+        else if (ln->occ && rep > 0) { if (ln->occ_step) { if (labs) labs += rep * ln->occ_step; else { labs = 0; lplus = ln->occ_step; } } }
         if (ln->np && is_body) {                    /* LINE ... NEXT PAGE */
             emit_page_advance(r);
         }
         if (is_body) {
             emit_report_addr("r3", r);
-            emit_li("r4", ln->abs); emit_li("r5", ln->plus); emit_li("r6", 1);
+            emit_li("r4", labs); emit_li("r5", lplus); emit_li("r6", 1);
             emit_call("cob_rw_line_overflows");
             int Lok = new_label();
             emit("\tbeq r1, r0, .L%d", Lok);
@@ -157,12 +218,41 @@ static void emit_report_group(Report *r, RGroup *g)
         /* the line's position first: LINE-COUNTER holds it while the SOURCE
          * items are moved (X3.23 VIII-5 2.4.5: the PH line prints 1) */
         emit_report_addr("r3", r);
-        emit_li("r4", ln->abs); emit_li("r5", ln->plus);
+        emit_li("r4", labs); emit_li("r5", lplus);
         emit_li("r6", is_body);
         emit_call("cob_rw_line_begin");
         for (int k = 0; k < ln->nf; k++) {
             RField *f = &ln->f[k];
             if (!f->column) continue;               /* no COLUMN: not presented (X3.23-1985 XIII 3.11.4 rule 1) */
+            int Lfield_end = new_label();
+            if (f->present_tp) rw_present(f->present_tp, Lfield_end);
+            int freps = f->ncols ? f->ncols : f->occ ? (f->occ_to ? f->occ_to : f->occ) : 1;
+            rw_vary_set(f->vary_sym, f->vary_from_tp, 0);
+            for (int j = 0; j < freps; j++) {
+                if (j > 0 && f->occ_to) rw_occ_check(f->occ_dep_tp, j + 1, Lfield_end);
+                int col = f->ncols ? rw_left_col(f, f->cols[j]) : f->col_rel ? f->column : rw_left_col(f, f->column);
+                if (f->occ && j > 0 && !f->col_rel) col += j * f->occ_step;
+                emit_report_field(r, g, f, col, f->col_rel);
+                if (j + 1 < freps) rw_vary_set(f->vary_sym, f->vary_by_tp, 1);
+            }
+            emit_label(Lfield_end);
+        }
+        emit_report_addr("r3", r);
+        emit_li("r4", is_body);
+        emit_call("cob_rw_line_write");
+        emit_label(Lrep_end);
+        if (rep + 1 < reps) rw_vary_set(ln->vary_sym, ln->vary_by_tp, 1);
+        }
+        emit_label(Lline_end);
+    }
+    if (Lgroup_absent >= 0) emit_label(Lgroup_absent);
+    emit_report_group_tail(r, g, is_body, Lsupp);
+}
+
+/* one printable item onto the line: at col, or (rel) col beyond the line's
+ * horizontal counter; a SUM entry prints its counter */
+static void emit_report_field(Report *r, RGroup *g, RField *f, int col, int rel)
+{
             int Lgi = -1;
             if (f->gi && g->type == RG_DETAIL) {    /* GROUP INDICATE: spaces except first after a page or break */
                 Lgi = new_label();
@@ -171,7 +261,7 @@ static void emit_report_group(Report *r, RGroup *g)
                 emit("\tbeq r2, r0, .L%d", Lgi);
             }
             Arg a[4];
-            a[0] = arg_imm(f->column);
+            a[0] = arg_imm(col);
             a[1] = arg_desc(rfield_desc(f));
             if (f->ctr_sym) {                       /* a SUM entry prints its counter */
                 Ref *rf = xmalloc(sizeof *rf);
@@ -204,13 +294,13 @@ static void emit_report_group(Report *r, RGroup *g)
                 (f->pi.category == PIC_NUMERIC || f->pi.category == PIC_NUMERIC_EDITED ||
                  f->pi.category == PIC_ALPHANUMERIC || f->pi.category == PIC_ALPHANUMERIC_EDITED))
                 cen_bless(f->source->sym);
-            emit_call("cob_rw_field");
+            emit_call(rel ? "cob_rw_field_rel" : "cob_rw_field");
             if (Lgi >= 0) emit_label(Lgi);
-        }
-        emit_report_addr("r3", r);
-        emit_li("r4", is_body);
-        emit_call("cob_rw_line_write");
-    }
+}
+
+static void emit_report_group_tail(Report *r, RGroup *g, int is_body, int Lsupp)
+{
+    (void)is_body;
     if (g->type == RG_DETAIL) {
         int gi_any = 0;
         for (int i = 0; i < g->nl; i++) for (int k = 0; k < g->l[i].nf; k++) if (g->l[i].f[k].gi) gi_any = 1;

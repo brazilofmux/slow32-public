@@ -545,11 +545,22 @@ typedef struct {
     int upon_g[4];                      /* resolved UPON detail groups (indexes into r->g) */
     int reset_lvl;                      /* resolved: 0 FINAL, 1..nctl; the own CF's level by default */
     int sign_lead, sign_sep;            /* SIGN IS LEADING/TRAILING SEPARATE */
+    /* COBOL 2002's Report Writer (standard-queue item 37, 2026-10-07) */
+    int col_mode;                       /* COLUMN LEFT (0), RIGHT (1), CENTER (2): what the number names (13.18.14.4 rule 6) */
+    int col_rel;                        /* COLUMN PLUS n: n beyond the line's horizontal counter (rule 8); column holds n */
+    int ncols, cols[8];                 /* a multiple COLUMN clause: the entry at each (SR 10) */
+    int present_tp;                     /* PRESENT WHEN: the condition's token position, parsed when the group is emitted; 0 none */
+    int occ, occ_to, occ_dep_tp, occ_step;   /* OCCURS n [TO m DEPENDING ON item] [STEP s] (format 3): horizontal repetition */
+    int vary_sym, vary_from_tp, vary_by_tp;  /* VARYING item [FROM expr] [BY expr]: the temporary (a sym index, 0 none) and the expressions' positions */
 } RField;
 
 typedef struct {
     int abs, plus, line, np;            /* np: LINE ... NEXT PAGE */
     RField *f; int nf, fcap;
+    int present_tp;                     /* PRESENT WHEN on the LINE entry (2002): the line and its items absent when false */
+    int nlines, lines[8];               /* a multiple LINE clause: the line at each number (abs) or step (plus) */
+    int occ, occ_to, occ_dep_tp, occ_step;   /* OCCURS on the LINE entry: vertical repetition */
+    int vary_sym, vary_from_tp, vary_by_tp;
 } RLine;
 
 enum { RG_PAGE_HEADING, RG_DETAIL, RG_PAGE_FOOTING,
@@ -563,6 +574,7 @@ typedef struct {
     int next_kind, next_n;              /* NEXT GROUP: 0 none, 1 integer, 2 PLUS, 3 NEXT PAGE */
     int use_sec;                        /* USE BEFORE REPORTING: the DECLARATIVES section, -1 none */
     RLine *l; int nl, lcap;
+    int present_tp;                     /* PRESENT WHEN on the 01 (2002): the whole group absent when false */
 } RGroup;
 
 typedef struct {

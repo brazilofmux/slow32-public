@@ -17,11 +17,11 @@ carry the compiler's own reason.
 | 10 the compilation group | 2 | 2 | 0 | 0 |
 | 11 IDENTIFICATION DIVISION | 15 | 15 | 0 | 0 |
 | 12 ENVIRONMENT DIVISION | 22 | 20 | 0 | 2 |
-| 13 DATA DIVISION | 78 | 67 | 0 | 11 |
+| 13 DATA DIVISION | 78 | 69 | 0 | 9 |
 | 14 PROCEDURE DIVISION | 54 | 47 | 6 | 1 |
 | 15 intrinsic functions | 94 | 89 | 5 | 0 |
 | 16 standard classes | 0 | 0 | 0 | 0 |
-| **all** | **324** | **297** | **11** | **16** |
+| **all** | **324** | **299** | **11** | **14** |
 
 ## 7 COPY, REPLACE and directives
 
@@ -157,11 +157,11 @@ carry the compiler's own reason.
 | 13.5 |  | [data-division](data-division.md) | 42 | 48 | 5 | 3 | 5 |
 | 13.6 |  | [data-division](data-division.md) | 42 | 48 | 5 | 3 | 5 |
 | 13.7 |  | [data-division](data-division.md) | 42 | 48 | 5 | 3 | 5 |
-| 13.8 |  | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
+| 13.8 |  | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
 | 13.9 |  | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
 | 13.10 |  | [data-division](data-division.md), [directives](directives.md) | 94 | 68 | 7 | 6 | 7 |
-| 13.14 |  | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
-| 13.15 |  | [data-division](data-division.md), [reportwriter](reportwriter.md) | 45 | 85 | 5 | 3 | 5 |
+| 13.14 |  | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
+| 13.15 |  | [data-division](data-division.md), [reportwriter](reportwriter.md) | 52 | 85 | 6 | 3 | 5 |
 | 13.16 |  | [data-division](data-division.md) | 42 | 48 | 5 | 3 | 5 |
 | 13.17 |  | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
 | 13.18.1 | ALIGNED clause | [data-division](data-division.md) | 42 | 48 | 5 | 3 | 5 |
@@ -175,11 +175,11 @@ carry the compiler's own reason.
 | 13.18.9 | BLINK clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
 | 13.18.10 | BLOCK CONTAINS clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
 | 13.18.11 | CLASS clause | *unswept* | | | | | |
-| 13.18.12 | CODE clause | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
+| 13.18.12 | CODE clause | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
 | 13.18.13 | CODE-SET clause | [data-division](data-division.md) | 42 | 48 | 5 | 3 | 5 |
-| 13.18.14 | COLUMN clause | [reportwriter](reportwriter.md), [screen](screen.md) | 60 | 55 | 1 | 1 | 3 |
+| 13.18.14 | COLUMN clause | [reportwriter](reportwriter.md), [screen](screen.md) | 67 | 55 | 2 | 1 | 3 |
 | 13.18.15 | CONSTANT RECORD clause | [data-division](data-division.md) | 42 | 48 | 5 | 3 | 5 |
-| 13.18.16 | CONTROL clause | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
+| 13.18.16 | CONTROL clause | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
 | 13.18.17 | DEFAULT clause | *unswept* | | | | | |
 | 13.18.18 | DESTINATION clause | *unswept* | | | | | |
 | 13.18.19 | DYNAMIC LENGTH clause | *unswept* | | | | | |
@@ -191,43 +191,43 @@ carry the compiler's own reason.
 | 13.18.25 | FROM clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
 | 13.18.26 | FULL clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
 | 13.18.27 | GLOBAL clause | [data-division](data-division.md) | 42 | 48 | 5 | 3 | 5 |
-| 13.18.28 | GROUP INDICATE clause | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
+| 13.18.28 | GROUP INDICATE clause | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
 | 13.18.29 | GROUP-USAGE clause | [national-boolean](national-boolean.md) | 15 | 13 | 0 | 0 | 1 |
 | 13.18.30 | HIGHLIGHT clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
 | 13.18.31 | INVALID clause | *unswept* | | | | | |
 | 13.18.32 | JUSTIFIED clause | [clauses](clauses.md) | 1 | 7 | 0 | 0 | 0 |
 | 13.18.33 |  | [clauses](clauses.md) | 1 | 7 | 0 | 0 | 0 |
 | 13.18.34 | LINAGE clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
-| 13.18.35 | LINE clause | [reportwriter](reportwriter.md), [screen](screen.md) | 60 | 55 | 1 | 1 | 3 |
+| 13.18.35 | LINE clause | [reportwriter](reportwriter.md), [screen](screen.md) | 67 | 55 | 2 | 1 | 3 |
 | 13.18.36 | LOWLIGHT clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
-| 13.18.37 | NEXT GROUP clause | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
-| 13.18.38 | OCCURS clause | [occurs](occurs.md) | 0 | 15 | 0 | 0 | 0 |
-| 13.18.39 | PAGE clause | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
+| 13.18.37 | NEXT GROUP clause | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
+| 13.18.38 | OCCURS clause | [occurs](occurs.md), [reportwriter](reportwriter.md) | 10 | 52 | 1 | 0 | 0 |
+| 13.18.39 | PAGE clause | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
 | 13.18.40 | PICTURE clause | [national-boolean](national-boolean.md), [picture](picture.md) | 26 | 38 | 0 | 4 | 2 |
-| 13.18.41 | PRESENT WHEN clause | *unswept* | | | | | |
+| 13.18.41 | PRESENT WHEN clause | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
 | 13.18.42 | PROPERTY clause | *unswept* | | | | | |
 | 13.18.43 | RECORD clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
 | 13.18.44 | REDEFINES clause | [redefines](redefines.md) | 1 | 10 | 0 | 0 | 0 |
 | 13.18.45 | RENAMES clause | [renames](renames.md) | 2 | 8 | 0 | 0 | 0 |
-| 13.18.46 | REPORT clause | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
+| 13.18.46 | REPORT clause | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
 | 13.18.47 | REQUIRED clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
 | 13.18.48 | REVERSE-VIDEO clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
 | 13.18.49 | SAME AS clause | [data-division](data-division.md) | 42 | 48 | 5 | 3 | 5 |
 | 13.18.50 | SECURE clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
 | 13.18.51 | SELECT WHEN clause | *unswept* | | | | | |
 | 13.18.52 | SIGN clause | [clauses](clauses.md) | 1 | 7 | 0 | 0 | 0 |
-| 13.18.53 | SOURCE clause | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
-| 13.18.54 | SUM clause | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
+| 13.18.53 | SOURCE clause | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
+| 13.18.54 | SUM clause | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
 | 13.18.55 | SYNCHRONIZED clause | [clauses](clauses.md), [edition-2023](edition-2023.md) | 1 | 12 | 0 | 0 | 0 |
 | 13.18.56 | TO clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
-| 13.18.57 | TYPE clause | [environment](environment.md), [reportwriter](reportwriter.md) | 29 | 71 | 3 | 3 | 4 |
+| 13.18.57 | TYPE clause | [environment](environment.md), [reportwriter](reportwriter.md) | 36 | 71 | 4 | 3 | 4 |
 | 13.18.58 | TYPEDEF clause | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 13.18.59 | UNDERLINE clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
 | 13.18.60 | USAGE clause | [national-boolean](national-boolean.md), [usage](usage.md) | 35 | 22 | 0 | 1 | 4 |
 | 13.18.61 | USING clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
 | 13.18.62 | VALIDATE-STATUS clause | *unswept* | | | | | |
 | 13.18.63 | VALUE clause | [value](value.md) | 2 | 14 | 0 | 0 | 0 |
-| 13.18.64 | VARYING clause | *unswept* | | | | | |
+| 13.18.64 | VARYING clause | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
 
 ## 14 PROCEDURE DIVISION
 
@@ -251,12 +251,12 @@ carry the compiler's own reason.
 | 14.9.13 | EVALUATE statement | [evaluate](evaluate.md) | 4 | 7 | 0 | 1 | 0 |
 | 14.9.14 | EXIT statement | [exit](exit.md) | 10 | 8 | 0 | 2 | 0 |
 | 14.9.15 | FREE statement | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
-| 14.9.16 | GENERATE statement | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
+| 14.9.16 | GENERATE statement | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
 | 14.9.17 | GO TO statement | [accept](accept.md) | 2 | 10 | 0 | 0 | 0 |
 | 14.9.18 | GOBACK statement | [control](control.md) | 10 | 10 | 0 | 1 | 0 |
 | 14.9.19 | IF statement | [evaluate](evaluate.md) | 4 | 7 | 0 | 1 | 0 |
 | 14.9.20 | INITIALIZE statement | [initialize](initialize.md) | 8 | 5 | 0 | 1 | 0 |
-| 14.9.21 | INITIATE statement | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
+| 14.9.21 | INITIATE statement | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
 | 14.9.22 | INSPECT statement | [string](string.md) | 3 | 20 | 0 | 2 | 0 |
 | 14.9.23 | INVOKE statement | **not implemented**: INVOKE is object orientation, not implemented | | | | | |
 | 14.9.24 | MERGE statement | [sort](sort.md) | 4 | 11 | 0 | 0 | 0 |
@@ -280,8 +280,8 @@ carry the compiler's own reason.
 | 14.9.42 | STOP statement | [control](control.md) | 10 | 10 | 0 | 1 | 0 |
 | 14.9.43 | STRING statement | [string](string.md) | 3 | 20 | 0 | 2 | 0 |
 | 14.9.44 | SUBTRACT statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
-| 14.9.45 | SUPPRESS statement | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
-| 14.9.46 | TERMINATE statement | [reportwriter](reportwriter.md) | 3 | 37 | 0 | 0 | 0 |
+| 14.9.45 | SUPPRESS statement | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
+| 14.9.46 | TERMINATE statement | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
 | 14.9.47 | UNLOCK statement | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 14.9.48 | UNSTRING statement | [string](string.md) | 3 | 20 | 0 | 2 | 0 |
 | 14.9.49 | USE statement | [use](use.md) | 16 | 10 | 0 | 2 | 2 |

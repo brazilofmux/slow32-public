@@ -319,3 +319,12 @@ naming their edition.
 Found with it: NUMVAL-C's argument-2, a currency string, was parsed and
 ignored (the 1989 text has it too); it is honoured now, through the
 same scanner.
+
+## GnuCOBOL 4 and the 2002 Report Writer clauses (2026-10-07)
+
+GnuCOBOL 4.0 has no VARYING clause in a report group ("'ix' is not
+defined"), refuses OCCURS on a LINE entry ("LINE with OCCURS is not
+supported"), and for a report with PRESENT WHEN on a line or a CONTROL
+FOOTING, or a multiple COLUMN clause, generates C that its own compile
+step rejects (`rf_2 undeclared`, `f_27 undeclared`). Test 2002/rw2002 is
+reviewed by hand against the text (standard-queue item 37).

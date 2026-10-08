@@ -1065,14 +1065,29 @@ static void rw_layout_check(Report *r, int paged)
             } else if (!ln->np) seen_rel = 1;
             if (k == 0 && g->type == RG_PAGE_FOOTING && !ln->abs)
                 die_at(ln->line, "a PAGE FOOTING group's first LINE is absolute (X3.23-1985 XIII 3.15.3 rule 9)");
-            /* COLUMN: ascending, no overlap, among the items presented */
+            /* COLUMN: ascending, no overlap, among the items presented -- by
+             * the leftmost column LEFT, RIGHT or CENTER names (2023 13.18.14.4
+             * rule 6), a PLUS from the horizontal counter (rule 8), each number
+             * of a multiple clause and each occurrence; items under different
+             * PRESENT WHEN clauses may overlap (SR 7, 8a), so an item with one
+             * is left out of the check */
             int endcol = 0;
             for (int f = 0; f < ln->nf; f++) {
                 RField *fd = &ln->f[f];
                 if (!fd->column) continue;
-                if (fd->column <= endcol)
-                    die_at(fd->line, "COLUMN %d: the printable items of a line ascend and do not overlap (the one before ends at %d; X3.23-1985 XIII 3.11.3 rule 2)", fd->column, endcol);
-                endcol = fd->column + rfield_cols(fd) - 1;
+                int w = rfield_cols(fd), reps = fd->ncols ? fd->ncols : fd->occ ? (fd->occ_to ? fd->occ_to : fd->occ) : 1;
+                for (int j = 0; j < reps; j++) {
+                    int left;
+                    if (fd->col_rel) left = endcol + fd->column;
+                    else {
+                        int n = fd->ncols ? fd->cols[j] : fd->column + (fd->occ ? j * fd->occ_step : 0);
+                        left = fd->col_mode == 1 ? n - w + 1 : fd->col_mode == 2 ? ((w & 1) ? n - (w - 1) / 2 : n - w / 2 + 1) : n;
+                    }
+                    if (left < 1) die_at(fd->line, "COLUMN %s %d puts the item before column 1", fd->col_mode == 1 ? "RIGHT" : "CENTER", fd->column);
+                    if (left <= endcol && !fd->present_tp)
+                        die_at(fd->line, "COLUMN %d: the printable items of a line ascend and do not overlap (the one before ends at %d; X3.23-1985 XIII 3.11.3 rule 2; 2023 13.18.14.3 rules 7-8)", left, endcol);
+                    if (left + w - 1 > endcol) endcol = left + w - 1;
+                }
             }
         }
         /* the page region the group's absolute lines fall in (3.8.3 rule 8) */
@@ -1236,7 +1251,7 @@ static void parse_rd(void)
          * first is the entry's name ("05 COL 1" is a COLUMN clause, not an
          * entry named COL -- ACAS, cobol ISSUES-124) */
         static const char *clause_words[] = { "type", "line", "next", "column", "columns", "col", "cols", "pic", "picture", "source", "value",
-            "just", "justified", "blank", "sum", "group", "usage", "display", "present", "sign", NULL };
+            "just", "justified", "blank", "sum", "group", "usage", "display", "present", "sign", "occurs", "varying", "lines", NULL };
         for (;;) {
             int eline = cur()->line, lvl = 1;
             if (!first) {
@@ -1257,6 +1272,10 @@ static void parse_rd(void)
             while (nlstk && lstk[nlstk - 1] >= lvl) nlstk--;       /* entries this one is not under */
             /* the entry's clauses */
             int has_line = 0, labs = 0, lplus = 0, is_field = 0, lnp = 0;
+            int mlines = 0, nmline = 0, mline[8];     /* a multiple LINE clause: the numbers (negative: PLUS steps) */
+            int present_tp = 0;                       /* PRESENT WHEN condition-1 */
+            int occ = 0, occ_to = 0, occ_dep_tp = 0, occ_step = 0;   /* OCCURS format 3 */
+            int vary_sym = 0, vary_from_tp = 0, vary_by_tp = 0;      /* VARYING */
             RField fd; memset(&fd, 0, sizeof fd); fd.line = eline;
             int usage_disp = 0;         /* DISPLAY written: a PICTURE of N refuses it (13.18.60.3 rule 20) */
             snprintf(fd.ename, sizeof fd.ename, "%s", entry_name);
@@ -1285,8 +1304,8 @@ static void parse_rd(void)
                     has_type = 1;
                     continue;
                 }
-                if (accept_word("line")) {
-                    accept_word("number"); accept_word("is");
+                if (accept_word("line") || accept_word("lines")) {
+                    accept_word("number"); accept_word("numbers"); accept_word("is"); accept_word("are");
                     if (accept_word("plus")) { if (cur()->kind != T_NUM) die_at(t->line, "expected a number after LINE PLUS"); lplus = atoi(cur()->s); advance(); }
                     else if (at_op("+")) { advance(); if (cur()->kind != T_NUM) die_at(t->line, "expected a number after LINE +"); lplus = atoi(cur()->s); advance(); }
                     else if (cur()->kind == T_NUM) {
@@ -1296,6 +1315,19 @@ static void parse_rd(void)
                         advance();
                     } else if (accept_word("next")) { expect_word("page"); lnp = 1; }
                     else die_at(t->line, "expected a line number after LINE");
+                    /* a multiple LINE clause (2002; 2023 13.18.35.3 rule 10): the
+                     * line at each number, or each PLUS step */
+                    while (cur()->kind == T_NUM || at_word("plus") || at_op("+")) {
+                        if (g_std < 2002) die_at(t->line, "several LINE numbers in one clause is COBOL 2002; compile with -std=2002");
+                        if (!mlines) { mlines = 1; nmline = 0; mline[nmline++] = lplus ? -lplus : labs; }
+                        int rel = accept_word("plus") || (at_op("+") && (advance(), 1));
+                        if (cur()->kind != T_NUM) die_at(t->line, "expected a line number");
+                        int v = atoi(cur()->s[0] == '+' ? cur()->s + 1 : cur()->s); if (cur()->s[0] == '+') rel = 1; advance();
+                        if (nmline == 8) die_at(t->line, "more than 8 LINE numbers in one clause");
+                        if ((rel != 0) != (mline[0] < 0)) die_at(t->line, "a multiple LINE clause is all absolute or all PLUS (2023 13.18.35.3 rule 10)");
+                        if (!rel && v <= (mline[nmline - 1])) die_at(t->line, "the numbers of a multiple LINE clause increase (2023 13.18.35.3 rule 10)");
+                        mline[nmline++] = rel ? -v : v;
+                    }
                     if (accept_word("on")) { expect_word("next"); expect_word("page"); lnp = 1; }
                     else if (labs && at_word("next") && is_word(peek(1), "page")) { advance(); advance(); lnp = 1; }
                     if (!lnp && !labs && !lplus) die_at(t->line, "LINE needs a number");
@@ -1321,11 +1353,32 @@ static void parse_rd(void)
                 }
                 if (accept_word("column") || accept_word("col") || accept_word("columns") || accept_word("cols")) {
                     accept_word("number"); accept_word("numbers"); accept_word("is"); accept_word("are");
-                    if (at_word("plus") || at_op("+") || at_word("left") || at_word("right") || at_word("center") || at_word("centered") ||
-                        (cur()->kind == T_NUM && peek(1)->kind == T_NUM))
-                        die_at(t->line, "COLUMN PLUS, LEFT, RIGHT, CENTER and several column numbers are COBOL 2002's Report Writer; not implemented (the 1985 module is)");
+                    /* 2002's forms (2023 13.18.14 format 1): LEFT, RIGHT or CENTER naming
+                     * what the number is (GR 6), PLUS n from the line's horizontal counter
+                     * (GR 8), several numbers in one clause (SR 10) */
+                    int mode = -1;
+                    if (accept_word("left")) mode = 0; else if (accept_word("right")) mode = 1; else if (accept_word("center") || accept_word("centered")) mode = 2;
+                    if (mode >= 0 && g_std < 2002) die_at(t->line, "COLUMN LEFT, RIGHT and CENTER are COBOL 2002; compile with -std=2002");
+                    if (accept_word("plus") || (at_op("+") && (advance(), 1))) {
+                        if (g_std < 2002) die_at(t->line, "COLUMN PLUS is COBOL 2002; compile with -std=2002");
+                        if (mode >= 0) die_at(t->line, "COLUMN LEFT, RIGHT or CENTER names an absolute column, not PLUS (2023 13.18.14.3 rule 9)");
+                        if (cur()->kind != T_NUM) die_at(t->line, "expected a number after COLUMN PLUS");
+                        fd.col_rel = 1; fd.column = atoi(cur()->s); advance(); is_field = 1;
+                        if (fd.column < 1) die_at(t->line, "COLUMN PLUS takes a positive integer");
+                        continue;
+                    }
                     if (cur()->kind != T_NUM) die_at(t->line, "expected a number after COLUMN");
                     fd.column = atoi(cur()->s); advance(); is_field = 1;
+                    fd.col_mode = mode > 0 ? mode : 0;
+                    while (cur()->kind == T_NUM || at_word("plus") || at_op("+")) {
+                        if (g_std < 2002) die_at(t->line, "several COLUMN numbers in one clause is COBOL 2002; compile with -std=2002");
+                        if (at_word("plus") || at_op("+")) die_at(t->line, "a multiple COLUMN clause is absolute numbers, each above the one before (2023 13.18.14.3 rules 9-10)");
+                        if (!fd.ncols) fd.cols[fd.ncols++] = fd.column;
+                        int v = atoi(cur()->s); advance();
+                        if (fd.ncols == 8) die_at(t->line, "more than 8 COLUMN numbers in one clause");
+                        if (v <= fd.cols[fd.ncols - 1]) die_at(t->line, "the numbers of a multiple COLUMN clause increase (2023 13.18.14.3 rule 10b)");
+                        fd.cols[fd.ncols++] = v;
+                    }
                     continue;
                 }
                 if (accept_word("pic") || accept_word("picture")) {
@@ -1418,9 +1471,57 @@ static void parse_rd(void)
                     fd.sign_sep = 1;
                     continue;
                 }
-                if (at_word("present") || at_word("varying") || at_word("occurs"))
-                    die_at(t->line, "%s in a report group is COBOL 2002's Report Writer; not implemented (the 1985 module is)",
-                           at_word("present") ? "PRESENT WHEN" : at_word("varying") ? "VARYING" : "OCCURS");
+                if (accept_word("present")) {
+                    /* PRESENT WHEN condition-1 (2023 13.18.41): the entry, its items
+                     * and lines, absent when false; parsed when the group is emitted */
+                    if (g_std < 2002) die_at(t->line, "PRESENT WHEN is COBOL 2002; compile with -std=2002");
+                    expect_word("when");
+                    present_tp = g_tp;
+                    g_noemit++; Cond *c = parse_cond(); g_noemit--; (void)c;   /* read over, checked; parsed again at emission */
+                    continue;
+                }
+                if (accept_word("occurs")) {
+                    /* OCCURS n [TO m TIMES DEPENDING ON item] [STEP s] (2023 13.18.38 format 3) */
+                    if (g_std < 2002) die_at(t->line, "OCCURS in a report group is COBOL 2002; compile with -std=2002");
+                    if (cur()->kind != T_NUM) die_at(t->line, "OCCURS in a report group takes an integer");
+                    occ = atoi(cur()->s); advance();
+                    if (accept_word("to")) {
+                        if (cur()->kind != T_NUM) die_at(t->line, "expected the maximum after OCCURS n TO");
+                        occ_to = atoi(cur()->s); advance();
+                        if (occ_to <= occ) die_at(t->line, "OCCURS n TO m: m above n");
+                    }
+                    accept_word("times");
+                    if (accept_word("depending")) {
+                        accept_word("on");
+                        if (!occ_to) die_at(t->line, "OCCURS ... DEPENDING ON goes with TO (2023 13.18.38.3 rule 24)");
+                        if (cur()->kind != T_WORD) die_at(t->line, "DEPENDING ON needs a data-name");
+                        occ_dep_tp = g_tp; advance();
+                        while (at_word("of") || at_word("in")) { advance(); if (cur()->kind == T_WORD) advance(); }
+                    } else if (occ_to) die_at(t->line, "OCCURS n TO m needs DEPENDING ON (2023 13.18.38.3 rule 24)");
+                    if (accept_word("step")) { if (cur()->kind != T_NUM) die_at(t->line, "expected a number after STEP"); occ_step = atoi(cur()->s); advance(); if (occ_step < 1) die_at(t->line, "STEP takes a positive integer"); }
+                    if (occ < 1 || (occ_to ? occ_to : occ) > 64) die_at(t->line, "OCCURS in a report group: 1 to 64 occurrences here");
+                    continue;
+                }
+                if (accept_word("varying")) {
+                    /* VARYING data-name-1 [FROM expr] [BY expr] (2023 13.18.64): a
+                     * temporary integer item of the entry's, stepped per repetition */
+                    if (g_std < 2002) die_at(t->line, "VARYING in a report group is COBOL 2002; compile with -std=2002");
+                    if (cur()->kind != T_WORD) die_at(t->line, "VARYING needs a data-name");
+                    if (sym_lookup_quiet(cur()->s)) die_at(t->line, "VARYING '%s': the name is defined elsewhere (2023 13.18.64.3 rule 2)", cur()->s);
+                    user_word(cur()->s, t->line, "a VARYING item");
+                    Sym *v = sym_new();
+                    snprintf(v->name, sizeof v->name, "%s", cur()->s);
+                    v->line = t->line; v->level = 77; v->has_pic = 1;
+                    snprintf(v->pic, sizeof v->pic, "s9(9)"); pic_analyse(v->pic, &v->pi); v->usage = U_DISPLAY;
+                    vary_sym = sym_idx(v);
+                    r = &g_reports[g_nreport - 1]; g = &r->g[r->ng - 1];
+                    advance();
+                    if (accept_word("from")) { vary_from_tp = g_tp; g_noemit++; Expr *e = parse_expr(); g_noemit--; (void)e; }
+                    if (accept_word("by")) { vary_by_tp = g_tp; g_noemit++; Expr *e = parse_expr(); g_noemit--; (void)e; }
+                    if (at_word("varying") || (cur()->kind == T_WORD && !sym_lookup_quiet(cur()->s) && peek(1)->kind == T_WORD && (is_word(peek(1), "from") || is_word(peek(1), "by"))))
+                        die_at(t->line, "one VARYING item per entry here (2023 13.18.64 allows several)");
+                    continue;
+                }
                 die_at(t->line, "unexpected %s in report group '%s'", tok_desc(t), g->name);
             }
             expect_period();
@@ -1434,12 +1535,28 @@ static void parse_rd(void)
                 die_at(eline, "SIGN: a numeric entry whose PICTURE has S (X3.23-1985 XIII 3.17.3 rule 1)");
             if (fd.has_sum && fd.has_pic && fd.pi.category == PIC_ALPHABETIC)
                 die_at(eline, "a SUM entry is not alphabetic (X3.23-1985 XIII 3.19.3 rule 1)");
+            if (first && present_tp) { g->present_tp = present_tp; present_tp = 0; }   /* on the 01: the whole group */
+            if (first && (occ || vary_sym || mlines)) die_at(eline, "OCCURS, VARYING and a multiple LINE clause are not written on the 01 of a report group");
+            if (mlines && occ) die_at(eline, "a multiple LINE clause with OCCURS (2023 13.18.35.3 rule 10a)");
+            if (fd.ncols && occ) die_at(eline, "a multiple COLUMN clause with OCCURS (2023 13.18.14.3 rule 10a)");
+            if (vary_sym && !occ && !mlines && !fd.ncols) die_at(eline, "VARYING goes with OCCURS or a multiple LINE or COLUMN clause (2023 13.18.64.3 rule 1)");
+            if (occ && !is_field && !has_line) die_at(eline, "OCCURS on a report group entry that is neither a line nor a printable item is not implemented");
+            if (occ && has_line && labs && !occ_step) die_at(eline, "OCCURS on an absolute LINE needs STEP (2023 13.18.38.3 rule 25a)");
+            if (occ && is_field && !has_line && !fd.col_rel && fd.column && !occ_step) die_at(eline, "OCCURS on an absolute COLUMN needs STEP (2023 13.18.38.3 rule 25c)");
             if (has_line) {
                 if (g->nl == g->lcap) { g->lcap = g->lcap ? g->lcap * 2 : 4; g->l = realloc(g->l, g->lcap * sizeof *g->l); }
                 RLine *ln = &g->l[g->nl++];
                 memset(ln, 0, sizeof *ln);
                 ln->line = eline; ln->abs = labs; ln->plus = lplus; ln->np = lnp;
+                ln->present_tp = present_tp;
+                if (mlines) { ln->nlines = nmline; for (int k = 0; k < nmline; k++) ln->lines[k] = mline[k]; }
+                ln->occ = occ; ln->occ_to = occ_to; ln->occ_dep_tp = occ_dep_tp; ln->occ_step = occ_step;
+                ln->vary_sym = vary_sym; ln->vary_from_tp = vary_from_tp; ln->vary_by_tp = vary_by_tp;
+                if (is_field) { present_tp = 0; occ = 0; vary_sym = 0; }   /* a printable LINE entry: the clauses are the line's */
             }
+            if (is_field) { fd.present_tp = present_tp; fd.occ = occ; fd.occ_to = occ_to; fd.occ_dep_tp = occ_dep_tp; fd.occ_step = occ_step; fd.vary_sym = vary_sym; fd.vary_from_tp = vary_from_tp; fd.vary_by_tp = vary_by_tp; }
+            else if (!has_line && !first && (present_tp || occ || vary_sym))
+                die_at(eline, "PRESENT WHEN, OCCURS and VARYING on a report group entry that is neither a line nor a printable item are not implemented");
             if (is_field) {
                 if (!g->nl) die_at(eline, "a printable entry of report group '%s' before any LINE", g->name);
                 RLine *ln = &g->l[g->nl - 1];

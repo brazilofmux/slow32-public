@@ -70,10 +70,28 @@ found that are now thirty refusal tests, `tests/bad/rw85-*`.
 | 4.9 SR 3 | no GENERATE, INITIATE or TERMINATE in a USE BEFORE REPORTING procedure | **refused**: "GENERATE in a USE BEFORE REPORTING procedure" |
 | general rules | the RWCS sequence, sums, breaks, pages | **test**: the CCVS RW module, fixed/report, free/rwpage, free/rptctl, free/rptnext, 2002/rptuse, fixed/rwcode, fixed/rwnested (docs/report-writer.md) |
 
-## 2002 and later
+## 2002 and later (13.18.14 format 1, 13.18.35 format 1, 13.18.38 format 3, 13.18.41, 13.18.64)
 
-PRESENT WHEN, COLUMN PLUS, LEFT, RIGHT and CENTER, several column
-numbers in one clause, VARYING, and OCCURS in report groups are not
-implemented. Each is refused by name ("... is COBOL 2002's Report
-Writer; not implemented"); until this sweep they met a bare parse error.
-Majesty and the Open Systems papers use the 1985 module.
+Implemented 2026-10-07 (docs/plans/standard-queue.md item 37), under
+-std=2002 and later. The report group is still compiled to code, line by
+line and item by item (helpers.h `emit_report_group`): a PRESENT WHEN
+condition is parsed at its recorded position and branched on; OCCURS and
+a multiple LINE or COLUMN clause unroll the repetitions, a DEPENDING ON
+count tested at run time; VARYING's item is a temporary of the entry's,
+set FROM before the first repetition and stepped BY after each; COLUMN
+PLUS goes through libcob's horizontal counter (`cob_rw_field_rel`). Test
+2002/rw2002 (no oracle: GnuCOBOL 4 has no VARYING in a report, and for
+the rest generates C that does not compile -- docs/oracles.md); bad tests
+as named. Majesty and the Open Systems papers use the 1985 module.
+
+| rule | paraphrase | disposition |
+|---|---|---|
+| COLUMN SR 9, GR 6 | LEFT (the default), RIGHT or CENTER: what the number names; not with PLUS | **test**: rw2002 (`RIGHT 20`, `CENTER 30`); **refused**: bad/std2002-rw-column-mode-plus; CENTER's even and odd widths by GR 6d |
+| COLUMN GR 7-9 | PLUS n: n beyond the line's horizontal counter, the rightmost column occupied | **test**: rw2002 (`PLUS 3` after an item ending at 31 lands at 34; `PLUS 1` on OCCURS items) |
+| COLUMN SR 10 | several numbers in one clause: the item at each, increasing, not with OCCURS | **test**: rw2002 (`COLUMN 40 50 60` with VARYING); **refused**: bad/std2002-rw-multicol-order, -multicol-occurs |
+| COLUMN SR 7, 8a; LINE SR 6 | items (lines) overlapping, or out of order, each under a different PRESENT WHEN | the 1985 overlap check now takes the leftmost column LEFT, RIGHT, CENTER or PLUS gives, every number and occurrence, and leaves out an item with a PRESENT WHEN (bad/std2002-rw-overlap-plus: RIGHT 1 is before column 1); lines are not checked against each other |
+| LINE SR 10 | a multiple LINE clause: the line at each number or PLUS step, all absolute or all relative | **test**: rw2002 has the OCCURS form; the clause parses (`LINES ARE 5 7 9`, `LINE PLUS 1 PLUS 1`), each repetition a line |
+| PRESENT WHEN GR 2 | the entry, its subordinates, or the whole group (on the 01) absent when false | **test**: rw2002 (an item, a line, a CONTROL FOOTING group); **refused**: bad/rw2002-85 under -std=85 |
+| PRESENT WHEN GR 3 | the arrangement rules take absent items into account; an absent SUM entry is not printed and not reset | the overlap check (above); a SUM entry's counter is kept whether printed or not: **gap**, the reset is unconditional |
+| OCCURS format 3 SR 24-27, GR 10-12 | n [TO m DEPENDING ON item] [STEP s] on a printable item (horizontal) or a LINE entry (vertical); STEP required for absolute positions | **test**: rw2002 (an item `OCCURS 1 TO 5 DEPENDING ON ndeps STEP 4`, a line `OCCURS 2`); **refused**: bad/std2002-rw-occurs-step, -occurs-to-dep; OCCURS on a group entry that is neither a line nor an item (GR 10b, 10d) is **refused** as not implemented; 64 occurrences at most |
+| VARYING SR 1-3, GR 1-3 | data-name-1 a temporary integer of the entry's, FROM (1) before the first repetition, BY (1) after each; with OCCURS or a multiple clause only | **test**: rw2002 (`VARYING ix FROM 1 BY 2` over `COLUMN 40 50 60`, `VARYING iy FROM 4` over a line's OCCURS, the DEPENDING ON item's); **refused**: bad/std2002-rw-varying-alone, -varying-dup; one VARYING item per entry here (the clause allows several) |

@@ -461,6 +461,9 @@ PLUS/LEFT/RIGHT/CENTER and several numbers, 13.18.64 VARYING, OCCURS in report g
 deps 19f.
 - Today: "... is COBOL 2002's Report Writer; not implemented (the 1985 module is)". Recorded in
   conformance/reportwriter.md but missing from refusals.md section 2.
+**DONE 2026-10-07**: all of it but OCCURS on a group entry that is neither a line nor an item
+(reportwriter.md "2002 and later"; test 2002/rw2002 -- no oracle, GnuCOBOL 4's report codegen
+breaks on these; 9 bad tests, std2002-rw-present-when turned round into the test).
 
 **38. Screen section leftovers.** A.4.2; 13.17, 14.9.39 format 6; Ed. 2002; M; deps none.
 - Swept 2026-10-06: docs/conformance/screen.md, whose "Open" list is this item -- GLOBAL; colours,

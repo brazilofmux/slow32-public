@@ -5969,12 +5969,17 @@ void cob_rw_page_end(cob_report *r)
 /* a print line: its position is settled first -- blank lines up to it,
  * LINE-COUNTER set to it -- so a SOURCE of LINE-COUNTER on the line
  * prints the line's own number; then the fields; then the write */
+/* the line's horizontal counter (2023 13.18.14.4 rules 7-9): the rightmost
+ * column a printable item occupied, zero at the line's start; COLUMN PLUS n
+ * puts the next item n beyond it */
+static int rw_hcol;
 void cob_rw_line_begin(cob_report *r, int abs, int plus, int is_body)
 {
     int target = rw_target(r, abs, plus, is_body);
     if (target < r->line_counter + 1) target = r->line_counter + 1;
     rw_blank_to(r, target);
     r->line_counter = target;
+    rw_hcol = 0;
     memset(rw_line, ' ', RW_WIDTH);
     memset(rw_kind, 0, RW_WIDTH);
     rw_pool_n = 0;
@@ -5994,6 +5999,7 @@ void cob_rw_field(int col, const cob_desc *dd, const void *src, const cob_desc *
     int nat = dd->cat == COB_NATIONAL || dd->usage == COB_U_NATIONAL;
     int ncol = nat ? (int)dd->size / 2 : (int)dd->size;
     if (col < 1 || col - 1 + ncol > RW_WIDTH) cob_fatal("report line wider than 512 columns");
+    if (col - 1 + ncol > rw_hcol) rw_hcol = col - 1 + ncol;
     rw_plain(col - 1, col - 1 + ncol);
     if (!nat) { cob_move(src, sd, rw_line + col - 1, dd); return; }
     unsigned char t[2 * RW_WIDTH];
@@ -6026,6 +6032,11 @@ void cob_rw_field(int col, const cob_desc *dd, const void *src, const cob_desc *
         }
         x += cl[i].w;
     }
+}
+/* COLUMN PLUS n (2023 13.18.14.4 rule 8): n beyond the rightmost column occupied so far */
+void cob_rw_field_rel(int n, const cob_desc *dd, const void *src, const cob_desc *sd)
+{
+    cob_rw_field(rw_hcol + n, dd, src, sd);
 }
 
 void cob_rw_line_write(cob_report *r, int is_body)

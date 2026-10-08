@@ -93,10 +93,6 @@ COBOL 2002/2023 (Stage B):
   SYMBOL gives such a currency its string (edition-2014.md);
 - USAGE NATIONAL on a screen item whose PICTURE is not N
   (docs/conformance/national-boolean.md).
-- the 2002 Report Writer additions: PRESENT WHEN, VARYING, OCCURS in a
-  report group; COLUMN PLUS, LEFT, RIGHT, CENTER and several column
-  numbers (the 1985 module is implemented; docs/conformance/
-  reportwriter.md);
 - the 2002-2023 constructs that used to meet a parse error and are now
   refused by name (docs/plans/standard-queue.md item 1; tests/bad/
   std2002-*): record locking and RETRY, OPEN SHARING,
