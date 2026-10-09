@@ -283,14 +283,34 @@ the field's last column, and with a parted pair (U+FFFD, one column);
 line sequential WRITE of a parted pair (status 71) and READ of a
 supplementary character; record sequential round trip.
 
-Left as the text has it, the user's to change: **truncation by code
-unit parts a surrogate pair** (8.5.1.4: a position is a code unit, and
-MOVE truncates by positions). `MOVE N"ab😀" TO PIC N(3)` leaves `ab` and
-a lone high surrogate, which displays as U+FFFD and which a line
-sequential WRITE refuses. Dropping the whole pair instead would keep
-the Unicode whole at the cost of a position of space, and would be a
-documented deviation. Until that ruling, the generator counts these
-cases and the runtime does what the text says.
+**A cut never parts a surrogate pair** (ruled 2026-10-09, a documented
+deviation from 8.5.1.4's code-unit positions). Keeping one half of a
+character above U+FFFF is corruption, not a shorter representation of
+it, so a pair that does not fit whole is dropped:
+
+- MOVE truncating on the right: `MOVE N"ab😀" TO PIC N(3)` gives `ab`
+  and a space, where the text's positions would leave a lone high
+  surrogate (U+FFFD on DISPLAY, status 71 on a line sequential WRITE).
+- JUSTIFIED RIGHT, truncating on the left: a low half left first is a
+  space.
+- A national-edited receiver: a pair needs two N positions in a row; met
+  where B, 0 or / interrupts them, it is dropped and the position is a
+  space.
+- STRING: a pair that does not fit before the receiver's end is not
+  transferred; the overflow condition holds and POINTER stays before it.
+
+Only the cut is guarded. A lone surrogate already in the data, or one a
+reference modification names on purpose (`n(2:1)`), moves as it is.
+Tests 2002/nattrunc and 2014/natfuncs2; the national generator's model
+applies the same rule (gen/national: "N reference lines drop a
+surrogate pair at a cut" counts how often a cut met one).
+
+Not done, and open for discussion: trimming a partial grapheme cluster
+at a cut (an emoji's modifier or ZWJ sequence, a base letter's
+combining marks), as TinyMUX does for its fixed-size buffers. COBOL's
+text does not ask for it; the cluster machinery is in common/s32utf.h
+if it is wanted. The same question stands for alphanumeric (UTF-8)
+items, whose truncation is by byte and can part a multi-byte sequence.
 
 ## Oracle
 

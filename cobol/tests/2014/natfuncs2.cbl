@@ -41,7 +41,9 @@ procedure division.
     display "trimL [" function trim(n"  😀 a  " leading) "]"
     display "trimT [" function trim(n"  😀 a  " trailing) "]"
     display "trim0 [" function trim(n"   ") "] " function length(function trim(n"   "))
-*> truncation by positions parts a pair; each lone surrogate shows as U+FFFD
+*> truncation drops a pair that does not fit whole, its position a space
+*> (the 2026-10-09 ruling; it used to keep the high half); a reference
+*> modification naming one half still shows it as U+FFFD
     move n"ab😀" to n3
     display "part  [" n3 "] " function length(n3)
     move n"😀😀" to n3

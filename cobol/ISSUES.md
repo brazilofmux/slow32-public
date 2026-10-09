@@ -6560,3 +6560,20 @@ With step 2 every 2002 intrinsic function is here, so bad/std2002-
 intrinsic-module ("a function whose module is not here yet is refused
 naming it") had nothing left to name and is gone; the harness count
 is one test less for it and one more for localedate.
+
+### 132. National truncation never parts a surrogate pair (2026-10-09)
+
+The open ruling of the national audit (ISSUES 128), made: keeping one
+half of a supplementary character is corruption, not a shorter
+representation, so a cut that would part a pair drops it whole --
+move_to_national's right cut and JUSTIFIED left cut (the stranded half a
+space), its national-edited fill (a pair needs two N positions in a
+row), and cob_str_src's overflow (the pair not transferred, POINTER
+before it). Only cuts; a lone surrogate already present, or named by a
+reference modification, moves as it is. A deviation from 8.5.1.4's
+code-unit positions, documented in docs/national.md, with the open
+question of trimming partial grapheme clusters (and of UTF-8
+alphanumeric truncation) recorded there. gen-national.py's model applies
+the rule: 40 of 40 agree, 37 lines meeting a pair at a cut. Test
+2002/nattrunc; 2014/natfuncs2's two lines that documented the old
+behaviour updated.

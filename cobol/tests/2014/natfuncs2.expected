@@ -19,5 +19,5 @@ trim  [😀 a] 4
 trimL [😀 a  ]
 trimT [  😀 a]
 trim0 [] 0
-part  [ab�] 3
-part2 [�|��]
+part  [ab ] 3
+part2 [ |� ]

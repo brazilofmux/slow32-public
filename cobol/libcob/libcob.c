@@ -1117,6 +1117,15 @@ static int as_national(const void *p, const cob_desc *d, unsigned short *out, in
 
 /* a national receiver: aligned left, or right under JUSTIFIED, padded
  * with national spaces (14.6.8) */
+/* Truncation never parts a surrogate pair (the owner's ruling, 2026-10-09):
+ * keeping one half of a character above U+FFFF is corruption, not a
+ * shorter representation of it, so a pair that does not fit whole is
+ * dropped and its position takes a space.  8.5.1.4 counts a code unit as a
+ * position; this is a documented deviation (docs/national.md).  Only the
+ * cut is guarded: a lone surrogate already in the data moves as it is. */
+static int u16_hi(unsigned u) { return u >= 0xD800 && u <= 0xDBFF; }
+static int u16_lo(unsigned u) { return u >= 0xDC00 && u <= 0xDFFF; }
+
 static void move_to_national(const void *src, const cob_desc *sd, void *dst, const cob_desc *dd)
 {
     int dn = (int)dd->size / 2;
@@ -1130,16 +1139,32 @@ static void move_to_national(const void *src, const cob_desc *sd, void *dst, con
         /* national-edited (cobol ISSUES-73): the characters fill the N
          * positions left to right; B, 0 and / are inserted (13.18.40) */
         int si = 0, o = 0;
-        for (const char *p = dd->pic; *p && o < dn; p++, o++)
-            nat_put(q, o, *p == 'B' ? 0x20 : *p == '0' ? 0x30 : *p == '/' ? 0x2F : si < n ? u[si++] : 0x20);
+        for (const char *p = dd->pic; *p && o < dn; p++, o++) {
+            if (*p == 'B' || *p == '0' || *p == '/') { nat_put(q, o, *p == 'B' ? 0x20 : *p == '0' ? 0x30 : 0x2F); continue; }
+            if (si < n && u16_hi(u[si]) && si + 1 < n && u16_lo(u[si + 1]) && !(p[1] == 'N' && o + 1 < dn)) {
+                nat_put(q, o, 0x20); si += 2;        /* the pair has no two N positions in a row here: dropped */
+                continue;
+            }
+            nat_put(q, o, si < n ? u[si++] : 0x20);
+        }
         if (u != stk) free(u);
         return;
     }
     int just = dd->flags & COB_F_JUST, off = 0;
     if (just && n < dn) off = dn - n;
     const unsigned short *from = u;
-    if (n > dn) { if (just) from = u + (n - dn); n = dn; }
-    for (int i = 0; i < dn; i++) nat_put(q, i, (i >= off && i - off < n) ? from[i - off] : 0x20);
+    int blank_first = 0;
+    if (n > dn) {
+        if (just) {                                 /* cut on the left: a low half left first is dropped */
+            from = u + (n - dn);
+            if (dn > 0 && u16_lo(from[0]) && u16_hi(from[-1])) blank_first = 1;
+            n = dn;
+        } else {                                    /* cut on the right: a high half left last is dropped */
+            n = dn;
+            if (dn > 0 && u16_hi(u[dn - 1]) && u16_lo(u[dn])) n = dn - 1;
+        }
+    }
+    for (int i = 0; i < dn; i++) nat_put(q, i, (i == 0 && blank_first) ? 0x20 : (i >= off && i - off < n) ? from[i - off] : 0x20);
     if (u != stk) free(u);
 }
 
@@ -4841,6 +4866,9 @@ void cob_str_src(const char *s, int n, const char *delim, int dn)
      * character that did not fit, having moved the ones before it) */
     int chars = take / w, room = cs.pos >= 1 && cs.pos - 1 <= cs.dlen ? (cs.dlen - (cs.pos - 1)) / w : 0;
     int moved = chars < room ? chars : room;
+    /* a national pair that does not fit whole stops the transfer before it (the cut never parts one) */
+    if (w == 2 && moved < chars && moved > 0 && u16_hi(s32u_u16_at((const unsigned char *)s, (size_t)moved - 1))
+        && u16_lo(s32u_u16_at((const unsigned char *)s, (size_t)moved))) moved--;
     if (cs.dyn && moved > 0) cs_str_grow(moved, w);
     if (moved > 0) memcpy(cs.dst + cs.pos - 1, s, (size_t)(moved * w));
     cs.pos += moved * w;

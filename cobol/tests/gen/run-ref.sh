@@ -5,9 +5,10 @@
 # (compile.sh, -std=2002) and run (slow32-fast) and must print exactly that.
 # No oracle: for national data GnuCOBOL has no UTF-16, so the reference is
 # the model written out from the text (gen-national.py's docstring).  A
-# reference line ending in " split" marks a case where the model's
-# code-unit truncation parts a surrogate pair; the program's line must
-# match it without that word, and the count of such cases is reported.
+# reference line ending in " split" marks a case where a cut met a
+# surrogate pair, which the model drops whole (the 2026-10-09 ruling); the
+# program's line must match it without that word, and the count of such
+# cases is reported.
 # Keeps the work directory when anything disagrees.
 set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -41,6 +42,6 @@ for s in $(seq "$FIRST" "$last"); do
         echo "seed $s: DIFFERS ($(LC_ALL=C diff "$W/r$s/ref.txt" "$W/r$s/out.txt" | grep -c '^<') lines; see $W/r$s)"; bad=$((bad + 1))
     fi
 done
-echo "$((COUNT - bad)) of $COUNT agree, $splits reference lines part a surrogate pair"
+echo "$((COUNT - bad)) of $COUNT agree, $splits reference lines drop a surrogate pair at a cut"
 [ $bad -eq 0 ] && rmdir "$W" 2>/dev/null
 exit $((bad > 0))

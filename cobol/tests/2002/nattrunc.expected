@@ -1,0 +1,12 @@
+right cut [ab ] length 3
+fits [ab😀]
+justified cut [ ab]
+justified, the low half cut [ cd]
+pair exactly at the end [x😀]
+edited NBN [   ]
+edited NNBN [a   ]
+edited pair in NN [😀 b]
+overflow, pointer 04
+string [abc-]
+string fits [ab😀] pointer 05
+a part naming one half: the lone surrogate moves as it is [x� ]

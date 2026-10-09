@@ -13,9 +13,12 @@ filled left-justified with national spaces and truncated on the right by
 positions (JUSTIFIED: on the left); reference modification, LENGTH,
 INSPECT and STRING/UNSTRING count positions; DISPLAY-OF gives UTF-8, a
 lone surrogate becoming U+FFFD; comparison pads the shorter with spaces
-and orders by code unit.  Where the text's model splits a surrogate pair
-the reference says so (the line ends in " split"), so the audit can count
-those cases apart from disagreements.
+and orders by code unit.  One deviation from the text, the owner's ruling
+of 2026-10-09: a cut never parts a surrogate pair -- a MOVE's truncation
+or a STRING's overflow that would keep one half drops the pair, its
+position a space (or, in STRING, not transferred).  The reference marks
+the lines where a cut met a pair (" split"), so the run counts how often
+the generator exercises the rule.
 
 The alphabet mixes one-unit characters of one, two and three UTF-8 bytes
 (ASCII, Latin-1, Greek, CJK -- the last two columns wide on a terminal),
@@ -61,10 +64,16 @@ def utf8_of_units(u):
 
 
 def fit(u, n, just=False):
-    """a national receiver of n positions: truncated, padded with spaces"""
+    """a national receiver of n positions: truncated, padded with spaces; a
+    pair the cut would part is dropped, its position a space"""
     if len(u) >= n:
         kept = u[len(u) - n:] if just else u[:n]
-        return kept, (len(u) > n and splits(u, n, just))
+        sp = len(u) > n and splits(u, n, just)
+        if sp:
+            kept = kept[:]
+            if just: kept[0] = 0x20
+            else: kept[-1] = 0x20
+        return kept, sp
     pad = [0x20] * (n - len(u))
     return (pad + u) if just else (u + pad), False
 
@@ -176,13 +185,17 @@ def main():
             a, b = text(r, 0, 5), text(r, 0, 5)
             p = r.randint(1, nlen[i] + 1)
             w('    move %d to P. string %s %s delimited by size into N%d with pointer P.' % (p, lit(a), lit(b), i))
-            u = cur[i][:]; pos = p; ov = False
-            for v in units(a) + units(b):
-                if pos < 1 or pos > len(u): ov = True; break
-                u[pos - 1] = v; pos += 1
+            u = cur[i][:]; pos = p; ov = False; sp = False
+            for src in (units(a), units(b)):            # one transfer per sending item
+                for t, v in enumerate(src):
+                    if pos < 1 or pos > len(u): ov = True; break
+                    if 0xD800 <= v <= 0xDBFF and pos == len(u) and t + 1 < len(src):
+                        ov = True; sp = True; break     # the pair does not fit whole: not transferred
+                    u[pos - 1] = v; pos += 1
+                if ov: break
             cur[i] = u
             w('    display "%d [" N%d "] " P.' % (k, i))
-            refs.append(b"%d [" % k + utf8_of_units(u) + b"] %02d" % pos)
+            refs.append(b"%d [" % k + utf8_of_units(u) + b"] %02d" % pos + (b" split" if sp else b""))
         elif kind == "unstring":
             j = (i + 1) % 4
             d = r.choice(["a", "é", "漢", "😀", " "])
