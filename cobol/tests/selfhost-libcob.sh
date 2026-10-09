@@ -43,7 +43,7 @@ if ! LIBCOB_OUT="$W" "$CDIR/libcob/build.sh" > "$W/build.log" 2>&1; then
     grep -a -m3 -A2 "error" "$W/build.log"
     exit 1
 fi
-export S32_LIBCOB="$W/libcob.s32o" S32_ESQL="$W/esql.s32o"
+export S32_LIBCOB="$W/libcob.s32o" S32_ESQL="$W/esql.s32o" S32_LOCALE="$W/libcobloc.s32a"
 
 pass=0; fail=0
 for fmt in fixed free 2002 2014 2023; do

@@ -36,3 +36,16 @@ echo "built: $OUT/libcob.s32o ($s32_cc_backend)"
 # the EXEC SQL runtime (docs/esql.md), linked only into programs with SQL
 s32_cc_obj "$OUT/esql.s32o" "$HERE/esql.c" -I"$HERE" -I"$ROOT/sqlite"
 echo "built: $OUT/esql.s32o"
+# The locales (docs/plans/locale.md): libutf's collation, vendored under
+# utf/ by sync-libutf.sh, and the runtime's locale entries (locale.c), as
+# an archive the driver links only into a program that names a locale --
+# 650 KB of tables the others need not carry.
+loc_objs=()
+for f in "$HERE"/locale.c "$HERE"/utf/src/*.c "$HERE"/utf/tables/*.c; do
+    o="$OUT/loc_$(basename "${f%.c}").s32o"
+    s32_cc_obj "$o" "$f" -I"$HERE" -I"$HERE/utf/include"
+    loc_objs+=("$o")
+done
+rm -f "$OUT/libcobloc.s32a"
+"$S32_AR" rc "$OUT/libcobloc.s32a" "${loc_objs[@]}"
+echo "built: $OUT/libcobloc.s32a"

@@ -97,6 +97,12 @@ if grep -q "cob_sql_" "$base".s "$base"-*.s 2>/dev/null; then
     }
     sql=("$S32_ESQL" "$S32_SQLITE"); code=(--code-size 2M)
 fi
+# Locales (docs/plans/locale.md): the collation tables and the locale
+# entries, 650 KB, only when a unit names a locale or calls a locale
+# function -- the cob_loc_ entries are theirs alone
+: "${S32_LOCALE:=$HERE/libcob/libcobloc.s32a}"
+loc=()
+if grep -q "cob_loc_" "$base".s "$base"-*.s 2>/dev/null; then loc=("$S32_LOCALE"); code+=(--rodata-size 2M); fi
 "$S32_LD" --mmio 64K --stack-size 256K --heap-size 64M ${code[@]+"${code[@]}"} -o "$out" "$S32_RT/crt0.s32o" "${link[@]}" \
-    "$S32_LIBCOB" ${sql[@]+"${sql[@]}"} "$S32_RT/libc_mmio.s32a" "$S32_RT/libs32.s32a" >/dev/null
+    "$S32_LIBCOB" ${sql[@]+"${sql[@]}"} ${loc[@]+"${loc[@]}"} "$S32_RT/libc_mmio.s32a" "$S32_RT/libs32.s32a" >/dev/null
 echo "$out"

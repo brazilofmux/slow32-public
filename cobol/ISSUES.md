@@ -6420,3 +6420,35 @@ surrogate pair, as the text has it (8.5.1.4); dropping the pair whole
 would be a documented deviation. The generator counts these cases
 ("split"); the user decides.
 
+
+### 129. Locale support (queue item 45): step 0, the record and the collation (2026-10-08)
+
+docs/plans/locale.md step 0.  libutf dfa04c5's collation -- UCA over
+DUCET 16.0 with the 53 CLDR 46 tailorings -- vendored by
+libcob/sync-libutf.sh into libcob/utf/ (six units, four headers, the MIT
+LICENSE, a SOURCE stamp: collate.c, nfc.c and the four tables they read;
+unicode_tables.c for the UTF-8 decoder only).  libcob/locale.c is the
+runtime's side: `cob_locale_names[]` (POSIX + libutf's 53, shared with
+the compiler through locale_names.h), `cob_loc_find` (POSIX or BCP 47
+spellings, codeset and modifier dropped, case-insensitive, a subtag at a
+time: de_CH -> de; C/POSIX/root/und/empty -> POSIX; unknown -> -1), the
+current locale as six category slots from LC_ALL / LC_<cat> / LANG with
+POSIX the fallback and an unknown environment name noted for
+EC-LOCALE-MISSING, SET's switch / save / restore (a saved locale is a
+magic-tagged heap record; a foreign pointer is EC-LOCALE-INVALID-PTR),
+and `cob_loc_compare`: the 8.8.4.2.11 trimming, national operands
+decoded to UTF-8, level 0 the full comparison, levels 1-4 the two sort
+keys cut at the Nth level separator (16-bit units for the first two
+levels -- a weight's low byte can be 0x00 -- bytes for the third).
+
+Built into libcob/libcobloc.s32a (773 KB) by build.sh with the compiler
+in use, and linked by compile.sh only when the program's text names a
+`cob_loc_` entry, with --rodata-size 2M then; the image's s32cob exports
+S32_LOCALE; selfhost-libcob.sh builds it with stage08 cc.  Gate 1k
+(tests/locale_test.c, 114 checks) on the host; the same source on
+SLOW-32 under both archives, 108 (the environment checks need setenv,
+which the guest libc lacks -- the COBOL tests' .env files cover that
+side).  One expectation of mine was wrong and the library right: a space
+has a primary weight below every letter (non-ignorable, UCA's default),
+so "a  b" sorts before "a b".  Not yet reachable from COBOL: step 1 is
+the clauses, the functions and SET.

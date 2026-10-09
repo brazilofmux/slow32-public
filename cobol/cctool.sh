@@ -39,6 +39,7 @@ fi
 : "${S32_KIT:=$HOME/s32x}"
 : "${OPT:=-O1}"
 : "${S32_AS:=$ROOT/tools/assembler/slow32asm}"
+: "${S32_AR:=$ROOT/tools/utilities/s32-ar}"
 : "${S32_RT_INCLUDE:=$ROOT/runtime/include}"
 
 if [ -x "$LLVM_BIN/clang" ]; then

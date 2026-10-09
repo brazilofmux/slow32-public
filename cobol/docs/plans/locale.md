@@ -258,7 +258,8 @@ the one no corpus of ours uses; last.
 
 ## Steps
 
-0. **Vendoring, the record, the link.**  `libcob/sync-libutf.sh`,
+0. **Vendoring, the record, the link.**  DONE 2026-10-08 (ISSUES 129).
+   `libcob/sync-libutf.sh`,
    `libcob/utf/` (MIT notice kept), `libcob/collate.s32o` in build.sh,
    compile.sh's `cob_loc_` grep + rodata size, the locale record and
    `cob_loc_find`, the POSIX locale, the user default from the
@@ -309,7 +310,7 @@ POSIX (a locale this build has no collation for is not quietly given
 root's -- libutf's rule, kept); the implementor-defined effect of a
 non-COBOL module's setlocale (there is none in a SLOW-32 run unit).
 
-## Decisions wanted
+## Decisions (all seven accepted 2026-10-08; 1 amended to CLDR the same day)
 
 1. **LC_TIME / LC_MONETARY data from CLDR 46** -- the release and the
    license the collators already come from, pinned in the libutf

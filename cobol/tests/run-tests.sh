@@ -244,6 +244,21 @@ else
     fi
 fi
 
+# --- Gate 1k: the locales (host, libcob/locale.c + libcob/utf) --------
+# Names and their fallbacks, the current locale from the environment, SET
+# LOCALE's save and restore, and locale-based comparison with ICU's orders
+# as the witness (docs/plans/locale.md)
+if [ -z "$SKIPPED" ]; then
+    if ! "$HOSTCC" -std=gnu99 -I"$CDIR/libcob" -I"$CDIR/libcob/utf/include" -O1 -w -o "$W/locale_test" \
+            "$HERE/locale_test.c" "$CDIR/libcob/locale.c" "$CDIR"/libcob/utf/src/*.c "$CDIR"/libcob/utf/tables/*.c 2>"$W/cc.log"; then
+        report "locale_test" 1 "host build"
+    elif env -u LC_ALL -u LANG "$W/locale_test" > "$W/locale.out" 2>&1; then
+        report "locale_test" 0 "$(tail -1 "$W/locale.out" | sed 's/^locale_test: //')"
+    else
+        report "locale_test" 1 "$(grep -m1 FAIL "$W/locale.out"; tail -1 "$W/locale.out")"
+    fi
+fi
+
 # --- Gate 1c: the 31-digit arithmetic core (host, libcob/wide.h) -------
 # Every limb operation against the host's unsigned __int128 (docs/wide.md)
 if [ -z "$SKIPPED" ]; then

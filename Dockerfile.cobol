@@ -25,13 +25,13 @@ COPY cobol/src /build/cobol/src
 COPY cobol/libcob /build/cobol/libcob
 COPY common/s32utf.h common/s32utf_tables.h /build/common/
 RUN CC=gcc LLVM_BIN=/opt/llvm/bin \
-    S32_AS=/opt/slow32/bin/slow32asm S32_RT_INCLUDE=/opt/slow32/include \
+    S32_AS=/opt/slow32/bin/slow32asm S32_AR=/opt/slow32/bin/s32-ar S32_RT_INCLUDE=/opt/slow32/include \
     ./build.sh
 
 # Stage 2: layer onto base
 FROM ${BASE_IMAGE}
 COPY --from=cobol-builder /build/cobol/out/s32-cobc /opt/slow32/bin/
-COPY --from=cobol-builder /build/cobol/libcob/libcob.s32o /build/cobol/libcob/esql.s32o /opt/slow32/lib/
+COPY --from=cobol-builder /build/cobol/libcob/libcob.s32o /build/cobol/libcob/esql.s32o /build/cobol/libcob/libcobloc.s32a /opt/slow32/lib/
 COPY --from=cobol-builder /build/sqlite/out/libsqlite3.s32a /opt/slow32/lib/
 COPY cobol/compile.sh cobol/cctool.sh /opt/slow32/cobol/
 COPY docker/bin/s32cob /opt/slow32/bin/
