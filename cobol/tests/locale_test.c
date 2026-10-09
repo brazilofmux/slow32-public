@@ -15,7 +15,13 @@ void cob_loc_init_env(void);
 int cob_loc_current(int cat);
 int cob_loc_user_default(int cat);
 int cob_loc_env_missing(void);
-void cob_loc_set(int cat, int loc);
+int cob_loc_missing(int cat);
+int cob_loc_set(int cat, int loc);
+int cob_loc_user_default_from(const void *p);
+void cob_loc_fn_arg(const unsigned char *p, int n, int nat);
+void cob_loc_fn_level(int level);
+char *cob_loc_fn_compare(const unsigned char *b, int nb, int nat_b, int loc, int standard);
+int cob_loc_fn_bad(void);
 void cob_loc_set_user_default(int loc);
 void *cob_loc_save(int user_default);
 int cob_loc_restore(int cat, const void *p);
@@ -83,10 +89,20 @@ int main(void)
     ok(cob_loc_current(COB_LC_COLLATE) == cob_loc_find("de", -1) && cob_loc_current(COB_LC_TIME) == sv, "LC_COLLATE over LANG, for its category");
     setenv("LC_ALL", "cs_CZ", 1); cob_loc_init_env(); cob_loc_set(-1, -2);
     ok(cob_loc_current(COB_LC_COLLATE) == cob_loc_find("cs", -1) && cob_loc_current(COB_LC_TIME) == cob_loc_find("cs", -1), "LC_ALL over everything");
-    ok(!cob_loc_env_missing(), "nothing missing so far");
-    setenv("LC_ALL", "tlh_KL.UTF-8", 1); cob_loc_init_env(); cob_loc_set(-1, -2);
-    ok(cob_loc_current(COB_LC_COLLATE) == 0 && cob_loc_env_missing() && !cob_loc_env_missing(), "an unknown environment locale: POSIX, and noted once");
-    unsetenv("LC_ALL"); unsetenv("LC_COLLATE"); unsetenv("LANG"); cob_loc_init_env(); cob_loc_set(-1, -2);
+    ok(!cob_loc_env_missing() && !cob_loc_missing(COB_LC_COLLATE), "nothing missing so far");
+    setenv("LC_ALL", "tlh_KL.UTF-8", 1); cob_loc_init_env();
+    ok(cob_loc_set(-1, -2) == 1 && cob_loc_current(COB_LC_COLLATE) == 0 && cob_loc_env_missing() && cob_loc_missing(COB_LC_COLLATE) && cob_loc_missing(COB_LC_TIME),
+       "an unknown environment locale: POSIX stands in, every category missing, SET says so");
+    ok(cob_loc_set(COB_LC_TIME, sv) == 0 && !cob_loc_missing(COB_LC_TIME) && cob_loc_missing(COB_LC_COLLATE), "a category given a locale is no longer missing");
+    unsetenv("LC_ALL"); setenv("LC_COLLATE", "tlh_KL", 1); setenv("LANG", "sv_SE", 1); cob_loc_init_env(); cob_loc_set(-1, -2);
+    ok(cob_loc_current(COB_LC_COLLATE) == 0 && cob_loc_missing(COB_LC_COLLATE) && cob_loc_current(COB_LC_TIME) == sv && !cob_loc_missing(COB_LC_TIME),
+       "one category's variable unknown: that category missing, the others from LANG");
+    unsetenv("LC_COLLATE"); setenv("LANG", "tlh_KL.UTF-8", 1); cob_loc_init_env(); cob_loc_set(-1, -2);
+    ok(cob_loc_current(COB_LC_TIME) == 0 && cob_loc_missing(COB_LC_TIME) && cob_loc_missing(COB_LC_COLLATE), "LANG alone unknown: every category missing");
+    setenv("LC_TIME", "de", 1); cob_loc_init_env(); cob_loc_set(-1, -2);
+    ok(cob_loc_current(COB_LC_TIME) == cob_loc_find("de", -1) && !cob_loc_missing(COB_LC_TIME) && cob_loc_missing(COB_LC_COLLATE), "LC_TIME known over an unknown LANG");
+    unsetenv("LC_ALL"); unsetenv("LC_COLLATE"); unsetenv("LC_TIME"); unsetenv("LANG"); cob_loc_init_env(); cob_loc_set(-1, -2);
+    ok(!cob_loc_missing(COB_LC_COLLATE), "nothing missing again");
 #endif
 
     /* SET LOCALE: switch, save, restore -- from POSIX, whatever the
@@ -105,6 +121,8 @@ int main(void)
     ok(cob_loc_user_default(COB_LC_TIME) == sv && cob_loc_current(COB_LC_TIME) == sv && cob_loc_current(COB_LC_COLLATE) == 0, "the user default set and taken");
     void *saved_ud = cob_loc_save(1);
     ok(cob_loc_restore(COB_LC_COLLATE, saved_ud) == 0 && cob_loc_current(COB_LC_COLLATE) == sv, "a saved user default restored into one category");
+    cob_loc_set_user_default(-3);
+    ok(cob_loc_user_default_from(saved_ud) == 0 && cob_loc_user_default(COB_LC_TIME) == sv && cob_loc_user_default_from("no") == 1, "the user default from a saved locale");
     free(saved); free(saved_ud);
     cob_loc_set_user_default(-3); cob_loc_set(-1, -3);
 
@@ -159,6 +177,27 @@ int main(void)
     memset(big1, 'x', 8999); memset(big2, 'x', 8999); big2[8998] = 'y';
     ok(cob_loc_compare((const unsigned char *)big1, 8999, 0, (const unsigned char *)big2, 8999, 0, 0, 0) < 0, "long operands");
     ok(cob_loc_compare((const unsigned char *)big1, 8999, 0, (const unsigned char *)big2, 8999, 0, 0, 1) < 0, "long operands at level 1 (the fallback)");
+
+    /* the function entries */
+    cob_loc_set_user_default(-3); cob_loc_set(-1, -3);
+    cob_loc_fn_arg((const unsigned char *)"z", 1, 0);
+    ok(!strcmp(cob_loc_fn_compare((const unsigned char *)"\xC3\xA5", 2, 0, sv, 0), "<") && cob_loc_fn_bad() == 0, "LOCALE-COMPARE z å in sv: '<'");
+    cob_loc_fn_arg((const unsigned char *)"z", 1, 0);
+    ok(!strcmp(cob_loc_fn_compare((const unsigned char *)"\xC3\xA5", 2, 0, -1, 0), ">"), "LOCALE-COMPARE under the current (POSIX) locale: '>'");
+    cob_loc_fn_arg((const unsigned char *)"a", 1, 0); cob_loc_fn_level(1);
+    ok(!strcmp(cob_loc_fn_compare((const unsigned char *)"A", 1, 0, 0, 1), "=") && cob_loc_fn_bad() == 0, "STANDARD-COMPARE a A at level 1: '='");
+    cob_loc_fn_arg((const unsigned char *)"a", 1, 0);
+    ok(!strcmp(cob_loc_fn_compare((const unsigned char *)"A", 1, 0, 0, 1), "<"), "STANDARD-COMPARE a A at the highest level: '<'");
+    cob_loc_fn_arg((const unsigned char *)"a", 1, 0); cob_loc_fn_level(5);
+    ok(!strcmp(cob_loc_fn_compare((const unsigned char *)"A", 1, 0, 0, 1), "<") && cob_loc_fn_bad() == 2 && cob_loc_fn_bad() == 0, "level 5: EC-ORDER-NOT-SUPPORTED noted, the full comparison given");
+#ifndef __slow32__
+    setenv("LC_ALL", "tlh_KL", 1); cob_loc_init_env(); cob_loc_set(-1, -2);
+    cob_loc_fn_arg((const unsigned char *)"a", 1, 0);
+    ok(!strcmp(cob_loc_fn_compare((const unsigned char *)"b", 1, 0, -1, 0), "<") && cob_loc_fn_bad() == 1, "the current locale missing: EC-LOCALE-MISSING noted, POSIX's answer given");
+    cob_loc_fn_arg((const unsigned char *)"a", 1, 0);
+    ok(!strcmp(cob_loc_fn_compare((const unsigned char *)"b", 1, 0, sv, 0), "<") && cob_loc_fn_bad() == 0, "a named locale: nothing missing");
+    unsetenv("LC_ALL"); cob_loc_init_env(); cob_loc_set(-1, -2);
+#endif
 
     printf("locale_test: %d checks, %d failed\n", checks, fails);
     return fails != 0;

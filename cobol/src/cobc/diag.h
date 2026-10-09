@@ -224,6 +224,16 @@ static int is_reserved85(const char *w)
     return bsearch(&k, g_rw85, sizeof g_rw85 / sizeof *g_rw85, sizeof *g_rw85, rw_cmp) != 0;
 }
 static Mnemonic g_mnemonic[16];
+/* SPECIAL-NAMES LOCALE locale-name IS external-name (2023 12.3.7): idx
+ * the runtime's locale (locale_names.h); and ORDER TABLE ordering-name IS
+ * literal, the one table being 'ISO_14651_2020_TABLE1' (docs/plans/locale.md) */
+typedef struct { char name[64], ext[64]; int idx; } LocaleName;
+static LocaleName g_locale[16];
+static int g_nlocale;
+static int locale_find(const char *w) { for (int i = 0; i < g_nlocale; i++) if (!strcmp(g_locale[i].name, w)) return i; return -1; }
+static char g_order[8][64];
+static int g_norder;
+static int order_find(const char *w) { for (int i = 0; i < g_norder; i++) if (!strcmp(g_order[i], w)) return i; return -1; }
 static int g_nmnemonic;
 static int mnemonic_kind(const char *name)
 {

@@ -546,8 +546,61 @@ static void parse_set(void)
         }
         return;
     }
-    if (at_word("locale") && !sym_lookup_quiet("locale"))
-        die_at(cur()->line, "SET LOCALE is not implemented (locale support, 2023 14.9.39 format 11)");
+    if (at_word("locale") && !sym_lookup_quiet("locale")) {
+        /* format 11 (2023 14.9.39, rules 21-27): SET LOCALE category | USER-DEFAULT TO
+         * locale-name | pointer-item (a saved locale, format 12's) | USER-DEFAULT |
+         * SYSTEM-DEFAULT (docs/plans/locale.md).  The runtime's cob_loc_set takes the
+         * category (-1 LC_ALL) and the locale's index, -2 the user default, -3 the
+         * system default (POSIX); its result says a user default stood in for a
+         * locale the environment named and the table lacks: EC-LOCALE-MISSING */
+        int line = cur()->line;
+        if (g_std < 2002) die_at(line, "SET LOCALE is COBOL 2002 (2023 14.9.39 format 11); compile with -std=2002");
+        advance();
+        static const char *const cats[] = { "lc_collate", "lc_ctype", "lc_messages", "lc_monetary", "lc_numeric", "lc_time" };
+        int cat = -9, ud = 0;
+        if (accept_word("lc_all")) cat = -1;
+        else if (accept_word("user-default")) ud = 1;
+        else for (int c = 0; c < 6; c++) if (accept_word(cats[c])) { cat = c; break; }
+        if (cat == -9 && !ud) die_at(cur()->line, "SET LOCALE: expected LC_ALL, LC_COLLATE, LC_CTYPE, LC_MESSAGES, LC_MONETARY, LC_NUMERIC, LC_TIME or USER-DEFAULT (2023 14.9.39 format 11)");
+        expect_word("to");
+        if (accept_word("user-default")) {
+            if (ud) die_at(line, "SET LOCALE USER-DEFAULT TO USER-DEFAULT: the TO phrase names a locale-name or a saved locale (2023 14.9.39.3 rule 25)");
+            emit_li("r3", cat); emit_li("r4", -2); emit_call("cob_loc_set");
+            if (ec_on_name("EC-LOCALE-MISSING")) {
+                int Lok = new_label();
+                emit("\tbeq r1, r0, .L%d", Lok);
+                emit_ec_raise(ec_find("EC-LOCALE-MISSING", 0));
+                emit_label(Lok);
+            }
+            return;
+        }
+        if (accept_word("system-default")) {
+            if (ud) { emit_li("r3", -3); emit_call("cob_loc_set_user_default"); }
+            else { emit_li("r3", cat); emit_li("r4", -3); emit_call("cob_loc_set"); }
+            return;
+        }
+        if (cur()->kind == T_WORD && locale_find(cur()->s) >= 0 && !sym_lookup_quiet(cur()->s)) {
+            int li = g_locale[locale_find(cur()->s)].idx; advance();
+            if (ud) { emit_li("r3", li); emit_call("cob_loc_set_user_default"); }
+            else { emit_li("r3", cat); emit_li("r4", li); emit_call("cob_loc_set"); }
+            return;
+        }
+        /* identifier-10: a data-pointer holding a saved locale (rules 21, 27) */
+        if (!at_operand()) die_at(cur()->line, "SET LOCALE ... TO: expected a locale-name, USER-DEFAULT, SYSTEM-DEFAULT or a data-pointer item (2023 14.9.39 format 11)");
+        Ref r; parse_ref(&r);
+        if (r.sym->is_group || r.sym->usage != U_POINTER || r.sym->uvar == UV_PPTR || r.sym->uvar == UV_FPTR)
+            die_at(r.line, "SET LOCALE ... TO '%s': a locale-name, USER-DEFAULT, SYSTEM-DEFAULT, or a data-pointer item holding a saved locale (2023 14.9.39.3 rules 26-27)", r.sym->name);
+        emit_ref_addr(&r, "r4"); emit("\tldw r4, r4+0");
+        if (ud) { emit("\tadd r3, r4, r0"); emit_call("cob_loc_user_default_from"); }
+        else { emit_li("r3", cat); emit_call("cob_loc_restore"); }
+        if (ec_on_name("EC-LOCALE-INVALID-PTR")) {
+            int Lok = new_label();
+            emit("\tbeq r1, r0, .L%d", Lok);
+            emit_ec_raise(ec_find("EC-LOCALE-INVALID-PTR", 0));
+            emit_label(Lok);
+        }
+        return;
+    }
     if (at_word("environment") && !sym_lookup_quiet("environment")) {
         /* SET ENVIRONMENT name TO value (GnuCOBOL's own; BP-G1, taken only
          * under -dialect=gnucobol): a variable the run unit's later
@@ -625,6 +678,26 @@ static void parse_set(void)
         for (int i = 1; i < nr; i++) {
             int c = raddr[i] ? 1 : rs[i].sym->uvar == UV_PPTR ? 2 : rs[i].sym->uvar == UV_FPTR ? 3 : 1;
             if (c != cat) die_at(rs[i].line, "SET: '%s' is a %s among %s receivers (2023 14.9.39.3 rules 17, 21)", rs[i].sym->name, ptr_cat_name(c), ptr_cat_name(cat));
+        }
+        if (at_word("locale") && !sym_lookup_quiet("locale")) {
+            /* format 12 (save-locale; 2023 14.9.39 rules 26-28): SET pointer TO LOCALE
+             * LC_ALL | USER-DEFAULT -- the current locale, or the user default, saved
+             * where a later format 11 can take it from */
+            int line = cur()->line;
+            if (g_std < 2002) die_at(line, "SET ... TO LOCALE is COBOL 2002 (2023 14.9.39 format 12); compile with -std=2002");
+            advance();
+            int ud = accept_word("user-default") ? 1 : accept_word("lc_all") ? 0 : -1;
+            if (ud < 0) die_at(cur()->line, "SET ... TO LOCALE: expected LC_ALL or USER-DEFAULT (2023 14.9.39 format 12)");
+            if (cat != 1 || raddr[0]) die_at(line, "SET ... TO LOCALE: the receiver is a data-pointer item (2023 14.9.39.3 rule 28)");
+            emit_li("r3", ud); emit_call("cob_loc_save");
+            emit("\tstw sp+%d, r1", SLOT_A);
+            for (int i = 0; i < nr; i++) {
+                recv_calls(&rs[i]);
+                emit_ref_addr(&rs[i], "r3");
+                emit("\tldw r1, sp+%d", SLOT_A);
+                emit("\tstw r3+0, r1");
+            }
+            return;
         }
         Opnd v; parse_operand(&v);
         int vc = opnd_ptr_cat(&v);

@@ -655,7 +655,7 @@ static void parse_environment_division(void)
                                 if (cur()->kind != T_WORD) die_at(cur()->line, "SYMBOLIC CHARACTERS IN needs an alphabet-name");
                                 advance(); break;
                             }
-                            if (cur()->kind != T_WORD || at_word("class") || at_word("currency") || at_word("decimal-point") || at_word("alphabet") || at_word("symbolic") || switch_find(cur()->s)) break;
+                            if (cur()->kind != T_WORD || at_word("class") || at_word("currency") || at_word("decimal-point") || at_word("alphabet") || at_word("symbolic") || at_word("locale") || at_word("order") || switch_find(cur()->s)) break;
                             if (mnemonic_kind(cur()->s) >= 0 || !strncmp(cur()->s, "switch-", 7) || at_word("sysin") || at_word("sysout") || at_word("console") || at_word("syserr") || at_word("formfeed")) break;
                         }
                         continue;
@@ -765,6 +765,46 @@ static void parse_environment_division(void)
                         }
                         continue;
                     }
+                    if (accept_word("locale")) {
+                        /* LOCALE locale-name IS external-locale-name | literal (2023 12.3.7;
+                         * docs/plans/locale.md): every locale name in the language is static,
+                         * so the external name is resolved now against the runtime's table
+                         * (locale_names.h: POSIX and libutf's 53); one it lacks is an error */
+                        if (g_std < 2002) die_at(cur()->line, "LOCALE is COBOL 2002 (2023 12.3.7); compile with -std=2002");
+                        if (cur()->kind != T_WORD) die_at(cur()->line, "expected a locale-name after LOCALE");
+                        if (g_nlocale == 16) die_at(cur()->line, "too many LOCALE clauses");
+                        user_word(cur()->s, cur()->line, "a locale");
+                        LocaleName *l = &g_locale[g_nlocale++];
+                        snprintf(l->name, sizeof l->name, "%s", cur()->s); advance();
+                        accept_word("is");
+                        const char *ext; int n;
+                        if (cur()->kind == T_STR) { ext = cur()->s; n = cur()->len; }
+                        else if (cur()->kind == T_WORD) { ext = cur()->s; n = (int)strlen(cur()->s); }
+                        else die_at(cur()->line, "LOCALE %s IS: expected an external-locale-name or a literal (2023 12.3.7)", l->name);
+                        snprintf(l->ext, sizeof l->ext, "%.*s", n, ext);
+                        l->idx = cob_locale_index(ext, n);
+                        if (l->idx < 0)
+                            die_at(cur()->line, "LOCALE %s IS \"%.*s\": not a locale this runtime has -- POSIX and the 53 of libutf (libcob/locale_names.h lists them; docs/plans/locale.md)", l->name, n, ext);
+                        advance();
+                        continue;
+                    }
+                    if (at_word("order") && is_word(peek(1), "table")) {
+                        /* ORDER TABLE ordering-name IS literal (2023 12.3.7 rule 17): a
+                         * cultural ordering table of ISO/IEC 14651; the one here is the
+                         * default, 'ISO_14651_2020_TABLE1' -- the DUCET under the UCA */
+                        advance(); advance();
+                        if (g_std < 2002) die_at(cur()->line, "ORDER TABLE is COBOL 2002 (2023 12.3.7); compile with -std=2002");
+                        if (cur()->kind != T_WORD) die_at(cur()->line, "expected an ordering-name after ORDER TABLE");
+                        if (g_norder == 8) die_at(cur()->line, "too many ORDER TABLE clauses");
+                        user_word(cur()->s, cur()->line, "an ordering table");
+                        snprintf(g_order[g_norder], sizeof g_order[0], "%s", cur()->s); advance();
+                        accept_word("is");
+                        if (cur()->kind != T_STR) die_at(cur()->line, "ORDER TABLE %s IS: expected a literal naming the table (2023 12.3.7 rule 17)", g_order[g_norder]);
+                        if (cur()->len != 21 || strncasecmp(cur()->s, "ISO_14651_2020_TABLE1", 21))
+                            die_at(cur()->line, "ORDER TABLE %s IS \"%.*s\": the one ordering table here is 'ISO_14651_2020_TABLE1' (2023 12.3.7 rule 17; docs/plans/locale.md)", g_order[g_norder], cur()->len, cur()->s);
+                        g_norder++; advance();
+                        continue;
+                    }
                     if (cur()->kind == T_WORD) {
                         int mk = 0;
                         if (at_word("sysin") || at_word("stdin") || at_word("sysipt")) mk = 1;
@@ -782,7 +822,7 @@ static void parse_environment_division(void)
                         }
                     }
                     if (at_division() || at_word("input-output") || at_word("repository") || at_word("select")) break;
-                    die_at(cur()->line, "SPECIAL-NAMES clause '%s' is not implemented yet (CLASS, SWITCH-n, ALPHABET and the device names are)", cur()->s);
+                    die_at(cur()->line, "SPECIAL-NAMES clause '%s' is not implemented yet (CLASS, SWITCH-n, ALPHABET, LOCALE, ORDER TABLE and the device names are)", cur()->s);
                 }
                 continue;
             }

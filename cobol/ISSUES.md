@@ -6452,3 +6452,55 @@ side).  One expectation of mine was wrong and the library right: a space
 has a primary weight below every letter (non-ignorable, UCA's default),
 so "a  b" sorts before "a b".  Not yet reachable from COBOL: step 1 is
 the clauses, the functions and SET.
+
+### 130. Locale support step 1: the clauses, LOCALE-COMPARE, STANDARD-COMPARE, SET LOCALE (2026-10-09)
+
+docs/plans/locale.md step 1, on step 0's record (ISSUES 129).
+
+- SPECIAL-NAMES `LOCALE locale-name IS external-locale-name | literal`
+  (12.3.7): the external name is resolved at compile time with the
+  rule the runtime uses for the environment (`cob_locale_index`,
+  locale_names.h, shared by both sides -- the one normalizer); a name
+  the table lacks is an error (the strict default, ruled 2026-10-08).
+  `ORDER TABLE ordering-name IS literal` takes 'ISO_14651_2020_TABLE1'
+  and refuses any other literal (rule 17: the implementor specifies the
+  allowable content).  g_locale / g_order in diag.h, reset per unit.
+- `LOCALE-COMPARE(a b [locale-name])` and `STANDARD-COMPARE(a b
+  [ordering-name] [level])` as g_fn89 rows -14 and -15: the locale-name
+  and the ordering-name are not arguments in fargs (floc, ford), the
+  level is (flev), checked 'I'; a literal level past 4 is refused (the
+  table has four; an item's value is EC-ORDER-NOT-SUPPORTED at run time,
+  the full comparison returned); a zero-length literal operand refused
+  (15.85.3 rule 4).  Emission: the level first when there is one,
+  argument-1 staged (`cob_loc_fn_arg`), argument-2 with the locale
+  (`cob_loc_fn_compare`: -1 the current LC_COLLATE, the named index, 0
+  the ordering table); then `cob_loc_fn_bad`'s note is read for
+  EC-LOCALE-MISSING (the current locale stands in for one the
+  environment named and the table lacks) and EC-ORDER-NOT-SUPPORTED,
+  the way cob_fn_argbad is.  The ids -14 and -15 had to be kept out of
+  the `id <= -11` grouping of the 2014 format-literal functions (the
+  first build read "z" as a date format).
+- SET format 11: `SET LOCALE LC_ALL | LC_x | USER-DEFAULT TO
+  locale-name | pointer-item | USER-DEFAULT | SYSTEM-DEFAULT`; format 12:
+  `SET pointer TO LOCALE LC_ALL | USER-DEFAULT` saves (a magic-tagged
+  heap record); the pointer form of 11 restores, or sets the user
+  default from the saved record (rule 22); a pointer that is not a saved
+  locale is EC-LOCALE-INVALID-PTR; SET ... TO USER-DEFAULT with the
+  environment's locale missing is EC-LOCALE-MISSING (rule 24).  A
+  category set from a missing user default stays "missing" (sticky per
+  category) until a SET gives it a locale that exists; the environment
+  reader had the LANG-only case wrong (the all-flag read after LANG) --
+  caught by localemiss, fixed, and a host check added.
+- All three conditions are fatal: the run unit ends after the
+  declarative (14.6.12), so the tests put the checked use last.
+
+Tests: 2002/localecmp (sv, de, cs, da, tr, fr-CA against ICU's orders;
+trimming; national; the current locale), 2002/stdcompare (levels 1-4,
+the ordering-name, decomposed Å, a level in an item, level 5 checked),
+2002/setlocale (+ .env LANG=sv_SE.UTF-8: user and system defaults, save
+and restore, the user default changed and saved, a called program's
+switch persisting, the bad pointer), 2002/localemiss (+ .env
+LANG=tlh_KL.UTF-8); bad/std2002-locale-unknown, -order-table-unknown,
+-stdcompare-level, -locale-compare-string.  None has an oracle: GnuCOBOL
+spells the locale as a string and its image has no locales; the witness
+is ICU through libutf's own checked tables.  Gate 1k now 127 checks.

@@ -1,0 +1,12 @@
+sv z/å < å/ä < ä/ö < äb/ab >
+de z/å > ä/b <
+cs ch/h > ch/i < posix ch/h <
+da A/a < aa/z > posix A/a >
+tr ı/i < ı/h >
+fr-CA côte/coté < posix >
+trim = = <
+national < =
+current sv <
+current posix >
+equal =
+r=>

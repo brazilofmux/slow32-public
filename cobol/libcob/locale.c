@@ -31,33 +31,8 @@ static void locs_init(void)
     locs_ready = 1;
 }
 
-/* The external name of a locale, resolved to an index, or -1.  A POSIX
- * spelling ("sv_SE.UTF-8", "de_AT@euro") or a BCP 47 one ("sv-SE",
- * "sr-Latn"), case-insensitively; a codeset or modifier is dropped; a name
- * the table lacks falls back a subtag at a time ("de_CH" -> "de"); "C",
- * "POSIX", "root", "und" and the empty name are the POSIX locale. */
-int cob_loc_find(const char *name, int n)
-{
-    char w[64];
-    int k = 0;
-    locs_init();
-    if (n < 0) n = (int)strlen(name);
-    for (int i = 0; i < n && k < (int)sizeof w - 1; i++) {
-        char c = name[i];
-        if (c == '.' || c == '@') break;
-        if (c == '-') c = '_';
-        if (c == ' ') { if (k == 0) continue; break; }
-        w[k++] = c;
-    }
-    w[k] = 0;
-    if (k == 0 || !strcasecmp(w, "C") || !strcasecmp(w, "POSIX") || !strcasecmp(w, "root") || !strcasecmp(w, "und")) return 0;
-    for (;;) {
-        for (int i = 1; i < COB_NLOCALES; i++) if (!strcasecmp(w, locs[i].name)) return i;
-        char *u = strrchr(w, '_');
-        if (!u) return -1;
-        *u = 0;
-    }
-}
+/* the external name resolved to an index, or -1 (locale_names.h has the rule) */
+int cob_loc_find(const char *name, int n) { locs_init(); return cob_locale_index(name, n); }
 
 const char *cob_loc_name(int loc) { locs_init(); return loc >= 0 && loc < COB_NLOCALES ? locs[loc].name : "?"; }
 
@@ -65,7 +40,11 @@ const char *cob_loc_name(int loc) { locs_init(); return loc >= 0 && loc < COB_NL
 
 static int cur[COB_LC_N], userdef[COB_LC_N];
 static int cur_ready;
-static int env_missing;   /* the environment named a locale the table lacks: EC-LOCALE-MISSING when it is used */
+/* the environment named a locale the table lacks: the user default is
+ * POSIX in its place, and a category holding that default is "missing"
+ * (8.2: EC-LOCALE-MISSING when an operation needs it) until a SET gives
+ * it a locale that exists */
+static int env_missing, ud_missing[COB_LC_N], cur_missing[COB_LC_N];
 static const char *const cat_env[COB_LC_N] = { "LC_COLLATE", "LC_CTYPE", "LC_MESSAGES", "LC_MONETARY", "LC_NUMERIC", "LC_TIME" };
 
 static int env_locale(const char *var, int *missing)
@@ -83,17 +62,18 @@ static int env_locale(const char *var, int *missing)
  * after a non-COBOL module changed it, 8.2 -- and the tests). */
 void cob_loc_init_env(void)
 {
-    int missing = 0;
-    int all = env_locale("LC_ALL", &missing);
-    int lang = all >= 0 ? -1 : env_locale("LANG", &missing);
+    int m_all = 0, m_lang = 0, m_any;
+    int all = env_locale("LC_ALL", &m_all);
+    int lang = all >= 0 ? -1 : env_locale("LANG", &m_lang);
+    m_any = m_all | m_lang;
     for (int c = 0; c < COB_LC_N; c++) {
-        int v = all;
-        if (v < 0) v = env_locale(cat_env[c], &missing);
-        if (v < 0) v = lang;
-        if (v < 0) v = 0;
-        userdef[c] = v;
+        int v = all, m = m_all, m_cat = 0;
+        if (v < 0) { v = env_locale(cat_env[c], &m_cat); m = m_cat; m_any |= m_cat; }
+        if (v < 0) { v = lang; m = m_lang; }
+        if (v < 0) { v = 0; m = 0; }
+        userdef[c] = v; ud_missing[c] = m;
     }
-    env_missing = missing;
+    env_missing = m_any;
     cur_ready = 1;
 }
 
@@ -101,28 +81,37 @@ static void cur_init(void)
 {
     if (cur_ready) return;
     cob_loc_init_env();
-    for (int c = 0; c < COB_LC_N; c++) cur[c] = userdef[c];
+    for (int c = 0; c < COB_LC_N; c++) { cur[c] = userdef[c]; cur_missing[c] = ud_missing[c]; }
 }
 
 int cob_loc_current(int cat) { cur_init(); return cat >= 0 && cat < COB_LC_N ? cur[cat] : cur[0]; }
 int cob_loc_user_default(int cat) { cur_init(); return cat >= 0 && cat < COB_LC_N ? userdef[cat] : userdef[0]; }
-int cob_loc_env_missing(void) { cur_init(); int r = env_missing; env_missing = 0; return r; }
+/* 1 when the category's current locale stands in for one the environment
+ * named and the table lacks */
+int cob_loc_missing(int cat) { cur_init(); return cat >= 0 && cat < COB_LC_N ? cur_missing[cat] : cur_missing[0]; }
+int cob_loc_env_missing(void) { cur_init(); return env_missing; }
 
 /* SET LOCALE category TO loc: cat -1 is LC_ALL; loc the index, or -2 for
- * USER-DEFAULT, -3 for SYSTEM-DEFAULT (POSIX) */
-void cob_loc_set(int cat, int loc)
+ * USER-DEFAULT, -3 for SYSTEM-DEFAULT (POSIX).  Returns 1 when a category
+ * set from the user default got the stand-in for a missing locale:
+ * EC-LOCALE-MISSING (14.9.39.4 rule 24) */
+int cob_loc_set(int cat, int loc)
 {
+    int miss = 0;
     cur_init();
     for (int c = 0; c < COB_LC_N; c++) {
         if (cat >= 0 && c != cat) continue;
         cur[c] = loc == -2 ? userdef[c] : loc == -3 ? 0 : loc;
+        cur_missing[c] = loc == -2 ? ud_missing[c] : 0;
+        miss |= cur_missing[c];
     }
+    return miss;
 }
 /* SET LOCALE USER-DEFAULT TO loc (14.9.39.4 rule 22) */
 void cob_loc_set_user_default(int loc)
 {
     cur_init();
-    for (int c = 0; c < COB_LC_N; c++) userdef[c] = loc == -3 ? 0 : loc;
+    for (int c = 0; c < COB_LC_N; c++) { userdef[c] = loc == -3 ? 0 : loc; ud_missing[c] = 0; }
 }
 
 /* --- saved locales: SET format 12 saves, format 11 restores (rules 21, 26-27) --- */
@@ -145,7 +134,17 @@ int cob_loc_restore(int cat, const void *p)
     const cob_saved_locale *s = p;
     cur_init();
     if (!s || ((unsigned long)s & 3) || s->magic != SAVED_MAGIC) return 1;
-    for (int c = 0; c < COB_LC_N; c++) if (cat < 0 || c == cat) cur[c] = s->cat[c];
+    for (int c = 0; c < COB_LC_N; c++) if (cat < 0 || c == cat) { cur[c] = s->cat[c]; cur_missing[c] = 0; }
+    return 0;
+}
+/* SET LOCALE USER-DEFAULT TO identifier: the user default from a saved
+ * locale (rule 22); 1 when p is not one */
+int cob_loc_user_default_from(const void *p)
+{
+    const cob_saved_locale *s = p;
+    cur_init();
+    if (!s || ((unsigned long)s & 3) || s->magic != SAVED_MAGIC) return 1;
+    for (int c = 0; c < COB_LC_N; c++) { userdef[c] = s->cat[c]; ud_missing[c] = 0; }
     return 0;
 }
 
@@ -235,6 +234,34 @@ done:
     if (big_b) free(ub);
     return r < 0 ? -1 : r > 0 ? 1 : 0;
 }
+
+/* --- the intrinsic functions LOCALE-COMPARE and STANDARD-COMPARE (15.51,
+ * 15.85): argument-1 staged, then the call with argument-2.  The result
+ * is one character, '<' '=' or '>'; the compiler reads a note after the
+ * call for the exception conditions (as it does cob_fn_argbad). --- */
+
+static const unsigned char *fn_a; static int fn_na, fn_nat_a, fn_level, fn_bad;
+void cob_loc_fn_arg(const unsigned char *p, int n, int nat) { fn_a = p; fn_na = n; fn_nat_a = nat; }
+void cob_loc_fn_level(int level) { fn_level = level; }
+/* loc: the locale index, or -1 for the current LC_COLLATE (LOCALE-COMPARE),
+ * 0 for the ordering table (STANDARD-COMPARE: the root collation is
+ * 'ISO_14651_2020_TABLE1' here); standard: 1 for STANDARD-COMPARE, whose
+ * level fn_level holds (0: the table's highest) */
+char *cob_loc_fn_compare(const unsigned char *b, int nb, int nat_b, int loc, int standard)
+{
+    static char res[2];
+    int level = 0;
+    if (standard) {
+        level = fn_level; fn_level = 0;
+        if (level < 0 || level > 4) { fn_bad = 2; level = 0; }   /* EC-ORDER-NOT-SUPPORTED: not a level of the table */
+    } else if (loc < 0 && cob_loc_missing(COB_LC_COLLATE)) fn_bad = 1;   /* EC-LOCALE-MISSING: the current locale stands in for a missing one */
+    int r = cob_loc_compare(fn_a, fn_na, fn_nat_a, b, nb, nat_b, loc, level);
+    res[0] = r < 0 ? '<' : r > 0 ? '>' : '=';
+    res[1] = 0;
+    return res;
+}
+/* the note: 0 fine, 1 EC-LOCALE-MISSING, 2 EC-ORDER-NOT-SUPPORTED; cleared */
+int cob_loc_fn_bad(void) { int r = fn_bad; fn_bad = 0; return r; }
 
 /* the collator's own name, for the tests and the SOURCE check */
 const char *cob_loc_collator_name(int loc) { locs_init(); return loc >= 0 && loc < COB_NLOCALES ? utf_collator_name(locs[loc].coll) : NULL; }

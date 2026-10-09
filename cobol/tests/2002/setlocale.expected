@@ -1,0 +1,11 @@
+user default (LANG sv) z/å <
+system default z/å >
+german ä/b <
+czech ch/h >
+restored ch/h < ä/b <
+user default again z/å <
+user default now german z/å >
+after the call ch/h >
+from the saved user default ch/h <
+lc_time switched, lc_collate not ch/h <
+  EC-LOCALE-INVALID-PTR

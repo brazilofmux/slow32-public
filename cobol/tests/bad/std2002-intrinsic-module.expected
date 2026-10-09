@@ -1,1 +1,1 @@
-FUNCTION locale-compare is COBOL 2002 and needs locale support, not implemented yet
+FUNCTION locale-date is COBOL 2002 and needs locale support, not implemented yet

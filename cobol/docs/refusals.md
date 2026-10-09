@@ -98,8 +98,11 @@ COBOL 2002/2023 (Stage B):
   std2002-*): SUPPRESS WHEN,
   FORMAT and SELECT WHEN, USAGE
   MESSAGE-TAG,
-  SET LOCALE, ALPHABET FOR and IS LOCALE,
-  and the LOCALE function phrase.
+  ALPHABET FOR and IS LOCALE,
+  and the LOCALE function phrase (UPPER-CASE, LOWER-CASE, NUMVAL-C,
+  TEST-NUMVAL-C: docs/plans/locale.md step 3); SET LOCALE, the LOCALE
+  and ORDER TABLE clauses, LOCALE-COMPARE and STANDARD-COMPARE came
+  2026-10-09 (step 1), the LC_TIME functions are step 2.
 
 ## 3. Out of scope, by ruling
 
@@ -113,8 +116,11 @@ COBOL 2002/2023 (Stage B):
 In scope since 2026-10-06 (the owner: "everything standard holds"):
 the COBOL 2014 and 2023 intrinsic functions and locale support, once
 listed here. The 2014 date and time functions came 2026-10-07 (queue
-item 27), the 2023 functions the same day (item 33); the locale
-functions are still refused as not implemented and queued (item 45).
+item 27), the 2023 functions the same day (item 33); locale support
+(item 45) is arriving by docs/plans/locale.md's steps: the LOCALE and
+ORDER TABLE clauses, SET LOCALE, LOCALE-COMPARE and STANDARD-COMPARE on
+2026-10-09; LOCALE-DATE, LOCALE-TIME and LOCALE-TIME-FROM-SECONDS are
+still refused as not implemented (step 2).
 
 Two ruled 2026-09-28:
 

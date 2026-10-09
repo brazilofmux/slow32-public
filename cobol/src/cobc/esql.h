@@ -1252,7 +1252,7 @@ static void compile_nested_unit(void)
     if (g_unit < 4096) g_unit_parent1[g_unit] = u->unit + 1;
     g_sym_base = g_nsym; g_file_base = g_nfile; g_para_base = g_npara;
     /* the contained unit's own USE entries follow every enclosing unit's */
-    g_report_base = g_nreport; g_screen_base = g_nscreen; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_last_item = -1;
+    g_report_base = g_nreport; g_screen_base = g_nscreen; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_nlocale = 0; g_norder = 0; g_last_item = -1;
     g_nsame_groups = 0; g_npoison = 0; g_collate_name[0] = 0; g_crt_status_name[0] = 0; g_cursor_name[0] = 0; g_cur_fd = -1; g_in_linkage = 0;
     /* the PROGRAM COLLATING SEQUENCE, and HIGH-VALUE and LOW-VALUE with it,
      * are the containing unit's unless this one names its own (2023

@@ -72,6 +72,10 @@ Unicode 16.0 under the Unicode Collation Algorithm, and the name it
 answers to is 'ISO_14651_2020_TABLE1'.  The honest statement for
 conformance.md: the orders agree except for characters added to
 Unicode after 14651:2020 was cut, which 14651 does not order at all.
+Found while writing the tests (2026-10-09): EC-LOCALE-MISSING,
+EC-LOCALE-INVALID-PTR and EC-ORDER-NOT-SUPPORTED are all fatal, so a
+checked program's run unit ends after their declaratives (14.6.12); the
+tests show the unchecked answer first and the condition last.
 
 ## What libutf gives, and what it does not
 
@@ -266,7 +270,8 @@ the one no corpus of ours uses; last.
    environment.  Gates: selfhost-libcob builds the vendored units with
    stage08 cc; a kern-style host test of `cob_loc_find` and the
    trimming rule.
-1. **The SPECIAL-NAMES clauses and the two comparisons.**  LOCALE and
+1. **The SPECIAL-NAMES clauses and the two comparisons.**  DONE
+   2026-10-09 (ISSUES 130).  LOCALE and
    ORDER TABLE clauses; LOCALE-COMPARE; STANDARD-COMPARE with
    ordering-name and level; SET format 11 (locale-name, USER-DEFAULT,
    SYSTEM-DEFAULT, by category) and format 12 (save, and 11's restore

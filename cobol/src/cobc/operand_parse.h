@@ -224,6 +224,10 @@ static const struct { const char *name; int id, kind, scale, minargs, maxargs, f
     { "numval-c", -6, FK_ALNUM, 9, 1, 2, 19, 85 },
     /* COBOL 2002 (15.x; cobol ISSUES-52), under -std=2002 */
     { "abs", COB_FN_ABS, FK_NUMS, 9, 1, 1, 19, 2002 },
+    /* locale-based comparison (15.51, 15.85; docs/plans/locale.md): two strings; LOCALE-COMPARE's
+     * locale-name and STANDARD-COMPARE's ordering-name are not in fargs, its level argument is */
+    { "locale-compare", -14, FK_ALNUM, -1, 2, 2, 1, 2002 },
+    { "standard-compare", -15, FK_ALNUM, -1, 2, 3, 1, 2002 },
     { "exp", COB_FN_EXP, FK_NUMS, 9, 1, 1, 19, 2002 },
     { "exp10", COB_FN_EXP10, FK_NUMS, 9, 1, 1, 19, 2002 },
     { "pi", COB_FN_PI, FK_NUMS, 9, 0, 0, 19, 2002 },
@@ -469,7 +473,8 @@ static int fn89_parse(Opnd *o, Tok *n)
     advance();
     o->fnid = g_fn89[f].id; o->fkind = g_fn89[f].kind; o->fscale = g_fn89[f].scale;
     o->fsize = g_fn89[f].fsize; o->fn = -1;
-    o->nfargs = 0;
+    o->nfargs = 0; o->floc = -1; o->flev = -1;
+    int ford = 0;
     if (cur()->kind == T_LP) {
         advance();
         o->fargs = xmalloc(16 * sizeof *o->fargs);
@@ -484,6 +489,19 @@ static int fn89_parse(Opnd *o, Tok *n)
                 break;
             }
             if (at_word("omitted") && !sym_lookup_quiet("omitted")) die_at(cur()->line, "FUNCTION %s: OMITTED is for a user-defined function's argument, not an intrinsic's (2023 8.4.3.2.3 rule 7)", n->s);
+            if (g_fn89[f].id == -14 && o->nfargs == 2) {
+                /* LOCALE-COMPARE's third argument: a locale-name of SPECIAL-NAMES (15.51.3 rule 4) */
+                int li = cur()->kind == T_WORD ? locale_find(cur()->s) : -1;
+                if (li < 0) die_at(cur()->line, "FUNCTION LOCALE-COMPARE: the third argument is a locale-name of the LOCALE clause (2023 15.51.3 rule 4)");
+                o->floc = g_locale[li].idx; advance();
+                if (cur()->kind != T_RP) die_at(cur()->line, "FUNCTION LOCALE-COMPARE: the locale-name ends the arguments (2023 15.51.2)");
+                break;
+            }
+            if (g_fn89[f].id == -15 && o->nfargs == 2 && !ford && cur()->kind == T_WORD && order_find(cur()->s) >= 0 && !sym_lookup_quiet(cur()->s)) {
+                /* STANDARD-COMPARE's ordering-name (15.85.3 rule 5): the table, which is the one there is */
+                ford = 1; advance();
+                continue;
+            }
             o->fargs[o->nfargs++] = fn89_arg(n->s);   /* the tokenizer drops the decorative commas */
         }
         advance();
@@ -493,7 +511,8 @@ static int fn89_parse(Opnd *o, Tok *n)
     {
         int id = g_fn89[f].id, kind = g_fn89[f].kind;
         int anyclass = id == COB_FN_MAX || id == COB_FN_MIN || id == COB_FN_ORD_MAX || id == COB_FN_ORD_MIN;
-        if (id <= -11) {
+        int dtf = id <= -11 && id >= -13;             /* the 2014 format-literal functions; -14, -15 are the locale comparisons */
+        if (dtf) {
             /* a format literal and data of its type (15.48.3, 15.79.3, 15.92.3) */
             dtfmt_literal(o->fargs[0], n->s, id == -11 ? 1 : id == -12 ? 2 : 0);
             int c = opnd_class(o->fargs[1]);
@@ -501,8 +520,25 @@ static int fn89_parse(Opnd *o, Tok *n)
                 die_at(n->line, "FUNCTION %s: argument 2 is %s, the type of the format (2023 15.48.3 rule 3, 15.79.3 rule 3, 15.92.3 rule 2)", n->s,
                        o->fargs[0]->tok->nat ? "national" : "alphanumeric");
         }
-        for (int i = 0; id > -11 && i < o->nfargs; i++) {
+        if (id == -15 && o->nfargs == 3) {
+            /* argument-4, the level: a positive nonzero integer (15.85.3 rule 6); the
+             * table has four, so a literal past 4 can never be served -- that is
+             * EC-ORDER-NOT-SUPPORTED at run time for an item, an error now for a literal */
+            o->flev = 2;
+            Opnd *lv = o->fargs[2];
+            if (lv->kind == O_NUM) {
+                long v = numlit_is_int(&lv->num) ? numlit_int(&lv->num) : 0;
+                if (v < 1) die_at(n->line, "FUNCTION STANDARD-COMPARE: the level is a positive nonzero integer (2023 15.85.3 rule 6)");
+                if (v > 4) die_at(n->line, "FUNCTION STANDARD-COMPARE: level %ld is not defined in the ordering table, which has four (2023 15.85.4 rule 2)", v);
+            }
+        }
+        if (id == -14 || id == -15)
+            for (int i = 0; i < 2; i++)
+                if (o->fargs[i]->kind == O_STR && o->fargs[i]->tok->len == 0)
+                    die_at(n->line, "FUNCTION %s: argument %d is a zero-length literal (2023 15.85.3 rule 4)", id == -14 ? "LOCALE-COMPARE" : "STANDARD-COMPARE", i + 1);
+        for (int i = 0; !dtf && i < o->nfargs; i++) {
             int want = kind == FK_ALNUM ? 'A' : kind == FK_INT ? 'I' : 'N';
+            if (i == o->flev) want = 'I';
             if (kind == FK_NUMS && (id == COB_FN_MOD || id == COB_FN_FACTORIAL || id == COB_FN_YEAR_TO_YYYY ||
                                     id == COB_FN_DATE_TO_YYYYMMDD || id == COB_FN_DAY_TO_YYYYDDD ||
                                     id == COB_FN_TEST_DATE_YYYYMMDD || id == COB_FN_TEST_DAY_YYYYDDD ||
@@ -524,7 +560,7 @@ static int fn89_parse(Opnd *o, Tok *n)
                 no_zero_lit(o->fargs[i], up, "2023 15.59.3, 15.63.3 rule 3; 15.71.3, 15.72.3 rule 2");
             }
         }
-        if (kind == FK_ALNUM && id > -11 && o->nfargs == 2 && (opnd_class(o->fargs[1]) != opnd_class(o->fargs[0])))
+        if (kind == FK_ALNUM && !dtf && id > -14 && o->nfargs == 2 && (opnd_class(o->fargs[1]) != opnd_class(o->fargs[0])))
             die_at(n->line, "FUNCTION %s: argument 2 is of the same class as argument 1 (2023 15.68.3 rule 2)", n->s);
     }
     if (g_fn89[f].kind == FK_ALNUM) {
@@ -604,8 +640,8 @@ static void fn_refuse(Tok *n)
 {
     static const struct { const char *name, *why; } later[] = {
 
-        { "locale-compare", "locale support" }, { "locale-date", "locale support" }, { "locale-time", "locale support" },
-        { "locale-time-from-seconds", "locale support" }, { "standard-compare", "the ISO/IEC 14651 ordering" },
+        { "locale-date", "locale support" }, { "locale-time", "locale support" },
+        { "locale-time-from-seconds", "locale support" },   /* docs/plans/locale.md step 2 */
         { NULL, NULL } };
     static const char *y2014[] = { NULL };     /* the date and time functions came 2026-10-07 (item 27) */
     static const char *y2023[] = { NULL };     /* the seven 2023 functions came 2026-10-07 (item 33) */
