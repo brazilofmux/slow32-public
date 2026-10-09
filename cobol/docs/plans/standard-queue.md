@@ -563,6 +563,9 @@ SPECIAL-NAMES LOCALE and SET LOCALE refused. In scope (ruled 2026-10-06; see ite
   -- generate every locale's tables, then a mechanism to patch/stitch the working tables for the
   requested one -- which is several layers of work there before this item can lean on it (libutf
   carries the DUCET collation tables STANDARD-COMPARE wants).
+- **2026-10-08**: libutf dfa04c5 has the collators (53 CLDR locales, `utf_collator_find` and the
+  `_l` comparison API; builds and runs on SLOW-32, 601/601). Plan: docs/plans/locale.md -- the
+  record, the on-demand collation object, steps 0-5, seven decisions wanted.
 
 **46. Commit and rollback.** A.4.3; 9.1.18, 12.4.6.3 APPLY COMMIT, 14.9.7, 14.9.36,
 EC-FLOW-*-COMMIT/ROLLBACK; Ed. 2023; L.
