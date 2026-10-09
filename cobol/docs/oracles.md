@@ -528,19 +528,21 @@ the table above, by test:
 
 - **Fixed on 17, "gcobol agrees" now -- nine rows, off Simon's list:**
   casermod, ebcdic, lineseq, numvaldigit, remrnd, rmode, tabcols,
-  unstring (G), hotdec (I).  (Kagura's tally said ten with these nine
-  named; the lists here add up to 65 of the 66 with these nine, so one
-  row is unaccounted for until the differs file is read again.)  The G
-  ones stood only on 15 and are noise by his rule.
-- **Still differ on 17 -- 46 rows, their class carried over** (the diffs
+  unstring (G), hotdec (I).  The G ones stood only on 15 and are noise
+  by his rule.
+- **Still differ on 17 -- 47 rows, their class carried over** (the diffs
   were not re-read against the text this time): G addressofarg
   allocinit altkey cancelrules cmpbytes codesetrecs compute copyquote
-  divremgiving divremse dpcomma edit floatext fnargbad heldvalues hotfn
-  idxbig init2002 moveall moveonce moverules picedit picmix recnot
-  searchrules seqblock seqbyte setcond startfirst stringrules userfnrecv
-  wide1 wide2; T dtformat negzero; I arith comp12 copybook datefn
-  divremu (both) hotarith hotarith2 hotmuldiv hotwrap packedpad
-  returncode.
+  divremgiving divremse divremu dpcomma edit floatext fnargbad
+  heldvalues hotfn idxbig init2002 moveall moveonce moverules picedit
+  picmix recnot searchrules seqblock seqbyte setcond startfirst
+  stringrules userfnrecv wide1 wide2; T dtformat negzero; I arith comp12
+  copybook datefn divremu hotarith hotarith2 hotmuldiv hotwrap packedpad
+  returncode.  (divremu is in the table twice, a G row for the remainder
+  zeroed on a size error -- `r=+5` becomes `r=+0` on 17 still -- and an I
+  row for its display; both stand.)  Nine fixed, 34 G, 2 T and 11 I
+  still differing, three not reached, four skipped, three newly refused:
+  66.
 - **Refused on 17 where 15 compiled -- three, regressions to report:**
   `free/corr` ("cobol1: internal compiler error: Segmentation fault"),
   `free/relative` ("syntax error, unexpected RELATIVE" on the SELECT),
