@@ -134,11 +134,11 @@ section finds only the USE procedures declared before it in the source
 | name | cat | disposition |
 |---|---|---|
 | EC-LOCALE-IMP | Imp | **ruling**: no implementor-defined condition is defined here, so it never arises |
-| EC-LOCALE-INCOMPATIBLE | Fatal | **n/a**: locale support (queue item 45) |
-| EC-LOCALE-INVALID | Fatal | **n/a**: locale support (queue item 45) |
-| EC-LOCALE-INVALID-PTR | Fatal | **n/a**: locale support (queue item 45) |
-| EC-LOCALE-MISSING | Fatal | **n/a**: locale support (queue item 45) |
-| EC-LOCALE-SIZE | Fatal | **n/a**: locale support (queue item 45) |
+| EC-LOCALE-INCOMPATIBLE | Fatal | **never set**: the UCA orders every code point (implicit weights), so no operand is outside a locale's collation (docs/plans/locale.md) |
+| EC-LOCALE-INVALID | Fatal | **never set**: the locale data is built in (locale_data.h), never read at run time |
+| EC-LOCALE-INVALID-PTR | Fatal | SET LOCALE ... TO pointer with a pointer that is not a saved locale (2026-10-09; 2002/setlocale) |
+| EC-LOCALE-MISSING | Fatal | the environment named a locale the runtime has not: SET ... TO USER-DEFAULT, or a locale function under the standing-in current locale (2026-10-09; 2002/localemiss); a LOCALE clause naming one is a compile-time error |
+| EC-LOCALE-SIZE | Fatal | **never set**: the saved locale is a heap record, not the program's storage |
 
 ## EC-MCS
 
@@ -171,7 +171,7 @@ section finds only the USE procedures declared before it in the source
 | name | cat | disposition |
 |---|---|---|
 | EC-ORDER-IMP | Imp | **ruling**: no implementor-defined condition is defined here, so it never arises |
-| EC-ORDER-NOT-SUPPORTED | Fatal | **n/a**: locale support and STANDARD-COMPARE (queue item 45) |
+| EC-ORDER-NOT-SUPPORTED | Fatal | STANDARD-COMPARE with a level the table has not (an item's value; a literal is refused at compile time) (2026-10-09; 2002/stdcompare) |
 
 ## EC-OVERFLOW
 

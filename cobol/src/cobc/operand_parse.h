@@ -228,6 +228,11 @@ static const struct { const char *name; int id, kind, scale, minargs, maxargs, f
      * locale-name and STANDARD-COMPARE's ordering-name are not in fargs, its level argument is */
     { "locale-compare", -14, FK_ALNUM, -1, 2, 2, 1, 2002 },
     { "standard-compare", -15, FK_ALNUM, -1, 2, 3, 1, 2002 },
+    /* the LC_TIME functions (15.52-15.54; step 2): a result of run-time length, the
+     * locale's format; the locale-name is not in fargs; the seconds are numeric */
+    { "locale-date", -16, FK_ALNUM, -1, 1, 1, 160, 2002 },
+    { "locale-time", -17, FK_ALNUM, -1, 1, 1, 160, 2002 },
+    { "locale-time-from-seconds", -18, FK_NUMS, -1, 1, 1, 160, 2002 },
     { "exp", COB_FN_EXP, FK_NUMS, 9, 1, 1, 19, 2002 },
     { "exp10", COB_FN_EXP10, FK_NUMS, 9, 1, 1, 19, 2002 },
     { "pi", COB_FN_PI, FK_NUMS, 9, 0, 0, 19, 2002 },
@@ -489,12 +494,17 @@ static int fn89_parse(Opnd *o, Tok *n)
                 break;
             }
             if (at_word("omitted") && !sym_lookup_quiet("omitted")) die_at(cur()->line, "FUNCTION %s: OMITTED is for a user-defined function's argument, not an intrinsic's (2023 8.4.3.2.3 rule 7)", n->s);
-            if (g_fn89[f].id == -14 && o->nfargs == 2) {
-                /* LOCALE-COMPARE's third argument: a locale-name of SPECIAL-NAMES (15.51.3 rule 4) */
+            if ((g_fn89[f].id == -14 && o->nfargs == 2) || (g_fn89[f].id <= -16 && g_fn89[f].id >= -18 && o->nfargs == 1)) {
+                /* the last argument of LOCALE-COMPARE, LOCALE-DATE, LOCALE-TIME and
+                 * LOCALE-TIME-FROM-SECONDS: a locale-name of SPECIAL-NAMES (15.51.3 rule
+                 * 4, 15.52.3 rule 3, 15.53.3 rule 4, 15.54.3 rule 2) */
+                char up[40]; snprintf(up, sizeof up, "%s", n->s);
+                for (char *q = up; *q; q++) *q = (char)toupper((unsigned char)*q);
                 int li = cur()->kind == T_WORD ? locale_find(cur()->s) : -1;
-                if (li < 0) die_at(cur()->line, "FUNCTION LOCALE-COMPARE: the third argument is a locale-name of the LOCALE clause (2023 15.51.3 rule 4)");
+                if (li < 0) die_at(cur()->line, "FUNCTION %s: argument %d is a locale-name of the LOCALE clause (2023 %s)", up, o->nfargs + 1,
+                                   g_fn89[f].id == -14 ? "15.51.3 rule 4" : g_fn89[f].id == -16 ? "15.52.3 rule 3" : g_fn89[f].id == -17 ? "15.53.3 rule 4" : "15.54.3 rule 2");
                 o->floc = g_locale[li].idx; advance();
-                if (cur()->kind != T_RP) die_at(cur()->line, "FUNCTION LOCALE-COMPARE: the locale-name ends the arguments (2023 15.51.2)");
+                if (cur()->kind != T_RP) die_at(cur()->line, "FUNCTION %s: the locale-name ends the arguments", up);
                 break;
             }
             if (g_fn89[f].id == -15 && o->nfargs == 2 && !ford && cur()->kind == T_WORD && order_find(cur()->s) >= 0 && !sym_lookup_quiet(cur()->s)) {
@@ -536,6 +546,17 @@ static int fn89_parse(Opnd *o, Tok *n)
             for (int i = 0; i < 2; i++)
                 if (o->fargs[i]->kind == O_STR && o->fargs[i]->tok->len == 0)
                     die_at(n->line, "FUNCTION %s: argument %d is a zero-length literal (2023 15.85.3 rule 4)", id == -14 ? "LOCALE-COMPARE" : "STANDARD-COMPARE", i + 1);
+        if (id == -16 || id == -17) {
+            /* LOCALE-DATE's argument is 8 character positions, LOCALE-TIME's 6 (15.52.3
+             * rule 1, 15.53.3 rule 1): checked now when the length is static */
+            Opnd *x = o->fargs[0];
+            int want = id == -16 ? 8 : 6, nat = opnd_is_national(x);
+            int have = x->kind == O_STR ? x->tok->len / (nat ? 2 : 1) : x->kind == O_REF && !x->ref.rm ? (int)x->ref.sym->size / (nat ? 2 : 1) : x->kind == O_FUNC && !x->fvar ? x->fsize / (nat ? 2 : 1) : -1;
+            if (have >= 0 && have != want)
+                die_at(n->line, "FUNCTION %s: argument 1 is %d character positions, the %s CURRENT-DATE returns (2023 %s rule 1); '%s' is %d", id == -16 ? "LOCALE-DATE" : "LOCALE-TIME", want,
+                       id == -16 ? "YYYYMMDD" : "hhmmss", id == -16 ? "15.52.3" : "15.53.3", x->fname ? x->fname : x->kind == O_REF ? x->ref.sym->name : "the literal", have);
+        }
+        if (id <= -16 && id >= -18) o->fvar = 1;        /* the length is the locale's format's */
         for (int i = 0; !dtf && i < o->nfargs; i++) {
             int want = kind == FK_ALNUM ? 'A' : kind == FK_INT ? 'I' : 'N';
             if (i == o->flev) want = 'I';
@@ -640,8 +661,6 @@ static void fn_refuse(Tok *n)
 {
     static const struct { const char *name, *why; } later[] = {
 
-        { "locale-date", "locale support" }, { "locale-time", "locale support" },
-        { "locale-time-from-seconds", "locale support" },   /* docs/plans/locale.md step 2 */
         { NULL, NULL } };
     static const char *y2014[] = { NULL };     /* the date and time functions came 2026-10-07 (item 27) */
     static const char *y2023[] = { NULL };     /* the seven 2023 functions came 2026-10-07 (item 33) */

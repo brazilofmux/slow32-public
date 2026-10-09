@@ -4987,6 +4987,31 @@ static int fn_conv_bad;                         /* a checked conversion substitu
 
 int cob_fn_last_len(void) { return fn_var_len; }
 
+/* --- for libcob/locale.c, the LC_TIME functions (docs/plans/locale.md step 2):
+ * a run-time-length result handed in from outside this file, the
+ * EC-ARGUMENT-FUNCTION note set from outside, and the numeric stack popped
+ * as whole seconds past midnight --- */
+char *cob_fn_var_result(const char *s, int n)
+{
+    char *b = fn_buffer(n);
+    memcpy(b, s, (size_t)n);
+    fn_var_len = n;
+    return b;
+}
+void cob_fn_argbad_set(void) { fn_argbad = 1; }
+/* standard numeric time form (15.3): 0 <= v < 86400, a fraction allowed and
+ * dropped; -1 outside it */
+int cob_pop_seconds(void)
+{
+    if (nsp <= 0) cob_fatal("numeric stack underflow");
+    cob_num *a = &nstk[--nsp];
+    long long v = a->v;
+    if (a->scale > 0) v = div_pow10(v, a->scale, 0);
+    else for (int k = a->scale; k < 0; k++) v *= 10;
+    if (a->v < 0 || v >= 86400) return -1;
+    return (int)v;
+}
+
 /* a function result reference-modified at computed positions (cobol
  * ISSUES-91): full bytes (-1: the result's own run-time length), start and
  * len in characters of unit bytes (len -1: to the end; a computed 0 is

@@ -265,3 +265,144 @@ int cob_loc_fn_bad(void) { int r = fn_bad; fn_bad = 0; return r; }
 
 /* the collator's own name, for the tests and the SOURCE check */
 const char *cob_loc_collator_name(int loc) { locs_init(); return loc >= 0 && loc < COB_NLOCALES ? utf_collator_name(locs[loc].coll) : NULL; }
+
+/* --- LC_TIME: LOCALE-DATE, LOCALE-TIME, LOCALE-TIME-FROM-SECONDS (15.52-15.54;
+ * docs/plans/locale.md step 2).  The record's patterns are CLDR's (locale_data.h,
+ * generated from CLDR 46 by gen_locale_data.py): the medium date and time
+ * formats stand for d_fmt and t_fmt, expanded here from the record's names.
+ * The result is alphanumeric (UTF-8), of run-time length; an argument outside
+ * the rules is EC-ARGUMENT-FUNCTION, noted in libcob (cob_fn_argbad_set) and
+ * an empty result. --- */
+#include "locale_data.h"
+
+char *cob_fn_var_result(const char *s, int n);
+void cob_fn_argbad_set(void);
+
+static int leap_year(int y) { return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0; }
+static int month_days(int y, int m) { static const int d[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }; return d[m - 1] + (m == 2 && leap_year(y)); }
+/* 0 Sunday .. 6 Saturday (Zeller) */
+static int weekday(int y, int m, int d)
+{
+    if (m < 3) { m += 12; y--; }
+    int k = y % 100, j = y / 100;
+    int h = (d + 13 * (m + 1) / 5 + k + k / 4 + j / 4 + 5 * j) % 7;   /* 0 Saturday */
+    return (h + 6) % 7;
+}
+
+typedef struct { int y, mo, d, h, mi, s; int has_date, has_time; } cob_tm;
+
+static void put(char *out, int *k, int max, const char *s)
+{
+    while (*s && *k < max - 1) out[(*k)++] = *s++;
+}
+static void put_num(char *out, int *k, int max, int v, int width)
+{
+    char b[12]; int n = 0;
+    if (v < 0) v = 0;
+    do { b[n++] = (char)('0' + v % 10); v /= 10; } while (v);
+    while (n < width) b[n++] = '0';
+    while (n && *k < max - 1) out[(*k)++] = b[--n];
+}
+
+/* a CLDR date or time pattern (y M L d E c H k h K m s a b B, quoted text) */
+static int expand(const cob_locale_data *ld, const char *pat, const cob_tm *t, char *out, int max)
+{
+    int k = 0;
+    for (const char *p = pat; *p; ) {
+        char c = *p;
+        if (c == '\'') {
+            if (p[1] == '\'') { if (k < max - 1) out[k++] = '\''; p += 2; continue; }
+            for (p++; *p && *p != '\''; p++) if (k < max - 1) out[k++] = *p;
+            if (*p) p++;
+            continue;
+        }
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) { if (k < max - 1) out[k++] = c; p++; continue; }
+        int n = 0;
+        while (*p == c) { n++; p++; }
+        switch (c) {
+        case 'y': if (n == 2) put_num(out, &k, max, t->y % 100, 2); else put_num(out, &k, max, t->y, n); break;
+        case 'u': put_num(out, &k, max, t->y, n); break;
+        case 'M': case 'L':
+            if (n >= 4) put(out, &k, max, ld->mon_wide[t->mo - 1]);
+            else if (n == 3) put(out, &k, max, ld->mon_abbr[t->mo - 1]);
+            else put_num(out, &k, max, t->mo, n);
+            break;
+        case 'd': put_num(out, &k, max, t->d, n); break;
+        case 'E': case 'c': {
+            int w = weekday(t->y, t->mo, t->d);
+            put(out, &k, max, n >= 4 ? ld->day_wide[w] : ld->day_abbr[w]);
+            break;
+        }
+        case 'H': put_num(out, &k, max, t->h, n); break;
+        case 'k': put_num(out, &k, max, t->h == 0 ? 24 : t->h, n); break;
+        case 'h': put_num(out, &k, max, t->h % 12 == 0 ? 12 : t->h % 12, n); break;
+        case 'K': put_num(out, &k, max, t->h % 12, n); break;
+        case 'm': put_num(out, &k, max, t->mi, n); break;
+        case 's': put_num(out, &k, max, t->s, n); break;
+        case 'a': case 'b': case 'B': put(out, &k, max, t->h < 12 ? ld->am : ld->pm); break;
+        case 'G': put(out, &k, max, "AD"); break;
+        default: while (n-- && k < max - 1) out[k++] = c; break;
+        }
+    }
+    out[k] = 0;
+    return k;
+}
+
+/* the argument's characters as ASCII digits; -1 when any is not one */
+static int digits_of(const unsigned char *p, int n, int nat, int want, int *v)
+{
+    int units = nat ? n / 2 : n;
+    if (units != want) return -1;
+    for (int i = 0; i < want; i++) {
+        unsigned c = nat ? s32u_u16_at(p, (size_t)i) : p[i];
+        if (c < '0' || c > '9') return -1;
+        v[i] = (int)(c - '0');
+    }
+    return 0;
+}
+
+static const cob_locale_data *loc_data(int loc)
+{
+    if (loc < 0 || loc >= COB_NLOCALES) loc = cob_loc_current(COB_LC_TIME);
+    return &cob_locale_data_tab[loc];
+}
+
+/* LOCALE-DATE (15.52): argument-1 YYYYMMDD as CURRENT-DATE returns it (1601-9999) */
+char *cob_loc_fn_date(const unsigned char *p, int n, int nat, int loc)
+{
+    int v[8]; cob_tm t = { 0 };
+    char out[160];
+    if (digits_of(p, n, nat, 8, v)) { cob_fn_argbad_set(); return cob_fn_var_result("", 0); }
+    t.y = v[0] * 1000 + v[1] * 100 + v[2] * 10 + v[3]; t.mo = v[4] * 10 + v[5]; t.d = v[6] * 10 + v[7];
+    if (t.y < 1601 || t.mo < 1 || t.mo > 12 || t.d < 1 || t.d > month_days(t.y, t.mo)) { cob_fn_argbad_set(); return cob_fn_var_result("", 0); }
+    t.has_date = 1;
+    int k = expand(loc_data(loc), loc_data(loc)->date_fmt, &t, out, (int)sizeof out);
+    return cob_fn_var_result(out, k);
+}
+
+/* LOCALE-TIME (15.53): argument-1 hhmmss, hours 00-24, seconds 00-99 (rule 3) */
+char *cob_loc_fn_time(const unsigned char *p, int n, int nat, int loc)
+{
+    int v[6]; cob_tm t = { 0 };
+    char out[160];
+    if (digits_of(p, n, nat, 6, v)) { cob_fn_argbad_set(); return cob_fn_var_result("", 0); }
+    t.h = v[0] * 10 + v[1]; t.mi = v[2] * 10 + v[3]; t.s = v[4] * 10 + v[5];
+    if (t.h > 24 || t.mi > 59) { cob_fn_argbad_set(); return cob_fn_var_result("", 0); }
+    t.y = 2000; t.mo = 1; t.d = 1; t.has_time = 1;
+    int k = expand(loc_data(loc), loc_data(loc)->time_fmt, &t, out, (int)sizeof out);
+    return cob_fn_var_result(out, k);
+}
+
+/* LOCALE-TIME-FROM-SECONDS (15.54): secs the whole seconds past midnight the
+ * compiler popped (cob_pop_seconds: -1 when the value was not in standard
+ * numeric time form) */
+char *cob_loc_fn_time_secs(int secs, int loc)
+{
+    cob_tm t = { 0 };
+    char out[160];
+    if (secs < 0 || secs >= 86400) { cob_fn_argbad_set(); return cob_fn_var_result("", 0); }
+    t.h = secs / 3600; t.mi = secs / 60 % 60; t.s = secs % 60;
+    t.y = 2000; t.mo = 1; t.d = 1; t.has_time = 1;
+    int k = expand(loc_data(loc), loc_data(loc)->time_fmt, &t, out, (int)sizeof out);
+    return cob_fn_var_result(out, k);
+}

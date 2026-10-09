@@ -6504,3 +6504,59 @@ LANG=tlh_KL.UTF-8); bad/std2002-locale-unknown, -order-table-unknown,
 -stdcompare-level, -locale-compare-string.  None has an oracle: GnuCOBOL
 spells the locale as a string and its image has no locales; the witness
 is ICU through libutf's own checked tables.  Gate 1k now 127 checks.
+
+### 131. Locale support step 2: LC_TIME -- LOCALE-DATE, LOCALE-TIME, LOCALE-TIME-FROM-SECONDS (2026-10-09)
+
+docs/plans/locale.md step 2.  The data: `libcob/gen_locale_data.py`
+reads CLDR 46's `common/main/<locale>.xml` for root and the 53 locales
+and `common/supplemental/{supplementalData,likelySubtags}.xml` (the
+Unicode license the collators already carry; the user's ruling of
+2026-10-08 against glibc's localedata, which would have tied the
+generator to a glibc) and writes `libcob/locale_data.h`: one record per
+locale of locale_names.h, in its order -- the gregorian medium date and
+time patterns standing for d_fmt and t_fmt, the month and day names
+(format context, abbreviated and wide), am and pm, and for step 5 the
+decimal and group symbols, the standard currency pattern, the region's
+currency (likelySubtags -> region -> currencyData), its symbol and
+fraction digits.  CLDR's inheritance had three rules to get right, each
+found by a wrong value: the marker (three up arrows) and a missing
+element mean the parent's (parentLocales, else truncation, to root);
+`<alias source="locale" path="...">` on a container restarts the search
+from the *requesting* locale along the aliased path -- root's
+"abbreviated months are the wide ones" is each locale's own wide months
+(Azerbaijani's abbreviated May came out as root's "M05" until then);
+elements with an alt attribute are variants; a currency with no symbol
+in the locale is written as its code (Romanian's RON).  The pin: the
+files are to join `~/utf/gen/data/cldr` beside collation/ (utf issue 5);
+until then the generator ran from a scratch copy of the release-46 files.
+The POSIX locale is the standard's own: MM/dd/yy, HH:mm:ss, English
+names, no currency.
+
+The runtime (locale.c): a CLDR pattern expander (y u M L d E c H k h K m
+s a b B G, quoted text, '' a quote) over the record, `cob_loc_fn_date`
+(YYYYMMDD as CURRENT-DATE returns it: 1601-9999, a valid day),
+`cob_loc_fn_time` (hhmmss, hours 00-24 and seconds 00-99 as 15.53.3 rule
+3 allows; 24 renders as itself), `cob_loc_fn_time_secs` (the whole
+seconds the compiler popped with the new `cob_pop_seconds`, -1 outside
+standard numeric time form); national arguments narrowed; an argument
+outside the rules is EC-ARGUMENT-FUNCTION (set through the new
+`cob_fn_argbad_set`) and an empty result.  Results are alphanumeric of
+run-time length, handed back through the new `cob_fn_var_result`
+(libcob.c's fn_var_len is static).  The compiler: rows -16, -17 (FK_ALNUM)
+and -18 (FK_NUMS, the one numeric), fvar set, the argument's length
+checked at compile time when static (8 and 6 character positions), the
+locale-name parsed as for LOCALE-COMPARE, the emission placed ahead of
+the FK_NUMS path (a first build sent the seconds down it).
+
+Witness: ICU 78 (CLDR 48) formatting the same values through Node's
+Intl, line for line -- but for the spaces CLDR 46 writes as U+202F before
+AM/PM (en, el) and before the year word (uk), which CLDR 48 has as plain
+spaces; the data here is 46's and the tests say so.  Tests:
+2002/localedate (ten locales, items, a national argument, seconds with a
+fraction, the current LC_TIME, SET switching it, hour 24, the bad
+arguments unchecked then one checked -- EC-ARGUMENT-FUNCTION is fatal);
+gate 1k now 152 checks.
+With step 2 every 2002 intrinsic function is here, so bad/std2002-
+intrinsic-module ("a function whose module is not here yet is refused
+naming it") had nothing left to name and is gone; the harness count
+is one test less for it and one more for localedate.

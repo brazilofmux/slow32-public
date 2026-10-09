@@ -336,10 +336,10 @@ carry the compiler's own reason.
 | 15.48 | INTEGER-OF-FORMATTED-DATE function | [functions](functions.md) (implemented) | | | | | |
 | 15.49 | INTEGER-PART function | [functions](functions.md) (implemented) | | | | | |
 | 15.50 | LENGTH function | [functions](functions.md) (implemented) | | | | | |
-| 15.51 | LOCALE-COMPARE function | **not implemented**: COBOL 2002 and needs locale support, not implemented yet | | | | | |
-| 15.52 | LOCALE-DATE function | **not implemented**: COBOL 2002 and needs locale support, not implemented yet | | | | | |
-| 15.53 | LOCALE-TIME function | **not implemented**: COBOL 2002 and needs locale support, not implemented yet | | | | | |
-| 15.54 | LOCALE-TIME-FROM-SECONDS function | **not implemented**: COBOL 2002 and needs locale support, not implemented yet | | | | | |
+| 15.51 | LOCALE-COMPARE function | implemented 2026-10-09 (docs/plans/locale.md step 1; ISSUES 130): the locale-name's collation (libutf, CLDR 46), the 8.8.4.2.11 trimming, national operands converted; EC-LOCALE-MISSING when the current locale stands in for one the environment named | 2002/localecmp, localemiss | |
+| 15.52 | LOCALE-DATE function | implemented 2026-10-09 (step 2; ISSUES 131): CLDR 46's medium date format as d_fmt, from locale_data.h; 1601-9999, a valid day, else EC-ARGUMENT-FUNCTION and an empty result | 2002/localedate | |
+| 15.53 | LOCALE-TIME function | implemented 2026-10-09 (step 2): CLDR 46's medium time format as t_fmt; hours 00-24 and seconds 00-99 as rule 3 says | 2002/localedate | |
+| 15.54 | LOCALE-TIME-FROM-SECONDS function | implemented 2026-10-09 (step 2): standard numeric time form, the fraction dropped, 86400 and up EC-ARGUMENT-FUNCTION | 2002/localedate | |
 | 15.55 | LOG function | [functions](functions.md) (implemented) | | | | | |
 | 15.56 | LOG10 function | [functions](functions.md) (implemented) | | | | | |
 | 15.57 | LOWER-CASE function | [functions](functions.md) (implemented) | | | | | |
@@ -370,7 +370,7 @@ carry the compiler's own reason.
 | 15.82 | SIN function | [functions](functions.md) (implemented) | | | | | |
 | 15.83 | SMALLEST-ALGEBRAIC function | [functions](functions.md) (implemented) | | | | | |
 | 15.84 | SQRT function | [functions](functions.md) (implemented) | | | | | |
-| 15.85 | STANDARD-COMPARE function | **not implemented**: COBOL 2002 and needs the ISO/IEC 14651 ordering, not implemented yet | | | | | |
+| 15.85 | STANDARD-COMPARE function | implemented 2026-10-09 (docs/plans/locale.md step 1; ISSUES 130): the DUCET of Unicode 16.0 under the UCA as 'ISO_14651_2020_TABLE1', the one ORDER TABLE taken; argument-4 the level (1-4: the sort keys cut there); a zero-length literal refused; a level the table has not is EC-ORDER-NOT-SUPPORTED (a literal refused at compile time) | 2002/stdcompare | |
 | 15.86 | STANDARD-DEVIATION function | [functions](functions.md) (implemented) | | | | | |
 | 15.87 | SUBSTITUTE function | [functions](functions.md) (implemented) | | | | | |
 | 15.88 | SUM function | [functions](functions.md) (implemented) | | | | | |

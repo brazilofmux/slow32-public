@@ -102,7 +102,8 @@ COBOL 2002/2023 (Stage B):
   and the LOCALE function phrase (UPPER-CASE, LOWER-CASE, NUMVAL-C,
   TEST-NUMVAL-C: docs/plans/locale.md step 3); SET LOCALE, the LOCALE
   and ORDER TABLE clauses, LOCALE-COMPARE and STANDARD-COMPARE came
-  2026-10-09 (step 1), the LC_TIME functions are step 2.
+  2026-10-09 (step 1), LOCALE-DATE, LOCALE-TIME and
+  LOCALE-TIME-FROM-SECONDS the same day (step 2).
 
 ## 3. Out of scope, by ruling
 
@@ -119,8 +120,9 @@ listed here. The 2014 date and time functions came 2026-10-07 (queue
 item 27), the 2023 functions the same day (item 33); locale support
 (item 45) is arriving by docs/plans/locale.md's steps: the LOCALE and
 ORDER TABLE clauses, SET LOCALE, LOCALE-COMPARE and STANDARD-COMPARE on
-2026-10-09; LOCALE-DATE, LOCALE-TIME and LOCALE-TIME-FROM-SECONDS are
-still refused as not implemented (step 2).
+2026-10-09 (step 1), LOCALE-DATE, LOCALE-TIME and LOCALE-TIME-FROM-SECONDS
+the same day (step 2); the LOCALE phrases, ALPHABET IS LOCALE and
+PICTURE's LOCALE are steps 3-5.
 
 Two ruled 2026-09-28:
 

@@ -22,6 +22,14 @@ void cob_loc_fn_arg(const unsigned char *p, int n, int nat);
 void cob_loc_fn_level(int level);
 char *cob_loc_fn_compare(const unsigned char *b, int nb, int nat_b, int loc, int standard);
 int cob_loc_fn_bad(void);
+char *cob_loc_fn_date(const unsigned char *p, int n, int nat, int loc);
+char *cob_loc_fn_time(const unsigned char *p, int n, int nat, int loc);
+char *cob_loc_fn_time_secs(int secs, int loc);
+/* libcob.c's side of the LC_TIME functions, stood in for here */
+static int argbad;
+static char varbuf[4][256]; static int varrot, varlen;
+char *cob_fn_var_result(const char *s, int n) { char *b = varbuf[varrot++ & 3]; memcpy(b, s, (size_t)n); b[n] = 0; varlen = n; return b; }
+void cob_fn_argbad_set(void) { argbad = 1; }
 void cob_loc_set_user_default(int loc);
 void *cob_loc_save(int user_default);
 int cob_loc_restore(int cat, const void *p);
@@ -198,6 +206,41 @@ int main(void)
     ok(!strcmp(cob_loc_fn_compare((const unsigned char *)"b", 1, 0, sv, 0), "<") && cob_loc_fn_bad() == 0, "a named locale: nothing missing");
     unsetenv("LC_ALL"); cob_loc_init_env(); cob_loc_set(-1, -2);
 #endif
+
+    /* the LC_TIME functions: CLDR 46's medium patterns (ICU's answers, but for
+     * CLDR 46's U+202F where CLDR 48 has a space) */
+    cob_loc_set_user_default(-3); cob_loc_set(-1, -3);
+    int de = cob_loc_find("de", -1), en = cob_loc_find("en", -1), frca = cob_loc_find("fr_CA", -1), cs = cob_loc_find("cs", -1), hu = cob_loc_find("hu", -1), uk = cob_loc_find("uk", -1);
+    #define D8(s) (const unsigned char *)(s), 8, 0
+    #define T6(s) (const unsigned char *)(s), 6, 0
+    ok(!strcmp(cob_loc_fn_date(D8("20261008"), sv), "8 okt. 2026") && varlen == 11, "sv date: d MMM y");
+    ok(!strcmp(cob_loc_fn_date(D8("20261008"), de), "08.10.2026"), "de date: dd.MM.y");
+    ok(!strcmp(cob_loc_fn_date(D8("20261008"), en), "Oct 8, 2026"), "en date: MMM d, y");
+    ok(!strcmp(cob_loc_fn_date(D8("20000229"), frca), "29 f\xC3\xA9vr. 2000"), "fr_CA date, a leap day");
+    ok(!strcmp(cob_loc_fn_date(D8("20261008"), hu), "2026. okt. 8."), "hu date: y. MMM d.");
+    ok(!strcmp(cob_loc_fn_date(D8("20261008"), uk), "8 \xD0\xB6\xD0\xBE\xD0\xB2\xD1\x82. 2026\xE2\x80\xAF\xD1\x80."), "uk date: the quoted year word after U+202F");
+    ok(!strcmp(cob_loc_fn_date(D8("20261008"), 0), "10/08/26"), "POSIX date: MM/dd/yy");
+    ok(!strcmp(cob_loc_fn_time(T6("134512"), sv), "13:45:12"), "sv time: HH:mm:ss");
+    ok(!strcmp(cob_loc_fn_time(T6("134512"), en), "1:45:12\xE2\x80\xAF" "PM") && !strcmp(cob_loc_fn_time(T6("000000"), en), "12:00:00\xE2\x80\xAF" "AM"), "en time: h:mm:ss a, midnight is 12 AM");
+    ok(!strcmp(cob_loc_fn_time(T6("134512"), frca), "13 h 45 min 12 s"), "fr_CA time: quoted letters");
+    ok(!strcmp(cob_loc_fn_time(T6("090507"), cs), "9:05:07"), "cs time: H:mm:ss");
+    ok(!strcmp(cob_loc_fn_time(T6("240000"), 0), "24:00:00") && !argbad, "hour 24 is allowed (15.53.3 rule 3a) and rendered as itself");
+    ok(!strcmp(cob_loc_fn_time(T6("235999"), 0), "23:59:99") && !argbad, "seconds to 99 are allowed (15.53.3 rule 3b)");
+    ok(!strcmp(cob_loc_fn_time_secs(49512, sv), "13:45:12") && !strcmp(cob_loc_fn_time_secs(0, 0), "00:00:00") && !strcmp(cob_loc_fn_time_secs(86399, de), "23:59:59"), "time from seconds");
+    unsigned char nd[16]; int ln = to_nat("19990101", nd);
+    ok(!strcmp(cob_loc_fn_date(nd, ln, 1, de), "01.01.1999") && !argbad, "a national date argument");
+    ok(!strcmp(cob_loc_fn_date(D8("20261332"), 0), "") && argbad, "month 13: EC-ARGUMENT-FUNCTION, an empty result"); argbad = 0;
+    ok(!strcmp(cob_loc_fn_date(D8("20000230"), 0), "") && argbad, "February 30: the condition"); argbad = 0;
+    ok(!strcmp(cob_loc_fn_date(D8("16001231"), 0), "") && argbad, "the year 1600: before CURRENT-DATE's range"); argbad = 0;
+    ok(!strcmp(cob_loc_fn_date(D8("2026100a"), 0), "") && argbad, "a letter: the condition"); argbad = 0;
+    ok(!strcmp(cob_loc_fn_date((const unsigned char *)"2026100", 7, 0, 0), "") && argbad, "seven characters: the condition"); argbad = 0;
+    ok(!strcmp(cob_loc_fn_time(T6("256000"), 0), "") && argbad, "hour 25: the condition"); argbad = 0;
+    ok(!strcmp(cob_loc_fn_time(T6("126000"), 0), "") && argbad, "minute 60: the condition"); argbad = 0;
+    ok(!strcmp(cob_loc_fn_time_secs(86400, 0), "") && argbad, "86400 seconds: the condition"); argbad = 0;
+    ok(!strcmp(cob_loc_fn_time_secs(-1, 0), "") && argbad, "negative seconds: the condition"); argbad = 0;
+    cob_loc_set(COB_LC_TIME, cs);
+    ok(!strcmp(cob_loc_fn_time(T6("090507"), -1), "9:05:07"), "the current LC_TIME (-1)");
+    cob_loc_set(-1, -3);
 
     printf("locale_test: %d checks, %d failed\n", checks, fails);
     return fails != 0;

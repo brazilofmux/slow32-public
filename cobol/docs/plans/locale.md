@@ -283,7 +283,7 @@ the one no corpus of ours uses; last.
    (switch, save, restore, a called program's switch persisting); bad
    tests for an unknown locale name, an unknown ordering table, a
    level of 5.  Witness: ICU's answers as libutf's tables record them.
-2. **LC_TIME.**  The CLDR generator and locale_data.h; LOCALE-DATE,
+2. **LC_TIME.**  DONE 2026-10-09 (ISSUES 131).  The CLDR generator and locale_data.h; LOCALE-DATE,
    LOCALE-TIME, LOCALE-TIME-FROM-SECONDS; the strftime subset.  Tests
    2002/localedate (sv 2026-10-08, de 08.10.2026, en_US Oct 8, 2026,
    POSIX 10/08/26; en_US 1:45:12 PM), bad arguments

@@ -712,7 +712,7 @@ static void emit_fn_value_raw(Opnd *f)
         emit_label(Lok);
         emit("\tadd r1, r12, r0");
     }
-    if (f->fn == -1 && (f->fnid == -14 || f->fnid == -15) && (ec_on_name("EC-LOCALE-MISSING") || ec_on_name("EC-ORDER-NOT-SUPPORTED"))) {
+    if (f->fn == -1 && f->fnid <= -14 && f->fnid >= -18 && (ec_on_name("EC-LOCALE-MISSING") || ec_on_name("EC-ORDER-NOT-SUPPORTED"))) {
         /* the library's note: 1 the current locale stands in for a missing one
          * (8.2), 2 a level the table has not (15.85.4 rule 2); r1 kept */
         int Lok = new_label(), Lnext = new_label();
@@ -854,6 +854,37 @@ static void emit_fn_value_raw_1(Opnd *f)
         return;
     }
     if (f->fn == -1) {
+        if (f->fnid <= -16 && f->fnid >= -18) {
+            /* LOCALE-DATE, LOCALE-TIME (15.52, 15.53): the argument, its class, the locale
+             * (-1 the current LC_TIME); LOCALE-TIME-FROM-SECONDS (15.54): the seconds
+             * popped whole (cob_pop_seconds: -1 outside standard numeric time form) */
+            Opnd *sx = f->fargs[0];
+            if (f->fnid == -18) { emit_push_opnd(sx); emit_call("cob_pop_seconds"); emit("\tadd r3, r1, r0"); emit_li("r4", f->floc); emit_call("cob_loc_fn_time_secs"); return; }
+            if (sx->kind == O_FUNC) { emit_fn_value(sx); emit("\tadd r3, r1, r0"); emit_li("r4", sx->fsize); }
+            else if (sx->kind == O_REF) emit_ref_addr_len(&sx->ref);
+            else { emit_la("r3", lit_label((unsigned char *)sx->tok->s, sx->tok->len)); emit_li("r4", sx->tok->len); }
+            emit_li("r5", opnd_is_national(sx)); emit_li("r6", f->floc);
+            emit_call(f->fnid == -16 ? "cob_loc_fn_date" : "cob_loc_fn_time");
+            return;
+        }
+        if (f->fnid == -14 || f->fnid == -15) {
+            /* LOCALE-COMPARE, STANDARD-COMPARE (15.51, 15.85; docs/plans/locale.md): the
+             * level first when there is one, argument-1 staged, then argument-2 with
+             * the locale (LOCALE-COMPARE: the named one, or -1 the current LC_COLLATE;
+             * STANDARD-COMPARE: 0, the ordering table) -- all in libcobloc.s32a, which
+             * the driver links on seeing cob_loc_ */
+            if (f->flev >= 0) { emit_push_opnd(f->fargs[f->flev]); emit_call("cob_pop_int"); emit("\tadd r3, r1, r0"); emit_call("cob_loc_fn_level"); }
+            for (int i = 0; i < 2; i++) {
+                Opnd *sx = f->fargs[i];
+                if (sx->kind == O_FUNC) { emit_fn_value(sx); emit("\tadd r3, r1, r0"); emit_li("r4", sx->fsize); }
+                else if (sx->kind == O_REF) emit_ref_addr_len(&sx->ref);
+                else { emit_la("r3", lit_label((unsigned char *)sx->tok->s, sx->tok->len)); emit_li("r4", sx->tok->len); }
+                emit_li("r5", opnd_is_national(sx));
+                if (i == 0) emit_call("cob_loc_fn_arg");
+                else { emit_li("r6", f->fnid == -14 ? f->floc : 0); emit_li("r7", f->fnid == -15); emit_call("cob_loc_fn_compare"); }
+            }
+            return;
+        }
         if (f->fkind == FK_NUMS) {
             /* the count in a frame slot: an ALL subscript's is known at run time */
             int cslot = g_slot_base++;
@@ -901,24 +932,6 @@ static void emit_fn_value_raw_1(Opnd *f)
             else die_at(f->line, "FUNCTION NUMVAL-C: the currency string must be an item or a literal");
             emit_li("r5", f->fanycase); emit_li("r6", opnd_is_national(cx));
             emit_call("cob_fn_currency_arg");
-        }
-        if (f->fnid == -14 || f->fnid == -15) {
-            /* LOCALE-COMPARE, STANDARD-COMPARE (15.51, 15.85; docs/plans/locale.md): the
-             * level first when there is one, argument-1 staged, then argument-2 with
-             * the locale (LOCALE-COMPARE: the named one, or -1 the current LC_COLLATE;
-             * STANDARD-COMPARE: 0, the ordering table) -- all in libcobloc.s32a, which
-             * the driver links on seeing cob_loc_ */
-            if (f->flev >= 0) { emit_push_opnd(f->fargs[f->flev]); emit_call("cob_pop_int"); emit("\tadd r3, r1, r0"); emit_call("cob_loc_fn_level"); }
-            for (int i = 0; i < 2; i++) {
-                Opnd *sx = f->fargs[i];
-                if (sx->kind == O_FUNC) { emit_fn_value(sx); emit("\tadd r3, r1, r0"); emit_li("r4", sx->fsize); }
-                else if (sx->kind == O_REF) emit_ref_addr_len(&sx->ref);
-                else { emit_la("r3", lit_label((unsigned char *)sx->tok->s, sx->tok->len)); emit_li("r4", sx->tok->len); }
-                emit_li("r5", opnd_is_national(sx));
-                if (i == 0) emit_call("cob_loc_fn_arg");
-                else { emit_li("r6", f->fnid == -14 ? f->floc : 0); emit_li("r7", f->fnid == -15); emit_call("cob_loc_fn_compare"); }
-            }
-            return;
         }
         Opnd *ax = f->fargs[0];                         /* the string functions: r3 the argument, r4 its length */
         if (f->fnid <= -11) {
