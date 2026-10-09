@@ -2,7 +2,8 @@
  * two compressed DFAs over UTF-8 bytes, membership of a code point in
  * Annex B's first set (the XID_Start characters of UAX #31, Unicode
  * 13.0.0: anywhere in a word) and in its second (the XID_Continue
- * characters beyond them: not first).  Built by ~/utf's gen/classify
+ * characters beyond them: not first; Unicode data, under the Unicode
+ * License V3 -- see NOTICE).  Built by ~/utf's gen/classify
  * (libutf, the same machines that classify characters there) from the
  * code-point lists of Annex B, ASCII left to the scanner; read by
  * xid_class() in tokenizer.h as libutf's run_membership_dfa_u16 reads

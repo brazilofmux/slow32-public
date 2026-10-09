@@ -362,5 +362,6 @@ Third-party files keep their own terms; the notices live in
 and distribute for any purpose without fee, provided that entire
 notice is kept with copies. Lua (`lua/src`) is MIT from Lua.org;
 the SQLite amalgamation is public domain; MojoZork (`zork/src`) is
-zlib.  Doom under `doom/` (doomgeneric) is GPLv2 and stands alone:
+zlib; the Unicode and CLDR data the COBOL runtime and `common/` carry
+(through libutf) is under the Unicode License V3.  Doom under `doom/` (doomgeneric) is GPLv2 and stands alone:
 it is a separate program, and nothing under MIT here links against it.
