@@ -109,6 +109,75 @@ item must know the oracle can be wrong there.
 | SCREEN SECTION | GnuCOBOL on a real tty, plus dBase Stage 4 behaviour where they overlap | no ISO text |
 | CCVS-85 | NIST CCVS-85 via GnuCOBOL's extracted modules | a **histogram of missing features**, as `cobc370/bin/cobc-ccvs` does, not a v1 score. Later, a pass/fail suite for NC/SQ/IC. |
 
+### Rechecked against gcobol 17 (2026-10-08, kagura)
+
+Simon's advice: GCC 17 is the line COBOL fixes land in, nothing before
+it gets backports, so a disagreement is worth his time only if it
+stands on 17.  Run on kagura (x86-64) by its session, the harness at
+3632e2d7 with `GCOBOL_IMAGE=gcobol:17` -- the image "gcobol 17.0.0,
+COBOLworx build 4556, gcc snapshot 2026-10-06, gcc commit 7afc59",
+digest 5cc84f48 -- beside gnucobol:4.0 at trunk r5725 (digests 38fe34d1
+builder, b3c1efc1 runtime).  **122 agree, 57 differ, 71 refused, 4
+skipped** of 254 (GCC 15 on the Mac: 126, 63, 70, 4 of 263).  Against
+the table above, by test:
+
+- **Fixed on 17, "gcobol agrees" now -- ten rows, off Simon's list:**
+  casermod, ebcdic, lineseq, numvaldigit, remrnd, rmode, tabcols,
+  unstring (G), hotdec (I).  The G ones stood only on 15 and are noise
+  by his rule.
+- **Still differ on 17 -- 46 rows, their class carried over** (the diffs
+  were not re-read against the text this time): G addressofarg
+  allocinit altkey cancelrules cmpbytes codesetrecs compute copyquote
+  divremgiving divremse dpcomma edit floatext fnargbad heldvalues hotfn
+  idxbig init2002 moveall moveonce moverules picedit picmix recnot
+  searchrules seqblock seqbyte setcond startfirst stringrules userfnrecv
+  wide1 wide2; T dtformat negzero; I arith comp12 copybook datefn
+  divremu (both) hotarith hotarith2 hotmuldiv hotwrap packedpad
+  returncode.
+- **Refused on 17 where 15 compiled -- three, regressions to report:**
+  `free/corr` ("cobol1: internal compiler error: Segmentation fault"),
+  `free/relative` ("syntax error, unexpected RELATIVE" on the SELECT),
+  `2002/basedlocal` (the link fails, `collect2: ld returned 1`).
+- **Not reached -- three:** notrunc, userfnonce, userfnsub failed the
+  GnuCOBOL gate on that host first (below) and were not handed to gcobol.
+- **Skipped as designed -- four E rows:** acceptyyyy, args, fixclock,
+  printer ("no gcobol").
+- **New disagreements, not in the table -- ten, a first look, class
+  provisional:** `2002/acceptrm` (a reference-modified ACCEPT, refused by
+  15, now `a00defghwxyz` for `a13defghwxyz`; G), `2002/bindouble`
+  (BINARY-DOUBLE's extremes and the size error at the maximum; four
+  lines for our five; G), `free/checked64` (none of the 26 lines
+  printed; G), `free/classbytes` (the NUMERIC class test over all 256
+  bytes: `numeric 0225 not 0031 from 0001 to 0254` for `numeric 0010
+  not 0246 from 0048 to 0057`; G), `free/divround18`
+  (`131629575978.525847` for `.526025`: intermediate precision, likely
+  I), `free/moditem` (FUNCTION MOD by an item gives -7 for 0, hotfn's
+  family; G), `fixed/move` (`2286` for `5678` on a test GCC 15 agreed
+  with: a probable 17 regression; G), `2002/sortnested` (a nested-table
+  SORT, refused by 15, now ordered wrongly; G), `free/strovf` (the
+  overflow flag `O` for `N`, stringrules' family; G), `2002/userfnnest`
+  (user-defined functions compile on 17 and give wrong values; G).
+
+Two things the run says about GnuCOBOL rather than gcobol.  Trunk
+r5725 on x86-64 fails nine of the harness's GnuCOBOL checks that the
+same revision passes on aarch64 (the Mac, 1270/0 the same day):
+`fixed/copytext` refused (line 16), and `free/notrunc`, `2002/fnvarying`
+and six user-function tests (`userfn`, `userfncount`, `userfndisp`,
+`userfnonce`, `userfnsub`, `userfnx`) disagreeing with their recorded
+output -- the rows whose recorded GnuCOBOL answers are an argument's
+evaluation order or a value read where none was written, which the
+host's C compiler decides.  And cobc itself (not compiled programs)
+dies on a closed pipe (`cobc --version | head -1`): SIGPIPE caught and
+a segfault on 3.1.2 and trunk, an abort on 3.2, not reproduced on 3.3
+r5729; timing-dependent, recorded by the public-mirror session.
+
+Method notes from kagura for the next run: the harness rebuilds
+neither `out/s32-cobc` nor the host emulators, and five-day-old ones
+hung `seqblock` and failed `scrinsert` before the tools were rebuilt;
+`out/gcobol-differs.txt` is keyed by basename, so `2002/divremu` and
+`free/divremu` share a row (57 rows for 56 names); about 31 minutes
+there, container start 1.2 s.
+
 ## Documented divergences from GnuCOBOL
 
 Where the 85 text and GnuCOBOL disagree, the `.expected` file carries
