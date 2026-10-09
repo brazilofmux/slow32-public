@@ -322,6 +322,7 @@ static Node *parse_expr(void);
 static Node *parse_stmt(void);
 static Node *parse_assign(void);
 static Node *parse_postfix(void);
+static Node *parse_postfix_from(Node *n);
 static Node *parse_gnu_asm_stmt(void);
 static Node *parse_block(void);
 /* ps_parse_fp_params sits above these and calls them (GitHub issue 71). */
@@ -2005,6 +2006,10 @@ static int ps_sizeof_node(Node *n) {
         return (gi >= 0) ? ps_gsize[gi] : ty_size(n->ty);
     }
     if (n->kind == ND_MEMBER && n->is_array) return n->val_hi;
+    /* a string literal is an array of char, its bytes and the NUL (C90
+     * 6.1.4): sizeof("abc") is 4 by coincidence, sizeof("A") 2, not the
+     * pointer the literal decays to (selfhost ISSUES-84) */
+    if (n->kind == ND_STRING) return lex_str_len[n->val] + 1;
     if (n->kind == ND_BINOP && n->arr_cols > 0 && ty_is_ptr(n->ty))
         return n->arr_cols * ty_size(ty_deref(n->ty));
     return ty_size(n->ty);
@@ -2157,8 +2162,8 @@ static int parse_const_primary(void) {
             Node *sn;
             int sv;
             sn = parse_expr();
-            sv = ps_sizeof_node(sn);
             expect(TK_RPAREN);
+            sv = ps_sizeof_node(parse_postfix_from(sn));
             return sv;
         }
     }
@@ -4006,11 +4011,12 @@ static Node *parse_primary(void) {
             int sz_ty;
             sz_ty = parse_type();
             v = ps_sizeof_type_tail(sz_ty, ps_type_arrcount);
+            expect(TK_RPAREN);
         } else {
             n = parse_expr();
-            v = ps_sizeof_node(n);
+            expect(TK_RPAREN);
+            v = ps_sizeof_node(parse_postfix_from(n));
         }
-        expect(TK_RPAREN);
         return nd_num(v);
     }
 
@@ -4019,8 +4025,13 @@ static Node *parse_primary(void) {
 }
 
 /* Postfix: handle array subscript p[i], postfix ++/--, member access . and -> */
-static Node *parse_postfix(void) {
-    Node *n;
+static Node *parse_postfix_from(Node *n);
+static Node *parse_postfix(void) { return parse_postfix_from(parse_primary()); }
+/* The postfix operators applied to n, a primary already parsed -- by
+ * parse_postfix, and by sizeof, whose "( expression )" is the start of a
+ * postfix-expression, not the whole operand: sizeof("abc")[0] is
+ * sizeof(("abc")[0]), 1 (C90 6.3.3 / 6.3.2; selfhost ISSUES-84) */
+static Node *parse_postfix_from(Node *n) {
     Node *idx;
     Node *pi;
     Node *ahead;
@@ -4031,7 +4042,6 @@ static Node *parse_postfix(void) {
     int mi;
     char mnm[256];
 
-    n = parse_primary();
     while (lex_tok == TK_LBRACK || lex_tok == TK_INC || lex_tok == TK_DEC ||
            lex_tok == TK_DOT || lex_tok == TK_ARROW || lex_tok == TK_LPAREN) {
         if (lex_tok == TK_LPAREN) {

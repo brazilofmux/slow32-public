@@ -3047,7 +3047,7 @@ harness with a 4 MB stack now (co_sort_words has a 1.1 MB frame -- two
 arrays of UTF_BUFSIZE/2 elements -- and the 1 MB stack faulted under
 `[sort]`).
 
-### 84. [OPEN] stage08 cc: sizeof of a string literal is 4, the size of a pointer
+### 84. [RESOLVED 2026-10-09] stage08 cc: sizeof of a string literal is 4, the size of a pointer
 
 Noticed 2026-10-08 writing the test for item 83: `sizeof("A")`,
 `sizeof("\n\n")` and the rest all come back 4 under stage08 cc.  A string
@@ -3057,4 +3057,15 @@ accident and `sizeof("A")` is 2; the `char buf[sizeof("...")]` and
 source stage08 builds today uses the form (grep over selfhost, cobol,
 sqlite3.c: none), which is why nothing has tripped.  The literal's type
 in sema is the pointer it decays to; sizeof (and only sizeof, and the
-address-of case) wants the array.  Not fixed yet.
+address-of case) wants the array.
+
+Fixed 2026-10-09: `ps_sizeof_node` sizes an ND_STRING as its pooled
+length plus the NUL (concatenated literals included).  The test found a
+second defect on the same path: `sizeof ( expression )` stopped at the
+closing parenthesis, so `sizeof("abc")[0]` applied `[0]` to the size
+instead of sizing `("abc")[0]` -- the parenthesized expression is the
+start of a postfix-expression (C90 6.3.3).  parse_postfix's loop is now
+parse_postfix_from(n), and both sizeof paths (the expression parser and
+the constant evaluator) continue the operand through it.  Test:
+tests/test_sizeof_string.c.  Gates: stage08 112/112 with fixed-point,
+check-host-frontend, SQLite stage08 == clang, libutf identical.
