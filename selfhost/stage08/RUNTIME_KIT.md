@@ -113,6 +113,21 @@ compiled from a source with such an expression is wrong until rebuilt:
   `c > -1` false.  Silent, in any sign-sensitive use of such a result;
   found by cobol's libcob (the 2014 date and time functions' scanner).
 
+Fixed 2026-10-09, ninth batch (`70579651`, `1bd54189`).  In `cc.s32x` only;
+the tools, `crt0.s32o`, the headers and all 32 `libc.s32a` members rebuilt
+content-identical:
+
+- **A hex escape stopped after two digits, and an out-of-range one was
+  accepted** (selfhost ISSUES-83).  `"\x0041"` was three bytes; `"\xC3\xA4b"`,
+  one escape to the standard and out of range, compiled as the bytes its
+  author meant while clang and gcc refuse it.  Every digit is taken now,
+  and a value over 255 is an error (octal too).  With it, a character
+  constant above 127 is sign-extended: `'\xff'` is -1, as clang's slow32
+  and stage08's own `ldb` have it, not 255.
+- **sizeof of a string literal was 4** (selfhost ISSUES-84), the pointer
+  it decays to, not the array's size; and `sizeof ( expression )` ended
+  at the parenthesis, so `sizeof("abc")[0]` indexed the size.
+
 Fixed 2026-10-07, eighth batch (`e98e1926`).  In `cc.s32x` only:
 
 - **A struct member read after a call took its address reloaded from
