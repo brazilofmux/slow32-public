@@ -267,6 +267,8 @@ int lex_kw_lookup(char *name) {
 
 /* === Escape sequence parser (shared by string and char actions) === */
 
+static void p_error(char *msg);   /* parser.h; the lexer is included first */
+
 static int lex_parse_esc(char *s, int *posout) {
     int ch;
     int val;
@@ -300,15 +302,24 @@ static int lex_parse_esc(char *s, int *posout) {
     if (ch == 39)  { *posout = pos; return 39; }
     if (ch == 34)  { *posout = pos; return 34; }
     if (ch == 120) {
+        /* C90 6.1.3.4: a hex escape takes every hex digit that follows,
+         * and a value a char cannot hold is a constraint violation.  So
+         * "\x0041" is "A", and "\xC3\xA4b" is an error (the b is a digit),
+         * not the 0xC3 0xA4 'b' a two-digit reading would make of it; clang
+         * and gcc reject it, and a compiler that accepted it would let a
+         * program through that no other compiler builds. */
         val = 0; i = 0;
-        while (i < 2) {
+        while (1) {
             ch = s[pos] & 255;
             if (ch >= 48 && ch <= 57) { val = val * 16 + (ch - 48); }
             else if (ch >= 97 && ch <= 102) { val = val * 16 + (ch - 87); }
             else if (ch >= 65 && ch <= 70) { val = val * 16 + (ch - 55); }
             else break;
+            if (val > 255) val = 256;   /* saturate; keep consuming */
             pos = pos + 1; i = i + 1;
         }
+        if (i == 0) p_error("\\x used with no following hex digits");
+        if (val > 255) p_error("hex escape sequence out of range");
         *posout = pos; return val;
     }
     if (ch >= 49 && ch <= 55) {
@@ -319,6 +330,7 @@ static int lex_parse_esc(char *s, int *posout) {
             val = val * 8 + (ch - 48);
             pos = pos + 1; i = i + 1;
         }
+        if (val > 255) p_error("octal escape sequence out of range");
         *posout = pos; return val;
     }
     *posout = pos; return ch;
@@ -756,6 +768,9 @@ static void lex_parse_chr(char *ts, char *te) {
         pos = pos + 1;
         ch = lex_parse_esc(ts, &pos);
     }
+    /* C90 6.1.3.4: the constant's value is the byte read as a char, and
+     * char is signed here (ldb), as under clang: '\xff' is -1, not 255. */
+    if (ch > 127) ch = ch - 256;
     lex_tok = TK_CHARLIT;
     lex_val = ch;
 }

@@ -3014,3 +3014,47 @@ comparison rule, the shift rule and unary minus / ~. Test
 `tests/test_int_promote.c` (exit 1 on the old compiler, 0 on this, 0
 with clang); stage08's suite with the self-rebuild gate; cobol's
 selfhost-libcob gate against the rebuilt kit.
+
+### 83. [RESOLVED 2026-10-08] stage08 cc: a hex escape stopped after two digits, and an out-of-range escape was accepted
+
+Found 2026-10-08 when libutf's harness (`tests/test_color_ops.c`, its
+new `collate_locales` table) compiled under stage08 cc and not under
+clang: `{ "sv", "\xC3\xA4b", "ab", 1 }` is "hex escape sequence out of
+range" to clang and gcc, because a hex escape takes every hex digit that
+follows it (C90 6.1.3.4) and the `b` is one, so the escape is `\xA4b` =
+0xA4B, which no char holds.  stage08's `lex_parse_esc` read at most two
+digits and so produced the three bytes 0xC3 0xA4 'b' the author meant --
+the program ran, 601/601 identical to the host build once the host side
+was patched.  The silent leniency has two edges: `"\x0041"` was 0x00 '4'
+'1' where the standard says it is the one byte 'A', and a program the
+other compilers refuse went through.
+
+`lex_parse_esc` (selfhost/src/c_lexer.rl, shared by stage08 and the two
+cross compilers through symlinks) now consumes every hex digit,
+saturating above 255 while it goes, and calls `p_error` for a value over
+255 or for `\x` with no digit; the octal branch gets the same range check
+(`\777`).  `p_error` lives in parser.h, which s12cc.c includes after the
+lexer, so the lexer carries a static forward declaration.  The test for
+it then tripped a sibling in `lex_parse_chr`: `'\xff'` was 255 where
+clang's slow32 (char signed, as stage08's own `ldb` loads say) makes it
+-1 -- C90 6.1.3.4 reads the byte as a char -- so a char constant above
+127 is now sign-extended.  No source stage08 compiles carried a
+high-bit char constant (SQLite's one, `#if 'A' == '\301'`, is in a
+preprocessor condition, where pp.h still reads a raw byte and knows no
+escapes -- an edge left as it is).  Test: `tests/test_hex_escape.c`.  libutf's own copy was fixed on the other
+machine's side as `"\xC3\xA4" "b"`; scripts/build-libutf.sh links the
+harness with a 4 MB stack now (co_sort_words has a 1.1 MB frame -- two
+arrays of UTF_BUFSIZE/2 elements -- and the 1 MB stack faulted under
+`[sort]`).
+
+### 84. [OPEN] stage08 cc: sizeof of a string literal is 4, the size of a pointer
+
+Noticed 2026-10-08 writing the test for item 83: `sizeof("A")`,
+`sizeof("\n\n")` and the rest all come back 4 under stage08 cc.  A string
+literal is an array of char (C90 6.1.4), so `sizeof("abc")` is 4 by
+accident and `sizeof("A")` is 2; the `char buf[sizeof("...")]` and
+`strncmp(s, "pfx", sizeof("pfx") - 1)` idioms are both wrong here.  No
+source stage08 builds today uses the form (grep over selfhost, cobol,
+sqlite3.c: none), which is why nothing has tripped.  The literal's type
+in sema is the pointer it decays to; sizeof (and only sizeof, and the
+address-of case) wants the array.  Not fixed yet.

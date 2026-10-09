@@ -53,8 +53,8 @@ cc08() {  # cc08 SRC OUT.s  (stage08 cc under the emulator; fails if no output)
         echo "compile failed: $1" >&2; grep -m3 -E 'expected|error' "$2.log" >&2; return 1
     fi
 }
-link() {  # link OBJ EXE  -- builtins64 for __muldi3; the harness needs > 64K stack
-    "$LD" -o "$2" --mmio 64K --stack-size 1M "$ROOT/runtime/crt0.s32o" "$1" \
+link() {  # link OBJ EXE  -- builtins64 for __muldi3; the harness needs > 1 MB of stack (co_sort_words frame)
+    "$LD" -o "$2" --mmio 64K --stack-size 4M "$ROOT/runtime/crt0.s32o" "$1" \
         "$OUT/libutf.s32a" "$ROOT/selfhost/stage08/lib/builtins64.s32o" \
         "$ROOT/runtime/libc_mmio.s32a" "$ROOT/runtime/libs32.s32a"
 }

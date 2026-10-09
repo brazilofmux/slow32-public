@@ -1,5 +1,5 @@
 
-#line 1 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 1 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 /* c_lexer.rl -- Ragel -G2 C lexer for SLOW-32 s32-cc compiler (stage18)
  *
  * Build:   bash gen_lexer.sh
@@ -269,6 +269,8 @@ int lex_kw_lookup(char *name) {
 
 /* === Escape sequence parser (shared by string and char actions) === */
 
+static void p_error(char *msg);   /* parser.h; the lexer is included first */
+
 static int lex_parse_esc(char *s, int *posout) {
     int ch;
     int val;
@@ -302,15 +304,24 @@ static int lex_parse_esc(char *s, int *posout) {
     if (ch == 39)  { *posout = pos; return 39; }
     if (ch == 34)  { *posout = pos; return 34; }
     if (ch == 120) {
+        /* C90 6.1.3.4: a hex escape takes every hex digit that follows,
+         * and a value a char cannot hold is a constraint violation.  So
+         * "\x0041" is "A", and "\xC3\xA4b" is an error (the b is a digit),
+         * not the 0xC3 0xA4 'b' a two-digit reading would make of it; clang
+         * and gcc reject it, and a compiler that accepted it would let a
+         * program through that no other compiler builds. */
         val = 0; i = 0;
-        while (i < 2) {
+        while (1) {
             ch = s[pos] & 255;
             if (ch >= 48 && ch <= 57) { val = val * 16 + (ch - 48); }
             else if (ch >= 97 && ch <= 102) { val = val * 16 + (ch - 87); }
             else if (ch >= 65 && ch <= 70) { val = val * 16 + (ch - 55); }
             else break;
+            if (val > 255) val = 256;   /* saturate; keep consuming */
             pos = pos + 1; i = i + 1;
         }
+        if (i == 0) p_error("\\x used with no following hex digits");
+        if (val > 255) p_error("hex escape sequence out of range");
         *posout = pos; return val;
     }
     if (ch >= 49 && ch <= 55) {
@@ -321,6 +332,7 @@ static int lex_parse_esc(char *s, int *posout) {
             val = val * 8 + (ch - 48);
             pos = pos + 1; i = i + 1;
         }
+        if (val > 255) p_error("octal escape sequence out of range");
         *posout = pos; return val;
     }
     *posout = pos; return ch;
@@ -758,6 +770,9 @@ static void lex_parse_chr(char *ts, char *te) {
         pos = pos + 1;
         ch = lex_parse_esc(ts, &pos);
     }
+    /* C90 6.1.3.4: the constant's value is the byte read as a char, and
+     * char is signed here (ldb), as under clang: '\xff' is -1, not 255. */
+    if (ch > 127) ch = ch - 256;
     lex_tok = TK_CHARLIT;
     lex_val = ch;
 }
@@ -782,20 +797,20 @@ static void lex_parse_id(char *ts, char *te) {
  * ================================================================ */
 
 
-#line 892 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 913 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 
 
 /* === Ragel data tables === */
 
 
-#line 786 "/Users/sdennis/slow-32/selfhost/src/c_lexer_gen.c"
+#line 807 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
 static const int c_lexer_start = 15;
 static const int c_lexer_error = 0;
 
 static const int c_lexer_en_main = 15;
 
 
-#line 897 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 918 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 
 /* === lex_init === */
 
@@ -827,7 +842,7 @@ void lex_init(char *src, int len) {
     lex_rpe = lex_src + lex_len;
 
     
-#line 825 "/Users/sdennis/slow-32/selfhost/src/c_lexer_gen.c"
+#line 846 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
 	{
 	cs = c_lexer_start;
 	ts = 0;
@@ -835,7 +850,7 @@ void lex_init(char *src, int len) {
 	act = 0;
 	}
 
-#line 928 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 949 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
     lex_rcs = cs;
     lex_ract = 0;
     lex_rts = 0;
@@ -866,53 +881,53 @@ void lex_next(void) {
     if (p >= pe) return;
 
     
-#line 864 "/Users/sdennis/slow-32/selfhost/src/c_lexer_gen.c"
+#line 885 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
 	{
 	if ( p == pe )
 		goto _test_eof;
 	switch ( cs )
 	{
 tr2:
-#line 822 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 843 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{
             lex_parse_str(ts, te);
             {p++; cs = 15; goto _out;}
         }}
 	goto st15;
 tr5:
-#line 828 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 849 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{
             lex_parse_chr(ts, te);
             {p++; cs = 15; goto _out;}
         }}
 	goto st15;
 tr7:
-#line 873 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 894 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{{p = ((te))-1;}{ lex_tok = TK_DOT; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr8:
-#line 840 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 861 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_ELLIPSIS; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr9:
-#line 798 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 819 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{{p = ((te))-1;}{
             lex_parse_fnum(ts, te);
             {p++; cs = 15; goto _out;}
         }}
 	goto st15;
 tr12:
-#line 881 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 902 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{{p = ((te))-1;}{ lex_tok = TK_SLASH; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr15:
-#line 789 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 810 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{
             lex_count_nl(ts, te);
         }}
 	goto st15;
 tr16:
-#line 794 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 815 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{{p = ((te))-1;}{
             lex_parse_fnum(ts, te);
             {p++; cs = 15; goto _out;}
@@ -937,259 +952,259 @@ tr19:
 	}
 	goto st15;
 tr22:
-#line 816 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 837 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{{p = ((te))-1;}{
             lex_parse_num(ts, te);
             {p++; cs = 15; goto _out;}
         }}
 	goto st15;
 tr25:
-#line 783 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 804 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_line = lex_line + 1; }}
 	goto st15;
 tr30:
-#line 865 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 886 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_LPAREN; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr31:
-#line 866 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 887 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_RPAREN; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr34:
-#line 872 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 893 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_COMMA; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr40:
-#line 874 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 895 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_COLON; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr41:
-#line 871 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 892 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_SEMI; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr45:
-#line 875 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 896 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_QMARK; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr47:
-#line 867 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 888 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_LBRACK; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr48:
-#line 868 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 889 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_RBRACK; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr50:
-#line 869 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 890 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_LBRACE; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr52:
-#line 870 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 891 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_RBRACE; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr53:
-#line 876 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 897 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_TILDE; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr54:
-#line 782 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 803 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{ /* skip */ }}
 	goto st15;
 tr55:
-#line 886 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 907 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{ lex_tok = TK_BANG; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr56:
-#line 853 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 874 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_NE; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr57:
-#line 877 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 898 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{ lex_tok = TK_HASH; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr58:
-#line 843 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 864 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_HASHHASH; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr59:
-#line 882 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 903 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{ lex_tok = TK_PERCENT; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr60:
-#line 848 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 869 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_PERCENTEQ; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr61:
-#line 883 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 904 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{ lex_tok = TK_AMP; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr62:
-#line 858 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 879 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_LAND; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr63:
-#line 849 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 870 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_AMPEQ; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr64:
-#line 880 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 901 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{ lex_tok = TK_STAR; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr65:
-#line 846 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 867 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_STAREQ; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr66:
-#line 878 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 899 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{ lex_tok = TK_PLUS; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr67:
-#line 860 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 881 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_INC; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr68:
-#line 844 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 865 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_PLUSEQ; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr69:
-#line 879 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 900 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{ lex_tok = TK_MINUS; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr70:
-#line 861 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 882 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_DEC; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr71:
-#line 845 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 866 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_MINUSEQ; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr72:
-#line 862 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 883 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_ARROW; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr73:
-#line 873 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 894 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{ lex_tok = TK_DOT; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr76:
-#line 798 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 819 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{
             lex_parse_fnum(ts, te);
             {p++; cs = 15; goto _out;}
         }}
 	goto st15;
 tr79:
-#line 881 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 902 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{ lex_tok = TK_SLASH; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr81:
-#line 847 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 868 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_SLASHEQ; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr82:
-#line 786 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 807 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{ /* skip */ }}
 	goto st15;
 tr83:
-#line 816 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 837 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{
             lex_parse_num(ts, te);
             {p++; cs = 15; goto _out;}
         }}
 	goto st15;
 tr89:
-#line 794 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 815 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{
             lex_parse_fnum(ts, te);
             {p++; cs = 15; goto _out;}
         }}
 	goto st15;
 tr92:
-#line 812 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 833 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{
             lex_parse_num(ts, te);
             {p++; cs = 15; goto _out;}
         }}
 	goto st15;
 tr94:
-#line 802 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 823 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{
             lex_parse_fnum(ts, te);
             {p++; cs = 15; goto _out;}
         }}
 	goto st15;
 tr96:
-#line 808 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 829 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{
             lex_parse_num(ts, te);
             {p++; cs = 15; goto _out;}
         }}
 	goto st15;
 tr98:
-#line 888 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 909 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{ lex_tok = TK_LT; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr100:
-#line 854 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 875 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_LE; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr101:
-#line 856 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 877 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{ lex_tok = TK_LSHIFT; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr102:
-#line 841 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 862 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_LSHIFTEQ; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr103:
-#line 887 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 908 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{ lex_tok = TK_ASSIGN; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr104:
-#line 852 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 873 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_EQ; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr105:
-#line 889 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 910 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{ lex_tok = TK_GT; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr106:
-#line 855 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 876 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_GE; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr108:
-#line 857 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 878 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{ lex_tok = TK_RSHIFT; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr109:
-#line 842 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 863 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_RSHIFTEQ; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr110:
-#line 834 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 855 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{
             lex_parse_id(ts, te);
             {p++; cs = 15; goto _out;}
         }}
 	goto st15;
 tr111:
-#line 885 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 906 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{ lex_tok = TK_CARET; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr112:
-#line 851 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 872 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_CARETEQ; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr113:
-#line 884 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 905 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{ lex_tok = TK_PIPE; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr114:
-#line 850 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 871 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_PIPEEQ; {p++; cs = 15; goto _out;} }}
 	goto st15;
 tr115:
-#line 859 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 880 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_tok = TK_LOR; {p++; cs = 15; goto _out;} }}
 	goto st15;
 st15:
@@ -1200,7 +1215,7 @@ st15:
 case 15:
 #line 1 "NONE"
 	{ts = p;}
-#line 1198 "/Users/sdennis/slow-32/selfhost/src/c_lexer_gen.c"
+#line 1219 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
 	switch( (*p) ) {
 		case 10: goto tr25;
 		case 32: goto st16;
@@ -1354,7 +1369,7 @@ st24:
 	if ( ++p == pe )
 		goto _test_eof24;
 case 24:
-#line 1352 "/Users/sdennis/slow-32/selfhost/src/c_lexer_gen.c"
+#line 1373 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
 	if ( (*p) == 46 )
 		goto st5;
 	if ( 48 <= (*p) && (*p) <= 57 )
@@ -1375,7 +1390,7 @@ st25:
 	if ( ++p == pe )
 		goto _test_eof25;
 case 25:
-#line 1373 "/Users/sdennis/slow-32/selfhost/src/c_lexer_gen.c"
+#line 1394 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
 	switch( (*p) ) {
 		case 69: goto st6;
 		case 70: goto st27;
@@ -1437,7 +1452,7 @@ st28:
 	if ( ++p == pe )
 		goto _test_eof28;
 case 28:
-#line 1435 "/Users/sdennis/slow-32/selfhost/src/c_lexer_gen.c"
+#line 1456 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
 	switch( (*p) ) {
 		case 42: goto st8;
 		case 47: goto st29;
@@ -1470,14 +1485,14 @@ case 29:
 tr38:
 #line 1 "NONE"
 	{te = p+1;}
-#line 816 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 837 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{act = 10;}
 	goto st30;
 st30:
 	if ( ++p == pe )
 		goto _test_eof30;
 case 30:
-#line 1475 "/Users/sdennis/slow-32/selfhost/src/c_lexer_gen.c"
+#line 1496 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
 	switch( (*p) ) {
 		case 46: goto tr84;
 		case 69: goto st12;
@@ -1503,7 +1518,7 @@ st31:
 	if ( ++p == pe )
 		goto _test_eof31;
 case 31:
-#line 1501 "/Users/sdennis/slow-32/selfhost/src/c_lexer_gen.c"
+#line 1522 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
 	switch( (*p) ) {
 		case 69: goto st10;
 		case 70: goto st33;
@@ -1560,14 +1575,14 @@ case 33:
 tr85:
 #line 1 "NONE"
 	{te = p+1;}
-#line 812 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 833 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{act = 9;}
 	goto st34;
 st34:
 	if ( ++p == pe )
 		goto _test_eof34;
 case 34:
-#line 1565 "/Users/sdennis/slow-32/selfhost/src/c_lexer_gen.c"
+#line 1586 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
 	switch( (*p) ) {
 		case 46: goto tr84;
 		case 69: goto st12;
@@ -1586,14 +1601,14 @@ case 34:
 tr39:
 #line 1 "NONE"
 	{te = p+1;}
-#line 816 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 837 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{act = 10;}
 	goto st35;
 st35:
 	if ( ++p == pe )
 		goto _test_eof35;
 case 35:
-#line 1591 "/Users/sdennis/slow-32/selfhost/src/c_lexer_gen.c"
+#line 1612 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
 	switch( (*p) ) {
 		case 46: goto tr84;
 		case 69: goto st12;
@@ -1888,7 +1903,7 @@ case 49:
 	_out: {}
 	}
 
-#line 958 "/Users/sdennis/slow-32/selfhost/src/c_lexer.rl"
+#line 979 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 
     lex_rp = p;
     lex_rcs = cs;
