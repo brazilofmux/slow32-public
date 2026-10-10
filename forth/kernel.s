@@ -245,10 +245,13 @@ find_search_next_wl:
 find_loop:
     beq r5, r0, find_wl_exhausted
 
-    # Compare length (mask out IMMEDIATE bit)
+    # Compare length (bit 7 IMMEDIATE; bit 6 smudged: skipped while ':' is open)
     ldbu r6, r5, 4     # dict len/raw flags
-    addi r7, r0, 0x7F
-    and r8, r6, r7     # dict_len = len & 0x7F
+    addi r7, r0, 0x40
+    and r8, r6, r7
+    bne r8, r0, find_next
+    addi r7, r0, 0x3F
+    and r8, r6, r7     # dict_len = len & 0x3F
     ldbu r7, r4, 0     # search len
     bne r8, r7, find_next
 
@@ -262,7 +265,12 @@ find_str_loop:
 
     add r11, r4, r9
     ldbu r11, r11, 1     # search char (offset 1 + i)
-
+    addi r12, r0, 97     # a-z folded to A-Z (as SEARCH-WORDLIST folds): the names are uppercase
+    blt r11, r12, find_cmp
+    addi r12, r0, 122
+    bgt r11, r12, find_cmp
+    addi r11, r11, -32
+find_cmp:
     bne r10, r11, find_next
 
     addi r9, r9, 1
@@ -295,8 +303,11 @@ find_match:
     addi r10, r0, 0x80
     and r6, r6, r10
     beq r6, r0, find_not_immediate
-    addi r6, r0, 1
+    addi r6, r0, 1     # IMMEDIATE
+    jal r0, find_push_flag
 find_not_immediate:
+    addi r6, r0, -1    # normal (Forth 2012: -1, not 1)
+find_push_flag:
     addi r28, r28, -4
     stw r28, r6, 0     # flag
 
@@ -304,7 +315,7 @@ find_not_immediate:
 
 find_fail:
     addi r28, r28, -4
-    stw r28, r0, 0     # xt = 0
+    stw r28, r4, 0     # c-addr back (Forth 2012: c-addr 0, not 0 0)
     addi r28, r28, -4
     stw r28, r0, 0     # flag = 0
     jal r0, next
@@ -456,8 +467,8 @@ parse_skip:
     add r5, r1, r4          # current addr = TIB + >IN
     ldbu r6, r5, 0          # load char
     
-    addi r7, r0, 32         # Space
-    bne r6, r7, parse_found # If not space, found start
+    addi r7, r0, 32         # Space, and every control character below it (3.4.1.1)
+    bltu r7, r6, parse_found # If not whitespace (c > 32), found start
     
     addi r4, r4, 1          # >IN++
     jal r0, parse_skip
@@ -473,10 +484,8 @@ parse_scan:
     add r5, r1, r4
     ldbu r6, r5, 0
     
-    addi r7, r0, 32         # Space
-    beq r6, r7, parse_end   # If space, end
-    
-    # Also check for invisible control chars? For now just space.
+    addi r7, r0, 32         # Space, and every control character below it
+    bgeu r7, r6, parse_end  # If whitespace (c <= 32), end
     
     addi r4, r4, 1          # >IN++
     jal r0, parse_scan
@@ -562,9 +571,8 @@ dot_print_sub:
     add r6, r0, r0     # sign flag
     add r10, r4, r0    # work = n
 
-    # If base==10 and n<0, remember sign and negate
-    addi r7, r0, 10
-    bne r5, r7, dot_no_sign
+    # n<0: remember the sign and negate, in every BASE (6.1.0180; HEX -1 .
+    # used to print "/", a digit computed from a signed remainder)
     blt r4, r0, dot_make_positive
     jal r0, dot_no_sign
 dot_make_positive:
@@ -586,8 +594,23 @@ dot_no_sign:
     jal r0, dot_digits_done
 
 dot_loop:
+    bge r10, r0, dot_div
+    # work = 2^31 (MIN-INT negated); there is no unsigned divide, so divide
+    # its half and double: quot = 2*(h/b) + (2*(h%b))/b, rem = (2*(h%b))%b
+    addi r7, r0, 1
+    srl r11, r10, r7   # h = work >>> 1
+    div r17, r11, r5
+    rem r12, r11, r5
+    add r17, r17, r17
+    add r12, r12, r12  # 2*(h%b) < 72
+    div r18, r12, r5
+    rem r12, r12, r5
+    add r11, r17, r18
+    jal r0, dot_divided
+dot_div:
     div r11, r10, r5   # quot = work / base
     rem r12, r10, r5   # rem  = work % base
+dot_divided:
     add r10, r11, r0   # work = quot
 
     # Convert digit to ASCII
@@ -734,7 +757,10 @@ latest_word:
     stw r28, r1, 0
     jal r0, next
 
-# Word: HERE ( -- a-addr )
+# Word: HERE ( -- addr ) the data-space pointer (Forth 2012 6.1.1650).
+# It used to push the ADDRESS of the pointer variable, so the prelude's
+# HERE 128 + for PAD landed on interp_saved_ip, and BLANKing PAD took the
+# interpreter down; DP below is the variable for HERE ! / HERE @ callers.
 .text
     .align 2
 head_here:
@@ -747,6 +773,42 @@ xt_here:
 here_word:
     lui r1, %hi(var_here)
     addi r1, r1, %lo(var_here)
+    ldw r1, r1, 0
+    addi r28, r28, -4
+    stw r28, r1, 0
+    jal r0, next
+
+# Word: DP ( -- a-addr ) the variable HERE reads
+.text
+    .align 2
+head_dp:
+    .word head_here
+    .byte 2
+    .ascii "DP"
+    .align 2
+xt_dp:
+    .word dp_word
+dp_word:
+    lui r1, %hi(var_here)
+    addi r1, r1, %lo(var_here)
+    addi r28, r28, -4
+    stw r28, r1, 0
+    jal r0, next
+
+# Word: NUMBER-HOOK ( -- a-addr ) variable: xt run on a token NUMBER rejects,
+# ( c-addr -- d 2 | n 1 | 0 ); the prelude installs (DNUMBER) for 1. -1. doubles
+.text
+    .align 2
+head_number_hook:
+    .word head_dp
+    .byte 11
+    .ascii "NUMBER-HOOK"
+    .align 2
+xt_number_hook:
+    .word number_hook_word
+number_hook_word:
+    lui r1, %hi(var_number_hook)
+    addi r1, r1, %lo(var_number_hook)
     addi r28, r28, -4
     stw r28, r1, 0
     jal r0, next
@@ -755,7 +817,7 @@ here_word:
 .text
     .align 2
 head_tib:
-    .word head_here
+    .word head_number_hook
     .byte 3
     .ascii "TIB"
     .align 2
@@ -1054,7 +1116,7 @@ xt_equals:
 equals_word:
     ldw r1, r28, 0
     ldw r2, r28, 4
-    addi r3, r0, 1
+    addi r3, r0, -1   # true is all ones (Forth 2012)
     bne r1, r2, equals_zero
     jal r0, equals_push
 equals_zero:
@@ -1081,7 +1143,7 @@ less_word:
     blt r2, r1, less_set
     jal r0, less_push
 less_set:
-    addi r3, r0, 1
+    addi r3, r0, -1   # true is all ones (Forth 2012)
 less_push:
     addi r28, r28, 4
     stw r28, r3, 0
@@ -1130,12 +1192,46 @@ zbranch_fallthrough:
     .align 2
 head_word:
     .word head_0branch
-    .byte 4
-    .ascii "WORD"
+    .byte 6
+    .ascii "(WORD)"
     .align 2
 xt_word:
     .word word_word
 word_word:
+    # (WORD) ( -- c-addr ): the interpreter's scanner -- BL-delimited (any
+    # control character a delimiter too), the name uppercased into word_buf
+    addi r22, r0, 32        # delimiter
+    addi r23, r0, 1         # uppercase
+    jal r0, word_scan_common
+
+# Word: WORD ( char "<chars>ccc<char>" -- c-addr ) the standard one (6.1.2450):
+# skip leading delimiters, parse to the next, a counted string in word_buf
+# with its case kept, >IN past the delimiter.  When the delimiter is BL,
+# every control character delimits (3.4.1.1).
+.text
+    .align 2
+head_word_std:
+    .word head_word
+    .byte 4
+    .ascii "WORD"
+    .align 2
+xt_word_std:
+    .word word_std_word
+word_std_word:
+    ldw r22, r28, 0         # delimiter
+    addi r28, r28, 4
+    add r23, r0, r0         # keep case
+
+word_scan_common:
+    # the counted string's buffer: the interpreter's for (WORD), WORD's own
+    # otherwise -- the words after a WORD on the same line are parsed into
+    # word_buf before they run, and would read their own names from it
+    lui r24, %hi(word_buf)
+    addi r24, r24, %lo(word_buf)
+    bne r23, r0, word_buf_chosen
+    lui r24, %hi(word_buf_std)
+    addi r24, r24, %lo(word_buf_std)
+word_buf_chosen:
     # Load SOURCE base, #TIB, >IN
     lui r1, %hi(var_source_ptr)
     addi r1, r1, %lo(var_source_ptr)
@@ -1147,13 +1243,16 @@ word_word:
     addi r3, r3, %lo(var_to_in)
     ldw r4, r3, 0           # r4 = >IN
 
-    # Skip leading spaces
+    # Skip leading delimiters
 word_skip:
     bge r4, r2, word_empty
     add r5, r1, r4
     ldbu r6, r5, 0
+    beq r6, r22, word_skip_next     # the delimiter itself
     addi r7, r0, 32
-    bne r6, r7, word_found
+    bne r22, r7, word_found         # another delimiter: only it skips
+    bltu r7, r6, word_found         # BL: a control character skips too
+word_skip_next:
     addi r4, r4, 1
     jal r0, word_skip
 
@@ -1161,18 +1260,26 @@ word_found:
     add r12, r4, r0         # start index
     add r11, r1, r4         # start addr
 
-    # Scan until space or end
+    # Scan until the delimiter or end
 word_scan:
     bge r4, r2, word_end
     add r5, r1, r4
     ldbu r6, r5, 0
+    beq r6, r22, word_end
     addi r7, r0, 32
-    beq r6, r7, word_end
+    bne r22, r7, word_scan_next
+    bgeu r7, r6, word_end           # BL: a control character ends the word
+word_scan_next:
     addi r4, r4, 1
     jal r0, word_scan
 
 word_end:
     sub r13, r4, r12        # len
+    bge r4, r2, word_past   # at the end of the source: nothing to step over
+    addi r4, r4, 1          # >IN past the delimiter (6.1.2450); the interpreter's (WORD) too
+                            # (3.4.1), so S" ." C" S\" and PARSE start at the text itself --
+                            # WORD with another delimiter used to see the space after the name
+word_past:
     stw r3, r4, 0           # update >IN
 
     # Build counted string in word_buf (uppercased); cap at 255
@@ -1180,8 +1287,7 @@ word_end:
     bgeu r19, r13, word_len_ok
     add r13, r19, r0
 word_len_ok:
-    lui r14, %hi(word_buf)
-    addi r14, r14, %lo(word_buf)
+    add r14, r24, r0        # the buffer chosen above
     stb r14, r13, 0         # length byte
     addi r15, r14, 1        # dest pointer
     add r16, r11, r0        # src pointer
@@ -1190,6 +1296,7 @@ word_len_ok:
 word_copy_loop:
     bge r17, r13, word_copy_done
     ldbu r18, r16, 0
+    beq r23, r0, word_no_upper      # the standard WORD keeps the case
     addi r19, r0, 97        # 'a'
     blt r18, r19, word_no_upper
     addi r19, r0, 122       # 'z'
@@ -1208,8 +1315,7 @@ word_copy_done:
     jal r0, next
 
 word_empty:
-    lui r14, %hi(word_buf)
-    addi r14, r14, %lo(word_buf)
+    add r14, r24, r0
     stb r14, r0, 0          # len = 0
     addi r28, r28, -4
     stw r28, r14, 0
@@ -1220,7 +1326,7 @@ word_empty:
 .text
     .align 2
 head_number:
-    .word head_word
+    .word head_word_std
     .byte 6
     .ascii "NUMBER"
     .align 2
@@ -1326,6 +1432,8 @@ number_not_sep:
     jal r0, number_have_digit
 
 number_digit:
+    addi r9, r0, 48         # '0'
+    blt r8, r9, number_fail # below '0' is no digit ('-', '.', a tab: 3- used to be 27)
     addi r9, r8, -48        # digit = c - '0'
 
 number_have_digit:
@@ -1390,9 +1498,9 @@ interpret_after_word:
     jal r0, interpret_run_xt
 
 interpret_after_find:
-    ldw r6, r28, 0           # flag
-    ldw r7, r28, 4           # xt
-    bne r7, r0, interpret_found
+    ldw r6, r28, 0           # flag: 0 not found, 1 immediate, -1 normal
+    ldw r7, r28, 4           # xt (or c-addr when not found)
+    bne r6, r0, interpret_found
 
     # Not found: drop flag+xt to expose addr
     addi r28, r28, 8         # pop flag and xt
@@ -1403,9 +1511,11 @@ interpret_after_find:
     jal r0, interpret_run_xt
 
 interpret_after_number:
-    ldw r6, r28, 0           # flag
+    ldw r6, r28, 0           # flag: 0 no, 1 single, 2 double (from the hook)
     ldw r7, r28, 4           # n
-    beq r6, r0, interpret_error
+    beq r6, r0, interpret_try_hook
+    addi r8, r0, 2
+    beq r6, r8, interpret_double
 
     # Number succeeded
     lui r8, %hi(var_state)
@@ -1440,7 +1550,8 @@ interpret_found:
     beq r9, r0, interpret_execute
 
     # Compiling
-    bne r6, r0, interpret_found_immediate
+    addi r10, r0, 1
+    beq r6, r10, interpret_found_immediate
 
     # Compile xt
     lui r10, %hi(var_here)
@@ -1495,8 +1606,53 @@ interpret_resume:
     ldw r2, r2, 0
     jalr r0, r2, 0           # jump to resume target
 
+interpret_try_hook:
+    # NUMBER said no: offer the token to NUMBER-HOOK, ( c-addr -- d 2 | n 1 | 0 )
+    lui r8, %hi(var_number_hook)
+    addi r8, r8, %lo(var_number_hook)
+    ldw r7, r8, 0
+    beq r7, r0, interpret_error
+    addi r28, r28, 4         # drop the flag; the dead n slot takes c-addr
+    lui r9, %hi(word_buf)
+    addi r9, r9, %lo(word_buf)
+    stw r28, r9, 0
+    lui r13, %hi(interpret_after_hook)
+    addi r13, r13, %lo(interpret_after_hook)
+    jal r0, interpret_run_xt
+interpret_after_hook:
+    ldw r6, r28, 0           # 0, 1 or 2
+    bne r6, r0, interpret_after_number   # 1 or 2: as if NUMBER had said so
+    addi r28, r28, -4        # a second cell, for interpret_error's drop of n and flag
+    jal r0, interpret_error
+interpret_double:
+    # ( lo hi 2 ): compile LIT lo LIT hi, or leave lo hi
+    addi r28, r28, 4         # drop the flag
+    lui r8, %hi(var_state)
+    addi r8, r8, %lo(var_state)
+    ldw r9, r8, 0
+    beq r9, r0, interpret_loop
+    ldw r7, r28, 4           # lo
+    ldw r6, r28, 0           # hi
+    addi r28, r28, 8
+    lui r10, %hi(var_here)
+    addi r10, r10, %lo(var_here)
+    ldw r11, r10, 0
+    lui r12, %hi(xt_lit)
+    addi r12, r12, %lo(xt_lit)
+    stw r11, r12, 0
+    stw r11, r7, 4
+    stw r11, r12, 8
+    stw r11, r6, 12
+    addi r11, r11, 16
+    stw r10, r11, 0
+    jal r0, interpret_loop
+
 interpret_error:
     addi r28, r28, 8         # drop n and flag
+    lui r1, %hi(var_catch_frame)
+    addi r1, r1, %lo(var_catch_frame)
+    ldw r1, r1, 0
+    bne r1, r0, interpret_error_throw   # a CATCH is active: it decides what to say
     # Print the offending word from word_buf (counted string)
     lui r1, %hi(word_buf)
     addi r1, r1, %lo(word_buf)
@@ -1517,7 +1673,11 @@ interpret_error_done:
     debug r3
     addi r3, r0, 10          # newline
     debug r3
-    jal r0, interpret_loop
+interpret_error_throw:
+    addi r28, r28, -4
+    addi r1, r0, -13         # undefined word: THROW, so CATCH sees -13 (ABORT when uncaught)
+    stw r28, r1, 0
+    jal r0, throw_word
 
 interpret_done:
     addi r28, r28, 4         # drop c-addr when len==0
@@ -1647,6 +1807,17 @@ semicolon_word:
     addi r1, r1, %lo(var_cf_sp)
     ldw r1, r1, 0
     bne r1, r0, cf_error      # dangling IF/BEGIN/WHILE -> abort
+    # Reveal the definition: clear the smudge bit ':' set (none after :NONAME)
+    lui r1, %hi(var_smudged)
+    addi r1, r1, %lo(var_smudged)
+    ldw r2, r1, 0
+    beq r2, r0, semicolon_revealed
+    ldbu r3, r2, 4
+    addi r4, r0, -65          # ~0x40
+    and r3, r3, r4
+    stb r2, r3, 4
+    stw r1, r0, 0
+semicolon_revealed:
     # Compile EXIT
     lui r1, %hi(var_here)
     addi r1, r1, %lo(var_here)
@@ -1668,8 +1839,8 @@ semicolon_word:
     .align 2
 head_colon:
     .word head_semicolon
-    .byte 0x81
-    .ascii ":"
+    .byte 1                # not IMMEDIATE (6.1.0450): inside a definition ':' is compiled, so
+    .ascii ":"             # : NOP : POSTPONE ; IMMEDIATE ; makes a defining word
     .align 2
 xt_colon:
     .word colon_word
@@ -1689,8 +1860,8 @@ colon_skip:
     bge r4, r2, colon_done  # no name available
     add r5, r1, r4
     ldbu r6, r5, 0
-    addi r7, r0, 32
-    bne r6, r7, colon_found
+    addi r7, r0, 32         # a control character delimits too (3.4.1.1)
+    bltu r7, r6, colon_found
     addi r4, r4, 1
     jal r0, colon_skip
 
@@ -1703,7 +1874,7 @@ colon_scan:
     add r5, r1, r4
     ldbu r6, r5, 0
     addi r7, r0, 32
-    beq r6, r7, colon_end
+    bgeu r7, r6, colon_end
     addi r4, r4, 1
     jal r0, colon_scan
 
@@ -1770,11 +1941,19 @@ colon_copy_done:
     stw r4, r6, 0
     addi r4, r4, 4
 
-    # Length byte (mask off immediate bit)
-    addi r7, r0, 0x7F
-    and r2, r13, r7
+    # Length byte: a name keeps at most 63 characters; bit 6 hides the word
+    # until ';' (smudge), so the body can call the previous definition of the
+    # same name and an aborted definition is never found
+    addi r7, r0, 63
+    bgeu r7, r13, colon_name_len_ok
+    add r13, r7, r0
+colon_name_len_ok:
+    addi r2, r13, 0x40
     stb r4, r2, 0
     addi r4, r4, 1
+    lui r7, %hi(var_smudged)
+    addi r7, r7, %lo(var_smudged)
+    stw r7, r12, 0      # the header ';' reveals
 
     # Copy name characters from word_buf+1
     addi r8, r14, 1     # src = word_buf+1
@@ -1831,10 +2010,7 @@ head_if:
 xt_if:
     .word if_word
 if_word:
-    lui r8, %hi(var_state)
-    addi r8, r8, %lo(var_state)
-    ldw r8, r8, 0
-    beq r8, r0, if_done
+    jal r31, cf_need_def
     addi r3, r0, 1            # CF: push ORIG (IF opens a forward branch)
     jal r31, cf_push
     # HERE
@@ -1868,10 +2044,7 @@ head_else:
 xt_else:
     .word else_word
 else_word:
-    lui r8, %hi(var_state)
-    addi r8, r8, %lo(var_state)
-    ldw r8, r8, 0
-    beq r8, r0, else_done
+    jal r31, cf_need_def
     addi r3, r0, 1            # CF: ELSE consumes the IF's ORIG ...
     jal r31, cf_pop_expect
     addi r3, r0, 1            # ... and opens a new ORIG
@@ -1917,10 +2090,7 @@ head_then:
 xt_then:
     .word then_word
 then_word:
-    lui r8, %hi(var_state)
-    addi r8, r8, %lo(var_state)
-    ldw r8, r8, 0
-    beq r8, r0, then_done
+    jal r31, cf_need_def
     addi r3, r0, 1            # CF: THEN resolves an ORIG (IF/ELSE/WHILE)
     jal r31, cf_pop_expect
     ldw r4, r28, 0     # patch addr
@@ -1945,10 +2115,7 @@ head_begin:
 xt_begin:
     .word begin_word
 begin_word:
-    lui r8, %hi(var_state)
-    addi r8, r8, %lo(var_state)
-    ldw r8, r8, 0
-    beq r8, r0, begin_done
+    jal r31, cf_need_def
     addi r3, r0, 2            # CF: push DEST (BEGIN is a backward target)
     jal r31, cf_push
     lui r1, %hi(var_here)
@@ -1970,10 +2137,7 @@ head_again:
 xt_again:
     .word again_word
 again_word:
-    lui r8, %hi(var_state)
-    addi r8, r8, %lo(var_state)
-    ldw r8, r8, 0
-    beq r8, r0, again_done
+    jal r31, cf_need_def
     addi r3, r0, 2            # CF: AGAIN closes a BEGIN (DEST)
     jal r31, cf_pop_expect
     ldw r4, r28, 0     # target addr (begin)
@@ -2005,10 +2169,7 @@ head_until:
 xt_until:
     .word until_word
 until_word:
-    lui r8, %hi(var_state)
-    addi r8, r8, %lo(var_state)
-    ldw r8, r8, 0
-    beq r8, r0, until_done
+    jal r31, cf_need_def
     addi r3, r0, 2            # CF: UNTIL closes a BEGIN (DEST)
     jal r31, cf_pop_expect
     ldw r4, r28, 0     # begin addr
@@ -2028,7 +2189,7 @@ until_word:
 until_done:
     jal r0, next
 
-# Word: WHILE ( addr -- addr patch ) IMMEDIATE
+# Word: WHILE ( dest -- orig dest ) IMMEDIATE (6.1.2430: the forward reference goes UNDER the loop start)
 .text
     .align 2
 head_while:
@@ -2039,15 +2200,12 @@ head_while:
 xt_while:
     .word while_word
 while_word:
-    lui r8, %hi(var_state)
-    addi r8, r8, %lo(var_state)
-    ldw r8, r8, 0
-    beq r8, r0, while_done
+    jal r31, cf_need_def
     addi r3, r0, 2            # CF: WHILE consumes the BEGIN's DEST ...
     jal r31, cf_pop_expect
-    addi r3, r0, 2            # ... re-pushes DEST (begin) ...
+    addi r3, r0, 1            # ... pushes ORIG (forward exit patch) under it ...
     jal r31, cf_push
-    addi r3, r0, 1            # ... and pushes ORIG (forward exit patch)
+    addi r3, r0, 2            # ... and re-pushes DEST (begin) on top
     jal r31, cf_push
     ldw r4, r28, 0     # begin addr
     addi r28, r28, 4   # pop begin
@@ -2061,16 +2219,18 @@ while_word:
     stw r2, r0, 0      # placeholder
     addi r2, r2, 4
     stw r1, r2, 0      # HERE update
-    # push begin then patch addr (stack: begin patch)
-    addi r28, r28, -4
-    stw r28, r4, 0     # begin
+    # push patch then begin (stack: orig dest), so a second WHILE nests and
+    # REPEAT ... ELSE/THEN resolves the first; it used to be (begin patch),
+    # and BEGIN .. WHILE .. WHILE .. REPEAT .. ELSE .. THEN compiled garbage
     addi r5, r2, -4
     addi r28, r28, -4
-    stw r28, r5, 0     # patch
+    stw r28, r5, 0     # patch (orig)
+    addi r28, r28, -4
+    stw r28, r4, 0     # begin (dest)
 while_done:
     jal r0, next
 
-# Word: REPEAT ( begin patch -- ) IMMEDIATE
+# Word: REPEAT ( orig dest -- ) IMMEDIATE
 .text
     .align 2
 head_repeat:
@@ -2081,16 +2241,13 @@ head_repeat:
 xt_repeat:
     .word repeat_word
 repeat_word:
-    lui r8, %hi(var_state)
-    addi r8, r8, %lo(var_state)
-    ldw r8, r8, 0
-    beq r8, r0, repeat_done
-    addi r3, r0, 1            # CF: REPEAT resolves the WHILE's ORIG ...
+    jal r31, cf_need_def
+    addi r3, r0, 2            # CF: REPEAT closes the BEGIN's DEST ...
     jal r31, cf_pop_expect
-    addi r3, r0, 2            # ... and closes the BEGIN's DEST
+    addi r3, r0, 1            # ... and resolves the WHILE's ORIG under it
     jal r31, cf_pop_expect
-    ldw r5, r28, 0     # patch addr
-    ldw r4, r28, 4     # begin addr
+    ldw r4, r28, 0     # begin addr (dest)
+    ldw r5, r28, 4     # patch addr (orig)
     addi r28, r28, 8
     lui r1, %hi(var_here)
     addi r1, r1, %lo(var_here)
@@ -2122,6 +2279,40 @@ repeat_done:
 # On any imbalance: print a message and ABORT (matching gforth strictness).
 # Call with jal r31; clobbers r3-r7. r3 = tag for push/pop-expect.
 # ----------------------------------------------------------------------
+# A compile-only word run with no definition open (STATE 0 and no ':' pending):
+# say so and -14 THROW, as the text interpreter does for compile-only words.
+# Under [ ] inside a definition it runs: [ POSTPONE-+LOOP ] (postpone.fs).
+# Before, these words checked STATE and did nothing when interpreting, which
+# made that idiom silently compile nothing.  Clobbers r1-r3.
+cf_need_def:
+    lui  r3, %hi(var_state)
+    addi r3, r3, %lo(var_state)
+    ldw  r3, r3, 0
+    bne  r3, r0, cf_need_def_ok
+    lui  r3, %hi(var_smudged)
+    addi r3, r3, %lo(var_smudged)
+    ldw  r3, r3, 0
+    bne  r3, r0, cf_need_def_ok
+    lui  r3, %hi(var_catch_frame)
+    addi r3, r3, %lo(var_catch_frame)
+    ldw  r3, r3, 0
+    bne  r3, r0, cf_need_def_throw   # a CATCH is active: it decides what to say
+    lui  r1, %hi(cf_compile_only_msg)
+    addi r1, r1, %lo(cf_compile_only_msg)
+cf_need_def_print:
+    ldbu r2, r1, 0
+    beq  r2, r0, cf_need_def_throw
+    debug r2
+    addi r1, r1, 1
+    jal  r0, cf_need_def_print
+cf_need_def_throw:
+    addi r28, r28, -4
+    addi r1, r0, -14         # interpreting a compile-only word
+    stw  r28, r1, 0
+    jal  r0, throw_word
+cf_need_def_ok:
+    jalr r0, r31, 0
+
 cf_push:
     lui  r4, %hi(var_cf_sp)
     addi r4, r4, %lo(var_cf_sp)
@@ -2217,7 +2408,7 @@ zero_equal_word:
     beq r1, r0, zero_equal_set
     jal r0, zero_equal_push
 zero_equal_set:
-    addi r2, r0, 1
+    addi r2, r0, -1   # true is all ones (Forth 2012)
 zero_equal_push:
     stw r28, r2, 0
     jal r0, next
@@ -2238,7 +2429,7 @@ zero_less_word:
     blt r1, r0, zero_less_set
     jal r0, zero_less_push
 zero_less_set:
-    addi r2, r0, 1
+    addi r2, r0, -1   # true is all ones (Forth 2012)
 zero_less_push:
     stw r28, r2, 0
     jal r0, next
@@ -2260,7 +2451,7 @@ greater_word:
     blt r1, r2, greater_set
     jal r0, greater_push
 greater_set:
-    addi r3, r0, 1
+    addi r3, r0, -1   # true is all ones (Forth 2012)
 greater_push:
     addi r28, r28, 4
     stw r28, r3, 0
@@ -2279,7 +2470,7 @@ xt_not_equals:
 not_equals_word:
     ldw r1, r28, 0
     ldw r2, r28, 4
-    addi r3, r0, 1
+    addi r3, r0, -1   # true is all ones (Forth 2012)
     bne r1, r2, not_equals_push
     addi r3, r0, 0
 not_equals_push:
@@ -2568,9 +2759,9 @@ does_runtime_word:
     addi r1, r1, %lo(var_compilation_wid)
     ldw r1, r1, 0          # r1 = wid (pointer to head cell)
     ldw r2, r1, 0          # r2 = latest header in compilation wordlist
-    ldbu r3, r2, 4         # length byte (with possible IMMEDIATE flag)
-    addi r4, r0, 0x7F
-    and r3, r3, r4         # mask off IMMEDIATE bit
+    ldbu r3, r2, 4         # length byte (with possible IMMEDIATE/smudge flags)
+    addi r4, r0, 0x3F
+    and r3, r3, r4         # mask off the flag bits
     addi r3, r3, 5         # skip: link(4) + len(1) + name_len
     add r3, r2, r3         # past end of name
     addi r3, r3, 3         # align up
@@ -2753,10 +2944,7 @@ head_do:
 xt_do:
     .word do_word
 do_word:
-    lui r8, %hi(var_state)
-    addi r8, r8, %lo(var_state)
-    ldw r8, r8, 0
-    beq r8, r0, do_done
+    jal r31, cf_need_def
     lui r1, %hi(var_here)
     addi r1, r1, %lo(var_here)
     ldw r2, r1, 0          # r2 = HERE
@@ -2789,10 +2977,7 @@ head_loop:
 xt_loop:
     .word loop_word
 loop_word:
-    lui r8, %hi(var_state)
-    addi r8, r8, %lo(var_state)
-    ldw r8, r8, 0
-    beq r8, r0, loop_done
+    jal r31, cf_need_def
     ldw r4, r28, 0         # r4 = loop-back target addr
     ldw r10, r28, 4        # r10 = old leave-list head (saved by DO)
     addi r28, r28, 8       # pop both
@@ -2838,10 +3023,7 @@ head_ploop:
 xt_ploop:
     .word ploop_word
 ploop_word:
-    lui r8, %hi(var_state)
-    addi r8, r8, %lo(var_state)
-    ldw r8, r8, 0
-    beq r8, r0, ploop_done
+    jal r31, cf_need_def
     ldw r4, r28, 0         # r4 = loop-back target addr
     ldw r10, r28, 4        # r10 = old leave-list head (saved by DO)
     addi r28, r28, 8       # pop both
@@ -2887,10 +3069,7 @@ head_leave:
 xt_leave:
     .word leave_word
 leave_word:
-    lui r8, %hi(var_state)
-    addi r8, r8, %lo(var_state)
-    ldw r8, r8, 0
-    beq r8, r0, leave_done
+    jal r31, cf_need_def
     lui r1, %hi(var_here)
     addi r1, r1, %lo(var_here)
     ldw r2, r1, 0          # r2 = HERE
@@ -2941,8 +3120,8 @@ create_skip:
     bge r4, r2, create_done
     add r5, r1, r4
     ldbu r6, r5, 0
-    addi r7, r0, 32
-    bne r6, r7, create_found
+    addi r7, r0, 32         # a control character delimits too (3.4.1.1)
+    bltu r7, r6, create_found
     addi r4, r4, 1
     jal r0, create_skip
 create_found:
@@ -2953,7 +3132,7 @@ create_scan:
     add r5, r1, r4
     ldbu r6, r5, 0
     addi r7, r0, 32
-    beq r6, r7, create_end
+    bgeu r7, r6, create_end
     addi r4, r4, 1
     jal r0, create_scan
 create_end:
@@ -3014,10 +3193,12 @@ create_copy_done:
     ldw r6, r5, 0          # previous head
     stw r4, r6, 0
     addi r4, r4, 4
-    # Length byte
-    addi r7, r0, 0x7F
-    and r2, r13, r7
-    stb r4, r2, 0
+    # Length byte (a name keeps at most 63 characters; see ':')
+    addi r7, r0, 63
+    bgeu r7, r13, create_name_len_ok
+    add r13, r7, r0
+create_name_len_ok:
+    stb r4, r13, 0
     addi r4, r4, 1
     # Copy name characters from word_buf+1
     addi r8, r14, 1
@@ -3064,10 +3245,7 @@ head_does:
 xt_does:
     .word does_compile_word
 does_compile_word:
-    lui r8, %hi(var_state)
-    addi r8, r8, %lo(var_state)
-    ldw r8, r8, 0
-    beq r8, r0, does_compile_done
+    jal r31, cf_need_def
     lui r1, %hi(var_here)
     addi r1, r1, %lo(var_here)
     ldw r2, r1, 0          # r2 = HERE
@@ -3103,8 +3281,23 @@ count_word:
 # Interpret mode: parses into transient buffer, pushes addr+len
 .text
     .align 2
-head_squote:
+# Word: (S") ( "ccc<quote>" -- ) parse the string and compile it as a literal
+# whatever STATE is: the compilation semantics of S" on their own, so ABORT"
+# (built on it) still compiles when run under [ ] -- postpone.fs does that
+.text
+    .align 2
+head_squote_c:
     .word head_count
+    .byte 4
+    .ascii "(S\")"
+    .align 2
+xt_squote_c:
+    .word squote_c_word
+squote_c_word:
+    jal r0, squote_compile
+
+head_squote:
+    .word head_squote_c
     .byte 0x82             # length 2 + IMMEDIATE flag (0x80)
     .ascii "S\""
     .align 2
@@ -3115,6 +3308,7 @@ squote_word:
     addi r8, r8, %lo(var_state)
     ldw r8, r8, 0
     beq r8, r0, squote_interpret
+squote_compile:
 
     # === Compile mode ===
     # Compile xt_sliteral at HERE
@@ -3139,13 +3333,7 @@ squote_word:
     addi r3, r3, %lo(var_to_in)
     ldw r4, r3, 0          # r4 = >IN
 
-    # Skip exactly one leading space (standard: S" <space>string")
-    bge r4, r2, squote_end_parse
-    add r5, r1, r4
-    ldbu r6, r5, 0
-    addi r7, r0, 32        # space
-    bne r6, r7, squote_parse_loop  # no leading space, start parsing
-    addi r4, r4, 1         # skip the space
+    # >IN is already past the space after the word: the interpreter consumed it
 
 squote_parse_loop:
     bge r4, r2, squote_end_parse   # end of input
@@ -3186,16 +3374,15 @@ squote_interpret:
     lui r14, %hi(squote_iwhich)
     addi r14, r14, %lo(squote_iwhich)
     ldw r8, r14, 0
-    addi r9, r0, 1
-    xor r9, r8, r9         # toggle 0<->1
+    addi r9, r8, 1
+    addi r10, r0, 3
+    and r9, r9, r10        # a ring of four (3.3.3.4 asks for two; string.fs holds three at once)
     stw r14, r9, 0
-    # Select buffer based on r8
     lui r15, %hi(squote_ibuf0)
     addi r15, r15, %lo(squote_ibuf0)
-    beq r8, r0, squote_i_buf_ok
-    lui r15, %hi(squote_ibuf1)
-    addi r15, r15, %lo(squote_ibuf1)
-squote_i_buf_ok:
+    addi r10, r0, 256
+    mul r10, r8, r10
+    add r15, r15, r10      # buffer r8 of the four contiguous ones
     add r16, r15, r0       # r16 = buffer start
 
     # Parse from SOURCE
@@ -3279,13 +3466,7 @@ dotquote_word:
     addi r3, r3, %lo(var_to_in)
     ldw r4, r3, 0
 
-    # Skip exactly one leading space
-    bge r4, r2, dotquote_end_parse
-    add r5, r1, r4
-    ldbu r6, r5, 0
-    addi r7, r0, 32
-    bne r6, r7, dotquote_parse_loop
-    addi r4, r4, 1
+    # >IN is already past the space after the word: the interpreter consumed it
 
 dotquote_parse_loop:
     bge r4, r2, dotquote_end_parse
@@ -3370,9 +3551,13 @@ head_tick:
 xt_tick:
     .word docol_word
     .word xt_word
-    .word xt_find
+    .word xt_find          # ( xt flag ), or ( c-addr 0 ) for an undefined name
+    .word xt_dup
+    .word xt_0branch
+    .word 8                # flag = 0: the undefined path below
     .word xt_drop
     .word xt_exit
+    .word xt_undefined     # prints "name ?", then -13 THROW (ABORT when uncaught)
 
 # Word: ['] ( "name" -- ) IMMEDIATE compile-time
 # At compile time: parse next word, find its XT, compile LIT <xt>
@@ -3386,13 +3571,17 @@ head_bracket_tick:
 xt_bracket_tick:
     .word docol_word
     .word xt_word
-    .word xt_find
+    .word xt_find          # ( xt flag ), or ( c-addr 0 ) for an undefined name
+    .word xt_dup
+    .word xt_0branch
+    .word 24               # an undefined name: the path after EXIT
     .word xt_drop
     .word xt_lit
     .word xt_lit           # pushes xt_lit itself as a literal
     .word xt_comma         # compile xt_lit at HERE
     .word xt_comma         # compile the XT at HERE
     .word xt_exit
+    .word xt_undefined
 
 # Word: CHAR ( "name" -- char )
 # Parse the next word and push its first character (case-preserving)
@@ -3442,7 +3631,7 @@ head_recurse:
     .align 2
 xt_recurse:
     .word docol_word
-    .word xt_latest        # push &var_latest
+    .word xt_get_current   # wid of the compilation wordlist (its head is the definition being compiled)
     .word xt_fetch         # read header address
     .word xt_dup           # header header
     .word xt_lit
@@ -3450,7 +3639,7 @@ xt_recurse:
     .word xt_plus          # header (header+4)
     .word xt_cfetch        # header len_byte
     .word xt_lit
-    .word 127
+    .word 63               # bits 7 (IMMEDIATE) and 6 (smudged: it is, during its own definition) are flags
     .word xt_and           # header clean_len
     .word xt_plus          # (header + clean_len)
     .word xt_lit
@@ -3475,14 +3664,28 @@ head_postpone:
 xt_postpone:
     .word docol_word
     .word xt_word          # parse next token
-    .word xt_find          # ( xt flag )
-    .word xt_0branch       # if flag=0 (not immediate), jump to else
-    .word 12               # skip 3 cells to ELSE
-    # IF (immediate word): just compile its XT
-    .word xt_comma
-    .word xt_branch
-    .word 28               # skip 7 cells to EXIT
-    # ELSE (non-immediate): compile LIT <xt> ,
+    .word xt_find          # ( xt flag ): 1 immediate, -1 normal, or ( c-addr 0 )
+    .word xt_dup
+    .word xt_0branch
+    .word 104              # an undefined name: the path after EXIT
+    # S" is STATE-smart; its compilation semantics on their own are (S"), and
+    # that is what POSTPONE S" must append (postpone.fs: [ postpone-S" XY" ])
+    .word xt_over
+    .word xt_lit
+    .word xt_squote
+    .word xt_equals
+    .word xt_0branch
+    .word 24               # not S": skip the 6 cells below
+    .word xt_drop
+    .word xt_drop
+    .word xt_lit
+    .word xt_squote_c
+    .word xt_lit
+    .word 1                # ( (S")-xt 1 ): compiled like an immediate word
+    .word xt_zero_less     # -1 (normal) -> true; 1 (immediate) -> false
+    .word xt_0branch
+    .word 36               # immediate: skip 9 cells to the , below
+    # non-immediate: compile LIT <xt> ,
     .word xt_lit
     .word xt_lit           # push xt_lit as literal
     .word xt_comma         # compile xt_lit at HERE
@@ -3490,14 +3693,62 @@ xt_postpone:
     .word xt_lit
     .word xt_comma         # push xt_comma as literal
     .word xt_comma         # compile xt_comma at HERE
+    .word xt_branch
+    .word 4                # skip 1 cell to EXIT
+    # immediate word: just compile its XT
+    .word xt_comma
     # THEN:
     .word xt_exit
+    .word xt_undefined
+
+# (UNDEFINED) ( c-addr 0 -- ) the name in word_buf is not defined: say so and
+# -13 THROW -- caught by CATCH, else ABORT.  ' ['] and POSTPONE used to
+# leave a 0 and go on, and IS or TO then wrote through it (address 8).
+.text
+    .align 2
+head_undefined:
+    .word head_postpone
+    .byte 11
+    .ascii "(UNDEFINED)"
+    .align 2
+xt_undefined:
+    .word undefined_word
+undefined_word:
+    addi r28, r28, 8         # drop the c-addr 0
+    lui r1, %hi(var_catch_frame)
+    addi r1, r1, %lo(var_catch_frame)
+    ldw r1, r1, 0
+    bne r1, r0, undefined_throw   # a CATCH is active: it decides what to say
+    lui r1, %hi(word_buf)
+    addi r1, r1, %lo(word_buf)
+    ldbu r2, r1, 0           # r2 = length
+    addi r1, r1, 1
+    add r4, r0, r0
+undefined_print:
+    bge r4, r2, undefined_printed
+    add r5, r1, r4
+    ldbu r3, r5, 0
+    debug r3
+    addi r4, r4, 1
+    jal r0, undefined_print
+undefined_printed:
+    addi r3, r0, 32
+    debug r3
+    addi r3, r0, 63          # '?'
+    debug r3
+    addi r3, r0, 10
+    debug r3
+undefined_throw:
+    addi r28, r28, -4
+    addi r1, r0, -13         # undefined word
+    stw r28, r1, 0
+    jal r0, throw_word
 
 # Word: C, ( char -- ) store byte at HERE, advance HERE by 1
 .text
     .align 2
 head_ccomma:
-    .word head_postpone
+    .word head_undefined
     .byte 2
     .ascii "C,"
     .align 2
@@ -3536,7 +3787,7 @@ ult_word:
     bltu r2, r1, ult_set
     jal r0, ult_push
 ult_set:
-    addi r3, r0, 1
+    addi r3, r0, -1   # true is all ones (Forth 2012)
 ult_push:
     addi r28, r28, 4
     stw r28, r3, 0
@@ -3818,11 +4069,14 @@ um_mod_word:
     addi r6, r0, 31       # shift constant
 um_mod_loop:
     srl r5, r1, r6        # carry = bit 31 of quotient
+    srl r8, r2, r6        # bit 31 of remainder: the shift below would lose it
     add r1, r1, r1        # quotient <<= 1
     add r2, r2, r2        # remainder <<= 1
     add r2, r2, r5        # remainder += carry
+    bne r8, r0, um_mod_sub  # 33-bit remainder is >= any divisor (MAX-UINT MAX-UINT UM* MAX-UINT UM/MOD)
     sltu r7, r2, r3       # r7 = (remainder < divisor)
     bne r7, r0, um_mod_skip
+um_mod_sub:
     sub r2, r2, r3        # remainder -= divisor
     addi r1, r1, 1        # set quotient bit
 um_mod_skip:
@@ -4077,10 +4331,7 @@ head_qdo_compile:
 xt_qdo_compile:
     .word qdo_compile_word
 qdo_compile_word:
-    lui r8, %hi(var_state)
-    addi r8, r8, %lo(var_state)
-    ldw r8, r8, 0
-    beq r8, r0, qdo_compile_done  # If not compiling, skip
+    jal r31, cf_need_def
 
     lui r1, %hi(var_here)
     addi r1, r1, %lo(var_here)
@@ -4738,13 +4989,7 @@ cquote_word:
     addi r3, r3, %lo(var_to_in)
     ldw r4, r3, 0              # r4 = >IN
 
-    # Skip exactly one leading space
-    bge r4, r2, cquote_end_parse
-    add r5, r1, r4
-    ldbu r6, r5, 0
-    addi r7, r0, 32            # space
-    bne r6, r7, cquote_parse_loop
-    addi r4, r4, 1             # skip the space
+    # >IN is already past the space after the word: the interpreter consumed it
 
 cquote_parse_loop:
     bge r4, r2, cquote_end_parse
@@ -4821,15 +5066,15 @@ se_interpret:
     lui r14, %hi(squote_iwhich)
     addi r14, r14, %lo(squote_iwhich)
     ldw r8, r14, 0
-    addi r9, r0, 1
-    xor r9, r8, r9             # toggle 0<->1
+    addi r9, r8, 1
+    addi r10, r0, 3
+    and r9, r9, r10        # a ring of four (3.3.3.4 asks for two; string.fs holds three at once)
     stw r14, r9, 0
     lui r15, %hi(squote_ibuf0)
     addi r15, r15, %lo(squote_ibuf0)
-    beq r8, r0, se_i_buf_ok
-    lui r15, %hi(squote_ibuf1)
-    addi r15, r15, %lo(squote_ibuf1)
-se_i_buf_ok:
+    addi r10, r0, 256
+    mul r10, r8, r10
+    add r15, r15, r10      # buffer r8 of the four contiguous ones
     add r16, r15, r0           # r16 = buffer start
 
 se_load_source:
@@ -4844,13 +5089,7 @@ se_load_source:
     addi r3, r3, %lo(var_to_in)
     ldw r4, r3, 0              # r4 = >IN
 
-    # Skip exactly one leading space
-    bge r4, r2, se_end_parse
-    add r5, r1, r4
-    ldbu r6, r5, 0
-    addi r7, r0, 32            # space
-    bne r6, r7, se_parse_loop
-    addi r4, r4, 1             # skip the space
+    # >IN is already past the space after the word: the interpreter consumed it
 
 se_parse_loop:
     bge r4, r2, se_end_parse
@@ -5076,8 +5315,11 @@ catch_word:
     addi r28, r28, 4           # DSP++
 
     # Push exception frame onto return stack:
-    #   [RSP+8] = old var_catch_frame
-    #   [RSP+4] = saved DSP
+    #   [RSP+32] = old var_catch_frame
+    #   [RSP+28] = saved DSP
+    #   [RSP+4..24] = input source specification (SOURCE-PTR #TIB >IN SOURCE-ID),
+    #                 which THROW restores (9.3.1), and the outer interpreter's
+    #                 resume state, which an EVALUATE inside the xt overwrites
     #   [RSP+0] = saved IP (caller's continuation)
     lui r1, %hi(var_catch_frame)
     addi r1, r1, %lo(var_catch_frame)
@@ -5087,6 +5329,36 @@ catch_word:
     stw r27, r2, 0             # push old_catch_frame
     addi r27, r27, -4
     stw r27, r28, 0            # push DSP
+    lui r3, %hi(var_source_ptr)
+    addi r3, r3, %lo(var_source_ptr)
+    ldw r4, r3, 0
+    addi r27, r27, -4
+    stw r27, r4, 0             # push var_source_ptr
+    lui r3, %hi(var_source_len)
+    addi r3, r3, %lo(var_source_len)
+    ldw r4, r3, 0
+    addi r27, r27, -4
+    stw r27, r4, 0             # push var_source_len
+    lui r3, %hi(var_to_in)
+    addi r3, r3, %lo(var_to_in)
+    ldw r4, r3, 0
+    addi r27, r27, -4
+    stw r27, r4, 0             # push var_to_in
+    lui r3, %hi(var_source_id)
+    addi r3, r3, %lo(var_source_id)
+    ldw r4, r3, 0
+    addi r27, r27, -4
+    stw r27, r4, 0             # push var_source_id
+    lui r3, %hi(interp_saved_ip)
+    addi r3, r3, %lo(interp_saved_ip)
+    ldw r4, r3, 0
+    addi r27, r27, -4
+    stw r27, r4, 0             # push interp_saved_ip
+    lui r3, %hi(interp_resume_target)
+    addi r3, r3, %lo(interp_resume_target)
+    ldw r4, r3, 0
+    addi r27, r27, -4
+    stw r27, r4, 0             # push interp_resume_target
     addi r27, r27, -4
     stw r27, r26, 0            # push IP (caller continuation)
 
@@ -5113,6 +5385,7 @@ catch_resume_word:
     # xt returned normally — pop exception frame
     ldw r2, r27, 0             # pop saved IP
     addi r27, r27, 4
+    addi r27, r27, 24          # drop the six saved input-source / resume cells
     ldw r3, r27, 0             # pop saved DSP (discard — stack is fine)
     addi r27, r27, 4
     ldw r4, r27, 0             # pop old_catch_frame
@@ -5163,6 +5436,36 @@ throw_word:
     # Pop exception frame
     ldw r26, r27, 0            # IP = saved IP
     addi r27, r27, 4
+    ldw r4, r27, 0
+    addi r27, r27, 4
+    lui r3, %hi(interp_resume_target)
+    addi r3, r3, %lo(interp_resume_target)
+    stw r3, r4, 0              # restore interp_resume_target
+    ldw r4, r27, 0
+    addi r27, r27, 4
+    lui r3, %hi(interp_saved_ip)
+    addi r3, r3, %lo(interp_saved_ip)
+    stw r3, r4, 0              # restore interp_saved_ip
+    ldw r4, r27, 0
+    addi r27, r27, 4
+    lui r3, %hi(var_source_id)
+    addi r3, r3, %lo(var_source_id)
+    stw r3, r4, 0              # restore var_source_id
+    ldw r4, r27, 0
+    addi r27, r27, 4
+    lui r3, %hi(var_to_in)
+    addi r3, r3, %lo(var_to_in)
+    stw r3, r4, 0              # restore var_to_in
+    ldw r4, r27, 0
+    addi r27, r27, 4
+    lui r3, %hi(var_source_len)
+    addi r3, r3, %lo(var_source_len)
+    stw r3, r4, 0              # restore var_source_len
+    ldw r4, r27, 0
+    addi r27, r27, 4
+    lui r3, %hi(var_source_ptr)
+    addi r3, r3, %lo(var_source_ptr)
+    stw r3, r4, 0              # restore var_source_ptr
     ldw r28, r27, 0            # DSP = saved DSP
     addi r27, r27, 4
     ldw r4, r27, 0             # old_catch_frame
@@ -5351,10 +5654,13 @@ search_wl_word:
 search_wl_loop:
     beq r5, r0, search_wl_fail
 
-    # Compare length (mask out IMMEDIATE bit)
+    # Compare length (bit 7 IMMEDIATE; bit 6 smudged: skipped while ':' is open)
     ldbu r6, r5, 4         # dict len/flags byte
-    addi r7, r0, 0x7F
-    and r8, r6, r7         # dict_len = len & 0x7F
+    addi r7, r0, 0x40
+    and r8, r6, r7
+    bne r8, r0, search_wl_next
+    addi r7, r0, 0x3F
+    and r8, r6, r7         # dict_len = len & 0x3F
     bne r8, r2, search_wl_next
 
     # Compare bytes
@@ -5507,7 +5813,7 @@ search_hit:
     addi r28, r28, -4
     stw r28, r18, 0        # u3
     addi r28, r28, -4
-    addi r1, r0, 1
+    addi r1, r0, -1          # true is -1 (it was 1)
     stw r28, r1, 0         # flag = 1
     jal r0, next
 
@@ -5517,7 +5823,7 @@ search_hit_start:
     addi r28, r28, -4
     stw r28, r13, 0        # u3 = u1
     addi r28, r28, -4
-    addi r1, r0, 1
+    addi r1, r0, -1          # true is -1 (it was 1)
     stw r28, r1, 0         # flag = 1
     jal r0, next
 
@@ -5675,7 +5981,11 @@ var_hld:            .word 0            # Pictured numeric output pointer into pn
 var_catch_frame:    .word 0            # Exception frame pointer (0 = none)
 var_compilation_wid: .word var_latest   # Current compilation wordlist (initially FORTH-WORDLIST)
 var_cf_sp:          .word 0            # Control-flow validation stack depth (compile-time)
+var_smudged:        .word 0            # Header ':' hid (length-byte bit 6) for ';' to reveal; 0 after :NONAME
+var_number_hook:    .word 0            # xt the interpreter runs when NUMBER fails ( c-addr -- d 2 | n 1 | 0 ); prelude sets it
 cf_err_msg:         .ascii "\n? unbalanced control structure\n"
+                    .byte 0
+cf_compile_only_msg: .ascii "\n? compile-only word outside a definition\n"
                     .byte 0
     .align 2
 search_order_count: .word 1            # Number of active search order entries
@@ -5705,13 +6015,16 @@ interp_resume_xt:
 tib:            .space 256         # Terminal Input Buffer
 user_dictionary: .space 2097152    # 2MB space for new words
 user_dictionary_end:
-word_buf:       .space 256         # WORD / : / CREATE counted-name buffer (len+name)
+word_buf:       .space 256         # (WORD) / : / CREATE counted-name buffer (len+name): the interpreter's
+word_buf_std:   .space 256         # the standard WORD's own counted-string buffer
 pno_buf:        .space 128         # Pictured numeric output + '.' conversion
 file_path_buf:   .space 512        # Temporary path buffer
 file_path_buf2:  .space 512        # Secondary path buffer (rename)
 file_stat_buf:   .space 128        # struct stat scratch buffer
 squote_ibuf0:    .space 256        # S" interpret-mode transient buffer 0
 squote_ibuf1:    .space 256        # S" interpret-mode transient buffer 1
+squote_ibuf2:    .space 256        # S" interpret-mode transient buffer 2
+squote_ibuf3:    .space 256        # S" interpret-mode transient buffer 3
 squote_iwhich:   .space 4          # Toggle: which transient buffer to use next
 cf_stack:        .space 64         # Control-flow validation stack (one tag byte per open construct)
 

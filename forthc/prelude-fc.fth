@@ -1,8 +1,8 @@
 \ prelude-fc.fth — the closed-world prelude: kernel-vocabulary words
 \ defined in compilable Forth. Concatenated ahead of user source by
-\ compile.sh (the way prelude.fth precedes kernel input). Where the
-\ kernel's flag conventions are quirky (TRUE=-1 but comparisons give
-\ 0/1), these mirror the kernel exactly — the DTC is M4's oracle.
+\ compile.sh (the way prelude.fth precedes kernel input). These mirror
+\ the kernel exactly — the DTC is M4's oracle. (Until 2026-10-10 the
+\ kernel's comparisons gave 0/1 and these did too; both say -1/0 now.)
 
 : NIP SWAP DROP ;
 : TUCK SWAP OVER ;
@@ -94,13 +94,13 @@
   REPEAT ;
 
 VARIABLE srch-a2  VARIABLE srch-u2
-: SEARCH ( a1 u1 a2 u2 -- a3 u3 flag )   \ kernel flag convention: 0/1
-  DUP 0= IF 2DROP 1 EXIT THEN
+: SEARCH ( a1 u1 a2 u2 -- a3 u3 flag )   \ flag is -1/0, as the kernel's SEARCH returns since 2026-10-10
+  DUP 0= IF 2DROP -1 EXIT THEN
   srch-u2 ! srch-a2 !
   DUP srch-u2 @ < IF 0 EXIT THEN
   DUP srch-u2 @ - 1+ 0 ?DO
     OVER I +  srch-u2 @  srch-a2 @  srch-u2 @  COMPARE 0= IF
-      SWAP I + SWAP I -  1 UNLOOP EXIT THEN
+      SWAP I + SWAP I -  -1 UNLOOP EXIT THEN
   LOOP 0 ;
 : SPACE BL EMIT ;
 : SPACES BEGIN DUP 0> WHILE SPACE 1- REPEAT DROP ;

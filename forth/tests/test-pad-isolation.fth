@@ -1,7 +1,7 @@
 \ PAD is independent of WORD's parse buffer and pictured numeric output
 
 \ PAD stays at HERE+128 after WORD
-: T1  WORD DROP  PAD HERE 128 + = . CR ;
+: T1  BL WORD DROP  PAD HERE 128 + = . CR ;
 T1 dummy
 
 \ PAD stays at HERE+128 after pictured numeric conversion

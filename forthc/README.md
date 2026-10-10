@@ -15,7 +15,7 @@ bash tests/run-tests.sh                # the gate: 3 engines, identical bytes
 
 Vocabulary through M2: `: ; MAIN`, decimal literals, comments,
 `DUP DROP SWAP OVER + - * AND OR XOR 1+ 1- @ ! C@ C! EMIT CR .`,
-comparisons `= <> < > <= >= U< 0= 0< 0<>` (kernel 0/1 flags),
+comparisons `= <> < > <= >= U< 0= 0< 0<>` (-1/0 flags, as the kernel's since 2026-10-10),
 `IF ELSE THEN`, `BEGIN AGAIN UNTIL WHILE REPEAT`,
 `DO ?DO LOOP +LOOP I J LEAVE`, `>R R> R@`, `EXIT`, `RECURSE`.
 

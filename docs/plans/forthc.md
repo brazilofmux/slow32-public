@@ -88,7 +88,8 @@ should approach 3–4× on dispatch-bound code.
   real labels and branches (text output makes forward references
   free); DO/LOOP inlines the kernel's exact boundary-cross test;
   comparisons are single SLT-family instructions (the kernel's 0/1
-  flag convention, mirrored for M4). Every m2.fth case and fib(32)
+  flag convention of the time, mirrored for M4; since the 2026-10-10
+  Forth 2012 pass both say -1/0, a negate after the SLT). Every m2.fth case and fib(32)
   correct on the first compiled run, three engines byte-identical.
   First measurement (fib 32, medians of 5): compiled-under-dbt 34 ms
   compute vs DTC-under-dbt 121 ms — **3.6×, the M3 win condition
@@ -136,8 +137,8 @@ should approach 3–4× on dispatch-bound code.
   PARSE/WORD/PAD, wordlists, BASE/HEX, `[ ]`), the kernel's own
   error-message test, and the tube test (M5's linking work). The
   differential caught two real slips en route: a prelude ordering
-  bug and SEARCH returning ANS -1 where the kernel returns 1 — the
-  oracle works.
+  bug and SEARCH returning ANS -1 where the kernel then returned 1 — the
+  oracle works (the kernel went to -1 on 2026-10-10 and SEARCH followed).
 - **M5 — turnkey and the showpiece.** A driver script (`forthc
   prog.fth prog.s32x`), docs, and one demo with teeth: `ship.fth`
   compiled — the vec arcade at native speed, tube words inlined.

@@ -22,11 +22,11 @@ Stage 4: Bootstrap Prelude. Self-extending Forth with ~50 standard vocabulary wo
 - **Comparison**: `=`, `<>`, `<`, `>`, `0=`, `0<`, `U<`
 - **Memory**: `!`, `@`, `C!`, `C@`, `C,`, `2!`, `2@`, `MOVE`, `SEARCH`
 - **I/O**: `EMIT`, `KEY`, `TYPE`, `.`, `.S`, `CR`, `ACCEPT`
-- **Compiler**: `:`, `;`, `:NONAME`, `IMMEDIATE`, `,`, `ALLOT`, `[`, `]`, `CREATE`, `DOES>`, `S"`, `."`, `C"`, `S\"`, `'`, `[']`, `LIT`, `CHAR`, `[CHAR]`, `RECURSE`, `POSTPONE`
+- **Compiler**: `:`, `;`, `:NONAME`, `IMMEDIATE`, `,`, `ALLOT`, `[`, `]`, `CREATE`, `DOES>`, `S"`, `(S")` (S"'s compilation semantics alone, for POSTPONE and ABORT"), `."`, `C"`, `S\"`, `'`, `[']`, `LIT`, `CHAR`, `[CHAR]`, `RECURSE`, `POSTPONE`, `(UNDEFINED)`
 - **Control flow**: `IF`, `ELSE`, `THEN`, `BEGIN`, `AGAIN`, `UNTIL`, `WHILE`, `REPEAT`
 - **Loops**: `DO`, `?DO`, `LOOP`, `+LOOP`, `I`, `J`, `UNLOOP`, `LEAVE`
-- **Variables**: `STATE`, `BASE`, `BASE!`, `LATEST`, `HERE`, `TIB`, `TOIN`, `NTIB`
-- **Parser**: `WORD`, `FIND`, `NUMBER`, `PARSE-WORD`, `PARSE`, `INTERPRET`
+- **Variables**: `STATE`, `BASE`, `BASE!`, `LATEST`, `DP` (the pointer `HERE` reads), `NUMBER-HOOK`, `TIB`, `TOIN`, `NTIB`
+- **Parser**: `WORD` (standard: any delimiter, >IN past it, its own buffer), `(WORD)` (the interpreter's: blank-delimited, uppercased, into `word_buf`), `FIND`, `NUMBER`, `PARSE-WORD`, `PARSE`, `INTERPRET`
 - **Strings**: `COUNT`
 - **Pictured Output**: `<#`, `HOLD`, `#>`
 - **Exception**: `CATCH`, `THROW`
@@ -48,17 +48,18 @@ Loaded automatically from `prelude.fth` at startup:
 - **Memory**: `+!`, `FILL`, `ERASE`, `MOVE`, `BLANK`
 - **Comparison**: `<=`, `>=`, `0>`, `0<>`, `U>`
 - **Compiler**: `LITERAL`, `COMPILE,`
-- **Defining**: `VARIABLE`, `CONSTANT`, `2VARIABLE`, `2CONSTANT`, `VALUE`, `TO`, `DEFER`, `IS`, `ACTION-OF`, `MARKER`, `BUFFER:`
+- **Defining**: `VARIABLE`, `CONSTANT`, `2VARIABLE`, `2CONSTANT`, `VALUE`, `TO`, `DEFER`, `IS`, `ACTION-OF`, `DEFER!`, `DEFER@`, `MARKER`, `BUFFER:`
 - **Control flow**: `CASE`, `OF`, `ENDOF`, `ENDCASE`
 - **Pictured Output**: `MU/MOD`, `#`, `#S`, `SIGN`, `U.`, `.R`, `U.R`, `HOLDS`
 - **Core Arithmetic**: `SM/REM`, `FM/MOD`, `*/MOD`, `*/`, `>NUMBER`
-- **Double-Number**: `D>S`, `DNEGATE`, `DABS`, `D0=`, `D0<`, `D=`, `D<`, `M+`, `D.`, `D.R`
+- **Double-Number**: `D>S`, `DNEGATE`, `DABS`, `D0=`, `D0<`, `D=`, `D<`, `DU<`, `D2*`, `D2/`, `M+`, `M*/` (via `T*` `T/`), `D.`, `D.R`; `1.` `-7.` are double literals (`(DNUMBER)` on `NUMBER-HOOK`)
 - **Strings**: `CMOVE`, `CMOVE>`, `/STRING`, `COMPARE`, `PLACE`, `-TRAILING`
   (`SEARCH` and `MOVE` are kernel primitives)
 - **System**: `>BODY`, `SOURCE`, `WITHIN`, `ALIGNED`, `ALIGN`, `ABORT"`, `>IN`, `PAD`, `REFILL`, `NOOP`
 - **Stack**: `ROLL`
 - **I/O**: `.(` (immediate display)
-- **Compiler**: `[DEFINED]`, `[UNDEFINED]`
+- **Compiler**: `[DEFINED]`, `[UNDEFINED]`, `[IF]`, `[ELSE]`, `[THEN]` (nest, skip across lines)
+- **System**: `ENVIRONMENT?` (the Core queries, `CORE`, `FLOATING`)
 - **Search-Order**: `DEFINITIONS`, `ALSO`, `PREVIOUS`, `FORTH`, `ONLY`, `ORDER`
 - **Comments**: `\` (backslash line comment), `(` (paren comment)
 
@@ -66,7 +67,7 @@ Loaded automatically from `prelude.fth` at startup:
 
 - **Header**:
   - `Link` (4 bytes): Pointer to previous word.
-  - `Length` (1 byte): Name length (bit 7 = IMMEDIATE flag).
+  - `Length` (1 byte): Name length, at most 63 (bit 7 = IMMEDIATE, bit 6 = smudged: `:` sets it, `;` clears it, so a definition cannot find itself and an aborted one is never found).
   - `Name` (N bytes): Name string (uppercase).
   - `Padding`: Align to 4 bytes.
   - `XT` (4 bytes): Execution Token (address of code).
@@ -107,6 +108,46 @@ glass (arrows rotate, up thrusts, ESC lands at `ok>`), whose words —
 `SHIP`, `STEP`, `SHAPE` — are small and `DEFER`red so you can redefine
 them at the prompt and `FLY` again with position, velocity, and heading
 intact. The arcade stays on while you rewire it.
+
+## Forth 2012 conformance (2026-10-10 pass)
+
+`tests/run-forth2012.sh` runs the Forth 2012 test suite as gforth ships it
+(coretest, coreext, coremore, dbltest, string, search, postpone, deferred;
+GPL, so read from the gforth installation, never vendored) and passes, apart
+from gforth's own `ROOT` wordlist and the floating-point items.  Getting
+there changed behaviour that the stage01 tools had been written around:
+
+- Comparisons (`=` `<>` `<` `>` `U<` `0=` `0<` and the prelude's) return -1
+  for true, not 1; `SEARCH`'s flag too.
+- `HERE` is the data-space pointer's value; `DP` is the variable (the old
+  `HERE @` / `HERE !`).  `PAD` (`HERE 128 +`) used to land on the
+  interpreter's resume cell.
+- `FIND` returns `c-addr 0` when it fails and `xt 1` / `xt -1` when it
+  succeeds (immediate / not).
+- `WORD` is standard (any delimiter, `>IN` left past it, its own buffer);
+  the interpreter and `'` `[']` `POSTPONE` `CHAR` `:` `CREATE` use `(WORD)`,
+  which treats every control character as a blank.  The interpreter leaves
+  `>IN` past the delimiter, so `S"` `."` `C"` `S\"` and `PARSE` start at
+  the text itself and `.( x)` prints no leading blank.
+- `:` is not IMMEDIATE, and smudges its header until `;`.  `RECURSE` is
+  the way to recurse; cc.fth and asm.fth did it by name (fixed).
+- `IF` ... `+LOOP` and `DOES>` no longer check STATE: under `[ ]` inside a
+  definition they compile (`[ POSTPONE-+LOOP ]`).  Run with no definition
+  open they say `? compile-only word outside a definition` and `-14 THROW`.
+- An undefined word is `-13 THROW`: the rest of the line is abandoned (and a
+  definition in progress stays hidden); the message is held back when a
+  `CATCH` is active.  `CATCH` saves and `THROW` restores the input source
+  (an `EVALUATE` that throws no longer leaves the interpreter inside its
+  string).
+- `WHILE` leaves its forward reference under the loop start (orig dest),
+  so `BEGIN .. WHILE .. WHILE .. REPEAT .. ELSE .. THEN` compiles.
+- `.` is signed in every base (`HEX -1 .` printed `/`), `UM/MOD` keeps
+  the 33rd remainder bit (`MAX-UINT MAX-UINT UM* MAX-UINT UM/MOD`), `*/MOD`
+  rounds like `/` (symmetric), `FILL` takes a zero count, `NUMBER` rejects
+  characters below `0`.
+- Interpreted `S"` rotates four transient buffers; `POSTPONE S"` appends
+  `(S")`, and `ABORT"` is built on it, so both compile under `[ ]`.
+- `REFILL` sets `#TIB` and `>IN`; `[IF] [ELSE] [THEN]` skip across lines.
 
 ## Bugs Fixed
 

@@ -85,7 +85,7 @@
 
 \ --- Memory operations ---
 : FILL  ( addr u char -- )
-  -ROT  0 DO 2DUP I + C! LOOP 2DROP ;
+  -ROT  0 ?DO 2DUP I + C! LOOP 2DROP ;   \ ?DO: a zero count filled 4G bytes
 
 : ERASE  ( addr u -- )  0 FILL ;
 
@@ -185,7 +185,7 @@
   THEN
   R> DROP ;
 
-: */MOD  ( n1 n2 n3 -- rem quot )  >R M* R> FM/MOD ;
+: */MOD  ( n1 n2 n3 -- rem quot )  >R M* R> SM/REM ;   \ symmetric, as / and /MOD are (the hardware divide truncates)
 : */     ( n1 n2 n3 -- n4 )  */MOD NIP ;
 
 : >BODY  ( xt -- addr )  8 + ;
@@ -200,7 +200,7 @@
 
 : ABORT"  ( flag "text" -- )
   POSTPONE IF
-  POSTPONE S" POSTPONE TYPE
+  (S") POSTPONE TYPE          \ (S") compiles the literal whatever STATE is: POSTPONE S" would interpret it under [ ]
   POSTPONE ABORT
   POSTPONE THEN ; IMMEDIATE
 
@@ -230,16 +230,22 @@
 : 2*  ( n -- n*2 )  DUP + ;
 : U>  ( u1 u2 -- flag )  SWAP U< ;
 
-: REFILL  ( -- flag )  TIB 128 ACCEPT -1 <> ;
+\ REFILL (6.2.2125): the next line becomes the input source -- #TIB its
+\ length, >IN zero -- or false at the end of input with the source unchanged.
+\ It used to ACCEPT into TIB without setting either, so [ELSE]'s skip across
+\ lines, and any word that refilled, read a stale line.
+: REFILL  ( -- flag )
+  TIB 256 ACCEPT DUP -1 = IF DROP FALSE EXIT THEN
+  NTIB ! 0 TOIN ! TRUE ;
 
 : MARKER  ( "name" -- )
-  LATEST @ HERE @
+  LATEST @ HERE
   CREATE , ,
   DOES>
-    DUP @ HERE !
+    DUP @ DP !
     CELL+ @ LATEST ! ;
 
-: .(  ( "text)" -- )  41 PARSE TYPE ; IMMEDIATE
+: .(  ( "text" -- )  41 PARSE TYPE ; IMMEDIATE   \ the comment's own ) must not come early: NUMBER used to swallow the leftovers as digits
 
 : BUFFER:  ( u "name" -- )  CREATE ALLOT ;
 
@@ -251,8 +257,65 @@
 : HOLDS  ( addr u -- )
   BEGIN DUP WHILE 1- 2DUP + C@ HOLD REPEAT 2DROP ;
 
-: [DEFINED]  ( "name" -- flag )  WORD FIND DROP 0<> ; IMMEDIATE
-: [UNDEFINED]  ( "name" -- flag )  WORD FIND DROP 0= ; IMMEDIATE
+: [DEFINED]  ( "name" -- flag )  BL WORD FIND NIP 0<> ; IMMEDIATE
+: [UNDEFINED]  ( "name" -- flag )  BL WORD FIND NIP 0= ; IMMEDIATE
+
+\ --- Conditional compilation (Tools Ext 15.6.2.2530-2533): [IF] [ELSE] [THEN]
+\ nest, and skip across lines by REFILL; the names are read uppercased, as
+\ the interpreter reads them ((WORD)), so [if] and [IF] are one word.
+: [ELSE]  ( -- )
+  1 BEGIN
+    BEGIN (WORD) COUNT DUP WHILE
+      2DUP S" [IF]" COMPARE 0= IF 2DROP 1+ ELSE
+      2DUP S" [ELSE]" COMPARE 0= IF 2DROP 1- DUP IF 1+ THEN ELSE
+      2DUP S" [THEN]" COMPARE 0= IF 2DROP 1- ELSE 2DROP THEN THEN THEN
+      ?DUP 0= IF EXIT THEN
+    REPEAT 2DROP
+  REFILL 0= UNTIL DROP ; IMMEDIATE
+: [IF]  ( flag -- )  0= IF POSTPONE [ELSE] THEN ; IMMEDIATE
+: [THEN]  ( -- ) ; IMMEDIATE
+
+\ --- Deferred words, the rest (Core Ext 6.2.1175 / 6.2.1177)
+: DEFER!  ( xt2 xt1 -- )  8 + ! ;
+: DEFER@  ( xt1 -- xt2 )  8 + @ ;
+
+\ --- Double-number words, the rest (Double / Double Ext)
+: D2*  ( d -- d*2 )  2DUP D+ ;
+: D2/  ( d -- d/2 )  DUP 1 AND >R 2/ SWAP 1 RSHIFT R> IF 1 31 LSHIFT OR THEN SWAP ;
+: DU<  ( ud1 ud2 -- flag )  ROT 2DUP = IF 2DROP U< ELSE U> NIP NIP THEN ;
+: T*  ( ud u -- ut )  TUCK UM* 2SWAP UM* SWAP >R 0 D+ R> -ROT ;
+: T/  ( ut u -- ud )  >R 0 R@ UM/MOD DROP R@ UM/MOD -ROT R> UM/MOD NIP SWAP ;
+: M*/  ( d1 n1 +n2 -- d2 )
+  >R 2DUP XOR 0< >R ABS -ROT DABS ROT T*  R> R> SWAP >R T/  R> IF DNEGATE THEN ;
+
+: ENVIRONMENT?  ( c-addr u -- false | i*x true )
+  2DUP S" /COUNTED-STRING" COMPARE 0= IF 2DROP 255 TRUE EXIT THEN
+  2DUP S" /HOLD" COMPARE 0= IF 2DROP 128 TRUE EXIT THEN
+  2DUP S" /PAD" COMPARE 0= IF 2DROP 128 TRUE EXIT THEN
+  2DUP S" ADDRESS-UNIT-BITS" COMPARE 0= IF 2DROP 8 TRUE EXIT THEN
+  2DUP S" CORE" COMPARE 0= IF 2DROP TRUE TRUE EXIT THEN
+  2DUP S" FLOATING" COMPARE 0= IF 2DROP FALSE TRUE EXIT THEN
+  2DUP S" FLOORED" COMPARE 0= IF 2DROP FALSE TRUE EXIT THEN
+  2DUP S" MAX-CHAR" COMPARE 0= IF 2DROP 255 TRUE EXIT THEN
+  2DUP S" MAX-D" COMPARE 0= IF 2DROP -1 2147483647 TRUE EXIT THEN
+  2DUP S" MAX-N" COMPARE 0= IF 2DROP 2147483647 TRUE EXIT THEN
+  2DUP S" MAX-U" COMPARE 0= IF 2DROP -1 TRUE EXIT THEN
+  2DUP S" MAX-UD" COMPARE 0= IF 2DROP -1 -1 TRUE EXIT THEN
+  2DUP S" RETURN-STACK-CELLS" COMPARE 0= IF 2DROP 2048 TRUE EXIT THEN
+  2DUP S" STACK-CELLS" COMPARE 0= IF 2DROP 2048 TRUE EXIT THEN
+  2DROP FALSE ;
+
+\ --- Double-cell literals (3.4.1.3): a number ending in '.' is a double. The
+\ interpreter hands a token NUMBER rejects to NUMBER-HOOK ( c-addr -- d 2 | 0 ).
+: (DNUMBER)  ( c-addr -- d 2 | 0 )
+  COUNT DUP 2 < IF 2DROP 0 EXIT THEN
+  2DUP + 1- C@ 46 <> IF 2DROP 0 EXIT THEN       \ last char '.'
+  1-
+  OVER C@ 45 = DUP >R IF 1- SWAP 1+ SWAP THEN  \ leading '-'
+  DUP 0= IF 2DROP R> DROP 0 EXIT THEN
+  0 0 2SWAP >NUMBER NIP IF 2DROP R> DROP 0 EXIT THEN
+  R> IF DNEGATE THEN 2 ;
+' (DNUMBER) NUMBER-HOOK !
 
 : BLANK  ( addr u -- )  BL FILL ;
 
@@ -272,7 +335,7 @@
   BEGIN
     DUP
   WHILE
-    DUP 4 + C@ 127 AND >R
+    DUP 4 + C@ 63 AND >R
     DUP 5 + R@ TYPE SPACE
     R> DROP @
   REPEAT
@@ -336,15 +399,6 @@ VARIABLE SOURCE-BUF 128 BUFFER: SOURCE-BUF-DATA
 : INCLUDED ( c-addr u -- )
   R/O OPEN-FILE IF ." OPEN-FILE error" CR ABORT THEN
   INCLUDE-FILE ;
-
-: ENVIRONMENT? ( c-addr u -- false | i*x true )
-  2DUP S" /COUNTED-STRING" COMPARE 0= IF 2DROP 255 TRUE EXIT THEN
-  2DUP S" /HOLD" COMPARE 0= IF 2DROP 128 TRUE EXIT THEN
-  2DUP S" /PAD" COMPARE 0= IF 2DROP 128 TRUE EXIT THEN
-  2DUP S" ADDRESS-UNIT-BITS" COMPARE 0= IF 2DROP 8 TRUE EXIT THEN
-  2DUP S" CORE" COMPARE 0= IF 2DROP TRUE TRUE EXIT THEN
-  2DUP S" FLOATING" COMPARE 0= IF 2DROP FALSE TRUE EXIT THEN
-  2DROP FALSE ;
 
 \ --- Compile-time ---
 : COMPILE,  ( xt -- )  , ;

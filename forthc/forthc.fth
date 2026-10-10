@@ -319,9 +319,10 @@ VARIABLE ll-val  VARIABLE ll-valid  VARIABLE ll-prev
         S" addi r28, r28, -4" ALINE  S" stw r28, r1, 0" ALINE ;
 : P-R@  S" ldw r1, r27, 0" ALINE
         S" addi r28, r28, -4" ALINE  S" stw r28, r1, 0" ALINE ;
-: P-ZCMP ( op-a op-u -- )   \ TOS := TOS <op> 0  (kernel flags: 0/1)
+: P-ZCMP ( op-a op-u -- )   \ TOS := TOS <op> 0, as a Forth flag (-1/0; the kernel's since 2026-10-10)
     S" ldw r1, r28, 0" ALINE
     S"     " OUT-STR OUT-STR S"  r1, r1, r0" OUT-STR OUT-NL
+    S" sub r1, r0, r1" ALINE
     S" stw r28, r1, 0" ALINE ;
 : P-INC ( n -- )            \ TOS += n, in place
     S" ldw r1, r28, 0" ALINE
@@ -365,6 +366,13 @@ VARIABLE ll-val  VARIABLE ll-valid  VARIABLE ll-prev
     S" ldw r2, r28, 4" ALINE
     S" addi r28, r28, 4" ALINE
     S"     " OUT-STR OUT-STR S"  r2, r2, r1" OUT-STR OUT-NL
+    S" stw r28, r2, 0" ALINE ;
+: P-CMPOP ( op-addr op-u -- )   \ TOS := second <op> top, as a Forth flag (-1/0)
+    S" ldw r1, r28, 0" ALINE
+    S" ldw r2, r28, 4" ALINE
+    S" addi r28, r28, 4" ALINE
+    S"     " OUT-STR OUT-STR S"  r2, r2, r1" OUT-STR OUT-NL
+    S" sub r2, r0, r2" ALINE
     S" stw r28, r2, 0" ALINE ;
 : P-FETCH S" ldw r1, r28, 0" ALINE  S" ldw r1, r1, 0" ALINE
           S" stw r28, r1, 0" ALINE ;
@@ -591,13 +599,13 @@ VARIABLE ll-val  VARIABLE ll-valid  VARIABLE ll-prev
     2DUP S" ."    COMPARE 0= IF 2DROP P-DOT  EXIT THEN
     2DUP S" 1+"   COMPARE 0= IF 2DROP 1 P-INC  EXIT THEN
     2DUP S" 1-"   COMPARE 0= IF 2DROP -1 P-INC EXIT THEN
-    2DUP S" ="    COMPARE 0= IF 2DROP S" seq"  P-BINOP EXIT THEN
-    2DUP S" <>"   COMPARE 0= IF 2DROP S" sne"  P-BINOP EXIT THEN
-    2DUP S" <"    COMPARE 0= IF 2DROP S" slt"  P-BINOP EXIT THEN
-    2DUP S" >"    COMPARE 0= IF 2DROP S" sgt"  P-BINOP EXIT THEN
-    2DUP S" <="   COMPARE 0= IF 2DROP S" sle"  P-BINOP EXIT THEN
-    2DUP S" >="   COMPARE 0= IF 2DROP S" sge"  P-BINOP EXIT THEN
-    2DUP S" U<"   COMPARE 0= IF 2DROP S" sltu" P-BINOP EXIT THEN
+    2DUP S" ="    COMPARE 0= IF 2DROP S" seq"  P-CMPOP EXIT THEN
+    2DUP S" <>"   COMPARE 0= IF 2DROP S" sne"  P-CMPOP EXIT THEN
+    2DUP S" <"    COMPARE 0= IF 2DROP S" slt"  P-CMPOP EXIT THEN
+    2DUP S" >"    COMPARE 0= IF 2DROP S" sgt"  P-CMPOP EXIT THEN
+    2DUP S" <="   COMPARE 0= IF 2DROP S" sle"  P-CMPOP EXIT THEN
+    2DUP S" >="   COMPARE 0= IF 2DROP S" sge"  P-CMPOP EXIT THEN
+    2DUP S" U<"   COMPARE 0= IF 2DROP S" sltu" P-CMPOP EXIT THEN
     2DUP S" AND"  COMPARE 0= IF 2DROP S" and"  P-BINOP EXIT THEN
     2DUP S" OR"   COMPARE 0= IF 2DROP S" or"   P-BINOP EXIT THEN
     2DUP S" XOR"  COMPARE 0= IF 2DROP S" xor"  P-BINOP EXIT THEN

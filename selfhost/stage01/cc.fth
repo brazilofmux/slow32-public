@@ -501,6 +501,14 @@ VARIABLE big-arr-count   \ full 32-bit array count (before clamping to 16 bits)
 : TYPE-IS-ARRAY ( type -- f ) TYPE-ARRAY-COUNT 0<> ;
 
 \ Robust struct sizing: use cached st-size when set, otherwise derive from fields.
+\ STRUCT-SIZE and TYPE-SIZE are mutually recursive, and STRUCT-SIZE wanted
+\ ALIGN-UP too: both were forward references, so the old kernel printed
+\ "TYPE-SIZE ?" / "ALIGN-UP ?" while loading and compiled STRUCT-SIZE WITHOUT
+\ those two calls (a struct's size was its last field's offset plus the
+\ field's type code, unaligned). The kernel now aborts a definition on an
+\ undefined word, which is how this surfaced.
+DEFER TYPE-SIZE
+: ALIGN-UP ( n align -- n' ) 1- TUCK + SWAP INVERT AND ;
 : STRUCT-SIZE ( struct-idx -- n )
     DUP MAX-STRUCT >= IF DROP 4 EXIT THEN
     DUP CELLS st-size + @ DUP 0<> IF NIP EXIT THEN DROP
@@ -537,10 +545,10 @@ VARIABLE big-arr-count   \ full 32-bit array count (before clamping to 16 bits)
         DROP 4
     ENDCASE ;
 
-: TYPE-SIZE ( type -- n )
+: (TYPE-SIZE) ( type -- n )   \ the body of the DEFERred TYPE-SIZE, so STRUCT-SIZE above can call it
     DUP TYPE-IS-ARRAY IF
         DUP TYPE-ARRAY-COUNT >R
-        CLR-ARR-MASK AND TYPE-SIZE
+        CLR-ARR-MASK AND RECURSE
         R> * EXIT
     THEN
     DUP TYPE-IS-PTR IF DROP 4 EXIT THEN
@@ -555,6 +563,7 @@ VARIABLE big-arr-count   \ full 32-bit array count (before clamping to 16 bits)
         TY-ENUM   OF DROP 4 ENDOF
         DROP 4
     ENDCASE ;
+' (TYPE-SIZE) IS TYPE-SIZE
 
 \ Size of pointed-to element (for pointer arithmetic)
 : TYPE-DEREF-SIZE ( type -- n )
@@ -573,7 +582,6 @@ VARIABLE big-arr-count   \ full 32-bit array count (before clamping to 16 bits)
         4 SWAP
     ENDCASE ;
 
-: ALIGN-UP ( n align -- n' ) 1- TUCK + SWAP INVERT AND ;
 
 \ --- Enum table (needed by lexer's CHECK-KEYWORD) ---
 : ENUM-FIND ( addr u -- idx | -1 )
@@ -1733,11 +1741,11 @@ DEFER PP-EVAL-EXPR
     tmp-d @ pp-line-len @ < IF
         pp-line tmp-d @ + C@ 33 = IF  \ '!'
             1 tmp-d +!
-            PP-EVAL-UNARY 0= IF 1 ELSE 0 THEN EXIT
+            RECURSE 0= IF 1 ELSE 0 THEN EXIT
         THEN
         pp-line tmp-d @ + C@ 126 = IF  \ '~'
             1 tmp-d +!
-            PP-EVAL-UNARY INVERT EXIT
+            RECURSE INVERT EXIT
         THEN
     THEN
     PP-EVAL-PRIMARY ;
@@ -2078,7 +2086,7 @@ VARIABLE mexp-scratch-len
     \ Handle end of include file
     tok-type @ TK-EOF = inc-depth @ 0> AND IF
         PP-POP-INPUT
-        CC-TOKEN  \ recurse to get token from parent file
+        RECURSE  \ recurse to get token from parent file
     THEN ;
 
 \ ============================================================
@@ -2769,7 +2777,7 @@ VARIABLE index-base-type
             tmp-type !          \ cast target type
             P-RPAREN EXPECT-PUNCT
             CC-TOKEN
-            PARSE-UNARY         \ cast-expression
+            RECURSE             \ cast-expression
             LVAL-TO-RVAL
             tmp-type @ expr-type !
             0 is-lvalue !
@@ -2785,7 +2793,7 @@ VARIABLE index-base-type
         tok-val @ CASE
             P-MINUS OF    \ unary minus
                 CC-TOKEN
-                PARSE-UNARY
+                RECURSE
                 LVAL-TO-RVAL
                 S" sub r1, r0, r1" EMIT-INSN
                 TY-INT expr-type !
@@ -2793,7 +2801,7 @@ VARIABLE index-base-type
             ENDOF
             P-BANG OF     \ logical not
                 CC-TOKEN
-                PARSE-UNARY
+                RECURSE
                 LVAL-TO-RVAL
                 S" seq r1, r1, r0" EMIT-INSN
                 TY-INT expr-type !
@@ -2802,7 +2810,7 @@ VARIABLE index-base-type
             ENDOF
             P-TILDE OF    \ bitwise not
                 CC-TOKEN
-                PARSE-UNARY
+                RECURSE
                 LVAL-TO-RVAL
                 \ ~x = x XOR -1
                 S" addi r2, r0, -1" EMIT-INSN
@@ -2813,7 +2821,7 @@ VARIABLE index-base-type
             ENDOF
             P-STAR OF     \ dereference
                 CC-TOKEN
-                PARSE-UNARY
+                RECURSE
                 LVAL-TO-RVAL
                 expr-type @ TYPE-REMOVE-PTR expr-type !
                 1 is-lvalue !
@@ -2821,7 +2829,7 @@ VARIABLE index-base-type
             ENDOF
             P-AMP OF      \ address-of
                 CC-TOKEN
-                PARSE-UNARY
+                RECURSE
                 \ Should be an lvalue — r1 already has the address
                 is-lvalue @ 0= IF S" & requires lvalue" CC-ERR THEN
                 expr-type @ TYPE-ADD-PTR expr-type !
@@ -2830,7 +2838,7 @@ VARIABLE index-base-type
             ENDOF
             P-INC OF      \ prefix ++
                 CC-TOKEN
-                PARSE-UNARY
+                RECURSE
                 is-lvalue @ 0= IF S" prefix ++ requires lvalue" CC-ERR THEN
                 expr-type @ tmp-type !
                 \ r1 = address
@@ -2850,7 +2858,7 @@ VARIABLE index-base-type
             ENDOF
             P-DEC OF      \ prefix --
                 CC-TOKEN
-                PARSE-UNARY
+                RECURSE
                 is-lvalue @ 0= IF S" prefix -- requires lvalue" CC-ERR THEN
                 expr-type @ tmp-type !
                 S" addi r2, r1, 0" EMIT-INSN
@@ -3087,7 +3095,7 @@ VARIABLE tern-end
         tern-false @ EMIT-LABEL     \ emit false label
         P-COLON EXPECT-PUNCT
         CC-TOKEN
-        PARSE-TERNARY
+        RECURSE
         LVAL-TO-RVAL
         tern-end @ EMIT-LABEL       \ emit end label
         R> tern-end !

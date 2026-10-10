@@ -3069,3 +3069,28 @@ parse_postfix_from(n), and both sizeof paths (the expression parser and
 the constant evaluator) continue the operand through it.  Test:
 tests/test_sizeof_string.c.  Gates: stage08 112/112 with fixed-point,
 check-host-frontend, SQLite stage08 == clang, libutf identical.
+
+### 85. [RESOLVED 2026-10-10] stage01 cc.fth: STRUCT-SIZE was compiled without its TYPE-SIZE and ALIGN-UP calls
+
+Found by the Forth 2012 pass over the kernel (forth/ISSUES.md, 2026-10-10).
+`STRUCT-SIZE` (cc.fth) calls `TYPE-SIZE` and `ALIGN-UP`, both defined
+later in the file; `TYPE-SIZE` calls `STRUCT-SIZE` back.  The old kernel
+printed `TYPE-SIZE ?` and `ALIGN-UP ?` while loading cc.fth -- the two
+lines were in every stage01 run's output -- and then carried on compiling
+the rest of each line, so the compiled `STRUCT-SIZE` had no call where
+either name stood: a struct's size came out as its last field's offset plus
+that field's *type code*, unaligned.  Nothing in the stage02-06 C sources
+depends on a nested struct's size, which is how it lived this long.
+
+The kernel now makes an undefined word `-13 THROW`, which abandons the line
+and leaves the definition hidden; cc.fth stopped loading at that point and
+the defect had to be fixed: `DEFER TYPE-SIZE` before `STRUCT-SIZE`, the
+real body as `(TYPE-SIZE)` with `' (TYPE-SIZE) IS TYPE-SIZE` after it (the
+pattern the file already uses for PARSE-EXPR), and `ALIGN-UP` moved above.
+In the same pass, every definition that called itself by name (`PARSE-NUM`
+in asm.fth; `TYPE-SIZE`, `PP-EVAL-UNARY`, `CC-TOKEN`, `PARSE-UNARY` x7,
+`PARSE-TERNARY` in cc.fth) now says `RECURSE`: the kernel smudges a
+definition until `;`, as the standard requires, so a name inside its own
+definition means the previous definition of that name.  Gate: the stage
+chain `selfhost/run-stages.sh --to stage06`.
+

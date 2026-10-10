@@ -349,6 +349,13 @@ cd ~/slow-32/sqlite && ./check-stage08.sh
 # Arguments name tests; none runs all.  ~1 minute.
 cd ~/slow-32/regression && ./run-libc-differential.sh
 
+# Forth kernel (the stage01 bootstrap seed): the kernel's own tests, then the
+# Forth 2012 suite as gforth ships it (read from the gforth install, GPL, not
+# vendored; skips when absent). Run both after touching forth/kernel.s or
+# prelude.fth, then selfhost/run-stages.sh --to stage06: the stage01 tools
+# were written around kernel behaviour the 2026-10-10 pass made standard.
+cd ~/slow-32/forth && ./tests/run-tests.sh && ./tests/run-forth2012.sh
+
 # Analyze binaries
 ./tools/utilities/slow32dump file.s32o    # Dump object file
 ./tools/utilities/slow32dump file.s32x    # Dump executable
