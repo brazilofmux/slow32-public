@@ -1199,6 +1199,7 @@ struct UnitSave {
     int default_rmode;              /* the OPTIONS paragraph's DEFAULT ROUNDED MODE, which a contained program inherits (11.9.4) */
     int float_bigend, float_dpd;    /* its FLOAT-BINARY and FLOAT-DECIMAL defaults, inherited likewise */
     int iround, nohx;               /* its INTERMEDIATE ROUNDING, and the register paths' state with it */
+    int arith_sd, iround_given;     /* its ARITHMETIC clause (STANDARD-DECIMAL), and whether the rounding clause was written */
     int init_fill_ws, init_fill_ls; /* its OPTIONS INITIALIZE */
     UseEntry use[64];
     File *io_file;
@@ -1241,7 +1242,7 @@ static void compile_nested_unit(void)
     memcpy(u->crtname, g_crt_status_name, sizeof u->crtname);
     memcpy(u->cursorname, g_cursor_name, sizeof u->cursorname);
     u->nuse = g_nuse; memcpy(u->use, g_use, sizeof u->use); u->in_decl = g_in_decl; u->cur_sec_id = g_cur_sec_id;
-    u->saw_end = g_saw_end_program; u->initial = g_initial; u->recursive = g_recursive; u->io_file = g_io_file; u->default_rmode = g_default_rmode; u->float_bigend = g_float_bigend; u->float_dpd = g_float_dpd; u->iround = g_iround; u->nohx = g_nohx; u->init_fill_ws = g_init_fill_ws; u->init_fill_ls = g_init_fill_ls;
+    u->saw_end = g_saw_end_program; u->initial = g_initial; u->recursive = g_recursive; u->io_file = g_io_file; u->default_rmode = g_default_rmode; u->float_bigend = g_float_bigend; u->float_dpd = g_float_dpd; u->iround = g_iround; u->nohx = g_nohx; u->arith_sd = g_arith_sd; u->iround_given = g_iround_given; u->init_fill_ws = g_init_fill_ws; u->init_fill_ls = g_init_fill_ls;
     memcpy(u->cls, g_class, sizeof u->cls); memcpy(u->sw, g_switch, sizeof u->sw); memcpy(u->alph, g_alphabet, sizeof u->alph);
     memcpy(u->mn, g_mnemonic, sizeof u->mn); memcpy(u->same, g_same, sizeof u->same); memcpy(u->nsame, g_nsame, sizeof u->nsame);
     u->nsorttab = g_nsorttab; u->sorttab = xmalloc((size_t)(g_nsorttab + 1) * sizeof *g_sorttab);
@@ -1291,7 +1292,7 @@ static void compile_nested_unit(void)
     memcpy(g_crt_status_name, u->crtname, sizeof g_crt_status_name);
     memcpy(g_cursor_name, u->cursorname, sizeof g_cursor_name);
     g_nuse = u->nuse; memcpy(g_use, u->use, sizeof g_use); g_in_decl = u->in_decl; g_cur_sec_id = u->cur_sec_id;
-    g_saw_end_program = u->saw_end; g_initial = u->initial; g_recursive = u->recursive; g_io_file = u->io_file; g_default_rmode = u->default_rmode; g_float_bigend = u->float_bigend; g_float_dpd = u->float_dpd; g_iround = u->iround; g_nohx = u->nohx; g_init_fill_ws = u->init_fill_ws; g_init_fill_ls = u->init_fill_ls;
+    g_saw_end_program = u->saw_end; g_initial = u->initial; g_recursive = u->recursive; g_io_file = u->io_file; g_default_rmode = u->default_rmode; g_float_bigend = u->float_bigend; g_float_dpd = u->float_dpd; g_iround = u->iround; g_nohx = u->nohx; g_arith_sd = u->arith_sd; g_iround_given = u->iround_given; g_init_fill_ws = u->init_fill_ws; g_init_fill_ls = u->init_fill_ls;
     memcpy(g_class, u->cls, sizeof g_class); memcpy(g_switch, u->sw, sizeof g_switch); memcpy(g_alphabet, u->alph, sizeof g_alphabet);
     memcpy(g_mnemonic, u->mn, sizeof g_mnemonic); memcpy(g_same, u->same, sizeof g_same); memcpy(g_nsame, u->nsame, sizeof g_nsame);
     g_nsorttab = u->nsorttab;

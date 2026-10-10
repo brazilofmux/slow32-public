@@ -306,8 +306,9 @@ static void parse_compute(void)
     g_noemit++; Expr *e = parse_expr(); g_noemit--;
     expr_calls(e);                              /* its user functions, before any path's code */
     int rw = refs_wide(rs, nr);                 /* first: it marks a float or software-float receiver's statement */
-    int wide = g_saw_wide || g_saw_float || g_saw_qfloat || rw || (g_xd_div && round_wide(rs, rd, nr)), flt = g_saw_float || g_fstmt;
-    if (g_saw_qfloat) g_qstmt = 1;
+    int wide = g_saw_wide || g_saw_float || g_saw_qfloat || rw || g_arith_sd || (g_xd_div && round_wide(rs, rd, nr)), flt = (g_saw_float || g_fstmt) && !g_arith_sd;
+    if (g_arith_sd) g_fstmt = 0;
+    if (g_saw_qfloat || g_arith_sd) g_qstmt = 1;
     g_saw_wide = saw; g_saw_float = sawf; g_saw_qfloat = sawq;
     /* the SIZE ERROR phrases, before any code (their statements must not
      * leave this statement's ROUNDED MODE or width behind them) */

@@ -594,6 +594,10 @@ format 17, EC-MCS-*; Ed. 2023; L.
 has it: candidate for the same treatment as VALIDATE.
 - **Ruling 2026-10-07**: STANDARD-BINARY no (as VALIDATE); STANDARD-DECIMAL stays queued (the wide
   decimal stack is the natural home).
+- **DONE 2026-10-09** (ISSUES 133; docs/wide.md "Standard-decimal arithmetic"): ARITHMETIC IS
+  STANDARD-DECIMAL on the wide stack's floating mode, 34 digits rounded once per operation by the
+  INTERMEDIATE ROUNDING mode, decimal128's exponent range; tests 2014/stddec and gen/stddec (Python's
+  decimal at precision 34 the witness, 40 of 40); STANDARD-BINARY refused by name.
 
 **50. The screen behaviours that differ from the text** (docs/conformance/screen.md's three
 rulings). Ed. 2002; S each; deps none. By the owner's rule (everything standard holds) the text is

@@ -36,9 +36,27 @@ static void parse_options_paragraph(void)
              * their intermediates (8.8.1.4-5): not those, so refused;
              * 2002's STANDARD was made obsolete in 2014 and removed in 2023 */
             accept_word("is");
-            if (accept_word("native")) { any = 1; continue; }
-            if (at_word("standard-decimal") || at_word("standard-binary"))
-                die_at(cur()->line, "ARITHMETIC IS %s (COBOL 2014; 2023 8.8.1.4-5) is not implemented: the intermediates here are NATIVE's", tok_orig(cur()));
+            if (accept_word("native")) {
+                /* NATIVE, perhaps inside a STANDARD-DECIMAL container: that mode's
+                 * implied NEAREST-AWAY-FROM-ZERO goes with it; a written
+                 * INTERMEDIATE ROUNDING clause stays (11.9.4) */
+                if (g_arith_sd && !g_iround_given) { g_iround = 0; g_nohx = g_nohx_cli; }
+                g_arith_sd = 0; any = 1; continue;
+            }
+            if (at_word("standard-decimal")) {
+                /* STANDARD-DECIMAL (2014; 2023 8.8.1.5, 11.9.5 GR 3): the unit's
+                 * arithmetic is decimal128's -- every intermediate 34 significant
+                 * digits, rounded by INTERMEDIATE ROUNDING's mode (NEAREST-AWAY-
+                 * FROM-ZERO implied), exponents to 6144.  The runtime does it on
+                 * the wide stack (cob_arith_sd, from the activation descriptor);
+                 * here every arithmetic statement, expression, comparison and
+                 * numeric function of the unit takes the wide floating-decimal
+                 * path (docs/wide.md, docs/conformance/options.md) */
+                if (g_std < 2014) die_at(cur()->line, "ARITHMETIC IS STANDARD-DECIMAL is COBOL 2014 (2023 11.9.5); compile with -std=2014");
+                advance(); g_arith_sd = 1; g_nohx = 1; any = 1; continue;
+            }
+            if (at_word("standard-binary"))
+                die_at(cur()->line, "ARITHMETIC IS STANDARD-BINARY (2023 8.8.1.4, obsolete) is not provided, by ruling (docs/plans/standard-queue.md item 49): STANDARD-DECIMAL is");
             if (at_word("standard"))
                 die_at(cur()->line, "ARITHMETIC IS STANDARD is COBOL 2002's, obsolete in 2014 and removed in 2023: write NATIVE");
             die_at(cur()->line, "expected NATIVE after ARITHMETIC IS, found %s", tok_desc(cur()));
@@ -124,6 +142,7 @@ static void parse_options_paragraph(void)
             else if (accept_word("nearest-even")) g_iround = 2;
             else if (accept_word("prohibited")) g_iround = 3;
             else die_at(cur()->line, "INTERMEDIATE ROUNDING IS: expected NEAREST-AWAY-FROM-ZERO, NEAREST-EVEN, PROHIBITED or TRUNCATION, found %s", tok_desc(cur()));
+            g_iround_given = 1;
             if (g_iround) g_nohx = 1;           /* the register paths truncate: this unit's arithmetic goes by the stacks, which round as asked */
             any = 1; continue;
         }
@@ -133,6 +152,7 @@ static void parse_options_paragraph(void)
     }
     if (any) expect_period();                   /* a terminating period when any clause is written (11.9.3) */
     else if (cur()->kind == T_PERIOD) advance();
+    if (g_arith_sd && !g_iround_given) g_iround = 1;    /* 11.9.11 GR 3a: NEAREST-AWAY-FROM-ZERO implied under STANDARD-DECIMAL */
 }
 
 static void parse_identification_division(void)

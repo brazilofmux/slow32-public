@@ -51,6 +51,9 @@ long long cob_get_edited(const void *vp, const cob_desc *d, int locale);
 int cob_put_edited(void *vp, const cob_desc *d, long long v, int vscale, int opts, int locale);
 void cob_wget(const void *vp, const cob_desc *d, cob_wnum *w);
 int cob_wput_x(void *vp, const cob_desc *d, const cob_wnum *win, int opts);
+static int cob_arith_sd, sd_sticky;              /* ARITHMETIC IS STANDARD-DECIMAL in effect; see the wide stack */
+static int iround_up(int half, int sticky, int odd);
+static void sd_round(cob_wnum *w);
 #include <term.h>
 #include <time.h>
 #include <sys/stat.h>
@@ -673,7 +676,7 @@ int cob_wput_x(void *vp, const cob_desc *d, const cob_wnum *win, int opts)
 {
     if (is_float(d)) { f_store(vp, d, w_to_dbl(win)); return 0; }
     if (is_sfloat(d)) return sf_store(vp, d, win) && (opts & 2);
-    if (win->isq && !win->isf && !is_natnum(d) && win->scale < d->scale - 60) {
+    if (win->isq && !win->isf && !cob_arith_sd && !is_natnum(d) && win->scale < d->scale - 60) {
         /* a floating value far past any receiver's digits */
         if (opts & 2) return 1;
         cob_wnum z; memset(&z, 0, sizeof z); z.scale = d->scale;
@@ -1646,6 +1649,10 @@ int cob_cmp(const void *a, const cob_desc *ad, const void *b, const cob_desc *bd
         return w_cmp_val(&x, &y);
     }
     if ((is_float(ad) || is_float(bd)) && is_numcat(ad) && is_numcat(bd)) {   /* in double (docs/usage.md) */
+        if (cob_arith_sd) {                                      /* STANDARD-DECIMAL (8.8.4.1.1): each as an SDIDI, then compared */
+            cob_wnum x, y; cob_wget(a, ad, &x); cob_wget(b, bd, &y); sd_round(&x); sd_round(&y);
+            return w_cmp_val(&x, &y);
+        }
         double x = num_dbl(a, ad), y = num_dbl(b, bd);
         return x < y ? -1 : x > y ? 1 : 0;
     }
@@ -2047,6 +2054,26 @@ static int div0;        /* a size error happened in this statement: 1 a zero div
  * to fit 38. */
 static int cob_iround;
 static int iround_stack[256]; static int iround_sp;
+/* ARITHMETIC IS STANDARD-DECIMAL (2014; 2023 8.8.1.5, 11.9.5 GR 3): the
+ * unit's arithmetic is decimal128's -- every operand and every result a
+ * standard-decimal intermediate (SDIDI) of at most 34 significant digits,
+ * rounded by cob_iround (NEAREST-AWAY-FROM-ZERO unless the unit's
+ * INTERMEDIATE ROUNDING says otherwise, 11.9.11 GR 3a), exponent -6176 to
+ * +6144 (overflow EC-SIZE-OVERFLOW, underflow EC-SIZE-UNDERFLOW).  Rides
+ * the wide stack's floating mode (isq: the scale runs negative, digits are
+ * shed for room, never a size error for size) with sd_round after each
+ * operation.  The inner sheds (alignment, a product past 38 digits, a
+ * quotient's remainder, fitting 38) truncate under this mode and record
+ * that something nonzero went (sd_sticky), so the one rounding to 34
+ * digits sees the whole dropped part and nothing rounds twice.  Set from
+ * the activation descriptor with cob_iround (docs/wide.md). */
+/* an inner shed's rounding: the mode's, or under STANDARD-DECIMAL none
+ * yet -- noted for sd_round */
+static int shed_up(int half, int sticky, int odd)
+{
+    if (cob_arith_sd) { if (half >= 0 || sticky) sd_sticky = 1; return 0; }
+    return cob_iround && iround_up(half, sticky, odd);
+}
 /* round up by one unit?  half: the first dropped digit against half a
  * unit (1 above, 0 exactly half, -1 below); sticky: more dropped below
  * it; odd: the kept value's last digit */
@@ -2055,7 +2082,7 @@ static int iround_up(int half, int sticky, int odd)
     switch (cob_iround) {
     case 1: return half >= 0;
     case 2: return half > 0 || (half == 0 && (sticky || odd));
-    case 3: if (half >= 0 || sticky) div0 = 2; return 0;
+    case 3: if (half >= 0 || sticky) div0 = 3; return 0;   /* PROHIBITED: an inexact intermediate is EC-SIZE-TRUNCATION (11.9.11 GR 2d, 3d) */
     default: return 0;
     }
 }
@@ -2077,12 +2104,12 @@ void cob_nmul(void)
         cob_num *w = a->scale >= b->scale ? a : b;
         if (w->scale == 0) w = w == a ? b : a;
         if (w->scale == 0) break;                    /* nothing left to shed: the store's size error catches it */
-        if (cob_iround) {
+        if (cob_iround || cob_arith_sd) {
             /* the digit shed, rounded into what stays (each step on its own:
              * the digits below it were already rounded away) */
             long long d = w->v % 10; int neg = w->v < 0; if (neg) d = -d;
             w->v /= 10; w->scale--;
-            if (iround_up(d > 5 ? 1 : d == 5 ? 0 : -1, 0, (int)((neg ? -w->v : w->v) & 1))) w->v += neg ? -1 : 1;
+            if (shed_up(d > 5 ? 1 : d == 5 ? 0 : -1, 0, (int)((neg ? -w->v : w->v) & 1))) w->v += neg ? -1 : 1;
             continue;
         }
         w->v /= 10; w->scale--;
@@ -2231,7 +2258,7 @@ int cob_ncmp(void)
     cob_num *a = &nstk[nsp - 2], *b = &nstk[nsp - 1];
     align2(a, b);
     int r = a->v < b->v ? -1 : a->v > b->v ? 1 : 0;
-    nsp -= 2;
+    nsp -= 2; div0 = 0;
     return r;
 }
 
@@ -2351,13 +2378,44 @@ static int w_fit_q(wl_t *a, int n, int *scale, int q)
         if (first >= 0 && first) rest = 1;
         first = (int)r;
     }
-    if (cob_iround && first >= 0 && iround_up(first > 5 ? 1 : first == 5 ? 0 : -1, rest, (int)(a[0] & 1))) mp_mul_small(a, n, 1, 1);
+    if (first >= 0 && shed_up(first > 5 ? 1 : first == 5 ? 0 : -1, rest, (int)(a[0] & 1))) mp_mul_small(a, n, 1, 1);
     return 1;
 }
 static int w_fit(wl_t *a, int n, int *scale) { return w_fit_q(a, n, scale, 0); }
 
-void cob_wpush(const void *p, const cob_desc *d) { wstk_room(); cob_wget(p, d, &wstk[wsp++]); }
-void cob_wpush_lit(long long v, int scale) { wstk_room(); w_from_i64(&wstk[wsp++], v, scale); }
+/* STANDARD-DECIMAL: the value just computed (or pushed) as an SDIDI -- 34
+ * significant digits, rounded by the unit's mode with the sheds' sticky
+ * bit; a double converted exactly first; the exponent range checked */
+static void sd_round(cob_wnum *w)
+{
+    if (!cob_arith_sd) return;
+    if (w->isf) { cob_wnum t; if (w_from_dbl_q(&t, w->f)) { sd_sticky = 0; return; } *w = t; }   /* an infinity or NaN stays a float: the store says what it can */
+    w->isq = 1;
+    int n = w_ndigits(w->m), odd;
+    if (n > 34) {
+        int half, nz, k = n - 34;
+        w_drop_digits(w->m, WL, k, &half, &nz); w->scale -= k;
+        odd = (int)(w->m[0] & 1);
+        if (iround_up(half, nz || sd_sticky, odd)) {
+            mp_mul_small(w->m, WL, 1, 1);
+            if (w_ndigits(w->m) > 34) { mp_div_small(w->m, WL, 10); w->scale--; }   /* 999...9 + 1 */
+        }
+    } else if (sd_sticky) iround_up(-1, 1, (int)(w->m[0] & 1));   /* inexact though it fits: PROHIBITED's condition */
+    sd_sticky = 0;
+    if (mp_is_zero(w->m, WL)) { w->neg = 0; return; }
+    n = w_ndigits(w->m);
+    if (n - w->scale - 1 > 6144) { div0 = 2; return; }           /* past 9.99...E+6144: EC-SIZE-OVERFLOW */
+    if (w->scale > 6176) {                                       /* below 1E-6176: subnormal digits go; nothing left is EC-SIZE-UNDERFLOW */
+        int half, nz, k = w->scale - 6176;
+        if (k >= 40) { memset(w->m, 0, sizeof w->m); w->scale = 6176; div0 = 5; return; }
+        w_drop_digits(w->m, WL, k, &half, &nz); w->scale = 6176;
+        if (iround_up(half, nz, (int)(w->m[0] & 1))) mp_mul_small(w->m, WL, 1, 1);
+        if (mp_is_zero(w->m, WL)) { w->neg = 0; div0 = 5; }
+    }
+}
+
+void cob_wpush(const void *p, const cob_desc *d) { wstk_room(); cob_wget(p, d, &wstk[wsp++]); sd_round(&wstk[wsp - 1]); }
+void cob_wpush_lit(long long v, int scale) { wstk_room(); w_from_i64(&wstk[wsp++], v, scale); sd_round(&wstk[wsp - 1]); }
 /* a statement that computes in double (a float among its operands or
  * receivers, docs/usage.md): every operand goes on as a double */
 void cob_fpush(const void *p, const cob_desc *d) { wstk_room(); w_set_f(&wstk[wsp++], num_dbl(p, d)); }
@@ -2365,8 +2423,8 @@ void cob_fpush_lit(long long v, int scale) { wstk_room(); w_set_f(&wstk[wsp++], 
 /* a statement that computes as floating decimals (a standard software
  * float among its operands or receivers): every operand goes on marked
  * so, and the stack sheds digits for room instead of a size error */
-void cob_qpush(const void *p, const cob_desc *d) { wstk_room(); cob_wget(p, d, &wstk[wsp]); if (!wstk[wsp].isf) wstk[wsp].isq = 1; wsp++; }
-void cob_qpush_lit(long long v, int scale) { wstk_room(); w_from_i64(&wstk[wsp++], v, scale); wstk[wsp - 1].isq = 1; }
+void cob_qpush(const void *p, const cob_desc *d) { wstk_room(); cob_wget(p, d, &wstk[wsp]); if (!wstk[wsp].isf) wstk[wsp].isq = 1; wsp++; sd_round(&wstk[wsp - 1]); }
+void cob_qpush_lit(long long v, int scale) { wstk_room(); w_from_i64(&wstk[wsp++], v, scale); wstk[wsp - 1].isq = 1; sd_round(&wstk[wsp - 1]); }
 
 /* one scale for both: the smaller scaled up while it has room below 38
  * digits, the rest shed from the larger (as align2) */
@@ -2379,7 +2437,7 @@ static void w_align2(cob_wnum *a, cob_wnum *b)
     if (up > 0) { w_scale_up(lo->m, up); lo->scale += up; }
     if (hi->scale > lo->scale) {
         int half, nz; w_drop_digits(hi->m, WL, hi->scale - lo->scale, &half, &nz); hi->scale = lo->scale;
-        if (cob_iround && iround_up(half, nz && half < 0 ? 1 : 0, (int)(hi->m[0] & 1))) mp_mul_small(hi->m, WL, 1, 1);
+        if (shed_up(half, nz && half < 0 ? 1 : 0, (int)(hi->m[0] & 1))) mp_mul_small(hi->m, WL, 1, 1);
     }
 }
 
@@ -2399,6 +2457,7 @@ static void w_addsub(cob_wnum *a, const cob_wnum *b0, int sub)
     else { wl_t t[WL]; memcpy(t, b.m, sizeof t); mp_sub(t, a->m, WL); memcpy(a->m, t, sizeof t); a->neg = b.neg; }
     if (mp_is_zero(a->m, WL)) a->neg = 0;
     a->isq = q;
+    sd_round(a);
 }
 
 void cob_wadd(void) { w_addsub(&wstk[wsp - 2], &wstk[wsp - 1], 0); wsp--; }
@@ -2412,15 +2471,16 @@ static void w_mul(cob_wnum *a, const cob_wnum *b)
     wl_t p[2 * WL];
     mp_mul(a->m, WL, b->m, WL, p);
     int scale = a->scale + b->scale, q = a->isq || b->isq;
-    if (scale > 38) {
+    if (scale > 38 && !q) {                     /* a floating product keeps its scale (a product below 1E-38 vanished) */
         int half, nz; w_drop_digits(p, 2 * WL, scale - 38, &half, &nz); scale = 38;
-        if (cob_iround && iround_up(half, nz && half < 0 ? 1 : 0, (int)(p[0] & 1))) mp_mul_small(p, 2 * WL, 1, 1);
+        if (shed_up(half, nz && half < 0 ? 1 : 0, (int)(p[0] & 1))) mp_mul_small(p, 2 * WL, 1, 1);
     }
     if (!w_fit_q(p, 2 * WL, &scale, q)) { div0 = 2; return; }
     memcpy(a->m, p, sizeof a->m);
     a->scale = scale;
     a->neg = a->neg != b->neg && !mp_is_zero(a->m, WL);
     a->isq = q;
+    sd_round(a);
 }
 void cob_wmul(void) { w_mul(&wstk[wsp - 2], &wstk[wsp - 1]); wsp--; }
 
@@ -2458,7 +2518,8 @@ static void w_div(cob_wnum *a, const cob_wnum *b)
     for (int i = 0; i < -k; i++) mp_mul_small(dv, 2 * WL, 10, 0);
     mp_divmod(n, dv, 2 * WL, q, r);                 /* a*10^k/b, or a/(b*10^-k): scale want either way */
     int scale = want;
-    if (cob_iround && !mp_is_zero(r, 2 * WL) && scale <= 38) {
+    if (cob_arith_sd && !mp_is_zero(r, 2 * WL)) sd_sticky = 1;        /* the remainder: something nonzero below the quotient */
+    if (cob_iround && !cob_arith_sd && !mp_is_zero(r, 2 * WL) && scale <= 38) {
         /* the remainder against half the divisor: 2r vs dv */
         wl_t r2[2 * WL]; memcpy(r2, r, sizeof r2); mp_mul_small(r2, 2 * WL, 2, 0);
         int c = mp_cmp(r2, dv, 2 * WL);
@@ -2466,13 +2527,14 @@ static void w_div(cob_wnum *a, const cob_wnum *b)
     }
     if (scale > 38 && !fq) {
         int half, nz; w_drop_digits(q, 2 * WL, scale - 38, &half, &nz); scale = 38;
-        if (cob_iround && iround_up(half, (nz && half < 0) || !mp_is_zero(r, 2 * WL) ? 1 : 0, (int)(q[0] & 1))) mp_mul_small(q, 2 * WL, 1, 1);
+        if (shed_up(half, (nz && half < 0) || !mp_is_zero(r, 2 * WL) ? 1 : 0, (int)(q[0] & 1))) mp_mul_small(q, 2 * WL, 1, 1);
     }
     if (!w_fit_q(q, 2 * WL, &scale, fq)) { div0 = 2; return; }
     int neg = a->neg != b->neg;
     memcpy(a->m, q, sizeof a->m); a->scale = scale;
     a->neg = neg && !mp_is_zero(a->m, WL);
     a->isq = fq;
+    sd_round(a);
 }
 void cob_wdiv(void) { w_div(&wstk[wsp - 2], &wstk[wsp - 1]); wsp--; }
 
@@ -2491,21 +2553,34 @@ void cob_wpow(void)
     cob_wnum *a = &wstk[wsp - 2], *b = &wstk[wsp - 1];
     int frac = 0;
     if (!b->isf && b->scale > 0) { cob_wnum t = *b; w_drop_digits(t.m, WL, t.scale, 0, &frac); }
-    if (a->isf || b->isf || frac || (b->neg && !mp_is_zero(b->m, WL))) {
+    int negexp = b->neg && !mp_is_zero(b->m, WL) && !b->isf && !frac;
+    if (cob_arith_sd && negexp) {
+        /* STANDARD-DECIMAL (8.8.1.5.4 rule 3): 1 / (operand-1 ** |operand-2|), in SDIDI arithmetic */
+        if (mp_is_zero(a->m, WL)) { div0 = 4; wsp--; return; }                     /* a zero base to a negative power (8.8.1.2 rule 6a) */
+        cob_wnum e = *b; e.neg = 0; cob_wnum base = *a, one; w_from_i64(&one, 1, 0); one.isq = 1;
+        wstk[wsp - 2] = base; wstk[wsp - 1] = e; cob_wpow();
+        cob_wnum p = wstk[wsp - 1]; wstk[wsp - 1] = one; wstk_room(); wstk[wsp++] = p; cob_wdiv();
+        return;
+    }
+    if (a->isf || b->isf || frac || negexp) {
         /* a float, or a fractional or negative exponent: in double; a zero
          * base to such a power, or a negative one to a fraction, is a size
          * error */
         double x = w_to_dbl(a), y = w_to_dbl(b);
         int bad = (x == 0 && y <= 0) || (x < 0 && y != floor(y));
         double r = bad ? 0 : pow(x, y);
-        if (bad || r != r) div0 = 4; else w_set_f(a, r);   /* 2023 8.8.1.2 rule 6a, 6c: EC-SIZE-EXPONENTIATION */
+        if (bad || r != r) div0 = 4; else { w_set_f(a, r); sd_round(a); }   /* 2023 8.8.1.2 rule 6a, 6c: EC-SIZE-EXPONENTIATION */
         wsp--; return;
     }
     if (b->scale > 0) { w_drop_digits(b->m, WL, b->scale, 0, 0); b->scale = 0; }
     if (mp_is_zero(a->m, WL) && mp_is_zero(b->m, WL)) { div0 = 4; wsp--; return; }   /* zero to the power zero (rule 6a) */
     if (b->m[1] || b->m[2] || b->m[3] || b->m[0] > 1000) cob_fatal("** with an exponent past 1000 is not implemented");
     cob_wnum r; w_from_i64(&r, 1, 0);
-    for (wl_t i = 0; i < b->m[0] && !div0; i++) w_mul(&r, a);
+    if (cob_arith_sd && b->m[0] == 4) {
+        /* 8.8.1.5.4 rule 2d: (x * x) * (x * x), each product rounded as an SDIDI */
+        r = *a; w_mul(&r, a); cob_wnum s = r; if (!div0) w_mul(&r, &s);
+    } else for (wl_t i = 0; i < b->m[0] && !div0; i++) w_mul(&r, a);   /* rules 2a-c and e: x, x*x, (x*x)*x, then on by one */
+    if (cob_arith_sd) r.isq = 1;
     *a = r;
     wsp--;
 }
@@ -2513,12 +2588,13 @@ void cob_wpow(void)
 int cob_wcmp(void)
 {
     int r = w_cmp_val(&wstk[wsp - 2], &wstk[wsp - 1]);
-    wsp -= 2;
+    wsp -= 2; sd_sticky = 0; div0 = 0;          /* a condition has no size error phrase: its intermediates' note ends with it */
     return r;
 }
 
 int cob_wtop_store(void *p, const cob_desc *d, int opts)
 {
+    sd_sticky = 0;                              /* the statement's own: not carried into the next */
     if (div0) { size_kind = div0; return 1; }
     if (wstk[wsp - 1].isf) opts |= 1;           /* a floating-point result is always rounded (MF: ROUNDED documentary) */
     int r = cob_wput_x(p, d, &wstk[wsp - 1], opts);
@@ -2528,6 +2604,7 @@ int cob_wtop_store(void *p, const cob_desc *d, int opts)
 
 static int w_top_addsub(void *p, const cob_desc *d, int opts, int sub)
 {
+    sd_sticky = 0;
     if (div0) { size_kind = div0; return 1; }
     cob_wnum a; cob_wget(p, d, &a);
     w_addsub(&a, &wstk[wsp - 1], sub);
@@ -2539,7 +2616,7 @@ static int w_top_addsub(void *p, const cob_desc *d, int opts, int sub)
 }
 int cob_wtop_addto(void *p, const cob_desc *d, int opts) { return w_top_addsub(p, d, opts, 0); }
 int cob_wtop_subfrom(void *p, const cob_desc *d, int opts) { return w_top_addsub(p, d, opts, 1); }
-void cob_wdrop(void) { if (wsp) wsp--; div0 = 0; }
+void cob_wdrop(void) { if (wsp) wsp--; div0 = 0; sd_sticky = 0; }
 
 /* A value taken off the numeric stack into a buffer of the program's, and
  * pushed again from it as often as wanted: an EVALUATE subject is
@@ -2853,8 +2930,9 @@ void *cob_act_enter(int *desc)
     if (act_depth < 256) act_names[act_depth] = (h->recursive & 2) ? NULL : h->name;
     act_depth++;
     /* the unit's INTERMEDIATE ROUNDING (bits 8- of the second word), the caller's kept for the leave */
-    if (iround_sp < 256) iround_stack[iround_sp++] = cob_iround;
-    cob_iround = h->recursive >> 8;
+    if (iround_sp < 256) iround_stack[iround_sp++] = cob_iround | (cob_arith_sd << 8);
+    cob_iround = (h->recursive >> 8) & 15;
+    cob_arith_sd = (h->recursive >> 12) & 1;                       /* ARITHMETIC IS STANDARD-DECIMAL (docs/wide.md) */
     int **words = (int **)(desc + 5);
     int *loc = desc + 5 + h->nwords, nl = loc[0];
     if (!h->active && h->cache) {
@@ -2897,7 +2975,7 @@ void cob_act_leave(int *desc, void *block)
     cob_act_hdr *h = (cob_act_hdr *)desc;
     h->active--;
     if (act_depth > 0) act_depth--;
-    if (iround_sp > 0) cob_iround = iround_stack[--iround_sp];
+    if (iround_sp > 0) { int v = iround_stack[--iround_sp]; cob_iround = v & 15; cob_arith_sd = (v >> 8) & 1; }
     if (!block || block == h->cache) return;      /* the outermost: nothing saved, the block kept */
     int **words = (int **)(desc + 5);
     for (int k = 0; k < h->nwords; k++) *words[k] = ((int *)block)[k];
@@ -8703,7 +8781,7 @@ static char *fn_wresult(const cob_wnum *w, int fscale)
     int ws = w->scale > 38 ? 38 : w->scale;
     int intd = nd - ws; if (intd < 0) intd = 0;
     int scale = ws > fscale ? ws : fscale;
-    int iw = 18 - fscale; if (intd > iw) iw = intd;
+    int iw = cob_arith_sd ? 1 : 18 - fscale; if (intd > iw) iw = intd;   /* STANDARD-DECIMAL: the value's own width, all 34 digits kept */
     if (iw + scale > 38) scale = 38 - iw;
     char *b = fn_buffer(40);
     int zero = nd == 0;
@@ -8952,6 +9030,7 @@ char *cob_fn_wnum(int which, int n, int fscale)
     default: cob_fatal("internal: cob_fn_wnum of a function it does not compute");
     }
     wsp -= n;
+    sd_round(&r);
     return fn_wresult(&r, fscale);
 }
 

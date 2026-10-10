@@ -96,7 +96,8 @@ static void emit_push(Opnd *o)
 {
     int w = (o->kind == O_NUM && numlit_wide(&o->num)) || (o->kind == O_REF && !o->ref.rm && sym_wide(o->ref.sym));
     if (w || fn_inexact(o)) g_saw_wide = 1;
-    if (o->kind == O_REF && o->ref.sym->usage == U_FLOAT) g_saw_float = 1;
+    if (g_arith_sd) { g_saw_wide = 1; g_saw_qfloat = 1; }      /* STANDARD-DECIMAL: every operand an SDIDI on the wide stack */
+    if (o->kind == O_REF && o->ref.sym->usage == U_FLOAT && !g_arith_sd) g_saw_float = 1;   /* under STANDARD-DECIMAL a float is an SDIDI, not a double statement */
     if (o->kind == O_REF && o->ref.sym->usage == U_DFLOAT) g_saw_qfloat = 1;
     if (w && !g_wide && !g_noemit) wide_arith_refuse(o->line, o->kind == O_NUM ? "a literal" : "an item");
     if (g_wide && o->kind == O_NUM && numlit_wide(&o->num)) {
@@ -724,18 +725,20 @@ static int arith_composite(const Opnd *ops, int n, const Ref *rs, int nr, const 
  * or receiver past 18 digits, or -- 2002's 31 -- a composite past 18 */
 static int opnds_wide(const Opnd *ops, int n)
 {
-    for (int k = 0; k < n; k++)
+    if (g_arith_sd) g_qstmt = 1;                                 /* STANDARD-DECIMAL: wide, as floating decimals */
+    for (int k = 0; !g_arith_sd && k < n; k++)
         if ((ops[k].kind == O_REF && ops[k].ref.sym->usage == U_FLOAT) || (ops[k].kind == O_EXPR && ops[k].flt)) g_fstmt = 1;
     for (int k = 0; k < n; k++)
         if ((ops[k].kind == O_REF && ops[k].ref.sym->usage == U_DFLOAT) || (ops[k].kind == O_EXPR && ops[k].qflt)) g_qstmt = 1;
     for (int k = 0; k < n; k++)
         if ((ops[k].kind == O_REF && !ops[k].ref.rm && sym_wide(ops[k].ref.sym)) || (ops[k].kind == O_NUM && numlit_wide(&ops[k].num)) ||
             (ops[k].kind == O_EXPR && ops[k].wide) || fn_inexact(&ops[k])) return 1;
-    return 0;
+    return g_arith_sd;
 }
 static int refs_wide(const Ref *rs, int nr)
 {
-    for (int k = 0; k < nr; k++) if (rs[k].sym->usage == U_FLOAT) g_fstmt = 1;
+    if (g_arith_sd) g_qstmt = 1;
+    for (int k = 0; !g_arith_sd && k < nr; k++) if (rs[k].sym->usage == U_FLOAT) g_fstmt = 1;
     for (int k = 0; k < nr; k++) if (rs[k].sym->usage == U_DFLOAT) g_qstmt = 1;
     for (int k = 0; k < nr; k++) if (!rs[k].rm && sym_wide(rs[k].sym)) return 1;
     return 0;

@@ -248,8 +248,8 @@ section finds only the USE procedures declared before it in the source
 | EC-SIZE-EXPONENTIATION | Fatal | **test**: 2002/ecsizeexp |
 | EC-SIZE-IMP | Imp | **ruling**: no implementor-defined condition is defined here, so it never arises |
 | EC-SIZE-OVERFLOW | Fatal | **test**: 2002/ecovfl, 2002/ecsizeexp, 2002/ecraise |
-| EC-SIZE-TRUNCATION | Fatal | **test**: 2002/ecsize |
-| EC-SIZE-UNDERFLOW | Fatal | **gap**: floating-point underflow is not detected (the IEEE usages, items 15 and 20-21) |
+| EC-SIZE-TRUNCATION | Fatal | **test**: 2002/ecsize; INTERMEDIATE ROUNDING IS PROHIBITED's inexact intermediate (11.9.11 GR 2d, 3d) raises it since 2026-10-09 (it raised EC-SIZE-OVERFLOW): 2014/stddec |
+| EC-SIZE-UNDERFLOW | Fatal | under STANDARD-DECIMAL, an intermediate below 1E-6176 that comes to nothing (8.8.1.5.2 rule 2; 2026-10-09, the runtime's size kind 5); **gap** for the IEEE usages' own underflow (items 15 and 20-21) |
 | EC-SIZE-ZERO-DIVIDE | Fatal | **test**: 2002/eczdiv |
 
 ## EC-SORT-MERGE

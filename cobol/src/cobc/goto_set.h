@@ -220,18 +220,18 @@ static void parse_resume(void)
 static int ec_size_on(void)
 {
     if (g_std < 2002) return 0;
-    static const char *n[] = { "EC-SIZE-ZERO-DIVIDE", "EC-SIZE-OVERFLOW", "EC-SIZE-TRUNCATION", "EC-SIZE-EXPONENTIATION" };
-    for (int k = 0; k < 4; k++) if (g_ecs.on[ec_find(n[k], 0)]) return 1;
+    static const char *n[] = { "EC-SIZE-ZERO-DIVIDE", "EC-SIZE-OVERFLOW", "EC-SIZE-TRUNCATION", "EC-SIZE-EXPONENTIATION", "EC-SIZE-UNDERFLOW" };
+    for (int k = 0; k < 5; k++) if (g_ecs.on[ec_find(n[k], 0)]) return 1;
     return 0;
 }
 
 static void emit_ec_size(void)
 {
-    static const char *n[] = { "EC-SIZE-ZERO-DIVIDE", "EC-SIZE-OVERFLOW", "EC-SIZE-TRUNCATION", "EC-SIZE-EXPONENTIATION" };
+    static const char *n[] = { "EC-SIZE-ZERO-DIVIDE", "EC-SIZE-OVERFLOW", "EC-SIZE-TRUNCATION", "EC-SIZE-EXPONENTIATION", "EC-SIZE-UNDERFLOW" };   /* the runtime's size_kind 1-5 */
     int Ldone = new_label();
     emit_call("cob_size_kind");
     emit("\tadd r13, r1, r0");
-    for (int k = 0; k < 4; k++) {
+    for (int k = 0; k < 5; k++) {
         int i = ec_find(n[k], 0);
         if (!g_ecs.on[i]) continue;
         int Lnext = new_label();

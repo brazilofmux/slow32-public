@@ -78,6 +78,8 @@ static char g_cursor_name[64];       /* SPECIAL-NAMES CURSOR IS name */
 static int g_same[8][16], g_nsame[8], g_nsame_groups;
 static int g_nohx;                           /* -fno-hot-arith: the register paths and their peepholes off -- the code as before them (a differential's other side); also a unit's INTERMEDIATE ROUNDING */
 static int g_init_fill_ws = -1, g_init_fill_ls = -1;   /* OPTIONS INITIALIZE (2023 11.9.10): the fill byte of a WORKING-STORAGE / LOCAL-STORAGE item with no VALUE, -1 none (the implementor's default) */
+static int g_arith_sd;                       /* OPTIONS ARITHMETIC IS STANDARD-DECIMAL (2023 11.9.5 GR 3, 8.8.1.5): this unit's arithmetic as decimal128's, on the wide stack's floating mode (docs/wide.md) */
+static int g_iround_given;                   /* the INTERMEDIATE ROUNDING clause written (under STANDARD-DECIMAL the default is NEAREST-AWAY-FROM-ZERO, 11.9.11 GR 3a) */
 static int g_iround;                         /* OPTIONS INTERMEDIATE ROUNDING (2023 11.9.11): 0 TRUNCATION (the default), 1 NEAREST-AWAY-FROM-ZERO, 2 NEAREST-EVEN, 3 PROHIBITED; in the activation descriptor's second word above bit 8 */
 static int g_refmod_zero;                    /* >>REF-MOD-ZERO-LENGTH ON is in effect: a reference modification may resolve to a zero-length item (2023 7.3.23; control.h) */
 static int g_refmod_zero_set;                /* ... and the directive has been written, ON or OFF (FLAG-14 REF-MOD-ZERO-LENGTH flags a reference modification while it has not) */

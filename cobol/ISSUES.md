@@ -6577,3 +6577,61 @@ alphanumeric truncation) recorded there. gen-national.py's model applies
 the rule: 40 of 40 agree, 37 lines meeting a pair at a cut. Test
 2002/nattrunc; 2014/natfuncs2's two lines that documented the old
 behaviour updated.
+
+
+### 133. Standard arithmetic modes (queue item 49): ARITHMETIC IS STANDARD-DECIMAL (2026-10-09)
+
+The last substantial item of the standard queue.  2023 8.8.1.5 defines
+the standard-decimal intermediate (SDIDI) as decimal128: 34 significant
+digits, exponent -6176..6144, every operation rounded as ISO/IEC 60559
+has it, the mode from INTERMEDIATE ROUNDING (NEAREST-AWAY-FROM-ZERO
+implied).  Built on the wide stack's floating mode (`isq`, the standard
+software floats' -- the scale runs negative, digits are shed for room)
+with one addition, `sd_round` after every operation and push: at most
+34 digits, `iround_up` deciding with the sheds' sticky bit, the exponent
+range checked (overflow kind 2, EC-SIZE-OVERFLOW; underflow a new kind 5,
+EC-SIZE-UNDERFLOW, when nothing is left below 1E-6176).  `cob_arith_sd`
+comes from bit 12 of the activation descriptor, saved and restored with
+the rounding mode, so a contained program inherits the clause (11.9.4)
+and one saying NATIVE drops the implied mode with it.
+
+The compiler (`g_arith_sd`, divisions.h): every arithmetic statement,
+expression, comparison with an expression and numeric function of the
+unit takes the wide floating-decimal path (`opnds_wide`, `refs_wide`,
+`emit_push`, expr.h; `narrow_ok` off for functions); a float operand no
+longer makes the statement a double one; `cob_cmp` of a float item
+under the mode converts both to SDIDIs.  STANDARD-BINARY stays refused,
+by the 2026-10-07 ruling, with a message that says so and names the
+mode that is provided.
+
+What the work found, each by a disagreement with the witness or the
+hand test and each a defect outside the new mode too:
+- the wide multiply cut a floating product's scale to 38, so a product
+  below 1E-38 vanished in FLOAT-DECIMAL statements (fixed: `!q`);
+- a comparison's intermediates could leave the size flag set, and the
+  next statement's store reported a size error that was not its own
+  (fixed: `cob_wcmp` and `cob_ncmp` clear it);
+- PROHIBITED's inexact intermediate raised EC-SIZE-OVERFLOW; 11.9.11 GR
+  2d and 3d say EC-SIZE-TRUNCATION (fixed, NATIVE included);
+- `fn_wresult` widened a function value's integer part to 18 - fscale
+  digits and so cut its decimals to 29: MEAN(1 2 2) * 3 was 4.99 under
+  the mode (under it the value keeps its own width).
+
+Witness: Python's decimal module, Context(prec=34, rounding=<mode>,
+Emax=6144, Emin=-6143), which is decimal128; tests/gen/gen-stddec.py
+writes a random program (six items of 1-31 digits, literals to 31
+digits and 1E22, + - * / and ** 0-4, unary minus, four receivers,
+ROUNDED, ON SIZE ERROR, relation conditions; the mode by seed) and its
+reference, gate gen/stddec runs forty: 40 of 40 agree.  Three
+generator defects on the way, worth remembering for the next one: a
+statement raised mid-expression left stale text behind (the program
+and the model evaluated different statements -- build the whole text,
+carry an error flag); unary minus binds before `**` in COBOL, so its
+operand is parenthesized; a 31-digit quantize needs a context wider
+than Python's default 28.  Neither GnuCOBOL (the clause "not
+implemented", a warning) nor gcobol (computes natively) is an oracle.
+Tests 2014/stddec (the visible differences from NATIVE: 2 / 3 * 3 is 2,
+1E40 an intermediate, a double's exact value, MEAN * 3, SDIDI
+comparison, 2 ** -2; one contained program per rounding mode; a NATIVE
+one; EC-SIZE-OVERFLOW checked last), bad/std2014-arith-standard-binary,
+bad/std2002-arith-standard-decimal.

@@ -42,6 +42,7 @@ for s in $(seq "$FIRST" "$last"); do
         echo "seed $s: DIFFERS ($(LC_ALL=C diff "$W/r$s/ref.txt" "$W/r$s/out.txt" | grep -c '^<') lines; see $W/r$s)"; bad=$((bad + 1))
     fi
 done
-echo "$((COUNT - bad)) of $COUNT agree, $splits reference lines drop a surrogate pair at a cut"
+if [ "$splits" -gt 0 ]; then echo "$((COUNT - bad)) of $COUNT agree, $splits reference lines drop a surrogate pair at a cut"
+else echo "$((COUNT - bad)) of $COUNT agree"; fi
 [ $bad -eq 0 ] && rmdir "$W" 2>/dev/null
 exit $((bad > 0))

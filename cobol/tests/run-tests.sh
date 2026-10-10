@@ -765,9 +765,19 @@ if command -v python3 >/dev/null 2>&1 || [ -n "${GENDIR:-}" ]; then      # GENDI
             *)                 report "gen/national" 1 "$fout" ;;
         esac
     else echo "SKIP  gen/national  (no python3, and GENDIR holds no national-N.ref)"; GEN_SKIPPED="${GEN_SKIPPED:-} gen/national"; fi
+    # ARITHMETIC IS STANDARD-DECIMAL against Python's decimal module at
+    # precision 34 -- decimal128 arithmetic, the standard's SDIDI (gen-stddec.py;
+    # no oracle: GnuCOBOL has the clause as not implemented, gcobol as NATIVE)
+    if command -v python3 >/dev/null 2>&1 || [ -f "${GENDIR:-/nonexistent}/stddec-1.ref" ]; then
+        fout="$(GEN=stddec "$HERE/gen/run-ref.sh" 1 40 40 2>&1 | tail -1)"
+        case "$fout" in
+            "40 of 40 agree"*) report "gen/stddec" 0 "40 programs against decimal128 (Python's decimal, precision 34), all five rounding modes" ;;
+            *)                 report "gen/stddec" 1 "$fout" ;;
+        esac
+    else echo "SKIP  gen/stddec  (no python3, and GENDIR holds no stddec-N.ref)"; GEN_SKIPPED="${GEN_SKIPPED:-} gen/stddec"; fi
 else
-    for g in gen/loop gen/held gen/native gen/hir gen/national; do echo "SKIP  $g  (no python3 to write the programs)"; done
-    GEN_SKIPPED=" gen/loop gen/held gen/native gen/hir gen/national"
+    for g in gen/loop gen/held gen/native gen/hir gen/national gen/stddec; do echo "SKIP  $g  (no python3 to write the programs)"; done
+    GEN_SKIPPED=" gen/loop gen/held gen/native gen/hir gen/national gen/stddec"
 fi
 
 # Gate 8 (sanitizers): the compiler itself, built with the address and

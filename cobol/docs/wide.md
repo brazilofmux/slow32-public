@@ -82,6 +82,56 @@ taught the modes: a unit with the clause takes the stack paths
 between the two paths that `ccvs/both-paths` keeps does not apply to
 such a unit.
 
+## Standard-decimal arithmetic (2014, queue item 49)
+
+`OPTIONS. ARITHMETIC IS STANDARD-DECIMAL.` (2023 8.8.1.5, 11.9.5 GR 3)
+makes a unit's arithmetic decimal128's: every operand and every
+intermediate is a standard-decimal intermediate data item (SDIDI) of at
+most 34 significant digits, each operation rounded once by the unit's
+INTERMEDIATE ROUNDING mode (NEAREST-AWAY-FROM-ZERO implied, 11.9.11 GR
+3a), the exponent from -6176 to 6144, past which EC-SIZE-OVERFLOW and
+EC-SIZE-UNDERFLOW are the size error condition.  Implemented 2026-10-09
+(ISSUES 133) on this stack's floating mode -- the `isq` mode the standard
+software floats brought, where the scale runs negative and digits are
+shed for room rather than reported as a size error -- plus `sd_round`
+after each operation and each push.  The compiler marks the unit
+(`g_arith_sd`, bit 12 of the activation descriptor, saved and restored
+with the rounding mode) and sends every arithmetic statement,
+expression, comparison and numeric function of the unit down the wide
+floating-decimal path; a float operand is converted exactly rather than
+making the statement a double one; a function's value keeps all its
+digits (fn_wresult no longer widens the integer part to 18 - fscale).
+
+Three things make the rounding ISO/IEC 60559's and not a double one.
+The inner sheds -- alignment, a product past 38 digits, a quotient's
+remainder, fitting 38 -- truncate under this mode and set `sd_sticky`
+when anything nonzero went, so the one rounding to 34 digits sees the
+whole dropped part (`shed_up`).  The floating multiply keeps a scale
+past 38 (a product below 1E-38 used to vanish in `isq` statements too).
+And a comparison clears the size flag its intermediates may have set,
+which otherwise leaked into the next statement's store (a native
+hazard as well, now closed).  Exponentiation follows 8.8.1.5.4: x,
+x*x, (x*x)*x, (x*x)*(x*x), then one multiply at a time; a negative
+exponent is 1 / (x ** |n|) in SDIDI arithmetic; a fractional one is the
+double's, rounded to an SDIDI.  Functions with an equivalent
+arithmetic expression (MEAN, MEDIAN, VARIANCE, SUM, ...) compute it on
+the stack; the transcendental ones are the double's 15 digits, as
+15.4.1 allows.  PROHIBITED's inexact intermediate is EC-SIZE-TRUNCATION
+(11.9.11 GR 2d/3d; it was raised as EC-SIZE-OVERFLOW, fixed for NATIVE
+too).
+
+Witness: Python's decimal module with precision 34, the mode's rounding,
+Emax 6144 and Emin -6143 is decimal128 as the standard defines the
+SDIDI; tests/gen/gen-stddec.py writes random programs (items of 1-31
+digits, literals to 31 digits and 1E22, the four operations,
+exponents 0-4, unary minus, ROUNDED, ON SIZE ERROR, comparisons, one
+of the five rounding modes per seed) and their reference from that
+module, and gen/stddec runs forty of them.  GnuCOBOL warns the clause
+is not implemented and gcobol computes natively, so neither is an
+oracle; 2014/stddec is the hand test.  Not done: STANDARD-BINARY
+(refused by ruling); a function value past 38 digits (fn_wresult's
+form); `**` with an exponent past 1000.
+
 ## Status
 
 Phases 1 and 2 are done (ISSUES-117): 2002/wide1-3, and

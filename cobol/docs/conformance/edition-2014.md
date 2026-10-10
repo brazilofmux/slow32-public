@@ -19,7 +19,7 @@ taken on purpose, and every one of these is the edition's own rule.
 |---|---|---|---|
 | 1 | ACTIVE-CLASS restrictions (object orientation) | **n/a**: objects are out of scope (docs/standards.md) | the same |
 | 2 | alphabetic items only where a rule allows them | each statement's own operand rule (the sweeps): UNSTRING refuses an alphabetic sender or delimiter (14.9.48.3 rule 2); STRING and INSPECT take one, their rules asking for usage DISPLAY or NATIONAL, which an alphabetic item is | the same |
-| 3 | ARITHMETIC IS STANDARD obsolete, processor-dependent | **refused** ("not implemented"); NATIVE, STANDARD-BINARY and STANDARD-DECIMAL are what options.md has | the same |
+| 3 | ARITHMETIC IS STANDARD obsolete, processor-dependent | **refused** ("removed in 2023: write NATIVE"); NATIVE and STANDARD-DECIMAL are implemented, STANDARD-BINARY refused by ruling (options.md 11.9.5) | the same |
 | 4, 5 | one coded character value for SPACE, ZERO, QUOTE, the editing characters, the digits, the currency symbol, in the alphanumeric and national sets | holds: ASCII in UTF-8 and UTF-16BE, one value each | the same |
 | 6 | two Unicode letters (U+2118, U+212E) no longer in user-defined words | holds: extended letters are Annex B's of 2023 (lexical.md, 2026-10-07), which has neither | the same |
 | 7 | CLOSE WITH NO REWIND, or CLOSE UNIT, of a file not on unit media sets I-O status 07 | NO REWIND closes with 00; REEL/UNIT gave 07 already | **changed**: NO REWIND closes and sets 07 (`cob_close_norewind`); REEL/UNIT 07 as before. Test 2014/e2audit |

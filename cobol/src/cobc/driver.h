@@ -44,7 +44,7 @@ static void emit_act_desc(void)
     emit("\t.p2align 2");
     emit(".Lact%d:\t# activation descriptor", g_unit);
     emit("\t.word 0");                              /* active instances */
-    emit("\t.word %d", g_recursive | (unit_is_contained(g_unit) << 1) | (g_iround << 8));   /* bit 0 RECURSIVE; bit 1 a contained program; bits 8-: INTERMEDIATE ROUNDING's mode */
+    emit("\t.word %d", g_recursive | (unit_is_contained(g_unit) << 1) | (g_iround << 8) | (g_arith_sd << 12));   /* bit 0 RECURSIVE; bit 1 a contained program; bits 8-11 INTERMEDIATE ROUNDING's mode; bit 12 STANDARD-DECIMAL */
     emit("\t.word %s", nlab);
     emit("\t.word 0");                              /* the outermost activation's block, kept (cob_act_enter) */
     emit("\t.word %d", nw);
@@ -563,7 +563,7 @@ int main(int argc, char **argv)
          * by END PROGRAM */
         g_nsym = 0; g_nfile = 0; g_npara = 0; g_nreport = 0; g_report_base = 0; g_nscreen = 0; g_screen_base = 0; g_nclass = 0; g_nswitch = 0; g_nalphabet = 0; g_nmnemonic = 0; g_nlocale = 0; g_norder = 0; g_last_item = -1;
         g_nsame_groups = 0; g_collate = -1; g_collate_name[0] = 0; g_lowval = 0x00; g_highval = 0xFF; g_cur_fd = -1; g_in_linkage = 0;
-        g_sym_base = g_file_base = g_para_base = 0; g_udepth = 0; g_nuse = 0; g_initial = 0; g_recursive = 0; g_nsymch = 0; g_default_rmode = 0; g_float_bigend = 0; g_float_dpd = 0; g_iround = 0; g_nohx = g_nohx_cli; g_init_fill_ws = g_init_fill_ls = -1;
+        g_sym_base = g_file_base = g_para_base = 0; g_udepth = 0; g_nuse = 0; g_initial = 0; g_recursive = 0; g_nsymch = 0; g_default_rmode = 0; g_float_bigend = 0; g_float_dpd = 0; g_iround = 0; g_arith_sd = 0; g_iround_given = 0; g_nohx = g_nohx_cli; g_init_fill_ws = g_init_fill_ls = -1;
         g_in_proc = 0;
         parse_identification_division();
         parse_environment_division();

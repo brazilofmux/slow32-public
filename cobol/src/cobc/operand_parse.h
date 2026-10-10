@@ -626,6 +626,7 @@ static int fn89_parse(Opnd *o, Tok *n)
      * costs it several times over. */
     int narrow_ok = o->fkind == FK_NUMS && (o->fnid == COB_FN_MOD || o->fnid == COB_FN_INTEGER || o->fnid == COB_FN_INTEGER_PART ||
                                             o->fnid == COB_FN_SIGN || o->fnid == COB_FN_ORD_MAX || o->fnid == COB_FN_ORD_MIN);
+    if (g_arith_sd) narrow_ok = 0;                               /* STANDARD-DECIMAL: a function's value is an SDIDI (15.4.1) */
     for (int i = 0; narrow_ok && i < o->nfargs; i++)
         if ((o->fargs[i]->kind != O_REF && o->fargs[i]->kind != O_NUM) || opnds_wide(o->fargs[i], 1)) narrow_ok = 0;
     if (!narrow_ok &&
