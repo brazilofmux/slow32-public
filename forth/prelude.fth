@@ -52,10 +52,10 @@
 
 \ --- CASE/OF/ENDOF/ENDCASE ---
 \ Usage: ( n ) CASE  1 OF ." one" ENDOF  2 OF ." two" ENDOF  ." default" ENDCASE
-: CASE    0 ; IMMEDIATE
-: OF      POSTPONE OVER POSTPONE = POSTPONE IF POSTPONE DROP ; IMMEDIATE
-: ENDOF   POSTPONE ELSE ; IMMEDIATE
-: ENDCASE POSTPONE DROP  BEGIN ?DUP WHILE POSTPONE THEN REPEAT ; IMMEDIATE
+: CASE    0 ; IMMEDIATE COMPILE-ONLY
+: OF      POSTPONE OVER POSTPONE = POSTPONE IF POSTPONE DROP ; IMMEDIATE COMPILE-ONLY
+: ENDOF   POSTPONE ELSE ; IMMEDIATE COMPILE-ONLY
+: ENDCASE POSTPONE DROP  BEGIN ?DUP WHILE POSTPONE THEN REPEAT ; IMMEDIATE COMPILE-ONLY
 
 \ --- VALUE / TO ---
 \ Usage: 42 VALUE X   X .   99 TO X   X .
@@ -77,7 +77,7 @@
      REPEAT ; IMMEDIATE
 
 \ --- Compile-time literal ---
-: LITERAL  ['] LIT , , ; IMMEDIATE
+: LITERAL  ['] LIT , , ; IMMEDIATE COMPILE-ONLY
 
 \ --- Comparison extensions ---
 : 0>   0 > ;
@@ -243,7 +243,7 @@
   CREATE , ,
   DOES>
     DUP @ DP !
-    CELL+ @ LATEST ! ;
+    CELL+ @ LATEST ! DICT-CACHE-CLEAR ;   \ the lookup cache may point behind the new DP
 
 : .(  ( "text" -- )  41 PARSE TYPE ; IMMEDIATE   \ the comment's own ) must not come early: NUMBER used to swallow the leftovers as digits
 
@@ -335,7 +335,7 @@
   BEGIN
     DUP
   WHILE
-    DUP 4 + C@ 63 AND >R
+    DUP 4 + C@ 31 AND >R
     DUP 5 + R@ TYPE SPACE
     R> DROP @
   REPEAT

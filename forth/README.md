@@ -30,6 +30,7 @@ point and file-system words beyond what the tools need are out of scope.
 - **Control flow**: `IF`, `ELSE`, `THEN`, `BEGIN`, `AGAIN`, `UNTIL`, `WHILE`, `REPEAT`
 - **Loops**: `DO`, `?DO`, `LOOP`, `+LOOP`, `I`, `J`, `UNLOOP`, `LEAVE`
 - **Variables**: `STATE`, `BASE`, `BASE!`, `LATEST`, `DP` (the pointer `HERE` reads), `NUMBER-HOOK`, `TIB`, `TOIN`, `NTIB`
+- **Dictionary**: `IMMEDIATE`, `COMPILE-ONLY`, `DICT-CACHE-CLEAR` (FIND's lookup cache; MARKER runs it)
 - **Parser**: `WORD` (standard: any delimiter, >IN past it, its own buffer), `(WORD)` (the interpreter's: blank-delimited, uppercased, into `word_buf`), `FIND`, `NUMBER`, `PARSE-WORD`, `PARSE`, `INTERPRET`
 - **Strings**: `COUNT`
 - **Pictured Output**: `<#`, `HOLD`, `#>`
@@ -71,7 +72,7 @@ Loaded automatically from `prelude.fth` at startup:
 
 - **Header**:
   - `Link` (4 bytes): Pointer to previous word.
-  - `Length` (1 byte): Name length, at most 63 (bit 7 = IMMEDIATE, bit 6 = smudged: `:` sets it, `;` clears it, so a definition cannot find itself and an aborted one is never found).
+  - `Length` (1 byte): Name length, at most 31 (bit 7 = IMMEDIATE; bit 6 = smudged: `:` sets it, `;` clears it, so a definition cannot find itself and an aborted one is never found; bit 5 = compile-only: the interpreter refuses to run the word in interpretation state, -14 THROW).  A longer name is kept, and looked up, as its first 31 characters.
   - `Name` (N bytes): Name string (uppercase).
   - `Padding`: Align to 4 bytes.
   - `XT` (4 bytes): Execution Token (address of code).
@@ -135,9 +136,13 @@ there changed behaviour that the stage01 tools had been written around:
   the text itself and `.( x)` prints no leading blank.
 - `:` is not IMMEDIATE, and smudges its header until `;`.  `RECURSE` is
   the way to recurse; cc.fth and asm.fth did it by name (fixed).
-- `IF` ... `+LOOP` and `DOES>` no longer check STATE: under `[ ]` inside a
-  definition they compile (`[ POSTPONE-+LOOP ]`).  Run with no definition
-  open they say `? compile-only word outside a definition` and `-14 THROW`.
+- `IF` ... `+LOOP` and `DOES>` no longer check STATE: executed from another
+  word under `[ ]` they compile (`[ POSTPONE-+LOOP ]`).  Their headers carry
+  the compile-only bit, and the text interpreter refuses to run such a word
+  directly in interpretation state: `IF is compile-only`, `-14 THROW`
+  (3.4.3.2; gforth says "Interpreting a compile-only word").  `COMPILE-ONLY`
+  marks a definition the way `IMMEDIATE` does; the prelude's `CASE` family
+  and `LITERAL` are marked.
 - An undefined word is `-13 THROW`: the rest of the line is abandoned (and a
   definition in progress stays hidden); the message is held back when a
   `CATCH` is active.  `CATCH` saves and `THROW` restores the input source
@@ -152,6 +157,11 @@ there changed behaviour that the stage01 tools had been written around:
 - Interpreted `S"` rotates four transient buffers; `POSTPONE S"` appends
   `(S")`, and `ABORT"` is built on it, so both compile under `[ ]`.
 - `REFILL` sets `#TIB` and `>IN`; `[IF] [ELSE] [THEN]` skip across lines.
+- `FIND` and `SEARCH-WORDLIST` go through a lookup cache: a direct-mapped
+  table of 1024 {hash, wid, header, epoch} entries in front of the linked
+  list, hits verified by name, misses remembered until the next definition.
+  Loading cc.fth went from 112M to 39M instructions; compiling a 2,100-line
+  C file with it from 826M to 753M (the rest is the compiler's own work).
 
 ## Bugs Fixed
 

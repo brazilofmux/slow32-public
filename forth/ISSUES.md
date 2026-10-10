@@ -54,7 +54,7 @@ These were implemented as byte-by-byte loops in `prelude.fth`.
 - **Status**: `UM*` already uses `mulhu` (unsigned high multiply). `M*` continues
   to use signed `mulh`. No further change required.
 
-### 8. `FIND` Efficiency
+### 8. `FIND` Efficiency (Resolved 2026-10-10)
 The `FIND` word performs a linear search through a linked list of word headers.
 
 - **Note**: While standard for Stage 4, as the dictionary grows (prelude + user code), lookups will slow down significantly.
@@ -116,12 +116,23 @@ and `ALIGN-UP` before they were defined.  The old interpreter printed
 `TYPE-SIZE ?` and carried on compiling the rest of the line, so the two
 calls were simply missing from the compiled word (selfhost ISSUES-85).
 
-Still open from this pass:
+Closed the same day, in a second step:
 
-- Compile-only words are detected by "no definition open" (STATE 0 and no
-  smudged header), not by a header flag as the standard's text interpreter
-  does; `:NONAME ... [ IF ]` would be refused.  A flag bit would cost the
-  name-length cap (63 -> 31) or a wider header.
-- ttester.fs' no-FP-stack branch names `0E FDROP F@ FCONF=`; the gate stubs
-  them.  Floating point is not in this kernel's scope.
-- Item 8 (`FIND` is a linear search) stands.
+- Compile-only is a header bit (bit 5 of the length byte, `COMPILE-ONLY`
+  sets it), checked by the text interpreter on a direct interpretation, as
+  the standard's is -- so `[ POSTPONE-+LOOP ]` runs while a bare `IF` at the
+  prompt is `IF is compile-only` and `-14 THROW`.  The "no definition open"
+  heuristic is gone.  The bit cost the name-length cap: 31 characters, the
+  standard's minimum; nothing in the tree had a longer name, and a longer
+  one is kept and looked up as its first 31.
+- Item 8: `FIND` and `SEARCH-WORDLIST` share `dict_find`, a direct-mapped
+  1024-entry cache {hash, wid, header, epoch} in front of the linked list
+  (FNV-1a over the folded name).  Hits are verified by name; misses are
+  cached with the epoch and every new header bumps it; `MARKER` clears the
+  table (`DICT-CACHE-CLEAR`) because it moves DP back.  Loading cc.fth:
+  112M -> 39M instructions.  Compiling stage02's cc-min-pass1.c with cc.fth:
+  826M -> 753M, output byte-identical -- the compiler's own work dominates
+  that run, so this is a load-time win mostly.
+
+Still open: ttester.fs' no-FP-stack branch names `0E FDROP F@ FCONF=`; the
+gate stubs them.  Floating point is not in this kernel's scope.

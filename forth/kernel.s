@@ -49,7 +49,7 @@ next:
     .align 2
 head_exit:
     .word 0            # Link (First word)
-    .byte 4
+    .byte 0x24  # compile-only
     .ascii "EXIT"
     .align 2
 xt_exit:
@@ -221,8 +221,10 @@ xt_find:
 # flag = 1 if the word is IMMEDIATE, 0 otherwise
 # Searches all wordlists in the search order
 find_word:
-    ldw r4, r28, 0     # r4 = search string address
+    ldw r4, r28, 0     # r4 = counted search string
     addi r28, r28, 4   # pop input
+    ldbu r2, r4, 0     # r2 = len
+    addi r3, r4, 1     # r3 = chars
 
     # Set up search order iteration
     lui r20, %hi(search_order)
@@ -234,64 +236,26 @@ find_word:
 
 find_search_next_wl:
     bge r21, r22, find_fail            # all wordlists exhausted
-
-    # Load head of current wordlist
     add r23, r21, r21
     add r23, r23, r23                  # r23 = index * 4
     add r23, r20, r23                  # r23 = &search_order[index]
     ldw r5, r23, 0                     # r5 = wid (pointer to head cell)
-    ldw r5, r5, 0                      # r5 = head of wordlist
-
-find_loop:
-    beq r5, r0, find_wl_exhausted
-
-    # Compare length (bit 7 IMMEDIATE; bit 6 smudged: skipped while ':' is open)
-    ldbu r6, r5, 4     # dict len/raw flags
-    addi r7, r0, 0x40
-    and r8, r6, r7
-    bne r8, r0, find_next
-    addi r7, r0, 0x3F
-    and r8, r6, r7     # dict_len = len & 0x3F
-    ldbu r7, r4, 0     # search len
-    bne r8, r7, find_next
-
-    # Compare bytes
-    add r9, r0, r0     # i = 0
-find_str_loop:
-    bge r9, r8, find_match
-
-    add r10, r5, r9
-    ldbu r10, r10, 5     # dict char (offset 5 + i)
-
-    add r11, r4, r9
-    ldbu r11, r11, 1     # search char (offset 1 + i)
-    addi r12, r0, 97     # a-z folded to A-Z (as SEARCH-WORDLIST folds): the names are uppercase
-    blt r11, r12, find_cmp
-    addi r12, r0, 122
-    bgt r11, r12, find_cmp
-    addi r11, r11, -32
-find_cmp:
-    bne r10, r11, find_next
-
-    addi r9, r9, 1
-    jal r0, find_str_loop
-
-find_next:
-    ldw r5, r5, 0      # Load link
-    jal r0, find_loop
-
-find_wl_exhausted:
-    addi r21, r21, 1   # next wordlist
+    jal r31, dict_find                 # r5 = header, or 0
+    bne r5, r0, find_match
+    addi r21, r21, 1                   # next wordlist
     jal r0, find_search_next_wl
 
 find_match:
-    # Found. Calculate XT address.
+    # Found. The interpreter checks this header's compile-only bit.
+    lui r6, %hi(var_found_header)
+    addi r6, r6, %lo(var_found_header)
+    stw r6, r5, 0
+    ldbu r6, r5, 4     # len/flags
+    addi r7, r0, 0x1F
+    and r8, r6, r7     # name length
     # XT is at header + aligned(5 + len)
     addi r5, r5, 5
     add r5, r5, r8     # r5 = end of name string
-
-    # Align r5 to 4 bytes
-    # mask = -4 (0xFFFFFFFC)
     addi r10, r0, -4
     addi r5, r5, 3
     and r5, r5, r10
@@ -320,6 +284,168 @@ find_fail:
     stw r28, r0, 0     # flag = 0
     jal r0, next
 
+# ----------------------------------------------------------------------
+# Dictionary lookup with a cache (forth/ISSUES.md item 8).  The dictionary
+# is still the linked list the headers form; dict_cache is a direct-mapped
+# table of 1024 entries {hash, wid, header, epoch} in front of it.  A hit is
+# verified (same wid, not smudged, same length, same name folded) so a stale
+# or colliding entry can only cost the linear search it would have done
+# anyway.  A miss is remembered as header 0 with the epoch, and every new
+# header bumps the epoch (dict_cache_add), so a name that was undefined is
+# searched again only after something was defined.  MARKER clears the table
+# (DICT-CACHE-CLEAR): it moves DP back, and a header behind a stale entry
+# may then be overwritten by anything.
+#
+# dict_hash: r8 = addr, r9 = len -> r6 = hash (FNV-1a, letters folded, seeded
+#            with the length).  Clobbers r7, r10, r11.  Link r19.
+# dict_cmp:  r12 = header, r3 = name, r2 = len -> r16 = 0 when equal.
+#            Clobbers r8, r9, r15-r18 (not r10-r11: dict_find keeps its entry in r11).  Link r19.
+# dict_find: r3 = name, r2 = len, r5 = wid -> r5 = header or 0.
+#            Clobbers r6-r19; keeps r2, r3, r4, r20+.  Link r31.
+# dict_cache_add: r12 = header, r5 = wid: enter it, bump the epoch.
+#            Clobbers r6-r11, r15-r19.  Link r31.
+# ----------------------------------------------------------------------
+dict_hash:
+    add r6, r9, r0
+    lui r7, 0x1000
+    addi r7, r7, 0x193       # 16777619
+dh_loop:
+    beq r9, r0, dh_done
+    ldbu r10, r8, 0
+    addi r11, r0, 97
+    blt r10, r11, dh_fold
+    addi r11, r0, 122
+    bgt r10, r11, dh_fold
+    addi r10, r10, -32
+dh_fold:
+    xor r6, r6, r10
+    mul r6, r6, r7
+    addi r8, r8, 1
+    addi r9, r9, -1
+    jal r0, dh_loop
+dh_done:
+    jalr r0, r19, 0
+
+dict_cmp:
+    addi r15, r12, 5
+    add r8, r3, r0
+    add r9, r2, r0
+dc_loop:
+    beq r9, r0, dc_equal
+    ldbu r17, r15, 0
+    ldbu r18, r8, 0
+    addi r16, r0, 97
+    blt r18, r16, dc_fold
+    addi r16, r0, 122
+    bgt r18, r16, dc_fold
+    addi r18, r18, -32
+dc_fold:
+    bne r17, r18, dc_diff
+    addi r15, r15, 1
+    addi r8, r8, 1
+    addi r9, r9, -1
+    jal r0, dc_loop
+dc_equal:
+    add r16, r0, r0
+    jalr r0, r19, 0
+dc_diff:
+    addi r16, r0, 1
+    jalr r0, r19, 0
+
+dict_find:
+    addi r14, r0, 31
+    bgeu r14, r2, df_len_ok
+    add r2, r14, r0          # a header keeps 31 characters: look up the same 31
+df_len_ok:
+    add r8, r3, r0
+    add r9, r2, r0
+    jal r19, dict_hash       # r6 = hash
+    addi r10, r0, 1023
+    and r10, r6, r10
+    add r10, r10, r10
+    add r10, r10, r10
+    add r10, r10, r10
+    add r10, r10, r10        # * 16
+    lui r11, %hi(dict_cache)
+    addi r11, r11, %lo(dict_cache)
+    add r11, r11, r10        # r11 = entry
+    ldw r12, r11, 0
+    bne r12, r6, df_miss
+    ldw r12, r11, 4
+    bne r12, r5, df_miss
+    ldw r12, r11, 8
+    beq r12, r0, df_negative
+    ldbu r13, r12, 4
+    addi r14, r0, 0x40
+    and r14, r13, r14
+    bne r14, r0, df_miss     # smudged: being defined
+    addi r14, r0, 0x1F
+    and r13, r13, r14
+    bne r13, r2, df_miss
+    jal r19, dict_cmp
+    bne r16, r0, df_miss
+    add r5, r12, r0
+    jalr r0, r31, 0
+df_negative:
+    ldw r12, r11, 12
+    lui r13, %hi(cache_epoch)
+    addi r13, r13, %lo(cache_epoch)
+    ldw r13, r13, 0
+    bne r12, r13, df_miss    # something was defined since: look again
+    add r5, r0, r0
+    jalr r0, r31, 0
+df_miss:
+    ldw r12, r5, 0           # head of the wordlist
+df_loop:
+    beq r12, r0, df_store
+    ldbu r13, r12, 4
+    addi r14, r0, 0x40
+    and r14, r13, r14
+    bne r14, r0, df_next     # smudged
+    addi r14, r0, 0x1F
+    and r13, r13, r14
+    bne r13, r2, df_next
+    jal r19, dict_cmp
+    beq r16, r0, df_store
+df_next:
+    ldw r12, r12, 0
+    jal r0, df_loop
+df_store:
+    stw r11, r6, 0
+    stw r11, r5, 4
+    stw r11, r12, 8
+    lui r13, %hi(cache_epoch)
+    addi r13, r13, %lo(cache_epoch)
+    ldw r13, r13, 0
+    stw r11, r13, 12
+    add r5, r12, r0
+    jalr r0, r31, 0
+
+dict_cache_add:
+    ldbu r9, r12, 4
+    addi r10, r0, 0x1F
+    and r9, r9, r10
+    addi r8, r12, 5
+    jal r19, dict_hash
+    addi r10, r0, 1023
+    and r10, r6, r10
+    add r10, r10, r10
+    add r10, r10, r10
+    add r10, r10, r10
+    add r10, r10, r10
+    lui r11, %hi(dict_cache)
+    addi r11, r11, %lo(dict_cache)
+    add r11, r11, r10
+    stw r11, r6, 0
+    stw r11, r5, 4
+    stw r11, r12, 8
+    lui r15, %hi(cache_epoch)
+    addi r15, r15, %lo(cache_epoch)
+    ldw r16, r15, 0
+    addi r16, r16, 1
+    stw r15, r16, 0
+    stw r11, r16, 12
+    jalr r0, r31, 0
 
 # Word: BYE
 .text
@@ -813,11 +939,38 @@ number_hook_word:
     stw r28, r1, 0
     jal r0, next
 
+# Word: DICT-CACHE-CLEAR ( -- ) forget every cached lookup; MARKER runs it
+# after moving DP back, since a header behind an entry may be overwritten
+.text
+    .align 2
+head_dict_cache_clear:
+    .word head_number_hook
+    .byte 16
+    .ascii "DICT-CACHE-CLEAR"
+    .align 2
+xt_dict_cache_clear:
+    .word dict_cache_clear_word
+dict_cache_clear_word:
+    lui r1, %hi(dict_cache)
+    addi r1, r1, %lo(dict_cache)
+    lui r2, 1                # 4096 = 1024 entries * 4 cells
+dcc_loop:
+    stw r1, r0, 0
+    addi r1, r1, 4
+    addi r2, r2, -1
+    bne r2, r0, dcc_loop
+    lui r1, %hi(cache_epoch)
+    addi r1, r1, %lo(cache_epoch)
+    ldw r2, r1, 0
+    addi r2, r2, 1
+    stw r1, r2, 0
+    jal r0, next
+
 # Word: TIB ( -- a-addr )
 .text
     .align 2
 head_tib:
-    .word head_number_hook
+    .word head_dict_cache_clear
     .byte 3
     .ascii "TIB"
     .align 2
@@ -1567,8 +1720,48 @@ interpret_found_immediate:
     jal r0, interpret_run_xt
 
 interpret_execute:
+    lui r1, %hi(var_found_header)
+    addi r1, r1, %lo(var_found_header)
+    ldw r1, r1, 0
+    ldbu r2, r1, 4
+    addi r3, r0, 0x20
+    and r2, r2, r3
+    bne r2, r0, interpret_compile_only
     add r13, r0, r0          # resume = interpret_loop
     jal r0, interpret_run_xt
+
+interpret_compile_only:
+    # Interpreting a compile-only word (3.4.3.2): say which, -14 THROW
+    lui r1, %hi(var_catch_frame)
+    addi r1, r1, %lo(var_catch_frame)
+    ldw r1, r1, 0
+    bne r1, r0, interpret_co_throw   # a CATCH is active: it decides what to say
+    lui r1, %hi(word_buf)
+    addi r1, r1, %lo(word_buf)
+    ldbu r2, r1, 0
+    addi r1, r1, 1
+    add r4, r0, r0
+interpret_co_print:
+    bge r4, r2, interpret_co_msg
+    add r5, r1, r4
+    ldbu r3, r5, 0
+    debug r3
+    addi r4, r4, 1
+    jal r0, interpret_co_print
+interpret_co_msg:
+    lui r1, %hi(compile_only_msg)
+    addi r1, r1, %lo(compile_only_msg)
+interpret_co_msg_loop:
+    ldbu r3, r1, 0
+    beq r3, r0, interpret_co_throw
+    debug r3
+    addi r1, r1, 1
+    jal r0, interpret_co_msg_loop
+interpret_co_throw:
+    addi r28, r28, -4
+    addi r1, r0, -14
+    stw r28, r1, 0
+    jal r0, throw_word
 
 interpret_run_xt:
     # r7 = XT to run
@@ -1770,6 +1963,33 @@ rbrac_word:
 # Word: IMMEDIATE ( -- )  set IMMEDIATE bit on latest
 .text
     .align 2
+# Word: COMPILE-ONLY ( -- ) mark the latest definition: the text interpreter
+# refuses to run it in interpretation state (-14 THROW), as the standard's
+# does for IF ... +LOOP ; DOES> POSTPONE ['] [CHAR] EXIT I J UNLOOP LEAVE.
+# Bit 5 of the length byte; so a name keeps at most 31 characters.
+.text
+    .align 2
+head_compile_only:
+    .word head_immediate
+    .byte 12
+    .ascii "COMPILE-ONLY"
+    .align 2
+xt_compile_only:
+    .word compile_only_word
+compile_only_word:
+    lui r1, %hi(var_compilation_wid)
+    addi r1, r1, %lo(var_compilation_wid)
+    ldw r1, r1, 0
+    ldw r2, r1, 0
+    beq r2, r0, compile_only_done
+    addi r2, r2, 4
+    ldbu r3, r2, 0
+    addi r4, r0, 0x20
+    or r3, r3, r4
+    stb r2, r3, 0
+compile_only_done:
+    jal r0, next
+
 head_immediate:
     .word head_rbrac
     .byte 0x89
@@ -1795,8 +2015,8 @@ immediate_done:
 .text
     .align 2
 head_semicolon:
-    .word head_immediate
-    .byte 0x81
+    .word head_compile_only
+    .byte 0xA1  # compile-only
     .ascii ";"
     .align 2
 xt_semicolon:
@@ -1817,6 +2037,11 @@ semicolon_word:
     and r3, r3, r4
     stb r2, r3, 4
     stw r1, r0, 0
+    add r12, r2, r0           # the revealed header replaces whatever the cache held for its name
+    lui r5, %hi(var_compilation_wid)
+    addi r5, r5, %lo(var_compilation_wid)
+    ldw r5, r5, 0
+    jal r31, dict_cache_add
 semicolon_revealed:
     # Compile EXIT
     lui r1, %hi(var_here)
@@ -1941,10 +2166,10 @@ colon_copy_done:
     stw r4, r6, 0
     addi r4, r4, 4
 
-    # Length byte: a name keeps at most 63 characters; bit 6 hides the word
+    # Length byte: a name keeps at most 31 characters; bit 6 hides the word
     # until ';' (smudge), so the body can call the previous definition of the
     # same name and an aborted definition is never found
-    addi r7, r0, 63
+    addi r7, r0, 31
     bgeu r7, r13, colon_name_len_ok
     add r13, r7, r0
 colon_name_len_ok:
@@ -1982,6 +2207,7 @@ colon_header_done:
     # Update HERE and compilation wordlist head
     stw r3, r4, 0       # HERE = body start
     stw r5, r12, 0      # [wid] = new header
+    jal r31, dict_cache_add
 
     # Enter compile state
     lui r13, %hi(var_state)
@@ -2004,13 +2230,12 @@ colon_overflow:
     .align 2
 head_if:
     .word head_colon
-    .byte 0x82
+    .byte 0xA2  # compile-only
     .ascii "IF"
     .align 2
 xt_if:
     .word if_word
 if_word:
-    jal r31, cf_need_def
     addi r3, r0, 1            # CF: push ORIG (IF opens a forward branch)
     jal r31, cf_push
     # HERE
@@ -2038,13 +2263,12 @@ if_done:
     .align 2
 head_else:
     .word head_if
-    .byte 0x84
+    .byte 0xA4  # compile-only
     .ascii "ELSE"
     .align 2
 xt_else:
     .word else_word
 else_word:
-    jal r31, cf_need_def
     addi r3, r0, 1            # CF: ELSE consumes the IF's ORIG ...
     jal r31, cf_pop_expect
     addi r3, r0, 1            # ... and opens a new ORIG
@@ -2084,13 +2308,12 @@ else_done:
     .align 2
 head_then:
     .word head_else
-    .byte 0x84
+    .byte 0xA4  # compile-only
     .ascii "THEN"
     .align 2
 xt_then:
     .word then_word
 then_word:
-    jal r31, cf_need_def
     addi r3, r0, 1            # CF: THEN resolves an ORIG (IF/ELSE/WHILE)
     jal r31, cf_pop_expect
     ldw r4, r28, 0     # patch addr
@@ -2109,13 +2332,12 @@ then_done:
     .align 2
 head_begin:
     .word head_then
-    .byte 0x85
+    .byte 0xA5  # compile-only
     .ascii "BEGIN"
     .align 2
 xt_begin:
     .word begin_word
 begin_word:
-    jal r31, cf_need_def
     addi r3, r0, 2            # CF: push DEST (BEGIN is a backward target)
     jal r31, cf_push
     lui r1, %hi(var_here)
@@ -2131,13 +2353,12 @@ begin_done:
     .align 2
 head_again:
     .word head_begin
-    .byte 0x85
+    .byte 0xA5  # compile-only
     .ascii "AGAIN"
     .align 2
 xt_again:
     .word again_word
 again_word:
-    jal r31, cf_need_def
     addi r3, r0, 2            # CF: AGAIN closes a BEGIN (DEST)
     jal r31, cf_pop_expect
     ldw r4, r28, 0     # target addr (begin)
@@ -2163,13 +2384,12 @@ again_done:
     .align 2
 head_until:
     .word head_again
-    .byte 0x85
+    .byte 0xA5  # compile-only
     .ascii "UNTIL"
     .align 2
 xt_until:
     .word until_word
 until_word:
-    jal r31, cf_need_def
     addi r3, r0, 2            # CF: UNTIL closes a BEGIN (DEST)
     jal r31, cf_pop_expect
     ldw r4, r28, 0     # begin addr
@@ -2194,13 +2414,12 @@ until_done:
     .align 2
 head_while:
     .word head_until
-    .byte 0x85
+    .byte 0xA5  # compile-only
     .ascii "WHILE"
     .align 2
 xt_while:
     .word while_word
 while_word:
-    jal r31, cf_need_def
     addi r3, r0, 2            # CF: WHILE consumes the BEGIN's DEST ...
     jal r31, cf_pop_expect
     addi r3, r0, 1            # ... pushes ORIG (forward exit patch) under it ...
@@ -2235,13 +2454,12 @@ while_done:
     .align 2
 head_repeat:
     .word head_while
-    .byte 0x86
+    .byte 0xA6  # compile-only
     .ascii "REPEAT"
     .align 2
 xt_repeat:
     .word repeat_word
 repeat_word:
-    jal r31, cf_need_def
     addi r3, r0, 2            # CF: REPEAT closes the BEGIN's DEST ...
     jal r31, cf_pop_expect
     addi r3, r0, 1            # ... and resolves the WHILE's ORIG under it
@@ -2279,40 +2497,6 @@ repeat_done:
 # On any imbalance: print a message and ABORT (matching gforth strictness).
 # Call with jal r31; clobbers r3-r7. r3 = tag for push/pop-expect.
 # ----------------------------------------------------------------------
-# A compile-only word run with no definition open (STATE 0 and no ':' pending):
-# say so and -14 THROW, as the text interpreter does for compile-only words.
-# Under [ ] inside a definition it runs: [ POSTPONE-+LOOP ] (postpone.fs).
-# Before, these words checked STATE and did nothing when interpreting, which
-# made that idiom silently compile nothing.  Clobbers r1-r3.
-cf_need_def:
-    lui  r3, %hi(var_state)
-    addi r3, r3, %lo(var_state)
-    ldw  r3, r3, 0
-    bne  r3, r0, cf_need_def_ok
-    lui  r3, %hi(var_smudged)
-    addi r3, r3, %lo(var_smudged)
-    ldw  r3, r3, 0
-    bne  r3, r0, cf_need_def_ok
-    lui  r3, %hi(var_catch_frame)
-    addi r3, r3, %lo(var_catch_frame)
-    ldw  r3, r3, 0
-    bne  r3, r0, cf_need_def_throw   # a CATCH is active: it decides what to say
-    lui  r1, %hi(cf_compile_only_msg)
-    addi r1, r1, %lo(cf_compile_only_msg)
-cf_need_def_print:
-    ldbu r2, r1, 0
-    beq  r2, r0, cf_need_def_throw
-    debug r2
-    addi r1, r1, 1
-    jal  r0, cf_need_def_print
-cf_need_def_throw:
-    addi r28, r28, -4
-    addi r1, r0, -14         # interpreting a compile-only word
-    stw  r28, r1, 0
-    jal  r0, throw_word
-cf_need_def_ok:
-    jalr r0, r31, 0
-
 cf_push:
     lui  r4, %hi(var_cf_sp)
     addi r4, r4, %lo(var_cf_sp)
@@ -2760,7 +2944,7 @@ does_runtime_word:
     ldw r1, r1, 0          # r1 = wid (pointer to head cell)
     ldw r2, r1, 0          # r2 = latest header in compilation wordlist
     ldbu r3, r2, 4         # length byte (with possible IMMEDIATE/smudge flags)
-    addi r4, r0, 0x3F
+    addi r4, r0, 0x1F
     and r3, r3, r4         # mask off the flag bits
     addi r3, r3, 5         # skip: link(4) + len(1) + name_len
     add r3, r2, r3         # past end of name
@@ -2891,7 +3075,7 @@ ploop_exit:
     .align 2
 head_i:
     .word head_ploop_runtime
-    .byte 1
+    .byte 0x21  # compile-only
     .ascii "I"
     .align 2
 xt_i:
@@ -2907,7 +3091,7 @@ i_word:
     .align 2
 head_j:
     .word head_i
-    .byte 1
+    .byte 0x21  # compile-only
     .ascii "J"
     .align 2
 xt_j:
@@ -2923,7 +3107,7 @@ j_word:
     .align 2
 head_unloop:
     .word head_j
-    .byte 6
+    .byte 0x26  # compile-only
     .ascii "UNLOOP"
     .align 2
 xt_unloop:
@@ -2938,13 +3122,12 @@ unloop_word:
     .align 2
 head_do:
     .word head_unloop
-    .byte 0x82
+    .byte 0xA2  # compile-only
     .ascii "DO"
     .align 2
 xt_do:
     .word do_word
 do_word:
-    jal r31, cf_need_def
     lui r1, %hi(var_here)
     addi r1, r1, %lo(var_here)
     ldw r2, r1, 0          # r2 = HERE
@@ -2971,13 +3154,12 @@ do_done:
     .align 2
 head_loop:
     .word head_do
-    .byte 0x84
+    .byte 0xA4  # compile-only
     .ascii "LOOP"
     .align 2
 xt_loop:
     .word loop_word
 loop_word:
-    jal r31, cf_need_def
     ldw r4, r28, 0         # r4 = loop-back target addr
     ldw r10, r28, 4        # r10 = old leave-list head (saved by DO)
     addi r28, r28, 8       # pop both
@@ -3017,13 +3199,12 @@ loop_done:
     .align 2
 head_ploop:
     .word head_loop
-    .byte 0x85
+    .byte 0xA5  # compile-only
     .ascii "+LOOP"
     .align 2
 xt_ploop:
     .word ploop_word
 ploop_word:
-    jal r31, cf_need_def
     ldw r4, r28, 0         # r4 = loop-back target addr
     ldw r10, r28, 4        # r10 = old leave-list head (saved by DO)
     addi r28, r28, 8       # pop both
@@ -3063,13 +3244,12 @@ ploop_done:
     .align 2
 head_leave:
     .word head_ploop
-    .byte 0x85
+    .byte 0xA5  # compile-only
     .ascii "LEAVE"
     .align 2
 xt_leave:
     .word leave_word
 leave_word:
-    jal r31, cf_need_def
     lui r1, %hi(var_here)
     addi r1, r1, %lo(var_here)
     ldw r2, r1, 0          # r2 = HERE
@@ -3193,8 +3373,8 @@ create_copy_done:
     ldw r6, r5, 0          # previous head
     stw r4, r6, 0
     addi r4, r4, 4
-    # Length byte (a name keeps at most 63 characters; see ':')
-    addi r7, r0, 63
+    # Length byte (a name keeps at most 31 characters; see ':')
+    addi r7, r0, 31
     bgeu r7, r13, create_name_len_ok
     add r13, r7, r0
 create_name_len_ok:
@@ -3228,6 +3408,7 @@ create_header_done:
     # Update HERE and compilation wordlist head (no compile state change)
     stw r3, r4, 0          # HERE = after does-cell
     stw r5, r12, 0         # [wid] = new header
+    jal r31, dict_cache_add
 create_done:
     jal r0, next
 create_overflow:
@@ -3239,13 +3420,12 @@ create_overflow:
     .align 2
 head_does:
     .word head_create
-    .byte 0x85
+    .byte 0xA5  # compile-only
     .ascii "DOES>"
     .align 2
 xt_does:
     .word does_compile_word
 does_compile_word:
-    jal r31, cf_need_def
     lui r1, %hi(var_here)
     addi r1, r1, %lo(var_here)
     ldw r2, r1, 0          # r2 = HERE
@@ -3565,7 +3745,7 @@ xt_tick:
     .align 2
 head_bracket_tick:
     .word head_tick
-    .byte 0x83             # length 3 + IMMEDIATE flag (0x80)
+    .byte 0xA3             # length 3 + IMMEDIATE flag (0x80)  # compile-only
     .ascii "[']"
     .align 2
 xt_bracket_tick:
@@ -3605,7 +3785,7 @@ xt_char:
     .align 2
 head_bracket_char:
     .word head_char
-    .byte 0x86             # length 6 + IMMEDIATE flag (0x80)
+    .byte 0xA6             # length 6 + IMMEDIATE flag (0x80)  # compile-only
     .ascii "[CHAR]"
     .align 2
 xt_bracket_char:
@@ -3626,7 +3806,7 @@ xt_bracket_char:
     .align 2
 head_recurse:
     .word head_bracket_char
-    .byte 0x87             # length 7 + IMMEDIATE flag (0x80)
+    .byte 0xA7             # length 7 + IMMEDIATE flag (0x80)  # compile-only
     .ascii "RECURSE"
     .align 2
 xt_recurse:
@@ -3639,7 +3819,7 @@ xt_recurse:
     .word xt_plus          # header (header+4)
     .word xt_cfetch        # header len_byte
     .word xt_lit
-    .word 63               # bits 7 (IMMEDIATE) and 6 (smudged: it is, during its own definition) are flags
+    .word 31               # bits 7 (IMMEDIATE), 6 (smudged: it is, during its own definition), 5 (compile-only) are flags
     .word xt_and           # header clean_len
     .word xt_plus          # (header + clean_len)
     .word xt_lit
@@ -3658,7 +3838,7 @@ xt_recurse:
     .align 2
 head_postpone:
     .word head_recurse
-    .byte 0x88             # length 8 + IMMEDIATE flag (0x80)
+    .byte 0xA8             # length 8 + IMMEDIATE flag (0x80)  # compile-only
     .ascii "POSTPONE"
     .align 2
 xt_postpone:
@@ -4325,13 +4505,12 @@ qdo_skip:
     .align 2
 head_qdo_compile:
     .word head_qdo_runtime
-    .byte 0x83                 # IMMEDIATE, length 3
+    .byte 0xA3                 # IMMEDIATE, length 3  # compile-only
     .ascii "?DO"
     .align 2
 xt_qdo_compile:
     .word qdo_compile_word
 qdo_compile_word:
-    jal r31, cf_need_def
 
     lui r1, %hi(var_here)
     addi r1, r1, %lo(var_here)
@@ -4955,7 +5134,7 @@ cliteral_word:
     .align 2
 head_cquote:
     .word head_noname
-    .byte 0x82                 # IMMEDIATE flag (0x80) + length 2
+    .byte 0xA2                 # IMMEDIATE flag (0x80) + length 2  # compile-only
     .ascii "C\""
     .align 2
 xt_cquote:
@@ -5644,65 +5823,22 @@ head_search_wl:
 xt_search_wl:
     .word search_wl_word
 search_wl_word:
-    ldw r1, r28, 0         # r1 = wid
+    ldw r5, r28, 0         # r5 = wid
     ldw r2, r28, 4         # r2 = u (length)
     ldw r3, r28, 8         # r3 = c-addr
     addi r28, r28, 12      # pop 3 items
-
-    ldw r5, r1, 0          # r5 = head of wordlist
-
-search_wl_loop:
+    jal r31, dict_find     # r5 = header or 0
     beq r5, r0, search_wl_fail
-
-    # Compare length (bit 7 IMMEDIATE; bit 6 smudged: skipped while ':' is open)
-    ldbu r6, r5, 4         # dict len/flags byte
-    addi r7, r0, 0x40
+    ldbu r6, r5, 4         # len/flags
+    addi r7, r0, 0x1F
     and r8, r6, r7
-    bne r8, r0, search_wl_next
-    addi r7, r0, 0x3F
-    and r8, r6, r7         # dict_len = len & 0x3F
-    bne r8, r2, search_wl_next
-
-    # Compare bytes
-    add r9, r0, r0         # i = 0
-search_wl_str_loop:
-    bge r9, r8, search_wl_match
-
-    add r10, r5, r9
-    ldbu r10, r10, 5       # dict char (offset 5 + i, already uppercase)
-
-    add r11, r3, r9
-    ldbu r11, r11, 0       # search char
-    # Uppercase the search char for case-insensitive compare
-    addi r12, r0, 97       # 'a'
-    blt r11, r12, search_wl_no_upper
-    addi r12, r0, 122      # 'z'
-    bgt r11, r12, search_wl_no_upper
-    addi r11, r11, -32
-search_wl_no_upper:
-
-    bne r10, r11, search_wl_next
-
-    addi r9, r9, 1
-    jal r0, search_wl_str_loop
-
-search_wl_next:
-    ldw r5, r5, 0          # follow link
-    jal r0, search_wl_loop
-
-search_wl_match:
-    # Calculate XT address
     addi r5, r5, 5
     add r5, r5, r8
     addi r5, r5, 3
     addi r10, r0, -4
     and r5, r5, r10        # r5 = XT (aligned)
-
-    # Push xt
     addi r28, r28, -4
-    stw r28, r5, 0
-
-    # Determine flag: 1 if IMMEDIATE, -1 if normal
+    stw r28, r5, 0         # xt
     addi r10, r0, 0x80
     and r6, r6, r10
     beq r6, r0, search_wl_not_imm
@@ -5714,7 +5850,6 @@ search_wl_push_flag:
     addi r28, r28, -4
     stw r28, r6, 0
     jal r0, next
-
 search_wl_fail:
     addi r28, r28, -4
     stw r28, r0, 0         # push 0 (not found)
@@ -5983,9 +6118,11 @@ var_compilation_wid: .word var_latest   # Current compilation wordlist (initiall
 var_cf_sp:          .word 0            # Control-flow validation stack depth (compile-time)
 var_smudged:        .word 0            # Header ':' hid (length-byte bit 6) for ';' to reveal; 0 after :NONAME
 var_number_hook:    .word 0            # xt the interpreter runs when NUMBER fails ( c-addr -- d 2 | n 1 | 0 ); prelude sets it
+cache_epoch:        .word 1            # bumped by every new header; dates the cache's negative entries
+var_found_header:   .word 0            # header FIND last matched; the interpreter reads its compile-only bit
 cf_err_msg:         .ascii "\n? unbalanced control structure\n"
                     .byte 0
-cf_compile_only_msg: .ascii "\n? compile-only word outside a definition\n"
+compile_only_msg:   .ascii " is compile-only\n"
                     .byte 0
     .align 2
 search_order_count: .word 1            # Number of active search order entries
@@ -6027,6 +6164,8 @@ squote_ibuf2:    .space 256        # S" interpret-mode transient buffer 2
 squote_ibuf3:    .space 256        # S" interpret-mode transient buffer 3
 squote_iwhich:   .space 4          # Toggle: which transient buffer to use next
 cf_stack:        .space 64         # Control-flow validation stack (one tag byte per open construct)
+    .align 2
+dict_cache:      .space 16384      # 1024 x {hash, wid, header, epoch}: the dictionary lookup cache
 
 
 # ----------------------------------------------------------------------
