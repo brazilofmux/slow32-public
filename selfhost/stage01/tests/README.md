@@ -9,8 +9,12 @@ These are the files exercised by normal regression and conformance gates
 (`run-stages.sh`, `run-subset-conformance.sh`, `run-regression-*.sh`).
 
 - `conformance/baseline/` — small canonical regression cases (`test1.c` … `test9.c`)
-- `conformance/subset/` — the core Subset-C litmus tests (13 files). This is the
+- `conformance/subset/` — the core Subset-C litmus tests (15 files). This is the
   minimum contract that `cc.fth` must satisfy.
+- `conformance/reject/` — programs OUTSIDE the contract (a second array
+  dimension, a stray token at the top level, `-name` in an initializer). The
+  gate is that `cc.fth` says "Compilation failed" with a diagnostic inside the
+  time limit: these used to hang it (selfhost ISSUES-54, 55, 56).
 - `conformance/subset-idioms/` — 62 focused, high-value tests distilled from real
   problems encountered while building later stages (pointer arithmetic shapes,
   preprocessor edge cases, relocation packing, long-branch lowering, archive
@@ -43,7 +47,9 @@ Normal validation (what must stay green):
 - `../run-regression-ar.sh test3`
 - `../run-regression-ld.sh test3`
 - `../run-regression-ld.sh archive`
+- `../run-regression-cc.sh`
 - `../run-subset-conformance.sh`  (uses subset + subset-idioms manifests)
+- `../run-reject-tests.sh`
 
 Debug / archaeology:
 

@@ -1,7 +1,11 @@
 # SLOW-32 Forth Kernel
 
 ## Status
-Stage 4: Bootstrap Prelude. Self-extending Forth with ~50 standard vocabulary words loaded at startup.
+The stage01 bootstrap seed: a DTC kernel in SLOW-32 assembly plus a Forth
+prelude, hosting asm.fth / cc.fth / link.fth / ar.fth and forthc.  Since the
+2026-10-10 pass it passes the Forth 2012 test suite as gforth ships it
+(`tests/run-forth2012.sh`; see "Forth 2012 conformance" below).  Floating
+point and file-system words beyond what the tools need are out of scope.
 
 ## Architecture
 

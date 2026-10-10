@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Stage 06: Full toolchain tests
+# Stage 05: Full toolchain tests
+#
+# Same shape as stage06/run-tests.sh (this file was its template).  Here
+# STAGE5_CC is this stage's own cc.s32x (built from stage04 by
+# build-s12cc.sh), so gen1 below is a SELF-rebuild of stage05: its source
+# compiled by its own compiler, then compared against the checked-in one.
 #
 # Tests:
-#   1. Build gen1_cc using stage05's s12cc (compiler bootstrap)
+#   1. Build gen1_cc: this stage's s12cc.c compiled by this stage's cc.s32x
 #   2. Run compiler tests with gen1_cc
-#   3. Build tools (s32-as, s32-ar, s32-ld) using stage05's s12cc
-#   4. End-to-end: gen1_cc + stage06 tools compile/assemble/link/run a program
+#   3. Build tools (s32-as, s32-ar, s32-ld) with this stage's cc.s32x
+#   4. End-to-end: gen1_cc + the rebuilt tools compile/assemble/link/run a program
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -32,7 +37,7 @@ usage() {
     cat <<USAGE
 Usage: $0 [--emu <path>] [--keep-artifacts] [--fixed-point] [--strict-shape]
 
-Stage compiler tests: s12cc compiler + toolchain tests (bootstrapped from stage05)
+Stage05 compiler tests: a self-rebuild (gen1) of this stage's cc.s32x, compared against it, plus the tools
 USAGE
 }
 
@@ -72,7 +77,7 @@ fi
 
 [[ -f "$EMU" ]] || { echo "Missing emulator: $EMU" >&2; exit 1; }
 
-WORKDIR="$(mktemp -d /tmp/selfhost-v2-stage06.XXXXXX)"
+WORKDIR="$(mktemp -d /tmp/selfhost-v2-stage05.XXXXXX)"
 if [[ "$KEEP_ARTIFACTS" -eq 0 ]]; then
     trap 'rm -rf "$WORKDIR"' EXIT
 fi
@@ -310,7 +315,7 @@ SHAPE_WARN_FILE="$WORKDIR/shape.warn"
 : > "$SHAPE_WARN_FILE"
 
 # ============================================================
-# Step 2: Build gen1_cc using stage05's s12cc (building stage06 compiler)
+# Step 2: Build gen1_cc: this stage's source with its own cc.s32x (a self-rebuild)
 # ============================================================
 echo ""
 echo "=== Step 2: Build gen1_cc (compiled by stage05 s12cc) ==="
@@ -320,7 +325,7 @@ STAGE_CC_SRC="$SCRIPT_DIR/s12cc.c"
 
 TOTAL=$((TOTAL + 1))
 
-# Compile stage06 source with stage05 compiler
+# Compile this stage's source with its checked-in compiler
 run_exe "$STAGE5_CC" "$WORKDIR/gen1_cc-compile.log" "$STAGE_CC_SRC" "$WORKDIR/gen1_cc.s"
 if [[ ! -s "$WORKDIR/gen1_cc.s" ]]; then
     printf "  %-30s FAIL (compile)\n" "gen1_cc-build:"
@@ -536,7 +541,7 @@ if [[ "$RUN_FIXED_POINT" -eq 1 && -s "$GEN1_CC_EXE" ]]; then
 fi
 
 # ============================================================
-# Step 3b: Semantic equivalence smoke (stage05 vs stage06 cc)
+# Step 3b: Semantic equivalence smoke (checked-in cc.s32x vs gen1)
 # ============================================================
 if [[ -s "$GEN1_CC_EXE" ]]; then
     echo ""
@@ -619,7 +624,7 @@ EOF
             printf "  %-30s FAIL (s4=%d, s5=%d)\n" "${name}:" "$RC_A" "$RC_B"
             echo "    stage05 run log:" >&2
             tail -n 20 "$WORKDIR/${name}-s4.run.log" >&2 || true
-            echo "    stage06 run log:" >&2
+            echo "    gen1 run log:" >&2
             tail -n 20 "$WORKDIR/${name}-s5.run.log" >&2 || true
             FAIL=$((FAIL + 1))
         fi
@@ -627,7 +632,7 @@ EOF
 fi
 
 # ============================================================
-# Step 3c: Optimizer regression pack (stage05 vs stage06 cc)
+# Step 3c: Optimizer regression pack (checked-in cc.s32x vs gen1)
 # ============================================================
 if [[ -s "$GEN1_CC_EXE" ]]; then
     echo ""
@@ -671,7 +676,7 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
             printf "  %-30s FAIL (s4=%d, s5=%d)\n" "${name}:" "$RC_A" "$RC_B"
             echo "    stage05 run log:" >&2
             tail -n 20 "$WORKDIR/${name}-s4.run.log" >&2 || true
-            echo "    stage06 run log:" >&2
+            echo "    gen1 run log:" >&2
             tail -n 20 "$WORKDIR/${name}-s5.run.log" >&2 || true
             FAIL=$((FAIL + 1))
         fi
@@ -682,7 +687,7 @@ fi
 # Step 4: Build tools with stage05's s12cc
 # ============================================================
 echo ""
-echo "=== Step 4: Build stage06 tools ==="
+echo "=== Step 4: Build this stage's tools ==="
 
 STAGE_AS_SRC="$SCRIPT_DIR/tools/s32-as.c"
 STAGE_AR_SRC="$SCRIPT_DIR/tools/s32-ar.c"
@@ -771,7 +776,7 @@ fi
 
 # ============================================================
 # Step 5: End-to-end toolchain test
-# Use gen1_cc + stage06 tools to compile/assemble/link/run a program
+# Use gen1_cc + the rebuilt tools to compile/assemble/link/run a program
 # ============================================================
 STAGE_AS_EXE="$WORKDIR/s32-as.s32x"
 STAGE_AR_EXE="$WORKDIR/s32-ar.s32x"
@@ -779,9 +784,9 @@ STAGE_LD_EXE="$WORKDIR/s32-ld.s32x"
 
 if [[ -s "$GEN1_CC_EXE" && -s "$STAGE_AS_EXE" && -s "$STAGE_LD_EXE" ]]; then
     echo ""
-    echo "=== Step 5: End-to-end toolchain test (gen1_cc + stage06 tools) ==="
+    echo "=== Step 5: End-to-end toolchain test (gen1_cc + rebuilt tools) ==="
 
-    # Test: compile test_spike.c with gen1_cc, assemble with stage06 AS, link with stage06 LD
+    # Test: compile test_spike.c with gen1_cc, assemble and link with the rebuilt AS and LD
     for tst in test_spike test_phase2 test_phase3; do
         TST_SRC="$TESTS_DIR/${tst}.c"
         [[ -f "$TST_SRC" ]] || continue

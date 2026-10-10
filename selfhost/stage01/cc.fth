@@ -177,6 +177,7 @@ VARIABLE peek-len
 VARIABLE peek-type
 VARIABLE peek-val
 VARIABLE has-peek           \ flag: is peek valid?
+VARIABLE tok-serial         \ tokens consumed so far (CC-TOKEN +1, UNGET-TOKEN -1): progress measure
 
 \ === Macro Table ===
 CREATE mac-name  MAX-MACRO CELLS ALLOT  \ offset into mname-buf
@@ -975,6 +976,7 @@ DEFER TYPE-SIZE
     tok-len @ peek-len !
     tok-type @ peek-type !
     tok-val @ peek-val !
+    -1 tok-serial +!
     1 has-peek ! ;
 
 \ Expect a specific punctuation, error if not
@@ -2063,6 +2065,7 @@ VARIABLE mexp-scratch-len
 
 \ Enhanced NEXT-TOKEN that handles preprocessor and macros
 : CC-TOKEN ( -- )
+    1 tok-serial +!
     inp-pos @ tok-start !   \ remember position before lexing
     BEGIN
         NEXT-TOKEN
@@ -2276,6 +2279,17 @@ VARIABLE mexp-scratch-len
             THEN
             P-RBRACK EXPECT-PUNCT
             CC-TOKEN
+            \ A further [ is a dimension Subset-C does not have (ISSUES-55):
+            \ diagnose it and skip to its ] instead of leaving it for the
+            \ caller, which looped on it
+            BEGIN tok-type @ TK-PUNCT = tok-val @ P-LBRACK = AND WHILE
+                S" multi-dimensional arrays are not supported (Subset-C has one dimension)" CC-ERR
+                BEGIN
+                    CC-TOKEN
+                    tok-type @ TK-EOF = tok-type @ TK-PUNCT = tok-val @ P-RBRACK = AND OR
+                UNTIL
+                tok-type @ TK-EOF <> IF CC-TOKEN THEN
+            REPEAT
         THEN
         func-name-buf tmp-name-off @
     ELSE
@@ -3852,11 +3866,21 @@ VARIABLE decl-name-len
                     CC-TOKEN
                 ELSE tok-val @ P-COMMA = IF
                     CC-TOKEN
+                ELSE tok-val @ P-MINUS = IF
+                    \ Negative literal (ISSUES-54: this arm sat outside the
+                    \ TK-PUNCT branch and never ran; {-7, 3} gave .word 0, .word 7)
+                    CC-TOKEN
+                    tok-type @ TK-NUM = IF
+                        EMIT-INDENT S" .word " OUT-STR tok-val @ NEGATE OUT-SNUM OUT-NL
+                        CC-TOKEN
+                    ELSE
+                        S" initializer: '-' must be followed by a number" CC-ERR
+                    THEN
                 ELSE
-                    \ Unknown punctuation inside initializer
+                    S" initializer: unexpected punctuation" CC-ERR
                     EMIT-INDENT S" .word 0" OUT-STR OUT-NL
                     CC-TOKEN
-                THEN THEN THEN
+                THEN THEN THEN THEN
             ELSE tok-type @ TK-NUM = IF
                 EMIT-INDENT S" .word " OUT-STR tok-val @ OUT-SNUM OUT-NL
                 CC-TOKEN
@@ -3868,14 +3892,11 @@ VARIABLE decl-name-len
                 \ Identifier — enum value or symbol address
                 EMIT-INDENT S" .word " OUT-STR tok-buf tok-len @ OUT-STR OUT-NL
                 CC-TOKEN
-            ELSE tok-type @ TK-PUNCT = tok-val @ P-MINUS = AND IF
-                CC-TOKEN
-                EMIT-INDENT S" .word " OUT-STR tok-val @ NEGATE OUT-SNUM OUT-NL
-                CC-TOKEN
             ELSE
+                S" initializer: unexpected token" CC-ERR
                 EMIT-INDENT S" .word 0" OUT-STR OUT-NL
                 CC-TOKEN
-            THEN THEN THEN THEN THEN
+            THEN THEN THEN THEN
         REPEAT
     ELSE tok-type @ TK-NUM = IF
         EMIT-INDENT S" .word " OUT-STR tok-val @ OUT-SNUM OUT-NL
@@ -4197,7 +4218,19 @@ VARIABLE decl-name-len
     BEGIN
         tok-type @ TK-EOF <>
     WHILE
+        tok-serial @
         PARSE-TOP-LEVEL
+        \ Out-of-contract input used to hang here: a declaration the parser
+        \ could not place consumed nothing and came round again (ISSUES-56).
+        \ No token consumed means no progress: say so, step over one token.
+        tok-serial @ = IF
+            S" cannot parse this declaration; skipping a token" CC-ERR
+            CC-TOKEN
+        THEN
+        cc-errors @ 50 > IF
+            S" too many errors; giving up" CC-ERR
+            TK-EOF tok-type !
+        THEN
     REPEAT
     \ Emit string literals
     EMIT-STRINGS

@@ -103,7 +103,14 @@ selfhost/stage01/run-regression-ar.sh test3
 selfhost/stage01/run-regression-ld.sh test3
 selfhost/stage01/run-regression-ld.sh kernel
 selfhost/stage01/run-regression-ld.sh archive
+selfhost/stage01/run-regression-cc.sh          # cc.fth: baseline test1..test9
+selfhost/stage01/run-subset-conformance.sh     # cc.fth: the Subset-C contract (15) and, with
+                                               #   --manifest tests/manifests/subset-stage2-idioms.lst, the 62 idioms
+selfhost/stage01/run-reject-tests.sh           # cc.fth: out-of-contract programs are diagnosed, never hung on
 ```
+
+`STAGE01_CC_EMU` (and the other scripts' `*_EMU`) picks the emulator; the
+default is stage00's `s32-emu`, `tools/emulator/slow32-fast` is the quick one.
 
 See `tests/README.md` for the reorganized test layout (conformance vs historical-debug)
 and `TEACHING.md` for a guided overview aimed at readers who want to understand the

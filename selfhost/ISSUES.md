@@ -1561,7 +1561,7 @@ conformance 14/14 with a new `subset14_global_aggregate_init.c`.
 Note: this was the "global aggregate-initializer hang" referenced as a known gap
 in `49f62669`.
 
-### 54. [OPEN] cc.fth: `P-MINUS` arm in the aggregate initializer is unreachable
+### 54. [RESOLVED 2026-10-10] cc.fth: `P-MINUS` arm in the aggregate initializer is unreachable
 
 `int n[2] = {-7, 3};` compiles but emits the wrong bytes:
 
@@ -1579,14 +1579,27 @@ Pre-existing on both paths; not introduced by #53. Fix is to test `P-MINUS`
 inside the `TK-PUNCT` branch. Deliberately excluded from
 `subset14_global_aggregate_init.c`.
 
-### 55. [OPEN] cc.fth: multi-level array declarators hang
+Fixed 2026-10-10: the arm is inside the `TK-PUNCT` branch (`-` must be
+followed by a number, else a diagnostic), the dead outer arm is gone, and
+unknown punctuation or tokens in an initializer are now diagnosed rather than
+silently emitted as `.word 0`.  Test: `subset15_negative_aggregate_init.c`
+(`{-7, 3}`, `-2147483647`, static) in the subset manifest, and
+`tests/conformance/reject/init_minus_name.c`.
+
+### 55. [RESOLVED 2026-10-10] cc.fth: multi-level array declarators hang
 
 `int m[2][2];` hangs in `PARSE-DECLARATOR` with or without an initializer.
 Multi-level arrays are not part of the Subset-C contract — that support arrives
 at a later stage — so this is a feature gap. It should reject with a diagnostic
 rather than loop. Tracked under the general hardening goal (#56).
 
-### 56. [OPEN] Forth toolchain: be well-behaved about what is and isn't supported
+Fixed 2026-10-10: `PARSE-DECLARATOR` consumes any further `[...]` with
+"multi-dimensional arrays are not supported (Subset-C has one dimension)".
+The hang was in the caller: the leftover `[` was a token `PARSE-TOP-LEVEL`
+could not place, and it came round without consuming it.  Tests:
+`tests/conformance/reject/multidim_array_{global,local}.c`.
+
+### 56. [OPEN, hardening landed 2026-10-10] Forth toolchain: be well-behaved about what is and isn't supported
 
 The Forth toolchain deliberately targets the lowest level of C it can get away
 with. Its failure mode for out-of-contract input, however, is frequently an
@@ -1610,6 +1623,18 @@ subset-idioms, validation, stage02). Scalar global initializers *are* used
 (`test3`, `test4`, `test5`, `test9`, `idiom03`, `idiom05`) and must be kept;
 local initializers (`char s[] = "a b"`, `subset01`) are a separate path.
 Deferred by decision, 2026-07-16: unify first (#53), revisit rejection later.
+
+2026-10-10, the hang half: `COMPILE-FILE`'s loop now measures progress
+(`tok-serial`, +1 per `CC-TOKEN`, -1 per `UNGET-TOKEN`); a `PARSE-TOP-LEVEL`
+round that consumed nothing is "cannot parse this declaration; skipping a
+token", and past 50 errors the compiler gives up.  `] int x;` and a stray `@`
+after `main` both hung before; both are diagnosed now.  `run-reject-tests.sh`
+(in the stage walk after the subset conformance) compiles every
+`tests/conformance/reject/*.c` and requires "Compilation failed" inside the
+time limit -- a hang or a silent acceptance fails the gate.  Still open: the
+contract question above (whether `{` initializers should be refused), and
+hangs deeper than the top level, which the gate is the place to pin as they
+are found.
 
 ### Build / Portability Follow-Ups
 

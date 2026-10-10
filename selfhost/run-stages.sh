@@ -202,6 +202,9 @@ run_stage01() {
         echo "[stage01] subset-c conformance"
         run_logged "stage01 cc subset" "$LOG_DIR/stage01-cc-subset.log" \
             env STAGE01_CC_EMU="$EMU" "$ROOT_DIR/selfhost/stage01/run-subset-conformance.sh"
+        echo "[stage01] out-of-contract programs are rejected, not hung on"
+        run_logged "stage01 cc reject" "$LOG_DIR/stage01-cc-reject.log" \
+            env STAGE01_CC_EMU="$EMU" "$ROOT_DIR/selfhost/stage01/run-reject-tests.sh"
         echo "[stage01] stage2-idiom conformance"
         run_logged "stage01 cc idioms" "$LOG_DIR/stage01-cc-idioms.log" \
             env STAGE01_CC_EMU="$EMU" "$ROOT_DIR/selfhost/stage01/run-subset-conformance.sh" \
