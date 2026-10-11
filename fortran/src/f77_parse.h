@@ -4406,6 +4406,9 @@ static int f77_sym_find(char *nm) {
  * the name is an intrinsic or statement function and not an array. */
 static int f77_actual_is_call(char *nm) {
     int s;
+    int after;
+    after = (int)(lx_rte - lx_stmt);
+    if (after >= lx_stmt_len || lx_stmt[after] != '(') return 0;   /* a bare name */
     if (f77_stf_find(nm) >= 0) return 1;
     if (f77_intrinsic(nm) == IN_NONE) return 0;
     s = f77_sym_find(nm);
@@ -4418,6 +4421,37 @@ static int f77_actual_addr(void) {
     int vty;
     int vhi;
     int tmp;
+
+    if (lx_t == T_NAME && f77_actual_is_simple()) {
+        /* A bare name that is a procedure -- EXTERNAL, a unit of this
+         * file, INTRINSIC, or an intrinsic no variable is using --
+         * passes the procedure's address.  A name the unit has typed,
+         * stored, shaped or received as a dummy is its variable. */
+        int after;
+        int sf;
+        after = (int)(lx_rte - lx_stmt);
+        if (after >= lx_stmt_len || lx_stmt[after] != '(') {
+            sf = f77_sym_find(lex_name);
+            if (sf < 0 || (!f77_styped[sf] && !f77_sstored[sf] && f77_srank[sf] == 0 &&
+                           !f77_sarg[sf] && !f77_scom[sf] && !f77_sparam[sf])) {
+                if ((sf >= 0 && f77_sexternal[sf]) || f77_find_unit(lex_name) >= 0) {
+                    char *pn;
+                    pn = strdup(lex_name);
+                    f77_tok();
+                    f77_act_len = -1;
+                    return hi_emit(HI_FADDR, HL_ADDR_TY, -1, -1, 0, pn);
+                }
+                if ((sf >= 0 && f77_sintrinsic[sf]) || f77_intrinsic(lex_name) != IN_NONE) {
+                    char *rn;
+                    rn = f77_intrinsic_proc(lex_name);
+                    f77_tok();
+                    f77_act_len = -1;
+                    if (rn == NULL) { f77_error("this intrinsic cannot be passed as an argument"); return f77_iconst(0); }
+                    return hi_emit(HI_FADDR, HL_ADDR_TY, -1, -1, 0, rn);
+                }
+            }
+        }
+    }
 
     if (lx_t == T_NAME && f77_find_func(lex_name) < 0 && f77_actual_is_simple() &&
         !f77_actual_is_call(lex_name)) {
@@ -4432,23 +4466,7 @@ static int f77_actual_addr(void) {
         /* A PARAMETER is a named constant, not a variable.  Passing
          * its leftover alloca would hand the callee garbage; fall
          * through and evaluate into a temp, like N+0 already does. */
-        if (f77_sexternal[s] || (f77_find_unit(lex_name) >= 0 && !f77_sarg[s] && f77_srank[s] == 0)) {
-            /* a procedure: its address */
-            f77_tok();
-            f77_act_len = -1;
-            return hi_emit(HI_FADDR, HL_ADDR_TY, -1, -1, 0, strdup(f77_sname[s]));
-        }
-        if (f77_sintrinsic[s] || (f77_intrinsic(lex_name) != IN_NONE && f77_sym_find(lex_name) < 0 &&
-                                  lx_stmt[(int)(lx_rte - lx_stmt)] != '(')) {
-            /* a specific intrinsic passed as a procedure: the runtime's
-             * by-reference copy of it */
-            char *rn;
-            rn = f77_intrinsic_proc(lex_name);
-            f77_tok();
-            f77_act_len = -1;
-            if (rn == NULL) { f77_error("this intrinsic cannot be passed as an argument"); return f77_iconst(0); }
-            return hi_emit(HI_FADDR, HL_ADDR_TY, -1, -1, 0, rn);
-        }
+
         if (f77_sty[s] == TY_CHAR) {
             f77_tok();
             v = f77_char_ref(s);
@@ -5967,6 +5985,103 @@ static void f77_stmt_open(int skip) {
     }
 }
 
+/* INQUIRE (UNIT=u | FILE=f, specifier=var, ...).  The runtime looks the
+ * unit or file up once (f77_inquire) and then fills each specifier
+ * variable by code (f77_inq); the codes are the runtime's. */
+static void f77_stmt_inquire(int skip) {
+    int unit_val;
+    int file_addr; int file_lenv;
+    int err_label;
+    int iostat_addr;
+    int nspec;
+    int spec_code[24]; int spec_addr[24]; int spec_len[24]; int spec_log[24];
+    char kw[F77_MAX_NAME];
+    int r;
+    int i;
+    int args[4];
+
+    f77_scan_from(skip);
+    unit_val = -1;
+    file_addr = -1; file_lenv = -1;
+    err_label = -1;
+    iostat_addr = -1;
+    nspec = 0;
+    if (lx_t != T_LP) { f77_error("INQUIRE needs a control list"); return; }
+    f77_tok();
+    for (;;) {
+        int code;
+        if (lx_t != T_NAME) { f77_error("INQUIRE needs keyword=value items"); return; }
+        strcpy(kw, lex_name);
+        f77_tok();
+        if (lx_t != T_ASSIGN) { f77_error("INQUIRE needs keyword=value items"); return; }
+        f77_tok();
+        code = 0;
+        if (strcmp(kw, "UNIT") == 0) {
+            unit_val = f77_expr();
+            unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
+        } else if (strcmp(kw, "FILE") == 0) {
+            file_addr = f77_expr();
+            if (ex_ty != TY_CHAR) { f77_error("FILE= needs a CHARACTER value"); return; }
+            file_lenv = ex_len;
+        } else if (strcmp(kw, "ERR") == 0) {
+            if (lx_t != T_ICON) { f77_error("ERR= needs a statement label"); return; }
+            err_label = lex_ival;
+            f77_tok();
+        } else if (strcmp(kw, "IOSTAT") == 0) {
+            int ty;
+            iostat_addr = f77_rd_target(&ty);
+        }
+        else if (strcmp(kw, "EXIST") == 0) code = 1;
+        else if (strcmp(kw, "OPENED") == 0) code = 2;
+        else if (strcmp(kw, "NUMBER") == 0) code = 3;
+        else if (strcmp(kw, "NAMED") == 0) code = 4;
+        else if (strcmp(kw, "NAME") == 0) code = 5;
+        else if (strcmp(kw, "ACCESS") == 0) code = 6;
+        else if (strcmp(kw, "SEQUENTIAL") == 0) code = 7;
+        else if (strcmp(kw, "DIRECT") == 0) code = 8;
+        else if (strcmp(kw, "FORM") == 0) code = 9;
+        else if (strcmp(kw, "FORMATTED") == 0) code = 10;
+        else if (strcmp(kw, "UNFORMATTED") == 0) code = 11;
+        else if (strcmp(kw, "RECL") == 0) code = 12;
+        else if (strcmp(kw, "NEXTREC") == 0) code = 13;
+        else if (strcmp(kw, "BLANK") == 0) code = 14;
+        else { f77_error("unknown INQUIRE specifier"); return; }
+        if (code > 0) {
+            int ty;
+            if (nspec >= 24) { f77_error("too many INQUIRE specifiers"); return; }
+            spec_addr[nspec] = f77_rd_target(&ty);
+            spec_len[nspec] = (ty == TY_CHAR) ? f77_rd_len : f77_iconst(0);
+            spec_code[nspec] = code;
+            spec_log[nspec] = (ty != TY_CHAR);
+            nspec = nspec + 1;
+        }
+        if (lx_t == T_COMMA) { f77_tok(); continue; }
+        break;
+    }
+    if (lx_t != T_RP) { f77_error("expected ) after INQUIRE list"); return; }
+    f77_tok();
+    if (unit_val < 0 && file_addr < 0) { f77_error("INQUIRE needs UNIT= or FILE="); return; }
+    args[0] = (unit_val >= 0) ? unit_val : f77_iconst(-1);
+    args[1] = (file_addr >= 0) ? file_addr : f77_iconst(0);
+    args[2] = (file_addr >= 0) ? file_lenv : f77_iconst(0);
+    r = f77_call_i("f77_inquire", 3, args);
+    if (iostat_addr >= 0) hi_emit(HI_STORE, TY_INT, iostat_addr, r, 0, NULL);
+    for (i = 0; i < nspec; i++) {
+        args[0] = f77_iconst(spec_code[i]);
+        args[1] = spec_addr[i];
+        args[2] = spec_len[i];
+        f77_call_i("f77_inq", 3, args);
+    }
+    if (err_label >= 0) {
+        int b_cont; int c;
+        b_cont = hir_new_block();
+        c = hi_emit(HI_SNE, TY_INT, r, f77_iconst(0), 0, NULL);
+        hi_emit(HI_BRC, TY_VOID, c, f77_label_blk(err_label), b_cont, NULL);
+        f77_cur_blk_live = 0;
+        f77_begin_blk(b_cont);
+    }
+}
+
 /* CLOSE (unit [, STATUS='KEEP'|'DELETE']) */
 static void f77_stmt_close(int skip) {
     int unit_val;
@@ -6234,6 +6349,7 @@ static void f77_statement(void) {
     if ((n = f77_starts("READ")) != 0)  { f77_stmt_read(n);  goto done; }
     if ((n = f77_starts("OPEN")) != 0)  { f77_stmt_open(n);  goto done; }
     if ((n = f77_starts("CLOSE")) != 0) { f77_stmt_close(n); goto done; }
+    if ((n = f77_starts("INQUIRE")) != 0) { f77_stmt_inquire(n); goto done; }
     if ((n = f77_starts("REWIND")) != 0) { f77_stmt_rewind(n); goto done; }
     if ((n = f77_starts("BACKSPACE")) != 0) {
         int u;
@@ -6522,7 +6638,12 @@ static void f77_statement(void) {
     }
 
     if (f77_is_unit_end()) {
-        if (f77_cur_blk_live) hi_emit(HI_RET, TY_INT, f77_iconst(0), -1, 0, NULL);
+        /* Falling off END returns like RETURN does -- a FUNCTION hands
+         * back its result variable.  This emitted a bare `return 0`
+         * for years: every direct caller was spliced inline and read
+         * the variable itself, so only a FUNCTION reached through a
+         * dummy procedure ever executed the out-of-line body. */
+        f77_emit_return();
         f77_cur_blk_live = 0;
         goto done;
     }

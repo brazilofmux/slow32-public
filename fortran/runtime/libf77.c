@@ -75,6 +75,7 @@ static int   fio_uunf[FIO_MAXUNIT];      /* FORM='UNFORMATTED' */
 static int   fio_urecl[FIO_MAXUNIT];     /* RECL= in bytes */
 static int   fio_ubz[FIO_MAXUNIT];       /* BLANK='ZERO' */
 static int   fio_rec_next;               /* REC= of the statement about to begin, or 0 */
+static int   fio_uaeof[FIO_MAXUNIT];     /* positioned after the endfile record */
 static int   fio_recoverable;            /* ERR=/IOSTAT= present: report, do not exit */
 static int   fio_err;                    /* set when a recoverable error happened */
 /* Unformatted record buffer: assembled on WRITE, consumed on READ. */
@@ -142,8 +143,18 @@ static int fio_str_is(const char *s, int len, const char *kw) {
     return 1;
 }
 
+/* The output line has a cursor (fio_col) distinct from its length:
+ * X and T editing move the cursor, characters are written at it
+ * (overwriting, or extending the line with blanks when the cursor is
+ * past the end), so `T1` after text overprints and trailing X emits no
+ * blanks -- both as gfortran does. */
+static int fio_col;
 static void fio_putc(int c) {
-    if (fio_len < FIO_MAXLINE - 1) fio_line[fio_len++] = (char)c;
+    if (fio_col >= FIO_MAXLINE - 1) return;
+    while (fio_len < fio_col) fio_line[fio_len++] = ' ';
+    fio_line[fio_col] = (char)c;
+    fio_col++;
+    if (fio_col > fio_len) fio_len = fio_col;
 }
 
 static void fio_puts(const char *s) {
@@ -155,6 +166,7 @@ static int fio_unit;             /* unit of the statement in progress */
 static void fio_flush_line(void) {
     FILE *f = fio_out ? fio_out : stdout;
     fio_line[fio_len] = 0;
+    fio_col = 0;
     if (fio_ibuf) {
         int i;
         if (fio_irec >= fio_inrec) {
@@ -200,7 +212,9 @@ static void fio_drop_zero(char *buf, int w) {
     else if (buf[0] == '-' && buf[1] == '0' && buf[2] == '.') memmove(buf + 1, buf + 2, (size_t)(n - 1));
 }
 
-static void fio_pad(int n) { while (n-- > 0) fio_putc(' '); }
+static void fio_pad(int n) { if (n > 0) fio_col += n; }
+/* Blanks that are part of a field (G editing's trailer) are written. */
+static void fio_blanks(int n) { while (n-- > 0) fio_putc(' '); }
 
 /* Right-justify `s` in a field of `w`; a field too narrow is filled
  * with asterisks, which is what Fortran does rather than overflowing. */
@@ -227,7 +241,7 @@ static int fio_getrec(void) {
         return 0;
     }
     if (fio_unit > 0 && fio_unit < FIO_MAXUNIT && fio_uend[fio_unit] >= 0 &&
-        fio_in && ftell(fio_in) >= fio_uend[fio_unit]) return 1;
+        fio_in && ftell(fio_in) >= fio_uend[fio_unit]) { fio_uaeof[fio_unit] = 1; return 1; }
     if (fio_unit > 0 && fio_unit < FIO_MAXUNIT && fio_udirect[fio_unit]) {
         int recl = fio_urecl[fio_unit];
         size_t n;
@@ -238,7 +252,10 @@ static int fio_getrec(void) {
         fio_rpos = 0;
         return 0;
     }
-    if (!fgets(fio_rec, FIO_MAXLINE, fio_in ? fio_in : stdin)) return 1;
+    if (!fgets(fio_rec, FIO_MAXLINE, fio_in ? fio_in : stdin)) {
+        if (fio_unit > 0 && fio_unit < FIO_MAXUNIT) fio_uaeof[fio_unit] = 1;
+        return 1;
+    }
     fio_rlen = (int)strlen(fio_rec);
     while (fio_rlen > 0 &&
            (fio_rec[fio_rlen - 1] == '\n' || fio_rec[fio_rlen - 1] == '\r'))
@@ -367,6 +384,24 @@ static int fio_next_desc(void) {
             fio_pos++;
             if (fio_reading) fio_rpos += n;   /* skip columns */
             else fio_pad(n);
+            continue;
+        }
+        if (c == 'T' || c == 't') {
+            /* Tn: to column n; TLn / TRn: n columns left / right */
+            int dir = 0;
+            fio_pos++;
+            if (fio_fmt[fio_pos] == 'L' || fio_fmt[fio_pos] == 'l') { dir = -1; fio_pos++; }
+            else if (fio_fmt[fio_pos] == 'R' || fio_fmt[fio_pos] == 'r') { dir = 1; fio_pos++; }
+            n = fio_isdigit(fio_fmt[fio_pos]) ? fio_number() : 1;
+            if (fio_reading) {
+                if (dir == 0) fio_rpos = n - 1;
+                else fio_rpos += dir * n;
+                if (fio_rpos < 0) fio_rpos = 0;
+            } else {
+                if (dir == 0) fio_col = n - 1;
+                else fio_col += dir * n;
+                if (fio_col < 0) fio_col = 0;
+            }
             continue;
         }
         if (c == 'H' || c == 'h') {
@@ -640,6 +675,7 @@ int f77_ru_begin(int unit, int flags) {
         return 0;
     }
     if (fio_uend[unit] >= 0 && ftell(f) >= fio_uend[unit]) {
+        fio_uaeof[unit] = 1;
         if (flags & 1) return 1;
         if (flags & 2) return 1;
         fprintf(stderr, "f77: end of file on READ\n");
@@ -649,6 +685,7 @@ int f77_ru_begin(int unit, int flags) {
         unsigned char lw[4];
         int n;
         if (fread(lw, 1, 4, f) != 4) {
+            fio_uaeof[unit] = 1;
             if (flags & 3) return 1;
             fprintf(stderr, "f77: end of file on READ\n");
             exit(2);
@@ -686,7 +723,7 @@ void f77_backspace(int unit) {
     f = fio_resolve(unit, 1);
     fflush(f);
     pos = ftell(f);
-    if (fio_uend[unit] >= 0 && pos >= fio_uend[unit]) { fio_uend[unit] = -1; return; }
+    if (fio_uaeof[unit]) { fio_uaeof[unit] = 0; return; }   /* back over the endfile record */
     if (pos <= 0) return;
     if (fio_uunf[unit]) {
         unsigned char lw[4];
@@ -724,6 +761,7 @@ void f77_wr_begin_int(char *buf, int len, int nrec, const char *fmt) {
 static void fio_wr_setup(const char *fmt) {
     fio_reading = 0;
     fio_len = 0;
+    fio_col = 0;
     fio_gdepth = 0;
     fio_scale = 0;
     fio_rep = 0;
@@ -764,7 +802,20 @@ void f77_wr_i(int v) {
         fio_consumed();
         return;
     }
-    snprintf(buf, sizeof buf, "%d", v);
+    if (fio_d > 0) {
+        /* Iw.m: at least m digits, zero-filled */
+        char dig[32];
+        int nd;
+        unsigned int u = v < 0 ? (unsigned int)(-(long)v) : (unsigned int)v;
+        snprintf(dig, sizeof dig, "%u", u);
+        nd = (int)strlen(dig);
+        snprintf(buf, sizeof buf, "%s%0*d%s", v < 0 ? "-" : "", nd < fio_d ? fio_d - nd : 0, 0, dig);
+        if (nd >= fio_d) snprintf(buf, sizeof buf, "%s%s", v < 0 ? "-" : "", dig);
+    } else if (fio_fmt[fio_pos - 1] == '0' && fio_fmt[fio_pos - 2] == '.' && v == 0) {
+        buf[0] = 0;                        /* Iw.0 of zero: blanks */
+    } else {
+        snprintf(buf, sizeof buf, "%d", v);
+    }
     fio_field(buf, fio_w);
     fio_consumed();
 }
@@ -799,7 +850,8 @@ void f77_wr_d(double v) {
         for (i = 0; i < nd; i++) lim *= 10.0;
         if (a == 0.0 || (a >= 0.1 && a < lim)) use_f = 1;
         if (use_f) {
-            int fw = fio_w >= 4 ? fio_w - 4 : fio_w;
+            int tb = fio_e > 0 ? fio_e + 2 : 4;
+            int fw = fio_w >= tb ? fio_w - tb : fio_w;
             int k = 0;
             double t = a;
             if (t >= 1.0) {
@@ -811,7 +863,7 @@ void f77_wr_d(double v) {
             if (nd - k <= 0) strcat(buf, ".");
             fio_drop_zero(buf, fw);
             fio_field(buf, fw);
-            fio_pad(fio_w >= 4 ? 4 : 0);
+            fio_blanks(fio_w >= tb ? tb : 0);
             fio_consumed();
             return;
         }
@@ -851,6 +903,7 @@ void f77_wr_c(float re, float im) {
             while (j > start && fio_line[j - 1] == ' ') j--;
             for (i = 0; i < j - start; i++) fio_line[save + i] = fio_line[start + i];
             fio_len = save + (j - start);
+            fio_col = fio_len;
         }
         fio_putc(',');
         save = fio_len;
@@ -863,7 +916,9 @@ void f77_wr_c(float re, float im) {
             while (j > start && fio_line[j - 1] == ' ') j--;
             for (i = 0; i < j - start; i++) fio_line[save + i] = fio_line[start + i];
             fio_len = save + (j - start);
+            fio_col = fio_len;
         }
+        fio_col = fio_len;
         fio_putc(')');
         /* gfortran right-justifies the pair in 35 columns after the blank */
         {
@@ -874,6 +929,7 @@ void f77_wr_c(float re, float im) {
                 memset(fio_line + start0, ' ', (size_t)pad);
                 fio_len += pad;
             }
+            fio_col = fio_len;
         }
         fio_first_item = 0;
         fio_prev_char = 0;
@@ -1745,6 +1801,97 @@ void f77_close(int unit, const char *status, int slen) {
     fio_ufname[unit][0] = 0;
 }
 
+/* --- INQUIRE ------------------------------------------------------------
+ *
+ * f77_inquire looks the unit (or file) up and remembers what it found;
+ * f77_inq then fills one specifier by code.  Values for an unconnected
+ * unit follow gfortran: 'UNDEFINED' for ACCESS/FORM/BLANK, 'UNKNOWN'
+ * for the yes/no ones, and the INTEGER ones unchanged. */
+static int  inq_unit;        /* -1 none */
+static int  inq_exist;
+static int  inq_opened;
+static char inq_name[FIO_MAXNAME];
+static int  inq_named;
+static int  inq_direct;
+static int  inq_unf;
+static int  inq_recl;
+static long inq_nextrec;
+static int  inq_bz;
+
+int f77_inquire(int unit, const char *file, int flen) {
+    int i;
+    fio_init_units();
+    inq_unit = -1; inq_exist = 0; inq_opened = 0; inq_name[0] = 0; inq_named = 0;
+    inq_direct = 0; inq_unf = 0; inq_recl = 0; inq_nextrec = 0; inq_bz = 0;
+    if (file && flen > 0) {
+        char nm[FIO_MAXNAME];
+        FILE *f;
+        int n = flen < FIO_MAXNAME - 1 ? flen : FIO_MAXNAME - 1;
+        memcpy(nm, file, (size_t)n); nm[n] = 0;
+        while (n > 0 && nm[n - 1] == ' ') nm[--n] = 0;
+        strcpy(inq_name, nm);
+        inq_named = 1;
+        f = fopen(nm, "r");
+        if (f) { inq_exist = 1; fclose(f); }
+        for (i = 1; i < FIO_MAXUNIT; i++) {
+            if (fio_ufile[i] && strcmp(fio_ufname[i], nm) == 0) { inq_opened = 1; inq_unit = i; break; }
+        }
+        if (inq_opened) { unit = inq_unit; }
+        else return 0;
+    } else {
+        if (unit < 0 || unit >= FIO_MAXUNIT) { inq_exist = 0; return 0; }
+        inq_exist = 1;
+        inq_unit = unit;
+        if (unit == 5 || unit == 6 || unit == 0) {
+            inq_opened = 1;
+            strcpy(inq_name, unit == 5 ? "stdin" : unit == 6 ? "stdout" : "stderr");
+            inq_named = 0;
+            return 0;
+        }
+        if (!fio_ufile[unit]) { inq_opened = 0; return 0; }
+        inq_opened = 1;
+        strcpy(inq_name, fio_ufname[unit]);
+        inq_named = inq_name[0] != 0;
+    }
+    inq_direct = fio_udirect[unit];
+    inq_unf = fio_uunf[unit];
+    inq_recl = fio_urecl[unit];
+    inq_bz = fio_ubz[unit];
+    if (inq_direct && inq_recl > 0) {
+        fflush(fio_ufile[unit]);
+        inq_nextrec = ftell(fio_ufile[unit]) / inq_recl + 1;
+    }
+    return 0;
+}
+
+static void inq_put_s(char *p, int len, const char *v) {
+    int n = (int)strlen(v);
+    int i;
+    for (i = 0; i < len; i++) p[i] = i < n ? v[i] : ' ';
+}
+
+void f77_inq(int code, void *p, int len) {
+    int *ip = (int *)p;
+    char *cp = (char *)p;
+    switch (code) {
+    case 1: *ip = inq_exist; break;
+    case 2: *ip = inq_opened; break;
+    case 3: if (inq_opened || inq_unit >= 0) *ip = inq_unit; else *ip = -1; break;
+    case 4: *ip = inq_opened ? inq_named : 0; break;
+    case 5: if (inq_opened && inq_named) inq_put_s(cp, len, inq_name); break;
+    case 6: inq_put_s(cp, len, !inq_opened ? "UNDEFINED" : inq_direct ? "DIRECT" : "SEQUENTIAL"); break;
+    case 7: inq_put_s(cp, len, !inq_opened ? "UNKNOWN" : inq_direct ? "NO" : "YES"); break;
+    case 8: inq_put_s(cp, len, !inq_opened ? "UNKNOWN" : inq_direct ? "YES" : "NO"); break;
+    case 9: inq_put_s(cp, len, !inq_opened ? "UNDEFINED" : inq_unf ? "UNFORMATTED" : "FORMATTED"); break;
+    case 10: inq_put_s(cp, len, !inq_opened ? "UNKNOWN" : inq_unf ? "NO" : "YES"); break;
+    case 11: inq_put_s(cp, len, !inq_opened ? "UNKNOWN" : inq_unf ? "YES" : "NO"); break;
+    case 12: if (inq_opened && inq_direct) *ip = inq_recl; break;
+    case 13: if (inq_opened && inq_direct) *ip = (int)inq_nextrec; break;
+    case 14: inq_put_s(cp, len, (!inq_opened || inq_unf) ? "UNDEFINED" : inq_bz ? "ZERO" : "NULL"); break;
+    default: break;
+    }
+}
+
 void f77_rewind(int unit) {
     FILE *f;
     fio_init_units();
@@ -1755,4 +1902,5 @@ void f77_rewind(int unit) {
     f = fio_resolve(unit, 1);
     fflush(f);
     fseek(f, 0L, SEEK_SET);
+    fio_uaeof[unit] = 0;
 }
