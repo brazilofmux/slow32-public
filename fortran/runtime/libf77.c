@@ -375,6 +375,10 @@ static void fio_efmt(char *out, int outsz, double v, int nd, int letter) {
 
 /* --- entry points called by compiled Fortran ------------------------ */
 
+/* List-directed layout follows gfortran: INTEGER in a 12-wide field,
+ * character items run together after one separating blank. */
+static int fio_prev_char;
+
 void f77_wr_begin(int unit, const char *fmt) {
     fio_out = fio_resolve(unit, 1);
     fio_reading = 0;
@@ -385,6 +389,7 @@ void f77_wr_begin(int unit, const char *fmt) {
     fio_rep = 0;
     fio_desc = 0;
     fio_first_item = 1;
+    fio_prev_char = 0;
     if (fmt == 0) {
         fio_listed = 1;
         fio_fmt = "";
@@ -405,10 +410,10 @@ void f77_wr_i(int v) {
     char buf[32];
     int d;
     if (fio_listed) {
-        snprintf(buf, sizeof buf, "%d", v);
-        fio_pad(fio_first_item ? 1 : 1);
+        snprintf(buf, sizeof buf, "%12d", v);
         fio_puts(buf);
         fio_first_item = 0;
+        fio_prev_char = 0;
         return;
     }
     d = fio_want();
@@ -433,6 +438,7 @@ void f77_wr_d(double v) {
         fio_putc(' ');
         fio_puts(buf);
         fio_first_item = 0;
+        fio_prev_char = 0;
         return;
     }
     d = fio_want();
@@ -490,9 +496,12 @@ void f77_wr_a(const char *s, int len) {
     int d;
     int i;
     if (fio_listed) {
-        fio_putc(' ');
+        /* List-directed: the record's leading blank, then character
+         * items run together with no separator (gfortran's layout). */
+        if (fio_first_item || !fio_prev_char) fio_putc(' ');
         for (i = 0; i < len; i++) fio_putc(s[i]);
         fio_first_item = 0;
+        fio_prev_char = 1;
         return;
     }
     d = fio_want();
@@ -501,6 +510,59 @@ void f77_wr_a(const char *s, int len) {
     else if (fio_w > len) fio_pad(fio_w - len);
     for (i = 0; i < len; i++) fio_putc(s[i]);
     fio_consumed();
+}
+
+/* --- CHARACTER primitives --------------------------------------------- */
+
+/* d(1:dl) = s(1:sl): copy, then blank-fill; memmove because F77 lets
+ * the two overlap only when they coincide, and that must still work. */
+void f77_strcpy(char *d, int dl, const char *s, int sl) {
+    int n = sl < dl ? sl : dl;
+    if (n > 0) memmove(d, s, (size_t)n);
+    while (n < dl) d[n++] = ' ';
+}
+
+/* Compare with the shorter operand blank-extended: -1, 0, 1. */
+int f77_strcmp(const char *a, int la, const char *b, int lb) {
+    int n = la > lb ? la : lb;
+    int i;
+    for (i = 0; i < n; i++) {
+        int ca = i < la ? (unsigned char)a[i] : ' ';
+        int cb = i < lb ? (unsigned char)b[i] : ' ';
+        if (ca != cb) return ca < cb ? -1 : 1;
+    }
+    return 0;
+}
+
+/* a // b when a length is not known at compile time: the result goes
+ * into a scratch ring and is consumed by the statement that built it
+ * (an assignment, comparison or argument), so a 64 KB ring outlives
+ * every live result in practice; a chain longer than that wraps. */
+#define FIO_CATRING 65536
+static char fio_catring[FIO_CATRING];
+static int  fio_catpos;
+char *f77_cat(const char *a, int la, const char *b, int lb) {
+    char *r;
+    int n = (la > 0 ? la : 0) + (lb > 0 ? lb : 0);
+    if (n > FIO_CATRING) {
+        fprintf(stderr, "f77: concatenation result of %d bytes is too long\n", n);
+        exit(2);
+    }
+    if (fio_catpos + n > FIO_CATRING) fio_catpos = 0;
+    r = fio_catring + fio_catpos;
+    fio_catpos += (n + 3) & ~3;
+    if (la > 0) memmove(r, a, (size_t)la);
+    if (lb > 0) memmove(r + (la > 0 ? la : 0), b, (size_t)lb);
+    return r;
+}
+
+/* INDEX: first position of b in a, 1-based; 0 when absent. */
+int f77_index(const char *a, int la, const char *b, int lb) {
+    int i;
+    if (lb == 0) return la > 0 ? 1 : 0;
+    for (i = 0; i + lb <= la; i++)
+        if (memcmp(a + i, b, (size_t)lb) == 0) return i + 1;
+    return 0;
 }
 
 void f77_wr_l(int v) {
@@ -816,6 +878,55 @@ void f77_rd_r(float *p) {
         exit(2);
     }
     else *p = (float)fio_in_real(fio_w, fio_d);
+    fio_consumed();
+}
+
+/* CHARACTER input.  Aw: w > len takes the rightmost len characters,
+ * w < len left-justifies and blank-fills; a bare A uses len.  Blanks
+ * are data here, not squeezed.  List-directed: a quoted token (with
+ * '' as the embedded quote) or an unquoted one. */
+void f77_rd_s(char *p, int len) {
+    int d;
+    int w;
+    int i;
+    if (fio_listed) {
+        int n;
+        if (fio_ldone) return;
+        if (fio_list_tok()) { fio_ldone = 1; return; }
+        n = (int)strlen(fio_ltok);
+        if (n >= 2 && (fio_ltok[0] == '\'' || fio_ltok[0] == '"') && fio_ltok[n - 1] == fio_ltok[0]) {
+            int q = fio_ltok[0];
+            int k = 0;
+            for (i = 1; i < n - 1; i++) {
+                if (fio_ltok[i] == q && fio_ltok[i + 1] == q) i++;
+                if (k < len) p[k++] = fio_ltok[i];
+            }
+            while (k < len) p[k++] = ' ';
+            return;
+        }
+        for (i = 0; i < len; i++) p[i] = i < n ? fio_ltok[i] : ' ';
+        return;
+    }
+    d = fio_want();
+    if (d == 0) return;
+    if (d != 'A') {
+        fprintf(stderr, "f77: %c editing does not match a CHARACTER READ item\n", d);
+        exit(2);
+    }
+    w = fio_w > 0 ? fio_w : len;
+    if (w >= len) {
+        int skip = w - len;
+        for (i = 0; i < len; i++) {
+            int c = (fio_rpos + skip + i < fio_rlen) ? fio_rec[fio_rpos + skip + i] : ' ';
+            p[i] = (char)c;
+        }
+    } else {
+        for (i = 0; i < len; i++) {
+            int c = (i < w && fio_rpos + i < fio_rlen) ? fio_rec[fio_rpos + i] : ' ';
+            p[i] = (char)c;
+        }
+    }
+    fio_rpos += w;
     fio_consumed();
 }
 

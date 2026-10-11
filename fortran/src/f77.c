@@ -91,7 +91,8 @@ static void f77_scan_units(void) {
             if (f77_starts("COMMON") || f77_starts("IMPLICIT") ||
                 f77_starts("DATA") || f77_starts("SAVE") ||
                 f77_starts("EQUIVALENCE") || f77_starts("PARAMETER") ||
-                f77_starts("ENTRY") || f77_starts("EXTERNAL"))
+                f77_starts("ENTRY") || f77_starts("EXTERNAL") ||
+                f77_starts("CHARACTER"))
                 f77_unosplice[f77_nunit - 1] = 1;
         }
         rty = f77_unit_header_ty();
@@ -135,6 +136,7 @@ static void f77_scan_units(void) {
                     f77_urty[f77_nunit] = f77_implicit_ty(f77_uname[f77_nunit]);
                 else
                     f77_urty[f77_nunit] = rty;
+                f77_urlen[f77_nunit] = (rty == TY_CHAR) ? f77_hdr_clen : 1;
             } else {
                 f77_ukind[f77_nunit] = F77_UNIT_SUBR;
                 f77_urty[f77_nunit] = TY_INT;
@@ -147,24 +149,34 @@ static void f77_scan_units(void) {
             int skip;
             ty = -1;
             skip = 0;
+            int clen;
+            clen = 1;
             if (f77_starts("INTEGER")) { ty = TY_INT; skip = 7; }
             else if (f77_starts("LOGICAL")) { ty = TY_INT; skip = 7; }
             else if (f77_starts("DOUBLEPRECISION")) { ty = TY_DOUBLE; skip = 15; }
             else if (f77_starts("REAL")) { ty = TY_FLOAT; skip = 4; }
+            else if (f77_starts("CHARACTER")) { ty = TY_CHAR; skip = 9; }
             if (ty >= 0) {
                 f77_scan_from(skip);
                 if (lx_t == T_STAR) {
                     f77_tok();
-                    if (lx_t == T_ICON) {
+                    if (ty == TY_CHAR) clen = f77_char_len();
+                    else if (lx_t == T_ICON) {
                         if (lex_ival == 8 && ty == TY_FLOAT) ty = TY_DOUBLE;
                         f77_tok();
                     }
+                    if (lx_t == T_COMMA) f77_tok();
                 }
                 while (lx_t == T_NAME) {
                     int is_fn;
                     is_fn = strcmp(lex_name, f77_uname[f77_nunit - 1]) == 0;
                     f77_tok();
-                    if (lx_t == T_STAR) {
+                    if (lx_t == T_STAR && ty == TY_CHAR) {
+                        int l;
+                        f77_tok();
+                        l = f77_char_len();
+                        if (is_fn) { f77_urty[f77_nunit - 1] = TY_CHAR; f77_urlen[f77_nunit - 1] = l; }
+                    } else if (lx_t == T_STAR) {
                         f77_tok();
                         if (lx_t == T_ICON) {
                             if (is_fn) {
@@ -177,6 +189,7 @@ static void f77_scan_units(void) {
                         }
                     } else if (is_fn) {
                         f77_urty[f77_nunit - 1] = ty;
+                        if (ty == TY_CHAR) f77_urlen[f77_nunit - 1] = clen;
                     }
                     if (lx_t == T_LP) {
                         int depth;

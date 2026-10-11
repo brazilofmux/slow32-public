@@ -113,6 +113,44 @@ static void f77_ldro_finalize(void) {
 static int  f77_sgidx[F77_MAX_SYM];    /* ps_g* index once bound static */
 static int  f77_sgoff[F77_MAX_SYM];    /* byte offset inside that object */
 
+/* --- CHARACTER ---------------------------------------------------------
+ *
+ * A CHARACTER*n entity is n bytes of storage and nothing else: no
+ * descriptor, no terminator.  A character-valued EXPRESSION is an
+ * ADDRESS (the HIR value f77_primary returns) plus a LENGTH, carried
+ * beside ex_ty in ex_len (an HIR int value) and ex_clen (the constant
+ * when it is known at compile time, else -1).  Lengths are constant
+ * everywhere except an assumed-length dummy, CHARACTER*(*), whose
+ * length arrives as a hidden INTEGER argument appended after the
+ * regular ones -- one per CHARACTER actual, in order, the gfortran
+ * convention -- and a CHARACTER FUNCTION, which takes its result
+ * buffer and length as two hidden leading arguments. */
+static int  f77_slen[F77_MAX_SYM];     /* length in bytes, -1 = assumed (*) */
+static int  f77_slenv[F77_MAX_SYM];    /* HIR value of the length when -1 */
+static int  f77_spstr[F77_MAX_SYM];    /* CHARACTER PARAMETER: string index */
+static int  f77_sexternal[F77_MAX_SYM]; /* named in EXTERNAL */
+static int  f77_imp_len[26];           /* IMPLICIT CHARACTER*n per letter */
+static int  ex_len;
+static int  ex_clen;
+static int  f77_act_len;               /* length of the last f77_actual_addr, or -1 */
+
+/* The unit's dummies in order (also the copy-in list), the count of
+ * its incoming words, and the length of the last CHARACTER READ
+ * target; declared here because the static layout reads them. */
+#define F77_MAX_COPYIN 32
+static int f77_ci_sym[F77_MAX_COPYIN];   /* the dummy's symbol */
+static int f77_ci_addr[F77_MAX_COPYIN];  /* its original address value */
+static int f77_ci_n;
+static int f77_unit_nparams;
+static int f77_rd_len;
+static void f77_assign_params(int n);
+
+/* Element size: a CHARACTER element is its length. */
+static int f77_esize(int s) {
+    if (f77_sty[s] == TY_CHAR) return f77_slen[s] > 0 ? f77_slen[s] : 1;
+    return ty_size(f77_sty[s]);
+}
+
 /* --- EQUIVALENCE -------------------------------------------------------
  *
  * Each statement's groups are flattened into pairs: addr(a)+oa ==
@@ -228,6 +266,12 @@ static int f77_sym(char *nm) {
     f77_ssaved[f77_nsym] = 0;
     f77_sgidx[f77_nsym] = -1;
     f77_sgoff[f77_nsym] = 0;
+    f77_slen[f77_nsym] = 1;
+    f77_slenv[f77_nsym] = -1;
+    f77_spstr[f77_nsym] = -1;
+    f77_sexternal[f77_nsym] = 0;
+    if (f77_sty[f77_nsym] == TY_CHAR && f77_imp_ready && nm[0] >= 'A' && nm[0] <= 'Z')
+        f77_slen[f77_nsym] = f77_imp_len[nm[0] - 'A'];
     f77_sparam[f77_nsym] = 0;
     f77_styped[f77_nsym] = 0;
     f77_sstored[f77_nsym] = 0;
@@ -261,6 +305,10 @@ static int f77_sym_temp(int ty) {
     f77_sparam[s] = 0;
     f77_styped[s] = 1;
     f77_sstored[s] = 0;
+    f77_slen[s] = 1;
+    f77_slenv[s] = -1;
+    f77_spstr[s] = -1;
+    f77_sexternal[s] = 0;
     { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[s][d] = -1; d = d + 1; } }
     f77_frame = f77_frame + ty_size(ty);
     f77_sval[s] = hi_emit(HI_ALLOCA, ty, -1, -1, 0 - f77_frame, NULL);
@@ -285,6 +333,8 @@ static int  f77_ukind[F77_MAX_UNIT];
 static int  f77_upos[F77_MAX_UNIT];    /* source offset of the header */
 static int  f77_uline[F77_MAX_UNIT];
 static int  f77_urty[F77_MAX_UNIT];    /* FUNCTION result type */
+static int  f77_urlen[F77_MAX_UNIT];   /* CHARACTER FUNCTION result length, -1 = (*) */
+static int  f77_hdr_clen;              /* length seen by f77_function_kw_end */
 static int  f77_nunit;
 
 /* Create a symbol whose storage is a by-reference dummy argument: its
@@ -308,6 +358,12 @@ static int f77_sym_param(char *nm, int index) {
     f77_sparam[s] = 0;
     f77_styped[s] = 0;
     f77_sstored[s] = 0;
+    f77_slen[s] = 1;
+    f77_slenv[s] = -1;
+    f77_spstr[s] = -1;
+    f77_sexternal[s] = 0;
+    if (f77_sty[s] == TY_CHAR && f77_imp_ready && nm[0] >= 'A' && nm[0] <= 'Z')
+        f77_slen[s] = f77_imp_len[nm[0] - 'A'];
     { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[s][d] = -1; d = d + 1; } }
     f77_sval[s] = hi_emit(HI_PARAM, HL_ADDR_TY, -1, -1, index, NULL);
     f77_nsym = f77_nsym + 1;
@@ -338,7 +394,8 @@ static void f77_realloc_sym(int s) {
         h_ty[f77_sval[s]] = HL_ADDR_TY;
         return;
     }
-    bytes = ty_size(f77_sty[s]) * f77_sym_nelem(s);
+    bytes = f77_esize(s) * f77_sym_nelem(s);
+    bytes = (bytes + 3) & ~3;             /* keep the frame word-aligned */
     f77_frame = f77_frame + bytes;
     h_val[f77_sval[s]] = 0 - f77_frame;
     h_ty[f77_sval[s]] = f77_sty[s];
@@ -600,6 +657,10 @@ static int f77_dconst(double d, int *hi) {
  * another, updating *hi in place. */
 static int f77_cvt(int v, int *hi, int from, int to) {
     if (from == to) return v;
+    if (from == TY_CHAR || to == TY_CHAR) {
+        f77_error("CHARACTER value where a numeric one is needed (or vice versa)");
+        return v;
+    }
     if (to == TY_DOUBLE) {
         if (from == TY_INT)   return f77_fp64_call1("__fp64_cvt_itoD", v, hi);
         if (from == TY_FLOAT) return f77_fp64_call1("__fp64_cvt_ftoD", v, hi);
@@ -694,6 +755,18 @@ static int f77_rconst(double d) {
  * i.e. the FIRST subscript varies fastest -- the opposite of C.  Any
  * lower bound is allowed (A(0:9), A(-5:5)); it is folded into the
  * subtraction, and constant subscripts fold away entirely downstream. */
+/* Byte offset of element `off` (zero-based, linear) of symbol s. */
+static int f77_elem_bytes(int s, int off) {
+    int t;
+    if (f77_sty[s] == TY_CHAR && f77_slen[s] < 0)
+        return hi_emit(HI_MUL, TY_INT, off, f77_slenv[s], 0, NULL);
+    t = f77_esize(s);
+    if (t == 1) return off;
+    if (t == 4) return hi_emit(HI_SLL, TY_INT, off, f77_iconst(2), 0, NULL);
+    if (t == 8) return hi_emit(HI_SLL, TY_INT, off, f77_iconst(3), 0, NULL);
+    return hi_emit(HI_MUL, TY_INT, off, f77_iconst(t), 0, NULL);
+}
+
 static int f77_subscript_addr(int s) {
     int off;
     int cstride;      /* constant part of the running stride */
@@ -766,15 +839,15 @@ static int f77_subscript_addr(int s) {
     if (k != f77_srank[s]) f77_error("wrong number of subscripts");
 
     if (off < 0) off = f77_iconst(0);
-    t = ty_size(f77_sty[s]);
-    if (t == 1) byte = off;
-    else if (t == 4) byte = hi_emit(HI_SLL, TY_INT, off, f77_iconst(2), 0, NULL);
-    else if (t == 8) byte = hi_emit(HI_SLL, TY_INT, off, f77_iconst(3), 0, NULL);
-    else byte = hi_emit(HI_MUL, TY_INT, off, f77_iconst(t), 0, NULL);
+    byte = f77_elem_bytes(s, off);
     addr = hi_emit(HI_ADD, HL_ADDR_TY, f77_sval[s], byte, 0, NULL);
-    if (coff != 0) {
+    if (coff != 0 && f77_sty[s] == TY_CHAR && f77_slen[s] < 0) {
+        /* assumed-length elements: the offset is a run-time product */
+        t = hi_emit(HI_MUL, TY_INT, f77_iconst(coff), f77_slenv[s], 0, NULL);
+        addr = hi_emit(HI_ADD, HL_ADDR_TY, addr, t, 0, NULL);
+    } else if (coff != 0) {
         int cb;
-        cb = coff * t;
+        cb = coff * f77_esize(s);
         if (cb >= -2048 && cb <= 2047)
             addr = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, cb, NULL);
         else
@@ -888,6 +961,14 @@ static int f77_select(int cond, int a, int b) {
 #define IN_NINT   29   /* nearest integer: NINT/IDNINT */
 #define IN_DIM    30   /* positive difference: DIM/IDIM/DDIM */
 #define IN_DPROD  31   /* double product of two reals */
+#define IN_LEN    32   /* CHARACTER intrinsics */
+#define IN_ICHAR  33
+#define IN_CHAR   34
+#define IN_INDEX  35
+#define IN_LGE    36
+#define IN_LGT    37
+#define IN_LLE    38
+#define IN_LLT    39
 
 /* F77 intrinsic names are type-decorated (ABS/IABS/DABS, MAX0/AMAX1/
  * DMAX1); the operation is the same and the operand types decide the
@@ -934,6 +1015,14 @@ static int f77_intrinsic(char *nm) {
     if (strcmp(nm, "DIM") == 0 || strcmp(nm, "IDIM") == 0 ||
         strcmp(nm, "DDIM") == 0) return IN_DIM;
     if (strcmp(nm, "DPROD") == 0) return IN_DPROD;
+    if (strcmp(nm, "LEN") == 0) return IN_LEN;
+    if (strcmp(nm, "ICHAR") == 0) return IN_ICHAR;
+    if (strcmp(nm, "CHAR") == 0) return IN_CHAR;
+    if (strcmp(nm, "INDEX") == 0) return IN_INDEX;
+    if (strcmp(nm, "LGE") == 0) return IN_LGE;
+    if (strcmp(nm, "LGT") == 0) return IN_LGT;
+    if (strcmp(nm, "LLE") == 0) return IN_LLE;
+    if (strcmp(nm, "LLT") == 0) return IN_LLT;
     return IN_NONE;
 }
 
@@ -991,6 +1080,152 @@ static int f77_minmax(int want_max, int a, int ahi, int b, int bhi,
 static int f77_stf_find(char *nm);
 static int f77_stf_expand(int si);
 
+/* A call to a runtime routine taking `n` word arguments, result in r1. */
+static int f77_call_i(char *name, int n, int *args) {
+    int cb;
+    int r;
+    int i;
+    cb = h_ncarg;
+    for (i = 0; i < n; i++) {
+        h_carg[h_ncarg] = args[i]; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    }
+    r = hi_emit(HI_CALL, TY_INT, -1, -1, n, name);
+    h_cbase[r] = cb;
+    return r;
+}
+
+/* A frame temporary of `len` bytes for a CHARACTER value. */
+static int f77_char_temp(int len) {
+    int tmp;
+    f77_frame = f77_frame + ((len + 3) & ~3);
+    tmp = hi_emit(HI_ALLOCA, TY_CHAR, -1, -1, 0 - f77_frame, NULL);
+    if (hl_nalloca < HL_MAX_ALLOCA) {
+        hl_ainst[hl_nalloca] = tmp;
+        hl_aoff[hl_nalloca] = 0 - f77_frame;
+        hl_nalloca = hl_nalloca + 1;
+    }
+    return tmp;
+}
+
+/* dst(1:dlen) = src(1:slen), blank-padded or truncated. */
+static void f77_char_assign(int dst, int dlen, int src, int slen) {
+    int args[4];
+    args[0] = dst; args[1] = dlen; args[2] = src; args[3] = slen;
+    f77_call_i("f77_strcpy", 4, args);
+}
+
+/* Substring (e1:e2) of a value at `base` with length `lenv` (constant
+ * `clen`, or -1).  The scanner is on the opening parenthesis.  Sets
+ * ex_len/ex_clen. */
+static int f77_substring(int base, int lenv, int clen) {
+    int e1; int e2; int c1; int c2; int t;
+    f77_tok();
+    e1 = -1; e2 = -1; c1 = 1; c2 = clen;
+    if (lx_t != T_COLON) {
+        e1 = f77_expr(); e1 = f77_cvt(e1, &ex_hi, ex_ty, TY_INT);
+        c1 = (h_kind[e1] == HI_ICONST) ? h_val[e1] : -2;
+    }
+    if (lx_t != T_COLON) { f77_error("expected : in substring"); return base; }
+    f77_tok();
+    if (lx_t != T_RP) {
+        e2 = f77_expr(); e2 = f77_cvt(e2, &ex_hi, ex_ty, TY_INT);
+        c2 = (h_kind[e2] == HI_ICONST) ? h_val[e2] : -2;
+    }
+    if (lx_t != T_RP) { f77_error("expected ) after substring"); return base; }
+    f77_tok();
+    if (e1 < 0) e1 = f77_iconst(1);
+    if (e2 < 0) e2 = lenv;
+    t = hi_emit(HI_ADDI, TY_INT, e1, -1, -1, NULL);
+    base = hi_emit(HI_ADD, HL_ADDR_TY, base, t, 0, NULL);
+    t = hi_emit(HI_SUB, TY_INT, e2, e1, 0, NULL);
+    ex_len = hi_emit(HI_ADDI, TY_INT, t, -1, 1, NULL);
+    ex_clen = (c1 >= 0 && c2 >= 0) ? c2 - c1 + 1 : -1;
+    if (ex_clen >= 0) ex_len = f77_iconst(ex_clen);
+    ex_ty = TY_CHAR;
+    ex_hi = -1;
+    return base;
+}
+
+/* Does the parenthesised group the scanner is on contain a top-level
+ * colon?  That is what tells C(1:3) (a substring) from F(1) (a call to
+ * an external CHARACTER function). */
+static int f77_paren_has_colon(void) {
+    int i;
+    int depth;
+    i = (int)(lx_rts - lx_stmt);
+    if (i < 0 || i >= lx_stmt_len || lx_stmt[i] != '(') return 0;
+    depth = 0;
+    while (i < lx_stmt_len) {
+        if (lx_stmt[i] == '\'') { i = i + 1; while (i < lx_stmt_len && lx_stmt[i] != '\'') i = i + 1; }
+        else if (lx_stmt[i] == '(') depth = depth + 1;
+        else if (lx_stmt[i] == ')') { depth = depth - 1; if (depth == 0) return 0; }
+        else if (lx_stmt[i] == ':' && depth == 1) return 1;
+        i = i + 1;
+    }
+    return 0;
+}
+
+/* Reference to CHARACTER symbol s (name already consumed): the whole
+ * entity, an array element, or a substring of either.  Returns the
+ * address; sets ex_ty/ex_len/ex_clen. */
+static int f77_char_ref(int s) {
+    int addr;
+    int lenv;
+    int clen;
+    clen = f77_slen[s];
+    if (clen >= 0) lenv = f77_iconst(clen);
+    else if (f77_slenv[s] >= 0) lenv = f77_slenv[s];
+    else { f77_error("CHARACTER length is not known here"); lenv = f77_iconst(1); clen = 1; }
+    if (f77_sparam[s]) addr = hi_emit(HI_SADDR, HL_ADDR_TY, -1, -1, f77_spstr[s], NULL);
+    else addr = f77_sval[s];
+    if (lx_t == T_LP && f77_srank[s] > 0) {
+        f77_tok();
+        addr = f77_subscript_addr(s);
+    }
+    if (lx_t == T_LP) return f77_substring(addr, lenv, clen);
+    ex_ty = TY_CHAR;
+    ex_hi = -1;
+    ex_len = lenv;
+    ex_clen = clen;
+    return addr;
+}
+
+/* Call a CHARACTER-valued function: hidden result buffer and length
+ * first, then the actuals, then their hidden lengths.  `rlen` is the
+ * result length the caller knows. */
+static int f77_char_fcall(char *name, int rlen, int *addrs, int *lens, int nargs) {
+    int tmp;
+    int cb;
+    int ai;
+    int r;
+    int nc;
+    if (rlen < 0) {
+        f77_error("the length of this CHARACTER function is not known at the call");
+        rlen = 1;
+    }
+    tmp = f77_char_temp(rlen);
+    cb = h_ncarg;
+    h_carg[h_ncarg] = tmp; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = f77_iconst(rlen); h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    nc = 2;
+    for (ai = 0; ai < nargs; ai++) {
+        h_carg[h_ncarg] = addrs[ai]; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+        nc = nc + 1;
+    }
+    for (ai = 0; ai < nargs; ai++) {
+        if (lens[ai] < 0) continue;
+        h_carg[h_ncarg] = lens[ai]; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+        nc = nc + 1;
+    }
+    r = hi_emit(HI_CALL, TY_INT, -1, -1, nc, name);
+    h_cbase[r] = cb;
+    ex_ty = TY_CHAR;
+    ex_hi = -1;
+    ex_clen = rlen;
+    ex_len = f77_iconst(rlen);
+    return tmp;
+}
+
 static int f77_primary(void) {
     int v;
     int s;
@@ -1003,6 +1238,15 @@ static int f77_primary(void) {
     }
     if (lx_t == T_TRUE)  { v = f77_iconst(1); ex_ty = TY_INT; f77_tok(); return v; }
     if (lx_t == T_FALSE) { v = f77_iconst(0); ex_ty = TY_INT; f77_tok(); return v; }
+    if (lx_t == T_SCON) {
+        v = hi_emit(HI_SADDR, HL_ADDR_TY, -1, -1, lex_sidx, NULL);
+        ex_ty = TY_CHAR;
+        ex_hi = -1;
+        ex_clen = lex_slen;
+        ex_len = f77_iconst(lex_slen);
+        f77_tok();
+        return v;
+    }
     if (lx_t == T_LP) {
         f77_tok();
         v = f77_expr();
@@ -1056,6 +1300,46 @@ static int f77_primary(void) {
             if (lx_t != T_LP) { f77_error("intrinsic needs arguments"); return f77_iconst(0); }
             f77_tok();
             a = f77_expr(); aty = ex_ty; ahi = ex_hi;
+
+            if (in >= IN_LEN && in <= IN_LLT) {
+                int alen;
+                int args[4];
+                alen = ex_len;
+                if (in == IN_CHAR) {
+                    int tmp;
+                    a = f77_cvt(a, &ahi, aty, TY_INT);
+                    if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                    tmp = f77_char_temp(1);
+                    hi_emit(HI_STORE, TY_CHAR, tmp, a, 0, NULL);
+                    ex_ty = TY_CHAR; ex_hi = -1; ex_clen = 1; ex_len = f77_iconst(1);
+                    return tmp;
+                }
+                if (aty != TY_CHAR) { f77_error("this intrinsic needs a CHARACTER argument"); return f77_iconst(0); }
+                if (in == IN_LEN) {
+                    if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                    ex_ty = TY_INT; ex_hi = -1;
+                    return alen;
+                }
+                if (in == IN_ICHAR) {
+                    if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                    ex_ty = TY_INT; ex_hi = -1;
+                    return hi_emit(HI_LOAD, TY_CHAR | TY_UNSIGNED, a, -1, 0, NULL);
+                }
+                /* INDEX and the lexical comparisons: two CHARACTER args */
+                if (lx_t != T_COMMA) { f77_error("this intrinsic needs two arguments"); return f77_iconst(0); }
+                f77_tok();
+                b = f77_expr(); bty = ex_ty;
+                if (bty != TY_CHAR) { f77_error("this intrinsic needs CHARACTER arguments"); return f77_iconst(0); }
+                if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                args[0] = a; args[1] = alen; args[2] = b; args[3] = ex_len;
+                ex_ty = TY_INT; ex_hi = -1;
+                if (in == IN_INDEX) return f77_call_i("f77_index", 4, args);
+                a = f77_call_i("f77_strcmp", 4, args);
+                if (in == IN_LGE) return hi_emit(HI_SGE, TY_INT, a, f77_iconst(0), 0, NULL);
+                if (in == IN_LGT) return hi_emit(HI_SGT, TY_INT, a, f77_iconst(0), 0, NULL);
+                if (in == IN_LLE) return hi_emit(HI_SLE, TY_INT, a, f77_iconst(0), 0, NULL);
+                return hi_emit(HI_SLT, TY_INT, a, f77_iconst(0), 0, NULL);
+            }
 
             if (in == IN_ABS) {
                 a = f77_abs(a, aty, &ahi);
@@ -1243,9 +1527,11 @@ static int f77_primary(void) {
              * usual return register (plus its hi word for a double). */
             int cb;
             int nargs;
+            int nc;
             int r;
             int rty;
             int addrs[64];
+            int lens[64];
             int ai;
             f77_tok();
             nargs = 0;
@@ -1257,7 +1543,7 @@ static int f77_primary(void) {
                          * h_carg slots: an actual may itself contain a
                          * call, which would otherwise interleave its
                          * arguments with ours. */
-                        if (nargs < 64) addrs[nargs] = f77_actual_addr();
+                        if (nargs < 64) { addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; }
                         else f77_actual_addr();
                         nargs = nargs + 1;
                         if (lx_t != T_COMMA) break;
@@ -1266,6 +1552,13 @@ static int f77_primary(void) {
                 }
                 if (lx_t != T_RP) f77_error("expected ) after arguments");
                 else f77_tok();
+            }
+            rty = f77_urty_of(u);
+            if (rty == TY_CHAR) {
+                int rl;
+                rl = f77_urlen[u];
+                if (rl < 0) rl = f77_slen[f77_sym(nm)];
+                return f77_char_fcall(f77_uname[u], rl, addrs, lens, nargs);
             }
             if (f77_can_inline(u)) {
                 /* Splice the body, then read its result variable. */
@@ -1276,16 +1569,22 @@ static int f77_primary(void) {
                 return f77_iconst(0);
             }
             cb = h_ncarg;
+            nc = 0;
             ai = 0;
             while (ai < nargs) {
                 h_carg[h_ncarg] = addrs[ai];
                 h_carg_tag[h_ncarg] = 0;
                 h_ncarg = h_ncarg + 1;
+                nc = nc + 1;
                 ai = ai + 1;
             }
-            rty = f77_urty_of(u);
+            for (ai = 0; ai < nargs; ai++) {
+                if (lens[ai] < 0) continue;
+                h_carg[h_ncarg] = lens[ai]; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+                nc = nc + 1;
+            }
             r = hi_emit(HI_CALL, rty == TY_DOUBLE ? TY_INT : rty, -1, -1,
-                        nargs, f77_uname[u]);
+                        nc, f77_uname[u]);
             h_cbase[r] = cb;
             ex_ty = rty;
             if (rty == TY_DOUBLE)
@@ -1294,6 +1593,9 @@ static int f77_primary(void) {
         }
         s = f77_sym(nm);
         f77_tok();
+        if (f77_sty[s] == TY_CHAR &&
+            !(lx_t == T_LP && f77_srank[s] == 0 && !f77_paren_has_colon()))
+            return f77_char_ref(s);
         if (f77_sparam[s]) {            /* named constant: fold in place */
             ex_ty = f77_sty[s];
             if (ex_ty == TY_DOUBLE) return f77_dconst(f77_spdval[s], &ex_hi);
@@ -1312,15 +1614,17 @@ static int f77_primary(void) {
              * used to drop the rest of the expression (GitHub #20). */
             int cb;
             int nargs;
+            int nc;
             int r;
             int addrs[64];
+            int lens[64];
             int ai;
             int rty;
             nargs = 0;
             f77_tok();
             if (lx_t != T_RP) {
                 for (;;) {
-                    if (nargs < 64) addrs[nargs] = f77_actual_addr();
+                    if (nargs < 64) { addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; }
                     else f77_actual_addr();
                     nargs = nargs + 1;
                     if (lx_t != T_COMMA) break;
@@ -1329,21 +1633,31 @@ static int f77_primary(void) {
             }
             if (lx_t != T_RP) f77_error("expected ) after arguments");
             else f77_tok();
+            /* The type is the caller's declaration of the name (or the
+             * implicit rule): INTEGER IRAND / CHARACTER*8 CDATE. */
+            rty = f77_sty[s];
+            if (rty == TY_CHAR) return f77_char_fcall(strdup(nm), f77_slen[s], addrs, lens, nargs);
             cb = h_ncarg;
+            nc = 0;
             ai = 0;
             while (ai < nargs) {
                 h_carg[h_ncarg] = addrs[ai];
                 h_carg_tag[h_ncarg] = 0;
                 h_ncarg = h_ncarg + 1;
+                nc = nc + 1;
                 ai = ai + 1;
             }
-            rty = f77_implicit_ty(nm);
+            for (ai = 0; ai < nargs; ai++) {
+                if (lens[ai] < 0) continue;
+                h_carg[h_ncarg] = lens[ai]; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+                nc = nc + 1;
+            }
             /* nm is this frame's buffer and hi_emit keeps the pointer:
              * the callee's name must outlive the parse (GitHub #20 --
              * the call came out as "EN", whatever the buffer held by
              * codegen time). */
             r = hi_emit(HI_CALL, rty == TY_DOUBLE ? TY_INT : rty, -1, -1,
-                        nargs, strdup(nm));
+                        nc, strdup(nm));
             h_cbase[r] = cb;
             ex_ty = rty;
             ex_hi = -1;
@@ -1469,16 +1783,68 @@ static int f77_arith(void) {
 /* Relationals produce an integer 0/1.  The FP comparison set is only
  * FEQ/FLT/FLE, so >, >= and /= are built by swapping operands or
  * inverting the result. */
+/* a // b: CHARACTER concatenation into a frame temporary.  Both
+ * lengths must be known here (F77 allows an assumed-length operand
+ * only on the right of an assignment, which this does not special-case). */
+static int f77_concat(void) {
+    int a; int b; int aty; int alen; int aclen; int bclen; int tmp; int t;
+    a = f77_arith();
+    aty = ex_ty; alen = ex_len; aclen = ex_clen;
+    while (lx_t == T_CONCAT) {
+        f77_tok();
+        b = f77_arith();
+        if (aty != TY_CHAR || ex_ty != TY_CHAR) {
+            f77_error("// needs CHARACTER operands");
+            return a;
+        }
+        bclen = ex_clen;
+        if (aclen < 0 || bclen < 0) {
+            /* An assumed-length operand: the runtime builds the result
+             * in its scratch ring and the length is a run-time sum. */
+            int args[4];
+            args[0] = a; args[1] = alen; args[2] = b; args[3] = ex_len;
+            a = f77_call_i("f77_cat", 4, args);
+            alen = hi_emit(HI_ADD, TY_INT, alen, ex_len, 0, NULL);
+            aclen = -1;
+            continue;
+        }
+        tmp = f77_char_temp(aclen + bclen);
+        f77_char_assign(tmp, f77_iconst(aclen), a, alen);
+        t = hi_emit(HI_ADDI, HL_ADDR_TY, tmp, -1, aclen, NULL);
+        f77_char_assign(t, f77_iconst(bclen), b, ex_len);
+        a = tmp;
+        aclen = aclen + bclen;
+        alen = f77_iconst(aclen);
+    }
+    ex_ty = aty; ex_len = alen; ex_clen = aclen;
+    if (aty == TY_CHAR) ex_hi = -1;
+    return a;
+}
+
 static int f77_relat(void) {
     int a; int b; int aty; int bty; int rty; int op; int r; int ahi; int bhi;
-    a = f77_arith();
-    aty = ex_ty; ahi = ex_hi;
+    int alen;
+    a = f77_concat();
+    aty = ex_ty; ahi = ex_hi; alen = ex_len;
     if (lx_t == T_EQ || lx_t == T_NE || lx_t == T_LT ||
         lx_t == T_LE || lx_t == T_GT || lx_t == T_GE) {
         op = lx_t;
         f77_tok();
-        b = f77_arith();
+        b = f77_concat();
         bty = ex_ty; bhi = ex_hi;
+        if (aty == TY_CHAR || bty == TY_CHAR) {
+            int args[4];
+            if (aty != bty) { f77_error("CHARACTER compared with a numeric"); ex_ty = TY_INT; return f77_iconst(0); }
+            args[0] = a; args[1] = alen; args[2] = b; args[3] = ex_len;
+            r = f77_call_i("f77_strcmp", 4, args);
+            ex_ty = TY_INT; ex_hi = -1;
+            if (op == T_EQ) return hi_emit(HI_SEQ, TY_INT, r, f77_iconst(0), 0, NULL);
+            if (op == T_NE) return hi_emit(HI_SNE, TY_INT, r, f77_iconst(0), 0, NULL);
+            if (op == T_LT) return hi_emit(HI_SLT, TY_INT, r, f77_iconst(0), 0, NULL);
+            if (op == T_LE) return hi_emit(HI_SLE, TY_INT, r, f77_iconst(0), 0, NULL);
+            if (op == T_GT) return hi_emit(HI_SGT, TY_INT, r, f77_iconst(0), 0, NULL);
+            return hi_emit(HI_SGE, TY_INT, r, f77_iconst(0), 0, NULL);
+        }
         rty = f77_balance(&a, &ahi, aty, &b, &bhi, bty);
         ex_ty = TY_INT;
         if (rty == TY_DOUBLE) {
@@ -1719,6 +2085,18 @@ static void f77_stmt_assign(void) {
     s = f77_sym(lex_name);
     if (f77_sparam[s]) { f77_error("cannot assign to a PARAMETER"); return; }
     f77_tok();
+    if (f77_sty[s] == TY_CHAR) {
+        int dlen;
+        addr = f77_char_ref(s);
+        dlen = ex_len;
+        if (lx_t != T_ASSIGN) { f77_error("expected ="); return; }
+        f77_tok();
+        v = f77_expr();
+        if (ex_ty != TY_CHAR) { f77_error("a CHARACTER variable needs a CHARACTER value"); return; }
+        f77_sstored[s] = 1;
+        f77_char_assign(addr, dlen, v, ex_len);
+        return;
+    }
     addr = f77_sval[s];
     if (lx_t == T_LP && f77_srank[s] > 0) {
         f77_tok();
@@ -1949,10 +2327,16 @@ static int f77_dim_bound(void) {
 static int    f77_cx_ty;
 static int    f77_cx_i;
 static double f77_cx_d;
+static int    f77_cx_sidx;   /* TY_CHAR: string index; f77_cx_i is the length */
 
 static void f77_cexpr(void);
 
 static void f77_cprimary(void) {
+    if (lx_t == T_SCON) {
+        f77_cx_ty = TY_CHAR; f77_cx_sidx = lex_sidx; f77_cx_i = lex_slen; f77_cx_d = 0.0;
+        f77_tok();
+        return;
+    }
     if (lx_t == T_ICON) { f77_cx_ty = TY_INT; f77_cx_i = lex_ival; f77_cx_d = (double)lex_ival; f77_tok(); return; }
     if (lx_t == T_RCON) { f77_cx_ty = TY_FLOAT; f77_cx_d = lex_dval; f77_cx_i = (int)lex_dval; f77_tok(); return; }
     if (lx_t == T_DCON) { f77_cx_ty = TY_DOUBLE; f77_cx_d = lex_dval; f77_cx_i = (int)lex_dval; f77_tok(); return; }
@@ -1976,6 +2360,11 @@ static void f77_cprimary(void) {
     if (lx_t == T_NAME) {
         int s;
         s = f77_sym(lex_name);
+        if (f77_sparam[s] && f77_sty[s] == TY_CHAR) {
+            f77_cx_ty = TY_CHAR; f77_cx_sidx = f77_spstr[s]; f77_cx_i = f77_slen[s]; f77_cx_d = 0.0;
+            f77_tok();
+            return;
+        }
         if (!f77_sparam[s]) {
             f77_error("only PARAMETER constants may appear in a constant expression");
             f77_cx_ty = TY_INT; f77_cx_i = 1; f77_cx_d = 1.0;
@@ -2101,17 +2490,44 @@ static void f77_parse_dims(int s) {
     f77_srank[s] = rank;
 }
 
+/* A CHARACTER length after the `*`: n, (cexpr), or (*) for an
+ * assumed-length dummy (returned as -1). */
+static void f77_cexpr(void);
+static int f77_char_len(void) {
+    int n;
+    if (lx_t == T_ICON) { n = lex_ival; f77_tok(); return n; }
+    if (lx_t != T_LP) { f77_error("bad CHARACTER length"); return 1; }
+    f77_tok();
+    if (lx_t == T_STAR) {
+        f77_tok();
+        if (lx_t != T_RP) { f77_error("expected ) after CHARACTER*(*"); return 1; }
+        f77_tok();
+        return -1;
+    }
+    f77_cexpr();
+    if (lx_t != T_RP) { f77_error("expected ) after CHARACTER length"); return 1; }
+    f77_tok();
+    if (f77_cx_ty != TY_INT || f77_cx_i < 0) { f77_error("CHARACTER length must be an integer constant"); return 1; }
+    return f77_cx_i;
+}
+
 /* Type declarations, and DIMENSION (which sets shape without a type). */
 static void f77_stmt_decl(int ty, int skip) {
     int s;
+    int clen;
+    clen = 1;
     f77_scan_from(skip);
-    /* Type-level length: REAL*8 X. Per-name REAL X*8 is below. */
+    /* Type-level length: REAL*8 X, CHARACTER*10 S.  Per-name forms
+     * (REAL X*8, CHARACTER S*10) are below. */
     if (lx_t == T_STAR) {
         f77_tok();
-        if (lx_t == T_ICON) {
+        if (ty == TY_CHAR) {
+            clen = f77_char_len();
+        } else if (lx_t == T_ICON) {
             if (lex_ival == 8 && ty == TY_FLOAT) ty = TY_DOUBLE;
             f77_tok();
         }
+        if (lx_t == T_COMMA) f77_tok();       /* CHARACTER*10, A, B */
     }
     for (;;) {
         if (lx_t != T_NAME) break;
@@ -2119,16 +2535,21 @@ static void f77_stmt_decl(int ty, int skip) {
         if (ty >= 0) {                  /* declaration overrides implicit typing */
             f77_sty[s] = ty;
             f77_styped[s] = 1;
+            if (ty == TY_CHAR) f77_slen[s] = clen;
         }
         f77_tok();
+        /* name*len(dims) and name(dims)*len are both F77. */
+        if (lx_t == T_LP) f77_parse_dims(s);
         if (lx_t == T_STAR) {           /* REAL*8 X -- length specifier */
             f77_tok();
-            if (lx_t == T_ICON) {
+            if (f77_sty[s] == TY_CHAR) {
+                f77_slen[s] = f77_char_len();
+            } else if (lx_t == T_ICON) {
                 if (lex_ival == 8 && f77_sty[s] == TY_FLOAT) f77_sty[s] = TY_DOUBLE;
                 f77_tok();
             }
+            if (lx_t == T_LP) f77_parse_dims(s);
         }
-        if (lx_t == T_LP) f77_parse_dims(s);
         f77_realloc_sym(s);
         if (lx_t != T_COMMA) break;
         f77_tok();
@@ -2350,13 +2771,25 @@ static void f77_stmt_implicit(int skip) {
         return;
     }
     for (;;) {
+        int clen;
+        clen = 1;
         if (lx_t != T_NAME) { f77_error("IMPLICIT needs a type"); return; }
         if (strcmp(lex_name, "INTEGER") == 0) ty = TY_INT;
         else if (strcmp(lex_name, "REAL") == 0) ty = TY_FLOAT;
         else if (strcmp(lex_name, "DOUBLEPRECISION") == 0) ty = TY_DOUBLE;
         else if (strcmp(lex_name, "LOGICAL") == 0) ty = TY_INT;
+        else if (strcmp(lex_name, "CHARACTER") == 0) ty = TY_CHAR;
         else { f77_error("IMPLICIT type not supported"); return; }
         f77_tok();
+        if (lx_t == T_STAR) {
+            f77_tok();
+            if (ty == TY_CHAR) clen = f77_char_len();
+            else if (lx_t == T_ICON) {
+                if (lex_ival == 8 && ty == TY_FLOAT) ty = TY_DOUBLE;
+                f77_tok();
+            }
+        }
+        if (clen < 0) { f77_error("IMPLICIT CHARACTER*(*) is not allowed"); return; }
         if (lx_t != T_LP) { f77_error("IMPLICIT needs (letter-ranges)"); return; }
         f77_tok();
         for (;;) {
@@ -2380,7 +2813,7 @@ static void f77_stmt_implicit(int skip) {
                 f77_error("bad IMPLICIT letter range");
                 return;
             }
-            for (c = lo; c <= hi; c++) f77_imp_map[c - 'A'] = ty;
+            for (c = lo; c <= hi; c++) { f77_imp_map[c - 'A'] = ty; f77_imp_len[c - 'A'] = clen; }
             if (lx_t != T_COMMA) break;
             f77_tok();
         }
@@ -2394,12 +2827,14 @@ static void f77_stmt_implicit(int skip) {
     for (s = f77_scope_base; s < f77_nsym; s++) {
         if (f77_styped[s] || f77_sparam[s]) continue;
         ty = f77_imp_map[f77_sname[s][0] - 'A'];
-        if (ty == f77_sty[s]) continue;
+        if (ty == f77_sty[s] &&
+            (ty != TY_CHAR || f77_slen[s] == f77_imp_len[f77_sname[s][0] - 'A'])) continue;
         if (s == f77_result_sym) {
             f77_error("IMPLICIT would change the FUNCTION result type; declare it in the header");
             return;
         }
         f77_sty[s] = ty;
+        if (ty == TY_CHAR) f77_slen[s] = f77_imp_len[f77_sname[s][0] - 'A'];
         if (!f77_sarg[s]) f77_realloc_sym(s);
     }
 }
@@ -2428,7 +2863,23 @@ static void f77_stmt_parameter(int skip) {
         f77_tok();
         f77_cexpr();
         f77_sparam[s] = 1;
-        if (f77_sty[s] == TY_INT) {
+        if (f77_sty[s] == TY_CHAR) {
+            if (f77_cx_ty != TY_CHAR) { f77_error("a CHARACTER PARAMETER needs a character constant"); return; }
+            if (f77_slen[s] < 0) f77_slen[s] = f77_cx_i;       /* CHARACTER*(*) takes the constant's length */
+            if (f77_slen[s] == f77_cx_i) {
+                f77_spstr[s] = f77_cx_sidx;
+            } else {
+                /* Pad or truncate to the declared length. */
+                char buf[F77_MAX_STMT];
+                int k;
+                for (k = 0; k < f77_slen[s] && k < F77_MAX_STMT - 1; k++)
+                    buf[k] = (k < f77_cx_i) ? lex_strpool[lex_str_off[f77_cx_sidx] + k] : ' ';
+                f77_spstr[s] = f77_intern_str(buf, k);
+            }
+        } else if (f77_cx_ty == TY_CHAR) {
+            f77_error("a character constant cannot initialise a numeric PARAMETER");
+            return;
+        } else if (f77_sty[s] == TY_INT) {
             f77_spival[s] = (f77_cx_ty == TY_INT) ? f77_cx_i : (int)f77_cx_d;
             f77_spdval[s] = (double)f77_spival[s];
         } else {
@@ -2458,6 +2909,7 @@ static int    f77_di_elem[F77_MAX_DINIT];
 static int    f77_di_ty[F77_MAX_DINIT];
 static int    f77_di_i[F77_MAX_DINIT];
 static double f77_di_d[F77_MAX_DINIT];
+static int    f77_di_sidx[F77_MAX_DINIT];
 static int    f77_di_n;
 
 /* One DATA constant: sign, literal, .TRUE./.FALSE., or a PARAMETER
@@ -2473,6 +2925,7 @@ static void f77_data_const(void) {
     else if (lx_t == T_DCON) { f77_cx_ty = TY_DOUBLE; f77_cx_d = lex_dval; f77_cx_i = (int)lex_dval; f77_tok(); }
     else if (lx_t == T_TRUE)  { f77_cx_ty = TY_INT; f77_cx_i = 1; f77_cx_d = 1.0; f77_tok(); }
     else if (lx_t == T_FALSE) { f77_cx_ty = TY_INT; f77_cx_i = 0; f77_cx_d = 0.0; f77_tok(); }
+    else if (lx_t == T_SCON) { f77_cx_ty = TY_CHAR; f77_cx_sidx = lex_sidx; f77_cx_i = lex_slen; f77_cx_d = 0.0; f77_tok(); }
     else if (lx_t == T_NAME) {
         int s;
         s = f77_sym(lex_name);
@@ -2480,6 +2933,7 @@ static void f77_data_const(void) {
         f77_cx_ty = f77_sty[s];
         f77_cx_i = f77_spival[s];
         f77_cx_d = f77_spdval[s];
+        if (f77_cx_ty == TY_CHAR) { f77_cx_sidx = f77_spstr[s]; f77_cx_i = f77_slen[s]; }
         f77_tok();
     } else {
         f77_error("DATA value must be a constant");
@@ -2600,6 +3054,7 @@ static void f77_stmt_data(int skip) {
                     f77_di_ty[f77_di_n] = f77_cx_ty;
                     f77_di_i[f77_di_n] = f77_cx_i;
                     f77_di_d[f77_di_n] = f77_cx_d;
+                    f77_di_sidx[f77_di_n] = f77_cx_sidx;
                     f77_di_n = f77_di_n + 1;
                     te = te + 1;
                     rep = rep - 1;
@@ -2628,6 +3083,19 @@ static int f77_eq_offset(int s) {
     int n;
     int subs[F77_MAX_RANK];
     if (lx_t != T_LP) return 0;
+    if (f77_srank[s] == 0 && f77_sty[s] == TY_CHAR) {
+        /* (e1:e2) on a scalar: the offset is e1-1 */
+        int e1;
+        f77_tok();
+        e1 = 1;
+        if (lx_t != T_COLON) { f77_cexpr(); e1 = f77_cx_i; }
+        if (lx_t != T_COLON) { f77_error("expected : in EQUIVALENCE substring"); return 0; }
+        f77_tok();
+        if (lx_t != T_RP) f77_cexpr();
+        if (lx_t != T_RP) { f77_error("expected ) in EQUIVALENCE"); return 0; }
+        f77_tok();
+        return e1 - 1;
+    }
     if (f77_srank[s] == 0) { f77_error("subscript on a scalar in EQUIVALENCE"); return 0; }
     f77_tok();
     n = 0;
@@ -2655,7 +3123,7 @@ static int f77_eq_offset(int s) {
             stride = stride * f77_sext[s][d];
         }
     }
-    return elem * ty_size(f77_sty[s]);
+    return elem * f77_esize(s);
 }
 
 static void f77_stmt_equivalence(int skip) {
@@ -2745,6 +3213,31 @@ static void f77_layout_static(void) {
         }
     }
 
+    for (s = f77_scope_base; s < f77_nsym; s++) {
+        if (f77_sty[s] == TY_CHAR && f77_slen[s] < 0 && !f77_sarg[s] && !f77_sparam[s]) {
+            static char msg[F77_MAX_NAME + 48];
+            strcpy(msg, f77_sname[s]);
+            strcat(msg, ": CHARACTER*(*) is only for dummy arguments and PARAMETERs");
+            f77_error(msg);
+            return;
+        }
+    }
+
+    /* Hidden lengths: one trailing INTEGER per CHARACTER dummy, in
+     * dummy order; an assumed-length dummy reads its length from it. */
+    {
+        int nh;
+        nh = 0;
+        for (i = 0; i < f77_ci_n; i++) {
+            s = f77_ci_sym[i];
+            if (f77_sty[s] != TY_CHAR) continue;
+            if (f77_slen[s] < 0)
+                f77_slenv[s] = hi_emit(HI_PARAM, TY_INT, -1, -1, f77_unit_nparams + nh, NULL);
+            nh = nh + 1;
+        }
+        if (nh > 0) f77_assign_params(f77_unit_nparams + nh);
+    }
+
     for (i = 0; i < f77_ncblk; i++) boff[i] = 0;
 
     for (i = 0; i < f77_cm_n; i++) {
@@ -2759,7 +3252,11 @@ static void f77_layout_static(void) {
         f77_bind_static(s, f77_cblk_name[blk], boff[blk]);
         f77_sgidx[s] = f77_cblk_gidx[blk];
         f77_sgoff[s] = boff[blk];
-        sz = ty_size(f77_sty[s]) * f77_sym_nelem(s);
+        if (f77_sty[s] == TY_CHAR && f77_slen[s] < 0) {
+            f77_error("an assumed-length CHARACTER cannot be in COMMON");
+            return;
+        }
+        sz = f77_esize(s) * f77_sym_nelem(s);
         boff[blk] = boff[blk] + sz;
     }
 
@@ -2796,7 +3293,7 @@ static void f77_layout_static(void) {
                 if (root != i) continue;
                 nm_s = nm_s + 1;
                 if (o < minoff) minoff = o;
-                sz = ty_size(f77_sty[s]) * f77_sym_nelem(s);
+                sz = f77_esize(s) * f77_sym_nelem(s);
                 if (o + sz > maxend) maxend = o + sz;
                 if (f77_scom[s]) {
                     if (csym >= 0 && f77_sgidx[csym] != f77_sgidx[s]) {
@@ -2866,7 +3363,7 @@ static void f77_layout_static(void) {
             char *nm;
             nm = f77_gpool_name("f77s_", f77_uname[f77_cur_unit], "_",
                                 f77_sname[s]);
-            f77_sgidx[s] = f77_g_add(nm, ty_size(f77_sty[s]) * f77_sym_nelem(s));
+            f77_sgidx[s] = f77_g_add(nm, f77_esize(s) * f77_sym_nelem(s));
             f77_bind_static(s, nm, 0);
         }
     }
@@ -2893,9 +3390,21 @@ static void f77_layout_static(void) {
                 ps_ginit_pool[ps_ginit_pool_len + k] = 0;
             ps_ginit_pool_len = ps_ginit_pool_len + ps_gsize[g];
         }
-        esz = ty_size(f77_sty[s]);
+        esz = f77_esize(s);
         off = ps_ginit_start[g] + f77_sgoff[s] + f77_di_elem[i] * esz;
-        if (f77_sty[s] == TY_DOUBLE) {
+        if (f77_di_ty[i] == TY_CHAR) {
+            /* A character constant: into a CHARACTER item padded or
+             * truncated to its length; into a numeric item (Hollerith
+             * data) left-justified, blank-filled. */
+            int n;
+            n = f77_di_i[i];
+            for (k = 0; k < esz; k++)
+                ps_ginit_pool[off + k] = (k < n) ?
+                    (unsigned char)lex_strpool[lex_str_off[f77_di_sidx[i]] + k] : ' ';
+        } else if (f77_sty[s] == TY_CHAR) {
+            f77_error("a CHARACTER item needs a character constant in DATA");
+            return;
+        } else if (f77_sty[s] == TY_DOUBLE) {
             union { double d; unsigned char b[8]; } u;
             u.d = (f77_di_ty[i] == TY_INT) ? (double)f77_di_i[i] : f77_di_d[i];
             for (k = 0; k < 8; k++) ps_ginit_pool[off + k] = u.b[k];
@@ -3180,8 +3689,35 @@ static int f77_function_kw_end(int *ty_out) {
 
     ty = TY_INT;
     off = 0;
+    f77_hdr_clen = 1;
     n = f77_type_before_function("DOUBLEPRECISION");
     if (n > 0) { off = n; ty = TY_DOUBLE; }
+    else if ((n = f77_type_before_function("CHARACTER")) > 0) {
+        off = n;
+        ty = TY_CHAR;
+        if (off < lx_stmt_len && lx_stmt[off] == '*') {
+            /* *n or *(*) by text; *(cexpr) through the scanner. */
+            off = off + 1;
+            if (off + 2 < lx_stmt_len && lx_stmt[off] == '(' && lx_stmt[off + 1] == '*' &&
+                lx_stmt[off + 2] == ')') {
+                f77_hdr_clen = -1;
+                off = off + 3;
+            } else if (off < lx_stmt_len && lx_isdigit(lx_stmt[off])) {
+                f77_hdr_clen = 0;
+                while (off < lx_stmt_len && lx_isdigit(lx_stmt[off])) {
+                    f77_hdr_clen = f77_hdr_clen * 10 + (lx_stmt[off] - '0');
+                    off = off + 1;
+                }
+            } else if (off < lx_stmt_len && lx_stmt[off] == '(') {
+                int end;
+                end = f77_match_paren(off);
+                if (end < 0) return -1;
+                f77_scan_from(off);
+                f77_hdr_clen = f77_char_len();
+                off = end;
+            }
+        }
+    }
     else {
         n = f77_type_before_function("INTEGER");
         if (n > 0) { off = n; ty = TY_INT; }
@@ -3324,6 +3860,20 @@ static int f77_actual_addr(void) {
         /* A PARAMETER is a named constant, not a variable.  Passing
          * its leftover alloca would hand the callee garbage; fall
          * through and evaluate into a temp, like N+0 already does. */
+        if (f77_sexternal[s]) {
+            f77_error("passing a procedure as an argument is not supported");
+            f77_tok();
+            f77_act_len = -1;
+            return f77_iconst(0);
+        }
+        if (f77_sty[s] == TY_CHAR) {
+            f77_tok();
+            v = f77_char_ref(s);
+            f77_act_len = ex_len;
+            if (f77_srank[s] == 0) f77_sstored[s] = 1;
+            return v;
+        }
+        f77_act_len = -1;
         if (!f77_sparam[s]) {
             f77_tok();
             if (lx_t == T_LP && f77_srank[s] > 0) {
@@ -3347,6 +3897,12 @@ static int f77_actual_addr(void) {
     v = f77_expr();
     vty = ex_ty;
     vhi = ex_hi;
+    if (vty == TY_CHAR) {
+        /* A character value is already an address. */
+        f77_act_len = ex_len;
+        return v;
+    }
+    f77_act_len = -1;
     f77_frame = f77_frame + ty_size(vty);
     tmp = hi_emit(HI_ALLOCA, vty, -1, -1, 0 - f77_frame, NULL);
     hl_ainst[hl_nalloca] = tmp;
@@ -3410,6 +3966,7 @@ static int f77_can_inline(int u) {
     if (f77_inline_disabled) return 0;
     if (u < 0) return 0;
     if (f77_ukind[u] == F77_UNIT_PROGRAM) return 0;
+    if (f77_urty[u] == TY_CHAR) return 0;
     if (f77_inline_depth >= F77_MAX_INLINE_DEPTH) return 0;
     if (f77_ustmts[u] > f77_inline_max) return 0;
     if (f77_unosplice[u]) return 0;
@@ -3595,8 +4152,10 @@ static int f77_inline_unit_body(int u, int *addrs, int nargs) {
 static void f77_stmt_call(int skip) {
     char nm[F77_MAX_NAME];
     int addrs[64];
+    int lens[64];
     int cb;
     int nargs;
+    int nc;
     int r;
 
     f77_scan_from(skip);
@@ -3611,7 +4170,7 @@ static void f77_stmt_call(int skip) {
             for (;;) {
                 /* Evaluated before any h_carg slot is reserved -- see
                  * the note in the FUNCTION path. */
-                if (nargs < 64) addrs[nargs] = f77_actual_addr();
+                if (nargs < 64) { addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; }
                 else f77_actual_addr();
                 nargs = nargs + 1;
                 if (lx_t != T_COMMA) break;
@@ -3630,6 +4189,7 @@ static void f77_stmt_call(int skip) {
         }
     }
     cb = h_ncarg;
+    nc = 0;
     {
         int ai;
         ai = 0;
@@ -3637,14 +4197,19 @@ static void f77_stmt_call(int skip) {
             h_carg[h_ncarg] = addrs[ai];
             h_carg_tag[h_ncarg] = 0;
             h_ncarg = h_ncarg + 1;
+            nc = nc + 1;
             ai = ai + 1;
         }
+        for (ai = 0; ai < nargs; ai++) {
+            if (lens[ai] < 0) continue;
+            h_carg[h_ncarg] = lens[ai]; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+            nc = nc + 1;
+        }
     }
-    r = hi_emit(HI_CALL, TY_INT, -1, -1, nargs, strdup(nm));
+    r = hi_emit(HI_CALL, TY_INT, -1, -1, nc, strdup(nm));
     h_cbase[r] = cb;
 }
 
-static int f77_unit_nparams;
 
 /* --- scalar dummy copy-in / copy-out ---------------------------------
  *
@@ -3682,10 +4247,6 @@ static int f77_unit_nparams;
  * known until its declaration has been read -- and F77 requires all
  * declarations to precede executable statements, so that point is
  * exactly when every type is known. */
-#define F77_MAX_COPYIN 32
-static int f77_ci_sym[F77_MAX_COPYIN];   /* the dummy's symbol */
-static int f77_ci_addr[F77_MAX_COPYIN];  /* its original address value */
-static int f77_ci_n;
 static int f77_decls_open;               /* still in the declaration part */
 
 static int f77_copyin_on = -1;
@@ -3790,6 +4351,32 @@ static void f77_unit_name(int u) {
     else { f77_error("subprogram needs a name"); strcpy(f77_uname[u], "unnamed"); }
 }
 
+/* Resolve where `n` incoming arguments arrive.  Without this the
+ * codegen's entry sequence is skipped entirely (it gates on h_val <
+ * hl_param_nflat) and the argument registers are never moved into the
+ * registers the allocator chose -- which silently "works" only when
+ * the allocator happens to pick the ABI register.  Every Fortran
+ * argument is one 32-bit word (an address, or a hidden CHARACTER
+ * length), so every tag is 0.  Called again from f77_layout_static
+ * when the declarations turn out to add hidden lengths: a later
+ * argument never moves an earlier one, so re-running is safe. */
+static void f77_assign_params(int n) {
+    int i;
+    int ord;
+    i = 0;
+    while (i < 64) { hl_param_tags[i] = 0; i = i + 1; }
+    hl_param_nflat = n;
+    hl_nparams = n;
+    hi_abi_assign(hl_param_tags, hl_param_nflat, hl_param_map);
+    ord = 0;
+    i = 0;
+    while (i < hl_param_nflat) {
+        if (hl_param_map[i] < 0) { hl_param_stkord[i] = ord; ord = ord + 4; }
+        else hl_param_stkord[i] = -1;
+        i = i + 1;
+    }
+}
+
 /* Bind this unit's header: record its dummy arguments as by-reference
  * symbols backed by HIR PARAMs, and, for a FUNCTION, create the result
  * variable that shares the unit's name. */
@@ -3818,8 +4405,10 @@ static void f77_bind_unit(int u) {
     /* Reset the implicit-typing map to the default rule. */
     {
         int c;
-        for (c = 0; c < 26; c++)
+        for (c = 0; c < 26; c++) {
             f77_imp_map[c] = (c >= 'I' - 'A' && c <= 'N' - 'A') ? TY_INT : TY_FLOAT;
+            f77_imp_len[c] = 1;
+        }
     }
     f77_imp_ready = 1;
     f77_imp_none = 0;
@@ -3842,6 +4431,10 @@ static void f77_bind_unit(int u) {
     if (lx_t != T_NAME) { f77_error("subprogram needs a name"); return; }
     f77_tok();
 
+    /* A CHARACTER FUNCTION takes its result buffer and length as two
+     * hidden leading arguments; the dummies follow. */
+    if (f77_ukind[u] == F77_UNIT_FUNC && f77_urty[u] == TY_CHAR) nparam = 2;
+
     if (lx_t == T_LP) {
         f77_tok();
         if (lx_t != T_RP) {
@@ -3863,31 +4456,17 @@ static void f77_bind_unit(int u) {
     }
 
     f77_unit_nparams = nparam;
+    f77_assign_params(nparam);
 
-    /* Resolve where the incoming arguments actually arrive.  Without
-     * this the codegen's entry sequence is skipped entirely (it gates
-     * on h_val < hl_param_nflat) and the argument registers are never
-     * moved into the registers the allocator chose -- which silently
-     * "works" only when the allocator happens to pick the ABI register.
-     * Every Fortran dummy is one 32-bit address, so every tag is 0. */
-    {
-        int i;
-        int ord;
-        i = 0;
-        while (i < 64) { hl_param_tags[i] = 0; i = i + 1; }
-        hl_param_nflat = nparam;
-        hl_nparams = nparam;
-        hi_abi_assign(hl_param_tags, hl_param_nflat, hl_param_map);
-        ord = 0;
-        i = 0;
-        while (i < hl_param_nflat) {
-            if (hl_param_map[i] < 0) { hl_param_stkord[i] = ord; ord = ord + 4; }
-            else hl_param_stkord[i] = -1;
-            i = i + 1;
-        }
-    }
-
-    if (f77_ukind[u] == F77_UNIT_FUNC) {
+    if (f77_ukind[u] == F77_UNIT_FUNC && f77_urty[u] == TY_CHAR) {
+        /* The result is the caller's buffer: a by-reference CHARACTER
+         * dummy in all but name, with its length in hidden param 1. */
+        f77_result_sym = f77_sym_param(f77_uname[u], 0);
+        f77_sty[f77_result_sym] = TY_CHAR;
+        f77_styped[f77_result_sym] = 1;
+        f77_slen[f77_result_sym] = f77_urlen[u];
+        f77_slenv[f77_result_sym] = hi_emit(HI_PARAM, TY_INT, -1, -1, 1, NULL);
+    } else if (f77_ukind[u] == F77_UNIT_FUNC) {
         f77_result_sym = f77_sym(f77_uname[u]);
         f77_sty[f77_result_sym] = f77_urty[u];
         /* A typed header (INTEGER FUNCTION F...) is an explicit
@@ -3935,6 +4514,12 @@ static void f77_wr_item(int v, int vty, int vhi) {
 static void f77_rd_item(int addr, int ty) {
     int cb;
     int r;
+    if (ty == TY_CHAR) {
+        int args[2];
+        args[0] = addr; args[1] = f77_rd_len;
+        f77_call_i("f77_rd_s", 2, args);
+        return;
+    }
     cb = h_ncarg;
     h_carg[h_ncarg] = addr; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
     if (ty == TY_DOUBLE)
@@ -3967,6 +4552,12 @@ static int f77_rd_target(int *tyo) {
     f77_sstored[s] = 1;
     f77_tok();
     *tyo = f77_sty[s];
+    if (f77_sty[s] == TY_CHAR) {
+        int a;
+        a = f77_char_ref(s);
+        f77_rd_len = ex_len;
+        return a;
+    }
     if (lx_t == T_LP && f77_srank[s] > 0) {
         f77_tok();
         return f77_subscript_addr(s);
@@ -4076,12 +4667,14 @@ static void f77_wr_whole_array(int s) {
         off = hi_emit(HI_ADD, TY_INT, off, idx, 0, NULL);
         cstride = cstride * f77_sext[s][k];
     }
-    t = ty_size(f77_sty[s]);
-    if (t == 4) byte = hi_emit(HI_SLL, TY_INT, off, f77_iconst(2), 0, NULL);
-    else if (t == 8) byte = hi_emit(HI_SLL, TY_INT, off, f77_iconst(3), 0, NULL);
-    else byte = hi_emit(HI_MUL, TY_INT, off, f77_iconst(t), 0, NULL);
+    byte = f77_elem_bytes(s, off);
     addr = hi_emit(HI_ADD, HL_ADDR_TY, f77_sval[s], byte, 0, NULL);
-    if (f77_io_rd) {
+    if (f77_sty[s] == TY_CHAR) {
+        int args[2];
+        args[0] = addr;
+        args[1] = (f77_slen[s] >= 0) ? f77_iconst(f77_slen[s]) : f77_slenv[s];
+        f77_call_i(f77_io_rd ? "f77_rd_s" : "f77_wr_a", 2, args);
+    } else if (f77_io_rd) {
         f77_rd_item(addr, f77_sty[s]);
     } else {
         v = f77_load_at(addr, f77_sty[s]);
@@ -4113,20 +4706,8 @@ static void f77_wr_one(void) {
     int cb;
     int r;
 
-    if (lx_t == T_SCON) {
-        int sa;
-        if (f77_io_rd) {
-            f77_error("a character constant cannot be a READ list item");
-            return;
-        }
-        sa = hi_emit(HI_SADDR, HL_ADDR_TY, -1, -1, lex_sidx, NULL);
-        cb = h_ncarg;
-        h_carg[h_ncarg] = sa; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-        h_carg[h_ncarg] = f77_iconst(lex_slen); h_carg_tag[h_ncarg] = 0;
-        h_ncarg = h_ncarg + 1;
-        r = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "f77_wr_a");
-        h_cbase[r] = cb;
-        f77_tok();
+    if (lx_t == T_SCON && f77_io_rd) {
+        f77_error("a character constant cannot be a READ list item");
         return;
     }
     if (lx_t == T_NAME) {
@@ -4237,11 +4818,14 @@ static void f77_wr_one(void) {
         f77_rd_item(a, vty);
         return;
     }
-
     v = f77_expr();
-    vty = ex_ty;
-    vhi = ex_hi;
-    f77_wr_item(v, vty, vhi);
+    if (ex_ty == TY_CHAR) {
+        int args[2];
+        args[0] = v; args[1] = ex_len;
+        f77_call_i("f77_wr_a", 2, args);
+        return;
+    }
+    f77_wr_item(v, ex_ty, ex_hi);
 }
 
 static void f77_wr_list(void) {
@@ -4262,7 +4846,9 @@ static void f77_wr_begin(int unit_val, int fmt_label) {
     int fa;
     cb = h_ncarg;
     h_carg[h_ncarg] = unit_val; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-    if (fmt_label == -2) {
+    if (fmt_label == -3) {
+        fa = f77_fmt_dyn;
+    } else if (fmt_label == -2) {
         fa = f77_fmt_dyn_addr(f77_fmt_dyn);
     } else if (fmt_label >= 0) {
         fs = f77_find_format(fmt_label);
@@ -4296,6 +4882,11 @@ static void f77_stmt_write(int skip) {
         f77_tok();
         if (lx_t == T_STAR) f77_tok();
         else if (lx_t == T_ICON) { fmt_label = lex_ival; f77_tok(); }
+        else if (lx_t == T_SCON || (lx_t == T_NAME && f77_sty[f77_sym(lex_name)] == TY_CHAR)) {
+            /* FORMAT held in a CHARACTER constant, variable or array. */
+            fmt_label = -3;
+            f77_fmt_dyn = f77_expr();
+        }
         else if (lx_t == T_NAME) {
             /* ASSIGNed FORMAT label in an INTEGER variable. */
             fmt_label = -2;
@@ -4319,6 +4910,11 @@ static void f77_stmt_print(int skip) {
     fmt_label = -1;
     if (lx_t == T_STAR) f77_tok();
     else if (lx_t == T_ICON) { fmt_label = lex_ival; f77_tok(); }
+    else if (lx_t == T_SCON || (lx_t == T_NAME && f77_sty[f77_sym(lex_name)] == TY_CHAR)) {
+        /* FORMAT held in a CHARACTER constant, variable or array. */
+        fmt_label = -3;
+        f77_fmt_dyn = f77_expr();
+    }
     else if (lx_t == T_NAME) {
         /* ASSIGNed FORMAT label in an INTEGER variable. */
         fmt_label = -2;
@@ -4357,7 +4953,11 @@ static void f77_stmt_read(int skip) {
     if (lx_t == T_LP) {
         f77_tok();
         if (lx_t == T_STAR) { unit_val = f77_iconst(5); f77_tok(); }
-        else { unit_val = f77_expr(); unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT); }
+        else {
+            unit_val = f77_expr();
+            if (ex_ty == TY_CHAR) { f77_error("internal files (a CHARACTER unit) are not supported"); return; }
+            unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
+        }
         if (lx_t != T_COMMA) {
             f77_error("unformatted READ is not supported -- needs (unit, format)");
             return;
@@ -4365,6 +4965,11 @@ static void f77_stmt_read(int skip) {
         f77_tok();
         if (lx_t == T_STAR) f77_tok();
         else if (lx_t == T_ICON) { fmt_label = lex_ival; f77_tok(); }
+        else if (lx_t == T_SCON || (lx_t == T_NAME && f77_sty[f77_sym(lex_name)] == TY_CHAR)) {
+            /* FORMAT held in a CHARACTER constant, variable or array. */
+            fmt_label = -3;
+            f77_fmt_dyn = f77_expr();
+        }
         else if (lx_t == T_NAME) {
             /* ASSIGNed FORMAT label in an INTEGER variable. */
             fmt_label = -2;
@@ -4394,6 +4999,11 @@ static void f77_stmt_read(int skip) {
         unit_val = f77_iconst(5);
         if (lx_t == T_STAR) f77_tok();
         else if (lx_t == T_ICON) { fmt_label = lex_ival; f77_tok(); }
+        else if (lx_t == T_SCON || (lx_t == T_NAME && f77_sty[f77_sym(lex_name)] == TY_CHAR)) {
+            /* FORMAT held in a CHARACTER constant, variable or array. */
+            fmt_label = -3;
+            f77_fmt_dyn = f77_expr();
+        }
         else if (lx_t == T_NAME) {
             /* ASSIGNed FORMAT label in an INTEGER variable. */
             fmt_label = -2;
@@ -4407,7 +5017,9 @@ static void f77_stmt_read(int skip) {
 
     cb = h_ncarg;
     h_carg[h_ncarg] = unit_val; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-    if (fmt_label == -2) {
+    if (fmt_label == -3) {
+        fa = f77_fmt_dyn;
+    } else if (fmt_label == -2) {
         fa = f77_fmt_dyn_addr(f77_fmt_dyn);
     } else if (fmt_label >= 0) {
         fs = f77_find_format(fmt_label);
@@ -4458,18 +5070,17 @@ static int f77_io_unit_after_name(char *nm) {
 static void f77_stmt_open(int skip) {
     int unit_val;
     int have_unit;
-    int file_sidx; int file_slen;
-    int stat_sidx; int stat_slen;
+    int file_addr; int file_lenv;
+    int stat_addr; int stat_lenv;
     char kw[F77_MAX_NAME];
     int cb;
     int r;
-    int a;
 
     f77_scan_from(skip);
     have_unit = 0;
     unit_val = -1;
-    file_sidx = -1; file_slen = 0;
-    stat_sidx = -1; stat_slen = 0;
+    file_addr = -1; file_lenv = -1;
+    stat_addr = -1; stat_lenv = -1;
     if (lx_t != T_LP) { f77_error("OPEN needs a control list"); return; }
     f77_tok();
     for (;;) {
@@ -4483,21 +5094,13 @@ static void f77_stmt_open(int skip) {
                     unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
                     have_unit = 1;
                 } else if (strcmp(kw, "FILE") == 0) {
-                    if (lx_t != T_SCON) {
-                        f77_error("FILE= needs a character constant (CHARACTER variables are not supported)");
-                        return;
-                    }
-                    file_sidx = lex_sidx;
-                    file_slen = lex_slen;
-                    f77_tok();
+                    file_addr = f77_expr();
+                    if (ex_ty != TY_CHAR) { f77_error("FILE= needs a CHARACTER value"); return; }
+                    file_lenv = ex_len;
                 } else if (strcmp(kw, "STATUS") == 0) {
-                    if (lx_t != T_SCON) {
-                        f77_error("STATUS= needs a character constant");
-                        return;
-                    }
-                    stat_sidx = lex_sidx;
-                    stat_slen = lex_slen;
-                    f77_tok();
+                    stat_addr = f77_expr();
+                    if (ex_ty != TY_CHAR) { f77_error("STATUS= needs a CHARACTER value"); return; }
+                    stat_lenv = ex_len;
                 } else {
                     f77_error("only UNIT=, FILE= and STATUS= are supported in OPEN");
                     return;
@@ -4524,17 +5127,15 @@ static void f77_stmt_open(int skip) {
     if (lx_t != T_RP) { f77_error("expected ) after OPEN control list"); return; }
     f77_tok();
     if (!have_unit) { f77_error("OPEN needs a unit"); return; }
-    if (file_sidx < 0) { f77_error("OPEN needs FILE="); return; }
+    if (file_addr < 0) { f77_error("OPEN needs FILE="); return; }
 
     cb = h_ncarg;
     h_carg[h_ncarg] = unit_val; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-    a = hi_emit(HI_SADDR, HL_ADDR_TY, -1, -1, file_sidx, NULL);
-    h_carg[h_ncarg] = a; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = f77_iconst(file_slen); h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-    if (stat_sidx >= 0) a = hi_emit(HI_SADDR, HL_ADDR_TY, -1, -1, stat_sidx, NULL);
-    else a = f77_iconst(0);
-    h_carg[h_ncarg] = a; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = f77_iconst(stat_slen); h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = file_addr; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = file_lenv; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    if (stat_addr < 0) { stat_addr = f77_iconst(0); stat_lenv = f77_iconst(0); }
+    h_carg[h_ncarg] = stat_addr; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = stat_lenv; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
     r = hi_emit(HI_CALL, TY_INT, -1, -1, 5, "f77_open");
     h_cbase[r] = cb;
 }
@@ -4669,6 +5270,19 @@ static void f77_statement(void) {
     int b_end;
     int lab;
 
+    cls = f77_classify();
+
+    if (cls == S_ASSIGN && f77_decls_open && f77_stf_define()) goto done;
+
+    /* Declarations must all precede executable statements, so the first
+     * executable one is where every dummy's type is finally known --
+     * and therefore where the static layout and the scalar copies are
+     * emitted.  That happens BEFORE the label's block is opened: the
+     * layout emits hidden-argument PARAMs and must stay in the entry
+     * block, and it runs once, which a labelled first statement (a
+     * loop target) would not guarantee. */
+    if (f77_decls_open && !f77_stmt_is_declaration(cls)) f77_emit_copyin();
+
     /* A labelled statement starts (or continues into) that label's
      * block, so GOTOs and DO terminals both land correctly. */
     if (lx_stmt_label >= 0) {
@@ -4677,15 +5291,6 @@ static void f77_statement(void) {
         f77_goto_blk(b);
         f77_begin_blk(b);
     }
-
-    cls = f77_classify();
-
-    /* Declarations must all precede executable statements, so the first
-     * executable one is where every dummy's type is finally known --
-     * and therefore where the scalar copies can be emitted. */
-    if (cls == S_ASSIGN && f77_decls_open && f77_stf_define()) goto done;
-
-    if (f77_decls_open && !f77_stmt_is_declaration(cls)) f77_emit_copyin();
 
     if (cls == S_ASSIGN)   { f77_stmt_assign(); goto done; }
     if (cls == S_DO)       { f77_open_do();     goto done; }
@@ -4805,11 +5410,23 @@ static void f77_statement(void) {
     if ((n = f77_starts("REWIND")) != 0) { f77_stmt_rewind(n); goto done; }
     if (f77_starts("BACKSPACE")) { f77_error("BACKSPACE is not supported"); goto done; }
     if ((n = f77_starts("EQUIVALENCE")) != 0) { f77_stmt_equivalence(n); goto done; }
-    if (f77_starts("CHARACTER")) { f77_error("CHARACTER is not supported"); goto done; }
+    if (f77_starts("CHARACTER")) { f77_stmt_decl(TY_CHAR, 9); goto done; }
     if (f77_starts("COMPLEX")) { f77_error("COMPLEX is not supported"); goto done; }
     if (f77_starts("BLOCKDATA")) goto done;    /* this unit's own header */
-    if (f77_starts("EXTERNAL")) { f77_error("EXTERNAL is not supported"); goto done; }
-    if (f77_starts("INTRINSIC")) { f77_error("INTRINSIC is not supported"); goto done; }
+    if ((n = f77_starts("EXTERNAL")) != 0) {
+        /* Names of external procedures.  Recorded so that passing one
+         * as an actual argument is refused instead of passing the
+         * address of a variable of that name. */
+        f77_scan_from(n);
+        while (lx_t == T_NAME) {
+            f77_sexternal[f77_sym(lex_name)] = 1;
+            f77_tok();
+            if (lx_t != T_COMMA) break;
+            f77_tok();
+        }
+        goto done;
+    }
+    if (f77_starts("INTRINSIC")) goto done;    /* generic names resolve anyway */
     if ((n = f77_starts("ASSIGN")) != 0) { f77_stmt_assign_label(n); goto done; }
     if (f77_starts("PAUSE")) { f77_error("PAUSE is not supported"); goto done; }
     if (f77_starts("ENTRY")) { f77_error("ENTRY is not supported"); goto done; }
