@@ -18,6 +18,7 @@
  */
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 #include <stdlib.h>
 
 #define FIO_MAXFMT   1024
@@ -647,6 +648,57 @@ void f77_wr_r(float v) {
     f77_wr_d((double)v);
 }
 
+/* A COMPLEX item: two edit descriptors, or "(re,im)" list-directed. */
+void f77_wr_c(float re, float im) {
+    if (fio_listed) {
+        int save;
+        int start0;
+        fio_putc(' ');
+        start0 = fio_len;
+        fio_putc('(');
+        save = fio_len;
+        fio_list_out_real((double)re, 0);
+        /* trim the field to the number: drop the leading blank and the padding */
+        {
+            int i, j;
+            int start = save;
+            while (start < fio_len && fio_line[start] == ' ') start++;
+            j = fio_len;
+            while (j > start && fio_line[j - 1] == ' ') j--;
+            for (i = 0; i < j - start; i++) fio_line[save + i] = fio_line[start + i];
+            fio_len = save + (j - start);
+        }
+        fio_putc(',');
+        save = fio_len;
+        fio_list_out_real((double)im, 0);
+        {
+            int i, j;
+            int start = save;
+            while (start < fio_len && fio_line[start] == ' ') start++;
+            j = fio_len;
+            while (j > start && fio_line[j - 1] == ' ') j--;
+            for (i = 0; i < j - start; i++) fio_line[save + i] = fio_line[start + i];
+            fio_len = save + (j - start);
+        }
+        fio_putc(')');
+        /* gfortran right-justifies the pair in 35 columns after the blank */
+        {
+            int n = fio_len - start0;
+            int pad = 35 - n;
+            if (pad > 0 && fio_len + pad < FIO_MAXLINE - 1) {
+                memmove(fio_line + start0 + pad, fio_line + start0, (size_t)n);
+                memset(fio_line + start0, ' ', (size_t)pad);
+                fio_len += pad;
+            }
+        }
+        fio_first_item = 0;
+        fio_prev_char = 0;
+        return;
+    }
+    f77_wr_d((double)re);
+    f77_wr_d((double)im);
+}
+
 void f77_wr_a(const char *s, int len) {
     int d;
     int i;
@@ -665,6 +717,59 @@ void f77_wr_a(const char *s, int len) {
     else if (fio_w > len) fio_pad(fio_w - len);
     for (i = 0; i < len; i++) fio_putc(s[i]);
     fio_consumed();
+}
+
+/* --- COMPLEX primitives ------------------------------------------------
+ *
+ * A COMPLEX is two floats; the compiler passes the parts as two words
+ * and takes results back through an 8-byte frame temporary (`out`). */
+float f77_cabs(float re, float im) { return (float)sqrt((double)re * re + (double)im * im); }
+
+void f77_cpow_i(float *out, float re, float im, int n) {
+    double rr = 1.0, ri = 0.0;
+    double br = re, bi = im;
+    int neg = n < 0;
+    unsigned k = (unsigned)(neg ? -n : n);
+    while (k) {
+        if (k & 1) { double t = rr * br - ri * bi; ri = rr * bi + ri * br; rr = t; }
+        k >>= 1;
+        if (k) { double t = br * br - bi * bi; bi = 2.0 * br * bi; br = t; }
+    }
+    if (neg) { double d = rr * rr + ri * ri; double t = rr / d; ri = -ri / d; rr = t; }
+    out[0] = (float)rr; out[1] = (float)ri;
+}
+
+void f77_clog(float *out, float re, float im) {
+    out[0] = (float)log(sqrt((double)re * re + (double)im * im));
+    out[1] = (float)atan2((double)im, (double)re);
+}
+void f77_cexp(float *out, float re, float im) {
+    double e = exp((double)re);
+    out[0] = (float)(e * cos((double)im));
+    out[1] = (float)(e * sin((double)im));
+}
+void f77_cpow_c(float *out, float ar, float ai, float br, float bi) {
+    float l[2];
+    double wr, wi;
+    if (ar == 0.0f && ai == 0.0f) { out[0] = 0.0f; out[1] = 0.0f; return; }
+    f77_clog(l, ar, ai);
+    wr = (double)br * l[0] - (double)bi * l[1];
+    wi = (double)br * l[1] + (double)bi * l[0];
+    f77_cexp(out, (float)wr, (float)wi);
+}
+void f77_csqrt(float *out, float re, float im) {
+    double m = sqrt((double)re * re + (double)im * im);
+    double r = sqrt((m + fabs((double)re)) / 2.0);
+    if (re >= 0.0f) { out[0] = (float)r; out[1] = (float)(r == 0.0 ? 0.0 : im / (2.0 * r)); }
+    else { out[0] = (float)(r == 0.0 ? 0.0 : fabs((double)im) / (2.0 * r)); out[1] = (float)(im < 0.0f ? -r : r); }
+}
+void f77_csin(float *out, float re, float im) {
+    out[0] = (float)(sin((double)re) * cosh((double)im));
+    out[1] = (float)(cos((double)re) * sinh((double)im));
+}
+void f77_ccos(float *out, float re, float im) {
+    out[0] = (float)(cos((double)re) * cosh((double)im));
+    out[1] = (float)(-sin((double)re) * sinh((double)im));
 }
 
 /* --- CHARACTER primitives --------------------------------------------- */
@@ -1169,6 +1274,36 @@ void f77_rd_s(char *p, int len) {
     }
     fio_rpos += w;
     fio_consumed();
+}
+
+/* COMPLEX input: two edit descriptors, or "(re, im)" list-directed. */
+void f77_rd_c(float *p) {
+    if (fio_listed) {
+        int t;
+        if (fio_ldone) return;
+        t = fio_list_tok();
+        if (t == 1) { fio_ldone = 1; return; }
+        if (t == 2) return;
+        if (fio_ltok[0] == '(') {
+            /* "(re," then "im)" -- the tokenizer split at the comma;
+             * blanks after the comma are legal */
+            char *q;
+            memmove(fio_ltok, fio_ltok + 1, strlen(fio_ltok));
+            p[0] = (float)fio_list_real();
+            fio_l_after = 1;              /* the comma is the pair's separator */
+            t = fio_list_tok();
+            if (t != 0) return;
+            q = strchr(fio_ltok, ')');
+            if (q) *q = 0;
+            p[1] = (float)fio_list_real();
+            return;
+        }
+        p[0] = (float)fio_list_real();
+        p[1] = 0.0f;
+        return;
+    }
+    f77_rd_r(p);
+    f77_rd_r(p + 1);
 }
 
 void f77_rd_end(void) {

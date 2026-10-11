@@ -62,6 +62,7 @@ static void f77_scan_units(void) {
     f77_nunit = 0;
     f77_nformat = 0;
     f77_nasg = 0;
+    f77_nesc = 0;
     { int z; z = 0; while (z < F77_MAX_UNIT) { f77_ustmts[z] = 0; f77_unosplice[z] = 0; z = z + 1; } }
     started = 0;
     pos = lx_pos;
@@ -78,6 +79,7 @@ static void f77_scan_units(void) {
                 f77_intern_str(lx_stmt + 6, lx_stmt_len - 6);
             f77_nformat = f77_nformat + 1;
         }
+        f77_esc_scan(started ? f77_nunit - 1 : 0);
         if (f77_starts("ASSIGN") && f77_nasg < F77_MAX_ASG) {
             f77_scan_from(6);
             if (lx_t == T_ICON) {
@@ -165,6 +167,7 @@ static void f77_scan_units(void) {
             else if (f77_starts("DOUBLEPRECISION")) { ty = TY_DOUBLE; skip = 15; }
             else if (f77_starts("REAL")) { ty = TY_FLOAT; skip = 4; }
             else if (f77_starts("CHARACTER")) { ty = TY_CHAR; skip = 9; }
+            else if (f77_starts("COMPLEX")) { ty = TY_CPLX; skip = 7; }
             if (ty >= 0) {
                 f77_scan_from(skip);
                 if (lx_t == T_STAR) {
