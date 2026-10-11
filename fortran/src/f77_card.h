@@ -96,12 +96,20 @@ static int lx_next_line(int p) {
     return p;
 }
 
-/* Is the line at p blank (only spaces/tabs before the newline)? */
+/* Is the line at p blank (only spaces/tabs in columns 1-72)?  Columns
+ * 73-80 are sequence numbers and do not count: a card of 72 blanks with
+ * its sequence number is a blank card.  FCVS decks have them, and before
+ * this rule such a card assembled as an empty statement, which the
+ * reader reported as end of file -- half the program vanished with no
+ * diagnostic but a missing FORMAT (FM036, FM038). */
 static int lx_is_blank_line(int p) {
-    while (p < lx_len && lx_src[p] != '\n') {
+    int col;
+    col = 1;
+    while (p < lx_len && lx_src[p] != '\n' && col <= 72) {
         if (lx_src[p] != ' ' && lx_src[p] != '\t' && lx_src[p] != '\r')
             return 0;
         p = p + 1;
+        col = col + 1;
     }
     return 1;
 }
@@ -273,8 +281,27 @@ static int f77_next_stmt(void) {
                     k = 0;
                     while (k < hcount) {
                         if (p >= lx_len || lx_src[p] == '\n' || col > 72) {
-                            f77_error("Hollerith constant runs off the line");
-                            break;
+                            /* The constant continues on the next
+                             * continuation line (comments between are
+                             * allowed), from its column 7. */
+                            int q;
+                            int qcont;
+                            int qlabel;
+                            q = lx_next_line(lx_pos);
+                            while (q < lx_len && (lx_is_comment(q) || lx_is_blank_line(q)))
+                                q = lx_next_line(q);
+                            if (q >= lx_len) {
+                                f77_error("Hollerith constant runs off the end of the file");
+                                break;
+                            }
+                            p = lx_line_body(q, &qcont, &qlabel);
+                            if (!qcont) {
+                                f77_error("Hollerith constant runs off the line");
+                                break;
+                            }
+                            lx_pos = q;
+                            col = 7;
+                            continue;
                         }
                         if (lx_src[p] == '\'') lx_put('\'');
                         lx_put(lx_src[p]);

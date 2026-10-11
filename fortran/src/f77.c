@@ -61,6 +61,7 @@ static void f77_scan_units(void) {
 
     f77_nunit = 0;
     f77_nformat = 0;
+    f77_nasg = 0;
     { int z; z = 0; while (z < F77_MAX_UNIT) { f77_ustmts[z] = 0; f77_unosplice[z] = 0; z = z + 1; } }
     started = 0;
     pos = lx_pos;
@@ -77,6 +78,14 @@ static void f77_scan_units(void) {
                 f77_intern_str(lx_stmt + 6, lx_stmt_len - 6);
             f77_nformat = f77_nformat + 1;
         }
+        if (f77_starts("ASSIGN") && f77_nasg < F77_MAX_ASG) {
+            f77_scan_from(6);
+            if (lx_t == T_ICON) {
+                f77_asg_lab[f77_nasg] = lex_ival;
+                f77_asg_unit[f77_nasg] = started ? f77_nunit - 1 : 0;
+                f77_nasg = f77_nasg + 1;
+            }
+        }
         if (started && f77_nunit > 0) {
             f77_ustmts[f77_nunit - 1]++;
             if (f77_starts("COMMON") || f77_starts("IMPLICIT") ||
@@ -87,7 +96,32 @@ static void f77_scan_units(void) {
         }
         rty = f77_unit_header_ty();
         if (f77_starts("BLOCKDATA")) {
-            f77_error("BLOCK DATA is not supported");
+            /* A declarations-only unit: its DATA lands in the COMMON
+             * blocks it names.  It compiles to an empty function that
+             * nothing calls; the name is mangled so it cannot collide
+             * with a subprogram. */
+            if (f77_nunit >= F77_MAX_UNIT) { f77_error("too many program units"); return; }
+            f77_upos[f77_nunit] = pos;
+            f77_uline[f77_nunit] = line;
+            f77_ukind[f77_nunit] = F77_UNIT_BDATA;
+            f77_urty[f77_nunit] = TY_INT;
+            f77_scan_from(9);
+            strcpy(f77_uname[f77_nunit], "f77bd_");
+            if (lx_t == T_NAME) strcat(f77_uname[f77_nunit], lex_name);
+            {
+                char num[12];
+                int q;
+                int v;
+                q = 0; v = f77_nunit;
+                num[q++] = '_';
+                if (v >= 100) num[q++] = (char)('0' + v / 100);
+                if (v >= 10) num[q++] = (char)('0' + (v / 10) % 10);
+                num[q++] = (char)('0' + v % 10);
+                num[q] = 0;
+                strcat(f77_uname[f77_nunit], num);
+            }
+            f77_nunit = f77_nunit + 1;
+            started = 1;
         } else if (f77_starts("SUBROUTINE") || rty >= 0) {
             if (f77_nunit >= F77_MAX_UNIT) { f77_error("too many program units"); return; }
             f77_upos[f77_nunit] = pos;

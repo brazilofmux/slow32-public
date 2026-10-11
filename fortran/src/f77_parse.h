@@ -111,6 +111,25 @@ static void f77_ldro_finalize(void) {
     }
 }
 static int  f77_sgidx[F77_MAX_SYM];    /* ps_g* index once bound static */
+static int  f77_sgoff[F77_MAX_SYM];    /* byte offset inside that object */
+
+/* --- EQUIVALENCE -------------------------------------------------------
+ *
+ * Each statement's groups are flattened into pairs: addr(a)+oa ==
+ * addr(b)+ob, with the offsets in bytes from constant subscripts (and,
+ * later, substrings).  Layout resolves them at the close of the
+ * declaration part with a union-find that carries offsets, then either
+ * hangs the group on the COMMON block one of its members belongs to or
+ * gives it a static object of its own -- storage association means
+ * static storage, the same trade SAVE makes. */
+#define F77_MAX_EQ 256
+static int f77_eq_sa[F77_MAX_EQ];
+static int f77_eq_oa[F77_MAX_EQ];
+static int f77_eq_sb[F77_MAX_EQ];
+static int f77_eq_ob[F77_MAX_EQ];
+static int f77_eq_n;
+static int f77_eq_parent[F77_MAX_SYM];   /* union-find; -1 = not involved */
+static int f77_eq_delta[F77_MAX_SYM];    /* addr(s) = addr(parent) + delta */
 
 /* PARAMETER named constants: no storage, value folded at parse time.
  * The value is kept in both domains and converted per the symbol's
@@ -145,8 +164,48 @@ static int f77_implicit_ty(char *nm) {
 
 static int f77_frame;   /* bytes of locals allocated so far */
 
+/* --- statement functions ---------------------------------------------
+ *
+ * NAME(d1, d2, ...) = expr in the declaration part.  The definition is
+ * kept as TEXT (with its blank-boundary flags), and every reference
+ * re-lexes it: the actuals are evaluated into fresh temporaries, each
+ * dummy name is bound to its temporary for the duration (f77_sym
+ * consults the bindings first), and the expression is parsed in place
+ * with the scanner pointed at the saved text -- the same checkpoint and
+ * restore the inliner uses, minus the scope push, because every other
+ * name in the expression must still resolve to the unit's variables. */
+#define F77_MAX_STF      64
+#define F77_MAX_STF_ARGS 16
+#define F77_STF_POOL     16384
+static int  f77_stf_sym[F77_MAX_STF];
+static int  f77_stf_nargs[F77_MAX_STF];
+static char f77_stf_arg[F77_MAX_STF][F77_MAX_STF_ARGS][F77_MAX_NAME];
+static int  f77_stf_argty[F77_MAX_STF][F77_MAX_STF_ARGS];
+static int  f77_stf_text[F77_MAX_STF];
+static int  f77_stf_len[F77_MAX_STF];
+static int  f77_stf_n;
+static char f77_stf_pool[F77_STF_POOL];
+static unsigned char f77_stf_pbrk[F77_STF_POOL];
+static int  f77_stf_pool_n;
+#define F77_MAX_STFB 64
+static char f77_stfb_name[F77_MAX_STFB][F77_MAX_NAME];
+static int  f77_stfb_sym[F77_MAX_STFB];
+static int  f77_stfb_n;
+
+/* ASSIGN labels, collected per unit in phase 1 so an assigned GOTO
+ * without a label list knows its candidates. */
+#define F77_MAX_ASG 256
+static int f77_asg_lab[F77_MAX_ASG];
+static int f77_asg_unit[F77_MAX_ASG];
+static int f77_nasg;
+
 static int f77_sym(char *nm) {
     int i;
+    i = f77_stfb_n;
+    while (i > 0) {
+        i = i - 1;
+        if (strcmp(f77_stfb_name[i], nm) == 0) return f77_stfb_sym[i];
+    }
     i = f77_scope_base;
     while (i < f77_nsym) {
         if (strcmp(f77_sname[i], nm) == 0) return i;
@@ -168,6 +227,7 @@ static int f77_sym(char *nm) {
     f77_scom[f77_nsym] = 0;
     f77_ssaved[f77_nsym] = 0;
     f77_sgidx[f77_nsym] = -1;
+    f77_sgoff[f77_nsym] = 0;
     f77_sparam[f77_nsym] = 0;
     f77_styped[f77_nsym] = 0;
     f77_sstored[f77_nsym] = 0;
@@ -182,11 +242,42 @@ static int f77_sym(char *nm) {
     return f77_nsym - 1;
 }
 
+/* A fresh anonymous local of type `ty`: a statement-function actual.
+ * Never looked up by name, so no scope or IMPLICIT NONE concerns. */
+static void f77_realloc_sym(int s);
+static int f77_sym_temp(int ty) {
+    int s;
+    if (f77_nsym >= F77_MAX_SYM) { f77_error("too many symbols"); return 0; }
+    s = f77_nsym;
+    strcpy(f77_sname[s], "%T");
+    f77_sty[s] = ty;
+    f77_srank[s] = 0;
+    f77_sarg[s] = 0;
+    f77_shi[s] = -1;
+    f77_scom[s] = 0;
+    f77_ssaved[s] = 0;
+    f77_sgidx[s] = -1;
+    f77_sgoff[s] = 0;
+    f77_sparam[s] = 0;
+    f77_styped[s] = 1;
+    f77_sstored[s] = 0;
+    { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[s][d] = -1; d = d + 1; } }
+    f77_frame = f77_frame + ty_size(ty);
+    f77_sval[s] = hi_emit(HI_ALLOCA, ty, -1, -1, 0 - f77_frame, NULL);
+    hl_ainst[hl_nalloca] = f77_sval[s];
+    hl_aoff[hl_nalloca] = 0 - f77_frame;
+    hl_nalloca = hl_nalloca + 1;
+    f77_nsym = f77_nsym + 1;
+    f77_realloc_sym(s);
+    return s;
+}
+
 /* --- program units --------------------------------------------------- */
 
 #define F77_UNIT_PROGRAM 0
 #define F77_UNIT_SUBR    1
 #define F77_UNIT_FUNC    2
+#define F77_UNIT_BDATA   3     /* BLOCK DATA: declarations only */
 #define F77_MAX_UNIT     256
 
 static char f77_uname[F77_MAX_UNIT][F77_MAX_NAME];
@@ -213,6 +304,7 @@ static int f77_sym_param(char *nm, int index) {
     f77_scom[s] = 0;
     f77_ssaved[s] = 0;
     f77_sgidx[s] = -1;
+    f77_sgoff[s] = 0;
     f77_sparam[s] = 0;
     f77_styped[s] = 0;
     f77_sstored[s] = 0;
@@ -791,6 +883,11 @@ static int f77_select(int cond, int a, int b) {
 #define IN_SINH   24
 #define IN_COSH   25
 #define IN_TANH   26
+#define IN_AINT   27   /* truncation: AINT/DINT */
+#define IN_ANINT  28   /* nearest whole number: ANINT/DNINT */
+#define IN_NINT   29   /* nearest integer: NINT/IDNINT */
+#define IN_DIM    30   /* positive difference: DIM/IDIM/DDIM */
+#define IN_DPROD  31   /* double product of two reals */
 
 /* F77 intrinsic names are type-decorated (ABS/IABS/DABS, MAX0/AMAX1/
  * DMAX1); the operation is the same and the operand types decide the
@@ -831,6 +928,12 @@ static int f77_intrinsic(char *nm) {
     if (strcmp(nm, "SINH") == 0 || strcmp(nm, "DSINH") == 0) return IN_SINH;
     if (strcmp(nm, "COSH") == 0 || strcmp(nm, "DCOSH") == 0) return IN_COSH;
     if (strcmp(nm, "TANH") == 0 || strcmp(nm, "DTANH") == 0) return IN_TANH;
+    if (strcmp(nm, "AINT") == 0 || strcmp(nm, "DINT") == 0) return IN_AINT;
+    if (strcmp(nm, "ANINT") == 0 || strcmp(nm, "DNINT") == 0) return IN_ANINT;
+    if (strcmp(nm, "NINT") == 0 || strcmp(nm, "IDNINT") == 0) return IN_NINT;
+    if (strcmp(nm, "DIM") == 0 || strcmp(nm, "IDIM") == 0 ||
+        strcmp(nm, "DDIM") == 0) return IN_DIM;
+    if (strcmp(nm, "DPROD") == 0) return IN_DPROD;
     return IN_NONE;
 }
 
@@ -885,6 +988,9 @@ static int f77_minmax(int want_max, int a, int ahi, int b, int bhi,
     return f77_select(c, a, b);
 }
 
+static int f77_stf_find(char *nm);
+static int f77_stf_expand(int si);
+
 static int f77_primary(void) {
     int v;
     int s;
@@ -930,6 +1036,13 @@ static int f77_primary(void) {
         strcpy(nm, lex_name);
         u = f77_find_func(nm);
 
+        /* A statement function of this unit shadows everything. */
+        {
+            int si;
+            si = f77_stf_find(nm);
+            if (si >= 0) return f77_stf_expand(si);
+        }
+
         /* Intrinsics, unless a unit in this file defines the name --
          * a user FUNCTION shadows the intrinsic of the same name. */
         in = (u < 0) ? f77_intrinsic(nm) : IN_NONE;
@@ -973,6 +1086,35 @@ static int f77_primary(void) {
                     ex_ty = TY_FLOAT;
                     return f77_fp64_call1("__fp32_sqrt", a, NULL);
                 }
+            }
+
+            if (in == IN_AINT || in == IN_ANINT || in == IN_NINT) {
+                /* trunc / round by the libm names the DBT intercepts
+                 * (math_soft.c has them for the interpreters).  The
+                 * D-specific names force the double path; NINT is
+                 * ANINT followed by the integer conversion. */
+                int dbl;
+                char *fn;
+                if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                dbl = (aty == TY_DOUBLE) || (in != IN_NINT && nm[0] == 'D') ||
+                      strcmp(nm, "IDNINT") == 0;
+                if (dbl) {
+                    a = f77_cvt(a, &ahi, aty, TY_DOUBLE);
+                    fn = (in == IN_AINT) ? "trunc" : "round";
+                    a = f77_libm_d1(fn, a, ahi, &ahi);
+                    aty = TY_DOUBLE;
+                } else {
+                    a = f77_cvt(a, &ahi, aty, TY_FLOAT);
+                    fn = (in == IN_AINT) ? "truncf" : "roundf";
+                    a = f77_libm_f1(fn, a);
+                    aty = TY_FLOAT;
+                }
+                if (in == IN_NINT) {
+                    a = f77_cvt(a, &ahi, aty, TY_INT);
+                    aty = TY_INT;
+                }
+                ex_ty = aty; ex_hi = ahi;
+                return a;
             }
 
             if (in >= IN_SIN && in <= IN_TANH) {
@@ -1042,6 +1184,27 @@ static int f77_primary(void) {
                             a = hi_emit(HI_FSUB, TY_FLOAT, a, q, 0, NULL);
                         }
                     }
+                } else if (in == IN_DIM) {
+                    /* max(a - b, 0) in the operands' type */
+                    int zero;
+                    int zhi;
+                    zhi = -1;
+                    if (rty == TY_DOUBLE) {
+                        a = f77_fp64_call2("__fp64_sub", a, ahi, b, bhi, &ahi);
+                        zero = f77_dconst(0.0, &zhi);
+                    } else if (rty == TY_FLOAT) {
+                        a = hi_emit(HI_FSUB, TY_FLOAT, a, b, 0, NULL);
+                        zero = f77_rconst(0.0);
+                    } else {
+                        a = hi_emit(HI_SUB, TY_INT, a, b, 0, NULL);
+                        zero = f77_iconst(0);
+                    }
+                    a = f77_minmax(1, a, ahi, zero, zhi, rty, &ahi);
+                } else if (in == IN_DPROD) {
+                    a = f77_cvt(a, &ahi, rty, TY_DOUBLE);
+                    b = f77_cvt(b, &bhi, rty, TY_DOUBLE);
+                    a = f77_fp64_call2("__fp64_mul", a, ahi, b, bhi, &ahi);
+                    rty = TY_DOUBLE;
                 } else if (in == IN_SIGN) {
                     /* |a| with the sign of b */
                     int neg;
@@ -1569,6 +1732,197 @@ static void f77_stmt_assign(void) {
         f77_store_sym_val(s, v, vty, ex_hi);
     else
         f77_store_at(addr, f77_sty[s], v, vty, ex_hi);
+}
+
+static int f77_stf_find(char *nm) {
+    int i;
+    for (i = 0; i < f77_stf_n; i++)
+        if (strcmp(f77_sname[f77_stf_sym[i]], nm) == 0) return i;
+    return -1;
+}
+
+/* Is this S_ASSIGN statement a statement-function definition?  Shape:
+ * an identifier, a parenthesised list ending exactly at the =, and a
+ * name that is not an array (an array element assignment has the same
+ * shape).  Records it and returns 1; returns 0 to let the assignment
+ * path have it. */
+static int f77_stf_define(void) {
+    int i;
+    int eq;
+    int s;
+    int n;
+    int len;
+    char nm[F77_MAX_NAME];
+
+    i = 0;
+    while (i < lx_stmt_len && (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]))) i = i + 1;
+    if (i == 0 || i >= F77_MAX_NAME || i >= lx_stmt_len || lx_stmt[i] != '(') return 0;
+    eq = f77_toplevel('=', 0);
+    if (eq < 0 || f77_match_paren(i) != eq) return 0;
+    memcpy(nm, lx_stmt, i);
+    nm[i] = 0;
+    s = f77_sym(nm);
+    if (f77_srank[s] > 0 || f77_sarg[s] || f77_sparam[s]) return 0;
+    if (f77_stf_n >= F77_MAX_STF) { f77_error("too many statement functions"); return 1; }
+
+    f77_scan_from(i + 1);
+    n = 0;
+    while (lx_t == T_NAME) {
+        if (n < F77_MAX_STF_ARGS) {
+            strcpy(f77_stf_arg[f77_stf_n][n], lex_name);
+            f77_stf_argty[f77_stf_n][n] = f77_sty[f77_sym(lex_name)];
+        }
+        n = n + 1;
+        f77_tok();
+        if (lx_t != T_COMMA) break;
+        f77_tok();
+    }
+    if (lx_t != T_RP) { f77_error("bad statement function dummy list"); return 1; }
+    if (n > F77_MAX_STF_ARGS) { f77_error("too many statement function dummies"); return 1; }
+
+    len = lx_stmt_len - (eq + 1);
+    if (f77_stf_pool_n + len + 1 > F77_STF_POOL) { f77_error("statement function pool overflow"); return 1; }
+    memcpy(f77_stf_pool + f77_stf_pool_n, lx_stmt + eq + 1, len);
+    memcpy(f77_stf_pbrk + f77_stf_pool_n, lx_brk + eq + 1, len);
+    f77_stf_sym[f77_stf_n] = s;
+    f77_stf_nargs[f77_stf_n] = n;
+    f77_stf_text[f77_stf_n] = f77_stf_pool_n;
+    f77_stf_len[f77_stf_n] = len;
+    f77_stf_pool_n = f77_stf_pool_n + len + 1;
+    f77_stf_n = f77_stf_n + 1;
+    return 1;
+}
+
+/* Reference: NAME(a1, ...) with the scanner on NAME. */
+static int f77_stf_expand(int si) {
+    int n;
+    int k;
+    int v;
+    int vty;
+    int vhi;
+    int fs;
+    int targs[F77_MAX_STF_ARGS];
+    char save_stmt[F77_MAX_STMT];
+    unsigned char save_brk[F77_MAX_STMT];
+    int save_len;
+    char *save_rp; char *save_rpe; char *save_rts; char *save_rte;
+    int save_rcs; int save_ract;
+    int save_t;
+    char save_name[F77_MAX_NAME];
+    int save_namelen;
+    int save_ival;
+    double save_dval;
+    int save_sidx;
+    int save_slen;
+
+    f77_tok();
+    if (lx_t != T_LP) { f77_error("statement function needs arguments"); return f77_iconst(0); }
+    f77_tok();
+    n = 0;
+    if (lx_t != T_RP) {
+        for (;;) {
+            v = f77_expr(); vty = ex_ty; vhi = ex_hi;
+            if (n < f77_stf_nargs[si]) {
+                targs[n] = f77_sym_temp(f77_stf_argty[si][n]);
+                f77_store_sym_val(targs[n], v, vty, vhi);
+            }
+            n = n + 1;
+            if (lx_t != T_COMMA) break;
+            f77_tok();
+        }
+    }
+    if (lx_t != T_RP) f77_error("expected ) after statement function arguments");
+    else f77_tok();
+    if (n != f77_stf_nargs[si]) {
+        f77_error("wrong number of statement function arguments");
+        return f77_iconst(0);
+    }
+    if (f77_stfb_n + n > F77_MAX_STFB) { f77_error("statement functions nested too deep"); return f77_iconst(0); }
+
+    /* Checkpoint the statement and scanner, swap the definition in. */
+    memcpy(save_stmt, lx_stmt, lx_stmt_len + 1);
+    memcpy(save_brk, lx_brk, lx_stmt_len);
+    save_len = lx_stmt_len;
+    save_rp = lx_rp; save_rpe = lx_rpe; save_rts = lx_rts; save_rte = lx_rte;
+    save_rcs = lx_rcs; save_ract = lx_ract;
+    save_t = lx_t;
+    memcpy(save_name, lex_name, F77_MAX_NAME);
+    save_namelen = lex_namelen;
+    save_ival = lex_ival; save_dval = lex_dval;
+    save_sidx = lex_sidx; save_slen = lex_slen;
+
+    memcpy(lx_stmt, f77_stf_pool + f77_stf_text[si], f77_stf_len[si]);
+    memcpy(lx_brk, f77_stf_pbrk + f77_stf_text[si], f77_stf_len[si]);
+    lx_stmt_len = f77_stf_len[si];
+    lx_stmt[lx_stmt_len] = 0;
+    for (k = 0; k < n; k++) {
+        strcpy(f77_stfb_name[f77_stfb_n], f77_stf_arg[si][k]);
+        f77_stfb_sym[f77_stfb_n] = targs[k];
+        f77_stfb_n = f77_stfb_n + 1;
+    }
+    f77_scan_from(0);
+    v = f77_expr(); vty = ex_ty; vhi = ex_hi;
+    if (lx_t != T_EOF) f77_error("junk after statement function expression");
+    f77_stfb_n = f77_stfb_n - n;
+
+    memcpy(lx_stmt, save_stmt, save_len + 1);
+    memcpy(lx_brk, save_brk, save_len);
+    lx_stmt_len = save_len;
+    lx_rp = save_rp; lx_rpe = save_rpe; lx_rts = save_rts; lx_rte = save_rte;
+    lx_rcs = save_rcs; lx_ract = save_ract;
+    lx_t = save_t;
+    memcpy(lex_name, save_name, F77_MAX_NAME);
+    lex_namelen = save_namelen;
+    lex_ival = save_ival; lex_dval = save_dval;
+    lex_sidx = save_sidx; lex_slen = save_slen;
+
+    fs = f77_stf_sym[si];
+    v = f77_cvt(v, &vhi, vty, f77_sty[fs]);
+    ex_ty = f77_sty[fs];
+    ex_hi = vhi;
+    return v;
+}
+
+/* ASSIGN label TO var -- the label number is the variable's value. */
+static void f77_stmt_assign_label(int skip) {
+    int lab;
+    int s;
+    f77_scan_from(skip);
+    if (lx_t != T_ICON) { f77_error("ASSIGN needs a statement label"); return; }
+    lab = lex_ival;
+    f77_tok();
+    /* Blanks are gone: "TO M" arrives as the one name TOM. */
+    if (lx_t != T_NAME || lex_name[0] != 'T' || lex_name[1] != 'O') {
+        f77_error("ASSIGN needs TO");
+        return;
+    }
+    if (lex_name[2] == 0) {
+        f77_tok();
+        if (lx_t != T_NAME) { f77_error("ASSIGN needs a variable"); return; }
+        s = f77_sym(lex_name);
+    } else {
+        s = f77_sym(lex_name + 2);
+    }
+    f77_store_sym_val(s, f77_iconst(lab), TY_INT, -1);
+}
+
+/* A FORMAT named by an ASSIGNed variable: pick the format text at run
+ * time by comparing the value against every FORMAT label of the unit
+ * (a branchless select chain -- the unit has a handful). */
+static int f77_fmt_dyn;
+static int f77_fmt_dyn_addr(int v) {
+    int i;
+    int acc;
+    int c;
+    int fa;
+    acc = f77_iconst(0);
+    for (i = 0; i < f77_nformat; i++) {
+        if (f77_funit[i] != f77_cur_unit) continue;
+        fa = hi_emit(HI_SADDR, HL_ADDR_TY, -1, -1, f77_fstr[i], NULL);
+        c = hi_emit(HI_SEQ, TY_INT, v, f77_iconst(f77_flabel[i]), 0, NULL);
+        acc = f77_select(c, fa, acc);
+    }
+    return acc;
 }
 
 /* A dimension bound: a signed integer constant.  F77 allows constant
@@ -2160,10 +2514,9 @@ static void f77_stmt_data(int skip) {
             s = f77_sym(lex_name);
             if (f77_sarg[s]) { f77_error("a dummy argument cannot appear in DATA"); return; }
             if (f77_sparam[s]) { f77_error("a PARAMETER cannot appear in DATA"); return; }
-            if (f77_scom[s]) {
-                f77_error("DATA for a COMMON member needs BLOCK DATA, which is not supported");
-                return;
-            }
+            /* A COMMON member is already static; DATA for it belongs
+             * in BLOCK DATA by the letter of F77, but is poured into
+             * the block from any unit (as gfortran does). */
             f77_tok();
             if (ntgt >= 64) { f77_error("too many DATA items"); return; }
             tsym[ntgt] = s;
@@ -2210,7 +2563,7 @@ static void f77_stmt_data(int skip) {
                 tstart[ntgt] = 0;
                 tcount[ntgt] = 1;
             }
-            f77_ssaved[s] = 1;          /* DATA implies static storage */
+            if (!f77_scom[s]) f77_ssaved[s] = 1;   /* DATA implies static storage */
             ntgt = ntgt + 1;
             if (lx_t != T_COMMA) break;
             f77_tok();
@@ -2264,6 +2617,97 @@ static void f77_stmt_data(int skip) {
     }
 }
 
+/* EQUIVALENCE (a, b(2), c(1,2)), (d, e) ... -- record the pairs.  An
+ * array element with constant subscripts (or a single subscript into a
+ * multi-dimensional array, which F77 allows here) gives a byte offset;
+ * a bare array name means its first element. */
+static int f77_eq_offset(int s) {
+    int elem;
+    int stride;
+    int d;
+    int n;
+    int subs[F77_MAX_RANK];
+    if (lx_t != T_LP) return 0;
+    if (f77_srank[s] == 0) { f77_error("subscript on a scalar in EQUIVALENCE"); return 0; }
+    f77_tok();
+    n = 0;
+    for (;;) {
+        f77_cexpr();
+        if (f77_cx_ty != TY_INT) { f77_error("EQUIVALENCE subscript must be an integer constant"); return 0; }
+        if (n < F77_MAX_RANK) subs[n] = f77_cx_i;
+        n = n + 1;
+        if (lx_t != T_COMMA) break;
+        f77_tok();
+    }
+    if (lx_t != T_RP) { f77_error("expected ) in EQUIVALENCE"); return 0; }
+    f77_tok();
+    for (d = 0; d < f77_srank[s]; d++) {
+        if (f77_sextsym[s][d] >= 0) { f77_error("adjustable array in EQUIVALENCE"); return 0; }
+    }
+    if (n == 1 && f77_srank[s] > 1) {
+        elem = subs[0] - 1;                 /* linear element number */
+    } else {
+        if (n != f77_srank[s]) { f77_error("wrong number of EQUIVALENCE subscripts"); return 0; }
+        elem = 0;
+        stride = 1;
+        for (d = 0; d < n; d++) {
+            elem = elem + (subs[d] - f77_slo[s][d]) * stride;
+            stride = stride * f77_sext[s][d];
+        }
+    }
+    return elem * ty_size(f77_sty[s]);
+}
+
+static void f77_stmt_equivalence(int skip) {
+    int sa;
+    int oa;
+    int sb;
+    int ob;
+    if (!f77_decls_open) {
+        f77_error("EQUIVALENCE after the first executable statement");
+        return;
+    }
+    f77_scan_from(skip);
+    for (;;) {
+        if (lx_t != T_LP) { f77_error("EQUIVALENCE needs a parenthesised list"); return; }
+        f77_tok();
+        if (lx_t != T_NAME) { f77_error("expected a variable in EQUIVALENCE"); return; }
+        sa = f77_sym(lex_name);
+        f77_tok();
+        oa = f77_eq_offset(sa);
+        if (lx_t != T_COMMA) { f77_error("EQUIVALENCE needs at least two items"); return; }
+        while (lx_t == T_COMMA) {
+            f77_tok();
+            if (lx_t != T_NAME) { f77_error("expected a variable in EQUIVALENCE"); return; }
+            sb = f77_sym(lex_name);
+            f77_tok();
+            ob = f77_eq_offset(sb);
+            if (f77_sarg[sa] || f77_sarg[sb]) { f77_error("a dummy argument cannot be in EQUIVALENCE"); return; }
+            if (f77_sparam[sa] || f77_sparam[sb]) { f77_error("a PARAMETER cannot be in EQUIVALENCE"); return; }
+            if (f77_eq_n >= F77_MAX_EQ) { f77_error("too many EQUIVALENCE pairs"); return; }
+            f77_eq_sa[f77_eq_n] = sa; f77_eq_oa[f77_eq_n] = oa;
+            f77_eq_sb[f77_eq_n] = sb; f77_eq_ob[f77_eq_n] = ob;
+            f77_eq_n = f77_eq_n + 1;
+        }
+        if (lx_t != T_RP) { f77_error("expected ) in EQUIVALENCE"); return; }
+        f77_tok();
+        if (lx_t == T_COMMA) f77_tok();
+        if (lx_t == T_EOF) break;
+    }
+}
+
+/* Union-find with offsets: addr(s) = addr(root) + *off. */
+static int f77_eq_find(int s, int *off) {
+    int o;
+    o = 0;
+    while (f77_eq_parent[s] != s) {
+        o = o + f77_eq_delta[s];
+        s = f77_eq_parent[s];
+    }
+    *off = o;
+    return s;
+}
+
 /* Rebind symbol `s` to static storage at `name`+`off`.  The GADDR (and
  * ADDI) land in whatever block is current -- the declaration part, so
  * the entry block, which dominates every use. */
@@ -2313,9 +2757,91 @@ static void f77_layout_static(void) {
             }
         }
         f77_bind_static(s, f77_cblk_name[blk], boff[blk]);
+        f77_sgidx[s] = f77_cblk_gidx[blk];
+        f77_sgoff[s] = boff[blk];
         sz = ty_size(f77_sty[s]) * f77_sym_nelem(s);
         boff[blk] = boff[blk] + sz;
     }
+
+    /* EQUIVALENCE groups.  Resolve the pairs, then place each group:
+     * on the COMMON block of a member that has one (the block grows
+     * to cover the group, and may not be extended backwards), else on
+     * a static object of the group's own. */
+    if (f77_eq_n > 0) {
+        int a; int b; int ra; int rb; int oa; int ob;
+        for (s = f77_scope_base; s < f77_nsym; s++) { f77_eq_parent[s] = s; f77_eq_delta[s] = 0; }
+        for (i = 0; i < f77_eq_n; i++) {
+            a = f77_eq_sa[i]; b = f77_eq_sb[i];
+            ra = f77_eq_find(a, &oa);
+            rb = f77_eq_find(b, &ob);
+            /* addr(b) = addr(a) + oa_i - ob_i */
+            if (ra == rb) {
+                if (oa + f77_eq_oa[i] - f77_eq_ob[i] != ob) {
+                    f77_error("inconsistent EQUIVALENCE");
+                    return;
+                }
+                continue;
+            }
+            f77_eq_parent[rb] = ra;
+            f77_eq_delta[rb] = oa + f77_eq_oa[i] - f77_eq_ob[i] - ob;
+        }
+        for (i = f77_scope_base; i < f77_nsym; i++) {
+            int root; int o; int minoff; int maxend; int csym; int coff; int g; int nm_s;
+            char *nm;
+            if (f77_eq_parent[i] != i) continue;          /* not a root */
+            /* Gather the group's extent and any COMMON member. */
+            minoff = 0; maxend = 0; csym = -1; coff = 0; nm_s = 0;
+            for (s = f77_scope_base; s < f77_nsym; s++) {
+                root = f77_eq_find(s, &o);
+                if (root != i) continue;
+                nm_s = nm_s + 1;
+                if (o < minoff) minoff = o;
+                sz = ty_size(f77_sty[s]) * f77_sym_nelem(s);
+                if (o + sz > maxend) maxend = o + sz;
+                if (f77_scom[s]) {
+                    if (csym >= 0 && f77_sgidx[csym] != f77_sgidx[s]) {
+                        f77_error("EQUIVALENCE joins two COMMON blocks");
+                        return;
+                    }
+                    if (csym < 0 || f77_sgoff[s] - o < coff) { csym = s; coff = f77_sgoff[s] - o; }
+                }
+            }
+            if (nm_s < 2) continue;                        /* a lone symbol */
+            if (csym >= 0) {
+                /* coff: block offset of the group origin (offset 0). */
+                g = f77_sgidx[csym];
+                if (coff + minoff < 0) {
+                    f77_error("EQUIVALENCE extends a COMMON block backwards");
+                    return;
+                }
+                for (s = f77_scope_base; s < f77_nsym; s++) {
+                    root = f77_eq_find(s, &o);
+                    if (root != i) continue;
+                    if (f77_scom[s]) {
+                        if (f77_sgoff[s] != coff + o) { f77_error("inconsistent EQUIVALENCE in COMMON"); return; }
+                        continue;
+                    }
+                    f77_bind_static(s, ps_gname[g], coff + o);
+                    f77_sgidx[s] = g;
+                    f77_sgoff[s] = coff + o;
+                }
+                for (k = 0; k < f77_ncblk; k++) {
+                    if (f77_cblk_gidx[k] == g && coff + maxend > boff[k]) boff[k] = coff + maxend;
+                }
+            } else {
+                nm = f77_gpool_name("f77e_", f77_uname[f77_cur_unit], "_", f77_sname[i]);
+                g = f77_g_add(nm, maxend - minoff);
+                for (s = f77_scope_base; s < f77_nsym; s++) {
+                    root = f77_eq_find(s, &o);
+                    if (root != i) continue;
+                    f77_bind_static(s, nm, o - minoff);
+                    f77_sgidx[s] = g;
+                    f77_sgoff[s] = o - minoff;
+                }
+            }
+        }
+    }
+
     for (i = 0; i < f77_ncblk; i++) {
         if (boff[i] > ps_gsize[f77_cblk_gidx[i]])
             ps_gsize[f77_cblk_gidx[i]] = boff[i];
@@ -2329,6 +2855,7 @@ static void f77_layout_static(void) {
     for (s = f77_scope_base; s < f77_nsym; s++) {
         if (!f77_ssaved[s]) continue;
         if (f77_sarg[s] || f77_scom[s] || s == f77_result_sym) continue;
+        if (f77_sgidx[s] >= 0) continue;          /* placed by EQUIVALENCE */
         for (k = 0; k < f77_srank[s]; k++) {
             if (f77_sextsym[s][k] >= 0) {
                 f77_error("adjustable dimensions cannot be SAVEd");
@@ -2367,7 +2894,7 @@ static void f77_layout_static(void) {
             ps_ginit_pool_len = ps_ginit_pool_len + ps_gsize[g];
         }
         esz = ty_size(f77_sty[s]);
-        off = ps_ginit_start[g] + f77_di_elem[i] * esz;
+        off = ps_ginit_start[g] + f77_sgoff[s] + f77_di_elem[i] * esz;
         if (f77_sty[s] == TY_DOUBLE) {
             union { double d; unsigned char b[8]; } u;
             u.d = (f77_di_ty[i] == TY_INT) ? (double)f77_di_i[i] : f77_di_d[i];
@@ -3283,6 +3810,10 @@ static void f77_bind_unit(int u) {
     f77_sv_n = 0;
     f77_di_n = 0;
     f77_ldro_n = 0;
+    f77_stf_n = 0;
+    f77_stf_pool_n = 0;
+    f77_stfb_n = 0;
+    f77_eq_n = 0;
 
     /* Reset the implicit-typing map to the default rule. */
     {
@@ -3293,7 +3824,7 @@ static void f77_bind_unit(int u) {
     f77_imp_ready = 1;
     f77_imp_none = 0;
 
-    if (f77_ukind[u] == F77_UNIT_PROGRAM) {
+    if (f77_ukind[u] == F77_UNIT_PROGRAM || f77_ukind[u] == F77_UNIT_BDATA) {
         hl_param_nflat = 0;
         hl_nparams = 0;
         return;
@@ -3731,7 +4262,9 @@ static void f77_wr_begin(int unit_val, int fmt_label) {
     int fa;
     cb = h_ncarg;
     h_carg[h_ncarg] = unit_val; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-    if (fmt_label >= 0) {
+    if (fmt_label == -2) {
+        fa = f77_fmt_dyn_addr(f77_fmt_dyn);
+    } else if (fmt_label >= 0) {
         fs = f77_find_format(fmt_label);
         if (fs < 0) { f77_error("no FORMAT statement with that label"); fs = 0; }
         fa = hi_emit(HI_SADDR, HL_ADDR_TY, -1, -1, fs, NULL);
@@ -3763,6 +4296,13 @@ static void f77_stmt_write(int skip) {
         f77_tok();
         if (lx_t == T_STAR) f77_tok();
         else if (lx_t == T_ICON) { fmt_label = lex_ival; f77_tok(); }
+        else if (lx_t == T_NAME) {
+            /* ASSIGNed FORMAT label in an INTEGER variable. */
+            fmt_label = -2;
+            f77_fmt_dyn = f77_load_sym(f77_sym(lex_name));
+            f77_fmt_dyn = f77_cvt(f77_fmt_dyn, &ex_hi, ex_ty, TY_INT);
+            f77_tok();
+        }
         else { f77_error("only a FORMAT label or * is supported"); return; }
     }
     if (lx_t != T_RP) { f77_error("expected ) after WRITE control list"); return; }
@@ -3779,6 +4319,13 @@ static void f77_stmt_print(int skip) {
     fmt_label = -1;
     if (lx_t == T_STAR) f77_tok();
     else if (lx_t == T_ICON) { fmt_label = lex_ival; f77_tok(); }
+    else if (lx_t == T_NAME) {
+        /* ASSIGNed FORMAT label in an INTEGER variable. */
+        fmt_label = -2;
+        f77_fmt_dyn = f77_load_sym(f77_sym(lex_name));
+        f77_fmt_dyn = f77_cvt(f77_fmt_dyn, &ex_hi, ex_ty, TY_INT);
+        f77_tok();
+    }
     else { f77_error("PRINT needs a FORMAT label or *"); return; }
     if (lx_t == T_COMMA) f77_tok();
     f77_wr_begin(f77_iconst(6), fmt_label);
@@ -3818,6 +4365,13 @@ static void f77_stmt_read(int skip) {
         f77_tok();
         if (lx_t == T_STAR) f77_tok();
         else if (lx_t == T_ICON) { fmt_label = lex_ival; f77_tok(); }
+        else if (lx_t == T_NAME) {
+            /* ASSIGNed FORMAT label in an INTEGER variable. */
+            fmt_label = -2;
+            f77_fmt_dyn = f77_load_sym(f77_sym(lex_name));
+            f77_fmt_dyn = f77_cvt(f77_fmt_dyn, &ex_hi, ex_ty, TY_INT);
+            f77_tok();
+        }
         else { f77_error("only a FORMAT label or * is supported"); return; }
         while (lx_t == T_COMMA) {
             f77_tok();
@@ -3840,13 +4394,22 @@ static void f77_stmt_read(int skip) {
         unit_val = f77_iconst(5);
         if (lx_t == T_STAR) f77_tok();
         else if (lx_t == T_ICON) { fmt_label = lex_ival; f77_tok(); }
+        else if (lx_t == T_NAME) {
+            /* ASSIGNed FORMAT label in an INTEGER variable. */
+            fmt_label = -2;
+            f77_fmt_dyn = f77_load_sym(f77_sym(lex_name));
+            f77_fmt_dyn = f77_cvt(f77_fmt_dyn, &ex_hi, ex_ty, TY_INT);
+            f77_tok();
+        }
         else { f77_error("READ needs a FORMAT label or *"); return; }
         if (lx_t == T_COMMA) f77_tok();
     }
 
     cb = h_ncarg;
     h_carg[h_ncarg] = unit_val; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-    if (fmt_label >= 0) {
+    if (fmt_label == -2) {
+        fa = f77_fmt_dyn_addr(f77_fmt_dyn);
+    } else if (fmt_label >= 0) {
         fs = f77_find_format(fmt_label);
         if (fs < 0) { f77_error("no FORMAT statement with that label"); fs = 0; }
         fa = hi_emit(HI_SADDR, HL_ADDR_TY, -1, -1, fs, NULL);
@@ -4120,6 +4683,8 @@ static void f77_statement(void) {
     /* Declarations must all precede executable statements, so the first
      * executable one is where every dummy's type is finally known --
      * and therefore where the scalar copies can be emitted. */
+    if (cls == S_ASSIGN && f77_decls_open && f77_stf_define()) goto done;
+
     if (f77_decls_open && !f77_stmt_is_declaration(cls)) f77_emit_copyin();
 
     if (cls == S_ASSIGN)   { f77_stmt_assign(); goto done; }
@@ -4239,13 +4804,13 @@ static void f77_statement(void) {
     if ((n = f77_starts("CLOSE")) != 0) { f77_stmt_close(n); goto done; }
     if ((n = f77_starts("REWIND")) != 0) { f77_stmt_rewind(n); goto done; }
     if (f77_starts("BACKSPACE")) { f77_error("BACKSPACE is not supported"); goto done; }
-    if (f77_starts("EQUIVALENCE")) { f77_error("EQUIVALENCE is not supported"); goto done; }
+    if ((n = f77_starts("EQUIVALENCE")) != 0) { f77_stmt_equivalence(n); goto done; }
     if (f77_starts("CHARACTER")) { f77_error("CHARACTER is not supported"); goto done; }
     if (f77_starts("COMPLEX")) { f77_error("COMPLEX is not supported"); goto done; }
-    if (f77_starts("BLOCKDATA")) { f77_error("BLOCK DATA is not supported"); goto done; }
+    if (f77_starts("BLOCKDATA")) goto done;    /* this unit's own header */
     if (f77_starts("EXTERNAL")) { f77_error("EXTERNAL is not supported"); goto done; }
     if (f77_starts("INTRINSIC")) { f77_error("INTRINSIC is not supported"); goto done; }
-    if (f77_starts("ASSIGN")) { f77_error("ASSIGN / assigned GOTO is not supported"); goto done; }
+    if ((n = f77_starts("ASSIGN")) != 0) { f77_stmt_assign_label(n); goto done; }
     if (f77_starts("PAUSE")) { f77_error("PAUSE is not supported"); goto done; }
     if (f77_starts("ENTRY")) { f77_error("ENTRY is not supported"); goto done; }
 
@@ -4373,7 +4938,53 @@ static void f77_statement(void) {
             f77_begin_blk(b_next);
             goto done;
         }
-        if (lx_t != T_ICON) { f77_error("GOTO needs a label (assigned GOTO is not supported)"); goto done; }
+        if (lx_t == T_NAME) {
+            /* Assigned GOTO: GO TO v [, (l1, l2, ...)].  A compare
+             * chain over the listed labels, or over every label this
+             * unit ASSIGNs when there is no list; the last candidate
+             * is taken unconditionally (the standard leaves a value
+             * outside the list undefined). */
+            int labs[64];
+            int nl;
+            int i;
+            int v;
+            int s;
+            s = f77_sym(lex_name);
+            v = f77_load_sym(s);
+            v = f77_cvt(v, &ex_hi, ex_ty, TY_INT);
+            f77_tok();
+            if (lx_t == T_COMMA) f77_tok();
+            nl = 0;
+            if (lx_t == T_LP) {
+                f77_tok();
+                for (;;) {
+                    if (lx_t != T_ICON) { f77_error("assigned GOTO needs statement labels"); goto done; }
+                    if (nl < 64) { labs[nl] = lex_ival; nl = nl + 1; }
+                    f77_tok();
+                    if (lx_t != T_COMMA) break;
+                    f77_tok();
+                }
+                if (lx_t != T_RP) { f77_error("expected ) in assigned GOTO"); goto done; }
+            } else {
+                for (i = 0; i < f77_nasg; i++) {
+                    if (f77_asg_unit[i] != f77_cur_unit) continue;
+                    if (f77_find_format(f77_asg_lab[i]) >= 0) continue;
+                    if (nl < 64) { labs[nl] = f77_asg_lab[i]; nl = nl + 1; }
+                }
+            }
+            if (nl == 0) { f77_error("assigned GOTO has no candidate labels"); goto done; }
+            for (i = 0; i + 1 < nl; i++) {
+                int b_next;
+                c = hi_emit(HI_SEQ, TY_INT, v, f77_iconst(labs[i]), 0, NULL);
+                b_next = hir_new_block();
+                hi_emit(HI_BRC, TY_VOID, c, f77_label_blk(labs[i]), b_next, NULL);
+                f77_cur_blk_live = 0;
+                f77_begin_blk(b_next);
+            }
+            f77_goto_blk(f77_label_blk(labs[nl - 1]));
+            goto done;
+        }
+        if (lx_t != T_ICON) { f77_error("GOTO needs a label"); goto done; }
         f77_goto_blk(f77_label_blk(lex_ival));
         goto done;
     }

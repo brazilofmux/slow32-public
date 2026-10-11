@@ -446,6 +446,8 @@ void f77_wr_d(double v) {
         while (k < 0) { fv /= 10.0; k++; }
         snprintf(cf, sizeof cf, "%%.%df", fio_d);
         snprintf(buf, sizeof buf, cf, fv);
+        /* Fw.0 keeps the decimal point ("3."); C's %.0f drops it. */
+        if (fio_d == 0) strcat(buf, ".");
     } else if (d == 'G') {
         /* Gw.d: F form when 0.1 <= |v| < 10^d, else E. The F form
          * occupies w-4 columns and is followed by four blanks. */
@@ -466,6 +468,7 @@ void f77_wr_d(double v) {
             }
             snprintf(cf, sizeof cf, "%%.%df", nd - k > 0 ? nd - k : 0);
             snprintf(buf, sizeof buf, cf, v);
+            if (nd - k <= 0) strcat(buf, ".");
             fio_field(buf, fw);
             fio_pad(fio_w >= 4 ? 4 : 0);
             fio_consumed();
