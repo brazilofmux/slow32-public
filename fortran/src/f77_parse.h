@@ -1255,6 +1255,7 @@ static int f77_minmax(int want_max, int a, int ahi, int b, int bhi,
 
 static int f77_stf_find(char *nm);
 static int f77_stf_expand(int si);
+static int f77_sym_find(char *nm);
 
 /* A call to a runtime routine taking `n` word arguments, result in r1. */
 static int f77_call_i(char *name, int n, int *args) {
@@ -1484,8 +1485,14 @@ static int f77_primary(void) {
         }
 
         /* Intrinsics, unless a unit in this file defines the name --
-         * a user FUNCTION shadows the intrinsic of the same name. */
+         * a user FUNCTION shadows the intrinsic of the same name -- or
+         * a dummy argument carries it (FF324(NINT, N) in the FCVS). */
         in = (u < 0) ? f77_intrinsic(nm) : IN_NONE;
+        {
+            int ds;
+            ds = f77_sym_find(nm);
+            if (ds >= 0 && (f77_sarg[ds] || f77_sexternal[ds])) in = IN_NONE;
+        }
         if (in != IN_NONE) {
             int a; int ahi; int aty;
             int b; int bhi; int bty;
@@ -4432,7 +4439,7 @@ static int f77_actual_addr(void) {
         after = (int)(lx_rte - lx_stmt);
         if (after >= lx_stmt_len || lx_stmt[after] != '(') {
             sf = f77_sym_find(lex_name);
-            if (sf < 0 || (!f77_styped[sf] && !f77_sstored[sf] && f77_srank[sf] == 0 &&
+            if (sf < 0 || (!f77_sstored[sf] && f77_srank[sf] == 0 &&
                            !f77_sarg[sf] && !f77_scom[sf] && !f77_sparam[sf])) {
                 if ((sf >= 0 && f77_sexternal[sf]) || f77_find_unit(lex_name) >= 0) {
                     char *pn;
@@ -6154,25 +6161,44 @@ static void f77_stmt_close(int skip) {
 }
 
 /* REWIND u  --  or REWIND (u). */
+static int f77_rd_target(int *tyo);
 static void f77_stmt_rewind(int skip) {
     int unit_val;
-    int paren;
-    int cb;
-    int r;
-
     f77_scan_from(skip);
-    paren = 0;
-    if (lx_t == T_LP) { paren = 1; f77_tok(); }
-    unit_val = f77_expr();
-    unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
-    if (paren) {
+    if (lx_t == T_LP) {
+        /* (u) or (UNIT=u [, ERR=l] [, IOSTAT=v]) */
+        unit_val = -1;
+        f77_tok();
+        for (;;) {
+            if (lx_t == T_NAME && (int)(lx_rte - lx_stmt) < lx_stmt_len &&
+                lx_stmt[(int)(lx_rte - lx_stmt)] == '=') {
+                char kw[F77_MAX_NAME];
+                strcpy(kw, lex_name);
+                f77_tok();
+                f77_tok();
+                if (strcmp(kw, "UNIT") == 0) {
+                    unit_val = f77_expr(); unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
+                } else if (strcmp(kw, "ERR") == 0) {
+                    f77_tok();                      /* a REWIND does not fail here */
+                } else if (strcmp(kw, "IOSTAT") == 0) {
+                    int ty; int a;
+                    a = f77_rd_target(&ty);
+                    hi_emit(HI_STORE, TY_INT, a, f77_iconst(0), 0, NULL);
+                } else { f77_error("unknown keyword in REWIND"); return; }
+            } else {
+                unit_val = f77_expr(); unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
+            }
+            if (lx_t == T_COMMA) { f77_tok(); continue; }
+            break;
+        }
         if (lx_t != T_RP) { f77_error("expected ) after REWIND unit"); return; }
         f77_tok();
+        if (unit_val < 0) { f77_error("REWIND needs a unit"); return; }
+    } else {
+        unit_val = f77_expr();
+        unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
     }
-    cb = h_ncarg;
-    h_carg[h_ncarg] = unit_val; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-    r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "f77_rewind");
-    h_cbase[r] = cb;
+    f77_call_i("f77_rewind", 1, &unit_val);
 }
 
 /* Is this statement part of the declaration part (so the scalar dummy

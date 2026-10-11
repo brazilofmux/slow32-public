@@ -91,6 +91,7 @@ static int   fio_inrec;
 static int   fio_irec;
 static int   fio_draining;       /* wr_end: no reversion at end of format */
 static int   fio_bz;             /* BZ in effect: blanks in a field are zeros */
+static int   fio_sp;             /* SP in effect: a plus sign on positive numbers */
 static int   fio_e;              /* Ew.dEe exponent digits, 0 = default */
 /* List-directed layout follows gfortran: INTEGER in a 12-wide field,
  * character items run together after one separating blank. */
@@ -202,6 +203,14 @@ static void fio_flush_line(void) {
         fio_uend[fio_unit] = ftell(f);
 }
 
+/* SP: a positive number gets a leading plus. */
+static void fio_plus(char *buf) {
+    if (!fio_sp) return;
+    if (buf[0] == '-' || buf[0] == '+' || buf[0] == 0) return;
+    memmove(buf + 1, buf, strlen(buf) + 1);
+    buf[0] = '+';
+}
+
 /* A numeric field one column too wide whose first character is the
  * optional zero before the decimal point drops that zero (F77
  * 13.5.9.2: the zero is optional, and gfortran omits it exactly then). */
@@ -309,6 +318,20 @@ static int fio_next_desc(void) {
         }
         if (c == ' ' || c == ',') { fio_pos++; continue; }
 
+        if (c == 'S' || c == 's') {
+            /* S, SP, SS: optional plus sign control, sticky (13.5.6) */
+            fio_pos++;
+            if (fio_fmt[fio_pos] == 'P' || fio_fmt[fio_pos] == 'p') { fio_sp = 1; fio_pos++; }
+            else if (fio_fmt[fio_pos] == 'S' || fio_fmt[fio_pos] == 's') { fio_sp = 0; fio_pos++; }
+            else fio_sp = 0;
+            continue;
+        }
+        if (c == ':') {
+            /* colon editing: ends format control when no items remain */
+            fio_pos++;
+            if (fio_draining) return 0;
+            continue;
+        }
         if ((c == 'B' || c == 'b') &&
             (fio_fmt[fio_pos + 1] == 'N' || fio_fmt[fio_pos + 1] == 'n' ||
              fio_fmt[fio_pos + 1] == 'Z' || fio_fmt[fio_pos + 1] == 'z')) {
@@ -607,6 +630,7 @@ void f77_wr_begin(int unit, const char *fmt) {
     fio_ibuf = 0;
     fio_out = fio_resolve(unit, 1);
     fio_unit = unit;
+    if (unit > 0 && unit < FIO_MAXUNIT) fio_uunf[unit] = 0;
     fio_position(fio_out, unit);
     fio_wr_setup(fmt);
 }
@@ -620,6 +644,7 @@ void f77_wu_begin(int unit) {
     fio_init_units();
     fio_out = fio_resolve(unit, 1);
     fio_unit = unit;
+    if (unit > 0 && unit < FIO_MAXUNIT) fio_uunf[unit] = 1;   /* BACKSPACE needs to know */
     fio_position(fio_out, unit);
     fio_ulen = 0;
 }
@@ -662,6 +687,7 @@ int f77_ru_begin(int unit, int flags) {
     f = fio_resolve(unit, 0);
     fio_in = f;
     fio_unit = unit;
+    if (unit > 0 && unit < FIO_MAXUNIT) fio_uunf[unit] = 1;
     fio_position(f, unit);
     fio_upos = 0;
     if (unit > 0 && unit < FIO_MAXUNIT && fio_udirect[unit]) {
@@ -762,6 +788,7 @@ static void fio_wr_setup(const char *fmt) {
     fio_reading = 0;
     fio_len = 0;
     fio_col = 0;
+    fio_sp = 0;
     fio_gdepth = 0;
     fio_scale = 0;
     fio_rep = 0;
@@ -816,6 +843,7 @@ void f77_wr_i(int v) {
     } else {
         snprintf(buf, sizeof buf, "%d", v);
     }
+    fio_plus(buf);
     fio_field(buf, fio_w);
     fio_consumed();
 }
@@ -838,6 +866,7 @@ void f77_wr_d(double v) {
         snprintf(buf, sizeof buf, cf, fv);
         /* Fw.0 keeps the decimal point ("3."); C's %.0f drops it. */
         if (fio_d == 0) strcat(buf, ".");
+        fio_plus(buf);
         fio_drop_zero(buf, fio_w);
     } else if (d == 'G') {
         /* Gw.d: F form when 0.1 <= |v| < 10^d, else E. The F form
@@ -861,6 +890,7 @@ void f77_wr_d(double v) {
             snprintf(cf, sizeof cf, "%%.%df", nd - k > 0 ? nd - k : 0);
             snprintf(buf, sizeof buf, cf, v);
             if (nd - k <= 0) strcat(buf, ".");
+            fio_plus(buf);
             fio_drop_zero(buf, fw);
             fio_field(buf, fw);
             fio_blanks(fio_w >= tb ? tb : 0);
@@ -868,9 +898,11 @@ void f77_wr_d(double v) {
             return;
         }
         fio_efmt(buf, sizeof buf, v, nd, 'E');
+        fio_plus(buf);
         fio_drop_zero(buf, fio_w);
     } else if (d == 'E' || d == 'D') {
         fio_efmt(buf, sizeof buf, v, fio_d, d);
+        fio_plus(buf);
         fio_drop_zero(buf, fio_w);
     } else {
         snprintf(buf, sizeof buf, "%g", v);
@@ -1412,6 +1444,7 @@ int f77_rd_begin(int unit, const char *fmt, int has_end) {
     fio_ibuf = 0;
     fio_in = fio_resolve(unit, 0);
     fio_unit = unit;
+    if (unit > 0 && unit < FIO_MAXUNIT) fio_uunf[unit] = 0;
     fio_position(fio_in, unit);
     fio_bz = (unit > 0 && unit < FIO_MAXUNIT) ? fio_ubz[unit] : 0;
     return fio_rd_setup(fmt, has_end);
