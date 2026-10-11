@@ -11,6 +11,24 @@ index be4448dab2..f33dfadf3a 100644
                         (target_asm.id=as_solaris_as) then
                        begin
                          asmline.concat(tai_const.create_8bit(DW_LNS_extended_op));
+diff --git a/compiler/nadd.pas b/compiler/nadd.pas
+index 961b7e7640..c5706a26f7 100644
+--- a/compiler/nadd.pas
++++ b/compiler/nadd.pas
+@@ -4632,8 +4632,12 @@          else if is_implicit_pointer_object_type(ld) or (ld.typ=classrefdef) the
+         if left.nodetype = ordconstn then
+           swapleftright;
+ 
+-        { can we use a shift instead of a mul? }
++        { can we use a shift instead of a mul?  Not for currency: the constant
++          was retyped to currency by pass_typecheck, and tshlshrnode's
++          pass_typecheck then converts that currency shift count to sinttype
++          ("Incompatible types: got Currency expected LongInt", tw41865) }
+         if not (cs_check_overflow in current_settings.localswitches) and
++           not is_currency(resultdef) and
+            (right.nodetype = ordconstn) and
+            ispowerof2(tordconstnode(right).value,power) then
+           begin
 diff --git a/compiler/pp.pas b/compiler/pp.pas
 index c29dc4d92a..484724f2fc 100644
 --- a/compiler/pp.pas

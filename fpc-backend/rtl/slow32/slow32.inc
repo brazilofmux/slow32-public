@@ -23,8 +23,8 @@
 {$define FPC_SYSTEM_HAS_GET_FRAME}
 function get_frame:pointer;assembler;nostackframe;
   asm
-    { r30 = fp (frame pointer) }
-    addi r3, r30, 0
+    { r30 = fp (frame pointer); results go in r1 (r3 is the first argument) }
+    addi r1, r30, 0
   end;
 {$ENDIF not INTERNAL_BACKTRACE}
 
@@ -32,8 +32,8 @@ function get_frame:pointer;assembler;nostackframe;
 {$define FPC_SYSTEM_HAS_SPTR}
 Function Sptr : pointer;assembler;nostackframe;
   asm
-    { r29 = sp (stack pointer) }
-    addi r3, r29, 0
+    { r29 = sp (stack pointer); result in r1 }
+    addi r1, r29, 0
   end;
 
 
@@ -90,19 +90,28 @@ procedure WriteBarrier;{$if defined(SYSTEMINLINE)}inline;{$endif}
 ****************************************************************************}
 
 {$define FPC_SYSTEM_HAS_GET_CALLER_ADDR}
-function get_caller_addr(framebp:pointer;addr:pointer=nil):pointer;assembler;
-  asm
-    { return address is at framebp - 4 }
-    ldw r3, r3, -4
-  end;
+function get_caller_addr(framebp:pointer;addr:pointer=nil):pointer;
+begin
+  { return address is at framebp - 4: the prologue saves lr first, then fp,
+    then the other callee-saved registers (cgcpu.pas g_proc_entry) }
+  if framebp=nil then
+    result:=nil
+  else
+    result:=PPointer(framebp-4)^;
+end;
 
 
 {$define FPC_SYSTEM_HAS_GET_CALLER_FRAME}
-function get_caller_frame(framebp:pointer;addr:pointer=nil):pointer;assembler;
-  asm
-    { previous frame pointer is at framebp - 8 }
-    ldw r3, r3, -8
-  end;
+function get_caller_frame(framebp:pointer;addr:pointer=nil):pointer;
+begin
+  { previous frame pointer is at framebp - 8; the chain ends at nil, and
+    the exception unwinder walks until it does (a runtime error raised as an
+    exception read address -8 here: trange*, texception4, Int64 overflow) }
+  if framebp=nil then
+    result:=nil
+  else
+    result:=PPointer(framebp-8)^;
+end;
 
 
 {****************************************************************************
@@ -110,7 +119,11 @@ function get_caller_frame(framebp:pointer;addr:pointer=nil):pointer;assembler;
 ****************************************************************************}
 
 { SLOW-32 has no hardware atomics -- simple non-atomic fallbacks
-  (single-core embedded, so these are safe) }
+  (single-core embedded, so these are safe).  Results return in r1: every
+  one of these, and get_frame and Sptr, used to leave the result in r3 (the
+  first argument register), so callers read whatever r1 last held -- the
+  exception unwinder walked a bogus frame and InterlockedIncrement never
+  settled (FPC test suite, 2026-10-10). }
 
 {$define FPC_SYSTEM_HAS_ATOMIC_DEC_32}
 function fpc_atomic_dec_32 (var Target: longint) : longint; assembler; nostackframe;
@@ -118,7 +131,7 @@ function fpc_atomic_dec_32 (var Target: longint) : longint; assembler; nostackfr
     ldw r4, r3, 0
     addi r4, r4, -1
     stw r3, r4, 0
-    addi r3, r4, 0
+    addi r1, r4, 0
   end;
 
 
@@ -128,7 +141,7 @@ function fpc_atomic_inc_32 (var Target: longint) : longint; assembler; nostackfr
     ldw r4, r3, 0
     addi r4, r4, 1
     stw r3, r4, 0
-    addi r3, r4, 0
+    addi r1, r4, 0
   end;
 
 
@@ -137,7 +150,7 @@ function fpc_atomic_xchg_32 (var Target: longint;Source : longint) : longint; as
   asm
     ldw r5, r3, 0
     stw r3, r4, 0
-    addi r3, r5, 0
+    addi r1, r5, 0
   end;
 
 
@@ -148,17 +161,18 @@ function fpc_atomic_cmp_xchg_32 (var Target: longint; NewValue: longint; Compara
     bne r6, r5, .LFail
     stw r3, r4, 0
   .LFail:
-    addi r3, r6, 0
+    addi r1, r6, 0
   end;
 
 
 {$define FPC_SYSTEM_HAS_ATOMIC_ADD_32}
 function fpc_atomic_add_32 (var Target: longint;Value: longint) : longint; assembler; nostackframe;
   asm
+    { returns the OLD value: AtomicIncrement(x, n) is this plus n (generic.inc) }
     ldw r5, r3, 0
-    add r5, r5, r4
-    stw r3, r5, 0
-    addi r3, r5, 0
+    add r6, r5, r4
+    stw r3, r6, 0
+    addi r1, r5, 0
   end;
 
 

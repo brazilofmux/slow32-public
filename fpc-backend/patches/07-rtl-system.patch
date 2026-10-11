@@ -17,6 +17,62 @@ index 46accdd50a..3b301456ef 100644
  {$ENDIF FPC_DOTTEDUNITS}
  
    { Include platform independent implementation part }
+diff --git a/rtl/inc/softfpu.pp b/rtl/inc/softfpu.pp
+index 7aad37bf77..7c8a25911e 100644
+--- a/rtl/inc/softfpu.pp
++++ b/rtl/inc/softfpu.pp
+@@ -4249,6 +4249,11 @@ function float32_to_float128( a: float32 ): float128;
+          OR ( ( extractFloat32Exp( b.float32 ) = $FF ) AND  (extractFloat32Frac( b.float32 )<>0) )
+        ) then
+     Begin
++        {$ifdef CPUSLOW32}
++        { as hardware FPC targets do (x86 UCOMISS, ARM VCMP): a quiet NaN compares
++          unordered without a trap, only a signalling NaN raises invalid (tminmax1) }
++        if (float32_is_signaling_nan(a.float32)<>0) or (float32_is_signaling_nan(b.float32)<>0) then
++        {$endif CPUSLOW32}
+         float_raise( float_flag_invalid );
+         float32_le := 0;
+         exit;
+@@ -4280,6 +4285,11 @@ function float32_to_float128( a: float32 ): float128;
+          OR ( ( extractFloat32Exp( b.float32 ) = $FF ) AND  (extractFloat32Frac( b.float32 ) <>0) )
+        ) then
+     Begin
++        {$ifdef CPUSLOW32}
++        { as hardware FPC targets do (x86 UCOMISS, ARM VCMP): a quiet NaN compares
++          unordered without a trap, only a signalling NaN raises invalid (tminmax1) }
++        if (float32_is_signaling_nan(a.float32)<>0) or (float32_is_signaling_nan(b.float32)<>0) then
++        {$endif CPUSLOW32}
+         float_raise( float_flag_invalid );
+         float32_lt :=0;
+         exit;
+@@ -5641,7 +5651,12 @@ function float64_sqrt( a: float64 ): float64;
+            )
+        ) then
+     Begin
+-        float_raise( float_flag_invalid );
++         {$ifdef CPUSLOW32}
++         { as hardware FPC targets do (x86 UCOMISS, ARM VCMP): a quiet NaN compares
++           unordered without a trap, only a signalling NaN raises invalid (tminmax1) }
++         if (float64_is_signaling_nan(a)<>0) or (float64_is_signaling_nan(b)<>0) then
++         {$endif CPUSLOW32}
++         float_raise( float_flag_invalid );
+         float64_le := 0;
+         exit;
+     End;
+@@ -5689,7 +5704,12 @@ function float64_sqrt( a: float64 ): float64;
+            )
+        ) then
+     Begin
+-        float_raise( float_flag_invalid );
++         {$ifdef CPUSLOW32}
++         { as hardware FPC targets do (x86 UCOMISS, ARM VCMP): a quiet NaN compares
++           unordered without a trap, only a signalling NaN raises invalid (tminmax1) }
++         if (float64_is_signaling_nan(a)<>0) or (float64_is_signaling_nan(b)<>0) then
++         {$endif CPUSLOW32}
++         float_raise( float_flag_invalid );
+         float64_lt := 0;
+         exit;
+     End;
 diff --git a/rtl/inc/system.inc b/rtl/inc/system.inc
 index e7b5a19991..d438d2830e 100644
 --- a/rtl/inc/system.inc

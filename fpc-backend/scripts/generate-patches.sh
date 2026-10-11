@@ -70,7 +70,7 @@ fi
 
 # 5. Compiler driver and utilities (pp.pas, psystem.pas, fpc.pp, mks32reg.pp, ppudump.pp, dbgdwarf.pas)
 echo "5. Generating compiler driver/utilities patch..."
-git diff $BASE -- compiler/pp.pas compiler/psystem.pas compiler/utils/fpc.pp compiler/utils/mks32reg.pp compiler/utils/ppuutils/ppudump.pp compiler/dbgdwarf.pas > "$PATCHES_DIR/05-compiler-driver.patch" 2>/dev/null || true
+git diff $BASE -- compiler/pp.pas compiler/psystem.pas compiler/utils/fpc.pp compiler/utils/mks32reg.pp compiler/utils/ppuutils/ppudump.pp compiler/dbgdwarf.pas compiler/nadd.pas > "$PATCHES_DIR/05-compiler-driver.patch" 2>/dev/null || true
 if [ -s "$PATCHES_DIR/05-compiler-driver.patch" ]; then
     lines=$(wc -l < "$PATCHES_DIR/05-compiler-driver.patch")
     echo "   Created: 05-compiler-driver.patch ($lines lines)"
@@ -90,7 +90,7 @@ fi
 
 # 7. RTL system unit includes (rtl/inc/systemh.inc, rtl/inc/system.inc)
 echo "7. Generating RTL system includes patch..."
-git diff $BASE -- rtl/inc/systemh.inc rtl/inc/system.inc rtl/embedded/sysutils.pp > "$PATCHES_DIR/07-rtl-system.patch" 2>/dev/null || true
+git diff $BASE -- rtl/inc/systemh.inc rtl/inc/system.inc rtl/embedded/sysutils.pp rtl/inc/softfpu.pp > "$PATCHES_DIR/07-rtl-system.patch" 2>/dev/null || true
 if [ -s "$PATCHES_DIR/07-rtl-system.patch" ]; then
     lines=$(wc -l < "$PATCHES_DIR/07-rtl-system.patch")
     echo "   Created: 07-rtl-system.patch ($lines lines)"

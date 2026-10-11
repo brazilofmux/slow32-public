@@ -15,7 +15,7 @@
 #
 # Usage: run-fpc-tests.sh [-j N] [--dirs "test tbs webtbs"] [--limit N]
 #                         [--match glob] [--out DIR] [--list FILE]
-# Links with --stack-size 1M --heap-size 32M: the linker defaults (64K, 1M)
+# Links with --stack-size 8M --heap-size 32M: the linker defaults (64K, 1M)
 # showed up as faults just under 0x0FFF0000 and as runtime error 203.
 #   env: FPC_SRC (~/fpc), PPCS32, UNITS (fpc-backend/runtime/units), EMU
 set -uo pipefail
@@ -89,7 +89,7 @@ run_one() {
         "$AS" "$s" "${s%.s}.s32o" > "$w/as.log" 2>&1 || { printf '%s\tASM-FAIL\t%s\n' "$rel" "$(grep -m1 -i error "$w/as.log" | cut -c1-120)"; return; }
         objs="$objs ${s%.s}.s32o"
     done
-    "$LD" --mmio 64K --stack-size 1M --heap-size 32M -o "$w/t.s32x" "$RT/crt0.s32o" "$OUT/fpc_startup.s32o" "$UNITS/system.s32o" $objs "$UNITS/fpcrtl.s32a" "$RT/libc_mmio.s32a" "$RT/libs32.s32a" > "$w/ld.log" 2>&1 \
+    "$LD" --mmio 64K --stack-size 8M --heap-size 32M -o "$w/t.s32x" "$RT/crt0.s32o" "$OUT/fpc_startup.s32o" "$UNITS/system.s32o" $objs "$UNITS/fpcrtl.s32a" "$RT/libc_mmio.s32a" "$RT/libs32.s32a" > "$w/ld.log" 2>&1 \
         || { printf '%s\tLINK-FAIL\t%s\n' "$rel" "$(grep -m1 -i 'error\|undefined' "$w/ld.log" | cut -c1-120)"; return; }
     ( cd "$w" && timeout 60 "$EMU" t.s32x < /dev/null > run.log 2>&1 ); rrc=$?
     if [[ $rrc -eq 124 ]]; then printf '%s\tTIMEOUT\t\n' "$rel"; return; fi

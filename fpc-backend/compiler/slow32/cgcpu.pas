@@ -113,6 +113,8 @@ unit cgcpu;
 
       tcg64fs32 = class(tcg64f32)
         procedure a_op64_reg_reg(list : TAsmList;op:TOpCG;size : tcgsize;regsrc,regdst : tregister64);override;
+        procedure a_op64_reg_reg_reg_checkoverflow(list: TAsmList;op:TOpCG;size : tcgsize;regsrc1,regsrc2,regdst : tregister64;setflags : boolean;var ovloc : tlocation);override;
+        procedure a_op64_const_reg_reg_checkoverflow(list: TAsmList;op:TOpCG;size : tcgsize;value : int64;regsrc,regdst : tregister64;setflags : boolean;var ovloc : tlocation);override;
         procedure a_op64_const_reg(list : TAsmList;op:TOpCG;size : tcgsize;value : int64;reg : tregister64);override;
         procedure a_op64_const_reg_reg(list: TAsmList;op:TOpCG;size : tcgsize;value : int64;regsrc,regdst : tregister64);override;
         procedure a_op64_reg_reg_reg(list: TAsmList;op:TOpCG;size : tcgsize;regsrc1,regsrc2,regdst : tregister64);override;
@@ -966,10 +968,26 @@ unit cgcpu;
                        Procedure entry/exit
 *****************************************************************************}
 
+    { The callee-saved registers are stored in a fixed order: lr first (at
+      fp-4), fp second (at fp-8), then r0..r29 ascending.  The RTL's
+      get_caller_addr / get_caller_frame (rtl/slow32/slow32.inc) read those
+      two slots, so the exception unwinder and backtraces depend on the order.
+      Saving in plain register order put them at offsets that varied with how
+      many other registers a function saved. }
+    function s32_save_order(i: longint): tsuperregister;
+      begin
+        case i of
+          0: result:=RS_RETURN_ADDRESS_REG;
+          1: result:=RS_FRAME_POINTER_REG;
+          else result:=RS_R0+(i-2);   { r0..r29 }
+        end;
+      end;
+
     procedure tcgs32.g_proc_entry(list: TAsmList; localsize: longint; nostackframe: boolean);
       var
         regs: tcpuregisterset;
         r: TSuperRegister;
+        i: longint;
         href: treference;
         stackcount, stackAdjust: longint;
       begin
@@ -1019,12 +1037,15 @@ unit cgcpu;
                 dec(localsize,stackcount);
               end;
 
-            for r:=RS_R0 to RS_R31 do
-              if r in regs then
-                begin
-                  dec(href.offset,sizeof(pint));
-                  list.concat(taicpu.op_reg_ref(A_STW,newreg(R_INTREGISTER,r,R_SUBWHOLE),href));
-                end;
+            for i:=0 to 31 do
+              begin
+                r:=s32_save_order(i);
+                if r in regs then
+                  begin
+                    dec(href.offset,sizeof(pint));
+                    list.concat(taicpu.op_reg_ref(A_STW,newreg(R_INTREGISTER,r,R_SUBWHOLE),href));
+                  end;
+              end;
 
             if current_procinfo.framepointer<>NR_STACK_POINTER_REG then
               list.concat(taicpu.op_reg_reg_const(A_ADDI,NR_FRAME_POINTER_REG,NR_STACK_POINTER_REG,stackAdjust));
@@ -1048,6 +1069,7 @@ unit cgcpu;
     procedure tcgs32.g_proc_exit(list: TAsmList; parasize: longint; nostackframe: boolean);
       var
         r: tsuperregister;
+        i: longint;
         regs: tcpuregisterset;
         stacksize, localsize, precompensation, postcompensation: longint;
         href: treference;
@@ -1115,12 +1137,16 @@ unit cgcpu;
 
             { No FPU register restore in SLOW-32 }
 
-            for r:=RS_R31 downto RS_R0 do
-              if r in regs then
-                begin
-                  list.concat(taicpu.op_reg_ref(A_LDW,newreg(R_INTREGISTER,r,R_SUBWHOLE),href));
-                  inc(href.offset,sizeof(pint));
-                end;
+            { lowest address holds the last-saved register: restore in reverse save order }
+            for i:=31 downto 0 do
+              begin
+                r:=s32_save_order(i);
+                if r in regs then
+                  begin
+                    list.concat(taicpu.op_reg_ref(A_LDW,newreg(R_INTREGISTER,r,R_SUBWHOLE),href));
+                    inc(href.offset,sizeof(pint));
+                  end;
+              end;
 
             if postcompensation>0 then
               list.concat(taicpu.op_reg_reg_const(A_ADDI,NR_STACK_POINTER_REG,NR_STACK_POINTER_REG,postcompensation));
@@ -1426,6 +1452,84 @@ unit cgcpu;
     procedure tcg64fs32.a_op64_const_reg(list : TAsmList;op:TOpCG;size : tcgsize;value : int64;reg : tregister64);
       begin
         a_op64_const_reg_reg(list,op,size,value,reg,reg);
+      end;
+
+
+    procedure tcg64fs32.a_op64_reg_reg_reg_checkoverflow(list: TAsmList;op:TOpCG;size : tcgsize;regsrc1,regsrc2,regdst : tregister64;setflags : boolean;var ovloc : tlocation);
+      var
+        s1lo,s1hi,s2lo,s2hi,t1,t2,allones: tregister;
+      begin
+        if not setflags or not (op in [OP_ADD,OP_SUB]) then
+          begin
+            { 64-bit MUL with overflow checking goes through the RTL helpers }
+            a_op64_reg_reg_reg(list,op,size,regsrc1,regsrc2,regdst);
+            ovloc.loc:=LOC_VOID;
+            exit;
+          end;
+        { regdst may be one of the sources: keep copies of what the test needs }
+        s1lo:=cg.getintregister(list,OS_INT);
+        s1hi:=cg.getintregister(list,OS_INT);
+        s2lo:=cg.getintregister(list,OS_INT);
+        s2hi:=cg.getintregister(list,OS_INT);
+        cg.a_load_reg_reg(list,OS_INT,OS_INT,regsrc1.reglo,s1lo);
+        cg.a_load_reg_reg(list,OS_INT,OS_INT,regsrc1.reghi,s1hi);
+        cg.a_load_reg_reg(list,OS_INT,OS_INT,regsrc2.reglo,s2lo);
+        cg.a_load_reg_reg(list,OS_INT,OS_INT,regsrc2.reghi,s2hi);
+        a_op64_reg_reg_reg(list,op,size,regsrc1,regsrc2,regdst);   { dst := src2 op src1 }
+        ovloc.loc:=LOC_JUMP;
+        current_asmdata.getjumplabel(ovloc.truelabel);
+        current_asmdata.getjumplabel(ovloc.falselabel);
+        if size in [OS_S64] then
+          begin
+            { signed: the sign of the result is wrong when
+                add: the operands agree in sign and the result does not
+                sub: the operands differ in sign and the result differs from src2 }
+            t1:=cg.getintregister(list,OS_INT);
+            t2:=cg.getintregister(list,OS_INT);
+            list.concat(taicpu.op_reg_reg_reg(A_XOR,t1,regdst.reghi,s2hi));
+            list.concat(taicpu.op_reg_reg_reg(A_XOR,t2,s2hi,s1hi));
+            if op=OP_ADD then
+              begin
+                allones:=cg.getintregister(list,OS_INT);
+                list.concat(taicpu.op_reg_reg_const(A_ADDI,allones,NR_R0,-1));
+                list.concat(taicpu.op_reg_reg_reg(A_XOR,t2,t2,allones));
+              end;
+            list.concat(taicpu.op_reg_reg_reg(A_AND,t1,t1,t2));
+            cg.a_cmp_reg_reg_label(list,OS_INT,OC_GTE,NR_R0,t1,ovloc.falselabel);  { t1 >= 0: no overflow }
+          end
+        else if op=OP_ADD then
+          begin
+            { unsigned add: carry out means dst < src2 }
+            cg.a_cmp_reg_reg_label(list,OS_INT,OC_B,s2hi,regdst.reghi,ovloc.truelabel);
+            cg.a_cmp_reg_reg_label(list,OS_INT,OC_A,s2hi,regdst.reghi,ovloc.falselabel);
+            cg.a_cmp_reg_reg_label(list,OS_INT,OC_AE,s2lo,regdst.reglo,ovloc.falselabel);
+          end
+        else
+          begin
+            { unsigned sub: borrow means src2 < src1 }
+            cg.a_cmp_reg_reg_label(list,OS_INT,OC_B,s1hi,s2hi,ovloc.truelabel);
+            cg.a_cmp_reg_reg_label(list,OS_INT,OC_A,s1hi,s2hi,ovloc.falselabel);
+            cg.a_cmp_reg_reg_label(list,OS_INT,OC_AE,s1lo,s2lo,ovloc.falselabel);
+          end;
+        cg.a_jmp_always(list,ovloc.truelabel);
+      end;
+
+
+    procedure tcg64fs32.a_op64_const_reg_reg_checkoverflow(list: TAsmList;op:TOpCG;size : tcgsize;value : int64;regsrc,regdst : tregister64;setflags : boolean;var ovloc : tlocation);
+      var
+        tmp: tregister64;
+      begin
+        if not setflags or not (op in [OP_ADD,OP_SUB]) then
+          begin
+            a_op64_const_reg_reg(list,op,size,value,regsrc,regdst);
+            ovloc.loc:=LOC_VOID;
+            exit;
+          end;
+        tmp.reglo:=cg.getintregister(list,OS_INT);
+        tmp.reghi:=cg.getintregister(list,OS_INT);
+        cg.a_load_const_reg(list,OS_INT,aint(lo(value)),tmp.reglo);
+        cg.a_load_const_reg(list,OS_INT,aint(hi(value)),tmp.reghi);
+        a_op64_reg_reg_reg_checkoverflow(list,op,size,tmp,regsrc,regdst,setflags,ovloc);
       end;
 
 

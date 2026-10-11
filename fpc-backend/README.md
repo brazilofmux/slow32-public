@@ -42,6 +42,14 @@ cd ~/fpc/compiler
 
 This produces `ppcs32`, the SLOW-32 cross-compiler. It runs on x86_64 and emits SLOW-32 assembly.
 
+On an Apple Silicon Mac use `scripts/build-compiler.sh` instead: it builds in
+two stages (3.2.2 -> trunk `ppca64` + trunk RTL for aarch64-darwin -> `ppcs32`).
+A `ppcs32` built directly by brew's FPC 3.2.2 is miscompiled -- it crashed
+with "Compilation raised exception internally" on `with r^ do begin ... exit
+end`, died with EBusError on varutils.pp and could not compile variants.pp or
+rtti.pp; the same sources built by the trunk host compiler have none of this
+(found by the FPC test-suite run, 2026-10-10).
+
 ### 3. Build the RTL (system unit)
 
 ```bash
@@ -103,6 +111,45 @@ RT=~/slow-32/runtime
 The link order matters: crt0 must be first (provides `_start`), then the FPC startup shim (provides `_haltproc`), then the system unit and program, then the C libraries.
 
 > **Note:** The RTL artifacts (`system.s`, `system.ppu`, `system.s32o`) are checked into `fpc-backend/runtime/`. To rebuild them after modifying the FPC RTL source, re-run step 3 and copy the outputs back.
+
+### 6. The rest of the RTL, and the Free Pascal test suite
+
+`scripts/build-rtl.sh` builds the whole embedded RTL for SLOW-32 the way
+rtl/embedded's Makefile lists it (sysutils, classes, math, typinfo, ...),
+plus variants, strutils, dateutils, rtti and heaptrc, into
+`runtime/units/` (not in git) as `fpcrtl.s32a` -- link it after the
+program.  `scripts/run-fpc-tests.sh` then runs Free Pascal's own test suite
+(`~/fpc/tests/{test,tbs,webtbs}`, about 5,200 programs) through ppcs32,
+slow32asm, s32-ld and the emulator and sorts the outcomes (PASS,
+COMPILE-FAIL with the message, RUN-FAIL(rc), RUN-FAULT, TIMEOUT, SKIP by
+directive).  Tests link with `--stack-size 1M --heap-size 32M`.
+
+First run (2026-10-10): 3,630 of 5,203 passed; at the end of the day 4,148,
+with 900 skipped by directive and 155 failing.  What the suite found, all
+fixed in ~/fpc and mirrored here:
+
+| Where | Defect |
+|-------|--------|
+| host build | ppcs32 built by FPC 3.2.2 on aarch64-darwin was miscompiled (see step 2) |
+| rtl/slow32/system.pp | `initunicodestringmanager` was never called: every ansistring -> unicodestring conversion called address 0 (= `_start`) and the program restarted inside itself until the stack was gone |
+| rtl/embedded/sysutils.pp | pulled in heapmgr, which replaced the libc_mmio heap with a static block (runtime error 203, hangs in heapmgr's free list) |
+| rtl/slow32/slow32.inc | `get_frame`, `Sptr` and the five atomics returned in r3, not r1: the exception unwinder walked a bogus frame, `InterlockedIncrement` never settled |
+| rtl/slow32/slow32.inc | `get_caller_frame`/`get_caller_addr` dereferenced a nil frame; and the backend saved registers in number order, so lr/fp were not at the fixed offsets they read (`g_proc_entry` now saves lr, fp first) |
+| rtl/slow32/mathu.inc | missing: math.pp did not compile, nor types, fgl, classes |
+| rtl/inc/softfpu.pp (SLOW-32 only) | ordered compares raised EInvalidOp on any NaN; hardware FPC targets raise only on a signalling NaN (tminmax1) |
+| compiler/slow32/ns32mat.pas | NOT of a QWordBool left the high half unallocated (`stw r4,INVALID,4`) |
+| compiler/slow32/cgcpu.pas | no 64-bit add/sub overflow checking (tint642) |
+| compiler/nadd.pas | `currency * 2` became a shift whose constant was typed Currency, then forced to LongInt (tw41865) |
+
+Residue (155): 23 heap exhaustions (heaptrc-using tests and tests that
+allocate more than the harness's 32M), 15 deep-recursion / stack-check
+tests, 18 tests failing their own checks, 10 unhandled exceptions (file
+tests mostly), 42 tests wanting units we do not build (`cthreads`, `cmem`,
+`crt`, `sockets`, `objects`, `Generics.Collections`), hardware-trap tests
+(`tabsvr6`), and the suite's own quirks (`%OPT` with a backslash, `-k`
+linker options we never see, generic front-end items that fail on the host
+compiler too).  `OUT=/tmp/fpc-tests-slow32` holds `results.tsv` and each
+failure's work directory.
 
 ## Compiler Flags Reference
 
