@@ -85,7 +85,15 @@ for name in "${NAMES[@]}"; do
     src="$FCVS/$name.FOR"
     [ -f "$src" ] || { echo "$name: no such program" >&2; continue; }
     d="$W/$name"; mkdir -p "$d"
-    cp "$src" "$d/$name.f"
+    # 139 of the files carry a PROGRAM card prepended to a program that
+    # already has one; gfortran rejects the pair, so the first is
+    # dropped here (f77 reads PROGRAM as documentation either way).
+    if [ "$(grep -c '^      PROGRAM ' "$src")" -gt 1 ]; then
+        awk 'BEGIN { seen = 0 } /^      PROGRAM / && !seen { seen = 1; next } { print }' "$src" > "$d/$name.f"
+    else
+        cp "$src" "$d/$name.f"
+    fi
+    src="$d/$name.f"
     log="$OUT/$name.out"; : > "$log"
     outcome=""; note=""
     if ! "$F77" "$d/$name.f" "$d/$name.s" >"$d/cc.err" 2>&1; then
@@ -121,7 +129,12 @@ for name in "${NAMES[@]}"; do
                 want="$OUT/oracle/$name.want"
                 if [ ! -s "$want" ]; then
                     mkdir -p "$OW/$name"; cp "$src" "$OW/$name/$name.f"
+                    # gfortran's warnings come back on the same stream as
+                    # the program's output; drop each 5-line block.
                     (cd "$OW/$name" && "$HERE/oracle.sh" "$OW/$name/$name.f" < "$dat" 2>/dev/null) \
+                        | awk '/^\/work\/[^ ]*\.f:[0-9]+:/ { skip = 1; next }
+                               skip { if ($0 ~ /^(Warning|Error|note):/) skip = 0; next }
+                               { print }' \
                         | sed 's/[[:space:]]*$//' > "$want.tmp"
                     if [ -s "$want.tmp" ]; then mv "$want.tmp" "$want"; else rm -f "$want.tmp"; fi
                 fi

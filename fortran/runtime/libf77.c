@@ -65,6 +65,22 @@ static char  fio_ltok[128];
 #define FIO_MAXNAME 256
 static FILE *fio_ufile[FIO_MAXUNIT];
 static char  fio_ufname[FIO_MAXUNIT][FIO_MAXNAME];
+/* Logical end of file set by ENDFILE (-1 = the physical end): a READ
+ * at or past it sees end of file, a WRITE moves it. */
+static long  fio_uend[FIO_MAXUNIT];
+static int   fio_uend_init;
+/* Internal file in progress (NULL = external): the CHARACTER entity's
+ * records, each fio_ilen bytes, fio_inrec of them, fio_irec next. */
+static char *fio_ibuf;
+static int   fio_ilen;
+static int   fio_inrec;
+static int   fio_irec;
+static int   fio_draining;       /* wr_end: no reversion at end of format */
+static int   fio_bz;             /* BZ in effect: blanks in a field are zeros */
+static int   fio_e;              /* Ew.dEe exponent digits, 0 = default */
+/* List-directed layout follows gfortran: INTEGER in a 12-wide field,
+ * character items run together after one separating blank. */
+static int   fio_prev_char;
 static FILE *fio_in;             /* stream of the READ in progress */
 static FILE *fio_out;            /* stream of the WRITE in progress */
 
@@ -76,6 +92,21 @@ static FILE *fio_resolve(int unit, int writing) {
         if (unit == 5) return stdout;    /* tolerated historically */
     } else {
         if (unit == 5 || unit == 0) return stdin;
+    }
+    if (unit > 0 && unit < FIO_MAXUNIT) {
+        /* Preconnected unit: the file fort.N in the working directory,
+         * created on first use (gfortran's convention). */
+        char nm[FIO_MAXNAME];
+        FILE *f;
+        snprintf(nm, sizeof nm, "fort.%d", unit);
+        f = fopen(nm, "r+");
+        if (!f) f = fopen(nm, "w+");
+        if (f) {
+            fio_ufile[unit] = f;
+            strcpy(fio_ufname[unit], nm);
+            fio_uend[unit] = -1;
+            return f;
+        }
     }
     fprintf(stderr, "f77: unit %d is not open for %s\n",
             unit, writing ? "WRITE" : "READ");
@@ -105,12 +136,42 @@ static void fio_puts(const char *s) {
     while (*s) fio_putc(*s++);
 }
 
+static int fio_unit;             /* unit of the statement in progress */
+
 static void fio_flush_line(void) {
     FILE *f = fio_out ? fio_out : stdout;
     fio_line[fio_len] = 0;
+    if (fio_ibuf) {
+        int i;
+        if (fio_irec >= fio_inrec) {
+            fprintf(stderr, "f77: WRITE past the end of an internal file\n");
+            exit(2);
+        }
+        if (fio_len > fio_ilen) {
+            fprintf(stderr, "f77: record longer than the internal file (%d > %d)\n", fio_len, fio_ilen);
+            exit(2);
+        }
+        memcpy(fio_ibuf + fio_irec * fio_ilen, fio_line, (size_t)fio_len);
+        for (i = fio_len; i < fio_ilen; i++) fio_ibuf[fio_irec * fio_ilen + i] = ' ';
+        fio_irec++;
+        fio_len = 0;
+        return;
+    }
     fputs(fio_line, f);
     fputc('\n', f);
     fio_len = 0;
+    if (fio_unit > 0 && fio_unit < FIO_MAXUNIT && fio_uend[fio_unit] >= 0)
+        fio_uend[fio_unit] = ftell(f);
+}
+
+/* A numeric field one column too wide whose first character is the
+ * optional zero before the decimal point drops that zero (F77
+ * 13.5.9.2: the zero is optional, and gfortran omits it exactly then). */
+static void fio_drop_zero(char *buf, int w) {
+    int n = (int)strlen(buf);
+    if (w <= 0 || n != w + 1) return;
+    if (buf[0] == '0' && buf[1] == '.') memmove(buf, buf + 1, (size_t)n);
+    else if (buf[0] == '-' && buf[1] == '0' && buf[2] == '.') memmove(buf + 1, buf + 2, (size_t)(n - 1));
 }
 
 static void fio_pad(int n) { while (n-- > 0) fio_putc(' '); }
@@ -131,6 +192,16 @@ static int fio_isdigit(int c) { return c >= '0' && c <= '9'; }
  * shorter than the fields read from it behaves as if blank-padded,
  * which fio_field_in provides by supplying blanks past fio_rlen. */
 static int fio_getrec(void) {
+    if (fio_ibuf) {
+        if (fio_irec >= fio_inrec) return 1;
+        memcpy(fio_rec, fio_ibuf + fio_irec * fio_ilen, (size_t)fio_ilen);
+        fio_rlen = fio_ilen;
+        fio_rpos = 0;
+        fio_irec++;
+        return 0;
+    }
+    if (fio_unit > 0 && fio_unit < FIO_MAXUNIT && fio_uend[fio_unit] >= 0 &&
+        fio_in && ftell(fio_in) >= fio_uend[fio_unit]) return 1;
     if (!fgets(fio_rec, FIO_MAXLINE, fio_in ? fio_in : stdin)) return 1;
     fio_rlen = (int)strlen(fio_rec);
     while (fio_rlen > 0 &&
@@ -176,7 +247,7 @@ static int fio_next_desc(void) {
              * a new record is taken where output would start a new
              * line. */
             if (fio_gdepth > 0) { fio_gdepth = 0; }
-            if (fio_revert < 0) return 0;
+            if (fio_draining || fio_revert < 0) return 0;
             fio_pos = fio_revert;
             if (fio_fmt[fio_pos] == 0) return 0;
             if (fio_reading) fio_next_record();
@@ -184,6 +255,16 @@ static int fio_next_desc(void) {
             continue;
         }
         if (c == ' ' || c == ',') { fio_pos++; continue; }
+
+        if ((c == 'B' || c == 'b') &&
+            (fio_fmt[fio_pos + 1] == 'N' || fio_fmt[fio_pos + 1] == 'n' ||
+             fio_fmt[fio_pos + 1] == 'Z' || fio_fmt[fio_pos + 1] == 'z')) {
+            /* BN / BZ: blank interpretation on input, sticky for the
+             * rest of the statement (13.5.8). */
+            fio_bz = (fio_fmt[fio_pos + 1] == 'Z' || fio_fmt[fio_pos + 1] == 'z');
+            fio_pos += 2;
+            continue;
+        }
 
         if (c == '/') {
             fio_pos++;
@@ -270,11 +351,12 @@ static int fio_next_desc(void) {
             fio_w = fio_isdigit(fio_fmt[fio_pos]) ? fio_number() : 0;
             fio_d = 0;
             if (fio_fmt[fio_pos] == '.') { fio_pos++; fio_d = fio_number(); }
-            /* Ew.dEe -- the exponent-width suffix is accepted and ignored */
+            /* Ew.dEe -- e digits in the exponent */
+            fio_e = 0;
             if (fio_fmt[fio_pos] == 'E' || fio_fmt[fio_pos] == 'e') {
                 int save = fio_pos;
                 fio_pos++;
-                if (fio_isdigit(fio_fmt[fio_pos])) fio_number();
+                if (fio_isdigit(fio_fmt[fio_pos])) fio_e = fio_number();
                 else fio_pos = save;
             }
             fio_rep = n;
@@ -359,30 +441,103 @@ static void fio_efmt(char *out, int outsz, double v, int nd, int letter) {
         for (i = 0; i < n && (q - out) < outsz - 8; i++) *q++ = tmp[40 + i];
     }
     expv = expv - k;
-    *q++ = (char)letter;
-    if (expv < 0) { *q++ = '-'; expv = -expv; }
-    else *q++ = '+';
-    if (expv >= 100) {
-        *q++ = (char)('0' + expv / 100);
-        *q++ = (char)('0' + (expv / 10) % 10);
-        *q++ = (char)('0' + expv % 10);
-    } else {
-        *q++ = (char)('0' + (expv / 10) % 10);
-        *q++ = (char)('0' + expv % 10);
+    {
+        /* Exponent: Ew.dEe gives e digits after the letter and sign;
+         * without e, two digits with the letter up to |exp| 99, three
+         * digits and no letter up to 999 (13.5.9.2.2).  An exponent
+         * that needs more digits than its field is written in full,
+         * which makes the item too wide and the field asterisks. */
+        int sign = expv < 0 ? '-' : '+';
+        int digits;
+        char dbuf[16];
+        int nd = 0;
+        int i2;
+        if (expv < 0) expv = -expv;
+        digits = fio_e > 0 ? fio_e : (expv <= 99 ? 2 : 3);
+        if (fio_e == 0 && expv > 99 && expv <= 999) { /* no letter */ }
+        else *q++ = (char)letter;
+        *q++ = (char)sign;
+        do { dbuf[nd++] = (char)('0' + expv % 10); expv /= 10; } while (expv > 0 && nd < 15);
+        while (nd < digits && nd < 15) dbuf[nd++] = '0';
+        for (i2 = nd - 1; i2 >= 0; i2--) *q++ = dbuf[i2];
     }
     *q = 0;
 }
 
+/* List-directed REAL output, gfortran's layout: one separating blank,
+ * then for REAL(4) a 16-column field (DOUBLE: 25) holding either an F
+ * form with 9 (17) significant digits right-justified in the first 12
+ * (20) columns followed by 4 (5) blanks, when 0.1 <= |v| < 10^9
+ * (10^17) or v is zero, or an ES form d.ddddddddE+ee (3-digit
+ * exponent for DOUBLE) right-justified in the whole field. */
+static void fio_list_out_real(double v, int dbl) {
+    char buf[64];
+    char cf[16];
+    double a = v < 0 ? -v : v;
+    int sig = dbl ? 17 : 9;
+    int width = dbl ? 25 : 16;
+    int fblanks = dbl ? 5 : 4;
+    double lim = dbl ? 1e17 : 1e9;
+    fio_putc(' ');
+    if (v == 0.0 || (a >= 0.1 && a < lim)) {
+        int intd = 0;
+        double t = a;
+        while (t >= 1.0) { t /= 10.0; intd++; }
+        if (intd == 0) intd = 1;                 /* the 0 before the point */
+        snprintf(cf, sizeof cf, "%%.%df", sig - (a < 1.0 ? 0 : intd));
+        snprintf(buf, sizeof buf, cf, v);
+        if (a < 1.0 && a != 0.0 && strlen(buf) > (size_t)(sig + 2 + (v < 0))) buf[sig + 2 + (v < 0)] = 0;
+        fio_field(buf, width - fblanks);
+        fio_pad(fblanks);
+    } else {
+        char *e;
+        snprintf(cf, sizeof cf, "%%.%dE", sig - 1);
+        snprintf(buf, sizeof buf, cf, v);
+        e = strchr(buf, 'E');
+        if (e && dbl) {
+            /* three exponent digits */
+            int n = (int)strlen(e + 2);
+            if (n < 3) { memmove(e + 2 + (3 - n), e + 2, (size_t)n + 1); memset(e + 2, '0', (size_t)(3 - n)); }
+        }
+        fio_field(buf, width);
+    }
+    fio_first_item = 0;
+    fio_prev_char = 0;
+}
+
 /* --- entry points called by compiled Fortran ------------------------ */
 
-/* List-directed layout follows gfortran: INTEGER in a 12-wide field,
- * character items run together after one separating blank. */
-static int fio_prev_char;
+static void fio_init_units(void) {
+    int i;
+    if (fio_uend_init) return;
+    for (i = 0; i < FIO_MAXUNIT; i++) fio_uend[i] = -1;
+    fio_uend_init = 1;
+}
 
+static void fio_wr_setup(const char *fmt);
 void f77_wr_begin(int unit, const char *fmt) {
+    fio_init_units();
+    fio_ibuf = 0;
     fio_out = fio_resolve(unit, 1);
-    fio_reading = 0;
     fio_unit = unit;
+    fio_wr_setup(fmt);
+}
+
+/* WRITE into an internal file: the CHARACTER entity at buf, nrec
+ * records of len bytes. */
+void f77_wr_begin_int(char *buf, int len, int nrec, const char *fmt) {
+    fio_init_units();
+    fio_out = stdout;
+    fio_unit = -1;
+    fio_ibuf = buf;
+    fio_ilen = len;
+    fio_inrec = nrec;
+    fio_irec = 0;
+    fio_wr_setup(fmt);
+}
+
+static void fio_wr_setup(const char *fmt) {
+    fio_reading = 0;
     fio_len = 0;
     fio_gdepth = 0;
     fio_scale = 0;
@@ -433,14 +588,7 @@ void f77_wr_d(double v) {
     char buf[64];
     char cf[16];
     int d;
-    if (fio_listed) {
-        snprintf(buf, sizeof buf, "%g", v);
-        fio_putc(' ');
-        fio_puts(buf);
-        fio_first_item = 0;
-        fio_prev_char = 0;
-        return;
-    }
+    if (fio_listed) { fio_list_out_real(v, 1); return; }
     d = fio_want();
     if (d == 0) return;
     if (d == 'I') {
@@ -454,6 +602,7 @@ void f77_wr_d(double v) {
         snprintf(buf, sizeof buf, cf, fv);
         /* Fw.0 keeps the decimal point ("3."); C's %.0f drops it. */
         if (fio_d == 0) strcat(buf, ".");
+        fio_drop_zero(buf, fio_w);
     } else if (d == 'G') {
         /* Gw.d: F form when 0.1 <= |v| < 10^d, else E. The F form
          * occupies w-4 columns and is followed by four blanks. */
@@ -475,14 +624,17 @@ void f77_wr_d(double v) {
             snprintf(cf, sizeof cf, "%%.%df", nd - k > 0 ? nd - k : 0);
             snprintf(buf, sizeof buf, cf, v);
             if (nd - k <= 0) strcat(buf, ".");
+            fio_drop_zero(buf, fw);
             fio_field(buf, fw);
             fio_pad(fio_w >= 4 ? 4 : 0);
             fio_consumed();
             return;
         }
         fio_efmt(buf, sizeof buf, v, nd, 'E');
+        fio_drop_zero(buf, fio_w);
     } else if (d == 'E' || d == 'D') {
         fio_efmt(buf, sizeof buf, v, fio_d, d);
+        fio_drop_zero(buf, fio_w);
     } else {
         snprintf(buf, sizeof buf, "%g", v);
     }
@@ -490,7 +642,10 @@ void f77_wr_d(double v) {
     fio_consumed();
 }
 
-void f77_wr_r(float v) { f77_wr_d((double)v); }
+void f77_wr_r(float v) {
+    if (fio_listed) { fio_list_out_real((double)v, 0); return; }
+    f77_wr_d((double)v);
+}
 
 void f77_wr_a(const char *s, int len) {
     int d;
@@ -567,6 +722,13 @@ int f77_index(const char *a, int la, const char *b, int lb) {
 
 void f77_wr_l(int v) {
     int d;
+    if (fio_listed) {
+        fio_putc(' ');
+        fio_putc(v ? 'T' : 'F');
+        fio_first_item = 0;
+        fio_prev_char = 0;
+        return;
+    }
     d = fio_want();
     if (d == 0) { return; }
     if (fio_w > 1) fio_pad(fio_w - 1);
@@ -578,14 +740,34 @@ void f77_wr_l(int v) {
  * first data descriptor that has no item to feed it. */
 void f77_wr_end(void) {
     if (!fio_listed) {
-        int save_revert = fio_revert;
-        fio_revert = -1;              /* no reversion while draining */
+        /* Run the format out to its end or the next data descriptor
+         * with no reversion: a WRITE with no items and a format ending
+         * in a group, `3(/)`, reverted to that group for ever. */
+        fio_draining = 1;
         fio_desc = 0;
         fio_rep = 0;
         fio_next_desc();
-        fio_revert = save_revert;
+        fio_draining = 0;
     }
     fio_flush_line();
+    fio_ibuf = 0;
+}
+
+/* ENDFILE: the file ends here; a READ past this point sees end of
+ * file until a WRITE moves the end. */
+void f77_endfile(int unit) {
+    FILE *f;
+    fio_init_units();
+    f = fio_resolve(unit, 1);
+    if (f == stdout || f == stderr) return;
+    fflush(f);
+    if (unit > 0 && unit < FIO_MAXUNIT) fio_uend[unit] = ftell(f);
+}
+
+/* PAUSE [n | 'text']: report and continue (there is no operator). */
+void f77_pause(const char *s, int len) {
+    fflush(stdout);
+    fprintf(stderr, "PAUSE %.*s\n", len, s);
 }
 
 /* --- formatted input ------------------------------------------------- */
@@ -598,9 +780,16 @@ static void fio_field_in(char *buf, int w) {
     int i;
     int c;
     int n = 0;
+    int seen = 0;
     for (i = 0; i < w; i++) {
         c = (fio_rpos + i < fio_rlen) ? fio_rec[fio_rpos + i] : ' ';
-        if (c != ' ' && c != '\t' && n < FIO_MAXLINE - 1) buf[n++] = (char)c;
+        if (c == ' ' || c == '\t') {
+            /* BZ: a blank after the first nonblank is a zero */
+            if (fio_bz && seen && n < FIO_MAXLINE - 1) buf[n++] = '0';
+            continue;
+        }
+        seen = 1;
+        if (n < FIO_MAXLINE - 1) buf[n++] = (char)c;
     }
     buf[n] = 0;
     fio_rpos += w;
@@ -728,10 +917,7 @@ static int fio_list_tok(void) {
         c = fio_rec[fio_rpos];
         if (c == ' ' || c == '\t') { fio_rpos++; continue; }
         if (c == ',') {
-            if (comma_seen) {
-                fprintf(stderr, "f77: null value in list-directed input is not supported\n");
-                exit(2);
-            }
+            if (comma_seen) { fio_rpos++; return 2; }   /* null value: item unchanged */
             comma_seen = 1;
             fio_rpos++;
             continue;
@@ -786,8 +972,28 @@ static double fio_list_real(void) {
  * record is fetched now, which is what makes the read-until-EOF idiom
  * (`READ (5, *, END=99) X` in a loop) work; end of file in the middle
  * of a statement is always fatal (see fio_next_record). */
+static int fio_rd_setup(const char *fmt, int has_end);
 int f77_rd_begin(int unit, const char *fmt, int has_end) {
+    fio_init_units();
+    fio_ibuf = 0;
     fio_in = fio_resolve(unit, 0);
+    fio_unit = unit;
+    return fio_rd_setup(fmt, has_end);
+}
+
+int f77_rd_begin_int(char *buf, int len, int nrec, const char *fmt, int has_end) {
+    fio_init_units();
+    fio_in = stdin;
+    fio_unit = -1;
+    fio_ibuf = buf;
+    fio_ilen = len;
+    fio_inrec = nrec;
+    fio_irec = 0;
+    return fio_rd_setup(fmt, has_end);
+}
+
+static int fio_rd_setup(const char *fmt, int has_end) {
+    fio_bz = 0;
     fio_reading = 1;
     fio_ldone = 0;
     fio_l_pending = 0;
@@ -820,8 +1026,11 @@ void f77_rd_i(int *p) {
     int d;
     if (fio_listed) {
         int c0;
+        int t;
         if (fio_ldone) return;
-        if (fio_list_tok()) { fio_ldone = 1; return; }
+        t = fio_list_tok();
+        if (t == 1) { fio_ldone = 1; return; }
+        if (t == 2) return;
         c0 = fio_ltok[0];
         if (c0 == '.' || c0 == 'T' || c0 == 't' || c0 == 'F' || c0 == 'f') {
             int i = (c0 == '.') ? 1 : 0;
@@ -846,8 +1055,11 @@ void f77_rd_i(int *p) {
 void f77_rd_d(double *p) {
     int d;
     if (fio_listed) {
+        int t;
         if (fio_ldone) return;
-        if (fio_list_tok()) { fio_ldone = 1; return; }
+        t = fio_list_tok();
+        if (t == 1) { fio_ldone = 1; return; }
+        if (t == 2) return;
         *p = fio_list_real();
         return;
     }
@@ -865,8 +1077,11 @@ void f77_rd_d(double *p) {
 void f77_rd_r(float *p) {
     int d;
     if (fio_listed) {
+        int t;
         if (fio_ldone) return;
-        if (fio_list_tok()) { fio_ldone = 1; return; }
+        t = fio_list_tok();
+        if (t == 1) { fio_ldone = 1; return; }
+        if (t == 2) return;
         *p = (float)fio_list_real();
         return;
     }
@@ -891,8 +1106,11 @@ void f77_rd_s(char *p, int len) {
     int i;
     if (fio_listed) {
         int n;
+        int t;
         if (fio_ldone) return;
-        if (fio_list_tok()) { fio_ldone = 1; return; }
+        t = fio_list_tok();
+        if (t == 1) { fio_ldone = 1; return; }
+        if (t == 2) return;
         n = (int)strlen(fio_ltok);
         if (n >= 2 && (fio_ltok[0] == '\'' || fio_ltok[0] == '"') && fio_ltok[n - 1] == fio_ltok[0]) {
             int q = fio_ltok[0];
@@ -932,6 +1150,7 @@ void f77_rd_s(char *p, int len) {
 
 void f77_rd_end(void) {
     fio_reading = 0;
+    fio_ibuf = 0;
 }
 
 /* --- ** with an INTEGER exponent -------------------------------------- */
@@ -1045,6 +1264,8 @@ void f77_open(int unit, const char *name, int nlen,
     }
     fio_ufile[unit] = f;
     strcpy(fio_ufname[unit], nm);
+    fio_init_units();
+    fio_uend[unit] = -1;
 }
 
 /* CLOSE (u [, STATUS='KEEP'|'DELETE']).  Closing a unit that is not
@@ -1059,14 +1280,19 @@ void f77_close(int unit, const char *status, int slen) {
     }
     fclose(fio_ufile[unit]);
     fio_ufile[unit] = 0;
+    fio_uend[unit] = -1;
     if (del) remove(fio_ufname[unit]);
     fio_ufname[unit][0] = 0;
 }
 
 void f77_rewind(int unit) {
-    if (unit < 0 || unit >= FIO_MAXUNIT || !fio_ufile[unit]) {
-        fprintf(stderr, "f77: REWIND: unit %d is not open\n", unit);
+    FILE *f;
+    fio_init_units();
+    if (unit <= 0 || unit >= FIO_MAXUNIT || unit == 5 || unit == 6) {
+        fprintf(stderr, "f77: REWIND: unit %d cannot be rewound\n", unit);
         exit(2);
     }
-    fseek(fio_ufile[unit], 0L, SEEK_SET);
+    f = fio_resolve(unit, 1);
+    fflush(f);
+    fseek(f, 0L, SEEK_SET);
 }

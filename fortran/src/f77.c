@@ -136,10 +136,17 @@ static void f77_scan_units(void) {
                     f77_urty[f77_nunit] = f77_implicit_ty(f77_uname[f77_nunit]);
                 else
                     f77_urty[f77_nunit] = rty;
-                f77_urlen[f77_nunit] = (rty == TY_CHAR) ? f77_hdr_clen : 1;
+                f77_urlog[f77_nunit] = f77_hdr_log;
+                if (rty == TY_CHAR && f77_hdr_clen == -2) {
+                    f77_scan_from(f77_hdr_clen_off);
+                    f77_urlen[f77_nunit] = f77_char_len();
+                } else {
+                    f77_urlen[f77_nunit] = (rty == TY_CHAR) ? f77_hdr_clen : 1;
+                }
             } else {
                 f77_ukind[f77_nunit] = F77_UNIT_SUBR;
                 f77_urty[f77_nunit] = TY_INT;
+                f77_urlog[f77_nunit] = 0;
             }
             f77_nunit = f77_nunit + 1;
             started = 1;
@@ -150,9 +157,11 @@ static void f77_scan_units(void) {
             ty = -1;
             skip = 0;
             int clen;
+            int lg;
             clen = 1;
+            lg = 0;
             if (f77_starts("INTEGER")) { ty = TY_INT; skip = 7; }
-            else if (f77_starts("LOGICAL")) { ty = TY_INT; skip = 7; }
+            else if (f77_starts("LOGICAL")) { ty = TY_INT; skip = 7; lg = 1; }
             else if (f77_starts("DOUBLEPRECISION")) { ty = TY_DOUBLE; skip = 15; }
             else if (f77_starts("REAL")) { ty = TY_FLOAT; skip = 4; }
             else if (f77_starts("CHARACTER")) { ty = TY_CHAR; skip = 9; }
@@ -189,6 +198,7 @@ static void f77_scan_units(void) {
                         }
                     } else if (is_fn) {
                         f77_urty[f77_nunit - 1] = ty;
+                        f77_urlog[f77_nunit - 1] = lg;
                         if (ty == TY_CHAR) f77_urlen[f77_nunit - 1] = clen;
                     }
                     if (lx_t == T_LP) {
