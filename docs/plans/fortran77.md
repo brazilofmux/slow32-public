@@ -1,13 +1,17 @@
 # Fortran 77 on SLOW-32
 
-Status: **working subset 2026-08-30.** Backend, frontend, FORMAT, READ,
-OPEN/CLOSE/REWIND, COMMON/SAVE, DATA/PARAMETER, IMPLICIT (incl. NONE),
-computed GOTO, arithmetic IF, `**` (INTEGER and real exponents), the
-transcendental intrinsics, and LINPACK all run. Still refused:
-`EQUIVALENCE`, `CHARACTER`, `COMPLEX`, assigned `GOTO`, `BACKSPACE`,
-`ENDFILE`, unformatted and direct-access I/O.  `tests/f77-pending/` is
-empty: `sumsq.f`, its founding resident, moved into the suite when
-ATAN2 landed.
+Status: **FCVS 2.1 complete, 192 of 192 (2026-10-10).**  Backend,
+frontend, FORMAT, READ, OPEN/CLOSE/REWIND, COMMON/SAVE, DATA/PARAMETER,
+IMPLICIT (incl. NONE), computed GOTO, arithmetic IF, `**`, the
+transcendental intrinsics and LINPACK ran by 2026-08-30 (the "working
+subset"); the 2026-10-10 FCVS pass added everything the suite found
+missing: EQUIVALENCE, BLOCK DATA, statement functions, ASSIGN and
+assigned GOTO, CHARACTER, COMPLEX, ENTRY, alternate returns,
+procedures as arguments, adjustable bounds as expressions, internal
+files, unformatted and direct-access I/O, INQUIRE, BACKSPACE, ENDFILE,
+PAUSE, and the rest of the edit descriptors.  See `fortran/README.md`
+for the list and `fortran/tests/run-fcvs.sh` for the harness.
+`tests/f77-pending/` is empty.
 
 ## Why this one
 

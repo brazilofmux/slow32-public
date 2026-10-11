@@ -1,15 +1,22 @@
 # fortran — Fortran 77 for SLOW-32
 
-Status: working F77 subset (2026-08-30). Vertical slice, arrays,
-subprograms, FORMAT, `READ` (formatted and list-directed, with
-`END=`), `OPEN`/`CLOSE`/`REWIND` (sequential formatted files),
-`COMMON`/`SAVE`, `DATA`/`PARAMETER`, `IMPLICIT` (including `NONE`),
-computed `GOTO`, arithmetic `IF`, `**` (INTEGER and real exponents),
-the transcendental intrinsics (SIN/COS/TAN, ASIN/ACOS/ATAN/ATAN2,
-EXP/LOG/LOG10, SINH/COSH/TANH, generic and D-specific names), and
-LINPACK run on SLOW-32 and match gfortran. Still refused (honestly):
-`EQUIVALENCE`, `CHARACTER`, `COMPLEX`, assigned `GOTO`, `BACKSPACE`,
-`ENDFILE`, unformatted and direct-access I/O.
+Status: **passes NIST's FCVS 2.1, 192 of 192 (2026-10-10).**  The whole
+of ANSI X3.9-1978 that the validation suite exercises: INTEGER, REAL,
+DOUBLE PRECISION, LOGICAL, CHARACTER (substrings, concatenation,
+assumed length, CHARACTER functions, A editing, internal files) and
+COMPLEX; arrays with any bounds including adjustable ones in dummies;
+SUBROUTINE/FUNCTION with by-reference arguments, alternate returns,
+ENTRY, statement functions, procedures and specific intrinsics as
+arguments, dummy procedures; COMMON/SAVE/EQUIVALENCE/BLOCK DATA,
+DATA (with implied-DO and substrings)/PARAMETER, IMPLICIT; computed
+and assigned GOTO, arithmetic IF, PAUSE; FORMAT with every F77 edit
+descriptor (I/F/E/D/G/L/A, Iw.m, Ew.dEe, kP, S/SP/SS, BN/BZ, T/TL/TR,
+X, H, apostrophe, slash, colon, groups), list-directed I/O laid out as
+gfortran lays it out, formats held in CHARACTER entities or ASSIGNed
+variables; sequential and direct-access files, formatted and
+unformatted, OPEN/CLOSE/INQUIRE with their specifiers, REWIND,
+BACKSPACE, ENDFILE, END=/ERR=/IOSTAT=, preconnected units as fort.N.
+LINPACK and the FCVS inspection programs match gfortran's output.
 
 The transcendentals are calls by their C libm names, on purpose:
 slow32 and slow32-fast execute the Newton-series SLOW-32 code linked
@@ -112,4 +119,32 @@ pushing it.
 
 `backend_slice` drives the copied backend with hand-built HIR and no
 frontend at all, then runs the result on the emulator. It is the test
-that proves the copy is still wired correctly.
+that proves the copy is still wired correctly.  The `diff:` tests are
+programs under `tests/f77/` (a sibling `.in` is stdin) whose output
+must match gfortran's byte for byte; the ones named for a feature
+(`character1`, `complex1`, `entry1`, `dummyproc*`, `unformatted1`,
+`internal1`, `dblescape`) were written while bringing up that feature
+against the FCVS and are the regression guard for it.
+
+## The FCVS
+
+    ./tests/run-fcvs.sh              # all 192 programs, ~10 s
+    ./tests/run-fcvs.sh -v FM110     # one, verbosely
+
+NIST's Fortran Compiler Validation System 2.1 -- 192 self-checking and
+inspection programs for X3.9-1978, public domain -- is the acceptance
+suite.  It is NOT in this tree: fetch `fcvs21.tar.Z` (the Wayback copy
+of `itl.nist.gov/div897/ctg/suites/fcvs21.tar.Z`) into
+`~/refs/fcvs/fcvs21` or point `FCVS` at it.  The harness compiles each
+program through the compile.sh pipeline, runs it on slow32-dbt with
+its `.DAT` as stdin, and reads the program's own run summary; the 139
+programs that print values for inspection are instead diffed against
+gfortran through `oracle.sh` (trailing blanks removed, gfortran's
+warning blocks filtered, the PROGRAM card NIST prepended to 40 files
+dropped so gfortran accepts them).  Outputs land in `/tmp/fcvs-slow32`
+(`FMxxx.out`, `FMxxx.diff`, `results.tsv`).  First sort on 2026-10-10
+was 41 of 192; everything the suite found is in the git log of that
+day, and two of the finds were latent wrong-code bugs no test had
+caught: a DOUBLE scalar written through its address (READ, CALL) kept
+its old value, and a FUNCTION falling off END without RETURN returned
+0 (every direct caller was inlined and never ran the body).

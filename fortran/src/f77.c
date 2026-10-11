@@ -53,6 +53,33 @@ static Node f77_program;
  * begins.  A file may hold a PROGRAM plus any number of SUBROUTINEs and
  * FUNCTIONs, and the backend drives them one at a time, so their
  * boundaries have to be known before any of them is compiled. */
+#define F77_MAX_ENTRY 64
+static int  f77_ent_pos[F77_MAX_ENTRY];
+static int  f77_ent_line[F77_MAX_ENTRY];
+static int  f77_ent_parent[F77_MAX_ENTRY];
+static char f77_ent_name[F77_MAX_ENTRY][F77_MAX_NAME];
+static int  f77_ent_ty[F77_MAX_ENTRY];
+static int  f77_nent;
+
+/* Record the dummy names of the header the scanner is on (past `skip`)
+ * against unit `unit`, for the ENTRY phantoms. */
+static void f77_collect_dummies(int skip, int unit) {
+    f77_scan_from(skip);
+    if (lx_t == T_NAME) f77_tok();
+    if (lx_t != T_LP) return;
+    f77_tok();
+    while (lx_t == T_NAME || lx_t == T_STAR) {
+        if (lx_t == T_NAME && f77_nfamd < F77_MAX_FAMD) {
+            strcpy(f77_famd_name[f77_nfamd], lex_name);
+            f77_famd_unit[f77_nfamd] = unit;
+            f77_nfamd = f77_nfamd + 1;
+        }
+        f77_tok();
+        if (lx_t != T_COMMA) break;
+        f77_tok();
+    }
+}
+
 static void f77_scan_units(void) {
     int pos;
     int line;
@@ -60,6 +87,9 @@ static void f77_scan_units(void) {
     int started;
 
     f77_nunit = 0;
+    f77_nent = 0;
+    f77_nfamd = 0;
+    { int z; z = 0; while (z < F77_MAX_UNIT) { f77_uentry_parent[z] = -1; z = z + 1; } }
     f77_nformat = 0;
     f77_nasg = 0;
     f77_nesc = 0;
@@ -97,6 +127,23 @@ static void f77_scan_units(void) {
                 f77_starts("CHARACTER"))
                 f77_unosplice[f77_nunit - 1] = 1;
         }
+        if (started && f77_nunit > 0 && f77_starts("ENTRY") &&
+            f77_ukind[f77_nunit - 1] != F77_UNIT_PROGRAM && f77_nent < F77_MAX_ENTRY) {
+            f77_scan_from(5);
+            if (lx_t == T_NAME) {
+                strcpy(f77_ent_name[f77_nent], lex_name);
+                f77_ent_pos[f77_nent] = pos;
+                f77_ent_line[f77_nent] = line;
+                f77_ent_parent[f77_nent] = f77_nunit - 1;
+                f77_ent_ty[f77_nent] = f77_implicit_ty(lex_name);
+                f77_collect_dummies(5, -2 - f77_nent);   /* unit index assigned after the scan */
+                f77_nent = f77_nent + 1;
+            }
+            f77_unosplice[f77_nunit - 1] = 1;
+            pos = lx_pos;
+            line = lx_line;
+            continue;
+        }
         rty = f77_unit_header_ty();
         if (f77_starts("BLOCKDATA")) {
             /* A declarations-only unit: its DATA lands in the COMMON
@@ -130,6 +177,7 @@ static void f77_scan_units(void) {
             f77_upos[f77_nunit] = pos;
             f77_uline[f77_nunit] = line;
             f77_unit_name(f77_nunit);
+            f77_collect_dummies(f77_starts("SUBROUTINE") ? 10 : f77_function_skip(), f77_nunit);
             if (rty >= 0) {
                 f77_ukind[f77_nunit] = F77_UNIT_FUNC;
                 /* Bare FUNCTION uses the I-N rule; a later type
@@ -203,6 +251,11 @@ static void f77_scan_units(void) {
                         f77_urty[f77_nunit - 1] = ty;
                         f77_urlog[f77_nunit - 1] = lg;
                         if (ty == TY_CHAR) f77_urlen[f77_nunit - 1] = clen;
+                    } else {
+                        int q;
+                        for (q = 0; q < f77_nent; q++)
+                            if (f77_ent_parent[q] == f77_nunit - 1 &&
+                                strcmp(f77_ent_name[q], lex_name) == 0) f77_ent_ty[q] = ty;
                     }
                     if (lx_t == T_LP) {
                         int depth;
@@ -231,6 +284,31 @@ static void f77_scan_units(void) {
         }
         pos = lx_pos;
         line = lx_line;
+    }
+
+    /* Each ENTRY becomes a unit of its own, after the ordinary ones. */
+    {
+        int q;
+        for (q = 0; q < f77_nent; q++) {
+            int par;
+            if (f77_nunit >= F77_MAX_UNIT) { f77_error("too many program units"); return; }
+            par = f77_ent_parent[q];
+            f77_upos[f77_nunit] = f77_ent_pos[q];
+            f77_uline[f77_nunit] = f77_ent_line[q];
+            f77_ukind[f77_nunit] = f77_ukind[par];
+            f77_urty[f77_nunit] = (f77_ukind[par] == F77_UNIT_FUNC) ? f77_ent_ty[q] : TY_INT;
+            f77_urlog[f77_nunit] = 0;
+            f77_urlen[f77_nunit] = 1;
+            strcpy(f77_uname[f77_nunit], f77_ent_name[q]);
+            f77_uentry_parent[f77_nunit] = par;
+            f77_unosplice[f77_nunit] = 1;
+            {
+                int d;
+                for (d = 0; d < f77_nfamd; d++)
+                    if (f77_famd_unit[d] == -2 - q) f77_famd_unit[d] = f77_nunit;
+            }
+            f77_nunit = f77_nunit + 1;
+        }
     }
 }
 
@@ -268,6 +346,24 @@ static void hl_func(Node *fn) {
     if (!f77_next_stmt()) return;
     f77_bind_unit(u);
     fn->nparams = f77_unit_nparams;
+
+    if (f77_uentry_parent[u] >= 0) {
+        /* An ENTRY: the parent's specification statements first, then
+         * the statements from the ENTRY onwards. */
+        int par;
+        par = f77_uentry_parent[u];
+        lx_pos = f77_upos[par];
+        lx_line = f77_uline[par];
+        if (!f77_next_stmt()) return;                 /* the parent's header */
+        for (;;) {
+            if (!f77_next_stmt()) break;
+            if (!f77_is_spec_stmt()) break;
+            f77_statement();
+        }
+        lx_pos = f77_upos[u];
+        lx_line = f77_uline[u];
+        if (!f77_next_stmt()) return;                 /* the ENTRY statement */
+    }
 
     if (f77_ukind[u] != F77_UNIT_PROGRAM) {
         /* The header itself emits nothing; go on to the body. */

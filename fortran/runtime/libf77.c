@@ -199,7 +199,7 @@ static void fio_flush_line(void) {
     fputs(fio_line, f);
     fputc('\n', f);
     fio_len = 0;
-    if (fio_unit > 0 && fio_unit < FIO_MAXUNIT && fio_uend[fio_unit] >= 0)
+    if (fio_unit > 0 && fio_unit < FIO_MAXUNIT && fio_unit != 5 && fio_unit != 6)
         fio_uend[fio_unit] = ftell(f);
 }
 
@@ -218,7 +218,7 @@ static void fio_drop_zero(char *buf, int w) {
     int n = (int)strlen(buf);
     if (w <= 0 || n != w + 1) return;
     if (buf[0] == '0' && buf[1] == '.') memmove(buf, buf + 1, (size_t)n);
-    else if (buf[0] == '-' && buf[1] == '0' && buf[2] == '.') memmove(buf + 1, buf + 2, (size_t)(n - 1));
+    else if ((buf[0] == '-' || buf[0] == '+') && buf[1] == '0' && buf[2] == '.') memmove(buf + 1, buf + 2, (size_t)(n - 1));
 }
 
 static void fio_pad(int n) { if (n > 0) fio_col += n; }
@@ -370,13 +370,22 @@ static int fio_next_desc(void) {
         }
 
         if (c == ')') {
+            if (fio_gdepth == 0) {
+                /* The outer close: the end of the format.  A format in
+                 * a CHARACTER entity has no terminator after it, so
+                 * this, not the NUL, is what ends it. */
+                if (fio_draining || fio_revert < 0) return 0;
+                fio_pos = fio_revert;
+                if (fio_fmt[fio_pos] == 0) return 0;
+                if (fio_reading) fio_next_record();
+                else fio_flush_line();
+                continue;
+            }
             fio_pos++;
-            if (fio_gdepth > 0) {
-                fio_gdepth--;
-                if (--fio_gcount[fio_gdepth] > 0) {
-                    fio_pos = fio_gstart[fio_gdepth];
-                    fio_gdepth++;
-                }
+            fio_gdepth--;
+            if (--fio_gcount[fio_gdepth] > 0) {
+                fio_pos = fio_gstart[fio_gdepth];
+                fio_gdepth++;
             }
             continue;
         }
@@ -582,7 +591,7 @@ static void fio_list_out_real(double v, int dbl) {
         snprintf(buf, sizeof buf, cf, v);
         if (a < 1.0 && a != 0.0 && strlen(buf) > (size_t)(sig + 2 + (v < 0))) buf[sig + 2 + (v < 0)] = 0;
         fio_field(buf, width - fblanks);
-        fio_pad(fblanks);
+        fio_blanks(fblanks);               /* part of the field: written */
     } else {
         char *e;
         snprintf(cf, sizeof cf, "%%.%dE", sig - 1);
@@ -630,7 +639,7 @@ void f77_wr_begin(int unit, const char *fmt) {
     fio_ibuf = 0;
     fio_out = fio_resolve(unit, 1);
     fio_unit = unit;
-    if (unit > 0 && unit < FIO_MAXUNIT) fio_uunf[unit] = 0;
+    if (unit > 0 && unit < FIO_MAXUNIT) { fio_uunf[unit] = 0; fio_uaeof[unit] = 0; }
     fio_position(fio_out, unit);
     fio_wr_setup(fmt);
 }
@@ -644,7 +653,7 @@ void f77_wu_begin(int unit) {
     fio_init_units();
     fio_out = fio_resolve(unit, 1);
     fio_unit = unit;
-    if (unit > 0 && unit < FIO_MAXUNIT) fio_uunf[unit] = 1;   /* BACKSPACE needs to know */
+    if (unit > 0 && unit < FIO_MAXUNIT) { fio_uunf[unit] = 1; fio_uaeof[unit] = 0; }   /* BACKSPACE needs to know */
     fio_position(fio_out, unit);
     fio_ulen = 0;
 }
@@ -677,7 +686,7 @@ void f77_wu_end(void) {
         fwrite(lw, 1, 4, f);
         fwrite(fio_urec, 1, (size_t)n, f);
         fwrite(lw, 1, 4, f);
-        if (fio_uend[fio_unit] >= 0) fio_uend[fio_unit] = ftell(f);
+        if (fio_unit > 0 && fio_unit < FIO_MAXUNIT) fio_uend[fio_unit] = ftell(f);
     }
 }
 /* flags: 1 END= present, 2 ERR=/IOSTAT= present.  0 ok, 1 eof, 2 error */
@@ -1197,7 +1206,10 @@ void f77_endfile(int unit) {
     f = fio_resolve(unit, 1);
     if (f == stdout || f == stderr) return;
     fflush(f);
-    if (unit > 0 && unit < FIO_MAXUNIT) fio_uend[unit] = ftell(f);
+    if (unit > 0 && unit < FIO_MAXUNIT) {
+        fio_uend[unit] = ftell(f);
+        fio_uaeof[unit] = 1;       /* positioned after the endfile record */
+    }
 }
 
 /* PAUSE [n | 'text']: report and continue (there is no operator). */

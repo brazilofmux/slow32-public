@@ -41,9 +41,17 @@ static int  f77_slo[F77_MAX_SYM][F77_MAX_RANK];   /* lower bound per dim */
 static int  f77_sext[F77_MAX_SYM][F77_MAX_RANK];  /* constant extent */
 /* Adjustable dimensions: DOUBLE PRECISION A(LDA,1) inside a subprogram,
  * where LDA is itself a dummy argument.  LINPACK is built on this.  When
- * f77_sextsym[s][k] >= 0 the extent is that symbol's runtime value and
- * f77_sext[s][k] is meaningless. */
-static int  f77_sextsym[F77_MAX_SYM][F77_MAX_RANK];
+ * f77_sextv[s][k] >= 0 the extent is that HIR value (computed in the
+ * declaration part) and f77_sext[s][k] is meaningless. */
+static int  f77_sextsym[F77_MAX_SYM][F77_MAX_RANK];   /* now: HIR value of the extent, or -1 */
+static int  f77_slov[F77_MAX_SYM][F77_MAX_RANK];      /* HIR value of the lower bound, or -1 */
+#define f77_sextv f77_sextsym
+static int f77_adjustable(int s) {
+    int k;
+    for (k = 0; k < f77_srank[s]; k++)
+        if (f77_sextv[s][k] >= 0 || f77_slov[s][k] >= 0) return 1;
+    return 0;
+}
 static int  f77_nsym;
 
 /* Lookups start here, not at 0.  Inlining a subprogram pushes a fresh
@@ -402,7 +410,7 @@ static int f77_sym(char *nm) {
     f77_sparam[f77_nsym] = 0;
     f77_styped[f77_nsym] = 0;
     f77_sstored[f77_nsym] = 0;
-    { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[f77_nsym][d] = -1; d = d + 1; } }
+    { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[f77_nsym][d] = -1; f77_slov[f77_nsym][d] = -1; d = d + 1; } }
     f77_frame = f77_frame + f77_tysize(f77_sty[f77_nsym]);
     f77_sval[f77_nsym] = hi_emit(HI_ALLOCA, f77_sty[f77_nsym] == TY_CPLX ? TY_FLOAT : f77_sty[f77_nsym], -1, -1,
                                  0 - f77_frame, NULL);
@@ -438,7 +446,7 @@ static int f77_sym_temp(int ty) {
     f77_sexternal[s] = 0;
     f77_sintrinsic[s] = 0;
     f77_slog[s] = 0;
-    { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[s][d] = -1; d = d + 1; } }
+    { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[s][d] = -1; f77_slov[s][d] = -1; d = d + 1; } }
     f77_frame = f77_frame + f77_tysize(ty);
     f77_sval[s] = hi_emit(HI_ALLOCA, ty == TY_CPLX ? TY_FLOAT : ty, -1, -1, 0 - f77_frame, NULL);
     hl_ainst[hl_nalloca] = f77_sval[s];
@@ -464,6 +472,22 @@ static int  f77_uline[F77_MAX_UNIT];
 static int  f77_urty[F77_MAX_UNIT];    /* FUNCTION result type */
 static int  f77_urlen[F77_MAX_UNIT];   /* CHARACTER FUNCTION result length, -1 = (*) */
 static int  f77_urlog[F77_MAX_UNIT];   /* LOGICAL FUNCTION */
+/* ENTRY: a secondary entry into a subprogram is compiled as a unit of
+ * its own -- the parent's declarations, then the statements from the
+ * ENTRY to END -- with f77_uentry_parent naming the parent (-1 for an
+ * ordinary unit).  In a FUNCTION the entry names and the function
+ * name all denote the one result, by aliasing. */
+static int  f77_uentry_parent[F77_MAX_UNIT];
+/* The dummies of every unit of an ENTRY family, collected in phase 1:
+ * the shared statements name them all, so when one unit of the family
+ * is compiled the dummies of the OTHER units are created as phantoms
+ * -- by-reference symbols whose address is a frame slot -- so the
+ * text compiles (to code that is never reached with them undefined)
+ * instead of taking F(X) for a call to an external function F. */
+#define F77_MAX_FAMD 512
+static char f77_famd_name[F77_MAX_FAMD][F77_MAX_NAME];
+static int  f77_famd_unit[F77_MAX_FAMD];
+static int  f77_nfamd;
 static int  f77_hdr_clen;              /* length seen by f77_function_kw_end; -2 = at f77_hdr_clen_off */
 static int  f77_hdr_clen_off;
 static int  f77_hdr_log;
@@ -500,7 +524,7 @@ static int f77_sym_param(char *nm, int index) {
         if (f77_sty[s] == TY_CHAR) f77_slen[s] = f77_imp_len[nm[0] - 'A'];
         f77_slog[s] = f77_imp_log[nm[0] - 'A'];
     }
-    { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[s][d] = -1; d = d + 1; } }
+    { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[s][d] = -1; f77_slov[s][d] = -1; d = d + 1; } }
     f77_sval[s] = hi_emit(HI_PARAM, HL_ADDR_TY, -1, -1, index, NULL);
     f77_nsym = f77_nsym + 1;
     return s;
@@ -950,6 +974,8 @@ static int f77_subscript_addr(int s) {
         idx = f77_expr();
         idx = f77_cvt(idx, &ex_hi, ex_ty, TY_INT);
         if (k < f77_srank[s]) {
+            if (f77_slov[s][k] >= 0)
+                idx = hi_emit(HI_SUB, TY_INT, idx, f77_slov[s][k], 0, NULL);
             if (f77_slo[s][k] != 0) {
                 if (vstride >= 0)
                     idx = hi_emit(HI_ADDI, TY_INT, idx, -1, 0 - f77_slo[s][k], NULL);
@@ -966,11 +992,8 @@ static int f77_subscript_addr(int s) {
              * extent is a run-time value the stride becomes one too;
              * the last dimension's extent is never needed, which is why
              * A(LDA,1) and A(LDA,*) both work. */
-            if (f77_sextsym[s][k] >= 0) {
-                e = f77_load_at(f77_sval[f77_sextsym[s][k]],
-                                f77_sty[f77_sextsym[s][k]]);
-                if (f77_sarg[f77_sextsym[s][k]])
-                    f77_ldro_note(e, f77_sextsym[s][k]);
+            if (f77_sextv[s][k] >= 0) {
+                e = f77_sextv[s][k];
                 if (vstride >= 0) {
                     vstride = hi_emit(HI_MUL, TY_INT, vstride, e, 0, NULL);
                 } else if (cstride == 1) {
@@ -2840,17 +2863,48 @@ static void f77_cexpr(void) {
 /* One dimension bound: `*` (assumed size), a non-PARAMETER name (an
  * adjustable dimension), or a constant expression -- which is where a
  * PARAMETER bound like A(N) or A(2*N+1) resolves. */
-static int f77_bound(int *sym) {
-    *sym = -1;
+/* One dimension bound.  A constant expression gives its value; `*` is
+ * an assumed size; an expression naming anything that is not a
+ * PARAMETER (a dummy, say: A(LDA, 2*N+1)) is an adjustable bound,
+ * evaluated here in the declaration part -- the entry block, which
+ * dominates every subscript -- and returned through *val. */
+static int f77_bound(int *val) {
+    int i;
+    int depth;
+    int runtime;
+    *val = -1;
     if (lx_t == T_STAR) { f77_tok(); return 1; }   /* assumed size */
-    if (lx_t == T_NAME) {
-        int s;
-        s = f77_sym(lex_name);
-        if (!f77_sparam[s]) {          /* adjustable dimension */
-            *sym = s;
-            f77_tok();
-            return 1;
+    runtime = 0;
+    i = (int)(lx_rts - lx_stmt);
+    depth = 0;
+    while (i < lx_stmt_len) {
+        int c;
+        c = lx_stmt[i];
+        if (c == '(') depth = depth + 1;
+        else if (c == ')') { if (depth == 0) break; depth = depth - 1; }
+        else if ((c == ',' || c == ':') && depth == 0) break;
+        if (lx_isalpha(c)) {
+            char nm[F77_MAX_NAME];
+            int j;
+            int sf;
+            j = i;
+            while (j < lx_stmt_len && (lx_isalpha(lx_stmt[j]) || lx_isdigit(lx_stmt[j]))) j = j + 1;
+            if (j - i < F77_MAX_NAME) {
+                memcpy(nm, lx_stmt + i, j - i);
+                nm[j - i] = 0;
+                sf = f77_sym_find(nm);
+                if (sf < 0 || !f77_sparam[sf]) runtime = 1;
+            }
+            i = j;
+            continue;
         }
+        i = i + 1;
+    }
+    if (runtime) {
+        int v;
+        v = f77_expr();
+        *val = f77_cvt(v, &ex_hi, ex_ty, TY_INT);
+        return 1;
     }
     f77_cexpr();
     if (f77_cx_ty != TY_INT) { f77_error("dimension bound must be an integer constant"); return 1; }
@@ -2877,11 +2931,18 @@ static void f77_parse_dims(int s) {
             hi = f77_bound(&hisym);
         }
         if (rank < F77_MAX_RANK) {
-            f77_slo[s][rank] = (losym >= 0) ? 1 : lo;
-            f77_sextsym[s][rank] = hisym;
-            if (hisym >= 0) {
+            f77_slo[s][rank] = (losym >= 0) ? 0 : lo;
+            f77_slov[s][rank] = losym;
+            if (hisym >= 0 || losym >= 0) {
+                /* extent = hi - lo + 1 at run time */
+                int hv; int lv; int e;
+                hv = (hisym >= 0) ? hisym : f77_iconst(hi);
+                lv = (losym >= 0) ? losym : f77_iconst(lo);
+                e = hi_emit(HI_SUB, TY_INT, hv, lv, 0, NULL);
+                f77_sextv[s][rank] = hi_emit(HI_ADDI, TY_INT, e, -1, 1, NULL);
                 f77_sext[s][rank] = 1;      /* size unknown until run time */
             } else {
+                f77_sextv[s][rank] = -1;
                 f77_sext[s][rank] = hi - lo + 1;
                 if (f77_sext[s][rank] < 0) f77_sext[s][rank] = 0;
             }
@@ -3466,9 +3527,7 @@ static int f77_data_target(int stop) {
         d = 0;
         f77_tok();
         for (;;) {
-            for (k = 0; k < f77_srank[s]; k++) {
-                if (f77_sextsym[s][k] >= 0) { f77_error("adjustable array in DATA"); return 0; }
-            }
+            if (f77_adjustable(s)) { f77_error("adjustable array in DATA"); return 0; }
             f77_cexpr();
             if (f77_cx_ty != TY_INT) { f77_error("DATA subscript must be an integer constant"); return 0; }
             if (d >= f77_srank[s]) { f77_error("too many DATA subscripts"); return 0; }
@@ -3489,9 +3548,7 @@ static int f77_data_target(int stop) {
         f77_dt_start[f77_dt_n] = elem;
         f77_dt_count[f77_dt_n] = 1;
     } else if (f77_srank[s] > 0) {
-        for (k = 0; k < f77_srank[s]; k++) {
-            if (f77_sextsym[s][k] >= 0) { f77_error("adjustable array in DATA"); return 0; }
-        }
+        if (f77_adjustable(s)) { f77_error("adjustable array in DATA"); return 0; }
         f77_dt_start[f77_dt_n] = 0;
         f77_dt_count[f77_dt_n] = f77_sym_nelem(s);
     } else {
@@ -3626,9 +3683,7 @@ static int f77_eq_offset(int s) {
     }
     if (lx_t != T_RP) { f77_error("expected ) in EQUIVALENCE"); return 0; }
     f77_tok();
-    for (d = 0; d < f77_srank[s]; d++) {
-        if (f77_sextsym[s][d] >= 0) { f77_error("adjustable array in EQUIVALENCE"); return 0; }
-    }
+    if (f77_adjustable(s)) { f77_error("adjustable array in EQUIVALENCE"); return 0; }
     if (n == 1 && f77_srank[s] > 1) {
         elem = subs[0] - 1;                 /* linear element number */
     } else {
@@ -3760,11 +3815,9 @@ static void f77_layout_static(void) {
     for (i = 0; i < f77_cm_n; i++) {
         s = f77_cm_sym[i];
         blk = f77_cm_blk[i];
-        for (k = 0; k < f77_srank[s]; k++) {
-            if (f77_sextsym[s][k] >= 0) {
-                f77_error("adjustable dimensions cannot appear in COMMON");
-                return;
-            }
+        if (f77_adjustable(s)) {
+            f77_error("adjustable dimensions cannot appear in COMMON");
+            return;
         }
         f77_bind_static(s, f77_cblk_name[blk], boff[blk]);
         f77_sgidx[s] = f77_cblk_gidx[blk];
@@ -3870,11 +3923,9 @@ static void f77_layout_static(void) {
         if (!f77_ssaved[s]) continue;
         if (f77_sarg[s] || f77_scom[s] || s == f77_result_sym) continue;
         if (f77_sgidx[s] >= 0) continue;          /* placed by EQUIVALENCE */
-        for (k = 0; k < f77_srank[s]; k++) {
-            if (f77_sextsym[s][k] >= 0) {
-                f77_error("adjustable dimensions cannot be SAVEd");
-                return;
-            }
+        if (f77_adjustable(s)) {
+            f77_error("adjustable dimensions cannot be SAVEd");
+            return;
         }
         {
             char *nm;
@@ -3988,15 +4039,10 @@ static void f77_open_do(void) {
         }
 
         /* var = m1 in the DO variable's type */
-        f77_sstored[s] = 1;
-        if (vty == TY_DOUBLE) {
-            int addr4;
-            hi_emit(HI_STORE, TY_INT, f77_sval[s], m1, 0, NULL);
-            addr4 = hi_emit(HI_ADDI, HL_ADDR_TY, f77_sval[s], -1, 4, NULL);
-            hi_emit(HI_STORE, TY_INT, addr4, m1hi, 0, NULL);
-        } else {
-            hi_emit(HI_STORE, vty, f77_sval[s], m1, 0, NULL);
-        }
+        /* Through the symbol's own store: a DOUBLE DO variable lives
+         * in split lo/hi slots, and a hand-rolled ADDI+4 store left
+         * the promoted hi slot stale (FM719 test 14 summed garbage). */
+        f77_store_sym_val(s, m1, vty, m1hi);
 
         /* Trip count MAX(0, INT((m2-m1+m3)/m3)), then counted as INT. */
         if (vty == TY_FLOAT) {
@@ -4074,15 +4120,12 @@ static void f77_close_do(int lab) {
                 int vlo;
                 int vhi;
                 int shi;
-                int addr4;
-                vlo = hi_emit(HI_LOAD, TY_INT, f77_sval[s], -1, 0, NULL);
-                addr4 = hi_emit(HI_ADDI, HL_ADDR_TY, f77_sval[s], -1, 4, NULL);
-                vhi = hi_emit(HI_LOAD, TY_INT, addr4, -1, 0, NULL);
+                vlo = f77_load_sym(s);
+                vhi = ex_hi;
                 shi = ctl_stephi[ctl_n];
                 vlo = f77_fp64_call2("__fp64_add", vlo, vhi,
                                      ctl_step[ctl_n], shi, &vhi);
-                hi_emit(HI_STORE, TY_INT, f77_sval[s], vlo, 0, NULL);
-                hi_emit(HI_STORE, TY_INT, addr4, vhi, 0, NULL);
+                f77_store_sym_val(s, vlo, TY_DOUBLE, vhi);
             } else {
                 v = hi_emit(HI_LOAD, TY_INT, f77_sval[s], -1, 0, NULL);
                 v = hi_emit(HI_ADD, TY_INT, v, ctl_step[ctl_n], 0, NULL);
@@ -4599,7 +4642,7 @@ static int f77_bind_actual(char *nm, int addr) {
     f77_srank[s] = 0;
     f77_sarg[s] = 1;
     f77_shi[s] = -1;                 /* by-reference: value is an address */
-    { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[s][d] = -1; d = d + 1; } }
+    { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[s][d] = -1; f77_slov[s][d] = -1; d = d + 1; } }
     f77_sval[s] = addr;
     f77_nsym = f77_nsym + 1;
     return s;
@@ -5071,7 +5114,8 @@ static void f77_bind_unit(int u) {
 
     /* Skip past the keyword and the unit name to the argument list. */
     skip = 0;
-    if (f77_ukind[u] == F77_UNIT_SUBR) skip = 10;              /* SUBROUTINE */
+    if (f77_uentry_parent[u] >= 0) skip = 5;                   /* ENTRY */
+    else if (f77_ukind[u] == F77_UNIT_SUBR) skip = 10;         /* SUBROUTINE */
     else {
         rty = f77_unit_header_ty();
         skip = f77_function_skip();
@@ -5131,9 +5175,68 @@ static void f77_bind_unit(int u) {
          * declaration; a bare FUNCTION F relies on implicit typing,
          * which a later IMPLICIT may not change (phase 1 already told
          * every caller the result type). */
-        f77_styped[f77_result_sym] = (skip != 8) ? 1 : 0;
+        f77_styped[f77_result_sym] = (skip != 8 && skip != 5) ? 1 : 0;
         f77_realloc_sym(f77_result_sym);
     }
+
+    /* Phantoms for the family's other dummies (see f77_famd_name). */
+    if (f77_ukind[u] != F77_UNIT_PROGRAM && f77_ukind[u] != F77_UNIT_BDATA) {
+        int fam;
+        int q;
+        fam = f77_uentry_parent[u] >= 0 ? f77_uentry_parent[u] : u;
+        for (q = 0; q < f77_nfamd; q++) {
+            int du;
+            int ps;
+            du = f77_famd_unit[q];
+            if (du == u) continue;
+            if (du != fam && f77_uentry_parent[du] != fam) continue;
+            ps = f77_sym_find(f77_famd_name[q]);
+            if (ps >= 0) continue;                    /* a real dummy of this unit, or seen */
+            ps = f77_sym(f77_famd_name[q]);           /* a frame slot ... */
+            f77_sarg[ps] = 1;                         /* ... treated as the address passed */
+        }
+    }
+
+    /* Entry names and the function name denote one result (F77 15.7.3). */
+    if (f77_ukind[u] == F77_UNIT_FUNC && f77_result_sym >= 0) {
+        int fam;
+        int e;
+        fam = f77_uentry_parent[u] >= 0 ? f77_uentry_parent[u] : u;
+        for (e = 0; e < f77_nunit; e++) {
+            if (e == u) continue;
+            if (e != fam && f77_uentry_parent[e] != fam) continue;
+            if (f77_stfb_n < F77_MAX_STFB) {
+                strcpy(f77_stfb_name[f77_stfb_n], f77_uname[e]);
+                f77_stfb_sym[f77_stfb_n] = f77_result_sym;
+                f77_stfb_n = f77_stfb_n + 1;
+            }
+        }
+    }
+}
+
+/* Is the assembled statement a specification statement for the purpose
+ * of compiling an ENTRY: a declaration, or a statement function? */
+static int f77_is_spec_stmt(void) {
+    int cls;
+    int i;
+    int eq;
+    cls = f77_classify();
+    if (f77_stmt_is_declaration(cls)) return 1;
+    if (cls != S_ASSIGN) return 0;
+    i = 0;
+    while (i < lx_stmt_len && (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]))) i = i + 1;
+    if (i == 0 || i >= lx_stmt_len || lx_stmt[i] != '(') return 0;
+    eq = f77_toplevel('=', 0);
+    if (eq < 0 || f77_match_paren(i) != eq) return 0;
+    {
+        char nm[F77_MAX_NAME];
+        int sf;
+        if (i >= F77_MAX_NAME) return 0;
+        memcpy(nm, lx_stmt, i); nm[i] = 0;
+        sf = f77_sym_find(nm);
+        if (sf >= 0 && (f77_srank[sf] > 0 || f77_sty[sf] == TY_CHAR)) return 0;
+    }
+    return 1;
 }
 
 /* --- formatted I/O ---------------------------------------------------- */
@@ -5300,11 +5403,9 @@ static void f77_wr_whole_array(int s) {
     int cstride;
 
     rank = f77_srank[s];
-    for (k = 0; k < rank; k++) {
-        if (f77_sextsym[s][k] >= 0) {
-            f77_error("whole-array I/O needs constant extents");
-            return;
-        }
+    if (f77_adjustable(s)) {
+        f77_error("whole-array I/O needs constant extents");
+        return;
     }
     for (k = rank - 1; k >= 0; k--) {
         f77_frame = f77_frame + 4;
@@ -6437,7 +6538,7 @@ static void f77_statement(void) {
         f77_call_i("f77_pause", 2, args);
         goto done;
     }
-    if (f77_starts("ENTRY")) { f77_error("ENTRY is not supported"); goto done; }
+    if (f77_starts("ENTRY")) goto done;        /* a no-op in the flow; see f77_uentry_parent */
 
 
     if (f77_starts("SUBROUTINE") || f77_unit_header_ty() >= 0) {
