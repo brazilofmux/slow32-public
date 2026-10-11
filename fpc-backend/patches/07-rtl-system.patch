@@ -1,3 +1,22 @@
+diff --git a/rtl/embedded/sysutils.pp b/rtl/embedded/sysutils.pp
+index 46accdd50a..3b301456ef 100644
+--- a/rtl/embedded/sysutils.pp
++++ b/rtl/embedded/sysutils.pp
+@@ -47,10 +47,12 @@ implementation
+ 
+ {$IFDEF FPC_DOTTEDUNITS}
+ uses
+-  System.SysConst,EmbeddedApi.HeapMGR;
++  System.SysConst{$ifndef CPUSLOW32},EmbeddedApi.HeapMGR{$endif};
+ {$ELSE FPC_DOTTEDUNITS}
+ uses
+-  sysconst,heapmgr;
++  { SLOW-32: the system unit's heap is libc_mmio's; heapmgr would replace it
++    with a static block of heapsize bytes and nothing else registers one }
++  sysconst{$ifndef CPUSLOW32},heapmgr{$endif};
+ {$ENDIF FPC_DOTTEDUNITS}
+ 
+   { Include platform independent implementation part }
 diff --git a/rtl/inc/system.inc b/rtl/inc/system.inc
 index e7b5a19991..d438d2830e 100644
 --- a/rtl/inc/system.inc

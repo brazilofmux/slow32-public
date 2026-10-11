@@ -105,10 +105,13 @@ implementation
     procedure ts32notnode.second_boolean;
       var
         tlabel, flabel: tasmlabel;
+        list: TAsmList;
+        tmpreg: tregister;
       begin
         secondpass(left);
         if not handle_locjump then
           begin
+            list:=current_asmdata.CurrAsmList;
             case left.location.loc of
               LOC_FLAGS :
                 begin
@@ -119,13 +122,29 @@ implementation
               LOC_SUBSETREG, LOC_CSUBSETREG,
               LOC_SUBSETREF, LOC_CSUBSETREF:
                 begin
-                  hlcg.location_force_reg(current_asmdata.CurrAsmList,left.location,left.resultdef,left.resultdef,false);
+                  hlcg.location_force_reg(list,left.location,left.resultdef,left.resultdef,false);
+                  if is_64bit(left.resultdef) then
+                    begin
+                      { QWordBool: false only when both halves are 0.  The result
+                        is a 64-bit boolean too, so it needs a register pair; the
+                        32-bit path below left the high half unallocated and the
+                        store of it came out as "stw r4,INVALID,4" (tw20874). }
+                      tmpreg:=cg.getintregister(list,OS_32);
+                      list.concat(taicpu.op_reg_reg_reg(A_OR,tmpreg,left.location.register64.reglo,left.location.register64.reghi));
+                      location_reset(location,LOC_REGISTER,OS_64);
+                      location.register64.reglo:=cg.getintregister(list,OS_32);
+                      location.register64.reghi:=cg.getintregister(list,OS_32);
+                      list.concat(taicpu.op_reg_reg_reg(A_SEQ,location.register64.reglo,tmpreg,NR_R0));
+                      cg.a_load_const_reg(list,OS_32,0,location.register64.reghi);
+                    end
+                  else
+                    begin
+                      location_reset(location,LOC_REGISTER,OS_INT);
+                      location.register:=hlcg.getintregister(list,s32inttype);
 
-                  location_reset(location,LOC_REGISTER,OS_INT);
-                  location.register:=hlcg.getintregister(current_asmdata.CurrAsmList,s32inttype);
-
-                  { SEQ dst, src, r0: sets dst=1 if src==0, i.e. boolean NOT }
-                  current_asmdata.CurrAsmList.Concat(taicpu.op_reg_reg_reg(A_SEQ,location.register,left.location.register,NR_R0));
+                      { SEQ dst, src, r0: sets dst=1 if src==0, i.e. boolean NOT }
+                      list.Concat(taicpu.op_reg_reg_reg(A_SEQ,location.register,left.location.register,NR_R0));
+                    end;
                end;
               else
                 internalerror(2003042401);

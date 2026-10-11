@@ -90,7 +90,7 @@ fi
 
 # 7. RTL system unit includes (rtl/inc/systemh.inc, rtl/inc/system.inc)
 echo "7. Generating RTL system includes patch..."
-git diff $BASE -- rtl/inc/systemh.inc rtl/inc/system.inc > "$PATCHES_DIR/07-rtl-system.patch" 2>/dev/null || true
+git diff $BASE -- rtl/inc/systemh.inc rtl/inc/system.inc rtl/embedded/sysutils.pp > "$PATCHES_DIR/07-rtl-system.patch" 2>/dev/null || true
 if [ -s "$PATCHES_DIR/07-rtl-system.patch" ]; then
     lines=$(wc -l < "$PATCHES_DIR/07-rtl-system.patch")
     echo "   Created: 07-rtl-system.patch ($lines lines)"

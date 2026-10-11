@@ -268,5 +268,12 @@ begin
 
 {$ifdef FPC_HAS_FEATURE_THREADING}
   InitSystemThreads;
+{$ifdef FPC_HAS_FEATURE_WIDESTRINGS}
+  { The embedded template leaves this out, so widestringmanager stays all
+    nil and the first ansistring -> unicodestring conversion calls address
+    0, which is _start: the program restarts inside itself until the stack
+    is gone (the codepage tests of the FPC suite, 2026-10-10). }
+  initunicodestringmanager;
+{$endif FPC_HAS_FEATURE_WIDESTRINGS}
 {$endif FPC_HAS_FEATURE_THREADING}
 end.
