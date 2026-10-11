@@ -108,6 +108,11 @@ for name in "${NAMES[@]}"; do
         cat "$d/ld.err" >> "$log"
     else
         dat=/dev/null; [ -f "$FCVS/$name.DAT" ] && dat="$FCVS/$name.DAT"
+        # gfortran's PAUSE reads stdin and ends the job at EOF; feed it
+        # "go" so the oracle runs on past each PAUSE as f77 does.
+        if [ "$dat" = /dev/null ] && grep -q '^ .....PAUSE' "$src"; then
+            yes go | head -50 > "$d/pause.in"; dat="$d/pause.in"
+        fi
         # Programs OPEN and REWIND scratch files: run inside their own dir.
         (cd "$d" && $TO ${TO:+$TIMEOUT} "$EMU" "$d/$name.s32x" < "$dat" > "$d/stdout" 2> "$d/stderr")
         rc=$?

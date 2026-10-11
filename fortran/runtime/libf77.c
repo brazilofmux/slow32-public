@@ -905,21 +905,34 @@ static double fio_in_real(int w, int d) {
  * filled, or 1 for the `/` terminator.  Handles r*c repeats and value
  * lists spanning records.  Null values (`1,,3`) are refused honestly
  * rather than mis-assigned. */
+/* List-directed input tokens (13.6).  Values are separated by blanks,
+ * a comma (with optional blanks), a slash (which ends the statement),
+ * or the end of a record; two separators with nothing between them,
+ * or a leading comma, are a NULL value, which leaves the item as it
+ * was; r*c is c repeated r times and r* is r nulls.  A quoted constant
+ * may hold blanks, commas and slashes, doubles its quote, and may
+ * continue onto the next record.  Returns 0 with the token in fio_ltok
+ * (fio_l_quoted says whether it was quoted), 1 for the slash, 2 for a
+ * null value. */
+static int fio_l_nulls;      /* nulls still owed by r* */
+static int fio_l_after;      /* a value has been taken since the last separator */
+static int fio_l_quoted;
+
 static int fio_list_tok(void) {
     int c;
     int n;
-    int comma_seen = 0;
 
+    if (fio_l_nulls > 0) { fio_l_nulls--; return 2; }
     if (fio_l_pending > 0) { fio_l_pending--; return 0; }
 
     for (;;) {
-        if (fio_rpos >= fio_rlen) { fio_next_record(); comma_seen = 0; continue; }
+        if (fio_rpos >= fio_rlen) { fio_next_record(); continue; }
         c = fio_rec[fio_rpos];
         if (c == ' ' || c == '\t') { fio_rpos++; continue; }
         if (c == ',') {
-            if (comma_seen) { fio_rpos++; return 2; }   /* null value: item unchanged */
-            comma_seen = 1;
             fio_rpos++;
+            if (!fio_l_after) return 2;          /* null value */
+            fio_l_after = 0;
             continue;
         }
         break;
@@ -927,6 +940,24 @@ static int fio_list_tok(void) {
     if (c == '/') { fio_rpos++; return 1; }
 
     n = 0;
+    fio_l_quoted = 0;
+    if (c == '\'' || c == '"') {
+        int q = c;
+        fio_l_quoted = 1;
+        fio_rpos++;
+        for (;;) {
+            if (fio_rpos >= fio_rlen) { fio_next_record(); continue; }   /* continues on the next record */
+            c = fio_rec[fio_rpos++];
+            if (c == q) {
+                if (fio_rpos < fio_rlen && fio_rec[fio_rpos] == q) { fio_rpos++; }
+                else break;
+            }
+            if (n < (int)sizeof fio_ltok - 1) fio_ltok[n++] = (char)c;
+        }
+        fio_ltok[n] = 0;
+        fio_l_after = 1;
+        return 0;
+    }
     while (fio_rpos < fio_rlen) {
         c = fio_rec[fio_rpos];
         if (c == ' ' || c == '\t' || c == ',' || c == '/') break;
@@ -934,19 +965,18 @@ static int fio_list_tok(void) {
         fio_rpos++;
     }
     fio_ltok[n] = 0;
+    fio_l_after = 1;
 
-    /* r*value: unsigned repeat count, a star, then the value. */
+    /* r*value, or r* for r nulls: unsigned repeat count, then a star. */
     n = 0;
     while (fio_isdigit(fio_ltok[n])) n++;
     if (n > 0 && fio_ltok[n] == '*') {
         int r = (int)strtol(fio_ltok, 0, 10);
         if (r == 0) {
-            /* F77's 0*c is a null value.  gfortran rejects it at
-             * runtime ("Zero repeat count"); so do we, like 1,,3,
-             * rather than silently assigning c once. */
-            fprintf(stderr, "f77: zero repeat count in list-directed input is not supported\n");
+            fprintf(stderr, "f77: zero repeat count in list-directed input\n");
             exit(2);
         }
+        if (fio_ltok[n + 1] == 0) { fio_l_nulls = r - 1; return 2; }
         if (r > 1) fio_l_pending = r - 1;
         memmove(fio_ltok, fio_ltok + n + 1, strlen(fio_ltok + n + 1) + 1);
     }
@@ -994,6 +1024,9 @@ int f77_rd_begin_int(char *buf, int len, int nrec, const char *fmt, int has_end)
 
 static int fio_rd_setup(const char *fmt, int has_end) {
     fio_bz = 0;
+    fio_l_nulls = 0;
+    fio_l_after = 0;
+    fio_l_quoted = 0;
     fio_reading = 1;
     fio_ldone = 0;
     fio_l_pending = 0;
@@ -1112,16 +1145,6 @@ void f77_rd_s(char *p, int len) {
         if (t == 1) { fio_ldone = 1; return; }
         if (t == 2) return;
         n = (int)strlen(fio_ltok);
-        if (n >= 2 && (fio_ltok[0] == '\'' || fio_ltok[0] == '"') && fio_ltok[n - 1] == fio_ltok[0]) {
-            int q = fio_ltok[0];
-            int k = 0;
-            for (i = 1; i < n - 1; i++) {
-                if (fio_ltok[i] == q && fio_ltok[i + 1] == q) i++;
-                if (k < len) p[k++] = fio_ltok[i];
-            }
-            while (k < len) p[k++] = ' ';
-            return;
-        }
         for (i = 0; i < len; i++) p[i] = i < n ? fio_ltok[i] : ' ';
         return;
     }
