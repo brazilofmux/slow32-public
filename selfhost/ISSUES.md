@@ -3119,3 +3119,44 @@ definition until `;`, as the standard requires, so a name inside its own
 definition means the previous definition of that name.  Gate: the stage
 chain `selfhost/run-stages.sh --to stage06`.
 
+### 86. [RESOLVED 2026-10-11] stage08 cc: the dominator-tree children were stale in a function with nothing to promote, and the call-site split walked them
+
+Found by the Fortran front at its 2026-10-11 re-sync with stage08 (the
+copy in fortran/src had been taken 2026-08-31; the two trees are
+identical past the banner again).  FCVS 2.1 went 192 -> 189 on the
+re-synced backend; two causes.
+
+**The stale table.**  `hir_ssa_construct` built the dominator-tree
+children (`ssa_dtc`) only past its early return for `ssa_npromo == 0`,
+because phi insertion was their only reader.  GitHub issue 67's
+call-site splitting (`ra_split_at_calls`, `ra_csplit_on_dom`) walks
+them from the allocator, long after -- so a function with nothing to
+promote walked the PREVIOUS function's tree.  FM715's `CF716`, a
+CHARACTER*10 function whose only locals are its hidden result pointer
+and length, has three RETURN arms behind an arithmetic IF; the stale
+table said the first arm dominated the other two, the split of the
+result pointer at the first arm's `f77_strcpy` was rewired into them,
+and they read a copy they had never executed: `f77_strcpy` wrote to
+address 0.  `ssa_idom[]` itself was right (computed before the
+return), which is why `licm_dominates` never misbehaved.  Fix: build
+the tree before the early return.  Latent for C: a function with every
+local address-taken, a value passed to a call and used after it, and a
+previous function whose tree happens to cover the block numbers.
+Gates: stage08 112/112 with the fixed point, SQLite byte-identical,
+host frontend, FCVS 192/192.
+
+**Code after a terminator.**  `hcg_block` takes the block's LAST
+instruction as its terminator, and GitHub issue 72 drops the jump of a
+RET (or BR) to the block laid out next.  So anything emitted after a
+terminator in the same block RUNS.  The C lowering never does that
+(`hl_stmt`'s ND_BLOCK loop skips statements after one), but the
+Fortran front did, at an unlabelled statement after RETURN: in FM509
+the body of the next ENTRY, parsed with phantom dummies, called through
+one's address once the RET's jump was gone.  `ssa_build_cfg` already
+found the FIRST terminator, with a comment allowing dead code behind
+it; that tolerance is now a contract violation it reports and stops on
+(`s12cc: instructions after a block's terminator`), and the Fortran
+front opens a fresh block for such a statement.  The COBOL copy
+(`cobol/src/hir`) carries both changes.  Fortran gate tests `entry2.f`
+and `charfn1.f` reproduce the two shapes; a mutant without the fixes
+faults on both.

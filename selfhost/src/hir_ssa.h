@@ -172,9 +172,14 @@ static void ssa_build_cfg(void) {
     }
 
     /* Build successors from terminators.
-       Find the FIRST terminator in each block (dead code after
-       goto/break/return may leave non-terminator instructions at
-       the end of a block).
+       A terminator is the LAST instruction of its block, by contract:
+       the codegen emits a block's instructions in order and drops the
+       branch of a RET or BR to the block laid out next (GitHub issue
+       72), so an instruction after the terminator would RUN.  The C
+       lowering skips statements after one (hl_stmt's ND_BLOCK loop);
+       the Fortran front did not, at a statement after RETURN, and FCVS
+       FM509 ran the next ENTRY's body through a phantom dummy.  Stop
+       here rather than miscompile.
 
        ssa_soff[b] is the cursor position where block b's successor
        slots begin in the flat ssa_succ[] pool; cursor advances by the
@@ -191,6 +196,16 @@ static void ssa_build_cfg(void) {
             term = term + 1;
         }
         if (term < bb_end[b]) {
+            i = term + 1;
+            while (i < bb_end[b]) {
+                if (h_kind[i] != HI_NOP) {
+                    fdputs("s12cc: instructions after a block's terminator (fn=", 2);
+                    fdputs(hl_cur_fn_dbg ? hl_cur_fn_dbg : "?", 2);
+                    fdputs(")\n", 2);
+                    exit(1);
+                }
+                i = i + 1;
+            }
             k = h_kind[term];
             if (k == HI_BR) {
                 if (cursor + 1 > SSA_SUCC_SZ) {
@@ -1231,6 +1246,17 @@ static void hir_ssa_construct(void) {
     ssa_compute_rpo();
     ssa_compute_idom();
     ssa_compute_df();
+    /* The dominator-tree children are built whether or not anything
+     * gets promoted: the allocator's call-site splitting walks them
+     * (ra_csplit_on_dom, GitHub issue 67) long after this pass.  They
+     * used to be built only past the early return below, so a function
+     * with nothing to promote read the previous function's table -- a
+     * Fortran CHARACTER function with three RETURN arms (FCVS FM715,
+     * CF716) had its result pointer "split" into a copy that two of the
+     * arms read without ever having executed it, and f77_strcpy wrote
+     * to address 0.  Found by the Fortran front at the 2026-10-11
+     * re-sync; latent for C. */
+    ssa_build_dtree();
     ssa_find_promo();
 
     if (ssa_npromo == 0) {
@@ -1238,7 +1264,6 @@ static void hir_ssa_construct(void) {
         return;
     }
 
-    ssa_build_dtree();
     /* Detach current block so hi_emit during phi insertion
        doesn't corrupt bb_end of the last lowered block */
     hl_cur_blk = -1;
