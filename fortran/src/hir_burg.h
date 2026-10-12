@@ -1,8 +1,4 @@
-/* COPIED from selfhost/src/hir_burg.h at 849dd791.
- * fortran/ is self-contained by ruling: selfhost must be free to evolve
- * without breaking f77.  Do NOT symlink this back.  Re-sync deliberately,
- * and record the new vintage here.
- */
+/* COPIED from selfhost/stage08/hir_burg.h at 30e16a57.  See note in hir.h. */
 /* hir_burg.h -- BURG-style instruction selection for s12cc
  *
  * Bottom-up rewrite grammar: table-driven pattern matcher.
@@ -54,8 +50,8 @@ static int bg_nchain;
 /* Per-instruction labeling: 8192 * 5 = 40960 entries.
  * Covers functions up to 8192 HIR instructions.
  * Functions exceeding this skip BURG (codegen falls back). */
-#define BG_MAX_INST 8192
-#define BG_COST_SZ 40960
+#define BG_MAX_INST 262144   /* was 8192 */
+#define BG_COST_SZ (BG_MAX_INST * BG_NNT)   /* was 40960 = 8192 * 5, the old ceiling: a function past 8192 instructions indexed off both tables into their neighbours, and sqlite3VdbeExec got garbage costs, rules, folds and symbol names from it */
 static int bg_cost[BG_COST_SZ];
 static int bg_rule[BG_COST_SZ];
 
@@ -602,20 +598,51 @@ static int bg_is_sym(int k) {
     return k == HI_GADDR || k == HI_SADDR || k == HI_FADDR;
 }
 
-static void bg_compute_foff(void) {
+static char bg_fdone[HIR_MAX_INST];   /* bg_foff_one: computed this function */
+static int  bg_walk[HIR_MAX_INST];    /* explicit stack: operand chains are not host recursion (GitHub issue 56) */
+
+/* Push onto bg_walk with a bound.  A node is marked done when it first
+ * reaches the TOP, not when it is pushed, so a shared operand can sit on
+ * the stack more than once and the depth is bounded by 2*h_ninst, not by
+ * h_ninst.  Measured max over all of sqlite3.c is 5 -- HIR operand trees
+ * are shallow -- so this never fires on real code; it is here because an
+ * unbounded write into a static array is how silent corruption starts. */
+static int bg_walk_push(int sp, int v) {
+    if (sp >= HIR_MAX_INST) {
+        fdputs("s12cc: burg walk stack overflow\n", 2);
+        exit(1);
+    }
+    bg_walk[sp] = v;
+    return sp + 1;
+}
+
+/* Frame offset and symbol base of one instruction; an addi's operand
+ * first, since the SSA pass appends allocas after their users. */
+static void bg_foff_one(int start) {
+    int sp;
     int i;
     int k;
     int s1;
     int sk;
-
-    i = 0;
-    while (i < h_ninst) {
+    if (bg_fdone[start]) return;
+    sp = 0;
+    sp = bg_walk_push(sp, start);
+    while (sp > 0) {
+        i = bg_walk[sp - 1];
+        if (!bg_fdone[i]) {
+            bg_fdone[i] = 1;
+            k = h_kind[i];
+            s1 = h_src1[i];
+            if (k == HI_ADDI && s1 >= 0 && s1 < h_ninst && !bg_fdone[s1]) {
+                sp = bg_walk_push(sp, s1);
+                continue;
+            }
+        }
         k = h_kind[i];
-        /* Frame offsets */
+        s1 = h_src1[i];
         if (k == HI_ALLOCA) {
             bg_foff[i] = h_val[i];
         } else if (k == HI_ADDI) {
-            s1 = h_src1[i];
             sk = -1;
             if (s1 >= 0) sk = h_kind[s1];
             if (sk == HI_ALLOCA || sk == HI_ADDI) {
@@ -631,7 +658,6 @@ static void bg_compute_foff(void) {
             bg_ssym[i] = i;
             bg_soff[i] = 0;
         } else if (k == HI_ADDI) {
-            s1 = h_src1[i];
             if (s1 >= 0 && bg_ssym[s1] >= 0) {
                 bg_ssym[i] = bg_ssym[s1];
                 bg_soff[i] = bg_soff[s1] + h_val[i];
@@ -643,14 +669,35 @@ static void bg_compute_foff(void) {
             bg_ssym[i] = -1;
             bg_soff[i] = 0;
         }
+        sp = sp - 1;
+    }
+}
+
+static void bg_compute_foff(void) {
+    int i;
+    i = 0;
+    while (i < h_ninst) {
+        bg_fdone[i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while (i < h_ninst) {
+        bg_foff_one(i);
         i = i + 1;
     }
 }
 
 /* --- Bottom-up labeling --- */
 
-static void bg_label(void) {
-    int i;
+static char bg_done[HIR_MAX_INST];   /* bg_label_one: labeled this function */
+
+/* Is src2 a value operand for this kind (a branch's src2 is a block)? */
+static int bg_src2_is_value(int k) {
+    if (k == HI_BR || k == HI_BRC || k == HI_PHI) return 0;
+    return 1;
+}
+
+static void bg_label_one(int start) {
     int k;
     int pi;
     int pat;
@@ -662,6 +709,118 @@ static void bg_label(void) {
     int s2;
     int base_idx;
     int dst;
+    int sp;
+    int i;
+    int pushed;
+    if (bg_done[start]) return;
+    sp = 0;
+    sp = bg_walk_push(sp, start);
+    while (sp > 0) {
+    i = bg_walk[sp - 1];
+    if (!bg_done[i]) {
+        bg_done[i] = 1;
+        k = h_kind[i];
+        if (k == HI_NOP || k < 0 || k > BG_MAX_OP) {
+            sp = sp - 1;
+            continue;
+        }
+        s1 = h_src1[i];
+        s2 = h_src2[i];
+        /* Operands defined AFTER their user -- the allocas the SSA pass
+         * appends, the phis at the end of the array -- are labeled first,
+         * or this instruction sees only infinite costs, gets no rule, and
+         * the emitter reads a nonterminal off the end of a table (SQLite's
+         * sqlite3VdbeExec loaded db->aDb through a symbol named by garbage).
+         * Walk them with bg_walk, not host recursion: a 50k ADDI chain
+         * blew the stack (GitHub issue 56). */
+        pushed = 0;
+        if (s1 >= 0 && s1 < h_ninst && !bg_done[s1]) {
+            sp = bg_walk_push(sp, s1);
+            pushed = 1;
+        }
+        if (s2 >= 0 && s2 < h_ninst && bg_src2_is_value(k) && !bg_done[s2]) {
+            sp = bg_walk_push(sp, s2);
+            pushed = 1;
+        }
+        if (pushed) continue;
+    }
+    k = h_kind[i];
+    if (k == HI_NOP || k < 0 || k > BG_MAX_OP) {
+        sp = sp - 1;
+        continue;
+    }
+    s1 = h_src1[i];
+    s2 = h_src2[i];
+
+    /* Try all patterns for this operator */
+    pi = 0;
+    while (pi < bg_ocount[k]) {
+        pat = bg_sorted[bg_ofirst[k] + pi];
+        lnt = bg_plnt[pat];
+        rnt = bg_prnt[pat];
+        cost = bg_pcost[pat];
+
+        /* Guard: faddr -> ALLOCA requires small offset */
+        if (k == HI_ALLOCA && bg_pnt[pat] == BG_FADDR) {
+            if (!bg_faddr_ok(i)) { pi = pi + 1; continue; }
+        }
+
+        /* Guard: faddr -> ADDI(faddr) requires combined offset fits */
+        if (k == HI_ADDI && bg_pnt[pat] == BG_FADDR) {
+            if (!bg_addi_faddr_ok(i)) { pi = pi + 1; continue; }
+        }
+
+        /* Check left child */
+        if (lnt >= 0) {
+            if (s1 < 0 || bg_cost[s1 * BG_NNT + lnt] >= BG_INF) {
+                pi = pi + 1;
+                continue;
+            }
+            cost = cost + bg_cost[s1 * BG_NNT + lnt];
+        }
+
+        /* Check right child */
+        if (rnt >= 0) {
+            if (s2 < 0 || bg_cost[s2 * BG_NNT + rnt] >= BG_INF) {
+                pi = pi + 1;
+                continue;
+            }
+            cost = cost + bg_cost[s2 * BG_NNT + rnt];
+        }
+
+        /* Update if better */
+        dst = i * BG_NNT + bg_pnt[pat];
+        if (cost < bg_cost[dst]) {
+            bg_cost[dst] = cost;
+            bg_rule[dst] = pat;
+        }
+
+        pi = pi + 1;
+    }
+
+    /* Apply chain rules */
+    ci = 0;
+    while (ci < bg_nchain) {
+        base_idx = i * BG_NNT + bg_cfrom[ci];
+        if (bg_cost[base_idx] < BG_INF) {
+            cost = bg_cost[base_idx] + bg_ccost[ci];
+            dst = i * BG_NNT + bg_cto[ci];
+            if (cost < bg_cost[dst]) {
+                bg_cost[dst] = cost;
+                /* Chain encodes as <= -2; -1 means no rule. */
+                bg_rule[dst] = -(ci + 2);
+            }
+        }
+        ci = ci + 1;
+    }
+
+    sp = sp - 1;
+    }
+
+}
+
+static void bg_label(void) {
+    int i;
 
     /* Initialize all costs to INF */
     i = 0;
@@ -670,84 +829,27 @@ static void bg_label(void) {
         bg_rule[i] = -1;
         i = i + 1;
     }
-
-    /* Label each instruction */
     i = 0;
     while (i < h_ninst) {
-        k = h_kind[i];
-        if (k == HI_NOP) { i = i + 1; continue; }
-        if (k < 0 || k > BG_MAX_OP) { i = i + 1; continue; }
+        bg_done[i] = 0;
+        i = i + 1;
+    }
 
-        s1 = h_src1[i];
-        s2 = h_src2[i];
-
-        /* Try all patterns for this operator */
-        pi = 0;
-        while (pi < bg_ocount[k]) {
-            pat = bg_sorted[bg_ofirst[k] + pi];
-            lnt = bg_plnt[pat];
-            rnt = bg_prnt[pat];
-            cost = bg_pcost[pat];
-
-            /* Guard: faddr -> ALLOCA requires small offset */
-            if (k == HI_ALLOCA && bg_pnt[pat] == BG_FADDR) {
-                if (!bg_faddr_ok(i)) { pi = pi + 1; continue; }
-            }
-
-            /* Guard: faddr -> ADDI(faddr) requires combined offset fits */
-            if (k == HI_ADDI && bg_pnt[pat] == BG_FADDR) {
-                if (!bg_addi_faddr_ok(i)) { pi = pi + 1; continue; }
-            }
-
-            /* Check left child */
-            if (lnt >= 0) {
-                if (s1 < 0 || bg_cost[s1 * BG_NNT + lnt] >= BG_INF) {
-                    pi = pi + 1;
-                    continue;
-                }
-                cost = cost + bg_cost[s1 * BG_NNT + lnt];
-            }
-
-            /* Check right child */
-            if (rnt >= 0) {
-                if (s2 < 0 || bg_cost[s2 * BG_NNT + rnt] >= BG_INF) {
-                    pi = pi + 1;
-                    continue;
-                }
-                cost = cost + bg_cost[s2 * BG_NNT + rnt];
-            }
-
-            /* Update if better */
-            dst = i * BG_NNT + bg_pnt[pat];
-            if (cost < bg_cost[dst]) {
-                bg_cost[dst] = cost;
-                bg_rule[dst] = pat;
-            }
-
-            pi = pi + 1;
-        }
-
-        /* Apply chain rules */
-        ci = 0;
-        while (ci < bg_nchain) {
-            base_idx = i * BG_NNT + bg_cfrom[ci];
-            if (bg_cost[base_idx] < BG_INF) {
-                cost = bg_cost[base_idx] + bg_ccost[ci];
-                dst = i * BG_NNT + bg_cto[ci];
-                if (cost < bg_cost[dst]) {
-                    bg_cost[dst] = cost;
-                    /* Chain encodes as <= -2; -1 means no rule. */
-                    bg_rule[dst] = -(ci + 2);
-                }
-            }
-            ci = ci + 1;
-        }
-
+    /* Label each instruction, operands first */
+    i = 0;
+    while (i < h_ninst) {
+        bg_label_one(i);
         i = i + 1;
     }
 }
 
 /* --- Top-down selection --- */
+
+/* Kinds a parent's pattern can regenerate once the child is folded away. */
+static int bg_foldable(int k) {
+    return k == HI_ICONST || k == HI_GADDR || k == HI_SADDR || k == HI_FADDR ||
+           k == HI_ALLOCA || k == HI_ADDI;
+}
 
 static void bg_select(void) {
     int i;
@@ -811,8 +913,11 @@ static void bg_select(void) {
         lnt = bg_plnt[pat];
         s1 = h_src1[i];
 
-        /* Fold left child if: non-REG NT, single use, same block, viable */
-        if (lnt >= 0 && lnt != BG_REG && s1 >= 0 && !bg_fold[s1]) {
+        /* Fold left child if: non-REG NT, single use, same block, viable,
+         * and of a kind the parent's pattern can regenerate.  A phi met
+         * every other test with a finite symbol-address cost and was
+         * deleted: SQLite's OP_OpenRead read its cursor as a literal 0. */
+        if (lnt >= 0 && lnt != BG_REG && s1 >= 0 && !bg_fold[s1] && bg_foldable(h_kind[s1])) {
             bg_stat_cand = bg_stat_cand + 1;
             if (hi_is_remat(h_kind[s1])) {
                 bg_stat_rej_remat = bg_stat_rej_remat + 1;
@@ -834,7 +939,7 @@ static void bg_select(void) {
         s2 = h_src2[i];
 
         /* Fold right child (rare, but check for completeness) */
-        if (rnt >= 0 && rnt != BG_REG && s2 >= 0 && !bg_fold[s2]) {
+        if (rnt >= 0 && rnt != BG_REG && s2 >= 0 && !bg_fold[s2] && bg_foldable(h_kind[s2])) {
             if (bg_uses[s2] == 1
                 && !hi_is_remat(h_kind[s2])
                 && h_kind[s2] != HI_NOP

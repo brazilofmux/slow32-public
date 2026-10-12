@@ -1,8 +1,4 @@
-/* COPIED from selfhost/src/hir_ssa.h at 849dd791.
- * fortran/ is self-contained by ruling: selfhost must be free to evolve
- * without breaking f77.  Do NOT symlink this back.  Re-sync deliberately,
- * and record the new vintage here.
- */
+/* COPIED from selfhost/stage08/hir_ssa.h at 30e16a57.  See note in hir.h. */
 /* hir_ssa.h -- SSA construction for s12cc
  *
  * Phase B: CFG, RPO, dominator tree, DF, phi insertion, renaming.
@@ -21,12 +17,12 @@
  * count / HL_JT_MAX_SPAN).  4096 (the old 2-per-block bound) could be
  * exhausted by one large switch plus ordinary control flow, so allow ample
  * headroom; ssa_build_cfg still range-checks and aborts cleanly on overflow. */
-#define SSA_SUCC_SZ 16384
+#define SSA_SUCC_SZ 131072   /* was 16384 */
 static int ssa_succ[SSA_SUCC_SZ];
 static int ssa_nsucc[HIR_MAX_BLOCK];
 static int ssa_soff[HIR_MAX_BLOCK];
 
-#define SSA_MAX_PRED 8192
+#define SSA_MAX_PRED 65536   /* was 8192 */
 static int ssa_pred[SSA_MAX_PRED];
 static int ssa_pbase[HIR_MAX_BLOCK];
 static int ssa_npred[HIR_MAX_BLOCK];
@@ -40,15 +36,50 @@ static int ssa_rpo_cnt;
 static int ssa_idom[HIR_MAX_BLOCK];
 
 /* --- Dominance frontier (fixed width per block) --- */
-#define SSA_DF_W 32
-#define SSA_DF_SZ 65536
+/* Per-block dominance-frontier width, and the flat array it indexes as
+ * block * SSA_DF_W.  The two must be raised together: SSA_DF_SZ is
+ * exactly HIR_MAX_BLOCK * SSA_DF_W, so bumping the width alone silently
+ * shortens how many blocks are addressable.
+ *
+ * Raised 32 -> 64 because stage08 could no longer compile its own
+ * source: some block in s12cc.c has a dominance frontier wider than 32,
+ * and gen1 died with "too many dominance-frontier entries", failing the
+ * (opt-in) fixed-point gate.  Dropping the entry instead would cost a
+ * phi and silently produce a wrong reaching definition, so stopping is
+ * right -- the ceiling just has to be big enough. */
+#define SSA_DF_W 64
+#define SSA_DF_SZ 1048576   /* HIR_MAX_BLOCK * SSA_DF_W; was 524288 at W=32 */
 static int ssa_df[SSA_DF_SZ];
 static int ssa_dfc[HIR_MAX_BLOCK];
 
 /* --- Promotable variables --- */
-#define SSA_MAX_PROMO 256
+#define SSA_MAX_PROMO 4096   /* was 256 */
 static int ssa_promo[SSA_MAX_PROMO];
 static int ssa_npromo;
+
+/* The function calls setjmp.  A longjmp brings control back to that
+ * call with the callee-saved registers as they were when setjmp was
+ * first called and memory as it is now -- so a local kept in a register
+ * goes back to an old value, and one kept in memory does not.  The
+ * standard asks only that volatile locals keep what was last stored;
+ * here every named local of such a function stays in memory, which
+ * gives volatile ones what they are owed and the rest more.  The
+ * allocator, for its part, gives each spilled value a slot of its own
+ * in such a function (hir_regalloc.h): a slot shared by two values with
+ * disjoint lifetimes is disjoint only along paths the flow graph has,
+ * and the way back from longjmp is not one of them.  (selfhost
+ * ISSUES-75: the library had no setjmp until then, so no program this
+ * compiler built had called it.) */
+static int ssa_fn_setjmp;
+
+static int ssa_is_setjmp_name(char *nm) {
+    if (nm == NULL) return 0;
+    if (strcmp(nm, "setjmp") == 0) return 1;
+    if (strcmp(nm, "_setjmp") == 0) return 1;
+    if (strcmp(nm, "sigsetjmp") == 0) return 1;
+    if (strcmp(nm, "__sigsetjmp") == 0) return 1;
+    return 0;
+}
 static int ssa_phi_base; /* h_ninst before phi insertion */
 
 /* --- PHI optimization (linked lists per block) --- */
@@ -58,7 +89,7 @@ static int ssa_phi_next[HIR_MAX_INST];
 /* hl_nparams defined in hir_lower.h (shared) */
 
 /* --- Dom tree children (flat) --- */
-#define SSA_DTC_MAX 8192
+#define SSA_DTC_MAX 65536   /* was 8192 */
 static int ssa_dtc[SSA_DTC_MAX];
 static int ssa_dtc_base[HIR_MAX_BLOCK];
 static int ssa_dtc_cnt[HIR_MAX_BLOCK];
@@ -69,19 +100,19 @@ static int ssa_dtc_cnt[HIR_MAX_BLOCK];
  * deeply-nested functions in tools/dbt (block_cache.c) hit the cap.
  * 256 leaves comfortable headroom; the cost is just static memory in
  * the compiler. */
-#define SSA_VD 256
-#define SSA_VSTK_SZ 65536
+#define SSA_VD 1024   /* was 256 */
+#define SSA_VSTK_SZ 4194304   /* was 65536 */
 static int ssa_vstk[SSA_VSTK_SZ];
 static int ssa_vtop[SSA_MAX_PROMO];
 
 /* --- Rename: DFS stack --- */
-#define SSA_DFS 2048
+#define SSA_DFS 16384   /* was 2048 */
 static int ssa_rblk[SSA_DFS];
 static int ssa_rci[SSA_DFS];
 static int ssa_rmark[SSA_DFS];
 
 /* --- Rename: push log for backtracking --- */
-#define SSA_PLOG 8192
+#define SSA_PLOG 65536   /* was 8192 */
 static int ssa_plog[SSA_PLOG];
 static int ssa_plog_n;
 
@@ -142,9 +173,14 @@ static void ssa_build_cfg(void) {
     }
 
     /* Build successors from terminators.
-       Find the FIRST terminator in each block (dead code after
-       goto/break/return may leave non-terminator instructions at
-       the end of a block).
+       A terminator is the LAST instruction of its block, by contract:
+       the codegen emits a block's instructions in order and drops the
+       branch of a RET or BR to the block laid out next (GitHub issue
+       72), so an instruction after the terminator would RUN.  The C
+       lowering skips statements after one (hl_stmt's ND_BLOCK loop);
+       the Fortran front did not, at a statement after RETURN, and FCVS
+       FM509 ran the next ENTRY's body through a phantom dummy.  Stop
+       here rather than miscompile.
 
        ssa_soff[b] is the cursor position where block b's successor
        slots begin in the flat ssa_succ[] pool; cursor advances by the
@@ -161,6 +197,16 @@ static void ssa_build_cfg(void) {
             term = term + 1;
         }
         if (term < bb_end[b]) {
+            i = term + 1;
+            while (i < bb_end[b]) {
+                if (h_kind[i] != HI_NOP) {
+                    fdputs("s12cc: instructions after a block's terminator (fn=", 2);
+                    fdputs(hl_cur_fn_dbg ? hl_cur_fn_dbg : "?", 2);
+                    fdputs(")\n", 2);
+                    exit(1);
+                }
+                i = i + 1;
+            }
             k = h_kind[term];
             if (k == HI_BR) {
                 if (cursor + 1 > SSA_SUCC_SZ) {
@@ -430,7 +476,16 @@ static void ssa_compute_df(void) {
                     if (ssa_df[base + di] == b) { dup = 1; }
                     di = di + 1;
                 }
-                if (!dup && ssa_dfc[runner] < SSA_DF_W) {
+                if (!dup) {
+                    if (ssa_dfc[runner] >= SSA_DF_W) {
+                        /* Dropping the entry costs a phi, and a missing
+                         * phi is a wrong reaching definition that nothing
+                         * downstream can notice -- the one ceiling in this
+                         * file that used to fail silently (GitHub issue
+                         * 53).  Every other one stops here. */
+                        fdputs("s12cc: too many dominance-frontier entries\n", 2);
+                        exit(1);
+                    }
                     ssa_df[base + ssa_dfc[runner]] = b;
                     ssa_dfc[runner] = ssa_dfc[runner] + 1;
                 }
@@ -466,6 +521,23 @@ static void ssa_find_promo(void) {
     while (i < hl_nalloca) {
         ok[i] = 1;
         i = i + 1;
+    }
+
+    /* A function that calls setjmp keeps its named locals in memory
+     * (slot ids are the parser's, one per declaration; 0 is a temp of
+     * the lowering's own, which does not live across a statement). */
+    ssa_fn_setjmp = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_CALL && ssa_is_setjmp_name(h_name[i])) ssa_fn_setjmp = 1;
+        i = i + 1;
+    }
+    if (ssa_fn_setjmp) {
+        i = 0;
+        while (i < hl_nalloca) {
+            if (hl_aslot[i] != 0) ok[i] = 0;
+            i = i + 1;
+        }
     }
 
     /* Scan instructions for non-promotable uses */
@@ -1057,6 +1129,7 @@ static void ssa_split_pair_allocas(void) {
         h_no_remat[ah] = 0;
         h_ninst = h_ninst + 1;
         hl_aoff[hl_nalloca] = hl_aoff[j] + 4;
+        hl_aslot[hl_nalloca] = hl_aslot[j];     /* the half of a named local is that local's (ssa_find_promo asks) */
         hl_ainst[hl_nalloca] = ah;
         hl_nalloca = hl_nalloca + 1;
 
@@ -1083,12 +1156,76 @@ static void ssa_split_pair_allocas(void) {
     }
 }
 
+/* JMPTAB edges cannot carry phi copies (hir_codegen.h).  Lowering already
+ * trampolines C switch fall-through (GitHub issue 64), but a goto into a
+ * case -- Ragel `st15:` falling into `case 15:` in lex_next -- is another
+ * predecessor that only shows up once the whole function is lowered.
+ * Split those table targets: JMPTAB -> trampoline BR -> case, so the
+ * case's extra edge is a normal BR and can shuffle.  GitHub issue 75. */
+static int ssa_jmptab_split_multi(void) {
+    int b;
+    int term;
+    int k;
+    int base;
+    int span;
+    int t;
+    int u;
+    int tgt;
+    int tramp;
+    int saved;
+    int changed;
+    int seen;
+
+    changed = 0;
+    b = 0;
+    while (b < bb_nblk) {
+        if (bb_start[b] >= 0 && bb_start[b] < bb_end[b]) {
+            term = bb_start[b];
+            while (term < bb_end[b]) {
+                k = h_kind[term];
+                if (hi_is_terminator(k)) break;
+                term = term + 1;
+            }
+            if (term < bb_end[b] && h_kind[term] == HI_JMPTAB) {
+                base = hjt_base[term];
+                span = hjt_span[term];
+                t = 0;
+                while (t < span) {
+                    tgt = hjt_target[base + t];
+                    seen = 0;
+                    u = 0;
+                    while (u < t) {
+                        if (hjt_target[base + u] == tgt) { seen = 1; break; }
+                        u = u + 1;
+                    }
+                    if (!seen && tgt >= 0 && tgt < bb_nblk && ssa_npred[tgt] > 1) {
+                        tramp = hir_new_block();
+                        saved = hl_cur_blk;
+                        hl_cur_blk = tramp;
+                        bb_start[tramp] = h_ninst;
+                        bb_end[tramp] = h_ninst;
+                        hi_emit(HI_BR, 0, -1, -1, tgt, NULL);
+                        hl_cur_blk = saved;
+                        u = t;
+                        while (u < span) {
+                            if (hjt_target[base + u] == tgt) {
+                                hjt_target[base + u] = tramp;
+                            }
+                            u = u + 1;
+                        }
+                        changed = 1;
+                    }
+                    t = t + 1;
+                }
+            }
+        }
+        b = b + 1;
+    }
+    return changed;
+}
+
 static void hir_ssa_construct(void) {
     int b;
-
-    /* Always init phi linked lists (codegen uses them even with 0 promos) */
-    b = 0;
-    while (b < bb_nblk) { ssa_phi_head[b] = -1; b = b + 1; }
 
     if (bb_nblk < 1) {
         ssa_phi_base = h_ninst;
@@ -1098,9 +1235,29 @@ static void hir_ssa_construct(void) {
     if (ssa_split_pairs) ssa_split_pair_allocas();
 
     ssa_build_cfg();
+    if (ssa_jmptab_split_multi()) {
+        ssa_build_cfg();
+    }
+
+    /* Always init phi linked lists (codegen uses them even with 0 promos).
+     * After the JMPTAB split so trampoline blocks are included. */
+    b = 0;
+    while (b < bb_nblk) { ssa_phi_head[b] = -1; b = b + 1; }
+
     ssa_compute_rpo();
     ssa_compute_idom();
     ssa_compute_df();
+    /* The dominator-tree children are built whether or not anything
+     * gets promoted: the allocator's call-site splitting walks them
+     * (ra_csplit_on_dom, GitHub issue 67) long after this pass.  They
+     * used to be built only past the early return below, so a function
+     * with nothing to promote read the previous function's table -- a
+     * Fortran CHARACTER function with three RETURN arms (FCVS FM715,
+     * CF716) had its result pointer "split" into a copy that two of the
+     * arms read without ever having executed it, and f77_strcpy wrote
+     * to address 0.  Found by the Fortran front at the 2026-10-11
+     * re-sync; latent for C. */
+    ssa_build_dtree();
     ssa_find_promo();
 
     if (ssa_npromo == 0) {
@@ -1108,7 +1265,6 @@ static void hir_ssa_construct(void) {
         return;
     }
 
-    ssa_build_dtree();
     /* Detach current block so hi_emit during phi insertion
        doesn't corrupt bb_end of the last lowered block */
     hl_cur_blk = -1;

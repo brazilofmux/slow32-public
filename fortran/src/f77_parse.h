@@ -6361,6 +6361,18 @@ static void f77_statement(void) {
         f77_begin_blk(b);
     }
 
+    /* An unlabelled statement after RETURN, GOTO or STOP is unreachable,
+     * but it is still compiled -- and it must not land in the block the
+     * terminator just closed.  The backend's contract is that a
+     * terminator is the LAST instruction of its block (the codegen drops
+     * the jump of a RET or BR to the block laid out next, so anything
+     * after it would run): the body of the next ENTRY, parsed here as
+     * dead code, called through a phantom dummy's address in FCVS FM509
+     * once the re-synced backend took that liberty.  So: a fresh block,
+     * which has no predecessor and is removed as dead. */
+    if (!f77_cur_blk_live && !f77_stmt_is_declaration(cls))
+        f77_begin_blk(hir_new_block());
+
     if (cls == S_ASSIGN)   { f77_stmt_assign(); goto done; }
     if (cls == S_DO)       { f77_open_do();     goto done; }
 

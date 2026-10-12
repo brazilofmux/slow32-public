@@ -138,7 +138,9 @@ No linker change is required, and none should be added for this.
 ## Milestones
 
 1. **Backend detached and proven.** ✅ **DONE 2026-08-27.** Copied at
-   `849dd791`; `tests/backend_slice.c` drives it with hand-built HIR
+   `849dd791` (re-synced 2026-10-11 at `30e16a57`, byte-identical to
+   stage08 past the banners; see the README's "copied backend" section
+   for what that re-sync found); `tests/backend_slice.c` drives it with hand-built HIR
    and no frontend, producing Σi² correctly on the emulator (0, 1, 5,
    14, 30, 55, 385). Kept as a permanent gate: it catches a broken
    frontend contract after a re-sync immediately and specifically.

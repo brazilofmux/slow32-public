@@ -1,4 +1,5 @@
-/* COPIED from selfhost/src/hir.h at 849dd791.
+/* COPIED from selfhost/stage08/hir.h at 30e16a57 (re-sync 2026-10-11; the
+ * first copy was 849dd791, 2026-08-31).
  * fortran/ is self-contained by ruling: selfhost must be free to evolve
  * without breaking f77.  Do NOT symlink this back.  Re-sync deliberately,
  * and record the new vintage here.
@@ -106,10 +107,11 @@
 #define HI_JMPTAB   70
 
 /* The high word of a product, signed and unsigned -- SLOW-32's mulh and
- * mulhu (selfhost bcc42652, selfhost ISSUES-79; here 2026-10-03 to keep
- * the copy in step -- f77 has no 64-bit integer and emits neither yet).
- * Binary like ADD..SGEU: pure, CSE-able, the result may reuse src1's
- * register. */
+ * mulhu.  A 64-bit product is lo = MUL, hi = MULH when both operands are
+ * sign-extended words, else MULHU + two MULs (hir_lower.h hl_ll_op); it
+ * was a __muldi3 call.  Binary like ADD..SGEU: pure, CSE-able, the result
+ * may reuse src1's register.  Came up from the COBOL front's copy of these
+ * headers (cobol/src/hir), 2026-10-03. */
 #define HI_MULH     71
 #define HI_MULHU    72
 /* a binary operation over two value operands (the ADD..SGEU range and
@@ -117,10 +119,22 @@
 static int hi_is_binop(int k) { return (k >= HI_ADD && k <= HI_SGEU) || k == HI_MULH || k == HI_MULHU; }
 
 /* --- Limits --- */
-#define HIR_MAX_INST   16384
-#define HIR_MAX_BLOCK  2048
-#define HIR_MAX_CARG   4096
-#define HIR_MAX_PARG   32768
+
+/* s12cc.c is built without -I, so these come from the implicit
+ * declaration everywhere they are used for truthiness (HIR_*_DEBUG
+ * gates).  The inline budget needs getenv's real return type, and a
+ * later prototype would conflict with the earlier implicit int -- so
+ * declare both here, ahead of every use in the HIR headers. */
+static int hl_inl_depth_dbg;
+static char *hl_cur_fn_dbg;
+
+char *getenv(const char *name);
+int atoi(const char *nptr);
+
+#define HIR_MAX_INST   262144   /* was 16384 */
+#define HIR_MAX_BLOCK  16384   /* was 2048 */
+#define HIR_MAX_CARG   32768   /* was 4096 */
+#define HIR_MAX_PARG 2097152   /* was 32768, then 262144; SQLite's debug build (asserts add blocks) overflowed it */
 
 /* --- Diagnostic flags --- */
 static int   s12cc_dump_intervals;  /* set by `-d` to dump per-fn live intervals */
@@ -224,7 +238,7 @@ static int   h_ncarg;
  * hjt_target[hjt_base[i] .. hjt_base[i]+hjt_span[i]) are the destination
  * block numbers for index 0..span-1.  Kept separate from h_carg because
  * these are block numbers, not value instructions. */
-#define HIR_MAX_JT  8192
+#define HIR_MAX_JT  32768   /* was 8192 */
 static int   hjt_target[HIR_MAX_JT];
 static int   hjt_base[HIR_MAX_INST];
 static int   hjt_span[HIR_MAX_INST];
@@ -265,7 +279,11 @@ static int hir_new_block(void) {
     int b;
     b = bb_nblk;
     if (b >= HIR_MAX_BLOCK) {
-        fdputs("s12cc: too many HIR blocks\n", 2);
+        fdputs("s12cc: too many HIR blocks (fn=", 2);
+        fdputs(hl_cur_fn_dbg ? hl_cur_fn_dbg : "?", 2);
+        fdputs(" inl_depth=", 2);
+        fdputuint(2, (unsigned)hl_inl_depth_dbg);
+        fdputs(")\n", 2);
         exit(1);
     }
     bb_start[b] = -1;  /* set lazily when block becomes current */
@@ -294,7 +312,11 @@ static int hi_emit(int kind, int ty, int s1, int s2, int val, char *name) {
     int idx;
     idx = h_ninst;
     if (idx >= HIR_MAX_INST) {
-        fdputs("s12cc: too many HIR instructions\n", 2);
+        fdputs("s12cc: too many HIR instructions (inl_depth=", 2);
+        fdputuint(2, (unsigned)hl_inl_depth_dbg);
+        fdputs(" fn=", 2);
+        fdputs(hl_cur_fn_dbg ? hl_cur_fn_dbg : "?", 2);
+        fdputs(")\n", 2);
         exit(1);
     }
     h_ld_ro[idx] = 0;

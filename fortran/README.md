@@ -41,32 +41,40 @@ plan, the rulings behind it, and the milestone list.
 
 `src/hir.h`, `hir_ssa.h`, `hir_opt.h`, `hir_licm.h`, `hir_burg.h`,
 `hir_regalloc.h` and `hir_codegen.h` are **copies** of the stage08
-backend, taken at commit `849dd791` (`hir_licm.h` re-synced at
-`1fd968dd` for the pruned hoisting; each file's header is authoritative). They are copies on purpose:
-`selfhost/` must be free to evolve without breaking f77, so these are
-deliberately NOT symlinks into `../selfhost/src` the way cc-x64 and
-cc-a64 do it.
+backend. The first copy was taken at `849dd791` (2026-08-31); the
+copies were re-synced on 2026-10-11 at `30e16a57`, and since then
+each file is byte-identical to its stage08 original past the one-line
+provenance banner (`hir.h` carries the ruling as well). They are copies
+on purpose: `selfhost/` must be free to evolve without breaking f77, so
+these are deliberately NOT symlinks into `../selfhost/src` the way
+cc-x64 and cc-a64 do it.
 
-Each file carries a provenance header naming its source commit. A
-re-sync is a deliberate act: re-copy, re-stamp the vintage, and run the
-tests — `backend_slice` exists precisely to catch a contract break at
-the moment it happens.
+A re-sync is a deliberate act: re-copy, re-stamp the banners, and run
+the tests -- `backend_slice` exists precisely to catch a contract break
+at the moment it happens. What the frontend owes the backend is in
+`f77_contract.h` and `f77_shim.h` (the C AST fields it reads, the type
+predicates, the alloca registry, the global-data tables, and inert
+stand-ins for the C inliner's hooks).
 
-**Deliberate divergences from the selfhost original** (re-apply these
-after any re-sync; each is marked in-place with a `DIVERGENCE` comment):
+**No divergences remain.** Everything prototyped here between the two
+copies -- fp64 pairs allocated as a unit, per-block liveness, iterated
+spilling, live-range splitting, strength reduction, the fused FP
+compare-branch, the hardware `FSQRT.D`/`FSQRT.S` for `__fp64_sqrt` and
+`__fp32_sqrt` -- was ported to stage08 and came back identical. The
+`DIVERGENCE` comments still in the sources are history, not a to-do.
 
-- `hir_codegen.h` — `hcg_fp64_kind`/`hcg_fp64_emit` additionally
-  recognise `__fp64_sqrt` and `__fp32_sqrt`, emitting the hardware
-  `FSQRT.D` / `FSQRT.S`. The C compiler reaches sqrt through
-  `HI_FSQRT`, which this backend does not implement and **silently
-  emits nothing for**, so without this Fortran would call a libm
-  function whose entire body is one instruction. Not ported to
-  stage08, where nothing emits those names.
-
-The fp64 **aligned-pair allocation** (`ra_pair_claim`/`hcg_pair_reg`)
-was prototyped here and has since been **ported upstream to
-`selfhost/stage08`**, so it is no longer a divergence — the two copies
-agree on it.
+The 2026-10-11 re-sync is what a re-sync is for. The six weeks of
+stage08 work it brought in (call-site live-range splitting, frameless
+leaves, r30 as a GPR, shared spill slots, return values computed into
+r1, a terminator's jump dropped when the next block is laid out next)
+cost 0.9% of LINPACK's instructions and left mandel byte-identical --
+and the FCVS went 192 to 189 on the first build. The two causes were a
+stage08 bug the C front had never tripped (the dominator-tree children
+were stale in a function with nothing to promote, and the new split
+walked them: selfhost ISSUES-86) and a front-end liberty the old
+backend had tolerated (statements after RETURN emitted into the block
+RETURN closed). Both are fixed on both sides, and `tests/f77/entry2.f`
+and `charfn1.f` hold the two shapes.
 
 SLOW-32 is the only target. x86-64 and aarch64 are reached through
 `slow32-dbt`, as with every other language here.

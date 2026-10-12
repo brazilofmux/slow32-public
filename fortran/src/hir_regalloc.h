@@ -1,4 +1,4 @@
-/* COPIED from selfhost/stage08/hir_regalloc.h at 849dd791.  See note in hir.h. */
+/* COPIED from selfhost/stage08/hir_regalloc.h at 30e16a57.  See note in hir.h. */
 /* hir_regalloc.h -- IRC graph-coloring register allocation for s12cc (SLOW-32)
  *
  * Iterated Register Coalescing (George-Appel 1996) for the SLOW-32 selfhost
@@ -26,9 +26,9 @@
  */
 
 /* --- Configuration (SLOW-32) --- */
-#define RA_NPHY      18   /* r11..r28 */
+#define RA_NPHY      19   /* r11..r28 + optional r30 */
 #define RA_FIRST_REG 11   /* lowest allocatable register */
-#define RA_NCALLEE   18   /* all allocatable registers are callee-saved */
+#define RA_NCALLEE   18   /* r11..r28; r30 is extra when ra_r30_alloc */
 
 /* --- Full register classification (hard item — disabled until wired) ---
  * Goal: match the official LLVM SLOW32 ABI so short-lived values can use
@@ -48,7 +48,7 @@
  * dimension (parser.h:1496/1918 — no parenthesized expressions).  Hard-code
  * the sum so `static int ra_phys_reg[RA_NPHY_TOTAL]` below parses under the
  * bootstrap compiler.  Keep in sync with RA_NCALLEE + RA_NCALLER above. */
-#define RA_NPHY_TOTAL 26   /* RA_NCALLEE (18) + RA_NCALLER (8) */
+#define RA_NPHY_TOTAL 27   /* RA_NCALLEE (18) + r30 + RA_NCALLER (8) */
 
 /* Knob: how many caller-saved registers the allocator may use right now.
  * 0 = current production behavior (18 callee only).
@@ -56,11 +56,30 @@
  */
 static int ra_caller_saved_enabled_count = 8;  /* 0 = baseline (18 callee-saved only). 8 = enable r3-r10 for non-call-crossing values. */
 
+/* GitHub issue 73: r30 is the frame pointer when the function keeps
+ * one (varargs, or a large frame that did not take the extra color).
+ * On the omit-fp path it is an extra callee-saved GPR.  Set per
+ * function before hir_regalloc(); ra_init_phys_regs rebuilds the map. */
+static int ra_r30_alloc;
+static int ra_ncal = 18;             /* 18 or 19; set by ra_init_phys_regs */
+static int ra_stat_r30;              /* values colored to r30 */
+
 /* Cross-call liveness tracking — must be declared extremely early because
  * ra_prefers_caller_for_inst() (and other early helpers) reference it in
  * this single translation unit. */
 static int ra_crosses_call[HIR_MAX_INST];
 static int ra_mem_forced[HIR_MAX_INST];  /* iterated-spill victims (gc_respill) */
+/* COPY insts emitted immediately before a call to split a live range
+ * that is used as a call argument (or CALLP callee) and also lives
+ * after the call.  Chained through ra_csplit_next. */
+static int ra_csplit_head[HIR_MAX_INST];
+static int ra_csplit_next[HIR_MAX_INST];
+static int ra_split_orig;
+static int ra_stat_csplit;
+static int ra_after_stamp[HIR_MAX_INST];
+static int ra_after_tick;
+static char ra_is_csplit[HIR_MAX_INST];   /* COPY dest of a call split: always callee-saved */
+static int ra_dom_wl[HIR_MAX_BLOCK];      /* dom-tree walk for after-use rewire */
 static void ra_dump_signed(int v);       /* diagnostics; defined near the dump */
 
 /* Physical register table and classification (populated by ra_init_phys_regs).
@@ -71,32 +90,36 @@ static int ra_phys_reg[RA_NPHY_TOTAL];
 static int ra_is_callee[RA_NPHY_TOTAL];
 
 /* Initialize the physical register map and callee/caller classification.
- * Called once at startup of the allocator (or lazily on first use).
- * This is the single source of truth for "which physicals are callee-saved".
+ * Rebuilt per function so r30 can join the callee pool when ra_r30_alloc.
  */
 static void ra_init_phys_regs(void) {
-    static int inited = 0;
     int i;
+    int ncal;
 
-    if (inited) return;
-    inited = 1;
-
-    /* Callee-saved pool: r11..r28 (indices 0..17) */
+    /* Callee-saved pool: r11..r28 (indices 0..17), then r30 if enabled. */
     for (i = 0; i < RA_NCALLEE; i = i + 1) {
         ra_phys_reg[i] = RA_FIRST_REG + i;   /* 11 .. 28 */
         ra_is_callee[i] = 1;
     }
+    ncal = RA_NCALLEE;
+    if (ra_r30_alloc) {
+        ra_phys_reg[ncal] = 30;
+        ra_is_callee[ncal] = 1;
+        ncal = ncal + 1;
+    }
+    ra_ncal = ncal;
 
-    /* Caller-saved pool: r3..r10 (indices 18..25) */
+    /* Caller-saved pool: r3..r10, immediately after the callee slots. */
     for (i = 0; i < RA_NCALLER; i = i + 1) {
-        ra_phys_reg[RA_NCALLEE + i] = 3 + i; /* 3 .. 10 */
-        ra_is_callee[RA_NCALLEE + i] = 0;
+        ra_phys_reg[ncal + i] = 3 + i; /* 3 .. 10 */
+        ra_is_callee[ncal + i] = 0;
     }
 }
 
 /* Query helpers (safe even when knob == 0) */
 static int ra_num_callee_saved(void) {
-    return RA_NCALLEE;
+    ra_init_phys_regs();
+    return ra_ncal;
 }
 
 static int ra_num_caller_saved_enabled(void) {
@@ -104,7 +127,8 @@ static int ra_num_caller_saved_enabled(void) {
 }
 
 static int ra_num_active_slots(void) {
-    return RA_NCALLEE + ra_caller_saved_enabled_count;
+    ra_init_phys_regs();
+    return ra_ncal + ra_caller_saved_enabled_count;
 }
 
 static int ra_phys_is_callee_saved(int phys) {
@@ -155,6 +179,7 @@ static int ra_prefers_caller_for_inst(int inst) {
      * Values whose live range does *not* cross any call are allowed to use
      * the cheap caller-saved registers (r3-r10).  Values that cross calls
      * must stay in the callee-saved pool (r11-r28). */
+    if (ra_is_csplit[inst]) return 0;
     return !ra_crosses_call[inst];
 }
 
@@ -201,6 +226,61 @@ static int ra_param_preferred_color(int inst) {
     return -1;
 }
 
+/* Preferred physical register for a value used as a call argument
+ * (issue 67).  -1 if none.  Last call site wins. */
+static int ra_arg_pref_phys[HIR_MAX_INST];
+static int ra_abi_map[256];
+
+static void ra_mark_arg_prefs(void) {
+    int i;
+    int j;
+    int n;
+    int base;
+    int v;
+    i = 0;
+    while (i < h_ninst) { ra_arg_pref_phys[i] = -1; i = i + 1; }
+    i = 0;
+    while (i < h_ninst) {
+        if ((h_kind[i] == HI_CALL || h_kind[i] == HI_CALLP) &&
+            h_cbase[i] >= 0) {
+            n = h_val[i];
+            base = h_cbase[i];
+            if (n > 0 && n <= 256) {
+                hi_abi_assign(&h_carg_tag[base], n, ra_abi_map);
+                j = 0;
+                while (j < n) {
+                    v = h_carg[base + j];
+                    if (v >= 0 && ra_abi_map[j] >= 0)
+                        ra_arg_pref_phys[v] = ra_abi_map[j];
+                    j = j + 1;
+                }
+            }
+        }
+        i = i + 1;
+    }
+}
+
+static int ra_argsite_preferred_color(int inst) {
+    int phys;
+    int slot;
+    int nactive;
+    if (inst < 0 || inst >= h_ninst) return -1;
+    phys = ra_arg_pref_phys[inst];
+    if (phys < 0) return -1;
+    ra_init_phys_regs();
+    nactive = ra_num_active_slots();
+    slot = 0;
+    while (slot < nactive) {
+        if (ra_phys_reg[slot] == phys) {
+            if (ra_is_callee[slot]) return slot;
+            if (ra_prefers_caller_for_inst(inst)) return slot;
+            return -1;
+        }
+        slot = slot + 1;
+    }
+    return -1;
+}
+
 /* --- Output arrays --- */
 static int ra_reg[HIR_MAX_INST];    /* physical register, -1 = spilled/remat */
 static int ra_spill_off[HIR_MAX_INST]; /* spill slot (negative fp offset), 0 = none */
@@ -239,9 +319,9 @@ static int ra_stat_imm_base_reuse;  /* HI_ADDI results that reused their base re
  * IRC data structures (Chunk 3 — dead code until wiring step)
  * ================================================================= */
 
-#define GC_MAX_NODE  4096
-#define GC_MAX_EDGE  262144   /* lowered for selfhost toolchain (BSS + assembler limits) */
-#define GC_MAX_MOVE  8192
+#define GC_MAX_NODE  65536   /* was 4096 */
+#define GC_MAX_EDGE  2097152   /* was 262144 */   /* lowered for selfhost toolchain (BSS + assembler limits) */
+#define GC_MAX_MOVE  65536   /* was 8192 */
 
 static int gc_nnode;
 static int gc_inst[GC_MAX_NODE];
@@ -265,7 +345,7 @@ static int gc_nmove;
 #define GC_MV_CONSTRAINED 4
 static int gc_mv_status[GC_MAX_MOVE];
 
-#define GC_MAX_NMLIST 16384   /* lowered for selfhost */
+#define GC_MAX_NMLIST 262144   /* was 16384 */   /* lowered for selfhost */
 static int gc_nmlist_mv[GC_MAX_NMLIST];
 static int gc_nmlist_next[GC_MAX_NMLIST];
 static int gc_nmlist_head[GC_MAX_NODE];
@@ -359,6 +439,19 @@ static void ra_compute_pos(void) {
         i = bb_start[b];
         while (i < bb_end[b]) {
             if (i == term) break;
+            {
+                int sp;
+                sp = ra_csplit_head[i];
+                while (sp >= 0) {
+                    if (h_kind[sp] != HI_NOP) {
+                        ra_pos[sp] = pos;
+                        ra_order[ra_norder] = sp;
+                        ra_norder = ra_norder + 1;
+                        pos = pos + 1;
+                    }
+                    sp = ra_csplit_next[sp];
+                }
+            }
             if (h_kind[i] != HI_NOP) {
                 ra_pos[i] = pos;
                 ra_order[ra_norder] = i;
@@ -707,6 +800,121 @@ static void ra_compute_ends(void) {
  * (Used by the IRC allocator)
  * ================================================================= */
 
+/* --- Spill-slot sharing (GitHub issue 77) ---
+ * A spilled value occupies its slot from the store after its def to
+ * its last reload: the register interval [ra_pos, ra_iend].  A spilled
+ * PHI is different -- its slot is written by the edge copies at the
+ * end of EVERY predecessor, which on a back edge is a position far
+ * after the phi's own, so the slot range is widened to cover each
+ * predecessor's terminator.  That also keeps a phi apart from the
+ * values still live at those terminators (the copies read them). */
+static int ra_shead[HIR_MAX_INST];      /* per start position: first value */
+static int ra_snext[HIR_MAX_INST];      /* next value with the same start */
+static int ra_slot_end[HIR_MAX_INST];   /* per slot: occupant's end position */
+static int ra_stat_sslots;              /* cumulative slots after sharing */
+
+static int ra_spill_wants_slot(int i) {
+    if (ra_reg[i] >= 0) return 0;
+    if (h_kind[i] == HI_NOP) return 0;
+    if (!hi_has_value(h_kind[i])) return 0;
+    if (hi_inst_remat(i)) return 0;
+    return 1;
+}
+
+static void ra_slot_range(int v, int *ps, int *pe) {
+    int s;
+    int e;
+    int j;
+    int pred;
+    int term;
+    s = ra_pos[v];
+    e = ra_iend[v];
+    if (e < s) e = s;
+    if (h_kind[v] == HI_PHI && h_pbase[v] >= 0) {
+        j = 0;
+        while (j < h_pcnt[v]) {
+            pred = h_pblk[h_pbase[v] + j];
+            if (pred >= 0 && pred < bb_nblk) {
+                term = bb_end[pred] - 1;
+                while (term >= bb_start[pred] && h_kind[term] == HI_NOP)
+                    term = term - 1;
+                if (term >= bb_start[pred] && ra_pos[term] >= 0) {
+                    if (ra_pos[term] < s) s = ra_pos[term];
+                    if (ra_pos[term] > e) e = ra_pos[term];
+                }
+            }
+            j = j + 1;
+        }
+    }
+    *ps = s;
+    *pe = e;
+}
+
+static void ra_assign_spill_slots(void) {
+    int i;
+    int v;
+    int s;
+    int e;
+    int p;
+    int k;
+    int nslot;
+    int base;
+    int npos;
+    npos = ra_norder;
+    p = 0;
+    while (p < npos) { ra_shead[p] = -1; p = p + 1; }
+    /* Bucket the spilled values by slot start; values with no
+     * position (unreachable) are handled after the scan. */
+    i = h_ninst - 1;
+    while (i >= 0) {
+        if (ra_spill_wants_slot(i) && ra_pos[i] >= 0 && ra_pos[i] < npos) {
+            ra_slot_range(i, &s, &e);
+            if (s < 0) s = 0;
+            if (s >= npos) s = npos - 1;
+            ra_snext[i] = ra_shead[s];
+            ra_shead[s] = i;
+        }
+        i = i - 1;
+    }
+    base = hl_temp_stack;
+    nslot = 0;
+    p = 0;
+    while (p < npos) {
+        v = ra_shead[p];
+        while (v >= 0) {
+            ra_slot_range(v, &s, &e);
+            /* First fit: lowest slot whose occupant ended strictly
+             * before this value starts (equal positions can be a
+             * reload feeding the def that would overwrite it). */
+            k = 0;
+            while (k < nslot && ra_slot_end[k] >= p) k = k + 1;
+            /* ...but not in a function that calls setjmp: lifetimes are
+             * disjoint only along the paths the flow graph has, and the
+             * way back from longjmp is not one (hir_ssa.h) */
+            if (ssa_fn_setjmp) k = nslot;
+            if (k == nslot) nslot = nslot + 1;
+            ra_slot_end[k] = e;
+            ra_spill_off[v] = 0 - (base + 4 * (k + 1));
+            ra_stat_spills = ra_stat_spills + 1;
+            v = ra_snext[v];
+        }
+        p = p + 1;
+    }
+    hl_temp_stack = base + 4 * nslot;
+    ra_stat_sslots = ra_stat_sslots + nslot;
+    /* Unreachable values: private slots, as before. */
+    i = 0;
+    while (i < h_ninst) {
+        if (ra_spill_wants_slot(i) && !(ra_pos[i] >= 0 && ra_pos[i] < npos)) {
+            hl_temp_stack = hl_temp_stack + 4;
+            ra_spill_off[i] = 0 - hl_temp_stack;
+            ra_stat_spills = ra_stat_spills + 1;
+            ra_stat_sslots = ra_stat_sslots + 1;
+        }
+        i = i + 1;
+    }
+}
+
 static void ra_assign_spills(void) {
     int i;
     int r;
@@ -754,22 +962,20 @@ static void ra_assign_spills(void) {
             i = i + 1;
         }
     }
-    /* Assign spill slots for non-allocated, non-remat value-producing instructions */
-    i = 0;
-    while (i < h_ninst) {
-        if (ra_reg[i] < 0 && h_kind[i] != HI_NOP &&
-            hi_has_value(h_kind[i]) && !hi_inst_remat(i)) {
-            hl_temp_stack = hl_temp_stack + 4;
-            ra_spill_off[i] = 0 - hl_temp_stack;
-            ra_stat_spills = ra_stat_spills + 1;
-        }
-        i = i + 1;
-    }
+    /* Assign spill slots for non-allocated, non-remat value-producing
+     * instructions.  GitHub issue 77: slots are SHARED by live range.
+     * One private slot per spilled value gave sqlite3VdbeExec 4,683
+     * slots (a 22,572-byte frame against clang's 400), and a slot past
+     * +/-2047 costs lui+addi+add on every access.  Linear scan over
+     * the spilled values in start order: a slot whose occupant ended
+     * strictly before this value starts is reused, else the frame
+     * grows by one.  Values the linearization never reached keep a
+     * private slot as before. */
+    ra_assign_spill_slots();
 
     /* Assign callee-save slots.
-     * Only colors 0 .. RA_NCALLEE-1 (r11..r28) ever need to be saved/restored.
-     * Caller-saved colors (when enabled) are deliberately excluded — that is
-     * the whole point of the classification work.
+     * Only callee colors (r11..r28, and r30 when allocated) need to be
+     * saved/restored.  Caller-saved colors are deliberately excluded.
      *
      * Track the bytes we charge here in ra_csave_bytes so the leaf-frame
      * reclaim in hir_codegen can subtract them by name instead of assuming
@@ -777,11 +983,11 @@ static void ra_assign_spills(void) {
     ra_ncsave = 0;
     ra_csave_bytes = 0;
     r = 0;
-    while (r < RA_NCALLEE) {
+    while (r < ra_ncal) {
         if (ra_used[r]) {
             hl_temp_stack = hl_temp_stack + 4;
             ra_csave_bytes = ra_csave_bytes + 4;
-            ra_csave_reg[ra_ncsave] = ra_get_phys(r);  /* r11..r28 */
+            ra_csave_reg[ra_ncsave] = ra_get_phys(r);  /* r11..r28, maybe r30 */
             ra_csave_off[ra_ncsave] = 0 - hl_temp_stack;
             ra_ncsave = ra_ncsave + 1;
         }
@@ -808,6 +1014,10 @@ static void ra_extend_fused_cmp(void) {
 
     i = 0;
     while (i < h_ninst) {
+        /* Only BRC carries a fuse; extra insts appended after
+         * hcg_identify_fusions (call-split COPYs) keep the BSS 0
+         * in hcg_brc_fuse[], which would NOP instruction 0. */
+        if (h_kind[i] != HI_BRC) { i = i + 1; continue; }
         cmp = hcg_brc_fuse[i];
         if (cmp < 0) { i = i + 1; continue; }
 
@@ -1019,9 +1229,29 @@ static int gc_pair_inst[GC_MAX_NODE];
  * static arrays, and the bound must be a literal (2048 * 128).  Kept
  * to 1MB apiece -- the selfhost assembler has a cumulative BSS
  * budget, and 4MB versions of these were what first blew it. */
-static unsigned int lv_in[262144];
-static unsigned int lv_out[262144];
-static unsigned int lv_live[LV_W];
+/* The live-in/out sets are bb_nblk rows of lv_w words, sized per
+ * function and grown as needed (SQLite's sqlite3VdbeExec has tens of
+ * thousands of values; 128 words per row was 4,096 and the row stride
+ * was a fixed shift). */
+static unsigned int *lv_in;
+static unsigned int *lv_out;
+static unsigned int *lv_live;
+static int lv_w;                   /* row stride in words, = lv_nw */
+#define LV_BUDGET_WORDS 2097152    /* 8MB per liveness set; past it, intervals */
+static unsigned int lv_pool_in[LV_BUDGET_WORDS];
+static unsigned int lv_pool_out[LV_BUDGET_WORDS];
+
+static void lv_putn(int n) {       /* decimal to stderr, for the diagnostic */
+    char b[12];
+    int i;
+    i = 11;
+    b[i] = 0;
+    if (n == 0) { i = i - 1; b[i] = 48; }
+    while (n > 0) { i = i - 1; b[i] = 48 + n % 10; n = n / 10; }
+    fdputs(b + i, 2);
+}
+static int lv_cap;                 /* words allocated in lv_in and lv_out each */
+static int lv_live_cap;            /* words allocated in lv_live */
 static int lv_id[HIR_MAX_INST];    /* inst -> dense id, -1 = untracked */
 static int lv_rev[HIR_MAX_INST];   /* dense id -> inst */
 static int lv_nid;
@@ -1130,7 +1360,7 @@ static void lv_out_of(int b) {
         s = ssa_succ[ssa_soff[b] + si];
         if (s >= 0 && s < bb_nblk) {
             w = 0;
-            while (w < lv_nw) { lv_live[w] = lv_live[w] | lv_in[(s << 7) + w]; w = w + 1; }
+            while (w < lv_nw) { lv_live[w] = lv_live[w] | lv_in[(s * lv_w) + w]; w = w + 1; }
             phi = ssa_phi_head[s];
             while (phi >= 0) {
                 if (h_kind[phi] == HI_PHI && h_pbase[phi] >= 0) {
@@ -1183,6 +1413,23 @@ static void lv_prepare(void) {
     if (lv_nid > GC_MAX_NODE) return;   /* stay on intervals */
     lv_nw = (lv_nid + 31) / 32;
     if (lv_nw == 0) lv_nw = 1;
+    lv_w = lv_nw;
+    /* Two bitsets of blocks x values: SQLite's sqlite3VdbeExec with
+     * asserts on wanted more than the heap holds.  Past the budget the
+     * function stays on intervals, like one with too many nodes. */
+    if (bb_nblk * lv_w > LV_BUDGET_WORDS) return;
+    /* Static, not heap: by code generation the whole file's syntax tree
+     * fills the heap (stage07's linker fixes it at 64MB), and SQLite's
+     * debug build could not get a 10MB pair from what was left. */
+    lv_in = lv_pool_in;
+    lv_out = lv_pool_out;
+    lv_cap = LV_BUDGET_WORDS;
+    if (lv_w > lv_live_cap) {
+        if (lv_live) free(lv_live);
+        lv_live_cap = lv_w + 256;
+        lv_live = malloc(lv_live_cap * 4);
+        if (!lv_live) { fdputs("s12cc: out of memory for liveness sets\n", 2); exit(1); }
+    }
 
     /* ra_order index range per block (blocks are contiguous runs). */
     b = 0;
@@ -1190,7 +1437,7 @@ static void lv_prepare(void) {
         lv_bstart[b] = 0;
         lv_bend[b] = 0;
         w = 0;
-        while (w < lv_nw) { lv_in[(b << 7) + w] = 0; lv_out[(b << 7) + w] = 0; w = w + 1; }
+        while (w < lv_nw) { lv_in[(b * lv_w) + w] = 0; lv_out[(b * lv_w) + w] = 0; w = w + 1; }
         b = b + 1;
     }
     i = 0;
@@ -1215,12 +1462,12 @@ static void lv_prepare(void) {
             if (b < 0 || b >= bb_nblk) continue;
             lv_out_of(b);
             w = 0;
-            while (w < lv_nw) { lv_out[(b << 7) + w] = lv_live[w]; w = w + 1; }
+            while (w < lv_nw) { lv_out[(b * lv_w) + w] = lv_live[w]; w = w + 1; }
             lv_transfer(b);
             w = 0;
             while (w < lv_nw) {
-                if (lv_in[(b << 7) + w] != lv_live[w]) {
-                    lv_in[(b << 7) + w] = lv_live[w];
+                if (lv_in[(b * lv_w) + w] != lv_live[w]) {
+                    lv_in[(b * lv_w) + w] = lv_live[w];
                     changed = 1;
                 }
                 w = w + 1;
@@ -1259,7 +1506,7 @@ static void lv_build_edges(void) {
     b = 0;
     while (b < bb_nblk) {
         w = 0;
-        while (w < lv_nw) { lv_live[w] = lv_out[(b << 7) + w]; w = w + 1; }
+        while (w < lv_nw) { lv_live[w] = lv_out[(b * lv_w) + w]; w = w + 1; }
         oi = lv_bend[b];
         while (oi > lv_bstart[b]) {
             oi = oi - 1;
@@ -1308,24 +1555,13 @@ static void lv_build_edges(void) {
                     j = j + 1;
                 }
             }
-            nu = lv_uses(inst);
-            j = 0;
-            while (j < nu) {
-                u = lv_ubuf[j];
-                if (lv_tracked(u))
-                    lv_live[lv_id[u] >> 5] =
-                        lv_live[lv_id[u] >> 5] | (1u << (lv_id[u] & 31));
-                j = j + 1;
-            }
+            /* Textbook liveness: a call's arguments die at the call and
+             * do not cross it.  The emitter used to marshal one move at
+             * a time, so a source in r3-r10 was clobbered before it was
+             * read (trans1's DLOG(DEXP(X))); arguments were therefore
+             * marked crossing.  The parallel-copy sequencer (issue 67)
+             * removes that hazard, so mark BEFORE re-adding uses. */
             if (lv_is_callkind(k)) {
-                /* Marked AFTER the uses are re-added: textbook liveness
-                 * says a call's arguments die at the call and do not
-                 * cross it, but the emitter marshals arguments into
-                 * r3..r10 one move at a time, so a source parked in a
-                 * caller-saved register is clobbered before it is read
-                 * (trans1's DLOG(DEXP(X)) lost the hi word to exactly
-                 * that).  Arguments count as crossing, as they always
-                 * did under intervals. */
                 w = 0;
                 while (w < lv_nw) {
                     unsigned int bits;
@@ -1340,6 +1576,15 @@ static void lv_build_edges(void) {
                     }
                     w = w + 1;
                 }
+            }
+            nu = lv_uses(inst);
+            j = 0;
+            while (j < nu) {
+                u = lv_ubuf[j];
+                if (lv_tracked(u))
+                    lv_live[lv_id[u] >> 5] =
+                        lv_live[lv_id[u] >> 5] | (1u << (lv_id[u] & 31));
+                j = j + 1;
             }
         }
         /* PHI defs of one block are written by one parallel copy:
@@ -1659,6 +1904,14 @@ static int gc_coalesce(void) {
                 gc_wl[u] = GC_WL_SIMPLIFY;
             if (!gc_move_related(v) && gc_degree[v] < gc_k(v) && gc_wl[v] == GC_WL_FREEZE)
                 gc_wl[v] = GC_WL_SIMPLIFY;
+            return 1;
+        }
+        /* A call-split COPY exists to separate the pre-call half
+         * (caller-saved, maybe the ABI arg register) from the
+         * post-call half (callee-saved).  Merging them back would
+         * undo the split. */
+        if (ra_is_csplit[gc_inst[u]] || ra_is_csplit[gc_inst[v]]) {
+            gc_mv_status[mv] = GC_MV_CONSTRAINED;
             return 1;
         }
         if (ra_crosses_call[gc_inst[u]] != ra_crosses_call[gc_inst[v]] &&
@@ -1997,9 +2250,9 @@ static int ra_pair_claim(int n, int inst, int maxc, int *used) {
             else                   { lo_c = c + 1; hi_c = c; }
             /* Respect the caller/callee split for both halves, judged
              * on the merged nodes' representatives. */
-            if (lo_c >= RA_NCALLEE && !ra_prefers_caller_for_inst(gc_inst[n]))
+            if (lo_c >= ra_ncal && !ra_prefers_caller_for_inst(gc_inst[n]))
                 { c = c + 1; continue; }
-            if (hi_c >= RA_NCALLEE && !ra_prefers_caller_for_inst(gc_inst[pn]))
+            if (hi_c >= ra_ncal && !ra_prefers_caller_for_inst(gc_inst[pn]))
                 { c = c + 1; continue; }
             gc_pin[pn] = hi_c;
             ra_pc_dbg[4]++;
@@ -2112,6 +2365,14 @@ static void gc_select(void) {
                 }
             }
 
+            /* Argument-register targeting (issue 67) before src1 reuse. */
+            if (gc_color[n] < 0) {
+                int ap2;
+                ap2 = ra_argsite_preferred_color(inst);
+                if (ap2 >= 0 && ap2 < maxc && !used[ap2])
+                    gc_color[n] = ap2;
+            }
+
             /* Src1 reuse for destructive binary ops.
              * For ADD, SUB, AND, OR, XOR, shifts, etc. the result can
              * usually live in the same physical register as the first
@@ -2129,7 +2390,7 @@ static void gc_select(void) {
                              * caller-saved color from its operand — the
                              * call clobbers r3-r10 (W_LumpNameHash's
                              * xor temp died across toupper()). */
-                            if (col >= RA_NCALLEE &&
+                            if (col >= ra_ncal &&
                                 !ra_prefers_caller_for_inst(inst)) col = -1;
                             if (col >= 0 && col < maxc && !used[col]) {
                                 gc_color[n] = col;
@@ -2161,7 +2422,7 @@ static void gc_select(void) {
                         int s1_node = gc_node[s1];
                         if (s1_node >= 0) {
                             int col = gc_color[s1_node];
-                            if (col >= RA_NCALLEE &&
+                            if (col >= ra_ncal &&
                                 !ra_prefers_caller_for_inst(inst)) col = -1;
                             if (col >= 0 && col < maxc && !used[col]) {
                                 int phys = ra_get_phys(col);
@@ -2180,7 +2441,7 @@ static void gc_select(void) {
                         int s2_node = gc_node[s2];
                         if (s2_node >= 0) {
                             int col = gc_color[s2_node];
-                            if (col >= RA_NCALLEE &&
+                            if (col >= ra_ncal &&
                                 !ra_prefers_caller_for_inst(inst)) col = -1;
                             if (col >= 0 && col < maxc && !used[col]) {
                                 int phys = ra_get_phys(col);
@@ -2211,15 +2472,23 @@ static void gc_select(void) {
              * marked used, so temporaries naturally avoid stealing them.
              */
             if (ra_prefers_caller_for_inst(inst)) {
-                /* Give operand reuse (src1/src2) higher priority in the cheap
-                 * caller-saved pool.  When a value is allowed to live in r3-r10,
-                 * we first try to keep it there by reusing an operand (with the
-                 * lowest-physical bias).  Only if that fails do we fall back to
-                 * the PARAM ABI preference.
-                 */
-                int best_col = -1;
-                int best_phys = 999;
-                int best_is_src2 = 0;
+                int best_col;
+                int best_phys;
+                int best_is_src2;
+                int ap;
+                /* Argument-register targeting (issue 67) before src1 reuse:
+                 * `u = x + 1` feeding argument 0 used to inherit x's
+                 * register and skip the ABI preference. */
+                if (gc_color[n] < 0) {
+                    ap = ra_argsite_preferred_color(inst);
+                    if (ap >= 0 && ap < maxc && !used[ap])
+                        gc_color[n] = ap;
+                }
+                /* Operand reuse in the cheap caller-saved pool, then
+                 * PARAM ABI preference. */
+                best_col = -1;
+                best_phys = 999;
+                best_is_src2 = 0;
 
                 if (ra_can_reuse_src1(k)) {
                     int s1 = h_src1[inst];
@@ -2227,7 +2496,7 @@ static void gc_select(void) {
                         int s1_node = gc_node[s1];
                         if (s1_node >= 0) {
                             int col = gc_color[s1_node];
-                            if (col >= RA_NCALLEE && col < maxc && !used[col]) {
+                            if (col >= ra_ncal && col < maxc && !used[col]) {
                                 int phys = ra_get_phys(col);
                                 if (phys < best_phys) {
                                     best_col = col;
@@ -2245,7 +2514,7 @@ static void gc_select(void) {
                         int s2_node = gc_node[s2];
                         if (s2_node >= 0) {
                             int col = gc_color[s2_node];
-                            if (col >= RA_NCALLEE && col < maxc && !used[col]) {
+                            if (col >= ra_ncal && col < maxc && !used[col]) {
                                 int phys = ra_get_phys(col);
                                 if (phys < best_phys) {
                                     best_col = col;
@@ -2276,7 +2545,7 @@ static void gc_select(void) {
                  */
                 if (gc_color[n] < 0) {
                     int pref = ra_param_preferred_color(inst);
-                    if (pref >= RA_NCALLEE && pref < maxc && !used[pref]) {
+                    if (pref >= ra_ncal && pref < maxc && !used[pref]) {
                         gc_color[n] = pref;
                         ra_stat_param_preferred = ra_stat_param_preferred + 1;
                     }
@@ -2300,7 +2569,7 @@ static void gc_select(void) {
                             int s1_node = gc_node[s1];
                             if (s1_node >= 0) {
                                 int col = gc_color[s1_node];
-                                if (col >= RA_NCALLEE && col < maxc && !used[col]) {
+                                if (col >= ra_ncal && col < maxc && !used[col]) {
                                     biased = col;
                                     biased_is_src2 = 0;
                                 }
@@ -2315,7 +2584,7 @@ static void gc_select(void) {
                             int s2_node = gc_node[s2];
                             if (s2_node >= 0) {
                                 int col = gc_color[s2_node];
-                                if (col >= RA_NCALLEE && col < maxc && !used[col]) {
+                                if (col >= ra_ncal && col < maxc && !used[col]) {
                                     biased = col;
                                     biased_is_src2 = 1;
                                 }
@@ -2333,23 +2602,23 @@ static void gc_select(void) {
                     } else {
                         /* No biased color available — first-free, but
                          * pair-friendly: keep virgin aligned pairs whole. */
-                        gc_color[n] = ra_first_free_pairfriendly(RA_NCALLEE, maxc, used);
+                        gc_color[n] = ra_first_free_pairfriendly(ra_ncal, maxc, used);
                     }
                 }
             }
 
             if (gc_color[n] < 0) {
                 int pref = ra_param_preferred_color(inst);
-                if (pref >= 0 && pref < RA_NCALLEE && !used[pref]) {
+                if (pref >= 0 && pref < ra_ncal && !used[pref]) {
                     gc_color[n] = pref;
                     ra_stat_param_preferred = ra_stat_param_preferred + 1;
                 } else {
                     /* Pair-friendly first-free in the callee pool. */
-                    gc_color[n] = ra_first_free_pairfriendly(0, RA_NCALLEE, used);
+                    gc_color[n] = ra_first_free_pairfriendly(0, ra_ncal, used);
                 }
             }
 
-            if (s12cc_dump_intervals && gc_color[n] >= RA_NCALLEE &&
+            if (s12cc_dump_intervals && gc_color[n] >= ra_ncal &&
                 ra_crosses_call[inst]) {
                 fdputs("XVIOL select inst=", 2);
                 ra_dump_signed(inst);
@@ -2371,7 +2640,7 @@ static void gc_select(void) {
         if (gc_wl[i] == GC_WL_COALESCED) {
             gc_color[i] = gc_color[gc_get_alias(i)];
             if (s12cc_dump_intervals && ra_crosses_call[gc_inst[i]] &&
-                gc_color[i] >= RA_NCALLEE) {
+                gc_color[i] >= ra_ncal) {
                 fdputs("XVIOL coalesce inst=", 2);
                 ra_dump_signed(gc_inst[i]);
                 fdputs(" rep=", 2);
@@ -2455,10 +2724,11 @@ static void gc_writeback(void) {
             if (phys >= 0) ra_used[c] = 1;
 
             /* Record class usage for diagnostics */
-            if (c >= RA_NCALLEE)
+            if (c >= ra_ncal)
                 ra_stat_caller_used = ra_stat_caller_used + 1;
             else
                 ra_stat_callee_used = ra_stat_callee_used + 1;
+            if (phys == 30) ra_stat_r30 = ra_stat_r30 + 1;
         } else {
             /* Uncolored pinned loop constant: revert to remat rather
              * than taking a frame slot -- every use materializes it
@@ -2646,17 +2916,313 @@ static void ra_mark_call_crossing(void) {
     }
 }
 
+static void ra_after_mark(int v) {
+    if (v >= 0 && v < HIR_MAX_INST) ra_after_stamp[v] = ra_after_tick;
+}
+
+static int ra_after_has(int v) {
+    if (v < 0 || v >= HIR_MAX_INST) return 0;
+    return ra_after_stamp[v] == ra_after_tick;
+}
+
+/* nw < 0: mark uses.  nw >= 0: rewrite old -> nw. */
+static void ra_csplit_on_inst(int i, int old, int nw) {
+    int j;
+    int n;
+    int base;
+    int sp;
+    if (nw < 0) {
+        if (h_src1[i] >= 0) ra_after_mark(h_src1[i]);
+        if (h_src2[i] >= 0 && ho_src2_is_ref(h_kind[i]))
+            ra_after_mark(h_src2[i]);
+    } else {
+        if (h_src1[i] == old) h_src1[i] = nw;
+        if (h_src2[i] == old && ho_src2_is_ref(h_kind[i])) h_src2[i] = nw;
+    }
+    if ((h_kind[i] == HI_CALL || h_kind[i] == HI_CALLP) &&
+        h_cbase[i] >= 0) {
+        n = h_val[i];
+        base = h_cbase[i];
+        j = 0;
+        while (j < n) {
+            if (nw < 0) ra_after_mark(h_carg[base + j]);
+            else if (h_carg[base + j] == old) h_carg[base + j] = nw;
+            j = j + 1;
+        }
+    }
+    sp = ra_csplit_head[i];
+    while (sp >= 0) {
+        if (nw < 0) ra_after_mark(h_src1[sp]);
+        else if (h_src1[sp] == old) h_src1[sp] = nw;
+        sp = ra_csplit_next[sp];
+    }
+}
+
+/* Phi args on edges that are after the call: the predecessor is the
+ * call block, or is strictly dominated by it (every path through that
+ * pred already went through the call). */
+static void ra_csplit_on_phis(int b, int cb, int old, int nw) {
+    int phi;
+    int j;
+    int pred;
+    int a;
+    phi = ssa_phi_head[b];
+    while (phi >= 0) {
+        if (h_kind[phi] == HI_PHI && h_pbase[phi] >= 0) {
+            j = 0;
+            while (j < h_pcnt[phi]) {
+                pred = h_pblk[h_pbase[phi] + j];
+                if (pred == cb ||
+                    (pred >= 0 && pred < bb_nblk &&
+                     licm_dominates(cb, pred))) {
+                    a = h_pval[h_pbase[phi] + j];
+                    if (nw < 0) {
+                        if (a >= 0) ra_after_mark(a);
+                    } else if (a == old) {
+                        h_pval[h_pbase[phi] + j] = nw;
+                    }
+                }
+                j = j + 1;
+            }
+        }
+        phi = ssa_phi_next[phi];
+    }
+}
+
+/* Blocks strictly dominated by the call's block: every path to them
+ * went through the call, so uses there are after-uses.  A miss used
+ * to cost the split (V stayed live-out and still crossed) rather
+ * than correctness. */
+static void ra_csplit_on_dom(int cb, int old, int nw) {
+    int nwl;
+    int i;
+    int b;
+    int inst;
+    nwl = 0;
+    i = 0;
+    while (i < ssa_dtc_cnt[cb] && nwl < HIR_MAX_BLOCK) {
+        ra_dom_wl[nwl] = ssa_dtc[ssa_dtc_base[cb] + i];
+        nwl = nwl + 1;
+        i = i + 1;
+    }
+    while (nwl > 0) {
+        nwl = nwl - 1;
+        b = ra_dom_wl[nwl];
+        if (b >= 0 && b < bb_nblk) {
+            inst = bb_start[b];
+            while (inst < bb_end[b]) {
+                ra_csplit_on_inst(inst, old, nw);
+                inst = inst + 1;
+            }
+            ra_csplit_on_phis(b, cb, old, nw);
+            i = 0;
+            while (i < ssa_dtc_cnt[b] && nwl < HIR_MAX_BLOCK) {
+                ra_dom_wl[nwl] = ssa_dtc[ssa_dtc_base[b] + i];
+                nwl = nwl + 1;
+                i = i + 1;
+            }
+        }
+    }
+}
+
+static void ra_mark_after_uses(int call) {
+    int i;
+    int si;
+    int s;
+    int cb;
+    ra_after_tick = ra_after_tick + 1;
+    if (ra_after_tick <= 0) {
+        i = 0;
+        while (i < HIR_MAX_INST) { ra_after_stamp[i] = 0; i = i + 1; }
+        ra_after_tick = 1;
+    }
+    cb = h_blk[call];
+    if (cb < 0) return;
+    i = call + 1;
+    while (i < bb_end[cb]) {
+        ra_csplit_on_inst(i, -1, -1);
+        i = i + 1;
+    }
+    si = 0;
+    while (si < ssa_nsucc[cb]) {
+        s = ssa_succ[ssa_soff[cb] + si];
+        if (s >= 0 && s < bb_nblk) ra_csplit_on_phis(s, cb, -1, -1);
+        si = si + 1;
+    }
+    ra_csplit_on_dom(cb, -1, -1);
+}
+
+static int ra_new_split_copy(int src, int blk) {
+    int cl;
+    cl = h_ninst;
+    if (cl >= HIR_MAX_INST) return -1;
+    h_kind[cl] = HI_COPY;
+    h_ty[cl] = h_ty[src];
+    h_src1[cl] = src;
+    h_src2[cl] = -1;
+    h_val[cl] = 0;
+    h_name[cl] = 0;
+    h_blk[cl] = blk;
+    h_cbase[cl] = -1;
+    h_pbase[cl] = -1;
+    h_pcnt[cl] = 0;
+    h_ld_ro[cl] = 0;
+    h_no_remat[cl] = 0;
+    bg_sel[cl] = -1;
+    bg_uses[cl] = 0;
+    bg_fold[cl] = 0;
+    /* The copy is the same value as its source, so a frame-address or
+     * symbol-address chain carries through it: a use the BURG matched
+     * as LOAD(faddr) or STORE(faddr) before this split still reads its
+     * offset from the operand (bg_foff), which was 0 here and sent the
+     * reload of `w.scale` after `touch(&w.scale)` to fp+0+20 instead
+     * of the struct's slot (ISSUES-81). */
+    bg_foff[cl] = bg_foff[src];
+    bg_ssym[cl] = bg_ssym[src];
+    bg_soff[cl] = bg_soff[src];
+    bg_iconst_seen_use[cl] = 0;
+    bg_iconst_seen_nonimm[cl] = 0;
+    licm_next[cl] = -1;
+    licm_cpin[cl] = 0;
+    licm_map[cl] = -1;
+    ho_use[cl] = 0;
+    ho_cse_next[cl] = -1;
+    ho_phi_vouched[cl] = 0;
+    hcg_brc_fuse[cl] = -1;
+    hcg_cmp_fused[cl] = 0;
+    hcg_cmp_kind[cl] = 0;
+    hjt_base[cl] = -1;
+    hjt_span[cl] = 0;
+    ssa_phi_next[cl] = -1;
+    ra_csplit_head[cl] = -1;
+    ra_csplit_next[cl] = -1;
+    ra_pair_of[cl] = -1;
+    ra_pair_lo[cl] = 0;
+    ra_is_csplit[cl] = 1;
+    h_ninst = h_ninst + 1;
+    return cl;
+}
+
+static void ra_rewire_after(int old, int nw, int call) {
+    int i;
+    int cb;
+    int si;
+    int s;
+    cb = h_blk[call];
+    i = call + 1;
+    while (i < bb_end[cb]) {
+        ra_csplit_on_inst(i, old, nw);
+        i = i + 1;
+    }
+    si = 0;
+    while (si < ssa_nsucc[cb]) {
+        s = ssa_succ[ssa_soff[cb] + si];
+        if (s >= 0 && s < bb_nblk) ra_csplit_on_phis(s, cb, old, nw);
+        si = si + 1;
+    }
+    ra_csplit_on_dom(cb, old, nw);
+}
+
+static int ra_split_pairing = 0;  /* guards the fp64 partner recursion below */
+
+static int ra_split_one(int v, int call) {
+    int cp;
+    int w;
+    int cpw;
+    if (v < 0 || v >= h_ninst) return -1;
+    if (v == call) return -1;
+    if (hi_is_remat(h_kind[v])) return -1;
+    if (h_kind[v] == HI_NOP) return -1;
+    if (h_blk[v] == h_blk[call] && v >= call) return -1;
+    if (!ra_after_has(v)) return -1;
+    cp = ra_new_split_copy(v, h_blk[call]);
+    if (cp < 0) return -1;
+    ra_csplit_next[cp] = ra_csplit_head[call];
+    ra_csplit_head[call] = cp;
+    ra_rewire_after(v, cp, call);
+    /* v's after-uses now all name cp, so v has none left.  Clear the
+     * stamp or the next ra_split_one(v, call) at this same call sees a
+     * stale "has after-uses" and splits v again into a copy nothing
+     * reads: an fp64 argument occupies TWO adjacent h_carg slots, so
+     * the argument loop calls us once per half and the second call
+     * re-split both halves. */
+    ra_after_stamp[v] = 0;
+    ra_stat_csplit = ra_stat_csplit + 1;
+    w = ra_pair_of[v];
+    /* Split the fp64 partner too, but NEVER let that inner call take
+     * this branch again: ra_pair_of[w] still names v (the cp<->cpw
+     * pairing below is what finally replaces it), so re-entering here
+     * would split v a second time, then w again, ... until
+     * ra_new_split_copy runs the instruction table out.  A double
+     * passed to a call and used after it filled all HIR_MAX_INST
+     * slots -- 6 lines of C became 1.3M lines of asm, and sqlite's
+     * dekkerMul2/kahanBabuskaNeumaierStep/absFunc/strftimeFunc each
+     * hit it (the assembler died on "Instruction buffer size
+     * overflow"). */
+    if (w >= 0 && w != v && ra_pair_of[cp] < 0 && !ra_split_pairing) {
+        ra_split_pairing = 1;
+        cpw = ra_split_one(w, call);
+        ra_split_pairing = 0;
+        if (cpw >= 0) {
+            ra_pair_of[cp] = cpw;
+            ra_pair_of[cpw] = cp;
+            ra_pair_lo[cp] = ra_pair_lo[v];
+            ra_pair_lo[cpw] = ra_pair_lo[w];
+        }
+    }
+    return cp;
+}
+
+static void ra_split_at_calls(void) {
+    int i;
+    int j;
+    int n;
+    int base;
+    int v;
+    int c;
+    ra_stat_csplit = 0;
+    ra_split_orig = h_ninst;
+    i = 0;
+    while (i < h_ninst) {
+        ra_csplit_head[i] = -1;
+        ra_csplit_next[i] = -1;
+        ra_is_csplit[i] = 0;
+        i = i + 1;
+    }
+    c = ra_split_orig - 1;
+    while (c >= 0) {
+        if (h_kind[c] == HI_CALL || h_kind[c] == HI_CALLP) {
+            ra_mark_after_uses(c);
+            if (h_cbase[c] >= 0) {
+                n = h_val[c];
+                base = h_cbase[c];
+                j = 0;
+                while (j < n) {
+                    v = h_carg[base + j];
+                    if (v >= 0) ra_split_one(v, c);
+                    j = j + 1;
+                }
+            }
+            if (h_kind[c] == HI_CALLP && h_src1[c] >= 0)
+                ra_split_one(h_src1[c], c);
+        }
+        c = c - 1;
+    }
+}
+
 static void hir_regalloc(void) {
     /* SLOW-32 IRC path (George-Appel Iterated Register Coalescing) */
     ra_init_phys_regs();   /* populates classification tables (safe, knob==0 today) */
     { int z; z = 0; while (z < GC_MAX_NODE) { gc_pin[z] = -1; z = z + 1; } }
     ra_build_pairs();      /* fp64 halves that want adjacent registers */
+    ra_split_at_calls();   /* chop crossing webs so the pre-call half can use r3-r10 */
     ra_build_wuses();      /* loop-depth-weighted use counts for spill cost */
     ra_compute_pos();
     ra_compute_ends();
     ra_extend_fused_cmp();
     ra_mark_call_crossing();
     lv_prepare();          /* per-block liveness; lv_on gates gc_build */
+    ra_mark_arg_prefs();
     { int z; z = 0; while (z < h_ninst) { ra_mem_forced[z] = 0; z = z + 1; } }
     /* (ra_mark_clobbers removed — x64 RCX/RDX clobber arrays were never populated or used for SLOW-32) */
 

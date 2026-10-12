@@ -1,9 +1,4 @@
-/* COPIED from selfhost/src/hir_licm.h at 34d6c147 (LICM pruning:
- * dominate-latch + cheap-leaf rules, GitHub issue 73).
- * fortran/ is self-contained by ruling: selfhost must be free to evolve
- * without breaking f77.  Do NOT symlink this back.  Re-sync deliberately,
- * and record the new vintage here.
- */
+/* COPIED from selfhost/stage08/hir_licm.h at 30e16a57.  See note in hir.h. */
 /* hir_licm.h -- Loop-Invariant Code Motion for s12cc
  *
  * Hoists pure computations out of loops.  Runs after hir_opt.h,
@@ -86,7 +81,7 @@ static char sp_post[HIR_MAX_INST];
 static char sp_bad[HIR_MAX_INST];
 
 /* --- Scratch for loop body --- */
-#define LICM_MAX_BODY 2048
+#define LICM_MAX_BODY 16384   /* was 2048 */
 static int licm_body[LICM_MAX_BODY];
 
 /* --- Helpers --- */

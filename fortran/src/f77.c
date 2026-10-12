@@ -318,6 +318,7 @@ static void hl_func(Node *fn) {
     int u;
 
     u = fn->unit;
+    hl_cur_fn_dbg = fn->name;
 
     hir_reset();
     hl_nalloca = 0;
@@ -435,7 +436,19 @@ int main(int argc, char **argv) {
     }
     f77_program.body = &f77_units[0];
 
+    /* The output is opened before code generation: the emitter flushes
+     * its buffer to it whenever the buffer fills (a full buffer used to
+     * be a silent drop). */
+    fd = open(argv[2], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        fdputs("f77: cannot open output\n", 2);
+        return 1;
+    }
+    cg_fd = fd;
+    cg_outpath = argv[2];
     gen_program(&f77_program);
+    cg_flush();
+    close(fd);
 
     if (getenv("HIR_PAIR_STATS")) {
         int z;
@@ -458,15 +471,8 @@ int main(int argc, char **argv) {
     }
     if (f77_nerr > 0) {
         fdputs("f77: compilation failed\n", 2);
+        unlink(argv[2]);
         return 1;
     }
-
-    fd = open(argv[2], O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd < 0) {
-        fdputs("f77: cannot open output\n", 2);
-        return 1;
-    }
-    write(fd, cg_out, cg_olen);
-    close(fd);
     return 0;
 }

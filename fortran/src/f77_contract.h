@@ -1,6 +1,6 @@
 /* f77_contract.h -- the frontend side of the copied SLOW-32 backend.
  *
- * The backend (hir*.h, copied from selfhost at 849dd791) is almost
+ * The backend (hir*.h, copied from selfhost/stage08 at 30e16a57) is almost
  * entirely language-neutral, but it reads 45 symbols that the C
  * compiler's frontend happened to define.  They fall into four groups,
  * all supplied here:
@@ -93,9 +93,28 @@ static int ty_size(int ty) {
 #define HL_MAX_ALLOCA 4096
 static int hl_ainst[HL_MAX_ALLOCA];  /* HIR index of each ALLOCA */
 static int hl_aoff[HL_MAX_ALLOCA];   /* frame offset of each ALLOCA */
+static int hl_aslot[HL_MAX_ALLOCA];  /* the C parser's slot id; always 0 here
+                                      * (keyed by offset) -- it only matters
+                                      * to the SSA pass in a function that
+                                      * calls setjmp, which no Fortran does */
 static int hl_nalloca;
 static int hl_temp_stack;            /* bytes of compiler temporaries */
 static int hl_nparams;               /* flat incoming-parameter count */
+
+/* --- 3b. the C inliner's hooks (selfhost hir_lower.h) ---------------- */
+/* gen_program() sets these up from S12CC_INLINE* and calls
+ * hl_inl_prepare() before the first unit.  Fortran inlines at the
+ * front end (f77_parse.h splices units, F77_INLINE_MAX), so the hooks
+ * are inert here: the budget stays whatever the environment says and
+ * nothing reads it. */
+static Node *hl_prog;
+static int   hl_inline_max;
+static int   hl_inl_move_max;
+static int   hl_inl_huge;
+static int   hl_stat_inlined;
+static int   hl_stat_inl_sel;
+static int   hl_stat_inl_direct;
+static void  hl_inl_prepare(Node *prog) { (void)prog; }
 
 /* --- 4. global data tables walked by gen_data() --------------------- */
 
