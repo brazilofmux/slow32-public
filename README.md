@@ -194,7 +194,7 @@ slow-32/
 ├── sbasic/             # BASIC
 ├── forth/              # Forth kernel (SLOW-32 assembly)
 ├── forthc/             # AOT Forth compiler (written in Forth)
-├── lisp/               # Lisp
+├── islisp/             # ISLISP (ISO Lisp)
 ├── prolog/             # Prolog
 ├── command/            # COMMAND.COM-shaped shell
 ├── clip/               # Clipper (.prg → .s32x)

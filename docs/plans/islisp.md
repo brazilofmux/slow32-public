@@ -4,9 +4,9 @@ Status: **the verification suite passes, 23 files and 9,585 checks
 (2026-10-12), on the host build and on the SLOW-32 build.**  Milestones
 1 through 6 landed in one pass of 2026-10-11/12, and the stage08 leg of
 milestone 7 with them: the interpreter built by the kit's stage08 cc
-prints the same bytes as the clang build over the whole suite.  Next:
-`islisp.s32x` into the kit and the images, then the retirement of
-`lisp/`.
+prints the same bytes as the clang build over the whole suite.  `islisp.s32x` is
+in the kit and `lisp/` is retired (2026-10-12); the images pick it up
+on the next builder run.
 `islisp/README.md` has the layout and the commands, `islisp/docs/
 oracle.md` the conventions taken from the oracle and the places the
 text wins over it.
@@ -206,7 +206,7 @@ by the user:
    `tests/run-tests.sh` stage08 line; `islisp.s32x` into `~/s32x` and
    the slow32:kit image; `slow32:islisp` image beside `slow32:fortran`
    if wanted.
-8. **Retire `lisp/`.** One commit, after 7.
+8. **Retire `lisp/`.** ✅ Done 2026-10-12, with the kit's fourteenth batch.
 
 Each milestone ends with the verify counts in `islisp/README.md` and
 in this file's status line, the way `fortran77.md` carries the FCVS

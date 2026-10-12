@@ -52,7 +52,6 @@ verify*.o
 # reaches the repository root, so the .s files were surfacing as
 # untracked after every rebuild.  None of these directories carries a
 # hand-written .s (asteroids/src does, and is deliberately not listed).
-lisp/src/*.s
 lua/src/*.s
 prolog/src/*.s
 zork/src/*.s

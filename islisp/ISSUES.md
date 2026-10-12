@@ -44,11 +44,9 @@ from the terminal, confuses it.  §27.2 allows "at least one space" when
 the column is unknown, which is what `~T` emits when already past the
 column.
 
-### 6. `lisp/` is still in the tree
-
-The Scheme-flavoured toy predates this front.  Plan milestone 8 retires
-it once `islisp.s32x` is in the kit and the containers.
-
 ## Resolved
 
-(none yet)
+### 6. [RESOLVED 2026-10-12] `lisp/` retired
+
+The Scheme-flavoured toy predated this front; it left the tree and the
+kit when `islisp.s32x` went in (kit batch fourteen).

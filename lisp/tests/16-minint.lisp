@@ -1,5 +1,0 @@
-(display (number->string 0)) (newline)
-(display (number->string 42)) (newline)
-(display (number->string -1)) (newline)
-(display (number->string -1073741824)) (newline)
-(display (number->string 1073741823)) (newline)
