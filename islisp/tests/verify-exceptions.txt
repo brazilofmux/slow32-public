@@ -1,0 +1,8 @@
+# Checks of the verification suite that this processor deliberately does not
+# satisfy, one per line: file <TAB> form prefix <TAB> why.  Each one is a
+# place where the suite encodes its author's processor rather than the text
+# (ISLISP Working Draft 23.0), and the text wins (docs/plans/islisp.md).
+bignum	(CONVERT 2837912874982137192837192837287312947728 <FLOAT>)	the expected 2.83791e39 is the oracle's six-digit print of the double; the coercion is exact (§17 X), so the result is 2.837912874982137e39
+number	(SQRT *MOST-POSITIVE-FLOAT*)	the expected 1.34078079299426e154 is the oracle's fifteen-digit print; the double is 1.3407807929942596e154
+object	re:<(INVALID|FIXNUM|LONGNUM|BIGNUM)>	classes of the oracle's, not of the standard: ISLISP has one <integer> class and no <invalid>
+object	(INSTANCEP (FUNCTION CREATE) (CLASS <STANDARD-GENERIC-FUNCTION>))	create is a generic function in the text (§15.4), so it is an instance of <standard-generic-function>; the oracle makes it an ordinary function

@@ -1,0 +1,47 @@
+# SLOW-32 ISLISP Oracle Image
+#
+# A reference ISLISP processor, used ONLY as a differential oracle while
+# building islisp/ (our ISLISP, ISO/IEC 13816:2007, for SLOW-32).  Every
+# compiler in this project is developed against a reference
+# implementation -- LLVM for stage08, gforth for stage01, gfortran for
+# f77 -- and this is ISLISP's: Easy-ISLisp (Kenichi Sasagawa, BSD-2; pinned by commit below),
+# whose verify/ directory carries about ten thousand checks keyed to
+# the Working Draft 23.0 page numbers.
+#
+# Deliberately a separate image: slow32:toolchain and slow32:emulator
+# are what ~/builder builds and the ECR mirror serves, and neither needs
+# an ISLISP.  Nothing here is required to BUILD or RUN SLOW-32 software;
+# it only produces expected output to diff against.  Easy-ISLisp's
+# extension.c needs <linux/fb.h>, so the oracle is Linux-only, which a
+# container makes a non-issue.
+#
+# Build:  podman build -t slow32:islisp-oracle -f Dockerfile.islisp-oracle .
+# Use:    islisp/tests/oracle.sh prog.lsp
+
+FROM debian:bookworm-slim
+
+# Pinned by commit: eisl tags its releases in full-width characters
+# ("ｖ５．６９"), which no shell wants to type.  This is "update version
+# -> 5.69", 2026-10-10.
+ARG EISL_COMMIT=ec87d77257c8d1b16299cbbd2dd792a0a7b4616c
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential git ca-certificates libncurses-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone https://github.com/sasagawa888/eisl.git /opt/eisl \
+    && cd /opt/eisl \
+    && git checkout --quiet "$EISL_COMMIT" \
+    && make eisl edlis \
+    && make install \
+    && rm -rf /opt/eisl/.git
+
+WORKDIR /work
+
+# Run the given ISLISP source as a script, so the container's whole job
+# is "source in, program output out".  eisl -s reads the file and exits.
+RUN printf '#!/bin/sh\nset -e\nexec eisl -s "$@"\n' > /usr/local/bin/islrun \
+    && chmod +x /usr/local/bin/islrun
+
+ENTRYPOINT ["/usr/local/bin/islrun"]

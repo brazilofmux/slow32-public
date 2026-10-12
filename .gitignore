@@ -255,3 +255,6 @@ sqlite/out/
 # Python bytecode (tests/gen imports inspect85.py)
 __pycache__/
 fpc-backend/runtime/units/
+
+# islisp builds: host binary, the two SLOW-32 executables, and the per-file .s/.s32o/.k.* intermediates
+islisp/out/
