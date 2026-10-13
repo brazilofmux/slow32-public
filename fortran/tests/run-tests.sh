@@ -154,6 +154,28 @@ else
     done
 fi
 
+# --- Gate: program units the compiler must refuse ----------------------
+# How the compiler divides a source into units is where a mistake loses
+# a unit without a word.  A PROGRAM statement inside a subprogram (its
+# END missing) and a second main program are refused, each with its
+# message; f77/mainlast.f has a main program after its subprograms.
+# Found by fort370 (reported on H390-MVS), whose unit scan is this one's.
+if [ -x "$F77" ]; then
+    printf '      SUBROUTINE PRINTIT\n      RETURN\n      PROGRAM HELLO\n      CALL PRINTIT\n      END\n' > "$W/noend.f"
+    printf '      PROGRAM A\n      END\n      PROGRAM B\n      END\n' > "$W/twomain.f"
+    for c in "noend:line 3: PROGRAM statement inside a subprogram: the END before it is missing" \
+             "twomain:line 3: more than one main program"; do
+        b="${c%%:*}"; msg="${c#*:}"
+        if "$F77" "$W/$b.f" "$W/$b.s" >"$W/$b.err" 2>&1; then
+            report "refuse:$b" 1 "compiled"
+        elif ! grep -qF "$msg" "$W/$b.err"; then
+            report "refuse:$b" 1 "said: $(head -1 "$W/$b.err")"
+        else
+            report "refuse:$b" 0
+        fi
+    done
+fi
+
 # --- Report: math libcalls emitted -----------------------------------
 # INFORMATIONAL, not a failure.  fortran/ lives in the tree's ordinary
 # universe, not selfhost's closed one: the compiler may use the host to
