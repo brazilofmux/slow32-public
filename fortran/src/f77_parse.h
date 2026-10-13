@@ -6118,10 +6118,30 @@ static void f77_stmt_inquire(int skip) {
     f77_tok();
     for (;;) {
         int code;
-        if (lx_t != T_NAME) { f77_error("INQUIRE needs keyword=value items"); return; }
+        if (lx_t != T_NAME) {
+            /* the first item may be the unit without UNIT= (12.10.3) */
+            if (nspec == 0 && unit_val < 0 && file_addr < 0 && err_label < 0 && iostat_addr < 0) {
+                unit_val = f77_expr();
+                unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
+                if (lx_t == T_COMMA) { f77_tok(); continue; }
+                break;
+            }
+            f77_error("INQUIRE needs keyword=value items");
+            return;
+        }
         strcpy(kw, lex_name);
         f77_tok();
-        if (lx_t != T_ASSIGN) { f77_error("INQUIRE needs keyword=value items"); return; }
+        if (lx_t != T_ASSIGN) {
+            if (nspec == 0 && unit_val < 0 && file_addr < 0 && err_label < 0 && iostat_addr < 0) {
+                /* a positional unit that is a name, as OPEN takes it */
+                unit_val = f77_io_unit_after_name(kw);
+                unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
+                if (lx_t == T_COMMA) { f77_tok(); continue; }
+                break;
+            }
+            f77_error("INQUIRE needs keyword=value items");
+            return;
+        }
         f77_tok();
         code = 0;
         if (strcmp(kw, "UNIT") == 0) {
@@ -6425,7 +6445,17 @@ static void f77_statement(void) {
         hi_emit(HI_BRC, TY_VOID, c_neg, f77_label_blk(l1), b_mid, NULL);
         f77_cur_blk_live = 0;
         f77_begin_blk(b_mid);
-        hi_emit(HI_BRC, TY_VOID, c_eq, f77_label_blk(l2), f77_label_blk(l3), NULL);
+        {
+            /* one at a time: f77_label_blk makes a label's block on first
+             * sight, and C leaves the order of a call's arguments open,
+             * so as arguments the two blocks came out numbered one way
+             * by gcc on x86_64 and the other by gcc on arm64 and clang */
+            int b2;
+            int b3;
+            b2 = f77_label_blk(l2);
+            b3 = f77_label_blk(l3);
+            hi_emit(HI_BRC, TY_VOID, c_eq, b2, b3, NULL);
+        }
         f77_cur_blk_live = 0;
         goto done;
     }
