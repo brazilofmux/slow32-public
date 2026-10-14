@@ -2575,6 +2575,7 @@ static int f77_stf_define(void) {
     f77_stf_len[f77_stf_n] = len;
     f77_stf_pool_n = f77_stf_pool_n + len + 1;
     f77_stf_n = f77_stf_n + 1;
+    lx_t = T_EOF;            /* the body is kept as text, parsed where it is used */
     return 1;
 }
 
@@ -2689,6 +2690,7 @@ static void f77_stmt_assign_label(int skip) {
     } else {
         s = f77_sym(lex_name + 2);
     }
+    f77_tok();
     f77_store_sym_val(s, f77_iconst(lab), TY_INT, -1);
 }
 
@@ -3418,6 +3420,7 @@ static void f77_stmt_parameter(int skip) {
         f77_tok();
     }
     if (lx_t != T_RP) f77_error("expected ) after PARAMETER list");
+    else f77_tok();
 }
 
 /* --- DATA -------------------------------------------------------------
@@ -6443,7 +6446,12 @@ static void f77_statement(void) {
     int b_else;
     int b_end;
     int lab;
+    int nerr0;
 
+    /* A statement no handler scans leaves no tokens; one that
+     * is scanned must be used up (see done:) */
+    lx_t = T_EOF;
+    nerr0 = f77_nerr;
     cls = f77_classify();
 
     if (cls == S_ASSIGN && f77_stf_define()) goto done;
@@ -6580,6 +6588,7 @@ static void f77_statement(void) {
     if (cls == S_IF_BLOCK) {
         f77_scan_from(2);
         c = f77_expr();
+        if (lx_t == T_NAME && strcmp(lex_name, "THEN") == 0) f77_tok();
         b_then = hir_new_block();
         b_else = hir_new_block();
         b_end = hir_new_block();
@@ -6615,6 +6624,7 @@ static void f77_statement(void) {
             if (lx_t == T_NAME && strcmp(lex_name, "UNIT") == 0) { f77_tok(); if (lx_t == T_ASSIGN) f77_tok(); }
             u = f77_expr(); u = f77_cvt(u, &ex_hi, ex_ty, TY_INT);
             if (lx_t != T_RP) f77_error("expected ) in BACKSPACE");
+            else f77_tok();
         } else {
             u = f77_expr(); u = f77_cvt(u, &ex_hi, ex_ty, TY_INT);
         }
@@ -6664,6 +6674,7 @@ static void f77_statement(void) {
             args[0] = f77_iconst(0);
             args[1] = f77_iconst(0);
         }
+        if (lx_t == T_SCON || lx_t == T_ICON) f77_tok();
         f77_call_i("f77_pause", 2, args);
         goto done;
     }
@@ -6724,6 +6735,8 @@ static void f77_statement(void) {
         }
         f77_scan_from(7);
         c = f77_expr();
+        if (lx_t == T_RP) f77_tok();
+        if (lx_t == T_NAME && strcmp(lex_name, "THEN") == 0) f77_tok();
         b_then = hir_new_block();
         b_else = hir_new_block();
         hi_emit(HI_BRC, TY_VOID, c, b_then, b_else, NULL);
@@ -6828,6 +6841,7 @@ static void f77_statement(void) {
                     f77_tok();
                 }
                 if (lx_t != T_RP) { f77_error("expected ) in assigned GOTO"); goto done; }
+                f77_tok();
             } else {
                 for (i = 0; i < f77_nasg; i++) {
                     if (f77_asg_unit[i] != f77_cur_unit) continue;
@@ -6849,6 +6863,7 @@ static void f77_statement(void) {
         }
         if (lx_t != T_ICON) { f77_error("GOTO needs a label"); goto done; }
         f77_goto_blk(f77_label_blk(lex_ival));
+        f77_tok();
         goto done;
     }
 
@@ -6858,6 +6873,7 @@ static void f77_statement(void) {
         int r;
         f77_scan_from(n);
         v = (lx_t == T_ICON) ? f77_iconst(lex_ival) : f77_iconst(0);
+        if (lx_t == T_ICON || lx_t == T_SCON) f77_tok();   /* STOP n, STOP 'text' */
         if (f77_cur_blk_live) {
             /* Process exit, not a function return -- STOP in a
              * SUBROUTINE must terminate the program (GitHub #20). */
@@ -6885,6 +6901,7 @@ static void f77_statement(void) {
             u = f77_expr();
             u = f77_cvt(u, &ex_hi, ex_ty, TY_INT);
             if (lx_t != T_RP) f77_error("expected ) in ENDFILE");
+            else f77_tok();
         } else {
             u = f77_expr();
             u = f77_cvt(u, &ex_hi, ex_ty, TY_INT);
@@ -6907,6 +6924,11 @@ static void f77_statement(void) {
     f77_error("unrecognised statement");
 
 done:
+    /* Text left over after a statement's handler is text it
+     * did not understand.  Ignored, it was ignored without a word:
+     * INTEGER N/9000/, LEN/30000/ lost both values and every name after
+     * them.  A statement that already reported an error is left be. */
+    if (lx_t != T_EOF && f77_nerr == nerr0) f77_error("unexpected text after the statement");
     /* If this statement carried a label that closes one or more DO
      * loops, close them now -- the terminal statement is part of the
      * loop body and has just been emitted. */

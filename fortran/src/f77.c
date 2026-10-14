@@ -20,6 +20,7 @@
 #include "f77_contract.h"
 
 static void f77_error(char *msg);
+static int f77_nerr;      /* errors reported; the parser checks it per statement */
 
 #include "f77_card.h"
 #include "f77_lexer_gen.c"
@@ -32,7 +33,6 @@ static void f77_error(char *msg);
 #include "f77_parse.h"
 #include "hir_codegen.h"
 
-static int f77_nerr;
 
 static void f77_error(char *msg) {
     fdputs("f77: line ", 2);
