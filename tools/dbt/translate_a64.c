@@ -16,6 +16,7 @@
 #include "hooks.h"
 #include "stage5_burg.h"
 #include "stage5_lift.h"
+#include "divrem.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>  // for getenv
@@ -2410,38 +2411,82 @@ void translate_mulhu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2)
 
 // ============================================================================
 // Divide/Remainder translations
-// AArch64 SDIV/UDIV are direct — no INT32_MIN/-1 guard needed
+// AArch64 SDIV gives INT32_MIN / -1 = INT32_MIN, as SLOW-32 does, but
+// x / 0 = 0 where SLOW-32 says 0xFFFFFFFF.  A branch around the SDIV
+// puts that right without lengthening the quotient's dependence chain
+// (a CSINV after it cost the pi spigot 8%: the quotient is often the
+// loop-carried value).  REM is SDIV then MSUB, and with the quotient
+// fixed x % 0 = x - (-1 * 0) = x.  A DIV and a REM of the same
+// operands share one SDIV (divrem.h); the partner's half waits in W12,
+// which nothing else uses, and is handed over by a 64-bit MOV -- which
+// the core eliminates at rename where a 32-bit one costs a cycle (W12's
+// upper half is zero: only 32-bit operations write it).
 // ============================================================================
 
-void translate_div(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
+// q = s1 / s2 with SLOW-32's x / 0 = -1:
+//     cbnz s2, 1f ; movn q, #0 ; b 2f ; 1: sdiv q, s1, s2 ; 2:
+static void emit_sdiv_s32(emit_ctx_t *e, a64_reg_t q, a64_reg_t s1, a64_reg_t s2) {
+    emit_cbnz_w32(e, s2, 12);
+    emit_inst(e, 0x12800000 | (q & 0x1F));       // MOVN Wq, #0 = 0xFFFFFFFF
+    emit_b(e, 8);
+    emit_sdiv_w32(e, q, s1, s2);
+}
+
+static void translate_divrem(translate_ctx_t *ctx, uint8_t op, uint8_t rd,
+                             uint8_t rs1, uint8_t rs2) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
+    uint8_t other = (op == OP_DIV) ? OP_REM : OP_DIV;
+    a64_reg_t hd;
 
-    a64_reg_t hd = guest_host_reg(ctx, rd);
-    if (hd != A64_NOREG) {
-        a64_reg_t s1 = resolve_src(ctx, rs1, W0);
-        a64_reg_t s2 = resolve_src(ctx, rs2, W1);
-        emit_sdiv_w32(e, hd, s1, s2);
-        reg_cache_mark_written(ctx, rd);
+    if (divrem_take(ctx, op, rs1, rs2)) {
+        hd = guest_host_reg(ctx, rd);
+        if (hd != A64_NOREG) {
+            emit_mov_x64_x64(e, hd, W12);
+            reg_cache_mark_written(ctx, rd);
+        } else {
+            emit_store_guest_reg(ctx, rd, W12);
+        }
+        return;
+    }
+    bool pair = divrem_partner_ahead(ctx->cpu, ctx->guest_pc, other, rd, rs1, rs2);
+
+    a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+    a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+    // The quotient: straight into rd's cached register when that is safe
+    // (the REM partner needs it held instead, in W12).
+    a64_reg_t q = W2;
+    hd = guest_host_reg(ctx, rd);
+    if (op == OP_REM && pair) q = W12;
+    else if (op == OP_DIV && hd != A64_NOREG && hd != s1 && hd != s2) q = hd;
+
+    emit_sdiv_s32(e, q, s1, s2);
+    // The remainder's MSUB needs the quotient at the very cycle the next
+    // use of it does -- in a loop, the multiply that carries it -- and
+    // the older MSUB takes the multiplier first.  One EOR in between
+    // (an ALU operation no core treats as a move) delays the MSUB a
+    // cycle and lets the loop go on: the pi spigot ran 3.5% faster on an
+    // M5 Max, as fast as the hand-scheduled loop.  Only when paired: a
+    // lone REM's quotient has no other consumer to compete with.
+    a64_reg_t m = q;
+    if (pair) { emit_eor_w32(e, W3, q, WZR); m = W3; }
+    if (op == OP_DIV) {
+        if (pair) emit_msub_w32(e, W12, m, s2, s1);
+        if (q == hd) reg_cache_mark_written(ctx, rd);
+        else emit_store_guest_reg(ctx, rd, q);
     } else {
-        emit_load_guest_reg(ctx, W0, rs1);
-        a64_reg_t s2 = resolve_src(ctx, rs2, W1);
-        emit_sdiv_w32(e, W0, W0, s2);
+        emit_msub_w32(e, W0, m, s2, s1);
         emit_store_guest_reg(ctx, rd, W0);
     }
+    if (pair) divrem_hold(ctx, other, rs1, rs2);
+}
+
+void translate_div(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
+    translate_divrem(ctx, OP_DIV, rd, rs1, rs2);
 }
 
 void translate_rem(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
-    if (rd == 0) return;
-    emit_ctx_t *e = &ctx->emit;
-
-    // REM = rs1 - (rs1/rs2)*rs2 = SDIV + MSUB
-    // Uses W0/W1/W2 as scratch since MSUB needs 4 operands
-    emit_load_guest_reg(ctx, W0, rs1);
-    a64_reg_t s2 = resolve_src(ctx, rs2, W1);
-    emit_sdiv_w32(e, W2, W0, s2);
-    emit_msub_w32(e, W0, W2, s2, W0);
-    emit_store_guest_reg(ctx, rd, W0);
+    translate_divrem(ctx, OP_REM, rd, rs1, rs2);
 }
 
 // DIVU not defined as a separate opcode in SLOW-32 (no OP_DIVU),
@@ -3402,6 +3447,7 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
         fprintf(stderr, "A64 translate begin pc=0x%08X\n", cpu->pc);
     }
 
+    ctx->divrem.valid = false;
     while (ctx->inst_count < MAX_BLOCK_INSTS) {
         if (ctx->guest_pc >= cpu->code_limit ||
             (cpu->code_limit - ctx->guest_pc) < 4) {
@@ -3430,6 +3476,7 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
         // Fetch and decode
         uint32_t raw = *(uint32_t *)(cpu->mem_base + ctx->guest_pc);
         decoded_inst_t inst = decode_instruction(raw);
+        divrem_note(ctx, &inst, is_backedge_target(ctx, ctx->guest_pc));
 
         if (DBT_TRACE) {
             fprintf(stderr, "  [%d] PC=0x%08X: raw=0x%08X op=0x%02X rd=%d rs1=%d rs2=%d imm=%d\n",
@@ -4781,6 +4828,7 @@ retry_translate:
         fprintf(stderr, "DBT: Translating cached block at PC=0x%08X (AArch64)\n", guest_pc);
     }
 
+    ctx->divrem.valid = false;
     while (ctx->inst_count < MAX_BLOCK_INSTS) {
         if (ctx->guest_pc >= cpu->code_limit ||
             (cpu->code_limit - ctx->guest_pc) < 4) {
@@ -4808,6 +4856,7 @@ retry_translate:
 
         uint32_t raw = *(uint32_t *)(cpu->mem_base + ctx->guest_pc);
         decoded_inst_t inst = decode_instruction(raw);
+        divrem_note(ctx, &inst, is_backedge_target(ctx, ctx->guest_pc));
 
         if (a64_emit_trace_matches_pc(ctx->block_start_pc)) {
             fprintf(stderr, "A64 translate cached inst idx=%d pc=0x%08X raw=0x%08X op=0x%02X imm=%d\n",

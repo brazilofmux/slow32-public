@@ -772,3 +772,93 @@ Fix: `emit_cvttss2si_r64_xmm` (F3 REX.W 0F 2C /r) in emit_x64.h; the
 translator converts to 64 bits and stores the low word, exact over the
 whole uint32 range.  Out-of-range inputs are undefined in C and the
 test does not check them.
+
+## 24. x / 0 Was 0 on AArch64 (FIXED 2026-10-14)
+
+SPEC.md says DIV by zero is 0xFFFFFFFF and REM by zero the dividend.
+The x86-64 translator guards both (native IDIV would trap); the AArch64
+one emitted a bare SDIV, which returns 0 for a zero divisor, under a
+comment saying no guard was needed.  REM came out right (SDIV's 0 times
+0, subtracted from the dividend); DIV did not.  The reference
+interpreter, slow32-fast and qemu all gave -1.  Nothing in the
+regression suites divides by a run-time zero; it was found by a
+probe written while pairing DIV and REM (item 26).
+
+Fix: a branch around the SDIV that leaves -1 for a zero divisor
+(`emit_sdiv_s32`).  A CSINV after the SDIV was the first try and cost
+the pi spigot 8% on an M5 Max: the quotient was its loop-carried value,
+and the CSINV sat on that chain.  The predicted branch is off it.
+regression/tests/feature-dbt-divrem-pair cases C, D and H.
+
+## 25. x86-64 Loops One Register Over the Cache Ran Through Memory (FIXED 2026-10-14)
+
+An in-block back edge whose cache state differed from the loop head's
+snapshot ("unstable": the body evicted something) flushed every dirty
+slot and reloaded all eight -- every pass.  A loop that uses nine guest
+registers is unstable on every pass, and the reload put its
+loop-carried values through a store and a load: the pi spigot's
+quotient chain gained the store-forwarding latency, 13% of its time on
+a Cascade Lake.
+
+Now the back edge reconciles slot by slot: a slot that still holds the
+head's register keeps it in place, the rest are stored if dirty (all
+stores first, so a register that moved between slots is in memory
+before its new slot loads it) and then loaded.  One case the first
+version missed, and run-differential caught at once on kagura (35 of
+108 diverged): a matching slot that was clean at the head but is dirty
+now must still be stored, because the body's code believes it clean and
+an eviction there drops it without a writeback.  It keeps its register;
+only the store is added.  The old stable path never met this -- a stable
+body evicts nothing.
+
+## 26. DIV and REM of the Same Operands Share One Divide (2026-10-14)
+
+MOD(X,Y) and X/Y become REM and DIV of the same two registers.  x86's
+IDIV gives both halves at once, AArch64's REM is SDIV then MSUB, and an
+integer divider takes one divide at a time -- so the second divide was
+waste, and when the remainder's went first the quotient (in the pi
+spigot, the loop-carried value) waited behind it.  divrem.h: the first
+of a pair computes both and holds the partner's half in a host register
+nothing else uses (R10, W12); the partner becomes a move.  A lookahead
+decides to pair (16 instructions, only ALU/compare/multiply/LUI/load/
+store between, neither operand written, the first's destination not an
+operand) and the translation loop drops a pending pair at anything the
+lookahead should have stopped at, including back-edge targets.
+S32_DBT_NO_DIVREM=1 turns it off.  On AArch64 the remainder's MSUB is
+fed through one EOR: issued the cycle the quotient arrives it takes the
+multiplier ahead of the loop-carried multiply (3.5% of the spigot).
+
+The spigot (Doug Wegscheid's, H390-MVS; 9000 digits, 270M passes),
+against native gfortran -O2 on the same host:
+
+| host | before | after | gfortran |
+|---|---:|---:|---:|
+| M5 Max, slow32-dbt (arm64) | 0.78 s (by luck, see below) | 0.78 s | 0.79 s |
+| Xeon 8259CL, slow32-dbt (x86-64) | 3.27 s (1.22x) | 2.81 s (1.05x) | 2.68 s |
+
+"By luck": the old AArch64 code ran two SDIVs remainder-first, which on
+an M5 costs 14% -- except that the remainder's dividend came through a
+32-bit MOV the core does not eliminate, delaying it one cycle so the
+quotient's divide went first.  Measured by editing gfortran's own loop
+(two divides remainder-first 0.88 s; the same through a 32-bit MOV
+0.757; through a 64-bit MOV, eliminated, 0.884).
+
+regression/tests/feature-dbt-divrem-pair: both orders, the special
+cases, an operand written between, the first's destination an operand,
+the partner at a loop head; mutation-tested (each guard removed trips
+its own case).
+
+## 27. dbt-x64 (Built by cc-x64) Diverges on MMIO Service Tests (OPEN, queued 2026-10-14)
+
+The self-hosted dbt-x64 (selfhost/stage08-cross-x64, `make out/dbt-x64`)
+run as SLOW32_DBT on kagura: run-differential 90 agree, 15 diverged --
+feature-dpc-{poll,post-read,sched,timer}, feature-socket-basic,
+feature-term-{clusters,unicode}, feature-tube-{fb,ppu,vec-keys,vec,
+vec-socket}-once, stdio-{prompt,short-paths,turn} -- and
+run-kit-differential test_stdio_fd exit 12 vs 0.  The gcc-built
+slow32-dbt from the same sources agrees on all of them.  A dbt-x64
+built from 002d4b99 (before items 24-26) diverges on the identical
+list, so it is older than those.  Every test on the list uses MMIO
+services beyond plain stdio (DPC, sockets, the terminal, tube), which
+points at the selfhost libc or the service code as cc-x64 compiles it,
+not the translator.  Not investigated; the user queued it.

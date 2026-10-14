@@ -35,6 +35,7 @@ extern uint32_t cmp_branch_fusion_count;
 extern uint32_t cmp_branch_fusion_carry_skipped;
 extern uint32_t cbz_peephole_count;
 extern uint32_t select_fusion_count;
+extern uint32_t divrem_fusion_count;   // DIV/REM pairs sharing one divide (divrem.h)
 extern uint32_t native_stub_count;
 extern uint32_t stage5_emit_side_exits;
 
@@ -164,6 +165,17 @@ typedef struct {
         uint8_t t_recover;      // rT holds t2 (in-place T^F): T = rT ^ rF
     } select_fuse[MAX_SELECT_FUSIONS];
     int select_fuse_count;
+
+    // DIV/REM pairing (divrem.h): a DIV and a REM of the same operands
+    // share one host divide.  The first computes both; the half its
+    // partner wants waits in a host register (R10 on x86-64, W12 on
+    // AArch64) that no other translation touches.  `consumer` is the
+    // opcode that may take it.
+    struct {
+        bool valid;
+        uint8_t consumer;
+        uint8_t rs1, rs2;
+    } divrem;
 
     // Constant propagation: track registers with known values at translate time
     struct {

@@ -292,6 +292,8 @@ void emit_cset_w32(emit_ctx_t *ctx, a64_reg_t rd, a64_cond_t cond);
 // CSEL Wd, Wn, Wm, cond — Wd = cond ? Wn : Wm
 void emit_csel_w32(emit_ctx_t *ctx, a64_reg_t rd, a64_reg_t rn,
                    a64_reg_t rm, a64_cond_t cond);
+void emit_csinv_w32(emit_ctx_t *ctx, a64_reg_t rd, a64_reg_t rn,
+                    a64_reg_t rm, a64_cond_t cond);
 
 // ============================================================================
 // Branches

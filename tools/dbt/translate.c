@@ -9,6 +9,7 @@
 #include "hooks.h"
 #include "stage5_lift.h"
 #include "stage5_burg.h"
+#include "divrem.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -2207,8 +2208,11 @@ void translate_mulhu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2)
     }
 }
 
-void translate_div(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
-    if (rd == 0) return;
+// rs1 / rs2 with SLOW-32's results on every path: quotient in EAX,
+// remainder in EDX.  SLOW-32 defines x / 0 = 0xFFFFFFFF and x % 0 = x
+// (no host trap), and INT32_MIN / -1 = INT32_MIN, % = 0 -- both of which
+// native IDIV would raise SIGFPE on, so they are guarded here.
+static void emit_divrem(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2) {
     emit_ctx_t *e = &ctx->emit;
 
     // IDIV requires dividend in EDX:EAX and divisor in any register.
@@ -2216,25 +2220,24 @@ void translate_div(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     emit_load_guest_reg(ctx, RAX, rs1);
     emit_load_guest_reg(ctx, RCX, rs2);
 
-    // Guard: divide by zero. SLOW-32 defines x / 0 = 0xFFFFFFFF (no host trap),
-    // but native idiv with a zero divisor raises SIGFPE -- so handle it here.
+    // Guard: divide by zero.
     emit_cmp_r32_imm32(e, RCX, 0);
     emit_jne_rel32(e, 0);
     size_t patch_not_zero = e->offset - 4;
-    emit_mov_r32_imm32(e, RAX, 0xFFFFFFFF);
+    emit_mov_r32_r32(e, RDX, RAX);               // remainder = rs1
+    emit_mov_r32_imm32(e, RAX, 0xFFFFFFFF);      // quotient = -1
     emit_jmp_rel32(e, 0);
     size_t patch_zero_done = e->offset - 4;
     emit_patch_rel32(e, patch_not_zero, e->offset);
 
-    // Guard: INT32_MIN / -1 would crash the host (x86 SIGFPE)
+    // Guard: INT32_MIN / -1
     emit_cmp_r32_imm32(e, RCX, -1);
     emit_jne_rel32(e, 0);
     size_t patch_not_neg1 = e->offset - 4;
     emit_cmp_r32_imm32(e, RAX, (int32_t)0x80000000);
     emit_jne_rel32(e, 0);
     size_t patch_not_intmin = e->offset - 4;
-    // INT32_MIN / -1 = INT32_MIN
-    emit_mov_r32_imm32(e, RAX, 0x80000000);
+    emit_xor_r32_r32(e, RDX, RDX);               // remainder 0, quotient INT32_MIN (in EAX)
     emit_jmp_rel32(e, 0);
     size_t patch_skip_idiv = e->offset - 4;
 
@@ -2245,46 +2248,34 @@ void translate_div(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
 
     emit_patch_rel32(e, patch_skip_idiv, e->offset);
     emit_patch_rel32(e, patch_zero_done, e->offset);
-    emit_store_guest_reg(ctx, rd, RAX);
+}
+
+// DIV and REM share emit_divrem; a partner of the same operands ahead
+// (divrem.h) gets the other half in R10, which nothing else uses.
+static void translate_divrem(translate_ctx_t *ctx, uint8_t op, uint8_t rd,
+                             uint8_t rs1, uint8_t rs2) {
+    if (rd == 0) return;
+    emit_ctx_t *e = &ctx->emit;
+    uint8_t other = (op == OP_DIV) ? OP_REM : OP_DIV;
+
+    if (divrem_take(ctx, op, rs1, rs2)) {
+        emit_store_guest_reg(ctx, rd, R10);
+        return;
+    }
+    emit_divrem(ctx, rs1, rs2);
+    if (divrem_partner_ahead(ctx->cpu, ctx->guest_pc, other, rd, rs1, rs2)) {
+        emit_mov_r32_r32(e, R10, op == OP_DIV ? RDX : RAX);
+        divrem_hold(ctx, other, rs1, rs2);
+    }
+    emit_store_guest_reg(ctx, rd, op == OP_DIV ? RAX : RDX);
+}
+
+void translate_div(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
+    translate_divrem(ctx, OP_DIV, rd, rs1, rs2);
 }
 
 void translate_rem(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
-    if (rd == 0) return;
-    emit_ctx_t *e = &ctx->emit;
-
-    emit_load_guest_reg(ctx, RAX, rs1);
-    emit_load_guest_reg(ctx, RCX, rs2);
-
-    // Guard: remainder by zero. SLOW-32 defines x % 0 = x (the dividend, already
-    // in RAX); native idiv with a zero divisor would raise SIGFPE.
-    emit_cmp_r32_imm32(e, RCX, 0);
-    emit_jne_rel32(e, 0);
-    size_t patch_not_zero = e->offset - 4;
-    emit_jmp_rel32(e, 0);               // result = rs1, already in RAX
-    size_t patch_zero_done = e->offset - 4;
-    emit_patch_rel32(e, patch_not_zero, e->offset);
-
-    // Guard: INT32_MIN % -1 would crash the host (x86 SIGFPE)
-    emit_cmp_r32_imm32(e, RCX, -1);
-    emit_jne_rel32(e, 0);
-    size_t patch_not_neg1 = e->offset - 4;
-    emit_cmp_r32_imm32(e, RAX, (int32_t)0x80000000);
-    emit_jne_rel32(e, 0);
-    size_t patch_not_intmin = e->offset - 4;
-    // INT32_MIN % -1 = 0
-    emit_xor_r32_r32(e, RAX, RAX);
-    emit_jmp_rel32(e, 0);
-    size_t patch_skip_idiv = e->offset - 4;
-
-    emit_patch_rel32(e, patch_not_neg1, e->offset);
-    emit_patch_rel32(e, patch_not_intmin, e->offset);
-    emit_cdq(e);
-    emit_idiv_r32(e, RCX);
-    emit_mov_r32_r32(e, RAX, RDX);
-
-    emit_patch_rel32(e, patch_skip_idiv, e->offset);
-    emit_patch_rel32(e, patch_zero_done, e->offset);
-    emit_store_guest_reg(ctx, rd, RAX);
+    translate_divrem(ctx, OP_REM, rd, rs1, rs2);
 }
 
 // ============================================================================
@@ -3507,46 +3498,38 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
         size_t taken_offset = emit_offset(e);
         emit_patch_rel32(e, jcc_patch, taken_offset);
 
-        // Classify cache stability:
-        // - "stable": all snapshot-occupied slots still have the same guest reg
-        //   (new allocations in previously-free slots are fine)
-        // - "unstable": some occupied slot was reassigned or evicted (need
-        //   full reconciliation to restore snapshot state)
-        bool cache_stable = ctx->backedge_snapshot_valid;
-        if (cache_stable) {
-            for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
-                if (ctx->backedge_snapshot[i].guest_reg >= 0 &&
-                    ctx->backedge_snapshot[i].guest_reg !=
-                    ctx->reg_alloc[i].guest_reg) {
-                    cache_stable = false;
-                    break;
-                }
+        // Reconcile the cache with the loop head's snapshot, slot by slot.
+        // A slot still holding the guest register it held at the head is
+        // not reloaded: the value is in the host register the head's code
+        // reads.  Every other slot is stored first if dirty (all stores before any
+        // load: a register that moved from slot j to slot i is in memory by
+        // the time slot i loads it), then loaded with the head's register.
+        // A loop with one register more than the cache has slots used to
+        // flush and reload all eight on every pass -- and with them its
+        // loop-carried value, through memory: a pi spigot's quotient chain
+        // ran through a store and a load, 13% of its time on a Cascade Lake.
+        bool mismatched[REG_ALLOC_SLOTS];
+        for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+            mismatched[i] = !ctx->backedge_snapshot_valid ||
+                ctx->backedge_snapshot[i].guest_reg != ctx->reg_alloc[i].guest_reg;
+        }
+        // A slot that matches but was clean at the head and is dirty now
+        // is stored too, and keeps its value: the body's code thinks it
+        // clean, and an eviction there would drop it without a writeback.
+        for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+            bool store = mismatched[i] ||
+                !ctx->backedge_snapshot[i].dirty;
+            if (store && ctx->reg_alloc[i].guest_reg >= 0 &&
+                ctx->reg_alloc[i].dirty) {
+                emit_mov_m32_r32(e, RBP,
+                    GUEST_REG_OFFSET(ctx->reg_alloc[i].guest_reg),
+                    reg_alloc_hosts[i]);
             }
         }
-
-        if (cache_stable) {
-            // Flush only dirty NEW slots (FREE in snapshot, OCCUPIED+DIRTY now).
-            // These guest regs had rc_read MISSes in the loop body, which emitted
-            // memory loads — the loads need up-to-date memory on re-entry.
-            for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
-                if (ctx->backedge_snapshot[i].guest_reg < 0 &&
-                    ctx->reg_alloc[i].guest_reg >= 0 &&
-                    ctx->reg_alloc[i].dirty) {
-                    emit_mov_m32_r32(e, RBP,
-                        GUEST_REG_OFFSET(ctx->reg_alloc[i].guest_reg),
-                        reg_alloc_hosts[i]);
-                }
-            }
-        } else {
-            // Unstable: evictions changed slot assignments. Emit
-            // reconciliation: flush dirty to memory, reload snapshot
-            // state so host regs match what the target code expects.
-            rc_flush(ctx);
-            for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
-                if (ctx->backedge_snapshot[i].guest_reg >= 0) {
-                    emit_mov_r32_m32(&ctx->emit, reg_alloc_hosts[i], RBP,
-                        GUEST_REG_OFFSET(ctx->backedge_snapshot[i].guest_reg));
-                }
+        for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+            if (mismatched[i] && ctx->backedge_snapshot[i].guest_reg >= 0) {
+                emit_mov_r32_m32(&ctx->emit, reg_alloc_hosts[i], RBP,
+                    GUEST_REG_OFFSET(ctx->backedge_snapshot[i].guest_reg));
             }
         }
 
@@ -4927,6 +4910,7 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
     // Debug: emit int3 at start of block for debugging
     // emit_int3(e);
 
+    ctx->divrem.valid = false;
     while (ctx->inst_count < MAX_BLOCK_INSTS) {
         if (ctx->guest_pc >= cpu->code_limit ||
             (cpu->code_limit - ctx->guest_pc) < 4) {
@@ -5009,6 +4993,7 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
         // Fetch and decode
         uint32_t raw = *(uint32_t *)(cpu->mem_base + ctx->guest_pc);
         decoded_inst_t inst = decode_instruction(raw);
+        divrem_note(ctx, &inst, is_backedge_target(ctx, ctx->guest_pc));
 
         if (DBT_TRACE) {
             fprintf(stderr, "  [%d] PC=0x%08X: raw=0x%08X op=0x%02X rd=%d rs1=%d rs2=%d imm=%d\n",
@@ -6385,6 +6370,7 @@ retry_translate:
     }
 
     // Translate the block (same logic as Stage 1)
+    ctx->divrem.valid = false;
     while (ctx->inst_count < MAX_BLOCK_INSTS) {
         if (ctx->guest_pc >= cpu->code_limit ||
             (cpu->code_limit - ctx->guest_pc) < 4) {
@@ -6455,6 +6441,7 @@ retry_translate:
         // Fetch and decode
         uint32_t raw = *(uint32_t *)(cpu->mem_base + ctx->guest_pc);
         decoded_inst_t inst = decode_instruction(raw);
+        divrem_note(ctx, &inst, is_backedge_target(ctx, ctx->guest_pc));
 
         if (DBT_TRACE) {
             fprintf(stderr, "  [%d] PC=0x%08X: raw=0x%08X op=0x%02X rd=%d rs1=%d rs2=%d imm=%d\n",

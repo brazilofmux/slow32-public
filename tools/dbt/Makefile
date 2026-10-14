@@ -44,7 +44,7 @@ EMULATOR_OBJS = mmio_ring.o
 
 # Headers
 HDRS = cpu_state.h $(ARCH_HDRS) translate.h block_cache.h dbt_limits.h shadow_interp.h hooks.h \
-	stage5_lift.h stage5_burg.h stage5_ssa.h stage5_ra.h stage5_mir.h stage5_lir.h \
+	stage5_lift.h stage5_burg.h stage5_ssa.h stage5_ra.h stage5_mir.h stage5_lir.h divrem.h \
 	../emulator/mmio_ring.h
 
 .DEFAULT_GOAL := all

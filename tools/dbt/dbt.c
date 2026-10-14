@@ -2708,6 +2708,9 @@ int main(int argc, char **argv) {
         if (select_fusion_count > 0) {
             fprintf(stderr, "Select-idiom fusions: %" PRIu32 "\n", select_fusion_count);
         }
+        if (divrem_fusion_count > 0) {
+            fprintf(stderr, "DIV/REM pairs sharing a divide: %" PRIu32 "\n", divrem_fusion_count);
+        }
 
         if (native_stub_count > 0) {
             fprintf(stderr, "Native intrinsic stubs: %" PRIu32 "\n", native_stub_count);

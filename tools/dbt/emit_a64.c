@@ -659,6 +659,15 @@ void emit_csel_w32(emit_ctx_t *ctx, a64_reg_t rd, a64_reg_t rn,
     emit_inst(ctx, inst);
 }
 
+// CSINV Wd, Wn, Wm, cond — Wd = cond ? Wn : ~Wm
+void emit_csinv_w32(emit_ctx_t *ctx, a64_reg_t rd, a64_reg_t rn,
+                    a64_reg_t rm, a64_cond_t cond) {
+    // 0 1 0 11010100 Rm(5) cond(4) 0 0 Rn(5) Rd(5)
+    uint32_t inst = 0x5A800000 | ((rm & 0x1F) << 16) | ((cond & 0xF) << 12) |
+                    ((rn & 0x1F) << 5) | (rd & 0x1F);
+    emit_inst(ctx, inst);
+}
+
 // ============================================================================
 // Branches
 // ============================================================================
