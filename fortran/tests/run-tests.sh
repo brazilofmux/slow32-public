@@ -157,14 +157,16 @@ fi
 # --- Gate: program units the compiler must refuse ----------------------
 # How the compiler divides a source into units is where a mistake loses
 # a unit without a word.  A PROGRAM statement inside a subprogram (its
-# END missing) and a second main program are refused, each with its
-# message; f77/mainlast.f has a main program after its subprograms.
+# END missing), a second main program and a label referred to but never
+# defined are refused, each with its message; f77/mainlast.f has a main program after its subprograms.
 # Found by fort370 (reported on H390-MVS), whose unit scan is this one's.
 if [ -x "$F77" ]; then
     printf '      SUBROUTINE PRINTIT\n      RETURN\n      PROGRAM HELLO\n      CALL PRINTIT\n      END\n' > "$W/noend.f"
     printf '      PROGRAM A\n      END\n      PROGRAM B\n      END\n' > "$W/twomain.f"
+    printf '      GO TO 99\n      END\n' > "$W/nolabel.f"
     for c in "noend:line 3: PROGRAM statement inside a subprogram: the END before it is missing" \
-             "twomain:line 3: more than one main program"; do
+             "twomain:line 3: more than one main program" \
+             "nolabel:line 2: statement label 99 is referred to but never defined"; do
         b="${c%%:*}"; msg="${c#*:}"
         if "$F77" "$W/$b.f" "$W/$b.s" >"$W/$b.err" 2>&1; then
             report "refuse:$b" 1 "compiled"

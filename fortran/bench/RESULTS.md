@@ -817,3 +817,16 @@ mandel unchanged at 20,365,637 (**0.868×**, output byte-identical).
 28/28 with inlining on and off.  The old frame note blaming the
 by-reference convention for inlining's loss is retracted in place;
 the convention costs something, but the allocator was the blocker.
+
+## 2026-10-13: an inlined dummy keeps its local's type (from fort370)
+
+When the inliner binds a callee's dummy to a caller's local, the
+callee's declaration of the dummy retyped the local's alloca to an
+address, and SSA promotion took its double loads for type puns and
+left it in memory (DGEFA's T reloaded every trip of the inlined DSCAL
+loop).  Only an HI_PARAM is retyped now.  fort370 found it on S/370.
+
+| LINPACK | insns | vs clang |
+|---|---:|---:|
+| before | 520,299,015 | 1.038× |
+| after | **514,573,235** | **1.027×** |

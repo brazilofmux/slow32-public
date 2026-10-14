@@ -411,7 +411,14 @@ static int f77_sym(char *nm) {
     f77_styped[f77_nsym] = 0;
     f77_sstored[f77_nsym] = 0;
     { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[f77_nsym][d] = -1; f77_slov[f77_nsym][d] = -1; d = d + 1; } }
-    f77_frame = f77_frame + f77_tysize(f77_sty[f77_nsym]);
+    /* An implicitly typed CHARACTER (IMPLICIT CHARACTER*14 (C)) has its
+     * length now and gets all of it; a declaration re-issues the slot
+     * anyway.  One byte here left CVCOMP*14 overlapping its
+     * neighbours (FCVS FM301, test 18). */
+    if (f77_sty[f77_nsym] == TY_CHAR && f77_slen[f77_nsym] > 1)
+        f77_frame = f77_frame + ((f77_slen[f77_nsym] + 3) & ~3);
+    else
+        f77_frame = f77_frame + f77_tysize(f77_sty[f77_nsym]);
     f77_sval[f77_nsym] = hi_emit(HI_ALLOCA, f77_sty[f77_nsym] == TY_CPLX ? TY_FLOAT : f77_sty[f77_nsym], -1, -1,
                                  0 - f77_frame, NULL);
     hl_ainst[hl_nalloca] = f77_sval[f77_nsym];
@@ -550,8 +557,12 @@ static void f77_realloc_sym(int s) {
     f77_shi[s] = -1;
     if (f77_sarg[s]) {
         /* By-reference dummy: storage belongs to the caller.  Only the
-         * type and shape are recorded here. */
-        h_ty[f77_sval[s]] = HL_ADDR_TY;
+         * type and shape are recorded here.  A dummy the inliner bound
+         * to an actual (f77_bind_actual) shares the caller's own
+         * value -- often a local's alloca -- whose type must stay the
+         * local's: retyped to an address, the SSA promoter saw its
+         * double loads as type puns and left it in memory. */
+        if (h_kind[f77_sval[s]] == HI_PARAM) h_ty[f77_sval[s]] = HL_ADDR_TY;
         return;
     }
     bytes = f77_esize(s) * f77_sym_nelem(s);
@@ -594,6 +605,7 @@ static void f77_realloc_sym(int s) {
 #define F77_MAX_LABEL 512
 static int f77_lnum[F77_MAX_LABEL];
 static int f77_lblk[F77_MAX_LABEL];
+static signed char f77_ldef[F77_MAX_LABEL];   /* a statement carries it */
 static int f77_nlabel;
 
 /* Block for a label, created on first mention so forward GOTOs work. */
@@ -607,8 +619,25 @@ static int f77_label_blk(int n) {
     if (f77_nlabel >= F77_MAX_LABEL) { f77_error("too many labels"); return 0; }
     f77_lnum[f77_nlabel] = n;
     f77_lblk[f77_nlabel] = hir_new_block();
+    f77_ldef[f77_nlabel] = 0;
     f77_nlabel = f77_nlabel + 1;
     return f77_lblk[f77_nlabel - 1];
+}
+
+/* A label the unit refers to (GO TO, DO, IF, END=) but no statement
+ * carries is an error: its block was made on first mention and, left
+ * empty, fell through to whatever came next.  (Found by fort370.) */
+static void f77_label_check(void) {
+    int i;
+    char msg[64];
+    i = f77_label_base;
+    while (i < f77_nlabel) {
+        if (!f77_ldef[i]) {
+            sprintf(msg, "statement label %d is referred to but never defined", f77_lnum[i]);
+            f77_error(msg);
+        }
+        i = i + 1;
+    }
 }
 
 /* --- FORMAT statements ----------------------------------------------- */
@@ -1515,6 +1544,12 @@ static int f77_primary(void) {
             int ds;
             ds = f77_sym_find(nm);
             if (ds >= 0 && (f77_sarg[ds] || f77_sexternal[ds])) in = IN_NONE;
+            /* An intrinsic's name is the intrinsic only where it is
+             * referenced as a function; not followed by '(' it is a
+             * local variable (INTEGER LEN/30000/), and an array of that
+             * name is the array.  (Found by fort370.) */
+            if (in != IN_NONE && !(lx_rp < lx_rpe && *lx_rp == '(')) in = IN_NONE;
+            if (in != IN_NONE && ds >= 0 && f77_srank[ds] > 0) in = IN_NONE;
         }
         if (in != IN_NONE) {
             int a; int ahi; int aty;
@@ -2992,6 +3027,7 @@ static int f77_char_len(void) {
 }
 
 /* Type declarations, and DIMENSION (which sets shape without a type). */
+static int f77_decl_init(int s);
 static void f77_stmt_decl(int ty, int skip) {
     int s;
     int clen;
@@ -3032,6 +3068,7 @@ static void f77_stmt_decl(int ty, int skip) {
             if (lx_t == T_LP) f77_parse_dims(s);
         }
         f77_realloc_sym(s);
+        if (lx_t == T_SLASH && ty >= 0 && !f77_decl_init(s)) return;
         if (lx_t != T_COMMA) break;
         f77_tok();
     }
@@ -3576,6 +3613,74 @@ static int f77_data_target(int stop) {
     return 1;
 }
 
+/* The value list of DATA (or of a type statement's /c/), from the first
+ * value up to the closing /, poured across f77_dt_* in order.  Returns 0
+ * on error. */
+static int f77_data_values(void) {
+    int ti;       /* target index */
+    int te;       /* elements consumed within target ti */
+    int rep;
+    ti = 0;
+    te = 0;
+    for (;;) {
+        if (lx_t == T_SLASH) break;
+        f77_data_const();
+        rep = 1;
+        if (lx_t == T_STAR) {   /* r*c: what we parsed was the count */
+            if (f77_cx_ty != TY_INT || f77_cx_i <= 0) {
+                f77_error("DATA repeat count must be a positive integer");
+                return 0;
+            }
+            rep = f77_cx_i;
+            f77_tok();
+            f77_data_const();
+        }
+        while (rep > 0) {
+            while (ti < f77_dt_n && te >= f77_dt_count[ti]) { ti = ti + 1; te = 0; }
+            if (ti >= f77_dt_n) { f77_error("more DATA values than variables"); return 0; }
+            if (f77_di_n >= F77_MAX_DINIT) { f77_error("too many DATA initializers"); return 0; }
+            f77_di_sym[f77_di_n] = f77_dt_sym[ti];
+            f77_di_elem[f77_di_n] = f77_dt_sublen[ti] ? f77_dt_start[ti] : f77_dt_start[ti] + te;
+            f77_di_ty[f77_di_n] = f77_cx_ty;
+            f77_di_i[f77_di_n] = f77_cx_i;
+            f77_di_d[f77_di_n] = f77_cx_d;
+            f77_di_sidx[f77_di_n] = f77_cx_sidx;
+            f77_di_d2[f77_di_n] = f77_cx_d2;
+            f77_di_sub[f77_di_n] = f77_dt_sublen[ti];
+            f77_di_n = f77_di_n + 1;
+            te = te + 1;
+            rep = rep - 1;
+        }
+        if (lx_t == T_COMMA) { f77_tok(); continue; }
+        break;
+    }
+    while (ti < f77_dt_n && te >= f77_dt_count[ti]) { ti = ti + 1; te = 0; }
+    if (ti < f77_dt_n) { f77_error("fewer DATA values than variables"); return 0; }
+    return 1;
+}
+
+/* INTEGER K/3/, A(2)/1,2/ -- initial values in a type statement
+ * (IBM's FORTRAN IV and VS FORTRAN; found by fort370), the same as DATA for the whole
+ * entity; lx_t is at the opening /.  They had been skipped, and with
+ * them everything after in the statement.  Returns 0 on error. */
+static int f77_decl_init(int s) {
+    if (f77_sarg[s]) { f77_error("a dummy argument cannot be given an initial value"); return 0; }
+    if (f77_srank[s] > 0 && f77_adjustable(s)) { f77_error("adjustable array given an initial value"); return 0; }
+    f77_dt_n = 1;
+    f77_cxb_n = 0;
+    f77_dt_sym[0] = s;
+    f77_dt_start[0] = 0;
+    f77_dt_count[0] = f77_srank[s] > 0 ? f77_sym_nelem(s) : 1;
+    f77_dt_sublen[0] = 0;
+    if (!f77_scom[s]) f77_ssaved[s] = 1;   /* DATA implies static storage */
+    f77_tok();
+    if (!f77_data_values()) return 0;
+    if (lx_t != T_SLASH) { f77_error("expected / after initial values"); return 0; }
+    f77_tok();
+    return 1;
+}
+
+
 static void f77_stmt_data(int skip) {
     int s;
     int k;
@@ -3597,48 +3702,7 @@ static void f77_stmt_data(int skip) {
         if (lx_t != T_SLASH) { f77_error("expected / before DATA values"); return; }
         f77_tok();
 
-        /* --- the value list, poured across the targets in order --- */
-        {
-            int ti;       /* target index */
-            int te;       /* elements consumed within target ti */
-            int rep;
-            ti = 0;
-            te = 0;
-            for (;;) {
-                if (lx_t == T_SLASH) break;
-                f77_data_const();
-                rep = 1;
-                if (lx_t == T_STAR) {   /* r*c: what we parsed was the count */
-                    if (f77_cx_ty != TY_INT || f77_cx_i <= 0) {
-                        f77_error("DATA repeat count must be a positive integer");
-                        return;
-                    }
-                    rep = f77_cx_i;
-                    f77_tok();
-                    f77_data_const();
-                }
-                while (rep > 0) {
-                    while (ti < f77_dt_n && te >= f77_dt_count[ti]) { ti = ti + 1; te = 0; }
-                    if (ti >= f77_dt_n) { f77_error("more DATA values than variables"); return; }
-                    if (f77_di_n >= F77_MAX_DINIT) { f77_error("too many DATA initializers"); return; }
-                    f77_di_sym[f77_di_n] = f77_dt_sym[ti];
-                    f77_di_elem[f77_di_n] = f77_dt_sublen[ti] ? f77_dt_start[ti] : f77_dt_start[ti] + te;
-                    f77_di_ty[f77_di_n] = f77_cx_ty;
-                    f77_di_i[f77_di_n] = f77_cx_i;
-                    f77_di_d[f77_di_n] = f77_cx_d;
-                    f77_di_sidx[f77_di_n] = f77_cx_sidx;
-                    f77_di_d2[f77_di_n] = f77_cx_d2;
-                    f77_di_sub[f77_di_n] = f77_dt_sublen[ti];
-                    f77_di_n = f77_di_n + 1;
-                    te = te + 1;
-                    rep = rep - 1;
-                }
-                if (lx_t == T_COMMA) { f77_tok(); continue; }
-                break;
-            }
-            while (ti < f77_dt_n && te >= f77_dt_count[ti]) { ti = ti + 1; te = 0; }
-            if (ti < f77_dt_n) { f77_error("fewer DATA values than variables"); return; }
-        }
+        if (!f77_data_values()) return;
         if (lx_t != T_SLASH) { f77_error("expected / after DATA values"); return; }
         f77_tok();
         if (lx_t == T_COMMA) f77_tok();
@@ -3753,10 +3817,31 @@ static int f77_eq_find(int s, int *off) {
  * the entry block, which dominates every use. */
 static void f77_bind_static(int s, char *name, int off) {
     int ga;
+    int old;
+    int j;
+    old = f77_sval[s];
     ga = hi_emit(HI_GADDR, HL_ADDR_TY, -1, -1, 0, name);
     if (off != 0) ga = hi_emit(HI_ADDI, HL_ADDR_TY, ga, -1, off, NULL);
     f77_sval[s] = ga;
     f77_shi[s] = -1;    /* doubles live contiguously in static storage */
+    /* A reference made before the binding -- a COMMON member in a
+     * dimension bound of the declaration part, INTEGER A(N:M) with M
+     * in COMMON -- read the symbol's provisional local slot.  It reads
+     * the static now.  (SN713 of FCVS FM711: the extent came from an
+     * unset local, which SSA then made nothing at all.) */
+    if (old >= 0 && h_kind[old] == HI_ALLOCA) {
+        for (j = 0; j < h_ninst; j++) {
+            int k;
+            k = h_kind[j];
+            if (k == HI_NOP || j == ga) continue;
+            if (h_src1[j] == old) h_src1[j] = ga;
+            if (h_src2[j] == old && ho_src2_is_ref(k)) h_src2[j] = ga;
+            if ((k == HI_CALL || k == HI_CALLP) && h_cbase[j] >= 0) {
+                int q;
+                for (q = 0; q < h_val[j]; q++) if (h_carg[h_cbase[j] + q] == old) h_carg[h_cbase[j] + q] = ga;
+            }
+        }
+    }
 }
 
 /* Run once per unit when the declaration part closes: lay out this
@@ -6377,6 +6462,8 @@ static void f77_statement(void) {
     if (lx_stmt_label >= 0) {
         int b;
         b = f77_label_blk(lx_stmt_label);
+        { int q; for (q = f77_label_base; q < f77_nlabel; q++)
+            if (f77_lnum[q] == lx_stmt_label) f77_ldef[q] = 1; }
         f77_goto_blk(b);
         f77_begin_blk(b);
     }

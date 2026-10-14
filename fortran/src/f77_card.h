@@ -280,6 +280,15 @@ static int f77_next_stmt(void) {
                     col = col + 1;
                     k = 0;
                     while (k < hcount) {
+                        if (col <= 72 && (p >= lx_len || lx_src[p] == '\n' || lx_src[p] == '\r')) {
+                            /* A line ending short of column 72 is blank
+                             * to 72, as its card was, and the blanks are
+                             * part of the constant.  (Found by fort370.) */
+                            lx_put(' ');
+                            col = col + 1;
+                            k = k + 1;
+                            continue;
+                        }
                         if (p >= lx_len || lx_src[p] == '\n' || col > 72) {
                             /* The constant continues on the next
                              * continuation line (comments between are
@@ -317,6 +326,11 @@ static int f77_next_stmt(void) {
             p = p + 1;
             col = col + 1;
         }
+        /* A character constant still open at the end of a line short of
+         * column 72 keeps the blanks its card had out to 72, before the
+         * continuation line's text: a file with trailing blanks trimmed
+         * reads as the deck does.  (Found by fort370.) */
+        if (inq) while (col <= 72) { lx_put(' '); col = col + 1; }
 
         lx_pos = lx_next_line(lx_pos);
         first = 0;
