@@ -830,3 +830,27 @@ loop).  Only an HI_PARAM is retyped now.  fort370 found it on S/370.
 |---|---:|---:|
 | before | 520,299,015 | 1.038× |
 | after | **514,573,235** | **1.027×** |
+
+## 2026-10-14: a pi spigot, and two optimizations from fort370
+
+A real program: the Rabinowitz-Wagon pi spigot posted to H390-MVS
+(9000 digits, an INTEGER array of 30000, 270 million passes of an inner
+loop with a MOD and a divide by 2*I-1).  Not in the tree.  Its digits
+match gfortran's.
+
+- A static local scalar (SAVE or DATA, outside COMMON, no EQUIVALENCE,
+  no ENTRY) the unit never stores is read-only, so its load leaves the
+  loop as a dummy's could: LEN in `INTEGER LEN/30000/`.
+- CSE takes equal integer constants as one operand within a block, so
+  the two copies of 2*I-1 (each 2*I its own shift constant) are one.
+  fort370's other half, one DR for MOD and divide, is S/370 only.
+
+| spigot | insns | per pass |
+|---|---:|---:|
+| main arrays static (e0c9f456) | 6,212,008,703 | 23 |
+| + both | **5,131,981,371** | 19 |
+| clang -O2, the same algorithm in C | 3,240,750,703 | 12 |
+
+Wall time under slow32-dbt is 0.76 s before and after, and native
+gfortran -O2 on the host is 0.77 s: the two divides a pass set the
+pace.  LINPACK 514,310,713 -> 514,182,323 (1.026x); mandel 20,361,417.
