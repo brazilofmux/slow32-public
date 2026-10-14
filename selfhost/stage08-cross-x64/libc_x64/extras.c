@@ -106,9 +106,7 @@ long sysconf(int name) {
 /* setitimer / signal / sigaction / sigemptyset — stubs.  dbt's
  * probe-timer and SIGSEGV-handler features are optional; returning
  * failure cleanly disables them without affecting the hot path. */
-int setitimer(int which, void *new_val, void *old_val) { return -1; }
-/* signal: ../cross-include/libc_linux.c (SIG_IGN, SIG_DFL) */
-int sigaction(int sig, void *act, void *oldact) { return -1; }
+/* signal, sigaction, setitimer, getitimer: ../cross-include/libc_linux.c */
 int sigemptyset(void *set) {
     /* signal.h defines sigset_t as `unsigned long` (8 bytes). The real
      * Linux kernel sigset_t is 128 bytes, but our sigaction stub is a
@@ -387,6 +385,33 @@ static int sn_putu64(char *buf, int sz, int pos, unsigned long long v,
     return pos;
 }
 
+/* %lx / %llx: 64-bit hex */
+static int sn_puthex64(char *buf, int sz, int pos, unsigned long long v,
+                       int width, int zero, int upper) {
+    char tmp[24];
+    char *digits;
+    int n;
+    int npad;
+    digits = upper ? "0123456789ABCDEF" : "0123456789abcdef";
+    n = 0;
+    if (v == 0) { tmp[0] = '0'; n = 1; }
+    while (v != 0 && n < 24) {
+        tmp[n] = digits[(int)(v & 15ULL)];
+        v = v >> 4;
+        n = n + 1;
+    }
+    npad = width - n;
+    while (npad > 0) {
+        pos = sn_emit(buf, sz, pos, zero ? '0' : ' ');
+        npad = npad - 1;
+    }
+    while (n > 0) {
+        n = n - 1;
+        pos = sn_emit(buf, sz, pos, tmp[n]);
+    }
+    return pos;
+}
+
 static int sn_putl64(char *buf, int sz, int pos, long long v,
                      int width, int zero) {
     unsigned long long u;
@@ -450,11 +475,13 @@ int vsnprintf(char *buf, int sz, char *fmt, va_list ap) {
                     i = i + 1;
                 }
             }
-            if (fmt[i] == 'l') {
+            if (fmt[i] == 'l') {        /* LP64: l, ll, z all 64 bits */
                 i = i + 1;
-                if (fmt[i] == 'l') { is_ll = 1; i = i + 1; }
+                is_ll = 1;
+                if (fmt[i] == 'l') i = i + 1;
             } else if (fmt[i] == 'z') {
-                i = i + 1;  /* size_t — same width as int on this build */
+                i = i + 1;
+                is_ll = 1;
             }
             if (fmt[i] == 'd' || fmt[i] == 'i') {
                 if (is_ll) pos = sn_putl64(buf, sz, pos, va_arg(ap, long long), width, zero);
@@ -463,9 +490,11 @@ int vsnprintf(char *buf, int sz, char *fmt, va_list ap) {
                 if (is_ll) pos = sn_putu64 (buf, sz, pos, va_arg(ap, unsigned long long), width, zero);
                 else       pos = sn_putuint(buf, sz, pos, va_arg(ap, unsigned int), 10, width, zero, 0);
             } else if (fmt[i] == 'x') {
-                pos = sn_putuint(buf, sz, pos, va_arg(ap, unsigned int), 16, width, zero, 0);
+                if (is_ll) pos = sn_puthex64(buf, sz, pos, va_arg(ap, unsigned long long), width, zero, 0);
+                else       pos = sn_putuint(buf, sz, pos, va_arg(ap, unsigned int), 16, width, zero, 0);
             } else if (fmt[i] == 'X') {
-                pos = sn_putuint(buf, sz, pos, va_arg(ap, unsigned int), 16, width, zero, 1);
+                if (is_ll) pos = sn_puthex64(buf, sz, pos, va_arg(ap, unsigned long long), width, zero, 1);
+                else       pos = sn_putuint(buf, sz, pos, va_arg(ap, unsigned int), 16, width, zero, 1);
             } else if (fmt[i] == 's') {
                 s = va_arg(ap, char *);
                 if (s == 0) s = "(null)";

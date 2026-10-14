@@ -527,7 +527,17 @@ static int fmt_double(double val, int precision, int width, int zero_pad,
  * GP types and double (default-promoted float) are supported. */
 typedef char *va_list;
 
+/* %-Nd and friends: count what a field emits, so the padding can follow */
+static void (*fmt_lj_inner)();
+static int fmt_lj_count;
+static void fmt_lj_put(int ch, char **ctx) {
+    fmt_lj_inner(ch, ctx);
+    fmt_lj_count = fmt_lj_count + 1;
+}
+
 static int fmt_core(char *fmt, va_list ap, void (*putfn)(), char **ctx) {
+    int left;
+    int lj_width;
     int count;
     int width;
     int zero_pad;
@@ -555,8 +565,9 @@ static int fmt_core(char *fmt, va_list ap, void (*putfn)(), char **ctx) {
         }
 
         zero_pad = 0;
-        if (*fmt == '0') {
-            zero_pad = 1;
+        left = 0;
+        while (*fmt == '0' || *fmt == '-') {     /* flags, either order */
+            if (*fmt == '-') left = 1; else zero_pad = 1;
             fmt = fmt + 1;
         }
 
@@ -580,20 +591,30 @@ static int fmt_core(char *fmt, va_list ap, void (*putfn)(), char **ctx) {
         }
         (void)has_prec;
 
-        /* Length modifier: l (long) or ll (long long).  We track only
-         * the ll case — single 'l' is treated identically to no-l for
-         * int-class specifiers since long == int on the s12cc subset. */
+        /* Length modifier.  This libc serves LP64 hosts: long, size_t,
+         * intmax_t and ptrdiff_t are 64 bits, as long long is.  (A bare
+         * 'l' read as int once -- right for SLOW-32, wrong here: %ld of
+         * 1<<32 printed 0.) */
         is_ll = 0;
         if (*fmt == 'l') {
             fmt = fmt + 1;
-            if (*fmt == 'l') {
-                is_ll = 1;
-                fmt = fmt + 1;
-            }
+            is_ll = 1;
+            if (*fmt == 'l') fmt = fmt + 1;
         } else if (*fmt == 'z' || *fmt == 'j' || *fmt == 't') {
-            /* Treat size_t / intmax_t / ptrdiff_t as their underlying
-             * type on this build (32-bit int).  Skip the modifier. */
             fmt = fmt + 1;
+            is_ll = 1;
+        }
+
+        /* '-': the field unpadded, through a counter, then spaces to
+         * the width after it (fmt_lj_put; printf is not reentrant here) */
+        lj_width = 0;
+        if (left && width > 0) {
+            lj_width = width;
+            width = 0;
+            zero_pad = 0;
+            fmt_lj_inner = putfn;
+            fmt_lj_count = 0;
+            putfn = fmt_lj_put;
         }
 
         if (*fmt == 'd' || *fmt == 'i') {
@@ -646,6 +667,14 @@ static int fmt_core(char *fmt, va_list ap, void (*putfn)(), char **ctx) {
             putfn('%', ctx);
             putfn(*fmt, ctx);
             count = count + 2;
+        }
+        if (lj_width > 0) {
+            putfn = fmt_lj_inner;
+            while (fmt_lj_count < lj_width) {
+                putfn(' ', ctx);
+                fmt_lj_count = fmt_lj_count + 1;
+                count = count + 1;
+            }
         }
         fmt = fmt + 1;
     }

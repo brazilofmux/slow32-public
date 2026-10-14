@@ -3160,3 +3160,29 @@ front opens a fresh block for such a statement.  The COBOL copy
 (`cobol/src/hir`) carries both changes.  Fortran gate tests `entry2.f`
 and `charfn1.f` reproduce the two shapes; a mutant without the fixes
 faults on both.
+
+### 87. [RESOLVED 2026-10-14] cc-x64: va_arg(double) read the XMM save area that no caller filled
+
+cc-x64 passes every argument, a double too, in the GP sequence: HI_CALL
+marshals each into the next of rdi..r9 as bits, then the stack.  The
+callee side of a variadic function was SysV's: named doubles counted
+against XMM0..7, and `va_arg(ap, double)` took the next XMM save slot.
+No caller ever put anything in an XMM register for it, so a variadic
+double was right only when XMM0 happened to hold the value -- often, it
+being the last FP value computed, which is how `printf("%.2f", x)` kept
+working -- and every GP argument after a double read one slot early.
+Found when real sigaction (tools/dbt/ISSUES.md, DBT-27) let dbt-x64's
+`-Q` probe run: its line, `"[%7.1fs] PC=0x%08X ... %s"`, printed the PC
+in the SP column and faulted on the `%s`.  cc-a64 was right.
+
+Fix (hir_codegen_x64.h): named parameters are all counted in the GP
+sequence, and HI_VA_ARG takes a double from the GP slots / the stack.
+Every caller of a cc-x64 variadic function is cc-x64, so the GP
+sequence is the whole convention.  The same commit taught libc_x64's
+printf and snprintf that `%ld`, `%lx` and `%zu` are 64 bits on an LP64
+host (they read an int) and the `-` flag (it printed `%-28s` literally).
+diff-test/corpus/d40_varargs_double.c: doubles first, last, among
+ints, past six registers and after a named double, and a format-string
+walk; it segfaults under the previous cc-x64, passes on both cross
+trees (40/40).
+

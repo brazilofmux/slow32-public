@@ -1,11 +1,10 @@
 /* signal_stubs.c — minimal AArch64 Linux syscall wrappers for the
  * signal/timer/clock APIs that tools/dbt uses.
  *
- * Strategy: implement the simple ones (clock_gettime, _exit, sysconf,
- * mmap, munmap, mprotect, getpid, kill) via real syscalls. Stub out
- * the more complex sigaction/signal/setitimer paths as no-ops for
- * now — dbt's signal-based diagnostics won't fire, but normal
- * dispatch-loop operation works.
+ * The simple ones (_exit, sysconf, mmap, munmap, mprotect, kill) are real
+ * syscalls here.  sigaction, signal, setitimer, getitimer, clock_gettime
+ * and getpid moved to ../cross-include/libc_linux.c (shared with libc_x64)
+ * and are real too: dbt's fault handler and -Q probe timer work.
  */
 
 long __syscall();
@@ -76,19 +75,7 @@ int sigaddset(void *set, int signo) {
     return 0;
 }
 
-int sigaction(int signo, void *act, void *oldact) {
-    return 0;  /* no-op: signal handlers do not fire */
-}
-
-/* signal: ../cross-include/libc_linux.c (SIG_IGN, SIG_DFL) */
-
-int setitimer(int which, void *new, void *old) {
-    return 0;  /* no-op: probe timer disabled */
-}
-
-int getitimer(int which, void *cur) {
-    return 0;
-}
+/* sigaction, signal, setitimer, getitimer: ../cross-include/libc_linux.c */
 
 int gettimeofday(void *tv, void *tz) {
     /* Use clock_gettime(REALTIME) and split into tv_sec / tv_usec. */

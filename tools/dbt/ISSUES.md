@@ -896,5 +896,20 @@ fixed); dbt-a64 in a Linux arm64 container matches the native slow32-dbt
 on all 109 regression programs and runs the kit's cc/as/ld to
 byte-identical .s/.s32o/.s32x (s32-as.c and s32-ld.c through it);
 both cross trees' make test pass (x64 on kagura, a64 in the container).
-Left: localtime_r reports UTC (no zone file read), so GETTZ under the
-self-hosted DBTs says UTC; signal() takes SIG_IGN / SIG_DFL only.
+Then the same day, the three things left:
+
+- localtime_r reads the zone: the TZif file $TZ names or /etc/localtime
+  (64-bit transitions, then the footer's POSIX rule), or $TZ as a rule
+  itself.  Checked against glibc on kagura and in the arm64 container
+  over 1900-2100 in 17 zones and rules (both hemispheres, Dublin's
+  negative DST, Chatham, Casablanca, J/n rule forms): identical, after
+  copying one glibc quirk -- a bare rule counts its dates from 1970 for
+  every year up to 1970, so before then it never says DST in the north.
+- sigaction is real (the kernel's struct; on x86-64 a nine-byte
+  rt_sigreturn restorer in a page of its own, AArch64 uses the vDSO's),
+  signal() is BSD-style over it, and setitimer/getitimer exist: dbt's
+  fault handler and -Q probe now work in the self-hosted DBTs.
+- realpath follows symlinks (readlinkat; ELOOP at 40), and matches
+  glibc on 26 cases.
+The -Q probe then found a cc-x64 variadic-double bug (selfhost
+ISSUES-87), fixed in the same commit.

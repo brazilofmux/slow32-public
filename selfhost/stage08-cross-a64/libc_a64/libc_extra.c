@@ -401,15 +401,16 @@ static int snp_core(char *fmt, va_list ap, char *buf, int size) {
             }
         }
         (void)has_prec;
-        /* Length modifier: ll for 64-bit; bare l treated as no-modifier
-         * (long == int on the s12cc subset).  z/j/t skipped as size_t /
-         * intmax_t / ptrdiff_t are 32-bit here. */
+        /* Length modifier.  This libc serves an LP64 host: long, size_t,
+         * intmax_t and ptrdiff_t are 64 bits, as long long is. */
         is_ll = 0;
         if (*fmt == 'l') {
             fmt = fmt + 1;
-            if (*fmt == 'l') { is_ll = 1; fmt = fmt + 1; }
+            is_ll = 1;
+            if (*fmt == 'l') fmt = fmt + 1;
         } else if (*fmt == 'z' || *fmt == 'j' || *fmt == 't') {
             fmt = fmt + 1;
+            is_ll = 1;
         }
         if (*fmt == 'd' || *fmt == 'i') {
             if (is_ll) snp_emit_int64(va_arg(ap, long long), 0, 10, width, zero_pad, 0, ctx);

@@ -2321,8 +2321,9 @@ static void hx_emit_inst(int idx) {
 
         va_ty = ty;
         is_fp_arg = ty_is_fp(va_ty);
-        left_off = is_fp_arg ? HX_VA_FP_LEFT : HX_VA_GP_LEFT;
-        ptr_off  = is_fp_arg ? HX_VA_FP_PTR  : HX_VA_GP_PTR;
+        /* a double comes from the GP slots too (see hx_va_named_gp) */
+        left_off = HX_VA_GP_LEFT;
+        ptr_off  = HX_VA_GP_PTR;
 
         /* RCX = left count */
         x64_mov_rm(X64_RCX, X64_RAX, left_off);
@@ -2439,15 +2440,21 @@ static void hx_gen_func(Node *fn) {
         v_ngrn = 0;
         v_nsrn = 0;
         if (ty_is_struct(fn->ty)) v_ngrn = 1;  /* hidden sret in rdi */
+        /* Every argument, a double too, travels in the GP sequence:
+         * HI_CALL marshals each one into the next of rdi..r9 (as bits,
+         * for a double), then the stack -- cc-x64's own convention, not
+         * SysV's, and every caller of a cc-x64 variadic function is
+         * cc-x64.  So the named ones are counted there, and HI_VA_ARG
+         * takes a double from the GP slots as well.  Counted as SysV
+         * (doubles in XMM), va_arg(double) read the XMM save area, which
+         * no caller filled: it came out right when XMM0 happened to hold
+         * the value, and the arguments after it shifted by one -- dbt-x64's
+         * -Q probe line ("[%7.1fs] PC=%08X ...") printed garbage and then
+         * faulted on a %s. */
         vp = fn->args;
         while (vp) {
-            if (ty_is_fp(vp->ty)) {
-                if (v_nsrn < HX_VA_NFP) v_nsrn = v_nsrn + 1;
-                else hx_va_named_stack = hx_va_named_stack + 1;
-            } else {
-                if (v_ngrn < HX_VA_NGP) v_ngrn = v_ngrn + 1;
-                else hx_va_named_stack = hx_va_named_stack + 1;
-            }
+            if (v_ngrn < HX_VA_NGP) v_ngrn = v_ngrn + 1;
+            else hx_va_named_stack = hx_va_named_stack + 1;
             vp = vp->next;
         }
         hx_va_named_gp = v_ngrn;
