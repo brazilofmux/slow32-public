@@ -16,9 +16,7 @@ void _exit(int code) {
     __syscall(94, code, 0, 0, 0, 0, 0);  /* exit_group */
 }
 
-int getpid(void) {
-    return __syscall(172, 0, 0, 0, 0, 0, 0);
-}
+/* getpid: ../cross-include/libc_linux.c */
 
 int kill(int pid, int signo) {
     return __syscall(129, pid, signo, 0, 0, 0, 0);
@@ -30,11 +28,7 @@ int raise(int signo) {
 
 /* ---- Time ---- */
 
-/* `struct timespec { long tv_sec; long tv_nsec; }` — kernel layout for
- * clock_gettime is two 64-bit fields, matching `long` on AArch64. */
-int clock_gettime(int clk, void *ts) {
-    return __syscall(113, clk, ts, 0, 0, 0, 0);
-}
+/* clock_gettime: ../cross-include/libc_linux.c */
 
 /* ---- Memory ---- */
 
@@ -86,9 +80,7 @@ int sigaction(int signo, void *act, void *oldact) {
     return 0;  /* no-op: signal handlers do not fire */
 }
 
-void *signal(int signo, void *handler) {
-    return 0;  /* no-op: returns SIG_DFL-equivalent (NULL) */
-}
+/* signal: ../cross-include/libc_linux.c (SIG_IGN, SIG_DFL) */
 
 int setitimer(int which, void *new, void *old) {
     return 0;  /* no-op: probe timer disabled */
@@ -112,11 +104,4 @@ int gettimeofday(void *tv, void *tz) {
 
 /* ---- Misc unistd stubs ---- */
 
-int isatty(int fd) {
-    return 0;  /* conservative: pretend nothing is a tty */
-}
-
-int unlink(char *path) {
-    /* unlinkat(AT_FDCWD, path, 0) */
-    return __syscall(35, -100, path, 0, 0, 0, 0);
-}
+/* isatty, unlink: ../cross-include/libc_linux.c */

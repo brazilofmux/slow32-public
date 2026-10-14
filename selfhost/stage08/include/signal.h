@@ -30,6 +30,7 @@ typedef unsigned long sigset_t;
 #define SIGFPE   8
 #define SIGKILL  9
 #define SIGSEGV 11
+#define SIGPIPE 13
 #define SIGALRM 14
 #define SIGTERM 15
 

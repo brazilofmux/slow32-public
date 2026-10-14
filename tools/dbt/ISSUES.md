@@ -848,7 +848,7 @@ cases, an operand written between, the first's destination an operand,
 the partner at a loop head; mutation-tested (each guard removed trips
 its own case).
 
-## 27. dbt-x64 (Built by cc-x64) Diverges on MMIO Service Tests (OPEN, queued 2026-10-14)
+## 27. dbt-x64 (Built by cc-x64) Diverges on MMIO Service Tests (FIXED 2026-10-14)
 
 The self-hosted dbt-x64 (selfhost/stage08-cross-x64, `make out/dbt-x64`)
 run as SLOW32_DBT on kagura: run-differential 90 agree, 15 diverged --
@@ -862,3 +862,39 @@ list, so it is older than those.  Every test on the list uses MMIO
 services beyond plain stdio (DPC, sockets, the terminal, tube), which
 points at the selfhost libc or the service code as cc-x64 compiles it,
 not the translator.  Not investigated; the user queued it.
+
+Cause: neither self-hosted DBT ran tools/emulator/mmio_ring.c.  Each
+cross libc carried a stub in its place (libc_x64/mmio_ring_x64.c,
+libc_a64/mmio_ring_a64.c, "for initial bring-up") that served file I/O,
+STAT, args and the environment and answered everything else -- DPC
+timers and posted reads, sockets, the terminal, the tube -- with an
+error.  Under them a DPC test printed "BAD: expected the timer", and
+stdio-prompt read lines out of nothing.  dbt-a64 had the same stubs.
+
+The real mmio_ring.c could not be compiled there: cc-x64 and cc-a64
+take their headers from stage08/include, the SLOW-32 guests' own (MMIO
+open flags, the MMIO stat reply as struct stat, no poll.h, termios.h or
+sockets), and the cross libcs were raw syscall wrappers that set no
+errno and handed the kernel a 112-byte struct for its 144- or 128-byte
+stat.  Fix:
+
+- selfhost/cross-include/: Linux host headers (fcntl, unistd, sys/stat
+  with each kernel's layout, dirent, poll, sys/select, termios,
+  sys/ioctl, sys/socket, netinet, sys/wait), first on the cross builds'
+  include path only; SLOW-32 guests still see stage08/include.
+- selfhost/cross-include/libc_linux.c: the POSIX calls over Linux
+  syscalls, errno and all, one file for both hosts (the *at calls,
+  ppoll, pselect6 and clone exist on both; syscall numbers differ).
+  The old wrappers it replaces left libc_x64 / libc_a64.
+- both cross Makefiles compile mmio_ring.c into the DBT; the stubs are
+  gone.  stage08/include/signal.h gained SIGPIPE (13, Linux's, as the
+  rest of its numbers are).
+
+Verified: dbt-x64 on kagura, run-differential 106 agree / 0 diverged
+(was 90 / 15), kit and kit-tools differentials agree (test_stdio_fd
+fixed); dbt-a64 in a Linux arm64 container matches the native slow32-dbt
+on all 109 regression programs and runs the kit's cc/as/ld to
+byte-identical .s/.s32o/.s32x (s32-as.c and s32-ld.c through it);
+both cross trees' make test pass (x64 on kagura, a64 in the container).
+Left: localtime_r reports UTC (no zone file read), so GETTZ under the
+self-hosted DBTs says UTC; signal() takes SIG_IGN / SIG_DFL only.

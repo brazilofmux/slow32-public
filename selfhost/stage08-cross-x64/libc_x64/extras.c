@@ -91,9 +91,7 @@ int munmap(void *addr, unsigned long len) {
     return __syscall(11, addr, len, 0, 0, 0, 0);
 }
 
-int clock_gettime(int clk_id, void *ts) {
-    return __syscall(228, clk_id, ts, 0, 0, 0, 0);
-}
+/* clock_gettime: ../cross-include/libc_linux.c */
 
 int mprotect(void *addr, unsigned long len, int prot) {
     return __syscall(10, addr, len, prot, 0, 0, 0);
@@ -109,7 +107,7 @@ long sysconf(int name) {
  * probe-timer and SIGSEGV-handler features are optional; returning
  * failure cleanly disables them without affecting the hot path. */
 int setitimer(int which, void *new_val, void *old_val) { return -1; }
-void *signal(int sig, void *handler) { return (void *)(long)-1; }
+/* signal: ../cross-include/libc_linux.c (SIG_IGN, SIG_DFL) */
 int sigaction(int sig, void *act, void *oldact) { return -1; }
 int sigemptyset(void *set) {
     /* signal.h defines sigset_t as `unsigned long` (8 bytes). The real

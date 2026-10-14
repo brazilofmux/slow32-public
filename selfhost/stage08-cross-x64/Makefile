@@ -75,14 +75,21 @@ $(OUT)/crt0.o: $(OUT)/cc-x64
 # __builtin_sqrt[f] is intercepted by cc-x64 as HI_FSQRT).
 
 LIBC_X64_HIR_SRCS = libc_x64/syscalls.c libc_x64/string.c libc_x64/stdio.c \
-                    libc_x64/malloc.c libc_x64/misc.c libc_x64/mmio_ring_x64.c \
+                    libc_x64/malloc.c libc_x64/misc.c \
                     libc_x64/extras.c libc_x64/fpu_ops.c libc_x64/math_stubs.c
 LIBC_X64_HIR_OBJS = $(patsubst libc_x64/%.c,$(OUT)/libc_x64_%.o,$(LIBC_X64_HIR_SRCS))
 
 $(OUT)/libc_x64_%.o: libc_x64/%.c $(OUT)/cc-x64
 	$(OUT)/cc-x64 --hir -c $< -o $@
 
+# The POSIX calls over Linux syscalls, shared with libc_a64, against the
+# Linux host headers in ../cross-include (README there).
+LIBC_X64_HIR_OBJS += $(OUT)/libc_x64_linux.o
+$(OUT)/libc_x64_linux.o: ../cross-include/libc_linux.c $(wildcard ../cross-include/*.h ../cross-include/*/*.h) $(OUT)/cc-x64
+	$(OUT)/cc-x64 --hir -I ../cross-include -c $< -o $@
+
 $(OUT)/libc_x64.a: $(LIBC_X64_HIR_OBJS) $(OUT)/ar-x64
+	rm -f $@
 	$(OUT)/ar-x64 rcs $@ $(LIBC_X64_HIR_OBJS)
 
 libc: $(OUT)/libc_x64.a $(OUT)/crt0.o
@@ -98,8 +105,9 @@ $(OUT)/s32fast-hir: $(OUT)/s32fast-hir.o $(OUT)/crt0.o $(OUT)/libc_x64.a $(OUT)/
 # --- dbt-x64 — SLOW-32 dynamic binary translator, compiled by cc-x64 --hir ---
 # x86-64-relevant subset of tools/dbt/.  emit_a64.c and translate_a64.c are
 # excluded (those are the AArch64 backend); stage5_codegen.c went with the
-# dead Stage 5 in ba2b9125.  The MMIO ring is provided by
-# libc_x64/mmio_ring_x64.c (a focused stub of tools/emulator/mmio_ring.c).
+# dead Stage 5 in ba2b9125.  The MMIO services are tools/emulator/mmio_ring.c
+# itself, against ../cross-include; until 2026-10-14 a stub stood in for
+# it and answered everything past file I/O with an error (DBT-27).
 
 DBT_DIR = ../../tools/dbt
 DBT_SRCS = $(DBT_DIR)/dbt.c $(DBT_DIR)/emit_x64.c $(DBT_DIR)/translate.c \
@@ -108,6 +116,11 @@ DBT_SRCS = $(DBT_DIR)/dbt.c $(DBT_DIR)/emit_x64.c $(DBT_DIR)/translate.c \
            $(DBT_DIR)/stage5_ssa.c $(DBT_DIR)/stage5_ra.c \
            $(DBT_DIR)/stage5_mir.c $(DBT_DIR)/stage5_lir_opt.c
 DBT_OBJS = $(patsubst $(DBT_DIR)/%.c,$(OUT)/dbt_%.o,$(DBT_SRCS))
+DBT_OBJS += $(OUT)/dbt_mmio_ring.o
+CROSS_HDRS = $(wildcard ../cross-include/*.h ../cross-include/*/*.h)
+
+$(OUT)/dbt_mmio_ring.o: ../../tools/emulator/mmio_ring.c ../../tools/emulator/mmio_ring.h $(CROSS_HDRS) $(OUT)/cc-x64
+	$(OUT)/cc-x64 --hir -I ../cross-include -c $< -o $@
 
 # hooks.c (docs/dbt-hooks.md), with the hook tags tools/dbt/Makefile passes
 # as -D: cc-x64 has no -D, so a wrapper defines them and includes the source.
@@ -122,10 +135,10 @@ DBT_OBJS += $(OUT)/dbt_hooks.o
 $(OUT)/dbt_hooks.o: $(DBT_DIR)/hooks.c $(DBT_DIR)/hooks.h $(HK_SRC_BUILTINS) $(HK_SRC_COBKERN) $(OUT)/cc-x64
 	printf '#define HK_TAG_BUILTINS "%s"\n#define HK_TAG_COBKERN "%s"\n#include "%s"\n' \
 	    '$(HK_TAG_BUILTINS)' '$(HK_TAG_COBKERN)' '../$(DBT_DIR)/hooks.c' > $(OUT)/dbt_hooks_tagged.c
-	$(OUT)/cc-x64 --hir -c $(OUT)/dbt_hooks_tagged.c -o $@
+	$(OUT)/cc-x64 --hir -I ../cross-include -c $(OUT)/dbt_hooks_tagged.c -o $@
 
 $(OUT)/dbt_%.o: $(DBT_DIR)/%.c $(OUT)/cc-x64
-	$(OUT)/cc-x64 --hir -c $< -o $@
+	$(OUT)/cc-x64 --hir -I ../cross-include -c $< -o $@
 
 $(OUT)/dbt-x64: $(DBT_OBJS) $(OUT)/crt0.o $(OUT)/libc_x64.a $(OUT)/ld-x64
 	$(OUT)/ld-x64 -o $@ $(OUT)/crt0.o $(DBT_OBJS) $(OUT)/libc_x64.a

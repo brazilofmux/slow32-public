@@ -15,38 +15,9 @@
 
 long __syscall();
 
-int write(int fd, char *buf, int len) {
-    return __syscall(64, fd, buf, len, 0, 0, 0);
-}
-
-int read(int fd, char *buf, int len) {
-    return __syscall(63, fd, buf, len, 0, 0, 0);
-}
-
-/* AArch64's asm-generic does not have plain open/stat — they use the *at
- * variants with AT_FDCWD as fd. Wrap them so callers see a familiar API. */
-#define AT_FDCWD (-100)
-
-int open(char *path, int flags, int mode) {
-    return __syscall(56, AT_FDCWD, path, flags, mode, 0, 0);  /* openat */
-}
-
-int close(int fd) {
-    return __syscall(57, fd, 0, 0, 0, 0, 0);
-}
-
-int lseek(int fd, int offset, int whence) {
-    return __syscall(62, fd, offset, whence, 0, 0, 0);
-}
-
-int stat(char *path, char *buf) {
-    /* newfstatat(AT_FDCWD, path, buf, 0) */
-    return __syscall(79, AT_FDCWD, path, buf, 0, 0, 0);
-}
-
-int fstat(int fd, char *buf) {
-    return __syscall(80, fd, buf, 0, 0, 0, 0);
-}
+/* write, read, open, close, lseek, stat and fstat are in
+ * ../cross-include/libc_linux.c now, with errno and the kernel's struct
+ * stat, shared with libc_x64. */
 
 char *sys_brk(char *addr) {
     return (char *)__syscall(214, addr, 0, 0, 0, 0, 0);
