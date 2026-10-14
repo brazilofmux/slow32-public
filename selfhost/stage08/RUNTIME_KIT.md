@@ -103,6 +103,22 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Fixed 2026-10-14 (`d67aab3b`, `90c9ef3e`).  In `cc.s32x`, and in
+`libc.s32a`'s `posix_proc.s32o` (getenv) and `dtoa.s32o` (recompiled
+by the fixed compiler); the tools were rebuilt by the fixed stage07;
+`<signal.h>` gained `SIGPIPE`:
+
+- **phi(undefined, x) became x where x did not dominate** (selfhost
+  ISSUES-88).  A variable set only inside a loop -- the index of the
+  maximum, say -- could read as a value computed later in that loop:
+  wrong results, silently.  Found by fort370 on a real program; stage05
+  through stage08 all had it.
+- **A frameless leaf read its 9th and later arguments from the
+  caller's frame** (ISSUES-88).  A function needing no frame addressed
+  its stack arguments through r30, which it never sets.
+- **A second getenv overwrote the first one's answer** (ISSUES-89).
+  Each name's answer now has storage of its own.
+
 Fixed 2026-10-07, ninth batch.  In `cc.s32x` only; any libc member
 compiled from a source with such an expression is wrong until rebuilt:
 
