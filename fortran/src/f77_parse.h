@@ -567,6 +567,9 @@ static void f77_realloc_sym(int s) {
     }
     bytes = f77_esize(s) * f77_sym_nelem(s);
     bytes = (bytes + 3) & ~3;             /* keep the frame word-aligned */
+    /* A main program's array is static (f77_layout_static): its slot
+     * is only a placeholder until then. */
+    if (f77_srank[s] > 0 && f77_ukind[f77_cur_unit] == F77_UNIT_PROGRAM) bytes = 4;
     f77_frame = f77_frame + bytes;
     h_val[f77_sval[s]] = 0 - f77_frame;
     h_ty[f77_sval[s]] = f77_sty[s] == TY_CPLX ? TY_FLOAT : f77_sty[s];
@@ -4006,6 +4009,19 @@ static void f77_layout_static(void) {
         for (s = f77_scope_base; s < f77_nsym; s++) f77_ssaved[s] = 1;
     }
     for (i = 0; i < f77_sv_n; i++) f77_ssaved[f77_sv_sym[i]] = 1;
+    /* A main program's arrays are static, SAVEd or not, as FORTRAN H
+     * kept them: the unit runs once and is never inlined, so static
+     * storage is indistinguishable from a frame.  On the stack,
+     * INTEGER A(30000) (120 KB) ran past the linker's 64 KB default
+     * and faulted on its first store; f77_realloc_sym gives it only a
+     * placeholder word.  (A subprogram's arrays stay on the stack: one with a
+     * static could not be spliced in, f77_unosplice.) */
+    if (f77_ukind[f77_cur_unit] == F77_UNIT_PROGRAM) {
+        for (s = f77_scope_base; s < f77_nsym; s++) {
+            if (f77_srank[s] > 0 && !f77_sarg[s] && !f77_scom[s])
+                f77_ssaved[s] = 1;
+        }
+    }
 
     for (s = f77_scope_base; s < f77_nsym; s++) {
         if (!f77_ssaved[s]) continue;
