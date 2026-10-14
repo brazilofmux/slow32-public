@@ -1,0 +1,7 @@
+HOME differs from PATH: 1
+HOME's answer intact after PATH's: 1
+HOME asked again, same text: 1
+a name not set, asked 1000 times: null
+a name with '=': null
+the empty name: null
+HOME still intact: 1

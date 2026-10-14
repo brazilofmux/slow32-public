@@ -99,14 +99,15 @@ static int ssa_dtc_base[HIR_MAX_BLOCK];
 static int ssa_dtc_cnt[HIR_MAX_BLOCK];
 
 /* --- Rename: per-variable value stack --- */
-/* SSA_VD bounds the depth of the per-variable value stack along any
- * single dominator-tree path during SSA rename.  64 was tight: a few
- * deeply-nested functions in tools/dbt (block_cache.c) hit the cap.
- * 256 leaves comfortable headroom; the cost is just static memory in
- * the compiler. */
-#define SSA_VD 1024   /* was 256 */
-#define SSA_VSTK_SZ 4194304   /* was 65536 */
-static int ssa_vstk[SSA_VSTK_SZ];
+/* The stacks are threaded through the push log (from fort370, where
+ * the fixed-depth stacks overran their table).  Pushes and pops are in
+ * strict stack order along the dominator-tree walk, so a push is the
+ * log entry that records it: the variable (ssa_plog), its value
+ * (ssa_pval) and the variable's previous top (ssa_pprev).  ssa_vtop[v]
+ * is the log index of v's top, or -1 when only the undefined value is
+ * on it.  This replaced a 1024-deep stack per variable -- 16MB of
+ * table, and a depth ceiling raised from 64 to 256 to 1024 as
+ * functions in tools/dbt hit it; what is left is the push log's. */
 static int ssa_vtop[SSA_MAX_PROMO];
 
 /* --- Rename: DFS stack --- */
@@ -118,6 +119,8 @@ static int ssa_rmark[SSA_DFS];
 /* --- Rename: push log for backtracking --- */
 #define SSA_PLOG 65536   /* was 8192 */
 static int ssa_plog[SSA_PLOG];
+static int ssa_pval[SSA_PLOG];
+static int ssa_pprev[SSA_PLOG];
 static int ssa_plog_n;
 
 /* --- Temp arrays (reused across passes) --- */
@@ -840,23 +843,20 @@ static void ssa_insert_phis(void) {
 /* ------------------------------------------------------------ */
 
 static void ssa_vpush(int v, int val) {
-    if (ssa_vtop[v] + 1 >= SSA_VD) {
-        fdputs("s12cc: SSA var stack overflow\n", 2);
-        exit(1);
-    }
-    ssa_vtop[v] = ssa_vtop[v] + 1;
-    ssa_vstk[v * SSA_VD + ssa_vtop[v]] = val;
     if (ssa_plog_n >= SSA_PLOG) {
         fdputs("s12cc: SSA push log overflow\n", 2);
         exit(1);
     }
     ssa_plog[ssa_plog_n] = v;
+    ssa_pval[ssa_plog_n] = val;
+    ssa_pprev[ssa_plog_n] = ssa_vtop[v];
+    ssa_vtop[v] = ssa_plog_n;
     ssa_plog_n = ssa_plog_n + 1;
 }
 
 static int ssa_vcur(int v) {
     if (ssa_vtop[v] < 0) return -1;
-    return ssa_vstk[v * SSA_VD + ssa_vtop[v]];
+    return ssa_pval[ssa_vtop[v]];
 }
 
 static void ssa_rename(void) {
@@ -877,8 +877,7 @@ static void ssa_rename(void) {
     /* Init variable stacks: all start with undef (-1) */
     v = 0;
     while (v < ssa_npromo) {
-        ssa_vtop[v] = 0;
-        ssa_vstk[v * SSA_VD] = -1;
+        ssa_vtop[v] = -1;            /* the undefined value */
         v = v + 1;
     }
     ssa_plog_n = 0;
@@ -970,7 +969,7 @@ static void ssa_rename(void) {
                 while (ssa_plog_n > ssa_rmark[top]) {
                     ssa_plog_n = ssa_plog_n - 1;
                     v = ssa_plog[ssa_plog_n];
-                    ssa_vtop[v] = ssa_vtop[v] - 1;
+                    ssa_vtop[v] = ssa_pprev[ssa_plog_n];
                 }
                 top = top - 1;
             }

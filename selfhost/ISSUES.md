@@ -3233,3 +3233,35 @@ guard (a frame slot is not code, so ho_dead_blocks no longer NOPs one).
 Tests: stage08 `test_phi_undef.c` and `test_frameless_args.c` (both fail
 under the previous compiler); fortran `tests/f77/phiundef1.f` and
 `leafargs1.f`.
+
+### 89. [RESOLVED 2026-10-14] getenv's answer was overwritten by the next getenv; SSA rename's per-variable stacks had a depth ceiling
+
+Both from reading fort370 again.  fort370 found getenv was nine tenths
+of its compile time on MVS: the backend reads its debugging switches
+where they act (once per macro expansion in pp.h, per spill in
+hir_regalloc.h, per candidate in hir_licm.h), and libc370's getenv is
+expensive.  Ours is not: a request costs about 0.13 us under slow32-dbt
+and 0.9 us on slow32-fast (a million calls, measured), and stage08 cc
+compiles SQLite in the same 33.5 s either way.  What the reading did
+find is that both libcs answered every getenv in one shared buffer, so
+
+    char *h = getenv("HOME"), *p = getenv("PATH");
+
+left h pointing at PATH's value.  C and POSIX allow that; glibc does not
+do it, and ported programs count on it.  Both libcs (stage08
+`libc/posix_proc.c`, `runtime/envp_mmio.c`) now keep each name's answer
+-- set or not -- in storage of its own: nothing changes a running
+program's environment (there is no setenv).  Past 64 names, or out of
+memory, the old shared buffer.  Test: regression `libc-tests/getenv_keep.c`
+(.expect; the previous stage08 libc prints "HOME's answer intact after
+PATH's: 0").
+
+SSA rename kept a value stack per promoted variable, 1024 deep, indexed
+`v * 1024 + top` in a 16MB table; the depth had been raised from 64 to
+256 to 1024 as functions in tools/dbt hit it.  fort370, having shrunk
+that table for an 8MB region, overran it.  Here it was guarded (a clean
+exit, never wrong code), but the ceiling is gone now: pushes and pops
+are in strict stack order along the dominator-tree walk, so each push
+lives in the push-log entry that records it (variable, value, previous
+top) and only the top is per variable.  stage08 cc's assembler for
+SQLite is byte-identical before and after.  All three backend copies.

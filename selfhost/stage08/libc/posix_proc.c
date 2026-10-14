@@ -12,6 +12,8 @@ int fflush(void *stream);
 extern int errno;
 void *memcpy(void *d, const void *s, unsigned int n);
 char *realloc(char *ptr, int size);
+char *malloc(int size);
+int strcmp(const char *a, const char *b);
 
 #define MMIO_DATA           (__s32_mmio_data())
 #define MMIO_DATA_CAPACITY  (48 * 1024)
@@ -98,17 +100,39 @@ void abort(void) {
 /* getenv over the GETENV request (selfhost ISSUES-68, GitHub issue 55).
  * Protocol: the name (with its NUL) goes in the data buffer, length is the
  * byte count; the reply puts the value at the same offset and returns its
- * length, or fails when the name is not set. */
+ * length, or fails when the name is not set.
+ *
+ * Each name's answer is kept, set or not (selfhost ISSUES-89).  Nothing
+ * here changes the environment (there is no setenv) and the host does not
+ * change it under a running program.  A kept answer has storage of its
+ * own, so a second getenv no longer overwrites the first one's, as
+ * glibc's does not; and a name asked for again -- the compiler reads its
+ * debugging switches where they act, once per macro expansion or per
+ * spill -- is not another request.  Past PM_ENV_MAX names, or out of
+ * memory, the request is made every time and the answer goes in the one
+ * shared buffer, as before. */
+#define PM_ENV_MAX 64
+static char *pm_env_name[PM_ENV_MAX];
+static char *pm_env_val[PM_ENV_MAX];
+static int   pm_env_n;
 static char *pm_env_buf;
 static int   pm_env_cap;
 
 char *getenv(const char *name) {
     unsigned int len;
     int vlen;
+    int i;
     const char *p;
     char *nb;
+    char *kn;
+    char *kv;
 
     if (name == 0 || name[0] == 0) return (char *)0;
+    i = 0;
+    while (i < pm_env_n) {
+        if (strcmp(pm_env_name[i], name) == 0) return pm_env_val[i];
+        i = i + 1;
+    }
     /* A name containing '=' can never be set (C11 7.22.4.6). */
     p = name;
     while (*p != 0) {
@@ -119,8 +143,27 @@ char *getenv(const char *name) {
     if (len > MMIO_DATA_CAPACITY) return (char *)0;
     memcpy(MMIO_DATA, name, len);
     vlen = s32_mmio_request(MMIO_OP_GETENV, len, 0, 0);
-    if (vlen < 0) return (char *)0;          /* not set */
     if (vlen > MMIO_DATA_CAPACITY) return (char *)0;
+    if (pm_env_n < PM_ENV_MAX) {
+        kn = malloc(len);
+        kv = (char *)0;
+        if (kn != 0 && vlen >= 0) {
+            kv = malloc(vlen + 1);
+            if (kv == 0) kn = (char *)0;   /* leaked, once; not kept */
+        }
+        if (kn != 0) {
+            memcpy(kn, name, len);
+            if (kv != 0) {
+                memcpy(kv, MMIO_DATA, vlen);
+                kv[vlen] = 0;
+            }
+            pm_env_name[pm_env_n] = kn;
+            pm_env_val[pm_env_n] = kv;
+            pm_env_n = pm_env_n + 1;
+            return kv;
+        }
+    }
+    if (vlen < 0) return (char *)0;          /* not set */
     if (vlen >= pm_env_cap) {
         nb = realloc(pm_env_buf, vlen + 1);
         if (nb == 0) return (char *)0;

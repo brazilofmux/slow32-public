@@ -136,9 +136,29 @@ static int fetch_envp_from_host(void) {
 
 // Look up an environment variable using the direct GETENV opcode
 // This avoids fetching the entire environment if you only need one variable
+//
+// Each name's answer is kept, set or not, as the self-hosted libc keeps
+// it (selfhost/stage08/libc/posix_proc.c): nothing here changes the
+// environment and the host does not change it under a running program.
+// A kept answer has storage of its own, so a second getenv no longer
+// overwrites the first one's, as glibc's does not; and a name asked for
+// again (a debugging switch read in a loop) is not a request again.
+// Past GETENV_KEEP_MAX names, or out of memory, the answer goes in one
+// shared buffer, as before.
+#define GETENV_KEEP_MAX 64
+static char *getenv_keep_name[GETENV_KEEP_MAX];
+static char *getenv_keep_val[GETENV_KEEP_MAX];
+static int getenv_keep_n = 0;
+
 char *getenv(const char *name) {
     if (!name || !*name) {
         return NULL;
+    }
+
+    for (int i = 0; i < getenv_keep_n; ++i) {
+        if (strcmp(getenv_keep_name[i], name) == 0) {
+            return getenv_keep_val[i];
+        }
     }
 
     // Check for invalid name (contains '=')
@@ -166,17 +186,42 @@ char *getenv(const char *name) {
         0u,
         0u);
 
+    size_t value_len = status;
+    if (status != S32_MMIO_STATUS_ERR && value_len > S32_MMIO_DATA_CAPACITY) {
+        return NULL;
+    }
+
+    if (getenv_keep_n < GETENV_KEEP_MAX) {
+        char *kn = (char *)malloc(name_len + 1);
+        char *kv = NULL;
+        if (kn && status != S32_MMIO_STATUS_ERR) {
+            kv = (char *)malloc(value_len + 1);
+            if (!kv) {
+                free(kn);
+                kn = NULL;
+            }
+        }
+        if (kn) {
+            memcpy(kn, name, name_len + 1);
+            if (kv) {
+                memcpy(kv, (const void *)data_buffer, value_len);
+                kv[value_len] = '\0';
+            }
+            getenv_keep_name[getenv_keep_n] = kn;
+            getenv_keep_val[getenv_keep_n] = kv;
+            getenv_keep_n++;
+            return kv;
+        }
+    }
+
     if (status == S32_MMIO_STATUS_ERR) {
         return NULL;  // Not found or error
     }
 
     // Value is in the data buffer, length is in status
-    // We need to return a pointer that remains valid
-    // Use a static buffer for simplicity (not thread-safe, but neither is getenv)
     static char *getenv_buffer = NULL;
     static size_t getenv_buffer_size = 0;
 
-    size_t value_len = status;
     if (value_len >= getenv_buffer_size) {
         size_t new_size = value_len + 1;
         char *new_buf = (char *)realloc(getenv_buffer, new_size);

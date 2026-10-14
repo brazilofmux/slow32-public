@@ -161,16 +161,20 @@ fi
 # defined, and text a statement leaves unread (DIMENSION A(3) B(2):
 # the guard that would have caught INTEGER N/9000/ being skipped) are
 # refused, each with its message; f77/mainlast.f has a main program after its subprograms.
+# The message names the statement's own line even when the statement
+# called a subprogram whose text was read in its place (callline).
 # Found by fort370 (reported on H390-MVS), whose unit scan is this one's.
 if [ -x "$F77" ]; then
     printf '      SUBROUTINE PRINTIT\n      RETURN\n      PROGRAM HELLO\n      CALL PRINTIT\n      END\n' > "$W/noend.f"
     printf '      PROGRAM A\n      END\n      PROGRAM B\n      END\n' > "$W/twomain.f"
     printf '      GO TO 99\n      END\n' > "$W/nolabel.f"
     printf '      DIMENSION A(3) B(2)\n      END\n' > "$W/nocomma.f"
+    printf '      X = 1.0\n      CALL FOO(X) Z\n      END\n      SUBROUTINE FOO(Y)\n      Y = 2.0\n      END\n' > "$W/callline.f"
     for c in "noend:line 3: PROGRAM statement inside a subprogram: the END before it is missing" \
              "twomain:line 3: more than one main program" \
              "nolabel:line 2: statement label 99 is referred to but never defined" \
-             "nocomma:line 1: unexpected text after the statement"; do
+             "nocomma:line 1: unexpected text after the statement" \
+             "callline:line 2: unexpected text after the statement"; do
         b="${c%%:*}"; msg="${c#*:}"
         if "$F77" "$W/$b.f" "$W/$b.s" >"$W/$b.err" 2>&1; then
             report "refuse:$b" 1 "compiled"
