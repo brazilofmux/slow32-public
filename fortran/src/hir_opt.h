@@ -570,12 +570,28 @@ static int ho_branch_simplify(void) {
  * replace the PHI with a COPY of that value.
  * ---------------------------------------------------------------- */
 
+/* Does block a strictly dominate block b?  (ho_block_dominates, below,
+ * is the same walk; this pass comes first in the file.) */
+static int ho_phi_sdom(int a, int b) {
+    int depth;
+    if (a == b || a < 0 || b < 0) return 0;
+    depth = 0;
+    while (depth < HIR_MAX_BLOCK) {
+        if (b == ssa_idom[b]) return 0;  /* root */
+        b = ssa_idom[b];
+        if (b == a) return 1;
+        depth = depth + 1;
+    }
+    return 0;
+}
+
 static int ho_phi_simplify(void) {
     int changed;
     int i;
     int j;
     int v;
     int unique;
+    int undef;
 
     changed = 0;
     i = 0;
@@ -583,13 +599,24 @@ static int ho_phi_simplify(void) {
         if (h_kind[i] != HI_PHI) { i = i + 1; continue; }
         if (h_pbase[i] < 0 || h_pcnt[i] == 0) { i = i + 1; continue; }
 
-        /* Find unique non-self-referential arg */
-        unique = -1;
+        /* Find unique non-self-referential arg, apart from the undefined
+         * value (-1).  phi(undefined, x) may become x only where x
+         * dominates the phi: the undefined value can be taken to be
+         * anything, x's among them, but only if x has one there.  It
+         * used to become x unconditionally (-1 was also the "none yet"
+         * sentinel), and x need not dominate: a variable set in a loop
+         * only on a new maximum became the loop index itself, its value
+         * when the loop ended.  Found by fort370 on René Ferland's
+         * ANCORR; C had it the same way. */
+        unique = -3;    /* none yet */
+        undef = 0;
         j = 0;
         while (j < h_pcnt[i]) {
             v = h_pval[h_pbase[i] + j];
-            if (v != i) {
-                if (unique == -1) {
+            if (v < 0) {
+                undef = 1;
+            } else if (v != i) {
+                if (unique == -3) {
                     unique = v;
                 } else if (v != unique) {
                     unique = -2;  /* multiple distinct values */
@@ -598,7 +625,8 @@ static int ho_phi_simplify(void) {
             j = j + 1;
         }
 
-        if (unique >= 0) {
+        if (unique >= 0 &&
+            (!undef || ho_phi_sdom(h_blk[unique], h_blk[i]))) {
             /* All non-self args are the same value -> COPY */
             h_kind[i] = HI_COPY;
             h_src1[i] = unique;
@@ -702,8 +730,12 @@ static int ho_dead_blocks(void) {
     while (i < h_ninst) {
         b = h_blk[i];
         if (b >= 0 && b < bb_nblk && !ho_use[b]) {
-            /* Dead block: NOP this instruction */
-            if (h_kind[i] != HI_NOP) {
+            /* Dead block: NOP this instruction -- but not an ALLOCA,
+             * which is a frame slot and no code: the front end can make
+             * one where a variable is first named, in a block that turns
+             * out dead, while a live block still uses the slot (found by
+             * fort370; harmless while every such variable is promoted). */
+            if (h_kind[i] != HI_NOP && h_kind[i] != HI_ALLOCA) {
                 h_kind[i] = HI_NOP;
                 h_src1[i] = -1;
                 h_src2[i] = -1;

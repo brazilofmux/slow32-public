@@ -11,6 +11,7 @@
 
 /* Use count per instruction */
 static int ho_use[HIR_MAX_INST];
+static int ho_phi_vouched[HIR_MAX_INST];   /* ho_count_uses: this live phi has counted its args */
 
 /* Resolve COPY chains: follow src1 until non-COPY */
 static int ho_resolve(int inst) {
@@ -558,12 +559,27 @@ static int ho_branch_simplify(void) {
  * replace the PHI with a COPY of that value.
  * ---------------------------------------------------------------- */
 
+/* Does block a strictly dominate block b? */
+static int ho_phi_sdom(int a, int b) {
+    int depth;
+    if (a == b || a < 0 || b < 0) return 0;
+    depth = 0;
+    while (depth < HIR_MAX_BLOCK) {
+        if (b == ssa_idom[b]) return 0;  /* root */
+        b = ssa_idom[b];
+        if (b == a) return 1;
+        depth = depth + 1;
+    }
+    return 0;
+}
+
 static int ho_phi_simplify(void) {
     int changed;
     int i;
     int j;
     int v;
     int unique;
+    int undef;
 
     changed = 0;
     i = 0;
@@ -571,13 +587,20 @@ static int ho_phi_simplify(void) {
         if (h_kind[i] != HI_PHI) { i = i + 1; continue; }
         if (h_pbase[i] < 0 || h_pcnt[i] == 0) { i = i + 1; continue; }
 
-        /* Find unique non-self-referential arg */
-        unique = -1;
+        /* Find unique non-self-referential arg, apart from the undefined
+         * value (-1).  phi(undefined, x) may become x only where x
+         * dominates the phi; it used to become x unconditionally (-1 was
+         * also the "none yet" sentinel), and a variable set in a loop
+         * only on a new maximum became the loop index (found by fort370). */
+        unique = -3;    /* none yet */
+        undef = 0;
         j = 0;
         while (j < h_pcnt[i]) {
             v = h_pval[h_pbase[i] + j];
-            if (v != i) {
-                if (unique == -1) {
+            if (v < 0) {
+                undef = 1;
+            } else if (v != i) {
+                if (unique == -3) {
                     unique = v;
                 } else if (v != unique) {
                     unique = -2;  /* multiple distinct values */
@@ -586,7 +609,8 @@ static int ho_phi_simplify(void) {
             j = j + 1;
         }
 
-        if (unique >= 0) {
+        if (unique >= 0 &&
+            (!undef || ho_phi_sdom(h_blk[unique], h_blk[i]))) {
             /* All non-self args are the same value -> COPY */
             h_kind[i] = HI_COPY;
             h_src1[i] = unique;
@@ -669,8 +693,9 @@ static int ho_dead_blocks(void) {
     while (i < h_ninst) {
         b = h_blk[i];
         if (b >= 0 && b < bb_nblk && !ho_use[b]) {
-            /* Dead block: NOP this instruction */
-            if (h_kind[i] != HI_NOP) {
+            /* Dead block: NOP this instruction, but not an ALLOCA:
+             * a frame slot is no code, and a live block may use it */
+            if (h_kind[i] != HI_NOP && h_kind[i] != HI_ALLOCA) {
                 h_kind[i] = HI_NOP;
                 h_src1[i] = -1;
                 h_src2[i] = -1;
@@ -706,10 +731,12 @@ static void ho_count_uses(void) {
     int k;
     int base;
     int cnt;
+    int changed;
 
     i = 0;
     while (i < h_ninst) {
         ho_use[i] = 0;
+        ho_phi_vouched[i] = 0;
         i = i + 1;
     }
 
@@ -738,18 +765,41 @@ static void ho_count_uses(void) {
             }
         }
 
-        /* PHI arguments */
-        if (k == HI_PHI && h_pbase[i] >= 0) {
-            j = 0;
-            while (j < h_pcnt[i]) {
-                if (h_pval[h_pbase[i] + j] >= 0)
-                    ho_use[h_pval[h_pbase[i] + j]] =
-                        ho_use[h_pval[h_pbase[i] + j]] + 1;
-                j = j + 1;
-            }
-        }
+        /* PHI arguments are counted below, and only from live phis. */
 
         i = i + 1;
+    }
+
+    /* PHI arguments.  A use from a phi is real only if the phi itself
+     * is live: counting every phi's arguments kept dead phis alive
+     * through each other (a loop header's phi feeding a join's phi
+     * that feeds the header, with no real reader).  ho_phi_simplify
+     * collapsed most of those by turning phi(undefined, x) into x
+     * whether or not x dominated, which was wrong code where the
+     * variable was live (fort370); with that gone, stage08's own
+     * s12cc.c came out 48% larger under this compiler.  So, as stage08
+     * does: seed with the uses from real instructions, then let each
+     * live phi vouch for its arguments, to a fixpoint. */
+    changed = 1;
+    while (changed) {
+        changed = 0;
+        i = 0;
+        while (i < h_ninst) {
+            if (h_kind[i] == HI_PHI && h_pbase[i] >= 0 && ho_use[i] > 0 &&
+                !ho_phi_vouched[i]) {
+                ho_phi_vouched[i] = 1;
+                changed = 1;
+                j = 0;
+                while (j < h_pcnt[i]) {
+                    if (h_pval[h_pbase[i] + j] >= 0 &&
+                        h_pval[h_pbase[i] + j] != i)
+                        ho_use[h_pval[h_pbase[i] + j]] =
+                            ho_use[h_pval[h_pbase[i] + j]] + 1;
+                    j = j + 1;
+                }
+            }
+            i = i + 1;
+        }
     }
 }
 

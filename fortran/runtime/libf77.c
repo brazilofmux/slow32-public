@@ -62,7 +62,7 @@ static char  fio_ltok[128];
 /* Open units.  0/5/6 are preconnected (stderr/stdin/stdout, matching
  * gfortran) and may not be OPENed; everything else goes through the
  * table.  The name is kept for CLOSE (STATUS='DELETE'). */
-#define FIO_MAXUNIT 32
+#define FIO_MAXUNIT 100                  /* units 0-99 */
 #define FIO_MAXNAME 256
 static FILE *fio_ufile[FIO_MAXUNIT];
 static char  fio_ufname[FIO_MAXUNIT][FIO_MAXNAME];
@@ -1203,7 +1203,12 @@ void f77_wr_l(int v) {
 /* Finish the record: emit any trailing literal text, but stop at the
  * first data descriptor that has no item to feed it. */
 void f77_wr_end(void) {
-    if (!fio_listed) {
+    /* A data descriptor with repeats left (3A1 with fewer than 3 items)
+     * wants the next item itself: the record ends there, and the
+     * literal after the group is not written.  Draining from a fresh
+     * descriptor wrote it (found by fort370: 4('!',15A1) histogram
+     * bars ended in a '!' that gfortran does not write). */
+    if (!fio_listed && !(fio_desc && fio_rep > 0)) {
         /* Run the format out to its end or the next data descriptor
          * with no reversion: a WRITE with no items and a format ending
          * in a group, `3(/)`, reverted to that group for ever. */

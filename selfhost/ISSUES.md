@@ -3186,3 +3186,50 @@ ints, past six registers and after a named double, and a format-string
 walk; it segfaults under the previous cc-x64, passes on both cross
 trees (40/40).
 
+
+### 88. [RESOLVED 2026-10-14] stage08 cc: phi(undefined, x) became x where x did not dominate; a frameless leaf read its stack arguments through the caller's r30
+
+Two wrong-code bugs that fort370 (FORTRAN 77 for MVS, which carries a
+copy of this optimizer) found running a real engineering program and
+cut down to small tests.  Both reproduce in C under stage08.
+
+**Phi of the undefined value.**  `ho_phi_simplify` looked for the one
+distinct non-self argument with -1 as "none yet" -- but -1 is also a phi
+argument, the undefined value, so phi(undefined, x) became x.  That is
+sound only where x dominates the phi.  At a loop header x is the latch
+value, which does not: in
+
+    for (j = 0; j < n; j++) { if (d[j] <= vmax) continue; vmax = d[j]; best = j; }
+    return best;
+
+`best` became `j` and the function returned n.  Stage05-07 had it too
+(stage07 printed the same wrong answer).  Fix: the undefined value is
+counted apart, and a phi with it collapses to x only if x's block
+strictly dominates the phi's (`ho_phi_sdom`).  In stage08 that costs
+0.12% of s12cc.c's instructions: the pruned phi DCE (`ho_phi_vouched`)
+already removes the dead phi webs the wrong rule used to remove.
+Stage05-07 lacked that DCE -- the wrong rule had been standing in for
+it -- and the fix alone made stage07's output for stage08's s12cc.c
+48% larger (3.82 to 5.64MB), so the vouching DCE was ported to them;
+the same file now comes out at 3.54MB.
+
+That size jump found a third bug: stage07's `cg_c` dropped output past
+4MB without a word, so s12cc.c was cut off mid-function and stage08's
+build failed at link time with unresolved globals.  stage07 now flushes
+its buffer into the open .s as stage08 does.
+
+**Frameless leaf.**  `hcg_classify_frame` makes a leaf with no spill,
+no callee-save and no live alloca frameless, and frameless code never
+sets r30.  But incoming stack arguments were still addressed
+r30-relative (`hcg_slot_base`), r30 being the caller's frame pointer:
+a leaf with more than eight arguments read the caller's locals.
+`test_many_args.c` never saw it because each of its leaves needs a
+callee-saved register and keeps a frame.  Fix: a frameless function
+addresses its slots from sp (`hcg_omit_fp`), where the caller left them.
+
+Both fixes went into all three copies of the backend (selfhost/src or
+stage08, fortran/src, cobol/src/hir), with fort370's dead-block ALLOCA
+guard (a frame slot is not code, so ho_dead_blocks no longer NOPs one).
+Tests: stage08 `test_phi_undef.c` and `test_frameless_args.c` (both fail
+under the previous compiler); fortran `tests/f77/phiundef1.f` and
+`leafargs1.f`.

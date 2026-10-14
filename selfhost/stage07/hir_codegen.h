@@ -11,14 +11,42 @@
 
 static char cg_out[CG_MAX_OUT];
 static int  cg_olen;
+static int  cg_fd = -1;      /* the .s being written; the buffer is a window on it */
+
+/* Emission only appends, so a full buffer goes to the file and starts
+ * over (stage08's arrangement).  A full buffer was dropped without a
+ * word: stage08's s12cc.c crossed 4MB of assembly under this compiler
+ * on 2026-10-14 and came out cut off mid-function, which surfaced as
+ * unresolved symbols at link time. */
+static void cg_flush(void) {
+    int off;
+    int n;
+    if (cg_fd < 0 || cg_olen <= 0) return;
+    off = 0;
+    while (off < cg_olen) {
+        n = write(cg_fd, &cg_out[off], cg_olen - off);
+        if (n <= 0) {
+            fdputs("s12cc: write failed\n", 2);
+            exit(1);
+        }
+        off = off + n;
+    }
+    cg_olen = 0;
+}
 
 /* --- Asm emission helpers --- */
 
 static void cg_c(int ch) {
-    if (cg_olen < CG_MAX_OUT - 1) {
-        cg_out[cg_olen] = ch;
-        cg_olen = cg_olen + 1;
+    if (cg_olen >= CG_MAX_OUT - 1) {
+        if (cg_fd >= 0) {
+            cg_flush();
+        } else {
+            fdputs("s12cc: output buffer overflow (assembly too large)\n", 2);
+            exit(1);
+        }
     }
+    cg_out[cg_olen] = ch;
+    cg_olen = cg_olen + 1;
 }
 
 static void cg_s(char *s) {

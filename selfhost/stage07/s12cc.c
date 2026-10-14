@@ -253,11 +253,7 @@ int main(int argc, char **argv) {
     /* Optimize AST */
     optimize(prog);
 
-    /* Codegen (cg_lbl not reset — parser may have allocated goto labels) */
-    cg_olen = 0;
-    gen_program(prog);
-
-    /* Write output */
+    /* Output: opened first, so codegen can flush its buffer into it */
     fd = open(outfile, 26);  /* O_WRONLY | O_CREAT | O_TRUNC */
     if (fd < 0) {
         fdputs("s12cc: cannot open output: ", 2);
@@ -265,7 +261,13 @@ int main(int argc, char **argv) {
         fdputc(10, 2);
         return 1;
     }
-    write(fd, cg_out, cg_olen);
+    cg_fd = fd;
+
+    /* Codegen (cg_lbl not reset — parser may have allocated goto labels) */
+    cg_olen = 0;
+    gen_program(prog);
+
+    cg_flush();
     close(fd);
 
     /* Print optimization stats to stderr */

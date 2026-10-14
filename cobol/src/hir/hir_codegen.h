@@ -4142,6 +4142,11 @@ static void hcg_func(Node *fn) {
         }
         if (hcg_omit_fp) hcg_stat_omit_fp = hcg_stat_omit_fp + 1;
     }
+    /* A frameless leaf never sets r30: it is still the caller's frame
+     * pointer, so incoming stack arguments are found from sp, which is
+     * where the caller left them.  The ninth argument was read from the
+     * caller's frame (fort370's ANCORR test cmpscr, a 15-argument leaf). */
+    if (hcg_frameless) hcg_omit_fp = 1;
 
     /* Frame-escape scan for the tail-call guard.  A tail call pops this
      * frame BEFORE entering the callee; if any local's address escaped

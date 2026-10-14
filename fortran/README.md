@@ -62,6 +62,9 @@ spilling, live-range splitting, strength reduction, the fused FP
 compare-branch, the hardware `FSQRT.D`/`FSQRT.S` for `__fp64_sqrt` and
 `__fp32_sqrt` -- was ported to stage08 and came back identical. The
 `DIVERGENCE` comments still in the sources are history, not a to-do.
+One has opened since: `hir_opt.h` lets CSE match two equal integer
+constants within a block (`ho_cse_key`, from fort370, 2026-10-13), which
+stage08 does not have yet.
 
 The 2026-10-11 re-sync is what a re-sync is for. The six weeks of
 stage08 work it brought in (call-site live-range splitting, frameless
@@ -75,6 +78,21 @@ walked them: selfhost ISSUES-86) and a front-end liberty the old
 backend had tolerated (statements after RETURN emitted into the block
 RETURN closed). Both are fixed on both sides, and `tests/f77/entry2.f`
 and `charfn1.f` hold the two shapes.
+
+## fort370 is a cousin, not a twin
+
+`~/fort370` (FORTRAN 77 for MVS 3.8j) began as this compiler and still
+shares its optimizer; its wrong-code fixes come back here, and each one
+gets a test in `tests/f77/` (the 2026-10-14 batch from a real program it
+ran: `phiundef1`, `leafargs1`, `fmtend1`, `units1`, two of them stage08
+bugs as well). What does not come back is IBM's meaning. There a
+subprogram's local keeps its value from one call to the next without a
+SAVE, because FORTRAN H's storage is static and old programs count on
+it, so fort370 keeps such a variable in its frame slot. Here the
+standard rules (ANSI X3.9-1978 17.3): a local not named in a SAVE
+becomes undefined when the subprogram returns, and a program that reads
+it on the next call is wrong. Both
+compilers say FORTRAN 77; they serve different programs.
 
 SLOW-32 is the only target. x86-64 and aarch64 are reached through
 `slow32-dbt`, as with every other language here.
