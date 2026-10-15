@@ -4792,6 +4792,13 @@ static int f77_bind_actual(char *nm, int addr) {
     f77_srank[s] = 0;
     f77_sarg[s] = 1;
     f77_shi[s] = -1;                 /* by-reference: value is an address */
+    /* And taken as stored.  A dummy's loads are asserted loop-invariant
+     * (f77_ldro_note) because nothing else may change it while its own
+     * unit runs; inlined, the callee runs as part of the caller, whose
+     * loop may be changing the actual -- the DO variable in
+     * DO 10 K = ... CALL RAMP(K, V), where RAMP's V = FLOAT(3*K+1) was
+     * hoisted out of the loop and every V was the first trip's. */
+    f77_sstored[s] = 1;
     { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[s][d] = -1; f77_slov[s][d] = -1; d = d + 1; } }
     f77_sval[s] = addr;
     f77_nsym = f77_nsym + 1;
