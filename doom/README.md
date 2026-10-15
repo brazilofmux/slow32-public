@@ -33,3 +33,25 @@ three tiny patches (no system(), no zenity, debug hooks).
 
 No sound (a different document, if ever). No mouse (it has not
 earned its way in). Saves and config land in the working directory.
+
+## How fast
+
+`-timedemo demo1` (5026 gametics; a realtic is 1/35 s), run in an
+empty directory, 2026-10-14:
+
+    ../tools/dbt/slow32-dbt doom.s32x -iwad doom1.wad -timedemo demo1
+
+| engine, build | Apple M5 Max | Xeon 8259CL |
+|---|---|---|
+| slow32-dbt, clang -O1 (this `doom.s32x`) | 75 | 169 |
+| slow32-dbt, clang -O2 | 73–74 | |
+| slow32-dbt, stage08 cc | 84 | |
+| slow32-fast (interpreter) | 861 | |
+
+For reference, the DOS DOOM's same demo1 under `~/x86`'s dos-monster
+takes 93 realtics on the Mac (bare MS-DOS 6.22) and 177–190 on the
+Xeon.  Different programs -- a user-mode binary handing its frame to
+the tube, against a DOS executable on an emulated PC -- so take it as
+a data point.  Repeat runs agree within a realtic; the wall clock adds
+about 2.4 s of startup on the Mac.  Timing the stage08 build is how
+"0.000000 fps" turned up (selfhost ISSUES-90).
