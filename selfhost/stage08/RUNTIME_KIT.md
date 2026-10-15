@@ -103,6 +103,17 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Fixed 2026-10-14, later (`959a43c3`).  In `cc.s32x` only; every
+`libc.s32a` member compiles the same before and after:
+
+- **A float passed through `...` was not promoted to double**
+  (selfhost ISSUES-90).  `printf("%f", f)` with `f` a float printed
+  0.000000 or a 40-digit number; any variadic callee reading
+  `va_arg(ap, double)` got the wrong value.
+- **A call through a pointer to a variadic function placed its double
+  arguments as for a fixed signature** (ISSUES-90): the callee's
+  va_arg walk read the wrong registers.
+
 Fixed 2026-10-14 (`d67aab3b`, `90c9ef3e`).  In `cc.s32x`, and in
 `libc.s32a`'s `posix_proc.s32o` (getenv) and `dtoa.s32o` (recompiled
 by the fixed compiler); the tools were rebuilt by the fixed stage07;
