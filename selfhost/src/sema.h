@@ -178,6 +178,12 @@ static void sema_expr(Node *n) {
         a = n->args;
         while (a) {
             pt = find_func_param(n->name, idx);
+            /* No declared parameter -- a variadic function's `...`, or a
+             * callee without a prototype: the default argument promotions
+             * (C90 6.3.2.2) make a float a double.  Without this, a
+             * float handed to printf arrived as its 32-bit pattern where
+             * va_arg(ap, double) reads a pair. */
+            if (pt < 0 && ty_is_float(a->ty)) pt = TY_DOUBLE;
             if (pt >= 0 &&
                 sema_arg_class(a->ty) != sema_arg_class(pt) &&
                 sema_arg_class(a->ty) != 4 && sema_arg_class(pt) != 4) {
@@ -209,11 +215,13 @@ static void sema_expr(Node *n) {
             if (n->lhs->kind == ND_CALL) fpn = n->lhs->val_hi;
         }
         if (fpbase >= 0) {
+            n->is_varargs = ps_fpvar[fpbase];
             idx = 0;
             prev = NULL;
             a = n->args;
             while (a) {
                 pt = (idx < fpn) ? ps_fptypes[fpbase + idx] : -1;
+                if (pt < 0 && ty_is_float(a->ty)) pt = TY_DOUBLE;
                 if (pt >= 0 &&
                     sema_arg_class(a->ty) != sema_arg_class(pt) &&
                     sema_arg_class(a->ty) != 4 && sema_arg_class(pt) != 4) {

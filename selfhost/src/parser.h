@@ -312,6 +312,7 @@ static int   ps_fretfpbase[PS_MAX_FUNCS]; /* return type is a function pointer *
 static int   ps_fretfpn[PS_MAX_FUNCS];
 static int   ps_fptypes[PS_MAX_FPARAM];
 static int   ps_fpret[PS_MAX_FPARAM];  /* return type of the fnptr signature at this base; 0 = TY_INT */
+static int   ps_fpvar[PS_MAX_FPARAM];  /* 1 = the signature at this base ends in `...` */
 static int   ps_nfptypes;
 static int   ps_nfuncs;
 static int   ps_pending_retfpbase = -1;
@@ -466,11 +467,14 @@ static int ps_parse_fp_params(int *np_out) {
     int ptys[64];
     int np;
     int ty;
+    int var;
+    int base;
     np = 0;
+    var = 0;
     *np_out = 0;
     if (lex_tok == TK_RPAREN) { next(); return ps_fp_store(ptys, 0); }
     while (lex_tok != TK_EOF) {
-        if (lex_tok == TK_ELLIPSIS) { next(); break; }
+        if (lex_tok == TK_ELLIPSIS) { next(); var = 1; break; }
         if (!is_type()) { p_skip_to_rparen(); return -1; }
         ty = parse_type();
         while (lex_tok == TK_STAR || lex_tok == TK_CONST || lex_tok == TK_VOLATILE || lex_tok == TK_RESTRICT) {
@@ -500,7 +504,11 @@ static int ps_parse_fp_params(int *np_out) {
     if (lex_tok == TK_RPAREN) next();
     if (np == 1 && ptys[0] == TY_VOID) np = 0;
     *np_out = np;
-    return ps_fp_store(ptys, np);
+    base = ps_fp_store(ptys, np);
+    /* A call through a variadic signature packs its doubles the way a
+     * direct call to a variadic function does (hl_expr, ND_CALL_PTR). */
+    if (base >= 0 && base < PS_MAX_FPARAM) ps_fpvar[base] = var;
+    return base;
 }
 
 static void expect(int tok) {
@@ -628,6 +636,7 @@ static int ps_fp_store(int *ptys, int np) {
     int i;
     if (np < 0 || ps_nfptypes + np > PS_MAX_FPARAM) return -1;
     base = ps_nfptypes;
+    if (base < PS_MAX_FPARAM) ps_fpvar[base] = 0;
     i = 0;
     while (i < np) {
         ps_fptypes[ps_nfptypes] = ptys[i];

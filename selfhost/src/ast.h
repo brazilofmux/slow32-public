@@ -233,7 +233,7 @@ struct Node {
     int is_fnptr;     /* MEMBER: a function-pointer member; (*p->m)(args) strips the star */
     int arr_cols;     /* VAR/MEMBER: 2D array column count (0 = 1D/scalar) */
     int nparams;      /* FUNC: number of parameters */
-    int is_varargs;   /* FUNC: 1 if variadic (...) */
+    int is_varargs;   /* FUNC: 1 if variadic (...); CALL_PTR: through a variadic signature */
     int is_static;    /* FUNC: 1 if `static` storage class — emit STB_LOCAL */
     int locals_size;  /* FUNC: total local stack bytes */
     int bit_off;      /* MEMBER: bit offset within storage unit (bit-fields) */

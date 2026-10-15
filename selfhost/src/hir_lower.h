@@ -3398,14 +3398,14 @@ static int hl_expr(Node *n) {
             if (is64_2[i] >= HI_TAG_BYVAL) {
                 h_carg_tag[h_ncarg] = is64_2[i];
             } else {
-                h_carg_tag[h_ncarg] = (is64_2[i] == 2) ? 1 : 0;
+                h_carg_tag[h_ncarg] = (is64_2[i] == 2 && !n->is_varargs) ? 1 : 0;
             }
             h_ncarg = h_ncarg + 1;
             phys_count2 = phys_count2 + 1;
             if (is64_2[i] == 1 || is64_2[i] == 2) {
                 if (h_ncarg >= HIR_MAX_CARG) p_error("too many call args (hir)");
                 h_carg[h_ncarg] = av_hi2[i];
-                h_carg_tag[h_ncarg] = (is64_2[i] == 2) ? 2 : 0;
+                h_carg_tag[h_ncarg] = (is64_2[i] == 2 && !n->is_varargs) ? 2 : 0;
                 h_ncarg = h_ncarg + 1;
                 phys_count2 = phys_count2 + 1;
             }

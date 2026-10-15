@@ -3265,3 +3265,32 @@ are in strict stack order along the dominator-tree walk, so each push
 lives in the push-log entry that records it (variable, value, previous
 top) and only the top is per variable.  stage08 cc's assembler for
 SQLite is byte-identical before and after.  All three backend copies.
+
+### 90. [RESOLVED 2026-10-14] A float passed through `...` was not promoted to double; a call through a pointer to a variadic function placed its doubles as for a fixed signature
+
+Found timing DOOM: built by stage08 cc, `-timedemo demo1` ended "timed
+5026 gametics in 84 realtics (0.000000 fps)"; clang's build printed
+2377.16.  `fps` is a float handed to `I_Error(char *, ...)`.  sema
+converts an argument to its declared parameter's type and left one with
+no declared parameter as it was, so the float went over as its 32-bit
+pattern where `va_arg(ap, double)` reads a register pair.  A plain
+`printf("%f", f)` printed 0.000000 or a 40-digit number; it was never in
+a test because every float the corpus printed had been through
+arithmetic with a double first.  Now a float past the prototype, or to a
+callee with none, is cast to double (C90 6.3.2.2) on direct calls and
+calls through a known signature.
+
+Testing the pointer case found the second bug: the indirect-call lowering
+did not know whether the signature ended in `...`, so it gave a double
+the aligned register pair a fixed-signature call uses, where a variadic
+callee's va_arg walk expects the arguments packed.  The function-pointer
+signature table records the `...` now (`ps_fpvar`), sema marks the call
+(`is_varargs` on the ND_CALL_PTR node), and the lowering packs as for a
+direct variadic call.
+
+Tests: stage08 `tests/test_float_promote.c` (exits 10 under the previous
+compiler, 15 with only the first fix), and
+`stage08-cross-x64/diff-test/corpus/d41_float_promote.c`, which passes on
+cc-x64 (kagura) and cc-a64 (arm64 container).  SQLite stays
+byte-identical to clang; the stage08 DOOM build still matches clang's
+demo3 frame hashes.
