@@ -3274,9 +3274,8 @@ Found timing DOOM: built by stage08 cc, `-timedemo demo1` ended "timed
 converts an argument to its declared parameter's type and left one with
 no declared parameter as it was, so the float went over as its 32-bit
 pattern where `va_arg(ap, double)` reads a register pair.  A plain
-`printf("%f", f)` printed 0.000000 or a 40-digit number; it was never in
-a test because every float the corpus printed had been through
-arithmetic with a double first.  Now a float past the prototype, or to a
+`printf("%f", f)` printed 0.000000 or a 40-digit number, and no test
+passed a float there.  Now a float past the prototype, or to a
 callee with none, is cast to double (C90 6.3.2.2) on direct calls and
 calls through a known signature.
 
