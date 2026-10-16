@@ -188,6 +188,16 @@ static int lx_pending_hollerith_count(void) {
     lx_hcount_digits = n;
     if (n == 0) return -1;
     if (i >= 0 && (lx_isalpha(lx_stmt[i]) || lx_stmt[i] == '.')) return -1;
+    /* A type's length, REAL*8 H or CHARACTER*8 HEAD: the statement so
+     * far is a type keyword and a star, and no Hollerith follows a
+     * length.  (A DATA repeat count, 2*8H..., keeps its Hollerith.) */
+    if (i > 0 && lx_stmt[i] == '*') {
+        if (i == 7 && (strncmp(lx_stmt, "INTEGER", 7) == 0 || strncmp(lx_stmt, "LOGICAL", 7) == 0 ||
+                       strncmp(lx_stmt, "COMPLEX", 7) == 0)) return -1;
+        if (i == 4 && strncmp(lx_stmt, "REAL", 4) == 0) return -1;
+        if (i == 9 && strncmp(lx_stmt, "CHARACTER", 9) == 0) return -1;
+        if (i == 15 && strncmp(lx_stmt, "DOUBLEPRECISION", 15) == 0) return -1;
+    }
     v = 0;
     i = i + 1;
     while (i < lx_stmt_len) { v = v * 10 + (lx_stmt[i] - '0'); i = i + 1; }

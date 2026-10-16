@@ -179,6 +179,24 @@ static int f77_esize(int s) {
     return ty_size(f77_sty[s]);
 }
 static int f77_tysize(int ty) { return ty == TY_CPLX ? 8 : ty_size(ty); }
+
+/* A length after a numeric type, *n (an extension): REAL*8 is DOUBLE
+ * PRECISION and REAL*4 is REAL; *4 on INTEGER and LOGICAL and *8 on
+ * COMPLEX are their own sizes.  Any other length is refused (with
+ * `say`) rather than taken as the default size: COMPLEX*16 compiled as
+ * single precision and INTEGER*2 as a fullword, without a word.  The
+ * unit scan in f77.c asks quietly; the statement itself reports. */
+static int f77_lenty(int ty, int n, int say) {
+    if ((ty == TY_FLOAT || ty == TY_DOUBLE) && (n == 4 || n == 8)) return n == 8 ? TY_DOUBLE : TY_FLOAT;
+    if (ty == TY_INT && n == 4) return ty;
+    if (ty == TY_CPLX && n == 8) return ty;
+    if (say) {
+        char m[64];
+        sprintf(m, "a type length of *%d is not supported here", n);
+        f77_error(m);
+    }
+    return ty;
+}
 static int f77_ispair(int ty) { return ty == TY_DOUBLE || ty == TY_CPLX; }
 
 /* --- EQUIVALENCE -------------------------------------------------------
@@ -501,6 +519,7 @@ static int  f77_nfamd;
 static int  f77_hdr_clen;              /* length seen by f77_function_kw_end; -2 = at f77_hdr_clen_off */
 static int  f77_hdr_clen_off;
 static int  f77_hdr_log;
+static int  f77_hdr_len;              /* REAL*8 FUNCTION: the *n seen by f77_function_kw_end, else 0 */
 static int  f77_nunit;
 
 /* Create a symbol whose storage is a by-reference dummy argument: its
@@ -2128,19 +2147,15 @@ static int f77_term(void) {
                 t2 = hi_emit(HI_FMUL, TY_FLOAT, ahi, b, 0, NULL);
                 im = hi_emit(HI_FADD, TY_FLOAT, t1, t2, 0, NULL);
             } else {
-                /* ((ar*br + ai*bi) / d, (ai*br - ar*bi) / d), d = br*br + bi*bi */
-                int d;
-                t1 = hi_emit(HI_FMUL, TY_FLOAT, b, b, 0, NULL);
-                t2 = hi_emit(HI_FMUL, TY_FLOAT, bhi, bhi, 0, NULL);
-                d = hi_emit(HI_FADD, TY_FLOAT, t1, t2, 0, NULL);
-                t1 = hi_emit(HI_FMUL, TY_FLOAT, a, b, 0, NULL);
-                t2 = hi_emit(HI_FMUL, TY_FLOAT, ahi, bhi, 0, NULL);
-                re = hi_emit(HI_FADD, TY_FLOAT, t1, t2, 0, NULL);
-                re = hi_emit(HI_FDIV, TY_FLOAT, re, d, 0, NULL);
-                t1 = hi_emit(HI_FMUL, TY_FLOAT, ahi, b, 0, NULL);
-                t2 = hi_emit(HI_FMUL, TY_FLOAT, a, bhi, 0, NULL);
-                im = hi_emit(HI_FSUB, TY_FLOAT, t1, t2, 0, NULL);
-                im = hi_emit(HI_FDIV, TY_FLOAT, im, d, 0, NULL);
+                /* in the runtime, in double (f77_cdiv): in float the
+                 * divisor's square overflowed past about 1.8E19 */
+                int args[5];
+                int out;
+                out = f77_char_temp(8);
+                args[0] = out; args[1] = a; args[2] = ahi; args[3] = b; args[4] = bhi;
+                f77_call_i("f77_cdiv", 5, args);
+                re = f77_load_at(out, TY_CPLX);
+                im = ex_hi;
             }
             a = re; ahi = im;
         }
@@ -3069,7 +3084,7 @@ static void f77_stmt_decl(int ty, int skip) {
         if (ty == TY_CHAR) {
             clen = f77_char_len();
         } else if (lx_t == T_ICON) {
-            if (lex_ival == 8 && ty == TY_FLOAT) ty = TY_DOUBLE;
+            ty = f77_lenty(ty, lex_ival, 1);
             f77_tok();
         }
         if (lx_t == T_COMMA) f77_tok();       /* CHARACTER*10, A, B */
@@ -3091,7 +3106,7 @@ static void f77_stmt_decl(int ty, int skip) {
             if (f77_sty[s] == TY_CHAR) {
                 f77_slen[s] = f77_char_len();
             } else if (lx_t == T_ICON) {
-                if (lex_ival == 8 && f77_sty[s] == TY_FLOAT) f77_sty[s] = TY_DOUBLE;
+                f77_sty[s] = f77_lenty(f77_sty[s], lex_ival, 1);
                 f77_tok();
             }
             if (lx_t == T_LP) f77_parse_dims(s);
@@ -3335,7 +3350,7 @@ static void f77_stmt_implicit(int skip) {
             f77_tok();
             if (ty == TY_CHAR) clen = f77_char_len();
             else if (lx_t == T_ICON) {
-                if (lex_ival == 8 && ty == TY_FLOAT) ty = TY_DOUBLE;
+                ty = f77_lenty(ty, lex_ival, 1);
                 f77_tok();
             }
         }
@@ -4411,6 +4426,7 @@ static int f77_function_kw_end(int *ty_out) {
     off = 0;
     f77_hdr_clen = 1;
     f77_hdr_log = 0;
+    f77_hdr_len = 0;
     n = f77_type_before_function("DOUBLEPRECISION");
     if (n > 0) { off = n; ty = TY_DOUBLE; }
     else if ((n = f77_type_before_function("CHARACTER")) > 0) {
@@ -4457,6 +4473,15 @@ static int f77_function_kw_end(int *ty_out) {
         }
     }
 
+    /* A length after the type: REAL*8 FUNCTION F(X) */
+    if (ty != TY_CHAR && off > 0 && off + 1 < lx_stmt_len && lx_stmt[off] == '*' && lx_isdigit(lx_stmt[off + 1])) {
+        int ln;
+        ln = 0;
+        off = off + 1;
+        while (off < lx_stmt_len && lx_isdigit(lx_stmt[off])) { ln = ln * 10 + (lx_stmt[off] - '0'); off = off + 1; }
+        ty = f77_lenty(ty, ln, 0);
+        f77_hdr_len = ln;
+    }
     fn = f77_kw_at(off, "FUNCTION");
     if (fn < 0) {
         /* No-space spelling: only when no blank was squeezed in the

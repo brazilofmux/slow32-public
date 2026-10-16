@@ -164,22 +164,34 @@ fi
 # The message names the statement's own line even when the statement
 # called a subprogram whose text was read in its place (callline).
 # Found by fort370 (reported on H390-MVS), whose unit scan is this one's.
+# A type length the compiler cannot honour is refused rather than taken
+# as the default size: COMPLEX*16 compiled as single precision and
+# INTEGER*2 as a fullword, silently -- in a declaration and in a
+# FUNCTION header, said once (lenfn).
 if [ -x "$F77" ]; then
     printf '      SUBROUTINE PRINTIT\n      RETURN\n      PROGRAM HELLO\n      CALL PRINTIT\n      END\n' > "$W/noend.f"
     printf '      PROGRAM A\n      END\n      PROGRAM B\n      END\n' > "$W/twomain.f"
     printf '      GO TO 99\n      END\n' > "$W/nolabel.f"
     printf '      DIMENSION A(3) B(2)\n      END\n' > "$W/nocomma.f"
     printf '      X = 1.0\n      CALL FOO(X) Z\n      END\n      SUBROUTINE FOO(Y)\n      Y = 2.0\n      END\n' > "$W/callline.f"
+    printf '      COMPLEX*16 Z\n      Z = (1.0, 2.0)\n      END\n' > "$W/lencx.f"
+    printf '      INTEGER*2 I\n      I = 1\n      END\n' > "$W/lenint.f"
+    printf '      X = G(1.0)\n      END\n      COMPLEX*16 FUNCTION G(Y)\n      G = Y\n      END\n' > "$W/lenfn.f"
     for c in "noend:line 3: PROGRAM statement inside a subprogram: the END before it is missing" \
              "twomain:line 3: more than one main program" \
              "nolabel:line 2: statement label 99 is referred to but never defined" \
              "nocomma:line 1: unexpected text after the statement" \
-             "callline:line 2: unexpected text after the statement"; do
+             "callline:line 2: unexpected text after the statement" \
+             "lencx:line 1: a type length of *16 is not supported here" \
+             "lenint:line 1: a type length of *2 is not supported here" \
+             "lenfn:line 3: a type length of *16 is not supported here"; do
         b="${c%%:*}"; msg="${c#*:}"
         if "$F77" "$W/$b.f" "$W/$b.s" >"$W/$b.err" 2>&1; then
             report "refuse:$b" 1 "compiled"
         elif ! grep -qF "$msg" "$W/$b.err"; then
             report "refuse:$b" 1 "said: $(head -1 "$W/$b.err")"
+        elif [ "$(grep -cF "$msg" "$W/$b.err")" != 1 ]; then
+            report "refuse:$b" 1 "said it $(grep -cF "$msg" "$W/$b.err") times"
         else
             report "refuse:$b" 0
         fi

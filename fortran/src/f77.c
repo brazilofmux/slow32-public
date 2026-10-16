@@ -212,6 +212,9 @@ static void f77_scan_units(void) {
             f77_unit_name(f77_nunit);
             f77_collect_dummies(f77_starts("SUBROUTINE") ? 10 : f77_function_skip(), f77_nunit);
             if (rty >= 0) {
+                /* the header is classified many times; its length is
+                 * reported once, here */
+                if (f77_hdr_len > 0) (void)f77_lenty(rty, f77_hdr_len, 1);
                 f77_ukind[f77_nunit] = F77_UNIT_FUNC;
                 /* Bare FUNCTION uses the I-N rule; a later type
                  * statement of the function name overrides it. */
@@ -256,7 +259,7 @@ static void f77_scan_units(void) {
                     f77_tok();
                     if (ty == TY_CHAR) clen = f77_char_len();
                     else if (lx_t == T_ICON) {
-                        if (lex_ival == 8 && ty == TY_FLOAT) ty = TY_DOUBLE;
+                        ty = f77_lenty(ty, lex_ival, 0);
                         f77_tok();
                     }
                     if (lx_t == T_COMMA) f77_tok();
@@ -273,12 +276,7 @@ static void f77_scan_units(void) {
                     } else if (lx_t == T_STAR) {
                         f77_tok();
                         if (lx_t == T_ICON) {
-                            if (is_fn) {
-                                if (lex_ival == 8 && ty == TY_FLOAT)
-                                    f77_urty[f77_nunit - 1] = TY_DOUBLE;
-                                else
-                                    f77_urty[f77_nunit - 1] = ty;
-                            }
+                            if (is_fn) f77_urty[f77_nunit - 1] = f77_lenty(ty, lex_ival, 0);
                             f77_tok();
                         }
                     } else if (is_fn) {
