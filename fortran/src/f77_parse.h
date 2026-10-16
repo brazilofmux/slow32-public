@@ -180,21 +180,16 @@ static int f77_esize(int s) {
 }
 static int f77_tysize(int ty) { return ty == TY_CPLX ? 8 : ty_size(ty); }
 
-/* A length after a numeric type, *n (an extension): REAL*8 is DOUBLE
- * PRECISION and REAL*4 is REAL; *4 on INTEGER and LOGICAL and *8 on
- * COMPLEX are their own sizes.  Any other length is refused (with
- * `say`) rather than taken as the default size: COMPLEX*16 compiled as
- * single precision and INTEGER*2 as a fullword, without a word.  The
- * unit scan in f77.c asks quietly; the statement itself reports. */
+/* A length after a type, *n (an extension, as fort370 reads it): REAL*8
+ * is DOUBLE PRECISION and REAL*4 takes it back; any other is the type
+ * itself (INTEGER*2 and LOGICAL*1 get a fullword still).  COMPLEX*16 is
+ * refused -- fort370 has it where a double is one HIR value, the S/370
+ * -- rather than compiled as single precision, which it was without a
+ * word.  The unit scan in f77.c asks quietly (`say` 0); the statement
+ * itself reports. */
 static int f77_lenty(int ty, int n, int say) {
     if ((ty == TY_FLOAT || ty == TY_DOUBLE) && (n == 4 || n == 8)) return n == 8 ? TY_DOUBLE : TY_FLOAT;
-    if (ty == TY_INT && n == 4) return ty;
-    if (ty == TY_CPLX && n == 8) return ty;
-    if (say) {
-        char m[64];
-        sprintf(m, "a type length of *%d is not supported here", n);
-        f77_error(m);
-    }
+    if (ty == TY_CPLX && n == 16 && say) f77_error("COMPLEX*16 needs a target with native DOUBLE PRECISION");
     return ty;
 }
 static int f77_ispair(int ty) { return ty == TY_DOUBLE || ty == TY_CPLX; }
