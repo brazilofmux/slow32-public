@@ -168,7 +168,9 @@ fi
 # it was without a word -- in a declaration and in a FUNCTION header,
 # said once (lenfn).  Other lengths are read as fort370 reads them.
 # END DO (MIL-STD-1753, from fort370): a DO left waiting for its END
-# DO, an IF block without END IF, and an END DO with no DO open.
+# DO, an IF block without END IF, and an END DO with no DO open.  A
+# labelled DO that its label never closes -- no such statement (nodo),
+# or the label inside another DO's range (crossdo) -- compiled silently.
 if [ -x "$F77" ]; then
     printf '      SUBROUTINE PRINTIT\n      RETURN\n      PROGRAM HELLO\n      CALL PRINTIT\n      END\n' > "$W/noend.f"
     printf '      PROGRAM A\n      END\n      PROGRAM B\n      END\n' > "$W/twomain.f"
@@ -180,6 +182,8 @@ if [ -x "$F77" ]; then
     printf '      DO I = 1, 3\n      X = I\n      END\n' > "$W/opendo.f"
     printf '      IF (X .GT. 0.0) THEN\n      X = 1.0\n      END\n' > "$W/openif.f"
     printf '      X = 1.0\n      END DO\n      END\n' > "$W/straydo.f"
+    printf '      DO 10 I = 1, 3\n      X = I\n      END\n' > "$W/nodo.f"
+    printf '      DO 10 I = 1, 3\n      DO 20 J = 1, 2\n   10 X = I\n   20 CONTINUE\n      END\n' > "$W/crossdo.f"
     for c in "noend:line 3: PROGRAM statement inside a subprogram: the END before it is missing" \
              "twomain:line 3: more than one main program" \
              "nolabel:line 2: statement label 99 is referred to but never defined" \
@@ -189,7 +193,9 @@ if [ -x "$F77" ]; then
              "lenfn:line 3: COMPLEX*16 needs a target with native DOUBLE PRECISION" \
              "opendo:DO without END DO" \
              "openif:IF block without END IF" \
-             "straydo:line 2: END DO without DO"; do
+             "straydo:line 2: END DO without DO" \
+             "nodo:DO 10 is never closed by a statement labelled 10" \
+             "crossdo:DO 10 is never closed by a statement labelled 10"; do
         b="${c%%:*}"; msg="${c#*:}"
         if "$F77" "$W/$b.f" "$W/$b.s" >"$W/$b.err" 2>&1; then
             report "refuse:$b" 1 "compiled"
