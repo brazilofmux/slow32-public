@@ -141,19 +141,19 @@ f77_wr_begin:                           # @f77_wr_begin
 	lui r1, %hi(fio_prev_char)
 	addi r1, r1, %lo(fio_prev_char)
 	stb r1+0, r14
-	lui r1, %hi(fio_listed)
-	addi r1, r1, %lo(fio_listed)
-	beq r11, r14, .LBB1_17
-.LBB1_12:
-	stw r1+0, r14
-	lui r1, %hi(fio_fmt)
-	addi r1, r1, %lo(fio_fmt)
-	stw r1+0, r11
 	lui r1, %hi(fio_pos)
 	addi r1, r1, %lo(fio_pos)
-	stw r1+0, r14
 	lui r3, %hi(fio_revert)
 	addi r3, r3, %lo(fio_revert)
+	lui r4, %hi(fio_listed)
+	addi r4, r4, %lo(fio_listed)
+	beq r11, r14, .LBB1_17
+.LBB1_12:
+	stw r4+0, r14
+	lui r4, %hi(fio_fmt)
+	addi r4, r4, %lo(fio_fmt)
+	stw r4+0, r11
+	stw r1+0, r14
 	addi r4, r0, -1
 	stw r3+0, r4
 	addi r4, r0, 32
@@ -169,25 +169,21 @@ f77_wr_begin:                           # @f77_wr_begin
 	addi r4, r0, 40
 	bne r5, r4, .LBB1_19
 .LBB1_16:
-	stw r3+0, r14
-	addi r3, r14, 1
+	addi r4, r14, 1
+	add r5, r4, r0
 	jal r0, .LBB1_18
 .LBB1_17:
-	stw r1+0, r12
-	lui r1, %hi(.L.str.10)
-	addi r1, r1, %lo(.L.str.10)
-	lui r3, %hi(fio_fmt)
-	addi r3, r3, %lo(fio_fmt)
-	stw r3+0, r1
-	lui r1, %hi(fio_pos)
-	addi r1, r1, %lo(fio_pos)
-	addi r3, r0, 0
-	stw r1+0, r3
-	lui r1, %hi(fio_revert)
-	addi r1, r1, %lo(fio_revert)
-	addi r3, r0, -1
+	stw r4+0, r12
+	lui r4, %hi(.L.str.10)
+	addi r4, r4, %lo(.L.str.10)
+	lui r5, %hi(fio_fmt)
+	addi r5, r5, %lo(fio_fmt)
+	stw r5+0, r4
+	addi r5, r0, -1
+	addi r4, r0, 0
 .LBB1_18:
-	stw r1+0, r3
+	stw r1+0, r4
+	stw r3+0, r5
 .LBB1_19:
 	ldw r16, sp+24
 	ldw r15, sp+28
@@ -1210,26 +1206,26 @@ f77_wr_begin_int:                       # @f77_wr_begin_int
 	lui r3, %hi(fio_desc)
 	addi r3, r3, %lo(fio_desc)
 	stw r3+0, r1
-	lui r4, %hi(fio_first_item)
-	addi r4, r4, %lo(fio_first_item)
-	addi r3, r0, 1
-	stb r4+0, r3
-	lui r4, %hi(fio_prev_char)
-	addi r4, r4, %lo(fio_prev_char)
-	stb r4+0, r1
-	beq r6, r1, .LBB10_10
-.LBB10_5:
-	lui r3, %hi(fio_listed)
-	addi r3, r3, %lo(fio_listed)
-	stw r3+0, r1
-	lui r3, %hi(fio_fmt)
-	addi r3, r3, %lo(fio_fmt)
-	stw r3+0, r6
+	lui r3, %hi(fio_first_item)
+	addi r3, r3, %lo(fio_first_item)
+	addi r5, r0, 1
+	stb r3+0, r5
+	lui r3, %hi(fio_prev_char)
+	addi r3, r3, %lo(fio_prev_char)
+	stb r3+0, r1
 	lui r3, %hi(fio_pos)
 	addi r3, r3, %lo(fio_pos)
-	stw r3+0, r1
 	lui r4, %hi(fio_revert)
 	addi r4, r4, %lo(fio_revert)
+	beq r6, r1, .LBB10_10
+.LBB10_5:
+	lui r5, %hi(fio_listed)
+	addi r5, r5, %lo(fio_listed)
+	stw r5+0, r1
+	lui r5, %hi(fio_fmt)
+	addi r5, r5, %lo(fio_fmt)
+	stw r5+0, r6
+	stw r3+0, r1
 	stw r4+0, r7
 	addi r5, r0, 32
 .LBB10_6:
@@ -1242,29 +1238,25 @@ f77_wr_begin_int:                       # @f77_wr_begin_int
 	jal r0, .LBB10_6
 .LBB10_8:
 	addi r5, r0, 40
-	bne r7, r5, .LBB10_11
+	bne r7, r5, .LBB10_12
 .LBB10_9:
-	stw r4+0, r1
 	addi r1, r1, 1
-	stw r3+0, r1
+	add r7, r1, r0
 	jal r0, .LBB10_11
 .LBB10_10:
 	lui r1, %hi(fio_listed)
 	addi r1, r1, %lo(fio_listed)
-	stw r1+0, r3
+	stw r1+0, r5
 	lui r1, %hi(.L.str.10)
 	addi r1, r1, %lo(.L.str.10)
-	lui r3, %hi(fio_fmt)
-	addi r3, r3, %lo(fio_fmt)
-	stw r3+0, r1
-	lui r1, %hi(fio_pos)
-	addi r1, r1, %lo(fio_pos)
-	addi r3, r0, 0
-	stw r1+0, r3
-	lui r1, %hi(fio_revert)
-	addi r1, r1, %lo(fio_revert)
-	stw r1+0, r7
+	lui r5, %hi(fio_fmt)
+	addi r5, r5, %lo(fio_fmt)
+	stw r5+0, r1
+	addi r1, r0, 0
 .LBB10_11:
+	stw r3+0, r1
+	stw r4+0, r7
+.LBB10_12:
 	ldw lr, sp+0
 	addi sp, sp, 16
 	jalr r0, r31, 0
@@ -7387,9 +7379,9 @@ fio_rd_setup:                           # @fio_rd_setup
 	addi r5, r0, 40
 	bne r7, r5, .LBB90_8
 .LBB90_7:
-	stw r4+0, r3
 	addi r3, r3, 1
 	stw r1+0, r3
+	stw r4+0, r3
 .LBB90_8:
 	jal r31, fio_getrec
 	beq r1, r12, .LBB90_11
