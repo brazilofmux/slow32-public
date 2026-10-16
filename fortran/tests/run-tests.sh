@@ -167,6 +167,8 @@ fi
 # COMPLEX*16 is refused rather than compiled as single precision, which
 # it was without a word -- in a declaration and in a FUNCTION header,
 # said once (lenfn).  Other lengths are read as fort370 reads them.
+# END DO (MIL-STD-1753, from fort370): a DO left waiting for its END
+# DO, an IF block without END IF, and an END DO with no DO open.
 if [ -x "$F77" ]; then
     printf '      SUBROUTINE PRINTIT\n      RETURN\n      PROGRAM HELLO\n      CALL PRINTIT\n      END\n' > "$W/noend.f"
     printf '      PROGRAM A\n      END\n      PROGRAM B\n      END\n' > "$W/twomain.f"
@@ -175,13 +177,19 @@ if [ -x "$F77" ]; then
     printf '      X = 1.0\n      CALL FOO(X) Z\n      END\n      SUBROUTINE FOO(Y)\n      Y = 2.0\n      END\n' > "$W/callline.f"
     printf '      COMPLEX*16 Z\n      Z = (1.0, 2.0)\n      END\n' > "$W/lencx.f"
     printf '      X = G(1.0)\n      END\n      COMPLEX*16 FUNCTION G(Y)\n      G = Y\n      END\n' > "$W/lenfn.f"
+    printf '      DO I = 1, 3\n      X = I\n      END\n' > "$W/opendo.f"
+    printf '      IF (X .GT. 0.0) THEN\n      X = 1.0\n      END\n' > "$W/openif.f"
+    printf '      X = 1.0\n      END DO\n      END\n' > "$W/straydo.f"
     for c in "noend:line 3: PROGRAM statement inside a subprogram: the END before it is missing" \
              "twomain:line 3: more than one main program" \
              "nolabel:line 2: statement label 99 is referred to but never defined" \
              "nocomma:line 1: unexpected text after the statement" \
              "callline:line 2: unexpected text after the statement" \
              "lencx:line 1: COMPLEX*16 needs a target with native DOUBLE PRECISION" \
-             "lenfn:line 3: COMPLEX*16 needs a target with native DOUBLE PRECISION"; do
+             "lenfn:line 3: COMPLEX*16 needs a target with native DOUBLE PRECISION" \
+             "opendo:DO without END DO" \
+             "openif:IF block without END IF" \
+             "straydo:line 2: END DO without DO"; do
         b="${c%%:*}"; msg="${c#*:}"
         if "$F77" "$W/$b.f" "$W/$b.s" >"$W/$b.err" 2>&1; then
             report "refuse:$b" 1 "compiled"
