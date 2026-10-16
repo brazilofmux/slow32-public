@@ -174,6 +174,9 @@ fi
 # Two subprograms of one name, a FUNCTION and a SUBROUTINE of one name,
 # and an ENTRY with a subprogram's name compiled silently too, and a
 # CALL reached whichever came first (from fort370).
+# A function whose type in its caller differs from its definition's --
+# implicitly REAL there, INTEGER FUNCTION here (fntype), or INTEGER
+# against LOGICAL (fnlog) -- compiled silently; gfortran refuses both.
 if [ -x "$F77" ]; then
     printf '      SUBROUTINE PRINTIT\n      RETURN\n      PROGRAM HELLO\n      CALL PRINTIT\n      END\n' > "$W/noend.f"
     printf '      PROGRAM A\n      END\n      PROGRAM B\n      END\n' > "$W/twomain.f"
@@ -190,6 +193,8 @@ if [ -x "$F77" ]; then
     printf '      CALL PING\n      END\n      SUBROUTINE PING\n      END\n      SUBROUTINE PING\n      END\n' > "$W/twosub.f"
     printf '      X = TICK(1.0)\n      END\n      FUNCTION TICK(Y)\n      TICK = Y\n      END\n      SUBROUTINE TICK\n      END\n' > "$W/fnsub.f"
     printf '      CALL PONG\n      END\n      SUBROUTINE OUTER\n      ENTRY PONG\n      RETURN\n      END\n      SUBROUTINE PONG\n      END\n' > "$W/entsub.f"
+    printf '      X = FTWO(1)\n      END\n      INTEGER FUNCTION FTWO(N)\n      FTWO = N + 1\n      END\n' > "$W/fntype.f"
+    printf '      INTEGER LOK\n      I = LOK(1)\n      END\n      LOGICAL FUNCTION LOK(N)\n      LOK = N .GT. 0\n      END\n' > "$W/fnlog.f"
     for c in "noend:line 3: PROGRAM statement inside a subprogram: the END before it is missing" \
              "twomain:line 3: more than one main program" \
              "nolabel:line 2: statement label 99 is referred to but never defined" \
@@ -204,7 +209,9 @@ if [ -x "$F77" ]; then
              "crossdo:DO 10 is never closed by a statement labelled 10" \
              "twosub:line 5: PING is already a subprogram or ENTRY name (line 3)" \
              "fnsub:line 6: TICK is already a subprogram or ENTRY name (line 3)" \
-             "entsub:line 7: PONG is already a subprogram or ENTRY name (line 4)"; do
+             "entsub:line 7: PONG is already a subprogram or ENTRY name (line 4)" \
+             "fntype:line 1: FTWO is REAL here but INTEGER where it is defined (line 3)" \
+             "fnlog:line 2: LOK is INTEGER here but LOGICAL where it is defined (line 4)"; do
         b="${c%%:*}"; msg="${c#*:}"
         if "$F77" "$W/$b.f" "$W/$b.s" >"$W/$b.err" 2>&1; then
             report "refuse:$b" 1 "compiled"

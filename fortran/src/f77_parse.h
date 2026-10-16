@@ -384,6 +384,27 @@ static int f77_asg_lab[F77_MAX_ASG];
 static int f77_asg_unit[F77_MAX_ASG];
 static int f77_nasg;
 
+/* A name's symbol in scope from `base`, or -1: looked up, not made. */
+static int f77_sym_at(char *nm, int base) {
+    int i;
+    i = base;
+    while (i < f77_nsym) {
+        if (strcmp(f77_sname[i], nm) == 0) return i;
+        i = i + 1;
+    }
+    return -1;
+}
+
+/* a type's name, for messages */
+static char *f77_tyname(int ty, int lg) {
+    if (ty == TY_INT) return lg ? "LOGICAL" : "INTEGER";
+    if (ty == TY_FLOAT) return "REAL";
+    if (ty == TY_DOUBLE) return "DOUBLE PRECISION";
+    if (ty == TY_CPLX) return "COMPLEX";
+    if (ty == TY_CHAR) return "CHARACTER";
+    return "untyped";
+}
+
 static int f77_sym(char *nm) {
     int i;
     i = f77_stfb_n;
@@ -1909,6 +1930,32 @@ static int f77_primary(void) {
                 else f77_tok();
             }
             rty = f77_urty_of(u);
+            {
+                /* fort370: the caller's type for the name, declared or
+                 * implicit, is the definition's (fort370 issue 21).  The
+                 * call takes the definition's, so the value was right
+                 * here, but a compiler that compiles units apart reads
+                 * it by the caller's, and gfortran refuses it: the
+                 * program does not mean what it says. */
+                int s;
+                int ulog;
+                int cty;
+                int clog;
+                /* looked up, not made: a symbol made here moved the frame */
+                s = f77_sym_at(nm, f77_scope_base);
+                if (s >= 0) { cty = f77_sty[s]; clog = f77_slog[s]; }
+                else {
+                    cty = f77_implicit_ty(nm);
+                    clog = (f77_imp_ready && nm[0] >= 'A' && nm[0] <= 'Z') ? f77_imp_log[nm[0] - 'A'] : 0;
+                }
+                ulog = f77_uentry_parent[u] >= 0 ? f77_urlog[f77_uentry_parent[u]] : f77_urlog[u];
+                if (cty >= 0 && (cty != rty || (rty == TY_INT && clog != ulog))) {
+                    char m[160];
+                    sprintf(m, "%s is %s here but %s where it is defined (line %d)", nm,
+                            f77_tyname(cty, clog), f77_tyname(rty, ulog), f77_uline[u]);
+                    f77_error(m);
+                }
+            }
             if (rty == TY_CHAR) {
                 int rl;
                 rl = f77_urlen[u];
