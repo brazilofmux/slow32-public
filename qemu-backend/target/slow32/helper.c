@@ -119,7 +119,10 @@ void HELPER(slow32_native_memcpy)(CPUSlow32State *env)
         void *host_dst = probe_write(env, dst, chunk, 0, ra);
 
         if (likely(host_dst && host_src)) {
-            memcpy(host_dst, host_src, chunk);
+            /* memmove, not memcpy: a guest memcpy over overlapping bytes is
+             * the guest's mistake, but it must not take the emulator down
+             * (fortified hosts, Alpine's among them, trap on overlap) */
+            memmove(host_dst, host_src, chunk);
         } else {
             for (uint32_t i = 0; i < chunk; i++) {
                 uint8_t b = cpu_ldub_mmuidx_ra(env, src + i, 0, ra);
@@ -184,7 +187,9 @@ void HELPER(slow32_native_memmove)(CPUSlow32State *env)
             void *host_d = probe_write(env, d, chunk, 0, ra);
 
             if (likely(host_d && host_s)) {
-                memcpy(host_d, host_s, chunk);
+                /* this branch also takes dst < src with the two
+                 * overlapping, so the host copy must be memmove */
+                memmove(host_d, host_s, chunk);
             } else {
                 for (uint32_t i = 0; i < chunk; i++) {
                     uint8_t b = cpu_ldub_mmuidx_ra(env, s + i, 0, ra);
