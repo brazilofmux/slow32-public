@@ -5034,6 +5034,25 @@ static int f77_bind_actual(char *nm, int addr) {
     f77_srank[s] = 0;
     f77_sarg[s] = 1;
     f77_shi[s] = -1;                 /* by-reference: value is an address */
+    /* And the rest as f77_sym_param has them: they were left as whatever
+     * symbol last had this index, often one of an earlier unit's -- a
+     * spliced dummy at a PARAMETER's old index could not be assigned. */
+    f77_scom[s] = 0;
+    f77_ssaved[s] = 0;
+    f77_sgidx[s] = -1;
+    f77_sgoff[s] = 0;
+    f77_sparam[s] = 0;
+    f77_styped[s] = 0;
+    f77_slen[s] = 1;
+    f77_slenv[s] = -1;
+    f77_spstr[s] = -1;
+    f77_sexternal[s] = 0;
+    f77_sintrinsic[s] = 0;
+    f77_slog[s] = 0;
+    if (f77_imp_ready && nm[0] >= 'A' && nm[0] <= 'Z') {
+        if (f77_sty[s] == TY_CHAR) f77_slen[s] = f77_imp_len[nm[0] - 'A'];
+        f77_slog[s] = f77_imp_log[nm[0] - 'A'];
+    }
     /* And taken as stored.  A dummy's loads are asserted loop-invariant
      * (f77_ldro_note) because nothing else may change it while its own
      * unit runs; inlined, the callee runs as part of the caller, whose
