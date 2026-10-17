@@ -103,6 +103,13 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Fixed 2026-10-16 (`f8815894`).  In `islisp.s32x` only; the compiler,
+tools and library are unchanged:
+
+- **islisp ran out of its 32MB heap in a long allocation loop**
+  (islisp ISSUES-7): about two million conses with a few thousand live.
+  `regression/run-kit-islisp.sh` (`islisp/tests/lists.lsp`) catches it.
+
 Fixed 2026-10-14, later (`959a43c3`).  In `cc.s32x` only; every
 `libc.s32a` member compiles the same before and after:
 
