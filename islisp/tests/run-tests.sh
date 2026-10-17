@@ -58,10 +58,16 @@ for f in "$HERE"/*.lsp; do
         (cd "$W" && "$HERE/oracle.sh" "$W/$b.lsp" > "$W/$b.want" 2>&1); wrc=$?
         if [ "$grc" -ne 0 ] || [ "$wrc" -ne 0 ]; then printf "  %-20s FAIL (exit ours=%s oracle=%s)\n" "$b" "$grc" "$wrc"; FAIL=$((FAIL+1))
         elif ! cmp -s "$W/$b.want" "$W/$b.got"; then printf "  %-20s FAIL (output differs)\n" "$b"; diff "$W/$b.want" "$W/$b.got" | head -6; FAIL=$((FAIL+1))
+        # <name>.expected is what regression/run-kit-islisp.sh holds the
+        # kit's islisp to, where there is no oracle; it must stay the oracle's.
+        elif [ -f "$HERE/$b.expected" ] && ! cmp -s "$W/$b.want" "$HERE/$b.expected"; then printf "  %-20s FAIL (%s.expected is not the oracle's output)\n" "$b" "$b"; FAIL=$((FAIL+1))
         else printf "  %-20s PASS\n" "$b"; PASS=$((PASS+1)); fi
     else
-        if [ "$grc" -eq 0 ]; then printf "  %-20s PASS (exit 0; oracle absent, output not diffed)\n" "$b"; PASS=$((PASS+1))
-        else printf "  %-20s FAIL (exit %s)\n" "$b" "$grc"; FAIL=$((FAIL+1)); fi
+        if [ "$grc" -ne 0 ]; then printf "  %-20s FAIL (exit %s)\n" "$b" "$grc"; FAIL=$((FAIL+1))
+        elif [ -f "$HERE/$b.expected" ]; then
+            if cmp -s "$HERE/$b.expected" "$W/$b.got"; then printf "  %-20s PASS (oracle absent; against %s.expected)\n" "$b" "$b"; PASS=$((PASS+1))
+            else printf "  %-20s FAIL (differs from %s.expected)\n" "$b" "$b"; FAIL=$((FAIL+1)); fi
+        else printf "  %-20s PASS (exit 0; oracle absent, output not diffed)\n" "$b"; PASS=$((PASS+1)); fi
     fi
 done
 

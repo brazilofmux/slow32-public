@@ -347,3 +347,16 @@ their kernels and two-constant (Cody-Waite) or Payne-Hanek reduction --
 in place of the series, for every language on the machine; sqrt is
 already the FPU's.  Until then tests print at most 13 significant
 digits of a transcendental result.
+
+### 30. `malloc` fragments under alternating big and small blocks (2026-10-16, open)
+
+Every block over 64 bytes lives on one bin, unsorted, searched first
+fit and pushed LIFO.  A big block that is freed goes to the head of
+that bin, so the next small allocations that find their own bins empty
+are cut from it; when a block of that size is wanted again, the old one
+is in pieces and fresh heap is taken.  islisp's collector, freeing and
+re-calloc'ing a 2MB table once a cycle, ran out of a 32MB heap this way
+with a few hundred KB live (islisp ISSUES-7, fixed on islisp's side).
+Address-ordered or size-ordered large bins, or carving small blocks
+from the top before a recycled large one, would bound it; nothing else
+has hit it.

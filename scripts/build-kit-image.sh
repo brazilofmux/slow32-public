@@ -13,9 +13,10 @@
 #   scripts/build-kit-image.sh            local: host arch, FROM slow32:base
 #   scripts/build-kit-image.sh --push     both arches FROM ECR base, gated, pushed
 #
-# Gate (always, host arch): regression/run-kit-differential.sh and
-# run-kit-tools-differential.sh INSIDE the built image, i.e. the kit's own
-# tools driven on the image's engines.
+# Gate (always, host arch): regression/run-kit-differential.sh,
+# run-kit-tools-differential.sh and run-kit-islisp.sh INSIDE the built
+# image, i.e. the kit's own tools driven on the image's engines, and the
+# shipped islisp.s32x over islisp/tests with committed expected output.
 #
 # EXCLUDED from the image (the same editorial line as the public mirror,
 # applied to layers -- an image is an extractable archive):
@@ -57,12 +58,12 @@ else
     HOST_TAG="slow32:kit"
 fi
 
-echo "--- gate: kit differentials inside $HOST_TAG"
+echo "--- gate: kit differentials and kit islisp inside $HOST_TAG"
 podman run --rm -v "$ROOT:/ws" -w /ws/regression \
     -e KIT=/opt/slow32/kit \
     -e SLOW32=/usr/local/bin/slow32 -e SLOW32_FAST=/usr/local/bin/slow32-fast \
     -e SLOW32_DBT=/usr/local/bin/slow32-dbt -e QEMU_S32=/usr/local/bin/qemu-system-slow32 \
-    --entrypoint bash "$HOST_TAG" -c './run-kit-differential.sh && ./run-kit-tools-differential.sh'
+    --entrypoint bash "$HOST_TAG" -c './run-kit-differential.sh && ./run-kit-tools-differential.sh && ./run-kit-islisp.sh'
 
 if [ "$PUSH" = 1 ]; then
     for arch in arm64 amd64; do

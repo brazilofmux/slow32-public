@@ -1,0 +1,16 @@
+area of c1 is 12
+a rectangle
+area of r1 is 12
+total 24
+area of c1 is 12
+a rectangle
+area of r1 is 40
+total 52
+a rectangle
+(CAUGHT <class domain-error>)
+cleanup ran
+THROWN
+depth 1
+depth 2
+depth 1
+depth 0

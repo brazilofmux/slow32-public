@@ -50,3 +50,16 @@ column.
 
 The Scheme-flavoured toy predated this front; it left the tree and the
 kit when `islisp.s32x` went in (kit batch fourteen).
+
+### 7. [RESOLVED 2026-10-16] Long-running programs ran out of heap on SLOW-32
+
+A program allocating about two million conses with a few thousand live
+died with "out of memory (object set)" in its 32MB heap; the host build
+ran it.  The collector rebuilt its object-address set after every run
+by freeing it and calloc'ing a new one.  The runtime's malloc is first
+fit with the large blocks on a LIFO list (runtime ISSUES-30), so the
+freed set was the first block the next small objects were cut from,
+and each cycle took fresh heap for the set.  The set now keeps its
+storage and is cleared in place; ten million conses run.
+`tests/lists.lsp` is the case, and `regression/run-kit-islisp.sh` runs
+it, with fib and objects, on every engine against committed output.

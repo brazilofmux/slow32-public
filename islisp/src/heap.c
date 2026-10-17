@@ -39,13 +39,24 @@ static void obj_set_insert_raw(uintptr_t a) {
     obj_set_n++;
 }
 
+/* The set keeps its storage once it has grown: rebuilt after every
+ * collection, a set freed and calloc'd anew left its old block to be
+ * carved up by the objects allocated next, and on a first-fit malloc
+ * (SLOW-32's) each cycle took fresh heap for the set until a program
+ * allocating two million conses with a few thousand live ran out of
+ * its 32MB. */
 static void obj_set_rebuild(long want) {
     obj *o;
     long cap = 1024;
     while (cap < want * 2) cap *= 2;
-    free(obj_set);
-    obj_set = calloc((size_t)cap, sizeof(uintptr_t));
-    if (!obj_set) fatal("out of memory (object set)");
+    if (cap <= obj_set_cap) {
+        cap = obj_set_cap;
+        memset(obj_set, 0, (size_t)cap * sizeof(uintptr_t));
+    } else {
+        free(obj_set);
+        obj_set = calloc((size_t)cap, sizeof(uintptr_t));
+        if (!obj_set) fatal("out of memory (object set)");
+    }
     obj_set_cap = cap;
     obj_set_n = 0;
     for (o = all_objects; o; o = o->gcnext) obj_set_insert_raw((uintptr_t)o);

@@ -1,0 +1,36 @@
+> SHAPE
+> CIRCLE
+> RECT
+> AREA
+> AREA
+> AREA
+> AREA
+> AREA
+> SHAPES
+> TOTAL
+> area of c1 is 12
+a rectangle
+area of r1 is 12
+total 24
+NIL
+> 10
+> area of c1 is 12
+a rectangle
+area of r1 is 40
+total 52
+NIL
+> a rectangle
+(CAUGHT <class domain-error>)
+NIL
+> cleanup ran
+THROWN
+NIL
+> *DEPTH*
+> SHOW
+> depth 1
+depth 2
+depth 1
+NIL
+> depth 0
+NIL
+> 

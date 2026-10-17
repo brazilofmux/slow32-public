@@ -1,0 +1,38 @@
+> MAKE-COUNTER
+> CTR
+> 41
+> counter 42
+NIL
+> IOTA
+> (0 1 4 9 16 25 36 49 64 81)
+NIL
+> (5 4 3 2 1 0)
+NIL
+> (P Q R S T)
+NIL
+> (GREEN . 2)
+NIL
+> (3 4) 17
+NIL
+> V
+> NIL
+> #(0 10 20 30 40) 30
+NIL
+> WORD
+> ant 7 L
+NIL
+> Lantern and kettle
+NIL
+> 3 T
+NIL
+> T
+NIL
+> OUT
+> NIL
+> built 7-11
+NIL
+> CHURN
+> KEPT
+> kept 1000, first 999
+NIL
+> 
