@@ -1,13 +1,13 @@
-/* HOSTLEG -- every <ctype.h> function over EOF and the 128 characters
- * the C locale defines.  (Above 127 the two libraries differ by design:
- * the clang runtime's tables are Latin-1, the self-hosted functions the
- * plain C locale's.) */
+/* HOSTLEG -- every <ctype.h> function over EOF and all 256 byte values,
+ * in the C locale: above 127 no byte is in any class or changes case.
+ * (Until 2026-10-19 the clang runtime's tables were Latin-1 there, and
+ * this stopped at 127.) */
 #include <stdio.h>
 #include <ctype.h>
 
 int main(void) {
     int c;
-    for (c = -1; c < 128; c++) {
+    for (c = -1; c < 256; c++) {
         printf("%4d %d%d%d%d%d%d%d%d%d%d%d%d %d %d %d %d\n", c,
                !!isalnum(c), !!isalpha(c), !!isblank(c), !!iscntrl(c),
                !!isdigit(c), !!isgraph(c), !!islower(c), !!isprint(c),

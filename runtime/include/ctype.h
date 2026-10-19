@@ -5,10 +5,10 @@
 extern "C" {
 #endif
 
-// Character classification functions (ISO 8859-1 / Latin-1)
+// Character classification functions: the C locale (ASCII; bytes 0x80-0xFF are in no class)
 int isalnum(int c);   // alphanumeric character
 int isalpha(int c);   // alphabetic character
-int isblank(int c);   // blank character (space, tab, nbsp)
+int isblank(int c);   // blank character (space, tab)
 int iscntrl(int c);   // control character
 int isdigit(int c);   // decimal digit
 int isgraph(int c);   // printing character except space
@@ -19,7 +19,7 @@ int isspace(int c);   // white-space character
 int isupper(int c);   // uppercase letter
 int isxdigit(int c);  // hexadecimal digit
 
-// Character conversion functions (Latin-1 aware)
+// Character conversion functions (ASCII letters only)
 int tolower(int c);   // convert to lowercase
 int toupper(int c);   // convert to uppercase
 
