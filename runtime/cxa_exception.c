@@ -181,8 +181,26 @@ void *__cxa_begin_catch(void *exc_obj) {
     header->handlerCount++;
     eh_globals.uncaughtExceptions--;
 
-    /* Return the thrown object pointer (past the header) */
-    return object_from_exception(header);
+    /* What the handler sees: the personality routine matched this catch
+     * clause and left the object adjusted to the caught type there -- a
+     * base-class subobject, or for a pointer, the converted pointer value
+     * itself (which may be null). */
+    return header->adjustedPtr;
+}
+
+/* The same pointer, before __cxa_begin_catch: a catch by value copies the
+ * exception from here. */
+void *__cxa_get_exception_ptr(void *exc_obj) {
+    struct _Unwind_Exception *unwind_exc = (struct _Unwind_Exception *)exc_obj;
+    struct __cxa_exception *header =
+        (struct __cxa_exception *)((char *)unwind_exc -
+            __builtin_offsetof(struct __cxa_exception, unwindHeader));
+    return header->adjustedPtr;
+}
+
+/* std::uncaught_exceptions() */
+unsigned int __cxa_uncaught_exceptions(void) {
+    return eh_globals.uncaughtExceptions;
 }
 
 void __cxa_end_catch(void) {

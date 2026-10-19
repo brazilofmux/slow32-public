@@ -137,8 +137,9 @@ run_test() {
         fi
 
         # Compile: C -> LLVM IR (with our runtime includes).  A test.cpp is
-        # freestanding C++ with exceptions: no C++ library, the runtime's
-        # cxxabi/unwinder underneath, RTTI off (it is not provided).  The one
+        # freestanding C++ with exceptions and RTTI: no C++ library, the
+        # runtime's cxxabi/unwinder/typeinfo underneath and its <exception>,
+        # <typeinfo> and <new>.  A cxx-flags file adds flags (-fno-rtti).  The one
         # exception test before these checked in its assembly, so it never
         # ran the compiler of the day -- which is how a resume with no
         # callee, CFI without the callee-saved registers and a broken
@@ -146,7 +147,11 @@ run_test() {
         local cc=("$CLANG") src="$test_path/test.c" langflags=()
         if [ "$asm_source" = "cpp" ]; then
             cc=("$CLANGXX"); src="$test_path/test.cpp"
-            langflags=(-fexceptions -fcxx-exceptions -fno-rtti -nostdinc++ -funwind-tables)
+            langflags=(-fexceptions -fcxx-exceptions -frtti -nostdinc++ -funwind-tables)
+            if [ -f "$test_path/cxx-flags" ]; then
+                read -r -a extra_cxx < "$test_path/cxx-flags"
+                langflags+=("${extra_cxx[@]}")
+            fi
         fi
         if ! "${cc[@]}" -target slow32-unknown-none -S -emit-llvm $clang_opt "${langflags[@]}" \
              -I"$SLOW32_BASE/runtime/include" \

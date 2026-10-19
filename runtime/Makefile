@@ -8,12 +8,16 @@ ARCHIVER = ../tools/utilities/s32-ar
 
 # Compiler flags
 CLANG = $(LLVM_BIN)/clang
+CLANGXX = $(LLVM_BIN)/clang++
 LLC = $(LLVM_BIN)/llc
 TARGET = slow32-unknown-none
 # Default optimization level (can be overridden per-file)
 OPT_LEVEL = -O2
 CFLAGS_BASE = -target $(TARGET) -S -emit-llvm -Iinclude -funwind-tables
 CFLAGS = $(CFLAGS_BASE) $(OPT_LEVEL)
+# The one C++ unit (cxa_std.cpp): freestanding, against include/'s headers
+CXXFLAGS = -target $(TARGET) -S -emit-llvm -Iinclude -funwind-tables \
+           -nostdinc++ -fexceptions -fcxx-exceptions -frtti $(OPT_LEVEL)
 
 # Compiler runtime objects (always needed, linked last)
 # These provide compiler support functions like division, intrinsics
@@ -30,7 +34,7 @@ LIBC_CORE_OBJS = string.s32o string_extra.s32o \
                  strerror.s32o signal.s32o system.s32o \
                  setjmp.s32o emutls.s32o atomic.s32o \
                  unwind.s32o unwind_asm.s32o cxa_exception.s32o cxa_personality.s32o \
-                 cxa_typeinfo.s32o
+                 cxa_typeinfo.s32o cxa_std.s32o
 
 # I/O objects for DEBUG version (simple, unbuffered)
 STDIO_DEBUG_OBJS = putchar.s32o stdio_minimal.s32o
@@ -114,6 +118,9 @@ builtins_hk.s: builtins.c
 # Generic pattern rule for C -> LLVM IR -> ASM -> OBJ
 %.ll: %.c
 	$(CLANG) $(CFLAGS) $< -o $@
+
+%.ll: %.cpp
+	$(CLANGXX) $(CXXFLAGS) $< -o $@
 
 %.s: %.ll
 	$(LLC) -mtriple=$(TARGET) $< -o $@

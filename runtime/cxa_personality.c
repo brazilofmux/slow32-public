@@ -139,8 +139,9 @@ static uint32_t read_encoded_ptr(const uint8_t **pp, uint8_t encoding) {
 /* ========================================================================
  * Type matching
  *
- * For SLOW-32, type matching uses simple pointer equality on
- * std::type_info pointers. A NULL type_info means catch-all.
+ * The C++ rules (catch_matches below), on the RTTI in cxa_typeinfo.c: the
+ * same type, a public unambiguous base class, or a pointer conversion.
+ * A NULL type_info means catch-all.
  * ======================================================================== */
 
 /* Forward-declare __cxa_exception for accessing thrown type_info */
@@ -159,18 +160,76 @@ struct __cxa_exception {
     struct _Unwind_Exception unwindHeader;
 };
 
-static void *get_thrown_type(struct _Unwind_Exception *exc) {
-    struct __cxa_exception *header =
-        (struct __cxa_exception *)((char *)exc -
-            __builtin_offsetof(struct __cxa_exception, unwindHeader));
-    return header->exceptionType;
+static struct __cxa_exception *exception_header(struct _Unwind_Exception *exc) {
+    return (struct __cxa_exception *)((char *)exc -
+        __builtin_offsetof(struct __cxa_exception, unwindHeader));
 }
 
-static int type_matches(void *thrown_type, void *catch_type) {
-    /* catch(...) — catch_type is NULL */
-    if (catch_type == 0) return 1;
-    /* Exact pointer match on type_info */
-    return thrown_type == catch_type;
+static void *get_thrown_type(struct _Unwind_Exception *exc) {
+    return exception_header(exc)->exceptionType;
+}
+
+/* cxa_typeinfo.c */
+int __s32_type_eq(const void *a, const void *b);
+int __s32_type_is_class(const void *t);
+int __s32_type_is_pointer(const void *t);
+int __s32_find_base(const void *derived, void *obj, const void *base,
+                    void **out);
+
+/* The pointer layout of __pbase_type_info: vtable, name, flags, pointee */
+struct pbase_ti {
+    const void *vtable;
+    const char *name;
+    unsigned flags;
+    const void *pointee;
+};
+enum { PTR_QUALS = 1 | 2 | 4 };     /* const, volatile, restrict */
+
+/* Whether a handler for CATCH_TYPE catches an exception of THROWN_TYPE
+ * whose object is at OBJ ([except.handle]); when it does, *ADJ is what
+ * the handler receives: the object, a base-class subobject of it, or --
+ * for a pointer -- the pointer value, converted. */
+static int catch_matches(const void *thrown_type, const void *catch_type,
+                         void *obj, void **adj) {
+    if (catch_type == 0) {                      /* catch (...) */
+        *adj = obj;
+        return 1;
+    }
+    if (__s32_type_eq(thrown_type, catch_type)) {
+        *adj = __s32_type_is_pointer(thrown_type) ? *(void **)obj : obj;
+        return 1;
+    }
+    /* A public, unambiguous base class */
+    if (__s32_type_is_class(thrown_type) && __s32_type_is_class(catch_type))
+        return __s32_find_base(thrown_type, obj, catch_type, adj);
+    /* nullptr caught as any pointer */
+    if (__s32_type_is_pointer(catch_type) &&
+        strcmp(((const struct pbase_ti *)thrown_type)->name, "Dn") == 0) {
+        *adj = 0;
+        return 1;
+    }
+    /* A pointer, by a qualification conversion and/or a conversion to a
+     * pointer to a public unambiguous base or to void */
+    if (__s32_type_is_pointer(thrown_type) && __s32_type_is_pointer(catch_type)) {
+        const struct pbase_ti *tp = thrown_type, *cp = catch_type;
+        void *p = *(void **)obj;
+        if (tp->flags & ~cp->flags & PTR_QUALS)
+            return 0;                           /* cannot drop a qualifier */
+        if (__s32_type_eq(tp->pointee, cp->pointee)) {
+            *adj = p;
+            return 1;
+        }
+        if (strcmp(((const struct pbase_ti *)cp->pointee)->name, "v") == 0 &&
+            !__s32_type_is_pointer(tp->pointee)) {
+            *adj = p;                           /* T* to void* */
+            return 1;
+        }
+        if (__s32_type_is_class(tp->pointee) && __s32_type_is_class(cp->pointee)) {
+            if (!p) { *adj = 0; return 1; }
+            return __s32_find_base(tp->pointee, p, cp->pointee, adj);
+        }
+    }
+    return 0;
 }
 
 /* ========================================================================
@@ -283,6 +342,7 @@ _Unwind_Reason_Code __gxx_personality_v0(
 
     /* Walk the action chain */
     void *thrown_type = get_thrown_type(exception_object);
+    void *thrown_obj = exception_header(exception_object) + 1;
     const uint8_t *action_record = action_table + cs_action - 1;
 
     for (;;) {
@@ -302,7 +362,9 @@ _Unwind_Reason_Code __gxx_personality_v0(
                 memcpy(&catch_type_addr, type_entry, 4);
                 void *catch_type = (void *)(uintptr_t)catch_type_addr;
 
-                if (type_matches(thrown_type, catch_type)) {
+                void *adj;
+                if (catch_matches(thrown_type, catch_type, thrown_obj, &adj)) {
+                    exception_header(exception_object)->adjustedPtr = adj;
                     /* Found a matching handler */
                     if (actions & _UA_SEARCH_PHASE) {
                         return _URC_HANDLER_FOUND;

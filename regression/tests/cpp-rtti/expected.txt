@@ -1,0 +1,35 @@
+typeid of fundamentals                   PASS
+typeid through a base reference          PASS
+typeid of the static type                PASS
+names: i 5Puppy 7Diamond PKc
+hash_code follows equality               PASS
+before is an order                       PASS
+bad_typeid: std::bad_typeid
+typeid(*null) throws bad_typeid          PASS
+downcast to the dynamic type             PASS
+downcast to an intermediate              PASS
+downcast to the wrong type is null       PASS
+cross-cast to the second base            PASS
+cross-cast back down                     PASS
+dynamic_cast<void *> finds the whole object PASS
+downcast from a virtual base             PASS
+cross-cast in a diamond                  PASS
+cross-cast to a sibling base             PASS
+cast to an ambiguous base is null        PASS
+bad_cast: std::bad_cast
+failed reference cast throws bad_cast    PASS
+catch derived by base reference          PASS
+catch by a second base (adjusted)        PASS
+catch by a virtual base                  PASS
+ambiguous base is not a match            PASS
+private base is not a match              PASS
+catch derived* by base*                  PASS
+catch adding const                       PASS
+const is not dropped                     PASS
+catch T* as void*                        PASS
+catch a string literal                   PASS
+nullptr caught as a pointer              PASS
+std::exception: oops from the zoo
+user exception by std::exception         PASS
+catch by value, sliced to a base         PASS
+0 failed

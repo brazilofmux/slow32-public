@@ -1,0 +1,64 @@
+// <typeinfo> for freestanding C++ on SLOW-32.  std::type_info has the
+// Itanium layout (vtable, mangled name); the type_info objects themselves
+// come from the compiler and from runtime/cxa_typeinfo.c.
+#ifndef _SLOW32_TYPEINFO
+#define _SLOW32_TYPEINFO
+
+#include <exception>
+
+namespace std {
+
+class type_info {
+public:
+    virtual ~type_info();
+
+    const char *name() const noexcept {
+        return __name[0] == '*' ? __name + 1 : __name;
+    }
+
+    // Equal types need not share a type_info object (a class's is emitted
+    // weak in every unit that uses it), so names are compared; a leading
+    // '*' marks a type compared by address only.  As cxa_typeinfo.c does.
+    bool operator==(const type_info &o) const noexcept {
+        if (this == &o || __name == o.__name) return true;
+        if (__name[0] == '*' || o.__name[0] == '*') return false;
+        return __builtin_strcmp(__name, o.__name) == 0;
+    }
+    bool operator!=(const type_info &o) const noexcept { return !(*this == o); }
+
+    bool before(const type_info &o) const noexcept {
+        return __builtin_strcmp(name(), o.name()) < 0;
+    }
+
+    __SIZE_TYPE__ hash_code() const noexcept {
+        __SIZE_TYPE__ h = 2166136261u;          // FNV-1a over the name
+        for (const char *p = name(); *p; p++)
+            h = (h ^ (unsigned char)*p) * 16777619u;
+        return h;
+    }
+
+    type_info(const type_info &) = delete;
+    type_info &operator=(const type_info &) = delete;
+
+protected:
+    explicit type_info(const char *n) : __name(n) {}
+    const char *__name;
+};
+
+class bad_cast : public exception {
+public:
+    bad_cast() noexcept {}
+    ~bad_cast() noexcept override;
+    const char *what() const noexcept override;
+};
+
+class bad_typeid : public exception {
+public:
+    bad_typeid() noexcept {}
+    ~bad_typeid() noexcept override;
+    const char *what() const noexcept override;
+};
+
+} // namespace std
+
+#endif

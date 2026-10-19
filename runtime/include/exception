@@ -1,0 +1,29 @@
+// <exception> for freestanding C++ on SLOW-32 (no C++ standard library;
+// the run time is runtime/cxxabi.c, cxa_*.c and cxa_std.cpp).
+#ifndef _SLOW32_EXCEPTION
+#define _SLOW32_EXCEPTION
+
+namespace std {
+
+class exception {
+public:
+    exception() noexcept {}
+    exception(const exception &) noexcept = default;
+    exception &operator=(const exception &) noexcept = default;
+    virtual ~exception() noexcept;
+    virtual const char *what() const noexcept;
+};
+
+class bad_exception : public exception {
+public:
+    bad_exception() noexcept {}
+    ~bad_exception() noexcept override;
+    const char *what() const noexcept override;
+};
+
+[[noreturn]] void terminate() noexcept;
+int uncaught_exceptions() noexcept;
+
+} // namespace std
+
+#endif

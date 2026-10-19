@@ -372,6 +372,13 @@ typedef struct {
     uint32_t data_start_addr;   // Starting address of data section (0x100000)
     bool generate_object;       // True for object file, false for executable
 
+    // Symbol aliases, "name = target" or ".set name, target" with a symbol
+    // as the target (clang's constructor/destructor aliases: D1 = D2).
+    // Resolved once relaxation has fixed every address.
+    struct { char name[MAX_SYMBOL_LEN]; char target[MAX_SYMBOL_LEN]; } *aliases;
+    int num_aliases;
+    int aliases_cap;
+
     // Label-difference fixups (resolved after all labels are defined)
     label_diff_t *label_diffs;
     int num_label_diffs;
@@ -1621,6 +1628,72 @@ static bool relax_branches(assembler_t *as) {
     return true;
 }
 
+// A bare symbol name, not a number or an expression.
+static bool is_symbol_name(const char *t) {
+    if (!(isalpha((unsigned char)t[0]) || t[0] == '_' || t[0] == '.' || t[0] == '$'))
+        return false;
+    for (const char *p = t; *p; p++)
+        if (!(isalnum((unsigned char)*p) || *p == '_' || *p == '.' || *p == '$'))
+            return false;
+    return true;
+}
+
+static bool add_alias(assembler_t *as, const char *name, const char *target) {
+    if (strlen(name) >= MAX_SYMBOL_LEN || strlen(target) >= MAX_SYMBOL_LEN) {
+        fprintf(stderr, "Error: alias name too long\n");
+        return false;
+    }
+    if (as->num_aliases == as->aliases_cap) {
+        int cap = as->aliases_cap ? as->aliases_cap * 2 : 16;
+        void *p = realloc(as->aliases, (size_t)cap * sizeof(*as->aliases));
+        if (!p) { fprintf(stderr, "Error: out of memory\n"); return false; }
+        as->aliases = p;
+        as->aliases_cap = cap;
+    }
+    copy_string(as->aliases[as->num_aliases].name, MAX_SYMBOL_LEN, name);
+    copy_string(as->aliases[as->num_aliases].target, MAX_SYMBOL_LEN, target);
+    as->num_aliases++;
+    return true;
+}
+
+// Give each alias its target's address and section.  The target must be
+// defined in this file (an alias of an external symbol has no address to
+// take); chains resolve in order, so "a = b" may follow "b = c".
+static bool resolve_aliases(assembler_t *as) {
+    for (int pass = 0; pass < as->num_aliases + 1; pass++) {
+        bool progress = false, pending = false;
+        for (int i = 0; i < as->num_aliases; i++) {
+            label_t *t = find_label(as, as->aliases[i].target);
+            label_t *a = find_label(as, as->aliases[i].name);
+            if (a && a->is_defined) continue;
+            if (!t || !t->is_defined) { pending = true; continue; }
+            uint32_t addr = t->address;
+            section_t sec = t->section;
+            bool abs = t->is_absolute;
+            if (!a) {
+                add_label(as, as->aliases[i].name, addr);
+                a = find_label(as, as->aliases[i].name);
+            }
+            a->address = addr;
+            a->section = sec;
+            a->is_absolute = abs;
+            a->is_defined = true;
+            progress = true;
+        }
+        if (!pending) return true;
+        if (!progress) break;
+    }
+    for (int i = 0; i < as->num_aliases; i++) {
+        label_t *a = find_label(as, as->aliases[i].name);
+        if (!a || !a->is_defined) {
+            fprintf(stderr, "Error: alias '%s' of '%s', which is not defined here\n",
+                    as->aliases[i].name, as->aliases[i].target);
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool assemble_line(assembler_t *as, char *line) {
     bool in_quotes = false;
     char *colon = NULL;
@@ -1678,6 +1751,23 @@ static bool assemble_line(assembler_t *as, char *line) {
     int num_tokens = tokenize(line, tokens);
     if (num_tokens < 0) return false;  // tokenizer overflow
     if (num_tokens == 0) return true;
+
+    // "name = target": tokens[0] is a symbol here, so this comes before the
+    // mnemonic is lowercased.  A number on the right is a constant (.set).
+    if (num_tokens == 3 && strcmp(tokens[1], "=") == 0) {
+        if (is_symbol_name(tokens[2]))
+            return add_alias(as, tokens[0], tokens[2]);
+        label_t *label = find_label(as, tokens[0]);
+        if (!label) {
+            add_label(as, tokens[0], (uint32_t)parse_immediate(tokens[2]));
+            label = &as->labels[as->num_labels - 1];
+        } else {
+            label->address = (uint32_t)parse_immediate(tokens[2]);
+        }
+        label->is_defined = true;
+        label->is_absolute = true;
+        return true;
+    }
     
     // Lowercase only mnemonic/directive (tokens[0]); keep operand/symbol case
     for (char *pp = tokens[0]; *pp; ++pp) *pp = (char)tolower((unsigned char)*pp);
@@ -2246,8 +2336,11 @@ static bool assemble_line(assembler_t *as, char *line) {
             }
             return true;
         } else if ((strcmp(tokens[0], ".equ") == 0 || strcmp(tokens[0], ".set") == 0) && num_tokens >= 3) {
-            // .equ/.set symbol, value - define a constant
+            // .equ/.set symbol, value - define a constant; with a symbol
+            // for the value, an alias (parse_immediate made that 0 before)
             char *symbol = tokens[1];
+            if (is_symbol_name(tokens[2]))
+                return add_alias(as, symbol, tokens[2]);
             int value = parse_immediate(tokens[2]);
             
             // Add as a label with the constant value
@@ -3606,6 +3699,9 @@ int main(int argc, char *argv[]) {
     // Relax out-of-range conditional branches (invert + jal) before any
     // relocation or label math: addresses are final after this point.
     if (!no_relax && !relax_branches(&as)) {
+        return 1;
+    }
+    if (!resolve_aliases(&as)) {
         return 1;
     }
 
