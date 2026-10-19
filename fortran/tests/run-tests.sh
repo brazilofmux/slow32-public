@@ -113,7 +113,14 @@ else
         # otherwise, so a runaway READ cannot hang on the terminal.
         IN="/dev/null"
         [ -f "$HERE/f77/$b.in" ] && IN="$HERE/f77/$b.in"
-        if [ "$ORACLE" = 1 ]; then
+        # A sibling <name>.expected pins the program to that output instead
+        # of gfortran's, where slow-32 differs from gfortran on purpose; the
+        # .f says why.  It must end in STOP 0 like any other.
+        PINNED=0
+        if [ -f "$HERE/f77/$b.expected" ]; then
+            PINNED=1
+            cp "$HERE/f77/$b.expected" "$W/$b.want"; wrc=0
+        elif [ "$ORACLE" = 1 ]; then
             cp "$f" "$OW/$b.f"
             "$HERE/oracle.sh" "$OW/$b.f" < "$IN" > "$W/$b.want" 2>/dev/null; wrc=$?
         fi
@@ -141,7 +148,14 @@ else
         # That happened: slice6 asserted FLAT(2)==21 against a fill of
         # I+10*J, stopped at its second check on BOTH compilers, and
         # reported PASS for several commits.  So require exit 0 too.
-        if [ "$ORACLE" = 0 ]; then
+        if [ "$PINNED" = 1 ]; then
+            if ! diff -q "$W/$b.want" "$W/$b.got" >/dev/null 2>&1 || [ "$grc" != "0" ]; then
+                report "pin:$b" 1 "output differs from $b.expected, or STOP $grc"
+                diff "$W/$b.want" "$W/$b.got" | head -8
+            else
+                report "pin:$b" 0
+            fi
+        elif [ "$ORACLE" = 0 ]; then
             if [ "$grc" = "0" ]; then report "self:$b" 0; else report "self:$b" 1 "STOP $grc -- an assertion tripped"; fi
         elif ! diff -q "$W/$b.want" "$W/$b.got" >/dev/null 2>&1 || [ "$wrc" != "$grc" ]; then
             report "diff:$b" 1 "output/exit differs (ours=$grc oracle=$wrc)"
@@ -177,6 +191,11 @@ fi
 # A function whose type in its caller differs from its definition's --
 # implicitly REAL there, INTEGER FUNCTION here (fntype), or INTEGER
 # against LOGICAL (fnlog) -- compiled silently; gfortran refuses both.
+# A format the compiler can see, a FORMAT statement or a character
+# constant, is checked (from fort370): an nH running past the end
+# (fmth), a count with no descriptor (fmtcnt), a missing width (fmtwid),
+# a letter that is no descriptor (fmtlet), unpaired parentheses (fmtpar),
+# a constant format (fmtcon).  The runtime used to read each some other way.
 if [ -x "$F77" ]; then
     printf '      SUBROUTINE PRINTIT\n      RETURN\n      PROGRAM HELLO\n      CALL PRINTIT\n      END\n' > "$W/noend.f"
     printf '      PROGRAM A\n      END\n      PROGRAM B\n      END\n' > "$W/twomain.f"
@@ -195,6 +214,12 @@ if [ -x "$F77" ]; then
     printf '      CALL PONG\n      END\n      SUBROUTINE OUTER\n      ENTRY PONG\n      RETURN\n      END\n      SUBROUTINE PONG\n      END\n' > "$W/entsub.f"
     printf '      X = FTWO(1)\n      END\n      INTEGER FUNCTION FTWO(N)\n      FTWO = N + 1\n      END\n' > "$W/fntype.f"
     printf '      INTEGER LOK\n      I = LOK(1)\n      END\n      LOGICAL FUNCTION LOK(N)\n      LOK = N .GT. 0\n      END\n' > "$W/fnlog.f"
+    printf '      WRITE (6, 10) 1\n   10 FORMAT (1X, 9HABC, I3)\n      END\n' > "$W/fmth.f"
+    printf '      WRITE (6, 10) 1\n   10 FORMAT (1X, 4HWXYZ12, I3)\n      END\n' > "$W/fmtcnt.f"
+    printf '      WRITE (6, 10) 1\n   10 FORMAT (1X, I)\n      END\n' > "$W/fmtwid.f"
+    printf '      WRITE (6, 10) 1\n   10 FORMAT (1X, Q5)\n      END\n' > "$W/fmtlet.f"
+    printf '      WRITE (6, 10) 1\n   10 FORMAT ((1X, I5)\n      END\n' > "$W/fmtpar.f"
+    printf "      WRITE (6, '(1X, F)') 2.5\n      END\n" > "$W/fmtcon.f"
     for c in "noend:line 3: PROGRAM statement inside a subprogram: the END before it is missing" \
              "twomain:line 3: more than one main program" \
              "nolabel:line 2: statement label 99 is referred to but never defined" \
@@ -211,7 +236,13 @@ if [ -x "$F77" ]; then
              "fnsub:line 6: TICK is already a subprogram or ENTRY name (line 3)" \
              "entsub:line 7: PONG is already a subprogram or ENTRY name (line 4)" \
              "fntype:line 1: FTWO is REAL here but INTEGER where it is defined (line 3)" \
-             "fnlog:line 2: LOK is INTEGER here but LOGICAL where it is defined (line 4)"; do
+             "fnlog:line 2: LOK is INTEGER here but LOGICAL where it is defined (line 4)" \
+             "fmth:line 2: FORMAT: the format ends without its )" \
+             "fmtcnt:line 2: FORMAT: a count with no descriptor after it" \
+             "fmtwid:line 2: FORMAT: I needs a width" \
+             "fmtlet:line 2: FORMAT: Q is no edit descriptor" \
+             "fmtpar:line 2: FORMAT: the format ends without its )" \
+             "fmtcon:line 1: FORMAT: F needs a width"; do
         b="${c%%:*}"; msg="${c#*:}"
         if "$F77" "$W/$b.f" "$W/$b.s" >"$W/$b.err" 2>&1; then
             report "refuse:$b" 1 "compiled"
