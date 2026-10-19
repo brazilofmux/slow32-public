@@ -5,6 +5,10 @@
 #include <stdint.h>
 #include "time.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef unsigned long long dev_t;
 typedef unsigned long long ino_t;
 typedef unsigned int mode_t;
@@ -56,4 +60,7 @@ int fstat(int fd, struct stat *buf);
 int lstat(const char *path, struct stat *buf);
 int mkdir(const char *pathname, mode_t mode);
 
+#ifdef __cplusplus
+}
+#endif
 #endif

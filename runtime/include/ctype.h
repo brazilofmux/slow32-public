@@ -1,6 +1,10 @@
 #ifndef _CTYPE_H
 #define _CTYPE_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 // Character classification functions (ISO 8859-1 / Latin-1)
 int isalnum(int c);   // alphanumeric character
 int isalpha(int c);   // alphabetic character
@@ -28,4 +32,7 @@ extern const unsigned char __ctype_table[256];
 extern const unsigned char __toupper_table[256];
 extern const unsigned char __tolower_table[256];
 
+#ifdef __cplusplus
+}
+#endif
 #endif

@@ -3,6 +3,10 @@
 
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define EXIT_SUCCESS 0
 #define EXIT_FAILURE 1
 
@@ -41,8 +45,10 @@ void *bsearch(const void *key, const void *base, size_t nmemb, size_t size,
 
 typedef struct { int quot; int rem; } div_t;
 typedef struct { long quot; long rem; } ldiv_t;
+typedef struct { long long quot; long long rem; } lldiv_t;
 div_t div(int numer, int denom);
 ldiv_t ldiv(long numer, long denom);
+lldiv_t lldiv(long long numer, long long denom);
 
 int rand(void);
 void srand(unsigned int seed);
@@ -53,4 +59,7 @@ void srand(unsigned int seed);
 
 char *getenv(const char *name);
 
+#ifdef __cplusplus
+}
+#endif
 #endif

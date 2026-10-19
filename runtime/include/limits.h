@@ -23,17 +23,17 @@
 #define USHRT_MAX   65535
 
 // Int limits (32-bit on SLOW32)
-#define INT_MIN     (-2147483648)
+#define INT_MIN     (-INT_MAX - 1)
 #define INT_MAX     2147483647
 #define UINT_MAX    4294967295U
 
 // Long limits (32-bit on SLOW32, same as int)
-#define LONG_MIN    (-2147483648L)
+#define LONG_MIN    (-LONG_MAX - 1L)
 #define LONG_MAX    2147483647L
 #define ULONG_MAX   4294967295UL
 
 // Long long limits (64-bit support via compiler-rt)
-#define LLONG_MIN   (-9223372036854775808LL)
+#define LLONG_MIN   (-LLONG_MAX - 1LL)
 #define LLONG_MAX   9223372036854775807LL
 #define ULLONG_MAX  18446744073709551615ULL
 
@@ -47,12 +47,16 @@
 #define WORD_BIT    32          // Number of bits in a word
 #define LONG_BIT    32          // Number of bits in a long
 
-// Size limits
+// Size limits (SIZE_MAX and PTRDIFF_* are <stdint.h>'s; either may come first)
+#ifndef SIZE_MAX
 #define SIZE_MAX    UINT_MAX
+#endif
 #define SSIZE_MAX   INT_MAX
 
 // Pointer difference limits
+#ifndef PTRDIFF_MIN
 #define PTRDIFF_MIN INT_MIN
 #define PTRDIFF_MAX INT_MAX
+#endif
 
 #endif /* _LIMITS_H */

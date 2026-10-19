@@ -11,6 +11,10 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Reason codes returned by _Unwind functions */
 typedef enum {
     _URC_NO_REASON                = 0,
@@ -72,4 +76,7 @@ void _Unwind_SetIP(struct _Unwind_Context *ctx, uint32_t ip);
 uint32_t _Unwind_GetRegionStart(struct _Unwind_Context *ctx);
 uint32_t _Unwind_GetLanguageSpecificData(struct _Unwind_Context *ctx);
 
+#ifdef __cplusplus
+}
+#endif
 #endif /* _UNWIND_H */

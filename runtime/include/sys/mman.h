@@ -4,6 +4,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define PROT_NONE  0
 #define PROT_READ  1
 #define PROT_WRITE 2
@@ -19,4 +23,7 @@
 void *mmap(void *addr, size_t length, int prot, int flags, int fd, uint64_t offset);
 int munmap(void *addr, size_t length);
 
+#ifdef __cplusplus
+}
+#endif
 #endif

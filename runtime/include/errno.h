@@ -1,6 +1,10 @@
 #ifndef _ERRNO_H
 #define _ERRNO_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Linux's numbers: the host hands the guest these whatever it runs on
  * (docs/SPEC.md 8.4.2), and runtime/strerror.c has a text for each. */
 extern int errno;
@@ -79,4 +83,7 @@ extern int errno;
 #define ENOTSUP EOPNOTSUPP
 #define EDEADLOCK EDEADLK
 
+#ifdef __cplusplus
+}
+#endif
 #endif

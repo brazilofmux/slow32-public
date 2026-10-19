@@ -3,6 +3,10 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Guest API for the negotiated tube service. See docs/TUBE.md. */
 
 #define TUBE_MODE_VEC 1
@@ -60,4 +64,7 @@ uint32_t tube_status(void);
 /* Copy up to nbytes (multiple of 4) key events. Returns event count. */
 int  tube_keys(void *buf, uint32_t nbytes);
 
+#ifdef __cplusplus
+}
+#endif
 #endif /* _TUBE_H */

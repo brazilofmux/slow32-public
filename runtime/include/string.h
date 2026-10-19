@@ -3,6 +3,10 @@
 
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 size_t strlen(const char *s);
 char *strcpy(char *dest, const char *src);
 char *strncpy(char *dest, const char *src, size_t n);
@@ -35,4 +39,7 @@ void *memchr(const void *s, int c, size_t n);
 void *memrchr(const void *s, int c, size_t n);
 void memswap(void *a, void *b, size_t n);
 
+#ifdef __cplusplus
+}
+#endif
 #endif

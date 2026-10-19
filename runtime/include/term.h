@@ -1,6 +1,10 @@
 #ifndef _TERM_H
 #define _TERM_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Terminal service API (negotiated via service protocol) */
 
 /* Initialize the terminal service. Returns 0 on success, -1 if denied/unavailable. */
@@ -77,4 +81,7 @@ void term_begin_update(void);
 /* End buffered update: diff shadow buffer vs snapshot, emit only changed cells. */
 void term_end_update(void);
 
+#ifdef __cplusplus
+}
+#endif
 #endif /* _TERM_H */

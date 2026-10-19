@@ -4,6 +4,10 @@
 #include <stddef.h>
 #include <stdarg.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define EOF (-1)
 #define BUFSIZ 1024
 #define FILENAME_MAX 256
@@ -141,4 +145,7 @@ ssize_t getdelim(char **lineptr, size_t *n, int delim, FILE *stream);
 FILE *fmemopen(void *buf, size_t size, const char *mode);
 FILE *open_memstream(char **bufp, size_t *sizep);
 
+#ifdef __cplusplus
+}
+#endif
 #endif

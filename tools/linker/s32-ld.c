@@ -17,6 +17,26 @@ static void copy_string(char *dst, size_t dst_size, const char *src) {
     dst[dst_size - 1] = '\0';
 }
 
+// Symbol names are heap strings of any length.  A fixed 256-byte field
+// here once truncated C++ mangled names silently, so two long names with
+// one prefix would have become one symbol.
+static char *ld_strdup(const char *str) {
+    size_t n = strlen(str) + 1;
+    char *p = malloc(n);
+    if (!p) { fprintf(stderr, "Error: out of memory\n"); exit(1); }
+    memcpy(p, str, n);
+    return p;
+}
+
+// "name@file", the unique name a local symbol is entered under
+static char *ld_local_name(const char *name, int f) {
+    size_t n = strlen(name) + 16;
+    char *p = malloc(n);
+    if (!p) { fprintf(stderr, "Error: out of memory\n"); exit(1); }
+    snprintf(p, n, "%s@%d", name, f);
+    return p;
+}
+
 // Configuration
 #define MAX_LIB_PATHS 32
 #define LINKER_DEFINED_FILE (-2)
@@ -85,7 +105,7 @@ typedef struct {
 
 // Symbol table entry
 typedef struct {
-    char name[256];
+    char *name;
     uint32_t value;
     uint32_t size;
     uint8_t type;
@@ -535,7 +555,7 @@ static bool load_archive_file(linker_state_t *ld, const char *filename) {
                 }
 
                 // Load the object
-                char full_name[256];
+                char full_name[4096];
                 snprintf(full_name, sizeof(full_name), "%s(%s)", filename, member_name);
                 if (!load_object_from_memory(ld, full_name, data, member->size)) {
                     free(data);
@@ -902,9 +922,9 @@ static void build_symbol_table(linker_state_t *ld) {
 
                 // For local symbols, create unique name to prevent collisions
                 if (isym->binding == S32O_BIND_LOCAL) {
-                    snprintf(nsym->name, sizeof(nsym->name), "%s@%d", name, f);
+                    nsym->name = ld_local_name(name, f);
                 } else {
-                    copy_string(nsym->name, sizeof(nsym->name), name);
+                    nsym->name = ld_strdup(name);
                 }
                 nsym->type = isym->type;
                 nsym->binding = isym->binding;
@@ -1316,7 +1336,7 @@ static void inject_memory_map_symbols(linker_state_t *ld) {
                     s32_hashmap_put(&ld->symbol_map, ld->symbols[si].name, si);
             }
             symbol_entry_t *sym = &ld->symbols[ld->num_symbols];
-            copy_string(sym->name, sizeof(sym->name), special_symbols[i].name);
+            sym->name = ld_strdup(special_symbols[i].name);
             sym->value = special_symbols[i].value;
             sym->size = 0;
             sym->type = 0;  // NOTYPE
@@ -1377,7 +1397,7 @@ static void inject_init_array_symbols(linker_state_t *ld) {
                     s32_hashmap_put(&ld->symbol_map, ld->symbols[si].name, si);
             }
             symbol_entry_t *sym = &ld->symbols[ld->num_symbols];
-            copy_string(sym->name, sizeof(sym->name), init_symbols[i].name);
+            sym->name = ld_strdup(init_symbols[i].name);
             sym->value = init_symbols[i].value;
             sym->size = 0;
             sym->type = 0;
@@ -1441,7 +1461,7 @@ static void inject_eh_frame_symbols(linker_state_t *ld) {
                     s32_hashmap_put(&ld->symbol_map, ld->symbols[si].name, si);
             }
             symbol_entry_t *sym = &ld->symbols[ld->num_symbols];
-            copy_string(sym->name, sizeof(sym->name), eh_symbols[i].name);
+            sym->name = ld_strdup(eh_symbols[i].name);
             sym->value = eh_symbols[i].value;
             sym->size = 0;
             sym->type = 0;
@@ -1489,11 +1509,19 @@ static void collect_relocations(linker_state_t *ld) {
                         inf->symbols[irel->symbol].name_offset);
 
                     // For local symbols, create the same unique name used in build_symbol_table
-                    char lookup_name[256];
+                    static char *lookup_buf;
+                    static size_t lookup_cap;
+                    const char *lookup_name = sym_name;
                     if (inf->symbols[irel->symbol].binding == S32O_BIND_LOCAL) {
-                        snprintf(lookup_name, sizeof(lookup_name), "%s@%d", sym_name, f);
-                    } else {
-                        copy_string(lookup_name, sizeof(lookup_name), sym_name);
+                        size_t need = strlen(sym_name) + 16;
+                        if (need > lookup_cap) {
+                            free(lookup_buf);
+                            lookup_cap = need * 2;
+                            lookup_buf = malloc(lookup_cap);
+                            if (!lookup_buf) { fprintf(stderr, "Error: out of memory\n"); exit(1); }
+                        }
+                        snprintf(lookup_buf, lookup_cap, "%s@%d", sym_name, f);
+                        lookup_name = lookup_buf;
                     }
 
                     int cs = s32_hashmap_get(&ld->symbol_map, lookup_name);
@@ -1518,7 +1546,7 @@ static void collect_relocations(linker_state_t *ld) {
                             exit(1);
                         }
                         symbol_entry_t *nsym = &ld->symbols[ld->num_symbols];
-                        snprintf(nsym->name, sizeof(nsym->name), "%s@%d", sym_name, f);
+                        nsym->name = ld_local_name(sym_name, f);
                         nsym->binding = isym->binding;   // likely LOCAL
                         nsym->type = isym->type;
                         nsym->size = isym->size;

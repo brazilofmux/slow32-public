@@ -14,14 +14,49 @@
 #define MAX_TOKEN_LEN 16384
 #define INITIAL_INSTRUCTION_CAPACITY 65536
 #define MAX_DATA_SIZE (1024 * 1024)  // 1MB max data section
-#define MAX_SYMBOL_LEN 256
 
-static void copy_string(char *dst, size_t dst_size, const char *src) {
-    if (dst_size == 0) return;
-    size_t len = strlen(src);
-    if (len >= dst_size) len = dst_size - 1;
-    memcpy(dst, src, len);
-    dst[len] = '\0';
+// Symbol names are interned: each distinct name is stored once, on the
+// heap, and every label, reference, relocation and fixup points at that
+// copy.  A name has no length limit beyond the input line's (C++ mangled
+// names run to thousands of bytes; the fixed 256-byte fields this
+// replaces could not hold libc++'s).  The copies live until exit.
+static const char **intern_slots;
+static size_t intern_cap, intern_count;
+
+static size_t intern_hash(const char *str) {
+    size_t h = 2166136261u;
+    for (const unsigned char *q = (const unsigned char *)str; *q; q++)
+        h = (h ^ *q) * 16777619u;
+    return h;
+}
+
+static const char *sym_intern(const char *str) {
+    if (intern_count * 2 >= intern_cap) {
+        size_t ncap = intern_cap ? intern_cap * 2 : 4096;
+        const char **ns = calloc(ncap, sizeof(*ns));
+        if (!ns) { fprintf(stderr, "Error: out of memory\n"); exit(1); }
+        for (size_t i = 0; i < intern_cap; i++) {
+            if (!intern_slots[i]) continue;
+            size_t j = intern_hash(intern_slots[i]) & (ncap - 1);
+            while (ns[j]) j = (j + 1) & (ncap - 1);
+            ns[j] = intern_slots[i];
+        }
+        free(intern_slots);
+        intern_slots = ns;
+        intern_cap = ncap;
+    }
+    size_t j = intern_hash(str) & (intern_cap - 1);
+    while (intern_slots[j]) {
+        if (strcmp(intern_slots[j], str) == 0) return intern_slots[j];
+        j = (j + 1) & (intern_cap - 1);
+    }
+    size_t len = strlen(str);
+    char *copy = malloc(len + 1);
+    if (!copy) { fprintf(stderr, "Error: out of memory\n"); exit(1); }
+    memcpy(copy, str, len + 1);
+    intern_slots[j] = copy;
+    intern_count++;
+    return copy;
 }
 
 static bool check_register(int reg, const char *context) {
@@ -47,7 +82,7 @@ typedef enum {
 } section_t;
 
 typedef struct {
-    char name[MAX_SYMBOL_LEN];
+    const char *name;
     uint32_t address;
     section_t section;
     bool is_global;
@@ -58,7 +93,7 @@ typedef struct {
 
 typedef struct {
     uint32_t offset;      // Offset in section
-    char symbol[MAX_SYMBOL_LEN];  // Symbol name
+    const char *symbol;  // Symbol name
     uint32_t type;        // Relocation type
     int32_t addend;       // Addend
     section_t section;    // Which section this relocation is in
@@ -72,7 +107,7 @@ typedef enum {
 typedef struct {
     token_type_t type;
     int32_t val;
-    char sval[256];
+    char sval[MAX_TOKEN_LEN];
 } token_t;
 
 typedef struct {
@@ -82,9 +117,9 @@ typedef struct {
 
 typedef struct {
     int32_t val;
-    char symbol[MAX_SYMBOL_LEN];
+    const char *symbol;
     bool has_symbol;
-    char minus_symbol[MAX_SYMBOL_LEN];   // For label1 - label2 expressions
+    const char *minus_symbol;   // For label1 - label2 expressions
     bool has_minus_symbol;
     bool is_hi;
     bool is_lo;
@@ -162,8 +197,7 @@ static bool parse_factor(scanner_t *s, expr_result_t *res) {
         res->val = s->curr.val;
         scanner_next(s);
     } else if (s->curr.type == TOK_IDENTIFIER) {
-        strncpy(res->symbol, s->curr.sval, MAX_SYMBOL_LEN - 1);
-        res->symbol[MAX_SYMBOL_LEN - 1] = '\0';
+        res->symbol = sym_intern(s->curr.sval);
         res->has_symbol = true;
         scanner_next(s);
     } else if (s->curr.type == TOK_LPAREN) {
@@ -231,10 +265,10 @@ static bool parse_expression(scanner_t *s, expr_result_t *res) {
             if (res->has_symbol && op == TOK_PLUS) return false;
             if (res->has_symbol && op == TOK_MINUS) {
                 // label1 - label2: store as label difference
-                copy_string(res->minus_symbol, sizeof(res->minus_symbol), rhs.symbol);
+                res->minus_symbol = sym_intern(rhs.symbol);
                 res->has_minus_symbol = true;
             } else {
-                copy_string(res->symbol, sizeof(res->symbol), rhs.symbol);
+                res->symbol = sym_intern(rhs.symbol);
                 res->has_symbol = true;
             }
         }
@@ -321,10 +355,10 @@ typedef struct {
     uint32_t instruction;
     uint32_t address;
     bool has_label_ref;
-    char label_ref[MAX_SYMBOL_LEN];
+    const char *label_ref;
     int label_offset;
     bool has_symbol_ref;    // True if this references a global symbol
-    char symbol_ref[MAX_SYMBOL_LEN];  // Symbol name for %hi()/%lo()/%pcrel_hi()/%pcrel_lo()
+    const char *symbol_ref;  // Symbol name for %hi()/%lo()/%pcrel_hi()/%pcrel_lo()
     bool symbol_is_hi;      // True if this is %hi(symbol)
     bool symbol_is_lo;      // True if this is %lo(symbol)
     bool symbol_is_pcrel_hi;// True if this is %pcrel_hi(symbol)
@@ -337,16 +371,16 @@ typedef struct {
 
 typedef struct {
     int instruction_index;
-    char plus_symbol[MAX_SYMBOL_LEN];
-    char minus_symbol[MAX_SYMBOL_LEN];
+    const char *plus_symbol;
+    const char *minus_symbol;
     int32_t addend;
 } label_diff_t;
 
 // ULEB128/SLEB128 label-difference fixup (for .uleb128/.sleb128 directives)
 typedef struct {
     int instruction_index;      // Index of first placeholder byte in instruction array
-    char plus_symbol[MAX_SYMBOL_LEN];
-    char minus_symbol[MAX_SYMBOL_LEN];
+    const char *plus_symbol;
+    const char *minus_symbol;
     int32_t addend;
     bool is_signed;             // true for SLEB128, false for ULEB128
 } uleb_diff_t;
@@ -375,7 +409,7 @@ typedef struct {
     // Symbol aliases, "name = target" or ".set name, target" with a symbol
     // as the target (clang's constructor/destructor aliases: D1 = D2).
     // Resolved once relaxation has fixed every address.
-    struct { char name[MAX_SYMBOL_LEN]; char target[MAX_SYMBOL_LEN]; } *aliases;
+    struct { const char *name; const char *target; } *aliases;
     int num_aliases;
     int aliases_cap;
 
@@ -401,12 +435,12 @@ typedef struct {
     uint8_t *cfi_fde_instrs;                    // FDE instruction buffer
     uint32_t cfi_fde_instrs_size;
     uint32_t cfi_fde_instrs_cap;
-    char cfi_func_symbol[MAX_SYMBOL_LEN];       // Function symbol for FDE
+    const char *cfi_func_symbol;       // Function symbol for FDE
     bool cfi_has_personality;
-    char cfi_personality_sym[MAX_SYMBOL_LEN];
+    const char *cfi_personality_sym;
     uint8_t cfi_personality_enc;
     bool cfi_has_lsda;
-    char cfi_lsda_sym[MAX_SYMBOL_LEN];
+    const char *cfi_lsda_sym;
     uint8_t cfi_lsda_enc;
     bool cfi_cie_zr_emitted;
     uint32_t cfi_cie_zr_offset;
@@ -811,7 +845,7 @@ static void emit_fde(assembler_t *as) {
     // PC begin (needs relocation)
     uint32_t pc_begin_offset = as->eh_frame_data_size;
     eh_frame_write32(as, 0);  // placeholder
-    if (as->cfi_func_symbol[0]) {
+    if (as->cfi_func_symbol && as->cfi_func_symbol[0]) {
         add_relocation(as, pc_begin_offset, as->cfi_func_symbol,
                        S32O_REL_32, 0, SECTION_EH_FRAME);
     }
@@ -916,7 +950,7 @@ static bool handle_cfi_directive(assembler_t *as, char tokens[][MAX_TOKEN_LEN], 
         as->cfi_fde_instrs_size = 0;
         as->cfi_has_personality = false;
         as->cfi_has_lsda = false;
-        as->cfi_func_symbol[0] = '\0';
+        as->cfi_func_symbol = NULL;
 
         // Find the most recent label at current code address for FDE pc_begin.
         // Prefer global labels (function names) over local labels.
@@ -924,17 +958,19 @@ static bool handle_cfi_directive(assembler_t *as, char tokens[][MAX_TOKEN_LEN], 
             if (as->labels[i].section == SECTION_CODE &&
                 as->labels[i].address == as->code_size) {
                 if (as->labels[i].is_global) {
-                    copy_string(as->cfi_func_symbol, MAX_SYMBOL_LEN, as->labels[i].name);
+                    as->cfi_func_symbol = sym_intern(as->labels[i].name);
                     break;
                 }
-                if (as->cfi_func_symbol[0] == '\0') {
-                    copy_string(as->cfi_func_symbol, MAX_SYMBOL_LEN, as->labels[i].name);
+                if ((!as->cfi_func_symbol || !as->cfi_func_symbol[0])) {
+                    as->cfi_func_symbol = sym_intern(as->labels[i].name);
                 }
             }
         }
         // Generate synthetic label if none found
-        if (as->cfi_func_symbol[0] == '\0') {
-            snprintf(as->cfi_func_symbol, MAX_SYMBOL_LEN, ".Lcfi_func_%u", as->code_size);
+        if ((!as->cfi_func_symbol || !as->cfi_func_symbol[0])) {
+            char cfi_name[32];
+            snprintf(cfi_name, sizeof cfi_name, ".Lcfi_func_%u", as->code_size);
+            as->cfi_func_symbol = sym_intern(cfi_name);
             add_label(as, as->cfi_func_symbol, as->code_size);
         }
         return true;
@@ -1041,14 +1077,14 @@ static bool handle_cfi_directive(assembler_t *as, char tokens[][MAX_TOKEN_LEN], 
 
     if (strcmp(tokens[0], ".cfi_personality") == 0 && num_tokens >= 3) {
         as->cfi_personality_enc = (uint8_t)parse_immediate(tokens[1]);
-        copy_string(as->cfi_personality_sym, MAX_SYMBOL_LEN, tokens[2]);
+        as->cfi_personality_sym = sym_intern(tokens[2]);
         as->cfi_has_personality = true;
         return true;
     }
 
     if (strcmp(tokens[0], ".cfi_lsda") == 0 && num_tokens >= 3) {
         as->cfi_lsda_enc = (uint8_t)parse_immediate(tokens[1]);
-        copy_string(as->cfi_lsda_sym, MAX_SYMBOL_LEN, tokens[2]);
+        as->cfi_lsda_sym = sym_intern(tokens[2]);
         as->cfi_has_lsda = true;
         return true;
     }
@@ -1181,11 +1217,6 @@ static instruction_def_t *find_instruction(const char *mnemonic) {
 }
 
 static void add_label(assembler_t *as, const char *name, uint32_t addr) {
-    if (strlen(name) >= MAX_SYMBOL_LEN) {
-        fprintf(stderr, "Error: symbol name too long (%zu bytes, max %d): '%.40s...'\n",
-                strlen(name), MAX_SYMBOL_LEN - 1, name);
-        exit(1);
-    }
     void *old = as->labels;
     DARR_PUSH(as->labels, as->num_labels, as->labels_cap, label_t);
     if (as->labels != old) {
@@ -1194,7 +1225,7 @@ static void add_label(assembler_t *as, const char *name, uint32_t addr) {
         for (int i = 0; i < as->num_labels; i++)
             s32_hashmap_put(&as->label_map, as->labels[i].name, i);
     }
-    copy_string(as->labels[as->num_labels].name, MAX_SYMBOL_LEN, name);
+    as->labels[as->num_labels].name = sym_intern(name);
     as->labels[as->num_labels].address = addr;
     as->labels[as->num_labels].section = as->current_section;
     as->labels[as->num_labels].is_global = false;  // Default to local
@@ -1248,8 +1279,7 @@ static void add_relocation(assembler_t *as, uint32_t offset, const char *symbol,
 
     relocation_t *rel = &as->relocations[as->num_relocations++];
     rel->offset = offset;
-    strncpy(rel->symbol, symbol, sizeof(rel->symbol) - 1);
-    rel->symbol[sizeof(rel->symbol) - 1] = '\0';
+    rel->symbol = sym_intern(symbol);
     rel->type = type;
     rel->addend = addend;
     rel->section = section;
@@ -1508,8 +1538,7 @@ static bool relax_branches(assembler_t *as) {
 
             // Invert the condition and hop over the new jal: the branch
             // target is PC+8, encoded relative to PC+4.
-            char target[MAX_SYMBOL_LEN];
-            copy_string(target, MAX_SYMBOL_LEN, br->label_ref);
+            const char *target = br->label_ref;
             br->opcode ^= 1;
             br->instruction = ((br->instruction ^ 1) & 0x01FFF07F) |
                               (encode_b(0, 0, 0, 4) & 0xFE000F80);
@@ -1619,7 +1648,7 @@ static bool relax_branches(assembler_t *as) {
             jal->address = ins_addr;
             jal->section = SECTION_CODE;
             jal->has_label_ref = true;
-            copy_string(jal->label_ref, MAX_SYMBOL_LEN, target);
+            jal->label_ref = sym_intern(target);
             as->num_instructions++;
 
             changed = true;
@@ -1639,10 +1668,6 @@ static bool is_symbol_name(const char *t) {
 }
 
 static bool add_alias(assembler_t *as, const char *name, const char *target) {
-    if (strlen(name) >= MAX_SYMBOL_LEN || strlen(target) >= MAX_SYMBOL_LEN) {
-        fprintf(stderr, "Error: alias name too long\n");
-        return false;
-    }
     if (as->num_aliases == as->aliases_cap) {
         int cap = as->aliases_cap ? as->aliases_cap * 2 : 16;
         void *p = realloc(as->aliases, (size_t)cap * sizeof(*as->aliases));
@@ -1650,8 +1675,8 @@ static bool add_alias(assembler_t *as, const char *name, const char *target) {
         as->aliases = p;
         as->aliases_cap = cap;
     }
-    copy_string(as->aliases[as->num_aliases].name, MAX_SYMBOL_LEN, name);
-    copy_string(as->aliases[as->num_aliases].target, MAX_SYMBOL_LEN, target);
+    as->aliases[as->num_aliases].name = sym_intern(name);
+    as->aliases[as->num_aliases].target = sym_intern(target);
     as->num_aliases++;
     return true;
 }
@@ -1940,8 +1965,8 @@ static bool assemble_line(assembler_t *as, char *line) {
                     as->instructions[idx].section = as->current_section;
                     as->instructions[idx].is_data_byte = false;
                     as->num_instructions++;
-                    copy_string(as->label_diffs[as->num_label_diffs].plus_symbol, MAX_SYMBOL_LEN, res.symbol);
-                    copy_string(as->label_diffs[as->num_label_diffs].minus_symbol, MAX_SYMBOL_LEN, res.minus_symbol);
+                    as->label_diffs[as->num_label_diffs].plus_symbol = sym_intern(res.symbol);
+                    as->label_diffs[as->num_label_diffs].minus_symbol = sym_intern(res.minus_symbol);
                     as->label_diffs[as->num_label_diffs].addend = res.val;
                     as->label_diffs[as->num_label_diffs].instruction_index = idx;
                     as->num_label_diffs++;
@@ -2304,8 +2329,8 @@ static bool assemble_line(assembler_t *as, char *line) {
                     bump_size(as, as->current_section, 5);
 
                     DARR_PUSH(as->uleb_diffs, as->num_uleb_diffs, as->uleb_diffs_cap, uleb_diff_t);
-                    copy_string(as->uleb_diffs[as->num_uleb_diffs].plus_symbol, MAX_SYMBOL_LEN, res.symbol);
-                    copy_string(as->uleb_diffs[as->num_uleb_diffs].minus_symbol, MAX_SYMBOL_LEN, res.minus_symbol);
+                    as->uleb_diffs[as->num_uleb_diffs].plus_symbol = sym_intern(res.symbol);
+                    as->uleb_diffs[as->num_uleb_diffs].minus_symbol = sym_intern(res.minus_symbol);
                     as->uleb_diffs[as->num_uleb_diffs].addend = res.val;
                     as->uleb_diffs[as->num_uleb_diffs].instruction_index = first_idx;
                     as->uleb_diffs[as->num_uleb_diffs].is_signed = is_signed;
@@ -2477,7 +2502,7 @@ static bool assemble_line(assembler_t *as, char *line) {
             if (is_symbol) {
                 inst1->has_symbol_ref = true;
                 inst1->symbol_is_hi = true;
-                copy_string(inst1->symbol_ref, sizeof(inst1->symbol_ref), res.symbol);
+                inst1->symbol_ref = sym_intern(res.symbol);
                 inst1->symbol_addend = res.val;
             }
             inst1->instruction = encode_u(0x20, rd, upper);
@@ -2493,7 +2518,7 @@ static bool assemble_line(assembler_t *as, char *line) {
             if (is_symbol) {
                 inst2->has_symbol_ref = true;
                 inst2->symbol_is_lo = true;
-                copy_string(inst2->symbol_ref, sizeof(inst2->symbol_ref), res.symbol);
+                inst2->symbol_ref = sym_intern(res.symbol);
                 inst2->symbol_addend = res.val;
             }
             inst2->instruction = encode_i(0x10, rd, rd, lower);
@@ -2560,7 +2585,7 @@ static bool assemble_line(assembler_t *as, char *line) {
         
         if (s_op.curr.type == TOK_IDENTIFIER) {
             inst->has_label_ref = true;
-            copy_string(inst->label_ref, sizeof(inst->label_ref), s_op.curr.sval);
+            inst->label_ref = sym_intern(s_op.curr.sval);
             inst->instruction = encode_j(0x40, 0, 0);
         } else {
             expr_result_t res;
@@ -2585,7 +2610,7 @@ static bool assemble_line(assembler_t *as, char *line) {
 
         if (s_op.curr.type == TOK_IDENTIFIER) {
             inst->has_label_ref = true;
-            copy_string(inst->label_ref, sizeof(inst->label_ref), s_op.curr.sval);
+            inst->label_ref = sym_intern(s_op.curr.sval);
             inst->instruction = encode_j(0x40, 31, 0);
         } else {
             expr_result_t res;
@@ -2610,7 +2635,7 @@ static bool assemble_line(assembler_t *as, char *line) {
 
         if (s_op.curr.type == TOK_IDENTIFIER) {
             inst->has_label_ref = true;
-            copy_string(inst->label_ref, sizeof(inst->label_ref), s_op.curr.sval);
+            inst->label_ref = sym_intern(s_op.curr.sval);
             inst->instruction = encode_j(0x40, 0, 0);
         } else {
             expr_result_t res;
@@ -2733,7 +2758,7 @@ static bool assemble_line(assembler_t *as, char *line) {
         inst1->section = as->current_section;
         inst1->has_symbol_ref = true;
         inst1->symbol_is_hi = true;
-        copy_string(inst1->symbol_ref, sizeof(inst1->symbol_ref), res.symbol);
+        inst1->symbol_ref = sym_intern(res.symbol);
         inst1->symbol_addend = res.val;
         inst1->instruction = encode_u(0x20, rd, 0);
         as->num_instructions++;
@@ -2747,7 +2772,7 @@ static bool assemble_line(assembler_t *as, char *line) {
         inst2->section = as->current_section;
         inst2->has_symbol_ref = true;
         inst2->symbol_is_lo = true;
-        copy_string(inst2->symbol_ref, sizeof(inst2->symbol_ref), res.symbol);
+        inst2->symbol_ref = sym_intern(res.symbol);
         inst2->symbol_addend = res.val;
         inst2->instruction = encode_i(0x10, rd, rd, 0);
         as->num_instructions++;
@@ -2855,7 +2880,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                     imm = res.val;
                     if (res.has_symbol) {
                         inst->has_symbol_ref = true;
-                        copy_string(inst->symbol_ref, sizeof(inst->symbol_ref), res.symbol);
+                        inst->symbol_ref = sym_intern(res.symbol);
                         if (reject_hi_on_imm12(&res, tokens[0])) return false;
                         inst->symbol_is_lo = res.is_lo;
                         inst->symbol_is_pcrel_lo = res.is_pcrel_lo;
@@ -2870,7 +2895,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                     imm = res.val;
                     if (res.has_symbol) {
                         inst->has_symbol_ref = true;
-                        copy_string(inst->symbol_ref, sizeof(inst->symbol_ref), res.symbol);
+                        inst->symbol_ref = sym_intern(res.symbol);
                         if (reject_hi_on_imm12(&res, tokens[0])) return false;
                         inst->symbol_is_lo = res.is_lo;
                         inst->symbol_is_pcrel_lo = res.is_pcrel_lo;
@@ -2907,7 +2932,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                 rs1 = reg1;
                 if (res.has_symbol) {
                     inst->has_symbol_ref = true;
-                    copy_string(inst->symbol_ref, sizeof(inst->symbol_ref), res.symbol);
+                    inst->symbol_ref = sym_intern(res.symbol);
                     if (reject_hi_on_imm12(&res, tokens[0])) return false;
                     inst->symbol_is_lo = res.is_lo;
                     inst->symbol_is_pcrel_lo = res.is_pcrel_lo;
@@ -2931,7 +2956,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                     if (parse_operand_scanner(&s_op, &res)) {
                         if (res.has_symbol) {
                             inst->has_symbol_ref = true;
-                            copy_string(inst->symbol_ref, sizeof(inst->symbol_ref), res.symbol);
+                            inst->symbol_ref = sym_intern(res.symbol);
                             if (reject_hi_on_imm12(&res, tokens[0])) return false;
                             inst->symbol_is_lo = res.is_lo;
                             inst->symbol_is_pcrel_lo = res.is_pcrel_lo;
@@ -2947,7 +2972,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                     if (!parse_operand_scanner(&s_op, &res)) return false;
                     if (res.has_symbol) {
                         inst->has_symbol_ref = true;
-                        copy_string(inst->symbol_ref, sizeof(inst->symbol_ref), res.symbol);
+                        inst->symbol_ref = sym_intern(res.symbol);
                         if (reject_hi_on_imm12(&res, tokens[0])) return false;
                         inst->symbol_is_lo = res.is_lo;
                         inst->symbol_is_pcrel_lo = res.is_pcrel_lo;
@@ -2987,7 +3012,7 @@ static bool assemble_line(assembler_t *as, char *line) {
 
             if (s_op.curr.type == TOK_IDENTIFIER) {
                 inst->has_label_ref = true;
-                copy_string(inst->label_ref, sizeof(inst->label_ref), s_op.curr.sval);
+                inst->label_ref = sym_intern(s_op.curr.sval);
                 inst->label_offset = 0;
                 inst->instruction = encode_b(inst->opcode, rs1, rs2, 0);
                 scanner_next(&s_op);
@@ -3009,7 +3034,7 @@ static bool assemble_line(assembler_t *as, char *line) {
 
             if (res.has_symbol) {
                 inst->has_symbol_ref = true;
-                copy_string(inst->symbol_ref, sizeof(inst->symbol_ref), res.symbol);
+                inst->symbol_ref = sym_intern(res.symbol);
                 inst->symbol_is_hi = res.is_hi;
                 inst->symbol_is_pcrel_hi = res.is_pcrel_hi;
                 inst->symbol_addend = res.val;
@@ -3034,7 +3059,7 @@ static bool assemble_line(assembler_t *as, char *line) {
 
             if (s_op.curr.type == TOK_IDENTIFIER) {
                 inst->has_label_ref = true;
-                copy_string(inst->label_ref, sizeof(inst->label_ref), s_op.curr.sval);
+                inst->label_ref = sym_intern(s_op.curr.sval);
                 inst->label_offset = 0;
                 inst->instruction = encode_j(inst->opcode, rd, 0);
                 scanner_next(&s_op);

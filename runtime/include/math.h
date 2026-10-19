@@ -1,6 +1,10 @@
 #ifndef _MATH_H
 #define _MATH_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /*
  * NOTE: SLOW-32 now supports native f32/f64 in the toolchain. Many math
  * functions are provided as libcalls that may be intercepted by fast
@@ -109,8 +113,27 @@ float frexpf(float x, int *exp);
 double modf(double x, double *iptr);
 float modff(float x, float *iptr);
 
+/* Classification.  C makes these macros; here isnan/isinf/isfinite are
+ * also functions for C programs that call them so.  C++ gets them as
+ * overloads from its own <cmath>, which these declarations would clash
+ * with, so C++ sees only the FP_ constants its versions are built on. */
+#define FP_NAN       0
+#define FP_INFINITE  1
+#define FP_ZERO      2
+#define FP_SUBNORMAL 3
+#define FP_NORMAL    4
+
+#ifndef __cplusplus
 int isnan(double x);
 int isinf(double x);
 int isfinite(double x);
+#define fpclassify(x) \
+    __builtin_fpclassify(FP_NAN, FP_INFINITE, FP_NORMAL, FP_SUBNORMAL, FP_ZERO, x)
+#define isnormal(x)  __builtin_isnormal(x)
+#define signbit(x)   __builtin_signbit(x)
+#endif
 
+#ifdef __cplusplus
+}
+#endif
 #endif

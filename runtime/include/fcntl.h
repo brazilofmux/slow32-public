@@ -1,6 +1,10 @@
 #ifndef SLOW32_FCNTL_H
 #define SLOW32_FCNTL_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define O_RDONLY 0x01
 #define O_WRONLY 0x02
 #define O_RDWR   0x03
@@ -10,4 +14,7 @@
 
 int open(const char *pathname, int flags, ...);
 
+#ifdef __cplusplus
+}
+#endif
 #endif
