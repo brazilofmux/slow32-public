@@ -36,6 +36,12 @@ SLOW32TargetMachine::SLOW32TargetMachine(const Target &T, const Triple &TT,
       TLOF(std::make_unique<TargetLoweringObjectFileELF>()),
       Subtarget(TT, std::string(CPU), std::string(FS), *this) {
   initAsmInfo();
+  // An epilogue in the middle of a function (a tail call's, an early
+  // return's) restores lr and the CFA in the CFI, and CFI is read by
+  // address: every block placed after it was described as frameless.
+  // The unwinder then stepped from a throw site there back to itself.
+  // CFIFixup wraps such epilogues in .cfi_remember_state/restore_state.
+  setCFIFixup(true);
 }
 
 namespace {

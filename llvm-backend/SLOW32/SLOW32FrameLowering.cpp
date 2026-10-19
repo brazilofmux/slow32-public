@@ -224,6 +224,29 @@ void SLOW32FrameLowering::emitPrologue(MachineFunction &MF,
       CFIBuilder.buildDefCFA(FramePtr, 0);
     }
   }
+
+  // The callee-saved registers PEI spills (r30/r31 are the fixed slots
+  // above and never in this list) follow the prologue, one store each.
+  // Describe where they went: an unwinder restores them from these slots
+  // for the caller's frame, and a landing pad reading a callee-saved
+  // register -- a loop counter, the catch selector -- otherwise sees the
+  // value the innermost frame left in it.  Object offsets are from the
+  // incoming SP, which is the CFA.
+  if (needsDwarfCFI(MF)) {
+    const MachineFrameInfo &MFI = MF.getFrameInfo();
+    const std::vector<CalleeSavedInfo> &CSI = MFI.getCalleeSavedInfo();
+    if (!CSI.empty()) {
+      MachineBasicBlock::iterator After = MBBI;
+      for (size_t I = 0; I < CSI.size() && After != MBB.end() &&
+                         After->mayStore();
+           ++I)
+        ++After;
+      CFIInstBuilder CFIBuilder(MBB, After, MachineInstr::FrameSetup);
+      for (const CalleeSavedInfo &CS : CSI)
+        CFIBuilder.buildOffset(CS.getReg(),
+                               MFI.getObjectOffset(CS.getFrameIdx()));
+    }
+  }
 }
 
 void SLOW32FrameLowering::emitEpilogue(MachineFunction &MF,

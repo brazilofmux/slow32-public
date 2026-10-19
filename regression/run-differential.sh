@@ -182,7 +182,7 @@ run_test() {
     TOTAL=$((TOTAL + 1))
     printf "%-34s " "$test_name:"
 
-    if [ ! -f "$test_path/test.c" ] && [ ! -f "$test_path/test.s" ]; then
+    if [ ! -f "$test_path/test.c" ] && [ ! -f "$test_path/test.cpp" ] && [ ! -f "$test_path/test.s" ]; then
         # Same rule as run-tests.sh: a case directory with no source is a
         # broken case, not an absent one, and a yellow line is not loud
         # enough to notice.

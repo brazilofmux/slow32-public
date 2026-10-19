@@ -56,3 +56,18 @@ const struct type_info_fundamental _ZTId = { 0, "d" };     /* double */
 const struct type_info_pointer _ZTIPv  = { 0, "Pv",  0, (void *)&_ZTIv };  /* void* */
 const struct type_info_pointer _ZTIPc  = { 0, "Pc",  0, (void *)&_ZTIc };  /* char* */
 const struct type_info_pointer _ZTIPKc = { 0, "PKc", 0, (void *)&_ZTIc };  /* const char* */
+
+/* The vtables a class's type_info points into (Itanium ABI, offset +8).
+ * Every class type thrown or caught references one of them, even under
+ * -fno-rtti; without them a class could not be thrown at all.  Only
+ * their addresses matter here: matching is by type_info address, so a
+ * class is caught by its own type, not by a base class -- that needs
+ * the hierarchy walk RTTI's __si/__vmi_class_type_info describe.
+ * Zero-filled, which a dynamic_cast or typeid would trip over; those
+ * are RTTI proper and not provided. */
+const void *_ZTVN10__cxxabiv117__class_type_infoE[4];      /* no bases */
+const void *_ZTVN10__cxxabiv120__si_class_type_infoE[4];   /* one public base */
+const void *_ZTVN10__cxxabiv121__vmi_class_type_infoE[4];  /* the rest */
+const void *_ZTVN10__cxxabiv119__pointer_type_infoE[4];    /* T* */
+const void *_ZTVN10__cxxabiv116__enum_type_infoE[4];       /* enums */
+

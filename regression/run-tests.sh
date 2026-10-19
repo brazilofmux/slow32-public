@@ -17,6 +17,7 @@ LLVM_BIN="${LLVM_BIN:-$HOME/llvm-project/build/bin}"
 # Tools
 CLANG="${CLANG:-$LLVM_BIN/clang}"
 LLC="${LLC:-$LLVM_BIN/llc}"
+CLANGXX="${CLANGXX:-$LLVM_BIN/clang++}"
 ASSEMBLER="${ASSEMBLER:-$SLOW32_BASE/tools/assembler/slow32asm}"
 LINKER="${LINKER:-$SLOW32_BASE/tools/linker/s32-ld}"
 EMULATOR="${EMULATOR:-$SLOW32_BASE/tools/emulator/slow32}"
@@ -88,6 +89,8 @@ run_test() {
     local asm_source=""
     if [ -f "$test_path/test.c" ]; then
         asm_source="c"
+    elif [ -f "$test_path/test.cpp" ]; then
+        asm_source="cpp"
     elif [ -f "$test_path/test.s" ]; then
         asm_source="s"
     else
@@ -96,7 +99,7 @@ run_test() {
         # This used to be a SKIP, which is how four cases sat inert --
         # .gitignore's blanket "test*.s" swallowed their sources and the
         # runner reported nothing louder than a yellow line.
-        echo -e "${RED}FAIL${NC} (no test.c or test.s -- source missing?)"
+        echo -e "${RED}FAIL${NC} (no test.c, test.cpp or test.s -- source missing?)"
         FAILED=$((FAILED + 1))
         return
     fi
@@ -117,7 +120,7 @@ run_test() {
         done < "$test_path/args.txt"
     fi
 
-    if [ "$asm_source" = "c" ]; then
+    if [ "$asm_source" = "c" ] || [ "$asm_source" = "cpp" ]; then
         if [ $HAVE_CLANG -eq 0 ] || [ $HAVE_LLC -eq 0 ]; then
             echo -e "${YELLOW}SKIP${NC} (clang/llc unavailable)"
             SKIPPED=$((SKIPPED + 1))
@@ -133,10 +136,21 @@ run_test() {
             clang_opt="$(tr -d ' \n' < "$test_path/clang-opt")"
         fi
 
-        # Compile: C -> LLVM IR (with our runtime includes)
-        if ! $CLANG -target slow32-unknown-none -S -emit-llvm $clang_opt \
+        # Compile: C -> LLVM IR (with our runtime includes).  A test.cpp is
+        # freestanding C++ with exceptions: no C++ library, the runtime's
+        # cxxabi/unwinder underneath, RTTI off (it is not provided).  The one
+        # exception test before these checked in its assembly, so it never
+        # ran the compiler of the day -- which is how a resume with no
+        # callee, CFI without the callee-saved registers and a broken
+        # action-chain walk went unseen (2026-10-19).
+        local cc=("$CLANG") src="$test_path/test.c" langflags=()
+        if [ "$asm_source" = "cpp" ]; then
+            cc=("$CLANGXX"); src="$test_path/test.cpp"
+            langflags=(-fexceptions -fcxx-exceptions -fno-rtti -nostdinc++ -funwind-tables)
+        fi
+        if ! "${cc[@]}" -target slow32-unknown-none -S -emit-llvm $clang_opt "${langflags[@]}" \
              -I"$SLOW32_BASE/runtime/include" \
-             "$test_path/test.c" -o "$result_path/test.ll" 2>"$result_path/compile.err"; then
+             "$src" -o "$result_path/test.ll" 2>"$result_path/compile.err"; then
             echo -e "${RED}FAIL${NC} (compile)"
             FAILED=$((FAILED + 1))
             return

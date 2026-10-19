@@ -288,6 +288,7 @@ _Unwind_Reason_Code __gxx_personality_v0(
     for (;;) {
         const uint8_t *ap = action_record;
         int32_t ar_filter = read_sleb128(&ap);
+        const uint8_t *disp_at = ap;  /* the displacement is relative to itself */
         int32_t ar_disp = read_sleb128(&ap);
 
         if (ar_filter > 0) {
@@ -328,7 +329,11 @@ _Unwind_Reason_Code __gxx_personality_v0(
         /* ar_filter < 0 = exception specification (not used by modern C++) */
 
         if (ar_disp == 0) break; /* End of action chain */
-        action_record += ar_disp;
+        /* Itanium ABI: the next record is ar_disp bytes from the
+         * displacement field, not from the record's start.  Counting from
+         * the start landed one filter's length short, on a garbled record,
+         * and a try with two handlers where the second matched spun here. */
+        action_record = disp_at + ar_disp;
     }
 
     return _URC_CONTINUE_UNWIND;

@@ -157,6 +157,15 @@ void __cxa_deleted_virtual(void) {
     __builtin_trap();
 }
 
+/*
+ * std::terminate() (_ZSt9terminatev) - what clang's __clang_call_terminate
+ * calls when an exception escapes a noexcept function or a destructor
+ * during unwinding.  There is no terminate handler to install; it aborts.
+ */
+void _ZSt9terminatev(void) {
+    abort();
+}
+
 /* ========================================================================
  * Operator New / Delete
  *

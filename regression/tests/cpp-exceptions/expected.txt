@@ -1,0 +1,10 @@
+throw int, catch int               PASS
+no throw, no catch                 PASS
+unwind 5 frames, run destructors   PASS
+rethrow with throw;                PASS
+second handler by type             PASS
+catch (...)                        PASS
+outer try catches what inner skips PASS
+throw through a function pointer   PASS
+catch class by its own type        PASS
+0 failed

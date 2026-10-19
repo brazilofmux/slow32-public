@@ -101,6 +101,11 @@ static inline void setSLOW32LibcallImpls(LibcallSink &Sink) {
   Sink.setLibcallImpl(RTLIB::MEMCPY, RTLIB::impl_memcpy);
   Sink.setLibcallImpl(RTLIB::MEMMOVE, RTLIB::impl_memmove);
   Sink.setLibcallImpl(RTLIB::MEMSET, RTLIB::impl_memset);
+
+  // DWARF EH: a landing pad that only cleans up ends in `resume`, which
+  // DwarfEHPrepare lowers to this call (runtime/unwind_asm.s).  Unbound,
+  // it came out as a call to an undefined "__unnamed_N".
+  Sink.setLibcallImpl(RTLIB::UNWIND_RESUME, RTLIB::impl__Unwind_Resume);
 }
 
 } // namespace llvm

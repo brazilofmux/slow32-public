@@ -1,0 +1,12 @@
+global ctors before main     PASS
+virtual dispatch             PASS
+virtual destructor chain     PASS
+multiple inheritance         PASS
+template vector + lambda sort PASS
+lambda capture by reference  PASS
+template recursion (constexpr) PASS
+value type, 64-bit math      PASS
+RAII reverse destruction     PASS
+new[] + double math          PASS
+function-local static        PASS
+0 failed
