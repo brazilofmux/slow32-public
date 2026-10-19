@@ -1,0 +1,24 @@
+string short and long                  PASS
+string find/rfind                      PASS
+to_string + append                     PASS
+stoi / stod                            PASS
+stoi throws invalid_argument           PASS
+stoi throws out_of_range               PASS
+vector::at throws out_of_range         PASS
+runtime_error carries a long message   PASS
+operator new throws bad_alloc          PASS
+nothrow new returns null               PASS
+current_exception / rethrow_exception  PASS
+make_exception_ptr                     PASS
+nested exceptions                      PASS
+uncaught_exceptions during unwind      PASS
+unordered_map                          PASS
+unordered_set rehashes                 PASS
+sort strings by a lambda               PASS
+to_chars int                           PASS
+to_chars double (shortest)             PASS
+from_chars double                      PASS
+std::format                            PASS
+system_clock is after 2020             PASS
+error_code                             PASS
+0 failed

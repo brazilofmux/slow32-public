@@ -254,7 +254,8 @@ static const char *safe_string(const input_file_t *inf, uint32_t offset) {
 static void register_object_globals_for_archive(linker_state_t *ld,
                                                 const input_file_t *inf) {
     for (uint32_t j = 0; j < inf->header.nsymbols; j++) {
-        if (inf->symbols[j].binding != S32O_BIND_GLOBAL) {
+        if (inf->symbols[j].binding != S32O_BIND_GLOBAL &&
+            inf->symbols[j].binding != S32O_BIND_WEAK) {
             continue;
         }
         const char *name = safe_string(inf, inf->symbols[j].name_offset);
@@ -2095,6 +2096,13 @@ static void apply_relocations(linker_state_t *ld) {
         relocation_entry_t *rel = &ld->relocations[i];
         symbol_entry_t *sym = &ld->symbols[rel->symbol_idx];
         
+        // An undefined weak reference resolves to 0, as in ELF (code tests
+        // the address before calling): an absolute linker-defined symbol.
+        if (sym->defined_in_file == -1 && sym->is_weak) {
+            sym->defined_in_file = LINKER_DEFINED_FILE;
+            sym->value = 0;
+            sym->section_idx = -1;
+        }
         // Check if symbol is resolved (-1 = undefined; LINKER_DEFINED_FILE is valid)
         if (sym->defined_in_file == -1) {
             fprintf(stderr, "Error: Undefined symbol '%s'\n", sym->name);

@@ -33,6 +33,8 @@ unsigned long strtoul(const char *nptr, char **endptr, int base);
 long long strtoll(const char *nptr, char **endptr, int base);
 unsigned long long strtoull(const char *nptr, char **endptr, int base);
 double strtod(const char *nptr, char **endptr);
+long double strtold(const char *nptr, char **endptr);   /* long double is double */
+float strtof(const char *nptr, char **endptr);
 double atof(const char *nptr);
 
 void qsort(void *base, size_t nmemb, size_t size,
@@ -49,6 +51,9 @@ typedef struct { long long quot; long long rem; } lldiv_t;
 div_t div(int numer, int denom);
 ldiv_t ldiv(long numer, long denom);
 lldiv_t lldiv(long long numer, long long denom);
+/* C11: ALIGNMENT a power of two; the block is freed with free() */
+void *aligned_alloc(size_t alignment, size_t size);
+int posix_memalign(void **memptr, size_t alignment, size_t size);
 
 int rand(void);
 void srand(unsigned int seed);

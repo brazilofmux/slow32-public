@@ -28,6 +28,8 @@ CRT0="$SLOW32_BASE/runtime/crt0.s32o"
 LIBC_DEBUG="$SLOW32_BASE/runtime/libc_debug.s32a"
 LIBC_MMIO="$SLOW32_BASE/runtime/libc_mmio.s32a"
 LIBS32="$SLOW32_BASE/runtime/libs32.s32a"
+# The runtime's C++ ABI; a C program pulls nothing from it
+LIBS32CXX="$SLOW32_BASE/runtime/libs32cxx.s32a"
 
 # Test configuration
 TEST_DIR="$(dirname "$0")/tests"
@@ -219,7 +221,7 @@ run_test() {
 
     if ! $LINKER -o "$result_path/test.s32x" \
          "${linker_args[@]}" \
-         $CRT0 "$result_path/test.s32o" "${extra_objs[@]}" "$libc_archive" $LIBS32 \
+         $CRT0 "$result_path/test.s32o" "${extra_objs[@]}" "$LIBS32CXX" "$libc_archive" $LIBS32 \
          2>"$result_path/link.err"; then
         echo -e "${RED}FAIL${NC} (link)"
         FAILED=$((FAILED + 1))
@@ -280,8 +282,10 @@ run_test() {
         env "${dump_env[@]}" timeout $run_timeout $EMULATOR "$result_path/test.s32x" "${run_args[@]}" \
              < <(bash "$test_path/stdin.sh") >"$result_path/output_full.txt" 2>&1 || emu_exit=$?
     else
+        # stdin is /dev/null, not the harness's own: a test that reads it
+        # (getchar at end of input) hung when that was a socket.
         env "${dump_env[@]}" timeout $run_timeout $EMULATOR "$result_path/test.s32x" "${run_args[@]}" \
-             >"$result_path/output_full.txt" 2>&1 || emu_exit=$?
+             </dev/null >"$result_path/output_full.txt" 2>&1 || emu_exit=$?
     fi
     if [ -n "$viewer_pid" ]; then
         wait "$viewer_pid" 2>/dev/null || true
@@ -332,14 +336,17 @@ run_test() {
         if [ -f "$test_path/expected.txt" ]; then
             # Strip trailing whitespace and newlines for comparison.
             # Fault PC is a code address that moves whenever the linked
-            # runtime changes (GitHub issue 68).  The signal on the
+            # runtime changes (GitHub issue 68), and SP moves with the
+            # layout: s32-ld gives a program under 4KB of code the compact
+            # layout, stack low in memory, and the runtime shrinking put
+            # four of these over that line (2026-10-19).  The signal on the
             # bug-dbt-intrinsic-bounds* tests is the fault address, size,
-            # and direction; SP has been stable, PC has not.
+            # and direction.
             tr -d '\n' < "$result_path/output.txt" \
-                | sed -E 's/PC=0x[0-9A-Fa-f]+/PC=*/g' \
+                | sed -E 's/PC=0x[0-9A-Fa-f]+/PC=*/g; s/SP=0x[0-9A-Fa-f]+/SP=*/g' \
                 > "$result_path/output_stripped.txt"
             tr -d '\n' < "$test_path/expected.txt" \
-                | sed -E 's/PC=0x[0-9A-Fa-f]+/PC=*/g' \
+                | sed -E 's/PC=0x[0-9A-Fa-f]+/PC=*/g; s/SP=0x[0-9A-Fa-f]+/SP=*/g' \
                 > "$result_path/expected_stripped.txt"
 
             if diff -q "$result_path/expected_stripped.txt" "$result_path/output_stripped.txt" >/dev/null 2>&1; then

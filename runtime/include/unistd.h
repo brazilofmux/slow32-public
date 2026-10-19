@@ -42,6 +42,10 @@ int s32_execv(const char *path, char *const argv[]);
  * (a socket or file). guest_fd < 0 means inherit the parent's stdio. */
 int s32_execv_fd(const char *path, char *const argv[], int guest_fd);
 
+/* The machine has no way to ask whether a descriptor is a terminal, so
+ * isatty() says it is not: 0, with errno ENOTTY. */
+int isatty(int fd);
+
 #ifdef __cplusplus
 }
 #endif

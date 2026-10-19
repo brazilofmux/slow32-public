@@ -15,6 +15,7 @@ RUNTIME="$SLOW32_ROOT/runtime"
 CRT0="$RUNTIME/crt0.s32o"
 LIBC="$RUNTIME/libc_debug.s32a"
 LIBS32="$RUNTIME/libs32.s32a"
+LIBS32CXX="$RUNTIME/libs32cxx.s32a"   # the C++ run time (guards, new/delete, ...)
 
 # C++ flags
 CPP_FLAGS="-target slow32-unknown-none -fno-exceptions -fno-rtti -nostdinc++ -O1"
@@ -55,7 +56,7 @@ for src in "$SCRIPT_DIR"/*.cpp; do
 
     # Link
     x_file="/tmp/${name}.s32x"
-    if ! "$LD" -o "$x_file" "$CRT0" "$o_file" "$LIBC" "$LIBS32" 2>/dev/null; then
+    if ! "$LD" -o "$x_file" "$CRT0" "$o_file" "$LIBS32CXX" "$LIBC" "$LIBS32" 2>/dev/null; then
         echo "FAIL (link)"
         ((failed++))
         continue

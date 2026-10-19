@@ -1,21 +1,35 @@
 #!/bin/bash
-# libc++ (LLVM's C++ standard library) for SLOW-32, from the llvm-project
-# tree the backend lives in -- the same LLVM, so no second pin to track.
+# libc++ (LLVM's C++ standard library) and libc++abi (its C++ ABI library:
+# exceptions, RTTI, exception_ptr, new/delete, the std exception classes)
+# for SLOW-32, from the llvm-project tree the backend lives in -- the same
+# LLVM, so no second pin to track.
 #
-#   scripts/build-libcxx.sh            configure and generate the headers
+#   scripts/build-libcxx.sh            configure, build, install
 #
-# Output: $BUILD/include/c++/v1, the header tree C++ programs compile
-# against, ahead of runtime/include:
+# Output, under $BUILD/install:
+#   include/c++/v1   the header tree C++ programs compile against, ahead
+#                    of runtime/include
+#   lib/libc++.a     the compiled half of libc++ } s32-ar archives, linked
+#   lib/libc++abi.a  libc++abi                   } before the C library:
 #
 #   clang++ -target slow32-unknown-none -nostdinc++ \
-#       -isystem $BUILD/include/c++/v1 -isystem runtime/include \
-#       -fexceptions -frtti ...
+#       -isystem $BUILD/install/include/c++/v1 -isystem runtime/include \
+#       -fexceptions -frtti -O2 -S -emit-llvm prog.cpp ...
+#   s32-ld --mmio 64K runtime/crt0.s32o prog.s32o \
+#       $BUILD/install/lib/libc++.a $BUILD/install/lib/libc++abi.a \
+#       runtime/libc_mmio.s32a runtime/libs32.s32a
+#
+# Not with runtime/libs32cxx.s32a: that is the runtime's own C++ ABI, for
+# freestanding C++ without libc++, and defines what libc++abi defines.
+# libc++abi unwinds with the runtime's DWARF unwinder (unwind*.c in libc).
 #
 # Configured freestanding: no threads, monotonic clock, filesystem, random
-# device, locales or wide characters; type_info compared by name, as
-# runtime/cxa_typeinfo.c does; the C++ ABI (exceptions, RTTI, new/delete)
-# is the runtime's own (LIBCXX_CXX_ABI=none).  The headers are not in git;
-# this regenerates them.  The compiled half (libc++.a) is not built yet.
+# device, locales or wide characters; type_info compared by name.  Built at
+# -O2, like the runtime, and archived with s32-ar (s32-ld reads its
+# archives, not ar's) -- the archives keep libc++'s .a names.
+# None of this is in git; the script regenerates it.
+#
+# The compilers, archiver and target come from scripts/slow32-toolchain.cmake.
 #
 # Env: LLVM_PROJECT (default ~/llvm-project), LLVM_BIN (default
 # $LLVM_PROJECT/build/bin), BUILD (default $LLVM_PROJECT/build-slow32-libcxx).
@@ -23,22 +37,22 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LLVM_PROJECT="${LLVM_PROJECT:-$HOME/llvm-project}"
-LLVM_BIN="${LLVM_BIN:-$LLVM_PROJECT/build/bin}"
+export LLVM_BIN="${LLVM_BIN:-$LLVM_PROJECT/build/bin}"
 BUILD="${BUILD:-$LLVM_PROJECT/build-slow32-libcxx}"
 
 # The clang driver assembles with slow32asm and links with s32-ld, by name.
 export PATH="$ROOT/tools/assembler:$ROOT/tools/linker:$ROOT/tools/utilities:$PATH"
 
 cmake -G Ninja -S "$LLVM_PROJECT/runtimes" -B "$BUILD" \
-    -DLLVM_ENABLE_RUNTIMES=libcxx \
-    -DCMAKE_C_COMPILER="$LLVM_BIN/clang" -DCMAKE_CXX_COMPILER="$LLVM_BIN/clang++" \
-    -DCMAKE_C_COMPILER_TARGET=slow32-unknown-none \
-    -DCMAKE_CXX_COMPILER_TARGET=slow32-unknown-none \
-    -DCMAKE_SYSTEM_NAME=Generic -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
-    -DCMAKE_C_FLAGS="-isystem $ROOT/runtime/include" \
-    -DCMAKE_CXX_FLAGS="-isystem $ROOT/runtime/include" \
+    -DCMAKE_TOOLCHAIN_FILE="$ROOT/scripts/slow32-toolchain.cmake" \
+    -DLLVM_ENABLE_RUNTIMES="libcxx;libcxxabi" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_FLAGS_RELEASE="-O2 -DNDEBUG" -DCMAKE_CXX_FLAGS_RELEASE="-O2 -DNDEBUG" \
     -DCMAKE_INSTALL_PREFIX="$BUILD/install" \
-    -DLIBCXX_ENABLE_SHARED=OFF -DLIBCXX_ENABLE_STATIC=ON -DLIBCXX_CXX_ABI=none \
+    -DLIBCXX_ENABLE_SHARED=OFF -DLIBCXX_ENABLE_STATIC=ON -DLIBCXX_CXX_ABI=libcxxabi \
+    -DLIBCXXABI_ENABLE_SHARED=OFF -DLIBCXXABI_ENABLE_STATIC=ON \
+    -DLIBCXXABI_USE_LLVM_UNWINDER=OFF -DLIBCXXABI_ENABLE_THREADS=OFF \
+    -DLIBCXXABI_BAREMETAL=ON -DLIBCXXABI_INCLUDE_TESTS=OFF \
     -DLIBCXX_ENABLE_THREADS=OFF -DLIBCXX_ENABLE_MONOTONIC_CLOCK=OFF \
     -DLIBCXX_ENABLE_FILESYSTEM=OFF -DLIBCXX_ENABLE_RANDOM_DEVICE=OFF \
     -DLIBCXX_ENABLE_LOCALIZATION=OFF -DLIBCXX_ENABLE_WIDE_CHARACTERS=OFF \
@@ -46,5 +60,6 @@ cmake -G Ninja -S "$LLVM_PROJECT/runtimes" -B "$BUILD" \
     -DLIBCXX_INCLUDE_TESTS=OFF -DLIBCXX_INCLUDE_BENCHMARKS=OFF \
     -DLIBCXX_TYPEINFO_COMPARISON_IMPLEMENTATION=2 -DLIBCXX_HARDENING_MODE=none
 
-ninja -C "$BUILD" generate-cxx-headers
-echo "headers: $BUILD/include/c++/v1"
+ninja -C "$BUILD" install-cxx install-cxxabi
+echo "headers: $BUILD/install/include/c++/v1"
+echo "libraries: $BUILD/install/lib/libc++.a $BUILD/install/lib/libc++abi.a"

@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stddef.h>
 #include <string.h>
+#include <stdint.h>
 
 // Linker symbols for heap boundaries
 extern char __heap_start[];
@@ -240,6 +241,40 @@ void free(void *ptr) {
     }
     
     add_to_free_list(block);
+}
+
+/* C11 aligned_alloc.  For more than the 8 bytes malloc already gives:
+ * allocate enough to find an aligned address at least a minimum block in,
+ * then split the slack in front off as a block of its own and free it, so
+ * that the aligned pointer heads an ordinary block and free() takes it. */
+void *aligned_alloc(size_t alignment, size_t size) {
+    if (alignment == 0 || (alignment & (alignment - 1)) != 0) return NULL;
+    if (alignment <= ALIGNMENT) return malloc(size);
+    if (size > (size_t)-1 - alignment - MIN_BLOCK_SIZE) return NULL;
+
+    char *raw = malloc(size + alignment + MIN_BLOCK_SIZE);
+    if (!raw) return NULL;
+    header_t *block = (header_t *)(raw - HEADER_SIZE);
+    size_t total = get_size(block);
+
+    uintptr_t want = ((uintptr_t)raw + MIN_BLOCK_SIZE + alignment - 1) & ~(uintptr_t)(alignment - 1);
+    size_t lead = (size_t)(want - (uintptr_t)raw);      /* a multiple of 8, >= MIN_BLOCK_SIZE */
+
+    header_t *aligned = (header_t *)((char *)block + lead);
+    aligned->size = (total - lead) | ALLOCATED_MASK;
+    set_footer(aligned, total - lead);
+    block->size = lead | ALLOCATED_MASK;
+    set_footer(block, lead);
+    free((char *)block + HEADER_SIZE);                  /* the slack */
+    return (void *)want;
+}
+
+int posix_memalign(void **memptr, size_t alignment, size_t size) {
+    if (alignment < sizeof(void *) || (alignment & (alignment - 1)) != 0) return 22;  /* EINVAL */
+    void *p = aligned_alloc(alignment, size);
+    if (!p) return 12;                                                                 /* ENOMEM */
+    *memptr = p;
+    return 0;
 }
 
 void *calloc(size_t nmemb, size_t size) {

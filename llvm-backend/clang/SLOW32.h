@@ -136,6 +136,19 @@ public:
 
   std::string_view getClobbers() const override { return ""; }
 
+  // __builtin_eh_return_data_regno: the registers a landing pad receives
+  // the exception and the selector in -- r3 and r4, as the backend's
+  // getExceptionPointerRegister/getExceptionSelectorRegister say (DWARF
+  // numbers are register numbers).  The default, -1, made libc++abi's
+  // personality write them nowhere: every catch missed its selector.
+  int getEHDataRegisterNumber(unsigned RegNo) const override {
+    if (RegNo == 0)
+      return 3;
+    if (RegNo == 1)
+      return 4;
+    return -1;
+  }
+
   BuiltinVaListKind getBuiltinVaListKind() const override {
     return VoidPtrBuiltinVaList;
   }

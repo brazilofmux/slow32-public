@@ -9,3 +9,12 @@ int __s32_query_tz(time_t when, long *gmtoff_sec, int *is_dst, char abbrev[8]) {
     (void)abbrev;
     return -1;
 }
+
+/* No clock without MMIO: gettimeofday() fails, as clock_gettime would. */
+#include <errno.h>
+#include <sys/time.h>
+int gettimeofday(struct timeval *tv, void *tz) {
+    (void)tv; (void)tz;
+    errno = ENOSYS;
+    return -1;
+}

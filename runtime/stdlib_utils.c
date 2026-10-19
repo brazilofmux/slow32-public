@@ -73,6 +73,18 @@ double strtod(const char *nptr, char **endptr) {
     return dtoa_strtod(nptr, endptr);
 }
 
+/* Through double, so it rounds twice: a decimal whose nearest double lies
+ * exactly halfway between two floats can come out one float away from
+ * the nearest.  Correct rounding needs a float parser of its own. */
+float strtof(const char *nptr, char **endptr) {
+    return (float)dtoa_strtod(nptr, endptr);
+}
+
+/* long double is double on SLOW-32 (64 bits, 53-bit mantissa) */
+long double strtold(const char *nptr, char **endptr) {
+    return dtoa_strtod(nptr, endptr);
+}
+
 double atof(const char *nptr) {
     return strtod(nptr, (char **)0);
 }

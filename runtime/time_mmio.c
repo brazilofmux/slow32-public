@@ -5,6 +5,7 @@
 #include "mmio_ring.h"
 #include "time.h"
 #include "unistd.h"
+#include <sys/time.h>
 
 #define S32_NSEC_PER_SEC   1000000000u
 #define S32_NSEC_PER_USEC        1000u
@@ -187,4 +188,16 @@ unsigned int sleep(unsigned int seconds) {
         return (unsigned int)rem.tv_sec;
     }
     return 0u;
+}
+
+/* gettimeofday(): CLOCK_REALTIME in microseconds.  The time zone argument
+ * is obsolete; it must be null or is left untouched. */
+int gettimeofday(struct timeval *tv, void *tz) {
+    struct timespec ts;
+    (void)tz;
+    if (!tv) return 0;
+    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) return -1;
+    tv->tv_sec = ts.tv_sec;
+    tv->tv_usec = (suseconds_t)(ts.tv_nsec / 1000);
+    return 0;
 }

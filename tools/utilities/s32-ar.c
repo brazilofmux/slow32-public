@@ -193,7 +193,9 @@ static symbol_entry_t *build_symbol_index(archive_state_t *state, size_t *out_co
         char *obj_strings = (char *)(member->data + hdr->str_offset);
 
         for (uint32_t i = 0; i < hdr->nsymbols; i++) {
-            if (symbols_in[i].binding == S32O_BIND_GLOBAL && symbols_in[i].section != 0) {
+            // Weak definitions too: a member may be wanted for one alone
+            if ((symbols_in[i].binding == S32O_BIND_GLOBAL ||
+                 symbols_in[i].binding == S32O_BIND_WEAK) && symbols_in[i].section != 0) {
                 // name_offset is untrusted and the string table is not guaranteed
                 // to be NUL-terminated; bound the read to the table extent so a
                 // crafted offset cannot make strdup() over-read past the member.

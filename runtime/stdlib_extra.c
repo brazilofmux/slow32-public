@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <errno.h>
+#include <stdio.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -220,4 +221,11 @@ lldiv_t lldiv(long long numer, long long denom) {
     result.quot = numer / denom;
     result.rem = numer % denom;
     return result;
+}
+
+/* assert()'s failure path (include/assert.h); the message is what the
+ * macro printed itself before. */
+void __s32_assert_fail(const char *expr, const char *file, int line) {
+    printf("Assertion failed: %s, file %s, line %d\n", expr, file, line);
+    abort();
 }

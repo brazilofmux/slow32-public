@@ -67,6 +67,9 @@ typedef _Unwind_Reason_Code (*_Unwind_Personality_Fn)(
 /* Unwinder entry points */
 _Unwind_Reason_Code _Unwind_RaiseException(struct _Unwind_Exception *exc);
 void _Unwind_Resume(struct _Unwind_Exception *exc) __attribute__((noreturn));
+/* Hand an exception back to its owner's cleanup function (an exception
+ * caught by a runtime that did not throw it) */
+void _Unwind_DeleteException(struct _Unwind_Exception *exc);
 
 /* Context accessors (used by personality routines) */
 uint32_t _Unwind_GetGR(struct _Unwind_Context *ctx, int reg);

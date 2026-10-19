@@ -1,0 +1,17 @@
+vector + sort                      PASS
+accumulate                         PASS
+array, reverse, max_element        PASS
+map counts                         PASS
+set from a range                   PASS
+optional                           PASS
+variant + visit                    PASS
+tuple + structured bindings        PASS
+unique_ptr in a vector             PASS
+unique_ptr destroys                PASS
+shared_ptr counts                  PASS
+shared_ptr frees, weak expires     PASS
+std::function                      PASS
+span                               PASS
+bitset                             PASS
+string_view find/substr            PASS
+0 failed

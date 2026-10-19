@@ -220,7 +220,7 @@ done_aug:
 /* Parse an FDE record */
 static int parse_fde(const uint8_t *data, uint32_t length,
                      const uint8_t *eh_frame_start, const cie_info_t *cies,
-                     int num_cies, fde_info_t *fde) {
+                     int num_cies, fde_info_t *fde, cie_info_t *scratch) {
     const uint8_t *p = data;
     const uint8_t *end = data + length;
 
@@ -239,7 +239,17 @@ static int parse_fde(const uint8_t *data, uint32_t length,
             break;
         }
     }
-    if (!fde->cie) return -1;
+    if (!fde->cie) {
+        /* Not among the CIEs parse_eh_frame cached (it keeps MAX_CIES;
+         * every object brings its own CIE, and a program on libc++ has far
+         * more than that): parse this one from the FDE's own pointer, into
+         * the caller's scratch, which lives as long as FDE does. */
+        if (!scratch) return -1;
+        const uint8_t *q = cie_record;
+        uint32_t cie_len = read_u32(&q);
+        if (cie_len == 0 || parse_cie(q, cie_len, scratch) != 0) return -1;
+        fde->cie = scratch;
+    }
 
     fde->pc_begin = read_encoded_ptr(&p, fde->cie->fde_encoding);
     fde->pc_range = read_encoded_ptr(&p, fde->cie->fde_encoding);
@@ -430,7 +440,7 @@ static void parse_eh_frame(void) {
             /* FDE - only parse here if no optimized header available */
             if (g_num_fdes < MAX_FDES) {
                 int rc = parse_fde(p, length, start, g_cies, g_num_cies,
-                              &g_fdes[g_num_fdes]);
+                              &g_fdes[g_num_fdes], NULL);
                 if (rc == 0) {
                     UNWIND_TRACE("[unwind]   FDE #%d: pc=0x%X..0x%X lsda=0x%X\n",
                                  g_num_fdes, g_fdes[g_num_fdes].pc_begin,
@@ -451,6 +461,7 @@ static void parse_eh_frame(void) {
 }
 
 static fde_info_t g_fde_temp;
+static cie_info_t g_cie_temp;      /* g_fde_temp's CIE when not cached */
 
 static fde_info_t *find_fde(uint32_t pc) {
     parse_eh_frame();
@@ -485,8 +496,8 @@ static fde_info_t *find_fde(uint32_t pc) {
                 memcpy(&fde_vaddr, table + found_idx * 8 + 4, 4);
                 const uint8_t *p = (const uint8_t *)(uintptr_t)fde_vaddr;
                 uint32_t length = read_u32(&p);
-                if (parse_fde(p, length, (const uint8_t *)&__eh_frame_start, 
-                              g_cies, g_num_cies, &g_fde_temp) == 0) {
+                if (parse_fde(p, length, (const uint8_t *)&__eh_frame_start,
+                              g_cies, g_num_cies, &g_fde_temp, &g_cie_temp) == 0) {
                     if (pc >= g_fde_temp.pc_begin && pc < g_fde_temp.pc_begin + g_fde_temp.pc_range) {
                         UNWIND_TRACE("[unwind] find_fde(0x%X) -> HDR lookup -> [0x%X..0x%X]\n",
                                      pc, g_fde_temp.pc_begin, g_fde_temp.pc_begin + g_fde_temp.pc_range);
@@ -762,4 +773,9 @@ void _Unwind_Resume_impl(struct _Unwind_Exception *exc, _Unwind_Context *ctx) {
         __builtin_trap();
     }
     /* NOTREACHED — phase2 calls _unwind_restore_context */
+}
+
+void _Unwind_DeleteException(struct _Unwind_Exception *exc) {
+    if (exc && exc->exception_cleanup)
+        exc->exception_cleanup(_URC_FOREIGN_EXCEPTION_CAUGHT, exc);
 }

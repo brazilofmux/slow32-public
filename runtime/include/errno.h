@@ -79,6 +79,8 @@ extern int errno;
 #define ESTALE 116
 #define EDQUOT 122
 #define ECANCELED 125
+
+#define ELAST 125           /* the highest errno value */
 #define EWOULDBLOCK EAGAIN
 #define ENOTSUP EOPNOTSUPP
 #define EDEADLOCK EDEADLK

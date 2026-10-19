@@ -64,10 +64,10 @@ index 64859a318485..9d6b8e3d37a5 100644
      break;
 diff --git a/clang/lib/Driver/ToolChains/SLOW32.cpp b/clang/lib/Driver/ToolChains/SLOW32.cpp
 new file mode 100644
-index 000000000000..271df526723a
+index 000000000000..95ec176682cf
 --- /dev/null
 +++ b/clang/lib/Driver/ToolChains/SLOW32.cpp
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,141 @@
 +//===--- SLOW32.cpp - SLOW-32 ToolChain Implementations ---------*- C++ -*-===//
 +//
 +// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -140,6 +140,11 @@ index 000000000000..271df526723a
 +  AddLinkerInputs(TC, Inputs, Args, CmdArgs, JA);
 +
 +  if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
++    // C++: the runtime's C++ ABI (guards, new/delete, exceptions, RTTI),
++    // before libc, which it calls into.  -nostdlib++ leaves it out for a
++    // program linking libc++ and libc++abi instead.
++    if (TC.getDriver().CCCIsCXX() && !Args.hasArg(options::OPT_nostdlibxx))
++      CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath("libs32cxx.s32a")));
 +    CmdArgs.push_back(Args.MakeArgString(
 +        TC.GetFilePath(DebugIO ? "libc_debug.s32a" : "libc_mmio.s32a")));
 +    CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath("libs32.s32a")));
@@ -179,6 +184,18 @@ index 000000000000..271df526723a
 +  return new tools::SLOW32::Assembler(*this);
 +}
 +
++// C++ gets unwind tables by default: an exception can only pass through a
++// function the unwinder has a table entry for, and one compiled without (a
++// helper that just calls a thrower) ended the search there and terminated
++// the program.  C keeps none unless asked (-funwind-tables), as before.
++ToolChain::UnwindTableLevel
++SLOW32ToolChain::getDefaultUnwindTableLevel(const llvm::opt::ArgList &Args) const {
++  if (getDriver().CCCIsCXX() ||
++      Args.hasArg(options::OPT_fexceptions, options::OPT_fcxx_exceptions))
++    return UnwindTableLevel::Synchronous;
++  return UnwindTableLevel::None;
++}
++
 +Tool *SLOW32ToolChain::buildLinker() const {
 +  return new tools::SLOW32::Linker(*this);
 +}
@@ -194,10 +211,10 @@ index 000000000000..271df526723a
 +}
 diff --git a/clang/lib/Driver/ToolChains/SLOW32.h b/clang/lib/Driver/ToolChains/SLOW32.h
 new file mode 100644
-index 000000000000..b369920c04d3
+index 000000000000..330a5a84c4e7
 --- /dev/null
 +++ b/clang/lib/Driver/ToolChains/SLOW32.h
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,94 @@
 +//===--- SLOW32.h - SLOW-32 ToolChain Implementations -----------*- C++ -*-===//
 +//
 +// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -263,6 +280,10 @@ index 000000000000..b369920c04d3
 +                  const llvm::opt::ArgList &Args);
 +
 +  bool isPICDefault() const override { return false; }
++
++  // C++ gets unwind tables by default (SLOW32.cpp)
++  UnwindTableLevel
++  getDefaultUnwindTableLevel(const llvm::opt::ArgList &Args) const override;
 +  bool isPIEDefault(const llvm::opt::ArgList &Args) const override {
 +    return false;
 +  }
@@ -290,10 +311,10 @@ index 000000000000..b369920c04d3
 +#endif // LLVM_CLANG_LIB_DRIVER_TOOLCHAINS_SLOW32_H
 diff --git a/clang/test/Driver/slow32-toolchain.c b/clang/test/Driver/slow32-toolchain.c
 new file mode 100644
-index 000000000000..4d994e021aa8
+index 000000000000..06178900596d
 --- /dev/null
 +++ b/clang/test/Driver/slow32-toolchain.c
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,54 @@
 +// Check the SLOW-32 driver pipeline: clang -cc1, then slow32asm, then s32-ld.
 +
 +// RUN: %clang -### --target=slow32-unknown-none --sysroot=/s32 %s 2>&1 \
@@ -325,3 +346,26 @@ index 000000000000..4d994e021aa8
 +// NOSTDLIB-NOT: libs32.s32a
 +
 +int main(void) { return 0; }
++
++// C++: the runtime's C++ ABI before libc, and unwind tables by default.
++// RUN: %clangxx -### --target=slow32-unknown-none --sysroot=/s32 %s 2>&1 \
++// RUN:   | FileCheck --check-prefix=CXX %s
++// CXX: "-cc1"
++// CXX-SAME: "-funwind-tables=1"
++// CXX: s32-ld
++// CXX-SAME: crt0.s32o
++// CXX-SAME: libs32cxx.s32a
++// CXX-SAME: libc_mmio.s32a
++
++// -nostdlib++: a program on libc++/libc++abi leaves the runtime's out.
++// RUN: %clangxx -### --target=slow32-unknown-none --sysroot=/s32 -nostdlib++ %s \
++// RUN:   2>&1 | FileCheck --check-prefix=NOSTDLIBXX %s
++// NOSTDLIBXX: s32-ld
++// NOSTDLIBXX-NOT: libs32cxx.s32a
++// NOSTDLIBXX-SAME: libc_mmio.s32a
++
++// C keeps neither.
++// RUN: %clang -### --target=slow32-unknown-none --sysroot=/s32 %s 2>&1 \
++// RUN:   | FileCheck --check-prefix=CNOCXX %s
++// CNOCXX-NOT: "-funwind-tables=
++// CNOCXX-NOT: libs32cxx.s32a
