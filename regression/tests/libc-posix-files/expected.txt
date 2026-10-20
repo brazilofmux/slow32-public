@@ -1,0 +1,14 @@
+mkdir: 0
+truncate: 0
+size after: 3
+realpath: ok absolute=1 tail=1
+realpath missing: null enoent=1
+realpath malloc: 1
+readlink file: -1 einval=1
+pathconf: 1 1
+chmod same mode: 0
+fseeko: 0 ftello: 2 getc: c
+remove full dir: 0
+remove file: 0
+remove dir: 0
+gone: 1

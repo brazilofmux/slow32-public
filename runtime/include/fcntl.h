@@ -12,6 +12,12 @@ extern "C" {
 #define O_CREAT  0x08
 #define O_TRUNC  0x10
 
+/* Accepted and ignored: a file here never blocks, and nothing inherits a
+ * descriptor across s32_execv.  open() strips them before the machine
+ * sees the flags (it refuses bits it does not know). */
+#define O_NONBLOCK 0x0800
+#define O_CLOEXEC  0x80000
+
 int open(const char *pathname, int flags, ...);
 
 #ifdef __cplusplus

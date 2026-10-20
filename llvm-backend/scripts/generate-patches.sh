@@ -103,16 +103,18 @@ else
 fi
 
 # Summary
-# 6. libc++ (locale support header for the runtime's POSIX 2008 locales)
+# 6. libc++ (the locale support header for the runtime's POSIX 2008
+#    locales; std::filesystem's remove_all by path, there being no openat)
 echo "6. Generating libc++ patch..."
 git diff $BASE HEAD -- \
     libcxx/include/__locale_dir/support/slow32.h \
     libcxx/include/__locale_dir/locale_base_api.h \
     libcxx/include/CMakeLists.txt \
     libcxx/include/module.modulemap.in \
-    > "$PATCHES_DIR/06-libcxx-locale.patch" 2>/dev/null || true
-lines=$(wc -l < "$PATCHES_DIR/06-libcxx-locale.patch")
-echo "   Created: 06-libcxx-locale.patch ($lines lines)"
+    libcxx/src/filesystem/operations.cpp \
+    > "$PATCHES_DIR/06-libcxx.patch" 2>/dev/null || true
+lines=$(wc -l < "$PATCHES_DIR/06-libcxx.patch")
+echo "   Created: 06-libcxx.patch ($lines lines)"
 
 echo ""
 echo "Patch generation complete!"

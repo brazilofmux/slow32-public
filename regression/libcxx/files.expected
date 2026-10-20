@@ -1,0 +1,28 @@
+path composition PASS
+filename / stem / extension PASS
+parent_path PASS
+lexically_normal PASS
+replace_extension PASS
+create_directories PASS
+is_directory PASS
+ofstream writes PASS
+ifstream reads PASS
+file_size PASS
+append mode PASS
+fstream read and write PASS
+binary round trip PASS
+missing file does not open PASS
+copy_file PASS
+rename PASS
+directory_iterator PASS
+recursive_directory_iterator PASS
+remove a file PASS
+remove what is not there PASS
+current_path is absolute PASS
+absolute PASS
+canonical PASS
+current_path changes PASS
+error_code for a missing file PASS
+filesystem_error for a missing file PASS
+remove_all PASS
+0 failed

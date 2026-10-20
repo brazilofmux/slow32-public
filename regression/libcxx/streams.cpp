@@ -1,7 +1,7 @@
 // libc++ iostreams and <locale> on SLOW-32, the C locale: cout and the
 // manipulators, string streams both ways, the standard facets, put_time,
-// regex, and a locale name nobody has.  (fstream comes with
-// std::filesystem, not built yet.)
+// regex, and a locale name nobody has.  (fstream is files.cpp's, with
+// std::filesystem.)
 // Self-checking; prints what a host build of this file prints.
 #include <cstdio>
 #include <ctime>

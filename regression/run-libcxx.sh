@@ -78,11 +78,14 @@ for b in "${NAMES[@]}"; do
         fi
         for spec in "${ENGINES[@]}"; do
             name="${spec%%|*}"; path="${spec#*|}"; rc=0
+            # each run in a fresh directory of its own: a program may make
+            # files (files.cpp does), and a run must not see the last one's
+            run_dir="$(mktemp -d "$W/run.XXXXXX")"
             if [ "$name" = qemu ]; then
-                timeout "$TIMEOUT" "$path" -machine slow32-tcg -nographic -monitor none \
-                    -kernel "$o.s32x" </dev/null >"$o.raw" 2>&1 || rc=$?
+                (cd "$run_dir" && timeout "$TIMEOUT" "$path" -machine slow32-tcg -nographic -monitor none \
+                    -kernel "$o.s32x" </dev/null >"$o.raw" 2>&1) || rc=$?
             else
-                timeout "$TIMEOUT" "$path" "$o.s32x" </dev/null >"$o.raw" 2>&1 || rc=$?
+                (cd "$run_dir" && timeout "$TIMEOUT" "$path" "$o.s32x" </dev/null >"$o.raw" 2>&1) || rc=$?
             fi
             normalize < "$o.raw" > "$o.got"
             if [ "$rc" -ne 0 ]; then

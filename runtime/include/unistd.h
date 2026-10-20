@@ -33,6 +33,20 @@ int read(int fd, void *buf, size_t count);
 int write(int fd, const void *buf, size_t count);
 int lseek(int fd, int offset, int whence);
 int ftruncate(int fd, int length);
+int truncate(const char *path, long long length);
+
+/* Links: the machine has no service to make or read one.  link and
+ * symlink fail with ENOSYS; readlink says EINVAL for a path that is not
+ * a link, ENOSYS for one that is (posix_extra.c). */
+int link(const char *oldpath, const char *newpath);
+int symlink(const char *target, const char *linkpath);
+long readlink(const char *path, char *buf, size_t size);
+
+/* pathconf/fpathconf: _PC_PATH_MAX and _PC_NAME_MAX */
+#define _PC_NAME_MAX 3
+#define _PC_PATH_MAX 4
+long pathconf(const char *path, int name);
+long fpathconf(int fd, int name);
 
 /* Run another .s32x via the host emulator and wait. Returns the
  * child's exit code, or -1 on failure. argv[0] is ignored; path is

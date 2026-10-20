@@ -8,9 +8,11 @@
 #include "mmio_ring.h"
 #include "sys/stat.h"
 #include "unistd.h"
+#include <fcntl.h>
 
 int open(const char *pathname, int flags, ...) {
     if (!pathname) return -1;
+    flags &= ~(O_NONBLOCK | O_CLOEXEC);     /* meaningless here (fcntl.h) */
     size_t len = strlen(pathname) + 1;
     if (len > S32_MMIO_DATA_CAPACITY) return -1;
 
@@ -325,6 +327,12 @@ char *getcwd(char *buf, size_t size) {
 }
 
 // remove() is defined in stdio.h and calls unlink()
+/* C/POSIX remove(): a file is unlinked, a directory rmdir'd.  It only
+ * unlinked, and a host's unlink of a directory fails (EPERM on macOS,
+ * EISDIR on Linux), so std::filesystem::remove_all could empty a tree
+ * but not remove it. */
 int remove(const char *pathname) {
+    struct stat st;
+    if (lstat(pathname, &st) == 0 && S_ISDIR(st.st_mode)) return rmdir(pathname);
     return unlink(pathname);
 }

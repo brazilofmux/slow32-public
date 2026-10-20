@@ -51,6 +51,10 @@ typedef struct { long long quot; long long rem; } lldiv_t;
 div_t div(int numer, int denom);
 ldiv_t ldiv(long numer, long denom);
 lldiv_t lldiv(long long numer, long long denom);
+/* The absolute path, with . and .. and repeated slashes resolved; the
+ * path must exist.  Symbolic links are not resolved -- the machine cannot
+ * read one (posix_extra.c). */
+char *realpath(const char *path, char *resolved);
 /* C11: ALIGNMENT a power of two; the block is freed with free() */
 void *aligned_alloc(size_t alignment, size_t size);
 int posix_memalign(void **memptr, size_t alignment, size_t size);

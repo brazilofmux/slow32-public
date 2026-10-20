@@ -63,6 +63,12 @@ int fstat(int fd, struct stat *buf);
 int lstat(const char *path, struct stat *buf);
 int mkdir(const char *pathname, mode_t mode);
 
+/* The machine sets no permissions: chmod and fchmod succeed when the
+ * permission bits asked for are the ones the file has, and fail with
+ * ENOSYS otherwise (posix_extra.c). */
+int chmod(const char *path, mode_t mode);
+int fchmod(int fd, mode_t mode);
+
 #ifdef __cplusplus
 }
 #endif

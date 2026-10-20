@@ -294,3 +294,17 @@ index d22a9ce36d02..9a8c37e62edd 100644
        textual header "__locale_dir/support/llvm_libc.h"
        textual header "__locale_dir/support/netbsd.h"
        textual header "__locale_dir/support/no_locale/conversions.h"
+diff --git a/libcxx/src/filesystem/operations.cpp b/libcxx/src/filesystem/operations.cpp
+index 3d8aa8b48e04..c1e2694874ab 100644
+--- a/libcxx/src/filesystem/operations.cpp
++++ b/libcxx/src/filesystem/operations.cpp
+@@ -821,7 +821,8 @@ bool __remove(const path& p, error_code* ec) {
+ //
+ // The second implementation is used on platforms where `openat()` & friends are available,
+ // and it threads file descriptors through recursive calls to avoid such race conditions.
+-#if defined(_WIN32) || defined(__MVS__)
++// SLOW-32 has no openat(): its file services take paths.
++#if defined(_WIN32) || defined(__MVS__) || defined(__slow32__)
+ #  define REMOVE_ALL_USE_DIRECTORY_ITERATOR
+ #endif
+ 
