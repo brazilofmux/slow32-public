@@ -7,7 +7,9 @@
  * virtuals, new/delete, exceptions, RTTI) is libs32cxx.s32a, cxa_support.c
  * and cxa_*.c -- or libc++abi for programs on libc++.
  *
- * Single-threaded.
+ * Single-threaded: the one thread's thread_local destructors
+ * (__cxa_thread_atexit_impl, libc++abi's __cxa_thread_atexit) run at exit,
+ * before the static ones, as [basic.start.term] orders them.
  */
 
 #include <stdlib.h>
@@ -26,7 +28,11 @@ void *__dso_handle = 0;
  * Static Destructor Registration
  * ======================================================================== */
 
-#define ATEXIT_MAX 64       /* the standard asks for 32 atexit functions; static destructors share the list */
+/* The first ATEXIT_STATIC registrations need no allocation (the standard
+ * asks for 32 atexit functions, and they must not fail for want of
+ * memory); past them the list grows on the heap.  A large C++ program
+ * registers a destructor per static object, far more than 64. */
+#define ATEXIT_STATIC 64
 
 struct atexit_entry {
     void (*destructor)(void *);
@@ -34,8 +40,46 @@ struct atexit_entry {
     void *dso_handle;
 };
 
-static struct atexit_entry atexit_list[ATEXIT_MAX];
-static int atexit_count = 0;
+struct atexit_list {
+    struct atexit_entry *entries;
+    int count, cap;
+};
+
+static struct atexit_entry atexit_static[ATEXIT_STATIC];
+static struct atexit_list exit_list = { atexit_static, 0, ATEXIT_STATIC };
+static struct atexit_entry tls_static[16];
+static struct atexit_list tls_list = { tls_static, 0, 16 };
+
+static int list_add(struct atexit_list *l, struct atexit_entry *first, void (*fn)(void *),
+                    void *arg, void *dso) {
+    if (l->count == l->cap) {
+        int ncap = l->cap * 2;
+        struct atexit_entry *n;
+        if (l->entries == first) {
+            n = malloc((size_t)ncap * sizeof *n);
+            if (n) for (int i = 0; i < l->count; i++) n[i] = first[i];
+        } else {
+            n = realloc(l->entries, (size_t)ncap * sizeof *n);
+        }
+        if (!n) return -1;
+        l->entries = n;
+        l->cap = ncap;
+    }
+    l->entries[l->count].destructor = fn;
+    l->entries[l->count].arg = arg;
+    l->entries[l->count].dso_handle = dso;
+    l->count++;
+    return 0;
+}
+
+/* the last registered first; one that registers another on its way out
+ * has it run next */
+static void list_run(struct atexit_list *l) {
+    while (l->count > 0) {
+        struct atexit_entry e = l->entries[--l->count];
+        if (e.destructor) e.destructor(e.arg);
+    }
+}
 
 /*
  * __cxa_atexit - Register a destructor for a static object
@@ -44,14 +88,16 @@ static int atexit_count = 0;
  * destructor is initialized.
  */
 int __cxa_atexit(void (*destructor)(void *), void *arg, void *dso_handle) {
-    if (atexit_count >= ATEXIT_MAX) {
-        return -1;  /* No space left */
-    }
-    atexit_list[atexit_count].destructor = destructor;
-    atexit_list[atexit_count].arg = arg;
-    atexit_list[atexit_count].dso_handle = dso_handle;
-    atexit_count++;
-    return 0;
+    return list_add(&exit_list, atexit_static, destructor, arg, dso_handle);
+}
+
+/*
+ * __cxa_thread_atexit_impl - Register a destructor for a thread_local
+ * object.  The one thread ends when the program does, so these run at
+ * exit -- first, before the static destructors.
+ */
+int __cxa_thread_atexit_impl(void (*destructor)(void *), void *obj, void *dso_symbol) {
+    return list_add(&tls_list, tls_static, destructor, obj, dso_symbol);
 }
 
 /*
@@ -73,20 +119,17 @@ int atexit(void (*function)(void)) {
  */
 void __cxa_finalize(void *dso_handle) {
     if (dso_handle == 0) {
-        /* exit: the last registered first -- and one that registers
-         * another on its way out has it run next */
-        while (atexit_count > 0) {
-            struct atexit_entry e = atexit_list[--atexit_count];
-            if (e.destructor) e.destructor(e.arg);
-        }
+        /* exit: the thread's thread_local objects, then the statics */
+        list_run(&tls_list);
+        list_run(&exit_list);
         return;
     }
-    for (int i = atexit_count - 1; i >= 0; i--) {
-        if (dso_handle == 0 || atexit_list[i].dso_handle == dso_handle) {
-            if (atexit_list[i].destructor) {
-                atexit_list[i].destructor(atexit_list[i].arg);
-                atexit_list[i].destructor = 0;  /* Mark as called */
-            }
+    for (int i = exit_list.count - 1; i >= 0; i--) {
+        struct atexit_entry *e = &exit_list.entries[i];
+        if (e->dso_handle == dso_handle && e->destructor) {
+            void (*fn)(void *) = e->destructor;
+            e->destructor = 0;  /* Mark as called */
+            fn(e->arg);
         }
     }
 }

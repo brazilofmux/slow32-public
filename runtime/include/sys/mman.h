@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <sys/types.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -20,7 +21,13 @@ extern "C" {
 
 #define MAP_FAILED ((void *)-1)
 
-void *mmap(void *addr, size_t length, int prot, int flags, int fd, uint64_t offset);
+/* The machine has no MMU (mman.c): a mapping is anonymous memory from the
+ * heap, page-aligned and zero-filled.  Executable memory there is none --
+ * code runs only from the code segment, W^X -- so PROT_EXEC is EACCES; a
+ * file cannot be mapped (ENODEV), nor an address chosen (MAP_FIXED,
+ * ENOMEM).  munmap takes back a whole mapping; part of one is EINVAL. */
+#define MAP_ANON MAP_ANONYMOUS
+void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
 int munmap(void *addr, size_t length);
 
 #ifdef __cplusplus

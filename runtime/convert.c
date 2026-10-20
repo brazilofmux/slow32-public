@@ -14,8 +14,9 @@ static const char Digits100[201] =
     "80818283848586878889"
     "90919293949596979899";
 
-const char Digits16L[17] = "0123456789abcdef";
-const char Digits16U[17] = "0123456789ABCDEF";
+/* the implementation's names: a program may have its own Digits16L (one did) */
+const char __s32_digits16l[17] = "0123456789abcdef";
+const char __s32_digits16u[17] = "0123456789ABCDEF";
 
 // 64-bit division helpers provided by builtins.c
 extern uint64_t __udivdi3(uint64_t, uint64_t);
@@ -137,7 +138,7 @@ size_t slow32_ltoa64(int64_t val, char *buf) {
 size_t slow32_utox(unsigned int val, char *buf, bool uppercase) {
     char *p = buf;
     char *q = p;
-    const char *digits = uppercase ? Digits16U : Digits16L;
+    const char *digits = uppercase ? __s32_digits16u : __s32_digits16l;
 
     if (val == 0) {
         *p++ = '0';
@@ -158,7 +159,7 @@ size_t slow32_utox(unsigned int val, char *buf, bool uppercase) {
 size_t slow32_utox64(uint64_t val, char *buf, bool uppercase) {
     char *p = buf;
     char *q = p;
-    const char *digits = uppercase ? Digits16U : Digits16L;
+    const char *digits = uppercase ? __s32_digits16u : __s32_digits16l;
 
     if (val == 0) {
         *p++ = '0';

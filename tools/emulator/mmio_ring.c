@@ -215,6 +215,20 @@ static ssize_t host_read(int host_fd, void *buf, size_t n) {
     return read(host_fd, buf, n);
 }
 
+static int alloc_guest_fd_from(mmio_ring_state_t *mmio, int host_fd, bool owned, uint32_t lowest) {
+    for (uint32_t i = lowest; i < S32_MMIO_MAX_FDS; ++i) {
+        if (mmio->host_fds[i] == -1 && mmio->host_dirs[i] == NULL) {
+            mmio->host_fds[i] = host_fd;
+            mmio->host_fd_owned[i] = owned;
+            mmio->fd_cloexec[i] = false;
+            mmio->fd_types[i] = S32_FD_TYPE_FILE;
+            mmio->host_dirs[i] = NULL;
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
 static int alloc_guest_fd(mmio_ring_state_t *mmio, int host_fd, bool owned) {
     for (uint32_t i = 0; i < S32_MMIO_MAX_FDS; ++i) {
         if (mmio->host_fds[i] == -1 && mmio->host_dirs[i] == NULL) {
@@ -4020,7 +4034,16 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                 mmio_fail(&resp, EBADF);
                 break;
             }
-            if (req->length == S32_F_GETFD) {
+            if (req->length == S32_F_DUPFD) {
+                // the same host object under a new slot, owned (closing it
+                // closes only the duplicate), close-on-exec clear
+                if (req->offset >= S32_MMIO_MAX_FDS) { mmio_fail(&resp, EINVAL); break; }
+                int dup_fd = dup(host_fd);
+                if (dup_fd < 0) { mmio_fail(&resp, errno > 0 ? errno : EIO); break; }
+                int slot = alloc_guest_fd_from(mmio, dup_fd, true, req->offset);
+                if (slot < 0) { close(dup_fd); mmio_fail(&resp, EMFILE); break; }
+                resp.status = (uint32_t)slot;
+            } else if (req->length == S32_F_GETFD) {
                 resp.status = mmio->fd_cloexec[gfd] ? S32_FD_CLOEXEC : 0u;
             } else if (req->length == S32_F_SETFD) {
                 mmio->fd_cloexec[gfd] = (req->offset & S32_FD_CLOEXEC) != 0;

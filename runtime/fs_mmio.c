@@ -26,7 +26,7 @@ int open(const char *pathname, int flags, ...) {
 
 int fcntl(int fd, int cmd, ...) {
     unsigned arg = 0;
-    if (cmd == F_SETFD || cmd == F_SETFL) {
+    if (cmd == F_SETFD || cmd == F_SETFL || cmd == F_DUPFD) {
         va_list ap;
         va_start(ap, cmd);
         arg = (unsigned)va_arg(ap, int);
@@ -35,7 +35,34 @@ int fcntl(int fd, int cmd, ...) {
         errno = EINVAL;
         return -1;
     }
+    if (cmd == F_DUPFD && (int)arg < 0) {
+        errno = EINVAL;
+        return -1;
+    }
     return s32_mmio_request(S32_MMIO_OP_FCNTL, (unsigned)cmd, arg, (unsigned)fd);
+}
+
+int dup(int fd) {
+    return fcntl(fd, F_DUPFD, 0);
+}
+
+/* fd2 closed, then the lowest free descriptor at or above it -- which is
+ * fd2 itself.  One thread: nothing can take fd2 in between. */
+int dup2(int fd, int fd2) {
+    if (fd2 < 0 || fd2 >= getdtablesize()) {
+        errno = EBADF;
+        return -1;
+    }
+    if (fd == fd2) return fcntl(fd, F_GETFD) < 0 ? -1 : fd2;
+    if (fcntl(fd, F_GETFD) < 0) return -1;      /* EBADF, and fd2 left open */
+    close(fd2);
+    int r = fcntl(fd, F_DUPFD, fd2);
+    if (r >= 0 && r != fd2) {                   /* fd2 was a directory stream, or past the table */
+        close(r);
+        errno = EBADF;
+        return -1;
+    }
+    return r;
 }
 
 int close(int fd) {

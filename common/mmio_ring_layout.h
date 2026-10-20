@@ -205,7 +205,9 @@ typedef struct {
 #define S32_POLLWRNORM 0x100u
 #define S32_POLLWRBAND 0x200u
 
-// FCNTL commands (req->length): Linux's numbers
+// FCNTL commands (req->length): Linux's numbers.  F_DUPFD: a new slot for
+// the same host object, the lowest free one at or above the argument.
+#define S32_F_DUPFD 0u
 #define S32_F_GETFD 1u
 #define S32_F_SETFD 2u
 #define S32_F_GETFL 3u

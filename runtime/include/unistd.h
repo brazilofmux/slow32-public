@@ -8,6 +8,17 @@
 extern "C" {
 #endif
 
+#define STDIN_FILENO  0
+#define STDOUT_FILENO 1
+#define STDERR_FILENO 2
+
+/* The environment, filled in at start for a program that names it */
+extern char **environ;
+
+/* A second descriptor for the same file or socket (FCNTL F_DUPFD) */
+int dup(int fd);
+int dup2(int fd, int fd2);
+
 // Access mode constants for access()
 // clock_gettime (CLOCK_REALTIME, CLOCK_MONOTONIC) and nanosleep are here;
 // the timer_* calls are not.  libc++ looks for this to use clock_gettime

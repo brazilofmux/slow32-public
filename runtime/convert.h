@@ -19,7 +19,7 @@ size_t slow32_utoo64(uint64_t uval, char *buf);
 size_t slow32_utox64(uint64_t uval, char *buf, bool uppercase);
 
 // Hex digit tables
-extern const char Digits16U[17];
-extern const char Digits16L[17];
+extern const char __s32_digits16u[17];
+extern const char __s32_digits16l[17];
 
 #endif // CONVERT_H

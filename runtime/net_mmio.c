@@ -165,6 +165,12 @@ int socket(int domain, int type, int protocol) {
     return r;
 }
 
+int socketpair(int domain, int type, int protocol, int sv[2]) {
+    (void)type; (void)protocol; (void)sv;
+    errno = domain == AF_UNIX ? EAFNOSUPPORT : EOPNOTSUPP;
+    return -1;
+}
+
 int bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
     s32_mmio_sockaddr_in_t packed;
     if (pack_sin(addr, addrlen, &packed) < 0) {

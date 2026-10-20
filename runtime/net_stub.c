@@ -147,3 +147,21 @@ int select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
     errno = ENOSYS;
     return -1;
 }
+
+int socketpair(int domain, int type, int protocol, int sv[2]) {
+    (void)domain; (void)type; (void)protocol; (void)sv;
+    errno = ENOSYS;
+    return -1;
+}
+
+int dup(int fd) {
+    (void)fd;
+    errno = ENOSYS;
+    return -1;
+}
+
+int dup2(int fd, int fd2) {
+    (void)fd; (void)fd2;
+    errno = ENOSYS;
+    return -1;
+}

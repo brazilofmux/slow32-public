@@ -21,11 +21,13 @@ extern "C" {
 #define O_NONBLOCK 0x0800
 #define O_CLOEXEC  0x80000
 
-/* fcntl: these four (Linux's numbers).  F_GETFL gives the access mode,
+/* fcntl: these five (Linux's numbers).  F_DUPFD gives the lowest free
+ * descriptor at or above its argument for the same file or socket.  F_GETFL gives the access mode,
  * O_APPEND and O_NONBLOCK; F_SETFL changes O_APPEND and O_NONBLOCK, but
  * not on fds 0-2 while they are still the emulator's own standard streams
  * (EPERM).  FD_CLOEXEC is remembered; nothing is inherited either way.
  * docs/SPEC.md 8.6, FCNTL. */
+#define F_DUPFD 0
 #define F_GETFD 1
 #define F_SETFD 2
 #define F_GETFL 3

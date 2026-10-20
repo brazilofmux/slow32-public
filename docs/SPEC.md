@@ -1026,10 +1026,10 @@ changed by `CHDIR`).
 #### 0x0F FCNTL
 | | |
 |---|---|
-| Request | `status` = fd; `length` = command: 1 F_GETFD, 2 F_SETFD, 3 F_GETFL, 4 F_SETFL; `off` = the argument (not a data-buffer offset) |
-| Action | F_GETFD/F_SETFD read and set the slot's close-on-exec bit (1). Nothing is inherited across EXEC whatever it says; the bit is kept so that a program reads back what it set, and a new slot starts with it clear. F_GETFL reports the host descriptor's access mode and status flags in the guest's `O_*` encoding: 1 read-only, 2 write-only, 3 read-write, `0x04` append, `0x0800` non-blocking. F_SETFL changes only append and non-blocking. |
-| Response | F_GETFD: `status` 0 or 1; F_GETFL: `status` the flags; the setters: `status` 0 |
-| Errors | `EBADF` (no such fd, or a directory stream); `EINVAL` (another command); `EPERM` (F_SETFL changing fd 0, 1 or 2 while it is still the host's own stream: those are shared with whatever started the emulator, and stay as they are); fcntl errno |
+| Request | `status` = fd; `length` = command: 0 F_DUPFD, 1 F_GETFD, 2 F_SETFD, 3 F_GETFL, 4 F_SETFL; `off` = the argument (not a data-buffer offset) |
+| Action | F_DUPFD gives the same host file or socket a second slot, the lowest free one at or above the argument; the duplicate is the host's own descriptor (closing it closes only it) with close-on-exec clear. F_GETFD/F_SETFD read and set the slot's close-on-exec bit (1). Nothing is inherited across EXEC whatever it says; the bit is kept so that a program reads back what it set, and a new slot starts with it clear. F_GETFL reports the host descriptor's access mode and status flags in the guest's `O_*` encoding: 1 read-only, 2 write-only, 3 read-write, `0x04` append, `0x0800` non-blocking. F_SETFL changes only append and non-blocking. |
+| Response | F_DUPFD: `status` the new fd; F_GETFD: `status` 0 or 1; F_GETFL: `status` the flags; the setters: `status` 0 |
+| Errors | `EBADF` (no such fd, or a directory stream); `EINVAL` (another command; F_DUPFD's argument ≥ 128); `EMFILE` (F_DUPFD: no free slot at or above it); `EPERM` (F_SETFL changing fd 0, 1 or 2 while it is still the host's own stream: those are shared with whatever started the emulator, and stay as they are); fcntl errno |
 
 On a non-blocking socket READ, WRITE and ACCEPT fail with `EAGAIN` instead
 of waiting, and CONNECT with `EINPROGRESS` (then FDPOLL for writing, and

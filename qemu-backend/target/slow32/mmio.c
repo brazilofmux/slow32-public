@@ -148,6 +148,7 @@ typedef struct QEMU_PACKED {
 #define S32_POLLWRBAND 0x200u
 
 // FCNTL commands (req->length): Linux's numbers
+#define S32_F_DUPFD 0u
 #define S32_F_GETFD 1u
 #define S32_F_SETFD 2u
 #define S32_F_GETFL 3u
@@ -2618,7 +2619,36 @@ static void slow32_mmio_handle_fcntl(Slow32MMIOContext *ctx,
         return;
     }
     resp->length = 0;
-    if (req->length == S32_F_GETFD) {
+    if (req->length == S32_F_DUPFD) {
+        /* the same host object under a new slot, owned (closing it closes
+         * only the duplicate), close-on-exec clear */
+        int dup_fd, slot = -1;
+        if (req->offset >= S32_MMIO_MAX_FDS) {
+            slow32_mmio_fail(resp, EINVAL);
+            return;
+        }
+        dup_fd = dup(host_fd);
+        if (dup_fd < 0) {
+            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
+            return;
+        }
+        for (uint32_t i = req->offset; i < S32_MMIO_MAX_FDS; i++) {
+            if (ctx->host_fds[i] == -1 && ctx->host_dirs[i] == NULL) {
+                ctx->host_fds[i] = dup_fd;
+                ctx->host_fd_owned[i] = true;
+                ctx->fd_cloexec[i] = false;
+                ctx->fd_types[i] = S32_FD_TYPE_FILE;
+                slot = (int)i;
+                break;
+            }
+        }
+        if (slot < 0) {
+            close(dup_fd);
+            slow32_mmio_fail(resp, EMFILE);
+            return;
+        }
+        resp->status = (uint32_t)slot;
+    } else if (req->length == S32_F_GETFD) {
         resp->status = ctx->fd_cloexec[gfd] ? S32_FD_CLOEXEC : 0u;
     } else if (req->length == S32_F_SETFD) {
         ctx->fd_cloexec[gfd] = (req->offset & S32_FD_CLOEXEC) != 0;

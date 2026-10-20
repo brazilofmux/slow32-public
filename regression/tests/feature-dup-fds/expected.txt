@@ -1,0 +1,11 @@
+dup: new descriptor 1, above the first 1
+shared offset: read 7 more, "harbor-lights"
+F_DUPFD 20: 20
+again: 21 (20 is taken)
+dup2 onto an open fd: 5 same 1
+it is the first one now: "rbor"
+dup2 onto itself: 1
+dup2 from a closed fd: -1 EBADF 1, target still open 1
+dup of a bad fd: -1 EBADF 1
+after closing the first, the dup still reads 6
+fd constants 0 1 2
