@@ -419,8 +419,17 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   // the __addsf3-family libcalls from SLOW32RuntimeLibcalls.h)
 
   // Shared FP policy (libcall or legalized away regardless of +f).
+  //
+  // frem is the runtime's fmodf/fmod.  As Expand, ExpandIRInsts inlined an
+  // expansion that calls rint and fma, which the runtime does not ship, so
+  // every frem failed to link.  sin, cos and pow are not Expand by default
+  // (TargetLoweringBase leaves them Legal) and the machine has no
+  // instruction for them: an llvm.sin/cos/pow could not be selected.
+  // Expanded, each is its libm call (SLOW32RuntimeLibcalls.h); sincos
+  // becomes the two calls.
   for (MVT VT : {MVT::f32, MVT::f64}) {
-    setOperationAction(ISD::FREM, VT, Expand);
+    setOperationAction(ISD::FREM, VT, LibCall);
+    setOperationAction({ISD::FSIN, ISD::FCOS, ISD::FSINCOS, ISD::FPOW}, VT, Expand);
     setOperationAction(ISD::FMA, VT, Expand);
     setOperationAction(ISD::FRINT, VT, Expand);
     setOperationAction(ISD::FNEARBYINT, VT, Expand);

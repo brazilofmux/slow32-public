@@ -182,12 +182,64 @@ double ldexp(double x, int n) {
  * fmod — C standard: x - trunc(x/y) * y
  * ================================================================ */
 
+/* fmod is exact: the remainder of two doubles is always a double, and it
+ * is found here as long division does, on the significands as integers --
+ * shift x's left, subtract y's where it goes -- one bit of quotient per
+ * step, so nothing is rounded.  (x - trunc(x/y)*y, which this replaces,
+ * rounds x/y: 1e17 mod 0.3 came out -16, 1.7e308 mod 0.1 -inf.)  At most
+ * one step per binade between x and y, ~2000 for the widest. */
 double fmod(double x, double y) {
-    if (y == 0.0 || x != x || y != y) return mk_nan();
-    if (x == 0.0) return x;
-    double q = trunc(x / y);
-    double r = x - q * y;
-    return r;
+    dbl_bits bx, by;
+    bx.d = x;
+    by.d = y;
+    unsigned long long ux = ((unsigned long long)bx.u[1] << 32) | bx.u[0];
+    unsigned long long uy = ((unsigned long long)by.u[1] << 32) | by.u[0];
+    unsigned long long sign = ux & 0x8000000000000000ull;
+    int ex = (int)((ux >> 52) & 0x7FF), ey = (int)((uy >> 52) & 0x7FF);
+    ux &= 0x7FFFFFFFFFFFFFFFull;
+    uy &= 0x7FFFFFFFFFFFFFFFull;
+
+    if (uy == 0 || ex == 0x7FF || uy > 0x7FF0000000000000ull) return mk_nan();
+    if (ux < uy) return x;                      /* |x| < |y|, y infinite too */
+    if (ux == uy) return 0.0 * x;               /* zero with x's sign */
+
+    /* significands with the hidden bit; a subnormal is normalized */
+    if (ex == 0) {
+        while (!(ux & 0x0010000000000000ull)) { ux <<= 1; ex--; }
+        ex++;
+    } else {
+        ux = (ux & 0x000FFFFFFFFFFFFFull) | 0x0010000000000000ull;
+    }
+    if (ey == 0) {
+        while (!(uy & 0x0010000000000000ull)) { uy <<= 1; ey--; }
+        ey++;
+    } else {
+        uy = (uy & 0x000FFFFFFFFFFFFFull) | 0x0010000000000000ull;
+    }
+
+    for (; ex > ey; ex--) {
+        if (ux >= uy) {
+            ux -= uy;
+            if (ux == 0) return 0.0 * x;
+        }
+        ux <<= 1;
+    }
+    if (ux >= uy) {
+        ux -= uy;
+        if (ux == 0) return 0.0 * x;
+    }
+
+    /* back to a double: normalize, then a normal or a subnormal */
+    while (!(ux & 0x0010000000000000ull)) { ux <<= 1; ex--; }
+    if (ex > 0) {
+        ux = (ux & 0x000FFFFFFFFFFFFFull) | ((unsigned long long)ex << 52);
+    } else {
+        ux >>= 1 - ex;
+    }
+    ux |= sign;
+    bx.u[0] = (unsigned int)ux;
+    bx.u[1] = (unsigned int)(ux >> 32);
+    return bx.d;
 }
 
 /* ================================================================
@@ -442,6 +494,48 @@ float atanf(float x)               { return (float)atan((double)x); }
 float sinhf(float x)               { return (float)sinh((double)x); }
 float coshf(float x)               { return (float)cosh((double)x); }
 float tanhf(float x)               { return (float)tanh((double)x); }
+
+/* C99 7.12.12.  A NaN is missing data: the other argument is the answer,
+ * and only two NaNs give a NaN.  Of two zeros, fmax gives +0 and fmin -0:
+ * the standard leaves it open, IEEE 754-2019's maximumNumber orders them
+ * so, and macOS does too (glibc returns the first argument). */
+/* the sign bit, by the bits: both libraries build this file, and the
+ * self-hosted <math.h> has no signbit */
+static int neg_d(double x) { dbl_bits b; b.d = x; return (int)(b.u[1] >> 31); }
+static int neg_f(float x) { flt_bits b; b.f = x; return (int)(b.u >> 31); }
+
+double fmax(double x, double y) {
+    if (x != x) return y;
+    if (y != y) return x;
+    if (x == 0.0 && y == 0.0) return neg_d(x) ? y : x;
+    return x > y ? x : y;
+}
+double fmin(double x, double y) {
+    if (x != x) return y;
+    if (y != y) return x;
+    if (x == 0.0 && y == 0.0) return neg_d(x) ? x : y;
+    return x < y ? x : y;
+}
+double fdim(double x, double y) {
+    if (x != x || y != y) return x + y;         /* a NaN */
+    return x > y ? x - y : 0.0;
+}
+float fmaxf(float x, float y) {
+    if (x != x) return y;
+    if (y != y) return x;
+    if (x == 0.0f && y == 0.0f) return neg_f(x) ? y : x;
+    return x > y ? x : y;
+}
+float fminf(float x, float y) {
+    if (x != x) return y;
+    if (y != y) return x;
+    if (x == 0.0f && y == 0.0f) return neg_f(x) ? x : y;
+    return x < y ? x : y;
+}
+float fdimf(float x, float y) {
+    if (x != x || y != y) return x + y;
+    return x > y ? x - y : 0.0f;
+}
 float expf(float x)                { return (float)exp((double)x); }
 float logf(float x)                { return (float)log((double)x); }
 float log10f(float x)              { return (float)log10((double)x); }
@@ -449,7 +543,7 @@ float ceilf(float x)               { return (float)ceil((double)x); }
 float floorf(float x)              { return (float)floor((double)x); }
 float roundf(float x)              { return (float)round((double)x); }
 float truncf(float x)              { return (float)trunc((double)x); }
-float fmodf(float x, float y)      { return (float)fmod((double)x, (double)y); }
+float fmodf(float x, float y)      { return (float)fmod((double)x, (double)y); }  /* exact: so is the float */
 float powf(float x, float y)       { return (float)pow((double)x, (double)y); }
 float atan2f(float y, float x)     { return (float)atan2((double)y, (double)x); }
 float ldexpf(float x, int n)       { return (float)ldexp((double)x, n); }

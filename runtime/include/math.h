@@ -104,6 +104,14 @@ float fmodf(float x, float y);
 double copysign(double x, double y);
 float copysignf(float x, float y);
 
+/* C99 7.12.12: a NaN argument is ignored when the other is a number */
+double fmax(double x, double y);
+float fmaxf(float x, float y);
+double fmin(double x, double y);
+float fminf(float x, float y);
+double fdim(double x, double y);
+float fdimf(float x, float y);
+
 double ldexp(double x, int exp);
 float ldexpf(float x, int exp);
 

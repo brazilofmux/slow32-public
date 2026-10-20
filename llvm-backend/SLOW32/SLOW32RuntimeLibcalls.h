@@ -98,6 +98,63 @@ static inline void setSLOW32LibcallImpls(LibcallSink &Sink) {
   Sink.setLibcallImpl(RTLIB::FMA_F32, RTLIB::impl_fmaf);
   Sink.setLibcallImpl(RTLIB::FMA_F64, RTLIB::impl_fma);
 
+  // libm, for the llvm.* math intrinsics clang emits when errno is not in
+  // play (C++ <cmath>, -fno-math-errno, the optimizer's own rewrites, and
+  // fmin/fmax always).
+  // Without these an f32 llvm.log failed with "no libcall available for
+  // flog" and an llvm.sin.f32 could not be selected at all; plain calls to
+  // logf() were never affected.  The runtime ships each of these except
+  // exp2 and exp10, which are bound anyway so that using them is a link
+  // error naming the function, as for the soft-float builtins above.
+  Sink.setLibcallImpl(RTLIB::SIN_F32, RTLIB::impl_sinf);
+  Sink.setLibcallImpl(RTLIB::SIN_F64, RTLIB::impl_sin);
+  Sink.setLibcallImpl(RTLIB::COS_F32, RTLIB::impl_cosf);
+  Sink.setLibcallImpl(RTLIB::COS_F64, RTLIB::impl_cos);
+  Sink.setLibcallImpl(RTLIB::TAN_F32, RTLIB::impl_tanf);
+  Sink.setLibcallImpl(RTLIB::TAN_F64, RTLIB::impl_tan);
+  Sink.setLibcallImpl(RTLIB::ASIN_F32, RTLIB::impl_asinf);
+  Sink.setLibcallImpl(RTLIB::ASIN_F64, RTLIB::impl_asin);
+  Sink.setLibcallImpl(RTLIB::ACOS_F32, RTLIB::impl_acosf);
+  Sink.setLibcallImpl(RTLIB::ACOS_F64, RTLIB::impl_acos);
+  Sink.setLibcallImpl(RTLIB::ATAN_F32, RTLIB::impl_atanf);
+  Sink.setLibcallImpl(RTLIB::ATAN_F64, RTLIB::impl_atan);
+  Sink.setLibcallImpl(RTLIB::ATAN2_F32, RTLIB::impl_atan2f);
+  Sink.setLibcallImpl(RTLIB::ATAN2_F64, RTLIB::impl_atan2);
+  Sink.setLibcallImpl(RTLIB::SINH_F32, RTLIB::impl_sinhf);
+  Sink.setLibcallImpl(RTLIB::SINH_F64, RTLIB::impl_sinh);
+  Sink.setLibcallImpl(RTLIB::COSH_F32, RTLIB::impl_coshf);
+  Sink.setLibcallImpl(RTLIB::COSH_F64, RTLIB::impl_cosh);
+  Sink.setLibcallImpl(RTLIB::TANH_F32, RTLIB::impl_tanhf);
+  Sink.setLibcallImpl(RTLIB::TANH_F64, RTLIB::impl_tanh);
+  Sink.setLibcallImpl(RTLIB::POW_F32, RTLIB::impl_powf);
+  Sink.setLibcallImpl(RTLIB::POW_F64, RTLIB::impl_pow);
+  Sink.setLibcallImpl(RTLIB::LOG_F32, RTLIB::impl_logf);
+  Sink.setLibcallImpl(RTLIB::LOG_F64, RTLIB::impl_log);
+  Sink.setLibcallImpl(RTLIB::LOG2_F32, RTLIB::impl_log2f);
+  Sink.setLibcallImpl(RTLIB::LOG2_F64, RTLIB::impl_log2);
+  Sink.setLibcallImpl(RTLIB::LOG10_F32, RTLIB::impl_log10f);
+  Sink.setLibcallImpl(RTLIB::LOG10_F64, RTLIB::impl_log10);
+  Sink.setLibcallImpl(RTLIB::EXP_F32, RTLIB::impl_expf);
+  Sink.setLibcallImpl(RTLIB::EXP_F64, RTLIB::impl_exp);
+  Sink.setLibcallImpl(RTLIB::EXP2_F32, RTLIB::impl_exp2f);
+  Sink.setLibcallImpl(RTLIB::EXP2_F64, RTLIB::impl_exp2);
+  Sink.setLibcallImpl(RTLIB::EXP10_F32, RTLIB::impl_exp10f);
+  Sink.setLibcallImpl(RTLIB::EXP10_F64, RTLIB::impl_exp10);
+  Sink.setLibcallImpl(RTLIB::CBRT_F32, RTLIB::impl_cbrtf);
+  Sink.setLibcallImpl(RTLIB::CBRT_F64, RTLIB::impl_cbrt);
+  Sink.setLibcallImpl(RTLIB::LDEXP_F32, RTLIB::impl_ldexpf);
+  Sink.setLibcallImpl(RTLIB::LDEXP_F64, RTLIB::impl_ldexp);
+  Sink.setLibcallImpl(RTLIB::FREXP_F32, RTLIB::impl_frexpf);
+  Sink.setLibcallImpl(RTLIB::FREXP_F64, RTLIB::impl_frexp);
+  Sink.setLibcallImpl(RTLIB::MODF_F32, RTLIB::impl_modff);
+  Sink.setLibcallImpl(RTLIB::MODF_F64, RTLIB::impl_modf);
+  // fmin/fmax: clang makes a plain fmax() call llvm.maxnum, which without
+  // these was "no libcall available for fmaxnum"
+  Sink.setLibcallImpl(RTLIB::FMIN_F32, RTLIB::impl_fminf);
+  Sink.setLibcallImpl(RTLIB::FMIN_F64, RTLIB::impl_fmin);
+  Sink.setLibcallImpl(RTLIB::FMAX_F32, RTLIB::impl_fmaxf);
+  Sink.setLibcallImpl(RTLIB::FMAX_F64, RTLIB::impl_fmax);
+
   Sink.setLibcallImpl(RTLIB::MEMCPY, RTLIB::impl_memcpy);
   Sink.setLibcallImpl(RTLIB::MEMMOVE, RTLIB::impl_memmove);
   Sink.setLibcallImpl(RTLIB::MEMSET, RTLIB::impl_memset);
