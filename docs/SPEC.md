@@ -1078,7 +1078,7 @@ A directory fd is not a byte stream: READ, WRITE and CLOSE on it give
 
 | Opcode | Name | Request | Response / data | Errors |
 |---|---|---|---|---|
-| 0x30 | GETTIME | `length` ≥ 16 | host wall clock (UTC, POSIX epoch; negative clamped to 0) as `timepair64` at `off`; `status` 0, `length` 16 | `EINVAL` (`length` < 16, `off` > CAP−16, clock failure) |
+| 0x30 | GETTIME | `length` ≥ 16; `status` the clock: 0 wall, 1 monotonic | request `status` 0: host wall clock (UTC, POSIX epoch; negative clamped to 0); 1: a monotonic clock (never decreasing, from an unspecified start); as `timepair64` at `off`; `status` 0, `length` 16 | `EINVAL` (`length` < 16, `off` > CAP−16, request `status` > 1, clock failure) |
 | 0x31 | SLEEP | `length` ≥ 16; `timepair64` interval at `off` | Blocks the whole machine for the interval. Done: zeros written at `off`, `status` 0, `length` 16. Interrupted by a host signal: remaining time at `off`, `status` `0xFFFFFFFE`, `length` 16 | `EINVAL` (`length`, `off`, nanoseconds ≥ 10⁹, other host failure) |
 | 0x35 | GETTZ | `length` ≥ 16; `timepair64` (a UTC instant) at `off` | `tzinfo` for that instant in the host's local time zone written over it at `off`; `status` 0, `length` 16. If no abbreviation is available, `"UTC"` | `EINVAL` (`length`, `off`) |
 | 0x32 | TIMER_START | §8.12 | | |

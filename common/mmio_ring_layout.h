@@ -117,7 +117,7 @@ enum s32_mmio_opcode {
     S32_MMIO_OP_REWINDDIR = 0x2B,  // rewind directory stream to the start
 
     // 0x30 - 0x3F : Time & event services
-    S32_MMIO_OP_GETTIME     = 0x30,  // Returns wall-clock time (64-bit seconds + nanos)
+    S32_MMIO_OP_GETTIME     = 0x30,  // A clock's time (64-bit seconds + nanos); status = S32_MMIO_CLOCK_*
     S32_MMIO_OP_SLEEP       = 0x31,  // nanosleep() + remainder reporting (64-bit seconds)
     S32_MMIO_OP_GETTZ       = 0x35,  // Returns host timezone info for a queried UTC time
     // Timers and the DPC ring.  A one-shot timer: interval as a timepair64 at
@@ -189,6 +189,12 @@ typedef struct s32_mmio_timepair64 {
     uint32_t nanoseconds;  // 0..999,999,999
     uint32_t reserved;     // align to 16 bytes / future flags
 } s32_mmio_timepair64_t;
+
+// S32_MMIO_OP_GETTIME's request status: which clock.  MONOTONIC never goes
+// backwards and counts from an unspecified start (the host's); C++'s
+// steady_clock and timeouts want it.
+#define S32_MMIO_CLOCK_REALTIME  0u
+#define S32_MMIO_CLOCK_MONOTONIC 1u
 
 #pragma pack(pop)
 

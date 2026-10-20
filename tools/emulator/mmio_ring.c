@@ -3399,8 +3399,17 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
         }
 
         case S32_MMIO_OP_GETTIME: {
+            // status selects the clock: 0 the wall clock, 1 a monotonic one
+            // (S32_MMIO_CLOCK_*); every guest before 2026-10-20 sent 0.
+            clockid_t clk;
+            if (req->status == S32_MMIO_CLOCK_REALTIME) clk = CLOCK_REALTIME;
+            else if (req->status == S32_MMIO_CLOCK_MONOTONIC) clk = CLOCK_MONOTONIC;
+            else {
+                mmio_fail(&resp, EINVAL);
+                break;
+            }
             struct timespec ts;
-            if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {
+            if (clock_gettime(clk, &ts) != 0) {
                 mmio_fail(&resp, EINVAL);
                 break;
             }

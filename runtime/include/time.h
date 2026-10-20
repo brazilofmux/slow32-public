@@ -29,6 +29,7 @@ struct tm {
 };
 
 #define CLOCK_REALTIME 0
+#define CLOCK_MONOTONIC 1   // never decreasing, from an unspecified start
 
 typedef unsigned long clock_t;
 #define CLOCKS_PER_SEC ((clock_t)1000000)

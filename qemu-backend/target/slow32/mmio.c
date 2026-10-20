@@ -1824,13 +1824,15 @@ static void slow32_mmio_handle_gettime(const CPUSlow32State *env,
                                        const Slow32MMIODesc *req,
                                        Slow32MMIODesc *resp)
 {
-    if (req->length < sizeof(s32_mmio_timepair64_t)) {
+    /* status selects the clock: 0 the wall clock, 1 a monotonic one
+     * (slow-32 common/mmio_ring_layout.h, S32_MMIO_CLOCK_*). */
+    if (req->length < sizeof(s32_mmio_timepair64_t) || req->status > 1) {
         slow32_mmio_fail(resp, EINVAL);
         return;
     }
 
     struct timespec ts = {0};
-    clock_gettime(CLOCK_REALTIME, &ts);
+    clock_gettime(req->status == 1 ? CLOCK_MONOTONIC : CLOCK_REALTIME, &ts);
     uint64_t secs = ts.tv_sec;
     s32_mmio_timepair64_t payload = {
         .seconds_lo = (uint32_t)(secs & 0xFFFFFFFFu),

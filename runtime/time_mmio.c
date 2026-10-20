@@ -1,6 +1,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <errno.h>
 
 #include "mmio_ring.h"
 #include "time.h"
@@ -11,12 +12,12 @@
 #define S32_NSEC_PER_USEC        1000u
 #define S32_USEC_PER_SEC      1000000u
 
-static int read_time_words(uint64_t *seconds, uint32_t *nanoseconds) {
+static int read_time_words(unsigned clock, uint64_t *seconds, uint32_t *nanoseconds) {
     volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
     unsigned int status = (unsigned int)s32_mmio_request(S32_MMIO_OP_GETTIME,
                                                          sizeof(s32_mmio_timepair64_t),
                                                          0u,
-                                                         0u);
+                                                         clock);
     if (status == S32_MMIO_STATUS_ERR) {
         return -1;
     }
@@ -65,13 +66,16 @@ static int mmio_sleep_request(uint64_t seconds,
 }
 
 int clock_gettime(int clock_id, struct timespec *ts) {
-    if (!ts || clock_id != CLOCK_REALTIME) {
+    if (!ts || (clock_id != CLOCK_REALTIME && clock_id != CLOCK_MONOTONIC)) {
+        errno = EINVAL;
         return -1;
     }
 
     uint64_t seconds = 0;
     uint32_t nanos = 0;
-    if (read_time_words(&seconds, &nanos) != 0) {
+    unsigned clock = clock_id == CLOCK_MONOTONIC ? S32_MMIO_CLOCK_MONOTONIC
+                                                 : S32_MMIO_CLOCK_REALTIME;
+    if (read_time_words(clock, &seconds, &nanos) != 0) {
         return -1;
     }
 
@@ -123,7 +127,7 @@ time_t time(time_t *t) {
     uint32_t nanos = 0;
     (void)nanos;
 
-    if (read_time_words(&seconds, &nanos) != 0) {
+    if (read_time_words(S32_MMIO_CLOCK_REALTIME, &seconds, &nanos) != 0) {
         if (t) {
             *t = (time_t)(~(time_t)0);
         }

@@ -1,0 +1,7 @@
+ok monotonic clock answers
+ok monotonic nanoseconds in range
+ok 2000 readings never go back
+ok wall clock still the wall clock
+ok unknown clock id is EINVAL
+ok GETTIME status 2 is EINVAL
+0 failed
