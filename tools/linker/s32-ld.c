@@ -2731,6 +2731,14 @@ static void cleanup(linker_state_t *ld) {
 // helper): a final link finds a relocation's local target by name within
 // its file, so names in one object have to be unique.
 //
+// The code section goes out as one section per input part, all named as it
+// is: a final link puts JAL veneer islands only between parts, never inside
+// one (a part's own branches are already resolved), so a partial link that
+// merged the code of a whole module into one part left a module bigger than
+// a JAL's reach with nowhere for its far calls to go.  Every relocation is
+// carried over, so the boundaries are as safe to cut at as they were before
+// the partial link.  Data sections are merged.
+//
 // --localize-hidden makes each defined S32O_SYM_HIDDEN symbol local -- the
 // object then keeps its internals to itself, as a shared object's hidden
 // symbols stay inside it -- and --redefine-sym renames a global (an
@@ -2740,6 +2748,7 @@ typedef struct {
     char *name;
     s32o_symbol_t sym;      // section is the output's, 1-based; 0 undefined
     bool strong_ref;        // an undefined entry some input references non-weakly
+    int from_file, from_sec;  // the definition's input section; -1 if undefined
 } rel_sym_t;
 
 static const char *rel_rename(linker_state_t *ld, const char *name) {
@@ -2802,6 +2811,7 @@ static void write_relocatable(linker_state_t *ld) {
                 memset(&syms[nsyms], 0, sizeof(syms[nsyms]));
                 syms[nsyms].name = ld_strdup(name);
                 syms[nsyms].sym.binding = isym->binding;
+                syms[nsyms].from_file = syms[nsyms].from_sec = -1;
                 s32_hashmap_put(&globals, syms[nsyms].name, nsyms);
                 idx = nsyms++;
             }
@@ -2825,6 +2835,8 @@ static void write_relocatable(linker_state_t *ld) {
                     o->sym.type = (uint8_t)((isym->type & S32O_SYM_TYPE_MASK)
                                             | (o->sym.type & S32O_SYM_HIDDEN));
                     o->sym.binding = isym->binding;
+                    o->from_file = f;
+                    o->from_sec = (int)isym->section - 1;
                 }
             }
             map[f][s] = (uint32_t)idx;
@@ -2856,6 +2868,8 @@ static void write_relocatable(linker_state_t *ld) {
             o->sym = *isym;
             o->sym.section = (uint16_t)(cs + 1);
             o->sym.value = inf->section_base[isym->section - 1] + isym->value;
+            o->from_file = f;
+            o->from_sec = (int)isym->section - 1;
             s32_hashmap_put(&used, o->name, nsyms);
             map[f][s] = (uint32_t)nsyms++;
         }
@@ -2872,9 +2886,64 @@ static void write_relocatable(linker_state_t *ld) {
         }
     }
 
-    // Relocations, section by section in part order.
-    uint32_t *nrel = calloc(ld->num_sections ? ld->num_sections : 1, sizeof(uint32_t));
-    s32o_reloc_t **rels = calloc(ld->num_sections ? ld->num_sections : 1, sizeof(s32o_reloc_t *));
+    // Output sections: the code section one per part, the others whole.
+    typedef struct { int c; uint32_t off, size, align; } rel_osec_t;
+    rel_osec_t *osec = NULL;
+    int nosec = 0, osec_cap = 0;
+    int *osec_first = calloc(ld->num_sections ? ld->num_sections : 1, sizeof(int));
+    bool *osec_split = calloc(ld->num_sections ? ld->num_sections : 1, sizeof(bool));
+    if (!osec_first || !osec_split) { fprintf(stderr, "Error: out of memory\n"); exit(1); }
+    for (int c = 0; c < ld->num_sections; c++) {
+        combined_section_t *sec = &ld->sections[c];
+        osec_first[c] = nosec;
+        osec_split[c] = sec->type == S32_SEC_CODE && sec->num_parts > 1;
+        if (osec_split[c]) {
+            for (int p = 0; p < sec->num_parts; p++) {
+                const s32o_section_t *isec =
+                    &ld->input_files[sec->parts[p].file_idx].sections[sec->parts[p].section_idx];
+                DARR_PUSH(osec, nosec, osec_cap, rel_osec_t);
+                osec[nosec].c = c;
+                osec[nosec].off = sec->parts[p].offset;
+                osec[nosec].size = sec->parts[p].size;
+                osec[nosec].align = isec->align > 4 ? isec->align : 4;
+                nosec++;
+            }
+        } else {
+            DARR_PUSH(osec, nosec, osec_cap, rel_osec_t);
+            osec[nosec].c = c;
+            osec[nosec].off = 0;
+            osec[nosec].size = sec->size;
+            osec[nosec].align = sec->align;
+            nosec++;
+        }
+    }
+    // a symbol's section and value, from the combined section's terms to
+    // the output section's: the part its definition came from (a label at
+    // a part's very end stays with that part, not the next one)
+    for (int i = 0; i < nsyms; i++) {
+        s32o_symbol_t *o = &syms[i].sym;
+        if (o->section == 0) continue;
+        int c = o->section - 1;
+        if (!osec_split[c]) {
+            o->section = (uint16_t)(osec_first[c] + 1);
+            continue;
+        }
+        combined_section_t *sec = &ld->sections[c];
+        int p = 0;
+        while (p < sec->num_parts && !(sec->parts[p].file_idx == syms[i].from_file &&
+                                       sec->parts[p].section_idx == syms[i].from_sec)) p++;
+        if (p == sec->num_parts) {
+            fprintf(stderr, "Error: symbol '%s' is in no part of '%s'\n", syms[i].name, sec->name);
+            exit(1);
+        }
+        o->value -= sec->parts[p].offset;
+        o->section = (uint16_t)(osec_first[c] + p + 1);
+    }
+    if (nosec > 0xFFFF) { fprintf(stderr, "Error: too many output sections\n"); exit(1); }
+
+    // Relocations, output section by output section.
+    uint32_t *nrel = calloc(nosec ? nosec : 1, sizeof(uint32_t));
+    s32o_reloc_t **rels = calloc(nosec ? nosec : 1, sizeof(s32o_reloc_t *));
     uint32_t **first = calloc(ld->num_input_files ? ld->num_input_files : 1, sizeof(uint32_t *));
     if (!nrel || !rels || !first) { fprintf(stderr, "Error: out of memory\n"); exit(1); }
     for (int f = 0; f < ld->num_input_files; f++) {
@@ -2886,13 +2955,22 @@ static void write_relocatable(linker_state_t *ld) {
     }
     for (int c = 0; c < ld->num_sections; c++) {
         combined_section_t *sec = &ld->sections[c];
-        uint32_t total = 0;
-        for (int p = 0; p < sec->num_parts; p++)
-            total += ld->input_files[sec->parts[p].file_idx].sections[sec->parts[p].section_idx].nrelocs;
-        rels[c] = calloc(total ? total : 1, sizeof(s32o_reloc_t));
-        if (!rels[c]) { fprintf(stderr, "Error: out of memory\n"); exit(1); }
+        for (int p = 0; p < sec->num_parts; p++) {
+            int o = osec_split[c] ? osec_first[c] + p : osec_first[c];
+            nrel[o] += ld->input_files[sec->parts[p].file_idx].sections[sec->parts[p].section_idx].nrelocs;
+        }
+    }
+    for (int o = 0; o < nosec; o++) {
+        rels[o] = calloc(nrel[o] ? nrel[o] : 1, sizeof(s32o_reloc_t));
+        if (!rels[o]) { fprintf(stderr, "Error: out of memory\n"); exit(1); }
+        nrel[o] = 0;
+    }
+    for (int c = 0; c < ld->num_sections; c++) {
+        combined_section_t *sec = &ld->sections[c];
         for (int p = 0; p < sec->num_parts; p++) {
             int f = sec->parts[p].file_idx, s = sec->parts[p].section_idx;
+            int o = osec_split[c] ? osec_first[c] + p : osec_first[c];
+            uint32_t base = osec_split[c] ? 0 : sec->parts[p].offset;
             input_file_t *inf = &ld->input_files[f];
             for (uint32_t r = 0; r < inf->sections[s].nrelocs; r++) {
                 s32o_reloc_t *irel = &inf->relocations[first[f][s] + r];
@@ -2901,9 +2979,9 @@ static void write_relocatable(linker_state_t *ld) {
                             inf->filename, irel->symbol);
                     exit(1);
                 }
-                s32o_reloc_t *orel = &rels[c][nrel[c]++];
+                s32o_reloc_t *orel = &rels[o][nrel[o]++];
                 *orel = *irel;
-                orel->offset = sec->parts[p].offset + irel->offset;
+                orel->offset = base + irel->offset;
                 orel->symbol = map[f][irel->symbol];
             }
         }
@@ -2912,7 +2990,7 @@ static void write_relocatable(linker_state_t *ld) {
     // String table: offset 0 is the empty string.
     uint32_t strsz = 1, strcap = 4096;
     char *strtab = calloc(1, strcap);
-    uint32_t *sec_name_off = calloc(ld->num_sections ? ld->num_sections : 1, sizeof(uint32_t));
+    uint32_t *sec_name_off = calloc(nosec ? nosec : 1, sizeof(uint32_t));
     if (!strtab || !sec_name_off) { fprintf(stderr, "Error: out of memory\n"); exit(1); }
 #define REL_ADD_STR(dst, s) do {                                              \
         size_t n_ = strlen(s) + 1;                                            \
@@ -2922,7 +3000,7 @@ static void write_relocatable(linker_state_t *ld) {
         }                                                                     \
         memcpy(strtab + strsz, (s), n_); (dst) = strsz; strsz += (uint32_t)n_; \
     } while (0)
-    for (int c = 0; c < ld->num_sections; c++) REL_ADD_STR(sec_name_off[c], ld->sections[c].name);
+    for (int o = 0; o < nosec; o++) REL_ADD_STR(sec_name_off[o], ld->sections[osec[o].c].name);
     for (int i = 0; i < nsyms; i++) REL_ADD_STR(syms[i].sym.name_offset, syms[i].name);
 #undef REL_ADD_STR
 
@@ -2933,23 +3011,23 @@ static void write_relocatable(linker_state_t *ld) {
     hdr.version = 1;
     hdr.endian = 0x01;
     hdr.machine = 0x32;
-    hdr.nsections = (uint32_t)ld->num_sections;
+    hdr.nsections = (uint32_t)nosec;
     hdr.sec_offset = sizeof(s32o_header_t);
     uint32_t off = hdr.sec_offset + hdr.nsections * sizeof(s32o_section_t);
-    s32o_section_t *shdr = calloc(ld->num_sections ? ld->num_sections : 1, sizeof(s32o_section_t));
+    s32o_section_t *shdr = calloc(nosec ? nosec : 1, sizeof(s32o_section_t));
     if (!shdr) { fprintf(stderr, "Error: out of memory\n"); exit(1); }
-    for (int c = 0; c < ld->num_sections; c++) {
-        combined_section_t *sec = &ld->sections[c];
-        shdr[c].name_offset = sec_name_off[c];
-        shdr[c].type = sec->type;
-        shdr[c].flags = sec->flags;
-        shdr[c].size = sec->size;
-        shdr[c].align = sec->align;
-        if (sec->type != S32_SEC_BSS && sec->size > 0) { shdr[c].offset = off; off += sec->size; }
+    for (int o = 0; o < nosec; o++) {
+        combined_section_t *sec = &ld->sections[osec[o].c];
+        shdr[o].name_offset = sec_name_off[o];
+        shdr[o].type = sec->type;
+        shdr[o].flags = sec->flags;
+        shdr[o].size = osec[o].size;
+        shdr[o].align = osec[o].align;
+        if (sec->type != S32_SEC_BSS && osec[o].size > 0) { shdr[o].offset = off; off += osec[o].size; }
     }
-    for (int c = 0; c < ld->num_sections; c++) {
-        shdr[c].nrelocs = nrel[c];
-        if (nrel[c]) { shdr[c].reloc_offset = off; off += nrel[c] * sizeof(s32o_reloc_t); }
+    for (int o = 0; o < nosec; o++) {
+        shdr[o].nrelocs = nrel[o];
+        if (nrel[o]) { shdr[o].reloc_offset = off; off += nrel[o] * sizeof(s32o_reloc_t); }
     }
     hdr.nsymbols = (uint32_t)nsyms;
     hdr.sym_offset = off;
@@ -2960,12 +3038,13 @@ static void write_relocatable(linker_state_t *ld) {
     FILE *out = fopen(ld->output_file, "wb");
     if (!out) { fprintf(stderr, "Error: cannot create %s\n", ld->output_file); exit(1); }
     bool ok = fwrite(&hdr, sizeof(hdr), 1, out) == 1;
-    if (ld->num_sections) ok = ok && fwrite(shdr, sizeof(s32o_section_t), ld->num_sections, out) == (size_t)ld->num_sections;
-    for (int c = 0; c < ld->num_sections; c++) {
-        if (shdr[c].offset) ok = ok && fwrite(ld->sections[c].data, 1, shdr[c].size, out) == shdr[c].size;
+    if (nosec) ok = ok && fwrite(shdr, sizeof(s32o_section_t), nosec, out) == (size_t)nosec;
+    for (int o = 0; o < nosec; o++) {
+        if (shdr[o].offset)
+            ok = ok && fwrite(ld->sections[osec[o].c].data + osec[o].off, 1, shdr[o].size, out) == shdr[o].size;
     }
-    for (int c = 0; c < ld->num_sections; c++) {
-        if (nrel[c]) ok = ok && fwrite(rels[c], sizeof(s32o_reloc_t), nrel[c], out) == nrel[c];
+    for (int o = 0; o < nosec; o++) {
+        if (nrel[o]) ok = ok && fwrite(rels[o], sizeof(s32o_reloc_t), nrel[o], out) == nrel[o];
     }
     for (int i = 0; i < nsyms; i++) ok = ok && fwrite(&syms[i].sym, sizeof(s32o_symbol_t), 1, out) == 1;
     ok = ok && fwrite(strtab, 1, strsz, out) == strsz;
@@ -2973,14 +3052,15 @@ static void write_relocatable(linker_state_t *ld) {
     if (!ok) { fprintf(stderr, "Error: failed writing %s\n", ld->output_file); exit(1); }
 
     if (ld->verbose) {
-        printf("Partial link: %d sections, %d symbols -> %s\n", ld->num_sections, nsyms, ld->output_file);
+        printf("Partial link: %d sections, %d symbols -> %s\n", nosec, nsyms, ld->output_file);
     }
     for (int i = 0; i < nsyms; i++) free(syms[i].name);
     free(syms);
     for (int f = 0; f < ld->num_input_files; f++) { free(map[f]); free(first[f]); }
     free(map); free(first);
-    for (int c = 0; c < ld->num_sections; c++) free(rels[c]);
+    for (int o = 0; o < nosec; o++) free(rels[o]);
     free(rels); free(nrel); free(strtab); free(sec_name_off); free(shdr);
+    free(osec); free(osec_first); free(osec_split);
     s32_hashmap_free(&globals);
     s32_hashmap_free(&used);
 }

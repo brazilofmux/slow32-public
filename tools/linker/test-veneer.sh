@@ -70,6 +70,16 @@ for u in u1 u2 u3; do "$AS" "$W/$u.s" "$W/$u.s32o" >/dev/null; done
 rc="$("$EMU" "$W/mid.s32x" >/dev/null; echo $?)"
 [ "$rc" = 55 ] || { echo "interior island: want rc=55 got $rc" >&2; exit 1; }
 
+# The same three units partially linked first (s32-ld -r, a module as
+# TinyMUX's static build makes them): islands go only between parts, and
+# the -r output merged the three into one, leaving the call from the middle
+# with nowhere to reach.  It keeps one code section per part now.
+"$LD" -r -o "$W/mod3.s32o" "$W/u1.s32o" "$W/u2.s32o" "$W/u3.s32o"
+"$LD" --code-size 4M -o "$W/modmid.s32x" "$W/mod3.s32o" 2>"$W/ld4.err" ||
+    { echo "interior island through -r: link failed" >&2; cat "$W/ld4.err" >&2; exit 1; }
+rc="$("$EMU" "$W/modmid.s32x" >/dev/null; echo $?)"
+[ "$rc" = 55 ] || { echo "interior island through -r: want rc=55 got $rc" >&2; exit 1; }
+
 # Prepend used to skip symbols sitting exactly at heap_base (__heap_start),
 # so malloc's arena started in .data.  The s32x header's heap_base and the
 # __heap_start symbol must stay in lockstep.
@@ -102,4 +112,4 @@ for k in range(sym_size // 16):
 sys.exit("no __heap_start")
 PY
 
-echo "OK: JAL veneers (near rc=7, far rc=42, interior rc=55)"
+echo "OK: JAL veneers (near rc=7, far rc=42, interior rc=55, through -r rc=55)"
