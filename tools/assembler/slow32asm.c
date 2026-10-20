@@ -3272,8 +3272,13 @@ static int write_object_file(assembler_t *as, const char *filename) {
 
         DARR_PUSH(symbols, num_symbols, symbols_cap, s32o_symbol_t);
         symbols[num_symbols].name_offset = add_string(as, as->labels[i].name);
-        symbols[num_symbols].value = as->labels[i].address;
-        symbols[num_symbols].section = section_map[as->labels[i].section];
+        // A label .globl or .weak named but never defined is a reference
+        // (llc's .weak for an extern declared weak): undefined, not a
+        // definition at offset 0 of whatever section was current when it
+        // was named -- which made a weak reference never null.
+        bool defined = as->labels[i].is_defined;
+        symbols[num_symbols].value = defined ? as->labels[i].address : 0;
+        symbols[num_symbols].section = defined ? section_map[as->labels[i].section] : 0;
         symbols[num_symbols].type = S32O_SYM_NOTYPE;
         symbols[num_symbols].binding = as->labels[i].is_weak ? S32O_BIND_WEAK : S32O_BIND_GLOBAL;
         symbols[num_symbols].size = 0;
@@ -3790,6 +3795,13 @@ int main(int argc, char *argv[]) {
         if (!inst->has_label_ref) continue;
 
         int label_idx = find_label_index(&as, inst->label_ref);
+        // A label only .globl or .weak named is not defined here, and a weak
+        // definition may lose to another file's: both are the linker's to
+        // resolve.  (Both used to be resolved here, the undefined one to
+        // address 0 -- a call through a weak reference landed on the
+        // section's first function.)
+        if (label_idx >= 0 && (!as.labels[label_idx].is_defined || as.labels[label_idx].is_weak))
+            label_idx = -1;
 
         if (label_idx >= 0) {
             // Local label - resolve it (PC-relative within section is stable)
