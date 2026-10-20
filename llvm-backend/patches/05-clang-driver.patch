@@ -64,10 +64,10 @@ index 64859a318485..9d6b8e3d37a5 100644
      break;
 diff --git a/clang/lib/Driver/ToolChains/SLOW32.cpp b/clang/lib/Driver/ToolChains/SLOW32.cpp
 new file mode 100644
-index 000000000000..c1c884051eea
+index 000000000000..ad95c14bc652
 --- /dev/null
 +++ b/clang/lib/Driver/ToolChains/SLOW32.cpp
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,162 @@
 +//===--- SLOW32.cpp - SLOW-32 ToolChain Implementations ---------*- C++ -*-===//
 +//
 +// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -131,6 +131,14 @@ index 000000000000..c1c884051eea
 +  if (!DebugIO) {
 +    CmdArgs.push_back("--mmio");
 +    CmdArgs.push_back("64K");
++  }
++
++  // C++ gets a 16 MB heap: libc++, libc++abi and the locale tables assume
++  // room, and s32-ld's own 1 MB is sized for small C programs.  It comes
++  // before the -Wl arguments, so a --heap-size there wins.
++  if (TC.getDriver().CCCIsCXX()) {
++    CmdArgs.push_back("--heap-size");
++    CmdArgs.push_back("16M");
 +  }
 +
 +  // crt0 provides _start and must come first.
@@ -325,10 +333,10 @@ index 000000000000..636656b04ebb
 +#endif // LLVM_CLANG_LIB_DRIVER_TOOLCHAINS_SLOW32_H
 diff --git a/clang/test/Driver/slow32-toolchain.c b/clang/test/Driver/slow32-toolchain.c
 new file mode 100644
-index 000000000000..19c9b16997dc
+index 000000000000..8640e76b5874
 --- /dev/null
 +++ b/clang/test/Driver/slow32-toolchain.c
-@@ -0,0 +1,71 @@
+@@ -0,0 +1,80 @@
 +// Check the SLOW-32 driver pipeline: clang -cc1, then slow32asm, then s32-ld.
 +
 +// RUN: %clang -### --target=slow32-unknown-none --sysroot=/s32 %s 2>&1 \
@@ -384,6 +392,7 @@ index 000000000000..19c9b16997dc
 +// CXX: "-cc1"
 +// CXX-SAME: "-funwind-tables=1"
 +// CXX: s32-ld
++// CXX-SAME: "--heap-size" "16M"
 +// CXX-SAME: crt0.s32o
 +// CXX-SAME: libs32cxx.s32a
 +// CXX-SAME: libc_mmio.s32a
@@ -395,8 +404,16 @@ index 000000000000..19c9b16997dc
 +// NOSTDLIBXX-NOT: libs32cxx.s32a
 +// NOSTDLIBXX-SAME: libc_mmio.s32a
 +
-+// C keeps neither.
++// A --heap-size of the program's own comes after, and s32-ld takes the last.
++// RUN: %clangxx -### --target=slow32-unknown-none --sysroot=/s32 \
++// RUN:   -Wl,--heap-size,64M %s 2>&1 | FileCheck --check-prefix=CXXHEAP %s
++// CXXHEAP: s32-ld
++// CXXHEAP-SAME: "--heap-size" "16M"
++// CXXHEAP-SAME: "--heap-size" "64M"
++
++// C keeps neither, and s32-ld's own heap.
 +// RUN: %clang -### --target=slow32-unknown-none --sysroot=/s32 %s 2>&1 \
 +// RUN:   | FileCheck --check-prefix=CNOCXX %s
 +// CNOCXX-NOT: "-funwind-tables=
 +// CNOCXX-NOT: libs32cxx.s32a
++// CNOCXX-NOT: "--heap-size"
