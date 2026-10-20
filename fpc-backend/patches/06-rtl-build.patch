@@ -32,7 +32,7 @@ index b7fd07602b..8af8c54afb 100644
  linux_all:
  	$(MAKE) -C linux all
 diff --git a/rtl/embedded/Makefile b/rtl/embedded/Makefile
-index ad3eb879db..c4e61e7249 100644
+index 450de4dd30..255c31f34d 100644
 --- a/rtl/embedded/Makefile
 +++ b/rtl/embedded/Makefile
 @@ -2,7 +2,7 @@

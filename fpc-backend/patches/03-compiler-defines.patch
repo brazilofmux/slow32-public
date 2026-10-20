@@ -25,10 +25,10 @@ index 7b23da08d8..2c3aba12aa 100644
           ,
           addr_b16, { %b16(sym) }
 diff --git a/compiler/fpcdefs.inc b/compiler/fpcdefs.inc
-index e9362baff4..653c34d04e 100644
+index 280b646cd8..e639ec356a 100644
 --- a/compiler/fpcdefs.inc
 +++ b/compiler/fpcdefs.inc
-@@ -421,6 +421,20 @@
+@@ -425,6 +425,20 @@
    {$define support_rodata}
  {$endif loongarch64}
  
@@ -50,10 +50,10 @@ index e9362baff4..653c34d04e 100644
    (but there we don't support it)
  }
 diff --git a/compiler/globals.pas b/compiler/globals.pas
-index b8b30a4321..a158130bbe 100644
+index ea25770b35..a0e80290a5 100644
 --- a/compiler/globals.pas
 +++ b/compiler/globals.pas
-@@ -689,6 +689,12 @@       tpendingstate = record
+@@ -690,6 +690,12 @@       tpendingstate = record
          asmcputype : cpu_none;
          fputype : fpu_fd;
    {$endif loongarch64}
@@ -67,10 +67,10 @@ index b8b30a4321..a158130bbe 100644
          asmmode : asmmode_standard;
  {$ifndef jvm}
 diff --git a/compiler/options.pas b/compiler/options.pas
-index 1178acbcc9..94948b8ed1 100644
+index c63dc78c6d..cebbcc539f 100644
 --- a/compiler/options.pas
 +++ b/compiler/options.pas
-@@ -4850,6 +4850,14 @@ procedure read_arguments(cmd:TCmdStr);
+@@ -4853,6 +4853,14 @@ procedure read_arguments(cmd:TCmdStr);
          def_system_macro('FPC_LOCALS_ARE_STACK_REG_RELATIVE');
        {$endif loongarch64}
  
@@ -85,7 +85,7 @@ index 1178acbcc9..94948b8ed1 100644
        {$if defined(cpu8bitalu)}
          def_system_macro('CPUINT8');
        {$elseif defined(cpu16bitalu)}
-@@ -5735,6 +5743,19 @@ procedure read_arguments(cmd:TCmdStr);
+@@ -5738,6 +5746,19 @@ procedure read_arguments(cmd:TCmdStr);
        ;
    end;
  {$endif mipsel}

@@ -12,10 +12,10 @@ index be4448dab2..f33dfadf3a 100644
                        begin
                          asmline.concat(tai_const.create_8bit(DW_LNS_extended_op));
 diff --git a/compiler/nadd.pas b/compiler/nadd.pas
-index 961b7e7640..c5706a26f7 100644
+index 7d60e94ef3..93079c8689 100644
 --- a/compiler/nadd.pas
 +++ b/compiler/nadd.pas
-@@ -4632,8 +4632,12 @@          else if is_implicit_pointer_object_type(ld) or (ld.typ=classrefdef) the
+@@ -4637,8 +4637,12 @@          else if is_implicit_pointer_object_type(ld) or (ld.typ=classrefdef) the
          if left.nodetype = ordconstn then
            swapleftright;
  
@@ -47,10 +47,10 @@ index c29dc4d92a..484724f2fc 100644
  {$ifndef CPUDEFINED}
    {$fatal A CPU type switch must be defined}
 diff --git a/compiler/psystem.pas b/compiler/psystem.pas
-index 36f6a95b46..84ab1d7208 100644
+index 99492d6fd3..f4fbd6866d 100644
 --- a/compiler/psystem.pas
 +++ b/compiler/psystem.pas
-@@ -402,6 +402,10 @@ implementation
+@@ -403,6 +403,10 @@ implementation
          create_fpu_types;
          s64currencytype:=corddef.create(scurrency,low(int64),high(int64),true);
  {$endif loongarch64}
@@ -350,7 +350,7 @@ index 0000000000..1e8c50f11e
 +   write_inc_files;
 +end.
 diff --git a/compiler/utils/ppuutils/ppudump.pp b/compiler/utils/ppuutils/ppudump.pp
-index cd14beca48..96d52ede0b 100644
+index e830b2ef1b..908b762116 100644
 --- a/compiler/utils/ppuutils/ppudump.pp
 +++ b/compiler/utils/ppuutils/ppudump.pp
 @@ -90,7 +90,8 @@

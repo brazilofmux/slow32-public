@@ -25,6 +25,15 @@ SDK="$(xcrun --show-sdk-path)"
 WORK="${WORK:-$FPC_SRC/compiler/bootstrap}"
 mkdir -p "$WORK/a64units" "$WORK/s32units"
 cd "$FPC_SRC/compiler"
+# msgidx.inc and msgtxt.inc come from msg/errore.msg, as `make msg` (and
+# Dockerfile.toolchain) make them: upstream commits a new message to
+# errore.msg ahead of the regenerated files at times (2026-10-20:
+# sym_e_type_must_be_record, "Identifier not found" in pdecvar.pas).
+echo "stage 1: message files from msg/errore.msg"
+"$HOST_FPC" -Fu"$HOST_RTL" -FE"$WORK" utils/msg2inc.pp > "$WORK/stage1.log" 2>&1 \
+    || { tail -5 "$WORK/stage1.log"; exit 1; }
+"$WORK/msg2inc" msg/errore.msg msg msg >> "$WORK/stage1.log" 2>&1 \
+    || { tail -5 "$WORK/stage1.log"; exit 1; }
 echo "stage 2: trunk ppca64 (host) with $HOST_FPC"
 "$HOST_FPC" -B -daarch64 -Fuaarch64 -Fuarmgen -Fusystems -Fiaarch64 -Fiarmgen \
     -Fu"$HOST_RTL" -FU"$WORK/a64units" -o"$WORK/ppca64.trunk" pp.pas > "$WORK/stage2.log" 2>&1 \

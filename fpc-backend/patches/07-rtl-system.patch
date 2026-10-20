@@ -74,7 +74,7 @@ index 7aad37bf77..7c8a25911e 100644
          exit;
      End;
 diff --git a/rtl/inc/system.inc b/rtl/inc/system.inc
-index e7b5a19991..d438d2830e 100644
+index dec670be73..ad9818030f 100644
 --- a/rtl/inc/system.inc
 +++ b/rtl/inc/system.inc
 @@ -366,6 +366,14 @@ function do_isdevice(handle:thandle):boolean;forward;
@@ -93,7 +93,7 @@ index e7b5a19991..d438d2830e 100644
    {$Error Can't determine processor type !}
  {$endif}
 diff --git a/rtl/inc/systemh.inc b/rtl/inc/systemh.inc
-index 8ca6902d79..ab99240e5a 100644
+index ca9a8ee0fd..28dd748e38 100644
 --- a/rtl/inc/systemh.inc
 +++ b/rtl/inc/systemh.inc
 @@ -429,6 +429,24 @@

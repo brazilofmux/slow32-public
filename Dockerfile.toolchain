@@ -120,7 +120,7 @@ RUN MACHINE=$(uname -m) && \
 
 # Clone FPC source at pinned commit
 # Pin to the upstream merge-base of ~/fpc (same SHA patches are regenerated against).
-ARG FPC_COMMIT=abcdfa618de1d4d7646698be07fc33b1540a6659
+ARG FPC_COMMIT=3f9ea418a294b249613e3e585f36dd398316bfa9
 RUN git init /fpc-src && cd /fpc-src && \
     git remote add origin https://gitlab.com/freepascal.org/fpc/source.git && \
     git fetch --depth=1 origin ${FPC_COMMIT} && \

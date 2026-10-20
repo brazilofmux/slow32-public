@@ -156,7 +156,7 @@ index e02973107c..2176ef23ce 100644
  endif
  endif
 diff --git a/compiler/Makefile.fpc b/compiler/Makefile.fpc
-index 281132ef2c..1e95af2d5c 100644
+index eb24263bdb..477f629658 100644
 --- a/compiler/Makefile.fpc
 +++ b/compiler/Makefile.fpc
 @@ -32,7 +32,7 @@ fpcdir=..
