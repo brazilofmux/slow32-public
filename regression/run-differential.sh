@@ -20,8 +20,10 @@
 #
 # Usage: ./run-differential.sh [test-name ...]
 #   With no arguments, runs every test in tests/.
-#   Test binaries are taken from results/<test>/test.s32x; missing ones are
-#   built via ./run-tests.sh <test>. REBUILD=1 forces a rebuild.
+#   Test binaries are taken from results/<test>/test.s32x; missing ones,
+#   and ones older than a file of their test or than the compiler,
+#   assembler, linker or runtime that built them, are (re)built via
+#   ./run-tests.sh <test>. REBUILD=1 forces a rebuild.
 #
 # Env overrides: SLOW32, SLOW32_FAST, SLOW32_DBT, QEMU_S32, TIMEOUT (secs).
 #
@@ -34,6 +36,17 @@ SLOW32="${SLOW32:-$SLOW32_BASE/tools/emulator/slow32}"
 SLOW32_FAST="${SLOW32_FAST:-$SLOW32_BASE/tools/emulator/slow32-fast}"
 SLOW32_DBT="${SLOW32_DBT:-$SLOW32_BASE/tools/dbt/slow32-dbt}"
 QEMU_S32="${QEMU_S32:-$HOME/qemu/build/qemu-system-slow32}"
+
+# What run-tests.sh builds with (same defaults, same overrides): a binary
+# older than any of these is stale.
+LLVM_BIN="${LLVM_BIN:-$HOME/llvm-project/build/bin}"
+BUILD_INPUTS=(
+    "${CLANG:-$LLVM_BIN/clang}" "${CLANGXX:-$LLVM_BIN/clang++}" "${LLC:-$LLVM_BIN/llc}"
+    "${ASSEMBLER:-$SLOW32_BASE/tools/assembler/slow32asm}"
+    "${LINKER:-$SLOW32_BASE/tools/linker/s32-ld}"
+    "$SLOW32_BASE"/runtime/crt0.s32o "$SLOW32_BASE"/runtime/*.s32a
+    "$SLOW32_BASE"/runtime/locales.s32o
+)
 
 TEST_DIR="$SCRIPT_DIR/tests"
 RESULTS_DIR="$SCRIPT_DIR/results"
@@ -193,7 +206,16 @@ run_test() {
         return
     fi
 
-    if [ ! -f "$s32x" ] || [ -n "$REBUILD" ]; then
+    local stale=
+    if [ -f "$s32x" ]; then
+        local f
+        for f in "${BUILD_INPUTS[@]}"; do
+            [ "$f" -nt "$s32x" ] && { stale=1; break; }
+        done
+        [ -n "$(find "$test_path" -type f -newer "$s32x" | head -1)" ] && stale=1
+    fi
+    if [ ! -f "$s32x" ] || [ -n "$stale" ] || [ -n "$REBUILD" ]; then
+        rm -f "$s32x"
         (cd "$SCRIPT_DIR" && ./run-tests.sh "$test_name" >/dev/null 2>&1)
         if [ ! -f "$s32x" ]; then
             echo -e "${YELLOW}SKIP${NC} (no test.s32x; build failed?)"
