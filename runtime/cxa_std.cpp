@@ -31,13 +31,15 @@ const nothrow_t nothrow{};
 
 } // namespace std
 
-// operator new does not throw here (no std::bad_alloc), so the nothrow
-// forms are the plain ones.
+// The plain operator new traps when memory runs out (there is no
+// std::bad_alloc); the nothrow forms are the ones that say null, so they
+// go to malloc themselves.
+extern "C" void *malloc(__SIZE_TYPE__);
 void *operator new(__SIZE_TYPE__ size, const std::nothrow_t &) noexcept {
-    return ::operator new(size);
+    return malloc(size ? size : 1);
 }
 void *operator new[](__SIZE_TYPE__ size, const std::nothrow_t &) noexcept {
-    return ::operator new[](size);
+    return malloc(size ? size : 1);
 }
 
 // dynamic_cast<T &> that fails, and typeid of *p with p null.

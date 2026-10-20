@@ -1,0 +1,23 @@
+malloc(0xffffffff) null
+malloc(0xfffffffc) null
+malloc(0xffffffc4) null
+malloc(0xffffff00) null
+malloc(0x7fffffff) null
+malloc(0x7ffffffc) null
+malloc(0x7ffffff9) null
+malloc(0x40000000) null
+malloc(0x10000000) null
+calloc(0x40000000, 4) null
+calloc(1, 0xffffffc4) null
+realloc(keep, 0xffffffff) null
+realloc(keep, 0xfffffffc) null
+realloc(keep, 0xffffffc4) null
+realloc(keep, 0xffffff00) null
+realloc(keep, 0x7fffffff) null
+realloc(keep, 0x7ffffffc) null
+realloc(keep, 0x7ffffff9) null
+realloc(keep, 0x40000000) null
+realloc(keep, 0x10000000) null
+keep still "pumice and basalt"
+heap afterwards: 2999 bytes, last 'q'
+malloc_limits done

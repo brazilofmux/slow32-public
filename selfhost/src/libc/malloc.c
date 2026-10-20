@@ -22,6 +22,10 @@ char *__get_heap_end(void);
 #define HDR_SIZE 8
 #define FTR_SIZE 4
 #define MIN_BLK 24
+/* More than the whole 256 MB address space.  Turned away before any size
+ * arithmetic, so align_up and the header and footer cannot carry a
+ * request just under 2 GB negative, where every block looks big enough. */
+#define MAX_REQ 0x40000000
 
 /* Free node: overlaid on free blocks at offset 0 */
 struct fnode {
@@ -102,7 +106,7 @@ char *malloc(int size) {
     int bsz;
     int rem;
     char *nb;
-    if (size <= 0) return (char *)0;
+    if (size <= 0 || size > MAX_REQ) return (char *)0;
     if (!heap_ready) heap_init();
     need = align_up(HDR_SIZE + align_up(size) + FTR_SIZE);
     if (need < MIN_BLK) need = MIN_BLK;
@@ -196,7 +200,9 @@ char *realloc(char *ptr, int size) {
     char *np;
     int cp;
     if (!ptr) return malloc(size);
-    if (size <= 0) { free(ptr); return (char *)0; }
+    if (size == 0) { free(ptr); return (char *)0; }
+    /* a size_t past 2 GB arrives negative: refuse it, keeping the block */
+    if (size < 0 || size > MAX_REQ) return (char *)0;
     blk = ptr - HDR_SIZE;
     cur_sz = blk_size(blk);
     payload = cur_sz - HDR_SIZE - FTR_SIZE;

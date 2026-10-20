@@ -1,5 +1,5 @@
 // Freestanding C++ through the SLOW-32 backend: no RTTI, no C++ standard
-// library; new/delete, guards and pure virtuals from runtime/cxxabi.c.  Self-checking; prints PASS/FAIL per part and
+// library; new/delete, guards and pure virtuals from runtime/cxa_support.c.  Self-checking; prints PASS/FAIL per part and
 // exits with the number of failures.
 typedef decltype(sizeof 0) size_t;
 extern "C" {
@@ -9,7 +9,7 @@ void free(void *);
 }
 
 // new/delete, __cxa_pure_virtual and the static guards come from the
-// runtime's cxxabi.c; placement new is the header's job, done here.
+// runtime's cxa_support.c; placement new is the header's job, done here.
 inline void *operator new(size_t, void *p) noexcept { return p; }
 
 static int fails;

@@ -39,6 +39,10 @@ typedef struct {
 #define HEADER_SIZE ALIGN(sizeof(header_t))
 #define FOOTER_SIZE (sizeof(footer_t))
 #define MIN_BLOCK_SIZE ALIGN(sizeof(free_node_t) + FOOTER_SIZE)
+// More than the whole 256 MB address space.  Turned away before any size
+// arithmetic, so ALIGN and the header and footer cannot wrap a request
+// near SIZE_MAX round to a small block.
+#define MAX_REQUEST ((size_t)0x40000000)
 
 // Bins
 // Sizes: 16, 24, 32, 40, 48, 56, 64, >64
@@ -137,7 +141,7 @@ static void init_heap(void) {
 }
 
 void *malloc(size_t size) {
-    if (size == 0) return NULL;
+    if (size == 0 || size > MAX_REQUEST) return NULL;
     if (!heap_initialized) init_heap();
     
     size_t payload_size = ALIGN(size);
@@ -292,6 +296,7 @@ void *realloc(void *ptr, size_t size) {
         free(ptr);
         return NULL;
     }
+    if (size > MAX_REQUEST) return NULL;
     
     header_t *block = (header_t *)((char *)ptr - HEADER_SIZE);
     size_t current_size = get_size(block);

@@ -1,6 +1,6 @@
 // <new> for freestanding C++ on SLOW-32.  operator new is malloc
-// (runtime/cxxabi.c) and returns null when memory runs out rather than
-// throwing; there is no std::bad_alloc.
+// (runtime/cxa_support.c) and traps when memory runs out, as there is no
+// std::bad_alloc to throw; new (std::nothrow) returns null instead.
 #ifndef _SLOW32_NEW
 #define _SLOW32_NEW
 

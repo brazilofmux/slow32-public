@@ -98,7 +98,8 @@ void _ZSt9terminatev(void) {
 
 /* operator new(unsigned int) */
 void *_Znwj(unsigned int size) {
-    void *p = malloc(size);
+    /* new T[0] is legal and owes a unique pointer; malloc(0) is NULL here */
+    void *p = malloc(size ? size : 1);
     if (!p) {
         /* No exceptions, so trap on OOM */
         __builtin_trap();

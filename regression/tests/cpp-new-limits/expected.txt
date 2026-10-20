@@ -1,0 +1,8 @@
+new char[0] not null               PASS
+two new char[0] differ             PASS
+nothrow 256 MB array is null       PASS
+nothrow overflowing count is null  PASS
+nothrow char[0] not null           PASS
+nothrow struct served              PASS
+nothrow int[6] served and usable   PASS
+0 failed
