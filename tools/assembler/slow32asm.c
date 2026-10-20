@@ -90,6 +90,7 @@ typedef struct {
     bool force_local;   // .local: never export, even via .comm
     bool is_absolute;   // .equ/.set constant: not an address, never shifted
     bool is_weak;       // .weak: global, and another definition may win
+    bool is_hidden;     // .hidden: S32O_SYM_HIDDEN on its symbol
 } label_t;
 
 typedef struct {
@@ -1252,6 +1253,7 @@ static void add_label(assembler_t *as, const char *name, uint32_t addr) {
     as->labels[as->num_labels].force_local = false;
     as->labels[as->num_labels].is_absolute = false;
     as->labels[as->num_labels].is_weak = false;
+    as->labels[as->num_labels].is_hidden = false;
     s32_hashmap_put(&as->label_map, as->labels[as->num_labels].name, as->num_labels);
     as->num_labels++;
 }
@@ -1968,6 +1970,20 @@ static bool assemble_line(assembler_t *as, char *line) {
                 label->is_global = false;
             }
             return true;
+        } else if (strcmp(tokens[0], ".hidden") == 0) {
+            // .hidden NAME: recorded on the symbol (S32O_SYM_HIDDEN) for a
+            // partial link to localize; it does not make NAME global, and a
+            // final link treats it as any other global.
+            for (int i = 1; i < num_tokens; i++) {
+                label_t *label = find_label(as, tokens[i]);
+                if (!label) {
+                    add_label(as, tokens[i], 0);
+                    label = &as->labels[as->num_labels - 1];
+                    label->is_defined = false;
+                }
+                label->is_hidden = true;
+            }
+            return true;
         } else if (strcmp(tokens[0], ".global") == 0 || strcmp(tokens[0], ".globl") == 0 ||
                    strcmp(tokens[0], ".weak") == 0) {
             // Mark symbol as global; .weak also weak.  .weak used to be
@@ -2489,7 +2505,6 @@ static bool assemble_line(assembler_t *as, char *line) {
             strcmp(tokens[0], ".ident") == 0 ||
             strcmp(tokens[0], ".addrsig") == 0 ||
             strcmp(tokens[0], ".addrsig_sym") == 0 ||
-            strcmp(tokens[0], ".hidden") == 0 ||
             strcmp(tokens[0], ".protected") == 0 ||
             strcmp(tokens[0], ".internal") == 0 ||
             strcmp(tokens[0], ".loc") == 0 ||
@@ -3300,7 +3315,7 @@ static int write_object_file(assembler_t *as, const char *filename) {
         bool defined = as->labels[i].is_defined;
         symbols[num_symbols].value = defined ? as->labels[i].address : 0;
         symbols[num_symbols].section = defined ? section_map[as->labels[i].section] : 0;
-        symbols[num_symbols].type = S32O_SYM_NOTYPE;
+        symbols[num_symbols].type = as->labels[i].is_hidden ? S32O_SYM_HIDDEN : S32O_SYM_NOTYPE;
         symbols[num_symbols].binding = as->labels[i].is_weak ? S32O_BIND_WEAK : S32O_BIND_GLOBAL;
         symbols[num_symbols].size = 0;
         s32_hashmap_put(&sym_dedup, as->labels[i].name, num_symbols);
@@ -3333,7 +3348,8 @@ static int write_object_file(assembler_t *as, const char *filename) {
             symbols[num_symbols].name_offset = add_string(as, sym);
             symbols[num_symbols].value = 0;
             symbols[num_symbols].section = 0; // Undefined
-            symbols[num_symbols].type = S32O_SYM_NOTYPE;
+            symbols[num_symbols].type = (lbl >= 0 && as->labels[lbl].is_hidden)
+                                            ? S32O_SYM_HIDDEN : S32O_SYM_NOTYPE;
             symbols[num_symbols].binding = S32O_BIND_GLOBAL;
             symbols[num_symbols].size = 0;
         }

@@ -463,7 +463,17 @@ typedef struct {
 #define S32O_SYM_FUNC     0x01  // Function
 #define S32O_SYM_OBJECT   0x02  // Data object
 #define S32O_SYM_SECTION  0x03  // Section symbol
+#define S32O_SYM_TYPE_MASK 0x0F // the type is the low four bits
+#define S32O_SYM_HIDDEN   0x10  // visibility: .hidden
 ```
+
+The type byte's high bits carry visibility, which ELF keeps apart in
+`st_other`. `S32O_SYM_HIDDEN` marks a `.hidden` symbol: an ordinary global to
+every link, except that `s32-ld -r --localize-hidden` makes a hidden
+definition local to the object the partial link writes. That is how a module
+keeps its internals to itself in a static link, as a shared object's hidden
+symbols stay inside it. A final link ignores the bit and writes executables
+without it.
 
 ### Symbol Binding
 

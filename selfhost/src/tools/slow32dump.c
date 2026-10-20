@@ -317,7 +317,9 @@ int main(int argc, char **argv) {
                 fputs(safe_name(strtab, str_sz, noff2), stdout);
                 fputs(" val=0x", stdout); out_hex32(stdout, val);
                 fputs(" sec=", stdout); out_dec(stdout, sec);
-                fputs(" type=", stdout); fputs(sym_type_name(typ), stdout);
+                /* 0x0F type, 0x10 S32O_SYM_HIDDEN (common/s32_formats.h) */
+                fputs(" type=", stdout); fputs(sym_type_name(typ & 15), stdout);
+                if (typ & 16) fputs(" hidden", stdout);
                 fputs(" bind=", stdout); fputs(sym_bind_name(bind), stdout);
                 fputs(" size=", stdout); out_dec(stdout, ssize2);
                 fputc('\n', stdout);

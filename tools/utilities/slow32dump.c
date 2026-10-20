@@ -51,6 +51,14 @@ static const char *section_type_name(uint32_t type) {
 }
 
 static const char *symbol_type_name(uint8_t type) {
+    if (type & S32O_SYM_HIDDEN) {
+        switch (type & S32O_SYM_TYPE_MASK) {
+            case S32O_SYM_NOTYPE:  return "HIDDEN";
+            case S32O_SYM_FUNC:    return "FUNC/H";
+            case S32O_SYM_OBJECT:  return "OBJECT/H";
+            default:               return "UNKN/H";
+        }
+    }
     switch (type) {
         case S32O_SYM_NOTYPE:  return "NOTYPE";
         case S32O_SYM_FUNC:    return "FUNC";

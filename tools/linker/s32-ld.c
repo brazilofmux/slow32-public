@@ -200,6 +200,14 @@ typedef struct {
     const char *entry_symbol;
     const char *map_file;   // Memory map output file
 
+    // -r: write a relocatable .s32o (write_relocatable), not an executable
+    bool relocatable;
+    bool localize_hidden;   // -r --localize-hidden
+    const char **redef_old; // -r --redefine-sym OLD=NEW, parallel arrays
+    const char **redef_new;
+    int num_redefs;
+    int redefs_cap;
+
     // Library search paths
     const char *lib_paths[MAX_LIB_PATHS];
     int num_lib_paths;
@@ -2497,7 +2505,8 @@ static void write_executable(linker_state_t *ld) {
             emit_syms[si].name_offset = name_off;
             emit_syms[si].value = sym->value;
             emit_syms[si].section = (uint16_t)sym->section_idx;
-            emit_syms[si].type = sym->type;
+            // visibility matters to a partial link only (S32O_SYM_HIDDEN)
+            emit_syms[si].type = sym->type & S32O_SYM_TYPE_MASK;
             emit_syms[si].binding = sym->binding;
             emit_syms[si].size = sym->size;
             si++;
@@ -2707,6 +2716,275 @@ static void cleanup(linker_state_t *ld) {
 }
 
 // Parse size with optional K/M suffix
+// ============================================================================
+// Partial link (-r): the inputs merged into one relocatable .s32o
+// ============================================================================
+//
+// Sections are merged as a final link merges them (merge_sections, the same
+// canonical names and part offsets), but nothing is placed or resolved:
+// every relocation is carried over, against the output's own symbol table,
+// for the final link to apply.  Global and weak symbols are unified by name
+// the way build_symbol_table does it -- one strong definition, a strong one
+// over weak ones, the first of several weak ones -- and one undefined entry
+// stands for every reference to a name nothing defines.  Locals are carried
+// over too, renamed where two inputs used the same name (.Ltmp0, a static
+// helper): a final link finds a relocation's local target by name within
+// its file, so names in one object have to be unique.
+//
+// --localize-hidden makes each defined S32O_SYM_HIDDEN symbol local -- the
+// object then keeps its internals to itself, as a shared object's hidden
+// symbols stay inside it -- and --redefine-sym renames a global (an
+// object's entry points, so that several modules can share one link).
+
+typedef struct {
+    char *name;
+    s32o_symbol_t sym;      // section is the output's, 1-based; 0 undefined
+    bool strong_ref;        // an undefined entry some input references non-weakly
+} rel_sym_t;
+
+static const char *rel_rename(linker_state_t *ld, const char *name) {
+    for (int i = 0; i < ld->num_redefs; i++) {
+        if (strcmp(ld->redef_old[i], name) == 0) return ld->redef_new[i];
+    }
+    return name;
+}
+
+// The output section an input section went to; created (empty) for one
+// merge_sections skipped because it was empty but which a symbol names.
+static int rel_out_section(linker_state_t *ld, input_file_t *inf, uint32_t s) {
+    const s32o_section_t *isec = &inf->sections[s];
+    const char *name = canonical_section_name(safe_string(inf, isec->name_offset));
+    int cs = s32_hashmap_get(&ld->section_map, name);
+    if (cs < 0) cs = find_or_create_section(ld, name, isec->type, isec->flags, isec->align);
+    return cs;
+}
+
+// A local name not yet used in the output: NAME, else NAME@rF, else
+// NAME@rF.N.  The names are kept in USED, which owns no strings.
+static char *rel_unique_name(s32_hashmap_t *used, const char *name, int f) {
+    if (s32_hashmap_get(used, name) < 0) return ld_strdup(name);
+    size_t n = strlen(name) + 32;
+    char *p = malloc(n);
+    if (!p) { fprintf(stderr, "Error: out of memory\n"); exit(1); }
+    snprintf(p, n, "%s@r%d", name, f);
+    for (int k = 1; s32_hashmap_get(used, p) >= 0; k++) snprintf(p, n, "%s@r%d.%d", name, f, k);
+    return p;
+}
+
+static void write_relocatable(linker_state_t *ld) {
+    rel_sym_t *syms = NULL;
+    int nsyms = 0, syms_cap = 0;
+    s32_hashmap_t globals, used;
+    s32_hashmap_init(&globals, 256);
+    s32_hashmap_init(&used, 256);
+    uint32_t **map = calloc(ld->num_input_files ? ld->num_input_files : 1, sizeof(uint32_t *));
+    if (!map) { fprintf(stderr, "Error: out of memory\n"); exit(1); }
+
+    // Globals and weaks, unified by (renamed) name.  The maps' keys are
+    // the entries' own heap names, which stay put when SYMS grows.
+    for (int f = 0; f < ld->num_input_files; f++) {
+        input_file_t *inf = &ld->input_files[f];
+        map[f] = calloc(inf->header.nsymbols ? inf->header.nsymbols : 1, sizeof(uint32_t));
+        if (!map[f]) { fprintf(stderr, "Error: out of memory\n"); exit(1); }
+        for (uint32_t s = 0; s < inf->header.nsymbols; s++) {
+            s32o_symbol_t *isym = &inf->symbols[s];
+            map[f][s] = UINT32_MAX;
+            if (isym->binding == S32O_BIND_LOCAL) continue;
+            if (isym->section > inf->header.nsections) {
+                fprintf(stderr, "Error: symbol '%s' in '%s' has invalid section index %u\n",
+                        safe_string(inf, isym->name_offset), inf->filename, isym->section);
+                exit(1);
+            }
+            const char *name = rel_rename(ld, safe_string(inf, isym->name_offset));
+            int idx = s32_hashmap_get(&globals, name);
+            if (idx < 0) {
+                DARR_PUSH(syms, nsyms, syms_cap, rel_sym_t);
+                memset(&syms[nsyms], 0, sizeof(syms[nsyms]));
+                syms[nsyms].name = ld_strdup(name);
+                syms[nsyms].sym.binding = isym->binding;
+                s32_hashmap_put(&globals, syms[nsyms].name, nsyms);
+                idx = nsyms++;
+            }
+            rel_sym_t *o = &syms[idx];
+            o->sym.type |= isym->type & S32O_SYM_HIDDEN;
+            if (isym->section == 0) {
+                if (isym->binding != S32O_BIND_WEAK) o->strong_ref = true;
+            } else {
+                bool take = (o->sym.section == 0)
+                         || (o->sym.binding == S32O_BIND_WEAK && isym->binding != S32O_BIND_WEAK);
+                if (!take && o->sym.binding != S32O_BIND_WEAK && isym->binding != S32O_BIND_WEAK) {
+                    fprintf(stderr, "Error: Multiple definitions of '%s'\n", name);
+                    fprintf(stderr, "  Also defined in %s\n", inf->filename);
+                    exit(1);
+                }
+                if (take) {
+                    int cs = rel_out_section(ld, inf, isym->section - 1);
+                    o->sym.section = (uint16_t)(cs + 1);
+                    o->sym.value = inf->section_base[isym->section - 1] + isym->value;
+                    o->sym.size = isym->size;
+                    o->sym.type = (uint8_t)((isym->type & S32O_SYM_TYPE_MASK)
+                                            | (o->sym.type & S32O_SYM_HIDDEN));
+                    o->sym.binding = isym->binding;
+                }
+            }
+            map[f][s] = (uint32_t)idx;
+        }
+    }
+    for (int i = 0; i < nsyms; i++) {
+        if (syms[i].sym.section == 0) {
+            syms[i].sym.binding = syms[i].strong_ref ? S32O_BIND_GLOBAL : S32O_BIND_WEAK;
+        }
+        s32_hashmap_put(&used, syms[i].name, i);
+    }
+
+    // Locals, each its own entry under a name unique in the output.
+    for (int f = 0; f < ld->num_input_files; f++) {
+        input_file_t *inf = &ld->input_files[f];
+        for (uint32_t s = 0; s < inf->header.nsymbols; s++) {
+            s32o_symbol_t *isym = &inf->symbols[s];
+            if (isym->binding != S32O_BIND_LOCAL) continue;
+            if (isym->section == 0 || isym->section > inf->header.nsections) {
+                fprintf(stderr, "Error: local symbol '%s' in '%s' is not defined in a section\n",
+                        safe_string(inf, isym->name_offset), inf->filename);
+                exit(1);
+            }
+            DARR_PUSH(syms, nsyms, syms_cap, rel_sym_t);
+            rel_sym_t *o = &syms[nsyms];
+            memset(o, 0, sizeof(*o));
+            o->name = rel_unique_name(&used, safe_string(inf, isym->name_offset), f);
+            int cs = rel_out_section(ld, inf, isym->section - 1);
+            o->sym = *isym;
+            o->sym.section = (uint16_t)(cs + 1);
+            o->sym.value = inf->section_base[isym->section - 1] + isym->value;
+            s32_hashmap_put(&used, o->name, nsyms);
+            map[f][s] = (uint32_t)nsyms++;
+        }
+    }
+
+    // Hidden definitions become locals of this object.
+    if (ld->localize_hidden) {
+        for (int i = 0; i < nsyms; i++) {
+            s32o_symbol_t *o = &syms[i].sym;
+            if (o->binding != S32O_BIND_LOCAL && (o->type & S32O_SYM_HIDDEN) && o->section != 0) {
+                o->binding = S32O_BIND_LOCAL;
+                o->type &= S32O_SYM_TYPE_MASK;
+            }
+        }
+    }
+
+    // Relocations, section by section in part order.
+    uint32_t *nrel = calloc(ld->num_sections ? ld->num_sections : 1, sizeof(uint32_t));
+    s32o_reloc_t **rels = calloc(ld->num_sections ? ld->num_sections : 1, sizeof(s32o_reloc_t *));
+    uint32_t **first = calloc(ld->num_input_files ? ld->num_input_files : 1, sizeof(uint32_t *));
+    if (!nrel || !rels || !first) { fprintf(stderr, "Error: out of memory\n"); exit(1); }
+    for (int f = 0; f < ld->num_input_files; f++) {
+        input_file_t *inf = &ld->input_files[f];
+        first[f] = calloc(inf->header.nsections ? inf->header.nsections : 1, sizeof(uint32_t));
+        if (!first[f]) { fprintf(stderr, "Error: out of memory\n"); exit(1); }
+        uint32_t k = 0;
+        for (uint32_t s = 0; s < inf->header.nsections; s++) { first[f][s] = k; k += inf->sections[s].nrelocs; }
+    }
+    for (int c = 0; c < ld->num_sections; c++) {
+        combined_section_t *sec = &ld->sections[c];
+        uint32_t total = 0;
+        for (int p = 0; p < sec->num_parts; p++)
+            total += ld->input_files[sec->parts[p].file_idx].sections[sec->parts[p].section_idx].nrelocs;
+        rels[c] = calloc(total ? total : 1, sizeof(s32o_reloc_t));
+        if (!rels[c]) { fprintf(stderr, "Error: out of memory\n"); exit(1); }
+        for (int p = 0; p < sec->num_parts; p++) {
+            int f = sec->parts[p].file_idx, s = sec->parts[p].section_idx;
+            input_file_t *inf = &ld->input_files[f];
+            for (uint32_t r = 0; r < inf->sections[s].nrelocs; r++) {
+                s32o_reloc_t *irel = &inf->relocations[first[f][s] + r];
+                if (irel->symbol >= inf->header.nsymbols || map[f][irel->symbol] == UINT32_MAX) {
+                    fprintf(stderr, "Error: relocation in %s refers to unknown symbol idx=%u\n",
+                            inf->filename, irel->symbol);
+                    exit(1);
+                }
+                s32o_reloc_t *orel = &rels[c][nrel[c]++];
+                *orel = *irel;
+                orel->offset = sec->parts[p].offset + irel->offset;
+                orel->symbol = map[f][irel->symbol];
+            }
+        }
+    }
+
+    // String table: offset 0 is the empty string.
+    uint32_t strsz = 1, strcap = 4096;
+    char *strtab = calloc(1, strcap);
+    uint32_t *sec_name_off = calloc(ld->num_sections ? ld->num_sections : 1, sizeof(uint32_t));
+    if (!strtab || !sec_name_off) { fprintf(stderr, "Error: out of memory\n"); exit(1); }
+#define REL_ADD_STR(dst, s) do {                                              \
+        size_t n_ = strlen(s) + 1;                                            \
+        while (strsz + n_ > strcap) {                                         \
+            strcap *= 2; strtab = realloc(strtab, strcap);                    \
+            if (!strtab) { fprintf(stderr, "Error: out of memory\n"); exit(1); } \
+        }                                                                     \
+        memcpy(strtab + strsz, (s), n_); (dst) = strsz; strsz += (uint32_t)n_; \
+    } while (0)
+    for (int c = 0; c < ld->num_sections; c++) REL_ADD_STR(sec_name_off[c], ld->sections[c].name);
+    for (int i = 0; i < nsyms; i++) REL_ADD_STR(syms[i].sym.name_offset, syms[i].name);
+#undef REL_ADD_STR
+
+    // Layout: header, section table, section data, relocations, symbols, strings.
+    s32o_header_t hdr;
+    memset(&hdr, 0, sizeof(hdr));
+    hdr.magic = S32O_MAGIC;
+    hdr.version = 1;
+    hdr.endian = 0x01;
+    hdr.machine = 0x32;
+    hdr.nsections = (uint32_t)ld->num_sections;
+    hdr.sec_offset = sizeof(s32o_header_t);
+    uint32_t off = hdr.sec_offset + hdr.nsections * sizeof(s32o_section_t);
+    s32o_section_t *shdr = calloc(ld->num_sections ? ld->num_sections : 1, sizeof(s32o_section_t));
+    if (!shdr) { fprintf(stderr, "Error: out of memory\n"); exit(1); }
+    for (int c = 0; c < ld->num_sections; c++) {
+        combined_section_t *sec = &ld->sections[c];
+        shdr[c].name_offset = sec_name_off[c];
+        shdr[c].type = sec->type;
+        shdr[c].flags = sec->flags;
+        shdr[c].size = sec->size;
+        shdr[c].align = sec->align;
+        if (sec->type != S32_SEC_BSS && sec->size > 0) { shdr[c].offset = off; off += sec->size; }
+    }
+    for (int c = 0; c < ld->num_sections; c++) {
+        shdr[c].nrelocs = nrel[c];
+        if (nrel[c]) { shdr[c].reloc_offset = off; off += nrel[c] * sizeof(s32o_reloc_t); }
+    }
+    hdr.nsymbols = (uint32_t)nsyms;
+    hdr.sym_offset = off;
+    off += hdr.nsymbols * sizeof(s32o_symbol_t);
+    hdr.str_offset = off;
+    hdr.str_size = strsz;
+
+    FILE *out = fopen(ld->output_file, "wb");
+    if (!out) { fprintf(stderr, "Error: cannot create %s\n", ld->output_file); exit(1); }
+    bool ok = fwrite(&hdr, sizeof(hdr), 1, out) == 1;
+    if (ld->num_sections) ok = ok && fwrite(shdr, sizeof(s32o_section_t), ld->num_sections, out) == (size_t)ld->num_sections;
+    for (int c = 0; c < ld->num_sections; c++) {
+        if (shdr[c].offset) ok = ok && fwrite(ld->sections[c].data, 1, shdr[c].size, out) == shdr[c].size;
+    }
+    for (int c = 0; c < ld->num_sections; c++) {
+        if (nrel[c]) ok = ok && fwrite(rels[c], sizeof(s32o_reloc_t), nrel[c], out) == nrel[c];
+    }
+    for (int i = 0; i < nsyms; i++) ok = ok && fwrite(&syms[i].sym, sizeof(s32o_symbol_t), 1, out) == 1;
+    ok = ok && fwrite(strtab, 1, strsz, out) == strsz;
+    if (fclose(out) != 0) ok = false;
+    if (!ok) { fprintf(stderr, "Error: failed writing %s\n", ld->output_file); exit(1); }
+
+    if (ld->verbose) {
+        printf("Partial link: %d sections, %d symbols -> %s\n", ld->num_sections, nsyms, ld->output_file);
+    }
+    for (int i = 0; i < nsyms; i++) free(syms[i].name);
+    free(syms);
+    for (int f = 0; f < ld->num_input_files; f++) { free(map[f]); free(first[f]); }
+    free(map); free(first);
+    for (int c = 0; c < ld->num_sections; c++) free(rels[c]);
+    free(rels); free(nrel); free(strtab); free(sec_name_off); free(shdr);
+    s32_hashmap_free(&globals);
+    s32_hashmap_free(&used);
+}
+
 static uint32_t parse_size(const char *str) {
     char *end;
     unsigned long val = strtoul(str, &end, 0);
@@ -2743,6 +3021,10 @@ static void print_usage(const char *prog) {
     fprintf(stderr, "  --no-pack-sections Disable tight packing; use fixed region sizes\n");
     fprintf(stderr, "  --compact         Ultra-compact mode (4KB pages, minimal memory)\n");
     fprintf(stderr, "  --print-map       Generate memory map file (.map)\n");
+    fprintf(stderr, "Partial link (output is a .s32o):\n");
+    fprintf(stderr, "  -r                Merge the inputs into one relocatable object\n");
+    fprintf(stderr, "  --localize-hidden With -r: hidden (.hidden) definitions become local\n");
+    fprintf(stderr, "  --redefine-sym OLD=NEW  With -r: rename a global symbol (repeatable)\n");
     fprintf(stderr, "  --help            Show this help\n");
     fprintf(stderr, "\nSizes can use suffixes: K=1024, M=1024*1024\n");
 }
@@ -2844,6 +3126,30 @@ int main(int argc, char *argv[]) {
             ld.pack_sections = true;  // Compact implies packing
         } else if (strcmp(argv[i], "--print-map") == 0) {
             ld.print_map = true;
+        } else if (strcmp(argv[i], "-r") == 0 || strcmp(argv[i], "--relocatable") == 0) {
+            ld.relocatable = true;
+        } else if (strcmp(argv[i], "--localize-hidden") == 0) {
+            ld.localize_hidden = true;
+        } else if (strcmp(argv[i], "--redefine-sym") == 0 && i + 1 < argc) {
+            const char *arg = argv[++i];
+            const char *eq = strchr(arg, '=');
+            if (!eq || eq == arg || !eq[1]) {
+                fprintf(stderr, "Error: --redefine-sym wants OLD=NEW, not '%s'\n", arg);
+                return 1;
+            }
+            char *old_name = malloc((size_t)(eq - arg) + 1);
+            if (!old_name) { fprintf(stderr, "Error: out of memory\n"); return 1; }
+            memcpy(old_name, arg, (size_t)(eq - arg));
+            old_name[eq - arg] = '\0';
+            int cap = ld.redefs_cap;
+            DARR_PUSH(ld.redef_old, ld.num_redefs, ld.redefs_cap, const char *);
+            if (ld.redefs_cap != cap) {
+                ld.redef_new = realloc(ld.redef_new, (size_t)ld.redefs_cap * sizeof(const char *));
+                if (!ld.redef_new) { fprintf(stderr, "Error: out of memory\n"); return 1; }
+            }
+            ld.redef_old[ld.num_redefs] = old_name;
+            ld.redef_new[ld.num_redefs] = eq + 1;
+            ld.num_redefs++;
         } else if (strcmp(argv[i], "--help") == 0) {
             print_usage(argv[0]);
             return 0;
@@ -2877,6 +3183,19 @@ int main(int argc, char *argv[]) {
         }
     }
     
+    if ((ld.localize_hidden || ld.num_redefs) && !ld.relocatable) {
+        fprintf(stderr, "Error: --localize-hidden and --redefine-sym need -r\n");
+        return 1;
+    }
+    if (ld.relocatable) {
+        merge_sections(&ld);
+        load_section_data(&ld);
+        write_relocatable(&ld);
+        cleanup(&ld);
+        free(input_files);
+        return 0;
+    }
+
     // Link everything
     merge_sections(&ld);
     create_eh_frame_hdr(&ld);

@@ -52,11 +52,19 @@ typedef struct {
     uint32_t size;         // Size of object
 } s32o_symbol_t;
 
-// Symbol types
+// Symbol types: the low four bits of the type byte
 #define S32O_SYM_NOTYPE   0x00  // No type
 #define S32O_SYM_FUNC     0x01  // Function
 #define S32O_SYM_OBJECT   0x02  // Data object
 #define S32O_SYM_SECTION  0x03  // Section symbol
+#define S32O_SYM_TYPE_MASK 0x0F
+
+// Visibility, in the type byte's high bits (ELF keeps it apart, in
+// st_other; this format has no spare field).  HIDDEN: .hidden -- global to
+// every object linked with it, but `s32-ld -r --localize-hidden` makes it
+// local to the object a partial link produces, which is how a module keeps
+// its internals to itself in a static link.  A final link ignores it.
+#define S32O_SYM_HIDDEN   0x10
 
 // Symbol binding
 #define S32O_BIND_LOCAL   0x00  // Local symbol
