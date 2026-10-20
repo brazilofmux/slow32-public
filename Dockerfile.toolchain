@@ -57,6 +57,23 @@ RUN cmake -G Ninja \
 
 RUN ninja && ninja install
 
+# === libc++ and libc++abi for SLOW-32 (scripts/build-libcxx.sh) ===
+# From the same llvm-project source and the clang just built, with the
+# SLOW-32 libc++ support (06-libcxx.patch, applied here so the LLVM layers
+# above keep their cache).  CMake's compiler checks and the archives need
+# slow32asm, s32-ar and s32-ld, which come from the base image; the C
+# headers it compiles against are the tree's runtime/include.
+FROM ${BASE_IMAGE} AS slow32-tools
+FROM llvm-builder AS libcxx-builder
+RUN apk add --no-cache bash
+COPY --from=slow32-tools /opt/slow32/bin /opt/slow32/bin
+WORKDIR /build/llvm-project
+RUN patch -p1 < /build/patches/06-libcxx.patch
+COPY scripts/build-libcxx.sh scripts/slow32-toolchain.cmake /slow32-build/scripts/
+COPY runtime/include /slow32-build/runtime/include
+RUN PATH="/opt/slow32/bin:$PATH" LLVM_PROJECT=/build/llvm-project LLVM_BIN=/opt/llvm/bin \
+    BUILD=/build/libcxx bash /slow32-build/scripts/build-libcxx.sh
+
 # Stage 2: Build FPC cross-compiler for SLOW-32
 FROM alpine:3.21 AS fpc-builder
 
@@ -308,39 +325,12 @@ s32-ld -o "$OUTPUT" \\\n\
 \n\
 echo "Successfully created $OUTPUT"\n' > /opt/slow32/bin/s32cc && chmod +x /opt/slow32/bin/s32cc
 
-# Create a helper script for C++ compilation
-RUN printf '#!/bin/bash\n\
-# SLOW-32 C++ Compilation Helper\n\
-# Usage: s32c++ input.cpp [output.s32x]\n\
-\n\
-if [ $# -lt 1 ]; then\n\
-    echo "Usage: s32c++ input.cpp [output.s32x]"\n\
-    exit 1\n\
-fi\n\
-\n\
-INPUT="$1"\n\
-OUTPUT="${2:-${INPUT%%.cpp}.s32x}"\n\
-BASE="${INPUT%%.cpp}"\n\
-\n\
-echo "Compiling $INPUT to $OUTPUT..."\n\
-\n\
-# Generate LLVM IR (C++ mode with no exceptions/RTTI)\n\
-clang++ -target slow32-unknown-none -S -emit-llvm -O2 -fno-exceptions -fno-rtti -I${SLOW32_INCLUDE} "$INPUT" -o "${BASE}.ll" || exit 1\n\
-\n\
-# Generate assembly\n\
-llc -mtriple=slow32-unknown-none "${BASE}.ll" -o "${BASE}.s" || exit 1\n\
-\n\
-# Assemble\n\
-slow32asm "${BASE}.s" "${BASE}.s32o" || exit 1\n\
-\n\
-# Link\n\
-s32-ld -o "$OUTPUT" \\\n\
-    ${SLOW32_LIB}/crt0.s32o \\\n\
-    "${BASE}.s32o" \\\n\
-    ${SLOW32_LIB}/libc_debug.s32a \\\n\
-    ${SLOW32_LIB}/libs32.s32a || exit 1\n\
-\n\
-echo "Successfully created $OUTPUT"\n' > /opt/slow32/bin/s32c++ && chmod +x /opt/slow32/bin/s32c++
+# libc++ and libc++abi (headers and the two archives), and s32c++, the C++
+# driver that links them
+COPY --from=libcxx-builder /build/libcxx/install/include/c++/v1 /opt/slow32/libcxx/include/c++/v1
+COPY --from=libcxx-builder /build/libcxx/install/lib/libc++.a /build/libcxx/install/lib/libc++abi.a /opt/slow32/libcxx/lib/
+COPY docker/bin/s32c++ /opt/slow32/bin/
+RUN chmod +x /opt/slow32/bin/s32c++
 
 # Create a helper script for Pascal compilation
 RUN printf '#!/bin/bash\n\

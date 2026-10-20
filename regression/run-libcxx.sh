@@ -17,7 +17,12 @@
 #
 # Usage: ./run-libcxx.sh [name ...]
 # Env:   LIBCXX (default ~/llvm-project/build-slow32-libcxx/install),
-#        LLVM_BIN, SLOW32, SLOW32_FAST, SLOW32_DBT, QEMU_S32, TIMEOUT.
+#        LLVM_BIN, SLOW32, SLOW32_FAST, SLOW32_DBT, QEMU_S32, TIMEOUT;
+#        S32_AS, S32_LD (default the tree's slow32asm and s32-ld),
+#        S32_RT (crt0, the C library archives and locales.s32o; default
+#        runtime/) and S32_RT_INCLUDE (default runtime/include) -- in
+#        slow32:toolchain, /opt/slow32/{bin,lib,include} and LIBCXX
+#        /opt/slow32/libcxx test the image's own runtime and libc++.
 # Exit:  0 all agree (or skipped), 1 a mismatch, 2 setup error.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -29,6 +34,10 @@ SLOW32_FAST="${SLOW32_FAST:-$R/tools/emulator/slow32-fast}"
 SLOW32_DBT="${SLOW32_DBT:-$R/tools/dbt/slow32-dbt}"
 QEMU_S32="${QEMU_S32:-$HOME/qemu/build/qemu-system-slow32}"
 TIMEOUT="${TIMEOUT:-120}"
+S32_AS="${S32_AS:-$R/tools/assembler/slow32asm}"
+S32_LD="${S32_LD:-$R/tools/linker/s32-ld}"
+S32_RT="${S32_RT:-$R/runtime}"
+S32_RT_INCLUDE="${S32_RT_INCLUDE:-$R/runtime/include}"
 TESTS="$SCRIPT_DIR/libcxx"
 
 if [ ! -f "$LIBCXX/lib/libc++.a" ] || [ ! -f "$LIBCXX/lib/libc++abi.a" ]; then
@@ -68,17 +77,17 @@ for b in "${NAMES[@]}"; do
     [ -f "$TESTS/$b.cpp" ] && [ -f "$TESTS/$b.expected" ] ||
         { echo "ERROR: $b needs $b.cpp and $b.expected" >&2; exit 2; }
     extra=()
-    [ -f "$TESTS/$b.locales" ] && extra=("$R/runtime/locales.s32o" --rodata-size 2M)
+    [ -f "$TESTS/$b.locales" ] && extra=("$S32_RT/locales.s32o" --rodata-size 2M)
     for opt in -O0 -O2; do
         o="$W/$b$opt"
         if ! "$LLVM_BIN/clang++" -target slow32-unknown-none -std=c++20 $opt -S -emit-llvm \
-                -nostdinc++ -isystem "$LIBCXX/include/c++/v1" -isystem "$R/runtime/include" \
+                -nostdinc++ -isystem "$LIBCXX/include/c++/v1" -isystem "$S32_RT_INCLUDE" \
                 -fexceptions -frtti -funwind-tables "$TESTS/$b.cpp" -o "$o.ll" 2>"$o.err" ||
            ! "$LLVM_BIN/llc" -mtriple=slow32-unknown-none "$o.ll" -o "$o.s" 2>>"$o.err" ||
-           ! "$R/tools/assembler/slow32asm" "$o.s" "$o.s32o" >/dev/null 2>>"$o.err" ||
-           ! "$R/tools/linker/s32-ld" -o "$o.s32x" --mmio 64K "$R/runtime/crt0.s32o" "$o.s32o" ${extra[@]+"${extra[@]}"} \
+           ! "$S32_AS" "$o.s" "$o.s32o" >/dev/null 2>>"$o.err" ||
+           ! "$S32_LD" -o "$o.s32x" --mmio 64K "$S32_RT/crt0.s32o" "$o.s32o" ${extra[@]+"${extra[@]}"} \
                 "$LIBCXX/lib/libc++.a" "$LIBCXX/lib/libc++abi.a" \
-                "$R/runtime/libc_mmio.s32a" "$R/runtime/libs32.s32a" >/dev/null 2>>"$o.err"; then
+                "$S32_RT/libc_mmio.s32a" "$S32_RT/libs32.s32a" >/dev/null 2>>"$o.err"; then
             printf "  %-30s FAIL (build)\n" "$b $opt"; head -3 "$o.err"; FAIL=$((FAIL+1)); continue
         fi
         for spec in "${ENGINES[@]}"; do

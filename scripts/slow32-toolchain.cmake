@@ -32,8 +32,13 @@ set(CMAKE_C_FLAGS_INIT "-isystem ${SLOW32_ROOT}/runtime/include -funwind-tables"
 set(CMAKE_CXX_FLAGS_INIT "-isystem ${SLOW32_ROOT}/runtime/include -funwind-tables")
 
 # s32-ar takes c (create) and r (replace); s32-ld reads its archives, not
-# ar's, and needs no ranlib.
-set(CMAKE_AR "${SLOW32_ROOT}/tools/utilities/s32-ar")
+# ar's, and needs no ranlib.  The tree's own build, else the one on PATH
+# (an image's /opt/slow32/bin, where the tree carries no built tools).
+if(EXISTS "${SLOW32_ROOT}/tools/utilities/s32-ar")
+  set(CMAKE_AR "${SLOW32_ROOT}/tools/utilities/s32-ar")
+else()
+  find_program(CMAKE_AR s32-ar REQUIRED)
+endif()
 foreach(lang C CXX ASM)
   set(CMAKE_${lang}_ARCHIVE_CREATE "<CMAKE_AR> c <TARGET> <OBJECTS>")
   set(CMAKE_${lang}_ARCHIVE_APPEND "<CMAKE_AR> r <TARGET> <OBJECTS>")

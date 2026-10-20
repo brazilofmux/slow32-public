@@ -25,6 +25,10 @@
 !LICENSE
 !NOTICE
 
+# libc++/libc++abi for the toolchain image (its libcxx-builder stage)
+!scripts/build-libcxx.sh
+!scripts/slow32-toolchain.cmake
+
 # Self-hosted cross-compilers need (shared frontend tree + container wrappers):
 !selfhost/
 !docker/

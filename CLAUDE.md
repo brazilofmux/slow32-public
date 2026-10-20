@@ -131,8 +131,10 @@ commands below work with `docker` substituted 1:1.
   slow32dis, and the runtime archives/headers under /opt/slow32. Everything
   language-independent; per-language images (COBOL 85, Fortran 77, Forth)
   build FROM this, not from the LLVM image.
-- `slow32:toolchain` (FROM base): + LLVM 22/clang, Free Pascal `ppcs32`,
-  cc-x64/cc-a64. The big one (~2.9 GB).
+- `slow32:toolchain` (FROM base): + LLVM 22/clang, libc++/libc++abi
+  (/opt/slow32/libcxx) and the `s32c++` driver (`s32c++ [--locales]
+  prog.cpp -o prog.s32x`), Free Pascal `ppcs32`, cc-x64/cc-a64. The big
+  one (~2.9 GB).
 - `slow32:cobol` (FROM base): + `s32-cobc`, `libcob.s32o` and the `s32cob`
   driver (`s32cob -free prog.cbl -o prog.s32x`, then `s32run prog.s32x`).
   Built in a stage FROM toolchain; carries no C compiler, so `.c` inputs
