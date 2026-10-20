@@ -2,23 +2,26 @@
 # s32c++ -- C++ to a SLOW-32 executable through LLVM, on libc++ and
 # libc++abi: exceptions, RTTI, the containers and algorithms, iostreams,
 # fstream and <filesystem>, locales.
-#   s32c++ [-O0|-O1|-O2|-Os] [-std=...] [--locales] [-I dir] [-D name[=v]]
-#          prog.cpp [more.cpp ...] [-o prog.s32x]
+#   s32c++ [-O0|-O1|-O2|-Os] [-std=...] [--locales] [--heap-size SIZE]
+#          [-I dir] [-D name[=v]] prog.cpp [more.cpp ...] [-o prog.s32x]
 # Default -O2 -std=c++20.  --locales links the named locales (CLDR 46's 53,
 # about 880 KB of tables); without it a program has "C" and "POSIX" only.
+# --heap-size goes to s32-ld (1M unless given; 16M, 64K): new and malloc
+# have that much, and a program wanting more gets std::bad_alloc.
 # The result runs under s32run (any engine): it uses the MMIO runtime.
 set -eu
 RT="${SLOW32_LIB:-/opt/slow32/lib}"
 INC="${SLOW32_INCLUDE:-/opt/slow32/include}"
 CXX_HOME="${SLOW32_LIBCXX:-/opt/slow32/libcxx}"
 LLVM="${LLVM_BIN:-/opt/llvm/bin}"
-opt=-O2; std=-std=c++20; out=""; srcs=(); flags=(); extra=()
+opt=-O2; std=-std=c++20; out=""; srcs=(); flags=(); extra=(); heap=()
 while [ $# -gt 0 ]; do
     case "$1" in
         -o) out="$2"; shift ;;
         -O0|-O1|-O2|-O3|-Os|-Oz) opt="$1" ;;
         -std=*) std="$1" ;;
         --locales) extra=("$RT/locales.s32o" --rodata-size 2M) ;;
+        --heap-size) heap=(--heap-size "$2"); shift ;;
         -I|-D) flags+=("$1$2"); shift ;;
         -I*|-D*) flags+=("$1") ;;
         *.cpp|*.cc|*.cxx|*.C) srcs+=("$1") ;;
@@ -27,7 +30,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 [ ${#srcs[@]} -gt 0 ] || {
-    echo "usage: s32c++ [-O2] [-std=c++20] [--locales] [-I dir] [-D x] prog.cpp... [-o prog.s32x]" >&2
+    echo "usage: s32c++ [-O2] [-std=c++20] [--locales] [--heap-size SIZE] [-I dir] [-D x] prog.cpp... [-o prog.s32x]" >&2
     exit 2
 }
 [ -n "$out" ] || { out="${srcs[0]##*/}"; out="${out%.*}.s32x"; }
@@ -44,7 +47,7 @@ for src in "${srcs[@]}"; do
     slow32asm "$o.s" "$o.s32o" >"$o.log" 2>&1 || { cat "$o.log" >&2; exit 1; }
     objs+=("$o.s32o")
 done
-s32-ld -o "$out" --mmio 64K "$RT/crt0.s32o" "${objs[@]}" ${extra[@]+"${extra[@]}"} \
+s32-ld -o "$out" --mmio 64K ${heap[@]+"${heap[@]}"} "$RT/crt0.s32o" "${objs[@]}" ${extra[@]+"${extra[@]}"} \
     "$CXX_HOME/lib/libc++.a" "$CXX_HOME/lib/libc++abi.a" \
     "$RT/libc_mmio.s32a" "$RT/libs32.s32a" >"$W/ld.log" 2>&1 || { cat "$W/ld.log" >&2; exit 1; }
 echo "$out"
