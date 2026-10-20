@@ -246,6 +246,9 @@ compile_gen1 "$LIBC_DIR/strtod.c" "$WORKDIR/g1_strtod.s" "$WORKDIR/g1_strtod.cc.
 # holds both builds to the host's C library.
 compile_gen1 "$RUNTIME_DIR/strerror.c" "$WORKDIR/g1_strerror.s" "$WORKDIR/g1_strerror.cc.log"     "-I$SCRIPT_DIR/include"
 assemble_gen1 "$WORKDIR/g1_strerror.s" "$LIBC_OUT_DIR/strerror.s32o" "$WORKDIR/g1_strerror.as.log"
+# getopt / getopt_long, the same way (tapemgr wanted getopt_long)
+compile_gen1 "$RUNTIME_DIR/getopt.c" "$WORKDIR/g1_getopt.s" "$WORKDIR/g1_getopt.cc.log"     "-I$SCRIPT_DIR/include"
+assemble_gen1 "$WORKDIR/g1_getopt.s" "$LIBC_OUT_DIR/getopt.s32o" "$WORKDIR/g1_getopt.as.log"
 compile_gen1 "$RUNTIME_DIR/time_std.c" "$WORKDIR/g1_time_std.s" "$WORKDIR/g1_time_std.cc.log"     "-I$SCRIPT_DIR/include"
 assemble_gen1 "$WORKDIR/g1_time_std.s" "$LIBC_OUT_DIR/time_std.s32o" "$WORKDIR/g1_time_std.as.log"
 # setjmp / longjmp: the clang runtime's, as it stands -- hand-written
