@@ -15,9 +15,11 @@ void free(void *ptr);
 void *calloc(size_t nmemb, size_t size);
 void *realloc(void *ptr, size_t size);
 
-void exit(int status);
-void _Exit(int status);
-void abort(void);
+// None of these returns; saying so lets a compiler see that the code after
+// a call is unreachable (libc++'s own sources do not build without it).
+__attribute__((noreturn)) void exit(int status);
+__attribute__((noreturn)) void _Exit(int status);
+__attribute__((noreturn)) void abort(void);
 int atexit(void (*function)(void));
 int system(const char *command);
 

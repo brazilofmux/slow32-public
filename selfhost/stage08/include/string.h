@@ -24,6 +24,7 @@ char *strtok(char *str, const char *delim);
 char *strtok_r(char *str, const char *delim, char **saveptr);
 char *strdup(const char *s);
 char *strerror(int errnum);
+int strerror_r(int errnum, char *buf, size_t buflen);
 
 void *memcpy(void *dest, const void *src, size_t n);
 void *memmove(void *dest, const void *src, size_t n);

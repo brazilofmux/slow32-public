@@ -23,8 +23,11 @@
 # freestanding C++ without libc++, and defines what libc++abi defines.
 # libc++abi unwinds with the runtime's DWARF unwinder (unwind*.c in libc).
 #
-# Configured freestanding: no threads, monotonic clock, filesystem, random
-# device, locales or wide characters; type_info compared by name.  Built at
+# Threads through the external thread API: SLOW-32 has one thread, and
+# runtime/include/__external_threading says what that makes of a mutex, a
+# condition variable and std::thread (which cannot start: EAGAIN).  The
+# monotonic clock is GETTIME's (status 1).  No random device, no wide
+# characters; filesystem and locales on; type_info compared by name.  Built at
 # -O2, like the runtime, and archived with s32-ar (s32-ld reads its
 # archives, not ar's) -- the archives keep libc++'s .a names.
 # None of this is in git; the script regenerates it.
@@ -51,9 +54,11 @@ cmake -G Ninja -S "$LLVM_PROJECT/runtimes" -B "$BUILD" \
     -DCMAKE_INSTALL_PREFIX="$BUILD/install" \
     -DLIBCXX_ENABLE_SHARED=OFF -DLIBCXX_ENABLE_STATIC=ON -DLIBCXX_CXX_ABI=libcxxabi \
     -DLIBCXXABI_ENABLE_SHARED=OFF -DLIBCXXABI_ENABLE_STATIC=ON \
-    -DLIBCXXABI_USE_LLVM_UNWINDER=OFF -DLIBCXXABI_ENABLE_THREADS=OFF \
+    -DLIBCXXABI_USE_LLVM_UNWINDER=OFF \
+    -DLIBCXXABI_ENABLE_THREADS=ON -DLIBCXXABI_HAS_EXTERNAL_THREAD_API=ON \
     -DLIBCXXABI_BAREMETAL=ON -DLIBCXXABI_INCLUDE_TESTS=OFF \
-    -DLIBCXX_ENABLE_THREADS=OFF -DLIBCXX_ENABLE_MONOTONIC_CLOCK=OFF \
+    -DLIBCXX_ENABLE_THREADS=ON -DLIBCXX_HAS_EXTERNAL_THREAD_API=ON \
+    -DLIBCXX_ENABLE_MONOTONIC_CLOCK=ON \
     -DLIBCXX_ENABLE_FILESYSTEM=ON -DLIBCXX_ENABLE_RANDOM_DEVICE=OFF \
     -DLIBCXX_ENABLE_LOCALIZATION=ON -DLIBCXX_ENABLE_WIDE_CHARACTERS=OFF \
     -DLIBCXX_ENABLE_TIME_ZONE_DATABASE=OFF -DLIBCXX_ENABLE_UNICODE=ON \

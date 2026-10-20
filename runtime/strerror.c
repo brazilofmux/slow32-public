@@ -112,3 +112,23 @@ char *strerror(int errnum) {
     unknown[at] = 0;
     return unknown;
 }
+
+/* strerror_r, POSIX's (the int form): the same text into the caller's
+ * buffer, so threads -- libc++'s std::system_error -- need not share
+ * strerror's.  ERANGE when it does not fit (the buffer then holds as much
+ * as fits, terminated).  A number with no text of its own gets "Unknown
+ * error N" and 0, as musl's does: POSIX lets it fail with EINVAL instead,
+ * and libc++ turns that into an empty message. */
+int strerror_r(int errnum, char *buf, size_t buflen) {
+    const char *text = strerror(errnum);
+    size_t n = strlen(text);
+
+    if (buflen == 0) return 34;           /* ERANGE */
+    if (n >= buflen) {
+        memcpy(buf, text, buflen - 1);
+        buf[buflen - 1] = 0;
+        return 34;                        /* ERANGE */
+    }
+    memcpy(buf, text, n + 1);
+    return 0;
+}

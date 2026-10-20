@@ -8,13 +8,18 @@ extern "C" {
 #endif
 
 // Access mode constants for access()
+// clock_gettime (CLOCK_REALTIME, CLOCK_MONOTONIC) and nanosleep are here;
+// the timer_* calls are not.  libc++ looks for this to use clock_gettime
+// for its clocks, steady_clock among them.
+#define _POSIX_TIMERS 200809L
+
 #define F_OK 0  // File exists
 #define X_OK 1  // Execute permission
 #define W_OK 2  // Write permission
 #define R_OK 4  // Read permission
 
 // The end, here and now: no atexit functions, nothing flushed
-void _exit(int status);
+__attribute__((noreturn)) void _exit(int status);
 
 // Sleep functions
 unsigned int sleep(unsigned int seconds);

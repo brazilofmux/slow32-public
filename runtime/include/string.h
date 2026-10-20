@@ -30,6 +30,7 @@ int strcoll(const char *s1, const char *s2);
 size_t strxfrm(char *dest, const char *src, size_t n);
 char *strcasestr(const char *haystack, const char *needle);
 char *strerror(int errnum);
+int strerror_r(int errnum, char *buf, size_t buflen);
 
 void *memcpy(void *dest, const void *src, size_t n);
 void *memmove(void *dest, const void *src, size_t n);
