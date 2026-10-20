@@ -27,7 +27,8 @@ RUN apk add --no-cache \
     libpng-dev \
     libjpeg-turbo-dev \
     alsa-lib-dev \
-    libslirp-dev
+    libslirp-dev \
+    openssl-dev
 
 # Clone QEMU source code pinned to a known-good commit
 # This is the upstream commit our patches are generated against.
@@ -80,11 +81,14 @@ RUN cd /build/qemu && \
 # Stage 2: Build the C++ emulators and DBT on Alpine
 FROM alpine:3.21 AS cpp-builder
 
-# Install build dependencies
+# Install build dependencies.  openssl-dev: the crypto service is the
+# platform's libcrypto (common/s32_crypto.mk), found through pkg-config
 RUN apk add --no-cache \
     g++ \
     gcc \
-    make
+    make \
+    openssl-dev \
+    pkgconf
 
 # Copy emulator and DBT source code
 WORKDIR /build
@@ -108,7 +112,9 @@ FROM alpine:3.21
 # Install runtime dependencies
 # C++ emulators need: libstdc++, libgcc
 # QEMU needs: glib, pixman, zlib, libjpeg, libpng, ncurses, bzip2, alsa-lib, libslirp
+# All the engines need libcrypto3 for the crypto service (the platform's library)
 RUN apk add --no-cache \
+    libcrypto3 \
     libstdc++ \
     libgcc \
     glib \

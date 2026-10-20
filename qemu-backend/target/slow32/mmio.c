@@ -1,6 +1,7 @@
 #include "qemu/osdep.h"
 #include "s32_errno.h"
 #include "s32_host_poll.h"
+#include "s32_crypto_host.h"   /* copied from slow-32 common/ */
 
 #include <dirent.h>
 #include <errno.h>
@@ -1448,6 +1449,143 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
     }
 }
 
+/* ========== Crypto service ==========
+ * The host platform's digests, HMAC and random bytes (s32_crypto_host.h,
+ * slow-32 docs/SPEC.md 8.17), there only where the build has a platform
+ * library.  Mirrors tools/emulator/mmio_ring.c. */
+#if S32_CRYPTO_HOST
+#define S32_CRYPTO_NEW        0
+#define S32_CRYPTO_UPDATE     1
+#define S32_CRYPTO_FINAL      2
+#define S32_CRYPTO_FREE       3
+#define S32_CRYPTO_RANDOM     4
+#define S32_CRYPTO_OPCODE_COUNT 8
+#define S32_CRYPTO_HMAC       0x100u
+#define S32_CRYPTO_MAX_HANDLES 32u
+#define S32_CRYPTO_MAX_DIGEST  64u
+
+typedef struct {
+    s32_crypto_ctx_t *ctx[S32_CRYPTO_MAX_HANDLES];
+    uint8_t buf[S32_MMIO_DATA_CAPACITY];
+} Slow32CryptoState;
+
+static void *slow32_crypto_create(void)
+{
+    return g_new0(Slow32CryptoState, 1);
+}
+
+static void slow32_crypto_cleanup(void *state)
+{
+    Slow32CryptoState *cs = state;
+    if (!cs) {
+        return;
+    }
+    for (uint32_t i = 0; i < S32_CRYPTO_MAX_HANDLES; i++) {
+        s32_crypto_free(cs->ctx[i]);
+    }
+    memset(cs->buf, 0, sizeof(cs->buf));
+    g_free(cs);
+}
+
+static void slow32_crypto_handle(void *state, Slow32MMIOCtx *ctx,
+                                 const CPUSlow32State *env,
+                                 uint32_t sub_opcode, const Slow32MMIODesc *req,
+                                 Slow32MMIODesc *resp)
+{
+    Slow32CryptoState *cs = state;
+    uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+    uint32_t h;
+    int err;
+
+    resp->length = 0;
+    if (sub_opcode == S32_CRYPTO_NEW || sub_opcode == S32_CRYPTO_UPDATE ||
+        sub_opcode == S32_CRYPTO_RANDOM) {
+        if (req->length > S32_MMIO_DATA_CAPACITY - offset) {
+            slow32_mmio_fail(resp, EINVAL);
+            return;
+        }
+    }
+    if (sub_opcode == S32_CRYPTO_NEW) {
+        bool hmac = (req->status & S32_CRYPTO_HMAC) != 0;
+        uint32_t alg = req->status & ~S32_CRYPTO_HMAC;
+        uint32_t slot = 0;
+        while (slot < S32_CRYPTO_MAX_HANDLES && cs->ctx[slot]) {
+            slot++;
+        }
+        if (slot == S32_CRYPTO_MAX_HANDLES) {
+            slow32_mmio_fail(resp, EMFILE);
+            return;
+        }
+        if (!hmac && req->length) {
+            slow32_mmio_fail(resp, EINVAL);
+            return;
+        }
+        if (req->length) {
+            slow32_mmio_copy_from_guest(env, offset, cs->buf, req->length);
+        }
+        err = s32_crypto_new(alg, hmac, cs->buf, req->length, &cs->ctx[slot]);
+        memset(cs->buf, 0, req->length);
+        if (err) {
+            slow32_mmio_fail(resp, err);
+            return;
+        }
+        resp->status = slot;
+        return;
+    }
+    if (sub_opcode == S32_CRYPTO_RANDOM) {
+        err = s32_crypto_random(cs->buf, req->length);
+        if (err) {
+            slow32_mmio_fail(resp, err);
+            return;
+        }
+        slow32_mmio_copy_to_guest(env, offset, cs->buf, req->length);
+        resp->status = resp->length = req->length;
+        return;
+    }
+    if (sub_opcode != S32_CRYPTO_UPDATE && sub_opcode != S32_CRYPTO_FINAL &&
+        sub_opcode != S32_CRYPTO_FREE) {
+        slow32_mmio_fail(resp, EINVAL);
+        return;
+    }
+    h = req->status;
+    if (h >= S32_CRYPTO_MAX_HANDLES || !cs->ctx[h]) {
+        slow32_mmio_fail(resp, EBADF);
+        return;
+    }
+    if (sub_opcode == S32_CRYPTO_UPDATE) {
+        slow32_mmio_copy_from_guest(env, offset, cs->buf, req->length);
+        err = s32_crypto_update(cs->ctx[h], cs->buf, req->length);
+        if (err) {
+            slow32_mmio_fail(resp, err);
+            return;
+        }
+        resp->status = S32_MMIO_STATUS_OK;
+        return;
+    }
+    if (sub_opcode == S32_CRYPTO_FINAL) {
+        uint8_t out[S32_CRYPTO_MAX_DIGEST];
+        uint32_t n = 0;
+        if (offset > S32_MMIO_DATA_CAPACITY - S32_CRYPTO_MAX_DIGEST) {
+            slow32_mmio_fail(resp, EINVAL);
+            return;
+        }
+        err = s32_crypto_final(cs->ctx[h], out, &n);
+        s32_crypto_free(cs->ctx[h]);
+        cs->ctx[h] = NULL;
+        if (err) {
+            slow32_mmio_fail(resp, err);
+            return;
+        }
+        slow32_mmio_copy_to_guest(env, offset, out, n);
+        resp->status = resp->length = n;
+        return;
+    }
+    s32_crypto_free(cs->ctx[h]);
+    cs->ctx[h] = NULL;
+    resp->status = S32_MMIO_STATUS_OK;
+}
+#endif
+
 /* ========== Built-in service table ========== */
 
 typedef struct {
@@ -1471,6 +1609,16 @@ static const Slow32BuiltinService builtin_services[] = {
         .cleanup = slow32_term_cleanup,
         .handle = slow32_term_handle,
     },
+#if S32_CRYPTO_HOST
+    {
+        .name = "crypto",
+        .opcode_count = S32_CRYPTO_OPCODE_COUNT,
+        .version = 1,
+        .create = slow32_crypto_create,
+        .cleanup = slow32_crypto_cleanup,
+        .handle = slow32_crypto_handle,
+    },
+#endif
 };
 
 #define NUM_BUILTIN_SERVICES ARRAY_SIZE(builtin_services)

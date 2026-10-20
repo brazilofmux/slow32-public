@@ -22,7 +22,7 @@ can chain superblocks until YIELD and not apologize; see
 | `0x30–0x3F` | Time, timers, wait | `GETTIME`, `SLEEP`, `TIMER_START`, `TIMER_CANCEL`, `POLL` (DPC wait), `GETTZ`, `FDPOLL` (poll(2)). |
 | `0x40–0x4F` | Networking / IPC | IPv4 TCP v1: `SOCKET` … `GETSOCKNAME`, `GETPEERNAME`, `SETSOCKOPT`, `GETSOCKOPT`. `SEND`/`RECV` alias `WRITE`/`READ`. No DNS, no UDP, no Unix sockets. |
 | `0x60–0x7F` | Host environment | `ARGS_INFO`/`ARGS_DATA`, `ENVP_INFO`/`ENVP_DATA`, `GETENV`. |
-| `0x80–0xEF` | Negotiated services | `term`, `tube`, and anything granted by `SVC_REQUEST`. Guest-picked bases. |
+| `0x80–0xEF` | Negotiated services | `term`, `tube`, `crypto` (the host platform's digests, HMAC and random bytes, where the build has a platform library; docs/SPEC.md 8.17), and anything granted by `SVC_REQUEST`. Guest-picked bases. |
 | `0xF0–0xFF` | Service negotiation | `SVC_REQUEST`, `SVC_RELEASE`, `SVC_QUERY`, `SVC_LIST`, `SVC_VERSION`. |
 
 ## Descriptor schema (recap)

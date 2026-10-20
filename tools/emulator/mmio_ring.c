@@ -4,6 +4,7 @@
 #include "../../common/s32utf.h"
 #include "../../common/s32_errno.h"
 #include "../../common/s32_host_poll.h"
+#include "../../common/s32_crypto_host.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -2101,6 +2102,86 @@ static void tube_handle(void *state, mmio_ring_state_t *mmio,
     }
 }
 
+// ========== Crypto service ==========
+/* The host platform's digests, HMAC and random bytes (common/
+ * s32_crypto_host.h, docs/SPEC.md 8.17): there only where the build has a
+ * platform library.  A handle is a slot in this session's table. */
+#if S32_CRYPTO_HOST
+typedef struct {
+    s32_crypto_ctx_t *ctx[S32_CRYPTO_MAX_HANDLES];
+} crypto_state_t;
+
+static void *crypto_create(void) {
+    return calloc(1, sizeof(crypto_state_t));
+}
+
+static void crypto_cleanup(void *state) {
+    crypto_state_t *cs = (crypto_state_t *)state;
+    if (!cs) return;
+    for (uint32_t i = 0; i < S32_CRYPTO_MAX_HANDLES; i++) s32_crypto_free(cs->ctx[i]);
+    free(cs);
+}
+
+static void crypto_handle(void *state, mmio_ring_state_t *mmio, uint32_t sub_opcode,
+                          io_descriptor_t *req, io_descriptor_t *resp) {
+    crypto_state_t *cs = (crypto_state_t *)state;
+    uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+    uint8_t *buf = mmio->data_buffer + offset;
+    resp->length = 0;
+    if (!cs) { mmio_fail(resp, ENOMEM); return; }
+    if (sub_opcode == S32_CRYPTO_NEW || sub_opcode == S32_CRYPTO_UPDATE ||
+        sub_opcode == S32_CRYPTO_RANDOM) {
+        if (req->length > S32_MMIO_DATA_CAPACITY - offset) { mmio_fail(resp, EINVAL); return; }
+    }
+    if (sub_opcode == S32_CRYPTO_NEW) {
+        uint32_t slot = 0;
+        while (slot < S32_CRYPTO_MAX_HANDLES && cs->ctx[slot]) slot++;
+        if (slot == S32_CRYPTO_MAX_HANDLES) { mmio_fail(resp, EMFILE); return; }
+        bool hmac = (req->status & S32_CRYPTO_HMAC) != 0;
+        uint32_t alg = req->status & ~S32_CRYPTO_HMAC;
+        if (!hmac && req->length) { mmio_fail(resp, EINVAL); return; }
+        int err = s32_crypto_new(alg, hmac, buf, req->length, &cs->ctx[slot]);
+        if (err) { mmio_fail(resp, err); return; }
+        resp->status = slot;
+        return;
+    }
+    if (sub_opcode == S32_CRYPTO_RANDOM) {
+        int err = s32_crypto_random(buf, req->length);
+        if (err) { mmio_fail(resp, err); return; }
+        resp->status = resp->length = req->length;
+        return;
+    }
+    if (sub_opcode != S32_CRYPTO_UPDATE && sub_opcode != S32_CRYPTO_FINAL &&
+        sub_opcode != S32_CRYPTO_FREE) {
+        mmio_fail(resp, EINVAL);
+        return;
+    }
+    uint32_t h = req->status;
+    if (h >= S32_CRYPTO_MAX_HANDLES || !cs->ctx[h]) { mmio_fail(resp, EBADF); return; }
+    if (sub_opcode == S32_CRYPTO_UPDATE) {
+        int err = s32_crypto_update(cs->ctx[h], buf, req->length);
+        if (err) { mmio_fail(resp, err); return; }
+        resp->status = S32_MMIO_STATUS_OK;
+        return;
+    }
+    if (sub_opcode == S32_CRYPTO_FINAL) {
+        uint8_t out[S32_CRYPTO_MAX_DIGEST];
+        uint32_t n = 0;
+        if (offset > S32_MMIO_DATA_CAPACITY - S32_CRYPTO_MAX_DIGEST) { mmio_fail(resp, EINVAL); return; }
+        int err = s32_crypto_final(cs->ctx[h], out, &n);
+        s32_crypto_free(cs->ctx[h]);
+        cs->ctx[h] = NULL;
+        if (err) { mmio_fail(resp, err); return; }
+        memcpy(buf, out, n);
+        resp->status = resp->length = n;
+        return;
+    }
+    s32_crypto_free(cs->ctx[h]);
+    cs->ctx[h] = NULL;
+    resp->status = S32_MMIO_STATUS_OK;
+}
+#endif
+
 // ========== Built-in service table ==========
 
 typedef struct {
@@ -2131,6 +2212,16 @@ static const builtin_service_t builtin_services[] = {
         .cleanup = tube_cleanup,
         .handle = tube_handle,
     },
+#if S32_CRYPTO_HOST
+    {
+        .name = "crypto",
+        .opcode_count = S32_CRYPTO_OPCODE_COUNT,
+        .version = 1,
+        .create = crypto_create,
+        .cleanup = crypto_cleanup,
+        .handle = crypto_handle,
+    },
+#endif
 };
 
 #define NUM_BUILTIN_SERVICES (sizeof(builtin_services) / sizeof(builtin_services[0]))

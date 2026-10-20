@@ -368,6 +368,27 @@ typedef struct s32_mmio_envp_info {
 #define S32_TUBE_KEYS         5
 #define S32_TUBE_OPCODE_COUNT 16
 
+// Crypto service ("crypto"), opcode offsets relative to the negotiated
+// base: the host platform's digests, HMAC and random bytes, offered only
+// where the emulator was built with a platform library (docs/SPEC.md 8.17,
+// common/s32_crypto_host.h).  8-opcode window; 5..7 reserved.
+#define S32_CRYPTO_NEW        0   // status = alg | S32_CRYPTO_HMAC; key (length bytes) at offset -> status = handle
+#define S32_CRYPTO_UPDATE     1   // status = handle; length bytes at offset
+#define S32_CRYPTO_FINAL      2   // status = handle; digest at offset, status = length = its size; handle freed
+#define S32_CRYPTO_FREE       3   // status = handle
+#define S32_CRYPTO_RANDOM     4   // length bytes of the platform's random at offset
+#define S32_CRYPTO_OPCODE_COUNT 8
+
+#define S32_CRYPTO_ALG_MD5    1u
+#define S32_CRYPTO_ALG_SHA1   2u
+#define S32_CRYPTO_ALG_SHA224 3u
+#define S32_CRYPTO_ALG_SHA256 4u
+#define S32_CRYPTO_ALG_SHA384 5u
+#define S32_CRYPTO_ALG_SHA512 6u
+#define S32_CRYPTO_HMAC       0x100u    // NEW: a keyed MAC, not a digest
+#define S32_CRYPTO_MAX_HANDLES 32u
+#define S32_CRYPTO_MAX_DIGEST  64u
+
 #define S32_TUBE_MODE_VEC     1
 #define S32_TUBE_MODE_FB      2
 #define S32_TUBE_MODE_PPU     3

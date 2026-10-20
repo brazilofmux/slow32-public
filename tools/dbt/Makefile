@@ -21,6 +21,10 @@ endif
 
 LDFLAGS = -lm
 
+include ../../common/s32_crypto.mk
+CFLAGS += $(S32_CRYPTO_CFLAGS)
+LDFLAGS += $(S32_CRYPTO_LIBS)
+
 # Architecture detection: select emitter and translator.
 # macOS reports `arm64`, Linux reports `aarch64` — normalize.
 UNAME_M := $(shell uname -m)

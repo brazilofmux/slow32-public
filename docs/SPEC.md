@@ -1699,6 +1699,30 @@ The reference hosts print a banner and statistics on standard output unless
 
 ---
 
+### 8.17 Crypto service (`"crypto"`, 8 opcodes)
+
+Message digests, HMAC and random bytes, computed by the host platform's own
+library: CommonCrypto on macOS, OpenSSL's libcrypto (3.0 or later) elsewhere.
+The machine defines no cryptography of its own. A host built without a
+platform library does not offer the service: SVC_REQUEST answers UNKNOWN,
+and there is no fallback (`common/s32_crypto_host.h`, `common/s32_crypto.mk`;
+the guest library in `runtime/crypto_mmio.c` presents it in OpenSSL's EVP
+shape).
+
+Algorithms (`alg`): 1 MD5, 2 SHA-1, 3 SHA-224, 4 SHA-256, 5 SHA-384,
+6 SHA-512. A session holds up to 32 contexts; a handle is 0..31.
+
+| n | Name | Request | Effect / response | Errors |
+|---|---|---|---|---|
+| 0 | NEW | `status` = `alg`, plus `0x100` for HMAC; HMAC key (`length` bytes, possibly 0) at `off` | a context; `status` = its handle | `EINVAL` (unknown `alg`, a key for a plain digest, past the buffer); `EMFILE` (32 in use); `ENOMEM`; `EIO` (the library refused) |
+| 1 | UPDATE | `status` = handle; `length` bytes at `off` | the bytes are digested; `status` 0 | `EBADF` (no such handle); `EINVAL`; `EIO` |
+| 2 | FINAL | `status` = handle; `off` ≤ CAP−64 | the digest or MAC at `off`; `status` = `length` = its size (16–64). The handle is freed, whether or not it succeeds | `EBADF`, `EINVAL`, `EIO` |
+| 3 | FREE | `status` = handle | the context is discarded; `status` 0 | `EBADF` |
+| 4 | RANDOM | `length` bytes | the platform's cryptographic random bytes at `off`; `status` = `length` | `EINVAL` (past the buffer); `EIO` |
+
+Sub-opcodes 5–7 are `EINVAL`. SVC_RELEASE, and the end of the run, free
+every context the session holds.
+
 ## 9. Conformance
 
 A machine conforms if, for every executable, it produces the same
