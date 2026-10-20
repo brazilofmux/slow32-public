@@ -4,9 +4,14 @@
 #include <stddef.h>
 #include <errno.h>
 #include "compat/shell_slow32.h"
+/* chmod, symlink, readlink and isatty: the clang runtime has had its own
+ * since 2026-10 (posix_extra.c), and build.sh says so with
+ * SHELL_LIBC_HAS_POSIX_FILES; the self-hosted libc has none of them */
+#ifndef SHELL_LIBC_HAS_POSIX_FILES
 int chmod(const char *path, unsigned mode) { (void)path; (void)mode; return 0; }
 int symlink(const char *target, const char *path) { (void)target; (void)path; errno = EPERM; return -1; }
 long readlink(const char *path, char *buf, size_t n) { (void)path; (void)buf; (void)n; errno = EINVAL; return -1; }
+#endif
 int getuid(void) { return 0; }
 int getpid(void) { return 1; }
 /* system and atexit were here until both C libraries had their own
@@ -18,5 +23,8 @@ int getpid(void) { return 1; }
 FILE *popen(const char *cmd, const char *mode) { (void)cmd; (void)mode; errno = ENOSYS; return 0; }
 int pclose(FILE *f) { (void)f; return -1; }
 /* not a terminal: the shell reads its standard input as a script, no
- * prompts -- how it is driven on the emulator */
+ * prompts -- how it is driven on the emulator (the runtime's isatty says
+ * the same) */
+#ifndef SHELL_LIBC_HAS_POSIX_FILES
 int isatty(int fd) { (void)fd; return 0; }
+#endif
