@@ -49,7 +49,7 @@ int dup(int fd) {
 /* fd2 closed, then the lowest free descriptor at or above it -- which is
  * fd2 itself.  One thread: nothing can take fd2 in between. */
 int dup2(int fd, int fd2) {
-    if (fd2 < 0 || fd2 >= getdtablesize()) {
+    if (fd2 < 0 || fd2 >= 128) {           /* the host's table, docs/SPEC.md 8.5 */
         errno = EBADF;
         return -1;
     }

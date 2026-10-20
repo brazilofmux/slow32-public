@@ -16,8 +16,8 @@
 /* docs/SPEC.md: the host's table of guest descriptors */
 #define GUEST_FDS 128
 
-pid_t getpid(void) { return 1; }
-pid_t getppid(void) { return 0; }
+/* getpid and getppid are getpid.c's: signal.c needs getpid, and every
+ * program that can abort() would otherwise carry the rest of this file */
 
 pid_t fork(void) {
     errno = ENOSYS;
