@@ -103,6 +103,17 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Fixed 2026-10-20 (`389da90c`, `ed653145`).  In `s32-as.s32x`, and in
+`libc.s32a` and `include/` (getopt); `cc.s32x`, `s32-ld`, `s32-ar` and
+the other 32 library members are unchanged.  The clang-built apps were
+rebuilt by the re-pinned LLVM (`8d15281a`):
+
+- **Every section an object file had was marked 4-aligned**, whatever
+  its `.align`/`.balign`/`.comm` asked for, so the linker could place a
+  16-aligned variable off its boundary.
+- **No `getopt`**: `<unistd.h>` declares `getopt`, `<getopt.h>`
+  `getopt_long` and `getopt_long_only` (the new `getopt.s32o`).
+
 Fixed 2026-10-16 (`f8815894`).  In `islisp.s32x` only; the compiler,
 tools and library are unchanged:
 
