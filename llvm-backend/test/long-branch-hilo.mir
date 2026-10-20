@@ -1,6 +1,6 @@
 # RUN: llc -mtriple=slow32-unknown-none -run-pass=branch-relaxation %s -o - \
 # RUN:   | FileCheck %s
-# RUN: llc -mtriple=slow32-unknown-none -start-after=postrapseudos %s -o - \
+# RUN: llc -mtriple=slow32-unknown-none -start-after=post-ra-pseudos %s -o - \
 # RUN:   | FileCheck --check-prefix=ASM %s
 # REQUIRES: slow32-registered-target
 #
@@ -32,7 +32,7 @@ body: |
 # CHECK-LABEL: name: far
 # CHECK: $r2 = LUI target-flags({{.*}}) %bb.
 # CHECK-NEXT: $r2 = ADDI $r2, target-flags({{.*}}) %bb.
-# CHECK-NEXT: $r0 = JALR $r2, 0
+# CHECK-NEXT: $r0 = JALR $r2{{$}}
 
 # ASM-LABEL: far:
 # ASM: lui r2, %hi(.LBB0_

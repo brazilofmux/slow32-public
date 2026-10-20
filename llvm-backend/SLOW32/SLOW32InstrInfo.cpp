@@ -64,10 +64,42 @@ void buildAbsoluteJump(MachineBasicBlock &MBB,
   BuildMI(MBB, InsertPt, DL, TII.get(SLOW32::ADDI), ScratchReg)
       .addReg(ScratchReg)
       .add(Lo);
+  // JALR is (rd, rs1); the 0 is in its assembly string, not an operand
   BuildMI(MBB, InsertPt, DL, TII.get(SLOW32::JALR))
       .addReg(SLOW32::R0, RegState::Define)
-      .addReg(ScratchReg)
-      .addImm(0);
+      .addReg(ScratchReg);
+}
+
+// A call pseudo's register mask and implicit operands, onto the real call.
+// BuildMI has already given the real one its own implicit defs and uses
+// (the same registers, from its Defs/Uses): where the pseudo carries one of
+// those, its flags -- dead, kill -- go onto that operand instead of a second
+// copy, which the verifier rejects as a dead def beside a live one.
+void addCallOperands(MachineInstrBuilder &MIB, const MachineInstr &MI) {
+  MachineInstr &Call = *MIB;
+  unsigned NumOwn = Call.getNumOperands();
+  for (const MachineOperand &MO : MI.operands()) {
+    if (MO.isRegMask()) {
+      MIB.add(MO);
+      continue;
+    }
+    if (!MO.isReg() || !MO.isImplicit())
+      continue;
+    MachineOperand *Same = nullptr;
+    for (unsigned I = 0; I < NumOwn && !Same; ++I) {
+      MachineOperand &Own = Call.getOperand(I);
+      if (Own.isReg() && Own.isImplicit() && Own.getReg() == MO.getReg() &&
+          Own.isDef() == MO.isDef())
+        Same = &Own;
+    }
+    if (!Same) {
+      MIB.add(MO);
+    } else if (MO.isDef()) {
+      Same->setIsDead(MO.isDead());
+    } else {
+      Same->setIsKill(MO.isKill());
+    }
+  }
 }
 
 MachineBasicBlock *getBranchTarget(const MachineInstr &MI) {
@@ -464,11 +496,7 @@ bool SLOW32InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
 
     MachineInstrBuilder MIB =
         BuildMI(MBB, MI, DL, get(SLOW32::JAL_CALLR)).add(MI.getOperand(0));
-
-    for (const MachineOperand &MO : MI.operands()) {
-      if (MO.isRegMask() || (MO.isReg() && MO.isImplicit()))
-        MIB.add(MO);
-    }
+    addCallOperands(MIB, MI);
 
     PropagateFlags(*MIB);
     for (MachineMemOperand *MMO : MI.memoperands())
@@ -520,11 +548,7 @@ bool SLOW32InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
             .addReg(SLOW32::R31, RegState::Define);
 
     MIB.add(MI.getOperand(0));
-
-    for (const MachineOperand &MO : MI.operands()) {
-      if (MO.isRegMask() || (MO.isReg() && MO.isImplicit()))
-        MIB.add(MO);
-    }
+    addCallOperands(MIB, MI);
 
     PropagateFlags(*MIB);
     for (MachineMemOperand *MMO : MI.memoperands())
