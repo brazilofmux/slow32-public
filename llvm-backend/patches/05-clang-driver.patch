@@ -64,10 +64,10 @@ index 64859a318485..9d6b8e3d37a5 100644
      break;
 diff --git a/clang/lib/Driver/ToolChains/SLOW32.cpp b/clang/lib/Driver/ToolChains/SLOW32.cpp
 new file mode 100644
-index 000000000000..aff86a4297e4
+index 000000000000..c1c884051eea
 --- /dev/null
 +++ b/clang/lib/Driver/ToolChains/SLOW32.cpp
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,154 @@
 +//===--- SLOW32.cpp - SLOW-32 ToolChain Implementations ---------*- C++ -*-===//
 +//
 +// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -159,24 +159,35 @@ index 000000000000..aff86a4297e4
 +SLOW32ToolChain::SLOW32ToolChain(const Driver &D, const llvm::Triple &Triple,
 +                                 const ArgList &Args)
 +    : ToolChain(D, Triple, Args) {
-+  // The runtime root: --sysroot, or SLOW32_HOME, in that order. It uses the
-+  // layout of the slow-32 repository.
++  // The runtime root: --sysroot, or SLOW32_HOME, in that order. It is laid
++  // out either as the slow-32 repository (runtime/, tools/assembler,
++  // tools/linker) or as an installed prefix (bin/, lib/, include/, as the
++  // slow32 images have it under /opt/slow32).  A root with no runtime/ but
++  // an include/ is an installed one; anything else is taken as the tree.
 +  if (!D.SysRoot.empty())
 +    RuntimeRoot = D.SysRoot;
 +  else if (const char *Home = ::getenv("SLOW32_HOME"))
 +    RuntimeRoot = Home;
 +
 +  if (!RuntimeRoot.empty()) {
-+    SmallString<256> P;
-+    P = RuntimeRoot;
-+    llvm::sys::path::append(P, "tools", "assembler");
-+    getProgramPaths().push_back(std::string(P));
-+    P = RuntimeRoot;
-+    llvm::sys::path::append(P, "tools", "linker");
-+    getProgramPaths().push_back(std::string(P));
-+    P = RuntimeRoot;
-+    llvm::sys::path::append(P, "runtime");
-+    getFilePaths().push_back(std::string(P));
++    auto Under = [&](StringRef A, StringRef B = "") {
++      SmallString<256> P(RuntimeRoot);
++      llvm::sys::path::append(P, A);
++      if (!B.empty())
++        llvm::sys::path::append(P, B);
++      return std::string(P);
++    };
++    if (!D.getVFS().exists(Under("runtime")) &&
++        D.getVFS().exists(Under("include"))) {
++      getProgramPaths().push_back(Under("bin"));
++      getFilePaths().push_back(Under("lib"));
++      IncludeDir = Under("include");
++    } else {
++      getProgramPaths().push_back(Under("tools", "assembler"));
++      getProgramPaths().push_back(Under("tools", "linker"));
++      getFilePaths().push_back(Under("runtime"));
++      IncludeDir = Under("runtime", "include");
++    }
 +  }
 +}
 +
@@ -207,18 +218,16 @@ index 000000000000..aff86a4297e4
 +  // had libc++abi making Linux futex calls).  Clang's own headers stay.
 +  CC1Args.push_back("-nostdsysteminc");
 +  if (DriverArgs.hasArg(options::OPT_nostdinc) ||
-+      DriverArgs.hasArg(options::OPT_nostdlibinc) || RuntimeRoot.empty())
++      DriverArgs.hasArg(options::OPT_nostdlibinc) || IncludeDir.empty())
 +    return;
-+  SmallString<256> P(RuntimeRoot);
-+  llvm::sys::path::append(P, "runtime", "include");
-+  addSystemInclude(DriverArgs, CC1Args, P);
++  addSystemInclude(DriverArgs, CC1Args, IncludeDir);
 +}
 diff --git a/clang/lib/Driver/ToolChains/SLOW32.h b/clang/lib/Driver/ToolChains/SLOW32.h
 new file mode 100644
-index 000000000000..330a5a84c4e7
+index 000000000000..636656b04ebb
 --- /dev/null
 +++ b/clang/lib/Driver/ToolChains/SLOW32.h
-@@ -0,0 +1,94 @@
+@@ -0,0 +1,95 @@
 +//===--- SLOW32.h - SLOW-32 ToolChain Implementations -----------*- C++ -*-===//
 +//
 +// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -306,6 +315,7 @@ index 000000000000..330a5a84c4e7
 +
 +private:
 +  std::string RuntimeRoot;
++  std::string IncludeDir;
 +};
 +
 +} // end namespace toolchains
@@ -315,10 +325,10 @@ index 000000000000..330a5a84c4e7
 +#endif // LLVM_CLANG_LIB_DRIVER_TOOLCHAINS_SLOW32_H
 diff --git a/clang/test/Driver/slow32-toolchain.c b/clang/test/Driver/slow32-toolchain.c
 new file mode 100644
-index 000000000000..43e153ff960a
+index 000000000000..19c9b16997dc
 --- /dev/null
 +++ b/clang/test/Driver/slow32-toolchain.c
-@@ -0,0 +1,61 @@
+@@ -0,0 +1,71 @@
 +// Check the SLOW-32 driver pipeline: clang -cc1, then slow32asm, then s32-ld.
 +
 +// RUN: %clang -### --target=slow32-unknown-none --sysroot=/s32 %s 2>&1 \
@@ -339,6 +349,16 @@ index 000000000000..43e153ff960a
 +// CHECK-SAME: crt0.s32o
 +// CHECK-SAME: libc_mmio.s32a
 +// CHECK-SAME: libs32.s32a
++
++// An installed prefix (bin/, lib/, include/; no runtime/), as in the images.
++// RUN: %clang -### --target=slow32-unknown-none \
++// RUN:   --sysroot=%S/Inputs/slow32_installed_tree %s 2>&1 \
++// RUN:   | FileCheck --check-prefix=INSTALLED %s
++// INSTALLED: "-cc1"
++// INSTALLED-SAME: "-internal-isystem" "{{.*}}slow32_installed_tree{{/|\\\\}}include"
++// INSTALLED: s32-ld
++// INSTALLED-SAME: "{{.*}}slow32_installed_tree{{/|\\\\}}lib{{/|\\\\}}crt0.s32o"
++// INSTALLED-SAME: "{{.*}}slow32_installed_tree{{/|\\\\}}lib{{/|\\\\}}libc_mmio.s32a"
 +
 +// -mdebug-io selects the DEBUG-instruction runtime and drops the MMIO window.
 +// RUN: %clang -### --target=slow32-unknown-none --sysroot=/s32 -mdebug-io %s \
