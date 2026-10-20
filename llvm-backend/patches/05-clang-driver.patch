@@ -64,10 +64,10 @@ index 64859a318485..9d6b8e3d37a5 100644
      break;
 diff --git a/clang/lib/Driver/ToolChains/SLOW32.cpp b/clang/lib/Driver/ToolChains/SLOW32.cpp
 new file mode 100644
-index 000000000000..95ec176682cf
+index 000000000000..aff86a4297e4
 --- /dev/null
 +++ b/clang/lib/Driver/ToolChains/SLOW32.cpp
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,145 @@
 +//===--- SLOW32.cpp - SLOW-32 ToolChain Implementations ---------*- C++ -*-===//
 +//
 +// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -202,6 +202,10 @@ index 000000000000..95ec176682cf
 +
 +void SLOW32ToolChain::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
 +                                                ArgStringList &CC1Args) const {
++  // The host's /usr/local/include and /usr/include are never SLOW-32's: a
++  // header the runtime lacks would be found there (Alpine's <sys/syscall.h>
++  // had libc++abi making Linux futex calls).  Clang's own headers stay.
++  CC1Args.push_back("-nostdsysteminc");
 +  if (DriverArgs.hasArg(options::OPT_nostdinc) ||
 +      DriverArgs.hasArg(options::OPT_nostdlibinc) || RuntimeRoot.empty())
 +    return;
@@ -311,17 +315,24 @@ index 000000000000..330a5a84c4e7
 +#endif // LLVM_CLANG_LIB_DRIVER_TOOLCHAINS_SLOW32_H
 diff --git a/clang/test/Driver/slow32-toolchain.c b/clang/test/Driver/slow32-toolchain.c
 new file mode 100644
-index 000000000000..06178900596d
+index 000000000000..43e153ff960a
 --- /dev/null
 +++ b/clang/test/Driver/slow32-toolchain.c
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,61 @@
 +// Check the SLOW-32 driver pipeline: clang -cc1, then slow32asm, then s32-ld.
 +
 +// RUN: %clang -### --target=slow32-unknown-none --sysroot=/s32 %s 2>&1 \
 +// RUN:   | FileCheck %s
 +// CHECK: "-cc1" "-triple" "slow32-unknown-none"
++// CHECK-SAME: "-nostdsysteminc"
 +// CHECK-SAME: "-internal-isystem" "{{.*}}/s32{{/|\\\\}}runtime{{/|\\\\}}include"
 +// CHECK-SAME: "-femulated-tls"
++
++// No host system directories, even with no runtime root to supply its own.
++// RUN: env -u SLOW32_HOME %clang -### --target=slow32-unknown-none %s 2>&1 \
++// RUN:   | FileCheck --check-prefix=NOHOST %s
++// NOHOST: "-cc1" "-triple" "slow32-unknown-none"
++// NOHOST-SAME: "-nostdsysteminc"
 +// CHECK: slow32asm
 +// CHECK: s32-ld
 +// CHECK-SAME: "--mmio" "64K"
