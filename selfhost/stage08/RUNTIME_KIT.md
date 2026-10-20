@@ -103,6 +103,17 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Fixed later 2026-10-20 (`f9e2301f`).  In `libc.s32a` (`malloc.s32o`, the
+only member that changed) and so in every tool and app that links it --
+`cc.s32x`, `s32-as/ld/ar`, `slow32dis/dump` and the clang-built apps,
+whose clang runtime had the same fault:
+
+- **A request too large to exist could come back as a small block**:
+  sizes just under 2 GB (here) or 4 GB (the clang runtime) wrapped while
+  being rounded up.  And `realloc` given a size past 2 GB freed the block
+  it was handed and said NULL, so the caller's next use of it was a
+  double free.  Anything over 1 GB is now refused before any arithmetic.
+
 Fixed 2026-10-20 (`389da90c`, `ed653145`).  In `s32-as.s32x`, and in
 `libc.s32a` and `include/` (getopt); `cc.s32x`, `s32-ld`, `s32-ar` and
 the other 32 library members are unchanged.  The clang-built apps were
