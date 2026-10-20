@@ -15,7 +15,14 @@
 #
 # Usage: ./run-kit-differential.sh [test-name ...]
 #   With no arguments, builds and runs the whole corpus.
-#   REBUILD=1 forces a rebuild of binaries already in results-kit/.
+#   A binary in results-kit/ is reused only while it is newer than its
+#   source and every piece of the kit that made it; REBUILD=1 forces a
+#   rebuild regardless.  (Reuse used to be unconditional: after a kit
+#   refresh the harness went on running binaries from earlier kits, which
+#   hid for eleven days that lex_test no longer linked.)
+#
+#   The corpus's must-reject sources (REJECTS below) are not run: the kit
+#   compiler has to refuse them, and the summary counts them apart.
 #
 # Env overrides: KIT (default ~/s32x), SRC_DIR, SLOW32, SLOW32_FAST,
 #   SLOW32_DBT, QEMU_S32, BUILD_ENGINE, TIMEOUT (secs).
@@ -135,6 +142,11 @@ normalize_output() {
     '
 }
 
+# Sources the compiler must refuse -- stage08's run-tests.sh checks the
+# diagnostic; here it is enough that the kit's cc produces no .s.
+REJECTS=" test_two_init test_two_init_zero "
+REJECTED=0
+
 TOTAL=0
 AGREE=0
 DIVERGED=0
@@ -200,7 +212,26 @@ run_test() {
     printf "%-34s " "$base:"
 
     mkdir -p "$dir"
-    if [ ! -f "$s32x" ] || [ -n "$REBUILD" ]; then
+    if [[ "$REJECTS" == *" $base "* ]]; then
+        rm -f "$dir/$base.s"
+        if timeout "$BUILD_TIMEOUT" "$BUILD" "$KIT/cc.s32x" -I"$SH/include" \
+               "$src" "$dir/$base.s" >"$dir/build.log" 2>&1 ||
+           [ ! -s "$dir/$base.s" ]; then
+            echo -e "${GREEN}REJECTED${NC} (as it must be)"
+            REJECTED=$((REJECTED + 1))
+        else
+            echo -e "${RED}ACCEPTED${NC} (must be rejected; see $dir/build.log)"
+            DIVERGED=$((DIVERGED + 1))
+            DIVERGED_TESTS+=("$base: compiled, must be rejected")
+        fi
+        return
+    fi
+    local stale=
+    for f in "$src" "$KIT/cc.s32x" "$KIT/s32-as.s32x" "$KIT/s32-ld.s32x" \
+             "$SH/crt0.s32o" "$SH/libc.s32a"; do
+        [ "$f" -nt "$s32x" ] && stale=1
+    done
+    if [ ! -f "$s32x" ] || [ -n "$stale" ] || [ -n "$REBUILD" ]; then
         rm -f "$s32x"
         if ! build_kit "$src" "$dir" "$base"; then
             echo -e "${YELLOW}SKIP${NC} (kit build failed; see $dir/build.log)"
@@ -283,7 +314,7 @@ fi
 
 echo ""
 echo "================================================="
-echo "Kit differential: $AGREE agree, $DIVERGED diverged, $SKIPPED skipped (of $TOTAL)"
+echo "Kit differential: $AGREE agree, $DIVERGED diverged, $SKIPPED skipped, $REJECTED rejected as they must be (of $TOTAL)"
 if [ "$THIN" -gt 0 ]; then
     echo -e "${YELLOW}NOTE${NC}: $THIN of the $AGREE agreeing tests print nothing --"
     echo "      those agree on exit code alone, which is thin evidence."

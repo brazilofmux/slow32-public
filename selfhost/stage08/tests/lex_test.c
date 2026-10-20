@@ -13,6 +13,16 @@ static int test_pass;
 static int test_fail;
 static int test_total;
 
+/* The lexer reports a malformed escape through the parser's p_error
+ * (selfhost ISSUES-83), and there is no parser here: a lexical error
+ * is one more failure. */
+static void p_error(char *msg) {
+    fdputs("FAIL: lexer error: ", 2);
+    fdputs(msg, 2);
+    fdputc(10, 2);
+    test_fail = test_fail + 1;
+}
+
 static void check_tok(int expect, char *name) {
     test_total = test_total + 1;
     if (lex_tok != expect) {
