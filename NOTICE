@@ -73,6 +73,15 @@ freely, subject to the following restrictions:
    misrepresented as being the original software.
 3. This notice may not be removed or altered from any source distribution.
 
+- pcre2/ (PCRE2 10.49; src/ is the release's, unmodified), and the
+  libraries and pcre2test.s32x built from it: the BSD licence with the
+  PCRE2 exemption (SPDX BSD-3-Clause WITH PCRE2-exception).  The full
+  text is pcre2/LICENCE.md, and the authors are in pcre2/AUTHORS.md.
+  Its Unicode property tables -- src/pcre2_ucd.c, src/pcre2_ucp.h and
+  src/pcre2_ucptables_inc.h, which PCRE2 generates from the Unicode
+  Character Database (Unicode 17.0.0) -- are also under the Unicode
+  License V3, reproduced below.
+
 - Data derived from the Unicode Character Database and the Unicode Common
   Locale Data Repository (Unicode 16.0, CLDR 46), by way of libutf
   (github.com/brazilofmux/utf, MIT): cobol/libcob/utf/tables/ (the DUCET,
