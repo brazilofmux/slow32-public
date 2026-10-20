@@ -328,12 +328,19 @@ MachineBasicBlock::iterator SLOW32FrameLowering::eliminateCallFramePseudoInstr(
     // prologue math assumes an aligned incoming SP.
     int64_t Amount = alignSPAdjust(I->getOperand(0).getImm());
     if (Amount != 0) {
-      if (I->getOpcode() == SLOW32::ADJCALLSTACKDOWN) {
-        emitAddImmediateChain(MBB, I, I->getDebugLoc(), *TII, StackPtr,
-                              StackPtr, -Amount);
-      } else {
-        emitAddImmediateChain(MBB, I, I->getDebugLoc(), *TII, StackPtr,
-                              StackPtr, Amount);
+      bool Down = I->getOpcode() == SLOW32::ADJCALLSTACKDOWN;
+      emitAddImmediateChain(MBB, I, I->getDebugLoc(), *TII, StackPtr,
+                            StackPtr, Down ? -Amount : Amount);
+      // Without a frame pointer the CFA is SP-relative, so moving SP for
+      // the outgoing arguments moves it too.  Without this an unwinder at
+      // the call -- an exception thrown by the callee -- took the CFA as
+      // the prologue left it, read the saved LR from the outgoing argument
+      // area and lost the frame: libc++'s __throw_system_error, which
+      // passes an error_code on the stack, threw exceptions nothing could
+      // catch (2026-10-20).
+      if (!hasFP(MF) && needsDwarfCFI(MF)) {
+        CFIInstBuilder CFIBuilder(MBB, I, MachineInstr::NoFlags);
+        CFIBuilder.buildAdjustCFAOffset(Down ? Amount : -Amount);
       }
     }
   }

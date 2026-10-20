@@ -1,0 +1,3 @@
+caught through stack-arg relay     PASS
+three catches in a loop            PASS
+0 failed

@@ -448,6 +448,12 @@ typedef struct {
     uint32_t cfi_cie_zr_offset;
     bool cfi_cie_zplr_emitted;
     uint32_t cfi_cie_zplr_offset;
+    // The CFA's offset as the directives so far leave it, for
+    // .cfi_adjust_cfa_offset (which is relative to it), with the copies
+    // .cfi_remember_state saves.
+    int32_t cfi_cfa_offset;
+    int32_t cfi_cfa_saved[8];
+    int cfi_cfa_depth;
 
     // String table
     char *string_table;
@@ -962,6 +968,8 @@ static int find_label_index(assembler_t *as, const char *name);
 static bool handle_cfi_directive(assembler_t *as, char tokens[][MAX_TOKEN_LEN], int num_tokens) {
     if (strcmp(tokens[0], ".cfi_startproc") == 0) {
         as->cfi_in_proc = true;
+        as->cfi_cfa_offset = 0;   // the CIE's: CFA = sp + 0
+        as->cfi_cfa_depth = 0;
         as->cfi_func_start = as->code_size;
         as->cfi_last_loc = as->code_size;
         as->cfi_fde_instrs_size = 0;
@@ -1033,6 +1041,7 @@ static bool handle_cfi_directive(assembler_t *as, char tokens[][MAX_TOKEN_LEN], 
         cfi_fde_write8(as, DW_CFA_def_cfa_op);
         cfi_fde_write_uleb128(as, (uint32_t)reg);
         cfi_fde_write_uleb128(as, (uint32_t)offset);
+        as->cfi_cfa_offset = offset;
         return true;
     }
 
@@ -1041,6 +1050,21 @@ static bool handle_cfi_directive(assembler_t *as, char tokens[][MAX_TOKEN_LEN], 
         int offset = parse_immediate(tokens[1]);
         cfi_fde_write8(as, DW_CFA_def_cfa_offset);
         cfi_fde_write_uleb128(as, (uint32_t)offset);
+        as->cfi_cfa_offset = offset;
+        return true;
+    }
+
+    // .cfi_adjust_cfa_offset N: the CFA's offset moves by N, as an SP
+    // adjustment around a call that passes arguments on the stack moves it
+    // in a function without a frame pointer.  It used to fall through to
+    // the "ignore" below, so an unwinder at such a call read the saved LR
+    // from the outgoing arguments.  Written as def_cfa_offset of the total,
+    // as GAS writes it.
+    if (strcmp(tokens[0], ".cfi_adjust_cfa_offset") == 0 && num_tokens >= 2) {
+        cfi_emit_advance_loc(as);
+        as->cfi_cfa_offset += parse_immediate(tokens[1]);
+        cfi_fde_write8(as, DW_CFA_def_cfa_offset);
+        cfi_fde_write_uleb128(as, (uint32_t)as->cfi_cfa_offset);
         return true;
     }
 
@@ -1086,12 +1110,18 @@ static bool handle_cfi_directive(assembler_t *as, char tokens[][MAX_TOKEN_LEN], 
     if (strcmp(tokens[0], ".cfi_remember_state") == 0) {
         cfi_emit_advance_loc(as);
         cfi_fde_write8(as, DW_CFA_remember_state);
+        if (as->cfi_cfa_depth < 8) as->cfi_cfa_saved[as->cfi_cfa_depth] = as->cfi_cfa_offset;
+        as->cfi_cfa_depth++;
         return true;
     }
 
     if (strcmp(tokens[0], ".cfi_restore_state") == 0) {
         cfi_emit_advance_loc(as);
         cfi_fde_write8(as, DW_CFA_restore_state);
+        if (as->cfi_cfa_depth > 0) {
+            as->cfi_cfa_depth--;
+            if (as->cfi_cfa_depth < 8) as->cfi_cfa_offset = as->cfi_cfa_saved[as->cfi_cfa_depth];
+        }
         return true;
     }
 
