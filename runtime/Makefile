@@ -243,24 +243,28 @@ string_extra.s: string_extra.ll
 # Compiler runtime library (always linked last)
 libs32.s32a: $(COMPILER_RT_OBJS)
 	@echo "Creating libs32.s32a (compiler runtime)..."
+	rm -f $@
 	$(ARCHIVER) c $@ $^
 	@echo "Archive size: $$(ls -lh $@ | awk '{print $$5}')"
 
 # Debug version of libc (uses DEBUG instruction for I/O)
 libc_debug.s32a: $(LIBC_CORE_OBJS) $(STDIO_DEBUG_OBJS) $(LIBC_DEBUG_EXTRA_OBJS)
 	@echo "Creating libc_debug.s32a (DEBUG I/O)..."
+	rm -f $@
 	$(ARCHIVER) c $@ $^
 	@echo "Archive size: $$(ls -lh $@ | awk '{print $$5}')"
 
 # MMIO version of libc (uses ring buffer for I/O)
 libc_mmio.s32a: $(LIBC_CORE_OBJS) $(STDIO_MMIO_OBJS) $(LIBC_MMIO_EXTRA_OBJS)
 	@echo "Creating libc_mmio.s32a (MMIO I/O)..."
+	rm -f $@
 	$(ARCHIVER) c $@ $^
 	@echo "Archive size: $$(ls -lh $@ | awk '{print $$5}')"
 
 # The runtime's C++ ABI, for freestanding C++ (linked before libc)
 libs32cxx.s32a: $(CXXRT_OBJS)
 	@echo "Creating libs32cxx.s32a (C++ run time)..."
+	rm -f $@
 	$(ARCHIVER) c $@ $^
 	@echo "Archive size: $$(ls -lh $@ | awk '{print $$5}')"
 
