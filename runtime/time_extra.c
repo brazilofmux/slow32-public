@@ -127,3 +127,8 @@ struct tm *localtime(const time_t *timer) {
 
 // mktime, asctime, ctime, difftime and strftime are time_std.c's: one source
 // for this library and the self-hosted one.
+
+// The zone is asked for at each conversion (__s32_query_tz), so there is
+// nothing for tzset to read ahead of time
+void tzset(void) {
+}

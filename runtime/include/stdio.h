@@ -20,7 +20,9 @@ extern "C" {
 #define _IOLBF 1
 #define _IONBF 2
 
-#define L_tmpnam 20
+#define L_tmpnam 32
+#define TMP_MAX  238328
+#define P_tmpdir "/tmp"
 
 typedef struct FILE {
     // Fields used by stdio_buffered.c (line-buffered output via flush callback)
@@ -130,6 +132,9 @@ int rename(const char *oldpath, const char *newpath);
 int ungetc(int c, FILE *stream);
 int setvbuf(FILE *stream, char *buf, int mode, size_t size);
 FILE *tmpfile(void);
+/* A name no file has yet, under P_tmpdir.  NULL: the result is in a
+ * static buffer, overwritten by the next call. */
+char *tmpnam(char *s);
 
 typedef long fpos_t;
 int fgetpos(FILE *stream, fpos_t *pos);

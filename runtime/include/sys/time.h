@@ -15,6 +15,12 @@ struct timeval {
     suseconds_t tv_usec;
 };
 
+// Obsolete; gettimeofday ignores it, and never fills one in
+struct timezone {
+    int tz_minuteswest;
+    int tz_dsttime;
+};
+
 // CLOCK_REALTIME in microseconds (libc_mmio; the debug libc has no clock
 // and fails with ENOSYS).  The time zone argument is obsolete and ignored.
 int gettimeofday(struct timeval *tv, void *tz);

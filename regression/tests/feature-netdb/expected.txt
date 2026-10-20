@@ -1,0 +1,58 @@
+pton4 192.0.2.33       -> 192.0.2.33 (192 0 2 33)
+pton4 0.0.0.0          -> 0.0.0.0 (0 0 0 0)
+pton4 255.255.255.255  -> 255.255.255.255 (255 255 255 255)
+pton4 10.1.2           -> 0
+pton4 10.1.2.300       -> 0
+pton4 10.1.2.3         -> 0
+pton4 1.2.3.4.5        -> 0
+pton6 ::                           -> ::
+pton6 ::1                          -> ::1
+pton6 2001:db8::7                  -> 2001:db8::7
+pton6 2001:DB8:0:0:1:0:0:1         -> 2001:db8::1:0:0:1
+pton6 2001:db8:0:0:0:0:2:1         -> 2001:db8::2:1
+pton6 2001:db8:0:1:1:1:1:1         -> 2001:db8:0:1:1:1:1:1
+pton6 fe80:0:0:0:0:0:0:0           -> fe80::
+pton6 ::ffff:198.51.100.9          -> ::ffff:198.51.100.9
+pton6 ::ffff:c633:6409             -> ::ffff:198.51.100.9
+pton6 1:2:3:4:5:6:7::              -> 1:2:3:4:5:6:7:0
+pton6 1:2:3:4:5:6:7:8              -> 1:2:3:4:5:6:7:8
+pton6 1:2:3:4:5:6:7:8:9            -> 0
+pton6 1::2::3                      -> 0
+pton6 12345::                      -> 0
+pton6 :1::                         -> 0
+pton6 1:                           -> 0
+pton6 ::1.2.3                      -> 0
+ntop into 8 bytes: NULL
+pton af 99: -1
+gai numeric v4 port          ok [inet 198.51.100.20 port 4201 proto tcp]
+gai numeric v6               ok [inet6 2001:db8::42 port 7 proto tcp]
+gai passive v4               ok [inet 0.0.0.0 port 2860 proto tcp]
+gai loopback v4              ok [inet 127.0.0.1 port 2860 proto tcp]
+gai passive v6               ok [inet6 :: port 2860 proto tcp]
+gai name, numeric only       EAI_NONAME
+gai named serv, numeric      EAI_NONAME
+gai nothing                  EAI_NONAME
+gai family 77                EAI_FAMILY
+gni numeric: ok 192.0.2.77 6250
+gni small host buffer: EAI_OVERFLOW
+gni service only: ok 6250
+gni loopback, numeric: ok 127.0.0.1
+ghbn numeric: 192.0.2.99 len 4 192.0.2.99
+-- machine --
+pton4 10.01.2.3        -> 0
+gai canon                    ok [inet 192.0.2.5 port 0 proto tcp canon 192.0.2.5]
+gai canon without node       EAI_BADFLAGS
+gai v4 text as v6            EAI_ADDRFAMILY
+gai v6 text as v4            EAI_ADDRFAMILY
+gai v4 text as v6, mapped    ok [inet6 ::ffff:192.0.2.5 port 21 proto tcp]
+gai localhost v4             ok [inet 127.0.0.1 port 80 proto tcp]
+gai localhost v6             ok [inet6 ::1 port 80 proto tcp]
+gai port too big             EAI_SERVICE
+gni short sockaddr: EAI_FAMILY
+unspec passive-less: ok [1 1 1]
+gai name                     EAI_NONAME
+gni loopback: ok localhost
+gni name required: EAI_NONAME
+ghbn name: NULL h_errno HOST_NOT_FOUND
+servbyname: NULL
+

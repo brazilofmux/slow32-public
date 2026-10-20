@@ -53,6 +53,8 @@ struct tm *localtime(const time_t *timer);
 struct tm *gmtime_r(const time_t *timer, struct tm *result);
 struct tm *localtime_r(const time_t *timer, struct tm *result);
 time_t mktime(struct tm *tm);
+// Nothing to do: every conversion asks the host for the zone in effect
+void tzset(void);
 
 // Internal: query the host timezone for the given UTC instant. Returns 0 and
 // fills the outputs on success, -1 if no timezone service is available (the

@@ -8,8 +8,23 @@
 extern "C" {
 #endif
 
+/* Linux's numbers.  The machine's sockets are IPv4 TCP only
+ * (docs/SPEC.md): AF_INET6, AF_UNIX and SOCK_DGRAM are here so programs
+ * that offer them compile and ask, and socket() refuses them. */
+#define AF_UNSPEC     0
+#define AF_UNIX       1
+#define AF_LOCAL      AF_UNIX
 #define AF_INET       2
+#define AF_INET6      10
+#define PF_UNSPEC     AF_UNSPEC
+#define PF_UNIX       AF_UNIX
+#define PF_LOCAL      AF_LOCAL
+#define PF_INET       AF_INET
+#define PF_INET6      AF_INET6
 #define SOCK_STREAM   1
+#define SOCK_DGRAM    2
+#define SOCK_RAW      3
+#define SOMAXCONN     128
 #define SHUT_RD       0
 #define SHUT_WR       1
 #define SHUT_RDWR     2
@@ -21,10 +36,18 @@ extern "C" {
 
 typedef unsigned socklen_t;
 typedef uint32_t in_addr_t;
+typedef uint16_t sa_family_t;
 
 struct sockaddr {
-    uint16_t sa_family;
+    sa_family_t sa_family;
     char sa_data[14];
+};
+
+/* Big enough, and aligned enough, for any address above */
+struct sockaddr_storage {
+    sa_family_t ss_family;
+    char __ss_pad[118];
+    unsigned long long __ss_align;
 };
 
 int socket(int domain, int type, int protocol);

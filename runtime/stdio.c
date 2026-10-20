@@ -767,6 +767,25 @@ FILE *tmpfile(void) {
     return NULL;
 }
 
+/* A name no file has yet: the time and a count make it, access() says it
+ * is free.  Only a name -- another program may take it before the caller
+ * does, which is why tmpfile and mkstemp are the better calls. */
+char *tmpnam(char *s) {
+    static char buf[L_tmpnam];
+    static unsigned int serial;
+    char *out = s ? s : buf;
+
+    for (int tries = 0; tries < 64; tries++) {
+        struct timespec ts = {0, 0};
+        clock_gettime(CLOCK_REALTIME, &ts);
+        serial++;
+        snprintf(out, L_tmpnam, "%s/s32-%08lx-%06x", P_tmpdir, (unsigned long)ts.tv_sec,
+                 (unsigned)((unsigned long)ts.tv_nsec / 1000ul + serial) & 0xffffffu);
+        if (access(out, F_OK) != 0) return out;
+    }
+    return NULL;
+}
+
 /* A whole line, however long, its delimiter with it: the buffer is the
  * caller's to free, and is made or grown here as the line needs. */
 ssize_t getdelim(char **lineptr, size_t *n, int delim, FILE *stream) {

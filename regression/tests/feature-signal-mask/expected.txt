@@ -1,0 +1,19 @@
+blocked: ran "", pending 1
+unblocked: ran "1" (once)
+pending after: 0
+three pending, delivered in order "21h"
+handler raising itself: "[][][][]" deepest 1
+same, SA_NODEFER: "[[[[]]]]" deepest 4
+sa_mask holds SIGUSR2 off: "<>2"
+without it: "<2>"
+SA_RESETHAND: ran "1", now SIG_DFL
+SA_SIGINFO: si_signo is SIGUSR2 1
+ignoring a pending signal discards it: 1
+and nothing arrives later: ""
+fill blocks SIGKILL 0, SIGSTOP 0, SIGTERM 1
+sigaction(SIGKILL): -1 EINVAL 1
+sigprocmask bad how: -1 EINVAL 1
+kill self: 0 ran "1"
+kill(self, 0): 0
+kill(absent, 0): -1 ESRCH 1
+

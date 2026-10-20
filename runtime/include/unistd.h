@@ -2,6 +2,7 @@
 #define SLOW32_UNISTD_H
 
 #include <stddef.h>
+#include <sys/types.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -60,6 +61,29 @@ int s32_execv(const char *path, char *const argv[]);
 /* Like s32_execv, but child's stdin/stdout/stderr become guest_fd
  * (a socket or file). guest_fd < 0 means inherit the parent's stdio. */
 int s32_execv_fd(const char *path, char *const argv[], int guest_fd);
+
+/* One program runs on the machine at a time: it is process 1, with no
+ * parent, and makes no others.  fork and the exec family fail with
+ * ENOSYS (s32_execv above runs a program and waits for it), and so a
+ * program has no children to wait for (<sys/wait.h>).  process.c. */
+pid_t getpid(void);
+pid_t getppid(void);
+pid_t fork(void);
+int execv(const char *path, char *const argv[]);
+int execve(const char *path, char *const argv[], char *const envp[]);
+int execvp(const char *file, char *const argv[]);
+
+/* sysconf: what the machine can say.  _SC_OPEN_MAX is the host's table
+ * of guest descriptors (docs/SPEC.md); the machine has no pages, and
+ * _SC_PAGESIZE is the unit an allocator may round to; one processor.
+ * Any other name fails with EINVAL.  Linux's numbers. */
+#define _SC_OPEN_MAX           4
+#define _SC_PAGESIZE           30
+#define _SC_PAGE_SIZE          _SC_PAGESIZE
+#define _SC_NPROCESSORS_CONF   83
+#define _SC_NPROCESSORS_ONLN   84
+long sysconf(int name);
+int getdtablesize(void);
 
 /* The machine has no way to ask whether a descriptor is a terminal, so
  * isatty() says it is not: 0, with errno ENOTTY. */

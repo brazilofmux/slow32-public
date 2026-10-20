@@ -72,7 +72,7 @@ if [ "${1:-}" != "--no-shell" ] && [ -f "$SCRIPT_DIR/shell.c" ]; then
     echo "=== shell"
     SHELL_CFLAGS="-include $SCRIPT_DIR/compat/shell_slow32.h -I$SCRIPT_DIR/compat"
     cc1 "$SCRIPT_DIR/shell.c" $SHELL_CFLAGS
-    cc1 "$SCRIPT_DIR/shell_slow32.c" -DSHELL_LIBC_HAS_POSIX_FILES
+    cc1 "$SCRIPT_DIR/shell_slow32.c" -DSHELL_LIBC_HAS_POSIX_FILES -DSHELL_LIBC_HAS_GETPID
     link "$OUTDIR/sqlite3.s32x" "$OUTDIR/shell.s32o" "$OUTDIR/shell_slow32.s32o"
     echo "  -> $OUTDIR/sqlite3.s32x"
 fi

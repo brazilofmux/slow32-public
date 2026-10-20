@@ -35,8 +35,13 @@ void __s32_killed(int sig) {
     halt_with(128 + sig);
 }
 
-/* abort raises SIGABRT; a handler that returns does not save the program */
+/* abort raises SIGABRT, blocked or not; a handler that returns does not
+ * save the program */
 void abort(void) {
+    sigset_t abrt;
+    sigemptyset(&abrt);
+    sigaddset(&abrt, SIGABRT);
+    sigprocmask(SIG_UNBLOCK, &abrt, (sigset_t *)0);
     raise(SIGABRT);
     signal(SIGABRT, SIG_DFL);
     raise(SIGABRT);

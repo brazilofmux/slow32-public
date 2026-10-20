@@ -1,0 +1,34 @@
+getpid 1 getppid 0
+fork                       -1 errno ENOSYS
+execv                      -1 errno ENOSYS
+execvp                     -1 errno ENOSYS
+wait                       -1 errno ECHILD
+waitpid WNOHANG            -1 errno ECHILD
+waitpid bad options        -1 errno EINVAL
+status untouched 1
+sysconf OPEN_MAX           128 errno 0
+sysconf PAGESIZE           4096 errno 0
+sysconf NPROCESSORS_ONLN   1 errno 0
+sysconf 9999               -1 errno EINVAL
+getdtablesize 128
+getrlimit NOFILE           0 errno 0
+  cur 128 max 128
+setrlimit NOFILE as is     0 errno 0
+setrlimit NOFILE 4096      -1 errno EPERM
+setrlimit NOFILE 64        -1 errno EINVAL
+getrlimit CORE             0 errno 0
+  cur 0 max 0
+setrlimit CORE unlimited   -1 errno EPERM
+getrlimit STACK            0 errno 0
+  unlimited 1
+getrlimit 77               -1 errno EINVAL
+getrusage SELF             0 errno 0
+  usec in range 1, stime 0 1, maxrss 0 1
+getrusage 42               -1 errno EINVAL
+tmpnam: own buffer 1, under P_tmpdir 1, distinct 1, absent 1
+tmpnam(NULL) static 1, fits L_tmpnam 1
+struct timezone 8 bytes
+exit 3: exited 1 status 3 signaled 0
+signal 9: exited 0 signaled 1 termsig 9
+stopped 19: stopped 1 stopsig 19 signaled 0
+
