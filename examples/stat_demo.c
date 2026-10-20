@@ -7,7 +7,7 @@ static void dump_stat(const char *label, const struct stat *st) {
            (unsigned long long)st->st_size,
            st->st_mode,
            (unsigned long long)st->st_mtime,
-           st->st_mtime_nsec);
+           st->st_mtim.tv_nsec);
 }
 
 int main(void) {

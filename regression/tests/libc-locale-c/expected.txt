@@ -1,0 +1,17 @@
+query: C
+C: C
+POSIX numeric: set
+unknown: (null)
+lconv: [.] [] [] frac=1
+newlocale unknown: null errno=ENOENT
+newlocale C: made
+uselocale was global: 1
+uselocale now: 1
+toupper_l: Qq isdigit_l: 1
+strcoll_l: 1 strtod_l: 250
+strftime_l: Monday 19 October 2026
+days: Sunday Saturday | Mon Fri
+months: January December | May Sep
+formats: [%a %b %e %H:%M:%S %Y] [%m/%d/%y] [%H:%M:%S] [%I:%M:%S %p]
+am/pm: AM PM radix: .
+asprintf: 14 [lamp-0042-3.14]

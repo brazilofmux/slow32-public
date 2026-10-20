@@ -818,3 +818,13 @@ void setbuf(FILE *stream, char *buf) {
     if (buf) setvbuf(stream, buf, 0, BUFSIZ);
     else setvbuf(stream, NULL, 2, 0);
 }
+
+/* fseeko / ftello: offsets are long here, as wide as the machine's files */
+int fseeko(FILE *stream, off_t offset, int whence) {
+    if (offset > 0x7FFFFFFFLL || offset < -0x7FFFFFFFLL - 1) { errno = EOVERFLOW; return -1; }
+    return fseek(stream, (long)offset, whence);
+}
+
+off_t ftello(FILE *stream) {
+    return (off_t)ftell(stream);
+}

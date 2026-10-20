@@ -19,6 +19,10 @@ struct timeval {
 // and fails with ENOSYS).  The time zone argument is obsolete and ignored.
 int gettimeofday(struct timeval *tv, void *tz);
 
+// Setting a file's times: the machine has no service for it, so utimes
+// fails with ENOSYS (posix_extra.c).
+int utimes(const char *path, const struct timeval times[2]);
+
 #ifdef __cplusplus
 }
 #endif

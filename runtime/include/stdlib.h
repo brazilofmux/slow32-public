@@ -64,6 +64,23 @@ void srand(unsigned int seed);
 
 char *getenv(const char *name);
 
+#ifndef _SLOW32_LOCALE_T
+#define _SLOW32_LOCALE_T
+typedef struct __s32_locale *locale_t;
+#endif
+
+/* The POSIX 2008 forms that take a locale (locale.c) */
+double strtod_l(const char *nptr, char **endptr, locale_t l);
+float strtof_l(const char *nptr, char **endptr, locale_t l);
+long double strtold_l(const char *nptr, char **endptr, locale_t l);
+long strtol_l(const char *nptr, char **endptr, int base, locale_t l);
+unsigned long strtoul_l(const char *nptr, char **endptr, int base, locale_t l);
+long long strtoll_l(const char *nptr, char **endptr, int base, locale_t l);
+unsigned long long strtoull_l(const char *nptr, char **endptr, int base, locale_t l);
+
+/* The longest multibyte character: the C locale has single bytes */
+#define MB_CUR_MAX ((size_t)1)
+
 #ifdef __cplusplus
 }
 #endif

@@ -33,7 +33,7 @@ LIBC_CORE_OBJS = string.s32o string_extra.s32o \
                  cxxabi.s32o time_extra.s32o time_stubs.s32o time_std.s32o math_int.s32o dtoa.s32o errno.s32o \
                  strerror.s32o signal.s32o system.s32o \
                  setjmp.s32o emutls.s32o atomic.s32o \
-                 unwind.s32o unwind_asm.s32o posix_extra.s32o
+                 unwind.s32o unwind_asm.s32o posix_extra.s32o locale.s32o
 
 # The C++ run time for freestanding C++ (libs32cxx.s32a): guards, new/delete,
 # exceptions, RTTI and the std:: exception classes.  Not in libc: a program
@@ -89,7 +89,7 @@ C_SOURCES = printf_enhanced.c convert.c builtins.c string.c malloc.c stdlib_util
             exec_mmio.c exec_stub.c tube_mmio.c tube_stub.c dpc_mmio.c \
             sched_mmio.c \
             math_hw.c math_soft.c math_cordic.c \
-            unwind.c posix_extra.c \
+            unwind.c posix_extra.c locale.c \
             cxa_support.c cxa_exception.c cxa_personality.c cxa_typeinfo.c
 
 # Default target builds everything

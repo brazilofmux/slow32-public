@@ -134,12 +134,12 @@ static int copy_lstat_result(struct stat *dst) {
     dst->st_size = (off_t)result.st_size;
     dst->st_blksize = (blksize_t)result.st_blksize;
     dst->st_blocks = (blkcnt_t)result.st_blocks;
-    dst->st_atime = (time_t)result.st_atime_sec;
-    dst->st_atime_nsec = result.st_atime_nsec;
-    dst->st_mtime = (time_t)result.st_mtime_sec;
-    dst->st_mtime_nsec = result.st_mtime_nsec;
-    dst->st_ctime = (time_t)result.st_ctime_sec;
-    dst->st_ctime_nsec = result.st_ctime_nsec;
+    dst->st_atim.tv_sec = (time_t)result.st_atime_sec;
+    dst->st_atim.tv_nsec = result.st_atime_nsec;
+    dst->st_mtim.tv_sec = (time_t)result.st_mtime_sec;
+    dst->st_mtim.tv_nsec = result.st_mtime_nsec;
+    dst->st_ctim.tv_sec = (time_t)result.st_ctime_sec;
+    dst->st_ctim.tv_nsec = result.st_ctime_nsec;
     return 0;
 }
 

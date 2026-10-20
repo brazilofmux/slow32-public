@@ -1867,6 +1867,17 @@ static bool assemble_line(assembler_t *as, char *line) {
             // Handle .section directive with arguments
             // Supports both LLVM-style (.rodata.str1.1) and FPC-style (.data.n_SYMBOL)
             if (num_tokens > 1) {
+                // clang quotes a name it cannot write bare -- a function's
+                // own section whose mangled name has a $ in it (a lambda,
+                // ".text._Z...$_0...").  Unquote it before matching: the
+                // quoted form matched nothing and fell through unreported,
+                // leaving the function in the section before it (libc++'s
+                // call_once proxy landed in .gcc_except_table).
+                size_t tl = strlen(tokens[1]);
+                if (tl >= 2 && tokens[1][0] == '"' && tokens[1][tl - 1] == '"') {
+                    memmove(tokens[1], tokens[1] + 1, tl - 2);
+                    tokens[1][tl - 2] = '\0';
+                }
                 if (strncmp(tokens[1], ".text", 5) == 0) {
                     as->current_section = SECTION_CODE;
                     as->current_addr = as->code_size;
@@ -1915,8 +1926,13 @@ static bool assemble_line(assembler_t *as, char *line) {
                     as->current_addr = as->rodata_size;
                     return true;
                 }
+                // .note.GNU-stack and the like: empty markers, which the
+                // assembler has always let pass without switching sections
+                if (strncmp(tokens[1], ".note", 5) == 0) return true;
                 // Reject unrecognized sections instead of silently ignoring
-                if (tokens[1][0] == '.') {
+                // (any name: one that matched nothing used to pass silently
+                // unless it began with a dot)
+                {
                     fprintf(stderr, "Error: Unrecognized section '%s'\n", tokens[1]);
                     fprintf(stderr, "  Known sections: .text*, .data*, .bss*, .rodata*, .init_array*, .fpc*, .debug*\n");
                     return false;

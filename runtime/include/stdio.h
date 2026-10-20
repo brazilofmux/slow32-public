@@ -145,6 +145,17 @@ ssize_t getdelim(char **lineptr, size_t *n, int delim, FILE *stream);
 FILE *fmemopen(void *buf, size_t size, const char *mode);
 FILE *open_memstream(char **bufp, size_t *sizep);
 
+
+/* Format into a buffer malloc'd to fit (printf_enhanced.c); -1 when out
+ * of memory, with *strp undefined */
+int asprintf(char **strp, const char *format, ...);
+int vasprintf(char **strp, const char *format, va_list ap);
+
+/* POSIX fseeko/ftello: fseek/ftell with an off_t offset */
+typedef long long off_t;
+int fseeko(FILE *stream, off_t offset, int whence);
+off_t ftello(FILE *stream);
+
 #ifdef __cplusplus
 }
 #endif

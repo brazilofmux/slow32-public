@@ -750,6 +750,28 @@ int vsnprintf(char *buffer, size_t size, const char *format, va_list ap) {
     return vsnprintf_enhanced(buffer, size, format, ap);
 }
 
+/* vasprintf / asprintf: measure, allocate, format */
+int vasprintf(char **strp, const char *format, va_list ap) {
+    va_list again;
+    va_copy(again, ap);
+    int n = vsnprintf(NULL, 0, format, ap);
+    if (n < 0) { va_end(again); return -1; }
+    char *buf = malloc((size_t)n + 1);
+    if (!buf) { va_end(again); return -1; }
+    vsnprintf(buf, (size_t)n + 1, format, again);
+    va_end(again);
+    *strp = buf;
+    return n;
+}
+
+int asprintf(char **strp, const char *format, ...) {
+    va_list ap;
+    va_start(ap, format);
+    int n = vasprintf(strp, format, ap);
+    va_end(ap);
+    return n;
+}
+
 // vsprintf - format to buffer using va_list (no size limit)
 int vsprintf(char *buffer, const char *format, va_list ap) {
     return vsnprintf_enhanced(buffer, 65536, format, ap);

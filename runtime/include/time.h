@@ -66,6 +66,14 @@ size_t strftime(char *s, size_t maxsize, const char *format, const struct tm *tm
 // Time arithmetic
 double difftime(time_t time1, time_t time0);
 
+#ifndef _SLOW32_LOCALE_T
+#define _SLOW32_LOCALE_T
+typedef struct __s32_locale *locale_t;
+#endif
+
+/* strftime in a given locale (locale.c) */
+size_t strftime_l(char *s, size_t maxsize, const char *format, const struct tm *tm, locale_t l);
+
 #ifdef __cplusplus
 }
 #endif

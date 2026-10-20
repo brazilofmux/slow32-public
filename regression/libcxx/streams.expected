@@ -1,0 +1,20 @@
+plain 42 -7 2.5 1
+true 0
+ff 0xff
+3.142 1.235e+04
+[......99]
+ostringstream formats               PASS
+istringstream parses                PASS
+getline after >>                    PASS
+failed extraction sets failbit      PASS
+stringstream round trip             PASS
+classic locale is named C           PASS
+global locale is C                  PASS
+numpunct                            PASS
+ctype facet                         PASS
+collate facet                       PASS
+put_time                            PASS
+an unknown locale name throws       PASS
+regex_search + groups               PASS
+regex_replace                       PASS
+0 failed

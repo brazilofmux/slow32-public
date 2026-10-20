@@ -30,13 +30,16 @@ struct stat {
     off_t st_size;
     blksize_t st_blksize;
     blkcnt_t st_blocks;
-    time_t st_atime;
-    unsigned int st_atime_nsec;
-    time_t st_mtime;
-    unsigned int st_mtime_nsec;
-    time_t st_ctime;
-    unsigned int st_ctime_nsec;
+    /* POSIX 2008: the times as timespecs, st_atime and the others the
+     * seconds of them.  The same bytes as the time_t + nanoseconds pairs
+     * these were. */
+    struct timespec st_atim;
+    struct timespec st_mtim;
+    struct timespec st_ctim;
 };
+#define st_atime st_atim.tv_sec
+#define st_mtime st_mtim.tv_sec
+#define st_ctime st_ctim.tv_sec
 
 #define S_IFMT   0170000
 #define S_IFSOCK 0140000
