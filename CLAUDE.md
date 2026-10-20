@@ -133,7 +133,8 @@ commands below work with `docker` substituted 1:1.
   build FROM this, not from the LLVM image.
 - `slow32:toolchain` (FROM base): + LLVM 22/clang, libc++/libc++abi
   (/opt/slow32/libcxx) and the `s32c++` driver (`s32c++ [--locales]
-  prog.cpp -o prog.s32x`), Free Pascal `ppcs32`, cc-x64/cc-a64. The big
+  prog.cpp -o prog.s32x`; a 16 MB heap unless `--heap-size` says
+  otherwise -- s32-ld's own default is 1 MB), Free Pascal `ppcs32`, cc-x64/cc-a64. The big
   one (~2.9 GB). Plain `clang --target=slow32-unknown-none prog.c -o
   prog.s32x` works too: SLOW32_HOME=/opt/slow32 is an installed prefix
   (bin/ lib/ include/), which the driver tells from a tree by runtime/.

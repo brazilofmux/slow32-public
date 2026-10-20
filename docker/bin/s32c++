@@ -6,15 +6,16 @@
 #          [-I dir] [-D name[=v]] prog.cpp [more.cpp ...] [-o prog.s32x]
 # Default -O2 -std=c++20.  --locales links the named locales (CLDR 46's 53,
 # about 880 KB of tables); without it a program has "C" and "POSIX" only.
-# --heap-size goes to s32-ld (1M unless given; 16M, 64K): new and malloc
-# have that much, and a program wanting more gets std::bad_alloc.
+# --heap-size goes to s32-ld (16M unless given; 64M, 512K): new and malloc
+# have that much, and a program wanting more gets std::bad_alloc.  The C++
+# run time and its libraries assume room; s32-ld's own default is 1M.
 # The result runs under s32run (any engine): it uses the MMIO runtime.
 set -eu
 RT="${SLOW32_LIB:-/opt/slow32/lib}"
 INC="${SLOW32_INCLUDE:-/opt/slow32/include}"
 CXX_HOME="${SLOW32_LIBCXX:-/opt/slow32/libcxx}"
 LLVM="${LLVM_BIN:-/opt/llvm/bin}"
-opt=-O2; std=-std=c++20; out=""; srcs=(); flags=(); extra=(); heap=()
+opt=-O2; std=-std=c++20; out=""; srcs=(); flags=(); extra=(); heap=(--heap-size 16M)
 while [ $# -gt 0 ]; do
     case "$1" in
         -o) out="$2"; shift ;;
