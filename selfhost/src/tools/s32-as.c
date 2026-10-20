@@ -1118,10 +1118,19 @@ int handle(char *line) {
             return 0;
         }
         if (strcmp(tok[0], ".space") == 0 || strcmp(tok[0], ".zero") == 0) {
-            if (n != 2) return -1;
+            /* .space N[, FILL]: N bytes of FILL (LLVM writes a run of
+             * 0xFF as `.zero 8,255`) */
+            if (n != 2 && n != 3) return -1;
             cnt = parse_num_or_abs(tok[1], &ok);
             if (!ok || cnt < 0) return -1;
+            v = 0;
+            if (n == 3) {
+                v = parse_num_or_abs(tok[2], &ok);
+                if (!ok) return -1;
+                v = v & 255;
+            }
             if (g_sec == SEC_BSS) {
+                if (v != 0) return -1;      /* bss holds zeros only */
                 /* Counted, not stored.  A byte at a time, the 129MB of
                  * tables in stage08's own cc took the assembler eleven
                  * minutes under stage00's emulator: the build's longest
@@ -1132,7 +1141,7 @@ int handle(char *line) {
                 return 0;
             }
             for (i = 0; i < cnt; i = i + 1) {
-                if (emit8(0) != 0) return -1;
+                if (emit8(v) != 0) return -1;
             }
             return 0;
         }

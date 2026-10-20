@@ -2317,15 +2317,26 @@ static bool assemble_line(assembler_t *as, char *line) {
             }
             return true;
         } else if ((strcmp(tokens[0], ".zero") == 0 || strcmp(tokens[0], ".space") == 0) && num_tokens > 1) {
-            // .zero/.space N - reserve N bytes of zeros
+            // .zero/.space N[, FILL] - N bytes, each FILL (0 when not given).
+            // LLVM writes a run of 0xFF as `.zero 8,255`; the fill was
+            // ignored, and an initialized -1 came out 0.
             int num_bytes = parse_immediate(tokens[1]);
             if (num_bytes < 0) {
                 fprintf(stderr, ".zero/.space requires positive byte count\n");
                 return false;
             }
+            int fill = num_tokens > 2 ? parse_immediate(tokens[2]) & 0xFF : 0;
+            if (num_tokens > 3) {
+                fprintf(stderr, ".zero/.space takes a count and a fill byte\n");
+                return false;
+            }
+            if (fill != 0 && as->current_section == SECTION_BSS) {
+                fprintf(stderr, ".zero/.space in .bss holds zeros only\n");
+                return false;
+            }
             ensure_instruction_capacity(as, num_bytes);
             for (int i = 0; i < num_bytes; i++) {
-                as->instructions[as->num_instructions].instruction = 0x80000000;
+                as->instructions[as->num_instructions].instruction = 0x80000000u | (uint32_t)fill;
                 as->instructions[as->num_instructions].address = as->current_addr;
                 as->instructions[as->num_instructions].section = as->current_section;
                 as->instructions[as->num_instructions].is_data_byte = true;
