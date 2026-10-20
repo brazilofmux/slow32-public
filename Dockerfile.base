@@ -41,7 +41,7 @@ COPY --from=tools-builder \
 # source with its own LLVM and overwrites these; images built FROM base link
 # against exactly what the repository ships.
 COPY runtime/crt0.s32o runtime/libs32.s32a runtime/libc_debug.s32a runtime/libc_mmio.s32a \
-     runtime/libs32cxx.s32a \
+     runtime/libs32cxx.s32a runtime/locales.s32o \
      /opt/slow32/lib/
 COPY runtime/include /opt/slow32/include
 # The licence travels with the binaries: an image is a distribution.

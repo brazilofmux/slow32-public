@@ -1,17 +1,31 @@
 /*
- * Locales: setlocale and localeconv, the POSIX 2008 locale objects
- * (newlocale, duplocale, freelocale, uselocale), nl_langinfo, and the
- * *_l forms of the functions a locale changes.
+ * Locales: setlocale, the POSIX 2008 locale objects (newlocale,
+ * duplocale, freelocale), and the *_l forms of the functions a locale
+ * changes.  The state they set, and localeconv, uselocale, nl_langinfo,
+ * strcoll and strxfrm, which read it, are locale_state.c's.
  *
- * The "C" locale, also named "POSIX", is the only one, so every locale
- * object is the same static one and the *_l functions are their plain
- * forms.  Another name is refused -- setlocale returns NULL, newlocale
- * fails with ENOENT -- rather than answered with "C" as if it had been
- * found.  setlocale(..., "") takes the environment's locale, which here
- * is "C" whatever LANG says.
+ * A locale object holds a constant record per category (locale_impl.h).
+ * libc has the C locale's, which is also "POSIX" (and "C.UTF-8": the
+ * bytes are the same).  The named locales are in locales.s32o, which
+ * a program links to have them; without it, another name is refused --
+ * setlocale returns NULL, newlocale fails with ENOENT -- rather than
+ * answered with "C" as if it had been found.
  *
- * The locale object keeps a name per category so that named locales
- * can be added without changing its users.
+ * setlocale(..., "") takes the environment's locale the POSIX way:
+ * LC_ALL, else the category's own variable, else LANG, else "C"; when one
+ * category's name is refused, nothing changes.  A query of LC_ALL whose
+ * categories differ answers "LC_COLLATE=...;LC_CTYPE=...;..." in category
+ * order, a string setlocale(LC_ALL, ...) takes back.  Each category keeps
+ * the name it was set by, as it was written.
+ *
+ * What a category changes here: LC_COLLATE strcoll and strxfrm (byte
+ * order in C); LC_TIME strftime's names and %c %x %X %r %p (time_std.c,
+ * built with S32_LOCALE_STRFTIME); LC_NUMERIC the radix of printf
+ * (S32_PRINTF_LOCALE) and of strtod (dtoa.c's USE_LOCALE), and with
+ * LC_MONETARY what localeconv gives; LC_CTYPE only nl_langinfo(CODESET),
+ * since the ctype functions classify bytes and every locale's characters
+ * past ASCII are UTF-8 sequences, in no byte class; LC_MESSAGES only
+ * YESEXPR and NOEXPR.
  */
 
 #include <ctype.h>
@@ -19,109 +33,161 @@
 #include <langinfo.h>
 #include <limits.h>
 #include <locale.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "locale_impl.h"
 
-struct __s32_locale {
-    const char *name[LC_MESSAGES + 1];    /* [0] unused: LC_ALL is per category */
+/* locales.s32o's, when a program links it: null otherwise */
+extern const struct __s32_locdata *__s32_locale_find(const char *name) __attribute__((weak));
+
+static const char *const cat_name[N_CAT] = {
+    "LC_ALL", "LC_COLLATE", "LC_CTYPE", "LC_MONETARY", "LC_NUMERIC", "LC_TIME", "LC_MESSAGES"
 };
-
-static struct __s32_locale c_locale = {
-    { "C", "C", "C", "C", "C", "C", "C" }
-};
-
-/* uselocale's per-thread locale (one thread); null means the global one */
-static locale_t current;
 
 static int is_c_name(const char *name) {
-    return strcmp(name, "C") == 0 || strcmp(name, "POSIX") == 0 || name[0] == '\0';
+    return strcmp(name, "C") == 0 || strcmp(name, "POSIX") == 0 ||
+           strcmp(name, "C.UTF-8") == 0 || strcmp(name, "C.utf8") == 0;
+}
+
+/* the record for a name, or null with errno set */
+static const struct __s32_locdata *lookup(const char *name) {
+    const struct __s32_locdata *d = NULL;
+    if (strlen(name) >= NAME_MAX_LEN) {
+        errno = EINVAL;
+        return NULL;
+    }
+    if (is_c_name(name)) return &__s32_c_data;
+    if (__s32_locale_find) d = __s32_locale_find(name);
+    if (!d) errno = ENOENT;
+    return d;
+}
+
+/* the environment's name for a category */
+static const char *env_name(int cat) {
+    const char *v = getenv("LC_ALL");
+    if (v && *v) return v;
+    v = getenv(cat_name[cat]);
+    if (v && *v) return v;
+    v = getenv("LANG");
+    if (v && *v) return v;
+    return "C";
+}
+
+static void assemble_conv(struct __s32_locale *L) {
+    const struct lconv *n = &L->data[LC_NUMERIC]->conv;
+    L->conv = L->data[LC_MONETARY]->conv;
+    L->conv.decimal_point = n->decimal_point;
+    L->conv.thousands_sep = n->thousands_sep;
+    L->conv.grouping = n->grouping;
+}
+
+/* Set the categories in mask of L to a name: "" is the environment's, a
+ * composite one names each category.  All or nothing: 0, L untouched and
+ * errno set, when a name is refused. */
+static int apply(struct __s32_locale *L, int mask, const char *name) {
+    const struct __s32_locdata *d[N_CAT] = { 0 };
+    const char *nm[N_CAT] = { 0 };
+    char part[N_CAT][NAME_MAX_LEN];
+    if (strchr(name, '=')) {
+        /* "LC_x=name;LC_y=name;...": every category of mask must be there */
+        const char *p = name;
+        while (*p) {
+            const char *eq = strchr(p, '=');
+            const char *end = strchr(p, ';');
+            if (!end) end = p + strlen(p);
+            if (!eq || eq > end) { errno = EINVAL; return 0; }
+            int c = 0;
+            for (int k = 1; k < N_CAT; k++)
+                if (strlen(cat_name[k]) == (size_t)(eq - p) && strncmp(p, cat_name[k], (size_t)(eq - p)) == 0) c = k;
+            size_t len = (size_t)(end - eq - 1);
+            if (c == 0 || len >= NAME_MAX_LEN) { errno = EINVAL; return 0; }
+            memcpy(part[c], eq + 1, len);
+            part[c][len] = 0;
+            nm[c] = part[c];
+            p = *end ? end + 1 : end;
+        }
+        for (int c = 1; c < N_CAT; c++)
+            if ((mask & (1 << c)) && !nm[c]) { errno = EINVAL; return 0; }
+    } else {
+        for (int c = 1; c < N_CAT; c++)
+            if (mask & (1 << c)) nm[c] = name[0] ? name : env_name(c);
+    }
+    for (int c = 1; c < N_CAT; c++)
+        if ((mask & (1 << c)) && !(d[c] = lookup(nm[c]))) return 0;
+    for (int c = 1; c < N_CAT; c++) {
+        if (!(mask & (1 << c))) continue;
+        L->data[c] = d[c];
+        strcpy(L->name[c], nm[c]);
+    }
+    assemble_conv(L);
+    return 1;
 }
 
 /* ---------------------------------------------------------------- */
 
 char *setlocale(int category, const char *name) {
-    if (category < LC_ALL || category > LC_MESSAGES) return NULL;
-    if (name && !is_c_name(name)) return NULL;
-    return (char *)"C";
-}
-
-static struct lconv c_lconv = {
-    ".", "", "", "", "", "", "", "", "", "",
-    CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX,
-    CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX
-};
-
-struct lconv *localeconv(void) {
-    return &c_lconv;
-}
-
-locale_t newlocale(int category_mask, const char *name, locale_t base) {
-    (void)base;
-    if ((category_mask & ~LC_ALL_MASK) != 0 || !name) {
+    static char all[N_CAT * (NAME_MAX_LEN + 16)];
+    if (category < LC_ALL || category > LC_MESSAGES) {
         errno = EINVAL;
         return NULL;
     }
-    if (!is_c_name(name)) {
-        errno = ENOENT;
+    if (name && !apply(&__s32_global_locale, category == LC_ALL ? LC_ALL_MASK : 1 << category, name))
+        return NULL;
+    if (category != LC_ALL) return __s32_global_locale.name[category];
+    int same = 1;
+    for (int c = 2; c < N_CAT; c++)
+        if (strcmp(__s32_global_locale.name[c], __s32_global_locale.name[1]) != 0) same = 0;
+    if (same) return __s32_global_locale.name[1];
+    all[0] = 0;
+    for (int c = 1; c < N_CAT; c++) {
+        if (c > 1) strcat(all, ";");
+        strcat(all, cat_name[c]);
+        strcat(all, "=");
+        strcat(all, __s32_global_locale.name[c]);
+    }
+    return all;
+}
+
+locale_t newlocale(int category_mask, const char *name, locale_t base) {
+    if ((category_mask & ~LC_ALL_MASK) != 0 || !name || base == LC_GLOBAL_LOCALE) {
+        errno = EINVAL;
         return NULL;
     }
-    return &c_locale;
+    if (!base && (category_mask == 0 || is_c_name(name))) return &__s32_c_locale;
+    struct __s32_locale *L = malloc(sizeof *L);
+    if (!L) {
+        errno = ENOMEM;
+        return NULL;
+    }
+    *L = base ? *base : __s32_c_locale;
+    if (!apply(L, category_mask, name)) {
+        free(L);
+        return NULL;
+    }
+    freelocale(base);
+    return L;
 }
 
 locale_t duplocale(locale_t loc) {
-    (void)loc;
-    return &c_locale;
+    struct __s32_locale *L = malloc(sizeof *L);
+    if (!L) {
+        errno = ENOMEM;
+        return NULL;
+    }
+    *L = *__s32_obj(loc);
+    return L;
 }
 
 void freelocale(locale_t loc) {
-    (void)loc;                      /* every object is the static C locale */
-}
-
-locale_t uselocale(locale_t loc) {
-    locale_t old = current ? current : LC_GLOBAL_LOCALE;
-    if (loc) current = (loc == LC_GLOBAL_LOCALE) ? NULL : loc;
-    return old;
+    if (loc && loc != &__s32_c_locale && loc != &__s32_global_locale && loc != LC_GLOBAL_LOCALE) free(loc);
 }
 
 /* ---------------------------------------------------------------- */
 
-static const char *const c_langinfo[__S32_NL_ITEMS] = {
-    [CODESET] = "ANSI_X3.4-1968",
-    [D_T_FMT] = "%a %b %e %H:%M:%S %Y",
-    [D_FMT] = "%m/%d/%y",
-    [T_FMT] = "%H:%M:%S",
-    [T_FMT_AMPM] = "%I:%M:%S %p",
-    [AM_STR] = "AM", [PM_STR] = "PM",
-    [DAY_1] = "Sunday", [DAY_2] = "Monday", [DAY_3] = "Tuesday",
-    [DAY_4] = "Wednesday", [DAY_5] = "Thursday", [DAY_6] = "Friday",
-    [DAY_7] = "Saturday",
-    [ABDAY_1] = "Sun", [ABDAY_2] = "Mon", [ABDAY_3] = "Tue", [ABDAY_4] = "Wed",
-    [ABDAY_5] = "Thu", [ABDAY_6] = "Fri", [ABDAY_7] = "Sat",
-    [MON_1] = "January", [MON_2] = "February", [MON_3] = "March",
-    [MON_4] = "April", [MON_5] = "May", [MON_6] = "June", [MON_7] = "July",
-    [MON_8] = "August", [MON_9] = "September", [MON_10] = "October",
-    [MON_11] = "November", [MON_12] = "December",
-    [ABMON_1] = "Jan", [ABMON_2] = "Feb", [ABMON_3] = "Mar", [ABMON_4] = "Apr",
-    [ABMON_5] = "May", [ABMON_6] = "Jun", [ABMON_7] = "Jul", [ABMON_8] = "Aug",
-    [ABMON_9] = "Sep", [ABMON_10] = "Oct", [ABMON_11] = "Nov", [ABMON_12] = "Dec",
-    [ERA] = "", [ERA_D_FMT] = "", [ALT_DIGITS] = "", [ERA_D_T_FMT] = "", [ERA_T_FMT] = "",
-    [RADIXCHAR] = ".", [THOUSEP] = "",
-    [YESEXPR] = "^[yY]", [NOEXPR] = "^[nN]", [CRNCYSTR] = "-",
-};
-
-char *nl_langinfo_l(nl_item item, locale_t loc) {
-    (void)loc;
-    if (item < 0 || item >= __S32_NL_ITEMS) return (char *)"";
-    return (char *)c_langinfo[item];
-}
-
-char *nl_langinfo(nl_item item) {
-    return nl_langinfo_l(item, LC_GLOBAL_LOCALE);
-}
-
 /* ---------------------------------------------------------------- */
-/* The *_l forms: in the C locale, the functions themselves. */
+/* LC_CTYPE: every locale classifies bytes as the C locale does */
 
 int isalnum_l(int c, locale_t l)  { (void)l; return isalnum(c); }
 int isalpha_l(int c, locale_t l)  { (void)l; return isalpha(c); }
@@ -138,18 +204,18 @@ int isxdigit_l(int c, locale_t l) { (void)l; return isxdigit(c); }
 int tolower_l(int c, locale_t l)  { (void)l; return tolower(c); }
 int toupper_l(int c, locale_t l)  { (void)l; return toupper(c); }
 
-int strcoll_l(const char *a, const char *b, locale_t l) { (void)l; return strcoll(a, b); }
-size_t strxfrm_l(char *d, const char *s, size_t n, locale_t l) { (void)l; return strxfrm(d, s, n); }
 
-double strtod_l(const char *s, char **e, locale_t l)       { (void)l; return strtod(s, e); }
-float strtof_l(const char *s, char **e, locale_t l)        { (void)l; return strtof(s, e); }
-long double strtold_l(const char *s, char **e, locale_t l) { (void)l; return strtold(s, e); }
+/* the rest under the locale they are given: uselocale for the call */
+#define UNDER(l, call) do { locale_t old_ = uselocale(l); __typeof__(call) r_ = (call); uselocale(old_); return r_; } while (0)
+
+double strtod_l(const char *s, char **e, locale_t l)       { UNDER(l, strtod(s, e)); }
+float strtof_l(const char *s, char **e, locale_t l)        { UNDER(l, strtof(s, e)); }
+long double strtold_l(const char *s, char **e, locale_t l) { UNDER(l, strtold(s, e)); }
 long strtol_l(const char *s, char **e, int b, locale_t l)  { (void)l; return strtol(s, e, b); }
 unsigned long strtoul_l(const char *s, char **e, int b, locale_t l) { (void)l; return strtoul(s, e, b); }
 long long strtoll_l(const char *s, char **e, int b, locale_t l) { (void)l; return strtoll(s, e, b); }
 unsigned long long strtoull_l(const char *s, char **e, int b, locale_t l) { (void)l; return strtoull(s, e, b); }
 
 size_t strftime_l(char *s, size_t max, const char *fmt, const struct tm *tm, locale_t l) {
-    (void)l;
-    return strftime(s, max, fmt, tm);
+    UNDER(l, strftime(s, max, fmt, tm));
 }

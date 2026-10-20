@@ -10,6 +10,9 @@ typedef int int32_t;
 typedef unsigned int uint32_t;
 typedef long long int64_t;
 typedef unsigned long long uint64_t;
+/* the widest integers (intptr_t and uintptr_t are the compiler's own) */
+typedef long long intmax_t;
+typedef unsigned long long uintmax_t;
 
 /* Range limits — needed by tools/dbt sources that bound 32-bit
  * arithmetic against INT32_MIN/MAX (the lower handles 0x80000000 as a
@@ -26,5 +29,8 @@ typedef unsigned long long uint64_t;
 #define INT64_MIN    (-9223372036854775807LL - 1)
 #define INT64_MAX     9223372036854775807LL
 #define UINT64_MAX    18446744073709551615ULL
+#define INTMAX_MIN   INT64_MIN
+#define INTMAX_MAX   INT64_MAX
+#define UINTMAX_MAX  UINT64_MAX
 
 #endif

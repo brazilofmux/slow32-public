@@ -77,12 +77,14 @@ freely, subject to the following restrictions:
   Locale Data Repository (Unicode 16.0, CLDR 46), by way of libutf
   (github.com/brazilofmux/utf, MIT): cobol/libcob/utf/tables/ (the DUCET,
   NFC and UTF-8 tables vendored from libutf), cobol/libcob/locale_data.h
-  (CLDR 46 date, time and number data), cobol/libcob/casemap.h (case
+  (CLDR 46 date, time and number data), runtime/utf/tables/ and
+  runtime/locales_data.h (the same, for the C runtime's named locales,
+  runtime/locales.s32o), cobol/libcob/casemap.h (case
   mappings), common/s32utf_tables.h (character width and cluster
   classes), cobol/src/cobc/xid_tables.h (identifier characters), and the
   programs and libraries built from them: the Unicode License V3,
   reproduced here as it requires.  A copy also travels with the vendored
-  units as cobol/libcob/utf/LICENSE-UNICODE.
+  units as cobol/libcob/utf/LICENSE-UNICODE and runtime/utf/LICENSE-UNICODE.
 
 UNICODE LICENSE V3
 

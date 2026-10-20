@@ -6,7 +6,10 @@
 # that scripts/build-libcxx.sh installs (outside the tree), at -O0 and -O2,
 # and run on slow32, slow32-fast, slow32-dbt and qemu; every run must print
 # exactly <name>.expected, which is what a host build of the same file
-# prints.  Without that libc++ install the gate says SKIP and exits 0.
+# prints -- or, for a test with a <name>.locales file, values pinned from
+# CLDR: that test is linked with the named locales (runtime/locales.s32o,
+# ahead of libc, and the rodata their collation wants).  Without that
+# libc++ install the gate says SKIP and exits 0.
 #
 # The link: crt0, the program, libc++.a, libc++abi.a, libc, libs32 -- not
 # runtime/libs32cxx.s32a, the runtime's own C++ ABI, which libc++abi
@@ -64,6 +67,8 @@ FAIL=0
 for b in "${NAMES[@]}"; do
     [ -f "$TESTS/$b.cpp" ] && [ -f "$TESTS/$b.expected" ] ||
         { echo "ERROR: $b needs $b.cpp and $b.expected" >&2; exit 2; }
+    extra=()
+    [ -f "$TESTS/$b.locales" ] && extra=("$R/runtime/locales.s32o" --rodata-size 2M)
     for opt in -O0 -O2; do
         o="$W/$b$opt"
         if ! "$LLVM_BIN/clang++" -target slow32-unknown-none -std=c++20 $opt -S -emit-llvm \
@@ -71,7 +76,7 @@ for b in "${NAMES[@]}"; do
                 -fexceptions -frtti -funwind-tables "$TESTS/$b.cpp" -o "$o.ll" 2>"$o.err" ||
            ! "$LLVM_BIN/llc" -mtriple=slow32-unknown-none "$o.ll" -o "$o.s" 2>>"$o.err" ||
            ! "$R/tools/assembler/slow32asm" "$o.s" "$o.s32o" >/dev/null 2>>"$o.err" ||
-           ! "$R/tools/linker/s32-ld" -o "$o.s32x" --mmio 64K "$R/runtime/crt0.s32o" "$o.s32o" \
+           ! "$R/tools/linker/s32-ld" -o "$o.s32x" --mmio 64K "$R/runtime/crt0.s32o" "$o.s32o" ${extra[@]+"${extra[@]}"} \
                 "$LIBCXX/lib/libc++.a" "$LIBCXX/lib/libc++abi.a" \
                 "$R/runtime/libc_mmio.s32a" "$R/runtime/libs32.s32a" >/dev/null 2>>"$o.err"; then
             printf "  %-30s FAIL (build)\n" "$b $opt"; head -3 "$o.err"; FAIL=$((FAIL+1)); continue

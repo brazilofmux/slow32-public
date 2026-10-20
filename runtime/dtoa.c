@@ -3594,6 +3594,8 @@ dtoa_strtod(const char *s00, char **se)
 				}
 			}
 		}
+	else if (c == '.')
+		c = 0;	/* SLOW-32: '.' is a radix only where the locale's is '.' */
 #endif
 	if (c == '.') {
 		c = *++s;

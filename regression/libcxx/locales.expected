@@ -1,0 +1,19 @@
+name: de_DE.UTF-8
+numpunct: [,] [.] grouping 3
+de numbers: 1.234.567,89 98.765.432
+de number read back PASS
+de time: 23.11.2028, 09:41:30 | 23.11.2028 | Donnerstag 23. November
+pl time: czwartek listopada 2028
+en time: 9:41:30 AM | AM
+C: apple orm zebra äpple åker öl
+de_DE.UTF-8: åker apple äpple öl orm zebra
+sv_SE.UTF-8: apple orm zebra åker äpple öl
+sv transform keys order as compare PASS
+moneypunct: [ €] frac 2 [,]
+international: [ EUR]
+de money: 1.234,56 € | -0,75 €
+en money: $1,234.56
+mixed: November 1.5 | *
+an unknown name still throws PASS
+a codeset other than UTF-8 throws PASS
+0 failed

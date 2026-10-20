@@ -33,7 +33,7 @@ LIBC_CORE_OBJS = string.s32o string_extra.s32o \
                  cxxabi.s32o time_extra.s32o time_stubs.s32o time_std.s32o math_int.s32o dtoa.s32o errno.s32o \
                  strerror.s32o signal.s32o system.s32o \
                  setjmp.s32o emutls.s32o atomic.s32o \
-                 unwind.s32o unwind_asm.s32o posix_extra.s32o locale.s32o
+                 unwind.s32o unwind_asm.s32o posix_extra.s32o locale.s32o locale_state.s32o
 
 # The C++ run time for freestanding C++ (libs32cxx.s32a): guards, new/delete,
 # exceptions, RTTI and the std:: exception classes.  Not in libc: a program
@@ -68,8 +68,13 @@ LIBC_DEBUG_EXTRA_OBJS = stat_stub.s32o args_stub.s32o exit_debug.s32o \
 # Startup code (linked first, not in any archive)
 STARTUP_OBJ = crt0.s32o
 
+# The named locales (locales.c), with libutf's collation: an object, not an
+# archive member, linked ahead of libc by a program that wants them; libc
+# reaches it only through weak references.
+LOCALES_OBJ = locales.s32o
+
 # All object files
-ALL_OBJS = $(STARTUP_OBJ) $(COMPILER_RT_OBJS) $(LIBC_CORE_OBJS) \
+ALL_OBJS = $(STARTUP_OBJ) $(LOCALES_OBJ) $(COMPILER_RT_OBJS) $(LIBC_CORE_OBJS) \
            $(STDIO_DEBUG_OBJS) $(STDIO_MMIO_OBJS) $(LIBC_MMIO_EXTRA_OBJS) \
            $(LIBC_DEBUG_EXTRA_OBJS) $(CXXRT_OBJS)
 
@@ -89,7 +94,7 @@ C_SOURCES = printf_enhanced.c convert.c builtins.c string.c malloc.c stdlib_util
             exec_mmio.c exec_stub.c tube_mmio.c tube_stub.c dpc_mmio.c \
             sched_mmio.c \
             math_hw.c math_soft.c math_cordic.c \
-            unwind.c posix_extra.c locale.c \
+            unwind.c posix_extra.c locale.c locale_state.c locales.c \
             cxa_support.c cxa_exception.c cxa_personality.c cxa_typeinfo.c
 
 # Default target builds everything
@@ -142,7 +147,7 @@ stdio.ll: stdio.c
 # Enhanced printf with long branch/jump support
 printf_enhanced.ll: OPT_LEVEL = -O2
 printf_enhanced.ll: printf_enhanced.c
-	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
+	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) -DS32_PRINTF_LOCALE $< -o $@
 
 math_hw.ll: OPT_LEVEL = -O2
 math_hw.ll: math_hw.c
@@ -158,7 +163,21 @@ math_cordic.ll: math_cordic.c
 
 dtoa.ll: OPT_LEVEL = -O2
 dtoa.ll: dtoa.c
-	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) -DIEEE_8087 $< -o $@
+	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) -DIEEE_8087 -DUSE_LOCALE -DNO_LOCALE_CACHE $< -o $@
+
+# Shared with the self-hosted libc, which has no locales: the locale
+# hooks are the runtime's alone (locale.c says what each does)
+time_std.ll: time_std.c
+	$(CLANG) $(CFLAGS) -DS32_LOCALE_STRFTIME $< -o $@
+
+locale.ll: locale.c locale_impl.h
+	$(CLANG) $(CFLAGS) $< -o $@
+
+locale_state.ll: locale_state.c locale_impl.h
+	$(CLANG) $(CFLAGS) $< -o $@
+
+locales.ll: locales.c locale_impl.h locales_data.h $(wildcard utf/src/*.c utf/tables/*.c utf/include/utf/*.h)
+	$(CLANG) $(CFLAGS) -Iutf/include $< -o $@
 
 flush_mmio.ll: OPT_LEVEL = -O2
 flush_mmio.ll: flush_mmio.c

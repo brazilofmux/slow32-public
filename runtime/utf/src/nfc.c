@@ -1,0 +1,678 @@
+/*
+ * nfc.c — Unicode NFC normalization for UTF-8 strings.
+ *
+ * Ported from TinyMUX mux/lib/utf8_normalize.cpp (C++) to pure C.
+ *
+ * Algorithm (UAX #15):
+ *   1. Decompose: Expand each code point to NFD (canonical decomposition).
+ *      Hangul syllables decomposed algorithmically.
+ *   2. Reorder: Sort combining marks by Canonical Combining Class (stable).
+ *   3. Compose: Combine starter + combining mark pairs back into precomposed
+ *      forms where possible.  Hangul composed algorithmically.
+ *
+ * Unicode 16.0.
+ */
+
+#include "utf/nfc.h"
+#include "utf/utf_tables.h"
+#include <string.h>
+
+/* Hangul constants (Unicode 3.0+ algorithmic composition/decomposition). */
+#define HANGUL_SBASE  0xAC00
+#define HANGUL_LBASE  0x1100
+#define HANGUL_VBASE  0x1161
+#define HANGUL_TBASE  0x11A7
+#define HANGUL_LCOUNT 19
+#define HANGUL_VCOUNT 21
+#define HANGUL_TCOUNT 28
+#define HANGUL_NCOUNT (HANGUL_VCOUNT * HANGUL_TCOUNT)
+#define HANGUL_SCOUNT (HANGUL_LCOUNT * HANGUL_NCOUNT)
+
+#define UNI_EOF       ((uint32_t)-1)
+
+#define UTF8_CONTINUE 5
+
+/* NFC_QC property values (see gen/gen_nfcqc.pl). */
+#define NFCQC_YES   0
+#define NFCQC_NO    1
+#define NFCQC_MAYBE 2
+
+/* Maximum *decomposed* code points per normalization segment.
+ *
+ * A segment is one combining character sequence: a starter plus every
+ * following code point up to the next canonical boundary.  UAX #15's
+ * Stream-Safe Text Format caps a sequence at 30 non-starters, so this is
+ * ~34x real-world worst case.  It is a hard limit rather than a hint:
+ * input that exceeds it is reported as UTF_NFC_SEGMENT_TOO_LONG and is
+ * never silently discarded.  Override with -DUTF_NFC_SEG_MAX=N.
+ */
+#ifndef UTF_NFC_SEG_MAX
+#define UTF_NFC_SEG_MAX 1024
+#endif
+#define NFC_SEG_MAX UTF_NFC_SEG_MAX
+
+typedef struct {
+    uint32_t cp;
+    int      ccc;
+} NFCCodePoint;
+
+/* --- UTF-8 encode/decode helpers --- */
+
+static uint32_t utf8_decode_raw(const unsigned char *p, int n)
+{
+    if (1 == n) return p[0];
+    if (2 == n) return ((uint32_t)(p[0] & 0x1F) << 6)
+                     |  (uint32_t)(p[1] & 0x3F);
+    if (3 == n) return ((uint32_t)(p[0] & 0x0F) << 12)
+                     | ((uint32_t)(p[1] & 0x3F) << 6)
+                     |  (uint32_t)(p[2] & 0x3F);
+    return ((uint32_t)(p[0] & 0x07) << 18)
+         | ((uint32_t)(p[1] & 0x3F) << 12)
+         | ((uint32_t)(p[2] & 0x3F) << 6)
+         |  (uint32_t)(p[3] & 0x3F);
+}
+
+static int utf8_is_valid_scalar(uint32_t cp, int n)
+{
+    if ((2 == n && cp < 0x80)
+       || (3 == n && cp < 0x800)
+       || (4 == n && cp < 0x10000)
+       || cp > 0x10FFFF
+       || (cp >= 0xD800 && cp <= 0xDFFF))
+        return 0;
+    return 1;
+}
+
+static uint32_t utf8_Decode(const unsigned char **pp, const unsigned char *pEnd)
+{
+    const unsigned char *p = *pp;
+    if (p >= pEnd) return UNI_EOF;
+
+    int n = utf8_FirstByte[*p];
+    if (n <= 0 || n >= UTF8_CONTINUE) { (*pp)++; return UNI_EOF; }
+    if (p + n > pEnd) { *pp = pEnd; return UNI_EOF; }
+    for (int i = 1; i < n; i++) {
+        if (UTF8_CONTINUE != utf8_FirstByte[p[i]]) { (*pp)++; return UNI_EOF; }
+    }
+
+    uint32_t cp = utf8_decode_raw(p, n);
+    if (!utf8_is_valid_scalar(cp, n)) { (*pp)++; return UNI_EOF; }
+    *pp = p + n;
+    return cp;
+}
+
+static int utf8_Encode(uint32_t cp, unsigned char *buf)
+{
+    if (cp < 0x80) {
+        buf[0] = (unsigned char)cp;
+        return 1;
+    } else if (cp < 0x800) {
+        buf[0] = (unsigned char)(0xC0 | (cp >> 6));
+        buf[1] = (unsigned char)(0x80 | (cp & 0x3F));
+        return 2;
+    } else if (cp < 0x10000) {
+        buf[0] = (unsigned char)(0xE0 | (cp >> 12));
+        buf[1] = (unsigned char)(0x80 | ((cp >> 6) & 0x3F));
+        buf[2] = (unsigned char)(0x80 | (cp & 0x3F));
+        return 3;
+    } else if (cp <= 0x10FFFF) {
+        buf[0] = (unsigned char)(0xF0 | (cp >> 18));
+        buf[1] = (unsigned char)(0x80 | ((cp >> 12) & 0x3F));
+        buf[2] = (unsigned char)(0x80 | ((cp >> 6) & 0x3F));
+        buf[3] = (unsigned char)(0x80 | (cp & 0x3F));
+        return 4;
+    }
+    return 0;
+}
+
+/* --- DFA traversal --- */
+
+/* Run integer DFA with unsigned short SBT (RUN/COPY format). */
+static int RunIntegerDFA_u16(
+    const unsigned char *itt,
+    const unsigned short *sot,
+    const unsigned short *sbt,
+    int nStartState, int nAcceptStart, int nDefault,
+    const unsigned char *pStart, const unsigned char *pEnd)
+{
+    int iState = nStartState;
+    const unsigned char *p = pStart;
+    while (p < pEnd && iState < nAcceptStart) {
+        unsigned char ch = *p++;
+        unsigned char iColumn = itt[ch];
+        unsigned short iOffset = sot[iState];
+        for (;;) {
+            int y = sbt[iOffset];
+            if (y < 128) {
+                if (iColumn < y) { iState = sbt[iOffset + 1]; break; }
+                iColumn = (unsigned char)(iColumn - y);
+                iOffset += 2;
+            } else {
+                y = 256 - y;
+                if (iColumn < y) { iState = sbt[iOffset + iColumn + 1]; break; }
+                iColumn = (unsigned char)(iColumn - y);
+                iOffset = (unsigned short)(iOffset + y + 1);
+            }
+        }
+    }
+    return (iState >= nAcceptStart) ? iState - nAcceptStart : nDefault;
+}
+
+static int GetCCC(const unsigned char *pStart, const unsigned char *pEnd)
+{
+    return RunIntegerDFA_u16(tr_ccc_nfcqc_itt, tr_ccc_nfcqc_sot, tr_ccc_nfcqc_sbt,
+        TR_CCC_NFCQC_START_STATE, TR_CCC_NFCQC_ACCEPTING_STATES_START, 0,
+        pStart, pEnd) / 3;
+}
+
+/* Combined CCC + NFC_QC lookup — single DFA traversal instead of two. */
+static int GetCCCandNFCQC(const unsigned char *pStart, const unsigned char *pEnd,
+                           int *pCCC, int *pNFCQC)
+{
+    int combined = RunIntegerDFA_u16(tr_ccc_nfcqc_itt, tr_ccc_nfcqc_sot, tr_ccc_nfcqc_sbt,
+        TR_CCC_NFCQC_START_STATE, TR_CCC_NFCQC_ACCEPTING_STATES_START, 0,
+        pStart, pEnd);
+    *pCCC   = combined / 3;
+    *pNFCQC = combined % 3;
+    return combined;
+}
+
+static const co_string_desc *GetNFD(const unsigned char *p, int *bXor)
+{
+    unsigned short iState = TR_NFD_START_STATE;
+    do {
+        unsigned char ch = *p++;
+        unsigned char iColumn = tr_nfd_itt[ch];
+        unsigned short iOffset = tr_nfd_sot[iState];
+        for (;;) {
+            int y = tr_nfd_sbt[iOffset];
+            if (y < 128) {
+                if (iColumn < y) { iState = tr_nfd_sbt[iOffset + 1]; break; }
+                iColumn = (unsigned char)(iColumn - y);
+                iOffset += 2;
+            } else {
+                y = 256 - y;
+                if (iColumn < y) { iState = tr_nfd_sbt[iOffset + iColumn + 1]; break; }
+                iColumn = (unsigned char)(iColumn - y);
+                iOffset = (unsigned short)(iOffset + y + 1);
+            }
+        }
+    } while (iState < TR_NFD_ACCEPTING_STATES_START);
+
+    int idx = iState - TR_NFD_ACCEPTING_STATES_START;
+    if (TR_NFD_DEFAULT == idx) {
+        *bXor = 0;
+        return NULL;
+    }
+    *bXor = (TR_NFD_XOR_START <= idx);
+    return tr_nfd_ott + idx - 1;
+}
+
+static uint32_t ComposeViaTable(const unsigned char *pStarter, int nStarterBytes,
+                                const unsigned char *pCombining, int nCombiningBytes)
+{
+    int iState = TR_NFC_COMPOSE_START_STATE;
+
+    for (int i = 0; i < nStarterBytes && iState < TR_NFC_COMPOSE_ACCEPTING_STATES_START; i++) {
+        unsigned char iColumn = tr_nfc_compose_itt[pStarter[i]];
+        unsigned short iOffset = tr_nfc_compose_sot[iState];
+        for (;;) {
+            int y = tr_nfc_compose_sbt[iOffset];
+            if (y < 128) {
+                if (iColumn < y) { iState = tr_nfc_compose_sbt[iOffset + 1]; break; }
+                iColumn = (unsigned char)(iColumn - y);
+                iOffset += 2;
+            } else {
+                y = 256 - y;
+                if (iColumn < y) { iState = tr_nfc_compose_sbt[iOffset + iColumn + 1]; break; }
+                iColumn = (unsigned char)(iColumn - y);
+                iOffset = (unsigned short)(iOffset + y + 1);
+            }
+        }
+    }
+
+    for (int i = 0; i < nCombiningBytes && iState < TR_NFC_COMPOSE_ACCEPTING_STATES_START; i++) {
+        unsigned char iColumn = tr_nfc_compose_itt[pCombining[i]];
+        unsigned short iOffset = tr_nfc_compose_sot[iState];
+        for (;;) {
+            int y = tr_nfc_compose_sbt[iOffset];
+            if (y < 128) {
+                if (iColumn < y) { iState = tr_nfc_compose_sbt[iOffset + 1]; break; }
+                iColumn = (unsigned char)(iColumn - y);
+                iOffset += 2;
+            } else {
+                y = 256 - y;
+                if (iColumn < y) { iState = tr_nfc_compose_sbt[iOffset + iColumn + 1]; break; }
+                iColumn = (unsigned char)(iColumn - y);
+                iOffset = (unsigned short)(iOffset + y + 1);
+            }
+        }
+    }
+
+    if (iState < TR_NFC_COMPOSE_ACCEPTING_STATES_START) return 0;
+    int idx = iState - TR_NFC_COMPOSE_ACCEPTING_STATES_START;
+    if (0 == idx) return 0;
+    return tr_nfc_compose_nfc_compose_result[idx];
+}
+
+static uint32_t Compose(uint32_t cp1, uint32_t cp2)
+{
+    /* Hangul L + V -> LV */
+    if (HANGUL_LBASE <= cp1 && cp1 < HANGUL_LBASE + HANGUL_LCOUNT
+        && HANGUL_VBASE <= cp2 && cp2 < HANGUL_VBASE + HANGUL_VCOUNT) {
+        return HANGUL_SBASE
+             + (cp1 - HANGUL_LBASE) * HANGUL_NCOUNT
+             + (cp2 - HANGUL_VBASE) * HANGUL_TCOUNT;
+    }
+    /* Hangul LV + T -> LVT */
+    if (HANGUL_SBASE <= cp1 && cp1 < HANGUL_SBASE + HANGUL_SCOUNT
+        && 0 == ((cp1 - HANGUL_SBASE) % HANGUL_TCOUNT)
+        && HANGUL_TBASE < cp2 && cp2 < HANGUL_TBASE + HANGUL_TCOUNT) {
+        return cp1 + (cp2 - HANGUL_TBASE);
+    }
+    /* Table lookup via DFA. */
+    unsigned char buf1[4], buf2[4];
+    int n1 = utf8_Encode(cp1, buf1);
+    int n2 = utf8_Encode(cp2, buf2);
+    if (n1 <= 0 || n2 <= 0) return 0;
+    return ComposeViaTable(buf1, n1, buf2, n2);
+}
+
+/* --- Decomposition --- */
+
+/* Decompose one code point into buf.  Returns 0 if buf is too small — the
+ * caller must treat that as an error, never as a truncated result.
+ */
+static int DecomposeOne(uint32_t cp, NFCCodePoint *buf, int *n, int maxN)
+{
+    /* Hangul syllable decomposition. */
+    if (HANGUL_SBASE <= cp && cp < HANGUL_SBASE + HANGUL_SCOUNT) {
+        int sIndex = (int)(cp - HANGUL_SBASE);
+        uint32_t l = HANGUL_LBASE + sIndex / HANGUL_NCOUNT;
+        uint32_t v = HANGUL_VBASE + (sIndex % HANGUL_NCOUNT) / HANGUL_TCOUNT;
+        uint32_t t = HANGUL_TBASE + sIndex % HANGUL_TCOUNT;
+        int need = (t != HANGUL_TBASE) ? 3 : 2;
+
+        if (*n + need > maxN) return 0;
+        buf[*n].cp = l; buf[*n].ccc = 0; (*n)++;
+        buf[*n].cp = v; buf[*n].ccc = 0; (*n)++;
+        if (t != HANGUL_TBASE) { buf[*n].cp = t; buf[*n].ccc = 0; (*n)++; }
+        return 1;
+    }
+
+    /* Table lookup. */
+    unsigned char encoded[4];
+    int nBytes = utf8_Encode(cp, encoded);
+    if (nBytes <= 0) return 1;
+
+    int bXor;
+    const co_string_desc *sd = GetNFD(encoded, &bXor);
+    if (NULL == sd) {
+        /* No decomposition — emit as-is. */
+        if (*n >= maxN) return 0;
+        buf[*n].cp = cp;
+        buf[*n].ccc = GetCCC(encoded, encoded + nBytes);
+        (*n)++;
+        return 1;
+    }
+
+    /* Build decomposed UTF-8. */
+    unsigned char decomposed[32];
+    size_t nDecomp = sd->n_bytes;
+    if (nDecomp > sizeof(decomposed)) nDecomp = sizeof(decomposed);
+
+    if (bXor) {
+        for (size_t i = 0; i < nDecomp; i++)
+            decomposed[i] = encoded[i] ^ sd->p[i];
+    } else {
+        memcpy(decomposed, sd->p, nDecomp);
+    }
+
+    /* Parse decomposed UTF-8 into code points. */
+    const unsigned char *dp = decomposed;
+    const unsigned char *dpEnd = decomposed + nDecomp;
+    while (dp < dpEnd) {
+        uint32_t dcp = utf8_Decode(&dp, dpEnd);
+        if (UNI_EOF == dcp) break;
+        if (*n >= maxN) return 0;
+
+        unsigned char enc3[4];
+        int nb3 = utf8_Encode(dcp, enc3);
+        buf[*n].cp = dcp;
+        buf[*n].ccc = (nb3 > 0) ? GetCCC(enc3, enc3 + nb3) : 0;
+        (*n)++;
+    }
+    return 1;
+}
+
+/*
+ * HasBoundaryBefore — is it safe to start a new normalization segment here?
+ *
+ * Normalizing [A, C) and [C, B) separately equals normalizing [A, B) only if
+ * nothing at or after C can interact with anything before it.  Three
+ * conditions, each of which is load-bearing:
+ *
+ *   1. ccc == 0.  A non-starter reorders with the marks preceding it.
+ *
+ *   2. NFC_QC != Maybe.  UAX #15 assigns Maybe to exactly the code points
+ *      that may compose with a preceding character, so every possible
+ *      second element of a primary composite is Maybe — verified against
+ *      Unicode 16.0: the 120 composition seconds (Hangul V/T jamo plus 71
+ *      pairs across 17 other scripts) are a subset of the 132 Maybe code
+ *      points.  QC=No is a different thing entirely: an exclusion or
+ *      singleton such as U+0958 or U+212B is rewritten in place and cannot
+ *      compose leftward, so a boundary before it IS safe.  Requiring
+ *      QC=Yes here (rather than merely "not Maybe") was the bug behind
+ *      issue #1: runs of exclusions never ended a segment, so 2700 of them
+ *      became one segment and everything past the buffer cap was dropped.
+ *
+ *   3. Its own decomposition begins with a starter.  U+0F73, U+0F75 and
+ *      U+0F81 are QC=No starters that decompose to U+0F71 (ccc=129) first;
+ *      splitting before one would leave that mark unable to reorder with
+ *      the preceding sequence.  Those three are the entire exception set in
+ *      Unicode 16.0, and QC=Yes starters never decompose to a non-starter,
+ *      so this lookup only runs for QC=No.
+ */
+static int HasBoundaryBefore(const unsigned char *p, int nBytes, int ccc, int qc)
+{
+    if (0 != ccc || NFCQC_MAYBE == qc) return 0;
+    if (NFCQC_NO != qc) return 1;
+
+    int bXor;
+    const co_string_desc *sd = GetNFD(p, &bXor);
+    if (NULL == sd) return 1;
+
+    /* Only the decomposition's first code point matters, so materialize at
+     * most 4 bytes.  XOR entries are deltas against the source code point's
+     * own bytes, which is why the copy is bounded by nBytes as well. */
+    unsigned char decomposed[4];
+    size_t nDecomp = sd->n_bytes;
+    if (nDecomp > sizeof(decomposed)) nDecomp = sizeof(decomposed);
+    if (bXor) {
+        if (nDecomp > (size_t)nBytes) nDecomp = (size_t)nBytes;
+        for (size_t i = 0; i < nDecomp; i++)
+            decomposed[i] = p[i] ^ sd->p[i];
+    } else {
+        memcpy(decomposed, sd->p, nDecomp);
+    }
+
+    const unsigned char *dp = decomposed;
+    const unsigned char *dpEnd = decomposed + nDecomp;
+    uint32_t first = utf8_Decode(&dp, dpEnd);
+    if (UNI_EOF == first) return 1;
+
+    unsigned char enc[4];
+    int nb = utf8_Encode(first, enc);
+    return (nb > 0) ? (0 == GetCCC(enc, enc + nb)) : 1;
+}
+
+/* Canonical ordering: stable insertion sort by CCC. */
+static void CanonicalOrder(NFCCodePoint *buf, int n)
+{
+    for (int i = 1; i < n; i++) {
+        if (buf[i].ccc != 0) {
+            NFCCodePoint tmp = buf[i];
+            int j = i;
+            while (j > 0 && buf[j-1].ccc > tmp.ccc && buf[j-1].ccc != 0) {
+                buf[j] = buf[j-1];
+                j--;
+            }
+            buf[j] = tmp;
+        }
+    }
+}
+
+/* Canonical composition step. */
+static void CanonicalCompose(NFCCodePoint *buf, int *n)
+{
+    if (*n < 2) return;
+
+    int starterIdx = -1;
+    for (int i = 0; i < *n; i++) {
+        if (0 == buf[i].ccc) { starterIdx = i; break; }
+    }
+    if (starterIdx < 0) return;
+
+    int lastCCC = -1;
+    for (int i = starterIdx + 1; i < *n; i++) {
+        int ccc = buf[i].ccc;
+        /* UAX #15 D115: B is blocked from starter A if and only if there is
+         * some character C between A and B where CCC(C) = 0 or
+         * CCC(C) >= CCC(B).
+         *
+         * Note there is no exemption for CCC(B) = 0.  The opposite holds:
+         * when B is itself a starter, CCC(B) = 0, so every intervening mark
+         * satisfies CCC(C) >= 0 and blocks it.  An earlier `&& ccc != 0`
+         * here removed protection from exactly those sequences, so NFC
+         * composed Hangul jamo across an intervening mark -- U+B3C4 U+032B
+         * U+11C1 became U+B3DE U+032B, consuming the jongseong and changing
+         * the syllable.
+         *
+         * lastCCC is only ever assigned from a non-zero ccc, so the
+         * lastCCC != -1 test already means "an intervening mark was seen";
+         * adjacent starters still compose normally. */
+        int blocked = (lastCCC != -1 && lastCCC >= ccc);
+
+        if (!blocked) {
+            uint32_t composed = Compose(buf[starterIdx].cp, buf[i].cp);
+            if (0 != composed) {
+                buf[starterIdx].cp = composed;
+                for (int j = i; j < *n - 1; j++) buf[j] = buf[j+1];
+                (*n)--;
+                i--;
+                lastCCC = -1;
+                continue;
+            }
+        }
+
+        if (0 == ccc) {
+            starterIdx = i;
+            lastCCC = -1;
+        } else {
+            lastCCC = ccc;
+        }
+    }
+}
+
+/* --- UTF-8 validation helper --- */
+
+/* Return byte length of a valid UTF-8 code point at p, or 0 if invalid. */
+static int utf8_cplen(const unsigned char *p, const unsigned char *pEnd)
+{
+    int n = utf8_FirstByte[*p];
+    if (n <= 0 || n >= UTF8_CONTINUE || p + n > pEnd) return 0;
+    for (int i = 1; i < n; i++) {
+        if (UTF8_CONTINUE != utf8_FirstByte[p[i]]) return 0;
+    }
+    uint32_t cp = utf8_decode_raw(p, n);
+    return utf8_is_valid_scalar(cp, n) ? n : 0;
+}
+
+/* --- Segment normalizer --- */
+
+/* Normalize a single combining character sequence into dst.
+ *
+ * Returns UTF_NFC_OK and sets *pnOut, or an error status.  On error nothing
+ * is written and *pnOut is 0: a partially normalized segment is not a valid
+ * prefix of the answer, so it must never be emitted.
+ */
+static int NormalizeSegment(const unsigned char *src, size_t nSrc,
+                            unsigned char *dst, size_t nDstMax, size_t *pnOut)
+{
+    NFCCodePoint cps[NFC_SEG_MAX];
+    int nCps = 0;
+
+    *pnOut = 0;
+
+    const unsigned char *p = src;
+    const unsigned char *pEnd = src + nSrc;
+    while (p < pEnd) {
+        uint32_t cp = utf8_Decode(&p, pEnd);
+        if (UNI_EOF == cp) continue;
+        if (!DecomposeOne(cp, cps, &nCps, NFC_SEG_MAX))
+            return UTF_NFC_SEGMENT_TOO_LONG;
+    }
+
+    CanonicalOrder(cps, nCps);
+    CanonicalCompose(cps, &nCps);
+
+    /* Measure before writing so a short dst truncates at a segment boundary
+     * rather than mid-sequence. */
+    size_t need = 0;
+    for (int i = 0; i < nCps; i++) {
+        unsigned char enc[4];
+        int nb = utf8_Encode(cps[i].cp, enc);
+        if (nb > 0) need += (size_t)nb;
+    }
+    if (need > nDstMax) return UTF_NFC_TRUNCATED;
+
+    size_t nOut = 0;
+    for (int i = 0; i < nCps; i++) {
+        unsigned char enc[4];
+        int nb = utf8_Encode(cps[i].cp, enc);
+        if (nb > 0) {
+            memcpy(dst + nOut, enc, nb);
+            nOut += (size_t)nb;
+        }
+    }
+    *pnOut = nOut;
+    return UTF_NFC_OK;
+}
+
+/* --- Public API --- */
+
+int utf_nfc_is_nfc(const unsigned char *src, size_t nSrc)
+{
+    const unsigned char *p = src;
+    const unsigned char *pEnd = src + nSrc;
+    int lastCCC = 0;
+
+    while (p < pEnd) {
+        /* ASCII fast path: always NFC_QC=Yes, CCC=0. */
+        if (*p < 0x80) {
+            lastCCC = 0;
+            p++;
+            continue;
+        }
+
+        int n = utf8_cplen(p, pEnd);
+        if (0 == n) return 0;
+
+        int ccc, qc;
+        GetCCCandNFCQC(p, p + n, &ccc, &qc);
+        if (0 != qc) return 0;  /* No or Maybe */
+        if (ccc != 0 && lastCCC > ccc) return 0;
+
+        lastCCC = ccc;
+        p += n;
+    }
+    return 1;
+}
+
+/* Append to dst, or report truncation.  Never writes a partial copy: a
+ * short buffer stops output at the last whole unit rather than splitting a
+ * UTF-8 sequence. */
+static int Emit(unsigned char *dst, size_t nDstMax, size_t *pnOut,
+                const unsigned char *p, size_t n)
+{
+    if (n > nDstMax - *pnOut) return UTF_NFC_TRUNCATED;
+    memcpy(dst + *pnOut, p, n);
+    *pnOut += n;
+    return UTF_NFC_OK;
+}
+
+size_t utf_nfc_normalize_bound(size_t nSrc)
+{
+    return 3 * nSrc;
+}
+
+utf_nfc_status utf_nfc_normalize(const unsigned char *src, size_t nSrc,
+                                 unsigned char *dst, size_t nDstMax,
+                                 size_t *pnDst)
+{
+    *pnDst = 0;
+    const unsigned char *p = src;
+    const unsigned char *pEnd = src + nSrc;
+    size_t nOut = 0;
+
+    const unsigned char *copyFrom = src;    /* start of unwritten clean data */
+    const unsigned char *lastStarter = src; /* last CCC=0 position in clean run */
+    int lastCCC = 0;
+
+    while (p < pEnd) {
+        /* ASCII fast path: CCC=0, NFC_QC=Yes. */
+        if (*p < 0x80) {
+            lastStarter = p;
+            lastCCC = 0;
+            p++;
+            continue;
+        }
+
+        int n = utf8_cplen(p, pEnd);
+        if (0 == n) {
+            /* Invalid UTF-8: skip byte, reset CCC tracking. */
+            p++;
+            lastCCC = 0;
+            continue;
+        }
+
+        int ccc, qc;
+        GetCCCandNFCQC(p, p + n, &ccc, &qc);
+
+        if (0 == qc && (0 == ccc || lastCCC <= ccc)) {
+            /* Clean code point — pass through. */
+            if (0 == ccc) lastStarter = p;
+            lastCCC = ccc;
+            p += n;
+            continue;
+        }
+
+        /* NFC violation. Dirty segment starts at lastStarter. */
+
+        /* Copy clean prefix [copyFrom, lastStarter) to output. */
+        size_t cleanLen = (size_t)(lastStarter - copyFrom);
+        if (cleanLen > 0) {
+            int rc = Emit(dst, nDstMax, &nOut, copyFrom, cleanLen);
+            if (UTF_NFC_OK != rc) { *pnDst = nOut; return rc; }
+        }
+
+        /* Skip past the problem code point. */
+        p += n;
+
+        /* Scan forward for the end of the dirty segment: the next code
+         * point with a canonical boundary before it (see
+         * HasBoundaryBefore).  Requiring NFC_QC=Yes here instead let runs
+         * of composition exclusions and singletons grow without bound. */
+        while (p < pEnd) {
+            if (*p < 0x80) break;  /* ASCII: starter, QC=Yes, never a comp second */
+            int n2 = utf8_cplen(p, pEnd);
+            if (0 == n2) { p++; continue; }
+            int ccc2, qc2;
+            GetCCCandNFCQC(p, p + n2, &ccc2, &qc2);
+            if (HasBoundaryBefore(p, n2, ccc2, qc2)) break;
+            p += n2;
+        }
+
+        /* Normalize [lastStarter, p). */
+        size_t segLen = (size_t)(p - lastStarter);
+        size_t segOut = 0;
+        int rc = NormalizeSegment(lastStarter, segLen,
+                                  dst + nOut, nDstMax - nOut, &segOut);
+        if (UTF_NFC_OK != rc) { *pnDst = nOut; return rc; }
+        nOut += segOut;
+
+        copyFrom = p;
+        lastStarter = p;
+        lastCCC = 0;
+    }
+
+    /* Copy remaining clean tail. */
+    size_t tailLen = (size_t)(pEnd - copyFrom);
+    if (tailLen > 0) {
+        int rc = Emit(dst, nDstMax, &nOut, copyFrom, tailLen);
+        if (UTF_NFC_OK != rc) { *pnDst = nOut; return rc; }
+    }
+
+    *pnDst = nOut;
+    return UTF_NFC_OK;
+}

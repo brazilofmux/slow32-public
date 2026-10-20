@@ -10,6 +10,16 @@
 #include <stdlib.h>
 #include "convert.h"
 
+/* The radix character: LC_NUMERIC's in the runtime, which builds this
+ * file with S32_PRINTF_LOCALE (locale.c; every locale's is one byte);
+ * '.' in the self-hosted libc, which has no locales */
+#ifdef S32_PRINTF_LOCALE
+#include <locale.h>
+#define RADIX (localeconv()->decimal_point[0])
+#else
+#define RADIX '.'
+#endif
+
 // Forward declarations
 size_t strlen(const char *s);
 void *memcpy(void *dest, const void *src, size_t n);
@@ -98,7 +108,7 @@ static size_t build_f(char *out, const char *digits, size_t len, int decpt,
         size_t frac_len = (decpt < (int)len) ? (len - (size_t)decpt) : 0;
         size_t frac_target = pad_zeros ? (size_t)precision : frac_len;
         if (force_decimal || frac_target > 0) {
-            pos = append_char(out, pos, '.');
+            pos = append_char(out, pos, RADIX);
             if (frac_len > 0) {
                 pos = append_str(out, pos, digits + int_len, frac_len);
             }
@@ -111,7 +121,7 @@ static size_t build_f(char *out, const char *digits, size_t len, int decpt,
         size_t frac_len = len + (size_t)(-decpt);
         size_t frac_target = pad_zeros ? (size_t)precision : frac_len;
         if (force_decimal || frac_target > 0) {
-            pos = append_char(out, pos, '.');
+            pos = append_char(out, pos, RADIX);
             if (decpt < 0) {
                 pos = append_repeat(out, pos, '0', (size_t)(-decpt));
             }
@@ -140,7 +150,7 @@ static size_t build_e(char *out, const char *digits, size_t len, int decpt,
     size_t frac_target = pad_zeros ? (size_t)precision : frac_len;
 
     if (force_decimal || frac_target > 0) {
-        pos = append_char(out, pos, '.');
+        pos = append_char(out, pos, RADIX);
         if (frac_len > 0) {
             pos = append_str(out, pos, digits + 1, frac_len);
         }
@@ -371,8 +381,16 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
                 length_mod++;
                 fmt++;
             }
-        } else if (*fmt == 'z') {
-            // size_t modifier
+        } else if (*fmt == 'z' || *fmt == 't') {
+            // size_t, ptrdiff_t: 32 bits, the default width
+            fmt++;
+        } else if (*fmt == 'j') {
+            // intmax_t: long long
+            length_mod = 2;
+            fmt++;
+        } else if (*fmt == 'L') {
+            // long double, which is double here (both compilers): a
+            // conversion of it is a double's (libc++'s put_money is %.0Lf)
             fmt++;
         } else if (*fmt == 'h') {
             // Short modifier

@@ -16,6 +16,7 @@
 #
 # Missing engines are reported as loud SKIPs, never silently dropped.
 # Tests with args.txt are skipped under QEMU (-kernel has no guest argv).
+# A test's env.txt (NAME=value lines) is every engine's environment.
 #
 # Usage: ./run-differential.sh [test-name ...]
 #   With no arguments, runs every test in tests/.
@@ -164,10 +165,10 @@ run_engine() {
     shift 4
     local rc=0
     if [ "$name" = "qemu" ]; then
-        with_stdin timeout "$TIMEOUT" "$path" -machine slow32-tcg -nographic -monitor none \
+        with_stdin env "${TEST_ENV[@]}" timeout "$TIMEOUT" "$path" -machine slow32-tcg -nographic -monitor none \
             -kernel "$s32x" >"$out" 2>&1 || rc=$?
     else
-        with_stdin timeout "$TIMEOUT" "$path" "$s32x" "$@" >"$out" 2>&1 || rc=$?
+        with_stdin env "${TEST_ENV[@]}" timeout "$TIMEOUT" "$path" "$s32x" "$@" >"$out" 2>&1 || rc=$?
     fi
     echo "$rc"
 }
@@ -210,6 +211,13 @@ run_test() {
         while IFS= read -r line || [ -n "$line" ]; do
             run_args+=("$line")
         done < "$test_path/args.txt"
+    fi
+    # env.txt: the guest's environment beyond the harness's, as run-tests.sh
+    TEST_ENV=()
+    if [ -f "$test_path/env.txt" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
+            [ -n "$line" ] && TEST_ENV+=("$line")
+        done < "$test_path/env.txt"
     fi
 
     mkdir -p "$diff_dir"

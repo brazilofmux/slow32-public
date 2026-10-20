@@ -195,20 +195,6 @@ char *strcasestr(const char *haystack, const char *needle) {
     return NULL;
 }
 
-// strcoll - locale-aware string comparison (no locale support, same as strcmp)
-int strcoll(const char *s1, const char *s2) {
-    return strcmp(s1, s2);
-}
-
-// strxfrm - the one locale is "C": a string's transformed form is the string
-size_t strxfrm(char *dest, const char *src, size_t n) {
-    size_t len = strlen(src);
-    if (n > 0) {
-        size_t i = 0;
-        for (; i < n - 1 && i < len; i++) dest[i] = src[i];
-        dest[i] = '\0';
-    }
-    return len;
-}
+// strcoll and strxfrm are locale.c's (LC_COLLATE)
 
 // strerror is strerror.c's (one table for this library and the self-hosted one)

@@ -1,0 +1,49 @@
+setlocale(LC_TIME, "de_DE.UTF-8") = de_DE.UTF-8
+setlocale(LC_TIME, "de-CH") = de-CH
+setlocale(LC_TIME, "sr_Latn_RS") = sr_Latn_RS
+setlocale(LC_TIME, "pt_BR.utf8") = pt_BR.utf8
+setlocale(LC_TIME, "C.UTF-8") = C.UTF-8
+setlocale(LC_TIME, "de_DE.ISO-8859-1") = (null) ENOENT
+setlocale(LC_TIME, "xx_QQ") = (null) ENOENT
+setlocale(LC_TIME, "en_US@calendar") = en_US@calendar
+setlocale(LC_TIME, "") = fi_FI.UTF-8
+env: LC_COLLATE=sv-SE;LC_CTYPE=nb_NO.UTF-8;LC_MONETARY=nb_NO.UTF-8;LC_NUMERIC=nb_NO.UTF-8;LC_TIME=fi_FI.UTF-8;LC_MESSAGES=nb_NO.UTF-8
+LC_TIME fi_FI.UTF-8, LC_NUMERIC nb_NO.UTF-8
+fi       7.3.2027 16.04.09 | 7.3.2027 | 16.04.09 | sunnuntai su maaliskuuta maalis | ip. | 7.3.  7
+sv       apple orm zebra Zulu åker äpple öl  [strxfrm agrees]
+1234,500 UTF-8
+C again: C
+back: taken
+LC_TIME fi_FI.UTF-8, LC_COLLATE sv-SE
+bad composite: (null)
+unchanged: fi_FI.UTF-8
+C        Sun Mar  7 16:04:09 2027 | 03/07/27 | 16:04:09 | Sunday Sun March Mar | PM | 7.3.  7
+en       Mar 7, 2027, 4:04:09 PM | Mar 7, 2027 | 4:04:09 PM | Sunday Sun March Mar | PM | 7.3.  7
+de       07.03.2027, 16:04:09 | 07.03.2027 | 16:04:09 | Sonntag So. März März | PM | 7.3.  7
+fr       7 mars 2027, 16:04:09 | 7 mars 2027 | 16:04:09 | dimanche dim. mars mars | PM | 7.3.  7
+pl       7 mar 2027, 16:04:09 | 7 mar 2027 | 16:04:09 | niedziela niedz. marca mar | PM | 7.3.  7
+hu       2027. márc. 7. 16:04:09 | 2027. márc. 7. | 16:04:09 | vasárnap V március márc. | du. | 7.3.  7
+fr_CA    7 mars 2027, 16 h 04 min 09 s | 7 mars 2027 | 16 h 04 min 09 s | dimanche dim. mars mars | p.m. | 7.3.  7
+de: D_T_FMT [%d.%m.%Y, %H:%M:%S] D_FMT [%d.%m.%Y] T_FMT [%H:%M:%S] AMPM [%I:%M:%S %p] März So.
+de time, C numbers: 2.75 .
+de_AT: 3,14 0,5 1,500000e+03 | strtod 2,5 = 2,5 (stops at 'x'), 2.5 = 2
+snprintf: 7,2
+C   [.] [] g=0 | [] [] [] [] [] g=0 frac=127 pre=127 sep=127 sign=127 [-]
+de  [,] [.] g=3 | [EUR ] [€] [,] [.] [-] g=3 frac=2 pre=0 sep=1 sign=1 [+€]
+en  [.] [,] g=3 | [USD ] [$] [.] [,] [-] g=3 frac=2 pre=1 sep=0 sign=1 [-$]
+fr  [,] [ ] g=3 | [EUR ] [€] [,] [ ] [-] g=3 frac=2 pre=0 sep=1 sign=1 [+€]
+pl  [,] [ ] g=3 | [PLN ] [zł] [,] [ ] [-] g=3 frac=2 pre=0 sep=1 sign=1 [+zł]
+pt  [,] [.] g=3 | [BRL ] [R$] [,] [.] [-] g=3 frac=2 pre=1 sep=1 sign=1 [-R$]
+eo  [,] [ ] g=3 | [] [] [,] [ ] [-] g=3 frac=127 pre=127 sep=127 sign=127 []
+C        Zulu apple orm zebra äpple åker öl  [strxfrm agrees]
+de       åker apple äpple öl orm zebra Zulu  [strxfrm agrees]
+sv       apple orm zebra Zulu åker äpple öl  [strxfrm agrees]
+en       åker apple äpple öl orm zebra Zulu  [strxfrm agrees]
+newlocale tr: made
+strftime_l: Pazar 07 Mart 2027 | Aralık
+strtod_l: 0.125 strcoll_l: 1
+under tr: 9,5 | global: 9.5
+added collation: made, radix still [,]
+refused: null errno=ENOENT
+dup survives: Pazartesi
+

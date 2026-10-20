@@ -219,6 +219,13 @@ run_test() {
         linker_args+=(--mmio 64K)
     fi
 
+    # A link-locales file: the named locales (runtime/locales.s32o, ahead of
+    # libc), whose collation tables want more rodata than the default 1MB
+    if [ -f "$test_path/link-locales" ]; then
+        extra_objs+=("$SLOW32_BASE/runtime/locales.s32o")
+        linker_args+=(--rodata-size 2M)
+    fi
+
     if ! $LINKER -o "$result_path/test.s32x" \
          "${linker_args[@]}" \
          $CRT0 "$result_path/test.s32o" "${extra_objs[@]}" "$LIBS32CXX" "$libc_archive" $LIBS32 \
@@ -238,6 +245,12 @@ run_test() {
     local viewer_pid=""
     local run_timeout=$TIMEOUT
     dump_env+=(S32_TUBE_PORT="$result_path/tube.port")
+    # env.txt: NAME=value lines, the guest's environment beyond the harness's
+    if [ -f "$test_path/env.txt" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
+            [ -n "$line" ] && dump_env+=("$line")
+        done < "$test_path/env.txt"
+    fi
     if [ -f "$test_path/expected.hash" ]; then
         dump_dir="$result_path/tube"
         mkdir -p "$dump_dir"

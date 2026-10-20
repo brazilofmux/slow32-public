@@ -117,6 +117,7 @@ struct sf_out {
     char *s;
     size_t max;
     size_t len;         /* what the whole result needs, whether it fits or not */
+    int nopad;          /* the conversion had the - flag: numbers unpadded */
 };
 
 static void sf_ch(struct sf_out *o, int c) {
@@ -143,6 +144,7 @@ static void sf_num(struct sf_out *o, long long v, int width, int pad) {
         digits[n++] = (char)('0' + v % 10);
         v /= 10;
     } while (v > 0);
+    if (o->nopad) width = 1;
     if (neg) {
         sf_ch(o, '-');
         width--;
@@ -194,11 +196,33 @@ static void sf_format(struct sf_out *o, const char *f, const struct tm *tm) {
             continue;
         }
         f++;
-        if (*f == 'E' || *f == 'O') f++;        /* the alternative forms are the plain ones in the C locale */
+        int nopad = *f == '-';                  /* glibc's and the BSDs' flag: no padding */
+        if (nopad) f++;
+        if (*f == 'E' || *f == 'O') f++;        /* the alternative forms are the plain ones */
         if (!*f) break;
+        int outer = o->nopad;
+        o->nopad = nopad;
         sf_conv(o, *f++, tm);
+        o->nopad = outer;
     }
 }
+
+/* The names and the formats a locale gives (LC_TIME): the runtime builds
+ * this file with S32_LOCALE_STRFTIME and takes them from nl_langinfo
+ * (locale.c); the self-hosted libc, which has no locales, has the C
+ * locale's. */
+#ifdef S32_LOCALE_STRFTIME
+#include <langinfo.h>
+static void sf_wday(struct sf_out *o, int wd, int abbr) { sf_str(o, nl_langinfo((abbr ? ABDAY_1 : DAY_1) + wd), -1); }
+static void sf_mon(struct sf_out *o, int m, int abbr) { sf_str(o, nl_langinfo((abbr ? ABMON_1 : MON_1) + m), -1); }
+static void sf_ampm(struct sf_out *o, int hour) { sf_str(o, nl_langinfo(hour < 12 ? AM_STR : PM_STR), -1); }
+#define SF_LOCALE_FMT(item, c_fmt) nl_langinfo(item)
+#else
+static void sf_wday(struct sf_out *o, int wd, int abbr) { sf_str(o, wday_name[wd], abbr ? 3 : -1); }
+static void sf_mon(struct sf_out *o, int m, int abbr) { sf_str(o, mon_name[m], abbr ? 3 : -1); }
+static void sf_ampm(struct sf_out *o, int hour) { sf_str(o, hour < 12 ? "AM" : "PM", -1); }
+#define SF_LOCALE_FMT(item, c_fmt) (c_fmt)
+#endif
 
 static void sf_conv(struct sf_out *o, int c, const struct tm *tm) {
     long long year = (long long)tm->tm_year + 1900;
@@ -207,12 +231,12 @@ static void sf_conv(struct sf_out *o, int c, const struct tm *tm) {
     long off;
 
     switch (c) {
-    case 'a': sf_str(o, wday_name[in_range(tm->tm_wday, 7)], 3); break;
-    case 'A': sf_str(o, wday_name[in_range(tm->tm_wday, 7)], -1); break;
+    case 'a': sf_wday(o, in_range(tm->tm_wday, 7), 1); break;
+    case 'A': sf_wday(o, in_range(tm->tm_wday, 7), 0); break;
     case 'b':
-    case 'h': sf_str(o, mon_name[in_range(tm->tm_mon, 12)], 3); break;
-    case 'B': sf_str(o, mon_name[in_range(tm->tm_mon, 12)], -1); break;
-    case 'c': sf_format(o, "%a %b %e %H:%M:%S %Y", tm); break;
+    case 'h': sf_mon(o, in_range(tm->tm_mon, 12), 1); break;
+    case 'B': sf_mon(o, in_range(tm->tm_mon, 12), 0); break;
+    case 'c': sf_format(o, SF_LOCALE_FMT(D_T_FMT, "%a %b %e %H:%M:%S %Y"), tm); break;
     case 'C': sf_num(o, (year - in_range((int)(year % 100), 100)) / 100, 2, '0'); break;
     case 'd': sf_num(o, tm->tm_mday, 2, '0'); break;
     case 'D': sf_format(o, "%m/%d/%y", tm); break;
@@ -226,8 +250,8 @@ static void sf_conv(struct sf_out *o, int c, const struct tm *tm) {
     case 'm': sf_num(o, tm->tm_mon + 1, 2, '0'); break;
     case 'M': sf_num(o, tm->tm_min, 2, '0'); break;
     case 'n': sf_ch(o, '\n'); break;
-    case 'p': sf_str(o, tm->tm_hour < 12 ? "AM" : "PM", -1); break;
-    case 'r': sf_format(o, "%I:%M:%S %p", tm); break;
+    case 'p': sf_ampm(o, tm->tm_hour); break;
+    case 'r': sf_format(o, SF_LOCALE_FMT(T_FMT_AMPM, "%I:%M:%S %p"), tm); break;
     case 'R': sf_format(o, "%H:%M", tm); break;
     case 'S': sf_num(o, tm->tm_sec, 2, '0'); break;
     case 't': sf_ch(o, '\t'); break;
@@ -237,8 +261,8 @@ static void sf_conv(struct sf_out *o, int c, const struct tm *tm) {
     case 'V': sf_num(o, iso_week(tm, &iso_year), 2, '0'); break;
     case 'w': sf_num(o, tm->tm_wday, 1, '0'); break;
     case 'W': sf_num(o, (tm->tm_yday + 7 - in_range(tm->tm_wday + 6, 7)) / 7, 2, '0'); break;  /* on Monday */
-    case 'x': sf_format(o, "%m/%d/%y", tm); break;
-    case 'X': sf_format(o, "%H:%M:%S", tm); break;
+    case 'x': sf_format(o, SF_LOCALE_FMT(D_FMT, "%m/%d/%y"), tm); break;
+    case 'X': sf_format(o, SF_LOCALE_FMT(T_FMT, "%H:%M:%S"), tm); break;
     case 'y': sf_num(o, in_range((int)(year % 100), 100), 2, '0'); break;
     case 'Y': sf_num(o, year, 1, '0'); break;
     case 'z':
@@ -265,6 +289,7 @@ size_t strftime(char *s, size_t max, const char *format, const struct tm *tm) {
     o.s = s;
     o.max = max;
     o.len = 0;
+    o.nopad = 0;
     sf_format(&o, format, tm);
     if (o.len >= max) return 0;
     s[o.len] = 0;
@@ -278,6 +303,7 @@ char *asctime(const struct tm *tm) {
     o.s = text;
     o.max = sizeof text - 1;
     o.len = 0;
+    o.nopad = 0;
     sf_str(&o, wday_name[in_range(tm->tm_wday, 7)], 3);
     sf_ch(&o, ' ');
     sf_str(&o, mon_name[in_range(tm->tm_mon, 12)], 3);

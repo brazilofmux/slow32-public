@@ -51,6 +51,20 @@ or
 crt0.s32o user.s32o libc_mmio.s32a libs32.s32a
 ```
 
+## Locales
+
+libc has the C locale ("C", "POSIX", "C.UTF-8") and refuses every other
+name.  The named locales -- the 53 CLDR 46 locales libutf has collators
+for, with their dates, numbers, currency and collation -- are
+`locales.s32o`, an object linked ahead of libc by a program that wants
+them; its collation tables want `--rodata-size 2M`:
+```
+crt0.s32o user.s32o locales.s32o libc_mmio.s32a libs32.s32a
+```
+A program that does not link it does not carry it: libc reaches it only
+through weak references.  `locale.c`'s header says what each category
+changes and how names resolve; `gen_locales.py` makes `locales_data.h`.
+
 ## Known Issues
 
 - printf() enters infinite loop - needs debugging/rewrite
