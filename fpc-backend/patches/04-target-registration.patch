@@ -1,5 +1,5 @@
 diff --git a/compiler/systems/i_embed.pas b/compiler/systems/i_embed.pas
-index 8ec19c5e88..797c97837d 100644
+index 8ec19c5e88..b3981f9596 100644
 --- a/compiler/systems/i_embed.pas
 +++ b/compiler/systems/i_embed.pas
 @@ -922,6 +922,73 @@
@@ -57,13 +57,13 @@ index 8ec19c5e88..797c97837d 100644
 +                coalescealign   : 0;
 +                coalescealignskipmax: 0;
 +                constalignmin   : 0;
-+                constalignmax   : 4;
++                constalignmax   : 16;
 +                varalignmin     : 0;
-+                varalignmax     : 4;
++                varalignmax     : 16;
 +                localalignmin   : 4;
 +                localalignmax   : 4;
 +                recordalignmin  : 0;
-+                recordalignmax  : 4;
++                recordalignmax  : 16;
 +                maxCrecordalign : 4
 +              );
 +            first_parm_offset : 8;

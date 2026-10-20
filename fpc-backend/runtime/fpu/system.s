@@ -174,9 +174,9 @@ FPC_LONGJMP:
 	ldw	r27,r3,72
 	ldw	r28,r3,76
 	ldw	r29,r3,80
-	bne	r4,r0,.Lj10357
+	bne	r4,r0,.Lj10352
 	addi	r4,r0,1
-.Lj10357:
+.Lj10352:
 	addi	r1,r4,0
 	jalr	r0,r31,0
 #  CPU SLOW32
@@ -40959,13 +40959,13 @@ SYSTEM_$$_DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10:
 	stw	r29,r31,4
 	stw	r29,r30,0
 	addi	r30,r29,8
-	addi	r29,r29,-120
+	addi	r29,r29,-108
 	sth	r30,r3,-56
 	stw	r30,r4,-60
 	la	r3,TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_BASE
-	ldh	r3,r3,16
+	ldh	r3,r3,12
 	la	r4,TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_FACTOR_MINUS
-	ldh	r4,r4,40
+	ldh	r4,r4,28
 	add	r3,r4,r3
 	slli	r3,r3,16
 	srai	r3,r3,16
@@ -40979,9 +40979,9 @@ SYSTEM_$$_DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10:
 	sth	r30,r0,-64
 	jal	r0,.Lj4492
 .Lj4491:
-	ldh	r4,r30,-56
-	ldh	r3,r30,-76
-	sub	r3,r4,r3
+	ldh	r3,r30,-56
+	ldh	r4,r30,-76
+	sub	r3,r3,r4
 	addi	r4,r0,18
 	div	r3,r3,r4
 	slli	r3,r3,16
@@ -40991,9 +40991,9 @@ SYSTEM_$$_DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10:
 	addi	r4,r0,18
 	mul	r4,r3,r4
 	ldh	r3,r30,-76
-	add	r3,r3,r4
-	ldh	r4,r30,-56
-	sne	r3,r3,r4
+	add	r4,r3,r4
+	ldh	r3,r30,-56
+	sne	r3,r4,r3
 	bne	r3,r0,.Lj4493
 	jal	r0,.Lj4494
 .Lj4493:
@@ -41031,173 +41031,156 @@ SYSTEM_$$_DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10:
 	bne	r3,r0,.Lj4497
 	jal	r0,.Lj4498
 .Lj4497:
-	ldhu	r4,r30,-72
-	addi	r3,r0,24
-	mul	r3,r4,r3
-	ldw	r4,r30,-60
-	la	r5,TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_BASE
-	add	r3,r3,r5
-	addi	r6,r0,6
-.Lj4499:
-	ldw	r5,r3,0
-	stw	r4,r5,0
-	addi	r3,r3,4
-	addi	r4,r4,4
-	addi	r6,r6,-1
-	bgt	r6,r0,.Lj4499
+	ldhu	r3,r30,-72
+	slli	r5,r3,4
+	ldw	r3,r30,-60
+	la	r4,TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_BASE
+	add	r4,r5,r4
+	ldw	r5,r4,0
+	stw	r3,r5,0
+	ldw	r5,r4,4
+	stw	r3,r5,4
+	ldw	r5,r4,8
+	stw	r3,r5,8
+	ldw	r5,r4,12
+	stw	r3,r5,12
 	jal	r0,.Lj4488
 .Lj4498:
 	ldhu	r3,r30,-72
-	addi	r4,r0,24
-	mul	r3,r3,r4
-	la	r4,TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_BASE
-	add	r3,r3,r4
-	addi	r5,r30,-100
-	addi	r4,r0,6
-.Lj4500:
-	ldw	r6,r3,0
-	stw	r5,r6,0
-	addi	r3,r3,4
-	addi	r5,r5,4
-	addi	r4,r4,-1
-	bgt	r4,r0,.Lj4500
+	slli	r4,r3,4
+	la	r3,TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_BASE
+	add	r3,r4,r3
+	ldw	r4,r3,0
+	stw	r30,r4,-92
+	ldw	r4,r3,4
+	stw	r30,r4,-88
+	ldw	r4,r3,8
+	stw	r30,r4,-84
+	ldw	r4,r3,12
+	stw	r30,r4,-80
 	ldh	r4,r30,-68
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4501
-	jal	r0,.Lj4502
-.Lj4501:
+	bne	r3,r0,.Lj4499
+	jal	r0,.Lj4500
+.Lj4499:
 	ldh	r3,r30,-68
 	addi	r3,r3,-1
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-68
-	ldhu	r4,r30,-68
-	addi	r3,r0,24
-	mul	r4,r4,r3
+	ldhu	r3,r30,-68
+	slli	r4,r3,4
 	la	r3,TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_FACTOR_PLUS
 	add	r3,r4,r3
-	ldh	r4,r3,16
-	ldh	r3,r30,-84
-	add	r3,r3,r4
-	slli	r3,r3,16
-	srai	r3,r3,16
-	ldw	r4,r30,-60
-	sth	r4,r3,16
-	ldh	r3,r30,-84
-	sne	r3,r3,r0
-	bne	r3,r0,.Lj4503
-	jal	r0,.Lj4504
-.Lj4503:
-	ldhu	r4,r30,-68
-	addi	r3,r0,24
-	mul	r3,r4,r3
-	la	r4,TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_FACTOR_PLUS
-	add	r5,r3,r4
-	addi	r4,r30,-100
-	addi	r3,r30,-120
-	addi	r6,r0,1
-	call	SYSTEM_$$_DIY_FP_MULTIPLY$TDIY_FP$TDIY_FP$BOOLEAN$$TDIY_FP
-	ldw	r4,r30,-60
-	ldw	r3,r30,-120
-	stw	r4,r3,0
-	ldw	r3,r30,-116
-	stw	r4,r3,4
-	ldw	r3,r30,-112
-	stw	r4,r3,8
-	ldw	r3,r30,-108
-	stw	r4,r3,12
-	jal	r0,.Lj4505
-.Lj4504:
-	ldhu	r3,r30,-68
-	addi	r4,r0,24
-	mul	r4,r3,r4
-	ldw	r3,r30,-60
-	la	r5,TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_FACTOR_PLUS
-	add	r4,r4,r5
-	ldw	r5,r4,0
-	stw	r3,r5,0
-	ldw	r5,r4,4
-	stw	r3,r5,4
-	ldw	r5,r4,8
-	stw	r3,r5,8
-	ldw	r5,r4,12
-	stw	r3,r5,12
-	jal	r0,.Lj4488
-.Lj4505:
-	jal	r0,.Lj4506
-.Lj4502:
-	ldh	r3,r30,-68
-	addi	r4,r0,-1
-	xor	r3,r3,r4
-	slli	r3,r3,16
-	srai	r3,r3,16
-	sth	r30,r3,-68
-	ldhu	r3,r30,-68
-	addi	r4,r0,24
-	mul	r4,r3,r4
-	la	r3,TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_FACTOR_MINUS
-	add	r3,r4,r3
-	ldh	r3,r3,16
-	ldh	r4,r30,-84
+	ldh	r3,r3,12
+	ldh	r4,r30,-80
 	add	r3,r4,r3
 	slli	r4,r3,16
 	srai	r4,r4,16
 	ldw	r3,r30,-60
-	sth	r3,r4,16
-	ldh	r3,r30,-84
+	sth	r3,r4,12
+	ldh	r3,r30,-80
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj4507
-	jal	r0,.Lj4508
-.Lj4507:
+	bne	r3,r0,.Lj4501
+	jal	r0,.Lj4502
+.Lj4501:
 	ldhu	r3,r30,-68
-	addi	r4,r0,24
-	mul	r3,r3,r4
-	la	r4,TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_FACTOR_MINUS
+	slli	r3,r3,4
+	la	r4,TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_FACTOR_PLUS
 	add	r5,r3,r4
-	addi	r4,r30,-100
-	addi	r3,r30,-120
+	addi	r4,r30,-92
+	addi	r3,r30,-108
 	addi	r6,r0,1
 	call	SYSTEM_$$_DIY_FP_MULTIPLY$TDIY_FP$TDIY_FP$BOOLEAN$$TDIY_FP
-	ldw	r4,r30,-60
-	ldw	r3,r30,-120
-	stw	r4,r3,0
-	ldw	r3,r30,-116
-	stw	r4,r3,4
-	ldw	r3,r30,-112
-	stw	r4,r3,8
-	ldw	r3,r30,-108
-	stw	r4,r3,12
-	jal	r0,.Lj4509
-.Lj4508:
-	ldhu	r3,r30,-68
-	addi	r4,r0,24
-	mul	r4,r3,r4
 	ldw	r3,r30,-60
-	la	r5,TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_FACTOR_MINUS
-	add	r4,r4,r5
+	ldw	r4,r30,-108
+	stw	r3,r4,0
+	ldw	r4,r30,-104
+	stw	r3,r4,4
+	ldw	r4,r30,-100
+	stw	r3,r4,8
+	jal	r0,.Lj4503
+.Lj4502:
+	ldhu	r3,r30,-68
+	slli	r4,r3,4
+	ldw	r3,r30,-60
+	la	r5,TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_FACTOR_PLUS
+	add	r5,r4,r5
+	ldw	r4,r5,0
+	stw	r3,r4,0
+	ldw	r4,r5,4
+	stw	r3,r4,4
+	ldw	r4,r5,8
+	stw	r3,r4,8
+	jal	r0,.Lj4488
+.Lj4503:
+	jal	r0,.Lj4504
+.Lj4500:
+	ldh	r4,r30,-68
+	addi	r3,r0,-1
+	xor	r3,r4,r3
+	slli	r3,r3,16
+	srai	r3,r3,16
+	sth	r30,r3,-68
+	ldhu	r3,r30,-68
+	slli	r3,r3,4
+	la	r4,TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_FACTOR_MINUS
+	add	r3,r3,r4
+	ldh	r3,r3,12
+	ldh	r4,r30,-80
+	add	r3,r4,r3
+	slli	r4,r3,16
+	srai	r4,r4,16
+	ldw	r3,r30,-60
+	sth	r3,r4,12
+	ldh	r3,r30,-80
+	sne	r3,r3,r0
+	bne	r3,r0,.Lj4505
+	jal	r0,.Lj4506
+.Lj4505:
+	ldhu	r3,r30,-68
+	slli	r3,r3,4
+	la	r4,TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_FACTOR_MINUS
+	add	r5,r3,r4
+	addi	r4,r30,-92
+	addi	r3,r30,-108
+	addi	r6,r0,1
+	call	SYSTEM_$$_DIY_FP_MULTIPLY$TDIY_FP$TDIY_FP$BOOLEAN$$TDIY_FP
+	ldw	r3,r30,-60
+	ldw	r4,r30,-108
+	stw	r3,r4,0
+	ldw	r4,r30,-104
+	stw	r3,r4,4
+	ldw	r4,r30,-100
+	stw	r3,r4,8
+	jal	r0,.Lj4507
+.Lj4506:
+	ldhu	r3,r30,-68
+	slli	r5,r3,4
+	ldw	r3,r30,-60
+	la	r4,TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_FACTOR_MINUS
+	add	r4,r5,r4
 	ldw	r5,r4,0
 	stw	r3,r5,0
 	ldw	r5,r4,4
 	stw	r3,r5,4
 	ldw	r5,r4,8
 	stw	r3,r5,8
-	ldw	r5,r4,12
-	stw	r3,r5,12
 	jal	r0,.Lj4488
-.Lj4509:
-.Lj4506:
+.Lj4507:
+.Lj4504:
 	ldhu	r3,r30,-64
 	la	r4,TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_CORRECTOR
 	add	r3,r3,r4
 	ldbu	r3,r3,0
-	stb	r30,r3,-104
-	ldb	r3,r30,-104
+	stb	r30,r3,-96
+	ldb	r3,r30,-96
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj4510
-	jal	r0,.Lj4511
-.Lj4510:
-	ldb	r3,r30,-104
+	bne	r3,r0,.Lj4508
+	jal	r0,.Lj4509
+.Lj4508:
+	ldb	r3,r30,-96
 	srai	r5,r3,31
 	ldw	r6,r30,-60
 	ldw	r4,r6,0
@@ -41213,11 +41196,11 @@ SYSTEM_$$_DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10:
 	add	r7,r3,r5
 	stw	r6,r4,0
 	stw	r6,r7,4
-.Lj4511:
+.Lj4509:
 .Lj4488:
-	ldw	r30,r29,120
-	ldw	r31,r29,124
-	addi	r29,r29,128
+	ldw	r30,r29,108
+	ldw	r31,r29,112
+	addi	r29,r29,116
 	jalr	r0,r31
 .Lc899:
 .Le170:
@@ -41232,7 +41215,7 @@ SYSTEM_$$_STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING:
 	stw	r29,r31,4
 	stw	r29,r30,0
 	addi	r30,r29,8
-	addi	r29,r29,-268
+	addi	r29,r29,-252
 	sth	r30,r3,-56
 	sth	r30,r4,-60
 	stw	r30,r5,-68
@@ -41243,160 +41226,158 @@ SYSTEM_$$_STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING:
 	ldh	r3,r30,-60
 	addi	r4,r0,216
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj4534
-	jal	r0,.Lj4535
-.Lj4534:
+	bne	r3,r0,.Lj4532
+	jal	r0,.Lj4533
+.Lj4532:
 	addi	r3,r0,216
 	sth	r30,r3,-60
-.Lj4535:
+.Lj4533:
 	ldh	r3,r30,-56
 	lui	r4,1048568
 	ori	r4,r4,1
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj4536
-	jal	r0,.Lj4537
-.Lj4536:
+	bne	r3,r0,.Lj4534
+	jal	r0,.Lj4535
+.Lj4534:
 	addi	r3,r0,-1
 	sth	r30,r3,-56
-	jal	r0,.Lj4538
-.Lj4537:
+	jal	r0,.Lj4536
+.Lj4535:
 	ldh	r4,r30,-56
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj4539
-	jal	r0,.Lj4540
-.Lj4539:
+	bne	r3,r0,.Lj4537
+	jal	r0,.Lj4538
+.Lj4537:
 	sth	r30,r0,-56
-	jal	r0,.Lj4541
-.Lj4540:
+	jal	r0,.Lj4539
+.Lj4538:
 	ldh	r3,r30,-56
 	addi	r4,r0,255
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj4542
-	jal	r0,.Lj4543
-.Lj4542:
+	bne	r3,r0,.Lj4540
+	jal	r0,.Lj4541
+.Lj4540:
 	addi	r3,r0,255
 	sth	r30,r3,-56
-.Lj4543:
 .Lj4541:
-.Lj4538:
+.Lj4539:
+.Lj4536:
 	ldw	r3,r30,-72
 	slli	r3,r3,2
 	la	r4,TC_$SYSTEM_$$_FLOAT_FORMAT
 	add	r3,r3,r4
 	ldhu	r3,r3,0
-	sth	r30,r3,-164
+	sth	r30,r3,-148
 	ldw	r3,r30,-72
 	slli	r3,r3,2
 	la	r4,TC_$SYSTEM_$$_FLOAT_FORMAT
 	add	r3,r3,r4
 	ldhu	r3,r3,2
-	sth	r30,r3,-152
+	sth	r30,r3,-136
 	la	r3,TC_$SYSTEM_$$_FLOAT_FORMAT
 	ldhu	r3,r3,4
-	sth	r30,r3,-156
-	ldh	r3,r30,-164
-	ldh	r4,r30,-156
+	sth	r30,r3,-140
+	ldh	r3,r30,-148
+	ldh	r4,r30,-140
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj4544
-	jal	r0,.Lj4545
-.Lj4544:
-	ldhu	r3,r30,-164
-	sth	r30,r3,-156
-.Lj4545:
+	bne	r3,r0,.Lj4542
+	jal	r0,.Lj4543
+.Lj4542:
+	ldhu	r3,r30,-148
+	sth	r30,r3,-140
+.Lj4543:
 	ldh	r4,r30,-56
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj4546
-	jal	r0,.Lj4547
-.Lj4546:
-	ldhu	r3,r30,-164
-	sth	r30,r3,-168
-	jal	r0,.Lj4548
-.Lj4547:
+	bne	r3,r0,.Lj4544
+	jal	r0,.Lj4545
+.Lj4544:
+	ldhu	r3,r30,-148
+	sth	r30,r3,-152
+	jal	r0,.Lj4546
+.Lj4545:
 	ldh	r3,r30,-56
 	addi	r3,r3,-1
 	addi	r3,r3,-1
 	addi	r3,r3,-1
 	addi	r4,r3,-1
-	ldh	r3,r30,-152
+	ldh	r3,r30,-136
 	sub	r3,r4,r3
 	slli	r3,r3,16
 	srai	r3,r3,16
-	sth	r30,r3,-168
-	ldh	r3,r30,-168
+	sth	r30,r3,-152
+	ldh	r3,r30,-152
 	addi	r4,r0,2
 	slt	r3,r3,r4
+	bne	r3,r0,.Lj4547
+	jal	r0,.Lj4548
+.Lj4547:
+	addi	r3,r0,2
+	sth	r30,r3,-152
+.Lj4548:
+	ldh	r3,r30,-152
+	ldh	r4,r30,-148
+	sgt	r3,r3,r4
 	bne	r3,r0,.Lj4549
 	jal	r0,.Lj4550
 .Lj4549:
-	addi	r3,r0,2
-	sth	r30,r3,-168
+	ldhu	r3,r30,-148
+	sth	r30,r3,-152
 .Lj4550:
-	ldh	r3,r30,-168
-	ldh	r4,r30,-164
-	sgt	r3,r3,r4
-	bne	r3,r0,.Lj4551
-	jal	r0,.Lj4552
-.Lj4551:
-	ldhu	r3,r30,-164
-	sth	r30,r3,-168
-.Lj4552:
-.Lj4548:
+.Lj4546:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-64
 	lui	r5,255
 	ori	r5,r5,4095
 	and	r4,r4,r5
-	stw	r30,r3,-256
-	stw	r30,r4,-252
+	stw	r30,r3,-236
+	stw	r30,r4,-232
 	ldw	r3,r30,-64
 	srli	r3,r3,20
 	andi	r3,r3,2047
 	slli	r3,r3,16
 	srai	r3,r3,16
-	sth	r30,r3,-248
+	sth	r30,r3,-228
 	ldw	r3,r30,-64
 	srli	r3,r3,31
 	andi	r3,r3,255
 	sne	r3,r3,r0
-	stb	r30,r3,-172
-	ldw	r3,r30,-256
-	stw	r30,r3,-96
-	ldw	r3,r30,-252
+	stb	r30,r3,-156
+	ldw	r3,r30,-236
 	stw	r30,r3,-92
-	ldw	r3,r30,-248
+	ldw	r3,r30,-232
 	stw	r30,r3,-88
-	ldw	r3,r30,-244
+	ldw	r3,r30,-228
 	stw	r30,r3,-84
-	ldh	r3,r30,-88
+	ldh	r3,r30,-84
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj4554
+	bne	r3,r0,.Lj4552
+	jal	r0,.Lj4553
+.Lj4552:
+	ldw	r3,r30,-92
+	ldw	r4,r30,-88
+	bne	r0,r4,.Lj4556
+	bne	r0,r3,.Lj4556
 	jal	r0,.Lj4555
-.Lj4554:
-	ldw	r3,r30,-96
-	ldw	r4,r30,-92
-	bne	r0,r4,.Lj4558
-	bne	r0,r3,.Lj4558
-	jal	r0,.Lj4557
-.Lj4557:
-	jal	r0,.Lj4556
-.Lj4558:
-	jal	r0,.Lj4555
+.Lj4555:
+	jal	r0,.Lj4554
 .Lj4556:
-	stb	r30,r0,-240
+	jal	r0,.Lj4553
+.Lj4554:
+	stb	r30,r0,-224
 	ldh	r4,r30,-60
 	addi	r3,r0,0
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj4559
-	jal	r0,.Lj4560
-.Lj4559:
+	bne	r3,r0,.Lj4557
+	jal	r0,.Lj4558
+.Lj4557:
 	ldh	r3,r30,-60
 	slli	r3,r3,16
 	srli	r3,r3,16
 	sth	r29,r3,0
-	addi	r7,r30,-240
-	ldbu	r6,r30,-172
+	addi	r7,r30,-224
+	ldbu	r6,r30,-156
 	ldw	r4,r30,-76
 	addi	r3,r30,0
 	ldh	r10,r30,-56
@@ -41404,43 +41385,43 @@ SYSTEM_$$_STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING:
 	addi	r8,r0,0
 	ldw	r5,r30,-80
 	call	SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_TRY_RETURN_FIXED$hbUemESu7qEE
-	bne	r1,r0,.Lj4561
-	jal	r0,.Lj4562
-.Lj4561:
-	jal	r0,.Lj4512
-.Lj4562:
+	bne	r1,r0,.Lj4559
+	jal	r0,.Lj4560
+.Lj4559:
+	jal	r0,.Lj4510
 .Lj4560:
+.Lj4558:
 	ldh	r3,r30,-56
 	slli	r3,r3,16
 	srli	r3,r3,16
 	sth	r29,r3,4
-	ldh	r3,r30,-152
+	ldh	r3,r30,-136
 	slli	r3,r3,16
 	srli	r3,r3,16
 	sth	r29,r3,0
-	addi	r7,r30,-240
-	ldbu	r6,r30,-172
+	addi	r7,r30,-224
+	ldbu	r6,r30,-156
 	ldw	r4,r30,-76
 	addi	r3,r30,0
 	addi	r10,r0,0
-	ldh	r9,r30,-168
+	ldh	r9,r30,-152
 	addi	r8,r0,0
 	ldw	r5,r30,-80
 	call	SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_EXPONENTIAL$hZ7j4WtHYkbG
-	jal	r0,.Lj4512
-.Lj4555:
-	ldh	r3,r30,-88
+	jal	r0,.Lj4510
+.Lj4553:
+	ldh	r3,r30,-84
 	addi	r3,r3,-2047
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj4563
-	jal	r0,.Lj4564
-.Lj4563:
+	bne	r3,r0,.Lj4561
+	jal	r0,.Lj4562
+.Lj4561:
 	ldh	r4,r30,-56
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj4565
-	jal	r0,.Lj4566
-.Lj4565:
+	bne	r3,r0,.Lj4563
+	jal	r0,.Lj4564
+.Lj4563:
 	ldw	r3,r30,-72
 	slli	r3,r3,2
 	la	r4,TC_$SYSTEM_$$_FLOAT_FORMAT
@@ -41456,101 +41437,101 @@ SYSTEM_$$_STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING:
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-56
-.Lj4566:
-	ldbu	r3,r30,-172
+.Lj4564:
+	ldbu	r3,r30,-156
 	slli	r3,r3,1
 	addi	r4,r0,1
 	sub	r3,r4,r3
 	slli	r3,r3,16
 	srai	r3,r3,16
-	sth	r30,r3,-140
-	ldw	r3,r30,-96
-	ldw	r4,r30,-92
-	bne	r0,r4,.Lj4568
-	bne	r0,r3,.Lj4568
-	jal	r0,.Lj4567
-.Lj4567:
+	sth	r30,r3,-124
+	ldw	r3,r30,-92
+	ldw	r4,r30,-88
+	bne	r0,r4,.Lj4566
+	bne	r0,r3,.Lj4566
+	jal	r0,.Lj4565
+.Lj4565:
 	la	r7,TC_$SYSTEM_$$_C_STR_INF
 	ldw	r4,r30,-76
 	addi	r3,r30,0
 	ldh	r8,r30,-56
-	ldh	r6,r30,-140
+	ldh	r6,r30,-124
 	ldw	r5,r30,-80
 	call	SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_SPECIAL$hPqvvDja5ojF
-	jal	r0,.Lj4569
-.Lj4568:
-	sth	r30,r0,-140
+	jal	r0,.Lj4567
+.Lj4566:
+	sth	r30,r0,-124
 	la	r7,TC_$SYSTEM_$$_C_STR_QNAN
 	ldw	r4,r30,-76
 	addi	r3,r30,0
 	ldh	r8,r30,-56
-	ldh	r6,r30,-140
+	ldh	r6,r30,-124
 	ldw	r5,r30,-80
 	call	SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_SPECIAL$hPqvvDja5ojF
-.Lj4569:
-	jal	r0,.Lj4512
-.Lj4564:
-	ldh	r3,r30,-88
+.Lj4567:
+	jal	r0,.Lj4510
+.Lj4562:
+	ldh	r3,r30,-84
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj4570
-	jal	r0,.Lj4571
-.Lj4570:
-	ldw	r3,r30,-96
-	ldw	r4,r30,-92
+	bne	r3,r0,.Lj4568
+	jal	r0,.Lj4569
+.Lj4568:
+	ldw	r3,r30,-92
+	ldw	r4,r30,-88
 	lui	r5,256
 	or	r4,r4,r5
-	stw	r30,r3,-96
-	stw	r30,r4,-92
+	stw	r30,r3,-92
+	stw	r30,r4,-88
 	addi	r3,r0,11
-	sth	r30,r3,-140
-	jal	r0,.Lj4572
-.Lj4571:
-	ldw	r3,r30,-96
-	stw	r30,r3,-248
+	sth	r30,r3,-124
+	jal	r0,.Lj4570
+.Lj4569:
 	ldw	r3,r30,-92
-	stw	r30,r3,-244
+	stw	r30,r3,-232
+	ldw	r3,r30,-88
+	stw	r30,r3,-228
 	addi	r3,r0,32
-	ldw	r4,r30,-248
-	ldw	r4,r30,-244
+	ldw	r4,r30,-232
+	ldw	r4,r30,-228
 	li	r5,0
 	srli	r4,r4,0
 	slli	r4,r4,0
 	srli	r4,r4,0
-	stw	r30,r4,-252
-	ldw	r4,r30,-252
+	stw	r30,r4,-236
+	ldw	r4,r30,-236
 	seq	r4,r4,r0
-	bne	r4,r0,.Lj4574
-	jal	r0,.Lj4575
-.Lj4574:
-	ldw	r4,r30,-248
-	stw	r30,r4,-252
+	bne	r4,r0,.Lj4572
+	jal	r0,.Lj4573
+.Lj4572:
+	ldw	r4,r30,-232
+	stw	r30,r4,-236
 	addi	r3,r0,0
-.Lj4575:
-	ldw	r4,r30,-252
+.Lj4573:
+	ldw	r4,r30,-236
 	lui	r5,15
 	ori	r5,r5,4095
 	sgtu	r4,r4,r5
 	slli	r4,r4,4
-	ldw	r5,r30,-252
+	ldw	r5,r30,-236
 	slli	r4,r4,0
 	srli	r4,r4,0
 	srl	r5,r5,r4
-	stw	r30,r5,-256
-	ldw	r6,r30,-256
+	stw	r30,r5,-240
+	ldw	r6,r30,-240
 	addi	r5,r0,255
 	sgtu	r5,r6,r5
 	slli	r5,r5,3
 	or	r5,r4,r5
 	addi	r4,r5,0
 	andi	r6,r4,8
-	ldw	r5,r30,-256
+	ldw	r5,r30,-240
 	slli	r6,r6,0
 	srli	r6,r6,0
 	srl	r5,r5,r6
-	stw	r30,r5,-256
-	ldbu	r5,r30,-256
-	stb	r30,r5,-260
-	ldbu	r5,r30,-260
+	stw	r30,r5,-240
+	ldbu	r5,r30,-240
+	stb	r30,r5,-244
+	ldbu	r5,r30,-244
 	la	r6,TC_$SYSTEM$_$BSRBYTE$BYTE$$BYTE_$$_BSR8BIT
 	add	r5,r5,r6
 	ldbu	r5,r5,0
@@ -41562,24 +41543,24 @@ SYSTEM_$$_STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING:
 	sub	r3,r4,r3
 	slli	r3,r3,16
 	srai	r3,r3,16
-	sth	r30,r3,-140
-	ldh	r3,r30,-88
+	sth	r30,r3,-124
+	ldh	r3,r30,-84
 	addi	r3,r3,1
 	slli	r3,r3,16
 	srai	r3,r3,16
-	sth	r30,r3,-88
-.Lj4572:
-	ldh	r5,r30,-140
-	ldw	r3,r30,-96
-	ldw	r4,r30,-92
+	sth	r30,r3,-84
+.Lj4570:
+	ldh	r5,r30,-124
+	ldw	r3,r30,-92
+	ldw	r4,r30,-88
 	slli	r5,r5,0
 	srli	r5,r5,0
 	addi	r6,r5,-32
-	blt	r6,r0,.Lj4577
+	blt	r6,r0,.Lj4575
 	li	r8,0
 	sll	r7,r3,r6
-	jal	r0,.Lj4578
-.Lj4577:
+	jal	r0,.Lj4576
+.Lj4575:
 	li	r6,31
 	srli	r9,r3,1
 	sub	r6,r6,r5
@@ -41587,83 +41568,79 @@ SYSTEM_$$_STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING:
 	srl	r9,r9,r6
 	sll	r7,r4,r5
 	or	r7,r7,r9
-.Lj4578:
-	stw	r30,r8,-96
-	stw	r30,r7,-92
-	ldh	r3,r30,-140
+.Lj4576:
+	stw	r30,r8,-92
+	stw	r30,r7,-88
+	ldh	r3,r30,-124
 	addi	r3,r3,1075
 	slli	r4,r3,16
 	srai	r4,r4,16
-	ldh	r3,r30,-88
+	ldh	r3,r30,-84
 	sub	r3,r3,r4
 	slli	r3,r3,16
 	srai	r3,r3,16
-	sth	r30,r3,-88
-	ldh	r4,r30,-88
+	sth	r30,r3,-84
+	ldh	r4,r30,-84
 	addi	r3,r0,-61
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj4579
-	jal	r0,.Lj4580
-.Lj4579:
-	ldh	r4,r30,-88
+	bne	r3,r0,.Lj4577
+	jal	r0,.Lj4578
+.Lj4577:
+	ldh	r4,r30,-84
 	addi	r3,r0,0
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj4581
-	jal	r0,.Lj4580
-.Lj4581:
-	ldw	r3,r30,-96
-	stw	r30,r3,-112
+	bne	r3,r0,.Lj4579
+	jal	r0,.Lj4578
+.Lj4579:
 	ldw	r3,r30,-92
-	stw	r30,r3,-108
-	ldw	r3,r30,-88
 	stw	r30,r3,-104
-	ldw	r3,r30,-84
+	ldw	r3,r30,-88
 	stw	r30,r3,-100
-	sth	r30,r0,-120
-	jal	r0,.Lj4582
-.Lj4580:
-	ldh	r4,r30,-88
+	ldw	r3,r30,-84
+	stw	r30,r3,-96
+	sth	r30,r0,-108
+	jal	r0,.Lj4580
+.Lj4578:
+	ldh	r4,r30,-84
 	addi	r3,r30,0
 	addi	r5,r0,-61
 	call	SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_K_COMP$hFNBR1sQx5LI
-	sth	r30,r1,-144
-	addi	r4,r30,-136
-	ldh	r3,r30,-144
+	sth	r30,r1,-128
+	addi	r4,r30,-120
+	ldh	r3,r30,-128
 	call	SYSTEM_$$_DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10
-	ldh	r3,r30,-120
+	ldh	r3,r30,-108
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj4583
-	jal	r0,.Lj4584
-.Lj4583:
-	ldw	r3,r30,-96
-	stw	r30,r3,-112
+	bne	r3,r0,.Lj4581
+	jal	r0,.Lj4582
+.Lj4581:
 	ldw	r3,r30,-92
-	stw	r30,r3,-108
-	ldw	r3,r30,-88
 	stw	r30,r3,-104
-	ldw	r3,r30,-84
+	ldw	r3,r30,-88
 	stw	r30,r3,-100
-	jal	r0,.Lj4585
-.Lj4584:
-	addi	r5,r30,-136
-	addi	r4,r30,-96
-	addi	r3,r30,-112
+	ldw	r3,r30,-84
+	stw	r30,r3,-96
+	jal	r0,.Lj4583
+.Lj4582:
+	addi	r5,r30,-120
+	addi	r4,r30,-92
+	addi	r3,r30,-104
 	addi	r6,r0,0
 	call	SYSTEM_$$_DIY_FP_MULTIPLY$TDIY_FP$TDIY_FP$BOOLEAN$$TDIY_FP
-.Lj4585:
-.Lj4582:
-	ldh	r3,r30,-104
+.Lj4583:
+.Lj4580:
+	ldh	r3,r30,-96
 	sub	r5,r0,r3
-	ldw	r4,r30,-112
-	ldw	r3,r30,-108
+	ldw	r4,r30,-104
+	ldw	r3,r30,-100
 	slli	r8,r5,0
 	srli	r8,r8,0
 	addi	r5,r8,-32
-	blt	r5,r0,.Lj4586
+	blt	r5,r0,.Lj4584
 	li	r7,0
 	srl	r6,r3,r5
-	jal	r0,.Lj4587
-.Lj4586:
+	jal	r0,.Lj4585
+.Lj4584:
 	li	r5,31
 	slli	r9,r3,1
 	sub	r5,r5,r8
@@ -41671,62 +41648,62 @@ SYSTEM_$$_STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING:
 	sll	r9,r9,r5
 	srl	r7,r3,r8
 	or	r6,r6,r9
-.Lj4587:
-	addi	r4,r30,-240
+.Lj4585:
+	addi	r4,r30,-224
 	addi	r3,r30,0
 	addi	r8,r0,0
 	addi	r5,r0,0
 	call	SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_GEN_DIGITS_64$hRjsHKrtwshB
-	sth	r30,r1,-160
-	ldhu	r3,r30,-160
-	sth	r30,r3,-148
-	stw	r30,r0,-200
-	ldh	r4,r30,-104
+	sth	r30,r1,-144
+	ldhu	r3,r30,-144
+	sth	r30,r3,-132
+	stw	r30,r0,-184
+	ldh	r4,r30,-96
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj4588
-	jal	r0,.Lj4589
-.Lj4588:
-	ldhu	r3,r30,-104
-	sth	r30,r3,-192
-	ldh	r3,r30,-104
+	bne	r3,r0,.Lj4586
+	jal	r0,.Lj4587
+.Lj4586:
+	ldhu	r3,r30,-96
+	sth	r30,r3,-176
+	ldh	r3,r30,-96
 	sub	r4,r0,r3
 	addi	r5,r0,1
 	addi	r3,r0,0
 	slli	r3,r4,0
 	srli	r3,r3,0
 	addi	r4,r3,-32
-	blt	r4,r0,.Lj4593
+	blt	r4,r0,.Lj4591
 	li	r6,0
 	sll	r4,r5,r4
-	jal	r0,.Lj4594
-.Lj4593:
+	jal	r0,.Lj4592
+.Lj4591:
 	sll	r6,r5,r3
 	li	r4,0
-.Lj4594:
+.Lj4592:
 	addi	r3,r6,-1
 	sltu	r5,r6,r3
 	sub	r4,r4,r5
-	stw	r30,r3,-188
-	stw	r30,r4,-184
-	ldw	r5,r30,-112
-	ldw	r3,r30,-108
-	ldw	r6,r30,-188
-	ldw	r4,r30,-184
+	stw	r30,r3,-172
+	stw	r30,r4,-168
+	ldw	r5,r30,-104
+	ldw	r3,r30,-100
+	ldw	r6,r30,-172
+	ldw	r4,r30,-168
 	and	r5,r5,r6
 	and	r3,r3,r4
-	stw	r30,r5,-180
-	stw	r30,r3,-176
-	jal	r0,.Lj4596
-.Lj4595:
-	ldw	r3,r30,-180
-	ldw	r5,r30,-176
+	stw	r30,r5,-164
+	stw	r30,r3,-160
+	jal	r0,.Lj4594
+.Lj4593:
+	ldw	r3,r30,-164
+	ldw	r5,r30,-160
 	srli	r4,r3,30
 	slli	r3,r3,2
 	slli	r5,r5,2
 	or	r5,r5,r4
-	ldw	r4,r30,-180
-	ldw	r6,r30,-176
+	ldw	r4,r30,-164
+	ldw	r6,r30,-160
 	add	r3,r4,r3
 	sltu	r7,r3,r4
 	addi	r4,r3,0
@@ -41736,33 +41713,33 @@ SYSTEM_$$_STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING:
 	sltu	r7,r8,r6
 	sub	r7,r3,r7
 	add	r6,r8,r5
-	stw	r30,r4,-180
-	stw	r30,r6,-176
-	ldw	r4,r30,-188
-	ldw	r5,r30,-184
+	stw	r30,r4,-164
+	stw	r30,r6,-160
+	ldw	r4,r30,-172
+	ldw	r5,r30,-168
 	slli	r3,r5,31
 	srli	r4,r4,1
 	srli	r5,r5,1
 	or	r4,r4,r3
-	stw	r30,r4,-188
-	stw	r30,r5,-184
-	ldh	r3,r30,-192
+	stw	r30,r4,-172
+	stw	r30,r5,-168
+	ldh	r3,r30,-176
 	addi	r3,r3,1
 	slli	r3,r3,16
 	srai	r3,r3,16
-	sth	r30,r3,-192
-	ldh	r3,r30,-192
+	sth	r30,r3,-176
+	ldh	r3,r30,-176
 	sub	r5,r0,r3
-	ldw	r3,r30,-180
-	ldw	r4,r30,-176
+	ldw	r3,r30,-164
+	ldw	r4,r30,-160
 	slli	r9,r5,0
 	srli	r9,r9,0
 	addi	r8,r9,-32
-	blt	r8,r0,.Lj4598
+	blt	r8,r0,.Lj4596
 	li	r7,0
 	srl	r5,r4,r8
-	jal	r0,.Lj4599
-.Lj4598:
+	jal	r0,.Lj4597
+.Lj4596:
 	li	r8,31
 	slli	r6,r4,1
 	sub	r8,r8,r9
@@ -41770,245 +41747,245 @@ SYSTEM_$$_STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING:
 	sll	r6,r6,r8
 	srl	r7,r4,r9
 	or	r5,r5,r6
-.Lj4599:
+.Lj4597:
 	andi	r3,r5,255
-	ldhu	r4,r30,-160
+	ldhu	r4,r30,-144
 	add	r4,r30,r4
-	stb	r4,r3,-240
-	ldw	r5,r30,-180
-	ldw	r4,r30,-176
-	ldw	r6,r30,-188
-	ldw	r3,r30,-184
+	stb	r4,r3,-224
+	ldw	r5,r30,-164
+	ldw	r4,r30,-160
+	ldw	r6,r30,-172
+	ldw	r3,r30,-168
 	and	r5,r5,r6
 	and	r3,r4,r3
-	stw	r30,r5,-180
-	stw	r30,r3,-176
-	ldh	r3,r30,-160
+	stw	r30,r5,-164
+	stw	r30,r3,-160
+	ldh	r3,r30,-144
 	addi	r3,r3,1
 	slli	r3,r3,16
 	srai	r3,r3,16
-	sth	r30,r3,-160
-.Lj4596:
-	ldh	r4,r30,-192
+	sth	r30,r3,-144
+.Lj4594:
+	ldh	r4,r30,-176
 	addi	r3,r0,-29
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj4600
-	jal	r0,.Lj4601
-.Lj4600:
-	ldh	r3,r30,-160
-	ldh	r4,r30,-156
+	bne	r3,r0,.Lj4598
+	jal	r0,.Lj4599
+.Lj4598:
+	ldh	r3,r30,-144
+	ldh	r4,r30,-140
 	addi	r4,r4,1
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj4602
-	jal	r0,.Lj4601
-.Lj4602:
-	ldw	r3,r30,-180
-	ldw	r4,r30,-176
-	bne	r0,r4,.Lj4604
-	bne	r0,r3,.Lj4604
-	jal	r0,.Lj4605
-.Lj4604:
+	bne	r3,r0,.Lj4600
+	jal	r0,.Lj4599
+.Lj4600:
+	ldw	r3,r30,-164
+	ldw	r4,r30,-160
+	bne	r0,r4,.Lj4602
+	bne	r0,r3,.Lj4602
 	jal	r0,.Lj4603
-.Lj4605:
+.Lj4602:
 	jal	r0,.Lj4601
 .Lj4603:
-	jal	r0,.Lj4595
+	jal	r0,.Lj4599
 .Lj4601:
-	jal	r0,.Lj4597
-.Lj4597:
-	ldh	r3,r30,-160
-	ldh	r4,r30,-156
+	jal	r0,.Lj4593
+.Lj4599:
+	jal	r0,.Lj4595
+.Lj4595:
+	ldh	r3,r30,-144
+	ldh	r4,r30,-140
 	addi	r4,r4,1
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj4606
+	bne	r3,r0,.Lj4604
+	jal	r0,.Lj4605
+.Lj4604:
+	ldw	r4,r30,-164
+	ldw	r3,r30,-160
+	bne	r0,r3,.Lj4606
+	bne	r0,r4,.Lj4606
 	jal	r0,.Lj4607
 .Lj4606:
-	ldw	r4,r30,-180
-	ldw	r3,r30,-176
-	bne	r0,r3,.Lj4608
-	bne	r0,r4,.Lj4608
-	jal	r0,.Lj4609
-.Lj4608:
 	addi	r3,r0,1
+	jal	r0,.Lj4608
+.Lj4607:
+	addi	r3,r0,0
+.Lj4608:
+	stw	r30,r3,-184
+	jal	r0,.Lj4590
+.Lj4605:
+	ldw	r3,r30,-172
+	stw	r30,r3,-180
+	ldw	r3,r30,-164
+	stw	r30,r3,-184
 	jal	r0,.Lj4610
 .Lj4609:
-	addi	r3,r0,0
-.Lj4610:
-	stw	r30,r3,-200
-	jal	r0,.Lj4592
-.Lj4607:
-	ldw	r3,r30,-188
-	stw	r30,r3,-196
-	ldw	r3,r30,-180
-	stw	r30,r3,-200
-	jal	r0,.Lj4612
-.Lj4611:
-	ldw	r3,r30,-200
+	ldw	r3,r30,-184
 	slli	r4,r3,2
-	ldw	r3,r30,-200
+	ldw	r3,r30,-184
 	add	r3,r3,r4
-	stw	r30,r3,-200
-	ldw	r3,r30,-196
+	stw	r30,r3,-184
+	ldw	r3,r30,-180
 	srli	r3,r3,1
-	stw	r30,r3,-196
-	ldh	r3,r30,-192
+	stw	r30,r3,-180
+	ldh	r3,r30,-176
 	addi	r3,r3,1
 	slli	r3,r3,16
 	srai	r3,r3,16
-	sth	r30,r3,-192
-	ldh	r3,r30,-192
+	sth	r30,r3,-176
+	ldh	r3,r30,-176
 	sub	r4,r0,r3
-	ldw	r3,r30,-200
+	ldw	r3,r30,-184
 	slli	r4,r4,0
 	srli	r4,r4,0
 	srl	r3,r3,r4
 	andi	r3,r3,255
-	ldhu	r4,r30,-160
+	ldhu	r4,r30,-144
 	add	r4,r30,r4
-	stb	r4,r3,-240
-	ldw	r3,r30,-200
-	ldw	r4,r30,-196
+	stb	r4,r3,-224
+	ldw	r3,r30,-184
+	ldw	r4,r30,-180
 	and	r3,r4,r3
-	stw	r30,r3,-200
-	ldh	r3,r30,-160
+	stw	r30,r3,-184
+	ldh	r3,r30,-144
 	addi	r3,r3,1
 	slli	r3,r3,16
 	srai	r3,r3,16
-	sth	r30,r3,-160
-.Lj4612:
-	ldh	r3,r30,-160
-	ldh	r4,r30,-156
+	sth	r30,r3,-144
+.Lj4610:
+	ldh	r3,r30,-144
+	ldh	r4,r30,-140
 	addi	r4,r4,1
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj4614
-	jal	r0,.Lj4615
-.Lj4614:
-	ldw	r3,r30,-200
-	sne	r3,r3,r0
-	bne	r3,r0,.Lj4616
-	jal	r0,.Lj4615
-.Lj4616:
-	jal	r0,.Lj4611
-.Lj4615:
+	bne	r3,r0,.Lj4612
 	jal	r0,.Lj4613
-.Lj4613:
-	jal	r0,.Lj4592
-.Lj4592:
-.Lj4589:
-	ldw	r3,r30,-200
+.Lj4612:
+	ldw	r3,r30,-184
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj4617
-	jal	r0,.Lj4618
-.Lj4617:
-	ldh	r3,r30,-160
-	ldh	r4,r30,-156
+	bne	r3,r0,.Lj4614
+	jal	r0,.Lj4613
+.Lj4614:
+	jal	r0,.Lj4609
+.Lj4613:
+	jal	r0,.Lj4611
+.Lj4611:
+	jal	r0,.Lj4590
+.Lj4590:
+.Lj4587:
+	ldw	r3,r30,-184
+	sne	r3,r3,r0
+	bne	r3,r0,.Lj4615
+	jal	r0,.Lj4616
+.Lj4615:
+	ldh	r3,r30,-144
+	ldh	r4,r30,-140
 	addi	r4,r4,1
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj4619
-	jal	r0,.Lj4618
-.Lj4619:
-	ldh	r3,r30,-156
+	bne	r3,r0,.Lj4617
+	jal	r0,.Lj4616
+.Lj4617:
+	ldh	r3,r30,-140
 	addi	r3,r3,2
 	slli	r3,r3,16
 	srai	r3,r3,16
-	sth	r30,r3,-160
-	ldh	r3,r30,-156
+	sth	r30,r3,-144
+	ldh	r3,r30,-140
 	addi	r4,r3,1
 	addi	r3,r0,1
 	add	r4,r30,r4
-	stb	r4,r3,-240
-.Lj4618:
-	ldh	r4,r30,-160
-	ldh	r3,r30,-156
+	stb	r4,r3,-224
+.Lj4616:
+	ldh	r4,r30,-144
+	ldh	r3,r30,-140
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4620
-	jal	r0,.Lj4621
-.Lj4620:
-	addi	r5,r30,-160
-	addi	r4,r30,-240
+	bne	r3,r0,.Lj4618
+	jal	r0,.Lj4619
+.Lj4618:
+	addi	r5,r30,-144
+	addi	r4,r30,-224
 	addi	r3,r30,0
 	addi	r7,r0,1
-	ldh	r6,r30,-156
+	ldh	r6,r30,-140
 	call	SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_ROUND_DIGITS$hoAQT56qravN
-	ldh	r3,r30,-148
+	ldh	r3,r30,-132
 	add	r3,r3,r1
 	slli	r3,r3,16
 	srai	r3,r3,16
-	sth	r30,r3,-148
-.Lj4621:
+	sth	r30,r3,-132
+.Lj4619:
 	ldh	r4,r30,-60
 	addi	r3,r0,0
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj4622
-	jal	r0,.Lj4623
-.Lj4622:
+	bne	r3,r0,.Lj4620
+	jal	r0,.Lj4621
+.Lj4620:
 	ldh	r3,r30,-60
 	slli	r3,r3,16
 	srli	r3,r3,16
 	sth	r29,r3,0
-	ldh	r4,r30,-120
-	ldh	r3,r30,-148
+	ldh	r4,r30,-108
+	ldh	r3,r30,-132
 	sub	r3,r3,r4
 	slli	r9,r3,16
 	srai	r9,r9,16
-	ldh	r8,r30,-160
-	addi	r7,r30,-240
-	ldbu	r6,r30,-172
+	ldh	r8,r30,-144
+	addi	r7,r30,-224
+	ldbu	r6,r30,-156
 	ldw	r4,r30,-76
 	addi	r3,r30,0
 	ldh	r10,r30,-56
 	ldw	r5,r30,-80
 	call	SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_TRY_RETURN_FIXED$hbUemESu7qEE
-	bne	r1,r0,.Lj4624
+	bne	r1,r0,.Lj4622
+	jal	r0,.Lj4623
+.Lj4622:
+	jal	r0,.Lj4510
+.Lj4623:
+.Lj4621:
+	ldh	r4,r30,-144
+	ldh	r3,r30,-152
+	sgt	r3,r4,r3
+	bne	r3,r0,.Lj4624
 	jal	r0,.Lj4625
 .Lj4624:
-	jal	r0,.Lj4512
-.Lj4625:
-.Lj4623:
-	ldh	r4,r30,-160
-	ldh	r3,r30,-168
-	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4626
-	jal	r0,.Lj4627
-.Lj4626:
-	addi	r5,r30,-160
-	addi	r4,r30,-240
+	addi	r5,r30,-144
+	addi	r4,r30,-224
 	addi	r3,r30,0
 	addi	r7,r0,0
-	ldh	r6,r30,-168
+	ldh	r6,r30,-152
 	call	SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_ROUND_DIGITS$hoAQT56qravN
-	ldh	r3,r30,-148
+	ldh	r3,r30,-132
 	add	r3,r3,r1
 	slli	r3,r3,16
 	srai	r3,r3,16
-	sth	r30,r3,-148
-.Lj4627:
+	sth	r30,r3,-132
+.Lj4625:
 	ldh	r3,r30,-56
 	slli	r3,r3,16
 	srli	r3,r3,16
 	sth	r29,r3,4
-	ldh	r3,r30,-152
+	ldh	r3,r30,-136
 	slli	r3,r3,16
 	srli	r3,r3,16
 	sth	r29,r3,0
-	ldh	r3,r30,-120
-	ldh	r4,r30,-148
+	ldh	r3,r30,-108
+	ldh	r4,r30,-132
 	sub	r3,r4,r3
 	addi	r3,r3,-1
 	slli	r10,r3,16
 	srai	r10,r10,16
-	ldh	r8,r30,-160
-	addi	r7,r30,-240
-	ldbu	r6,r30,-172
+	ldh	r8,r30,-144
+	addi	r7,r30,-224
+	ldbu	r6,r30,-156
 	ldw	r4,r30,-76
 	addi	r3,r30,0
-	ldh	r9,r30,-168
+	ldh	r9,r30,-152
 	ldw	r5,r30,-80
 	call	SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_EXPONENTIAL$hZ7j4WtHYkbG
-.Lj4512:
-	ldw	r30,r29,268
-	ldw	r31,r29,272
-	addi	r29,r29,276
+.Lj4510:
+	ldw	r30,r29,252
+	ldw	r31,r29,256
+	addi	r29,r29,260
 	jalr	r0,r31
 .Lc901:
 .Le171:
@@ -42062,9 +42039,9 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_K_COMP$hFNBR
 	ldh	r4,r30,-80
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4628
-	jal	r0,.Lj4629
-.Lj4628:
+	bne	r3,r0,.Lj4626
+	jal	r0,.Lj4627
+.Lj4626:
 	ldh	r3,r30,-84
 	ldh	r3,r30,-84
 	fcvt.d.w	r4,r3
@@ -42077,16 +42054,16 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_K_COMP$hFNBR
 	addi	r7,r8,0
 	feq.d	r3,r4,r6
 	xori	r3,r3,1
-	bne	r3,r0,.Lj4630
-	jal	r0,.Lj4631
-.Lj4630:
+	bne	r3,r0,.Lj4628
+	jal	r0,.Lj4629
+.Lj4628:
 	ldh	r3,r30,-84
 	addi	r3,r3,1
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-84
-.Lj4631:
 .Lj4629:
+.Lj4627:
 	ldhu	r3,r30,-84
 	sth	r30,r3,-68
 	ldh	r1,r30,-68
@@ -42121,13 +42098,13 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_COUNT_LEADIN
 	stw	r30,r4,-72
 	ldw	r4,r30,-72
 	seq	r4,r4,r0
-	bne	r4,r0,.Lj4633
-	jal	r0,.Lj4634
-.Lj4633:
+	bne	r4,r0,.Lj4631
+	jal	r0,.Lj4632
+.Lj4631:
 	ldw	r4,r30,-60
 	stw	r30,r4,-72
 	addi	r3,r0,0
-.Lj4634:
+.Lj4632:
 	ldw	r4,r30,-72
 	lui	r5,15
 	ori	r5,r5,4095
@@ -42193,19 +42170,19 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_SPECI
 	sth	r30,r3,-84
 	ldh	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj4636
-	jal	r0,.Lj4637
-.Lj4636:
+	bne	r3,r0,.Lj4634
+	jal	r0,.Lj4635
+.Lj4634:
 	ldhu	r3,r30,-84
 	sth	r30,r3,-88
-	jal	r0,.Lj4638
-.Lj4637:
+	jal	r0,.Lj4636
+.Lj4635:
 	ldh	r3,r30,-84
 	addi	r3,r3,1
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-88
-.Lj4638:
+.Lj4636:
 	ldh	r4,r30,-88
 	addi	r3,r0,255
 	sub	r3,r3,r4
@@ -42221,25 +42198,25 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_SPECI
 	ldh	r3,r30,-92
 	ldh	r4,r30,-96
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj4639
-	jal	r0,.Lj4640
-.Lj4639:
+	bne	r3,r0,.Lj4637
+	jal	r0,.Lj4638
+.Lj4637:
 	ldhu	r3,r30,-96
 	sth	r30,r3,-92
-.Lj4640:
+.Lj4638:
 	ldh	r4,r30,-92
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4641
-	jal	r0,.Lj4642
-.Lj4641:
+	bne	r3,r0,.Lj4639
+	jal	r0,.Lj4640
+.Lj4639:
 	ldh	r4,r30,-92
 	ldh	r3,r30,-88
 	add	r3,r3,r4
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-88
-.Lj4642:
+.Lj4640:
 	ldh	r5,r30,-88
 	ldw	r3,r30,-56
 	ldw	r4,r30,-72
@@ -42249,9 +42226,9 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_SPECI
 	ldh	r4,r30,-92
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4643
-	jal	r0,.Lj4644
-.Lj4643:
+	bne	r3,r0,.Lj4641
+	jal	r0,.Lj4642
+.Lj4641:
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-80
 	add	r3,r3,r4
@@ -42264,39 +42241,39 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_SPECI
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-80
-.Lj4644:
+.Lj4642:
 	ldh	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj4645
-	jal	r0,.Lj4646
-.Lj4645:
+	bne	r3,r0,.Lj4643
+	jal	r0,.Lj4644
+.Lj4643:
 	ldh	r4,r30,-60
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4647
-	jal	r0,.Lj4648
-.Lj4647:
+	bne	r3,r0,.Lj4645
+	jal	r0,.Lj4646
+.Lj4645:
 	ldw	r4,r30,-56
 	ldbu	r5,r30,-80
 	addi	r3,r0,43
 	add	r4,r4,r5
 	stb	r4,r3,0
-	jal	r0,.Lj4649
-.Lj4648:
+	jal	r0,.Lj4647
+.Lj4646:
 	ldw	r4,r30,-56
 	ldbu	r5,r30,-80
 	addi	r3,r0,45
 	add	r4,r4,r5
 	stb	r4,r3,0
-.Lj4649:
+.Lj4647:
 	ldh	r3,r30,-80
 	addi	r3,r3,1
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-80
-.Lj4646:
-	jal	r0,.Lj4651
-.Lj4650:
+.Lj4644:
+	jal	r0,.Lj4649
+.Lj4648:
 	ldw	r3,r30,-56
 	ldh	r5,r30,-80
 	ldh	r4,r30,-84
@@ -42315,13 +42292,13 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_SPECI
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-84
-.Lj4651:
+.Lj4649:
 	ldh	r4,r30,-84
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4650
-	jal	r0,.Lj4652
-.Lj4652:
+	bne	r3,r0,.Lj4648
+	jal	r0,.Lj4650
+.Lj4650:
 	ldw	r30,r29,96
 	ldw	r31,r29,100
 	addi	r29,r29,104
@@ -42357,15 +42334,15 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_EXPON
 	slt	r3,r4,r3
 	stb	r30,r3,-96
 	ldbu	r3,r30,-96
-	bne	r3,r0,.Lj4653
-	jal	r0,.Lj4654
-.Lj4653:
+	bne	r3,r0,.Lj4651
+	jal	r0,.Lj4652
+.Lj4651:
 	ldh	r3,r30,-76
 	sub	r3,r0,r3
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-76
-.Lj4654:
+.Lj4652:
 	ldh	r6,r30,-76
 	addi	r4,r30,-160
 	ldw	r3,r30,-92
@@ -42376,16 +42353,16 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_EXPON
 	ldh	r3,r30,-112
 	ldh	r4,r30,-80
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj4655
-	jal	r0,.Lj4656
-.Lj4655:
+	bne	r3,r0,.Lj4653
+	jal	r0,.Lj4654
+.Lj4653:
 	ldhu	r3,r30,-80
 	sth	r30,r3,-108
-	jal	r0,.Lj4657
-.Lj4656:
+	jal	r0,.Lj4655
+.Lj4654:
 	ldhu	r3,r30,-112
 	sth	r30,r3,-108
-.Lj4657:
+.Lj4655:
 	ldh	r3,r30,-72
 	addi	r3,r3,3
 	slli	r4,r3,16
@@ -42398,15 +42375,15 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_EXPON
 	ldh	r3,r30,-72
 	addi	r4,r0,1
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj4658
-	jal	r0,.Lj4659
-.Lj4658:
+	bne	r3,r0,.Lj4656
+	jal	r0,.Lj4657
+.Lj4656:
 	ldh	r3,r30,-108
 	addi	r3,r3,1
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-108
-.Lj4659:
+.Lj4657:
 	ldh	r3,r30,-108
 	addi	r4,r0,255
 	sub	r3,r4,r3
@@ -42422,25 +42399,25 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_EXPON
 	ldh	r3,r30,-116
 	ldh	r4,r30,-120
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj4660
-	jal	r0,.Lj4661
-.Lj4660:
+	bne	r3,r0,.Lj4658
+	jal	r0,.Lj4659
+.Lj4658:
 	ldhu	r3,r30,-120
 	sth	r30,r3,-116
-.Lj4661:
+.Lj4659:
 	ldh	r4,r30,-116
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4662
-	jal	r0,.Lj4663
-.Lj4662:
+	bne	r3,r0,.Lj4660
+	jal	r0,.Lj4661
+.Lj4660:
 	ldh	r3,r30,-116
 	ldh	r4,r30,-108
 	add	r4,r4,r3
 	slli	r4,r4,16
 	srai	r4,r4,16
 	sth	r30,r4,-108
-.Lj4663:
+.Lj4661:
 	ldh	r5,r30,-108
 	ldw	r3,r30,-56
 	ldw	r4,r30,-88
@@ -42450,9 +42427,9 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_EXPON
 	ldh	r4,r30,-116
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4664
-	jal	r0,.Lj4665
-.Lj4664:
+	bne	r3,r0,.Lj4662
+	jal	r0,.Lj4663
+.Lj4662:
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-100
 	add	r3,r3,r4
@@ -42465,24 +42442,24 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_EXPON
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-100
-.Lj4665:
+.Lj4663:
 	ldbu	r3,r30,-60
-	bne	r3,r0,.Lj4666
-	jal	r0,.Lj4667
-.Lj4666:
+	bne	r3,r0,.Lj4664
+	jal	r0,.Lj4665
+.Lj4664:
 	ldw	r5,r30,-56
 	ldbu	r4,r30,-100
 	addi	r3,r0,45
 	add	r4,r5,r4
 	stb	r4,r3,0
-	jal	r0,.Lj4668
-.Lj4667:
+	jal	r0,.Lj4666
+.Lj4665:
 	ldw	r4,r30,-56
 	ldbu	r5,r30,-100
 	addi	r3,r0,32
 	add	r4,r4,r5
 	stb	r4,r3,0
-.Lj4668:
+.Lj4666:
 	ldh	r3,r30,-100
 	addi	r3,r3,1
 	slli	r3,r3,16
@@ -42491,9 +42468,9 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_EXPON
 	ldh	r4,r30,-68
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4669
-	jal	r0,.Lj4670
-.Lj4669:
+	bne	r3,r0,.Lj4667
+	jal	r0,.Lj4668
+.Lj4667:
 	ldw	r3,r30,-64
 	ldbu	r3,r3,0
 	addi	r3,r3,48
@@ -42502,14 +42479,14 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_EXPON
 	ldbu	r4,r30,-100
 	add	r4,r5,r4
 	stb	r4,r3,0
-	jal	r0,.Lj4671
-.Lj4670:
+	jal	r0,.Lj4669
+.Lj4668:
 	ldw	r5,r30,-56
 	ldbu	r4,r30,-100
 	addi	r3,r0,48
 	add	r4,r5,r4
 	stb	r4,r3,0
-.Lj4671:
+.Lj4669:
 	ldh	r3,r30,-100
 	addi	r3,r3,1
 	slli	r3,r3,16
@@ -42518,9 +42495,9 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_EXPON
 	ldh	r4,r30,-72
 	addi	r3,r0,1
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4672
-	jal	r0,.Lj4673
-.Lj4672:
+	bne	r3,r0,.Lj4670
+	jal	r0,.Lj4671
+.Lj4670:
 	ldw	r5,r30,-56
 	ldbu	r4,r30,-100
 	addi	r3,r0,46
@@ -42531,11 +42508,11 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_EXPON
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-100
-.Lj4673:
+.Lj4671:
 	addi	r3,r0,1
 	sth	r30,r3,-104
-	jal	r0,.Lj4675
-.Lj4674:
+	jal	r0,.Lj4673
+.Lj4672:
 	ldw	r3,r30,-64
 	ldhu	r4,r30,-104
 	add	r3,r3,r4
@@ -42556,23 +42533,23 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_EXPON
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-104
-.Lj4675:
+.Lj4673:
 	ldh	r3,r30,-104
 	ldh	r4,r30,-68
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj4677
-	jal	r0,.Lj4678
-.Lj4677:
+	bne	r3,r0,.Lj4675
+	jal	r0,.Lj4676
+.Lj4675:
 	ldh	r4,r30,-104
 	ldh	r3,r30,-72
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj4679
-	jal	r0,.Lj4678
-.Lj4679:
-	jal	r0,.Lj4674
-.Lj4678:
+	bne	r3,r0,.Lj4677
 	jal	r0,.Lj4676
+.Lj4677:
+	jal	r0,.Lj4672
 .Lj4676:
+	jal	r0,.Lj4674
+.Lj4674:
 	ldh	r4,r30,-72
 	ldh	r3,r30,-104
 	sub	r3,r4,r3
@@ -42582,9 +42559,9 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_EXPON
 	ldh	r4,r30,-104
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4680
-	jal	r0,.Lj4681
-.Lj4680:
+	bne	r3,r0,.Lj4678
+	jal	r0,.Lj4679
+.Lj4678:
 	ldw	r4,r30,-56
 	ldbu	r3,r30,-100
 	add	r3,r4,r3
@@ -42597,7 +42574,7 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_EXPON
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-100
-.Lj4681:
+.Lj4679:
 	ldw	r4,r30,-56
 	ldbu	r5,r30,-100
 	addi	r3,r0,69
@@ -42609,22 +42586,22 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_EXPON
 	srai	r3,r3,16
 	sth	r30,r3,-100
 	ldbu	r3,r30,-96
-	bne	r3,r0,.Lj4682
-	jal	r0,.Lj4683
-.Lj4682:
+	bne	r3,r0,.Lj4680
+	jal	r0,.Lj4681
+.Lj4680:
 	ldw	r4,r30,-56
 	ldbu	r5,r30,-100
 	addi	r3,r0,45
 	add	r4,r4,r5
 	stb	r4,r3,0
-	jal	r0,.Lj4684
-.Lj4683:
+	jal	r0,.Lj4682
+.Lj4681:
 	ldw	r4,r30,-56
 	ldbu	r5,r30,-100
 	addi	r3,r0,43
 	add	r4,r4,r5
 	stb	r4,r3,0
-.Lj4684:
+.Lj4682:
 	ldh	r3,r30,-100
 	addi	r3,r3,1
 	slli	r3,r3,16
@@ -42639,9 +42616,9 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_EXPON
 	ldh	r4,r30,-104
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4685
-	jal	r0,.Lj4686
-.Lj4685:
+	bne	r3,r0,.Lj4683
+	jal	r0,.Lj4684
+.Lj4683:
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-100
 	add	r3,r3,r4
@@ -42654,19 +42631,19 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_EXPON
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-100
-.Lj4686:
+.Lj4684:
 	ldh	r3,r30,-112
 	addi	r3,r3,-1
 	slli	r4,r3,16
 	srai	r4,r4,16
 	addi	r3,r0,0
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj4687
-	jal	r0,.Lj4688
-.Lj4687:
+	bne	r3,r0,.Lj4685
+	jal	r0,.Lj4686
+.Lj4685:
 	addi	r3,r0,-1
 	sth	r30,r3,-104
-.Lj4689:
+.Lj4687:
 	ldh	r3,r30,-104
 	addi	r3,r3,1
 	slli	r3,r3,16
@@ -42688,10 +42665,10 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_RETURN_EXPON
 	sth	r30,r3,-100
 	ldh	r3,r30,-104
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj4691
-	jal	r0,.Lj4689
-.Lj4691:
-.Lj4688:
+	bne	r3,r0,.Lj4689
+	jal	r0,.Lj4687
+.Lj4689:
+.Lj4686:
 	ldw	r30,r29,160
 	ldw	r31,r29,164
 	addi	r29,r29,168
@@ -42731,29 +42708,29 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_TRY_RETURN_F
 	ldh	r4,r30,-152
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj4692
-	jal	r0,.Lj4693
-.Lj4692:
+	bne	r3,r0,.Lj4690
+	jal	r0,.Lj4691
+.Lj4690:
 	sth	r30,r0,-68
-	jal	r0,.Lj4694
-.Lj4693:
+	jal	r0,.Lj4692
+.Lj4691:
 	ldh	r4,r30,-68
 	ldh	r3,r30,-152
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj4695
-	jal	r0,.Lj4696
-.Lj4695:
+	bne	r3,r0,.Lj4693
+	jal	r0,.Lj4694
+.Lj4693:
 	ldh	r4,r30,-68
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4697
-	jal	r0,.Lj4698
-.Lj4697:
+	bne	r3,r0,.Lj4695
+	jal	r0,.Lj4696
+.Lj4695:
 	ldh	r5,r30,-68
 	addi	r4,r30,-136
 	ldw	r3,r30,-64
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj4698:
+.Lj4696:
 	addi	r5,r30,-68
 	addi	r4,r30,-136
 	ldw	r3,r30,-88
@@ -42767,30 +42744,30 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_TRY_RETURN_F
 	sth	r30,r3,-72
 	addi	r3,r0,1
 	stb	r30,r3,-96
-.Lj4696:
 .Lj4694:
+.Lj4692:
 	ldh	r4,r30,-72
 	addi	r3,r0,0
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj4699
-	jal	r0,.Lj4700
-.Lj4700:
+	bne	r3,r0,.Lj4697
+	jal	r0,.Lj4698
+.Lj4698:
 	ldh	r3,r30,-68
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj4699
-	jal	r0,.Lj4701
-.Lj4699:
+	bne	r3,r0,.Lj4697
+	jal	r0,.Lj4699
+.Lj4697:
 	sth	r30,r0,-164
 	addi	r3,r0,1
 	sth	r30,r3,-168
-	jal	r0,.Lj4702
-.Lj4701:
+	jal	r0,.Lj4700
+.Lj4699:
 	ldh	r4,r30,-68
 	ldh	r3,r30,-72
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj4703
-	jal	r0,.Lj4704
-.Lj4703:
+	bne	r3,r0,.Lj4701
+	jal	r0,.Lj4702
+.Lj4701:
 	ldhu	r3,r30,-68
 	sth	r30,r3,-164
 	ldh	r4,r30,-68
@@ -42799,37 +42776,37 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_TRY_RETURN_F
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-168
-	jal	r0,.Lj4705
-.Lj4704:
+	jal	r0,.Lj4703
+.Lj4702:
 	ldhu	r3,r30,-72
 	sth	r30,r3,-164
 	sth	r30,r0,-168
-.Lj4705:
-.Lj4702:
+.Lj4703:
+.Lj4700:
 	ldh	r4,r30,-72
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj4706
-	jal	r0,.Lj4707
-.Lj4706:
+	bne	r3,r0,.Lj4704
+	jal	r0,.Lj4705
+.Lj4704:
 	ldh	r3,r30,-72
 	sub	r3,r0,r3
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-172
-	jal	r0,.Lj4708
-.Lj4707:
+	jal	r0,.Lj4706
+.Lj4705:
 	sth	r30,r0,-172
-.Lj4708:
+.Lj4706:
 	ldh	r4,r30,-172
 	ldh	r3,r30,-80
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4709
-	jal	r0,.Lj4710
-.Lj4709:
+	bne	r3,r0,.Lj4707
+	jal	r0,.Lj4708
+.Lj4707:
 	ldhu	r3,r30,-80
 	sth	r30,r3,-172
-.Lj4710:
+.Lj4708:
 	ldh	r4,r30,-68
 	ldh	r3,r30,-164
 	sub	r3,r4,r3
@@ -42855,9 +42832,9 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_TRY_RETURN_F
 	ldh	r4,r30,-80
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4711
-	jal	r0,.Lj4712
-.Lj4711:
+	bne	r3,r0,.Lj4709
+	jal	r0,.Lj4710
+.Lj4709:
 	ldh	r4,r30,-172
 	ldh	r3,r30,-176
 	add	r3,r3,r4
@@ -42871,7 +42848,7 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_TRY_RETURN_F
 	slli	r4,r4,16
 	srai	r4,r4,16
 	sth	r30,r4,-148
-.Lj4712:
+.Lj4710:
 	ldh	r3,r30,-148
 	addi	r4,r0,255
 	sub	r3,r4,r3
@@ -42881,11 +42858,11 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_TRY_RETURN_F
 	ldh	r4,r30,-160
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj4713
-	jal	r0,.Lj4714
-.Lj4713:
-	jal	r0,.Lj4524
-.Lj4714:
+	bne	r3,r0,.Lj4711
+	jal	r0,.Lj4712
+.Lj4711:
+	jal	r0,.Lj4522
+.Lj4712:
 	ldh	r4,r30,-76
 	ldh	r3,r30,-148
 	sub	r3,r4,r3
@@ -42895,25 +42872,25 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_TRY_RETURN_F
 	ldh	r4,r30,-156
 	ldh	r3,r30,-160
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4715
-	jal	r0,.Lj4716
-.Lj4715:
+	bne	r3,r0,.Lj4713
+	jal	r0,.Lj4714
+.Lj4713:
 	ldhu	r3,r30,-160
 	sth	r30,r3,-156
-.Lj4716:
+.Lj4714:
 	ldh	r4,r30,-156
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4717
-	jal	r0,.Lj4718
-.Lj4717:
+	bne	r3,r0,.Lj4715
+	jal	r0,.Lj4716
+.Lj4715:
 	ldh	r4,r30,-156
 	ldh	r3,r30,-148
 	add	r3,r3,r4
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-148
-.Lj4718:
+.Lj4716:
 	ldh	r5,r30,-148
 	ldw	r3,r30,-56
 	ldw	r4,r30,-84
@@ -42923,9 +42900,9 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_TRY_RETURN_F
 	ldh	r4,r30,-156
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4719
-	jal	r0,.Lj4720
-.Lj4719:
+	bne	r3,r0,.Lj4717
+	jal	r0,.Lj4718
+.Lj4717:
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-140
 	add	r3,r3,r4
@@ -42938,11 +42915,11 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_TRY_RETURN_F
 	slli	r4,r4,16
 	srai	r4,r4,16
 	sth	r30,r4,-140
-.Lj4720:
+.Lj4718:
 	ldbu	r3,r30,-60
-	bne	r3,r0,.Lj4721
-	jal	r0,.Lj4722
-.Lj4721:
+	bne	r3,r0,.Lj4719
+	jal	r0,.Lj4720
+.Lj4719:
 	ldw	r5,r30,-56
 	ldbu	r4,r30,-140
 	addi	r3,r0,45
@@ -42953,14 +42930,14 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_TRY_RETURN_F
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-140
-.Lj4722:
+.Lj4720:
 	sth	r30,r0,-144
 	ldbu	r3,r30,-96
-	bne	r3,r0,.Lj4723
+	bne	r3,r0,.Lj4721
+	jal	r0,.Lj4722
+.Lj4721:
 	jal	r0,.Lj4724
 .Lj4723:
-	jal	r0,.Lj4726
-.Lj4725:
 	ldhu	r3,r30,-144
 	add	r3,r30,r3
 	ldbu	r3,r3,-136
@@ -42985,17 +42962,17 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_TRY_RETURN_F
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-164
-.Lj4726:
+.Lj4724:
 	ldh	r4,r30,-164
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4725
-	jal	r0,.Lj4727
-.Lj4727:
+	bne	r3,r0,.Lj4723
+	jal	r0,.Lj4725
+.Lj4725:
+	jal	r0,.Lj4726
+.Lj4722:
 	jal	r0,.Lj4728
-.Lj4724:
-	jal	r0,.Lj4730
-.Lj4729:
+.Lj4727:
 	ldw	r4,r30,-64
 	ldhu	r3,r30,-144
 	add	r3,r4,r3
@@ -43021,20 +42998,20 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_TRY_RETURN_F
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-164
-.Lj4730:
+.Lj4728:
 	ldh	r4,r30,-164
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4729
-	jal	r0,.Lj4731
-.Lj4731:
-.Lj4728:
+	bne	r3,r0,.Lj4727
+	jal	r0,.Lj4729
+.Lj4729:
+.Lj4726:
 	ldh	r4,r30,-168
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4732
-	jal	r0,.Lj4733
-.Lj4732:
+	bne	r3,r0,.Lj4730
+	jal	r0,.Lj4731
+.Lj4730:
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-140
 	add	r3,r3,r4
@@ -43047,12 +43024,12 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_TRY_RETURN_F
 	slli	r4,r4,16
 	srai	r4,r4,16
 	sth	r30,r4,-140
-.Lj4733:
+.Lj4731:
 	ldh	r3,r30,-80
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj4734
-	jal	r0,.Lj4735
-.Lj4734:
+	bne	r3,r0,.Lj4732
+	jal	r0,.Lj4733
+.Lj4732:
 	ldw	r4,r30,-56
 	ldbu	r5,r30,-140
 	addi	r3,r0,46
@@ -43066,9 +43043,9 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_TRY_RETURN_F
 	ldh	r4,r30,-172
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4736
-	jal	r0,.Lj4737
-.Lj4736:
+	bne	r3,r0,.Lj4734
+	jal	r0,.Lj4735
+.Lj4734:
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-140
 	add	r3,r3,r4
@@ -43081,13 +43058,13 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_TRY_RETURN_F
 	slli	r4,r4,16
 	srai	r4,r4,16
 	sth	r30,r4,-140
-.Lj4737:
+.Lj4735:
 	ldbu	r3,r30,-96
-	bne	r3,r0,.Lj4738
+	bne	r3,r0,.Lj4736
+	jal	r0,.Lj4737
+.Lj4736:
 	jal	r0,.Lj4739
 .Lj4738:
-	jal	r0,.Lj4741
-.Lj4740:
 	ldhu	r3,r30,-144
 	add	r3,r30,r3
 	ldbu	r3,r3,-136
@@ -43112,17 +43089,17 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_TRY_RETURN_F
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-176
-.Lj4741:
+.Lj4739:
 	ldh	r4,r30,-176
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4740
-	jal	r0,.Lj4742
-.Lj4742:
+	bne	r3,r0,.Lj4738
+	jal	r0,.Lj4740
+.Lj4740:
+	jal	r0,.Lj4741
+.Lj4737:
 	jal	r0,.Lj4743
-.Lj4739:
-	jal	r0,.Lj4745
-.Lj4744:
+.Lj4742:
 	ldw	r3,r30,-64
 	ldhu	r4,r30,-144
 	add	r3,r3,r4
@@ -43148,31 +43125,31 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_TRY_RETURN_F
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-176
-.Lj4745:
+.Lj4743:
 	ldh	r4,r30,-176
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4744
-	jal	r0,.Lj4746
-.Lj4746:
-.Lj4743:
+	bne	r3,r0,.Lj4742
+	jal	r0,.Lj4744
+.Lj4744:
+.Lj4741:
 	ldh	r4,r30,-180
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4747
-	jal	r0,.Lj4748
-.Lj4747:
+	bne	r3,r0,.Lj4745
+	jal	r0,.Lj4746
+.Lj4745:
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-140
 	add	r3,r3,r4
 	ldh	r4,r30,-180
 	addi	r5,r0,48
 	call	SYSTEM_$$_FILLCHAR$formal$LONGINT$ANSICHAR
-.Lj4748:
-.Lj4735:
+.Lj4746:
+.Lj4733:
 	addi	r3,r0,1
 	stb	r30,r3,-92
-.Lj4524:
+.Lj4522:
 	ldbu	r1,r30,-92
 	ldw	r30,r29,180
 	ldw	r31,r29,184
@@ -43239,22 +43216,22 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_ROUND_DIGITS
 	stb	r30,r3,-84
 	ldbu	r3,r30,-68
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj4749
-	jal	r0,.Lj4750
-.Lj4749:
+	bne	r3,r0,.Lj4747
+	jal	r0,.Lj4748
+.Lj4747:
 	ldbu	r3,r30,-84
 	addi	r3,r3,-4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj4751
-	jal	r0,.Lj4752
-.Lj4751:
+	bne	r3,r0,.Lj4749
+	jal	r0,.Lj4750
+.Lj4749:
 	ldh	r3,r30,-80
 	addi	r3,r3,-3
 	ldh	r4,r30,-64
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj4753
-	jal	r0,.Lj4752
-.Lj4753:
+	bne	r3,r0,.Lj4751
+	jal	r0,.Lj4750
+.Lj4751:
 	ldw	r3,r30,-56
 	ldh	r4,r30,-80
 	addi	r4,r4,-2
@@ -43262,15 +43239,15 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_ROUND_DIGITS
 	ldbu	r3,r3,0
 	addi	r4,r0,8
 	sgeu	r3,r3,r4
-	bne	r3,r0,.Lj4754
-	jal	r0,.Lj4755
-.Lj4754:
+	bne	r3,r0,.Lj4752
+	jal	r0,.Lj4753
+.Lj4752:
 	ldh	r3,r30,-80
 	addi	r3,r3,-2
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-92
-.Lj4756:
+.Lj4754:
 	ldh	r3,r30,-92
 	addi	r3,r3,-1
 	slli	r3,r3,16
@@ -43279,57 +43256,57 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_ROUND_DIGITS
 	ldh	r3,r30,-92
 	ldh	r4,r30,-64
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj4759
-	jal	r0,.Lj4760
-.Lj4760:
+	bne	r3,r0,.Lj4757
+	jal	r0,.Lj4758
+.Lj4758:
 	ldw	r3,r30,-56
 	ldhu	r4,r30,-92
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r3,r3,-9
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj4759
-	jal	r0,.Lj4761
-.Lj4759:
-	jal	r0,.Lj4758
-.Lj4761:
+	bne	r3,r0,.Lj4757
+	jal	r0,.Lj4759
+.Lj4757:
 	jal	r0,.Lj4756
-.Lj4758:
+.Lj4759:
+	jal	r0,.Lj4754
+.Lj4756:
 	ldh	r4,r30,-92
 	ldh	r3,r30,-64
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj4762
-	jal	r0,.Lj4763
-.Lj4762:
+	bne	r3,r0,.Lj4760
+	jal	r0,.Lj4761
+.Lj4760:
 	addi	r3,r0,9
 	stb	r30,r3,-84
-.Lj4763:
-.Lj4755:
-.Lj4752:
+.Lj4761:
+.Lj4753:
 .Lj4750:
+.Lj4748:
 	ldbu	r4,r30,-84
 	addi	r3,r0,5
 	sltu	r3,r4,r3
-	bne	r3,r0,.Lj4764
-	jal	r0,.Lj4765
-.Lj4764:
-	jal	r0,.Lj4520
-.Lj4765:
+	bne	r3,r0,.Lj4762
+	jal	r0,.Lj4763
+.Lj4762:
+	jal	r0,.Lj4518
+.Lj4763:
 	ldbu	r3,r30,-84
 	addi	r3,r3,-5
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj4766
-	jal	r0,.Lj4767
-.Lj4766:
+	bne	r3,r0,.Lj4764
+	jal	r0,.Lj4765
+.Lj4764:
 	ldbu	r3,r30,-68
-	bne	r3,r0,.Lj4768
-	jal	r0,.Lj4767
-.Lj4768:
+	bne	r3,r0,.Lj4766
+	jal	r0,.Lj4765
+.Lj4766:
 	ldh	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj4770
-	jal	r0,.Lj4771
-.Lj4771:
+	bne	r3,r0,.Lj4768
+	jal	r0,.Lj4769
+.Lj4769:
 	ldw	r3,r30,-56
 	ldh	r4,r30,-64
 	addi	r4,r4,-1
@@ -43337,16 +43314,16 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_ROUND_DIGITS
 	ldbu	r3,r3,0
 	andi	r3,r3,1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj4770
-	jal	r0,.Lj4772
-.Lj4770:
-	jal	r0,.Lj4769
-.Lj4772:
+	bne	r3,r0,.Lj4768
+	jal	r0,.Lj4770
+.Lj4768:
 	jal	r0,.Lj4767
-.Lj4769:
+.Lj4770:
+	jal	r0,.Lj4765
+.Lj4767:
 	stb	r30,r0,-88
-	jal	r0,.Lj4774
-.Lj4773:
+	jal	r0,.Lj4772
+.Lj4771:
 	ldh	r3,r30,-80
 	addi	r3,r3,-1
 	slli	r3,r3,16
@@ -43357,33 +43334,33 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_ROUND_DIGITS
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	stb	r30,r3,-88
-.Lj4774:
+.Lj4772:
 	ldh	r3,r30,-64
 	addi	r3,r3,1
 	ldh	r4,r30,-80
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4776
-	jal	r0,.Lj4777
-.Lj4776:
-	ldbu	r3,r30,-88
-	seq	r3,r3,r0
-	bne	r3,r0,.Lj4778
-	jal	r0,.Lj4777
-.Lj4778:
-	jal	r0,.Lj4773
-.Lj4777:
+	bne	r3,r0,.Lj4774
 	jal	r0,.Lj4775
-.Lj4775:
+.Lj4774:
 	ldbu	r3,r30,-88
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj4779
+	bne	r3,r0,.Lj4776
+	jal	r0,.Lj4775
+.Lj4776:
+	jal	r0,.Lj4771
+.Lj4775:
+	jal	r0,.Lj4773
+.Lj4773:
+	ldbu	r3,r30,-88
+	seq	r3,r3,r0
+	bne	r3,r0,.Lj4777
+	jal	r0,.Lj4778
+.Lj4777:
+	jal	r0,.Lj4518
+.Lj4778:
+.Lj4765:
 	jal	r0,.Lj4780
 .Lj4779:
-	jal	r0,.Lj4520
-.Lj4780:
-.Lj4767:
-	jal	r0,.Lj4782
-.Lj4781:
 	ldh	r3,r30,-64
 	addi	r3,r3,-1
 	slli	r3,r3,16
@@ -43403,24 +43380,24 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_ROUND_DIGITS
 	ldbu	r3,r3,0
 	addi	r4,r0,10
 	sltu	r3,r3,r4
-	bne	r3,r0,.Lj4784
-	jal	r0,.Lj4785
-.Lj4784:
+	bne	r3,r0,.Lj4782
+	jal	r0,.Lj4783
+.Lj4782:
 	ldh	r3,r30,-64
 	addi	r3,r3,1
 	slli	r3,r3,16
 	srai	r3,r3,16
 	ldw	r4,r30,-60
 	sth	r4,r3,0
-	jal	r0,.Lj4520
-.Lj4785:
-.Lj4782:
+	jal	r0,.Lj4518
+.Lj4783:
+.Lj4780:
 	ldh	r4,r30,-64
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4781
-	jal	r0,.Lj4783
-.Lj4783:
+	bne	r3,r0,.Lj4779
+	jal	r0,.Lj4781
+.Lj4781:
 	ldw	r3,r30,-56
 	addi	r4,r0,1
 	stb	r3,r4,0
@@ -43429,7 +43406,7 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_ROUND_DIGITS
 	sth	r4,r3,0
 	addi	r3,r0,1
 	sth	r30,r3,-76
-.Lj4520:
+.Lj4518:
 	ldh	r1,r30,-76
 	ldw	r30,r29,92
 	ldw	r31,r29,96
@@ -43459,17 +43436,17 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_GEN_DIGITS_6
 	ldw	r5,r30,-64
 	lui	r3,244140
 	ori	r3,r3,2560
-	bltu	r5,r0,.Lj4786
-	bne	r0,r5,.Lj4787
-	bltu	r4,r3,.Lj4786
-	jal	r0,.Lj4787
-.Lj4786:
+	bltu	r5,r0,.Lj4784
+	bne	r0,r5,.Lj4785
+	bltu	r4,r3,.Lj4784
+	jal	r0,.Lj4785
+.Lj4784:
 	stw	r30,r0,-104
 	stw	r30,r0,-100
 	ldw	r3,r30,-68
 	stw	r30,r3,-96
-	jal	r0,.Lj4788
-.Lj4787:
+	jal	r0,.Lj4786
+.Lj4785:
 	ldw	r5,r30,-68
 	ldw	r6,r30,-64
 	addi	r4,r0,0
@@ -43501,16 +43478,16 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_GEN_DIGITS_6
 	ldw	r4,r30,-88
 	lui	r5,244140
 	ori	r5,r5,2560
-	bltu	r4,r0,.Lj4789
-	bne	r0,r4,.Lj4790
-	bltu	r3,r5,.Lj4789
-	jal	r0,.Lj4790
-.Lj4789:
+	bltu	r4,r0,.Lj4787
+	bne	r0,r4,.Lj4788
+	bltu	r3,r5,.Lj4787
+	jal	r0,.Lj4788
+.Lj4787:
 	stw	r30,r0,-104
 	ldw	r3,r30,-92
 	stw	r30,r3,-100
-	jal	r0,.Lj4791
-.Lj4790:
+	jal	r0,.Lj4789
+.Lj4788:
 	ldw	r5,r30,-92
 	ldw	r6,r30,-88
 	addi	r4,r0,0
@@ -43527,8 +43504,8 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_GEN_DIGITS_6
 	ldw	r4,r30,-92
 	sub	r3,r4,r3
 	stw	r30,r3,-100
-.Lj4791:
-.Lj4788:
+.Lj4789:
+.Lj4786:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-76
 	addi	r7,r0,0
@@ -43537,21 +43514,21 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_GEN_DIGITS_6
 	call	SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_GEN_DIGITS_32$huey3aEFpigP
 	sth	r30,r1,-84
 	ldbu	r3,r30,-72
-	bne	r3,r0,.Lj4792
-	jal	r0,.Lj4793
-.Lj4792:
+	bne	r3,r0,.Lj4790
+	jal	r0,.Lj4791
+.Lj4790:
 	ldh	r3,r30,-84
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj4794
-	jal	r0,.Lj4793
-.Lj4794:
+	bne	r3,r0,.Lj4792
+	jal	r0,.Lj4791
+.Lj4792:
 	ldw	r3,r30,-56
 	ldhu	r4,r30,-60
 	add	r3,r3,r4
 	stb	r3,r0,0
 	addi	r3,r0,1
 	sth	r30,r3,-84
-.Lj4793:
+.Lj4791:
 	ldh	r3,r30,-60
 	ldh	r4,r30,-84
 	add	r3,r4,r3
@@ -43614,12 +43591,12 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_GEN_DIGITS_3
 	stb	r30,r7,-68
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj4795
-	jal	r0,.Lj4796
-.Lj4795:
+	bne	r3,r0,.Lj4793
+	jal	r0,.Lj4794
+.Lj4793:
 	sth	r30,r0,-80
-	jal	r0,.Lj4797
-.Lj4796:
+	jal	r0,.Lj4795
+.Lj4794:
 	ldw	r4,r30,-64
 	lui	r3,15
 	ori	r3,r3,4095
@@ -43664,35 +43641,35 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_GEN_DIGITS_3
 	ldw	r3,r3,0
 	ldw	r4,r30,-64
 	sgeu	r3,r4,r3
-	bne	r3,r0,.Lj4799
-	jal	r0,.Lj4800
-.Lj4799:
+	bne	r3,r0,.Lj4797
+	jal	r0,.Lj4798
+.Lj4797:
 	ldh	r3,r30,-80
 	addi	r3,r3,1
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-80
-.Lj4800:
-.Lj4797:
+.Lj4798:
+.Lj4795:
 	ldbu	r3,r30,-68
-	bne	r3,r0,.Lj4801
-	jal	r0,.Lj4802
-.Lj4801:
+	bne	r3,r0,.Lj4799
+	jal	r0,.Lj4800
+.Lj4799:
 	ldh	r3,r30,-80
 	addi	r4,r0,9
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj4803
-	jal	r0,.Lj4802
-.Lj4803:
+	bne	r3,r0,.Lj4801
+	jal	r0,.Lj4800
+.Lj4801:
 	addi	r3,r0,9
 	sth	r30,r3,-80
-.Lj4802:
+.Lj4800:
 	ldhu	r3,r30,-80
 	sth	r30,r3,-76
 	ldw	r3,r30,-64
 	stw	r30,r3,-84
-	jal	r0,.Lj4805
-.Lj4804:
+	jal	r0,.Lj4803
+.Lj4802:
 	ldh	r3,r30,-80
 	addi	r3,r3,-1
 	slli	r3,r3,16
@@ -43700,9 +43677,9 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_GEN_DIGITS_3
 	sth	r30,r3,-80
 	ldw	r3,r30,-84
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj4807
-	jal	r0,.Lj4808
-.Lj4807:
+	bne	r3,r0,.Lj4805
+	jal	r0,.Lj4806
+.Lj4805:
 	ldw	r4,r30,-84
 	addi	r3,r0,10
 	call	fpc_div_dword
@@ -43721,22 +43698,22 @@ SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_$$_GEN_DIGITS_3
 	stb	r4,r3,0
 	ldw	r3,r30,-88
 	stw	r30,r3,-84
-	jal	r0,.Lj4809
-.Lj4808:
+	jal	r0,.Lj4807
+.Lj4806:
 	ldw	r3,r30,-56
 	ldh	r5,r30,-60
 	ldh	r4,r30,-80
 	add	r4,r4,r5
 	add	r3,r3,r4
 	stb	r3,r0,0
-.Lj4809:
-.Lj4805:
+.Lj4807:
+.Lj4803:
 	ldh	r4,r30,-80
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4804
-	jal	r0,.Lj4806
-.Lj4806:
+	bne	r3,r0,.Lj4802
+	jal	r0,.Lj4804
+.Lj4804:
 	ldh	r1,r30,-76
 	ldw	r30,r29,96
 	ldw	r31,r29,100
@@ -43817,27 +43794,27 @@ SYSTEM_$$_STR_REAL_ISO$LONGINT$LONGINT$DOUBLE$TREAL_TYPE$OPENSTRING:
 	ldbu	r3,r3,0
 	addi	r4,r0,1
 	sge	r4,r3,r4
-	bne	r4,r0,.Lj4812
-	jal	r0,.Lj4813
-.Lj4812:
+	bne	r4,r0,.Lj4810
+	jal	r0,.Lj4811
+.Lj4810:
 	sth	r30,r3,-84
-.Lj4814:
+.Lj4812:
 	ldw	r3,r30,-76
 	ldbu	r4,r30,-84
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r3,r3,-69
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj4817
-	jal	r0,.Lj4818
-.Lj4817:
+	bne	r3,r0,.Lj4815
+	jal	r0,.Lj4816
+.Lj4815:
 	ldw	r5,r30,-76
 	ldbu	r4,r30,-84
 	addi	r3,r0,101
 	add	r4,r5,r4
 	stb	r4,r3,0
-	jal	r0,.Lj4816
-.Lj4818:
+	jal	r0,.Lj4814
+.Lj4816:
 	ldh	r3,r30,-84
 	addi	r3,r3,-1
 	slli	r3,r3,16
@@ -43845,10 +43822,10 @@ SYSTEM_$$_STR_REAL_ISO$LONGINT$LONGINT$DOUBLE$TREAL_TYPE$OPENSTRING:
 	sth	r30,r3,-84
 	ldh	r3,r30,-84
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj4816
-	jal	r0,.Lj4814
-.Lj4816:
-.Lj4813:
+	bne	r3,r0,.Lj4814
+	jal	r0,.Lj4812
+.Lj4814:
+.Lj4811:
 	ldw	r30,r29,84
 	ldw	r31,r29,88
 	addi	r29,r29,92
@@ -43866,7 +43843,7 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	stw	r29,r31,4
 	stw	r29,r30,0
 	addi	r30,r29,8
-	addi	r29,r29,-220
+	addi	r29,r29,-192
 	stw	r30,r3,-56
 	stw	r30,r4,-60
 	ldw	r4,r30,-60
@@ -43885,8 +43862,8 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	addi	r5,r0,0
 	call	SYSTEM$_$VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE_$$_PACK_FLOAT$DOUBLE$BOOLEAN$SMALLINT$QWORD
 	stb	r30,r0,-144
-	jal	r0,.Lj4830
-.Lj4829:
+	jal	r0,.Lj4828
+.Lj4827:
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-116
 	add	r3,r3,r4
@@ -43894,19 +43871,19 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	stb	r30,r3,-72
 	ldbu	r3,r30,-72
 	addi	r4,r0,43
-	beq	r3,r4,.Lj4834
+	beq	r3,r4,.Lj4832
 	addi	r4,r0,45
-	beq	r3,r4,.Lj4835
-	jal	r0,.Lj4833
-.Lj4834:
+	beq	r3,r4,.Lj4833
+	jal	r0,.Lj4831
+.Lj4832:
 	ldh	r3,r30,-116
 	addi	r3,r3,1
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-116
-	jal	r0,.Lj4831
-	jal	r0,.Lj4832
-.Lj4835:
+	jal	r0,.Lj4829
+	jal	r0,.Lj4830
+.Lj4833:
 	addi	r3,r0,1
 	stb	r30,r3,-144
 	ldh	r3,r30,-116
@@ -43914,67 +43891,67 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-116
-	jal	r0,.Lj4831
-	jal	r0,.Lj4832
-.Lj4833:
+	jal	r0,.Lj4829
+	jal	r0,.Lj4830
+.Lj4831:
 	ldbu	r3,r30,-72
 	addi	r3,r3,-32
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj4836
-	jal	r0,.Lj4837
-.Lj4836:
-	jal	r0,.Lj4831
-.Lj4837:
-.Lj4832:
+	bne	r3,r0,.Lj4834
+	jal	r0,.Lj4835
+.Lj4834:
+	jal	r0,.Lj4829
+.Lj4835:
+.Lj4830:
 	ldh	r3,r30,-116
 	addi	r3,r3,1
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-116
-.Lj4830:
+.Lj4828:
 	ldh	r4,r30,-116
 	ldh	r3,r30,-120
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj4829
-	jal	r0,.Lj4831
-.Lj4831:
+	bne	r3,r0,.Lj4827
+	jal	r0,.Lj4829
+.Lj4829:
 	ldh	r4,r30,-116
 	ldh	r3,r30,-120
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4838
-	jal	r0,.Lj4839
-.Lj4838:
+	bne	r3,r0,.Lj4836
+	jal	r0,.Lj4837
+.Lj4836:
 	ldw	r3,r30,-60
 	ldh	r4,r30,-116
 	stw	r3,r4,0
-	jal	r0,.Lj4819
-.Lj4839:
+	jal	r0,.Lj4817
+.Lj4837:
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-116
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r4,r0,46
-	beq	r3,r4,.Lj4842
+	beq	r3,r4,.Lj4840
 	addi	r4,r0,48
-	bltu	r3,r4,.Lj4841
+	bltu	r3,r4,.Lj4839
 	addi	r4,r0,57
-	bleu	r3,r4,.Lj4842
+	bleu	r3,r4,.Lj4840
 	addi	r4,r0,69
-	beq	r3,r4,.Lj4842
+	beq	r3,r4,.Lj4840
 	addi	r4,r0,101
-	beq	r3,r4,.Lj4842
-	jal	r0,.Lj4841
-.Lj4842:
+	beq	r3,r4,.Lj4840
+	jal	r0,.Lj4839
+.Lj4840:
 	stb	r30,r0,-152
-	jal	r0,.Lj4840
-.Lj4841:
+	jal	r0,.Lj4838
+.Lj4839:
 	addi	r3,r0,1
 	stb	r30,r3,-152
-.Lj4840:
+.Lj4838:
 	ldbu	r3,r30,-152
-	bne	r3,r0,.Lj4843
-	jal	r0,.Lj4844
-.Lj4843:
+	bne	r3,r0,.Lj4841
+	jal	r0,.Lj4842
+.Lj4841:
 	stw	r30,r0,-80
 	stw	r30,r0,-76
 	la	r6,TC_$SYSTEM_$$_C_STR_INF
@@ -43983,31 +43960,31 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	ldh	r4,r30,-116
 	call	SYSTEM$_$VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE_$$_MATCH_SPECIAL$hhHMw1lc7yrC
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj4845
-	jal	r0,.Lj4846
-.Lj4845:
+	bne	r3,r0,.Lj4843
+	jal	r0,.Lj4844
+.Lj4843:
 	la	r6,TC_$SYSTEM_$$_C_STR_QNAN
 	ldw	r5,r30,-56
 	addi	r3,r30,0
 	ldh	r4,r30,-116
 	call	SYSTEM$_$VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE_$$_MATCH_SPECIAL$hhHMw1lc7yrC
-	bne	r1,r0,.Lj4847
-	jal	r0,.Lj4848
-.Lj4847:
+	bne	r1,r0,.Lj4845
+	jal	r0,.Lj4846
+.Lj4845:
 	addi	r3,r0,1
 	stb	r30,r3,-144
 	stw	r30,r0,-80
 	lui	r3,128
 	stw	r30,r3,-76
+	jal	r0,.Lj4847
+.Lj4846:
+	stb	r30,r0,-152
+.Lj4847:
+.Lj4844:
+	ldbu	r3,r30,-152
+	bne	r3,r0,.Lj4848
 	jal	r0,.Lj4849
 .Lj4848:
-	stb	r30,r0,-152
-.Lj4849:
-.Lj4846:
-	ldbu	r3,r30,-152
-	bne	r3,r0,.Lj4850
-	jal	r0,.Lj4851
-.Lj4850:
 	addi	r4,r30,-68
 	addi	r3,r30,0
 	ldw	r7,r30,-80
@@ -44016,47 +43993,47 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	ldbu	r5,r30,-144
 	call	SYSTEM$_$VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE_$$_PACK_FLOAT$DOUBLE$BOOLEAN$SMALLINT$QWORD
 	sth	r30,r0,-116
-.Lj4851:
+.Lj4849:
 	ldw	r4,r30,-60
 	ldh	r3,r30,-116
 	stw	r4,r3,0
-	jal	r0,.Lj4819
-.Lj4844:
+	jal	r0,.Lj4817
+.Lj4842:
 	stw	r30,r0,-80
 	stw	r30,r0,-76
 	sth	r30,r0,-100
 	sth	r30,r0,-104
 	stb	r30,r0,-136
 	stb	r30,r0,-140
-	jal	r0,.Lj4853
-.Lj4852:
+	jal	r0,.Lj4851
+.Lj4850:
 	ldh	r3,r30,-116
 	addi	r3,r3,1
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-116
-.Lj4853:
+.Lj4851:
 	ldh	r3,r30,-116
 	ldh	r4,r30,-120
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj4855
-	jal	r0,.Lj4856
-.Lj4855:
+	bne	r3,r0,.Lj4853
+	jal	r0,.Lj4854
+.Lj4853:
 	ldw	r4,r30,-56
 	ldbu	r3,r30,-116
 	add	r3,r4,r3
 	ldbu	r3,r3,0
 	addi	r3,r3,-48
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj4857
-	jal	r0,.Lj4856
-.Lj4857:
-	jal	r0,.Lj4852
-.Lj4856:
+	bne	r3,r0,.Lj4855
 	jal	r0,.Lj4854
+.Lj4855:
+	jal	r0,.Lj4850
 .Lj4854:
-	jal	r0,.Lj4859
-.Lj4858:
+	jal	r0,.Lj4852
+.Lj4852:
+	jal	r0,.Lj4857
+.Lj4856:
 	ldw	r4,r30,-56
 	ldbu	r3,r30,-116
 	add	r3,r4,r3
@@ -44065,17 +44042,17 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	ldbu	r3,r30,-72
 	addi	r4,r0,48
 	sltu	r3,r3,r4
-	bne	r3,r0,.Lj4861
-	jal	r0,.Lj4862
-.Lj4862:
+	bne	r3,r0,.Lj4859
+	jal	r0,.Lj4860
+.Lj4860:
 	ldbu	r4,r30,-72
 	addi	r3,r0,57
 	sgtu	r3,r4,r3
-	bne	r3,r0,.Lj4861
-	jal	r0,.Lj4863
+	bne	r3,r0,.Lj4859
+	jal	r0,.Lj4861
+.Lj4859:
+	jal	r0,.Lj4858
 .Lj4861:
-	jal	r0,.Lj4860
-.Lj4863:
 	ldbu	r3,r30,-72
 	addi	r3,r3,-48
 	andi	r3,r3,255
@@ -44083,9 +44060,9 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	ldh	r4,r30,-100
 	addi	r3,r0,19
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj4864
-	jal	r0,.Lj4865
-.Lj4864:
+	bne	r3,r0,.Lj4862
+	jal	r0,.Lj4863
+.Lj4862:
 	ldw	r5,r30,-80
 	ldw	r3,r30,-76
 	srli	r4,r5,29
@@ -44125,29 +44102,29 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	add	r6,r3,r7
 	stw	r30,r4,-80
 	stw	r30,r6,-76
-	jal	r0,.Lj4866
-.Lj4865:
+	jal	r0,.Lj4864
+.Lj4863:
 	ldh	r3,r30,-100
 	addi	r3,r3,-19
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj4867
-	jal	r0,.Lj4868
-.Lj4867:
+	bne	r3,r0,.Lj4865
+	jal	r0,.Lj4866
+.Lj4865:
 	ldbu	r3,r30,-132
 	stb	r30,r3,-136
-	jal	r0,.Lj4869
-.Lj4868:
+	jal	r0,.Lj4867
+.Lj4866:
 	ldbu	r3,r30,-140
 	ldbu	r4,r30,-132
 	or	r3,r4,r3
 	stb	r30,r3,-140
-.Lj4869:
+.Lj4867:
 	ldh	r3,r30,-104
 	addi	r3,r3,1
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-104
-.Lj4866:
+.Lj4864:
 	ldh	r3,r30,-100
 	addi	r3,r3,1
 	slli	r3,r3,16
@@ -44158,28 +44135,28 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-116
-.Lj4859:
+.Lj4857:
 	ldh	r4,r30,-116
 	ldh	r3,r30,-120
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj4858
-	jal	r0,.Lj4860
-.Lj4860:
+	bne	r3,r0,.Lj4856
+	jal	r0,.Lj4858
+.Lj4858:
 	ldh	r3,r30,-116
 	ldh	r4,r30,-120
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj4870
-	jal	r0,.Lj4871
-.Lj4870:
+	bne	r3,r0,.Lj4868
+	jal	r0,.Lj4869
+.Lj4868:
 	ldw	r4,r30,-56
 	ldbu	r3,r30,-116
 	add	r3,r4,r3
 	ldbu	r3,r3,0
 	addi	r3,r3,-46
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj4872
-	jal	r0,.Lj4871
-.Lj4872:
+	bne	r3,r0,.Lj4870
+	jal	r0,.Lj4869
+.Lj4870:
 	ldh	r3,r30,-116
 	addi	r3,r3,1
 	slli	r3,r3,16
@@ -44187,11 +44164,11 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	sth	r30,r3,-116
 	ldh	r3,r30,-100
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj4873
+	bne	r3,r0,.Lj4871
+	jal	r0,.Lj4872
+.Lj4871:
 	jal	r0,.Lj4874
 .Lj4873:
-	jal	r0,.Lj4876
-.Lj4875:
 	ldh	r3,r30,-104
 	addi	r3,r3,-1
 	slli	r3,r3,16
@@ -44202,29 +44179,29 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-116
-.Lj4876:
+.Lj4874:
 	ldh	r4,r30,-116
 	ldh	r3,r30,-120
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj4878
-	jal	r0,.Lj4879
-.Lj4878:
+	bne	r3,r0,.Lj4876
+	jal	r0,.Lj4877
+.Lj4876:
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-116
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r3,r3,-48
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj4880
-	jal	r0,.Lj4879
-.Lj4880:
-	jal	r0,.Lj4875
-.Lj4879:
+	bne	r3,r0,.Lj4878
 	jal	r0,.Lj4877
+.Lj4878:
+	jal	r0,.Lj4873
 .Lj4877:
-.Lj4874:
-	jal	r0,.Lj4882
-.Lj4881:
+	jal	r0,.Lj4875
+.Lj4875:
+.Lj4872:
+	jal	r0,.Lj4880
+.Lj4879:
 	ldw	r4,r30,-56
 	ldbu	r3,r30,-116
 	add	r3,r4,r3
@@ -44233,17 +44210,17 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	ldbu	r4,r30,-72
 	addi	r3,r0,48
 	sltu	r3,r4,r3
-	bne	r3,r0,.Lj4884
-	jal	r0,.Lj4885
-.Lj4885:
+	bne	r3,r0,.Lj4882
+	jal	r0,.Lj4883
+.Lj4883:
 	ldbu	r4,r30,-72
 	addi	r3,r0,57
 	sgtu	r3,r4,r3
-	bne	r3,r0,.Lj4884
-	jal	r0,.Lj4886
+	bne	r3,r0,.Lj4882
+	jal	r0,.Lj4884
+.Lj4882:
+	jal	r0,.Lj4881
 .Lj4884:
-	jal	r0,.Lj4883
-.Lj4886:
 	ldbu	r3,r30,-72
 	addi	r3,r3,-48
 	andi	r3,r3,255
@@ -44251,9 +44228,9 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	ldh	r3,r30,-100
 	addi	r4,r0,19
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj4887
-	jal	r0,.Lj4888
-.Lj4887:
+	bne	r3,r0,.Lj4885
+	jal	r0,.Lj4886
+.Lj4885:
 	ldw	r5,r30,-80
 	ldw	r3,r30,-76
 	srli	r4,r5,29
@@ -44298,24 +44275,24 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-104
-	jal	r0,.Lj4889
-.Lj4888:
+	jal	r0,.Lj4887
+.Lj4886:
 	ldh	r3,r30,-100
 	addi	r3,r3,-19
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj4890
-	jal	r0,.Lj4891
-.Lj4890:
+	bne	r3,r0,.Lj4888
+	jal	r0,.Lj4889
+.Lj4888:
 	ldbu	r3,r30,-132
 	stb	r30,r3,-136
-	jal	r0,.Lj4892
-.Lj4891:
+	jal	r0,.Lj4890
+.Lj4889:
 	ldbu	r4,r30,-140
 	ldbu	r3,r30,-132
 	or	r3,r3,r4
 	stb	r30,r3,-140
-.Lj4892:
-.Lj4889:
+.Lj4890:
+.Lj4887:
 	ldh	r3,r30,-100
 	addi	r3,r3,1
 	slli	r3,r3,16
@@ -44326,48 +44303,48 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-116
-.Lj4882:
+.Lj4880:
 	ldh	r3,r30,-116
 	ldh	r4,r30,-120
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj4881
-	jal	r0,.Lj4883
-.Lj4883:
-.Lj4871:
+	bne	r3,r0,.Lj4879
+	jal	r0,.Lj4881
+.Lj4881:
+.Lj4869:
 	ldbu	r3,r30,-136
 	addi	r3,r3,-5
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj4893
-	jal	r0,.Lj4894
-.Lj4893:
+	bne	r3,r0,.Lj4891
+	jal	r0,.Lj4892
+.Lj4891:
 	ldbu	r3,r30,-140
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj4895
-	jal	r0,.Lj4894
-.Lj4895:
+	bne	r3,r0,.Lj4893
+	jal	r0,.Lj4892
+.Lj4893:
 	ldw	r3,r30,-80
 	ldw	r4,r30,-76
 	andi	r4,r3,1
 	addi	r3,r0,0
-	bne	r0,r3,.Lj4898
-	bne	r0,r4,.Lj4898
-	jal	r0,.Lj4897
-.Lj4897:
-	jal	r0,.Lj4896
-.Lj4898:
+	bne	r0,r3,.Lj4896
+	bne	r0,r4,.Lj4896
+	jal	r0,.Lj4895
+.Lj4895:
 	jal	r0,.Lj4894
 .Lj4896:
+	jal	r0,.Lj4892
+.Lj4894:
 	ldbu	r3,r30,-136
 	addi	r3,r3,-1
 	andi	r3,r3,255
 	stb	r30,r3,-136
-.Lj4894:
+.Lj4892:
 	ldbu	r4,r30,-136
 	addi	r3,r0,5
 	sgeu	r3,r4,r3
-	bne	r3,r0,.Lj4899
-	jal	r0,.Lj4900
-.Lj4899:
+	bne	r3,r0,.Lj4897
+	jal	r0,.Lj4898
+.Lj4897:
 	ldw	r4,r30,-80
 	ldw	r5,r30,-76
 	addi	r3,r4,1
@@ -44376,32 +44353,32 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	add	r5,r5,r6
 	stw	r30,r4,-80
 	stw	r30,r5,-76
-.Lj4900:
+.Lj4898:
 	stw	r30,r0,-124
 	ldh	r4,r30,-116
 	ldh	r3,r30,-120
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj4901
-	jal	r0,.Lj4902
-.Lj4901:
+	bne	r3,r0,.Lj4899
+	jal	r0,.Lj4900
+.Lj4899:
 	stb	r30,r0,-148
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-116
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r4,r0,69
-	beq	r3,r4,.Lj4905
+	beq	r3,r4,.Lj4903
 	addi	r4,r0,101
-	beq	r3,r4,.Lj4905
-	jal	r0,.Lj4904
-.Lj4905:
-	jal	r0,.Lj4903
-.Lj4904:
+	beq	r3,r4,.Lj4903
+	jal	r0,.Lj4902
+.Lj4903:
+	jal	r0,.Lj4901
+.Lj4902:
 	ldw	r3,r30,-60
 	ldh	r4,r30,-116
 	stw	r3,r4,0
-	jal	r0,.Lj4819
-.Lj4903:
+	jal	r0,.Lj4817
+.Lj4901:
 	ldh	r3,r30,-116
 	addi	r3,r3,1
 	slli	r3,r3,16
@@ -44410,31 +44387,31 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	ldh	r3,r30,-116
 	ldh	r4,r30,-120
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj4906
-	jal	r0,.Lj4907
-.Lj4906:
+	bne	r3,r0,.Lj4904
+	jal	r0,.Lj4905
+.Lj4904:
 	ldw	r3,r30,-60
 	ldh	r4,r30,-116
 	stw	r3,r4,0
-	jal	r0,.Lj4819
-.Lj4907:
+	jal	r0,.Lj4817
+.Lj4905:
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-116
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r4,r0,43
-	beq	r3,r4,.Lj4909
+	beq	r3,r4,.Lj4907
 	addi	r4,r0,45
-	beq	r3,r4,.Lj4910
-	jal	r0,.Lj4908
-.Lj4909:
+	beq	r3,r4,.Lj4908
+	jal	r0,.Lj4906
+.Lj4907:
 	ldh	r3,r30,-116
 	addi	r3,r3,1
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-116
-	jal	r0,.Lj4908
-.Lj4910:
+	jal	r0,.Lj4906
+.Lj4908:
 	addi	r3,r0,1
 	stb	r30,r3,-148
 	ldh	r3,r30,-116
@@ -44442,10 +44419,10 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-116
-	jal	r0,.Lj4908
-.Lj4908:
-	jal	r0,.Lj4912
-.Lj4911:
+	jal	r0,.Lj4906
+.Lj4906:
+	jal	r0,.Lj4910
+.Lj4909:
 	ldw	r4,r30,-56
 	ldbu	r3,r30,-116
 	add	r3,r4,r3
@@ -44454,27 +44431,27 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	ldbu	r3,r30,-72
 	addi	r4,r0,48
 	sltu	r3,r3,r4
-	bne	r3,r0,.Lj4914
-	jal	r0,.Lj4915
-.Lj4915:
+	bne	r3,r0,.Lj4912
+	jal	r0,.Lj4913
+.Lj4913:
 	ldbu	r4,r30,-72
 	addi	r3,r0,57
 	sgtu	r3,r4,r3
-	bne	r3,r0,.Lj4914
-	jal	r0,.Lj4916
-.Lj4914:
+	bne	r3,r0,.Lj4912
+	jal	r0,.Lj4914
+.Lj4912:
 	ldw	r4,r30,-60
 	ldh	r3,r30,-116
 	stw	r4,r3,0
-	jal	r0,.Lj4819
-.Lj4916:
+	jal	r0,.Lj4817
+.Lj4914:
 	ldw	r4,r30,-124
 	lui	r3,24
 	ori	r3,r3,1696
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj4917
-	jal	r0,.Lj4918
-.Lj4917:
+	bne	r3,r0,.Lj4915
+	jal	r0,.Lj4916
+.Lj4915:
 	ldw	r3,r30,-124
 	slli	r4,r3,3
 	ldw	r3,r30,-124
@@ -44485,28 +44462,28 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	ldw	r4,r30,-124
 	add	r4,r4,r3
 	stw	r30,r4,-124
-.Lj4918:
+.Lj4916:
 	ldh	r3,r30,-116
 	addi	r3,r3,1
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-116
-.Lj4912:
+.Lj4910:
 	ldh	r4,r30,-116
 	ldh	r3,r30,-120
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj4911
-	jal	r0,.Lj4913
-.Lj4913:
+	bne	r3,r0,.Lj4909
+	jal	r0,.Lj4911
+.Lj4911:
 	ldbu	r3,r30,-148
-	bne	r3,r0,.Lj4919
-	jal	r0,.Lj4920
-.Lj4919:
+	bne	r3,r0,.Lj4917
+	jal	r0,.Lj4918
+.Lj4917:
 	ldw	r3,r30,-124
 	sub	r3,r0,r3
 	stw	r30,r3,-124
-.Lj4920:
-.Lj4902:
+.Lj4918:
+.Lj4900:
 	ldh	r4,r30,-104
 	ldw	r3,r30,-124
 	add	r3,r3,r4
@@ -44515,63 +44492,63 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	lui	r3,24
 	ori	r3,r3,1696
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj4921
-	jal	r0,.Lj4922
-.Lj4922:
+	bne	r3,r0,.Lj4919
+	jal	r0,.Lj4920
+.Lj4920:
 	ldw	r3,r30,-128
 	addi	r4,r0,1000
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj4921
-	jal	r0,.Lj4923
-.Lj4921:
+	bne	r3,r0,.Lj4919
+	jal	r0,.Lj4921
+.Lj4919:
 	addi	r3,r0,1000
 	sth	r30,r3,-104
-	jal	r0,.Lj4924
-.Lj4923:
+	jal	r0,.Lj4922
+.Lj4921:
 	ldw	r3,r30,-124
 	lui	r4,1048551
 	ori	r4,r4,2400
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj4925
-	jal	r0,.Lj4926
-.Lj4926:
+	bne	r3,r0,.Lj4923
+	jal	r0,.Lj4924
+.Lj4924:
 	ldw	r4,r30,-128
 	addi	r3,r0,-1000
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj4925
-	jal	r0,.Lj4927
-.Lj4925:
+	bne	r3,r0,.Lj4923
+	jal	r0,.Lj4925
+.Lj4923:
 	addi	r3,r0,-1000
 	sth	r30,r3,-104
-	jal	r0,.Lj4928
-.Lj4927:
+	jal	r0,.Lj4926
+.Lj4925:
 	ldhu	r3,r30,-128
 	sth	r30,r3,-104
-.Lj4928:
-.Lj4924:
+.Lj4926:
+.Lj4922:
 	ldh	r4,r30,-116
 	ldh	r3,r30,-120
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj4929
-	jal	r0,.Lj4930
-.Lj4929:
+	bne	r3,r0,.Lj4927
+	jal	r0,.Lj4928
+.Lj4927:
 	ldw	r4,r30,-60
 	ldh	r3,r30,-116
 	stw	r4,r3,0
-	jal	r0,.Lj4819
-.Lj4930:
+	jal	r0,.Lj4817
+.Lj4928:
 	ldw	r3,r30,-80
 	ldw	r4,r30,-76
-	bne	r0,r4,.Lj4932
-	bne	r0,r3,.Lj4932
-	jal	r0,.Lj4931
-.Lj4932:
+	bne	r0,r4,.Lj4930
+	bne	r0,r3,.Lj4930
+	jal	r0,.Lj4929
+.Lj4930:
 	ldh	r3,r30,-104
 	addi	r4,r0,-1000
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj4931
-	jal	r0,.Lj4933
-.Lj4931:
+	bne	r3,r0,.Lj4929
+	jal	r0,.Lj4931
+.Lj4929:
 	addi	r4,r30,-68
 	addi	r3,r30,0
 	addi	r8,r0,0
@@ -44581,18 +44558,18 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	call	SYSTEM$_$VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE_$$_PACK_FLOAT$DOUBLE$BOOLEAN$SMALLINT$QWORD
 	ldw	r3,r30,-60
 	stw	r3,r0,0
-	jal	r0,.Lj4819
-.Lj4933:
+	jal	r0,.Lj4817
+.Lj4931:
 	ldh	r4,r30,-104
 	addi	r3,r0,1000
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj4934
-	jal	r0,.Lj4935
-.Lj4934:
+	bne	r3,r0,.Lj4932
+	jal	r0,.Lj4933
+.Lj4932:
 	addi	r3,r0,1
 	sth	r30,r3,-108
-	jal	r0,.Lj4936
-.Lj4935:
+	jal	r0,.Lj4934
+.Lj4933:
 	addi	r3,r0,32
 	ldw	r4,r30,-80
 	ldw	r4,r30,-76
@@ -44600,41 +44577,41 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	srli	r4,r4,0
 	slli	r4,r4,0
 	srli	r4,r4,0
-	stw	r30,r4,-196
-	ldw	r4,r30,-196
+	stw	r30,r4,-184
+	ldw	r4,r30,-184
 	seq	r4,r4,r0
-	bne	r4,r0,.Lj4938
-	jal	r0,.Lj4939
-.Lj4938:
+	bne	r4,r0,.Lj4936
+	jal	r0,.Lj4937
+.Lj4936:
 	ldw	r4,r30,-80
-	stw	r30,r4,-196
+	stw	r30,r4,-184
 	addi	r3,r0,0
-.Lj4939:
-	ldw	r4,r30,-196
+.Lj4937:
+	ldw	r4,r30,-184
 	lui	r5,15
 	ori	r5,r5,4095
 	sgtu	r4,r4,r5
 	slli	r4,r4,4
-	ldw	r5,r30,-196
+	ldw	r5,r30,-184
 	slli	r4,r4,0
 	srli	r4,r4,0
 	srl	r5,r5,r4
-	stw	r30,r5,-200
-	ldw	r5,r30,-200
+	stw	r30,r5,-188
+	ldw	r5,r30,-188
 	addi	r6,r0,255
 	sgtu	r5,r5,r6
 	slli	r5,r5,3
 	or	r5,r4,r5
 	addi	r4,r5,0
 	andi	r6,r4,8
-	ldw	r5,r30,-200
+	ldw	r5,r30,-188
 	slli	r6,r6,0
 	srli	r6,r6,0
 	srl	r5,r5,r6
-	stw	r30,r5,-200
-	ldbu	r5,r30,-200
-	stb	r30,r5,-204
-	ldbu	r5,r30,-204
+	stw	r30,r5,-188
+	ldbu	r5,r30,-188
+	stb	r30,r5,-192
+	ldbu	r5,r30,-192
 	la	r6,TC_$SYSTEM$_$BSRBYTE$BYTE$$BYTE_$$_BSR8BIT
 	add	r5,r5,r6
 	ldbu	r5,r5,0
@@ -44653,11 +44630,11 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	slli	r6,r5,0
 	srli	r6,r6,0
 	addi	r8,r6,-32
-	blt	r8,r0,.Lj4941
+	blt	r8,r0,.Lj4939
 	li	r5,0
 	sll	r7,r4,r8
-	jal	r0,.Lj4942
-.Lj4941:
+	jal	r0,.Lj4940
+.Lj4939:
 	li	r8,31
 	srli	r9,r4,1
 	sub	r8,r8,r6
@@ -44665,73 +44642,71 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	srl	r9,r9,r8
 	sll	r7,r3,r6
 	or	r7,r7,r9
-.Lj4942:
-	stw	r30,r5,-192
-	stw	r30,r7,-188
+.Lj4940:
+	stw	r30,r5,-180
+	stw	r30,r7,-176
 	ldh	r3,r30,-112
 	sub	r3,r0,r3
 	slli	r3,r3,16
 	srai	r3,r3,16
-	sth	r30,r3,-184
-	addi	r5,r30,-176
+	sth	r30,r3,-172
+	addi	r5,r30,-168
 	addi	r3,r30,0
 	ldh	r4,r30,-104
 	call	SYSTEM$_$VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE_$$_FACTOR_10_INEXACT$hgVXucCMsxBA
 	sth	r30,r1,-108
-.Lj4936:
+.Lj4934:
 	ldh	r3,r30,-108
 	seq	r3,r3,r0
+	bne	r3,r0,.Lj4941
+	jal	r0,.Lj4942
+.Lj4941:
+	ldh	r3,r30,-156
+	sne	r3,r3,r0
 	bne	r3,r0,.Lj4943
 	jal	r0,.Lj4944
 .Lj4943:
-	ldh	r3,r30,-160
-	sne	r3,r3,r0
-	bne	r3,r0,.Lj4945
-	jal	r0,.Lj4946
-.Lj4945:
-	addi	r5,r30,-176
-	addi	r4,r30,-192
-	addi	r3,r30,-220
+	addi	r5,r30,-168
+	addi	r4,r30,-180
+	addi	r3,r30,-192
 	addi	r6,r0,1
 	call	SYSTEM_$$_DIY_FP_MULTIPLY$TDIY_FP$TDIY_FP$BOOLEAN$$TDIY_FP
-	ldw	r3,r30,-220
-	stw	r30,r3,-192
-	ldw	r3,r30,-216
-	stw	r30,r3,-188
-	ldw	r3,r30,-212
-	stw	r30,r3,-184
-	ldw	r3,r30,-208
-	stw	r30,r3,-180
-.Lj4946:
 	ldw	r3,r30,-192
-	ldw	r4,r30,-188
+	stw	r30,r3,-180
+	ldw	r3,r30,-188
+	stw	r30,r3,-176
+	ldw	r3,r30,-184
+	stw	r30,r3,-172
+.Lj4944:
+	ldw	r3,r30,-180
+	ldw	r4,r30,-176
 	andi	r4,r3,4095
 	addi	r3,r0,0
 	addi	r5,r0,1024
-	bne	r0,r3,.Lj4948
-	bne	r5,r4,.Lj4948
-	jal	r0,.Lj4947
-.Lj4947:
+	bne	r0,r3,.Lj4946
+	bne	r5,r4,.Lj4946
+	jal	r0,.Lj4945
+.Lj4945:
 	stb	r30,r0,-132
-	jal	r0,.Lj4949
-.Lj4948:
-	ldw	r4,r30,-192
-	ldw	r3,r30,-188
+	jal	r0,.Lj4947
+.Lj4946:
+	ldw	r4,r30,-180
+	ldw	r3,r30,-176
 	andi	r4,r4,1024
 	addi	r3,r0,0
-	bne	r0,r3,.Lj4950
-	bne	r0,r4,.Lj4950
-	jal	r0,.Lj4951
-.Lj4950:
+	bne	r0,r3,.Lj4948
+	bne	r0,r4,.Lj4948
+	jal	r0,.Lj4949
+.Lj4948:
 	addi	r3,r0,1
-	jal	r0,.Lj4952
-.Lj4951:
-	addi	r3,r0,0
-.Lj4952:
-	stb	r30,r3,-132
+	jal	r0,.Lj4950
 .Lj4949:
-	ldw	r5,r30,-192
-	ldw	r4,r30,-188
+	addi	r3,r0,0
+.Lj4950:
+	stb	r30,r3,-132
+.Lj4947:
+	ldw	r5,r30,-180
+	ldw	r4,r30,-176
 	slli	r3,r4,21
 	srli	r6,r5,11
 	srli	r5,r4,11
@@ -44746,63 +44721,63 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	sltu	r6,r8,r5
 	sub	r6,r7,r6
 	add	r3,r8,r3
-	stw	r30,r4,-192
-	stw	r30,r3,-188
-	ldw	r3,r30,-192
-	ldw	r4,r30,-188
+	stw	r30,r4,-180
+	stw	r30,r3,-176
+	ldw	r3,r30,-180
+	ldw	r4,r30,-176
 	addi	r3,r0,0
 	lui	r5,512
 	and	r4,r4,r5
-	bne	r0,r4,.Lj4953
-	bne	r0,r3,.Lj4953
-	jal	r0,.Lj4954
-.Lj4953:
-	ldw	r4,r30,-192
-	ldw	r5,r30,-188
+	bne	r0,r4,.Lj4951
+	bne	r0,r3,.Lj4951
+	jal	r0,.Lj4952
+.Lj4951:
+	ldw	r4,r30,-180
+	ldw	r5,r30,-176
 	slli	r3,r5,31
 	srli	r4,r4,1
 	srli	r5,r5,1
 	or	r4,r4,r3
-	stw	r30,r4,-192
-	stw	r30,r5,-188
-	ldh	r3,r30,-184
+	stw	r30,r4,-180
+	stw	r30,r5,-176
+	ldh	r3,r30,-172
 	addi	r3,r3,1
 	slli	r3,r3,16
 	srai	r3,r3,16
-	sth	r30,r3,-184
-.Lj4954:
-	ldh	r3,r30,-184
+	sth	r30,r3,-172
+.Lj4952:
+	ldh	r3,r30,-172
 	addi	r3,r3,1086
 	slli	r3,r3,16
 	srai	r3,r3,16
-	sth	r30,r3,-184
-	ldh	r3,r30,-184
+	sth	r30,r3,-172
+	ldh	r3,r30,-172
 	addi	r4,r0,2047
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj4955
-	jal	r0,.Lj4956
-.Lj4955:
+	bne	r3,r0,.Lj4953
+	jal	r0,.Lj4954
+.Lj4953:
 	addi	r3,r0,1
 	sth	r30,r3,-108
-	jal	r0,.Lj4957
-.Lj4956:
-	ldh	r4,r30,-184
+	jal	r0,.Lj4955
+.Lj4954:
+	ldh	r4,r30,-172
 	addi	r3,r0,-52
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj4958
-	jal	r0,.Lj4959
-.Lj4958:
+	bne	r3,r0,.Lj4956
+	jal	r0,.Lj4957
+.Lj4956:
 	addi	r3,r0,-1
 	sth	r30,r3,-108
-	jal	r0,.Lj4960
-.Lj4959:
-	ldh	r4,r30,-184
+	jal	r0,.Lj4958
+.Lj4957:
+	ldh	r4,r30,-172
 	addi	r3,r0,0
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj4961
-	jal	r0,.Lj4962
-.Lj4961:
-	ldh	r4,r30,-184
+	bne	r3,r0,.Lj4959
+	jal	r0,.Lj4960
+.Lj4959:
+	ldh	r4,r30,-172
 	addi	r3,r0,1
 	sub	r3,r3,r4
 	slli	r3,r3,16
@@ -44815,14 +44790,14 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	slli	r3,r5,0
 	srli	r3,r3,0
 	addi	r6,r3,-32
-	blt	r6,r0,.Lj4963
+	blt	r6,r0,.Lj4961
 	li	r5,0
 	sll	r6,r4,r6
-	jal	r0,.Lj4964
-.Lj4963:
+	jal	r0,.Lj4962
+.Lj4961:
 	sll	r5,r4,r3
 	li	r6,0
-.Lj4964:
+.Lj4962:
 	stw	r30,r5,-88
 	stw	r30,r6,-84
 	ldw	r5,r30,-88
@@ -44836,69 +44811,69 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	sub	r4,r4,r5
 	stw	r30,r3,-96
 	stw	r30,r4,-92
-	ldw	r3,r30,-192
-	ldw	r4,r30,-188
+	ldw	r3,r30,-180
+	ldw	r4,r30,-176
 	ldw	r6,r30,-96
 	ldw	r5,r30,-92
 	and	r3,r3,r6
 	and	r4,r4,r5
 	ldw	r6,r30,-88
 	ldw	r5,r30,-84
-	bne	r5,r4,.Lj4966
-	bne	r6,r3,.Lj4966
-	jal	r0,.Lj4965
-.Lj4965:
+	bne	r5,r4,.Lj4964
+	bne	r6,r3,.Lj4964
+	jal	r0,.Lj4963
+.Lj4963:
 	stb	r30,r0,-132
-	jal	r0,.Lj4967
-.Lj4966:
-	ldw	r5,r30,-192
-	ldw	r3,r30,-188
+	jal	r0,.Lj4965
+.Lj4964:
+	ldw	r5,r30,-180
+	ldw	r3,r30,-176
 	ldw	r6,r30,-88
 	ldw	r4,r30,-84
 	and	r5,r5,r6
 	and	r3,r3,r4
-	bne	r0,r3,.Lj4968
-	bne	r0,r5,.Lj4968
-	jal	r0,.Lj4969
-.Lj4968:
+	bne	r0,r3,.Lj4966
+	bne	r0,r5,.Lj4966
+	jal	r0,.Lj4967
+.Lj4966:
 	addi	r3,r0,1
+	jal	r0,.Lj4968
+.Lj4967:
+	addi	r3,r0,0
+.Lj4968:
+	stb	r30,r3,-132
+.Lj4965:
+	ldh	r3,r30,-172
+	addi	r3,r3,52
+	seq	r3,r3,r0
+	bne	r3,r0,.Lj4969
 	jal	r0,.Lj4970
 .Lj4969:
+	ldbu	r4,r30,-132
 	addi	r3,r0,0
-.Lj4970:
-	stb	r30,r3,-132
-.Lj4967:
-	ldh	r3,r30,-184
-	addi	r3,r3,52
+	stw	r30,r4,-180
+	stw	r30,r3,-176
+	ldbu	r3,r30,-132
 	seq	r3,r3,r0
 	bne	r3,r0,.Lj4971
 	jal	r0,.Lj4972
 .Lj4971:
-	ldbu	r4,r30,-132
-	addi	r3,r0,0
-	stw	r30,r4,-192
-	stw	r30,r3,-188
-	ldbu	r3,r30,-132
-	seq	r3,r3,r0
-	bne	r3,r0,.Lj4973
-	jal	r0,.Lj4974
-.Lj4973:
 	addi	r3,r0,-1
 	sth	r30,r3,-108
-.Lj4974:
-	jal	r0,.Lj4975
 .Lj4972:
+	jal	r0,.Lj4973
+.Lj4970:
 	ldh	r5,r30,-112
-	ldw	r4,r30,-192
-	ldw	r3,r30,-188
+	ldw	r4,r30,-180
+	ldw	r3,r30,-176
 	slli	r7,r5,0
 	srli	r7,r7,0
 	addi	r9,r7,-32
-	blt	r9,r0,.Lj4976
+	blt	r9,r0,.Lj4974
 	li	r5,0
 	srl	r6,r3,r9
-	jal	r0,.Lj4977
-.Lj4976:
+	jal	r0,.Lj4975
+.Lj4974:
 	li	r9,31
 	slli	r8,r3,1
 	sub	r9,r9,r7
@@ -44906,7 +44881,7 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	sll	r8,r8,r9
 	srl	r5,r3,r7
 	or	r6,r6,r8
-.Lj4977:
+.Lj4975:
 	ldbu	r4,r30,-132
 	addi	r3,r0,0
 	add	r4,r6,r4
@@ -44917,29 +44892,29 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	sltu	r6,r8,r5
 	sub	r6,r7,r6
 	add	r3,r8,r3
-	stw	r30,r4,-192
-	stw	r30,r3,-188
-.Lj4975:
-	sth	r30,r0,-184
-	jal	r0,.Lj4978
-.Lj4962:
-	ldw	r3,r30,-192
-	ldw	r4,r30,-188
+	stw	r30,r4,-180
+	stw	r30,r3,-176
+.Lj4973:
+	sth	r30,r0,-172
+	jal	r0,.Lj4976
+.Lj4960:
+	ldw	r3,r30,-180
+	ldw	r4,r30,-176
 	lui	r5,255
 	ori	r5,r5,4095
 	and	r4,r4,r5
-	stw	r30,r3,-192
-	stw	r30,r4,-188
-.Lj4978:
-.Lj4960:
-.Lj4957:
-.Lj4944:
+	stw	r30,r3,-180
+	stw	r30,r4,-176
+.Lj4976:
+.Lj4958:
+.Lj4955:
+.Lj4942:
 	ldh	r4,r30,-108
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj4979
-	jal	r0,.Lj4980
-.Lj4979:
+	bne	r3,r0,.Lj4977
+	jal	r0,.Lj4978
+.Lj4977:
 	addi	r4,r30,-68
 	addi	r3,r30,0
 	addi	r8,r0,0
@@ -44947,14 +44922,14 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	addi	r6,r0,0
 	ldbu	r5,r30,-144
 	call	SYSTEM$_$VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE_$$_PACK_FLOAT$DOUBLE$BOOLEAN$SMALLINT$QWORD
-	jal	r0,.Lj4981
-.Lj4980:
+	jal	r0,.Lj4979
+.Lj4978:
 	ldh	r4,r30,-108
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj4982
-	jal	r0,.Lj4983
-.Lj4982:
+	bne	r3,r0,.Lj4980
+	jal	r0,.Lj4981
+.Lj4980:
 	addi	r4,r30,-68
 	addi	r3,r30,0
 	addi	r8,r0,0
@@ -44962,25 +44937,25 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	addi	r6,r0,2047
 	ldbu	r5,r30,-144
 	call	SYSTEM$_$VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE_$$_PACK_FLOAT$DOUBLE$BOOLEAN$SMALLINT$QWORD
-	jal	r0,.Lj4984
-.Lj4983:
-	ldw	r7,r30,-192
-	ldw	r8,r30,-188
-	ldh	r6,r30,-184
+	jal	r0,.Lj4982
+.Lj4981:
+	ldw	r7,r30,-180
+	ldw	r8,r30,-176
+	ldh	r6,r30,-172
 	addi	r4,r30,-68
 	addi	r3,r30,0
 	ldbu	r5,r30,-144
 	call	SYSTEM$_$VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE_$$_PACK_FLOAT$DOUBLE$BOOLEAN$SMALLINT$QWORD
-.Lj4984:
-.Lj4981:
+.Lj4982:
+.Lj4979:
 	ldw	r3,r30,-60
 	stw	r3,r0,0
-.Lj4819:
+.Lj4817:
 	ldw	r1,r30,-68
 	ldw	r2,r30,-64
-	ldw	r30,r29,220
-	ldw	r31,r29,224
-	addi	r29,r29,228
+	ldw	r30,r29,192
+	ldw	r31,r29,196
+	addi	r29,r29,200
 	jalr	r0,r31
 .Lc925:
 .Le180:
@@ -45014,12 +44989,12 @@ SYSTEM$_$VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE_$$_MATCH_SPECIAL$hhHMw1lc7yrC:
 	addi	r3,r3,1
 	ldh	r4,r30,-76
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj4985
-	jal	r0,.Lj4986
+	bne	r3,r0,.Lj4983
+	jal	r0,.Lj4984
+.Lj4983:
+	jal	r0,.Lj4825
+.Lj4984:
 .Lj4985:
-	jal	r0,.Lj4827
-.Lj4986:
-.Lj4987:
 	ldw	r3,r30,-60
 	ldbu	r4,r30,-80
 	add	r3,r3,r4
@@ -45032,11 +45007,11 @@ SYSTEM$_$VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE_$$_MATCH_SPECIAL$hhHMw1lc7yrC:
 	ldbu	r3,r3,0
 	call	SYSTEM_$$_UPCASE$ANSICHAR$$ANSICHAR
 	sne	r3,r11,r1
-	bne	r3,r0,.Lj4990
-	jal	r0,.Lj4991
-.Lj4990:
-	jal	r0,.Lj4827
-.Lj4991:
+	bne	r3,r0,.Lj4988
+	jal	r0,.Lj4989
+.Lj4988:
+	jal	r0,.Lj4825
+.Lj4989:
 	ldh	r3,r30,-80
 	addi	r3,r3,-1
 	slli	r3,r3,16
@@ -45050,12 +45025,12 @@ SYSTEM$_$VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE_$$_MATCH_SPECIAL$hhHMw1lc7yrC:
 	ldh	r4,r30,-76
 	addi	r3,r0,0
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj4989
-	jal	r0,.Lj4987
-.Lj4989:
+	bne	r3,r0,.Lj4987
+	jal	r0,.Lj4985
+.Lj4987:
 	addi	r3,r0,1
 	stb	r30,r3,-72
-.Lj4827:
+.Lj4825:
 	ldbu	r1,r30,-72
 	ldw	r11,r29,80
 	ldw	r30,r29,84
@@ -45089,13 +45064,13 @@ SYSTEM$_$VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE_$$_COUNT_LEADING_ZERO$QWORD$$SMALL
 	stw	r30,r4,-72
 	ldw	r4,r30,-72
 	seq	r4,r4,r0
-	bne	r4,r0,.Lj4993
-	jal	r0,.Lj4994
-.Lj4993:
+	bne	r4,r0,.Lj4991
+	jal	r0,.Lj4992
+.Lj4991:
 	ldw	r4,r30,-60
 	stw	r30,r4,-72
 	addi	r3,r0,0
-.Lj4994:
+.Lj4992:
 	ldw	r4,r30,-72
 	lui	r5,15
 	ori	r5,r5,4095
@@ -45149,14 +45124,14 @@ SYSTEM$_$VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE_$$_FACTOR_10_INEXACT$hgVXucCMsxBA:
 	stw	r29,r31,4
 	stw	r29,r30,0
 	addi	r30,r29,8
-	addi	r29,r29,-136
+	addi	r29,r29,-116
 	stw	r30,r3,-64
 	sth	r30,r4,-56
 	stw	r30,r5,-60
-	addi	r4,r30,-96
+	addi	r4,r30,-88
 	ldh	r3,r30,-56
 	call	SYSTEM_$$_DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10
-	ldh	r3,r30,-80
+	ldh	r3,r30,-76
 	ldh	r4,r30,-56
 	sub	r3,r3,r4
 	slli	r3,r3,16
@@ -45165,96 +45140,90 @@ SYSTEM$_$VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE_$$_FACTOR_10_INEXACT$hgVXucCMsxBA:
 	ldh	r4,r30,-72
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj4996
-	jal	r0,.Lj4997
-.Lj4996:
+	bne	r3,r0,.Lj4994
+	jal	r0,.Lj4995
+.Lj4994:
 	addi	r3,r0,1
 	sth	r30,r3,-68
-	jal	r0,.Lj4823
-.Lj4997:
+	jal	r0,.Lj4821
+.Lj4995:
 	ldh	r3,r30,-72
 	addi	r4,r0,17
 	sgt	r3,r3,r4
+	bne	r3,r0,.Lj4996
+	jal	r0,.Lj4997
+.Lj4996:
+	addi	r3,r0,-1
+	sth	r30,r3,-68
+	jal	r0,.Lj4821
+.Lj4997:
+	ldhu	r3,r30,-72
+	slli	r4,r3,4
+	la	r3,TC_$SYSTEM$_$VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE_FACTOR_10_INEXACT$SMALLINT$TDIY_FP_POWER_OF_10$$SMALLINT_$$_FACTOR
+	add	r3,r4,r3
+	ldw	r4,r3,0
+	stw	r30,r4,-104
+	ldw	r4,r3,4
+	stw	r30,r4,-100
+	ldw	r4,r3,8
+	stw	r30,r4,-96
+	ldw	r4,r3,12
+	stw	r30,r4,-92
+	ldh	r3,r30,-92
+	seq	r3,r3,r0
 	bne	r3,r0,.Lj4998
 	jal	r0,.Lj4999
 .Lj4998:
-	addi	r3,r0,-1
-	sth	r30,r3,-68
-	jal	r0,.Lj4823
+	ldw	r3,r30,-60
+	ldw	r4,r30,-88
+	stw	r3,r4,0
+	ldw	r4,r30,-84
+	stw	r3,r4,4
+	ldw	r4,r30,-80
+	stw	r3,r4,8
+	ldw	r4,r30,-76
+	stw	r3,r4,12
+	jal	r0,.Lj5000
 .Lj4999:
-	ldhu	r3,r30,-72
-	addi	r4,r0,24
-	mul	r4,r3,r4
-	la	r3,TC_$SYSTEM$_$VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE_FACTOR_10_INEXACT$SMALLINT$TDIY_FP_POWER_OF_10$$SMALLINT_$$_FACTOR
-	add	r3,r4,r3
-	addi	r5,r30,-120
-	addi	r4,r0,6
-.Lj5000:
-	ldw	r6,r3,0
-	stw	r5,r6,0
-	addi	r3,r3,4
-	addi	r5,r5,4
-	addi	r4,r4,-1
-	bgt	r4,r0,.Lj5000
-	ldh	r3,r30,-104
+	ldh	r3,r30,-76
 	seq	r3,r3,r0
 	bne	r3,r0,.Lj5001
 	jal	r0,.Lj5002
 .Lj5001:
 	ldw	r3,r30,-60
-	addi	r4,r30,-96
-	addi	r5,r0,6
-.Lj5003:
-	ldw	r6,r4,0
-	stw	r3,r6,0
-	addi	r4,r4,4
-	addi	r3,r3,4
-	addi	r5,r5,-1
-	bgt	r5,r0,.Lj5003
-	jal	r0,.Lj5004
+	ldw	r4,r30,-104
+	stw	r3,r4,0
+	ldw	r4,r30,-100
+	stw	r3,r4,4
+	ldw	r4,r30,-96
+	stw	r3,r4,8
+	ldw	r4,r30,-92
+	stw	r3,r4,12
+	jal	r0,.Lj5003
 .Lj5002:
-	ldh	r3,r30,-80
-	seq	r3,r3,r0
-	bne	r3,r0,.Lj5005
-	jal	r0,.Lj5006
-.Lj5005:
-	ldw	r3,r30,-60
-	addi	r4,r30,-120
-	addi	r5,r0,6
-.Lj5007:
-	ldw	r6,r4,0
-	stw	r3,r6,0
-	addi	r4,r4,4
-	addi	r3,r3,4
-	addi	r5,r5,-1
-	bgt	r5,r0,.Lj5007
-	jal	r0,.Lj5008
-.Lj5006:
-	addi	r5,r30,-120
-	addi	r4,r30,-96
-	addi	r3,r30,-136
+	addi	r5,r30,-104
+	addi	r4,r30,-88
+	addi	r3,r30,-116
 	addi	r6,r0,1
 	call	SYSTEM_$$_DIY_FP_MULTIPLY$TDIY_FP$TDIY_FP$BOOLEAN$$TDIY_FP
 	ldw	r3,r30,-60
-	ldw	r4,r30,-136
+	ldw	r4,r30,-116
 	stw	r3,r4,0
-	ldw	r4,r30,-132
+	ldw	r4,r30,-112
 	stw	r3,r4,4
-	ldw	r4,r30,-128
+	ldw	r4,r30,-108
 	stw	r3,r4,8
-	ldw	r4,r30,-124
-	stw	r3,r4,12
 	ldw	r3,r30,-60
 	ldhu	r4,r30,-56
-	sth	r3,r4,16
-.Lj5008:
-.Lj5004:
+	sth	r3,r4,12
+.Lj5003:
+.Lj5000:
 	sth	r30,r0,-68
-.Lj4823:
+.Lj4821:
 	ldh	r1,r30,-68
-	ldw	r30,r29,136
-	ldw	r31,r29,140
-	addi	r29,r29,144
+	ldw	r30,r29,116
+	ldw	r31,r29,120
+	addi	r29,r29,124
 	jalr	r0,r31
 .Lc931:
 .Le182:
@@ -45289,13 +45258,13 @@ SYSTEM$_$VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE_$$_PACK_FLOAT$DOUBLE$BOOLEAN$SMALL
 	srli	r3,r3,16
 	sth	r30,r3,-78
 	ldbu	r3,r30,-60
-	bne	r3,r0,.Lj5009
-	jal	r0,.Lj5010
-.Lj5009:
+	bne	r3,r0,.Lj5004
+	jal	r0,.Lj5005
+.Lj5004:
 	ldbu	r3,r30,-77
 	ori	r3,r3,128
 	stb	r30,r3,-77
-.Lj5010:
+.Lj5005:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-84
 	stw	r3,r4,0
@@ -45336,51 +45305,51 @@ SYSTEM_$$_FLT_PARSE_DECIMAL$SHORTSTRING$TFLTDECIMAL$BOOLEAN$$BOOLEAN:
 	stw	r30,r3,-76
 	addi	r3,r0,1
 	stw	r30,r3,-72
-	jal	r0,.Lj5014
-.Lj5013:
+	jal	r0,.Lj5009
+.Lj5008:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
-.Lj5014:
+.Lj5009:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-76
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj5016
-	jal	r0,.Lj5017
-.Lj5016:
+	bne	r3,r0,.Lj5011
+	jal	r0,.Lj5012
+.Lj5011:
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-72
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r3,r3,-32
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5018
-	jal	r0,.Lj5017
-.Lj5018:
-	jal	r0,.Lj5013
-.Lj5017:
-	jal	r0,.Lj5015
-.Lj5015:
+	bne	r3,r0,.Lj5013
+	jal	r0,.Lj5012
+.Lj5013:
+	jal	r0,.Lj5008
+.Lj5012:
+	jal	r0,.Lj5010
+.Lj5010:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-76
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj5019
-	jal	r0,.Lj5020
-.Lj5019:
+	bne	r3,r0,.Lj5014
+	jal	r0,.Lj5015
+.Lj5014:
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-72
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r4,r0,43
-	beq	r3,r4,.Lj5022
+	beq	r3,r4,.Lj5017
 	addi	r4,r0,45
-	beq	r3,r4,.Lj5022
-	jal	r0,.Lj5023
-.Lj5022:
-	jal	r0,.Lj5021
-.Lj5023:
-	jal	r0,.Lj5020
-.Lj5021:
+	beq	r3,r4,.Lj5017
+	jal	r0,.Lj5018
+.Lj5017:
+	jal	r0,.Lj5016
+.Lj5018:
+	jal	r0,.Lj5015
+.Lj5016:
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-72
 	add	r3,r3,r4
@@ -45392,61 +45361,61 @@ SYSTEM_$$_FLT_PARSE_DECIMAL$SHORTSTRING$TFLTDECIMAL$BOOLEAN$$BOOLEAN:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
-.Lj5020:
+.Lj5015:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-76
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj5024
-	jal	r0,.Lj5025
-.Lj5025:
+	bne	r3,r0,.Lj5019
+	jal	r0,.Lj5020
+.Lj5020:
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-72
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r4,r0,46
-	beq	r3,r4,.Lj5027
+	beq	r3,r4,.Lj5022
 	addi	r3,r3,-48
 	addi	r4,r0,10
-	bltu	r3,r4,.Lj5027
+	bltu	r3,r4,.Lj5022
 	addi	r4,r0,21
-	beq	r3,r4,.Lj5027
+	beq	r3,r4,.Lj5022
 	addi	r4,r0,53
-	beq	r3,r4,.Lj5027
-	jal	r0,.Lj5028
-.Lj5028:
-	jal	r0,.Lj5024
-.Lj5027:
-	jal	r0,.Lj5026
+	beq	r3,r4,.Lj5022
+	jal	r0,.Lj5023
+.Lj5023:
+	jal	r0,.Lj5019
+.Lj5022:
+	jal	r0,.Lj5021
+.Lj5019:
+	jal	r0,.Lj5006
+.Lj5021:
+	jal	r0,.Lj5025
 .Lj5024:
-	jal	r0,.Lj5011
-.Lj5026:
-	jal	r0,.Lj5030
-.Lj5029:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
-.Lj5030:
+.Lj5025:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-76
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj5032
-	jal	r0,.Lj5033
-.Lj5032:
+	bne	r3,r0,.Lj5027
+	jal	r0,.Lj5028
+.Lj5027:
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-72
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r3,r3,-48
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5034
-	jal	r0,.Lj5033
-.Lj5034:
-	jal	r0,.Lj5029
-.Lj5033:
+	bne	r3,r0,.Lj5029
+	jal	r0,.Lj5028
+.Lj5029:
+	jal	r0,.Lj5024
+.Lj5028:
+	jal	r0,.Lj5026
+.Lj5026:
 	jal	r0,.Lj5031
-.Lj5031:
-	jal	r0,.Lj5036
-.Lj5035:
+.Lj5030:
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-72
 	add	r3,r3,r4
@@ -45469,7 +45438,30 @@ SYSTEM_$$_FLT_PARSE_DECIMAL$SHORTSTRING$TFLTDECIMAL$BOOLEAN$$BOOLEAN:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
+.Lj5031:
+	ldw	r3,r30,-72
+	ldw	r4,r30,-76
+	sle	r3,r3,r4
+	bne	r3,r0,.Lj5033
+	jal	r0,.Lj5034
+.Lj5033:
+	ldw	r4,r30,-56
+	ldbu	r3,r30,-72
+	add	r3,r4,r3
+	ldbu	r4,r3,0
+	addi	r4,r4,-48
+	addi	r3,r0,10
+	bltu	r4,r3,.Lj5036
+	jal	r0,.Lj5037
 .Lj5036:
+	jal	r0,.Lj5035
+.Lj5037:
+	jal	r0,.Lj5034
+.Lj5035:
+	jal	r0,.Lj5030
+.Lj5034:
+	jal	r0,.Lj5032
+.Lj5032:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-76
 	sle	r3,r3,r4
@@ -45479,61 +45471,38 @@ SYSTEM_$$_FLT_PARSE_DECIMAL$SHORTSTRING$TFLTDECIMAL$BOOLEAN$$BOOLEAN:
 	ldw	r4,r30,-56
 	ldbu	r3,r30,-72
 	add	r3,r4,r3
-	ldbu	r4,r3,0
-	addi	r4,r4,-48
-	addi	r3,r0,10
-	bltu	r4,r3,.Lj5041
-	jal	r0,.Lj5042
-.Lj5041:
-	jal	r0,.Lj5040
-.Lj5042:
-	jal	r0,.Lj5039
-.Lj5040:
-	jal	r0,.Lj5035
-.Lj5039:
-	jal	r0,.Lj5037
-.Lj5037:
-	ldw	r3,r30,-72
-	ldw	r4,r30,-76
-	sle	r3,r3,r4
-	bne	r3,r0,.Lj5043
-	jal	r0,.Lj5044
-.Lj5043:
-	ldw	r4,r30,-56
-	ldbu	r3,r30,-72
-	add	r3,r4,r3
 	ldbu	r3,r3,0
 	addi	r3,r3,-46
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5045
-	jal	r0,.Lj5044
-.Lj5045:
+	bne	r3,r0,.Lj5040
+	jal	r0,.Lj5039
+.Lj5040:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
-	jal	r0,.Lj5047
-.Lj5046:
+	jal	r0,.Lj5042
+.Lj5041:
 	ldw	r3,r30,-60
 	ldw	r3,r3,820
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5049
-	jal	r0,.Lj5050
-.Lj5049:
+	bne	r3,r0,.Lj5044
+	jal	r0,.Lj5045
+.Lj5044:
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-72
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r3,r3,-48
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5051
-	jal	r0,.Lj5050
-.Lj5051:
+	bne	r3,r0,.Lj5046
+	jal	r0,.Lj5045
+.Lj5046:
 	ldw	r4,r30,-60
 	ldw	r3,r4,824
 	addi	r3,r3,-1
 	stw	r4,r3,824
-	jal	r0,.Lj5052
-.Lj5050:
+	jal	r0,.Lj5047
+.Lj5045:
 	ldw	r4,r30,-56
 	ldbu	r3,r30,-72
 	add	r3,r4,r3
@@ -45549,11 +45518,36 @@ SYSTEM_$$_FLT_PARSE_DECIMAL$SHORTSTRING$TFLTDECIMAL$BOOLEAN$$BOOLEAN:
 	ldw	r3,r4,820
 	addi	r3,r3,1
 	stw	r4,r3,820
-.Lj5052:
+.Lj5047:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
-.Lj5047:
+.Lj5042:
+	ldw	r3,r30,-72
+	ldw	r4,r30,-76
+	sle	r3,r3,r4
+	bne	r3,r0,.Lj5048
+	jal	r0,.Lj5049
+.Lj5048:
+	ldw	r3,r30,-56
+	ldbu	r4,r30,-72
+	add	r3,r3,r4
+	ldbu	r4,r3,0
+	addi	r4,r4,-48
+	addi	r3,r0,10
+	bltu	r4,r3,.Lj5051
+	jal	r0,.Lj5052
+.Lj5051:
+	jal	r0,.Lj5050
+.Lj5052:
+	jal	r0,.Lj5049
+.Lj5050:
+	jal	r0,.Lj5041
+.Lj5049:
+	jal	r0,.Lj5043
+.Lj5043:
+.Lj5039:
+	stw	r30,r0,-80
 	ldw	r3,r30,-72
 	ldw	r4,r30,-76
 	sle	r3,r3,r4
@@ -45563,94 +45557,69 @@ SYSTEM_$$_FLT_PARSE_DECIMAL$SHORTSTRING$TFLTDECIMAL$BOOLEAN$$BOOLEAN:
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-72
 	add	r3,r3,r4
-	ldbu	r4,r3,0
-	addi	r4,r4,-48
-	addi	r3,r0,10
-	bltu	r4,r3,.Lj5056
-	jal	r0,.Lj5057
-.Lj5056:
-	jal	r0,.Lj5055
-.Lj5057:
-	jal	r0,.Lj5054
-.Lj5055:
-	jal	r0,.Lj5046
-.Lj5054:
-	jal	r0,.Lj5048
-.Lj5048:
-.Lj5044:
-	stw	r30,r0,-80
-	ldw	r3,r30,-72
-	ldw	r4,r30,-76
-	sle	r3,r3,r4
-	bne	r3,r0,.Lj5058
-	jal	r0,.Lj5059
-.Lj5058:
-	ldw	r3,r30,-56
-	ldbu	r4,r30,-72
-	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r4,r0,69
-	beq	r3,r4,.Lj5060
+	beq	r3,r4,.Lj5055
 	addi	r4,r0,101
-	beq	r3,r4,.Lj5060
-	jal	r0,.Lj5061
-.Lj5061:
-	jal	r0,.Lj5011
-.Lj5060:
+	beq	r3,r4,.Lj5055
+	jal	r0,.Lj5056
+.Lj5056:
+	jal	r0,.Lj5006
+.Lj5055:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
 	ldw	r4,r30,-72
 	ldw	r3,r30,-76
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5062
-	jal	r0,.Lj5063
-.Lj5062:
-	jal	r0,.Lj5011
-.Lj5063:
+	bne	r3,r0,.Lj5057
+	jal	r0,.Lj5058
+.Lj5057:
+	jal	r0,.Lj5006
+.Lj5058:
 	stb	r30,r0,-84
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-72
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r4,r0,43
-	beq	r3,r4,.Lj5065
+	beq	r3,r4,.Lj5060
 	addi	r4,r0,45
-	beq	r3,r4,.Lj5066
-	jal	r0,.Lj5064
-.Lj5065:
+	beq	r3,r4,.Lj5061
+	jal	r0,.Lj5059
+.Lj5060:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
-	jal	r0,.Lj5064
-.Lj5066:
+	jal	r0,.Lj5059
+.Lj5061:
 	addi	r3,r0,1
 	stb	r30,r3,-84
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
-	jal	r0,.Lj5064
-.Lj5064:
-	jal	r0,.Lj5068
-.Lj5067:
+	jal	r0,.Lj5059
+.Lj5059:
+	jal	r0,.Lj5063
+.Lj5062:
 	ldw	r4,r30,-56
 	ldbu	r3,r30,-72
 	add	r3,r4,r3
 	ldbu	r4,r3,0
 	addi	r4,r4,-48
 	addi	r3,r0,10
-	bltu	r4,r3,.Lj5070
-	jal	r0,.Lj5071
-.Lj5071:
-	jal	r0,.Lj5011
-.Lj5070:
+	bltu	r4,r3,.Lj5065
+	jal	r0,.Lj5066
+.Lj5066:
+	jal	r0,.Lj5006
+.Lj5065:
 	ldw	r3,r30,-80
 	lui	r4,24
 	ori	r4,r4,1696
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj5072
-	jal	r0,.Lj5073
-.Lj5072:
+	bne	r3,r0,.Lj5067
+	jal	r0,.Lj5068
+.Lj5067:
 	ldw	r3,r30,-80
 	addi	r4,r0,10
 	mul	r3,r3,r4
@@ -45661,46 +45630,46 @@ SYSTEM_$$_FLT_PARSE_DECIMAL$SHORTSTRING$TFLTDECIMAL$BOOLEAN$$BOOLEAN:
 	add	r3,r4,r3
 	addi	r3,r3,-48
 	stw	r30,r3,-80
-.Lj5073:
+.Lj5068:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
-.Lj5068:
+.Lj5063:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-76
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj5067
-	jal	r0,.Lj5069
-.Lj5069:
+	bne	r3,r0,.Lj5062
+	jal	r0,.Lj5064
+.Lj5064:
 	ldbu	r3,r30,-84
-	bne	r3,r0,.Lj5074
-	jal	r0,.Lj5075
-.Lj5074:
+	bne	r3,r0,.Lj5069
+	jal	r0,.Lj5070
+.Lj5069:
 	ldw	r3,r30,-80
 	sub	r3,r0,r3
 	stw	r30,r3,-80
-.Lj5075:
-.Lj5059:
+.Lj5070:
+.Lj5054:
 	ldw	r3,r30,-60
 	ldw	r4,r3,820
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5076
-	jal	r0,.Lj5077
-.Lj5076:
+	bne	r3,r0,.Lj5071
+	jal	r0,.Lj5072
+.Lj5071:
 	ldw	r5,r30,-60
 	ldw	r4,r30,-80
 	ldw	r3,r5,824
 	add	r3,r3,r4
 	stw	r5,r3,824
-	jal	r0,.Lj5078
-.Lj5077:
+	jal	r0,.Lj5073
+.Lj5072:
 	ldw	r3,r30,-60
 	stw	r3,r0,824
-.Lj5078:
+.Lj5073:
 	addi	r3,r0,1
 	stb	r30,r3,-68
-.Lj5011:
+.Lj5006:
 	ldbu	r1,r30,-68
 	ldw	r30,r29,84
 	ldw	r31,r29,88
@@ -45732,24 +45701,24 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	stw	r3,r0,4
 	ldw	r3,r30,-60
 	ldw	r4,r30,-56
-	bne	r0,r4,.Lj5082
-	bne	r0,r3,.Lj5082
-	jal	r0,.Lj5081
-.Lj5082:
+	bne	r0,r4,.Lj5077
+	bne	r0,r3,.Lj5077
+	jal	r0,.Lj5076
+.Lj5077:
 	ldw	r3,r30,-64
 	addi	r4,r0,-342
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj5081
-	jal	r0,.Lj5083
-.Lj5083:
+	bne	r3,r0,.Lj5076
+	jal	r0,.Lj5078
+.Lj5078:
 	ldw	r4,r30,-64
 	addi	r3,r0,308
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5081
-	jal	r0,.Lj5084
-.Lj5081:
+	bne	r3,r0,.Lj5076
 	jal	r0,.Lj5079
-.Lj5084:
+.Lj5076:
+	jal	r0,.Lj5074
+.Lj5079:
 	addi	r3,r0,32
 	ldw	r4,r30,-60
 	ldw	r5,r30,-56
@@ -45760,13 +45729,13 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	stw	r30,r4,-168
 	ldw	r4,r30,-168
 	seq	r4,r4,r0
-	bne	r4,r0,.Lj5086
-	jal	r0,.Lj5087
-.Lj5086:
+	bne	r4,r0,.Lj5081
+	jal	r0,.Lj5082
+.Lj5081:
 	ldw	r4,r30,-60
 	stw	r30,r4,-168
 	addi	r3,r0,0
-.Lj5087:
+.Lj5082:
 	ldw	r4,r30,-168
 	lui	r5,15
 	ori	r5,r5,4095
@@ -45806,11 +45775,11 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	ldw	r8,r30,-56
 	ldw	r9,r30,-84
 	addi	r5,r9,-32
-	blt	r5,r0,.Lj5089
+	blt	r5,r0,.Lj5084
 	li	r3,0
 	sll	r6,r4,r5
-	jal	r0,.Lj5090
-.Lj5089:
+	jal	r0,.Lj5085
+.Lj5084:
 	li	r5,31
 	srli	r7,r4,1
 	sub	r5,r5,r9
@@ -45818,7 +45787,7 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	srl	r7,r7,r5
 	sll	r6,r8,r9
 	or	r6,r6,r7
-.Lj5090:
+.Lj5085:
 	stw	r30,r3,-60
 	stw	r30,r6,-56
 	ldw	r4,r30,-64
@@ -45845,14 +45814,14 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	addi	r3,r0,0
 	ldw	r3,r30,-88
 	addi	r4,r3,-32
-	blt	r4,r0,.Lj5091
+	blt	r4,r0,.Lj5086
 	li	r6,0
 	sll	r4,r5,r4
-	jal	r0,.Lj5092
-.Lj5091:
+	jal	r0,.Lj5087
+.Lj5086:
 	sll	r6,r5,r3
 	li	r4,0
-.Lj5092:
+.Lj5087:
 	addi	r3,r6,-1
 	sltu	r5,r6,r3
 	sub	r4,r4,r5
@@ -45881,10 +45850,10 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	and	r5,r5,r4
 	ldw	r6,r30,-100
 	ldw	r4,r30,-96
-	bne	r4,r5,.Lj5094
-	bne	r6,r3,.Lj5094
-	jal	r0,.Lj5093
-.Lj5093:
+	bne	r4,r5,.Lj5089
+	bne	r6,r3,.Lj5089
+	jal	r0,.Lj5088
+.Lj5088:
 	ldw	r6,r30,-116
 	ldw	r5,r30,-112
 	ldw	r3,r30,-60
@@ -45899,15 +45868,15 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	add	r4,r7,r4
 	ldw	r6,r30,-60
 	ldw	r5,r30,-56
-	bltu	r4,r5,.Lj5096
-	bne	r5,r4,.Lj5097
-	bltu	r3,r6,.Lj5096
-	jal	r0,.Lj5097
-.Lj5096:
-	jal	r0,.Lj5095
-.Lj5097:
-	jal	r0,.Lj5094
-.Lj5095:
+	bltu	r4,r5,.Lj5091
+	bne	r5,r4,.Lj5092
+	bltu	r3,r6,.Lj5091
+	jal	r0,.Lj5092
+.Lj5091:
+	jal	r0,.Lj5090
+.Lj5092:
+	jal	r0,.Lj5089
+.Lj5090:
 	ldw	r3,r30,-64
 	slli	r4,r3,4
 	la	r3,TC_$SYSTEM_$$_FLT_POW10_TABLE
@@ -45945,11 +45914,11 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	ldw	r4,r30,-144
 	ldw	r5,r30,-116
 	ldw	r6,r30,-112
-	bltu	r4,r6,.Lj5098
-	bne	r6,r4,.Lj5099
-	bltu	r3,r5,.Lj5098
-	jal	r0,.Lj5099
-.Lj5098:
+	bltu	r4,r6,.Lj5093
+	bne	r6,r4,.Lj5094
+	bltu	r3,r5,.Lj5093
+	jal	r0,.Lj5094
+.Lj5093:
 	ldw	r4,r30,-140
 	ldw	r5,r30,-136
 	addi	r3,r4,1
@@ -45958,7 +45927,7 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	add	r5,r5,r6
 	stw	r30,r4,-140
 	stw	r30,r5,-136
-.Lj5099:
+.Lj5094:
 	ldw	r3,r30,-140
 	ldw	r4,r30,-136
 	ldw	r6,r30,-100
@@ -45967,24 +45936,24 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	and	r4,r4,r5
 	ldw	r6,r30,-100
 	ldw	r5,r30,-96
-	bne	r5,r4,.Lj5101
-	bne	r6,r3,.Lj5101
-	jal	r0,.Lj5100
-.Lj5100:
+	bne	r5,r4,.Lj5096
+	bne	r6,r3,.Lj5096
+	jal	r0,.Lj5095
+.Lj5095:
 	ldw	r4,r30,-148
 	ldw	r3,r30,-144
 	lui	r6,1048575
 	ori	r6,r6,4095
 	lui	r5,1048575
 	ori	r5,r5,4095
-	bne	r5,r3,.Lj5104
-	bne	r6,r4,.Lj5104
-	jal	r0,.Lj5103
-.Lj5103:
-	jal	r0,.Lj5102
-.Lj5104:
-	jal	r0,.Lj5101
-.Lj5102:
+	bne	r5,r3,.Lj5099
+	bne	r6,r4,.Lj5099
+	jal	r0,.Lj5098
+.Lj5098:
+	jal	r0,.Lj5097
+.Lj5099:
+	jal	r0,.Lj5096
+.Lj5097:
 	ldw	r6,r30,-132
 	ldw	r4,r30,-128
 	ldw	r3,r30,-60
@@ -45999,17 +45968,17 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	add	r4,r8,r5
 	ldw	r5,r30,-60
 	ldw	r6,r30,-56
-	bltu	r4,r6,.Lj5106
-	bne	r6,r4,.Lj5107
-	bltu	r3,r5,.Lj5106
-	jal	r0,.Lj5107
-.Lj5106:
-	jal	r0,.Lj5105
-.Lj5107:
-	jal	r0,.Lj5101
-.Lj5105:
-	jal	r0,.Lj5079
+	bltu	r4,r6,.Lj5101
+	bne	r6,r4,.Lj5102
+	bltu	r3,r5,.Lj5101
+	jal	r0,.Lj5102
 .Lj5101:
+	jal	r0,.Lj5100
+.Lj5102:
+	jal	r0,.Lj5096
+.Lj5100:
+	jal	r0,.Lj5074
+.Lj5096:
 	ldw	r3,r30,-140
 	stw	r30,r3,-108
 	ldw	r3,r30,-136
@@ -46018,7 +45987,7 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	stw	r30,r3,-116
 	ldw	r3,r30,-144
 	stw	r30,r3,-112
-.Lj5094:
+.Lj5089:
 	ldw	r3,r30,-108
 	ldw	r4,r30,-104
 	li	r3,0
@@ -46044,11 +46013,11 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	slli	r7,r5,0
 	srli	r7,r7,0
 	addi	r9,r7,-32
-	blt	r9,r0,.Lj5108
+	blt	r9,r0,.Lj5103
 	li	r8,0
 	srl	r5,r3,r9
-	jal	r0,.Lj5109
-.Lj5108:
+	jal	r0,.Lj5104
+.Lj5103:
 	li	r9,31
 	slli	r6,r3,1
 	sub	r9,r9,r7
@@ -46056,7 +46025,7 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	sll	r6,r6,r9
 	srl	r8,r3,r7
 	or	r5,r5,r6
-.Lj5109:
+.Lj5104:
 	stw	r30,r5,-164
 	stw	r30,r8,-160
 	ldw	r4,r30,-156
@@ -46069,39 +46038,39 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	stw	r30,r4,-92
 	ldw	r4,r30,-116
 	ldw	r3,r30,-112
-	bne	r0,r3,.Lj5111
-	bne	r0,r4,.Lj5111
-	jal	r0,.Lj5110
-.Lj5110:
+	bne	r0,r3,.Lj5106
+	bne	r0,r4,.Lj5106
+	jal	r0,.Lj5105
+.Lj5105:
 	ldw	r5,r30,-108
 	ldw	r4,r30,-104
 	ldw	r6,r30,-100
 	ldw	r3,r30,-96
 	and	r5,r5,r6
 	and	r3,r4,r3
-	bne	r0,r3,.Lj5114
-	bne	r0,r5,.Lj5114
-	jal	r0,.Lj5113
-.Lj5113:
-	jal	r0,.Lj5112
-.Lj5114:
-	jal	r0,.Lj5111
-.Lj5112:
+	bne	r0,r3,.Lj5109
+	bne	r0,r5,.Lj5109
+	jal	r0,.Lj5108
+.Lj5108:
+	jal	r0,.Lj5107
+.Lj5109:
+	jal	r0,.Lj5106
+.Lj5107:
 	ldw	r3,r30,-164
 	ldw	r4,r30,-160
 	andi	r4,r3,3
 	addi	r3,r0,0
 	addi	r5,r0,1
-	bne	r0,r3,.Lj5117
-	bne	r5,r4,.Lj5117
-	jal	r0,.Lj5116
-.Lj5116:
-	jal	r0,.Lj5115
-.Lj5117:
+	bne	r0,r3,.Lj5112
+	bne	r5,r4,.Lj5112
 	jal	r0,.Lj5111
-.Lj5115:
-	jal	r0,.Lj5079
 .Lj5111:
+	jal	r0,.Lj5110
+.Lj5112:
+	jal	r0,.Lj5106
+.Lj5110:
+	jal	r0,.Lj5074
+.Lj5106:
 	ldw	r3,r30,-164
 	ldw	r4,r30,-160
 	andi	r6,r3,1
@@ -46129,11 +46098,11 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	slli	r8,r5,0
 	srli	r8,r8,0
 	addi	r9,r8,-32
-	blt	r9,r0,.Lj5120
+	blt	r9,r0,.Lj5115
 	li	r7,0
 	srl	r5,r3,r9
-	jal	r0,.Lj5121
-.Lj5120:
+	jal	r0,.Lj5116
+.Lj5115:
 	li	r9,31
 	slli	r6,r3,1
 	sub	r9,r9,r8
@@ -46141,11 +46110,11 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	sll	r6,r6,r9
 	srl	r7,r3,r8
 	or	r5,r5,r6
-.Lj5121:
-	bne	r0,r7,.Lj5118
-	bne	r0,r5,.Lj5118
-	jal	r0,.Lj5119
-.Lj5118:
+.Lj5116:
+	bne	r0,r7,.Lj5113
+	bne	r0,r5,.Lj5113
+	jal	r0,.Lj5114
+.Lj5113:
 	ldw	r5,r30,-164
 	ldw	r4,r30,-160
 	slli	r3,r4,31
@@ -46157,36 +46126,36 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	ldw	r3,r30,-92
 	addi	r3,r3,1
 	stw	r30,r3,-92
-.Lj5119:
+.Lj5114:
 	ldw	r4,r30,-92
 	addi	r3,r0,0
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj5122
-	jal	r0,.Lj5123
-.Lj5123:
+	bne	r3,r0,.Lj5117
+	jal	r0,.Lj5118
+.Lj5118:
 	addi	r4,r0,1
 	ldw	r3,r30,-72
 	sll	r3,r4,r3
 	addi	r4,r3,-1
 	ldw	r3,r30,-92
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj5122
-	jal	r0,.Lj5124
-.Lj5122:
-	jal	r0,.Lj5079
-.Lj5124:
+	bne	r3,r0,.Lj5117
+	jal	r0,.Lj5119
+.Lj5117:
+	jal	r0,.Lj5074
+.Lj5119:
 	addi	r5,r0,1
 	addi	r3,r0,0
 	ldw	r3,r30,-68
 	addi	r4,r3,-32
-	blt	r4,r0,.Lj5125
+	blt	r4,r0,.Lj5120
 	li	r6,0
 	sll	r4,r5,r4
-	jal	r0,.Lj5126
-.Lj5125:
+	jal	r0,.Lj5121
+.Lj5120:
 	sll	r6,r5,r3
 	li	r4,0
-.Lj5126:
+.Lj5121:
 	addi	r3,r6,-1
 	sltu	r5,r6,r3
 	sub	r4,r4,r5
@@ -46198,11 +46167,11 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	srai	r6,r7,31
 	ldw	r10,r30,-68
 	addi	r9,r10,-32
-	blt	r9,r0,.Lj5127
+	blt	r9,r0,.Lj5122
 	li	r8,0
 	sll	r5,r7,r9
-	jal	r0,.Lj5128
-.Lj5127:
+	jal	r0,.Lj5123
+.Lj5122:
 	li	r9,31
 	srli	r2,r7,1
 	sub	r9,r9,r10
@@ -46210,7 +46179,7 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	srl	r2,r2,r9
 	sll	r5,r6,r10
 	or	r5,r5,r2
-.Lj5128:
+.Lj5123:
 	or	r3,r3,r8
 	or	r4,r4,r5
 	ldw	r5,r30,-76
@@ -46218,7 +46187,7 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	stw	r5,r4,4
 	addi	r3,r0,1
 	stb	r30,r3,-80
-.Lj5079:
+.Lj5074:
 	ldbu	r1,r30,-80
 	ldw	r30,r29,176
 	ldw	r31,r29,180
@@ -46239,20 +46208,20 @@ SYSTEM_$$_FLT_DECIMAL_TRIM$TFLTDECIMAL:
 	addi	r30,r29,8
 	addi	r29,r29,-56
 	stw	r30,r3,-56
-	jal	r0,.Lj5132
-.Lj5131:
+	jal	r0,.Lj5127
+.Lj5126:
 	ldw	r3,r30,-56
 	ldw	r4,r3,820
 	addi	r4,r4,-1
 	stw	r3,r4,820
-.Lj5132:
+.Lj5127:
 	ldw	r3,r30,-56
 	ldw	r4,r3,820
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5134
-	jal	r0,.Lj5135
-.Lj5134:
+	bne	r3,r0,.Lj5129
+	jal	r0,.Lj5130
+.Lj5129:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
 	ldw	r4,r4,820
@@ -46260,22 +46229,22 @@ SYSTEM_$$_FLT_DECIMAL_TRIM$TFLTDECIMAL:
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5136
-	jal	r0,.Lj5135
-.Lj5136:
-	jal	r0,.Lj5131
-.Lj5135:
-	jal	r0,.Lj5133
-.Lj5133:
+	bne	r3,r0,.Lj5131
+	jal	r0,.Lj5130
+.Lj5131:
+	jal	r0,.Lj5126
+.Lj5130:
+	jal	r0,.Lj5128
+.Lj5128:
 	ldw	r3,r30,-56
 	ldw	r3,r3,820
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5137
-	jal	r0,.Lj5138
-.Lj5137:
+	bne	r3,r0,.Lj5132
+	jal	r0,.Lj5133
+.Lj5132:
 	ldw	r3,r30,-56
 	stw	r3,r0,824
-.Lj5138:
+.Lj5133:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -46300,27 +46269,27 @@ SYSTEM_$$_FLT_DECIMAL_RIGHT_SHIFT$TFLTDECIMAL$LONGINT:
 	stw	r30,r0,-68
 	stw	r30,r0,-76
 	stw	r30,r0,-72
-	jal	r0,.Lj5142
-.Lj5141:
+	jal	r0,.Lj5137
+.Lj5136:
 	ldw	r3,r30,-56
 	ldw	r3,r3,820
 	ldw	r4,r30,-64
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj5144
-	jal	r0,.Lj5145
-.Lj5144:
+	bne	r3,r0,.Lj5139
+	jal	r0,.Lj5140
+.Lj5139:
 	ldw	r4,r30,-76
 	ldw	r3,r30,-72
-	bne	r0,r3,.Lj5147
-	bne	r0,r4,.Lj5147
-	jal	r0,.Lj5146
-.Lj5146:
+	bne	r0,r3,.Lj5142
+	bne	r0,r4,.Lj5142
+	jal	r0,.Lj5141
+.Lj5141:
 	ldw	r3,r30,-56
 	stw	r3,r0,820
-	jal	r0,.Lj5139
-.Lj5147:
-	jal	r0,.Lj5149
-.Lj5148:
+	jal	r0,.Lj5134
+.Lj5142:
+	jal	r0,.Lj5144
+.Lj5143:
 	addi	r6,r0,0
 	addi	r5,r0,10
 	ldw	r3,r30,-76
@@ -46331,16 +46300,16 @@ SYSTEM_$$_FLT_DECIMAL_RIGHT_SHIFT$TFLTDECIMAL$LONGINT:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-64
-.Lj5149:
+.Lj5144:
 	ldw	r7,r30,-76
 	ldw	r8,r30,-72
 	ldw	r9,r30,-60
 	addi	r3,r9,-32
-	blt	r3,r0,.Lj5153
+	blt	r3,r0,.Lj5148
 	li	r5,0
 	srl	r6,r8,r3
-	jal	r0,.Lj5154
-.Lj5153:
+	jal	r0,.Lj5149
+.Lj5148:
 	li	r3,31
 	slli	r4,r8,1
 	sub	r3,r3,r9
@@ -46348,17 +46317,17 @@ SYSTEM_$$_FLT_DECIMAL_RIGHT_SHIFT$TFLTDECIMAL$LONGINT:
 	sll	r4,r4,r3
 	srl	r5,r8,r9
 	or	r6,r6,r4
-.Lj5154:
-	bne	r0,r5,.Lj5152
-	bne	r0,r6,.Lj5152
-	jal	r0,.Lj5151
-.Lj5151:
-	jal	r0,.Lj5148
-.Lj5152:
-	jal	r0,.Lj5150
-.Lj5150:
+.Lj5149:
+	bne	r0,r5,.Lj5147
+	bne	r0,r6,.Lj5147
+	jal	r0,.Lj5146
+.Lj5146:
 	jal	r0,.Lj5143
+.Lj5147:
+	jal	r0,.Lj5145
 .Lj5145:
+	jal	r0,.Lj5138
+.Lj5140:
 	addi	r6,r0,0
 	addi	r5,r0,10
 	ldw	r3,r30,-76
@@ -46382,16 +46351,16 @@ SYSTEM_$$_FLT_DECIMAL_RIGHT_SHIFT$TFLTDECIMAL$LONGINT:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-64
-.Lj5142:
+.Lj5137:
 	ldw	r6,r30,-76
 	ldw	r7,r30,-72
 	ldw	r8,r30,-60
 	addi	r3,r8,-32
-	blt	r3,r0,.Lj5157
+	blt	r3,r0,.Lj5152
 	li	r5,0
 	srl	r9,r7,r3
-	jal	r0,.Lj5158
-.Lj5157:
+	jal	r0,.Lj5153
+.Lj5152:
 	li	r3,31
 	slli	r4,r7,1
 	sub	r3,r3,r8
@@ -46399,15 +46368,15 @@ SYSTEM_$$_FLT_DECIMAL_RIGHT_SHIFT$TFLTDECIMAL$LONGINT:
 	sll	r4,r4,r3
 	srl	r5,r7,r8
 	or	r9,r9,r4
-.Lj5158:
-	bne	r0,r5,.Lj5156
-	bne	r0,r9,.Lj5156
-	jal	r0,.Lj5155
-.Lj5155:
-	jal	r0,.Lj5141
-.Lj5156:
-	jal	r0,.Lj5143
-.Lj5143:
+.Lj5153:
+	bne	r0,r5,.Lj5151
+	bne	r0,r9,.Lj5151
+	jal	r0,.Lj5150
+.Lj5150:
+	jal	r0,.Lj5136
+.Lj5151:
+	jal	r0,.Lj5138
+.Lj5138:
 	ldw	r3,r30,-64
 	addi	r5,r3,-1
 	ldw	r3,r30,-56
@@ -46418,21 +46387,21 @@ SYSTEM_$$_FLT_DECIMAL_RIGHT_SHIFT$TFLTDECIMAL$LONGINT:
 	addi	r3,r0,0
 	ldw	r3,r30,-60
 	addi	r4,r3,-32
-	blt	r4,r0,.Lj5159
+	blt	r4,r0,.Lj5154
 	li	r6,0
 	sll	r4,r5,r4
-	jal	r0,.Lj5160
-.Lj5159:
+	jal	r0,.Lj5155
+.Lj5154:
 	sll	r6,r5,r3
 	li	r4,0
-.Lj5160:
+.Lj5155:
 	addi	r3,r6,-1
 	sltu	r5,r6,r3
 	sub	r4,r4,r5
 	stw	r30,r3,-84
 	stw	r30,r4,-80
-	jal	r0,.Lj5162
-.Lj5161:
+	jal	r0,.Lj5157
+.Lj5156:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-64
 	add	r3,r3,r4
@@ -46442,11 +46411,11 @@ SYSTEM_$$_FLT_DECIMAL_RIGHT_SHIFT$TFLTDECIMAL$LONGINT:
 	ldw	r3,r30,-72
 	ldw	r7,r30,-60
 	addi	r4,r7,-32
-	blt	r4,r0,.Lj5164
+	blt	r4,r0,.Lj5159
 	li	r8,0
 	srl	r9,r3,r4
-	jal	r0,.Lj5165
-.Lj5164:
+	jal	r0,.Lj5160
+.Lj5159:
 	li	r4,31
 	slli	r5,r3,1
 	sub	r4,r4,r7
@@ -46454,7 +46423,7 @@ SYSTEM_$$_FLT_DECIMAL_RIGHT_SHIFT$TFLTDECIMAL$LONGINT:
 	sll	r5,r5,r4
 	srl	r8,r3,r7
 	or	r9,r9,r5
-.Lj5165:
+.Lj5160:
 	stw	r30,r9,-92
 	stw	r30,r8,-88
 	ldw	r5,r30,-76
@@ -46493,25 +46462,25 @@ SYSTEM_$$_FLT_DECIMAL_RIGHT_SHIFT$TFLTDECIMAL$LONGINT:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-64
-.Lj5162:
+.Lj5157:
 	ldw	r3,r30,-56
 	ldw	r4,r3,820
 	ldw	r3,r30,-64
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj5161
-	jal	r0,.Lj5163
-.Lj5163:
-	jal	r0,.Lj5167
-.Lj5166:
+	bne	r3,r0,.Lj5156
+	jal	r0,.Lj5158
+.Lj5158:
+	jal	r0,.Lj5162
+.Lj5161:
 	ldw	r4,r30,-76
 	ldw	r5,r30,-72
 	ldw	r7,r30,-60
 	addi	r8,r7,-32
-	blt	r8,r0,.Lj5169
+	blt	r8,r0,.Lj5164
 	li	r9,0
 	srl	r6,r5,r8
-	jal	r0,.Lj5170
-.Lj5169:
+	jal	r0,.Lj5165
+.Lj5164:
 	li	r8,31
 	slli	r3,r5,1
 	sub	r8,r8,r7
@@ -46519,7 +46488,7 @@ SYSTEM_$$_FLT_DECIMAL_RIGHT_SHIFT$TFLTDECIMAL$LONGINT:
 	sll	r3,r3,r8
 	srl	r9,r5,r7
 	or	r6,r6,r3
-.Lj5170:
+.Lj5165:
 	stw	r30,r6,-92
 	stw	r30,r9,-88
 	ldw	r5,r30,-76
@@ -46533,9 +46502,9 @@ SYSTEM_$$_FLT_DECIMAL_RIGHT_SHIFT$TFLTDECIMAL$LONGINT:
 	ldw	r3,r30,-68
 	addi	r4,r0,800
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj5171
-	jal	r0,.Lj5172
-.Lj5171:
+	bne	r3,r0,.Lj5166
+	jal	r0,.Lj5167
+.Lj5166:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-68
 	add	r3,r3,r4
@@ -46544,20 +46513,20 @@ SYSTEM_$$_FLT_DECIMAL_RIGHT_SHIFT$TFLTDECIMAL$LONGINT:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	stw	r30,r3,-68
-	jal	r0,.Lj5173
-.Lj5172:
+	jal	r0,.Lj5168
+.Lj5167:
 	ldw	r4,r30,-92
 	ldw	r3,r30,-88
-	bltu	r0,r3,.Lj5174
-	bne	r3,r0,.Lj5175
-	bltu	r0,r4,.Lj5174
-	jal	r0,.Lj5175
-.Lj5174:
+	bltu	r0,r3,.Lj5169
+	bne	r3,r0,.Lj5170
+	bltu	r0,r4,.Lj5169
+	jal	r0,.Lj5170
+.Lj5169:
 	ldw	r3,r30,-56
 	addi	r4,r0,1
 	stb	r3,r4,828
-.Lj5175:
-.Lj5173:
+.Lj5170:
+.Lj5168:
 	addi	r6,r0,0
 	addi	r5,r0,10
 	ldw	r3,r30,-76
@@ -46565,24 +46534,24 @@ SYSTEM_$$_FLT_DECIMAL_RIGHT_SHIFT$TFLTDECIMAL$LONGINT:
 	call	fpc_mul_qword
 	stw	r30,r1,-76
 	stw	r30,r2,-72
-.Lj5167:
+.Lj5162:
 	ldw	r4,r30,-76
 	ldw	r3,r30,-72
-	bltu	r0,r3,.Lj5176
-	bne	r3,r0,.Lj5177
-	bltu	r0,r4,.Lj5176
-	jal	r0,.Lj5177
-.Lj5176:
-	jal	r0,.Lj5166
-.Lj5177:
-	jal	r0,.Lj5168
-.Lj5168:
+	bltu	r0,r3,.Lj5171
+	bne	r3,r0,.Lj5172
+	bltu	r0,r4,.Lj5171
+	jal	r0,.Lj5172
+.Lj5171:
+	jal	r0,.Lj5161
+.Lj5172:
+	jal	r0,.Lj5163
+.Lj5163:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-68
 	stw	r4,r3,820
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_FLT_DECIMAL_TRIM$TFLTDECIMAL
-.Lj5139:
+.Lj5134:
 	ldw	r30,r29,96
 	ldw	r31,r29,100
 	addi	r29,r29,104
@@ -46617,8 +46586,8 @@ SYSTEM_$$_FLT_DECIMAL_LEFT_SHIFT$TFLTDECIMAL$LONGINT:
 	stw	r30,r3,-68
 	stw	r30,r0,-88
 	stw	r30,r0,-84
-	jal	r0,.Lj5181
-.Lj5180:
+	jal	r0,.Lj5176
+.Lj5175:
 	ldw	r3,r30,-64
 	addi	r3,r3,-1
 	stw	r30,r3,-64
@@ -46629,11 +46598,11 @@ SYSTEM_$$_FLT_DECIMAL_LEFT_SHIFT$TFLTDECIMAL$LONGINT:
 	addi	r3,r0,0
 	ldw	r9,r30,-60
 	addi	r4,r9,-32
-	blt	r4,r0,.Lj5183
+	blt	r4,r0,.Lj5178
 	li	r6,0
 	sll	r5,r7,r4
-	jal	r0,.Lj5184
-.Lj5183:
+	jal	r0,.Lj5179
+.Lj5178:
 	li	r4,31
 	srli	r8,r7,1
 	sub	r4,r4,r9
@@ -46641,7 +46610,7 @@ SYSTEM_$$_FLT_DECIMAL_LEFT_SHIFT$TFLTDECIMAL$LONGINT:
 	srl	r8,r8,r4
 	sll	r5,r3,r9
 	or	r5,r5,r8
-.Lj5184:
+.Lj5179:
 	ldw	r4,r30,-88
 	ldw	r7,r30,-84
 	add	r3,r4,r6
@@ -46689,15 +46658,15 @@ SYSTEM_$$_FLT_DECIMAL_LEFT_SHIFT$TFLTDECIMAL$LONGINT:
 	stw	r30,r3,-88
 	ldw	r3,r30,-92
 	stw	r30,r3,-84
-.Lj5181:
+.Lj5176:
 	ldw	r4,r30,-64
 	addi	r3,r0,20
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5180
-	jal	r0,.Lj5182
-.Lj5182:
-	jal	r0,.Lj5186
-.Lj5185:
+	bne	r3,r0,.Lj5175
+	jal	r0,.Lj5177
+.Lj5177:
+	jal	r0,.Lj5181
+.Lj5180:
 	ldw	r5,r30,-88
 	ldw	r6,r30,-84
 	addi	r4,r0,0
@@ -46732,18 +46701,18 @@ SYSTEM_$$_FLT_DECIMAL_LEFT_SHIFT$TFLTDECIMAL$LONGINT:
 	stw	r30,r3,-88
 	ldw	r3,r30,-92
 	stw	r30,r3,-84
-.Lj5186:
+.Lj5181:
 	ldw	r4,r30,-88
 	ldw	r3,r30,-84
-	bltu	r0,r3,.Lj5188
-	bne	r3,r0,.Lj5189
-	bltu	r0,r4,.Lj5188
-	jal	r0,.Lj5189
-.Lj5188:
-	jal	r0,.Lj5185
-.Lj5189:
-	jal	r0,.Lj5187
-.Lj5187:
+	bltu	r0,r3,.Lj5183
+	bne	r3,r0,.Lj5184
+	bltu	r0,r4,.Lj5183
+	jal	r0,.Lj5184
+.Lj5183:
+	jal	r0,.Lj5180
+.Lj5184:
+	jal	r0,.Lj5182
+.Lj5182:
 	ldw	r3,r30,-68
 	addi	r4,r0,20
 	sub	r3,r4,r3
@@ -46756,9 +46725,9 @@ SYSTEM_$$_FLT_DECIMAL_LEFT_SHIFT$TFLTDECIMAL$LONGINT:
 	ldw	r3,r30,-72
 	addi	r4,r0,800
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj5190
-	jal	r0,.Lj5191
-.Lj5190:
+	bne	r3,r0,.Lj5185
+	jal	r0,.Lj5186
+.Lj5185:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-72
 	add	r3,r3,r4
@@ -46766,13 +46735,13 @@ SYSTEM_$$_FLT_DECIMAL_LEFT_SHIFT$TFLTDECIMAL$LONGINT:
 	ldw	r4,r30,-68
 	addi	r4,r4,800
 	sle	r4,r4,r3
-	bne	r4,r0,.Lj5192
-	jal	r0,.Lj5193
-.Lj5192:
+	bne	r4,r0,.Lj5187
+	jal	r0,.Lj5188
+.Lj5187:
 	ldw	r4,r30,-68
 	addi	r4,r4,799
 	stw	r30,r4,-80
-.Lj5194:
+.Lj5189:
 	ldw	r4,r30,-80
 	addi	r4,r4,1
 	stw	r30,r4,-80
@@ -46781,22 +46750,22 @@ SYSTEM_$$_FLT_DECIMAL_LEFT_SHIFT$TFLTDECIMAL$LONGINT:
 	add	r4,r5,r4
 	ldbu	r4,r4,0
 	sne	r4,r4,r0
-	bne	r4,r0,.Lj5197
-	jal	r0,.Lj5198
-.Lj5197:
+	bne	r4,r0,.Lj5192
+	jal	r0,.Lj5193
+.Lj5192:
 	ldw	r4,r30,-56
 	addi	r5,r0,1
 	stb	r4,r5,828
-.Lj5198:
+.Lj5193:
 	ldw	r4,r30,-80
 	sge	r4,r4,r3
-	bne	r4,r0,.Lj5196
-	jal	r0,.Lj5194
-.Lj5196:
-.Lj5193:
+	bne	r4,r0,.Lj5191
+	jal	r0,.Lj5189
+.Lj5191:
+.Lj5188:
 	addi	r3,r0,800
 	stw	r30,r3,-72
-.Lj5191:
+.Lj5186:
 	ldw	r4,r30,-56
 	ldw	r5,r30,-56
 	ldw	r3,r30,-68
@@ -46836,65 +46805,65 @@ SYSTEM_$$_FLT_DECIMAL_SHIFT$TFLTDECIMAL$LONGINT:
 	ldw	r3,r30,-56
 	ldw	r3,r3,820
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5201
-	jal	r0,.Lj5202
-.Lj5201:
-	jal	r0,.Lj5199
-.Lj5202:
+	bne	r3,r0,.Lj5196
+	jal	r0,.Lj5197
+.Lj5196:
+	jal	r0,.Lj5194
+.Lj5197:
 	ldw	r4,r30,-60
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5203
-	jal	r0,.Lj5204
-.Lj5203:
-	jal	r0,.Lj5206
-.Lj5205:
+	bne	r3,r0,.Lj5198
+	jal	r0,.Lj5199
+.Lj5198:
+	jal	r0,.Lj5201
+.Lj5200:
 	ldw	r3,r30,-56
 	addi	r4,r0,60
 	call	SYSTEM_$$_FLT_DECIMAL_LEFT_SHIFT$TFLTDECIMAL$LONGINT
 	ldw	r3,r30,-60
 	addi	r3,r3,-60
 	stw	r30,r3,-60
-.Lj5206:
+.Lj5201:
 	ldw	r4,r30,-60
 	addi	r3,r0,60
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5205
-	jal	r0,.Lj5207
-.Lj5207:
+	bne	r3,r0,.Lj5200
+	jal	r0,.Lj5202
+.Lj5202:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	call	SYSTEM_$$_FLT_DECIMAL_LEFT_SHIFT$TFLTDECIMAL$LONGINT
-	jal	r0,.Lj5208
-.Lj5204:
+	jal	r0,.Lj5203
+.Lj5199:
 	ldw	r4,r30,-60
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj5209
-	jal	r0,.Lj5210
-.Lj5209:
-	jal	r0,.Lj5212
-.Lj5211:
+	bne	r3,r0,.Lj5204
+	jal	r0,.Lj5205
+.Lj5204:
+	jal	r0,.Lj5207
+.Lj5206:
 	ldw	r3,r30,-56
 	addi	r4,r0,60
 	call	SYSTEM_$$_FLT_DECIMAL_RIGHT_SHIFT$TFLTDECIMAL$LONGINT
 	ldw	r3,r30,-60
 	addi	r3,r3,60
 	stw	r30,r3,-60
-.Lj5212:
+.Lj5207:
 	ldw	r3,r30,-60
 	addi	r4,r0,-60
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj5211
-	jal	r0,.Lj5213
-.Lj5213:
+	bne	r3,r0,.Lj5206
+	jal	r0,.Lj5208
+.Lj5208:
 	ldw	r3,r30,-60
 	sub	r4,r0,r3
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_FLT_DECIMAL_RIGHT_SHIFT$TFLTDECIMAL$LONGINT
-.Lj5210:
-.Lj5208:
-.Lj5199:
+.Lj5205:
+.Lj5203:
+.Lj5194:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -46917,8 +46886,8 @@ SYSTEM_$$_FLT_DECIMAL_ROUNDED_INTEGER$TFLTDECIMAL$$QWORD:
 	stw	r30,r0,-64
 	stw	r30,r0,-60
 	stw	r30,r0,-68
-	jal	r0,.Lj5217
-.Lj5216:
+	jal	r0,.Lj5212
+.Lj5211:
 	addi	r6,r0,0
 	addi	r5,r0,10
 	ldw	r3,r30,-64
@@ -46942,27 +46911,27 @@ SYSTEM_$$_FLT_DECIMAL_ROUNDED_INTEGER$TFLTDECIMAL$$QWORD:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	stw	r30,r3,-68
-.Lj5217:
+.Lj5212:
 	ldw	r3,r30,-56
 	ldw	r4,r3,824
 	ldw	r3,r30,-68
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj5219
-	jal	r0,.Lj5220
-.Lj5219:
+	bne	r3,r0,.Lj5214
+	jal	r0,.Lj5215
+.Lj5214:
 	ldw	r3,r30,-56
 	ldw	r3,r3,820
 	ldw	r4,r30,-68
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj5221
-	jal	r0,.Lj5220
-.Lj5221:
-	jal	r0,.Lj5216
-.Lj5220:
+	bne	r3,r0,.Lj5216
+	jal	r0,.Lj5215
+.Lj5216:
+	jal	r0,.Lj5211
+.Lj5215:
+	jal	r0,.Lj5213
+.Lj5213:
 	jal	r0,.Lj5218
-.Lj5218:
-	jal	r0,.Lj5223
-.Lj5222:
+.Lj5217:
 	addi	r6,r0,0
 	addi	r5,r0,10
 	ldw	r3,r30,-64
@@ -46973,30 +46942,30 @@ SYSTEM_$$_FLT_DECIMAL_ROUNDED_INTEGER$TFLTDECIMAL$$QWORD:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	stw	r30,r3,-68
-.Lj5223:
+.Lj5218:
 	ldw	r3,r30,-56
 	ldw	r3,r3,824
 	ldw	r4,r30,-68
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj5222
-	jal	r0,.Lj5224
-.Lj5224:
+	bne	r3,r0,.Lj5217
+	jal	r0,.Lj5219
+.Lj5219:
 	stb	r30,r0,-72
 	ldw	r3,r30,-56
 	ldw	r4,r3,824
 	addi	r3,r0,0
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj5225
-	jal	r0,.Lj5226
-.Lj5225:
+	bne	r3,r0,.Lj5220
+	jal	r0,.Lj5221
+.Lj5220:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-56
 	ldw	r4,r4,824
 	ldw	r3,r3,820
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj5227
-	jal	r0,.Lj5226
-.Lj5227:
+	bne	r3,r0,.Lj5222
+	jal	r0,.Lj5221
+.Lj5222:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
 	ldw	r4,r4,824
@@ -47004,30 +46973,30 @@ SYSTEM_$$_FLT_DECIMAL_ROUNDED_INTEGER$TFLTDECIMAL$$QWORD:
 	ldbu	r3,r3,0
 	addi	r3,r3,-5
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5228
-	jal	r0,.Lj5229
-.Lj5228:
+	bne	r3,r0,.Lj5223
+	jal	r0,.Lj5224
+.Lj5223:
 	ldw	r3,r30,-56
 	ldw	r3,r3,824
 	addi	r3,r3,1
 	ldw	r4,r30,-56
 	ldw	r4,r4,820
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj5230
-	jal	r0,.Lj5229
-.Lj5230:
+	bne	r3,r0,.Lj5225
+	jal	r0,.Lj5224
+.Lj5225:
 	ldw	r3,r30,-56
 	ldbu	r3,r3,828
-	bne	r3,r0,.Lj5231
-	jal	r0,.Lj5232
-.Lj5232:
+	bne	r3,r0,.Lj5226
+	jal	r0,.Lj5227
+.Lj5227:
 	ldw	r3,r30,-56
 	ldw	r4,r3,824
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5234
-	jal	r0,.Lj5235
-.Lj5234:
+	bne	r3,r0,.Lj5229
+	jal	r0,.Lj5230
+.Lj5229:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
 	ldw	r4,r4,824
@@ -47038,21 +47007,21 @@ SYSTEM_$$_FLT_DECIMAL_ROUNDED_INTEGER$TFLTDECIMAL$$QWORD:
 	ldw	r3,r30,-76
 	andi	r3,r3,1
 	andi	r3,r3,255
-	bne	r3,r0,.Lj5236
-	jal	r0,.Lj5235
-.Lj5236:
-	jal	r0,.Lj5231
-.Lj5235:
-	jal	r0,.Lj5233
+	bne	r3,r0,.Lj5231
+	jal	r0,.Lj5230
 .Lj5231:
+	jal	r0,.Lj5226
+.Lj5230:
+	jal	r0,.Lj5228
+.Lj5226:
 	addi	r3,r0,1
 	stb	r30,r3,-72
-	jal	r0,.Lj5237
-.Lj5233:
+	jal	r0,.Lj5232
+.Lj5228:
 	stb	r30,r0,-72
-.Lj5237:
-	jal	r0,.Lj5238
-.Lj5229:
+.Lj5232:
+	jal	r0,.Lj5233
+.Lj5224:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
 	ldw	r4,r4,824
@@ -47061,12 +47030,12 @@ SYSTEM_$$_FLT_DECIMAL_ROUNDED_INTEGER$TFLTDECIMAL$$QWORD:
 	addi	r4,r0,5
 	sgeu	r3,r3,r4
 	stb	r30,r3,-72
-.Lj5238:
-.Lj5226:
+.Lj5233:
+.Lj5221:
 	ldbu	r3,r30,-72
-	bne	r3,r0,.Lj5239
-	jal	r0,.Lj5240
-.Lj5239:
+	bne	r3,r0,.Lj5234
+	jal	r0,.Lj5235
+.Lj5234:
 	ldw	r4,r30,-64
 	ldw	r5,r30,-60
 	addi	r3,r4,1
@@ -47075,7 +47044,7 @@ SYSTEM_$$_FLT_DECIMAL_ROUNDED_INTEGER$TFLTDECIMAL$$QWORD:
 	add	r5,r5,r6
 	stw	r30,r4,-64
 	stw	r30,r5,-60
-.Lj5240:
+.Lj5235:
 	ldw	r1,r30,-64
 	ldw	r2,r30,-60
 	ldw	r30,r29,76
@@ -47120,55 +47089,55 @@ SYSTEM_$$_FLT_DECIMAL_TO_BITS$TFLTDECIMAL$LONGINT$LONGINT$$QWORD:
 	ldw	r4,r3,820
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5243
-	jal	r0,.Lj5244
-.Lj5243:
+	bne	r3,r0,.Lj5238
+	jal	r0,.Lj5239
+.Lj5238:
 	ldw	r3,r30,-56
 	ldw	r4,r3,824
 	addi	r3,r0,310
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5245
-	jal	r0,.Lj5244
-.Lj5245:
+	bne	r3,r0,.Lj5240
+	jal	r0,.Lj5239
+.Lj5240:
 	addi	r3,r0,1
 	stb	r30,r3,-100
-	jal	r0,.Lj5246
-.Lj5244:
+	jal	r0,.Lj5241
+.Lj5239:
 	ldw	r3,r30,-56
 	ldw	r4,r3,820
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5247
-	jal	r0,.Lj5248
-.Lj5247:
+	bne	r3,r0,.Lj5242
+	jal	r0,.Lj5243
+.Lj5242:
 	ldw	r3,r30,-56
 	ldw	r3,r3,824
 	addi	r4,r0,-330
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj5249
-	jal	r0,.Lj5248
-.Lj5249:
+	bne	r3,r0,.Lj5244
+	jal	r0,.Lj5243
+.Lj5244:
 	stw	r30,r0,-80
-	jal	r0,.Lj5251
-.Lj5250:
+	jal	r0,.Lj5246
+.Lj5245:
 	ldw	r3,r30,-56
 	ldw	r3,r3,824
 	addi	r4,r0,8
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj5253
-	jal	r0,.Lj5254
-.Lj5253:
+	bne	r3,r0,.Lj5248
+	jal	r0,.Lj5249
+.Lj5248:
 	addi	r3,r0,27
 	stw	r30,r3,-84
-	jal	r0,.Lj5255
-.Lj5254:
+	jal	r0,.Lj5250
+.Lj5249:
 	ldw	r3,r30,-56
 	ldw	r4,r3,824
 	la	r3,TC_$SYSTEM$_$FLT_DECIMAL_TO_BITS$TFLTDECIMAL$LONGINT$LONGINT$$QWORD_$$_CPOWTAB
 	add	r3,r4,r3
 	ldbu	r3,r3,0
 	stw	r30,r3,-84
-.Lj5255:
+.Lj5250:
 	ldw	r3,r30,-84
 	sub	r4,r0,r3
 	ldw	r3,r30,-56
@@ -47177,28 +47146,28 @@ SYSTEM_$$_FLT_DECIMAL_TO_BITS$TFLTDECIMAL$LONGINT$LONGINT$$QWORD:
 	ldw	r3,r30,-80
 	add	r3,r3,r4
 	stw	r30,r3,-80
-.Lj5251:
+.Lj5246:
 	ldw	r3,r30,-56
 	ldw	r4,r3,824
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5250
+	bne	r3,r0,.Lj5245
+	jal	r0,.Lj5247
+.Lj5247:
 	jal	r0,.Lj5252
-.Lj5252:
-	jal	r0,.Lj5257
-.Lj5256:
+.Lj5251:
 	ldw	r3,r30,-56
 	ldw	r3,r3,824
 	sub	r4,r0,r3
 	addi	r3,r0,8
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5259
-	jal	r0,.Lj5260
-.Lj5259:
+	bne	r3,r0,.Lj5254
+	jal	r0,.Lj5255
+.Lj5254:
 	addi	r3,r0,27
 	stw	r30,r3,-84
-	jal	r0,.Lj5261
-.Lj5260:
+	jal	r0,.Lj5256
+.Lj5255:
 	ldw	r3,r30,-56
 	ldw	r3,r3,824
 	sub	r3,r0,r3
@@ -47206,7 +47175,7 @@ SYSTEM_$$_FLT_DECIMAL_TO_BITS$TFLTDECIMAL$LONGINT$LONGINT$$QWORD:
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	stw	r30,r3,-84
-.Lj5261:
+.Lj5256:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-84
 	call	SYSTEM_$$_FLT_DECIMAL_SHIFT$TFLTDECIMAL$LONGINT
@@ -47214,35 +47183,35 @@ SYSTEM_$$_FLT_DECIMAL_TO_BITS$TFLTDECIMAL$LONGINT$LONGINT$$QWORD:
 	ldw	r3,r30,-80
 	sub	r3,r3,r4
 	stw	r30,r3,-80
-.Lj5257:
+.Lj5252:
 	ldw	r3,r30,-56
 	ldw	r4,r3,824
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj5262
-	jal	r0,.Lj5263
-.Lj5263:
+	bne	r3,r0,.Lj5257
+	jal	r0,.Lj5258
+.Lj5258:
 	ldw	r3,r30,-56
 	ldw	r3,r3,824
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5265
-	jal	r0,.Lj5266
-.Lj5265:
+	bne	r3,r0,.Lj5260
+	jal	r0,.Lj5261
+.Lj5260:
 	ldw	r3,r30,-56
 	ldbu	r4,r3,0
 	addi	r3,r0,5
 	sltu	r3,r4,r3
-	bne	r3,r0,.Lj5267
-	jal	r0,.Lj5266
-.Lj5267:
-	jal	r0,.Lj5262
-.Lj5266:
-	jal	r0,.Lj5264
+	bne	r3,r0,.Lj5262
+	jal	r0,.Lj5261
 .Lj5262:
-	jal	r0,.Lj5256
-.Lj5264:
-	jal	r0,.Lj5258
-.Lj5258:
+	jal	r0,.Lj5257
+.Lj5261:
+	jal	r0,.Lj5259
+.Lj5257:
+	jal	r0,.Lj5251
+.Lj5259:
+	jal	r0,.Lj5253
+.Lj5253:
 	ldw	r3,r30,-80
 	addi	r3,r3,-1
 	stw	r30,r3,-80
@@ -47250,9 +47219,9 @@ SYSTEM_$$_FLT_DECIMAL_TO_BITS$TFLTDECIMAL$LONGINT$LONGINT$$QWORD:
 	addi	r4,r3,1
 	ldw	r3,r30,-80
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj5268
-	jal	r0,.Lj5269
-.Lj5268:
+	bne	r3,r0,.Lj5263
+	jal	r0,.Lj5264
+.Lj5263:
 	ldw	r3,r30,-76
 	addi	r4,r3,1
 	ldw	r3,r30,-80
@@ -47266,19 +47235,19 @@ SYSTEM_$$_FLT_DECIMAL_TO_BITS$TFLTDECIMAL$LONGINT$LONGINT$$QWORD:
 	ldw	r3,r30,-80
 	add	r3,r3,r4
 	stw	r30,r3,-80
-.Lj5269:
+.Lj5264:
 	ldw	r3,r30,-80
 	ldw	r4,r30,-76
 	sub	r3,r3,r4
 	ldw	r4,r30,-88
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj5270
-	jal	r0,.Lj5271
-.Lj5270:
+	bne	r3,r0,.Lj5265
+	jal	r0,.Lj5266
+.Lj5265:
 	addi	r3,r0,1
 	stb	r30,r3,-100
-	jal	r0,.Lj5272
-.Lj5271:
+	jal	r0,.Lj5267
+.Lj5266:
 	ldw	r3,r30,-60
 	addi	r4,r3,1
 	ldw	r3,r30,-56
@@ -47291,11 +47260,11 @@ SYSTEM_$$_FLT_DECIMAL_TO_BITS$TFLTDECIMAL$LONGINT$LONGINT$$QWORD:
 	addi	r3,r0,0
 	ldw	r8,r30,-60
 	addi	r7,r8,-32
-	blt	r7,r0,.Lj5275
+	blt	r7,r0,.Lj5270
 	li	r5,0
 	sll	r4,r6,r7
-	jal	r0,.Lj5276
-.Lj5275:
+	jal	r0,.Lj5271
+.Lj5270:
 	li	r7,31
 	srli	r9,r6,1
 	sub	r7,r7,r8
@@ -47303,13 +47272,13 @@ SYSTEM_$$_FLT_DECIMAL_TO_BITS$TFLTDECIMAL$LONGINT$LONGINT$$QWORD:
 	srl	r9,r9,r7
 	sll	r4,r3,r8
 	or	r4,r4,r9
-.Lj5276:
+.Lj5271:
 	ldw	r3,r30,-96
 	ldw	r6,r30,-92
-	bne	r6,r4,.Lj5274
-	bne	r3,r5,.Lj5274
-	jal	r0,.Lj5273
-.Lj5273:
+	bne	r6,r4,.Lj5269
+	bne	r3,r5,.Lj5269
+	jal	r0,.Lj5268
+.Lj5268:
 	ldw	r4,r30,-96
 	ldw	r5,r30,-92
 	slli	r3,r5,31
@@ -47326,50 +47295,50 @@ SYSTEM_$$_FLT_DECIMAL_TO_BITS$TFLTDECIMAL$LONGINT$LONGINT$$QWORD:
 	sub	r3,r3,r4
 	ldw	r4,r30,-88
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj5277
-	jal	r0,.Lj5278
-.Lj5277:
+	bne	r3,r0,.Lj5272
+	jal	r0,.Lj5273
+.Lj5272:
 	addi	r3,r0,1
 	stb	r30,r3,-100
-.Lj5278:
-.Lj5274:
+.Lj5273:
+.Lj5269:
 	addi	r5,r0,1
 	addi	r3,r0,0
 	ldw	r6,r30,-60
 	addi	r3,r6,-32
-	blt	r3,r0,.Lj5281
+	blt	r3,r0,.Lj5276
 	li	r4,0
 	sll	r3,r5,r3
-	jal	r0,.Lj5282
-.Lj5281:
+	jal	r0,.Lj5277
+.Lj5276:
 	sll	r4,r5,r6
 	li	r3,0
-.Lj5282:
+.Lj5277:
 	ldw	r6,r30,-96
 	ldw	r5,r30,-92
 	and	r4,r4,r6
 	and	r3,r3,r5
-	bne	r0,r3,.Lj5280
-	bne	r0,r4,.Lj5280
-	jal	r0,.Lj5279
-.Lj5279:
+	bne	r0,r3,.Lj5275
+	bne	r0,r4,.Lj5275
+	jal	r0,.Lj5274
+.Lj5274:
 	ldw	r3,r30,-76
 	stw	r30,r3,-80
-.Lj5280:
-.Lj5272:
-.Lj5248:
-.Lj5246:
+.Lj5275:
+.Lj5267:
+.Lj5243:
+.Lj5241:
 	ldbu	r3,r30,-100
-	bne	r3,r0,.Lj5283
-	jal	r0,.Lj5284
-.Lj5283:
+	bne	r3,r0,.Lj5278
+	jal	r0,.Lj5279
+.Lj5278:
 	stw	r30,r0,-96
 	stw	r30,r0,-92
 	ldw	r3,r30,-88
 	ldw	r4,r30,-76
 	add	r3,r4,r3
 	stw	r30,r3,-80
-.Lj5284:
+.Lj5279:
 	ldw	r3,r30,-80
 	ldw	r4,r30,-76
 	sub	r4,r3,r4
@@ -47380,11 +47349,11 @@ SYSTEM_$$_FLT_DECIMAL_TO_BITS$TFLTDECIMAL$LONGINT$LONGINT$$QWORD:
 	srai	r6,r3,31
 	ldw	r7,r30,-60
 	addi	r4,r7,-32
-	blt	r4,r0,.Lj5285
+	blt	r4,r0,.Lj5280
 	li	r9,0
 	sll	r8,r3,r4
-	jal	r0,.Lj5286
-.Lj5285:
+	jal	r0,.Lj5281
+.Lj5280:
 	li	r4,31
 	srli	r5,r3,1
 	sub	r4,r4,r7
@@ -47392,19 +47361,19 @@ SYSTEM_$$_FLT_DECIMAL_TO_BITS$TFLTDECIMAL$LONGINT$LONGINT$$QWORD:
 	srl	r5,r5,r4
 	sll	r8,r6,r7
 	or	r8,r8,r5
-.Lj5286:
+.Lj5281:
 	addi	r6,r0,1
 	addi	r3,r0,0
 	ldw	r3,r30,-60
 	addi	r4,r3,-32
-	blt	r4,r0,.Lj5287
+	blt	r4,r0,.Lj5282
 	li	r5,0
 	sll	r4,r6,r4
-	jal	r0,.Lj5288
-.Lj5287:
+	jal	r0,.Lj5283
+.Lj5282:
 	sll	r5,r6,r3
 	li	r4,0
-.Lj5288:
+.Lj5283:
 	addi	r3,r5,-1
 	sltu	r5,r5,r3
 	sub	r4,r4,r5
@@ -47451,40 +47420,40 @@ SYSTEM_$$_FLT_STR_TO_BITS$SHORTSTRING$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	stb	r30,r1,-72
 	ldbu	r3,r30,-72
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5291
-	jal	r0,.Lj5292
-.Lj5291:
-	jal	r0,.Lj5289
-.Lj5292:
+	bne	r3,r0,.Lj5286
+	jal	r0,.Lj5287
+.Lj5286:
+	jal	r0,.Lj5284
+.Lj5287:
 	ldw	r4,r30,-84
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5293
-	jal	r0,.Lj5294
-.Lj5293:
+	bne	r3,r0,.Lj5288
+	jal	r0,.Lj5289
+.Lj5288:
 	ldw	r3,r30,-84
 	stw	r30,r3,-932
 	ldw	r3,r30,-932
 	addi	r4,r0,19
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj5295
-	jal	r0,.Lj5296
-.Lj5295:
+	bne	r3,r0,.Lj5290
+	jal	r0,.Lj5291
+.Lj5290:
 	addi	r3,r0,19
 	stw	r30,r3,-932
-.Lj5296:
+.Lj5291:
 	stw	r30,r0,-920
 	stw	r30,r0,-916
 	ldw	r3,r30,-932
 	addi	r11,r3,-1
 	addi	r3,r0,0
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj5297
-	jal	r0,.Lj5298
-.Lj5297:
+	bne	r3,r0,.Lj5292
+	jal	r0,.Lj5293
+.Lj5292:
 	addi	r3,r0,-1
 	stw	r30,r3,-940
-.Lj5299:
+.Lj5294:
 	ldw	r3,r30,-940
 	addi	r3,r3,1
 	stw	r30,r3,-940
@@ -47509,22 +47478,22 @@ SYSTEM_$$_FLT_STR_TO_BITS$SHORTSTRING$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	stw	r30,r3,-916
 	ldw	r3,r30,-940
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj5301
-	jal	r0,.Lj5299
-.Lj5301:
-.Lj5298:
+	bne	r3,r0,.Lj5296
+	jal	r0,.Lj5294
+.Lj5296:
+.Lj5293:
 	stb	r30,r0,-912
 	ldw	r3,r30,-84
 	addi	r3,r3,-1
 	ldw	r4,r30,-932
 	sle	r4,r4,r3
-	bne	r4,r0,.Lj5302
-	jal	r0,.Lj5303
-.Lj5302:
+	bne	r4,r0,.Lj5297
+	jal	r0,.Lj5298
+.Lj5297:
 	ldw	r4,r30,-932
 	addi	r4,r4,-1
 	stw	r30,r4,-940
-.Lj5304:
+.Lj5299:
 	ldw	r4,r30,-940
 	addi	r4,r4,1
 	stw	r30,r4,-940
@@ -47532,18 +47501,18 @@ SYSTEM_$$_FLT_STR_TO_BITS$SHORTSTRING$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	add	r4,r30,r4
 	ldbu	r4,r4,-904
 	sne	r4,r4,r0
-	bne	r4,r0,.Lj5307
-	jal	r0,.Lj5308
-.Lj5307:
+	bne	r4,r0,.Lj5302
+	jal	r0,.Lj5303
+.Lj5302:
 	addi	r4,r0,1
 	stb	r30,r4,-912
-.Lj5308:
+.Lj5303:
 	ldw	r4,r30,-940
 	sge	r4,r4,r3
-	bne	r4,r0,.Lj5306
-	jal	r0,.Lj5304
-.Lj5306:
-.Lj5303:
+	bne	r4,r0,.Lj5301
+	jal	r0,.Lj5299
+.Lj5301:
+.Lj5298:
 	ldw	r3,r30,-80
 	ldw	r4,r30,-932
 	sub	r3,r3,r4
@@ -47556,13 +47525,13 @@ SYSTEM_$$_FLT_STR_TO_BITS$SHORTSTRING$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	ldw	r4,r30,-916
 	call	SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj5309
-	jal	r0,.Lj5310
-.Lj5310:
+	bne	r3,r0,.Lj5304
+	jal	r0,.Lj5305
+.Lj5305:
 	ldbu	r3,r30,-912
-	bne	r3,r0,.Lj5312
-	jal	r0,.Lj5313
-.Lj5312:
+	bne	r3,r0,.Lj5307
+	jal	r0,.Lj5308
+.Lj5307:
 	addi	r8,r30,-928
 	ldw	r5,r30,-920
 	ldw	r4,r30,-916
@@ -47573,30 +47542,30 @@ SYSTEM_$$_FLT_STR_TO_BITS$SHORTSTRING$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	ldw	r6,r30,-60
 	ldw	r5,r30,-936
 	call	SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN
-	bne	r1,r0,.Lj5315
-	jal	r0,.Lj5316
-.Lj5315:
+	bne	r1,r0,.Lj5310
+	jal	r0,.Lj5311
+.Lj5310:
 	ldw	r6,r30,-68
 	ldw	r3,r30,-928
 	ldw	r4,r30,-924
 	ldw	r5,r6,0
 	ldw	r6,r6,4
-	bne	r6,r4,.Lj5319
-	bne	r5,r3,.Lj5319
-	jal	r0,.Lj5318
-.Lj5318:
-	jal	r0,.Lj5317
-.Lj5319:
-	jal	r0,.Lj5316
-.Lj5316:
-	jal	r0,.Lj5314
-.Lj5317:
+	bne	r6,r4,.Lj5314
+	bne	r5,r3,.Lj5314
 	jal	r0,.Lj5313
-.Lj5314:
-	jal	r0,.Lj5309
 .Lj5313:
+	jal	r0,.Lj5312
+.Lj5314:
 	jal	r0,.Lj5311
+.Lj5311:
+	jal	r0,.Lj5309
+.Lj5312:
+	jal	r0,.Lj5308
 .Lj5309:
+	jal	r0,.Lj5304
+.Lj5308:
+	jal	r0,.Lj5306
+.Lj5304:
 	addi	r3,r30,-904
 	ldw	r5,r30,-64
 	ldw	r4,r30,-60
@@ -47604,12 +47573,12 @@ SYSTEM_$$_FLT_STR_TO_BITS$SHORTSTRING$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	ldw	r3,r30,-68
 	stw	r3,r1,0
 	stw	r3,r2,4
-.Lj5311:
-.Lj5294:
+.Lj5306:
+.Lj5289:
 	ldbu	r3,r30,-908
-	bne	r3,r0,.Lj5320
-	jal	r0,.Lj5321
-.Lj5320:
+	bne	r3,r0,.Lj5315
+	jal	r0,.Lj5316
+.Lj5315:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-64
 	add	r4,r4,r3
@@ -47618,14 +47587,14 @@ SYSTEM_$$_FLT_STR_TO_BITS$SHORTSTRING$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	slli	r6,r4,0
 	srli	r6,r6,0
 	addi	r4,r6,-32
-	blt	r4,r0,.Lj5322
+	blt	r4,r0,.Lj5317
 	li	r3,0
 	sll	r4,r5,r4
-	jal	r0,.Lj5323
-.Lj5322:
+	jal	r0,.Lj5318
+.Lj5317:
 	sll	r3,r5,r6
 	li	r4,0
-.Lj5323:
+.Lj5318:
 	ldw	r6,r30,-68
 	ldw	r5,r6,0
 	ldw	r6,r6,4
@@ -47634,8 +47603,8 @@ SYSTEM_$$_FLT_STR_TO_BITS$SHORTSTRING$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	ldw	r4,r30,-68
 	stw	r4,r3,0
 	stw	r4,r5,4
-.Lj5321:
-.Lj5289:
+.Lj5316:
+.Lj5284:
 	ldbu	r1,r30,-72
 	ldw	r11,r29,940
 	ldw	r30,r29,944
@@ -47664,9 +47633,9 @@ SYSTEM_$$_VAL_DOUBLE$SHORTSTRING$LONGINT$$DOUBLE:
 	addi	r4,r0,52
 	call	SYSTEM_$$_FLT_STR_TO_BITS$SHORTSTRING$LONGINT$LONGINT$QWORD$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj5326
-	jal	r0,.Lj5327
-.Lj5326:
+	bne	r3,r0,.Lj5321
+	jal	r0,.Lj5322
+.Lj5321:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE
@@ -47676,8 +47645,8 @@ SYSTEM_$$_VAL_DOUBLE$SHORTSTRING$LONGINT$$DOUBLE:
 	stw	r30,r3,-68
 	ldw	r3,r30,-88
 	stw	r30,r3,-64
-	jal	r0,.Lj5324
-.Lj5327:
+	jal	r0,.Lj5319
+.Lj5322:
 	ldw	r3,r30,-76
 	stw	r30,r3,-84
 	ldw	r3,r30,-72
@@ -47688,7 +47657,7 @@ SYSTEM_$$_VAL_DOUBLE$SHORTSTRING$LONGINT$$DOUBLE:
 	stw	r30,r3,-68
 	ldw	r3,r30,-80
 	stw	r30,r3,-64
-.Lj5324:
+.Lj5319:
 	ldw	r1,r30,-68
 	ldw	r2,r30,-64
 	ldw	r30,r29,92
@@ -47718,9 +47687,9 @@ SYSTEM_$$_VAL_SINGLE$SHORTSTRING$LONGINT$$SINGLE:
 	addi	r4,r0,23
 	call	SYSTEM_$$_FLT_STR_TO_BITS$SHORTSTRING$LONGINT$LONGINT$QWORD$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj5330
-	jal	r0,.Lj5331
-.Lj5330:
+	bne	r3,r0,.Lj5325
+	jal	r0,.Lj5326
+.Lj5325:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE
@@ -47736,15 +47705,15 @@ SYSTEM_$$_VAL_SINGLE$SHORTSTRING$LONGINT$$SINGLE:
 	addi	r5,r3,0
 	fcvt.s.d	r20,r4
 	stw	r30,r20,-64
-	jal	r0,.Lj5328
-.Lj5331:
+	jal	r0,.Lj5323
+.Lj5326:
 	ldw	r3,r30,-72
 	stw	r30,r3,-76
 	ldw	r3,r30,-60
 	stw	r3,r0,0
 	ldw	r3,r30,-76
 	stw	r30,r3,-64
-.Lj5328:
+.Lj5323:
 	ldw	r1,r30,-64
 	ldw	r20,r29,92
 	ldw	r30,r29,96
@@ -47811,9 +47780,9 @@ SYSTEM_$$_FPC_SHORTSTR_ENUM_INTERN$LONGINT$LONGINT$POINTER$POINTER$OPENSTRING$$L
 	ldw	r3,r30,-84
 	ldw	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5336
-	jal	r0,.Lj5337
-.Lj5336:
+	bne	r3,r0,.Lj5331
+	jal	r0,.Lj5332
+.Lj5331:
 	ldw	r3,r30,-64
 	stw	r30,r3,-88
 	ldw	r3,r30,-88
@@ -47831,38 +47800,38 @@ SYSTEM_$$_FPC_SHORTSTR_ENUM_INTERN$LONGINT$LONGINT$POINTER$POINTER$OPENSTRING$$L
 	ldw	r3,r30,-132
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5339
-	jal	r0,.Lj5340
-.Lj5339:
+	bne	r3,r0,.Lj5334
+	jal	r0,.Lj5335
+.Lj5334:
 	ldw	r3,r30,-132
 	addi	r4,r0,-1
 	xor	r3,r3,r4
 	ldw	r4,r30,-128
 	and	r3,r4,r3
-	jal	r0,.Lj5341
-.Lj5340:
+	jal	r0,.Lj5336
+.Lj5335:
 	ldw	r4,r30,-128
 	andi	r4,r4,3
 	ldw	r5,r30,-128
 	sub	r4,r5,r4
 	addi	r3,r4,0
-.Lj5341:
+.Lj5336:
 	stw	r30,r3,-92
 	ldw	r3,r30,-92
 	ldw	r4,r3,8
 	ldw	r5,r30,-56
 	slt	r4,r5,r4
-	bne	r4,r0,.Lj5342
-	jal	r0,.Lj5343
-.Lj5343:
+	bne	r4,r0,.Lj5337
+	jal	r0,.Lj5338
+.Lj5338:
 	ldw	r5,r3,12
 	ldw	r4,r30,-56
 	sgt	r4,r4,r5
-	bne	r4,r0,.Lj5342
-	jal	r0,.Lj5344
-.Lj5342:
-	jal	r0,.Lj5334
-.Lj5344:
+	bne	r4,r0,.Lj5337
+	jal	r0,.Lj5339
+.Lj5337:
+	jal	r0,.Lj5329
+.Lj5339:
 	ldw	r5,r3,8
 	ldw	r4,r30,-56
 	sub	r4,r4,r5
@@ -47875,17 +47844,17 @@ SYSTEM_$$_FPC_SHORTSTR_ENUM_INTERN$LONGINT$LONGINT$POINTER$POINTER$OPENSTRING$$L
 	stw	r30,r3,-96
 	ldw	r3,r30,-96
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5345
-	jal	r0,.Lj5346
-.Lj5345:
-	jal	r0,.Lj5334
-.Lj5346:
+	bne	r3,r0,.Lj5340
+	jal	r0,.Lj5341
+.Lj5340:
+	jal	r0,.Lj5329
+.Lj5341:
 	ldw	r5,r30,-96
 	ldw	r3,r30,-72
 	ldw	r4,r30,-76
 	call	fpc_shortstr_to_shortstr
-	jal	r0,.Lj5347
-.Lj5337:
+	jal	r0,.Lj5342
+.Lj5332:
 	ldw	r3,r30,-84
 	addi	r3,r3,8
 	stw	r30,r3,-100
@@ -47894,13 +47863,13 @@ SYSTEM_$$_FPC_SHORTSTR_ENUM_INTERN$LONGINT$LONGINT$POINTER$POINTER$OPENSTRING$$L
 	ldw	r3,r3,4
 	addi	r3,r3,-1
 	stw	r30,r3,-116
-.Lj5348:
+.Lj5343:
 	ldw	r4,r30,-120
 	ldw	r3,r30,-116
 	add	r3,r3,r4
-	bgt	r3,r0,.Lj5351
+	bgt	r3,r0,.Lj5346
 	addi	r3,r3,1
-.Lj5351:
+.Lj5346:
 	srai	r3,r3,1
 	stw	r30,r3,-112
 	ldw	r3,r30,-100
@@ -47910,14 +47879,14 @@ SYSTEM_$$_FPC_SHORTSTR_ENUM_INTERN$LONGINT$LONGINT$POINTER$POINTER$OPENSTRING$$L
 	ldw	r4,r3,0
 	ldw	r3,r30,-56
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj5352
-	jal	r0,.Lj5353
-.Lj5352:
+	bne	r3,r0,.Lj5347
+	jal	r0,.Lj5348
+.Lj5347:
 	ldw	r3,r30,-112
 	addi	r3,r3,1
 	stw	r30,r3,-120
-	jal	r0,.Lj5354
-.Lj5353:
+	jal	r0,.Lj5349
+.Lj5348:
 	ldw	r3,r30,-100
 	ldw	r4,r30,-112
 	slli	r4,r4,3
@@ -47925,27 +47894,27 @@ SYSTEM_$$_FPC_SHORTSTR_ENUM_INTERN$LONGINT$LONGINT$POINTER$POINTER$OPENSTRING$$L
 	ldw	r3,r3,0
 	ldw	r4,r30,-56
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj5355
-	jal	r0,.Lj5356
-.Lj5355:
+	bne	r3,r0,.Lj5350
+	jal	r0,.Lj5351
+.Lj5350:
 	ldw	r3,r30,-112
 	addi	r3,r3,-1
 	stw	r30,r3,-116
-	jal	r0,.Lj5357
-.Lj5356:
-	jal	r0,.Lj5350
-.Lj5357:
-.Lj5354:
+	jal	r0,.Lj5352
+.Lj5351:
+	jal	r0,.Lj5345
+.Lj5352:
+.Lj5349:
 	ldw	r4,r30,-120
 	ldw	r3,r30,-116
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5358
-	jal	r0,.Lj5359
-.Lj5358:
-	jal	r0,.Lj5334
-.Lj5359:
-	jal	r0,.Lj5348
-.Lj5350:
+	bne	r3,r0,.Lj5353
+	jal	r0,.Lj5354
+.Lj5353:
+	jal	r0,.Lj5329
+.Lj5354:
+	jal	r0,.Lj5343
+.Lj5345:
 	ldw	r3,r30,-100
 	ldw	r4,r30,-112
 	slli	r4,r4,3
@@ -47954,14 +47923,14 @@ SYSTEM_$$_FPC_SHORTSTR_ENUM_INTERN$LONGINT$LONGINT$POINTER$POINTER$OPENSTRING$$L
 	ldw	r3,r30,-72
 	ldw	r4,r30,-76
 	call	fpc_shortstr_to_shortstr
-.Lj5347:
+.Lj5342:
 	ldw	r3,r30,-72
 	ldbu	r4,r3,0
 	ldw	r3,r30,-60
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj5360
-	jal	r0,.Lj5361
-.Lj5360:
+	bne	r3,r0,.Lj5355
+	jal	r0,.Lj5356
+.Lj5355:
 	ldw	r3,r30,-72
 	ldbu	r4,r3,0
 	ldw	r3,r30,-60
@@ -47970,11 +47939,11 @@ SYSTEM_$$_FPC_SHORTSTR_ENUM_INTERN$LONGINT$LONGINT$POINTER$POINTER$OPENSTRING$$L
 	ldw	r3,r30,-104
 	addi	r4,r0,1
 	sle	r4,r4,r3
-	bne	r4,r0,.Lj5362
-	jal	r0,.Lj5363
-.Lj5362:
+	bne	r4,r0,.Lj5357
+	jal	r0,.Lj5358
+.Lj5357:
 	stw	r30,r0,-108
-.Lj5364:
+.Lj5359:
 	ldw	r4,r30,-108
 	addi	r4,r4,1
 	stw	r30,r4,-108
@@ -47990,19 +47959,19 @@ SYSTEM_$$_FPC_SHORTSTR_ENUM_INTERN$LONGINT$LONGINT$POINTER$POINTER$OPENSTRING$$L
 	stb	r4,r5,0
 	ldw	r4,r30,-108
 	sge	r4,r4,r3
-	bne	r4,r0,.Lj5366
-	jal	r0,.Lj5364
-.Lj5366:
-.Lj5363:
+	bne	r4,r0,.Lj5361
+	jal	r0,.Lj5359
+.Lj5361:
+.Lj5358:
 	ldw	r5,r30,-72
 	ldbu	r4,r30,-104
 	ldbu	r3,r5,0
 	add	r3,r3,r4
 	andi	r3,r3,255
 	stb	r5,r3,0
-.Lj5361:
+.Lj5356:
 	stw	r30,r0,-80
-.Lj5334:
+.Lj5329:
 	ldw	r1,r30,-80
 	ldw	r30,r29,132
 	ldw	r31,r29,136
@@ -48040,12 +48009,12 @@ FPC_SHORTSTR_ENUM:
 	stw	r30,r1,-80
 	ldw	r3,r30,-80
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj5369
-	jal	r0,.Lj5370
-.Lj5369:
+	bne	r3,r0,.Lj5364
+	jal	r0,.Lj5365
+.Lj5364:
 	addi	r3,r0,107
 	call	SYSTEM_$$_RUNERROR$WORD
-.Lj5370:
+.Lj5365:
 	ldw	r30,r29,80
 	ldw	r31,r29,84
 	addi	r29,r29,88
@@ -48069,27 +48038,27 @@ FPC_SHORTSTR_BOOL:
 	stw	r30,r5,-64
 	stw	r30,r6,-68
 	ldbu	r3,r30,-56
-	bne	r3,r0,.Lj5373
-	jal	r0,.Lj5374
-.Lj5373:
+	bne	r3,r0,.Lj5368
+	jal	r0,.Lj5369
+.Lj5368:
 	la	r5,.Ld26
 	ldw	r3,r30,-64
 	ldw	r4,r30,-68
 	call	fpc_shortstr_to_shortstr
-	jal	r0,.Lj5375
-.Lj5374:
+	jal	r0,.Lj5370
+.Lj5369:
 	la	r5,.Ld27
 	ldw	r3,r30,-64
 	ldw	r4,r30,-68
 	call	fpc_shortstr_to_shortstr
-.Lj5375:
+.Lj5370:
 	ldw	r3,r30,-64
 	ldbu	r3,r3,0
 	ldw	r4,r30,-60
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj5376
-	jal	r0,.Lj5377
-.Lj5376:
+	bne	r3,r0,.Lj5371
+	jal	r0,.Lj5372
+.Lj5371:
 	ldw	r3,r30,-64
 	ldbu	r3,r3,0
 	ldw	r4,r30,-60
@@ -48102,7 +48071,7 @@ FPC_SHORTSTR_BOOL:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-68
 	call	fpc_shortstr_concat
-.Lj5377:
+.Lj5372:
 	ldw	r30,r29,324
 	ldw	r31,r29,328
 	addi	r29,r29,332
@@ -48135,28 +48104,28 @@ FPC_SHORTSTR_CURRENCY:
 	lui	r4,1048568
 	ori	r4,r4,1
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj5380
-	jal	r0,.Lj5381
-.Lj5380:
+	bne	r3,r0,.Lj5375
+	jal	r0,.Lj5376
+.Lj5375:
 	addi	r3,r0,25
 	stw	r30,r3,-64
-.Lj5381:
+.Lj5376:
 	addi	r4,r30,-60
 	ldw	r3,r4,0
 	ldw	r4,r4,4
-	blt	r4,r0,.Lj5383
-	bne	r4,r0,.Lj5382
-	bltu	r3,r0,.Lj5383
-	jal	r0,.Lj5382
-.Lj5382:
+	blt	r4,r0,.Lj5378
+	bne	r4,r0,.Lj5377
+	bltu	r3,r0,.Lj5378
+	jal	r0,.Lj5377
+.Lj5377:
 	addi	r4,r30,-60
 	ldw	r3,r4,0
 	stw	r30,r3,-136
 	ldw	r3,r4,4
 	stw	r30,r3,-132
 	stw	r30,r0,-120
-	jal	r0,.Lj5384
-.Lj5383:
+	jal	r0,.Lj5379
+.Lj5378:
 	addi	r3,r0,1
 	stw	r30,r3,-120
 	addi	r4,r30,-60
@@ -48168,9 +48137,9 @@ FPC_SHORTSTR_CURRENCY:
 	sub	r5,r5,r4
 	stw	r30,r3,-136
 	stw	r30,r5,-132
-.Lj5384:
+.Lj5379:
 	stw	r30,r0,-116
-.Lj5385:
+.Lj5380:
 	ldw	r3,r30,-116
 	addi	r3,r3,1
 	stw	r30,r3,-116
@@ -48195,43 +48164,43 @@ FPC_SHORTSTR_CURRENCY:
 	stw	r30,r2,-132
 	ldw	r3,r30,-136
 	ldw	r4,r30,-132
-	bne	r0,r4,.Lj5389
-	bne	r0,r3,.Lj5389
-	jal	r0,.Lj5388
-.Lj5388:
-	jal	r0,.Lj5387
-.Lj5389:
-	jal	r0,.Lj5385
-.Lj5387:
+	bne	r0,r4,.Lj5384
+	bne	r0,r3,.Lj5384
+	jal	r0,.Lj5383
+.Lj5383:
+	jal	r0,.Lj5382
+.Lj5384:
+	jal	r0,.Lj5380
+.Lj5382:
 	ldw	r3,r30,-116
 	stw	r30,r3,-112
 	ldw	r3,r30,-68
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj5390
-	jal	r0,.Lj5391
-.Lj5390:
+	bne	r3,r0,.Lj5385
+	jal	r0,.Lj5386
+.Lj5385:
 	ldw	r3,r30,-112
 	addi	r3,r3,1
 	stw	r30,r3,-112
-.Lj5391:
+.Lj5386:
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj5392
-	jal	r0,.Lj5393
-.Lj5392:
+	bne	r3,r0,.Lj5387
+	jal	r0,.Lj5388
+.Lj5387:
 	ldw	r3,r30,-112
 	addi	r3,r3,5
 	stw	r30,r3,-112
 	ldw	r4,r30,-64
 	addi	r3,r0,8
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj5394
-	jal	r0,.Lj5395
-.Lj5394:
+	bne	r3,r0,.Lj5389
+	jal	r0,.Lj5390
+.Lj5389:
 	addi	r3,r0,8
 	stw	r30,r3,-64
-.Lj5395:
+.Lj5390:
 	ldw	r4,r30,-112
 	ldw	r3,r30,-64
 	sub	r3,r4,r3
@@ -48239,37 +48208,37 @@ FPC_SHORTSTR_CURRENCY:
 	ldw	r3,r30,-112
 	ldw	r4,r30,-64
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj5396
-	jal	r0,.Lj5397
-.Lj5396:
+	bne	r3,r0,.Lj5391
+	jal	r0,.Lj5392
+.Lj5391:
 	ldw	r3,r30,-64
 	stw	r30,r3,-112
-.Lj5397:
+.Lj5392:
 	ldw	r4,r30,-124
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5398
-	jal	r0,.Lj5399
-.Lj5398:
+	bne	r3,r0,.Lj5393
+	jal	r0,.Lj5394
+.Lj5393:
 	ldw	r3,r30,-64
 	stw	r30,r3,-112
 	ldw	r4,r30,-116
 	ldw	r3,r30,-124
 	sub	r3,r4,r3
 	stw	r30,r3,-128
-	jal	r0,.Lj5400
-.Lj5399:
+	jal	r0,.Lj5395
+.Lj5394:
 	ldw	r3,r30,-116
 	stw	r30,r3,-128
-.Lj5400:
-	jal	r0,.Lj5401
-.Lj5393:
+.Lj5395:
+	jal	r0,.Lj5396
+.Lj5388:
 	ldw	r3,r30,-120
 	ldw	r4,r30,-112
 	add	r4,r4,r3
 	stw	r30,r4,-112
-	jal	r0,.Lj5403
-.Lj5402:
+	jal	r0,.Lj5398
+.Lj5397:
 	ldw	r3,r30,-112
 	addi	r3,r3,1
 	stw	r30,r3,-112
@@ -48280,13 +48249,13 @@ FPC_SHORTSTR_CURRENCY:
 	addi	r3,r0,48
 	add	r4,r30,r4
 	stb	r4,r3,-97
-.Lj5403:
+.Lj5398:
 	ldw	r4,r30,-116
 	addi	r3,r0,5
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj5402
-	jal	r0,.Lj5404
-.Lj5404:
+	bne	r3,r0,.Lj5397
+	jal	r0,.Lj5399
+.Lj5399:
 	ldw	r3,r30,-68
 	addi	r4,r0,4
 	sub	r3,r4,r3
@@ -48295,33 +48264,33 @@ FPC_SHORTSTR_CURRENCY:
 	stw	r30,r3,-128
 	ldw	r3,r30,-128
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj5405
-	jal	r0,.Lj5406
-.Lj5405:
+	bne	r3,r0,.Lj5400
+	jal	r0,.Lj5401
+.Lj5400:
 	ldw	r4,r30,-128
 	addi	r3,r0,4
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5407
-	jal	r0,.Lj5408
-.Lj5407:
+	bne	r3,r0,.Lj5402
+	jal	r0,.Lj5403
+.Lj5402:
 	addi	r3,r0,4
 	stw	r30,r3,-128
-.Lj5408:
+.Lj5403:
 	ldw	r3,r30,-128
 	addi	r3,r3,1
 	stw	r30,r3,-128
-.Lj5406:
+.Lj5401:
 	ldw	r3,r30,-124
 	ldw	r4,r30,-112
 	sub	r4,r4,r3
 	stw	r30,r4,-112
-.Lj5401:
+.Lj5396:
 	ldw	r4,r30,-124
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5409
-	jal	r0,.Lj5410
-.Lj5409:
+	bne	r3,r0,.Lj5404
+	jal	r0,.Lj5405
+.Lj5404:
 	stw	r30,r0,-108
 	ldw	r3,r30,-124
 	addi	r3,r3,2
@@ -48329,31 +48298,31 @@ FPC_SHORTSTR_CURRENCY:
 	ldw	r3,r30,-100
 	ldw	r4,r30,-116
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj5411
-	jal	r0,.Lj5412
-.Lj5411:
+	bne	r3,r0,.Lj5406
+	jal	r0,.Lj5407
+.Lj5406:
 	ldw	r3,r30,-116
 	addi	r3,r3,1
 	stw	r30,r3,-100
-.Lj5412:
+.Lj5407:
 	ldw	r3,r30,-100
 	addi	r3,r3,-2
 	add	r3,r30,r3
 	ldbu	r3,r3,-97
 	addi	r4,r0,53
 	sgeu	r3,r3,r4
-	bne	r3,r0,.Lj5413
-	jal	r0,.Lj5414
-.Lj5413:
+	bne	r3,r0,.Lj5408
+	jal	r0,.Lj5409
+.Lj5408:
 	ldw	r3,r30,-100
 	addi	r3,r3,-1
 	add	r3,r30,r3
 	ldbu	r3,r3,-97
 	addi	r4,r0,57
 	sltu	r3,r3,r4
-	bne	r3,r0,.Lj5415
-	jal	r0,.Lj5416
-.Lj5415:
+	bne	r3,r0,.Lj5410
+	jal	r0,.Lj5411
+.Lj5410:
 	ldw	r3,r30,-100
 	addi	r3,r3,-1
 	add	r3,r30,r3
@@ -48364,8 +48333,8 @@ FPC_SHORTSTR_CURRENCY:
 	addi	r4,r4,-1
 	add	r4,r30,r4
 	stb	r4,r3,-97
-	jal	r0,.Lj5417
-.Lj5416:
+	jal	r0,.Lj5412
+.Lj5411:
 	ldw	r3,r30,-100
 	addi	r4,r3,-1
 	addi	r3,r0,48
@@ -48373,25 +48342,25 @@ FPC_SHORTSTR_CURRENCY:
 	stb	r4,r3,-97
 	addi	r3,r0,1
 	stw	r30,r3,-108
-.Lj5417:
-.Lj5414:
+.Lj5412:
+.Lj5409:
 	ldw	r3,r30,-108
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5418
-	jal	r0,.Lj5419
-.Lj5418:
+	bne	r3,r0,.Lj5413
+	jal	r0,.Lj5414
+.Lj5413:
 	ldw	r3,r30,-100
 	addi	r3,r3,-1
 	add	r3,r30,r3
 	ldbu	r3,r3,-97
 	addi	r3,r3,-48
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5420
-	jal	r0,.Lj5419
-.Lj5420:
-	jal	r0,.Lj5422
-.Lj5421:
+	bne	r3,r0,.Lj5415
+	jal	r0,.Lj5414
+.Lj5415:
+	jal	r0,.Lj5417
+.Lj5416:
 	ldw	r4,r30,-100
 	addi	r3,r0,48
 	add	r4,r30,r4
@@ -48399,15 +48368,15 @@ FPC_SHORTSTR_CURRENCY:
 	ldw	r3,r30,-100
 	addi	r3,r3,1
 	stw	r30,r3,-100
-.Lj5422:
+.Lj5417:
 	ldw	r3,r30,-100
 	add	r3,r30,r3
 	ldbu	r3,r3,-97
 	addi	r3,r3,-57
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5421
-	jal	r0,.Lj5423
-.Lj5423:
+	bne	r3,r0,.Lj5416
+	jal	r0,.Lj5418
+.Lj5418:
 	ldw	r3,r30,-100
 	add	r3,r30,r3
 	ldbu	r3,r3,-97
@@ -48419,49 +48388,49 @@ FPC_SHORTSTR_CURRENCY:
 	ldw	r4,r30,-100
 	ldw	r3,r30,-116
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5424
-	jal	r0,.Lj5425
-.Lj5424:
+	bne	r3,r0,.Lj5419
+	jal	r0,.Lj5420
+.Lj5419:
 	ldw	r3,r30,-112
 	addi	r3,r3,1
 	stw	r30,r3,-112
 	ldw	r3,r30,-116
 	addi	r3,r3,1
 	stw	r30,r3,-116
-.Lj5425:
-.Lj5419:
-.Lj5410:
+.Lj5420:
+.Lj5414:
+.Lj5405:
 	ldw	r3,r30,-112
 	ldw	r4,r30,-64
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj5426
-	jal	r0,.Lj5427
-.Lj5426:
+	bne	r3,r0,.Lj5421
+	jal	r0,.Lj5422
+.Lj5421:
 	ldw	r3,r30,-64
 	stw	r30,r3,-112
-.Lj5427:
+.Lj5422:
 	ldw	r3,r30,-112
 	ldw	r4,r30,-76
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj5428
-	jal	r0,.Lj5429
-.Lj5428:
+	bne	r3,r0,.Lj5423
+	jal	r0,.Lj5424
+.Lj5423:
 	ldw	r4,r30,-124
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj5430
-	jal	r0,.Lj5431
-.Lj5430:
+	bne	r3,r0,.Lj5425
+	jal	r0,.Lj5426
+.Lj5425:
 	ldw	r3,r30,-112
 	ldw	r4,r30,-76
 	sub	r3,r3,r4
 	ldw	r4,r30,-124
 	add	r4,r4,r3
 	stw	r30,r4,-124
-.Lj5431:
+.Lj5426:
 	ldw	r3,r30,-76
 	stw	r30,r3,-112
-.Lj5429:
+.Lj5424:
 	ldw	r3,r30,-72
 	ldw	r5,r30,-112
 	ldw	r4,r30,-76
@@ -48471,29 +48440,29 @@ FPC_SHORTSTR_CURRENCY:
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj5432
-	jal	r0,.Lj5433
-.Lj5432:
+	bne	r3,r0,.Lj5427
+	jal	r0,.Lj5428
+.Lj5427:
 	addi	r4,r30,-60
 	ldw	r3,r4,0
 	ldw	r4,r4,4
-	bne	r0,r4,.Lj5435
-	bne	r0,r3,.Lj5435
-	jal	r0,.Lj5434
-.Lj5434:
+	bne	r0,r4,.Lj5430
+	bne	r0,r3,.Lj5430
+	jal	r0,.Lj5429
+.Lj5429:
 	stw	r30,r0,-108
-	jal	r0,.Lj5436
-.Lj5435:
+	jal	r0,.Lj5431
+.Lj5430:
 	ldw	r3,r30,-116
 	addi	r3,r3,-5
 	stw	r30,r3,-108
-.Lj5436:
+.Lj5431:
 	ldw	r4,r30,-108
 	addi	r3,r0,0
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj5437
-	jal	r0,.Lj5438
-.Lj5437:
+	bne	r3,r0,.Lj5432
+	jal	r0,.Lj5433
+.Lj5432:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-104
 	addi	r4,r4,-2
@@ -48502,8 +48471,8 @@ FPC_SHORTSTR_CURRENCY:
 	addi	r4,r0,43
 	add	r3,r3,r5
 	stb	r3,r4,0
-	jal	r0,.Lj5439
-.Lj5438:
+	jal	r0,.Lj5434
+.Lj5433:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-104
 	addi	r4,r4,-2
@@ -48515,7 +48484,7 @@ FPC_SHORTSTR_CURRENCY:
 	ldw	r3,r30,-108
 	sub	r3,r0,r3
 	stw	r30,r3,-108
-.Lj5439:
+.Lj5434:
 	ldw	r4,r30,-108
 	addi	r3,r0,10
 	rem	r3,r4,r3
@@ -48548,9 +48517,9 @@ FPC_SHORTSTR_CURRENCY:
 	ldw	r3,r30,-104
 	addi	r3,r3,-1
 	stw	r30,r3,-104
-.Lj5433:
-	jal	r0,.Lj5441
-.Lj5440:
+.Lj5428:
+	jal	r0,.Lj5436
+.Lj5435:
 	ldw	r4,r30,-72
 	ldbu	r5,r30,-104
 	addi	r3,r0,48
@@ -48562,23 +48531,23 @@ FPC_SHORTSTR_CURRENCY:
 	ldw	r3,r30,-124
 	addi	r3,r3,1
 	stw	r30,r3,-124
-.Lj5441:
+.Lj5436:
 	ldw	r4,r30,-124
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj5440
-	jal	r0,.Lj5442
-.Lj5442:
+	bne	r3,r0,.Lj5435
+	jal	r0,.Lj5437
+.Lj5437:
 	ldw	r6,r30,-116
 	ldw	r3,r30,-124
 	addi	r3,r3,1
 	sle	r3,r3,r6
-	bne	r3,r0,.Lj5443
-	jal	r0,.Lj5444
-.Lj5443:
+	bne	r3,r0,.Lj5438
+	jal	r0,.Lj5439
+.Lj5438:
 	ldw	r3,r30,-124
 	stw	r30,r3,-100
-.Lj5445:
+.Lj5440:
 	ldw	r3,r30,-100
 	addi	r3,r3,1
 	stw	r30,r3,-100
@@ -48587,9 +48556,9 @@ FPC_SHORTSTR_CURRENCY:
 	stw	r30,r3,-128
 	ldw	r3,r30,-128
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5448
-	jal	r0,.Lj5449
-.Lj5448:
+	bne	r3,r0,.Lj5443
+	jal	r0,.Lj5444
+.Lj5443:
 	ldw	r5,r30,-72
 	ldbu	r4,r30,-104
 	addi	r3,r0,46
@@ -48598,7 +48567,7 @@ FPC_SHORTSTR_CURRENCY:
 	ldw	r3,r30,-104
 	addi	r3,r3,-1
 	stw	r30,r3,-104
-.Lj5449:
+.Lj5444:
 	ldw	r3,r30,-72
 	ldbu	r4,r30,-104
 	ldw	r5,r30,-100
@@ -48611,16 +48580,16 @@ FPC_SHORTSTR_CURRENCY:
 	stw	r30,r3,-104
 	ldw	r3,r30,-100
 	sge	r3,r3,r6
-	bne	r3,r0,.Lj5447
-	jal	r0,.Lj5445
-.Lj5447:
-.Lj5444:
+	bne	r3,r0,.Lj5442
+	jal	r0,.Lj5440
+.Lj5442:
+.Lj5439:
 	ldw	r3,r30,-120
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5450
-	jal	r0,.Lj5451
-.Lj5450:
+	bne	r3,r0,.Lj5445
+	jal	r0,.Lj5446
+.Lj5445:
 	ldw	r5,r30,-72
 	ldbu	r4,r30,-104
 	addi	r3,r0,45
@@ -48629,9 +48598,9 @@ FPC_SHORTSTR_CURRENCY:
 	ldw	r3,r30,-104
 	addi	r3,r3,-1
 	stw	r30,r3,-104
-.Lj5451:
-	jal	r0,.Lj5453
-.Lj5452:
+.Lj5446:
+	jal	r0,.Lj5448
+.Lj5447:
 	ldw	r5,r30,-72
 	ldbu	r4,r30,-104
 	addi	r3,r0,32
@@ -48640,13 +48609,13 @@ FPC_SHORTSTR_CURRENCY:
 	ldw	r3,r30,-104
 	addi	r3,r3,-1
 	stw	r30,r3,-104
-.Lj5453:
+.Lj5448:
 	ldw	r4,r30,-104
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5452
-	jal	r0,.Lj5454
-.Lj5454:
+	bne	r3,r0,.Lj5447
+	jal	r0,.Lj5449
+.Lj5449:
 	ldw	r30,r29,136
 	ldw	r31,r29,140
 	addi	r29,r29,144
@@ -48676,9 +48645,9 @@ fpc_chararray_sint:
 	ldbu	r4,r30,-324
 	ldw	r3,r30,-60
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj5457
-	jal	r0,.Lj5458
-.Lj5457:
+	bne	r3,r0,.Lj5452
+	jal	r0,.Lj5453
+.Lj5452:
 	ldbu	r3,r30,-324
 	ldw	r4,r30,-60
 	sub	r3,r4,r3
@@ -48690,22 +48659,22 @@ fpc_chararray_sint:
 	addi	r3,r30,-324
 	addi	r4,r0,255
 	call	fpc_shortstr_concat
-.Lj5458:
+.Lj5453:
 	ldbu	r3,r30,-324
 	ldw	r4,r30,-68
 	addi	r4,r4,1
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj5459
-	jal	r0,.Lj5460
-.Lj5459:
+	bne	r3,r0,.Lj5454
+	jal	r0,.Lj5455
+.Lj5454:
 	ldbu	r3,r30,-324
 	stw	r30,r3,-328
-	jal	r0,.Lj5461
-.Lj5460:
+	jal	r0,.Lj5456
+.Lj5455:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	stw	r30,r3,-328
-.Lj5461:
+.Lj5456:
 	ldw	r4,r30,-64
 	addi	r3,r30,-324
 	ldw	r6,r30,-328
@@ -48738,9 +48707,9 @@ fpc_chararray_uint:
 	ldbu	r4,r30,-324
 	ldw	r3,r30,-60
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj5464
-	jal	r0,.Lj5465
-.Lj5464:
+	bne	r3,r0,.Lj5459
+	jal	r0,.Lj5460
+.Lj5459:
 	ldbu	r3,r30,-324
 	ldw	r4,r30,-60
 	sub	r3,r4,r3
@@ -48752,22 +48721,22 @@ fpc_chararray_uint:
 	addi	r3,r30,-324
 	addi	r4,r0,255
 	call	fpc_shortstr_concat
-.Lj5465:
+.Lj5460:
 	ldbu	r3,r30,-324
 	ldw	r4,r30,-68
 	addi	r4,r4,1
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj5466
-	jal	r0,.Lj5467
-.Lj5466:
+	bne	r3,r0,.Lj5461
+	jal	r0,.Lj5462
+.Lj5461:
 	ldbu	r3,r30,-324
 	stw	r30,r3,-328
-	jal	r0,.Lj5468
-.Lj5467:
+	jal	r0,.Lj5463
+.Lj5462:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	stw	r30,r3,-328
-.Lj5468:
+.Lj5463:
 	ldw	r4,r30,-64
 	addi	r3,r30,-324
 	ldw	r6,r30,-328
@@ -48802,9 +48771,9 @@ fpc_chararray_qword:
 	ldbu	r4,r30,-328
 	ldw	r3,r30,-64
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj5471
-	jal	r0,.Lj5472
-.Lj5471:
+	bne	r3,r0,.Lj5466
+	jal	r0,.Lj5467
+.Lj5466:
 	ldbu	r3,r30,-328
 	ldw	r4,r30,-64
 	sub	r3,r4,r3
@@ -48816,22 +48785,22 @@ fpc_chararray_qword:
 	addi	r3,r30,-328
 	addi	r4,r0,255
 	call	fpc_shortstr_concat
-.Lj5472:
+.Lj5467:
 	ldbu	r3,r30,-328
 	ldw	r4,r30,-72
 	addi	r4,r4,1
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj5473
-	jal	r0,.Lj5474
-.Lj5473:
+	bne	r3,r0,.Lj5468
+	jal	r0,.Lj5469
+.Lj5468:
 	ldbu	r3,r30,-328
 	stw	r30,r3,-332
-	jal	r0,.Lj5475
-.Lj5474:
+	jal	r0,.Lj5470
+.Lj5469:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-332
-.Lj5475:
+.Lj5470:
 	ldw	r4,r30,-68
 	addi	r3,r30,-328
 	ldw	r6,r30,-332
@@ -48866,9 +48835,9 @@ fpc_chararray_int64:
 	ldbu	r4,r30,-328
 	ldw	r3,r30,-64
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj5478
-	jal	r0,.Lj5479
-.Lj5478:
+	bne	r3,r0,.Lj5473
+	jal	r0,.Lj5474
+.Lj5473:
 	ldbu	r3,r30,-328
 	ldw	r4,r30,-64
 	sub	r3,r4,r3
@@ -48880,22 +48849,22 @@ fpc_chararray_int64:
 	addi	r3,r30,-328
 	addi	r4,r0,255
 	call	fpc_shortstr_concat
-.Lj5479:
+.Lj5474:
 	ldbu	r3,r30,-328
 	ldw	r4,r30,-72
 	addi	r4,r4,1
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj5480
-	jal	r0,.Lj5481
-.Lj5480:
+	bne	r3,r0,.Lj5475
+	jal	r0,.Lj5476
+.Lj5475:
 	ldbu	r3,r30,-328
 	stw	r30,r3,-332
-	jal	r0,.Lj5482
-.Lj5481:
+	jal	r0,.Lj5477
+.Lj5476:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-332
-.Lj5482:
+.Lj5477:
 	ldw	r4,r30,-68
 	addi	r3,r30,-328
 	ldw	r6,r30,-332
@@ -48936,17 +48905,17 @@ fpc_chararray_float:
 	ldw	r4,r30,-80
 	addi	r4,r4,1
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj5485
-	jal	r0,.Lj5486
-.Lj5485:
+	bne	r3,r0,.Lj5480
+	jal	r0,.Lj5481
+.Lj5480:
 	ldbu	r3,r30,-336
 	stw	r30,r3,-340
-	jal	r0,.Lj5487
-.Lj5486:
+	jal	r0,.Lj5482
+.Lj5481:
 	ldw	r3,r30,-80
 	addi	r3,r3,1
 	stw	r30,r3,-340
-.Lj5487:
+.Lj5482:
 	ldw	r4,r30,-76
 	addi	r3,r30,-336
 	ldw	r6,r30,-340
@@ -48985,17 +48954,17 @@ fpc_chararray_enum:
 	ldw	r4,r30,-76
 	addi	r4,r4,1
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj5490
-	jal	r0,.Lj5491
-.Lj5490:
+	bne	r3,r0,.Lj5485
+	jal	r0,.Lj5486
+.Lj5485:
 	ldbu	r3,r30,-332
 	stw	r30,r3,-336
-	jal	r0,.Lj5492
-.Lj5491:
+	jal	r0,.Lj5487
+.Lj5486:
 	ldw	r3,r30,-76
 	addi	r3,r3,1
 	stw	r30,r3,-336
-.Lj5492:
+.Lj5487:
 	ldw	r4,r30,-72
 	addi	r3,r30,-332
 	ldw	r6,r30,-336
@@ -49030,17 +48999,17 @@ fpc_chararray_bool:
 	ldw	r4,r30,-68
 	addi	r4,r4,1
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj5495
-	jal	r0,.Lj5496
-.Lj5495:
+	bne	r3,r0,.Lj5490
+	jal	r0,.Lj5491
+.Lj5490:
 	ldbu	r3,r30,-324
 	stw	r30,r3,-328
-	jal	r0,.Lj5497
-.Lj5496:
+	jal	r0,.Lj5492
+.Lj5491:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	stw	r30,r3,-328
-.Lj5497:
+.Lj5492:
 	ldw	r4,r30,-64
 	addi	r3,r30,-324
 	ldw	r6,r30,-328
@@ -49079,17 +49048,17 @@ fpc_chararray_currency:
 	ldw	r4,r30,-76
 	addi	r4,r4,1
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj5500
-	jal	r0,.Lj5501
-.Lj5500:
+	bne	r3,r0,.Lj5495
+	jal	r0,.Lj5496
+.Lj5495:
 	ldbu	r3,r30,-332
 	stw	r30,r3,-336
-	jal	r0,.Lj5502
-.Lj5501:
+	jal	r0,.Lj5497
+.Lj5496:
 	ldw	r3,r30,-76
 	addi	r3,r3,1
 	stw	r30,r3,-336
-.Lj5502:
+.Lj5497:
 	ldw	r4,r30,-72
 	addi	r3,r30,-332
 	ldw	r6,r30,-336
@@ -49125,12 +49094,36 @@ SYSTEM_$$_INITVAL$SHORTSTRING$VALCOMMON$$LONGINT:
 	ldw	r3,r30,-56
 	ldbu	r3,r3,0
 	stw	r30,r3,-68
-	jal	r0,.Lj5506
-.Lj5505:
+	jal	r0,.Lj5501
+.Lj5500:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-64
+.Lj5501:
+	ldw	r3,r30,-64
+	ldw	r4,r30,-68
+	sle	r3,r3,r4
+	bne	r3,r0,.Lj5503
+	jal	r0,.Lj5504
+.Lj5503:
+	ldw	r3,r30,-56
+	ldbu	r4,r30,-64
+	add	r3,r3,r4
+	ldbu	r3,r3,0
+	addi	r4,r0,9
+	beq	r3,r4,.Lj5506
+	addi	r4,r0,32
+	beq	r3,r4,.Lj5506
+	jal	r0,.Lj5507
 .Lj5506:
+	jal	r0,.Lj5505
+.Lj5507:
+	jal	r0,.Lj5504
+.Lj5505:
+	jal	r0,.Lj5500
+.Lj5504:
+	jal	r0,.Lj5502
+.Lj5502:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-68
 	sle	r3,r3,r4
@@ -49141,20 +49134,29 @@ SYSTEM_$$_INITVAL$SHORTSTRING$VALCOMMON$$LONGINT:
 	ldbu	r4,r30,-64
 	add	r3,r3,r4
 	ldbu	r3,r3,0
-	addi	r4,r0,9
+	addi	r4,r0,43
+	beq	r3,r4,.Lj5512
+	addi	r4,r0,45
 	beq	r3,r4,.Lj5511
-	addi	r4,r0,32
-	beq	r3,r4,.Lj5511
-	jal	r0,.Lj5512
+	jal	r0,.Lj5510
 .Lj5511:
+	ldw	r3,r30,-60
+	addi	r4,r0,1
+	stb	r3,r4,0
+	ldw	r3,r30,-60
+	ldw	r4,r30,-64
+	stw	r3,r4,4
+	ldw	r3,r30,-64
+	addi	r3,r3,1
+	stw	r30,r3,-64
 	jal	r0,.Lj5510
 .Lj5512:
-	jal	r0,.Lj5509
+	ldw	r3,r30,-64
+	addi	r3,r3,1
+	stw	r30,r3,-64
+	jal	r0,.Lj5510
 .Lj5510:
-	jal	r0,.Lj5505
 .Lj5509:
-	jal	r0,.Lj5507
-.Lj5507:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-68
 	sle	r3,r3,r4
@@ -49165,53 +49167,20 @@ SYSTEM_$$_INITVAL$SHORTSTRING$VALCOMMON$$LONGINT:
 	ldbu	r4,r30,-64
 	add	r3,r3,r4
 	ldbu	r3,r3,0
-	addi	r4,r0,43
+	addi	r4,r0,36
+	beq	r3,r4,.Lj5516
+	addi	r4,r0,37
 	beq	r3,r4,.Lj5517
-	addi	r4,r0,45
+	addi	r4,r0,38
+	beq	r3,r4,.Lj5518
+	addi	r4,r0,48
+	beq	r3,r4,.Lj5519
+	addi	r4,r0,88
+	beq	r3,r4,.Lj5516
+	addi	r4,r0,120
 	beq	r3,r4,.Lj5516
 	jal	r0,.Lj5515
 .Lj5516:
-	ldw	r3,r30,-60
-	addi	r4,r0,1
-	stb	r3,r4,0
-	ldw	r3,r30,-60
-	ldw	r4,r30,-64
-	stw	r3,r4,4
-	ldw	r3,r30,-64
-	addi	r3,r3,1
-	stw	r30,r3,-64
-	jal	r0,.Lj5515
-.Lj5517:
-	ldw	r3,r30,-64
-	addi	r3,r3,1
-	stw	r30,r3,-64
-	jal	r0,.Lj5515
-.Lj5515:
-.Lj5514:
-	ldw	r3,r30,-64
-	ldw	r4,r30,-68
-	sle	r3,r3,r4
-	bne	r3,r0,.Lj5518
-	jal	r0,.Lj5519
-.Lj5518:
-	ldw	r3,r30,-56
-	ldbu	r4,r30,-64
-	add	r3,r3,r4
-	ldbu	r3,r3,0
-	addi	r4,r0,36
-	beq	r3,r4,.Lj5521
-	addi	r4,r0,37
-	beq	r3,r4,.Lj5522
-	addi	r4,r0,38
-	beq	r3,r4,.Lj5523
-	addi	r4,r0,48
-	beq	r3,r4,.Lj5524
-	addi	r4,r0,88
-	beq	r3,r4,.Lj5521
-	addi	r4,r0,120
-	beq	r3,r4,.Lj5521
-	jal	r0,.Lj5520
-.Lj5521:
 	ldw	r4,r30,-60
 	addi	r3,r0,16
 	stb	r4,r3,1
@@ -49221,8 +49190,8 @@ SYSTEM_$$_INITVAL$SHORTSTRING$VALCOMMON$$LONGINT:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-64
-	jal	r0,.Lj5520
-.Lj5522:
+	jal	r0,.Lj5515
+.Lj5517:
 	ldw	r4,r30,-60
 	addi	r3,r0,2
 	stb	r4,r3,1
@@ -49232,8 +49201,8 @@ SYSTEM_$$_INITVAL$SHORTSTRING$VALCOMMON$$LONGINT:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-64
-	jal	r0,.Lj5520
-.Lj5523:
+	jal	r0,.Lj5515
+.Lj5518:
 	ldw	r3,r30,-60
 	addi	r4,r0,8
 	stb	r3,r4,1
@@ -49243,14 +49212,14 @@ SYSTEM_$$_INITVAL$SHORTSTRING$VALCOMMON$$LONGINT:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-64
-	jal	r0,.Lj5520
-.Lj5524:
+	jal	r0,.Lj5515
+.Lj5519:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-68
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj5525
-	jal	r0,.Lj5526
-.Lj5525:
+	bne	r3,r0,.Lj5520
+	jal	r0,.Lj5521
+.Lj5520:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-64
 	addi	r4,r4,1
@@ -49259,15 +49228,15 @@ SYSTEM_$$_INITVAL$SHORTSTRING$VALCOMMON$$LONGINT:
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r4,r0,88
-	beq	r3,r4,.Lj5528
+	beq	r3,r4,.Lj5523
 	addi	r4,r0,120
-	beq	r3,r4,.Lj5528
-	jal	r0,.Lj5529
-.Lj5528:
-	jal	r0,.Lj5527
-.Lj5529:
-	jal	r0,.Lj5526
-.Lj5527:
+	beq	r3,r4,.Lj5523
+	jal	r0,.Lj5524
+.Lj5523:
+	jal	r0,.Lj5522
+.Lj5524:
+	jal	r0,.Lj5521
+.Lj5522:
 	ldw	r4,r30,-60
 	addi	r3,r0,16
 	stb	r4,r3,1
@@ -49277,31 +49246,31 @@ SYSTEM_$$_INITVAL$SHORTSTRING$VALCOMMON$$LONGINT:
 	ldw	r3,r30,-64
 	addi	r3,r3,2
 	stw	r30,r3,-64
-.Lj5526:
-	jal	r0,.Lj5520
-.Lj5520:
-.Lj5519:
-	jal	r0,.Lj5531
-.Lj5530:
+.Lj5521:
+	jal	r0,.Lj5515
+.Lj5515:
+.Lj5514:
+	jal	r0,.Lj5526
+.Lj5525:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-64
-.Lj5531:
+.Lj5526:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-68
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj5533
-	jal	r0,.Lj5534
-.Lj5533:
+	bne	r3,r0,.Lj5528
+	jal	r0,.Lj5529
+.Lj5528:
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-64
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r3,r3,-48
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5535
-	jal	r0,.Lj5534
-.Lj5535:
+	bne	r3,r0,.Lj5530
+	jal	r0,.Lj5529
+.Lj5530:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-64
 	addi	r4,r4,1
@@ -49310,13 +49279,13 @@ SYSTEM_$$_INITVAL$SHORTSTRING$VALCOMMON$$LONGINT:
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj5536
-	jal	r0,.Lj5534
-.Lj5536:
-	jal	r0,.Lj5530
-.Lj5534:
-	jal	r0,.Lj5532
-.Lj5532:
+	bne	r3,r0,.Lj5531
+	jal	r0,.Lj5529
+.Lj5531:
+	jal	r0,.Lj5525
+.Lj5529:
+	jal	r0,.Lj5527
+.Lj5527:
 	ldw	r1,r30,-64
 	ldw	r30,r29,68
 	ldw	r31,r29,72
@@ -49352,37 +49321,37 @@ FPC_VAL_SINT_SHORTSTR:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-76
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj5539
-	jal	r0,.Lj5540
-.Lj5540:
+	bne	r3,r0,.Lj5534
+	jal	r0,.Lj5535
+.Lj5535:
 	ldw	r4,r30,-60
 	ldbu	r3,r30,-72
 	add	r3,r4,r3
 	ldbu	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5539
-	jal	r0,.Lj5541
-.Lj5539:
+	bne	r3,r0,.Lj5534
+	jal	r0,.Lj5536
+.Lj5534:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-72
 	stw	r3,r4,0
-	jal	r0,.Lj5537
-.Lj5541:
+	jal	r0,.Lj5532
+.Lj5536:
 	ldbu	r3,r30,-107
 	addi	r3,r3,-10
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5542
-	jal	r0,.Lj5543
-.Lj5543:
+	bne	r3,r0,.Lj5537
+	jal	r0,.Lj5538
+.Lj5538:
 	ldbu	r3,r30,-108
-	bne	r3,r0,.Lj5542
-	jal	r0,.Lj5544
-.Lj5542:
+	bne	r3,r0,.Lj5537
+	jal	r0,.Lj5539
+.Lj5537:
 	addi	r3,r0,1
-	jal	r0,.Lj5545
-.Lj5544:
+	jal	r0,.Lj5540
+.Lj5539:
 	addi	r3,r0,0
-.Lj5545:
+.Lj5540:
 	ldbu	r4,r30,-108
 	add	r3,r4,r3
 	slli	r6,r3,4
@@ -49427,7 +49396,7 @@ FPC_VAL_SINT_SHORTSTR:
 	stw	r30,r3,-84
 	stw	r30,r0,-92
 	stw	r30,r0,-96
-.Lj5547:
+.Lj5542:
 	ldw	r3,r30,-60
 	ldbu	r4,r30,-72
 	add	r3,r3,r4
@@ -49437,11 +49406,11 @@ FPC_VAL_SINT_SHORTSTR:
 	ldw	r4,r30,-80
 	addi	r3,r0,55
 	sgeu	r3,r4,r3
-	bne	r3,r0,.Lj5550
-	jal	r0,.Lj5551
-.Lj5550:
-	jal	r0,.Lj5549
-.Lj5551:
+	bne	r3,r0,.Lj5545
+	jal	r0,.Lj5546
+.Lj5545:
+	jal	r0,.Lj5544
+.Lj5546:
 	ldw	r3,r30,-80
 	la	r4,TC_$SYSTEM_$$_VALDATA
 	add	r3,r3,r4
@@ -49450,22 +49419,22 @@ FPC_VAL_SINT_SHORTSTR:
 	ldbu	r4,r30,-107
 	ldw	r3,r30,-80
 	sgeu	r3,r3,r4
-	bne	r3,r0,.Lj5552
-	jal	r0,.Lj5553
-.Lj5552:
-	jal	r0,.Lj5549
-.Lj5553:
+	bne	r3,r0,.Lj5547
+	jal	r0,.Lj5548
+.Lj5547:
+	jal	r0,.Lj5544
+.Lj5548:
 	ldw	r3,r30,-84
 	addi	r3,r3,-1
 	stw	r30,r3,-84
 	ldw	r4,r30,-84
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj5554
-	jal	r0,.Lj5555
-.Lj5554:
-	jal	r0,.Lj5549
-.Lj5555:
+	bne	r3,r0,.Lj5549
+	jal	r0,.Lj5550
+.Lj5549:
+	jal	r0,.Lj5544
+.Lj5550:
 	ldw	r3,r30,-92
 	stw	r30,r3,-96
 	ldbu	r3,r30,-107
@@ -49480,21 +49449,21 @@ FPC_VAL_SINT_SHORTSTR:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-76
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj5549
-	jal	r0,.Lj5547
-.Lj5549:
+	bne	r3,r0,.Lj5544
+	jal	r0,.Lj5542
+.Lj5544:
 	ldw	r4,r30,-84
 	addi	r3,r0,0
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj5556
-	jal	r0,.Lj5557
-.Lj5556:
+	bne	r3,r0,.Lj5551
+	jal	r0,.Lj5552
+.Lj5551:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-76
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj5558
-	jal	r0,.Lj5559
-.Lj5558:
+	bne	r3,r0,.Lj5553
+	jal	r0,.Lj5554
+.Lj5553:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-72
 	addi	r4,r4,-1
@@ -49507,7 +49476,7 @@ FPC_VAL_SINT_SHORTSTR:
 	add	r3,r4,r3
 	ldbu	r3,r3,0
 	stw	r30,r3,-80
-.Lj5559:
+.Lj5554:
 	ldw	r3,r30,-56
 	slli	r4,r3,3
 	addi	r3,r0,32
@@ -49520,19 +49489,19 @@ FPC_VAL_SINT_SHORTSTR:
 	ldbu	r3,r30,-107
 	addi	r3,r3,-10
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5560
-	jal	r0,.Lj5561
-.Lj5561:
+	bne	r3,r0,.Lj5555
+	jal	r0,.Lj5556
+.Lj5556:
 	ldbu	r3,r30,-108
-	bne	r3,r0,.Lj5560
-	jal	r0,.Lj5562
-.Lj5560:
+	bne	r3,r0,.Lj5555
+	jal	r0,.Lj5557
+.Lj5555:
 	ldbu	r3,r30,-108
 	ldw	r4,r30,-100
 	srli	r4,r4,1
 	add	r3,r4,r3
 	stw	r30,r3,-100
-.Lj5562:
+.Lj5557:
 	ldbu	r3,r30,-107
 	ldw	r5,r30,-100
 	ldw	r4,r30,-80
@@ -49540,62 +49509,62 @@ FPC_VAL_SINT_SHORTSTR:
 	call	fpc_div_dword
 	ldw	r3,r30,-96
 	sgtu	r3,r3,r1
-	bne	r3,r0,.Lj5563
-	jal	r0,.Lj5564
-.Lj5563:
+	bne	r3,r0,.Lj5558
+	jal	r0,.Lj5559
+.Lj5558:
 	ldw	r3,r30,-72
 	addi	r3,r3,-1
 	stw	r30,r3,-72
-.Lj5564:
-.Lj5557:
+.Lj5559:
+.Lj5552:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-76
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj5565
-	jal	r0,.Lj5566
-.Lj5565:
+	bne	r3,r0,.Lj5560
+	jal	r0,.Lj5561
+.Lj5560:
 	ldw	r3,r30,-60
 	ldbu	r4,r30,-72
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj5567
-	jal	r0,.Lj5566
-.Lj5567:
+	bne	r3,r0,.Lj5562
+	jal	r0,.Lj5561
+.Lj5562:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-72
 	stw	r3,r4,0
-	jal	r0,.Lj5537
-.Lj5566:
+	jal	r0,.Lj5532
+.Lj5561:
 	ldw	r3,r30,-64
 	stw	r3,r0,0
 	ldw	r3,r30,-92
 	stw	r30,r3,-68
 	ldbu	r3,r30,-108
-	bne	r3,r0,.Lj5568
-	jal	r0,.Lj5569
-.Lj5568:
+	bne	r3,r0,.Lj5563
+	jal	r0,.Lj5564
+.Lj5563:
 	ldw	r3,r30,-68
 	sub	r3,r0,r3
 	stw	r30,r3,-68
-.Lj5569:
+.Lj5564:
 	ldbu	r3,r30,-108
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5570
-	jal	r0,.Lj5571
-.Lj5570:
+	bne	r3,r0,.Lj5565
+	jal	r0,.Lj5566
+.Lj5565:
 	ldbu	r3,r30,-107
 	addi	r3,r3,-10
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj5572
-	jal	r0,.Lj5571
-.Lj5572:
+	bne	r3,r0,.Lj5567
+	jal	r0,.Lj5566
+.Lj5567:
 	ldw	r3,r30,-56
 	addi	r4,r0,4
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj5573
-	jal	r0,.Lj5571
-.Lj5573:
+	bne	r3,r0,.Lj5568
+	jal	r0,.Lj5566
+.Lj5568:
 	ldw	r3,r30,-56
 	slli	r3,r3,3
 	addi	r4,r0,32
@@ -49607,8 +49576,8 @@ FPC_VAL_SINT_SHORTSTR:
 	ldbu	r3,r30,-88
 	sra	r3,r4,r3
 	stw	r30,r3,-68
-.Lj5571:
-.Lj5537:
+.Lj5566:
+.Lj5532:
 	ldw	r1,r30,-68
 	ldw	r30,r29,116
 	ldw	r31,r29,120
@@ -49642,35 +49611,35 @@ FPC_VAL_UINT_SHORTSTR:
 	ldbu	r3,r3,0
 	stw	r30,r3,-76
 	ldbu	r3,r30,-96
-	bne	r3,r0,.Lj5576
-	jal	r0,.Lj5577
-.Lj5577:
+	bne	r3,r0,.Lj5571
+	jal	r0,.Lj5572
+.Lj5572:
 	ldw	r4,r30,-72
 	ldw	r3,r30,-76
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5576
-	jal	r0,.Lj5578
-.Lj5578:
+	bne	r3,r0,.Lj5571
+	jal	r0,.Lj5573
+.Lj5573:
 	ldw	r4,r30,-60
 	ldbu	r3,r30,-72
 	add	r3,r4,r3
 	ldbu	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5576
-	jal	r0,.Lj5579
-.Lj5576:
+	bne	r3,r0,.Lj5571
+	jal	r0,.Lj5574
+.Lj5571:
 	ldbu	r3,r30,-96
-	bne	r3,r0,.Lj5580
-	jal	r0,.Lj5581
-.Lj5580:
+	bne	r3,r0,.Lj5575
+	jal	r0,.Lj5576
+.Lj5575:
 	ldw	r3,r30,-92
 	stw	r30,r3,-72
-.Lj5581:
+.Lj5576:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-72
 	stw	r3,r4,0
-	jal	r0,.Lj5574
-.Lj5579:
+	jal	r0,.Lj5569
+.Lj5574:
 	ldbu	r3,r30,-94
 	slli	r6,r3,2
 	ldw	r4,r30,-56
@@ -49707,7 +49676,7 @@ FPC_VAL_UINT_SHORTSTR:
 	ldbu	r3,r3,55
 	stw	r30,r3,-84
 	stw	r30,r0,-88
-.Lj5583:
+.Lj5578:
 	ldw	r3,r30,-60
 	ldbu	r4,r30,-72
 	add	r3,r3,r4
@@ -49717,11 +49686,11 @@ FPC_VAL_UINT_SHORTSTR:
 	ldw	r4,r30,-80
 	addi	r3,r0,55
 	sgeu	r3,r4,r3
-	bne	r3,r0,.Lj5586
-	jal	r0,.Lj5587
-.Lj5586:
-	jal	r0,.Lj5585
-.Lj5587:
+	bne	r3,r0,.Lj5581
+	jal	r0,.Lj5582
+.Lj5581:
+	jal	r0,.Lj5580
+.Lj5582:
 	ldw	r3,r30,-80
 	la	r4,TC_$SYSTEM_$$_VALDATA
 	add	r3,r3,r4
@@ -49730,22 +49699,22 @@ FPC_VAL_UINT_SHORTSTR:
 	ldbu	r4,r30,-95
 	ldw	r3,r30,-80
 	sgeu	r3,r3,r4
-	bne	r3,r0,.Lj5588
-	jal	r0,.Lj5589
-.Lj5588:
-	jal	r0,.Lj5585
-.Lj5589:
+	bne	r3,r0,.Lj5583
+	jal	r0,.Lj5584
+.Lj5583:
+	jal	r0,.Lj5580
+.Lj5584:
 	ldw	r3,r30,-84
 	addi	r3,r3,-1
 	stw	r30,r3,-84
 	ldw	r4,r30,-84
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj5590
-	jal	r0,.Lj5591
-.Lj5590:
-	jal	r0,.Lj5585
-.Lj5591:
+	bne	r3,r0,.Lj5585
+	jal	r0,.Lj5586
+.Lj5585:
+	jal	r0,.Lj5580
+.Lj5586:
 	ldw	r3,r30,-68
 	stw	r30,r3,-88
 	ldbu	r3,r30,-95
@@ -49760,21 +49729,21 @@ FPC_VAL_UINT_SHORTSTR:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-76
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj5585
-	jal	r0,.Lj5583
-.Lj5585:
+	bne	r3,r0,.Lj5580
+	jal	r0,.Lj5578
+.Lj5580:
 	ldw	r4,r30,-84
 	addi	r3,r0,0
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj5592
-	jal	r0,.Lj5593
-.Lj5592:
+	bne	r3,r0,.Lj5587
+	jal	r0,.Lj5588
+.Lj5587:
 	ldw	r4,r30,-72
 	ldw	r3,r30,-76
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj5594
-	jal	r0,.Lj5595
-.Lj5594:
+	bne	r3,r0,.Lj5589
+	jal	r0,.Lj5590
+.Lj5589:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-72
 	addi	r4,r4,-1
@@ -49787,7 +49756,7 @@ FPC_VAL_UINT_SHORTSTR:
 	add	r3,r4,r3
 	ldbu	r3,r3,0
 	stw	r30,r3,-80
-.Lj5595:
+.Lj5590:
 	ldw	r3,r30,-56
 	slli	r3,r3,3
 	addi	r4,r0,32
@@ -49802,36 +49771,36 @@ FPC_VAL_UINT_SHORTSTR:
 	call	fpc_div_dword
 	ldw	r3,r30,-88
 	sgtu	r3,r3,r1
-	bne	r3,r0,.Lj5596
-	jal	r0,.Lj5597
-.Lj5596:
+	bne	r3,r0,.Lj5591
+	jal	r0,.Lj5592
+.Lj5591:
 	ldw	r3,r30,-72
 	addi	r3,r3,-1
 	stw	r30,r3,-72
-.Lj5597:
-.Lj5593:
+.Lj5592:
+.Lj5588:
 	ldw	r3,r30,-64
 	stw	r3,r0,0
 	ldw	r4,r30,-72
 	ldw	r3,r30,-76
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj5598
-	jal	r0,.Lj5599
-.Lj5598:
+	bne	r3,r0,.Lj5593
+	jal	r0,.Lj5594
+.Lj5593:
 	ldw	r3,r30,-60
 	ldbu	r4,r30,-72
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj5600
-	jal	r0,.Lj5599
-.Lj5600:
+	bne	r3,r0,.Lj5595
+	jal	r0,.Lj5594
+.Lj5595:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-72
 	stw	r3,r4,0
 	stw	r30,r0,-68
-.Lj5599:
-.Lj5574:
+.Lj5594:
+.Lj5569:
 	ldw	r1,r30,-68
 	ldw	r30,r29,104
 	ldw	r31,r29,108
@@ -49867,37 +49836,37 @@ FPC_VAL_INT64_SHORTSTR:
 	ldw	r3,r30,-76
 	ldw	r4,r30,-80
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj5603
-	jal	r0,.Lj5604
-.Lj5604:
+	bne	r3,r0,.Lj5598
+	jal	r0,.Lj5599
+.Lj5599:
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-76
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5603
-	jal	r0,.Lj5605
-.Lj5603:
+	bne	r3,r0,.Lj5598
+	jal	r0,.Lj5600
+.Lj5598:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-76
 	stw	r4,r3,0
-	jal	r0,.Lj5601
-.Lj5605:
+	jal	r0,.Lj5596
+.Lj5600:
 	ldbu	r3,r30,-115
 	addi	r3,r3,-10
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5606
-	jal	r0,.Lj5607
-.Lj5607:
+	bne	r3,r0,.Lj5601
+	jal	r0,.Lj5602
+.Lj5602:
 	ldbu	r3,r30,-116
-	bne	r3,r0,.Lj5606
-	jal	r0,.Lj5608
-.Lj5606:
+	bne	r3,r0,.Lj5601
+	jal	r0,.Lj5603
+.Lj5601:
 	addi	r3,r0,1
-	jal	r0,.Lj5609
-.Lj5608:
+	jal	r0,.Lj5604
+.Lj5603:
 	addi	r3,r0,0
-.Lj5609:
+.Lj5604:
 	ldbu	r4,r30,-116
 	add	r3,r4,r3
 	slli	r3,r3,4
@@ -49912,7 +49881,7 @@ FPC_VAL_INT64_SHORTSTR:
 	stw	r30,r0,-88
 	stw	r30,r0,-100
 	stw	r30,r0,-96
-.Lj5610:
+.Lj5605:
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-76
 	add	r3,r3,r4
@@ -49922,11 +49891,11 @@ FPC_VAL_INT64_SHORTSTR:
 	ldw	r3,r30,-72
 	addi	r4,r0,55
 	sgeu	r3,r3,r4
-	bne	r3,r0,.Lj5613
-	jal	r0,.Lj5614
-.Lj5613:
-	jal	r0,.Lj5612
-.Lj5614:
+	bne	r3,r0,.Lj5608
+	jal	r0,.Lj5609
+.Lj5608:
+	jal	r0,.Lj5607
+.Lj5609:
 	ldw	r3,r30,-72
 	la	r4,TC_$SYSTEM_$$_VALDATA
 	add	r3,r3,r4
@@ -49935,22 +49904,22 @@ FPC_VAL_INT64_SHORTSTR:
 	ldbu	r4,r30,-115
 	ldw	r3,r30,-72
 	sgeu	r3,r3,r4
-	bne	r3,r0,.Lj5615
-	jal	r0,.Lj5616
-.Lj5615:
-	jal	r0,.Lj5612
-.Lj5616:
+	bne	r3,r0,.Lj5610
+	jal	r0,.Lj5611
+.Lj5610:
+	jal	r0,.Lj5607
+.Lj5611:
 	ldw	r3,r30,-84
 	addi	r3,r3,-1
 	stw	r30,r3,-84
 	ldw	r4,r30,-84
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj5617
-	jal	r0,.Lj5618
-.Lj5617:
-	jal	r0,.Lj5612
-.Lj5618:
+	bne	r3,r0,.Lj5612
+	jal	r0,.Lj5613
+.Lj5612:
+	jal	r0,.Lj5607
+.Lj5613:
 	ldw	r3,r30,-92
 	stw	r30,r3,-100
 	ldw	r3,r30,-88
@@ -49978,21 +49947,21 @@ FPC_VAL_INT64_SHORTSTR:
 	ldw	r3,r30,-76
 	ldw	r4,r30,-80
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj5612
-	jal	r0,.Lj5610
-.Lj5612:
+	bne	r3,r0,.Lj5607
+	jal	r0,.Lj5605
+.Lj5607:
 	ldw	r4,r30,-84
 	addi	r3,r0,0
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj5619
-	jal	r0,.Lj5620
-.Lj5619:
+	bne	r3,r0,.Lj5614
+	jal	r0,.Lj5615
+.Lj5614:
 	ldw	r4,r30,-76
 	ldw	r3,r30,-80
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj5621
-	jal	r0,.Lj5622
-.Lj5621:
+	bne	r3,r0,.Lj5616
+	jal	r0,.Lj5617
+.Lj5616:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-76
 	addi	r4,r4,-1
@@ -50005,7 +49974,7 @@ FPC_VAL_INT64_SHORTSTR:
 	add	r3,r4,r3
 	ldbu	r3,r3,0
 	stw	r30,r3,-72
-.Lj5622:
+.Lj5617:
 	addi	r3,r0,-1
 	stw	r30,r3,-108
 	addi	r3,r0,-1
@@ -50013,27 +49982,27 @@ FPC_VAL_INT64_SHORTSTR:
 	ldbu	r3,r30,-115
 	addi	r3,r3,-10
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5623
-	jal	r0,.Lj5624
-.Lj5624:
+	bne	r3,r0,.Lj5618
+	jal	r0,.Lj5619
+.Lj5619:
 	ldbu	r3,r30,-116
-	bne	r3,r0,.Lj5623
-	jal	r0,.Lj5625
-.Lj5623:
+	bne	r3,r0,.Lj5618
+	jal	r0,.Lj5620
+.Lj5618:
 	addi	r3,r0,-1
 	stw	r30,r3,-108
 	lui	r3,524287
 	ori	r3,r3,4095
 	stw	r30,r3,-104
 	ldbu	r3,r30,-116
-	bne	r3,r0,.Lj5626
-	jal	r0,.Lj5627
-.Lj5626:
+	bne	r3,r0,.Lj5621
+	jal	r0,.Lj5622
+.Lj5621:
 	stw	r30,r0,-108
 	lui	r3,524288
 	stw	r30,r3,-104
-.Lj5627:
-.Lj5625:
+.Lj5622:
+.Lj5620:
 	ldbu	r3,r30,-115
 	addi	r4,r0,0
 	ldw	r5,r30,-72
@@ -50051,35 +50020,35 @@ FPC_VAL_INT64_SHORTSTR:
 	call	fpc_div_qword
 	ldw	r4,r30,-100
 	ldw	r3,r30,-96
-	bltu	r2,r3,.Lj5628
-	bne	r3,r2,.Lj5629
-	bltu	r1,r4,.Lj5628
-	jal	r0,.Lj5629
-.Lj5628:
+	bltu	r2,r3,.Lj5623
+	bne	r3,r2,.Lj5624
+	bltu	r1,r4,.Lj5623
+	jal	r0,.Lj5624
+.Lj5623:
 	ldw	r3,r30,-76
 	addi	r3,r3,-1
 	stw	r30,r3,-76
-.Lj5629:
-.Lj5620:
+.Lj5624:
+.Lj5615:
 	ldw	r4,r30,-76
 	ldw	r3,r30,-80
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj5630
-	jal	r0,.Lj5631
-.Lj5630:
+	bne	r3,r0,.Lj5625
+	jal	r0,.Lj5626
+.Lj5625:
 	ldw	r4,r30,-56
 	ldbu	r3,r30,-76
 	add	r3,r4,r3
 	ldbu	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj5632
-	jal	r0,.Lj5631
-.Lj5632:
+	bne	r3,r0,.Lj5627
+	jal	r0,.Lj5626
+.Lj5627:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-76
 	stw	r3,r4,0
-	jal	r0,.Lj5601
-.Lj5631:
+	jal	r0,.Lj5596
+.Lj5626:
 	ldw	r3,r30,-60
 	stw	r3,r0,0
 	ldw	r3,r30,-92
@@ -50087,9 +50056,9 @@ FPC_VAL_INT64_SHORTSTR:
 	ldw	r3,r30,-88
 	stw	r30,r3,-64
 	ldbu	r3,r30,-116
-	bne	r3,r0,.Lj5633
-	jal	r0,.Lj5634
-.Lj5633:
+	bne	r3,r0,.Lj5628
+	jal	r0,.Lj5629
+.Lj5628:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-64
 	sub	r3,r0,r3
@@ -50098,8 +50067,8 @@ FPC_VAL_INT64_SHORTSTR:
 	sub	r4,r4,r5
 	stw	r30,r3,-68
 	stw	r30,r4,-64
-.Lj5634:
-.Lj5601:
+.Lj5629:
+.Lj5596:
 	ldw	r1,r30,-68
 	ldw	r2,r30,-64
 	ldw	r30,r29,116
@@ -50134,35 +50103,35 @@ FPC_VAL_QWORD_SHORTSTR:
 	ldbu	r3,r3,0
 	stw	r30,r3,-76
 	ldbu	r3,r30,-100
-	bne	r3,r0,.Lj5637
-	jal	r0,.Lj5638
-.Lj5638:
+	bne	r3,r0,.Lj5632
+	jal	r0,.Lj5633
+.Lj5633:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-76
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj5637
-	jal	r0,.Lj5639
-.Lj5639:
+	bne	r3,r0,.Lj5632
+	jal	r0,.Lj5634
+.Lj5634:
 	ldw	r4,r30,-56
 	ldbu	r3,r30,-72
 	add	r3,r4,r3
 	ldbu	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5637
-	jal	r0,.Lj5640
-.Lj5637:
+	bne	r3,r0,.Lj5632
+	jal	r0,.Lj5635
+.Lj5632:
 	ldbu	r3,r30,-100
-	bne	r3,r0,.Lj5641
-	jal	r0,.Lj5642
-.Lj5641:
+	bne	r3,r0,.Lj5636
+	jal	r0,.Lj5637
+.Lj5636:
 	ldw	r3,r30,-96
 	stw	r30,r3,-72
-.Lj5642:
+.Lj5637:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-72
 	stw	r4,r3,0
-	jal	r0,.Lj5635
-.Lj5640:
+	jal	r0,.Lj5630
+.Lj5635:
 	stw	r30,r0,-92
 	stw	r30,r0,-88
 	ldbu	r3,r30,-98
@@ -50171,7 +50140,7 @@ FPC_VAL_QWORD_SHORTSTR:
 	add	r3,r3,r4
 	ldbu	r3,r3,58
 	stw	r30,r3,-84
-.Lj5643:
+.Lj5638:
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-72
 	add	r3,r3,r4
@@ -50181,11 +50150,11 @@ FPC_VAL_QWORD_SHORTSTR:
 	ldw	r3,r30,-80
 	addi	r4,r0,55
 	sgeu	r3,r3,r4
-	bne	r3,r0,.Lj5646
-	jal	r0,.Lj5647
-.Lj5646:
-	jal	r0,.Lj5645
-.Lj5647:
+	bne	r3,r0,.Lj5641
+	jal	r0,.Lj5642
+.Lj5641:
+	jal	r0,.Lj5640
+.Lj5642:
 	ldw	r3,r30,-80
 	la	r4,TC_$SYSTEM_$$_VALDATA
 	add	r3,r3,r4
@@ -50194,22 +50163,22 @@ FPC_VAL_QWORD_SHORTSTR:
 	ldbu	r4,r30,-99
 	ldw	r3,r30,-80
 	sgeu	r3,r3,r4
-	bne	r3,r0,.Lj5648
-	jal	r0,.Lj5649
-.Lj5648:
-	jal	r0,.Lj5645
-.Lj5649:
+	bne	r3,r0,.Lj5643
+	jal	r0,.Lj5644
+.Lj5643:
+	jal	r0,.Lj5640
+.Lj5644:
 	ldw	r3,r30,-84
 	addi	r3,r3,-1
 	stw	r30,r3,-84
 	ldw	r4,r30,-84
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj5650
-	jal	r0,.Lj5651
-.Lj5650:
-	jal	r0,.Lj5645
-.Lj5651:
+	bne	r3,r0,.Lj5645
+	jal	r0,.Lj5646
+.Lj5645:
+	jal	r0,.Lj5640
+.Lj5646:
 	ldw	r3,r30,-68
 	stw	r30,r3,-92
 	ldw	r3,r30,-64
@@ -50237,21 +50206,21 @@ FPC_VAL_QWORD_SHORTSTR:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-76
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj5645
-	jal	r0,.Lj5643
-.Lj5645:
+	bne	r3,r0,.Lj5640
+	jal	r0,.Lj5638
+.Lj5640:
 	ldw	r4,r30,-84
 	addi	r3,r0,0
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj5652
-	jal	r0,.Lj5653
-.Lj5652:
+	bne	r3,r0,.Lj5647
+	jal	r0,.Lj5648
+.Lj5647:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-76
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj5654
-	jal	r0,.Lj5655
-.Lj5654:
+	bne	r3,r0,.Lj5649
+	jal	r0,.Lj5650
+.Lj5649:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-72
 	addi	r4,r4,-1
@@ -50264,7 +50233,7 @@ FPC_VAL_QWORD_SHORTSTR:
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	stw	r30,r3,-80
-.Lj5655:
+.Lj5650:
 	ldbu	r3,r30,-99
 	addi	r4,r0,0
 	ldw	r5,r30,-80
@@ -50282,39 +50251,39 @@ FPC_VAL_QWORD_SHORTSTR:
 	call	fpc_div_qword
 	ldw	r3,r30,-92
 	ldw	r4,r30,-88
-	bltu	r2,r4,.Lj5656
-	bne	r4,r2,.Lj5657
-	bltu	r1,r3,.Lj5656
-	jal	r0,.Lj5657
-.Lj5656:
+	bltu	r2,r4,.Lj5651
+	bne	r4,r2,.Lj5652
+	bltu	r1,r3,.Lj5651
+	jal	r0,.Lj5652
+.Lj5651:
 	ldw	r3,r30,-72
 	addi	r3,r3,-1
 	stw	r30,r3,-72
-.Lj5657:
-.Lj5653:
+.Lj5652:
+.Lj5648:
 	ldw	r3,r30,-60
 	stw	r3,r0,0
 	ldw	r3,r30,-72
 	ldw	r4,r30,-76
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj5658
-	jal	r0,.Lj5659
-.Lj5658:
+	bne	r3,r0,.Lj5653
+	jal	r0,.Lj5654
+.Lj5653:
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-72
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj5660
-	jal	r0,.Lj5659
-.Lj5660:
+	bne	r3,r0,.Lj5655
+	jal	r0,.Lj5654
+.Lj5655:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-72
 	stw	r4,r3,0
 	stw	r30,r0,-68
 	stw	r30,r0,-64
-.Lj5659:
-.Lj5635:
+.Lj5654:
+.Lj5630:
 	ldw	r1,r30,-68
 	ldw	r2,r30,-64
 	ldw	r30,r29,100
@@ -50435,32 +50404,32 @@ FPC_VAL_ENUM_SHORTSTR:
 	stw	r30,r5,-64
 	addi	r3,r0,1
 	stw	r30,r3,-92
-	jal	r0,.Lj5670
-.Lj5669:
+	jal	r0,.Lj5665
+.Lj5664:
 	ldw	r3,r30,-92
 	addi	r3,r3,1
 	stw	r30,r3,-92
-.Lj5670:
+.Lj5665:
 	ldw	r3,r30,-60
 	ldbu	r4,r3,0
 	ldw	r3,r30,-92
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj5672
-	jal	r0,.Lj5673
-.Lj5672:
+	bne	r3,r0,.Lj5667
+	jal	r0,.Lj5668
+.Lj5667:
 	ldw	r3,r30,-60
 	ldbu	r4,r30,-92
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r3,r3,-32
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5674
-	jal	r0,.Lj5673
-.Lj5674:
-	jal	r0,.Lj5669
-.Lj5673:
-	jal	r0,.Lj5671
-.Lj5671:
+	bne	r3,r0,.Lj5669
+	jal	r0,.Lj5668
+.Lj5669:
+	jal	r0,.Lj5664
+.Lj5668:
+	jal	r0,.Lj5666
+.Lj5666:
 	stw	r30,r0,-72
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
@@ -50469,7 +50438,7 @@ FPC_VAL_ENUM_SHORTSTR:
 	addi	r3,r3,-1
 	stw	r30,r3,-92
 	stw	r30,r0,-96
-.Lj5675:
+.Lj5670:
 	ldw	r3,r30,-92
 	addi	r3,r3,1
 	stw	r30,r3,-92
@@ -50477,11 +50446,11 @@ FPC_VAL_ENUM_SHORTSTR:
 	ldbu	r3,r3,0
 	ldw	r4,r30,-92
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5678
-	jal	r0,.Lj5679
-.Lj5678:
-	jal	r0,.Lj5677
-.Lj5679:
+	bne	r3,r0,.Lj5673
+	jal	r0,.Lj5674
+.Lj5673:
+	jal	r0,.Lj5672
+.Lj5674:
 	ldw	r3,r30,-96
 	addi	r3,r3,1
 	stw	r30,r3,-96
@@ -50500,21 +50469,21 @@ FPC_VAL_ENUM_SHORTSTR:
 	ldbu	r3,r3,0
 	ldw	r4,r30,-96
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5680
-	jal	r0,.Lj5681
-.Lj5680:
+	bne	r3,r0,.Lj5675
+	jal	r0,.Lj5676
+.Lj5675:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
 	ldw	r4,r30,-72
 	ldw	r3,r30,-76
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj5682
-	jal	r0,.Lj5683
-.Lj5682:
-	jal	r0,.Lj5677
-.Lj5683:
-.Lj5681:
+	bne	r3,r0,.Lj5677
+	jal	r0,.Lj5678
+.Lj5677:
+	jal	r0,.Lj5672
+.Lj5678:
+.Lj5676:
 	ldw	r3,r30,-56
 	addi	r3,r3,4
 	ldw	r4,r30,-72
@@ -50527,23 +50496,23 @@ FPC_VAL_ENUM_SHORTSTR:
 	call	SYSTEM_$$_UPCASE$ANSICHAR$$ANSICHAR
 	ldbu	r3,r30,-100
 	seq	r3,r1,r3
-	bne	r3,r0,.Lj5684
-	jal	r0,.Lj5685
-.Lj5684:
+	bne	r3,r0,.Lj5679
+	jal	r0,.Lj5680
+.Lj5679:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	ldw	r4,r30,-76
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj5686
-	jal	r0,.Lj5687
-.Lj5686:
-	jal	r0,.Lj5676
-.Lj5687:
-	jal	r0,.Lj5688
-.Lj5685:
+	bne	r3,r0,.Lj5681
+	jal	r0,.Lj5682
+.Lj5681:
+	jal	r0,.Lj5671
+.Lj5682:
+	jal	r0,.Lj5683
+.Lj5680:
 	ldw	r3,r30,-76
 	stw	r30,r3,-84
-.Lj5689:
+.Lj5684:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-84
 	add	r3,r4,r3
@@ -50561,32 +50530,32 @@ FPC_VAL_ENUM_SHORTSTR:
 	call	SYSTEM_$$_UPCASE$ANSICHAR$$ANSICHAR
 	ldbu	r3,r30,-100
 	sltu	r3,r1,r3
-	bne	r3,r0,.Lj5692
-	jal	r0,.Lj5693
-.Lj5692:
+	bne	r3,r0,.Lj5687
+	jal	r0,.Lj5688
+.Lj5687:
 	ldw	r3,r30,-88
 	addi	r3,r3,1
 	stw	r30,r3,-72
-	jal	r0,.Lj5694
-.Lj5693:
+	jal	r0,.Lj5689
+.Lj5688:
 	ldw	r3,r30,-88
 	stw	r30,r3,-84
-.Lj5694:
+.Lj5689:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-84
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj5691
-	jal	r0,.Lj5689
-.Lj5691:
+	bne	r3,r0,.Lj5686
+	jal	r0,.Lj5684
+.Lj5686:
 	ldw	r4,r30,-72
 	ldw	r3,r30,-76
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj5695
-	jal	r0,.Lj5696
-.Lj5695:
-	jal	r0,.Lj5677
-.Lj5696:
-.Lj5688:
+	bne	r3,r0,.Lj5690
+	jal	r0,.Lj5691
+.Lj5690:
+	jal	r0,.Lj5672
+.Lj5691:
+.Lj5683:
 	ldw	r3,r30,-56
 	addi	r3,r3,4
 	ldw	r4,r30,-76
@@ -50600,14 +50569,14 @@ FPC_VAL_ENUM_SHORTSTR:
 	call	SYSTEM_$$_UPCASE$ANSICHAR$$ANSICHAR
 	ldbu	r3,r30,-100
 	seq	r3,r1,r3
-	bne	r3,r0,.Lj5697
-	jal	r0,.Lj5698
-.Lj5697:
-	jal	r0,.Lj5676
-.Lj5698:
+	bne	r3,r0,.Lj5692
+	jal	r0,.Lj5693
+.Lj5692:
+	jal	r0,.Lj5671
+.Lj5693:
 	ldw	r3,r30,-72
 	stw	r30,r3,-80
-.Lj5699:
+.Lj5694:
 	ldw	r3,r30,-80
 	ldw	r4,r30,-76
 	add	r3,r4,r3
@@ -50625,40 +50594,40 @@ FPC_VAL_ENUM_SHORTSTR:
 	call	SYSTEM_$$_UPCASE$ANSICHAR$$ANSICHAR
 	ldbu	r3,r30,-100
 	sleu	r3,r1,r3
-	bne	r3,r0,.Lj5702
-	jal	r0,.Lj5703
-.Lj5702:
+	bne	r3,r0,.Lj5697
+	jal	r0,.Lj5698
+.Lj5697:
 	ldw	r3,r30,-88
 	addi	r3,r3,1
 	stw	r30,r3,-80
-	jal	r0,.Lj5704
-.Lj5703:
+	jal	r0,.Lj5699
+.Lj5698:
 	ldw	r3,r30,-88
 	stw	r30,r3,-76
-.Lj5704:
+.Lj5699:
 	ldw	r4,r30,-80
 	ldw	r3,r30,-76
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj5701
-	jal	r0,.Lj5699
-.Lj5701:
+	bne	r3,r0,.Lj5696
+	jal	r0,.Lj5694
+.Lj5696:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-76
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj5705
-	jal	r0,.Lj5706
-.Lj5705:
-	jal	r0,.Lj5677
-.Lj5706:
-.Lj5676:
-	jal	r0,.Lj5675
-.Lj5677:
+	bne	r3,r0,.Lj5700
+	jal	r0,.Lj5701
+.Lj5700:
+	jal	r0,.Lj5672
+.Lj5701:
+.Lj5671:
+	jal	r0,.Lj5670
+.Lj5672:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-76
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj5707
-	jal	r0,.Lj5708
-.Lj5707:
+	bne	r3,r0,.Lj5702
+	jal	r0,.Lj5703
+.Lj5702:
 	ldw	r3,r30,-56
 	addi	r3,r3,4
 	ldw	r4,r30,-72
@@ -50668,9 +50637,9 @@ FPC_VAL_ENUM_SHORTSTR:
 	ldbu	r3,r3,0
 	ldw	r4,r30,-96
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj5709
-	jal	r0,.Lj5708
-.Lj5709:
+	bne	r3,r0,.Lj5704
+	jal	r0,.Lj5703
+.Lj5704:
 	ldw	r3,r30,-64
 	stw	r3,r0,0
 	ldw	r3,r30,-56
@@ -50680,14 +50649,14 @@ FPC_VAL_ENUM_SHORTSTR:
 	add	r3,r3,r4
 	ldw	r3,r3,0
 	stw	r30,r3,-68
-	jal	r0,.Lj5667
-.Lj5708:
+	jal	r0,.Lj5662
+.Lj5703:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-92
 	stw	r3,r4,0
 	addi	r3,r0,-1
 	stw	r30,r3,-68
-.Lj5667:
+.Lj5662:
 	ldw	r1,r30,-68
 	ldw	r30,r29,100
 	ldw	r31,r29,104
@@ -50723,83 +50692,83 @@ FPC_VAL_CURRENCY_SHORTSTR:
 	addi	r3,r0,-1
 	stw	r30,r3,-92
 	stw	r30,r0,-88
-	jal	r0,.Lj5713
-.Lj5712:
+	jal	r0,.Lj5708
+.Lj5707:
 	ldw	r3,r30,-60
 	ldw	r3,r3,0
 	ldw	r4,r30,-96
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj5715
-	jal	r0,.Lj5716
-.Lj5715:
-	jal	r0,.Lj5710
-	jal	r0,.Lj5717
-.Lj5716:
+	bne	r3,r0,.Lj5710
+	jal	r0,.Lj5711
+.Lj5710:
+	jal	r0,.Lj5705
+	jal	r0,.Lj5712
+.Lj5711:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	ldbu	r4,r4,0
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r4,r0,9
-	beq	r3,r4,.Lj5718
+	beq	r3,r4,.Lj5713
 	addi	r4,r0,32
-	beq	r3,r4,.Lj5718
-	jal	r0,.Lj5719
-.Lj5718:
+	beq	r3,r4,.Lj5713
+	jal	r0,.Lj5714
+.Lj5713:
 	ldw	r3,r30,-60
 	ldw	r4,r3,0
 	addi	r4,r4,1
 	stw	r3,r4,0
-	jal	r0,.Lj5720
-.Lj5719:
-	jal	r0,.Lj5714
-.Lj5720:
-.Lj5717:
-.Lj5713:
-	jal	r0,.Lj5712
+	jal	r0,.Lj5715
 .Lj5714:
+	jal	r0,.Lj5709
+.Lj5715:
+.Lj5712:
+.Lj5708:
+	jal	r0,.Lj5707
+.Lj5709:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	ldbu	r4,r4,0
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r4,r0,43
-	beq	r3,r4,.Lj5722
+	beq	r3,r4,.Lj5717
 	addi	r4,r0,45
-	beq	r3,r4,.Lj5723
-	jal	r0,.Lj5721
-.Lj5722:
+	beq	r3,r4,.Lj5718
+	jal	r0,.Lj5716
+.Lj5717:
 	ldw	r4,r30,-60
 	ldw	r3,r4,0
 	addi	r3,r3,1
 	stw	r4,r3,0
-	jal	r0,.Lj5721
-.Lj5723:
+	jal	r0,.Lj5716
+.Lj5718:
 	addi	r3,r0,1
 	stw	r30,r3,-92
 	ldw	r4,r30,-60
 	ldw	r3,r4,0
 	addi	r3,r3,1
 	stw	r4,r3,0
-	jal	r0,.Lj5721
-.Lj5721:
+	jal	r0,.Lj5716
+.Lj5716:
 	stb	r30,r0,-100
 	stw	r30,r0,-80
-	jal	r0,.Lj5725
-.Lj5724:
+	jal	r0,.Lj5720
+.Lj5719:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	ldbu	r4,r4,0
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r4,r0,46
-	beq	r3,r4,.Lj5730
+	beq	r3,r4,.Lj5725
 	addi	r4,r0,48
-	bltu	r3,r4,.Lj5728
+	bltu	r3,r4,.Lj5723
 	addi	r4,r0,57
-	bleu	r3,r4,.Lj5729
-	jal	r0,.Lj5728
-.Lj5729:
+	bleu	r3,r4,.Lj5724
+	jal	r0,.Lj5723
+.Lj5724:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	ldbu	r4,r4,0
@@ -50812,11 +50781,11 @@ FPC_VAL_CURRENCY_SHORTSTR:
 	la	r6,TC_$SYSTEM$_$fpc_val_currency_shortstr$SHORTSTRING$LONGINT$$CURRENCY_$$_MININT64EDGE
 	ldw	r4,r6,0
 	ldw	r6,r6,4
-	blt	r5,r6,.Lj5732
-	bne	r5,r6,.Lj5731
-	bltu	r3,r4,.Lj5732
-	jal	r0,.Lj5731
-.Lj5732:
+	blt	r5,r6,.Lj5727
+	bne	r5,r6,.Lj5726
+	bltu	r3,r4,.Lj5727
+	jal	r0,.Lj5726
+.Lj5727:
 	ldw	r5,r30,-84
 	srai	r3,r5,31
 	la	r4,TC_$SYSTEM$_$fpc_val_currency_shortstr$SHORTSTRING$LONGINT$$CURRENCY_$$_MININT64
@@ -50831,15 +50800,15 @@ FPC_VAL_CURRENCY_SHORTSTR:
 	call	fpc_div_int64
 	ldw	r4,r30,-76
 	ldw	r3,r30,-72
-	blt	r3,r2,.Lj5735
-	bne	r3,r2,.Lj5734
-	bltu	r4,r1,.Lj5735
-	jal	r0,.Lj5734
-.Lj5734:
-	jal	r0,.Lj5731
-.Lj5735:
-	jal	r0,.Lj5733
-.Lj5731:
+	blt	r3,r2,.Lj5730
+	bne	r3,r2,.Lj5729
+	bltu	r4,r1,.Lj5730
+	jal	r0,.Lj5729
+.Lj5729:
+	jal	r0,.Lj5726
+.Lj5730:
+	jal	r0,.Lj5728
+.Lj5726:
 	ldw	r3,r30,-76
 	ldw	r4,r30,-72
 	addi	r6,r0,0
@@ -50856,41 +50825,41 @@ FPC_VAL_CURRENCY_SHORTSTR:
 	ldw	r3,r30,-80
 	addi	r3,r3,1
 	stw	r30,r3,-80
-	jal	r0,.Lj5736
-.Lj5733:
+	jal	r0,.Lj5731
+.Lj5728:
 	ldw	r3,r30,-88
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5737
-	jal	r0,.Lj5738
-.Lj5737:
-	jal	r0,.Lj5710
-	jal	r0,.Lj5739
-.Lj5738:
+	bne	r3,r0,.Lj5732
+	jal	r0,.Lj5733
+.Lj5732:
+	jal	r0,.Lj5705
+	jal	r0,.Lj5734
+.Lj5733:
 	ldbu	r3,r30,-100
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5740
-	jal	r0,.Lj5741
-.Lj5740:
+	bne	r3,r0,.Lj5735
+	jal	r0,.Lj5736
+.Lj5735:
 	ldw	r4,r30,-84
 	addi	r3,r0,5
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj5742
-	jal	r0,.Lj5741
-.Lj5742:
+	bne	r3,r0,.Lj5737
+	jal	r0,.Lj5736
+.Lj5737:
 	ldw	r3,r30,-76
 	ldw	r4,r30,-72
 	la	r6,TC_$SYSTEM$_$fpc_val_currency_shortstr$SHORTSTRING$LONGINT$$CURRENCY_$$_MININT64
 	ldw	r5,r6,0
 	ldw	r6,r6,4
-	blt	r6,r4,.Lj5744
-	bne	r4,r6,.Lj5745
-	bltu	r5,r3,.Lj5744
-	jal	r0,.Lj5745
-.Lj5744:
-	jal	r0,.Lj5743
-.Lj5745:
-	jal	r0,.Lj5741
-.Lj5743:
+	blt	r6,r4,.Lj5739
+	bne	r4,r6,.Lj5740
+	bltu	r5,r3,.Lj5739
+	jal	r0,.Lj5740
+.Lj5739:
+	jal	r0,.Lj5738
+.Lj5740:
+	jal	r0,.Lj5736
+.Lj5738:
 	ldw	r4,r30,-76
 	ldw	r5,r30,-72
 	addi	r3,r4,-1
@@ -50899,61 +50868,61 @@ FPC_VAL_CURRENCY_SHORTSTR:
 	sub	r5,r5,r6
 	stw	r30,r4,-76
 	stw	r30,r5,-72
-.Lj5741:
+.Lj5736:
 	addi	r3,r0,1
 	stb	r30,r3,-100
-.Lj5739:
-.Lj5736:
-	jal	r0,.Lj5727
-.Lj5730:
+.Lj5734:
+.Lj5731:
+	jal	r0,.Lj5722
+.Lj5725:
 	ldw	r3,r30,-88
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5746
-	jal	r0,.Lj5747
-.Lj5746:
+	bne	r3,r0,.Lj5741
+	jal	r0,.Lj5742
+.Lj5741:
 	addi	r3,r0,1
 	stw	r30,r3,-88
 	stw	r30,r0,-80
-	jal	r0,.Lj5748
-.Lj5747:
-	jal	r0,.Lj5710
-.Lj5748:
-	jal	r0,.Lj5727
-.Lj5728:
-	jal	r0,.Lj5726
-.Lj5727:
+	jal	r0,.Lj5743
+.Lj5742:
+	jal	r0,.Lj5705
+.Lj5743:
+	jal	r0,.Lj5722
+.Lj5723:
+	jal	r0,.Lj5721
+.Lj5722:
 	ldw	r3,r30,-60
 	ldw	r4,r3,0
 	addi	r4,r4,1
 	stw	r3,r4,0
-.Lj5725:
+.Lj5720:
 	ldw	r3,r30,-60
 	ldw	r3,r3,0
 	ldw	r4,r30,-96
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj5724
-	jal	r0,.Lj5726
-.Lj5726:
+	bne	r3,r0,.Lj5719
+	jal	r0,.Lj5721
+.Lj5721:
 	ldw	r3,r30,-80
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5749
-	jal	r0,.Lj5750
-.Lj5749:
+	bne	r3,r0,.Lj5744
+	jal	r0,.Lj5745
+.Lj5744:
 	ldw	r3,r30,-88
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5751
-	jal	r0,.Lj5750
-.Lj5751:
-	jal	r0,.Lj5710
-.Lj5750:
+	bne	r3,r0,.Lj5746
+	jal	r0,.Lj5745
+.Lj5746:
+	jal	r0,.Lj5705
+.Lj5745:
 	ldw	r3,r30,-88
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj5752
-	jal	r0,.Lj5753
-.Lj5752:
+	bne	r3,r0,.Lj5747
+	jal	r0,.Lj5748
+.Lj5747:
 	ldw	r3,r30,-80
 	stw	r30,r3,-88
-.Lj5753:
+.Lj5748:
 	ldw	r3,r30,-88
 	addi	r4,r0,4
 	sub	r3,r4,r3
@@ -50962,20 +50931,20 @@ FPC_VAL_CURRENCY_SHORTSTR:
 	ldw	r3,r3,0
 	ldw	r4,r30,-96
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj5754
-	jal	r0,.Lj5755
-.Lj5754:
+	bne	r3,r0,.Lj5749
+	jal	r0,.Lj5750
+.Lj5749:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	ldbu	r4,r4,0
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r4,r0,69
-	beq	r3,r4,.Lj5756
+	beq	r3,r4,.Lj5751
 	addi	r4,r0,101
-	beq	r3,r4,.Lj5756
-	jal	r0,.Lj5757
-.Lj5756:
+	beq	r3,r4,.Lj5751
+	jal	r0,.Lj5752
+.Lj5751:
 	ldw	r3,r30,-60
 	ldw	r4,r3,0
 	addi	r4,r4,1
@@ -50984,11 +50953,11 @@ FPC_VAL_CURRENCY_SHORTSTR:
 	ldw	r3,r3,0
 	ldw	r4,r30,-96
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj5758
-	jal	r0,.Lj5759
-.Lj5758:
-	jal	r0,.Lj5710
-.Lj5759:
+	bne	r3,r0,.Lj5753
+	jal	r0,.Lj5754
+.Lj5753:
+	jal	r0,.Lj5705
+.Lj5754:
 	addi	r3,r0,1
 	stw	r30,r3,-80
 	ldw	r3,r30,-56
@@ -50997,28 +50966,28 @@ FPC_VAL_CURRENCY_SHORTSTR:
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r4,r0,43
-	beq	r3,r4,.Lj5761
+	beq	r3,r4,.Lj5756
 	addi	r4,r0,45
-	beq	r3,r4,.Lj5762
-	jal	r0,.Lj5760
-.Lj5761:
+	beq	r3,r4,.Lj5757
+	jal	r0,.Lj5755
+.Lj5756:
 	ldw	r4,r30,-60
 	ldw	r3,r4,0
 	addi	r3,r3,1
 	stw	r4,r3,0
-	jal	r0,.Lj5760
-.Lj5762:
+	jal	r0,.Lj5755
+.Lj5757:
 	addi	r3,r0,-1
 	stw	r30,r3,-80
 	ldw	r3,r30,-60
 	ldw	r4,r3,0
 	addi	r4,r4,1
 	stw	r3,r4,0
-	jal	r0,.Lj5760
-.Lj5760:
+	jal	r0,.Lj5755
+.Lj5755:
 	stw	r30,r0,-84
-	jal	r0,.Lj5764
-.Lj5763:
+	jal	r0,.Lj5759
+.Lj5758:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	ldbu	r4,r4,0
@@ -51026,18 +50995,18 @@ FPC_VAL_CURRENCY_SHORTSTR:
 	ldbu	r3,r3,0
 	addi	r3,r3,-48
 	addi	r4,r0,10
-	bltu	r3,r4,.Lj5766
-	jal	r0,.Lj5767
-.Lj5766:
+	bltu	r3,r4,.Lj5761
+	jal	r0,.Lj5762
+.Lj5761:
 	ldw	r4,r30,-84
 	lui	r3,1
 	ori	r3,r3,855
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5768
-	jal	r0,.Lj5769
-.Lj5768:
-	jal	r0,.Lj5710
-.Lj5769:
+	bne	r3,r0,.Lj5763
+	jal	r0,.Lj5764
+.Lj5763:
+	jal	r0,.Lj5705
+.Lj5764:
 	ldw	r4,r30,-84
 	addi	r3,r0,10
 	mul	r3,r4,r3
@@ -51053,43 +51022,43 @@ FPC_VAL_CURRENCY_SHORTSTR:
 	ldw	r3,r4,0
 	addi	r3,r3,1
 	stw	r4,r3,0
-	jal	r0,.Lj5770
-.Lj5767:
-	jal	r0,.Lj5710
-.Lj5770:
-.Lj5764:
+	jal	r0,.Lj5765
+.Lj5762:
+	jal	r0,.Lj5705
+.Lj5765:
+.Lj5759:
 	ldw	r3,r30,-60
 	ldw	r4,r3,0
 	ldw	r3,r30,-96
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj5763
-	jal	r0,.Lj5765
-.Lj5765:
+	bne	r3,r0,.Lj5758
+	jal	r0,.Lj5760
+.Lj5760:
 	ldw	r3,r30,-84
 	ldw	r4,r30,-80
 	mul	r3,r4,r3
 	ldw	r4,r30,-88
 	add	r3,r4,r3
 	stw	r30,r3,-88
-	jal	r0,.Lj5771
-.Lj5757:
-	jal	r0,.Lj5710
-.Lj5771:
-.Lj5755:
+	jal	r0,.Lj5766
+.Lj5752:
+	jal	r0,.Lj5705
+.Lj5766:
+.Lj5750:
 	ldw	r4,r30,-88
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5772
-	jal	r0,.Lj5773
-.Lj5772:
+	bne	r3,r0,.Lj5767
+	jal	r0,.Lj5768
+.Lj5767:
 	ldw	r11,r30,-88
 	addi	r3,r0,1
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj5774
-	jal	r0,.Lj5775
-.Lj5774:
+	bne	r3,r0,.Lj5769
+	jal	r0,.Lj5770
+.Lj5769:
 	stw	r30,r0,-80
-.Lj5776:
+.Lj5771:
 	ldw	r3,r30,-80
 	addi	r3,r3,1
 	stw	r30,r3,-80
@@ -51101,11 +51070,11 @@ FPC_VAL_CURRENCY_SHORTSTR:
 	call	fpc_div_int64
 	ldw	r3,r30,-76
 	ldw	r4,r30,-72
-	blt	r4,r2,.Lj5780
-	bne	r4,r2,.Lj5779
-	bltu	r3,r1,.Lj5780
-	jal	r0,.Lj5779
-.Lj5779:
+	blt	r4,r2,.Lj5775
+	bne	r4,r2,.Lj5774
+	bltu	r3,r1,.Lj5775
+	jal	r0,.Lj5774
+.Lj5774:
 	ldw	r3,r30,-76
 	ldw	r4,r30,-72
 	addi	r6,r0,0
@@ -51113,27 +51082,27 @@ FPC_VAL_CURRENCY_SHORTSTR:
 	call	fpc_mul_int64
 	stw	r30,r1,-76
 	stw	r30,r2,-72
-	jal	r0,.Lj5781
-.Lj5780:
-	jal	r0,.Lj5710
-.Lj5781:
+	jal	r0,.Lj5776
+.Lj5775:
+	jal	r0,.Lj5705
+.Lj5776:
 	ldw	r3,r30,-80
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj5778
-	jal	r0,.Lj5776
-.Lj5778:
-.Lj5775:
-	jal	r0,.Lj5782
+	bne	r3,r0,.Lj5773
+	jal	r0,.Lj5771
 .Lj5773:
+.Lj5770:
+	jal	r0,.Lj5777
+.Lj5768:
 	ldw	r3,r30,-88
 	sub	r11,r0,r3
 	addi	r3,r0,1
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj5783
-	jal	r0,.Lj5784
-.Lj5783:
+	bne	r3,r0,.Lj5778
+	jal	r0,.Lj5779
+.Lj5778:
 	stw	r30,r0,-80
-.Lj5785:
+.Lj5780:
 	ldw	r3,r30,-80
 	addi	r3,r3,1
 	stw	r30,r3,-80
@@ -51145,11 +51114,11 @@ FPC_VAL_CURRENCY_SHORTSTR:
 	add	r4,r4,r5
 	ldw	r6,r30,-76
 	ldw	r5,r30,-72
-	blt	r5,r4,.Lj5789
-	bne	r5,r4,.Lj5788
-	bltu	r6,r3,.Lj5789
-	jal	r0,.Lj5788
-.Lj5788:
+	blt	r5,r4,.Lj5784
+	bne	r5,r4,.Lj5783
+	bltu	r6,r3,.Lj5784
+	jal	r0,.Lj5783
+.Lj5783:
 	ldw	r4,r30,-76
 	ldw	r5,r30,-72
 	addi	r3,r4,-5
@@ -51158,7 +51127,7 @@ FPC_VAL_CURRENCY_SHORTSTR:
 	sub	r5,r5,r6
 	stw	r30,r4,-76
 	stw	r30,r5,-72
-.Lj5789:
+.Lj5784:
 	ldw	r5,r30,-76
 	ldw	r6,r30,-72
 	addi	r4,r0,0
@@ -51168,27 +51137,27 @@ FPC_VAL_CURRENCY_SHORTSTR:
 	stw	r30,r2,-72
 	ldw	r3,r30,-80
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj5787
-	jal	r0,.Lj5785
-.Lj5787:
-.Lj5784:
+	bne	r3,r0,.Lj5782
+	jal	r0,.Lj5780
 .Lj5782:
+.Lj5779:
+.Lj5777:
 	ldw	r3,r30,-92
 	addi	r3,r3,-1
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj5790
-	jal	r0,.Lj5791
-.Lj5790:
+	bne	r3,r0,.Lj5785
+	jal	r0,.Lj5786
+.Lj5785:
 	ldw	r3,r30,-76
 	ldw	r5,r30,-72
 	la	r6,TC_$SYSTEM$_$fpc_val_currency_shortstr$SHORTSTRING$LONGINT$$CURRENCY_$$_MININT64
 	ldw	r4,r6,0
 	ldw	r6,r6,4
-	blt	r6,r5,.Lj5792
-	bne	r5,r6,.Lj5793
-	bltu	r4,r3,.Lj5792
-	jal	r0,.Lj5793
-.Lj5792:
+	blt	r6,r5,.Lj5787
+	bne	r5,r6,.Lj5788
+	bltu	r4,r3,.Lj5787
+	jal	r0,.Lj5788
+.Lj5787:
 	ldw	r3,r30,-76
 	ldw	r4,r30,-72
 	ldw	r5,r30,-92
@@ -51196,11 +51165,11 @@ FPC_VAL_CURRENCY_SHORTSTR:
 	call	fpc_mul_int64
 	stw	r30,r1,-76
 	stw	r30,r2,-72
-	jal	r0,.Lj5794
-.Lj5793:
-	jal	r0,.Lj5710
-.Lj5794:
-.Lj5791:
+	jal	r0,.Lj5789
+.Lj5788:
+	jal	r0,.Lj5705
+.Lj5789:
+.Lj5786:
 	addi	r3,r30,-76
 	ldw	r4,r3,0
 	stw	r30,r4,-68
@@ -51208,7 +51177,7 @@ FPC_VAL_CURRENCY_SHORTSTR:
 	stw	r30,r4,-64
 	ldw	r3,r30,-60
 	stw	r3,r0,0
-.Lj5710:
+.Lj5705:
 	ldw	r1,r30,-68
 	ldw	r2,r30,-64
 	ldw	r11,r29,100
@@ -51237,27 +51206,27 @@ fpc_setstring_shortstr:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-68
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj5797
-	jal	r0,.Lj5798
-.Lj5797:
+	bne	r3,r0,.Lj5792
+	jal	r0,.Lj5793
+.Lj5792:
 	ldw	r3,r30,-68
 	stw	r30,r3,-64
-.Lj5798:
+.Lj5793:
 	ldw	r3,r30,-56
 	ldw	r5,r30,-64
 	ldw	r4,r30,-68
 	call	fpc_shortstr_setlength
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj5799
-	jal	r0,.Lj5800
-.Lj5799:
+	bne	r3,r0,.Lj5794
+	jal	r0,.Lj5795
+.Lj5794:
 	ldw	r3,r30,-56
 	addi	r4,r3,1
 	ldw	r3,r30,-60
 	ldw	r5,r30,-64
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj5800:
+.Lj5795:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -51285,16 +51254,16 @@ SYSTEM_$$_SHORTCOMPARETEXT$SHORTSTRING$SHORTSTRING$$LONGINT:
 	ldw	r3,r30,-80
 	ldw	r4,r30,-84
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj5803
-	jal	r0,.Lj5804
-.Lj5803:
+	bne	r3,r0,.Lj5798
+	jal	r0,.Lj5799
+.Lj5798:
 	ldw	r3,r30,-84
 	stw	r30,r3,-88
-	jal	r0,.Lj5805
-.Lj5804:
+	jal	r0,.Lj5800
+.Lj5799:
 	ldw	r3,r30,-80
 	stw	r30,r3,-88
-.Lj5805:
+.Lj5800:
 	stw	r30,r0,-76
 	ldw	r3,r30,-56
 	addi	r3,r3,1
@@ -51302,8 +51271,8 @@ SYSTEM_$$_SHORTCOMPARETEXT$SHORTSTRING$SHORTSTRING$$LONGINT:
 	ldw	r3,r30,-60
 	addi	r3,r3,1
 	stw	r30,r3,-96
-	jal	r0,.Lj5807
-.Lj5806:
+	jal	r0,.Lj5802
+.Lj5801:
 	ldw	r3,r30,-92
 	ldbu	r3,r3,0
 	stb	r30,r3,-68
@@ -51313,40 +51282,40 @@ SYSTEM_$$_SHORTCOMPARETEXT$SHORTSTRING$SHORTSTRING$$LONGINT:
 	ldbu	r4,r30,-68
 	ldbu	r3,r30,-72
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj5809
-	jal	r0,.Lj5810
-.Lj5809:
+	bne	r3,r0,.Lj5804
+	jal	r0,.Lj5805
+.Lj5804:
 	ldbu	r3,r30,-68
 	addi	r3,r3,-97
 	addi	r4,r0,26
-	bltu	r3,r4,.Lj5811
-	jal	r0,.Lj5812
-.Lj5811:
+	bltu	r3,r4,.Lj5806
+	jal	r0,.Lj5807
+.Lj5806:
 	ldbu	r3,r30,-68
 	addi	r3,r3,-32
 	andi	r3,r3,255
 	stb	r30,r3,-68
-.Lj5812:
+.Lj5807:
 	ldbu	r4,r30,-72
 	addi	r4,r4,-97
 	addi	r3,r0,26
-	bltu	r4,r3,.Lj5813
-	jal	r0,.Lj5814
-.Lj5813:
+	bltu	r4,r3,.Lj5808
+	jal	r0,.Lj5809
+.Lj5808:
 	ldbu	r3,r30,-72
 	addi	r3,r3,-32
 	andi	r3,r3,255
 	stb	r30,r3,-72
-.Lj5814:
+.Lj5809:
 	ldbu	r4,r30,-68
 	ldbu	r3,r30,-72
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj5815
-	jal	r0,.Lj5816
-.Lj5815:
-	jal	r0,.Lj5808
-.Lj5816:
+	bne	r3,r0,.Lj5810
+	jal	r0,.Lj5811
 .Lj5810:
+	jal	r0,.Lj5803
+.Lj5811:
+.Lj5805:
 	ldw	r3,r30,-92
 	addi	r3,r3,1
 	stw	r30,r3,-92
@@ -51356,30 +51325,30 @@ SYSTEM_$$_SHORTCOMPARETEXT$SHORTSTRING$SHORTSTRING$$LONGINT:
 	ldw	r3,r30,-76
 	addi	r3,r3,1
 	stw	r30,r3,-76
-.Lj5807:
+.Lj5802:
 	ldw	r3,r30,-76
 	ldw	r4,r30,-88
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj5806
-	jal	r0,.Lj5808
-.Lj5808:
+	bne	r3,r0,.Lj5801
+	jal	r0,.Lj5803
+.Lj5803:
 	ldw	r3,r30,-76
 	ldw	r4,r30,-88
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj5817
-	jal	r0,.Lj5818
-.Lj5817:
+	bne	r3,r0,.Lj5812
+	jal	r0,.Lj5813
+.Lj5812:
 	ldbu	r3,r30,-68
 	ldbu	r4,r30,-72
 	sub	r3,r3,r4
 	stw	r30,r3,-64
-	jal	r0,.Lj5819
-.Lj5818:
+	jal	r0,.Lj5814
+.Lj5813:
 	ldw	r3,r30,-80
 	ldw	r4,r30,-84
 	sub	r3,r3,r4
 	stw	r30,r3,-64
-.Lj5819:
+.Lj5814:
 	ldw	r1,r30,-64
 	ldw	r30,r29,96
 	ldw	r31,r29,100
@@ -51409,21 +51378,21 @@ FPC_SHL_QWORD:
 	stw	r30,r3,-64
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5822
-	jal	r0,.Lj5823
-.Lj5822:
+	bne	r3,r0,.Lj5817
+	jal	r0,.Lj5818
+.Lj5817:
 	ldw	r3,r30,-60
 	stw	r30,r3,-72
 	ldw	r3,r30,-56
 	stw	r30,r3,-68
-	jal	r0,.Lj5824
-.Lj5823:
+	jal	r0,.Lj5819
+.Lj5818:
 	ldw	r3,r30,-64
 	addi	r4,r0,31
 	sgtu	r3,r3,r4
-	bne	r3,r0,.Lj5825
-	jal	r0,.Lj5826
-.Lj5825:
+	bne	r3,r0,.Lj5820
+	jal	r0,.Lj5821
+.Lj5820:
 	stw	r30,r0,-72
 	ldw	r3,r30,-64
 	addi	r4,r3,-32
@@ -51432,8 +51401,8 @@ FPC_SHL_QWORD:
 	srli	r4,r4,0
 	sll	r3,r3,r4
 	stw	r30,r3,-68
-	jal	r0,.Lj5827
-.Lj5826:
+	jal	r0,.Lj5822
+.Lj5821:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-64
 	sll	r3,r4,r3
@@ -51450,8 +51419,8 @@ FPC_SHL_QWORD:
 	sll	r4,r5,r4
 	or	r3,r4,r3
 	stw	r30,r3,-68
-.Lj5827:
-.Lj5824:
+.Lj5822:
+.Lj5819:
 	ldw	r1,r30,-72
 	ldw	r2,r30,-68
 	ldw	r30,r29,72
@@ -51479,15 +51448,15 @@ FPC_SHL_ASSIGN_QWORD:
 	stw	r30,r3,-60
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj5830
-	jal	r0,.Lj5831
-.Lj5830:
+	bne	r3,r0,.Lj5825
+	jal	r0,.Lj5826
+.Lj5825:
 	ldw	r4,r30,-60
 	addi	r3,r0,31
 	sgtu	r3,r4,r3
-	bne	r3,r0,.Lj5832
-	jal	r0,.Lj5833
-.Lj5832:
+	bne	r3,r0,.Lj5827
+	jal	r0,.Lj5828
+.Lj5827:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	addi	r3,r3,-32
@@ -51499,8 +51468,8 @@ FPC_SHL_ASSIGN_QWORD:
 	stw	r3,r4,4
 	ldw	r3,r30,-56
 	stw	r3,r0,0
-	jal	r0,.Lj5834
-.Lj5833:
+	jal	r0,.Lj5829
+.Lj5828:
 	ldw	r3,r30,-56
 	ldw	r5,r30,-60
 	addi	r4,r0,32
@@ -51522,8 +51491,8 @@ FPC_SHL_ASSIGN_QWORD:
 	sll	r3,r3,r4
 	ldw	r4,r30,-56
 	stw	r4,r3,0
-.Lj5834:
-.Lj5831:
+.Lj5829:
+.Lj5826:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -51550,21 +51519,21 @@ FPC_SHR_QWORD:
 	stw	r30,r3,-64
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5837
-	jal	r0,.Lj5838
-.Lj5837:
+	bne	r3,r0,.Lj5832
+	jal	r0,.Lj5833
+.Lj5832:
 	ldw	r3,r30,-60
 	stw	r30,r3,-72
 	ldw	r3,r30,-56
 	stw	r30,r3,-68
-	jal	r0,.Lj5839
-.Lj5838:
+	jal	r0,.Lj5834
+.Lj5833:
 	ldw	r3,r30,-64
 	addi	r4,r0,31
 	sgtu	r3,r3,r4
-	bne	r3,r0,.Lj5840
-	jal	r0,.Lj5841
-.Lj5840:
+	bne	r3,r0,.Lj5835
+	jal	r0,.Lj5836
+.Lj5835:
 	stw	r30,r0,-68
 	ldw	r3,r30,-64
 	addi	r4,r3,-32
@@ -51573,8 +51542,8 @@ FPC_SHR_QWORD:
 	srli	r4,r4,0
 	srl	r3,r3,r4
 	stw	r30,r3,-72
-	jal	r0,.Lj5842
-.Lj5841:
+	jal	r0,.Lj5837
+.Lj5836:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-64
 	srl	r3,r4,r3
@@ -51591,8 +51560,8 @@ FPC_SHR_QWORD:
 	srl	r4,r5,r4
 	or	r3,r4,r3
 	stw	r30,r3,-72
-.Lj5842:
-.Lj5839:
+.Lj5837:
+.Lj5834:
 	ldw	r1,r30,-72
 	ldw	r2,r30,-68
 	ldw	r30,r29,72
@@ -51620,15 +51589,15 @@ FPC_SHR_ASSIGN_QWORD:
 	stw	r30,r3,-60
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj5845
-	jal	r0,.Lj5846
-.Lj5845:
+	bne	r3,r0,.Lj5840
+	jal	r0,.Lj5841
+.Lj5840:
 	ldw	r4,r30,-60
 	addi	r3,r0,31
 	sgtu	r3,r4,r3
-	bne	r3,r0,.Lj5847
-	jal	r0,.Lj5848
-.Lj5847:
+	bne	r3,r0,.Lj5842
+	jal	r0,.Lj5843
+.Lj5842:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	addi	r3,r3,-32
@@ -51640,8 +51609,8 @@ FPC_SHR_ASSIGN_QWORD:
 	stw	r3,r4,0
 	ldw	r3,r30,-56
 	stw	r3,r0,4
-	jal	r0,.Lj5849
-.Lj5848:
+	jal	r0,.Lj5844
+.Lj5843:
 	ldw	r3,r30,-56
 	ldw	r5,r30,-60
 	addi	r4,r0,32
@@ -51663,8 +51632,8 @@ FPC_SHR_ASSIGN_QWORD:
 	srl	r3,r3,r4
 	ldw	r4,r30,-56
 	stw	r4,r3,4
-.Lj5849:
-.Lj5846:
+.Lj5844:
+.Lj5841:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -51691,21 +51660,21 @@ FPC_SHL_INT64:
 	stw	r30,r3,-64
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5852
-	jal	r0,.Lj5853
-.Lj5852:
+	bne	r3,r0,.Lj5847
+	jal	r0,.Lj5848
+.Lj5847:
 	ldw	r3,r30,-60
 	stw	r30,r3,-72
 	ldw	r3,r30,-56
 	stw	r30,r3,-68
-	jal	r0,.Lj5854
-.Lj5853:
+	jal	r0,.Lj5849
+.Lj5848:
 	ldw	r3,r30,-64
 	addi	r4,r0,31
 	sgtu	r3,r3,r4
-	bne	r3,r0,.Lj5855
-	jal	r0,.Lj5856
-.Lj5855:
+	bne	r3,r0,.Lj5850
+	jal	r0,.Lj5851
+.Lj5850:
 	stw	r30,r0,-72
 	ldw	r3,r30,-64
 	addi	r4,r3,-32
@@ -51714,8 +51683,8 @@ FPC_SHL_INT64:
 	srli	r4,r4,0
 	sll	r3,r3,r4
 	stw	r30,r3,-68
-	jal	r0,.Lj5857
-.Lj5856:
+	jal	r0,.Lj5852
+.Lj5851:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-64
 	sll	r3,r4,r3
@@ -51732,8 +51701,8 @@ FPC_SHL_INT64:
 	sll	r4,r5,r4
 	or	r3,r4,r3
 	stw	r30,r3,-68
-.Lj5857:
-.Lj5854:
+.Lj5852:
+.Lj5849:
 	ldw	r1,r30,-72
 	ldw	r2,r30,-68
 	ldw	r30,r29,72
@@ -51761,15 +51730,15 @@ FPC_SHL_ASSIGN_INT64:
 	stw	r30,r3,-60
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj5860
-	jal	r0,.Lj5861
-.Lj5860:
+	bne	r3,r0,.Lj5855
+	jal	r0,.Lj5856
+.Lj5855:
 	ldw	r4,r30,-60
 	addi	r3,r0,31
 	sgtu	r3,r4,r3
-	bne	r3,r0,.Lj5862
-	jal	r0,.Lj5863
-.Lj5862:
+	bne	r3,r0,.Lj5857
+	jal	r0,.Lj5858
+.Lj5857:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	addi	r3,r3,-32
@@ -51781,8 +51750,8 @@ FPC_SHL_ASSIGN_INT64:
 	stw	r3,r4,4
 	ldw	r3,r30,-56
 	stw	r3,r0,0
-	jal	r0,.Lj5864
-.Lj5863:
+	jal	r0,.Lj5859
+.Lj5858:
 	ldw	r3,r30,-56
 	ldw	r5,r30,-60
 	addi	r4,r0,32
@@ -51804,8 +51773,8 @@ FPC_SHL_ASSIGN_INT64:
 	sll	r3,r3,r4
 	ldw	r4,r30,-56
 	stw	r4,r3,0
-.Lj5864:
-.Lj5861:
+.Lj5859:
+.Lj5856:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -51832,21 +51801,21 @@ FPC_SHR_INT64:
 	stw	r30,r3,-64
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5867
-	jal	r0,.Lj5868
-.Lj5867:
+	bne	r3,r0,.Lj5862
+	jal	r0,.Lj5863
+.Lj5862:
 	ldw	r3,r30,-60
 	stw	r30,r3,-72
 	ldw	r3,r30,-56
 	stw	r30,r3,-68
-	jal	r0,.Lj5869
-.Lj5868:
+	jal	r0,.Lj5864
+.Lj5863:
 	ldw	r3,r30,-64
 	addi	r4,r0,31
 	sgtu	r3,r3,r4
-	bne	r3,r0,.Lj5870
-	jal	r0,.Lj5871
-.Lj5870:
+	bne	r3,r0,.Lj5865
+	jal	r0,.Lj5866
+.Lj5865:
 	stw	r30,r0,-68
 	ldw	r3,r30,-64
 	addi	r4,r3,-32
@@ -51855,8 +51824,8 @@ FPC_SHR_INT64:
 	srli	r4,r4,0
 	srl	r3,r3,r4
 	stw	r30,r3,-72
-	jal	r0,.Lj5872
-.Lj5871:
+	jal	r0,.Lj5867
+.Lj5866:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-64
 	srl	r3,r4,r3
@@ -51873,8 +51842,8 @@ FPC_SHR_INT64:
 	srl	r4,r5,r4
 	or	r3,r4,r3
 	stw	r30,r3,-72
-.Lj5872:
-.Lj5869:
+.Lj5867:
+.Lj5864:
 	ldw	r1,r30,-72
 	ldw	r2,r30,-68
 	ldw	r30,r29,72
@@ -51902,15 +51871,15 @@ FPC_SHR_ASSIGN_INT64:
 	stw	r30,r3,-60
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj5875
-	jal	r0,.Lj5876
-.Lj5875:
+	bne	r3,r0,.Lj5870
+	jal	r0,.Lj5871
+.Lj5870:
 	ldw	r4,r30,-60
 	addi	r3,r0,31
 	sgtu	r3,r4,r3
-	bne	r3,r0,.Lj5877
-	jal	r0,.Lj5878
-.Lj5877:
+	bne	r3,r0,.Lj5872
+	jal	r0,.Lj5873
+.Lj5872:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	addi	r3,r3,-32
@@ -51922,8 +51891,8 @@ FPC_SHR_ASSIGN_INT64:
 	stw	r3,r4,0
 	ldw	r3,r30,-56
 	stw	r3,r0,4
-	jal	r0,.Lj5879
-.Lj5878:
+	jal	r0,.Lj5874
+.Lj5873:
 	ldw	r3,r30,-56
 	ldw	r5,r30,-60
 	addi	r4,r0,32
@@ -51945,8 +51914,8 @@ FPC_SHR_ASSIGN_INT64:
 	srl	r3,r3,r4
 	ldw	r4,r30,-56
 	stw	r4,r3,4
-.Lj5879:
-.Lj5876:
+.Lj5874:
+.Lj5871:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -51977,9 +51946,9 @@ FPC_DIV_QWORD:
 	slli	r3,r3,0
 	srli	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5882
-	jal	r0,.Lj5883
-.Lj5882:
+	bne	r3,r0,.Lj5877
+	jal	r0,.Lj5878
+.Lj5877:
 	ldw	r3,r30,-60
 	ldw	r3,r30,-56
 	li	r4,0
@@ -51987,25 +51956,25 @@ FPC_DIV_QWORD:
 	slli	r3,r3,0
 	srli	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5884
-	jal	r0,.Lj5883
-.Lj5884:
+	bne	r3,r0,.Lj5879
+	jal	r0,.Lj5878
+.Lj5879:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-60
 	call	fpc_div_dword
 	addi	r3,r0,0
 	stw	r30,r1,-76
 	stw	r30,r3,-72
-	jal	r0,.Lj5880
-.Lj5883:
+	jal	r0,.Lj5875
+.Lj5878:
 	stw	r30,r0,-76
 	stw	r30,r0,-72
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
-	bne	r0,r3,.Lj5886
-	bne	r0,r4,.Lj5886
-	jal	r0,.Lj5885
-.Lj5885:
+	bne	r0,r3,.Lj5881
+	bne	r0,r4,.Lj5881
+	jal	r0,.Lj5880
+.Lj5880:
 	call	SYSTEM_$$_GET_FRAME$$POINTER
 	addi	r11,r1,0
 	call	SYSTEM_$$_GET_PC_ADDR$$POINTER
@@ -52013,15 +51982,15 @@ FPC_DIV_QWORD:
 	addi	r3,r0,200
 	addi	r5,r11,0
 	call	SYSTEM_$$_HANDLEERRORADDRFRAMEIND$LONGINT$POINTER$POINTER
-.Lj5886:
+.Lj5881:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-64
-	bne	r0,r4,.Lj5888
-	bne	r0,r3,.Lj5888
-	jal	r0,.Lj5887
-.Lj5887:
-	jal	r0,.Lj5880
-.Lj5888:
+	bne	r0,r4,.Lj5883
+	bne	r0,r3,.Lj5883
+	jal	r0,.Lj5882
+.Lj5882:
+	jal	r0,.Lj5875
+.Lj5883:
 	addi	r3,r0,32
 	ldw	r4,r30,-68
 	ldw	r4,r30,-64
@@ -52032,13 +52001,13 @@ FPC_DIV_QWORD:
 	stw	r30,r4,-92
 	ldw	r4,r30,-92
 	seq	r4,r4,r0
-	bne	r4,r0,.Lj5890
-	jal	r0,.Lj5891
-.Lj5890:
+	bne	r4,r0,.Lj5885
+	jal	r0,.Lj5886
+.Lj5885:
 	ldw	r4,r30,-68
 	stw	r30,r4,-92
 	addi	r3,r0,0
-.Lj5891:
+.Lj5886:
 	ldw	r4,r30,-92
 	lui	r5,15
 	ori	r5,r5,4095
@@ -52082,13 +52051,13 @@ FPC_DIV_QWORD:
 	stw	r30,r4,-92
 	ldw	r4,r30,-92
 	seq	r4,r4,r0
-	bne	r4,r0,.Lj5894
-	jal	r0,.Lj5895
-.Lj5894:
+	bne	r4,r0,.Lj5889
+	jal	r0,.Lj5890
+.Lj5889:
 	ldw	r4,r30,-60
 	stw	r30,r4,-92
 	addi	r3,r0,0
-.Lj5895:
+.Lj5890:
 	ldw	r4,r30,-92
 	lui	r5,15
 	ori	r5,r5,4095
@@ -52125,11 +52094,11 @@ FPC_DIV_QWORD:
 	ldw	r4,r30,-88
 	ldw	r3,r30,-84
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5897
-	jal	r0,.Lj5898
-.Lj5897:
-	jal	r0,.Lj5880
-.Lj5898:
+	bne	r3,r0,.Lj5892
+	jal	r0,.Lj5893
+.Lj5892:
+	jal	r0,.Lj5875
+.Lj5893:
 	ldw	r4,r30,-84
 	ldw	r3,r30,-88
 	sub	r3,r4,r3
@@ -52138,11 +52107,11 @@ FPC_DIV_QWORD:
 	ldw	r7,r30,-56
 	ldw	r3,r30,-80
 	addi	r8,r3,-32
-	blt	r8,r0,.Lj5899
+	blt	r8,r0,.Lj5894
 	li	r9,0
 	sll	r5,r4,r8
-	jal	r0,.Lj5900
-.Lj5899:
+	jal	r0,.Lj5895
+.Lj5894:
 	li	r8,31
 	srli	r6,r4,1
 	sub	r8,r8,r3
@@ -52150,27 +52119,27 @@ FPC_DIV_QWORD:
 	srl	r6,r6,r8
 	sll	r5,r7,r3
 	or	r5,r5,r6
-.Lj5900:
+.Lj5895:
 	stw	r30,r9,-60
 	stw	r30,r5,-56
 	ldw	r4,r30,-80
 	addi	r3,r0,0
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj5901
-	jal	r0,.Lj5902
-.Lj5901:
+	bne	r3,r0,.Lj5896
+	jal	r0,.Lj5897
+.Lj5896:
 	ldw	r3,r30,-80
 	stw	r30,r3,-80
-.Lj5903:
+.Lj5898:
 	ldw	r5,r30,-68
 	ldw	r3,r30,-64
 	ldw	r4,r30,-60
 	ldw	r6,r30,-56
-	bltu	r3,r6,.Lj5907
-	bne	r3,r6,.Lj5906
-	bltu	r5,r4,.Lj5907
-	jal	r0,.Lj5906
-.Lj5906:
+	bltu	r3,r6,.Lj5902
+	bne	r3,r6,.Lj5901
+	bltu	r5,r4,.Lj5902
+	jal	r0,.Lj5901
+.Lj5901:
 	ldw	r6,r30,-68
 	ldw	r4,r30,-64
 	ldw	r3,r30,-60
@@ -52189,14 +52158,14 @@ FPC_DIV_QWORD:
 	addi	r3,r0,0
 	ldw	r3,r30,-80
 	addi	r4,r3,-32
-	blt	r4,r0,.Lj5908
+	blt	r4,r0,.Lj5903
 	li	r6,0
 	sll	r4,r5,r4
-	jal	r0,.Lj5909
-.Lj5908:
+	jal	r0,.Lj5904
+.Lj5903:
 	sll	r6,r5,r3
 	li	r4,0
-.Lj5909:
+.Lj5904:
 	ldw	r3,r30,-76
 	ldw	r5,r30,-72
 	add	r3,r6,r3
@@ -52209,7 +52178,7 @@ FPC_DIV_QWORD:
 	add	r4,r7,r5
 	stw	r30,r3,-76
 	stw	r30,r4,-72
-.Lj5907:
+.Lj5902:
 	ldw	r4,r30,-60
 	ldw	r5,r30,-56
 	slli	r3,r5,31
@@ -52224,11 +52193,11 @@ FPC_DIV_QWORD:
 	ldw	r4,r30,-80
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj5905
-	jal	r0,.Lj5903
-.Lj5905:
-.Lj5902:
-.Lj5880:
+	bne	r3,r0,.Lj5900
+	jal	r0,.Lj5898
+.Lj5900:
+.Lj5897:
+.Lj5875:
 	ldw	r1,r30,-76
 	ldw	r2,r30,-72
 	ldw	r11,r29,100
@@ -52264,9 +52233,9 @@ FPC_MOD_QWORD:
 	slli	r3,r3,0
 	srli	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5912
-	jal	r0,.Lj5913
-.Lj5912:
+	bne	r3,r0,.Lj5907
+	jal	r0,.Lj5908
+.Lj5907:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-56
 	li	r3,0
@@ -52274,25 +52243,25 @@ FPC_MOD_QWORD:
 	slli	r3,r3,0
 	srli	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj5914
-	jal	r0,.Lj5913
-.Lj5914:
+	bne	r3,r0,.Lj5909
+	jal	r0,.Lj5908
+.Lj5909:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-60
 	call	fpc_mod_dword
 	addi	r3,r0,0
 	stw	r30,r1,-76
 	stw	r30,r3,-72
-	jal	r0,.Lj5910
-.Lj5913:
+	jal	r0,.Lj5905
+.Lj5908:
 	stw	r30,r0,-76
 	stw	r30,r0,-72
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
-	bne	r0,r3,.Lj5916
-	bne	r0,r4,.Lj5916
-	jal	r0,.Lj5915
-.Lj5915:
+	bne	r0,r3,.Lj5911
+	bne	r0,r4,.Lj5911
+	jal	r0,.Lj5910
+.Lj5910:
 	call	SYSTEM_$$_GET_FRAME$$POINTER
 	addi	r11,r1,0
 	call	SYSTEM_$$_GET_PC_ADDR$$POINTER
@@ -52300,15 +52269,15 @@ FPC_MOD_QWORD:
 	addi	r3,r0,200
 	addi	r5,r11,0
 	call	SYSTEM_$$_HANDLEERRORADDRFRAMEIND$LONGINT$POINTER$POINTER
-.Lj5916:
+.Lj5911:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-64
-	bne	r0,r4,.Lj5918
-	bne	r0,r3,.Lj5918
-	jal	r0,.Lj5917
-.Lj5917:
-	jal	r0,.Lj5910
-.Lj5918:
+	bne	r0,r4,.Lj5913
+	bne	r0,r3,.Lj5913
+	jal	r0,.Lj5912
+.Lj5912:
+	jal	r0,.Lj5905
+.Lj5913:
 	addi	r3,r0,32
 	ldw	r4,r30,-68
 	ldw	r5,r30,-64
@@ -52319,13 +52288,13 @@ FPC_MOD_QWORD:
 	stw	r30,r4,-92
 	ldw	r4,r30,-92
 	seq	r4,r4,r0
-	bne	r4,r0,.Lj5920
-	jal	r0,.Lj5921
-.Lj5920:
+	bne	r4,r0,.Lj5915
+	jal	r0,.Lj5916
+.Lj5915:
 	ldw	r4,r30,-68
 	stw	r30,r4,-92
 	addi	r3,r0,0
-.Lj5921:
+.Lj5916:
 	ldw	r5,r30,-92
 	lui	r4,15
 	ori	r4,r4,4095
@@ -52369,13 +52338,13 @@ FPC_MOD_QWORD:
 	stw	r30,r4,-92
 	ldw	r4,r30,-92
 	seq	r4,r4,r0
-	bne	r4,r0,.Lj5924
-	jal	r0,.Lj5925
-.Lj5924:
+	bne	r4,r0,.Lj5919
+	jal	r0,.Lj5920
+.Lj5919:
 	ldw	r4,r30,-60
 	stw	r30,r4,-92
 	addi	r3,r0,0
-.Lj5925:
+.Lj5920:
 	ldw	r4,r30,-92
 	lui	r5,15
 	ori	r5,r5,4095
@@ -52412,15 +52381,15 @@ FPC_MOD_QWORD:
 	ldw	r4,r30,-88
 	ldw	r3,r30,-84
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5927
-	jal	r0,.Lj5928
-.Lj5927:
+	bne	r3,r0,.Lj5922
+	jal	r0,.Lj5923
+.Lj5922:
 	ldw	r3,r30,-68
 	stw	r30,r3,-76
 	ldw	r3,r30,-64
 	stw	r30,r3,-72
-	jal	r0,.Lj5910
-.Lj5928:
+	jal	r0,.Lj5905
+.Lj5923:
 	ldw	r4,r30,-84
 	ldw	r3,r30,-88
 	sub	r3,r4,r3
@@ -52429,11 +52398,11 @@ FPC_MOD_QWORD:
 	ldw	r7,r30,-56
 	ldw	r4,r30,-80
 	addi	r5,r4,-32
-	blt	r5,r0,.Lj5929
+	blt	r5,r0,.Lj5924
 	li	r9,0
 	sll	r8,r3,r5
-	jal	r0,.Lj5930
-.Lj5929:
+	jal	r0,.Lj5925
+.Lj5924:
 	li	r5,31
 	srli	r6,r3,1
 	sub	r5,r5,r4
@@ -52441,27 +52410,27 @@ FPC_MOD_QWORD:
 	srl	r6,r6,r5
 	sll	r8,r7,r4
 	or	r8,r8,r6
-.Lj5930:
+.Lj5925:
 	stw	r30,r9,-60
 	stw	r30,r8,-56
 	ldw	r4,r30,-80
 	addi	r3,r0,0
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj5931
-	jal	r0,.Lj5932
-.Lj5931:
+	bne	r3,r0,.Lj5926
+	jal	r0,.Lj5927
+.Lj5926:
 	ldw	r3,r30,-80
 	stw	r30,r3,-80
-.Lj5933:
+.Lj5928:
 	ldw	r3,r30,-68
 	ldw	r6,r30,-64
 	ldw	r4,r30,-60
 	ldw	r5,r30,-56
-	bltu	r6,r5,.Lj5937
-	bne	r6,r5,.Lj5936
-	bltu	r3,r4,.Lj5937
-	jal	r0,.Lj5936
-.Lj5936:
+	bltu	r6,r5,.Lj5932
+	bne	r6,r5,.Lj5931
+	bltu	r3,r4,.Lj5932
+	jal	r0,.Lj5931
+.Lj5931:
 	ldw	r6,r30,-68
 	ldw	r5,r30,-64
 	ldw	r3,r30,-60
@@ -52476,7 +52445,7 @@ FPC_MOD_QWORD:
 	sub	r4,r7,r4
 	stw	r30,r3,-68
 	stw	r30,r4,-64
-.Lj5937:
+.Lj5932:
 	ldw	r4,r30,-60
 	ldw	r5,r30,-56
 	slli	r3,r5,31
@@ -52491,15 +52460,15 @@ FPC_MOD_QWORD:
 	ldw	r4,r30,-80
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj5935
-	jal	r0,.Lj5933
-.Lj5935:
-.Lj5932:
+	bne	r3,r0,.Lj5930
+	jal	r0,.Lj5928
+.Lj5930:
+.Lj5927:
 	ldw	r3,r30,-68
 	stw	r30,r3,-76
 	ldw	r3,r30,-64
 	stw	r30,r3,-72
-.Lj5910:
+.Lj5905:
 	ldw	r1,r30,-76
 	ldw	r2,r30,-72
 	ldw	r11,r29,100
@@ -52530,10 +52499,10 @@ FPC_DIV_INT64:
 	stw	r30,r6,-64
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
-	bne	r0,r3,.Lj5941
-	bne	r0,r4,.Lj5941
-	jal	r0,.Lj5940
-.Lj5940:
+	bne	r0,r3,.Lj5936
+	bne	r0,r4,.Lj5936
+	jal	r0,.Lj5935
+.Lj5935:
 	call	SYSTEM_$$_GET_FRAME$$POINTER
 	addi	r11,r1,0
 	call	SYSTEM_$$_GET_PC_ADDR$$POINTER
@@ -52541,15 +52510,15 @@ FPC_DIV_INT64:
 	addi	r3,r0,200
 	addi	r5,r11,0
 	call	SYSTEM_$$_HANDLEERRORADDRFRAMEIND$LONGINT$POINTER$POINTER
-.Lj5941:
+.Lj5936:
 	stb	r30,r0,-80
 	ldw	r4,r30,-68
 	ldw	r3,r30,-64
-	blt	r3,r0,.Lj5942
-	bne	r0,r3,.Lj5943
-	bltu	r4,r0,.Lj5942
-	jal	r0,.Lj5943
-.Lj5942:
+	blt	r3,r0,.Lj5937
+	bne	r0,r3,.Lj5938
+	bltu	r4,r0,.Lj5937
+	jal	r0,.Lj5938
+.Lj5937:
 	ldbu	r3,r30,-80
 	seq	r3,r3,r0
 	stb	r30,r3,-80
@@ -52561,20 +52530,20 @@ FPC_DIV_INT64:
 	sub	r4,r4,r5
 	stw	r30,r3,-88
 	stw	r30,r4,-84
-	jal	r0,.Lj5944
-.Lj5943:
+	jal	r0,.Lj5939
+.Lj5938:
 	ldw	r3,r30,-68
 	stw	r30,r3,-88
 	ldw	r3,r30,-64
 	stw	r30,r3,-84
-.Lj5944:
+.Lj5939:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
-	blt	r3,r0,.Lj5945
-	bne	r0,r3,.Lj5946
-	bltu	r4,r0,.Lj5945
-	jal	r0,.Lj5946
-.Lj5945:
+	blt	r3,r0,.Lj5940
+	bne	r0,r3,.Lj5941
+	bltu	r4,r0,.Lj5940
+	jal	r0,.Lj5941
+.Lj5940:
 	ldbu	r3,r30,-80
 	seq	r3,r3,r0
 	stb	r30,r3,-80
@@ -52586,17 +52555,17 @@ FPC_DIV_INT64:
 	sub	r4,r4,r5
 	stw	r30,r3,-96
 	stw	r30,r4,-92
-	jal	r0,.Lj5947
-.Lj5946:
+	jal	r0,.Lj5942
+.Lj5941:
 	ldw	r3,r30,-60
 	stw	r30,r3,-96
 	ldw	r3,r30,-56
 	stw	r30,r3,-92
-.Lj5947:
+.Lj5942:
 	ldbu	r3,r30,-80
-	bne	r3,r0,.Lj5948
-	jal	r0,.Lj5949
-.Lj5948:
+	bne	r3,r0,.Lj5943
+	jal	r0,.Lj5944
+.Lj5943:
 	ldw	r5,r30,-88
 	ldw	r6,r30,-84
 	ldw	r3,r30,-96
@@ -52608,8 +52577,8 @@ FPC_DIV_INT64:
 	sub	r5,r5,r3
 	stw	r30,r4,-76
 	stw	r30,r5,-72
-	jal	r0,.Lj5950
-.Lj5949:
+	jal	r0,.Lj5945
+.Lj5944:
 	ldw	r5,r30,-88
 	ldw	r6,r30,-84
 	ldw	r3,r30,-96
@@ -52617,7 +52586,7 @@ FPC_DIV_INT64:
 	call	fpc_div_qword
 	stw	r30,r1,-76
 	stw	r30,r2,-72
-.Lj5950:
+.Lj5945:
 	ldw	r1,r30,-76
 	ldw	r2,r30,-72
 	ldw	r11,r29,96
@@ -52648,10 +52617,10 @@ FPC_MOD_INT64:
 	stw	r30,r6,-64
 	ldw	r3,r30,-60
 	ldw	r4,r30,-56
-	bne	r0,r4,.Lj5954
-	bne	r0,r3,.Lj5954
-	jal	r0,.Lj5953
-.Lj5953:
+	bne	r0,r4,.Lj5949
+	bne	r0,r3,.Lj5949
+	jal	r0,.Lj5948
+.Lj5948:
 	call	SYSTEM_$$_GET_FRAME$$POINTER
 	addi	r11,r1,0
 	call	SYSTEM_$$_GET_PC_ADDR$$POINTER
@@ -52659,14 +52628,14 @@ FPC_MOD_INT64:
 	addi	r3,r0,200
 	addi	r5,r11,0
 	call	SYSTEM_$$_HANDLEERRORADDRFRAMEIND$LONGINT$POINTER$POINTER
-.Lj5954:
+.Lj5949:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
-	blt	r3,r0,.Lj5955
-	bne	r0,r3,.Lj5956
-	bltu	r4,r0,.Lj5955
-	jal	r0,.Lj5956
-.Lj5955:
+	blt	r3,r0,.Lj5950
+	bne	r0,r3,.Lj5951
+	bltu	r4,r0,.Lj5950
+	jal	r0,.Lj5951
+.Lj5950:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-56
 	sub	r5,r0,r3
@@ -52675,20 +52644,20 @@ FPC_MOD_INT64:
 	sub	r4,r4,r3
 	stw	r30,r5,-96
 	stw	r30,r4,-92
-	jal	r0,.Lj5957
-.Lj5956:
+	jal	r0,.Lj5952
+.Lj5951:
 	ldw	r3,r30,-60
 	stw	r30,r3,-96
 	ldw	r3,r30,-56
 	stw	r30,r3,-92
-.Lj5957:
+.Lj5952:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-64
-	blt	r3,r0,.Lj5958
-	bne	r0,r3,.Lj5959
-	bltu	r4,r0,.Lj5958
-	jal	r0,.Lj5959
-.Lj5958:
+	blt	r3,r0,.Lj5953
+	bne	r0,r3,.Lj5954
+	bltu	r4,r0,.Lj5953
+	jal	r0,.Lj5954
+.Lj5953:
 	addi	r3,r0,1
 	stb	r30,r3,-80
 	ldw	r3,r30,-68
@@ -52699,14 +52668,14 @@ FPC_MOD_INT64:
 	sub	r4,r4,r3
 	stw	r30,r5,-104
 	stw	r30,r4,-100
-	jal	r0,.Lj5960
-.Lj5959:
+	jal	r0,.Lj5955
+.Lj5954:
 	stb	r30,r0,-80
 	ldw	r3,r30,-68
 	stw	r30,r3,-104
 	ldw	r3,r30,-64
 	stw	r30,r3,-100
-.Lj5960:
+.Lj5955:
 	ldw	r5,r30,-104
 	ldw	r6,r30,-100
 	ldw	r3,r30,-96
@@ -52715,9 +52684,9 @@ FPC_MOD_INT64:
 	stw	r30,r1,-88
 	stw	r30,r2,-84
 	ldbu	r3,r30,-80
-	bne	r3,r0,.Lj5961
-	jal	r0,.Lj5962
-.Lj5961:
+	bne	r3,r0,.Lj5956
+	jal	r0,.Lj5957
+.Lj5956:
 	ldw	r4,r30,-88
 	ldw	r3,r30,-84
 	sub	r5,r0,r4
@@ -52726,13 +52695,13 @@ FPC_MOD_INT64:
 	sub	r3,r3,r4
 	stw	r30,r5,-76
 	stw	r30,r3,-72
-	jal	r0,.Lj5963
-.Lj5962:
+	jal	r0,.Lj5958
+.Lj5957:
 	ldw	r3,r30,-88
 	stw	r30,r3,-76
 	ldw	r3,r30,-84
 	stw	r30,r3,-72
-.Lj5963:
+.Lj5958:
 	ldw	r1,r30,-76
 	ldw	r2,r30,-72
 	ldw	r11,r29,104
@@ -52763,13 +52732,13 @@ FPC_MUL_QWORD:
 	stw	r30,r0,-76
 	stw	r30,r0,-72
 	stb	r30,r0,-80
-.Lj5966:
+.Lj5961:
 	ldw	r3,r30,-68
 	andi	r3,r3,1
 	andi	r3,r3,255
-	bne	r3,r0,.Lj5969
-	jal	r0,.Lj5970
-.Lj5969:
+	bne	r3,r0,.Lj5964
+	jal	r0,.Lj5965
+.Lj5964:
 	ldw	r6,r30,-76
 	ldw	r4,r30,-72
 	ldw	r3,r30,-60
@@ -52784,7 +52753,7 @@ FPC_MUL_QWORD:
 	add	r4,r7,r5
 	stw	r30,r3,-76
 	stw	r30,r4,-72
-.Lj5970:
+.Lj5965:
 	ldw	r5,r30,-60
 	ldw	r4,r30,-56
 	srli	r3,r5,31
@@ -52808,9 +52777,9 @@ FPC_MUL_QWORD:
 	ldbu	r4,r30,-80
 	addi	r3,r0,63
 	sgtu	r3,r4,r3
-	bne	r3,r0,.Lj5968
-	jal	r0,.Lj5966
-.Lj5968:
+	bne	r3,r0,.Lj5963
+	jal	r0,.Lj5961
+.Lj5963:
 	ldw	r1,r30,-76
 	ldw	r2,r30,-72
 	ldw	r30,r29,80
@@ -52845,17 +52814,17 @@ FPC_MUL_QWORD_CHECKOVERFLOW:
 	stw	r30,r0,-88
 	stb	r30,r0,-100
 	stb	r30,r0,-96
-.Lj5973:
+.Lj5968:
 	ldw	r5,r30,-68
 	ldw	r4,r30,-64
 	ldw	r6,r30,-92
 	ldw	r3,r30,-88
 	and	r5,r5,r6
 	and	r3,r4,r3
-	bne	r0,r3,.Lj5976
-	bne	r0,r5,.Lj5976
-	jal	r0,.Lj5977
-.Lj5976:
+	bne	r0,r3,.Lj5971
+	bne	r0,r5,.Lj5971
+	jal	r0,.Lj5972
+.Lj5971:
 	ldw	r3,r30,-76
 	stw	r30,r3,-84
 	ldw	r3,r30,-72
@@ -52875,55 +52844,55 @@ FPC_MUL_QWORD_CHECKOVERFLOW:
 	stw	r30,r3,-76
 	stw	r30,r4,-72
 	ldbu	r3,r30,-100
-	bne	r3,r0,.Lj5978
-	jal	r0,.Lj5979
-.Lj5979:
+	bne	r3,r0,.Lj5973
+	jal	r0,.Lj5974
+.Lj5974:
 	ldw	r4,r30,-84
 	ldw	r3,r30,-80
-	bne	r0,r3,.Lj5981
-	bne	r0,r4,.Lj5981
-	jal	r0,.Lj5982
-.Lj5981:
+	bne	r0,r3,.Lj5976
+	bne	r0,r4,.Lj5976
+	jal	r0,.Lj5977
+.Lj5976:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
-	bne	r0,r3,.Lj5984
-	bne	r0,r4,.Lj5984
-	jal	r0,.Lj5985
-.Lj5984:
-	jal	r0,.Lj5983
-.Lj5985:
-	jal	r0,.Lj5982
-.Lj5983:
+	bne	r0,r3,.Lj5979
+	bne	r0,r4,.Lj5979
+	jal	r0,.Lj5980
+.Lj5979:
+	jal	r0,.Lj5978
+.Lj5980:
+	jal	r0,.Lj5977
+.Lj5978:
 	ldw	r4,r30,-84
 	ldw	r5,r30,-80
 	ldw	r6,r30,-76
 	ldw	r3,r30,-72
-	bltu	r3,r5,.Lj5987
-	bne	r5,r3,.Lj5988
-	bltu	r6,r4,.Lj5987
-	jal	r0,.Lj5988
-.Lj5988:
+	bltu	r3,r5,.Lj5982
+	bne	r5,r3,.Lj5983
+	bltu	r6,r4,.Lj5982
+	jal	r0,.Lj5983
+.Lj5983:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-56
 	ldw	r5,r30,-76
 	ldw	r6,r30,-72
-	bltu	r6,r4,.Lj5990
-	bne	r4,r6,.Lj5991
-	bltu	r5,r3,.Lj5990
-	jal	r0,.Lj5991
-.Lj5990:
-	jal	r0,.Lj5987
-.Lj5991:
-	jal	r0,.Lj5989
-.Lj5987:
+	bltu	r6,r4,.Lj5985
+	bne	r4,r6,.Lj5986
+	bltu	r5,r3,.Lj5985
 	jal	r0,.Lj5986
-.Lj5989:
+.Lj5985:
 	jal	r0,.Lj5982
 .Lj5986:
-	jal	r0,.Lj5978
+	jal	r0,.Lj5984
 .Lj5982:
-	jal	r0,.Lj5980
-.Lj5978:
+	jal	r0,.Lj5981
+.Lj5984:
+	jal	r0,.Lj5977
+.Lj5981:
+	jal	r0,.Lj5973
+.Lj5977:
+	jal	r0,.Lj5975
+.Lj5973:
 	call	SYSTEM_$$_GET_FRAME$$POINTER
 	addi	r11,r1,0
 	call	SYSTEM_$$_GET_PC_ADDR$$POINTER
@@ -52931,31 +52900,31 @@ FPC_MUL_QWORD_CHECKOVERFLOW:
 	addi	r3,r0,215
 	addi	r5,r11,0
 	call	SYSTEM_$$_HANDLEERRORADDRFRAMEIND$LONGINT$POINTER$POINTER
-.Lj5980:
-.Lj5977:
+.Lj5975:
+.Lj5972:
 	ldbu	r3,r30,-100
-	bne	r3,r0,.Lj5992
-	jal	r0,.Lj5993
-.Lj5993:
+	bne	r3,r0,.Lj5987
+	jal	r0,.Lj5988
+.Lj5988:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-56
 	addi	r3,r0,0
 	lui	r5,524288
 	and	r4,r4,r5
-	bne	r0,r4,.Lj5995
-	bne	r0,r3,.Lj5995
-	jal	r0,.Lj5996
-.Lj5995:
-	jal	r0,.Lj5992
-.Lj5996:
-	jal	r0,.Lj5994
-.Lj5992:
+	bne	r0,r4,.Lj5990
+	bne	r0,r3,.Lj5990
+	jal	r0,.Lj5991
+.Lj5990:
+	jal	r0,.Lj5987
+.Lj5991:
+	jal	r0,.Lj5989
+.Lj5987:
 	addi	r3,r0,1
 	stb	r30,r3,-100
-	jal	r0,.Lj5997
-.Lj5994:
+	jal	r0,.Lj5992
+.Lj5989:
 	stb	r30,r0,-100
-.Lj5997:
+.Lj5992:
 	ldw	r5,r30,-60
 	ldw	r4,r30,-56
 	srli	r3,r5,31
@@ -52979,9 +52948,9 @@ FPC_MUL_QWORD_CHECKOVERFLOW:
 	ldbu	r3,r30,-96
 	addi	r4,r0,63
 	sgtu	r3,r3,r4
-	bne	r3,r0,.Lj5975
-	jal	r0,.Lj5973
-.Lj5975:
+	bne	r3,r0,.Lj5970
+	jal	r0,.Lj5968
+.Lj5970:
 	ldw	r1,r30,-76
 	ldw	r2,r30,-72
 	ldw	r11,r29,100
@@ -53072,11 +53041,11 @@ FPC_MUL_INT64_CHECKOVERFLOW:
 	stw	r30,r6,-64
 	ldw	r3,r30,-60
 	ldw	r4,r30,-56
-	blt	r4,r0,.Lj6004
-	bne	r0,r4,.Lj6005
-	bltu	r3,r0,.Lj6004
-	jal	r0,.Lj6005
-.Lj6004:
+	blt	r4,r0,.Lj5999
+	bne	r0,r4,.Lj6000
+	bltu	r3,r0,.Lj5999
+	jal	r0,.Lj6000
+.Lj5999:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-56
 	sub	r3,r0,r3
@@ -53087,21 +53056,21 @@ FPC_MUL_INT64_CHECKOVERFLOW:
 	stw	r30,r4,-84
 	addi	r3,r0,1
 	stb	r30,r3,-80
-	jal	r0,.Lj6006
-.Lj6005:
+	jal	r0,.Lj6001
+.Lj6000:
 	ldw	r3,r30,-60
 	stw	r30,r3,-88
 	ldw	r3,r30,-56
 	stw	r30,r3,-84
 	stb	r30,r0,-80
-.Lj6006:
+.Lj6001:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-64
-	blt	r4,r0,.Lj6007
-	bne	r0,r4,.Lj6008
-	bltu	r3,r0,.Lj6007
-	jal	r0,.Lj6008
-.Lj6007:
+	blt	r4,r0,.Lj6002
+	bne	r0,r4,.Lj6003
+	bltu	r3,r0,.Lj6002
+	jal	r0,.Lj6003
+.Lj6002:
 	ldbu	r3,r30,-80
 	seq	r3,r3,r0
 	stb	r30,r3,-80
@@ -53113,13 +53082,13 @@ FPC_MUL_INT64_CHECKOVERFLOW:
 	sub	r5,r5,r3
 	stw	r30,r4,-96
 	stw	r30,r5,-92
-	jal	r0,.Lj6009
-.Lj6008:
+	jal	r0,.Lj6004
+.Lj6003:
 	ldw	r3,r30,-68
 	stw	r30,r3,-96
 	ldw	r3,r30,-64
 	stw	r30,r3,-92
-.Lj6009:
+.Lj6004:
 	ldw	r5,r30,-96
 	ldw	r6,r30,-92
 	ldw	r3,r30,-88
@@ -53129,75 +53098,75 @@ FPC_MUL_INT64_CHECKOVERFLOW:
 	stw	r30,r2,-100
 	ldw	r3,r30,-88
 	ldw	r4,r30,-84
-	bne	r0,r4,.Lj6010
-	bne	r0,r3,.Lj6010
-	jal	r0,.Lj6011
-.Lj6010:
+	bne	r0,r4,.Lj6005
+	bne	r0,r3,.Lj6005
+	jal	r0,.Lj6006
+.Lj6005:
 	ldw	r4,r30,-96
 	ldw	r3,r30,-92
-	bne	r0,r3,.Lj6013
-	bne	r0,r4,.Lj6013
-	jal	r0,.Lj6014
-.Lj6013:
-	jal	r0,.Lj6012
-.Lj6014:
-	jal	r0,.Lj6011
-.Lj6012:
+	bne	r0,r3,.Lj6008
+	bne	r0,r4,.Lj6008
+	jal	r0,.Lj6009
+.Lj6008:
+	jal	r0,.Lj6007
+.Lj6009:
+	jal	r0,.Lj6006
+.Lj6007:
 	ldw	r4,r30,-88
 	ldw	r3,r30,-84
 	ldw	r6,r30,-104
 	ldw	r5,r30,-100
-	bltu	r5,r3,.Lj6016
-	bne	r3,r5,.Lj6017
-	bltu	r6,r4,.Lj6016
-	jal	r0,.Lj6017
-.Lj6017:
+	bltu	r5,r3,.Lj6011
+	bne	r3,r5,.Lj6012
+	bltu	r6,r4,.Lj6011
+	jal	r0,.Lj6012
+.Lj6012:
 	ldw	r4,r30,-96
 	ldw	r3,r30,-92
 	ldw	r6,r30,-104
 	ldw	r5,r30,-100
-	bltu	r5,r3,.Lj6019
-	bne	r3,r5,.Lj6020
-	bltu	r6,r4,.Lj6019
-	jal	r0,.Lj6020
-.Lj6019:
-	jal	r0,.Lj6016
-.Lj6020:
-	jal	r0,.Lj6018
-.Lj6018:
+	bltu	r5,r3,.Lj6014
+	bne	r3,r5,.Lj6015
+	bltu	r6,r4,.Lj6014
+	jal	r0,.Lj6015
+.Lj6014:
+	jal	r0,.Lj6011
+.Lj6015:
+	jal	r0,.Lj6013
+.Lj6013:
 	ldw	r3,r30,-104
 	ldw	r4,r30,-100
 	li	r3,0
 	srli	r4,r4,31
-	bne	r0,r3,.Lj6022
-	bne	r0,r4,.Lj6022
-	jal	r0,.Lj6023
-.Lj6022:
+	bne	r0,r3,.Lj6017
+	bne	r0,r4,.Lj6017
+	jal	r0,.Lj6018
+.Lj6017:
 	ldw	r5,r30,-104
 	ldw	r3,r30,-100
 	lui	r4,524288
 	ori	r4,r4,0
-	bne	r4,r3,.Lj6025
-	bne	r0,r5,.Lj6025
-	jal	r0,.Lj6026
-.Lj6026:
+	bne	r4,r3,.Lj6020
+	bne	r0,r5,.Lj6020
+	jal	r0,.Lj6021
+.Lj6021:
 	ldbu	r3,r30,-80
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6025
-	jal	r0,.Lj6027
-.Lj6025:
-	jal	r0,.Lj6024
-.Lj6027:
-	jal	r0,.Lj6023
-.Lj6024:
-	jal	r0,.Lj6016
-.Lj6023:
-	jal	r0,.Lj6021
-.Lj6016:
-	jal	r0,.Lj6015
-.Lj6021:
+	bne	r3,r0,.Lj6020
+	jal	r0,.Lj6022
+.Lj6020:
+	jal	r0,.Lj6019
+.Lj6022:
+	jal	r0,.Lj6018
+.Lj6019:
 	jal	r0,.Lj6011
-.Lj6015:
+.Lj6018:
+	jal	r0,.Lj6016
+.Lj6011:
+	jal	r0,.Lj6010
+.Lj6016:
+	jal	r0,.Lj6006
+.Lj6010:
 	call	SYSTEM_$$_GET_FRAME$$POINTER
 	addi	r11,r1,0
 	call	SYSTEM_$$_GET_PC_ADDR$$POINTER
@@ -53205,11 +53174,11 @@ FPC_MUL_INT64_CHECKOVERFLOW:
 	addi	r3,r0,215
 	addi	r5,r11,0
 	call	SYSTEM_$$_HANDLEERRORADDRFRAMEIND$LONGINT$POINTER$POINTER
-.Lj6011:
+.Lj6006:
 	ldbu	r3,r30,-80
-	bne	r3,r0,.Lj6028
-	jal	r0,.Lj6029
-.Lj6028:
+	bne	r3,r0,.Lj6023
+	jal	r0,.Lj6024
+.Lj6023:
 	ldw	r4,r30,-104
 	ldw	r3,r30,-100
 	sub	r4,r0,r4
@@ -53218,13 +53187,13 @@ FPC_MUL_INT64_CHECKOVERFLOW:
 	sub	r3,r3,r5
 	stw	r30,r4,-76
 	stw	r30,r3,-72
-	jal	r0,.Lj6030
-.Lj6029:
+	jal	r0,.Lj6025
+.Lj6024:
 	ldw	r3,r30,-104
 	stw	r30,r3,-76
 	ldw	r3,r30,-100
 	stw	r30,r3,-72
-.Lj6030:
+.Lj6025:
 	ldw	r1,r30,-76
 	ldw	r2,r30,-72
 	ldw	r11,r29,104
@@ -53398,11 +53367,11 @@ FPC_MUL_CURRENCY:
 	stb	r30,r0,-80
 	ldw	r3,r30,-60
 	ldw	r4,r30,-56
-	blt	r4,r0,.Lj6039
-	bne	r0,r4,.Lj6040
-	bltu	r3,r0,.Lj6039
-	jal	r0,.Lj6040
-.Lj6039:
+	blt	r4,r0,.Lj6034
+	bne	r0,r4,.Lj6035
+	bltu	r3,r0,.Lj6034
+	jal	r0,.Lj6035
+.Lj6034:
 	addi	r3,r0,1
 	stb	r30,r3,-80
 	ldw	r3,r30,-60
@@ -53413,20 +53382,20 @@ FPC_MUL_CURRENCY:
 	sub	r4,r4,r3
 	stw	r30,r5,-88
 	stw	r30,r4,-84
-	jal	r0,.Lj6041
-.Lj6040:
+	jal	r0,.Lj6036
+.Lj6035:
 	ldw	r3,r30,-60
 	stw	r30,r3,-88
 	ldw	r3,r30,-56
 	stw	r30,r3,-84
-.Lj6041:
+.Lj6036:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-64
-	blt	r3,r0,.Lj6042
-	bne	r0,r3,.Lj6043
-	bltu	r4,r0,.Lj6042
-	jal	r0,.Lj6043
-.Lj6042:
+	blt	r3,r0,.Lj6037
+	bne	r0,r3,.Lj6038
+	bltu	r4,r0,.Lj6037
+	jal	r0,.Lj6038
+.Lj6037:
 	ldbu	r3,r30,-80
 	seq	r3,r3,r0
 	stb	r30,r3,-80
@@ -53438,13 +53407,13 @@ FPC_MUL_CURRENCY:
 	sub	r3,r3,r4
 	stw	r30,r5,-96
 	stw	r30,r3,-92
-	jal	r0,.Lj6044
-.Lj6043:
+	jal	r0,.Lj6039
+.Lj6038:
 	ldw	r3,r30,-68
 	stw	r30,r3,-96
 	ldw	r3,r30,-64
 	stw	r30,r3,-92
-.Lj6044:
+.Lj6039:
 	ldw	r4,r30,-88
 	ldw	r3,r30,-84
 	addi	r3,r0,0
@@ -53600,7 +53569,7 @@ FPC_MUL_CURRENCY:
 	stw	r30,r0,-224
 	addi	r3,r0,3
 	stw	r30,r3,-220
-.Lj6045:
+.Lj6040:
 	ldw	r3,r30,-220
 	slli	r5,r3,3
 	ldw	r3,r30,-228
@@ -53639,9 +53608,9 @@ FPC_MUL_CURRENCY:
 	ldw	r4,r30,-220
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj6047
-	jal	r0,.Lj6045
-.Lj6047:
+	bne	r3,r0,.Lj6042
+	jal	r0,.Lj6040
+.Lj6042:
 	ldw	r3,r30,-260
 	ldw	r4,r30,-256
 	li	r5,0
@@ -53653,9 +53622,9 @@ FPC_MUL_CURRENCY:
 	stw	r30,r5,-276
 	stw	r30,r3,-272
 	ldbu	r3,r30,-80
-	bne	r3,r0,.Lj6048
-	jal	r0,.Lj6049
-.Lj6048:
+	bne	r3,r0,.Lj6043
+	jal	r0,.Lj6044
+.Lj6043:
 	ldw	r4,r30,-276
 	ldw	r3,r30,-272
 	sub	r5,r0,r4
@@ -53664,13 +53633,13 @@ FPC_MUL_CURRENCY:
 	sub	r3,r3,r4
 	stw	r30,r5,-76
 	stw	r30,r3,-72
-	jal	r0,.Lj6050
-.Lj6049:
+	jal	r0,.Lj6045
+.Lj6044:
 	ldw	r3,r30,-276
 	stw	r30,r3,-76
 	ldw	r3,r30,-272
 	stw	r30,r3,-72
-.Lj6050:
+.Lj6045:
 	ldw	r1,r30,-76
 	ldw	r2,r30,-72
 	ldw	r30,r29,276
@@ -53699,11 +53668,11 @@ FPC_MUL_CURRENCY_CHECKOVERFLOW:
 	stb	r30,r0,-80
 	ldw	r3,r30,-60
 	ldw	r4,r30,-56
-	blt	r4,r0,.Lj6053
-	bne	r0,r4,.Lj6054
-	bltu	r3,r0,.Lj6053
-	jal	r0,.Lj6054
-.Lj6053:
+	blt	r4,r0,.Lj6048
+	bne	r0,r4,.Lj6049
+	bltu	r3,r0,.Lj6048
+	jal	r0,.Lj6049
+.Lj6048:
 	addi	r3,r0,1
 	stb	r30,r3,-80
 	ldw	r3,r30,-60
@@ -53714,20 +53683,20 @@ FPC_MUL_CURRENCY_CHECKOVERFLOW:
 	sub	r4,r4,r3
 	stw	r30,r5,-88
 	stw	r30,r4,-84
-	jal	r0,.Lj6055
-.Lj6054:
+	jal	r0,.Lj6050
+.Lj6049:
 	ldw	r3,r30,-60
 	stw	r30,r3,-88
 	ldw	r3,r30,-56
 	stw	r30,r3,-84
-.Lj6055:
+.Lj6050:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-64
-	blt	r3,r0,.Lj6056
-	bne	r0,r3,.Lj6057
-	bltu	r4,r0,.Lj6056
-	jal	r0,.Lj6057
-.Lj6056:
+	blt	r3,r0,.Lj6051
+	bne	r0,r3,.Lj6052
+	bltu	r4,r0,.Lj6051
+	jal	r0,.Lj6052
+.Lj6051:
 	ldbu	r3,r30,-80
 	seq	r3,r3,r0
 	stb	r30,r3,-80
@@ -53739,13 +53708,13 @@ FPC_MUL_CURRENCY_CHECKOVERFLOW:
 	sub	r3,r3,r4
 	stw	r30,r5,-96
 	stw	r30,r3,-92
-	jal	r0,.Lj6058
-.Lj6057:
+	jal	r0,.Lj6053
+.Lj6052:
 	ldw	r3,r30,-68
 	stw	r30,r3,-96
 	ldw	r3,r30,-64
 	stw	r30,r3,-92
-.Lj6058:
+.Lj6053:
 	ldw	r4,r30,-88
 	ldw	r3,r30,-84
 	addi	r3,r0,0
@@ -53901,7 +53870,7 @@ FPC_MUL_CURRENCY_CHECKOVERFLOW:
 	stw	r30,r0,-224
 	addi	r3,r0,3
 	stw	r30,r3,-220
-.Lj6059:
+.Lj6054:
 	ldw	r3,r30,-220
 	slli	r5,r3,3
 	ldw	r3,r30,-228
@@ -53940,9 +53909,9 @@ FPC_MUL_CURRENCY_CHECKOVERFLOW:
 	ldw	r4,r30,-220
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj6061
-	jal	r0,.Lj6059
-.Lj6061:
+	bne	r3,r0,.Lj6056
+	jal	r0,.Lj6054
+.Lj6056:
 	ldw	r3,r30,-260
 	ldw	r4,r30,-256
 	li	r5,0
@@ -53955,49 +53924,49 @@ FPC_MUL_CURRENCY_CHECKOVERFLOW:
 	stw	r30,r3,-272
 	ldw	r4,r30,-252
 	ldw	r3,r30,-248
-	bne	r0,r3,.Lj6062
-	bne	r0,r4,.Lj6062
-	jal	r0,.Lj6063
-.Lj6063:
+	bne	r0,r3,.Lj6057
+	bne	r0,r4,.Lj6057
+	jal	r0,.Lj6058
+.Lj6058:
 	ldw	r4,r30,-244
 	ldw	r3,r30,-240
-	bne	r0,r3,.Lj6065
-	bne	r0,r4,.Lj6065
-	jal	r0,.Lj6066
-.Lj6065:
-	jal	r0,.Lj6062
-.Lj6066:
-	jal	r0,.Lj6064
-.Lj6064:
+	bne	r0,r3,.Lj6060
+	bne	r0,r4,.Lj6060
+	jal	r0,.Lj6061
+.Lj6060:
+	jal	r0,.Lj6057
+.Lj6061:
+	jal	r0,.Lj6059
+.Lj6059:
 	ldw	r3,r30,-276
 	ldw	r4,r30,-272
 	li	r3,0
 	srli	r4,r4,31
-	bne	r0,r3,.Lj6068
-	bne	r0,r4,.Lj6068
-	jal	r0,.Lj6069
-.Lj6068:
+	bne	r0,r3,.Lj6063
+	bne	r0,r4,.Lj6063
+	jal	r0,.Lj6064
+.Lj6063:
 	ldw	r5,r30,-276
 	ldw	r3,r30,-272
 	lui	r4,524288
 	ori	r4,r4,0
-	bne	r4,r3,.Lj6071
-	bne	r0,r5,.Lj6071
-	jal	r0,.Lj6072
-.Lj6072:
+	bne	r4,r3,.Lj6066
+	bne	r0,r5,.Lj6066
+	jal	r0,.Lj6067
+.Lj6067:
 	ldbu	r3,r30,-80
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6071
-	jal	r0,.Lj6073
-.Lj6071:
-	jal	r0,.Lj6070
-.Lj6073:
-	jal	r0,.Lj6069
-.Lj6070:
+	bne	r3,r0,.Lj6066
+	jal	r0,.Lj6068
+.Lj6066:
+	jal	r0,.Lj6065
+.Lj6068:
+	jal	r0,.Lj6064
+.Lj6065:
+	jal	r0,.Lj6057
+.Lj6064:
 	jal	r0,.Lj6062
-.Lj6069:
-	jal	r0,.Lj6067
-.Lj6062:
+.Lj6057:
 	call	SYSTEM_$$_GET_FRAME$$POINTER
 	addi	r11,r1,0
 	call	SYSTEM_$$_GET_PC_ADDR$$POINTER
@@ -54005,11 +53974,11 @@ FPC_MUL_CURRENCY_CHECKOVERFLOW:
 	addi	r3,r0,215
 	addi	r5,r11,0
 	call	SYSTEM_$$_HANDLEERRORADDRFRAMEIND$LONGINT$POINTER$POINTER
-.Lj6067:
+.Lj6062:
 	ldbu	r3,r30,-80
-	bne	r3,r0,.Lj6074
-	jal	r0,.Lj6075
-.Lj6074:
+	bne	r3,r0,.Lj6069
+	jal	r0,.Lj6070
+.Lj6069:
 	ldw	r3,r30,-276
 	ldw	r4,r30,-272
 	sub	r5,r0,r3
@@ -54018,13 +53987,13 @@ FPC_MUL_CURRENCY_CHECKOVERFLOW:
 	sub	r4,r4,r3
 	stw	r30,r5,-76
 	stw	r30,r4,-72
-	jal	r0,.Lj6076
-.Lj6075:
+	jal	r0,.Lj6071
+.Lj6070:
 	ldw	r3,r30,-276
 	stw	r30,r3,-76
 	ldw	r3,r30,-272
 	stw	r30,r3,-72
-.Lj6076:
+.Lj6071:
 	ldw	r1,r30,-76
 	ldw	r2,r30,-72
 	ldw	r11,r29,276
@@ -54050,13 +54019,13 @@ SYSTEM_$$_TRANSLATEPLACEHOLDERCP$WORD$$WORD:
 	ldhu	r3,r30,-56
 	addi	r4,r0,1
 	sleu	r3,r3,r4
-	bne	r3,r0,.Lj6079
-	jal	r0,.Lj6080
-.Lj6079:
+	bne	r3,r0,.Lj6074
+	jal	r0,.Lj6075
+.Lj6074:
 	la	r3,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r3,r3,0
 	sth	r30,r3,-60
-.Lj6080:
+.Lj6075:
 	ldhu	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -54174,44 +54143,44 @@ FPC_ANSISTR_DECR_REF:
 	stw	r30,r3,-60
 	ldw	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6089
-	jal	r0,.Lj6090
-.Lj6089:
-	jal	r0,.Lj6087
-.Lj6090:
+	bne	r3,r0,.Lj6084
+	jal	r0,.Lj6085
+.Lj6084:
+	jal	r0,.Lj6082
+.Lj6085:
 	ldw	r3,r30,-56
 	stw	r3,r0,0
 	ldw	r3,r30,-60
 	ldw	r3,r3,-8
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6091
-	jal	r0,.Lj6092
-.Lj6092:
+	bne	r3,r0,.Lj6086
+	jal	r0,.Lj6087
+.Lj6087:
 	ldw	r3,r30,-60
 	ldw	r4,r3,-8
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6094
-	jal	r0,.Lj6095
-.Lj6094:
+	bne	r3,r0,.Lj6089
+	jal	r0,.Lj6090
+.Lj6089:
 	ldw	r3,r30,-60
 	addi	r11,r3,-8
 	addi	r3,r11,0
 	call	SYSTEM_$$_INTERLOCKEDDECREMENT$LONGINT$$LONGINT
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj6096
-	jal	r0,.Lj6095
-.Lj6096:
-	jal	r0,.Lj6091
-.Lj6095:
-	jal	r0,.Lj6093
+	bne	r3,r0,.Lj6091
+	jal	r0,.Lj6090
 .Lj6091:
+	jal	r0,.Lj6086
+.Lj6090:
+	jal	r0,.Lj6088
+.Lj6086:
 	ldw	r3,r30,-60
 	addi	r3,r3,-12
 	call	SYSTEM_$$_FREEMEM$POINTER$$LONGWORD
-.Lj6093:
-.Lj6087:
+.Lj6088:
+.Lj6082:
 	ldw	r11,r29,60
 	ldw	r30,r29,64
 	ldw	r31,r29,68
@@ -54237,21 +54206,21 @@ FPC_ANSISTR_INCR_REF:
 	stw	r30,r3,-56
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj6099
-	jal	r0,.Lj6100
-.Lj6099:
+	bne	r3,r0,.Lj6094
+	jal	r0,.Lj6095
+.Lj6094:
 	ldw	r3,r30,-56
 	ldw	r4,r3,-8
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6101
-	jal	r0,.Lj6100
-.Lj6101:
+	bne	r3,r0,.Lj6096
+	jal	r0,.Lj6095
+.Lj6096:
 	ldw	r3,r30,-56
 	addi	r11,r3,-8
 	addi	r3,r11,0
 	call	SYSTEM_$$_INTERLOCKEDINCREMENT$LONGINT$$LONGINT
-.Lj6100:
+.Lj6095:
 	ldw	r11,r29,56
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -54280,71 +54249,71 @@ FPC_ANSISTR_ASSIGN:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-60
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj6104
-	jal	r0,.Lj6105
-.Lj6104:
-	jal	r0,.Lj6102
-.Lj6105:
+	bne	r3,r0,.Lj6099
+	jal	r0,.Lj6100
+.Lj6099:
+	jal	r0,.Lj6097
+.Lj6100:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	stw	r3,r4,0
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj6106
-	jal	r0,.Lj6107
-.Lj6106:
+	bne	r3,r0,.Lj6101
+	jal	r0,.Lj6102
+.Lj6101:
 	ldw	r3,r30,-60
 	ldw	r4,r3,-8
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6108
-	jal	r0,.Lj6107
-.Lj6108:
+	bne	r3,r0,.Lj6103
+	jal	r0,.Lj6102
+.Lj6103:
 	ldw	r3,r30,-60
 	addi	r11,r3,-8
 	addi	r3,r11,0
 	call	SYSTEM_$$_INTERLOCKEDINCREMENT$LONGINT$$LONGINT
-.Lj6107:
+.Lj6102:
 	ldw	r3,r30,-64
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj6109
-	jal	r0,.Lj6110
-.Lj6109:
+	bne	r3,r0,.Lj6104
+	jal	r0,.Lj6105
+.Lj6104:
 	ldw	r3,r30,-64
 	ldw	r3,r3,-8
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6112
-	jal	r0,.Lj6113
-.Lj6113:
+	bne	r3,r0,.Lj6107
+	jal	r0,.Lj6108
+.Lj6108:
 	ldw	r3,r30,-64
 	ldw	r4,r3,-8
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6115
-	jal	r0,.Lj6116
-.Lj6115:
+	bne	r3,r0,.Lj6110
+	jal	r0,.Lj6111
+.Lj6110:
 	ldw	r3,r30,-64
 	addi	r11,r3,-8
 	addi	r3,r11,0
 	call	SYSTEM_$$_INTERLOCKEDDECREMENT$LONGINT$$LONGINT
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj6117
-	jal	r0,.Lj6116
-.Lj6117:
-	jal	r0,.Lj6112
-.Lj6116:
-	jal	r0,.Lj6114
-.Lj6112:
+	bne	r3,r0,.Lj6112
 	jal	r0,.Lj6111
-.Lj6114:
-	jal	r0,.Lj6110
+.Lj6112:
+	jal	r0,.Lj6107
 .Lj6111:
+	jal	r0,.Lj6109
+.Lj6107:
+	jal	r0,.Lj6106
+.Lj6109:
+	jal	r0,.Lj6105
+.Lj6106:
 	ldw	r3,r30,-64
 	addi	r3,r3,-12
 	call	SYSTEM_$$_FREEMEM$POINTER$$LONGWORD
-.Lj6110:
-.Lj6102:
+.Lj6105:
+.Lj6097:
 	ldw	r11,r29,64
 	ldw	r30,r29,68
 	ldw	r31,r29,72
@@ -54379,7 +54348,7 @@ SYSTEM_$$_ANSISTR_CONCAT_COMPLEX$RAWBYTESTRING$RAWBYTESTRING$RAWBYTESTRING$WORD:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-172
-	bne	r1,r0,.Lj6121
+	bne	r1,r0,.Lj6116
 	addi	r3,r30,-176
 	ldw	r4,r30,-64
 	call	fpc_ansistr_to_unicodestr
@@ -54392,16 +54361,16 @@ SYSTEM_$$_ANSISTR_CONCAT_COMPLEX$RAWBYTESTRING$RAWBYTESTRING$RAWBYTESTRING$WORD:
 	addi	r5,r11,0
 	call	fpc_unicodestr_concat
 	ldw	r6,r30,-72
-	beq	r6,r0,.Lj6123
+	beq	r6,r0,.Lj6118
 	ldw	r6,r6,-4
-.Lj6123:
+.Lj6118:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-72
 	ldhu	r5,r30,-68
 	la	r7,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	ldw	r7,r7,76
 	jalr	r31,r7
-.Lj6121:
+.Lj6116:
 	call	fpc_popaddrstack
 	addi	r3,r30,-180
 	call	fpc_unicodestr_decr_ref
@@ -54410,11 +54379,11 @@ SYSTEM_$$_ANSISTR_CONCAT_COMPLEX$RAWBYTESTRING$RAWBYTESTRING$RAWBYTESTRING$WORD:
 	addi	r3,r30,-72
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-172
-	beq	r3,r0,.Lj6120
+	beq	r3,r0,.Lj6115
 	call	fpc_reraise
 	stw	r30,r0,-172
-	jal	r0,.Lj6121
-.Lj6120:
+	jal	r0,.Lj6116
+.Lj6115:
 	ldw	r11,r29,180
 	ldw	r30,r29,184
 	ldw	r31,r29,188
@@ -54444,97 +54413,97 @@ fpc_ansistr_concat:
 	lui	r4,15
 	ori	r4,r4,4095
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj6126
-	jal	r0,.Lj6127
-.Lj6126:
+	bne	r3,r0,.Lj6121
+	jal	r0,.Lj6122
+.Lj6121:
 	la	r3,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r3,r3,0
 	sth	r30,r3,-88
-.Lj6127:
+.Lj6122:
 	ldhu	r3,r30,-88
 	ldhu	r5,r30,-88
 	addi	r4,r0,1
 	sleu	r4,r5,r4
-	bne	r4,r0,.Lj6129
-	jal	r0,.Lj6130
-.Lj6129:
+	bne	r4,r0,.Lj6124
+	jal	r0,.Lj6125
+.Lj6124:
 	la	r4,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r3,r4,0
-.Lj6130:
+.Lj6125:
 	sth	r30,r3,-88
 	ldw	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6131
-	jal	r0,.Lj6132
-.Lj6132:
+	bne	r3,r0,.Lj6126
+	jal	r0,.Lj6127
+.Lj6127:
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6131
-	jal	r0,.Lj6133
-.Lj6131:
+	bne	r3,r0,.Lj6126
+	jal	r0,.Lj6128
+.Lj6126:
 	ldw	r3,r30,-60
 	stw	r30,r3,-104
 	ldw	r3,r30,-104
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6134
-	jal	r0,.Lj6135
-.Lj6134:
+	bne	r3,r0,.Lj6129
+	jal	r0,.Lj6130
+.Lj6129:
 	ldw	r3,r30,-64
 	stw	r30,r3,-104
-.Lj6135:
+.Lj6130:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-104
 	call	fpc_ansistr_assign
 	ldw	r3,r30,-104
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj6136
-	jal	r0,.Lj6137
-.Lj6136:
+	bne	r3,r0,.Lj6131
+	jal	r0,.Lj6132
+.Lj6131:
 	ldhu	r3,r30,-68
 	lui	r4,15
 	ori	r4,r4,4095
 	sne	r3,r3,r4
-	bne	r3,r0,.Lj6138
-	jal	r0,.Lj6137
-.Lj6138:
+	bne	r3,r0,.Lj6133
+	jal	r0,.Lj6132
+.Lj6133:
 	ldw	r3,r30,-104
 	ldhu	r3,r3,-12
 	sth	r30,r3,-80
 	ldhu	r3,r30,-88
 	ldhu	r4,r30,-80
 	sne	r3,r3,r4
-	bne	r3,r0,.Lj6139
-	jal	r0,.Lj6140
-.Lj6139:
+	bne	r3,r0,.Lj6134
+	jal	r0,.Lj6135
+.Lj6134:
 	ldhu	r4,r30,-68
 	ldhu	r3,r30,-80
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj6141
-	jal	r0,.Lj6140
-.Lj6141:
+	bne	r3,r0,.Lj6136
+	jal	r0,.Lj6135
+.Lj6136:
 	ldhu	r3,r30,-80
 	ldhu	r5,r30,-80
 	addi	r4,r0,1
 	sleu	r4,r5,r4
-	bne	r4,r0,.Lj6144
-	jal	r0,.Lj6145
-.Lj6144:
+	bne	r4,r0,.Lj6139
+	jal	r0,.Lj6140
+.Lj6139:
 	la	r4,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r3,r4,0
-.Lj6145:
+.Lj6140:
 	ldhu	r4,r30,-88
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj6142
-	jal	r0,.Lj6140
-.Lj6142:
+	bne	r3,r0,.Lj6137
+	jal	r0,.Lj6135
+.Lj6137:
 	ldw	r3,r30,-56
 	addi	r5,r0,1
 	ldhu	r4,r30,-88
 	call	SYSTEM_$$_SETCODEPAGE$RAWBYTESTRING$WORD$BOOLEAN
-.Lj6140:
-.Lj6137:
-	jal	r0,.Lj6124
-.Lj6133:
+.Lj6135:
+.Lj6132:
+	jal	r0,.Lj6119
+.Lj6128:
 	ldw	r3,r30,-60
 	ldhu	r3,r3,-12
 	sth	r30,r3,-80
@@ -54544,92 +54513,92 @@ fpc_ansistr_concat:
 	ldhu	r4,r30,-88
 	ldhu	r3,r30,-80
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj6146
-	jal	r0,.Lj6147
-.Lj6146:
+	bne	r3,r0,.Lj6141
+	jal	r0,.Lj6142
+.Lj6141:
 	ldhu	r3,r30,-68
 	ldhu	r4,r30,-80
 	sne	r3,r3,r4
-	bne	r3,r0,.Lj6148
-	jal	r0,.Lj6147
-.Lj6147:
+	bne	r3,r0,.Lj6143
+	jal	r0,.Lj6142
+.Lj6142:
 	ldhu	r3,r30,-68
 	ldhu	r4,r30,-84
 	sne	r3,r3,r4
-	bne	r3,r0,.Lj6150
-	jal	r0,.Lj6151
-.Lj6150:
+	bne	r3,r0,.Lj6145
+	jal	r0,.Lj6146
+.Lj6145:
 	ldhu	r3,r30,-88
 	ldhu	r4,r30,-84
 	sne	r3,r3,r4
-	bne	r3,r0,.Lj6152
-	jal	r0,.Lj6151
-.Lj6152:
-	jal	r0,.Lj6148
-.Lj6151:
-	jal	r0,.Lj6149
-.Lj6148:
+	bne	r3,r0,.Lj6147
+	jal	r0,.Lj6146
+.Lj6147:
+	jal	r0,.Lj6143
+.Lj6146:
+	jal	r0,.Lj6144
+.Lj6143:
 	ldhu	r3,r30,-80
 	ldhu	r4,r30,-80
 	addi	r5,r0,1
 	sleu	r4,r4,r5
-	bne	r4,r0,.Lj6154
-	jal	r0,.Lj6155
-.Lj6154:
+	bne	r4,r0,.Lj6149
+	jal	r0,.Lj6150
+.Lj6149:
 	la	r4,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r3,r4,0
-.Lj6155:
+.Lj6150:
 	sth	r30,r3,-80
 	ldhu	r3,r30,-84
 	ldhu	r4,r30,-84
 	addi	r5,r0,1
 	sleu	r4,r4,r5
-	bne	r4,r0,.Lj6157
-	jal	r0,.Lj6158
-.Lj6157:
+	bne	r4,r0,.Lj6152
+	jal	r0,.Lj6153
+.Lj6152:
 	la	r4,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r3,r4,0
-.Lj6158:
+.Lj6153:
 	ldhu	r4,r30,-80
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj6159
-	jal	r0,.Lj6160
-.Lj6160:
+	bne	r3,r0,.Lj6154
+	jal	r0,.Lj6155
+.Lj6155:
 	ldhu	r4,r30,-68
 	lui	r3,15
 	ori	r3,r3,4095
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj6162
-	jal	r0,.Lj6163
-.Lj6162:
+	bne	r3,r0,.Lj6157
+	jal	r0,.Lj6158
+.Lj6157:
 	ldhu	r3,r30,-88
 	ldhu	r4,r30,-80
 	sne	r3,r3,r4
-	bne	r3,r0,.Lj6164
-	jal	r0,.Lj6163
-.Lj6164:
-	jal	r0,.Lj6159
-.Lj6163:
-	jal	r0,.Lj6161
+	bne	r3,r0,.Lj6159
+	jal	r0,.Lj6158
 .Lj6159:
+	jal	r0,.Lj6154
+.Lj6158:
+	jal	r0,.Lj6156
+.Lj6154:
 	ldw	r3,r30,-56
 	ldhu	r6,r30,-88
 	ldw	r5,r30,-64
 	ldw	r4,r30,-60
 	call	SYSTEM_$$_ANSISTR_CONCAT_COMPLEX$RAWBYTESTRING$RAWBYTESTRING$RAWBYTESTRING$WORD
-	jal	r0,.Lj6124
-.Lj6161:
+	jal	r0,.Lj6119
+.Lj6156:
 	ldhu	r4,r30,-68
 	lui	r3,15
 	ori	r3,r3,4095
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj6165
-	jal	r0,.Lj6166
-.Lj6165:
+	bne	r3,r0,.Lj6160
+	jal	r0,.Lj6161
+.Lj6160:
 	ldhu	r3,r30,-80
 	sth	r30,r3,-88
-.Lj6166:
-.Lj6149:
+.Lj6161:
+.Lj6144:
 	ldw	r3,r30,-60
 	ldw	r3,r3,-4
 	stw	r30,r3,-72
@@ -54641,16 +54610,16 @@ fpc_ansistr_concat:
 	stw	r30,r3,-92
 	ldw	r3,r30,-92
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj6167
-	jal	r0,.Lj6168
-.Lj6167:
+	bne	r3,r0,.Lj6162
+	jal	r0,.Lj6163
+.Lj6162:
 	ldw	r3,r30,-92
 	ldw	r3,r3,-8
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6169
-	jal	r0,.Lj6168
-.Lj6169:
+	bne	r3,r0,.Lj6164
+	jal	r0,.Lj6163
+.Lj6164:
 	ldw	r3,r30,-92
 	addi	r3,r3,-12
 	stw	r30,r3,-100
@@ -54667,12 +54636,12 @@ fpc_ansistr_concat:
 	ldw	r4,r30,-104
 	ldw	r3,r30,-92
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj6170
-	jal	r0,.Lj6171
-.Lj6170:
+	bne	r3,r0,.Lj6165
+	jal	r0,.Lj6166
+.Lj6165:
 	ldw	r3,r30,-96
 	stw	r30,r3,-104
-.Lj6171:
+.Lj6166:
 	ldw	r4,r30,-96
 	ldw	r3,r30,-72
 	add	r4,r4,r3
@@ -54682,16 +54651,16 @@ fpc_ansistr_concat:
 	ldw	r4,r30,-92
 	ldw	r3,r30,-60
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj6172
-	jal	r0,.Lj6173
-.Lj6172:
+	bne	r3,r0,.Lj6167
+	jal	r0,.Lj6168
+.Lj6167:
 	ldw	r4,r30,-96
 	ldw	r3,r30,-60
 	ldw	r5,r30,-72
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj6173:
-	jal	r0,.Lj6174
 .Lj6168:
+	jal	r0,.Lj6169
+.Lj6163:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-76
 	add	r3,r4,r3
@@ -54717,7 +54686,7 @@ fpc_ansistr_concat:
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
 	ldw	r3,r30,-56
 	call	FPC_ANSISTR_DECR_REF
-.Lj6174:
+.Lj6169:
 	ldw	r3,r30,-96
 	ldw	r5,r30,-72
 	ldw	r4,r30,-76
@@ -54735,7 +54704,7 @@ fpc_ansistr_concat:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-96
 	stw	r4,r3,0
-.Lj6124:
+.Lj6119:
 	ldw	r30,r29,104
 	ldw	r31,r29,108
 	addi	r29,r29,112
@@ -54765,19 +54734,19 @@ SYSTEM_$$_ANSISTR_CONCAT_MULTI_COMPLEX$RAWBYTESTRING$array_of_RAWBYTESTRING$WORD
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-176
-	bne	r1,r0,.Lj6178
+	bne	r1,r0,.Lj6173
 	addi	r3,r30,-76
 	addi	r4,r0,0
 	call	fpc_unicodestr_assign
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj6180
-	jal	r0,.Lj6181
-.Lj6180:
+	bne	r3,r0,.Lj6175
+	jal	r0,.Lj6176
+.Lj6175:
 	addi	r3,r0,-1
 	stw	r30,r3,-72
-.Lj6182:
+.Lj6177:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
@@ -54786,13 +54755,13 @@ SYSTEM_$$_ANSISTR_CONCAT_MULTI_COMPLEX$RAWBYTESTRING$array_of_RAWBYTESTRING$WORD
 	slli	r4,r4,2
 	add	r3,r3,r4
 	ldw	r3,r3,0
-	beq	r3,r0,.Lj6185
+	beq	r3,r0,.Lj6180
 	ldw	r3,r3,-4
-.Lj6185:
+.Lj6180:
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj6186
-	jal	r0,.Lj6187
-.Lj6186:
+	bne	r3,r0,.Lj6181
+	jal	r0,.Lj6182
+.Lj6181:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-72
 	slli	r4,r4,2
@@ -54804,39 +54773,39 @@ SYSTEM_$$_ANSISTR_CONCAT_MULTI_COMPLEX$RAWBYTESTRING$array_of_RAWBYTESTRING$WORD
 	ldw	r4,r30,-76
 	addi	r3,r30,-76
 	call	fpc_unicodestr_concat
-.Lj6187:
+.Lj6182:
 	ldw	r4,r30,-72
 	ldw	r3,r30,-68
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj6184
-	jal	r0,.Lj6182
-.Lj6184:
-.Lj6181:
+	bne	r3,r0,.Lj6179
+	jal	r0,.Lj6177
+.Lj6179:
+.Lj6176:
 	ldw	r3,r30,-56
 	addi	r4,r0,0
 	call	fpc_ansistr_assign
 	ldw	r6,r30,-76
-	beq	r6,r0,.Lj6188
+	beq	r6,r0,.Lj6183
 	ldw	r6,r6,-4
-.Lj6188:
+.Lj6183:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-76
 	ldhu	r5,r30,-64
 	la	r7,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	ldw	r7,r7,76
 	jalr	r31,r7
-.Lj6178:
+.Lj6173:
 	call	fpc_popaddrstack
 	addi	r3,r30,-180
 	call	fpc_unicodestr_decr_ref
 	addi	r3,r30,-76
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-176
-	beq	r3,r0,.Lj6177
+	beq	r3,r0,.Lj6172
 	call	fpc_reraise
 	stw	r30,r0,-176
-	jal	r0,.Lj6178
-.Lj6177:
+	jal	r0,.Lj6173
+.Lj6172:
 	ldw	r30,r29,180
 	ldw	r31,r29,184
 	addi	r29,r29,188
@@ -54866,65 +54835,65 @@ fpc_ansistr_concat_multi:
 	lui	r4,15
 	ori	r4,r4,4095
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj6191
-	jal	r0,.Lj6192
-.Lj6191:
+	bne	r3,r0,.Lj6186
+	jal	r0,.Lj6187
+.Lj6186:
 	la	r3,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r3,r3,0
 	sth	r30,r3,-108
-.Lj6192:
+.Lj6187:
 	stw	r30,r0,-72
-	jal	r0,.Lj6194
-.Lj6193:
+	jal	r0,.Lj6189
+.Lj6188:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
-.Lj6194:
+.Lj6189:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-68
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj6196
-	jal	r0,.Lj6197
-.Lj6196:
+	bne	r3,r0,.Lj6191
+	jal	r0,.Lj6192
+.Lj6191:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-72
 	slli	r4,r4,2
 	add	r3,r3,r4
 	ldw	r3,r3,0
-	beq	r3,r0,.Lj6199
+	beq	r3,r0,.Lj6194
 	ldw	r3,r3,-4
-.Lj6199:
+.Lj6194:
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6198
-	jal	r0,.Lj6197
-.Lj6198:
-	jal	r0,.Lj6193
-.Lj6197:
-	jal	r0,.Lj6195
-.Lj6195:
+	bne	r3,r0,.Lj6193
+	jal	r0,.Lj6192
+.Lj6193:
+	jal	r0,.Lj6188
+.Lj6192:
+	jal	r0,.Lj6190
+.Lj6190:
 	ldw	r4,r30,-72
 	ldw	r3,r30,-68
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6200
-	jal	r0,.Lj6201
-.Lj6200:
+	bne	r3,r0,.Lj6195
+	jal	r0,.Lj6196
+.Lj6195:
 	ldw	r3,r30,-56
 	addi	r4,r0,0
 	call	fpc_ansistr_assign
-	jal	r0,.Lj6189
-.Lj6201:
+	jal	r0,.Lj6184
+.Lj6196:
 	ldhu	r3,r30,-108
 	sth	r30,r3,-116
 	ldhu	r3,r30,-108
 	ldhu	r4,r30,-108
 	addi	r5,r0,1
 	sleu	r4,r4,r5
-	bne	r4,r0,.Lj6203
-	jal	r0,.Lj6204
-.Lj6203:
+	bne	r4,r0,.Lj6198
+	jal	r0,.Lj6199
+.Lj6198:
 	la	r4,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r3,r4,0
-.Lj6204:
+.Lj6199:
 	sth	r30,r3,-108
 	ldhu	r3,r30,-108
 	sth	r30,r3,-112
@@ -54932,13 +54901,13 @@ fpc_ansistr_concat_multi:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-68
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj6205
-	jal	r0,.Lj6206
-.Lj6205:
+	bne	r3,r0,.Lj6200
+	jal	r0,.Lj6201
+.Lj6200:
 	ldw	r3,r30,-72
 	addi	r3,r3,-1
 	stw	r30,r3,-76
-.Lj6207:
+.Lj6202:
 	ldw	r3,r30,-76
 	addi	r3,r3,1
 	stw	r30,r3,-76
@@ -54950,11 +54919,11 @@ fpc_ansistr_concat_multi:
 	stw	r30,r3,-88
 	ldw	r3,r30,-88
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6210
-	jal	r0,.Lj6211
-.Lj6210:
-	jal	r0,.Lj6208
-.Lj6211:
+	bne	r3,r0,.Lj6205
+	jal	r0,.Lj6206
+.Lj6205:
+	jal	r0,.Lj6203
+.Lj6206:
 	ldw	r3,r30,-88
 	ldw	r3,r3,-4
 	ldw	r4,r30,-84
@@ -54966,60 +54935,60 @@ fpc_ansistr_concat_multi:
 	ldhu	r3,r30,-120
 	ldhu	r4,r30,-112
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj6212
-	jal	r0,.Lj6213
-.Lj6213:
+	bne	r3,r0,.Lj6207
+	jal	r0,.Lj6208
+.Lj6208:
 	ldhu	r3,r30,-120
 	ldhu	r4,r30,-116
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj6212
-	jal	r0,.Lj6214
-.Lj6212:
-	jal	r0,.Lj6208
-.Lj6214:
+	bne	r3,r0,.Lj6207
+	jal	r0,.Lj6209
+.Lj6207:
+	jal	r0,.Lj6203
+.Lj6209:
 	ldhu	r3,r30,-120
 	ldhu	r5,r30,-120
 	addi	r4,r0,1
 	sleu	r4,r5,r4
-	bne	r4,r0,.Lj6216
-	jal	r0,.Lj6217
-.Lj6216:
+	bne	r4,r0,.Lj6211
+	jal	r0,.Lj6212
+.Lj6211:
 	la	r4,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r3,r4,0
-.Lj6217:
+.Lj6212:
 	sth	r30,r3,-120
 	ldhu	r4,r30,-120
 	ldhu	r3,r30,-112
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj6218
-	jal	r0,.Lj6219
-.Lj6218:
-	jal	r0,.Lj6208
-.Lj6219:
+	bne	r3,r0,.Lj6213
+	jal	r0,.Lj6214
+.Lj6213:
+	jal	r0,.Lj6203
+.Lj6214:
 	ldw	r4,r30,-76
 	ldw	r3,r30,-72
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj6220
-	jal	r0,.Lj6221
-.Lj6220:
+	bne	r3,r0,.Lj6215
+	jal	r0,.Lj6216
+.Lj6215:
 	ldhu	r3,r30,-64
 	lui	r4,15
 	ori	r4,r4,4095
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj6222
-	jal	r0,.Lj6223
-.Lj6222:
+	bne	r3,r0,.Lj6217
+	jal	r0,.Lj6218
+.Lj6217:
 	la	r3,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r3,r3,0
 	sth	r30,r3,-108
-.Lj6223:
+.Lj6218:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	ldhu	r6,r30,-108
 	ldw	r5,r30,-68
 	call	SYSTEM_$$_ANSISTR_CONCAT_MULTI_COMPLEX$RAWBYTESTRING$array_of_RAWBYTESTRING$WORD
-	jal	r0,.Lj6189
-.Lj6221:
+	jal	r0,.Lj6184
+.Lj6216:
 	ldhu	r3,r30,-120
 	sth	r30,r3,-116
 	ldhu	r3,r30,-120
@@ -55028,20 +54997,20 @@ fpc_ansistr_concat_multi:
 	lui	r3,15
 	ori	r3,r3,4095
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj6224
-	jal	r0,.Lj6225
-.Lj6224:
+	bne	r3,r0,.Lj6219
+	jal	r0,.Lj6220
+.Lj6219:
 	ldhu	r3,r30,-112
 	sth	r30,r3,-108
-.Lj6225:
-.Lj6208:
+.Lj6220:
+.Lj6203:
 	ldw	r3,r30,-76
 	ldw	r4,r30,-68
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj6209
-	jal	r0,.Lj6207
-.Lj6209:
-.Lj6206:
+	bne	r3,r0,.Lj6204
+	jal	r0,.Lj6202
+.Lj6204:
+.Lj6201:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-72
 	slli	r4,r4,2
@@ -55050,9 +55019,9 @@ fpc_ansistr_concat_multi:
 	ldw	r4,r3,-4
 	ldw	r3,r30,-84
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj6226
-	jal	r0,.Lj6227
-.Lj6226:
+	bne	r3,r0,.Lj6221
+	jal	r0,.Lj6222
+.Lj6221:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-72
 	slli	r4,r4,2
@@ -55060,23 +55029,23 @@ fpc_ansistr_concat_multi:
 	ldw	r4,r3,0
 	ldw	r3,r30,-56
 	call	fpc_ansistr_assign
-	jal	r0,.Lj6228
-.Lj6227:
+	jal	r0,.Lj6223
+.Lj6222:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	stw	r30,r3,-96
 	ldw	r3,r30,-96
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj6229
-	jal	r0,.Lj6230
-.Lj6229:
+	bne	r3,r0,.Lj6224
+	jal	r0,.Lj6225
+.Lj6224:
 	ldw	r3,r30,-96
 	ldw	r3,r3,-8
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6231
-	jal	r0,.Lj6230
-.Lj6231:
+	bne	r3,r0,.Lj6226
+	jal	r0,.Lj6225
+.Lj6226:
 	ldw	r3,r30,-96
 	addi	r3,r3,-12
 	stw	r30,r3,-104
@@ -55093,15 +55062,15 @@ fpc_ansistr_concat_multi:
 	ldw	r3,r3,0
 	ldw	r4,r30,-96
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj6232
-	jal	r0,.Lj6233
-.Lj6232:
+	bne	r3,r0,.Lj6227
+	jal	r0,.Lj6228
+.Lj6227:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
-.Lj6233:
-	jal	r0,.Lj6234
-.Lj6230:
+.Lj6228:
+	jal	r0,.Lj6229
+.Lj6225:
 	stw	r30,r0,-96
 	ldw	r3,r30,-84
 	addi	r3,r3,13
@@ -55114,7 +55083,7 @@ fpc_ansistr_concat_multi:
 	ldw	r3,r30,-100
 	addi	r4,r0,1
 	stw	r3,r4,-8
-.Lj6234:
+.Lj6229:
 	ldw	r4,r30,-100
 	ldw	r3,r30,-84
 	add	r3,r3,r4
@@ -55124,13 +55093,13 @@ fpc_ansistr_concat_multi:
 	ldw	r11,r30,-72
 	ldw	r3,r30,-68
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj6235
-	jal	r0,.Lj6236
-.Lj6235:
+	bne	r3,r0,.Lj6230
+	jal	r0,.Lj6231
+.Lj6230:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	stw	r30,r3,-76
-.Lj6237:
+.Lj6232:
 	ldw	r3,r30,-76
 	addi	r3,r3,-1
 	stw	r30,r3,-76
@@ -55142,20 +55111,20 @@ fpc_ansistr_concat_multi:
 	stw	r30,r3,-88
 	ldw	r3,r30,-88
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6240
-	jal	r0,.Lj6241
-.Lj6240:
-	jal	r0,.Lj6238
-.Lj6241:
+	bne	r3,r0,.Lj6235
+	jal	r0,.Lj6236
+.Lj6235:
+	jal	r0,.Lj6233
+.Lj6236:
 	ldw	r3,r30,-88
 	ldw	r4,r30,-96
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj6242
-	jal	r0,.Lj6243
-.Lj6242:
+	bne	r3,r0,.Lj6237
+	jal	r0,.Lj6238
+.Lj6237:
 	ldw	r3,r30,-100
 	stw	r30,r3,-88
-.Lj6243:
+.Lj6238:
 	ldw	r3,r30,-88
 	ldw	r3,r3,-4
 	stw	r30,r3,-80
@@ -55167,13 +55136,13 @@ fpc_ansistr_concat_multi:
 	ldw	r3,r30,-88
 	ldw	r5,r30,-80
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj6238:
+.Lj6233:
 	ldw	r3,r30,-76
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj6239
-	jal	r0,.Lj6237
-.Lj6239:
-.Lj6236:
+	bne	r3,r0,.Lj6234
+	jal	r0,.Lj6232
+.Lj6234:
+.Lj6231:
 	ldw	r4,r30,-100
 	ldhu	r3,r30,-112
 	sth	r4,r3,-12
@@ -55182,28 +55151,28 @@ fpc_ansistr_concat_multi:
 	stw	r3,r4,-4
 	ldw	r3,r30,-96
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6244
-	jal	r0,.Lj6245
-.Lj6244:
+	bne	r3,r0,.Lj6239
+	jal	r0,.Lj6240
+.Lj6239:
 	ldw	r3,r30,-56
 	call	FPC_ANSISTR_DECR_REF
-.Lj6245:
+.Lj6240:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-100
 	stw	r3,r4,0
-.Lj6228:
+.Lj6223:
 	ldhu	r3,r30,-108
 	ldhu	r4,r30,-112
 	sne	r3,r3,r4
-	bne	r3,r0,.Lj6246
-	jal	r0,.Lj6247
-.Lj6246:
+	bne	r3,r0,.Lj6241
+	jal	r0,.Lj6242
+.Lj6241:
 	ldw	r3,r30,-56
 	addi	r5,r0,1
 	ldhu	r4,r30,-108
 	call	SYSTEM_$$_SETCODEPAGE$RAWBYTESTRING$WORD$BOOLEAN
-.Lj6247:
-.Lj6189:
+.Lj6242:
+.Lj6184:
 	ldw	r11,r29,120
 	ldw	r30,r29,124
 	ldw	r31,r29,128
@@ -55236,31 +55205,31 @@ FPC_ANSISTR_TO_ANSISTR:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-176
-	bne	r1,r0,.Lj6251
+	bne	r1,r0,.Lj6246
 	ldw	r3,r30,-64
 	addi	r4,r0,0
 	call	fpc_ansistr_assign
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj6253
+	beq	r3,r0,.Lj6248
 	ldw	r3,r3,-4
-.Lj6253:
+.Lj6248:
 	stw	r30,r3,-68
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6254
-	jal	r0,.Lj6255
-.Lj6254:
+	bne	r3,r0,.Lj6249
+	jal	r0,.Lj6250
+.Lj6249:
 	ldhu	r3,r30,-60
 	ldhu	r5,r30,-60
 	addi	r4,r0,1
 	sleu	r4,r5,r4
-	bne	r4,r0,.Lj6257
-	jal	r0,.Lj6258
-.Lj6257:
+	bne	r4,r0,.Lj6252
+	jal	r0,.Lj6253
+.Lj6252:
 	la	r4,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r3,r4,0
-.Lj6258:
+.Lj6253:
 	sth	r30,r3,-60
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_STRINGCODEPAGE$RAWBYTESTRING$$WORD
@@ -55269,26 +55238,26 @@ FPC_ANSISTR_TO_ANSISTR:
 	ldhu	r4,r30,-180
 	addi	r5,r0,1
 	sleu	r4,r4,r5
-	bne	r4,r0,.Lj6260
-	jal	r0,.Lj6261
-.Lj6260:
+	bne	r4,r0,.Lj6255
+	jal	r0,.Lj6256
+.Lj6255:
 	la	r4,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r3,r4,0
-.Lj6261:
+.Lj6256:
 	sth	r30,r3,-76
 	ldhu	r3,r30,-76
 	ldhu	r4,r30,-60
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj6262
-	jal	r0,.Lj6263
-.Lj6263:
+	bne	r3,r0,.Lj6257
+	jal	r0,.Lj6258
+.Lj6258:
 	ldhu	r4,r30,-76
 	lui	r3,15
 	ori	r3,r3,4095
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj6262
-	jal	r0,.Lj6264
-.Lj6262:
+	bne	r3,r0,.Lj6257
+	jal	r0,.Lj6259
+.Lj6257:
 	ldw	r3,r30,-64
 	addi	r5,r0,0
 	ldw	r4,r30,-68
@@ -55303,15 +55272,15 @@ FPC_ANSISTR_TO_ANSISTR:
 	ldw	r4,r3,0
 	ldhu	r3,r30,-60
 	sth	r4,r3,-12
-	jal	r0,.Lj6265
-.Lj6264:
+	jal	r0,.Lj6260
+.Lj6259:
 	addi	r3,r30,-72
 	ldw	r4,r30,-56
 	call	fpc_ansistr_to_unicodestr
 	ldw	r3,r30,-72
-	beq	r3,r0,.Lj6266
+	beq	r3,r0,.Lj6261
 	ldw	r3,r3,-4
-.Lj6266:
+.Lj6261:
 	stw	r30,r3,-68
 	ldw	r4,r30,-64
 	ldw	r3,r30,-72
@@ -55320,18 +55289,18 @@ FPC_ANSISTR_TO_ANSISTR:
 	la	r7,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	ldw	r7,r7,76
 	jalr	r31,r7
-.Lj6265:
-.Lj6255:
-.Lj6251:
+.Lj6260:
+.Lj6250:
+.Lj6246:
 	call	fpc_popaddrstack
 	addi	r3,r30,-72
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-176
-	beq	r3,r0,.Lj6250
+	beq	r3,r0,.Lj6245
 	call	fpc_reraise
 	stw	r30,r0,-176
-	jal	r0,.Lj6251
-.Lj6250:
+	jal	r0,.Lj6246
+.Lj6245:
 	ldw	r30,r29,180
 	ldw	r31,r29,184
 	addi	r29,r29,188
@@ -55354,31 +55323,31 @@ FPC_ANSISTR_TO_SHORTSTR:
 	stw	r30,r4,-64
 	stw	r30,r5,-60
 	ldw	r3,r30,-60
-	beq	r3,r0,.Lj6269
+	beq	r3,r0,.Lj6264
 	ldw	r3,r3,-4
-.Lj6269:
+.Lj6264:
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6270
-	jal	r0,.Lj6271
-.Lj6270:
+	bne	r3,r0,.Lj6265
+	jal	r0,.Lj6266
+.Lj6265:
 	ldw	r3,r30,-56
 	stb	r3,r0,0
-	jal	r0,.Lj6272
-.Lj6271:
+	jal	r0,.Lj6267
+.Lj6266:
 	ldw	r3,r30,-60
-	beq	r3,r0,.Lj6273
+	beq	r3,r0,.Lj6268
 	ldw	r3,r3,-4
-.Lj6273:
+.Lj6268:
 	stw	r30,r3,-68
 	ldw	r3,r30,-68
 	ldw	r4,r30,-64
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj6274
-	jal	r0,.Lj6275
-.Lj6274:
+	bne	r3,r0,.Lj6269
+	jal	r0,.Lj6270
+.Lj6269:
 	ldw	r3,r30,-64
 	stw	r30,r3,-68
-.Lj6275:
+.Lj6270:
 	ldw	r3,r30,-56
 	ldbu	r4,r30,-68
 	stb	r3,r4,0
@@ -55387,7 +55356,7 @@ FPC_ANSISTR_TO_SHORTSTR:
 	ldw	r3,r30,-60
 	ldw	r5,r30,-68
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj6272:
+.Lj6267:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -55419,9 +55388,9 @@ fpc_shortstr_to_ansistr:
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6278
-	jal	r0,.Lj6279
-.Lj6278:
+	bne	r3,r0,.Lj6273
+	jal	r0,.Lj6274
+.Lj6273:
 	ldw	r3,r30,-64
 	ldw	r4,r3,0
 	ldw	r3,r30,-56
@@ -55432,16 +55401,16 @@ fpc_shortstr_to_ansistr:
 	ldhu	r5,r30,-60
 	addi	r3,r0,1
 	sleu	r3,r5,r3
-	bne	r3,r0,.Lj6281
-	jal	r0,.Lj6282
-.Lj6281:
+	bne	r3,r0,.Lj6276
+	jal	r0,.Lj6277
+.Lj6276:
 	la	r3,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r4,r3,0
-.Lj6282:
+.Lj6277:
 	ldw	r3,r30,-64
 	addi	r5,r0,0
 	call	SYSTEM_$$_SETCODEPAGE$RAWBYTESTRING$WORD$BOOLEAN
-.Lj6279:
+.Lj6274:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -55469,22 +55438,22 @@ fpc_char_to_ansistr:
 	call	fpc_ansistr_setlength
 	ldw	r3,r30,-64
 	ldw	r4,r3,0
-	bne	r4,r0,.Lj6285
+	bne	r4,r0,.Lj6280
 	la	r3,FPC_EMPTYCHAR
 	addi	r4,r3,0
-.Lj6285:
+.Lj6280:
 	ldbu	r3,r30,-56
 	stb	r4,r3,0
 	ldhu	r4,r30,-60
 	ldhu	r5,r30,-60
 	addi	r3,r0,1
 	sleu	r3,r5,r3
-	bne	r3,r0,.Lj6287
-	jal	r0,.Lj6288
-.Lj6287:
+	bne	r3,r0,.Lj6282
+	jal	r0,.Lj6283
+.Lj6282:
 	la	r3,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r4,r3,0
-.Lj6288:
+.Lj6283:
 	ldw	r3,r30,-64
 	addi	r5,r0,0
 	call	SYSTEM_$$_SETCODEPAGE$RAWBYTESTRING$WORD$BOOLEAN
@@ -55511,24 +55480,24 @@ fpc_pchar_to_ansistr:
 	sth	r30,r5,-60
 	ldw	r3,r30,-56
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6291
-	jal	r0,.Lj6292
-.Lj6292:
+	bne	r3,r0,.Lj6286
+	jal	r0,.Lj6287
+.Lj6287:
 	ldw	r3,r30,-56
 	ldbu	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6291
-	jal	r0,.Lj6293
-.Lj6291:
+	bne	r3,r0,.Lj6286
+	jal	r0,.Lj6288
+.Lj6286:
 	stw	r30,r0,-68
-	jal	r0,.Lj6294
-.Lj6293:
+	jal	r0,.Lj6289
+.Lj6288:
 	ldw	r3,r30,-56
 	addi	r5,r0,0
 	addi	r4,r0,-1
 	call	SYSTEM_$$_INDEXCHAR$formal$LONGINT$ANSICHAR$$LONGINT
 	stw	r30,r1,-68
-.Lj6294:
+.Lj6289:
 	ldw	r3,r30,-64
 	addi	r5,r0,0
 	ldw	r4,r30,-68
@@ -55536,9 +55505,9 @@ fpc_pchar_to_ansistr:
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6295
-	jal	r0,.Lj6296
-.Lj6295:
+	bne	r3,r0,.Lj6290
+	jal	r0,.Lj6291
+.Lj6290:
 	ldw	r3,r30,-64
 	ldw	r4,r3,0
 	ldw	r3,r30,-56
@@ -55548,16 +55517,16 @@ fpc_pchar_to_ansistr:
 	ldhu	r3,r30,-60
 	addi	r5,r0,1
 	sleu	r3,r3,r5
-	bne	r3,r0,.Lj6298
-	jal	r0,.Lj6299
-.Lj6298:
+	bne	r3,r0,.Lj6293
+	jal	r0,.Lj6294
+.Lj6293:
 	la	r3,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r4,r3,0
-.Lj6299:
+.Lj6294:
 	ldw	r3,r30,-64
 	addi	r5,r0,0
 	call	SYSTEM_$$_SETCODEPAGE$RAWBYTESTRING$WORD$BOOLEAN
-.Lj6296:
+.Lj6291:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -55582,18 +55551,18 @@ fpc_chararray_to_ansistr:
 	sth	r30,r6,-60
 	stb	r30,r7,-64
 	ldbu	r3,r30,-64
-	bne	r3,r0,.Lj6302
-	jal	r0,.Lj6303
-.Lj6302:
+	bne	r3,r0,.Lj6297
+	jal	r0,.Lj6298
+.Lj6297:
 	ldw	r3,r30,-56
 	ldbu	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6304
-	jal	r0,.Lj6305
-.Lj6304:
+	bne	r3,r0,.Lj6299
+	jal	r0,.Lj6300
+.Lj6299:
 	stw	r30,r0,-76
-	jal	r0,.Lj6306
-.Lj6305:
+	jal	r0,.Lj6301
+.Lj6300:
 	ldw	r3,r30,-68
 	addi	r4,r3,1
 	ldw	r3,r30,-56
@@ -55603,20 +55572,20 @@ fpc_chararray_to_ansistr:
 	ldw	r3,r30,-76
 	addi	r3,r3,1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6307
-	jal	r0,.Lj6308
-.Lj6307:
+	bne	r3,r0,.Lj6302
+	jal	r0,.Lj6303
+.Lj6302:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	stw	r30,r3,-76
-.Lj6308:
-.Lj6306:
-	jal	r0,.Lj6309
 .Lj6303:
+.Lj6301:
+	jal	r0,.Lj6304
+.Lj6298:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	stw	r30,r3,-76
-.Lj6309:
+.Lj6304:
 	ldw	r3,r30,-72
 	addi	r5,r0,0
 	ldw	r4,r30,-76
@@ -55624,9 +55593,9 @@ fpc_chararray_to_ansistr:
 	ldw	r4,r30,-76
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6310
-	jal	r0,.Lj6311
-.Lj6310:
+	bne	r3,r0,.Lj6305
+	jal	r0,.Lj6306
+.Lj6305:
 	ldw	r3,r30,-56
 	stw	r30,r3,-80
 	ldw	r3,r30,-72
@@ -55638,16 +55607,16 @@ fpc_chararray_to_ansistr:
 	ldhu	r5,r30,-60
 	addi	r3,r0,1
 	sleu	r3,r5,r3
-	bne	r3,r0,.Lj6313
-	jal	r0,.Lj6314
-.Lj6313:
+	bne	r3,r0,.Lj6308
+	jal	r0,.Lj6309
+.Lj6308:
 	la	r3,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r4,r3,0
-.Lj6314:
+.Lj6309:
 	ldw	r3,r30,-72
 	addi	r5,r0,0
 	call	SYSTEM_$$_SETCODEPAGE$RAWBYTESTRING$WORD$BOOLEAN
-.Lj6311:
+.Lj6306:
 	ldw	r30,r29,80
 	ldw	r31,r29,84
 	addi	r29,r29,88
@@ -55668,32 +55637,32 @@ fpc_ansistr_to_chararray:
 	stw	r30,r4,-64
 	stw	r30,r5,-60
 	ldw	r3,r30,-60
-	beq	r3,r0,.Lj6317
+	beq	r3,r0,.Lj6312
 	ldw	r3,r3,-4
-.Lj6317:
+.Lj6312:
 	stw	r30,r3,-68
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	ldw	r4,r30,-68
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6318
-	jal	r0,.Lj6319
-.Lj6318:
+	bne	r3,r0,.Lj6313
+	jal	r0,.Lj6314
+.Lj6313:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-68
-.Lj6319:
+.Lj6314:
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6320
-	jal	r0,.Lj6321
-.Lj6320:
+	bne	r3,r0,.Lj6315
+	jal	r0,.Lj6316
+.Lj6315:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	ldw	r5,r30,-68
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj6321:
+.Lj6316:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	ldw	r4,r30,-68
@@ -55732,7 +55701,7 @@ SYSTEM_$$_FPC_UTF8_COMPARE$RAWBYTESTRING$RAWBYTESTRING$$LONGINT:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-172
-	bne	r1,r0,.Lj6325
+	bne	r1,r0,.Lj6320
 	addi	r3,r30,-68
 	ldw	r4,r30,-56
 	call	fpc_ansistr_assign
@@ -55753,18 +55722,18 @@ SYSTEM_$$_FPC_UTF8_COMPARE$RAWBYTESTRING$RAWBYTESTRING$$LONGINT:
 	ldw	r3,r30,-68
 	call	fpc_ansistr_compare
 	stw	r30,r1,-64
-.Lj6325:
+.Lj6320:
 	call	fpc_popaddrstack
 	addi	r3,r30,-68
 	call	fpc_ansistr_decr_ref
 	addi	r3,r30,-72
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-172
-	beq	r3,r0,.Lj6324
+	beq	r3,r0,.Lj6319
 	call	fpc_reraise
 	stw	r30,r0,-172
-	jal	r0,.Lj6325
-.Lj6324:
+	jal	r0,.Lj6320
+.Lj6319:
 	ldw	r1,r30,-64
 	ldw	r30,r29,172
 	ldw	r31,r29,176
@@ -55791,27 +55760,27 @@ FPC_ANSISTR_COMPARE:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj6329
-	jal	r0,.Lj6330
-.Lj6330:
+	bne	r3,r0,.Lj6324
+	jal	r0,.Lj6325
+.Lj6325:
 	ldw	r3,r30,-56
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6329
-	jal	r0,.Lj6331
-.Lj6331:
+	bne	r3,r0,.Lj6324
+	jal	r0,.Lj6326
+.Lj6326:
 	ldw	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6329
-	jal	r0,.Lj6332
-.Lj6329:
+	bne	r3,r0,.Lj6324
+	jal	r0,.Lj6327
+.Lj6324:
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
 	ldw	r4,r30,-60
 	sne	r4,r4,r0
 	sub	r3,r3,r4
 	stw	r30,r3,-64
-	jal	r0,.Lj6327
-.Lj6332:
+	jal	r0,.Lj6322
+.Lj6327:
 	ldw	r3,r30,-56
 	ldhu	r3,r3,-12
 	sth	r30,r3,-80
@@ -55819,12 +55788,12 @@ FPC_ANSISTR_COMPARE:
 	ldhu	r5,r30,-80
 	addi	r4,r0,1
 	sleu	r4,r5,r4
-	bne	r4,r0,.Lj6334
-	jal	r0,.Lj6335
-.Lj6334:
+	bne	r4,r0,.Lj6329
+	jal	r0,.Lj6330
+.Lj6329:
 	la	r4,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r3,r4,0
-.Lj6335:
+.Lj6330:
 	ldw	r4,r30,-60
 	ldhu	r4,r4,-12
 	sth	r30,r4,-80
@@ -55832,22 +55801,22 @@ FPC_ANSISTR_COMPARE:
 	ldhu	r5,r30,-80
 	addi	r6,r0,1
 	sleu	r5,r5,r6
-	bne	r5,r0,.Lj6337
-	jal	r0,.Lj6338
-.Lj6337:
+	bne	r5,r0,.Lj6332
+	jal	r0,.Lj6333
+.Lj6332:
 	la	r5,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r4,r5,0
-.Lj6338:
+.Lj6333:
 	sne	r3,r3,r4
-	bne	r3,r0,.Lj6339
-	jal	r0,.Lj6340
-.Lj6339:
+	bne	r3,r0,.Lj6334
+	jal	r0,.Lj6335
+.Lj6334:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_FPC_UTF8_COMPARE$RAWBYTESTRING$RAWBYTESTRING$$LONGINT
 	stw	r30,r1,-64
-	jal	r0,.Lj6327
-.Lj6340:
+	jal	r0,.Lj6322
+.Lj6335:
 	ldw	r3,r30,-56
 	ldw	r3,r3,-4
 	stw	r30,r3,-68
@@ -55859,12 +55828,12 @@ FPC_ANSISTR_COMPARE:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-72
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6341
-	jal	r0,.Lj6342
-.Lj6341:
+	bne	r3,r0,.Lj6336
+	jal	r0,.Lj6337
+.Lj6336:
 	ldw	r3,r30,-72
 	stw	r30,r3,-76
-.Lj6342:
+.Lj6337:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	ldw	r5,r30,-76
@@ -55872,15 +55841,15 @@ FPC_ANSISTR_COMPARE:
 	stw	r30,r1,-64
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6343
-	jal	r0,.Lj6344
-.Lj6343:
+	bne	r3,r0,.Lj6338
+	jal	r0,.Lj6339
+.Lj6338:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-72
 	sub	r3,r3,r4
 	stw	r30,r3,-64
-.Lj6344:
-.Lj6327:
+.Lj6339:
+.Lj6322:
 	ldw	r1,r30,-64
 	ldw	r30,r29,80
 	ldw	r31,r29,84
@@ -55911,7 +55880,7 @@ SYSTEM_$$_FPC_UTF8_COMPARE_EQUAL$RAWBYTESTRING$RAWBYTESTRING$$LONGINT:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-180
-	bne	r1,r0,.Lj6348
+	bne	r1,r0,.Lj6343
 	addi	r3,r30,-68
 	ldw	r4,r30,-56
 	call	fpc_ansistr_assign
@@ -55929,14 +55898,14 @@ SYSTEM_$$_FPC_UTF8_COMPARE_EQUAL$RAWBYTESTRING$RAWBYTESTRING$$LONGINT:
 	ori	r4,r4,3561
 	call	SYSTEM_$$_SETCODEPAGE$RAWBYTESTRING$WORD$BOOLEAN
 	ldw	r3,r30,-68
-	beq	r3,r0,.Lj6350
+	beq	r3,r0,.Lj6345
 	ldw	r3,r3,-4
-.Lj6350:
+.Lj6345:
 	stw	r30,r3,-76
 	ldw	r3,r30,-72
-	beq	r3,r0,.Lj6351
+	beq	r3,r0,.Lj6346
 	ldw	r3,r3,-4
-.Lj6351:
+.Lj6346:
 	stw	r30,r3,-80
 	ldw	r3,r30,-76
 	ldw	r4,r30,-80
@@ -55944,34 +55913,34 @@ SYSTEM_$$_FPC_UTF8_COMPARE_EQUAL$RAWBYTESTRING$RAWBYTESTRING$$LONGINT:
 	stw	r30,r3,-64
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6352
-	jal	r0,.Lj6353
-.Lj6352:
+	bne	r3,r0,.Lj6347
+	jal	r0,.Lj6348
+.Lj6347:
 	ldw	r4,r30,-76
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6354
-	jal	r0,.Lj6355
-.Lj6354:
+	bne	r3,r0,.Lj6349
+	jal	r0,.Lj6350
+.Lj6349:
 	ldw	r4,r30,-72
 	ldw	r3,r30,-68
 	ldw	r5,r30,-76
 	call	SYSTEM_$$_COMPAREBYTE$formal$formal$LONGINT$$LONGINT
 	stw	r30,r1,-64
-.Lj6355:
-.Lj6353:
+.Lj6350:
 .Lj6348:
+.Lj6343:
 	call	fpc_popaddrstack
 	addi	r3,r30,-68
 	call	fpc_ansistr_decr_ref
 	addi	r3,r30,-72
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-180
-	beq	r3,r0,.Lj6347
+	beq	r3,r0,.Lj6342
 	call	fpc_reraise
 	stw	r30,r0,-180
-	jal	r0,.Lj6348
-.Lj6347:
+	jal	r0,.Lj6343
+.Lj6342:
 	ldw	r1,r30,-64
 	ldw	r30,r29,180
 	ldw	r31,r29,184
@@ -55998,25 +55967,25 @@ FPC_ANSISTR_COMPARE_EQUAL:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj6358
-	jal	r0,.Lj6359
-.Lj6359:
+	bne	r3,r0,.Lj6353
+	jal	r0,.Lj6354
+.Lj6354:
 	ldw	r3,r30,-56
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6358
-	jal	r0,.Lj6360
-.Lj6360:
+	bne	r3,r0,.Lj6353
+	jal	r0,.Lj6355
+.Lj6355:
 	ldw	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6358
-	jal	r0,.Lj6361
-.Lj6358:
+	bne	r3,r0,.Lj6353
+	jal	r0,.Lj6356
+.Lj6353:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	sne	r3,r3,r4
 	stw	r30,r3,-64
-	jal	r0,.Lj6356
-.Lj6361:
+	jal	r0,.Lj6351
+.Lj6356:
 	ldw	r3,r30,-56
 	ldhu	r3,r3,-12
 	sth	r30,r3,-72
@@ -56024,12 +55993,12 @@ FPC_ANSISTR_COMPARE_EQUAL:
 	ldhu	r5,r30,-72
 	addi	r4,r0,1
 	sleu	r4,r5,r4
-	bne	r4,r0,.Lj6363
-	jal	r0,.Lj6364
-.Lj6363:
+	bne	r4,r0,.Lj6358
+	jal	r0,.Lj6359
+.Lj6358:
 	la	r4,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r3,r4,0
-.Lj6364:
+.Lj6359:
 	ldw	r4,r30,-60
 	ldhu	r4,r4,-12
 	sth	r30,r4,-72
@@ -56037,22 +56006,22 @@ FPC_ANSISTR_COMPARE_EQUAL:
 	ldhu	r5,r30,-72
 	addi	r6,r0,1
 	sleu	r5,r5,r6
-	bne	r5,r0,.Lj6366
-	jal	r0,.Lj6367
-.Lj6366:
+	bne	r5,r0,.Lj6361
+	jal	r0,.Lj6362
+.Lj6361:
 	la	r5,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r4,r5,0
-.Lj6367:
+.Lj6362:
 	sne	r3,r3,r4
-	bne	r3,r0,.Lj6368
-	jal	r0,.Lj6369
-.Lj6368:
+	bne	r3,r0,.Lj6363
+	jal	r0,.Lj6364
+.Lj6363:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_FPC_UTF8_COMPARE_EQUAL$RAWBYTESTRING$RAWBYTESTRING$$LONGINT
 	stw	r30,r1,-64
-	jal	r0,.Lj6356
-.Lj6369:
+	jal	r0,.Lj6351
+.Lj6364:
 	ldw	r3,r30,-56
 	ldw	r3,r3,-4
 	stw	r30,r3,-68
@@ -56063,16 +56032,16 @@ FPC_ANSISTR_COMPARE_EQUAL:
 	stw	r30,r3,-64
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6370
-	jal	r0,.Lj6371
-.Lj6370:
+	bne	r3,r0,.Lj6365
+	jal	r0,.Lj6366
+.Lj6365:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	ldw	r5,r30,-68
 	call	SYSTEM_$$_COMPAREBYTE$formal$formal$LONGINT$$LONGINT
 	stw	r30,r1,-64
-.Lj6371:
-.Lj6356:
+.Lj6366:
+.Lj6351:
 	ldw	r1,r30,-64
 	ldw	r30,r29,72
 	ldw	r31,r29,76
@@ -56097,22 +56066,22 @@ FPC_ANSISTR_RANGECHECK:
 	stw	r30,r4,-60
 	ldw	r3,r30,-56
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6374
-	jal	r0,.Lj6375
-.Lj6375:
+	bne	r3,r0,.Lj6369
+	jal	r0,.Lj6370
+.Lj6370:
 	ldw	r3,r30,-56
 	ldw	r3,r3,-4
 	ldw	r4,r30,-60
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6374
-	jal	r0,.Lj6376
-.Lj6376:
+	bne	r3,r0,.Lj6369
+	jal	r0,.Lj6371
+.Lj6371:
 	ldw	r4,r30,-60
 	addi	r3,r0,1
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj6374
-	jal	r0,.Lj6377
-.Lj6374:
+	bne	r3,r0,.Lj6369
+	jal	r0,.Lj6372
+.Lj6369:
 	call	SYSTEM_$$_GET_FRAME$$POINTER
 	addi	r11,r1,0
 	call	SYSTEM_$$_GET_PC_ADDR$$POINTER
@@ -56120,7 +56089,7 @@ FPC_ANSISTR_RANGECHECK:
 	addi	r3,r0,201
 	addi	r5,r11,0
 	call	SYSTEM_$$_HANDLEERRORADDRFRAMEIND$LONGINT$POINTER$POINTER
-.Lj6377:
+.Lj6372:
 	ldw	r11,r29,60
 	ldw	r30,r29,64
 	ldw	r31,r29,68
@@ -56145,22 +56114,22 @@ FPC_ANSISTR_ZEROBASED_RANGECHECK:
 	stw	r30,r4,-60
 	ldw	r3,r30,-56
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6380
-	jal	r0,.Lj6381
-.Lj6381:
+	bne	r3,r0,.Lj6375
+	jal	r0,.Lj6376
+.Lj6376:
 	ldw	r3,r30,-56
 	ldw	r4,r3,-4
 	ldw	r3,r30,-60
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj6380
-	jal	r0,.Lj6382
-.Lj6382:
+	bne	r3,r0,.Lj6375
+	jal	r0,.Lj6377
+.Lj6377:
 	ldw	r4,r30,-60
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj6380
-	jal	r0,.Lj6383
-.Lj6380:
+	bne	r3,r0,.Lj6375
+	jal	r0,.Lj6378
+.Lj6375:
 	call	SYSTEM_$$_GET_FRAME$$POINTER
 	addi	r11,r1,0
 	call	SYSTEM_$$_GET_PC_ADDR$$POINTER
@@ -56168,7 +56137,7 @@ FPC_ANSISTR_ZEROBASED_RANGECHECK:
 	addi	r3,r0,201
 	addi	r5,r11,0
 	call	SYSTEM_$$_HANDLEERRORADDRFRAMEIND$LONGINT$POINTER$POINTER
-.Lj6383:
+.Lj6378:
 	ldw	r11,r29,60
 	ldw	r30,r29,64
 	ldw	r31,r29,68
@@ -56194,28 +56163,28 @@ FPC_ANSISTR_SETLENGTH:
 	ldw	r4,r30,-60
 	addi	r3,r0,0
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj6386
-	jal	r0,.Lj6387
-.Lj6386:
+	bne	r3,r0,.Lj6381
+	jal	r0,.Lj6382
+.Lj6381:
 	ldw	r3,r30,-56
 	call	FPC_ANSISTR_DECR_REF
-	jal	r0,.Lj6384
-.Lj6387:
+	jal	r0,.Lj6379
+.Lj6382:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	stw	r30,r3,-68
 	ldw	r3,r30,-68
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj6388
-	jal	r0,.Lj6389
-.Lj6388:
+	bne	r3,r0,.Lj6383
+	jal	r0,.Lj6384
+.Lj6383:
 	ldw	r3,r30,-68
 	ldw	r3,r3,-8
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6390
-	jal	r0,.Lj6389
-.Lj6390:
+	bne	r3,r0,.Lj6385
+	jal	r0,.Lj6384
+.Lj6385:
 	ldw	r3,r30,-68
 	addi	r3,r3,-12
 	call	SYSTEM_$$_MEMSIZE$POINTER$$LONGWORD
@@ -56226,17 +56195,17 @@ FPC_ANSISTR_SETLENGTH:
 	ldw	r3,r30,-84
 	ldw	r4,r30,-80
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj6391
-	jal	r0,.Lj6392
-.Lj6392:
+	bne	r3,r0,.Lj6386
+	jal	r0,.Lj6387
+.Lj6387:
 	ldw	r3,r30,-84
 	addi	r3,r3,32
 	ldw	r4,r30,-80
 	srli	r4,r4,1
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj6391
-	jal	r0,.Lj6393
-.Lj6391:
+	bne	r3,r0,.Lj6386
+	jal	r0,.Lj6388
+.Lj6386:
 	ldw	r3,r30,-68
 	addi	r3,r3,-12
 	stw	r30,r3,-76
@@ -56245,9 +56214,9 @@ FPC_ANSISTR_SETLENGTH:
 	call	SYSTEM_$$_REALLOCMEM$POINTER$LONGWORD$$POINTER
 	addi	r3,r1,12
 	stw	r30,r3,-68
-.Lj6393:
-	jal	r0,.Lj6394
-.Lj6389:
+.Lj6388:
+	jal	r0,.Lj6389
+.Lj6384:
 	ldw	r3,r30,-68
 	stw	r30,r3,-72
 	ldw	r3,r30,-60
@@ -56263,23 +56232,23 @@ FPC_ANSISTR_SETLENGTH:
 	stw	r4,r3,-8
 	ldw	r3,r30,-72
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6395
-	jal	r0,.Lj6396
-.Lj6395:
+	bne	r3,r0,.Lj6390
+	jal	r0,.Lj6391
+.Lj6390:
 	ldw	r3,r30,-68
 	ldhu	r4,r30,-64
 	ldhu	r5,r30,-64
 	addi	r6,r0,1
 	sleu	r5,r5,r6
-	bne	r5,r0,.Lj6398
-	jal	r0,.Lj6399
-.Lj6398:
+	bne	r5,r0,.Lj6393
+	jal	r0,.Lj6394
+.Lj6393:
 	la	r5,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r4,r5,0
-.Lj6399:
+.Lj6394:
 	sth	r3,r4,-12
-	jal	r0,.Lj6400
-.Lj6396:
+	jal	r0,.Lj6395
+.Lj6391:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-72
 	ldhu	r4,r4,-12
@@ -56290,20 +56259,20 @@ FPC_ANSISTR_SETLENGTH:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-80
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj6401
-	jal	r0,.Lj6402
-.Lj6401:
+	bne	r3,r0,.Lj6396
+	jal	r0,.Lj6397
+.Lj6396:
 	ldw	r3,r30,-60
 	stw	r30,r3,-80
-.Lj6402:
+.Lj6397:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-72
 	ldw	r5,r30,-80
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
 	ldw	r3,r30,-56
 	call	FPC_ANSISTR_DECR_REF
-.Lj6400:
-.Lj6394:
+.Lj6395:
+.Lj6389:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-60
 	add	r3,r4,r3
@@ -56314,7 +56283,7 @@ FPC_ANSISTR_SETLENGTH:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-68
 	stw	r4,r3,0
-.Lj6384:
+.Lj6379:
 	ldw	r30,r29,84
 	ldw	r31,r29,88
 	addi	r29,r29,92
@@ -56405,20 +56374,20 @@ FPC_ANSISTR_UNIQUE:
 	stw	r30,r3,-60
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj6409
-	jal	r0,.Lj6410
-.Lj6409:
+	bne	r3,r0,.Lj6404
+	jal	r0,.Lj6405
+.Lj6404:
 	ldw	r3,r30,-60
 	ldw	r3,r3,-8
 	addi	r3,r3,-1
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj6411
-	jal	r0,.Lj6410
-.Lj6411:
+	bne	r3,r0,.Lj6406
+	jal	r0,.Lj6405
+.Lj6406:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_FPC_TRUELY_ANSISTR_UNIQUE$POINTER$$POINTER
 	stw	r30,r1,-60
-.Lj6410:
+.Lj6405:
 	ldw	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -56445,51 +56414,51 @@ fpc_ansistr_copy:
 	ldw	r4,r30,-60
 	addi	r3,r0,1
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj6414
-	jal	r0,.Lj6415
-.Lj6414:
+	bne	r3,r0,.Lj6409
+	jal	r0,.Lj6410
+.Lj6409:
 	addi	r3,r0,1
 	stw	r30,r3,-60
-.Lj6415:
+.Lj6410:
 	ldw	r3,r30,-60
 	addi	r3,r3,-1
 	stw	r30,r3,-60
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj6416
+	beq	r3,r0,.Lj6411
 	ldw	r3,r3,-4
-.Lj6416:
+.Lj6411:
 	ldw	r4,r30,-60
 	sub	r3,r3,r4
 	stw	r30,r3,-72
 	ldw	r3,r30,-64
 	ldw	r4,r30,-72
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj6417
-	jal	r0,.Lj6418
-.Lj6417:
+	bne	r3,r0,.Lj6412
+	jal	r0,.Lj6413
+.Lj6412:
 	ldw	r3,r30,-72
 	stw	r30,r3,-64
-.Lj6418:
+.Lj6413:
 	ldw	r4,r30,-64
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6419
-	jal	r0,.Lj6420
-.Lj6419:
+	bne	r3,r0,.Lj6414
+	jal	r0,.Lj6415
+.Lj6414:
 	ldw	r3,r30,-68
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj6421
-	jal	r0,.Lj6420
-.Lj6421:
+	bne	r3,r0,.Lj6416
+	jal	r0,.Lj6415
+.Lj6416:
 	ldw	r3,r30,-68
 	ldw	r3,r3,0
 	ldw	r3,r3,-8
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6422
-	jal	r0,.Lj6420
-.Lj6422:
+	bne	r3,r0,.Lj6417
+	jal	r0,.Lj6415
+.Lj6417:
 	ldw	r3,r30,-68
 	ldw	r3,r3,0
 	addi	r3,r3,-12
@@ -56500,24 +56469,24 @@ fpc_ansistr_copy:
 	call	SYSTEM_$$_REALLOCMEM$POINTER$LONGWORD$$POINTER
 	addi	r3,r1,12
 	stw	r30,r3,-76
-	jal	r0,.Lj6423
-.Lj6420:
+	jal	r0,.Lj6418
+.Lj6415:
 	ldw	r3,r30,-68
 	call	FPC_ANSISTR_DECR_REF
 	ldw	r4,r30,-64
 	addi	r3,r0,0
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj6424
-	jal	r0,.Lj6425
-.Lj6424:
-	jal	r0,.Lj6412
-.Lj6425:
+	bne	r3,r0,.Lj6419
+	jal	r0,.Lj6420
+.Lj6419:
+	jal	r0,.Lj6407
+.Lj6420:
 	ldw	r3,r30,-64
 	addi	r3,r3,13
 	call	SYSTEM_$$_GETMEM$LONGWORD$$POINTER
 	addi	r3,r1,12
 	stw	r30,r3,-76
-.Lj6423:
+.Lj6418:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-76
 	stw	r3,r4,0
@@ -56544,7 +56513,7 @@ fpc_ansistr_copy:
 	ldw	r4,r30,-64
 	add	r3,r3,r4
 	stb	r3,r0,0
-.Lj6412:
+.Lj6407:
 	ldw	r30,r29,80
 	ldw	r31,r29,84
 	addi	r29,r29,88
@@ -56565,9 +56534,9 @@ SYSTEM_$$_POS$SHORTSTRING$RAWBYTESTRING$LONGINT$$LONGINT:
 	stw	r30,r4,-60
 	stw	r30,r5,-64
 	ldw	r3,r30,-60
-	beq	r3,r0,.Lj6428
+	beq	r3,r0,.Lj6423
 	ldw	r3,r3,-4
-.Lj6428:
+.Lj6423:
 	stw	r30,r3,-72
 	stw	r30,r0,-68
 	ldw	r3,r30,-64
@@ -56576,9 +56545,9 @@ SYSTEM_$$_POS$SHORTSTRING$RAWBYTESTRING$LONGINT$$LONGINT:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-72
 	sltu	r3,r4,r3
-	bne	r3,r0,.Lj6429
-	jal	r0,.Lj6430
-.Lj6429:
+	bne	r3,r0,.Lj6424
+	jal	r0,.Lj6425
+.Lj6424:
 	ldw	r3,r30,-56
 	ldbu	r4,r3,0
 	ldw	r3,r30,-56
@@ -56592,18 +56561,18 @@ SYSTEM_$$_POS$SHORTSTRING$RAWBYTESTRING$LONGINT$$LONGINT:
 	call	SYSTEM_$$_MEMPOS$PBYTE$LONGWORD$PBYTE$LONGWORD$$LONGINT
 	addi	r3,r1,1
 	stw	r30,r3,-68
-.Lj6430:
+.Lj6425:
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6431
-	jal	r0,.Lj6432
-.Lj6431:
+	bne	r3,r0,.Lj6426
+	jal	r0,.Lj6427
+.Lj6426:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-68
 	add	r3,r3,r4
 	stw	r30,r3,-68
-.Lj6432:
+.Lj6427:
 	ldw	r1,r30,-68
 	ldw	r30,r29,72
 	ldw	r31,r29,76
@@ -56625,9 +56594,9 @@ SYSTEM_$$_POS$RAWBYTESTRING$RAWBYTESTRING$LONGINT$$LONGINT:
 	stw	r30,r4,-60
 	stw	r30,r5,-64
 	ldw	r3,r30,-60
-	beq	r3,r0,.Lj6435
+	beq	r3,r0,.Lj6430
 	ldw	r3,r3,-4
-.Lj6435:
+.Lj6430:
 	stw	r30,r3,-72
 	stw	r30,r0,-68
 	ldw	r3,r30,-64
@@ -56636,9 +56605,9 @@ SYSTEM_$$_POS$RAWBYTESTRING$RAWBYTESTRING$LONGINT$$LONGINT:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-72
 	sltu	r3,r3,r4
-	bne	r3,r0,.Lj6436
-	jal	r0,.Lj6437
-.Lj6436:
+	bne	r3,r0,.Lj6431
+	jal	r0,.Lj6432
+.Lj6431:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-64
 	sub	r6,r3,r4
@@ -56646,25 +56615,25 @@ SYSTEM_$$_POS$RAWBYTESTRING$RAWBYTESTRING$LONGINT$$LONGINT:
 	ldw	r3,r30,-64
 	add	r5,r3,r4
 	ldw	r4,r30,-56
-	beq	r4,r0,.Lj6438
+	beq	r4,r0,.Lj6433
 	ldw	r4,r4,-4
-.Lj6438:
+.Lj6433:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_MEMPOS$PBYTE$LONGWORD$PBYTE$LONGWORD$$LONGINT
 	addi	r3,r1,1
 	stw	r30,r3,-68
-.Lj6437:
+.Lj6432:
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6439
-	jal	r0,.Lj6440
-.Lj6439:
+	bne	r3,r0,.Lj6434
+	jal	r0,.Lj6435
+.Lj6434:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-68
 	add	r4,r4,r3
 	stw	r30,r4,-68
-.Lj6440:
+.Lj6435:
 	ldw	r1,r30,-68
 	ldw	r30,r29,72
 	ldw	r31,r29,76
@@ -56689,22 +56658,22 @@ SYSTEM_$$_POS$ANSICHAR$RAWBYTESTRING$LONGINT$$LONGINT:
 	stw	r30,r5,-64
 	stw	r30,r0,-68
 	ldw	r3,r30,-60
-	beq	r3,r0,.Lj6443
+	beq	r3,r0,.Lj6438
 	ldw	r3,r3,-4
-.Lj6443:
+.Lj6438:
 	stw	r30,r3,-72
 	ldw	r4,r30,-64
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6444
-	jal	r0,.Lj6445
-.Lj6444:
+	bne	r3,r0,.Lj6439
+	jal	r0,.Lj6440
+.Lj6439:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-72
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj6446
-	jal	r0,.Lj6445
-.Lj6446:
+	bne	r3,r0,.Lj6441
+	jal	r0,.Lj6440
+.Lj6441:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-64
 	sub	r3,r3,r4
@@ -56719,15 +56688,15 @@ SYSTEM_$$_POS$ANSICHAR$RAWBYTESTRING$LONGINT$$LONGINT:
 	ldw	r4,r30,-76
 	addi	r3,r0,0
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj6447
-	jal	r0,.Lj6448
-.Lj6447:
+	bne	r3,r0,.Lj6442
+	jal	r0,.Lj6443
+.Lj6442:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-76
 	add	r3,r4,r3
 	stw	r30,r3,-68
-.Lj6448:
-.Lj6445:
+.Lj6443:
+.Lj6440:
 	ldw	r1,r30,-68
 	ldw	r30,r29,76
 	ldw	r31,r29,80
@@ -56755,19 +56724,19 @@ FPC_VAL_REAL_ANSISTR:
 	ldw	r4,r3,4
 	stw	r30,r4,-64
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj6451
+	beq	r3,r0,.Lj6446
 	ldw	r3,r3,-4
-.Lj6451:
+.Lj6446:
 	addi	r4,r0,255
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj6452
-	jal	r0,.Lj6453
-.Lj6452:
+	bne	r3,r0,.Lj6447
+	jal	r0,.Lj6448
+.Lj6447:
 	ldw	r3,r30,-60
 	addi	r4,r0,256
 	stw	r3,r4,0
-	jal	r0,.Lj6454
-.Lj6453:
+	jal	r0,.Lj6449
+.Lj6448:
 	addi	r3,r30,-324
 	ldw	r5,r30,-56
 	addi	r4,r0,255
@@ -56781,7 +56750,7 @@ FPC_VAL_REAL_ANSISTR:
 	stw	r30,r3,-68
 	ldw	r3,r30,-328
 	stw	r30,r3,-64
-.Lj6454:
+.Lj6449:
 	ldw	r1,r30,-68
 	ldw	r2,r30,-64
 	ldw	r30,r29,332
@@ -56809,19 +56778,19 @@ FPC_VAL_SINGLE_ANSISTR:
 	ldw	r3,r3,0
 	stw	r30,r3,-64
 	ldw	r4,r30,-56
-	beq	r4,r0,.Lj6457
+	beq	r4,r0,.Lj6452
 	ldw	r4,r4,-4
-.Lj6457:
+.Lj6452:
 	addi	r3,r0,255
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6458
-	jal	r0,.Lj6459
-.Lj6458:
+	bne	r3,r0,.Lj6453
+	jal	r0,.Lj6454
+.Lj6453:
 	ldw	r3,r30,-60
 	addi	r4,r0,256
 	stw	r3,r4,0
-	jal	r0,.Lj6460
-.Lj6459:
+	jal	r0,.Lj6455
+.Lj6454:
 	addi	r3,r30,-320
 	ldw	r5,r30,-56
 	addi	r4,r0,255
@@ -56832,7 +56801,7 @@ FPC_VAL_SINGLE_ANSISTR:
 	stw	r30,r1,-324
 	ldw	r20,r30,-324
 	stw	r30,r20,-64
-.Lj6460:
+.Lj6455:
 	ldw	r1,r30,-64
 	ldw	r20,r29,324
 	ldw	r30,r29,328
@@ -56861,19 +56830,19 @@ FPC_VAL_DOUBLE_ANSISTR:
 	ldw	r4,r3,4
 	stw	r30,r4,-64
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj6463
+	beq	r3,r0,.Lj6458
 	ldw	r3,r3,-4
-.Lj6463:
+.Lj6458:
 	addi	r4,r0,255
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj6464
-	jal	r0,.Lj6465
-.Lj6464:
+	bne	r3,r0,.Lj6459
+	jal	r0,.Lj6460
+.Lj6459:
 	ldw	r3,r30,-60
 	addi	r4,r0,256
 	stw	r3,r4,0
-	jal	r0,.Lj6466
-.Lj6465:
+	jal	r0,.Lj6461
+.Lj6460:
 	addi	r3,r30,-324
 	ldw	r5,r30,-56
 	addi	r4,r0,255
@@ -56887,7 +56856,7 @@ FPC_VAL_DOUBLE_ANSISTR:
 	stw	r30,r3,-68
 	ldw	r3,r30,-328
 	stw	r30,r3,-64
-.Lj6466:
+.Lj6461:
 	ldw	r1,r30,-68
 	ldw	r2,r30,-64
 	ldw	r30,r29,332
@@ -56911,21 +56880,21 @@ FPC_VAL_CURRENCY_ANSISTR:
 	stw	r30,r3,-56
 	stw	r30,r4,-60
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj6469
+	beq	r3,r0,.Lj6464
 	ldw	r3,r3,-4
-.Lj6469:
+.Lj6464:
 	addi	r4,r0,255
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj6470
-	jal	r0,.Lj6471
-.Lj6470:
+	bne	r3,r0,.Lj6465
+	jal	r0,.Lj6466
+.Lj6465:
 	stw	r30,r0,-68
 	stw	r30,r0,-64
 	ldw	r3,r30,-60
 	addi	r4,r0,256
 	stw	r3,r4,0
-	jal	r0,.Lj6472
-.Lj6471:
+	jal	r0,.Lj6467
+.Lj6466:
 	addi	r3,r30,-324
 	ldw	r5,r30,-56
 	addi	r4,r0,255
@@ -56935,7 +56904,7 @@ FPC_VAL_CURRENCY_ANSISTR:
 	call	fpc_val_currency_shortstr
 	stw	r30,r1,-68
 	stw	r30,r2,-64
-.Lj6472:
+.Lj6467:
 	ldw	r1,r30,-68
 	ldw	r2,r30,-64
 	ldw	r30,r29,324
@@ -56961,19 +56930,19 @@ FPC_VAL_UINT_ANSISTR:
 	stw	r30,r5,-64
 	stw	r30,r0,-68
 	ldw	r3,r30,-60
-	beq	r3,r0,.Lj6475
+	beq	r3,r0,.Lj6470
 	ldw	r3,r3,-4
-.Lj6475:
+.Lj6470:
 	addi	r4,r0,255
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj6476
-	jal	r0,.Lj6477
-.Lj6476:
+	bne	r3,r0,.Lj6471
+	jal	r0,.Lj6472
+.Lj6471:
 	ldw	r3,r30,-64
 	addi	r4,r0,256
 	stw	r3,r4,0
-	jal	r0,.Lj6478
-.Lj6477:
+	jal	r0,.Lj6473
+.Lj6472:
 	addi	r3,r30,-324
 	ldw	r5,r30,-60
 	addi	r4,r0,255
@@ -56983,7 +56952,7 @@ FPC_VAL_UINT_ANSISTR:
 	ldw	r3,r30,-56
 	call	FPC_VAL_UINT_SHORTSTR
 	stw	r30,r1,-68
-.Lj6478:
+.Lj6473:
 	ldw	r1,r30,-68
 	ldw	r30,r29,324
 	ldw	r31,r29,328
@@ -57008,19 +56977,19 @@ FPC_VAL_SINT_ANSISTR:
 	stw	r30,r5,-64
 	stw	r30,r0,-68
 	ldw	r3,r30,-60
-	beq	r3,r0,.Lj6481
+	beq	r3,r0,.Lj6476
 	ldw	r3,r3,-4
-.Lj6481:
+.Lj6476:
 	addi	r4,r0,255
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj6482
-	jal	r0,.Lj6483
-.Lj6482:
+	bne	r3,r0,.Lj6477
+	jal	r0,.Lj6478
+.Lj6477:
 	ldw	r3,r30,-64
 	addi	r4,r0,256
 	stw	r3,r4,0
-	jal	r0,.Lj6484
-.Lj6483:
+	jal	r0,.Lj6479
+.Lj6478:
 	addi	r3,r30,-324
 	ldw	r5,r30,-60
 	addi	r4,r0,255
@@ -57030,7 +56999,7 @@ FPC_VAL_SINT_ANSISTR:
 	ldw	r3,r30,-56
 	call	FPC_VAL_SINT_SHORTSTR
 	stw	r30,r1,-68
-.Lj6484:
+.Lj6479:
 	ldw	r1,r30,-68
 	ldw	r30,r29,324
 	ldw	r31,r29,328
@@ -57055,19 +57024,19 @@ FPC_VAL_QWORD_ANSISTR:
 	stw	r30,r0,-68
 	stw	r30,r0,-64
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj6487
+	beq	r3,r0,.Lj6482
 	ldw	r3,r3,-4
-.Lj6487:
+.Lj6482:
 	addi	r4,r0,255
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj6488
-	jal	r0,.Lj6489
-.Lj6488:
+	bne	r3,r0,.Lj6483
+	jal	r0,.Lj6484
+.Lj6483:
 	ldw	r3,r30,-60
 	addi	r4,r0,256
 	stw	r3,r4,0
-	jal	r0,.Lj6490
-.Lj6489:
+	jal	r0,.Lj6485
+.Lj6484:
 	addi	r3,r30,-324
 	ldw	r5,r30,-56
 	addi	r4,r0,255
@@ -57077,7 +57046,7 @@ FPC_VAL_QWORD_ANSISTR:
 	call	fpc_val_qword_shortstr
 	stw	r30,r1,-68
 	stw	r30,r2,-64
-.Lj6490:
+.Lj6485:
 	ldw	r1,r30,-68
 	ldw	r2,r30,-64
 	ldw	r30,r29,324
@@ -57103,19 +57072,19 @@ FPC_VAL_INT64_ANSISTR:
 	stw	r30,r0,-68
 	stw	r30,r0,-64
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj6493
+	beq	r3,r0,.Lj6488
 	ldw	r3,r3,-4
-.Lj6493:
+.Lj6488:
 	addi	r4,r0,255
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj6494
-	jal	r0,.Lj6495
-.Lj6494:
+	bne	r3,r0,.Lj6489
+	jal	r0,.Lj6490
+.Lj6489:
 	ldw	r3,r30,-60
 	addi	r4,r0,256
 	stw	r3,r4,0
-	jal	r0,.Lj6496
-.Lj6495:
+	jal	r0,.Lj6491
+.Lj6490:
 	addi	r3,r30,-324
 	ldw	r5,r30,-56
 	addi	r4,r0,255
@@ -57125,7 +57094,7 @@ FPC_VAL_INT64_ANSISTR:
 	call	fpc_val_int64_shortstr
 	stw	r30,r1,-68
 	stw	r30,r2,-64
-.Lj6496:
+.Lj6491:
 	ldw	r1,r30,-68
 	ldw	r2,r30,-64
 	ldw	r30,r29,324
@@ -57494,30 +57463,30 @@ fpc_ansistr_delete:
 	stw	r30,r5,-64
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
-	beq	r3,r0,.Lj6517
+	beq	r3,r0,.Lj6512
 	ldw	r3,r3,-4
-.Lj6517:
+.Lj6512:
 	stw	r30,r3,-68
 	ldw	r3,r30,-60
 	ldw	r4,r30,-68
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj6518
-	jal	r0,.Lj6519
-.Lj6519:
+	bne	r3,r0,.Lj6513
+	jal	r0,.Lj6514
+.Lj6514:
 	ldw	r4,r30,-60
 	addi	r3,r0,0
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj6518
-	jal	r0,.Lj6520
-.Lj6520:
+	bne	r3,r0,.Lj6513
+	jal	r0,.Lj6515
+.Lj6515:
 	ldw	r4,r30,-64
 	addi	r3,r0,0
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj6518
-	jal	r0,.Lj6521
-.Lj6518:
-	jal	r0,.Lj6515
-.Lj6521:
+	bne	r3,r0,.Lj6513
+	jal	r0,.Lj6516
+.Lj6513:
+	jal	r0,.Lj6510
+.Lj6516:
 	ldw	r3,r30,-56
 	call	FPC_ANSISTR_UNIQUE
 	ldw	r3,r30,-68
@@ -57525,23 +57494,23 @@ fpc_ansistr_delete:
 	sub	r3,r3,r4
 	ldw	r4,r30,-64
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6522
-	jal	r0,.Lj6523
-.Lj6522:
+	bne	r3,r0,.Lj6517
+	jal	r0,.Lj6518
+.Lj6517:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-60
 	sub	r3,r4,r3
 	addi	r3,r3,1
 	stw	r30,r3,-64
-.Lj6523:
+.Lj6518:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-60
 	sub	r4,r4,r3
 	ldw	r3,r30,-64
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj6524
-	jal	r0,.Lj6525
-.Lj6524:
+	bne	r3,r0,.Lj6519
+	jal	r0,.Lj6520
+.Lj6519:
 	ldw	r3,r30,-60
 	addi	r3,r3,-1
 	stw	r30,r3,-60
@@ -57553,24 +57522,24 @@ fpc_ansistr_delete:
 	addi	r7,r3,1
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
-	bne	r3,r0,.Lj6526
+	bne	r3,r0,.Lj6521
 	la	r4,FPC_EMPTYCHAR
 	addi	r3,r4,0
-.Lj6526:
+.Lj6521:
 	ldw	r5,r30,-56
 	ldw	r6,r30,-60
 	ldw	r4,r30,-64
 	add	r4,r4,r6
 	ldw	r6,r30,-60
 	call	SYSTEM_$$_FPC_PCHAR_ANSISTR_INTERN_CHARMOVE$PANSICHAR$LONGINT$RAWBYTESTRING$LONGINT$LONGINT
-.Lj6525:
+.Lj6520:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-64
 	sub	r4,r3,r4
 	ldw	r3,r30,-56
 	addi	r5,r0,0
 	call	fpc_ansistr_setlength
-.Lj6515:
+.Lj6510:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -57592,22 +57561,22 @@ fpc_ansistr_insert:
 	stw	r30,r5,-64
 	ldw	r3,r30,-56
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6529
-	jal	r0,.Lj6530
-.Lj6529:
-	jal	r0,.Lj6527
-.Lj6530:
+	bne	r3,r0,.Lj6524
+	jal	r0,.Lj6525
+.Lj6524:
+	jal	r0,.Lj6522
+.Lj6525:
 	ldw	r3,r30,-60
 	ldw	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6531
-	jal	r0,.Lj6532
-.Lj6531:
+	bne	r3,r0,.Lj6526
+	jal	r0,.Lj6527
+.Lj6526:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-56
 	call	fpc_ansistr_assign
-	jal	r0,.Lj6527
-.Lj6532:
+	jal	r0,.Lj6522
+.Lj6527:
 	ldw	r3,r30,-56
 	ldw	r3,r3,-4
 	stw	r30,r3,-72
@@ -57618,24 +57587,24 @@ fpc_ansistr_insert:
 	ldw	r3,r30,-64
 	addi	r4,r0,1
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj6533
-	jal	r0,.Lj6534
-.Lj6533:
+	bne	r3,r0,.Lj6528
+	jal	r0,.Lj6529
+.Lj6528:
 	addi	r3,r0,1
 	stw	r30,r3,-64
-.Lj6534:
+.Lj6529:
 	ldw	r3,r30,-64
 	addi	r3,r3,-1
 	stw	r30,r3,-64
 	ldw	r3,r30,-64
 	ldw	r4,r30,-68
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj6535
-	jal	r0,.Lj6536
-.Lj6535:
+	bne	r3,r0,.Lj6530
+	jal	r0,.Lj6531
+.Lj6530:
 	ldw	r3,r30,-68
 	stw	r30,r3,-64
-.Lj6536:
+.Lj6531:
 	ldw	r3,r30,-60
 	ldw	r4,r3,0
 	ldw	r3,r30,-56
@@ -57664,13 +57633,13 @@ fpc_ansistr_insert:
 	ldw	r3,r30,-56
 	stw	r30,r3,-80
 	ldbu	r3,r30,-76
-	bne	r3,r0,.Lj6537
-	jal	r0,.Lj6538
-.Lj6537:
+	bne	r3,r0,.Lj6532
+	jal	r0,.Lj6533
+.Lj6532:
 	ldw	r3,r30,-60
 	ldw	r3,r3,0
 	stw	r30,r3,-80
-.Lj6538:
+.Lj6533:
 	ldw	r3,r30,-60
 	ldw	r3,r3,0
 	ldw	r4,r30,-64
@@ -57678,7 +57647,7 @@ fpc_ansistr_insert:
 	ldw	r3,r30,-80
 	ldw	r5,r30,-72
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj6527:
+.Lj6522:
 	ldw	r30,r29,80
 	ldw	r31,r29,84
 	addi	r29,r29,88
@@ -57704,9 +57673,9 @@ SYSTEM_$$_STRINGOFCHAR$ANSICHAR$LONGINT$$ANSISTRING:
 	call	fpc_ansistr_setlength
 	ldw	r3,r30,-64
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj6541
+	beq	r4,r0,.Lj6536
 	ldw	r4,r4,-4
-.Lj6541:
+.Lj6536:
 	ldw	r3,r30,-64
 	ldw	r3,r3,0
 	ldbu	r5,r30,-56
@@ -57743,15 +57712,15 @@ fpc_setstring_ansistr_pansichar:
 	call	SYSTEM_$$_SETCODEPAGE$RAWBYTESTRING$WORD$BOOLEAN
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj6544
-	jal	r0,.Lj6545
-.Lj6544:
+	bne	r3,r0,.Lj6539
+	jal	r0,.Lj6540
+.Lj6539:
 	ldw	r3,r30,-56
 	ldw	r4,r3,0
 	ldw	r3,r30,-60
 	ldw	r5,r30,-64
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj6545:
+.Lj6540:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -57778,24 +57747,24 @@ fpc_setstring_ansistr_pwidechar:
 	ldhu	r5,r30,-68
 	addi	r4,r0,1
 	sleu	r4,r5,r4
-	bne	r4,r0,.Lj6549
-	jal	r0,.Lj6550
-.Lj6549:
+	bne	r4,r0,.Lj6544
+	jal	r0,.Lj6545
+.Lj6544:
 	la	r4,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r3,r4,0
-.Lj6550:
+.Lj6545:
 	sth	r30,r3,-68
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj6551
-	jal	r0,.Lj6552
-.Lj6551:
+	bne	r3,r0,.Lj6546
+	jal	r0,.Lj6547
+.Lj6546:
 	ldw	r4,r30,-64
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6553
-	jal	r0,.Lj6552
-.Lj6553:
+	bne	r3,r0,.Lj6548
+	jal	r0,.Lj6547
+.Lj6548:
 	ldw	r4,r30,-56
 	ldw	r6,r30,-64
 	ldhu	r5,r30,-68
@@ -57803,8 +57772,8 @@ fpc_setstring_ansistr_pwidechar:
 	la	r7,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	ldw	r7,r7,0
 	jalr	r31,r7
-	jal	r0,.Lj6554
-.Lj6552:
+	jal	r0,.Lj6549
+.Lj6547:
 	ldw	r3,r30,-56
 	addi	r5,r0,0
 	ldw	r4,r30,-64
@@ -57813,7 +57782,7 @@ fpc_setstring_ansistr_pwidechar:
 	addi	r5,r0,0
 	ldhu	r4,r30,-68
 	call	SYSTEM_$$_SETCODEPAGE$RAWBYTESTRING$WORD$BOOLEAN
-.Lj6554:
+.Lj6549:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -57836,23 +57805,23 @@ SYSTEM_$$_UPCASE$ANSISTRING$$ANSISTRING:
 	stw	r30,r3,-60
 	stw	r30,r4,-56
 	ldw	r4,r30,-56
-	beq	r4,r0,.Lj6557
+	beq	r4,r0,.Lj6552
 	ldw	r4,r4,-4
-.Lj6557:
+.Lj6552:
 	ldw	r3,r30,-60
 	addi	r5,r0,0
 	call	fpc_ansistr_setlength
 	ldw	r11,r30,-56
-	beq	r11,r0,.Lj6558
+	beq	r11,r0,.Lj6553
 	ldw	r11,r11,-4
-.Lj6558:
+.Lj6553:
 	addi	r3,r0,1
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj6559
-	jal	r0,.Lj6560
-.Lj6559:
+	bne	r3,r0,.Lj6554
+	jal	r0,.Lj6555
+.Lj6554:
 	stw	r30,r0,-64
-.Lj6561:
+.Lj6556:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-64
@@ -57869,10 +57838,10 @@ SYSTEM_$$_UPCASE$ANSISTRING$$ANSISTRING:
 	stb	r3,r1,-1
 	ldw	r3,r30,-64
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj6563
-	jal	r0,.Lj6561
-.Lj6563:
-.Lj6560:
+	bne	r3,r0,.Lj6558
+	jal	r0,.Lj6556
+.Lj6558:
+.Lj6555:
 	ldw	r13,r29,64
 	ldw	r12,r29,68
 	ldw	r11,r29,72
@@ -57898,23 +57867,23 @@ SYSTEM_$$_LOWERCASE$ANSISTRING$$ANSISTRING:
 	stw	r30,r3,-60
 	stw	r30,r4,-56
 	ldw	r4,r30,-56
-	beq	r4,r0,.Lj6566
+	beq	r4,r0,.Lj6561
 	ldw	r4,r4,-4
-.Lj6566:
+.Lj6561:
 	ldw	r3,r30,-60
 	addi	r5,r0,0
 	call	fpc_ansistr_setlength
 	ldw	r11,r30,-56
-	beq	r11,r0,.Lj6567
+	beq	r11,r0,.Lj6562
 	ldw	r11,r11,-4
-.Lj6567:
+.Lj6562:
 	addi	r3,r0,1
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj6568
-	jal	r0,.Lj6569
-.Lj6568:
+	bne	r3,r0,.Lj6563
+	jal	r0,.Lj6564
+.Lj6563:
 	stw	r30,r0,-64
-.Lj6570:
+.Lj6565:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-64
@@ -57931,10 +57900,10 @@ SYSTEM_$$_LOWERCASE$ANSISTRING$$ANSISTRING:
 	stb	r3,r1,-1
 	ldw	r3,r30,-64
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj6572
-	jal	r0,.Lj6570
-.Lj6572:
-.Lj6569:
+	bne	r3,r0,.Lj6567
+	jal	r0,.Lj6565
+.Lj6567:
+.Lj6564:
 	ldw	r13,r29,64
 	ldw	r12,r29,68
 	ldw	r11,r29,72
@@ -57957,18 +57926,18 @@ SYSTEM_$$_STRINGCODEPAGE$RAWBYTESTRING$$WORD:
 	stw	r30,r3,-56
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj6575
-	jal	r0,.Lj6576
-.Lj6575:
+	bne	r3,r0,.Lj6570
+	jal	r0,.Lj6571
+.Lj6570:
 	ldw	r3,r30,-56
 	ldhu	r3,r3,-12
 	sth	r30,r3,-60
-	jal	r0,.Lj6577
-.Lj6576:
+	jal	r0,.Lj6572
+.Lj6571:
 	la	r3,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r3,r3,0
 	sth	r30,r3,-60
-.Lj6577:
+.Lj6572:
 	ldhu	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -57991,17 +57960,17 @@ SYSTEM_$$_STRINGELEMENTSIZE$RAWBYTESTRING$$WORD:
 	stw	r30,r3,-56
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj6580
-	jal	r0,.Lj6581
-.Lj6580:
+	bne	r3,r0,.Lj6575
+	jal	r0,.Lj6576
+.Lj6575:
 	ldw	r3,r30,-56
 	ldhu	r3,r3,-10
 	sth	r30,r3,-60
-	jal	r0,.Lj6582
-.Lj6581:
+	jal	r0,.Lj6577
+.Lj6576:
 	addi	r3,r0,1
 	sth	r30,r3,-60
-.Lj6582:
+.Lj6577:
 	ldhu	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -58022,16 +57991,16 @@ SYSTEM_$$_STRINGREFCOUNT$RAWBYTESTRING$$LONGINT:
 	stw	r30,r3,-56
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj6585
-	jal	r0,.Lj6586
-.Lj6585:
+	bne	r3,r0,.Lj6580
+	jal	r0,.Lj6581
+.Lj6580:
 	ldw	r3,r30,-56
 	ldw	r3,r3,-8
 	stw	r30,r3,-60
-	jal	r0,.Lj6587
-.Lj6586:
+	jal	r0,.Lj6582
+.Lj6581:
 	stw	r30,r0,-60
-.Lj6587:
+.Lj6582:
 	ldw	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -58060,11 +58029,11 @@ SYSTEM_$$_INTERNALSETCODEPAGE$RAWBYTESTRING$WORD$BOOLEAN:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj6591
+	bne	r1,r0,.Lj6586
 	ldbu	r3,r30,-64
-	bne	r3,r0,.Lj6593
-	jal	r0,.Lj6594
-.Lj6593:
+	bne	r3,r0,.Lj6588
+	jal	r0,.Lj6589
+.Lj6588:
 	ldw	r3,r30,-56
 	ldw	r4,r3,0
 	addi	r3,r30,-168
@@ -58073,25 +58042,25 @@ SYSTEM_$$_INTERNALSETCODEPAGE$RAWBYTESTRING$WORD$BOOLEAN:
 	ldw	r4,r30,-168
 	ldw	r3,r30,-56
 	call	fpc_ansistr_assign
-	jal	r0,.Lj6595
-.Lj6594:
+	jal	r0,.Lj6590
+.Lj6589:
 	ldw	r3,r30,-56
 	call	FPC_ANSISTR_UNIQUE
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	ldhu	r4,r30,-60
 	sth	r3,r4,-12
-.Lj6595:
-.Lj6591:
+.Lj6590:
+.Lj6586:
 	call	fpc_popaddrstack
 	addi	r3,r30,-168
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj6590
+	beq	r3,r0,.Lj6585
 	call	fpc_reraise
 	stw	r30,r0,-164
-	jal	r0,.Lj6591
-.Lj6590:
+	jal	r0,.Lj6586
+.Lj6585:
 	ldw	r30,r29,168
 	ldw	r31,r29,172
 	addi	r29,r29,176
@@ -58115,15 +58084,15 @@ SYSTEM_$$_SETCODEPAGE$RAWBYTESTRING$WORD$BOOLEAN:
 	stb	r30,r5,-64
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
-	beq	r3,r0,.Lj6598
+	beq	r3,r0,.Lj6593
 	ldw	r3,r3,-4
-.Lj6598:
+.Lj6593:
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6599
-	jal	r0,.Lj6600
-.Lj6599:
-	jal	r0,.Lj6596
-.Lj6600:
+	bne	r3,r0,.Lj6594
+	jal	r0,.Lj6595
+.Lj6594:
+	jal	r0,.Lj6591
+.Lj6595:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	ldhu	r3,r3,-12
@@ -58131,74 +58100,74 @@ SYSTEM_$$_SETCODEPAGE$RAWBYTESTRING$WORD$BOOLEAN:
 	ldhu	r4,r30,-68
 	ldhu	r3,r30,-60
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj6601
-	jal	r0,.Lj6602
-.Lj6601:
-	jal	r0,.Lj6596
-.Lj6602:
+	bne	r3,r0,.Lj6596
+	jal	r0,.Lj6597
+.Lj6596:
+	jal	r0,.Lj6591
+.Lj6597:
 	ldhu	r3,r30,-68
 	ldhu	r5,r30,-68
 	addi	r4,r0,1
 	sleu	r4,r5,r4
-	bne	r4,r0,.Lj6604
-	jal	r0,.Lj6605
-.Lj6604:
+	bne	r4,r0,.Lj6599
+	jal	r0,.Lj6600
+.Lj6599:
 	la	r4,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r3,r4,0
-.Lj6605:
+.Lj6600:
 	sth	r30,r3,-76
 	ldhu	r3,r30,-60
 	ldhu	r4,r30,-60
 	addi	r5,r0,1
 	sleu	r4,r4,r5
-	bne	r4,r0,.Lj6607
-	jal	r0,.Lj6608
-.Lj6607:
+	bne	r4,r0,.Lj6602
+	jal	r0,.Lj6603
+.Lj6602:
 	la	r4,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r3,r4,0
-.Lj6608:
+.Lj6603:
 	sth	r30,r3,-72
 	ldbu	r3,r30,-64
-	bne	r3,r0,.Lj6609
-	jal	r0,.Lj6610
-.Lj6609:
+	bne	r3,r0,.Lj6604
+	jal	r0,.Lj6605
+.Lj6604:
 	ldhu	r4,r30,-76
 	ldhu	r3,r30,-72
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj6611
-	jal	r0,.Lj6610
-.Lj6611:
+	bne	r3,r0,.Lj6606
+	jal	r0,.Lj6605
+.Lj6606:
 	addi	r3,r0,1
 	stb	r30,r3,-64
-	jal	r0,.Lj6612
-.Lj6610:
+	jal	r0,.Lj6607
+.Lj6605:
 	stb	r30,r0,-64
-.Lj6612:
+.Lj6607:
 	ldbu	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6613
-	jal	r0,.Lj6614
-.Lj6613:
+	bne	r3,r0,.Lj6608
+	jal	r0,.Lj6609
+.Lj6608:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	ldw	r3,r3,-8
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6615
-	jal	r0,.Lj6614
-.Lj6615:
+	bne	r3,r0,.Lj6610
+	jal	r0,.Lj6609
+.Lj6610:
 	ldw	r3,r30,-56
 	ldw	r4,r3,0
 	ldhu	r3,r30,-60
 	sth	r4,r3,-12
-	jal	r0,.Lj6616
-.Lj6614:
+	jal	r0,.Lj6611
+.Lj6609:
 	ldw	r3,r30,-56
 	ldbu	r5,r30,-64
 	ldhu	r4,r30,-60
 	call	SYSTEM_$$_INTERNALSETCODEPAGE$RAWBYTESTRING$WORD$BOOLEAN
-.Lj6616:
-.Lj6596:
+.Lj6611:
+.Lj6591:
 	ldw	r30,r29,76
 	ldw	r31,r29,80
 	addi	r29,r29,84
@@ -58288,11 +58257,11 @@ SYSTEM_$$_DEFAULTUNICODE2ANSIMOVE$PUNICODECHAR$RAWBYTESTRING$WORD$LONGINT:
 	ldw	r3,r30,-60
 	ldw	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6625
-	jal	r0,.Lj6626
-.Lj6625:
-	jal	r0,.Lj6623
-.Lj6626:
+	bne	r3,r0,.Lj6620
+	jal	r0,.Lj6621
+.Lj6620:
+	jal	r0,.Lj6618
+.Lj6621:
 	ldw	r3,r30,-60
 	addi	r5,r0,0
 	ldhu	r4,r30,-64
@@ -58303,11 +58272,11 @@ SYSTEM_$$_DEFAULTUNICODE2ANSIMOVE$PUNICODECHAR$RAWBYTESTRING$WORD$LONGINT:
 	ldw	r3,r30,-68
 	addi	r4,r0,1
 	sle	r4,r4,r3
-	bne	r4,r0,.Lj6627
-	jal	r0,.Lj6628
-.Lj6627:
+	bne	r4,r0,.Lj6622
+	jal	r0,.Lj6623
+.Lj6622:
 	stw	r30,r0,-72
-.Lj6629:
+.Lj6624:
 	ldw	r4,r30,-72
 	addi	r4,r4,1
 	stw	r30,r4,-72
@@ -58315,19 +58284,19 @@ SYSTEM_$$_DEFAULTUNICODE2ANSIMOVE$PUNICODECHAR$RAWBYTESTRING$WORD$LONGINT:
 	ldhu	r4,r4,0
 	addi	r5,r0,256
 	sltu	r4,r4,r5
-	bne	r4,r0,.Lj6632
-	jal	r0,.Lj6633
-.Lj6632:
+	bne	r4,r0,.Lj6627
+	jal	r0,.Lj6628
+.Lj6627:
 	ldw	r5,r30,-56
 	ldw	r4,r30,-76
 	ldbu	r5,r5,0
 	stb	r4,r5,0
-	jal	r0,.Lj6634
-.Lj6633:
+	jal	r0,.Lj6629
+.Lj6628:
 	ldw	r5,r30,-76
 	addi	r4,r0,63
 	stb	r5,r4,0
-.Lj6634:
+.Lj6629:
 	ldw	r4,r30,-56
 	addi	r4,r4,2
 	stw	r30,r4,-56
@@ -58336,11 +58305,11 @@ SYSTEM_$$_DEFAULTUNICODE2ANSIMOVE$PUNICODECHAR$RAWBYTESTRING$WORD$LONGINT:
 	stw	r30,r4,-76
 	ldw	r4,r30,-72
 	sge	r4,r4,r3
-	bne	r4,r0,.Lj6631
-	jal	r0,.Lj6629
-.Lj6631:
-.Lj6628:
+	bne	r4,r0,.Lj6626
+	jal	r0,.Lj6624
+.Lj6626:
 .Lj6623:
+.Lj6618:
 	ldw	r30,r29,76
 	ldw	r31,r29,80
 	addi	r29,r29,84
@@ -58372,11 +58341,11 @@ SYSTEM_$$_DEFAULTANSI2UNICODEMOVE$PANSICHAR$WORD$UNICODESTRING$LONGINT:
 	ldw	r4,r30,-68
 	addi	r3,r0,1
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj6637
-	jal	r0,.Lj6638
-.Lj6637:
+	bne	r3,r0,.Lj6632
+	jal	r0,.Lj6633
+.Lj6632:
 	stw	r30,r0,-72
-.Lj6639:
+.Lj6634:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
@@ -58392,10 +58361,10 @@ SYSTEM_$$_DEFAULTANSI2UNICODEMOVE$PANSICHAR$WORD$UNICODESTRING$LONGINT:
 	stw	r30,r3,-76
 	ldw	r3,r30,-72
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj6641
-	jal	r0,.Lj6639
-.Lj6641:
-.Lj6638:
+	bne	r3,r0,.Lj6636
+	jal	r0,.Lj6634
+.Lj6636:
+.Lj6633:
 	ldw	r30,r29,76
 	ldw	r31,r29,80
 	addi	r29,r29,84
@@ -58442,15 +58411,15 @@ SYSTEM_$$_DEFAULTCODEPOINTLENGTH$PANSICHAR$LONGINT$$LONGINT:
 	ldw	r3,r30,-56
 	ldbu	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj6646
-	jal	r0,.Lj6647
-.Lj6646:
+	bne	r3,r0,.Lj6641
+	jal	r0,.Lj6642
+.Lj6641:
 	addi	r3,r0,1
 	stw	r30,r3,-64
-	jal	r0,.Lj6648
-.Lj6647:
+	jal	r0,.Lj6643
+.Lj6642:
 	stw	r30,r0,-64
-.Lj6648:
+.Lj6643:
 	ldw	r1,r30,-64
 	ldw	r30,r29,64
 	ldw	r31,r29,68
@@ -58474,18 +58443,18 @@ SYSTEM_$$_DEFAULTGETSTANDARDCODEPAGE$TSTANDARDCODEPAGEENUM$$WORD:
 	ldw	r3,r30,-56
 	addi	r3,r3,-3
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj6651
-	jal	r0,.Lj6652
-.Lj6651:
+	bne	r3,r0,.Lj6646
+	jal	r0,.Lj6647
+.Lj6646:
 	la	r3,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r3,r3,0
 	sth	r30,r3,-60
-	jal	r0,.Lj6653
-.Lj6652:
+	jal	r0,.Lj6648
+.Lj6647:
 	la	r3,U_$SYSTEM_$$_DEFAULTFILESYSTEMCODEPAGE
 	ldhu	r3,r3,0
 	sth	r30,r3,-60
-.Lj6653:
+.Lj6648:
 	ldhu	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -58509,13 +58478,13 @@ SYSTEM_$$_GETUNICODESTRINGMANAGER$TUNICODESTRINGMANAGER:
 	ldw	r4,r30,-56
 	la	r3,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	addi	r5,r0,25
-.Lj6656:
+.Lj6651:
 	ldw	r6,r3,0
 	stw	r4,r6,0
 	addi	r3,r3,4
 	addi	r4,r4,4
 	addi	r5,r5,-1
-	bgt	r5,r0,.Lj6656
+	bgt	r5,r0,.Lj6651
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -58537,23 +58506,23 @@ SYSTEM_$$_SETUNICODESTRINGMANAGER$TUNICODESTRINGMANAGER$TUNICODESTRINGMANAGER:
 	ldw	r4,r30,-60
 	la	r3,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	addi	r5,r0,25
-.Lj6659:
+.Lj6654:
 	ldw	r6,r3,0
 	stw	r4,r6,0
 	addi	r3,r3,4
 	addi	r4,r4,4
 	addi	r5,r5,-1
-	bgt	r5,r0,.Lj6659
+	bgt	r5,r0,.Lj6654
 	ldw	r3,r30,-56
 	la	r4,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	addi	r5,r0,25
-.Lj6660:
+.Lj6655:
 	ldw	r6,r3,0
 	stw	r4,r6,0
 	addi	r3,r3,4
 	addi	r4,r4,4
 	addi	r5,r5,-1
-	bgt	r5,r0,.Lj6660
+	bgt	r5,r0,.Lj6655
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -58574,13 +58543,13 @@ SYSTEM_$$_SETUNICODESTRINGMANAGER$TUNICODESTRINGMANAGER:
 	ldw	r3,r30,-56
 	la	r4,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	addi	r5,r0,25
-.Lj6663:
+.Lj6658:
 	ldw	r6,r3,0
 	stw	r4,r6,0
 	addi	r3,r3,4
 	addi	r4,r4,4
 	addi	r5,r5,-1
-	bgt	r5,r0,.Lj6663
+	bgt	r5,r0,.Lj6658
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -58601,13 +58570,13 @@ SYSTEM_$$_GETWIDESTRINGMANAGER$TUNICODESTRINGMANAGER:
 	ldw	r4,r30,-56
 	la	r3,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	addi	r5,r0,25
-.Lj6666:
+.Lj6661:
 	ldw	r6,r3,0
 	stw	r4,r6,0
 	addi	r3,r3,4
 	addi	r4,r4,4
 	addi	r5,r5,-1
-	bgt	r5,r0,.Lj6666
+	bgt	r5,r0,.Lj6661
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -58629,23 +58598,23 @@ SYSTEM_$$_SETWIDESTRINGMANAGER$TUNICODESTRINGMANAGER$TUNICODESTRINGMANAGER:
 	ldw	r4,r30,-60
 	la	r3,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	addi	r5,r0,25
-.Lj6669:
+.Lj6664:
 	ldw	r6,r3,0
 	stw	r4,r6,0
 	addi	r3,r3,4
 	addi	r4,r4,4
 	addi	r5,r5,-1
-	bgt	r5,r0,.Lj6669
+	bgt	r5,r0,.Lj6664
 	ldw	r3,r30,-56
 	la	r4,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	addi	r5,r0,25
-.Lj6670:
+.Lj6665:
 	ldw	r6,r3,0
 	stw	r4,r6,0
 	addi	r3,r3,4
 	addi	r4,r4,4
 	addi	r5,r5,-1
-	bgt	r5,r0,.Lj6670
+	bgt	r5,r0,.Lj6665
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -58666,13 +58635,13 @@ SYSTEM_$$_SETWIDESTRINGMANAGER$TUNICODESTRINGMANAGER:
 	ldw	r3,r30,-56
 	la	r4,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	addi	r5,r0,25
-.Lj6673:
+.Lj6668:
 	ldw	r6,r3,0
 	stw	r4,r6,0
 	addi	r3,r3,4
 	addi	r4,r4,4
 	addi	r5,r5,-1
-	bgt	r5,r0,.Lj6673
+	bgt	r5,r0,.Lj6668
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -58698,44 +58667,44 @@ FPC_UNICODESTR_DECR_REF:
 	stw	r30,r3,-60
 	ldw	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6676
-	jal	r0,.Lj6677
-.Lj6676:
-	jal	r0,.Lj6674
-.Lj6677:
+	bne	r3,r0,.Lj6671
+	jal	r0,.Lj6672
+.Lj6671:
+	jal	r0,.Lj6669
+.Lj6672:
 	ldw	r3,r30,-56
 	stw	r3,r0,0
 	ldw	r3,r30,-60
 	ldw	r3,r3,-8
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6678
-	jal	r0,.Lj6679
-.Lj6679:
+	bne	r3,r0,.Lj6673
+	jal	r0,.Lj6674
+.Lj6674:
 	ldw	r3,r30,-60
 	ldw	r4,r3,-8
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6681
-	jal	r0,.Lj6682
-.Lj6681:
+	bne	r3,r0,.Lj6676
+	jal	r0,.Lj6677
+.Lj6676:
 	ldw	r3,r30,-60
 	addi	r11,r3,-8
 	addi	r3,r11,0
 	call	SYSTEM_$$_INTERLOCKEDDECREMENT$LONGINT$$LONGINT
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj6683
-	jal	r0,.Lj6682
-.Lj6683:
-	jal	r0,.Lj6678
-.Lj6682:
-	jal	r0,.Lj6680
+	bne	r3,r0,.Lj6678
+	jal	r0,.Lj6677
 .Lj6678:
+	jal	r0,.Lj6673
+.Lj6677:
+	jal	r0,.Lj6675
+.Lj6673:
 	ldw	r3,r30,-60
 	addi	r3,r3,-12
 	call	SYSTEM_$$_FREEMEM$POINTER$$LONGWORD
-.Lj6680:
-.Lj6674:
+.Lj6675:
+.Lj6669:
 	ldw	r11,r29,60
 	ldw	r30,r29,64
 	ldw	r31,r29,68
@@ -58761,25 +58730,25 @@ FPC_UNICODESTR_INCR_REF:
 	stw	r30,r3,-56
 	ldw	r3,r30,-56
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6686
-	jal	r0,.Lj6687
-.Lj6686:
-	jal	r0,.Lj6684
-.Lj6687:
+	bne	r3,r0,.Lj6681
+	jal	r0,.Lj6682
+.Lj6681:
+	jal	r0,.Lj6679
+.Lj6682:
 	ldw	r3,r30,-56
 	ldw	r4,r3,-8
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj6688
-	jal	r0,.Lj6689
-.Lj6688:
+	bne	r3,r0,.Lj6683
 	jal	r0,.Lj6684
-.Lj6689:
+.Lj6683:
+	jal	r0,.Lj6679
+.Lj6684:
 	ldw	r3,r30,-56
 	addi	r11,r3,-8
 	addi	r3,r11,0
 	call	SYSTEM_$$_INTERLOCKEDINCREMENT$LONGINT$$LONGINT
-.Lj6684:
+.Lj6679:
 	ldw	r11,r29,56
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -58810,29 +58779,29 @@ FPC_UNICODESTR_TO_SHORTSTR:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-172
-	bne	r1,r0,.Lj6693
+	bne	r1,r0,.Lj6688
 	ldw	r3,r30,-56
 	stb	r3,r0,0
 	ldw	r3,r30,-60
-	beq	r3,r0,.Lj6695
+	beq	r3,r0,.Lj6690
 	ldw	r3,r3,-4
-.Lj6695:
+.Lj6690:
 	stw	r30,r3,-68
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6696
-	jal	r0,.Lj6697
-.Lj6696:
+	bne	r3,r0,.Lj6691
+	jal	r0,.Lj6692
+.Lj6691:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-64
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj6698
-	jal	r0,.Lj6699
-.Lj6698:
+	bne	r3,r0,.Lj6693
+	jal	r0,.Lj6694
+.Lj6693:
 	ldw	r3,r30,-64
 	stw	r30,r3,-68
-.Lj6699:
+.Lj6694:
 	la	r3,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r5,r3,0
 	addi	r4,r30,-72
@@ -58845,17 +58814,17 @@ FPC_UNICODESTR_TO_SHORTSTR:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-64
 	call	fpc_ansistr_to_shortstr
-.Lj6697:
-.Lj6693:
+.Lj6692:
+.Lj6688:
 	call	fpc_popaddrstack
 	addi	r3,r30,-72
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-172
-	beq	r3,r0,.Lj6692
+	beq	r3,r0,.Lj6687
 	call	fpc_reraise
 	stw	r30,r0,-172
-	jal	r0,.Lj6693
-.Lj6692:
+	jal	r0,.Lj6688
+.Lj6687:
 	ldw	r30,r29,172
 	ldw	r31,r29,176
 	addi	r29,r29,180
@@ -58885,9 +58854,9 @@ fpc_shortstr_to_unicodestr:
 	ldw	r4,r30,-64
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6702
-	jal	r0,.Lj6703
-.Lj6702:
+	bne	r3,r0,.Lj6697
+	jal	r0,.Lj6698
+.Lj6697:
 	ldw	r3,r30,-56
 	addi	r3,r3,1
 	ldw	r5,r30,-60
@@ -58897,7 +58866,7 @@ fpc_shortstr_to_unicodestr:
 	la	r7,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	ldw	r7,r7,80
 	jalr	r31,r7
-.Lj6703:
+.Lj6698:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -58923,33 +58892,33 @@ fpc_unicodestr_to_ansistr:
 	addi	r4,r0,0
 	call	fpc_ansistr_assign
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj6706
+	beq	r3,r0,.Lj6701
 	ldw	r3,r3,-4
-.Lj6706:
+.Lj6701:
 	stw	r30,r3,-68
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6707
-	jal	r0,.Lj6708
-.Lj6707:
+	bne	r3,r0,.Lj6702
+	jal	r0,.Lj6703
+.Lj6702:
 	ldhu	r5,r30,-60
 	ldhu	r4,r30,-60
 	addi	r3,r0,1
 	sleu	r3,r4,r3
-	bne	r3,r0,.Lj6710
-	jal	r0,.Lj6711
-.Lj6710:
+	bne	r3,r0,.Lj6705
+	jal	r0,.Lj6706
+.Lj6705:
 	la	r3,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r5,r3,0
-.Lj6711:
+.Lj6706:
 	ldw	r4,r30,-64
 	ldw	r6,r30,-68
 	ldw	r3,r30,-56
 	la	r7,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	ldw	r7,r7,76
 	jalr	r31,r7
-.Lj6708:
+.Lj6703:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -58974,16 +58943,16 @@ fpc_ansistr_to_unicodestr:
 	addi	r4,r0,0
 	call	fpc_unicodestr_assign
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj6714
+	beq	r3,r0,.Lj6709
 	ldw	r3,r3,-4
-.Lj6714:
+.Lj6709:
 	stw	r30,r3,-64
 	ldw	r4,r30,-64
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6715
-	jal	r0,.Lj6716
-.Lj6715:
+	bne	r3,r0,.Lj6710
+	jal	r0,.Lj6711
+.Lj6710:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_STRINGCODEPAGE$RAWBYTESTRING$$WORD
 	sth	r30,r1,-72
@@ -58991,25 +58960,25 @@ fpc_ansistr_to_unicodestr:
 	ldhu	r5,r30,-72
 	addi	r4,r0,1
 	sleu	r4,r5,r4
-	bne	r4,r0,.Lj6718
-	jal	r0,.Lj6719
-.Lj6718:
+	bne	r4,r0,.Lj6713
+	jal	r0,.Lj6714
+.Lj6713:
 	la	r4,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r3,r4,0
-.Lj6719:
+.Lj6714:
 	sth	r30,r3,-68
 	ldw	r5,r30,-60
 	ldw	r3,r30,-56
-	bne	r3,r0,.Lj6720
+	bne	r3,r0,.Lj6715
 	la	r4,FPC_EMPTYCHAR
 	addi	r3,r4,0
-.Lj6720:
+.Lj6715:
 	ldw	r6,r30,-64
 	ldhu	r4,r30,-68
 	la	r7,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	ldw	r7,r7,80
 	jalr	r31,r7
-.Lj6716:
+.Lj6711:
 	ldw	r30,r29,72
 	ldw	r31,r29,76
 	addi	r29,r29,80
@@ -59031,15 +59000,15 @@ fpc_unicodestr_to_widestr:
 	stw	r30,r3,-60
 	stw	r30,r4,-56
 	ldw	r4,r30,-56
-	beq	r4,r0,.Lj6723
+	beq	r4,r0,.Lj6718
 	ldw	r4,r4,-4
-.Lj6723:
+.Lj6718:
 	ldw	r3,r30,-60
 	call	fpc_unicodestr_setlength
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj6724
+	beq	r3,r0,.Lj6719
 	ldw	r3,r3,-4
-.Lj6724:
+.Lj6719:
 	slli	r5,r3,1
 	ldw	r3,r30,-60
 	ldw	r4,r3,0
@@ -59064,15 +59033,15 @@ fpc_widestr_to_unicodestr:
 	stw	r30,r3,-60
 	stw	r30,r4,-56
 	ldw	r4,r30,-56
-	beq	r4,r0,.Lj6727
+	beq	r4,r0,.Lj6722
 	ldw	r4,r4,-4
-.Lj6727:
+.Lj6722:
 	ldw	r3,r30,-60
 	call	fpc_unicodestr_setlength
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj6728
+	beq	r3,r0,.Lj6723
 	ldw	r3,r3,-4
-.Lj6728:
+.Lj6723:
 	slli	r5,r3,1
 	ldw	r3,r30,-60
 	ldw	r4,r3,0
@@ -59101,11 +59070,11 @@ fpc_pwidechar_to_unicodestr:
 	call	fpc_unicodestr_assign
 	ldw	r3,r30,-56
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6731
-	jal	r0,.Lj6732
-.Lj6731:
-	jal	r0,.Lj6729
-.Lj6732:
+	bne	r3,r0,.Lj6726
+	jal	r0,.Lj6727
+.Lj6726:
+	jal	r0,.Lj6724
+.Lj6727:
 	ldw	r3,r30,-56
 	addi	r5,r0,0
 	addi	r4,r0,-1
@@ -59117,17 +59086,17 @@ fpc_pwidechar_to_unicodestr:
 	ldw	r4,r30,-64
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6733
-	jal	r0,.Lj6734
-.Lj6733:
+	bne	r3,r0,.Lj6728
+	jal	r0,.Lj6729
+.Lj6728:
 	ldw	r3,r30,-64
 	slli	r5,r3,1
 	ldw	r3,r30,-60
 	ldw	r4,r3,0
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj6734:
 .Lj6729:
+.Lj6724:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -59154,11 +59123,11 @@ fpc_pwidechar_to_ansistr:
 	call	fpc_ansistr_assign
 	ldw	r3,r30,-56
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6737
-	jal	r0,.Lj6738
-.Lj6737:
-	jal	r0,.Lj6735
-.Lj6738:
+	bne	r3,r0,.Lj6732
+	jal	r0,.Lj6733
+.Lj6732:
+	jal	r0,.Lj6730
+.Lj6733:
 	ldw	r3,r30,-56
 	addi	r5,r0,0
 	addi	r4,r0,-1
@@ -59167,27 +59136,27 @@ fpc_pwidechar_to_ansistr:
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6739
-	jal	r0,.Lj6740
-.Lj6739:
+	bne	r3,r0,.Lj6734
+	jal	r0,.Lj6735
+.Lj6734:
 	ldhu	r5,r30,-60
 	ldhu	r4,r30,-60
 	addi	r3,r0,1
 	sleu	r3,r4,r3
-	bne	r3,r0,.Lj6742
-	jal	r0,.Lj6743
-.Lj6742:
+	bne	r3,r0,.Lj6737
+	jal	r0,.Lj6738
+.Lj6737:
 	la	r3,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r5,r3,0
-.Lj6743:
+.Lj6738:
 	ldw	r4,r30,-64
 	ldw	r6,r30,-68
 	ldw	r3,r30,-56
 	la	r7,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	ldw	r7,r7,0
 	jalr	r31,r7
-.Lj6740:
 .Lj6735:
+.Lj6730:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -59217,16 +59186,16 @@ fpc_pwidechar_to_shortstr:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-172
-	bne	r1,r0,.Lj6747
+	bne	r1,r0,.Lj6742
 	ldw	r3,r30,-56
 	stb	r3,r0,0
 	ldw	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6749
-	jal	r0,.Lj6750
-.Lj6749:
-	jal	r0,.Lj6748
-.Lj6750:
+	bne	r3,r0,.Lj6744
+	jal	r0,.Lj6745
+.Lj6744:
+	jal	r0,.Lj6743
+.Lj6745:
 	ldw	r3,r30,-60
 	addi	r5,r0,0
 	lui	r4,524287
@@ -59236,9 +59205,9 @@ fpc_pwidechar_to_shortstr:
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6751
-	jal	r0,.Lj6752
-.Lj6751:
+	bne	r3,r0,.Lj6746
+	jal	r0,.Lj6747
+.Lj6746:
 	la	r3,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r5,r3,0
 	addi	r4,r30,-72
@@ -59251,18 +59220,18 @@ fpc_pwidechar_to_shortstr:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-64
 	call	fpc_ansistr_to_shortstr
-.Lj6752:
 .Lj6747:
+.Lj6742:
 	call	fpc_popaddrstack
 	addi	r3,r30,-72
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-172
-	beq	r3,r0,.Lj6746
+	beq	r3,r0,.Lj6741
 	call	fpc_reraise
-.Lj6748:
+.Lj6743:
 	stw	r30,r0,-172
-	jal	r0,.Lj6747
-.Lj6746:
+	jal	r0,.Lj6742
+.Lj6741:
 	ldw	r30,r29,172
 	ldw	r31,r29,176
 	addi	r29,r29,180
@@ -59286,22 +59255,22 @@ FPC_UNICODESTR_ASSIGN:
 	stw	r30,r4,-60
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj6755
-	jal	r0,.Lj6756
-.Lj6755:
+	bne	r3,r0,.Lj6750
+	jal	r0,.Lj6751
+.Lj6750:
 	ldw	r3,r30,-60
 	ldw	r4,r3,-8
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6757
-	jal	r0,.Lj6758
-.Lj6757:
+	bne	r3,r0,.Lj6752
+	jal	r0,.Lj6753
+.Lj6752:
 	ldw	r3,r30,-60
 	addi	r11,r3,-8
 	addi	r3,r11,0
 	call	SYSTEM_$$_INTERLOCKEDINCREMENT$LONGINT$$LONGINT
-.Lj6758:
-.Lj6756:
+.Lj6753:
+.Lj6751:
 	ldw	r3,r30,-56
 	call	FPC_UNICODESTR_DECR_REF
 	ldw	r4,r30,-56
@@ -59330,31 +59299,31 @@ fpc_unicodestr_concat:
 	stw	r30,r4,-60
 	stw	r30,r5,-64
 	ldw	r3,r30,-60
-	beq	r3,r0,.Lj6761
+	beq	r3,r0,.Lj6756
 	ldw	r3,r3,-4
-.Lj6761:
+.Lj6756:
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6762
-	jal	r0,.Lj6763
-.Lj6762:
+	bne	r3,r0,.Lj6757
+	jal	r0,.Lj6758
+.Lj6757:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-64
 	call	fpc_unicodestr_assign
-	jal	r0,.Lj6759
-.Lj6763:
+	jal	r0,.Lj6754
+.Lj6758:
 	ldw	r3,r30,-64
-	beq	r3,r0,.Lj6764
+	beq	r3,r0,.Lj6759
 	ldw	r3,r3,-4
-.Lj6764:
+.Lj6759:
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6765
-	jal	r0,.Lj6766
-.Lj6765:
+	bne	r3,r0,.Lj6760
+	jal	r0,.Lj6761
+.Lj6760:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	call	fpc_unicodestr_assign
-	jal	r0,.Lj6759
-.Lj6766:
+	jal	r0,.Lj6754
+.Lj6761:
 	ldw	r3,r30,-60
 	ldw	r3,r3,-4
 	stw	r30,r3,-68
@@ -59366,16 +59335,16 @@ fpc_unicodestr_concat:
 	stw	r30,r3,-76
 	ldw	r3,r30,-76
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj6767
-	jal	r0,.Lj6768
-.Lj6767:
+	bne	r3,r0,.Lj6762
+	jal	r0,.Lj6763
+.Lj6762:
 	ldw	r3,r30,-76
 	ldw	r3,r3,-8
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6769
-	jal	r0,.Lj6768
-.Lj6769:
+	bne	r3,r0,.Lj6764
+	jal	r0,.Lj6763
+.Lj6764:
 	ldw	r3,r30,-76
 	addi	r3,r3,-12
 	stw	r30,r3,-84
@@ -59393,12 +59362,12 @@ fpc_unicodestr_concat:
 	ldw	r3,r30,-88
 	ldw	r4,r30,-76
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj6770
-	jal	r0,.Lj6771
-.Lj6770:
+	bne	r3,r0,.Lj6765
+	jal	r0,.Lj6766
+.Lj6765:
 	ldw	r3,r30,-80
 	stw	r30,r3,-88
-.Lj6771:
+.Lj6766:
 	ldw	r3,r30,-72
 	slli	r5,r3,1
 	ldw	r3,r30,-80
@@ -59410,17 +59379,17 @@ fpc_unicodestr_concat:
 	ldw	r3,r30,-76
 	ldw	r4,r30,-60
 	sne	r3,r3,r4
-	bne	r3,r0,.Lj6772
-	jal	r0,.Lj6773
-.Lj6772:
+	bne	r3,r0,.Lj6767
+	jal	r0,.Lj6768
+.Lj6767:
 	ldw	r3,r30,-68
 	slli	r5,r3,1
 	ldw	r4,r30,-80
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj6773:
-	jal	r0,.Lj6774
 .Lj6768:
+	jal	r0,.Lj6769
+.Lj6763:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-72
 	add	r3,r4,r3
@@ -59454,7 +59423,7 @@ fpc_unicodestr_concat:
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
 	ldw	r3,r30,-56
 	call	FPC_UNICODESTR_DECR_REF
-.Lj6774:
+.Lj6769:
 	ldw	r3,r30,-80
 	ldw	r4,r30,-68
 	ldw	r5,r30,-72
@@ -59470,7 +59439,7 @@ fpc_unicodestr_concat:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-80
 	stw	r4,r3,0
-.Lj6759:
+.Lj6754:
 	ldw	r30,r29,88
 	ldw	r31,r29,92
 	addi	r29,r29,96
@@ -59494,53 +59463,53 @@ fpc_unicodestr_concat_multi:
 	stw	r30,r4,-60
 	stw	r30,r5,-64
 	stw	r30,r0,-68
-	jal	r0,.Lj6778
-.Lj6777:
+	jal	r0,.Lj6773
+.Lj6772:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	stw	r30,r3,-68
-.Lj6778:
+.Lj6773:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-64
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj6780
-	jal	r0,.Lj6781
-.Lj6780:
+	bne	r3,r0,.Lj6775
+	jal	r0,.Lj6776
+.Lj6775:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-68
 	slli	r4,r4,2
 	add	r3,r3,r4
 	ldw	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6782
-	jal	r0,.Lj6781
-.Lj6782:
-	jal	r0,.Lj6777
-.Lj6781:
-	jal	r0,.Lj6779
-.Lj6779:
+	bne	r3,r0,.Lj6777
+	jal	r0,.Lj6776
+.Lj6777:
+	jal	r0,.Lj6772
+.Lj6776:
+	jal	r0,.Lj6774
+.Lj6774:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-64
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj6783
-	jal	r0,.Lj6784
-.Lj6783:
+	bne	r3,r0,.Lj6778
+	jal	r0,.Lj6779
+.Lj6778:
 	ldw	r3,r30,-56
 	addi	r4,r0,0
 	call	fpc_unicodestr_assign
-	jal	r0,.Lj6775
-.Lj6784:
+	jal	r0,.Lj6770
+.Lj6779:
 	stw	r30,r0,-80
 	ldw	r4,r30,-68
 	ldw	r3,r30,-64
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj6785
-	jal	r0,.Lj6786
-.Lj6785:
+	bne	r3,r0,.Lj6780
+	jal	r0,.Lj6781
+.Lj6780:
 	ldw	r3,r30,-68
 	addi	r3,r3,-1
 	stw	r30,r3,-72
-.Lj6787:
+.Lj6782:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
@@ -59549,19 +59518,19 @@ fpc_unicodestr_concat_multi:
 	slli	r4,r4,2
 	add	r3,r3,r4
 	ldw	r3,r3,0
-	beq	r3,r0,.Lj6790
+	beq	r3,r0,.Lj6785
 	ldw	r3,r3,-4
-.Lj6790:
+.Lj6785:
 	ldw	r4,r30,-80
 	add	r4,r4,r3
 	stw	r30,r4,-80
 	ldw	r4,r30,-72
 	ldw	r3,r30,-64
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj6789
-	jal	r0,.Lj6787
-.Lj6789:
-.Lj6786:
+	bne	r3,r0,.Lj6784
+	jal	r0,.Lj6782
+.Lj6784:
+.Lj6781:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-68
 	slli	r4,r4,2
@@ -59570,9 +59539,9 @@ fpc_unicodestr_concat_multi:
 	ldw	r4,r3,-4
 	ldw	r3,r30,-80
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj6791
-	jal	r0,.Lj6792
-.Lj6791:
+	bne	r3,r0,.Lj6786
+	jal	r0,.Lj6787
+.Lj6786:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-68
 	slli	r4,r4,2
@@ -59580,23 +59549,23 @@ fpc_unicodestr_concat_multi:
 	ldw	r4,r3,0
 	ldw	r3,r30,-56
 	call	fpc_unicodestr_assign
-	jal	r0,.Lj6775
-.Lj6792:
+	jal	r0,.Lj6770
+.Lj6787:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	stw	r30,r3,-92
 	ldw	r3,r30,-92
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj6793
-	jal	r0,.Lj6794
-.Lj6793:
+	bne	r3,r0,.Lj6788
+	jal	r0,.Lj6789
+.Lj6788:
 	ldw	r3,r30,-92
 	ldw	r3,r3,-8
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6795
-	jal	r0,.Lj6794
-.Lj6795:
+	bne	r3,r0,.Lj6790
+	jal	r0,.Lj6789
+.Lj6790:
 	ldw	r3,r30,-92
 	addi	r3,r3,-12
 	stw	r30,r3,-100
@@ -59614,15 +59583,15 @@ fpc_unicodestr_concat_multi:
 	ldw	r3,r3,0
 	ldw	r4,r30,-92
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj6796
-	jal	r0,.Lj6797
-.Lj6796:
+	bne	r3,r0,.Lj6791
+	jal	r0,.Lj6792
+.Lj6791:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	stw	r30,r3,-68
-.Lj6797:
-	jal	r0,.Lj6798
-.Lj6794:
+.Lj6792:
+	jal	r0,.Lj6793
+.Lj6789:
 	stw	r30,r0,-92
 	ldw	r3,r30,-80
 	slli	r3,r3,1
@@ -59640,7 +59609,7 @@ fpc_unicodestr_concat_multi:
 	ldw	r4,r30,-96
 	addi	r3,r0,1
 	stw	r4,r3,-8
-.Lj6798:
+.Lj6793:
 	ldw	r3,r30,-80
 	slli	r3,r3,1
 	ldw	r4,r30,-96
@@ -59651,13 +59620,13 @@ fpc_unicodestr_concat_multi:
 	ldw	r11,r30,-68
 	ldw	r3,r30,-64
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj6799
-	jal	r0,.Lj6800
-.Lj6799:
+	bne	r3,r0,.Lj6794
+	jal	r0,.Lj6795
+.Lj6794:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-72
-.Lj6801:
+.Lj6796:
 	ldw	r3,r30,-72
 	addi	r3,r3,-1
 	stw	r30,r3,-72
@@ -59669,20 +59638,20 @@ fpc_unicodestr_concat_multi:
 	stw	r30,r3,-84
 	ldw	r3,r30,-84
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6804
-	jal	r0,.Lj6805
-.Lj6804:
-	jal	r0,.Lj6802
-.Lj6805:
+	bne	r3,r0,.Lj6799
+	jal	r0,.Lj6800
+.Lj6799:
+	jal	r0,.Lj6797
+.Lj6800:
 	ldw	r3,r30,-84
 	ldw	r4,r30,-92
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj6806
-	jal	r0,.Lj6807
-.Lj6806:
+	bne	r3,r0,.Lj6801
+	jal	r0,.Lj6802
+.Lj6801:
 	ldw	r3,r30,-96
 	stw	r30,r3,-84
-.Lj6807:
+.Lj6802:
 	ldw	r3,r30,-84
 	ldw	r3,r3,-4
 	slli	r3,r3,1
@@ -59695,28 +59664,28 @@ fpc_unicodestr_concat_multi:
 	ldw	r3,r30,-84
 	ldw	r5,r30,-76
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj6802:
+.Lj6797:
 	ldw	r3,r30,-72
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj6803
-	jal	r0,.Lj6801
-.Lj6803:
-.Lj6800:
+	bne	r3,r0,.Lj6798
+	jal	r0,.Lj6796
+.Lj6798:
+.Lj6795:
 	ldw	r4,r30,-96
 	ldw	r3,r30,-80
 	stw	r4,r3,-4
 	ldw	r3,r30,-92
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6808
-	jal	r0,.Lj6809
-.Lj6808:
+	bne	r3,r0,.Lj6803
+	jal	r0,.Lj6804
+.Lj6803:
 	ldw	r3,r30,-56
 	call	FPC_UNICODESTR_DECR_REF
-.Lj6809:
+.Lj6804:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-96
 	stw	r3,r4,0
-.Lj6775:
+.Lj6770:
 	ldw	r11,r29,100
 	ldw	r30,r29,104
 	ldw	r31,r29,108
@@ -59743,7 +59712,7 @@ fpc_char_to_uchar:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj6813
+	bne	r1,r0,.Lj6808
 	addi	r3,r30,-56
 	addi	r5,r30,-64
 	la	r4,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
@@ -59755,16 +59724,16 @@ fpc_char_to_uchar:
 	ldw	r3,r30,-64
 	ldhu	r3,r3,0
 	sth	r30,r3,-60
-.Lj6813:
+.Lj6808:
 	call	fpc_popaddrstack
 	addi	r3,r30,-64
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj6812
+	beq	r3,r0,.Lj6807
 	call	fpc_reraise
 	stw	r30,r0,-164
-	jal	r0,.Lj6813
-.Lj6812:
+	jal	r0,.Lj6808
+.Lj6807:
 	ldhu	r1,r30,-60
 	ldw	r30,r29,164
 	ldw	r31,r29,168
@@ -59819,7 +59788,7 @@ fpc_uchar_to_char:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj6820
+	bne	r1,r0,.Lj6815
 	addi	r3,r30,-56
 	la	r4,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r5,r4,0
@@ -59829,32 +59798,32 @@ fpc_uchar_to_char:
 	ldw	r7,r7,76
 	jalr	r31,r7
 	ldw	r3,r30,-64
-	beq	r3,r0,.Lj6822
+	beq	r3,r0,.Lj6817
 	ldw	r3,r3,-4
-.Lj6822:
+.Lj6817:
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6823
-	jal	r0,.Lj6824
-.Lj6823:
+	bne	r3,r0,.Lj6818
+	jal	r0,.Lj6819
+.Lj6818:
 	ldw	r3,r30,-64
 	ldbu	r3,r3,0
 	stb	r30,r3,-60
-	jal	r0,.Lj6825
-.Lj6824:
+	jal	r0,.Lj6820
+.Lj6819:
 	addi	r3,r0,63
 	stb	r30,r3,-60
-.Lj6825:
 .Lj6820:
+.Lj6815:
 	call	fpc_popaddrstack
 	addi	r3,r30,-64
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj6819
+	beq	r3,r0,.Lj6814
 	call	fpc_reraise
 	stw	r30,r0,-164
-	jal	r0,.Lj6820
-.Lj6819:
+	jal	r0,.Lj6815
+.Lj6814:
 	ldbu	r1,r30,-60
 	ldw	r30,r29,164
 	ldw	r31,r29,168
@@ -59884,7 +59853,7 @@ fpc_uchar_to_shortstr:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj6829
+	bne	r1,r0,.Lj6824
 	addi	r3,r30,-56
 	la	r4,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r5,r4,0
@@ -59897,16 +59866,16 @@ fpc_uchar_to_shortstr:
 	ldw	r3,r30,-60
 	addi	r4,r0,255
 	call	fpc_ansistr_to_shortstr
-.Lj6829:
+.Lj6824:
 	call	fpc_popaddrstack
 	addi	r3,r30,-64
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj6828
+	beq	r3,r0,.Lj6823
 	call	fpc_reraise
 	stw	r30,r0,-164
-	jal	r0,.Lj6829
-.Lj6828:
+	jal	r0,.Lj6824
+.Lj6823:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -59957,12 +59926,12 @@ fpc_uchar_to_ansistr:
 	ldhu	r4,r30,-60
 	addi	r3,r0,1
 	sleu	r3,r4,r3
-	bne	r3,r0,.Lj6836
-	jal	r0,.Lj6837
-.Lj6836:
+	bne	r3,r0,.Lj6831
+	jal	r0,.Lj6832
+.Lj6831:
 	la	r3,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r5,r3,0
-.Lj6837:
+.Lj6832:
 	addi	r3,r30,-56
 	ldw	r4,r30,-64
 	addi	r6,r0,1
@@ -59989,20 +59958,20 @@ fpc_pchar_to_unicodestr:
 	stw	r30,r4,-56
 	ldw	r3,r30,-56
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6840
-	jal	r0,.Lj6841
-.Lj6841:
+	bne	r3,r0,.Lj6835
+	jal	r0,.Lj6836
+.Lj6836:
 	ldw	r3,r30,-56
 	ldbu	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6840
-	jal	r0,.Lj6842
-.Lj6840:
+	bne	r3,r0,.Lj6835
+	jal	r0,.Lj6837
+.Lj6835:
 	ldw	r3,r30,-60
 	addi	r4,r0,0
 	call	fpc_unicodestr_assign
-	jal	r0,.Lj6838
-.Lj6842:
+	jal	r0,.Lj6833
+.Lj6837:
 	ldw	r3,r30,-56
 	addi	r5,r0,0
 	addi	r4,r0,-1
@@ -60016,7 +59985,7 @@ fpc_pchar_to_unicodestr:
 	la	r7,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	ldw	r7,r7,80
 	jalr	r31,r7
-.Lj6838:
+.Lj6833:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -60040,20 +60009,20 @@ fpc_chararray_to_unicodestr:
 	stw	r30,r5,-64
 	stb	r30,r6,-60
 	ldbu	r3,r30,-60
-	bne	r3,r0,.Lj6845
-	jal	r0,.Lj6846
-.Lj6845:
+	bne	r3,r0,.Lj6840
+	jal	r0,.Lj6841
+.Lj6840:
 	ldw	r3,r30,-56
 	ldbu	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6847
-	jal	r0,.Lj6848
-.Lj6847:
+	bne	r3,r0,.Lj6842
+	jal	r0,.Lj6843
+.Lj6842:
 	ldw	r3,r30,-68
 	addi	r4,r0,0
 	call	fpc_unicodestr_assign
-	jal	r0,.Lj6843
-.Lj6848:
+	jal	r0,.Lj6838
+.Lj6843:
 	ldw	r3,r30,-64
 	addi	r4,r3,1
 	ldw	r3,r30,-56
@@ -60063,19 +60032,19 @@ fpc_chararray_to_unicodestr:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6849
-	jal	r0,.Lj6850
-.Lj6849:
+	bne	r3,r0,.Lj6844
+	jal	r0,.Lj6845
+.Lj6844:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-72
-.Lj6850:
-	jal	r0,.Lj6851
+.Lj6845:
+	jal	r0,.Lj6846
+.Lj6841:
+	ldw	r3,r30,-64
+	addi	r3,r3,1
+	stw	r30,r3,-72
 .Lj6846:
-	ldw	r3,r30,-64
-	addi	r3,r3,1
-	stw	r30,r3,-72
-.Lj6851:
 	ldw	r3,r30,-56
 	ldw	r5,r30,-68
 	la	r4,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
@@ -60084,7 +60053,7 @@ fpc_chararray_to_unicodestr:
 	la	r7,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	ldw	r7,r7,80
 	jalr	r31,r7
-.Lj6843:
+.Lj6838:
 	ldw	r30,r29,72
 	ldw	r31,r29,76
 	addi	r29,r29,80
@@ -60106,9 +60075,9 @@ fpc_widechararray_to_unicodestr:
 	stw	r30,r5,-64
 	stb	r30,r6,-60
 	ldbu	r3,r30,-60
-	bne	r3,r0,.Lj6854
-	jal	r0,.Lj6855
-.Lj6854:
+	bne	r3,r0,.Lj6849
+	jal	r0,.Lj6850
+.Lj6849:
 	ldw	r3,r30,-64
 	addi	r4,r3,1
 	ldw	r3,r30,-56
@@ -60118,19 +60087,19 @@ fpc_widechararray_to_unicodestr:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6856
-	jal	r0,.Lj6857
-.Lj6856:
+	bne	r3,r0,.Lj6851
+	jal	r0,.Lj6852
+.Lj6851:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-72
-.Lj6857:
-	jal	r0,.Lj6858
-.Lj6855:
+.Lj6852:
+	jal	r0,.Lj6853
+.Lj6850:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-72
-.Lj6858:
+.Lj6853:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-72
 	call	fpc_unicodestr_setlength
@@ -60171,7 +60140,7 @@ FPC_WIDECHARARRAY_TO_SHORTSTR:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-188
-	bne	r1,r0,.Lj6862
+	bne	r1,r0,.Lj6857
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-76
@@ -60179,26 +60148,26 @@ FPC_WIDECHARARRAY_TO_SHORTSTR:
 	addi	r4,r3,1
 	ldw	r3,r30,-76
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj6864
-	jal	r0,.Lj6865
-.Lj6864:
+	bne	r3,r0,.Lj6859
+	jal	r0,.Lj6860
+.Lj6859:
 	ldw	r3,r30,-68
 	stw	r30,r3,-76
-	jal	r0,.Lj6866
-.Lj6865:
+	jal	r0,.Lj6861
+.Lj6860:
 	ldw	r4,r30,-76
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj6867
-	jal	r0,.Lj6868
-.Lj6867:
+	bne	r3,r0,.Lj6862
+	jal	r0,.Lj6863
+.Lj6862:
 	stw	r30,r0,-76
-.Lj6868:
-.Lj6866:
+.Lj6863:
+.Lj6861:
 	ldbu	r3,r30,-64
-	bne	r3,r0,.Lj6869
-	jal	r0,.Lj6870
-.Lj6869:
+	bne	r3,r0,.Lj6864
+	jal	r0,.Lj6865
+.Lj6864:
 	ldw	r3,r30,-60
 	addi	r5,r0,0
 	ldw	r4,r30,-76
@@ -60207,21 +60176,21 @@ FPC_WIDECHARARRAY_TO_SHORTSTR:
 	ldw	r4,r30,-80
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj6871
-	jal	r0,.Lj6872
-.Lj6871:
+	bne	r3,r0,.Lj6866
+	jal	r0,.Lj6867
+.Lj6866:
 	ldbu	r3,r30,-76
 	stb	r30,r3,-84
-	jal	r0,.Lj6873
-.Lj6872:
+	jal	r0,.Lj6868
+.Lj6867:
 	ldbu	r3,r30,-80
 	stb	r30,r3,-84
-.Lj6873:
-	jal	r0,.Lj6874
-.Lj6870:
+.Lj6868:
+	jal	r0,.Lj6869
+.Lj6865:
 	ldbu	r3,r30,-76
 	stb	r30,r3,-84
-.Lj6874:
+.Lj6869:
 	ldw	r3,r30,-60
 	ldbu	r6,r30,-84
 	la	r4,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
@@ -60234,16 +60203,16 @@ FPC_WIDECHARARRAY_TO_SHORTSTR:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-68
 	call	fpc_ansistr_to_shortstr
-.Lj6862:
+.Lj6857:
 	call	fpc_popaddrstack
 	addi	r3,r30,-88
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-188
-	beq	r3,r0,.Lj6861
+	beq	r3,r0,.Lj6856
 	call	fpc_reraise
 	stw	r30,r0,-188
-	jal	r0,.Lj6862
-.Lj6861:
+	jal	r0,.Lj6857
+.Lj6856:
 	ldw	r30,r29,188
 	ldw	r31,r29,192
 	addi	r29,r29,196
@@ -60266,9 +60235,9 @@ fpc_widechararray_to_ansistr:
 	sth	r30,r6,-60
 	stb	r30,r7,-64
 	ldbu	r3,r30,-64
-	bne	r3,r0,.Lj6877
-	jal	r0,.Lj6878
-.Lj6877:
+	bne	r3,r0,.Lj6872
+	jal	r0,.Lj6873
+.Lj6872:
 	ldw	r3,r30,-68
 	addi	r4,r3,1
 	ldw	r3,r30,-56
@@ -60278,47 +60247,47 @@ fpc_widechararray_to_ansistr:
 	ldw	r3,r30,-76
 	addi	r3,r3,1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6879
-	jal	r0,.Lj6880
-.Lj6879:
+	bne	r3,r0,.Lj6874
+	jal	r0,.Lj6875
+.Lj6874:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	stw	r30,r3,-76
-.Lj6880:
-	jal	r0,.Lj6881
-.Lj6878:
+.Lj6875:
+	jal	r0,.Lj6876
+.Lj6873:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	stw	r30,r3,-76
-.Lj6881:
+.Lj6876:
 	ldw	r4,r30,-76
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6882
-	jal	r0,.Lj6883
-.Lj6882:
+	bne	r3,r0,.Lj6877
+	jal	r0,.Lj6878
+.Lj6877:
 	ldhu	r5,r30,-60
 	ldhu	r4,r30,-60
 	addi	r3,r0,1
 	sleu	r3,r4,r3
-	bne	r3,r0,.Lj6885
-	jal	r0,.Lj6886
-.Lj6885:
+	bne	r3,r0,.Lj6880
+	jal	r0,.Lj6881
+.Lj6880:
 	la	r3,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r5,r3,0
-.Lj6886:
+.Lj6881:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-72
 	ldw	r6,r30,-76
 	la	r7,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	ldw	r7,r7,0
 	jalr	r31,r7
-	jal	r0,.Lj6887
-.Lj6883:
+	jal	r0,.Lj6882
+.Lj6878:
 	ldw	r3,r30,-72
 	addi	r4,r0,0
 	call	fpc_ansistr_assign
-.Lj6887:
+.Lj6882:
 	ldw	r30,r29,76
 	ldw	r31,r29,80
 	addi	r29,r29,84
@@ -60340,9 +60309,9 @@ fpc_widechararray_to_widestr:
 	stw	r30,r5,-64
 	stb	r30,r6,-60
 	ldbu	r3,r30,-60
-	bne	r3,r0,.Lj6890
-	jal	r0,.Lj6891
-.Lj6890:
+	bne	r3,r0,.Lj6885
+	jal	r0,.Lj6886
+.Lj6885:
 	ldw	r3,r30,-64
 	addi	r4,r3,1
 	ldw	r3,r30,-56
@@ -60352,19 +60321,19 @@ fpc_widechararray_to_widestr:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6892
-	jal	r0,.Lj6893
-.Lj6892:
+	bne	r3,r0,.Lj6887
+	jal	r0,.Lj6888
+.Lj6887:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-72
-.Lj6893:
-	jal	r0,.Lj6894
-.Lj6891:
+.Lj6888:
+	jal	r0,.Lj6889
+.Lj6886:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-72
-.Lj6894:
+.Lj6889:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-72
 	call	fpc_unicodestr_setlength
@@ -60401,18 +60370,18 @@ fpc_unicodestr_to_chararray:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-172
-	bne	r1,r0,.Lj6898
+	bne	r1,r0,.Lj6893
 	ldw	r3,r30,-60
-	beq	r3,r0,.Lj6900
+	beq	r3,r0,.Lj6895
 	ldw	r3,r3,-4
-.Lj6900:
+.Lj6895:
 	stw	r30,r3,-68
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6901
-	jal	r0,.Lj6902
-.Lj6901:
+	bne	r3,r0,.Lj6896
+	jal	r0,.Lj6897
+.Lj6896:
 	la	r3,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r5,r3,0
 	addi	r4,r30,-72
@@ -60421,23 +60390,23 @@ fpc_unicodestr_to_chararray:
 	la	r7,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	ldw	r7,r7,76
 	jalr	r31,r7
-.Lj6902:
+.Lj6897:
 	ldw	r3,r30,-72
-	beq	r3,r0,.Lj6903
+	beq	r3,r0,.Lj6898
 	ldw	r3,r3,-4
-.Lj6903:
+.Lj6898:
 	stw	r30,r3,-68
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	ldw	r4,r30,-68
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6904
-	jal	r0,.Lj6905
-.Lj6904:
+	bne	r3,r0,.Lj6899
+	jal	r0,.Lj6900
+.Lj6899:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-68
-.Lj6905:
+.Lj6900:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-72
 	ldw	r5,r30,-68
@@ -60451,16 +60420,16 @@ fpc_unicodestr_to_chararray:
 	add	r3,r3,r5
 	addi	r5,r0,0
 	call	SYSTEM_$$_FILLCHAR$formal$LONGINT$BYTE
-.Lj6898:
+.Lj6893:
 	call	fpc_popaddrstack
 	addi	r3,r30,-72
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-172
-	beq	r3,r0,.Lj6897
+	beq	r3,r0,.Lj6892
 	call	fpc_reraise
 	stw	r30,r0,-172
-	jal	r0,.Lj6898
-.Lj6897:
+	jal	r0,.Lj6893
+.Lj6892:
 	ldw	r30,r29,172
 	ldw	r31,r29,176
 	addi	r29,r29,180
@@ -60488,18 +60457,18 @@ fpc_ansistr_to_widechararray:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-172
-	bne	r1,r0,.Lj6909
+	bne	r1,r0,.Lj6904
 	ldw	r3,r30,-60
-	beq	r3,r0,.Lj6911
+	beq	r3,r0,.Lj6906
 	ldw	r3,r3,-4
-.Lj6911:
+.Lj6906:
 	stw	r30,r3,-68
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6912
-	jal	r0,.Lj6913
-.Lj6912:
+	bne	r3,r0,.Lj6907
+	jal	r0,.Lj6908
+.Lj6907:
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_STRINGCODEPAGE$RAWBYTESTRING$$WORD
 	sth	r30,r1,-176
@@ -60507,35 +60476,35 @@ fpc_ansistr_to_widechararray:
 	ldhu	r5,r30,-176
 	addi	r3,r0,1
 	sleu	r3,r5,r3
-	bne	r3,r0,.Lj6915
-	jal	r0,.Lj6916
-.Lj6915:
+	bne	r3,r0,.Lj6910
+	jal	r0,.Lj6911
+.Lj6910:
 	la	r3,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r4,r3,0
-.Lj6916:
+.Lj6911:
 	ldw	r3,r30,-60
 	addi	r5,r30,-72
 	ldw	r6,r30,-68
 	la	r7,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	ldw	r7,r7,4
 	jalr	r31,r7
-.Lj6913:
+.Lj6908:
 	ldw	r3,r30,-72
-	beq	r3,r0,.Lj6917
+	beq	r3,r0,.Lj6912
 	ldw	r3,r3,-4
-.Lj6917:
+.Lj6912:
 	stw	r30,r3,-68
 	ldw	r3,r30,-64
 	addi	r4,r3,1
 	ldw	r3,r30,-68
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj6918
-	jal	r0,.Lj6919
-.Lj6918:
+	bne	r3,r0,.Lj6913
+	jal	r0,.Lj6914
+.Lj6913:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-68
-.Lj6919:
+.Lj6914:
 	ldw	r3,r30,-68
 	slli	r5,r3,1
 	ldw	r4,r30,-56
@@ -60552,16 +60521,16 @@ fpc_ansistr_to_widechararray:
 	add	r3,r3,r5
 	addi	r5,r0,0
 	call	SYSTEM_$$_FILLCHAR$formal$LONGINT$BYTE
-.Lj6909:
+.Lj6904:
 	call	fpc_popaddrstack
 	addi	r3,r30,-72
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-172
-	beq	r3,r0,.Lj6908
+	beq	r3,r0,.Lj6903
 	call	fpc_reraise
 	stw	r30,r0,-172
-	jal	r0,.Lj6909
-.Lj6908:
+	jal	r0,.Lj6904
+.Lj6903:
 	ldw	r30,r29,176
 	ldw	r31,r29,180
 	addi	r29,r29,184
@@ -60589,16 +60558,16 @@ fpc_shortstr_to_widechararray:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-172
-	bne	r1,r0,.Lj6923
+	bne	r1,r0,.Lj6918
 	ldw	r3,r30,-60
 	ldbu	r3,r3,0
 	stw	r30,r3,-68
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6925
-	jal	r0,.Lj6926
-.Lj6925:
+	bne	r3,r0,.Lj6920
+	jal	r0,.Lj6921
+.Lj6920:
 	ldw	r3,r30,-60
 	addi	r3,r3,1
 	addi	r5,r30,-72
@@ -60608,23 +60577,23 @@ fpc_shortstr_to_widechararray:
 	la	r7,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	ldw	r7,r7,4
 	jalr	r31,r7
-.Lj6926:
+.Lj6921:
 	ldw	r3,r30,-72
-	beq	r3,r0,.Lj6927
+	beq	r3,r0,.Lj6922
 	ldw	r3,r3,-4
-.Lj6927:
+.Lj6922:
 	stw	r30,r3,-68
 	ldw	r3,r30,-64
 	addi	r4,r3,1
 	ldw	r3,r30,-68
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj6928
-	jal	r0,.Lj6929
-.Lj6928:
+	bne	r3,r0,.Lj6923
+	jal	r0,.Lj6924
+.Lj6923:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-68
-.Lj6929:
+.Lj6924:
 	ldw	r3,r30,-68
 	slli	r5,r3,1
 	ldw	r4,r30,-56
@@ -60641,16 +60610,16 @@ fpc_shortstr_to_widechararray:
 	add	r3,r3,r5
 	addi	r5,r0,0
 	call	SYSTEM_$$_FILLCHAR$formal$LONGINT$BYTE
-.Lj6923:
+.Lj6918:
 	call	fpc_popaddrstack
 	addi	r3,r30,-72
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-172
-	beq	r3,r0,.Lj6922
+	beq	r3,r0,.Lj6917
 	call	fpc_reraise
 	stw	r30,r0,-172
-	jal	r0,.Lj6923
-.Lj6922:
+	jal	r0,.Lj6918
+.Lj6917:
 	ldw	r30,r29,172
 	ldw	r31,r29,176
 	addi	r29,r29,180
@@ -60671,33 +60640,33 @@ fpc_unicodestr_to_widechararray:
 	stw	r30,r4,-64
 	stw	r30,r5,-60
 	ldw	r3,r30,-60
-	beq	r3,r0,.Lj6932
+	beq	r3,r0,.Lj6927
 	ldw	r3,r3,-4
-.Lj6932:
+.Lj6927:
 	stw	r30,r3,-68
 	ldw	r3,r30,-64
 	addi	r4,r3,1
 	ldw	r3,r30,-68
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj6933
-	jal	r0,.Lj6934
-.Lj6933:
+	bne	r3,r0,.Lj6928
+	jal	r0,.Lj6929
+.Lj6928:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-68
-.Lj6934:
+.Lj6929:
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6935
-	jal	r0,.Lj6936
-.Lj6935:
+	bne	r3,r0,.Lj6930
+	jal	r0,.Lj6931
+.Lj6930:
 	ldw	r3,r30,-68
 	slli	r5,r3,1
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj6936:
+.Lj6931:
 	ldw	r3,r30,-64
 	addi	r4,r3,1
 	ldw	r3,r30,-68
@@ -60732,31 +60701,31 @@ FPC_UNICODESTR_COMPARE:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj6939
-	jal	r0,.Lj6940
-.Lj6939:
+	bne	r3,r0,.Lj6934
+	jal	r0,.Lj6935
+.Lj6934:
 	stw	r30,r0,-64
-	jal	r0,.Lj6937
-.Lj6940:
+	jal	r0,.Lj6932
+.Lj6935:
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj6941
+	beq	r3,r0,.Lj6936
 	ldw	r3,r3,-4
-.Lj6941:
+.Lj6936:
 	stw	r30,r3,-68
 	ldw	r3,r30,-60
-	beq	r3,r0,.Lj6942
+	beq	r3,r0,.Lj6937
 	ldw	r3,r3,-4
-.Lj6942:
+.Lj6937:
 	stw	r30,r3,-72
 	ldw	r4,r30,-68
 	ldw	r3,r30,-72
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6943
-	jal	r0,.Lj6944
-.Lj6943:
+	bne	r3,r0,.Lj6938
+	jal	r0,.Lj6939
+.Lj6938:
 	ldw	r3,r30,-72
 	stw	r30,r3,-68
-.Lj6944:
+.Lj6939:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	ldw	r5,r30,-68
@@ -60764,23 +60733,23 @@ FPC_UNICODESTR_COMPARE:
 	stw	r30,r1,-72
 	ldw	r3,r30,-72
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6945
-	jal	r0,.Lj6946
-.Lj6945:
+	bne	r3,r0,.Lj6940
+	jal	r0,.Lj6941
+.Lj6940:
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj6947
+	beq	r3,r0,.Lj6942
 	ldw	r3,r3,-4
-.Lj6947:
+.Lj6942:
 	ldw	r4,r30,-60
-	beq	r4,r0,.Lj6948
+	beq	r4,r0,.Lj6943
 	ldw	r4,r4,-4
-.Lj6948:
+.Lj6943:
 	sub	r3,r3,r4
 	stw	r30,r3,-72
-.Lj6946:
+.Lj6941:
 	ldw	r3,r30,-72
 	stw	r30,r3,-64
-.Lj6937:
+.Lj6932:
 	ldw	r1,r30,-64
 	ldw	r30,r29,72
 	ldw	r31,r29,76
@@ -60805,39 +60774,39 @@ FPC_UNICODESTR_COMPARE_EQUAL:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj6951
-	jal	r0,.Lj6952
-.Lj6951:
+	bne	r3,r0,.Lj6946
+	jal	r0,.Lj6947
+.Lj6946:
 	stw	r30,r0,-64
-	jal	r0,.Lj6949
-.Lj6952:
+	jal	r0,.Lj6944
+.Lj6947:
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj6953
+	beq	r3,r0,.Lj6948
 	ldw	r3,r3,-4
-.Lj6953:
+.Lj6948:
 	stw	r30,r3,-68
 	ldw	r3,r30,-60
-	beq	r3,r0,.Lj6954
+	beq	r3,r0,.Lj6949
 	ldw	r3,r3,-4
-.Lj6954:
+.Lj6949:
 	ldw	r4,r30,-68
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj6955
-	jal	r0,.Lj6956
-.Lj6955:
+	bne	r3,r0,.Lj6950
+	jal	r0,.Lj6951
+.Lj6950:
 	addi	r3,r0,-1
 	stw	r30,r3,-64
-	jal	r0,.Lj6949
-	jal	r0,.Lj6957
-.Lj6956:
+	jal	r0,.Lj6944
+	jal	r0,.Lj6952
+.Lj6951:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	ldw	r5,r30,-68
 	call	SYSTEM_$$_COMPAREWORD$formal$formal$LONGINT$$LONGINT
 	stw	r30,r1,-64
-	jal	r0,.Lj6949
-.Lj6957:
-.Lj6949:
+	jal	r0,.Lj6944
+.Lj6952:
+.Lj6944:
 	ldw	r1,r30,-64
 	ldw	r30,r29,68
 	ldw	r31,r29,72
@@ -60862,22 +60831,22 @@ FPC_UNICODESTR_RANGECHECK:
 	stw	r30,r4,-60
 	ldw	r3,r30,-56
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6960
-	jal	r0,.Lj6961
-.Lj6961:
+	bne	r3,r0,.Lj6955
+	jal	r0,.Lj6956
+.Lj6956:
 	ldw	r3,r30,-56
 	ldw	r3,r3,-4
 	ldw	r4,r30,-60
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj6960
-	jal	r0,.Lj6962
-.Lj6962:
+	bne	r3,r0,.Lj6955
+	jal	r0,.Lj6957
+.Lj6957:
 	ldw	r4,r30,-60
 	addi	r3,r0,1
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj6960
-	jal	r0,.Lj6963
-.Lj6960:
+	bne	r3,r0,.Lj6955
+	jal	r0,.Lj6958
+.Lj6955:
 	call	SYSTEM_$$_GET_FRAME$$POINTER
 	addi	r11,r1,0
 	call	SYSTEM_$$_GET_PC_ADDR$$POINTER
@@ -60885,7 +60854,7 @@ FPC_UNICODESTR_RANGECHECK:
 	addi	r3,r0,201
 	addi	r5,r11,0
 	call	SYSTEM_$$_HANDLEERRORADDRFRAMEIND$LONGINT$POINTER$POINTER
-.Lj6963:
+.Lj6958:
 	ldw	r11,r29,60
 	ldw	r30,r29,64
 	ldw	r31,r29,68
@@ -60910,22 +60879,22 @@ FPC_UNICODESTR_ZEROBASED_RANGECHECK:
 	stw	r30,r4,-60
 	ldw	r3,r30,-56
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6966
-	jal	r0,.Lj6967
-.Lj6967:
+	bne	r3,r0,.Lj6961
+	jal	r0,.Lj6962
+.Lj6962:
 	ldw	r3,r30,-56
 	ldw	r4,r3,-4
 	ldw	r3,r30,-60
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj6966
-	jal	r0,.Lj6968
-.Lj6968:
+	bne	r3,r0,.Lj6961
+	jal	r0,.Lj6963
+.Lj6963:
 	ldw	r4,r30,-60
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj6966
-	jal	r0,.Lj6969
-.Lj6966:
+	bne	r3,r0,.Lj6961
+	jal	r0,.Lj6964
+.Lj6961:
 	call	SYSTEM_$$_GET_FRAME$$POINTER
 	addi	r11,r1,0
 	call	SYSTEM_$$_GET_PC_ADDR$$POINTER
@@ -60933,7 +60902,7 @@ FPC_UNICODESTR_ZEROBASED_RANGECHECK:
 	addi	r3,r0,201
 	addi	r5,r11,0
 	call	SYSTEM_$$_HANDLEERRORADDRFRAMEIND$LONGINT$POINTER$POINTER
-.Lj6969:
+.Lj6964:
 	ldw	r11,r29,60
 	ldw	r30,r29,64
 	ldw	r31,r29,68
@@ -60958,28 +60927,28 @@ FPC_UNICODESTR_SETLENGTH:
 	ldw	r4,r30,-60
 	addi	r3,r0,0
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj6972
-	jal	r0,.Lj6973
-.Lj6972:
+	bne	r3,r0,.Lj6967
+	jal	r0,.Lj6968
+.Lj6967:
 	ldw	r3,r30,-56
 	call	FPC_UNICODESTR_DECR_REF
-	jal	r0,.Lj6970
-.Lj6973:
+	jal	r0,.Lj6965
+.Lj6968:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	stw	r30,r3,-64
 	ldw	r3,r30,-64
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj6974
-	jal	r0,.Lj6975
-.Lj6974:
+	bne	r3,r0,.Lj6969
+	jal	r0,.Lj6970
+.Lj6969:
 	ldw	r3,r30,-64
 	ldw	r3,r3,-8
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj6976
-	jal	r0,.Lj6975
-.Lj6976:
+	bne	r3,r0,.Lj6971
+	jal	r0,.Lj6970
+.Lj6971:
 	ldw	r3,r30,-64
 	addi	r3,r3,-12
 	call	SYSTEM_$$_MEMSIZE$POINTER$$LONGWORD
@@ -60991,17 +60960,17 @@ FPC_UNICODESTR_SETLENGTH:
 	ldw	r3,r30,-80
 	ldw	r4,r30,-76
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj6977
-	jal	r0,.Lj6978
-.Lj6978:
+	bne	r3,r0,.Lj6972
+	jal	r0,.Lj6973
+.Lj6973:
 	ldw	r3,r30,-80
 	addi	r3,r3,16
 	ldw	r4,r30,-76
 	srli	r4,r4,1
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj6977
-	jal	r0,.Lj6979
-.Lj6977:
+	bne	r3,r0,.Lj6972
+	jal	r0,.Lj6974
+.Lj6972:
 	ldw	r3,r30,-64
 	addi	r3,r3,-12
 	stw	r30,r3,-72
@@ -61010,9 +60979,9 @@ FPC_UNICODESTR_SETLENGTH:
 	call	SYSTEM_$$_REALLOCMEM$POINTER$LONGWORD$$POINTER
 	addi	r3,r1,12
 	stw	r30,r3,-64
-.Lj6979:
-	jal	r0,.Lj6980
-.Lj6975:
+.Lj6974:
+	jal	r0,.Lj6975
+.Lj6970:
 	ldw	r3,r30,-64
 	stw	r30,r3,-68
 	ldw	r3,r30,-60
@@ -61033,21 +61002,21 @@ FPC_UNICODESTR_SETLENGTH:
 	stw	r4,r3,-8
 	ldw	r3,r30,-68
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj6981
-	jal	r0,.Lj6982
-.Lj6981:
+	bne	r3,r0,.Lj6976
+	jal	r0,.Lj6977
+.Lj6976:
 	ldw	r3,r30,-68
 	ldw	r3,r3,-4
 	stw	r30,r3,-76
 	ldw	r3,r30,-60
 	ldw	r4,r30,-76
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj6983
-	jal	r0,.Lj6984
-.Lj6983:
+	bne	r3,r0,.Lj6978
+	jal	r0,.Lj6979
+.Lj6978:
 	ldw	r3,r30,-60
 	stw	r30,r3,-76
-.Lj6984:
+.Lj6979:
 	ldw	r3,r30,-76
 	slli	r5,r3,1
 	ldw	r4,r30,-64
@@ -61055,8 +61024,8 @@ FPC_UNICODESTR_SETLENGTH:
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
 	ldw	r3,r30,-56
 	call	FPC_UNICODESTR_DECR_REF
-.Lj6982:
-.Lj6980:
+.Lj6977:
+.Lj6975:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-60
 	slli	r4,r4,1
@@ -61068,7 +61037,7 @@ FPC_UNICODESTR_SETLENGTH:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-64
 	stw	r4,r3,0
-.Lj6970:
+.Lj6965:
 	ldw	r30,r29,80
 	ldw	r31,r29,84
 	addi	r29,r29,88
@@ -61097,27 +61066,27 @@ SYSTEM_$$_UNICODECHARTOSTRING$PUNICODECHAR$$UNICODESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj6988
+	bne	r1,r0,.Lj6983
 	addi	r3,r30,-164
 	ldw	r4,r30,-56
 	call	fpc_pwidechar_to_unicodestr
 	ldw	r5,r30,-164
-	beq	r5,r0,.Lj6990
+	beq	r5,r0,.Lj6985
 	ldw	r5,r5,-4
-.Lj6990:
+.Lj6985:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-56
 	call	SYSTEM_$$_UNICODECHARLENTOSTRING$PUNICODECHAR$LONGINT$$UNICODESTRING
-.Lj6988:
+.Lj6983:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj6987
+	beq	r3,r0,.Lj6982
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj6988
-.Lj6987:
+	jal	r0,.Lj6983
+.Lj6982:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -61171,27 +61140,27 @@ SYSTEM_$$_WIDECHARTOSTRING$PWIDECHAR$$UNICODESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj6996
+	bne	r1,r0,.Lj6991
 	addi	r3,r30,-164
 	ldw	r4,r30,-56
 	call	fpc_pwidechar_to_unicodestr
 	ldw	r5,r30,-164
-	beq	r5,r0,.Lj6998
+	beq	r5,r0,.Lj6993
 	ldw	r5,r5,-4
-.Lj6998:
+.Lj6993:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-56
 	call	SYSTEM_$$_WIDECHARLENTOSTRING$PWIDECHAR$LONGINT$$UNICODESTRING
-.Lj6996:
+.Lj6991:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj6995
+	beq	r3,r0,.Lj6990
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj6996
-.Lj6995:
+	jal	r0,.Lj6991
+.Lj6990:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -61221,38 +61190,38 @@ SYSTEM_$$_STRINGTOWIDECHAR$RAWBYTESTRING$PWIDECHAR$LONGINT$$PWIDECHAR:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-176
-	bne	r1,r0,.Lj7002
+	bne	r1,r0,.Lj6997
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_STRINGCODEPAGE$RAWBYTESTRING$$WORD
 	addi	r4,r1,0
 	ldw	r6,r30,-56
-	beq	r6,r0,.Lj7004
+	beq	r6,r0,.Lj6999
 	ldw	r6,r6,-4
-.Lj7004:
+.Lj6999:
 	addi	r5,r30,-72
 	ldw	r3,r30,-56
-	bne	r3,r0,.Lj7005
+	bne	r3,r0,.Lj7000
 	la	r7,FPC_EMPTYCHAR
 	addi	r3,r7,0
-.Lj7005:
+.Lj7000:
 	la	r7,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	ldw	r7,r7,4
 	jalr	r31,r7
 	ldw	r3,r30,-72
-	beq	r3,r0,.Lj7006
+	beq	r3,r0,.Lj7001
 	ldw	r3,r3,-4
-.Lj7006:
+.Lj7001:
 	stw	r30,r3,-76
 	ldw	r4,r30,-64
 	ldw	r3,r30,-76
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj7007
-	jal	r0,.Lj7008
-.Lj7007:
+	bne	r3,r0,.Lj7002
+	jal	r0,.Lj7003
+.Lj7002:
 	ldw	r3,r30,-64
 	addi	r3,r3,-1
 	stw	r30,r3,-76
-.Lj7008:
+.Lj7003:
 	ldw	r3,r30,-76
 	slli	r5,r3,1
 	ldw	r3,r30,-72
@@ -61265,16 +61234,16 @@ SYSTEM_$$_STRINGTOWIDECHAR$RAWBYTESTRING$PWIDECHAR$LONGINT$$PWIDECHAR:
 	sth	r3,r0,0
 	ldw	r3,r30,-60
 	stw	r30,r3,-68
-.Lj7002:
+.Lj6997:
 	call	fpc_popaddrstack
 	addi	r3,r30,-72
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-176
-	beq	r3,r0,.Lj7001
+	beq	r3,r0,.Lj6996
 	call	fpc_reraise
 	stw	r30,r0,-176
-	jal	r0,.Lj7002
-.Lj7001:
+	jal	r0,.Lj6997
+.Lj6996:
 	ldw	r1,r30,-68
 	ldw	r30,r29,176
 	ldw	r31,r29,180
@@ -61308,7 +61277,7 @@ SYSTEM_$$_UNICODEFROMLOCALECHARS$LONGWORD$LONGWORD$PANSICHAR$LONGINT$PWIDECHAR$L
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-188
-	bne	r1,r0,.Lj7012
+	bne	r1,r0,.Lj7007
 	addi	r5,r30,-84
 	ldhu	r4,r30,-56
 	ldw	r6,r30,-68
@@ -61317,26 +61286,26 @@ SYSTEM_$$_UNICODEFROMLOCALECHARS$LONGWORD$LONGWORD$PANSICHAR$LONGINT$PWIDECHAR$L
 	ldw	r7,r7,4
 	jalr	r31,r7
 	ldw	r3,r30,-84
-	beq	r3,r0,.Lj7014
+	beq	r3,r0,.Lj7009
 	ldw	r3,r3,-4
-.Lj7014:
+.Lj7009:
 	stw	r30,r3,-88
 	ldw	r4,r30,-76
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj7015
-	jal	r0,.Lj7016
-.Lj7015:
+	bne	r3,r0,.Lj7010
+	jal	r0,.Lj7011
+.Lj7010:
 	ldw	r4,r30,-76
 	ldw	r3,r30,-88
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj7017
-	jal	r0,.Lj7018
-.Lj7017:
+	bne	r3,r0,.Lj7012
+	jal	r0,.Lj7013
+.Lj7012:
 	ldw	r3,r30,-76
 	addi	r3,r3,-1
 	stw	r30,r3,-88
-.Lj7018:
+.Lj7013:
 	ldw	r3,r30,-88
 	slli	r5,r3,1
 	ldw	r3,r30,-84
@@ -61347,19 +61316,19 @@ SYSTEM_$$_UNICODEFROMLOCALECHARS$LONGWORD$LONGWORD$PANSICHAR$LONGINT$PWIDECHAR$L
 	slli	r4,r4,1
 	add	r3,r3,r4
 	sth	r3,r0,0
-.Lj7016:
+.Lj7011:
 	ldw	r3,r30,-88
 	stw	r30,r3,-80
-.Lj7012:
+.Lj7007:
 	call	fpc_popaddrstack
 	addi	r3,r30,-84
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-188
-	beq	r3,r0,.Lj7011
+	beq	r3,r0,.Lj7006
 	call	fpc_reraise
 	stw	r30,r0,-188
-	jal	r0,.Lj7012
-.Lj7011:
+	jal	r0,.Lj7007
+.Lj7006:
 	ldw	r1,r30,-80
 	ldw	r30,r29,188
 	ldw	r31,r29,192
@@ -61393,12 +61362,12 @@ SYSTEM_$$_UNICODEFROMLOCALECHARS$hA9Pjpad2HXH:
 	addi	r4,r30,-84
 	call	SYSTEM_$$_LOCALENAMETOCODEPAGE$SHORTSTRING$WORD$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj7021
-	jal	r0,.Lj7022
-.Lj7021:
+	bne	r3,r0,.Lj7016
+	jal	r0,.Lj7017
+.Lj7016:
 	stw	r30,r0,-80
-	jal	r0,.Lj7023
-.Lj7022:
+	jal	r0,.Lj7018
+.Lj7017:
 	ldhu	r3,r30,-84
 	ldw	r8,r30,-76
 	ldw	r7,r30,-72
@@ -61407,7 +61376,7 @@ SYSTEM_$$_UNICODEFROMLOCALECHARS$hA9Pjpad2HXH:
 	ldw	r4,r30,-60
 	call	SYSTEM_$$_UNICODEFROMLOCALECHARS$LONGWORD$LONGWORD$PANSICHAR$LONGINT$PWIDECHAR$LONGINT$$LONGINT
 	stw	r30,r1,-80
-.Lj7023:
+.Lj7018:
 	ldw	r1,r30,-80
 	ldw	r30,r29,340
 	ldw	r31,r29,344
@@ -61468,7 +61437,7 @@ SYSTEM_$$_UNICODECHARLENTOSTRVAR$PUNICODECHAR$LONGINT$UNICODESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj7029
+	bne	r1,r0,.Lj7024
 	addi	r3,r30,-168
 	ldw	r5,r30,-60
 	ldw	r4,r30,-56
@@ -61476,16 +61445,16 @@ SYSTEM_$$_UNICODECHARLENTOSTRVAR$PUNICODECHAR$LONGINT$UNICODESTRING:
 	ldw	r4,r30,-168
 	ldw	r3,r30,-64
 	call	fpc_unicodestr_assign
-.Lj7029:
+.Lj7024:
 	call	fpc_popaddrstack
 	addi	r3,r30,-168
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj7028
+	beq	r3,r0,.Lj7023
 	call	fpc_reraise
 	stw	r30,r0,-164
-	jal	r0,.Lj7029
-.Lj7028:
+	jal	r0,.Lj7024
+.Lj7023:
 	ldw	r30,r29,168
 	ldw	r31,r29,172
 	addi	r29,r29,176
@@ -61515,7 +61484,7 @@ SYSTEM_$$_UNICODECHARLENTOSTRVAR$PUNICODECHAR$LONGINT$ANSISTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj7034
+	bne	r1,r0,.Lj7029
 	addi	r3,r30,-168
 	ldw	r5,r30,-60
 	ldw	r4,r30,-56
@@ -61524,16 +61493,16 @@ SYSTEM_$$_UNICODECHARLENTOSTRVAR$PUNICODECHAR$LONGINT$ANSISTRING:
 	ldw	r3,r30,-64
 	addi	r5,r0,0
 	call	fpc_unicodestr_to_ansistr
-.Lj7034:
+.Lj7029:
 	call	fpc_popaddrstack
 	addi	r3,r30,-168
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj7033
+	beq	r3,r0,.Lj7028
 	call	fpc_reraise
 	stw	r30,r0,-164
-	jal	r0,.Lj7034
-.Lj7033:
+	jal	r0,.Lj7029
+.Lj7028:
 	ldw	r30,r29,168
 	ldw	r31,r29,172
 	addi	r29,r29,176
@@ -61562,7 +61531,7 @@ SYSTEM_$$_UNICODECHARTOSTRVAR$PUNICODECHAR$ANSISTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj7039
+	bne	r1,r0,.Lj7034
 	addi	r3,r30,-164
 	ldw	r4,r30,-56
 	call	SYSTEM_$$_UNICODECHARTOSTRING$PUNICODECHAR$$UNICODESTRING
@@ -61570,16 +61539,16 @@ SYSTEM_$$_UNICODECHARTOSTRVAR$PUNICODECHAR$ANSISTRING:
 	ldw	r3,r30,-60
 	addi	r5,r0,0
 	call	fpc_unicodestr_to_ansistr
-.Lj7039:
+.Lj7034:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj7038
+	beq	r3,r0,.Lj7033
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj7039
-.Lj7038:
+	jal	r0,.Lj7034
+.Lj7033:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -61639,7 +61608,7 @@ SYSTEM_$$_WIDECHARLENTOSTRVAR$PWIDECHAR$LONGINT$UNICODESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj7046
+	bne	r1,r0,.Lj7041
 	addi	r3,r30,-168
 	ldw	r5,r30,-60
 	ldw	r4,r30,-56
@@ -61647,16 +61616,16 @@ SYSTEM_$$_WIDECHARLENTOSTRVAR$PWIDECHAR$LONGINT$UNICODESTRING:
 	ldw	r4,r30,-168
 	ldw	r3,r30,-64
 	call	fpc_unicodestr_assign
-.Lj7046:
+.Lj7041:
 	call	fpc_popaddrstack
 	addi	r3,r30,-168
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj7045
+	beq	r3,r0,.Lj7040
 	call	fpc_reraise
 	stw	r30,r0,-164
-	jal	r0,.Lj7046
-.Lj7045:
+	jal	r0,.Lj7041
+.Lj7040:
 	ldw	r30,r29,168
 	ldw	r31,r29,172
 	addi	r29,r29,176
@@ -61686,7 +61655,7 @@ SYSTEM_$$_WIDECHARLENTOSTRVAR$PWIDECHAR$LONGINT$ANSISTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj7051
+	bne	r1,r0,.Lj7046
 	addi	r3,r30,-168
 	ldw	r5,r30,-60
 	ldw	r4,r30,-56
@@ -61695,16 +61664,16 @@ SYSTEM_$$_WIDECHARLENTOSTRVAR$PWIDECHAR$LONGINT$ANSISTRING:
 	ldw	r3,r30,-64
 	addi	r5,r0,0
 	call	fpc_unicodestr_to_ansistr
-.Lj7051:
+.Lj7046:
 	call	fpc_popaddrstack
 	addi	r3,r30,-168
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj7050
+	beq	r3,r0,.Lj7045
 	call	fpc_reraise
 	stw	r30,r0,-164
-	jal	r0,.Lj7051
-.Lj7050:
+	jal	r0,.Lj7046
+.Lj7045:
 	ldw	r30,r29,168
 	ldw	r31,r29,172
 	addi	r29,r29,176
@@ -61733,23 +61702,23 @@ SYSTEM_$$_WIDECHARTOSTRVAR$PWIDECHAR$UNICODESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj7056
+	bne	r1,r0,.Lj7051
 	addi	r3,r30,-164
 	ldw	r4,r30,-56
 	call	SYSTEM_$$_WIDECHARTOSTRING$PWIDECHAR$$UNICODESTRING
 	ldw	r4,r30,-164
 	ldw	r3,r30,-60
 	call	fpc_unicodestr_assign
-.Lj7056:
+.Lj7051:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj7055
+	beq	r3,r0,.Lj7050
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj7056
-.Lj7055:
+	jal	r0,.Lj7051
+.Lj7050:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -61778,7 +61747,7 @@ SYSTEM_$$_WIDECHARTOSTRVAR$PWIDECHAR$ANSISTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj7061
+	bne	r1,r0,.Lj7056
 	addi	r3,r30,-164
 	ldw	r4,r30,-56
 	call	SYSTEM_$$_WIDECHARTOSTRING$PWIDECHAR$$UNICODESTRING
@@ -61786,16 +61755,16 @@ SYSTEM_$$_WIDECHARTOSTRVAR$PWIDECHAR$ANSISTRING:
 	ldw	r3,r30,-60
 	addi	r5,r0,0
 	call	fpc_unicodestr_to_ansistr
-.Lj7061:
+.Lj7056:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj7060
+	beq	r3,r0,.Lj7055
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj7061
-.Lj7060:
+	jal	r0,.Lj7056
+.Lj7055:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -61839,16 +61808,16 @@ FPC_UNICODESTR_UNIQUE:
 	stw	r30,r3,-60
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7067
-	jal	r0,.Lj7068
-.Lj7067:
+	bne	r3,r0,.Lj7062
+	jal	r0,.Lj7063
+.Lj7062:
 	ldw	r3,r30,-60
 	ldw	r3,r3,-8
 	addi	r3,r3,-1
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7069
-	jal	r0,.Lj7068
-.Lj7069:
+	bne	r3,r0,.Lj7064
+	jal	r0,.Lj7063
+.Lj7064:
 	ldw	r3,r30,-60
 	ldw	r3,r3,-4
 	slli	r3,r3,1
@@ -61874,7 +61843,7 @@ FPC_UNICODESTR_UNIQUE:
 	stw	r3,r4,0
 	ldw	r3,r30,-64
 	stw	r30,r3,-60
-.Lj7068:
+.Lj7063:
 	ldw	r1,r30,-60
 	ldw	r30,r29,68
 	ldw	r31,r29,72
@@ -61901,51 +61870,51 @@ fpc_unicodestr_copy:
 	ldw	r3,r30,-60
 	addi	r4,r0,1
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj7072
-	jal	r0,.Lj7073
-.Lj7072:
+	bne	r3,r0,.Lj7067
+	jal	r0,.Lj7068
+.Lj7067:
 	addi	r3,r0,1
 	stw	r30,r3,-60
-.Lj7073:
+.Lj7068:
 	ldw	r3,r30,-60
 	addi	r3,r3,-1
 	stw	r30,r3,-60
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj7074
+	beq	r3,r0,.Lj7069
 	ldw	r3,r3,-4
-.Lj7074:
+.Lj7069:
 	ldw	r4,r30,-60
 	sub	r3,r3,r4
 	stw	r30,r3,-72
 	ldw	r3,r30,-64
 	ldw	r4,r30,-72
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj7075
-	jal	r0,.Lj7076
-.Lj7075:
+	bne	r3,r0,.Lj7070
+	jal	r0,.Lj7071
+.Lj7070:
 	ldw	r3,r30,-72
 	stw	r30,r3,-64
-.Lj7076:
+.Lj7071:
 	ldw	r4,r30,-64
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj7077
-	jal	r0,.Lj7078
-.Lj7077:
+	bne	r3,r0,.Lj7072
+	jal	r0,.Lj7073
+.Lj7072:
 	ldw	r3,r30,-68
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7079
-	jal	r0,.Lj7078
-.Lj7079:
+	bne	r3,r0,.Lj7074
+	jal	r0,.Lj7073
+.Lj7074:
 	ldw	r3,r30,-68
 	ldw	r3,r3,0
 	ldw	r3,r3,-8
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7080
-	jal	r0,.Lj7078
-.Lj7080:
+	bne	r3,r0,.Lj7075
+	jal	r0,.Lj7073
+.Lj7075:
 	ldw	r3,r30,-68
 	ldw	r3,r3,0
 	addi	r3,r3,-12
@@ -61957,25 +61926,25 @@ fpc_unicodestr_copy:
 	call	SYSTEM_$$_REALLOCMEM$POINTER$LONGWORD$$POINTER
 	addi	r3,r1,12
 	stw	r30,r3,-76
-	jal	r0,.Lj7081
-.Lj7078:
+	jal	r0,.Lj7076
+.Lj7073:
 	ldw	r3,r30,-68
 	call	FPC_UNICODESTR_DECR_REF
 	ldw	r4,r30,-64
 	addi	r3,r0,0
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj7082
-	jal	r0,.Lj7083
-.Lj7082:
-	jal	r0,.Lj7070
-.Lj7083:
+	bne	r3,r0,.Lj7077
+	jal	r0,.Lj7078
+.Lj7077:
+	jal	r0,.Lj7065
+.Lj7078:
 	ldw	r3,r30,-64
 	slli	r3,r3,1
 	addi	r3,r3,14
 	call	SYSTEM_$$_GETMEM$LONGWORD$$POINTER
 	addi	r3,r1,12
 	stw	r30,r3,-76
-.Lj7081:
+.Lj7076:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-76
 	stw	r4,r3,0
@@ -62005,7 +61974,7 @@ fpc_unicodestr_copy:
 	slli	r4,r4,1
 	add	r3,r3,r4
 	sth	r3,r0,0
-.Lj7070:
+.Lj7065:
 	ldw	r30,r29,80
 	ldw	r31,r29,84
 	addi	r29,r29,88
@@ -62027,33 +61996,33 @@ SYSTEM_$$_POS$UNICODESTRING$UNICODESTRING$LONGINT$$LONGINT:
 	stw	r30,r5,-64
 	stw	r30,r0,-68
 	ldw	r3,r30,-60
-	beq	r3,r0,.Lj7086
+	beq	r3,r0,.Lj7081
 	ldw	r3,r3,-4
-.Lj7086:
+.Lj7081:
 	stw	r30,r3,-80
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj7087
+	beq	r3,r0,.Lj7082
 	ldw	r3,r3,-4
-.Lj7087:
+.Lj7082:
 	stw	r30,r3,-84
 	ldw	r4,r30,-84
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj7088
-	jal	r0,.Lj7089
-.Lj7088:
+	bne	r3,r0,.Lj7083
+	jal	r0,.Lj7084
+.Lj7083:
 	ldw	r4,r30,-64
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj7090
-	jal	r0,.Lj7089
-.Lj7090:
+	bne	r3,r0,.Lj7085
+	jal	r0,.Lj7084
+.Lj7085:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-80
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj7091
-	jal	r0,.Lj7089
-.Lj7091:
+	bne	r3,r0,.Lj7086
+	jal	r0,.Lj7084
+.Lj7086:
 	ldw	r3,r30,-80
 	ldw	r4,r30,-84
 	sub	r3,r3,r4
@@ -62061,8 +62030,8 @@ SYSTEM_$$_POS$UNICODESTRING$UNICODESTRING$LONGINT$$LONGINT:
 	stw	r30,r3,-76
 	ldw	r3,r30,-64
 	stw	r30,r3,-72
-	jal	r0,.Lj7093
-.Lj7092:
+	jal	r0,.Lj7088
+.Lj7087:
 	ldw	r3,r30,-76
 	ldw	r4,r30,-72
 	sub	r3,r3,r4
@@ -62079,11 +62048,11 @@ SYSTEM_$$_POS$UNICODESTRING$UNICODESTRING$LONGINT$$LONGINT:
 	ldw	r4,r30,-88
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj7095
-	jal	r0,.Lj7096
-.Lj7095:
-	jal	r0,.Lj7084
-.Lj7096:
+	bne	r3,r0,.Lj7090
+	jal	r0,.Lj7091
+.Lj7090:
+	jal	r0,.Lj7079
+.Lj7091:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-72
 	ldw	r5,r30,-88
@@ -62095,29 +62064,29 @@ SYSTEM_$$_POS$UNICODESTRING$UNICODESTRING$LONGINT$$LONGINT:
 	ldw	r5,r30,-84
 	call	SYSTEM_$$_COMPAREWORD$formal$formal$LONGINT$$LONGINT
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj7097
-	jal	r0,.Lj7098
-.Lj7097:
+	bne	r3,r0,.Lj7092
+	jal	r0,.Lj7093
+.Lj7092:
 	ldw	r4,r30,-72
 	ldw	r3,r30,-88
 	add	r3,r3,r4
 	stw	r30,r3,-68
-	jal	r0,.Lj7084
-.Lj7098:
+	jal	r0,.Lj7079
+.Lj7093:
 	ldw	r4,r30,-72
 	ldw	r3,r30,-88
 	add	r3,r3,r4
 	addi	r3,r3,1
 	stw	r30,r3,-72
-.Lj7093:
+.Lj7088:
 	ldw	r4,r30,-72
 	ldw	r3,r30,-76
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj7092
-	jal	r0,.Lj7094
-.Lj7094:
+	bne	r3,r0,.Lj7087
+	jal	r0,.Lj7089
 .Lj7089:
 .Lj7084:
+.Lj7079:
 	ldw	r1,r30,-68
 	ldw	r30,r29,88
 	ldw	r31,r29,92
@@ -62142,22 +62111,22 @@ SYSTEM_$$_POS$WIDECHAR$UNICODESTRING$LONGINT$$LONGINT:
 	stw	r30,r5,-64
 	stw	r30,r0,-68
 	ldw	r3,r30,-60
-	beq	r3,r0,.Lj7101
+	beq	r3,r0,.Lj7096
 	ldw	r3,r3,-4
-.Lj7101:
+.Lj7096:
 	stw	r30,r3,-72
 	ldw	r4,r30,-64
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj7102
-	jal	r0,.Lj7103
-.Lj7102:
+	bne	r3,r0,.Lj7097
+	jal	r0,.Lj7098
+.Lj7097:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-72
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj7104
-	jal	r0,.Lj7103
-.Lj7104:
+	bne	r3,r0,.Lj7099
+	jal	r0,.Lj7098
+.Lj7099:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-64
 	sub	r3,r3,r4
@@ -62173,15 +62142,15 @@ SYSTEM_$$_POS$WIDECHAR$UNICODESTRING$LONGINT$$LONGINT:
 	ldw	r4,r30,-76
 	addi	r3,r0,0
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj7105
-	jal	r0,.Lj7106
-.Lj7105:
+	bne	r3,r0,.Lj7100
+	jal	r0,.Lj7101
+.Lj7100:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-76
 	add	r3,r3,r4
 	stw	r30,r3,-68
-.Lj7106:
-.Lj7103:
+.Lj7101:
+.Lj7098:
 	ldw	r1,r30,-68
 	ldw	r30,r29,76
 	ldw	r31,r29,80
@@ -62210,7 +62179,7 @@ SYSTEM_$$_POS$RAWBYTESTRING$UNICODESTRING$LONGINT$$LONGINT:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-168
-	bne	r1,r0,.Lj7110
+	bne	r1,r0,.Lj7105
 	addi	r3,r30,-172
 	ldw	r4,r30,-56
 	call	fpc_ansistr_to_unicodestr
@@ -62219,16 +62188,16 @@ SYSTEM_$$_POS$RAWBYTESTRING$UNICODESTRING$LONGINT$$LONGINT:
 	ldw	r4,r30,-60
 	call	SYSTEM_$$_POS$UNICODESTRING$UNICODESTRING$LONGINT$$LONGINT
 	stw	r30,r1,-68
-.Lj7110:
+.Lj7105:
 	call	fpc_popaddrstack
 	addi	r3,r30,-172
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-168
-	beq	r3,r0,.Lj7109
+	beq	r3,r0,.Lj7104
 	call	fpc_reraise
 	stw	r30,r0,-168
-	jal	r0,.Lj7110
-.Lj7109:
+	jal	r0,.Lj7105
+.Lj7104:
 	ldw	r1,r30,-68
 	ldw	r30,r29,172
 	ldw	r31,r29,176
@@ -62257,7 +62226,7 @@ SYSTEM_$$_POS$SHORTSTRING$UNICODESTRING$LONGINT$$LONGINT:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-168
-	bne	r1,r0,.Lj7115
+	bne	r1,r0,.Lj7110
 	ldw	r4,r30,-56
 	addi	r3,r30,-172
 	call	fpc_shortstr_to_unicodestr
@@ -62266,16 +62235,16 @@ SYSTEM_$$_POS$SHORTSTRING$UNICODESTRING$LONGINT$$LONGINT:
 	ldw	r4,r30,-60
 	call	SYSTEM_$$_POS$UNICODESTRING$UNICODESTRING$LONGINT$$LONGINT
 	stw	r30,r1,-68
-.Lj7115:
+.Lj7110:
 	call	fpc_popaddrstack
 	addi	r3,r30,-172
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-168
-	beq	r3,r0,.Lj7114
+	beq	r3,r0,.Lj7109
 	call	fpc_reraise
 	stw	r30,r0,-168
-	jal	r0,.Lj7115
-.Lj7114:
+	jal	r0,.Lj7110
+.Lj7109:
 	ldw	r1,r30,-68
 	ldw	r30,r29,172
 	ldw	r31,r29,176
@@ -62304,7 +62273,7 @@ SYSTEM_$$_POS$UNICODESTRING$RAWBYTESTRING$LONGINT$$LONGINT:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-168
-	bne	r1,r0,.Lj7120
+	bne	r1,r0,.Lj7115
 	addi	r3,r30,-172
 	ldw	r4,r30,-60
 	call	fpc_ansistr_to_unicodestr
@@ -62313,16 +62282,16 @@ SYSTEM_$$_POS$UNICODESTRING$RAWBYTESTRING$LONGINT$$LONGINT:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_POS$UNICODESTRING$UNICODESTRING$LONGINT$$LONGINT
 	stw	r30,r1,-68
-.Lj7120:
+.Lj7115:
 	call	fpc_popaddrstack
 	addi	r3,r30,-172
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-168
-	beq	r3,r0,.Lj7119
+	beq	r3,r0,.Lj7114
 	call	fpc_reraise
 	stw	r30,r0,-168
-	jal	r0,.Lj7120
-.Lj7119:
+	jal	r0,.Lj7115
+.Lj7114:
 	ldw	r1,r30,-68
 	ldw	r30,r29,172
 	ldw	r31,r29,176
@@ -62348,9 +62317,9 @@ SYSTEM_$$_STRINGOFCHAR$WIDECHAR$LONGINT$$UNICODESTRING:
 	call	fpc_unicodestr_setlength
 	ldw	r3,r30,-64
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj7124
+	beq	r4,r0,.Lj7119
 	ldw	r4,r4,-4
-.Lj7124:
+.Lj7119:
 	ldw	r3,r30,-64
 	ldw	r3,r3,0
 	ldhu	r5,r30,-56
@@ -62376,22 +62345,22 @@ SYSTEM_$$_POS$ANSICHAR$UNICODESTRING$LONGINT$$LONGINT:
 	stw	r30,r5,-64
 	stw	r30,r0,-68
 	ldw	r3,r30,-60
-	beq	r3,r0,.Lj7127
+	beq	r3,r0,.Lj7122
 	ldw	r3,r3,-4
-.Lj7127:
+.Lj7122:
 	stw	r30,r3,-72
 	ldw	r4,r30,-64
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj7128
-	jal	r0,.Lj7129
-.Lj7128:
+	bne	r3,r0,.Lj7123
+	jal	r0,.Lj7124
+.Lj7123:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-72
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj7130
-	jal	r0,.Lj7129
-.Lj7130:
+	bne	r3,r0,.Lj7125
+	jal	r0,.Lj7124
+.Lj7125:
 	ldbu	r3,r30,-56
 	call	fpc_char_to_uchar
 	addi	r5,r1,0
@@ -62409,15 +62378,15 @@ SYSTEM_$$_POS$ANSICHAR$UNICODESTRING$LONGINT$$LONGINT:
 	ldw	r4,r30,-76
 	addi	r3,r0,0
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj7131
-	jal	r0,.Lj7132
-.Lj7131:
+	bne	r3,r0,.Lj7126
+	jal	r0,.Lj7127
+.Lj7126:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-76
 	add	r3,r3,r4
 	stw	r30,r3,-68
-.Lj7132:
-.Lj7129:
+.Lj7127:
+.Lj7124:
 	ldw	r1,r30,-68
 	ldw	r30,r29,76
 	ldw	r31,r29,80
@@ -62440,30 +62409,30 @@ fpc_unicodestr_delete:
 	stw	r30,r5,-64
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
-	beq	r3,r0,.Lj7135
+	beq	r3,r0,.Lj7130
 	ldw	r3,r3,-4
-.Lj7135:
+.Lj7130:
 	stw	r30,r3,-68
 	ldw	r3,r30,-60
 	ldw	r4,r30,-68
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj7136
-	jal	r0,.Lj7137
-.Lj7137:
+	bne	r3,r0,.Lj7131
+	jal	r0,.Lj7132
+.Lj7132:
 	ldw	r4,r30,-60
 	addi	r3,r0,0
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj7136
-	jal	r0,.Lj7138
-.Lj7138:
+	bne	r3,r0,.Lj7131
+	jal	r0,.Lj7133
+.Lj7133:
 	ldw	r4,r30,-64
 	addi	r3,r0,0
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj7136
-	jal	r0,.Lj7139
-.Lj7136:
-	jal	r0,.Lj7133
-.Lj7139:
+	bne	r3,r0,.Lj7131
+	jal	r0,.Lj7134
+.Lj7131:
+	jal	r0,.Lj7128
+.Lj7134:
 	ldw	r3,r30,-56
 	call	FPC_UNICODESTR_UNIQUE
 	ldw	r3,r30,-68
@@ -62471,23 +62440,23 @@ fpc_unicodestr_delete:
 	sub	r3,r3,r4
 	ldw	r4,r30,-64
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj7140
-	jal	r0,.Lj7141
-.Lj7140:
+	bne	r3,r0,.Lj7135
+	jal	r0,.Lj7136
+.Lj7135:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-60
 	sub	r3,r3,r4
 	addi	r3,r3,1
 	stw	r30,r3,-64
-.Lj7141:
+.Lj7136:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-60
 	sub	r4,r3,r4
 	ldw	r3,r30,-64
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj7142
-	jal	r0,.Lj7143
-.Lj7142:
+	bne	r3,r0,.Lj7137
+	jal	r0,.Lj7138
+.Lj7137:
 	ldw	r3,r30,-60
 	addi	r3,r3,-1
 	stw	r30,r3,-60
@@ -62500,10 +62469,10 @@ fpc_unicodestr_delete:
 	slli	r5,r3,1
 	ldw	r3,r30,-56
 	ldw	r4,r3,0
-	bne	r4,r0,.Lj7144
+	bne	r4,r0,.Lj7139
 	la	r3,FPC_EMPTYCHAR
 	addi	r4,r3,0
-.Lj7144:
+.Lj7139:
 	ldw	r3,r30,-60
 	ldw	r6,r30,-64
 	add	r3,r6,r3
@@ -62511,21 +62480,21 @@ fpc_unicodestr_delete:
 	add	r3,r4,r3
 	ldw	r4,r30,-56
 	ldw	r6,r4,0
-	bne	r6,r0,.Lj7145
+	bne	r6,r0,.Lj7140
 	la	r4,FPC_EMPTYCHAR
 	addi	r6,r4,0
-.Lj7145:
+.Lj7140:
 	ldw	r4,r30,-60
 	slli	r4,r4,1
 	add	r4,r6,r4
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj7143:
+.Lj7138:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-64
 	sub	r4,r4,r3
 	ldw	r3,r30,-56
 	call	fpc_unicodestr_setlength
-.Lj7133:
+.Lj7128:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -62547,22 +62516,22 @@ fpc_unicodestr_insert:
 	stw	r30,r5,-64
 	ldw	r3,r30,-56
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7148
-	jal	r0,.Lj7149
-.Lj7148:
-	jal	r0,.Lj7146
-.Lj7149:
+	bne	r3,r0,.Lj7143
+	jal	r0,.Lj7144
+.Lj7143:
+	jal	r0,.Lj7141
+.Lj7144:
 	ldw	r3,r30,-60
 	ldw	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7150
-	jal	r0,.Lj7151
-.Lj7150:
+	bne	r3,r0,.Lj7145
+	jal	r0,.Lj7146
+.Lj7145:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-56
 	call	fpc_unicodestr_assign
-	jal	r0,.Lj7146
-.Lj7151:
+	jal	r0,.Lj7141
+.Lj7146:
 	ldw	r3,r30,-56
 	ldw	r3,r3,-4
 	stw	r30,r3,-72
@@ -62573,24 +62542,24 @@ fpc_unicodestr_insert:
 	ldw	r3,r30,-64
 	addi	r4,r0,1
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj7152
-	jal	r0,.Lj7153
-.Lj7152:
+	bne	r3,r0,.Lj7147
+	jal	r0,.Lj7148
+.Lj7147:
 	addi	r3,r0,1
 	stw	r30,r3,-64
-.Lj7153:
+.Lj7148:
 	ldw	r3,r30,-64
 	addi	r3,r3,-1
 	stw	r30,r3,-64
 	ldw	r4,r30,-64
 	ldw	r3,r30,-68
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj7154
-	jal	r0,.Lj7155
-.Lj7154:
+	bne	r3,r0,.Lj7149
+	jal	r0,.Lj7150
+.Lj7149:
 	ldw	r3,r30,-68
 	stw	r30,r3,-64
-.Lj7155:
+.Lj7150:
 	ldw	r3,r30,-60
 	ldw	r3,r3,0
 	ldw	r4,r30,-56
@@ -62621,13 +62590,13 @@ fpc_unicodestr_insert:
 	ldw	r3,r30,-56
 	stw	r30,r3,-80
 	ldbu	r3,r30,-76
-	bne	r3,r0,.Lj7156
-	jal	r0,.Lj7157
-.Lj7156:
+	bne	r3,r0,.Lj7151
+	jal	r0,.Lj7152
+.Lj7151:
 	ldw	r3,r30,-60
 	ldw	r3,r3,0
 	stw	r30,r3,-80
-.Lj7157:
+.Lj7152:
 	ldw	r3,r30,-72
 	slli	r5,r3,1
 	ldw	r3,r30,-60
@@ -62637,7 +62606,7 @@ fpc_unicodestr_insert:
 	add	r4,r3,r4
 	ldw	r3,r30,-80
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj7146:
+.Lj7141:
 	ldw	r30,r29,80
 	ldw	r31,r29,84
 	addi	r29,r29,88
@@ -62664,7 +62633,7 @@ SYSTEM_$$_UPCASE$WIDECHAR$$WIDECHAR:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj7161
+	bne	r1,r0,.Lj7156
 	addi	r3,r30,-168
 	ldhu	r4,r30,-56
 	call	fpc_uchar_to_unicodestr
@@ -62676,18 +62645,18 @@ SYSTEM_$$_UPCASE$WIDECHAR$$WIDECHAR:
 	ldw	r3,r30,-164
 	ldhu	r3,r3,0
 	sth	r30,r3,-60
-.Lj7161:
+.Lj7156:
 	call	fpc_popaddrstack
 	addi	r3,r30,-168
 	call	fpc_unicodestr_decr_ref
 	addi	r3,r30,-164
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj7160
+	beq	r3,r0,.Lj7155
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj7161
-.Lj7160:
+	jal	r0,.Lj7156
+.Lj7155:
 	ldhu	r1,r30,-60
 	ldw	r30,r29,168
 	ldw	r31,r29,172
@@ -62738,7 +62707,7 @@ SYSTEM_$$_LOWERCASE$WIDECHAR$$WIDECHAR:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj7168
+	bne	r1,r0,.Lj7163
 	addi	r3,r30,-168
 	ldhu	r4,r30,-56
 	call	fpc_uchar_to_unicodestr
@@ -62750,18 +62719,18 @@ SYSTEM_$$_LOWERCASE$WIDECHAR$$WIDECHAR:
 	ldw	r3,r30,-164
 	ldhu	r3,r3,0
 	sth	r30,r3,-60
-.Lj7168:
+.Lj7163:
 	call	fpc_popaddrstack
 	addi	r3,r30,-168
 	call	fpc_unicodestr_decr_ref
 	addi	r3,r30,-164
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj7167
+	beq	r3,r0,.Lj7162
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj7168
-.Lj7167:
+	jal	r0,.Lj7163
+.Lj7162:
 	ldhu	r1,r30,-60
 	ldw	r30,r29,168
 	ldw	r31,r29,172
@@ -62812,15 +62781,15 @@ fpc_setstring_unicodestr_pwidechar:
 	call	fpc_unicodestr_setlength
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7174
-	jal	r0,.Lj7175
-.Lj7174:
+	bne	r3,r0,.Lj7169
+	jal	r0,.Lj7170
+.Lj7169:
 	ldw	r4,r30,-64
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj7176
-	jal	r0,.Lj7175
-.Lj7176:
+	bne	r3,r0,.Lj7171
+	jal	r0,.Lj7170
+.Lj7171:
 	ldw	r3,r30,-56
 	call	fpc_unicodestr_unique
 	addi	r4,r1,0
@@ -62828,7 +62797,7 @@ fpc_setstring_unicodestr_pwidechar:
 	slli	r5,r3,1
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj7175:
+.Lj7170:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -62852,15 +62821,15 @@ fpc_setstring_unicodestr_pansichar:
 	stw	r3,r0,0
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7179
-	jal	r0,.Lj7180
-.Lj7179:
+	bne	r3,r0,.Lj7174
+	jal	r0,.Lj7175
+.Lj7174:
 	ldw	r4,r30,-64
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj7181
-	jal	r0,.Lj7180
-.Lj7181:
+	bne	r3,r0,.Lj7176
+	jal	r0,.Lj7175
+.Lj7176:
 	ldw	r5,r30,-56
 	la	r3,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r4,r3,0
@@ -62869,12 +62838,12 @@ fpc_setstring_unicodestr_pansichar:
 	la	r7,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	ldw	r7,r7,80
 	jalr	r31,r7
-	jal	r0,.Lj7182
-.Lj7180:
+	jal	r0,.Lj7177
+.Lj7175:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-64
 	call	fpc_unicodestr_setlength
-.Lj7182:
+.Lj7177:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -62901,19 +62870,19 @@ FPC_VAL_REAL_UNICODESTR:
 	ldw	r4,r3,4
 	stw	r30,r4,-64
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj7185
+	beq	r3,r0,.Lj7180
 	ldw	r3,r3,-4
-.Lj7185:
+.Lj7180:
 	addi	r4,r0,255
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj7186
-	jal	r0,.Lj7187
-.Lj7186:
+	bne	r3,r0,.Lj7181
+	jal	r0,.Lj7182
+.Lj7181:
 	ldw	r3,r30,-60
 	addi	r4,r0,256
 	stw	r3,r4,0
-	jal	r0,.Lj7188
-.Lj7187:
+	jal	r0,.Lj7183
+.Lj7182:
 	ldw	r5,r30,-56
 	addi	r3,r30,-580
 	addi	r4,r0,255
@@ -62931,7 +62900,7 @@ FPC_VAL_REAL_UNICODESTR:
 	stw	r30,r3,-68
 	ldw	r3,r30,-328
 	stw	r30,r3,-64
-.Lj7188:
+.Lj7183:
 	ldw	r1,r30,-68
 	ldw	r2,r30,-64
 	ldw	r30,r29,580
@@ -62959,19 +62928,19 @@ FPC_VAL_SINGLE_UNICODESTR:
 	ldw	r3,r3,0
 	stw	r30,r3,-64
 	ldw	r4,r30,-56
-	beq	r4,r0,.Lj7191
+	beq	r4,r0,.Lj7186
 	ldw	r4,r4,-4
-.Lj7191:
+.Lj7186:
 	addi	r3,r0,255
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj7192
-	jal	r0,.Lj7193
-.Lj7192:
+	bne	r3,r0,.Lj7187
+	jal	r0,.Lj7188
+.Lj7187:
 	ldw	r3,r30,-60
 	addi	r4,r0,256
 	stw	r3,r4,0
-	jal	r0,.Lj7194
-.Lj7193:
+	jal	r0,.Lj7189
+.Lj7188:
 	ldw	r5,r30,-56
 	addi	r3,r30,-576
 	addi	r4,r0,255
@@ -62986,7 +62955,7 @@ FPC_VAL_SINGLE_UNICODESTR:
 	stw	r30,r1,-324
 	ldw	r20,r30,-324
 	stw	r30,r20,-64
-.Lj7194:
+.Lj7189:
 	ldw	r1,r30,-64
 	ldw	r20,r29,576
 	ldw	r30,r29,580
@@ -63015,19 +62984,19 @@ FPC_VAL_DOUBLE_UNICODESTR:
 	ldw	r4,r3,4
 	stw	r30,r4,-64
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj7197
+	beq	r3,r0,.Lj7192
 	ldw	r3,r3,-4
-.Lj7197:
+.Lj7192:
 	addi	r4,r0,255
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj7198
-	jal	r0,.Lj7199
-.Lj7198:
+	bne	r3,r0,.Lj7193
+	jal	r0,.Lj7194
+.Lj7193:
 	ldw	r3,r30,-60
 	addi	r4,r0,256
 	stw	r3,r4,0
-	jal	r0,.Lj7200
-.Lj7199:
+	jal	r0,.Lj7195
+.Lj7194:
 	ldw	r5,r30,-56
 	addi	r3,r30,-580
 	addi	r4,r0,255
@@ -63045,7 +63014,7 @@ FPC_VAL_DOUBLE_UNICODESTR:
 	stw	r30,r3,-68
 	ldw	r3,r30,-328
 	stw	r30,r3,-64
-.Lj7200:
+.Lj7195:
 	ldw	r1,r30,-68
 	ldw	r2,r30,-64
 	ldw	r30,r29,580
@@ -63068,19 +63037,19 @@ fpc_val_enum_unicodestr:
 	stw	r30,r4,-60
 	stw	r30,r5,-64
 	ldw	r3,r30,-60
-	beq	r3,r0,.Lj7203
+	beq	r3,r0,.Lj7198
 	ldw	r3,r3,-4
-.Lj7203:
+.Lj7198:
 	addi	r4,r0,255
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj7204
-	jal	r0,.Lj7205
-.Lj7204:
+	bne	r3,r0,.Lj7199
+	jal	r0,.Lj7200
+.Lj7199:
 	ldw	r3,r30,-64
 	addi	r4,r0,256
 	stw	r3,r4,0
-	jal	r0,.Lj7206
-.Lj7205:
+	jal	r0,.Lj7201
+.Lj7200:
 	ldw	r5,r30,-60
 	addi	r3,r30,-580
 	addi	r4,r0,255
@@ -63094,7 +63063,7 @@ fpc_val_enum_unicodestr:
 	addi	r3,r0,4
 	call	fpc_val_sint_shortstr
 	stw	r30,r1,-68
-.Lj7206:
+.Lj7201:
 	ldw	r1,r30,-68
 	ldw	r30,r29,580
 	ldw	r31,r29,584
@@ -63117,21 +63086,21 @@ FPC_VAL_CURRENCY_UNICODESTR:
 	stw	r30,r3,-56
 	stw	r30,r4,-60
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj7209
+	beq	r3,r0,.Lj7204
 	ldw	r3,r3,-4
-.Lj7209:
+.Lj7204:
 	addi	r4,r0,255
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj7210
-	jal	r0,.Lj7211
-.Lj7210:
+	bne	r3,r0,.Lj7205
+	jal	r0,.Lj7206
+.Lj7205:
 	stw	r30,r0,-68
 	stw	r30,r0,-64
 	ldw	r3,r30,-60
 	addi	r4,r0,256
 	stw	r3,r4,0
-	jal	r0,.Lj7212
-.Lj7211:
+	jal	r0,.Lj7207
+.Lj7206:
 	ldw	r5,r30,-56
 	addi	r3,r30,-580
 	addi	r4,r0,255
@@ -63145,7 +63114,7 @@ FPC_VAL_CURRENCY_UNICODESTR:
 	call	fpc_val_currency_shortstr
 	stw	r30,r1,-68
 	stw	r30,r2,-64
-.Lj7212:
+.Lj7207:
 	ldw	r1,r30,-68
 	ldw	r2,r30,-64
 	ldw	r30,r29,580
@@ -63171,19 +63140,19 @@ FPC_VAL_UINT_UNICODESTR:
 	stw	r30,r5,-64
 	stw	r30,r0,-68
 	ldw	r3,r30,-60
-	beq	r3,r0,.Lj7215
+	beq	r3,r0,.Lj7210
 	ldw	r3,r3,-4
-.Lj7215:
+.Lj7210:
 	addi	r4,r0,255
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj7216
-	jal	r0,.Lj7217
-.Lj7216:
+	bne	r3,r0,.Lj7211
+	jal	r0,.Lj7212
+.Lj7211:
 	ldw	r3,r30,-64
 	addi	r4,r0,256
 	stw	r3,r4,0
-	jal	r0,.Lj7218
-.Lj7217:
+	jal	r0,.Lj7213
+.Lj7212:
 	ldw	r5,r30,-60
 	addi	r3,r30,-580
 	addi	r4,r0,255
@@ -63197,7 +63166,7 @@ FPC_VAL_UINT_UNICODESTR:
 	ldw	r3,r30,-56
 	call	FPC_VAL_UINT_SHORTSTR
 	stw	r30,r1,-68
-.Lj7218:
+.Lj7213:
 	ldw	r1,r30,-68
 	ldw	r30,r29,580
 	ldw	r31,r29,584
@@ -63222,19 +63191,19 @@ FPC_VAL_SINT_UNICODESTR:
 	stw	r30,r5,-64
 	stw	r30,r0,-68
 	ldw	r3,r30,-60
-	beq	r3,r0,.Lj7221
+	beq	r3,r0,.Lj7216
 	ldw	r3,r3,-4
-.Lj7221:
+.Lj7216:
 	addi	r4,r0,255
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj7222
-	jal	r0,.Lj7223
-.Lj7222:
+	bne	r3,r0,.Lj7217
+	jal	r0,.Lj7218
+.Lj7217:
 	ldw	r3,r30,-64
 	addi	r4,r0,256
 	stw	r3,r4,0
-	jal	r0,.Lj7224
-.Lj7223:
+	jal	r0,.Lj7219
+.Lj7218:
 	ldw	r5,r30,-60
 	addi	r3,r30,-580
 	addi	r4,r0,255
@@ -63248,7 +63217,7 @@ FPC_VAL_SINT_UNICODESTR:
 	ldw	r3,r30,-56
 	call	FPC_VAL_SINT_SHORTSTR
 	stw	r30,r1,-68
-.Lj7224:
+.Lj7219:
 	ldw	r1,r30,-68
 	ldw	r30,r29,580
 	ldw	r31,r29,584
@@ -63273,19 +63242,19 @@ FPC_VAL_QWORD_UNICODESTR:
 	stw	r30,r0,-68
 	stw	r30,r0,-64
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj7227
+	beq	r3,r0,.Lj7222
 	ldw	r3,r3,-4
-.Lj7227:
+.Lj7222:
 	addi	r4,r0,255
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj7228
-	jal	r0,.Lj7229
-.Lj7228:
+	bne	r3,r0,.Lj7223
+	jal	r0,.Lj7224
+.Lj7223:
 	ldw	r3,r30,-60
 	addi	r4,r0,256
 	stw	r3,r4,0
-	jal	r0,.Lj7230
-.Lj7229:
+	jal	r0,.Lj7225
+.Lj7224:
 	ldw	r5,r30,-56
 	addi	r3,r30,-580
 	addi	r4,r0,255
@@ -63299,7 +63268,7 @@ FPC_VAL_QWORD_UNICODESTR:
 	call	fpc_val_qword_shortstr
 	stw	r30,r1,-68
 	stw	r30,r2,-64
-.Lj7230:
+.Lj7225:
 	ldw	r1,r30,-68
 	ldw	r2,r30,-64
 	ldw	r30,r29,580
@@ -63325,19 +63294,19 @@ FPC_VAL_INT64_UNICODESTR:
 	stw	r30,r0,-68
 	stw	r30,r0,-64
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj7233
+	beq	r3,r0,.Lj7228
 	ldw	r3,r3,-4
-.Lj7233:
+.Lj7228:
 	addi	r4,r0,255
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj7234
-	jal	r0,.Lj7235
-.Lj7234:
+	bne	r3,r0,.Lj7229
+	jal	r0,.Lj7230
+.Lj7229:
 	ldw	r3,r30,-60
 	addi	r4,r0,256
 	stw	r3,r4,0
-	jal	r0,.Lj7236
-.Lj7235:
+	jal	r0,.Lj7231
+.Lj7230:
 	ldw	r5,r30,-56
 	addi	r3,r30,-580
 	addi	r4,r0,255
@@ -63351,7 +63320,7 @@ FPC_VAL_INT64_UNICODESTR:
 	call	fpc_val_int64_shortstr
 	stw	r30,r1,-68
 	stw	r30,r2,-64
-.Lj7236:
+.Lj7231:
 	ldw	r1,r30,-68
 	ldw	r2,r30,-64
 	ldw	r30,r29,580
@@ -63625,9 +63594,9 @@ SYSTEM_$$_UNICODETOUTF8$PANSICHAR$PUNICODECHAR$LONGINT$$LONGINT:
 	stw	r30,r5,-64
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7255
-	jal	r0,.Lj7256
-.Lj7255:
+	bne	r3,r0,.Lj7250
+	jal	r0,.Lj7251
+.Lj7250:
 	ldw	r3,r30,-60
 	call	fpc_pwidechar_length
 	addi	r6,r1,0
@@ -63636,10 +63605,10 @@ SYSTEM_$$_UNICODETOUTF8$PANSICHAR$PUNICODECHAR$LONGINT$$LONGINT:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_UNICODETOUTF8$PANSICHAR$LONGWORD$PUNICODECHAR$LONGWORD$$LONGWORD
 	stw	r30,r1,-68
-	jal	r0,.Lj7257
-.Lj7256:
+	jal	r0,.Lj7252
+.Lj7251:
 	stw	r30,r0,-68
-.Lj7257:
+.Lj7252:
 	ldw	r1,r30,-68
 	ldw	r30,r29,68
 	ldw	r31,r29,72
@@ -63664,30 +63633,30 @@ SYSTEM_$$_UNICODETOUTF8$PANSICHAR$LONGWORD$PUNICODECHAR$LONGWORD$$LONGWORD:
 	stw	r30,r0,-72
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7260
-	jal	r0,.Lj7261
-.Lj7260:
-	jal	r0,.Lj7258
-.Lj7261:
+	bne	r3,r0,.Lj7255
+	jal	r0,.Lj7256
+.Lj7255:
+	jal	r0,.Lj7253
+.Lj7256:
 	stw	r30,r0,-76
 	stw	r30,r0,-80
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7262
-	jal	r0,.Lj7263
-.Lj7262:
+	bne	r3,r0,.Lj7257
+	jal	r0,.Lj7258
+.Lj7257:
 	ldw	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7264
-	jal	r0,.Lj7265
-.Lj7264:
-	jal	r0,.Lj7258
-.Lj7265:
+	bne	r3,r0,.Lj7259
+	jal	r0,.Lj7260
+.Lj7259:
+	jal	r0,.Lj7253
+.Lj7260:
 	ldw	r3,r30,-60
 	addi	r3,r3,-1
 	stw	r30,r3,-84
-	jal	r0,.Lj7267
-.Lj7266:
+	jal	r0,.Lj7262
+.Lj7261:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-76
 	slli	r4,r4,1
@@ -63695,24 +63664,24 @@ SYSTEM_$$_UNICODETOUTF8$PANSICHAR$LONGWORD$PUNICODECHAR$LONGWORD$$LONGWORD:
 	ldhu	r3,r3,0
 	stw	r30,r3,-88
 	ldw	r3,r30,-88
-	bltu	r3,r0,.Lj7269
+	bltu	r3,r0,.Lj7264
 	addi	r4,r0,127
-	bleu	r3,r4,.Lj7270
+	bleu	r3,r4,.Lj7265
 	addi	r4,r0,2047
-	bleu	r3,r4,.Lj7271
+	bleu	r3,r4,.Lj7266
 	lui	r4,13
 	ori	r4,r4,2047
-	bleu	r3,r4,.Lj7272
+	bleu	r3,r4,.Lj7267
 	lui	r4,13
 	ori	r4,r4,3071
-	bleu	r3,r4,.Lj7273
+	bleu	r3,r4,.Lj7268
 	lui	r4,14
-	bltu	r3,r4,.Lj7269
+	bltu	r3,r4,.Lj7264
 	lui	r4,15
 	ori	r4,r4,4095
-	bleu	r3,r4,.Lj7272
-	jal	r0,.Lj7269
-.Lj7270:
+	bleu	r3,r4,.Lj7267
+	jal	r0,.Lj7264
+.Lj7265:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-80
 	add	r4,r4,r3
@@ -63721,17 +63690,17 @@ SYSTEM_$$_UNICODETOUTF8$PANSICHAR$LONGWORD$PUNICODECHAR$LONGWORD$$LONGWORD:
 	ldw	r3,r30,-80
 	addi	r3,r3,1
 	stw	r30,r3,-80
-	jal	r0,.Lj7269
-.Lj7271:
+	jal	r0,.Lj7264
+.Lj7266:
 	ldw	r3,r30,-80
 	addi	r4,r3,1
 	ldw	r3,r30,-84
 	sgeu	r3,r4,r3
-	bne	r3,r0,.Lj7274
-	jal	r0,.Lj7275
-.Lj7274:
-	jal	r0,.Lj7268
-.Lj7275:
+	bne	r3,r0,.Lj7269
+	jal	r0,.Lj7270
+.Lj7269:
+	jal	r0,.Lj7263
+.Lj7270:
 	ldw	r3,r30,-88
 	srli	r3,r3,6
 	ori	r3,r3,192
@@ -63752,17 +63721,17 @@ SYSTEM_$$_UNICODETOUTF8$PANSICHAR$LONGWORD$PUNICODECHAR$LONGWORD$$LONGWORD:
 	ldw	r3,r30,-80
 	addi	r3,r3,2
 	stw	r30,r3,-80
-	jal	r0,.Lj7269
-.Lj7272:
+	jal	r0,.Lj7264
+.Lj7267:
 	ldw	r3,r30,-80
 	addi	r4,r3,2
 	ldw	r3,r30,-84
 	sgeu	r3,r4,r3
-	bne	r3,r0,.Lj7276
-	jal	r0,.Lj7277
-.Lj7276:
-	jal	r0,.Lj7268
-.Lj7277:
+	bne	r3,r0,.Lj7271
+	jal	r0,.Lj7272
+.Lj7271:
+	jal	r0,.Lj7263
+.Lj7272:
 	ldw	r3,r30,-88
 	srli	r3,r3,12
 	ori	r3,r3,224
@@ -63793,24 +63762,24 @@ SYSTEM_$$_UNICODETOUTF8$PANSICHAR$LONGWORD$PUNICODECHAR$LONGWORD$$LONGWORD:
 	ldw	r3,r30,-80
 	addi	r3,r3,3
 	stw	r30,r3,-80
-	jal	r0,.Lj7269
-.Lj7273:
+	jal	r0,.Lj7264
+.Lj7268:
 	ldw	r3,r30,-80
 	addi	r3,r3,3
 	ldw	r4,r30,-84
 	sgeu	r3,r3,r4
-	bne	r3,r0,.Lj7278
-	jal	r0,.Lj7279
-.Lj7278:
-	jal	r0,.Lj7268
-.Lj7279:
+	bne	r3,r0,.Lj7273
+	jal	r0,.Lj7274
+.Lj7273:
+	jal	r0,.Lj7263
+.Lj7274:
 	ldw	r3,r30,-76
 	addi	r4,r3,1
 	ldw	r3,r30,-68
 	sltu	r3,r4,r3
-	bne	r3,r0,.Lj7280
-	jal	r0,.Lj7281
-.Lj7280:
+	bne	r3,r0,.Lj7275
+	jal	r0,.Lj7276
+.Lj7275:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-76
 	addi	r4,r4,1
@@ -63820,9 +63789,9 @@ SYSTEM_$$_UNICODETOUTF8$PANSICHAR$LONGWORD$PUNICODECHAR$LONGWORD$$LONGWORD:
 	lui	r3,13
 	ori	r3,r3,3072
 	sgeu	r3,r4,r3
-	bne	r3,r0,.Lj7282
-	jal	r0,.Lj7281
-.Lj7282:
+	bne	r3,r0,.Lj7277
+	jal	r0,.Lj7276
+.Lj7277:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-76
 	addi	r4,r4,1
@@ -63832,9 +63801,9 @@ SYSTEM_$$_UNICODETOUTF8$PANSICHAR$LONGWORD$PUNICODECHAR$LONGWORD$$LONGWORD:
 	lui	r3,13
 	ori	r3,r3,4095
 	sleu	r3,r4,r3
-	bne	r3,r0,.Lj7283
-	jal	r0,.Lj7281
-.Lj7283:
+	bne	r3,r0,.Lj7278
+	jal	r0,.Lj7276
+.Lj7278:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-76
 	addi	r4,r4,1
@@ -63894,82 +63863,82 @@ SYSTEM_$$_UNICODETOUTF8$PANSICHAR$LONGWORD$PUNICODECHAR$LONGWORD$$LONGWORD:
 	ldw	r3,r30,-76
 	addi	r3,r3,1
 	stw	r30,r3,-76
-.Lj7281:
-	jal	r0,.Lj7269
-.Lj7269:
+.Lj7276:
+	jal	r0,.Lj7264
+.Lj7264:
 	ldw	r3,r30,-76
 	addi	r3,r3,1
 	stw	r30,r3,-76
-.Lj7267:
+.Lj7262:
 	ldw	r4,r30,-76
 	ldw	r3,r30,-68
 	sltu	r3,r4,r3
-	bne	r3,r0,.Lj7284
-	jal	r0,.Lj7285
-.Lj7284:
+	bne	r3,r0,.Lj7279
+	jal	r0,.Lj7280
+.Lj7279:
 	ldw	r4,r30,-80
 	ldw	r3,r30,-84
 	sltu	r3,r4,r3
-	bne	r3,r0,.Lj7286
-	jal	r0,.Lj7285
-.Lj7286:
-	jal	r0,.Lj7266
-.Lj7285:
-	jal	r0,.Lj7268
-.Lj7268:
+	bne	r3,r0,.Lj7281
+	jal	r0,.Lj7280
+.Lj7281:
+	jal	r0,.Lj7261
+.Lj7280:
+	jal	r0,.Lj7263
+.Lj7263:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-80
 	add	r3,r3,r4
 	stb	r3,r0,0
-	jal	r0,.Lj7287
-.Lj7263:
-	jal	r0,.Lj7289
-.Lj7288:
+	jal	r0,.Lj7282
+.Lj7258:
+	jal	r0,.Lj7284
+.Lj7283:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-76
 	slli	r4,r4,1
 	add	r3,r3,r4
 	ldhu	r3,r3,0
-	bltu	r3,r0,.Lj7291
+	bltu	r3,r0,.Lj7286
 	addi	r4,r0,127
-	bleu	r3,r4,.Lj7292
+	bleu	r3,r4,.Lj7287
 	addi	r4,r0,2047
-	bleu	r3,r4,.Lj7293
+	bleu	r3,r4,.Lj7288
 	lui	r4,13
 	ori	r4,r4,2047
-	bleu	r3,r4,.Lj7294
+	bleu	r3,r4,.Lj7289
 	lui	r4,13
 	ori	r4,r4,3071
-	bleu	r3,r4,.Lj7295
+	bleu	r3,r4,.Lj7290
 	lui	r4,14
-	bltu	r3,r4,.Lj7291
+	bltu	r3,r4,.Lj7286
 	lui	r4,15
 	ori	r4,r4,4095
-	bleu	r3,r4,.Lj7294
-	jal	r0,.Lj7291
-.Lj7292:
+	bleu	r3,r4,.Lj7289
+	jal	r0,.Lj7286
+.Lj7287:
 	ldw	r3,r30,-80
 	addi	r3,r3,1
 	stw	r30,r3,-80
-	jal	r0,.Lj7291
-.Lj7293:
+	jal	r0,.Lj7286
+.Lj7288:
 	ldw	r3,r30,-80
 	addi	r3,r3,2
 	stw	r30,r3,-80
-	jal	r0,.Lj7291
-.Lj7294:
+	jal	r0,.Lj7286
+.Lj7289:
 	ldw	r3,r30,-80
 	addi	r3,r3,3
 	stw	r30,r3,-80
-	jal	r0,.Lj7291
-.Lj7295:
+	jal	r0,.Lj7286
+.Lj7290:
 	ldw	r3,r30,-76
 	addi	r4,r3,1
 	ldw	r3,r30,-68
 	sltu	r3,r4,r3
-	bne	r3,r0,.Lj7296
-	jal	r0,.Lj7297
-.Lj7296:
+	bne	r3,r0,.Lj7291
+	jal	r0,.Lj7292
+.Lj7291:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-76
 	addi	r4,r4,1
@@ -63979,9 +63948,9 @@ SYSTEM_$$_UNICODETOUTF8$PANSICHAR$LONGWORD$PUNICODECHAR$LONGWORD$$LONGWORD:
 	lui	r4,13
 	ori	r4,r4,3072
 	sgeu	r3,r3,r4
-	bne	r3,r0,.Lj7298
-	jal	r0,.Lj7297
-.Lj7298:
+	bne	r3,r0,.Lj7293
+	jal	r0,.Lj7292
+.Lj7293:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-76
 	addi	r4,r4,1
@@ -63991,33 +63960,33 @@ SYSTEM_$$_UNICODETOUTF8$PANSICHAR$LONGWORD$PUNICODECHAR$LONGWORD$$LONGWORD:
 	lui	r3,13
 	ori	r3,r3,4095
 	sleu	r3,r4,r3
-	bne	r3,r0,.Lj7299
-	jal	r0,.Lj7297
-.Lj7299:
+	bne	r3,r0,.Lj7294
+	jal	r0,.Lj7292
+.Lj7294:
 	ldw	r3,r30,-80
 	addi	r3,r3,4
 	stw	r30,r3,-80
 	ldw	r3,r30,-76
 	addi	r3,r3,1
 	stw	r30,r3,-76
-.Lj7297:
-	jal	r0,.Lj7291
-.Lj7291:
+.Lj7292:
+	jal	r0,.Lj7286
+.Lj7286:
 	ldw	r3,r30,-76
 	addi	r3,r3,1
 	stw	r30,r3,-76
-.Lj7289:
+.Lj7284:
 	ldw	r3,r30,-76
 	ldw	r4,r30,-68
 	sltu	r3,r3,r4
-	bne	r3,r0,.Lj7288
-	jal	r0,.Lj7290
-.Lj7290:
-.Lj7287:
+	bne	r3,r0,.Lj7283
+	jal	r0,.Lj7285
+.Lj7285:
+.Lj7282:
 	ldw	r3,r30,-80
 	addi	r3,r3,1
 	stw	r30,r3,-72
-.Lj7258:
+.Lj7253:
 	ldw	r1,r30,-72
 	ldw	r30,r29,88
 	ldw	r31,r29,92
@@ -64042,9 +64011,9 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$PANSICHAR$LONGINT$$LONGINT:
 	stw	r30,r5,-64
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7302
-	jal	r0,.Lj7303
-.Lj7302:
+	bne	r3,r0,.Lj7297
+	jal	r0,.Lj7298
+.Lj7297:
 	ldw	r3,r30,-60
 	call	fpc_pchar_length
 	addi	r6,r1,0
@@ -64054,10 +64023,10 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$PANSICHAR$LONGINT$$LONGINT:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWORD
 	stw	r30,r1,-68
-	jal	r0,.Lj7304
-.Lj7303:
+	jal	r0,.Lj7299
+.Lj7298:
 	stw	r30,r0,-68
-.Lj7304:
+.Lj7299:
 	ldw	r1,r30,-68
 	ldw	r30,r29,68
 	ldw	r31,r29,72
@@ -64112,45 +64081,45 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	stb	r30,r7,-72
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7309
-	jal	r0,.Lj7310
-.Lj7309:
+	bne	r3,r0,.Lj7304
+	jal	r0,.Lj7305
+.Lj7304:
 	stw	r30,r0,-76
-	jal	r0,.Lj7307
-.Lj7310:
+	jal	r0,.Lj7302
+.Lj7305:
 	stw	r30,r0,-80
 	stw	r30,r0,-84
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7311
-	jal	r0,.Lj7312
-.Lj7311:
+	bne	r3,r0,.Lj7306
+	jal	r0,.Lj7307
+.Lj7306:
 	ldw	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7313
-	jal	r0,.Lj7314
-.Lj7313:
+	bne	r3,r0,.Lj7308
+	jal	r0,.Lj7309
+.Lj7308:
 	stw	r30,r0,-76
-	jal	r0,.Lj7307
-.Lj7314:
+	jal	r0,.Lj7302
+.Lj7309:
 	ldw	r3,r30,-60
 	addi	r3,r3,-1
 	stw	r30,r3,-88
 	ldw	r4,r30,-80
 	ldw	r3,r30,-68
 	sltu	r3,r4,r3
-	bne	r3,r0,.Lj7315
-	jal	r0,.Lj7316
-.Lj7315:
-.Lj7317:
+	bne	r3,r0,.Lj7310
+	jal	r0,.Lj7311
+.Lj7310:
+.Lj7312:
 	ldw	r4,r30,-84
 	ldw	r3,r30,-88
 	sgeu	r3,r4,r3
-	bne	r3,r0,.Lj7320
-	jal	r0,.Lj7321
-.Lj7320:
-	jal	r0,.Lj7319
-.Lj7321:
+	bne	r3,r0,.Lj7315
+	jal	r0,.Lj7316
+.Lj7315:
+	jal	r0,.Lj7314
+.Lj7316:
 	ldw	r3,r30,-84
 	addi	r3,r3,1
 	stw	r30,r3,-84
@@ -64160,19 +64129,19 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	ldbu	r3,r3,0
 	stw	r30,r3,-92
 	ldw	r3,r30,-92
-	bltu	r3,r0,.Lj7322
+	bltu	r3,r0,.Lj7317
 	addi	r4,r0,127
-	bleu	r3,r4,.Lj7323
+	bleu	r3,r4,.Lj7318
 	addi	r4,r0,194
-	bltu	r3,r4,.Lj7322
+	bltu	r3,r4,.Lj7317
 	addi	r4,r0,223
-	bleu	r3,r4,.Lj7324
+	bleu	r3,r4,.Lj7319
 	addi	r4,r0,239
-	bleu	r3,r4,.Lj7325
+	bleu	r3,r4,.Lj7320
 	addi	r4,r0,244
-	bleu	r3,r4,.Lj7326
-	jal	r0,.Lj7322
-.Lj7323:
+	bleu	r3,r4,.Lj7321
+	jal	r0,.Lj7317
+.Lj7318:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-84
 	addi	r4,r4,-1
@@ -64186,23 +64155,23 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	ldw	r3,r30,-80
 	ldw	r4,r30,-68
 	sltu	r3,r3,r4
-	bne	r3,r0,.Lj7327
-	jal	r0,.Lj7328
-.Lj7327:
-	jal	r0,.Lj7318
-	jal	r0,.Lj7329
-.Lj7328:
-	jal	r0,.Lj7319
-.Lj7329:
-	jal	r0,.Lj7322
+	bne	r3,r0,.Lj7322
+	jal	r0,.Lj7323
+.Lj7322:
+	jal	r0,.Lj7313
+	jal	r0,.Lj7324
+.Lj7323:
+	jal	r0,.Lj7314
 .Lj7324:
+	jal	r0,.Lj7317
+.Lj7319:
 	ldw	r3,r30,-80
 	addi	r4,r3,1
 	ldw	r3,r30,-68
 	sltu	r3,r4,r3
-	bne	r3,r0,.Lj7330
-	jal	r0,.Lj7331
-.Lj7330:
+	bne	r3,r0,.Lj7325
+	jal	r0,.Lj7326
+.Lj7325:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-80
 	addi	r4,r4,1
@@ -64211,9 +64180,9 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	andi	r3,r3,192
 	addi	r3,r3,-128
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7332
-	jal	r0,.Lj7331
-.Lj7332:
+	bne	r3,r0,.Lj7327
+	jal	r0,.Lj7326
+.Lj7327:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-80
 	addi	r4,r4,1
@@ -64238,24 +64207,24 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	ldw	r3,r30,-80
 	ldw	r4,r30,-68
 	sltu	r3,r3,r4
-	bne	r3,r0,.Lj7333
-	jal	r0,.Lj7334
-.Lj7333:
-	jal	r0,.Lj7318
-	jal	r0,.Lj7335
-.Lj7334:
-	jal	r0,.Lj7319
-.Lj7335:
-.Lj7331:
-	jal	r0,.Lj7322
-.Lj7325:
+	bne	r3,r0,.Lj7328
+	jal	r0,.Lj7329
+.Lj7328:
+	jal	r0,.Lj7313
+	jal	r0,.Lj7330
+.Lj7329:
+	jal	r0,.Lj7314
+.Lj7330:
+.Lj7326:
+	jal	r0,.Lj7317
+.Lj7320:
 	ldw	r3,r30,-80
 	addi	r3,r3,2
 	ldw	r4,r30,-68
 	sltu	r3,r3,r4
-	bne	r3,r0,.Lj7336
-	jal	r0,.Lj7337
-.Lj7336:
+	bne	r3,r0,.Lj7331
+	jal	r0,.Lj7332
+.Lj7331:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-80
 	addi	r4,r4,1
@@ -64264,9 +64233,9 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	andi	r3,r3,192
 	addi	r3,r3,-128
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7338
-	jal	r0,.Lj7337
-.Lj7338:
+	bne	r3,r0,.Lj7333
+	jal	r0,.Lj7332
+.Lj7333:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-80
 	addi	r4,r4,2
@@ -64275,9 +64244,9 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	andi	r3,r3,192
 	addi	r3,r3,-128
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7339
-	jal	r0,.Lj7337
-.Lj7339:
+	bne	r3,r0,.Lj7334
+	jal	r0,.Lj7332
+.Lj7334:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-80
 	addi	r4,r4,1
@@ -64301,34 +64270,34 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	lui	r3,0
 	ori	r3,r3,2048
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj7340
-	jal	r0,.Lj7341
-.Lj7340:
+	bne	r3,r0,.Lj7335
+	jal	r0,.Lj7336
+.Lj7335:
 	ldw	r3,r30,-92
 	lui	r4,15
 	ori	r4,r4,4093
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj7342
-	jal	r0,.Lj7341
-.Lj7342:
+	bne	r3,r0,.Lj7337
+	jal	r0,.Lj7336
+.Lj7337:
 	ldw	r3,r30,-92
 	lui	r4,13
 	ori	r4,r4,2048
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj7344
-	jal	r0,.Lj7345
-.Lj7344:
+	bne	r3,r0,.Lj7339
+	jal	r0,.Lj7340
+.Lj7339:
 	ldw	r4,r30,-92
 	lui	r3,13
 	ori	r3,r3,4095
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj7346
-	jal	r0,.Lj7345
-.Lj7345:
-	jal	r0,.Lj7343
-.Lj7346:
-	jal	r0,.Lj7341
-.Lj7343:
+	bne	r3,r0,.Lj7341
+	jal	r0,.Lj7340
+.Lj7340:
+	jal	r0,.Lj7338
+.Lj7341:
+	jal	r0,.Lj7336
+.Lj7338:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-84
 	addi	r4,r4,-1
@@ -64342,25 +64311,25 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	ldw	r3,r30,-80
 	ldw	r4,r30,-68
 	sltu	r3,r3,r4
-	bne	r3,r0,.Lj7347
-	jal	r0,.Lj7348
-.Lj7347:
-	jal	r0,.Lj7318
-	jal	r0,.Lj7349
-.Lj7348:
-	jal	r0,.Lj7319
-.Lj7349:
-.Lj7341:
-.Lj7337:
-	jal	r0,.Lj7322
-.Lj7326:
+	bne	r3,r0,.Lj7342
+	jal	r0,.Lj7343
+.Lj7342:
+	jal	r0,.Lj7313
+	jal	r0,.Lj7344
+.Lj7343:
+	jal	r0,.Lj7314
+.Lj7344:
+.Lj7336:
+.Lj7332:
+	jal	r0,.Lj7317
+.Lj7321:
 	ldw	r3,r30,-80
 	addi	r4,r3,3
 	ldw	r3,r30,-68
 	sltu	r3,r4,r3
-	bne	r3,r0,.Lj7350
-	jal	r0,.Lj7351
-.Lj7350:
+	bne	r3,r0,.Lj7345
+	jal	r0,.Lj7346
+.Lj7345:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-80
 	addi	r4,r4,1
@@ -64369,9 +64338,9 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	andi	r3,r3,192
 	addi	r3,r3,-128
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7352
-	jal	r0,.Lj7351
-.Lj7352:
+	bne	r3,r0,.Lj7347
+	jal	r0,.Lj7346
+.Lj7347:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-80
 	addi	r4,r4,2
@@ -64380,9 +64349,9 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	andi	r3,r3,192
 	addi	r3,r3,-128
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7353
-	jal	r0,.Lj7351
-.Lj7353:
+	bne	r3,r0,.Lj7348
+	jal	r0,.Lj7346
+.Lj7348:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-80
 	addi	r4,r4,3
@@ -64391,9 +64360,9 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	andi	r3,r3,192
 	addi	r3,r3,-128
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7354
-	jal	r0,.Lj7351
-.Lj7354:
+	bne	r3,r0,.Lj7349
+	jal	r0,.Lj7346
+.Lj7349:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-80
 	addi	r4,r4,1
@@ -64427,9 +64396,9 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	lui	r4,255
 	ori	r4,r4,4095
 	sleu	r3,r3,r4
-	bne	r3,r0,.Lj7355
-	jal	r0,.Lj7356
-.Lj7355:
+	bne	r3,r0,.Lj7350
+	jal	r0,.Lj7351
+.Lj7350:
 	ldw	r3,r30,-84
 	addi	r3,r3,-1
 	stw	r30,r3,-84
@@ -64437,11 +64406,11 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	addi	r3,r3,1
 	ldw	r4,r30,-88
 	sgeu	r3,r3,r4
-	bne	r3,r0,.Lj7357
-	jal	r0,.Lj7358
-.Lj7357:
-	jal	r0,.Lj7319
-.Lj7358:
+	bne	r3,r0,.Lj7352
+	jal	r0,.Lj7353
+.Lj7352:
+	jal	r0,.Lj7314
+.Lj7353:
 	ldw	r3,r30,-92
 	srli	r4,r3,10
 	lui	r3,13
@@ -64476,26 +64445,26 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	ldw	r4,r30,-80
 	ldw	r3,r30,-68
 	sltu	r3,r4,r3
-	bne	r3,r0,.Lj7359
-	jal	r0,.Lj7360
-.Lj7359:
-	jal	r0,.Lj7318
-	jal	r0,.Lj7361
-.Lj7360:
-	jal	r0,.Lj7319
-.Lj7361:
+	bne	r3,r0,.Lj7354
+	jal	r0,.Lj7355
+.Lj7354:
+	jal	r0,.Lj7313
+	jal	r0,.Lj7356
+.Lj7355:
+	jal	r0,.Lj7314
 .Lj7356:
 .Lj7351:
-	jal	r0,.Lj7322
-.Lj7322:
+.Lj7346:
+	jal	r0,.Lj7317
+.Lj7317:
 	ldbu	r3,r30,-72
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7362
-	jal	r0,.Lj7363
-.Lj7362:
+	bne	r3,r0,.Lj7357
+	jal	r0,.Lj7358
+.Lj7357:
 	addi	r3,r0,231
 	call	FPC_HANDLEERROR
-.Lj7363:
+.Lj7358:
 	ldw	r3,r30,-80
 	addi	r3,r3,1
 	stw	r30,r3,-80
@@ -64507,21 +64476,21 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	andi	r3,r3,192
 	addi	r3,r3,-128
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7364
-	jal	r0,.Lj7365
-.Lj7364:
-	jal	r0,.Lj7367
-.Lj7366:
+	bne	r3,r0,.Lj7359
+	jal	r0,.Lj7360
+.Lj7359:
+	jal	r0,.Lj7362
+.Lj7361:
 	ldw	r3,r30,-80
 	addi	r3,r3,1
 	stw	r30,r3,-80
-.Lj7367:
+.Lj7362:
 	ldw	r3,r30,-80
 	ldw	r4,r30,-68
 	sltu	r3,r3,r4
-	bne	r3,r0,.Lj7369
-	jal	r0,.Lj7370
-.Lj7369:
+	bne	r3,r0,.Lj7364
+	jal	r0,.Lj7365
+.Lj7364:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-80
 	add	r3,r4,r3
@@ -64529,14 +64498,14 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	andi	r3,r3,192
 	addi	r3,r3,-128
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7371
-	jal	r0,.Lj7370
-.Lj7371:
-	jal	r0,.Lj7366
-.Lj7370:
-	jal	r0,.Lj7368
-.Lj7368:
+	bne	r3,r0,.Lj7366
+	jal	r0,.Lj7365
+.Lj7366:
+	jal	r0,.Lj7361
 .Lj7365:
+	jal	r0,.Lj7363
+.Lj7363:
+.Lj7360:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-84
 	addi	r4,r4,-1
@@ -64547,29 +64516,29 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	ldw	r4,r30,-80
 	ldw	r3,r30,-68
 	sgeu	r3,r4,r3
-	bne	r3,r0,.Lj7372
-	jal	r0,.Lj7373
-.Lj7372:
-	jal	r0,.Lj7319
-.Lj7373:
-.Lj7318:
-	jal	r0,.Lj7317
-.Lj7319:
-.Lj7316:
+	bne	r3,r0,.Lj7367
+	jal	r0,.Lj7368
+.Lj7367:
+	jal	r0,.Lj7314
+.Lj7368:
+.Lj7313:
+	jal	r0,.Lj7312
+.Lj7314:
+.Lj7311:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-84
 	slli	r4,r4,1
 	add	r3,r3,r4
 	sth	r3,r0,0
-	jal	r0,.Lj7374
-.Lj7312:
+	jal	r0,.Lj7369
+.Lj7307:
 	ldw	r3,r30,-80
 	ldw	r4,r30,-68
 	sltu	r3,r3,r4
-	bne	r3,r0,.Lj7375
-	jal	r0,.Lj7376
-.Lj7375:
-.Lj7377:
+	bne	r3,r0,.Lj7370
+	jal	r0,.Lj7371
+.Lj7370:
+.Lj7372:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-80
 	add	r3,r4,r3
@@ -64579,42 +64548,42 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	addi	r3,r3,1
 	stw	r30,r3,-84
 	ldw	r3,r30,-92
-	bltu	r3,r0,.Lj7380
+	bltu	r3,r0,.Lj7375
 	addi	r4,r0,127
-	bleu	r3,r4,.Lj7381
+	bleu	r3,r4,.Lj7376
 	addi	r4,r0,194
-	bltu	r3,r4,.Lj7380
+	bltu	r3,r4,.Lj7375
 	addi	r4,r0,223
-	bleu	r3,r4,.Lj7382
+	bleu	r3,r4,.Lj7377
 	addi	r4,r0,239
-	bleu	r3,r4,.Lj7383
+	bleu	r3,r4,.Lj7378
 	addi	r4,r0,244
-	bleu	r3,r4,.Lj7384
-	jal	r0,.Lj7380
-.Lj7381:
+	bleu	r3,r4,.Lj7379
+	jal	r0,.Lj7375
+.Lj7376:
 	ldw	r3,r30,-80
 	addi	r3,r3,1
 	stw	r30,r3,-80
 	ldw	r3,r30,-80
 	ldw	r4,r30,-68
 	sltu	r3,r3,r4
-	bne	r3,r0,.Lj7385
-	jal	r0,.Lj7386
-.Lj7385:
-	jal	r0,.Lj7378
-	jal	r0,.Lj7387
-.Lj7386:
-	jal	r0,.Lj7379
-.Lj7387:
-	jal	r0,.Lj7380
+	bne	r3,r0,.Lj7380
+	jal	r0,.Lj7381
+.Lj7380:
+	jal	r0,.Lj7373
+	jal	r0,.Lj7382
+.Lj7381:
+	jal	r0,.Lj7374
 .Lj7382:
+	jal	r0,.Lj7375
+.Lj7377:
 	ldw	r3,r30,-80
 	addi	r4,r3,1
 	ldw	r3,r30,-68
 	sltu	r3,r4,r3
-	bne	r3,r0,.Lj7388
-	jal	r0,.Lj7389
-.Lj7388:
+	bne	r3,r0,.Lj7383
+	jal	r0,.Lj7384
+.Lj7383:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-80
 	addi	r4,r4,1
@@ -64623,33 +64592,33 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	andi	r3,r3,192
 	addi	r3,r3,-128
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7390
-	jal	r0,.Lj7389
-.Lj7390:
+	bne	r3,r0,.Lj7385
+	jal	r0,.Lj7384
+.Lj7385:
 	ldw	r3,r30,-80
 	addi	r3,r3,2
 	stw	r30,r3,-80
 	ldw	r3,r30,-80
 	ldw	r4,r30,-68
 	sltu	r3,r3,r4
-	bne	r3,r0,.Lj7391
-	jal	r0,.Lj7392
-.Lj7391:
-	jal	r0,.Lj7378
-	jal	r0,.Lj7393
-.Lj7392:
-	jal	r0,.Lj7379
-.Lj7393:
-.Lj7389:
-	jal	r0,.Lj7380
-.Lj7383:
+	bne	r3,r0,.Lj7386
+	jal	r0,.Lj7387
+.Lj7386:
+	jal	r0,.Lj7373
+	jal	r0,.Lj7388
+.Lj7387:
+	jal	r0,.Lj7374
+.Lj7388:
+.Lj7384:
+	jal	r0,.Lj7375
+.Lj7378:
 	ldw	r3,r30,-80
 	addi	r3,r3,2
 	ldw	r4,r30,-68
 	sltu	r3,r3,r4
-	bne	r3,r0,.Lj7394
-	jal	r0,.Lj7395
-.Lj7394:
+	bne	r3,r0,.Lj7389
+	jal	r0,.Lj7390
+.Lj7389:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-80
 	addi	r4,r4,1
@@ -64658,9 +64627,9 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	andi	r3,r3,192
 	addi	r3,r3,-128
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7396
-	jal	r0,.Lj7395
-.Lj7396:
+	bne	r3,r0,.Lj7391
+	jal	r0,.Lj7390
+.Lj7391:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-80
 	addi	r4,r4,2
@@ -64669,9 +64638,9 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	andi	r3,r3,192
 	addi	r3,r3,-128
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7397
-	jal	r0,.Lj7395
-.Lj7397:
+	bne	r3,r0,.Lj7392
+	jal	r0,.Lj7390
+.Lj7392:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-80
 	addi	r4,r4,1
@@ -64695,59 +64664,59 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	lui	r3,0
 	ori	r3,r3,2048
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj7398
-	jal	r0,.Lj7399
-.Lj7398:
+	bne	r3,r0,.Lj7393
+	jal	r0,.Lj7394
+.Lj7393:
 	ldw	r3,r30,-92
 	lui	r4,15
 	ori	r4,r4,4093
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj7400
-	jal	r0,.Lj7399
-.Lj7400:
+	bne	r3,r0,.Lj7395
+	jal	r0,.Lj7394
+.Lj7395:
 	ldw	r3,r30,-92
 	lui	r4,13
 	ori	r4,r4,2048
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj7402
-	jal	r0,.Lj7403
-.Lj7402:
+	bne	r3,r0,.Lj7397
+	jal	r0,.Lj7398
+.Lj7397:
 	ldw	r4,r30,-92
 	lui	r3,13
 	ori	r3,r3,4095
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj7404
-	jal	r0,.Lj7403
-.Lj7403:
-	jal	r0,.Lj7401
-.Lj7404:
-	jal	r0,.Lj7399
-.Lj7401:
+	bne	r3,r0,.Lj7399
+	jal	r0,.Lj7398
+.Lj7398:
+	jal	r0,.Lj7396
+.Lj7399:
+	jal	r0,.Lj7394
+.Lj7396:
 	ldw	r3,r30,-80
 	addi	r3,r3,3
 	stw	r30,r3,-80
 	ldw	r4,r30,-80
 	ldw	r3,r30,-68
 	sltu	r3,r4,r3
-	bne	r3,r0,.Lj7405
-	jal	r0,.Lj7406
-.Lj7405:
-	jal	r0,.Lj7378
-	jal	r0,.Lj7407
-.Lj7406:
-	jal	r0,.Lj7379
-.Lj7407:
-.Lj7399:
-.Lj7395:
-	jal	r0,.Lj7380
-.Lj7384:
+	bne	r3,r0,.Lj7400
+	jal	r0,.Lj7401
+.Lj7400:
+	jal	r0,.Lj7373
+	jal	r0,.Lj7402
+.Lj7401:
+	jal	r0,.Lj7374
+.Lj7402:
+.Lj7394:
+.Lj7390:
+	jal	r0,.Lj7375
+.Lj7379:
 	ldw	r3,r30,-80
 	addi	r4,r3,3
 	ldw	r3,r30,-68
 	sltu	r3,r4,r3
-	bne	r3,r0,.Lj7408
-	jal	r0,.Lj7409
-.Lj7408:
+	bne	r3,r0,.Lj7403
+	jal	r0,.Lj7404
+.Lj7403:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-80
 	addi	r4,r4,1
@@ -64756,9 +64725,9 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	andi	r3,r3,192
 	addi	r3,r3,-128
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7410
-	jal	r0,.Lj7409
-.Lj7410:
+	bne	r3,r0,.Lj7405
+	jal	r0,.Lj7404
+.Lj7405:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-80
 	addi	r4,r4,2
@@ -64767,9 +64736,9 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	andi	r3,r3,192
 	addi	r3,r3,-128
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7411
-	jal	r0,.Lj7409
-.Lj7411:
+	bne	r3,r0,.Lj7406
+	jal	r0,.Lj7404
+.Lj7406:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-80
 	addi	r4,r4,3
@@ -64778,9 +64747,9 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	andi	r3,r3,192
 	addi	r3,r3,-128
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7412
-	jal	r0,.Lj7409
-.Lj7412:
+	bne	r3,r0,.Lj7407
+	jal	r0,.Lj7404
+.Lj7407:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-80
 	addi	r4,r4,1
@@ -64814,9 +64783,9 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	lui	r4,255
 	ori	r4,r4,4095
 	sleu	r3,r3,r4
-	bne	r3,r0,.Lj7413
-	jal	r0,.Lj7414
-.Lj7413:
+	bne	r3,r0,.Lj7408
+	jal	r0,.Lj7409
+.Lj7408:
 	ldw	r3,r30,-80
 	addi	r3,r3,4
 	stw	r30,r3,-80
@@ -64826,26 +64795,26 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	ldw	r3,r30,-80
 	ldw	r4,r30,-68
 	sltu	r3,r3,r4
-	bne	r3,r0,.Lj7415
-	jal	r0,.Lj7416
-.Lj7415:
-	jal	r0,.Lj7378
-	jal	r0,.Lj7417
-.Lj7416:
-	jal	r0,.Lj7379
-.Lj7417:
-.Lj7414:
+	bne	r3,r0,.Lj7410
+	jal	r0,.Lj7411
+.Lj7410:
+	jal	r0,.Lj7373
+	jal	r0,.Lj7412
+.Lj7411:
+	jal	r0,.Lj7374
+.Lj7412:
 .Lj7409:
-	jal	r0,.Lj7380
-.Lj7380:
+.Lj7404:
+	jal	r0,.Lj7375
+.Lj7375:
 	ldbu	r3,r30,-72
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7418
-	jal	r0,.Lj7419
-.Lj7418:
+	bne	r3,r0,.Lj7413
+	jal	r0,.Lj7414
+.Lj7413:
 	addi	r3,r0,231
 	call	FPC_HANDLEERROR
-.Lj7419:
+.Lj7414:
 	ldw	r3,r30,-80
 	addi	r3,r3,1
 	stw	r30,r3,-80
@@ -64857,21 +64826,21 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	andi	r3,r3,192
 	addi	r3,r3,-128
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7420
-	jal	r0,.Lj7421
-.Lj7420:
-	jal	r0,.Lj7423
-.Lj7422:
+	bne	r3,r0,.Lj7415
+	jal	r0,.Lj7416
+.Lj7415:
+	jal	r0,.Lj7418
+.Lj7417:
 	ldw	r3,r30,-80
 	addi	r3,r3,1
 	stw	r30,r3,-80
-.Lj7423:
+.Lj7418:
 	ldw	r4,r30,-80
 	ldw	r3,r30,-68
 	sltu	r3,r4,r3
-	bne	r3,r0,.Lj7425
-	jal	r0,.Lj7426
-.Lj7425:
+	bne	r3,r0,.Lj7420
+	jal	r0,.Lj7421
+.Lj7420:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-80
 	add	r3,r3,r4
@@ -64879,31 +64848,31 @@ SYSTEM_$$_UTF8TOUNICODE$PUNICODECHAR$LONGWORD$PANSICHAR$LONGWORD$BOOLEAN$$LONGWO
 	andi	r3,r3,192
 	addi	r3,r3,-128
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7427
-	jal	r0,.Lj7426
-.Lj7427:
-	jal	r0,.Lj7422
-.Lj7426:
-	jal	r0,.Lj7424
-.Lj7424:
+	bne	r3,r0,.Lj7422
+	jal	r0,.Lj7421
+.Lj7422:
+	jal	r0,.Lj7417
 .Lj7421:
+	jal	r0,.Lj7419
+.Lj7419:
+.Lj7416:
 	ldw	r3,r30,-80
 	ldw	r4,r30,-68
 	sgeu	r3,r3,r4
-	bne	r3,r0,.Lj7428
-	jal	r0,.Lj7429
-.Lj7428:
-	jal	r0,.Lj7379
-.Lj7429:
-.Lj7378:
-	jal	r0,.Lj7377
-.Lj7379:
-.Lj7376:
+	bne	r3,r0,.Lj7423
+	jal	r0,.Lj7424
+.Lj7423:
+	jal	r0,.Lj7374
+.Lj7424:
+.Lj7373:
+	jal	r0,.Lj7372
 .Lj7374:
+.Lj7371:
+.Lj7369:
 	ldw	r3,r30,-84
 	addi	r3,r3,1
 	stw	r30,r3,-76
-.Lj7307:
+.Lj7302:
 	ldw	r1,r30,-76
 	ldw	r30,r29,92
 	ldw	r31,r29,96
@@ -64933,23 +64902,23 @@ SYSTEM_$$_UTF8ENCODE$RAWBYTESTRING$$RAWBYTESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj7433
+	bne	r1,r0,.Lj7428
 	addi	r3,r30,-164
 	ldw	r4,r30,-56
 	call	fpc_ansistr_to_unicodestr
 	ldw	r4,r30,-164
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_UTF8ENCODE$UNICODESTRING$$RAWBYTESTRING
-.Lj7433:
+.Lj7428:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj7432
+	beq	r3,r0,.Lj7427
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj7433
-.Lj7432:
+	jal	r0,.Lj7428
+.Lj7427:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -64972,19 +64941,19 @@ SYSTEM_$$_UTF8ENCODE$UNICODESTRING$$RAWBYTESTRING:
 	addi	r4,r0,0
 	call	fpc_ansistr_assign
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj7437
+	beq	r3,r0,.Lj7432
 	ldw	r3,r3,-4
-.Lj7437:
+.Lj7432:
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7438
-	jal	r0,.Lj7439
-.Lj7438:
-	jal	r0,.Lj7435
-.Lj7439:
+	bne	r3,r0,.Lj7433
+	jal	r0,.Lj7434
+.Lj7433:
+	jal	r0,.Lj7430
+.Lj7434:
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj7440
+	beq	r3,r0,.Lj7435
 	ldw	r3,r3,-4
-.Lj7440:
+.Lj7435:
 	stw	r30,r3,-64
 	ldw	r4,r30,-64
 	addi	r3,r0,3
@@ -65007,7 +64976,7 @@ SYSTEM_$$_UTF8ENCODE$UNICODESTRING$$RAWBYTESTRING:
 	lui	r5,15
 	ori	r5,r5,3561
 	call	fpc_ansistr_setlength
-.Lj7435:
+.Lj7430:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -65032,19 +65001,19 @@ SYSTEM_$$_UTF8DECODE$RAWBYTESTRING$$UNICODESTRING:
 	addi	r4,r0,0
 	call	fpc_unicodestr_assign
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj7443
+	beq	r3,r0,.Lj7438
 	ldw	r3,r3,-4
-.Lj7443:
+.Lj7438:
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7444
-	jal	r0,.Lj7445
-.Lj7444:
-	jal	r0,.Lj7441
-.Lj7445:
+	bne	r3,r0,.Lj7439
+	jal	r0,.Lj7440
+.Lj7439:
+	jal	r0,.Lj7436
+.Lj7440:
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj7446
+	beq	r3,r0,.Lj7441
 	ldw	r3,r3,-4
-.Lj7446:
+.Lj7441:
 	stw	r30,r3,-64
 	ldw	r3,r30,-60
 	ldw	r4,r30,-64
@@ -65059,7 +65028,7 @@ SYSTEM_$$_UTF8DECODE$RAWBYTESTRING$$UNICODESTRING:
 	addi	r4,r1,-1
 	ldw	r3,r30,-60
 	call	fpc_unicodestr_setlength
-.Lj7441:
+.Lj7436:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -65088,7 +65057,7 @@ SYSTEM_$$_ANSITOUTF8$RAWBYTESTRING$$RAWBYTESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj7450
+	bne	r1,r0,.Lj7445
 	addi	r3,r30,-164
 	ldw	r4,r30,-56
 	call	fpc_ansistr_to_unicodestr
@@ -65096,16 +65065,16 @@ SYSTEM_$$_ANSITOUTF8$RAWBYTESTRING$$RAWBYTESTRING:
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_UTF8ENCODE$UNICODESTRING$$RAWBYTESTRING
 	ldw	r3,r30,-60
-.Lj7450:
+.Lj7445:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj7449
+	beq	r3,r0,.Lj7444
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj7450
-.Lj7449:
+	jal	r0,.Lj7445
+.Lj7444:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -65132,7 +65101,7 @@ SYSTEM_$$_UTF8TOANSI$RAWBYTESTRING$$RAWBYTESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj7455
+	bne	r1,r0,.Lj7450
 	addi	r3,r30,-164
 	ldw	r4,r30,-56
 	call	SYSTEM_$$_UTF8DECODE$RAWBYTESTRING$$UNICODESTRING
@@ -65140,16 +65109,16 @@ SYSTEM_$$_UTF8TOANSI$RAWBYTESTRING$$RAWBYTESTRING:
 	ldw	r3,r30,-60
 	addi	r5,r0,0
 	call	fpc_unicodestr_to_ansistr
-.Lj7455:
+.Lj7450:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj7454
+	beq	r3,r0,.Lj7449
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj7455
-.Lj7454:
+	jal	r0,.Lj7450
+.Lj7449:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -65173,8 +65142,8 @@ SYSTEM_$$_UCS4ENCODE$PWIDECHAR$LONGINT$UCS4STRING:
 	stw	r3,r0,0
 	stw	r30,r0,-72
 	stw	r30,r0,-68
-	jal	r0,.Lj7460
-.Lj7459:
+	jal	r0,.Lj7455
+.Lj7454:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-68
 	slli	r4,r4,1
@@ -65183,9 +65152,9 @@ SYSTEM_$$_UCS4ENCODE$PWIDECHAR$LONGINT$UCS4STRING:
 	lui	r4,13
 	ori	r4,r4,2047
 	sleu	r3,r3,r4
-	bne	r3,r0,.Lj7462
-	jal	r0,.Lj7463
-.Lj7463:
+	bne	r3,r0,.Lj7457
+	jal	r0,.Lj7458
+.Lj7458:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-68
 	slli	r4,r4,1
@@ -65193,14 +65162,14 @@ SYSTEM_$$_UCS4ENCODE$PWIDECHAR$LONGINT$UCS4STRING:
 	ldhu	r4,r3,0
 	lui	r3,14
 	sgeu	r3,r4,r3
-	bne	r3,r0,.Lj7462
-	jal	r0,.Lj7464
-.Lj7462:
+	bne	r3,r0,.Lj7457
+	jal	r0,.Lj7459
+.Lj7457:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	stw	r30,r3,-68
-	jal	r0,.Lj7465
-.Lj7464:
+	jal	r0,.Lj7460
+.Lj7459:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-68
 	slli	r4,r4,1
@@ -65209,16 +65178,16 @@ SYSTEM_$$_UCS4ENCODE$PWIDECHAR$LONGINT$UCS4STRING:
 	lui	r3,13
 	ori	r3,r3,3071
 	sleu	r3,r4,r3
-	bne	r3,r0,.Lj7466
-	jal	r0,.Lj7467
-.Lj7466:
+	bne	r3,r0,.Lj7461
+	jal	r0,.Lj7462
+.Lj7461:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	ldw	r4,r30,-60
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj7468
-	jal	r0,.Lj7467
-.Lj7468:
+	bne	r3,r0,.Lj7463
+	jal	r0,.Lj7462
+.Lj7463:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-68
 	addi	r4,r4,1
@@ -65228,9 +65197,9 @@ SYSTEM_$$_UCS4ENCODE$PWIDECHAR$LONGINT$UCS4STRING:
 	lui	r3,13
 	ori	r3,r3,3072
 	sgeu	r3,r4,r3
-	bne	r3,r0,.Lj7469
-	jal	r0,.Lj7467
-.Lj7469:
+	bne	r3,r0,.Lj7464
+	jal	r0,.Lj7462
+.Lj7464:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-68
 	addi	r4,r4,1
@@ -65240,29 +65209,29 @@ SYSTEM_$$_UCS4ENCODE$PWIDECHAR$LONGINT$UCS4STRING:
 	lui	r4,13
 	ori	r4,r4,4095
 	sleu	r3,r3,r4
-	bne	r3,r0,.Lj7470
-	jal	r0,.Lj7467
-.Lj7470:
+	bne	r3,r0,.Lj7465
+	jal	r0,.Lj7462
+.Lj7465:
 	ldw	r3,r30,-68
 	addi	r3,r3,2
 	stw	r30,r3,-68
-	jal	r0,.Lj7471
-.Lj7467:
+	jal	r0,.Lj7466
+.Lj7462:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	stw	r30,r3,-68
-.Lj7471:
-.Lj7465:
+.Lj7466:
+.Lj7460:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
-.Lj7460:
+.Lj7455:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-60
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj7459
-	jal	r0,.Lj7461
-.Lj7461:
+	bne	r3,r0,.Lj7454
+	jal	r0,.Lj7456
+.Lj7456:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-80
@@ -65273,8 +65242,8 @@ SYSTEM_$$_UCS4ENCODE$PWIDECHAR$LONGINT$UCS4STRING:
 	call	fpc_dynarray_setlength
 	stw	r30,r0,-72
 	stw	r30,r0,-68
-	jal	r0,.Lj7473
-.Lj7472:
+	jal	r0,.Lj7468
+.Lj7467:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-68
 	slli	r4,r4,1
@@ -65285,15 +65254,15 @@ SYSTEM_$$_UCS4ENCODE$PWIDECHAR$LONGINT$UCS4STRING:
 	lui	r4,13
 	ori	r4,r4,2047
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj7475
-	jal	r0,.Lj7476
-.Lj7476:
+	bne	r3,r0,.Lj7470
+	jal	r0,.Lj7471
+.Lj7471:
 	ldw	r4,r30,-76
 	lui	r3,14
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj7475
-	jal	r0,.Lj7477
-.Lj7475:
+	bne	r3,r0,.Lj7470
+	jal	r0,.Lj7472
+.Lj7470:
 	ldw	r3,r30,-64
 	ldw	r3,r3,0
 	ldw	r4,r30,-72
@@ -65301,22 +65270,22 @@ SYSTEM_$$_UCS4ENCODE$PWIDECHAR$LONGINT$UCS4STRING:
 	add	r3,r3,r4
 	ldw	r4,r30,-76
 	stw	r3,r4,0
-	jal	r0,.Lj7478
-.Lj7477:
+	jal	r0,.Lj7473
+.Lj7472:
 	ldw	r4,r30,-76
 	lui	r3,13
 	ori	r3,r3,3071
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj7479
-	jal	r0,.Lj7480
-.Lj7479:
+	bne	r3,r0,.Lj7474
+	jal	r0,.Lj7475
+.Lj7474:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	ldw	r4,r30,-60
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj7481
-	jal	r0,.Lj7480
-.Lj7481:
+	bne	r3,r0,.Lj7476
+	jal	r0,.Lj7475
+.Lj7476:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-68
 	addi	r4,r4,1
@@ -65326,9 +65295,9 @@ SYSTEM_$$_UCS4ENCODE$PWIDECHAR$LONGINT$UCS4STRING:
 	lui	r4,13
 	ori	r4,r4,3072
 	sgeu	r3,r3,r4
-	bne	r3,r0,.Lj7482
-	jal	r0,.Lj7480
-.Lj7482:
+	bne	r3,r0,.Lj7477
+	jal	r0,.Lj7475
+.Lj7477:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-68
 	addi	r4,r4,1
@@ -65338,9 +65307,9 @@ SYSTEM_$$_UCS4ENCODE$PWIDECHAR$LONGINT$UCS4STRING:
 	lui	r4,13
 	ori	r4,r4,4095
 	sleu	r3,r3,r4
-	bne	r3,r0,.Lj7483
-	jal	r0,.Lj7480
-.Lj7483:
+	bne	r3,r0,.Lj7478
+	jal	r0,.Lj7475
+.Lj7478:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-68
 	addi	r4,r4,1
@@ -65365,8 +65334,8 @@ SYSTEM_$$_UCS4ENCODE$PWIDECHAR$LONGINT$UCS4STRING:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	stw	r30,r3,-68
-	jal	r0,.Lj7484
-.Lj7480:
+	jal	r0,.Lj7479
+.Lj7475:
 	ldw	r3,r30,-64
 	ldw	r3,r3,0
 	ldw	r4,r30,-72
@@ -65374,21 +65343,21 @@ SYSTEM_$$_UCS4ENCODE$PWIDECHAR$LONGINT$UCS4STRING:
 	add	r3,r3,r4
 	ldw	r4,r30,-76
 	stw	r3,r4,0
-.Lj7484:
-.Lj7478:
+.Lj7479:
+.Lj7473:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	stw	r30,r3,-68
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
-.Lj7473:
+.Lj7468:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-60
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj7472
-	jal	r0,.Lj7474
-.Lj7474:
+	bne	r3,r0,.Lj7467
+	jal	r0,.Lj7469
+.Lj7469:
 	ldw	r3,r30,-64
 	ldw	r3,r3,0
 	ldw	r4,r30,-72
@@ -65422,14 +65391,14 @@ SYSTEM_$$_UNICODESTRINGTOUCS4STRING$UNICODESTRING$$UCS4STRING:
 	call	fpc_finalize
 	addi	r5,r11,0
 	ldw	r4,r30,-56
-	beq	r4,r0,.Lj7487
+	beq	r4,r0,.Lj7482
 	ldw	r4,r4,-4
-.Lj7487:
+.Lj7482:
 	ldw	r3,r30,-56
-	bne	r3,r0,.Lj7488
+	bne	r3,r0,.Lj7483
 	la	r6,FPC_EMPTYCHAR
 	addi	r3,r6,0
-.Lj7488:
+.Lj7483:
 	call	SYSTEM_$$_UCS4ENCODE$PWIDECHAR$LONGINT$UCS4STRING
 	ldw	r11,r29,60
 	ldw	r30,r29,64
@@ -65457,14 +65426,14 @@ SYSTEM_$$_WIDESTRINGTOUCS4STRING$WIDESTRING$$UCS4STRING:
 	call	fpc_finalize
 	addi	r5,r11,0
 	ldw	r4,r30,-56
-	beq	r4,r0,.Lj7491
+	beq	r4,r0,.Lj7486
 	ldw	r4,r4,-4
-.Lj7491:
+.Lj7486:
 	ldw	r3,r30,-56
-	bne	r3,r0,.Lj7492
+	bne	r3,r0,.Lj7487
 	la	r6,FPC_EMPTYCHAR
 	addi	r3,r6,0
-.Lj7492:
+.Lj7487:
 	call	SYSTEM_$$_UCS4ENCODE$PWIDECHAR$LONGINT$UCS4STRING
 	ldw	r11,r29,60
 	ldw	r30,r29,64
@@ -65486,19 +65455,19 @@ SYSTEM_$$_UCS4DECODE$UCS4STRING$PWIDECHAR:
 	stw	r30,r3,-56
 	stw	r30,r4,-60
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj7495
+	beq	r3,r0,.Lj7490
 	ldw	r3,r3,-4
 	addi	r3,r3,1
-.Lj7495:
+.Lj7490:
 	addi	r4,r3,-2
 	addi	r3,r0,0
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj7496
-	jal	r0,.Lj7497
-.Lj7496:
+	bne	r3,r0,.Lj7491
+	jal	r0,.Lj7492
+.Lj7491:
 	addi	r3,r0,-1
 	stw	r30,r3,-64
-.Lj7498:
+.Lj7493:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-64
@@ -65512,40 +65481,40 @@ SYSTEM_$$_UCS4DECODE$UCS4STRING$PWIDECHAR:
 	lui	r5,13
 	ori	r5,r5,2048
 	sgeu	r3,r3,r5
-	bne	r3,r0,.Lj7501
-	jal	r0,.Lj7502
-.Lj7501:
+	bne	r3,r0,.Lj7496
+	jal	r0,.Lj7497
+.Lj7496:
 	ldw	r3,r30,-68
 	lui	r5,13
 	ori	r5,r5,4095
 	sleu	r3,r3,r5
-	bne	r3,r0,.Lj7503
-	jal	r0,.Lj7502
-.Lj7503:
+	bne	r3,r0,.Lj7498
+	jal	r0,.Lj7497
+.Lj7498:
 	ldw	r3,r30,-60
 	addi	r5,r0,63
 	sth	r3,r5,0
-	jal	r0,.Lj7504
-.Lj7502:
+	jal	r0,.Lj7499
+.Lj7497:
 	ldw	r3,r30,-68
 	lui	r5,15
 	ori	r5,r5,4095
 	sleu	r3,r3,r5
-	bne	r3,r0,.Lj7505
-	jal	r0,.Lj7506
-.Lj7505:
+	bne	r3,r0,.Lj7500
+	jal	r0,.Lj7501
+.Lj7500:
 	ldw	r5,r30,-60
 	ldhu	r3,r30,-68
 	sth	r5,r3,0
-	jal	r0,.Lj7507
-.Lj7506:
+	jal	r0,.Lj7502
+.Lj7501:
 	ldw	r5,r30,-68
 	lui	r3,271
 	ori	r3,r3,4095
 	sleu	r3,r5,r3
-	bne	r3,r0,.Lj7508
-	jal	r0,.Lj7509
-.Lj7508:
+	bne	r3,r0,.Lj7503
+	jal	r0,.Lj7504
+.Lj7503:
 	ldw	r3,r30,-68
 	srli	r3,r3,10
 	lui	r5,13
@@ -65567,23 +65536,23 @@ SYSTEM_$$_UCS4DECODE$UCS4STRING$PWIDECHAR:
 	ldw	r3,r30,-60
 	addi	r3,r3,2
 	stw	r30,r3,-60
-	jal	r0,.Lj7510
-.Lj7509:
+	jal	r0,.Lj7505
+.Lj7504:
 	ldw	r5,r30,-60
 	addi	r3,r0,63
 	sth	r5,r3,0
-.Lj7510:
-.Lj7507:
-.Lj7504:
+.Lj7505:
+.Lj7502:
+.Lj7499:
 	ldw	r3,r30,-60
 	addi	r3,r3,2
 	stw	r30,r3,-60
 	ldw	r3,r30,-64
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj7500
-	jal	r0,.Lj7498
-.Lj7500:
-.Lj7497:
+	bne	r3,r0,.Lj7495
+	jal	r0,.Lj7493
+.Lj7495:
+.Lj7492:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -65606,19 +65575,19 @@ SYSTEM_$$_UCS4STRINGTOUNICODESTRING$UCS4STRING$$UNICODESTRING:
 	stw	r30,r4,-56
 	stw	r30,r0,-68
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj7513
+	beq	r3,r0,.Lj7508
 	ldw	r3,r3,-4
 	addi	r3,r3,1
-.Lj7513:
+.Lj7508:
 	addi	r4,r3,-2
 	addi	r3,r0,0
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj7514
-	jal	r0,.Lj7515
-.Lj7514:
+	bne	r3,r0,.Lj7509
+	jal	r0,.Lj7510
+.Lj7509:
 	addi	r3,r0,-1
 	stw	r30,r3,-64
-.Lj7516:
+.Lj7511:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-64
@@ -65630,9 +65599,9 @@ SYSTEM_$$_UCS4STRINGTOUNICODESTRING$UCS4STRING$$UNICODESTRING:
 	lui	r5,15
 	ori	r5,r5,4095
 	sgtu	r3,r3,r5
-	bne	r3,r0,.Lj7519
-	jal	r0,.Lj7520
-.Lj7519:
+	bne	r3,r0,.Lj7514
+	jal	r0,.Lj7515
+.Lj7514:
 	ldw	r3,r30,-56
 	ldw	r5,r30,-64
 	slli	r5,r5,2
@@ -65641,24 +65610,24 @@ SYSTEM_$$_UCS4STRINGTOUNICODESTRING$UCS4STRING$$UNICODESTRING:
 	lui	r5,271
 	ori	r5,r5,4095
 	sleu	r3,r3,r5
-	bne	r3,r0,.Lj7521
-	jal	r0,.Lj7520
-.Lj7521:
+	bne	r3,r0,.Lj7516
+	jal	r0,.Lj7515
+.Lj7516:
 	addi	r3,r0,1
-	jal	r0,.Lj7522
-.Lj7520:
+	jal	r0,.Lj7517
+.Lj7515:
 	addi	r3,r0,0
-.Lj7522:
+.Lj7517:
 	addi	r3,r3,1
 	ldw	r5,r30,-68
 	add	r5,r5,r3
 	stw	r30,r5,-68
 	ldw	r3,r30,-64
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj7518
-	jal	r0,.Lj7516
-.Lj7518:
-.Lj7515:
+	bne	r3,r0,.Lj7513
+	jal	r0,.Lj7511
+.Lj7513:
+.Lj7510:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-68
 	call	fpc_unicodestr_setlength
@@ -65686,19 +65655,19 @@ SYSTEM_$$_UCS4STRINGTOWIDESTRING$UCS4STRING$$WIDESTRING:
 	stw	r30,r4,-56
 	stw	r30,r0,-68
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj7525
+	beq	r3,r0,.Lj7520
 	ldw	r3,r3,-4
 	addi	r3,r3,1
-.Lj7525:
+.Lj7520:
 	addi	r4,r3,-2
 	addi	r3,r0,0
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj7526
-	jal	r0,.Lj7527
-.Lj7526:
+	bne	r3,r0,.Lj7521
+	jal	r0,.Lj7522
+.Lj7521:
 	addi	r3,r0,-1
 	stw	r30,r3,-64
-.Lj7528:
+.Lj7523:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-64
@@ -65710,9 +65679,9 @@ SYSTEM_$$_UCS4STRINGTOWIDESTRING$UCS4STRING$$WIDESTRING:
 	lui	r5,15
 	ori	r5,r5,4095
 	sgtu	r3,r3,r5
-	bne	r3,r0,.Lj7531
-	jal	r0,.Lj7532
-.Lj7531:
+	bne	r3,r0,.Lj7526
+	jal	r0,.Lj7527
+.Lj7526:
 	ldw	r3,r30,-56
 	ldw	r5,r30,-64
 	slli	r5,r5,2
@@ -65721,24 +65690,24 @@ SYSTEM_$$_UCS4STRINGTOWIDESTRING$UCS4STRING$$WIDESTRING:
 	lui	r5,271
 	ori	r5,r5,4095
 	sleu	r3,r3,r5
-	bne	r3,r0,.Lj7533
-	jal	r0,.Lj7532
-.Lj7533:
+	bne	r3,r0,.Lj7528
+	jal	r0,.Lj7527
+.Lj7528:
 	addi	r3,r0,1
-	jal	r0,.Lj7534
-.Lj7532:
+	jal	r0,.Lj7529
+.Lj7527:
 	addi	r3,r0,0
-.Lj7534:
+.Lj7529:
 	addi	r3,r3,1
 	ldw	r5,r30,-68
 	add	r5,r5,r3
 	stw	r30,r5,-68
 	ldw	r3,r30,-64
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj7530
-	jal	r0,.Lj7528
-.Lj7530:
-.Lj7527:
+	bne	r3,r0,.Lj7525
+	jal	r0,.Lj7523
+.Lj7525:
+.Lj7522:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-68
 	call	fpc_unicodestr_setlength
@@ -65767,21 +65736,21 @@ SYSTEM_$$_UNIMPLEMENTEDUNICODESTRING:
 	addi	r29,r29,-52
 	la	r3,operatingsystem_isconsole
 	ldbu	r3,r3,0
-	bne	r3,r0,.Lj7537
-	jal	r0,.Lj7538
-.Lj7537:
+	bne	r3,r0,.Lj7532
+	jal	r0,.Lj7533
+.Lj7532:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj7539
+	beq	r4,r0,.Lj7534
 	la	r5,U_$SYSTEM_$$_ERROUTPUT
 	ldw	r3,r5,0
 	jalr	r31,r4
 	addi	r11,r1,0
-	jal	r0,.Lj7540
-.Lj7539:
+	jal	r0,.Lj7535
+.Lj7534:
 	la	r3,U_$SYSTEM_$$_ERROUTPUT
 	addi	r11,r3,4
-.Lj7540:
+.Lj7535:
 	la	r5,.Ld28
 	addi	r4,r11,0
 	addi	r3,r0,0
@@ -65790,23 +65759,23 @@ SYSTEM_$$_UNIMPLEMENTEDUNICODESTRING:
 	call	fpc_writeln_end
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj7541
+	beq	r5,r0,.Lj7536
 	la	r4,U_$SYSTEM_$$_ERROUTPUT
 	ldw	r3,r4,0
 	jalr	r31,r5
 	addi	r11,r1,0
-	jal	r0,.Lj7542
-.Lj7541:
+	jal	r0,.Lj7537
+.Lj7536:
 	la	r3,U_$SYSTEM_$$_ERROUTPUT
 	addi	r11,r3,4
-.Lj7542:
+.Lj7537:
 	la	r5,.Ld29
 	addi	r4,r11,0
 	addi	r3,r0,0
 	call	fpc_write_text_shortstr
 	addi	r3,r11,0
 	call	fpc_writeln_end
-.Lj7538:
+.Lj7533:
 	call	SYSTEM_$$_GET_FRAME$$POINTER
 	addi	r11,r1,0
 	call	SYSTEM_$$_GET_PC_ADDR$$POINTER
@@ -65836,17 +65805,17 @@ SYSTEM_$$_STRINGELEMENTSIZE$UNICODESTRING$$WORD:
 	stw	r30,r3,-56
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7545
-	jal	r0,.Lj7546
-.Lj7545:
+	bne	r3,r0,.Lj7540
+	jal	r0,.Lj7541
+.Lj7540:
 	ldw	r3,r30,-56
 	ldhu	r3,r3,-10
 	sth	r30,r3,-60
-	jal	r0,.Lj7547
-.Lj7546:
+	jal	r0,.Lj7542
+.Lj7541:
 	addi	r3,r0,2
 	sth	r30,r3,-60
-.Lj7547:
+.Lj7542:
 	ldhu	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -65867,16 +65836,16 @@ SYSTEM_$$_STRINGREFCOUNT$UNICODESTRING$$LONGINT:
 	stw	r30,r3,-56
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7550
-	jal	r0,.Lj7551
-.Lj7550:
+	bne	r3,r0,.Lj7545
+	jal	r0,.Lj7546
+.Lj7545:
 	ldw	r3,r30,-56
 	ldw	r3,r3,-8
 	stw	r30,r3,-60
-	jal	r0,.Lj7552
-.Lj7551:
+	jal	r0,.Lj7547
+.Lj7546:
 	stw	r30,r0,-60
-.Lj7552:
+.Lj7547:
 	ldw	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -65897,18 +65866,18 @@ SYSTEM_$$_STRINGCODEPAGE$UNICODESTRING$$WORD:
 	stw	r30,r3,-56
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7555
-	jal	r0,.Lj7556
-.Lj7555:
+	bne	r3,r0,.Lj7550
+	jal	r0,.Lj7551
+.Lj7550:
 	ldw	r3,r30,-56
 	ldhu	r3,r3,-12
 	sth	r30,r3,-60
-	jal	r0,.Lj7557
-.Lj7556:
+	jal	r0,.Lj7552
+.Lj7551:
 	la	r3,U_$SYSTEM_$$_DEFAULTUNICODECODEPAGE
 	ldhu	r3,r3,0
 	sth	r30,r3,-60
-.Lj7557:
+.Lj7552:
 	ldhu	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -66015,13 +65984,13 @@ SYSTEM_$$_INITUNICODESTRINGMANAGER:
 	la	r3,TC_$SYSTEM_$$__zero_$SYSTEM_$$_TUNICODESTRINGMANAGER
 	la	r4,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	addi	r5,r0,25
-.Lj7568:
+.Lj7563:
 	ldw	r6,r3,0
 	stw	r4,r6,0
 	addi	r3,r3,4
 	addi	r4,r4,4
 	addi	r5,r5,-1
-	bgt	r5,r0,.Lj7568
+	bgt	r5,r0,.Lj7563
 	la	r3,SYSTEM_$$_DEFAULTANSI2UNICODEMOVE$PANSICHAR$WORD$UNICODESTRING$LONGINT
 	la	r4,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	stw	r4,r3,4
@@ -66082,17 +66051,17 @@ SYSTEM_$$_TOSINGLEBYTEFILESYSTEMENCODEDFILENAME$UNICODESTRING$$RAWBYTESTRING:
 	stw	r30,r3,-60
 	stw	r30,r4,-56
 	ldw	r6,r30,-56
-	beq	r6,r0,.Lj7571
+	beq	r6,r0,.Lj7566
 	ldw	r6,r6,-4
-.Lj7571:
+.Lj7566:
 	la	r3,U_$SYSTEM_$$_DEFAULTFILESYSTEMCODEPAGE
 	ldhu	r5,r3,0
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
-	bne	r3,r0,.Lj7572
+	bne	r3,r0,.Lj7567
 	la	r7,FPC_EMPTYCHAR
 	addi	r3,r7,0
-.Lj7572:
+.Lj7567:
 	la	r7,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	ldw	r7,r7,76
 	jalr	r31,r7
@@ -66223,7 +66192,7 @@ SYSTEM_$$_UTF8TOSTRING$SHORTSTRING$$UNICODESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj7584
+	bne	r1,r0,.Lj7579
 	ldw	r4,r30,-56
 	addi	r3,r30,-64
 	addi	r5,r0,0
@@ -66231,16 +66200,16 @@ SYSTEM_$$_UTF8TOSTRING$SHORTSTRING$$UNICODESTRING:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_UTF8DECODE$RAWBYTESTRING$$UNICODESTRING
-.Lj7584:
+.Lj7579:
 	call	fpc_popaddrstack
 	addi	r3,r30,-64
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj7583
+	beq	r3,r0,.Lj7578
 	call	fpc_reraise
 	stw	r30,r0,-164
-	jal	r0,.Lj7584
-.Lj7583:
+	jal	r0,.Lj7579
+.Lj7578:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -66290,7 +66259,7 @@ SYSTEM_$$_UTF8TOSTRING$PANSICHAR$$UNICODESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-168
-	bne	r1,r0,.Lj7591
+	bne	r1,r0,.Lj7586
 	ldw	r3,r30,-56
 	call	fpc_pchar_length
 	stw	r30,r1,-68
@@ -66301,30 +66270,30 @@ SYSTEM_$$_UTF8TOSTRING$PANSICHAR$$UNICODESTRING:
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj7593
-	jal	r0,.Lj7594
-.Lj7593:
+	bne	r3,r0,.Lj7588
+	jal	r0,.Lj7589
+.Lj7588:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-56
 	ldw	r5,r30,-68
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj7594:
+.Lj7589:
 	ldw	r3,r30,-64
 	stw	r30,r3,-172
 	ldw	r4,r30,-172
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_UTF8DECODE$RAWBYTESTRING$$UNICODESTRING
 	ldw	r3,r30,-60
-.Lj7591:
+.Lj7586:
 	call	fpc_popaddrstack
 	addi	r3,r30,-64
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-168
-	beq	r3,r0,.Lj7590
+	beq	r3,r0,.Lj7585
 	call	fpc_reraise
 	stw	r30,r0,-168
-	jal	r0,.Lj7591
-.Lj7590:
+	jal	r0,.Lj7586
+.Lj7585:
 	ldw	r30,r29,172
 	ldw	r31,r29,176
 	addi	r29,r29,180
@@ -66375,7 +66344,7 @@ SYSTEM_$$_UTF8TOSTRING$array_of_ANSICHAR$$UNICODESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-172
-	bne	r1,r0,.Lj7600
+	bne	r1,r0,.Lj7595
 	ldw	r3,r30,-60
 	addi	r3,r3,1
 	stw	r30,r3,-72
@@ -66386,32 +66355,32 @@ SYSTEM_$$_UTF8TOSTRING$array_of_ANSICHAR$$UNICODESTRING:
 	ldw	r4,r30,-72
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj7602
-	jal	r0,.Lj7603
-.Lj7602:
+	bne	r3,r0,.Lj7597
+	jal	r0,.Lj7598
+.Lj7597:
 	ldw	r3,r30,-56
 	stw	r30,r3,-176
 	ldw	r4,r30,-68
 	ldw	r3,r30,-176
 	ldw	r5,r30,-72
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj7603:
+.Lj7598:
 	ldw	r3,r30,-68
 	stw	r30,r3,-176
 	ldw	r4,r30,-176
 	ldw	r3,r30,-64
 	call	SYSTEM_$$_UTF8DECODE$RAWBYTESTRING$$UNICODESTRING
 	ldw	r3,r30,-64
-.Lj7600:
+.Lj7595:
 	call	fpc_popaddrstack
 	addi	r3,r30,-68
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-172
-	beq	r3,r0,.Lj7599
+	beq	r3,r0,.Lj7594
 	call	fpc_reraise
 	stw	r30,r0,-172
-	jal	r0,.Lj7600
-.Lj7599:
+	jal	r0,.Lj7595
+.Lj7594:
 	ldw	r30,r29,176
 	ldw	r31,r29,180
 	addi	r29,r29,184
@@ -66439,7 +66408,7 @@ SYSTEM_$$_UTF8TOSTRING$array_of_BYTE$$UNICODESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-172
-	bne	r1,r0,.Lj7607
+	bne	r1,r0,.Lj7602
 	ldw	r3,r30,-60
 	addi	r3,r3,1
 	stw	r30,r3,-72
@@ -66450,32 +66419,32 @@ SYSTEM_$$_UTF8TOSTRING$array_of_BYTE$$UNICODESTRING:
 	ldw	r4,r30,-72
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj7609
-	jal	r0,.Lj7610
-.Lj7609:
+	bne	r3,r0,.Lj7604
+	jal	r0,.Lj7605
+.Lj7604:
 	ldw	r3,r30,-56
 	stw	r30,r3,-176
 	ldw	r4,r30,-68
 	ldw	r3,r30,-176
 	ldw	r5,r30,-72
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj7610:
+.Lj7605:
 	ldw	r3,r30,-68
 	stw	r30,r3,-176
 	ldw	r4,r30,-176
 	ldw	r3,r30,-64
 	call	SYSTEM_$$_UTF8DECODE$RAWBYTESTRING$$UNICODESTRING
 	ldw	r3,r30,-64
-.Lj7607:
+.Lj7602:
 	call	fpc_popaddrstack
 	addi	r3,r30,-68
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-172
-	beq	r3,r0,.Lj7606
+	beq	r3,r0,.Lj7601
 	call	fpc_reraise
 	stw	r30,r0,-172
-	jal	r0,.Lj7607
-.Lj7606:
+	jal	r0,.Lj7602
+.Lj7601:
 	ldw	r30,r29,176
 	ldw	r31,r29,180
 	addi	r29,r29,184
@@ -66498,79 +66467,79 @@ SYSTEM_$$_LOCALENAMETOCODEPAGE$SHORTSTRING$WORD$$BOOLEAN:
 	ldw	r3,r30,-56
 	call	fpc_shortstr_compare_equal
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj7613
-	jal	r0,.Lj7614
-.Lj7614:
+	bne	r3,r0,.Lj7608
+	jal	r0,.Lj7609
+.Lj7609:
 	la	r4,.Ld31
 	ldw	r3,r30,-56
 	call	fpc_shortstr_compare_equal
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj7613
-	jal	r0,.Lj7615
-.Lj7613:
+	bne	r3,r0,.Lj7608
+	jal	r0,.Lj7610
+.Lj7608:
 	addi	r3,r0,1
 	stb	r30,r3,-64
-	jal	r0,.Lj7616
-.Lj7615:
+	jal	r0,.Lj7611
+.Lj7610:
 	stb	r30,r0,-64
-.Lj7616:
+.Lj7611:
 	ldbu	r3,r30,-64
-	bne	r3,r0,.Lj7617
-	jal	r0,.Lj7618
-.Lj7617:
+	bne	r3,r0,.Lj7612
+	jal	r0,.Lj7613
+.Lj7612:
 	ldw	r3,r30,-60
 	lui	r4,15
 	ori	r4,r4,3561
 	sth	r3,r4,0
-	jal	r0,.Lj7619
-.Lj7618:
+	jal	r0,.Lj7614
+.Lj7613:
 	la	r4,.Ld32
 	ldw	r3,r30,-56
 	call	fpc_shortstr_compare_equal
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj7620
-	jal	r0,.Lj7621
-.Lj7621:
+	bne	r3,r0,.Lj7615
+	jal	r0,.Lj7616
+.Lj7616:
 	la	r4,.Ld33
 	ldw	r3,r30,-56
 	call	fpc_shortstr_compare_equal
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj7620
-	jal	r0,.Lj7622
-.Lj7620:
+	bne	r3,r0,.Lj7615
+	jal	r0,.Lj7617
+.Lj7615:
 	addi	r3,r0,1
 	stb	r30,r3,-64
-	jal	r0,.Lj7623
-.Lj7622:
+	jal	r0,.Lj7618
+.Lj7617:
 	stb	r30,r0,-64
-.Lj7623:
+.Lj7618:
 	ldbu	r3,r30,-64
-	bne	r3,r0,.Lj7624
-	jal	r0,.Lj7625
-.Lj7624:
+	bne	r3,r0,.Lj7619
+	jal	r0,.Lj7620
+.Lj7619:
 	ldw	r3,r30,-60
 	lui	r4,15
 	ori	r4,r4,3560
 	sth	r3,r4,0
-	jal	r0,.Lj7626
-.Lj7625:
+	jal	r0,.Lj7621
+.Lj7620:
 	la	r3,U_$SYSTEM_$$_LOCALENAMETOCODEPAGECALLBACK
 	ldw	r3,r3,0
 	sne	r3,r3,r0
 	stb	r30,r3,-64
 	ldbu	r3,r30,-64
-	bne	r3,r0,.Lj7627
-	jal	r0,.Lj7628
-.Lj7627:
+	bne	r3,r0,.Lj7622
+	jal	r0,.Lj7623
+.Lj7622:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	ldbu	r5,r30,-64
 	la	r6,U_$SYSTEM_$$_LOCALENAMETOCODEPAGECALLBACK
 	ldw	r6,r6,0
 	jalr	r31,r6
-.Lj7628:
-.Lj7626:
-.Lj7619:
+.Lj7623:
+.Lj7621:
+.Lj7614:
 	ldbu	r1,r30,-64
 	ldw	r30,r29,64
 	ldw	r31,r29,68
@@ -66597,22 +66566,22 @@ FPC_DYNARRAY_RANGECHECK:
 	stw	r30,r4,-60
 	ldw	r3,r30,-56
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7631
-	jal	r0,.Lj7632
-.Lj7632:
+	bne	r3,r0,.Lj7626
+	jal	r0,.Lj7627
+.Lj7627:
 	ldw	r4,r30,-60
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj7631
-	jal	r0,.Lj7633
-.Lj7633:
+	bne	r3,r0,.Lj7626
+	jal	r0,.Lj7628
+.Lj7628:
 	ldw	r3,r30,-56
 	ldw	r3,r3,-4
 	ldw	r4,r30,-60
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj7631
-	jal	r0,.Lj7634
-.Lj7631:
+	bne	r3,r0,.Lj7626
+	jal	r0,.Lj7629
+.Lj7626:
 	call	SYSTEM_$$_GET_FRAME$$POINTER
 	addi	r11,r1,0
 	call	SYSTEM_$$_GET_PC_ADDR$$POINTER
@@ -66620,7 +66589,7 @@ FPC_DYNARRAY_RANGECHECK:
 	addi	r3,r0,201
 	addi	r5,r11,0
 	call	SYSTEM_$$_HANDLEERRORADDRFRAMEIND$LONGINT$POINTER$POINTER
-.Lj7634:
+.Lj7629:
 	ldw	r11,r29,60
 	ldw	r30,r29,64
 	ldw	r31,r29,68
@@ -66643,17 +66612,17 @@ FPC_DYNARRAY_LENGTH:
 	stw	r30,r3,-56
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7637
-	jal	r0,.Lj7638
-.Lj7637:
+	bne	r3,r0,.Lj7632
+	jal	r0,.Lj7633
+.Lj7632:
 	ldw	r3,r30,-56
 	ldw	r3,r3,-4
 	addi	r3,r3,1
 	stw	r30,r3,-60
-	jal	r0,.Lj7639
-.Lj7638:
+	jal	r0,.Lj7634
+.Lj7633:
 	stw	r30,r0,-60
-.Lj7639:
+.Lj7634:
 	ldw	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -66676,17 +66645,17 @@ FPC_DYNARRAY_HIGH:
 	stw	r30,r3,-56
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7642
-	jal	r0,.Lj7643
-.Lj7642:
+	bne	r3,r0,.Lj7637
+	jal	r0,.Lj7638
+.Lj7637:
 	ldw	r3,r30,-56
 	ldw	r3,r3,-4
 	stw	r30,r3,-60
-	jal	r0,.Lj7644
-.Lj7643:
+	jal	r0,.Lj7639
+.Lj7638:
 	addi	r3,r0,-1
 	stw	r30,r3,-60
-.Lj7644:
+.Lj7639:
 	ldw	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -66714,39 +66683,39 @@ FPC_DYNARRAY_CLEAR:
 	stw	r30,r3,-64
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7647
-	jal	r0,.Lj7648
-.Lj7647:
-	jal	r0,.Lj7645
-.Lj7648:
+	bne	r3,r0,.Lj7642
+	jal	r0,.Lj7643
+.Lj7642:
+	jal	r0,.Lj7640
+.Lj7643:
 	ldw	r3,r30,-56
 	stw	r3,r0,0
 	ldw	r3,r30,-64
 	ldw	r3,r3,-8
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7649
-	jal	r0,.Lj7650
-.Lj7650:
+	bne	r3,r0,.Lj7644
+	jal	r0,.Lj7645
+.Lj7645:
 	ldw	r3,r30,-64
 	ldw	r4,r3,-8
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj7652
-	jal	r0,.Lj7653
-.Lj7652:
+	bne	r3,r0,.Lj7647
+	jal	r0,.Lj7648
+.Lj7647:
 	ldw	r3,r30,-64
 	addi	r11,r3,-8
 	addi	r3,r11,0
 	call	SYSTEM_$$_INTERLOCKEDDECREMENT$LONGINT$$LONGINT
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj7654
-	jal	r0,.Lj7653
-.Lj7654:
-	jal	r0,.Lj7649
-.Lj7653:
-	jal	r0,.Lj7651
+	bne	r3,r0,.Lj7649
+	jal	r0,.Lj7648
 .Lj7649:
+	jal	r0,.Lj7644
+.Lj7648:
+	jal	r0,.Lj7646
+.Lj7644:
 	ldw	r3,r30,-60
 	ldbu	r3,r3,1
 	ldw	r4,r30,-60
@@ -66762,29 +66731,29 @@ FPC_DYNARRAY_CLEAR:
 	ldw	r3,r30,-76
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7656
-	jal	r0,.Lj7657
-.Lj7656:
+	bne	r3,r0,.Lj7651
+	jal	r0,.Lj7652
+.Lj7651:
 	ldw	r3,r30,-76
 	addi	r4,r0,-1
 	xor	r4,r3,r4
 	ldw	r3,r30,-72
 	and	r3,r3,r4
-	jal	r0,.Lj7658
-.Lj7657:
+	jal	r0,.Lj7653
+.Lj7652:
 	ldw	r4,r30,-72
 	andi	r5,r4,3
 	ldw	r4,r30,-72
 	sub	r4,r4,r5
 	addi	r3,r4,0
-.Lj7658:
+.Lj7653:
 	ldw	r3,r3,16
 	stw	r30,r3,-60
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7659
-	jal	r0,.Lj7660
-.Lj7659:
+	bne	r3,r0,.Lj7654
+	jal	r0,.Lj7655
+.Lj7654:
 	ldw	r3,r30,-64
 	ldw	r3,r3,-4
 	addi	r5,r3,1
@@ -66792,12 +66761,12 @@ FPC_DYNARRAY_CLEAR:
 	ldw	r4,r3,0
 	ldw	r3,r30,-64
 	call	FPC_FINALIZE_ARRAY
-.Lj7660:
+.Lj7655:
 	ldw	r3,r30,-64
 	addi	r3,r3,-8
 	call	SYSTEM_$$_FREEMEM$POINTER$$LONGWORD
-.Lj7651:
-.Lj7645:
+.Lj7646:
+.Lj7640:
 	ldw	r11,r29,76
 	ldw	r30,r29,80
 	ldw	r31,r29,84
@@ -66821,21 +66790,21 @@ FPC_DYNARRAY_INCR_REF:
 	stw	r30,r3,-56
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7663
-	jal	r0,.Lj7664
-.Lj7663:
+	bne	r3,r0,.Lj7658
+	jal	r0,.Lj7659
+.Lj7658:
 	ldw	r3,r30,-56
 	ldw	r4,r3,-8
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj7665
-	jal	r0,.Lj7664
-.Lj7665:
+	bne	r3,r0,.Lj7660
+	jal	r0,.Lj7659
+.Lj7660:
 	ldw	r3,r30,-56
 	addi	r11,r3,-8
 	addi	r3,r11,0
 	call	SYSTEM_$$_INTERLOCKEDINCREMENT$LONGINT$$LONGINT
-.Lj7664:
+.Lj7659:
 	ldw	r11,r29,56
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -66895,15 +66864,15 @@ FPC_DYNARR_SETLENGTH:
 	ldw	r4,r30,-96
 	addi	r3,r0,0
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj7670
-	jal	r0,.Lj7671
-.Lj7670:
+	bne	r3,r0,.Lj7665
+	jal	r0,.Lj7666
+.Lj7665:
 	ldw	r4,r30,-96
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj7672
-	jal	r0,.Lj7673
-.Lj7672:
+	bne	r3,r0,.Lj7667
+	jal	r0,.Lj7668
+.Lj7667:
 	call	SYSTEM_$$_GET_FRAME$$POINTER
 	addi	r11,r1,0
 	call	SYSTEM_$$_GET_PC_ADDR$$POINTER
@@ -66911,12 +66880,12 @@ FPC_DYNARR_SETLENGTH:
 	addi	r3,r0,201
 	addi	r5,r11,0
 	call	SYSTEM_$$_HANDLEERRORADDRFRAMEIND$LONGINT$POINTER$POINTER
-.Lj7673:
+.Lj7668:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	call	FPC_DYNARRAY_CLEAR
-	jal	r0,.Lj7668
-.Lj7671:
+	jal	r0,.Lj7663
+.Lj7666:
 	ldw	r3,r30,-60
 	ldbu	r3,r3,1
 	ldw	r4,r30,-60
@@ -66932,22 +66901,22 @@ FPC_DYNARR_SETLENGTH:
 	ldw	r3,r30,-124
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7675
-	jal	r0,.Lj7676
-.Lj7675:
+	bne	r3,r0,.Lj7670
+	jal	r0,.Lj7671
+.Lj7670:
 	ldw	r3,r30,-124
 	addi	r4,r0,-1
 	xor	r4,r3,r4
 	ldw	r3,r30,-120
 	and	r3,r3,r4
-	jal	r0,.Lj7677
-.Lj7676:
+	jal	r0,.Lj7672
+.Lj7671:
 	ldw	r4,r30,-120
 	andi	r4,r4,3
 	ldw	r5,r30,-120
 	sub	r4,r5,r4
 	addi	r3,r4,0
-.Lj7677:
+.Lj7672:
 	stw	r30,r3,-108
 	ldw	r3,r30,-108
 	ldw	r3,r3,4
@@ -66957,39 +66926,39 @@ FPC_DYNARR_SETLENGTH:
 	stw	r30,r3,-112
 	ldw	r3,r30,-112
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7678
-	jal	r0,.Lj7679
-.Lj7678:
+	bne	r3,r0,.Lj7673
+	jal	r0,.Lj7674
+.Lj7673:
 	ldw	r3,r30,-112
 	ldw	r3,r3,0
 	stw	r30,r3,-112
-.Lj7679:
+.Lj7674:
 	ldw	r4,r30,-88
 	ldw	r5,r30,-96
 	mul	r3,r5,r4
 	mulh	r4,r5,r4
 	srai	r5,r3,31
-	beq	r5,r4,.Lj7681
-	jal	r0,.Lj7680
-.Lj7680:
+	beq	r5,r4,.Lj7676
+	jal	r0,.Lj7675
+.Lj7675:
 	call	FPC_OVERFLOW
-.Lj7681:
+.Lj7676:
 	addi	r5,r0,8
 	add	r4,r3,r5
 	slt	r3,r4,r3
 	slt	r5,r5,r0
-	beq	r5,r3,.Lj7683
-	jal	r0,.Lj7682
-.Lj7682:
+	beq	r5,r3,.Lj7678
+	jal	r0,.Lj7677
+.Lj7677:
 	call	FPC_OVERFLOW
-.Lj7683:
+.Lj7678:
 	stw	r30,r4,-80
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7684
-	jal	r0,.Lj7685
-.Lj7684:
+	bne	r3,r0,.Lj7679
+	jal	r0,.Lj7680
+.Lj7679:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	ldw	r3,r3,-4
@@ -67000,9 +66969,9 @@ FPC_DYNARR_SETLENGTH:
 	ldw	r3,r3,-8
 	addi	r3,r3,-1
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7686
-	jal	r0,.Lj7687
-.Lj7686:
+	bne	r3,r0,.Lj7681
+	jal	r0,.Lj7682
+.Lj7681:
 	ldw	r3,r30,-80
 	call	SYSTEM_$$_GETMEM$LONGWORD$$POINTER
 	stw	r30,r1,-104
@@ -67011,12 +66980,12 @@ FPC_DYNARR_SETLENGTH:
 	ldw	r3,r30,-96
 	ldw	r4,r30,-76
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj7688
-	jal	r0,.Lj7689
-.Lj7688:
+	bne	r3,r0,.Lj7683
+	jal	r0,.Lj7684
+.Lj7683:
 	ldw	r3,r30,-96
 	stw	r30,r3,-76
-.Lj7689:
+.Lj7684:
 	ldw	r3,r30,-88
 	ldw	r4,r30,-76
 	mul	r5,r4,r3
@@ -67027,31 +66996,31 @@ FPC_DYNARR_SETLENGTH:
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
 	ldw	r3,r30,-112
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7690
-	jal	r0,.Lj7691
-.Lj7690:
+	bne	r3,r0,.Lj7685
+	jal	r0,.Lj7686
+.Lj7685:
 	ldw	r3,r30,-104
 	addi	r3,r3,8
 	ldw	r5,r30,-76
 	ldw	r4,r30,-112
 	call	FPC_ADDREF_ARRAY
-.Lj7691:
+.Lj7686:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	call	FPC_DYNARRAY_CLEAR
-	jal	r0,.Lj7692
-.Lj7687:
+	jal	r0,.Lj7687
+.Lj7682:
 	ldw	r3,r30,-112
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7693
-	jal	r0,.Lj7694
-.Lj7693:
+	bne	r3,r0,.Lj7688
+	jal	r0,.Lj7689
+.Lj7688:
 	ldw	r4,r30,-96
 	ldw	r3,r30,-92
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj7695
-	jal	r0,.Lj7694
-.Lj7695:
+	bne	r3,r0,.Lj7690
+	jal	r0,.Lj7689
+.Lj7690:
 	ldw	r3,r30,-88
 	ldw	r4,r30,-96
 	mul	r3,r4,r3
@@ -67063,7 +67032,7 @@ FPC_DYNARR_SETLENGTH:
 	sub	r5,r5,r4
 	ldw	r4,r30,-112
 	call	FPC_FINALIZE_ARRAY
-.Lj7694:
+.Lj7689:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	addi	r3,r3,-8
@@ -67072,25 +67041,25 @@ FPC_DYNARR_SETLENGTH:
 	ldw	r4,r30,-80
 	call	SYSTEM_$$_REALLOCMEM$POINTER$LONGWORD$$POINTER
 	stw	r30,r1,-104
-.Lj7692:
-	jal	r0,.Lj7696
-.Lj7685:
+.Lj7687:
+	jal	r0,.Lj7691
+.Lj7680:
 	stw	r30,r0,-92
 	ldw	r3,r30,-80
 	call	SYSTEM_$$_ALLOCMEM$LONGWORD$$POINTER
 	stw	r30,r1,-104
-.Lj7696:
+.Lj7691:
 	ldw	r3,r30,-96
 	ldw	r4,r30,-92
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj7697
-	jal	r0,.Lj7698
-.Lj7697:
+	bne	r3,r0,.Lj7692
+	jal	r0,.Lj7693
+.Lj7692:
 	ldw	r3,r30,-92
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7699
-	jal	r0,.Lj7700
-.Lj7699:
+	bne	r3,r0,.Lj7694
+	jal	r0,.Lj7695
+.Lj7694:
 	ldw	r4,r30,-88
 	ldw	r3,r30,-92
 	mul	r3,r3,r4
@@ -67104,33 +67073,33 @@ FPC_DYNARR_SETLENGTH:
 	mul	r4,r5,r4
 	addi	r5,r0,0
 	call	SYSTEM_$$_FILLCHAR$formal$LONGINT$BYTE
-.Lj7700:
+.Lj7695:
 	ldw	r3,r30,-112
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7701
-	jal	r0,.Lj7702
-.Lj7701:
+	bne	r3,r0,.Lj7696
+	jal	r0,.Lj7697
+.Lj7696:
 	ldw	r3,r30,-112
 	ldbu	r3,r3,0
 	addi	r3,r3,-12
 	addi	r4,r0,2
-	bltu	r3,r4,.Lj7704
+	bltu	r3,r4,.Lj7699
 	addi	r4,r0,4
-	beq	r3,r4,.Lj7704
-	jal	r0,.Lj7705
-.Lj7704:
-	jal	r0,.Lj7703
-.Lj7705:
-	jal	r0,.Lj7702
-.Lj7703:
+	beq	r3,r4,.Lj7699
+	jal	r0,.Lj7700
+.Lj7699:
+	jal	r0,.Lj7698
+.Lj7700:
+	jal	r0,.Lj7697
+.Lj7698:
 	addi	r5,r30,-84
 	addi	r6,r0,1
 	addi	r4,r0,0
 	ldw	r3,r30,-112
 	call	SYSTEM_$$_RTTIMANAGEMENTANDSIZE$POINTER$TRTTIRECOPTYPE$LONGINT$BOOLEAN$$BOOLEAN
-	bne	r1,r0,.Lj7706
-	jal	r0,.Lj7702
-.Lj7706:
+	bne	r1,r0,.Lj7701
+	jal	r0,.Lj7697
+.Lj7701:
 	ldw	r3,r30,-88
 	ldw	r4,r30,-92
 	mul	r3,r4,r3
@@ -67142,8 +67111,8 @@ FPC_DYNARR_SETLENGTH:
 	sub	r5,r5,r4
 	ldw	r4,r30,-112
 	call	FPC_INITIALIZE_ARRAY
-.Lj7702:
-.Lj7698:
+.Lj7697:
+.Lj7693:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-104
 	addi	r4,r4,8
@@ -67158,19 +67127,19 @@ FPC_DYNARR_SETLENGTH:
 	ldw	r4,r30,-64
 	addi	r3,r0,1
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj7707
-	jal	r0,.Lj7708
-.Lj7707:
+	bne	r3,r0,.Lj7702
+	jal	r0,.Lj7703
+.Lj7702:
 	ldw	r3,r30,-96
 	addi	r11,r3,-1
 	addi	r3,r0,0
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj7709
-	jal	r0,.Lj7710
-.Lj7709:
+	bne	r3,r0,.Lj7704
+	jal	r0,.Lj7705
+.Lj7704:
 	addi	r3,r0,-1
 	stw	r30,r3,-72
-.Lj7711:
+.Lj7706:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
@@ -67190,12 +67159,12 @@ FPC_DYNARR_SETLENGTH:
 	call	FPC_DYNARR_SETLENGTH
 	ldw	r3,r30,-72
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj7713
-	jal	r0,.Lj7711
-.Lj7713:
-.Lj7710:
+	bne	r3,r0,.Lj7708
+	jal	r0,.Lj7706
 .Lj7708:
-.Lj7668:
+.Lj7705:
+.Lj7703:
+.Lj7663:
 	ldw	r11,r29,124
 	ldw	r30,r29,128
 	ldw	r31,r29,132
@@ -67230,52 +67199,52 @@ FPC_ARR_TO_DYNARR_COPY:
 	call	FPC_DYNARRAY_CLEAR
 	ldw	r3,r30,-56
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7716
-	jal	r0,.Lj7717
-.Lj7716:
-	jal	r0,.Lj7714
-.Lj7717:
+	bne	r3,r0,.Lj7711
+	jal	r0,.Lj7712
+.Lj7711:
+	jal	r0,.Lj7709
+.Lj7712:
 	ldw	r4,r30,-64
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj7718
-	jal	r0,.Lj7719
-.Lj7718:
+	bne	r3,r0,.Lj7713
+	jal	r0,.Lj7714
+.Lj7713:
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj7720
-	jal	r0,.Lj7721
-.Lj7720:
-	jal	r0,.Lj7714
-.Lj7721:
+	bne	r3,r0,.Lj7715
+	jal	r0,.Lj7716
+.Lj7715:
+	jal	r0,.Lj7709
+.Lj7716:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-64
 	add	r3,r4,r3
 	stw	r30,r3,-68
 	stw	r30,r0,-64
-.Lj7719:
+.Lj7714:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-64
 	sub	r4,r3,r4
 	ldw	r3,r30,-68
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj7722
-	jal	r0,.Lj7723
-.Lj7722:
+	bne	r3,r0,.Lj7717
+	jal	r0,.Lj7718
+.Lj7717:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-64
 	sub	r3,r3,r4
 	stw	r30,r3,-68
-.Lj7723:
+.Lj7718:
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj7724
-	jal	r0,.Lj7725
-.Lj7724:
-	jal	r0,.Lj7714
-.Lj7725:
+	bne	r3,r0,.Lj7719
+	jal	r0,.Lj7720
+.Lj7719:
+	jal	r0,.Lj7709
+.Lj7720:
 	ldw	r4,r30,-76
 	ldw	r3,r30,-68
 	mul	r3,r3,r4
@@ -67308,16 +67277,16 @@ FPC_ARR_TO_DYNARR_COPY:
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
 	ldw	r3,r30,-80
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7726
-	jal	r0,.Lj7727
-.Lj7726:
+	bne	r3,r0,.Lj7721
+	jal	r0,.Lj7722
+.Lj7721:
 	ldw	r3,r30,-84
 	ldw	r3,r3,0
 	ldw	r5,r30,-68
 	ldw	r4,r30,-80
 	call	FPC_ADDREF_ARRAY
-.Lj7727:
-.Lj7714:
+.Lj7722:
+.Lj7709:
 	ldw	r30,r29,88
 	ldw	r31,r29,92
 	addi	r29,r29,96
@@ -67343,17 +67312,17 @@ fpc_dynarray_delete:
 	stw	r30,r3,-80
 	ldw	r3,r30,-80
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7730
-	jal	r0,.Lj7731
-.Lj7731:
+	bne	r3,r0,.Lj7725
+	jal	r0,.Lj7726
+.Lj7726:
 	ldw	r4,r30,-64
 	addi	r3,r0,0
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj7730
-	jal	r0,.Lj7732
-.Lj7730:
-	jal	r0,.Lj7728
-.Lj7732:
+	bne	r3,r0,.Lj7725
+	jal	r0,.Lj7727
+.Lj7725:
+	jal	r0,.Lj7723
+.Lj7727:
 	ldw	r3,r30,-80
 	ldw	r3,r3,-4
 	addi	r3,r3,1
@@ -67361,34 +67330,34 @@ fpc_dynarray_delete:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-72
 	sgeu	r3,r3,r4
-	bne	r3,r0,.Lj7733
-	jal	r0,.Lj7734
-.Lj7733:
-	jal	r0,.Lj7728
-.Lj7734:
+	bne	r3,r0,.Lj7728
+	jal	r0,.Lj7729
+.Lj7728:
+	jal	r0,.Lj7723
+.Lj7729:
 	ldw	r4,r30,-72
 	ldw	r3,r30,-60
 	sub	r3,r4,r3
 	ldw	r4,r30,-64
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj7735
-	jal	r0,.Lj7736
-.Lj7735:
+	bne	r3,r0,.Lj7730
+	jal	r0,.Lj7731
+.Lj7730:
 	ldw	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7737
-	jal	r0,.Lj7738
-.Lj7737:
+	bne	r3,r0,.Lj7732
+	jal	r0,.Lj7733
+.Lj7732:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-68
 	call	FPC_DYNARRAY_CLEAR
-	jal	r0,.Lj7728
-.Lj7738:
+	jal	r0,.Lj7723
+.Lj7733:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-60
 	sub	r3,r3,r4
 	stw	r30,r3,-64
-.Lj7736:
+.Lj7731:
 	ldw	r3,r30,-68
 	ldbu	r3,r3,1
 	ldw	r4,r30,-68
@@ -67404,22 +67373,22 @@ fpc_dynarray_delete:
 	ldw	r3,r30,-108
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7740
-	jal	r0,.Lj7741
-.Lj7740:
+	bne	r3,r0,.Lj7735
+	jal	r0,.Lj7736
+.Lj7735:
 	ldw	r3,r30,-108
 	addi	r4,r0,-1
 	xor	r4,r3,r4
 	ldw	r3,r30,-104
 	and	r3,r3,r4
-	jal	r0,.Lj7742
-.Lj7741:
+	jal	r0,.Lj7737
+.Lj7736:
 	ldw	r4,r30,-104
 	andi	r5,r4,3
 	ldw	r4,r30,-104
 	sub	r4,r4,r5
 	addi	r3,r4,0
-.Lj7742:
+.Lj7737:
 	stw	r30,r3,-92
 	ldw	r3,r30,-92
 	ldw	r3,r3,4
@@ -67429,13 +67398,13 @@ fpc_dynarray_delete:
 	stw	r30,r3,-96
 	ldw	r3,r30,-96
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7743
-	jal	r0,.Lj7744
-.Lj7743:
+	bne	r3,r0,.Lj7738
+	jal	r0,.Lj7739
+.Lj7738:
 	ldw	r3,r30,-96
 	ldw	r3,r3,0
 	stw	r30,r3,-96
-.Lj7744:
+.Lj7739:
 	ldw	r4,r30,-72
 	ldw	r3,r30,-64
 	sub	r3,r4,r3
@@ -67444,9 +67413,9 @@ fpc_dynarray_delete:
 	ldw	r3,r3,-8
 	addi	r3,r3,-1
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7745
-	jal	r0,.Lj7746
-.Lj7745:
+	bne	r3,r0,.Lj7740
+	jal	r0,.Lj7741
+.Lj7740:
 	ldw	r4,r30,-76
 	ldw	r3,r30,-72
 	mul	r3,r3,r4
@@ -67484,25 +67453,25 @@ fpc_dynarray_delete:
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
 	ldw	r3,r30,-96
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7747
-	jal	r0,.Lj7748
-.Lj7747:
+	bne	r3,r0,.Lj7742
+	jal	r0,.Lj7743
+.Lj7742:
 	ldw	r3,r30,-84
 	addi	r3,r3,8
 	ldw	r5,r30,-72
 	ldw	r4,r30,-96
 	call	FPC_ADDREF_ARRAY
-.Lj7748:
+.Lj7743:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-68
 	call	FPC_DYNARRAY_CLEAR
-	jal	r0,.Lj7749
-.Lj7746:
+	jal	r0,.Lj7744
+.Lj7741:
 	ldw	r3,r30,-96
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7750
-	jal	r0,.Lj7751
-.Lj7750:
+	bne	r3,r0,.Lj7745
+	jal	r0,.Lj7746
+.Lj7745:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-76
 	mul	r4,r4,r3
@@ -67511,7 +67480,7 @@ fpc_dynarray_delete:
 	ldw	r5,r30,-64
 	ldw	r4,r30,-96
 	call	FPC_FINALIZE_ARRAY
-.Lj7751:
+.Lj7746:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-64
 	add	r4,r3,r4
@@ -67540,7 +67509,7 @@ fpc_dynarray_delete:
 	addi	r3,r30,-88
 	call	SYSTEM_$$_REALLOCMEM$POINTER$LONGWORD$$POINTER
 	stw	r30,r1,-84
-.Lj7749:
+.Lj7744:
 	ldw	r3,r30,-84
 	ldw	r4,r30,-72
 	addi	r4,r4,-1
@@ -67549,7 +67518,7 @@ fpc_dynarray_delete:
 	ldw	r4,r30,-84
 	addi	r4,r4,8
 	stw	r3,r4,0
-.Lj7728:
+.Lj7723:
 	ldw	r30,r29,108
 	ldw	r31,r29,112
 	addi	r29,r29,116
@@ -67573,19 +67542,19 @@ fpc_dynarray_insert:
 	stw	r30,r7,-72
 	ldw	r3,r30,-68
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7754
-	jal	r0,.Lj7755
-.Lj7754:
-	jal	r0,.Lj7752
-.Lj7755:
+	bne	r3,r0,.Lj7749
+	jal	r0,.Lj7750
+.Lj7749:
+	jal	r0,.Lj7747
+.Lj7750:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	stw	r30,r3,-88
 	ldw	r3,r30,-88
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7756
-	jal	r0,.Lj7757
-.Lj7756:
+	bne	r3,r0,.Lj7751
+	jal	r0,.Lj7752
+.Lj7751:
 	ldw	r3,r30,-88
 	addi	r3,r3,-8
 	stw	r30,r3,-88
@@ -67596,32 +67565,32 @@ fpc_dynarray_insert:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-76
 	sgtu	r3,r3,r4
-	bne	r3,r0,.Lj7758
-	jal	r0,.Lj7759
-.Lj7758:
+	bne	r3,r0,.Lj7753
+	jal	r0,.Lj7754
+.Lj7753:
 	ldw	r4,r30,-60
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj7760
-	jal	r0,.Lj7761
-.Lj7760:
+	bne	r3,r0,.Lj7755
+	jal	r0,.Lj7756
+.Lj7755:
 	stw	r30,r0,-60
-	jal	r0,.Lj7762
-.Lj7761:
+	jal	r0,.Lj7757
+.Lj7756:
 	ldw	r3,r30,-76
 	stw	r30,r3,-60
-.Lj7762:
-.Lj7759:
+.Lj7757:
+.Lj7754:
 	ldw	r4,r30,-76
 	ldw	r3,r30,-68
 	add	r3,r3,r4
 	stw	r30,r3,-76
-	jal	r0,.Lj7763
-.Lj7757:
+	jal	r0,.Lj7758
+.Lj7752:
 	stw	r30,r0,-60
 	ldw	r3,r30,-68
 	stw	r30,r3,-76
-.Lj7763:
+.Lj7758:
 	ldw	r3,r30,-72
 	ldbu	r3,r3,1
 	ldw	r4,r30,-72
@@ -67637,22 +67606,22 @@ fpc_dynarray_insert:
 	ldw	r3,r30,-116
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7765
-	jal	r0,.Lj7766
-.Lj7765:
+	bne	r3,r0,.Lj7760
+	jal	r0,.Lj7761
+.Lj7760:
 	ldw	r4,r30,-116
 	addi	r3,r0,-1
 	xor	r4,r4,r3
 	ldw	r3,r30,-112
 	and	r3,r3,r4
-	jal	r0,.Lj7767
-.Lj7766:
+	jal	r0,.Lj7762
+.Lj7761:
 	ldw	r4,r30,-112
 	andi	r5,r4,3
 	ldw	r4,r30,-112
 	sub	r4,r4,r5
 	addi	r3,r4,0
-.Lj7767:
+.Lj7762:
 	stw	r30,r3,-100
 	ldw	r3,r30,-100
 	ldw	r3,r3,4
@@ -67662,25 +67631,25 @@ fpc_dynarray_insert:
 	stw	r30,r3,-104
 	ldw	r3,r30,-104
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7768
-	jal	r0,.Lj7769
-.Lj7768:
+	bne	r3,r0,.Lj7763
+	jal	r0,.Lj7764
+.Lj7763:
 	ldw	r3,r30,-104
 	ldw	r3,r3,0
 	stw	r30,r3,-104
-.Lj7769:
+.Lj7764:
 	ldw	r3,r30,-88
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7770
-	jal	r0,.Lj7771
-.Lj7771:
+	bne	r3,r0,.Lj7765
+	jal	r0,.Lj7766
+.Lj7766:
 	ldw	r3,r30,-88
 	ldw	r3,r3,0
 	addi	r3,r3,-1
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7770
-	jal	r0,.Lj7772
-.Lj7770:
+	bne	r3,r0,.Lj7765
+	jal	r0,.Lj7767
+.Lj7765:
 	ldw	r4,r30,-80
 	ldw	r3,r30,-76
 	mul	r3,r3,r4
@@ -67708,9 +67677,9 @@ fpc_dynarray_insert:
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
 	ldw	r3,r30,-88
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7773
-	jal	r0,.Lj7774
-.Lj7773:
+	bne	r3,r0,.Lj7768
+	jal	r0,.Lj7769
+.Lj7768:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-68
 	add	r3,r4,r3
@@ -67733,31 +67702,31 @@ fpc_dynarray_insert:
 	addi	r6,r6,8
 	add	r3,r6,r3
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj7774:
+.Lj7769:
 	ldw	r3,r30,-104
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7775
-	jal	r0,.Lj7776
-.Lj7775:
+	bne	r3,r0,.Lj7770
+	jal	r0,.Lj7771
+.Lj7770:
 	ldw	r3,r30,-92
 	addi	r3,r3,8
 	ldw	r5,r30,-76
 	ldw	r4,r30,-104
 	call	FPC_ADDREF_ARRAY
-.Lj7776:
+.Lj7771:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-72
 	call	FPC_DYNARRAY_CLEAR
-	jal	r0,.Lj7777
-.Lj7772:
+	jal	r0,.Lj7772
+.Lj7767:
 	addi	r3,r0,-1
 	stw	r30,r3,-84
 	ldw	r3,r30,-64
 	ldw	r4,r30,-88
 	sgeu	r3,r3,r4
-	bne	r3,r0,.Lj7778
-	jal	r0,.Lj7779
-.Lj7778:
+	bne	r3,r0,.Lj7773
+	jal	r0,.Lj7774
+.Lj7773:
 	ldw	r3,r30,-88
 	ldw	r3,r3,4
 	ldw	r4,r30,-80
@@ -67767,14 +67736,14 @@ fpc_dynarray_insert:
 	add	r3,r4,r3
 	ldw	r4,r30,-64
 	sleu	r3,r4,r3
-	bne	r3,r0,.Lj7780
-	jal	r0,.Lj7779
-.Lj7780:
+	bne	r3,r0,.Lj7775
+	jal	r0,.Lj7774
+.Lj7775:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-88
 	sub	r3,r4,r3
 	stw	r30,r3,-84
-.Lj7779:
+.Lj7774:
 	ldw	r3,r30,-88
 	stw	r30,r3,-96
 	ldw	r4,r30,-80
@@ -67787,9 +67756,9 @@ fpc_dynarray_insert:
 	ldw	r4,r30,-84
 	addi	r3,r0,0
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj7781
-	jal	r0,.Lj7782
-.Lj7781:
+	bne	r3,r0,.Lj7776
+	jal	r0,.Lj7777
+.Lj7776:
 	ldw	r4,r30,-92
 	ldw	r3,r30,-84
 	add	r3,r3,r4
@@ -67802,17 +67771,17 @@ fpc_dynarray_insert:
 	add	r4,r4,r3
 	ldw	r3,r30,-64
 	sgeu	r3,r3,r4
-	bne	r3,r0,.Lj7783
-	jal	r0,.Lj7784
-.Lj7783:
+	bne	r3,r0,.Lj7778
+	jal	r0,.Lj7779
+.Lj7778:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-80
 	mul	r3,r4,r3
 	ldw	r4,r30,-64
 	add	r3,r4,r3
 	stw	r30,r3,-64
-.Lj7784:
-.Lj7782:
+.Lj7779:
+.Lj7777:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-68
 	add	r4,r3,r4
@@ -67848,9 +67817,9 @@ fpc_dynarray_insert:
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
 	ldw	r3,r30,-104
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7785
-	jal	r0,.Lj7786
-.Lj7785:
+	bne	r3,r0,.Lj7780
+	jal	r0,.Lj7781
+.Lj7780:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-80
 	mul	r3,r4,r3
@@ -67860,8 +67829,8 @@ fpc_dynarray_insert:
 	ldw	r5,r30,-68
 	ldw	r4,r30,-104
 	call	FPC_ADDREF_ARRAY
-.Lj7786:
-.Lj7777:
+.Lj7781:
+.Lj7772:
 	ldw	r3,r30,-92
 	addi	r4,r0,1
 	stw	r3,r4,0
@@ -67873,7 +67842,7 @@ fpc_dynarray_insert:
 	ldw	r4,r30,-92
 	addi	r4,r4,8
 	stw	r3,r4,0
-.Lj7752:
+.Lj7747:
 	ldw	r30,r29,116
 	ldw	r31,r29,120
 	addi	r29,r29,124
@@ -67899,21 +67868,21 @@ fpc_dynarray_concat_multi:
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj7789
-	jal	r0,.Lj7790
-.Lj7789:
+	bne	r3,r0,.Lj7784
+	jal	r0,.Lj7785
+.Lj7784:
 	ldw	r3,r30,-68
 	stw	r30,r3,-72
-.Lj7791:
+.Lj7786:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-72
 	slli	r4,r4,2
 	add	r3,r3,r4
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7794
-	jal	r0,.Lj7795
-.Lj7794:
+	bne	r3,r0,.Lj7789
+	jal	r0,.Lj7790
+.Lj7789:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-72
 	slli	r4,r4,2
@@ -67926,27 +67895,27 @@ fpc_dynarray_concat_multi:
 	stw	r30,r4,-84
 	ldw	r3,r30,-72
 	stw	r30,r3,-76
-.Lj7795:
+.Lj7790:
 	ldw	r3,r30,-72
 	addi	r3,r3,-1
 	stw	r30,r3,-72
 	ldw	r4,r30,-72
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj7793
-	jal	r0,.Lj7791
-.Lj7793:
-.Lj7790:
+	bne	r3,r0,.Lj7788
+	jal	r0,.Lj7786
+.Lj7788:
+.Lj7785:
 	ldw	r3,r30,-84
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7796
-	jal	r0,.Lj7797
-.Lj7796:
+	bne	r3,r0,.Lj7791
+	jal	r0,.Lj7792
+.Lj7791:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	call	FPC_DYNARRAY_CLEAR
-	jal	r0,.Lj7787
-.Lj7797:
+	jal	r0,.Lj7782
+.Lj7792:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-76
 	slli	r4,r4,2
@@ -67956,9 +67925,9 @@ fpc_dynarray_concat_multi:
 	addi	r3,r3,1
 	ldw	r4,r30,-84
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj7798
-	jal	r0,.Lj7799
-.Lj7798:
+	bne	r3,r0,.Lj7793
+	jal	r0,.Lj7794
+.Lj7793:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-76
 	slli	r4,r4,2
@@ -67967,8 +67936,8 @@ fpc_dynarray_concat_multi:
 	ldw	r3,r30,-56
 	ldw	r5,r30,-60
 	call	FPC_DYNARRAY_ASSIGN
-	jal	r0,.Lj7787
-.Lj7799:
+	jal	r0,.Lj7782
+.Lj7794:
 	ldw	r3,r30,-60
 	ldbu	r3,r3,1
 	ldw	r4,r30,-60
@@ -67984,22 +67953,22 @@ fpc_dynarray_concat_multi:
 	ldw	r3,r30,-132
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7801
-	jal	r0,.Lj7802
-.Lj7801:
+	bne	r3,r0,.Lj7796
+	jal	r0,.Lj7797
+.Lj7796:
 	ldw	r3,r30,-132
 	addi	r4,r0,-1
 	xor	r3,r3,r4
 	ldw	r4,r30,-128
 	and	r3,r4,r3
-	jal	r0,.Lj7803
-.Lj7802:
+	jal	r0,.Lj7798
+.Lj7797:
 	ldw	r4,r30,-128
 	andi	r5,r4,3
 	ldw	r4,r30,-128
 	sub	r4,r4,r5
 	addi	r3,r4,0
-.Lj7803:
+.Lj7798:
 	stw	r30,r3,-112
 	ldw	r3,r30,-112
 	ldw	r3,r3,4
@@ -68009,43 +67978,43 @@ fpc_dynarray_concat_multi:
 	stw	r30,r3,-116
 	ldw	r3,r30,-116
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7804
-	jal	r0,.Lj7805
-.Lj7804:
+	bne	r3,r0,.Lj7799
+	jal	r0,.Lj7800
+.Lj7799:
 	ldw	r3,r30,-116
 	ldw	r3,r3,0
 	stw	r30,r3,-116
-.Lj7805:
+.Lj7800:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	stw	r30,r3,-108
 	ldw	r3,r30,-108
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7806
-	jal	r0,.Lj7807
-.Lj7806:
+	bne	r3,r0,.Lj7801
+	jal	r0,.Lj7802
+.Lj7801:
 	ldw	r3,r30,-108
 	ldw	r3,r3,-8
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7808
-	jal	r0,.Lj7807
-.Lj7808:
+	bne	r3,r0,.Lj7803
+	jal	r0,.Lj7802
+.Lj7803:
 	ldw	r3,r30,-116
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7809
-	jal	r0,.Lj7810
-.Lj7809:
+	bne	r3,r0,.Lj7804
+	jal	r0,.Lj7805
+.Lj7804:
 	stw	r30,r0,-92
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj7811
-	jal	r0,.Lj7812
-.Lj7811:
+	bne	r3,r0,.Lj7806
+	jal	r0,.Lj7807
+.Lj7806:
 	addi	r3,r0,-1
 	stw	r30,r3,-72
-.Lj7813:
+.Lj7808:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
@@ -68055,9 +68024,9 @@ fpc_dynarray_concat_multi:
 	add	r3,r3,r4
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7816
-	jal	r0,.Lj7817
-.Lj7816:
+	bne	r3,r0,.Lj7811
+	jal	r0,.Lj7812
+.Lj7811:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-72
 	slli	r4,r4,2
@@ -68065,9 +68034,9 @@ fpc_dynarray_concat_multi:
 	ldw	r4,r3,0
 	ldw	r3,r30,-108
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj7818
-	jal	r0,.Lj7819
-.Lj7818:
+	bne	r3,r0,.Lj7813
+	jal	r0,.Lj7814
+.Lj7813:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-72
 	slli	r4,r4,2
@@ -68078,32 +68047,32 @@ fpc_dynarray_concat_multi:
 	ldw	r3,r30,-92
 	add	r3,r3,r4
 	stw	r30,r3,-92
-	jal	r0,.Lj7820
-.Lj7819:
 	jal	r0,.Lj7815
-.Lj7820:
-.Lj7817:
+.Lj7814:
+	jal	r0,.Lj7810
+.Lj7815:
+.Lj7812:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-68
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj7815
-	jal	r0,.Lj7813
-.Lj7815:
-.Lj7812:
+	bne	r3,r0,.Lj7810
+	jal	r0,.Lj7808
+.Lj7810:
+.Lj7807:
 	ldw	r3,r30,-92
 	ldw	r4,r30,-84
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj7821
-	jal	r0,.Lj7822
-.Lj7821:
+	bne	r3,r0,.Lj7816
+	jal	r0,.Lj7817
+.Lj7816:
 	ldw	r3,r30,-108
 	ldw	r3,r3,-4
 	addi	r5,r3,1
 	ldw	r4,r30,-116
 	ldw	r3,r30,-108
 	call	FPC_FINALIZE_ARRAY
-.Lj7822:
-.Lj7810:
+.Lj7817:
+.Lj7805:
 	ldw	r3,r30,-108
 	addi	r3,r3,-8
 	stw	r30,r3,-100
@@ -68121,15 +68090,15 @@ fpc_dynarray_concat_multi:
 	ldw	r3,r3,0
 	ldw	r4,r30,-108
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj7823
-	jal	r0,.Lj7824
-.Lj7823:
+	bne	r3,r0,.Lj7818
+	jal	r0,.Lj7819
+.Lj7818:
 	ldw	r3,r30,-76
 	addi	r3,r3,1
 	stw	r30,r3,-76
-.Lj7824:
-	jal	r0,.Lj7825
-.Lj7807:
+.Lj7819:
+	jal	r0,.Lj7820
+.Lj7802:
 	stw	r30,r0,-108
 	ldw	r4,r30,-84
 	ldw	r3,r30,-80
@@ -68140,7 +68109,7 @@ fpc_dynarray_concat_multi:
 	ldw	r4,r30,-96
 	addi	r3,r0,1
 	stw	r4,r3,0
-.Lj7825:
+.Lj7820:
 	ldw	r3,r30,-84
 	ldw	r4,r30,-80
 	mul	r3,r4,r3
@@ -68151,13 +68120,13 @@ fpc_dynarray_concat_multi:
 	ldw	r11,r30,-76
 	ldw	r3,r30,-68
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj7826
-	jal	r0,.Lj7827
-.Lj7826:
+	bne	r3,r0,.Lj7821
+	jal	r0,.Lj7822
+.Lj7821:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	stw	r30,r3,-72
-.Lj7828:
+.Lj7823:
 	ldw	r3,r30,-72
 	addi	r3,r3,-1
 	stw	r30,r3,-72
@@ -68169,21 +68138,21 @@ fpc_dynarray_concat_multi:
 	stw	r30,r3,-104
 	ldw	r3,r30,-104
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7831
-	jal	r0,.Lj7832
-.Lj7831:
-	jal	r0,.Lj7829
-.Lj7832:
+	bne	r3,r0,.Lj7826
+	jal	r0,.Lj7827
+.Lj7826:
+	jal	r0,.Lj7824
+.Lj7827:
 	ldw	r4,r30,-104
 	ldw	r3,r30,-108
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj7833
-	jal	r0,.Lj7834
-.Lj7833:
+	bne	r3,r0,.Lj7828
+	jal	r0,.Lj7829
+.Lj7828:
 	ldw	r3,r30,-96
 	addi	r3,r3,8
 	stw	r30,r3,-104
-.Lj7834:
+.Lj7829:
 	ldw	r3,r30,-104
 	ldw	r3,r3,-4
 	addi	r4,r3,1
@@ -68198,48 +68167,48 @@ fpc_dynarray_concat_multi:
 	ldw	r3,r30,-104
 	ldw	r5,r30,-88
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj7829:
+.Lj7824:
 	ldw	r3,r30,-72
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj7830
-	jal	r0,.Lj7828
-.Lj7830:
-.Lj7827:
+	bne	r3,r0,.Lj7825
+	jal	r0,.Lj7823
+.Lj7825:
+.Lj7822:
 	ldw	r3,r30,-116
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7835
-	jal	r0,.Lj7836
-.Lj7835:
+	bne	r3,r0,.Lj7830
+	jal	r0,.Lj7831
+.Lj7830:
 	ldw	r3,r30,-108
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7837
-	jal	r0,.Lj7838
-.Lj7838:
+	bne	r3,r0,.Lj7832
+	jal	r0,.Lj7833
+.Lj7833:
 	ldw	r4,r30,-92
 	ldw	r3,r30,-84
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj7837
-	jal	r0,.Lj7839
-.Lj7837:
+	bne	r3,r0,.Lj7832
+	jal	r0,.Lj7834
+.Lj7832:
 	ldw	r3,r30,-96
 	addi	r3,r3,8
 	ldw	r5,r30,-84
 	ldw	r4,r30,-116
 	call	FPC_ADDREF_ARRAY
-	jal	r0,.Lj7840
-.Lj7839:
+	jal	r0,.Lj7835
+.Lj7834:
 	ldw	r4,r30,-92
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj7841
-	jal	r0,.Lj7842
-.Lj7841:
+	bne	r3,r0,.Lj7836
+	jal	r0,.Lj7837
+.Lj7836:
 	ldw	r3,r30,-96
 	addi	r3,r3,8
 	ldw	r5,r30,-92
 	ldw	r4,r30,-116
 	call	FPC_ADDREF_ARRAY
-.Lj7842:
+.Lj7837:
 	ldw	r3,r30,-96
 	ldw	r4,r3,4
 	ldw	r3,r30,-92
@@ -68259,17 +68228,17 @@ fpc_dynarray_concat_multi:
 	sub	r5,r5,r4
 	ldw	r4,r30,-116
 	call	FPC_ADDREF_ARRAY
-.Lj7840:
-.Lj7836:
+.Lj7835:
+.Lj7831:
 	ldw	r3,r30,-108
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7843
-	jal	r0,.Lj7844
-.Lj7843:
+	bne	r3,r0,.Lj7838
+	jal	r0,.Lj7839
+.Lj7838:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	call	FPC_DYNARRAY_CLEAR
-.Lj7844:
+.Lj7839:
 	ldw	r3,r30,-96
 	ldw	r4,r30,-84
 	addi	r4,r4,-1
@@ -68278,7 +68247,7 @@ fpc_dynarray_concat_multi:
 	ldw	r4,r30,-96
 	addi	r4,r4,8
 	stw	r3,r4,0
-.Lj7787:
+.Lj7782:
 	ldw	r11,r29,132
 	ldw	r30,r29,136
 	ldw	r31,r29,140
@@ -68302,22 +68271,22 @@ fpc_dynarray_concat:
 	stw	r30,r6,-68
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7847
-	jal	r0,.Lj7848
-.Lj7848:
+	bne	r3,r0,.Lj7842
+	jal	r0,.Lj7843
+.Lj7843:
 	ldw	r3,r30,-68
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7847
-	jal	r0,.Lj7849
-.Lj7847:
+	bne	r3,r0,.Lj7842
+	jal	r0,.Lj7844
+.Lj7842:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-68
 	or	r4,r4,r3
 	ldw	r3,r30,-56
 	ldw	r5,r30,-60
 	call	FPC_DYNARRAY_ASSIGN
-	jal	r0,.Lj7845
-.Lj7849:
+	jal	r0,.Lj7840
+.Lj7844:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-68
 	ldw	r4,r4,-4
@@ -68340,22 +68309,22 @@ fpc_dynarray_concat:
 	ldw	r3,r30,-116
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7851
-	jal	r0,.Lj7852
-.Lj7851:
+	bne	r3,r0,.Lj7846
+	jal	r0,.Lj7847
+.Lj7846:
 	ldw	r4,r30,-116
 	addi	r3,r0,-1
 	xor	r3,r4,r3
 	ldw	r4,r30,-112
 	and	r3,r4,r3
-	jal	r0,.Lj7853
-.Lj7852:
+	jal	r0,.Lj7848
+.Lj7847:
 	ldw	r4,r30,-112
 	andi	r4,r4,3
 	ldw	r5,r30,-112
 	sub	r4,r5,r4
 	addi	r3,r4,0
-.Lj7853:
+.Lj7848:
 	stw	r30,r3,-100
 	ldw	r3,r30,-100
 	ldw	r3,r3,4
@@ -68365,13 +68334,13 @@ fpc_dynarray_concat:
 	stw	r30,r3,-104
 	ldw	r3,r30,-104
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7854
-	jal	r0,.Lj7855
-.Lj7854:
+	bne	r3,r0,.Lj7849
+	jal	r0,.Lj7850
+.Lj7849:
 	ldw	r3,r30,-104
 	ldw	r3,r3,0
 	stw	r30,r3,-104
-.Lj7855:
+.Lj7850:
 	ldw	r3,r30,-64
 	ldw	r3,r3,-4
 	addi	r3,r3,1
@@ -68383,40 +68352,40 @@ fpc_dynarray_concat:
 	stw	r30,r3,-92
 	ldw	r3,r30,-92
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7856
-	jal	r0,.Lj7857
-.Lj7856:
+	bne	r3,r0,.Lj7851
+	jal	r0,.Lj7852
+.Lj7851:
 	ldw	r3,r30,-92
 	ldw	r3,r3,-8
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7858
-	jal	r0,.Lj7857
-.Lj7858:
+	bne	r3,r0,.Lj7853
+	jal	r0,.Lj7852
+.Lj7853:
 	ldw	r3,r30,-104
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7859
-	jal	r0,.Lj7860
-.Lj7859:
+	bne	r3,r0,.Lj7854
+	jal	r0,.Lj7855
+.Lj7854:
 	ldw	r3,r30,-92
 	ldw	r4,r30,-64
 	sne	r3,r3,r4
-	bne	r3,r0,.Lj7861
-	jal	r0,.Lj7860
-.Lj7861:
+	bne	r3,r0,.Lj7856
+	jal	r0,.Lj7855
+.Lj7856:
 	ldw	r4,r30,-92
 	ldw	r3,r30,-68
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj7862
-	jal	r0,.Lj7860
-.Lj7862:
+	bne	r3,r0,.Lj7857
+	jal	r0,.Lj7855
+.Lj7857:
 	ldw	r3,r30,-92
 	ldw	r3,r3,-4
 	addi	r5,r3,1
 	ldw	r4,r30,-104
 	ldw	r3,r30,-92
 	call	FPC_FINALIZE_ARRAY
-.Lj7860:
+.Lj7855:
 	ldw	r3,r30,-92
 	addi	r3,r3,-8
 	stw	r30,r3,-88
@@ -68432,13 +68401,13 @@ fpc_dynarray_concat:
 	ldw	r3,r30,-96
 	ldw	r4,r30,-92
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj7863
-	jal	r0,.Lj7864
-.Lj7863:
+	bne	r3,r0,.Lj7858
+	jal	r0,.Lj7859
+.Lj7858:
 	ldw	r3,r30,-84
 	addi	r3,r3,8
 	stw	r30,r3,-96
-.Lj7864:
+.Lj7859:
 	ldw	r3,r30,-96
 	ldw	r3,r3,-4
 	addi	r3,r3,1
@@ -68453,9 +68422,9 @@ fpc_dynarray_concat:
 	ldw	r4,r30,-92
 	ldw	r3,r30,-64
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj7865
-	jal	r0,.Lj7866
-.Lj7865:
+	bne	r3,r0,.Lj7860
+	jal	r0,.Lj7861
+.Lj7860:
 	ldw	r3,r30,-64
 	ldw	r3,r3,-4
 	addi	r4,r3,1
@@ -68465,18 +68434,18 @@ fpc_dynarray_concat:
 	addi	r4,r3,8
 	ldw	r3,r30,-64
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj7866:
+.Lj7861:
 	ldw	r3,r30,-104
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7867
-	jal	r0,.Lj7868
-.Lj7867:
+	bne	r3,r0,.Lj7862
+	jal	r0,.Lj7863
+.Lj7862:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-92
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj7869
-	jal	r0,.Lj7870
-.Lj7869:
+	bne	r3,r0,.Lj7864
+	jal	r0,.Lj7865
+.Lj7864:
 	ldw	r3,r30,-96
 	ldw	r3,r3,-4
 	addi	r5,r3,1
@@ -68486,14 +68455,14 @@ fpc_dynarray_concat:
 	add	r3,r3,r4
 	ldw	r4,r30,-104
 	call	FPC_ADDREF_ARRAY
-	jal	r0,.Lj7871
-.Lj7870:
+	jal	r0,.Lj7866
+.Lj7865:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-92
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj7872
-	jal	r0,.Lj7873
-.Lj7872:
+	bne	r3,r0,.Lj7867
+	jal	r0,.Lj7868
+.Lj7867:
 	ldw	r3,r30,-64
 	ldw	r3,r3,-4
 	addi	r5,r3,1
@@ -68501,18 +68470,18 @@ fpc_dynarray_concat:
 	addi	r3,r3,8
 	ldw	r4,r30,-104
 	call	FPC_ADDREF_ARRAY
-	jal	r0,.Lj7874
-.Lj7873:
+	jal	r0,.Lj7869
+.Lj7868:
 	ldw	r3,r30,-84
 	addi	r3,r3,8
 	ldw	r5,r30,-72
 	ldw	r4,r30,-104
 	call	FPC_ADDREF_ARRAY
-.Lj7874:
-.Lj7871:
-.Lj7868:
-	jal	r0,.Lj7875
-.Lj7857:
+.Lj7869:
+.Lj7866:
+.Lj7863:
+	jal	r0,.Lj7870
+.Lj7852:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-76
 	mul	r3,r4,r3
@@ -68540,19 +68509,19 @@ fpc_dynarray_concat:
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
 	ldw	r3,r30,-104
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7876
-	jal	r0,.Lj7877
-.Lj7876:
+	bne	r3,r0,.Lj7871
+	jal	r0,.Lj7872
+.Lj7871:
 	ldw	r3,r30,-84
 	addi	r3,r3,8
 	ldw	r5,r30,-72
 	ldw	r4,r30,-104
 	call	FPC_ADDREF_ARRAY
-.Lj7877:
+.Lj7872:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	call	FPC_DYNARRAY_CLEAR
-.Lj7875:
+.Lj7870:
 	ldw	r3,r30,-84
 	ldw	r4,r30,-72
 	addi	r4,r4,-1
@@ -68561,7 +68530,7 @@ fpc_dynarray_concat:
 	ldw	r4,r30,-84
 	addi	r4,r4,8
 	stw	r3,r4,0
-.Lj7845:
+.Lj7840:
 	ldw	r30,r29,116
 	ldw	r31,r29,120
 	addi	r29,r29,124
@@ -68595,16 +68564,16 @@ SYSTEM_$$_DYNARRAYREFCOUNT$POINTER$$LONGINT:
 	stw	r30,r3,-56
 	ldw	r3,r30,-56
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7880
-	jal	r0,.Lj7881
-.Lj7880:
+	bne	r3,r0,.Lj7875
+	jal	r0,.Lj7876
+.Lj7875:
 	stw	r30,r0,-60
-	jal	r0,.Lj7878
-.Lj7881:
+	jal	r0,.Lj7873
+.Lj7876:
 	ldw	r3,r30,-56
 	ldw	r3,r3,-8
 	stw	r30,r3,-60
-.Lj7878:
+.Lj7873:
 	ldw	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -68636,8 +68605,8 @@ SYSTEM_$$_DYNARRAYDIM$POINTER$$SMALLINT:
 	addi	r29,r29,-72
 	stw	r30,r3,-56
 	sth	r30,r0,-60
-	jal	r0,.Lj7885
-.Lj7884:
+	jal	r0,.Lj7880
+.Lj7879:
 	ldw	r3,r30,-56
 	ldbu	r3,r3,1
 	ldw	r4,r30,-56
@@ -68653,22 +68622,22 @@ SYSTEM_$$_DYNARRAYDIM$POINTER$$SMALLINT:
 	ldw	r3,r30,-72
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7888
-	jal	r0,.Lj7889
-.Lj7888:
+	bne	r3,r0,.Lj7883
+	jal	r0,.Lj7884
+.Lj7883:
 	ldw	r3,r30,-72
 	addi	r4,r0,-1
 	xor	r3,r3,r4
 	ldw	r4,r30,-68
 	and	r3,r4,r3
-	jal	r0,.Lj7890
-.Lj7889:
+	jal	r0,.Lj7885
+.Lj7884:
 	ldw	r4,r30,-68
 	andi	r5,r4,3
 	ldw	r4,r30,-68
 	sub	r4,r4,r5
 	addi	r3,r4,0
-.Lj7890:
+.Lj7885:
 	stw	r30,r3,-56
 	ldw	r3,r30,-56
 	ldw	r3,r3,8
@@ -68679,23 +68648,23 @@ SYSTEM_$$_DYNARRAYDIM$POINTER$$SMALLINT:
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-60
-.Lj7885:
+.Lj7880:
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7891
-	jal	r0,.Lj7892
-.Lj7891:
+	bne	r3,r0,.Lj7886
+	jal	r0,.Lj7887
+.Lj7886:
 	ldw	r3,r30,-56
 	ldbu	r3,r3,0
 	addi	r3,r3,-21
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7893
-	jal	r0,.Lj7892
-.Lj7893:
-	jal	r0,.Lj7884
-.Lj7892:
-	jal	r0,.Lj7886
-.Lj7886:
+	bne	r3,r0,.Lj7888
+	jal	r0,.Lj7887
+.Lj7888:
+	jal	r0,.Lj7879
+.Lj7887:
+	jal	r0,.Lj7881
+.Lj7881:
 	ldh	r1,r30,-60
 	ldw	r30,r29,72
 	ldw	r31,r29,76
@@ -68733,23 +68702,23 @@ SYSTEM_$$_DYNARRAYBOUNDS$POINTER$POINTER$$TBOUNDARRAY:
 	addi	r11,r3,-1
 	addi	r3,r0,0
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj7896
-	jal	r0,.Lj7897
-.Lj7896:
+	bne	r3,r0,.Lj7891
+	jal	r0,.Lj7892
+.Lj7891:
 	addi	r3,r0,-1
 	stw	r30,r3,-68
-.Lj7898:
+.Lj7893:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	stw	r30,r3,-68
 	ldw	r3,r30,-56
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7901
-	jal	r0,.Lj7902
-.Lj7901:
-	jal	r0,.Lj7894
-	jal	r0,.Lj7903
-.Lj7902:
+	bne	r3,r0,.Lj7896
+	jal	r0,.Lj7897
+.Lj7896:
+	jal	r0,.Lj7889
+	jal	r0,.Lj7898
+.Lj7897:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	stw	r30,r3,-56
@@ -68762,14 +68731,14 @@ SYSTEM_$$_DYNARRAYBOUNDS$POINTER$POINTER$$TBOUNDARRAY:
 	slli	r5,r5,2
 	add	r4,r4,r5
 	stw	r4,r3,0
-.Lj7903:
+.Lj7898:
 	ldw	r3,r30,-68
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj7900
-	jal	r0,.Lj7898
-.Lj7900:
-.Lj7897:
-.Lj7894:
+	bne	r3,r0,.Lj7895
+	jal	r0,.Lj7893
+.Lj7895:
+.Lj7892:
+.Lj7889:
 	ldw	r11,r29,76
 	ldw	r30,r29,80
 	ldw	r31,r29,84
@@ -68798,11 +68767,11 @@ SYSTEM_$$_ISDYNARRAYRECTANGULAR$POINTER$POINTER$$BOOLEAN:
 	addi	r11,r3,-1
 	addi	r3,r0,1
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj7906
-	jal	r0,.Lj7907
-.Lj7906:
+	bne	r3,r0,.Lj7901
+	jal	r0,.Lj7902
+.Lj7901:
 	stw	r30,r0,-68
-.Lj7908:
+.Lj7903:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	stw	r30,r3,-68
@@ -68815,11 +68784,11 @@ SYSTEM_$$_ISDYNARRAYRECTANGULAR$POINTER$POINTER$$BOOLEAN:
 	addi	r12,r1,-1
 	addi	r3,r0,1
 	sle	r3,r3,r12
-	bne	r3,r0,.Lj7911
-	jal	r0,.Lj7912
-.Lj7911:
+	bne	r3,r0,.Lj7906
+	jal	r0,.Lj7907
+.Lj7906:
 	stw	r30,r0,-72
-.Lj7913:
+.Lj7908:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
@@ -68831,30 +68800,30 @@ SYSTEM_$$_ISDYNARRAYRECTANGULAR$POINTER$POINTER$$BOOLEAN:
 	call	SYSTEM_$$_DYNARRAYSIZE$POINTER$$LONGINT
 	ldw	r3,r30,-80
 	sne	r3,r3,r1
-	bne	r3,r0,.Lj7916
-	jal	r0,.Lj7917
-.Lj7916:
+	bne	r3,r0,.Lj7911
+	jal	r0,.Lj7912
+.Lj7911:
 	stb	r30,r0,-64
-	jal	r0,.Lj7904
-.Lj7917:
+	jal	r0,.Lj7899
+.Lj7912:
 	ldw	r3,r30,-72
 	sge	r3,r3,r12
-	bne	r3,r0,.Lj7915
-	jal	r0,.Lj7913
-.Lj7915:
-.Lj7912:
+	bne	r3,r0,.Lj7910
+	jal	r0,.Lj7908
+.Lj7910:
+.Lj7907:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	stw	r30,r3,-56
 	ldw	r3,r30,-68
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj7910
-	jal	r0,.Lj7908
-.Lj7910:
-.Lj7907:
+	bne	r3,r0,.Lj7905
+	jal	r0,.Lj7903
+.Lj7905:
+.Lj7902:
 	addi	r3,r0,1
 	stb	r30,r3,-64
-.Lj7904:
+.Lj7899:
 	ldbu	r1,r30,-64
 	ldw	r12,r29,80
 	ldw	r11,r29,84
@@ -68883,12 +68852,12 @@ SYSTEM_$$_DYNARRAYINDEX$POINTER$array_of_LONGINT$POINTER$$POINTER:
 	ldw	r6,r30,-80
 	addi	r3,r0,0
 	sle	r3,r3,r6
-	bne	r3,r0,.Lj7920
-	jal	r0,.Lj7921
-.Lj7920:
+	bne	r3,r0,.Lj7915
+	jal	r0,.Lj7916
+.Lj7915:
 	addi	r3,r0,-1
 	stw	r30,r3,-76
-.Lj7922:
+.Lj7917:
 	ldw	r3,r30,-76
 	addi	r3,r3,1
 	stw	r30,r3,-76
@@ -68907,31 +68876,31 @@ SYSTEM_$$_DYNARRAYINDEX$POINTER$array_of_LONGINT$POINTER$$POINTER:
 	ldw	r3,r30,-92
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj7926
-	jal	r0,.Lj7927
-.Lj7926:
+	bne	r3,r0,.Lj7921
+	jal	r0,.Lj7922
+.Lj7921:
 	ldw	r4,r30,-92
 	addi	r3,r0,-1
 	xor	r3,r4,r3
 	ldw	r4,r30,-88
 	and	r3,r4,r3
-	jal	r0,.Lj7928
-.Lj7927:
+	jal	r0,.Lj7923
+.Lj7922:
 	ldw	r4,r30,-88
 	andi	r5,r4,3
 	ldw	r4,r30,-88
 	sub	r4,r4,r5
 	addi	r3,r4,0
-.Lj7928:
+.Lj7923:
 	stw	r30,r3,-64
 	ldw	r3,r30,-76
 	ldw	r4,r30,-80
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj7929
-	jal	r0,.Lj7930
-.Lj7929:
-	jal	r0,.Lj7924
-.Lj7930:
+	bne	r3,r0,.Lj7924
+	jal	r0,.Lj7925
+.Lj7924:
+	jal	r0,.Lj7919
+.Lj7925:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	ldw	r5,r30,-76
@@ -68948,10 +68917,10 @@ SYSTEM_$$_DYNARRAYINDEX$POINTER$array_of_LONGINT$POINTER$$POINTER:
 	stw	r30,r3,-64
 	ldw	r3,r30,-76
 	sge	r3,r3,r6
-	bne	r3,r0,.Lj7924
-	jal	r0,.Lj7922
-.Lj7924:
-.Lj7921:
+	bne	r3,r0,.Lj7919
+	jal	r0,.Lj7917
+.Lj7919:
+.Lj7916:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-80
 	slli	r5,r3,2
@@ -69066,27 +69035,27 @@ FPC_DO_IS:
 	stw	r30,r4,-60
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7939
-	jal	r0,.Lj7940
-.Lj7939:
+	bne	r3,r0,.Lj7934
+	jal	r0,.Lj7935
+.Lj7934:
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7941
-	jal	r0,.Lj7940
-.Lj7941:
+	bne	r3,r0,.Lj7936
+	jal	r0,.Lj7935
+.Lj7936:
 	ldw	r3,r30,-60
 	ldw	r3,r3,0
 	ldw	r4,r30,-56
 	call	SYSTEM$_$TOBJECT_$__$$_INHERITSFROM$TCLASS$$BOOLEAN
-	bne	r1,r0,.Lj7942
-	jal	r0,.Lj7940
-.Lj7942:
+	bne	r1,r0,.Lj7937
+	jal	r0,.Lj7935
+.Lj7937:
 	addi	r3,r0,1
 	stb	r30,r3,-64
-	jal	r0,.Lj7943
-.Lj7940:
+	jal	r0,.Lj7938
+.Lj7935:
 	stb	r30,r0,-64
-.Lj7943:
+.Lj7938:
 	ldbu	r1,r30,-64
 	ldw	r30,r29,64
 	ldw	r31,r29,68
@@ -69113,28 +69082,28 @@ FPC_DO_AS:
 	stw	r30,r4,-60
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7946
-	jal	r0,.Lj7947
-.Lj7946:
+	bne	r3,r0,.Lj7941
+	jal	r0,.Lj7942
+.Lj7941:
 	ldw	r3,r30,-60
 	ldw	r3,r3,0
 	ldw	r4,r30,-56
 	call	SYSTEM$_$TOBJECT_$__$$_INHERITSFROM$TCLASS$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj7948
-	jal	r0,.Lj7947
-.Lj7948:
+	bne	r3,r0,.Lj7943
+	jal	r0,.Lj7942
+.Lj7943:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj7949
+	beq	r5,r0,.Lj7944
 	la	r4,U_$SYSTEM_$$_CASTERROR
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj7950
-.Lj7949:
+	jal	r0,.Lj7945
+.Lj7944:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
-.Lj7950:
+.Lj7945:
 	addi	r3,r0,1
 	stw	r1,r3,0
 	ldw	r3,r30,-60
@@ -69143,40 +69112,40 @@ FPC_DO_AS:
 	addi	r11,r1,0
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj7951
+	beq	r5,r0,.Lj7946
 	la	r4,U_$SYSTEM_$$_CASTERROR
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj7952
-.Lj7951:
+	jal	r0,.Lj7947
+.Lj7946:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
-.Lj7952:
+.Lj7947:
 	stw	r1,r11,4
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj7953
+	beq	r5,r0,.Lj7948
 	la	r4,U_$SYSTEM_$$_CASTERROR
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj7954
-.Lj7953:
+	jal	r0,.Lj7949
+.Lj7948:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
-.Lj7954:
+.Lj7949:
 	addi	r3,r0,1
 	stw	r1,r3,8
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj7955
+	beq	r5,r0,.Lj7950
 	la	r4,U_$SYSTEM_$$_CASTERROR
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj7956
-.Lj7955:
+	jal	r0,.Lj7951
+.Lj7950:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
-.Lj7956:
+.Lj7951:
 	ldw	r3,r30,-56
 	stw	r1,r3,12
 	call	SYSTEM_$$_GET_FRAME$$POINTER
@@ -69186,7 +69155,7 @@ FPC_DO_AS:
 	addi	r3,r0,219
 	addi	r5,r11,0
 	call	SYSTEM_$$_HANDLEERRORADDRFRAMEIND$LONGINT$POINTER$POINTER
-.Lj7947:
+.Lj7942:
 	ldw	r3,r30,-60
 	stw	r30,r3,-64
 	ldw	r1,r30,-64
@@ -69215,9 +69184,9 @@ FPC_INTF_DECR_REF:
 	stw	r30,r3,-60
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7959
-	jal	r0,.Lj7960
-.Lj7959:
+	bne	r3,r0,.Lj7954
+	jal	r0,.Lj7955
+.Lj7954:
 	ldw	r3,r30,-56
 	stw	r3,r0,0
 	ldw	r3,r30,-60
@@ -69225,7 +69194,7 @@ FPC_INTF_DECR_REF:
 	ldw	r4,r4,0
 	ldw	r4,r4,8
 	jalr	r31,r4
-.Lj7960:
+.Lj7955:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -69247,15 +69216,15 @@ FPC_INTF_INCR_REF:
 	stw	r30,r3,-56
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7963
-	jal	r0,.Lj7964
-.Lj7963:
+	bne	r3,r0,.Lj7958
+	jal	r0,.Lj7959
+.Lj7958:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
 	ldw	r4,r4,0
 	ldw	r4,r4,4
 	jalr	r31,r4
-.Lj7964:
+.Lj7959:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -69278,21 +69247,21 @@ FPC_INTF_ASSIGN:
 	stw	r30,r4,-60
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7967
-	jal	r0,.Lj7968
-.Lj7967:
+	bne	r3,r0,.Lj7962
+	jal	r0,.Lj7963
+.Lj7962:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-60
 	ldw	r4,r4,0
 	ldw	r4,r4,4
 	jalr	r31,r4
-.Lj7968:
+.Lj7963:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7969
-	jal	r0,.Lj7970
-.Lj7969:
+	bne	r3,r0,.Lj7964
+	jal	r0,.Lj7965
+.Lj7964:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	ldw	r4,r30,-56
@@ -69300,7 +69269,7 @@ FPC_INTF_ASSIGN:
 	ldw	r4,r4,0
 	ldw	r4,r4,8
 	jalr	r31,r4
-.Lj7970:
+.Lj7965:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	stw	r4,r3,0
@@ -69329,9 +69298,9 @@ FPC_INTF_IS:
 	stw	r30,r0,-68
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7973
-	jal	r0,.Lj7974
-.Lj7973:
+	bne	r3,r0,.Lj7968
+	jal	r0,.Lj7969
+.Lj7968:
 	addi	r5,r30,-68
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
@@ -69340,26 +69309,26 @@ FPC_INTF_IS:
 	ldw	r6,r6,0
 	jalr	r31,r6
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj7975
-	jal	r0,.Lj7974
-.Lj7975:
+	bne	r3,r0,.Lj7970
+	jal	r0,.Lj7969
+.Lj7970:
 	addi	r3,r0,1
 	stb	r30,r3,-64
-	jal	r0,.Lj7976
-.Lj7974:
+	jal	r0,.Lj7971
+.Lj7969:
 	stb	r30,r0,-64
-.Lj7976:
+.Lj7971:
 	ldw	r3,r30,-68
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7977
-	jal	r0,.Lj7978
-.Lj7977:
+	bne	r3,r0,.Lj7972
+	jal	r0,.Lj7973
+.Lj7972:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-68
 	ldw	r4,r4,0
 	ldw	r4,r4,8
 	jalr	r31,r4
-.Lj7978:
+.Lj7973:
 	ldbu	r1,r30,-64
 	ldw	r30,r29,68
 	ldw	r31,r29,72
@@ -69383,9 +69352,9 @@ FPC_INTF_IS_CLASS:
 	stw	r30,r4,-60
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7981
-	jal	r0,.Lj7982
-.Lj7981:
+	bne	r3,r0,.Lj7976
+	jal	r0,.Lj7977
+.Lj7976:
 	addi	r5,r30,-68
 	la	r4,TC_$SYSTEM_$$_IOBJECTINSTANCE
 	ldw	r3,r30,-56
@@ -69394,22 +69363,22 @@ FPC_INTF_IS_CLASS:
 	ldw	r6,r6,0
 	jalr	r31,r6
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj7983
-	jal	r0,.Lj7982
-.Lj7983:
+	bne	r3,r0,.Lj7978
+	jal	r0,.Lj7977
+.Lj7978:
 	ldw	r3,r30,-68
 	ldw	r3,r3,0
 	ldw	r4,r30,-60
 	call	SYSTEM$_$TOBJECT_$__$$_INHERITSFROM$TCLASS$$BOOLEAN
-	bne	r1,r0,.Lj7984
-	jal	r0,.Lj7982
-.Lj7984:
+	bne	r1,r0,.Lj7979
+	jal	r0,.Lj7977
+.Lj7979:
 	addi	r3,r0,1
 	stb	r30,r3,-64
-	jal	r0,.Lj7985
-.Lj7982:
+	jal	r0,.Lj7980
+.Lj7977:
 	stb	r30,r0,-64
-.Lj7985:
+.Lj7980:
 	ldbu	r1,r30,-64
 	ldw	r30,r29,68
 	ldw	r31,r29,72
@@ -69435,16 +69404,16 @@ FPC_CLASS_IS_INTF:
 	stw	r30,r0,-72
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7988
-	jal	r0,.Lj7989
-.Lj7988:
+	bne	r3,r0,.Lj7983
+	jal	r0,.Lj7984
+.Lj7983:
 	la	r4,.Ld34
 	addi	r5,r30,-72
 	ldw	r3,r30,-56
 	call	SYSTEM$_$TOBJECT_$__$$_GETINTERFACEWEAK$TGUID$formal$$BOOLEAN
-	bne	r1,r0,.Lj7991
-	jal	r0,.Lj7992
-.Lj7991:
+	bne	r1,r0,.Lj7986
+	jal	r0,.Lj7987
+.Lj7986:
 	addi	r5,r30,-68
 	ldw	r4,r30,-60
 	ldw	r3,r30,-72
@@ -69453,37 +69422,37 @@ FPC_CLASS_IS_INTF:
 	ldw	r6,r6,0
 	jalr	r31,r6
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj7993
-	jal	r0,.Lj7992
-.Lj7992:
+	bne	r3,r0,.Lj7988
+	jal	r0,.Lj7987
+.Lj7987:
 	addi	r5,r30,-68
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	call	SYSTEM$_$TOBJECT_$__$$_GETINTERFACE$TGUID$formal$$BOOLEAN
-	bne	r1,r0,.Lj7993
-	jal	r0,.Lj7994
-.Lj7993:
-	jal	r0,.Lj7990
-.Lj7994:
+	bne	r1,r0,.Lj7988
 	jal	r0,.Lj7989
-.Lj7990:
+.Lj7988:
+	jal	r0,.Lj7985
+.Lj7989:
+	jal	r0,.Lj7984
+.Lj7985:
 	addi	r3,r0,1
 	stb	r30,r3,-64
-	jal	r0,.Lj7995
-.Lj7989:
+	jal	r0,.Lj7990
+.Lj7984:
 	stb	r30,r0,-64
-.Lj7995:
+.Lj7990:
 	ldw	r3,r30,-68
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj7996
-	jal	r0,.Lj7997
-.Lj7996:
+	bne	r3,r0,.Lj7991
+	jal	r0,.Lj7992
+.Lj7991:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-68
 	ldw	r4,r4,0
 	ldw	r4,r4,8
 	jalr	r31,r4
-.Lj7997:
+.Lj7992:
 	ldbu	r1,r30,-64
 	ldw	r30,r29,72
 	ldw	r31,r29,76
@@ -69507,23 +69476,23 @@ FPC_CLASS_IS_CORBAINTF:
 	stw	r30,r4,-60
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8000
-	jal	r0,.Lj8001
-.Lj8000:
+	bne	r3,r0,.Lj7995
+	jal	r0,.Lj7996
+.Lj7995:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	ldw	r4,r30,-60
 	call	SYSTEM$_$TOBJECT_$__$$_GETINTERFACEENTRYBYSTR$SHORTSTRING$$PINTERFACEENTRY
 	sne	r3,r1,r0
-	bne	r3,r0,.Lj8002
-	jal	r0,.Lj8001
-.Lj8002:
+	bne	r3,r0,.Lj7997
+	jal	r0,.Lj7996
+.Lj7997:
 	addi	r3,r0,1
 	stb	r30,r3,-64
-	jal	r0,.Lj8003
-.Lj8001:
+	jal	r0,.Lj7998
+.Lj7996:
 	stb	r30,r0,-64
-.Lj8003:
+.Lj7998:
 	ldbu	r1,r30,-64
 	ldw	r30,r29,64
 	ldw	r31,r29,68
@@ -69549,9 +69518,9 @@ FPC_INTF_CAST:
 	stw	r30,r0,-68
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8006
-	jal	r0,.Lj8007
-.Lj8006:
+	bne	r3,r0,.Lj8001
+	jal	r0,.Lj8002
+.Lj8001:
 	addi	r5,r30,-68
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
@@ -69560,18 +69529,18 @@ FPC_INTF_CAST:
 	ldw	r6,r6,0
 	jalr	r31,r6
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj8008
-	jal	r0,.Lj8007
-.Lj8008:
+	bne	r3,r0,.Lj8003
+	jal	r0,.Lj8002
+.Lj8003:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-68
 	stw	r4,r3,0
-	jal	r0,.Lj8009
-.Lj8007:
+	jal	r0,.Lj8004
+.Lj8002:
 	ldw	r3,r30,-64
 	addi	r4,r0,0
 	call	fpc_intf_assign
-.Lj8009:
+.Lj8004:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -69594,9 +69563,9 @@ FPC_INTF_CAST_CLASS:
 	stw	r30,r4,-60
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8012
-	jal	r0,.Lj8013
-.Lj8012:
+	bne	r3,r0,.Lj8007
+	jal	r0,.Lj8008
+.Lj8007:
 	addi	r5,r30,-68
 	la	r4,TC_$SYSTEM_$$_IOBJECTINSTANCE
 	ldw	r3,r30,-56
@@ -69605,22 +69574,22 @@ FPC_INTF_CAST_CLASS:
 	ldw	r6,r6,0
 	jalr	r31,r6
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj8014
-	jal	r0,.Lj8013
-.Lj8014:
+	bne	r3,r0,.Lj8009
+	jal	r0,.Lj8008
+.Lj8009:
 	ldw	r3,r30,-68
 	ldw	r3,r3,0
 	ldw	r4,r30,-60
 	call	SYSTEM$_$TOBJECT_$__$$_INHERITSFROM$TCLASS$$BOOLEAN
-	bne	r1,r0,.Lj8015
-	jal	r0,.Lj8013
-.Lj8015:
+	bne	r1,r0,.Lj8010
+	jal	r0,.Lj8008
+.Lj8010:
 	ldw	r3,r30,-68
 	stw	r30,r3,-64
-	jal	r0,.Lj8016
-.Lj8013:
+	jal	r0,.Lj8011
+.Lj8008:
 	stw	r30,r0,-64
-.Lj8016:
+.Lj8011:
 	ldw	r1,r30,-64
 	ldw	r30,r29,68
 	ldw	r31,r29,72
@@ -69647,16 +69616,16 @@ FPC_CLASS_CAST_INTF:
 	stw	r30,r0,-72
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8019
-	jal	r0,.Lj8020
-.Lj8019:
+	bne	r3,r0,.Lj8014
+	jal	r0,.Lj8015
+.Lj8014:
 	la	r4,.Ld34
 	addi	r5,r30,-72
 	ldw	r3,r30,-56
 	call	SYSTEM$_$TOBJECT_$__$$_GETINTERFACEWEAK$TGUID$formal$$BOOLEAN
-	bne	r1,r0,.Lj8022
-	jal	r0,.Lj8023
-.Lj8022:
+	bne	r1,r0,.Lj8017
+	jal	r0,.Lj8018
+.Lj8017:
 	addi	r5,r30,-68
 	ldw	r4,r30,-60
 	ldw	r3,r30,-72
@@ -69665,32 +69634,32 @@ FPC_CLASS_CAST_INTF:
 	ldw	r6,r6,0
 	jalr	r31,r6
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj8024
-	jal	r0,.Lj8023
-.Lj8023:
+	bne	r3,r0,.Lj8019
+	jal	r0,.Lj8018
+.Lj8018:
 	addi	r5,r30,-68
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	call	SYSTEM$_$TOBJECT_$__$$_GETINTERFACE$TGUID$formal$$BOOLEAN
-	bne	r1,r0,.Lj8024
-	jal	r0,.Lj8025
-.Lj8024:
-	jal	r0,.Lj8021
-.Lj8025:
+	bne	r1,r0,.Lj8019
 	jal	r0,.Lj8020
-.Lj8021:
+.Lj8019:
+	jal	r0,.Lj8016
+.Lj8020:
+	jal	r0,.Lj8015
+.Lj8016:
 	ldw	r3,r30,-64
 	addi	r4,r0,0
 	call	fpc_intf_assign
 	ldw	r4,r30,-64
 	ldw	r3,r30,-68
 	stw	r4,r3,0
-	jal	r0,.Lj8026
-.Lj8020:
+	jal	r0,.Lj8021
+.Lj8015:
 	ldw	r3,r30,-64
 	addi	r4,r0,0
 	call	fpc_intf_assign
-.Lj8026:
+.Lj8021:
 	ldw	r30,r29,72
 	ldw	r31,r29,76
 	addi	r29,r29,80
@@ -69713,22 +69682,22 @@ FPC_CLASS_CAST_CORBAINTF:
 	stw	r30,r4,-60
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8029
-	jal	r0,.Lj8030
-.Lj8029:
+	bne	r3,r0,.Lj8024
+	jal	r0,.Lj8025
+.Lj8024:
 	addi	r5,r30,-68
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	call	SYSTEM$_$TOBJECT_$__$$_GETINTERFACE$SHORTSTRING$formal$$BOOLEAN
-	bne	r1,r0,.Lj8031
-	jal	r0,.Lj8030
-.Lj8031:
+	bne	r1,r0,.Lj8026
+	jal	r0,.Lj8025
+.Lj8026:
 	ldw	r3,r30,-68
 	stw	r30,r3,-64
-	jal	r0,.Lj8032
-.Lj8030:
+	jal	r0,.Lj8027
+.Lj8025:
 	stw	r30,r0,-64
-.Lj8032:
+.Lj8027:
 	ldw	r1,r30,-64
 	ldw	r30,r29,68
 	ldw	r31,r29,72
@@ -69754,9 +69723,9 @@ FPC_INTF_AS:
 	stw	r30,r5,-60
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8035
-	jal	r0,.Lj8036
-.Lj8035:
+	bne	r3,r0,.Lj8030
+	jal	r0,.Lj8031
+.Lj8030:
 	stw	r30,r0,-68
 	addi	r5,r30,-68
 	ldw	r4,r30,-60
@@ -69766,9 +69735,9 @@ FPC_INTF_AS:
 	ldw	r6,r6,0
 	jalr	r31,r6
 	sne	r3,r1,r0
-	bne	r3,r0,.Lj8037
-	jal	r0,.Lj8038
-.Lj8037:
+	bne	r3,r0,.Lj8032
+	jal	r0,.Lj8033
+.Lj8032:
 	addi	r5,r30,-72
 	la	r4,TC_$SYSTEM_$$_IOBJECTINSTANCE
 	ldw	r3,r30,-56
@@ -69777,26 +69746,54 @@ FPC_INTF_AS:
 	ldw	r6,r6,0
 	jalr	r31,r6
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj8039
-	jal	r0,.Lj8040
-.Lj8039:
+	bne	r3,r0,.Lj8034
+	jal	r0,.Lj8035
+.Lj8034:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj8041
+	beq	r5,r0,.Lj8036
 	la	r4,U_$SYSTEM_$$_CASTERROR
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj8042
-.Lj8041:
+	jal	r0,.Lj8037
+.Lj8036:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
-.Lj8042:
+.Lj8037:
 	addi	r3,r0,1
 	stw	r1,r3,0
 	ldw	r3,r30,-72
 	ldw	r3,r3,0
 	call	SYSTEM$_$TOBJECT_$__$$_CLASSTYPE$$TCLASS
 	addi	r11,r1,0
+	la	r3,FPC_THREADVAR_RELOCATE
+	ldw	r4,r3,0
+	beq	r4,r0,.Lj8038
+	la	r5,U_$SYSTEM_$$_CASTERROR
+	ldw	r3,r5,0
+	jalr	r31,r4
+	jal	r0,.Lj8039
+.Lj8038:
+	la	r3,U_$SYSTEM_$$_CASTERROR
+	addi	r1,r3,4
+.Lj8039:
+	stw	r1,r11,4
+	jal	r0,.Lj8040
+.Lj8035:
+	la	r3,FPC_THREADVAR_RELOCATE
+	ldw	r4,r3,0
+	beq	r4,r0,.Lj8041
+	la	r5,U_$SYSTEM_$$_CASTERROR
+	ldw	r3,r5,0
+	jalr	r31,r4
+	jal	r0,.Lj8042
+.Lj8041:
+	la	r3,U_$SYSTEM_$$_CASTERROR
+	addi	r1,r3,4
+.Lj8042:
+	addi	r3,r0,2
+	stw	r1,r3,0
+.Lj8040:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
 	beq	r4,r0,.Lj8043
@@ -69808,47 +69805,19 @@ FPC_INTF_AS:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
 .Lj8044:
-	stw	r1,r11,4
-	jal	r0,.Lj8045
-.Lj8040:
-	la	r3,FPC_THREADVAR_RELOCATE
-	ldw	r4,r3,0
-	beq	r4,r0,.Lj8046
-	la	r5,U_$SYSTEM_$$_CASTERROR
-	ldw	r3,r5,0
-	jalr	r31,r4
-	jal	r0,.Lj8047
-.Lj8046:
-	la	r3,U_$SYSTEM_$$_CASTERROR
-	addi	r1,r3,4
-.Lj8047:
-	addi	r3,r0,2
-	stw	r1,r3,0
-.Lj8045:
-	la	r3,FPC_THREADVAR_RELOCATE
-	ldw	r4,r3,0
-	beq	r4,r0,.Lj8048
-	la	r5,U_$SYSTEM_$$_CASTERROR
-	ldw	r3,r5,0
-	jalr	r31,r4
-	jal	r0,.Lj8049
-.Lj8048:
-	la	r3,U_$SYSTEM_$$_CASTERROR
-	addi	r1,r3,4
-.Lj8049:
 	addi	r3,r0,2
 	stw	r1,r3,8
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8050
+	beq	r4,r0,.Lj8045
 	la	r5,U_$SYSTEM_$$_CASTERROR
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8051
-.Lj8050:
+	jal	r0,.Lj8046
+.Lj8045:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
-.Lj8051:
+.Lj8046:
 	ldw	r4,r30,-60
 	ldw	r3,r4,0
 	stw	r1,r3,12
@@ -69860,19 +69829,19 @@ FPC_INTF_AS:
 	stw	r1,r3,24
 	addi	r3,r0,219
 	call	FPC_HANDLEERROR
-.Lj8038:
+.Lj8033:
 	ldw	r3,r30,-64
 	addi	r4,r0,0
 	call	fpc_intf_assign
 	ldw	r4,r30,-64
 	ldw	r3,r30,-68
 	stw	r4,r3,0
-	jal	r0,.Lj8052
-.Lj8036:
+	jal	r0,.Lj8047
+.Lj8031:
 	ldw	r3,r30,-64
 	addi	r4,r0,0
 	call	fpc_intf_assign
-.Lj8052:
+.Lj8047:
 	ldw	r11,r29,72
 	ldw	r30,r29,76
 	ldw	r31,r29,80
@@ -69897,9 +69866,9 @@ FPC_INTF_AS_CLASS:
 	stw	r30,r4,-60
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8055
-	jal	r0,.Lj8056
-.Lj8055:
+	bne	r3,r0,.Lj8050
+	jal	r0,.Lj8051
+.Lj8050:
 	addi	r5,r30,-68
 	la	r4,TC_$SYSTEM_$$_IOBJECTINSTANCE
 	ldw	r3,r30,-56
@@ -69908,16 +69877,16 @@ FPC_INTF_AS_CLASS:
 	ldw	r6,r6,0
 	jalr	r31,r6
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj8057
-	jal	r0,.Lj8058
-.Lj8057:
+	bne	r3,r0,.Lj8052
+	jal	r0,.Lj8053
+.Lj8052:
 	ldw	r3,r30,-68
 	ldw	r3,r3,0
 	ldw	r4,r30,-60
 	call	SYSTEM$_$TOBJECT_$__$$_INHERITSFROM$TCLASS$$BOOLEAN
-	bne	r1,r0,.Lj8059
-	jal	r0,.Lj8058
-.Lj8058:
+	bne	r1,r0,.Lj8054
+	jal	r0,.Lj8053
+.Lj8053:
 	addi	r5,r30,-72
 	la	r4,TC_$SYSTEM_$$_IOBJECTINSTANCE
 	ldw	r3,r30,-56
@@ -69926,26 +69895,54 @@ FPC_INTF_AS_CLASS:
 	ldw	r6,r6,0
 	jalr	r31,r6
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj8060
-	jal	r0,.Lj8061
-.Lj8060:
+	bne	r3,r0,.Lj8055
+	jal	r0,.Lj8056
+.Lj8055:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj8062
+	beq	r5,r0,.Lj8057
 	la	r4,U_$SYSTEM_$$_CASTERROR
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj8063
-.Lj8062:
+	jal	r0,.Lj8058
+.Lj8057:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
-.Lj8063:
+.Lj8058:
 	addi	r3,r0,1
 	stw	r1,r3,0
 	ldw	r3,r30,-72
 	ldw	r3,r3,0
 	call	SYSTEM$_$TOBJECT_$__$$_CLASSTYPE$$TCLASS
 	addi	r11,r1,0
+	la	r3,FPC_THREADVAR_RELOCATE
+	ldw	r4,r3,0
+	beq	r4,r0,.Lj8059
+	la	r5,U_$SYSTEM_$$_CASTERROR
+	ldw	r3,r5,0
+	jalr	r31,r4
+	jal	r0,.Lj8060
+.Lj8059:
+	la	r3,U_$SYSTEM_$$_CASTERROR
+	addi	r1,r3,4
+.Lj8060:
+	stw	r1,r11,4
+	jal	r0,.Lj8061
+.Lj8056:
+	la	r3,FPC_THREADVAR_RELOCATE
+	ldw	r4,r3,0
+	beq	r4,r0,.Lj8062
+	la	r5,U_$SYSTEM_$$_CASTERROR
+	ldw	r3,r5,0
+	jalr	r31,r4
+	jal	r0,.Lj8063
+.Lj8062:
+	la	r3,U_$SYSTEM_$$_CASTERROR
+	addi	r1,r3,4
+.Lj8063:
+	addi	r3,r0,2
+	stw	r1,r3,0
+.Lj8061:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
 	beq	r4,r0,.Lj8064
@@ -69957,58 +69954,30 @@ FPC_INTF_AS_CLASS:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
 .Lj8065:
-	stw	r1,r11,4
-	jal	r0,.Lj8066
-.Lj8061:
-	la	r3,FPC_THREADVAR_RELOCATE
-	ldw	r4,r3,0
-	beq	r4,r0,.Lj8067
-	la	r5,U_$SYSTEM_$$_CASTERROR
-	ldw	r3,r5,0
-	jalr	r31,r4
-	jal	r0,.Lj8068
-.Lj8067:
-	la	r3,U_$SYSTEM_$$_CASTERROR
-	addi	r1,r3,4
-.Lj8068:
-	addi	r3,r0,2
-	stw	r1,r3,0
-.Lj8066:
-	la	r3,FPC_THREADVAR_RELOCATE
-	ldw	r4,r3,0
-	beq	r4,r0,.Lj8069
-	la	r5,U_$SYSTEM_$$_CASTERROR
-	ldw	r3,r5,0
-	jalr	r31,r4
-	jal	r0,.Lj8070
-.Lj8069:
-	la	r3,U_$SYSTEM_$$_CASTERROR
-	addi	r1,r3,4
-.Lj8070:
 	addi	r3,r0,1
 	stw	r1,r3,8
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8071
+	beq	r4,r0,.Lj8066
 	la	r5,U_$SYSTEM_$$_CASTERROR
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8072
-.Lj8071:
+	jal	r0,.Lj8067
+.Lj8066:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
-.Lj8072:
+.Lj8067:
 	ldw	r3,r30,-60
 	stw	r1,r3,12
 	addi	r3,r0,219
 	call	FPC_HANDLEERROR
-.Lj8059:
+.Lj8054:
 	ldw	r3,r30,-68
 	stw	r30,r3,-64
-	jal	r0,.Lj8073
-.Lj8056:
+	jal	r0,.Lj8068
+.Lj8051:
 	stw	r30,r0,-64
-.Lj8073:
+.Lj8068:
 	ldw	r1,r30,-64
 	ldw	r11,r29,72
 	ldw	r30,r29,76
@@ -70035,18 +70004,18 @@ FPC_CLASS_AS_INTF:
 	stw	r30,r5,-60
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8076
-	jal	r0,.Lj8077
-.Lj8076:
+	bne	r3,r0,.Lj8071
+	jal	r0,.Lj8072
+.Lj8071:
 	stw	r30,r0,-68
 	stw	r30,r0,-72
 	la	r4,.Ld34
 	addi	r5,r30,-72
 	ldw	r3,r30,-56
 	call	SYSTEM$_$TOBJECT_$__$$_GETINTERFACEWEAK$TGUID$formal$$BOOLEAN
-	bne	r1,r0,.Lj8078
-	jal	r0,.Lj8079
-.Lj8078:
+	bne	r1,r0,.Lj8073
+	jal	r0,.Lj8074
+.Lj8073:
 	addi	r5,r30,-68
 	ldw	r4,r30,-60
 	ldw	r3,r30,-72
@@ -70055,27 +70024,27 @@ FPC_CLASS_AS_INTF:
 	ldw	r6,r6,0
 	jalr	r31,r6
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj8080
-	jal	r0,.Lj8079
-.Lj8079:
+	bne	r3,r0,.Lj8075
+	jal	r0,.Lj8074
+.Lj8074:
 	addi	r5,r30,-68
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	call	SYSTEM$_$TOBJECT_$__$$_GETINTERFACE$TGUID$formal$$BOOLEAN
-	bne	r1,r0,.Lj8080
-	jal	r0,.Lj8081
-.Lj8081:
+	bne	r1,r0,.Lj8075
+	jal	r0,.Lj8076
+.Lj8076:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj8082
+	beq	r5,r0,.Lj8077
 	la	r4,U_$SYSTEM_$$_CASTERROR
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj8083
-.Lj8082:
+	jal	r0,.Lj8078
+.Lj8077:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
-.Lj8083:
+.Lj8078:
 	addi	r3,r0,1
 	stw	r1,r3,0
 	ldw	r3,r30,-56
@@ -70084,40 +70053,40 @@ FPC_CLASS_AS_INTF:
 	addi	r11,r1,0
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8084
+	beq	r4,r0,.Lj8079
 	la	r5,U_$SYSTEM_$$_CASTERROR
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8085
-.Lj8084:
+	jal	r0,.Lj8080
+.Lj8079:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
-.Lj8085:
+.Lj8080:
 	stw	r1,r11,4
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8086
+	beq	r4,r0,.Lj8081
 	la	r5,U_$SYSTEM_$$_CASTERROR
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8087
-.Lj8086:
+	jal	r0,.Lj8082
+.Lj8081:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
-.Lj8087:
+.Lj8082:
 	addi	r3,r0,2
 	stw	r1,r3,8
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8088
+	beq	r4,r0,.Lj8083
 	la	r5,U_$SYSTEM_$$_CASTERROR
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8089
-.Lj8088:
+	jal	r0,.Lj8084
+.Lj8083:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
-.Lj8089:
+.Lj8084:
 	ldw	r3,r30,-60
 	ldw	r4,r3,0
 	stw	r1,r4,12
@@ -70129,19 +70098,19 @@ FPC_CLASS_AS_INTF:
 	stw	r1,r4,24
 	addi	r3,r0,219
 	call	FPC_HANDLEERROR
-.Lj8080:
+.Lj8075:
 	ldw	r3,r30,-64
 	addi	r4,r0,0
 	call	fpc_intf_assign
 	ldw	r3,r30,-64
 	ldw	r4,r30,-68
 	stw	r3,r4,0
-	jal	r0,.Lj8090
-.Lj8077:
+	jal	r0,.Lj8085
+.Lj8072:
 	ldw	r3,r30,-64
 	addi	r4,r0,0
 	call	fpc_intf_assign
-.Lj8090:
+.Lj8085:
 	ldw	r11,r29,76
 	ldw	r30,r29,80
 	ldw	r31,r29,84
@@ -70166,29 +70135,29 @@ FPC_CLASS_AS_CORBAINTF:
 	stw	r30,r4,-60
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8093
-	jal	r0,.Lj8094
-.Lj8093:
+	bne	r3,r0,.Lj8088
+	jal	r0,.Lj8089
+.Lj8088:
 	stw	r30,r0,-68
 	addi	r5,r30,-68
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	call	SYSTEM$_$TOBJECT_$__$$_GETINTERFACE$SHORTSTRING$formal$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj8095
-	jal	r0,.Lj8096
-.Lj8095:
+	bne	r3,r0,.Lj8090
+	jal	r0,.Lj8091
+.Lj8090:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj8097
+	beq	r5,r0,.Lj8092
 	la	r4,U_$SYSTEM_$$_CASTERROR
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj8098
-.Lj8097:
+	jal	r0,.Lj8093
+.Lj8092:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
-.Lj8098:
+.Lj8093:
 	addi	r3,r0,1
 	stw	r1,r3,0
 	ldw	r3,r30,-56
@@ -70197,53 +70166,53 @@ FPC_CLASS_AS_CORBAINTF:
 	addi	r11,r1,0
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8099
+	beq	r4,r0,.Lj8094
 	la	r5,U_$SYSTEM_$$_CASTERROR
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8100
-.Lj8099:
+	jal	r0,.Lj8095
+.Lj8094:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
-.Lj8100:
+.Lj8095:
 	stw	r1,r11,4
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj8101
+	beq	r5,r0,.Lj8096
 	la	r4,U_$SYSTEM_$$_CASTERROR
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj8102
-.Lj8101:
+	jal	r0,.Lj8097
+.Lj8096:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
-.Lj8102:
+.Lj8097:
 	addi	r3,r0,3
 	stw	r1,r3,8
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj8103
+	beq	r5,r0,.Lj8098
 	la	r4,U_$SYSTEM_$$_CASTERROR
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj8104
-.Lj8103:
+	jal	r0,.Lj8099
+.Lj8098:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
-.Lj8104:
+.Lj8099:
 	addi	r3,r1,12
 	ldw	r5,r30,-60
 	addi	r4,r0,15
 	call	fpc_shortstr_to_shortstr
 	addi	r3,r0,219
 	call	FPC_HANDLEERROR
-.Lj8096:
+.Lj8091:
 	ldw	r3,r30,-68
 	stw	r30,r3,-64
-	jal	r0,.Lj8105
-.Lj8094:
+	jal	r0,.Lj8100
+.Lj8089:
 	stw	r30,r0,-64
-.Lj8105:
+.Lj8100:
 	ldw	r1,r30,-64
 	ldw	r11,r29,68
 	ldw	r30,r29,72
@@ -70266,17 +70235,17 @@ SYSTEM$_$TVMT_$__$$_GETVPARENT$$PVMT:
 	ldw	r3,r30,-56
 	ldw	r3,r3,8
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8108
-	jal	r0,.Lj8109
-.Lj8108:
+	bne	r3,r0,.Lj8103
+	jal	r0,.Lj8104
+.Lj8103:
 	ldw	r3,r30,-56
 	ldw	r3,r3,8
 	ldw	r3,r3,0
 	stw	r30,r3,-60
-	jal	r0,.Lj8110
-.Lj8109:
+	jal	r0,.Lj8105
+.Lj8104:
 	stw	r30,r0,-60
-.Lj8110:
+.Lj8105:
 	ldw	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -70305,39 +70274,39 @@ SYSTEM$_$TGUID_$__$$_$equal$TGUID$TGUID$$BOOLEAN:
 	ldw	r4,r4,0
 	ldw	r3,r3,0
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj8113
-	jal	r0,.Lj8114
-.Lj8113:
+	bne	r3,r0,.Lj8108
+	jal	r0,.Lj8109
+.Lj8108:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-72
 	ldw	r4,r4,4
 	ldw	r3,r3,4
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj8115
-	jal	r0,.Lj8114
-.Lj8115:
+	bne	r3,r0,.Lj8110
+	jal	r0,.Lj8109
+.Lj8110:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-72
 	ldw	r4,r4,8
 	ldw	r3,r3,8
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj8116
-	jal	r0,.Lj8114
-.Lj8116:
+	bne	r3,r0,.Lj8111
+	jal	r0,.Lj8109
+.Lj8111:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-72
 	ldw	r4,r4,12
 	ldw	r3,r3,12
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj8117
-	jal	r0,.Lj8114
-.Lj8117:
+	bne	r3,r0,.Lj8112
+	jal	r0,.Lj8109
+.Lj8112:
 	addi	r3,r0,1
 	stb	r30,r3,-64
-	jal	r0,.Lj8118
-.Lj8114:
+	jal	r0,.Lj8113
+.Lj8109:
 	stb	r30,r0,-64
-.Lj8118:
+.Lj8113:
 	ldbu	r1,r30,-64
 	ldw	r30,r29,72
 	ldw	r31,r29,76
@@ -70448,11 +70417,11 @@ SYSTEM$_$TGUID_$__$$_CREATE$PBYTE$BOOLEAN$$TGUID:
 	stw	r3,r4,12
 	ldbu	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8127
-	jal	r0,.Lj8128
-.Lj8127:
-	jal	r0,.Lj8125
-.Lj8128:
+	bne	r3,r0,.Lj8122
+	jal	r0,.Lj8123
+.Lj8122:
+	jal	r0,.Lj8120
+.Lj8123:
 	ldw	r3,r30,-64
 	ldw	r3,r3,0
 	slli	r3,r3,8
@@ -70499,7 +70468,7 @@ SYSTEM$_$TGUID_$__$$_CREATE$PBYTE$BOOLEAN$$TGUID:
 	srli	r4,r4,16
 	ldw	r3,r30,-64
 	sth	r3,r4,6
-.Lj8125:
+.Lj8120:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -70525,66 +70494,66 @@ SYSTEM$_$TGUID_$__$$_FROMSTRING$SHORTSTRING$TGUID$$BOOLEAN:
 	ldbu	r3,r3,0
 	addi	r3,r3,-38
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8134
-	jal	r0,.Lj8135
-.Lj8134:
+	bne	r3,r0,.Lj8129
+	jal	r0,.Lj8130
+.Lj8129:
 	ldw	r3,r30,-56
 	ldbu	r3,r3,1
 	addi	r3,r3,-123
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8136
-	jal	r0,.Lj8135
-.Lj8136:
+	bne	r3,r0,.Lj8131
+	jal	r0,.Lj8130
+.Lj8131:
 	ldw	r3,r30,-56
 	ldbu	r3,r3,10
 	addi	r3,r3,-45
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8137
-	jal	r0,.Lj8135
-.Lj8137:
+	bne	r3,r0,.Lj8132
+	jal	r0,.Lj8130
+.Lj8132:
 	ldw	r3,r30,-56
 	ldbu	r3,r3,15
 	addi	r3,r3,-45
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8138
-	jal	r0,.Lj8135
-.Lj8138:
+	bne	r3,r0,.Lj8133
+	jal	r0,.Lj8130
+.Lj8133:
 	ldw	r3,r30,-56
 	ldbu	r3,r3,20
 	addi	r3,r3,-45
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8139
-	jal	r0,.Lj8135
-.Lj8139:
+	bne	r3,r0,.Lj8134
+	jal	r0,.Lj8130
+.Lj8134:
 	ldw	r3,r30,-56
 	ldbu	r3,r3,25
 	addi	r3,r3,-45
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8140
-	jal	r0,.Lj8135
-.Lj8140:
+	bne	r3,r0,.Lj8135
+	jal	r0,.Lj8130
+.Lj8135:
 	ldw	r3,r30,-56
 	ldbu	r3,r3,38
 	addi	r3,r3,-125
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8141
-	jal	r0,.Lj8135
-.Lj8141:
+	bne	r3,r0,.Lj8136
+	jal	r0,.Lj8130
+.Lj8136:
 	addi	r3,r0,1
 	stb	r30,r3,-64
-	jal	r0,.Lj8142
-.Lj8135:
+	jal	r0,.Lj8137
+.Lj8130:
 	stb	r30,r0,-64
-.Lj8142:
+.Lj8137:
 	ldbu	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8143
-	jal	r0,.Lj8144
-.Lj8143:
-	jal	r0,.Lj8130
-.Lj8144:
+	bne	r3,r0,.Lj8138
+	jal	r0,.Lj8139
+.Lj8138:
+	jal	r0,.Lj8125
+.Lj8139:
 	stw	r30,r0,-68
-.Lj8145:
+.Lj8140:
 	ldw	r3,r30,-56
 	addi	r3,r3,1
 	ldw	r4,r30,-68
@@ -70617,10 +70586,10 @@ SYSTEM$_$TGUID_$__$$_FROMSTRING$SHORTSTRING$TGUID$$BOOLEAN:
 	ldw	r4,r30,-68
 	addi	r3,r0,15
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj8147
-	jal	r0,.Lj8145
-.Lj8147:
-.Lj8130:
+	bne	r3,r0,.Lj8142
+	jal	r0,.Lj8140
+.Lj8142:
+.Lj8125:
 	ldbu	r1,r30,-64
 	ldw	r11,r29,72
 	ldw	r30,r29,76
@@ -70644,42 +70613,42 @@ SYSTEM$_$TGUID_$_FROMSTRING$SHORTSTRING$TGUID$$BOOLEAN_$$_PARSEHEXDIGIT$ANSICHAR
 	stw	r30,r5,-60
 	ldbu	r3,r30,-56
 	addi	r4,r0,48
-	bltu	r3,r4,.Lj8149
+	bltu	r3,r4,.Lj8144
 	addi	r4,r0,57
-	bleu	r3,r4,.Lj8150
+	bleu	r3,r4,.Lj8145
 	addi	r4,r0,65
-	bltu	r3,r4,.Lj8149
+	bltu	r3,r4,.Lj8144
 	addi	r4,r0,70
-	bleu	r3,r4,.Lj8152
+	bleu	r3,r4,.Lj8147
 	addi	r4,r0,97
-	bltu	r3,r4,.Lj8149
+	bltu	r3,r4,.Lj8144
 	addi	r4,r0,102
-	bleu	r3,r4,.Lj8151
-	jal	r0,.Lj8149
-.Lj8150:
+	bleu	r3,r4,.Lj8146
+	jal	r0,.Lj8144
+.Lj8145:
 	ldbu	r3,r30,-56
 	addi	r3,r3,-48
 	andi	r3,r3,255
 	stb	r30,r3,-68
-	jal	r0,.Lj8148
-.Lj8151:
+	jal	r0,.Lj8143
+.Lj8146:
 	ldbu	r3,r30,-56
 	addi	r3,r3,-97
 	addi	r3,r3,10
 	andi	r3,r3,255
 	stb	r30,r3,-68
-	jal	r0,.Lj8148
-.Lj8152:
+	jal	r0,.Lj8143
+.Lj8147:
 	ldbu	r3,r30,-56
 	addi	r3,r3,-65
 	addi	r3,r3,10
 	andi	r3,r3,255
 	stb	r30,r3,-68
-	jal	r0,.Lj8148
-.Lj8149:
+	jal	r0,.Lj8143
+.Lj8144:
 	ldw	r3,r30,-60
 	stb	r3,r0,0
-.Lj8148:
+.Lj8143:
 	ldbu	r1,r30,-68
 	ldw	r30,r29,68
 	ldw	r31,r29,72
@@ -70716,22 +70685,22 @@ SYSTEM$_$TGUID_$__$$_CREATE$array_of_BYTE$LONGWORD$BOOLEAN$$TGUID:
 	sub	r3,r5,r3
 	sub	r3,r3,r6
 	addi	r5,r0,16
-	blt	r3,r0,.Lj8155
-	bne	r0,r3,.Lj8156
-	bltu	r4,r5,.Lj8155
-	jal	r0,.Lj8156
-.Lj8155:
+	blt	r3,r0,.Lj8150
+	bne	r0,r3,.Lj8151
+	bltu	r4,r5,.Lj8150
+	jal	r0,.Lj8151
+.Lj8150:
 	ldw	r3,r30,-72
 	call	SYSTEM$_$TGUID_$__$$_EMPTY$$TGUID
-	jal	r0,.Lj8157
-.Lj8156:
+	jal	r0,.Lj8152
+.Lj8151:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	add	r4,r4,r3
 	ldw	r3,r30,-72
 	ldbu	r5,r30,-64
 	call	SYSTEM$_$TGUID_$__$$_CREATE$PBYTE$BOOLEAN$$TGUID
-.Lj8157:
+.Lj8152:
 	ldw	r30,r29,72
 	ldw	r31,r29,76
 	addi	r29,r29,80
@@ -70754,33 +70723,33 @@ SYSTEM$_$TGUID_$__$$_ISEMPTY$$BOOLEAN:
 	ldw	r3,r30,-64
 	ldw	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8160
-	jal	r0,.Lj8161
-.Lj8160:
+	bne	r3,r0,.Lj8155
+	jal	r0,.Lj8156
+.Lj8155:
 	ldw	r3,r30,-64
 	ldw	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8162
-	jal	r0,.Lj8161
-.Lj8162:
+	bne	r3,r0,.Lj8157
+	jal	r0,.Lj8156
+.Lj8157:
 	ldw	r3,r30,-64
 	ldw	r3,r3,8
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8163
-	jal	r0,.Lj8161
-.Lj8163:
+	bne	r3,r0,.Lj8158
+	jal	r0,.Lj8156
+.Lj8158:
 	ldw	r3,r30,-64
 	ldw	r3,r3,12
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8164
-	jal	r0,.Lj8161
-.Lj8164:
+	bne	r3,r0,.Lj8159
+	jal	r0,.Lj8156
+.Lj8159:
 	addi	r3,r0,1
 	stb	r30,r3,-60
-	jal	r0,.Lj8165
-.Lj8161:
+	jal	r0,.Lj8160
+.Lj8156:
 	stb	r30,r0,-60
-.Lj8165:
+.Lj8160:
 	ldbu	r1,r30,-60
 	ldw	r30,r29,64
 	ldw	r31,r29,68
@@ -70822,7 +70791,7 @@ SYSTEM$_$TGUID_$__$$_ASSTRING$$SHORTSTRING:
 	addi	r4,r0,125
 	stb	r3,r4,38
 	stw	r30,r0,-64
-.Lj8168:
+.Lj8163:
 	ldw	r4,r30,-64
 	la	r3,TC_$SYSTEM_$$_CASSTRINGBYTESCATTER
 	add	r3,r4,r3
@@ -70861,9 +70830,9 @@ SYSTEM$_$TGUID_$__$$_ASSTRING$$SHORTSTRING:
 	ldw	r4,r30,-64
 	addi	r3,r0,15
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj8170
-	jal	r0,.Lj8168
-.Lj8170:
+	bne	r3,r0,.Lj8165
+	jal	r0,.Lj8163
+.Lj8165:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -70886,17 +70855,17 @@ SYSTEM$_$TINTERFACEENTRY_$__$$_GETIID$$PGUID:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8173
-	jal	r0,.Lj8174
-.Lj8173:
+	bne	r3,r0,.Lj8168
+	jal	r0,.Lj8169
+.Lj8168:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	ldw	r3,r3,0
 	stw	r30,r3,-60
-	jal	r0,.Lj8175
-.Lj8174:
+	jal	r0,.Lj8170
+.Lj8169:
 	stw	r30,r0,-60
-.Lj8175:
+.Lj8170:
 	ldw	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -70918,17 +70887,17 @@ SYSTEM$_$TINTERFACEENTRY_$__$$_GETIIDSTR$$PSHORTSTRING:
 	ldw	r3,r30,-56
 	ldw	r3,r3,12
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8178
-	jal	r0,.Lj8179
-.Lj8178:
+	bne	r3,r0,.Lj8173
+	jal	r0,.Lj8174
+.Lj8173:
 	ldw	r3,r30,-56
 	ldw	r3,r3,12
 	ldw	r3,r3,0
 	stw	r30,r3,-60
-	jal	r0,.Lj8180
-.Lj8179:
+	jal	r0,.Lj8175
+.Lj8174:
 	stw	r30,r0,-60
-.Lj8180:
+.Lj8175:
 	ldw	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -70951,22 +70920,22 @@ SYSTEM$_$TOBJECT_$__$$_CREATE$$TOBJECT:
 	ldw	r3,r30,-56
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8183
-	jal	r0,.Lj8184
-.Lj8183:
+	bne	r3,r0,.Lj8178
+	jal	r0,.Lj8179
+.Lj8178:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-60
 	ldw	r4,r4,52
 	jalr	r31,r4
 	stw	r30,r1,-60
-.Lj8184:
+.Lj8179:
 	ldw	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8185
-	jal	r0,.Lj8186
-.Lj8185:
+	bne	r3,r0,.Lj8180
 	jal	r0,.Lj8181
-.Lj8186:
+.Lj8180:
+	jal	r0,.Lj8176
+.Lj8181:
 	addi	r5,r30,-76
 	addi	r4,r30,-160
 	addi	r3,r0,1
@@ -70974,31 +70943,31 @@ SYSTEM$_$TOBJECT_$__$$_CREATE$$TOBJECT:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj8191
+	bne	r1,r0,.Lj8186
 	addi	r3,r0,-1
 	stw	r30,r3,-64
 	addi	r3,r0,1
 	stw	r30,r3,-64
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8193
-	jal	r0,.Lj8194
-.Lj8193:
+	bne	r3,r0,.Lj8188
+	jal	r0,.Lj8189
+.Lj8188:
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8195
-	jal	r0,.Lj8194
-.Lj8195:
+	bne	r3,r0,.Lj8190
+	jal	r0,.Lj8189
+.Lj8190:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-60
 	ldw	r4,r4,0
 	ldw	r4,r4,68
 	jalr	r31,r4
-.Lj8194:
-.Lj8191:
+.Lj8189:
+.Lj8186:
 	call	fpc_popaddrstack
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj8189
+	beq	r3,r0,.Lj8184
 	addi	r5,r30,-176
 	addi	r4,r30,-260
 	addi	r3,r0,1
@@ -71006,31 +70975,31 @@ SYSTEM$_$TOBJECT_$__$$_CREATE$$TOBJECT:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-264
-	bne	r1,r0,.Lj8196
+	bne	r1,r0,.Lj8191
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8197
-	jal	r0,.Lj8198
-.Lj8197:
+	bne	r3,r0,.Lj8192
+	jal	r0,.Lj8193
+.Lj8192:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-60
 	ldw	r5,r30,-60
 	ldw	r5,r5,0
 	ldw	r5,r5,48
 	jalr	r31,r5
-.Lj8198:
+.Lj8193:
 	call	fpc_popaddrstack
 	call	fpc_reraise
-.Lj8196:
+.Lj8191:
 	call	fpc_popaddrstack
 	ldw	r3,r30,-264
-	beq	r3,r0,.Lj8199
+	beq	r3,r0,.Lj8194
 	call	fpc_raise_nested
-.Lj8199:
+.Lj8194:
 	call	fpc_doneexception
-	jal	r0,.Lj8189
-.Lj8189:
-.Lj8181:
+	jal	r0,.Lj8184
+.Lj8184:
+.Lj8176:
 	ldw	r1,r30,-60
 	ldw	r30,r29,264
 	ldw	r31,r29,268
@@ -71055,31 +71024,31 @@ SYSTEM$_$TOBJECT_$__$$_DESTROY:
 	ldw	r4,r30,-56
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj8202
-	jal	r0,.Lj8203
-.Lj8202:
+	bne	r3,r0,.Lj8197
+	jal	r0,.Lj8198
+.Lj8197:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-60
 	ldw	r4,r4,0
 	ldw	r4,r4,72
 	jalr	r31,r4
-.Lj8203:
+.Lj8198:
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8204
-	jal	r0,.Lj8205
-.Lj8204:
+	bne	r3,r0,.Lj8199
+	jal	r0,.Lj8200
+.Lj8199:
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8206
-	jal	r0,.Lj8205
-.Lj8206:
+	bne	r3,r0,.Lj8201
+	jal	r0,.Lj8200
+.Lj8201:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-60
 	ldw	r4,r4,0
 	ldw	r4,r4,56
 	jalr	r31,r4
-.Lj8205:
+.Lj8200:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -71101,16 +71070,16 @@ SYSTEM$_$TOBJECT_$__$$_FREE:
 	stw	r30,r3,-56
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8209
-	jal	r0,.Lj8210
-.Lj8209:
+	bne	r3,r0,.Lj8204
+	jal	r0,.Lj8205
+.Lj8204:
 	addi	r4,r0,1
 	ldw	r3,r30,-56
 	ldw	r5,r30,-56
 	ldw	r5,r5,0
 	ldw	r5,r5,48
 	jalr	r31,r5
-.Lj8210:
+.Lj8205:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -71156,8 +71125,8 @@ SYSTEM_$$_INITINTERFACEPOINTERS$TCLASS$POINTER:
 	stw	r30,r4,-60
 	ldw	r3,r30,-56
 	stw	r30,r3,-64
-	jal	r0,.Lj8216
-.Lj8215:
+	jal	r0,.Lj8211
+.Lj8210:
 	ldw	r3,r30,-64
 	ldw	r3,r3,40
 	stw	r30,r3,-72
@@ -71167,14 +71136,14 @@ SYSTEM_$$_INITINTERFACEPOINTERS$TCLASS$POINTER:
 	ldw	r3,r30,-72
 	addi	r3,r3,4
 	stw	r30,r3,-76
-	jal	r0,.Lj8219
-.Lj8218:
+	jal	r0,.Lj8214
+.Lj8213:
 	ldw	r3,r30,-76
 	ldw	r3,r3,16
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8221
-	jal	r0,.Lj8222
-.Lj8221:
+	bne	r3,r0,.Lj8216
+	jal	r0,.Lj8217
+.Lj8216:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-76
 	ldw	r4,r4,8
@@ -71182,50 +71151,50 @@ SYSTEM_$$_INITINTERFACEPOINTERS$TCLASS$POINTER:
 	ldw	r4,r30,-76
 	ldw	r4,r4,4
 	stw	r3,r4,0
-.Lj8222:
+.Lj8217:
 	ldw	r3,r30,-76
 	addi	r3,r3,20
 	stw	r30,r3,-76
 	ldw	r3,r30,-68
 	addi	r3,r3,-1
 	stw	r30,r3,-68
-.Lj8219:
+.Lj8214:
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sgtu	r3,r4,r3
-	bne	r3,r0,.Lj8218
-	jal	r0,.Lj8220
-.Lj8220:
+	bne	r3,r0,.Lj8213
+	jal	r0,.Lj8215
+.Lj8215:
 	ldw	r3,r30,-64
 	ldw	r3,r3,8
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8223
-	jal	r0,.Lj8224
-.Lj8223:
+	bne	r3,r0,.Lj8218
+	jal	r0,.Lj8219
+.Lj8218:
 	ldw	r3,r30,-64
 	ldw	r3,r3,8
 	ldw	r3,r3,0
-	jal	r0,.Lj8225
-.Lj8224:
+	jal	r0,.Lj8220
+.Lj8219:
 	addi	r3,r0,0
-.Lj8225:
+.Lj8220:
 	stw	r30,r3,-64
-.Lj8216:
+.Lj8211:
 	ldw	r3,r30,-64
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8226
-	jal	r0,.Lj8227
-.Lj8226:
+	bne	r3,r0,.Lj8221
+	jal	r0,.Lj8222
+.Lj8221:
 	ldw	r3,r30,-64
 	ldw	r3,r3,40
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8228
-	jal	r0,.Lj8227
-.Lj8228:
-	jal	r0,.Lj8215
-.Lj8227:
-	jal	r0,.Lj8217
-.Lj8217:
+	bne	r3,r0,.Lj8223
+	jal	r0,.Lj8222
+.Lj8223:
+	jal	r0,.Lj8210
+.Lj8222:
+	jal	r0,.Lj8212
+.Lj8212:
 	ldw	r30,r29,76
 	ldw	r31,r29,80
 	addi	r29,r29,84
@@ -71252,44 +71221,44 @@ SYSTEM$_$TOBJECT_$__$$_INITZEROEDINSTANCE$POINTER:
 	ldw	r3,r30,-60
 	ldw	r3,r3,40
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8231
-	jal	r0,.Lj8232
-.Lj8231:
+	bne	r3,r0,.Lj8226
+	jal	r0,.Lj8227
+.Lj8226:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_INITINTERFACEPOINTERS$TCLASS$POINTER
-.Lj8232:
+.Lj8227:
 	ldw	r3,r30,-60
 	stw	r30,r3,-64
 	ldw	r3,r30,-64
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8233
-	jal	r0,.Lj8234
-.Lj8233:
+	bne	r3,r0,.Lj8228
+	jal	r0,.Lj8229
+.Lj8228:
 	ldw	r3,r30,-64
 	ldw	r3,r3,32
 	stw	r30,r3,-68
 	ldw	r3,r30,-68
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8235
-	jal	r0,.Lj8236
-.Lj8235:
+	bne	r3,r0,.Lj8230
+	jal	r0,.Lj8231
+.Lj8230:
 	ldw	r3,r30,-68
 	call	SYSTEM_$$_RTTIRECORDMOPINITTABLE$POINTER$$PRTTIRECORDOPOFFSETTABLE
 	stw	r30,r1,-76
 	ldw	r3,r30,-76
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8237
-	jal	r0,.Lj8238
-.Lj8237:
+	bne	r3,r0,.Lj8232
+	jal	r0,.Lj8233
+.Lj8232:
 	ldw	r3,r30,-76
 	ldw	r3,r3,0
 	stw	r30,r3,-80
 	ldw	r3,r30,-76
 	addi	r3,r3,4
 	stw	r30,r3,-72
-	jal	r0,.Lj8240
-.Lj8239:
+	jal	r0,.Lj8235
+.Lj8234:
 	ldw	r3,r30,-72
 	ldw	r3,r3,4
 	ldw	r4,r30,-56
@@ -71303,16 +71272,16 @@ SYSTEM$_$TOBJECT_$__$$_INITZEROEDINSTANCE$POINTER:
 	ldw	r3,r30,-80
 	addi	r3,r3,-1
 	stw	r30,r3,-80
-.Lj8240:
+.Lj8235:
 	ldw	r4,r30,-80
 	addi	r3,r0,0
 	sgtu	r3,r4,r3
-	bne	r3,r0,.Lj8239
-	jal	r0,.Lj8241
-.Lj8241:
-.Lj8238:
+	bne	r3,r0,.Lj8234
+	jal	r0,.Lj8236
 .Lj8236:
-.Lj8234:
+.Lj8233:
+.Lj8231:
+.Lj8229:
 	ldw	r30,r29,80
 	ldw	r31,r29,84
 	addi	r29,r29,88
@@ -71365,16 +71334,16 @@ SYSTEM$_$TOBJECT_$__$$_CLASSPARENT$$TCLASS:
 	ldw	r3,r30,-56
 	ldw	r3,r3,8
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8246
-	jal	r0,.Lj8247
-.Lj8246:
+	bne	r3,r0,.Lj8241
+	jal	r0,.Lj8242
+.Lj8241:
 	ldw	r3,r30,-56
 	ldw	r3,r3,8
 	ldw	r3,r3,0
-	jal	r0,.Lj8248
-.Lj8247:
+	jal	r0,.Lj8243
+.Lj8242:
 	addi	r3,r0,0
-.Lj8248:
+.Lj8243:
 	stw	r30,r3,-60
 	ldw	r1,r30,-60
 	ldw	r30,r29,60
@@ -71401,13 +71370,13 @@ SYSTEM$_$TOBJECT_$__$$_NEWINSTANCE$$TOBJECT:
 	stw	r30,r1,-60
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8251
-	jal	r0,.Lj8252
-.Lj8251:
+	bne	r3,r0,.Lj8246
+	jal	r0,.Lj8247
+.Lj8246:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	call	SYSTEM$_$TOBJECT_$__$$_INITZEROEDINSTANCE$POINTER
-.Lj8252:
+.Lj8247:
 	ldw	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -71477,27 +71446,27 @@ SYSTEM$_$TOBJECT_$__$$_METHODADDRESS$SHORTSTRING$$POINTER:
 	stw	r30,r4,-56
 	ldw	r3,r30,-60
 	stw	r30,r3,-76
-	jal	r0,.Lj8260
-.Lj8259:
+	jal	r0,.Lj8255
+.Lj8254:
 	ldw	r3,r30,-76
 	ldw	r3,r3,20
 	stw	r30,r3,-68
 	ldw	r3,r30,-68
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8262
-	jal	r0,.Lj8263
-.Lj8262:
+	bne	r3,r0,.Lj8257
+	jal	r0,.Lj8258
+.Lj8257:
 	ldw	r3,r30,-68
 	ldw	r3,r3,0
 	addi	r11,r3,-1
 	addi	r3,r0,0
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj8264
-	jal	r0,.Lj8265
-.Lj8264:
+	bne	r3,r0,.Lj8259
+	jal	r0,.Lj8260
+.Lj8259:
 	addi	r3,r0,-1
 	stw	r30,r3,-72
-.Lj8266:
+.Lj8261:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
@@ -71509,46 +71478,46 @@ SYSTEM$_$TOBJECT_$__$$_METHODADDRESS$SHORTSTRING$$POINTER:
 	ldw	r4,r30,-56
 	call	SYSTEM_$$_SHORTCOMPARETEXT$SHORTSTRING$SHORTSTRING$$LONGINT
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj8269
-	jal	r0,.Lj8270
-.Lj8269:
+	bne	r3,r0,.Lj8264
+	jal	r0,.Lj8265
+.Lj8264:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-72
 	slli	r4,r4,3
 	add	r3,r3,r4
 	ldw	r3,r3,8
 	stw	r30,r3,-64
-	jal	r0,.Lj8257
-.Lj8270:
+	jal	r0,.Lj8252
+.Lj8265:
 	ldw	r3,r30,-72
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj8268
-	jal	r0,.Lj8266
-.Lj8268:
-.Lj8265:
+	bne	r3,r0,.Lj8263
+	jal	r0,.Lj8261
 .Lj8263:
+.Lj8260:
+.Lj8258:
 	ldw	r3,r30,-76
 	ldw	r3,r3,8
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8271
-	jal	r0,.Lj8272
-.Lj8271:
+	bne	r3,r0,.Lj8266
+	jal	r0,.Lj8267
+.Lj8266:
 	ldw	r3,r30,-76
 	ldw	r3,r3,8
 	ldw	r3,r3,0
-	jal	r0,.Lj8273
-.Lj8272:
+	jal	r0,.Lj8268
+.Lj8267:
 	addi	r3,r0,0
-.Lj8273:
+.Lj8268:
 	stw	r30,r3,-76
-.Lj8260:
+.Lj8255:
 	ldw	r3,r30,-76
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8259
-	jal	r0,.Lj8261
-.Lj8261:
+	bne	r3,r0,.Lj8254
+	jal	r0,.Lj8256
+.Lj8256:
 	stw	r30,r0,-64
-.Lj8257:
+.Lj8252:
 	ldw	r1,r30,-64
 	ldw	r11,r29,76
 	ldw	r30,r29,80
@@ -71573,27 +71542,27 @@ SYSTEM$_$TOBJECT_$__$$_METHODNAME$POINTER$$SHORTSTRING:
 	stw	r30,r5,-56
 	ldw	r3,r30,-60
 	stw	r30,r3,-76
-	jal	r0,.Lj8277
-.Lj8276:
+	jal	r0,.Lj8272
+.Lj8271:
 	ldw	r3,r30,-76
 	ldw	r3,r3,20
 	stw	r30,r3,-68
 	ldw	r3,r30,-68
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8279
-	jal	r0,.Lj8280
-.Lj8279:
+	bne	r3,r0,.Lj8274
+	jal	r0,.Lj8275
+.Lj8274:
 	ldw	r3,r30,-68
 	ldw	r3,r3,0
 	addi	r11,r3,-1
 	addi	r3,r0,0
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj8281
-	jal	r0,.Lj8282
-.Lj8281:
+	bne	r3,r0,.Lj8276
+	jal	r0,.Lj8277
+.Lj8276:
 	addi	r3,r0,-1
 	stw	r30,r3,-72
-.Lj8283:
+.Lj8278:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
@@ -71604,9 +71573,9 @@ SYSTEM$_$TOBJECT_$__$$_METHODNAME$POINTER$$SHORTSTRING:
 	ldw	r4,r3,8
 	ldw	r3,r30,-56
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj8286
-	jal	r0,.Lj8287
-.Lj8286:
+	bne	r3,r0,.Lj8281
+	jal	r0,.Lj8282
+.Lj8281:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-72
 	slli	r4,r4,3
@@ -71615,38 +71584,38 @@ SYSTEM$_$TOBJECT_$__$$_METHODNAME$POINTER$$SHORTSTRING:
 	ldw	r3,r30,-64
 	addi	r4,r0,255
 	call	fpc_shortstr_to_shortstr
-	jal	r0,.Lj8274
-.Lj8287:
+	jal	r0,.Lj8269
+.Lj8282:
 	ldw	r3,r30,-72
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj8285
-	jal	r0,.Lj8283
-.Lj8285:
-.Lj8282:
+	bne	r3,r0,.Lj8280
+	jal	r0,.Lj8278
 .Lj8280:
+.Lj8277:
+.Lj8275:
 	ldw	r3,r30,-76
 	ldw	r3,r3,8
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8288
-	jal	r0,.Lj8289
-.Lj8288:
+	bne	r3,r0,.Lj8283
+	jal	r0,.Lj8284
+.Lj8283:
 	ldw	r3,r30,-76
 	ldw	r3,r3,8
 	ldw	r3,r3,0
-	jal	r0,.Lj8290
-.Lj8289:
+	jal	r0,.Lj8285
+.Lj8284:
 	addi	r3,r0,0
-.Lj8290:
+.Lj8285:
 	stw	r30,r3,-76
-.Lj8277:
+.Lj8272:
 	ldw	r3,r30,-76
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8276
-	jal	r0,.Lj8278
-.Lj8278:
+	bne	r3,r0,.Lj8271
+	jal	r0,.Lj8273
+.Lj8273:
 	ldw	r3,r30,-64
 	stb	r3,r0,0
-.Lj8274:
+.Lj8269:
 	ldw	r11,r29,76
 	ldw	r30,r29,80
 	ldw	r31,r29,84
@@ -71671,24 +71640,24 @@ SYSTEM$_$TOBJECT_$__$$_FIELDADDRESS$SHORTSTRING$$POINTER:
 	ldbu	r4,r3,0
 	addi	r3,r0,0
 	sgtu	r3,r4,r3
-	bne	r3,r0,.Lj8293
-	jal	r0,.Lj8294
-.Lj8293:
+	bne	r3,r0,.Lj8288
+	jal	r0,.Lj8289
+.Lj8288:
 	ldw	r3,r30,-60
 	ldw	r3,r3,0
 	stw	r30,r3,-84
 	ldw	r3,r30,-84
 	stw	r30,r3,-68
-	jal	r0,.Lj8296
-.Lj8295:
+	jal	r0,.Lj8291
+.Lj8290:
 	ldw	r3,r30,-68
 	ldw	r3,r3,24
 	stw	r30,r3,-72
 	ldw	r3,r30,-72
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8298
-	jal	r0,.Lj8299
-.Lj8298:
+	bne	r3,r0,.Lj8293
+	jal	r0,.Lj8294
+.Lj8293:
 	ldw	r3,r30,-72
 	addi	r3,r3,8
 	stw	r30,r3,-76
@@ -71697,12 +71666,12 @@ SYSTEM$_$TOBJECT_$__$$_FIELDADDRESS$SHORTSTRING$$POINTER:
 	addi	r11,r3,-1
 	addi	r3,r0,0
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj8300
-	jal	r0,.Lj8301
-.Lj8300:
+	bne	r3,r0,.Lj8295
+	jal	r0,.Lj8296
+.Lj8295:
 	addi	r3,r0,-1
 	stw	r30,r3,-80
-.Lj8302:
+.Lj8297:
 	ldw	r3,r30,-80
 	addi	r3,r3,1
 	stw	r30,r3,-80
@@ -71711,16 +71680,16 @@ SYSTEM$_$TOBJECT_$__$$_FIELDADDRESS$SHORTSTRING$$POINTER:
 	addi	r3,r3,6
 	call	SYSTEM_$$_SHORTCOMPARETEXT$SHORTSTRING$SHORTSTRING$$LONGINT
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj8305
-	jal	r0,.Lj8306
-.Lj8305:
+	bne	r3,r0,.Lj8300
+	jal	r0,.Lj8301
+.Lj8300:
 	ldw	r3,r30,-76
 	ldw	r3,r3,0
 	ldw	r4,r30,-60
 	add	r3,r4,r3
 	stw	r30,r3,-64
-	jal	r0,.Lj8291
-.Lj8306:
+	jal	r0,.Lj8286
+.Lj8301:
 	ldw	r3,r30,-76
 	addi	r3,r3,6
 	addi	r3,r3,1
@@ -71737,53 +71706,53 @@ SYSTEM$_$TOBJECT_$__$$_FIELDADDRESS$SHORTSTRING$$POINTER:
 	ldw	r3,r30,-88
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8308
-	jal	r0,.Lj8309
-.Lj8308:
+	bne	r3,r0,.Lj8303
+	jal	r0,.Lj8304
+.Lj8303:
 	ldw	r3,r30,-88
 	addi	r4,r0,-1
 	xor	r4,r3,r4
 	ldw	r3,r30,-84
 	and	r3,r3,r4
-	jal	r0,.Lj8310
-.Lj8309:
+	jal	r0,.Lj8305
+.Lj8304:
 	ldw	r4,r30,-84
 	andi	r4,r4,3
 	ldw	r5,r30,-84
 	sub	r4,r5,r4
 	addi	r3,r4,0
-.Lj8310:
+.Lj8305:
 	stw	r30,r3,-76
 	ldw	r3,r30,-80
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj8304
-	jal	r0,.Lj8302
-.Lj8304:
-.Lj8301:
+	bne	r3,r0,.Lj8299
+	jal	r0,.Lj8297
 .Lj8299:
+.Lj8296:
+.Lj8294:
 	ldw	r3,r30,-68
 	ldw	r3,r3,8
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8311
-	jal	r0,.Lj8312
-.Lj8311:
+	bne	r3,r0,.Lj8306
+	jal	r0,.Lj8307
+.Lj8306:
 	ldw	r3,r30,-68
 	ldw	r3,r3,8
 	ldw	r3,r3,0
-	jal	r0,.Lj8313
-.Lj8312:
+	jal	r0,.Lj8308
+.Lj8307:
 	addi	r3,r0,0
-.Lj8313:
+.Lj8308:
 	stw	r30,r3,-68
-.Lj8296:
+.Lj8291:
 	ldw	r3,r30,-68
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8295
-	jal	r0,.Lj8297
-.Lj8297:
-.Lj8294:
+	bne	r3,r0,.Lj8290
+	jal	r0,.Lj8292
+.Lj8292:
+.Lj8289:
 	stw	r30,r0,-64
-.Lj8291:
+.Lj8286:
 	ldw	r1,r30,-64
 	ldw	r11,r29,88
 	ldw	r30,r29,92
@@ -71933,51 +71902,51 @@ SYSTEM$_$TOBJECT_$__$$_INHERITSFROM$TCLASS$$BOOLEAN:
 	stw	r30,r4,-56
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
+	bne	r3,r0,.Lj8321
+	jal	r0,.Lj8322
+.Lj8321:
+	ldw	r3,r30,-60
+	stw	r30,r3,-68
+	jal	r0,.Lj8324
+.Lj8323:
+	ldw	r3,r30,-68
+	ldw	r3,r3,8
+	sne	r3,r3,r0
 	bne	r3,r0,.Lj8326
 	jal	r0,.Lj8327
 .Lj8326:
-	ldw	r3,r30,-60
-	stw	r30,r3,-68
-	jal	r0,.Lj8329
-.Lj8328:
-	ldw	r3,r30,-68
-	ldw	r3,r3,8
-	sne	r3,r3,r0
-	bne	r3,r0,.Lj8331
-	jal	r0,.Lj8332
-.Lj8331:
 	ldw	r3,r30,-68
 	ldw	r3,r3,8
 	ldw	r3,r3,0
-	jal	r0,.Lj8333
-.Lj8332:
+	jal	r0,.Lj8328
+.Lj8327:
 	addi	r3,r0,0
-.Lj8333:
+.Lj8328:
 	stw	r30,r3,-68
-.Lj8329:
+.Lj8324:
 	ldw	r3,r30,-68
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8334
-	jal	r0,.Lj8335
-.Lj8334:
+	bne	r3,r0,.Lj8329
+	jal	r0,.Lj8330
+.Lj8329:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-56
 	sne	r3,r3,r4
-	bne	r3,r0,.Lj8336
-	jal	r0,.Lj8335
-.Lj8336:
-	jal	r0,.Lj8328
-.Lj8335:
+	bne	r3,r0,.Lj8331
 	jal	r0,.Lj8330
+.Lj8331:
+	jal	r0,.Lj8323
 .Lj8330:
+	jal	r0,.Lj8325
+.Lj8325:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-56
 	seq	r3,r3,r4
 	stb	r30,r3,-64
-	jal	r0,.Lj8337
-.Lj8327:
+	jal	r0,.Lj8332
+.Lj8322:
 	stb	r30,r0,-64
-.Lj8337:
+.Lj8332:
 	ldbu	r1,r30,-64
 	ldw	r30,r29,68
 	ldw	r31,r29,72
@@ -72029,36 +71998,36 @@ SYSTEM$_$TOBJECT_$__$$_DISPATCH$formal:
 	stw	r30,r3,-96
 	ldw	r3,r30,-96
 	stw	r30,r3,-84
-	jal	r0,.Lj8343
-.Lj8342:
+	jal	r0,.Lj8338
+.Lj8337:
 	ldw	r3,r30,-84
 	ldw	r3,r3,16
 	stw	r30,r3,-80
 	ldw	r3,r30,-80
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8345
-	jal	r0,.Lj8346
-.Lj8345:
+	bne	r3,r0,.Lj8340
+	jal	r0,.Lj8341
+.Lj8340:
 	ldw	r3,r30,-80
 	addi	r3,r3,4
 	stw	r30,r3,-76
 	ldw	r3,r30,-80
 	ldw	r3,r3,0
 	stw	r30,r3,-68
-	jal	r0,.Lj8347
-.Lj8346:
+	jal	r0,.Lj8342
+.Lj8341:
 	stw	r30,r0,-68
-.Lj8347:
+.Lj8342:
 	ldw	r3,r30,-68
 	addi	r11,r3,-1
 	addi	r3,r0,0
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj8348
-	jal	r0,.Lj8349
-.Lj8348:
+	bne	r3,r0,.Lj8343
+	jal	r0,.Lj8344
+.Lj8343:
 	addi	r3,r0,-1
 	stw	r30,r3,-72
-.Lj8350:
+.Lj8345:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
@@ -72069,9 +72038,9 @@ SYSTEM$_$TOBJECT_$__$$_DISPATCH$formal:
 	ldw	r3,r3,0
 	ldw	r4,r30,-64
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj8353
-	jal	r0,.Lj8354
-.Lj8353:
+	bne	r3,r0,.Lj8348
+	jal	r0,.Lj8349
+.Lj8348:
 	ldw	r3,r30,-76
 	ldw	r4,r30,-72
 	slli	r4,r4,3
@@ -72084,41 +72053,41 @@ SYSTEM$_$TOBJECT_$__$$_DISPATCH$formal:
 	ldw	r3,r30,-88
 	ldw	r5,r30,-92
 	jalr	r31,r5
-	jal	r0,.Lj8340
-.Lj8354:
+	jal	r0,.Lj8335
+.Lj8349:
 	ldw	r3,r30,-72
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj8352
-	jal	r0,.Lj8350
-.Lj8352:
-.Lj8349:
+	bne	r3,r0,.Lj8347
+	jal	r0,.Lj8345
+.Lj8347:
+.Lj8344:
 	ldw	r3,r30,-84
 	ldw	r3,r3,8
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8355
-	jal	r0,.Lj8356
-.Lj8355:
+	bne	r3,r0,.Lj8350
+	jal	r0,.Lj8351
+.Lj8350:
 	ldw	r3,r30,-84
 	ldw	r3,r3,8
 	ldw	r3,r3,0
-	jal	r0,.Lj8357
-.Lj8356:
+	jal	r0,.Lj8352
+.Lj8351:
 	addi	r3,r0,0
-.Lj8357:
+.Lj8352:
 	stw	r30,r3,-84
-.Lj8343:
+.Lj8338:
 	ldw	r3,r30,-84
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8342
-	jal	r0,.Lj8344
-.Lj8344:
+	bne	r3,r0,.Lj8337
+	jal	r0,.Lj8339
+.Lj8339:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	ldw	r5,r30,-60
 	ldw	r5,r5,0
 	ldw	r5,r5,64
 	jalr	r31,r5
-.Lj8340:
+.Lj8335:
 	ldw	r11,r29,96
 	ldw	r30,r29,100
 	ldw	r31,r29,104
@@ -72150,42 +72119,42 @@ SYSTEM$_$TOBJECT_$__$$_DISPATCHSTR$formal:
 	stw	r30,r3,-348
 	ldw	r3,r30,-348
 	stw	r30,r3,-336
-	jal	r0,.Lj8361
-.Lj8360:
+	jal	r0,.Lj8356
+.Lj8355:
 	ldw	r3,r30,-336
 	ldw	r3,r3,44
 	stw	r30,r3,-332
 	ldw	r3,r30,-332
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8363
-	jal	r0,.Lj8364
-.Lj8363:
+	bne	r3,r0,.Lj8358
+	jal	r0,.Lj8359
+.Lj8358:
 	ldw	r3,r30,-332
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8365
-	jal	r0,.Lj8364
-.Lj8365:
+	bne	r3,r0,.Lj8360
+	jal	r0,.Lj8359
+.Lj8360:
 	ldw	r3,r30,-332
 	ldw	r3,r3,0
 	stw	r30,r3,-320
 	ldw	r3,r30,-332
 	addi	r3,r3,4
 	stw	r30,r3,-328
-	jal	r0,.Lj8366
-.Lj8364:
+	jal	r0,.Lj8361
+.Lj8359:
 	stw	r30,r0,-320
-.Lj8366:
+.Lj8361:
 	ldw	r3,r30,-320
 	addi	r11,r3,-1
 	addi	r3,r0,0
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj8367
-	jal	r0,.Lj8368
-.Lj8367:
+	bne	r3,r0,.Lj8362
+	jal	r0,.Lj8363
+.Lj8362:
 	addi	r3,r0,-1
 	stw	r30,r3,-324
-.Lj8369:
+.Lj8364:
 	ldw	r3,r30,-324
 	addi	r3,r3,1
 	stw	r30,r3,-324
@@ -72197,9 +72166,9 @@ SYSTEM$_$TOBJECT_$__$$_DISPATCHSTR$formal:
 	addi	r3,r30,-316
 	call	fpc_shortstr_compare_equal
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj8372
-	jal	r0,.Lj8373
-.Lj8372:
+	bne	r3,r0,.Lj8367
+	jal	r0,.Lj8368
+.Lj8367:
 	ldw	r3,r30,-328
 	ldw	r4,r30,-324
 	slli	r4,r4,3
@@ -72212,41 +72181,41 @@ SYSTEM$_$TOBJECT_$__$$_DISPATCHSTR$formal:
 	ldw	r3,r30,-340
 	ldw	r5,r30,-344
 	jalr	r31,r5
-	jal	r0,.Lj8358
-.Lj8373:
+	jal	r0,.Lj8353
+.Lj8368:
 	ldw	r3,r30,-324
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj8371
-	jal	r0,.Lj8369
-.Lj8371:
-.Lj8368:
+	bne	r3,r0,.Lj8366
+	jal	r0,.Lj8364
+.Lj8366:
+.Lj8363:
 	ldw	r3,r30,-336
 	ldw	r3,r3,8
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8374
-	jal	r0,.Lj8375
-.Lj8374:
+	bne	r3,r0,.Lj8369
+	jal	r0,.Lj8370
+.Lj8369:
 	ldw	r3,r30,-336
 	ldw	r3,r3,8
 	ldw	r3,r3,0
-	jal	r0,.Lj8376
-.Lj8375:
+	jal	r0,.Lj8371
+.Lj8370:
 	addi	r3,r0,0
-.Lj8376:
+.Lj8371:
 	stw	r30,r3,-336
-.Lj8361:
+.Lj8356:
 	ldw	r3,r30,-336
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8360
-	jal	r0,.Lj8362
-.Lj8362:
+	bne	r3,r0,.Lj8355
+	jal	r0,.Lj8357
+.Lj8357:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	ldw	r5,r30,-60
 	ldw	r5,r5,0
 	ldw	r5,r5,76
 	jalr	r31,r5
-.Lj8358:
+.Lj8353:
 	ldw	r11,r29,348
 	ldw	r30,r29,352
 	ldw	r31,r29,356
@@ -72312,16 +72281,16 @@ SYSTEM$_$TOBJECT_$__$$_CLEANUPINSTANCE:
 	stw	r30,r3,-68
 	ldw	r3,r30,-68
 	stw	r30,r3,-60
-	jal	r0,.Lj8384
-.Lj8383:
+	jal	r0,.Lj8379
+.Lj8378:
 	ldw	r3,r30,-60
 	ldw	r3,r3,32
 	stw	r30,r3,-64
 	ldw	r3,r30,-64
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8386
-	jal	r0,.Lj8387
-.Lj8386:
+	bne	r3,r0,.Lj8381
+	jal	r0,.Lj8382
+.Lj8381:
 	ldw	r3,r30,-64
 	ldbu	r3,r3,1
 	ldw	r4,r30,-64
@@ -72337,45 +72306,45 @@ SYSTEM$_$TOBJECT_$__$$_CLEANUPINSTANCE:
 	ldw	r3,r30,-76
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8389
-	jal	r0,.Lj8390
-.Lj8389:
+	bne	r3,r0,.Lj8384
+	jal	r0,.Lj8385
+.Lj8384:
 	ldw	r3,r30,-76
 	addi	r4,r0,-1
 	xor	r4,r3,r4
 	ldw	r3,r30,-72
 	and	r4,r3,r4
-	jal	r0,.Lj8391
-.Lj8390:
+	jal	r0,.Lj8386
+.Lj8385:
 	ldw	r3,r30,-72
 	andi	r5,r3,3
 	ldw	r3,r30,-72
 	sub	r3,r3,r5
 	addi	r4,r3,0
-.Lj8391:
+.Lj8386:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_FINALIZERECORDFIELDS$POINTER$PRECORDINFOINIT
+.Lj8382:
+	ldw	r3,r30,-60
+	ldw	r3,r3,8
+	sne	r3,r3,r0
+	bne	r3,r0,.Lj8387
+	jal	r0,.Lj8388
 .Lj8387:
 	ldw	r3,r30,-60
 	ldw	r3,r3,8
-	sne	r3,r3,r0
-	bne	r3,r0,.Lj8392
-	jal	r0,.Lj8393
-.Lj8392:
-	ldw	r3,r30,-60
-	ldw	r3,r3,8
 	ldw	r3,r3,0
-	jal	r0,.Lj8394
-.Lj8393:
+	jal	r0,.Lj8389
+.Lj8388:
 	addi	r3,r0,0
-.Lj8394:
+.Lj8389:
 	stw	r30,r3,-60
-.Lj8384:
+.Lj8379:
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8383
-	jal	r0,.Lj8385
-.Lj8385:
+	bne	r3,r0,.Lj8378
+	jal	r0,.Lj8380
+.Lj8380:
 	ldw	r30,r29,76
 	ldw	r31,r29,80
 	addi	r29,r29,84
@@ -72439,9 +72408,9 @@ SYSTEM_$$_ISGUIDEQUAL$TGUID$TGUID$$BOOLEAN:
 	ldw	r4,r4,0
 	ldw	r3,r3,0
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj8401
-	jal	r0,.Lj8402
-.Lj8401:
+	bne	r3,r0,.Lj8396
+	jal	r0,.Lj8397
+.Lj8396:
 	ldw	r3,r30,-56
 	addi	r3,r3,4
 	ldw	r4,r30,-60
@@ -72449,9 +72418,9 @@ SYSTEM_$$_ISGUIDEQUAL$TGUID$TGUID$$BOOLEAN:
 	ldw	r3,r3,0
 	ldw	r4,r4,0
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj8403
-	jal	r0,.Lj8402
-.Lj8403:
+	bne	r3,r0,.Lj8398
+	jal	r0,.Lj8397
+.Lj8398:
 	ldw	r3,r30,-56
 	addi	r3,r3,8
 	ldw	r4,r30,-60
@@ -72459,9 +72428,9 @@ SYSTEM_$$_ISGUIDEQUAL$TGUID$TGUID$$BOOLEAN:
 	ldw	r3,r3,0
 	ldw	r4,r4,0
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj8404
-	jal	r0,.Lj8402
-.Lj8404:
+	bne	r3,r0,.Lj8399
+	jal	r0,.Lj8397
+.Lj8399:
 	ldw	r3,r30,-56
 	addi	r3,r3,12
 	ldw	r4,r30,-60
@@ -72469,15 +72438,15 @@ SYSTEM_$$_ISGUIDEQUAL$TGUID$TGUID$$BOOLEAN:
 	ldw	r3,r3,0
 	ldw	r4,r4,0
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj8405
-	jal	r0,.Lj8402
-.Lj8405:
+	bne	r3,r0,.Lj8400
+	jal	r0,.Lj8397
+.Lj8400:
 	addi	r3,r0,1
 	stb	r30,r3,-64
-	jal	r0,.Lj8406
-.Lj8402:
+	jal	r0,.Lj8401
+.Lj8397:
 	stb	r30,r0,-64
-.Lj8406:
+.Lj8401:
 	ldbu	r1,r30,-64
 	ldw	r30,r29,64
 	ldw	r31,r29,68
@@ -72506,39 +72475,39 @@ SYSTEM_$$_GETINTERFACEBYENTRY$POINTER$PINTERFACEENTRY$formal$$BOOLEAN:
 	stw	r30,r3,-72
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8409
-	jal	r0,.Lj8410
-.Lj8409:
+	bne	r3,r0,.Lj8404
+	jal	r0,.Lj8405
+.Lj8404:
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8411
-	jal	r0,.Lj8410
-.Lj8411:
+	bne	r3,r0,.Lj8406
+	jal	r0,.Lj8405
+.Lj8406:
 	ldw	r3,r30,-60
 	ldw	r3,r3,16
-	beq	r3,r0,.Lj8413
+	beq	r3,r0,.Lj8408
 	addi	r4,r0,1
-	beq	r3,r4,.Lj8415
+	beq	r3,r4,.Lj8410
 	addi	r4,r0,2
-	beq	r3,r4,.Lj8417
+	beq	r3,r4,.Lj8412
 	addi	r4,r0,3
-	beq	r3,r4,.Lj8414
+	beq	r3,r4,.Lj8409
 	addi	r4,r0,4
-	beq	r3,r4,.Lj8416
+	beq	r3,r4,.Lj8411
 	addi	r4,r0,5
-	beq	r3,r4,.Lj8418
+	beq	r3,r4,.Lj8413
 	addi	r4,r0,6
-	beq	r3,r4,.Lj8414
-	jal	r0,.Lj8412
-.Lj8413:
+	beq	r3,r4,.Lj8409
+	jal	r0,.Lj8407
+.Lj8408:
 	ldw	r3,r30,-60
 	ldw	r4,r3,8
 	ldw	r3,r30,-56
 	add	r3,r3,r4
 	ldw	r4,r30,-64
 	stw	r4,r3,0
-	jal	r0,.Lj8412
-.Lj8414:
+	jal	r0,.Lj8407
+.Lj8409:
 	ldw	r3,r30,-60
 	ldw	r3,r3,8
 	ldw	r4,r30,-56
@@ -72546,8 +72515,8 @@ SYSTEM_$$_GETINTERFACEBYENTRY$POINTER$PINTERFACEENTRY$formal$$BOOLEAN:
 	ldw	r3,r30,-64
 	ldw	r4,r4,0
 	stw	r3,r4,0
-	jal	r0,.Lj8412
-.Lj8415:
+	jal	r0,.Lj8407
+.Lj8410:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	ldw	r4,r4,0
@@ -72559,8 +72528,8 @@ SYSTEM_$$_GETINTERFACEBYENTRY$POINTER$PINTERFACEENTRY$formal$$BOOLEAN:
 	ldw	r3,r30,-72
 	ldw	r5,r30,-76
 	jalr	r31,r5
-	jal	r0,.Lj8412
-.Lj8416:
+	jal	r0,.Lj8407
+.Lj8411:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	ldw	r3,r3,0
@@ -72573,8 +72542,8 @@ SYSTEM_$$_GETINTERFACEBYENTRY$POINTER$PINTERFACEENTRY$formal$$BOOLEAN:
 	jalr	r31,r4
 	ldw	r3,r30,-64
 	stw	r3,r1,0
-	jal	r0,.Lj8412
-.Lj8417:
+	jal	r0,.Lj8407
+.Lj8412:
 	ldw	r3,r30,-60
 	ldw	r3,r3,8
 	stw	r30,r3,-76
@@ -72582,8 +72551,8 @@ SYSTEM_$$_GETINTERFACEBYENTRY$POINTER$PINTERFACEENTRY$formal$$BOOLEAN:
 	ldw	r3,r30,-72
 	ldw	r5,r30,-76
 	jalr	r31,r5
-	jal	r0,.Lj8412
-.Lj8418:
+	jal	r0,.Lj8407
+.Lj8413:
 	ldw	r3,r30,-60
 	ldw	r3,r3,8
 	stw	r30,r3,-76
@@ -72592,9 +72561,9 @@ SYSTEM_$$_GETINTERFACEBYENTRY$POINTER$PINTERFACEENTRY$formal$$BOOLEAN:
 	jalr	r31,r4
 	ldw	r3,r30,-64
 	stw	r3,r1,0
-	jal	r0,.Lj8412
-.Lj8412:
-.Lj8410:
+	jal	r0,.Lj8407
+.Lj8407:
+.Lj8405:
 	ldw	r3,r30,-64
 	ldw	r3,r3,0
 	sne	r3,r3,r0
@@ -72624,19 +72593,19 @@ SYSTEM$_$TOBJECT_$__$$_GETINTERFACE$TGUID$formal$$BOOLEAN:
 	ldw	r4,r30,-56
 	la	r3,TC_$SYSTEM_$$_IOBJECTINSTANCE
 	call	SYSTEM_$$_ISGUIDEQUAL$TGUID$TGUID$$BOOLEAN
-	bne	r1,r0,.Lj8421
-	jal	r0,.Lj8422
-.Lj8421:
+	bne	r1,r0,.Lj8416
+	jal	r0,.Lj8417
+.Lj8416:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-64
 	stw	r4,r3,0
 	addi	r3,r0,1
 	stb	r30,r3,-68
-	jal	r0,.Lj8419
-.Lj8422:
+	jal	r0,.Lj8414
+.Lj8417:
 	ldw	r3,r30,-64
 	stw	r30,r3,-76
-.Lj8423:
+.Lj8418:
 	ldw	r3,r30,-76
 	ldw	r3,r3,0
 	ldw	r4,r30,-56
@@ -72649,41 +72618,41 @@ SYSTEM$_$TOBJECT_$__$$_GETINTERFACE$TGUID$formal$$BOOLEAN:
 	stb	r30,r1,-68
 	ldbu	r3,r30,-68
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8426
-	jal	r0,.Lj8427
-.Lj8427:
+	bne	r3,r0,.Lj8421
+	jal	r0,.Lj8422
+.Lj8422:
 	ldw	r3,r30,-72
 	ldw	r4,r3,16
 	addi	r3,r0,4
-	bltu	r4,r3,.Lj8429
-	jal	r0,.Lj8430
-.Lj8429:
-	jal	r0,.Lj8426
-.Lj8430:
-	jal	r0,.Lj8428
-.Lj8426:
+	bltu	r4,r3,.Lj8424
 	jal	r0,.Lj8425
-.Lj8428:
+.Lj8424:
+	jal	r0,.Lj8421
+.Lj8425:
+	jal	r0,.Lj8423
+.Lj8421:
+	jal	r0,.Lj8420
+.Lj8423:
 	ldw	r3,r30,-60
 	ldw	r3,r3,0
 	stw	r30,r3,-76
-	jal	r0,.Lj8423
-.Lj8425:
+	jal	r0,.Lj8418
+.Lj8420:
 	ldbu	r3,r30,-68
-	bne	r3,r0,.Lj8431
-	jal	r0,.Lj8432
-.Lj8431:
+	bne	r3,r0,.Lj8426
+	jal	r0,.Lj8427
+.Lj8426:
 	ldw	r3,r30,-72
 	ldw	r3,r3,16
-	beq	r3,r0,.Lj8434
+	beq	r3,r0,.Lj8429
 	addi	r4,r0,3
-	beq	r3,r4,.Lj8434
-	jal	r0,.Lj8435
-.Lj8434:
-	jal	r0,.Lj8433
-.Lj8435:
-	jal	r0,.Lj8432
-.Lj8433:
+	beq	r3,r4,.Lj8429
+	jal	r0,.Lj8430
+.Lj8429:
+	jal	r0,.Lj8428
+.Lj8430:
+	jal	r0,.Lj8427
+.Lj8428:
 	ldw	r3,r30,-60
 	ldw	r3,r3,0
 	ldw	r4,r30,-60
@@ -72691,8 +72660,8 @@ SYSTEM$_$TOBJECT_$__$$_GETINTERFACE$TGUID$formal$$BOOLEAN:
 	ldw	r4,r4,0
 	ldw	r4,r4,4
 	jalr	r31,r4
-.Lj8432:
-.Lj8419:
+.Lj8427:
+.Lj8414:
 	ldbu	r1,r30,-68
 	ldw	r30,r29,76
 	ldw	r31,r29,80
@@ -72718,19 +72687,19 @@ SYSTEM$_$TOBJECT_$__$$_GETINTERFACEWEAK$TGUID$formal$$BOOLEAN:
 	ldw	r4,r30,-56
 	la	r3,TC_$SYSTEM_$$_IOBJECTINSTANCE
 	call	SYSTEM_$$_ISGUIDEQUAL$TGUID$TGUID$$BOOLEAN
-	bne	r1,r0,.Lj8438
-	jal	r0,.Lj8439
-.Lj8438:
+	bne	r1,r0,.Lj8433
+	jal	r0,.Lj8434
+.Lj8433:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-64
 	stw	r4,r3,0
 	addi	r3,r0,1
 	stb	r30,r3,-68
-	jal	r0,.Lj8436
-.Lj8439:
+	jal	r0,.Lj8431
+.Lj8434:
 	ldw	r3,r30,-64
 	stw	r30,r3,-76
-.Lj8440:
+.Lj8435:
 	ldw	r3,r30,-76
 	ldw	r3,r3,0
 	ldw	r4,r30,-56
@@ -72743,41 +72712,41 @@ SYSTEM$_$TOBJECT_$__$$_GETINTERFACEWEAK$TGUID$formal$$BOOLEAN:
 	stb	r30,r1,-68
 	ldbu	r3,r30,-68
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8443
-	jal	r0,.Lj8444
-.Lj8444:
+	bne	r3,r0,.Lj8438
+	jal	r0,.Lj8439
+.Lj8439:
 	ldw	r3,r30,-72
 	ldw	r4,r3,16
 	addi	r3,r0,4
-	bltu	r4,r3,.Lj8446
-	jal	r0,.Lj8447
-.Lj8446:
-	jal	r0,.Lj8443
-.Lj8447:
-	jal	r0,.Lj8445
-.Lj8443:
+	bltu	r4,r3,.Lj8441
 	jal	r0,.Lj8442
-.Lj8445:
+.Lj8441:
+	jal	r0,.Lj8438
+.Lj8442:
+	jal	r0,.Lj8440
+.Lj8438:
+	jal	r0,.Lj8437
+.Lj8440:
 	ldw	r3,r30,-60
 	ldw	r3,r3,0
 	stw	r30,r3,-76
-	jal	r0,.Lj8440
-.Lj8442:
+	jal	r0,.Lj8435
+.Lj8437:
 	ldbu	r3,r30,-68
-	bne	r3,r0,.Lj8448
-	jal	r0,.Lj8449
-.Lj8448:
+	bne	r3,r0,.Lj8443
+	jal	r0,.Lj8444
+.Lj8443:
 	ldw	r3,r30,-72
 	ldw	r3,r3,16
-	beq	r3,r0,.Lj8451
+	beq	r3,r0,.Lj8446
 	addi	r4,r0,3
-	beq	r3,r4,.Lj8451
-	jal	r0,.Lj8452
-.Lj8452:
-	jal	r0,.Lj8450
-.Lj8451:
-	jal	r0,.Lj8449
-.Lj8450:
+	beq	r3,r4,.Lj8446
+	jal	r0,.Lj8447
+.Lj8447:
+	jal	r0,.Lj8445
+.Lj8446:
+	jal	r0,.Lj8444
+.Lj8445:
 	ldw	r3,r30,-60
 	ldw	r3,r3,0
 	ldw	r4,r30,-60
@@ -72785,8 +72754,8 @@ SYSTEM$_$TOBJECT_$__$$_GETINTERFACEWEAK$TGUID$formal$$BOOLEAN:
 	ldw	r4,r4,0
 	ldw	r4,r4,8
 	jalr	r31,r4
-.Lj8449:
-.Lj8436:
+.Lj8444:
+.Lj8431:
 	ldbu	r1,r30,-68
 	ldw	r30,r29,76
 	ldw	r31,r29,80
@@ -72811,7 +72780,7 @@ SYSTEM$_$TOBJECT_$__$$_GETINTERFACEBYSTR$SHORTSTRING$formal$$BOOLEAN:
 	stw	r30,r5,-60
 	ldw	r3,r30,-64
 	stw	r30,r3,-76
-.Lj8455:
+.Lj8450:
 	ldw	r3,r30,-76
 	ldw	r3,r3,0
 	ldw	r4,r30,-56
@@ -72824,58 +72793,58 @@ SYSTEM$_$TOBJECT_$__$$_GETINTERFACEBYSTR$SHORTSTRING$formal$$BOOLEAN:
 	stb	r30,r1,-68
 	ldbu	r3,r30,-68
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8458
-	jal	r0,.Lj8459
-.Lj8459:
+	bne	r3,r0,.Lj8453
+	jal	r0,.Lj8454
+.Lj8454:
 	ldw	r3,r30,-72
 	ldw	r4,r3,16
 	addi	r3,r0,4
-	bltu	r4,r3,.Lj8461
-	jal	r0,.Lj8462
-.Lj8461:
-	jal	r0,.Lj8458
-.Lj8462:
-	jal	r0,.Lj8460
-.Lj8458:
+	bltu	r4,r3,.Lj8456
 	jal	r0,.Lj8457
-.Lj8460:
+.Lj8456:
+	jal	r0,.Lj8453
+.Lj8457:
+	jal	r0,.Lj8455
+.Lj8453:
+	jal	r0,.Lj8452
+.Lj8455:
 	ldw	r3,r30,-60
 	ldw	r3,r3,0
 	stw	r30,r3,-76
-	jal	r0,.Lj8455
-.Lj8457:
+	jal	r0,.Lj8450
+.Lj8452:
 	ldbu	r3,r30,-68
-	bne	r3,r0,.Lj8463
-	jal	r0,.Lj8464
-.Lj8463:
+	bne	r3,r0,.Lj8458
+	jal	r0,.Lj8459
+.Lj8458:
 	ldw	r3,r30,-72
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8466
-	jal	r0,.Lj8467
-.Lj8466:
+	bne	r3,r0,.Lj8461
+	jal	r0,.Lj8462
+.Lj8461:
 	ldw	r3,r30,-72
 	ldw	r3,r3,0
 	ldw	r3,r3,0
-	jal	r0,.Lj8468
-.Lj8467:
+	jal	r0,.Lj8463
+.Lj8462:
 	addi	r3,r0,0
-.Lj8468:
+.Lj8463:
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8465
-	jal	r0,.Lj8464
-.Lj8465:
+	bne	r3,r0,.Lj8460
+	jal	r0,.Lj8459
+.Lj8460:
 	ldw	r3,r30,-72
 	ldw	r4,r3,16
-	beq	r4,r0,.Lj8470
+	beq	r4,r0,.Lj8465
 	addi	r3,r0,3
-	beq	r4,r3,.Lj8470
-	jal	r0,.Lj8471
-.Lj8470:
-	jal	r0,.Lj8469
-.Lj8471:
+	beq	r4,r3,.Lj8465
+	jal	r0,.Lj8466
+.Lj8465:
 	jal	r0,.Lj8464
-.Lj8469:
+.Lj8466:
+	jal	r0,.Lj8459
+.Lj8464:
 	ldw	r3,r30,-60
 	ldw	r3,r3,0
 	ldw	r4,r30,-60
@@ -72883,7 +72852,7 @@ SYSTEM$_$TOBJECT_$__$$_GETINTERFACEBYSTR$SHORTSTRING$formal$$BOOLEAN:
 	ldw	r4,r4,0
 	ldw	r4,r4,4
 	jalr	r31,r4
-.Lj8464:
+.Lj8459:
 	ldbu	r1,r30,-68
 	ldw	r30,r29,76
 	ldw	r31,r29,80
@@ -72934,8 +72903,8 @@ SYSTEM$_$TOBJECT_$__$$_GETINTERFACEENTRY$TGUID$$PINTERFACEENTRY:
 	stw	r30,r4,-56
 	ldw	r3,r30,-60
 	stw	r30,r3,-76
-	jal	r0,.Lj8477
-.Lj8476:
+	jal	r0,.Lj8472
+.Lj8471:
 	ldw	r3,r30,-76
 	ldw	r3,r3,40
 	stw	r30,r3,-72
@@ -72945,90 +72914,90 @@ SYSTEM$_$TOBJECT_$__$$_GETINTERFACEENTRY$TGUID$$PINTERFACEENTRY:
 	ldw	r3,r30,-72
 	addi	r3,r3,4
 	stw	r30,r3,-64
-	jal	r0,.Lj8480
-.Lj8479:
+	jal	r0,.Lj8475
+.Lj8474:
 	ldw	r3,r30,-64
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8482
-	jal	r0,.Lj8483
-.Lj8482:
+	bne	r3,r0,.Lj8477
+	jal	r0,.Lj8478
+.Lj8477:
 	ldw	r3,r30,-64
 	ldw	r3,r3,0
 	ldw	r3,r3,0
+	jal	r0,.Lj8479
+.Lj8478:
+	addi	r3,r0,0
+.Lj8479:
+	sne	r3,r3,r0
+	bne	r3,r0,.Lj8480
+	jal	r0,.Lj8481
+.Lj8480:
+	ldw	r3,r30,-64
+	ldw	r3,r3,0
+	sne	r3,r3,r0
+	bne	r3,r0,.Lj8483
 	jal	r0,.Lj8484
 .Lj8483:
-	addi	r3,r0,0
+	ldw	r3,r30,-64
+	ldw	r3,r3,0
+	ldw	r3,r3,0
+	jal	r0,.Lj8485
 .Lj8484:
-	sne	r3,r3,r0
-	bne	r3,r0,.Lj8485
-	jal	r0,.Lj8486
-.Lj8485:
-	ldw	r3,r30,-64
-	ldw	r3,r3,0
-	sne	r3,r3,r0
-	bne	r3,r0,.Lj8488
-	jal	r0,.Lj8489
-.Lj8488:
-	ldw	r3,r30,-64
-	ldw	r3,r3,0
-	ldw	r3,r3,0
-	jal	r0,.Lj8490
-.Lj8489:
 	addi	r3,r0,0
-.Lj8490:
+.Lj8485:
 	ldw	r4,r30,-56
 	call	SYSTEM_$$_ISGUIDEQUAL$TGUID$TGUID$$BOOLEAN
-	bne	r1,r0,.Lj8487
-	jal	r0,.Lj8486
-.Lj8487:
-	jal	r0,.Lj8474
-.Lj8486:
+	bne	r1,r0,.Lj8482
+	jal	r0,.Lj8481
+.Lj8482:
+	jal	r0,.Lj8469
+.Lj8481:
 	ldw	r3,r30,-64
 	addi	r3,r3,20
 	stw	r30,r3,-64
 	ldw	r3,r30,-68
 	addi	r3,r3,-1
 	stw	r30,r3,-68
-.Lj8480:
+.Lj8475:
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sgtu	r3,r4,r3
-	bne	r3,r0,.Lj8479
-	jal	r0,.Lj8481
-.Lj8481:
+	bne	r3,r0,.Lj8474
+	jal	r0,.Lj8476
+.Lj8476:
 	ldw	r3,r30,-76
 	ldw	r3,r3,8
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8491
-	jal	r0,.Lj8492
-.Lj8491:
+	bne	r3,r0,.Lj8486
+	jal	r0,.Lj8487
+.Lj8486:
 	ldw	r3,r30,-76
 	ldw	r3,r3,8
 	ldw	r3,r3,0
-	jal	r0,.Lj8493
-.Lj8492:
+	jal	r0,.Lj8488
+.Lj8487:
 	addi	r3,r0,0
-.Lj8493:
+.Lj8488:
 	stw	r30,r3,-76
-.Lj8477:
+.Lj8472:
 	ldw	r3,r30,-76
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8494
-	jal	r0,.Lj8495
-.Lj8494:
+	bne	r3,r0,.Lj8489
+	jal	r0,.Lj8490
+.Lj8489:
 	ldw	r3,r30,-76
 	ldw	r3,r3,40
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8496
-	jal	r0,.Lj8495
-.Lj8496:
-	jal	r0,.Lj8476
-.Lj8495:
-	jal	r0,.Lj8478
-.Lj8478:
+	bne	r3,r0,.Lj8491
+	jal	r0,.Lj8490
+.Lj8491:
+	jal	r0,.Lj8471
+.Lj8490:
+	jal	r0,.Lj8473
+.Lj8473:
 	stw	r30,r0,-64
-.Lj8474:
+.Lj8469:
 	ldw	r1,r30,-64
 	ldw	r30,r29,76
 	ldw	r31,r29,80
@@ -73052,8 +73021,8 @@ SYSTEM$_$TOBJECT_$__$$_GETINTERFACEENTRYBYSTR$SHORTSTRING$$PINTERFACEENTRY:
 	stw	r30,r4,-56
 	ldw	r3,r30,-60
 	stw	r30,r3,-76
-	jal	r0,.Lj8500
-.Lj8499:
+	jal	r0,.Lj8495
+.Lj8494:
 	ldw	r3,r30,-76
 	ldw	r3,r3,40
 	stw	r30,r3,-72
@@ -73063,91 +73032,91 @@ SYSTEM$_$TOBJECT_$__$$_GETINTERFACEENTRYBYSTR$SHORTSTRING$$PINTERFACEENTRY:
 	ldw	r3,r30,-72
 	addi	r3,r3,4
 	stw	r30,r3,-64
-	jal	r0,.Lj8503
-.Lj8502:
+	jal	r0,.Lj8498
+.Lj8497:
 	ldw	r3,r30,-64
 	ldw	r3,r3,12
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8505
-	jal	r0,.Lj8506
-.Lj8505:
+	bne	r3,r0,.Lj8500
+	jal	r0,.Lj8501
+.Lj8500:
 	ldw	r3,r30,-64
 	ldw	r3,r3,12
 	ldw	r3,r3,0
+	jal	r0,.Lj8502
+.Lj8501:
+	addi	r3,r0,0
+.Lj8502:
+	sne	r3,r3,r0
+	bne	r3,r0,.Lj8503
+	jal	r0,.Lj8504
+.Lj8503:
+	ldw	r3,r30,-64
+	ldw	r3,r3,12
+	sne	r3,r3,r0
+	bne	r3,r0,.Lj8506
 	jal	r0,.Lj8507
 .Lj8506:
-	addi	r3,r0,0
-.Lj8507:
-	sne	r3,r3,r0
-	bne	r3,r0,.Lj8508
-	jal	r0,.Lj8509
-.Lj8508:
-	ldw	r3,r30,-64
-	ldw	r3,r3,12
-	sne	r3,r3,r0
-	bne	r3,r0,.Lj8511
-	jal	r0,.Lj8512
-.Lj8511:
 	ldw	r3,r30,-64
 	ldw	r3,r3,12
 	ldw	r3,r3,0
-	jal	r0,.Lj8513
-.Lj8512:
+	jal	r0,.Lj8508
+.Lj8507:
 	addi	r3,r0,0
-.Lj8513:
+.Lj8508:
 	ldw	r4,r30,-56
 	call	fpc_shortstr_compare_equal
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj8510
-	jal	r0,.Lj8509
-.Lj8510:
-	jal	r0,.Lj8497
-.Lj8509:
+	bne	r3,r0,.Lj8505
+	jal	r0,.Lj8504
+.Lj8505:
+	jal	r0,.Lj8492
+.Lj8504:
 	ldw	r3,r30,-64
 	addi	r3,r3,20
 	stw	r30,r3,-64
 	ldw	r3,r30,-68
 	addi	r3,r3,-1
 	stw	r30,r3,-68
-.Lj8503:
+.Lj8498:
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sgtu	r3,r4,r3
-	bne	r3,r0,.Lj8502
-	jal	r0,.Lj8504
-.Lj8504:
+	bne	r3,r0,.Lj8497
+	jal	r0,.Lj8499
+.Lj8499:
 	ldw	r3,r30,-76
 	ldw	r3,r3,8
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8514
-	jal	r0,.Lj8515
-.Lj8514:
+	bne	r3,r0,.Lj8509
+	jal	r0,.Lj8510
+.Lj8509:
 	ldw	r3,r30,-76
 	ldw	r3,r3,8
 	ldw	r3,r3,0
-	jal	r0,.Lj8516
-.Lj8515:
+	jal	r0,.Lj8511
+.Lj8510:
 	addi	r3,r0,0
-.Lj8516:
+.Lj8511:
 	stw	r30,r3,-76
-.Lj8500:
+.Lj8495:
 	ldw	r3,r30,-76
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8517
-	jal	r0,.Lj8518
-.Lj8517:
+	bne	r3,r0,.Lj8512
+	jal	r0,.Lj8513
+.Lj8512:
 	ldw	r3,r30,-76
 	ldw	r3,r3,40
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8519
-	jal	r0,.Lj8518
-.Lj8519:
-	jal	r0,.Lj8499
-.Lj8518:
-	jal	r0,.Lj8501
-.Lj8501:
+	bne	r3,r0,.Lj8514
+	jal	r0,.Lj8513
+.Lj8514:
+	jal	r0,.Lj8494
+.Lj8513:
+	jal	r0,.Lj8496
+.Lj8496:
 	stw	r30,r0,-64
-.Lj8497:
+.Lj8492:
 	ldw	r1,r30,-64
 	ldw	r30,r29,76
 	ldw	r31,r29,80
@@ -73194,33 +73163,33 @@ SYSTEM$_$TOBJECT_$__$$_GETLASTCASTERRORINFO$OPENSTRING$OPENSTRING:
 	stw	r30,r6,-68
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj8528
+	beq	r5,r0,.Lj8523
 	la	r4,U_$SYSTEM_$$_CASTERROR
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj8529
-.Lj8528:
+	jal	r0,.Lj8524
+.Lj8523:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
-.Lj8529:
+.Lj8524:
 	ldw	r3,r1,0
 	addi	r4,r0,1
-	beq	r3,r4,.Lj8526
+	beq	r3,r4,.Lj8521
 	addi	r4,r0,2
-	beq	r3,r4,.Lj8527
-	jal	r0,.Lj8525
-.Lj8526:
+	beq	r3,r4,.Lj8522
+	jal	r0,.Lj8520
+.Lj8521:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8530
+	beq	r4,r0,.Lj8525
 	la	r5,U_$SYSTEM_$$_CASTERROR
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8531
-.Lj8530:
+	jal	r0,.Lj8526
+.Lj8525:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
-.Lj8531:
+.Lj8526:
 	ldw	r3,r1,4
 	addi	r4,r30,-324
 	call	SYSTEM$_$TOBJECT_$__$$_CLASSNAME$$SHORTSTRING
@@ -73228,48 +73197,48 @@ SYSTEM$_$TOBJECT_$__$$_GETLASTCASTERRORINFO$OPENSTRING$OPENSTRING:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-64
 	call	fpc_shortstr_to_shortstr
-	jal	r0,.Lj8524
-.Lj8527:
+	jal	r0,.Lj8519
+.Lj8522:
 	la	r5,.Ld35
 	ldw	r3,r30,-56
 	ldw	r4,r30,-64
 	call	fpc_shortstr_to_shortstr
-	jal	r0,.Lj8524
-.Lj8525:
+	jal	r0,.Lj8519
+.Lj8520:
 	ldw	r3,r30,-56
 	stb	r3,r0,0
-.Lj8524:
+.Lj8519:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8537
+	beq	r4,r0,.Lj8532
 	la	r5,U_$SYSTEM_$$_CASTERROR
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8538
-.Lj8537:
+	jal	r0,.Lj8533
+.Lj8532:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
-.Lj8538:
+.Lj8533:
 	ldw	r3,r1,8
 	addi	r4,r0,1
-	beq	r3,r4,.Lj8534
+	beq	r3,r4,.Lj8529
 	addi	r4,r0,2
-	beq	r3,r4,.Lj8535
+	beq	r3,r4,.Lj8530
 	addi	r4,r0,3
-	beq	r3,r4,.Lj8536
-	jal	r0,.Lj8533
-.Lj8534:
+	beq	r3,r4,.Lj8531
+	jal	r0,.Lj8528
+.Lj8529:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj8539
+	beq	r5,r0,.Lj8534
 	la	r4,U_$SYSTEM_$$_CASTERROR
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj8540
-.Lj8539:
+	jal	r0,.Lj8535
+.Lj8534:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
-.Lj8540:
+.Lj8535:
 	ldw	r3,r1,12
 	addi	r4,r30,-324
 	call	SYSTEM$_$TOBJECT_$__$$_CLASSNAME$$SHORTSTRING
@@ -73277,19 +73246,19 @@ SYSTEM$_$TOBJECT_$__$$_GETLASTCASTERRORINFO$OPENSTRING$OPENSTRING:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-68
 	call	fpc_shortstr_to_shortstr
-	jal	r0,.Lj8532
-.Lj8535:
+	jal	r0,.Lj8527
+.Lj8530:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8541
+	beq	r4,r0,.Lj8536
 	la	r5,U_$SYSTEM_$$_CASTERROR
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8542
-.Lj8541:
+	jal	r0,.Lj8537
+.Lj8536:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
-.Lj8542:
+.Lj8537:
 	addi	r3,r1,12
 	addi	r4,r30,-324
 	call	SYSTEM$_$TGUID_$__$$_ASSTRING$$SHORTSTRING
@@ -73297,51 +73266,51 @@ SYSTEM$_$TOBJECT_$__$$_GETLASTCASTERRORINFO$OPENSTRING$OPENSTRING:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-68
 	call	fpc_shortstr_to_shortstr
-	jal	r0,.Lj8532
-.Lj8536:
+	jal	r0,.Lj8527
+.Lj8531:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj8543
+	beq	r5,r0,.Lj8538
 	la	r4,U_$SYSTEM_$$_CASTERROR
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj8544
-.Lj8543:
+	jal	r0,.Lj8539
+.Lj8538:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
-.Lj8544:
+.Lj8539:
 	addi	r5,r1,12
 	ldw	r3,r30,-60
 	ldw	r4,r30,-68
 	call	fpc_shortstr_to_shortstr
-	jal	r0,.Lj8532
-.Lj8533:
+	jal	r0,.Lj8527
+.Lj8528:
 	ldw	r3,r30,-60
 	stb	r3,r0,0
-.Lj8532:
+.Lj8527:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8545
+	beq	r4,r0,.Lj8540
 	la	r5,U_$SYSTEM_$$_CASTERROR
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8546
-.Lj8545:
+	jal	r0,.Lj8541
+.Lj8540:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
-.Lj8546:
+.Lj8541:
 	stw	r1,r0,0
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8547
+	beq	r4,r0,.Lj8542
 	la	r5,U_$SYSTEM_$$_CASTERROR
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8548
-.Lj8547:
+	jal	r0,.Lj8543
+.Lj8542:
 	la	r3,U_$SYSTEM_$$_CASTERROR
 	addi	r1,r3,4
-.Lj8548:
+.Lj8543:
 	stw	r1,r0,8
 	ldw	r30,r29,324
 	ldw	r31,r29,328
@@ -73366,9 +73335,9 @@ SYSTEM$_$TOBJECT_$__$$_UNITNAME$$ANSISTRING:
 	stw	r30,r1,-64
 	ldw	r3,r30,-64
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8551
-	jal	r0,.Lj8552
-.Lj8551:
+	bne	r3,r0,.Lj8546
+	jal	r0,.Lj8547
+.Lj8546:
 	ldw	r3,r30,-64
 	ldbu	r3,r3,1
 	addi	r3,r3,2
@@ -73386,12 +73355,12 @@ SYSTEM$_$TOBJECT_$__$$_UNITNAME$$ANSISTRING:
 	ldw	r3,r30,-60
 	addi	r5,r0,0
 	call	fpc_shortstr_to_ansistr
-	jal	r0,.Lj8553
-.Lj8552:
+	jal	r0,.Lj8548
+.Lj8547:
 	ldw	r3,r30,-60
 	addi	r4,r0,0
 	call	fpc_ansistr_assign
-.Lj8553:
+.Lj8548:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -73421,15 +73390,15 @@ SYSTEM$_$TOBJECT_$__$$_QUALIFIEDCLASSNAME$$ANSISTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj8557
+	bne	r1,r0,.Lj8552
 	addi	r4,r30,-64
 	ldw	r3,r30,-56
 	call	SYSTEM$_$TOBJECT_$__$$_UNITNAME$$ANSISTRING
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8559
-	jal	r0,.Lj8560
-.Lj8559:
+	bne	r3,r0,.Lj8554
+	jal	r0,.Lj8555
+.Lj8554:
 	addi	r4,r30,-420
 	ldw	r3,r30,-56
 	call	SYSTEM$_$TOBJECT_$__$$_CLASSNAME$$SHORTSTRING
@@ -73437,8 +73406,8 @@ SYSTEM$_$TOBJECT_$__$$_QUALIFIEDCLASSNAME$$ANSISTRING:
 	ldw	r3,r30,-60
 	addi	r5,r0,0
 	call	fpc_shortstr_to_ansistr
-	jal	r0,.Lj8561
-.Lj8560:
+	jal	r0,.Lj8556
+.Lj8555:
 	ldw	r3,r30,-64
 	stw	r30,r3,-176
 	la	r3,.Ld36
@@ -73457,19 +73426,19 @@ SYSTEM$_$TOBJECT_$__$$_QUALIFIEDCLASSNAME$$ANSISTRING:
 	addi	r6,r0,0
 	addi	r5,r0,2
 	call	fpc_ansistr_concat_multi
-.Lj8561:
-.Lj8557:
+.Lj8556:
+.Lj8552:
 	call	fpc_popaddrstack
 	addi	r3,r30,-424
 	call	fpc_ansistr_decr_ref
 	addi	r3,r30,-64
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj8556
+	beq	r3,r0,.Lj8551
 	call	fpc_reraise
 	stw	r30,r0,-164
-	jal	r0,.Lj8557
-.Lj8556:
+	jal	r0,.Lj8552
+.Lj8551:
 	ldw	r30,r29,680
 	ldw	r31,r29,684
 	addi	r29,r29,688
@@ -73623,16 +73592,16 @@ SYSTEM$_$TINTERFACEDOBJECT_$__$$_QUERYINTERFACE$TGUID$formal$$LONGINT:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-64
 	call	SYSTEM$_$TOBJECT_$__$$_GETINTERFACE$TGUID$formal$$BOOLEAN
-	bne	r1,r0,.Lj8576
-	jal	r0,.Lj8577
-.Lj8576:
+	bne	r1,r0,.Lj8571
+	jal	r0,.Lj8572
+.Lj8571:
 	stw	r30,r0,-68
-	jal	r0,.Lj8578
-.Lj8577:
+	jal	r0,.Lj8573
+.Lj8572:
 	lui	r3,524292
 	ori	r3,r3,2
 	stw	r30,r3,-68
-.Lj8578:
+.Lj8573:
 	ldw	r1,r30,-68
 	ldw	r30,r29,68
 	ldw	r31,r29,72
@@ -73658,28 +73627,28 @@ SYSTEM$_$TINTERFACEDOBJECT_$__$$__ADDREF$$LONGINT:
 	stw	r30,r3,-60
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8581
-	jal	r0,.Lj8582
-.Lj8581:
+	bne	r3,r0,.Lj8576
+	jal	r0,.Lj8577
+.Lj8576:
 	ldw	r4,r30,-60
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj8583
-	jal	r0,.Lj8584
-.Lj8583:
+	bne	r3,r0,.Lj8578
+	jal	r0,.Lj8579
+.Lj8578:
 	ldw	r3,r30,-56
 	addi	r3,r3,4
 	call	SYSTEM_$$_INTERLOCKEDINCREMENT$LONGINT$$LONGINT
 	stw	r30,r1,-60
-.Lj8584:
-	jal	r0,.Lj8579
-.Lj8582:
+.Lj8579:
+	jal	r0,.Lj8574
+.Lj8577:
 	ldw	r4,r30,-56
 	addi	r3,r0,1
 	stw	r4,r3,4
 	addi	r3,r0,1
 	stw	r30,r3,-60
-.Lj8579:
+.Lj8574:
 	ldw	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -73706,17 +73675,17 @@ SYSTEM$_$TINTERFACEDOBJECT_$__$$__RELEASE$$LONGINT:
 	ldw	r3,r30,-60
 	addi	r3,r3,-1
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8587
-	jal	r0,.Lj8588
-.Lj8587:
+	bne	r3,r0,.Lj8582
+	jal	r0,.Lj8583
+.Lj8582:
 	ldw	r4,r30,-60
 	addi	r3,r0,0
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj8589
-	jal	r0,.Lj8590
-.Lj8589:
+	bne	r3,r0,.Lj8584
 	jal	r0,.Lj8585
-.Lj8590:
+.Lj8584:
+	jal	r0,.Lj8580
+.Lj8585:
 	ldw	r3,r30,-56
 	addi	r3,r3,4
 	call	SYSTEM_$$_INTERLOCKEDDECREMENT$LONGINT$$LONGINT
@@ -73724,15 +73693,15 @@ SYSTEM$_$TINTERFACEDOBJECT_$__$$__RELEASE$$LONGINT:
 	ldw	r4,r30,-60
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj8591
-	jal	r0,.Lj8592
-.Lj8591:
-	jal	r0,.Lj8585
-.Lj8592:
-	jal	r0,.Lj8593
-.Lj8588:
+	bne	r3,r0,.Lj8586
+	jal	r0,.Lj8587
+.Lj8586:
+	jal	r0,.Lj8580
+.Lj8587:
+	jal	r0,.Lj8588
+.Lj8583:
 	stw	r30,r0,-60
-.Lj8593:
+.Lj8588:
 	ldw	r4,r30,-56
 	addi	r3,r0,-1
 	stw	r4,r3,4
@@ -73742,7 +73711,7 @@ SYSTEM$_$TINTERFACEDOBJECT_$__$$__RELEASE$$LONGINT:
 	ldw	r5,r5,0
 	ldw	r5,r5,48
 	jalr	r31,r5
-.Lj8585:
+.Lj8580:
 	ldw	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -73767,15 +73736,15 @@ SYSTEM$_$TINTERFACEDOBJECT_$__$$_DESTROY:
 	ldw	r4,r30,-56
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj8596
-	jal	r0,.Lj8597
-.Lj8596:
+	bne	r3,r0,.Lj8591
+	jal	r0,.Lj8592
+.Lj8591:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-60
 	ldw	r4,r4,0
 	ldw	r4,r4,72
 	jalr	r31,r4
-.Lj8597:
+.Lj8592:
 	ldw	r3,r30,-60
 	stw	r3,r0,4
 	addi	r4,r0,0
@@ -73783,20 +73752,20 @@ SYSTEM$_$TINTERFACEDOBJECT_$__$$_DESTROY:
 	call	SYSTEM$_$TOBJECT_$__$$_DESTROY
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8598
-	jal	r0,.Lj8599
-.Lj8598:
+	bne	r3,r0,.Lj8593
+	jal	r0,.Lj8594
+.Lj8593:
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8600
-	jal	r0,.Lj8599
-.Lj8600:
+	bne	r3,r0,.Lj8595
+	jal	r0,.Lj8594
+.Lj8595:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-60
 	ldw	r4,r4,0
 	ldw	r4,r4,56
 	jalr	r31,r4
-.Lj8599:
+.Lj8594:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -73821,19 +73790,19 @@ SYSTEM$_$TINTERFACEDOBJECT_$__$$_AFTERCONSTRUCTION:
 	ldw	r3,r3,4
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8603
-	jal	r0,.Lj8604
-.Lj8603:
+	bne	r3,r0,.Lj8598
+	jal	r0,.Lj8599
+.Lj8598:
 	ldw	r3,r30,-56
 	stw	r3,r0,4
-	jal	r0,.Lj8605
-.Lj8604:
+	jal	r0,.Lj8600
+.Lj8599:
 	ldw	r3,r30,-56
 	addi	r11,r3,4
 	addi	r3,r11,0
 	call	SYSTEM_$$_INTERLOCKEDDECREMENT$LONGINT$$LONGINT
 	seq	r3,r1,r0
-.Lj8605:
+.Lj8600:
 	ldw	r11,r29,56
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -73858,12 +73827,12 @@ SYSTEM$_$TINTERFACEDOBJECT_$__$$_BEFOREDESTRUCTION:
 	ldw	r4,r3,4
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj8608
-	jal	r0,.Lj8609
-.Lj8608:
+	bne	r3,r0,.Lj8603
+	jal	r0,.Lj8604
+.Lj8603:
 	addi	r3,r0,204
 	call	FPC_HANDLEERROR
-.Lj8609:
+.Lj8604:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -73888,13 +73857,13 @@ SYSTEM$_$TINTERFACEDOBJECT_$__$$_NEWINSTANCE$$TOBJECT:
 	stw	r30,r1,-60
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8612
-	jal	r0,.Lj8613
-.Lj8612:
+	bne	r3,r0,.Lj8607
+	jal	r0,.Lj8608
+.Lj8607:
 	ldw	r3,r30,-60
 	addi	r4,r0,1
 	stw	r3,r4,4
-.Lj8613:
+.Lj8608:
 	ldw	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -73920,22 +73889,22 @@ SYSTEM$_$TAGGREGATEDOBJECT_$__$$_CREATE$IUNKNOWN$$TAGGREGATEDOBJECT:
 	ldw	r3,r30,-60
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8616
-	jal	r0,.Lj8617
-.Lj8616:
+	bne	r3,r0,.Lj8611
+	jal	r0,.Lj8612
+.Lj8611:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-64
 	ldw	r4,r4,52
 	jalr	r31,r4
 	stw	r30,r1,-64
-.Lj8617:
+.Lj8612:
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8618
-	jal	r0,.Lj8619
-.Lj8618:
+	bne	r3,r0,.Lj8613
 	jal	r0,.Lj8614
-.Lj8619:
+.Lj8613:
+	jal	r0,.Lj8609
+.Lj8614:
 	addi	r5,r30,-80
 	addi	r4,r30,-164
 	addi	r3,r0,1
@@ -73943,7 +73912,7 @@ SYSTEM$_$TAGGREGATEDOBJECT_$__$$_CREATE$IUNKNOWN$$TAGGREGATEDOBJECT:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-168
-	bne	r1,r0,.Lj8624
+	bne	r1,r0,.Lj8619
 	addi	r3,r0,-1
 	stw	r30,r3,-68
 	addi	r4,r0,0
@@ -73956,24 +73925,24 @@ SYSTEM$_$TAGGREGATEDOBJECT_$__$$_CREATE$IUNKNOWN$$TAGGREGATEDOBJECT:
 	stw	r30,r3,-68
 	ldw	r3,r30,-64
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8626
-	jal	r0,.Lj8627
-.Lj8626:
+	bne	r3,r0,.Lj8621
+	jal	r0,.Lj8622
+.Lj8621:
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8628
-	jal	r0,.Lj8627
-.Lj8628:
+	bne	r3,r0,.Lj8623
+	jal	r0,.Lj8622
+.Lj8623:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-64
 	ldw	r4,r4,0
 	ldw	r4,r4,68
 	jalr	r31,r4
-.Lj8627:
-.Lj8624:
+.Lj8622:
+.Lj8619:
 	call	fpc_popaddrstack
 	ldw	r3,r30,-168
-	beq	r3,r0,.Lj8622
+	beq	r3,r0,.Lj8617
 	addi	r5,r30,-180
 	addi	r4,r30,-264
 	addi	r3,r0,1
@@ -73981,31 +73950,31 @@ SYSTEM$_$TAGGREGATEDOBJECT_$__$$_CREATE$IUNKNOWN$$TAGGREGATEDOBJECT:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-268
-	bne	r1,r0,.Lj8629
+	bne	r1,r0,.Lj8624
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8630
-	jal	r0,.Lj8631
-.Lj8630:
+	bne	r3,r0,.Lj8625
+	jal	r0,.Lj8626
+.Lj8625:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-64
 	ldw	r5,r30,-64
 	ldw	r5,r5,0
 	ldw	r5,r5,48
 	jalr	r31,r5
-.Lj8631:
+.Lj8626:
 	call	fpc_popaddrstack
 	call	fpc_reraise
-.Lj8629:
+.Lj8624:
 	call	fpc_popaddrstack
 	ldw	r3,r30,-268
-	beq	r3,r0,.Lj8632
+	beq	r3,r0,.Lj8627
 	call	fpc_raise_nested
-.Lj8632:
+.Lj8627:
 	call	fpc_doneexception
-	jal	r0,.Lj8622
-.Lj8622:
-.Lj8614:
+	jal	r0,.Lj8617
+.Lj8617:
+.Lj8609:
 	ldw	r1,r30,-64
 	ldw	r30,r29,268
 	ldw	r31,r29,272
@@ -74138,16 +74107,16 @@ SYSTEM$_$TCONTAINEDOBJECT_$__$$_QUERYINTERFACE$TGUID$formal$$LONGINT:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-64
 	call	SYSTEM$_$TOBJECT_$__$$_GETINTERFACE$TGUID$formal$$BOOLEAN
-	bne	r1,r0,.Lj8643
-	jal	r0,.Lj8644
-.Lj8643:
+	bne	r1,r0,.Lj8638
+	jal	r0,.Lj8639
+.Lj8638:
 	stw	r30,r0,-68
-	jal	r0,.Lj8645
-.Lj8644:
+	jal	r0,.Lj8640
+.Lj8639:
 	lui	r3,524292
 	ori	r3,r3,2
 	stw	r30,r3,-68
-.Lj8645:
+.Lj8640:
 	ldw	r1,r30,-68
 	ldw	r30,r29,68
 	ldw	r31,r29,72
@@ -74174,16 +74143,16 @@ SYSTEM$_$TNOREFCOUNTOBJECT_$__$$_QUERYINTERFACE$TGUID$formal$$LONGINT:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-64
 	call	SYSTEM$_$TOBJECT_$__$$_GETINTERFACE$TGUID$formal$$BOOLEAN
-	bne	r1,r0,.Lj8648
-	jal	r0,.Lj8649
-.Lj8648:
+	bne	r1,r0,.Lj8643
+	jal	r0,.Lj8644
+.Lj8643:
 	stw	r30,r0,-68
-	jal	r0,.Lj8650
-.Lj8649:
+	jal	r0,.Lj8645
+.Lj8644:
 	lui	r3,524292
 	ori	r3,r3,2
 	stw	r30,r3,-68
-.Lj8650:
+.Lj8645:
 	ldw	r1,r30,-68
 	ldw	r30,r29,68
 	ldw	r31,r29,72
@@ -74252,22 +74221,22 @@ SYSTEM$_$TCUSTOMATTRIBUTE_$__$$_CREATE$$TCUSTOMATTRIBUTE:
 	ldw	r3,r30,-56
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8657
-	jal	r0,.Lj8658
-.Lj8657:
+	bne	r3,r0,.Lj8652
+	jal	r0,.Lj8653
+.Lj8652:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-60
 	ldw	r4,r4,52
 	jalr	r31,r4
 	stw	r30,r1,-60
-.Lj8658:
+.Lj8653:
 	ldw	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8659
-	jal	r0,.Lj8660
-.Lj8659:
+	bne	r3,r0,.Lj8654
 	jal	r0,.Lj8655
-.Lj8660:
+.Lj8654:
+	jal	r0,.Lj8650
+.Lj8655:
 	addi	r5,r30,-76
 	addi	r4,r30,-160
 	addi	r3,r0,1
@@ -74275,7 +74244,7 @@ SYSTEM$_$TCUSTOMATTRIBUTE_$__$$_CREATE$$TCUSTOMATTRIBUTE:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj8665
+	bne	r1,r0,.Lj8660
 	addi	r3,r0,-1
 	stw	r30,r3,-64
 	addi	r4,r0,0
@@ -74285,24 +74254,24 @@ SYSTEM$_$TCUSTOMATTRIBUTE_$__$$_CREATE$$TCUSTOMATTRIBUTE:
 	stw	r30,r3,-64
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8667
-	jal	r0,.Lj8668
-.Lj8667:
+	bne	r3,r0,.Lj8662
+	jal	r0,.Lj8663
+.Lj8662:
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8669
-	jal	r0,.Lj8668
-.Lj8669:
+	bne	r3,r0,.Lj8664
+	jal	r0,.Lj8663
+.Lj8664:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-60
 	ldw	r4,r4,0
 	ldw	r4,r4,68
 	jalr	r31,r4
-.Lj8668:
-.Lj8665:
+.Lj8663:
+.Lj8660:
 	call	fpc_popaddrstack
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj8663
+	beq	r3,r0,.Lj8658
 	addi	r5,r30,-176
 	addi	r4,r30,-260
 	addi	r3,r0,1
@@ -74310,31 +74279,31 @@ SYSTEM$_$TCUSTOMATTRIBUTE_$__$$_CREATE$$TCUSTOMATTRIBUTE:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-264
-	bne	r1,r0,.Lj8670
+	bne	r1,r0,.Lj8665
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8671
-	jal	r0,.Lj8672
-.Lj8671:
+	bne	r3,r0,.Lj8666
+	jal	r0,.Lj8667
+.Lj8666:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-60
 	ldw	r5,r30,-60
 	ldw	r5,r5,0
 	ldw	r5,r5,48
 	jalr	r31,r5
-.Lj8672:
+.Lj8667:
 	call	fpc_popaddrstack
 	call	fpc_reraise
-.Lj8670:
+.Lj8665:
 	call	fpc_popaddrstack
 	ldw	r3,r30,-264
-	beq	r3,r0,.Lj8673
+	beq	r3,r0,.Lj8668
 	call	fpc_raise_nested
-.Lj8673:
+.Lj8668:
 	call	fpc_doneexception
-	jal	r0,.Lj8663
-.Lj8663:
-.Lj8655:
+	jal	r0,.Lj8658
+.Lj8658:
+.Lj8650:
 	ldw	r1,r30,-60
 	ldw	r30,r29,264
 	ldw	r31,r29,268
@@ -74359,22 +74328,22 @@ SYSTEM$_$TUNIMPLEMENTEDATTRIBUTE_$__$$_CREATE$$TUNIMPLEMENTEDATTRIBUTE:
 	ldw	r3,r30,-56
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8676
-	jal	r0,.Lj8677
-.Lj8676:
+	bne	r3,r0,.Lj8671
+	jal	r0,.Lj8672
+.Lj8671:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-60
 	ldw	r4,r4,52
 	jalr	r31,r4
 	stw	r30,r1,-60
-.Lj8677:
+.Lj8672:
 	ldw	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8678
-	jal	r0,.Lj8679
-.Lj8678:
+	bne	r3,r0,.Lj8673
 	jal	r0,.Lj8674
-.Lj8679:
+.Lj8673:
+	jal	r0,.Lj8669
+.Lj8674:
 	addi	r5,r30,-76
 	addi	r4,r30,-160
 	addi	r3,r0,1
@@ -74382,7 +74351,7 @@ SYSTEM$_$TUNIMPLEMENTEDATTRIBUTE_$__$$_CREATE$$TUNIMPLEMENTEDATTRIBUTE:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj8684
+	bne	r1,r0,.Lj8679
 	addi	r3,r0,-1
 	stw	r30,r3,-64
 	addi	r4,r0,0
@@ -74392,24 +74361,24 @@ SYSTEM$_$TUNIMPLEMENTEDATTRIBUTE_$__$$_CREATE$$TUNIMPLEMENTEDATTRIBUTE:
 	stw	r30,r3,-64
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8686
-	jal	r0,.Lj8687
-.Lj8686:
+	bne	r3,r0,.Lj8681
+	jal	r0,.Lj8682
+.Lj8681:
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8688
-	jal	r0,.Lj8687
-.Lj8688:
+	bne	r3,r0,.Lj8683
+	jal	r0,.Lj8682
+.Lj8683:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-60
 	ldw	r4,r4,0
 	ldw	r4,r4,68
 	jalr	r31,r4
-.Lj8687:
-.Lj8684:
+.Lj8682:
+.Lj8679:
 	call	fpc_popaddrstack
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj8682
+	beq	r3,r0,.Lj8677
 	addi	r5,r30,-176
 	addi	r4,r30,-260
 	addi	r3,r0,1
@@ -74417,31 +74386,31 @@ SYSTEM$_$TUNIMPLEMENTEDATTRIBUTE_$__$$_CREATE$$TUNIMPLEMENTEDATTRIBUTE:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-264
-	bne	r1,r0,.Lj8689
+	bne	r1,r0,.Lj8684
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8690
-	jal	r0,.Lj8691
-.Lj8690:
+	bne	r3,r0,.Lj8685
+	jal	r0,.Lj8686
+.Lj8685:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-60
 	ldw	r5,r30,-60
 	ldw	r5,r5,0
 	ldw	r5,r5,48
 	jalr	r31,r5
-.Lj8691:
+.Lj8686:
 	call	fpc_popaddrstack
 	call	fpc_reraise
-.Lj8689:
+.Lj8684:
 	call	fpc_popaddrstack
 	ldw	r3,r30,-264
-	beq	r3,r0,.Lj8692
+	beq	r3,r0,.Lj8687
 	call	fpc_raise_nested
-.Lj8692:
+.Lj8687:
 	call	fpc_doneexception
-	jal	r0,.Lj8682
-.Lj8682:
-.Lj8674:
+	jal	r0,.Lj8677
+.Lj8677:
+.Lj8669:
 	ldw	r1,r30,-60
 	ldw	r30,r29,264
 	ldw	r31,r29,268
@@ -74464,22 +74433,22 @@ SYSTEM$_$STOREDATTRIBUTE_$__$$_CREATE$$STOREDATTRIBUTE:
 	ldw	r3,r30,-56
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8695
-	jal	r0,.Lj8696
-.Lj8695:
+	bne	r3,r0,.Lj8690
+	jal	r0,.Lj8691
+.Lj8690:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-60
 	ldw	r4,r4,52
 	jalr	r31,r4
 	stw	r30,r1,-60
-.Lj8696:
+.Lj8691:
 	ldw	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8697
-	jal	r0,.Lj8698
-.Lj8697:
+	bne	r3,r0,.Lj8692
 	jal	r0,.Lj8693
-.Lj8698:
+.Lj8692:
+	jal	r0,.Lj8688
+.Lj8693:
 	addi	r5,r30,-76
 	addi	r4,r30,-160
 	addi	r3,r0,1
@@ -74487,31 +74456,31 @@ SYSTEM$_$STOREDATTRIBUTE_$__$$_CREATE$$STOREDATTRIBUTE:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj8703
+	bne	r1,r0,.Lj8698
 	addi	r3,r0,-1
 	stw	r30,r3,-64
 	addi	r3,r0,1
 	stw	r30,r3,-64
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8705
-	jal	r0,.Lj8706
-.Lj8705:
+	bne	r3,r0,.Lj8700
+	jal	r0,.Lj8701
+.Lj8700:
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8707
-	jal	r0,.Lj8706
-.Lj8707:
+	bne	r3,r0,.Lj8702
+	jal	r0,.Lj8701
+.Lj8702:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-60
 	ldw	r4,r4,0
 	ldw	r4,r4,68
 	jalr	r31,r4
-.Lj8706:
-.Lj8703:
+.Lj8701:
+.Lj8698:
 	call	fpc_popaddrstack
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj8701
+	beq	r3,r0,.Lj8696
 	addi	r5,r30,-176
 	addi	r4,r30,-260
 	addi	r3,r0,1
@@ -74519,31 +74488,31 @@ SYSTEM$_$STOREDATTRIBUTE_$__$$_CREATE$$STOREDATTRIBUTE:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-264
-	bne	r1,r0,.Lj8708
+	bne	r1,r0,.Lj8703
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8709
-	jal	r0,.Lj8710
-.Lj8709:
+	bne	r3,r0,.Lj8704
+	jal	r0,.Lj8705
+.Lj8704:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-60
 	ldw	r5,r30,-60
 	ldw	r5,r5,0
 	ldw	r5,r5,48
 	jalr	r31,r5
-.Lj8710:
+.Lj8705:
 	call	fpc_popaddrstack
 	call	fpc_reraise
-.Lj8708:
+.Lj8703:
 	call	fpc_popaddrstack
 	ldw	r3,r30,-264
-	beq	r3,r0,.Lj8711
+	beq	r3,r0,.Lj8706
 	call	fpc_raise_nested
-.Lj8711:
+.Lj8706:
 	call	fpc_doneexception
-	jal	r0,.Lj8701
-.Lj8701:
-.Lj8693:
+	jal	r0,.Lj8696
+.Lj8696:
+.Lj8688:
 	ldw	r1,r30,-60
 	ldw	r30,r29,264
 	ldw	r31,r29,268
@@ -74567,22 +74536,22 @@ SYSTEM$_$STOREDATTRIBUTE_$__$$_CREATE$BOOLEAN$$STOREDATTRIBUTE:
 	ldw	r3,r30,-60
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8714
-	jal	r0,.Lj8715
-.Lj8714:
+	bne	r3,r0,.Lj8709
+	jal	r0,.Lj8710
+.Lj8709:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-64
 	ldw	r4,r4,52
 	jalr	r31,r4
 	stw	r30,r1,-64
-.Lj8715:
+.Lj8710:
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8716
-	jal	r0,.Lj8717
-.Lj8716:
+	bne	r3,r0,.Lj8711
 	jal	r0,.Lj8712
-.Lj8717:
+.Lj8711:
+	jal	r0,.Lj8707
+.Lj8712:
 	addi	r5,r30,-80
 	addi	r4,r30,-164
 	addi	r3,r0,1
@@ -74590,7 +74559,7 @@ SYSTEM$_$STOREDATTRIBUTE_$__$$_CREATE$BOOLEAN$$STOREDATTRIBUTE:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-168
-	bne	r1,r0,.Lj8722
+	bne	r1,r0,.Lj8717
 	addi	r3,r0,-1
 	stw	r30,r3,-68
 	ldw	r3,r30,-64
@@ -74600,24 +74569,24 @@ SYSTEM$_$STOREDATTRIBUTE_$__$$_CREATE$BOOLEAN$$STOREDATTRIBUTE:
 	stw	r30,r3,-68
 	ldw	r3,r30,-64
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8724
-	jal	r0,.Lj8725
-.Lj8724:
+	bne	r3,r0,.Lj8719
+	jal	r0,.Lj8720
+.Lj8719:
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8726
-	jal	r0,.Lj8725
-.Lj8726:
+	bne	r3,r0,.Lj8721
+	jal	r0,.Lj8720
+.Lj8721:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-64
 	ldw	r4,r4,0
 	ldw	r4,r4,68
 	jalr	r31,r4
-.Lj8725:
-.Lj8722:
+.Lj8720:
+.Lj8717:
 	call	fpc_popaddrstack
 	ldw	r3,r30,-168
-	beq	r3,r0,.Lj8720
+	beq	r3,r0,.Lj8715
 	addi	r5,r30,-180
 	addi	r4,r30,-264
 	addi	r3,r0,1
@@ -74625,31 +74594,31 @@ SYSTEM$_$STOREDATTRIBUTE_$__$$_CREATE$BOOLEAN$$STOREDATTRIBUTE:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-268
-	bne	r1,r0,.Lj8727
+	bne	r1,r0,.Lj8722
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8728
-	jal	r0,.Lj8729
-.Lj8728:
+	bne	r3,r0,.Lj8723
+	jal	r0,.Lj8724
+.Lj8723:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-64
 	ldw	r5,r30,-64
 	ldw	r5,r5,0
 	ldw	r5,r5,48
 	jalr	r31,r5
-.Lj8729:
+.Lj8724:
 	call	fpc_popaddrstack
 	call	fpc_reraise
-.Lj8727:
+.Lj8722:
 	call	fpc_popaddrstack
 	ldw	r3,r30,-268
-	beq	r3,r0,.Lj8730
+	beq	r3,r0,.Lj8725
 	call	fpc_raise_nested
-.Lj8730:
+.Lj8725:
 	call	fpc_doneexception
-	jal	r0,.Lj8720
-.Lj8720:
-.Lj8712:
+	jal	r0,.Lj8715
+.Lj8715:
+.Lj8707:
 	ldw	r1,r30,-64
 	ldw	r30,r29,268
 	ldw	r31,r29,272
@@ -74673,22 +74642,22 @@ SYSTEM$_$STOREDATTRIBUTE_$__$$_CREATE$SHORTSTRING$$STOREDATTRIBUTE:
 	ldw	r3,r30,-60
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8733
-	jal	r0,.Lj8734
-.Lj8733:
+	bne	r3,r0,.Lj8728
+	jal	r0,.Lj8729
+.Lj8728:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-64
 	ldw	r4,r4,52
 	jalr	r31,r4
 	stw	r30,r1,-64
-.Lj8734:
+.Lj8729:
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8735
-	jal	r0,.Lj8736
-.Lj8735:
+	bne	r3,r0,.Lj8730
 	jal	r0,.Lj8731
-.Lj8736:
+.Lj8730:
+	jal	r0,.Lj8726
+.Lj8731:
 	addi	r5,r30,-80
 	addi	r4,r30,-164
 	addi	r3,r0,1
@@ -74696,7 +74665,7 @@ SYSTEM$_$STOREDATTRIBUTE_$__$$_CREATE$SHORTSTRING$$STOREDATTRIBUTE:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-168
-	bne	r1,r0,.Lj8741
+	bne	r1,r0,.Lj8736
 	addi	r3,r0,-1
 	stw	r30,r3,-68
 	ldw	r3,r30,-64
@@ -74708,24 +74677,24 @@ SYSTEM$_$STOREDATTRIBUTE_$__$$_CREATE$SHORTSTRING$$STOREDATTRIBUTE:
 	stw	r30,r3,-68
 	ldw	r3,r30,-64
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8743
-	jal	r0,.Lj8744
-.Lj8743:
+	bne	r3,r0,.Lj8738
+	jal	r0,.Lj8739
+.Lj8738:
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8745
-	jal	r0,.Lj8744
-.Lj8745:
+	bne	r3,r0,.Lj8740
+	jal	r0,.Lj8739
+.Lj8740:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-64
 	ldw	r4,r4,0
 	ldw	r4,r4,68
 	jalr	r31,r4
-.Lj8744:
-.Lj8741:
+.Lj8739:
+.Lj8736:
 	call	fpc_popaddrstack
 	ldw	r3,r30,-168
-	beq	r3,r0,.Lj8739
+	beq	r3,r0,.Lj8734
 	addi	r5,r30,-180
 	addi	r4,r30,-264
 	addi	r3,r0,1
@@ -74733,31 +74702,31 @@ SYSTEM$_$STOREDATTRIBUTE_$__$$_CREATE$SHORTSTRING$$STOREDATTRIBUTE:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-268
-	bne	r1,r0,.Lj8746
+	bne	r1,r0,.Lj8741
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8747
-	jal	r0,.Lj8748
-.Lj8747:
+	bne	r3,r0,.Lj8742
+	jal	r0,.Lj8743
+.Lj8742:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-64
 	ldw	r5,r30,-64
 	ldw	r5,r5,0
 	ldw	r5,r5,48
 	jalr	r31,r5
-.Lj8748:
+.Lj8743:
 	call	fpc_popaddrstack
 	call	fpc_reraise
-.Lj8746:
+.Lj8741:
 	call	fpc_popaddrstack
 	ldw	r3,r30,-268
-	beq	r3,r0,.Lj8749
+	beq	r3,r0,.Lj8744
 	call	fpc_raise_nested
-.Lj8749:
+.Lj8744:
 	call	fpc_doneexception
-	jal	r0,.Lj8739
-.Lj8739:
-.Lj8731:
+	jal	r0,.Lj8734
+.Lj8734:
+.Lj8726:
 	ldw	r1,r30,-64
 	ldw	r30,r29,268
 	ldw	r31,r29,272
@@ -74782,22 +74751,22 @@ SYSTEM$_$TINTERFACETHUNK_$__$$_CREATE$TInterfaceThunk.TTHUNKCALLBACK$$TINTERFACE
 	ldw	r3,r30,-64
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8752
-	jal	r0,.Lj8753
-.Lj8752:
+	bne	r3,r0,.Lj8747
+	jal	r0,.Lj8748
+.Lj8747:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-68
 	ldw	r4,r4,52
 	jalr	r31,r4
 	stw	r30,r1,-68
-.Lj8753:
+.Lj8748:
 	ldw	r3,r30,-68
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8754
-	jal	r0,.Lj8755
-.Lj8754:
+	bne	r3,r0,.Lj8749
 	jal	r0,.Lj8750
-.Lj8755:
+.Lj8749:
+	jal	r0,.Lj8745
+.Lj8750:
 	addi	r5,r30,-84
 	addi	r4,r30,-168
 	addi	r3,r0,1
@@ -74805,7 +74774,7 @@ SYSTEM$_$TINTERFACETHUNK_$__$$_CREATE$TInterfaceThunk.TTHUNKCALLBACK$$TINTERFACE
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-172
-	bne	r1,r0,.Lj8760
+	bne	r1,r0,.Lj8755
 	addi	r3,r0,-1
 	stw	r30,r3,-72
 	ldw	r3,r30,-68
@@ -74817,24 +74786,24 @@ SYSTEM$_$TINTERFACETHUNK_$__$$_CREATE$TInterfaceThunk.TTHUNKCALLBACK$$TINTERFACE
 	stw	r30,r3,-72
 	ldw	r3,r30,-68
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8762
-	jal	r0,.Lj8763
-.Lj8762:
+	bne	r3,r0,.Lj8757
+	jal	r0,.Lj8758
+.Lj8757:
 	ldw	r3,r30,-64
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8764
-	jal	r0,.Lj8763
-.Lj8764:
+	bne	r3,r0,.Lj8759
+	jal	r0,.Lj8758
+.Lj8759:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-68
 	ldw	r4,r4,0
 	ldw	r4,r4,68
 	jalr	r31,r4
-.Lj8763:
-.Lj8760:
+.Lj8758:
+.Lj8755:
 	call	fpc_popaddrstack
 	ldw	r3,r30,-172
-	beq	r3,r0,.Lj8758
+	beq	r3,r0,.Lj8753
 	addi	r5,r30,-184
 	addi	r4,r30,-268
 	addi	r3,r0,1
@@ -74842,31 +74811,31 @@ SYSTEM$_$TINTERFACETHUNK_$__$$_CREATE$TInterfaceThunk.TTHUNKCALLBACK$$TINTERFACE
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-272
-	bne	r1,r0,.Lj8765
+	bne	r1,r0,.Lj8760
 	ldw	r3,r30,-64
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8766
-	jal	r0,.Lj8767
-.Lj8766:
+	bne	r3,r0,.Lj8761
+	jal	r0,.Lj8762
+.Lj8761:
 	ldw	r4,r30,-72
 	ldw	r3,r30,-68
 	ldw	r5,r30,-68
 	ldw	r5,r5,0
 	ldw	r5,r5,48
 	jalr	r31,r5
-.Lj8767:
+.Lj8762:
 	call	fpc_popaddrstack
 	call	fpc_reraise
-.Lj8765:
+.Lj8760:
 	call	fpc_popaddrstack
 	ldw	r3,r30,-272
-	beq	r3,r0,.Lj8768
+	beq	r3,r0,.Lj8763
 	call	fpc_raise_nested
-.Lj8768:
+.Lj8763:
 	call	fpc_doneexception
-	jal	r0,.Lj8758
-.Lj8758:
-.Lj8750:
+	jal	r0,.Lj8753
+.Lj8753:
+.Lj8745:
 	ldw	r1,r30,-68
 	ldw	r30,r29,272
 	ldw	r31,r29,276
@@ -74891,9 +74860,9 @@ SYSTEM$_$TINTERFACETHUNK_$__$$_THUNK$LONGINT$LONGINT$TInterfaceThunk.PARGDATA:
 	ldw	r3,r30,-68
 	ldw	r3,r3,20
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8771
-	jal	r0,.Lj8772
-.Lj8771:
+	bne	r3,r0,.Lj8766
+	jal	r0,.Lj8767
+.Lj8766:
 	ldw	r3,r30,-68
 	ldw	r3,r3,24
 	ldw	r7,r30,-64
@@ -74903,7 +74872,7 @@ SYSTEM$_$TINTERFACETHUNK_$__$$_THUNK$LONGINT$LONGINT$TInterfaceThunk.PARGDATA:
 	ldw	r8,r30,-68
 	ldw	r8,r8,20
 	jalr	r31,r8
-.Lj8772:
+.Lj8767:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -74931,42 +74900,42 @@ SYSTEM$_$TINTERFACETHUNK_$__$$_QUERYINTERFACE$TGUID$formal$$LONGINT:
 	ldw	r3,r30,-64
 	ldw	r3,r3,24
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8775
-	jal	r0,.Lj8776
-.Lj8775:
+	bne	r3,r0,.Lj8770
+	jal	r0,.Lj8771
+.Lj8770:
 	ldw	r3,r30,-64
 	ldw	r3,r3,24
 	ldw	r5,r30,-60
 	ldw	r4,r30,-56
 	call	SYSTEM$_$TOBJECT_$__$$_GETINTERFACE$TGUID$formal$$BOOLEAN
-	bne	r1,r0,.Lj8777
-	jal	r0,.Lj8778
-.Lj8777:
+	bne	r1,r0,.Lj8772
+	jal	r0,.Lj8773
+.Lj8772:
 	stw	r30,r0,-68
-.Lj8778:
-.Lj8776:
+.Lj8773:
+.Lj8771:
 	ldw	r3,r30,-68
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8779
-	jal	r0,.Lj8780
-.Lj8779:
+	bne	r3,r0,.Lj8774
+	jal	r0,.Lj8775
+.Lj8774:
 	ldw	r5,r30,-60
 	ldw	r4,r30,-56
 	ldw	r3,r30,-64
 	call	SYSTEM$_$TINTERFACEDOBJECT_$__$$_QUERYINTERFACE$TGUID$formal$$LONGINT
 	stw	r30,r1,-68
-.Lj8780:
+.Lj8775:
 	ldw	r3,r30,-68
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8781
-	jal	r0,.Lj8782
-.Lj8781:
+	bne	r3,r0,.Lj8776
+	jal	r0,.Lj8777
+.Lj8776:
 	ldw	r3,r30,-64
 	ldw	r3,r3,12
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8783
-	jal	r0,.Lj8782
-.Lj8783:
+	bne	r3,r0,.Lj8778
+	jal	r0,.Lj8777
+.Lj8778:
 	ldw	r3,r30,-64
 	ldw	r3,r3,16
 	ldw	r6,r30,-60
@@ -74975,7 +74944,7 @@ SYSTEM$_$TINTERFACETHUNK_$__$$_QUERYINTERFACE$TGUID$formal$$LONGINT:
 	ldw	r7,r30,-64
 	ldw	r7,r7,12
 	jalr	r31,r7
-.Lj8782:
+.Lj8777:
 	ldw	r1,r30,-68
 	ldw	r30,r29,68
 	ldw	r31,r29,72
@@ -75016,15 +74985,15 @@ SYSTEM_$$_RAISELIST$$PEXCEPTOBJECT:
 	addi	r29,r29,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8788
+	beq	r4,r0,.Lj8783
 	la	r5,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8789
-.Lj8788:
+	jal	r0,.Lj8784
+.Lj8783:
 	la	r3,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	addi	r1,r3,4
-.Lj8789:
+.Lj8784:
 	ldw	r3,r1,0
 	stw	r30,r3,-56
 	ldw	r1,r30,-56
@@ -75048,22 +75017,22 @@ SYSTEM_$$_ACQUIREEXCEPTIONOBJECT$$POINTER:
 	addi	r29,r29,-60
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8792
+	beq	r4,r0,.Lj8787
 	la	r5,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8793
-.Lj8792:
+	jal	r0,.Lj8788
+.Lj8787:
 	la	r3,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	addi	r1,r3,4
-.Lj8793:
+.Lj8788:
 	ldw	r3,r1,0
 	stw	r30,r3,-60
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8794
-	jal	r0,.Lj8795
-.Lj8794:
+	bne	r3,r0,.Lj8789
+	jal	r0,.Lj8790
+.Lj8789:
 	ldw	r3,r30,-60
 	ldw	r4,r3,12
 	addi	r4,r4,1
@@ -75071,11 +75040,11 @@ SYSTEM_$$_ACQUIREEXCEPTIONOBJECT$$POINTER:
 	ldw	r3,r30,-60
 	ldw	r3,r3,0
 	stw	r30,r3,-56
-	jal	r0,.Lj8796
-.Lj8795:
+	jal	r0,.Lj8791
+.Lj8790:
 	addi	r3,r0,231
 	call	SYSTEM_$$_RUNERROR$WORD
-.Lj8796:
+.Lj8791:
 	ldw	r1,r30,-56
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -75095,39 +75064,39 @@ SYSTEM_$$_RELEASEEXCEPTIONOBJECT:
 	addi	r29,r29,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8799
+	beq	r4,r0,.Lj8794
 	la	r5,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8800
-.Lj8799:
+	jal	r0,.Lj8795
+.Lj8794:
 	la	r3,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	addi	r1,r3,4
-.Lj8800:
+.Lj8795:
 	ldw	r3,r1,0
 	stw	r30,r3,-56
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8801
-	jal	r0,.Lj8802
-.Lj8801:
+	bne	r3,r0,.Lj8796
+	jal	r0,.Lj8797
+.Lj8796:
 	ldw	r3,r30,-56
 	ldw	r4,r3,12
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj8803
-	jal	r0,.Lj8804
-.Lj8803:
+	bne	r3,r0,.Lj8798
+	jal	r0,.Lj8799
+.Lj8798:
 	ldw	r4,r30,-56
 	ldw	r3,r4,12
 	addi	r3,r3,-1
 	stw	r4,r3,12
-.Lj8804:
-	jal	r0,.Lj8805
-.Lj8802:
+.Lj8799:
+	jal	r0,.Lj8800
+.Lj8797:
 	addi	r3,r0,231
 	call	SYSTEM_$$_RUNERROR$WORD
-.Lj8805:
+.Lj8800:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -75151,15 +75120,15 @@ FPC_PUSHEXCEPTADDR:
 	stw	r30,r5,-64
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8808
+	beq	r4,r0,.Lj8803
 	la	r5,U_$SYSTEM_$$_EXCEPTADDRSTACK
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8809
-.Lj8808:
+	jal	r0,.Lj8804
+.Lj8803:
 	la	r3,U_$SYSTEM_$$_EXCEPTADDRSTACK
 	addi	r1,r3,4
-.Lj8809:
+.Lj8804:
 	stw	r30,r1,-72
 	ldw	r3,r30,-64
 	ldw	r4,r30,-72
@@ -75200,15 +75169,15 @@ SYSTEM_$$_PUSHEXCEPTOBJECT$TOBJECT$POINTER$POINTER$$PEXCEPTOBJECT:
 	stw	r30,r5,-64
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8812
+	beq	r4,r0,.Lj8807
 	la	r5,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8813
-.Lj8812:
+	jal	r0,.Lj8808
+.Lj8807:
 	la	r3,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	addi	r1,r3,4
-.Lj8813:
+.Lj8808:
 	stw	r30,r1,-76
 	addi	r3,r0,28
 	call	SYSTEM_$$_ALLOCMEM$LONGWORD$$POINTER
@@ -75228,9 +75197,9 @@ SYSTEM_$$_PUSHEXCEPTOBJECT$TOBJECT$POINTER$POINTER$$PEXCEPTOBJECT:
 	stw	r3,r4,4
 	call	SYSTEM_$$_GET_FRAME$$POINTER
 	sne	r3,r1,r0
-	bne	r3,r0,.Lj8814
-	jal	r0,.Lj8815
-.Lj8814:
+	bne	r3,r0,.Lj8809
+	jal	r0,.Lj8810
+.Lj8809:
 	ldw	r3,r30,-72
 	stw	r3,r0,12
 	ldw	r3,r30,-64
@@ -75242,8 +75211,8 @@ SYSTEM_$$_PUSHEXCEPTOBJECT$TOBJECT$POINTER$POINTER$$PEXCEPTOBJECT:
 	stw	r30,r0,-80
 	call	SYSTEM_$$_GET_FRAME$$POINTER
 	stw	r30,r1,-92
-	jal	r0,.Lj8817
-.Lj8816:
+	jal	r0,.Lj8812
+.Lj8811:
 	ldw	r3,r30,-96
 	stw	r30,r3,-92
 	addi	r4,r30,-100
@@ -75251,22 +75220,22 @@ SYSTEM_$$_PUSHEXCEPTOBJECT$TOBJECT$POINTER$POINTER$$PEXCEPTOBJECT:
 	call	SYSTEM_$$_GET_CALLER_STACKINFO$POINTER$POINTER
 	ldw	r3,r30,-100
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8819
-	jal	r0,.Lj8820
-.Lj8820:
+	bne	r3,r0,.Lj8814
+	jal	r0,.Lj8815
+.Lj8815:
 	ldw	r3,r30,-96
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8819
-	jal	r0,.Lj8821
-.Lj8819:
-	jal	r0,.Lj8818
-.Lj8821:
+	bne	r3,r0,.Lj8814
+	jal	r0,.Lj8816
+.Lj8814:
+	jal	r0,.Lj8813
+.Lj8816:
 	ldw	r4,r30,-84
 	ldw	r3,r30,-80
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj8822
-	jal	r0,.Lj8823
-.Lj8822:
+	bne	r3,r0,.Lj8817
+	jal	r0,.Lj8818
+.Lj8817:
 	ldw	r3,r30,-80
 	addi	r3,r3,16
 	stw	r30,r3,-80
@@ -75274,7 +75243,7 @@ SYSTEM_$$_PUSHEXCEPTOBJECT$TOBJECT$POINTER$POINTER$$PEXCEPTOBJECT:
 	slli	r4,r3,2
 	addi	r3,r30,-88
 	call	SYSTEM_$$_REALLOCMEM$POINTER$LONGWORD$$POINTER
-.Lj8823:
+.Lj8818:
 	ldw	r3,r30,-88
 	ldw	r4,r30,-84
 	slli	r4,r4,2
@@ -75284,37 +75253,37 @@ SYSTEM_$$_PUSHEXCEPTOBJECT$TOBJECT$POINTER$POINTER$$PEXCEPTOBJECT:
 	ldw	r3,r30,-84
 	addi	r3,r3,1
 	stw	r30,r3,-84
-.Lj8817:
+.Lj8812:
 	la	r3,TC_$SYSTEM_$$_RAISEMAXFRAMECOUNT
 	ldw	r3,r3,0
 	ldw	r4,r30,-84
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj8824
-	jal	r0,.Lj8825
-.Lj8824:
+	bne	r3,r0,.Lj8819
+	jal	r0,.Lj8820
+.Lj8819:
 	ldw	r4,r30,-96
 	ldw	r3,r30,-92
 	sgtu	r3,r4,r3
-	bne	r3,r0,.Lj8826
-	jal	r0,.Lj8825
-.Lj8826:
+	bne	r3,r0,.Lj8821
+	jal	r0,.Lj8820
+.Lj8821:
 	call	SYSTEM_$$_STACKTOP$$POINTER
 	ldw	r3,r30,-96
 	sltu	r3,r3,r1
-	bne	r3,r0,.Lj8827
-	jal	r0,.Lj8825
-.Lj8827:
-	jal	r0,.Lj8816
-.Lj8825:
-	jal	r0,.Lj8818
-.Lj8818:
+	bne	r3,r0,.Lj8822
+	jal	r0,.Lj8820
+.Lj8822:
+	jal	r0,.Lj8811
+.Lj8820:
+	jal	r0,.Lj8813
+.Lj8813:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-84
 	stw	r3,r4,16
 	ldw	r3,r30,-72
 	ldw	r4,r30,-88
 	stw	r3,r4,20
-.Lj8815:
+.Lj8810:
 	ldw	r3,r30,-72
 	stw	r30,r3,-68
 	ldw	r1,r30,-68
@@ -75339,93 +75308,93 @@ SYSTEM_$$_FREEUNHANDLEDEXCEPTION$BOOLEAN:
 	stb	r30,r3,-56
 	la	r3,U_$SYSTEM_$$_UNHANDLEDEXCEPTIONFREEING
 	ldbu	r3,r3,0
-	bne	r3,r0,.Lj8830
-	jal	r0,.Lj8831
-.Lj8830:
-	jal	r0,.Lj8828
-.Lj8831:
+	bne	r3,r0,.Lj8825
+	jal	r0,.Lj8826
+.Lj8825:
+	jal	r0,.Lj8823
+.Lj8826:
 	addi	r4,r0,1
 	la	r3,U_$SYSTEM_$$_UNHANDLEDEXCEPTIONFREEING
 	stb	r3,r4,0
-	jal	r0,.Lj8833
-.Lj8832:
+	jal	r0,.Lj8828
+.Lj8827:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8835
+	beq	r4,r0,.Lj8830
 	la	r5,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8836
-.Lj8835:
+	jal	r0,.Lj8831
+.Lj8830:
 	la	r3,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	addi	r1,r3,4
-.Lj8836:
+.Lj8831:
 	ldw	r3,r1,0
 	stw	r30,r3,-60
 	ldw	r3,r30,-60
 	ldw	r3,r3,12
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8837
-	jal	r0,.Lj8838
-.Lj8837:
+	bne	r3,r0,.Lj8832
+	jal	r0,.Lj8833
+.Lj8832:
 	ldw	r3,r30,-60
 	ldw	r3,r3,0
 	stw	r30,r3,-64
-	jal	r0,.Lj8839
-.Lj8838:
+	jal	r0,.Lj8834
+.Lj8833:
 	stw	r30,r0,-64
-.Lj8839:
+.Lj8834:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj8840
+	beq	r5,r0,.Lj8835
 	la	r4,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj8841
-.Lj8840:
+	jal	r0,.Lj8836
+.Lj8835:
 	la	r3,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	addi	r1,r3,4
-.Lj8841:
+.Lj8836:
 	ldw	r3,r30,-60
 	ldw	r3,r3,8
 	stw	r1,r3,0
 	ldw	r3,r30,-60
 	ldw	r3,r3,20
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8842
-	jal	r0,.Lj8843
-.Lj8842:
+	bne	r3,r0,.Lj8837
+	jal	r0,.Lj8838
+.Lj8837:
 	ldw	r3,r30,-60
 	ldw	r3,r3,20
 	call	SYSTEM_$$_FREEMEM$POINTER$$LONGWORD
-.Lj8843:
+.Lj8838:
 	ldbu	r3,r30,-56
-	bne	r3,r0,.Lj8844
-	jal	r0,.Lj8845
-.Lj8844:
+	bne	r3,r0,.Lj8839
+	jal	r0,.Lj8840
+.Lj8839:
 	ldw	r3,r30,-60
 	call	fpc_freemem
-.Lj8845:
+.Lj8840:
 	ldw	r3,r30,-64
 	call	SYSTEM$_$TOBJECT_$__$$_FREE
-.Lj8833:
+.Lj8828:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8846
+	beq	r4,r0,.Lj8841
 	la	r5,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8847
-.Lj8846:
+	jal	r0,.Lj8842
+.Lj8841:
 	la	r3,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	addi	r1,r3,4
-.Lj8847:
+.Lj8842:
 	ldw	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8832
-	jal	r0,.Lj8834
-.Lj8834:
-.Lj8828:
+	bne	r3,r0,.Lj8827
+	jal	r0,.Lj8829
+.Lj8829:
+.Lj8823:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -75447,28 +75416,28 @@ SYSTEM_$$_DOUNHANDLEDEXCEPTION:
 	addi	r29,r29,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8850
+	beq	r4,r0,.Lj8845
 	la	r5,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8851
-.Lj8850:
+	jal	r0,.Lj8846
+.Lj8845:
 	la	r3,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	addi	r1,r3,4
-.Lj8851:
+.Lj8846:
 	ldw	r3,r1,0
 	stw	r30,r3,-56
 	la	r3,TC_$SYSTEM_$$_EXCEPTPROC
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8852
-	jal	r0,.Lj8853
-.Lj8852:
+	bne	r3,r0,.Lj8847
+	jal	r0,.Lj8848
+.Lj8847:
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8854
-	jal	r0,.Lj8853
-.Lj8854:
+	bne	r3,r0,.Lj8849
+	jal	r0,.Lj8848
+.Lj8849:
 	ldw	r11,r30,-56
 	ldw	r6,r11,20
 	ldw	r5,r11,16
@@ -75481,21 +75450,21 @@ SYSTEM_$$_DOUNHANDLEDEXCEPTION:
 	call	SYSTEM_$$_FREEUNHANDLEDEXCEPTION$BOOLEAN
 	addi	r3,r0,217
 	call	SYSTEM_$$_HALT$LONGINT
-.Lj8853:
+.Lj8848:
 	la	r3,TC_$SYSTEM_$$_ERRORADDR
 	ldw	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8855
-	jal	r0,.Lj8856
-.Lj8855:
+	bne	r3,r0,.Lj8850
+	jal	r0,.Lj8851
+.Lj8850:
 	addi	r3,r0,217
 	call	SYSTEM_$$_RUNERROR$WORD
-	jal	r0,.Lj8857
-.Lj8856:
+	jal	r0,.Lj8852
+.Lj8851:
 	la	r3,TC_$SYSTEM_$$_ERRORCODE
 	ldhu	r3,r3,0
 	call	SYSTEM_$$_HALT$LONGINT
-.Lj8857:
+.Lj8852:
 	ldw	r11,r29,56
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -75517,27 +75486,27 @@ SYSTEM_$$_EXCEPTFRAMEINCHAIN$PEXCEPTADDR$PEXCEPTADDR$$BOOLEAN:
 	addi	r29,r29,-64
 	stw	r30,r3,-56
 	stw	r30,r4,-60
-	jal	r0,.Lj8861
-.Lj8860:
+	jal	r0,.Lj8856
+.Lj8855:
 	ldw	r3,r30,-60
 	ldw	r3,r3,4
 	stw	r30,r3,-60
-.Lj8861:
+.Lj8856:
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8863
-	jal	r0,.Lj8864
-.Lj8863:
+	bne	r3,r0,.Lj8858
+	jal	r0,.Lj8859
+.Lj8858:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj8865
-	jal	r0,.Lj8864
-.Lj8865:
-	jal	r0,.Lj8860
-.Lj8864:
-	jal	r0,.Lj8862
-.Lj8862:
+	bne	r3,r0,.Lj8860
+	jal	r0,.Lj8859
+.Lj8860:
+	jal	r0,.Lj8855
+.Lj8859:
+	jal	r0,.Lj8857
+.Lj8857:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	seq	r3,r4,r3
@@ -75564,24 +75533,24 @@ SYSTEM_$$_RELEASEABANDONEDEXCEPTIONS$PEXCEPTADDR:
 	stw	r30,r3,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8868
+	beq	r4,r0,.Lj8863
 	la	r5,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8869
-.Lj8868:
+	jal	r0,.Lj8864
+.Lj8863:
 	la	r3,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	addi	r1,r3,4
-.Lj8869:
+.Lj8864:
 	ldw	r3,r1,0
 	stw	r30,r3,-60
 	ldw	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8870
-	jal	r0,.Lj8871
-.Lj8870:
+	bne	r3,r0,.Lj8865
 	jal	r0,.Lj8866
-.Lj8871:
+.Lj8865:
+	jal	r0,.Lj8861
+.Lj8866:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-56
 	ldw	r4,r4,4
@@ -75591,20 +75560,20 @@ SYSTEM_$$_RELEASEABANDONEDEXCEPTIONS$PEXCEPTADDR:
 	ldw	r3,r30,-60
 	ldw	r3,r3,8
 	stw	r30,r3,-68
-	jal	r0,.Lj8873
-.Lj8872:
+	jal	r0,.Lj8868
+.Lj8867:
 	ldw	r3,r30,-56
 	ldw	r4,r3,4
 	ldw	r3,r30,-68
 	ldw	r3,r3,24
 	call	SYSTEM_$$_EXCEPTFRAMEINCHAIN$PEXCEPTADDR$PEXCEPTADDR$$BOOLEAN
-	bne	r1,r0,.Lj8875
-	jal	r0,.Lj8876
-.Lj8875:
+	bne	r1,r0,.Lj8870
+	jal	r0,.Lj8871
+.Lj8870:
 	ldw	r3,r30,-68
 	stw	r30,r3,-64
-	jal	r0,.Lj8877
-.Lj8876:
+	jal	r0,.Lj8872
+.Lj8871:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-68
 	ldw	r4,r4,8
@@ -75612,49 +75581,49 @@ SYSTEM_$$_RELEASEABANDONEDEXCEPTIONS$PEXCEPTADDR:
 	ldw	r3,r30,-68
 	ldw	r3,r3,12
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8878
-	jal	r0,.Lj8879
-.Lj8878:
+	bne	r3,r0,.Lj8873
+	jal	r0,.Lj8874
+.Lj8873:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-60
 	ldw	r4,r4,0
 	ldw	r3,r3,0
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj8880
-	jal	r0,.Lj8879
-.Lj8880:
+	bne	r3,r0,.Lj8875
+	jal	r0,.Lj8874
+.Lj8875:
 	ldw	r3,r30,-68
 	ldw	r3,r3,0
 	stw	r30,r3,-72
-	jal	r0,.Lj8881
-.Lj8879:
+	jal	r0,.Lj8876
+.Lj8874:
 	stw	r30,r0,-72
-.Lj8881:
+.Lj8876:
 	ldw	r3,r30,-68
 	ldw	r3,r3,20
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8882
-	jal	r0,.Lj8883
-.Lj8882:
+	bne	r3,r0,.Lj8877
+	jal	r0,.Lj8878
+.Lj8877:
 	ldw	r3,r30,-68
 	ldw	r3,r3,20
 	call	SYSTEM_$$_FREEMEM$POINTER$$LONGWORD
-.Lj8883:
+.Lj8878:
 	ldw	r3,r30,-68
 	call	fpc_freemem
 	ldw	r3,r30,-72
 	call	SYSTEM$_$TOBJECT_$__$$_FREE
-.Lj8877:
+.Lj8872:
 	ldw	r3,r30,-64
 	ldw	r3,r3,8
 	stw	r30,r3,-68
-.Lj8873:
+.Lj8868:
 	ldw	r3,r30,-68
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8872
-	jal	r0,.Lj8874
-.Lj8874:
-.Lj8866:
+	bne	r3,r0,.Lj8867
+	jal	r0,.Lj8869
+.Lj8869:
+.Lj8861:
 	ldw	r30,r29,72
 	ldw	r31,r29,76
 	addi	r29,r29,80
@@ -75681,34 +75650,34 @@ FPC_RAISEEXCEPTION:
 	stw	r30,r5,-64
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8886
+	beq	r4,r0,.Lj8881
 	la	r5,U_$SYSTEM_$$_EXCEPTTRYLEVEL
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8887
-.Lj8886:
+	jal	r0,.Lj8882
+.Lj8881:
 	la	r3,U_$SYSTEM_$$_EXCEPTTRYLEVEL
 	addi	r1,r3,4
-.Lj8887:
+.Lj8882:
 	ldw	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8888
-	jal	r0,.Lj8889
-.Lj8888:
+	bne	r3,r0,.Lj8883
+	jal	r0,.Lj8884
+.Lj8883:
 	addi	r3,r0,217
 	call	SYSTEM_$$_HALT$LONGINT
-.Lj8889:
+.Lj8884:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8890
+	beq	r4,r0,.Lj8885
 	la	r5,U_$SYSTEM_$$_EXCEPTTRYLEVEL
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8891
-.Lj8890:
+	jal	r0,.Lj8886
+.Lj8885:
 	la	r3,U_$SYSTEM_$$_EXCEPTTRYLEVEL
 	addi	r1,r3,4
-.Lj8891:
+.Lj8886:
 	addi	r3,r0,1
 	stw	r1,r3,0
 	ldw	r5,r30,-64
@@ -75717,62 +75686,62 @@ FPC_RAISEEXCEPTION:
 	call	SYSTEM_$$_PUSHEXCEPTOBJECT$TOBJECT$POINTER$POINTER$$PEXCEPTOBJECT
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8892
+	beq	r4,r0,.Lj8887
 	la	r5,U_$SYSTEM_$$_EXCEPTTRYLEVEL
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8893
-.Lj8892:
+	jal	r0,.Lj8888
+.Lj8887:
 	la	r3,U_$SYSTEM_$$_EXCEPTTRYLEVEL
 	addi	r1,r3,4
-.Lj8893:
+.Lj8888:
 	stw	r1,r0,0
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj8894
+	beq	r5,r0,.Lj8889
 	la	r4,U_$SYSTEM_$$_EXCEPTADDRSTACK
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj8895
-.Lj8894:
+	jal	r0,.Lj8890
+.Lj8889:
 	la	r3,U_$SYSTEM_$$_EXCEPTADDRSTACK
 	addi	r1,r3,4
-.Lj8895:
+.Lj8890:
 	ldw	r3,r1,0
 	stw	r30,r3,-72
 	ldw	r3,r30,-72
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8896
-	jal	r0,.Lj8897
-.Lj8896:
+	bne	r3,r0,.Lj8891
+	jal	r0,.Lj8892
+.Lj8891:
 	call	SYSTEM_$$_DOUNHANDLEDEXCEPTION
-.Lj8897:
+.Lj8892:
 	ldw	r3,r30,-72
 	call	SYSTEM_$$_RELEASEABANDONEDEXCEPTIONS$PEXCEPTADDR
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8898
+	beq	r4,r0,.Lj8893
 	la	r5,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8899
-.Lj8898:
+	jal	r0,.Lj8894
+.Lj8893:
 	la	r3,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	addi	r1,r3,4
-.Lj8899:
+.Lj8894:
 	ldw	r3,r1,0
 	stw	r30,r3,-68
 	la	r3,TC_$SYSTEM_$$_RAISEPROC
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8900
-	jal	r0,.Lj8901
-.Lj8900:
+	bne	r3,r0,.Lj8895
+	jal	r0,.Lj8896
+.Lj8895:
 	ldw	r3,r30,-68
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8902
-	jal	r0,.Lj8901
-.Lj8902:
+	bne	r3,r0,.Lj8897
+	jal	r0,.Lj8896
+.Lj8897:
 	ldw	r11,r30,-68
 	ldw	r6,r11,20
 	ldw	r5,r11,16
@@ -75781,7 +75750,7 @@ FPC_RAISEEXCEPTION:
 	la	r7,TC_$SYSTEM_$$_RAISEPROC
 	ldw	r7,r7,0
 	jalr	r31,r7
-.Lj8901:
+.Lj8896:
 	ldw	r3,r30,-72
 	ldw	r3,r3,0
 	addi	r4,r0,1
@@ -75807,32 +75776,32 @@ FPC_POPADDRSTACK:
 	addi	r29,r29,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8905
+	beq	r4,r0,.Lj8900
 	la	r5,U_$SYSTEM_$$_EXCEPTADDRSTACK
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8906
-.Lj8905:
+	jal	r0,.Lj8901
+.Lj8900:
 	la	r3,U_$SYSTEM_$$_EXCEPTADDRSTACK
 	addi	r1,r3,4
-.Lj8906:
+.Lj8901:
 	stw	r30,r1,-56
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8907
-	jal	r0,.Lj8908
-.Lj8907:
+	bne	r3,r0,.Lj8902
+	jal	r0,.Lj8903
+.Lj8902:
 	addi	r3,r0,255
 	call	SYSTEM_$$_HALT$LONGINT
-	jal	r0,.Lj8909
-.Lj8908:
+	jal	r0,.Lj8904
+.Lj8903:
 	ldw	r3,r30,-56
 	ldw	r4,r3,0
 	ldw	r3,r30,-56
 	ldw	r4,r4,4
 	stw	r3,r4,0
-.Lj8909:
+.Lj8904:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -75855,68 +75824,68 @@ FPC_POPOBJECTSTACK:
 	addi	r29,r29,-60
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8912
+	beq	r4,r0,.Lj8907
 	la	r5,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8913
-.Lj8912:
+	jal	r0,.Lj8908
+.Lj8907:
 	la	r3,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	addi	r1,r3,4
-.Lj8913:
+.Lj8908:
 	ldw	r3,r1,0
 	stw	r30,r3,-60
 	ldw	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8914
-	jal	r0,.Lj8915
-.Lj8914:
+	bne	r3,r0,.Lj8909
+	jal	r0,.Lj8910
+.Lj8909:
 	addi	r3,r0,1
 	call	SYSTEM_$$_HALT$LONGINT
-	jal	r0,.Lj8916
-.Lj8915:
+	jal	r0,.Lj8911
+.Lj8910:
 	ldw	r3,r30,-60
 	ldw	r3,r3,12
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8917
-	jal	r0,.Lj8918
-.Lj8917:
+	bne	r3,r0,.Lj8912
+	jal	r0,.Lj8913
+.Lj8912:
 	ldw	r3,r30,-60
 	ldw	r3,r3,0
 	stw	r30,r3,-56
-	jal	r0,.Lj8919
-.Lj8918:
+	jal	r0,.Lj8914
+.Lj8913:
 	stw	r30,r0,-56
-.Lj8919:
+.Lj8914:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8920
+	beq	r4,r0,.Lj8915
 	la	r5,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8921
-.Lj8920:
+	jal	r0,.Lj8916
+.Lj8915:
 	la	r3,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	addi	r1,r3,4
-.Lj8921:
+.Lj8916:
 	ldw	r3,r30,-60
 	ldw	r3,r3,8
 	stw	r1,r3,0
 	ldw	r3,r30,-60
 	ldw	r3,r3,20
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8922
-	jal	r0,.Lj8923
-.Lj8922:
+	bne	r3,r0,.Lj8917
+	jal	r0,.Lj8918
+.Lj8917:
 	ldw	r3,r30,-60
 	ldw	r3,r3,20
 	call	SYSTEM_$$_FREEMEM$POINTER$$LONGWORD
-.Lj8923:
+.Lj8918:
 	ldw	r3,r30,-60
 	call	fpc_freemem
 	la	r3,TC_$SYSTEM_$$_ERRORADDR
 	stw	r3,r0,0
-.Lj8916:
+.Lj8911:
 	ldw	r1,r30,-56
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -75938,47 +75907,47 @@ FPC_POPSECONDOBJECTSTACK:
 	addi	r29,r29,-64
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8926
+	beq	r4,r0,.Lj8921
 	la	r5,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8927
-.Lj8926:
+	jal	r0,.Lj8922
+.Lj8921:
 	la	r3,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	addi	r1,r3,4
-.Lj8927:
+.Lj8922:
 	ldw	r3,r1,0
 	stw	r30,r3,-64
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8928
-	jal	r0,.Lj8929
-.Lj8929:
+	bne	r3,r0,.Lj8923
+	jal	r0,.Lj8924
+.Lj8924:
 	ldw	r3,r30,-64
 	ldw	r3,r3,8
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8928
-	jal	r0,.Lj8930
-.Lj8928:
+	bne	r3,r0,.Lj8923
+	jal	r0,.Lj8925
+.Lj8923:
 	addi	r3,r0,1
 	call	SYSTEM_$$_HALT$LONGINT
-	jal	r0,.Lj8931
-.Lj8930:
+	jal	r0,.Lj8926
+.Lj8925:
 	ldw	r3,r30,-64
 	ldw	r3,r3,8
 	ldw	r3,r3,12
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8932
-	jal	r0,.Lj8933
-.Lj8932:
+	bne	r3,r0,.Lj8927
+	jal	r0,.Lj8928
+.Lj8927:
 	ldw	r3,r30,-64
 	ldw	r3,r3,8
 	ldw	r3,r3,0
 	stw	r30,r3,-56
-	jal	r0,.Lj8934
-.Lj8933:
+	jal	r0,.Lj8929
+.Lj8928:
 	stw	r30,r0,-56
-.Lj8934:
+.Lj8929:
 	ldw	r3,r30,-64
 	ldw	r3,r3,8
 	stw	r30,r3,-60
@@ -75989,16 +75958,16 @@ FPC_POPSECONDOBJECTSTACK:
 	ldw	r3,r30,-60
 	ldw	r3,r3,20
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8935
-	jal	r0,.Lj8936
-.Lj8935:
+	bne	r3,r0,.Lj8930
+	jal	r0,.Lj8931
+.Lj8930:
 	ldw	r3,r30,-60
 	ldw	r3,r3,20
 	call	SYSTEM_$$_FREEMEM$POINTER$$LONGWORD
-.Lj8936:
+.Lj8931:
 	ldw	r3,r30,-60
 	call	fpc_freemem
-.Lj8931:
+.Lj8926:
 	ldw	r1,r30,-56
 	ldw	r30,r29,64
 	ldw	r31,r29,68
@@ -76020,35 +75989,35 @@ FPC_RERAISE:
 	addi	r29,r29,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8939
+	beq	r4,r0,.Lj8934
 	la	r5,U_$SYSTEM_$$_EXCEPTADDRSTACK
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8940
-.Lj8939:
+	jal	r0,.Lj8935
+.Lj8934:
 	la	r3,U_$SYSTEM_$$_EXCEPTADDRSTACK
 	addi	r1,r3,4
-.Lj8940:
+.Lj8935:
 	ldw	r3,r1,0
 	stw	r30,r3,-56
 	ldw	r3,r30,-56
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8941
-	jal	r0,.Lj8942
-.Lj8941:
+	bne	r3,r0,.Lj8936
+	jal	r0,.Lj8937
+.Lj8936:
 	call	SYSTEM_$$_DOUNHANDLEDEXCEPTION
-.Lj8942:
+.Lj8937:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj8943
+	beq	r5,r0,.Lj8938
 	la	r4,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj8944
-.Lj8943:
+	jal	r0,.Lj8939
+.Lj8938:
 	la	r3,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	addi	r1,r3,4
-.Lj8944:
+.Lj8939:
 	ldw	r3,r1,0
 	stw	r3,r0,12
 	ldw	r3,r30,-56
@@ -76080,45 +76049,45 @@ FPC_CATCHES:
 	stw	r30,r3,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8947
+	beq	r4,r0,.Lj8942
 	la	r5,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8948
-.Lj8947:
+	jal	r0,.Lj8943
+.Lj8942:
 	la	r3,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	addi	r1,r3,4
-.Lj8948:
+.Lj8943:
 	ldw	r3,r1,0
 	stw	r30,r3,-64
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8949
-	jal	r0,.Lj8950
-.Lj8949:
+	bne	r3,r0,.Lj8944
+	jal	r0,.Lj8945
+.Lj8944:
 	addi	r3,r0,255
 	call	SYSTEM_$$_HALT$LONGINT
-.Lj8950:
+.Lj8945:
 	ldw	r3,r30,-56
 	addi	r3,r3,1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj8951
-	jal	r0,.Lj8952
-.Lj8952:
+	bne	r3,r0,.Lj8946
+	jal	r0,.Lj8947
+.Lj8947:
 	ldw	r3,r30,-64
 	ldw	r4,r3,0
 	ldw	r3,r30,-56
 	call	fpc_do_is
-	bne	r1,r0,.Lj8951
-	jal	r0,.Lj8953
-.Lj8953:
+	bne	r1,r0,.Lj8946
+	jal	r0,.Lj8948
+.Lj8948:
 	stw	r30,r0,-60
-	jal	r0,.Lj8954
-.Lj8951:
+	jal	r0,.Lj8949
+.Lj8946:
 	ldw	r3,r30,-64
 	ldw	r3,r3,0
 	stw	r30,r3,-60
-.Lj8954:
+.Lj8949:
 	ldw	r1,r30,-60
 	ldw	r30,r29,64
 	ldw	r31,r29,68
@@ -76138,27 +76107,27 @@ SYSTEM_$$_SYSINITEXCEPTIONS:
 	addi	r29,r29,-52
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8957
+	beq	r4,r0,.Lj8952
 	la	r5,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8958
-.Lj8957:
+	jal	r0,.Lj8953
+.Lj8952:
 	la	r3,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	addi	r1,r3,4
-.Lj8958:
+.Lj8953:
 	stw	r1,r0,0
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8959
+	beq	r4,r0,.Lj8954
 	la	r5,U_$SYSTEM_$$_EXCEPTADDRSTACK
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8960
-.Lj8959:
+	jal	r0,.Lj8955
+.Lj8954:
 	la	r3,U_$SYSTEM_$$_EXCEPTADDRSTACK
 	addi	r1,r3,4
-.Lj8960:
+.Lj8955:
 	stw	r1,r0,0
 	ldw	r30,r29,52
 	ldw	r31,r29,56
@@ -76236,41 +76205,41 @@ FPC_SAFECALLHANDLER:
 	stw	r30,r3,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj8967
+	beq	r4,r0,.Lj8962
 	la	r5,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj8968
-.Lj8967:
+	jal	r0,.Lj8963
+.Lj8962:
 	la	r3,U_$SYSTEM_$$_EXCEPTOBJECTSTACK
 	addi	r1,r3,4
-.Lj8968:
+.Lj8963:
 	ldw	r3,r1,0
 	stw	r30,r3,-64
 	ldw	r3,r30,-64
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8969
-	jal	r0,.Lj8970
-.Lj8969:
+	bne	r3,r0,.Lj8964
+	jal	r0,.Lj8965
+.Lj8964:
 	ldw	r3,r30,-64
 	ldw	r3,r3,4
 	stw	r30,r3,-68
-	jal	r0,.Lj8971
-.Lj8970:
+	jal	r0,.Lj8966
+.Lj8965:
 	stw	r30,r0,-68
-.Lj8971:
+.Lj8966:
 	call	FPC_POPOBJECTSTACK
 	stw	r30,r1,-72
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8972
-	jal	r0,.Lj8973
-.Lj8972:
+	bne	r3,r0,.Lj8967
+	jal	r0,.Lj8968
+.Lj8967:
 	ldw	r3,r30,-72
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj8974
-	jal	r0,.Lj8973
-.Lj8974:
+	bne	r3,r0,.Lj8969
+	jal	r0,.Lj8968
+.Lj8969:
 	ldw	r5,r30,-68
 	ldw	r4,r30,-72
 	ldw	r3,r30,-56
@@ -76279,12 +76248,12 @@ FPC_SAFECALLHANDLER:
 	ldw	r6,r6,60
 	jalr	r31,r6
 	stw	r30,r1,-60
-	jal	r0,.Lj8975
-.Lj8973:
+	jal	r0,.Lj8970
+.Lj8968:
 	lui	r3,524303
 	ori	r3,r3,4095
 	stw	r30,r3,-60
-.Lj8975:
+.Lj8970:
 	ldw	r3,r30,-72
 	call	SYSTEM$_$TOBJECT_$__$$_FREE
 	ldw	r1,r30,-60
@@ -76311,23 +76280,23 @@ SYSTEM$_$TMETHOD_$__$$_$equal$TMETHOD$TMETHOD$$BOOLEAN:
 	ldw	r3,r3,4
 	ldw	r4,r4,4
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj8978
-	jal	r0,.Lj8979
-.Lj8978:
+	bne	r3,r0,.Lj8973
+	jal	r0,.Lj8974
+.Lj8973:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	ldw	r4,r4,0
 	ldw	r3,r3,0
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj8980
-	jal	r0,.Lj8979
-.Lj8980:
+	bne	r3,r0,.Lj8975
+	jal	r0,.Lj8974
+.Lj8975:
 	addi	r3,r0,1
 	stb	r30,r3,-64
-	jal	r0,.Lj8981
-.Lj8979:
+	jal	r0,.Lj8976
+.Lj8974:
 	stb	r30,r0,-64
-.Lj8981:
+.Lj8976:
 	ldbu	r1,r30,-64
 	ldw	r30,r29,64
 	ldw	r31,r29,68
@@ -76352,23 +76321,23 @@ SYSTEM$_$TMETHOD_$__$$_$not_equal$TMETHOD$TMETHOD$$BOOLEAN:
 	ldw	r3,r3,4
 	ldw	r4,r4,4
 	sne	r3,r3,r4
-	bne	r3,r0,.Lj8984
-	jal	r0,.Lj8985
-.Lj8985:
+	bne	r3,r0,.Lj8979
+	jal	r0,.Lj8980
+.Lj8980:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	ldw	r4,r4,0
 	ldw	r3,r3,0
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj8984
-	jal	r0,.Lj8986
-.Lj8984:
+	bne	r3,r0,.Lj8979
+	jal	r0,.Lj8981
+.Lj8979:
 	addi	r3,r0,1
 	stb	r30,r3,-64
-	jal	r0,.Lj8987
-.Lj8986:
+	jal	r0,.Lj8982
+.Lj8981:
 	stb	r30,r0,-64
-.Lj8987:
+.Lj8982:
 	ldbu	r1,r30,-64
 	ldw	r30,r29,64
 	ldw	r31,r29,68
@@ -76393,35 +76362,35 @@ SYSTEM$_$TMETHOD_$__$$_$greater$TMETHOD$TMETHOD$$BOOLEAN:
 	ldw	r4,r4,4
 	ldw	r3,r3,4
 	sgtu	r3,r4,r3
-	bne	r3,r0,.Lj8990
-	jal	r0,.Lj8991
-.Lj8991:
+	bne	r3,r0,.Lj8985
+	jal	r0,.Lj8986
+.Lj8986:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	ldw	r4,r4,4
 	ldw	r3,r3,4
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj8993
-	jal	r0,.Lj8994
-.Lj8993:
+	bne	r3,r0,.Lj8988
+	jal	r0,.Lj8989
+.Lj8988:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	ldw	r3,r3,0
 	ldw	r4,r4,0
 	sgtu	r3,r3,r4
-	bne	r3,r0,.Lj8995
-	jal	r0,.Lj8994
-.Lj8995:
-	jal	r0,.Lj8990
-.Lj8994:
-	jal	r0,.Lj8992
+	bne	r3,r0,.Lj8990
+	jal	r0,.Lj8989
 .Lj8990:
+	jal	r0,.Lj8985
+.Lj8989:
+	jal	r0,.Lj8987
+.Lj8985:
 	addi	r3,r0,1
 	stb	r30,r3,-64
-	jal	r0,.Lj8996
-.Lj8992:
+	jal	r0,.Lj8991
+.Lj8987:
 	stb	r30,r0,-64
-.Lj8996:
+.Lj8991:
 	ldbu	r1,r30,-64
 	ldw	r30,r29,64
 	ldw	r31,r29,68
@@ -76446,55 +76415,55 @@ SYSTEM$_$TMETHOD_$__$$_$greater_or_equal$TMETHOD$TMETHOD$$BOOLEAN:
 	ldw	r4,r4,4
 	ldw	r3,r3,4
 	sgtu	r3,r4,r3
-	bne	r3,r0,.Lj8999
-	jal	r0,.Lj9000
-.Lj9000:
+	bne	r3,r0,.Lj8994
+	jal	r0,.Lj8995
+.Lj8995:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	ldw	r4,r4,4
 	ldw	r3,r3,4
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj9002
-	jal	r0,.Lj9003
-.Lj9002:
+	bne	r3,r0,.Lj8997
+	jal	r0,.Lj8998
+.Lj8997:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	ldw	r4,r4,0
 	ldw	r3,r3,0
 	sgtu	r3,r4,r3
-	bne	r3,r0,.Lj9004
-	jal	r0,.Lj9003
-.Lj9004:
-	jal	r0,.Lj8999
-.Lj9003:
-	jal	r0,.Lj9001
-.Lj9001:
+	bne	r3,r0,.Lj8999
+	jal	r0,.Lj8998
+.Lj8999:
+	jal	r0,.Lj8994
+.Lj8998:
+	jal	r0,.Lj8996
+.Lj8996:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	ldw	r4,r4,4
 	ldw	r3,r3,4
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj9006
-	jal	r0,.Lj9007
-.Lj9006:
+	bne	r3,r0,.Lj9001
+	jal	r0,.Lj9002
+.Lj9001:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	ldw	r4,r4,0
 	ldw	r3,r3,0
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj9008
-	jal	r0,.Lj9007
-.Lj9008:
-	jal	r0,.Lj8999
-.Lj9007:
-	jal	r0,.Lj9005
-.Lj8999:
+	bne	r3,r0,.Lj9003
+	jal	r0,.Lj9002
+.Lj9003:
+	jal	r0,.Lj8994
+.Lj9002:
+	jal	r0,.Lj9000
+.Lj8994:
 	addi	r3,r0,1
 	stb	r30,r3,-64
-	jal	r0,.Lj9009
-.Lj9005:
+	jal	r0,.Lj9004
+.Lj9000:
 	stb	r30,r0,-64
-.Lj9009:
+.Lj9004:
 	ldbu	r1,r30,-64
 	ldw	r30,r29,64
 	ldw	r31,r29,68
@@ -76519,35 +76488,35 @@ SYSTEM$_$TMETHOD_$__$$_$lower$TMETHOD$TMETHOD$$BOOLEAN:
 	ldw	r4,r4,4
 	ldw	r3,r3,4
 	sltu	r3,r4,r3
-	bne	r3,r0,.Lj9012
-	jal	r0,.Lj9013
-.Lj9013:
+	bne	r3,r0,.Lj9007
+	jal	r0,.Lj9008
+.Lj9008:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	ldw	r4,r4,4
 	ldw	r3,r3,4
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj9015
-	jal	r0,.Lj9016
-.Lj9015:
+	bne	r3,r0,.Lj9010
+	jal	r0,.Lj9011
+.Lj9010:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	ldw	r3,r3,0
 	ldw	r4,r4,0
 	sltu	r3,r3,r4
-	bne	r3,r0,.Lj9017
-	jal	r0,.Lj9016
-.Lj9017:
-	jal	r0,.Lj9012
-.Lj9016:
-	jal	r0,.Lj9014
+	bne	r3,r0,.Lj9012
+	jal	r0,.Lj9011
 .Lj9012:
+	jal	r0,.Lj9007
+.Lj9011:
+	jal	r0,.Lj9009
+.Lj9007:
 	addi	r3,r0,1
 	stb	r30,r3,-64
-	jal	r0,.Lj9018
-.Lj9014:
+	jal	r0,.Lj9013
+.Lj9009:
 	stb	r30,r0,-64
-.Lj9018:
+.Lj9013:
 	ldbu	r1,r30,-64
 	ldw	r30,r29,64
 	ldw	r31,r29,68
@@ -76572,55 +76541,55 @@ SYSTEM$_$TMETHOD_$__$$_$lower_or_equal$TMETHOD$TMETHOD$$BOOLEAN:
 	ldw	r4,r4,4
 	ldw	r3,r3,4
 	sltu	r3,r4,r3
-	bne	r3,r0,.Lj9021
-	jal	r0,.Lj9022
-.Lj9022:
+	bne	r3,r0,.Lj9016
+	jal	r0,.Lj9017
+.Lj9017:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	ldw	r4,r4,4
 	ldw	r3,r3,4
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj9024
-	jal	r0,.Lj9025
-.Lj9024:
+	bne	r3,r0,.Lj9019
+	jal	r0,.Lj9020
+.Lj9019:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	ldw	r4,r4,0
 	ldw	r3,r3,0
 	sltu	r3,r4,r3
-	bne	r3,r0,.Lj9026
-	jal	r0,.Lj9025
-.Lj9026:
-	jal	r0,.Lj9021
-.Lj9025:
-	jal	r0,.Lj9023
-.Lj9023:
+	bne	r3,r0,.Lj9021
+	jal	r0,.Lj9020
+.Lj9021:
+	jal	r0,.Lj9016
+.Lj9020:
+	jal	r0,.Lj9018
+.Lj9018:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	ldw	r4,r4,4
 	ldw	r3,r3,4
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj9028
-	jal	r0,.Lj9029
-.Lj9028:
+	bne	r3,r0,.Lj9023
+	jal	r0,.Lj9024
+.Lj9023:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	ldw	r4,r4,0
 	ldw	r3,r3,0
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj9030
-	jal	r0,.Lj9029
-.Lj9030:
-	jal	r0,.Lj9021
-.Lj9029:
-	jal	r0,.Lj9027
-.Lj9021:
+	bne	r3,r0,.Lj9025
+	jal	r0,.Lj9024
+.Lj9025:
+	jal	r0,.Lj9016
+.Lj9024:
+	jal	r0,.Lj9022
+.Lj9016:
 	addi	r3,r0,1
 	stb	r30,r3,-64
-	jal	r0,.Lj9031
-.Lj9027:
+	jal	r0,.Lj9026
+.Lj9022:
 	stb	r30,r0,-64
-.Lj9031:
+.Lj9026:
 	ldbu	r1,r30,-64
 	ldw	r30,r29,64
 	ldw	r31,r29,68
@@ -76769,22 +76738,22 @@ SYSTEM$_$TMARSHAL_$__$$_CREATE$$TMARSHAL:
 	ldw	r3,r30,-56
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9046
-	jal	r0,.Lj9047
-.Lj9046:
+	bne	r3,r0,.Lj9041
+	jal	r0,.Lj9042
+.Lj9041:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-60
 	ldw	r4,r4,52
 	jalr	r31,r4
 	stw	r30,r1,-60
-.Lj9047:
+.Lj9042:
 	ldw	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9048
-	jal	r0,.Lj9049
-.Lj9048:
+	bne	r3,r0,.Lj9043
 	jal	r0,.Lj9044
-.Lj9049:
+.Lj9043:
+	jal	r0,.Lj9039
+.Lj9044:
 	addi	r5,r30,-76
 	addi	r4,r30,-160
 	addi	r3,r0,1
@@ -76792,7 +76761,7 @@ SYSTEM$_$TMARSHAL_$__$$_CREATE$$TMARSHAL:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj9054
+	bne	r1,r0,.Lj9049
 	addi	r3,r0,-1
 	stw	r30,r3,-64
 	addi	r3,r0,2
@@ -76801,24 +76770,24 @@ SYSTEM$_$TMARSHAL_$__$$_CREATE$$TMARSHAL:
 	stw	r30,r3,-64
 	ldw	r3,r30,-60
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9056
-	jal	r0,.Lj9057
-.Lj9056:
+	bne	r3,r0,.Lj9051
+	jal	r0,.Lj9052
+.Lj9051:
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9058
-	jal	r0,.Lj9057
-.Lj9058:
+	bne	r3,r0,.Lj9053
+	jal	r0,.Lj9052
+.Lj9053:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-60
 	ldw	r4,r4,0
 	ldw	r4,r4,68
 	jalr	r31,r4
-.Lj9057:
-.Lj9054:
+.Lj9052:
+.Lj9049:
 	call	fpc_popaddrstack
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj9052
+	beq	r3,r0,.Lj9047
 	addi	r5,r30,-176
 	addi	r4,r30,-260
 	addi	r3,r0,1
@@ -76826,31 +76795,31 @@ SYSTEM$_$TMARSHAL_$__$$_CREATE$$TMARSHAL:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-264
-	bne	r1,r0,.Lj9059
+	bne	r1,r0,.Lj9054
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9060
-	jal	r0,.Lj9061
-.Lj9060:
+	bne	r3,r0,.Lj9055
+	jal	r0,.Lj9056
+.Lj9055:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-60
 	ldw	r5,r30,-60
 	ldw	r5,r5,0
 	ldw	r5,r5,48
 	jalr	r31,r5
-.Lj9061:
+.Lj9056:
 	call	fpc_popaddrstack
 	call	fpc_reraise
-.Lj9059:
+.Lj9054:
 	call	fpc_popaddrstack
 	ldw	r3,r30,-264
-	beq	r3,r0,.Lj9062
+	beq	r3,r0,.Lj9057
 	call	fpc_raise_nested
-.Lj9062:
+.Lj9057:
 	call	fpc_doneexception
-	jal	r0,.Lj9052
-.Lj9052:
-.Lj9044:
+	jal	r0,.Lj9047
+.Lj9047:
+.Lj9039:
 	ldw	r1,r30,-60
 	ldw	r30,r29,264
 	ldw	r31,r29,268
@@ -77771,10 +77740,10 @@ SYSTEM$_$TMARSHAL_$__$$_INOUTSTRING$UNICODESTRING$$PUNICODECHAR:
 	addi	r29,r29,-60
 	stw	r30,r3,-56
 	ldw	r4,r30,-56
-	bne	r4,r0,.Lj9141
+	bne	r4,r0,.Lj9136
 	la	r3,FPC_EMPTYCHAR
 	addi	r4,r3,0
-.Lj9141:
+.Lj9136:
 	stw	r30,r4,-60
 	ldw	r1,r30,-60
 	ldw	r30,r29,60
@@ -77795,10 +77764,10 @@ SYSTEM$_$TMARSHAL_$__$$_INSTRING$UNICODESTRING$$PUNICODECHAR:
 	addi	r29,r29,-60
 	stw	r30,r3,-56
 	ldw	r4,r30,-56
-	bne	r4,r0,.Lj9144
+	bne	r4,r0,.Lj9139
 	la	r3,FPC_EMPTYCHAR
 	addi	r4,r3,0
-.Lj9144:
+.Lj9139:
 	stw	r30,r4,-60
 	ldw	r1,r30,-60
 	ldw	r30,r29,60
@@ -77819,10 +77788,10 @@ SYSTEM$_$TMARSHAL_$__$$_OUTSTRING$UNICODESTRING$$PUNICODECHAR:
 	addi	r29,r29,-60
 	stw	r30,r3,-56
 	ldw	r4,r30,-56
-	bne	r4,r0,.Lj9147
+	bne	r4,r0,.Lj9142
 	la	r3,FPC_EMPTYCHAR
 	addi	r4,r3,0
-.Lj9147:
+.Lj9142:
 	stw	r30,r4,-60
 	ldw	r1,r30,-60
 	ldw	r30,r29,60
@@ -77869,12 +77838,12 @@ SYSTEM$_$TMARSHAL_$__$$_UNFIXSTRING$TPTRWRAPPER:
 	la	r3,FPC_EMPTYCHAR
 	ldw	r4,r30,-56
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj9152
-	jal	r0,.Lj9153
-.Lj9152:
+	bne	r3,r0,.Lj9147
+	jal	r0,.Lj9148
+.Lj9147:
 	addi	r3,r30,-56
 	call	fpc_unicodestr_decr_ref
-.Lj9153:
+.Lj9148:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -77894,24 +77863,24 @@ SYSTEM$_$TMARSHAL_$__$$_UNSAFEFIXSTRING$UNICODESTRING$$TPTRWRAPPER:
 	stw	r30,r3,-60
 	stw	r30,r4,-56
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj9156
+	beq	r3,r0,.Lj9151
 	ldw	r3,r3,-4
-.Lj9156:
+.Lj9151:
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9157
-	jal	r0,.Lj9158
-.Lj9157:
+	bne	r3,r0,.Lj9152
+	jal	r0,.Lj9153
+.Lj9152:
 	la	r3,FPC_EMPTYCHAR
 	ldw	r4,r30,-60
 	stw	r4,r3,0
-	jal	r0,.Lj9154
-.Lj9158:
+	jal	r0,.Lj9149
+.Lj9153:
 	ldw	r3,r30,-60
 	stw	r3,r0,0
 	ldw	r3,r30,-60
 	ldw	r4,r30,-56
 	call	fpc_unicodestr_assign
-.Lj9154:
+.Lj9149:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -77935,9 +77904,9 @@ SYSTEM$_$TMARSHAL_$__$$_ALLOCSTRINGASANSI$UNICODESTRING$$TPTRWRAPPER:
 	la	r3,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r6,r3,0
 	ldw	r5,r30,-56
-	beq	r5,r0,.Lj9161
+	beq	r5,r0,.Lj9156
 	ldw	r5,r5,-4
-.Lj9161:
+.Lj9156:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-56
 	call	SYSTEM$_$TMARSHAL_$__$$_ALLOCSTRINGASANSI$PUNICODECHAR$LONGINT$WORD$$TPTRWRAPPER
@@ -77961,9 +77930,9 @@ SYSTEM$_$TMARSHAL_$__$$_ALLOCSTRINGASANSI$UNICODESTRING$WORD$$TPTRWRAPPER:
 	stw	r30,r4,-56
 	sth	r30,r5,-60
 	ldw	r5,r30,-56
-	beq	r5,r0,.Lj9164
+	beq	r5,r0,.Lj9159
 	ldw	r5,r5,-4
-.Lj9164:
+.Lj9159:
 	ldw	r3,r30,-64
 	ldhu	r6,r30,-60
 	ldw	r4,r30,-56
@@ -78039,9 +78008,9 @@ SYSTEM$_$TMARSHAL_$__$$_ALLOCSTRINGASUNICODE$UNICODESTRING$$TPTRWRAPPER:
 	stw	r30,r3,-60
 	stw	r30,r4,-56
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj9171
+	beq	r3,r0,.Lj9166
 	ldw	r3,r3,-4
-.Lj9171:
+.Lj9166:
 	addi	r3,r3,1
 	slli	r3,r3,1
 	stw	r30,r3,-64
@@ -78052,10 +78021,10 @@ SYSTEM$_$TMARSHAL_$__$$_ALLOCSTRINGASUNICODE$UNICODESTRING$$TPTRWRAPPER:
 	ldw	r3,r30,-60
 	ldw	r4,r3,0
 	ldw	r3,r30,-56
-	bne	r3,r0,.Lj9172
+	bne	r3,r0,.Lj9167
 	la	r5,FPC_EMPTYCHAR
 	addi	r3,r5,0
-.Lj9172:
+.Lj9167:
 	ldw	r5,r30,-64
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
 	ldw	r30,r29,64
@@ -78077,9 +78046,9 @@ SYSTEM$_$TMARSHAL_$__$$_ALLOCSTRINGASUTF8$UNICODESTRING$$TPTRWRAPPER:
 	stw	r30,r3,-60
 	stw	r30,r4,-56
 	ldw	r5,r30,-56
-	beq	r5,r0,.Lj9175
+	beq	r5,r0,.Lj9170
 	ldw	r5,r5,-4
-.Lj9175:
+.Lj9170:
 	ldw	r3,r30,-60
 	lui	r6,15
 	ori	r6,r6,3561
@@ -78139,7 +78108,7 @@ SYSTEM$_$TMARSHAL_$__$$_ALLOCSTRINGASANSI$PUNICODECHAR$LONGINT$WORD$$TPTRWRAPPER
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-176
-	bne	r1,r0,.Lj9181
+	bne	r1,r0,.Lj9176
 	addi	r3,r30,-72
 	addi	r4,r0,0
 	call	fpc_ansistr_assign
@@ -78151,21 +78120,21 @@ SYSTEM$_$TMARSHAL_$__$$_ALLOCSTRINGASANSI$PUNICODECHAR$LONGINT$WORD$$TPTRWRAPPER
 	ldw	r7,r7,76
 	jalr	r31,r7
 	ldw	r3,r30,-72
-	beq	r3,r0,.Lj9183
+	beq	r3,r0,.Lj9178
 	ldw	r3,r3,-4
-.Lj9183:
+.Lj9178:
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9184
-	jal	r0,.Lj9185
-.Lj9184:
+	bne	r3,r0,.Lj9179
+	jal	r0,.Lj9180
+.Lj9179:
 	ldw	r3,r30,-68
 	stw	r3,r0,0
-	jal	r0,.Lj9182
-.Lj9185:
+	jal	r0,.Lj9177
+.Lj9180:
 	ldw	r3,r30,-72
-	beq	r3,r0,.Lj9186
+	beq	r3,r0,.Lj9181
 	ldw	r3,r3,-4
-.Lj9186:
+.Lj9181:
 	addi	r3,r3,1
 	stw	r30,r3,-76
 	ldw	r3,r30,-76
@@ -78173,25 +78142,25 @@ SYSTEM$_$TMARSHAL_$__$$_ALLOCSTRINGASANSI$PUNICODECHAR$LONGINT$WORD$$TPTRWRAPPER
 	ldw	r3,r30,-68
 	stw	r3,r1,0
 	ldw	r3,r30,-72
-	bne	r3,r0,.Lj9187
+	bne	r3,r0,.Lj9182
 	la	r4,FPC_EMPTYCHAR
 	addi	r3,r4,0
-.Lj9187:
+.Lj9182:
 	ldw	r4,r30,-68
 	ldw	r4,r4,0
 	ldw	r5,r30,-76
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj9181:
+.Lj9176:
 	call	fpc_popaddrstack
 	addi	r3,r30,-72
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-176
-	beq	r3,r0,.Lj9180
+	beq	r3,r0,.Lj9175
 	call	fpc_reraise
-.Lj9182:
+.Lj9177:
 	stw	r30,r0,-176
-	jal	r0,.Lj9181
-.Lj9180:
+	jal	r0,.Lj9176
+.Lj9175:
 	ldw	r30,r29,176
 	ldw	r31,r29,180
 	addi	r29,r29,184
@@ -78299,15 +78268,15 @@ SYSTEM$_$TMARSHAL_$__$$_READSTRINGASANSI$WORD$TPTRWRAPPER$LONGINT$$UNICODESTRING
 	ldw	r4,r30,-64
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj9196
-	jal	r0,.Lj9197
-.Lj9196:
+	bne	r3,r0,.Lj9191
+	jal	r0,.Lj9192
+.Lj9191:
 	ldw	r3,r30,-60
 	addi	r5,r0,0
 	ldw	r4,r30,-64
 	call	SYSTEM_$$_INDEXBYTE$formal$LONGINT$BYTE$$LONGINT
 	stw	r30,r1,-64
-.Lj9197:
+.Lj9192:
 	ldw	r3,r30,-68
 	addi	r4,r0,0
 	call	fpc_unicodestr_assign
@@ -78348,12 +78317,12 @@ SYSTEM$_$TMARSHAL_$__$$_READSTRINGASANSIUPTO$WORD$TPTRWRAPPER$LONGINT$$UNICODEST
 	ldw	r4,r30,-72
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj9200
-	jal	r0,.Lj9201
-.Lj9200:
+	bne	r3,r0,.Lj9195
+	jal	r0,.Lj9196
+.Lj9195:
 	ldw	r3,r30,-64
 	stw	r30,r3,-72
-.Lj9201:
+.Lj9196:
 	ldw	r3,r30,-68
 	ldw	r6,r30,-72
 	ldw	r5,r30,-60
@@ -78469,30 +78438,30 @@ SYSTEM$_$TMARSHAL_$__$$_WRITESTRINGASANSI$TPTRWRAPPER$LONGINT$UNICODESTRING$LONG
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-184
-	bne	r1,r0,.Lj9211
+	bne	r1,r0,.Lj9206
 	addi	r3,r30,-76
 	addi	r4,r0,0
 	call	fpc_ansistr_assign
 	ldw	r3,r30,-64
-	beq	r3,r0,.Lj9213
+	beq	r3,r0,.Lj9208
 	ldw	r3,r3,-4
-.Lj9213:
+.Lj9208:
 	stw	r30,r3,-80
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj9214
-	jal	r0,.Lj9215
-.Lj9214:
+	bne	r3,r0,.Lj9209
+	jal	r0,.Lj9210
+.Lj9209:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-80
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj9216
-	jal	r0,.Lj9215
-.Lj9216:
+	bne	r3,r0,.Lj9211
+	jal	r0,.Lj9210
+.Lj9211:
 	ldw	r3,r30,-68
 	stw	r30,r3,-80
-.Lj9215:
+.Lj9210:
 	addi	r4,r30,-76
 	ldw	r6,r30,-80
 	ldhu	r5,r30,-72
@@ -78501,25 +78470,25 @@ SYSTEM$_$TMARSHAL_$__$$_WRITESTRINGASANSI$TPTRWRAPPER$LONGINT$UNICODESTRING$LONG
 	ldw	r7,r7,76
 	jalr	r31,r7
 	ldw	r3,r30,-76
-	beq	r3,r0,.Lj9217
+	beq	r3,r0,.Lj9212
 	ldw	r3,r3,-4
-.Lj9217:
+.Lj9212:
 	stw	r30,r3,-84
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj9218
-	jal	r0,.Lj9219
-.Lj9218:
+	bne	r3,r0,.Lj9213
+	jal	r0,.Lj9214
+.Lj9213:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-84
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj9220
-	jal	r0,.Lj9219
-.Lj9220:
+	bne	r3,r0,.Lj9215
+	jal	r0,.Lj9214
+.Lj9215:
 	ldw	r3,r30,-68
 	stw	r30,r3,-84
-.Lj9219:
+.Lj9214:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	add	r4,r4,r3
@@ -78529,26 +78498,26 @@ SYSTEM$_$TMARSHAL_$__$$_WRITESTRINGASANSI$TPTRWRAPPER$LONGINT$UNICODESTRING$LONG
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj9221
-	jal	r0,.Lj9222
-.Lj9221:
+	bne	r3,r0,.Lj9216
+	jal	r0,.Lj9217
+.Lj9216:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	add	r3,r3,r4
 	ldw	r4,r30,-84
 	add	r3,r3,r4
 	stb	r3,r0,0
-.Lj9222:
-.Lj9211:
+.Lj9217:
+.Lj9206:
 	call	fpc_popaddrstack
 	addi	r3,r30,-76
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-184
-	beq	r3,r0,.Lj9210
+	beq	r3,r0,.Lj9205
 	call	fpc_reraise
 	stw	r30,r0,-184
-	jal	r0,.Lj9211
-.Lj9210:
+	jal	r0,.Lj9206
+.Lj9205:
 	ldw	r30,r29,184
 	ldw	r31,r29,188
 	addi	r29,r29,192
@@ -78573,13 +78542,13 @@ SYSTEM$_$TMARSHAL_$__$$_READSTRINGASUNICODE$TPTRWRAPPER$LONGINT$$UNICODESTRING:
 	ldw	r4,r30,-60
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj9225
-	jal	r0,.Lj9226
-.Lj9225:
+	bne	r3,r0,.Lj9220
+	jal	r0,.Lj9221
+.Lj9220:
 	ldw	r3,r30,-56
 	call	fpc_pwidechar_length
 	stw	r30,r1,-60
-.Lj9226:
+.Lj9221:
 	ldw	r3,r30,-64
 	addi	r4,r0,0
 	call	fpc_unicodestr_assign
@@ -78621,12 +78590,12 @@ SYSTEM$_$TMARSHAL_$__$$_READSTRINGASUNICODEUPTO$TPTRWRAPPER$LONGINT$$UNICODESTRI
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj9229
-	jal	r0,.Lj9230
-.Lj9229:
+	bne	r3,r0,.Lj9224
+	jal	r0,.Lj9225
+.Lj9224:
 	ldw	r3,r30,-60
 	stw	r30,r3,-68
-.Lj9230:
+.Lj9225:
 	ldw	r3,r30,-64
 	ldw	r5,r30,-68
 	ldw	r4,r30,-56
@@ -78676,25 +78645,25 @@ SYSTEM$_$TMARSHAL_$__$$_WRITESTRINGASUNICODE$TPTRWRAPPER$LONGINT$UNICODESTRING$L
 	stw	r30,r5,-64
 	stw	r30,r6,-68
 	ldw	r3,r30,-64
-	beq	r3,r0,.Lj9235
+	beq	r3,r0,.Lj9230
 	ldw	r3,r3,-4
-.Lj9235:
+.Lj9230:
 	stw	r30,r3,-72
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj9236
-	jal	r0,.Lj9237
-.Lj9236:
+	bne	r3,r0,.Lj9231
+	jal	r0,.Lj9232
+.Lj9231:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-72
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj9238
-	jal	r0,.Lj9237
-.Lj9238:
+	bne	r3,r0,.Lj9233
+	jal	r0,.Lj9232
+.Lj9233:
 	ldw	r3,r30,-68
 	stw	r30,r3,-72
-.Lj9237:
+.Lj9232:
 	ldw	r3,r30,-72
 	slli	r5,r3,1
 	ldw	r3,r30,-56
@@ -78705,9 +78674,9 @@ SYSTEM$_$TMARSHAL_$__$$_WRITESTRINGASUNICODE$TPTRWRAPPER$LONGINT$UNICODESTRING$L
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj9239
-	jal	r0,.Lj9240
-.Lj9239:
+	bne	r3,r0,.Lj9234
+	jal	r0,.Lj9235
+.Lj9234:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	add	r3,r3,r4
@@ -78715,7 +78684,7 @@ SYSTEM$_$TMARSHAL_$__$$_WRITESTRINGASUNICODE$TPTRWRAPPER$LONGINT$UNICODESTRING$L
 	slli	r4,r4,1
 	add	r3,r3,r4
 	sth	r3,r0,0
-.Lj9240:
+.Lj9235:
 	ldw	r30,r29,72
 	ldw	r31,r29,76
 	addi	r29,r29,80
@@ -78868,14 +78837,14 @@ FPC_VARIANT_CLEAR:
 	la	r3,TC_$SYSTEM_$$_VARCLEARPROC
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9253
-	jal	r0,.Lj9254
-.Lj9253:
+	bne	r3,r0,.Lj9248
+	jal	r0,.Lj9249
+.Lj9248:
 	ldw	r3,r30,-56
 	la	r4,TC_$SYSTEM_$$_VARCLEARPROC
 	ldw	r4,r4,0
 	jalr	r31,r4
-.Lj9254:
+.Lj9249:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -78900,14 +78869,14 @@ FPC_VARIANT_ADDREF:
 	la	r3,TC_$SYSTEM_$$_VARADDREFPROC
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9257
-	jal	r0,.Lj9258
-.Lj9257:
+	bne	r3,r0,.Lj9252
+	jal	r0,.Lj9253
+.Lj9252:
 	ldw	r3,r30,-56
 	la	r4,TC_$SYSTEM_$$_VARADDREFPROC
 	ldw	r4,r4,0
 	jalr	r31,r4
-.Lj9258:
+.Lj9253:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -78933,15 +78902,15 @@ FPC_VARIANT_COPY:
 	la	r3,TC_$SYSTEM_$$_VARCOPYPROC
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9261
-	jal	r0,.Lj9262
-.Lj9261:
+	bne	r3,r0,.Lj9256
+	jal	r0,.Lj9257
+.Lj9256:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	la	r5,TC_$SYSTEM_$$_VARCOPYPROC
 	ldw	r5,r5,0
 	jalr	r31,r5
-.Lj9262:
+.Lj9257:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -78969,15 +78938,15 @@ FPC_VARIANT_COPY_OVERWRITE:
 	la	r3,TC_$SYSTEM_$$_VARCOPYPROC
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9265
-	jal	r0,.Lj9266
-.Lj9265:
+	bne	r3,r0,.Lj9260
+	jal	r0,.Lj9261
+.Lj9260:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	la	r5,TC_$SYSTEM_$$_VARCOPYPROC
 	ldw	r5,r5,0
 	jalr	r31,r5
-.Lj9266:
+.Lj9261:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -79001,84 +78970,84 @@ FPC_WRITE_TEXT_VARIANT:
 	stw	r30,r5,-64
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj9269
+	beq	r5,r0,.Lj9264
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj9270
-.Lj9269:
+	jal	r0,.Lj9265
+.Lj9264:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj9270:
+.Lj9265:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9271
-	jal	r0,.Lj9272
-.Lj9271:
+	bne	r3,r0,.Lj9266
 	jal	r0,.Lj9267
-.Lj9272:
+.Lj9266:
+	jal	r0,.Lj9262
+.Lj9267:
 	ldw	r3,r30,-60
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1969
-	beq	r3,r4,.Lj9276
+	beq	r3,r4,.Lj9271
 	lui	r4,13
 	ori	r4,r4,1970
-	beq	r3,r4,.Lj9275
-	jal	r0,.Lj9274
-.Lj9275:
+	beq	r3,r4,.Lj9270
+	jal	r0,.Lj9269
+.Lj9270:
 	ldw	r3,r30,-56
 	addi	r3,r3,1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9277
-	jal	r0,.Lj9278
-.Lj9277:
+	bne	r3,r0,.Lj9272
+	jal	r0,.Lj9273
+.Lj9272:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-60
 	la	r5,U_$SYSTEM_$$_VARIANTMANAGER
 	ldw	r5,r5,180
 	jalr	r31,r5
-	jal	r0,.Lj9279
-.Lj9278:
+	jal	r0,.Lj9274
+.Lj9273:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-60
 	ldw	r5,r30,-56
 	la	r6,U_$SYSTEM_$$_VARIANTMANAGER
 	ldw	r6,r6,176
 	jalr	r31,r6
-.Lj9279:
-	jal	r0,.Lj9273
-.Lj9276:
+.Lj9274:
+	jal	r0,.Lj9268
+.Lj9271:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj9280
+	beq	r4,r0,.Lj9275
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj9281
-.Lj9280:
+	jal	r0,.Lj9276
+.Lj9275:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj9281:
+.Lj9276:
 	addi	r3,r0,105
 	sth	r1,r3,0
-	jal	r0,.Lj9273
-.Lj9274:
+	jal	r0,.Lj9268
+.Lj9269:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj9282
+	beq	r5,r0,.Lj9277
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj9283
-.Lj9282:
+	jal	r0,.Lj9278
+.Lj9277:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj9283:
+.Lj9278:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj9273:
-.Lj9267:
+.Lj9268:
+.Lj9262:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -79108,7 +79077,7 @@ fpc_vararray_get:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-168
-	bne	r1,r0,.Lj9287
+	bne	r1,r0,.Lj9282
 	ldw	r4,r30,-60
 	addi	r3,r30,-184
 	ldw	r6,r30,-64
@@ -79119,16 +79088,16 @@ fpc_vararray_get:
 	addi	r4,r30,-184
 	ldw	r3,r30,-56
 	call	fpc_variant_copy
-.Lj9287:
+.Lj9282:
 	call	fpc_popaddrstack
 	addi	r3,r30,-184
 	call	fpc_variant_clear
 	ldw	r3,r30,-168
-	beq	r3,r0,.Lj9286
+	beq	r3,r0,.Lj9281
 	call	fpc_reraise
 	stw	r30,r0,-168
-	jal	r0,.Lj9287
-.Lj9286:
+	jal	r0,.Lj9282
+.Lj9281:
 	ldw	r30,r29,184
 	ldw	r31,r29,188
 	addi	r29,r29,192
@@ -79698,7 +79667,7 @@ SYSTEM_$$_$assign$WIDECHAR$$VARIANT:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj9336
+	bne	r1,r0,.Lj9331
 	addi	r3,r30,-64
 	ldhu	r4,r30,-56
 	call	fpc_uchar_to_unicodestr
@@ -79707,16 +79676,16 @@ SYSTEM_$$_$assign$WIDECHAR$$VARIANT:
 	la	r5,U_$SYSTEM_$$_VARIANTMANAGER
 	ldw	r5,r5,88
 	jalr	r31,r5
-.Lj9336:
+.Lj9331:
 	call	fpc_popaddrstack
 	addi	r3,r30,-64
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj9335
+	beq	r3,r0,.Lj9330
 	call	fpc_reraise
 	stw	r30,r0,-164
-	jal	r0,.Lj9336
-.Lj9335:
+	jal	r0,.Lj9331
+.Lj9330:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -79812,7 +79781,7 @@ SYSTEM_$$_$assign$UTF8STRING$$VARIANT:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj9347
+	bne	r1,r0,.Lj9342
 	addi	r3,r30,-164
 	ldw	r4,r30,-56
 	call	SYSTEM_$$_UTF8DECODE$RAWBYTESTRING$$UNICODESTRING
@@ -79821,16 +79790,16 @@ SYSTEM_$$_$assign$UTF8STRING$$VARIANT:
 	la	r5,U_$SYSTEM_$$_VARIANTMANAGER
 	ldw	r5,r5,88
 	jalr	r31,r5
-.Lj9347:
+.Lj9342:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj9346
+	beq	r3,r0,.Lj9341
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj9347
-.Lj9346:
+	jal	r0,.Lj9342
+.Lj9341:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -79857,7 +79826,7 @@ SYSTEM_$$_$assign$UCS4STRING$$VARIANT:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj9352
+	bne	r1,r0,.Lj9347
 	addi	r3,r30,-164
 	ldw	r4,r30,-56
 	call	SYSTEM_$$_UCS4STRINGTOWIDESTRING$UCS4STRING$$WIDESTRING
@@ -79866,16 +79835,16 @@ SYSTEM_$$_$assign$UCS4STRING$$VARIANT:
 	la	r5,U_$SYSTEM_$$_VARIANTMANAGER
 	ldw	r5,r5,88
 	jalr	r31,r5
-.Lj9352:
+.Lj9347:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj9351
+	beq	r3,r0,.Lj9346
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj9352
-.Lj9351:
+	jal	r0,.Lj9347
+.Lj9346:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -80371,12 +80340,12 @@ SYSTEM_$$_$assign$VARIANT$$ANSICHAR:
 	ldbu	r4,r30,-316
 	addi	r3,r0,0
 	sgtu	r3,r4,r3
-	bne	r3,r0,.Lj9394
-	jal	r0,.Lj9395
-.Lj9394:
+	bne	r3,r0,.Lj9389
+	jal	r0,.Lj9390
+.Lj9389:
 	ldbu	r3,r30,-315
 	stb	r30,r3,-60
-.Lj9395:
+.Lj9390:
 	ldbu	r1,r30,-60
 	ldw	r30,r29,316
 	ldw	r31,r29,320
@@ -80403,35 +80372,35 @@ SYSTEM_$$_$assign$VARIANT$$WIDECHAR:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj9399
+	bne	r1,r0,.Lj9394
 	ldw	r4,r30,-56
 	addi	r3,r30,-64
 	la	r5,U_$SYSTEM_$$_VARIANTMANAGER
 	ldw	r5,r5,36
 	jalr	r31,r5
 	ldw	r4,r30,-64
-	beq	r4,r0,.Lj9401
+	beq	r4,r0,.Lj9396
 	ldw	r4,r4,-4
-.Lj9401:
+.Lj9396:
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj9402
-	jal	r0,.Lj9403
-.Lj9402:
+	bne	r3,r0,.Lj9397
+	jal	r0,.Lj9398
+.Lj9397:
 	ldw	r3,r30,-64
 	ldhu	r3,r3,0
 	sth	r30,r3,-60
-.Lj9403:
-.Lj9399:
+.Lj9398:
+.Lj9394:
 	call	fpc_popaddrstack
 	addi	r3,r30,-64
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj9398
+	beq	r3,r0,.Lj9393
 	call	fpc_reraise
 	stw	r30,r0,-164
-	jal	r0,.Lj9399
-.Lj9398:
+	jal	r0,.Lj9394
+.Lj9393:
 	ldhu	r1,r30,-60
 	ldw	r30,r29,164
 	ldw	r31,r29,168
@@ -80528,7 +80497,7 @@ SYSTEM_$$_$assign$VARIANT$$UTF8STRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj9413
+	bne	r1,r0,.Lj9408
 	ldw	r4,r30,-56
 	addi	r3,r30,-64
 	la	r5,U_$SYSTEM_$$_VARIANTMANAGER
@@ -80537,16 +80506,16 @@ SYSTEM_$$_$assign$VARIANT$$UTF8STRING:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_UTF8ENCODE$UNICODESTRING$$RAWBYTESTRING
-.Lj9413:
+.Lj9408:
 	call	fpc_popaddrstack
 	addi	r3,r30,-64
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj9412
+	beq	r3,r0,.Lj9407
 	call	fpc_reraise
 	stw	r30,r0,-164
-	jal	r0,.Lj9413
-.Lj9412:
+	jal	r0,.Lj9408
+.Lj9407:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -81305,9 +81274,9 @@ SYSTEM_$$_VARARRAYPUT$VARIANT$VARIANT$array_of_LONGINT:
 	addi	r4,r3,1
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj9471
-	jal	r0,.Lj9472
-.Lj9471:
+	bne	r3,r0,.Lj9466
+	jal	r0,.Lj9467
+.Lj9466:
 	ldw	r6,r30,-64
 	ldw	r3,r30,-68
 	addi	r5,r3,1
@@ -81316,8 +81285,8 @@ SYSTEM_$$_VARARRAYPUT$VARIANT$VARIANT$array_of_LONGINT:
 	la	r7,U_$SYSTEM_$$_VARIANTMANAGER
 	ldw	r7,r7,172
 	jalr	r31,r7
-	jal	r0,.Lj9473
-.Lj9472:
+	jal	r0,.Lj9468
+.Lj9467:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	addi	r6,r0,0
@@ -81325,7 +81294,7 @@ SYSTEM_$$_VARARRAYPUT$VARIANT$VARIANT$array_of_LONGINT:
 	la	r7,U_$SYSTEM_$$_VARIANTMANAGER
 	ldw	r7,r7,172
 	jalr	r31,r7
-.Lj9473:
+.Lj9468:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -81350,9 +81319,9 @@ SYSTEM_$$_VARARRAYGET$VARIANT$array_of_LONGINT$$VARIANT:
 	addi	r4,r3,1
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj9476
-	jal	r0,.Lj9477
-.Lj9476:
+	bne	r3,r0,.Lj9471
+	jal	r0,.Lj9472
+.Lj9471:
 	ldw	r6,r30,-60
 	ldw	r3,r30,-64
 	addi	r5,r3,1
@@ -81361,8 +81330,8 @@ SYSTEM_$$_VARARRAYGET$VARIANT$array_of_LONGINT$$VARIANT:
 	la	r7,U_$SYSTEM_$$_VARIANTMANAGER
 	ldw	r7,r7,168
 	jalr	r31,r7
-	jal	r0,.Lj9478
-.Lj9477:
+	jal	r0,.Lj9473
+.Lj9472:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-68
 	addi	r6,r0,0
@@ -81370,7 +81339,7 @@ SYSTEM_$$_VARARRAYGET$VARIANT$array_of_LONGINT$$VARIANT:
 	la	r7,U_$SYSTEM_$$_VARIANTMANAGER
 	ldw	r7,r7,168
 	jalr	r31,r7
-.Lj9478:
+.Lj9473:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -81689,15 +81658,15 @@ SYSTEM_$$_$assign$OLEVARIANT$$ANSICHAR:
 	ldbu	r4,r30,-316
 	addi	r3,r0,0
 	sgtu	r3,r4,r3
-	bne	r3,r0,.Lj9505
-	jal	r0,.Lj9506
-.Lj9505:
+	bne	r3,r0,.Lj9500
+	jal	r0,.Lj9501
+.Lj9500:
 	ldbu	r3,r30,-315
 	stb	r30,r3,-60
-	jal	r0,.Lj9507
-.Lj9506:
+	jal	r0,.Lj9502
+.Lj9501:
 	stb	r30,r0,-60
-.Lj9507:
+.Lj9502:
 	ldbu	r1,r30,-60
 	ldw	r30,r29,316
 	ldw	r31,r29,320
@@ -81724,38 +81693,38 @@ SYSTEM_$$_$assign$OLEVARIANT$$WIDECHAR:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj9511
+	bne	r1,r0,.Lj9506
 	ldw	r4,r30,-56
 	addi	r3,r30,-64
 	la	r5,U_$SYSTEM_$$_VARIANTMANAGER
 	ldw	r5,r5,36
 	jalr	r31,r5
 	ldw	r4,r30,-64
-	beq	r4,r0,.Lj9513
+	beq	r4,r0,.Lj9508
 	ldw	r4,r4,-4
-.Lj9513:
+.Lj9508:
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj9514
-	jal	r0,.Lj9515
-.Lj9514:
+	bne	r3,r0,.Lj9509
+	jal	r0,.Lj9510
+.Lj9509:
 	ldw	r3,r30,-64
 	ldhu	r3,r3,0
 	sth	r30,r3,-60
-	jal	r0,.Lj9516
-.Lj9515:
+	jal	r0,.Lj9511
+.Lj9510:
 	sth	r30,r0,-60
-.Lj9516:
 .Lj9511:
+.Lj9506:
 	call	fpc_popaddrstack
 	addi	r3,r30,-64
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj9510
+	beq	r3,r0,.Lj9505
 	call	fpc_reraise
 	stw	r30,r0,-164
-	jal	r0,.Lj9511
-.Lj9510:
+	jal	r0,.Lj9506
+.Lj9505:
 	ldhu	r1,r30,-60
 	ldw	r30,r29,164
 	ldw	r31,r29,168
@@ -82326,7 +82295,7 @@ SYSTEM_$$_$assign$WIDECHAR$$OLEVARIANT:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj9562
+	bne	r1,r0,.Lj9557
 	addi	r3,r30,-164
 	ldhu	r4,r30,-56
 	call	fpc_uchar_to_unicodestr
@@ -82335,16 +82304,16 @@ SYSTEM_$$_$assign$WIDECHAR$$OLEVARIANT:
 	la	r5,U_$SYSTEM_$$_VARIANTMANAGER
 	ldw	r5,r5,88
 	jalr	r31,r5
-.Lj9562:
+.Lj9557:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj9561
+	beq	r3,r0,.Lj9556
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj9562
-.Lj9561:
+	jal	r0,.Lj9557
+.Lj9556:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -82638,13 +82607,13 @@ SYSTEM_$$_GETVARIANTMANAGER$TVARIANTMANAGER:
 	ldw	r4,r30,-56
 	la	r3,U_$SYSTEM_$$_VARIANTMANAGER
 	addi	r5,r0,46
-.Lj9588:
+.Lj9583:
 	ldw	r6,r3,0
 	stw	r4,r6,0
 	addi	r3,r3,4
 	addi	r4,r4,4
 	addi	r5,r5,-1
-	bgt	r5,r0,.Lj9588
+	bgt	r5,r0,.Lj9583
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -82665,13 +82634,13 @@ SYSTEM_$$_SETVARIANTMANAGER$TVARIANTMANAGER:
 	ldw	r3,r30,-56
 	la	r4,U_$SYSTEM_$$_VARIANTMANAGER
 	addi	r5,r0,46
-.Lj9591:
+.Lj9586:
 	ldw	r6,r3,0
 	stw	r4,r6,0
 	addi	r3,r3,4
 	addi	r4,r4,4
 	addi	r5,r5,-1
-	bgt	r5,r0,.Lj9591
+	bgt	r5,r0,.Lj9586
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -82760,7 +82729,7 @@ SYSTEM_$$_POS$ANSISTRING$VARIANT$$LONGINT:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj9599
+	bne	r1,r0,.Lj9594
 	ldw	r4,r30,-60
 	addi	r3,r30,-168
 	la	r5,U_$SYSTEM_$$_VARIANTMANAGER
@@ -82771,16 +82740,16 @@ SYSTEM_$$_POS$ANSISTRING$VARIANT$$LONGINT:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_POS$RAWBYTESTRING$RAWBYTESTRING$LONGINT$$LONGINT
 	stw	r30,r1,-64
-.Lj9599:
+.Lj9594:
 	call	fpc_popaddrstack
 	addi	r3,r30,-168
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj9598
+	beq	r3,r0,.Lj9593
 	call	fpc_reraise
 	stw	r30,r0,-164
-	jal	r0,.Lj9599
-.Lj9598:
+	jal	r0,.Lj9594
+.Lj9593:
 	ldw	r1,r30,-64
 	ldw	r30,r29,168
 	ldw	r31,r29,172
@@ -82808,7 +82777,7 @@ SYSTEM_$$_POS$WIDESTRING$VARIANT$$LONGINT:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj9604
+	bne	r1,r0,.Lj9599
 	ldw	r4,r30,-60
 	addi	r3,r30,-168
 	la	r5,U_$SYSTEM_$$_VARIANTMANAGER
@@ -82819,16 +82788,16 @@ SYSTEM_$$_POS$WIDESTRING$VARIANT$$LONGINT:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_POS$UNICODESTRING$UNICODESTRING$LONGINT$$LONGINT
 	stw	r30,r1,-64
-.Lj9604:
+.Lj9599:
 	call	fpc_popaddrstack
 	addi	r3,r30,-168
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj9603
+	beq	r3,r0,.Lj9598
 	call	fpc_reraise
 	stw	r30,r0,-164
-	jal	r0,.Lj9604
-.Lj9603:
+	jal	r0,.Lj9599
+.Lj9598:
 	ldw	r1,r30,-64
 	ldw	r30,r29,168
 	ldw	r31,r29,172
@@ -82914,7 +82883,7 @@ SYSTEM_$$_POS$VARIANT$ANSISTRING$$LONGINT:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj9613
+	bne	r1,r0,.Lj9608
 	ldw	r4,r30,-56
 	addi	r3,r30,-168
 	la	r5,U_$SYSTEM_$$_VARIANTMANAGER
@@ -82925,16 +82894,16 @@ SYSTEM_$$_POS$VARIANT$ANSISTRING$$LONGINT:
 	ldw	r4,r30,-60
 	call	SYSTEM_$$_POS$RAWBYTESTRING$RAWBYTESTRING$LONGINT$$LONGINT
 	stw	r30,r1,-64
-.Lj9613:
+.Lj9608:
 	call	fpc_popaddrstack
 	addi	r3,r30,-168
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj9612
+	beq	r3,r0,.Lj9607
 	call	fpc_reraise
 	stw	r30,r0,-164
-	jal	r0,.Lj9613
-.Lj9612:
+	jal	r0,.Lj9608
+.Lj9607:
 	ldw	r1,r30,-64
 	ldw	r30,r29,168
 	ldw	r31,r29,172
@@ -82962,7 +82931,7 @@ SYSTEM_$$_POS$VARIANT$WIDESTRING$$LONGINT:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj9618
+	bne	r1,r0,.Lj9613
 	ldw	r4,r30,-56
 	addi	r3,r30,-168
 	la	r5,U_$SYSTEM_$$_VARIANTMANAGER
@@ -82973,16 +82942,16 @@ SYSTEM_$$_POS$VARIANT$WIDESTRING$$LONGINT:
 	ldw	r4,r30,-60
 	call	SYSTEM_$$_POS$UNICODESTRING$UNICODESTRING$LONGINT$$LONGINT
 	stw	r30,r1,-64
-.Lj9618:
+.Lj9613:
 	call	fpc_popaddrstack
 	addi	r3,r30,-168
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj9617
+	beq	r3,r0,.Lj9612
 	call	fpc_reraise
 	stw	r30,r0,-164
-	jal	r0,.Lj9618
-.Lj9617:
+	jal	r0,.Lj9613
+.Lj9612:
 	ldw	r1,r30,-64
 	ldw	r30,r29,168
 	ldw	r31,r29,172
@@ -83012,7 +82981,7 @@ SYSTEM_$$_POS$VARIANT$VARIANT$$LONGINT:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj9623
+	bne	r1,r0,.Lj9618
 	ldw	r4,r30,-60
 	addi	r3,r30,-168
 	la	r5,U_$SYSTEM_$$_VARIANTMANAGER
@@ -83029,18 +82998,18 @@ SYSTEM_$$_POS$VARIANT$VARIANT$$LONGINT:
 	addi	r4,r11,0
 	call	SYSTEM_$$_POS$UNICODESTRING$UNICODESTRING$LONGINT$$LONGINT
 	stw	r30,r1,-64
-.Lj9623:
+.Lj9618:
 	call	fpc_popaddrstack
 	addi	r3,r30,-172
 	call	fpc_unicodestr_decr_ref
 	addi	r3,r30,-168
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj9622
+	beq	r3,r0,.Lj9617
 	call	fpc_reraise
 	stw	r30,r0,-164
-	jal	r0,.Lj9623
-.Lj9622:
+	jal	r0,.Lj9618
+.Lj9617:
 	ldw	r1,r30,-64
 	ldw	r11,r29,172
 	ldw	r30,r29,176
@@ -83075,29 +83044,29 @@ SYSTEM_$$_RTTIRECORDINFOINIT$POINTER$$PRECORDINFOINIT:
 	ldw	r3,r30,-72
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9628
-	jal	r0,.Lj9629
-.Lj9628:
+	bne	r3,r0,.Lj9623
+	jal	r0,.Lj9624
+.Lj9623:
 	ldw	r3,r30,-72
 	addi	r4,r0,-1
 	xor	r4,r3,r4
 	ldw	r3,r30,-68
 	and	r3,r3,r4
-	jal	r0,.Lj9630
-.Lj9629:
+	jal	r0,.Lj9625
+.Lj9624:
 	ldw	r4,r30,-68
 	andi	r5,r4,3
 	ldw	r4,r30,-68
 	sub	r4,r4,r5
 	addi	r3,r4,0
-.Lj9630:
+.Lj9625:
 	stw	r30,r3,-60
 	ldw	r3,r30,-60
 	ldw	r3,r3,4
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9631
-	jal	r0,.Lj9632
-.Lj9631:
+	bne	r3,r0,.Lj9626
+	jal	r0,.Lj9627
+.Lj9626:
 	ldw	r3,r30,-60
 	ldw	r3,r3,4
 	stw	r30,r3,-60
@@ -83116,24 +83085,24 @@ SYSTEM_$$_RTTIRECORDINFOINIT$POINTER$$PRECORDINFOINIT:
 	ldw	r3,r30,-72
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9634
-	jal	r0,.Lj9635
-.Lj9634:
+	bne	r3,r0,.Lj9629
+	jal	r0,.Lj9630
+.Lj9629:
 	ldw	r3,r30,-72
 	addi	r4,r0,-1
 	xor	r3,r3,r4
 	ldw	r4,r30,-68
 	and	r3,r4,r3
-	jal	r0,.Lj9636
-.Lj9635:
+	jal	r0,.Lj9631
+.Lj9630:
 	ldw	r4,r30,-68
 	andi	r5,r4,3
 	ldw	r4,r30,-68
 	sub	r4,r4,r5
 	addi	r3,r4,0
-.Lj9636:
+.Lj9631:
 	stw	r30,r3,-60
-.Lj9632:
+.Lj9627:
 	ldw	r1,r30,-60
 	ldw	r30,r29,72
 	ldw	r31,r29,76
@@ -83167,34 +83136,34 @@ SYSTEM_$$_RTTIMANAGEMENTANDSIZE$POINTER$TRTTIRECOPTYPE$LONGINT$BOOLEAN$$BOOLEAN:
 	ldw	r3,r30,-88
 	addi	r3,r3,-49
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9639
-	jal	r0,.Lj9640
-.Lj9639:
+	bne	r3,r0,.Lj9634
+	jal	r0,.Lj9635
+.Lj9634:
 	ldbu	r3,r30,-68
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9641
-	jal	r0,.Lj9642
-.Lj9641:
+	bne	r3,r0,.Lj9636
+	jal	r0,.Lj9637
+.Lj9636:
 	ldw	r3,r30,-88
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9643
-	jal	r0,.Lj9642
-.Lj9643:
+	bne	r3,r0,.Lj9638
+	jal	r0,.Lj9637
+.Lj9638:
 	addi	r3,r0,1
 	stb	r30,r3,-72
-	jal	r0,.Lj9644
-.Lj9642:
+	jal	r0,.Lj9639
+.Lj9637:
 	stb	r30,r0,-72
-.Lj9644:
-	jal	r0,.Lj9645
-.Lj9640:
+.Lj9639:
+	jal	r0,.Lj9640
+.Lj9635:
 	ldw	r3,r30,-56
 	ldbu	r3,r3,0
 	addi	r3,r3,-12
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9646
-	jal	r0,.Lj9647
-.Lj9646:
+	bne	r3,r0,.Lj9641
+	jal	r0,.Lj9642
+.Lj9641:
 	ldw	r3,r30,-56
 	ldbu	r3,r3,1
 	ldw	r4,r30,-56
@@ -83210,22 +83179,22 @@ SYSTEM_$$_RTTIMANAGEMENTANDSIZE$POINTER$TRTTIRECOPTYPE$LONGINT$BOOLEAN$$BOOLEAN:
 	ldw	r3,r30,-104
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9649
-	jal	r0,.Lj9650
-.Lj9649:
+	bne	r3,r0,.Lj9644
+	jal	r0,.Lj9645
+.Lj9644:
 	ldw	r3,r30,-104
 	addi	r4,r0,-1
 	xor	r4,r3,r4
 	ldw	r3,r30,-100
 	and	r3,r3,r4
-	jal	r0,.Lj9651
-.Lj9650:
+	jal	r0,.Lj9646
+.Lj9645:
 	ldw	r4,r30,-100
 	andi	r5,r4,3
 	ldw	r4,r30,-100
 	sub	r4,r4,r5
 	addi	r3,r4,0
-.Lj9651:
+.Lj9646:
 	stw	r30,r3,-56
 	ldw	r3,r30,-64
 	ldw	r4,r30,-56
@@ -83239,8 +83208,8 @@ SYSTEM_$$_RTTIMANAGEMENTANDSIZE$POINTER$TRTTIRECOPTYPE$LONGINT$BOOLEAN$$BOOLEAN:
 	ldbu	r4,r30,-60
 	call	SYSTEM_$$_RTTIMANAGEMENTANDSIZE$POINTER$TRTTIRECOPTYPE$LONGINT$BOOLEAN$$BOOLEAN
 	stb	r30,r1,-72
-	jal	r0,.Lj9652
-.Lj9647:
+	jal	r0,.Lj9647
+.Lj9642:
 	ldw	r3,r30,-56
 	ldbu	r3,r3,1
 	ldw	r4,r30,-56
@@ -83256,27 +83225,27 @@ SYSTEM_$$_RTTIMANAGEMENTANDSIZE$POINTER$TRTTIRECOPTYPE$LONGINT$BOOLEAN$$BOOLEAN:
 	ldw	r3,r30,-104
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9655
-	jal	r0,.Lj9656
-.Lj9655:
+	bne	r3,r0,.Lj9650
+	jal	r0,.Lj9651
+.Lj9650:
 	ldw	r3,r30,-104
 	addi	r4,r0,-1
 	xor	r4,r3,r4
 	ldw	r3,r30,-100
 	and	r3,r3,r4
-	jal	r0,.Lj9657
-.Lj9656:
+	jal	r0,.Lj9652
+.Lj9651:
 	ldw	r4,r30,-100
 	andi	r5,r4,3
 	ldw	r4,r30,-100
 	sub	r4,r4,r5
 	addi	r3,r4,0
-.Lj9657:
+.Lj9652:
 	ldw	r4,r3,4
 	sne	r4,r4,r0
-	bne	r4,r0,.Lj9658
-	jal	r0,.Lj9659
-.Lj9658:
+	bne	r4,r0,.Lj9653
+	jal	r0,.Lj9654
+.Lj9653:
 	ldw	r3,r3,4
 	ldbu	r5,r3,1
 	addi	r4,r3,2
@@ -83291,24 +83260,24 @@ SYSTEM_$$_RTTIMANAGEMENTANDSIZE$POINTER$TRTTIRECOPTYPE$LONGINT$BOOLEAN$$BOOLEAN:
 	ldw	r4,r30,-104
 	andi	r4,r4,4
 	seq	r4,r4,r0
-	bne	r4,r0,.Lj9661
-	jal	r0,.Lj9662
-.Lj9661:
+	bne	r4,r0,.Lj9656
+	jal	r0,.Lj9657
+.Lj9656:
 	ldw	r4,r30,-104
 	addi	r5,r0,-1
 	xor	r4,r4,r5
 	ldw	r5,r30,-100
 	and	r4,r5,r4
-	jal	r0,.Lj9663
-.Lj9662:
+	jal	r0,.Lj9658
+.Lj9657:
 	ldw	r5,r30,-100
 	andi	r6,r5,3
 	ldw	r5,r30,-100
 	sub	r5,r5,r6
 	addi	r4,r5,0
-.Lj9663:
+.Lj9658:
 	addi	r3,r4,0
-.Lj9659:
+.Lj9654:
 	stw	r30,r3,-76
 	ldw	r3,r30,-64
 	ldw	r4,r30,-76
@@ -83317,9 +83286,9 @@ SYSTEM_$$_RTTIMANAGEMENTANDSIZE$POINTER$TRTTIRECOPTYPE$LONGINT$BOOLEAN$$BOOLEAN:
 	ldw	r3,r30,-76
 	ldw	r3,r3,16
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9664
-	jal	r0,.Lj9665
-.Lj9664:
+	bne	r3,r0,.Lj9659
+	jal	r0,.Lj9660
+.Lj9659:
 	ldw	r3,r30,-76
 	ldw	r3,r3,16
 	ldbu	r4,r30,-60
@@ -83327,21 +83296,21 @@ SYSTEM_$$_RTTIMANAGEMENTANDSIZE$POINTER$TRTTIRECOPTYPE$LONGINT$BOOLEAN$$BOOLEAN:
 	add	r3,r3,r4
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9666
-	jal	r0,.Lj9665
-.Lj9666:
+	bne	r3,r0,.Lj9661
+	jal	r0,.Lj9660
+.Lj9661:
 	addi	r3,r0,1
 	stb	r30,r3,-72
-	jal	r0,.Lj9667
-.Lj9665:
+	jal	r0,.Lj9662
+.Lj9660:
 	stb	r30,r0,-72
-.Lj9667:
+.Lj9662:
 	ldbu	r3,r30,-72
-	bne	r3,r0,.Lj9668
-	jal	r0,.Lj9669
-.Lj9668:
-	jal	r0,.Lj9637
-.Lj9669:
+	bne	r3,r0,.Lj9663
+	jal	r0,.Lj9664
+.Lj9663:
+	jal	r0,.Lj9632
+.Lj9664:
 	ldw	r3,r30,-76
 	addi	r3,r3,20
 	addi	r3,r3,4
@@ -83354,13 +83323,13 @@ SYSTEM_$$_RTTIMANAGEMENTANDSIZE$POINTER$TRTTIRECOPTYPE$LONGINT$BOOLEAN$$BOOLEAN:
 	ldw	r3,r3,20
 	addi	r4,r0,1
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj9670
-	jal	r0,.Lj9671
-.Lj9670:
+	bne	r3,r0,.Lj9665
+	jal	r0,.Lj9666
+.Lj9665:
 	ldw	r3,r30,-76
 	ldw	r3,r3,20
 	stw	r30,r3,-84
-.Lj9672:
+.Lj9667:
 	ldw	r3,r30,-80
 	ldw	r3,r3,0
 	ldw	r3,r3,0
@@ -83371,26 +83340,26 @@ SYSTEM_$$_RTTIMANAGEMENTANDSIZE$POINTER$TRTTIRECOPTYPE$LONGINT$BOOLEAN$$BOOLEAN:
 	stw	r30,r3,-88
 	ldbu	r3,r30,-68
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9675
-	jal	r0,.Lj9676
-.Lj9675:
+	bne	r3,r0,.Lj9670
+	jal	r0,.Lj9671
+.Lj9670:
 	ldw	r3,r30,-88
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9677
-	jal	r0,.Lj9676
-.Lj9677:
+	bne	r3,r0,.Lj9672
+	jal	r0,.Lj9671
+.Lj9672:
 	addi	r3,r0,1
 	stb	r30,r3,-72
-	jal	r0,.Lj9678
-.Lj9676:
+	jal	r0,.Lj9673
+.Lj9671:
 	stb	r30,r0,-72
-.Lj9678:
+.Lj9673:
 	ldw	r3,r30,-88
 	addi	r3,r3,-49
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9679
-	jal	r0,.Lj9680
-.Lj9679:
+	bne	r3,r0,.Lj9674
+	jal	r0,.Lj9675
+.Lj9674:
 	ldw	r3,r30,-80
 	ldw	r3,r3,0
 	ldw	r3,r3,0
@@ -83399,13 +83368,13 @@ SYSTEM_$$_RTTIMANAGEMENTANDSIZE$POINTER$TRTTIRECOPTYPE$LONGINT$BOOLEAN$$BOOLEAN:
 	ldbu	r4,r30,-60
 	call	SYSTEM_$$_RTTIMANAGEMENTANDSIZE$POINTER$TRTTIRECOPTYPE$LONGINT$BOOLEAN$$BOOLEAN
 	stb	r30,r1,-72
-.Lj9680:
+.Lj9675:
 	ldbu	r3,r30,-72
-	bne	r3,r0,.Lj9681
-	jal	r0,.Lj9682
-.Lj9681:
-	jal	r0,.Lj9637
-.Lj9682:
+	bne	r3,r0,.Lj9676
+	jal	r0,.Lj9677
+.Lj9676:
+	jal	r0,.Lj9632
+.Lj9677:
 	ldw	r3,r30,-80
 	addi	r3,r3,8
 	stw	r30,r3,-80
@@ -83414,13 +83383,13 @@ SYSTEM_$$_RTTIMANAGEMENTANDSIZE$POINTER$TRTTIRECOPTYPE$LONGINT$BOOLEAN$$BOOLEAN:
 	stw	r30,r3,-84
 	ldw	r3,r30,-84
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9674
-	jal	r0,.Lj9672
-.Lj9674:
-.Lj9671:
-.Lj9652:
-.Lj9645:
-.Lj9637:
+	bne	r3,r0,.Lj9669
+	jal	r0,.Lj9667
+.Lj9669:
+.Lj9666:
+.Lj9647:
+.Lj9640:
+.Lj9632:
 	ldbu	r1,r30,-72
 	ldw	r30,r29,104
 	ldw	r31,r29,108
@@ -83454,13 +83423,13 @@ SYSTEM_$$_FINALIZERECORDFIELDS$POINTER$PRECORDINFOINIT:
 	ldw	r4,r3,20
 	addi	r3,r0,1
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj9685
-	jal	r0,.Lj9686
-.Lj9685:
+	bne	r3,r0,.Lj9680
+	jal	r0,.Lj9681
+.Lj9680:
 	ldw	r3,r30,-60
 	ldw	r3,r3,20
 	stw	r30,r3,-64
-.Lj9687:
+.Lj9682:
 	ldw	r3,r30,-68
 	ldw	r3,r3,0
 	ldw	r4,r3,0
@@ -83477,10 +83446,10 @@ SYSTEM_$$_FINALIZERECORDFIELDS$POINTER$PRECORDINFOINIT:
 	stw	r30,r3,-64
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9689
-	jal	r0,.Lj9687
-.Lj9689:
-.Lj9686:
+	bne	r3,r0,.Lj9684
+	jal	r0,.Lj9682
+.Lj9684:
+.Lj9681:
 	ldw	r30,r29,72
 	ldw	r31,r29,76
 	addi	r29,r29,80
@@ -83513,13 +83482,13 @@ SYSTEM_$$_ADDREFRECORDFIELDS$POINTER$PRECORDINFOINIT:
 	ldw	r4,r3,20
 	addi	r3,r0,1
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj9692
-	jal	r0,.Lj9693
-.Lj9692:
+	bne	r3,r0,.Lj9687
+	jal	r0,.Lj9688
+.Lj9687:
 	ldw	r3,r30,-60
 	ldw	r3,r3,20
 	stw	r30,r3,-64
-.Lj9694:
+.Lj9689:
 	ldw	r3,r30,-68
 	ldw	r3,r3,0
 	ldw	r4,r3,0
@@ -83536,10 +83505,10 @@ SYSTEM_$$_ADDREFRECORDFIELDS$POINTER$PRECORDINFOINIT:
 	stw	r30,r3,-64
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9696
-	jal	r0,.Lj9694
-.Lj9696:
-.Lj9693:
+	bne	r3,r0,.Lj9691
+	jal	r0,.Lj9689
+.Lj9691:
+.Lj9688:
 	ldw	r30,r29,72
 	ldw	r31,r29,76
 	addi	r29,r29,80
@@ -83574,22 +83543,22 @@ SYSTEM_$$_RTTIRECORDMOPINITTABLE$POINTER$$PRTTIRECORDOPOFFSETTABLE:
 	ldw	r3,r30,-72
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9700
-	jal	r0,.Lj9701
-.Lj9700:
+	bne	r3,r0,.Lj9695
+	jal	r0,.Lj9696
+.Lj9695:
 	ldw	r3,r30,-72
 	addi	r4,r0,-1
 	xor	r3,r3,r4
 	ldw	r4,r30,-68
 	and	r3,r4,r3
-	jal	r0,.Lj9702
-.Lj9701:
+	jal	r0,.Lj9697
+.Lj9696:
 	ldw	r4,r30,-68
 	andi	r5,r4,3
 	ldw	r4,r30,-68
 	sub	r4,r4,r5
 	addi	r3,r4,0
-.Lj9702:
+.Lj9697:
 	stw	r30,r3,-56
 	ldw	r3,r30,-56
 	ldw	r3,r3,12
@@ -83621,19 +83590,19 @@ SYSTEM_$$_INLINEDINITIALIZE$POINTER$POINTER:
 	la	r3,TC_$SYSTEM_$$_RTTIFLATTENINITIALIZE
 	add	r3,r4,r3
 	ldbu	r3,r3,0
-	beq	r3,r0,.Lj9706
+	beq	r3,r0,.Lj9701
 	addi	r4,r0,1
-	beq	r3,r4,.Lj9707
+	beq	r3,r4,.Lj9702
 	addi	r4,r0,2
-	beq	r3,r4,.Lj9708
+	beq	r3,r4,.Lj9703
 	addi	r4,r0,3
-	beq	r3,r4,.Lj9709
-	jal	r0,.Lj9705
-.Lj9706:
+	beq	r3,r4,.Lj9704
+	jal	r0,.Lj9700
+.Lj9701:
 	ldw	r3,r30,-56
 	stw	r3,r0,0
-	jal	r0,.Lj9705
-.Lj9707:
+	jal	r0,.Lj9700
+.Lj9702:
 	ldw	r3,r30,-60
 	ldbu	r3,r3,1
 	ldw	r4,r30,-60
@@ -83649,27 +83618,27 @@ SYSTEM_$$_INLINEDINITIALIZE$POINTER$POINTER:
 	ldw	r3,r30,-76
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9712
-	jal	r0,.Lj9713
-.Lj9712:
+	bne	r3,r0,.Lj9707
+	jal	r0,.Lj9708
+.Lj9707:
 	ldw	r3,r30,-76
 	addi	r4,r0,-1
 	xor	r3,r3,r4
 	ldw	r4,r30,-72
 	and	r4,r4,r3
-	jal	r0,.Lj9714
-.Lj9713:
+	jal	r0,.Lj9709
+.Lj9708:
 	ldw	r3,r30,-72
 	andi	r5,r3,3
 	ldw	r3,r30,-72
 	sub	r3,r3,r5
 	addi	r4,r3,0
-.Lj9714:
+.Lj9709:
 	ldw	r3,r4,4
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9715
-	jal	r0,.Lj9716
-.Lj9715:
+	bne	r3,r0,.Lj9710
+	jal	r0,.Lj9711
+.Lj9710:
 	ldw	r4,r4,4
 	ldbu	r5,r4,1
 	addi	r3,r4,2
@@ -83684,28 +83653,28 @@ SYSTEM_$$_INLINEDINITIALIZE$POINTER$POINTER:
 	ldw	r3,r30,-76
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9718
-	jal	r0,.Lj9719
-.Lj9718:
+	bne	r3,r0,.Lj9713
+	jal	r0,.Lj9714
+.Lj9713:
 	ldw	r3,r30,-76
 	addi	r5,r0,-1
 	xor	r3,r3,r5
 	ldw	r5,r30,-72
 	and	r3,r5,r3
-	jal	r0,.Lj9720
-.Lj9719:
+	jal	r0,.Lj9715
+.Lj9714:
 	ldw	r5,r30,-72
 	andi	r5,r5,3
 	ldw	r6,r30,-72
 	sub	r5,r6,r5
 	addi	r3,r5,0
-.Lj9720:
+.Lj9715:
 	addi	r4,r3,0
-.Lj9716:
+.Lj9711:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_INITIALIZERECORD$POINTER$PRECORDINFOINIT
-	jal	r0,.Lj9705
-.Lj9708:
+	jal	r0,.Lj9700
+.Lj9703:
 	ldw	r3,r30,-60
 	ldbu	r3,r3,1
 	ldw	r4,r30,-60
@@ -83721,33 +83690,33 @@ SYSTEM_$$_INLINEDINITIALIZE$POINTER$POINTER:
 	ldw	r3,r30,-76
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9722
-	jal	r0,.Lj9723
-.Lj9722:
+	bne	r3,r0,.Lj9717
+	jal	r0,.Lj9718
+.Lj9717:
 	ldw	r4,r30,-76
 	addi	r3,r0,-1
 	xor	r3,r4,r3
 	ldw	r4,r30,-72
 	and	r11,r4,r3
-	jal	r0,.Lj9724
-.Lj9723:
+	jal	r0,.Lj9719
+.Lj9718:
 	ldw	r3,r30,-72
 	andi	r4,r3,3
 	ldw	r3,r30,-72
 	sub	r3,r3,r4
 	addi	r11,r3,0
-.Lj9724:
+.Lj9719:
 	ldw	r3,r11,12
 	ldw	r4,r3,0
 	ldw	r5,r11,8
 	ldw	r3,r30,-56
 	call	FPC_INITIALIZE_ARRAY
-	jal	r0,.Lj9705
-.Lj9709:
+	jal	r0,.Lj9700
+.Lj9704:
 	ldw	r3,r30,-56
 	call	FPC_VARIANT_INIT
-	jal	r0,.Lj9705
-.Lj9705:
+	jal	r0,.Lj9700
+.Lj9700:
 	ldw	r11,r29,76
 	ldw	r30,r29,80
 	ldw	r31,r29,84
@@ -83780,13 +83749,13 @@ SYSTEM_$$_INITIALIZERECORD$POINTER$PRECORDINFOINIT:
 	ldw	r4,r3,20
 	addi	r3,r0,1
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj9727
-	jal	r0,.Lj9728
-.Lj9727:
+	bne	r3,r0,.Lj9722
+	jal	r0,.Lj9723
+.Lj9722:
 	ldw	r3,r30,-60
 	ldw	r3,r3,20
 	stw	r30,r3,-64
-.Lj9729:
+.Lj9724:
 	ldw	r3,r30,-68
 	ldw	r3,r3,0
 	ldw	r3,r3,0
@@ -83801,19 +83770,19 @@ SYSTEM_$$_INITIALIZERECORD$POINTER$PRECORDINFOINIT:
 	la	r3,TC_$SYSTEM_$$_RTTIFLATTENINITIALIZE
 	add	r3,r4,r3
 	ldbu	r3,r3,0
-	beq	r3,r0,.Lj9733
+	beq	r3,r0,.Lj9728
 	addi	r4,r0,1
-	beq	r3,r4,.Lj9734
+	beq	r3,r4,.Lj9729
 	addi	r4,r0,2
-	beq	r3,r4,.Lj9735
+	beq	r3,r4,.Lj9730
 	addi	r4,r0,3
-	beq	r3,r4,.Lj9736
-	jal	r0,.Lj9732
-.Lj9733:
+	beq	r3,r4,.Lj9731
+	jal	r0,.Lj9727
+.Lj9728:
 	ldw	r3,r30,-76
 	stw	r3,r0,0
-	jal	r0,.Lj9732
-.Lj9734:
+	jal	r0,.Lj9727
+.Lj9729:
 	ldw	r3,r30,-72
 	ldbu	r3,r3,1
 	ldw	r4,r30,-72
@@ -83829,27 +83798,27 @@ SYSTEM_$$_INITIALIZERECORD$POINTER$PRECORDINFOINIT:
 	ldw	r3,r30,-92
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9739
-	jal	r0,.Lj9740
-.Lj9739:
+	bne	r3,r0,.Lj9734
+	jal	r0,.Lj9735
+.Lj9734:
 	ldw	r3,r30,-92
 	addi	r4,r0,-1
 	xor	r4,r3,r4
 	ldw	r3,r30,-88
 	and	r4,r3,r4
-	jal	r0,.Lj9741
-.Lj9740:
+	jal	r0,.Lj9736
+.Lj9735:
 	ldw	r3,r30,-88
 	andi	r5,r3,3
 	ldw	r3,r30,-88
 	sub	r3,r3,r5
 	addi	r4,r3,0
-.Lj9741:
+.Lj9736:
 	ldw	r3,r4,4
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9742
-	jal	r0,.Lj9743
-.Lj9742:
+	bne	r3,r0,.Lj9737
+	jal	r0,.Lj9738
+.Lj9737:
 	ldw	r4,r4,4
 	ldbu	r5,r4,1
 	addi	r3,r4,2
@@ -83864,28 +83833,28 @@ SYSTEM_$$_INITIALIZERECORD$POINTER$PRECORDINFOINIT:
 	ldw	r3,r30,-92
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9745
-	jal	r0,.Lj9746
-.Lj9745:
+	bne	r3,r0,.Lj9740
+	jal	r0,.Lj9741
+.Lj9740:
 	ldw	r3,r30,-92
 	addi	r5,r0,-1
 	xor	r3,r3,r5
 	ldw	r5,r30,-88
 	and	r3,r5,r3
-	jal	r0,.Lj9747
-.Lj9746:
+	jal	r0,.Lj9742
+.Lj9741:
 	ldw	r5,r30,-88
 	andi	r5,r5,3
 	ldw	r6,r30,-88
 	sub	r5,r6,r5
 	addi	r3,r5,0
-.Lj9747:
+.Lj9742:
 	addi	r4,r3,0
-.Lj9743:
+.Lj9738:
 	ldw	r3,r30,-76
 	call	SYSTEM_$$_INITIALIZERECORD$POINTER$PRECORDINFOINIT
-	jal	r0,.Lj9732
-.Lj9735:
+	jal	r0,.Lj9727
+.Lj9730:
 	ldw	r3,r30,-72
 	ldbu	r3,r3,1
 	ldw	r4,r30,-72
@@ -83901,33 +83870,33 @@ SYSTEM_$$_INITIALIZERECORD$POINTER$PRECORDINFOINIT:
 	ldw	r3,r30,-92
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9749
-	jal	r0,.Lj9750
-.Lj9749:
+	bne	r3,r0,.Lj9744
+	jal	r0,.Lj9745
+.Lj9744:
 	ldw	r4,r30,-92
 	addi	r3,r0,-1
 	xor	r3,r4,r3
 	ldw	r4,r30,-88
 	and	r11,r4,r3
-	jal	r0,.Lj9751
-.Lj9750:
+	jal	r0,.Lj9746
+.Lj9745:
 	ldw	r3,r30,-88
 	andi	r3,r3,3
 	ldw	r4,r30,-88
 	sub	r3,r4,r3
 	addi	r11,r3,0
-.Lj9751:
+.Lj9746:
 	ldw	r3,r11,12
 	ldw	r4,r3,0
 	ldw	r5,r11,8
 	ldw	r3,r30,-76
 	call	FPC_INITIALIZE_ARRAY
-	jal	r0,.Lj9732
-.Lj9736:
+	jal	r0,.Lj9727
+.Lj9731:
 	ldw	r3,r30,-76
 	call	FPC_VARIANT_INIT
-	jal	r0,.Lj9732
-.Lj9732:
+	jal	r0,.Lj9727
+.Lj9727:
 	ldw	r3,r30,-68
 	addi	r3,r3,8
 	stw	r30,r3,-68
@@ -83936,29 +83905,29 @@ SYSTEM_$$_INITIALIZERECORD$POINTER$PRECORDINFOINIT:
 	stw	r30,r3,-64
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9731
-	jal	r0,.Lj9729
-.Lj9731:
-.Lj9728:
+	bne	r3,r0,.Lj9726
+	jal	r0,.Lj9724
+.Lj9726:
+.Lj9723:
 	ldw	r3,r30,-60
 	ldw	r3,r3,16
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9752
-	jal	r0,.Lj9753
-.Lj9752:
+	bne	r3,r0,.Lj9747
+	jal	r0,.Lj9748
+.Lj9747:
 	ldw	r3,r30,-60
 	ldw	r3,r3,16
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9754
-	jal	r0,.Lj9753
-.Lj9754:
+	bne	r3,r0,.Lj9749
+	jal	r0,.Lj9748
+.Lj9749:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	ldw	r4,r4,16
 	ldw	r4,r4,0
 	jalr	r31,r4
-.Lj9753:
+.Lj9748:
 	ldw	r11,r29,92
 	ldw	r30,r29,96
 	ldw	r31,r29,100
@@ -83988,19 +83957,19 @@ FPC_INITIALIZE:
 	la	r3,TC_$SYSTEM_$$_RTTIFLATTENINITIALIZE
 	add	r3,r4,r3
 	ldbu	r3,r3,0
-	beq	r3,r0,.Lj9758
+	beq	r3,r0,.Lj9753
 	addi	r4,r0,1
-	beq	r3,r4,.Lj9759
+	beq	r3,r4,.Lj9754
 	addi	r4,r0,2
-	beq	r3,r4,.Lj9760
+	beq	r3,r4,.Lj9755
 	addi	r4,r0,3
-	beq	r3,r4,.Lj9761
-	jal	r0,.Lj9757
-.Lj9758:
+	beq	r3,r4,.Lj9756
+	jal	r0,.Lj9752
+.Lj9753:
 	ldw	r3,r30,-56
 	stw	r3,r0,0
-	jal	r0,.Lj9757
-.Lj9759:
+	jal	r0,.Lj9752
+.Lj9754:
 	ldw	r3,r30,-60
 	ldbu	r3,r3,1
 	ldw	r4,r30,-60
@@ -84016,27 +83985,27 @@ FPC_INITIALIZE:
 	ldw	r3,r30,-76
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9764
-	jal	r0,.Lj9765
-.Lj9764:
+	bne	r3,r0,.Lj9759
+	jal	r0,.Lj9760
+.Lj9759:
 	ldw	r3,r30,-76
 	addi	r4,r0,-1
 	xor	r3,r3,r4
 	ldw	r4,r30,-72
 	and	r4,r4,r3
-	jal	r0,.Lj9766
-.Lj9765:
+	jal	r0,.Lj9761
+.Lj9760:
 	ldw	r3,r30,-72
 	andi	r5,r3,3
 	ldw	r3,r30,-72
 	sub	r3,r3,r5
 	addi	r4,r3,0
-.Lj9766:
+.Lj9761:
 	ldw	r3,r4,4
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9767
-	jal	r0,.Lj9768
-.Lj9767:
+	bne	r3,r0,.Lj9762
+	jal	r0,.Lj9763
+.Lj9762:
 	ldw	r4,r4,4
 	ldbu	r5,r4,1
 	addi	r3,r4,2
@@ -84051,28 +84020,28 @@ FPC_INITIALIZE:
 	ldw	r3,r30,-76
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9770
-	jal	r0,.Lj9771
-.Lj9770:
+	bne	r3,r0,.Lj9765
+	jal	r0,.Lj9766
+.Lj9765:
 	ldw	r3,r30,-76
 	addi	r5,r0,-1
 	xor	r3,r3,r5
 	ldw	r5,r30,-72
 	and	r3,r5,r3
-	jal	r0,.Lj9772
-.Lj9771:
+	jal	r0,.Lj9767
+.Lj9766:
 	ldw	r5,r30,-72
 	andi	r5,r5,3
 	ldw	r6,r30,-72
 	sub	r5,r6,r5
 	addi	r3,r5,0
-.Lj9772:
+.Lj9767:
 	addi	r4,r3,0
-.Lj9768:
+.Lj9763:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_INITIALIZERECORD$POINTER$PRECORDINFOINIT
-	jal	r0,.Lj9757
-.Lj9760:
+	jal	r0,.Lj9752
+.Lj9755:
 	ldw	r3,r30,-60
 	ldbu	r3,r3,1
 	ldw	r4,r30,-60
@@ -84088,33 +84057,33 @@ FPC_INITIALIZE:
 	ldw	r3,r30,-76
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9774
-	jal	r0,.Lj9775
-.Lj9774:
+	bne	r3,r0,.Lj9769
+	jal	r0,.Lj9770
+.Lj9769:
 	ldw	r4,r30,-76
 	addi	r3,r0,-1
 	xor	r3,r4,r3
 	ldw	r4,r30,-72
 	and	r11,r4,r3
-	jal	r0,.Lj9776
-.Lj9775:
+	jal	r0,.Lj9771
+.Lj9770:
 	ldw	r3,r30,-72
 	andi	r4,r3,3
 	ldw	r3,r30,-72
 	sub	r3,r3,r4
 	addi	r11,r3,0
-.Lj9776:
+.Lj9771:
 	ldw	r3,r11,12
 	ldw	r4,r3,0
 	ldw	r5,r11,8
 	ldw	r3,r30,-56
 	call	FPC_INITIALIZE_ARRAY
-	jal	r0,.Lj9757
-.Lj9761:
+	jal	r0,.Lj9752
+.Lj9756:
 	ldw	r3,r30,-56
 	call	FPC_VARIANT_INIT
-	jal	r0,.Lj9757
-.Lj9757:
+	jal	r0,.Lj9752
+.Lj9752:
 	ldw	r11,r29,76
 	ldw	r30,r29,80
 	ldw	r31,r29,84
@@ -84140,31 +84109,31 @@ FPC_FINALIZE:
 	ldw	r3,r30,-60
 	ldbu	r3,r3,0
 	addi	r4,r0,9
-	beq	r3,r4,.Lj9780
+	beq	r3,r4,.Lj9775
 	addi	r4,r0,11
-	beq	r3,r4,.Lj9786
-	addi	r4,r0,12
-	beq	r3,r4,.Lj9782
-	addi	r4,r0,13
-	beq	r3,r4,.Lj9783
-	addi	r4,r0,14
-	beq	r3,r4,.Lj9784
-	addi	r4,r0,16
-	beq	r3,r4,.Lj9783
-	addi	r4,r0,21
-	beq	r3,r4,.Lj9785
-	addi	r4,r0,24
 	beq	r3,r4,.Lj9781
-	jal	r0,.Lj9779
-.Lj9780:
+	addi	r4,r0,12
+	beq	r3,r4,.Lj9777
+	addi	r4,r0,13
+	beq	r3,r4,.Lj9778
+	addi	r4,r0,14
+	beq	r3,r4,.Lj9779
+	addi	r4,r0,16
+	beq	r3,r4,.Lj9778
+	addi	r4,r0,21
+	beq	r3,r4,.Lj9780
+	addi	r4,r0,24
+	beq	r3,r4,.Lj9776
+	jal	r0,.Lj9774
+.Lj9775:
 	ldw	r3,r30,-56
 	call	FPC_ANSISTR_DECR_REF
-	jal	r0,.Lj9779
-.Lj9781:
+	jal	r0,.Lj9774
+.Lj9776:
 	ldw	r3,r30,-56
 	call	FPC_UNICODESTR_DECR_REF
-	jal	r0,.Lj9779
-.Lj9782:
+	jal	r0,.Lj9774
+.Lj9777:
 	ldw	r3,r30,-60
 	ldbu	r3,r3,1
 	ldw	r4,r30,-60
@@ -84180,29 +84149,29 @@ FPC_FINALIZE:
 	ldw	r3,r30,-76
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9788
-	jal	r0,.Lj9789
-.Lj9788:
+	bne	r3,r0,.Lj9783
+	jal	r0,.Lj9784
+.Lj9783:
 	ldw	r3,r30,-76
 	addi	r4,r0,-1
 	xor	r4,r3,r4
 	ldw	r3,r30,-72
 	and	r11,r3,r4
-	jal	r0,.Lj9790
-.Lj9789:
+	jal	r0,.Lj9785
+.Lj9784:
 	ldw	r3,r30,-72
 	andi	r4,r3,3
 	ldw	r3,r30,-72
 	sub	r3,r3,r4
 	addi	r11,r3,0
-.Lj9790:
+.Lj9785:
 	ldw	r3,r11,12
 	ldw	r4,r3,0
 	ldw	r5,r11,8
 	ldw	r3,r30,-56
 	call	FPC_FINALIZE_ARRAY
-	jal	r0,.Lj9779
-.Lj9783:
+	jal	r0,.Lj9774
+.Lj9778:
 	ldw	r3,r30,-60
 	ldbu	r3,r3,1
 	ldw	r4,r30,-60
@@ -84218,27 +84187,27 @@ FPC_FINALIZE:
 	ldw	r3,r30,-76
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9793
-	jal	r0,.Lj9794
-.Lj9793:
+	bne	r3,r0,.Lj9788
+	jal	r0,.Lj9789
+.Lj9788:
 	ldw	r3,r30,-76
 	addi	r4,r0,-1
 	xor	r3,r3,r4
 	ldw	r4,r30,-72
 	and	r3,r4,r3
-	jal	r0,.Lj9795
-.Lj9794:
+	jal	r0,.Lj9790
+.Lj9789:
 	ldw	r4,r30,-72
 	andi	r5,r4,3
 	ldw	r4,r30,-72
 	sub	r4,r4,r5
 	addi	r3,r4,0
-.Lj9795:
+.Lj9790:
 	ldw	r4,r3,4
 	sne	r4,r4,r0
-	bne	r4,r0,.Lj9796
-	jal	r0,.Lj9797
-.Lj9796:
+	bne	r4,r0,.Lj9791
+	jal	r0,.Lj9792
+.Lj9791:
 	ldw	r3,r3,4
 	ldbu	r5,r3,1
 	addi	r4,r3,2
@@ -84253,62 +84222,62 @@ FPC_FINALIZE:
 	ldw	r4,r30,-76
 	andi	r4,r4,4
 	seq	r4,r4,r0
-	bne	r4,r0,.Lj9799
-	jal	r0,.Lj9800
-.Lj9799:
+	bne	r4,r0,.Lj9794
+	jal	r0,.Lj9795
+.Lj9794:
 	ldw	r4,r30,-76
 	addi	r5,r0,-1
 	xor	r5,r4,r5
 	ldw	r4,r30,-72
 	and	r4,r4,r5
-	jal	r0,.Lj9801
-.Lj9800:
+	jal	r0,.Lj9796
+.Lj9795:
 	ldw	r5,r30,-72
 	andi	r5,r5,3
 	ldw	r6,r30,-72
 	sub	r5,r6,r5
 	addi	r4,r5,0
-.Lj9801:
+.Lj9796:
 	addi	r3,r4,0
-.Lj9797:
+.Lj9792:
 	stw	r30,r3,-64
 	ldw	r3,r30,-64
 	ldw	r3,r3,16
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9802
-	jal	r0,.Lj9803
-.Lj9802:
+	bne	r3,r0,.Lj9797
+	jal	r0,.Lj9798
+.Lj9797:
 	ldw	r3,r30,-64
 	ldw	r3,r3,16
 	ldw	r3,r3,4
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9804
-	jal	r0,.Lj9803
-.Lj9804:
+	bne	r3,r0,.Lj9799
+	jal	r0,.Lj9798
+.Lj9799:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-64
 	ldw	r4,r4,16
 	ldw	r4,r4,4
 	jalr	r31,r4
-.Lj9803:
+.Lj9798:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_FINALIZERECORDFIELDS$POINTER$PRECORDINFOINIT
-	jal	r0,.Lj9779
-.Lj9784:
+	jal	r0,.Lj9774
+.Lj9779:
 	ldw	r3,r30,-56
 	call	FPC_INTF_DECR_REF
-	jal	r0,.Lj9779
-.Lj9785:
+	jal	r0,.Lj9774
+.Lj9780:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	call	FPC_DYNARRAY_CLEAR
-	jal	r0,.Lj9779
-.Lj9786:
+	jal	r0,.Lj9774
+.Lj9781:
 	ldw	r3,r30,-56
 	call	FPC_VARIANT_CLEAR
-	jal	r0,.Lj9779
-.Lj9779:
+	jal	r0,.Lj9774
+.Lj9774:
 	ldw	r11,r29,76
 	ldw	r30,r29,80
 	ldw	r31,r29,84
@@ -84336,33 +84305,33 @@ FPC_ADDREF:
 	ldw	r3,r30,-60
 	ldbu	r3,r3,0
 	addi	r4,r0,9
-	beq	r3,r4,.Lj9808
+	beq	r3,r4,.Lj9803
 	addi	r4,r0,11
-	beq	r3,r4,.Lj9814
-	addi	r4,r0,12
-	beq	r3,r4,.Lj9810
-	addi	r4,r0,13
-	beq	r3,r4,.Lj9811
-	addi	r4,r0,14
-	beq	r3,r4,.Lj9813
-	addi	r4,r0,16
-	beq	r3,r4,.Lj9811
-	addi	r4,r0,21
-	beq	r3,r4,.Lj9812
-	addi	r4,r0,24
 	beq	r3,r4,.Lj9809
-	jal	r0,.Lj9807
-.Lj9808:
+	addi	r4,r0,12
+	beq	r3,r4,.Lj9805
+	addi	r4,r0,13
+	beq	r3,r4,.Lj9806
+	addi	r4,r0,14
+	beq	r3,r4,.Lj9808
+	addi	r4,r0,16
+	beq	r3,r4,.Lj9806
+	addi	r4,r0,21
+	beq	r3,r4,.Lj9807
+	addi	r4,r0,24
+	beq	r3,r4,.Lj9804
+	jal	r0,.Lj9802
+.Lj9803:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	call	FPC_ANSISTR_INCR_REF
-	jal	r0,.Lj9807
-.Lj9809:
+	jal	r0,.Lj9802
+.Lj9804:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	call	FPC_UNICODESTR_INCR_REF
-	jal	r0,.Lj9807
-.Lj9810:
+	jal	r0,.Lj9802
+.Lj9805:
 	ldw	r3,r30,-60
 	ldbu	r3,r3,1
 	ldw	r4,r30,-60
@@ -84378,29 +84347,29 @@ FPC_ADDREF:
 	ldw	r3,r30,-76
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9816
-	jal	r0,.Lj9817
-.Lj9816:
+	bne	r3,r0,.Lj9811
+	jal	r0,.Lj9812
+.Lj9811:
 	ldw	r3,r30,-76
 	addi	r4,r0,-1
 	xor	r4,r3,r4
 	ldw	r3,r30,-72
 	and	r11,r3,r4
-	jal	r0,.Lj9818
-.Lj9817:
+	jal	r0,.Lj9813
+.Lj9812:
 	ldw	r3,r30,-72
 	andi	r4,r3,3
 	ldw	r3,r30,-72
 	sub	r3,r3,r4
 	addi	r11,r3,0
-.Lj9818:
+.Lj9813:
 	ldw	r3,r11,12
 	ldw	r4,r3,0
 	ldw	r5,r11,8
 	ldw	r3,r30,-56
 	call	FPC_ADDREF_ARRAY
-	jal	r0,.Lj9807
-.Lj9811:
+	jal	r0,.Lj9802
+.Lj9806:
 	ldw	r3,r30,-60
 	ldbu	r3,r3,1
 	ldw	r4,r30,-60
@@ -84416,27 +84385,27 @@ FPC_ADDREF:
 	ldw	r3,r30,-76
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9821
-	jal	r0,.Lj9822
-.Lj9821:
+	bne	r3,r0,.Lj9816
+	jal	r0,.Lj9817
+.Lj9816:
 	ldw	r3,r30,-76
 	addi	r4,r0,-1
 	xor	r3,r3,r4
 	ldw	r4,r30,-72
 	and	r3,r4,r3
-	jal	r0,.Lj9823
-.Lj9822:
+	jal	r0,.Lj9818
+.Lj9817:
 	ldw	r4,r30,-72
 	andi	r5,r4,3
 	ldw	r4,r30,-72
 	sub	r4,r4,r5
 	addi	r3,r4,0
-.Lj9823:
+.Lj9818:
 	ldw	r4,r3,4
 	sne	r4,r4,r0
-	bne	r4,r0,.Lj9824
-	jal	r0,.Lj9825
-.Lj9824:
+	bne	r4,r0,.Lj9819
+	jal	r0,.Lj9820
+.Lj9819:
 	ldw	r3,r3,4
 	ldbu	r5,r3,1
 	addi	r4,r3,2
@@ -84451,24 +84420,24 @@ FPC_ADDREF:
 	ldw	r4,r30,-76
 	andi	r4,r4,4
 	seq	r4,r4,r0
-	bne	r4,r0,.Lj9827
-	jal	r0,.Lj9828
-.Lj9827:
+	bne	r4,r0,.Lj9822
+	jal	r0,.Lj9823
+.Lj9822:
 	ldw	r4,r30,-76
 	addi	r5,r0,-1
 	xor	r5,r4,r5
 	ldw	r4,r30,-72
 	and	r4,r4,r5
-	jal	r0,.Lj9829
-.Lj9828:
+	jal	r0,.Lj9824
+.Lj9823:
 	ldw	r5,r30,-72
 	andi	r5,r5,3
 	ldw	r6,r30,-72
 	sub	r5,r6,r5
 	addi	r4,r5,0
-.Lj9829:
+.Lj9824:
 	addi	r3,r4,0
-.Lj9825:
+.Lj9820:
 	stw	r30,r3,-64
 	ldw	r4,r30,-64
 	ldw	r3,r30,-56
@@ -84476,38 +84445,38 @@ FPC_ADDREF:
 	ldw	r3,r30,-64
 	ldw	r3,r3,16
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9830
-	jal	r0,.Lj9831
-.Lj9830:
+	bne	r3,r0,.Lj9825
+	jal	r0,.Lj9826
+.Lj9825:
 	ldw	r3,r30,-64
 	ldw	r3,r3,16
 	ldw	r3,r3,8
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9832
-	jal	r0,.Lj9831
-.Lj9832:
+	bne	r3,r0,.Lj9827
+	jal	r0,.Lj9826
+.Lj9827:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-64
 	ldw	r4,r4,16
 	ldw	r4,r4,8
 	jalr	r31,r4
-.Lj9831:
-	jal	r0,.Lj9807
-.Lj9812:
+.Lj9826:
+	jal	r0,.Lj9802
+.Lj9807:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	call	FPC_DYNARRAY_INCR_REF
-	jal	r0,.Lj9807
-.Lj9813:
+	jal	r0,.Lj9802
+.Lj9808:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	call	FPC_INTF_INCR_REF
-	jal	r0,.Lj9807
-.Lj9814:
+	jal	r0,.Lj9802
+.Lj9809:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_VARIANT_ADDREF$TVARDATA
-	jal	r0,.Lj9807
-.Lj9807:
+	jal	r0,.Lj9802
+.Lj9802:
 	ldw	r11,r29,76
 	ldw	r30,r29,80
 	ldw	r31,r29,84
@@ -84536,35 +84505,35 @@ FPC_COPY:
 	ldw	r3,r30,-64
 	ldbu	r3,r3,0
 	addi	r4,r0,9
-	beq	r3,r4,.Lj9836
+	beq	r3,r4,.Lj9831
 	addi	r4,r0,11
-	beq	r3,r4,.Lj9842
-	addi	r4,r0,12
-	beq	r3,r4,.Lj9838
-	addi	r4,r0,13
-	beq	r3,r4,.Lj9839
-	addi	r4,r0,14
-	beq	r3,r4,.Lj9841
-	addi	r4,r0,16
-	beq	r3,r4,.Lj9839
-	addi	r4,r0,21
-	beq	r3,r4,.Lj9840
-	addi	r4,r0,24
 	beq	r3,r4,.Lj9837
-	jal	r0,.Lj9835
-.Lj9836:
+	addi	r4,r0,12
+	beq	r3,r4,.Lj9833
+	addi	r4,r0,13
+	beq	r3,r4,.Lj9834
+	addi	r4,r0,14
+	beq	r3,r4,.Lj9836
+	addi	r4,r0,16
+	beq	r3,r4,.Lj9834
+	addi	r4,r0,21
+	beq	r3,r4,.Lj9835
+	addi	r4,r0,24
+	beq	r3,r4,.Lj9832
+	jal	r0,.Lj9830
+.Lj9831:
 	ldw	r3,r30,-56
 	ldw	r4,r3,0
 	ldw	r3,r30,-60
 	call	FPC_ANSISTR_ASSIGN
-	jal	r0,.Lj9835
-.Lj9837:
+	jal	r0,.Lj9830
+.Lj9832:
 	ldw	r3,r30,-56
 	ldw	r4,r3,0
 	ldw	r3,r30,-60
 	call	FPC_UNICODESTR_ASSIGN
-	jal	r0,.Lj9835
-.Lj9838:
+	jal	r0,.Lj9830
+.Lj9833:
 	ldw	r3,r30,-64
 	ldbu	r3,r3,1
 	ldw	r4,r30,-64
@@ -84580,22 +84549,22 @@ FPC_COPY:
 	ldw	r3,r30,-108
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9844
-	jal	r0,.Lj9845
-.Lj9844:
+	bne	r3,r0,.Lj9839
+	jal	r0,.Lj9840
+.Lj9839:
 	ldw	r4,r30,-108
 	addi	r3,r0,-1
 	xor	r4,r4,r3
 	ldw	r3,r30,-104
 	and	r3,r3,r4
-	jal	r0,.Lj9846
-.Lj9845:
+	jal	r0,.Lj9841
+.Lj9840:
 	ldw	r4,r30,-104
 	andi	r5,r4,3
 	ldw	r4,r30,-104
 	sub	r4,r4,r5
 	addi	r3,r4,0
-.Lj9846:
+.Lj9841:
 	stw	r30,r3,-92
 	ldw	r3,r30,-92
 	ldw	r3,r3,4
@@ -84605,32 +84574,32 @@ FPC_COPY:
 	stw	r30,r3,-80
 	ldw	r3,r30,-80
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9847
-	jal	r0,.Lj9848
-.Lj9847:
-	jal	r0,.Lj9833
-.Lj9848:
+	bne	r3,r0,.Lj9842
+	jal	r0,.Lj9843
+.Lj9842:
+	jal	r0,.Lj9828
+.Lj9843:
 	ldw	r3,r30,-92
 	ldw	r3,r3,12
 	ldw	r3,r3,0
 	stw	r30,r3,-96
 	ldw	r4,r30,-68
 	ldw	r5,r30,-80
-	bne	r5,r0,.Lj9849
+	bne	r5,r0,.Lj9844
 	addi	r3,r0,200
 	call	FPC_HANDLEERROR
-.Lj9849:
+.Lj9844:
 	div	r3,r4,r5
 	stw	r30,r3,-72
 	stw	r30,r0,-84
 	ldw	r11,r30,-80
 	addi	r3,r0,1
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj9850
-	jal	r0,.Lj9851
-.Lj9850:
+	bne	r3,r0,.Lj9845
+	jal	r0,.Lj9846
+.Lj9845:
 	stw	r30,r0,-88
-.Lj9852:
+.Lj9847:
 	ldw	r3,r30,-88
 	addi	r3,r3,1
 	stw	r30,r3,-88
@@ -84648,12 +84617,12 @@ FPC_COPY:
 	stw	r30,r3,-84
 	ldw	r3,r30,-88
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj9854
-	jal	r0,.Lj9852
-.Lj9854:
-.Lj9851:
-	jal	r0,.Lj9835
-.Lj9839:
+	bne	r3,r0,.Lj9849
+	jal	r0,.Lj9847
+.Lj9849:
+.Lj9846:
+	jal	r0,.Lj9830
+.Lj9834:
 	ldw	r3,r30,-64
 	ldbu	r3,r3,1
 	ldw	r4,r30,-64
@@ -84669,27 +84638,27 @@ FPC_COPY:
 	ldw	r3,r30,-108
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9857
-	jal	r0,.Lj9858
-.Lj9857:
+	bne	r3,r0,.Lj9852
+	jal	r0,.Lj9853
+.Lj9852:
 	ldw	r4,r30,-108
 	addi	r3,r0,-1
 	xor	r4,r4,r3
 	ldw	r3,r30,-104
 	and	r3,r3,r4
-	jal	r0,.Lj9859
-.Lj9858:
+	jal	r0,.Lj9854
+.Lj9853:
 	ldw	r4,r30,-104
 	andi	r5,r4,3
 	ldw	r4,r30,-104
 	sub	r4,r4,r5
 	addi	r3,r4,0
-.Lj9859:
+.Lj9854:
 	ldw	r4,r3,4
 	sne	r4,r4,r0
-	bne	r4,r0,.Lj9860
-	jal	r0,.Lj9861
-.Lj9860:
+	bne	r4,r0,.Lj9855
+	jal	r0,.Lj9856
+.Lj9855:
 	ldw	r3,r3,4
 	ldbu	r5,r3,1
 	addi	r4,r3,2
@@ -84704,24 +84673,24 @@ FPC_COPY:
 	ldw	r4,r30,-108
 	andi	r4,r4,4
 	seq	r4,r4,r0
-	bne	r4,r0,.Lj9863
-	jal	r0,.Lj9864
-.Lj9863:
+	bne	r4,r0,.Lj9858
+	jal	r0,.Lj9859
+.Lj9858:
 	ldw	r4,r30,-108
 	addi	r5,r0,-1
 	xor	r4,r4,r5
 	ldw	r5,r30,-104
 	and	r4,r5,r4
-	jal	r0,.Lj9865
-.Lj9864:
+	jal	r0,.Lj9860
+.Lj9859:
 	ldw	r5,r30,-104
 	andi	r6,r5,3
 	ldw	r5,r30,-104
 	sub	r5,r5,r6
 	addi	r4,r5,0
-.Lj9865:
+.Lj9860:
 	addi	r3,r4,0
-.Lj9861:
+.Lj9856:
 	stw	r30,r3,-92
 	ldw	r3,r30,-92
 	ldw	r3,r3,8
@@ -84729,24 +84698,24 @@ FPC_COPY:
 	ldw	r3,r30,-92
 	ldw	r3,r3,16
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9866
-	jal	r0,.Lj9867
-.Lj9866:
+	bne	r3,r0,.Lj9861
+	jal	r0,.Lj9862
+.Lj9861:
 	ldw	r3,r30,-92
 	ldw	r3,r3,16
 	ldw	r3,r3,12
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9868
-	jal	r0,.Lj9867
-.Lj9868:
+	bne	r3,r0,.Lj9863
+	jal	r0,.Lj9862
+.Lj9863:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	ldw	r5,r30,-92
 	ldw	r5,r5,16
 	ldw	r5,r5,12
 	jalr	r31,r5
-	jal	r0,.Lj9869
-.Lj9867:
+	jal	r0,.Lj9864
+.Lj9862:
 	ldw	r3,r30,-92
 	ldw	r3,r3,20
 	stw	r30,r3,-80
@@ -84762,11 +84731,11 @@ FPC_COPY:
 	ldw	r11,r30,-80
 	addi	r3,r0,1
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj9870
-	jal	r0,.Lj9871
-.Lj9870:
+	bne	r3,r0,.Lj9865
+	jal	r0,.Lj9866
+.Lj9865:
 	stw	r30,r0,-88
-.Lj9872:
+.Lj9867:
 	ldw	r3,r30,-88
 	addi	r3,r3,1
 	stw	r30,r3,-88
@@ -84776,9 +84745,9 @@ FPC_COPY:
 	ldw	r4,r30,-84
 	ldw	r3,r30,-76
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj9875
-	jal	r0,.Lj9876
-.Lj9875:
+	bne	r3,r0,.Lj9870
+	jal	r0,.Lj9871
+.Lj9870:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-76
 	add	r4,r4,r3
@@ -84789,7 +84758,7 @@ FPC_COPY:
 	ldw	r5,r30,-76
 	sub	r5,r6,r5
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj9876:
+.Lj9871:
 	ldw	r3,r30,-92
 	ldw	r3,r3,0
 	ldw	r5,r3,0
@@ -84808,16 +84777,16 @@ FPC_COPY:
 	stw	r30,r3,-92
 	ldw	r3,r30,-88
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj9874
-	jal	r0,.Lj9872
-.Lj9874:
-.Lj9871:
+	bne	r3,r0,.Lj9869
+	jal	r0,.Lj9867
+.Lj9869:
+.Lj9866:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-76
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj9877
-	jal	r0,.Lj9878
-.Lj9877:
+	bne	r3,r0,.Lj9872
+	jal	r0,.Lj9873
+.Lj9872:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-76
 	add	r4,r4,r3
@@ -84828,23 +84797,23 @@ FPC_COPY:
 	ldw	r5,r30,-76
 	sub	r5,r6,r5
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj9878:
-.Lj9869:
-	jal	r0,.Lj9835
-.Lj9840:
+.Lj9873:
+.Lj9864:
+	jal	r0,.Lj9830
+.Lj9835:
 	ldw	r3,r30,-56
 	ldw	r4,r3,0
 	ldw	r3,r30,-60
 	ldw	r5,r30,-64
 	call	FPC_DYNARRAY_ASSIGN
-	jal	r0,.Lj9835
-.Lj9841:
+	jal	r0,.Lj9830
+.Lj9836:
 	ldw	r3,r30,-56
 	ldw	r4,r3,0
 	ldw	r3,r30,-60
 	call	FPC_INTF_ASSIGN
-	jal	r0,.Lj9835
-.Lj9842:
+	jal	r0,.Lj9830
+.Lj9837:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-60
 	la	r5,TC_$SYSTEM_$$_VARCOPYPROC
@@ -84852,9 +84821,9 @@ FPC_COPY:
 	jalr	r31,r5
 	addi	r3,r0,16
 	stw	r30,r3,-68
-	jal	r0,.Lj9835
-.Lj9835:
-.Lj9833:
+	jal	r0,.Lj9830
+.Lj9830:
+.Lj9828:
 	ldw	r1,r30,-68
 	ldw	r11,r29,108
 	ldw	r30,r29,112
@@ -84916,39 +84885,39 @@ FPC_COPY_WITH_MOVE_SEMANTICS:
 	ldw	r3,r30,-84
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9884
-	jal	r0,.Lj9885
-.Lj9884:
+	bne	r3,r0,.Lj9879
+	jal	r0,.Lj9880
+.Lj9879:
 	ldw	r3,r30,-84
 	addi	r4,r0,-1
 	xor	r3,r3,r4
 	ldw	r4,r30,-80
 	and	r3,r4,r3
-	jal	r0,.Lj9886
-.Lj9885:
+	jal	r0,.Lj9881
+.Lj9880:
 	ldw	r4,r30,-80
 	andi	r5,r4,3
 	ldw	r4,r30,-80
 	sub	r4,r4,r5
 	addi	r3,r4,0
-.Lj9886:
+.Lj9881:
 	stw	r30,r3,-72
 	ldw	r3,r30,-64
 	ldbu	r3,r3,0
 	addi	r3,r3,-12
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9887
-	jal	r0,.Lj9888
-.Lj9887:
+	bne	r3,r0,.Lj9882
+	jal	r0,.Lj9883
+.Lj9882:
 	ldw	r3,r30,-72
 	ldw	r3,r3,4
 	stw	r30,r3,-68
-	jal	r0,.Lj9889
-.Lj9888:
+	jal	r0,.Lj9884
+.Lj9883:
 	ldw	r3,r30,-72
 	ldw	r3,r3,8
 	stw	r30,r3,-68
-.Lj9889:
+.Lj9884:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-60
 	call	FPC_FINALIZE
@@ -85014,24 +84983,24 @@ FPC_INITIALIZE_ARRAY:
 	ldw	r3,r30,-68
 	addi	r3,r3,-49
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9894
-	jal	r0,.Lj9895
-.Lj9894:
+	bne	r3,r0,.Lj9889
+	jal	r0,.Lj9890
+.Lj9889:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-64
 	mul	r4,r3,r4
 	ldw	r3,r30,-56
 	addi	r5,r0,0
 	call	SYSTEM_$$_FILLCHAR$formal$LONGINT$BYTE
-	jal	r0,.Lj9896
-.Lj9895:
+	jal	r0,.Lj9891
+.Lj9890:
 	ldw	r3,r30,-60
 	ldbu	r3,r3,0
 	addi	r3,r3,-12
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9897
-	jal	r0,.Lj9898
-.Lj9897:
+	bne	r3,r0,.Lj9892
+	jal	r0,.Lj9893
+.Lj9892:
 	ldw	r3,r30,-60
 	ldbu	r3,r3,1
 	ldw	r4,r30,-60
@@ -85047,22 +85016,22 @@ FPC_INITIALIZE_ARRAY:
 	ldw	r3,r30,-92
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9900
-	jal	r0,.Lj9901
-.Lj9900:
+	bne	r3,r0,.Lj9895
+	jal	r0,.Lj9896
+.Lj9895:
 	ldw	r4,r30,-92
 	addi	r3,r0,-1
 	xor	r3,r4,r3
 	ldw	r4,r30,-88
 	and	r11,r4,r3
-	jal	r0,.Lj9902
-.Lj9901:
+	jal	r0,.Lj9897
+.Lj9896:
 	ldw	r3,r30,-88
 	andi	r4,r3,3
 	ldw	r3,r30,-88
 	sub	r3,r3,r4
 	addi	r11,r3,0
-.Lj9902:
+.Lj9897:
 	ldw	r4,r11,8
 	ldw	r3,r30,-64
 	mul	r5,r3,r4
@@ -85070,8 +85039,8 @@ FPC_INITIALIZE_ARRAY:
 	ldw	r4,r3,0
 	ldw	r3,r30,-56
 	call	FPC_INITIALIZE_ARRAY
-	jal	r0,.Lj9903
-.Lj9898:
+	jal	r0,.Lj9898
+.Lj9893:
 	ldw	r3,r30,-60
 	ldbu	r3,r3,1
 	ldw	r4,r30,-60
@@ -85087,27 +85056,27 @@ FPC_INITIALIZE_ARRAY:
 	ldw	r3,r30,-92
 	andi	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9906
-	jal	r0,.Lj9907
-.Lj9906:
+	bne	r3,r0,.Lj9901
+	jal	r0,.Lj9902
+.Lj9901:
 	ldw	r4,r30,-92
 	addi	r3,r0,-1
 	xor	r3,r4,r3
 	ldw	r4,r30,-88
 	and	r3,r4,r3
-	jal	r0,.Lj9908
-.Lj9907:
+	jal	r0,.Lj9903
+.Lj9902:
 	ldw	r4,r30,-88
 	andi	r5,r4,3
 	ldw	r4,r30,-88
 	sub	r4,r4,r5
 	addi	r3,r4,0
-.Lj9908:
+.Lj9903:
 	ldw	r4,r3,4
 	sne	r4,r4,r0
-	bne	r4,r0,.Lj9909
-	jal	r0,.Lj9910
-.Lj9909:
+	bne	r4,r0,.Lj9904
+	jal	r0,.Lj9905
+.Lj9904:
 	ldw	r3,r3,4
 	ldbu	r5,r3,1
 	addi	r4,r3,2
@@ -85122,24 +85091,24 @@ FPC_INITIALIZE_ARRAY:
 	ldw	r4,r30,-92
 	andi	r4,r4,4
 	seq	r4,r4,r0
-	bne	r4,r0,.Lj9912
-	jal	r0,.Lj9913
-.Lj9912:
+	bne	r4,r0,.Lj9907
+	jal	r0,.Lj9908
+.Lj9907:
 	ldw	r4,r30,-92
 	addi	r5,r0,-1
 	xor	r5,r4,r5
 	ldw	r4,r30,-88
 	and	r4,r4,r5
-	jal	r0,.Lj9914
-.Lj9913:
+	jal	r0,.Lj9909
+.Lj9908:
 	ldw	r5,r30,-88
 	andi	r5,r5,3
 	ldw	r6,r30,-88
 	sub	r5,r6,r5
 	addi	r4,r5,0
-.Lj9914:
+.Lj9909:
 	addi	r3,r4,0
-.Lj9910:
+.Lj9905:
 	stw	r30,r3,-80
 	ldw	r3,r30,-80
 	ldw	r3,r3,8
@@ -85148,25 +85117,25 @@ FPC_INITIALIZE_ARRAY:
 	ldw	r4,r3,20
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj9915
-	jal	r0,.Lj9916
-.Lj9916:
+	bne	r3,r0,.Lj9910
+	jal	r0,.Lj9911
+.Lj9911:
 	ldw	r3,r30,-80
 	ldw	r3,r3,16
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj9915
-	jal	r0,.Lj9917
-.Lj9915:
+	bne	r3,r0,.Lj9910
+	jal	r0,.Lj9912
+.Lj9910:
 	ldw	r3,r30,-64
 	addi	r11,r3,-1
 	addi	r3,r0,0
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj9918
-	jal	r0,.Lj9919
-.Lj9918:
+	bne	r3,r0,.Lj9913
+	jal	r0,.Lj9914
+.Lj9913:
 	addi	r3,r0,-1
 	stw	r30,r3,-76
-.Lj9920:
+.Lj9915:
 	ldw	r3,r30,-76
 	addi	r3,r3,1
 	stw	r30,r3,-76
@@ -85179,13 +85148,13 @@ FPC_INITIALIZE_ARRAY:
 	call	SYSTEM_$$_INITIALIZERECORD$POINTER$PRECORDINFOINIT
 	ldw	r3,r30,-76
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj9922
-	jal	r0,.Lj9920
-.Lj9922:
-.Lj9919:
+	bne	r3,r0,.Lj9917
+	jal	r0,.Lj9915
 .Lj9917:
-.Lj9903:
-.Lj9896:
+.Lj9914:
+.Lj9912:
+.Lj9898:
+.Lj9891:
 	ldw	r11,r29,92
 	ldw	r30,r29,96
 	ldw	r31,r29,100
@@ -85210,28 +85179,28 @@ SYSTEM_$$_SKIPTRAILINGNILS$PPOINTER$LONGINT$$LONGINT:
 	ldw	r4,r30,-56
 	add	r3,r4,r3
 	stw	r30,r3,-68
-	jal	r0,.Lj9926
-.Lj9925:
+	jal	r0,.Lj9921
+.Lj9920:
 	ldw	r3,r30,-68
 	addi	r3,r3,-4
 	stw	r30,r3,-68
-.Lj9926:
+.Lj9921:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-56
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj9928
-	jal	r0,.Lj9929
-.Lj9928:
+	bne	r3,r0,.Lj9923
+	jal	r0,.Lj9924
+.Lj9923:
 	ldw	r3,r30,-68
 	ldw	r3,r3,-4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9930
-	jal	r0,.Lj9929
-.Lj9930:
-	jal	r0,.Lj9925
-.Lj9929:
-	jal	r0,.Lj9927
-.Lj9927:
+	bne	r3,r0,.Lj9925
+	jal	r0,.Lj9924
+.Lj9925:
+	jal	r0,.Lj9920
+.Lj9924:
+	jal	r0,.Lj9922
+.Lj9922:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-56
 	sub	r3,r4,r3
@@ -85268,21 +85237,21 @@ FPC_FINALIZE_ARRAY:
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9933
-	jal	r0,.Lj9934
-.Lj9933:
+	bne	r3,r0,.Lj9928
+	jal	r0,.Lj9929
+.Lj9928:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_SKIPTRAILINGNILS$PPOINTER$LONGINT$$LONGINT
 	addi	r11,r1,-1
 	addi	r3,r0,0
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj9935
-	jal	r0,.Lj9936
-.Lj9935:
+	bne	r3,r0,.Lj9930
+	jal	r0,.Lj9931
+.Lj9930:
 	addi	r3,r0,-1
 	stw	r30,r3,-72
-.Lj9937:
+.Lj9932:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
@@ -85294,30 +85263,30 @@ FPC_FINALIZE_ARRAY:
 	call	FPC_FINALIZE
 	ldw	r3,r30,-72
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj9939
-	jal	r0,.Lj9937
-.Lj9939:
-.Lj9936:
-	jal	r0,.Lj9940
+	bne	r3,r0,.Lj9934
+	jal	r0,.Lj9932
 .Lj9934:
+.Lj9931:
+	jal	r0,.Lj9935
+.Lj9929:
 	addi	r5,r30,-68
 	addi	r6,r0,0
 	addi	r4,r0,1
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_RTTIMANAGEMENTANDSIZE$POINTER$TRTTIRECOPTYPE$LONGINT$BOOLEAN$$BOOLEAN
-	bne	r1,r0,.Lj9941
-	jal	r0,.Lj9942
-.Lj9941:
+	bne	r1,r0,.Lj9936
+	jal	r0,.Lj9937
+.Lj9936:
 	ldw	r3,r30,-64
 	addi	r11,r3,-1
 	addi	r3,r0,0
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj9943
-	jal	r0,.Lj9944
-.Lj9943:
+	bne	r3,r0,.Lj9938
+	jal	r0,.Lj9939
+.Lj9938:
 	addi	r3,r0,-1
 	stw	r30,r3,-72
-.Lj9945:
+.Lj9940:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
@@ -85330,12 +85299,12 @@ FPC_FINALIZE_ARRAY:
 	call	FPC_FINALIZE
 	ldw	r3,r30,-72
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj9947
-	jal	r0,.Lj9945
-.Lj9947:
-.Lj9944:
+	bne	r3,r0,.Lj9942
+	jal	r0,.Lj9940
 .Lj9942:
-.Lj9940:
+.Lj9939:
+.Lj9937:
+.Lj9935:
 	ldw	r11,r29,72
 	ldw	r30,r29,76
 	ldw	r31,r29,80
@@ -85365,21 +85334,21 @@ FPC_ADDREF_ARRAY:
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj9950
-	jal	r0,.Lj9951
-.Lj9950:
+	bne	r3,r0,.Lj9945
+	jal	r0,.Lj9946
+.Lj9945:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_SKIPTRAILINGNILS$PPOINTER$LONGINT$$LONGINT
 	addi	r11,r1,-1
 	addi	r3,r0,0
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj9952
-	jal	r0,.Lj9953
-.Lj9952:
+	bne	r3,r0,.Lj9947
+	jal	r0,.Lj9948
+.Lj9947:
 	addi	r3,r0,-1
 	stw	r30,r3,-72
-.Lj9954:
+.Lj9949:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
@@ -85391,30 +85360,30 @@ FPC_ADDREF_ARRAY:
 	call	FPC_ADDREF
 	ldw	r3,r30,-72
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj9956
-	jal	r0,.Lj9954
-.Lj9956:
-.Lj9953:
-	jal	r0,.Lj9957
+	bne	r3,r0,.Lj9951
+	jal	r0,.Lj9949
 .Lj9951:
+.Lj9948:
+	jal	r0,.Lj9952
+.Lj9946:
 	addi	r5,r30,-68
 	addi	r6,r0,0
 	addi	r4,r0,2
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_RTTIMANAGEMENTANDSIZE$POINTER$TRTTIRECOPTYPE$LONGINT$BOOLEAN$$BOOLEAN
-	bne	r1,r0,.Lj9958
-	jal	r0,.Lj9959
-.Lj9958:
+	bne	r1,r0,.Lj9953
+	jal	r0,.Lj9954
+.Lj9953:
 	ldw	r3,r30,-64
 	addi	r11,r3,-1
 	addi	r3,r0,0
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj9960
-	jal	r0,.Lj9961
-.Lj9960:
+	bne	r3,r0,.Lj9955
+	jal	r0,.Lj9956
+.Lj9955:
 	addi	r3,r0,-1
 	stw	r30,r3,-72
-.Lj9962:
+.Lj9957:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
@@ -85427,12 +85396,12 @@ FPC_ADDREF_ARRAY:
 	call	FPC_ADDREF
 	ldw	r3,r30,-72
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj9964
-	jal	r0,.Lj9962
-.Lj9964:
-.Lj9961:
+	bne	r3,r0,.Lj9959
+	jal	r0,.Lj9957
 .Lj9959:
-.Lj9957:
+.Lj9956:
+.Lj9954:
+.Lj9952:
 	ldw	r11,r29,72
 	ldw	r30,r29,76
 	ldw	r31,r29,80
@@ -85526,19 +85495,19 @@ SYSTEM_$$_COPYARRAY$POINTER$POINTER$POINTER$LONGINT:
 	addi	r4,r0,3
 	ldw	r3,r30,-64
 	call	SYSTEM_$$_RTTIMANAGEMENTANDSIZE$POINTER$TRTTIRECOPTYPE$LONGINT$BOOLEAN$$BOOLEAN
-	bne	r1,r0,.Lj9971
-	jal	r0,.Lj9972
-.Lj9971:
+	bne	r1,r0,.Lj9966
+	jal	r0,.Lj9967
+.Lj9966:
 	ldw	r3,r30,-68
 	addi	r11,r3,-1
 	addi	r3,r0,0
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj9973
-	jal	r0,.Lj9974
-.Lj9973:
+	bne	r3,r0,.Lj9968
+	jal	r0,.Lj9969
+.Lj9968:
 	addi	r3,r0,-1
 	stw	r30,r3,-72
-.Lj9975:
+.Lj9970:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
@@ -85556,11 +85525,11 @@ SYSTEM_$$_COPYARRAY$POINTER$POINTER$POINTER$LONGINT:
 	call	FPC_COPY
 	ldw	r3,r30,-72
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj9977
-	jal	r0,.Lj9975
-.Lj9977:
-.Lj9974:
+	bne	r3,r0,.Lj9972
+	jal	r0,.Lj9970
 .Lj9972:
+.Lj9969:
+.Lj9967:
 	ldw	r11,r29,76
 	ldw	r30,r29,80
 	ldw	r31,r29,84
@@ -85849,11 +85818,11 @@ SYSTEM_$$_XSR128_32_U32RAND$$LONGWORD:
 	la	r4,TC_$SYSTEM_$$_OLDRANDSEED
 	ldw	r4,r4,0
 	sne	r3,r3,r4
-	bne	r3,r0,.Lj9990
-	jal	r0,.Lj9991
-.Lj9990:
+	bne	r3,r0,.Lj9985
+	jal	r0,.Lj9986
+.Lj9985:
 	call	SYSTEM_$$_RESEEDGLOBALRNG
-.Lj9991:
+.Lj9986:
 	la	r3,TC_$SYSTEM_$$_GLOBALXSR128_32
 	ldw	r3,r3,0
 	stw	r30,r3,-60
@@ -85930,14 +85899,14 @@ SYSTEM_$$_RANDOM$LONGINT$$LONGINT:
 	ldw	r4,r30,-56
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj9995
-	jal	r0,.Lj9996
-.Lj9995:
+	bne	r3,r0,.Lj9990
+	jal	r0,.Lj9991
+.Lj9990:
 	ldw	r3,r30,-60
 	addi	r4,r0,-1
 	xor	r3,r3,r4
 	stw	r30,r3,-60
-.Lj9996:
+.Lj9991:
 	call	SYSTEM_$$_XSR128_32_U32RAND$$LONGWORD
 	ldw	r4,r30,-60
 	mulhu	r3,r1,r4
@@ -85947,30 +85916,30 @@ SYSTEM_$$_RANDOM$LONGINT$$LONGINT:
 	ldw	r4,r30,-72
 	ldw	r3,r30,-60
 	sltu	r3,r4,r3
-	bne	r3,r0,.Lj9997
-	jal	r0,.Lj9998
-.Lj9997:
+	bne	r3,r0,.Lj9992
+	jal	r0,.Lj9993
+.Lj9992:
 	ldw	r3,r30,-60
 	sub	r4,r0,r3
 	ldw	r3,r30,-60
 	call	fpc_mod_dword
 	stw	r30,r1,-64
-	jal	r0,.Lj10000
-.Lj9999:
+	jal	r0,.Lj9995
+.Lj9994:
 	call	SYSTEM_$$_XSR128_32_U32RAND$$LONGWORD
 	ldw	r4,r30,-60
 	mulhu	r3,r1,r4
 	mul	r4,r1,r4
 	stw	r30,r4,-72
 	stw	r30,r3,-68
-.Lj10000:
+.Lj9995:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-64
 	sltu	r3,r3,r4
-	bne	r3,r0,.Lj9999
-	jal	r0,.Lj10001
-.Lj10001:
-.Lj9998:
+	bne	r3,r0,.Lj9994
+	jal	r0,.Lj9996
+.Lj9996:
+.Lj9993:
 	ldw	r3,r30,-72
 	ldw	r3,r30,-68
 	li	r4,0
@@ -85981,14 +85950,14 @@ SYSTEM_$$_RANDOM$LONGINT$$LONGINT:
 	ldw	r3,r30,-56
 	addi	r4,r0,-1
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj10002
-	jal	r0,.Lj10003
-.Lj10002:
+	bne	r3,r0,.Lj9997
+	jal	r0,.Lj9998
+.Lj9997:
 	ldw	r3,r30,-60
 	addi	r4,r0,-1
 	xor	r3,r3,r4
 	stw	r30,r3,-60
-.Lj10003:
+.Lj9998:
 	ldw	r1,r30,-60
 	ldw	r30,r29,72
 	ldw	r31,r29,76
@@ -86016,10 +85985,10 @@ SYSTEM_$$_RANDOM$INT64$$INT64:
 	srai	r6,r4,31
 	ldw	r5,r30,-60
 	ldw	r3,r30,-56
-	bne	r3,r6,.Lj10007
-	bne	r5,r4,.Lj10007
-	jal	r0,.Lj10006
-.Lj10006:
+	bne	r3,r6,.Lj10002
+	bne	r5,r4,.Lj10002
+	jal	r0,.Lj10001
+.Lj10001:
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_RANDOM$LONGINT$$LONGINT
 	slli	r1,r1,0
@@ -86027,19 +85996,19 @@ SYSTEM_$$_RANDOM$INT64$$INT64:
 	srai	r3,r1,31
 	stw	r30,r1,-68
 	stw	r30,r3,-64
-	jal	r0,.Lj10004
-.Lj10007:
+	jal	r0,.Lj9999
+.Lj10002:
 	ldw	r3,r30,-60
 	stw	r30,r3,-84
 	ldw	r3,r30,-56
 	stw	r30,r3,-80
 	ldw	r3,r30,-60
 	ldw	r4,r30,-56
-	blt	r4,r0,.Lj10008
-	bne	r0,r4,.Lj10009
-	bltu	r3,r0,.Lj10008
-	jal	r0,.Lj10009
-.Lj10008:
+	blt	r4,r0,.Lj10003
+	bne	r0,r4,.Lj10004
+	bltu	r3,r0,.Lj10003
+	jal	r0,.Lj10004
+.Lj10003:
 	ldw	r4,r30,-84
 	ldw	r3,r30,-80
 	addi	r5,r0,-1
@@ -86048,7 +86017,7 @@ SYSTEM_$$_RANDOM$INT64$$INT64:
 	xor	r3,r3,r5
 	stw	r30,r4,-84
 	stw	r30,r3,-80
-.Lj10009:
+.Lj10004:
 	call	SYSTEM_$$_XSR128_32_U32RAND$$LONGWORD
 	stw	r30,r1,-96
 	ldw	r4,r30,-96
@@ -86069,11 +86038,11 @@ SYSTEM_$$_RANDOM$INT64$$INT64:
 	ldw	r3,r30,-88
 	ldw	r4,r30,-84
 	ldw	r5,r30,-80
-	bltu	r3,r5,.Lj10010
-	bne	r5,r3,.Lj10011
-	bltu	r6,r4,.Lj10010
-	jal	r0,.Lj10011
-.Lj10010:
+	bltu	r3,r5,.Lj10005
+	bne	r5,r3,.Lj10006
+	bltu	r6,r4,.Lj10005
+	jal	r0,.Lj10006
+.Lj10005:
 	ldw	r3,r30,-84
 	ldw	r4,r30,-80
 	sub	r5,r0,r3
@@ -86085,8 +86054,8 @@ SYSTEM_$$_RANDOM$INT64$$INT64:
 	call	fpc_mod_qword
 	stw	r30,r1,-76
 	stw	r30,r2,-72
-	jal	r0,.Lj10013
-.Lj10012:
+	jal	r0,.Lj10008
+.Lj10007:
 	call	SYSTEM_$$_XSR128_32_U32RAND$$LONGWORD
 	stw	r30,r1,-96
 	ldw	r4,r30,-96
@@ -86103,32 +86072,32 @@ SYSTEM_$$_RANDOM$INT64$$INT64:
 	call	SYSTEM_$$_UMUL64X64_128$QWORD$QWORD$QWORD$$QWORD
 	stw	r30,r1,-92
 	stw	r30,r2,-88
-.Lj10013:
+.Lj10008:
 	ldw	r4,r30,-92
 	ldw	r5,r30,-88
 	ldw	r6,r30,-76
 	ldw	r3,r30,-72
-	bltu	r5,r3,.Lj10015
-	bne	r3,r5,.Lj10016
-	bltu	r4,r6,.Lj10015
-	jal	r0,.Lj10016
-.Lj10015:
-	jal	r0,.Lj10012
-.Lj10016:
-	jal	r0,.Lj10014
-.Lj10014:
+	bltu	r5,r3,.Lj10010
+	bne	r3,r5,.Lj10011
+	bltu	r4,r6,.Lj10010
+	jal	r0,.Lj10011
+.Lj10010:
+	jal	r0,.Lj10007
 .Lj10011:
+	jal	r0,.Lj10009
+.Lj10009:
+.Lj10006:
 	ldw	r5,r30,-60
 	ldw	r3,r30,-56
 	lui	r6,1048575
 	ori	r6,r6,4095
 	lui	r4,1048575
 	ori	r4,r4,4095
-	blt	r3,r4,.Lj10017
-	bne	r4,r3,.Lj10018
-	bltu	r5,r6,.Lj10017
-	jal	r0,.Lj10018
-.Lj10017:
+	blt	r3,r4,.Lj10012
+	bne	r4,r3,.Lj10013
+	bltu	r5,r6,.Lj10012
+	jal	r0,.Lj10013
+.Lj10012:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-64
 	addi	r5,r0,-1
@@ -86137,8 +86106,8 @@ SYSTEM_$$_RANDOM$INT64$$INT64:
 	xor	r3,r3,r5
 	stw	r30,r4,-68
 	stw	r30,r3,-64
-.Lj10018:
-.Lj10004:
+.Lj10013:
+.Lj9999:
 	ldw	r1,r30,-68
 	ldw	r2,r30,-64
 	ldw	r12,r29,96
@@ -86182,13 +86151,13 @@ SYSTEM_$$_RANDOM$$DOUBLE:
 	ldw	r3,r30,-72
 	srli	r3,r3,20
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10021
-	jal	r0,.Lj10022
-.Lj10021:
+	bne	r3,r0,.Lj10016
+	jal	r0,.Lj10017
+.Lj10016:
 	ldw	r3,r30,-76
 	addi	r3,r3,20
 	stw	r30,r3,-76
-.Lj10023:
+.Lj10018:
 	ldw	r3,r30,-76
 	addi	r3,r3,-32
 	stw	r30,r3,-76
@@ -86196,10 +86165,10 @@ SYSTEM_$$_RANDOM$$DOUBLE:
 	stw	r30,r1,-72
 	ldw	r3,r30,-72
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10025
-	jal	r0,.Lj10023
-.Lj10025:
-.Lj10022:
+	bne	r3,r0,.Lj10020
+	jal	r0,.Lj10018
+.Lj10020:
+.Lj10017:
 	ldw	r3,r30,-72
 	lui	r4,15
 	ori	r4,r4,4095
@@ -86368,30 +86337,30 @@ SYSTEM_$$_GET_CALLER_STACKINFO$POINTER$POINTER:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10039
-	jal	r0,.Lj10040
-.Lj10039:
+	bne	r3,r0,.Lj10034
+	jal	r0,.Lj10035
+.Lj10034:
 	addi	r3,r0,0
-	jal	r0,.Lj10041
-.Lj10040:
+	jal	r0,.Lj10036
+.Lj10035:
 	ldw	r4,r30,-56
 	ldw	r4,r4,0
 	ldw	r3,r4,-8
-.Lj10041:
+.Lj10036:
 	stw	r30,r3,-64
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10042
-	jal	r0,.Lj10043
-.Lj10042:
+	bne	r3,r0,.Lj10037
+	jal	r0,.Lj10038
+.Lj10037:
 	addi	r3,r0,0
-	jal	r0,.Lj10044
-.Lj10043:
+	jal	r0,.Lj10039
+.Lj10038:
 	ldw	r4,r30,-56
 	ldw	r4,r4,0
 	ldw	r3,r4,-4
-.Lj10044:
+.Lj10039:
 	stw	r30,r3,-68
 	ldw	r3,r30,-56
 	ldw	r4,r30,-64
@@ -86559,22 +86528,22 @@ FPC_IOCHECK:
 	addi	r29,r29,-60
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10059
+	beq	r4,r0,.Lj10054
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10060
-.Lj10059:
+	jal	r0,.Lj10055
+.Lj10054:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10060:
+.Lj10055:
 	stw	r30,r1,-60
 	ldw	r3,r30,-60
 	ldhu	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10061
-	jal	r0,.Lj10062
-.Lj10061:
+	bne	r3,r0,.Lj10056
+	jal	r0,.Lj10057
+.Lj10056:
 	ldw	r3,r30,-60
 	ldhu	r3,r3,0
 	stw	r30,r3,-56
@@ -86585,7 +86554,7 @@ FPC_IOCHECK:
 	addi	r4,r0,0
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_HANDLEERRORADDRFRAMEIND$LONGINT$POINTER$POINTER
-.Lj10062:
+.Lj10057:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -86604,15 +86573,15 @@ SYSTEM_$$_IORESULT$$WORD:
 	addi	r29,r29,-60
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10065
+	beq	r4,r0,.Lj10060
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10066
-.Lj10065:
+	jal	r0,.Lj10061
+.Lj10060:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10066:
+.Lj10061:
 	stw	r30,r1,-60
 	ldw	r3,r30,-60
 	ldhu	r3,r3,0
@@ -86638,15 +86607,15 @@ SYSTEM_$$_GETTHREADID$$LONGINT:
 	addi	r29,r29,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10069
+	beq	r4,r0,.Lj10064
 	la	r5,U_$SYSTEM_$$_THREADID
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10070
-.Lj10069:
+	jal	r0,.Lj10065
+.Lj10064:
 	la	r3,U_$SYSTEM_$$_THREADID
 	addi	r1,r3,4
-.Lj10070:
+.Lj10065:
 	ldw	r3,r1,0
 	stw	r30,r3,-56
 	ldw	r1,r30,-56
@@ -86672,28 +86641,28 @@ FPC_SAFECALLCHECK:
 	ldw	r4,r30,-56
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj10073
-	jal	r0,.Lj10074
-.Lj10073:
+	bne	r3,r0,.Lj10068
+	jal	r0,.Lj10069
+.Lj10068:
 	la	r3,TC_$SYSTEM_$$_SAFECALLERRORPROC
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10075
-	jal	r0,.Lj10076
-.Lj10075:
+	bne	r3,r0,.Lj10070
+	jal	r0,.Lj10071
+.Lj10070:
 	call	SYSTEM_$$_GET_FRAME$$POINTER
 	addi	r4,r1,0
 	ldw	r3,r30,-56
 	la	r5,TC_$SYSTEM_$$_SAFECALLERRORPROC
 	ldw	r5,r5,0
 	jalr	r31,r5
-.Lj10076:
+.Lj10071:
 	call	SYSTEM_$$_GET_FRAME$$POINTER
 	addi	r5,r1,0
 	addi	r4,r0,0
 	addi	r3,r0,229
 	call	SYSTEM_$$_HANDLEERRORADDRFRAMEIND$LONGINT$POINTER$POINTER
-.Lj10074:
+.Lj10069:
 	ldw	r3,r30,-56
 	stw	r30,r3,-60
 	ldw	r1,r30,-60
@@ -86718,11 +86687,11 @@ FPC_STACKCHECK:
 	stw	r30,r3,-56
 	la	r3,TC_$SYSTEM_$$_STACKERROR
 	ldbu	r3,r3,0
-	bne	r3,r0,.Lj10079
-	jal	r0,.Lj10080
-.Lj10079:
-	jal	r0,.Lj10077
-.Lj10080:
+	bne	r3,r0,.Lj10074
+	jal	r0,.Lj10075
+.Lj10074:
+	jal	r0,.Lj10072
+.Lj10075:
 	call	SYSTEM_$$_SPTR$$POINTER
 	la	r3,TC_$SYSTEM_$$_STACKMARGIN
 	ldw	r3,r3,0
@@ -86730,28 +86699,28 @@ FPC_STACKCHECK:
 	stw	r30,r3,-60
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10081
+	beq	r4,r0,.Lj10076
 	la	r5,U_$SYSTEM_$$_STACKBOTTOM
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10082
-.Lj10081:
+	jal	r0,.Lj10077
+.Lj10076:
 	la	r3,U_$SYSTEM_$$_STACKBOTTOM
 	addi	r1,r3,4
-.Lj10082:
+.Lj10077:
 	ldw	r3,r1,0
 	ldw	r4,r30,-60
 	sleu	r3,r4,r3
-	bne	r3,r0,.Lj10083
-	jal	r0,.Lj10084
-.Lj10083:
+	bne	r3,r0,.Lj10078
+	jal	r0,.Lj10079
+.Lj10078:
 	addi	r3,r0,1
 	la	r4,TC_$SYSTEM_$$_STACKERROR
 	stb	r4,r3,0
 	addi	r3,r0,202
 	call	FPC_HANDLEERROR
-.Lj10084:
-.Lj10077:
+.Lj10079:
+.Lj10072:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -86779,11 +86748,11 @@ FPC_INITIALIZEUNITS:
 	ldw	r12,r11,0
 	addi	r3,r0,1
 	sleu	r3,r3,r12
-	bne	r3,r0,.Lj10087
-	jal	r0,.Lj10088
-.Lj10087:
+	bne	r3,r0,.Lj10082
+	jal	r0,.Lj10083
+.Lj10082:
 	stw	r30,r0,-56
-.Lj10089:
+.Lj10084:
 	ldw	r3,r30,-56
 	addi	r3,r3,1
 	stw	r30,r3,-56
@@ -86793,34 +86762,34 @@ FPC_INITIALIZEUNITS:
 	add	r3,r11,r3
 	ldw	r3,r3,-4
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10092
-	jal	r0,.Lj10093
-.Lj10092:
+	bne	r3,r0,.Lj10087
+	jal	r0,.Lj10088
+.Lj10087:
 	ldw	r3,r30,-56
 	addi	r4,r0,12
 	mul	r3,r3,r4
 	add	r3,r11,r3
 	ldw	r3,r3,-4
 	jalr	r31,r3
-.Lj10093:
+.Lj10088:
 	ldw	r3,r30,-56
 	stw	r11,r3,4
 	ldw	r3,r30,-56
 	sgeu	r3,r3,r12
-	bne	r3,r0,.Lj10091
-	jal	r0,.Lj10089
-.Lj10091:
-.Lj10088:
+	bne	r3,r0,.Lj10086
+	jal	r0,.Lj10084
+.Lj10086:
+.Lj10083:
 	la	r3,TC_$SYSTEM_$$_INITPROC
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10094
-	jal	r0,.Lj10095
-.Lj10094:
+	bne	r3,r0,.Lj10089
+	jal	r0,.Lj10090
+.Lj10089:
 	la	r3,TC_$SYSTEM_$$_INITPROC
 	ldw	r3,r3,0
 	jalr	r31,r3
-.Lj10095:
+.Lj10090:
 	ldw	r12,r29,60
 	ldw	r11,r29,64
 	ldw	r30,r29,68
@@ -86902,68 +86871,68 @@ SYSTEM_$$_SYSFLUSHSTDIO:
 	addi	r29,r29,-52
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10104
+	beq	r4,r0,.Lj10099
 	la	r5,U_$SYSTEM_$$_OUTPUT
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10105
-.Lj10104:
+	jal	r0,.Lj10100
+.Lj10099:
 	la	r3,U_$SYSTEM_$$_OUTPUT
 	addi	r1,r3,4
-.Lj10105:
+.Lj10100:
 	ldw	r3,r1,4
 	lui	r4,13
 	ori	r4,r4,1970
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj10106
-	jal	r0,.Lj10107
-.Lj10106:
+	bne	r3,r0,.Lj10101
+	jal	r0,.Lj10102
+.Lj10101:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj10108
+	beq	r5,r0,.Lj10103
 	la	r4,U_$SYSTEM_$$_OUTPUT
 	ldw	r3,r4,0
 	jalr	r31,r5
 	addi	r3,r1,0
-	jal	r0,.Lj10109
-.Lj10108:
+	jal	r0,.Lj10104
+.Lj10103:
 	la	r4,U_$SYSTEM_$$_OUTPUT
 	addi	r3,r4,4
-.Lj10109:
+.Lj10104:
 	call	SYSTEM_$$_FLUSH$TEXT
-.Lj10107:
+.Lj10102:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10110
+	beq	r4,r0,.Lj10105
 	la	r5,U_$SYSTEM_$$_ERROUTPUT
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10111
-.Lj10110:
+	jal	r0,.Lj10106
+.Lj10105:
 	la	r3,U_$SYSTEM_$$_ERROUTPUT
 	addi	r1,r3,4
-.Lj10111:
+.Lj10106:
 	ldw	r4,r1,4
 	lui	r3,13
 	ori	r3,r3,1970
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj10112
-	jal	r0,.Lj10113
-.Lj10112:
+	bne	r3,r0,.Lj10107
+	jal	r0,.Lj10108
+.Lj10107:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj10114
+	beq	r5,r0,.Lj10109
 	la	r4,U_$SYSTEM_$$_ERROUTPUT
 	ldw	r3,r4,0
 	jalr	r31,r5
 	addi	r3,r1,0
-	jal	r0,.Lj10115
-.Lj10114:
+	jal	r0,.Lj10110
+.Lj10109:
 	la	r4,U_$SYSTEM_$$_ERROUTPUT
 	addi	r3,r4,4
-.Lj10115:
+.Lj10110:
 	call	SYSTEM_$$_FLUSH$TEXT
-.Lj10113:
+.Lj10108:
 	ldw	r30,r29,52
 	ldw	r31,r29,56
 	addi	r29,r29,60
@@ -86982,19 +86951,19 @@ SYSTEM_$$_INTERNALEXIT:
 	stw	r29,r30,0
 	addi	r30,r29,8
 	addi	r29,r29,-60
-	jal	r0,.Lj10119
-.Lj10118:
+	jal	r0,.Lj10114
+.Lj10113:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10121
+	beq	r4,r0,.Lj10116
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10122
-.Lj10121:
+	jal	r0,.Lj10117
+.Lj10116:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10122:
+.Lj10117:
 	sth	r1,r0,0
 	la	r3,TC_$SYSTEM_$$_EXITPROC
 	ldw	r3,r3,0
@@ -87003,13 +86972,13 @@ SYSTEM_$$_INTERNALEXIT:
 	stw	r3,r0,0
 	ldw	r3,r30,-56
 	jalr	r31,r3
-.Lj10119:
+.Lj10114:
 	la	r3,TC_$SYSTEM_$$_EXITPROC
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10118
-	jal	r0,.Lj10120
-.Lj10120:
+	bne	r3,r0,.Lj10113
+	jal	r0,.Lj10115
+.Lj10115:
 	call	FPC_FINALIZE_FUNC_TABLE
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -87072,18 +87041,18 @@ SYSTEM_$$_HALT$LONGINT:
 	ldw	r3,r30,-56
 	addi	r4,r0,255
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj10129
-	jal	r0,.Lj10130
-.Lj10129:
+	bne	r3,r0,.Lj10124
+	jal	r0,.Lj10125
+.Lj10124:
 	addi	r3,r0,255
 	la	r4,operatingsystem_result
 	stw	r4,r3,0
-	jal	r0,.Lj10131
-.Lj10130:
+	jal	r0,.Lj10126
+.Lj10125:
 	la	r3,operatingsystem_result
 	ldw	r4,r30,-56
 	stw	r3,r4,0
-.Lj10131:
+.Lj10126:
 	call	FPC_DO_EXIT
 	ldw	r30,r29,56
 	ldw	r31,r29,60
@@ -87145,32 +87114,32 @@ SYSTEM_$$_CAPTUREBACKTRACE$LONGINT$LONGINT$PCODEPOINTER$$LONGINT:
 	stw	r30,r3,-100
 	ldw	r3,r30,-100
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10137
-	jal	r0,.Lj10138
-.Lj10137:
+	bne	r3,r0,.Lj10132
+	jal	r0,.Lj10133
+.Lj10132:
 	stw	r30,r0,-88
-	jal	r0,.Lj10139
-.Lj10138:
+	jal	r0,.Lj10134
+.Lj10133:
 	ldw	r3,r30,-100
 	ldw	r3,r3,-8
 	stw	r30,r3,-88
-.Lj10139:
+.Lj10134:
 	ldw	r3,r30,-80
 	stw	r30,r3,-96
 	ldw	r3,r30,-72
 	stw	r30,r3,-100
 	ldw	r3,r30,-100
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10140
-	jal	r0,.Lj10141
-.Lj10140:
+	bne	r3,r0,.Lj10135
+	jal	r0,.Lj10136
+.Lj10135:
 	stw	r30,r0,-92
-	jal	r0,.Lj10142
-.Lj10141:
+	jal	r0,.Lj10137
+.Lj10136:
 	ldw	r3,r30,-100
 	ldw	r3,r3,-4
 	stw	r30,r3,-92
-.Lj10142:
+.Lj10137:
 	ldw	r3,r30,-88
 	stw	r30,r3,-72
 	ldw	r3,r30,-92
@@ -87178,33 +87147,33 @@ SYSTEM_$$_CAPTUREBACKTRACE$LONGINT$LONGINT$PCODEPOINTER$$LONGINT:
 	ldw	r3,r30,-56
 	sub	r3,r0,r3
 	stw	r30,r3,-84
-	jal	r0,.Lj10144
-.Lj10143:
+	jal	r0,.Lj10139
+.Lj10138:
 	ldw	r3,r30,-80
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10146
-	jal	r0,.Lj10147
-.Lj10147:
+	bne	r3,r0,.Lj10141
+	jal	r0,.Lj10142
+.Lj10142:
 	ldw	r3,r30,-72
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10146
-	jal	r0,.Lj10148
-.Lj10146:
-	jal	r0,.Lj10145
-.Lj10148:
+	bne	r3,r0,.Lj10141
+	jal	r0,.Lj10143
+.Lj10141:
+	jal	r0,.Lj10140
+.Lj10143:
 	ldw	r4,r30,-84
 	addi	r3,r0,0
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj10149
-	jal	r0,.Lj10150
-.Lj10149:
+	bne	r3,r0,.Lj10144
+	jal	r0,.Lj10145
+.Lj10144:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-84
 	slli	r4,r4,2
 	add	r3,r3,r4
 	ldw	r4,r30,-80
 	stw	r3,r4,0
-.Lj10150:
+.Lj10145:
 	ldw	r3,r30,-84
 	addi	r3,r3,1
 	stw	r30,r3,-84
@@ -87216,71 +87185,71 @@ SYSTEM_$$_CAPTUREBACKTRACE$LONGINT$LONGINT$PCODEPOINTER$$LONGINT:
 	stw	r30,r3,-100
 	ldw	r3,r30,-100
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10152
-	jal	r0,.Lj10153
-.Lj10152:
+	bne	r3,r0,.Lj10147
+	jal	r0,.Lj10148
+.Lj10147:
 	stw	r30,r0,-88
-	jal	r0,.Lj10154
-.Lj10153:
+	jal	r0,.Lj10149
+.Lj10148:
 	ldw	r3,r30,-100
 	ldw	r3,r3,-8
 	stw	r30,r3,-88
-.Lj10154:
+.Lj10149:
 	ldw	r3,r30,-80
 	stw	r30,r3,-96
 	ldw	r3,r30,-72
 	stw	r30,r3,-100
 	ldw	r3,r30,-100
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10155
-	jal	r0,.Lj10156
-.Lj10155:
+	bne	r3,r0,.Lj10150
+	jal	r0,.Lj10151
+.Lj10150:
 	stw	r30,r0,-92
-	jal	r0,.Lj10157
-.Lj10156:
+	jal	r0,.Lj10152
+.Lj10151:
 	ldw	r3,r30,-100
 	ldw	r3,r3,-4
 	stw	r30,r3,-92
-.Lj10157:
+.Lj10152:
 	ldw	r3,r30,-88
 	stw	r30,r3,-72
 	ldw	r3,r30,-92
 	stw	r30,r3,-80
-.Lj10144:
+.Lj10139:
 	ldw	r4,r30,-84
 	ldw	r3,r30,-60
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj10158
-	jal	r0,.Lj10159
-.Lj10158:
+	bne	r3,r0,.Lj10153
+	jal	r0,.Lj10154
+.Lj10153:
 	ldw	r4,r30,-72
 	ldw	r3,r30,-76
 	sgtu	r3,r4,r3
-	bne	r3,r0,.Lj10160
-	jal	r0,.Lj10159
-.Lj10160:
+	bne	r3,r0,.Lj10155
+	jal	r0,.Lj10154
+.Lj10155:
 	call	SYSTEM_$$_STACKTOP$$POINTER
 	ldw	r3,r30,-72
 	sltu	r3,r3,r1
-	bne	r3,r0,.Lj10161
-	jal	r0,.Lj10159
-.Lj10161:
-	jal	r0,.Lj10143
-.Lj10159:
-	jal	r0,.Lj10145
-.Lj10145:
+	bne	r3,r0,.Lj10156
+	jal	r0,.Lj10154
+.Lj10156:
+	jal	r0,.Lj10138
+.Lj10154:
+	jal	r0,.Lj10140
+.Lj10140:
 	ldw	r4,r30,-84
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj10162
-	jal	r0,.Lj10163
-.Lj10162:
+	bne	r3,r0,.Lj10157
+	jal	r0,.Lj10158
+.Lj10157:
 	stw	r30,r0,-68
-	jal	r0,.Lj10164
-.Lj10163:
+	jal	r0,.Lj10159
+.Lj10158:
 	ldw	r3,r30,-84
 	stw	r30,r3,-68
-.Lj10164:
+.Lj10159:
 	ldw	r1,r30,-68
 	ldw	r30,r29,100
 	ldw	r31,r29,104
@@ -87308,16 +87277,16 @@ FPC_BREAK_ERROR:
 	la	r3,TC_$SYSTEM_$$_ERRORPROC
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10167
-	jal	r0,.Lj10168
-.Lj10167:
+	bne	r3,r0,.Lj10162
+	jal	r0,.Lj10163
+.Lj10162:
 	ldw	r5,r30,-64
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	la	r6,TC_$SYSTEM_$$_ERRORPROC
 	ldw	r6,r6,0
 	jalr	r31,r6
-.Lj10168:
+.Lj10163:
 	la	r3,TC_$SYSTEM_$$_ERRORCODE
 	ldhu	r4,r30,-56
 	sth	r3,r4,0
@@ -87357,32 +87326,32 @@ SYSTEM_$$_HANDLEERRORADDRFRAMEIND$LONGINT$POINTER$POINTER:
 	stw	r30,r3,-80
 	ldw	r3,r30,-80
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10172
-	jal	r0,.Lj10173
-.Lj10172:
+	bne	r3,r0,.Lj10167
+	jal	r0,.Lj10168
+.Lj10167:
 	stw	r30,r0,-68
-	jal	r0,.Lj10174
-.Lj10173:
+	jal	r0,.Lj10169
+.Lj10168:
 	ldw	r3,r30,-80
 	ldw	r3,r3,-8
 	stw	r30,r3,-68
-.Lj10174:
+.Lj10169:
 	ldw	r3,r30,-60
 	stw	r30,r3,-76
 	ldw	r3,r30,-64
 	stw	r30,r3,-80
 	ldw	r3,r30,-80
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10175
-	jal	r0,.Lj10176
-.Lj10175:
+	bne	r3,r0,.Lj10170
+	jal	r0,.Lj10171
+.Lj10170:
 	stw	r30,r0,-72
-	jal	r0,.Lj10177
-.Lj10176:
+	jal	r0,.Lj10172
+.Lj10171:
 	ldw	r3,r30,-80
 	ldw	r3,r3,-4
 	stw	r30,r3,-72
-.Lj10177:
+.Lj10172:
 	ldw	r3,r30,-68
 	stw	r30,r3,-64
 	ldw	r3,r30,-72
@@ -87413,26 +87382,26 @@ SYSTEM_$$_HANDLEERRORFRAME$LONGINT$POINTER:
 	stw	r30,r4,-60
 	ldw	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10180
-	jal	r0,.Lj10181
-.Lj10180:
+	bne	r3,r0,.Lj10175
+	jal	r0,.Lj10176
+.Lj10175:
 	addi	r5,r0,0
-	jal	r0,.Lj10182
-.Lj10181:
+	jal	r0,.Lj10177
+.Lj10176:
 	ldw	r3,r30,-60
 	ldw	r5,r3,-8
-.Lj10182:
+.Lj10177:
 	ldw	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10183
-	jal	r0,.Lj10184
-.Lj10183:
+	bne	r3,r0,.Lj10178
+	jal	r0,.Lj10179
+.Lj10178:
 	addi	r4,r0,0
-	jal	r0,.Lj10185
-.Lj10184:
+	jal	r0,.Lj10180
+.Lj10179:
 	ldw	r3,r30,-60
 	ldw	r4,r3,-4
-.Lj10185:
+.Lj10180:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_HANDLEERRORADDRFRAME$LONGINT$POINTER$POINTER
 	ldw	r30,r29,60
@@ -87490,32 +87459,32 @@ FPC_RUNERROR:
 	stw	r30,r3,-80
 	ldw	r3,r30,-80
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10191
-	jal	r0,.Lj10192
-.Lj10191:
+	bne	r3,r0,.Lj10186
+	jal	r0,.Lj10187
+.Lj10186:
 	stw	r30,r0,-68
-	jal	r0,.Lj10193
-.Lj10192:
+	jal	r0,.Lj10188
+.Lj10187:
 	ldw	r3,r30,-80
 	ldw	r3,r3,-8
 	stw	r30,r3,-68
-.Lj10193:
+.Lj10188:
 	ldw	r3,r30,-64
 	stw	r30,r3,-76
 	ldw	r3,r30,-60
 	stw	r30,r3,-80
 	ldw	r3,r30,-80
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10194
-	jal	r0,.Lj10195
-.Lj10194:
+	bne	r3,r0,.Lj10189
+	jal	r0,.Lj10190
+.Lj10189:
 	stw	r30,r0,-72
-	jal	r0,.Lj10196
-.Lj10195:
+	jal	r0,.Lj10191
+.Lj10190:
 	ldw	r3,r30,-80
 	ldw	r3,r3,-4
 	stw	r30,r3,-72
-.Lj10196:
+.Lj10191:
 	ldw	r3,r30,-68
 	stw	r30,r3,-60
 	ldw	r3,r30,-72
@@ -87617,7 +87586,7 @@ SYSTEM_$$_DUMP_STACK$TEXT$POINTER$POINTER:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-176
-	bne	r1,r0,.Lj10209
+	bne	r1,r0,.Lj10204
 	call	SYSTEM_$$_GET_FRAME$$POINTER
 	stw	r30,r1,-72
 	stw	r30,r0,-68
@@ -87625,8 +87594,8 @@ SYSTEM_$$_DUMP_STACK$TEXT$POINTER$POINTER:
 	ldw	r3,r3,0
 	call	SYSTEM_$$_DO_ISDEVICE$LONGINT$$BOOLEAN
 	stb	r30,r1,-76
-	jal	r0,.Lj10211
-.Lj10210:
+	jal	r0,.Lj10206
+.Lj10205:
 	ldw	r3,r30,-60
 	stw	r30,r3,-72
 	ldw	r3,r30,-64
@@ -87635,43 +87604,43 @@ SYSTEM_$$_DUMP_STACK$TEXT$POINTER$POINTER:
 	stw	r30,r3,-192
 	ldw	r3,r30,-192
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10214
-	jal	r0,.Lj10215
-.Lj10214:
+	bne	r3,r0,.Lj10209
+	jal	r0,.Lj10210
+.Lj10209:
 	stw	r30,r0,-180
-	jal	r0,.Lj10216
-.Lj10215:
+	jal	r0,.Lj10211
+.Lj10210:
 	ldw	r3,r30,-192
 	ldw	r3,r3,-8
 	stw	r30,r3,-180
-.Lj10216:
+.Lj10211:
 	ldw	r3,r30,-64
 	stw	r30,r3,-188
 	ldw	r3,r30,-60
 	stw	r30,r3,-192
 	ldw	r3,r30,-192
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10217
-	jal	r0,.Lj10218
-.Lj10217:
+	bne	r3,r0,.Lj10212
+	jal	r0,.Lj10213
+.Lj10212:
 	stw	r30,r0,-184
-	jal	r0,.Lj10219
-.Lj10218:
+	jal	r0,.Lj10214
+.Lj10213:
 	ldw	r3,r30,-192
 	ldw	r3,r3,-4
 	stw	r30,r3,-184
-.Lj10219:
+.Lj10214:
 	ldw	r3,r30,-180
 	stw	r30,r3,-60
 	ldw	r3,r30,-184
 	stw	r30,r3,-64
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10220
-	jal	r0,.Lj10221
-.Lj10220:
-	jal	r0,.Lj10212
-.Lj10221:
+	bne	r3,r0,.Lj10215
+	jal	r0,.Lj10216
+.Lj10215:
+	jal	r0,.Lj10207
+.Lj10216:
 	ldw	r4,r30,-64
 	addi	r3,r30,-448
 	la	r5,TC_$SYSTEM_$$_BACKTRACESTRFUNC
@@ -87685,11 +87654,11 @@ SYSTEM_$$_DUMP_STACK$TEXT$POINTER$POINTER:
 	call	fpc_writeln_end
 	ldw	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10222
-	jal	r0,.Lj10223
-.Lj10222:
-	jal	r0,.Lj10212
-.Lj10223:
+	bne	r3,r0,.Lj10217
+	jal	r0,.Lj10218
+.Lj10217:
+	jal	r0,.Lj10207
+.Lj10218:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	stw	r30,r3,-68
@@ -87697,45 +87666,45 @@ SYSTEM_$$_DUMP_STACK$TEXT$POINTER$POINTER:
 	ldhu	r4,r3,0
 	ldw	r3,r30,-68
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj10224
-	jal	r0,.Lj10225
-.Lj10224:
+	bne	r3,r0,.Lj10219
+	jal	r0,.Lj10220
+.Lj10219:
 	ldbu	r3,r30,-76
-	bne	r3,r0,.Lj10226
-	jal	r0,.Lj10225
-.Lj10225:
+	bne	r3,r0,.Lj10221
+	jal	r0,.Lj10220
+.Lj10220:
 	ldw	r3,r30,-68
 	addi	r4,r0,256
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj10226
-	jal	r0,.Lj10227
-.Lj10226:
-	jal	r0,.Lj10212
-.Lj10227:
-.Lj10211:
+	bne	r3,r0,.Lj10221
+	jal	r0,.Lj10222
+.Lj10221:
+	jal	r0,.Lj10207
+.Lj10222:
+.Lj10206:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-72
 	sgtu	r3,r4,r3
-	bne	r3,r0,.Lj10228
-	jal	r0,.Lj10229
-.Lj10228:
+	bne	r3,r0,.Lj10223
+	jal	r0,.Lj10224
+.Lj10223:
 	call	SYSTEM_$$_STACKTOP$$POINTER
 	ldw	r3,r30,-60
 	sltu	r3,r3,r1
-	bne	r3,r0,.Lj10230
-	jal	r0,.Lj10229
-.Lj10230:
-	jal	r0,.Lj10210
-.Lj10229:
-	jal	r0,.Lj10212
-.Lj10212:
-.Lj10209:
-	call	fpc_popaddrstack
-	ldw	r3,r30,-176
-	beq	r3,r0,.Lj10207
-	call	fpc_doneexception
+	bne	r3,r0,.Lj10225
+	jal	r0,.Lj10224
+.Lj10225:
+	jal	r0,.Lj10205
+.Lj10224:
 	jal	r0,.Lj10207
 .Lj10207:
+.Lj10204:
+	call	fpc_popaddrstack
+	ldw	r3,r30,-176
+	beq	r3,r0,.Lj10202
+	call	fpc_doneexception
+	jal	r0,.Lj10202
+.Lj10202:
 	ldw	r30,r29,448
 	ldw	r31,r29,452
 	addi	r29,r29,456
@@ -87758,17 +87727,17 @@ SYSTEM_$$_DUMP_STACK$TEXT$LONGINT:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	call	SYSTEM_$$_DO_ISDEVICE$LONGINT$$BOOLEAN
-	bne	r1,r0,.Lj10233
-	jal	r0,.Lj10234
-.Lj10233:
+	bne	r1,r0,.Lj10228
+	jal	r0,.Lj10229
+.Lj10228:
 	la	r3,TC_$SYSTEM_$$_MAX_FRAME_DUMP
 	ldhu	r3,r3,0
 	stw	r30,r3,-68
-	jal	r0,.Lj10235
-.Lj10234:
+	jal	r0,.Lj10230
+.Lj10229:
 	addi	r3,r0,255
 	stw	r30,r3,-68
-.Lj10235:
+.Lj10230:
 	addi	r5,r30,-1104
 	addi	r4,r30,-1188
 	addi	r3,r0,1
@@ -87776,7 +87745,7 @@ SYSTEM_$$_DUMP_STACK$TEXT$LONGINT:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-1192
-	bne	r1,r0,.Lj10240
+	bne	r1,r0,.Lj10235
 	addi	r5,r30,-1092
 	ldw	r3,r30,-60
 	addi	r3,r3,1
@@ -87787,12 +87756,12 @@ SYSTEM_$$_DUMP_STACK$TEXT$LONGINT:
 	addi	r11,r3,-1
 	addi	r3,r0,0
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj10241
-	jal	r0,.Lj10242
-.Lj10241:
+	bne	r3,r0,.Lj10236
+	jal	r0,.Lj10237
+.Lj10236:
 	addi	r3,r0,-1
 	stw	r30,r3,-64
-.Lj10243:
+.Lj10238:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-64
@@ -87812,17 +87781,17 @@ SYSTEM_$$_DUMP_STACK$TEXT$LONGINT:
 	call	fpc_writeln_end
 	ldw	r3,r30,-64
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj10245
-	jal	r0,.Lj10243
-.Lj10245:
-.Lj10242:
+	bne	r3,r0,.Lj10240
+	jal	r0,.Lj10238
 .Lj10240:
+.Lj10237:
+.Lj10235:
 	call	fpc_popaddrstack
 	ldw	r3,r30,-1192
-	beq	r3,r0,.Lj10238
+	beq	r3,r0,.Lj10233
 	call	fpc_doneexception
-	jal	r0,.Lj10238
-.Lj10238:
+	jal	r0,.Lj10233
+.Lj10233:
 	ldw	r11,r29,1448
 	ldw	r30,r29,1452
 	ldw	r31,r29,1456
@@ -87844,11 +87813,11 @@ SYSTEM_$$_DUMPEXCEPTIONBACKTRACE$TEXT:
 	stw	r30,r3,-56
 	call	SYSTEM_$$_RAISELIST$$PEXCEPTOBJECT
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj10248
-	jal	r0,.Lj10249
-.Lj10248:
-	jal	r0,.Lj10246
-.Lj10249:
+	bne	r3,r0,.Lj10243
+	jal	r0,.Lj10244
+.Lj10243:
+	jal	r0,.Lj10241
+.Lj10244:
 	call	SYSTEM_$$_RAISELIST$$PEXCEPTOBJECT
 	ldw	r4,r1,4
 	addi	r3,r30,-324
@@ -87871,12 +87840,12 @@ SYSTEM_$$_DUMPEXCEPTIONBACKTRACE$TEXT:
 	addi	r11,r3,-1
 	addi	r3,r0,0
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj10250
-	jal	r0,.Lj10251
-.Lj10250:
+	bne	r3,r0,.Lj10245
+	jal	r0,.Lj10246
+.Lj10245:
 	addi	r3,r0,-1
 	stw	r30,r3,-60
-.Lj10252:
+.Lj10247:
 	ldw	r3,r30,-60
 	addi	r3,r3,1
 	stw	r30,r3,-60
@@ -87897,11 +87866,11 @@ SYSTEM_$$_DUMPEXCEPTIONBACKTRACE$TEXT:
 	call	fpc_writeln_end
 	ldw	r3,r30,-60
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj10254
-	jal	r0,.Lj10252
-.Lj10254:
-.Lj10251:
+	bne	r3,r0,.Lj10249
+	jal	r0,.Lj10247
+.Lj10249:
 .Lj10246:
+.Lj10241:
 	ldw	r11,r29,324
 	ldw	r30,r29,328
 	ldw	r31,r29,332
@@ -88000,12 +87969,12 @@ SYSTEM_$$_ARRAYSTRINGTOPPCHAR$array_of_ANSISTRING$LONGINT$$PPANSICHAR:
 	ldw	r4,r30,-64
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj10261
-	jal	r0,.Lj10262
-.Lj10261:
+	bne	r3,r0,.Lj10256
+	jal	r0,.Lj10257
+.Lj10256:
 	stw	r30,r0,-68
-	jal	r0,.Lj10259
-.Lj10262:
+	jal	r0,.Lj10254
+.Lj10257:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-60
 	add	r3,r3,r4
@@ -88015,21 +87984,21 @@ SYSTEM_$$_ARRAYSTRINGTOPPCHAR$array_of_ANSISTRING$LONGINT$$PPANSICHAR:
 	call	SYSTEM_$$_GETMEM$POINTER$LONGWORD
 	ldw	r3,r30,-72
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10263
-	jal	r0,.Lj10264
-.Lj10263:
-	stw	r30,r0,-68
+	bne	r3,r0,.Lj10258
 	jal	r0,.Lj10259
-.Lj10264:
+.Lj10258:
+	stw	r30,r0,-68
+	jal	r0,.Lj10254
+.Lj10259:
 	ldw	r4,r30,-64
 	addi	r3,r0,0
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj10265
-	jal	r0,.Lj10266
-.Lj10265:
+	bne	r3,r0,.Lj10260
+	jal	r0,.Lj10261
+.Lj10260:
 	addi	r3,r0,-1
 	stw	r30,r3,-76
-.Lj10267:
+.Lj10262:
 	ldw	r3,r30,-76
 	addi	r3,r3,1
 	stw	r30,r3,-76
@@ -88043,19 +88012,19 @@ SYSTEM_$$_ARRAYSTRINGTOPPCHAR$array_of_ANSISTRING$LONGINT$$PPANSICHAR:
 	slli	r4,r4,2
 	add	r3,r3,r4
 	ldw	r4,r3,0
-	bne	r4,r0,.Lj10270
+	bne	r4,r0,.Lj10265
 	la	r3,FPC_EMPTYCHAR
 	addi	r4,r3,0
-.Lj10270:
+.Lj10265:
 	add	r3,r5,r6
 	stw	r3,r4,0
 	ldw	r3,r30,-76
 	ldw	r4,r30,-64
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj10269
-	jal	r0,.Lj10267
-.Lj10269:
-.Lj10266:
+	bne	r3,r0,.Lj10264
+	jal	r0,.Lj10262
+.Lj10264:
+.Lj10261:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-64
 	addi	r4,r4,1
@@ -88066,7 +88035,7 @@ SYSTEM_$$_ARRAYSTRINGTOPPCHAR$array_of_ANSISTRING$LONGINT$$PPANSICHAR:
 	stw	r3,r0,0
 	ldw	r3,r30,-72
 	stw	r30,r3,-68
-.Lj10259:
+.Lj10254:
 	ldw	r1,r30,-68
 	ldw	r30,r29,76
 	ldw	r31,r29,80
@@ -88088,10 +88057,10 @@ SYSTEM_$$_STRINGTOPPCHAR$ANSISTRING$SMALLINT$$PPANSICHAR:
 	sth	r30,r4,-60
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
-	bne	r3,r0,.Lj10273
+	bne	r3,r0,.Lj10268
 	la	r4,FPC_EMPTYCHAR
 	addi	r3,r4,0
-.Lj10273:
+.Lj10268:
 	ldh	r4,r30,-60
 	call	SYSTEM_$$_STRINGTOPPCHAR$PANSICHAR$SMALLINT$$PPANSICHAR
 	stw	r30,r1,-64
@@ -88118,27 +88087,27 @@ SYSTEM_$$_STRINGTOPPCHAR$PANSICHAR$SMALLINT$$PPANSICHAR:
 	stw	r30,r3,-76
 	addi	r3,r0,1
 	stw	r30,r3,-72
-	jal	r0,.Lj10277
-.Lj10276:
-	jal	r0,.Lj10280
-.Lj10279:
+	jal	r0,.Lj10272
+.Lj10271:
+	jal	r0,.Lj10275
+.Lj10274:
 	ldw	r3,r30,-76
 	addi	r3,r3,1
 	stw	r30,r3,-76
-.Lj10280:
+.Lj10275:
 	ldw	r3,r30,-76
 	ldbu	r3,r3,0
 	addi	r3,r3,-9
 	addi	r4,r0,2
-	bltu	r3,r4,.Lj10282
+	bltu	r3,r4,.Lj10277
 	addi	r4,r0,23
-	beq	r3,r4,.Lj10282
-	jal	r0,.Lj10283
-.Lj10282:
-	jal	r0,.Lj10279
-.Lj10283:
-	jal	r0,.Lj10281
-.Lj10281:
+	beq	r3,r4,.Lj10277
+	jal	r0,.Lj10278
+.Lj10277:
+	jal	r0,.Lj10274
+.Lj10278:
+	jal	r0,.Lj10276
+.Lj10276:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-72
@@ -88146,70 +88115,70 @@ SYSTEM_$$_STRINGTOPPCHAR$PANSICHAR$SMALLINT$$PPANSICHAR:
 	ldbu	r3,r3,0
 	addi	r3,r3,-34
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10284
-	jal	r0,.Lj10285
-.Lj10284:
+	bne	r3,r0,.Lj10279
+	jal	r0,.Lj10280
+.Lj10279:
 	ldw	r3,r30,-76
 	addi	r3,r3,1
 	stw	r30,r3,-76
+	jal	r0,.Lj10282
+.Lj10281:
+	ldw	r3,r30,-76
+	addi	r3,r3,1
+	stw	r30,r3,-76
+.Lj10282:
+	ldw	r3,r30,-76
+	ldbu	r4,r3,0
+	beq	r4,r0,.Lj10284
+	addi	r3,r0,34
+	beq	r4,r3,.Lj10284
+	jal	r0,.Lj10285
+.Lj10284:
+	jal	r0,.Lj10283
+.Lj10285:
+	jal	r0,.Lj10281
+.Lj10283:
+	ldw	r3,r30,-76
+	ldbu	r3,r3,0
+	addi	r3,r3,-34
+	seq	r3,r3,r0
+	bne	r3,r0,.Lj10286
 	jal	r0,.Lj10287
 .Lj10286:
 	ldw	r3,r30,-76
 	addi	r3,r3,1
 	stw	r30,r3,-76
 .Lj10287:
-	ldw	r3,r30,-76
-	ldbu	r4,r3,0
-	beq	r4,r0,.Lj10289
-	addi	r3,r0,34
-	beq	r4,r3,.Lj10289
+	jal	r0,.Lj10288
+.Lj10280:
 	jal	r0,.Lj10290
 .Lj10289:
-	jal	r0,.Lj10288
+	ldw	r3,r30,-76
+	addi	r3,r3,1
+	stw	r30,r3,-76
 .Lj10290:
-	jal	r0,.Lj10286
-.Lj10288:
 	ldw	r3,r30,-76
 	ldbu	r3,r3,0
-	addi	r3,r3,-34
-	seq	r3,r3,r0
-	bne	r3,r0,.Lj10291
-	jal	r0,.Lj10292
-.Lj10291:
-	ldw	r3,r30,-76
-	addi	r3,r3,1
-	stw	r30,r3,-76
-.Lj10292:
-	jal	r0,.Lj10293
-.Lj10285:
-	jal	r0,.Lj10295
-.Lj10294:
-	ldw	r3,r30,-76
-	addi	r3,r3,1
-	stw	r30,r3,-76
-.Lj10295:
-	ldw	r3,r30,-76
-	ldbu	r3,r3,0
-	beq	r3,r0,.Lj10297
+	beq	r3,r0,.Lj10292
 	addi	r3,r3,-9
 	addi	r4,r0,2
-	bltu	r3,r4,.Lj10297
+	bltu	r3,r4,.Lj10292
 	addi	r4,r0,23
-	beq	r3,r4,.Lj10297
-	jal	r0,.Lj10298
-.Lj10297:
-	jal	r0,.Lj10296
-.Lj10298:
-	jal	r0,.Lj10294
-.Lj10296:
+	beq	r3,r4,.Lj10292
+	jal	r0,.Lj10293
+.Lj10292:
+	jal	r0,.Lj10291
 .Lj10293:
-.Lj10277:
+	jal	r0,.Lj10289
+.Lj10291:
+.Lj10288:
+.Lj10272:
 	ldw	r3,r30,-76
 	ldbu	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10276
-	jal	r0,.Lj10278
-.Lj10278:
+	bne	r3,r0,.Lj10271
+	jal	r0,.Lj10273
+.Lj10273:
 	ldh	r3,r30,-60
 	ldw	r4,r30,-72
 	add	r3,r4,r3
@@ -88220,19 +88189,19 @@ SYSTEM_$$_STRINGTOPPCHAR$PANSICHAR$SMALLINT$$PPANSICHAR:
 	stw	r30,r3,-64
 	ldw	r3,r30,-80
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10299
-	jal	r0,.Lj10300
-.Lj10299:
-	jal	r0,.Lj10274
-.Lj10300:
+	bne	r3,r0,.Lj10294
+	jal	r0,.Lj10295
+.Lj10294:
+	jal	r0,.Lj10269
+.Lj10295:
 	ldh	r3,r30,-60
 	addi	r4,r0,1
 	sle	r4,r4,r3
-	bne	r4,r0,.Lj10301
-	jal	r0,.Lj10302
-.Lj10301:
+	bne	r4,r0,.Lj10296
+	jal	r0,.Lj10297
+.Lj10296:
 	stw	r30,r0,-68
-.Lj10303:
+.Lj10298:
 	ldw	r4,r30,-68
 	addi	r4,r4,1
 	stw	r30,r4,-68
@@ -88241,42 +88210,42 @@ SYSTEM_$$_STRINGTOPPCHAR$PANSICHAR$SMALLINT$$PPANSICHAR:
 	stw	r30,r4,-80
 	ldw	r4,r30,-68
 	sge	r4,r4,r3
-	bne	r4,r0,.Lj10305
-	jal	r0,.Lj10303
-.Lj10305:
-.Lj10302:
+	bne	r4,r0,.Lj10300
+	jal	r0,.Lj10298
+.Lj10300:
+.Lj10297:
 	ldw	r3,r30,-56
 	stw	r30,r3,-76
-	jal	r0,.Lj10307
-.Lj10306:
-	jal	r0,.Lj10310
-.Lj10309:
+	jal	r0,.Lj10302
+.Lj10301:
+	jal	r0,.Lj10305
+.Lj10304:
 	ldw	r3,r30,-76
 	stb	r3,r0,0
 	ldw	r3,r30,-76
 	addi	r3,r3,1
 	stw	r30,r3,-76
-.Lj10310:
+.Lj10305:
 	ldw	r3,r30,-76
 	ldbu	r3,r3,0
 	addi	r3,r3,-9
 	addi	r4,r0,2
-	bltu	r3,r4,.Lj10312
+	bltu	r3,r4,.Lj10307
 	addi	r4,r0,23
-	beq	r3,r4,.Lj10312
-	jal	r0,.Lj10313
-.Lj10312:
-	jal	r0,.Lj10309
-.Lj10313:
-	jal	r0,.Lj10311
-.Lj10311:
+	beq	r3,r4,.Lj10307
+	jal	r0,.Lj10308
+.Lj10307:
+	jal	r0,.Lj10304
+.Lj10308:
+	jal	r0,.Lj10306
+.Lj10306:
 	ldw	r3,r30,-76
 	ldbu	r3,r3,0
 	addi	r3,r3,-34
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10314
-	jal	r0,.Lj10315
-.Lj10314:
+	bne	r3,r0,.Lj10309
+	jal	r0,.Lj10310
+.Lj10309:
 	ldw	r3,r30,-76
 	addi	r3,r3,1
 	stw	r30,r3,-76
@@ -88288,38 +88257,38 @@ SYSTEM_$$_STRINGTOPPCHAR$PANSICHAR$SMALLINT$$PPANSICHAR:
 	stw	r30,r3,-80
 	ldw	r3,r30,-80
 	stw	r3,r0,0
-	jal	r0,.Lj10317
-.Lj10316:
+	jal	r0,.Lj10312
+.Lj10311:
 	ldw	r3,r30,-76
 	addi	r3,r3,1
 	stw	r30,r3,-76
-.Lj10317:
+.Lj10312:
 	ldw	r3,r30,-76
 	ldbu	r3,r3,0
-	beq	r3,r0,.Lj10319
+	beq	r3,r0,.Lj10314
 	addi	r4,r0,34
-	beq	r3,r4,.Lj10319
-	jal	r0,.Lj10320
-.Lj10319:
-	jal	r0,.Lj10318
-.Lj10320:
-	jal	r0,.Lj10316
-.Lj10318:
+	beq	r3,r4,.Lj10314
+	jal	r0,.Lj10315
+.Lj10314:
+	jal	r0,.Lj10313
+.Lj10315:
+	jal	r0,.Lj10311
+.Lj10313:
 	ldw	r3,r30,-76
 	ldbu	r3,r3,0
 	addi	r3,r3,-34
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10321
-	jal	r0,.Lj10322
-.Lj10321:
+	bne	r3,r0,.Lj10316
+	jal	r0,.Lj10317
+.Lj10316:
 	ldw	r3,r30,-76
 	stb	r3,r0,0
 	ldw	r3,r30,-76
 	addi	r3,r3,1
 	stw	r30,r3,-76
-.Lj10322:
-	jal	r0,.Lj10323
-.Lj10315:
+.Lj10317:
+	jal	r0,.Lj10318
+.Lj10310:
 	ldw	r4,r30,-80
 	ldw	r3,r30,-76
 	stw	r4,r3,0
@@ -88328,35 +88297,35 @@ SYSTEM_$$_STRINGTOPPCHAR$PANSICHAR$SMALLINT$$PPANSICHAR:
 	stw	r30,r3,-80
 	ldw	r3,r30,-80
 	stw	r3,r0,0
-	jal	r0,.Lj10325
-.Lj10324:
+	jal	r0,.Lj10320
+.Lj10319:
 	ldw	r3,r30,-76
 	addi	r3,r3,1
 	stw	r30,r3,-76
-.Lj10325:
+.Lj10320:
 	ldw	r3,r30,-76
 	ldbu	r3,r3,0
-	beq	r3,r0,.Lj10327
+	beq	r3,r0,.Lj10322
 	addi	r3,r3,-9
 	addi	r4,r0,2
-	bltu	r3,r4,.Lj10327
+	bltu	r3,r4,.Lj10322
 	addi	r4,r0,23
-	beq	r3,r4,.Lj10327
-	jal	r0,.Lj10328
-.Lj10327:
-	jal	r0,.Lj10326
-.Lj10328:
-	jal	r0,.Lj10324
-.Lj10326:
+	beq	r3,r4,.Lj10322
+	jal	r0,.Lj10323
+.Lj10322:
+	jal	r0,.Lj10321
 .Lj10323:
-.Lj10307:
+	jal	r0,.Lj10319
+.Lj10321:
+.Lj10318:
+.Lj10302:
 	ldw	r3,r30,-76
 	ldbu	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10306
-	jal	r0,.Lj10308
-.Lj10308:
-.Lj10274:
+	bne	r3,r0,.Lj10301
+	jal	r0,.Lj10303
+.Lj10303:
+.Lj10269:
 	ldw	r1,r30,-64
 	ldw	r30,r29,80
 	ldw	r31,r29,84
@@ -88399,13 +88368,13 @@ FPC_ABSTRACTERROR:
 	la	r3,TC_$SYSTEM_$$_ABSTRACTERRORPROC
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10333
-	jal	r0,.Lj10334
-.Lj10333:
+	bne	r3,r0,.Lj10328
+	jal	r0,.Lj10329
+.Lj10328:
 	la	r3,TC_$SYSTEM_$$_ABSTRACTERRORPROC
 	ldw	r3,r3,0
 	jalr	r31,r3
-.Lj10334:
+.Lj10329:
 	call	SYSTEM_$$_GET_FRAME$$POINTER
 	addi	r5,r1,0
 	addi	r4,r0,0
@@ -88436,9 +88405,9 @@ FPC_ASSERT:
 	la	r3,TC_$SYSTEM_$$_ASSERTERRORPROC
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10337
-	jal	r0,.Lj10338
-.Lj10337:
+	bne	r3,r0,.Lj10332
+	jal	r0,.Lj10333
+.Lj10332:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	ldw	r6,r30,-68
@@ -88446,14 +88415,14 @@ FPC_ASSERT:
 	la	r7,TC_$SYSTEM_$$_ASSERTERRORPROC
 	ldw	r7,r7,0
 	jalr	r31,r7
-	jal	r0,.Lj10339
-.Lj10338:
+	jal	r0,.Lj10334
+.Lj10333:
 	call	SYSTEM_$$_GET_FRAME$$POINTER
 	addi	r5,r1,0
 	addi	r4,r0,0
 	addi	r3,r0,227
 	call	SYSTEM_$$_HANDLEERRORADDRFRAMEIND$LONGINT$POINTER$POINTER
-.Lj10339:
+.Lj10334:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -88478,9 +88447,48 @@ SYSTEM_$$_SYSASSERT$SHORTSTRING$SHORTSTRING$LONGINT$POINTER:
 	ldw	r3,r30,-56
 	ldbu	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10342
+	bne	r3,r0,.Lj10337
+	jal	r0,.Lj10338
+.Lj10337:
+	la	r3,FPC_THREADVAR_RELOCATE
+	ldw	r4,r3,0
+	beq	r4,r0,.Lj10339
+	la	r5,U_$SYSTEM_$$_ERROUTPUT
+	ldw	r3,r5,0
+	jalr	r31,r4
+	addi	r11,r1,0
+	jal	r0,.Lj10340
+.Lj10339:
+	la	r3,U_$SYSTEM_$$_ERROUTPUT
+	addi	r11,r3,4
+.Lj10340:
+	la	r5,.Ld38
+	addi	r4,r11,0
+	addi	r3,r0,0
+	call	fpc_write_text_shortstr
+	addi	r3,r11,0
+	call	fpc_write_end
+	jal	r0,.Lj10341
+.Lj10338:
+	la	r3,FPC_THREADVAR_RELOCATE
+	ldw	r4,r3,0
+	beq	r4,r0,.Lj10342
+	la	r5,U_$SYSTEM_$$_ERROUTPUT
+	ldw	r3,r5,0
+	jalr	r31,r4
+	addi	r11,r1,0
 	jal	r0,.Lj10343
 .Lj10342:
+	la	r3,U_$SYSTEM_$$_ERROUTPUT
+	addi	r11,r3,4
+.Lj10343:
+	ldw	r5,r30,-56
+	addi	r4,r11,0
+	addi	r3,r0,0
+	call	fpc_write_text_shortstr
+	addi	r3,r11,0
+	call	fpc_write_end
+.Lj10341:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
 	beq	r4,r0,.Lj10344
@@ -88493,45 +88501,6 @@ SYSTEM_$$_SYSASSERT$SHORTSTRING$SHORTSTRING$LONGINT$POINTER:
 	la	r3,U_$SYSTEM_$$_ERROUTPUT
 	addi	r11,r3,4
 .Lj10345:
-	la	r5,.Ld38
-	addi	r4,r11,0
-	addi	r3,r0,0
-	call	fpc_write_text_shortstr
-	addi	r3,r11,0
-	call	fpc_write_end
-	jal	r0,.Lj10346
-.Lj10343:
-	la	r3,FPC_THREADVAR_RELOCATE
-	ldw	r4,r3,0
-	beq	r4,r0,.Lj10347
-	la	r5,U_$SYSTEM_$$_ERROUTPUT
-	ldw	r3,r5,0
-	jalr	r31,r4
-	addi	r11,r1,0
-	jal	r0,.Lj10348
-.Lj10347:
-	la	r3,U_$SYSTEM_$$_ERROUTPUT
-	addi	r11,r3,4
-.Lj10348:
-	ldw	r5,r30,-56
-	addi	r4,r11,0
-	addi	r3,r0,0
-	call	fpc_write_text_shortstr
-	addi	r3,r11,0
-	call	fpc_write_end
-.Lj10346:
-	la	r3,FPC_THREADVAR_RELOCATE
-	ldw	r4,r3,0
-	beq	r4,r0,.Lj10349
-	la	r5,U_$SYSTEM_$$_ERROUTPUT
-	ldw	r3,r5,0
-	jalr	r31,r4
-	addi	r11,r1,0
-	jal	r0,.Lj10350
-.Lj10349:
-	la	r3,U_$SYSTEM_$$_ERROUTPUT
-	addi	r11,r3,4
-.Lj10350:
 	la	r5,.Ld39
 	addi	r4,r11,0
 	addi	r3,r0,0
@@ -88556,16 +88525,16 @@ SYSTEM_$$_SYSASSERT$SHORTSTRING$SHORTSTRING$LONGINT$POINTER:
 	call	fpc_writeln_end
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10351
+	beq	r4,r0,.Lj10346
 	la	r5,U_$SYSTEM_$$_ERROUTPUT
 	ldw	r3,r5,0
 	jalr	r31,r4
 	addi	r11,r1,0
-	jal	r0,.Lj10352
-.Lj10351:
+	jal	r0,.Lj10347
+.Lj10346:
 	la	r3,U_$SYSTEM_$$_ERROUTPUT
 	addi	r11,r3,4
-.Lj10352:
+.Lj10347:
 	la	r5,.Ld25
 	addi	r4,r11,0
 	addi	r3,r0,0
@@ -88597,13 +88566,13 @@ SYSTEM_$$_GETMEMORYMANAGER$TMEMORYMANAGER:
 	ldw	r4,r30,-56
 	la	r3,FPC_SYSTEM_MEMORYMANAGER
 	addi	r5,r0,12
-.Lj10360:
+.Lj10355:
 	ldw	r6,r3,0
 	stw	r4,r6,0
 	addi	r3,r3,4
 	addi	r4,r4,4
 	addi	r5,r5,-1
-	bgt	r5,r0,.Lj10360
+	bgt	r5,r0,.Lj10355
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -88624,13 +88593,13 @@ SYSTEM_$$_SETMEMORYMANAGER$TMEMORYMANAGER:
 	ldw	r3,r30,-56
 	la	r4,FPC_SYSTEM_MEMORYMANAGER
 	addi	r5,r0,12
-.Lj10363:
+.Lj10358:
 	ldw	r6,r3,0
 	stw	r4,r6,0
 	addi	r3,r3,4
 	addi	r4,r4,4
 	addi	r5,r5,-1
-	bgt	r5,r0,.Lj10363
+	bgt	r5,r0,.Lj10358
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -89078,65 +89047,65 @@ SYSTEM_$$_INITTHREAD$LONGWORD:
 	la	r3,FPC_SYSTEM_MEMORYMANAGER
 	ldw	r3,r3,28
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10402
-	jal	r0,.Lj10403
-.Lj10402:
+	bne	r3,r0,.Lj10397
+	jal	r0,.Lj10398
+.Lj10397:
 	la	r3,FPC_SYSTEM_MEMORYMANAGER
 	ldw	r3,r3,28
 	jalr	r31,r3
-.Lj10403:
+.Lj10398:
 	la	r3,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	ldw	r3,r3,68
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10404
-	jal	r0,.Lj10405
-.Lj10404:
+	bne	r3,r0,.Lj10399
+	jal	r0,.Lj10400
+.Lj10399:
 	la	r3,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	ldw	r3,r3,68
 	jalr	r31,r3
-.Lj10405:
+.Lj10400:
 	call	SYSTEM_$$_SYSINITEXCEPTIONS
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CHECKINITIALSTKLEN$LONGWORD$$LONGWORD
 	addi	r11,r1,0
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10406
+	beq	r4,r0,.Lj10401
 	la	r5,U_$SYSTEM_$$_STACKLENGTH
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10407
-.Lj10406:
+	jal	r0,.Lj10402
+.Lj10401:
 	la	r3,U_$SYSTEM_$$_STACKLENGTH
 	addi	r1,r3,4
-.Lj10407:
+.Lj10402:
 	stw	r1,r11,0
 	call	SYSTEM_$$_SPTR$$POINTER
 	addi	r11,r1,0
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj10408
+	beq	r5,r0,.Lj10403
 	la	r4,U_$SYSTEM_$$_STACKLENGTH
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj10409
-.Lj10408:
+	jal	r0,.Lj10404
+.Lj10403:
 	la	r3,U_$SYSTEM_$$_STACKLENGTH
 	addi	r1,r3,4
-.Lj10409:
+.Lj10404:
 	ldw	r3,r1,0
 	sub	r11,r11,r3
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10410
+	beq	r4,r0,.Lj10405
 	la	r5,U_$SYSTEM_$$_STACKBOTTOM
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10411
-.Lj10410:
+	jal	r0,.Lj10406
+.Lj10405:
 	la	r3,U_$SYSTEM_$$_STACKBOTTOM
 	addi	r1,r3,4
-.Lj10411:
+.Lj10406:
 	stw	r1,r11,0
 	la	r3,U_$SYSTEM_$$_CURRENTTM
 	ldw	r3,r3,48
@@ -89144,15 +89113,15 @@ SYSTEM_$$_INITTHREAD$LONGWORD:
 	addi	r11,r1,0
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10412
+	beq	r4,r0,.Lj10407
 	la	r5,U_$SYSTEM_$$_THREADID
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10413
-.Lj10412:
+	jal	r0,.Lj10408
+.Lj10407:
 	la	r3,U_$SYSTEM_$$_THREADID
 	addi	r1,r3,4
-.Lj10413:
+.Lj10408:
 	stw	r1,r11,0
 	ldw	r11,r29,56
 	ldw	r30,r29,60
@@ -89176,46 +89145,46 @@ SYSTEM_$$_DONETHREAD:
 	la	r3,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	ldw	r3,r3,72
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10416
-	jal	r0,.Lj10417
-.Lj10416:
+	bne	r3,r0,.Lj10411
+	jal	r0,.Lj10412
+.Lj10411:
 	la	r3,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	ldw	r3,r3,72
 	jalr	r31,r3
-.Lj10417:
+.Lj10412:
 	la	r3,FPC_SYSTEM_MEMORYMANAGER
 	ldw	r3,r3,32
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10418
-	jal	r0,.Lj10419
-.Lj10418:
+	bne	r3,r0,.Lj10413
+	jal	r0,.Lj10414
+.Lj10413:
 	la	r3,FPC_SYSTEM_MEMORYMANAGER
 	ldw	r3,r3,32
 	jalr	r31,r3
-.Lj10419:
+.Lj10414:
 	call	SYSTEM_$$_SYSFLUSHSTDIO
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj10420
+	beq	r5,r0,.Lj10415
 	la	r4,U_$SYSTEM_$$_THREADID
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj10421
-.Lj10420:
+	jal	r0,.Lj10416
+.Lj10415:
 	la	r3,U_$SYSTEM_$$_THREADID
 	addi	r1,r3,4
-.Lj10421:
+.Lj10416:
 	stw	r1,r0,0
 	la	r3,U_$SYSTEM_$$_CURRENTTM
 	ldw	r3,r3,92
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10422
-	jal	r0,.Lj10423
-.Lj10422:
+	bne	r3,r0,.Lj10417
+	jal	r0,.Lj10418
+.Lj10417:
 	la	r3,U_$SYSTEM_$$_CURRENTTM
 	ldw	r3,r3,92
 	jalr	r31,r3
-.Lj10423:
+.Lj10418:
 	ldw	r30,r29,52
 	ldw	r31,r29,56
 	addi	r29,r29,60
@@ -89815,13 +89784,13 @@ SYSTEM_$$_GETTHREADMANAGER$TTHREADMANAGER$$BOOLEAN:
 	ldw	r4,r30,-56
 	la	r3,U_$SYSTEM_$$_CURRENTTM
 	addi	r5,r0,35
-.Lj10476:
+.Lj10471:
 	ldw	r6,r3,0
 	stw	r4,r6,0
 	addi	r3,r3,4
 	addi	r4,r4,4
 	addi	r5,r5,-1
-	bgt	r5,r0,.Lj10476
+	bgt	r5,r0,.Lj10471
 	addi	r3,r0,1
 	stb	r30,r3,-60
 	ldbu	r1,r30,-60
@@ -89873,18 +89842,18 @@ SYSTEM_$$_SETTHREADMANAGER$TTHREADMANAGER$$BOOLEAN:
 	la	r3,U_$SYSTEM_$$_CURRENTTM
 	ldw	r3,r3,4
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10481
-	jal	r0,.Lj10482
-.Lj10481:
+	bne	r3,r0,.Lj10476
+	jal	r0,.Lj10477
+.Lj10476:
 	la	r3,U_$SYSTEM_$$_CURRENTTM
 	ldw	r3,r3,4
 	jalr	r31,r3
 	stb	r30,r1,-60
-.Lj10482:
+.Lj10477:
 	ldbu	r3,r30,-60
-	bne	r3,r0,.Lj10483
-	jal	r0,.Lj10484
-.Lj10483:
+	bne	r3,r0,.Lj10478
+	jal	r0,.Lj10479
+.Lj10478:
 	ldw	r3,r30,-56
 	la	r4,U_$SYSTEM_$$_CURRENTTM
 	addi	r5,r0,140
@@ -89892,15 +89861,15 @@ SYSTEM_$$_SETTHREADMANAGER$TTHREADMANAGER$$BOOLEAN:
 	la	r3,U_$SYSTEM_$$_CURRENTTM
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10485
-	jal	r0,.Lj10486
-.Lj10485:
+	bne	r3,r0,.Lj10480
+	jal	r0,.Lj10481
+.Lj10480:
 	la	r3,U_$SYSTEM_$$_CURRENTTM
 	ldw	r3,r3,0
 	jalr	r31,r3
 	stb	r30,r1,-60
-.Lj10486:
-.Lj10484:
+.Lj10481:
+.Lj10479:
 	ldbu	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -90167,8 +90136,8 @@ SYSTEM_$$_FINALIZELAZYINITTHREADING:
 	stw	r29,r30,0
 	addi	r30,r29,8
 	addi	r29,r29,-56
-	jal	r0,.Lj10512
-.Lj10511:
+	jal	r0,.Lj10507
+.Lj10506:
 	la	r3,TC_$SYSTEM_$$_LAZYINITTHREADINGPROCLIST
 	ldw	r3,r3,0
 	ldw	r3,r3,0
@@ -90179,13 +90148,13 @@ SYSTEM_$$_FINALIZELAZYINITTHREADING:
 	la	r3,TC_$SYSTEM_$$_LAZYINITTHREADINGPROCLIST
 	ldw	r4,r30,-56
 	stw	r3,r4,0
-.Lj10512:
+.Lj10507:
 	la	r3,TC_$SYSTEM_$$_LAZYINITTHREADINGPROCLIST
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10511
-	jal	r0,.Lj10513
-.Lj10513:
+	bne	r3,r0,.Lj10506
+	jal	r0,.Lj10508
+.Lj10508:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -90207,23 +90176,23 @@ SYSTEM_$$_REGISTERLAZYINITTHREADINGPROC$TPROCEDURE:
 	stw	r30,r3,-56
 	la	r3,TC_$SYSTEM_$$_ISMULTITHREAD
 	ldw	r3,r3,0
-	bne	r3,r0,.Lj10516
-	jal	r0,.Lj10517
-.Lj10516:
+	bne	r3,r0,.Lj10511
+	jal	r0,.Lj10512
+.Lj10511:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	jalr	r31,r3
-	jal	r0,.Lj10518
-.Lj10517:
+	jal	r0,.Lj10513
+.Lj10512:
 	la	r3,TC_$SYSTEM_$$_LAZYINITTHREADINGPROCLIST
 	ldw	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10519
-	jal	r0,.Lj10520
-.Lj10519:
+	bne	r3,r0,.Lj10514
+	jal	r0,.Lj10515
+.Lj10514:
 	la	r3,SYSTEM_$$_FINALIZELAZYINITTHREADING
 	call	SYSTEM_$$_ADDEXITPROC$TPROCEDURE
-.Lj10520:
+.Lj10515:
 	addi	r3,r0,8
 	call	fpc_getmem
 	stw	r30,r1,-60
@@ -90238,7 +90207,7 @@ SYSTEM_$$_REGISTERLAZYINITTHREADINGPROC$TPROCEDURE:
 	la	r3,TC_$SYSTEM_$$_LAZYINITTHREADINGPROCLIST
 	ldw	r4,r30,-60
 	stw	r3,r4,0
-.Lj10518:
+.Lj10513:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -90258,20 +90227,20 @@ SYSTEM_$$_LAZYINITTHREADING:
 	la	r3,TC_$SYSTEM_$$_LAZYINITTHREADINGPROCLIST
 	ldw	r3,r3,0
 	stw	r30,r3,-56
-	jal	r0,.Lj10524
-.Lj10523:
+	jal	r0,.Lj10519
+.Lj10518:
 	ldw	r3,r30,-56
 	ldw	r3,r3,4
 	jalr	r31,r3
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	stw	r30,r3,-56
-.Lj10524:
+.Lj10519:
 	ldw	r3,r30,-56
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10523
-	jal	r0,.Lj10525
-.Lj10525:
+	bne	r3,r0,.Lj10518
+	jal	r0,.Lj10520
+.Lj10520:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -90289,8 +90258,8 @@ SYSTEM_$$_INIT_UNIT_THREADVARS$PLTVINITENTRY:
 	addi	r30,r29,8
 	addi	r29,r29,-56
 	stw	r30,r3,-56
-	jal	r0,.Lj10529
-.Lj10528:
+	jal	r0,.Lj10524
+.Lj10523:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	ldw	r4,r30,-56
@@ -90301,13 +90270,13 @@ SYSTEM_$$_INIT_UNIT_THREADVARS$PLTVINITENTRY:
 	ldw	r3,r30,-56
 	addi	r3,r3,8
 	stw	r30,r3,-56
-.Lj10529:
+.Lj10524:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10528
-	jal	r0,.Lj10530
-.Lj10530:
+	bne	r3,r0,.Lj10523
+	jal	r0,.Lj10525
+.Lj10525:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -90331,11 +90300,11 @@ SYSTEM_$$_INIT_ALL_UNIT_THREADVARS:
 	ldw	r11,r3,0
 	addi	r3,r0,1
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj10533
-	jal	r0,.Lj10534
-.Lj10533:
+	bne	r3,r0,.Lj10528
+	jal	r0,.Lj10529
+.Lj10528:
 	stw	r30,r0,-56
-.Lj10535:
+.Lj10530:
 	ldw	r3,r30,-56
 	addi	r3,r3,1
 	stw	r30,r3,-56
@@ -90348,10 +90317,10 @@ SYSTEM_$$_INIT_ALL_UNIT_THREADVARS:
 	call	SYSTEM_$$_INIT_UNIT_THREADVARS$PLTVINITENTRY
 	ldw	r3,r30,-56
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj10537
-	jal	r0,.Lj10535
-.Lj10537:
-.Lj10534:
+	bne	r3,r0,.Lj10532
+	jal	r0,.Lj10530
+.Lj10532:
+.Lj10529:
 	ldw	r11,r29,56
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -90372,8 +90341,8 @@ SYSTEM_$$_COPY_UNIT_THREADVARS$PLTVINITENTRY:
 	addi	r30,r29,8
 	addi	r29,r29,-64
 	stw	r30,r3,-56
-	jal	r0,.Lj10541
-.Lj10540:
+	jal	r0,.Lj10536
+.Lj10535:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	ldw	r3,r3,0
@@ -90393,13 +90362,13 @@ SYSTEM_$$_COPY_UNIT_THREADVARS$PLTVINITENTRY:
 	ldw	r3,r30,-56
 	addi	r3,r3,8
 	stw	r30,r3,-56
-.Lj10541:
+.Lj10536:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10540
-	jal	r0,.Lj10542
-.Lj10542:
+	bne	r3,r0,.Lj10535
+	jal	r0,.Lj10537
+.Lj10537:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -90423,11 +90392,11 @@ SYSTEM_$$_COPY_ALL_UNIT_THREADVARS:
 	ldw	r11,r3,0
 	addi	r3,r0,1
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj10545
-	jal	r0,.Lj10546
-.Lj10545:
+	bne	r3,r0,.Lj10540
+	jal	r0,.Lj10541
+.Lj10540:
 	stw	r30,r0,-56
-.Lj10547:
+.Lj10542:
 	ldw	r3,r30,-56
 	addi	r3,r3,1
 	stw	r30,r3,-56
@@ -90440,10 +90409,10 @@ SYSTEM_$$_COPY_ALL_UNIT_THREADVARS:
 	call	SYSTEM_$$_COPY_UNIT_THREADVARS$PLTVINITENTRY
 	ldw	r3,r30,-56
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj10549
-	jal	r0,.Lj10547
-.Lj10549:
-.Lj10546:
+	bne	r3,r0,.Lj10544
+	jal	r0,.Lj10542
+.Lj10544:
+.Lj10541:
 	ldw	r11,r29,56
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -90491,21 +90460,21 @@ SYSTEM_$$_NOTHREADERROR:
 	addi	r29,r29,-52
 	la	r3,operatingsystem_isconsole
 	ldbu	r3,r3,0
-	bne	r3,r0,.Lj10554
-	jal	r0,.Lj10555
-.Lj10554:
+	bne	r3,r0,.Lj10549
+	jal	r0,.Lj10550
+.Lj10549:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10556
+	beq	r4,r0,.Lj10551
 	la	r5,U_$SYSTEM_$$_ERROUTPUT
 	ldw	r3,r5,0
 	jalr	r31,r4
 	addi	r11,r1,0
-	jal	r0,.Lj10557
-.Lj10556:
+	jal	r0,.Lj10552
+.Lj10551:
 	la	r3,U_$SYSTEM_$$_ERROUTPUT
 	addi	r11,r3,4
-.Lj10557:
+.Lj10552:
 	la	r5,.Ld42
 	addi	r4,r11,0
 	addi	r3,r0,0
@@ -90514,23 +90483,23 @@ SYSTEM_$$_NOTHREADERROR:
 	call	fpc_writeln_end
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj10558
+	beq	r5,r0,.Lj10553
 	la	r4,U_$SYSTEM_$$_ERROUTPUT
 	ldw	r3,r4,0
 	jalr	r31,r5
 	addi	r11,r1,0
-	jal	r0,.Lj10559
-.Lj10558:
+	jal	r0,.Lj10554
+.Lj10553:
 	la	r3,U_$SYSTEM_$$_ERROUTPUT
 	addi	r11,r3,4
-.Lj10559:
+.Lj10554:
 	la	r5,.Ld43
 	addi	r4,r11,0
 	addi	r3,r0,0
 	call	fpc_write_text_shortstr
 	addi	r3,r11,0
 	call	fpc_writeln_end
-.Lj10555:
+.Lj10550:
 	call	SYSTEM_$$_SYSTEM_EXIT
 	ldw	r11,r29,52
 	ldw	r30,r29,56
@@ -90553,16 +90522,16 @@ SYSTEM_$$_NOGETCURRENTTHREADID$$LONGINT:
 	addi	r29,r29,-56
 	la	r3,TC_$SYSTEM_$$_ISMULTITHREAD
 	ldw	r3,r3,0
-	bne	r3,r0,.Lj10562
-	jal	r0,.Lj10563
-.Lj10562:
+	bne	r3,r0,.Lj10557
+	jal	r0,.Lj10558
+.Lj10557:
 	call	SYSTEM_$$_NOTHREADERROR
-	jal	r0,.Lj10564
-.Lj10563:
+	jal	r0,.Lj10559
+.Lj10558:
 	addi	r3,r0,1
 	la	r4,TC_$SYSTEM_$$_THREADINGALREADYUSED
 	stb	r4,r3,0
-.Lj10564:
+.Lj10559:
 	addi	r3,r0,1
 	stw	r30,r3,-56
 	ldw	r1,r30,-56
@@ -90707,13 +90676,13 @@ SYSTEM_$$_INITSYSTEMTHREADS:
 	la	r3,TC_$SYSTEM_$$_EMBEDDEDTHREADMANAGER
 	la	r4,U_$SYSTEM_$$_CURRENTTM
 	addi	r5,r0,35
-.Lj10579:
+.Lj10574:
 	ldw	r6,r3,0
 	stw	r4,r6,0
 	addi	r3,r3,4
 	addi	r4,r4,4
 	addi	r5,r5,-1
-	bgt	r5,r0,.Lj10579
+	bgt	r5,r0,.Lj10574
 	ldw	r30,r29,52
 	ldw	r31,r29,56
 	addi	r29,r29,60
@@ -90834,23 +90803,23 @@ SYSTEM_$$_SAFELOADLIBRARY$UNICODESTRING$$LONGINT:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj10591
+	bne	r1,r0,.Lj10586
 	addi	r3,r30,-164
 	ldw	r4,r30,-56
 	call	SYSTEM_$$_TOSINGLEBYTEFILESYSTEMENCODEDFILENAME$UNICODESTRING$$RAWBYTESTRING
 	ldw	r3,r30,-164
 	call	SYSTEM_$$_DOSAFELOADLIBRARY$RAWBYTESTRING$$LONGINT
 	stw	r30,r1,-60
-.Lj10591:
+.Lj10586:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj10590
+	beq	r3,r0,.Lj10585
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj10591
-.Lj10590:
+	jal	r0,.Lj10586
+.Lj10585:
 	ldw	r1,r30,-60
 	ldw	r30,r29,164
 	ldw	r31,r29,168
@@ -90900,19 +90869,19 @@ SYSTEM_$$_GETPROCEDUREADDRESS$LONGINT$LONGWORD$$POINTER:
 	la	r3,U_$SYSTEM_$$_CURRENTDLM
 	ldw	r3,r3,12
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10597
-	jal	r0,.Lj10598
-.Lj10597:
+	bne	r3,r0,.Lj10592
+	jal	r0,.Lj10593
+.Lj10592:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	la	r5,U_$SYSTEM_$$_CURRENTDLM
 	ldw	r5,r5,12
 	jalr	r31,r5
 	stw	r30,r1,-64
-	jal	r0,.Lj10599
-.Lj10598:
+	jal	r0,.Lj10594
+.Lj10593:
 	stw	r30,r0,-64
-.Lj10599:
+.Lj10594:
 	ldw	r1,r30,-64
 	ldw	r30,r29,64
 	ldw	r31,r29,68
@@ -91024,13 +90993,13 @@ SYSTEM_$$_GETDYNLIBSMANAGER$TDYNLIBSMANAGER:
 	ldw	r4,r30,-56
 	la	r3,U_$SYSTEM_$$_CURRENTDLM
 	addi	r5,r0,6
-.Lj10610:
+.Lj10605:
 	ldw	r6,r3,0
 	stw	r4,r6,0
 	addi	r3,r3,4
 	addi	r4,r4,4
 	addi	r5,r5,-1
-	bgt	r5,r0,.Lj10610
+	bgt	r5,r0,.Lj10605
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -91051,13 +91020,13 @@ SYSTEM_$$_SETDYNLIBSMANAGER$TDYNLIBSMANAGER:
 	ldw	r3,r30,-56
 	la	r4,U_$SYSTEM_$$_CURRENTDLM
 	addi	r5,r0,6
-.Lj10613:
+.Lj10608:
 	ldw	r6,r3,0
 	stw	r4,r6,0
 	addi	r3,r3,4
 	addi	r4,r4,4
 	addi	r5,r5,-1
-	bgt	r5,r0,.Lj10613
+	bgt	r5,r0,.Lj10608
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -91081,23 +91050,23 @@ SYSTEM_$$_SETDYNLIBSMANAGER$TDYNLIBSMANAGER$TDYNLIBSMANAGER:
 	ldw	r4,r30,-60
 	la	r3,U_$SYSTEM_$$_CURRENTDLM
 	addi	r5,r0,6
-.Lj10616:
+.Lj10611:
 	ldw	r6,r3,0
 	stw	r4,r6,0
 	addi	r3,r3,4
 	addi	r4,r4,4
 	addi	r5,r5,-1
-	bgt	r5,r0,.Lj10616
+	bgt	r5,r0,.Lj10611
 	ldw	r3,r30,-56
 	la	r4,U_$SYSTEM_$$_CURRENTDLM
 	addi	r5,r0,6
-.Lj10617:
+.Lj10612:
 	ldw	r6,r3,0
 	stw	r4,r6,0
 	addi	r3,r3,4
 	addi	r4,r4,4
 	addi	r5,r5,-1
-	bgt	r5,r0,.Lj10617
+	bgt	r5,r0,.Lj10612
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -91327,12 +91296,12 @@ SYSTEM_$$_DODIRSEPARATORS$PANSICHAR$BOOLEAN:
 	ldw	r11,r30,-68
 	addi	r3,r0,0
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj10640
-	jal	r0,.Lj10641
-.Lj10640:
+	bne	r3,r0,.Lj10635
+	jal	r0,.Lj10636
+.Lj10635:
 	addi	r3,r0,-1
 	stw	r30,r3,-64
-.Lj10642:
+.Lj10637:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-64
@@ -91349,19 +91318,19 @@ SYSTEM_$$_DODIRSEPARATORS$PANSICHAR$BOOLEAN:
 	ldbu	r4,r4,0
 	srl	r4,r4,r3
 	andi	r4,r4,1
-	bne	r4,r0,.Lj10645
-	jal	r0,.Lj10646
-.Lj10645:
+	bne	r4,r0,.Lj10640
+	jal	r0,.Lj10641
+.Lj10640:
 	ldbu	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10647
-	jal	r0,.Lj10648
-.Lj10647:
+	bne	r3,r0,.Lj10642
+	jal	r0,.Lj10643
+.Lj10642:
 	ldw	r3,r30,-72
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10649
-	jal	r0,.Lj10648
-.Lj10649:
+	bne	r3,r0,.Lj10644
+	jal	r0,.Lj10643
+.Lj10644:
 	ldw	r3,r30,-68
 	addi	r4,r3,1
 	addi	r3,r30,-72
@@ -91375,20 +91344,20 @@ SYSTEM_$$_DODIRSEPARATORS$PANSICHAR$BOOLEAN:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-72
 	stw	r3,r4,0
-.Lj10648:
+.Lj10643:
 	ldw	r3,r30,-56
 	ldw	r5,r3,0
 	ldw	r4,r30,-64
 	addi	r3,r0,47
 	add	r4,r5,r4
 	stb	r4,r3,0
-.Lj10646:
+.Lj10641:
 	ldw	r3,r30,-64
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj10644
-	jal	r0,.Lj10642
-.Lj10644:
-.Lj10641:
+	bne	r3,r0,.Lj10639
+	jal	r0,.Lj10637
+.Lj10639:
+.Lj10636:
 	ldw	r11,r29,72
 	ldw	r30,r29,76
 	ldw	r31,r29,80
@@ -91417,12 +91386,12 @@ SYSTEM_$$_DODIRSEPARATORS$PWIDECHAR$BOOLEAN:
 	ldw	r11,r30,-68
 	addi	r3,r0,0
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj10652
-	jal	r0,.Lj10653
-.Lj10652:
+	bne	r3,r0,.Lj10647
+	jal	r0,.Lj10648
+.Lj10647:
 	addi	r3,r0,-1
 	stw	r30,r3,-64
-.Lj10654:
+.Lj10649:
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-64
@@ -91434,9 +91403,9 @@ SYSTEM_$$_DODIRSEPARATORS$PWIDECHAR$BOOLEAN:
 	ldhu	r3,r3,0
 	addi	r4,r0,255
 	sltu	r3,r3,r4
-	bne	r3,r0,.Lj10657
-	jal	r0,.Lj10658
-.Lj10657:
+	bne	r3,r0,.Lj10652
+	jal	r0,.Lj10653
+.Lj10652:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	ldw	r4,r30,-64
@@ -91451,19 +91420,19 @@ SYSTEM_$$_DODIRSEPARATORS$PWIDECHAR$BOOLEAN:
 	ldbu	r4,r4,0
 	srl	r4,r4,r3
 	andi	r4,r4,1
-	bne	r4,r0,.Lj10659
-	jal	r0,.Lj10658
-.Lj10659:
+	bne	r4,r0,.Lj10654
+	jal	r0,.Lj10653
+.Lj10654:
 	ldbu	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10660
-	jal	r0,.Lj10661
-.Lj10660:
+	bne	r3,r0,.Lj10655
+	jal	r0,.Lj10656
+.Lj10655:
 	ldw	r3,r30,-72
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10662
-	jal	r0,.Lj10661
-.Lj10662:
+	bne	r3,r0,.Lj10657
+	jal	r0,.Lj10656
+.Lj10657:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	slli	r4,r3,1
@@ -91479,7 +91448,7 @@ SYSTEM_$$_DODIRSEPARATORS$PWIDECHAR$BOOLEAN:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-72
 	stw	r3,r4,0
-.Lj10661:
+.Lj10656:
 	ldw	r3,r30,-56
 	ldw	r4,r3,0
 	ldw	r3,r30,-64
@@ -91487,13 +91456,13 @@ SYSTEM_$$_DODIRSEPARATORS$PWIDECHAR$BOOLEAN:
 	addi	r3,r0,47
 	add	r4,r4,r5
 	sth	r4,r3,0
-.Lj10658:
+.Lj10653:
 	ldw	r3,r30,-64
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj10656
-	jal	r0,.Lj10654
-.Lj10656:
-.Lj10653:
+	bne	r3,r0,.Lj10651
+	jal	r0,.Lj10649
+.Lj10651:
+.Lj10648:
 	ldw	r11,r29,72
 	ldw	r30,r29,76
 	ldw	r31,r29,80
@@ -91517,11 +91486,11 @@ SYSTEM_$$_DODIRSEPARATORS$OPENSTRING:
 	ldbu	r3,r3,0
 	addi	r4,r0,1
 	sle	r4,r4,r3
-	bne	r4,r0,.Lj10665
-	jal	r0,.Lj10666
-.Lj10665:
+	bne	r4,r0,.Lj10660
+	jal	r0,.Lj10661
+.Lj10660:
 	stw	r30,r0,-64
-.Lj10667:
+.Lj10662:
 	ldw	r4,r30,-64
 	addi	r4,r4,1
 	stw	r30,r4,-64
@@ -91537,21 +91506,21 @@ SYSTEM_$$_DODIRSEPARATORS$OPENSTRING:
 	ldbu	r5,r5,0
 	srl	r5,r5,r4
 	andi	r5,r5,1
-	bne	r5,r0,.Lj10670
-	jal	r0,.Lj10671
-.Lj10670:
+	bne	r5,r0,.Lj10665
+	jal	r0,.Lj10666
+.Lj10665:
 	ldw	r6,r30,-56
 	ldbu	r5,r30,-64
 	addi	r4,r0,47
 	add	r5,r6,r5
 	stb	r5,r4,0
-.Lj10671:
+.Lj10666:
 	ldw	r4,r30,-64
 	sge	r4,r4,r3
-	bne	r4,r0,.Lj10669
-	jal	r0,.Lj10667
-.Lj10669:
-.Lj10666:
+	bne	r4,r0,.Lj10664
+	jal	r0,.Lj10662
+.Lj10664:
+.Lj10661:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -91573,16 +91542,16 @@ SYSTEM_$$_DODIRSEPARATORS$RAWBYTESTRING:
 	stb	r30,r0,-68
 	ldw	r3,r30,-56
 	ldw	r11,r3,0
-	beq	r11,r0,.Lj10674
+	beq	r11,r0,.Lj10669
 	ldw	r11,r11,-4
-.Lj10674:
+.Lj10669:
 	addi	r3,r0,1
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj10675
-	jal	r0,.Lj10676
-.Lj10675:
+	bne	r3,r0,.Lj10670
+	jal	r0,.Lj10671
+.Lj10670:
 	stw	r30,r0,-60
-.Lj10677:
+.Lj10672:
 	ldw	r3,r30,-60
 	addi	r3,r3,1
 	stw	r30,r3,-60
@@ -91599,39 +91568,39 @@ SYSTEM_$$_DODIRSEPARATORS$RAWBYTESTRING:
 	ldbu	r4,r4,0
 	srl	r4,r4,r3
 	andi	r4,r4,1
-	bne	r4,r0,.Lj10680
-	jal	r0,.Lj10681
-.Lj10680:
+	bne	r4,r0,.Lj10675
+	jal	r0,.Lj10676
+.Lj10675:
 	ldbu	r3,r30,-68
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10682
-	jal	r0,.Lj10683
-.Lj10682:
+	bne	r3,r0,.Lj10677
+	jal	r0,.Lj10678
+.Lj10677:
 	ldw	r3,r30,-56
 	call	FPC_ANSISTR_UNIQUE
 	ldw	r3,r30,-56
 	ldw	r4,r3,0
-	bne	r4,r0,.Lj10684
+	bne	r4,r0,.Lj10679
 	la	r3,FPC_EMPTYCHAR
 	addi	r4,r3,0
-.Lj10684:
+.Lj10679:
 	stw	r30,r4,-64
 	addi	r3,r0,1
 	stb	r30,r3,-68
-.Lj10683:
+.Lj10678:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-60
 	addi	r5,r3,-1
 	addi	r3,r0,47
 	add	r4,r4,r5
 	stb	r4,r3,0
-.Lj10681:
+.Lj10676:
 	ldw	r3,r30,-60
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj10679
-	jal	r0,.Lj10677
-.Lj10679:
-.Lj10676:
+	bne	r3,r0,.Lj10674
+	jal	r0,.Lj10672
+.Lj10674:
+.Lj10671:
 	ldw	r11,r29,68
 	ldw	r30,r29,72
 	ldw	r31,r29,76
@@ -91654,16 +91623,16 @@ SYSTEM_$$_DODIRSEPARATORS$UNICODESTRING:
 	stb	r30,r0,-68
 	ldw	r3,r30,-56
 	ldw	r11,r3,0
-	beq	r11,r0,.Lj10687
+	beq	r11,r0,.Lj10682
 	ldw	r11,r11,-4
-.Lj10687:
+.Lj10682:
 	addi	r3,r0,1
 	sle	r3,r3,r11
-	bne	r3,r0,.Lj10688
-	jal	r0,.Lj10689
-.Lj10688:
+	bne	r3,r0,.Lj10683
+	jal	r0,.Lj10684
+.Lj10683:
 	stw	r30,r0,-60
-.Lj10690:
+.Lj10685:
 	ldw	r3,r30,-60
 	addi	r3,r3,1
 	stw	r30,r3,-60
@@ -91683,26 +91652,26 @@ SYSTEM_$$_DODIRSEPARATORS$UNICODESTRING:
 	ldbu	r4,r4,0
 	srl	r4,r4,r3
 	andi	r4,r4,1
-	bne	r4,r0,.Lj10693
-	jal	r0,.Lj10694
-.Lj10693:
+	bne	r4,r0,.Lj10688
+	jal	r0,.Lj10689
+.Lj10688:
 	ldbu	r3,r30,-68
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10695
-	jal	r0,.Lj10696
-.Lj10695:
+	bne	r3,r0,.Lj10690
+	jal	r0,.Lj10691
+.Lj10690:
 	ldw	r3,r30,-56
 	call	FPC_UNICODESTR_UNIQUE
 	ldw	r3,r30,-56
 	ldw	r4,r3,0
-	bne	r4,r0,.Lj10697
+	bne	r4,r0,.Lj10692
 	la	r3,FPC_EMPTYCHAR
 	addi	r4,r3,0
-.Lj10697:
+.Lj10692:
 	stw	r30,r4,-64
 	addi	r3,r0,1
 	stb	r30,r3,-68
-.Lj10696:
+.Lj10691:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-60
 	addi	r4,r4,-1
@@ -91710,13 +91679,13 @@ SYSTEM_$$_DODIRSEPARATORS$UNICODESTRING:
 	addi	r4,r0,47
 	add	r3,r3,r5
 	sth	r3,r4,0
-.Lj10694:
+.Lj10689:
 	ldw	r3,r30,-60
 	sge	r3,r3,r11
-	bne	r3,r0,.Lj10692
-	jal	r0,.Lj10690
-.Lj10692:
-.Lj10689:
+	bne	r3,r0,.Lj10687
+	jal	r0,.Lj10685
+.Lj10687:
+.Lj10684:
 	ldw	r11,r29,68
 	ldw	r30,r29,72
 	ldw	r31,r29,76
@@ -91737,14 +91706,14 @@ SYSTEM_$$_DO_CLOSE$LONGINT:
 	stw	r30,r3,-56
 	la	r3,TC_$SYSTEM_$$_RTL_DO_CLOSE
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10700
-	jal	r0,.Lj10701
-.Lj10700:
+	bne	r3,r0,.Lj10695
+	jal	r0,.Lj10696
+.Lj10695:
 	ldw	r3,r30,-56
 	la	r4,TC_$SYSTEM_$$_RTL_DO_CLOSE
 	ldw	r4,r4,0
 	jalr	r31,r4
-.Lj10701:
+.Lj10696:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -91767,14 +91736,14 @@ SYSTEM_$$_DO_ERASE$PANSICHAR$BOOLEAN:
 	stb	r30,r4,-60
 	la	r3,TC_$SYSTEM_$$_RTL_DO_ERASE
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10704
-	jal	r0,.Lj10705
-.Lj10704:
+	bne	r3,r0,.Lj10699
+	jal	r0,.Lj10700
+.Lj10699:
 	ldw	r3,r30,-56
 	la	r4,TC_$SYSTEM_$$_RTL_DO_ERASE
 	ldw	r4,r4,0
 	jalr	r31,r4
-.Lj10705:
+.Lj10700:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -91799,15 +91768,15 @@ SYSTEM_$$_DO_RENAME$PANSICHAR$PANSICHAR$BOOLEAN$BOOLEAN:
 	stb	r30,r6,-68
 	la	r3,TC_$SYSTEM_$$_RTL_DO_RENAME
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10708
-	jal	r0,.Lj10709
-.Lj10708:
+	bne	r3,r0,.Lj10703
+	jal	r0,.Lj10704
+.Lj10703:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	la	r5,TC_$SYSTEM_$$_RTL_DO_RENAME
 	ldw	r5,r5,0
 	jalr	r31,r5
-.Lj10709:
+.Lj10704:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -91832,9 +91801,9 @@ SYSTEM_$$_DO_WRITE$LONGINT$POINTER$LONGINT$$LONGINT:
 	la	r3,TC_$SYSTEM_$$_RTL_DO_WRITE
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10712
-	jal	r0,.Lj10713
-.Lj10712:
+	bne	r3,r0,.Lj10707
+	jal	r0,.Lj10708
+.Lj10707:
 	ldw	r5,r30,-64
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
@@ -91842,11 +91811,11 @@ SYSTEM_$$_DO_WRITE$LONGINT$POINTER$LONGINT$$LONGINT:
 	ldw	r6,r6,0
 	jalr	r31,r6
 	stw	r30,r1,-68
-	jal	r0,.Lj10714
-.Lj10713:
+	jal	r0,.Lj10709
+.Lj10708:
 	addi	r3,r0,-1
 	stw	r30,r3,-68
-.Lj10714:
+.Lj10709:
 	ldw	r1,r30,-68
 	ldw	r30,r29,68
 	ldw	r31,r29,72
@@ -91872,9 +91841,9 @@ SYSTEM_$$_DO_READ$LONGINT$POINTER$LONGINT$$LONGINT:
 	la	r3,TC_$SYSTEM_$$_RTL_DO_READ
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10717
-	jal	r0,.Lj10718
-.Lj10717:
+	bne	r3,r0,.Lj10712
+	jal	r0,.Lj10713
+.Lj10712:
 	ldw	r5,r30,-64
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
@@ -91882,11 +91851,11 @@ SYSTEM_$$_DO_READ$LONGINT$POINTER$LONGINT$$LONGINT:
 	ldw	r6,r6,0
 	jalr	r31,r6
 	stw	r30,r1,-68
-	jal	r0,.Lj10719
-.Lj10718:
+	jal	r0,.Lj10714
+.Lj10713:
 	addi	r3,r0,-1
 	stw	r30,r3,-68
-.Lj10719:
+.Lj10714:
 	ldw	r1,r30,-68
 	ldw	r30,r29,68
 	ldw	r31,r29,72
@@ -91910,19 +91879,19 @@ SYSTEM_$$_DO_FILEPOS$LONGINT$$LONGINT:
 	la	r3,TC_$SYSTEM_$$_RTL_DO_FILEPOS
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10722
-	jal	r0,.Lj10723
-.Lj10722:
+	bne	r3,r0,.Lj10717
+	jal	r0,.Lj10718
+.Lj10717:
 	ldw	r3,r30,-56
 	la	r4,TC_$SYSTEM_$$_RTL_DO_FILEPOS
 	ldw	r4,r4,0
 	jalr	r31,r4
 	stw	r30,r1,-60
-	jal	r0,.Lj10724
-.Lj10723:
+	jal	r0,.Lj10719
+.Lj10718:
 	addi	r3,r0,-1
 	stw	r30,r3,-60
-.Lj10724:
+.Lj10719:
 	ldw	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -91947,15 +91916,15 @@ SYSTEM_$$_DO_SEEK$LONGINT$LONGINT:
 	la	r3,TC_$SYSTEM_$$_RTL_DO_SEEK
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10727
-	jal	r0,.Lj10728
-.Lj10727:
+	bne	r3,r0,.Lj10722
+	jal	r0,.Lj10723
+.Lj10722:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	la	r5,TC_$SYSTEM_$$_RTL_DO_SEEK
 	ldw	r5,r5,0
 	jalr	r31,r5
-.Lj10728:
+.Lj10723:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -91978,19 +91947,19 @@ SYSTEM_$$_DO_SEEKEND$LONGINT$$LONGINT:
 	la	r3,TC_$SYSTEM_$$_RTL_DO_SEEKEND
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10731
-	jal	r0,.Lj10732
-.Lj10731:
+	bne	r3,r0,.Lj10726
+	jal	r0,.Lj10727
+.Lj10726:
 	ldw	r3,r30,-56
 	la	r4,TC_$SYSTEM_$$_RTL_DO_SEEKEND
 	ldw	r4,r4,0
 	jalr	r31,r4
 	stw	r30,r1,-60
-	jal	r0,.Lj10733
-.Lj10732:
+	jal	r0,.Lj10728
+.Lj10727:
 	addi	r3,r0,-1
 	stw	r30,r3,-60
-.Lj10733:
+.Lj10728:
 	ldw	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -92014,15 +91983,15 @@ SYSTEM_$$_DO_FILESIZE$LONGINT$$LONGINT:
 	la	r3,TC_$SYSTEM_$$_RTL_DO_FILESIZE
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10736
-	jal	r0,.Lj10737
-.Lj10736:
+	bne	r3,r0,.Lj10731
+	jal	r0,.Lj10732
+.Lj10731:
 	ldw	r3,r30,-56
 	la	r4,TC_$SYSTEM_$$_RTL_DO_FILESIZE
 	ldw	r4,r4,0
 	jalr	r31,r4
 	stw	r30,r1,-60
-.Lj10737:
+.Lj10732:
 	ldw	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -92047,15 +92016,15 @@ SYSTEM_$$_DO_TRUNCATE$LONGINT$LONGINT:
 	la	r3,TC_$SYSTEM_$$_RTL_DO_TRUNCATE
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10740
-	jal	r0,.Lj10741
-.Lj10740:
+	bne	r3,r0,.Lj10735
+	jal	r0,.Lj10736
+.Lj10735:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	la	r5,TC_$SYSTEM_$$_RTL_DO_TRUNCATE
 	ldw	r5,r5,0
 	jalr	r31,r5
-.Lj10741:
+.Lj10736:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -92081,16 +92050,16 @@ SYSTEM_$$_DO_OPEN$formal$PFILETEXTRECCHAR$LONGINT$BOOLEAN:
 	la	r3,TC_$SYSTEM_$$_RTL_DO_OPEN
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10744
-	jal	r0,.Lj10745
-.Lj10744:
+	bne	r3,r0,.Lj10739
+	jal	r0,.Lj10740
+.Lj10739:
 	ldw	r3,r30,-56
 	ldw	r5,r30,-64
 	ldw	r4,r30,-60
 	la	r6,TC_$SYSTEM_$$_RTL_DO_OPEN
 	ldw	r6,r6,0
 	jalr	r31,r6
-.Lj10745:
+.Lj10740:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -92114,15 +92083,15 @@ SYSTEM_$$_DO_ISDEVICE$LONGINT$$BOOLEAN:
 	la	r3,TC_$SYSTEM_$$_RTL_DO_ISDEVICE
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10748
-	jal	r0,.Lj10749
-.Lj10748:
+	bne	r3,r0,.Lj10743
+	jal	r0,.Lj10744
+.Lj10743:
 	ldw	r3,r30,-56
 	la	r4,TC_$SYSTEM_$$_RTL_DO_ISDEVICE
 	ldw	r4,r4,0
 	jalr	r31,r4
 	stb	r30,r1,-60
-.Lj10749:
+.Lj10744:
 	ldbu	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -92147,16 +92116,16 @@ SYSTEM_$$_MIN$LONGINT$LONGINT$$LONGINT:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj10752
-	jal	r0,.Lj10753
-.Lj10752:
+	bne	r3,r0,.Lj10747
+	jal	r0,.Lj10748
+.Lj10747:
 	ldw	r3,r30,-56
 	stw	r30,r3,-64
-	jal	r0,.Lj10754
-.Lj10753:
+	jal	r0,.Lj10749
+.Lj10748:
 	ldw	r3,r30,-60
 	stw	r30,r3,-64
-.Lj10754:
+.Lj10749:
 	ldw	r1,r30,-64
 	ldw	r30,r29,64
 	ldw	r31,r29,68
@@ -92233,11 +92202,11 @@ SYSTEM_$$_FILEWRITEFUNC$TEXTREC:
 	ldw	r3,r30,-56
 	ldw	r3,r3,16
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10761
-	jal	r0,.Lj10762
-.Lj10761:
-	jal	r0,.Lj10759
-.Lj10762:
+	bne	r3,r0,.Lj10756
+	jal	r0,.Lj10757
+.Lj10756:
+	jal	r0,.Lj10754
+.Lj10757:
 	ldw	r3,r30,-56
 	ldw	r5,r3,16
 	ldw	r3,r30,-56
@@ -92250,26 +92219,26 @@ SYSTEM_$$_FILEWRITEFUNC$TEXTREC:
 	ldw	r3,r3,16
 	ldw	r4,r30,-60
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj10763
-	jal	r0,.Lj10764
-.Lj10763:
+	bne	r3,r0,.Lj10758
+	jal	r0,.Lj10759
+.Lj10758:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj10765
+	beq	r5,r0,.Lj10760
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj10766
-.Lj10765:
+	jal	r0,.Lj10761
+.Lj10760:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10766:
+.Lj10761:
 	addi	r3,r0,101
 	sth	r1,r3,0
-.Lj10764:
+.Lj10759:
 	ldw	r3,r30,-56
 	stw	r3,r0,16
-.Lj10759:
+.Lj10754:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -92293,65 +92262,65 @@ SYSTEM_$$_FILEOPENFUNC$TEXTREC:
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1969
-	beq	r3,r4,.Lj10771
+	beq	r3,r4,.Lj10766
 	lui	r4,13
 	ori	r4,r4,1970
-	beq	r3,r4,.Lj10772
+	beq	r3,r4,.Lj10767
 	lui	r4,13
 	ori	r4,r4,1972
-	beq	r3,r4,.Lj10773
-	jal	r0,.Lj10770
-.Lj10771:
+	beq	r3,r4,.Lj10768
+	jal	r0,.Lj10765
+.Lj10766:
 	lui	r3,16
 	stw	r30,r3,-60
-	jal	r0,.Lj10769
-.Lj10772:
+	jal	r0,.Lj10764
+.Lj10767:
 	lui	r3,17
 	ori	r3,r3,1
 	stw	r30,r3,-60
-	jal	r0,.Lj10769
-.Lj10773:
+	jal	r0,.Lj10764
+.Lj10768:
 	lui	r3,16
 	ori	r3,r3,257
 	stw	r30,r3,-60
-	jal	r0,.Lj10769
-.Lj10770:
+	jal	r0,.Lj10764
+.Lj10765:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10774
+	beq	r4,r0,.Lj10769
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10775
-.Lj10774:
+	jal	r0,.Lj10770
+.Lj10769:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10775:
+.Lj10770:
 	addi	r3,r0,102
 	sth	r1,r3,0
-	jal	r0,.Lj10767
-.Lj10769:
+	jal	r0,.Lj10762
+.Lj10764:
 	ldw	r3,r30,-56
 	ldw	r3,r3,596
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10776
-	jal	r0,.Lj10777
-.Lj10776:
+	bne	r3,r0,.Lj10771
+	jal	r0,.Lj10772
+.Lj10771:
 	ldw	r3,r30,-56
 	ldw	r4,r3,596
 	ldw	r3,r30,-56
 	addi	r6,r0,0
 	ldw	r5,r30,-60
 	call	SYSTEM_$$_DO_OPEN$formal$PFILETEXTRECCHAR$LONGINT$BOOLEAN
-	jal	r0,.Lj10778
-.Lj10777:
+	jal	r0,.Lj10773
+.Lj10772:
 	ldw	r3,r30,-56
 	addi	r4,r3,76
 	ldw	r3,r30,-56
 	addi	r6,r0,0
 	ldw	r5,r30,-60
 	call	SYSTEM_$$_DO_OPEN$formal$PFILETEXTRECCHAR$LONGINT$BOOLEAN
-.Lj10778:
+.Lj10773:
 	la	r3,SYSTEM_$$_FILECLOSEFUNC$TEXTREC
 	ldw	r4,r30,-56
 	stw	r4,r3,40
@@ -92362,45 +92331,45 @@ SYSTEM_$$_FILEOPENFUNC$TEXTREC:
 	lui	r4,13
 	ori	r4,r4,1969
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj10779
-	jal	r0,.Lj10780
-.Lj10779:
+	bne	r3,r0,.Lj10774
+	jal	r0,.Lj10775
+.Lj10774:
 	la	r3,SYSTEM_$$_FILEREADFUNC$TEXTREC
 	ldw	r4,r30,-56
 	stw	r4,r3,32
-	jal	r0,.Lj10781
-.Lj10780:
+	jal	r0,.Lj10776
+.Lj10775:
 	la	r3,SYSTEM_$$_FILEWRITEFUNC$TEXTREC
 	ldw	r4,r30,-56
 	stw	r4,r3,32
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj10782
+	beq	r5,r0,.Lj10777
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj10783
-.Lj10782:
+	jal	r0,.Lj10778
+.Lj10777:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10783:
+.Lj10778:
 	ldhu	r3,r1,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10784
-	jal	r0,.Lj10785
-.Lj10784:
+	bne	r3,r0,.Lj10779
+	jal	r0,.Lj10780
+.Lj10779:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	call	SYSTEM_$$_DO_ISDEVICE$LONGINT$$BOOLEAN
-	bne	r1,r0,.Lj10786
-	jal	r0,.Lj10785
-.Lj10786:
+	bne	r1,r0,.Lj10781
+	jal	r0,.Lj10780
+.Lj10781:
 	la	r3,SYSTEM_$$_FILEWRITEFUNC$TEXTREC
 	ldw	r4,r30,-56
 	stw	r4,r3,36
-.Lj10785:
-.Lj10781:
-.Lj10767:
+.Lj10780:
+.Lj10776:
+.Lj10762:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -92443,32 +92412,32 @@ SYSTEM_$$_INITTEXT$TEXT:
 	stw	r4,r3,28
 	la	r3,TC_$SYSTEM_$$_DEFAULTTEXTLINEBREAKSTYLE
 	ldw	r3,r3,0
-	beq	r3,r0,.Lj10790
+	beq	r3,r0,.Lj10785
 	addi	r4,r0,1
-	beq	r3,r4,.Lj10791
+	beq	r3,r4,.Lj10786
 	addi	r4,r0,2
-	beq	r3,r4,.Lj10792
-	jal	r0,.Lj10789
-.Lj10790:
+	beq	r3,r4,.Lj10787
+	jal	r0,.Lj10784
+.Lj10785:
 	ldw	r3,r30,-56
 	lui	r4,0
 	ori	r4,r4,2561
 	sth	r3,r4,332
-	jal	r0,.Lj10789
-.Lj10791:
+	jal	r0,.Lj10784
+.Lj10786:
 	la	r5,.Ld44
 	ldw	r3,r30,-56
 	addi	r3,r3,332
 	addi	r4,r0,3
 	call	fpc_shortstr_to_shortstr
-	jal	r0,.Lj10789
-.Lj10792:
+	jal	r0,.Lj10784
+.Lj10787:
 	ldw	r4,r30,-56
 	lui	r3,0
 	ori	r3,r3,3329
 	sth	r4,r3,332
-	jal	r0,.Lj10789
-.Lj10789:
+	jal	r0,.Lj10784
+.Lj10784:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -92497,7 +92466,7 @@ SYSTEM_$$_ASSIGN$TEXT$UNICODESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj10796
+	bne	r1,r0,.Lj10791
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_INITTEXT$TEXT
 	addi	r3,r30,-420
@@ -92513,14 +92482,14 @@ SYSTEM_$$_ASSIGN$TEXT$UNICODESTRING:
 	addi	r3,r30,-416
 	call	FPC_MOVE
 	ldw	r3,r30,-60
-	beq	r3,r0,.Lj10798
+	beq	r3,r0,.Lj10793
 	ldw	r3,r3,-4
-.Lj10798:
+.Lj10793:
 	addi	r4,r0,255
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj10799
-	jal	r0,.Lj10800
-.Lj10799:
+	bne	r3,r0,.Lj10794
+	jal	r0,.Lj10795
+.Lj10794:
 	addi	r3,r30,-420
 	ldw	r4,r30,-60
 	call	SYSTEM_$$_TOSINGLEBYTEFILESYSTEMENCODEDFILENAME$UNICODESTRING$$RAWBYTESTRING
@@ -92528,19 +92497,19 @@ SYSTEM_$$_ASSIGN$TEXT$UNICODESTRING:
 	ldw	r3,r30,-56
 	addi	r3,r3,596
 	call	fpc_ansistr_assign
-.Lj10800:
+.Lj10795:
 	ldw	r3,r30,-56
 	stb	r3,r0,331
-.Lj10796:
+.Lj10791:
 	call	fpc_popaddrstack
 	addi	r3,r30,-420
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj10795
+	beq	r3,r0,.Lj10790
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj10796
-.Lj10795:
+	jal	r0,.Lj10791
+.Lj10790:
 	ldw	r30,r29,420
 	ldw	r31,r29,424
 	addi	r29,r29,428
@@ -92567,7 +92536,7 @@ SYSTEM_$$_ASSIGN$TEXT$RAWBYTESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj10804
+	bne	r1,r0,.Lj10799
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_INITTEXT$TEXT
 	addi	r3,r30,-420
@@ -92583,14 +92552,14 @@ SYSTEM_$$_ASSIGN$TEXT$RAWBYTESTRING:
 	addi	r3,r30,-416
 	call	FPC_MOVE
 	ldw	r3,r30,-60
-	beq	r3,r0,.Lj10806
+	beq	r3,r0,.Lj10801
 	ldw	r3,r3,-4
-.Lj10806:
+.Lj10801:
 	addi	r4,r0,255
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj10807
-	jal	r0,.Lj10808
-.Lj10807:
+	bne	r3,r0,.Lj10802
+	jal	r0,.Lj10803
+.Lj10802:
 	addi	r3,r30,-420
 	ldw	r4,r30,-60
 	call	SYSTEM_$$_TOSINGLEBYTEFILESYSTEMENCODEDFILENAME$RAWBYTESTRING$$RAWBYTESTRING
@@ -92598,19 +92567,19 @@ SYSTEM_$$_ASSIGN$TEXT$RAWBYTESTRING:
 	ldw	r3,r30,-56
 	addi	r3,r3,596
 	call	fpc_ansistr_assign
-.Lj10808:
+.Lj10803:
 	ldw	r3,r30,-56
 	stb	r3,r0,331
-.Lj10804:
+.Lj10799:
 	call	fpc_popaddrstack
 	addi	r3,r30,-420
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj10803
+	beq	r3,r0,.Lj10798
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj10804
-.Lj10803:
+	jal	r0,.Lj10799
+.Lj10798:
 	ldw	r30,r29,420
 	ldw	r31,r29,424
 	addi	r29,r29,428
@@ -92639,7 +92608,7 @@ SYSTEM_$$_ASSIGN$TEXT$SHORTSTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj10812
+	bne	r1,r0,.Lj10807
 	ldw	r4,r30,-60
 	addi	r3,r30,-164
 	addi	r5,r0,0
@@ -92647,16 +92616,16 @@ SYSTEM_$$_ASSIGN$TEXT$SHORTSTRING:
 	ldw	r4,r30,-164
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_ASSIGN$TEXT$RAWBYTESTRING
-.Lj10812:
+.Lj10807:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj10811
+	beq	r3,r0,.Lj10806
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj10812
-.Lj10811:
+	jal	r0,.Lj10807
+.Lj10806:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -92685,7 +92654,7 @@ SYSTEM_$$_ASSIGN$TEXT$PANSICHAR:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj10817
+	bne	r1,r0,.Lj10812
 	addi	r3,r30,-164
 	addi	r5,r0,0
 	ldw	r4,r30,-60
@@ -92693,16 +92662,16 @@ SYSTEM_$$_ASSIGN$TEXT$PANSICHAR:
 	ldw	r4,r30,-164
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_ASSIGN$TEXT$RAWBYTESTRING
-.Lj10817:
+.Lj10812:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj10816
+	beq	r3,r0,.Lj10811
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj10817
-.Lj10816:
+	jal	r0,.Lj10812
+.Lj10811:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -92729,7 +92698,7 @@ SYSTEM_$$_ASSIGN$TEXT$ANSICHAR:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj10822
+	bne	r1,r0,.Lj10817
 	addi	r3,r30,-164
 	addi	r5,r0,0
 	ldbu	r4,r30,-60
@@ -92737,16 +92706,16 @@ SYSTEM_$$_ASSIGN$TEXT$ANSICHAR:
 	ldw	r4,r30,-164
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_ASSIGN$TEXT$RAWBYTESTRING
-.Lj10822:
+.Lj10817:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj10821
+	beq	r3,r0,.Lj10816
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj10822
-.Lj10821:
+	jal	r0,.Lj10817
+.Lj10816:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -92766,73 +92735,73 @@ SYSTEM_$$_CLOSE$TEXT:
 	stw	r30,r3,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10826
+	beq	r4,r0,.Lj10821
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10827
-.Lj10826:
+	jal	r0,.Lj10822
+.Lj10821:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10827:
+.Lj10822:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10828
-	jal	r0,.Lj10829
-.Lj10828:
+	bne	r3,r0,.Lj10823
 	jal	r0,.Lj10824
-.Lj10829:
+.Lj10823:
+	jal	r0,.Lj10819
+.Lj10824:
 	ldw	r3,r30,-56
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1969
-	blt	r3,r4,.Lj10831
+	blt	r3,r4,.Lj10826
 	lui	r4,13
 	ori	r4,r4,1970
-	ble	r3,r4,.Lj10832
+	ble	r3,r4,.Lj10827
 	lui	r4,13
 	ori	r4,r4,1972
-	beq	r3,r4,.Lj10832
-	jal	r0,.Lj10831
-.Lj10832:
+	beq	r3,r4,.Lj10827
+	jal	r0,.Lj10826
+.Lj10827:
 	ldw	r3,r30,-56
 	ldw	r4,r3,4
 	lui	r3,13
 	ori	r3,r3,1970
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj10833
-	jal	r0,.Lj10834
-.Lj10833:
+	bne	r3,r0,.Lj10828
+	jal	r0,.Lj10829
+.Lj10828:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
 	ldw	r4,r4,32
 	jalr	r31,r4
-.Lj10834:
+.Lj10829:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10835
-	jal	r0,.Lj10836
-.Lj10835:
+	bne	r3,r0,.Lj10830
+	jal	r0,.Lj10831
+.Lj10830:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	addi	r3,r3,-1
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10837
-	jal	r0,.Lj10836
-.Lj10837:
+	bne	r3,r0,.Lj10832
+	jal	r0,.Lj10831
+.Lj10832:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	addi	r3,r3,-2
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10838
-	jal	r0,.Lj10836
-.Lj10838:
+	bne	r3,r0,.Lj10833
+	jal	r0,.Lj10831
+.Lj10833:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
 	ldw	r4,r4,40
 	jalr	r31,r4
-.Lj10836:
+.Lj10831:
 	ldw	r4,r30,-56
 	lui	r3,13
 	ori	r3,r3,1968
@@ -92841,27 +92810,27 @@ SYSTEM_$$_CLOSE$TEXT:
 	stw	r3,r0,16
 	ldw	r3,r30,-56
 	stw	r3,r0,20
-	jal	r0,.Lj10830
-.Lj10831:
+	jal	r0,.Lj10825
+.Lj10826:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj10839
+	beq	r5,r0,.Lj10834
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj10840
-.Lj10839:
+	jal	r0,.Lj10835
+.Lj10834:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10840:
+.Lj10835:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj10830:
+.Lj10825:
 	ldw	r3,r30,-56
 	addi	r3,r3,596
 	addi	r4,r0,0
 	call	fpc_ansistr_assign
-.Lj10824:
+.Lj10819:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -92887,36 +92856,36 @@ SYSTEM_$$_OPENTEXT$TEXT$LONGINT$LONGINT:
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1968
-	beq	r3,r4,.Lj10846
+	beq	r3,r4,.Lj10841
 	lui	r4,13
 	ori	r4,r4,1969
-	blt	r3,r4,.Lj10844
+	blt	r3,r4,.Lj10839
 	lui	r4,13
 	ori	r4,r4,1971
-	ble	r3,r4,.Lj10845
-	jal	r0,.Lj10844
-.Lj10845:
+	ble	r3,r4,.Lj10840
+	jal	r0,.Lj10839
+.Lj10840:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CLOSE$TEXT
-	jal	r0,.Lj10843
-.Lj10846:
-	jal	r0,.Lj10843
-.Lj10844:
+	jal	r0,.Lj10838
+.Lj10841:
+	jal	r0,.Lj10838
+.Lj10839:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10847
+	beq	r4,r0,.Lj10842
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10848
-.Lj10847:
+	jal	r0,.Lj10843
+.Lj10842:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10848:
+.Lj10843:
 	addi	r3,r0,102
 	sth	r1,r3,0
-	jal	r0,.Lj10841
-.Lj10843:
+	jal	r0,.Lj10836
+.Lj10838:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	stw	r3,r4,4
@@ -92934,12 +92903,12 @@ SYSTEM_$$_OPENTEXT$TEXT$LONGINT$LONGINT:
 	ldhu	r6,r30,-68
 	addi	r5,r0,1
 	sleu	r5,r6,r5
-	bne	r5,r0,.Lj10850
-	jal	r0,.Lj10851
-.Lj10850:
+	bne	r5,r0,.Lj10845
+	jal	r0,.Lj10846
+.Lj10845:
 	la	r5,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r4,r5,0
-.Lj10851:
+.Lj10846:
 	sth	r3,r4,592
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
@@ -92947,26 +92916,26 @@ SYSTEM_$$_OPENTEXT$TEXT$LONGINT$LONGINT:
 	jalr	r31,r4
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10852
+	beq	r4,r0,.Lj10847
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10853
-.Lj10852:
+	jal	r0,.Lj10848
+.Lj10847:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10853:
+.Lj10848:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10854
-	jal	r0,.Lj10855
-.Lj10854:
+	bne	r3,r0,.Lj10849
+	jal	r0,.Lj10850
+.Lj10849:
 	ldw	r4,r30,-56
 	lui	r3,13
 	ori	r3,r3,1968
 	stw	r4,r3,4
-.Lj10855:
-.Lj10841:
+.Lj10850:
+.Lj10836:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -92988,28 +92957,28 @@ SYSTEM_$$_REWRITE$TEXT:
 	stw	r30,r3,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10858
+	beq	r4,r0,.Lj10853
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10859
-.Lj10858:
+	jal	r0,.Lj10854
+.Lj10853:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10859:
+.Lj10854:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10860
-	jal	r0,.Lj10861
-.Lj10860:
+	bne	r3,r0,.Lj10855
 	jal	r0,.Lj10856
-.Lj10861:
+.Lj10855:
+	jal	r0,.Lj10851
+.Lj10856:
 	ldw	r3,r30,-56
 	addi	r5,r0,1
 	lui	r4,13
 	ori	r4,r4,1970
 	call	SYSTEM_$$_OPENTEXT$TEXT$LONGINT$LONGINT
-.Lj10856:
+.Lj10851:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -93029,28 +92998,28 @@ SYSTEM_$$_RESET$TEXT:
 	stw	r30,r3,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10864
+	beq	r4,r0,.Lj10859
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10865
-.Lj10864:
+	jal	r0,.Lj10860
+.Lj10859:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10865:
+.Lj10860:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10866
-	jal	r0,.Lj10867
-.Lj10866:
+	bne	r3,r0,.Lj10861
 	jal	r0,.Lj10862
-.Lj10867:
+.Lj10861:
+	jal	r0,.Lj10857
+.Lj10862:
 	ldw	r3,r30,-56
 	addi	r5,r0,0
 	lui	r4,13
 	ori	r4,r4,1969
 	call	SYSTEM_$$_OPENTEXT$TEXT$LONGINT$LONGINT
-.Lj10862:
+.Lj10857:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -93070,28 +93039,28 @@ SYSTEM_$$_APPEND$TEXT:
 	stw	r30,r3,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10870
+	beq	r4,r0,.Lj10865
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10871
-.Lj10870:
+	jal	r0,.Lj10866
+.Lj10865:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10871:
+.Lj10866:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10872
-	jal	r0,.Lj10873
-.Lj10872:
+	bne	r3,r0,.Lj10867
 	jal	r0,.Lj10868
-.Lj10873:
+.Lj10867:
+	jal	r0,.Lj10863
+.Lj10868:
 	ldw	r3,r30,-56
 	addi	r5,r0,1
 	lui	r4,13
 	ori	r4,r4,1972
 	call	SYSTEM_$$_OPENTEXT$TEXT$LONGINT$LONGINT
-.Lj10868:
+.Lj10863:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -93111,74 +93080,74 @@ SYSTEM_$$_FLUSH$TEXT:
 	stw	r30,r3,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10876
+	beq	r4,r0,.Lj10871
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10877
-.Lj10876:
+	jal	r0,.Lj10872
+.Lj10871:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10877:
+.Lj10872:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10878
-	jal	r0,.Lj10879
-.Lj10878:
+	bne	r3,r0,.Lj10873
 	jal	r0,.Lj10874
-.Lj10879:
+.Lj10873:
+	jal	r0,.Lj10869
+.Lj10874:
 	ldw	r3,r30,-56
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1970
 	sne	r3,r3,r4
-	bne	r3,r0,.Lj10880
-	jal	r0,.Lj10881
-.Lj10880:
+	bne	r3,r0,.Lj10875
+	jal	r0,.Lj10876
+.Lj10875:
 	ldw	r3,r30,-56
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1969
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj10882
-	jal	r0,.Lj10883
-.Lj10882:
+	bne	r3,r0,.Lj10877
+	jal	r0,.Lj10878
+.Lj10877:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj10884
+	beq	r5,r0,.Lj10879
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj10885
-.Lj10884:
+	jal	r0,.Lj10880
+.Lj10879:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10885:
+.Lj10880:
 	addi	r3,r0,105
 	sth	r1,r3,0
-	jal	r0,.Lj10886
-.Lj10883:
+	jal	r0,.Lj10881
+.Lj10878:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10887
+	beq	r4,r0,.Lj10882
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10888
-.Lj10887:
+	jal	r0,.Lj10883
+.Lj10882:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10888:
+.Lj10883:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj10886:
-	jal	r0,.Lj10874
 .Lj10881:
+	jal	r0,.Lj10869
+.Lj10876:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
 	ldw	r4,r4,32
 	jalr	r31,r4
-.Lj10874:
+.Lj10869:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -93200,50 +93169,50 @@ SYSTEM_$$_ERASE$TEXT:
 	stw	r30,r3,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10891
+	beq	r4,r0,.Lj10886
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10892
-.Lj10891:
+	jal	r0,.Lj10887
+.Lj10886:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10892:
+.Lj10887:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10893
-	jal	r0,.Lj10894
-.Lj10893:
+	bne	r3,r0,.Lj10888
 	jal	r0,.Lj10889
-.Lj10894:
+.Lj10888:
+	jal	r0,.Lj10884
+.Lj10889:
 	ldw	r3,r30,-56
 	ldw	r4,r3,4
 	lui	r3,13
 	ori	r3,r3,1968
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj10895
-	jal	r0,.Lj10896
-.Lj10895:
+	bne	r3,r0,.Lj10890
+	jal	r0,.Lj10891
+.Lj10890:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj10897
+	beq	r5,r0,.Lj10892
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj10898
-.Lj10897:
+	jal	r0,.Lj10893
+.Lj10892:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10898:
+.Lj10893:
 	addi	r3,r0,102
 	sth	r1,r3,0
-	jal	r0,.Lj10889
-.Lj10896:
+	jal	r0,.Lj10884
+.Lj10891:
 	ldw	r3,r30,-56
 	addi	r3,r3,76
 	addi	r4,r0,0
 	call	SYSTEM_$$_DO_ERASE$PANSICHAR$BOOLEAN
-.Lj10889:
+.Lj10884:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -93270,56 +93239,56 @@ SYSTEM_$$_RENAME$TEXT$UNICODESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj10902
+	bne	r1,r0,.Lj10897
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10904
+	beq	r4,r0,.Lj10899
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10905
-.Lj10904:
+	jal	r0,.Lj10900
+.Lj10899:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10905:
+.Lj10900:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10906
-	jal	r0,.Lj10907
-.Lj10906:
-	jal	r0,.Lj10903
-.Lj10907:
+	bne	r3,r0,.Lj10901
+	jal	r0,.Lj10902
+.Lj10901:
+	jal	r0,.Lj10898
+.Lj10902:
 	ldw	r3,r30,-56
 	ldw	r4,r3,4
 	lui	r3,13
 	ori	r3,r3,1968
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj10908
-	jal	r0,.Lj10909
-.Lj10908:
+	bne	r3,r0,.Lj10903
+	jal	r0,.Lj10904
+.Lj10903:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj10910
+	beq	r5,r0,.Lj10905
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj10911
-.Lj10910:
+	jal	r0,.Lj10906
+.Lj10905:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10911:
+.Lj10906:
 	addi	r3,r0,102
 	sth	r1,r3,0
-	jal	r0,.Lj10903
-.Lj10909:
+	jal	r0,.Lj10898
+.Lj10904:
 	addi	r3,r30,-64
 	ldw	r4,r30,-60
 	call	SYSTEM_$$_TOSINGLEBYTEFILESYSTEMENCODEDFILENAME$UNICODESTRING$$RAWBYTESTRING
 	ldw	r4,r30,-64
-	bne	r4,r0,.Lj10912
+	bne	r4,r0,.Lj10907
 	la	r3,FPC_EMPTYCHAR
 	addi	r4,r3,0
-.Lj10912:
+.Lj10907:
 	ldw	r3,r30,-56
 	addi	r3,r3,76
 	addi	r6,r0,1
@@ -93327,20 +93296,20 @@ SYSTEM_$$_RENAME$TEXT$UNICODESTRING:
 	call	SYSTEM_$$_DO_RENAME$PANSICHAR$PANSICHAR$BOOLEAN$BOOLEAN
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10913
+	beq	r4,r0,.Lj10908
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10914
-.Lj10913:
+	jal	r0,.Lj10909
+.Lj10908:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10914:
+.Lj10909:
 	ldhu	r3,r1,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10915
-	jal	r0,.Lj10916
-.Lj10915:
+	bne	r3,r0,.Lj10910
+	jal	r0,.Lj10911
+.Lj10910:
 	ldw	r5,r30,-64
 	addi	r3,r30,-420
 	addi	r4,r0,255
@@ -93350,18 +93319,18 @@ SYSTEM_$$_RENAME$TEXT$UNICODESTRING:
 	addi	r4,r3,76
 	addi	r3,r30,-420
 	call	FPC_MOVE
-.Lj10916:
-.Lj10902:
+.Lj10911:
+.Lj10897:
 	call	fpc_popaddrstack
 	addi	r3,r30,-64
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj10901
+	beq	r3,r0,.Lj10896
 	call	fpc_reraise
-.Lj10903:
+.Lj10898:
 	stw	r30,r0,-164
-	jal	r0,.Lj10902
-.Lj10901:
+	jal	r0,.Lj10897
+.Lj10896:
 	ldw	r30,r29,420
 	ldw	r31,r29,424
 	addi	r29,r29,428
@@ -93388,54 +93357,54 @@ SYSTEM_$$_RENAME$TEXT$RAWBYTESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-172
-	bne	r1,r0,.Lj10920
+	bne	r1,r0,.Lj10915
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10922
+	beq	r4,r0,.Lj10917
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10923
-.Lj10922:
+	jal	r0,.Lj10918
+.Lj10917:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10923:
+.Lj10918:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10924
-	jal	r0,.Lj10925
-.Lj10924:
-	jal	r0,.Lj10921
-.Lj10925:
+	bne	r3,r0,.Lj10919
+	jal	r0,.Lj10920
+.Lj10919:
+	jal	r0,.Lj10916
+.Lj10920:
 	ldw	r3,r30,-56
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1968
 	sne	r3,r3,r4
-	bne	r3,r0,.Lj10926
-	jal	r0,.Lj10927
-.Lj10926:
+	bne	r3,r0,.Lj10921
+	jal	r0,.Lj10922
+.Lj10921:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj10928
+	beq	r5,r0,.Lj10923
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj10929
-.Lj10928:
+	jal	r0,.Lj10924
+.Lj10923:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10929:
+.Lj10924:
 	addi	r3,r0,102
 	sth	r1,r3,0
-	jal	r0,.Lj10921
-.Lj10927:
+	jal	r0,.Lj10916
+.Lj10922:
 	stb	r30,r0,-72
 	ldw	r4,r30,-60
-	bne	r4,r0,.Lj10930
+	bne	r4,r0,.Lj10925
 	la	r3,FPC_EMPTYCHAR
 	addi	r4,r3,0
-.Lj10930:
+.Lj10925:
 	stw	r30,r4,-68
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_STRINGCODEPAGE$RAWBYTESTRING$$WORD
@@ -93444,35 +93413,35 @@ SYSTEM_$$_RENAME$TEXT$RAWBYTESTRING:
 	ldhu	r4,r30,-176
 	addi	r5,r0,1
 	sleu	r4,r4,r5
-	bne	r4,r0,.Lj10932
-	jal	r0,.Lj10933
-.Lj10932:
+	bne	r4,r0,.Lj10927
+	jal	r0,.Lj10928
+.Lj10927:
 	la	r4,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r3,r4,0
-.Lj10933:
+.Lj10928:
 	la	r4,U_$SYSTEM_$$_DEFAULTFILESYSTEMCODEPAGE
 	ldhu	r4,r4,0
 	sne	r3,r3,r4
-	bne	r3,r0,.Lj10934
-	jal	r0,.Lj10935
-.Lj10934:
+	bne	r3,r0,.Lj10929
+	jal	r0,.Lj10930
+.Lj10929:
 	addi	r3,r30,-64
 	ldw	r4,r30,-60
 	call	SYSTEM_$$_TOSINGLEBYTEFILESYSTEMENCODEDFILENAME$RAWBYTESTRING$$RAWBYTESTRING
 	ldw	r4,r30,-64
-	bne	r4,r0,.Lj10936
+	bne	r4,r0,.Lj10931
 	la	r3,FPC_EMPTYCHAR
 	addi	r4,r3,0
-.Lj10936:
+.Lj10931:
 	stw	r30,r4,-68
 	addi	r3,r0,1
 	stb	r30,r3,-72
-	jal	r0,.Lj10937
-.Lj10935:
+	jal	r0,.Lj10932
+.Lj10930:
 	addi	r3,r30,-64
 	ldw	r4,r30,-60
 	call	fpc_ansistr_assign
-.Lj10937:
+.Lj10932:
 	ldw	r3,r30,-56
 	addi	r3,r3,76
 	ldbu	r6,r30,-72
@@ -93481,20 +93450,20 @@ SYSTEM_$$_RENAME$TEXT$RAWBYTESTRING:
 	call	SYSTEM_$$_DO_RENAME$PANSICHAR$PANSICHAR$BOOLEAN$BOOLEAN
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10938
+	beq	r4,r0,.Lj10933
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10939
-.Lj10938:
+	jal	r0,.Lj10934
+.Lj10933:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10939:
+.Lj10934:
 	ldhu	r3,r1,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10940
-	jal	r0,.Lj10941
-.Lj10940:
+	bne	r3,r0,.Lj10935
+	jal	r0,.Lj10936
+.Lj10935:
 	ldw	r5,r30,-64
 	addi	r3,r30,-432
 	addi	r4,r0,255
@@ -93504,18 +93473,18 @@ SYSTEM_$$_RENAME$TEXT$RAWBYTESTRING:
 	addi	r4,r3,76
 	addi	r3,r30,-432
 	call	FPC_MOVE
-.Lj10941:
-.Lj10920:
+.Lj10936:
+.Lj10915:
 	call	fpc_popaddrstack
 	addi	r3,r30,-64
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-172
-	beq	r3,r0,.Lj10919
+	beq	r3,r0,.Lj10914
 	call	fpc_reraise
-.Lj10921:
+.Lj10916:
 	stw	r30,r0,-172
-	jal	r0,.Lj10920
-.Lj10919:
+	jal	r0,.Lj10915
+.Lj10914:
 	ldw	r30,r29,432
 	ldw	r31,r29,436
 	addi	r29,r29,440
@@ -93544,7 +93513,7 @@ SYSTEM_$$_RENAME$TEXT$SHORTSTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj10945
+	bne	r1,r0,.Lj10940
 	ldw	r4,r30,-60
 	addi	r3,r30,-164
 	addi	r5,r0,0
@@ -93552,16 +93521,16 @@ SYSTEM_$$_RENAME$TEXT$SHORTSTRING:
 	ldw	r4,r30,-164
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_RENAME$TEXT$RAWBYTESTRING
-.Lj10945:
+.Lj10940:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj10944
+	beq	r3,r0,.Lj10939
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj10945
-.Lj10944:
+	jal	r0,.Lj10940
+.Lj10939:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -93588,7 +93557,7 @@ SYSTEM_$$_RENAME$TEXT$PANSICHAR:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj10950
+	bne	r1,r0,.Lj10945
 	addi	r3,r30,-164
 	addi	r5,r0,0
 	ldw	r4,r30,-60
@@ -93596,16 +93565,16 @@ SYSTEM_$$_RENAME$TEXT$PANSICHAR:
 	ldw	r4,r30,-164
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_RENAME$TEXT$RAWBYTESTRING
-.Lj10950:
+.Lj10945:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj10949
+	beq	r3,r0,.Lj10944
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj10950
-.Lj10949:
+	jal	r0,.Lj10945
+.Lj10944:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -93632,7 +93601,7 @@ SYSTEM_$$_RENAME$TEXT$ANSICHAR:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj10955
+	bne	r1,r0,.Lj10950
 	addi	r3,r30,-164
 	addi	r5,r0,0
 	ldbu	r4,r30,-60
@@ -93640,16 +93609,16 @@ SYSTEM_$$_RENAME$TEXT$ANSICHAR:
 	ldw	r4,r30,-164
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_RENAME$TEXT$RAWBYTESTRING
-.Lj10955:
+.Lj10950:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj10954
+	beq	r3,r0,.Lj10949
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj10955
-.Lj10954:
+	jal	r0,.Lj10950
+.Lj10949:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -93671,9 +93640,9 @@ SYSTEM_$$_READTEXTBUF$TEXT:
 	ldw	r4,r3,20
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj10959
-	jal	r0,.Lj10960
-.Lj10959:
+	bne	r3,r0,.Lj10954
+	jal	r0,.Lj10955
+.Lj10954:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -93682,22 +93651,22 @@ SYSTEM_$$_READTEXTBUF$TEXT:
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r4,r0,10
-	beq	r3,r4,.Lj10961
+	beq	r3,r4,.Lj10956
 	addi	r4,r0,13
-	beq	r3,r4,.Lj10961
+	beq	r3,r4,.Lj10956
 	addi	r4,r0,26
-	beq	r3,r4,.Lj10961
-	jal	r0,.Lj10962
-.Lj10961:
+	beq	r3,r4,.Lj10956
+	jal	r0,.Lj10957
+.Lj10956:
 	ldw	r3,r30,-56
 	stw	r3,r0,12
-	jal	r0,.Lj10963
-.Lj10962:
+	jal	r0,.Lj10958
+.Lj10957:
 	ldw	r3,r30,-56
 	addi	r4,r0,1
 	stw	r3,r4,12
-.Lj10963:
-.Lj10960:
+.Lj10958:
+.Lj10955:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
 	ldw	r4,r4,32
@@ -93723,81 +93692,81 @@ SYSTEM_$$_EOF$TEXT$$BOOLEAN:
 	stw	r30,r3,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10966
+	beq	r4,r0,.Lj10961
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10967
-.Lj10966:
+	jal	r0,.Lj10962
+.Lj10961:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10967:
+.Lj10962:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10968
-	jal	r0,.Lj10969
-.Lj10968:
+	bne	r3,r0,.Lj10963
+	jal	r0,.Lj10964
+.Lj10963:
 	addi	r3,r0,1
 	stb	r30,r3,-60
-	jal	r0,.Lj10964
-.Lj10969:
+	jal	r0,.Lj10959
+.Lj10964:
 	ldw	r3,r30,-56
 	ldw	r4,r3,4
 	lui	r3,13
 	ori	r3,r3,1969
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj10970
-	jal	r0,.Lj10971
-.Lj10970:
+	bne	r3,r0,.Lj10965
+	jal	r0,.Lj10966
+.Lj10965:
 	ldw	r3,r30,-56
 	ldw	r4,r3,4
 	lui	r3,13
 	ori	r3,r3,1970
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj10972
-	jal	r0,.Lj10973
-.Lj10972:
+	bne	r3,r0,.Lj10967
+	jal	r0,.Lj10968
+.Lj10967:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj10974
+	beq	r5,r0,.Lj10969
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj10975
-.Lj10974:
+	jal	r0,.Lj10970
+.Lj10969:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10975:
+.Lj10970:
 	addi	r3,r0,104
 	sth	r1,r3,0
-	jal	r0,.Lj10976
-.Lj10973:
+	jal	r0,.Lj10971
+.Lj10968:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10977
+	beq	r4,r0,.Lj10972
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10978
-.Lj10977:
+	jal	r0,.Lj10973
+.Lj10972:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10978:
+.Lj10973:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj10976:
+.Lj10971:
 	addi	r3,r0,1
 	stb	r30,r3,-60
-	jal	r0,.Lj10964
-.Lj10971:
+	jal	r0,.Lj10959
+.Lj10966:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-56
 	ldw	r4,r4,16
 	ldw	r3,r3,20
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj10979
-	jal	r0,.Lj10980
-.Lj10979:
+	bne	r3,r0,.Lj10974
+	jal	r0,.Lj10975
+.Lj10974:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_READTEXTBUF$TEXT
 	ldw	r3,r30,-56
@@ -93805,19 +93774,19 @@ SYSTEM_$$_EOF$TEXT$$BOOLEAN:
 	ldw	r3,r3,16
 	ldw	r4,r4,20
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj10981
-	jal	r0,.Lj10982
-.Lj10981:
+	bne	r3,r0,.Lj10976
+	jal	r0,.Lj10977
+.Lj10976:
 	addi	r3,r0,1
 	stb	r30,r3,-60
-	jal	r0,.Lj10964
-.Lj10982:
-.Lj10980:
+	jal	r0,.Lj10959
+.Lj10977:
+.Lj10975:
 	la	r3,TC_$SYSTEM_$$_CTRLZMARKSEOF
 	ldbu	r3,r3,0
-	bne	r3,r0,.Lj10983
-	jal	r0,.Lj10984
-.Lj10983:
+	bne	r3,r0,.Lj10978
+	jal	r0,.Lj10979
+.Lj10978:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -93826,16 +93795,16 @@ SYSTEM_$$_EOF$TEXT$$BOOLEAN:
 	ldbu	r3,r3,0
 	addi	r3,r3,-26
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj10985
-	jal	r0,.Lj10984
-.Lj10985:
+	bne	r3,r0,.Lj10980
+	jal	r0,.Lj10979
+.Lj10980:
 	addi	r3,r0,1
 	stb	r30,r3,-60
-	jal	r0,.Lj10986
-.Lj10984:
+	jal	r0,.Lj10981
+.Lj10979:
 	stb	r30,r0,-60
-.Lj10986:
-.Lj10964:
+.Lj10981:
+.Lj10959:
 	ldbu	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -93857,16 +93826,16 @@ SYSTEM_$$_EOF$$BOOLEAN:
 	addi	r29,r29,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10989
+	beq	r4,r0,.Lj10984
 	la	r5,U_$SYSTEM_$$_INPUT
 	ldw	r3,r5,0
 	jalr	r31,r4
 	addi	r3,r1,0
-	jal	r0,.Lj10990
-.Lj10989:
+	jal	r0,.Lj10985
+.Lj10984:
 	la	r4,U_$SYSTEM_$$_INPUT
 	addi	r3,r4,4
-.Lj10990:
+.Lj10985:
 	call	SYSTEM_$$_EOF$TEXT$$BOOLEAN
 	stb	r30,r1,-56
 	ldbu	r1,r30,-56
@@ -93889,82 +93858,82 @@ SYSTEM_$$_SEEKEOF$TEXT$$BOOLEAN:
 	stw	r30,r3,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj10993
+	beq	r4,r0,.Lj10988
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj10994
-.Lj10993:
+	jal	r0,.Lj10989
+.Lj10988:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj10994:
+.Lj10989:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj10995
-	jal	r0,.Lj10996
-.Lj10995:
+	bne	r3,r0,.Lj10990
+	jal	r0,.Lj10991
+.Lj10990:
 	addi	r3,r0,1
 	stb	r30,r3,-60
-	jal	r0,.Lj10991
-.Lj10996:
+	jal	r0,.Lj10986
+.Lj10991:
 	ldw	r3,r30,-56
 	ldw	r4,r3,4
 	lui	r3,13
 	ori	r3,r3,1969
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj10997
-	jal	r0,.Lj10998
-.Lj10997:
+	bne	r3,r0,.Lj10992
+	jal	r0,.Lj10993
+.Lj10992:
 	ldw	r3,r30,-56
 	ldw	r4,r3,4
 	lui	r3,13
 	ori	r3,r3,1970
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj10999
-	jal	r0,.Lj11000
-.Lj10999:
+	bne	r3,r0,.Lj10994
+	jal	r0,.Lj10995
+.Lj10994:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11001
+	beq	r4,r0,.Lj10996
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11002
-.Lj11001:
+	jal	r0,.Lj10997
+.Lj10996:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11002:
+.Lj10997:
 	addi	r3,r0,104
 	sth	r1,r3,0
-	jal	r0,.Lj11003
-.Lj11000:
+	jal	r0,.Lj10998
+.Lj10995:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11004
+	beq	r4,r0,.Lj10999
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11005
-.Lj11004:
+	jal	r0,.Lj11000
+.Lj10999:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11005:
+.Lj11000:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj11003:
+.Lj10998:
 	addi	r3,r0,1
 	stb	r30,r3,-60
-	jal	r0,.Lj10991
-.Lj10998:
-.Lj11006:
+	jal	r0,.Lj10986
+.Lj10993:
+.Lj11001:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-56
 	ldw	r4,r4,16
 	ldw	r3,r3,20
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11009
-	jal	r0,.Lj11010
-.Lj11009:
+	bne	r3,r0,.Lj11004
+	jal	r0,.Lj11005
+.Lj11004:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_READTEXTBUF$TEXT
 	ldw	r3,r30,-56
@@ -93972,14 +93941,14 @@ SYSTEM_$$_SEEKEOF$TEXT$$BOOLEAN:
 	ldw	r3,r3,16
 	ldw	r4,r4,20
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj11011
-	jal	r0,.Lj11012
-.Lj11011:
+	bne	r3,r0,.Lj11006
+	jal	r0,.Lj11007
+.Lj11006:
 	addi	r3,r0,1
 	stb	r30,r3,-60
-	jal	r0,.Lj11008
-.Lj11012:
-.Lj11010:
+	jal	r0,.Lj11003
+.Lj11007:
+.Lj11005:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -93987,40 +93956,40 @@ SYSTEM_$$_SEEKEOF$TEXT$$BOOLEAN:
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r4,r0,9
-	bltu	r3,r4,.Lj11014
+	bltu	r3,r4,.Lj11009
 	addi	r4,r0,10
-	bleu	r3,r4,.Lj11016
+	bleu	r3,r4,.Lj11011
 	addi	r4,r0,13
-	beq	r3,r4,.Lj11016
+	beq	r3,r4,.Lj11011
 	addi	r4,r0,26
-	beq	r3,r4,.Lj11015
+	beq	r3,r4,.Lj11010
 	addi	r4,r0,32
-	beq	r3,r4,.Lj11016
-	jal	r0,.Lj11014
-.Lj11015:
+	beq	r3,r4,.Lj11011
+	jal	r0,.Lj11009
+.Lj11010:
 	la	r3,TC_$SYSTEM_$$_CTRLZMARKSEOF
 	ldbu	r3,r3,0
-	bne	r3,r0,.Lj11017
-	jal	r0,.Lj11018
-.Lj11017:
+	bne	r3,r0,.Lj11012
+	jal	r0,.Lj11013
+.Lj11012:
 	addi	r3,r0,1
 	stb	r30,r3,-60
-	jal	r0,.Lj11008
-.Lj11018:
-	jal	r0,.Lj11013
-.Lj11016:
-	jal	r0,.Lj11013
-.Lj11014:
-	stb	r30,r0,-60
-	jal	r0,.Lj11008
+	jal	r0,.Lj11003
 .Lj11013:
+	jal	r0,.Lj11008
+.Lj11011:
+	jal	r0,.Lj11008
+.Lj11009:
+	stb	r30,r0,-60
+	jal	r0,.Lj11003
+.Lj11008:
 	ldw	r4,r30,-56
 	ldw	r3,r4,16
 	addi	r3,r3,1
 	stw	r4,r3,16
-	jal	r0,.Lj11006
-.Lj11008:
-.Lj10991:
+	jal	r0,.Lj11001
+.Lj11003:
+.Lj10986:
 	ldbu	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -94042,16 +94011,16 @@ SYSTEM_$$_SEEKEOF$$BOOLEAN:
 	addi	r29,r29,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11021
+	beq	r4,r0,.Lj11016
 	la	r5,U_$SYSTEM_$$_INPUT
 	ldw	r3,r5,0
 	jalr	r31,r4
 	addi	r3,r1,0
-	jal	r0,.Lj11022
-.Lj11021:
+	jal	r0,.Lj11017
+.Lj11016:
 	la	r4,U_$SYSTEM_$$_INPUT
 	addi	r3,r4,4
-.Lj11022:
+.Lj11017:
 	call	SYSTEM_$$_SEEKEOF$TEXT$$BOOLEAN
 	stb	r30,r1,-56
 	ldbu	r1,r30,-56
@@ -94074,81 +94043,81 @@ SYSTEM_$$_EOLN$TEXT$$BOOLEAN:
 	stw	r30,r3,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11025
+	beq	r4,r0,.Lj11020
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11026
-.Lj11025:
+	jal	r0,.Lj11021
+.Lj11020:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11026:
+.Lj11021:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11027
-	jal	r0,.Lj11028
-.Lj11027:
+	bne	r3,r0,.Lj11022
+	jal	r0,.Lj11023
+.Lj11022:
 	addi	r3,r0,1
 	stb	r30,r3,-60
-	jal	r0,.Lj11023
-.Lj11028:
+	jal	r0,.Lj11018
+.Lj11023:
 	ldw	r3,r30,-56
 	ldw	r4,r3,4
 	lui	r3,13
 	ori	r3,r3,1969
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj11029
-	jal	r0,.Lj11030
-.Lj11029:
+	bne	r3,r0,.Lj11024
+	jal	r0,.Lj11025
+.Lj11024:
 	ldw	r3,r30,-56
 	ldw	r4,r3,4
 	lui	r3,13
 	ori	r3,r3,1970
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj11031
-	jal	r0,.Lj11032
-.Lj11031:
+	bne	r3,r0,.Lj11026
+	jal	r0,.Lj11027
+.Lj11026:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj11033
+	beq	r5,r0,.Lj11028
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj11034
-.Lj11033:
+	jal	r0,.Lj11029
+.Lj11028:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11034:
+.Lj11029:
 	addi	r3,r0,104
 	sth	r1,r3,0
-	jal	r0,.Lj11035
-.Lj11032:
+	jal	r0,.Lj11030
+.Lj11027:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11036
+	beq	r4,r0,.Lj11031
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11037
-.Lj11036:
+	jal	r0,.Lj11032
+.Lj11031:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11037:
+.Lj11032:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj11035:
+.Lj11030:
 	addi	r3,r0,1
 	stb	r30,r3,-60
-	jal	r0,.Lj11023
-.Lj11030:
+	jal	r0,.Lj11018
+.Lj11025:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-56
 	ldw	r4,r4,16
 	ldw	r3,r3,20
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11038
-	jal	r0,.Lj11039
-.Lj11038:
+	bne	r3,r0,.Lj11033
+	jal	r0,.Lj11034
+.Lj11033:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_READTEXTBUF$TEXT
 	ldw	r3,r30,-56
@@ -94156,19 +94125,19 @@ SYSTEM_$$_EOLN$TEXT$$BOOLEAN:
 	ldw	r3,r3,16
 	ldw	r4,r4,20
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj11040
-	jal	r0,.Lj11041
-.Lj11040:
+	bne	r3,r0,.Lj11035
+	jal	r0,.Lj11036
+.Lj11035:
 	addi	r3,r0,1
 	stb	r30,r3,-60
-	jal	r0,.Lj11023
-.Lj11041:
-.Lj11039:
+	jal	r0,.Lj11018
+.Lj11036:
+.Lj11034:
 	la	r3,TC_$SYSTEM_$$_CTRLZMARKSEOF
 	ldbu	r3,r3,0
-	bne	r3,r0,.Lj11042
-	jal	r0,.Lj11043
-.Lj11042:
+	bne	r3,r0,.Lj11037
+	jal	r0,.Lj11038
+.Lj11037:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -94177,13 +94146,13 @@ SYSTEM_$$_EOLN$TEXT$$BOOLEAN:
 	ldbu	r3,r3,0
 	addi	r3,r3,-26
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11044
-	jal	r0,.Lj11043
-.Lj11044:
+	bne	r3,r0,.Lj11039
+	jal	r0,.Lj11038
+.Lj11039:
 	addi	r3,r0,1
 	stb	r30,r3,-60
-	jal	r0,.Lj11023
-.Lj11043:
+	jal	r0,.Lj11018
+.Lj11038:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -94191,18 +94160,18 @@ SYSTEM_$$_EOLN$TEXT$$BOOLEAN:
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r4,r0,10
-	beq	r3,r4,.Lj11045
+	beq	r3,r4,.Lj11040
 	addi	r4,r0,13
-	beq	r3,r4,.Lj11045
-	jal	r0,.Lj11046
-.Lj11045:
+	beq	r3,r4,.Lj11040
+	jal	r0,.Lj11041
+.Lj11040:
 	addi	r3,r0,1
 	stb	r30,r3,-60
-	jal	r0,.Lj11047
-.Lj11046:
+	jal	r0,.Lj11042
+.Lj11041:
 	stb	r30,r0,-60
-.Lj11047:
-.Lj11023:
+.Lj11042:
+.Lj11018:
 	ldbu	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -94224,16 +94193,16 @@ SYSTEM_$$_EOLN$$BOOLEAN:
 	addi	r29,r29,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11050
+	beq	r4,r0,.Lj11045
 	la	r5,U_$SYSTEM_$$_INPUT
 	ldw	r3,r5,0
 	jalr	r31,r4
 	addi	r3,r1,0
-	jal	r0,.Lj11051
-.Lj11050:
+	jal	r0,.Lj11046
+.Lj11045:
 	la	r4,U_$SYSTEM_$$_INPUT
 	addi	r3,r4,4
-.Lj11051:
+.Lj11046:
 	call	SYSTEM_$$_EOLN$TEXT$$BOOLEAN
 	stb	r30,r1,-56
 	ldbu	r1,r30,-56
@@ -94256,82 +94225,82 @@ SYSTEM_$$_SEEKEOLN$TEXT$$BOOLEAN:
 	stw	r30,r3,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11054
+	beq	r4,r0,.Lj11049
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11055
-.Lj11054:
+	jal	r0,.Lj11050
+.Lj11049:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11055:
+.Lj11050:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11056
-	jal	r0,.Lj11057
-.Lj11056:
+	bne	r3,r0,.Lj11051
+	jal	r0,.Lj11052
+.Lj11051:
 	addi	r3,r0,1
 	stb	r30,r3,-60
-	jal	r0,.Lj11052
-.Lj11057:
+	jal	r0,.Lj11047
+.Lj11052:
 	ldw	r3,r30,-56
 	ldw	r4,r3,4
 	lui	r3,13
 	ori	r3,r3,1969
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj11058
-	jal	r0,.Lj11059
-.Lj11058:
+	bne	r3,r0,.Lj11053
+	jal	r0,.Lj11054
+.Lj11053:
 	ldw	r3,r30,-56
 	ldw	r4,r3,4
 	lui	r3,13
 	ori	r3,r3,1970
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj11060
-	jal	r0,.Lj11061
-.Lj11060:
+	bne	r3,r0,.Lj11055
+	jal	r0,.Lj11056
+.Lj11055:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11062
+	beq	r4,r0,.Lj11057
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11063
-.Lj11062:
+	jal	r0,.Lj11058
+.Lj11057:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11063:
+.Lj11058:
 	addi	r3,r0,104
 	sth	r1,r3,0
-	jal	r0,.Lj11064
-.Lj11061:
+	jal	r0,.Lj11059
+.Lj11056:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11065
+	beq	r4,r0,.Lj11060
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11066
-.Lj11065:
+	jal	r0,.Lj11061
+.Lj11060:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11066:
+.Lj11061:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj11064:
+.Lj11059:
 	addi	r3,r0,1
 	stb	r30,r3,-60
-	jal	r0,.Lj11052
-.Lj11059:
-.Lj11067:
+	jal	r0,.Lj11047
+.Lj11054:
+.Lj11062:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-56
 	ldw	r4,r4,16
 	ldw	r3,r3,20
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11070
-	jal	r0,.Lj11071
-.Lj11070:
+	bne	r3,r0,.Lj11065
+	jal	r0,.Lj11066
+.Lj11065:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_READTEXTBUF$TEXT
 	ldw	r3,r30,-56
@@ -94339,14 +94308,14 @@ SYSTEM_$$_SEEKEOLN$TEXT$$BOOLEAN:
 	ldw	r3,r3,16
 	ldw	r4,r4,20
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj11072
-	jal	r0,.Lj11073
-.Lj11072:
+	bne	r3,r0,.Lj11067
+	jal	r0,.Lj11068
+.Lj11067:
 	addi	r3,r0,1
 	stb	r30,r3,-60
-	jal	r0,.Lj11052
-.Lj11073:
-.Lj11071:
+	jal	r0,.Lj11047
+.Lj11068:
+.Lj11066:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -94354,44 +94323,44 @@ SYSTEM_$$_SEEKEOLN$TEXT$$BOOLEAN:
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r4,r0,9
-	beq	r3,r4,.Lj11078
+	beq	r3,r4,.Lj11073
 	addi	r4,r0,10
-	beq	r3,r4,.Lj11077
+	beq	r3,r4,.Lj11072
 	addi	r4,r0,13
-	beq	r3,r4,.Lj11077
+	beq	r3,r4,.Lj11072
 	addi	r4,r0,26
-	beq	r3,r4,.Lj11076
+	beq	r3,r4,.Lj11071
 	addi	r4,r0,32
-	beq	r3,r4,.Lj11078
-	jal	r0,.Lj11075
-.Lj11076:
+	beq	r3,r4,.Lj11073
+	jal	r0,.Lj11070
+.Lj11071:
 	la	r3,TC_$SYSTEM_$$_CTRLZMARKSEOF
 	ldbu	r3,r3,0
-	bne	r3,r0,.Lj11079
-	jal	r0,.Lj11080
-.Lj11079:
-	addi	r3,r0,1
-	stb	r30,r3,-60
-	jal	r0,.Lj11052
-.Lj11080:
-	jal	r0,.Lj11074
-.Lj11077:
-	addi	r3,r0,1
-	stb	r30,r3,-60
-	jal	r0,.Lj11052
-	jal	r0,.Lj11074
-.Lj11078:
-	jal	r0,.Lj11074
-.Lj11075:
-	stb	r30,r0,-60
-	jal	r0,.Lj11052
+	bne	r3,r0,.Lj11074
+	jal	r0,.Lj11075
 .Lj11074:
+	addi	r3,r0,1
+	stb	r30,r3,-60
+	jal	r0,.Lj11047
+.Lj11075:
+	jal	r0,.Lj11069
+.Lj11072:
+	addi	r3,r0,1
+	stb	r30,r3,-60
+	jal	r0,.Lj11047
+	jal	r0,.Lj11069
+.Lj11073:
+	jal	r0,.Lj11069
+.Lj11070:
+	stb	r30,r0,-60
+	jal	r0,.Lj11047
+.Lj11069:
 	ldw	r4,r30,-56
 	ldw	r3,r4,16
 	addi	r3,r3,1
 	stw	r4,r3,16
-	jal	r0,.Lj11067
-.Lj11052:
+	jal	r0,.Lj11062
+.Lj11047:
 	ldbu	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -94413,16 +94382,16 @@ SYSTEM_$$_SEEKEOLN$$BOOLEAN:
 	addi	r29,r29,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11083
+	beq	r4,r0,.Lj11078
 	la	r5,U_$SYSTEM_$$_INPUT
 	ldw	r3,r5,0
 	jalr	r31,r4
 	addi	r3,r1,0
-	jal	r0,.Lj11084
-.Lj11083:
+	jal	r0,.Lj11079
+.Lj11078:
 	la	r4,U_$SYSTEM_$$_INPUT
 	addi	r3,r4,4
-.Lj11084:
+.Lj11079:
 	call	SYSTEM_$$_SEEKEOLN$TEXT$$BOOLEAN
 	stb	r30,r1,-56
 	ldbu	r1,r30,-56
@@ -94526,12 +94495,12 @@ SYSTEM_$$_SETTEXTCODEPAGE$TEXT$WORD:
 	ldhu	r5,r30,-60
 	addi	r6,r0,1
 	sleu	r5,r5,r6
-	bne	r5,r0,.Lj11094
-	jal	r0,.Lj11095
-.Lj11094:
+	bne	r5,r0,.Lj11089
+	jal	r0,.Lj11090
+.Lj11089:
 	la	r5,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r4,r5,0
-.Lj11095:
+.Lj11090:
 	sth	r3,r4,592
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -94553,83 +94522,83 @@ SYSTEM_$$_SETTEXTAUTOFLUSH$TEXT$BOOLEAN:
 	stb	r30,r4,-60
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11098
+	beq	r4,r0,.Lj11093
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11099
-.Lj11098:
+	jal	r0,.Lj11094
+.Lj11093:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11099:
+.Lj11094:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11100
-	jal	r0,.Lj11101
-.Lj11100:
+	bne	r3,r0,.Lj11095
 	jal	r0,.Lj11096
-.Lj11101:
+.Lj11095:
+	jal	r0,.Lj11091
+.Lj11096:
 	ldw	r3,r30,-56
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1970
 	sne	r3,r3,r4
-	bne	r3,r0,.Lj11102
-	jal	r0,.Lj11103
-.Lj11102:
+	bne	r3,r0,.Lj11097
+	jal	r0,.Lj11098
+.Lj11097:
 	ldw	r3,r30,-56
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1969
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj11104
-	jal	r0,.Lj11105
-.Lj11104:
+	bne	r3,r0,.Lj11099
+	jal	r0,.Lj11100
+.Lj11099:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj11106
+	beq	r5,r0,.Lj11101
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj11107
-.Lj11106:
+	jal	r0,.Lj11102
+.Lj11101:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11107:
+.Lj11102:
 	addi	r3,r0,105
 	sth	r1,r3,0
-	jal	r0,.Lj11108
-.Lj11105:
+	jal	r0,.Lj11103
+.Lj11100:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11109
+	beq	r4,r0,.Lj11104
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11110
-.Lj11109:
+	jal	r0,.Lj11105
+.Lj11104:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11110:
+.Lj11105:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj11108:
-	jal	r0,.Lj11096
 .Lj11103:
+	jal	r0,.Lj11091
+.Lj11098:
 	ldbu	r3,r30,-60
-	bne	r3,r0,.Lj11111
-	jal	r0,.Lj11112
-.Lj11111:
+	bne	r3,r0,.Lj11106
+	jal	r0,.Lj11107
+.Lj11106:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
 	ldw	r4,r4,32
 	stw	r3,r4,36
-	jal	r0,.Lj11113
-.Lj11112:
+	jal	r0,.Lj11108
+.Lj11107:
 	ldw	r3,r30,-56
 	stw	r3,r0,36
-.Lj11113:
-.Lj11096:
+.Lj11108:
+.Lj11091:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -94650,74 +94619,74 @@ SYSTEM_$$_GETTEXTAUTOFLUSH$TEXT$$BOOLEAN:
 	stb	r30,r0,-60
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11116
+	beq	r4,r0,.Lj11111
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11117
-.Lj11116:
+	jal	r0,.Lj11112
+.Lj11111:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11117:
+.Lj11112:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11118
-	jal	r0,.Lj11119
-.Lj11118:
+	bne	r3,r0,.Lj11113
 	jal	r0,.Lj11114
-.Lj11119:
+.Lj11113:
+	jal	r0,.Lj11109
+.Lj11114:
 	ldw	r3,r30,-56
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1970
 	sne	r3,r3,r4
-	bne	r3,r0,.Lj11120
-	jal	r0,.Lj11121
-.Lj11120:
+	bne	r3,r0,.Lj11115
+	jal	r0,.Lj11116
+.Lj11115:
 	ldw	r3,r30,-56
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1969
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj11122
-	jal	r0,.Lj11123
-.Lj11122:
+	bne	r3,r0,.Lj11117
+	jal	r0,.Lj11118
+.Lj11117:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj11124
+	beq	r5,r0,.Lj11119
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj11125
-.Lj11124:
+	jal	r0,.Lj11120
+.Lj11119:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11125:
+.Lj11120:
 	addi	r3,r0,105
 	sth	r1,r3,0
-	jal	r0,.Lj11126
-.Lj11123:
+	jal	r0,.Lj11121
+.Lj11118:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj11127
+	beq	r5,r0,.Lj11122
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj11128
-.Lj11127:
+	jal	r0,.Lj11123
+.Lj11122:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11128:
+.Lj11123:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj11126:
-	jal	r0,.Lj11114
 .Lj11121:
+	jal	r0,.Lj11109
+.Lj11116:
 	ldw	r3,r30,-56
 	ldw	r3,r3,36
 	sne	r3,r3,r0
 	stb	r30,r3,-60
-.Lj11114:
+.Lj11109:
 	ldbu	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -94737,15 +94706,15 @@ fpc_get_input:
 	addi	r29,r29,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11131
+	beq	r4,r0,.Lj11126
 	la	r5,U_$SYSTEM_$$_INPUT
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11132
-.Lj11131:
+	jal	r0,.Lj11127
+.Lj11126:
 	la	r3,U_$SYSTEM_$$_INPUT
 	addi	r1,r3,4
-.Lj11132:
+.Lj11127:
 	stw	r30,r1,-56
 	ldw	r1,r30,-56
 	ldw	r30,r29,56
@@ -94766,15 +94735,15 @@ fpc_get_output:
 	addi	r29,r29,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11135
+	beq	r4,r0,.Lj11130
 	la	r5,U_$SYSTEM_$$_OUTPUT
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11136
-.Lj11135:
+	jal	r0,.Lj11131
+.Lj11130:
 	la	r3,U_$SYSTEM_$$_OUTPUT
 	addi	r1,r3,4
-.Lj11136:
+.Lj11131:
 	stw	r30,r1,-56
 	ldw	r1,r30,-56
 	ldw	r30,r29,56
@@ -94825,9 +94794,9 @@ fpc_textinit_filename_iso:
 	call	SYSTEM_$$_PARAMSTR$LONGINT$$SHORTSTRING
 	ldbu	r3,r30,-320
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11141
-	jal	r0,.Lj11142
-.Lj11141:
+	bne	r3,r0,.Lj11136
+	jal	r0,.Lj11137
+.Lj11136:
 	la	r6,.Ld45
 	ldw	r5,r30,-64
 	addi	r3,r30,-320
@@ -94836,15 +94805,15 @@ fpc_textinit_filename_iso:
 	addi	r4,r30,-320
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_ASSIGN$TEXT$SHORTSTRING
-	jal	r0,.Lj11143
-.Lj11142:
+	jal	r0,.Lj11138
+.Lj11137:
 	addi	r3,r30,-320
 	ldw	r4,r30,-60
 	call	SYSTEM_$$_PARAMSTR$LONGINT$$SHORTSTRING
 	addi	r4,r30,-320
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_ASSIGN$TEXT$SHORTSTRING
-.Lj11143:
+.Lj11138:
 	ldw	r30,r29,320
 	ldw	r31,r29,324
 	addi	r29,r29,328
@@ -94864,29 +94833,29 @@ fpc_textclose_iso:
 	stw	r30,r3,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11146
+	beq	r4,r0,.Lj11141
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11147
-.Lj11146:
+	jal	r0,.Lj11142
+.Lj11141:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11147:
+.Lj11142:
 	sth	r1,r0,0
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CLOSE$TEXT
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11148
+	beq	r4,r0,.Lj11143
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11149
-.Lj11148:
+	jal	r0,.Lj11144
+.Lj11143:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11149:
+.Lj11144:
 	sth	r1,r0,0
 	ldw	r30,r29,56
 	ldw	r31,r29,60
@@ -94916,8 +94885,8 @@ SYSTEM_$$_FPC_WRITEBUFFER$TEXT$formal$LONGINT:
 	ldw	r3,r3,16
 	sub	r3,r4,r3
 	stw	r30,r3,-72
-	jal	r0,.Lj11153
-.Lj11152:
+	jal	r0,.Lj11148
+.Lj11147:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -94951,13 +94920,13 @@ SYSTEM_$$_FPC_WRITEBUFFER$TEXT$formal$LONGINT:
 	ldw	r3,r3,16
 	sub	r3,r4,r3
 	stw	r30,r3,-72
-.Lj11153:
+.Lj11148:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-72
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj11152
-	jal	r0,.Lj11154
-.Lj11154:
+	bne	r3,r0,.Lj11147
+	jal	r0,.Lj11149
+.Lj11149:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -94999,8 +94968,8 @@ SYSTEM_$$_FPC_WRITEBLANKS$TEXT$LONGINT:
 	ldw	r3,r3,16
 	sub	r3,r4,r3
 	stw	r30,r3,-64
-	jal	r0,.Lj11158
-.Lj11157:
+	jal	r0,.Lj11153
+.Lj11152:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -95028,13 +94997,13 @@ SYSTEM_$$_FPC_WRITEBLANKS$TEXT$LONGINT:
 	ldw	r4,r4,16
 	sub	r3,r3,r4
 	stw	r30,r3,-64
-.Lj11158:
+.Lj11153:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-64
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj11157
-	jal	r0,.Lj11159
-.Lj11159:
+	bne	r3,r0,.Lj11152
+	jal	r0,.Lj11154
+.Lj11154:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -95070,14 +95039,14 @@ fpc_write_end:
 	ldw	r3,r30,-56
 	ldw	r3,r3,36
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11162
-	jal	r0,.Lj11163
-.Lj11162:
+	bne	r3,r0,.Lj11157
+	jal	r0,.Lj11158
+.Lj11157:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
 	ldw	r4,r4,36
 	jalr	r31,r4
-.Lj11163:
+.Lj11158:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -95099,32 +95068,32 @@ fpc_writeln_end:
 	stw	r30,r3,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11166
+	beq	r4,r0,.Lj11161
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11167
-.Lj11166:
+	jal	r0,.Lj11162
+.Lj11161:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11167:
+.Lj11162:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11168
-	jal	r0,.Lj11169
-.Lj11168:
+	bne	r3,r0,.Lj11163
 	jal	r0,.Lj11164
-.Lj11169:
+.Lj11163:
+	jal	r0,.Lj11159
+.Lj11164:
 	ldw	r3,r30,-56
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1969
-	beq	r3,r4,.Lj11173
+	beq	r3,r4,.Lj11168
 	lui	r4,13
 	ori	r4,r4,1970
-	beq	r3,r4,.Lj11172
-	jal	r0,.Lj11171
-.Lj11172:
+	beq	r3,r4,.Lj11167
+	jal	r0,.Lj11166
+.Lj11167:
 	ldw	r3,r30,-56
 	ldbu	r5,r3,332
 	ldw	r3,r30,-56
@@ -95134,46 +95103,46 @@ fpc_writeln_end:
 	ldw	r3,r30,-56
 	ldw	r3,r3,36
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11174
-	jal	r0,.Lj11175
-.Lj11174:
+	bne	r3,r0,.Lj11169
+	jal	r0,.Lj11170
+.Lj11169:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
 	ldw	r4,r4,36
 	jalr	r31,r4
-.Lj11175:
-	jal	r0,.Lj11170
-.Lj11173:
+.Lj11170:
+	jal	r0,.Lj11165
+.Lj11168:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11176
+	beq	r4,r0,.Lj11171
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11177
-.Lj11176:
+	jal	r0,.Lj11172
+.Lj11171:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11177:
+.Lj11172:
 	addi	r3,r0,105
 	sth	r1,r3,0
-	jal	r0,.Lj11170
-.Lj11171:
+	jal	r0,.Lj11165
+.Lj11166:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj11178
+	beq	r5,r0,.Lj11173
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj11179
-.Lj11178:
+	jal	r0,.Lj11174
+.Lj11173:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11179:
+.Lj11174:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj11170:
-.Lj11164:
+.Lj11165:
+.Lj11159:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -95199,84 +95168,84 @@ FPC_WRITE_TEXT_SHORTSTR:
 	stw	r30,r5,-64
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11182
+	beq	r4,r0,.Lj11177
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11183
-.Lj11182:
+	jal	r0,.Lj11178
+.Lj11177:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11183:
+.Lj11178:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11184
-	jal	r0,.Lj11185
-.Lj11184:
+	bne	r3,r0,.Lj11179
 	jal	r0,.Lj11180
-.Lj11185:
+.Lj11179:
+	jal	r0,.Lj11175
+.Lj11180:
 	ldw	r3,r30,-60
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1969
-	beq	r3,r4,.Lj11189
+	beq	r3,r4,.Lj11184
 	lui	r4,13
 	ori	r4,r4,1970
-	beq	r3,r4,.Lj11188
-	jal	r0,.Lj11187
-.Lj11188:
+	beq	r3,r4,.Lj11183
+	jal	r0,.Lj11182
+.Lj11183:
 	ldw	r3,r30,-64
 	ldbu	r4,r3,0
 	ldw	r3,r30,-56
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj11190
-	jal	r0,.Lj11191
-.Lj11190:
+	bne	r3,r0,.Lj11185
+	jal	r0,.Lj11186
+.Lj11185:
 	ldw	r3,r30,-64
 	ldbu	r3,r3,0
 	ldw	r4,r30,-56
 	sub	r4,r4,r3
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_FPC_WRITEBLANKS$TEXT$LONGINT
-.Lj11191:
+.Lj11186:
 	ldw	r3,r30,-64
 	ldbu	r5,r3,0
 	ldw	r3,r30,-64
 	addi	r4,r3,1
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_FPC_WRITEBUFFER$TEXT$formal$LONGINT
-	jal	r0,.Lj11186
-.Lj11189:
+	jal	r0,.Lj11181
+.Lj11184:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj11192
+	beq	r5,r0,.Lj11187
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj11193
-.Lj11192:
+	jal	r0,.Lj11188
+.Lj11187:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11193:
+.Lj11188:
 	addi	r3,r0,105
 	sth	r1,r3,0
-	jal	r0,.Lj11186
-.Lj11187:
+	jal	r0,.Lj11181
+.Lj11182:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11194
+	beq	r4,r0,.Lj11189
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11195
-.Lj11194:
+	jal	r0,.Lj11190
+.Lj11189:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11195:
+.Lj11190:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj11186:
-.Lj11180:
+.Lj11181:
+.Lj11175:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -95302,49 +95271,49 @@ FPC_WRITE_TEXT_SHORTSTR_ISO:
 	stw	r30,r5,-64
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11198
+	beq	r4,r0,.Lj11193
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11199
-.Lj11198:
+	jal	r0,.Lj11194
+.Lj11193:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11199:
+.Lj11194:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11200
-	jal	r0,.Lj11201
-.Lj11200:
+	bne	r3,r0,.Lj11195
 	jal	r0,.Lj11196
-.Lj11201:
+.Lj11195:
+	jal	r0,.Lj11191
+.Lj11196:
 	ldw	r3,r30,-60
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1969
-	beq	r3,r4,.Lj11205
+	beq	r3,r4,.Lj11200
 	lui	r4,13
 	ori	r4,r4,1970
-	beq	r3,r4,.Lj11204
-	jal	r0,.Lj11203
-.Lj11204:
+	beq	r3,r4,.Lj11199
+	jal	r0,.Lj11198
+.Lj11199:
 	ldw	r3,r30,-56
 	addi	r3,r3,1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11206
-	jal	r0,.Lj11207
-.Lj11206:
+	bne	r3,r0,.Lj11201
+	jal	r0,.Lj11202
+.Lj11201:
 	ldw	r3,r30,-64
 	ldbu	r3,r3,0
 	stw	r30,r3,-56
-.Lj11207:
+.Lj11202:
 	ldw	r3,r30,-64
 	ldbu	r4,r3,0
 	ldw	r3,r30,-56
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj11208
-	jal	r0,.Lj11209
-.Lj11208:
+	bne	r3,r0,.Lj11203
+	jal	r0,.Lj11204
+.Lj11203:
 	ldw	r3,r30,-64
 	ldbu	r4,r3,0
 	ldw	r3,r30,-56
@@ -95357,46 +95326,46 @@ FPC_WRITE_TEXT_SHORTSTR_ISO:
 	addi	r4,r3,1
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_FPC_WRITEBUFFER$TEXT$formal$LONGINT
-	jal	r0,.Lj11210
-.Lj11209:
+	jal	r0,.Lj11205
+.Lj11204:
 	ldw	r3,r30,-64
 	addi	r4,r3,1
 	ldw	r3,r30,-60
 	ldw	r5,r30,-56
 	call	SYSTEM_$$_FPC_WRITEBUFFER$TEXT$formal$LONGINT
-.Lj11210:
-	jal	r0,.Lj11202
 .Lj11205:
+	jal	r0,.Lj11197
+.Lj11200:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11211
+	beq	r4,r0,.Lj11206
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11212
-.Lj11211:
+	jal	r0,.Lj11207
+.Lj11206:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11212:
+.Lj11207:
 	addi	r3,r0,105
 	sth	r1,r3,0
-	jal	r0,.Lj11202
-.Lj11203:
+	jal	r0,.Lj11197
+.Lj11198:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11213
+	beq	r4,r0,.Lj11208
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11214
-.Lj11213:
+	jal	r0,.Lj11209
+.Lj11208:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11214:
+.Lj11209:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj11202:
-.Lj11196:
+.Lj11197:
+.Lj11191:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -95420,38 +95389,38 @@ fpc_write_text_pchar_as_array:
 	stb	r30,r7,-68
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11217
+	beq	r4,r0,.Lj11212
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11218
-.Lj11217:
+	jal	r0,.Lj11213
+.Lj11212:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11218:
+.Lj11213:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11219
-	jal	r0,.Lj11220
-.Lj11219:
+	bne	r3,r0,.Lj11214
 	jal	r0,.Lj11215
-.Lj11220:
+.Lj11214:
+	jal	r0,.Lj11210
+.Lj11215:
 	ldw	r3,r30,-60
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1969
-	beq	r3,r4,.Lj11224
+	beq	r3,r4,.Lj11219
 	lui	r4,13
 	ori	r4,r4,1970
-	beq	r3,r4,.Lj11223
-	jal	r0,.Lj11222
-.Lj11223:
+	beq	r3,r4,.Lj11218
+	jal	r0,.Lj11217
+.Lj11218:
 	ldw	r3,r30,-64
 	stw	r30,r3,-80
 	ldbu	r3,r30,-68
-	bne	r3,r0,.Lj11225
-	jal	r0,.Lj11226
-.Lj11225:
+	bne	r3,r0,.Lj11220
+	jal	r0,.Lj11221
+.Lj11220:
 	ldw	r3,r30,-72
 	addi	r4,r3,1
 	ldw	r3,r30,-80
@@ -95461,67 +95430,67 @@ fpc_write_text_pchar_as_array:
 	ldw	r3,r30,-76
 	addi	r3,r3,1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11227
-	jal	r0,.Lj11228
-.Lj11227:
+	bne	r3,r0,.Lj11222
+	jal	r0,.Lj11223
+.Lj11222:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-76
-.Lj11228:
-	jal	r0,.Lj11229
-.Lj11226:
+.Lj11223:
+	jal	r0,.Lj11224
+.Lj11221:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-76
-.Lj11229:
+.Lj11224:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-76
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj11230
-	jal	r0,.Lj11231
-.Lj11230:
+	bne	r3,r0,.Lj11225
+	jal	r0,.Lj11226
+.Lj11225:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-76
 	sub	r4,r3,r4
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_FPC_WRITEBLANKS$TEXT$LONGINT
-.Lj11231:
+.Lj11226:
 	ldw	r4,r30,-80
 	ldw	r3,r30,-60
 	ldw	r5,r30,-76
 	call	SYSTEM_$$_FPC_WRITEBUFFER$TEXT$formal$LONGINT
-	jal	r0,.Lj11221
-.Lj11224:
+	jal	r0,.Lj11216
+.Lj11219:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj11232
+	beq	r5,r0,.Lj11227
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj11233
-.Lj11232:
+	jal	r0,.Lj11228
+.Lj11227:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11233:
+.Lj11228:
 	addi	r3,r0,105
 	sth	r1,r3,0
-	jal	r0,.Lj11221
-.Lj11222:
+	jal	r0,.Lj11216
+.Lj11217:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11234
+	beq	r4,r0,.Lj11229
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11235
-.Lj11234:
+	jal	r0,.Lj11230
+.Lj11229:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11235:
+.Lj11230:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj11221:
-.Lj11215:
+.Lj11216:
+.Lj11210:
 	ldw	r30,r29,80
 	ldw	r31,r29,84
 	addi	r29,r29,88
@@ -95545,38 +95514,38 @@ fpc_write_text_pchar_as_array_iso:
 	stb	r30,r7,-68
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11238
+	beq	r4,r0,.Lj11233
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11239
-.Lj11238:
+	jal	r0,.Lj11234
+.Lj11233:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11239:
+.Lj11234:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11240
-	jal	r0,.Lj11241
-.Lj11240:
+	bne	r3,r0,.Lj11235
 	jal	r0,.Lj11236
-.Lj11241:
+.Lj11235:
+	jal	r0,.Lj11231
+.Lj11236:
 	ldw	r3,r30,-60
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1969
-	beq	r3,r4,.Lj11245
+	beq	r3,r4,.Lj11240
 	lui	r4,13
 	ori	r4,r4,1970
-	beq	r3,r4,.Lj11244
-	jal	r0,.Lj11243
-.Lj11244:
+	beq	r3,r4,.Lj11239
+	jal	r0,.Lj11238
+.Lj11239:
 	ldw	r3,r30,-64
 	stw	r30,r3,-80
 	ldbu	r3,r30,-68
-	bne	r3,r0,.Lj11246
-	jal	r0,.Lj11247
-.Lj11246:
+	bne	r3,r0,.Lj11241
+	jal	r0,.Lj11242
+.Lj11241:
 	ldw	r3,r30,-72
 	addi	r4,r3,1
 	ldw	r3,r30,-80
@@ -95586,34 +95555,34 @@ fpc_write_text_pchar_as_array_iso:
 	ldw	r3,r30,-76
 	addi	r3,r3,1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11248
-	jal	r0,.Lj11249
-.Lj11248:
+	bne	r3,r0,.Lj11243
+	jal	r0,.Lj11244
+.Lj11243:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-76
-.Lj11249:
-	jal	r0,.Lj11250
-.Lj11247:
+.Lj11244:
+	jal	r0,.Lj11245
+.Lj11242:
 	ldw	r3,r30,-72
 	addi	r3,r3,1
 	stw	r30,r3,-76
-.Lj11250:
+.Lj11245:
 	ldw	r3,r30,-56
 	addi	r3,r3,1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11251
-	jal	r0,.Lj11252
-.Lj11251:
+	bne	r3,r0,.Lj11246
+	jal	r0,.Lj11247
+.Lj11246:
 	ldw	r3,r30,-76
 	stw	r30,r3,-56
-.Lj11252:
+.Lj11247:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-76
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj11253
-	jal	r0,.Lj11254
-.Lj11253:
+	bne	r3,r0,.Lj11248
+	jal	r0,.Lj11249
+.Lj11248:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-76
 	sub	r4,r3,r4
@@ -95623,45 +95592,45 @@ fpc_write_text_pchar_as_array_iso:
 	ldw	r3,r30,-60
 	ldw	r5,r30,-76
 	call	SYSTEM_$$_FPC_WRITEBUFFER$TEXT$formal$LONGINT
-	jal	r0,.Lj11255
-.Lj11254:
+	jal	r0,.Lj11250
+.Lj11249:
 	ldw	r4,r30,-80
 	ldw	r3,r30,-60
 	ldw	r5,r30,-56
 	call	SYSTEM_$$_FPC_WRITEBUFFER$TEXT$formal$LONGINT
-.Lj11255:
-	jal	r0,.Lj11242
-.Lj11245:
+.Lj11250:
+	jal	r0,.Lj11237
+.Lj11240:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj11256
+	beq	r5,r0,.Lj11251
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj11257
-.Lj11256:
+	jal	r0,.Lj11252
+.Lj11251:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11257:
+.Lj11252:
 	addi	r3,r0,105
 	sth	r1,r3,0
-	jal	r0,.Lj11242
-.Lj11243:
+	jal	r0,.Lj11237
+.Lj11238:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj11258
+	beq	r5,r0,.Lj11253
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj11259
-.Lj11258:
+	jal	r0,.Lj11254
+.Lj11253:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11259:
+.Lj11254:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj11242:
-.Lj11236:
+.Lj11237:
+.Lj11231:
 	ldw	r30,r29,80
 	ldw	r31,r29,84
 	addi	r29,r29,88
@@ -95683,88 +95652,88 @@ fpc_write_text_pchar_as_pointer:
 	stw	r30,r5,-64
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11262
-	jal	r0,.Lj11263
-.Lj11263:
+	bne	r3,r0,.Lj11257
+	jal	r0,.Lj11258
+.Lj11258:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11265
+	beq	r4,r0,.Lj11260
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11266
-.Lj11265:
+	jal	r0,.Lj11261
+.Lj11260:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11266:
+.Lj11261:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11262
-	jal	r0,.Lj11264
-.Lj11262:
-	jal	r0,.Lj11260
-.Lj11264:
+	bne	r3,r0,.Lj11257
+	jal	r0,.Lj11259
+.Lj11257:
+	jal	r0,.Lj11255
+.Lj11259:
 	ldw	r3,r30,-60
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1969
-	beq	r3,r4,.Lj11270
+	beq	r3,r4,.Lj11265
 	lui	r4,13
 	ori	r4,r4,1970
-	beq	r3,r4,.Lj11269
-	jal	r0,.Lj11268
-.Lj11269:
+	beq	r3,r4,.Lj11264
+	jal	r0,.Lj11263
+.Lj11264:
 	ldw	r3,r30,-64
 	call	FPC_PCHAR_LENGTH
 	stw	r30,r1,-68
 	ldw	r3,r30,-56
 	ldw	r4,r30,-68
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj11271
-	jal	r0,.Lj11272
-.Lj11271:
+	bne	r3,r0,.Lj11266
+	jal	r0,.Lj11267
+.Lj11266:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-68
 	sub	r4,r3,r4
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_FPC_WRITEBLANKS$TEXT$LONGINT
-.Lj11272:
+.Lj11267:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-60
 	ldw	r5,r30,-68
 	call	SYSTEM_$$_FPC_WRITEBUFFER$TEXT$formal$LONGINT
-	jal	r0,.Lj11267
-.Lj11270:
+	jal	r0,.Lj11262
+.Lj11265:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11273
+	beq	r4,r0,.Lj11268
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11274
-.Lj11273:
+	jal	r0,.Lj11269
+.Lj11268:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11274:
+.Lj11269:
 	addi	r3,r0,105
 	sth	r1,r3,0
-	jal	r0,.Lj11267
-.Lj11268:
+	jal	r0,.Lj11262
+.Lj11263:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj11275
+	beq	r5,r0,.Lj11270
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj11276
-.Lj11275:
+	jal	r0,.Lj11271
+.Lj11270:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11276:
+.Lj11271:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj11267:
-.Lj11260:
+.Lj11262:
+.Lj11255:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -95795,58 +95764,58 @@ FPC_WRITE_TEXT_ANSISTR:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-172
-	bne	r1,r0,.Lj11280
+	bne	r1,r0,.Lj11275
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11282
+	beq	r4,r0,.Lj11277
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11283
-.Lj11282:
+	jal	r0,.Lj11278
+.Lj11277:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11283:
+.Lj11278:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11284
-	jal	r0,.Lj11285
-.Lj11284:
-	jal	r0,.Lj11281
-.Lj11285:
+	bne	r3,r0,.Lj11279
+	jal	r0,.Lj11280
+.Lj11279:
+	jal	r0,.Lj11276
+.Lj11280:
 	ldw	r3,r30,-60
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1969
-	beq	r3,r4,.Lj11289
+	beq	r3,r4,.Lj11284
 	lui	r4,13
 	ori	r4,r4,1970
-	beq	r3,r4,.Lj11288
-	jal	r0,.Lj11287
-.Lj11288:
+	beq	r3,r4,.Lj11283
+	jal	r0,.Lj11282
+.Lj11283:
 	ldw	r3,r30,-64
-	beq	r3,r0,.Lj11290
+	beq	r3,r0,.Lj11285
 	ldw	r3,r3,-4
-.Lj11290:
+.Lj11285:
 	stw	r30,r3,-68
 	ldw	r4,r30,-56
 	ldw	r3,r30,-68
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj11291
-	jal	r0,.Lj11292
-.Lj11291:
+	bne	r3,r0,.Lj11286
+	jal	r0,.Lj11287
+.Lj11286:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-68
 	sub	r4,r4,r3
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_FPC_WRITEBLANKS$TEXT$LONGINT
-.Lj11292:
+.Lj11287:
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj11293
-	jal	r0,.Lj11294
-.Lj11293:
+	bne	r3,r0,.Lj11288
+	jal	r0,.Lj11289
+.Lj11288:
 	ldw	r11,r30,-60
 	ldw	r3,r30,-64
 	call	SYSTEM_$$_STRINGCODEPAGE$RAWBYTESTRING$$WORD
@@ -95855,87 +95824,87 @@ FPC_WRITE_TEXT_ANSISTR:
 	ldhu	r4,r30,-176
 	addi	r5,r0,1
 	sleu	r4,r4,r5
-	bne	r4,r0,.Lj11296
-	jal	r0,.Lj11297
-.Lj11296:
+	bne	r4,r0,.Lj11291
+	jal	r0,.Lj11292
+.Lj11291:
 	la	r4,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r3,r4,0
-.Lj11297:
+.Lj11292:
 	ldhu	r4,r11,592
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj11298
-	jal	r0,.Lj11299
-.Lj11298:
+	bne	r3,r0,.Lj11293
+	jal	r0,.Lj11294
+.Lj11293:
 	ldw	r3,r30,-60
 	ldhu	r5,r3,592
 	addi	r3,r30,-72
 	ldw	r4,r30,-64
 	call	FPC_ANSISTR_TO_ANSISTR
 	ldw	r4,r30,-72
-	bne	r4,r0,.Lj11300
+	bne	r4,r0,.Lj11295
 	la	r3,FPC_EMPTYCHAR
 	addi	r4,r3,0
-.Lj11300:
+.Lj11295:
 	ldw	r5,r30,-72
-	beq	r5,r0,.Lj11301
+	beq	r5,r0,.Lj11296
 	ldw	r5,r5,-4
-.Lj11301:
+.Lj11296:
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_FPC_WRITEBUFFER$TEXT$formal$LONGINT
-	jal	r0,.Lj11302
-.Lj11299:
+	jal	r0,.Lj11297
+.Lj11294:
 	ldw	r4,r30,-64
-	bne	r4,r0,.Lj11303
+	bne	r4,r0,.Lj11298
 	la	r3,FPC_EMPTYCHAR
 	addi	r4,r3,0
-.Lj11303:
+.Lj11298:
 	ldw	r3,r30,-60
 	ldw	r5,r30,-68
 	call	SYSTEM_$$_FPC_WRITEBUFFER$TEXT$formal$LONGINT
-.Lj11302:
-.Lj11294:
-	jal	r0,.Lj11286
+.Lj11297:
 .Lj11289:
+	jal	r0,.Lj11281
+.Lj11284:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj11304
+	beq	r5,r0,.Lj11299
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj11305
-.Lj11304:
+	jal	r0,.Lj11300
+.Lj11299:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11305:
+.Lj11300:
 	addi	r3,r0,105
 	sth	r1,r3,0
-	jal	r0,.Lj11286
-.Lj11287:
+	jal	r0,.Lj11281
+.Lj11282:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11306
+	beq	r4,r0,.Lj11301
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11307
-.Lj11306:
+	jal	r0,.Lj11302
+.Lj11301:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11307:
+.Lj11302:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj11286:
-.Lj11280:
+.Lj11281:
+.Lj11275:
 	call	fpc_popaddrstack
 	addi	r3,r30,-72
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-172
-	beq	r3,r0,.Lj11279
+	beq	r3,r0,.Lj11274
 	call	fpc_reraise
-.Lj11281:
+.Lj11276:
 	stw	r30,r0,-172
-	jal	r0,.Lj11280
-.Lj11279:
+	jal	r0,.Lj11275
+.Lj11274:
 	ldw	r11,r29,176
 	ldw	r30,r29,180
 	ldw	r31,r29,184
@@ -95964,122 +95933,122 @@ fpc_write_text_unicodestr:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-172
-	bne	r1,r0,.Lj11311
+	bne	r1,r0,.Lj11306
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11313
-	jal	r0,.Lj11314
-.Lj11314:
+	bne	r3,r0,.Lj11308
+	jal	r0,.Lj11309
+.Lj11309:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11316
+	beq	r4,r0,.Lj11311
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11317
-.Lj11316:
+	jal	r0,.Lj11312
+.Lj11311:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11317:
+.Lj11312:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11313
-	jal	r0,.Lj11315
-.Lj11313:
-	jal	r0,.Lj11312
-.Lj11315:
+	bne	r3,r0,.Lj11308
+	jal	r0,.Lj11310
+.Lj11308:
+	jal	r0,.Lj11307
+.Lj11310:
 	ldw	r3,r30,-60
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1969
-	beq	r3,r4,.Lj11321
+	beq	r3,r4,.Lj11316
 	lui	r4,13
 	ori	r4,r4,1970
-	beq	r3,r4,.Lj11320
-	jal	r0,.Lj11319
-.Lj11320:
+	beq	r3,r4,.Lj11315
+	jal	r0,.Lj11314
+.Lj11315:
 	ldw	r3,r30,-64
-	beq	r3,r0,.Lj11322
+	beq	r3,r0,.Lj11317
 	ldw	r3,r3,-4
-.Lj11322:
+.Lj11317:
 	stw	r30,r3,-68
 	ldw	r4,r30,-56
 	ldw	r3,r30,-68
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj11323
-	jal	r0,.Lj11324
-.Lj11323:
+	bne	r3,r0,.Lj11318
+	jal	r0,.Lj11319
+.Lj11318:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-68
 	sub	r4,r4,r3
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_FPC_WRITEBLANKS$TEXT$LONGINT
-.Lj11324:
+.Lj11319:
 	ldw	r3,r30,-60
 	ldhu	r5,r3,592
 	addi	r4,r30,-72
 	ldw	r3,r30,-64
-	bne	r3,r0,.Lj11325
+	bne	r3,r0,.Lj11320
 	la	r6,FPC_EMPTYCHAR
 	addi	r3,r6,0
-.Lj11325:
+.Lj11320:
 	ldw	r6,r30,-68
 	la	r7,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	ldw	r7,r7,76
 	jalr	r31,r7
 	ldw	r4,r30,-72
-	bne	r4,r0,.Lj11326
+	bne	r4,r0,.Lj11321
 	la	r3,FPC_EMPTYCHAR
 	addi	r4,r3,0
-.Lj11326:
+.Lj11321:
 	ldw	r5,r30,-72
-	beq	r5,r0,.Lj11327
+	beq	r5,r0,.Lj11322
 	ldw	r5,r5,-4
-.Lj11327:
+.Lj11322:
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_FPC_WRITEBUFFER$TEXT$formal$LONGINT
-	jal	r0,.Lj11318
-.Lj11321:
+	jal	r0,.Lj11313
+.Lj11316:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11328
+	beq	r4,r0,.Lj11323
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11329
-.Lj11328:
+	jal	r0,.Lj11324
+.Lj11323:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11329:
+.Lj11324:
 	addi	r3,r0,105
 	sth	r1,r3,0
-	jal	r0,.Lj11318
-.Lj11319:
+	jal	r0,.Lj11313
+.Lj11314:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj11330
+	beq	r5,r0,.Lj11325
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj11331
-.Lj11330:
+	jal	r0,.Lj11326
+.Lj11325:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11331:
+.Lj11326:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj11318:
-.Lj11311:
+.Lj11313:
+.Lj11306:
 	call	fpc_popaddrstack
 	addi	r3,r30,-72
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-172
-	beq	r3,r0,.Lj11310
+	beq	r3,r0,.Lj11305
 	call	fpc_reraise
-.Lj11312:
+.Lj11307:
 	stw	r30,r0,-172
-	jal	r0,.Lj11311
-.Lj11310:
+	jal	r0,.Lj11306
+.Lj11305:
 	ldw	r30,r29,172
 	ldw	r31,r29,176
 	addi	r29,r29,180
@@ -96101,22 +96070,22 @@ fpc_write_text_sint:
 	stw	r30,r5,-64
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11334
+	beq	r4,r0,.Lj11329
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11335
-.Lj11334:
+	jal	r0,.Lj11330
+.Lj11329:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11335:
+.Lj11330:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11336
-	jal	r0,.Lj11337
-.Lj11336:
+	bne	r3,r0,.Lj11331
 	jal	r0,.Lj11332
-.Lj11337:
+.Lj11331:
+	jal	r0,.Lj11327
+.Lj11332:
 	addi	r5,r30,-320
 	addi	r6,r0,255
 	addi	r4,r0,-1
@@ -96126,7 +96095,7 @@ fpc_write_text_sint:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	call	FPC_WRITE_TEXT_SHORTSTR
-.Lj11332:
+.Lj11327:
 	ldw	r30,r29,320
 	ldw	r31,r29,324
 	addi	r29,r29,328
@@ -96150,22 +96119,22 @@ fpc_write_text_uint:
 	stw	r30,r5,-64
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11340
+	beq	r4,r0,.Lj11335
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11341
-.Lj11340:
+	jal	r0,.Lj11336
+.Lj11335:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11341:
+.Lj11336:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11342
-	jal	r0,.Lj11343
-.Lj11342:
+	bne	r3,r0,.Lj11337
 	jal	r0,.Lj11338
-.Lj11343:
+.Lj11337:
+	jal	r0,.Lj11333
+.Lj11338:
 	addi	r5,r30,-320
 	addi	r6,r0,255
 	addi	r4,r0,-1
@@ -96175,7 +96144,7 @@ fpc_write_text_uint:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	call	FPC_WRITE_TEXT_SHORTSTR
-.Lj11338:
+.Lj11333:
 	ldw	r30,r29,320
 	ldw	r31,r29,324
 	addi	r29,r29,328
@@ -96197,22 +96166,22 @@ fpc_write_text_sint_iso:
 	stw	r30,r5,-64
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11346
+	beq	r4,r0,.Lj11341
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11347
-.Lj11346:
+	jal	r0,.Lj11342
+.Lj11341:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11347:
+.Lj11342:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11348
-	jal	r0,.Lj11349
-.Lj11348:
+	bne	r3,r0,.Lj11343
 	jal	r0,.Lj11344
-.Lj11349:
+.Lj11343:
+	jal	r0,.Lj11339
+.Lj11344:
 	addi	r5,r30,-320
 	addi	r6,r0,255
 	addi	r4,r0,-1
@@ -96221,28 +96190,28 @@ fpc_write_text_sint_iso:
 	ldw	r3,r30,-56
 	addi	r3,r3,1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11350
-	jal	r0,.Lj11351
-.Lj11350:
+	bne	r3,r0,.Lj11345
+	jal	r0,.Lj11346
+.Lj11345:
 	addi	r3,r0,11
 	stw	r30,r3,-56
-	jal	r0,.Lj11352
-.Lj11351:
+	jal	r0,.Lj11347
+.Lj11346:
 	ldbu	r3,r30,-320
 	ldw	r4,r30,-56
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj11353
-	jal	r0,.Lj11354
-.Lj11353:
+	bne	r3,r0,.Lj11348
+	jal	r0,.Lj11349
+.Lj11348:
 	ldbu	r3,r30,-320
 	stw	r30,r3,-56
-.Lj11354:
-.Lj11352:
+.Lj11349:
+.Lj11347:
 	addi	r5,r30,-320
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	call	FPC_WRITE_TEXT_SHORTSTR_ISO
-.Lj11344:
+.Lj11339:
 	ldw	r30,r29,320
 	ldw	r31,r29,324
 	addi	r29,r29,328
@@ -96264,22 +96233,22 @@ fpc_write_text_uint_iso:
 	stw	r30,r5,-64
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11357
+	beq	r4,r0,.Lj11352
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11358
-.Lj11357:
+	jal	r0,.Lj11353
+.Lj11352:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11358:
+.Lj11353:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11359
-	jal	r0,.Lj11360
-.Lj11359:
+	bne	r3,r0,.Lj11354
 	jal	r0,.Lj11355
-.Lj11360:
+.Lj11354:
+	jal	r0,.Lj11350
+.Lj11355:
 	addi	r5,r30,-320
 	addi	r6,r0,255
 	addi	r4,r0,-1
@@ -96288,28 +96257,28 @@ fpc_write_text_uint_iso:
 	ldw	r3,r30,-56
 	addi	r3,r3,1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11361
-	jal	r0,.Lj11362
-.Lj11361:
+	bne	r3,r0,.Lj11356
+	jal	r0,.Lj11357
+.Lj11356:
 	addi	r3,r0,11
 	stw	r30,r3,-56
-	jal	r0,.Lj11363
-.Lj11362:
+	jal	r0,.Lj11358
+.Lj11357:
 	ldbu	r3,r30,-320
 	ldw	r4,r30,-56
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj11364
-	jal	r0,.Lj11365
-.Lj11364:
+	bne	r3,r0,.Lj11359
+	jal	r0,.Lj11360
+.Lj11359:
 	ldbu	r3,r30,-320
 	stw	r30,r3,-56
-.Lj11365:
-.Lj11363:
+.Lj11360:
+.Lj11358:
 	addi	r5,r30,-320
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	call	FPC_WRITE_TEXT_SHORTSTR_ISO
-.Lj11355:
+.Lj11350:
 	ldw	r30,r29,320
 	ldw	r31,r29,324
 	addi	r29,r29,328
@@ -96332,22 +96301,22 @@ fpc_write_text_qword:
 	stw	r30,r6,-64
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11368
+	beq	r4,r0,.Lj11363
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11369
-.Lj11368:
+	jal	r0,.Lj11364
+.Lj11363:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11369:
+.Lj11364:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11370
-	jal	r0,.Lj11371
-.Lj11370:
+	bne	r3,r0,.Lj11365
 	jal	r0,.Lj11366
-.Lj11371:
+.Lj11365:
+	jal	r0,.Lj11361
+.Lj11366:
 	addi	r6,r30,-324
 	addi	r7,r0,255
 	addi	r5,r0,-1
@@ -96358,7 +96327,7 @@ fpc_write_text_qword:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	call	FPC_WRITE_TEXT_SHORTSTR
-.Lj11366:
+.Lj11361:
 	ldw	r30,r29,324
 	ldw	r31,r29,328
 	addi	r29,r29,332
@@ -96381,22 +96350,22 @@ fpc_write_text_int64:
 	stw	r30,r6,-64
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11374
+	beq	r4,r0,.Lj11369
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11375
-.Lj11374:
+	jal	r0,.Lj11370
+.Lj11369:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11375:
+.Lj11370:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11376
-	jal	r0,.Lj11377
-.Lj11376:
+	bne	r3,r0,.Lj11371
 	jal	r0,.Lj11372
-.Lj11377:
+.Lj11371:
+	jal	r0,.Lj11367
+.Lj11372:
 	addi	r6,r30,-324
 	addi	r7,r0,255
 	addi	r5,r0,-1
@@ -96407,7 +96376,7 @@ fpc_write_text_int64:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	call	FPC_WRITE_TEXT_SHORTSTR
-.Lj11372:
+.Lj11367:
 	ldw	r30,r29,324
 	ldw	r31,r29,328
 	addi	r29,r29,332
@@ -96430,22 +96399,22 @@ fpc_write_text_qword_iso:
 	stw	r30,r6,-64
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11380
+	beq	r4,r0,.Lj11375
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11381
-.Lj11380:
+	jal	r0,.Lj11376
+.Lj11375:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11381:
+.Lj11376:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11382
-	jal	r0,.Lj11383
-.Lj11382:
+	bne	r3,r0,.Lj11377
 	jal	r0,.Lj11378
-.Lj11383:
+.Lj11377:
+	jal	r0,.Lj11373
+.Lj11378:
 	addi	r6,r30,-324
 	addi	r7,r0,255
 	addi	r5,r0,-1
@@ -96455,28 +96424,28 @@ fpc_write_text_qword_iso:
 	ldw	r3,r30,-56
 	addi	r3,r3,1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11384
-	jal	r0,.Lj11385
-.Lj11384:
+	bne	r3,r0,.Lj11379
+	jal	r0,.Lj11380
+.Lj11379:
 	addi	r3,r0,20
 	stw	r30,r3,-56
-	jal	r0,.Lj11386
-.Lj11385:
+	jal	r0,.Lj11381
+.Lj11380:
 	ldbu	r3,r30,-324
 	ldw	r4,r30,-56
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj11387
-	jal	r0,.Lj11388
-.Lj11387:
+	bne	r3,r0,.Lj11382
+	jal	r0,.Lj11383
+.Lj11382:
 	ldbu	r3,r30,-324
 	stw	r30,r3,-56
-.Lj11388:
-.Lj11386:
+.Lj11383:
+.Lj11381:
 	addi	r5,r30,-324
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	call	FPC_WRITE_TEXT_SHORTSTR_ISO
-.Lj11378:
+.Lj11373:
 	ldw	r30,r29,324
 	ldw	r31,r29,328
 	addi	r29,r29,332
@@ -96499,22 +96468,22 @@ fpc_write_text_int64_iso:
 	stw	r30,r6,-64
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11391
+	beq	r4,r0,.Lj11386
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11392
-.Lj11391:
+	jal	r0,.Lj11387
+.Lj11386:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11392:
+.Lj11387:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11393
-	jal	r0,.Lj11394
-.Lj11393:
+	bne	r3,r0,.Lj11388
 	jal	r0,.Lj11389
-.Lj11394:
+.Lj11388:
+	jal	r0,.Lj11384
+.Lj11389:
 	addi	r6,r30,-324
 	addi	r7,r0,255
 	addi	r5,r0,-1
@@ -96524,28 +96493,28 @@ fpc_write_text_int64_iso:
 	ldw	r3,r30,-56
 	addi	r3,r3,1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11395
-	jal	r0,.Lj11396
-.Lj11395:
+	bne	r3,r0,.Lj11390
+	jal	r0,.Lj11391
+.Lj11390:
 	addi	r3,r0,20
 	stw	r30,r3,-56
-	jal	r0,.Lj11397
-.Lj11396:
+	jal	r0,.Lj11392
+.Lj11391:
 	ldbu	r3,r30,-324
 	ldw	r4,r30,-56
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj11398
-	jal	r0,.Lj11399
-.Lj11398:
+	bne	r3,r0,.Lj11393
+	jal	r0,.Lj11394
+.Lj11393:
 	ldbu	r3,r30,-324
 	stw	r30,r3,-56
-.Lj11399:
-.Lj11397:
+.Lj11394:
+.Lj11392:
 	addi	r5,r30,-324
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	call	FPC_WRITE_TEXT_SHORTSTR_ISO
-.Lj11389:
+.Lj11384:
 	ldw	r30,r29,324
 	ldw	r31,r29,328
 	addi	r29,r29,332
@@ -96570,22 +96539,22 @@ fpc_write_text_float:
 	stw	r30,r8,-72
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11402
+	beq	r4,r0,.Lj11397
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11403
-.Lj11402:
+	jal	r0,.Lj11398
+.Lj11397:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11403:
+.Lj11398:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11404
-	jal	r0,.Lj11405
-.Lj11404:
+	bne	r3,r0,.Lj11399
 	jal	r0,.Lj11400
-.Lj11405:
+.Lj11399:
+	jal	r0,.Lj11395
+.Lj11400:
 	addi	r8,r30,-332
 	ldw	r5,r30,-76
 	ldw	r6,r30,-72
@@ -96598,7 +96567,7 @@ fpc_write_text_float:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-64
 	call	FPC_WRITE_TEXT_SHORTSTR
-.Lj11400:
+.Lj11395:
 	ldw	r30,r29,332
 	ldw	r31,r29,336
 	addi	r29,r29,340
@@ -96623,22 +96592,22 @@ fpc_write_text_float_iso:
 	stw	r30,r8,-72
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11408
+	beq	r4,r0,.Lj11403
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11409
-.Lj11408:
+	jal	r0,.Lj11404
+.Lj11403:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11409:
+.Lj11404:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11410
-	jal	r0,.Lj11411
-.Lj11410:
+	bne	r3,r0,.Lj11405
 	jal	r0,.Lj11406
-.Lj11411:
+.Lj11405:
+	jal	r0,.Lj11401
+.Lj11406:
 	addi	r8,r30,-332
 	ldw	r5,r30,-76
 	ldw	r6,r30,-72
@@ -96651,7 +96620,7 @@ fpc_write_text_float_iso:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-64
 	call	FPC_WRITE_TEXT_SHORTSTR
-.Lj11406:
+.Lj11401:
 	ldw	r30,r29,332
 	ldw	r31,r29,336
 	addi	r29,r29,340
@@ -96679,48 +96648,48 @@ fpc_write_text_enum:
 	lui	r4,13
 	ori	r4,r4,1970
 	sne	r3,r3,r4
-	bne	r3,r0,.Lj11414
-	jal	r0,.Lj11415
-.Lj11414:
+	bne	r3,r0,.Lj11409
+	jal	r0,.Lj11410
+.Lj11409:
 	ldw	r3,r30,-68
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1969
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj11416
-	jal	r0,.Lj11417
-.Lj11416:
+	bne	r3,r0,.Lj11411
+	jal	r0,.Lj11412
+.Lj11411:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11418
+	beq	r4,r0,.Lj11413
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11419
-.Lj11418:
+	jal	r0,.Lj11414
+.Lj11413:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11419:
+.Lj11414:
 	addi	r3,r0,105
 	sth	r1,r3,0
-	jal	r0,.Lj11420
-.Lj11417:
+	jal	r0,.Lj11415
+.Lj11412:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11421
+	beq	r4,r0,.Lj11416
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11422
-.Lj11421:
+	jal	r0,.Lj11417
+.Lj11416:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11422:
+.Lj11417:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj11420:
-	jal	r0,.Lj11412
 .Lj11415:
+	jal	r0,.Lj11407
+.Lj11410:
 	addi	r7,r30,-328
 	addi	r8,r0,255
 	ldw	r6,r30,-60
@@ -96732,39 +96701,39 @@ fpc_write_text_enum:
 	srli	r11,r11,16
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj11423
+	beq	r5,r0,.Lj11418
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj11424
-.Lj11423:
+	jal	r0,.Lj11419
+.Lj11418:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11424:
+.Lj11419:
 	sth	r1,r11,0
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj11425
+	beq	r5,r0,.Lj11420
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj11426
-.Lj11425:
+	jal	r0,.Lj11421
+.Lj11420:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11426:
+.Lj11421:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11427
-	jal	r0,.Lj11428
-.Lj11427:
-	jal	r0,.Lj11412
-.Lj11428:
+	bne	r3,r0,.Lj11422
+	jal	r0,.Lj11423
+.Lj11422:
+	jal	r0,.Lj11407
+.Lj11423:
 	ldbu	r5,r30,-328
 	addi	r4,r30,-327
 	ldw	r3,r30,-68
 	call	SYSTEM_$$_FPC_WRITEBUFFER$TEXT$formal$LONGINT
-.Lj11412:
+.Lj11407:
 	ldw	r11,r29,328
 	ldw	r30,r29,332
 	ldw	r31,r29,336
@@ -96789,22 +96758,22 @@ fpc_write_text_currency:
 	stw	r30,r7,-68
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11431
+	beq	r4,r0,.Lj11426
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11432
-.Lj11431:
+	jal	r0,.Lj11427
+.Lj11426:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11432:
+.Lj11427:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11433
-	jal	r0,.Lj11434
-.Lj11433:
+	bne	r3,r0,.Lj11428
 	jal	r0,.Lj11429
-.Lj11434:
+.Lj11428:
+	jal	r0,.Lj11424
+.Lj11429:
 	addi	r7,r30,-328
 	addi	r8,r0,255
 	ldw	r6,r30,-56
@@ -96816,7 +96785,7 @@ fpc_write_text_currency:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-60
 	call	FPC_WRITE_TEXT_SHORTSTR
-.Lj11429:
+.Lj11424:
 	ldw	r30,r29,328
 	ldw	r31,r29,332
 	addi	r29,r29,336
@@ -96838,38 +96807,38 @@ fpc_write_text_boolean:
 	stb	r30,r5,-64
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11437
+	beq	r4,r0,.Lj11432
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11438
-.Lj11437:
+	jal	r0,.Lj11433
+.Lj11432:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11438:
+.Lj11433:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11439
-	jal	r0,.Lj11440
-.Lj11439:
+	bne	r3,r0,.Lj11434
 	jal	r0,.Lj11435
-.Lj11440:
+.Lj11434:
+	jal	r0,.Lj11430
+.Lj11435:
 	ldbu	r3,r30,-64
-	bne	r3,r0,.Lj11441
-	jal	r0,.Lj11442
-.Lj11441:
+	bne	r3,r0,.Lj11436
+	jal	r0,.Lj11437
+.Lj11436:
 	la	r5,.Ld26
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	call	FPC_WRITE_TEXT_SHORTSTR
-	jal	r0,.Lj11443
-.Lj11442:
+	jal	r0,.Lj11438
+.Lj11437:
 	la	r5,.Ld27
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	call	FPC_WRITE_TEXT_SHORTSTR
-.Lj11443:
-.Lj11435:
+.Lj11438:
+.Lj11430:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -96891,47 +96860,47 @@ fpc_write_text_boolean_iso:
 	stb	r30,r5,-64
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11446
+	beq	r4,r0,.Lj11441
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11447
-.Lj11446:
+	jal	r0,.Lj11442
+.Lj11441:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11447:
+.Lj11442:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11448
-	jal	r0,.Lj11449
-.Lj11448:
+	bne	r3,r0,.Lj11443
 	jal	r0,.Lj11444
-.Lj11449:
+.Lj11443:
+	jal	r0,.Lj11439
+.Lj11444:
 	ldw	r3,r30,-56
 	addi	r3,r3,1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11450
-	jal	r0,.Lj11451
-.Lj11450:
+	bne	r3,r0,.Lj11445
+	jal	r0,.Lj11446
+.Lj11445:
 	addi	r3,r0,5
 	stw	r30,r3,-56
-.Lj11451:
+.Lj11446:
 	ldbu	r3,r30,-64
-	bne	r3,r0,.Lj11452
-	jal	r0,.Lj11453
-.Lj11452:
+	bne	r3,r0,.Lj11447
+	jal	r0,.Lj11448
+.Lj11447:
 	la	r5,.Ld46
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	call	FPC_WRITE_TEXT_SHORTSTR_ISO
-	jal	r0,.Lj11454
-.Lj11453:
+	jal	r0,.Lj11449
+.Lj11448:
 	la	r5,.Ld47
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	call	FPC_WRITE_TEXT_SHORTSTR_ISO
-.Lj11454:
-.Lj11444:
+.Lj11449:
+.Lj11439:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -96953,93 +96922,93 @@ fpc_write_text_char:
 	stb	r30,r5,-64
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11457
+	beq	r4,r0,.Lj11452
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11458
-.Lj11457:
+	jal	r0,.Lj11453
+.Lj11452:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11458:
+.Lj11453:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11459
-	jal	r0,.Lj11460
-.Lj11459:
+	bne	r3,r0,.Lj11454
 	jal	r0,.Lj11455
-.Lj11460:
+.Lj11454:
+	jal	r0,.Lj11450
+.Lj11455:
 	ldw	r3,r30,-60
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1970
 	sne	r3,r3,r4
-	bne	r3,r0,.Lj11461
-	jal	r0,.Lj11462
-.Lj11461:
+	bne	r3,r0,.Lj11456
+	jal	r0,.Lj11457
+.Lj11456:
 	ldw	r3,r30,-60
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1968
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj11463
-	jal	r0,.Lj11464
-.Lj11463:
+	bne	r3,r0,.Lj11458
+	jal	r0,.Lj11459
+.Lj11458:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11465
+	beq	r4,r0,.Lj11460
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11466
-.Lj11465:
+	jal	r0,.Lj11461
+.Lj11460:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11466:
+.Lj11461:
 	addi	r3,r0,103
 	sth	r1,r3,0
-	jal	r0,.Lj11467
-.Lj11464:
+	jal	r0,.Lj11462
+.Lj11459:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj11468
+	beq	r5,r0,.Lj11463
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj11469
-.Lj11468:
+	jal	r0,.Lj11464
+.Lj11463:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11469:
+.Lj11464:
 	addi	r3,r0,105
 	sth	r1,r3,0
-.Lj11467:
-	jal	r0,.Lj11455
 .Lj11462:
+	jal	r0,.Lj11450
+.Lj11457:
 	ldw	r3,r30,-56
 	addi	r4,r0,1
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj11470
-	jal	r0,.Lj11471
-.Lj11470:
+	bne	r3,r0,.Lj11465
+	jal	r0,.Lj11466
+.Lj11465:
 	ldw	r3,r30,-56
 	addi	r4,r3,-1
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_FPC_WRITEBLANKS$TEXT$LONGINT
-.Lj11471:
+.Lj11466:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-60
 	ldw	r4,r4,16
 	ldw	r3,r3,8
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11472
-	jal	r0,.Lj11473
-.Lj11472:
+	bne	r3,r0,.Lj11467
+	jal	r0,.Lj11468
+.Lj11467:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-60
 	ldw	r4,r4,32
 	jalr	r31,r4
-.Lj11473:
+.Lj11468:
 	ldw	r3,r30,-60
 	ldw	r3,r3,24
 	ldw	r4,r30,-60
@@ -97051,7 +97020,7 @@ fpc_write_text_char:
 	ldw	r3,r4,16
 	addi	r3,r3,1
 	stw	r4,r3,16
-.Lj11455:
+.Lj11450:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -97073,112 +97042,112 @@ fpc_write_text_char_iso:
 	stb	r30,r5,-64
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11476
+	beq	r4,r0,.Lj11471
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11477
-.Lj11476:
+	jal	r0,.Lj11472
+.Lj11471:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11477:
+.Lj11472:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11478
-	jal	r0,.Lj11479
-.Lj11478:
+	bne	r3,r0,.Lj11473
 	jal	r0,.Lj11474
-.Lj11479:
+.Lj11473:
+	jal	r0,.Lj11469
+.Lj11474:
 	ldw	r3,r30,-60
 	ldw	r4,r3,4
 	lui	r3,13
 	ori	r3,r3,1970
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj11480
-	jal	r0,.Lj11481
-.Lj11480:
+	bne	r3,r0,.Lj11475
+	jal	r0,.Lj11476
+.Lj11475:
 	ldw	r3,r30,-60
 	ldw	r4,r3,4
 	lui	r3,13
 	ori	r3,r3,1968
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj11482
-	jal	r0,.Lj11483
-.Lj11482:
+	bne	r3,r0,.Lj11477
+	jal	r0,.Lj11478
+.Lj11477:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11484
+	beq	r4,r0,.Lj11479
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11485
-.Lj11484:
+	jal	r0,.Lj11480
+.Lj11479:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11485:
+.Lj11480:
 	addi	r3,r0,103
 	sth	r1,r3,0
-	jal	r0,.Lj11486
-.Lj11483:
+	jal	r0,.Lj11481
+.Lj11478:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj11487
+	beq	r5,r0,.Lj11482
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj11488
-.Lj11487:
+	jal	r0,.Lj11483
+.Lj11482:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11488:
+.Lj11483:
 	addi	r3,r0,105
 	sth	r1,r3,0
-.Lj11486:
-	jal	r0,.Lj11474
 .Lj11481:
+	jal	r0,.Lj11469
+.Lj11476:
 	ldw	r3,r30,-56
 	addi	r3,r3,1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11489
-	jal	r0,.Lj11490
-.Lj11489:
+	bne	r3,r0,.Lj11484
+	jal	r0,.Lj11485
+.Lj11484:
 	addi	r3,r0,1
 	stw	r30,r3,-56
-.Lj11490:
+.Lj11485:
 	ldw	r4,r30,-56
 	addi	r3,r0,1
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj11491
-	jal	r0,.Lj11492
-.Lj11491:
+	bne	r3,r0,.Lj11486
+	jal	r0,.Lj11487
+.Lj11486:
 	ldw	r3,r30,-56
 	addi	r4,r3,-1
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_FPC_WRITEBLANKS$TEXT$LONGINT
-	jal	r0,.Lj11493
-.Lj11492:
+	jal	r0,.Lj11488
+.Lj11487:
 	ldw	r4,r30,-56
 	addi	r3,r0,1
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj11494
-	jal	r0,.Lj11495
-.Lj11494:
-	jal	r0,.Lj11474
-.Lj11495:
-.Lj11493:
+	bne	r3,r0,.Lj11489
+	jal	r0,.Lj11490
+.Lj11489:
+	jal	r0,.Lj11469
+.Lj11490:
+.Lj11488:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-60
 	ldw	r4,r4,16
 	ldw	r3,r3,8
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11496
-	jal	r0,.Lj11497
-.Lj11496:
+	bne	r3,r0,.Lj11491
+	jal	r0,.Lj11492
+.Lj11491:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-60
 	ldw	r4,r4,32
 	jalr	r31,r4
-.Lj11497:
+.Lj11492:
 	ldw	r3,r30,-60
 	ldw	r3,r3,24
 	ldw	r4,r30,-60
@@ -97190,7 +97159,7 @@ fpc_write_text_char_iso:
 	ldw	r4,r3,16
 	addi	r4,r4,1
 	stw	r3,r4,16
-.Lj11474:
+.Lj11469:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -97218,96 +97187,96 @@ fpc_write_text_widechar:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-168
-	bne	r1,r0,.Lj11501
+	bne	r1,r0,.Lj11496
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj11503
+	beq	r5,r0,.Lj11498
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj11504
-.Lj11503:
+	jal	r0,.Lj11499
+.Lj11498:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11504:
+.Lj11499:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11505
-	jal	r0,.Lj11506
-.Lj11505:
-	jal	r0,.Lj11502
-.Lj11506:
+	bne	r3,r0,.Lj11500
+	jal	r0,.Lj11501
+.Lj11500:
+	jal	r0,.Lj11497
+.Lj11501:
 	ldw	r3,r30,-60
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1970
 	sne	r3,r3,r4
-	bne	r3,r0,.Lj11507
-	jal	r0,.Lj11508
-.Lj11507:
+	bne	r3,r0,.Lj11502
+	jal	r0,.Lj11503
+.Lj11502:
 	ldw	r3,r30,-60
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1968
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj11509
-	jal	r0,.Lj11510
-.Lj11509:
+	bne	r3,r0,.Lj11504
+	jal	r0,.Lj11505
+.Lj11504:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11511
+	beq	r4,r0,.Lj11506
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11512
-.Lj11511:
+	jal	r0,.Lj11507
+.Lj11506:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11512:
+.Lj11507:
 	addi	r3,r0,103
 	sth	r1,r3,0
-	jal	r0,.Lj11513
-.Lj11510:
+	jal	r0,.Lj11508
+.Lj11505:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11514
+	beq	r4,r0,.Lj11509
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11515
-.Lj11514:
+	jal	r0,.Lj11510
+.Lj11509:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11515:
+.Lj11510:
 	addi	r3,r0,105
 	sth	r1,r3,0
-.Lj11513:
-	jal	r0,.Lj11502
 .Lj11508:
+	jal	r0,.Lj11497
+.Lj11503:
 	ldw	r3,r30,-56
 	addi	r4,r0,1
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj11516
-	jal	r0,.Lj11517
-.Lj11516:
+	bne	r3,r0,.Lj11511
+	jal	r0,.Lj11512
+.Lj11511:
 	ldw	r3,r30,-56
 	addi	r4,r3,-1
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_FPC_WRITEBLANKS$TEXT$LONGINT
-.Lj11517:
+.Lj11512:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-60
 	ldw	r4,r4,16
 	ldw	r3,r3,8
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11518
-	jal	r0,.Lj11519
-.Lj11518:
+	bne	r3,r0,.Lj11513
+	jal	r0,.Lj11514
+.Lj11513:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-60
 	ldw	r4,r4,32
 	jalr	r31,r4
-.Lj11519:
+.Lj11514:
 	addi	r3,r30,-64
 	ldw	r4,r30,-60
 	ldhu	r5,r4,592
@@ -97317,27 +97286,27 @@ fpc_write_text_widechar:
 	ldw	r7,r7,0
 	jalr	r31,r7
 	ldw	r4,r30,-68
-	bne	r4,r0,.Lj11520
+	bne	r4,r0,.Lj11515
 	la	r3,FPC_EMPTYCHAR
 	addi	r4,r3,0
-.Lj11520:
+.Lj11515:
 	ldw	r5,r30,-68
-	beq	r5,r0,.Lj11521
+	beq	r5,r0,.Lj11516
 	ldw	r5,r5,-4
-.Lj11521:
+.Lj11516:
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_FPC_WRITEBUFFER$TEXT$formal$LONGINT
-.Lj11501:
+.Lj11496:
 	call	fpc_popaddrstack
 	addi	r3,r30,-68
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-168
-	beq	r3,r0,.Lj11500
+	beq	r3,r0,.Lj11495
 	call	fpc_reraise
-.Lj11502:
+.Lj11497:
 	stw	r30,r0,-168
-	jal	r0,.Lj11501
-.Lj11500:
+	jal	r0,.Lj11496
+.Lj11495:
 	ldw	r30,r29,168
 	ldw	r31,r29,172
 	addi	r29,r29,176
@@ -97363,15 +97332,15 @@ SYSTEM_$$_NEXTCHAR$TEXT$OPENSTRING$$BOOLEAN:
 	ldw	r3,r3,16
 	ldw	r4,r4,20
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj11524
-	jal	r0,.Lj11525
-.Lj11524:
+	bne	r3,r0,.Lj11519
+	jal	r0,.Lj11520
+.Lj11519:
 	la	r3,TC_$SYSTEM_$$_CTRLZMARKSEOF
 	ldbu	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11526
-	jal	r0,.Lj11527
-.Lj11527:
+	bne	r3,r0,.Lj11521
+	jal	r0,.Lj11522
+.Lj11522:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -97380,16 +97349,16 @@ SYSTEM_$$_NEXTCHAR$TEXT$OPENSTRING$$BOOLEAN:
 	ldbu	r3,r3,0
 	addi	r3,r3,-26
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11526
-	jal	r0,.Lj11528
-.Lj11526:
+	bne	r3,r0,.Lj11521
+	jal	r0,.Lj11523
+.Lj11521:
 	ldw	r3,r30,-60
 	ldbu	r3,r3,0
 	ldw	r4,r30,-64
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj11529
-	jal	r0,.Lj11530
-.Lj11529:
+	bne	r3,r0,.Lj11524
+	jal	r0,.Lj11525
+.Lj11524:
 	ldw	r3,r30,-60
 	ldbu	r3,r3,0
 	addi	r5,r3,1
@@ -97407,7 +97376,7 @@ SYSTEM_$$_NEXTCHAR$TEXT$OPENSTRING$$BOOLEAN:
 	add	r3,r3,r4
 	ldbu	r4,r5,0
 	stb	r3,r4,0
-.Lj11530:
+.Lj11525:
 	ldw	r3,r30,-56
 	ldw	r4,r3,16
 	addi	r4,r4,1
@@ -97417,16 +97386,16 @@ SYSTEM_$$_NEXTCHAR$TEXT$OPENSTRING$$BOOLEAN:
 	ldw	r4,r4,16
 	ldw	r3,r3,20
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11531
-	jal	r0,.Lj11532
-.Lj11531:
+	bne	r3,r0,.Lj11526
+	jal	r0,.Lj11527
+.Lj11526:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_READTEXTBUF$TEXT
-.Lj11532:
+.Lj11527:
 	addi	r3,r0,1
 	stb	r30,r3,-68
-.Lj11528:
-.Lj11525:
+.Lj11523:
+.Lj11520:
 	ldbu	r1,r30,-68
 	ldw	r30,r29,68
 	ldw	r31,r29,72
@@ -97454,16 +97423,16 @@ SYSTEM_$$_IGNORESPACES$TEXT$$BOOLEAN:
 	ldw	r4,r4,16
 	ldw	r3,r3,20
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11535
-	jal	r0,.Lj11536
-.Lj11535:
-	jal	r0,.Lj11533
-.Lj11536:
+	bne	r3,r0,.Lj11530
+	jal	r0,.Lj11531
+.Lj11530:
+	jal	r0,.Lj11528
+.Lj11531:
 	la	r3,TC_$SYSTEM_$$_CTRLZMARKSEOF
 	ldbu	r3,r3,0
-	bne	r3,r0,.Lj11537
-	jal	r0,.Lj11538
-.Lj11537:
+	bne	r3,r0,.Lj11532
+	jal	r0,.Lj11533
+.Lj11532:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -97472,38 +97441,38 @@ SYSTEM_$$_IGNORESPACES$TEXT$$BOOLEAN:
 	ldbu	r3,r3,0
 	addi	r3,r3,-26
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11539
-	jal	r0,.Lj11538
-.Lj11539:
+	bne	r3,r0,.Lj11534
 	jal	r0,.Lj11533
-.Lj11538:
-	jal	r0,.Lj11541
-.Lj11540:
+.Lj11534:
+	jal	r0,.Lj11528
+.Lj11533:
+	jal	r0,.Lj11536
+.Lj11535:
 	addi	r4,r30,-316
 	ldw	r3,r30,-56
 	addi	r5,r0,255
 	call	SYSTEM_$$_NEXTCHAR$TEXT$OPENSTRING$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj11543
-	jal	r0,.Lj11544
-.Lj11543:
-	jal	r0,.Lj11533
-.Lj11544:
+	bne	r3,r0,.Lj11538
+	jal	r0,.Lj11539
+.Lj11538:
+	jal	r0,.Lj11528
+.Lj11539:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-56
 	ldw	r4,r4,16
 	ldw	r3,r3,20
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11545
-	jal	r0,.Lj11546
-.Lj11545:
-	jal	r0,.Lj11542
-.Lj11546:
+	bne	r3,r0,.Lj11540
+	jal	r0,.Lj11541
+.Lj11540:
+	jal	r0,.Lj11537
+.Lj11541:
 	la	r3,TC_$SYSTEM_$$_CTRLZMARKSEOF
 	ldbu	r3,r3,0
-	bne	r3,r0,.Lj11547
-	jal	r0,.Lj11548
-.Lj11547:
+	bne	r3,r0,.Lj11542
+	jal	r0,.Lj11543
+.Lj11542:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -97512,12 +97481,12 @@ SYSTEM_$$_IGNORESPACES$TEXT$$BOOLEAN:
 	ldbu	r3,r3,0
 	addi	r3,r3,-26
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11549
-	jal	r0,.Lj11548
-.Lj11549:
-	jal	r0,.Lj11542
-.Lj11548:
-.Lj11541:
+	bne	r3,r0,.Lj11544
+	jal	r0,.Lj11543
+.Lj11544:
+	jal	r0,.Lj11537
+.Lj11543:
+.Lj11536:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -97526,12 +97495,12 @@ SYSTEM_$$_IGNORESPACES$TEXT$$BOOLEAN:
 	ldbu	r4,r3,0
 	addi	r3,r0,32
 	sleu	r3,r4,r3
-	bne	r3,r0,.Lj11540
-	jal	r0,.Lj11542
-.Lj11542:
+	bne	r3,r0,.Lj11535
+	jal	r0,.Lj11537
+.Lj11537:
 	addi	r3,r0,1
 	stb	r30,r3,-60
-.Lj11533:
+.Lj11528:
 	ldbu	r1,r30,-60
 	ldw	r30,r29,316
 	ldw	r31,r29,320
@@ -97554,24 +97523,24 @@ SYSTEM_$$_READNUMERIC$TEXT$OPENSTRING:
 	stw	r30,r3,-56
 	stw	r30,r4,-60
 	stw	r30,r5,-64
-.Lj11552:
+.Lj11547:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	ldw	r5,r30,-64
 	call	SYSTEM_$$_NEXTCHAR$TEXT$OPENSTRING$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj11555
-	jal	r0,.Lj11556
-.Lj11555:
-	jal	r0,.Lj11550
-.Lj11556:
+	bne	r3,r0,.Lj11550
+	jal	r0,.Lj11551
+.Lj11550:
+	jal	r0,.Lj11545
+.Lj11551:
 	ldw	r3,r30,-60
 	ldbu	r4,r3,0
 	ldw	r3,r30,-64
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj11557
-	jal	r0,.Lj11558
-.Lj11558:
+	bne	r3,r0,.Lj11552
+	jal	r0,.Lj11553
+.Lj11553:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -97580,14 +97549,14 @@ SYSTEM_$$_READNUMERIC$TEXT$OPENSTRING:
 	ldbu	r3,r3,0
 	addi	r4,r0,32
 	sleu	r3,r3,r4
-	bne	r3,r0,.Lj11557
-	jal	r0,.Lj11559
-.Lj11557:
+	bne	r3,r0,.Lj11552
 	jal	r0,.Lj11554
-.Lj11559:
-	jal	r0,.Lj11552
+.Lj11552:
+	jal	r0,.Lj11549
 .Lj11554:
-.Lj11550:
+	jal	r0,.Lj11547
+.Lj11549:
+.Lj11545:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -97610,97 +97579,97 @@ SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN:
 	stb	r30,r0,-60
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11562
+	beq	r4,r0,.Lj11557
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11563
-.Lj11562:
+	jal	r0,.Lj11558
+.Lj11557:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11563:
+.Lj11558:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11564
-	jal	r0,.Lj11565
-.Lj11564:
+	bne	r3,r0,.Lj11559
 	jal	r0,.Lj11560
-.Lj11565:
+.Lj11559:
+	jal	r0,.Lj11555
+.Lj11560:
 	ldw	r3,r30,-56
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1969
 	sne	r3,r3,r4
-	bne	r3,r0,.Lj11566
-	jal	r0,.Lj11567
-.Lj11566:
+	bne	r3,r0,.Lj11561
+	jal	r0,.Lj11562
+.Lj11561:
 	ldw	r3,r30,-56
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1970
-	beq	r3,r4,.Lj11570
+	beq	r3,r4,.Lj11565
 	lui	r4,13
 	ori	r4,r4,1972
-	beq	r3,r4,.Lj11570
-	jal	r0,.Lj11569
-.Lj11570:
+	beq	r3,r4,.Lj11565
+	jal	r0,.Lj11564
+.Lj11565:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj11571
+	beq	r5,r0,.Lj11566
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj11572
-.Lj11571:
+	jal	r0,.Lj11567
+.Lj11566:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11572:
+.Lj11567:
 	addi	r3,r0,104
 	sth	r1,r3,0
-	jal	r0,.Lj11568
-.Lj11569:
+	jal	r0,.Lj11563
+.Lj11564:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11573
+	beq	r4,r0,.Lj11568
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11574
-.Lj11573:
+	jal	r0,.Lj11569
+.Lj11568:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11574:
+.Lj11569:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj11568:
-	jal	r0,.Lj11560
-.Lj11567:
+.Lj11563:
+	jal	r0,.Lj11555
+.Lj11562:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-56
 	ldw	r4,r4,16
 	ldw	r3,r3,20
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11575
-	jal	r0,.Lj11576
-.Lj11575:
+	bne	r3,r0,.Lj11570
+	jal	r0,.Lj11571
+.Lj11570:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_READTEXTBUF$TEXT
-.Lj11576:
+.Lj11571:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj11577
+	beq	r5,r0,.Lj11572
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj11578
-.Lj11577:
+	jal	r0,.Lj11573
+.Lj11572:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11578:
+.Lj11573:
 	ldhu	r3,r1,0
 	seq	r3,r3,r0
 	stb	r30,r3,-60
-.Lj11560:
+.Lj11555:
 	ldbu	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -97728,11 +97697,11 @@ SYSTEM_$$_READINTEGER$TEXT$OPENSTRING:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj11581
-	jal	r0,.Lj11582
-.Lj11581:
-	jal	r0,.Lj11579
-.Lj11582:
+	bne	r3,r0,.Lj11576
+	jal	r0,.Lj11577
+.Lj11576:
+	jal	r0,.Lj11574
+.Lj11577:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_IGNORESPACES$TEXT$$BOOLEAN
 	ldw	r4,r30,-56
@@ -97740,13 +97709,13 @@ SYSTEM_$$_READINTEGER$TEXT$OPENSTRING:
 	ldw	r4,r4,16
 	ldw	r3,r3,20
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11583
-	jal	r0,.Lj11584
-.Lj11583:
+	bne	r3,r0,.Lj11578
+	jal	r0,.Lj11579
+.Lj11578:
 	ldw	r3,r30,-56
 	stw	r3,r0,12
-	jal	r0,.Lj11579
-.Lj11584:
+	jal	r0,.Lj11574
+.Lj11579:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -97754,16 +97723,16 @@ SYSTEM_$$_READINTEGER$TEXT$OPENSTRING:
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r4,r0,43
-	beq	r3,r4,.Lj11585
+	beq	r3,r4,.Lj11580
 	addi	r4,r0,45
-	beq	r3,r4,.Lj11585
-	jal	r0,.Lj11586
-.Lj11585:
+	beq	r3,r4,.Lj11580
+	jal	r0,.Lj11581
+.Lj11580:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	ldw	r5,r30,-64
 	call	SYSTEM_$$_NEXTCHAR$TEXT$OPENSTRING$$BOOLEAN
-.Lj11586:
+.Lj11581:
 	addi	r3,r0,10
 	sth	r30,r3,-68
 	ldw	r3,r30,-56
@@ -97771,11 +97740,11 @@ SYSTEM_$$_READINTEGER$TEXT$OPENSTRING:
 	ldw	r3,r3,16
 	ldw	r4,r4,20
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj11587
-	jal	r0,.Lj11588
-.Lj11587:
-	jal	r0,.Lj11579
-.Lj11588:
+	bne	r3,r0,.Lj11582
+	jal	r0,.Lj11583
+.Lj11582:
+	jal	r0,.Lj11574
+.Lj11583:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -97784,13 +97753,13 @@ SYSTEM_$$_READINTEGER$TEXT$OPENSTRING:
 	ldbu	r3,r3,0
 	addi	r3,r3,-36
 	addi	r4,r0,3
-	bltu	r3,r4,.Lj11589
+	bltu	r3,r4,.Lj11584
 	addi	r4,r0,52
-	beq	r3,r4,.Lj11589
+	beq	r3,r4,.Lj11584
 	addi	r4,r0,84
-	beq	r3,r4,.Lj11589
-	jal	r0,.Lj11590
-.Lj11589:
+	beq	r3,r4,.Lj11584
+	jal	r0,.Lj11585
+.Lj11584:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -97798,35 +97767,35 @@ SYSTEM_$$_READINTEGER$TEXT$OPENSTRING:
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r4,r0,36
-	beq	r3,r4,.Lj11592
+	beq	r3,r4,.Lj11587
 	addi	r4,r0,37
-	beq	r3,r4,.Lj11593
+	beq	r3,r4,.Lj11588
 	addi	r4,r0,38
-	beq	r3,r4,.Lj11594
+	beq	r3,r4,.Lj11589
 	addi	r4,r0,88
-	beq	r3,r4,.Lj11592
+	beq	r3,r4,.Lj11587
 	addi	r4,r0,120
-	beq	r3,r4,.Lj11592
-	jal	r0,.Lj11591
-.Lj11592:
+	beq	r3,r4,.Lj11587
+	jal	r0,.Lj11586
+.Lj11587:
 	addi	r3,r0,16
 	sth	r30,r3,-68
-	jal	r0,.Lj11591
-.Lj11593:
+	jal	r0,.Lj11586
+.Lj11588:
 	addi	r3,r0,2
 	sth	r30,r3,-68
-	jal	r0,.Lj11591
-.Lj11594:
+	jal	r0,.Lj11586
+.Lj11589:
 	addi	r3,r0,8
 	sth	r30,r3,-68
-	jal	r0,.Lj11591
-.Lj11591:
+	jal	r0,.Lj11586
+.Lj11586:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	ldw	r5,r30,-64
 	call	SYSTEM_$$_NEXTCHAR$TEXT$OPENSTRING$$BOOLEAN
-	jal	r0,.Lj11595
-.Lj11590:
+	jal	r0,.Lj11590
+.Lj11585:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -97835,9 +97804,9 @@ SYSTEM_$$_READINTEGER$TEXT$OPENSTRING:
 	ldbu	r3,r3,0
 	addi	r3,r3,-48
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11596
-	jal	r0,.Lj11597
-.Lj11596:
+	bne	r3,r0,.Lj11591
+	jal	r0,.Lj11592
+.Lj11591:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	ldw	r5,r30,-64
@@ -97847,11 +97816,11 @@ SYSTEM_$$_READINTEGER$TEXT$OPENSTRING:
 	ldw	r3,r3,16
 	ldw	r4,r4,20
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj11598
-	jal	r0,.Lj11599
-.Lj11598:
-	jal	r0,.Lj11579
-.Lj11599:
+	bne	r3,r0,.Lj11593
+	jal	r0,.Lj11594
+.Lj11593:
+	jal	r0,.Lj11574
+.Lj11594:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -97859,28 +97828,28 @@ SYSTEM_$$_READINTEGER$TEXT$OPENSTRING:
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r4,r0,88
-	beq	r3,r4,.Lj11600
+	beq	r3,r4,.Lj11595
 	addi	r4,r0,120
-	beq	r3,r4,.Lj11600
-	jal	r0,.Lj11601
-.Lj11600:
+	beq	r3,r4,.Lj11595
+	jal	r0,.Lj11596
+.Lj11595:
 	addi	r3,r0,16
 	sth	r30,r3,-68
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	ldw	r5,r30,-64
 	call	SYSTEM_$$_NEXTCHAR$TEXT$OPENSTRING$$BOOLEAN
-.Lj11601:
+.Lj11596:
+.Lj11592:
+.Lj11590:
+	jal	r0,.Lj11598
 .Lj11597:
-.Lj11595:
-	jal	r0,.Lj11603
-.Lj11602:
 	ldh	r3,r30,-68
 	addi	r3,r3,-2
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11605
-	jal	r0,.Lj11606
-.Lj11605:
+	bne	r3,r0,.Lj11600
+	jal	r0,.Lj11601
+.Lj11600:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -97889,19 +97858,19 @@ SYSTEM_$$_READINTEGER$TEXT$OPENSTRING:
 	ldbu	r3,r3,0
 	addi	r3,r3,-48
 	addi	r4,r0,2
-	bltu	r3,r4,.Lj11608
-	jal	r0,.Lj11609
-.Lj11608:
-	jal	r0,.Lj11607
-.Lj11609:
-	jal	r0,.Lj11606
-.Lj11606:
+	bltu	r3,r4,.Lj11603
+	jal	r0,.Lj11604
+.Lj11603:
+	jal	r0,.Lj11602
+.Lj11604:
+	jal	r0,.Lj11601
+.Lj11601:
 	ldh	r3,r30,-68
 	addi	r3,r3,-8
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11611
-	jal	r0,.Lj11612
-.Lj11611:
+	bne	r3,r0,.Lj11606
+	jal	r0,.Lj11607
+.Lj11606:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -97910,23 +97879,23 @@ SYSTEM_$$_READINTEGER$TEXT$OPENSTRING:
 	ldbu	r4,r3,0
 	addi	r4,r4,-48
 	addi	r3,r0,8
-	bltu	r4,r3,.Lj11614
-	jal	r0,.Lj11615
-.Lj11614:
-	jal	r0,.Lj11613
-.Lj11615:
-	jal	r0,.Lj11612
-.Lj11613:
-	jal	r0,.Lj11607
-.Lj11612:
+	bltu	r4,r3,.Lj11609
 	jal	r0,.Lj11610
+.Lj11609:
+	jal	r0,.Lj11608
 .Lj11610:
+	jal	r0,.Lj11607
+.Lj11608:
+	jal	r0,.Lj11602
+.Lj11607:
+	jal	r0,.Lj11605
+.Lj11605:
 	ldh	r3,r30,-68
 	addi	r3,r3,-10
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11617
-	jal	r0,.Lj11618
-.Lj11617:
+	bne	r3,r0,.Lj11612
+	jal	r0,.Lj11613
+.Lj11612:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -97935,23 +97904,23 @@ SYSTEM_$$_READINTEGER$TEXT$OPENSTRING:
 	ldbu	r4,r3,0
 	addi	r4,r4,-48
 	addi	r3,r0,10
-	bltu	r4,r3,.Lj11620
-	jal	r0,.Lj11621
-.Lj11620:
-	jal	r0,.Lj11619
-.Lj11621:
-	jal	r0,.Lj11618
-.Lj11619:
-	jal	r0,.Lj11607
-.Lj11618:
+	bltu	r4,r3,.Lj11615
 	jal	r0,.Lj11616
+.Lj11615:
+	jal	r0,.Lj11614
 .Lj11616:
+	jal	r0,.Lj11613
+.Lj11614:
+	jal	r0,.Lj11602
+.Lj11613:
+	jal	r0,.Lj11611
+.Lj11611:
 	ldh	r3,r30,-68
 	addi	r3,r3,-16
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11623
-	jal	r0,.Lj11624
-.Lj11623:
+	bne	r3,r0,.Lj11618
+	jal	r0,.Lj11619
+.Lj11618:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -97960,52 +97929,52 @@ SYSTEM_$$_READINTEGER$TEXT$OPENSTRING:
 	ldbu	r3,r3,0
 	addi	r3,r3,-48
 	addi	r4,r0,10
-	bltu	r3,r4,.Lj11626
+	bltu	r3,r4,.Lj11621
 	addi	r3,r3,-17
 	addi	r4,r0,6
-	bltu	r3,r4,.Lj11626
+	bltu	r3,r4,.Lj11621
 	addi	r3,r3,-32
 	addi	r4,r0,6
-	bltu	r3,r4,.Lj11626
-	jal	r0,.Lj11627
-.Lj11626:
-	jal	r0,.Lj11625
-.Lj11627:
-	jal	r0,.Lj11624
-.Lj11625:
-	jal	r0,.Lj11607
-.Lj11624:
+	bltu	r3,r4,.Lj11621
 	jal	r0,.Lj11622
-.Lj11607:
+.Lj11621:
+	jal	r0,.Lj11620
+.Lj11622:
+	jal	r0,.Lj11619
+.Lj11620:
+	jal	r0,.Lj11602
+.Lj11619:
+	jal	r0,.Lj11617
+.Lj11602:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	ldw	r5,r30,-64
 	call	SYSTEM_$$_NEXTCHAR$TEXT$OPENSTRING$$BOOLEAN
-	jal	r0,.Lj11628
-.Lj11622:
-	jal	r0,.Lj11579
-.Lj11628:
-.Lj11603:
+	jal	r0,.Lj11623
+.Lj11617:
+	jal	r0,.Lj11574
+.Lj11623:
+.Lj11598:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-56
 	ldw	r4,r4,16
 	ldw	r3,r3,20
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj11629
-	jal	r0,.Lj11630
-.Lj11629:
+	bne	r3,r0,.Lj11624
+	jal	r0,.Lj11625
+.Lj11624:
 	ldw	r3,r30,-60
 	ldbu	r3,r3,0
 	ldw	r4,r30,-64
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj11631
-	jal	r0,.Lj11630
-.Lj11631:
-	jal	r0,.Lj11602
-.Lj11630:
-	jal	r0,.Lj11604
-.Lj11604:
-.Lj11579:
+	bne	r3,r0,.Lj11626
+	jal	r0,.Lj11625
+.Lj11626:
+	jal	r0,.Lj11597
+.Lj11625:
+	jal	r0,.Lj11599
+.Lj11599:
+.Lj11574:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -98032,11 +98001,11 @@ SYSTEM_$$_READREAL$TEXT$OPENSTRING:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj11634
-	jal	r0,.Lj11635
-.Lj11634:
-	jal	r0,.Lj11632
-.Lj11635:
+	bne	r3,r0,.Lj11629
+	jal	r0,.Lj11630
+.Lj11629:
+	jal	r0,.Lj11627
+.Lj11630:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_IGNORESPACES$TEXT$$BOOLEAN
 	ldw	r4,r30,-56
@@ -98044,13 +98013,13 @@ SYSTEM_$$_READREAL$TEXT$OPENSTRING:
 	ldw	r4,r4,16
 	ldw	r3,r3,20
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11636
-	jal	r0,.Lj11637
-.Lj11636:
+	bne	r3,r0,.Lj11631
+	jal	r0,.Lj11632
+.Lj11631:
 	ldw	r3,r30,-56
 	stw	r3,r0,12
-	jal	r0,.Lj11632
-.Lj11637:
+	jal	r0,.Lj11627
+.Lj11632:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -98058,27 +98027,27 @@ SYSTEM_$$_READREAL$TEXT$OPENSTRING:
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r4,r0,43
-	beq	r3,r4,.Lj11638
+	beq	r3,r4,.Lj11633
 	addi	r4,r0,45
-	beq	r3,r4,.Lj11638
-	jal	r0,.Lj11639
-.Lj11638:
+	beq	r3,r4,.Lj11633
+	jal	r0,.Lj11634
+.Lj11633:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	ldw	r5,r30,-64
 	call	SYSTEM_$$_NEXTCHAR$TEXT$OPENSTRING$$BOOLEAN
-.Lj11639:
+.Lj11634:
 	stb	r30,r0,-68
 	ldw	r4,r30,-56
 	ldw	r3,r30,-56
 	ldw	r4,r4,16
 	ldw	r3,r3,20
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11640
-	jal	r0,.Lj11641
-.Lj11640:
-	jal	r0,.Lj11632
-.Lj11641:
+	bne	r3,r0,.Lj11635
+	jal	r0,.Lj11636
+.Lj11635:
+	jal	r0,.Lj11627
+.Lj11636:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -98087,12 +98056,12 @@ SYSTEM_$$_READREAL$TEXT$OPENSTRING:
 	ldbu	r3,r3,0
 	addi	r3,r3,-48
 	addi	r4,r0,10
-	bltu	r3,r4,.Lj11642
-	jal	r0,.Lj11643
-.Lj11642:
+	bltu	r3,r4,.Lj11637
+	jal	r0,.Lj11638
+.Lj11637:
 	addi	r3,r0,1
 	stb	r30,r3,-68
-.Lj11644:
+.Lj11639:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	ldw	r5,r30,-64
@@ -98102,18 +98071,18 @@ SYSTEM_$$_READREAL$TEXT$OPENSTRING:
 	ldw	r4,r4,16
 	ldw	r3,r3,20
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11647
-	jal	r0,.Lj11648
-.Lj11648:
+	bne	r3,r0,.Lj11642
+	jal	r0,.Lj11643
+.Lj11643:
 	ldw	r3,r30,-60
 	ldbu	r4,r3,0
 	ldw	r3,r30,-64
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11647
-	jal	r0,.Lj11649
-.Lj11647:
-	jal	r0,.Lj11632
-.Lj11649:
+	bne	r3,r0,.Lj11642
+	jal	r0,.Lj11644
+.Lj11642:
+	jal	r0,.Lj11627
+.Lj11644:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -98122,14 +98091,14 @@ SYSTEM_$$_READREAL$TEXT$OPENSTRING:
 	ldbu	r3,r3,0
 	addi	r3,r3,-48
 	addi	r4,r0,10
-	bltu	r3,r4,.Lj11650
-	jal	r0,.Lj11651
-.Lj11650:
-	jal	r0,.Lj11644
-.Lj11651:
+	bltu	r3,r4,.Lj11645
 	jal	r0,.Lj11646
+.Lj11645:
+	jal	r0,.Lj11639
 .Lj11646:
-.Lj11643:
+	jal	r0,.Lj11641
+.Lj11641:
+.Lj11638:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -98138,44 +98107,44 @@ SYSTEM_$$_READREAL$TEXT$OPENSTRING:
 	ldbu	r3,r3,0
 	addi	r3,r3,-46
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11652
+	bne	r3,r0,.Lj11647
+	jal	r0,.Lj11648
+.Lj11647:
+	ldw	r4,r30,-60
+	ldw	r3,r30,-56
+	ldw	r5,r30,-64
+	call	SYSTEM_$$_NEXTCHAR$TEXT$OPENSTRING$$BOOLEAN
+	ldw	r4,r30,-56
+	ldw	r3,r30,-56
+	ldw	r4,r4,16
+	ldw	r3,r3,20
+	sge	r3,r4,r3
+	bne	r3,r0,.Lj11649
+	jal	r0,.Lj11650
+.Lj11650:
+	ldw	r3,r30,-60
+	ldbu	r3,r3,0
+	ldw	r4,r30,-64
+	sge	r3,r3,r4
+	bne	r3,r0,.Lj11649
+	jal	r0,.Lj11651
+.Lj11649:
+	jal	r0,.Lj11627
+.Lj11651:
+	ldw	r3,r30,-56
+	ldw	r3,r3,24
+	ldw	r4,r30,-56
+	ldw	r4,r4,16
+	add	r3,r3,r4
+	ldbu	r4,r3,0
+	addi	r4,r4,-48
+	addi	r3,r0,10
+	bltu	r4,r3,.Lj11652
 	jal	r0,.Lj11653
 .Lj11652:
-	ldw	r4,r30,-60
-	ldw	r3,r30,-56
-	ldw	r5,r30,-64
-	call	SYSTEM_$$_NEXTCHAR$TEXT$OPENSTRING$$BOOLEAN
-	ldw	r4,r30,-56
-	ldw	r3,r30,-56
-	ldw	r4,r4,16
-	ldw	r3,r3,20
-	sge	r3,r4,r3
-	bne	r3,r0,.Lj11654
-	jal	r0,.Lj11655
-.Lj11655:
-	ldw	r3,r30,-60
-	ldbu	r3,r3,0
-	ldw	r4,r30,-64
-	sge	r3,r3,r4
-	bne	r3,r0,.Lj11654
-	jal	r0,.Lj11656
-.Lj11654:
-	jal	r0,.Lj11632
-.Lj11656:
-	ldw	r3,r30,-56
-	ldw	r3,r3,24
-	ldw	r4,r30,-56
-	ldw	r4,r4,16
-	add	r3,r3,r4
-	ldbu	r4,r3,0
-	addi	r4,r4,-48
-	addi	r3,r0,10
-	bltu	r4,r3,.Lj11657
-	jal	r0,.Lj11658
-.Lj11657:
 	addi	r3,r0,1
 	stb	r30,r3,-68
-.Lj11659:
+.Lj11654:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	ldw	r5,r30,-64
@@ -98185,18 +98154,18 @@ SYSTEM_$$_READREAL$TEXT$OPENSTRING:
 	ldw	r4,r4,16
 	ldw	r3,r3,20
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11662
-	jal	r0,.Lj11663
-.Lj11663:
+	bne	r3,r0,.Lj11657
+	jal	r0,.Lj11658
+.Lj11658:
 	ldw	r3,r30,-60
 	ldbu	r3,r3,0
 	ldw	r4,r30,-64
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj11662
-	jal	r0,.Lj11664
-.Lj11662:
-	jal	r0,.Lj11632
-.Lj11664:
+	bne	r3,r0,.Lj11657
+	jal	r0,.Lj11659
+.Lj11657:
+	jal	r0,.Lj11627
+.Lj11659:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -98205,19 +98174,19 @@ SYSTEM_$$_READREAL$TEXT$OPENSTRING:
 	ldbu	r4,r3,0
 	addi	r4,r4,-48
 	addi	r3,r0,10
-	bltu	r4,r3,.Lj11665
-	jal	r0,.Lj11666
-.Lj11665:
-	jal	r0,.Lj11659
-.Lj11666:
+	bltu	r4,r3,.Lj11660
 	jal	r0,.Lj11661
+.Lj11660:
+	jal	r0,.Lj11654
 .Lj11661:
-.Lj11658:
+	jal	r0,.Lj11656
+.Lj11656:
 .Lj11653:
+.Lj11648:
 	ldbu	r3,r30,-68
-	bne	r3,r0,.Lj11667
-	jal	r0,.Lj11668
-.Lj11667:
+	bne	r3,r0,.Lj11662
+	jal	r0,.Lj11663
+.Lj11662:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -98225,15 +98194,15 @@ SYSTEM_$$_READREAL$TEXT$OPENSTRING:
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r4,r0,69
-	beq	r3,r4,.Lj11670
+	beq	r3,r4,.Lj11665
 	addi	r4,r0,101
-	beq	r3,r4,.Lj11670
-	jal	r0,.Lj11671
-.Lj11670:
-	jal	r0,.Lj11669
-.Lj11671:
-	jal	r0,.Lj11668
-.Lj11669:
+	beq	r3,r4,.Lj11665
+	jal	r0,.Lj11666
+.Lj11665:
+	jal	r0,.Lj11664
+.Lj11666:
+	jal	r0,.Lj11663
+.Lj11664:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	ldw	r5,r30,-64
@@ -98243,18 +98212,18 @@ SYSTEM_$$_READREAL$TEXT$OPENSTRING:
 	ldw	r3,r3,16
 	ldw	r4,r4,20
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj11672
-	jal	r0,.Lj11673
-.Lj11673:
+	bne	r3,r0,.Lj11667
+	jal	r0,.Lj11668
+.Lj11668:
 	ldw	r3,r30,-60
 	ldbu	r3,r3,0
 	ldw	r4,r30,-64
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj11672
-	jal	r0,.Lj11674
-.Lj11672:
-	jal	r0,.Lj11632
-.Lj11674:
+	bne	r3,r0,.Lj11667
+	jal	r0,.Lj11669
+.Lj11667:
+	jal	r0,.Lj11627
+.Lj11669:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -98262,18 +98231,18 @@ SYSTEM_$$_READREAL$TEXT$OPENSTRING:
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	addi	r4,r0,43
-	beq	r3,r4,.Lj11675
+	beq	r3,r4,.Lj11670
 	addi	r4,r0,45
-	beq	r3,r4,.Lj11675
-	jal	r0,.Lj11676
-.Lj11675:
+	beq	r3,r4,.Lj11670
+	jal	r0,.Lj11671
+.Lj11670:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	ldw	r5,r30,-64
 	call	SYSTEM_$$_NEXTCHAR$TEXT$OPENSTRING$$BOOLEAN
-.Lj11676:
-	jal	r0,.Lj11678
-.Lj11677:
+.Lj11671:
+	jal	r0,.Lj11673
+.Lj11672:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -98282,39 +98251,39 @@ SYSTEM_$$_READREAL$TEXT$OPENSTRING:
 	ldbu	r4,r3,0
 	addi	r4,r4,-48
 	addi	r3,r0,10
-	bltu	r4,r3,.Lj11680
-	jal	r0,.Lj11681
-.Lj11680:
+	bltu	r4,r3,.Lj11675
+	jal	r0,.Lj11676
+.Lj11675:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	ldw	r5,r30,-64
 	call	SYSTEM_$$_NEXTCHAR$TEXT$OPENSTRING$$BOOLEAN
-	jal	r0,.Lj11682
-.Lj11681:
-	jal	r0,.Lj11679
-.Lj11682:
-.Lj11678:
+	jal	r0,.Lj11677
+.Lj11676:
+	jal	r0,.Lj11674
+.Lj11677:
+.Lj11673:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
 	ldw	r3,r3,16
 	ldw	r4,r4,20
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj11683
-	jal	r0,.Lj11684
-.Lj11683:
+	bne	r3,r0,.Lj11678
+	jal	r0,.Lj11679
+.Lj11678:
 	ldw	r3,r30,-60
 	ldbu	r3,r3,0
 	ldw	r4,r30,-64
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj11685
-	jal	r0,.Lj11684
-.Lj11685:
-	jal	r0,.Lj11677
-.Lj11684:
+	bne	r3,r0,.Lj11680
 	jal	r0,.Lj11679
+.Lj11680:
+	jal	r0,.Lj11672
 .Lj11679:
-.Lj11668:
-.Lj11632:
+	jal	r0,.Lj11674
+.Lj11674:
+.Lj11663:
+.Lj11627:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -98339,14 +98308,14 @@ FPC_READ_END:
 	ldw	r3,r30,-56
 	ldw	r3,r3,36
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11688
-	jal	r0,.Lj11689
-.Lj11688:
+	bne	r3,r0,.Lj11683
+	jal	r0,.Lj11684
+.Lj11683:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
 	ldw	r4,r4,36
 	jalr	r31,r4
-.Lj11689:
+.Lj11684:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -98369,37 +98338,37 @@ FPC_READLN_END:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj11692
-	jal	r0,.Lj11693
-.Lj11692:
-	jal	r0,.Lj11690
-.Lj11693:
+	bne	r3,r0,.Lj11687
+	jal	r0,.Lj11688
+.Lj11687:
+	jal	r0,.Lj11685
+.Lj11688:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-56
 	ldw	r4,r4,16
 	ldw	r3,r3,20
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11694
-	jal	r0,.Lj11695
-.Lj11694:
+	bne	r3,r0,.Lj11689
+	jal	r0,.Lj11690
+.Lj11689:
 	ldw	r3,r30,-56
 	ldw	r3,r3,36
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11696
-	jal	r0,.Lj11697
-.Lj11696:
+	bne	r3,r0,.Lj11691
+	jal	r0,.Lj11692
+.Lj11691:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
 	ldw	r4,r4,36
 	jalr	r31,r4
-.Lj11697:
-	jal	r0,.Lj11690
-.Lj11695:
+.Lj11692:
+	jal	r0,.Lj11685
+.Lj11690:
 	la	r3,TC_$SYSTEM_$$_CTRLZMARKSEOF
 	ldbu	r3,r3,0
-	bne	r3,r0,.Lj11698
-	jal	r0,.Lj11699
-.Lj11698:
+	bne	r3,r0,.Lj11693
+	jal	r0,.Lj11694
+.Lj11693:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -98408,12 +98377,12 @@ FPC_READLN_END:
 	ldbu	r3,r3,0
 	addi	r3,r3,-26
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11700
-	jal	r0,.Lj11699
-.Lj11700:
-	jal	r0,.Lj11690
-.Lj11699:
-.Lj11701:
+	bne	r3,r0,.Lj11695
+	jal	r0,.Lj11694
+.Lj11695:
+	jal	r0,.Lj11685
+.Lj11694:
+.Lj11696:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -98428,19 +98397,19 @@ FPC_READLN_END:
 	ldbu	r3,r30,-60
 	addi	r3,r3,-10
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11704
-	jal	r0,.Lj11705
-.Lj11704:
-	jal	r0,.Lj11690
-.Lj11705:
+	bne	r3,r0,.Lj11699
+	jal	r0,.Lj11700
+.Lj11699:
+	jal	r0,.Lj11685
+.Lj11700:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
 	ldw	r3,r3,16
 	ldw	r4,r4,20
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj11706
-	jal	r0,.Lj11707
-.Lj11706:
+	bne	r3,r0,.Lj11701
+	jal	r0,.Lj11702
+.Lj11701:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_READTEXTBUF$TEXT
 	ldw	r4,r30,-56
@@ -98448,28 +98417,28 @@ FPC_READLN_END:
 	ldw	r4,r4,16
 	ldw	r3,r3,20
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11708
-	jal	r0,.Lj11709
-.Lj11708:
+	bne	r3,r0,.Lj11703
+	jal	r0,.Lj11704
+.Lj11703:
 	ldw	r3,r30,-56
 	ldw	r3,r3,36
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11710
-	jal	r0,.Lj11711
-.Lj11710:
+	bne	r3,r0,.Lj11705
+	jal	r0,.Lj11706
+.Lj11705:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
 	ldw	r4,r4,36
 	jalr	r31,r4
-.Lj11711:
-	jal	r0,.Lj11690
-.Lj11709:
-.Lj11707:
+.Lj11706:
+	jal	r0,.Lj11685
+.Lj11704:
+.Lj11702:
 	la	r3,TC_$SYSTEM_$$_CTRLZMARKSEOF
 	ldbu	r3,r3,0
-	bne	r3,r0,.Lj11712
-	jal	r0,.Lj11713
-.Lj11712:
+	bne	r3,r0,.Lj11707
+	jal	r0,.Lj11708
+.Lj11707:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -98478,17 +98447,17 @@ FPC_READLN_END:
 	ldbu	r3,r3,0
 	addi	r3,r3,-26
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11714
-	jal	r0,.Lj11713
-.Lj11714:
-	jal	r0,.Lj11690
-.Lj11713:
+	bne	r3,r0,.Lj11709
+	jal	r0,.Lj11708
+.Lj11709:
+	jal	r0,.Lj11685
+.Lj11708:
 	ldbu	r3,r30,-60
 	addi	r3,r3,-13
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11715
-	jal	r0,.Lj11716
-.Lj11715:
+	bne	r3,r0,.Lj11710
+	jal	r0,.Lj11711
+.Lj11710:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -98497,18 +98466,18 @@ FPC_READLN_END:
 	ldbu	r3,r3,0
 	addi	r3,r3,-10
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11717
-	jal	r0,.Lj11718
-.Lj11717:
+	bne	r3,r0,.Lj11712
+	jal	r0,.Lj11713
+.Lj11712:
 	ldw	r4,r30,-56
 	ldw	r3,r4,16
 	addi	r3,r3,1
 	stw	r4,r3,16
-.Lj11718:
-	jal	r0,.Lj11690
-.Lj11716:
-	jal	r0,.Lj11701
-.Lj11690:
+.Lj11713:
+	jal	r0,.Lj11685
+.Lj11711:
+	jal	r0,.Lj11696
+.Lj11685:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -98531,34 +98500,34 @@ FPC_READLN_END_ISO:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj11721
-	jal	r0,.Lj11722
-.Lj11721:
-	jal	r0,.Lj11719
-.Lj11722:
+	bne	r3,r0,.Lj11716
+	jal	r0,.Lj11717
+.Lj11716:
+	jal	r0,.Lj11714
+.Lj11717:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-56
 	ldw	r4,r4,16
 	ldw	r3,r3,20
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11723
-	jal	r0,.Lj11724
-.Lj11723:
+	bne	r3,r0,.Lj11718
+	jal	r0,.Lj11719
+.Lj11718:
 	ldw	r3,r30,-56
 	stw	r3,r0,12
 	ldw	r3,r30,-56
 	ldw	r3,r3,36
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11725
-	jal	r0,.Lj11726
-.Lj11725:
+	bne	r3,r0,.Lj11720
+	jal	r0,.Lj11721
+.Lj11720:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
 	ldw	r4,r4,36
 	jalr	r31,r4
-.Lj11726:
-	jal	r0,.Lj11719
-.Lj11724:
+.Lj11721:
+	jal	r0,.Lj11714
+.Lj11719:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -98567,16 +98536,16 @@ FPC_READLN_END_ISO:
 	ldbu	r3,r3,0
 	addi	r3,r3,-26
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11727
-	jal	r0,.Lj11728
-.Lj11727:
+	bne	r3,r0,.Lj11722
+	jal	r0,.Lj11723
+.Lj11722:
 	ldw	r4,r30,-56
 	ldw	r3,r4,16
 	addi	r3,r3,1
 	stw	r4,r3,16
-	jal	r0,.Lj11719
-.Lj11728:
-.Lj11729:
+	jal	r0,.Lj11714
+.Lj11723:
+.Lj11724:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -98591,19 +98560,19 @@ FPC_READLN_END_ISO:
 	ldbu	r3,r30,-60
 	addi	r3,r3,-10
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11732
-	jal	r0,.Lj11733
-.Lj11732:
-	jal	r0,.Lj11719
-.Lj11733:
+	bne	r3,r0,.Lj11727
+	jal	r0,.Lj11728
+.Lj11727:
+	jal	r0,.Lj11714
+.Lj11728:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-56
 	ldw	r4,r4,16
 	ldw	r3,r3,20
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11734
-	jal	r0,.Lj11735
-.Lj11734:
+	bne	r3,r0,.Lj11729
+	jal	r0,.Lj11730
+.Lj11729:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_READTEXTBUF$TEXT
 	ldw	r4,r30,-56
@@ -98611,25 +98580,25 @@ FPC_READLN_END_ISO:
 	ldw	r4,r4,16
 	ldw	r3,r3,20
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11736
-	jal	r0,.Lj11737
-.Lj11736:
+	bne	r3,r0,.Lj11731
+	jal	r0,.Lj11732
+.Lj11731:
 	ldw	r3,r30,-56
 	stw	r3,r0,12
 	ldw	r3,r30,-56
 	ldw	r3,r3,36
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11738
-	jal	r0,.Lj11739
-.Lj11738:
+	bne	r3,r0,.Lj11733
+	jal	r0,.Lj11734
+.Lj11733:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
 	ldw	r4,r4,36
 	jalr	r31,r4
-.Lj11739:
-	jal	r0,.Lj11719
-.Lj11737:
-.Lj11735:
+.Lj11734:
+	jal	r0,.Lj11714
+.Lj11732:
+.Lj11730:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -98638,21 +98607,21 @@ FPC_READLN_END_ISO:
 	ldbu	r3,r3,0
 	addi	r3,r3,-26
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11740
-	jal	r0,.Lj11741
-.Lj11740:
+	bne	r3,r0,.Lj11735
+	jal	r0,.Lj11736
+.Lj11735:
 	ldw	r3,r30,-56
 	ldw	r4,r3,16
 	addi	r4,r4,1
 	stw	r3,r4,16
-	jal	r0,.Lj11719
-.Lj11741:
+	jal	r0,.Lj11714
+.Lj11736:
 	ldbu	r3,r30,-60
 	addi	r3,r3,-13
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11742
-	jal	r0,.Lj11743
-.Lj11742:
+	bne	r3,r0,.Lj11737
+	jal	r0,.Lj11738
+.Lj11737:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -98661,18 +98630,18 @@ FPC_READLN_END_ISO:
 	ldbu	r3,r3,0
 	addi	r3,r3,-10
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11744
-	jal	r0,.Lj11745
-.Lj11744:
+	bne	r3,r0,.Lj11739
+	jal	r0,.Lj11740
+.Lj11739:
 	ldw	r3,r30,-56
 	ldw	r4,r3,16
 	addi	r4,r4,1
 	stw	r3,r4,16
-.Lj11745:
-	jal	r0,.Lj11719
-.Lj11743:
-	jal	r0,.Lj11729
-.Lj11719:
+.Lj11740:
+	jal	r0,.Lj11714
+.Lj11738:
+	jal	r0,.Lj11724
+.Lj11714:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -98696,22 +98665,22 @@ SYSTEM_$$_READPCHARLEN$TEXT$PANSICHAR$LONGINT$$LONGINT:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj11748
-	jal	r0,.Lj11749
-.Lj11748:
-	jal	r0,.Lj11746
-.Lj11749:
+	bne	r3,r0,.Lj11743
+	jal	r0,.Lj11744
+.Lj11743:
+	jal	r0,.Lj11741
+.Lj11744:
 	stw	r30,r0,-72
 	stb	r30,r0,-92
-.Lj11750:
+.Lj11745:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-56
 	ldw	r4,r4,16
 	ldw	r3,r3,20
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11753
-	jal	r0,.Lj11754
-.Lj11753:
+	bne	r3,r0,.Lj11748
+	jal	r0,.Lj11749
+.Lj11748:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_READTEXTBUF$TEXT
 	ldw	r3,r30,-56
@@ -98719,12 +98688,12 @@ SYSTEM_$$_READPCHARLEN$TEXT$PANSICHAR$LONGINT$$LONGINT:
 	ldw	r3,r3,16
 	ldw	r4,r4,20
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj11755
-	jal	r0,.Lj11756
-.Lj11755:
-	jal	r0,.Lj11752
-.Lj11756:
-.Lj11754:
+	bne	r3,r0,.Lj11750
+	jal	r0,.Lj11751
+.Lj11750:
+	jal	r0,.Lj11747
+.Lj11751:
+.Lj11749:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -98740,9 +98709,9 @@ SYSTEM_$$_READPCHARLEN$TEXT$PANSICHAR$LONGINT$$LONGINT:
 	sub	r3,r3,r4
 	ldw	r4,r30,-64
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj11757
-	jal	r0,.Lj11758
-.Lj11757:
+	bne	r3,r0,.Lj11752
+	jal	r0,.Lj11753
+.Lj11752:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -98753,65 +98722,65 @@ SYSTEM_$$_READPCHARLEN$TEXT$PANSICHAR$LONGINT$$LONGINT:
 	sub	r4,r4,r5
 	add	r3,r3,r4
 	stw	r30,r3,-88
-	jal	r0,.Lj11759
-.Lj11758:
+	jal	r0,.Lj11754
+.Lj11753:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
 	ldw	r4,r4,20
 	add	r3,r3,r4
 	stw	r30,r3,-88
-.Lj11759:
+.Lj11754:
 	ldw	r3,r30,-80
 	stw	r30,r3,-84
-	jal	r0,.Lj11761
-.Lj11760:
+	jal	r0,.Lj11756
+.Lj11755:
 	ldw	r3,r30,-80
 	ldbu	r4,r3,0
 	addi	r3,r0,32
 	sltu	r3,r4,r3
+	bne	r3,r0,.Lj11758
+	jal	r0,.Lj11759
+.Lj11758:
+	ldw	r3,r30,-80
+	ldbu	r3,r3,0
+	addi	r4,r0,10
+	beq	r3,r4,.Lj11760
+	addi	r4,r0,13
+	beq	r3,r4,.Lj11760
+	jal	r0,.Lj11761
+.Lj11761:
+	la	r3,TC_$SYSTEM_$$_CTRLZMARKSEOF
+	ldbu	r3,r3,0
 	bne	r3,r0,.Lj11763
 	jal	r0,.Lj11764
 .Lj11763:
 	ldw	r3,r30,-80
 	ldbu	r3,r3,0
-	addi	r4,r0,10
-	beq	r3,r4,.Lj11765
-	addi	r4,r0,13
-	beq	r3,r4,.Lj11765
-	jal	r0,.Lj11766
-.Lj11766:
-	la	r3,TC_$SYSTEM_$$_CTRLZMARKSEOF
-	ldbu	r3,r3,0
-	bne	r3,r0,.Lj11768
-	jal	r0,.Lj11769
-.Lj11768:
-	ldw	r3,r30,-80
-	ldbu	r3,r3,0
 	addi	r3,r3,-26
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11770
-	jal	r0,.Lj11769
-.Lj11770:
-	jal	r0,.Lj11765
-.Lj11769:
-	jal	r0,.Lj11767
+	bne	r3,r0,.Lj11765
+	jal	r0,.Lj11764
 .Lj11765:
+	jal	r0,.Lj11760
+.Lj11764:
+	jal	r0,.Lj11762
+.Lj11760:
 	addi	r3,r0,1
 	stb	r30,r3,-92
-	jal	r0,.Lj11762
-.Lj11767:
-.Lj11764:
+	jal	r0,.Lj11757
+.Lj11762:
+.Lj11759:
 	ldw	r3,r30,-80
 	addi	r3,r3,1
 	stw	r30,r3,-80
-.Lj11761:
+.Lj11756:
 	ldw	r4,r30,-80
 	ldw	r3,r30,-88
 	sltu	r3,r4,r3
-	bne	r3,r0,.Lj11760
-	jal	r0,.Lj11762
-.Lj11762:
+	bne	r3,r0,.Lj11755
+	jal	r0,.Lj11757
+.Lj11757:
 	ldw	r3,r30,-80
 	ldw	r4,r30,-84
 	sub	r3,r3,r4
@@ -98834,20 +98803,20 @@ SYSTEM_$$_READPCHARLEN$TEXT$PANSICHAR$LONGINT$$LONGINT:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-64
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj11771
-	jal	r0,.Lj11772
-.Lj11772:
+	bne	r3,r0,.Lj11766
+	jal	r0,.Lj11767
+.Lj11767:
 	ldbu	r3,r30,-92
-	bne	r3,r0,.Lj11771
-	jal	r0,.Lj11773
-.Lj11771:
-	jal	r0,.Lj11752
-.Lj11773:
-	jal	r0,.Lj11750
-.Lj11752:
+	bne	r3,r0,.Lj11766
+	jal	r0,.Lj11768
+.Lj11766:
+	jal	r0,.Lj11747
+.Lj11768:
+	jal	r0,.Lj11745
+.Lj11747:
 	ldw	r3,r30,-72
 	stw	r30,r3,-68
-.Lj11746:
+.Lj11741:
 	ldw	r1,r30,-68
 	ldw	r30,r29,92
 	ldw	r31,r29,96
@@ -98933,29 +98902,29 @@ fpc_read_text_pchar_as_array:
 	call	SYSTEM_$$_READPCHARLEN$TEXT$PANSICHAR$LONGINT$$LONGINT
 	stw	r30,r1,-72
 	ldbu	r3,r30,-64
-	bne	r3,r0,.Lj11780
-	jal	r0,.Lj11781
-.Lj11780:
+	bne	r3,r0,.Lj11775
+	jal	r0,.Lj11776
+.Lj11775:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-68
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj11782
-	jal	r0,.Lj11781
-.Lj11782:
+	bne	r3,r0,.Lj11777
+	jal	r0,.Lj11776
+.Lj11777:
 	ldw	r3,r30,-68
 	stw	r30,r3,-72
-.Lj11781:
+.Lj11776:
 	ldw	r3,r30,-72
 	ldw	r4,r30,-68
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj11783
-	jal	r0,.Lj11784
-.Lj11783:
+	bne	r3,r0,.Lj11778
+	jal	r0,.Lj11779
+.Lj11778:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-72
 	add	r3,r3,r4
 	stb	r3,r0,0
-.Lj11784:
+.Lj11779:
 	ldw	r30,r29,72
 	ldw	r31,r29,76
 	addi	r29,r29,80
@@ -98987,9 +98956,9 @@ FPC_READ_TEXT_ANSISTR:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-172
-	bne	r1,r0,.Lj11788
+	bne	r1,r0,.Lj11783
 	stw	r30,r0,-68
-.Lj11790:
+.Lj11785:
 	ldw	r3,r30,-68
 	addi	r4,r3,255
 	ldw	r3,r30,-60
@@ -99010,9 +98979,9 @@ FPC_READ_TEXT_ANSISTR:
 	ldw	r3,r30,-72
 	addi	r4,r0,255
 	slt	r3,r3,r4
-	bne	r3,r0,.Lj11792
-	jal	r0,.Lj11790
-.Lj11792:
+	bne	r3,r0,.Lj11787
+	jal	r0,.Lj11785
+.Lj11787:
 	ldw	r3,r30,-60
 	addi	r5,r0,0
 	ldw	r4,r30,-68
@@ -99026,20 +98995,20 @@ FPC_READ_TEXT_ANSISTR:
 	ldhu	r4,r30,-64
 	addi	r5,r0,1
 	sleu	r4,r4,r5
-	bne	r4,r0,.Lj11794
-	jal	r0,.Lj11795
-.Lj11794:
+	bne	r4,r0,.Lj11789
+	jal	r0,.Lj11790
+.Lj11789:
 	la	r4,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r3,r4,0
-.Lj11795:
+.Lj11790:
 	sth	r30,r3,-64
 	ldw	r3,r30,-56
 	ldhu	r3,r3,592
 	ldhu	r4,r30,-64
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj11796
-	jal	r0,.Lj11797
-.Lj11796:
+	bne	r3,r0,.Lj11791
+	jal	r0,.Lj11792
+.Lj11791:
 	ldw	r3,r30,-60
 	ldw	r4,r3,0
 	addi	r3,r30,-176
@@ -99048,17 +99017,17 @@ FPC_READ_TEXT_ANSISTR:
 	ldw	r4,r30,-176
 	ldw	r3,r30,-60
 	call	fpc_ansistr_assign
-.Lj11797:
-.Lj11788:
+.Lj11792:
+.Lj11783:
 	call	fpc_popaddrstack
 	addi	r3,r30,-176
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-172
-	beq	r3,r0,.Lj11787
+	beq	r3,r0,.Lj11782
 	call	fpc_reraise
 	stw	r30,r0,-172
-	jal	r0,.Lj11788
-.Lj11787:
+	jal	r0,.Lj11783
+.Lj11782:
 	ldw	r30,r29,176
 	ldw	r31,r29,180
 	addi	r29,r29,184
@@ -99088,7 +99057,7 @@ fpc_read_text_unicodestr:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj11801
+	bne	r1,r0,.Lj11796
 	addi	r11,r30,-64
 	addi	r3,r11,0
 	call	fpc_ansistr_decr_ref
@@ -99101,28 +99070,28 @@ fpc_read_text_unicodestr:
 	call	SYSTEM_$$_STRINGCODEPAGE$RAWBYTESTRING$$WORD
 	addi	r4,r1,0
 	ldw	r6,r30,-64
-	beq	r6,r0,.Lj11803
+	beq	r6,r0,.Lj11798
 	ldw	r6,r6,-4
-.Lj11803:
+.Lj11798:
 	ldw	r3,r30,-64
-	bne	r3,r0,.Lj11804
+	bne	r3,r0,.Lj11799
 	la	r5,FPC_EMPTYCHAR
 	addi	r3,r5,0
-.Lj11804:
+.Lj11799:
 	ldw	r5,r30,-60
 	la	r7,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	ldw	r7,r7,80
 	jalr	r31,r7
-.Lj11801:
+.Lj11796:
 	call	fpc_popaddrstack
 	addi	r3,r30,-64
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj11800
+	beq	r3,r0,.Lj11795
 	call	fpc_reraise
 	stw	r30,r0,-164
-	jal	r0,.Lj11801
-.Lj11800:
+	jal	r0,.Lj11796
+.Lj11795:
 	ldw	r11,r29,164
 	ldw	r30,r29,168
 	ldw	r31,r29,172
@@ -99149,24 +99118,24 @@ FPC_READ_TEXT_CHAR:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj11807
-	jal	r0,.Lj11808
-.Lj11807:
-	jal	r0,.Lj11805
-.Lj11808:
+	bne	r3,r0,.Lj11802
+	jal	r0,.Lj11803
+.Lj11802:
+	jal	r0,.Lj11800
+.Lj11803:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
 	ldw	r3,r3,16
 	ldw	r4,r4,20
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj11809
-	jal	r0,.Lj11810
-.Lj11809:
+	bne	r3,r0,.Lj11804
+	jal	r0,.Lj11805
+.Lj11804:
 	ldw	r3,r30,-60
 	addi	r4,r0,26
 	stb	r3,r4,0
-	jal	r0,.Lj11805
-.Lj11810:
+	jal	r0,.Lj11800
+.Lj11805:
 	ldw	r3,r30,-56
 	ldw	r4,r3,24
 	ldw	r3,r30,-56
@@ -99179,7 +99148,7 @@ FPC_READ_TEXT_CHAR:
 	ldw	r3,r4,16
 	addi	r3,r3,1
 	stw	r4,r3,16
-.Lj11805:
+.Lj11800:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -99202,17 +99171,17 @@ fpc_getbuf_text:
 	lui	r4,13
 	ori	r4,r4,1970
 	seq	r3,r3,r4
-	bne	r3,r0,.Lj11813
-	jal	r0,.Lj11814
-.Lj11813:
+	bne	r3,r0,.Lj11808
+	jal	r0,.Lj11809
+.Lj11808:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
 	ldw	r4,r4,16
 	add	r3,r3,r4
 	stw	r30,r3,-60
-	jal	r0,.Lj11811
-.Lj11814:
+	jal	r0,.Lj11806
+.Lj11809:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -99222,28 +99191,28 @@ fpc_getbuf_text:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj11815
-	jal	r0,.Lj11816
-.Lj11815:
+	bne	r3,r0,.Lj11810
 	jal	r0,.Lj11811
-.Lj11816:
+.Lj11810:
+	jal	r0,.Lj11806
+.Lj11811:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-56
 	ldw	r4,r4,16
 	ldw	r3,r3,20
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11817
-	jal	r0,.Lj11818
-.Lj11817:
-	jal	r0,.Lj11811
-.Lj11818:
+	bne	r3,r0,.Lj11812
+	jal	r0,.Lj11813
+.Lj11812:
+	jal	r0,.Lj11806
+.Lj11813:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
 	ldw	r4,r4,16
 	add	r3,r3,r4
 	stw	r30,r3,-60
-.Lj11811:
+.Lj11806:
 	ldw	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -99271,13 +99240,13 @@ fpc_read_text_widechar:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-176
-	bne	r1,r0,.Lj11822
+	bne	r1,r0,.Lj11817
 	addi	r3,r30,-76
 	addi	r5,r0,0
 	addi	r4,r0,6
 	call	SYSTEM_$$_FILLCHAR$formal$LONGINT$BYTE
 	stw	r30,r0,-68
-.Lj11824:
+.Lj11819:
 	ldw	r3,r30,-68
 	add	r3,r30,r3
 	addi	r4,r3,-76
@@ -99290,17 +99259,17 @@ fpc_read_text_widechar:
 	ldw	r5,r5,24
 	jalr	r31,r5
 	addi	r3,r0,-1
-	beq	r1,r3,.Lj11829
-	beq	r1,r0,.Lj11830
-	jal	r0,.Lj11828
-.Lj11829:
-	jal	r0,.Lj11827
-.Lj11830:
+	beq	r1,r3,.Lj11824
+	beq	r1,r0,.Lj11825
+	jal	r0,.Lj11823
+.Lj11824:
+	jal	r0,.Lj11822
+.Lj11825:
 	ldw	r3,r30,-60
 	sth	r3,r0,0
-	jal	r0,.Lj11823
-	jal	r0,.Lj11827
-.Lj11828:
+	jal	r0,.Lj11818
+	jal	r0,.Lj11822
+.Lj11823:
 	addi	r3,r30,-76
 	ldw	r4,r30,-68
 	addi	r6,r4,1
@@ -99311,57 +99280,57 @@ fpc_read_text_widechar:
 	ldw	r7,r7,4
 	jalr	r31,r7
 	ldw	r3,r30,-64
-	beq	r3,r0,.Lj11831
+	beq	r3,r0,.Lj11826
 	ldw	r3,r3,-4
-.Lj11831:
+.Lj11826:
 	addi	r3,r3,-1
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11832
-	jal	r0,.Lj11833
-.Lj11832:
+	bne	r3,r0,.Lj11827
+	jal	r0,.Lj11828
+.Lj11827:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-60
 	ldhu	r4,r4,0
 	sth	r3,r4,0
-	jal	r0,.Lj11823
-	jal	r0,.Lj11834
-.Lj11833:
-	jal	r0,.Lj11826
-.Lj11834:
-.Lj11827:
+	jal	r0,.Lj11818
+	jal	r0,.Lj11829
+.Lj11828:
+	jal	r0,.Lj11821
+.Lj11829:
+.Lj11822:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	stw	r30,r3,-68
 	ldw	r4,r30,-68
 	addi	r3,r0,5
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj11826
-	jal	r0,.Lj11824
-.Lj11826:
+	bne	r3,r0,.Lj11821
+	jal	r0,.Lj11819
+.Lj11821:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11835
+	beq	r4,r0,.Lj11830
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11836
-.Lj11835:
+	jal	r0,.Lj11831
+.Lj11830:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11836:
+.Lj11831:
 	addi	r3,r0,106
 	sth	r1,r3,0
-.Lj11822:
+.Lj11817:
 	call	fpc_popaddrstack
 	addi	r3,r30,-64
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-176
-	beq	r3,r0,.Lj11821
+	beq	r3,r0,.Lj11816
 	call	fpc_reraise
-.Lj11823:
+.Lj11818:
 	stw	r30,r0,-176
-	jal	r0,.Lj11822
-.Lj11821:
+	jal	r0,.Lj11817
+.Lj11816:
 	ldw	r30,r29,176
 	ldw	r31,r29,180
 	addi	r29,r29,184
@@ -99386,23 +99355,23 @@ fpc_read_text_char_iso:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj11839
-	jal	r0,.Lj11840
-.Lj11839:
-	jal	r0,.Lj11837
-.Lj11840:
+	bne	r3,r0,.Lj11834
+	jal	r0,.Lj11835
+.Lj11834:
+	jal	r0,.Lj11832
+.Lj11835:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-56
 	ldw	r4,r4,16
 	ldw	r3,r3,20
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11841
-	jal	r0,.Lj11842
-.Lj11841:
+	bne	r3,r0,.Lj11836
+	jal	r0,.Lj11837
+.Lj11836:
 	ldw	r3,r30,-56
 	stw	r3,r0,12
-	jal	r0,.Lj11837
-.Lj11842:
+	jal	r0,.Lj11832
+.Lj11837:
 	ldw	r3,r30,-56
 	ldw	r4,r3,24
 	ldw	r3,r30,-56
@@ -99419,12 +99388,44 @@ fpc_read_text_char_iso:
 	ldbu	r3,r3,0
 	addi	r3,r3,-13
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11843
-	jal	r0,.Lj11844
-.Lj11843:
+	bne	r3,r0,.Lj11838
+	jal	r0,.Lj11839
+.Lj11838:
 	ldw	r4,r30,-60
 	addi	r3,r0,32
 	stb	r4,r3,0
+	ldw	r3,r30,-56
+	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
+	seq	r3,r1,r0
+	bne	r3,r0,.Lj11840
+	jal	r0,.Lj11841
+.Lj11841:
+	ldw	r4,r30,-56
+	ldw	r3,r30,-56
+	ldw	r4,r4,16
+	ldw	r3,r3,20
+	sge	r3,r4,r3
+	bne	r3,r0,.Lj11840
+	jal	r0,.Lj11842
+.Lj11840:
+	jal	r0,.Lj11832
+.Lj11842:
+	ldw	r3,r30,-56
+	ldw	r3,r3,24
+	ldw	r4,r30,-56
+	ldw	r4,r4,16
+	add	r3,r3,r4
+	ldbu	r3,r3,0
+	addi	r3,r3,-10
+	seq	r3,r3,r0
+	bne	r3,r0,.Lj11843
+	jal	r0,.Lj11844
+.Lj11843:
+	ldw	r3,r30,-56
+	ldw	r4,r3,16
+	addi	r4,r4,1
+	stw	r3,r4,16
+.Lj11844:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
 	seq	r3,r1,r0
@@ -99439,7 +99440,7 @@ fpc_read_text_char_iso:
 	bne	r3,r0,.Lj11845
 	jal	r0,.Lj11847
 .Lj11845:
-	jal	r0,.Lj11837
+	jal	r0,.Lj11832
 .Lj11847:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
@@ -99447,7 +99448,7 @@ fpc_read_text_char_iso:
 	ldw	r4,r4,16
 	add	r3,r3,r4
 	ldbu	r3,r3,0
-	addi	r3,r3,-10
+	addi	r3,r3,-26
 	seq	r3,r3,r0
 	bne	r3,r0,.Lj11848
 	jal	r0,.Lj11849
@@ -99457,66 +99458,34 @@ fpc_read_text_char_iso:
 	addi	r4,r4,1
 	stw	r3,r4,16
 .Lj11849:
-	ldw	r3,r30,-56
-	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
-	seq	r3,r1,r0
-	bne	r3,r0,.Lj11850
-	jal	r0,.Lj11851
-.Lj11851:
-	ldw	r4,r30,-56
-	ldw	r3,r30,-56
-	ldw	r4,r4,16
-	ldw	r3,r3,20
-	sge	r3,r4,r3
-	bne	r3,r0,.Lj11850
-	jal	r0,.Lj11852
-.Lj11850:
-	jal	r0,.Lj11837
-.Lj11852:
-	ldw	r3,r30,-56
-	ldw	r3,r3,24
-	ldw	r4,r30,-56
-	ldw	r4,r4,16
-	add	r3,r3,r4
-	ldbu	r3,r3,0
-	addi	r3,r3,-26
-	seq	r3,r3,r0
-	bne	r3,r0,.Lj11853
-	jal	r0,.Lj11854
-.Lj11853:
-	ldw	r3,r30,-56
-	ldw	r4,r3,16
-	addi	r4,r4,1
-	stw	r3,r4,16
-.Lj11854:
-	jal	r0,.Lj11855
-.Lj11844:
+	jal	r0,.Lj11850
+.Lj11839:
 	ldw	r3,r30,-60
 	ldbu	r3,r3,0
 	addi	r3,r3,-10
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11856
-	jal	r0,.Lj11857
-.Lj11856:
+	bne	r3,r0,.Lj11851
+	jal	r0,.Lj11852
+.Lj11851:
 	ldw	r4,r30,-60
 	addi	r3,r0,32
 	stb	r4,r3,0
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj11858
-	jal	r0,.Lj11859
-.Lj11859:
+	bne	r3,r0,.Lj11853
+	jal	r0,.Lj11854
+.Lj11854:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
 	ldw	r3,r3,16
 	ldw	r4,r4,20
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj11858
-	jal	r0,.Lj11860
-.Lj11858:
-	jal	r0,.Lj11837
-.Lj11860:
+	bne	r3,r0,.Lj11853
+	jal	r0,.Lj11855
+.Lj11853:
+	jal	r0,.Lj11832
+.Lj11855:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -99525,30 +99494,30 @@ fpc_read_text_char_iso:
 	ldbu	r3,r3,0
 	addi	r3,r3,-26
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11861
-	jal	r0,.Lj11862
-.Lj11861:
+	bne	r3,r0,.Lj11856
+	jal	r0,.Lj11857
+.Lj11856:
 	ldw	r3,r30,-56
 	ldw	r4,r3,16
 	addi	r4,r4,1
 	stw	r3,r4,16
-.Lj11862:
-	jal	r0,.Lj11863
 .Lj11857:
+	jal	r0,.Lj11858
+.Lj11852:
 	ldw	r3,r30,-60
 	ldbu	r3,r3,0
 	addi	r3,r3,-26
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11864
-	jal	r0,.Lj11865
-.Lj11864:
+	bne	r3,r0,.Lj11859
+	jal	r0,.Lj11860
+.Lj11859:
 	ldw	r3,r30,-60
 	addi	r4,r0,32
 	stb	r3,r4,0
-.Lj11865:
-.Lj11863:
-.Lj11855:
-.Lj11837:
+.Lj11860:
+.Lj11858:
+.Lj11850:
+.Lj11832:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -99572,32 +99541,32 @@ fpc_read_text_sint:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj11868
-	jal	r0,.Lj11869
-.Lj11868:
-	jal	r0,.Lj11866
-.Lj11869:
+	bne	r3,r0,.Lj11863
+	jal	r0,.Lj11864
+.Lj11863:
+	jal	r0,.Lj11861
+.Lj11864:
 	stb	r30,r0,-316
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_IGNORESPACES$TEXT$$BOOLEAN
-	bne	r1,r0,.Lj11870
-	jal	r0,.Lj11871
-.Lj11870:
+	bne	r1,r0,.Lj11865
+	jal	r0,.Lj11866
+.Lj11865:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-56
 	ldw	r4,r4,16
 	ldw	r3,r3,20
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11872
-	jal	r0,.Lj11873
-.Lj11872:
-	jal	r0,.Lj11866
-.Lj11873:
+	bne	r3,r0,.Lj11867
+	jal	r0,.Lj11868
+.Lj11867:
+	jal	r0,.Lj11861
+.Lj11868:
 	la	r3,TC_$SYSTEM_$$_CTRLZMARKSEOF
 	ldbu	r3,r3,0
-	bne	r3,r0,.Lj11874
-	jal	r0,.Lj11875
-.Lj11874:
+	bne	r3,r0,.Lj11869
+	jal	r0,.Lj11870
+.Lj11869:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	ldw	r4,r30,-56
@@ -99606,25 +99575,25 @@ fpc_read_text_sint:
 	ldbu	r3,r3,0
 	addi	r3,r3,-26
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11876
-	jal	r0,.Lj11875
-.Lj11876:
-	jal	r0,.Lj11866
-.Lj11875:
+	bne	r3,r0,.Lj11871
+	jal	r0,.Lj11870
+.Lj11871:
+	jal	r0,.Lj11861
+.Lj11870:
 	addi	r4,r30,-316
 	ldw	r3,r30,-56
 	addi	r5,r0,255
 	call	SYSTEM_$$_READNUMERIC$TEXT$OPENSTRING
-.Lj11871:
+.Lj11866:
 	ldbu	r3,r30,-316
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11877
-	jal	r0,.Lj11878
-.Lj11877:
+	bne	r3,r0,.Lj11872
+	jal	r0,.Lj11873
+.Lj11872:
 	ldw	r3,r30,-60
 	stw	r3,r0,0
-	jal	r0,.Lj11879
-.Lj11878:
+	jal	r0,.Lj11874
+.Lj11873:
 	addi	r5,r30,-320
 	addi	r4,r30,-316
 	addi	r3,r0,4
@@ -99633,25 +99602,25 @@ fpc_read_text_sint:
 	stw	r3,r1,0
 	ldw	r3,r30,-320
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11880
-	jal	r0,.Lj11881
-.Lj11880:
+	bne	r3,r0,.Lj11875
+	jal	r0,.Lj11876
+.Lj11875:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj11882
+	beq	r5,r0,.Lj11877
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj11883
-.Lj11882:
+	jal	r0,.Lj11878
+.Lj11877:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11883:
+.Lj11878:
 	addi	r3,r0,106
 	sth	r1,r3,0
-.Lj11881:
-.Lj11879:
-.Lj11866:
+.Lj11876:
+.Lj11874:
+.Lj11861:
 	ldw	r30,r29,320
 	ldw	r31,r29,324
 	addi	r29,r29,328
@@ -99675,11 +99644,11 @@ fpc_read_text_sint_iso:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj11886
-	jal	r0,.Lj11887
-.Lj11886:
-	jal	r0,.Lj11884
-.Lj11887:
+	bne	r3,r0,.Lj11881
+	jal	r0,.Lj11882
+.Lj11881:
+	jal	r0,.Lj11879
+.Lj11882:
 	addi	r4,r30,-316
 	ldw	r3,r30,-56
 	addi	r5,r0,255
@@ -99692,24 +99661,24 @@ fpc_read_text_sint_iso:
 	stw	r3,r1,0
 	ldw	r3,r30,-320
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11888
-	jal	r0,.Lj11889
-.Lj11888:
+	bne	r3,r0,.Lj11883
+	jal	r0,.Lj11884
+.Lj11883:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11890
+	beq	r4,r0,.Lj11885
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11891
-.Lj11890:
+	jal	r0,.Lj11886
+.Lj11885:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11891:
+.Lj11886:
 	addi	r3,r0,106
 	sth	r1,r3,0
-.Lj11889:
 .Lj11884:
+.Lj11879:
 	ldw	r30,r29,320
 	ldw	r31,r29,324
 	addi	r29,r29,328
@@ -99733,41 +99702,41 @@ fpc_read_text_uint:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj11894
-	jal	r0,.Lj11895
-.Lj11894:
-	jal	r0,.Lj11892
-.Lj11895:
+	bne	r3,r0,.Lj11889
+	jal	r0,.Lj11890
+.Lj11889:
+	jal	r0,.Lj11887
+.Lj11890:
 	stb	r30,r0,-316
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_IGNORESPACES$TEXT$$BOOLEAN
-	bne	r1,r0,.Lj11896
-	jal	r0,.Lj11897
-.Lj11896:
+	bne	r1,r0,.Lj11891
+	jal	r0,.Lj11892
+.Lj11891:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
 	ldw	r3,r3,16
 	ldw	r4,r4,20
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj11898
-	jal	r0,.Lj11899
-.Lj11898:
-	jal	r0,.Lj11892
-.Lj11899:
+	bne	r3,r0,.Lj11893
+	jal	r0,.Lj11894
+.Lj11893:
+	jal	r0,.Lj11887
+.Lj11894:
 	addi	r4,r30,-316
 	ldw	r3,r30,-56
 	addi	r5,r0,255
 	call	SYSTEM_$$_READNUMERIC$TEXT$OPENSTRING
-.Lj11897:
+.Lj11892:
 	ldbu	r3,r30,-316
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj11900
-	jal	r0,.Lj11901
-.Lj11900:
+	bne	r3,r0,.Lj11895
+	jal	r0,.Lj11896
+.Lj11895:
 	ldw	r3,r30,-60
 	stw	r3,r0,0
-	jal	r0,.Lj11902
-.Lj11901:
+	jal	r0,.Lj11897
+.Lj11896:
 	addi	r5,r30,-320
 	addi	r4,r30,-316
 	addi	r3,r0,4
@@ -99776,25 +99745,25 @@ fpc_read_text_uint:
 	stw	r3,r1,0
 	ldw	r3,r30,-320
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11903
-	jal	r0,.Lj11904
-.Lj11903:
+	bne	r3,r0,.Lj11898
+	jal	r0,.Lj11899
+.Lj11898:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11905
+	beq	r4,r0,.Lj11900
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11906
-.Lj11905:
+	jal	r0,.Lj11901
+.Lj11900:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11906:
+.Lj11901:
 	addi	r3,r0,106
 	sth	r1,r3,0
-.Lj11904:
-.Lj11902:
-.Lj11892:
+.Lj11899:
+.Lj11897:
+.Lj11887:
 	ldw	r30,r29,320
 	ldw	r31,r29,324
 	addi	r29,r29,328
@@ -99818,11 +99787,11 @@ fpc_read_text_uint_iso:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj11909
-	jal	r0,.Lj11910
-.Lj11909:
-	jal	r0,.Lj11907
-.Lj11910:
+	bne	r3,r0,.Lj11904
+	jal	r0,.Lj11905
+.Lj11904:
+	jal	r0,.Lj11902
+.Lj11905:
 	addi	r4,r30,-316
 	ldw	r3,r30,-56
 	addi	r5,r0,255
@@ -99835,24 +99804,24 @@ fpc_read_text_uint_iso:
 	stw	r3,r1,0
 	ldw	r3,r30,-320
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11911
-	jal	r0,.Lj11912
-.Lj11911:
+	bne	r3,r0,.Lj11906
+	jal	r0,.Lj11907
+.Lj11906:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11913
+	beq	r4,r0,.Lj11908
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11914
-.Lj11913:
+	jal	r0,.Lj11909
+.Lj11908:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11914:
+.Lj11909:
 	addi	r3,r0,106
 	sth	r1,r3,0
-.Lj11912:
 .Lj11907:
+.Lj11902:
 	ldw	r30,r29,320
 	ldw	r31,r29,324
 	addi	r29,r29,328
@@ -99880,32 +99849,32 @@ fpc_read_text_float:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj11917
-	jal	r0,.Lj11918
-.Lj11917:
-	jal	r0,.Lj11915
-.Lj11918:
+	bne	r3,r0,.Lj11912
+	jal	r0,.Lj11913
+.Lj11912:
+	jal	r0,.Lj11910
+.Lj11913:
 	stb	r30,r0,-316
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_IGNORESPACES$TEXT$$BOOLEAN
-	bne	r1,r0,.Lj11919
-	jal	r0,.Lj11920
-.Lj11919:
+	bne	r1,r0,.Lj11914
+	jal	r0,.Lj11915
+.Lj11914:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-56
 	ldw	r4,r4,16
 	ldw	r3,r3,20
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11921
-	jal	r0,.Lj11922
-.Lj11921:
-	jal	r0,.Lj11915
-.Lj11922:
+	bne	r3,r0,.Lj11916
+	jal	r0,.Lj11917
+.Lj11916:
+	jal	r0,.Lj11910
+.Lj11917:
 	addi	r4,r30,-316
 	ldw	r3,r30,-56
 	addi	r5,r0,255
 	call	SYSTEM_$$_READNUMERIC$TEXT$OPENSTRING
-.Lj11920:
+.Lj11915:
 	addi	r4,r30,-324
 	addi	r3,r30,-316
 	call	fpc_val_double_shortstr
@@ -99920,24 +99889,24 @@ fpc_read_text_float:
 	sth	r30,r3,-320
 	ldhu	r3,r30,-320
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11923
-	jal	r0,.Lj11924
-.Lj11923:
+	bne	r3,r0,.Lj11918
+	jal	r0,.Lj11919
+.Lj11918:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj11925
+	beq	r5,r0,.Lj11920
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj11926
-.Lj11925:
+	jal	r0,.Lj11921
+.Lj11920:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11926:
+.Lj11921:
 	addi	r3,r0,106
 	sth	r1,r3,0
-.Lj11924:
-.Lj11915:
+.Lj11919:
+.Lj11910:
 	ldw	r30,r29,332
 	ldw	r31,r29,336
 	addi	r29,r29,340
@@ -99965,11 +99934,11 @@ fpc_read_text_float_iso:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj11929
-	jal	r0,.Lj11930
-.Lj11929:
-	jal	r0,.Lj11927
-.Lj11930:
+	bne	r3,r0,.Lj11924
+	jal	r0,.Lj11925
+.Lj11924:
+	jal	r0,.Lj11922
+.Lj11925:
 	addi	r4,r30,-316
 	ldw	r3,r30,-56
 	addi	r5,r0,255
@@ -99988,24 +99957,24 @@ fpc_read_text_float_iso:
 	sth	r30,r3,-320
 	ldhu	r3,r30,-320
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11931
-	jal	r0,.Lj11932
-.Lj11931:
+	bne	r3,r0,.Lj11926
+	jal	r0,.Lj11927
+.Lj11926:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj11933
+	beq	r5,r0,.Lj11928
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj11934
-.Lj11933:
+	jal	r0,.Lj11929
+.Lj11928:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11934:
+.Lj11929:
 	addi	r3,r0,106
 	sth	r1,r3,0
-.Lj11932:
 .Lj11927:
+.Lj11922:
 	ldw	r30,r29,332
 	ldw	r31,r29,336
 	addi	r29,r29,340
@@ -100028,32 +99997,32 @@ fpc_read_text_enum_longint:
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj11937
-	jal	r0,.Lj11938
-.Lj11937:
-	jal	r0,.Lj11935
-.Lj11938:
+	bne	r3,r0,.Lj11932
+	jal	r0,.Lj11933
+.Lj11932:
+	jal	r0,.Lj11930
+.Lj11933:
 	stb	r30,r0,-320
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_IGNORESPACES$TEXT$$BOOLEAN
-	bne	r1,r0,.Lj11939
-	jal	r0,.Lj11940
-.Lj11939:
+	bne	r1,r0,.Lj11934
+	jal	r0,.Lj11935
+.Lj11934:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-60
 	ldw	r4,r4,16
 	ldw	r3,r3,20
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj11941
-	jal	r0,.Lj11942
-.Lj11941:
-	jal	r0,.Lj11935
-.Lj11942:
+	bne	r3,r0,.Lj11936
+	jal	r0,.Lj11937
+.Lj11936:
+	jal	r0,.Lj11930
+.Lj11937:
 	addi	r4,r30,-320
 	ldw	r3,r30,-60
 	addi	r5,r0,255
 	call	SYSTEM_$$_READNUMERIC$TEXT$OPENSTRING
-.Lj11940:
+.Lj11935:
 	addi	r5,r30,-324
 	addi	r4,r30,-320
 	ldw	r3,r30,-56
@@ -100062,24 +100031,24 @@ fpc_read_text_enum_longint:
 	stw	r3,r1,0
 	ldw	r3,r30,-324
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11943
-	jal	r0,.Lj11944
-.Lj11943:
+	bne	r3,r0,.Lj11938
+	jal	r0,.Lj11939
+.Lj11938:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11945
+	beq	r4,r0,.Lj11940
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11946
-.Lj11945:
+	jal	r0,.Lj11941
+.Lj11940:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11946:
+.Lj11941:
 	addi	r3,r0,106
 	sth	r1,r3,0
-.Lj11944:
-.Lj11935:
+.Lj11939:
+.Lj11930:
 	ldw	r30,r29,324
 	ldw	r31,r29,328
 	addi	r29,r29,332
@@ -100102,32 +100071,32 @@ fpc_read_text_enum_smallint:
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj11949
-	jal	r0,.Lj11950
-.Lj11949:
-	jal	r0,.Lj11947
-.Lj11950:
+	bne	r3,r0,.Lj11944
+	jal	r0,.Lj11945
+.Lj11944:
+	jal	r0,.Lj11942
+.Lj11945:
 	stb	r30,r0,-320
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_IGNORESPACES$TEXT$$BOOLEAN
-	bne	r1,r0,.Lj11951
-	jal	r0,.Lj11952
-.Lj11951:
+	bne	r1,r0,.Lj11946
+	jal	r0,.Lj11947
+.Lj11946:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-60
 	ldw	r3,r3,16
 	ldw	r4,r4,20
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj11953
-	jal	r0,.Lj11954
-.Lj11953:
-	jal	r0,.Lj11947
-.Lj11954:
+	bne	r3,r0,.Lj11948
+	jal	r0,.Lj11949
+.Lj11948:
+	jal	r0,.Lj11942
+.Lj11949:
 	addi	r4,r30,-320
 	ldw	r3,r30,-60
 	addi	r5,r0,255
 	call	SYSTEM_$$_READNUMERIC$TEXT$OPENSTRING
-.Lj11952:
+.Lj11947:
 	addi	r5,r30,-324
 	addi	r4,r30,-320
 	ldw	r3,r30,-56
@@ -100138,24 +100107,24 @@ fpc_read_text_enum_smallint:
 	sth	r3,r4,0
 	ldw	r3,r30,-324
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11955
-	jal	r0,.Lj11956
-.Lj11955:
+	bne	r3,r0,.Lj11950
+	jal	r0,.Lj11951
+.Lj11950:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj11957
+	beq	r5,r0,.Lj11952
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj11958
-.Lj11957:
+	jal	r0,.Lj11953
+.Lj11952:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11958:
+.Lj11953:
 	addi	r3,r0,106
 	sth	r1,r3,0
-.Lj11956:
-.Lj11947:
+.Lj11951:
+.Lj11942:
 	ldw	r30,r29,324
 	ldw	r31,r29,328
 	addi	r29,r29,332
@@ -100178,32 +100147,32 @@ fpc_read_text_enum_shortint:
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj11961
-	jal	r0,.Lj11962
-.Lj11961:
-	jal	r0,.Lj11959
-.Lj11962:
+	bne	r3,r0,.Lj11956
+	jal	r0,.Lj11957
+.Lj11956:
+	jal	r0,.Lj11954
+.Lj11957:
 	stb	r30,r0,-320
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_IGNORESPACES$TEXT$$BOOLEAN
-	bne	r1,r0,.Lj11963
-	jal	r0,.Lj11964
-.Lj11963:
+	bne	r1,r0,.Lj11958
+	jal	r0,.Lj11959
+.Lj11958:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-60
 	ldw	r3,r3,16
 	ldw	r4,r4,20
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj11965
-	jal	r0,.Lj11966
-.Lj11965:
-	jal	r0,.Lj11959
-.Lj11966:
+	bne	r3,r0,.Lj11960
+	jal	r0,.Lj11961
+.Lj11960:
+	jal	r0,.Lj11954
+.Lj11961:
 	addi	r4,r30,-320
 	ldw	r3,r30,-60
 	addi	r5,r0,255
 	call	SYSTEM_$$_READNUMERIC$TEXT$OPENSTRING
-.Lj11964:
+.Lj11959:
 	addi	r5,r30,-324
 	addi	r4,r30,-320
 	ldw	r3,r30,-56
@@ -100214,24 +100183,24 @@ fpc_read_text_enum_shortint:
 	stb	r3,r4,0
 	ldw	r3,r30,-324
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11967
-	jal	r0,.Lj11968
-.Lj11967:
+	bne	r3,r0,.Lj11962
+	jal	r0,.Lj11963
+.Lj11962:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj11969
+	beq	r5,r0,.Lj11964
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj11970
-.Lj11969:
+	jal	r0,.Lj11965
+.Lj11964:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11970:
+.Lj11965:
 	addi	r3,r0,106
 	sth	r1,r3,0
-.Lj11968:
-.Lj11959:
+.Lj11963:
+.Lj11954:
 	ldw	r30,r29,324
 	ldw	r31,r29,328
 	addi	r29,r29,332
@@ -100256,32 +100225,32 @@ fpc_read_text_currency:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj11973
-	jal	r0,.Lj11974
-.Lj11973:
-	jal	r0,.Lj11971
-.Lj11974:
+	bne	r3,r0,.Lj11968
+	jal	r0,.Lj11969
+.Lj11968:
+	jal	r0,.Lj11966
+.Lj11969:
 	stb	r30,r0,-316
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_IGNORESPACES$TEXT$$BOOLEAN
-	bne	r1,r0,.Lj11975
-	jal	r0,.Lj11976
-.Lj11975:
+	bne	r1,r0,.Lj11970
+	jal	r0,.Lj11971
+.Lj11970:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
 	ldw	r3,r3,16
 	ldw	r4,r4,20
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj11977
-	jal	r0,.Lj11978
-.Lj11977:
-	jal	r0,.Lj11971
-.Lj11978:
+	bne	r3,r0,.Lj11972
+	jal	r0,.Lj11973
+.Lj11972:
+	jal	r0,.Lj11966
+.Lj11973:
 	addi	r4,r30,-316
 	ldw	r3,r30,-56
 	addi	r5,r0,255
 	call	SYSTEM_$$_READNUMERIC$TEXT$OPENSTRING
-.Lj11976:
+.Lj11971:
 	addi	r4,r30,-320
 	addi	r3,r30,-316
 	call	fpc_val_currency_shortstr
@@ -100290,24 +100259,24 @@ fpc_read_text_currency:
 	stw	r3,r2,4
 	ldw	r3,r30,-320
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11979
-	jal	r0,.Lj11980
-.Lj11979:
+	bne	r3,r0,.Lj11974
+	jal	r0,.Lj11975
+.Lj11974:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11981
+	beq	r4,r0,.Lj11976
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11982
-.Lj11981:
+	jal	r0,.Lj11977
+.Lj11976:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11982:
+.Lj11977:
 	addi	r3,r0,106
 	sth	r1,r3,0
-.Lj11980:
-.Lj11971:
+.Lj11975:
+.Lj11966:
 	ldw	r30,r29,320
 	ldw	r31,r29,324
 	addi	r29,r29,328
@@ -100332,11 +100301,11 @@ fpc_read_text_currency_iso:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj11985
-	jal	r0,.Lj11986
-.Lj11985:
-	jal	r0,.Lj11983
-.Lj11986:
+	bne	r3,r0,.Lj11980
+	jal	r0,.Lj11981
+.Lj11980:
+	jal	r0,.Lj11978
+.Lj11981:
 	addi	r4,r30,-316
 	ldw	r3,r30,-56
 	addi	r5,r0,255
@@ -100349,24 +100318,24 @@ fpc_read_text_currency_iso:
 	stw	r3,r2,4
 	ldw	r3,r30,-320
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11987
-	jal	r0,.Lj11988
-.Lj11987:
+	bne	r3,r0,.Lj11982
+	jal	r0,.Lj11983
+.Lj11982:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj11989
+	beq	r4,r0,.Lj11984
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj11990
-.Lj11989:
+	jal	r0,.Lj11985
+.Lj11984:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj11990:
+.Lj11985:
 	addi	r3,r0,106
 	sth	r1,r3,0
-.Lj11988:
 .Lj11983:
+.Lj11978:
 	ldw	r30,r29,320
 	ldw	r31,r29,324
 	addi	r29,r29,328
@@ -100391,32 +100360,32 @@ fpc_read_text_qword:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj11993
-	jal	r0,.Lj11994
-.Lj11993:
-	jal	r0,.Lj11991
-.Lj11994:
+	bne	r3,r0,.Lj11988
+	jal	r0,.Lj11989
+.Lj11988:
+	jal	r0,.Lj11986
+.Lj11989:
 	stb	r30,r0,-316
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_IGNORESPACES$TEXT$$BOOLEAN
-	bne	r1,r0,.Lj11995
-	jal	r0,.Lj11996
-.Lj11995:
+	bne	r1,r0,.Lj11990
+	jal	r0,.Lj11991
+.Lj11990:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
 	ldw	r3,r3,16
 	ldw	r4,r4,20
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj11997
-	jal	r0,.Lj11998
-.Lj11997:
-	jal	r0,.Lj11991
-.Lj11998:
+	bne	r3,r0,.Lj11992
+	jal	r0,.Lj11993
+.Lj11992:
+	jal	r0,.Lj11986
+.Lj11993:
 	addi	r4,r30,-316
 	ldw	r3,r30,-56
 	addi	r5,r0,255
 	call	SYSTEM_$$_READNUMERIC$TEXT$OPENSTRING
-.Lj11996:
+.Lj11991:
 	addi	r4,r30,-320
 	addi	r3,r30,-316
 	call	fpc_val_qword_shortstr
@@ -100425,24 +100394,24 @@ fpc_read_text_qword:
 	stw	r3,r2,4
 	ldw	r3,r30,-320
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj11999
-	jal	r0,.Lj12000
-.Lj11999:
+	bne	r3,r0,.Lj11994
+	jal	r0,.Lj11995
+.Lj11994:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12001
+	beq	r4,r0,.Lj11996
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12002
-.Lj12001:
+	jal	r0,.Lj11997
+.Lj11996:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12002:
+.Lj11997:
 	addi	r3,r0,106
 	sth	r1,r3,0
-.Lj12000:
-.Lj11991:
+.Lj11995:
+.Lj11986:
 	ldw	r30,r29,320
 	ldw	r31,r29,324
 	addi	r29,r29,328
@@ -100467,11 +100436,11 @@ fpc_read_text_qword_iso:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj12005
-	jal	r0,.Lj12006
-.Lj12005:
-	jal	r0,.Lj12003
-.Lj12006:
+	bne	r3,r0,.Lj12000
+	jal	r0,.Lj12001
+.Lj12000:
+	jal	r0,.Lj11998
+.Lj12001:
 	addi	r4,r30,-316
 	ldw	r3,r30,-56
 	addi	r5,r0,255
@@ -100484,24 +100453,24 @@ fpc_read_text_qword_iso:
 	stw	r3,r2,4
 	ldw	r3,r30,-320
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12007
-	jal	r0,.Lj12008
-.Lj12007:
+	bne	r3,r0,.Lj12002
+	jal	r0,.Lj12003
+.Lj12002:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12009
+	beq	r4,r0,.Lj12004
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12010
-.Lj12009:
+	jal	r0,.Lj12005
+.Lj12004:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12010:
+.Lj12005:
 	addi	r3,r0,106
 	sth	r1,r3,0
-.Lj12008:
 .Lj12003:
+.Lj11998:
 	ldw	r30,r29,320
 	ldw	r31,r29,324
 	addi	r29,r29,328
@@ -100526,32 +100495,32 @@ fpc_read_text_int64:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj12013
-	jal	r0,.Lj12014
-.Lj12013:
-	jal	r0,.Lj12011
-.Lj12014:
+	bne	r3,r0,.Lj12008
+	jal	r0,.Lj12009
+.Lj12008:
+	jal	r0,.Lj12006
+.Lj12009:
 	stb	r30,r0,-316
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_IGNORESPACES$TEXT$$BOOLEAN
-	bne	r1,r0,.Lj12015
-	jal	r0,.Lj12016
-.Lj12015:
+	bne	r1,r0,.Lj12010
+	jal	r0,.Lj12011
+.Lj12010:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-56
 	ldw	r3,r3,16
 	ldw	r4,r4,20
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj12017
-	jal	r0,.Lj12018
-.Lj12017:
-	jal	r0,.Lj12011
-.Lj12018:
+	bne	r3,r0,.Lj12012
+	jal	r0,.Lj12013
+.Lj12012:
+	jal	r0,.Lj12006
+.Lj12013:
 	addi	r4,r30,-316
 	ldw	r3,r30,-56
 	addi	r5,r0,255
 	call	SYSTEM_$$_READNUMERIC$TEXT$OPENSTRING
-.Lj12016:
+.Lj12011:
 	addi	r4,r30,-320
 	addi	r3,r30,-316
 	call	fpc_val_int64_shortstr
@@ -100560,24 +100529,24 @@ fpc_read_text_int64:
 	stw	r3,r2,4
 	ldw	r3,r30,-320
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12019
-	jal	r0,.Lj12020
-.Lj12019:
+	bne	r3,r0,.Lj12014
+	jal	r0,.Lj12015
+.Lj12014:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12021
+	beq	r4,r0,.Lj12016
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12022
-.Lj12021:
+	jal	r0,.Lj12017
+.Lj12016:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12022:
+.Lj12017:
 	addi	r3,r0,106
 	sth	r1,r3,0
-.Lj12020:
-.Lj12011:
+.Lj12015:
+.Lj12006:
 	ldw	r30,r29,320
 	ldw	r31,r29,324
 	addi	r29,r29,328
@@ -100602,11 +100571,11 @@ fpc_read_text_int64_iso:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CHECKREAD$TEXT$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj12025
-	jal	r0,.Lj12026
-.Lj12025:
-	jal	r0,.Lj12023
-.Lj12026:
+	bne	r3,r0,.Lj12020
+	jal	r0,.Lj12021
+.Lj12020:
+	jal	r0,.Lj12018
+.Lj12021:
 	addi	r4,r30,-316
 	ldw	r3,r30,-56
 	addi	r5,r0,255
@@ -100619,24 +100588,24 @@ fpc_read_text_int64_iso:
 	stw	r3,r2,4
 	ldw	r3,r30,-320
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12027
-	jal	r0,.Lj12028
-.Lj12027:
+	bne	r3,r0,.Lj12022
+	jal	r0,.Lj12023
+.Lj12022:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12029
+	beq	r4,r0,.Lj12024
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12030
-.Lj12029:
+	jal	r0,.Lj12025
+.Lj12024:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12030:
+.Lj12025:
 	addi	r3,r0,106
 	sth	r1,r3,0
-.Lj12028:
 .Lj12023:
+.Lj12018:
 	ldw	r30,r29,320
 	ldw	r31,r29,324
 	addi	r29,r29,328
@@ -100657,11 +100626,11 @@ SYSTEM_$$_WRITESTRSHORT$TEXTREC:
 	ldw	r3,r30,-56
 	ldw	r3,r3,16
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12033
-	jal	r0,.Lj12034
-.Lj12033:
-	jal	r0,.Lj12031
-.Lj12034:
+	bne	r3,r0,.Lj12028
+	jal	r0,.Lj12029
+.Lj12028:
+	jal	r0,.Lj12026
+.Lj12029:
 	ldw	r3,r30,-56
 	addi	r3,r3,52
 	ldw	r3,r3,0
@@ -100679,15 +100648,15 @@ SYSTEM_$$_WRITESTRSHORT$TEXTREC:
 	ldw	r4,r30,-68
 	add	r4,r4,r5
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj12035
-	jal	r0,.Lj12036
-.Lj12035:
+	bne	r3,r0,.Lj12030
+	jal	r0,.Lj12031
+.Lj12030:
 	ldw	r3,r30,-56
 	ldbu	r3,r3,60
 	ldw	r4,r30,-68
 	sub	r3,r3,r4
 	stw	r30,r3,-64
-.Lj12036:
+.Lj12031:
 	ldw	r3,r30,-60
 	ldbu	r4,r3,0
 	ldw	r3,r30,-64
@@ -100707,7 +100676,7 @@ SYSTEM_$$_WRITESTRSHORT$TEXTREC:
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
 	ldw	r3,r30,-56
 	stw	r3,r0,16
-.Lj12031:
+.Lj12026:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -100769,19 +100738,19 @@ SYSTEM_$$_WRITESTRANSI$TEXTREC:
 	ldw	r3,r30,-56
 	ldw	r3,r3,16
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12041
-	jal	r0,.Lj12042
-.Lj12041:
-	jal	r0,.Lj12039
-.Lj12042:
+	bne	r3,r0,.Lj12036
+	jal	r0,.Lj12037
+.Lj12036:
+	jal	r0,.Lj12034
+.Lj12037:
 	ldw	r3,r30,-56
 	addi	r3,r3,52
 	stw	r30,r3,-60
 	ldw	r3,r30,-60
 	ldw	r3,r3,0
-	beq	r3,r0,.Lj12043
+	beq	r3,r0,.Lj12038
 	ldw	r3,r3,-4
-.Lj12043:
+.Lj12038:
 	stw	r30,r3,-64
 	ldw	r3,r30,-56
 	ldw	r4,r3,16
@@ -100803,7 +100772,7 @@ SYSTEM_$$_WRITESTRANSI$TEXTREC:
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
 	ldw	r3,r30,-56
 	stw	r3,r0,16
-.Lj12039:
+.Lj12034:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -100860,11 +100829,11 @@ SYSTEM_$$_ENDOFLASTCOMPLETEUTF8CODEPOINT$TEXTREC$$LONGINT:
 	addi	r4,r3,-1
 	addi	r3,r0,0
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj12048
-	jal	r0,.Lj12049
-.Lj12048:
+	bne	r3,r0,.Lj12043
+	jal	r0,.Lj12044
+.Lj12043:
 	stw	r30,r4,-64
-.Lj12050:
+.Lj12045:
 	ldw	r3,r30,-56
 	ldw	r3,r3,16
 	addi	r3,r3,-1
@@ -100881,29 +100850,29 @@ SYSTEM_$$_ENDOFLASTCOMPLETEUTF8CODEPOINT$TEXTREC$$LONGINT:
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj12053
-	jal	r0,.Lj12054
-.Lj12053:
+	bne	r3,r0,.Lj12048
+	jal	r0,.Lj12049
+.Lj12048:
 	ldw	r3,r30,-64
 	ldw	r4,r30,-68
 	add	r3,r4,r3
 	stw	r30,r3,-60
-	jal	r0,.Lj12046
-.Lj12054:
+	jal	r0,.Lj12041
+.Lj12049:
 	ldw	r3,r30,-64
 	addi	r3,r3,-1
 	stw	r30,r3,-64
 	ldw	r4,r30,-64
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj12052
-	jal	r0,.Lj12050
-.Lj12052:
-.Lj12049:
+	bne	r3,r0,.Lj12047
+	jal	r0,.Lj12045
+.Lj12047:
+.Lj12044:
 	ldw	r3,r30,-56
 	ldw	r3,r3,16
 	stw	r30,r3,-60
-.Lj12046:
+.Lj12041:
 	ldw	r1,r30,-60
 	ldw	r30,r29,68
 	ldw	r31,r29,72
@@ -100933,32 +100902,32 @@ SYSTEM_$$_WRITESTRUNICODEINTERN$TEXTREC$BOOLEAN:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-172
-	bne	r1,r0,.Lj12058
+	bne	r1,r0,.Lj12053
 	ldw	r3,r30,-56
 	ldw	r3,r3,16
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12060
-	jal	r0,.Lj12061
-.Lj12060:
-	jal	r0,.Lj12059
-.Lj12061:
+	bne	r3,r0,.Lj12055
+	jal	r0,.Lj12056
+.Lj12055:
+	jal	r0,.Lj12054
+.Lj12056:
 	ldw	r3,r30,-56
 	addi	r3,r3,52
 	stw	r30,r3,-68
 	ldbu	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12062
-	jal	r0,.Lj12063
-.Lj12062:
+	bne	r3,r0,.Lj12057
+	jal	r0,.Lj12058
+.Lj12057:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_ENDOFLASTCOMPLETEUTF8CODEPOINT$TEXTREC$$LONGINT
 	stw	r30,r1,-72
-	jal	r0,.Lj12064
-.Lj12063:
+	jal	r0,.Lj12059
+.Lj12058:
 	ldw	r3,r30,-56
 	ldw	r3,r3,16
 	stw	r30,r3,-72
-.Lj12064:
+.Lj12059:
 	ldw	r3,r30,-56
 	ldw	r3,r3,24
 	addi	r5,r30,-64
@@ -100981,9 +100950,9 @@ SYSTEM_$$_WRITESTRUNICODEINTERN$TEXTREC$BOOLEAN:
 	ldw	r3,r30,-56
 	ldw	r3,r3,16
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12065
-	jal	r0,.Lj12066
-.Lj12065:
+	bne	r3,r0,.Lj12060
+	jal	r0,.Lj12061
+.Lj12060:
 	ldw	r3,r30,-56
 	ldw	r4,r3,24
 	ldw	r3,r30,-56
@@ -100993,18 +100962,18 @@ SYSTEM_$$_WRITESTRUNICODEINTERN$TEXTREC$BOOLEAN:
 	ldw	r5,r30,-56
 	ldw	r5,r5,16
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj12066:
-.Lj12058:
+.Lj12061:
+.Lj12053:
 	call	fpc_popaddrstack
 	addi	r3,r30,-64
 	call	fpc_unicodestr_decr_ref
 	ldw	r3,r30,-172
-	beq	r3,r0,.Lj12057
+	beq	r3,r0,.Lj12052
 	call	fpc_reraise
-.Lj12059:
+.Lj12054:
 	stw	r30,r0,-172
-	jal	r0,.Lj12058
-.Lj12057:
+	jal	r0,.Lj12053
+.Lj12052:
 	ldw	r30,r29,172
 	ldw	r31,r29,176
 	addi	r29,r29,180
@@ -101096,12 +101065,12 @@ SYSTEM_$$_SETUPWRITESTRCOMMON$TEXTREC$WORD:
 	ldhu	r5,r30,-60
 	addi	r6,r0,1
 	sleu	r5,r5,r6
-	bne	r5,r0,.Lj12074
-	jal	r0,.Lj12075
-.Lj12074:
+	bne	r5,r0,.Lj12069
+	jal	r0,.Lj12070
+.Lj12069:
 	la	r5,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r4,r5,0
-.Lj12075:
+.Lj12070:
 	sth	r3,r4,592
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -101175,11 +101144,11 @@ fpc_setupwritestr_ansistr:
 	lui	r3,15
 	ori	r3,r3,4095
 	seq	r3,r4,r3
-	bne	r3,r0,.Lj12080
-	jal	r0,.Lj12081
-.Lj12080:
+	bne	r3,r0,.Lj12075
+	jal	r0,.Lj12076
+.Lj12075:
 	sth	r30,r0,-64
-.Lj12081:
+.Lj12076:
 	ldw	r3,r30,-56
 	ldhu	r4,r30,-64
 	call	SYSTEM_$$_SETUPWRITESTRCOMMON$TEXTREC$WORD
@@ -101283,19 +101252,19 @@ SYSTEM_$$_READSTRCOMMON$TEXTREC$PANSICHAR$LONGINT:
 	ldw	r3,r3,8
 	ldw	r4,r30,-68
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj12088
-	jal	r0,.Lj12089
-.Lj12088:
+	bne	r3,r0,.Lj12083
+	jal	r0,.Lj12084
+.Lj12083:
 	ldw	r3,r30,-56
 	ldw	r3,r3,8
 	stw	r30,r3,-68
-.Lj12089:
+.Lj12084:
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj12090
-	jal	r0,.Lj12091
-.Lj12090:
+	bne	r3,r0,.Lj12085
+	jal	r0,.Lj12086
+.Lj12085:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-56
 	addi	r4,r4,60
@@ -101311,7 +101280,7 @@ SYSTEM_$$_READSTRCOMMON$TEXTREC$PANSICHAR$LONGINT:
 	ldw	r5,r4,0
 	add	r5,r5,r3
 	stw	r4,r5,0
-.Lj12091:
+.Lj12086:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-68
 	stw	r3,r4,20
@@ -101343,9 +101312,9 @@ SYSTEM_$$_READSTRANSI$TEXTREC:
 	ldw	r4,r3,0
 	ldw	r3,r30,-60
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12094
+	beq	r5,r0,.Lj12089
 	ldw	r5,r5,-4
-.Lj12094:
+.Lj12089:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_READSTRCOMMON$TEXTREC$PANSICHAR$LONGINT
 	ldw	r30,r29,60
@@ -101384,12 +101353,12 @@ SYSTEM_$$_SETUPREADSTRCOMMON$TEXTREC$WORD:
 	ldhu	r5,r30,-60
 	addi	r6,r0,1
 	sleu	r5,r5,r6
-	bne	r5,r0,.Lj12098
-	jal	r0,.Lj12099
-.Lj12098:
+	bne	r5,r0,.Lj12093
+	jal	r0,.Lj12094
+.Lj12093:
 	la	r5,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r4,r5,0
-.Lj12099:
+.Lj12094:
 	sth	r3,r4,592
 	ldw	r3,r30,-56
 	addi	r3,r3,60
@@ -101457,7 +101426,7 @@ fpc_setupreadstr_shortstr:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj12105
+	bne	r1,r0,.Lj12100
 	ldw	r4,r30,-60
 	addi	r3,r30,-164
 	addi	r5,r0,0
@@ -101465,16 +101434,16 @@ fpc_setupreadstr_shortstr:
 	ldw	r4,r30,-164
 	ldw	r3,r30,-56
 	call	FPC_SETUPREADSTR_ANSISTR
-.Lj12105:
+.Lj12100:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj12104
+	beq	r3,r0,.Lj12099
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj12105
-.Lj12104:
+	jal	r0,.Lj12100
+.Lj12099:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -101501,7 +101470,7 @@ fpc_setupreadstr_unicodestr:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj12110
+	bne	r1,r0,.Lj12105
 	addi	r3,r30,-164
 	addi	r5,r0,0
 	ldw	r4,r30,-60
@@ -101509,16 +101478,16 @@ fpc_setupreadstr_unicodestr:
 	ldw	r4,r30,-164
 	ldw	r3,r30,-56
 	call	FPC_SETUPREADSTR_ANSISTR
-.Lj12110:
+.Lj12105:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj12109
+	beq	r3,r0,.Lj12104
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj12110
-.Lj12109:
+	jal	r0,.Lj12105
+.Lj12104:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -101540,20 +101509,20 @@ SYSTEM_$$_GETFULLNAME$TEXT$$UNICODESTRING:
 	ldw	r3,r30,-56
 	ldw	r3,r3,596
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12114
-	jal	r0,.Lj12115
-.Lj12114:
+	bne	r3,r0,.Lj12109
+	jal	r0,.Lj12110
+.Lj12109:
 	ldw	r3,r30,-56
 	ldw	r4,r3,596
 	ldw	r3,r30,-60
 	call	fpc_unicodestr_assign
-	jal	r0,.Lj12116
-.Lj12115:
+	jal	r0,.Lj12111
+.Lj12110:
 	ldw	r3,r30,-56
 	addi	r4,r3,76
 	ldw	r3,r30,-60
 	call	fpc_pchar_to_unicodestr
-.Lj12116:
+.Lj12111:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -101574,20 +101543,20 @@ SYSTEM_$$_STDIOCODEPAGE$TSTANDARDCODEPAGEENUM$$WORD:
 	la	r3,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	ldw	r3,r3,96
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12119
-	jal	r0,.Lj12120
-.Lj12119:
+	bne	r3,r0,.Lj12114
+	jal	r0,.Lj12115
+.Lj12114:
 	ldw	r3,r30,-56
 	la	r4,U_$SYSTEM_$$_WIDESTRINGMANAGER
 	ldw	r4,r4,96
 	jalr	r31,r4
 	sth	r30,r1,-60
-	jal	r0,.Lj12121
-.Lj12120:
+	jal	r0,.Lj12116
+.Lj12115:
 	la	r3,U_$SYSTEM_$$_DEFAULTSYSTEMCODEPAGE
 	ldhu	r3,r3,0
 	sth	r30,r3,-60
-.Lj12121:
+.Lj12116:
 	ldhu	r1,r30,-60
 	ldw	r30,r29,60
 	ldw	r31,r29,64
@@ -101625,12 +101594,12 @@ SYSTEM_$$_OPENSTDIO$TEXT$LONGINT$LONGINT:
 	ldw	r3,r30,-60
 	lui	r4,13
 	ori	r4,r4,1969
-	beq	r3,r4,.Lj12126
+	beq	r3,r4,.Lj12121
 	lui	r4,13
 	ori	r4,r4,1970
-	beq	r3,r4,.Lj12127
-	jal	r0,.Lj12125
-.Lj12126:
+	beq	r3,r4,.Lj12122
+	jal	r0,.Lj12120
+.Lj12121:
 	la	r3,SYSTEM_$$_FILEREADFUNC$TEXTREC
 	ldw	r4,r30,-56
 	stw	r4,r3,32
@@ -101638,8 +101607,8 @@ SYSTEM_$$_OPENSTDIO$TEXT$LONGINT$LONGINT:
 	call	SYSTEM_$$_STDIOCODEPAGE$TSTANDARDCODEPAGEENUM$$WORD
 	ldw	r3,r30,-56
 	sth	r3,r1,592
-	jal	r0,.Lj12124
-.Lj12127:
+	jal	r0,.Lj12119
+.Lj12122:
 	la	r3,SYSTEM_$$_FILEWRITEFUNC$TEXTREC
 	ldw	r4,r30,-56
 	stw	r4,r3,32
@@ -101649,18 +101618,18 @@ SYSTEM_$$_OPENSTDIO$TEXT$LONGINT$LONGINT:
 	sth	r3,r1,592
 	ldw	r3,r30,-64
 	call	SYSTEM_$$_DO_ISDEVICE$LONGINT$$BOOLEAN
-	bne	r1,r0,.Lj12128
-	jal	r0,.Lj12129
-.Lj12128:
+	bne	r1,r0,.Lj12123
+	jal	r0,.Lj12124
+.Lj12123:
 	la	r3,SYSTEM_$$_FILEWRITEFUNC$TEXTREC
 	ldw	r4,r30,-56
 	stw	r4,r3,36
-.Lj12129:
-	jal	r0,.Lj12124
-.Lj12125:
+.Lj12124:
+	jal	r0,.Lj12119
+.Lj12120:
 	addi	r3,r0,102
 	call	FPC_HANDLEERROR
-.Lj12124:
+.Lj12119:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -101717,7 +101686,7 @@ SYSTEM_$$_ASSIGN$file$UNICODESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj12135
+	bne	r1,r0,.Lj12130
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_INITFILE$file
 	addi	r3,r30,-420
@@ -101733,14 +101702,14 @@ SYSTEM_$$_ASSIGN$file$UNICODESTRING:
 	addi	r3,r30,-416
 	call	FPC_MOVE
 	ldw	r3,r30,-60
-	beq	r3,r0,.Lj12137
+	beq	r3,r0,.Lj12132
 	ldw	r3,r3,-4
-.Lj12137:
+.Lj12132:
 	addi	r4,r0,255
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj12138
-	jal	r0,.Lj12139
-.Lj12138:
+	bne	r3,r0,.Lj12133
+	jal	r0,.Lj12134
+.Lj12133:
 	addi	r3,r30,-420
 	addi	r5,r0,0
 	ldw	r4,r30,-60
@@ -101749,19 +101718,19 @@ SYSTEM_$$_ASSIGN$file$UNICODESTRING:
 	ldw	r3,r30,-56
 	addi	r3,r3,332
 	call	fpc_ansistr_assign
-.Lj12139:
+.Lj12134:
 	ldw	r3,r30,-56
 	stb	r3,r0,331
-.Lj12135:
+.Lj12130:
 	call	fpc_popaddrstack
 	addi	r3,r30,-420
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj12134
+	beq	r3,r0,.Lj12129
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj12135
-.Lj12134:
+	jal	r0,.Lj12130
+.Lj12129:
 	ldw	r30,r29,420
 	ldw	r31,r29,424
 	addi	r29,r29,428
@@ -101790,7 +101759,7 @@ SYSTEM_$$_ASSIGN$file$RAWBYTESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj12143
+	bne	r1,r0,.Lj12138
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_INITFILE$file
 	addi	r3,r30,-420
@@ -101806,31 +101775,31 @@ SYSTEM_$$_ASSIGN$file$RAWBYTESTRING:
 	addi	r3,r30,-416
 	call	FPC_MOVE
 	ldw	r3,r30,-60
-	beq	r3,r0,.Lj12145
+	beq	r3,r0,.Lj12140
 	ldw	r3,r3,-4
-.Lj12145:
+.Lj12140:
 	addi	r4,r0,255
 	sgt	r3,r3,r4
-	bne	r3,r0,.Lj12146
-	jal	r0,.Lj12147
-.Lj12146:
+	bne	r3,r0,.Lj12141
+	jal	r0,.Lj12142
+.Lj12141:
 	ldw	r3,r30,-56
 	addi	r3,r3,332
 	ldw	r4,r30,-60
 	call	fpc_ansistr_assign
-.Lj12147:
+.Lj12142:
 	ldw	r3,r30,-56
 	stb	r3,r0,331
-.Lj12143:
+.Lj12138:
 	call	fpc_popaddrstack
 	addi	r3,r30,-420
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj12142
+	beq	r3,r0,.Lj12137
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj12143
-.Lj12142:
+	jal	r0,.Lj12138
+.Lj12137:
 	ldw	r30,r29,420
 	ldw	r31,r29,424
 	addi	r29,r29,428
@@ -101859,7 +101828,7 @@ SYSTEM_$$_ASSIGN$file$SHORTSTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj12151
+	bne	r1,r0,.Lj12146
 	ldw	r4,r30,-60
 	addi	r3,r30,-164
 	addi	r5,r0,0
@@ -101867,16 +101836,16 @@ SYSTEM_$$_ASSIGN$file$SHORTSTRING:
 	ldw	r4,r30,-164
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_ASSIGN$file$RAWBYTESTRING
-.Lj12151:
+.Lj12146:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj12150
+	beq	r3,r0,.Lj12145
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj12151
-.Lj12150:
+	jal	r0,.Lj12146
+.Lj12145:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -101905,7 +101874,7 @@ SYSTEM_$$_ASSIGN$file$PANSICHAR:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj12156
+	bne	r1,r0,.Lj12151
 	addi	r3,r30,-164
 	addi	r5,r0,0
 	ldw	r4,r30,-60
@@ -101913,16 +101882,16 @@ SYSTEM_$$_ASSIGN$file$PANSICHAR:
 	ldw	r4,r30,-164
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_ASSIGN$file$RAWBYTESTRING
-.Lj12156:
+.Lj12151:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj12155
+	beq	r3,r0,.Lj12150
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj12156
-.Lj12155:
+	jal	r0,.Lj12151
+.Lj12150:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -101951,7 +101920,7 @@ SYSTEM_$$_ASSIGN$file$ANSICHAR:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj12161
+	bne	r1,r0,.Lj12156
 	addi	r3,r30,-164
 	addi	r5,r0,0
 	ldbu	r4,r30,-60
@@ -101959,16 +101928,16 @@ SYSTEM_$$_ASSIGN$file$ANSICHAR:
 	ldw	r4,r30,-164
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_ASSIGN$file$RAWBYTESTRING
-.Lj12161:
+.Lj12156:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj12160
+	beq	r3,r0,.Lj12155
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj12161
-.Lj12160:
+	jal	r0,.Lj12156
+.Lj12155:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -101991,85 +101960,85 @@ SYSTEM_$$_REWRITE$file$LONGINT:
 	stw	r30,r4,-60
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12165
+	beq	r4,r0,.Lj12160
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12166
-.Lj12165:
+	jal	r0,.Lj12161
+.Lj12160:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12166:
+.Lj12161:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12167
-	jal	r0,.Lj12168
-.Lj12167:
+	bne	r3,r0,.Lj12162
 	jal	r0,.Lj12163
-.Lj12168:
+.Lj12162:
+	jal	r0,.Lj12158
+.Lj12163:
 	ldw	r3,r30,-56
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1968
-	beq	r3,r4,.Lj12172
+	beq	r3,r4,.Lj12167
 	lui	r4,13
 	ori	r4,r4,1969
-	beq	r3,r4,.Lj12171
+	beq	r3,r4,.Lj12166
 	lui	r4,13
 	ori	r4,r4,1970
-	blt	r3,r4,.Lj12170
+	blt	r3,r4,.Lj12165
 	lui	r4,13
 	ori	r4,r4,1971
-	ble	r3,r4,.Lj12171
-	jal	r0,.Lj12170
-.Lj12171:
+	ble	r3,r4,.Lj12166
+	jal	r0,.Lj12165
+.Lj12166:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CLOSE$file
-	jal	r0,.Lj12169
-.Lj12172:
-	jal	r0,.Lj12169
-.Lj12170:
+	jal	r0,.Lj12164
+.Lj12167:
+	jal	r0,.Lj12164
+.Lj12165:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12173
+	beq	r4,r0,.Lj12168
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12174
-.Lj12173:
+	jal	r0,.Lj12169
+.Lj12168:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12174:
+.Lj12169:
 	addi	r3,r0,102
 	sth	r1,r3,0
-	jal	r0,.Lj12163
-.Lj12169:
+	jal	r0,.Lj12158
+.Lj12164:
 	ldw	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12175
-	jal	r0,.Lj12176
-.Lj12175:
+	bne	r3,r0,.Lj12170
+	jal	r0,.Lj12171
+.Lj12170:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12177
+	beq	r5,r0,.Lj12172
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12178
-.Lj12177:
+	jal	r0,.Lj12173
+.Lj12172:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12178:
+.Lj12173:
 	addi	r3,r0,2
 	sth	r1,r3,0
-	jal	r0,.Lj12179
-.Lj12176:
+	jal	r0,.Lj12174
+.Lj12171:
 	ldw	r3,r30,-56
 	ldw	r3,r3,332
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12180
-	jal	r0,.Lj12181
-.Lj12180:
+	bne	r3,r0,.Lj12175
+	jal	r0,.Lj12176
+.Lj12175:
 	ldw	r3,r30,-56
 	ldw	r4,r3,332
 	ldw	r3,r30,-56
@@ -102077,8 +102046,8 @@ SYSTEM_$$_REWRITE$file$LONGINT:
 	lui	r5,1
 	ori	r5,r5,2
 	call	SYSTEM_$$_DO_OPEN$formal$PFILETEXTRECCHAR$LONGINT$BOOLEAN
-	jal	r0,.Lj12182
-.Lj12181:
+	jal	r0,.Lj12177
+.Lj12176:
 	ldw	r3,r30,-56
 	addi	r4,r3,76
 	ldw	r3,r30,-56
@@ -102086,12 +102055,12 @@ SYSTEM_$$_REWRITE$file$LONGINT:
 	lui	r5,1
 	ori	r5,r5,2
 	call	SYSTEM_$$_DO_OPEN$formal$PFILETEXTRECCHAR$LONGINT$BOOLEAN
-.Lj12182:
+.Lj12177:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	stw	r3,r4,8
-.Lj12179:
-.Lj12163:
+.Lj12174:
+.Lj12158:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -102114,85 +102083,85 @@ SYSTEM_$$_RESET$file$LONGINT:
 	stw	r30,r4,-60
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12185
+	beq	r4,r0,.Lj12180
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12186
-.Lj12185:
+	jal	r0,.Lj12181
+.Lj12180:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12186:
+.Lj12181:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12187
-	jal	r0,.Lj12188
-.Lj12187:
+	bne	r3,r0,.Lj12182
 	jal	r0,.Lj12183
-.Lj12188:
+.Lj12182:
+	jal	r0,.Lj12178
+.Lj12183:
 	ldw	r3,r30,-56
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1968
-	beq	r3,r4,.Lj12192
+	beq	r3,r4,.Lj12187
 	lui	r4,13
 	ori	r4,r4,1969
-	beq	r3,r4,.Lj12191
+	beq	r3,r4,.Lj12186
 	lui	r4,13
 	ori	r4,r4,1970
-	blt	r3,r4,.Lj12190
+	blt	r3,r4,.Lj12185
 	lui	r4,13
 	ori	r4,r4,1971
-	ble	r3,r4,.Lj12191
-	jal	r0,.Lj12190
-.Lj12191:
+	ble	r3,r4,.Lj12186
+	jal	r0,.Lj12185
+.Lj12186:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CLOSE$file
-	jal	r0,.Lj12189
-.Lj12192:
-	jal	r0,.Lj12189
-.Lj12190:
+	jal	r0,.Lj12184
+.Lj12187:
+	jal	r0,.Lj12184
+.Lj12185:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12193
+	beq	r4,r0,.Lj12188
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12194
-.Lj12193:
+	jal	r0,.Lj12189
+.Lj12188:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12194:
+.Lj12189:
 	addi	r3,r0,102
 	sth	r1,r3,0
-	jal	r0,.Lj12183
-.Lj12189:
+	jal	r0,.Lj12178
+.Lj12184:
 	ldw	r3,r30,-60
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12195
-	jal	r0,.Lj12196
-.Lj12195:
+	bne	r3,r0,.Lj12190
+	jal	r0,.Lj12191
+.Lj12190:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12197
+	beq	r5,r0,.Lj12192
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12198
-.Lj12197:
+	jal	r0,.Lj12193
+.Lj12192:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12198:
+.Lj12193:
 	addi	r3,r0,2
 	sth	r1,r3,0
-	jal	r0,.Lj12199
-.Lj12196:
+	jal	r0,.Lj12194
+.Lj12191:
 	ldw	r3,r30,-56
 	ldw	r3,r3,332
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12200
-	jal	r0,.Lj12201
-.Lj12200:
+	bne	r3,r0,.Lj12195
+	jal	r0,.Lj12196
+.Lj12195:
 	la	r3,TC_$SYSTEM_$$_FILEMODE
 	ldbu	r5,r3,0
 	ldw	r3,r30,-56
@@ -102200,8 +102169,8 @@ SYSTEM_$$_RESET$file$LONGINT:
 	ldw	r3,r30,-56
 	addi	r6,r0,0
 	call	SYSTEM_$$_DO_OPEN$formal$PFILETEXTRECCHAR$LONGINT$BOOLEAN
-	jal	r0,.Lj12202
-.Lj12201:
+	jal	r0,.Lj12197
+.Lj12196:
 	la	r3,TC_$SYSTEM_$$_FILEMODE
 	ldbu	r5,r3,0
 	ldw	r3,r30,-56
@@ -102209,12 +102178,12 @@ SYSTEM_$$_RESET$file$LONGINT:
 	ldw	r3,r30,-56
 	addi	r6,r0,0
 	call	SYSTEM_$$_DO_OPEN$formal$PFILETEXTRECCHAR$LONGINT$BOOLEAN
-.Lj12202:
+.Lj12197:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	stw	r3,r4,8
-.Lj12199:
-.Lj12183:
+.Lj12194:
+.Lj12178:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -102236,26 +102205,26 @@ SYSTEM_$$_REWRITE$file:
 	stw	r30,r3,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12205
+	beq	r4,r0,.Lj12200
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12206
-.Lj12205:
+	jal	r0,.Lj12201
+.Lj12200:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12206:
+.Lj12201:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12207
-	jal	r0,.Lj12208
-.Lj12207:
+	bne	r3,r0,.Lj12202
 	jal	r0,.Lj12203
-.Lj12208:
+.Lj12202:
+	jal	r0,.Lj12198
+.Lj12203:
 	ldw	r3,r30,-56
 	addi	r4,r0,128
 	call	SYSTEM_$$_REWRITE$file$LONGINT
-.Lj12203:
+.Lj12198:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -102275,26 +102244,26 @@ SYSTEM_$$_RESET$file:
 	stw	r30,r3,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12211
+	beq	r4,r0,.Lj12206
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12212
-.Lj12211:
+	jal	r0,.Lj12207
+.Lj12206:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12212:
+.Lj12207:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12213
-	jal	r0,.Lj12214
-.Lj12213:
+	bne	r3,r0,.Lj12208
 	jal	r0,.Lj12209
-.Lj12214:
+.Lj12208:
+	jal	r0,.Lj12204
+.Lj12209:
 	ldw	r3,r30,-56
 	addi	r4,r0,128
 	call	SYSTEM_$$_RESET$file$LONGINT
-.Lj12209:
+.Lj12204:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -102321,35 +102290,35 @@ SYSTEM_$$_BLOCKWRITE$file$formal$INT64$INT64:
 	stw	r3,r0,4
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12217
+	beq	r4,r0,.Lj12212
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12218
-.Lj12217:
+	jal	r0,.Lj12213
+.Lj12212:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12218:
+.Lj12213:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12219
-	jal	r0,.Lj12220
-.Lj12219:
+	bne	r3,r0,.Lj12214
 	jal	r0,.Lj12215
-.Lj12220:
+.Lj12214:
+	jal	r0,.Lj12210
+.Lj12215:
 	ldw	r3,r30,-56
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1969
-	beq	r3,r4,.Lj12224
+	beq	r3,r4,.Lj12219
 	lui	r4,13
 	ori	r4,r4,1970
-	blt	r3,r4,.Lj12222
+	blt	r3,r4,.Lj12217
 	lui	r4,13
 	ori	r4,r4,1971
-	ble	r3,r4,.Lj12223
-	jal	r0,.Lj12222
-.Lj12223:
+	ble	r3,r4,.Lj12218
+	jal	r0,.Lj12217
+.Lj12218:
 	ldw	r3,r30,-56
 	ldw	r5,r3,8
 	srai	r6,r5,31
@@ -102364,10 +102333,10 @@ SYSTEM_$$_BLOCKWRITE$file$formal$INT64$INT64:
 	call	SYSTEM_$$_DO_WRITE$LONGINT$POINTER$LONGINT$$LONGINT
 	ldw	r3,r30,-56
 	ldw	r4,r3,8
-	bne	r4,r0,.Lj12225
+	bne	r4,r0,.Lj12220
 	addi	r3,r0,200
 	call	FPC_HANDLEERROR
-.Lj12225:
+.Lj12220:
 	div	r4,r1,r4
 	slli	r4,r4,0
 	srli	r4,r4,0
@@ -102375,38 +102344,38 @@ SYSTEM_$$_BLOCKWRITE$file$formal$INT64$INT64:
 	ldw	r3,r30,-72
 	stw	r3,r4,0
 	stw	r3,r5,4
-	jal	r0,.Lj12221
-.Lj12224:
+	jal	r0,.Lj12216
+.Lj12219:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12226
+	beq	r5,r0,.Lj12221
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12227
-.Lj12226:
+	jal	r0,.Lj12222
+.Lj12221:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12227:
+.Lj12222:
 	addi	r3,r0,105
 	sth	r1,r3,0
-	jal	r0,.Lj12221
-.Lj12222:
+	jal	r0,.Lj12216
+.Lj12217:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12228
+	beq	r4,r0,.Lj12223
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12229
-.Lj12228:
+	jal	r0,.Lj12224
+.Lj12223:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12229:
+.Lj12224:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj12221:
-.Lj12215:
+.Lj12216:
+.Lj12210:
 	ldw	r30,r29,72
 	ldw	r31,r29,76
 	addi	r29,r29,80
@@ -102552,53 +102521,53 @@ SYSTEM_$$_BLOCKWRITE$file$formal$LONGINT:
 	call	SYSTEM_$$_BLOCKWRITE$file$formal$INT64$INT64
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12240
+	beq	r5,r0,.Lj12235
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12241
-.Lj12240:
+	jal	r0,.Lj12236
+.Lj12235:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12241:
+.Lj12236:
 	ldhu	r3,r1,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12242
-	jal	r0,.Lj12243
-.Lj12242:
+	bne	r3,r0,.Lj12237
+	jal	r0,.Lj12238
+.Lj12237:
 	ldw	r5,r30,-64
 	srai	r6,r5,31
 	ldw	r3,r30,-72
 	ldw	r4,r30,-68
-	blt	r4,r6,.Lj12245
-	bne	r6,r4,.Lj12246
-	bltu	r3,r5,.Lj12245
-	jal	r0,.Lj12246
-.Lj12245:
-	jal	r0,.Lj12244
-.Lj12246:
-	jal	r0,.Lj12243
-.Lj12244:
+	blt	r4,r6,.Lj12240
+	bne	r6,r4,.Lj12241
+	bltu	r3,r5,.Lj12240
+	jal	r0,.Lj12241
+.Lj12240:
+	jal	r0,.Lj12239
+.Lj12241:
+	jal	r0,.Lj12238
+.Lj12239:
 	ldw	r4,r30,-64
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj12247
-	jal	r0,.Lj12243
-.Lj12247:
+	bne	r3,r0,.Lj12242
+	jal	r0,.Lj12238
+.Lj12242:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12248
+	beq	r4,r0,.Lj12243
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12249
-.Lj12248:
+	jal	r0,.Lj12244
+.Lj12243:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12249:
+.Lj12244:
 	addi	r3,r0,101
 	sth	r1,r3,0
-.Lj12243:
+.Lj12238:
 	ldw	r30,r29,72
 	ldw	r31,r29,76
 	addi	r29,r29,80
@@ -102625,35 +102594,35 @@ SYSTEM_$$_BLOCKREAD$file$formal$INT64$INT64:
 	stw	r3,r0,4
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12252
+	beq	r4,r0,.Lj12247
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12253
-.Lj12252:
+	jal	r0,.Lj12248
+.Lj12247:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12253:
+.Lj12248:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12254
-	jal	r0,.Lj12255
-.Lj12254:
+	bne	r3,r0,.Lj12249
 	jal	r0,.Lj12250
-.Lj12255:
+.Lj12249:
+	jal	r0,.Lj12245
+.Lj12250:
 	ldw	r3,r30,-56
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1969
-	beq	r3,r4,.Lj12258
+	beq	r3,r4,.Lj12253
 	lui	r4,13
 	ori	r4,r4,1970
-	beq	r3,r4,.Lj12259
+	beq	r3,r4,.Lj12254
 	lui	r4,13
 	ori	r4,r4,1971
-	beq	r3,r4,.Lj12258
-	jal	r0,.Lj12257
-.Lj12258:
+	beq	r3,r4,.Lj12253
+	jal	r0,.Lj12252
+.Lj12253:
 	ldw	r3,r30,-56
 	ldw	r5,r3,8
 	srai	r6,r5,31
@@ -102668,10 +102637,10 @@ SYSTEM_$$_BLOCKREAD$file$formal$INT64$INT64:
 	call	SYSTEM_$$_DO_READ$LONGINT$POINTER$LONGINT$$LONGINT
 	ldw	r3,r30,-56
 	ldw	r4,r3,8
-	bne	r4,r0,.Lj12260
+	bne	r4,r0,.Lj12255
 	addi	r3,r0,200
 	call	FPC_HANDLEERROR
-.Lj12260:
+.Lj12255:
 	div	r4,r1,r4
 	slli	r4,r4,0
 	srli	r4,r4,0
@@ -102679,38 +102648,38 @@ SYSTEM_$$_BLOCKREAD$file$formal$INT64$INT64:
 	ldw	r3,r30,-72
 	stw	r3,r4,0
 	stw	r3,r5,4
-	jal	r0,.Lj12256
-.Lj12259:
+	jal	r0,.Lj12251
+.Lj12254:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12261
+	beq	r5,r0,.Lj12256
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12262
-.Lj12261:
+	jal	r0,.Lj12257
+.Lj12256:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12262:
+.Lj12257:
 	addi	r3,r0,104
 	sth	r1,r3,0
-	jal	r0,.Lj12256
-.Lj12257:
+	jal	r0,.Lj12251
+.Lj12252:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12263
+	beq	r4,r0,.Lj12258
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12264
-.Lj12263:
+	jal	r0,.Lj12259
+.Lj12258:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12264:
+.Lj12259:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj12256:
-.Lj12250:
+.Lj12251:
+.Lj12245:
 	ldw	r30,r29,72
 	ldw	r31,r29,76
 	addi	r29,r29,80
@@ -102857,58 +102826,58 @@ SYSTEM_$$_BLOCKREAD$file$formal$INT64:
 	call	SYSTEM_$$_BLOCKREAD$file$formal$INT64$INT64
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12275
+	beq	r5,r0,.Lj12270
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12276
-.Lj12275:
+	jal	r0,.Lj12271
+.Lj12270:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12276:
+.Lj12271:
 	ldhu	r3,r1,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12277
-	jal	r0,.Lj12278
-.Lj12277:
+	bne	r3,r0,.Lj12272
+	jal	r0,.Lj12273
+.Lj12272:
 	ldw	r5,r30,-76
 	ldw	r6,r30,-72
 	ldw	r3,r30,-68
 	ldw	r4,r30,-64
-	blt	r6,r4,.Lj12280
-	bne	r4,r6,.Lj12281
-	bltu	r5,r3,.Lj12280
-	jal	r0,.Lj12281
-.Lj12280:
-	jal	r0,.Lj12279
-.Lj12281:
-	jal	r0,.Lj12278
-.Lj12279:
+	blt	r6,r4,.Lj12275
+	bne	r4,r6,.Lj12276
+	bltu	r5,r3,.Lj12275
+	jal	r0,.Lj12276
+.Lj12275:
+	jal	r0,.Lj12274
+.Lj12276:
+	jal	r0,.Lj12273
+.Lj12274:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-64
-	blt	r0,r3,.Lj12283
-	bne	r3,r0,.Lj12284
-	bltu	r0,r4,.Lj12283
-	jal	r0,.Lj12284
-.Lj12283:
-	jal	r0,.Lj12282
-.Lj12284:
-	jal	r0,.Lj12278
-.Lj12282:
+	blt	r0,r3,.Lj12278
+	bne	r3,r0,.Lj12279
+	bltu	r0,r4,.Lj12278
+	jal	r0,.Lj12279
+.Lj12278:
+	jal	r0,.Lj12277
+.Lj12279:
+	jal	r0,.Lj12273
+.Lj12277:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12285
+	beq	r4,r0,.Lj12280
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12286
-.Lj12285:
+	jal	r0,.Lj12281
+.Lj12280:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12286:
+.Lj12281:
 	addi	r3,r0,100
 	sth	r1,r3,0
-.Lj12278:
+.Lj12273:
 	ldw	r30,r29,76
 	ldw	r31,r29,80
 	addi	r29,r29,84
@@ -102932,67 +102901,67 @@ SYSTEM_$$_FILEPOS$file$$INT64:
 	stw	r30,r0,-60
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12289
+	beq	r4,r0,.Lj12284
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12290
-.Lj12289:
+	jal	r0,.Lj12285
+.Lj12284:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12290:
+.Lj12285:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12291
-	jal	r0,.Lj12292
-.Lj12291:
+	bne	r3,r0,.Lj12286
 	jal	r0,.Lj12287
-.Lj12292:
+.Lj12286:
+	jal	r0,.Lj12282
+.Lj12287:
 	ldw	r3,r30,-56
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1969
-	beq	r3,r4,.Lj12295
+	beq	r3,r4,.Lj12290
 	lui	r4,13
 	ori	r4,r4,1970
-	blt	r3,r4,.Lj12294
+	blt	r3,r4,.Lj12289
 	lui	r4,13
 	ori	r4,r4,1971
-	ble	r3,r4,.Lj12295
-	jal	r0,.Lj12294
-.Lj12295:
+	ble	r3,r4,.Lj12290
+	jal	r0,.Lj12289
+.Lj12290:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	call	SYSTEM_$$_DO_FILEPOS$LONGINT$$LONGINT
 	ldw	r3,r30,-56
 	ldw	r4,r3,8
-	bne	r4,r0,.Lj12296
+	bne	r4,r0,.Lj12291
 	addi	r3,r0,200
 	call	FPC_HANDLEERROR
-.Lj12296:
+.Lj12291:
 	div	r3,r1,r4
 	slli	r3,r3,0
 	srli	r3,r3,0
 	srai	r4,r3,31
 	stw	r30,r3,-64
 	stw	r30,r4,-60
-	jal	r0,.Lj12293
-.Lj12294:
+	jal	r0,.Lj12288
+.Lj12289:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12297
+	beq	r5,r0,.Lj12292
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12298
-.Lj12297:
+	jal	r0,.Lj12293
+.Lj12292:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12298:
+.Lj12293:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj12293:
-.Lj12287:
+.Lj12288:
+.Lj12282:
 	ldw	r1,r30,-64
 	ldw	r2,r30,-60
 	ldw	r30,r29,64
@@ -103018,75 +102987,75 @@ SYSTEM_$$_FILESIZE$file$$INT64:
 	stw	r30,r0,-60
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12301
+	beq	r4,r0,.Lj12296
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12302
-.Lj12301:
+	jal	r0,.Lj12297
+.Lj12296:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12302:
+.Lj12297:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12303
-	jal	r0,.Lj12304
-.Lj12303:
+	bne	r3,r0,.Lj12298
 	jal	r0,.Lj12299
-.Lj12304:
+.Lj12298:
+	jal	r0,.Lj12294
+.Lj12299:
 	ldw	r3,r30,-56
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1969
-	beq	r3,r4,.Lj12307
+	beq	r3,r4,.Lj12302
 	lui	r4,13
 	ori	r4,r4,1970
-	blt	r3,r4,.Lj12306
+	blt	r3,r4,.Lj12301
 	lui	r4,13
 	ori	r4,r4,1971
-	ble	r3,r4,.Lj12307
-	jal	r0,.Lj12306
-.Lj12307:
+	ble	r3,r4,.Lj12302
+	jal	r0,.Lj12301
+.Lj12302:
 	ldw	r3,r30,-56
 	ldw	r4,r3,8
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj12308
-	jal	r0,.Lj12309
-.Lj12308:
+	bne	r3,r0,.Lj12303
+	jal	r0,.Lj12304
+.Lj12303:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	call	SYSTEM_$$_DO_FILESIZE$LONGINT$$LONGINT
 	ldw	r3,r30,-56
 	ldw	r4,r3,8
-	bne	r4,r0,.Lj12310
+	bne	r4,r0,.Lj12305
 	addi	r3,r0,200
 	call	FPC_HANDLEERROR
-.Lj12310:
+.Lj12305:
 	div	r3,r1,r4
 	slli	r3,r3,0
 	srli	r3,r3,0
 	srai	r4,r3,31
 	stw	r30,r3,-64
 	stw	r30,r4,-60
-.Lj12309:
-	jal	r0,.Lj12305
-.Lj12306:
+.Lj12304:
+	jal	r0,.Lj12300
+.Lj12301:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12311
+	beq	r5,r0,.Lj12306
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12312
-.Lj12311:
+	jal	r0,.Lj12307
+.Lj12306:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12312:
+.Lj12307:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj12305:
-.Lj12299:
+.Lj12300:
+.Lj12294:
 	ldw	r1,r30,-64
 	ldw	r2,r30,-60
 	ldw	r30,r29,64
@@ -103113,69 +103082,69 @@ SYSTEM_$$_EOF$file$$BOOLEAN:
 	stb	r30,r0,-60
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12315
+	beq	r4,r0,.Lj12310
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12316
-.Lj12315:
+	jal	r0,.Lj12311
+.Lj12310:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12316:
+.Lj12311:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12317
-	jal	r0,.Lj12318
-.Lj12317:
+	bne	r3,r0,.Lj12312
 	jal	r0,.Lj12313
-.Lj12318:
+.Lj12312:
+	jal	r0,.Lj12308
+.Lj12313:
 	ldw	r3,r30,-56
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1969
-	beq	r3,r4,.Lj12321
+	beq	r3,r4,.Lj12316
 	lui	r4,13
 	ori	r4,r4,1970
-	blt	r3,r4,.Lj12320
+	blt	r3,r4,.Lj12315
 	lui	r4,13
 	ori	r4,r4,1971
-	ble	r3,r4,.Lj12321
-	jal	r0,.Lj12320
-.Lj12321:
+	ble	r3,r4,.Lj12316
+	jal	r0,.Lj12315
+.Lj12316:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_FILESIZE$file$$INT64
 	addi	r11,r1,0
 	addi	r12,r2,0
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_FILEPOS$file$$INT64
-	blt	r2,r12,.Lj12323
-	bne	r2,r12,.Lj12322
-	bltu	r1,r11,.Lj12323
-	jal	r0,.Lj12322
-.Lj12322:
+	blt	r2,r12,.Lj12318
+	bne	r2,r12,.Lj12317
+	bltu	r1,r11,.Lj12318
+	jal	r0,.Lj12317
+.Lj12317:
 	addi	r3,r0,1
 	stb	r30,r3,-60
-	jal	r0,.Lj12324
-.Lj12323:
-	stb	r30,r0,-60
-.Lj12324:
 	jal	r0,.Lj12319
-.Lj12320:
+.Lj12318:
+	stb	r30,r0,-60
+.Lj12319:
+	jal	r0,.Lj12314
+.Lj12315:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12325
+	beq	r4,r0,.Lj12320
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12326
-.Lj12325:
+	jal	r0,.Lj12321
+.Lj12320:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12326:
+.Lj12321:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj12319:
-.Lj12313:
+.Lj12314:
+.Lj12308:
 	ldbu	r1,r30,-60
 	ldw	r12,r29,60
 	ldw	r11,r29,64
@@ -103202,35 +103171,35 @@ SYSTEM_$$_SEEK$file$INT64:
 	stw	r30,r5,-60
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12329
+	beq	r4,r0,.Lj12324
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12330
-.Lj12329:
+	jal	r0,.Lj12325
+.Lj12324:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12330:
+.Lj12325:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12331
-	jal	r0,.Lj12332
-.Lj12331:
+	bne	r3,r0,.Lj12326
 	jal	r0,.Lj12327
-.Lj12332:
+.Lj12326:
+	jal	r0,.Lj12322
+.Lj12327:
 	ldw	r3,r30,-56
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1969
-	beq	r3,r4,.Lj12335
+	beq	r3,r4,.Lj12330
 	lui	r4,13
 	ori	r4,r4,1970
-	blt	r3,r4,.Lj12334
+	blt	r3,r4,.Lj12329
 	lui	r4,13
 	ori	r4,r4,1971
-	ble	r3,r4,.Lj12335
-	jal	r0,.Lj12334
-.Lj12335:
+	ble	r3,r4,.Lj12330
+	jal	r0,.Lj12329
+.Lj12330:
 	ldw	r3,r30,-56
 	ldw	r5,r3,8
 	srai	r6,r5,31
@@ -103242,23 +103211,23 @@ SYSTEM_$$_SEEK$file$INT64:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	call	SYSTEM_$$_DO_SEEK$LONGINT$LONGINT
-	jal	r0,.Lj12333
-.Lj12334:
+	jal	r0,.Lj12328
+.Lj12329:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12336
+	beq	r4,r0,.Lj12331
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12337
-.Lj12336:
+	jal	r0,.Lj12332
+.Lj12331:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12337:
+.Lj12332:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj12333:
-.Lj12327:
+.Lj12328:
+.Lj12322:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -103278,38 +103247,38 @@ SYSTEM_$$_TRUNCATE$file:
 	stw	r30,r3,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12340
+	beq	r4,r0,.Lj12335
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12341
-.Lj12340:
+	jal	r0,.Lj12336
+.Lj12335:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12341:
+.Lj12336:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12342
-	jal	r0,.Lj12343
-.Lj12342:
+	bne	r3,r0,.Lj12337
 	jal	r0,.Lj12338
-.Lj12343:
+.Lj12337:
+	jal	r0,.Lj12333
+.Lj12338:
 	ldw	r3,r30,-56
 	ldw	r4,r3,4
 	lui	r3,13
 	ori	r3,r3,1970
 	sge	r3,r4,r3
-	bne	r3,r0,.Lj12344
-	jal	r0,.Lj12345
-.Lj12344:
+	bne	r3,r0,.Lj12339
+	jal	r0,.Lj12340
+.Lj12339:
 	ldw	r3,r30,-56
 	ldw	r4,r3,4
 	lui	r3,13
 	ori	r3,r3,1971
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj12346
-	jal	r0,.Lj12345
-.Lj12346:
+	bne	r3,r0,.Lj12341
+	jal	r0,.Lj12340
+.Lj12341:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_FILEPOS$file$$INT64
 	addi	r3,r1,0
@@ -103323,23 +103292,23 @@ SYSTEM_$$_TRUNCATE$file:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	call	SYSTEM_$$_DO_TRUNCATE$LONGINT$LONGINT
-	jal	r0,.Lj12347
-.Lj12345:
+	jal	r0,.Lj12342
+.Lj12340:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12348
+	beq	r4,r0,.Lj12343
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12349
-.Lj12348:
+	jal	r0,.Lj12344
+.Lj12343:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12349:
+.Lj12344:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj12347:
-.Lj12338:
+.Lj12342:
+.Lj12333:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -103359,35 +103328,35 @@ SYSTEM_$$_CLOSE$file:
 	stw	r30,r3,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12352
+	beq	r4,r0,.Lj12347
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12353
-.Lj12352:
+	jal	r0,.Lj12348
+.Lj12347:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12353:
+.Lj12348:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12354
-	jal	r0,.Lj12355
-.Lj12354:
+	bne	r3,r0,.Lj12349
 	jal	r0,.Lj12350
-.Lj12355:
+.Lj12349:
+	jal	r0,.Lj12345
+.Lj12350:
 	ldw	r3,r30,-56
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1969
-	beq	r3,r4,.Lj12358
+	beq	r3,r4,.Lj12353
 	lui	r4,13
 	ori	r4,r4,1970
-	blt	r3,r4,.Lj12357
+	blt	r3,r4,.Lj12352
 	lui	r4,13
 	ori	r4,r4,1971
-	ble	r3,r4,.Lj12358
-	jal	r0,.Lj12357
-.Lj12358:
+	ble	r3,r4,.Lj12353
+	jal	r0,.Lj12352
+.Lj12353:
 	ldw	r3,r30,-56
 	ldw	r3,r3,0
 	call	SYSTEM_$$_DO_CLOSE$LONGINT
@@ -103395,27 +103364,27 @@ SYSTEM_$$_CLOSE$file:
 	lui	r3,13
 	ori	r3,r3,1968
 	stw	r4,r3,4
-	jal	r0,.Lj12356
-.Lj12357:
+	jal	r0,.Lj12351
+.Lj12352:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12359
+	beq	r5,r0,.Lj12354
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12360
-.Lj12359:
+	jal	r0,.Lj12355
+.Lj12354:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12360:
+.Lj12355:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj12356:
+.Lj12351:
 	ldw	r3,r30,-56
 	addi	r3,r3,332
 	addi	r4,r0,0
 	call	fpc_unicodestr_assign
-.Lj12350:
+.Lj12345:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -103437,50 +103406,50 @@ SYSTEM_$$_ERASE$file:
 	stw	r30,r3,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12363
+	beq	r4,r0,.Lj12358
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12364
-.Lj12363:
+	jal	r0,.Lj12359
+.Lj12358:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12364:
+.Lj12359:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12365
-	jal	r0,.Lj12366
-.Lj12365:
+	bne	r3,r0,.Lj12360
 	jal	r0,.Lj12361
-.Lj12366:
+.Lj12360:
+	jal	r0,.Lj12356
+.Lj12361:
 	ldw	r3,r30,-56
 	ldw	r4,r3,4
 	lui	r3,13
 	ori	r3,r3,1968
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj12367
-	jal	r0,.Lj12368
-.Lj12367:
+	bne	r3,r0,.Lj12362
+	jal	r0,.Lj12363
+.Lj12362:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12369
+	beq	r5,r0,.Lj12364
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12370
-.Lj12369:
+	jal	r0,.Lj12365
+.Lj12364:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12370:
+.Lj12365:
 	addi	r3,r0,102
 	sth	r1,r3,0
-	jal	r0,.Lj12361
-.Lj12368:
+	jal	r0,.Lj12356
+.Lj12363:
 	ldw	r3,r30,-56
 	addi	r3,r3,76
 	addi	r4,r0,0
 	call	SYSTEM_$$_DO_ERASE$PANSICHAR$BOOLEAN
-.Lj12361:
+.Lj12356:
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -103507,56 +103476,56 @@ SYSTEM_$$_RENAME$file$UNICODESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj12374
+	bne	r1,r0,.Lj12369
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12376
+	beq	r4,r0,.Lj12371
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12377
-.Lj12376:
+	jal	r0,.Lj12372
+.Lj12371:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12377:
+.Lj12372:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12378
-	jal	r0,.Lj12379
-.Lj12378:
-	jal	r0,.Lj12375
-.Lj12379:
+	bne	r3,r0,.Lj12373
+	jal	r0,.Lj12374
+.Lj12373:
+	jal	r0,.Lj12370
+.Lj12374:
 	ldw	r3,r30,-56
 	ldw	r4,r3,4
 	lui	r3,13
 	ori	r3,r3,1968
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj12380
-	jal	r0,.Lj12381
-.Lj12380:
+	bne	r3,r0,.Lj12375
+	jal	r0,.Lj12376
+.Lj12375:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12382
+	beq	r5,r0,.Lj12377
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12383
-.Lj12382:
+	jal	r0,.Lj12378
+.Lj12377:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12383:
+.Lj12378:
 	addi	r3,r0,102
 	sth	r1,r3,0
-	jal	r0,.Lj12375
-.Lj12381:
+	jal	r0,.Lj12370
+.Lj12376:
 	addi	r3,r30,-64
 	ldw	r4,r30,-60
 	call	SYSTEM_$$_TOSINGLEBYTEFILESYSTEMENCODEDFILENAME$UNICODESTRING$$RAWBYTESTRING
 	ldw	r4,r30,-64
-	bne	r4,r0,.Lj12384
+	bne	r4,r0,.Lj12379
 	la	r3,FPC_EMPTYCHAR
 	addi	r4,r3,0
-.Lj12384:
+.Lj12379:
 	ldw	r3,r30,-56
 	addi	r3,r3,76
 	addi	r6,r0,1
@@ -103564,20 +103533,20 @@ SYSTEM_$$_RENAME$file$UNICODESTRING:
 	call	SYSTEM_$$_DO_RENAME$PANSICHAR$PANSICHAR$BOOLEAN$BOOLEAN
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12385
+	beq	r4,r0,.Lj12380
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12386
-.Lj12385:
+	jal	r0,.Lj12381
+.Lj12380:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12386:
+.Lj12381:
 	ldhu	r3,r1,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12387
-	jal	r0,.Lj12388
-.Lj12387:
+	bne	r3,r0,.Lj12382
+	jal	r0,.Lj12383
+.Lj12382:
 	ldw	r5,r30,-64
 	addi	r3,r30,-420
 	addi	r4,r0,255
@@ -103587,18 +103556,18 @@ SYSTEM_$$_RENAME$file$UNICODESTRING:
 	addi	r4,r3,76
 	addi	r3,r30,-420
 	call	FPC_MOVE
-.Lj12388:
-.Lj12374:
+.Lj12383:
+.Lj12369:
 	call	fpc_popaddrstack
 	addi	r3,r30,-64
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj12373
+	beq	r3,r0,.Lj12368
 	call	fpc_reraise
-.Lj12375:
+.Lj12370:
 	stw	r30,r0,-164
-	jal	r0,.Lj12374
-.Lj12373:
+	jal	r0,.Lj12369
+.Lj12368:
 	ldw	r30,r29,420
 	ldw	r31,r29,424
 	addi	r29,r29,428
@@ -103625,80 +103594,80 @@ SYSTEM_$$_RENAME$file$RAWBYTESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-172
-	bne	r1,r0,.Lj12392
+	bne	r1,r0,.Lj12387
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12394
+	beq	r4,r0,.Lj12389
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12395
-.Lj12394:
+	jal	r0,.Lj12390
+.Lj12389:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12395:
+.Lj12390:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12396
-	jal	r0,.Lj12397
-.Lj12396:
-	jal	r0,.Lj12393
-.Lj12397:
+	bne	r3,r0,.Lj12391
+	jal	r0,.Lj12392
+.Lj12391:
+	jal	r0,.Lj12388
+.Lj12392:
 	ldw	r3,r30,-56
 	ldw	r4,r3,4
 	lui	r3,13
 	ori	r3,r3,1968
 	sne	r3,r4,r3
-	bne	r3,r0,.Lj12398
-	jal	r0,.Lj12399
-.Lj12398:
+	bne	r3,r0,.Lj12393
+	jal	r0,.Lj12394
+.Lj12393:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12400
+	beq	r5,r0,.Lj12395
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12401
-.Lj12400:
+	jal	r0,.Lj12396
+.Lj12395:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12401:
+.Lj12396:
 	addi	r3,r0,102
 	sth	r1,r3,0
-	jal	r0,.Lj12393
-.Lj12399:
+	jal	r0,.Lj12388
+.Lj12394:
 	stb	r30,r0,-72
 	ldw	r4,r30,-60
-	bne	r4,r0,.Lj12402
+	bne	r4,r0,.Lj12397
 	la	r3,FPC_EMPTYCHAR
 	addi	r4,r3,0
-.Lj12402:
+.Lj12397:
 	stw	r30,r4,-68
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_STRINGCODEPAGE$RAWBYTESTRING$$WORD
 	la	r3,U_$SYSTEM_$$_DEFAULTFILESYSTEMCODEPAGE
 	ldhu	r3,r3,0
 	sne	r3,r1,r3
-	bne	r3,r0,.Lj12403
-	jal	r0,.Lj12404
-.Lj12403:
+	bne	r3,r0,.Lj12398
+	jal	r0,.Lj12399
+.Lj12398:
 	addi	r3,r30,-64
 	ldw	r4,r30,-60
 	call	SYSTEM_$$_TOSINGLEBYTEFILESYSTEMENCODEDFILENAME$RAWBYTESTRING$$RAWBYTESTRING
 	ldw	r4,r30,-64
-	bne	r4,r0,.Lj12405
+	bne	r4,r0,.Lj12400
 	la	r3,FPC_EMPTYCHAR
 	addi	r4,r3,0
-.Lj12405:
+.Lj12400:
 	stw	r30,r4,-68
 	addi	r3,r0,1
 	stb	r30,r3,-72
-	jal	r0,.Lj12406
-.Lj12404:
+	jal	r0,.Lj12401
+.Lj12399:
 	addi	r3,r30,-64
 	ldw	r4,r30,-60
 	call	fpc_ansistr_assign
-.Lj12406:
+.Lj12401:
 	ldw	r3,r30,-56
 	addi	r3,r3,76
 	ldbu	r6,r30,-72
@@ -103707,20 +103676,20 @@ SYSTEM_$$_RENAME$file$RAWBYTESTRING:
 	call	SYSTEM_$$_DO_RENAME$PANSICHAR$PANSICHAR$BOOLEAN$BOOLEAN
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12407
+	beq	r4,r0,.Lj12402
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12408
-.Lj12407:
+	jal	r0,.Lj12403
+.Lj12402:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12408:
+.Lj12403:
 	ldhu	r3,r1,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12409
-	jal	r0,.Lj12410
-.Lj12409:
+	bne	r3,r0,.Lj12404
+	jal	r0,.Lj12405
+.Lj12404:
 	ldw	r5,r30,-64
 	addi	r3,r30,-428
 	addi	r4,r0,255
@@ -103730,18 +103699,18 @@ SYSTEM_$$_RENAME$file$RAWBYTESTRING:
 	addi	r4,r3,76
 	addi	r3,r30,-428
 	call	FPC_MOVE
-.Lj12410:
-.Lj12392:
+.Lj12405:
+.Lj12387:
 	call	fpc_popaddrstack
 	addi	r3,r30,-64
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-172
-	beq	r3,r0,.Lj12391
+	beq	r3,r0,.Lj12386
 	call	fpc_reraise
-.Lj12393:
+.Lj12388:
 	stw	r30,r0,-172
-	jal	r0,.Lj12392
-.Lj12391:
+	jal	r0,.Lj12387
+.Lj12386:
 	ldw	r30,r29,428
 	ldw	r31,r29,432
 	addi	r29,r29,436
@@ -103770,7 +103739,7 @@ SYSTEM_$$_RENAME$file$SHORTSTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj12414
+	bne	r1,r0,.Lj12409
 	ldw	r4,r30,-60
 	addi	r3,r30,-164
 	addi	r5,r0,0
@@ -103778,16 +103747,16 @@ SYSTEM_$$_RENAME$file$SHORTSTRING:
 	ldw	r4,r30,-164
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_RENAME$file$RAWBYTESTRING
-.Lj12414:
+.Lj12409:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj12413
+	beq	r3,r0,.Lj12408
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj12414
-.Lj12413:
+	jal	r0,.Lj12409
+.Lj12408:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -103814,7 +103783,7 @@ SYSTEM_$$_RENAME$file$PANSICHAR:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj12419
+	bne	r1,r0,.Lj12414
 	addi	r3,r30,-164
 	addi	r5,r0,0
 	ldw	r4,r30,-60
@@ -103822,16 +103791,16 @@ SYSTEM_$$_RENAME$file$PANSICHAR:
 	ldw	r4,r30,-164
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_RENAME$file$RAWBYTESTRING
-.Lj12419:
+.Lj12414:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj12418
+	beq	r3,r0,.Lj12413
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj12419
-.Lj12418:
+	jal	r0,.Lj12414
+.Lj12413:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -103858,7 +103827,7 @@ SYSTEM_$$_RENAME$file$ANSICHAR:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj12424
+	bne	r1,r0,.Lj12419
 	addi	r3,r30,-164
 	addi	r5,r0,0
 	ldbu	r4,r30,-60
@@ -103866,16 +103835,16 @@ SYSTEM_$$_RENAME$file$ANSICHAR:
 	ldw	r4,r30,-164
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_RENAME$file$RAWBYTESTRING
-.Lj12424:
+.Lj12419:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj12423
+	beq	r3,r0,.Lj12418
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj12424
-.Lj12423:
+	jal	r0,.Lj12419
+.Lj12418:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -103897,20 +103866,20 @@ SYSTEM_$$_GETFULLNAME$file$$UNICODESTRING:
 	ldw	r3,r30,-56
 	ldw	r3,r3,332
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12428
-	jal	r0,.Lj12429
-.Lj12428:
+	bne	r3,r0,.Lj12423
+	jal	r0,.Lj12424
+.Lj12423:
 	ldw	r3,r30,-56
 	ldw	r4,r3,332
 	ldw	r3,r30,-60
 	call	fpc_unicodestr_assign
-	jal	r0,.Lj12430
-.Lj12429:
+	jal	r0,.Lj12425
+.Lj12424:
 	ldw	r3,r30,-56
 	addi	r4,r3,76
 	ldw	r3,r30,-60
 	call	fpc_pchar_to_unicodestr
-.Lj12430:
+.Lj12425:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -104151,31 +104120,31 @@ FPC_RESET_TYPED_ISO:
 	stw	r30,r4,-60
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12451
+	beq	r4,r0,.Lj12446
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12452
-.Lj12451:
+	jal	r0,.Lj12447
+.Lj12446:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12452:
+.Lj12447:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12453
-	jal	r0,.Lj12454
-.Lj12453:
+	bne	r3,r0,.Lj12448
 	jal	r0,.Lj12449
-.Lj12454:
+.Lj12448:
+	jal	r0,.Lj12444
+.Lj12449:
 	ldw	r3,r30,-56
 	ldw	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12455
-	jal	r0,.Lj12456
-.Lj12455:
+	bne	r3,r0,.Lj12450
+	jal	r0,.Lj12451
+.Lj12450:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_DOASSIGN$TYPEDFILE
-.Lj12456:
+.Lj12451:
 	ldw	r3,r30,-56
 	stb	r3,r0,12
 	ldw	r3,r30,-56
@@ -104187,7 +104156,7 @@ FPC_RESET_TYPED_ISO:
 	addi	r6,r0,0
 	addi	r5,r0,1
 	call	SYSTEM_$$_BLOCKREAD$file$formal$INT64
-.Lj12449:
+.Lj12444:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -104210,35 +104179,35 @@ FPC_REWRITE_TYPED_ISO:
 	stw	r30,r4,-60
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12459
+	beq	r4,r0,.Lj12454
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12460
-.Lj12459:
+	jal	r0,.Lj12455
+.Lj12454:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12460:
+.Lj12455:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12461
-	jal	r0,.Lj12462
-.Lj12461:
+	bne	r3,r0,.Lj12456
 	jal	r0,.Lj12457
-.Lj12462:
+.Lj12456:
+	jal	r0,.Lj12452
+.Lj12457:
 	ldw	r3,r30,-56
 	ldw	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12463
-	jal	r0,.Lj12464
-.Lj12463:
+	bne	r3,r0,.Lj12458
+	jal	r0,.Lj12459
+.Lj12458:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_DOASSIGN$TYPEDFILE
-.Lj12464:
+.Lj12459:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-60
 	call	SYSTEM_$$_REWRITE$file$LONGINT
-.Lj12457:
+.Lj12452:
 	ldw	r30,r29,60
 	ldw	r31,r29,64
 	addi	r29,r29,68
@@ -104262,32 +104231,32 @@ FPC_RESET_TYPED_NAME_ISO:
 	stw	r30,r5,-64
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12467
+	beq	r4,r0,.Lj12462
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12468
-.Lj12467:
+	jal	r0,.Lj12463
+.Lj12462:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12468:
+.Lj12463:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12469
-	jal	r0,.Lj12470
-.Lj12469:
+	bne	r3,r0,.Lj12464
 	jal	r0,.Lj12465
-.Lj12470:
+.Lj12464:
+	jal	r0,.Lj12460
+.Lj12465:
 	ldw	r3,r30,-56
 	ldw	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12471
-	jal	r0,.Lj12472
-.Lj12471:
+	bne	r3,r0,.Lj12466
+	jal	r0,.Lj12467
+.Lj12466:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_ASSIGN$TYPEDFILE$SHORTSTRING
-.Lj12472:
+.Lj12467:
 	ldw	r3,r30,-56
 	stb	r3,r0,12
 	ldw	r3,r30,-56
@@ -104296,22 +104265,22 @@ FPC_RESET_TYPED_NAME_ISO:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_EOF$file$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj12473
-	jal	r0,.Lj12474
-.Lj12473:
+	bne	r3,r0,.Lj12468
+	jal	r0,.Lj12469
+.Lj12468:
 	ldw	r3,r30,-56
 	addi	r4,r3,336
 	ldw	r3,r30,-56
 	addi	r6,r0,0
 	addi	r5,r0,1
 	call	SYSTEM_$$_BLOCKREAD$file$formal$INT64
-	jal	r0,.Lj12475
-.Lj12474:
+	jal	r0,.Lj12470
+.Lj12469:
 	ldw	r3,r30,-56
 	addi	r4,r0,1
 	stb	r3,r4,12
-.Lj12475:
-.Lj12465:
+.Lj12470:
+.Lj12460:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -104335,36 +104304,36 @@ FPC_REWRITE_TYPED_NAME_ISO:
 	stw	r30,r5,-64
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12478
+	beq	r4,r0,.Lj12473
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12479
-.Lj12478:
+	jal	r0,.Lj12474
+.Lj12473:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12479:
+.Lj12474:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12480
-	jal	r0,.Lj12481
-.Lj12480:
+	bne	r3,r0,.Lj12475
 	jal	r0,.Lj12476
-.Lj12481:
+.Lj12475:
+	jal	r0,.Lj12471
+.Lj12476:
 	ldw	r3,r30,-56
 	ldw	r3,r3,4
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12482
-	jal	r0,.Lj12483
-.Lj12482:
+	bne	r3,r0,.Lj12477
+	jal	r0,.Lj12478
+.Lj12477:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_ASSIGN$TYPEDFILE$SHORTSTRING
-.Lj12483:
+.Lj12478:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-64
 	call	SYSTEM_$$_REWRITE$file$LONGINT
-.Lj12476:
+.Lj12471:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -104388,72 +104357,72 @@ FPC_TYPED_WRITE:
 	stw	r30,r5,-64
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12486
+	beq	r4,r0,.Lj12481
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12487
-.Lj12486:
+	jal	r0,.Lj12482
+.Lj12481:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12487:
+.Lj12482:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12488
-	jal	r0,.Lj12489
-.Lj12488:
+	bne	r3,r0,.Lj12483
 	jal	r0,.Lj12484
-.Lj12489:
+.Lj12483:
+	jal	r0,.Lj12479
+.Lj12484:
 	ldw	r3,r30,-60
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1969
-	beq	r3,r4,.Lj12493
+	beq	r3,r4,.Lj12488
 	lui	r4,13
 	ori	r4,r4,1970
-	blt	r3,r4,.Lj12491
+	blt	r3,r4,.Lj12486
 	lui	r4,13
 	ori	r4,r4,1971
-	ble	r3,r4,.Lj12492
-	jal	r0,.Lj12491
-.Lj12492:
+	ble	r3,r4,.Lj12487
+	jal	r0,.Lj12486
+.Lj12487:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-60
 	ldw	r3,r3,0
 	ldw	r5,r30,-56
 	call	SYSTEM_$$_DO_WRITE$LONGINT$POINTER$LONGINT$$LONGINT
-	jal	r0,.Lj12490
-.Lj12493:
+	jal	r0,.Lj12485
+.Lj12488:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12494
+	beq	r4,r0,.Lj12489
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12495
-.Lj12494:
+	jal	r0,.Lj12490
+.Lj12489:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12495:
+.Lj12490:
 	addi	r3,r0,105
 	sth	r1,r3,0
-	jal	r0,.Lj12490
-.Lj12491:
+	jal	r0,.Lj12485
+.Lj12486:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12496
+	beq	r5,r0,.Lj12491
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12497
-.Lj12496:
+	jal	r0,.Lj12492
+.Lj12491:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12497:
+.Lj12492:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj12490:
-.Lj12484:
+.Lj12485:
+.Lj12479:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -104477,35 +104446,35 @@ FPC_TYPED_READ:
 	stw	r30,r5,-64
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12500
+	beq	r4,r0,.Lj12495
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12501
-.Lj12500:
+	jal	r0,.Lj12496
+.Lj12495:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12501:
+.Lj12496:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12502
-	jal	r0,.Lj12503
-.Lj12502:
+	bne	r3,r0,.Lj12497
 	jal	r0,.Lj12498
-.Lj12503:
+.Lj12497:
+	jal	r0,.Lj12493
+.Lj12498:
 	ldw	r3,r30,-60
 	ldw	r3,r3,4
 	lui	r4,13
 	ori	r4,r4,1969
-	beq	r3,r4,.Lj12506
+	beq	r3,r4,.Lj12501
 	lui	r4,13
 	ori	r4,r4,1970
-	beq	r3,r4,.Lj12507
+	beq	r3,r4,.Lj12502
 	lui	r4,13
 	ori	r4,r4,1971
-	beq	r3,r4,.Lj12506
-	jal	r0,.Lj12505
-.Lj12506:
+	beq	r3,r4,.Lj12501
+	jal	r0,.Lj12500
+.Lj12501:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-60
 	ldw	r3,r3,0
@@ -104515,55 +104484,55 @@ FPC_TYPED_READ:
 	ldw	r4,r30,-68
 	ldw	r3,r30,-56
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj12508
-	jal	r0,.Lj12509
-.Lj12508:
+	bne	r3,r0,.Lj12503
+	jal	r0,.Lj12504
+.Lj12503:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12510
+	beq	r5,r0,.Lj12505
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12511
-.Lj12510:
+	jal	r0,.Lj12506
+.Lj12505:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12511:
+.Lj12506:
 	addi	r3,r0,100
 	sth	r1,r3,0
-.Lj12509:
-	jal	r0,.Lj12504
-.Lj12507:
+.Lj12504:
+	jal	r0,.Lj12499
+.Lj12502:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12512
+	beq	r4,r0,.Lj12507
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12513
-.Lj12512:
+	jal	r0,.Lj12508
+.Lj12507:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12513:
+.Lj12508:
 	addi	r3,r0,104
 	sth	r1,r3,0
-	jal	r0,.Lj12504
-.Lj12505:
+	jal	r0,.Lj12499
+.Lj12500:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12514
+	beq	r4,r0,.Lj12509
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12515
-.Lj12514:
+	jal	r0,.Lj12510
+.Lj12509:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12515:
+.Lj12510:
 	addi	r3,r0,103
 	sth	r1,r3,0
-.Lj12504:
-.Lj12498:
+.Lj12499:
+.Lj12493:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -104593,21 +104562,21 @@ FPC_TYPED_READ_ISO:
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_EOF$file$$BOOLEAN
 	seq	r3,r1,r0
-	bne	r3,r0,.Lj12518
-	jal	r0,.Lj12519
-.Lj12518:
+	bne	r3,r0,.Lj12513
+	jal	r0,.Lj12514
+.Lj12513:
 	ldw	r3,r30,-60
 	addi	r4,r3,336
 	ldw	r3,r30,-60
 	addi	r6,r0,0
 	addi	r5,r0,1
 	call	SYSTEM_$$_BLOCKREAD$file$formal$INT64
-	jal	r0,.Lj12520
-.Lj12519:
+	jal	r0,.Lj12515
+.Lj12514:
 	ldw	r4,r30,-60
 	addi	r3,r0,1
 	stb	r4,r3,12
-.Lj12520:
+.Lj12515:
 	ldw	r30,r29,64
 	ldw	r31,r29,68
 	addi	r29,r29,72
@@ -104677,21 +104646,21 @@ fpc_typedfile_init_filename_iso:
 	call	SYSTEM_$$_PARAMSTR$LONGINT$$SHORTSTRING
 	ldbu	r3,r30,-320
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12527
-	jal	r0,.Lj12528
-.Lj12527:
+	bne	r3,r0,.Lj12522
+	jal	r0,.Lj12523
+.Lj12522:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_ASSIGN$TYPEDFILE$SHORTSTRING
-	jal	r0,.Lj12529
-.Lj12528:
+	jal	r0,.Lj12524
+.Lj12523:
 	addi	r3,r30,-320
 	ldw	r4,r30,-60
 	call	SYSTEM_$$_PARAMSTR$LONGINT$$SHORTSTRING
 	addi	r4,r30,-320
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_ASSIGN$TYPEDFILE$SHORTSTRING
-.Lj12529:
+.Lj12524:
 	ldw	r30,r29,320
 	ldw	r31,r29,324
 	addi	r29,r29,328
@@ -104711,29 +104680,29 @@ fpc_typedfile_close_iso:
 	stw	r30,r3,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12532
+	beq	r4,r0,.Lj12527
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12533
-.Lj12532:
+	jal	r0,.Lj12528
+.Lj12527:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12533:
+.Lj12528:
 	sth	r1,r0,0
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_CLOSE$file
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12534
+	beq	r4,r0,.Lj12529
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12535
-.Lj12534:
+	jal	r0,.Lj12530
+.Lj12529:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12535:
+.Lj12530:
 	sth	r1,r0,0
 	ldw	r30,r29,56
 	ldw	r31,r29,60
@@ -104754,15 +104723,15 @@ SYSTEM_$$_DO_MKDIR$RAWBYTESTRING:
 	stw	r30,r3,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12538
+	beq	r4,r0,.Lj12533
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12539
-.Lj12538:
+	jal	r0,.Lj12534
+.Lj12533:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12539:
+.Lj12534:
 	addi	r3,r0,3
 	sth	r1,r3,0
 	ldw	r30,r29,56
@@ -104786,15 +104755,15 @@ SYSTEM_$$_DO_RMDIR$RAWBYTESTRING:
 	stw	r30,r3,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12542
+	beq	r4,r0,.Lj12537
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12543
-.Lj12542:
+	jal	r0,.Lj12538
+.Lj12537:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12543:
+.Lj12538:
 	addi	r3,r0,3
 	sth	r1,r3,0
 	ldw	r30,r29,56
@@ -104818,15 +104787,15 @@ SYSTEM_$$_DO_CHDIR$RAWBYTESTRING:
 	stw	r30,r3,-56
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12546
+	beq	r4,r0,.Lj12541
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12547
-.Lj12546:
+	jal	r0,.Lj12542
+.Lj12541:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12547:
+.Lj12542:
 	addi	r3,r0,3
 	sth	r1,r3,0
 	ldw	r30,r29,56
@@ -104851,15 +104820,15 @@ SYSTEM_$$_DO_GETDIR$BYTE$RAWBYTESTRING:
 	stw	r30,r4,-60
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12550
+	beq	r4,r0,.Lj12545
 	la	r5,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12551
-.Lj12550:
+	jal	r0,.Lj12546
+.Lj12545:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12551:
+.Lj12546:
 	addi	r3,r0,3
 	sth	r1,r3,0
 	ldw	r30,r29,60
@@ -104889,49 +104858,49 @@ SYSTEM_$$_MKDIR$RAWBYTESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-156
-	bne	r1,r0,.Lj12555
+	bne	r1,r0,.Lj12550
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj12557
+	beq	r3,r0,.Lj12552
 	ldw	r3,r3,-4
-.Lj12557:
+.Lj12552:
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12558
-	jal	r0,.Lj12559
-.Lj12559:
+	bne	r3,r0,.Lj12553
+	jal	r0,.Lj12554
+.Lj12554:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12561
+	beq	r5,r0,.Lj12556
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12562
-.Lj12561:
+	jal	r0,.Lj12557
+.Lj12556:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12562:
+.Lj12557:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12558
-	jal	r0,.Lj12560
-.Lj12558:
-	jal	r0,.Lj12556
-.Lj12560:
+	bne	r3,r0,.Lj12553
+	jal	r0,.Lj12555
+.Lj12553:
+	jal	r0,.Lj12551
+.Lj12555:
 	addi	r3,r30,-160
 	ldw	r4,r30,-56
 	call	SYSTEM_$$_TOSINGLEBYTEFILESYSTEMENCODEDFILENAME$RAWBYTESTRING$$RAWBYTESTRING
 	ldw	r3,r30,-160
 	call	SYSTEM_$$_DO_MKDIR$RAWBYTESTRING
-.Lj12555:
+.Lj12550:
 	call	fpc_popaddrstack
 	addi	r3,r30,-160
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-156
-	beq	r3,r0,.Lj12554
+	beq	r3,r0,.Lj12549
 	call	fpc_reraise
-.Lj12556:
+.Lj12551:
 	stw	r30,r0,-156
-	jal	r0,.Lj12555
-.Lj12554:
+	jal	r0,.Lj12550
+.Lj12549:
 	ldw	r30,r29,160
 	ldw	r31,r29,164
 	addi	r29,r29,168
@@ -104957,49 +104926,49 @@ SYSTEM_$$_RMDIR$RAWBYTESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-156
-	bne	r1,r0,.Lj12566
+	bne	r1,r0,.Lj12561
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj12568
+	beq	r3,r0,.Lj12563
 	ldw	r3,r3,-4
-.Lj12568:
+.Lj12563:
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12569
-	jal	r0,.Lj12570
-.Lj12570:
+	bne	r3,r0,.Lj12564
+	jal	r0,.Lj12565
+.Lj12565:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12572
+	beq	r5,r0,.Lj12567
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12573
-.Lj12572:
+	jal	r0,.Lj12568
+.Lj12567:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12573:
+.Lj12568:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12569
-	jal	r0,.Lj12571
-.Lj12569:
-	jal	r0,.Lj12567
-.Lj12571:
+	bne	r3,r0,.Lj12564
+	jal	r0,.Lj12566
+.Lj12564:
+	jal	r0,.Lj12562
+.Lj12566:
 	addi	r3,r30,-160
 	ldw	r4,r30,-56
 	call	SYSTEM_$$_TOSINGLEBYTEFILESYSTEMENCODEDFILENAME$RAWBYTESTRING$$RAWBYTESTRING
 	ldw	r3,r30,-160
 	call	SYSTEM_$$_DO_RMDIR$RAWBYTESTRING
-.Lj12566:
+.Lj12561:
 	call	fpc_popaddrstack
 	addi	r3,r30,-160
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-156
-	beq	r3,r0,.Lj12565
+	beq	r3,r0,.Lj12560
 	call	fpc_reraise
-.Lj12567:
+.Lj12562:
 	stw	r30,r0,-156
-	jal	r0,.Lj12566
-.Lj12565:
+	jal	r0,.Lj12561
+.Lj12560:
 	ldw	r30,r29,160
 	ldw	r31,r29,164
 	addi	r29,r29,168
@@ -105025,49 +104994,49 @@ SYSTEM_$$_CHDIR$RAWBYTESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-156
-	bne	r1,r0,.Lj12577
+	bne	r1,r0,.Lj12572
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj12579
+	beq	r3,r0,.Lj12574
 	ldw	r3,r3,-4
-.Lj12579:
+.Lj12574:
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12580
-	jal	r0,.Lj12581
-.Lj12581:
+	bne	r3,r0,.Lj12575
+	jal	r0,.Lj12576
+.Lj12576:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12583
+	beq	r5,r0,.Lj12578
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12584
-.Lj12583:
+	jal	r0,.Lj12579
+.Lj12578:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12584:
+.Lj12579:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12580
-	jal	r0,.Lj12582
-.Lj12580:
-	jal	r0,.Lj12578
-.Lj12582:
+	bne	r3,r0,.Lj12575
+	jal	r0,.Lj12577
+.Lj12575:
+	jal	r0,.Lj12573
+.Lj12577:
 	addi	r3,r30,-160
 	ldw	r4,r30,-56
 	call	SYSTEM_$$_TOSINGLEBYTEFILESYSTEMENCODEDFILENAME$RAWBYTESTRING$$RAWBYTESTRING
 	ldw	r3,r30,-160
 	call	SYSTEM_$$_DO_CHDIR$RAWBYTESTRING
-.Lj12577:
+.Lj12572:
 	call	fpc_popaddrstack
 	addi	r3,r30,-160
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-156
-	beq	r3,r0,.Lj12576
+	beq	r3,r0,.Lj12571
 	call	fpc_reraise
-.Lj12578:
+.Lj12573:
 	stw	r30,r0,-156
-	jal	r0,.Lj12577
-.Lj12576:
+	jal	r0,.Lj12572
+.Lj12571:
 	ldw	r30,r29,160
 	ldw	r31,r29,164
 	addi	r29,r29,168
@@ -105120,7 +105089,7 @@ SYSTEM_$$_GETDIRSTRFROMSHORTSTRING$SHORTSTRING$$RAWBYTESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-160
-	bne	r1,r0,.Lj12590
+	bne	r1,r0,.Lj12585
 	ldw	r4,r30,-56
 	addi	r3,r30,-164
 	addi	r5,r0,0
@@ -105128,16 +105097,16 @@ SYSTEM_$$_GETDIRSTRFROMSHORTSTRING$SHORTSTRING$$RAWBYTESTRING:
 	ldw	r4,r30,-164
 	ldw	r3,r30,-60
 	call	SYSTEM_$$_TOSINGLEBYTEFILESYSTEMENCODEDFILENAME$RAWBYTESTRING$$RAWBYTESTRING
-.Lj12590:
+.Lj12585:
 	call	fpc_popaddrstack
 	addi	r3,r30,-164
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-160
-	beq	r3,r0,.Lj12589
+	beq	r3,r0,.Lj12584
 	call	fpc_reraise
 	stw	r30,r0,-160
-	jal	r0,.Lj12590
-.Lj12589:
+	jal	r0,.Lj12585
+.Lj12584:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -105165,47 +105134,47 @@ SYSTEM_$$_MKDIR$SHORTSTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-156
-	bne	r1,r0,.Lj12595
+	bne	r1,r0,.Lj12590
 	ldw	r3,r30,-56
 	ldbu	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12597
-	jal	r0,.Lj12598
-.Lj12598:
+	bne	r3,r0,.Lj12592
+	jal	r0,.Lj12593
+.Lj12593:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12600
+	beq	r5,r0,.Lj12595
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12601
-.Lj12600:
+	jal	r0,.Lj12596
+.Lj12595:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12601:
+.Lj12596:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12597
-	jal	r0,.Lj12599
-.Lj12597:
-	jal	r0,.Lj12596
-.Lj12599:
+	bne	r3,r0,.Lj12592
+	jal	r0,.Lj12594
+.Lj12592:
+	jal	r0,.Lj12591
+.Lj12594:
 	ldw	r4,r30,-56
 	addi	r3,r30,-160
 	call	SYSTEM_$$_GETDIRSTRFROMSHORTSTRING$SHORTSTRING$$RAWBYTESTRING
 	ldw	r3,r30,-160
 	call	SYSTEM_$$_DO_MKDIR$RAWBYTESTRING
-.Lj12595:
+.Lj12590:
 	call	fpc_popaddrstack
 	addi	r3,r30,-160
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-156
-	beq	r3,r0,.Lj12594
+	beq	r3,r0,.Lj12589
 	call	fpc_reraise
-.Lj12596:
+.Lj12591:
 	stw	r30,r0,-156
-	jal	r0,.Lj12595
-.Lj12594:
+	jal	r0,.Lj12590
+.Lj12589:
 	ldw	r30,r29,160
 	ldw	r31,r29,164
 	addi	r29,r29,168
@@ -105231,47 +105200,47 @@ SYSTEM_$$_RMDIR$SHORTSTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-156
-	bne	r1,r0,.Lj12605
+	bne	r1,r0,.Lj12600
 	ldw	r3,r30,-56
 	ldbu	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12607
-	jal	r0,.Lj12608
-.Lj12608:
+	bne	r3,r0,.Lj12602
+	jal	r0,.Lj12603
+.Lj12603:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12610
+	beq	r5,r0,.Lj12605
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12611
-.Lj12610:
+	jal	r0,.Lj12606
+.Lj12605:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12611:
+.Lj12606:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12607
-	jal	r0,.Lj12609
-.Lj12607:
-	jal	r0,.Lj12606
-.Lj12609:
+	bne	r3,r0,.Lj12602
+	jal	r0,.Lj12604
+.Lj12602:
+	jal	r0,.Lj12601
+.Lj12604:
 	ldw	r4,r30,-56
 	addi	r3,r30,-160
 	call	SYSTEM_$$_GETDIRSTRFROMSHORTSTRING$SHORTSTRING$$RAWBYTESTRING
 	ldw	r3,r30,-160
 	call	SYSTEM_$$_DO_RMDIR$RAWBYTESTRING
-.Lj12605:
+.Lj12600:
 	call	fpc_popaddrstack
 	addi	r3,r30,-160
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-156
-	beq	r3,r0,.Lj12604
+	beq	r3,r0,.Lj12599
 	call	fpc_reraise
-.Lj12606:
+.Lj12601:
 	stw	r30,r0,-156
-	jal	r0,.Lj12605
-.Lj12604:
+	jal	r0,.Lj12600
+.Lj12599:
 	ldw	r30,r29,160
 	ldw	r31,r29,164
 	addi	r29,r29,168
@@ -105297,47 +105266,47 @@ SYSTEM_$$_CHDIR$SHORTSTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-156
-	bne	r1,r0,.Lj12615
+	bne	r1,r0,.Lj12610
 	ldw	r3,r30,-56
 	ldbu	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12617
-	jal	r0,.Lj12618
-.Lj12618:
+	bne	r3,r0,.Lj12612
+	jal	r0,.Lj12613
+.Lj12613:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12620
+	beq	r5,r0,.Lj12615
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12621
-.Lj12620:
+	jal	r0,.Lj12616
+.Lj12615:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12621:
+.Lj12616:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12617
-	jal	r0,.Lj12619
-.Lj12617:
-	jal	r0,.Lj12616
-.Lj12619:
+	bne	r3,r0,.Lj12612
+	jal	r0,.Lj12614
+.Lj12612:
+	jal	r0,.Lj12611
+.Lj12614:
 	ldw	r4,r30,-56
 	addi	r3,r30,-160
 	call	SYSTEM_$$_GETDIRSTRFROMSHORTSTRING$SHORTSTRING$$RAWBYTESTRING
 	ldw	r3,r30,-160
 	call	SYSTEM_$$_DO_CHDIR$RAWBYTESTRING
-.Lj12615:
+.Lj12610:
 	call	fpc_popaddrstack
 	addi	r3,r30,-160
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-156
-	beq	r3,r0,.Lj12614
+	beq	r3,r0,.Lj12609
 	call	fpc_reraise
-.Lj12616:
+.Lj12611:
 	stw	r30,r0,-156
-	jal	r0,.Lj12615
-.Lj12614:
+	jal	r0,.Lj12610
+.Lj12609:
 	ldw	r30,r29,160
 	ldw	r31,r29,164
 	addi	r29,r29,168
@@ -105365,49 +105334,49 @@ SYSTEM_$$_GETDIR$BYTE$OPENSTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-168
-	bne	r1,r0,.Lj12625
+	bne	r1,r0,.Lj12620
 	addi	r4,r30,-68
 	ldbu	r3,r30,-56
 	call	SYSTEM_$$_DO_GETDIR$BYTE$RAWBYTESTRING
 	ldw	r3,r30,-68
-	beq	r3,r0,.Lj12627
+	beq	r3,r0,.Lj12622
 	ldw	r3,r3,-4
-.Lj12627:
+.Lj12622:
 	ldw	r4,r30,-64
 	sle	r3,r3,r4
-	bne	r3,r0,.Lj12628
-	jal	r0,.Lj12629
-.Lj12628:
+	bne	r3,r0,.Lj12623
+	jal	r0,.Lj12624
+.Lj12623:
 	ldw	r5,r30,-68
 	ldw	r3,r30,-60
 	ldw	r4,r30,-64
 	call	fpc_ansistr_to_shortstr
-	jal	r0,.Lj12630
-.Lj12629:
+	jal	r0,.Lj12625
+.Lj12624:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12631
+	beq	r5,r0,.Lj12626
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12632
-.Lj12631:
+	jal	r0,.Lj12627
+.Lj12626:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12632:
+.Lj12627:
 	addi	r3,r0,3
 	sth	r1,r3,0
-.Lj12630:
 .Lj12625:
+.Lj12620:
 	call	fpc_popaddrstack
 	addi	r3,r30,-68
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-168
-	beq	r3,r0,.Lj12624
+	beq	r3,r0,.Lj12619
 	call	fpc_reraise
 	stw	r30,r0,-168
-	jal	r0,.Lj12625
-.Lj12624:
+	jal	r0,.Lj12620
+.Lj12619:
 	ldw	r30,r29,168
 	ldw	r31,r29,172
 	addi	r29,r29,176
@@ -105433,22 +105402,22 @@ SYSTEM_$$_DO_MKDIR$UNICODESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-156
-	bne	r1,r0,.Lj12636
+	bne	r1,r0,.Lj12631
 	addi	r3,r30,-160
 	ldw	r4,r30,-56
 	call	SYSTEM_$$_TOSINGLEBYTEFILESYSTEMENCODEDFILENAME$UNICODESTRING$$RAWBYTESTRING
 	ldw	r3,r30,-160
 	call	SYSTEM_$$_DO_MKDIR$RAWBYTESTRING
-.Lj12636:
+.Lj12631:
 	call	fpc_popaddrstack
 	addi	r3,r30,-160
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-156
-	beq	r3,r0,.Lj12635
+	beq	r3,r0,.Lj12630
 	call	fpc_reraise
 	stw	r30,r0,-156
-	jal	r0,.Lj12636
-.Lj12635:
+	jal	r0,.Lj12631
+.Lj12630:
 	ldw	r30,r29,160
 	ldw	r31,r29,164
 	addi	r29,r29,168
@@ -105474,22 +105443,22 @@ SYSTEM_$$_DO_RMDIR$UNICODESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-156
-	bne	r1,r0,.Lj12641
+	bne	r1,r0,.Lj12636
 	addi	r3,r30,-160
 	ldw	r4,r30,-56
 	call	SYSTEM_$$_TOSINGLEBYTEFILESYSTEMENCODEDFILENAME$UNICODESTRING$$RAWBYTESTRING
 	ldw	r3,r30,-160
 	call	SYSTEM_$$_DO_RMDIR$RAWBYTESTRING
-.Lj12641:
+.Lj12636:
 	call	fpc_popaddrstack
 	addi	r3,r30,-160
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-156
-	beq	r3,r0,.Lj12640
+	beq	r3,r0,.Lj12635
 	call	fpc_reraise
 	stw	r30,r0,-156
-	jal	r0,.Lj12641
-.Lj12640:
+	jal	r0,.Lj12636
+.Lj12635:
 	ldw	r30,r29,160
 	ldw	r31,r29,164
 	addi	r29,r29,168
@@ -105515,22 +105484,22 @@ SYSTEM_$$_DO_CHDIR$UNICODESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-156
-	bne	r1,r0,.Lj12646
+	bne	r1,r0,.Lj12641
 	addi	r3,r30,-160
 	ldw	r4,r30,-56
 	call	SYSTEM_$$_TOSINGLEBYTEFILESYSTEMENCODEDFILENAME$UNICODESTRING$$RAWBYTESTRING
 	ldw	r3,r30,-160
 	call	SYSTEM_$$_DO_CHDIR$RAWBYTESTRING
-.Lj12646:
+.Lj12641:
 	call	fpc_popaddrstack
 	addi	r3,r30,-160
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-156
-	beq	r3,r0,.Lj12645
+	beq	r3,r0,.Lj12640
 	call	fpc_reraise
 	stw	r30,r0,-156
-	jal	r0,.Lj12646
-.Lj12645:
+	jal	r0,.Lj12641
+.Lj12640:
 	ldw	r30,r29,160
 	ldw	r31,r29,164
 	addi	r29,r29,168
@@ -105557,23 +105526,23 @@ SYSTEM_$$_DO_GETDIR$BYTE$UNICODESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-164
-	bne	r1,r0,.Lj12651
+	bne	r1,r0,.Lj12646
 	addi	r4,r30,-64
 	ldbu	r3,r30,-56
 	call	SYSTEM_$$_DO_GETDIR$BYTE$RAWBYTESTRING
 	ldw	r4,r30,-64
 	ldw	r3,r30,-60
 	call	fpc_ansistr_to_unicodestr
-.Lj12651:
+.Lj12646:
 	call	fpc_popaddrstack
 	addi	r3,r30,-64
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-164
-	beq	r3,r0,.Lj12650
+	beq	r3,r0,.Lj12645
 	call	fpc_reraise
 	stw	r30,r0,-164
-	jal	r0,.Lj12651
-.Lj12650:
+	jal	r0,.Lj12646
+.Lj12645:
 	ldw	r30,r29,164
 	ldw	r31,r29,168
 	addi	r29,r29,172
@@ -105601,49 +105570,49 @@ SYSTEM_$$_MKDIR$UNICODESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-156
-	bne	r1,r0,.Lj12656
+	bne	r1,r0,.Lj12651
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj12658
+	beq	r3,r0,.Lj12653
 	ldw	r3,r3,-4
-.Lj12658:
+.Lj12653:
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12659
-	jal	r0,.Lj12660
-.Lj12660:
+	bne	r3,r0,.Lj12654
+	jal	r0,.Lj12655
+.Lj12655:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12662
+	beq	r5,r0,.Lj12657
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12663
-.Lj12662:
+	jal	r0,.Lj12658
+.Lj12657:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12663:
+.Lj12658:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12659
-	jal	r0,.Lj12661
-.Lj12659:
-	jal	r0,.Lj12657
-.Lj12661:
+	bne	r3,r0,.Lj12654
+	jal	r0,.Lj12656
+.Lj12654:
+	jal	r0,.Lj12652
+.Lj12656:
 	addi	r3,r30,-160
 	ldw	r4,r30,-56
 	call	SYSTEM_$$_TOSINGLEBYTEFILESYSTEMENCODEDFILENAME$UNICODESTRING$$RAWBYTESTRING
 	ldw	r3,r30,-160
 	call	SYSTEM_$$_DO_MKDIR$RAWBYTESTRING
-.Lj12656:
+.Lj12651:
 	call	fpc_popaddrstack
 	addi	r3,r30,-160
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-156
-	beq	r3,r0,.Lj12655
+	beq	r3,r0,.Lj12650
 	call	fpc_reraise
-.Lj12657:
+.Lj12652:
 	stw	r30,r0,-156
-	jal	r0,.Lj12656
-.Lj12655:
+	jal	r0,.Lj12651
+.Lj12650:
 	ldw	r30,r29,160
 	ldw	r31,r29,164
 	addi	r29,r29,168
@@ -105669,49 +105638,49 @@ SYSTEM_$$_RMDIR$UNICODESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-156
-	bne	r1,r0,.Lj12667
+	bne	r1,r0,.Lj12662
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj12669
+	beq	r3,r0,.Lj12664
 	ldw	r3,r3,-4
-.Lj12669:
+.Lj12664:
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12670
-	jal	r0,.Lj12671
-.Lj12671:
+	bne	r3,r0,.Lj12665
+	jal	r0,.Lj12666
+.Lj12666:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12673
+	beq	r5,r0,.Lj12668
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12674
-.Lj12673:
+	jal	r0,.Lj12669
+.Lj12668:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12674:
+.Lj12669:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12670
-	jal	r0,.Lj12672
-.Lj12670:
-	jal	r0,.Lj12668
-.Lj12672:
+	bne	r3,r0,.Lj12665
+	jal	r0,.Lj12667
+.Lj12665:
+	jal	r0,.Lj12663
+.Lj12667:
 	addi	r3,r30,-160
 	ldw	r4,r30,-56
 	call	SYSTEM_$$_TOSINGLEBYTEFILESYSTEMENCODEDFILENAME$UNICODESTRING$$RAWBYTESTRING
 	ldw	r3,r30,-160
 	call	SYSTEM_$$_DO_RMDIR$RAWBYTESTRING
-.Lj12667:
+.Lj12662:
 	call	fpc_popaddrstack
 	addi	r3,r30,-160
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-156
-	beq	r3,r0,.Lj12666
+	beq	r3,r0,.Lj12661
 	call	fpc_reraise
-.Lj12668:
+.Lj12663:
 	stw	r30,r0,-156
-	jal	r0,.Lj12667
-.Lj12666:
+	jal	r0,.Lj12662
+.Lj12661:
 	ldw	r30,r29,160
 	ldw	r31,r29,164
 	addi	r29,r29,168
@@ -105737,49 +105706,49 @@ SYSTEM_$$_CHDIR$UNICODESTRING:
 	addi	r3,r1,0
 	call	fpc_setjmp
 	stw	r30,r1,-156
-	bne	r1,r0,.Lj12678
+	bne	r1,r0,.Lj12673
 	ldw	r3,r30,-56
-	beq	r3,r0,.Lj12680
+	beq	r3,r0,.Lj12675
 	ldw	r3,r3,-4
-.Lj12680:
+.Lj12675:
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12681
-	jal	r0,.Lj12682
-.Lj12682:
+	bne	r3,r0,.Lj12676
+	jal	r0,.Lj12677
+.Lj12677:
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12684
+	beq	r5,r0,.Lj12679
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12685
-.Lj12684:
+	jal	r0,.Lj12680
+.Lj12679:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12685:
+.Lj12680:
 	ldhu	r3,r1,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12681
-	jal	r0,.Lj12683
-.Lj12681:
-	jal	r0,.Lj12679
-.Lj12683:
+	bne	r3,r0,.Lj12676
+	jal	r0,.Lj12678
+.Lj12676:
+	jal	r0,.Lj12674
+.Lj12678:
 	addi	r3,r30,-160
 	ldw	r4,r30,-56
 	call	SYSTEM_$$_TOSINGLEBYTEFILESYSTEMENCODEDFILENAME$UNICODESTRING$$RAWBYTESTRING
 	ldw	r3,r30,-160
 	call	SYSTEM_$$_DO_CHDIR$RAWBYTESTRING
-.Lj12678:
+.Lj12673:
 	call	fpc_popaddrstack
 	addi	r3,r30,-160
 	call	fpc_ansistr_decr_ref
 	ldw	r3,r30,-156
-	beq	r3,r0,.Lj12677
+	beq	r3,r0,.Lj12672
 	call	fpc_reraise
-.Lj12679:
+.Lj12674:
 	stw	r30,r0,-156
-	jal	r0,.Lj12678
-.Lj12677:
+	jal	r0,.Lj12673
+.Lj12672:
 	ldw	r30,r29,160
 	ldw	r31,r29,164
 	addi	r29,r29,168
@@ -105870,15 +105839,15 @@ SYSTEM_$$_FINDRESOURCE$LONGWORD$ANSISTRING$ANSISTRING$$LONGWORD:
 	stw	r30,r4,-60
 	stw	r30,r5,-64
 	ldw	r5,r30,-64
-	bne	r5,r0,.Lj12694
+	bne	r5,r0,.Lj12689
 	la	r3,FPC_EMPTYCHAR
 	addi	r5,r3,0
-.Lj12694:
+.Lj12689:
 	ldw	r4,r30,-60
-	bne	r4,r0,.Lj12695
+	bne	r4,r0,.Lj12690
 	la	r3,FPC_EMPTYCHAR
 	addi	r4,r3,0
-.Lj12695:
+.Lj12690:
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_FINDRESOURCE$LONGWORD$PANSICHAR$PANSICHAR$$LONGWORD
 	stw	r30,r1,-68
@@ -105904,15 +105873,15 @@ SYSTEM_$$_FINDRESOURCEEX$LONGWORD$ANSISTRING$ANSISTRING$WORD$$LONGWORD:
 	stw	r30,r5,-64
 	sth	r30,r6,-68
 	ldw	r5,r30,-64
-	bne	r5,r0,.Lj12698
+	bne	r5,r0,.Lj12693
 	la	r3,FPC_EMPTYCHAR
 	addi	r5,r3,0
-.Lj12698:
+.Lj12693:
 	ldw	r4,r30,-60
-	bne	r4,r0,.Lj12699
+	bne	r4,r0,.Lj12694
 	la	r3,FPC_EMPTYCHAR
 	addi	r4,r3,0
-.Lj12699:
+.Lj12694:
 	ldhu	r6,r30,-68
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_FINDRESOURCEEX$LONGWORD$PANSICHAR$PANSICHAR$WORD$$LONGWORD
@@ -105938,10 +105907,10 @@ SYSTEM_$$_FINDRESOURCE$LONGWORD$ANSISTRING$PANSICHAR$$LONGWORD:
 	stw	r30,r4,-60
 	stw	r30,r5,-64
 	ldw	r4,r30,-60
-	bne	r4,r0,.Lj12702
+	bne	r4,r0,.Lj12697
 	la	r3,FPC_EMPTYCHAR
 	addi	r4,r3,0
-.Lj12702:
+.Lj12697:
 	ldw	r5,r30,-64
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_FINDRESOURCE$LONGWORD$PANSICHAR$PANSICHAR$$LONGWORD
@@ -105968,10 +105937,10 @@ SYSTEM_$$_FINDRESOURCEEX$LONGWORD$PANSICHAR$ANSISTRING$WORD$$LONGWORD:
 	stw	r30,r5,-64
 	sth	r30,r6,-68
 	ldw	r5,r30,-64
-	bne	r5,r0,.Lj12705
+	bne	r5,r0,.Lj12700
 	la	r3,FPC_EMPTYCHAR
 	addi	r5,r3,0
-.Lj12705:
+.Lj12700:
 	ldhu	r6,r30,-68
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
@@ -105998,10 +105967,10 @@ SYSTEM_$$_FINDRESOURCE$LONGWORD$PANSICHAR$ANSISTRING$$LONGWORD:
 	stw	r30,r4,-60
 	stw	r30,r5,-64
 	ldw	r5,r30,-64
-	bne	r5,r0,.Lj12708
+	bne	r5,r0,.Lj12703
 	la	r3,FPC_EMPTYCHAR
 	addi	r5,r3,0
-.Lj12708:
+.Lj12703:
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_FINDRESOURCE$LONGWORD$PANSICHAR$PANSICHAR$$LONGWORD
@@ -106028,10 +105997,10 @@ SYSTEM_$$_FINDRESOURCEEX$LONGWORD$ANSISTRING$PANSICHAR$WORD$$LONGWORD:
 	stw	r30,r5,-64
 	sth	r30,r6,-68
 	ldw	r4,r30,-60
-	bne	r4,r0,.Lj12711
+	bne	r4,r0,.Lj12706
 	la	r3,FPC_EMPTYCHAR
 	addi	r4,r3,0
-.Lj12711:
+.Lj12706:
 	ldhu	r6,r30,-68
 	ldw	r5,r30,-64
 	ldw	r3,r30,-56
@@ -106304,13 +106273,13 @@ SYSTEM_$$_GETRESOURCEMANAGER$TRESOURCEMANAGER:
 	ldw	r4,r30,-56
 	la	r3,TC_$SYSTEM_$$_RESOURCEMANAGER
 	addi	r5,r0,11
-.Lj12736:
+.Lj12731:
 	ldw	r6,r3,0
 	stw	r4,r6,0
 	addi	r3,r3,4
 	addi	r4,r4,4
 	addi	r5,r5,-1
-	bgt	r5,r0,.Lj12736
+	bgt	r5,r0,.Lj12731
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -106331,13 +106300,13 @@ SYSTEM_$$_SETRESOURCEMANAGER$TRESOURCEMANAGER:
 	ldw	r3,r30,-56
 	la	r4,TC_$SYSTEM_$$_RESOURCEMANAGER
 	addi	r5,r0,11
-.Lj12739:
+.Lj12734:
 	ldw	r6,r3,0
 	stw	r4,r6,0
 	addi	r3,r3,4
 	addi	r4,r4,4
 	addi	r5,r5,-1
-	bgt	r5,r0,.Lj12739
+	bgt	r5,r0,.Lj12734
 	ldw	r30,r29,56
 	ldw	r31,r29,60
 	addi	r29,r29,64
@@ -106718,17 +106687,17 @@ SYSTEM_$$_PARAMCOUNT$$LONGINT:
 	ldw	r4,r3,0
 	addi	r3,r0,0
 	sle	r3,r4,r3
-	bne	r3,r0,.Lj12770
-	jal	r0,.Lj12771
-.Lj12770:
+	bne	r3,r0,.Lj12765
+	jal	r0,.Lj12766
+.Lj12765:
 	stw	r30,r0,-56
-	jal	r0,.Lj12772
-.Lj12771:
+	jal	r0,.Lj12767
+.Lj12766:
 	la	r3,TC_$SYSTEM_$$_ARGC
 	ldw	r3,r3,0
 	addi	r3,r3,-1
 	stw	r30,r3,-56
-.Lj12772:
+.Lj12767:
 	ldw	r1,r30,-56
 	ldw	r30,r29,56
 	ldw	r31,r29,60
@@ -106753,24 +106722,24 @@ SYSTEM_$$_PARAMSTR$LONGINT$$SHORTSTRING:
 	la	r3,TC_$SYSTEM_$$_ARGV
 	ldw	r3,r3,0
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12775
-	jal	r0,.Lj12776
-.Lj12776:
+	bne	r3,r0,.Lj12770
+	jal	r0,.Lj12771
+.Lj12771:
 	ldw	r4,r30,-56
 	addi	r3,r0,0
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj12775
-	jal	r0,.Lj12777
-.Lj12777:
+	bne	r3,r0,.Lj12770
+	jal	r0,.Lj12772
+.Lj12772:
 	la	r3,TC_$SYSTEM_$$_ARGC
 	ldw	r4,r3,0
 	ldw	r3,r30,-56
 	sge	r3,r3,r4
-	bne	r3,r0,.Lj12775
-	jal	r0,.Lj12778
-.Lj12775:
+	bne	r3,r0,.Lj12770
 	jal	r0,.Lj12773
-.Lj12778:
+.Lj12770:
+	jal	r0,.Lj12768
+.Lj12773:
 	la	r3,TC_$SYSTEM_$$_ARGV
 	ldw	r3,r3,0
 	ldw	r4,r30,-56
@@ -106780,36 +106749,36 @@ SYSTEM_$$_PARAMSTR$LONGINT$$SHORTSTRING:
 	stw	r30,r3,-64
 	ldw	r3,r30,-64
 	seq	r3,r3,r0
-	bne	r3,r0,.Lj12779
-	jal	r0,.Lj12780
-.Lj12779:
-	jal	r0,.Lj12773
-.Lj12780:
+	bne	r3,r0,.Lj12774
+	jal	r0,.Lj12775
+.Lj12774:
+	jal	r0,.Lj12768
+.Lj12775:
 	stw	r30,r0,-68
-	jal	r0,.Lj12782
-.Lj12781:
+	jal	r0,.Lj12777
+.Lj12776:
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	stw	r30,r3,-68
-.Lj12782:
+.Lj12777:
 	ldw	r4,r30,-68
 	addi	r3,r0,255
 	slt	r3,r4,r3
-	bne	r3,r0,.Lj12784
-	jal	r0,.Lj12785
-.Lj12784:
+	bne	r3,r0,.Lj12779
+	jal	r0,.Lj12780
+.Lj12779:
 	ldw	r4,r30,-64
 	ldw	r3,r30,-68
 	add	r3,r4,r3
 	ldbu	r3,r3,0
 	sne	r3,r3,r0
-	bne	r3,r0,.Lj12786
-	jal	r0,.Lj12785
-.Lj12786:
-	jal	r0,.Lj12781
-.Lj12785:
-	jal	r0,.Lj12783
-.Lj12783:
+	bne	r3,r0,.Lj12781
+	jal	r0,.Lj12780
+.Lj12781:
+	jal	r0,.Lj12776
+.Lj12780:
+	jal	r0,.Lj12778
+.Lj12778:
 	ldw	r3,r30,-60
 	ldw	r5,r30,-68
 	addi	r4,r0,255
@@ -106817,16 +106786,16 @@ SYSTEM_$$_PARAMSTR$LONGINT$$SHORTSTRING:
 	ldw	r4,r30,-68
 	addi	r3,r0,0
 	sgt	r3,r4,r3
-	bne	r3,r0,.Lj12787
-	jal	r0,.Lj12788
-.Lj12787:
+	bne	r3,r0,.Lj12782
+	jal	r0,.Lj12783
+.Lj12782:
 	ldw	r3,r30,-60
 	addi	r4,r3,1
 	ldw	r3,r30,-64
 	ldw	r5,r30,-68
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-.Lj12788:
-.Lj12773:
+.Lj12783:
+.Lj12768:
 	ldw	r30,r29,68
 	ldw	r31,r29,72
 	addi	r29,r29,76
@@ -106981,15 +106950,15 @@ INIT$_$SYSTEM:
 	call	SYSTEM_$$_SYSINITSTDIO
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12811
+	beq	r5,r0,.Lj12806
 	la	r4,U_$SYSTEM_$$_STACKLENGTH
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12812
-.Lj12811:
+	jal	r0,.Lj12807
+.Lj12806:
 	la	r3,U_$SYSTEM_$$_STACKLENGTH
 	addi	r1,r3,4
-.Lj12812:
+.Lj12807:
 	la	r3,__stklen
 	ldw	r3,r3,0
 	stw	r30,r3,-56
@@ -106997,41 +106966,41 @@ INIT$_$SYSTEM:
 	stw	r1,r3,0
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r4,r3,0
-	beq	r4,r0,.Lj12813
+	beq	r4,r0,.Lj12808
 	la	r5,U_$SYSTEM_$$_STACKLENGTH
 	ldw	r3,r5,0
 	jalr	r31,r4
-	jal	r0,.Lj12814
-.Lj12813:
+	jal	r0,.Lj12809
+.Lj12808:
 	la	r3,U_$SYSTEM_$$_STACKLENGTH
 	addi	r1,r3,4
-.Lj12814:
+.Lj12809:
 	la	r3,_stack_top
 	ldw	r4,r1,0
 	sub	r11,r3,r4
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12815
+	beq	r5,r0,.Lj12810
 	la	r4,U_$SYSTEM_$$_STACKBOTTOM
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12816
-.Lj12815:
+	jal	r0,.Lj12811
+.Lj12810:
 	la	r3,U_$SYSTEM_$$_STACKBOTTOM
 	addi	r1,r3,4
-.Lj12816:
+.Lj12811:
 	stw	r1,r11,0
 	la	r3,FPC_THREADVAR_RELOCATE
 	ldw	r5,r3,0
-	beq	r5,r0,.Lj12817
+	beq	r5,r0,.Lj12812
 	la	r4,U_$SYSTEM_$$_INOUTRES
 	ldw	r3,r4,0
 	jalr	r31,r5
-	jal	r0,.Lj12818
-.Lj12817:
+	jal	r0,.Lj12813
+.Lj12812:
 	la	r3,U_$SYSTEM_$$_INOUTRES
 	addi	r1,r3,4
-.Lj12818:
+.Lj12813:
 	sth	r1,r0,0
 	call	SYSTEM_$$_INITSYSTEMTHREADS
 	call	SYSTEM_$$_INITUNICODESTRINGMANAGER
@@ -109120,54 +109089,54 @@ TC_$SYSTEM_$$_C_STR_QNAN:
 TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_BASE:
 	.long	-931956688,-2107716572
 	.short	65174
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	65446
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	551375410,-500692116
 	.short	65233
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	65464
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	-1535828403,-1003958182
 	.short	65293
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	65482
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	1769181907,-1440471911
 	.short	65353
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	65500
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	-1843569401,-1819087218
 	.short	65413
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	65518
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	0,-2147483648
 	.short	65473
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	0
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	1983905792,-569676998
 	.short	65532
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	18
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	-922282573,-1063793029
 	.short	56
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	36
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	-1504809902,-1492370368
 	.short	116
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	54
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	-367183285,-1864101954
 	.short	176
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	72
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 .Le723:
 	.size	TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_BASE, .Le723 - TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_BASE
 
@@ -109176,14 +109145,14 @@ TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_BASE:
 TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_FACTOR_PLUS:
 	.long	-1550278820,-154756494
 	.short	534
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	180
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	-1729330556,-303936793
 	.short	1132
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	360
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 .Le724:
 	.size	TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_FACTOR_PLUS, .Le724 - TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_FACTOR_PLUS
 
@@ -109192,14 +109161,14 @@ TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_FACTOR_PLUS:
 TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_FACTOR_MINUS:
 	.long	-758759621,-2067213089
 	.short	64875
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	65356
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	1077051266,-1983942104
 	.short	64277
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	65176
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 .Le725:
 	.size	TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_FACTOR_MINUS, .Le725 - TC_$SYSTEM$_$DIY_FP_CACHED_POWER10$SMALLINT$TDIY_FP_POWER_OF_10_$$_FACTOR_MINUS
 
@@ -109228,94 +109197,94 @@ TC_$SYSTEM$_$STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING_K_COMP$SMAL
 TC_$SYSTEM$_$VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE_FACTOR_10_INEXACT$SMALLINT$TDIY_FP_POWER_OF_10$$SMALLINT_$$_FACTOR:
 	.long	0,-2147483648
 	.short	65473
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	0
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	-858993459,-858993460
 	.short	65469
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	65535
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	1889785610,-1546188227
 	.short	65466
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	65534
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	-1924145349,-2095944041
 	.short	65463
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	65533
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	-501652180,-776530088
 	.short	65459
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	65532
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	457671715,-1480217529
 	.short	65456
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	65531
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	-1351849546,-2043167483
 	.short	65453
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	65530
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	-444972356,-692087595
 	.short	65449
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	65529
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	-2073964803,-1412663535
 	.short	65446
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	65528
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	917808535,-1989124287
 	.short	65443
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	65527
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	-1108486721,-605618482
 	.short	65439
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	65526
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	-886789377,-1343488245
 	.short	65436
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	65525
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	1867548876,-1933784055
 	.short	65433
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	65524
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	1270091283,-517074110
 	.short	65429
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	65523
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	157079567,-1272652747
 	.short	65426
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	65522
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	984657113,-1877115657
 	.short	65423
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	65521
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	-1001528997,-426404674
 	.short	65419
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	65520
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.long	916763721,-1200117198
 	.short	65416
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 	.short	65519
-	.byte	0,0,0,0,0,0
+	.byte	0,0
 .Le729:
 	.size	TC_$SYSTEM$_$VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE_FACTOR_10_INEXACT$SMALLINT$TDIY_FP_POWER_OF_10$$SMALLINT_$$_FACTOR, .Le729 - TC_$SYSTEM$_$VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE_FACTOR_10_INEXACT$SMALLINT$TDIY_FP_POWER_OF_10$$SMALLINT_$$_FACTOR
 
@@ -110723,7 +110692,7 @@ TC_$SYSTEM$_$fpc_val_currency_shortstr$SHORTSTRING$LONGINT$$CURRENCY_$$_MININT64
 	.size	.Ld33, .Le742 - .Ld33
 
 .section .rodata.n_.Ld34
-	.balign 4
+	.balign 16
 .Ld34:
 	.long	0
 	.short	0,0
@@ -121206,7 +121175,7 @@ INIT_$SYSTEM_$$_FLOATX80:
 	.byte	13,8
 	.ascii	"floatx80"
 	.byte	0,0
-	.long	0,0,16,0,0,0
+	.long	0,0,12,0,0,0
 .Le1321:
 	.size	INIT_$SYSTEM_$$_FLOATX80, .Le1321 - INIT_$SYSTEM_$$_FLOATX80
 
@@ -121219,7 +121188,7 @@ RTTI_$SYSTEM_$$_FLOATX80:
 	.byte	0,0
 	.long	0
 	.long	INIT_$SYSTEM_$$_FLOATX80
-	.long	16,3
+	.long	12,3
 	.long	RTTI_$SYSTEM_$$_DOUBLE$indirect
 	.long	0
 	.long	RTTI_$SYSTEM_$$_QWORD$indirect
