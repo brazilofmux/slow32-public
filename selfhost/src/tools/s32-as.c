@@ -121,6 +121,20 @@ static int g_lin_has_minus;
 static int g_text_strict_align_max;
 static int g_text_has_strict_align;
 
+/* The strongest alignment asked for in each section (.align, .balign,
+ * .comm's): the section header's, so the linker places the section where
+ * that padding still lands on the boundary.  0 means the default 4. */
+static int g_sec_align[5];
+
+void note_sec_align(int sec, int a) {
+    if (a > g_sec_align[sec]) g_sec_align[sec] = a;
+}
+
+int sec_align(int sec) {
+    if (g_sec_align[sec] > 4) return g_sec_align[sec];
+    return 4;
+}
+
 int find_lbl(char *name);
 
 char *trim(char *s) {
@@ -796,6 +810,7 @@ int do_align(int p) {
     int a;
     int n;
     a = 1 << p;
+    note_sec_align(g_sec, a);
     n = cur_off();
     while ((n & (a - 1)) != 0) {
         if (emit8(0) != 0) return -1;
@@ -812,6 +827,7 @@ int do_align(int p) {
 int do_balign(int bytes, int fill) {
     int n;
     if (bytes <= 0) return -1;
+    note_sec_align(g_sec, bytes);
     n = cur_off();
     while ((n % bytes) != 0) {
         if (emit8(fill & 255) != 0) return -1;
@@ -1084,6 +1100,7 @@ int handle(char *line) {
                 align = parse_num_or_abs(tok[3], &ok);
                 if (!ok || align <= 0) return -1;
             }
+            note_sec_align(SEC_BSS, align);
             li = get_lbl(tok[1]);
             if (li < 0) return -1;
             while ((g_bsz % align) != 0) {
@@ -1969,7 +1986,7 @@ int write_obj(char *out) {
         v = S32_SEC_FLAG_EXEC | S32_SEC_FLAG_READ | S32_SEC_FLAG_ALLOC; w32(v);
         v = g_tsz; w32(v);
         v = text_data_off; w32(v);
-        v = 4; w32(v);
+        v = sec_align(SEC_TEXT); w32(v);
         v = text_rel; w32(v);
         v = text_rel_off; w32(v);
     }
@@ -1979,7 +1996,7 @@ int write_obj(char *out) {
         v = S32_SEC_FLAG_READ | S32_SEC_FLAG_ALLOC; w32(v);
         v = g_rsz; w32(v);
         v = rodata_data_off; w32(v);
-        v = 4; w32(v);
+        v = sec_align(SEC_RODATA); w32(v);
         v = rodata_rel; w32(v);
         v = rodata_rel_off; w32(v);
     }
@@ -1989,7 +2006,7 @@ int write_obj(char *out) {
         v = S32_SEC_FLAG_WRITE | S32_SEC_FLAG_READ | S32_SEC_FLAG_ALLOC; w32(v);
         v = g_dsz; w32(v);
         v = data_data_off; w32(v);
-        v = 4; w32(v);
+        v = sec_align(SEC_DATA); w32(v);
         v = data_rel; w32(v);
         v = data_rel_off; w32(v);
     }
@@ -1999,7 +2016,7 @@ int write_obj(char *out) {
         v = S32_SEC_FLAG_WRITE | S32_SEC_FLAG_READ | S32_SEC_FLAG_ALLOC; w32(v);
         v = g_isz; w32(v);
         v = init_array_data_off; w32(v);
-        v = 4; w32(v);
+        v = sec_align(SEC_INIT_ARRAY); w32(v);
         v = init_array_rel; w32(v);
         v = init_array_rel_off; w32(v);
     }
@@ -2009,7 +2026,7 @@ int write_obj(char *out) {
         v = S32_SEC_FLAG_WRITE | S32_SEC_FLAG_READ | S32_SEC_FLAG_ALLOC; w32(v);
         v = g_bsz; w32(v);
         v = 0; w32(v);
-        v = 4; w32(v);
+        v = sec_align(SEC_BSS); w32(v);
         v = bss_rel; w32(v);
         v = bss_rel_off; w32(v);
     }

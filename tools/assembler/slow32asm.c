@@ -468,7 +468,22 @@ typedef struct {
     // bytes promised to keep aligned; inserting words below it breaks it.
     uint32_t code_strict_align_max;
     bool code_has_strict_align;
+    // The strongest .align/.p2align/.balign in each section: the section
+    // header's alignment, so the linker places the section where that
+    // padding still lands on the boundary (0: none above the default 4).
+    uint32_t sec_align[SECTION_COUNT];
 } assembler_t;
+
+static void note_section_align(assembler_t *as, uint32_t align_bytes)
+{
+    if (align_bytes > as->sec_align[as->current_section])
+        as->sec_align[as->current_section] = align_bytes;
+}
+
+static uint32_t section_align(const assembler_t *as, section_t sec)
+{
+    return as->sec_align[sec] > 4 ? as->sec_align[sec] : 4;
+}
 
 typedef enum {
     FMT_R, FMT_I, FMT_S, FMT_B, FMT_U, FMT_J, FMT_NONE
@@ -2084,6 +2099,8 @@ static bool assemble_line(assembler_t *as, char *line) {
                 padding = 0;
                 align_suppressed = true;
             }
+            if (!align_suppressed)
+                note_section_align(as, (uint32_t)align_bytes);
             if (!align_suppressed && align_bytes > 4 &&
                 as->current_section == SECTION_CODE) {
                 uint32_t here = as->current_addr + (uint32_t)padding;
@@ -2127,6 +2144,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                 padding = align_bytes - (as->current_addr & align_mask);
             }
 
+            note_section_align(as, (uint32_t)align_bytes);
             if (align_bytes > 4 && as->current_section == SECTION_CODE) {
                 uint32_t here = as->current_addr + (uint32_t)padding;
                 if (!as->code_has_strict_align || here > as->code_strict_align_max)
@@ -2167,6 +2185,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                 padding = align_bytes - (as->current_addr & align_mask);
             }
 
+            note_section_align(as, (uint32_t)align_bytes);
             if (align_bytes > 4 && as->current_section == SECTION_CODE) {
                 uint32_t here = as->current_addr + (uint32_t)padding;
                 if (!as->code_has_strict_align || here > as->code_strict_align_max)
@@ -2426,6 +2445,8 @@ static bool assemble_line(assembler_t *as, char *line) {
             if (num_tokens > 3) {
                 int align = parse_immediate(tokens[3]);
                 int align_mask = align - 1;
+                if (align > 0)
+                    note_section_align(as, (uint32_t)align);
                 if (as->current_addr & align_mask) {
                     int padding = align - (as->current_addr & align_mask);
                     as->current_addr += padding;
@@ -3423,7 +3444,7 @@ static int write_object_file(assembler_t *as, const char *filename) {
             .flags = S32_SEC_FLAG_READ | S32_SEC_FLAG_EXEC | S32_SEC_FLAG_ALLOC,
             .size = as->code_size,
             .offset = code_offset,
-            .align = 4,
+            .align = section_align(as, SECTION_CODE),
             .nrelocs = text_relocs,
             .reloc_offset = text_reloc_offset
         };
@@ -3437,7 +3458,7 @@ static int write_object_file(assembler_t *as, const char *filename) {
             .flags = S32_SEC_FLAG_READ | S32_SEC_FLAG_ALLOC,
             .size = as->rodata_size,
             .offset = rodata_offset,
-            .align = 4,
+            .align = section_align(as, SECTION_RODATA),
             .nrelocs = rodata_relocs,
             .reloc_offset = rodata_reloc_offset
         };
@@ -3451,7 +3472,7 @@ static int write_object_file(assembler_t *as, const char *filename) {
             .flags = S32_SEC_FLAG_READ | S32_SEC_FLAG_WRITE | S32_SEC_FLAG_ALLOC,
             .size = as->data_size,
             .offset = data_offset,
-            .align = 4,
+            .align = section_align(as, SECTION_DATA),
             .nrelocs = data_relocs,
             .reloc_offset = data_reloc_offset
         };
@@ -3465,7 +3486,7 @@ static int write_object_file(assembler_t *as, const char *filename) {
             .flags = S32_SEC_FLAG_READ | S32_SEC_FLAG_WRITE | S32_SEC_FLAG_ALLOC,
             .size = as->bss_size,
             .offset = 0,  // BSS has no file data
-            .align = 4,
+            .align = section_align(as, SECTION_BSS),
             .nrelocs = bss_relocs,
             .reloc_offset = bss_reloc_offset
         };
@@ -3479,7 +3500,7 @@ static int write_object_file(assembler_t *as, const char *filename) {
             .flags = S32_SEC_FLAG_READ | S32_SEC_FLAG_WRITE | S32_SEC_FLAG_ALLOC,
             .size = as->init_array_size,
             .offset = init_array_offset,
-            .align = 4,
+            .align = section_align(as, SECTION_INIT_ARRAY),
             .nrelocs = init_array_relocs,
             .reloc_offset = init_array_reloc_offset
         };
@@ -3493,7 +3514,7 @@ static int write_object_file(assembler_t *as, const char *filename) {
             .flags = S32_SEC_FLAG_READ | S32_SEC_FLAG_ALLOC,
             .size = as->eh_frame_data_size,
             .offset = eh_frame_offset,
-            .align = 4,
+            .align = section_align(as, SECTION_EH_FRAME),
             .nrelocs = eh_frame_relocs,
             .reloc_offset = eh_frame_reloc_offset
         };
@@ -3507,7 +3528,7 @@ static int write_object_file(assembler_t *as, const char *filename) {
             .flags = S32_SEC_FLAG_READ | S32_SEC_FLAG_ALLOC,
             .size = as->except_table_size,
             .offset = except_table_offset,
-            .align = 4,
+            .align = section_align(as, SECTION_EXCEPT_TABLE),
             .nrelocs = except_table_relocs,
             .reloc_offset = except_table_reloc_offset
         };
