@@ -16,11 +16,11 @@ can chain superblocks until YIELD and not apologize; see
 
 | Range (hex) | Purpose | Notes |
 |---|---|---|
-| `0x00–0x0F` | Core process + stdio | `NOP`, `PUTCHAR`, `GETCHAR`, `WRITE`, `READ`, `OPEN`, `CLOSE`, `SEEK`, `EXIT` (0x09), `STAT`, `FLUSH`, `READ_DIRECT`, `FTRUNCATE`, `POST_READ` (0x0E). `0x08` reserved (was `BRK`). |
+| `0x00–0x0F` | Core process + stdio | `NOP`, `PUTCHAR`, `GETCHAR`, `WRITE`, `READ`, `OPEN`, `CLOSE`, `SEEK`, `EXIT` (0x09), `STAT`, `FLUSH`, `READ_DIRECT`, `FTRUNCATE`, `POST_READ` (0x0E), `FCNTL` (0x0F). `0x08` reserved (was `BRK`). |
 | `0x10–0x1F` | Process management | `EXEC` (0x10): run a `.s32x` and wait. |
 | `0x20–0x2F` | Filesystem metadata | `UNLINK`, `RENAME`, `MKDIR`, `RMDIR`, `LSTAT`, `ACCESS`, `CHDIR`, `GETCWD`, `OPENDIR`, `READDIR`, `CLOSEDIR`, `REWINDDIR`. |
-| `0x30–0x3F` | Time, timers, wait | `GETTIME`, `SLEEP`, `TIMER_START`, `TIMER_CANCEL`, `POLL` (DPC wait), `GETTZ`. |
-| `0x40–0x4F` | Networking / IPC | IPv4 TCP v1: `SOCKET` … `GETSOCKNAME`. `SEND`/`RECV` alias `WRITE`/`READ`. No DNS, no UDP, no Unix sockets. |
+| `0x30–0x3F` | Time, timers, wait | `GETTIME`, `SLEEP`, `TIMER_START`, `TIMER_CANCEL`, `POLL` (DPC wait), `GETTZ`, `FDPOLL` (poll(2)). |
+| `0x40–0x4F` | Networking / IPC | IPv4 TCP v1: `SOCKET` … `GETSOCKNAME`, `GETPEERNAME`, `SETSOCKOPT`, `GETSOCKOPT`. `SEND`/`RECV` alias `WRITE`/`READ`. No DNS, no UDP, no Unix sockets. |
 | `0x60–0x7F` | Host environment | `ARGS_INFO`/`ARGS_DATA`, `ENVP_INFO`/`ENVP_DATA`, `GETENV`. |
 | `0x80–0xEF` | Negotiated services | `term`, `tube`, and anything granted by `SVC_REQUEST`. Guest-picked bases. |
 | `0xF0–0xFF` | Service negotiation | `SVC_REQUEST`, `SVC_RELEASE`, `SVC_QUERY`, `SVC_LIST`, `SVC_VERSION`. |
@@ -217,6 +217,16 @@ endian, `family = 2` (`S32_AF_INET`).
 | `BIND` (0x46) | fd | `s32_mmio_sockaddr_in_t` | OK |
 | `LISTEN` (0x47) | fd | `length` = backlog | OK |
 | `GETSOCKNAME` (0x48) | fd | address written back | OK |
+| `GETPEERNAME` (0x49) | fd | the other end's address written back | OK |
+| `SETSOCKOPT` (0x4A) | fd | `s32_mmio_sockopt_t` + value | OK |
+| `GETSOCKOPT` (0x4B) | fd | `s32_mmio_sockopt_t` in, value after it out | value bytes |
+
+The options are a fixed table (docs/SPEC.md 8.9.2): `SO_REUSEADDR`,
+`SO_KEEPALIVE`, `SO_LINGER`, `SO_SNDBUF`, `SO_RCVBUF`, `TCP_NODELAY`, and
+`SO_ERROR`/`SO_TYPE` to read; anything else is `ENOPROTOOPT`.  A
+non-blocking socket (`FCNTL`, 0x0F) answers `EAGAIN`/`EINPROGRESS`;
+`FDPOLL` (0x36) is poll(2) over guest fds, synchronous and outside the
+DPC ring.
 
 `SOCKET` accepts only `family=2`, `type=1` (`SOCK_STREAM`), protocol
 0 or 6. The host sets `SO_REUSEADDR` on `BIND`. `CLOSE` already
@@ -224,8 +234,9 @@ closes the guest fd. Policy name is `net` (legacy opcode range
 `0x40–0x4F`); default policy allows it.
 
 Unix `socketpair` as a same-machine hose is still hosting work, not a
-new family here. Wait-for-any on guest fds is `OP_POLL` with a payload
-(POLLIN only); see Timers and `POLL` above.
+new family here. Wait-for-any on guest fds as a DPC is `OP_POLL` with a
+payload (POLLIN only; Timers and `POLL` above); `FDPOLL` is the
+synchronous poll(2), with every event bit.
 
 ## Host environment (`0x60–0x64`)
 

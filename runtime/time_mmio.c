@@ -66,7 +66,8 @@ static int mmio_sleep_request(uint64_t seconds,
 }
 
 int clock_gettime(int clock_id, struct timespec *ts) {
-    if (!ts || (clock_id != CLOCK_REALTIME && clock_id != CLOCK_MONOTONIC)) {
+    if (!ts || (clock_id != CLOCK_REALTIME && clock_id != CLOCK_MONOTONIC &&
+                clock_id != CLOCK_PROCESS_CPUTIME_ID)) {
         errno = EINVAL;
         return -1;
     }
@@ -74,7 +75,8 @@ int clock_gettime(int clock_id, struct timespec *ts) {
     uint64_t seconds = 0;
     uint32_t nanos = 0;
     unsigned clock = clock_id == CLOCK_MONOTONIC ? S32_MMIO_CLOCK_MONOTONIC
-                                                 : S32_MMIO_CLOCK_REALTIME;
+                   : clock_id == CLOCK_PROCESS_CPUTIME_ID ? S32_MMIO_CLOCK_PROCESS
+                   : S32_MMIO_CLOCK_REALTIME;
     if (read_time_words(clock, &seconds, &nanos) != 0) {
         return -1;
     }
@@ -204,4 +206,17 @@ int gettimeofday(struct timeval *tv, void *tz) {
     tv->tv_sec = ts.tv_sec;
     tv->tv_usec = (suseconds_t)(ts.tv_nsec / 1000);
     return 0;
+}
+
+/* The processor time of the emulator running the program, which is the
+ * program's: in CLOCKS_PER_SEC (microseconds), so a 32-bit clock_t wraps
+ * after 71 minutes of it, as on any 32-bit system.  (clock_t)-1 if the
+ * host cannot say. */
+clock_t clock(void) {
+    uint64_t seconds = 0;
+    uint32_t nanos = 0;
+    if (read_time_words(S32_MMIO_CLOCK_PROCESS, &seconds, &nanos) != 0) {
+        return (clock_t)-1;
+    }
+    return (clock_t)(seconds * 1000000u + nanos / 1000u);
 }

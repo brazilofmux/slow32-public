@@ -1,0 +1,28 @@
+idle listener: poll 0, waited the timeout 1
+listener with a caller: POLLIN 1
+accepted 1
+getpeername 0: the client's port 1, loopback 1, len 1
+client's peer is the listening port 1
+fresh connection: POLLOUT 1, POLLIN 0
+F_GETFL: nonblocking 0, read-write 1
+F_SETFL O_NONBLOCK: 0, now 1
+empty non-blocking read: -1 EAGAIN 1
+after a send: POLLIN 1
+read 7 "lantern"
+select, nothing to read: 1, srv 0 cli 0, cli writable 1
+select, the client has bytes: 1, srv 0 cli 1
+client read 4 "moth"
+select times out: 0, waited 1
+TCP_NODELAY set 0, get 0, on 1, len 4
+SO_KEEPALIVE set 0, on 1
+SO_LINGER set 0, on 1, 3 seconds
+SO_ERROR 0: 0
+SO_TYPE stream 1
+unknown option: -1 ENOPROTOOPT 1
+peer closed: readable 1, read 0
+non-blocking connect to a closed port: refused 1
+closed fd: poll 1, POLLNVAL 1
+negative fd skipped: poll 0, revents 0
+closed fd: select -1 EBADF 1
+poll of nothing sleeps: 0, waited 1
+

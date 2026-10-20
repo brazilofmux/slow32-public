@@ -18,3 +18,8 @@ int gettimeofday(struct timeval *tv, void *tz) {
     errno = ENOSYS;
     return -1;
 }
+
+/* No processor time without MMIO either: C's answer for "not available" */
+clock_t clock(void) {
+    return (clock_t)-1;
+}

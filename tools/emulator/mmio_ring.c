@@ -29,6 +29,11 @@
 #define MSG_NOSIGNAL 0
 #endif
 #include <sys/wait.h>
+/* the self-hosted DBTs' headers (selfhost/cross-include) lack it; their
+ * libc_linux.c hands the id to Linux, whose number it is */
+#if defined(__S12CC__) && !defined(CLOCK_PROCESS_CPUTIME_ID)
+#define CLOCK_PROCESS_CPUTIME_ID 2
+#endif
 #include <limits.h>
 
 static char g_emu_path[4096];
@@ -154,6 +159,7 @@ static void reset_fd_table(mmio_ring_state_t *mmio) {
     for (uint32_t i = 0; i < S32_MMIO_MAX_FDS; ++i) {
         mmio->host_fds[i] = -1;
         mmio->host_fd_owned[i] = false;
+        mmio->fd_cloexec[i] = false;
         mmio->fd_types[i] = S32_FD_TYPE_FILE;
         mmio->host_dirs[i] = NULL;
     }
@@ -213,6 +219,7 @@ static int alloc_guest_fd(mmio_ring_state_t *mmio, int host_fd, bool owned) {
         if (mmio->host_fds[i] == -1 && mmio->host_dirs[i] == NULL) {
             mmio->host_fds[i] = host_fd;
             mmio->host_fd_owned[i] = owned;
+            mmio->fd_cloexec[i] = false;
             mmio->fd_types[i] = S32_FD_TYPE_FILE;
             mmio->host_dirs[i] = NULL;
             return (int)i;
@@ -226,6 +233,7 @@ static int alloc_guest_dir_fd(mmio_ring_state_t *mmio, DIR *host_dir) {
         if (mmio->host_fds[i] == -1 && mmio->host_dirs[i] == NULL) {
             mmio->host_fds[i] = -1;  // No underlying file descriptor
             mmio->host_fd_owned[i] = true;
+            mmio->fd_cloexec[i] = false;
             mmio->fd_types[i] = S32_FD_TYPE_DIR;
             mmio->host_dirs[i] = host_dir;
             return (int)i;
@@ -2148,6 +2156,7 @@ static const char *legacy_opcode_service(const io_descriptor_t *req) {
     if (opcode == 0x0C) return "fs";   // READ_DIRECT
     if (opcode == 0x0D) return "fs";   // FTRUNCATE
     if (opcode == 0x0E) return "fs";   // POST_READ (completion is a DPC)
+    if (opcode == 0x0F) return "fs";   // FCNTL
     if (opcode >= 0x20 && opcode <= 0x2B) return "fs";  // FS metadata (through REWINDDIR)
     if (opcode >= 0x30 && opcode <= 0x3F) return "time";
     if (opcode == 0x10) return "exec";
@@ -2736,6 +2745,180 @@ static void mmio_poll(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descript
     resp->status = (mmio->dpc_head + S32_MMIO_DPC_ENTRIES - mmio->dpc_tail) % S32_MMIO_DPC_ENTRIES;
 }
 
+/* The guest's F_GETFL word: its own O_* encoding (runtime/include/fcntl.h) */
+#define S32_O_ACC_RDONLY 0x01u
+#define S32_O_ACC_WRONLY 0x02u
+#define S32_O_ACC_RDWR   0x03u
+#define S32_O_APPEND_BIT 0x04u
+#define S32_O_NONBLOCK_BIT 0x0800u
+
+static uint32_t guest_status_flags(int host_flags) {
+    uint32_t g;
+    switch (host_flags & O_ACCMODE) {
+    case O_WRONLY: g = S32_O_ACC_WRONLY; break;
+    case O_RDWR:   g = S32_O_ACC_RDWR; break;
+    default:       g = S32_O_ACC_RDONLY; break;
+    }
+    if (host_flags & O_APPEND) g |= S32_O_APPEND_BIT;
+    if (host_flags & O_NONBLOCK) g |= S32_O_NONBLOCK_BIT;
+    return g;
+}
+
+static short host_poll_events(uint16_t g) {
+    short h = 0;
+    if (g & S32_POLLIN)     h |= POLLIN;
+    if (g & S32_POLLPRI)    h |= POLLPRI;
+    if (g & S32_POLLOUT)    h |= POLLOUT;
+    if (g & S32_POLLRDNORM) h |= POLLRDNORM;
+    if (g & S32_POLLRDBAND) h |= POLLRDBAND;
+    if (g & S32_POLLWRNORM) h |= POLLWRNORM;
+    if (g & S32_POLLWRBAND) h |= POLLWRBAND;
+    return h;
+}
+
+static uint16_t guest_poll_events(short h) {
+    uint16_t g = 0;
+    if (h & POLLIN)     g |= S32_POLLIN;
+    if (h & POLLPRI)    g |= S32_POLLPRI;
+    if (h & POLLOUT)    g |= S32_POLLOUT;
+    if (h & POLLERR)    g |= S32_POLLERR;
+    if (h & POLLHUP)    g |= S32_POLLHUP;
+    if (h & POLLNVAL)   g |= S32_POLLNVAL;
+    if (h & POLLRDNORM) g |= S32_POLLRDNORM;
+    if (h & POLLRDBAND) g |= S32_POLLRDBAND;
+    if (h & POLLWRNORM) g |= S32_POLLWRNORM;
+    if (h & POLLWRBAND) g |= S32_POLLWRBAND;
+    return g;
+}
+
+/* the guest's (Linux's) level and option numbers, to the host's; 0 if the
+ * machine does not carry the option */
+static int host_sockopt(uint32_t level, uint32_t name, int *hlevel, int *hname) {
+    if (level == S32_SOL_SOCKET) {
+        *hlevel = SOL_SOCKET;
+        switch (name) {
+        case S32_SO_TYPE:      *hname = SO_TYPE; return 1;
+        case S32_SO_ERROR:     *hname = SO_ERROR; return 1;
+        case S32_SO_REUSEADDR: *hname = SO_REUSEADDR; return 1;
+        case S32_SO_SNDBUF:    *hname = SO_SNDBUF; return 1;
+        case S32_SO_RCVBUF:    *hname = SO_RCVBUF; return 1;
+        case S32_SO_KEEPALIVE: *hname = SO_KEEPALIVE; return 1;
+        case S32_SO_LINGER:    *hname = SO_LINGER; return 1;
+        default: return 0;
+        }
+    }
+    if (level == S32_IPPROTO_TCP && name == S32_TCP_NODELAY) {
+        *hlevel = IPPROTO_TCP;
+        *hname = TCP_NODELAY;
+        return 1;
+    }
+    return 0;
+}
+
+/* FDPOLL: poll(2) over guest fds, synchronously (no DPC).  length/8
+ * s32_mmio_pollfd_t at offset; status the timeout in ms (as int32,
+ * negative: no end).  revents written back in place; resp->status the
+ * number of entries with any. */
+static void mmio_fdpoll(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descriptor_t *resp) {
+    uint32_t n = req->length / sizeof(s32_mmio_pollfd_t);
+    uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+    if (req->length % sizeof(s32_mmio_pollfd_t) || n > S32_MMIO_FDPOLL_MAX ||
+        offset > S32_MMIO_DATA_CAPACITY - req->length) { mmio_fail(resp, EINVAL); return; }
+    s32_mmio_pollfd_t w[S32_MMIO_FDPOLL_MAX];
+    struct pollfd pf[S32_MMIO_FDPOLL_MAX];
+    uint32_t which[S32_MMIO_FDPOLL_MAX];
+    if (req->length) memcpy(w, mmio->data_buffer + offset, req->length);
+
+    nfds_t np = 0;
+    bool now = false;       /* an answer already: do not wait */
+    for (uint32_t i = 0; i < n; i++) {
+        w[i].revents = 0;
+        if ((int32_t)w[i].fd < 0) continue;
+        int h = host_fd_for_guest(mmio, w[i].fd);
+        if (h < 0) { w[i].revents = S32_POLLNVAL; now = true; continue; }
+        pf[np].fd = h;
+        pf[np].events = host_poll_events(w[i].events);
+        pf[np].revents = 0;
+        which[np++] = i;
+    }
+    int timeout = now ? 0 : (int)(int32_t)req->status;
+    /* A prefixed stdin is readable now, whatever the real fd 0 says. */
+    bool prefix_in = false;
+    if (stdin_prefix_active()) {
+        for (nfds_t k = 0; k < np; k++)
+            if (pf[k].fd == STDIN_FILENO && (pf[k].events & POLLIN)) { prefix_in = true; timeout = 0; }
+    }
+    if (s32_host_poll(pf, np, timeout) < 0) { mmio_fail(resp, errno > 0 ? errno : EIO); return; }
+    if (prefix_in) {
+        for (nfds_t k = 0; k < np; k++)
+            if (pf[k].fd == STDIN_FILENO && (pf[k].events & POLLIN)) pf[k].revents |= POLLIN;
+    }
+    for (nfds_t k = 0; k < np; k++) w[which[k]].revents = guest_poll_events(pf[k].revents);
+    uint32_t ready = 0;
+    for (uint32_t i = 0; i < n; i++) if (w[i].revents) ready++;
+    if (req->length) memcpy(mmio->data_buffer + offset, w, req->length);
+    resp->status = ready;
+    resp->length = req->length;
+}
+
+/* SETSOCKOPT / GETSOCKOPT: status = fd; at offset an s32_mmio_sockopt_t
+ * and, after it, the value (SET: len bytes in; GET: up to len bytes out,
+ * resp->status their count).  Integer values are int32; SO_LINGER is two;
+ * SO_ERROR comes back in the guest's errno numbering, SO_TYPE in its
+ * socket types. */
+static void mmio_sockopt(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descriptor_t *resp) {
+    uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+    s32_mmio_sockopt_t h;
+    int host_fd = host_fd_for_guest(mmio, req->status);
+    if (host_fd < 0) { mmio_fail(resp, EBADF); return; }
+    if (req->length < sizeof h || offset > S32_MMIO_DATA_CAPACITY - req->length ||
+        offset > S32_MMIO_DATA_CAPACITY - sizeof h - 8u) { mmio_fail(resp, EINVAL); return; }
+    memcpy(&h, mmio->data_buffer + offset, sizeof h);
+    unsigned char *val = mmio->data_buffer + offset + sizeof h;
+    int hlevel, hname;
+    if (!host_sockopt(h.level, h.name, &hlevel, &hname)) { mmio_fail(resp, ENOPROTOOPT); return; }
+    bool linger = h.level == S32_SOL_SOCKET && h.name == S32_SO_LINGER;
+    uint32_t need = linger ? 8u : 4u;
+
+    if (req->opcode == S32_MMIO_OP_SETSOCKOPT) {
+        if (h.len < need || req->length < sizeof h + need) { mmio_fail(resp, EINVAL); return; }
+        int32_t g[2];
+        memcpy(g, val, need);
+        int r;
+        if (linger) {
+            struct linger lg = { g[0], g[1] };
+            r = setsockopt(host_fd, hlevel, hname, &lg, sizeof lg);
+        } else {
+            int v = g[0];
+            r = setsockopt(host_fd, hlevel, hname, &v, sizeof v);
+        }
+        if (r < 0) { mmio_fail(resp, errno > 0 ? errno : EIO); return; }
+        resp->status = S32_MMIO_STATUS_OK;
+        resp->length = 0;
+        return;
+    }
+
+    int32_t g[2];
+    if (linger) {
+        struct linger lg;
+        socklen_t l = sizeof lg;
+        if (getsockopt(host_fd, hlevel, hname, &lg, &l) < 0) { mmio_fail(resp, errno > 0 ? errno : EIO); return; }
+        g[0] = lg.l_onoff;
+        g[1] = lg.l_linger;
+    } else {
+        int v = 0;
+        socklen_t l = sizeof v;
+        if (getsockopt(host_fd, hlevel, hname, &v, &l) < 0) { mmio_fail(resp, errno > 0 ? errno : EIO); return; }
+        if (hname == SO_ERROR && hlevel == SOL_SOCKET && v > 0) v = s32_errno_from_host(v);
+        if (hname == SO_TYPE && hlevel == SOL_SOCKET) v = v == SOCK_STREAM ? 1 : v == SOCK_DGRAM ? 2 : v;
+        g[0] = v;
+    }
+    uint32_t give = h.len < need ? h.len : need;
+    memcpy(val, g, give);
+    resp->status = give;
+    resp->length = give;
+}
+
 // Process a single request
 /* Fault injection for the guest's I/O error paths (cobol/tests/fault):
  * S32_FAULT=OP:N:ERR[,OP:N:ERR...] fails the Nth request of kind OP with
@@ -2832,6 +3015,8 @@ static bool mmio_offset_is_buffer(uint32_t op) {
     case S32_MMIO_OP_GETTZ: case S32_MMIO_OP_TIMER_START: case S32_MMIO_OP_POLL:
     case S32_MMIO_OP_CONNECT: case S32_MMIO_OP_ACCEPT: case S32_MMIO_OP_SEND:
     case S32_MMIO_OP_RECV: case S32_MMIO_OP_BIND: case S32_MMIO_OP_GETSOCKNAME:
+    case S32_MMIO_OP_FDPOLL: case S32_MMIO_OP_GETPEERNAME: case S32_MMIO_OP_SETSOCKOPT:
+    case S32_MMIO_OP_GETSOCKOPT:
     case S32_MMIO_OP_ARGS_INFO: case S32_MMIO_OP_ARGS_DATA: case S32_MMIO_OP_ENVP_INFO:
     case S32_MMIO_OP_ENVP_DATA: case S32_MMIO_OP_GETENV: case S32_MMIO_OP_SVC_REQUEST:
     case S32_MMIO_OP_SVC_RELEASE: case S32_MMIO_OP_SVC_QUERY: case S32_MMIO_OP_SVC_LIST:
@@ -3399,11 +3584,15 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
         }
 
         case S32_MMIO_OP_GETTIME: {
-            // status selects the clock: 0 the wall clock, 1 a monotonic one
-            // (S32_MMIO_CLOCK_*); every guest before 2026-10-20 sent 0.
+            // status selects the clock: 0 the wall clock, 1 a monotonic one,
+            // 2 this process's processor time (S32_MMIO_CLOCK_*); every
+            // guest before 2026-10-20 sent 0.
             clockid_t clk;
             if (req->status == S32_MMIO_CLOCK_REALTIME) clk = CLOCK_REALTIME;
             else if (req->status == S32_MMIO_CLOCK_MONOTONIC) clk = CLOCK_MONOTONIC;
+#ifdef CLOCK_PROCESS_CPUTIME_ID
+            else if (req->status == S32_MMIO_CLOCK_PROCESS) clk = CLOCK_PROCESS_CPUTIME_ID;
+#endif
             else {
                 mmio_fail(&resp, EINVAL);
                 break;
@@ -3689,6 +3878,11 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                 mmio_fail(&resp, errno > 0 ? errno : EIO);
                 break;
             }
+            {   /* blocking, whatever the listener is: Linux's rule (a BSD
+                 * host copies the listener's O_NONBLOCK) */
+                int fl = fcntl(new_host, F_GETFL);
+                if (fl >= 0 && (fl & O_NONBLOCK)) fcntl(new_host, F_SETFL, fl & ~O_NONBLOCK);
+            }
 
             int guest_fd = guest_socket_fd(mmio, new_host);
             if (guest_fd < 0) {
@@ -3726,6 +3920,80 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             resp.length = 0;
             break;
         }
+
+        case S32_MMIO_OP_FCNTL: {
+            // status = fd, length = the command, offset = its argument
+            uint32_t gfd = req->status;
+            int host_fd = host_fd_for_guest(mmio, gfd);
+            if (host_fd < 0) {
+                mmio_fail(&resp, EBADF);
+                break;
+            }
+            if (req->length == S32_F_GETFD) {
+                resp.status = mmio->fd_cloexec[gfd] ? S32_FD_CLOEXEC : 0u;
+            } else if (req->length == S32_F_SETFD) {
+                mmio->fd_cloexec[gfd] = (req->offset & S32_FD_CLOEXEC) != 0;
+                resp.status = S32_MMIO_STATUS_OK;
+            } else if (req->length == S32_F_GETFL || req->length == S32_F_SETFL) {
+                int fl = fcntl(host_fd, F_GETFL);
+                if (fl < 0) {
+                    mmio_fail(&resp, errno > 0 ? errno : EIO);
+                    break;
+                }
+                if (req->length == S32_F_GETFL) {
+                    resp.status = guest_status_flags(fl);
+                    break;
+                }
+                int want = fl & ~(O_NONBLOCK | O_APPEND);
+                if (req->offset & S32_O_NONBLOCK_BIT) want |= O_NONBLOCK;
+                if (req->offset & S32_O_APPEND_BIT) want |= O_APPEND;
+                if (want != fl) {
+                    // the standard streams are the emulator's own, shared
+                    // with whatever started it: they stay as they are
+                    if (!mmio->host_fd_owned[gfd]) {
+                        mmio_fail(&resp, EPERM);
+                        break;
+                    }
+                    if (fcntl(host_fd, F_SETFL, want) < 0) {
+                        mmio_fail(&resp, errno > 0 ? errno : EIO);
+                        break;
+                    }
+                }
+                resp.status = S32_MMIO_STATUS_OK;
+            } else {
+                mmio_fail(&resp, EINVAL);
+            }
+            resp.length = 0;
+            break;
+        }
+
+        case S32_MMIO_OP_FDPOLL:
+            mmio_fdpoll(mmio, req, &resp);
+            break;
+
+        case S32_MMIO_OP_GETPEERNAME: {
+            int host_fd = host_fd_for_guest(mmio, req->status);
+            if (host_fd < 0) {
+                mmio_fail(&resp, EBADF);
+                break;
+            }
+            struct sockaddr_in other;
+            socklen_t other_len = sizeof(other);
+            if (getpeername(host_fd, (struct sockaddr *)&other, &other_len) < 0) {
+                mmio_fail(&resp, errno > 0 ? errno : EIO);
+                break;
+            }
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            write_guest_sockaddr_in(mmio, offset, &other);
+            resp.status = S32_MMIO_STATUS_OK;
+            resp.length = sizeof(s32_mmio_sockaddr_in_t);
+            break;
+        }
+
+        case S32_MMIO_OP_SETSOCKOPT:
+        case S32_MMIO_OP_GETSOCKOPT:
+            mmio_sockopt(mmio, req, &resp);
+            break;
 
         case S32_MMIO_OP_ARGS_INFO: {
             if (req->length < sizeof(s32_mmio_args_info_t)) {

@@ -1,7 +1,9 @@
 // SLOW-32 Filesystem MMIO Operations
 // Implements: unlink, rename, mkdir, rmdir, lstat, access, chdir, getcwd
 
+#include <stdarg.h>
 #include <stddef.h>
+#include <errno.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -20,6 +22,20 @@ int open(const char *pathname, int flags, ...) {
     memcpy((void *)data_buffer, pathname, len);
 
     return s32_mmio_request(S32_MMIO_OP_OPEN, (unsigned int)len, 0u, (unsigned int)flags);
+}
+
+int fcntl(int fd, int cmd, ...) {
+    unsigned arg = 0;
+    if (cmd == F_SETFD || cmd == F_SETFL) {
+        va_list ap;
+        va_start(ap, cmd);
+        arg = (unsigned)va_arg(ap, int);
+        va_end(ap);
+    } else if (cmd != F_GETFD && cmd != F_GETFL) {
+        errno = EINVAL;
+        return -1;
+    }
+    return s32_mmio_request(S32_MMIO_OP_FCNTL, (unsigned)cmd, arg, (unsigned)fd);
 }
 
 int close(int fd) {

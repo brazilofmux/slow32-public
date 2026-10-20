@@ -124,10 +124,14 @@ int getrusage(int who, struct rusage *usage) {
     }
     char *p = (char *)usage;
     for (unsigned i = 0; i < sizeof *usage; i++) p[i] = 0;
-    if (who == RUSAGE_SELF) {
-        clock_t c = clock();
+    /* no processor time to report (libc_debug, or a host that cannot say)
+     * is zero, and not this call's failure: errno is left as it was */
+    int saved = errno;
+    clock_t c;
+    if (who == RUSAGE_SELF && (c = clock()) != (clock_t)-1) {
         usage->ru_utime.tv_sec = (time_t)(c / CLOCKS_PER_SEC);
         usage->ru_utime.tv_usec = (suseconds_t)(c % CLOCKS_PER_SEC);
     }
+    errno = saved;
     return 0;
 }

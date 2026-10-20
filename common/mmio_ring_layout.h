@@ -101,6 +101,9 @@ enum s32_mmio_opcode {
      * partition is full.
      * docs/plans/dpc.md, docs/plans/hosting.md. */
     S32_MMIO_OP_POST_READ   = 0x0E,
+    // fcntl() on a guest fd: status=fd, length=the command (S32_F_*),
+    // offset=its argument (not a buffer offset).  docs/SPEC.md 8.6.
+    S32_MMIO_OP_FCNTL       = 0x0F,
 
     // 0x20 - 0x2F : Filesystem metadata operations
     S32_MMIO_OP_UNLINK   = 0x20,  // unlink/remove - delete a file
@@ -135,6 +138,10 @@ enum s32_mmio_opcode {
     // ring is empty and nothing is armed (no timer, no pending post,
     // nfds 0).
     S32_MMIO_OP_POLL        = 0x34,
+    // poll(2) over guest fds, synchronously, no DPC: length/8
+    // s32_mmio_pollfd_t at offset, status the timeout in ms (int32,
+    // negative: no end); revents written back, resp.status = how many.
+    S32_MMIO_OP_FDPOLL      = 0x36,
 
     // 0x40 - 0x4F : Networking / IPC
     // v1 is IPv4 TCP only. No DNS, no UDP, no Unix sockets.
@@ -148,6 +155,9 @@ enum s32_mmio_opcode {
     S32_MMIO_OP_BIND        = 0x46,  // bind() — status=fd, payload=sockaddr_in
     S32_MMIO_OP_LISTEN      = 0x47,  // listen() — status=fd, length=backlog
     S32_MMIO_OP_GETSOCKNAME = 0x48,  // getsockname() — status=fd, writes sockaddr_in
+    S32_MMIO_OP_GETPEERNAME = 0x49,  // getpeername() — status=fd, writes sockaddr_in
+    S32_MMIO_OP_SETSOCKOPT  = 0x4A,  // status=fd; s32_mmio_sockopt_t, then the value
+    S32_MMIO_OP_GETSOCKOPT  = 0x4B,  // status=fd; s32_mmio_sockopt_t in, the value after it out
 
     // 0x60 - 0x6F : Host environment services
     S32_MMIO_OP_ARGS_INFO   = 0x60,  // Query argc/total-bytes for guest argv[]
@@ -172,6 +182,57 @@ enum s32_mmio_opcode {
 #define S32_SHUT_RDWR     2
 #define S32_MMIO_SOCKADDR_IN_SIZE 8
 
+// FDPOLL's wire format: an array of these, the guest's struct pollfd
+// (runtime/include/poll.h) byte for byte, at most S32_MMIO_FDPOLL_MAX.
+#define S32_MMIO_FDPOLL_MAX 128u
+#pragma pack(push, 1)
+typedef struct {
+    uint32_t fd;         // a guest fd; negative (as int32) is skipped
+    uint16_t events;     // S32_POLL* asked for
+    uint16_t revents;    // S32_POLL* found, written by the host
+} s32_mmio_pollfd_t;
+#pragma pack(pop)
+
+// The poll bits, in FDPOLL's events and revents: Linux's numbers
+#define S32_POLLIN     0x001u
+#define S32_POLLPRI    0x002u
+#define S32_POLLOUT    0x004u
+#define S32_POLLERR    0x008u
+#define S32_POLLHUP    0x010u
+#define S32_POLLNVAL   0x020u
+#define S32_POLLRDNORM 0x040u
+#define S32_POLLRDBAND 0x080u
+#define S32_POLLWRNORM 0x100u
+#define S32_POLLWRBAND 0x200u
+
+// FCNTL commands (req->length): Linux's numbers
+#define S32_F_GETFD 1u
+#define S32_F_SETFD 2u
+#define S32_F_GETFL 3u
+#define S32_F_SETFL 4u
+#define S32_FD_CLOEXEC 1u
+
+// SETSOCKOPT / GETSOCKOPT: the data buffer holds a header, then the value.
+// The level and option are the guest's (Linux's) numbers; the host carries
+// these and refuses others with ENOPROTOOPT.
+#pragma pack(push, 1)
+typedef struct {
+    uint32_t level;
+    uint32_t name;
+    uint32_t len;        // SET: bytes of value that follow; GET: room for it
+} s32_mmio_sockopt_t;
+#pragma pack(pop)
+#define S32_SOL_SOCKET     1u
+#define S32_SO_TYPE        3u
+#define S32_SO_ERROR       4u
+#define S32_SO_REUSEADDR   2u
+#define S32_SO_SNDBUF      7u
+#define S32_SO_RCVBUF      8u
+#define S32_SO_KEEPALIVE   9u
+#define S32_SO_LINGER      13u   // value: two int32, l_onoff then l_linger
+#define S32_IPPROTO_TCP    6u
+#define S32_TCP_NODELAY    1u
+
 #pragma pack(push, 1)
 
 // Compact IPv4 address written to the MMIO data buffer for BIND/CONNECT/ACCEPT.
@@ -195,6 +256,8 @@ typedef struct s32_mmio_timepair64 {
 // steady_clock and timeouts want it.
 #define S32_MMIO_CLOCK_REALTIME  0u
 #define S32_MMIO_CLOCK_MONOTONIC 1u
+// The processor time of the emulator running the program: the program's
+#define S32_MMIO_CLOCK_PROCESS   2u
 
 #pragma pack(pop)
 

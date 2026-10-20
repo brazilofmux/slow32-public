@@ -126,6 +126,7 @@ struct mmio_ring_state {
 
     int host_fds[S32_MMIO_MAX_FDS];
     bool host_fd_owned[S32_MMIO_MAX_FDS];
+    bool fd_cloexec[S32_MMIO_MAX_FDS];   // FCNTL F_SETFD's bit; nothing inherits
     s32_fd_type_t fd_types[S32_MMIO_MAX_FDS];
     DIR *host_dirs[S32_MMIO_MAX_FDS];
 

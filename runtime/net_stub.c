@@ -4,6 +4,9 @@
 #include "sys/socket.h"
 #include "netinet/in.h"
 #include "arpa/inet.h"
+#include "fcntl.h"
+#include "poll.h"
+#include "sys/select.h"
 
 uint32_t htonl(uint32_t x) {
     return ((x & 0x000000ffu) << 24) |
@@ -103,6 +106,44 @@ int recv(int sockfd, void *buf, int len, int flags) {
     (void)buf;
     (void)len;
     (void)flags;
+    errno = ENOSYS;
+    return -1;
+}
+
+/* and the rest of what needs the machine: no descriptors to ask about */
+int getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
+    (void)sockfd; (void)addr; (void)addrlen;
+    errno = ENOSYS;
+    return -1;
+}
+
+int setsockopt(int sockfd, int level, int optname, const void *optval, socklen_t optlen) {
+    (void)sockfd; (void)level; (void)optname; (void)optval; (void)optlen;
+    errno = ENOSYS;
+    return -1;
+}
+
+int getsockopt(int sockfd, int level, int optname, void *optval, socklen_t *optlen) {
+    (void)sockfd; (void)level; (void)optname; (void)optval; (void)optlen;
+    errno = ENOSYS;
+    return -1;
+}
+
+int fcntl(int fd, int cmd, ...) {
+    (void)fd; (void)cmd;
+    errno = ENOSYS;
+    return -1;
+}
+
+int poll(struct pollfd *fds, nfds_t nfds, int timeout) {
+    (void)fds; (void)nfds; (void)timeout;
+    errno = ENOSYS;
+    return -1;
+}
+
+int select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
+           struct timeval *timeout) {
+    (void)nfds; (void)readfds; (void)writefds; (void)exceptfds; (void)timeout;
     errno = ENOSYS;
     return -1;
 }

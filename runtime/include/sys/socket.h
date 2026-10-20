@@ -28,8 +28,21 @@ extern "C" {
 #define SHUT_RD       0
 #define SHUT_WR       1
 #define SHUT_RDWR     2
+/* The options the machine carries (docs/SPEC.md 8.9.2); any other is
+ * ENOPROTOOPT */
 #define SOL_SOCKET    1
 #define SO_REUSEADDR  2
+#define SO_TYPE       3
+#define SO_ERROR      4
+#define SO_SNDBUF     7
+#define SO_RCVBUF     8
+#define SO_KEEPALIVE  9
+#define SO_LINGER     13
+
+struct linger {
+    int l_onoff;
+    int l_linger;
+};
 
 #define IPPROTO_IP    0
 #define IPPROTO_TCP   6
@@ -55,6 +68,9 @@ int bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
 int listen(int sockfd, int backlog);
 int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
 int getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+int getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+int setsockopt(int sockfd, int level, int optname, const void *optval, socklen_t optlen);
+int getsockopt(int sockfd, int level, int optname, void *optval, socklen_t *optlen);
 int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
 int shutdown(int sockfd, int how);
 int send(int sockfd, const void *buf, int len, int flags);

@@ -3,7 +3,8 @@
  * Its readings must not decrease; it must not be the wall clock under
  * another name only in the sense that both answer -- the values are not
  * compared, a host may start them anywhere -- but an unknown clock id must
- * be refused, by clock_gettime and by the request itself. */
+ * be refused, by clock_gettime and by the request itself.  Status 2 is the
+ * processor time (CLOCK_PROCESS_CPUTIME_ID, clock()), which work advances. */
 #include <stdio.h>
 #include <errno.h>
 #include <time.h>
@@ -39,8 +40,18 @@ int main(void)
     errno = 0;
     ok(clock_gettime(7, &now) == -1 && errno == EINVAL, "unknown clock id is EINVAL");
     errno = 0;
-    unsigned r = (unsigned)s32_mmio_request(S32_MMIO_OP_GETTIME, 16u, 0u, 2u);
-    ok(r == 0xFFFFFFFFu && errno == EINVAL, "GETTIME status 2 is EINVAL");
+    unsigned r = (unsigned)s32_mmio_request(S32_MMIO_OP_GETTIME, 16u, 0u, 3u);
+    ok(r == 0xFFFFFFFFu && errno == EINVAL, "GETTIME status 3 is EINVAL");
+
+    struct timespec c0, c1;
+    ok(clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &c0) == 0, "processor-time clock answers");
+    clock_t k0 = clock();
+    volatile unsigned spin = 0;
+    for (unsigned i = 0; i < 20000000u; i++) spin += i;
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &c1);
+    clock_t k1 = clock();
+    ok(before(&c0, &c1), "work advances it");
+    ok(k0 != (clock_t)-1 && k1 > k0, "and clock() with it");
     printf("%d failed\n", fails);
     return fails;
 }

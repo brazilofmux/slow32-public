@@ -1,6 +1,9 @@
 // SLOW-32 IPv4 TCP sockets via MMIO.
-// No DNS. Address conversion lives here; the host sees guest-endian
-// s32_mmio_sockaddr_in_t payloads only.
+// No DNS (netdb.c reads numeric text). Address conversion lives here; the
+// host sees guest-endian s32_mmio_sockaddr_in_t payloads only.  A write to
+// a socket whose reader is gone is EPIPE, never SIGPIPE: the emulator
+// ignores the signal, so a program here behaves as if every send had
+// MSG_NOSIGNAL.
 
 #include <string.h>
 #include <stdint.h>
@@ -185,6 +188,57 @@ int getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
         memcpy(&packed, (const void *)S32_MMIO_DATA_BUFFER, sizeof(packed));
         unpack_sin(&packed, addr, addrlen);
     }
+    return 0;
+}
+
+int getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
+    int r = s32_mmio_request(S32_MMIO_OP_GETPEERNAME,
+                             sizeof(s32_mmio_sockaddr_in_t), 0u,
+                             (unsigned)sockfd);
+    if (r < 0) {
+        return -1;
+    }
+    if (addr && addrlen) {
+        s32_mmio_sockaddr_in_t packed;
+        memcpy(&packed, (const void *)S32_MMIO_DATA_BUFFER, sizeof(packed));
+        unpack_sin(&packed, addr, addrlen);
+    }
+    return 0;
+}
+
+/* The options the machine carries (SO_REUSEADDR, SO_KEEPALIVE, SO_LINGER,
+ * SO_SNDBUF, SO_RCVBUF, TCP_NODELAY; SO_ERROR and SO_TYPE to read) go to
+ * the host's socket; any other is ENOPROTOOPT there.  The value travels
+ * after a small header (s32_mmio_sockopt_t). */
+#define SOCKOPT_ROOM 64u
+
+int setsockopt(int sockfd, int level, int optname, const void *optval, socklen_t optlen) {
+    if (!optval || optlen > SOCKOPT_ROOM) {
+        errno = EINVAL;
+        return -1;
+    }
+    s32_mmio_sockopt_t h = { (uint32_t)level, (uint32_t)optname, optlen };
+    memcpy((void *)S32_MMIO_DATA_BUFFER, &h, sizeof h);
+    memcpy((unsigned char *)S32_MMIO_DATA_BUFFER + sizeof h, optval, optlen);
+    int r = s32_mmio_request(S32_MMIO_OP_SETSOCKOPT, sizeof h + optlen, 0u, (unsigned)sockfd);
+    return (r < 0) ? -1 : 0;
+}
+
+int getsockopt(int sockfd, int level, int optname, void *optval, socklen_t *optlen) {
+    if (!optval || !optlen) {
+        errno = EINVAL;
+        return -1;
+    }
+    socklen_t room = *optlen > SOCKOPT_ROOM ? SOCKOPT_ROOM : *optlen;
+    s32_mmio_sockopt_t h = { (uint32_t)level, (uint32_t)optname, room };
+    memcpy((void *)S32_MMIO_DATA_BUFFER, &h, sizeof h);
+    int r = s32_mmio_request(S32_MMIO_OP_GETSOCKOPT, sizeof h, 0u, (unsigned)sockfd);
+    if (r < 0) {
+        return -1;
+    }
+    unsigned got = (unsigned)r < room ? (unsigned)r : room;
+    memcpy(optval, (const unsigned char *)S32_MMIO_DATA_BUFFER + sizeof h, got);
+    *optlen = got;
     return 0;
 }
 

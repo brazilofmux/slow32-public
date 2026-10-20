@@ -25,6 +25,9 @@ struct sockaddr_storage {
 #define SOCK_CLOEXEC  02000000
 #define SOL_SOCKET   1
 #define SO_REUSEADDR 2
+#define SO_TYPE      3
+#define SO_LINGER    13
+struct linger { int l_onoff; int l_linger; };
 #define SO_ERROR     4
 #define SO_SNDBUF    7
 #define SO_RCVBUF    8

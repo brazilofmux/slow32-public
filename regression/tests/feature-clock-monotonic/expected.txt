@@ -3,5 +3,8 @@ ok monotonic nanoseconds in range
 ok 2000 readings never go back
 ok wall clock still the wall clock
 ok unknown clock id is EINVAL
-ok GETTIME status 2 is EINVAL
+ok GETTIME status 3 is EINVAL
+ok processor-time clock answers
+ok work advances it
+ok and clock() with it
 0 failed

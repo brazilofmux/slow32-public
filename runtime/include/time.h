@@ -30,11 +30,13 @@ struct tm {
 
 #define CLOCK_REALTIME 0
 #define CLOCK_MONOTONIC 1   // never decreasing, from an unspecified start
+#define CLOCK_PROCESS_CPUTIME_ID 2  // the processor time the program has used
 
 typedef unsigned long clock_t;
 #define CLOCKS_PER_SEC ((clock_t)1000000)
 
-// Clock
+// Processor time used, CLOCKS_PER_SEC to the second; (clock_t)-1 without
+// MMIO (libc_debug)
 clock_t clock(void);
 
 // Time retrieval

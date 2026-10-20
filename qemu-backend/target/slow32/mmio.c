@@ -12,6 +12,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
@@ -83,6 +84,7 @@
 #define S32_MMIO_OP_READ_DIRECT 0x0C
 #define S32_MMIO_OP_FTRUNCATE   0x0D
 #define S32_MMIO_OP_POST_READ   0x0E
+#define S32_MMIO_OP_FCNTL       0x0F
 
 #define S32_MMIO_OP_UNLINK    0x20
 #define S32_MMIO_OP_RENAME    0x21
@@ -103,6 +105,7 @@
 #define S32_MMIO_OP_TIMER_CANCEL 0x33
 #define S32_MMIO_OP_POLL         0x34
 #define S32_MMIO_OP_GETTZ     0x35
+#define S32_MMIO_OP_FDPOLL    0x36
 
 #define S32_MMIO_OP_SOCKET      0x40
 #define S32_MMIO_OP_CONNECT     0x41
@@ -113,6 +116,61 @@
 #define S32_MMIO_OP_BIND        0x46
 #define S32_MMIO_OP_LISTEN      0x47
 #define S32_MMIO_OP_GETSOCKNAME 0x48
+#define S32_MMIO_OP_GETPEERNAME 0x49
+#define S32_MMIO_OP_SETSOCKOPT  0x4A
+#define S32_MMIO_OP_GETSOCKOPT  0x4B
+
+#define S32_MMIO_CLOCK_REALTIME  0u
+#define S32_MMIO_CLOCK_MONOTONIC 1u
+#define S32_MMIO_CLOCK_PROCESS   2u
+
+/* slow-32 common/mmio_ring_layout.h */
+// FDPOLL's wire format: an array of these, the guest's struct pollfd
+// (runtime/include/poll.h) byte for byte, at most S32_MMIO_FDPOLL_MAX.
+#define S32_MMIO_FDPOLL_MAX 128u
+typedef struct QEMU_PACKED {
+    uint32_t fd;         // a guest fd; negative (as int32) is skipped
+    uint16_t events;     // S32_POLL* asked for
+    uint16_t revents;    // S32_POLL* found, written by the host
+} s32_mmio_pollfd_t;
+
+// The poll bits, in FDPOLL's events and revents: Linux's numbers
+#define S32_POLLIN     0x001u
+#define S32_POLLPRI    0x002u
+#define S32_POLLOUT    0x004u
+#define S32_POLLERR    0x008u
+#define S32_POLLHUP    0x010u
+#define S32_POLLNVAL   0x020u
+#define S32_POLLRDNORM 0x040u
+#define S32_POLLRDBAND 0x080u
+#define S32_POLLWRNORM 0x100u
+#define S32_POLLWRBAND 0x200u
+
+// FCNTL commands (req->length): Linux's numbers
+#define S32_F_GETFD 1u
+#define S32_F_SETFD 2u
+#define S32_F_GETFL 3u
+#define S32_F_SETFL 4u
+#define S32_FD_CLOEXEC 1u
+
+// SETSOCKOPT / GETSOCKOPT: the data buffer holds a header, then the value.
+// The level and option are the guest's (Linux's) numbers; the host carries
+// these and refuses others with ENOPROTOOPT.
+typedef struct QEMU_PACKED {
+    uint32_t level;
+    uint32_t name;
+    uint32_t len;        // SET: bytes of value that follow; GET: room for it
+} s32_mmio_sockopt_t;
+#define S32_SOL_SOCKET     1u
+#define S32_SO_TYPE        3u
+#define S32_SO_ERROR       4u
+#define S32_SO_REUSEADDR   2u
+#define S32_SO_SNDBUF      7u
+#define S32_SO_RCVBUF      8u
+#define S32_SO_KEEPALIVE   9u
+#define S32_SO_LINGER      13u   // value: two int32, l_onoff then l_linger
+#define S32_IPPROTO_TCP    6u
+#define S32_TCP_NODELAY    1u
 
 #define S32_AF_INET     2
 #define S32_SOCK_STREAM 1
@@ -321,6 +379,7 @@ struct Slow32MMIOContext {
     GByteArray *envp_blob;
     int host_fds[S32_MMIO_MAX_FDS];
     bool host_fd_owned[S32_MMIO_MAX_FDS];
+    bool fd_cloexec[S32_MMIO_MAX_FDS];   /* FCNTL F_SETFD's bit; nothing inherits */
     Slow32FdType fd_types[S32_MMIO_MAX_FDS];
     DIR *host_dirs[S32_MMIO_MAX_FDS];
     uint8_t scratch[S32_MMIO_DATA_CAPACITY + 1];   /* + a NUL after it */
@@ -391,6 +450,7 @@ static void slow32_mmio_reset_fd_table(Slow32MMIOContext *ctx)
         }
         ctx->host_fds[i] = -1;
         ctx->host_fd_owned[i] = false;
+        ctx->fd_cloexec[i] = false;
         ctx->fd_types[i] = S32_FD_TYPE_FILE;
         ctx->host_dirs[i] = NULL;
     }
@@ -407,6 +467,7 @@ static int slow32_mmio_alloc_guest_fd(Slow32MMIOContext *ctx, int host_fd,
         if (ctx->host_fds[i] == -1 && ctx->host_dirs[i] == NULL) {
             ctx->host_fds[i] = host_fd;
             ctx->host_fd_owned[i] = owned;
+            ctx->fd_cloexec[i] = false;
             ctx->fd_types[i] = S32_FD_TYPE_FILE;
             ctx->host_dirs[i] = NULL;
             return (int)i;
@@ -421,6 +482,7 @@ static int slow32_mmio_alloc_guest_dir_fd(Slow32MMIOContext *ctx, DIR *host_dir)
         if (ctx->host_fds[i] == -1 && ctx->host_dirs[i] == NULL) {
             ctx->host_fds[i] = -1;
             ctx->host_fd_owned[i] = true;
+            ctx->fd_cloexec[i] = false;
             ctx->fd_types[i] = S32_FD_TYPE_DIR;
             ctx->host_dirs[i] = host_dir;
             return (int)i;
@@ -1826,13 +1888,21 @@ static void slow32_mmio_handle_gettime(const CPUSlow32State *env,
 {
     /* status selects the clock: 0 the wall clock, 1 a monotonic one
      * (slow-32 common/mmio_ring_layout.h, S32_MMIO_CLOCK_*). */
-    if (req->length < sizeof(s32_mmio_timepair64_t) || req->status > 1) {
+    if (req->length < sizeof(s32_mmio_timepair64_t) || req->status > 2) {
         slow32_mmio_fail(resp, EINVAL);
         return;
     }
 
+    /* 2: this process's processor time -- the guest's, though QEMU's other
+     * threads count in it too */
     struct timespec ts = {0};
-    clock_gettime(req->status == 1 ? CLOCK_MONOTONIC : CLOCK_REALTIME, &ts);
+    clockid_t clk = req->status == S32_MMIO_CLOCK_MONOTONIC ? CLOCK_MONOTONIC
+                  : req->status == S32_MMIO_CLOCK_PROCESS ? CLOCK_PROCESS_CPUTIME_ID
+                  : CLOCK_REALTIME;
+    if (clock_gettime(clk, &ts) != 0) {
+        slow32_mmio_fail(resp, EINVAL);
+        return;
+    }
     uint64_t secs = ts.tv_sec;
     s32_mmio_timepair64_t payload = {
         .seconds_lo = (uint32_t)(secs & 0xFFFFFFFFu),
@@ -2254,6 +2324,280 @@ static int slow32_mmio_guest_socket_fd(Slow32MMIOContext *ctx, int host_fd)
     return guest_fd;
 }
 
+/* FCNTL, FDPOLL and the socket options.  Mirrors tools/emulator/mmio_ring.c. */
+
+/* The guest's F_GETFL word: its own O_* encoding (runtime/include/fcntl.h) */
+#define S32_O_ACC_RDONLY 0x01u
+#define S32_O_ACC_WRONLY 0x02u
+#define S32_O_ACC_RDWR   0x03u
+#define S32_O_APPEND_BIT 0x04u
+#define S32_O_NONBLOCK_BIT 0x0800u
+
+static uint32_t guest_status_flags(int host_flags) {
+    uint32_t g;
+    switch (host_flags & O_ACCMODE) {
+    case O_WRONLY: g = S32_O_ACC_WRONLY; break;
+    case O_RDWR:   g = S32_O_ACC_RDWR; break;
+    default:       g = S32_O_ACC_RDONLY; break;
+    }
+    if (host_flags & O_APPEND) g |= S32_O_APPEND_BIT;
+    if (host_flags & O_NONBLOCK) g |= S32_O_NONBLOCK_BIT;
+    return g;
+}
+
+static short host_poll_events(uint16_t g) {
+    short h = 0;
+    if (g & S32_POLLIN)     h |= POLLIN;
+    if (g & S32_POLLPRI)    h |= POLLPRI;
+    if (g & S32_POLLOUT)    h |= POLLOUT;
+    if (g & S32_POLLRDNORM) h |= POLLRDNORM;
+    if (g & S32_POLLRDBAND) h |= POLLRDBAND;
+    if (g & S32_POLLWRNORM) h |= POLLWRNORM;
+    if (g & S32_POLLWRBAND) h |= POLLWRBAND;
+    return h;
+}
+
+static uint16_t guest_poll_events(short h) {
+    uint16_t g = 0;
+    if (h & POLLIN)     g |= S32_POLLIN;
+    if (h & POLLPRI)    g |= S32_POLLPRI;
+    if (h & POLLOUT)    g |= S32_POLLOUT;
+    if (h & POLLERR)    g |= S32_POLLERR;
+    if (h & POLLHUP)    g |= S32_POLLHUP;
+    if (h & POLLNVAL)   g |= S32_POLLNVAL;
+    if (h & POLLRDNORM) g |= S32_POLLRDNORM;
+    if (h & POLLRDBAND) g |= S32_POLLRDBAND;
+    if (h & POLLWRNORM) g |= S32_POLLWRNORM;
+    if (h & POLLWRBAND) g |= S32_POLLWRBAND;
+    return g;
+}
+
+/* the guest's (Linux's) level and option numbers, to the host's; 0 if the
+ * machine does not carry the option */
+static int host_sockopt(uint32_t level, uint32_t name, int *hlevel, int *hname) {
+    if (level == S32_SOL_SOCKET) {
+        *hlevel = SOL_SOCKET;
+        switch (name) {
+        case S32_SO_TYPE:      *hname = SO_TYPE; return 1;
+        case S32_SO_ERROR:     *hname = SO_ERROR; return 1;
+        case S32_SO_REUSEADDR: *hname = SO_REUSEADDR; return 1;
+        case S32_SO_SNDBUF:    *hname = SO_SNDBUF; return 1;
+        case S32_SO_RCVBUF:    *hname = SO_RCVBUF; return 1;
+        case S32_SO_KEEPALIVE: *hname = SO_KEEPALIVE; return 1;
+        case S32_SO_LINGER:    *hname = SO_LINGER; return 1;
+        default: return 0;
+        }
+    }
+    if (level == S32_IPPROTO_TCP && name == S32_TCP_NODELAY) {
+        *hlevel = IPPROTO_TCP;
+        *hname = TCP_NODELAY;
+        return 1;
+    }
+    return 0;
+}
+
+/* FDPOLL: poll(2) over guest fds, synchronously (no DPC).  length/8
+ * s32_mmio_pollfd_t at offset; status the timeout in ms (as int32,
+ * negative: no end).  revents written back in place; resp->status the
+ * number of entries with any. */
+static void slow32_mmio_handle_fdpoll(Slow32MMIOContext *ctx,
+                                      const CPUSlow32State *env,
+                                      const Slow32MMIODesc *req,
+                                      Slow32MMIODesc *resp)
+{
+    uint32_t n = req->length / sizeof(s32_mmio_pollfd_t);
+    uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+    s32_mmio_pollfd_t w[S32_MMIO_FDPOLL_MAX];
+    struct pollfd pf[S32_MMIO_FDPOLL_MAX];
+    uint32_t which[S32_MMIO_FDPOLL_MAX];
+    nfds_t np = 0;
+    bool now = false;       /* an answer already: do not wait */
+    uint32_t ready = 0;
+
+    if (req->length % sizeof(s32_mmio_pollfd_t) || n > S32_MMIO_FDPOLL_MAX ||
+        offset > S32_MMIO_DATA_CAPACITY - req->length) {
+        slow32_mmio_fail(resp, EINVAL);
+        return;
+    }
+    if (req->length) {
+        slow32_mmio_copy_from_guest(env, offset, (uint8_t *)w, req->length);
+    }
+    for (uint32_t i = 0; i < n; i++) {
+        int h;
+        w[i].revents = 0;
+        if ((int32_t)w[i].fd < 0) {
+            continue;
+        }
+        h = slow32_mmio_host_fd_for_guest(ctx, w[i].fd);
+        if (h < 0) {
+            w[i].revents = S32_POLLNVAL;
+            now = true;
+            continue;
+        }
+        pf[np].fd = h;
+        pf[np].events = host_poll_events(w[i].events);
+        pf[np].revents = 0;
+        which[np++] = i;
+    }
+    if (s32_host_poll(pf, np, now ? 0 : (int)(int32_t)req->status) < 0) {
+        slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
+        return;
+    }
+    for (nfds_t k = 0; k < np; k++) {
+        w[which[k]].revents = guest_poll_events(pf[k].revents);
+    }
+    for (uint32_t i = 0; i < n; i++) {
+        if (w[i].revents) {
+            ready++;
+        }
+    }
+    if (req->length) {
+        slow32_mmio_copy_to_guest(env, offset, (const uint8_t *)w, req->length);
+    }
+    resp->status = ready;
+    resp->length = req->length;
+}
+
+static void slow32_mmio_handle_fcntl(Slow32MMIOContext *ctx,
+                                     const Slow32MMIODesc *req,
+                                     Slow32MMIODesc *resp)
+{
+    uint32_t gfd = req->status;
+    int host_fd = slow32_mmio_host_fd_for_guest(ctx, gfd);
+
+    if (host_fd < 0) {
+        slow32_mmio_fail(resp, EBADF);
+        return;
+    }
+    resp->length = 0;
+    if (req->length == S32_F_GETFD) {
+        resp->status = ctx->fd_cloexec[gfd] ? S32_FD_CLOEXEC : 0u;
+    } else if (req->length == S32_F_SETFD) {
+        ctx->fd_cloexec[gfd] = (req->offset & S32_FD_CLOEXEC) != 0;
+        resp->status = S32_MMIO_STATUS_OK;
+    } else if (req->length == S32_F_GETFL || req->length == S32_F_SETFL) {
+        int fl = fcntl(host_fd, F_GETFL);
+        int want;
+        if (fl < 0) {
+            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
+            return;
+        }
+        if (req->length == S32_F_GETFL) {
+            resp->status = guest_status_flags(fl);
+            return;
+        }
+        want = fl & ~(O_NONBLOCK | O_APPEND);
+        if (req->offset & S32_O_NONBLOCK_BIT) {
+            want |= O_NONBLOCK;
+        }
+        if (req->offset & S32_O_APPEND_BIT) {
+            want |= O_APPEND;
+        }
+        if (want != fl) {
+            /* the standard streams are QEMU's own, shared with whatever
+             * started it: they stay as they are */
+            if (!ctx->host_fd_owned[gfd]) {
+                slow32_mmio_fail(resp, EPERM);
+                return;
+            }
+            if (fcntl(host_fd, F_SETFL, want) < 0) {
+                slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
+                return;
+            }
+        }
+        resp->status = S32_MMIO_STATUS_OK;
+    } else {
+        slow32_mmio_fail(resp, EINVAL);
+    }
+}
+
+/* SETSOCKOPT / GETSOCKOPT: status = fd; at offset an s32_mmio_sockopt_t
+ * and, after it, the value.  Integer values are int32; SO_LINGER is two;
+ * SO_ERROR comes back in the guest's errno numbering, SO_TYPE in its
+ * socket types. */
+static void slow32_mmio_handle_sockopt(Slow32MMIOContext *ctx,
+                                       const CPUSlow32State *env,
+                                       const Slow32MMIODesc *req,
+                                       Slow32MMIODesc *resp)
+{
+    uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+    int host_fd = slow32_mmio_host_fd_for_guest(ctx, req->status);
+    s32_mmio_sockopt_t h;
+    int hlevel, hname;
+    bool linger;
+    uint32_t need, give;
+    int32_t g[2] = { 0, 0 };
+
+    if (host_fd < 0) {
+        slow32_mmio_fail(resp, EBADF);
+        return;
+    }
+    if (req->length < sizeof h || offset > S32_MMIO_DATA_CAPACITY - req->length ||
+        offset > S32_MMIO_DATA_CAPACITY - sizeof h - 8u) {
+        slow32_mmio_fail(resp, EINVAL);
+        return;
+    }
+    slow32_mmio_copy_from_guest(env, offset, (uint8_t *)&h, sizeof h);
+    if (!host_sockopt(h.level, h.name, &hlevel, &hname)) {
+        slow32_mmio_fail(resp, ENOPROTOOPT);
+        return;
+    }
+    linger = h.level == S32_SOL_SOCKET && h.name == S32_SO_LINGER;
+    need = linger ? 8u : 4u;
+
+    if (req->opcode == S32_MMIO_OP_SETSOCKOPT) {
+        int r;
+        if (h.len < need || req->length < sizeof h + need) {
+            slow32_mmio_fail(resp, EINVAL);
+            return;
+        }
+        slow32_mmio_copy_from_guest(env, offset + sizeof h, (uint8_t *)g, need);
+        if (linger) {
+            struct linger lg = { g[0], g[1] };
+            r = setsockopt(host_fd, hlevel, hname, &lg, sizeof lg);
+        } else {
+            int v = g[0];
+            r = setsockopt(host_fd, hlevel, hname, &v, sizeof v);
+        }
+        if (r < 0) {
+            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
+            return;
+        }
+        resp->status = S32_MMIO_STATUS_OK;
+        resp->length = 0;
+        return;
+    }
+
+    if (linger) {
+        struct linger lg;
+        socklen_t l = sizeof lg;
+        if (getsockopt(host_fd, hlevel, hname, &lg, &l) < 0) {
+            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
+            return;
+        }
+        g[0] = lg.l_onoff;
+        g[1] = lg.l_linger;
+    } else {
+        int v = 0;
+        socklen_t l = sizeof v;
+        if (getsockopt(host_fd, hlevel, hname, &v, &l) < 0) {
+            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
+            return;
+        }
+        if (hlevel == SOL_SOCKET && hname == SO_ERROR && v > 0) {
+            v = s32_errno_from_host(v);
+        }
+        if (hlevel == SOL_SOCKET && hname == SO_TYPE) {
+            v = v == SOCK_STREAM ? 1 : v == SOCK_DGRAM ? 2 : v;
+        }
+        g[0] = v;
+    }
+    give = h.len < need ? h.len : need;
+    slow32_mmio_copy_to_guest(env, offset + sizeof h, (const uint8_t *)g, give);
+    resp->status = give;
+    resp->length = give;
+}
+
 /*
  * The fixed opcodes whose offset word is a data-buffer offset (not a guest
  * address -- READ_DIRECT, POST_READ -- and not unused)
@@ -2271,6 +2615,8 @@ static bool slow32_mmio_offset_is_buffer(uint32_t op)
     case S32_MMIO_OP_GETTZ: case S32_MMIO_OP_TIMER_START: case S32_MMIO_OP_POLL:
     case S32_MMIO_OP_CONNECT: case S32_MMIO_OP_ACCEPT: case S32_MMIO_OP_SEND:
     case S32_MMIO_OP_RECV: case S32_MMIO_OP_BIND: case S32_MMIO_OP_GETSOCKNAME:
+    case S32_MMIO_OP_FDPOLL: case S32_MMIO_OP_GETPEERNAME: case S32_MMIO_OP_SETSOCKOPT:
+    case S32_MMIO_OP_GETSOCKOPT:
     case S32_MMIO_OP_ARGS_INFO: case S32_MMIO_OP_ARGS_DATA:
     case S32_MMIO_OP_ENVP_INFO: case S32_MMIO_OP_ENVP_DATA:
     case S32_MMIO_OP_GETENV: case S32_MMIO_OP_SVC_REQUEST:
@@ -2840,6 +3186,13 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
             slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
             break;
         }
+        {   /* blocking, whatever the listener is: Linux's rule (a BSD host
+             * copies the listener's O_NONBLOCK) */
+            int fl = fcntl(new_host, F_GETFL);
+            if (fl >= 0 && (fl & O_NONBLOCK)) {
+                fcntl(new_host, F_SETFL, fl & ~O_NONBLOCK);
+            }
+        }
         guest_fd = slow32_mmio_guest_socket_fd(ctx, new_host);
         if (guest_fd < 0) {
             slow32_mmio_fail(resp, EMFILE);
@@ -2869,6 +3222,38 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
         resp->length = sizeof(s32_mmio_sockaddr_in_t);
         break;
     }
+
+    case S32_MMIO_OP_FCNTL:
+        slow32_mmio_handle_fcntl(ctx, req, resp);
+        break;
+
+    case S32_MMIO_OP_FDPOLL:
+        slow32_mmio_handle_fdpoll(ctx, env, req, resp);
+        break;
+
+    case S32_MMIO_OP_GETPEERNAME: {
+        int host_fd = slow32_mmio_host_fd_for_guest(ctx, req->status);
+        struct sockaddr_in other;
+        socklen_t other_len = sizeof(other);
+
+        if (host_fd < 0) {
+            slow32_mmio_fail(resp, EBADF);
+            break;
+        }
+        if (getpeername(host_fd, (struct sockaddr *)&other, &other_len) < 0) {
+            slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
+            break;
+        }
+        slow32_mmio_write_sockaddr_in(ctx, env, req->offset, &other);
+        resp->status = S32_MMIO_STATUS_OK;
+        resp->length = sizeof(s32_mmio_sockaddr_in_t);
+        break;
+    }
+
+    case S32_MMIO_OP_SETSOCKOPT:
+    case S32_MMIO_OP_GETSOCKOPT:
+        slow32_mmio_handle_sockopt(ctx, env, req, resp);
+        break;
 
     case S32_MMIO_OP_SHUTDOWN: {
         int host_fd = slow32_mmio_host_fd_for_guest(ctx, req->status);

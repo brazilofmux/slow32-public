@@ -1023,6 +1023,19 @@ At most 11 arguments after the path are used; an empty string ends the list
 early. The child inherits the host environment and the current directory (as
 changed by `CHDIR`).
 
+#### 0x0F FCNTL
+| | |
+|---|---|
+| Request | `status` = fd; `length` = command: 1 F_GETFD, 2 F_SETFD, 3 F_GETFL, 4 F_SETFL; `off` = the argument (not a data-buffer offset) |
+| Action | F_GETFD/F_SETFD read and set the slot's close-on-exec bit (1). Nothing is inherited across EXEC whatever it says; the bit is kept so that a program reads back what it set, and a new slot starts with it clear. F_GETFL reports the host descriptor's access mode and status flags in the guest's `O_*` encoding: 1 read-only, 2 write-only, 3 read-write, `0x04` append, `0x0800` non-blocking. F_SETFL changes only append and non-blocking. |
+| Response | F_GETFD: `status` 0 or 1; F_GETFL: `status` the flags; the setters: `status` 0 |
+| Errors | `EBADF` (no such fd, or a directory stream); `EINVAL` (another command); `EPERM` (F_SETFL changing fd 0, 1 or 2 while it is still the host's own stream: those are shared with whatever started the emulator, and stay as they are); fcntl errno |
+
+On a non-blocking socket READ, WRITE and ACCEPT fail with `EAGAIN` instead
+of waiting, and CONNECT with `EINPROGRESS` (then FDPOLL for writing, and
+`SO_ERROR`, §8.9).  A socket ACCEPT returns is blocking, whatever the
+listener is (Linux's rule; BSD hosts copy the flag, and the host clears it).
+
 
 ### 8.7 Filesystem metadata (0x20–0x2B)
 
@@ -1059,7 +1072,7 @@ A directory fd is not a byte stream: READ, WRITE and CLOSE on it give
 | 16 | 256 bytes | d_name, NUL-terminated, zero-filled after the NUL |
 
 
-### 8.8 Time (0x30–0x35)
+### 8.8 Time and readiness (0x30–0x36)
 
 ##### 8.8.1 `timepair64` (16 bytes)
 | Offset | Type | Field |
@@ -1078,18 +1091,33 @@ A directory fd is not a byte stream: READ, WRITE and CLOSE on it give
 
 | Opcode | Name | Request | Response / data | Errors |
 |---|---|---|---|---|
-| 0x30 | GETTIME | `length` ≥ 16; `status` the clock: 0 wall, 1 monotonic | request `status` 0: host wall clock (UTC, POSIX epoch; negative clamped to 0); 1: a monotonic clock (never decreasing, from an unspecified start); as `timepair64` at `off`; `status` 0, `length` 16 | `EINVAL` (`length` < 16, `off` > CAP−16, request `status` > 1, clock failure) |
+| 0x30 | GETTIME | `length` ≥ 16; `status` the clock: 0 wall, 1 monotonic, 2 processor time | request `status` 0: host wall clock (UTC, POSIX epoch; negative clamped to 0); 1: a monotonic clock (never decreasing, from an unspecified start); 2: the processor time the emulator process has used, which is the program's (under QEMU its other threads count too); as `timepair64` at `off`; `status` 0, `length` 16 | `EINVAL` (`length` < 16, `off` > CAP−16, request `status` > 2, clock failure) |
 | 0x31 | SLEEP | `length` ≥ 16; `timepair64` interval at `off` | Blocks the whole machine for the interval. Done: zeros written at `off`, `status` 0, `length` 16. Interrupted by a host signal: remaining time at `off`, `status` `0xFFFFFFFE`, `length` 16 | `EINVAL` (`length`, `off`, nanoseconds ≥ 10⁹, other host failure) |
 | 0x35 | GETTZ | `length` ≥ 16; `timepair64` (a UTC instant) at `off` | `tzinfo` for that instant in the host's local time zone written over it at `off`; `status` 0, `length` 16. If no abbreviation is available, `"UTC"` | `EINVAL` (`length`, `off`) |
 | 0x32 | TIMER_START | §8.12 | | |
 | 0x33 | TIMER_CANCEL | §8.12 | | |
 | 0x34 | POLL | §8.12 | | |
+| 0x36 | FDPOLL | `length` = n × 8 (n ≤ 128); n `pollfd` at `off`; `status` = timeout in milliseconds, as i32 (negative: no end) | Waits until one of the descriptors is ready, or the timeout. `revents` written in place at `off`; `status` = the number of entries with any; `length` = the request's | `EINVAL` (`length` not a multiple of 8, n > 128, past the buffer); poll errno |
 
 The local time zone is the host's (normally the host `TZ` setting).
 `GETTIME`/`SLEEP` use the host's real clocks and are not deterministic.
 
+##### 8.8.3 `pollfd` (8 bytes) — the guest's `struct pollfd`
+| Offset | Type | Field |
+|---|---|---|
+| 0 | i32 | guest fd; negative: skipped, `revents` 0 |
+| 4 | u16 | events asked for |
+| 6 | u16 | revents, written by the host |
 
-### 8.9 Sockets (0x40–0x48)
+The bits are Linux's: `0x001` IN, `0x002` PRI, `0x004` OUT, `0x008` ERR,
+`0x010` HUP, `0x020` NVAL, `0x040` RDNORM, `0x080` RDBAND, `0x100`
+WRNORM, `0x200` WRBAND.  An fd that is not open (or is a directory
+stream) is NVAL at once, and the wait does not wait.  FDPOLL is
+synchronous and is not POLL (§8.12): it queues no DPC entry, delivers no
+timer, and sees a descriptor whose read is posted as poll(2) sees it.
+
+
+### 8.9 Sockets (0x40–0x4B)
 
 IPv4 TCP only.
 
@@ -1102,7 +1130,7 @@ IPv4 TCP only.
 
 | Opcode | Name | Request | Response | Errors |
 |---|---|---|---|---|
-| 0x40 | SOCKET | `status` = family \| type<<8 \| protocol<<16 (bits 0–7, 8–15, 16–23) | `status` = new guest fd (a blocking TCP socket) | family ≠ 2: `EAFNOSUPPORT`; type ≠ 1 (stream): `EPROTONOSUPPORT`; protocol not 0 or 6: `EPROTONOSUPPORT`; no slot: `EMFILE`; socket errno |
+| 0x40 | SOCKET | `status` = family \| type<<8 \| protocol<<16 (bits 0–7, 8–15, 16–23) | `status` = new guest fd (a blocking TCP socket; FCNTL, §8.6, makes it non-blocking) | family ≠ 2: `EAFNOSUPPORT`; type ≠ 1 (stream): `EPROTONOSUPPORT`; protocol not 0 or 6: `EPROTONOSUPPORT`; no slot: `EMFILE`; socket errno |
 | 0x46 | BIND | `status` = fd, `length` ≥ 8, `sockaddr` at `off` | `status` 0. The host sets `SO_REUSEADDR` first. | `EBADF`; `EINVAL` (`length` < 8, `off` > CAP−8); family ≠ 2: `EAFNOSUPPORT`; bind errno |
 | 0x47 | LISTEN | `status` = fd, `length` = backlog | `status` 0. Backlog ≤ 0 (as i32) → 8; > 128 → 128. | `EBADF`, listen errno |
 | 0x41 | CONNECT | as BIND | `status` 0 (blocks until connected) | as BIND, connect errno |
@@ -1111,9 +1139,28 @@ IPv4 TCP only.
 | 0x48 | GETSOCKNAME | `status` = fd | `status` 0, `length` 8, local `sockaddr` at `off` (not written if `off` > CAP−8) | `EBADF`, getsockname errno |
 | 0x43 | SEND | identical to WRITE (§8.6) | | |
 | 0x44 | RECV | identical to READ (§8.6) | | |
+| 0x49 | GETPEERNAME | `status` = fd | `status` 0, `length` 8, the other end's `sockaddr` at `off` (not written if `off` > CAP−8) | `EBADF`, getpeername errno (`ENOTCONN`) |
+| 0x4A | SETSOCKOPT | `status` = fd; `length` ≥ 12 + the value; `sockopt` at `off`, the value after it | `status` 0 | `EBADF`; `EINVAL` (short `length` or value, past the buffer); `ENOPROTOOPT` (an option not in the table below); setsockopt errno |
+| 0x4B | GETSOCKOPT | `status` = fd; `length` ≥ 12; `sockopt` at `off`, its `len` the room for the value | the value after the header, at most `len` bytes; `status` = `length` = its size | as SETSOCKOPT, getsockopt errno |
 
-Socket fds are closed with CLOSE. There is no DNS, UDP or Unix-domain
-support. The guest library converts POSIX `sockaddr_in` (network byte order)
+##### 8.9.2 `sockopt` (12 bytes) and the options
+| Offset | Type | Field |
+|---|---|---|
+| 0 | u32 | level, Linux's number |
+| 4 | u32 | option, Linux's number |
+| 8 | u32 | SET: bytes of value that follow; GET: room for it |
+
+| Level | Option | Value |
+|---|---|---|
+| 1 (SOL_SOCKET) | 2 SO_REUSEADDR, 9 SO_KEEPALIVE, 7 SO_SNDBUF, 8 SO_RCVBUF | i32 |
+| 1 | 13 SO_LINGER | two i32: on, seconds |
+| 1 | 4 SO_ERROR (get) | i32, the pending error in the guest's errno numbering (§8.4.2), 0 for none; reading clears it |
+| 1 | 3 SO_TYPE (get) | i32, 1 for a stream |
+| 6 (IPPROTO_TCP) | 1 TCP_NODELAY | i32 |
+
+Socket fds are closed with CLOSE; readiness is FDPOLL's (§8.8). There is
+no DNS, UDP or Unix-domain support. A WRITE to a socket whose reader has
+gone fails with `EPIPE`; the host ignores SIGPIPE. The guest library converts POSIX `sockaddr_in` (network byte order)
 to and from §8.9.1.
 
 

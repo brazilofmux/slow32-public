@@ -2,9 +2,7 @@
 #include <stddef.h>
 #include <string.h>
 
-/* clock() - return processor time used (stub: always 0) */
-clock_t clock(void) {
-    return (clock_t)0;
-}
+/* clock is time_mmio.c's (the processor time the host measures) and
+ * time_tz_stub.c's (none) */
 
 /* strftime is time_std.c's */
