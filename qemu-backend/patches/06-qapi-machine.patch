@@ -1,8 +1,8 @@
 diff --git a/qapi/machine.json b/qapi/machine.json
-index de6460f091..7109d1e772 100644
+index 9b145c635b..6f9d7ee661 100644
 --- a/qapi/machine.json
 +++ b/qapi/machine.json
-@@ -41,7 +41,7 @@
+@@ -40,7 +40,7 @@
               'loongarch64', 'm68k', 'microblaze', 'mips', 'mips64',
               'mips64el', 'mipsel', 'or1k', 'ppc',
               'ppc64', 'riscv32', 'riscv64', 'rx', 's390x', 'sh4',
