@@ -94,6 +94,36 @@ PY
         cat "$work/out.txt"
         fail=1
     fi
+
+    # A DBF written by something else (GitHub issue 117): a C field whose
+    # text looks numeric must come back a label, N fields numbers, and a
+    # deleted record must not take up a row.
+    python3 - "$work/foreign.dbf" <<'PY'
+import struct, sys
+hdr = bytes([3, 0, 0, 0]) + struct.pack('<IHH', 3, 32 + 2 * 32 + 1, 11) + bytes(20)
+f1 = b'A'.ljust(11, b'\0') + b'C' + bytes(4) + bytes([5, 0]) + bytes(14)
+f2 = b'B'.ljust(11, b'\0') + b'N' + bytes(4) + bytes([5, 0]) + bytes(14)
+recs = b' ' + b'00123' + b'   42' + b'*' + b'gone ' + b'    0' + b' ' + b'zz   ' + b'    7'
+open(sys.argv[1], 'wb').write(hdr + f1 + f2 + b'\x0d' + recs + b'\x1a')
+PY
+    printf 'LOAD foreign.dbf\nA1\nB1\nA2\nB2\nA3\nX1==A1+1\nQUIT\n' > "$work/in2.cmd"
+    (cd "$work" && "$EMU" "$SHEET_DIR/sheet.s32x" --line) \
+        < "$work/in2.cmd" > "$work/out2.txt" 2>"$work/err2.txt" || true
+    f3=0
+    # X1: a label is worth 0 in arithmetic, a number 123 would give 124
+    for pat in "A1: 00123" "B1: 42" "A2: zz" "B2: 7" "A3: (empty)" "X1: 1 "; do
+        if grep -q "$pat" "$work/out2.txt"; then
+            echo "  OK  foreign-dbf: $pat"
+        else
+            echo "  FAIL foreign-dbf: $pat"
+            f3=1
+        fi
+    done
+    if [ "$f3" -ne 0 ]; then
+        echo "=== foreign-dbf output ---"
+        cat "$work/out2.txt" "$work/err2.txt"
+        fail=1
+    fi
     rm -rf "$work"
 else
     echo "  SKIP foreign-wk1 (no python3)"

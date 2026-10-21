@@ -48,6 +48,8 @@ void sheet_init(sheet_t *sh);
 void sheet_clear(sheet_t *sh);
 cell_t *sheet_cell(sheet_t *sh, int col, int row);
 int sheet_set(sheet_t *sh, int col, int row, const char *text);
+/* A label whatever the text looks like: a DBF C field "00123" is text */
+int sheet_set_label(sheet_t *sh, int col, int row, const char *text);
 double sheet_eval(sheet_t *sh, int col, int row, int *err);
 void sheet_recalc(sheet_t *sh);
 void sheet_format_value(const cell_t *cell, char *buf, int cap);

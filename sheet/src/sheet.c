@@ -135,6 +135,25 @@ int sheet_set(sheet_t *sh, int col, int row, const char *text) {
     return SERR_OK;
 }
 
+int sheet_set_label(sheet_t *sh, int col, int row, const char *text) {
+    cell_t *cell = sheet_cell(sh, col, row);
+    char *copy;
+
+    if (!cell) {
+        return SERR_REF;
+    }
+    free(cell->raw);
+    memset(cell, 0, sizeof(*cell));
+    copy = (char *)malloc(strlen(text) + 1);
+    if (!copy) {
+        return SERR_PARSE;
+    }
+    memcpy(copy, text, strlen(text) + 1);
+    cell->raw = copy;
+    cell->kind = CELL_LABEL;
+    return SERR_OK;
+}
+
 double sheet_eval(sheet_t *sh, int col, int row, int *err) {
     cell_t *cell = sheet_cell(sh, col, row);
     int ferr = SERR_OK;

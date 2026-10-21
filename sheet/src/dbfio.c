@@ -10,7 +10,6 @@
 
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 
@@ -179,25 +178,6 @@ int sheet_save_dbf(const sheet_t *sh, const char *path) {
     return 0;
 }
 
-/* Force a label even when the text looks numeric ("00123"). */
-static int set_label(sheet_t *sh, int col, int row, const char *s) {
-    cell_t *cell = sheet_cell(sh, col, row);
-    char *copy;
-    if (!cell) {
-        return -1;
-    }
-    free(cell->raw);
-    memset(cell, 0, sizeof(*cell));
-    copy = (char *)malloc(strlen(s) + 1);
-    if (!copy) {
-        return -1;
-    }
-    memcpy(copy, s, strlen(s) + 1);
-    cell->raw = copy;
-    cell->kind = CELL_LABEL;
-    return 0;
-}
-
 static void trim_spaces(char *s) {
     char *p = s;
     char *end;
@@ -313,7 +293,7 @@ int sheet_load_dbf(sheet_t *sh, const char *path) {
                 if (tmp[0]) {
                     if (kind == 'C' || kind == 'c' || kind == 'D' || kind == 'd' ||
                         kind == 'L' || kind == 'l') {
-                        set_label(sh, i, row, tmp);
+                        sheet_set_label(sh, i, row, tmp);
                     } else {
                         sheet_set(sh, i, row, tmp);
                     }
