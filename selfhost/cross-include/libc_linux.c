@@ -225,6 +225,10 @@ char *getcwd(char *buf, unsigned long size) {
     return buf;
 }
 
+int dup(int fd) {
+    return (int)sys_ret(__syscall(NR_fcntl, fd, F_DUPFD, 0, 0, 0, 0));
+}
+
 int dup2(int oldfd, int newfd) {
     if (oldfd == newfd) {                        /* dup3 refuses the same fd */
         if (sys_ret(__syscall(NR_fcntl, oldfd, F_GETFD, 0, 0, 0, 0)) < 0) return -1;

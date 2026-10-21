@@ -39,6 +39,7 @@ int   ftruncate(int fd, long length);
 int   chdir(const char *path);
 char *getcwd(char *buf, unsigned long size);
 int   fsync(int fd);
+int   dup(int fd);
 int   dup2(int oldfd, int newfd);
 int   pipe(int fds[2]);
 pid_t fork(void);
