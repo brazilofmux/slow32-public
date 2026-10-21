@@ -2882,6 +2882,7 @@ static void f77_stmt_assign_label(int skip) {
  * time by comparing the value against every FORMAT label of the unit
  * (a branchless select chain -- the unit has a handful). */
 static int f77_fmt_dyn;
+static int f77_fmt_dyn_len;    /* HIR length of a CHARACTER format (-3) */
 
 /* The unit of a WRITE/READ control list.  A CHARACTER entity makes it
  * an internal file: f77_io_int is set with the record length and count
@@ -6306,8 +6307,23 @@ static void f77_wr_list(void) {
     }
 }
 
+/* Length of the format the runtime will walk: a CHARACTER's ex_len,
+ * a FORMAT statement's interned length, -1 for an ASSIGNed label
+ * (those strings are NUL-terminated), 0 when there is no format. */
+static int f77_fmt_len_arg(int fmt_label) {
+    int fs;
+    if (fmt_label == -3) return f77_fmt_dyn_len;
+    if (fmt_label == -2) return f77_iconst(-1);
+    if (fmt_label >= 0) {
+        fs = f77_find_format(fmt_label);
+        if (fs < 0) return f77_iconst(-1);
+        return f77_iconst(lex_str_len[fs]);
+    }
+    return f77_iconst(0);
+}
+
 /* Emit the f77_wr_begin call: unit number, plus the format string or a
- * null pointer for list-directed (FMT=*) output. */
+ * null pointer for list-directed (FMT=*) output, plus the format length. */
 static void f77_wr_begin(int unit_val, int fmt_label) {
     int cb;
     int r;
@@ -6331,8 +6347,9 @@ static void f77_wr_begin(int unit_val, int fmt_label) {
         fa = f77_iconst(0);
     }
     h_carg[h_ncarg] = fa; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-    if (f77_io_int) r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "f77_wr_begin_int");
-    else r = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "f77_wr_begin");
+    h_carg[h_ncarg] = f77_fmt_len_arg(fmt_label); h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    if (f77_io_int) r = hi_emit(HI_CALL, TY_INT, -1, -1, 5, "f77_wr_begin_int");
+    else r = hi_emit(HI_CALL, TY_INT, -1, -1, 3, "f77_wr_begin");
     h_cbase[r] = cb;
     f77_io_int = 0;
 }
@@ -6527,10 +6544,25 @@ static int f77_io_fmt_spec(void) {
             /* the constant itself, not one end of a // */
             if (f77_fmt_dyn >= 0 && h_kind[f77_fmt_dyn] == HI_SADDR && h_val[f77_fmt_dyn] == sidx)
                 f77_check_format(lex_strpool + lex_str_off[sidx], slen);
+            f77_fmt_dyn_len = ex_len;
             return -3;
         }
-        f77_fmt_dyn = f77_expr();
-        return -3;
+        {
+            /* an unsubscripted CHARACTER array is the concatenation of
+             * its elements (F77 13.1.1); a single element is one item. */
+            int nelem = 1;
+            if (lx_t == T_NAME) {
+                int s = f77_sym(lex_name);
+                int after = (int)(lx_rte - lx_stmt);
+                if (f77_srank[s] > 0 && (after >= lx_stmt_len || lx_stmt[after] != '('))
+                    nelem = f77_sym_nelem(s);
+            }
+            f77_fmt_dyn = f77_expr();
+            f77_fmt_dyn_len = ex_len;
+            if (nelem > 1)
+                f77_fmt_dyn_len = hi_emit(HI_MUL, TY_INT, ex_len, f77_iconst(nelem), 0, NULL);
+            return -3;
+        }
     }
     if (lx_t == T_NAME) {
         f77_fmt_dyn = f77_load_sym(f77_sym(lex_name));
@@ -6861,11 +6893,12 @@ static void f77_stmt_read(int skip) {
         fa = f77_iconst(0);
     }
     h_carg[h_ncarg] = fa; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = f77_fmt_len_arg(fmt_label); h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
     h_carg[h_ncarg] = f77_iconst((f77_io_end_label >= 0 ? 1 : 0) |
                                  ((f77_io_err_label >= 0 || f77_io_iostat >= 0) ? 2 : 0));
     h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-    if (f77_io_int) r = hi_emit(HI_CALL, TY_INT, -1, -1, 5, "f77_rd_begin_int");
-    else r = hi_emit(HI_CALL, TY_INT, -1, -1, 3, "f77_rd_begin");
+    if (f77_io_int) r = hi_emit(HI_CALL, TY_INT, -1, -1, 6, "f77_rd_begin_int");
+    else r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "f77_rd_begin");
     h_cbase[r] = cb;
     f77_io_int = 0;
 
