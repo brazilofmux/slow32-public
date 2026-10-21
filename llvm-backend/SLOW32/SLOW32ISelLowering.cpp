@@ -1089,18 +1089,23 @@ SDValue SLOW32TargetLowering::LowerFormalArguments(
     assert(isSupportedLocInfo(VA.getLocInfo()) &&
            "Unsupported calling convention assignment");
 
+    // Index is into ArgLocs; the Ins entry is the location's ValNo, as on the
+    // caller side.  A straddling varargs f64 above is two ArgLocs for one
+    // Ins, so after one the two indices differ, and Ins[Index] was the
+    // wrong argument or past the end (GitHub issue 116).
     auto HandleSplitI64 = [&](unsigned Index) -> bool {
-      if (Ins[Index].ArgVT != MVT::i64 || Ins[Index].VT != MVT::i32)
-        return false;
       if (Index + 1 >= ArgLocs.size())
         return false;
-      if (Ins[Index + 1].ArgVT != MVT::i64 || Ins[Index + 1].VT != MVT::i32)
-        return false;
-      if (Ins[Index].OrigArgIndex != Ins[Index + 1].OrigArgIndex)
-        return false;
-
       const CCValAssign &LoVA = ArgLocs[Index];
       const CCValAssign &HiVA = ArgLocs[Index + 1];
+      const ISD::InputArg &LoIn = Ins[LoVA.getValNo()];
+      const ISD::InputArg &HiIn = Ins[HiVA.getValNo()];
+      if (LoIn.ArgVT != MVT::i64 || LoIn.VT != MVT::i32)
+        return false;
+      if (HiIn.ArgVT != MVT::i64 || HiIn.VT != MVT::i32)
+        return false;
+      if (LoIn.OrigArgIndex != HiIn.OrigArgIndex)
+        return false;
       if (!LoVA.isRegLoc())
         return false;
 

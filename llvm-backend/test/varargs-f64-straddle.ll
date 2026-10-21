@@ -35,3 +35,14 @@ define i32 @caller() {
 define double @callee(i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 %a5, i32 %a6, i32 %a7, double %d, ...) {
   ret double %d
 }
+
+; An i64 after the straddling double (GitHub issue 116): the double is two
+; ArgLocs for one Ins entry, so from here the two indices differ by one; the
+; split-i64 handler used the ArgLocs index into Ins and read past its end.
+; The halves are the next two stack words after the double's high half.
+; CHECK-LABEL: callee_i64:
+; CHECK-DAG: ldw r1, sp+4
+; CHECK-DAG: ldw r2, sp+8
+define i64 @callee_i64(i32 %a1, i32 %a2, i32 %a3, i32 %a4, i32 %a5, i32 %a6, i32 %a7, double %d, i64 %x, ...) {
+  ret i64 %x
+}
