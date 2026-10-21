@@ -6654,3 +6654,9 @@ compare bytes, which for big-endian UTF-16 in fixed-length records is
 this same order. Test 2002/natsortcoll (file and table SORT, a national
 and an alphanumeric key under one alphabet; no oracle: GnuCOBOL's USAGE
 NATIONAL is unfinished and refuses it).
+Comparisons were checked the same day and needed nothing: under a
+PROGRAM COLLATING SEQUENCE, national relations (to national, to a
+literal, to an alphanumeric operand converted per 8.8.4.2.6), EVALUATE,
+a condition-name THRU range, HIGH-VALUE/LOW-VALUE and SEARCH ALL all
+keep code-unit order, on both arithmetic paths, while an alphanumeric
+relation follows the alphabet. Test 2002/natifcoll keeps it so.
