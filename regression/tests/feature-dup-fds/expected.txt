@@ -7,5 +7,7 @@ it is the first one now: "rbor"
 dup2 onto itself: 1
 dup2 from a closed fd: -1 EBADF 1, target still open 1
 dup of a bad fd: -1 EBADF 1
+dirfd F_GETFD: 1
+dup2 onto dirfd: 1 same 1 still open 1
 after closing the first, the dup still reads 6
 fd constants 0 1 2

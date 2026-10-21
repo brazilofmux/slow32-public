@@ -3,10 +3,12 @@
  * it first, onto itself does nothing, from a closed one fails and leaves
  * the target alone; closing one leaves the other.  Every line is what
  * glibc and macOS print. */
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 int main(void) {
@@ -45,6 +47,14 @@ int main(void) {
     r = dup(9999);
     e = errno;
     printf("dup of a bad fd: %d EBADF %d\n", r, e == EBADF);
+
+    mkdir("dupdir.tmp", 0755);
+    DIR *dp = opendir("dupdir.tmp");
+    int dfd = dirfd(dp);
+    printf("dirfd F_GETFD: %d\n", dfd >= 0 && fcntl(dfd, F_GETFD) >= 0);
+    int onto = dup2(c, dfd);
+    printf("dup2 onto dirfd: %d same %d still open %d\n", onto >= 0, onto == dfd, fcntl(dfd, F_GETFD) >= 0);
+    rmdir("dupdir.tmp");
 
     close(a);
     lseek(b, 0, SEEK_SET);
