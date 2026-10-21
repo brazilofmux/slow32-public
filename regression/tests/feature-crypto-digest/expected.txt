@@ -25,4 +25,5 @@ SHA224()               23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7
 MD5()                  900150983cd24fb0d6963f7d28e17f72
 names: SHA-256 1, SHA2-512 1, Sha1 1, whirlpool 1
 sizes: 16 48 64, blocks 64 128
+max block 128
 random: 1, two draws differ 1, status 1

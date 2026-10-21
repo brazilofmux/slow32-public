@@ -85,6 +85,7 @@ int main(void) {
            EVP_get_digestbyname("Sha1") == EVP_sha1(), EVP_get_digestbyname("whirlpool") == NULL);
     printf("sizes: %d %d %d, blocks %d %d\n", EVP_MD_size(EVP_md5()), EVP_MD_size(EVP_sha384()),
            EVP_MD_get_size(EVP_sha512()), EVP_MD_block_size(EVP_sha256()), EVP_MD_block_size(EVP_sha512()));
+    printf("max block %d\n", EVP_MAX_BLOCK_LENGTH);
 
     unsigned char r1[64], r2[64];
     int ok = RAND_bytes(r1, sizeof r1) && RAND_bytes(r2, sizeof r2);

@@ -119,10 +119,17 @@ static int host_update(int handle, const void *d, size_t n) {
     return 1;
 }
 
-/* the result, and the host context is gone either way */
-static int host_final(int handle, unsigned char *out, unsigned int *len) {
+/* the result, and the host context is gone either way.  expect is the
+ * digest size for this algorithm: a host that returns another length
+ * (or more than the buffer this interface advertises) is refused
+ * before the copy. */
+static int host_final(int handle, unsigned char *out, unsigned int *len, int expect) {
     int r = request(S32_CRYPTO_FINAL, 0u, (unsigned)handle);
     if (r < 0) return 0;
+    if (expect < 1 || r < 1 || r > expect || (unsigned)r > S32_CRYPTO_MAX_DIGEST) {
+        errno = EIO;
+        return 0;
+    }
     memcpy(out, (const void *)S32_MMIO_DATA_BUFFER, (size_t)r);
     if (len) *len = (unsigned)r;
     return 1;
@@ -183,8 +190,8 @@ int EVP_DigestUpdate(EVP_MD_CTX *ctx, const void *d, size_t cnt) {
 }
 
 int EVP_DigestFinal_ex(EVP_MD_CTX *ctx, unsigned char *md, unsigned int *s) {
-    if (!ctx || ctx->handle < 0 || !md) return 0;
-    int ok = host_final(ctx->handle, md, s);
+    if (!ctx || ctx->handle < 0 || !md || !ctx->md) return 0;
+    int ok = host_final(ctx->handle, md, s, ctx->md->size);
     ctx->handle = -1;           /* spent, as OpenSSL's is until the next Init */
     return ok;
 }
@@ -203,7 +210,7 @@ int EVP_Digest(const void *data, size_t count, unsigned char *md, unsigned int *
         host_free(h);
         return 0;
     }
-    return host_final(h, md, size);
+    return host_final(h, md, size, type->size);
 }
 
 unsigned char *HMAC(const EVP_MD *evp_md, const void *key, int key_len,
@@ -218,7 +225,7 @@ unsigned char *HMAC(const EVP_MD *evp_md, const void *key, int key_len,
         return NULL;
     }
     if (!md) md = own;
-    return host_final(h, md, md_len) ? md : NULL;
+    return host_final(h, md, md_len, evp_md->size) ? md : NULL;
 }
 
 static unsigned char *one_shot(const EVP_MD *type, const unsigned char *d, size_t n,
@@ -259,7 +266,12 @@ int RAND_bytes(unsigned char *buf, int num) {
     size_t left = (size_t)num;
     while (left) {
         size_t chunk = left > S32_MMIO_DATA_CAPACITY ? S32_MMIO_DATA_CAPACITY : left;
-        if (request(S32_CRYPTO_RANDOM, (unsigned)chunk, 0u) < 0) return 0;
+        int r = request(S32_CRYPTO_RANDOM, (unsigned)chunk, 0u);
+        if (r < 0) return 0;
+        if (r != (int)chunk) {
+            errno = EIO;
+            return 0;
+        }
         memcpy(buf, (const void *)S32_MMIO_DATA_BUFFER, chunk);
         buf += chunk;
         left -= chunk;
