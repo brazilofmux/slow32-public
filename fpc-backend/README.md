@@ -151,6 +151,17 @@ linker options we never see, generic front-end items that fail on the host
 compiler too).  `OUT=/tmp/fpc-tests-slow32` holds `results.tsv` and each
 failure's work directory.
 
+### 7. The ABI tests
+
+`tests/cdecl-abi/run.sh` compiles a Pascal program with ppcs32 and a C file
+with clang and links them: every `cdecl` parameter shape that tells the
+conventions apart (a double after an int, an int64 after the hole that
+leaves, a double or int64 at r10, fixed and variadic arguments of a varargs
+function), in both directions, with the C side printing what arrived.
+`tests/shift64/run.sh` checks 64-bit shifts by a variable count against what
+a host Free Pascal prints.  Both must say PASS after a compiler change;
+neither is part of the FPC suite above.
+
 ## Compiler Flags Reference
 
 | Flag | Purpose |

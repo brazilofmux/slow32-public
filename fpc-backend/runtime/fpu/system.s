@@ -744,80 +744,83 @@ SYSTEM_$$_SHIFT128RIGHT$QWORD$QWORD$SMALLINT$QWORD$QWORD:
 	stw	r30,r3,-84
 	jal	r0,.Lj92
 .Lj91:
-	ldh	r3,r30,-72
-	addi	r4,r0,64
-	slt	r3,r3,r4
+	ldh	r4,r30,-72
+	addi	r3,r0,64
+	slt	r3,r4,r3
 	bne	r3,r0,.Lj93
 	jal	r0,.Lj94
 .Lj93:
 	ldb	r3,r30,-100
 	ldw	r6,r30,-60
 	ldw	r5,r30,-56
-	slli	r8,r3,0
-	srli	r8,r8,0
-	addi	r9,r8,-32
-	blt	r9,r0,.Lj95
+	slli	r3,r3,0
+	srli	r3,r3,0
+	andi	r9,r3,63
+	addi	r7,r9,-32
+	blt	r7,r0,.Lj95
 	li	r4,0
-	sll	r3,r6,r9
+	sll	r3,r6,r7
 	jal	r0,.Lj96
 .Lj95:
-	li	r9,31
-	srli	r7,r6,1
-	sub	r9,r9,r8
-	sll	r4,r6,r8
-	srl	r7,r7,r9
-	sll	r3,r5,r8
-	or	r3,r3,r7
+	li	r7,31
+	srli	r8,r6,1
+	sub	r7,r7,r9
+	sll	r4,r6,r9
+	srl	r8,r8,r7
+	sll	r3,r5,r9
+	or	r3,r3,r8
 .Lj96:
 	ldh	r7,r30,-72
-	ldw	r5,r30,-68
-	ldw	r6,r30,-64
-	slli	r2,r7,0
-	srli	r2,r2,0
-	addi	r8,r2,-32
-	blt	r8,r0,.Lj97
+	ldw	r6,r30,-68
+	ldw	r5,r30,-64
+	slli	r7,r7,0
+	srli	r7,r7,0
+	andi	r2,r7,63
+	addi	r10,r2,-32
+	blt	r10,r0,.Lj97
 	li	r7,0
-	srl	r10,r6,r8
+	srl	r8,r5,r10
 	jal	r0,.Lj98
 .Lj97:
-	li	r8,31
-	slli	r9,r6,1
-	sub	r8,r8,r2
-	srl	r10,r5,r2
-	sll	r9,r9,r8
-	srl	r7,r6,r2
-	or	r10,r10,r9
+	li	r10,31
+	slli	r9,r5,1
+	sub	r10,r10,r2
+	srl	r8,r6,r2
+	sll	r9,r9,r10
+	srl	r7,r5,r2
+	or	r8,r8,r9
 .Lj98:
-	or	r4,r4,r10
+	or	r4,r4,r8
 	or	r3,r3,r7
 	stw	r30,r4,-96
 	stw	r30,r3,-92
 	ldh	r5,r30,-72
-	ldw	r4,r30,-60
-	ldw	r3,r30,-56
-	slli	r6,r5,0
-	srli	r6,r6,0
-	addi	r5,r6,-32
-	blt	r5,r0,.Lj99
-	li	r8,0
-	srl	r7,r3,r5
+	ldw	r3,r30,-60
+	ldw	r4,r30,-56
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r9,r5,63
+	addi	r7,r9,-32
+	blt	r7,r0,.Lj99
+	li	r6,0
+	srl	r5,r4,r7
 	jal	r0,.Lj100
 .Lj99:
-	li	r5,31
-	slli	r9,r3,1
-	sub	r5,r5,r6
-	srl	r7,r4,r6
-	sll	r9,r9,r5
-	srl	r8,r3,r6
-	or	r7,r7,r9
+	li	r7,31
+	slli	r8,r4,1
+	sub	r7,r7,r9
+	srl	r5,r3,r9
+	sll	r8,r8,r7
+	srl	r6,r4,r9
+	or	r5,r5,r8
 .Lj100:
-	stw	r30,r7,-88
-	stw	r30,r8,-84
+	stw	r30,r5,-88
+	stw	r30,r6,-84
 	jal	r0,.Lj101
 .Lj94:
-	ldh	r3,r30,-72
-	addi	r4,r0,128
-	slt	r3,r3,r4
+	ldh	r4,r30,-72
+	addi	r3,r0,128
+	slt	r3,r4,r3
 	bne	r3,r0,.Lj102
 	jal	r0,.Lj103
 .Lj102:
@@ -825,24 +828,25 @@ SYSTEM_$$_SHIFT128RIGHT$QWORD$QWORD$SMALLINT$QWORD$QWORD:
 	andi	r5,r3,63
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
-	slli	r9,r5,0
-	srli	r9,r9,0
-	addi	r6,r9,-32
-	blt	r6,r0,.Lj104
-	li	r8,0
-	srl	r5,r3,r6
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r5,r5,63
+	addi	r7,r5,-32
+	blt	r7,r0,.Lj104
+	li	r6,0
+	srl	r9,r3,r7
 	jal	r0,.Lj105
 .Lj104:
-	li	r6,31
-	slli	r7,r3,1
-	sub	r6,r6,r9
-	srl	r5,r4,r9
-	sll	r7,r7,r6
-	srl	r8,r3,r9
-	or	r5,r5,r7
+	li	r7,31
+	slli	r8,r3,1
+	sub	r7,r7,r5
+	srl	r9,r4,r5
+	sll	r8,r8,r7
+	srl	r6,r3,r5
+	or	r9,r9,r8
 .Lj105:
-	stw	r30,r5,-96
-	stw	r30,r8,-92
+	stw	r30,r9,-96
+	stw	r30,r6,-92
 	jal	r0,.Lj106
 .Lj103:
 	stw	r30,r0,-96
@@ -857,11 +861,11 @@ SYSTEM_$$_SHIFT128RIGHT$QWORD$QWORD$SMALLINT$QWORD$QWORD:
 	stw	r4,r3,0
 	ldw	r3,r30,-92
 	stw	r4,r3,4
-	ldw	r4,r30,-76
-	ldw	r3,r30,-88
-	stw	r4,r3,0
-	ldw	r3,r30,-84
-	stw	r4,r3,4
+	ldw	r3,r30,-76
+	ldw	r4,r30,-88
+	stw	r3,r4,0
+	ldw	r4,r30,-84
+	stw	r3,r4,4
 	ldw	r30,r29,100
 	ldw	r31,r29,104
 	addi	r29,r29,108
@@ -908,70 +912,73 @@ SYSTEM_$$_SHIFT128RIGHTJAMMING$QWORD$QWORD$SMALLINT$QWORD$QWORD:
 	stw	r30,r3,-84
 	jal	r0,.Lj111
 .Lj110:
-	ldh	r3,r30,-72
-	addi	r4,r0,64
-	slt	r3,r3,r4
+	ldh	r4,r30,-72
+	addi	r3,r0,64
+	slt	r3,r4,r3
 	bne	r3,r0,.Lj112
 	jal	r0,.Lj113
 .Lj112:
 	ldb	r3,r30,-100
-	ldw	r6,r30,-60
-	ldw	r5,r30,-56
-	slli	r8,r3,0
-	srli	r8,r8,0
+	ldw	r5,r30,-60
+	ldw	r6,r30,-56
+	slli	r3,r3,0
+	srli	r3,r3,0
+	andi	r8,r3,63
 	addi	r7,r8,-32
 	blt	r7,r0,.Lj114
 	li	r4,0
-	sll	r3,r6,r7
+	sll	r3,r5,r7
 	jal	r0,.Lj115
 .Lj114:
 	li	r7,31
-	srli	r9,r6,1
+	srli	r9,r5,1
 	sub	r7,r7,r8
-	sll	r4,r6,r8
+	sll	r4,r5,r8
 	srl	r9,r9,r7
-	sll	r3,r5,r8
+	sll	r3,r6,r8
 	or	r3,r3,r9
 .Lj115:
 	ldh	r7,r30,-72
 	ldw	r5,r30,-68
 	ldw	r6,r30,-64
-	slli	r2,r7,0
-	srli	r2,r2,0
-	addi	r9,r2,-32
-	blt	r9,r0,.Lj116
+	slli	r7,r7,0
+	srli	r7,r7,0
+	andi	r10,r7,63
+	addi	r8,r10,-32
+	blt	r8,r0,.Lj116
 	li	r7,0
-	srl	r8,r6,r9
+	srl	r2,r6,r8
 	jal	r0,.Lj117
 .Lj116:
-	li	r9,31
-	slli	r10,r6,1
-	sub	r9,r9,r2
-	srl	r8,r5,r2
-	sll	r10,r10,r9
-	srl	r7,r6,r2
-	or	r8,r8,r10
+	li	r8,31
+	slli	r9,r6,1
+	sub	r8,r8,r10
+	srl	r2,r5,r10
+	sll	r9,r9,r8
+	srl	r7,r6,r10
+	or	r2,r2,r9
 .Lj117:
-	or	r5,r4,r8
+	or	r5,r4,r2
 	or	r6,r3,r7
 	ldb	r7,r30,-100
 	ldw	r4,r30,-68
 	ldw	r3,r30,-64
 	slli	r7,r7,0
 	srli	r7,r7,0
-	addi	r10,r7,-32
+	andi	r2,r7,63
+	addi	r10,r2,-32
 	blt	r10,r0,.Lj120
 	li	r8,0
 	sll	r9,r4,r10
 	jal	r0,.Lj121
 .Lj120:
 	li	r10,31
-	srli	r2,r4,1
-	sub	r10,r10,r7
-	sll	r8,r4,r7
-	srl	r2,r2,r10
-	sll	r9,r3,r7
-	or	r9,r9,r2
+	srli	r7,r4,1
+	sub	r10,r10,r2
+	sll	r8,r4,r2
+	srl	r7,r7,r10
+	sll	r9,r3,r2
+	or	r9,r9,r7
 .Lj121:
 	bne	r0,r9,.Lj118
 	bne	r0,r8,.Lj118
@@ -988,26 +995,27 @@ SYSTEM_$$_SHIFT128RIGHTJAMMING$QWORD$QWORD$SMALLINT$QWORD$QWORD:
 	stw	r30,r3,-96
 	stw	r30,r4,-92
 	ldh	r5,r30,-72
-	ldw	r4,r30,-60
-	ldw	r3,r30,-56
-	slli	r9,r5,0
-	srli	r9,r9,0
-	addi	r5,r9,-32
-	blt	r5,r0,.Lj123
-	li	r8,0
-	srl	r6,r3,r5
+	ldw	r3,r30,-60
+	ldw	r4,r30,-56
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r9,r5,63
+	addi	r6,r9,-32
+	blt	r6,r0,.Lj123
+	li	r5,0
+	srl	r8,r4,r6
 	jal	r0,.Lj124
 .Lj123:
-	li	r5,31
-	slli	r7,r3,1
-	sub	r5,r5,r9
-	srl	r6,r4,r9
-	sll	r7,r7,r5
+	li	r6,31
+	slli	r7,r4,1
+	sub	r6,r6,r9
 	srl	r8,r3,r9
-	or	r6,r6,r7
+	sll	r7,r7,r6
+	srl	r5,r4,r9
+	or	r8,r8,r7
 .Lj124:
-	stw	r30,r6,-88
-	stw	r30,r8,-84
+	stw	r30,r8,-88
+	stw	r30,r5,-84
 	jal	r0,.Lj125
 .Lj113:
 	ldh	r3,r30,-72
@@ -1045,21 +1053,22 @@ SYSTEM_$$_SHIFT128RIGHTJAMMING$QWORD$QWORD$SMALLINT$QWORD$QWORD:
 	ldb	r3,r30,-100
 	ldw	r5,r30,-60
 	ldw	r6,r30,-56
-	slli	r8,r3,0
-	srli	r8,r8,0
-	addi	r9,r8,-32
-	blt	r9,r0,.Lj136
+	slli	r3,r3,0
+	srli	r3,r3,0
+	andi	r9,r3,63
+	addi	r7,r9,-32
+	blt	r7,r0,.Lj136
 	li	r4,0
-	sll	r3,r5,r9
+	sll	r3,r5,r7
 	jal	r0,.Lj137
 .Lj136:
-	li	r9,31
-	srli	r7,r5,1
-	sub	r9,r9,r8
-	sll	r4,r5,r8
-	srl	r7,r7,r9
-	sll	r3,r6,r8
-	or	r3,r3,r7
+	li	r7,31
+	srli	r8,r5,1
+	sub	r7,r7,r9
+	sll	r4,r5,r9
+	srl	r8,r8,r7
+	sll	r3,r6,r9
+	or	r3,r3,r8
 .Lj137:
 	ldw	r6,r30,-68
 	ldw	r5,r30,-64
@@ -1077,36 +1086,37 @@ SYSTEM_$$_SHIFT128RIGHTJAMMING$QWORD$QWORD$SMALLINT$QWORD$QWORD:
 	addi	r4,r0,0
 	ldh	r5,r30,-72
 	andi	r7,r5,63
-	ldw	r5,r30,-60
-	ldw	r6,r30,-56
-	slli	r2,r7,0
-	srli	r2,r2,0
-	addi	r10,r2,-32
-	blt	r10,r0,.Lj139
+	ldw	r6,r30,-60
+	ldw	r5,r30,-56
+	slli	r7,r7,0
+	srli	r7,r7,0
+	andi	r8,r7,63
+	addi	r9,r8,-32
+	blt	r9,r0,.Lj139
 	li	r7,0
-	srl	r8,r6,r10
+	srl	r2,r5,r9
 	jal	r0,.Lj140
 .Lj139:
-	li	r10,31
-	slli	r9,r6,1
-	sub	r10,r10,r2
-	srl	r8,r5,r2
-	sll	r9,r9,r10
-	srl	r7,r6,r2
-	or	r8,r8,r9
+	li	r9,31
+	slli	r10,r5,1
+	sub	r9,r9,r8
+	srl	r2,r6,r8
+	sll	r10,r10,r9
+	srl	r7,r5,r8
+	or	r2,r2,r10
 .Lj140:
-	or	r3,r3,r8
+	or	r3,r3,r2
 	or	r4,r4,r7
 	stw	r30,r3,-96
 	stw	r30,r4,-92
 	jal	r0,.Lj141
 .Lj133:
 	ldw	r5,r30,-60
-	ldw	r3,r30,-56
+	ldw	r4,r30,-56
 	ldw	r6,r30,-68
-	ldw	r4,r30,-64
+	ldw	r3,r30,-64
 	or	r5,r5,r6
-	or	r3,r3,r4
+	or	r3,r4,r3
 	bne	r0,r3,.Lj142
 	bne	r0,r5,.Lj142
 	jal	r0,.Lj143
@@ -1125,16 +1135,16 @@ SYSTEM_$$_SHIFT128RIGHTJAMMING$QWORD$QWORD$SMALLINT$QWORD$QWORD:
 	stw	r30,r0,-84
 .Lj125:
 .Lj111:
-	ldw	r4,r30,-80
-	ldw	r3,r30,-96
-	stw	r4,r3,0
-	ldw	r3,r30,-92
-	stw	r4,r3,4
-	ldw	r3,r30,-76
-	ldw	r4,r30,-88
+	ldw	r3,r30,-80
+	ldw	r4,r30,-96
 	stw	r3,r4,0
-	ldw	r4,r30,-84
+	ldw	r4,r30,-92
 	stw	r3,r4,4
+	ldw	r4,r30,-76
+	ldw	r3,r30,-88
+	stw	r4,r3,0
+	ldw	r3,r30,-84
+	stw	r4,r3,4
 	ldw	r30,r29,100
 	ldw	r31,r29,104
 	addi	r29,r29,108
@@ -1395,24 +1405,25 @@ SYSTEM_$$_SHIFT64RIGHTJAMMING$QWORD$SMALLINT$QWORD:
 	andi	r5,r3,63
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
-	slli	r8,r5,0
-	srli	r8,r8,0
-	addi	r6,r8,-32
-	blt	r6,r0,.Lj179
-	li	r5,0
-	sll	r7,r4,r6
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r8,r5,63
+	addi	r5,r8,-32
+	blt	r5,r0,.Lj179
+	li	r6,0
+	sll	r7,r4,r5
 	jal	r0,.Lj180
 .Lj179:
-	li	r6,31
+	li	r5,31
 	srli	r9,r4,1
-	sub	r6,r6,r8
-	sll	r5,r4,r8
-	srl	r9,r9,r6
+	sub	r5,r5,r8
+	sll	r6,r4,r8
+	srl	r9,r9,r5
 	sll	r7,r3,r8
 	or	r7,r7,r9
 .Lj180:
 	bne	r0,r7,.Lj177
-	bne	r0,r5,.Lj177
+	bne	r0,r6,.Lj177
 	jal	r0,.Lj178
 .Lj177:
 	addi	r3,r0,1
@@ -1421,27 +1432,28 @@ SYSTEM_$$_SHIFT64RIGHTJAMMING$QWORD$SMALLINT$QWORD:
 	addi	r3,r0,0
 .Lj181:
 	addi	r4,r0,0
-	ldh	r6,r30,-64
-	ldw	r7,r30,-60
-	ldw	r5,r30,-56
-	slli	r10,r6,0
-	srli	r10,r10,0
-	addi	r9,r10,-32
-	blt	r9,r0,.Lj182
-	li	r6,0
-	srl	r8,r5,r9
+	ldh	r7,r30,-64
+	ldw	r5,r30,-60
+	ldw	r6,r30,-56
+	slli	r7,r7,0
+	srli	r7,r7,0
+	andi	r10,r7,63
+	addi	r2,r10,-32
+	blt	r2,r0,.Lj182
+	li	r7,0
+	srl	r8,r6,r2
 	jal	r0,.Lj183
 .Lj182:
-	li	r9,31
-	slli	r2,r5,1
-	sub	r9,r9,r10
-	srl	r8,r7,r10
-	sll	r2,r2,r9
-	srl	r6,r5,r10
-	or	r8,r8,r2
+	li	r2,31
+	slli	r9,r6,1
+	sub	r2,r2,r10
+	srl	r8,r5,r10
+	sll	r9,r9,r2
+	srl	r7,r6,r10
+	or	r8,r8,r9
 .Lj183:
 	or	r3,r3,r8
-	or	r4,r4,r6
+	or	r4,r4,r7
 	stw	r30,r3,-76
 	stw	r30,r4,-72
 	jal	r0,.Lj184
@@ -1776,27 +1788,28 @@ SYSTEM_$$_SHORTSHIFT128LEFT$QWORD$QWORD$SMALLINT$QWORD$QWORD:
 	sth	r30,r7,-72
 	stw	r30,r8,-76
 	stw	r30,r9,-80
-	ldh	r4,r30,-72
+	ldh	r5,r30,-72
 	ldw	r3,r30,-68
-	ldw	r5,r30,-64
-	slli	r8,r4,0
-	srli	r8,r8,0
-	addi	r9,r8,-32
-	blt	r9,r0,.Lj216
-	li	r4,0
-	sll	r6,r3,r9
+	ldw	r4,r30,-64
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r8,r5,63
+	addi	r7,r8,-32
+	blt	r7,r0,.Lj216
+	li	r5,0
+	sll	r6,r3,r7
 	jal	r0,.Lj217
 .Lj216:
-	li	r9,31
-	srli	r7,r3,1
-	sub	r9,r9,r8
-	sll	r4,r3,r8
-	srl	r7,r7,r9
-	sll	r6,r5,r8
-	or	r6,r6,r7
+	li	r7,31
+	srli	r9,r3,1
+	sub	r7,r7,r8
+	sll	r5,r3,r8
+	srl	r9,r9,r7
+	sll	r6,r4,r8
+	or	r6,r6,r9
 .Lj217:
 	ldw	r3,r30,-80
-	stw	r3,r4,0
+	stw	r3,r5,0
 	stw	r3,r6,4
 	ldh	r3,r30,-72
 	seq	r3,r3,r0
@@ -1815,46 +1828,48 @@ SYSTEM_$$_SHORTSHIFT128LEFT$QWORD$QWORD$SMALLINT$QWORD$QWORD:
 	andi	r3,r3,63
 	ldw	r6,r30,-68
 	ldw	r5,r30,-64
-	slli	r7,r3,0
-	srli	r7,r7,0
-	addi	r8,r7,-32
-	blt	r8,r0,.Lj221
+	slli	r3,r3,0
+	srli	r3,r3,0
+	andi	r9,r3,63
+	addi	r7,r9,-32
+	blt	r7,r0,.Lj221
 	li	r3,0
-	srl	r4,r5,r8
+	srl	r4,r5,r7
 	jal	r0,.Lj222
 .Lj221:
-	li	r8,31
-	slli	r9,r5,1
-	sub	r8,r8,r7
-	srl	r4,r6,r7
-	sll	r9,r9,r8
-	srl	r3,r5,r7
-	or	r4,r4,r9
+	li	r7,31
+	slli	r8,r5,1
+	sub	r7,r7,r9
+	srl	r4,r6,r9
+	sll	r8,r8,r7
+	srl	r3,r5,r9
+	or	r4,r4,r8
 .Lj222:
 	ldh	r7,r30,-72
 	ldw	r5,r30,-60
 	ldw	r6,r30,-56
-	slli	r2,r7,0
-	srli	r2,r2,0
-	addi	r8,r2,-32
-	blt	r8,r0,.Lj223
-	li	r10,0
-	sll	r7,r5,r8
+	slli	r7,r7,0
+	srli	r7,r7,0
+	andi	r10,r7,63
+	addi	r9,r10,-32
+	blt	r9,r0,.Lj223
+	li	r2,0
+	sll	r7,r5,r9
 	jal	r0,.Lj224
 .Lj223:
-	li	r8,31
-	srli	r9,r5,1
-	sub	r8,r8,r2
-	sll	r10,r5,r2
-	srl	r9,r9,r8
-	sll	r7,r6,r2
-	or	r7,r7,r9
+	li	r9,31
+	srli	r8,r5,1
+	sub	r9,r9,r10
+	sll	r2,r5,r10
+	srl	r8,r8,r9
+	sll	r7,r6,r10
+	or	r7,r7,r8
 .Lj224:
-	or	r4,r4,r10
-	or	r5,r3,r7
-	ldw	r3,r30,-76
-	stw	r3,r4,0
-	stw	r3,r5,4
+	or	r4,r4,r2
+	or	r3,r3,r7
+	ldw	r5,r30,-76
+	stw	r5,r4,0
+	stw	r5,r3,4
 .Lj220:
 	ldw	r30,r29,80
 	ldw	r31,r29,84
@@ -2013,68 +2028,71 @@ SYSTEM_$$_SHORTSHIFT192LEFT$QWORD$QWORD$QWORD$SMALLINT$QWORD$QWORD$QWORD:
 	ldw	r3,r30,4
 	stw	r30,r3,-92
 	ldh	r5,r30,-80
-	ldw	r4,r30,-76
-	ldw	r3,r30,-72
-	slli	r6,r5,0
-	srli	r6,r6,0
-	addi	r5,r6,-32
+	ldw	r3,r30,-76
+	ldw	r4,r30,-72
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r7,r5,63
+	addi	r5,r7,-32
 	blt	r5,r0,.Lj234
 	li	r9,0
-	sll	r8,r4,r5
+	sll	r8,r3,r5
 	jal	r0,.Lj235
 .Lj234:
 	li	r5,31
-	srli	r7,r4,1
-	sub	r5,r5,r6
-	sll	r9,r4,r6
-	srl	r7,r7,r5
-	sll	r8,r3,r6
-	or	r8,r8,r7
+	srli	r6,r3,1
+	sub	r5,r5,r7
+	sll	r9,r3,r7
+	srl	r6,r6,r5
+	sll	r8,r4,r7
+	or	r8,r8,r6
 .Lj235:
 	stw	r30,r9,-116
 	stw	r30,r8,-112
 	ldh	r5,r30,-80
-	ldw	r4,r30,-68
-	ldw	r3,r30,-64
-	slli	r9,r5,0
-	srli	r9,r9,0
-	addi	r7,r9,-32
-	blt	r7,r0,.Lj236
-	li	r6,0
-	sll	r5,r4,r7
+	ldw	r3,r30,-68
+	ldw	r4,r30,-64
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r9,r5,63
+	addi	r5,r9,-32
+	blt	r5,r0,.Lj236
+	li	r7,0
+	sll	r6,r3,r5
 	jal	r0,.Lj237
 .Lj236:
-	li	r7,31
-	srli	r8,r4,1
-	sub	r7,r7,r9
+	li	r5,31
+	srli	r8,r3,1
+	sub	r5,r5,r9
+	sll	r7,r3,r9
+	srl	r8,r8,r5
 	sll	r6,r4,r9
-	srl	r8,r8,r7
-	sll	r5,r3,r9
-	or	r5,r5,r8
+	or	r6,r6,r8
 .Lj237:
-	stw	r30,r6,-108
-	stw	r30,r5,-104
+	stw	r30,r7,-108
+	stw	r30,r6,-104
 	ldh	r5,r30,-80
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
-	slli	r7,r5,0
-	srli	r7,r7,0
-	addi	r8,r7,-32
-	blt	r8,r0,.Lj238
-	li	r6,0
-	sll	r5,r4,r8
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r5,r5,63
+	addi	r6,r5,-32
+	blt	r6,r0,.Lj238
+	li	r9,0
+	sll	r8,r4,r6
 	jal	r0,.Lj239
 .Lj238:
-	li	r8,31
-	srli	r9,r4,1
-	sub	r8,r8,r7
-	sll	r6,r4,r7
-	srl	r9,r9,r8
-	sll	r5,r3,r7
-	or	r5,r5,r9
+	li	r6,31
+	srli	r7,r4,1
+	sub	r6,r6,r5
+	sll	r9,r4,r5
+	srl	r7,r7,r6
+	sll	r8,r3,r5
+	or	r8,r8,r7
 .Lj239:
-	stw	r30,r6,-100
-	stw	r30,r5,-96
+	stw	r30,r9,-100
+	stw	r30,r8,-96
 	ldh	r4,r30,-80
 	addi	r3,r0,0
 	slt	r3,r3,r4
@@ -2088,48 +2106,50 @@ SYSTEM_$$_SHORTSHIFT192LEFT$QWORD$QWORD$QWORD$SMALLINT$QWORD$QWORD$QWORD:
 	srai	r3,r3,24
 	stb	r30,r3,-120
 	ldb	r3,r30,-120
-	ldw	r5,r30,-76
-	ldw	r6,r30,-72
-	slli	r8,r3,0
-	srli	r8,r8,0
-	addi	r7,r8,-32
-	blt	r7,r0,.Lj242
+	ldw	r6,r30,-76
+	ldw	r4,r30,-72
+	slli	r3,r3,0
+	srli	r3,r3,0
+	andi	r7,r3,63
+	addi	r8,r7,-32
+	blt	r8,r0,.Lj242
 	li	r3,0
-	srl	r4,r6,r7
+	srl	r5,r4,r8
 	jal	r0,.Lj243
 .Lj242:
-	li	r7,31
-	slli	r9,r6,1
-	sub	r7,r7,r8
-	srl	r4,r5,r8
-	sll	r9,r9,r7
-	srl	r3,r6,r8
-	or	r4,r4,r9
+	li	r8,31
+	slli	r9,r4,1
+	sub	r8,r8,r7
+	srl	r5,r6,r7
+	sll	r9,r9,r8
+	srl	r3,r4,r7
+	or	r5,r5,r9
 .Lj243:
 	ldw	r6,r30,-108
-	ldw	r5,r30,-104
-	or	r4,r4,r6
-	or	r3,r3,r5
-	stw	r30,r4,-108
+	ldw	r4,r30,-104
+	or	r5,r5,r6
+	or	r3,r3,r4
+	stw	r30,r5,-108
 	stw	r30,r3,-104
 	ldb	r3,r30,-120
-	ldw	r6,r30,-68
-	ldw	r5,r30,-64
-	slli	r8,r3,0
-	srli	r8,r8,0
-	addi	r7,r8,-32
-	blt	r7,r0,.Lj244
+	ldw	r5,r30,-68
+	ldw	r6,r30,-64
+	slli	r3,r3,0
+	srli	r3,r3,0
+	andi	r7,r3,63
+	addi	r9,r7,-32
+	blt	r9,r0,.Lj244
 	li	r3,0
-	srl	r4,r5,r7
+	srl	r4,r6,r9
 	jal	r0,.Lj245
 .Lj244:
-	li	r7,31
-	slli	r9,r5,1
-	sub	r7,r7,r8
-	srl	r4,r6,r8
-	sll	r9,r9,r7
-	srl	r3,r5,r8
-	or	r4,r4,r9
+	li	r9,31
+	slli	r8,r6,1
+	sub	r9,r9,r7
+	srl	r4,r5,r7
+	sll	r8,r8,r9
+	srl	r3,r6,r7
+	or	r4,r4,r8
 .Lj245:
 	ldw	r6,r30,-100
 	ldw	r5,r30,-96
@@ -2138,11 +2158,11 @@ SYSTEM_$$_SHORTSHIFT192LEFT$QWORD$QWORD$QWORD$SMALLINT$QWORD$QWORD$QWORD:
 	stw	r30,r4,-100
 	stw	r30,r3,-96
 .Lj241:
-	ldw	r3,r30,-92
-	ldw	r4,r30,-116
-	stw	r3,r4,0
-	ldw	r4,r30,-112
-	stw	r3,r4,4
+	ldw	r4,r30,-92
+	ldw	r3,r30,-116
+	stw	r4,r3,0
+	ldw	r3,r30,-112
+	stw	r4,r3,4
 	ldw	r4,r30,-88
 	ldw	r3,r30,-108
 	stw	r4,r3,0
@@ -5821,35 +5841,36 @@ SYSTEM_$$_NORMALIZEFLOAT64SUBNORMAL$QWORD$SMALLINT$QWORD:
 	slli	r3,r3,24
 	srai	r3,r3,24
 	stb	r30,r3,-72
-	ldb	r3,r30,-72
+	ldb	r5,r30,-72
 	ldw	r4,r30,-60
-	ldw	r5,r30,-56
-	slli	r9,r3,0
-	srli	r9,r9,0
+	ldw	r3,r30,-56
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r9,r5,63
 	addi	r7,r9,-32
 	blt	r7,r0,.Lj586
-	li	r3,0
+	li	r5,0
 	sll	r6,r4,r7
 	jal	r0,.Lj587
 .Lj586:
 	li	r7,31
 	srli	r8,r4,1
 	sub	r7,r7,r9
-	sll	r3,r4,r9
+	sll	r5,r4,r9
 	srl	r8,r8,r7
-	sll	r6,r5,r9
+	sll	r6,r3,r9
 	or	r6,r6,r8
 .Lj587:
-	ldw	r4,r30,-68
-	stw	r4,r3,0
-	stw	r4,r6,4
-	ldb	r4,r30,-72
-	addi	r3,r0,1
-	sub	r3,r3,r4
-	slli	r3,r3,16
-	srai	r3,r3,16
-	ldw	r4,r30,-64
-	sth	r4,r3,0
+	ldw	r3,r30,-68
+	stw	r3,r5,0
+	stw	r3,r6,4
+	ldb	r3,r30,-72
+	addi	r4,r0,1
+	sub	r3,r4,r3
+	slli	r4,r3,16
+	srai	r4,r4,16
+	ldw	r3,r30,-64
+	sth	r3,r4,0
 	ldw	r30,r29,72
 	ldw	r31,r29,76
 	addi	r29,r29,80
@@ -6737,21 +6758,22 @@ SYSTEM_$$_NORMALIZEROUNDANDPACKFLOAT64$BYTE$SMALLINT$QWORD$$FLOAT64:
 	ldb	r6,r30,-76
 	ldw	r3,r30,-68
 	ldw	r4,r30,-64
-	slli	r8,r6,0
-	srli	r8,r8,0
-	addi	r9,r8,-32
+	slli	r6,r6,0
+	srli	r6,r6,0
+	andi	r10,r6,63
+	addi	r9,r10,-32
 	blt	r9,r0,.Lj708
 	li	r6,0
 	sll	r7,r3,r9
 	jal	r0,.Lj709
 .Lj708:
 	li	r9,31
-	srli	r10,r3,1
-	sub	r9,r9,r8
-	sll	r6,r3,r8
-	srl	r10,r10,r9
-	sll	r7,r4,r8
-	or	r7,r7,r10
+	srli	r8,r3,1
+	sub	r9,r9,r10
+	sll	r6,r3,r10
+	srl	r8,r8,r9
+	sll	r7,r4,r10
+	or	r7,r7,r8
 .Lj709:
 	ldw	r3,r30,-72
 	ldbu	r4,r30,-56
@@ -7416,10 +7438,10 @@ SYSTEM_$$_FLOAT32_TO_INT64_ROUND_TO_ZERO$LONGWORD$$INT64:
 	addi	r30,r29,8
 	addi	r29,r29,-96
 	stw	r30,r3,-56
-	ldw	r3,r30,-56
-	lui	r4,2047
-	ori	r4,r4,4095
-	and	r3,r3,r4
+	ldw	r4,r30,-56
+	lui	r3,2047
+	ori	r3,r3,4095
+	and	r3,r4,r3
 	stw	r30,r3,-80
 	ldw	r3,r30,-56
 	srli	r3,r3,23
@@ -7484,17 +7506,17 @@ SYSTEM_$$_FLOAT32_TO_INT64_ROUND_TO_ZERO$LONGWORD$$INT64:
 	jal	r0,.Lj797
 	jal	r0,.Lj809
 .Lj800:
-	ldh	r3,r30,-72
-	addi	r4,r0,126
-	sle	r3,r3,r4
+	ldh	r4,r30,-72
+	addi	r3,r0,126
+	sle	r3,r4,r3
 	bne	r3,r0,.Lj810
 	jal	r0,.Lj811
 .Lj810:
-	ldh	r5,r30,-72
-	srai	r4,r5,31
-	ldw	r6,r30,-80
+	ldh	r6,r30,-72
+	srai	r4,r6,31
+	ldw	r5,r30,-80
 	addi	r3,r0,0
-	or	r5,r5,r6
+	or	r5,r6,r5
 	or	r3,r4,r3
 	bne	r0,r3,.Lj812
 	bne	r0,r5,.Lj812
@@ -7513,53 +7535,55 @@ SYSTEM_$$_FLOAT32_TO_INT64_ROUND_TO_ZERO$LONGWORD$$INT64:
 	addi	r3,r0,0
 	stw	r30,r4,-88
 	stw	r30,r3,-84
-	ldw	r4,r30,-88
-	ldw	r3,r30,-84
-	li	r3,0
-	slli	r4,r4,8
-	stw	r30,r3,-88
-	stw	r30,r4,-84
+	ldw	r3,r30,-88
+	ldw	r4,r30,-84
+	li	r4,0
+	slli	r3,r3,8
+	stw	r30,r4,-88
+	stw	r30,r3,-84
 	ldh	r3,r30,-76
 	sub	r5,r0,r3
 	ldw	r3,r30,-88
 	ldw	r4,r30,-84
-	slli	r8,r5,0
-	srli	r8,r8,0
-	addi	r5,r8,-32
-	blt	r5,r0,.Lj814
-	li	r7,0
-	srl	r9,r4,r5
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r7,r5,63
+	addi	r9,r7,-32
+	blt	r9,r0,.Lj814
+	li	r8,0
+	srl	r5,r4,r9
 	jal	r0,.Lj815
 .Lj814:
-	li	r5,31
+	li	r9,31
 	slli	r6,r4,1
-	sub	r5,r5,r8
-	srl	r9,r3,r8
-	sll	r6,r6,r5
-	srl	r7,r4,r8
-	or	r9,r9,r6
+	sub	r9,r9,r7
+	srl	r5,r3,r7
+	sll	r6,r6,r9
+	srl	r8,r4,r7
+	or	r5,r5,r6
 .Lj815:
-	stw	r30,r9,-96
-	stw	r30,r7,-92
+	stw	r30,r5,-96
+	stw	r30,r8,-92
 	ldh	r3,r30,-76
 	andi	r5,r3,63
-	ldw	r3,r30,-88
-	ldw	r4,r30,-84
-	slli	r6,r5,0
-	srli	r6,r6,0
-	addi	r7,r6,-32
-	blt	r7,r0,.Lj818
+	ldw	r4,r30,-88
+	ldw	r3,r30,-84
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r8,r5,63
+	addi	r6,r8,-32
+	blt	r6,r0,.Lj818
 	li	r9,0
-	sll	r5,r3,r7
+	sll	r5,r4,r6
 	jal	r0,.Lj819
 .Lj818:
-	li	r7,31
-	srli	r8,r3,1
-	sub	r7,r7,r6
-	sll	r9,r3,r6
-	srl	r8,r8,r7
-	sll	r5,r4,r6
-	or	r5,r5,r8
+	li	r6,31
+	srli	r7,r4,1
+	sub	r6,r6,r8
+	sll	r9,r4,r8
+	srl	r7,r7,r6
+	sll	r5,r3,r8
+	or	r5,r5,r7
 .Lj819:
 	bne	r0,r5,.Lj816
 	bne	r0,r9,.Lj816
@@ -7572,14 +7596,14 @@ SYSTEM_$$_FLOAT32_TO_INT64_ROUND_TO_ZERO$LONGWORD$$INT64:
 	bne	r3,r0,.Lj820
 	jal	r0,.Lj821
 .Lj820:
-	ldw	r3,r30,-96
-	ldw	r4,r30,-92
-	sub	r5,r0,r3
-	sltu	r3,r0,r5
-	sub	r4,r0,r4
-	sub	r4,r4,r3
+	ldw	r4,r30,-96
+	ldw	r3,r30,-92
+	sub	r5,r0,r4
+	sltu	r4,r0,r5
+	sub	r3,r0,r3
+	sub	r3,r3,r4
 	stw	r30,r5,-96
-	stw	r30,r4,-92
+	stw	r30,r3,-92
 .Lj821:
 	ldw	r3,r30,-96
 	stw	r30,r3,-64
@@ -10803,9 +10827,9 @@ SYSTEM_$$_FLOAT64_TO_INT64$FLOAT64$$INT64:
 	bne	r3,r0,.Lj1230
 	jal	r0,.Lj1231
 .Lj1230:
-	ldh	r4,r30,-76
-	addi	r3,r0,1086
-	slt	r3,r3,r4
+	ldh	r3,r30,-76
+	addi	r4,r0,1086
+	slt	r3,r4,r3
 	bne	r3,r0,.Lj1232
 	jal	r0,.Lj1233
 .Lj1232:
@@ -10857,22 +10881,23 @@ SYSTEM_$$_FLOAT64_TO_INT64$FLOAT64$$INT64:
 	ldw	r4,r30,-84
 	slli	r5,r5,0
 	srli	r5,r5,0
-	addi	r6,r5,-32
+	andi	r9,r5,63
+	addi	r6,r9,-32
 	blt	r6,r0,.Lj1242
 	li	r8,0
-	sll	r7,r3,r6
+	sll	r5,r3,r6
 	jal	r0,.Lj1243
 .Lj1242:
 	li	r6,31
-	srli	r9,r3,1
-	sub	r6,r6,r5
-	sll	r8,r3,r5
-	srl	r9,r9,r6
-	sll	r7,r4,r5
-	or	r7,r7,r9
+	srli	r7,r3,1
+	sub	r6,r6,r9
+	sll	r8,r3,r9
+	srl	r7,r7,r6
+	sll	r5,r4,r9
+	or	r5,r5,r7
 .Lj1243:
 	stw	r30,r8,-88
-	stw	r30,r7,-84
+	stw	r30,r5,-84
 	jal	r0,.Lj1244
 .Lj1231:
 	addi	r9,r30,-96
@@ -10953,18 +10978,18 @@ SYSTEM_$$_FLOAT64_TO_INT64_ROUND_TO_ZERO$FLOAT64$$INT64:
 	bne	r3,r0,.Lj1249
 	jal	r0,.Lj1250
 .Lj1249:
-	ldh	r3,r30,-76
-	addi	r4,r0,1086
-	sle	r3,r4,r3
+	ldh	r4,r30,-76
+	addi	r3,r0,1086
+	sle	r3,r3,r4
 	bne	r3,r0,.Lj1251
 	jal	r0,.Lj1252
 .Lj1251:
-	ldw	r5,r30,-60
-	ldw	r3,r30,-56
+	ldw	r3,r30,-60
+	ldw	r5,r30,-56
 	lui	r4,802304
 	ori	r4,r4,0
-	bne	r4,r3,.Lj1253
-	bne	r0,r5,.Lj1253
+	bne	r4,r5,.Lj1253
+	bne	r0,r3,.Lj1253
 	jal	r0,.Lj1254
 .Lj1253:
 	addi	r3,r0,0
@@ -10980,11 +11005,11 @@ SYSTEM_$$_FLOAT64_TO_INT64_ROUND_TO_ZERO$FLOAT64$$INT64:
 	bne	r3,r0,.Lj1258
 	jal	r0,.Lj1259
 .Lj1258:
-	ldw	r3,r30,-88
-	ldw	r4,r30,-84
+	ldw	r4,r30,-88
+	ldw	r3,r30,-84
 	lui	r5,256
-	bne	r5,r4,.Lj1261
-	bne	r0,r3,.Lj1261
+	bne	r5,r3,.Lj1261
+	bne	r0,r4,.Lj1261
 	jal	r0,.Lj1262
 .Lj1261:
 	jal	r0,.Lj1260
@@ -11011,37 +11036,38 @@ SYSTEM_$$_FLOAT64_TO_INT64_ROUND_TO_ZERO$FLOAT64$$INT64:
 	ldh	r5,r30,-80
 	ldw	r4,r30,-88
 	ldw	r3,r30,-84
-	slli	r7,r5,0
-	srli	r7,r7,0
-	addi	r8,r7,-32
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r6,r5,63
+	addi	r8,r6,-32
 	blt	r8,r0,.Lj1263
-	li	r6,0
-	sll	r9,r4,r8
+	li	r5,0
+	sll	r7,r4,r8
 	jal	r0,.Lj1264
 .Lj1263:
 	li	r8,31
-	srli	r5,r4,1
-	sub	r8,r8,r7
-	sll	r6,r4,r7
-	srl	r5,r5,r8
-	sll	r9,r3,r7
-	or	r9,r9,r5
+	srli	r9,r4,1
+	sub	r8,r8,r6
+	sll	r5,r4,r6
+	srl	r9,r9,r8
+	sll	r7,r3,r6
+	or	r7,r7,r9
 .Lj1264:
-	stw	r30,r6,-96
-	stw	r30,r9,-92
+	stw	r30,r5,-96
+	stw	r30,r7,-92
 	jal	r0,.Lj1265
 .Lj1250:
-	ldh	r4,r30,-76
-	addi	r3,r0,1022
-	slt	r3,r4,r3
+	ldh	r3,r30,-76
+	addi	r4,r0,1022
+	slt	r3,r3,r4
 	bne	r3,r0,.Lj1266
 	jal	r0,.Lj1267
 .Lj1266:
-	ldh	r5,r30,-76
-	srai	r3,r5,31
-	ldw	r6,r30,-88
+	ldh	r6,r30,-76
+	srai	r3,r6,31
+	ldw	r5,r30,-88
 	ldw	r4,r30,-84
-	or	r5,r5,r6
+	or	r5,r6,r5
 	or	r3,r3,r4
 	bne	r0,r3,.Lj1268
 	bne	r0,r5,.Lj1268
@@ -11057,46 +11083,48 @@ SYSTEM_$$_FLOAT64_TO_INT64_ROUND_TO_ZERO$FLOAT64$$INT64:
 	sub	r5,r0,r3
 	ldw	r3,r30,-88
 	ldw	r4,r30,-84
-	slli	r9,r5,0
-	srli	r9,r9,0
-	addi	r5,r9,-32
-	blt	r5,r0,.Lj1270
-	li	r7,0
-	srl	r8,r4,r5
-	jal	r0,.Lj1271
-.Lj1270:
-	li	r5,31
-	slli	r6,r4,1
-	sub	r5,r5,r9
-	srl	r8,r3,r9
-	sll	r6,r6,r5
-	srl	r7,r4,r9
-	or	r8,r8,r6
-.Lj1271:
-	stw	r30,r8,-96
-	stw	r30,r7,-92
-	ldh	r3,r30,-80
-	andi	r5,r3,63
-	ldw	r3,r30,-88
-	ldw	r4,r30,-84
 	slli	r5,r5,0
 	srli	r5,r5,0
-	addi	r6,r5,-32
-	blt	r6,r0,.Lj1274
-	li	r8,0
-	sll	r7,r3,r6
+	andi	r9,r5,63
+	addi	r7,r9,-32
+	blt	r7,r0,.Lj1270
+	li	r5,0
+	srl	r6,r4,r7
+	jal	r0,.Lj1271
+.Lj1270:
+	li	r7,31
+	slli	r8,r4,1
+	sub	r7,r7,r9
+	srl	r6,r3,r9
+	sll	r8,r8,r7
+	srl	r5,r4,r9
+	or	r6,r6,r8
+.Lj1271:
+	stw	r30,r6,-96
+	stw	r30,r5,-92
+	ldh	r3,r30,-80
+	andi	r5,r3,63
+	ldw	r4,r30,-88
+	ldw	r3,r30,-84
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r5,r5,63
+	addi	r9,r5,-32
+	blt	r9,r0,.Lj1274
+	li	r7,0
+	sll	r6,r4,r9
 	jal	r0,.Lj1275
 .Lj1274:
-	li	r6,31
-	srli	r9,r3,1
-	sub	r6,r6,r5
-	sll	r8,r3,r5
-	srl	r9,r9,r6
+	li	r9,31
+	srli	r8,r4,1
+	sub	r9,r9,r5
 	sll	r7,r4,r5
-	or	r7,r7,r9
+	srl	r8,r8,r9
+	sll	r6,r3,r5
+	or	r6,r6,r8
 .Lj1275:
+	bne	r0,r6,.Lj1272
 	bne	r0,r7,.Lj1272
-	bne	r0,r8,.Lj1272
 	jal	r0,.Lj1273
 .Lj1272:
 	call	SYSTEM_$$_SET_INEXACT_FLAG
@@ -11107,14 +11135,14 @@ SYSTEM_$$_FLOAT64_TO_INT64_ROUND_TO_ZERO$FLOAT64$$INT64:
 	bne	r3,r0,.Lj1276
 	jal	r0,.Lj1277
 .Lj1276:
-	ldw	r3,r30,-96
-	ldw	r4,r30,-92
-	sub	r5,r0,r3
-	sltu	r3,r0,r5
-	sub	r4,r0,r4
-	sub	r4,r4,r3
+	ldw	r4,r30,-96
+	ldw	r3,r30,-92
+	sub	r5,r0,r4
+	sltu	r4,r0,r5
+	sub	r3,r0,r3
+	sub	r3,r3,r4
 	stw	r30,r5,-96
-	stw	r30,r4,-92
+	stw	r30,r3,-92
 .Lj1277:
 	ldw	r3,r30,-96
 	stw	r30,r3,-68
@@ -14730,21 +14758,21 @@ int64_to_float32:
 	stw	r30,r3,-64
 	stw	r30,r4,-60
 	stw	r30,r5,-56
-	ldw	r4,r30,-60
-	ldw	r3,r30,-56
-	bne	r0,r3,.Lj1704
+	ldw	r3,r30,-60
+	ldw	r4,r30,-56
 	bne	r0,r4,.Lj1704
+	bne	r0,r3,.Lj1704
 	jal	r0,.Lj1703
 .Lj1703:
 	ldw	r3,r30,-64
 	stw	r3,r0,0
 	jal	r0,.Lj1701
 .Lj1704:
-	ldw	r4,r30,-60
-	ldw	r3,r30,-56
-	blt	r3,r0,.Lj1705
-	bne	r0,r3,.Lj1706
-	bltu	r4,r0,.Lj1705
+	ldw	r3,r30,-60
+	ldw	r4,r30,-56
+	blt	r4,r0,.Lj1705
+	bne	r0,r4,.Lj1706
+	bltu	r3,r0,.Lj1705
 	jal	r0,.Lj1706
 .Lj1705:
 	addi	r3,r0,1
@@ -14758,14 +14786,14 @@ int64_to_float32:
 	bne	r3,r0,.Lj1708
 	jal	r0,.Lj1709
 .Lj1708:
-	ldw	r4,r30,-60
-	ldw	r3,r30,-56
-	sub	r4,r0,r4
-	sltu	r5,r0,r4
+	ldw	r3,r30,-60
+	ldw	r4,r30,-56
 	sub	r3,r0,r3
-	sub	r3,r3,r5
-	stw	r30,r4,-76
-	stw	r30,r3,-72
+	sltu	r5,r0,r3
+	sub	r4,r0,r4
+	sub	r4,r4,r5
+	stw	r30,r3,-76
+	stw	r30,r4,-72
 	jal	r0,.Lj1710
 .Lj1709:
 	ldw	r3,r30,-60
@@ -14789,23 +14817,24 @@ int64_to_float32:
 	ldb	r5,r30,-80
 	ldw	r4,r30,-76
 	ldw	r3,r30,-72
-	slli	r7,r5,0
-	srli	r7,r7,0
-	addi	r8,r7,-32
-	blt	r8,r0,.Lj1713
-	li	r5,0
-	sll	r6,r4,r8
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r9,r5,63
+	addi	r7,r9,-32
+	blt	r7,r0,.Lj1713
+	li	r6,0
+	sll	r5,r4,r7
 	jal	r0,.Lj1714
 .Lj1713:
-	li	r8,31
-	srli	r9,r4,1
-	sub	r8,r8,r7
-	sll	r5,r4,r7
-	srl	r9,r9,r8
-	sll	r6,r3,r7
-	or	r6,r6,r9
+	li	r7,31
+	srli	r8,r4,1
+	sub	r7,r7,r9
+	sll	r6,r4,r9
+	srl	r8,r8,r7
+	sll	r5,r3,r9
+	or	r5,r5,r8
 .Lj1714:
-	slli	r3,r5,0
+	slli	r3,r6,0
 	srli	r3,r3,0
 	stw	r30,r3,-84
 	ldb	r3,r30,-80
@@ -14847,30 +14876,31 @@ int64_to_float32:
 	jal	r0,.Lj1718
 .Lj1717:
 	ldb	r5,r30,-80
-	ldw	r3,r30,-76
-	ldw	r4,r30,-72
+	ldw	r4,r30,-76
+	ldw	r3,r30,-72
 	slli	r5,r5,0
 	srli	r5,r5,0
-	addi	r7,r5,-32
-	blt	r7,r0,.Lj1719
-	li	r9,0
-	sll	r6,r3,r7
+	andi	r9,r5,63
+	addi	r8,r9,-32
+	blt	r8,r0,.Lj1719
+	li	r5,0
+	sll	r6,r4,r8
 	jal	r0,.Lj1720
 .Lj1719:
-	li	r7,31
-	srli	r8,r3,1
-	sub	r7,r7,r5
-	sll	r9,r3,r5
-	srl	r8,r8,r7
-	sll	r6,r4,r5
-	or	r6,r6,r8
+	li	r8,31
+	srli	r7,r4,1
+	sub	r8,r8,r9
+	sll	r5,r4,r9
+	srl	r7,r7,r8
+	sll	r6,r3,r9
+	or	r6,r6,r7
 .Lj1720:
-	stw	r30,r9,-76
+	stw	r30,r5,-76
 	stw	r30,r6,-72
 .Lj1718:
-	ldb	r4,r30,-80
-	addi	r3,r0,156
-	sub	r3,r3,r4
+	ldb	r3,r30,-80
+	addi	r4,r0,156
+	sub	r3,r4,r3
 	slli	r4,r3,16
 	srai	r4,r4,16
 	ldw	r5,r30,-76
@@ -14899,10 +14929,10 @@ qword_to_float32:
 	stw	r30,r3,-64
 	stw	r30,r4,-60
 	stw	r30,r5,-56
-	ldw	r3,r30,-60
-	ldw	r4,r30,-56
-	bne	r0,r4,.Lj1724
+	ldw	r4,r30,-60
+	ldw	r3,r30,-56
 	bne	r0,r3,.Lj1724
+	bne	r0,r4,.Lj1724
 	jal	r0,.Lj1723
 .Lj1723:
 	ldw	r3,r30,-64
@@ -14929,23 +14959,24 @@ qword_to_float32:
 	ldb	r5,r30,-76
 	ldw	r4,r30,-72
 	ldw	r3,r30,-68
-	slli	r8,r5,0
-	srli	r8,r8,0
-	addi	r7,r8,-32
-	blt	r7,r0,.Lj1727
-	li	r5,0
-	sll	r6,r4,r7
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r7,r5,63
+	addi	r6,r7,-32
+	blt	r6,r0,.Lj1727
+	li	r8,0
+	sll	r5,r4,r6
 	jal	r0,.Lj1728
 .Lj1727:
-	li	r7,31
+	li	r6,31
 	srli	r9,r4,1
-	sub	r7,r7,r8
-	sll	r5,r4,r8
-	srl	r9,r9,r7
-	sll	r6,r3,r8
-	or	r6,r6,r9
+	sub	r6,r6,r7
+	sll	r8,r4,r7
+	srl	r9,r9,r6
+	sll	r5,r3,r7
+	or	r5,r5,r9
 .Lj1728:
-	slli	r3,r5,0
+	slli	r3,r8,0
 	srli	r3,r3,0
 	stw	r30,r3,-80
 	ldb	r3,r30,-76
@@ -14984,30 +15015,31 @@ qword_to_float32:
 	jal	r0,.Lj1732
 .Lj1731:
 	ldb	r5,r30,-76
-	ldw	r4,r30,-72
-	ldw	r3,r30,-68
-	slli	r8,r5,0
-	srli	r8,r8,0
-	addi	r7,r8,-32
-	blt	r7,r0,.Lj1733
-	li	r5,0
-	sll	r6,r4,r7
+	ldw	r3,r30,-72
+	ldw	r4,r30,-68
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r7,r5,63
+	addi	r6,r7,-32
+	blt	r6,r0,.Lj1733
+	li	r8,0
+	sll	r5,r3,r6
 	jal	r0,.Lj1734
 .Lj1733:
-	li	r7,31
-	srli	r9,r4,1
-	sub	r7,r7,r8
-	sll	r5,r4,r8
-	srl	r9,r9,r7
-	sll	r6,r3,r8
-	or	r6,r6,r9
+	li	r6,31
+	srli	r9,r3,1
+	sub	r6,r6,r7
+	sll	r8,r3,r7
+	srl	r9,r9,r6
+	sll	r5,r4,r7
+	or	r5,r5,r9
 .Lj1734:
-	stw	r30,r5,-72
-	stw	r30,r6,-68
+	stw	r30,r8,-72
+	stw	r30,r5,-68
 .Lj1732:
-	ldb	r4,r30,-76
-	addi	r3,r0,156
-	sub	r3,r3,r4
+	ldb	r3,r30,-76
+	addi	r4,r0,156
+	sub	r3,r4,r3
 	slli	r4,r3,16
 	srai	r4,r4,16
 	ldw	r5,r30,-72
@@ -15038,10 +15070,10 @@ QWORD_TO_FLOAT64:
 	stw	r30,r3,-64
 	stw	r30,r4,-60
 	stw	r30,r5,-56
-	ldw	r4,r30,-60
-	ldw	r3,r30,-56
-	bne	r0,r3,.Lj1738
+	ldw	r3,r30,-60
+	ldw	r4,r30,-56
 	bne	r0,r4,.Lj1738
+	bne	r0,r3,.Lj1738
 	jal	r0,.Lj1737
 .Lj1737:
 	ldw	r3,r30,-64
@@ -15057,9 +15089,9 @@ QWORD_TO_FLOAT64:
 	slli	r3,r3,24
 	srai	r3,r3,24
 	stb	r30,r3,-68
-	ldb	r3,r30,-68
-	addi	r4,r0,9
-	sgt	r3,r3,r4
+	ldb	r4,r30,-68
+	addi	r3,r0,9
+	sgt	r3,r4,r3
 	bne	r3,r0,.Lj1740
 	jal	r0,.Lj1741
 .Lj1740:
@@ -15067,24 +15099,25 @@ QWORD_TO_FLOAT64:
 	addi	r5,r3,-10
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
-	slli	r9,r5,0
-	srli	r9,r9,0
-	addi	r6,r9,-32
-	blt	r6,r0,.Lj1742
-	li	r5,0
-	sll	r8,r4,r6
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r9,r5,63
+	addi	r5,r9,-32
+	blt	r5,r0,.Lj1742
+	li	r7,0
+	sll	r6,r4,r5
 	jal	r0,.Lj1743
 .Lj1742:
-	li	r6,31
-	srli	r7,r4,1
-	sub	r6,r6,r9
-	sll	r5,r4,r9
-	srl	r7,r7,r6
-	sll	r8,r3,r9
-	or	r8,r8,r7
+	li	r5,31
+	srli	r8,r4,1
+	sub	r5,r5,r9
+	sll	r7,r4,r9
+	srl	r8,r8,r5
+	sll	r6,r3,r9
+	or	r6,r6,r8
 .Lj1743:
-	stw	r30,r5,-76
-	stw	r30,r8,-72
+	stw	r30,r7,-76
+	stw	r30,r6,-72
 	ldb	r3,r30,-68
 	addi	r4,r0,1084
 	sub	r3,r4,r3
@@ -15094,20 +15127,20 @@ QWORD_TO_FLOAT64:
 	ldh	r3,r30,-80
 	srai	r4,r3,31
 	li	r6,0
-	slli	r4,r3,20
+	slli	r5,r3,20
 	ldw	r3,r30,-76
-	ldw	r5,r30,-72
+	ldw	r4,r30,-72
 	add	r3,r6,r3
 	sltu	r6,r3,r6
 	lui	r8,524288
 	ori	r8,r8,0
-	add	r7,r4,r6
-	sltu	r6,r7,r4
+	add	r7,r5,r6
+	sltu	r6,r7,r5
 	sub	r6,r8,r6
-	add	r5,r7,r5
-	ldw	r4,r30,-64
-	stw	r4,r3,0
-	stw	r4,r5,4
+	add	r4,r7,r4
+	ldw	r5,r30,-64
+	stw	r5,r3,0
+	stw	r5,r4,4
 	ldw	r3,r30,-64
 	jal	r0,.Lj1744
 .Lj1741:
@@ -15118,23 +15151,24 @@ QWORD_TO_FLOAT64:
 	jal	r0,.Lj1746
 .Lj1745:
 	ldb	r5,r30,-68
-	ldw	r4,r30,-60
-	ldw	r3,r30,-56
+	ldw	r3,r30,-60
+	ldw	r4,r30,-56
 	slli	r5,r5,0
 	srli	r5,r5,0
-	addi	r8,r5,-32
-	blt	r8,r0,.Lj1747
+	andi	r5,r5,63
+	addi	r9,r5,-32
+	blt	r9,r0,.Lj1747
 	li	r6,0
-	sll	r7,r4,r8
+	sll	r7,r3,r9
 	jal	r0,.Lj1748
 .Lj1747:
-	li	r8,31
-	srli	r9,r4,1
-	sub	r8,r8,r5
-	sll	r6,r4,r5
-	srl	r9,r9,r8
-	sll	r7,r3,r5
-	or	r7,r7,r9
+	li	r9,31
+	srli	r8,r3,1
+	sub	r9,r9,r5
+	sll	r6,r3,r5
+	srl	r8,r8,r9
+	sll	r7,r4,r5
+	or	r7,r7,r8
 .Lj1748:
 	ldb	r3,r30,-68
 	addi	r4,r0,1084
@@ -15405,96 +15439,100 @@ SYSTEM_$$_SHIFT128EXTRARIGHTJAMMING$QWORD$QWORD$QWORD$SMALLINT$QWORD$QWORD$QWORD
 	stw	r30,r3,-96
 	jal	r0,.Lj1784
 .Lj1783:
-	ldh	r3,r30,-80
-	addi	r4,r0,64
-	slt	r3,r3,r4
+	ldh	r4,r30,-80
+	addi	r3,r0,64
+	slt	r3,r4,r3
 	bne	r3,r0,.Lj1785
 	jal	r0,.Lj1786
 .Lj1785:
 	ldb	r5,r30,-120
-	ldw	r4,r30,-68
-	ldw	r3,r30,-64
-	slli	r6,r5,0
-	srli	r6,r6,0
-	addi	r5,r6,-32
-	blt	r5,r0,.Lj1787
-	li	r9,0
-	sll	r8,r4,r5
+	ldw	r3,r30,-68
+	ldw	r4,r30,-64
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r7,r5,63
+	addi	r8,r7,-32
+	blt	r8,r0,.Lj1787
+	li	r5,0
+	sll	r9,r3,r8
 	jal	r0,.Lj1788
 .Lj1787:
-	li	r5,31
-	srli	r7,r4,1
-	sub	r5,r5,r6
-	sll	r9,r4,r6
-	srl	r7,r7,r5
-	sll	r8,r3,r6
-	or	r8,r8,r7
+	li	r8,31
+	srli	r6,r3,1
+	sub	r8,r8,r7
+	sll	r5,r3,r7
+	srl	r6,r6,r8
+	sll	r9,r4,r7
+	or	r9,r9,r6
 .Lj1788:
-	stw	r30,r9,-116
-	stw	r30,r8,-112
+	stw	r30,r5,-116
+	stw	r30,r9,-112
 	ldb	r3,r30,-120
-	ldw	r6,r30,-60
-	ldw	r5,r30,-56
-	slli	r7,r3,0
-	srli	r7,r7,0
-	addi	r8,r7,-32
-	blt	r8,r0,.Lj1789
+	ldw	r5,r30,-60
+	ldw	r6,r30,-56
+	slli	r3,r3,0
+	srli	r3,r3,0
+	andi	r9,r3,63
+	addi	r7,r9,-32
+	blt	r7,r0,.Lj1789
 	li	r4,0
-	sll	r3,r6,r8
+	sll	r3,r5,r7
 	jal	r0,.Lj1790
 .Lj1789:
-	li	r8,31
-	srli	r9,r6,1
-	sub	r8,r8,r7
-	sll	r4,r6,r7
-	srl	r9,r9,r8
-	sll	r3,r5,r7
-	or	r3,r3,r9
+	li	r7,31
+	srli	r8,r5,1
+	sub	r7,r7,r9
+	sll	r4,r5,r9
+	srl	r8,r8,r7
+	sll	r3,r6,r9
+	or	r3,r3,r8
 .Lj1790:
 	ldh	r7,r30,-80
 	ldw	r6,r30,-68
 	ldw	r5,r30,-64
-	slli	r2,r7,0
-	srli	r2,r2,0
-	addi	r8,r2,-32
-	blt	r8,r0,.Lj1791
+	slli	r7,r7,0
+	srli	r7,r7,0
+	andi	r2,r7,63
+	addi	r9,r2,-32
+	blt	r9,r0,.Lj1791
 	li	r7,0
-	srl	r9,r5,r8
+	srl	r8,r5,r9
 	jal	r0,.Lj1792
 .Lj1791:
-	li	r8,31
+	li	r9,31
 	slli	r10,r5,1
-	sub	r8,r8,r2
-	srl	r9,r6,r2
-	sll	r10,r10,r8
+	sub	r9,r9,r2
+	srl	r8,r6,r2
+	sll	r10,r10,r9
 	srl	r7,r5,r2
-	or	r9,r9,r10
+	or	r8,r8,r10
 .Lj1792:
-	or	r4,r4,r9
+	or	r4,r4,r8
 	or	r3,r3,r7
 	stw	r30,r4,-108
 	stw	r30,r3,-104
 	ldh	r5,r30,-80
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
-	slli	r7,r5,0
-	srli	r7,r7,0
-	addi	r5,r7,-32
-	blt	r5,r0,.Lj1793
-	li	r9,0
-	srl	r6,r3,r5
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r8,r5,63
+	addi	r6,r8,-32
+	blt	r6,r0,.Lj1793
+	li	r5,0
+	srl	r9,r3,r6
 	jal	r0,.Lj1794
 .Lj1793:
-	li	r5,31
-	slli	r8,r3,1
-	sub	r5,r5,r7
-	srl	r6,r4,r7
-	sll	r8,r8,r5
-	srl	r9,r3,r7
-	or	r6,r6,r8
+	li	r6,31
+	slli	r7,r3,1
+	sub	r6,r6,r8
+	srl	r9,r4,r8
+	sll	r7,r7,r6
+	srl	r5,r3,r8
+	or	r9,r9,r7
 .Lj1794:
-	stw	r30,r6,-100
-	stw	r30,r9,-96
+	stw	r30,r9,-100
+	stw	r30,r5,-96
 	jal	r0,.Lj1795
 .Lj1786:
 	ldh	r3,r30,-80
@@ -15513,63 +15551,65 @@ SYSTEM_$$_SHIFT128EXTRARIGHTJAMMING$QWORD$QWORD$QWORD$SMALLINT$QWORD$QWORD$QWORD
 	stw	r30,r3,-104
 	jal	r0,.Lj1798
 .Lj1797:
-	ldw	r6,r30,-76
-	ldw	r3,r30,-72
-	ldw	r5,r30,-68
-	ldw	r4,r30,-64
-	or	r5,r6,r5
-	or	r3,r3,r4
+	ldw	r5,r30,-76
+	ldw	r4,r30,-72
+	ldw	r6,r30,-68
+	ldw	r3,r30,-64
+	or	r5,r5,r6
+	or	r3,r4,r3
 	stw	r30,r5,-76
 	stw	r30,r3,-72
-	ldh	r4,r30,-80
-	addi	r3,r0,128
-	slt	r3,r4,r3
+	ldh	r3,r30,-80
+	addi	r4,r0,128
+	slt	r3,r3,r4
 	bne	r3,r0,.Lj1799
 	jal	r0,.Lj1800
 .Lj1799:
 	ldb	r5,r30,-120
-	ldw	r3,r30,-60
-	ldw	r4,r30,-56
-	slli	r6,r5,0
-	srli	r6,r6,0
-	addi	r8,r6,-32
-	blt	r8,r0,.Lj1801
-	li	r9,0
-	sll	r5,r3,r8
-	jal	r0,.Lj1802
-.Lj1801:
-	li	r8,31
-	srli	r7,r3,1
-	sub	r8,r8,r6
-	sll	r9,r3,r6
-	srl	r7,r7,r8
-	sll	r5,r4,r6
-	or	r5,r5,r7
-.Lj1802:
-	stw	r30,r9,-116
-	stw	r30,r5,-112
-	ldh	r3,r30,-80
-	andi	r5,r3,63
 	ldw	r4,r30,-60
 	ldw	r3,r30,-56
-	slli	r9,r5,0
-	srli	r9,r9,0
-	addi	r8,r9,-32
-	blt	r8,r0,.Lj1803
-	li	r5,0
-	srl	r6,r3,r8
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r6,r5,63
+	addi	r9,r6,-32
+	blt	r9,r0,.Lj1801
+	li	r8,0
+	sll	r7,r4,r9
+	jal	r0,.Lj1802
+.Lj1801:
+	li	r9,31
+	srli	r5,r4,1
+	sub	r9,r9,r6
+	sll	r8,r4,r6
+	srl	r5,r5,r9
+	sll	r7,r3,r6
+	or	r7,r7,r5
+.Lj1802:
+	stw	r30,r8,-116
+	stw	r30,r7,-112
+	ldh	r3,r30,-80
+	andi	r5,r3,63
+	ldw	r3,r30,-60
+	ldw	r4,r30,-56
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r7,r5,63
+	addi	r9,r7,-32
+	blt	r9,r0,.Lj1803
+	li	r6,0
+	srl	r5,r4,r9
 	jal	r0,.Lj1804
 .Lj1803:
-	li	r8,31
-	slli	r7,r3,1
-	sub	r8,r8,r9
-	srl	r6,r4,r9
-	sll	r7,r7,r8
-	srl	r5,r3,r9
-	or	r6,r6,r7
+	li	r9,31
+	slli	r8,r4,1
+	sub	r9,r9,r7
+	srl	r5,r3,r7
+	sll	r8,r8,r9
+	srl	r6,r4,r7
+	or	r5,r5,r8
 .Lj1804:
-	stw	r30,r6,-108
-	stw	r30,r5,-104
+	stw	r30,r5,-108
+	stw	r30,r6,-104
 	jal	r0,.Lj1805
 .Lj1800:
 	ldh	r3,r30,-80
@@ -15606,10 +15646,10 @@ SYSTEM_$$_SHIFT128EXTRARIGHTJAMMING$QWORD$QWORD$QWORD$SMALLINT$QWORD$QWORD$QWORD
 	stw	r30,r0,-100
 	stw	r30,r0,-96
 .Lj1795:
-	ldw	r3,r30,-76
-	ldw	r4,r30,-72
-	bne	r0,r4,.Lj1812
+	ldw	r4,r30,-76
+	ldw	r3,r30,-72
 	bne	r0,r3,.Lj1812
+	bne	r0,r4,.Lj1812
 	jal	r0,.Lj1813
 .Lj1812:
 	addi	r3,r0,1
@@ -15630,11 +15670,11 @@ SYSTEM_$$_SHIFT128EXTRARIGHTJAMMING$QWORD$QWORD$QWORD$SMALLINT$QWORD$QWORD$QWORD
 	stw	r3,r4,0
 	ldw	r4,r30,-112
 	stw	r3,r4,4
-	ldw	r3,r30,-88
-	ldw	r4,r30,-108
-	stw	r3,r4,0
-	ldw	r4,r30,-104
-	stw	r3,r4,4
+	ldw	r4,r30,-88
+	ldw	r3,r30,-108
+	stw	r4,r3,0
+	ldw	r3,r30,-104
+	stw	r4,r3,4
 	ldw	r4,r30,-84
 	ldw	r3,r30,-100
 	stw	r4,r3,0
@@ -15693,21 +15733,22 @@ SYSTEM_$$_SHIFT64EXTRARIGHTJAMMING$QWORD$QWORD$SMALLINT$QWORD$QWORD:
 	ldb	r5,r30,-100
 	ldw	r3,r30,-60
 	ldw	r4,r30,-56
-	slli	r7,r5,0
-	srli	r7,r7,0
-	addi	r8,r7,-32
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r9,r5,63
+	addi	r8,r9,-32
 	blt	r8,r0,.Lj1822
 	li	r6,0
 	sll	r5,r3,r8
 	jal	r0,.Lj1823
 .Lj1822:
 	li	r8,31
-	srli	r9,r3,1
-	sub	r8,r8,r7
-	sll	r6,r3,r7
-	srl	r9,r9,r8
-	sll	r5,r4,r7
-	or	r5,r5,r9
+	srli	r7,r3,1
+	sub	r8,r8,r9
+	sll	r6,r3,r9
+	srl	r7,r7,r8
+	sll	r5,r4,r9
+	or	r5,r5,r7
 .Lj1823:
 	ldw	r3,r30,-68
 	ldw	r4,r30,-64
@@ -15728,24 +15769,25 @@ SYSTEM_$$_SHIFT64EXTRARIGHTJAMMING$QWORD$QWORD$SMALLINT$QWORD$QWORD:
 	ldh	r5,r30,-72
 	ldw	r3,r30,-60
 	ldw	r4,r30,-56
-	slli	r8,r5,0
-	srli	r8,r8,0
-	addi	r7,r8,-32
-	blt	r7,r0,.Lj1827
-	li	r5,0
-	srl	r6,r4,r7
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r5,r5,63
+	addi	r8,r5,-32
+	blt	r8,r0,.Lj1827
+	li	r6,0
+	srl	r7,r4,r8
 	jal	r0,.Lj1828
 .Lj1827:
-	li	r7,31
+	li	r8,31
 	slli	r9,r4,1
-	sub	r7,r7,r8
-	srl	r6,r3,r8
-	sll	r9,r9,r7
-	srl	r5,r4,r8
-	or	r6,r6,r9
+	sub	r8,r8,r5
+	srl	r7,r3,r5
+	sll	r9,r9,r8
+	srl	r6,r4,r5
+	or	r7,r7,r9
 .Lj1828:
-	stw	r30,r6,-88
-	stw	r30,r5,-84
+	stw	r30,r7,-88
+	stw	r30,r6,-84
 	jal	r0,.Lj1829
 .Lj1821:
 	ldh	r3,r30,-72
@@ -15754,10 +15796,10 @@ SYSTEM_$$_SHIFT64EXTRARIGHTJAMMING$QWORD$QWORD$SMALLINT$QWORD$QWORD:
 	bne	r3,r0,.Lj1830
 	jal	r0,.Lj1831
 .Lj1830:
-	ldw	r4,r30,-68
-	ldw	r3,r30,-64
-	bne	r0,r3,.Lj1832
+	ldw	r3,r30,-68
+	ldw	r4,r30,-64
 	bne	r0,r4,.Lj1832
+	bne	r0,r3,.Lj1832
 	jal	r0,.Lj1833
 .Lj1832:
 	addi	r3,r0,1
@@ -15775,11 +15817,11 @@ SYSTEM_$$_SHIFT64EXTRARIGHTJAMMING$QWORD$QWORD$SMALLINT$QWORD$QWORD:
 	jal	r0,.Lj1835
 .Lj1831:
 	ldw	r5,r30,-60
-	ldw	r3,r30,-56
+	ldw	r4,r30,-56
 	ldw	r6,r30,-68
-	ldw	r4,r30,-64
+	ldw	r3,r30,-64
 	or	r5,r5,r6
-	or	r3,r3,r4
+	or	r3,r4,r3
 	bne	r0,r3,.Lj1836
 	bne	r0,r5,.Lj1836
 	jal	r0,.Lj1837
@@ -15797,11 +15839,11 @@ SYSTEM_$$_SHIFT64EXTRARIGHTJAMMING$QWORD$QWORD$SMALLINT$QWORD$QWORD:
 	stw	r30,r0,-84
 .Lj1829:
 .Lj1819:
-	ldw	r3,r30,-80
-	ldw	r4,r30,-96
-	stw	r3,r4,0
-	ldw	r4,r30,-92
-	stw	r3,r4,4
+	ldw	r4,r30,-80
+	ldw	r3,r30,-96
+	stw	r4,r3,0
+	ldw	r3,r30,-92
+	stw	r4,r3,4
 	ldw	r4,r30,-76
 	ldw	r3,r30,-88
 	stw	r4,r3,0
@@ -26351,48 +26393,50 @@ SYSTEM_$$_RORQWORD$QWORD$BYTE$$QWORD:
 	stw	r30,r4,-56
 	stb	r30,r5,-64
 	ldbu	r3,r30,-64
-	andi	r3,r3,63
-	addi	r4,r0,64
-	sub	r4,r4,r3
-	ldw	r6,r30,-60
-	ldw	r3,r30,-56
-	slli	r9,r4,0
-	srli	r9,r9,0
-	addi	r7,r9,-32
+	andi	r4,r3,63
+	addi	r3,r0,64
+	sub	r4,r3,r4
+	ldw	r3,r30,-60
+	ldw	r6,r30,-56
+	slli	r4,r4,0
+	srli	r4,r4,0
+	andi	r8,r4,63
+	addi	r7,r8,-32
 	blt	r7,r0,.Lj3220
 	li	r5,0
-	sll	r4,r6,r7
+	sll	r4,r3,r7
 	jal	r0,.Lj3221
 .Lj3220:
 	li	r7,31
-	srli	r8,r6,1
-	sub	r7,r7,r9
-	sll	r5,r6,r9
-	srl	r8,r8,r7
-	sll	r4,r3,r9
-	or	r4,r4,r8
+	srli	r9,r3,1
+	sub	r7,r7,r8
+	sll	r5,r3,r8
+	srl	r9,r9,r7
+	sll	r4,r6,r8
+	or	r4,r4,r9
 .Lj3221:
 	ldbu	r3,r30,-64
 	andi	r7,r3,63
-	ldw	r6,r30,-60
-	ldw	r3,r30,-56
-	slli	r2,r7,0
-	srli	r2,r2,0
+	ldw	r3,r30,-60
+	ldw	r6,r30,-56
+	slli	r7,r7,0
+	srli	r7,r7,0
+	andi	r2,r7,63
 	addi	r8,r2,-32
 	blt	r8,r0,.Lj3222
 	li	r7,0
-	srl	r9,r3,r8
+	srl	r10,r6,r8
 	jal	r0,.Lj3223
 .Lj3222:
 	li	r8,31
-	slli	r10,r3,1
+	slli	r9,r6,1
 	sub	r8,r8,r2
-	srl	r9,r6,r2
-	sll	r10,r10,r8
-	srl	r7,r3,r2
-	or	r9,r9,r10
+	srl	r10,r3,r2
+	sll	r9,r9,r8
+	srl	r7,r6,r2
+	or	r10,r10,r9
 .Lj3223:
-	or	r3,r5,r9
+	or	r3,r5,r10
 	or	r4,r4,r7
 	stw	r30,r3,-72
 	stw	r30,r4,-68
@@ -26452,48 +26496,50 @@ SYSTEM_$$_ROLQWORD$QWORD$BYTE$$QWORD:
 	stw	r30,r4,-56
 	stb	r30,r5,-64
 	ldbu	r3,r30,-64
-	andi	r3,r3,63
-	addi	r4,r0,64
-	sub	r4,r4,r3
-	ldw	r6,r30,-60
-	ldw	r3,r30,-56
-	slli	r9,r4,0
-	srli	r9,r9,0
-	addi	r7,r9,-32
+	andi	r4,r3,63
+	addi	r3,r0,64
+	sub	r4,r3,r4
+	ldw	r3,r30,-60
+	ldw	r6,r30,-56
+	slli	r4,r4,0
+	srli	r4,r4,0
+	andi	r8,r4,63
+	addi	r7,r8,-32
 	blt	r7,r0,.Lj3228
 	li	r4,0
-	srl	r5,r3,r7
+	srl	r5,r6,r7
 	jal	r0,.Lj3229
 .Lj3228:
 	li	r7,31
-	slli	r8,r3,1
-	sub	r7,r7,r9
-	srl	r5,r6,r9
-	sll	r8,r8,r7
-	srl	r4,r3,r9
-	or	r5,r5,r8
+	slli	r9,r6,1
+	sub	r7,r7,r8
+	srl	r5,r3,r8
+	sll	r9,r9,r7
+	srl	r4,r6,r8
+	or	r5,r5,r9
 .Lj3229:
 	ldbu	r3,r30,-64
 	andi	r7,r3,63
-	ldw	r6,r30,-60
-	ldw	r3,r30,-56
-	slli	r2,r7,0
-	srli	r2,r2,0
+	ldw	r3,r30,-60
+	ldw	r6,r30,-56
+	slli	r7,r7,0
+	srli	r7,r7,0
+	andi	r2,r7,63
 	addi	r8,r2,-32
 	blt	r8,r0,.Lj3230
-	li	r9,0
-	sll	r7,r6,r8
+	li	r10,0
+	sll	r7,r3,r8
 	jal	r0,.Lj3231
 .Lj3230:
 	li	r8,31
-	srli	r10,r6,1
+	srli	r9,r3,1
 	sub	r8,r8,r2
-	sll	r9,r6,r2
-	srl	r10,r10,r8
-	sll	r7,r3,r2
-	or	r7,r7,r10
+	sll	r10,r3,r2
+	srl	r9,r9,r8
+	sll	r7,r6,r2
+	or	r7,r7,r9
 .Lj3231:
-	or	r3,r5,r9
+	or	r3,r5,r10
 	or	r4,r4,r7
 	stw	r30,r3,-72
 	stw	r30,r4,-68
@@ -26521,49 +26567,51 @@ FPC_ROR_ASSIGN_INT64:
 	stb	r30,r4,-60
 	ldw	r4,r30,-56
 	ldbu	r3,r30,-60
-	andi	r3,r3,63
-	addi	r5,r0,64
-	sub	r5,r5,r3
+	andi	r5,r3,63
+	addi	r3,r0,64
+	sub	r5,r3,r5
 	ldw	r3,r4,0
 	ldw	r6,r4,4
-	slli	r7,r5,0
-	srli	r7,r7,0
-	addi	r9,r7,-32
-	blt	r9,r0,.Lj3234
+	slli	r4,r5,0
+	srli	r4,r4,0
+	andi	r9,r4,63
+	addi	r8,r9,-32
+	blt	r8,r0,.Lj3234
 	li	r5,0
-	sll	r4,r3,r9
+	sll	r4,r3,r8
 	jal	r0,.Lj3235
 .Lj3234:
-	li	r9,31
-	srli	r8,r3,1
-	sub	r9,r9,r7
-	sll	r5,r3,r7
-	srl	r8,r8,r9
-	sll	r4,r6,r7
-	or	r4,r4,r8
+	li	r8,31
+	srli	r7,r3,1
+	sub	r8,r8,r9
+	sll	r5,r3,r9
+	srl	r7,r7,r8
+	sll	r4,r6,r9
+	or	r4,r4,r7
 .Lj3235:
 	ldw	r6,r30,-56
 	ldbu	r3,r30,-60
 	andi	r7,r3,63
 	ldw	r3,r6,0
 	ldw	r6,r6,4
-	slli	r2,r7,0
-	srli	r2,r2,0
-	addi	r8,r2,-32
+	slli	r7,r7,0
+	srli	r7,r7,0
+	andi	r10,r7,63
+	addi	r8,r10,-32
 	blt	r8,r0,.Lj3236
 	li	r7,0
-	srl	r10,r6,r8
+	srl	r2,r6,r8
 	jal	r0,.Lj3237
 .Lj3236:
 	li	r8,31
 	slli	r9,r6,1
-	sub	r8,r8,r2
-	srl	r10,r3,r2
+	sub	r8,r8,r10
+	srl	r2,r3,r10
 	sll	r9,r9,r8
-	srl	r7,r6,r2
-	or	r10,r10,r9
+	srl	r7,r6,r10
+	or	r2,r2,r9
 .Lj3237:
-	or	r3,r5,r10
+	or	r3,r5,r2
 	or	r4,r4,r7
 	ldw	r5,r30,-56
 	stw	r5,r3,0
@@ -26590,49 +26638,51 @@ FPC_ROR_ASSIGN_QWORD:
 	stb	r30,r4,-60
 	ldw	r4,r30,-56
 	ldbu	r3,r30,-60
-	andi	r3,r3,63
-	addi	r5,r0,64
-	sub	r5,r5,r3
+	andi	r5,r3,63
+	addi	r3,r0,64
+	sub	r5,r3,r5
 	ldw	r3,r4,0
 	ldw	r6,r4,4
-	slli	r7,r5,0
-	srli	r7,r7,0
-	addi	r9,r7,-32
-	blt	r9,r0,.Lj3240
+	slli	r4,r5,0
+	srli	r4,r4,0
+	andi	r9,r4,63
+	addi	r8,r9,-32
+	blt	r8,r0,.Lj3240
 	li	r5,0
-	sll	r4,r3,r9
+	sll	r4,r3,r8
 	jal	r0,.Lj3241
 .Lj3240:
-	li	r9,31
-	srli	r8,r3,1
-	sub	r9,r9,r7
-	sll	r5,r3,r7
-	srl	r8,r8,r9
-	sll	r4,r6,r7
-	or	r4,r4,r8
+	li	r8,31
+	srli	r7,r3,1
+	sub	r8,r8,r9
+	sll	r5,r3,r9
+	srl	r7,r7,r8
+	sll	r4,r6,r9
+	or	r4,r4,r7
 .Lj3241:
 	ldw	r6,r30,-56
 	ldbu	r3,r30,-60
 	andi	r7,r3,63
 	ldw	r3,r6,0
 	ldw	r6,r6,4
-	slli	r2,r7,0
-	srli	r2,r2,0
-	addi	r8,r2,-32
+	slli	r7,r7,0
+	srli	r7,r7,0
+	andi	r10,r7,63
+	addi	r8,r10,-32
 	blt	r8,r0,.Lj3242
 	li	r7,0
-	srl	r10,r6,r8
+	srl	r2,r6,r8
 	jal	r0,.Lj3243
 .Lj3242:
 	li	r8,31
 	slli	r9,r6,1
-	sub	r8,r8,r2
-	srl	r10,r3,r2
+	sub	r8,r8,r10
+	srl	r2,r3,r10
 	sll	r9,r9,r8
-	srl	r7,r6,r2
-	or	r10,r10,r9
+	srl	r7,r6,r10
+	or	r2,r2,r9
 .Lj3243:
-	or	r3,r5,r10
+	or	r3,r5,r2
 	or	r4,r4,r7
 	ldw	r5,r30,-56
 	stw	r5,r3,0
@@ -26659,49 +26709,51 @@ FPC_ROL_ASSIGN_INT64:
 	stb	r30,r4,-60
 	ldw	r4,r30,-56
 	ldbu	r3,r30,-60
-	andi	r3,r3,63
-	addi	r5,r0,64
-	sub	r5,r5,r3
+	andi	r5,r3,63
+	addi	r3,r0,64
+	sub	r5,r3,r5
 	ldw	r3,r4,0
 	ldw	r6,r4,4
-	slli	r7,r5,0
-	srli	r7,r7,0
-	addi	r9,r7,-32
-	blt	r9,r0,.Lj3246
+	slli	r4,r5,0
+	srli	r4,r4,0
+	andi	r9,r4,63
+	addi	r8,r9,-32
+	blt	r8,r0,.Lj3246
 	li	r4,0
-	srl	r5,r6,r9
+	srl	r5,r6,r8
 	jal	r0,.Lj3247
 .Lj3246:
-	li	r9,31
-	slli	r8,r6,1
-	sub	r9,r9,r7
-	srl	r5,r3,r7
-	sll	r8,r8,r9
-	srl	r4,r6,r7
-	or	r5,r5,r8
+	li	r8,31
+	slli	r7,r6,1
+	sub	r8,r8,r9
+	srl	r5,r3,r9
+	sll	r7,r7,r8
+	srl	r4,r6,r9
+	or	r5,r5,r7
 .Lj3247:
 	ldw	r6,r30,-56
 	ldbu	r3,r30,-60
 	andi	r7,r3,63
 	ldw	r3,r6,0
 	ldw	r6,r6,4
-	slli	r2,r7,0
-	srli	r2,r2,0
-	addi	r8,r2,-32
+	slli	r7,r7,0
+	srli	r7,r7,0
+	andi	r10,r7,63
+	addi	r8,r10,-32
 	blt	r8,r0,.Lj3248
-	li	r10,0
+	li	r2,0
 	sll	r7,r3,r8
 	jal	r0,.Lj3249
 .Lj3248:
 	li	r8,31
 	srli	r9,r3,1
-	sub	r8,r8,r2
-	sll	r10,r3,r2
+	sub	r8,r8,r10
+	sll	r2,r3,r10
 	srl	r9,r9,r8
-	sll	r7,r6,r2
+	sll	r7,r6,r10
 	or	r7,r7,r9
 .Lj3249:
-	or	r3,r5,r10
+	or	r3,r5,r2
 	or	r4,r4,r7
 	ldw	r5,r30,-56
 	stw	r5,r3,0
@@ -26728,49 +26780,51 @@ FPC_ROL_ASSIGN_QWORD:
 	stb	r30,r4,-60
 	ldw	r4,r30,-56
 	ldbu	r3,r30,-60
-	andi	r3,r3,63
-	addi	r5,r0,64
-	sub	r5,r5,r3
+	andi	r5,r3,63
+	addi	r3,r0,64
+	sub	r5,r3,r5
 	ldw	r3,r4,0
 	ldw	r6,r4,4
-	slli	r7,r5,0
-	srli	r7,r7,0
-	addi	r9,r7,-32
-	blt	r9,r0,.Lj3252
+	slli	r4,r5,0
+	srli	r4,r4,0
+	andi	r9,r4,63
+	addi	r8,r9,-32
+	blt	r8,r0,.Lj3252
 	li	r4,0
-	srl	r5,r6,r9
+	srl	r5,r6,r8
 	jal	r0,.Lj3253
 .Lj3252:
-	li	r9,31
-	slli	r8,r6,1
-	sub	r9,r9,r7
-	srl	r5,r3,r7
-	sll	r8,r8,r9
-	srl	r4,r6,r7
-	or	r5,r5,r8
+	li	r8,31
+	slli	r7,r6,1
+	sub	r8,r8,r9
+	srl	r5,r3,r9
+	sll	r7,r7,r8
+	srl	r4,r6,r9
+	or	r5,r5,r7
 .Lj3253:
 	ldw	r6,r30,-56
 	ldbu	r3,r30,-60
 	andi	r7,r3,63
 	ldw	r3,r6,0
 	ldw	r6,r6,4
-	slli	r2,r7,0
-	srli	r2,r2,0
-	addi	r8,r2,-32
+	slli	r7,r7,0
+	srli	r7,r7,0
+	andi	r10,r7,63
+	addi	r8,r10,-32
 	blt	r8,r0,.Lj3254
-	li	r10,0
+	li	r2,0
 	sll	r7,r3,r8
 	jal	r0,.Lj3255
 .Lj3254:
 	li	r8,31
 	srli	r9,r3,1
-	sub	r8,r8,r2
-	sll	r10,r3,r2
+	sub	r8,r8,r10
+	sll	r2,r3,r10
 	srl	r9,r9,r8
-	sll	r7,r6,r2
+	sll	r7,r6,r10
 	or	r7,r7,r9
 .Lj3255:
-	or	r3,r5,r10
+	or	r3,r5,r2
 	or	r4,r4,r7
 	ldw	r5,r30,-56
 	stw	r5,r3,0
@@ -26914,10 +26968,10 @@ FPC_SARINT64:
 	ldw	r4,r30,-56
 	li	r3,0
 	srli	r4,r4,31
-	sub	r4,r0,r4
-	sltu	r6,r0,r4
-	sub	r5,r0,r3
-	sub	r5,r5,r6
+	sub	r5,r0,r4
+	sltu	r6,r0,r5
+	sub	r4,r0,r3
+	sub	r4,r4,r6
 	ldbu	r3,r30,-64
 	andi	r3,r3,63
 	sne	r3,r3,r0
@@ -26925,14 +26979,15 @@ FPC_SARINT64:
 	slli	r6,r6,0
 	srli	r6,r6,0
 	srai	r3,r6,31
-	and	r6,r4,r6
-	and	r7,r5,r3
+	and	r6,r5,r6
+	and	r7,r4,r3
 	ldbu	r3,r30,-64
 	andi	r4,r3,63
 	addi	r3,r0,64
 	sub	r3,r3,r4
-	slli	r8,r3,0
-	srli	r8,r8,0
+	slli	r3,r3,0
+	srli	r3,r3,0
+	andi	r8,r3,63
 	addi	r3,r8,-32
 	blt	r3,r0,.Lj3262
 	li	r5,0
@@ -26948,27 +27003,28 @@ FPC_SARINT64:
 	or	r4,r4,r9
 .Lj3263:
 	ldbu	r3,r30,-64
-	andi	r6,r3,63
-	ldw	r7,r30,-60
-	ldw	r3,r30,-56
-	slli	r10,r6,0
-	srli	r10,r10,0
-	addi	r9,r10,-32
-	blt	r9,r0,.Lj3264
-	li	r6,0
-	srl	r8,r3,r9
+	andi	r7,r3,63
+	ldw	r3,r30,-60
+	ldw	r6,r30,-56
+	slli	r7,r7,0
+	srli	r7,r7,0
+	andi	r8,r7,63
+	addi	r10,r8,-32
+	blt	r10,r0,.Lj3264
+	li	r7,0
+	srl	r2,r6,r10
 	jal	r0,.Lj3265
 .Lj3264:
-	li	r9,31
-	slli	r2,r3,1
-	sub	r9,r9,r10
-	srl	r8,r7,r10
-	sll	r2,r2,r9
-	srl	r6,r3,r10
-	or	r8,r8,r2
+	li	r10,31
+	slli	r9,r6,1
+	sub	r10,r10,r8
+	srl	r2,r3,r8
+	sll	r9,r9,r10
+	srl	r7,r6,r8
+	or	r2,r2,r9
 .Lj3265:
-	or	r3,r5,r8
-	or	r4,r4,r6
+	or	r3,r5,r2
+	or	r4,r4,r7
 	stw	r30,r3,-72
 	stw	r30,r4,-68
 	ldw	r1,r30,-72
@@ -26993,9 +27049,9 @@ FPC_SAR_ASSIGN_INT64:
 	addi	r29,r29,-60
 	stw	r30,r3,-56
 	stb	r30,r4,-60
-	ldw	r4,r30,-56
-	ldw	r3,r4,0
-	ldw	r4,r4,4
+	ldw	r3,r30,-56
+	ldw	r4,r3,0
+	ldw	r4,r3,4
 	li	r3,0
 	srli	r4,r4,31
 	sub	r5,r0,r4
@@ -27017,40 +27073,42 @@ FPC_SAR_ASSIGN_INT64:
 	sub	r3,r3,r4
 	slli	r3,r3,0
 	srli	r3,r3,0
-	addi	r9,r3,-32
-	blt	r9,r0,.Lj3268
+	andi	r9,r3,63
+	addi	r8,r9,-32
+	blt	r8,r0,.Lj3268
 	li	r5,0
-	sll	r4,r6,r9
+	sll	r4,r6,r8
 	jal	r0,.Lj3269
 .Lj3268:
-	li	r9,31
-	srli	r8,r6,1
-	sub	r9,r9,r3
-	sll	r5,r6,r3
-	srl	r8,r8,r9
-	sll	r4,r7,r3
-	or	r4,r4,r8
+	li	r8,31
+	srli	r3,r6,1
+	sub	r8,r8,r9
+	sll	r5,r6,r9
+	srl	r3,r3,r8
+	sll	r4,r7,r9
+	or	r4,r4,r3
 .Lj3269:
 	ldw	r6,r30,-56
 	ldbu	r3,r30,-60
 	andi	r7,r3,63
 	ldw	r3,r6,0
 	ldw	r6,r6,4
-	slli	r10,r7,0
-	srli	r10,r10,0
-	addi	r9,r10,-32
-	blt	r9,r0,.Lj3270
+	slli	r7,r7,0
+	srli	r7,r7,0
+	andi	r10,r7,63
+	addi	r2,r10,-32
+	blt	r2,r0,.Lj3270
 	li	r7,0
-	srl	r8,r6,r9
+	srl	r8,r6,r2
 	jal	r0,.Lj3271
 .Lj3270:
-	li	r9,31
-	slli	r2,r6,1
-	sub	r9,r9,r10
+	li	r2,31
+	slli	r9,r6,1
+	sub	r2,r2,r10
 	srl	r8,r3,r10
-	sll	r2,r2,r9
+	sll	r9,r9,r2
 	srl	r7,r6,r10
-	or	r8,r8,r2
+	or	r8,r8,r9
 .Lj3271:
 	or	r3,r5,r8
 	or	r5,r4,r7
@@ -27077,9 +27135,9 @@ FPC_SAR_ASSIGN_QWORD:
 	addi	r29,r29,-60
 	stw	r30,r3,-56
 	stb	r30,r4,-60
-	ldw	r4,r30,-56
-	ldw	r3,r4,0
-	ldw	r4,r4,4
+	ldw	r3,r30,-56
+	ldw	r4,r3,0
+	ldw	r4,r3,4
 	li	r3,0
 	srli	r4,r4,31
 	sub	r5,r0,r4
@@ -27101,40 +27159,42 @@ FPC_SAR_ASSIGN_QWORD:
 	sub	r3,r3,r4
 	slli	r3,r3,0
 	srli	r3,r3,0
-	addi	r9,r3,-32
-	blt	r9,r0,.Lj3274
+	andi	r9,r3,63
+	addi	r8,r9,-32
+	blt	r8,r0,.Lj3274
 	li	r5,0
-	sll	r4,r6,r9
+	sll	r4,r6,r8
 	jal	r0,.Lj3275
 .Lj3274:
-	li	r9,31
-	srli	r8,r6,1
-	sub	r9,r9,r3
-	sll	r5,r6,r3
-	srl	r8,r8,r9
-	sll	r4,r7,r3
-	or	r4,r4,r8
+	li	r8,31
+	srli	r3,r6,1
+	sub	r8,r8,r9
+	sll	r5,r6,r9
+	srl	r3,r3,r8
+	sll	r4,r7,r9
+	or	r4,r4,r3
 .Lj3275:
 	ldw	r6,r30,-56
 	ldbu	r3,r30,-60
 	andi	r7,r3,63
 	ldw	r3,r6,0
 	ldw	r6,r6,4
-	slli	r10,r7,0
-	srli	r10,r10,0
-	addi	r9,r10,-32
-	blt	r9,r0,.Lj3276
+	slli	r7,r7,0
+	srli	r7,r7,0
+	andi	r10,r7,63
+	addi	r2,r10,-32
+	blt	r2,r0,.Lj3276
 	li	r7,0
-	srl	r8,r6,r9
+	srl	r8,r6,r2
 	jal	r0,.Lj3277
 .Lj3276:
-	li	r9,31
-	slli	r2,r6,1
-	sub	r9,r9,r10
+	li	r2,31
+	slli	r9,r6,1
+	sub	r2,r2,r10
 	srl	r8,r3,r10
-	sll	r2,r2,r9
+	sll	r9,r9,r2
 	srl	r7,r6,r10
-	or	r8,r8,r2
+	or	r8,r8,r9
 .Lj3277:
 	or	r3,r5,r8
 	or	r5,r4,r7
@@ -30109,11 +30169,11 @@ fpc_trunc_real:
 	bne	r3,r0,.Lj3587
 	jal	r0,.Lj3588
 .Lj3587:
-	ldw	r5,r30,-84
+	ldw	r4,r30,-84
 	ldw	r3,r30,-80
-	lui	r4,256
-	bne	r4,r3,.Lj3590
-	bne	r0,r5,.Lj3590
+	lui	r5,256
+	bne	r5,r3,.Lj3590
+	bne	r0,r4,.Lj3590
 	jal	r0,.Lj3591
 .Lj3590:
 	jal	r0,.Lj3589
@@ -30139,29 +30199,30 @@ fpc_trunc_real:
 	ldh	r5,r30,-76
 	ldw	r4,r30,-84
 	ldw	r3,r30,-80
-	slli	r8,r5,0
-	srli	r8,r8,0
-	addi	r7,r8,-32
-	blt	r7,r0,.Lj3592
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r8,r5,63
+	addi	r6,r8,-32
+	blt	r6,r0,.Lj3592
 	li	r5,0
-	sll	r6,r4,r7
+	sll	r7,r4,r6
 	jal	r0,.Lj3593
 .Lj3592:
-	li	r7,31
+	li	r6,31
 	srli	r9,r4,1
-	sub	r7,r7,r8
+	sub	r6,r6,r8
 	sll	r5,r4,r8
-	srl	r9,r9,r7
-	sll	r6,r3,r8
-	or	r6,r6,r9
+	srl	r9,r9,r6
+	sll	r7,r3,r8
+	or	r7,r7,r9
 .Lj3593:
 	stw	r30,r5,-92
-	stw	r30,r6,-88
+	stw	r30,r7,-88
 	jal	r0,.Lj3594
 .Lj3581:
-	ldh	r3,r30,-72
-	addi	r4,r0,1022
-	slt	r3,r3,r4
+	ldh	r4,r30,-72
+	addi	r3,r0,1022
+	slt	r3,r4,r3
 	bne	r3,r0,.Lj3595
 	jal	r0,.Lj3596
 .Lj3595:
@@ -30171,26 +30232,27 @@ fpc_trunc_real:
 .Lj3596:
 	ldh	r3,r30,-76
 	sub	r5,r0,r3
-	ldw	r4,r30,-84
-	ldw	r3,r30,-80
-	slli	r9,r5,0
-	srli	r9,r9,0
-	addi	r7,r9,-32
-	blt	r7,r0,.Lj3597
-	li	r5,0
-	srl	r6,r3,r7
+	ldw	r3,r30,-84
+	ldw	r4,r30,-80
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r7,r5,63
+	addi	r8,r7,-32
+	blt	r8,r0,.Lj3597
+	li	r6,0
+	srl	r5,r4,r8
 	jal	r0,.Lj3598
 .Lj3597:
-	li	r7,31
-	slli	r8,r3,1
-	sub	r7,r7,r9
-	srl	r6,r4,r9
-	sll	r8,r8,r7
-	srl	r5,r3,r9
-	or	r6,r6,r8
+	li	r8,31
+	slli	r9,r4,1
+	sub	r8,r8,r7
+	srl	r5,r3,r7
+	sll	r9,r9,r8
+	srl	r6,r4,r7
+	or	r5,r5,r9
 .Lj3598:
-	stw	r30,r6,-92
-	stw	r30,r5,-88
+	stw	r30,r5,-92
+	stw	r30,r6,-88
 .Lj3594:
 	ldw	r4,r30,-96
 	addi	r3,r0,0
@@ -30198,14 +30260,14 @@ fpc_trunc_real:
 	bne	r3,r0,.Lj3599
 	jal	r0,.Lj3600
 .Lj3599:
-	ldw	r3,r30,-92
-	ldw	r4,r30,-88
-	sub	r5,r0,r3
-	sltu	r3,r0,r5
-	sub	r4,r0,r4
-	sub	r4,r4,r3
+	ldw	r4,r30,-92
+	ldw	r3,r30,-88
+	sub	r5,r0,r4
+	sltu	r4,r0,r5
+	sub	r3,r0,r3
+	sub	r3,r3,r4
 	stw	r30,r5,-92
-	stw	r30,r4,-88
+	stw	r30,r3,-88
 .Lj3600:
 	ldw	r3,r30,-92
 	stw	r30,r3,-68
@@ -30474,9 +30536,9 @@ SYSTEM_$$_FREXP$REAL$REAL$LONGINT:
 	srli	r4,r4,0
 	srl	r5,r5,r4
 	stw	r30,r5,-92
-	ldw	r6,r30,-92
-	addi	r5,r0,255
-	sgtu	r5,r6,r5
+	ldw	r5,r30,-92
+	addi	r6,r0,255
+	sgtu	r5,r5,r6
 	slli	r5,r5,3
 	or	r5,r4,r5
 	addi	r4,r5,0
@@ -30500,21 +30562,22 @@ SYSTEM_$$_FREXP$REAL$REAL$LONGINT:
 	sub	r3,r4,r3
 	stw	r30,r3,-84
 	ldw	r6,r30,-76
-	ldw	r7,r30,-72
-	ldw	r8,r30,-84
-	addi	r3,r8,-32
-	blt	r3,r0,.Lj3632
+	ldw	r3,r30,-72
+	ldw	r4,r30,-84
+	andi	r9,r4,63
+	addi	r7,r9,-32
+	blt	r7,r0,.Lj3632
 	li	r4,0
-	sll	r5,r6,r3
+	sll	r5,r6,r7
 	jal	r0,.Lj3633
 .Lj3632:
-	li	r3,31
-	srli	r9,r6,1
-	sub	r3,r3,r8
-	sll	r4,r6,r8
-	srl	r9,r9,r3
-	sll	r5,r7,r8
-	or	r5,r5,r9
+	li	r7,31
+	srli	r8,r6,1
+	sub	r7,r7,r9
+	sll	r4,r6,r9
+	srl	r8,r8,r7
+	sll	r5,r3,r9
+	or	r5,r5,r8
 .Lj3633:
 	ldw	r3,r30,-64
 	call	SYSTEM$_$TDOUBLEREC_$__$$_SETFRAC$QWORD
@@ -30523,9 +30586,9 @@ SYSTEM_$$_FREXP$REAL$REAL$LONGINT:
 	addi	r4,r0,1022
 	call	SYSTEM$_$TDOUBLEREC_$__$$_SETEXP$QWORD
 	ldw	r3,r30,-68
-	ldw	r5,r30,-84
-	addi	r4,r0,-1021
-	sub	r4,r4,r5
+	ldw	r4,r30,-84
+	addi	r5,r0,-1021
+	sub	r4,r5,r4
 	stw	r3,r4,0
 	jal	r0,.Lj3619
 .Lj3627:
@@ -35124,16 +35187,16 @@ fpc_round_real:
 	ldw	r3,r30,-84
 	srli	r3,r3,31
 	stw	r30,r3,-88
-	ldw	r3,r30,-84
-	lui	r4,255
-	ori	r4,r4,4095
-	and	r3,r3,r4
+	ldw	r4,r30,-84
+	lui	r3,255
+	ori	r3,r3,4095
+	and	r3,r4,r3
 	lui	r4,256
 	or	r3,r3,r4
 	stw	r30,r3,-84
-	ldw	r4,r30,-80
-	addi	r3,r0,52
-	sge	r3,r4,r3
+	ldw	r3,r30,-80
+	addi	r4,r0,52
+	sge	r3,r3,r4
 	bne	r3,r0,.Lj4013
 	jal	r0,.Lj4014
 .Lj4013:
@@ -35156,39 +35219,40 @@ fpc_round_real:
 .Lj4016:
 	ldw	r4,r30,-84
 	addi	r3,r0,0
-	li	r6,0
-	slli	r5,r4,0
+	li	r5,0
+	slli	r6,r4,0
 	ldw	r4,r30,-60
 	addi	r3,r0,0
-	or	r4,r6,r4
-	or	r3,r5,r3
+	or	r4,r5,r4
+	or	r3,r6,r3
 	ldw	r5,r30,-80
 	addi	r5,r5,-52
-	slli	r6,r5,0
-	srli	r6,r6,0
-	addi	r7,r6,-32
-	blt	r7,r0,.Lj4018
-	li	r5,0
-	sll	r8,r4,r7
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r8,r5,63
+	addi	r5,r8,-32
+	blt	r5,r0,.Lj4018
+	li	r6,0
+	sll	r7,r4,r5
 	jal	r0,.Lj4019
 .Lj4018:
-	li	r7,31
+	li	r5,31
 	srli	r9,r4,1
-	sub	r7,r7,r6
-	sll	r5,r4,r6
-	srl	r9,r9,r7
-	sll	r8,r3,r6
-	or	r8,r8,r9
+	sub	r5,r5,r8
+	sll	r6,r4,r8
+	srl	r9,r9,r5
+	sll	r7,r3,r8
+	or	r7,r7,r9
 .Lj4019:
-	stw	r30,r5,-68
-	stw	r30,r8,-64
+	stw	r30,r6,-68
+	stw	r30,r7,-64
 .Lj4017:
 	jal	r0,.Lj4020
 .Lj4014:
 	ldw	r3,r30,-88
-	slli	r3,r3,3
-	la	r4,TC_$SYSTEM$_$fpc_round_real$DOUBLE$$INT64_$$_H2_52
-	add	r3,r3,r4
+	slli	r4,r3,3
+	la	r3,TC_$SYSTEM$_$fpc_round_real$DOUBLE$$INT64_$$_H2_52
+	add	r3,r4,r3
 	ldw	r4,r3,0
 	ldw	r3,r3,4
 	ldw	r8,r30,-60
@@ -35202,11 +35266,11 @@ fpc_round_real:
 	stw	r30,r3,-76
 	stw	r30,r10,-72
 	ldw	r3,r30,-88
-	slli	r5,r3,3
+	slli	r6,r3,3
 	ldw	r4,r30,-76
 	ldw	r3,r30,-72
-	la	r6,TC_$SYSTEM$_$fpc_round_real$DOUBLE$$INT64_$$_H2_52
-	add	r5,r5,r6
+	la	r5,TC_$SYSTEM$_$fpc_round_real$DOUBLE$$INT64_$$_H2_52
+	add	r5,r6,r5
 	ldw	r8,r5,0
 	ldw	r9,r5,4
 	addi	r5,r3,0
@@ -35273,23 +35337,24 @@ fpc_round_real:
 	addi	r3,r0,0
 	ldw	r7,r30,-80
 	addi	r7,r7,-20
-	slli	r10,r7,0
-	srli	r10,r10,0
-	addi	r8,r10,-32
+	slli	r7,r7,0
+	srli	r7,r7,0
+	andi	r2,r7,63
+	addi	r8,r2,-32
 	blt	r8,r0,.Lj4027
-	li	r9,0
+	li	r10,0
 	sll	r7,r4,r8
 	jal	r0,.Lj4028
 .Lj4027:
 	li	r8,31
-	srli	r2,r4,1
-	sub	r8,r8,r10
-	sll	r9,r4,r10
-	srl	r2,r2,r8
-	sll	r7,r3,r10
-	or	r7,r7,r2
+	srli	r9,r4,1
+	sub	r8,r8,r2
+	sll	r10,r4,r2
+	srl	r9,r9,r8
+	sll	r7,r3,r2
+	or	r7,r7,r9
 .Lj4028:
-	or	r3,r6,r9
+	or	r3,r6,r10
 	or	r4,r5,r7
 	stw	r30,r3,-68
 	stw	r30,r4,-64
@@ -41278,9 +41343,9 @@ SYSTEM_$$_STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING:
 	la	r3,TC_$SYSTEM_$$_FLOAT_FORMAT
 	ldhu	r3,r3,4
 	sth	r30,r3,-140
-	ldh	r3,r30,-148
-	ldh	r4,r30,-140
-	slt	r3,r3,r4
+	ldh	r4,r30,-148
+	ldh	r3,r30,-140
+	slt	r3,r4,r3
 	bne	r3,r0,.Lj4542
 	jal	r0,.Lj4543
 .Lj4542:
@@ -41316,9 +41381,9 @@ SYSTEM_$$_STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING:
 	addi	r3,r0,2
 	sth	r30,r3,-152
 .Lj4548:
-	ldh	r3,r30,-152
-	ldh	r4,r30,-148
-	sgt	r3,r3,r4
+	ldh	r4,r30,-152
+	ldh	r3,r30,-148
+	sgt	r3,r4,r3
 	bne	r3,r0,.Lj4549
 	jal	r0,.Lj4550
 .Lj4549:
@@ -41355,10 +41420,10 @@ SYSTEM_$$_STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING:
 	bne	r3,r0,.Lj4552
 	jal	r0,.Lj4553
 .Lj4552:
-	ldw	r3,r30,-92
-	ldw	r4,r30,-88
-	bne	r0,r4,.Lj4556
+	ldw	r4,r30,-92
+	ldw	r3,r30,-88
 	bne	r0,r3,.Lj4556
+	bne	r0,r4,.Lj4556
 	jal	r0,.Lj4555
 .Lj4555:
 	jal	r0,.Lj4554
@@ -41507,10 +41572,10 @@ SYSTEM_$$_STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING:
 	stw	r30,r4,-236
 	addi	r3,r0,0
 .Lj4573:
-	ldw	r4,r30,-236
-	lui	r5,15
-	ori	r5,r5,4095
-	sgtu	r4,r4,r5
+	ldw	r5,r30,-236
+	lui	r4,15
+	ori	r4,r4,4095
+	sgtu	r4,r5,r4
 	slli	r4,r4,4
 	ldw	r5,r30,-236
 	slli	r4,r4,0
@@ -41551,35 +41616,36 @@ SYSTEM_$$_STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING:
 	sth	r30,r3,-84
 .Lj4570:
 	ldh	r5,r30,-124
-	ldw	r3,r30,-92
-	ldw	r4,r30,-88
+	ldw	r4,r30,-92
+	ldw	r3,r30,-88
 	slli	r5,r5,0
 	srli	r5,r5,0
-	addi	r6,r5,-32
-	blt	r6,r0,.Lj4575
-	li	r8,0
-	sll	r7,r3,r6
+	andi	r7,r5,63
+	addi	r8,r7,-32
+	blt	r8,r0,.Lj4575
+	li	r5,0
+	sll	r9,r4,r8
 	jal	r0,.Lj4576
 .Lj4575:
-	li	r6,31
-	srli	r9,r3,1
-	sub	r6,r6,r5
-	sll	r8,r3,r5
-	srl	r9,r9,r6
-	sll	r7,r4,r5
-	or	r7,r7,r9
+	li	r8,31
+	srli	r6,r4,1
+	sub	r8,r8,r7
+	sll	r5,r4,r7
+	srl	r6,r6,r8
+	sll	r9,r3,r7
+	or	r9,r9,r6
 .Lj4576:
-	stw	r30,r8,-92
-	stw	r30,r7,-88
+	stw	r30,r5,-92
+	stw	r30,r9,-88
 	ldh	r3,r30,-124
 	addi	r3,r3,1075
-	slli	r4,r3,16
-	srai	r4,r4,16
-	ldh	r3,r30,-84
-	sub	r3,r3,r4
 	slli	r3,r3,16
 	srai	r3,r3,16
-	sth	r30,r3,-84
+	ldh	r4,r30,-84
+	sub	r4,r4,r3
+	slli	r4,r4,16
+	srai	r4,r4,16
+	sth	r30,r4,-84
 	ldh	r4,r30,-84
 	addi	r3,r0,-61
 	sle	r3,r3,r4
@@ -41631,23 +41697,24 @@ SYSTEM_$$_STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING:
 .Lj4580:
 	ldh	r3,r30,-96
 	sub	r5,r0,r3
-	ldw	r4,r30,-104
-	ldw	r3,r30,-100
-	slli	r8,r5,0
-	srli	r8,r8,0
-	addi	r5,r8,-32
+	ldw	r3,r30,-104
+	ldw	r4,r30,-100
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r9,r5,63
+	addi	r5,r9,-32
 	blt	r5,r0,.Lj4584
 	li	r7,0
-	srl	r6,r3,r5
+	srl	r6,r4,r5
 	jal	r0,.Lj4585
 .Lj4584:
 	li	r5,31
-	slli	r9,r3,1
-	sub	r5,r5,r8
-	srl	r6,r4,r8
-	sll	r9,r9,r5
-	srl	r7,r3,r8
-	or	r6,r6,r9
+	slli	r8,r4,1
+	sub	r5,r5,r9
+	srl	r6,r3,r9
+	sll	r8,r8,r5
+	srl	r7,r4,r9
+	or	r6,r6,r8
 .Lj4585:
 	addi	r4,r30,-224
 	addi	r3,r30,0
@@ -41672,6 +41739,7 @@ SYSTEM_$$_STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING:
 	addi	r3,r0,0
 	slli	r3,r4,0
 	srli	r3,r3,0
+	andi	r3,r3,63
 	addi	r4,r3,-32
 	blt	r4,r0,.Lj4591
 	li	r6,0
@@ -41687,11 +41755,11 @@ SYSTEM_$$_STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING:
 	stw	r30,r3,-172
 	stw	r30,r4,-168
 	ldw	r5,r30,-104
-	ldw	r3,r30,-100
+	ldw	r4,r30,-100
 	ldw	r6,r30,-172
-	ldw	r4,r30,-168
+	ldw	r3,r30,-168
 	and	r5,r5,r6
-	and	r3,r3,r4
+	and	r3,r4,r3
 	stw	r30,r5,-164
 	stw	r30,r3,-160
 	jal	r0,.Lj4594
@@ -41707,12 +41775,12 @@ SYSTEM_$$_STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING:
 	add	r3,r4,r3
 	sltu	r7,r3,r4
 	addi	r4,r3,0
-	lui	r3,524288
-	ori	r3,r3,0
-	add	r8,r6,r7
-	sltu	r7,r8,r6
-	sub	r7,r3,r7
-	add	r6,r8,r5
+	lui	r8,524288
+	ori	r8,r8,0
+	add	r3,r6,r7
+	sltu	r7,r3,r6
+	sub	r7,r8,r7
+	add	r6,r3,r5
 	stw	r30,r4,-164
 	stw	r30,r6,-160
 	ldw	r4,r30,-172
@@ -41732,32 +41800,33 @@ SYSTEM_$$_STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING:
 	sub	r5,r0,r3
 	ldw	r3,r30,-164
 	ldw	r4,r30,-160
-	slli	r9,r5,0
-	srli	r9,r9,0
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r9,r5,63
 	addi	r8,r9,-32
 	blt	r8,r0,.Lj4596
-	li	r7,0
-	srl	r5,r4,r8
+	li	r5,0
+	srl	r7,r4,r8
 	jal	r0,.Lj4597
 .Lj4596:
 	li	r8,31
 	slli	r6,r4,1
 	sub	r8,r8,r9
-	srl	r5,r3,r9
+	srl	r7,r3,r9
 	sll	r6,r6,r8
-	srl	r7,r4,r9
-	or	r5,r5,r6
+	srl	r5,r4,r9
+	or	r7,r7,r6
 .Lj4597:
-	andi	r3,r5,255
+	andi	r3,r7,255
 	ldhu	r4,r30,-144
 	add	r4,r30,r4
 	stb	r4,r3,-224
-	ldw	r5,r30,-164
-	ldw	r4,r30,-160
-	ldw	r6,r30,-172
-	ldw	r3,r30,-168
-	and	r5,r5,r6
-	and	r3,r4,r3
+	ldw	r6,r30,-164
+	ldw	r3,r30,-160
+	ldw	r5,r30,-172
+	ldw	r4,r30,-168
+	and	r5,r6,r5
+	and	r3,r3,r4
 	stw	r30,r5,-164
 	stw	r30,r3,-160
 	ldh	r3,r30,-144
@@ -41821,10 +41890,10 @@ SYSTEM_$$_STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING:
 	jal	r0,.Lj4610
 .Lj4609:
 	ldw	r3,r30,-184
-	slli	r4,r3,2
-	ldw	r3,r30,-184
-	add	r3,r3,r4
-	stw	r30,r3,-184
+	slli	r3,r3,2
+	ldw	r4,r30,-184
+	add	r4,r4,r3
+	stw	r30,r4,-184
 	ldw	r3,r30,-180
 	srli	r3,r3,1
 	stw	r30,r3,-180
@@ -41968,9 +42037,9 @@ SYSTEM_$$_STR_REAL$SMALLINT$SMALLINT$DOUBLE$TREAL_TYPE$OPENSTRING:
 	slli	r3,r3,16
 	srli	r3,r3,16
 	sth	r29,r3,0
-	ldh	r3,r30,-108
-	ldh	r4,r30,-132
-	sub	r3,r4,r3
+	ldh	r4,r30,-108
+	ldh	r3,r30,-132
+	sub	r3,r3,r4
 	addi	r3,r3,-1
 	slli	r10,r3,16
 	srai	r10,r10,16
@@ -43921,14 +43990,14 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	bne	r3,r0,.Lj4836
 	jal	r0,.Lj4837
 .Lj4836:
-	ldw	r3,r30,-60
-	ldh	r4,r30,-116
-	stw	r3,r4,0
+	ldw	r4,r30,-60
+	ldh	r3,r30,-116
+	stw	r4,r3,0
 	jal	r0,.Lj4817
 .Lj4837:
-	ldw	r3,r30,-56
-	ldbu	r4,r30,-116
-	add	r3,r3,r4
+	ldw	r4,r30,-56
+	ldbu	r3,r30,-116
+	add	r3,r4,r3
 	ldbu	r3,r3,0
 	addi	r4,r0,46
 	beq	r3,r4,.Lj4840
@@ -44045,9 +44114,9 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	bne	r3,r0,.Lj4859
 	jal	r0,.Lj4860
 .Lj4860:
-	ldbu	r4,r30,-72
-	addi	r3,r0,57
-	sgtu	r3,r4,r3
+	ldbu	r3,r30,-72
+	addi	r4,r0,57
+	sgtu	r3,r3,r4
 	bne	r3,r0,.Lj4859
 	jal	r0,.Lj4861
 .Lj4859:
@@ -44088,20 +44157,20 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	add	r8,r6,r4
 	sltu	r4,r8,r6
 	sub	r4,r7,r4
-	add	r7,r8,r3
+	add	r6,r8,r3
 	ldw	r4,r30,-80
-	ldw	r6,r30,-76
+	ldw	r7,r30,-76
 	add	r3,r4,r5
 	sltu	r5,r3,r4
 	addi	r4,r3,0
 	lui	r8,524288
 	ori	r8,r8,0
-	add	r3,r6,r5
-	sltu	r5,r3,r6
+	add	r3,r7,r5
+	sltu	r5,r3,r7
 	sub	r5,r8,r5
-	add	r6,r3,r7
+	add	r7,r3,r6
 	stw	r30,r4,-80
-	stw	r30,r6,-76
+	stw	r30,r7,-76
 	jal	r0,.Lj4864
 .Lj4863:
 	ldh	r3,r30,-100
@@ -44142,9 +44211,9 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	bne	r3,r0,.Lj4856
 	jal	r0,.Lj4858
 .Lj4858:
-	ldh	r3,r30,-116
-	ldh	r4,r30,-120
-	sle	r3,r3,r4
+	ldh	r4,r30,-116
+	ldh	r3,r30,-120
+	sle	r3,r4,r3
 	bne	r3,r0,.Lj4868
 	jal	r0,.Lj4869
 .Lj4868:
@@ -44202,14 +44271,14 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 .Lj4872:
 	jal	r0,.Lj4880
 .Lj4879:
-	ldw	r4,r30,-56
-	ldbu	r3,r30,-116
-	add	r3,r4,r3
+	ldw	r3,r30,-56
+	ldbu	r4,r30,-116
+	add	r3,r3,r4
 	ldbu	r3,r3,0
 	stb	r30,r3,-72
-	ldbu	r4,r30,-72
-	addi	r3,r0,48
-	sltu	r3,r4,r3
+	ldbu	r3,r30,-72
+	addi	r4,r0,48
+	sltu	r3,r3,r4
 	bne	r3,r0,.Lj4882
 	jal	r0,.Lj4883
 .Lj4883:
@@ -44355,16 +44424,16 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	stw	r30,r5,-76
 .Lj4898:
 	stw	r30,r0,-124
-	ldh	r4,r30,-116
-	ldh	r3,r30,-120
-	sle	r3,r4,r3
+	ldh	r3,r30,-116
+	ldh	r4,r30,-120
+	sle	r3,r3,r4
 	bne	r3,r0,.Lj4899
 	jal	r0,.Lj4900
 .Lj4899:
 	stb	r30,r0,-148
-	ldw	r3,r30,-56
-	ldbu	r4,r30,-116
-	add	r3,r3,r4
+	ldw	r4,r30,-56
+	ldbu	r3,r30,-116
+	add	r3,r4,r3
 	ldbu	r3,r3,0
 	addi	r4,r0,69
 	beq	r3,r4,.Lj4903
@@ -44384,20 +44453,20 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-116
-	ldh	r3,r30,-116
-	ldh	r4,r30,-120
-	sgt	r3,r3,r4
+	ldh	r4,r30,-116
+	ldh	r3,r30,-120
+	sgt	r3,r4,r3
 	bne	r3,r0,.Lj4904
 	jal	r0,.Lj4905
 .Lj4904:
-	ldw	r3,r30,-60
-	ldh	r4,r30,-116
-	stw	r3,r4,0
+	ldw	r4,r30,-60
+	ldh	r3,r30,-116
+	stw	r4,r3,0
 	jal	r0,.Lj4817
 .Lj4905:
-	ldw	r3,r30,-56
-	ldbu	r4,r30,-116
-	add	r3,r3,r4
+	ldw	r4,r30,-56
+	ldbu	r3,r30,-116
+	add	r3,r4,r3
 	ldbu	r3,r3,0
 	addi	r4,r0,43
 	beq	r3,r4,.Lj4907
@@ -44423,9 +44492,9 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 .Lj4906:
 	jal	r0,.Lj4910
 .Lj4909:
-	ldw	r4,r30,-56
-	ldbu	r3,r30,-116
-	add	r3,r4,r3
+	ldw	r3,r30,-56
+	ldbu	r4,r30,-116
+	add	r3,r3,r4
 	ldbu	r3,r3,0
 	stb	r30,r3,-72
 	ldbu	r3,r30,-72
@@ -44434,15 +44503,15 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	bne	r3,r0,.Lj4912
 	jal	r0,.Lj4913
 .Lj4913:
-	ldbu	r4,r30,-72
-	addi	r3,r0,57
-	sgtu	r3,r4,r3
+	ldbu	r3,r30,-72
+	addi	r4,r0,57
+	sgtu	r3,r3,r4
 	bne	r3,r0,.Lj4912
 	jal	r0,.Lj4914
 .Lj4912:
-	ldw	r4,r30,-60
-	ldh	r3,r30,-116
-	stw	r4,r3,0
+	ldw	r3,r30,-60
+	ldh	r4,r30,-116
+	stw	r3,r4,0
 	jal	r0,.Lj4817
 .Lj4914:
 	ldw	r4,r30,-124
@@ -44453,15 +44522,15 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	jal	r0,.Lj4916
 .Lj4915:
 	ldw	r3,r30,-124
-	slli	r4,r3,3
-	ldw	r3,r30,-124
-	add	r3,r3,r4
+	slli	r3,r3,3
+	ldw	r4,r30,-124
+	add	r3,r4,r3
 	ldbu	r4,r30,-72
 	add	r3,r4,r3
-	addi	r3,r3,-48
-	ldw	r4,r30,-124
-	add	r4,r4,r3
-	stw	r30,r4,-124
+	addi	r4,r3,-48
+	ldw	r3,r30,-124
+	add	r3,r3,r4
+	stw	r30,r3,-124
 .Lj4916:
 	ldh	r3,r30,-116
 	addi	r3,r3,1
@@ -44484,9 +44553,9 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	stw	r30,r3,-124
 .Lj4918:
 .Lj4900:
-	ldh	r4,r30,-104
-	ldw	r3,r30,-124
-	add	r3,r3,r4
+	ldh	r3,r30,-104
+	ldw	r4,r30,-124
+	add	r3,r4,r3
 	stw	r30,r3,-128
 	ldw	r4,r30,-124
 	lui	r3,24
@@ -44512,9 +44581,9 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	bne	r3,r0,.Lj4923
 	jal	r0,.Lj4924
 .Lj4924:
-	ldw	r4,r30,-128
-	addi	r3,r0,-1000
-	sle	r3,r4,r3
+	ldw	r3,r30,-128
+	addi	r4,r0,-1000
+	sle	r3,r3,r4
 	bne	r3,r0,.Lj4923
 	jal	r0,.Lj4925
 .Lj4923:
@@ -44587,19 +44656,19 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	stw	r30,r4,-184
 	addi	r3,r0,0
 .Lj4937:
-	ldw	r4,r30,-184
-	lui	r5,15
-	ori	r5,r5,4095
-	sgtu	r4,r4,r5
+	ldw	r5,r30,-184
+	lui	r4,15
+	ori	r4,r4,4095
+	sgtu	r4,r5,r4
 	slli	r4,r4,4
 	ldw	r5,r30,-184
 	slli	r4,r4,0
 	srli	r4,r4,0
 	srl	r5,r5,r4
 	stw	r30,r5,-188
-	ldw	r5,r30,-188
-	addi	r6,r0,255
-	sgtu	r5,r5,r6
+	ldw	r6,r30,-188
+	addi	r5,r0,255
+	sgtu	r5,r6,r5
 	slli	r5,r5,3
 	or	r5,r4,r5
 	addi	r4,r5,0
@@ -44611,9 +44680,9 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	stw	r30,r5,-188
 	ldbu	r5,r30,-188
 	stb	r30,r5,-192
-	ldbu	r5,r30,-192
-	la	r6,TC_$SYSTEM$_$BSRBYTE$BYTE$$BYTE_$$_BSR8BIT
-	add	r5,r5,r6
+	ldbu	r6,r30,-192
+	la	r5,TC_$SYSTEM$_$BSRBYTE$BYTE$$BYTE_$$_BSR8BIT
+	add	r5,r6,r5
 	ldbu	r5,r5,0
 	or	r5,r4,r5
 	addi	r4,r5,0
@@ -44625,25 +44694,26 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	srai	r3,r3,16
 	sth	r30,r3,-112
 	ldh	r5,r30,-112
-	ldw	r4,r30,-80
-	ldw	r3,r30,-76
-	slli	r6,r5,0
-	srli	r6,r6,0
-	addi	r8,r6,-32
-	blt	r8,r0,.Lj4939
-	li	r5,0
-	sll	r7,r4,r8
+	ldw	r3,r30,-80
+	ldw	r4,r30,-76
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r9,r5,63
+	addi	r5,r9,-32
+	blt	r5,r0,.Lj4939
+	li	r6,0
+	sll	r7,r3,r5
 	jal	r0,.Lj4940
 .Lj4939:
-	li	r8,31
-	srli	r9,r4,1
-	sub	r8,r8,r6
-	sll	r5,r4,r6
-	srl	r9,r9,r8
-	sll	r7,r3,r6
-	or	r7,r7,r9
+	li	r5,31
+	srli	r8,r3,1
+	sub	r5,r5,r9
+	sll	r6,r3,r9
+	srl	r8,r8,r5
+	sll	r7,r4,r9
+	or	r7,r7,r8
 .Lj4940:
-	stw	r30,r5,-180
+	stw	r30,r6,-180
 	stw	r30,r7,-176
 	ldh	r3,r30,-112
 	sub	r3,r0,r3
@@ -44678,9 +44748,9 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	ldw	r3,r30,-184
 	stw	r30,r3,-172
 .Lj4944:
-	ldw	r3,r30,-180
-	ldw	r4,r30,-176
-	andi	r4,r3,4095
+	ldw	r4,r30,-180
+	ldw	r3,r30,-176
+	andi	r4,r4,4095
 	addi	r3,r0,0
 	addi	r5,r0,1024
 	bne	r0,r3,.Lj4946
@@ -44690,9 +44760,9 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	stb	r30,r0,-132
 	jal	r0,.Lj4947
 .Lj4946:
-	ldw	r4,r30,-180
-	ldw	r3,r30,-176
-	andi	r4,r4,1024
+	ldw	r3,r30,-180
+	ldw	r4,r30,-176
+	andi	r4,r3,1024
 	addi	r3,r0,0
 	bne	r0,r3,.Lj4948
 	bne	r0,r4,.Lj4948
@@ -44715,12 +44785,12 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	addi	r3,r0,0
 	add	r4,r6,r4
 	sltu	r6,r4,r6
-	lui	r7,524288
-	ori	r7,r7,0
-	add	r8,r5,r6
-	sltu	r6,r8,r5
-	sub	r6,r7,r6
-	add	r3,r8,r3
+	lui	r8,524288
+	ori	r8,r8,0
+	add	r7,r5,r6
+	sltu	r6,r7,r5
+	sub	r6,r8,r6
+	add	r3,r7,r3
 	stw	r30,r4,-180
 	stw	r30,r3,-176
 	ldw	r3,r30,-180
@@ -44732,14 +44802,14 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	bne	r0,r3,.Lj4951
 	jal	r0,.Lj4952
 .Lj4951:
-	ldw	r4,r30,-180
-	ldw	r5,r30,-176
-	slli	r3,r5,31
-	srli	r4,r4,1
+	ldw	r5,r30,-180
+	ldw	r4,r30,-176
+	slli	r3,r4,31
 	srli	r5,r5,1
-	or	r4,r4,r3
-	stw	r30,r4,-180
-	stw	r30,r5,-176
+	srli	r4,r4,1
+	or	r5,r5,r3
+	stw	r30,r5,-180
+	stw	r30,r4,-176
 	ldh	r3,r30,-172
 	addi	r3,r3,1
 	slli	r3,r3,16
@@ -44751,9 +44821,9 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	slli	r3,r3,16
 	srai	r3,r3,16
 	sth	r30,r3,-172
-	ldh	r3,r30,-172
-	addi	r4,r0,2047
-	sge	r3,r3,r4
+	ldh	r4,r30,-172
+	addi	r3,r0,2047
+	sge	r3,r4,r3
 	bne	r3,r0,.Lj4953
 	jal	r0,.Lj4954
 .Lj4953:
@@ -44789,6 +44859,7 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	addi	r3,r0,0
 	slli	r3,r5,0
 	srli	r3,r3,0
+	andi	r3,r3,63
 	addi	r6,r3,-32
 	blt	r6,r0,.Lj4961
 	li	r5,0
@@ -44811,27 +44882,27 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	sub	r4,r4,r5
 	stw	r30,r3,-96
 	stw	r30,r4,-92
-	ldw	r3,r30,-180
-	ldw	r4,r30,-176
-	ldw	r6,r30,-96
-	ldw	r5,r30,-92
-	and	r3,r3,r6
-	and	r4,r4,r5
+	ldw	r6,r30,-180
+	ldw	r5,r30,-176
+	ldw	r3,r30,-96
+	ldw	r4,r30,-92
+	and	r3,r6,r3
+	and	r5,r5,r4
 	ldw	r6,r30,-88
-	ldw	r5,r30,-84
-	bne	r5,r4,.Lj4964
+	ldw	r4,r30,-84
+	bne	r4,r5,.Lj4964
 	bne	r6,r3,.Lj4964
 	jal	r0,.Lj4963
 .Lj4963:
 	stb	r30,r0,-132
 	jal	r0,.Lj4965
 .Lj4964:
-	ldw	r5,r30,-180
-	ldw	r3,r30,-176
-	ldw	r6,r30,-88
-	ldw	r4,r30,-84
-	and	r5,r5,r6
-	and	r3,r3,r4
+	ldw	r6,r30,-180
+	ldw	r4,r30,-176
+	ldw	r5,r30,-88
+	ldw	r3,r30,-84
+	and	r5,r6,r5
+	and	r3,r4,r3
 	bne	r0,r3,.Lj4966
 	bne	r0,r5,.Lj4966
 	jal	r0,.Lj4967
@@ -44864,34 +44935,35 @@ SYSTEM_$$_VAL_REAL$SHORTSTRING$LONGINT$$DOUBLE:
 	jal	r0,.Lj4973
 .Lj4970:
 	ldh	r5,r30,-112
-	ldw	r4,r30,-180
-	ldw	r3,r30,-176
-	slli	r7,r5,0
-	srli	r7,r7,0
-	addi	r9,r7,-32
-	blt	r9,r0,.Lj4974
+	ldw	r3,r30,-180
+	ldw	r4,r30,-176
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r9,r5,63
+	addi	r7,r9,-32
+	blt	r7,r0,.Lj4974
 	li	r5,0
-	srl	r6,r3,r9
+	srl	r6,r4,r7
 	jal	r0,.Lj4975
 .Lj4974:
-	li	r9,31
-	slli	r8,r3,1
-	sub	r9,r9,r7
-	srl	r6,r4,r7
-	sll	r8,r8,r9
-	srl	r5,r3,r7
+	li	r7,31
+	slli	r8,r4,1
+	sub	r7,r7,r9
+	srl	r6,r3,r9
+	sll	r8,r8,r7
+	srl	r5,r4,r9
 	or	r6,r6,r8
 .Lj4975:
 	ldbu	r4,r30,-132
 	addi	r3,r0,0
 	add	r4,r6,r4
 	sltu	r6,r4,r6
-	lui	r7,524288
-	ori	r7,r7,0
-	add	r8,r5,r6
-	sltu	r6,r8,r5
-	sub	r6,r7,r6
-	add	r3,r8,r3
+	lui	r8,524288
+	ori	r8,r8,0
+	add	r7,r5,r6
+	sltu	r6,r7,r5
+	sub	r6,r8,r6
+	add	r3,r7,r3
 	stw	r30,r4,-180
 	stw	r30,r3,-176
 .Lj4973:
@@ -45699,21 +45771,21 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	ldw	r3,r30,-76
 	stw	r3,r0,0
 	stw	r3,r0,4
-	ldw	r3,r30,-60
-	ldw	r4,r30,-56
-	bne	r0,r4,.Lj5077
+	ldw	r4,r30,-60
+	ldw	r3,r30,-56
 	bne	r0,r3,.Lj5077
+	bne	r0,r4,.Lj5077
 	jal	r0,.Lj5076
 .Lj5077:
-	ldw	r3,r30,-64
-	addi	r4,r0,-342
-	slt	r3,r3,r4
+	ldw	r4,r30,-64
+	addi	r3,r0,-342
+	slt	r3,r4,r3
 	bne	r3,r0,.Lj5076
 	jal	r0,.Lj5078
 .Lj5078:
-	ldw	r4,r30,-64
-	addi	r3,r0,308
-	sgt	r3,r4,r3
+	ldw	r3,r30,-64
+	addi	r4,r0,308
+	sgt	r3,r3,r4
 	bne	r3,r0,.Lj5076
 	jal	r0,.Lj5079
 .Lj5076:
@@ -45736,19 +45808,19 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	stw	r30,r4,-168
 	addi	r3,r0,0
 .Lj5082:
-	ldw	r4,r30,-168
-	lui	r5,15
-	ori	r5,r5,4095
-	sgtu	r4,r4,r5
+	ldw	r5,r30,-168
+	lui	r4,15
+	ori	r4,r4,4095
+	sgtu	r4,r5,r4
 	slli	r4,r4,4
 	ldw	r5,r30,-168
 	slli	r4,r4,0
 	srli	r4,r4,0
 	srl	r5,r5,r4
 	stw	r30,r5,-172
-	ldw	r6,r30,-172
-	addi	r5,r0,255
-	sgtu	r5,r6,r5
+	ldw	r5,r30,-172
+	addi	r6,r0,255
+	sgtu	r5,r5,r6
 	slli	r5,r5,3
 	or	r5,r4,r5
 	addi	r4,r5,0
@@ -45772,24 +45844,25 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	sub	r3,r4,r3
 	stw	r30,r3,-84
 	ldw	r4,r30,-60
-	ldw	r8,r30,-56
-	ldw	r9,r30,-84
-	addi	r5,r9,-32
-	blt	r5,r0,.Lj5084
-	li	r3,0
-	sll	r6,r4,r5
+	ldw	r3,r30,-56
+	ldw	r5,r30,-84
+	andi	r9,r5,63
+	addi	r6,r9,-32
+	blt	r6,r0,.Lj5084
+	li	r5,0
+	sll	r7,r4,r6
 	jal	r0,.Lj5085
 .Lj5084:
-	li	r5,31
-	srli	r7,r4,1
-	sub	r5,r5,r9
-	sll	r3,r4,r9
-	srl	r7,r7,r5
-	sll	r6,r8,r9
-	or	r6,r6,r7
+	li	r6,31
+	srli	r8,r4,1
+	sub	r6,r6,r9
+	sll	r5,r4,r9
+	srl	r8,r8,r6
+	sll	r7,r3,r9
+	or	r7,r7,r8
 .Lj5085:
-	stw	r30,r3,-60
-	stw	r30,r6,-56
+	stw	r30,r5,-60
+	stw	r30,r7,-56
 	ldw	r4,r30,-64
 	lui	r3,53
 	ori	r3,r3,618
@@ -45801,9 +45874,9 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	addi	r5,r0,1
 	sll	r3,r5,r3
 	addi	r3,r3,-1
-	add	r4,r3,r4
-	ldw	r3,r30,-84
-	sub	r3,r4,r3
+	add	r3,r3,r4
+	ldw	r4,r30,-84
+	sub	r3,r3,r4
 	stw	r30,r3,-92
 	ldw	r4,r30,-68
 	addi	r3,r0,64
@@ -45813,6 +45886,7 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	addi	r5,r0,1
 	addi	r3,r0,0
 	ldw	r3,r30,-88
+	andi	r3,r3,63
 	addi	r4,r3,-32
 	blt	r4,r0,.Lj5086
 	li	r6,0
@@ -45842,35 +45916,35 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	call	SYSTEM_$$_UMUL64X64_128$QWORD$QWORD$QWORD$$QWORD
 	stw	r30,r1,-116
 	stw	r30,r2,-112
-	ldw	r6,r30,-108
+	ldw	r3,r30,-108
 	ldw	r5,r30,-104
-	ldw	r3,r30,-100
-	ldw	r4,r30,-96
-	and	r3,r6,r3
-	and	r5,r5,r4
 	ldw	r6,r30,-100
 	ldw	r4,r30,-96
-	bne	r4,r5,.Lj5089
-	bne	r6,r3,.Lj5089
+	and	r3,r3,r6
+	and	r4,r5,r4
+	ldw	r5,r30,-100
+	ldw	r6,r30,-96
+	bne	r6,r4,.Lj5089
+	bne	r5,r3,.Lj5089
 	jal	r0,.Lj5088
 .Lj5088:
 	ldw	r6,r30,-116
-	ldw	r5,r30,-112
+	ldw	r4,r30,-112
 	ldw	r3,r30,-60
-	ldw	r4,r30,-56
+	ldw	r5,r30,-56
 	add	r3,r6,r3
 	sltu	r6,r3,r6
 	lui	r8,524288
 	ori	r8,r8,0
-	add	r7,r5,r6
-	sltu	r6,r7,r5
+	add	r7,r4,r6
+	sltu	r6,r7,r4
 	sub	r6,r8,r6
-	add	r4,r7,r4
-	ldw	r6,r30,-60
-	ldw	r5,r30,-56
-	bltu	r4,r5,.Lj5091
-	bne	r5,r4,.Lj5092
-	bltu	r3,r6,.Lj5091
+	add	r4,r7,r5
+	ldw	r5,r30,-60
+	ldw	r6,r30,-56
+	bltu	r4,r6,.Lj5091
+	bne	r6,r4,.Lj5092
+	bltu	r3,r5,.Lj5091
 	jal	r0,.Lj5092
 .Lj5091:
 	jal	r0,.Lj5090
@@ -45897,26 +45971,26 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	ldw	r3,r30,-104
 	stw	r30,r3,-136
 	ldw	r6,r30,-124
-	ldw	r5,r30,-120
+	ldw	r4,r30,-120
 	ldw	r3,r30,-116
-	ldw	r4,r30,-112
+	ldw	r5,r30,-112
 	add	r3,r6,r3
 	sltu	r6,r3,r6
-	lui	r8,524288
-	ori	r8,r8,0
-	add	r7,r5,r6
-	sltu	r6,r7,r5
-	sub	r6,r8,r6
-	add	r4,r7,r4
+	lui	r7,524288
+	ori	r7,r7,0
+	add	r8,r4,r6
+	sltu	r6,r8,r4
+	sub	r6,r7,r6
+	add	r4,r8,r5
 	stw	r30,r3,-148
 	stw	r30,r4,-144
-	ldw	r3,r30,-148
-	ldw	r4,r30,-144
-	ldw	r5,r30,-116
-	ldw	r6,r30,-112
+	ldw	r4,r30,-148
+	ldw	r5,r30,-144
+	ldw	r6,r30,-116
+	ldw	r3,r30,-112
+	bltu	r5,r3,.Lj5093
+	bne	r3,r5,.Lj5094
 	bltu	r4,r6,.Lj5093
-	bne	r6,r4,.Lj5094
-	bltu	r3,r5,.Lj5093
 	jal	r0,.Lj5094
 .Lj5093:
 	ldw	r4,r30,-140
@@ -45933,21 +46007,21 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	ldw	r6,r30,-100
 	ldw	r5,r30,-96
 	and	r3,r3,r6
-	and	r4,r4,r5
-	ldw	r6,r30,-100
+	and	r6,r4,r5
+	ldw	r4,r30,-100
 	ldw	r5,r30,-96
-	bne	r5,r4,.Lj5096
-	bne	r6,r3,.Lj5096
+	bne	r5,r6,.Lj5096
+	bne	r4,r3,.Lj5096
 	jal	r0,.Lj5095
 .Lj5095:
-	ldw	r4,r30,-148
-	ldw	r3,r30,-144
+	ldw	r5,r30,-148
+	ldw	r4,r30,-144
+	lui	r3,1048575
+	ori	r3,r3,4095
 	lui	r6,1048575
 	ori	r6,r6,4095
-	lui	r5,1048575
-	ori	r5,r5,4095
-	bne	r5,r3,.Lj5099
 	bne	r6,r4,.Lj5099
+	bne	r3,r5,.Lj5099
 	jal	r0,.Lj5098
 .Lj5098:
 	jal	r0,.Lj5097
@@ -45965,12 +46039,12 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	add	r8,r4,r6
 	sltu	r6,r8,r4
 	sub	r6,r7,r6
-	add	r4,r8,r5
-	ldw	r5,r30,-60
-	ldw	r6,r30,-56
-	bltu	r4,r6,.Lj5101
-	bne	r6,r4,.Lj5102
-	bltu	r3,r5,.Lj5101
+	add	r5,r8,r5
+	ldw	r6,r30,-60
+	ldw	r4,r30,-56
+	bltu	r5,r4,.Lj5101
+	bne	r4,r5,.Lj5102
+	bltu	r3,r6,.Lj5101
 	jal	r0,.Lj5102
 .Lj5101:
 	jal	r0,.Lj5100
@@ -45999,54 +46073,55 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	ldw	r3,r30,-156
 	ldw	r5,r30,-152
 	add	r3,r6,r3
-	sltu	r7,r3,r6
+	sltu	r6,r3,r6
 	lui	r8,524288
 	ori	r8,r8,0
-	add	r6,r4,r7
-	sltu	r7,r6,r4
-	sub	r7,r8,r7
-	add	r4,r6,r5
+	add	r7,r4,r6
+	sltu	r6,r7,r4
+	sub	r6,r8,r6
+	add	r4,r7,r5
 	slli	r5,r3,0
 	srai	r5,r5,0
 	ldw	r4,r30,-108
 	ldw	r3,r30,-104
-	slli	r7,r5,0
-	srli	r7,r7,0
-	addi	r9,r7,-32
-	blt	r9,r0,.Lj5103
-	li	r8,0
-	srl	r5,r3,r9
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r9,r5,63
+	addi	r7,r9,-32
+	blt	r7,r0,.Lj5103
+	li	r5,0
+	srl	r6,r3,r7
 	jal	r0,.Lj5104
 .Lj5103:
-	li	r9,31
-	slli	r6,r3,1
-	sub	r9,r9,r7
-	srl	r5,r4,r7
-	sll	r6,r6,r9
-	srl	r8,r3,r7
-	or	r5,r5,r6
+	li	r7,31
+	slli	r8,r3,1
+	sub	r7,r7,r9
+	srl	r6,r4,r9
+	sll	r8,r8,r7
+	srl	r5,r3,r9
+	or	r6,r6,r8
 .Lj5104:
-	stw	r30,r5,-164
-	stw	r30,r8,-160
+	stw	r30,r6,-164
+	stw	r30,r5,-160
 	ldw	r4,r30,-156
 	ldw	r3,r30,-152
 	xori	r4,r4,1
-	slli	r3,r4,0
-	srai	r3,r3,0
-	ldw	r4,r30,-92
-	sub	r4,r4,r3
-	stw	r30,r4,-92
-	ldw	r4,r30,-116
-	ldw	r3,r30,-112
-	bne	r0,r3,.Lj5106
+	slli	r4,r4,0
+	srai	r4,r4,0
+	ldw	r3,r30,-92
+	sub	r3,r3,r4
+	stw	r30,r3,-92
+	ldw	r3,r30,-116
+	ldw	r4,r30,-112
 	bne	r0,r4,.Lj5106
+	bne	r0,r3,.Lj5106
 	jal	r0,.Lj5105
 .Lj5105:
-	ldw	r5,r30,-108
+	ldw	r6,r30,-108
 	ldw	r4,r30,-104
-	ldw	r6,r30,-100
+	ldw	r5,r30,-100
 	ldw	r3,r30,-96
-	and	r5,r5,r6
+	and	r5,r6,r5
 	and	r3,r4,r3
 	bne	r0,r3,.Lj5109
 	bne	r0,r5,.Lj5109
@@ -46079,12 +46154,12 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	ldw	r5,r30,-160
 	add	r4,r6,r4
 	sltu	r6,r4,r6
-	lui	r8,524288
-	ori	r8,r8,0
-	add	r7,r3,r6
-	sltu	r6,r7,r3
-	sub	r6,r8,r6
-	add	r5,r7,r5
+	lui	r7,524288
+	ori	r7,r7,0
+	add	r8,r3,r6
+	sltu	r6,r8,r3
+	sub	r6,r7,r6
+	add	r5,r8,r5
 	slli	r3,r5,31
 	srli	r4,r4,1
 	srli	r5,r5,1
@@ -46093,26 +46168,27 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	stw	r30,r5,-160
 	ldw	r3,r30,-68
 	addi	r5,r3,1
-	ldw	r4,r30,-164
-	ldw	r3,r30,-160
-	slli	r8,r5,0
-	srli	r8,r8,0
-	addi	r9,r8,-32
-	blt	r9,r0,.Lj5115
-	li	r7,0
-	srl	r5,r3,r9
+	ldw	r3,r30,-164
+	ldw	r4,r30,-160
+	slli	r5,r5,0
+	srli	r5,r5,0
+	andi	r9,r5,63
+	addi	r6,r9,-32
+	blt	r6,r0,.Lj5115
+	li	r5,0
+	srl	r7,r4,r6
 	jal	r0,.Lj5116
 .Lj5115:
-	li	r9,31
-	slli	r6,r3,1
-	sub	r9,r9,r8
-	srl	r5,r4,r8
-	sll	r6,r6,r9
-	srl	r7,r3,r8
-	or	r5,r5,r6
+	li	r6,31
+	slli	r8,r4,1
+	sub	r6,r6,r9
+	srl	r7,r3,r9
+	sll	r8,r8,r6
+	srl	r5,r4,r9
+	or	r7,r7,r8
 .Lj5116:
-	bne	r0,r7,.Lj5113
 	bne	r0,r5,.Lj5113
+	bne	r0,r7,.Lj5113
 	jal	r0,.Lj5114
 .Lj5113:
 	ldw	r5,r30,-164
@@ -46133,12 +46209,12 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	bne	r3,r0,.Lj5117
 	jal	r0,.Lj5118
 .Lj5118:
-	addi	r4,r0,1
-	ldw	r3,r30,-72
-	sll	r3,r4,r3
-	addi	r4,r3,-1
-	ldw	r3,r30,-92
-	sge	r3,r3,r4
+	addi	r3,r0,1
+	ldw	r4,r30,-72
+	sll	r3,r3,r4
+	addi	r3,r3,-1
+	ldw	r4,r30,-92
+	sge	r3,r4,r3
 	bne	r3,r0,.Lj5117
 	jal	r0,.Lj5119
 .Lj5117:
@@ -46147,6 +46223,7 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	addi	r5,r0,1
 	addi	r3,r0,0
 	ldw	r3,r30,-68
+	andi	r3,r3,63
 	addi	r4,r3,-32
 	blt	r4,r0,.Lj5120
 	li	r6,0
@@ -46163,28 +46240,29 @@ SYSTEM_$$_FLT_EISEL_LEMIRE$QWORD$LONGINT$LONGINT$LONGINT$QWORD$$BOOLEAN:
 	ldw	r5,r30,-160
 	and	r3,r3,r6
 	and	r4,r4,r5
-	ldw	r7,r30,-92
-	srai	r6,r7,31
-	ldw	r10,r30,-68
-	addi	r9,r10,-32
-	blt	r9,r0,.Lj5122
-	li	r8,0
-	sll	r5,r7,r9
+	ldw	r5,r30,-92
+	srai	r6,r5,31
+	ldw	r7,r30,-68
+	andi	r10,r7,63
+	addi	r8,r10,-32
+	blt	r8,r0,.Lj5122
+	li	r2,0
+	sll	r7,r5,r8
 	jal	r0,.Lj5123
 .Lj5122:
-	li	r9,31
-	srli	r2,r7,1
-	sub	r9,r9,r10
-	sll	r8,r7,r10
-	srl	r2,r2,r9
-	sll	r5,r6,r10
-	or	r5,r5,r2
+	li	r8,31
+	srli	r9,r5,1
+	sub	r8,r8,r10
+	sll	r2,r5,r10
+	srl	r9,r9,r8
+	sll	r7,r6,r10
+	or	r7,r7,r9
 .Lj5123:
-	or	r3,r3,r8
-	or	r4,r4,r5
-	ldw	r5,r30,-76
-	stw	r5,r3,0
-	stw	r5,r4,4
+	or	r3,r3,r2
+	or	r5,r4,r7
+	ldw	r4,r30,-76
+	stw	r4,r3,0
+	stw	r4,r5,4
 	addi	r3,r0,1
 	stb	r30,r3,-80
 .Lj5074:
@@ -46278,10 +46356,10 @@ SYSTEM_$$_FLT_DECIMAL_RIGHT_SHIFT$TFLTDECIMAL$LONGINT:
 	bne	r3,r0,.Lj5139
 	jal	r0,.Lj5140
 .Lj5139:
-	ldw	r4,r30,-76
-	ldw	r3,r30,-72
-	bne	r0,r3,.Lj5142
+	ldw	r3,r30,-76
+	ldw	r4,r30,-72
 	bne	r0,r4,.Lj5142
+	bne	r0,r3,.Lj5142
 	jal	r0,.Lj5141
 .Lj5141:
 	ldw	r3,r30,-56
@@ -46301,22 +46379,23 @@ SYSTEM_$$_FLT_DECIMAL_RIGHT_SHIFT$TFLTDECIMAL$LONGINT:
 	addi	r3,r3,1
 	stw	r30,r3,-64
 .Lj5144:
-	ldw	r7,r30,-76
-	ldw	r8,r30,-72
-	ldw	r9,r30,-60
-	addi	r3,r9,-32
-	blt	r3,r0,.Lj5148
+	ldw	r4,r30,-76
+	ldw	r3,r30,-72
+	ldw	r5,r30,-60
+	andi	r9,r5,63
+	addi	r8,r9,-32
+	blt	r8,r0,.Lj5148
 	li	r5,0
-	srl	r6,r8,r3
+	srl	r6,r3,r8
 	jal	r0,.Lj5149
 .Lj5148:
-	li	r3,31
-	slli	r4,r8,1
-	sub	r3,r3,r9
-	srl	r6,r7,r9
-	sll	r4,r4,r3
-	srl	r5,r8,r9
-	or	r6,r6,r4
+	li	r8,31
+	slli	r7,r3,1
+	sub	r8,r8,r9
+	srl	r6,r4,r9
+	sll	r7,r7,r8
+	srl	r5,r3,r9
+	or	r6,r6,r7
 .Lj5149:
 	bne	r0,r5,.Lj5147
 	bne	r0,r6,.Lj5147
@@ -46333,44 +46412,45 @@ SYSTEM_$$_FLT_DECIMAL_RIGHT_SHIFT$TFLTDECIMAL$LONGINT:
 	ldw	r3,r30,-76
 	ldw	r4,r30,-72
 	call	fpc_mul_qword
-	ldw	r4,r30,-56
-	ldw	r3,r30,-64
-	add	r3,r4,r3
+	ldw	r3,r30,-56
+	ldw	r4,r30,-64
+	add	r3,r3,r4
 	ldbu	r4,r3,0
 	addi	r3,r0,0
 	add	r4,r1,r4
 	sltu	r5,r4,r1
-	lui	r6,524288
-	ori	r6,r6,0
-	add	r7,r2,r5
-	sltu	r5,r7,r2
-	sub	r5,r6,r5
-	add	r3,r7,r3
+	lui	r7,524288
+	ori	r7,r7,0
+	add	r6,r2,r5
+	sltu	r5,r6,r2
+	sub	r5,r7,r5
+	add	r3,r6,r3
 	stw	r30,r4,-76
 	stw	r30,r3,-72
 	ldw	r3,r30,-64
 	addi	r3,r3,1
 	stw	r30,r3,-64
 .Lj5137:
-	ldw	r6,r30,-76
-	ldw	r7,r30,-72
-	ldw	r8,r30,-60
-	addi	r3,r8,-32
-	blt	r3,r0,.Lj5152
-	li	r5,0
-	srl	r9,r7,r3
+	ldw	r4,r30,-76
+	ldw	r3,r30,-72
+	ldw	r5,r30,-60
+	andi	r5,r5,63
+	addi	r9,r5,-32
+	blt	r9,r0,.Lj5152
+	li	r6,0
+	srl	r8,r3,r9
 	jal	r0,.Lj5153
 .Lj5152:
-	li	r3,31
-	slli	r4,r7,1
-	sub	r3,r3,r8
-	srl	r9,r6,r8
-	sll	r4,r4,r3
-	srl	r5,r7,r8
-	or	r9,r9,r4
+	li	r9,31
+	slli	r7,r3,1
+	sub	r9,r9,r5
+	srl	r8,r4,r5
+	sll	r7,r7,r9
+	srl	r6,r3,r5
+	or	r8,r8,r7
 .Lj5153:
-	bne	r0,r5,.Lj5151
-	bne	r0,r9,.Lj5151
+	bne	r0,r6,.Lj5151
+	bne	r0,r8,.Lj5151
 	jal	r0,.Lj5150
 .Lj5150:
 	jal	r0,.Lj5136
@@ -46378,14 +46458,15 @@ SYSTEM_$$_FLT_DECIMAL_RIGHT_SHIFT$TFLTDECIMAL$LONGINT:
 	jal	r0,.Lj5138
 .Lj5138:
 	ldw	r3,r30,-64
-	addi	r5,r3,-1
-	ldw	r3,r30,-56
-	ldw	r4,r3,824
-	sub	r4,r4,r5
-	stw	r3,r4,824
+	addi	r4,r3,-1
+	ldw	r5,r30,-56
+	ldw	r3,r5,824
+	sub	r3,r3,r4
+	stw	r5,r3,824
 	addi	r5,r0,1
 	addi	r3,r0,0
 	ldw	r3,r30,-60
+	andi	r3,r3,63
 	addi	r4,r3,-32
 	blt	r4,r0,.Lj5154
 	li	r6,0
@@ -46407,31 +46488,32 @@ SYSTEM_$$_FLT_DECIMAL_RIGHT_SHIFT$TFLTDECIMAL$LONGINT:
 	add	r3,r3,r4
 	ldbu	r3,r3,0
 	stb	r30,r3,-96
-	ldw	r6,r30,-76
+	ldw	r4,r30,-76
 	ldw	r3,r30,-72
-	ldw	r7,r30,-60
-	addi	r4,r7,-32
-	blt	r4,r0,.Lj5159
-	li	r8,0
-	srl	r9,r3,r4
+	ldw	r5,r30,-60
+	andi	r6,r5,63
+	addi	r9,r6,-32
+	blt	r9,r0,.Lj5159
+	li	r7,0
+	srl	r5,r3,r9
 	jal	r0,.Lj5160
 .Lj5159:
-	li	r4,31
-	slli	r5,r3,1
-	sub	r4,r4,r7
-	srl	r9,r6,r7
-	sll	r5,r5,r4
-	srl	r8,r3,r7
-	or	r9,r9,r5
+	li	r9,31
+	slli	r8,r3,1
+	sub	r9,r9,r6
+	srl	r5,r4,r6
+	sll	r8,r8,r9
+	srl	r7,r3,r6
+	or	r5,r5,r8
 .Lj5160:
-	stw	r30,r9,-92
-	stw	r30,r8,-88
+	stw	r30,r5,-92
+	stw	r30,r7,-88
 	ldw	r5,r30,-76
-	ldw	r4,r30,-72
+	ldw	r3,r30,-72
 	ldw	r6,r30,-84
-	ldw	r3,r30,-80
+	ldw	r4,r30,-80
 	and	r5,r5,r6
-	and	r3,r4,r3
+	and	r3,r3,r4
 	stw	r30,r5,-76
 	stw	r30,r3,-72
 	ldw	r4,r30,-56
@@ -46451,12 +46533,12 @@ SYSTEM_$$_FLT_DECIMAL_RIGHT_SHIFT$TFLTDECIMAL$LONGINT:
 	addi	r3,r0,0
 	add	r4,r1,r4
 	sltu	r5,r4,r1
-	lui	r6,524288
-	ori	r6,r6,0
-	add	r7,r2,r5
-	sltu	r5,r7,r2
-	sub	r5,r6,r5
-	add	r3,r7,r3
+	lui	r7,524288
+	ori	r7,r7,0
+	add	r6,r2,r5
+	sltu	r5,r6,r2
+	sub	r5,r7,r5
+	add	r3,r6,r3
 	stw	r30,r4,-76
 	stw	r30,r3,-72
 	ldw	r3,r30,-64
@@ -46464,33 +46546,34 @@ SYSTEM_$$_FLT_DECIMAL_RIGHT_SHIFT$TFLTDECIMAL$LONGINT:
 	stw	r30,r3,-64
 .Lj5157:
 	ldw	r3,r30,-56
-	ldw	r4,r3,820
-	ldw	r3,r30,-64
-	slt	r3,r3,r4
+	ldw	r3,r3,820
+	ldw	r4,r30,-64
+	slt	r3,r4,r3
 	bne	r3,r0,.Lj5156
 	jal	r0,.Lj5158
 .Lj5158:
 	jal	r0,.Lj5162
 .Lj5161:
 	ldw	r4,r30,-76
-	ldw	r5,r30,-72
-	ldw	r7,r30,-60
-	addi	r8,r7,-32
-	blt	r8,r0,.Lj5164
-	li	r9,0
-	srl	r6,r5,r8
+	ldw	r3,r30,-72
+	ldw	r5,r30,-60
+	andi	r5,r5,63
+	addi	r6,r5,-32
+	blt	r6,r0,.Lj5164
+	li	r7,0
+	srl	r9,r3,r6
 	jal	r0,.Lj5165
 .Lj5164:
-	li	r8,31
-	slli	r3,r5,1
-	sub	r8,r8,r7
-	srl	r6,r4,r7
-	sll	r3,r3,r8
-	srl	r9,r5,r7
-	or	r6,r6,r3
+	li	r6,31
+	slli	r8,r3,1
+	sub	r6,r6,r5
+	srl	r9,r4,r5
+	sll	r8,r8,r6
+	srl	r7,r3,r5
+	or	r9,r9,r8
 .Lj5165:
-	stw	r30,r6,-92
-	stw	r30,r9,-88
+	stw	r30,r9,-92
+	stw	r30,r7,-88
 	ldw	r5,r30,-76
 	ldw	r4,r30,-72
 	ldw	r6,r30,-84
@@ -46499,32 +46582,32 @@ SYSTEM_$$_FLT_DECIMAL_RIGHT_SHIFT$TFLTDECIMAL$LONGINT:
 	and	r3,r4,r3
 	stw	r30,r5,-76
 	stw	r30,r3,-72
-	ldw	r3,r30,-68
-	addi	r4,r0,800
-	slt	r3,r3,r4
+	ldw	r4,r30,-68
+	addi	r3,r0,800
+	slt	r3,r4,r3
 	bne	r3,r0,.Lj5166
 	jal	r0,.Lj5167
 .Lj5166:
 	ldw	r3,r30,-56
 	ldw	r4,r30,-68
-	add	r3,r3,r4
-	ldbu	r4,r30,-92
-	stb	r3,r4,0
+	add	r4,r3,r4
+	ldbu	r3,r30,-92
+	stb	r4,r3,0
 	ldw	r3,r30,-68
 	addi	r3,r3,1
 	stw	r30,r3,-68
 	jal	r0,.Lj5168
 .Lj5167:
-	ldw	r4,r30,-92
-	ldw	r3,r30,-88
-	bltu	r0,r3,.Lj5169
-	bne	r3,r0,.Lj5170
+	ldw	r3,r30,-92
+	ldw	r4,r30,-88
 	bltu	r0,r4,.Lj5169
+	bne	r4,r0,.Lj5170
+	bltu	r0,r3,.Lj5169
 	jal	r0,.Lj5170
 .Lj5169:
-	ldw	r3,r30,-56
-	addi	r4,r0,1
-	stb	r3,r4,828
+	ldw	r4,r30,-56
+	addi	r3,r0,1
+	stb	r4,r3,828
 .Lj5170:
 .Lj5168:
 	addi	r6,r0,0
@@ -46546,9 +46629,9 @@ SYSTEM_$$_FLT_DECIMAL_RIGHT_SHIFT$TFLTDECIMAL$LONGINT:
 .Lj5172:
 	jal	r0,.Lj5163
 .Lj5163:
-	ldw	r4,r30,-56
-	ldw	r3,r30,-68
-	stw	r4,r3,820
+	ldw	r3,r30,-56
+	ldw	r4,r30,-68
+	stw	r3,r4,820
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_FLT_DECIMAL_TRIM$TFLTDECIMAL
 .Lj5134:
@@ -46594,21 +46677,22 @@ SYSTEM_$$_FLT_DECIMAL_LEFT_SHIFT$TFLTDECIMAL$LONGINT:
 	ldw	r4,r30,-56
 	ldw	r3,r30,-64
 	add	r3,r4,r3
-	ldbu	r7,r3,0
+	ldbu	r4,r3,0
 	addi	r3,r0,0
-	ldw	r9,r30,-60
-	addi	r4,r9,-32
-	blt	r4,r0,.Lj5178
+	ldw	r5,r30,-60
+	andi	r7,r5,63
+	addi	r9,r7,-32
+	blt	r9,r0,.Lj5178
 	li	r6,0
-	sll	r5,r7,r4
+	sll	r5,r4,r9
 	jal	r0,.Lj5179
 .Lj5178:
-	li	r4,31
-	srli	r8,r7,1
-	sub	r4,r4,r9
-	sll	r6,r7,r9
-	srl	r8,r8,r4
-	sll	r5,r3,r9
+	li	r9,31
+	srli	r8,r4,1
+	sub	r9,r9,r7
+	sll	r6,r4,r7
+	srl	r8,r8,r9
+	sll	r5,r3,r7
 	or	r5,r5,r8
 .Lj5179:
 	ldw	r4,r30,-88
@@ -46616,57 +46700,14 @@ SYSTEM_$$_FLT_DECIMAL_LEFT_SHIFT$TFLTDECIMAL$LONGINT:
 	add	r3,r4,r6
 	sltu	r6,r3,r4
 	addi	r4,r3,0
-	lui	r8,524288
-	ori	r8,r8,0
-	add	r3,r7,r6
-	sltu	r6,r3,r7
-	sub	r6,r8,r6
-	add	r7,r3,r5
+	lui	r3,524288
+	ori	r3,r3,0
+	add	r8,r7,r6
+	sltu	r6,r8,r7
+	sub	r6,r3,r6
+	add	r7,r8,r5
 	stw	r30,r4,-88
 	stw	r30,r7,-84
-	ldw	r5,r30,-88
-	ldw	r6,r30,-84
-	addi	r4,r0,0
-	addi	r3,r0,10
-	call	fpc_div_qword
-	stw	r30,r1,-96
-	stw	r30,r2,-92
-	ldw	r3,r30,-68
-	addi	r3,r3,-1
-	stw	r30,r3,-68
-	addi	r6,r0,0
-	addi	r5,r0,10
-	ldw	r3,r30,-96
-	ldw	r4,r30,-92
-	call	fpc_mul_qword
-	ldw	r5,r30,-88
-	ldw	r4,r30,-84
-	sub	r3,r5,r1
-	sltu	r5,r5,r3
-	lui	r7,524288
-	ori	r7,r7,0
-	sub	r6,r4,r5
-	sltu	r5,r4,r6
-	sub	r5,r7,r5
-	sub	r4,r6,r2
-	andi	r3,r3,255
-	ldw	r4,r30,-56
-	ldw	r5,r30,-68
-	add	r4,r4,r5
-	stb	r4,r3,0
-	ldw	r3,r30,-96
-	stw	r30,r3,-88
-	ldw	r3,r30,-92
-	stw	r30,r3,-84
-.Lj5176:
-	ldw	r4,r30,-64
-	addi	r3,r0,20
-	sgt	r3,r4,r3
-	bne	r3,r0,.Lj5175
-	jal	r0,.Lj5177
-.Lj5177:
-	jal	r0,.Lj5181
-.Lj5180:
 	ldw	r5,r30,-88
 	ldw	r6,r30,-84
 	addi	r4,r0,0
@@ -46701,12 +46742,55 @@ SYSTEM_$$_FLT_DECIMAL_LEFT_SHIFT$TFLTDECIMAL$LONGINT:
 	stw	r30,r3,-88
 	ldw	r3,r30,-92
 	stw	r30,r3,-84
+.Lj5176:
+	ldw	r3,r30,-64
+	addi	r4,r0,20
+	sgt	r3,r3,r4
+	bne	r3,r0,.Lj5175
+	jal	r0,.Lj5177
+.Lj5177:
+	jal	r0,.Lj5181
+.Lj5180:
+	ldw	r5,r30,-88
+	ldw	r6,r30,-84
+	addi	r4,r0,0
+	addi	r3,r0,10
+	call	fpc_div_qword
+	stw	r30,r1,-96
+	stw	r30,r2,-92
+	ldw	r3,r30,-68
+	addi	r3,r3,-1
+	stw	r30,r3,-68
+	addi	r6,r0,0
+	addi	r5,r0,10
+	ldw	r3,r30,-96
+	ldw	r4,r30,-92
+	call	fpc_mul_qword
+	ldw	r5,r30,-88
+	ldw	r4,r30,-84
+	sub	r3,r5,r1
+	sltu	r5,r5,r3
+	lui	r7,524288
+	ori	r7,r7,0
+	sub	r6,r4,r5
+	sltu	r5,r4,r6
+	sub	r5,r7,r5
+	sub	r4,r6,r2
+	andi	r3,r3,255
+	ldw	r4,r30,-56
+	ldw	r5,r30,-68
+	add	r4,r4,r5
+	stb	r4,r3,0
+	ldw	r3,r30,-96
+	stw	r30,r3,-88
+	ldw	r3,r30,-92
+	stw	r30,r3,-84
 .Lj5181:
-	ldw	r4,r30,-88
-	ldw	r3,r30,-84
-	bltu	r0,r3,.Lj5183
-	bne	r3,r0,.Lj5184
+	ldw	r3,r30,-88
+	ldw	r4,r30,-84
 	bltu	r0,r4,.Lj5183
+	bne	r4,r0,.Lj5184
+	bltu	r0,r3,.Lj5183
 	jal	r0,.Lj5184
 .Lj5183:
 	jal	r0,.Lj5180
@@ -46767,14 +46851,14 @@ SYSTEM_$$_FLT_DECIMAL_LEFT_SHIFT$TFLTDECIMAL$LONGINT:
 	stw	r30,r3,-72
 .Lj5186:
 	ldw	r4,r30,-56
-	ldw	r5,r30,-56
-	ldw	r3,r30,-68
-	add	r3,r5,r3
+	ldw	r3,r30,-56
+	ldw	r5,r30,-68
+	add	r3,r3,r5
 	ldw	r5,r30,-72
 	call	SYSTEM_$$_MOVE$formal$formal$LONGINT
-	ldw	r4,r30,-56
-	ldw	r3,r30,-72
-	stw	r4,r3,820
+	ldw	r3,r30,-56
+	ldw	r4,r30,-72
+	stw	r3,r4,820
 	ldw	r4,r30,-56
 	ldw	r3,r30,-76
 	ldw	r5,r4,824
@@ -47075,9 +47159,9 @@ SYSTEM_$$_FLT_DECIMAL_TO_BITS$TFLTDECIMAL$LONGINT$LONGINT$$QWORD:
 	addi	r3,r3,-1
 	sub	r3,r0,r3
 	stw	r30,r3,-76
-	addi	r3,r0,1
-	ldw	r4,r30,-64
-	sll	r3,r3,r4
+	addi	r4,r0,1
+	ldw	r3,r30,-64
+	sll	r3,r4,r3
 	addi	r3,r3,-1
 	stw	r30,r3,-88
 	stw	r30,r0,-96
@@ -47142,10 +47226,10 @@ SYSTEM_$$_FLT_DECIMAL_TO_BITS$TFLTDECIMAL$LONGINT$LONGINT$$QWORD:
 	sub	r4,r0,r3
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_FLT_DECIMAL_SHIFT$TFLTDECIMAL$LONGINT
-	ldw	r4,r30,-84
-	ldw	r3,r30,-80
-	add	r3,r3,r4
-	stw	r30,r3,-80
+	ldw	r3,r30,-84
+	ldw	r4,r30,-80
+	add	r4,r4,r3
+	stw	r30,r4,-80
 .Lj5246:
 	ldw	r3,r30,-56
 	ldw	r4,r3,824
@@ -47170,9 +47254,9 @@ SYSTEM_$$_FLT_DECIMAL_TO_BITS$TFLTDECIMAL$LONGINT$LONGINT$$QWORD:
 .Lj5255:
 	ldw	r3,r30,-56
 	ldw	r3,r3,824
-	sub	r3,r0,r3
-	la	r4,TC_$SYSTEM$_$FLT_DECIMAL_TO_BITS$TFLTDECIMAL$LONGINT$LONGINT$$QWORD_$$_CPOWTAB
-	add	r3,r3,r4
+	sub	r4,r0,r3
+	la	r3,TC_$SYSTEM$_$FLT_DECIMAL_TO_BITS$TFLTDECIMAL$LONGINT$LONGINT$$QWORD_$$_CPOWTAB
+	add	r3,r4,r3
 	ldbu	r3,r3,0
 	stw	r30,r3,-84
 .Lj5256:
@@ -47231,16 +47315,16 @@ SYSTEM_$$_FLT_DECIMAL_TO_BITS$TFLTDECIMAL$LONGINT$LONGINT$$QWORD:
 	sub	r4,r0,r3
 	ldw	r3,r30,-56
 	call	SYSTEM_$$_FLT_DECIMAL_SHIFT$TFLTDECIMAL$LONGINT
-	ldw	r4,r30,-84
-	ldw	r3,r30,-80
-	add	r3,r3,r4
-	stw	r30,r3,-80
+	ldw	r3,r30,-84
+	ldw	r4,r30,-80
+	add	r4,r4,r3
+	stw	r30,r4,-80
 .Lj5264:
-	ldw	r3,r30,-80
-	ldw	r4,r30,-76
-	sub	r3,r3,r4
-	ldw	r4,r30,-88
-	sge	r3,r3,r4
+	ldw	r4,r30,-80
+	ldw	r3,r30,-76
+	sub	r4,r4,r3
+	ldw	r3,r30,-88
+	sge	r3,r4,r3
 	bne	r3,r0,.Lj5265
 	jal	r0,.Lj5266
 .Lj5265:
@@ -47258,43 +47342,44 @@ SYSTEM_$$_FLT_DECIMAL_TO_BITS$TFLTDECIMAL$LONGINT$LONGINT$$QWORD:
 	stw	r30,r2,-92
 	addi	r6,r0,2
 	addi	r3,r0,0
-	ldw	r8,r30,-60
-	addi	r7,r8,-32
-	blt	r7,r0,.Lj5270
-	li	r5,0
-	sll	r4,r6,r7
+	ldw	r4,r30,-60
+	andi	r9,r4,63
+	addi	r8,r9,-32
+	blt	r8,r0,.Lj5270
+	li	r4,0
+	sll	r5,r6,r8
 	jal	r0,.Lj5271
 .Lj5270:
-	li	r7,31
-	srli	r9,r6,1
-	sub	r7,r7,r8
-	sll	r5,r6,r8
-	srl	r9,r9,r7
-	sll	r4,r3,r8
-	or	r4,r4,r9
+	li	r8,31
+	srli	r7,r6,1
+	sub	r8,r8,r9
+	sll	r4,r6,r9
+	srl	r7,r7,r8
+	sll	r5,r3,r9
+	or	r5,r5,r7
 .Lj5271:
 	ldw	r3,r30,-96
 	ldw	r6,r30,-92
-	bne	r6,r4,.Lj5269
-	bne	r3,r5,.Lj5269
+	bne	r6,r5,.Lj5269
+	bne	r3,r4,.Lj5269
 	jal	r0,.Lj5268
 .Lj5268:
-	ldw	r4,r30,-96
-	ldw	r5,r30,-92
-	slli	r3,r5,31
-	srli	r4,r4,1
+	ldw	r5,r30,-96
+	ldw	r4,r30,-92
+	slli	r3,r4,31
 	srli	r5,r5,1
-	or	r4,r4,r3
-	stw	r30,r4,-96
-	stw	r30,r5,-92
+	srli	r4,r4,1
+	or	r5,r5,r3
+	stw	r30,r5,-96
+	stw	r30,r4,-92
 	ldw	r3,r30,-80
 	addi	r3,r3,1
 	stw	r30,r3,-80
 	ldw	r3,r30,-80
 	ldw	r4,r30,-76
-	sub	r3,r3,r4
-	ldw	r4,r30,-88
-	sge	r3,r3,r4
+	sub	r4,r3,r4
+	ldw	r3,r30,-88
+	sge	r3,r4,r3
 	bne	r3,r0,.Lj5272
 	jal	r0,.Lj5273
 .Lj5272:
@@ -47302,24 +47387,25 @@ SYSTEM_$$_FLT_DECIMAL_TO_BITS$TFLTDECIMAL$LONGINT$LONGINT$$QWORD:
 	stb	r30,r3,-100
 .Lj5273:
 .Lj5269:
-	addi	r5,r0,1
+	addi	r4,r0,1
 	addi	r3,r0,0
-	ldw	r6,r30,-60
-	addi	r3,r6,-32
-	blt	r3,r0,.Lj5276
-	li	r4,0
-	sll	r3,r5,r3
+	ldw	r3,r30,-60
+	andi	r6,r3,63
+	addi	r5,r6,-32
+	blt	r5,r0,.Lj5276
+	li	r3,0
+	sll	r5,r4,r5
 	jal	r0,.Lj5277
 .Lj5276:
-	sll	r4,r5,r6
-	li	r3,0
+	sll	r3,r4,r6
+	li	r5,0
 .Lj5277:
 	ldw	r6,r30,-96
-	ldw	r5,r30,-92
-	and	r4,r4,r6
-	and	r3,r3,r5
-	bne	r0,r3,.Lj5275
+	ldw	r4,r30,-92
+	and	r3,r3,r6
+	and	r4,r5,r4
 	bne	r0,r4,.Lj5275
+	bne	r0,r3,.Lj5275
 	jal	r0,.Lj5274
 .Lj5274:
 	ldw	r3,r30,-76
@@ -47334,48 +47420,50 @@ SYSTEM_$$_FLT_DECIMAL_TO_BITS$TFLTDECIMAL$LONGINT$LONGINT$$QWORD:
 .Lj5278:
 	stw	r30,r0,-96
 	stw	r30,r0,-92
-	ldw	r3,r30,-88
-	ldw	r4,r30,-76
-	add	r3,r4,r3
+	ldw	r4,r30,-88
+	ldw	r3,r30,-76
+	add	r3,r3,r4
 	stw	r30,r3,-80
 .Lj5279:
-	ldw	r3,r30,-80
-	ldw	r4,r30,-76
-	sub	r4,r3,r4
-	ldw	r3,r30,-88
-	and	r3,r3,r4
+	ldw	r4,r30,-80
+	ldw	r3,r30,-76
+	sub	r3,r4,r3
+	ldw	r4,r30,-88
+	and	r3,r4,r3
 	slli	r3,r3,0
 	srli	r3,r3,0
-	srai	r6,r3,31
-	ldw	r7,r30,-60
-	addi	r4,r7,-32
-	blt	r4,r0,.Lj5280
+	srai	r4,r3,31
+	ldw	r5,r30,-60
+	andi	r7,r5,63
+	addi	r5,r7,-32
+	blt	r5,r0,.Lj5280
 	li	r9,0
-	sll	r8,r3,r4
+	sll	r8,r3,r5
 	jal	r0,.Lj5281
 .Lj5280:
-	li	r4,31
-	srli	r5,r3,1
-	sub	r4,r4,r7
+	li	r5,31
+	srli	r6,r3,1
+	sub	r5,r5,r7
 	sll	r9,r3,r7
-	srl	r5,r5,r4
-	sll	r8,r6,r7
-	or	r8,r8,r5
+	srl	r6,r6,r5
+	sll	r8,r4,r7
+	or	r8,r8,r6
 .Lj5281:
-	addi	r6,r0,1
+	addi	r5,r0,1
 	addi	r3,r0,0
 	ldw	r3,r30,-60
+	andi	r3,r3,63
 	addi	r4,r3,-32
 	blt	r4,r0,.Lj5282
-	li	r5,0
-	sll	r4,r6,r4
+	li	r6,0
+	sll	r4,r5,r4
 	jal	r0,.Lj5283
 .Lj5282:
-	sll	r5,r6,r3
+	sll	r6,r5,r3
 	li	r4,0
 .Lj5283:
-	addi	r3,r5,-1
-	sltu	r5,r5,r3
+	addi	r3,r6,-1
+	sltu	r5,r6,r3
 	sub	r4,r4,r5
 	ldw	r6,r30,-96
 	ldw	r5,r30,-92
@@ -47581,28 +47669,29 @@ SYSTEM_$$_FLT_STR_TO_BITS$SHORTSTRING$LONGINT$LONGINT$QWORD$$BOOLEAN:
 .Lj5315:
 	ldw	r3,r30,-60
 	ldw	r4,r30,-64
-	add	r4,r4,r3
-	addi	r5,r0,1
+	add	r5,r4,r3
+	addi	r4,r0,1
 	addi	r3,r0,0
-	slli	r6,r4,0
-	srli	r6,r6,0
-	addi	r4,r6,-32
-	blt	r4,r0,.Lj5317
+	slli	r3,r5,0
+	srli	r3,r3,0
+	andi	r6,r3,63
+	addi	r5,r6,-32
+	blt	r5,r0,.Lj5317
 	li	r3,0
-	sll	r4,r5,r4
+	sll	r5,r4,r5
 	jal	r0,.Lj5318
 .Lj5317:
-	sll	r3,r5,r6
-	li	r4,0
+	sll	r3,r4,r6
+	li	r5,0
 .Lj5318:
-	ldw	r6,r30,-68
-	ldw	r5,r6,0
-	ldw	r6,r6,4
-	or	r3,r3,r5
-	or	r5,r4,r6
 	ldw	r4,r30,-68
-	stw	r4,r3,0
-	stw	r4,r5,4
+	ldw	r6,r4,0
+	ldw	r4,r4,4
+	or	r3,r3,r6
+	or	r4,r5,r4
+	ldw	r5,r30,-68
+	stw	r5,r3,0
+	stw	r5,r4,4
 .Lj5316:
 .Lj5284:
 	ldbu	r1,r30,-72
@@ -51950,9 +52039,9 @@ FPC_DIV_QWORD:
 	jal	r0,.Lj5878
 .Lj5877:
 	ldw	r3,r30,-60
-	ldw	r3,r30,-56
-	li	r4,0
-	srli	r3,r3,0
+	ldw	r4,r30,-56
+	li	r3,0
+	srli	r3,r4,0
 	slli	r3,r3,0
 	srli	r3,r3,0
 	seq	r3,r3,r0
@@ -51993,9 +52082,9 @@ FPC_DIV_QWORD:
 .Lj5883:
 	addi	r3,r0,32
 	ldw	r4,r30,-68
-	ldw	r4,r30,-64
-	li	r5,0
-	srli	r4,r4,0
+	ldw	r5,r30,-64
+	li	r4,0
+	srli	r4,r5,0
 	slli	r4,r4,0
 	srli	r4,r4,0
 	stw	r30,r4,-92
@@ -52008,19 +52097,19 @@ FPC_DIV_QWORD:
 	stw	r30,r4,-92
 	addi	r3,r0,0
 .Lj5886:
-	ldw	r4,r30,-92
-	lui	r5,15
-	ori	r5,r5,4095
-	sgtu	r4,r4,r5
+	ldw	r5,r30,-92
+	lui	r4,15
+	ori	r4,r4,4095
+	sgtu	r4,r5,r4
 	slli	r4,r4,4
 	ldw	r5,r30,-92
 	slli	r4,r4,0
 	srli	r4,r4,0
 	srl	r5,r5,r4
 	stw	r30,r5,-96
-	ldw	r6,r30,-96
-	addi	r5,r0,255
-	sgtu	r5,r6,r5
+	ldw	r5,r30,-96
+	addi	r6,r0,255
+	sgtu	r5,r5,r6
 	slli	r5,r5,3
 	or	r5,r4,r5
 	addi	r4,r5,0
@@ -52082,9 +52171,9 @@ FPC_DIV_QWORD:
 	stw	r30,r5,-96
 	ldbu	r5,r30,-96
 	stb	r30,r5,-100
-	ldbu	r5,r30,-100
-	la	r6,TC_$SYSTEM$_$BSRBYTE$BYTE$$BYTE_$$_BSR8BIT
-	add	r5,r5,r6
+	ldbu	r6,r30,-100
+	la	r5,TC_$SYSTEM$_$BSRBYTE$BYTE$$BYTE_$$_BSR8BIT
+	add	r5,r6,r5
 	ldbu	r5,r5,0
 	or	r5,r4,r5
 	addi	r4,r5,0
@@ -52103,25 +52192,26 @@ FPC_DIV_QWORD:
 	ldw	r3,r30,-88
 	sub	r3,r4,r3
 	stw	r30,r3,-80
-	ldw	r4,r30,-60
-	ldw	r7,r30,-56
-	ldw	r3,r30,-80
-	addi	r8,r3,-32
-	blt	r8,r0,.Lj5894
-	li	r9,0
-	sll	r5,r4,r8
+	ldw	r3,r30,-60
+	ldw	r4,r30,-56
+	ldw	r5,r30,-80
+	andi	r9,r5,63
+	addi	r5,r9,-32
+	blt	r5,r0,.Lj5894
+	li	r7,0
+	sll	r8,r3,r5
 	jal	r0,.Lj5895
 .Lj5894:
-	li	r8,31
-	srli	r6,r4,1
-	sub	r8,r8,r3
-	sll	r9,r4,r3
-	srl	r6,r6,r8
-	sll	r5,r7,r3
-	or	r5,r5,r6
+	li	r5,31
+	srli	r6,r3,1
+	sub	r5,r5,r9
+	sll	r7,r3,r9
+	srl	r6,r6,r5
+	sll	r8,r4,r9
+	or	r8,r8,r6
 .Lj5895:
-	stw	r30,r9,-60
-	stw	r30,r5,-56
+	stw	r30,r7,-60
+	stw	r30,r8,-56
 	ldw	r4,r30,-80
 	addi	r3,r0,0
 	sge	r3,r4,r3
@@ -52141,22 +52231,23 @@ FPC_DIV_QWORD:
 	jal	r0,.Lj5901
 .Lj5901:
 	ldw	r6,r30,-68
-	ldw	r4,r30,-64
+	ldw	r5,r30,-64
 	ldw	r3,r30,-60
-	ldw	r5,r30,-56
+	ldw	r4,r30,-56
 	sub	r3,r6,r3
 	sltu	r6,r6,r3
-	lui	r8,524288
-	ori	r8,r8,0
-	sub	r7,r4,r6
-	sltu	r6,r4,r7
-	sub	r6,r8,r6
-	sub	r4,r7,r5
+	lui	r7,524288
+	ori	r7,r7,0
+	sub	r8,r5,r6
+	sltu	r6,r5,r8
+	sub	r6,r7,r6
+	sub	r4,r8,r4
 	stw	r30,r3,-68
 	stw	r30,r4,-64
 	addi	r5,r0,1
 	addi	r3,r0,0
 	ldw	r3,r30,-80
+	andi	r3,r3,63
 	addi	r4,r3,-32
 	blt	r4,r0,.Lj5903
 	li	r6,0
@@ -52256,10 +52347,10 @@ FPC_MOD_QWORD:
 .Lj5908:
 	stw	r30,r0,-76
 	stw	r30,r0,-72
-	ldw	r4,r30,-60
-	ldw	r3,r30,-56
-	bne	r0,r3,.Lj5911
+	ldw	r3,r30,-60
+	ldw	r4,r30,-56
 	bne	r0,r4,.Lj5911
+	bne	r0,r3,.Lj5911
 	jal	r0,.Lj5910
 .Lj5910:
 	call	SYSTEM_$$_GET_FRAME$$POINTER
@@ -52270,10 +52361,10 @@ FPC_MOD_QWORD:
 	addi	r5,r11,0
 	call	SYSTEM_$$_HANDLEERRORADDRFRAMEIND$LONGINT$POINTER$POINTER
 .Lj5911:
-	ldw	r3,r30,-68
-	ldw	r4,r30,-64
-	bne	r0,r4,.Lj5913
+	ldw	r4,r30,-68
+	ldw	r3,r30,-64
 	bne	r0,r3,.Lj5913
+	bne	r0,r4,.Lj5913
 	jal	r0,.Lj5912
 .Lj5912:
 	jal	r0,.Lj5905
@@ -52305,9 +52396,9 @@ FPC_MOD_QWORD:
 	srli	r4,r4,0
 	srl	r5,r5,r4
 	stw	r30,r5,-96
-	ldw	r6,r30,-96
-	addi	r5,r0,255
-	sgtu	r5,r6,r5
+	ldw	r5,r30,-96
+	addi	r6,r0,255
+	sgtu	r5,r5,r6
 	slli	r5,r5,3
 	or	r5,r4,r5
 	addi	r4,r5,0
@@ -52345,10 +52436,10 @@ FPC_MOD_QWORD:
 	stw	r30,r4,-92
 	addi	r3,r0,0
 .Lj5920:
-	ldw	r4,r30,-92
-	lui	r5,15
-	ori	r5,r5,4095
-	sgtu	r4,r4,r5
+	ldw	r5,r30,-92
+	lui	r4,15
+	ori	r4,r4,4095
+	sgtu	r4,r5,r4
 	slli	r4,r4,4
 	ldw	r5,r30,-92
 	slli	r4,r4,0
@@ -52394,25 +52485,26 @@ FPC_MOD_QWORD:
 	ldw	r3,r30,-88
 	sub	r3,r4,r3
 	stw	r30,r3,-80
-	ldw	r3,r30,-60
-	ldw	r7,r30,-56
-	ldw	r4,r30,-80
-	addi	r5,r4,-32
-	blt	r5,r0,.Lj5924
-	li	r9,0
-	sll	r8,r3,r5
+	ldw	r4,r30,-60
+	ldw	r3,r30,-56
+	ldw	r5,r30,-80
+	andi	r7,r5,63
+	addi	r6,r7,-32
+	blt	r6,r0,.Lj5924
+	li	r5,0
+	sll	r9,r4,r6
 	jal	r0,.Lj5925
 .Lj5924:
-	li	r5,31
-	srli	r6,r3,1
-	sub	r5,r5,r4
-	sll	r9,r3,r4
-	srl	r6,r6,r5
-	sll	r8,r7,r4
-	or	r8,r8,r6
+	li	r6,31
+	srli	r8,r4,1
+	sub	r6,r6,r7
+	sll	r5,r4,r7
+	srl	r8,r8,r6
+	sll	r9,r3,r7
+	or	r9,r9,r8
 .Lj5925:
-	stw	r30,r9,-60
-	stw	r30,r8,-56
+	stw	r30,r5,-60
+	stw	r30,r9,-56
 	ldw	r4,r30,-80
 	addi	r3,r0,0
 	sge	r3,r4,r3
@@ -52422,13 +52514,13 @@ FPC_MOD_QWORD:
 	ldw	r3,r30,-80
 	stw	r30,r3,-80
 .Lj5928:
-	ldw	r3,r30,-68
-	ldw	r6,r30,-64
-	ldw	r4,r30,-60
-	ldw	r5,r30,-56
-	bltu	r6,r5,.Lj5932
-	bne	r6,r5,.Lj5931
-	bltu	r3,r4,.Lj5932
+	ldw	r4,r30,-68
+	ldw	r3,r30,-64
+	ldw	r5,r30,-60
+	ldw	r6,r30,-56
+	bltu	r3,r6,.Lj5932
+	bne	r3,r6,.Lj5931
+	bltu	r4,r5,.Lj5932
 	jal	r0,.Lj5931
 .Lj5931:
 	ldw	r6,r30,-68
@@ -52446,14 +52538,14 @@ FPC_MOD_QWORD:
 	stw	r30,r3,-68
 	stw	r30,r4,-64
 .Lj5932:
-	ldw	r4,r30,-60
-	ldw	r5,r30,-56
-	slli	r3,r5,31
-	srli	r4,r4,1
+	ldw	r5,r30,-60
+	ldw	r4,r30,-56
+	slli	r3,r4,31
 	srli	r5,r5,1
-	or	r4,r4,r3
-	stw	r30,r4,-60
-	stw	r30,r5,-56
+	srli	r4,r4,1
+	or	r5,r5,r3
+	stw	r30,r5,-60
+	stw	r30,r4,-56
 	ldw	r3,r30,-80
 	addi	r3,r3,-1
 	stw	r30,r3,-80

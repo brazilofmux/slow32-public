@@ -17,12 +17,27 @@
 Arguments are assigned left-to-right from R3-R10:
 
 - **i32, f32**: one register each
-- **i64, f64**: pair-aligned — R3:R4, R5:R6, R7:R8, R9:R10
+- **f64**: pair-aligned — R3:R4, R5:R6, R7:R8, R9:R10
+- **i64**: two independent 4-byte pieces, low half first, never aligned
 - Overflow goes to the stack, 4-byte aligned
 
-Pair alignment means a 64-bit value that would start at an odd register
-(e.g. R4) skips to the next even pair (R5:R6). This wastes a register but
-is simple and matches common RISC conventions.
+Pair alignment means an f64 that would start at R4 skips to R5:R6. The
+skipped register is a **hole**, and the next 4-byte piece fills it: in
+`f(int a, double b, int c)` c is in R4, and in
+`f(int a, double b, long long c)` c's low half is in R4 and its high half
+in R7. An f64 that does not fit (only R10 left) goes entirely to the
+stack and R10 stays available for a later piece. An i64 is split into
+two i32s by type legalization before the convention runs, so each half
+is placed on its own: `f(int a, long long b)` has b in R4:R5, and with
+R10 the last free register a long long puts its low half there and its
+high half on the stack.
+
+This is what the LLVM backend has always done, measured from its output
+(2026-10-21, GitHub issue 98); an earlier version of this page claimed
+i64 was pair-aligned. Every clang-built object in the tree, the libc
+included, follows it, so it is the convention, and Free Pascal's `cdecl`
+(fpc-backend `cpupara.pas`) reproduces it hole for hole. FPC's own
+calling convention packs everything sequentially.
 
 Return values use R1 (and R1:R2 for 64-bit).
 
@@ -166,9 +181,10 @@ argument type mix.
 
 Three calling conventions in `SLOW32CallingConv.td`:
 
-- **`CC_SLOW32`**: Standard calls. Pair-aligned f64/i64 (R3:R4, R5:R6,
+- **`CC_SLOW32`**: Standard calls. Pair-aligned f64 (R3:R4, R5:R6,
 
-  R7:R8, R9:R10). Used for both caller and callee sides.
+  R7:R8, R9:R10) with the skipped register backfilled; i64 arrives as
+  two i32s and is placed piecewise. Used for both caller and callee sides.
 
 - **`CC_SLOW32_VarArg`**: Callee-side varargs. Only processes fixed
 

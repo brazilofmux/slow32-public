@@ -220,7 +220,7 @@ implementation
         end;
 
       var
-        tmpreg1, tmpreg2: TRegister;
+        tmpreg1, tmpreg2, cntreg: TRegister;
         less32, finished: TAsmLabel;
 
       begin
@@ -240,7 +240,15 @@ implementation
         if right.nodetype=ordconstn then
           begin
             v:=tordconstnode(right).value and 63;
-            if v >= 32 then
+            { by 0: a copy.  The < 32 path below shifts the carried half by
+              32-v, and SLOW-32 keeps five bits of a shift count, so 32 is 0
+              and the other half would be ORed in whole. }
+            if v = 0 then
+              begin
+                cg.a_load_reg_reg(current_asmdata.CurrAsmList,OS_INT,OS_INT,lreg.reglo,resreg.reglo);
+                cg.a_load_reg_reg(current_asmdata.CurrAsmList,OS_INT,OS_INT,lreg.reghi,resreg.reghi);
+              end
+            else if v >= 32 then
               begin
                 if nodetype=shln then
                   begin
@@ -284,10 +292,14 @@ implementation
             current_asmdata.getjumplabel(finished);
             tmpreg1:=cg.getintregister(current_asmdata.CurrAsmList,OS_INT);
             tmpreg2:=cg.getintregister(current_asmdata.CurrAsmList,OS_INT);
+            { the count modulo 64, as the RTL's fpc_shl_qword defines it: a
+              count of 64 is 0, not "the low half shifted by 32" }
+            cntreg:=cg.getintregister(current_asmdata.CurrAsmList,OS_INT);
+            emit_instr(taicpu.op_reg_reg_const(A_ANDI,cntreg,right.location.register64.reglo,63));
 
             if nodetype = shln then
               begin
-                emit_instr(taicpu.op_reg_reg_const(A_ADDI,tmpreg1,right.location.register64.reglo,-32));
+                emit_instr(taicpu.op_reg_reg_const(A_ADDI,tmpreg1,cntreg,-32));
                 { SLOW-32 has no A_BLTZ pseudo-op; use BLT reg,r0 equivalent }
                 cg.a_cmp_const_reg_label(current_asmdata.CurrAsmList,OS_INT,OC_LT,0,tmpreg1,less32);
                 emit_instr(taicpu.op_reg_const(A_LI,resreg.reglo,0));
@@ -297,23 +309,23 @@ implementation
                 { simple case were we know where the bit ends up, useful when bitmasks are created }
                 if (left.nodetype=ordconstn) and (tordconstnode(left).value=1) then
                   begin
-                    emit_instr(taicpu.op_reg_reg_reg(A_SLL,resreg.reglo,lreg.reglo,right.location.register64.reglo));
+                    emit_instr(taicpu.op_reg_reg_reg(A_SLL,resreg.reglo,lreg.reglo,cntreg));
                     emit_instr(taicpu.op_reg_const(A_LI,resreg.reghi,0));
                   end
                 else
                   begin
                     emit_instr(taicpu.op_reg_const(A_LI,tmpreg1,31));
                     emit_instr(taicpu.op_reg_reg_const(A_SRLI,tmpreg2,lreg.reglo,1));
-                    emit_instr(taicpu.op_reg_reg_reg(A_SUB,tmpreg1,tmpreg1,right.location.register64.reglo));
-                    emit_instr(taicpu.op_reg_reg_reg(A_SLL,resreg.reglo,lreg.reglo,right.location.register64.reglo));
+                    emit_instr(taicpu.op_reg_reg_reg(A_SUB,tmpreg1,tmpreg1,cntreg));
+                    emit_instr(taicpu.op_reg_reg_reg(A_SLL,resreg.reglo,lreg.reglo,cntreg));
                     emit_instr(taicpu.op_reg_reg_reg(A_SRL,tmpreg2,tmpreg2,tmpreg1));
-                    emit_instr(taicpu.op_reg_reg_reg(A_SLL,resreg.reghi,lreg.reghi,right.location.register64.reglo));
+                    emit_instr(taicpu.op_reg_reg_reg(A_SLL,resreg.reghi,lreg.reghi,cntreg));
                     emit_instr(taicpu.op_reg_reg_reg(A_OR,resreg.reghi,resreg.reghi,tmpreg2));
                   end;
               end
             else
               begin
-                emit_instr(taicpu.op_reg_reg_const(A_ADDI,tmpreg1,right.location.register64.reglo,-32));
+                emit_instr(taicpu.op_reg_reg_const(A_ADDI,tmpreg1,cntreg,-32));
                 cg.a_cmp_const_reg_label(current_asmdata.CurrAsmList,OS_INT,OC_LT,0,tmpreg1,less32);
                 emit_instr(taicpu.op_reg_const(A_LI,resreg.reghi,0));
                 emit_instr(taicpu.op_reg_reg_reg(A_SRL,resreg.reglo,lreg.reghi,tmpreg1));
@@ -321,10 +333,10 @@ implementation
                 cg.a_label(current_asmdata.CurrAsmList,less32);
                 emit_instr(taicpu.op_reg_const(A_LI,tmpreg1,31));
                 emit_instr(taicpu.op_reg_reg_const(A_SLLI,tmpreg2,lreg.reghi,1));
-                emit_instr(taicpu.op_reg_reg_reg(A_SUB,tmpreg1,tmpreg1,right.location.register64.reglo));
-                emit_instr(taicpu.op_reg_reg_reg(A_SRL,resreg.reglo,lreg.reglo,right.location.register64.reglo));
+                emit_instr(taicpu.op_reg_reg_reg(A_SUB,tmpreg1,tmpreg1,cntreg));
+                emit_instr(taicpu.op_reg_reg_reg(A_SRL,resreg.reglo,lreg.reglo,cntreg));
                 emit_instr(taicpu.op_reg_reg_reg(A_SLL,tmpreg2,tmpreg2,tmpreg1));
-                emit_instr(taicpu.op_reg_reg_reg(A_SRL,resreg.reghi,lreg.reghi,right.location.register64.reglo));
+                emit_instr(taicpu.op_reg_reg_reg(A_SRL,resreg.reghi,lreg.reghi,cntreg));
                 emit_instr(taicpu.op_reg_reg_reg(A_OR,resreg.reglo,resreg.reglo,tmpreg2));
               end;
             cg.a_label(current_asmdata.CurrAsmList,finished);

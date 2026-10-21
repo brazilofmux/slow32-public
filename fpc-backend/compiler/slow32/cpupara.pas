@@ -44,7 +44,7 @@ unit cpupara;
         procedure getcgtempparaloc(list: TAsmList; pd: tabstractprocdef; nr: longint; var cgpara: tcgpara);override;
 
         function create_paraloc_info_intern(p: tabstractprocdef; side: tcallercallee; paras: tparalist; var curintreg, curfloatreg, curmmreg: tsuperregister; var cur_stack_offset: aword; isVararg : boolean): longint;virtual;
-        procedure create_paraloc_for_def(var para: TCGPara; varspez: tvarspez; paradef: tdef; var nextfloatreg, nextintreg: tsuperregister; var stack_offset: aword; const isVararg, forceintmem: boolean; const side: tcallercallee; const p: tabstractprocdef);virtual;
+        procedure create_paraloc_for_def(var para: TCGPara; varspez: tvarspez; paradef: tdef; var holereg, nextintreg: tsuperregister; var stack_offset: aword; const isVararg, forceintmem: boolean; const side: tcallercallee; const p: tabstractprocdef);virtual;
 
         function create_varargs_paraloc_info(p: tabstractprocdef; side: tcallercallee; varargspara: tvarargsparalist): longint;override;
 
@@ -278,7 +278,8 @@ implementation
         cur_stack_offset := 0;
         { First argument register is r3 (a0) }
         curintreg := RS_R3;
-        { SLOW-32 has no FPU or MM registers }
+        { SLOW-32 has no FPU or MM registers; the float cursor carries the
+          C-convention hole register instead (create_paraloc_for_def) }
         curfloatreg := RS_NO;
         curmmreg := RS_NO;
       end;
@@ -374,8 +375,12 @@ implementation
       end;
 
 
-    procedure tcpuparamanager.create_paraloc_for_def(var para: TCGPara; varspez: tvarspez; paradef: tdef; var nextfloatreg, nextintreg: tsuperregister; var stack_offset: aword; const isVararg, forceintmem: boolean; const side: tcallercallee; const p: tabstractprocdef);
+    procedure tcpuparamanager.create_paraloc_for_def(var para: TCGPara; varspez: tvarspez; paradef: tdef; var holereg, nextintreg: tsuperregister; var stack_offset: aword; const isVararg, forceintmem: boolean; const side: tcallercallee; const p: tabstractprocdef);
+      { holereg is the float-register cursor of the generic drivers: SLOW-32 has
+        no FPU registers, so on this target it carries the C-convention hole
+        register (RS_NO when there is none) from one parameter to the next. }
       var
+        split64, fillshole: boolean;
         paracgsize: tcgsize;
         loc: tcgloc;
         paraloc: pcgparalocation;
@@ -462,13 +467,45 @@ implementation
           end;
         firstparaloc:=true;
 
-        { Parameters passed in 2 registers are passed in a register starting with an even number. }
-        if isVararg and
-           (paralen > sizeof(AInt)) and
+        { The C convention is what clang's SLOW-32 backend does
+          (docs/CALLING_CONVENTION.md): a double occupies an aligned pair,
+          r3:r4, r5:r6, r7:r8 or r9:r10, and the even register it skips over
+          is a hole that the next 4-byte piece -- an integer, a single, or
+          half of an int64 -- fills.  An int64 is two independent 4-byte
+          pieces and never skips.  A varargs procedure packs everything
+          sequentially, fixed parameters included, so that va_arg can walk
+          the register save area.  FPC's own convention packs sequentially.
+          (The skip used to run only for the varargs extras, and towards
+          the odd register: printf's double landed in r6:r7 where C reads
+          r5:r6.) }
+        if (p.proccalloption in cdecl_pocalls) and
+           not (po_varargs in p.procoptions) and
            (loc = LOC_REGISTER) and
+           (paradef.typ = floatdef) and
+           not (tfloatdef(paradef).floattype in [s64comp, s64currency]) and
+           (paralen = 8) and
            (nextintreg <= RS_R10) and
-           odd(nextintreg) then
-          inc(nextintreg);
+           not odd(nextintreg) then
+          begin
+            holereg := nextintreg;
+            inc(nextintreg);
+          end;
+
+        { A C-convention int64 is split into two 4-byte pieces when one of
+          them fills a hole, or when the pair would straddle r10 and the
+          stack; otherwise the single OS_64 location, a consecutive pair, is
+          already what C does.  (A varargs double is OS_32 pieces already,
+          from the patch above; a soft-float double is OS_64 but must stay
+          whole: one that does not fit goes to the stack entire.) }
+        split64 := (p.proccalloption in cdecl_pocalls) and
+                   (loc = LOC_REGISTER) and
+                   (paracgsize in [OS_64, OS_S64]) and
+                   (paradef.typ = orddef) and
+                   ((holereg <> RS_NO) or (nextintreg = RS_R10));
+        { Only a 4-byte parameter, or a split int64's low half, fills the
+          hole: a double is laid out as two 4-byte pieces here and must not
+          fill the hole it has just made. }
+        fillshole := (holereg <> RS_NO) and (split64 or (paralen <= sizeof(AInt)));
 
         { can become < 0 for e.g. 3-byte records }
         while (paralen > 0) do begin
@@ -476,7 +513,7 @@ implementation
           { In case of po_delphi_nested_cc, the parent frame pointer
             is always passed on the stack. }
           if (loc = LOC_REGISTER) and
-             (nextintreg <= RS_R10) and
+             ((nextintreg <= RS_R10) or (fillshole and (holereg <> RS_NO))) and
              not forceintmem then
             begin
               paraloc^.loc := loc;
@@ -490,7 +527,7 @@ implementation
                   locdef:=get_paraloc_def(paradef, paralen, firstparaloc);
                 end;
 
-               if (paracgsize in [OS_NO, OS_SPAIR, OS_PAIR]) then
+               if (paracgsize in [OS_NO, OS_SPAIR, OS_PAIR]) or split64 then
                 begin
                   if (paralen > 4) then
                     begin
@@ -510,8 +547,16 @@ implementation
                   paraloc^.def := locdef;
                 end;
 
-              paraloc^.register := newreg(R_INTREGISTER, nextintreg, R_SUBNONE);
-              inc(nextintreg);
+              if fillshole and (holereg <> RS_NO) and (tcgsize2size[paraloc^.size] <= sizeof(AInt)) then
+                begin
+                  paraloc^.register := newreg(R_INTREGISTER, holereg, R_SUBNONE);
+                  holereg := RS_NO;
+                end
+              else
+                begin
+                  paraloc^.register := newreg(R_INTREGISTER, nextintreg, R_SUBNONE);
+                  inc(nextintreg);
+                end;
               dec(paralen, tcgsize2size[paraloc^.size]);
             end
           else
