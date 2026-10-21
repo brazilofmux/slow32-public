@@ -4,9 +4,15 @@
 #include "date.h"
 #include "set.h"
 
-/* Standard astronomical Julian Day Number formula */
+/* Standard astronomical Julian Day Number formula.
+ * Invalid calendar dates (Feb 31, month 0, …) are blank (JDN 0), matching
+ * dBase CTOD of a bad string. */
 int32_t date_to_jdn(int year, int month, int day) {
     int a, y, m;
+    int dim = date_days_in_month(year, month);
+    if (dim <= 0 || day < 1 || day > dim) {
+        return 0;
+    }
     a = (14 - month) / 12;
     y = year + 4800 - a;
     m = month + 12 * a - 3;

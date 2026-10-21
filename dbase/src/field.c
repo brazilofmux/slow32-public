@@ -23,10 +23,9 @@ int field_format_numeric(char *buf, int field_len, int decimals, const char *val
     char tmp[64];
 
     v = atof(value);
-    if (decimals > 0)
-        snprintf(tmp, sizeof(tmp), "%*.*f", field_len, decimals, v);
-    else
-        snprintf(tmp, sizeof(tmp), "%*d", field_len, (int)v);
+    /* decimals==0 used (int)v, which wraps at 2³¹ on ILP32. N width is
+     * up to 19; %.0f keeps values that fit in double. */
+    snprintf(tmp, sizeof(tmp), "%*.*f", field_len, decimals > 0 ? decimals : 0, v);
 
     len = strlen(tmp);
     if (len > field_len) {
