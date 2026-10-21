@@ -450,9 +450,11 @@ typedef struct {
     uint32_t cfi_cie_zplr_offset;
     // The CFA's offset as the directives so far leave it, for
     // .cfi_adjust_cfa_offset (which is relative to it), with the copies
-    // .cfi_remember_state saves.
+    // .cfi_remember_state saves.  The save stack grows; a silent 8-deep
+    // cap used to leave later adjust_cfa_offset describing the wrong CFA.
     int32_t cfi_cfa_offset;
-    int32_t cfi_cfa_saved[8];
+    int32_t *cfi_cfa_saved;
+    int cfi_cfa_cap;
     int cfi_cfa_depth;
 
     // String table
@@ -1110,18 +1112,29 @@ static bool handle_cfi_directive(assembler_t *as, char tokens[][MAX_TOKEN_LEN], 
     if (strcmp(tokens[0], ".cfi_remember_state") == 0) {
         cfi_emit_advance_loc(as);
         cfi_fde_write8(as, DW_CFA_remember_state);
-        if (as->cfi_cfa_depth < 8) as->cfi_cfa_saved[as->cfi_cfa_depth] = as->cfi_cfa_offset;
-        as->cfi_cfa_depth++;
+        if (as->cfi_cfa_depth == as->cfi_cfa_cap) {
+            int ncap = as->cfi_cfa_cap ? as->cfi_cfa_cap * 2 : 8;
+            int32_t *n = realloc(as->cfi_cfa_saved, (size_t)ncap * sizeof *n);
+            if (!n) {
+                fprintf(stderr, "Error: out of memory\n");
+                exit(1);
+            }
+            as->cfi_cfa_saved = n;
+            as->cfi_cfa_cap = ncap;
+        }
+        as->cfi_cfa_saved[as->cfi_cfa_depth++] = as->cfi_cfa_offset;
         return true;
     }
 
     if (strcmp(tokens[0], ".cfi_restore_state") == 0) {
         cfi_emit_advance_loc(as);
-        cfi_fde_write8(as, DW_CFA_restore_state);
-        if (as->cfi_cfa_depth > 0) {
-            as->cfi_cfa_depth--;
-            if (as->cfi_cfa_depth < 8) as->cfi_cfa_offset = as->cfi_cfa_saved[as->cfi_cfa_depth];
+        if (as->cfi_cfa_depth <= 0) {
+            fprintf(stderr, "Error: .cfi_restore_state without .cfi_remember_state\n");
+            return false;
         }
+        cfi_fde_write8(as, DW_CFA_restore_state);
+        as->cfi_cfa_depth--;
+        as->cfi_cfa_offset = as->cfi_cfa_saved[as->cfi_cfa_depth];
         return true;
     }
 
