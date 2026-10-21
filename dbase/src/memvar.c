@@ -34,6 +34,26 @@ void memvar_init(memvar_store_t *store) {
     store->hw = 0;
 }
 
+/* The slot an upper-cased name resolves to at the current depth: a LOCAL
+ * made at this depth shadows everything of that name; a LOCAL of any other
+ * depth is invisible; otherwise the first PRIVATE/PUBLIC.  -1 if none.
+ * (LOCAL used to release the variable it shadowed, so a callee saw nothing
+ * and the caller's value was gone on return: GitHub issue 113.) */
+static int memvar_slot(const memvar_store_t *store, const char *uname, unsigned h) {
+    int i, best = -1;
+    for (i = 0; i < store->hw; i++) {
+        if (store->vars[i].used && store->vars[i].hash == h &&
+            strcmp(store->vars[i].name, uname) == 0) {
+            if (store->vars[i].is_local) {
+                if (store->vars[i].scope_depth == store->current_depth) return i;
+                continue;
+            }
+            if (best < 0) best = i;
+        }
+    }
+    return best;
+}
+
 int memvar_find(const memvar_store_t *store, const char *name, value_t *val) {
     int i;
     char uname[64];
@@ -44,18 +64,10 @@ int memvar_find(const memvar_store_t *store, const char *name, value_t *val) {
     str_copy(uname, name, sizeof(uname));
     str_upper(uname);
     h = name_hash(uname);
-    for (i = 0; i < store->hw; i++) {
-        if (store->vars[i].used && store->vars[i].hash == h &&
-            strcmp(store->vars[i].name, uname) == 0) {
-            /* LOCAL vars only visible at exact creation scope */
-            if (store->vars[i].is_local &&
-                store->vars[i].scope_depth != store->current_depth)
-                continue;
-            *val = store->vars[i].val;
-            return 0;
-        }
-    }
-    return -1;
+    i = memvar_slot(store, uname, h);
+    if (i < 0) return -1;
+    *val = store->vars[i].val;
+    return 0;
 }
 
 int memvar_set(memvar_store_t *store, const char *name, const value_t *val) {
@@ -67,18 +79,13 @@ int memvar_set(memvar_store_t *store, const char *name, const value_t *val) {
 
     unsigned h = name_hash(uname);
 
-    /* Update existing */
-    for (i = 0; i < store->hw; i++) {
-        if (store->vars[i].used && store->vars[i].hash == h && strcmp(store->vars[i].name, uname) == 0) {
-            /* LOCAL vars only writable at exact creation scope */
-            if (store->vars[i].is_local &&
-                store->vars[i].scope_depth != store->current_depth)
-                continue;
-            if (store->vars[i].val.type == VAL_ARRAY)
-                array_free(store->vars[i].val.array);
-            store->vars[i].val = *val;
-            return 0;
-        }
+    /* Update existing: the LOCAL of this depth if there is one, else the PRIVATE/PUBLIC */
+    i = memvar_slot(store, uname, h);
+    if (i >= 0) {
+        if (store->vars[i].val.type == VAL_ARRAY)
+            array_free(store->vars[i].val.array);
+        store->vars[i].val = *val;
+        return 0;
     }
 
     /* Find free slot */
@@ -107,6 +114,16 @@ int memvar_set_local(memvar_store_t *store, const char *name, const value_t *val
     str_copy(uname, name, MEMVAR_NAMELEN);
     str_upper(uname);
 
+    /* A second LOCAL of the name at this depth resets it; a PRIVATE or
+     * PUBLIC of the name is left alone, shadowed until memvar_release_locals. */
+    i = memvar_slot(store, uname, name_hash(uname));
+    if (i >= 0 && store->vars[i].is_local) {
+        if (store->vars[i].val.type == VAL_ARRAY)
+            array_free(store->vars[i].val.array);
+        store->vars[i].val = *val;
+        return 0;
+    }
+
     /* Find free slot */
     for (i = 0; i < MEMVAR_MAX; i++) {
         if (!store->vars[i].used) {
@@ -129,21 +146,30 @@ int memvar_set_local(memvar_store_t *store, const char *name, const value_t *val
 int memvar_release(memvar_store_t *store, const char *name) {
     int i;
     char uname[64];
-    unsigned h;
     str_copy(uname, name, sizeof(uname));
     str_upper(uname);
-    h = name_hash(uname);
+    i = memvar_slot(store, uname, name_hash(uname));
+    if (i < 0) return -1;
+    if (store->vars[i].val.type == VAL_ARRAY)
+        array_free(store->vars[i].val.array);
+    store->vars[i].used = 0;
+    store->count--;
+    hw_shrink(store);
+    return 0;
+}
+
+/* The LOCALs of a scope, on its RETURN. */
+void memvar_release_locals(memvar_store_t *store, int depth) {
+    int i;
     for (i = 0; i < store->hw; i++) {
-        if (store->vars[i].used && store->vars[i].hash == h && strcmp(store->vars[i].name, uname) == 0) {
-            if (store->vars[i].val.type == VAL_ARRAY)
-                array_free(store->vars[i].val.array);
-            store->vars[i].used = 0;
-            store->count--;
-            hw_shrink(store);
-            return 0;
-        }
+        if (!store->vars[i].used || !store->vars[i].is_local ||
+            store->vars[i].scope_depth != depth) continue;
+        if (store->vars[i].val.type == VAL_ARRAY)
+            array_free(store->vars[i].val.array);
+        store->vars[i].used = 0;
+        store->count--;
     }
-    return -1;
+    hw_shrink(store);
 }
 
 void memvar_release_all(memvar_store_t *store) {

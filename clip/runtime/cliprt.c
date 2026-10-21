@@ -231,16 +231,18 @@ void clip_private(clip_scope_t *s, const char *name) {
 }
 
 void clip_local(clip_scope_t *s, const char *name) {
+    /* A LOCAL shadows an outer variable of the name without touching it,
+     * and clip_leave releases it; nothing to save. */
     value_t nil = val_nil();
-    memvar_store_t *store = cmd_get_memvar_store();
-    scope_save(s, name);
-    memvar_release(store, name);
-    memvar_set_local(store, name, &nil);
+    (void)s;
+    memvar_set_local(cmd_get_memvar_store(), name, &nil);
 }
 
 void clip_leave(clip_scope_t *s) {
     memvar_store_t *store = cmd_get_memvar_store();
     int i;
+    /* LOCALs first, so a PRIVATE restore lands on what it shadowed */
+    memvar_release_locals(store, store->current_depth);
     for (i = 0; i < s->count; i++) {
         if (s->valid[i]) {
             memvar_set(store, s->names[i], &s->saved[i]);

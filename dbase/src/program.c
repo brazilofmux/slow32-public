@@ -1017,6 +1017,10 @@ static void pop_frame(void) {
         }
     }
 
+    /* The frame's LOCALs go first, so a PRIVATE restore below lands on
+     * the variable it shadowed, not on the LOCAL */
+    memvar_release_locals(store, store->current_depth);
+
     /* Restore PRIVATE variables */
     restore_privates(frame);
 
@@ -2395,11 +2399,10 @@ void prog_local(lexer_t *l) {
             prog_error(ERR_SYNTAX, err);
             return;
         }
-        /* Save as PRIVATE for cleanup on RETURN */
-        save_private(&state.call_stack[state.call_depth - 1], name);
-        /* Release any existing var */
-        memvar_release(store, name);
-        /* Create fresh LOCAL var */
+        /* A fresh LOCAL at this depth.  It shadows a PRIVATE or PUBLIC of
+         * the name without touching it, and pop_frame releases it; it
+         * used to release the outer variable, so a callee saw nothing and
+         * the caller's value was gone on return (GitHub issue 113). */
         memvar_set_local(store, name, &nil_val);
 
         lex_next(l);

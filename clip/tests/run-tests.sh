@@ -36,6 +36,8 @@ run_one doproc || fail=1
 run_one setproc || fail=1
 run_one func || fail=1
 run_one funcpriv || fail=1
+run_one funclocal || fail=1
+run_one ifnum || fail=1
 run_one funccase || fail=1
 run_one money || fail=1
 
