@@ -2,8 +2,8 @@ identification division.
 program-id. dynlself.
 *> A MOVE of a dynamic-length item onto itself, or of a reference-modified
 *> slice of it onto the whole item: the sender's bytes are kept across the
-*> realloc.  A variable-length group moved onto itself is a no-op.  No
-*> oracle: GnuCOBOL 4 has no DYNAMIC LENGTH.  No gcobol either.
+*> realloc.  A variable-length group moved onto itself is a no-op.
+*> No oracle: GnuCOBOL 4 has no DYNAMIC LENGTH.  No gcobol either.
 data division.
 working-storage section.
 01 s pic x dynamic length.

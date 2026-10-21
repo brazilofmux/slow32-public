@@ -1398,9 +1398,10 @@ static void emit_dyn_free_at(int rec, int local, int off)
     } else emit_la_off("r3", g_sym[rec].label, off);
     emit_call("cob_dyn_free");
 }
+/* (from rec itself: an 01 DYNAMIC LENGTH item is its own record) */
 static int rec_has_dyn(int rec)
 {
-    for (int j = rec + 1; j < g_nsym; j++)
+    for (int j = rec; j < g_nsym; j++)
         if ((g_sym[j].dyn || g_sym[j].dynl) && g_sym[j].record == rec) return 1;
     return 0;
 }
@@ -1414,7 +1415,7 @@ static void emit_dyn_frees_of(int rec, int local)
         emit("\tldw r1, r1+0");
         emit("\tbeq r1, r0, .L%d", skip);
     }
-    for (int j = rec + 1; j < g_nsym; j++) {
+    for (int j = rec; j < g_nsym; j++) {
         if (g_sym[j].record != rec) continue;
         if (g_sym[j].dyn) emit_dyn_free_at(rec, local, g_sym[j].offset);
         else if (g_sym[j].dynl && !g_sym[j].ndims) emit_dyn_free_at(rec, local, g_sym[j].offset);

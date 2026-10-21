@@ -3197,7 +3197,11 @@ static void lin_values(cob_file *f);
 #define LK_PER_RUN_UNIT 1024
 #define LK_KEYMAX 255
 static struct { const char *path; int nconn; } lk_files[64]; static int lk_nfiles;
-static struct { int fid; cob_file *owner; unsigned char key[LK_KEYMAX]; unsigned klen; } lk_locks[LK_PER_RUN_UNIT]; static int lk_nlocks;
+/* the run unit's record locks: allocated at the first one, since a
+ * whole primary key per lock makes the table ~270K, which a program
+ * that locks nothing should not carry */
+typedef struct { int fid; cob_file *owner; unsigned char key[LK_KEYMAX]; unsigned klen; } lk_lock_t;
+static lk_lock_t *lk_locks; static int lk_nlocks;
 static int lk_active;                           /* any connector open with a sharing mode or lock mode: the checks run */
 static struct { unsigned flags; int times; double secs; int forever; int set; } cob_io_opt;
 void cob_io_set(unsigned flags, int times, int secs_scaled, int forever)   /* secs_scaled: hundredths */
@@ -3295,6 +3299,7 @@ static int lk_lock(cob_file *f, const unsigned char *key, unsigned klen)
     if (!lk_multiple(f)) lk_release_all(f);     /* single-record locking: the one before goes */
     if (lk_count(f) >= LK_PER_CONNECTOR) return 54;
     if (lk_nlocks >= LK_PER_RUN_UNIT) return 53;
+    if (!lk_locks && !(lk_locks = malloc(LK_PER_RUN_UNIT * sizeof *lk_locks))) cob_fatal("out of memory");
     lk_locks[lk_nlocks].fid = lk_fid(f); lk_locks[lk_nlocks].owner = f; lk_locks[lk_nlocks].klen = klen; memcpy(lk_locks[lk_nlocks].key, key, klen); lk_nlocks++;
     return 0;
 }
