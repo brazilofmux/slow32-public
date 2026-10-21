@@ -1,0 +1,4 @@
+qa holds last sequential: 00 bbbb
+qb EXTEND write at EOF: 00
+la holds last line: 00 two     
+lb EXTEND write at EOF: 00

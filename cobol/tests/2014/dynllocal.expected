@@ -1,0 +1,10 @@
+n=1 s=[one] len=3 c=0000000003 k2=1
+n=2 s=[two-two] len=7 c=0000000003 k2=2
+n=3 s=[three-three-three] len=17 c=0000000003 k2=3
+back n=2 s=[two-two] c=0000000003 k2=2
+back n=1 s=[one] c=0000000003 k2=1
+n=1 s=[one] len=3 c=0000000003 k2=1
+n=2 s=[two-two] len=7 c=0000000003 k2=2
+n=3 s=[three-three-three] len=17 c=0000000003 k2=3
+back n=2 s=[two-two] c=0000000003 k2=2
+back n=1 s=[one] c=0000000003 k2=1

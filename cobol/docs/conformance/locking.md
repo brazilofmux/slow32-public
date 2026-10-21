@@ -25,7 +25,9 @@ holding no locks: it is refused where Table 19 refuses it, it reads
 another connector's locked record freely (12.4.5.9.4 rule 1).
 
 Tests 2002/locking (indexed, relative and sequential files under every
-form below) and 2023/lockdel (DELETE FILE, OPEN RETRY); no oracle:
+form below), 2002/lockseq (sequential EXTEND WRITE vs the last record's
+lock), 2002/lockkey (indexed keys longer than 60 bytes) and 2023/lockdel
+(DELETE FILE, OPEN RETRY); no oracle:
 GnuCOBOL's sharing checks and locks are between processes, none within a
 run unit -- every status there is 00. Bad: std2002-lock-multiple-seq,
 -lock-multiple-seqaccess, -read-lock-automatic, -rewrite-lock-automatic,
@@ -55,7 +57,7 @@ run unit -- every status there is 00. Bad: std2002-lock-multiple-seq,
 | 12.4.5.9.4 rule 5; 14.9.30.4 rule 11d, 14.9.35.4, 14.9.51.4 rule 11 | MANUAL: a lock only by WITH LOCK, on READ, REWRITE or WRITE | **implemented** |
 | 12.4.5.9.4 rule 6; 14.9.30.4 rule 11a; 14.9.51.4 rule 10 | single-record locking: any I-O statement but START releases the connector's lock, before its own | **implemented**: a REWRITE WITH LOCK moves the lock; a plain READ, WRITE, REWRITE or DELETE drops it |
 | 12.4.5.9.4 rule 7 | MULTIPLE: the connector keeps every lock until UNLOCK or CLOSE; limits of at least 15 per connector and 255 per run unit | **implemented**: 255 per connector, 1024 per run unit; the operation that would pass a limit is **54** (connector) or **53** (run unit), EC-I-O-RECORD-OPERATION |
-| 9.1.16; 14.9.30.4 rules 8-9, 14.9.10.4 rule 6, 14.9.35.4, 14.9.51.4 | a record locked by another connector: READ (keyed, or sequential of that record), REWRITE, DELETE, WRITE of it is **51**, EC-I-O-RECORD-OPERATION; the holder reads its own freely | **implemented**. The record: a relative file's number (the RELATIVE KEY item before a keyed operation, the number read after a sequential one), an indexed record's primary key, a sequential record's position |
+| 9.1.16; 14.9.30.4 rules 8-9, 14.9.10.4 rule 6, 14.9.35.4, 14.9.51.4 | a record locked by another connector: READ (keyed, or sequential of that record), REWRITE, DELETE, WRITE of it is **51**, EC-I-O-RECORD-OPERATION; the holder reads its own freely | **implemented**. The record: a relative file's number (the RELATIVE KEY item before a keyed operation, the number read after a sequential one), an indexed record's primary key (the whole key, up to 255 bytes, the tree's `BT_KEYMAX`; 2002/lockkey), a sequential record's start (the byte position the record began at, not `fpos` past it: a WRITE in EXTEND at EOF is not the last record a READ just locked; 2002/lockseq) |
 | 14.9.41.4 rule 3 | START neither detects, acquires nor releases locks | **implemented** (RETRY is its only phrase) |
 | 9.1.16; 14.9.6 | CLOSE releases the connector's locks | **implemented** |
 | 14.9.47 | UNLOCK releases them (environment.md for its statuses) | **implemented**; the test's UNLOCK frees a record another connector then reads |

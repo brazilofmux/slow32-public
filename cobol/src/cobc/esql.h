@@ -1384,6 +1384,53 @@ static void emit_external_checks(void)
     }
 }
 
+/* Give up the heap of a record's DYNAMIC LENGTH / OCCURS DYNAMIC slots.
+ * CANCEL restores WORKING-STORAGE after this. LOCAL-STORAGE is freed the
+ * same way on cob_act_leave, before the activation's image is dropped or
+ * overwritten (the slots live in the activation's copy). */
+static void emit_dyn_free_at(int rec, int local, int off)
+{
+    if (local) {
+        emit_la("r1", g_sym[rec].label);
+        emit("\tldw r1, r1+0");
+        if (off >= -2048 && off <= 2047) emit("\taddi r3, r1, %d", off);
+        else { emit_li("r3", off); emit("\tadd r3, r1, r3"); }
+    } else emit_la_off("r3", g_sym[rec].label, off);
+    emit_call("cob_dyn_free");
+}
+static int rec_has_dyn(int rec)
+{
+    for (int j = rec + 1; j < g_nsym; j++)
+        if ((g_sym[j].dyn || g_sym[j].dynl) && g_sym[j].record == rec) return 1;
+    return 0;
+}
+static void emit_dyn_frees_of(int rec, int local)
+{
+    if (!rec_has_dyn(rec)) return;
+    int skip = -1;
+    if (local) {
+        skip = new_label();
+        emit_la("r1", g_sym[rec].label);
+        emit("\tldw r1, r1+0");
+        emit("\tbeq r1, r0, .L%d", skip);
+    }
+    for (int j = rec + 1; j < g_nsym; j++) {
+        if (g_sym[j].record != rec) continue;
+        if (g_sym[j].dyn) emit_dyn_free_at(rec, local, g_sym[j].offset);
+        else if (g_sym[j].dynl && !g_sym[j].ndims) emit_dyn_free_at(rec, local, g_sym[j].offset);
+        else if (g_sym[j].dynl) {
+            int cnt[MAXDIM]; long tot = 1; for (int q = 0; q < g_sym[j].ndims; q++) { cnt[q] = g_sym[j].dim_count[q]; tot *= cnt[q]; }
+            int k[MAXDIM] = { 0 };
+            for (long n = 0; n < tot; n++) {
+                int off = g_sym[j].offset; for (int q = 0; q < g_sym[j].ndims; q++) off += k[q] * g_sym[j].dim_stride[q];
+                emit_dyn_free_at(rec, local, off);
+                int q = g_sym[j].ndims - 1; while (q >= 0 && ++k[q] == cnt[q]) k[q--] = 0;
+            }
+        }
+    }
+    if (local) emit_label(skip);
+}
+
 static void parse_procedure_division(void)
 {
     expect_word("procedure"); expect_word("division");
@@ -1897,6 +1944,11 @@ static void parse_procedure_division(void)
         }
     emit("\tldw r3, sp+%d", SLOT_PBASE); emit_call("cob_perform_leave");
     if (g_std >= 2002) {
+        for (int i = g_sym_base; i < g_nsym; i++) {
+            Sym *s = &g_sym[i];
+            if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || !s->is_local) continue;
+            emit_dyn_frees_of(i, 1);
+        }
         char lab[32]; snprintf(lab, sizeof lab, ".Lact%d", g_unit);
         emit_la("r3", lab); emit("\tldw r4, sp+%d", SLOT_ACT); emit_call("cob_act_leave");
     }
@@ -1960,18 +2012,7 @@ static void parse_procedure_division(void)
         for (int i = g_sym_base; i < g_nsym; i++) {
             Sym *s = &g_sym[i];
             if (s->is_cond || s->parent >= 0 || s->redefines >= 0 || s->lin_file >= 0 || s->rep_ctr >= 0 || rec_indirect(s) || s->is_rc || s->is_constrec) continue;
-            for (int j = i + 1; j < g_nsym; j++)          /* its dynamic-capacity tables' elements given up first (14.9.5.4 rule 2) */
-                if (g_sym[j].dyn && g_sym[j].record == i) { emit_la_off("r3", s->label, g_sym[j].offset); emit_call("cob_dyn_free"); }
-                else if (g_sym[j].dynl && g_sym[j].record == i && !g_sym[j].ndims) { emit_la_off("r3", s->label, g_sym[j].offset); emit_call("cob_dyn_free"); }
-                else if (g_sym[j].dynl && g_sym[j].record == i) {   /* every occurrence's slot */
-                    int cnt[MAXDIM]; long tot = 1; for (int q = 0; q < g_sym[j].ndims; q++) { cnt[q] = g_sym[j].dim_count[q]; tot *= cnt[q]; }
-                    int k[MAXDIM] = { 0 };
-                    for (long n = 0; n < tot; n++) {
-                        int off = g_sym[j].offset; for (int q = 0; q < g_sym[j].ndims; q++) off += k[q] * g_sym[j].dim_stride[q];
-                        emit_la_off("r3", s->label, off); emit_call("cob_dyn_free");
-                        int q = g_sym[j].ndims - 1; while (q >= 0 && ++k[q] == cnt[q]) k[q--] = 0;
-                    }
-                }
+            emit_dyn_frees_of(i, 0);                        /* its dynamic-capacity tables' elements given up first (14.9.5.4 rule 2) */
             emit_la("r3", s->label);
             char il[80]; snprintf(il, sizeof il, "%s_i", s->label);
             emit_la("r4", il);

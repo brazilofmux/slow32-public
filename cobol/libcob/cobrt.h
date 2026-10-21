@@ -119,6 +119,7 @@ typedef struct {
     unsigned int last_st;     /* the last I-O status of this connector, 0x10000 | its two characters; 0 never accessed (FUNCTION EXCEPTION-FILE (file-name), 2023 15.28.4 rule 2) */
     unsigned int share_lock;  /* the file control entry's SHARING (bits 0-3: 0 none, 1 ALL OTHER, 2 NO OTHER, 3 READ ONLY) and LOCK MODE (bits 4-7: 0 none, 1 MANUAL, 2 AUTOMATIC; bit 8 MULTIPLE) -- 2023 12.4.5.15, 12.4.5.9 */
     unsigned int lk_state;    /* the runtime's: the sharing mode this opening took (bits 0-3), the physical file's slot + 1 (bits 8-) */
+    unsigned int rec_start;   /* sequential: byte position of the current record (the start, not fpos past it) */
 } cob_file;
 
 /* A dynamic-capacity table (2023 13.18.38 format 4, 8.5.1.9): in its
