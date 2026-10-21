@@ -11,6 +11,7 @@ struct lexer;
 #define MAX_LINE_LEN      256
 #define MAX_CALL_DEPTH     32
 #define MAX_LOOP_DEPTH     16
+#define MAX_IF_DEPTH       32
 #define MAX_SEQUENCE_DEPTH  8
 
 /* A loaded program */
@@ -44,6 +45,14 @@ typedef struct {
     /* Pass-by-reference tracking for DO...WITH */
     char with_ref_names[MAX_FUNC_ARGS][MEMVAR_NAMELEN]; /* caller var name (empty=by-value) */
     char param_names[MAX_FUNC_ARGS][MEMVAR_NAMELEN];    /* procedure param name */
+    /* Caller IF/CASE/loop — nested DO must not smash these (UDFs already save) */
+    int if_skip;
+    int if_depth;
+    int if_done[MAX_IF_DEPTH];
+    int case_active;
+    int case_done;
+    int case_skip;
+    int loop_depth;
 } call_frame_t;
 
 /* Loop stack entry (DO WHILE / ENDDO / FOR / NEXT / SCAN / ENDSCAN) */

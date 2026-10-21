@@ -37,7 +37,6 @@ static int prog_udf_call(const char *name, value_t *args, int nargs, value_t *re
 #define MAX_UDF_CALL_NESTING 8
 
 /* IF/ELSE/ENDIF nesting for skip mode */
-#define MAX_IF_DEPTH 32
 static int if_skip;             /* >0 = skipping lines */
 static int if_depth;            /* current IF nesting depth */
 static int if_done[MAX_IF_DEPTH]; /* branch already taken at this depth */
@@ -973,6 +972,22 @@ static int push_frame(program_t *new_prog, int start_line) {
     frame->return_line = start_line;
     frame->private_count = 0;
 
+    frame->if_skip = if_skip;
+    frame->if_depth = if_depth;
+    memcpy(frame->if_done, if_done, sizeof(if_done));
+    frame->case_active = case_active;
+    frame->case_done = case_done;
+    frame->case_skip = case_skip;
+    frame->loop_depth = state.loop_depth;
+
+    if_skip = 0;
+    if_depth = 0;
+    memset(if_done, 0, sizeof(if_done));
+    case_active = 0;
+    case_done = 0;
+    case_skip = 0;
+    /* Do not reset loop_depth — callee loops push on top of the caller's slots */
+
     state.call_depth++;
     state.current_prog = new_prog;
     state.pc = start_line;
@@ -1014,6 +1029,14 @@ static void pop_frame(void) {
             memvar_set(store, frame->with_ref_names[i], &ref_vals[i]);
         }
     }
+
+    if_skip = frame->if_skip;
+    if_depth = frame->if_depth;
+    memcpy(if_done, frame->if_done, sizeof(if_done));
+    case_active = frame->case_active;
+    case_done = frame->case_done;
+    case_skip = frame->case_skip;
+    state.loop_depth = frame->loop_depth;
 
     if (frame->caller_prog) {
         state.current_prog = frame->caller_prog;

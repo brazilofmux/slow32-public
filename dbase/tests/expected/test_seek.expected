@@ -11,11 +11,15 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width
 . . 4 record(s) indexed.
 . . .T.
 . Bob 35
-. Not found.
+. . Not found.
+. .F.
+. Bob
+. . . .F.
+. Charlie
+. . Not found.
 . .F.
 . . .T.
 . Alice 25
 . . .T.
 . David 28
 . Database closed.
-

@@ -4676,7 +4676,7 @@ static void cmd_seek(dbf_t *db, const char *arg) {
         }
     } else {
         expr_ctx.found = 0;
-        {
+        if (set_opts.softseek) {
             uint32_t rec = index_current_recno(idx);
             if (rec > 0) {
                 dbf_read_record(db, rec);
@@ -4722,7 +4722,7 @@ static void cmd_find(dbf_t *db, const char *arg) {
         }
     } else {
         expr_ctx.found = 0;
-        {
+        if (set_opts.softseek) {
             uint32_t rec = index_current_recno(idx);
             if (rec > 0) {
                 dbf_read_record(db, rec);
