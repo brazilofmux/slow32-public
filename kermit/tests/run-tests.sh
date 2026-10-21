@@ -97,6 +97,11 @@ import sys
 open(sys.argv[1], 'wb').write(bytes((i * 7 + (i >> 8)) & 255 for i in range(65536)))
 PY
 
+# fwrite/fclose/ferror fail paths are not injected here: a full guest disk
+# is hard, and a transfer that prints OK does not prove those arms. They
+# are structurally handled in kermit.c (short D write, Z fclose, sender
+# ferror). Happy-path and lossy-wire transfers still have to pass.
+
 echo "=== Kermit tests ==="
 transfer text notes.txt
 transfer binary allbytes.bin

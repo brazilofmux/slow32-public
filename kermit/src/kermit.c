@@ -40,7 +40,8 @@ typedef struct {
     unsigned char rbuf[512];
     int rlen, rpos;
     int maxl;               /* peer's max packet length */
-    int qctl;               /* peer's control-quote char */
+    int qctl_send;          /* prefix we advertise and use when sending */
+    int qctl_recv;          /* prefix the peer uses when sending */
     int timeout;            /* seconds to wait for the peer: its TIME */
     int timer;              /* the armed packet timer's id, or -1 */
     unsigned cookie;        /* what it was armed with: stale entries differ */
@@ -220,7 +221,8 @@ static void my_params(unsigned char *d, int *dlen) {
 
 static void take_params(link_t *lk, const pkt_t *p) {
     lk->maxl = MAXL;
-    lk->qctl = QCTL;
+    /* QCTL in Send-Init/ACK is the prefix the sender of that packet will
+     * use: keep our advertised qctl_send, take the peer's for decode. */
     if (p->dlen >= 1) {
         int m = unchar(p->data[0]);
         if (m >= 20 && m <= 94) {
@@ -234,7 +236,7 @@ static void take_params(link_t *lk, const pkt_t *p) {
         }
     }
     if (p->dlen >= 6 && p->data[5] > 32 && p->data[5] < 127) {
-        lk->qctl = p->data[5];
+        lk->qctl_recv = p->data[5];
     }
 }
 
@@ -242,7 +244,8 @@ static void link_init(link_t *lk, int fd) {
     memset(lk, 0, sizeof(*lk));
     lk->fd = fd;
     lk->maxl = MAXL;
-    lk->qctl = QCTL;
+    lk->qctl_send = QCTL;
+    lk->qctl_recv = QCTL;
     lk->timeout = opt_time;
     lk->timer = -1;
 }
@@ -295,12 +298,13 @@ static int send_reliably(link_t *lk, int seq, int type,
 /* Ctl-quote one byte into the packet buffer. */
 static void encode_byte(link_t *lk, unsigned char *data, int *dlen,
                         unsigned char b) {
+    int q = lk->qctl_send;          /* our advertised '#', not the peer's */
     int low = b & 0x7f;
     if (low < 32 || low == 127) {
-        data[(*dlen)++] = (unsigned char)lk->qctl;
+        data[(*dlen)++] = (unsigned char)q;
         data[(*dlen)++] = (unsigned char)ctl(b);
-    } else if (b == (unsigned char)lk->qctl) {
-        data[(*dlen)++] = (unsigned char)lk->qctl;
+    } else if (b == (unsigned char)q) {
+        data[(*dlen)++] = (unsigned char)q;
         data[(*dlen)++] = b;
     } else {
         data[(*dlen)++] = b;
@@ -346,12 +350,18 @@ static int send_file(link_t *lk, int *seq, const char *path) {
 
     for (;;) {
         int room = lk->maxl - 3;
-        int c;
+        int c = 0;
         dlen = 0;
         /* Encode until the packet is full (a quoted byte needs 2). */
         while (dlen + 2 <= room && (c = fgetc(f)) != EOF) {
             encode_byte(lk, data, &dlen, (unsigned char)c);
             total++;
+        }
+        if (c == EOF && ferror(f)) {
+            fprintf(stderr, "kermit: read error\n");
+            fclose(f);
+            send_pkt(lk, *seq, 'E', NULL, 0);
+            return -1;
         }
         if (dlen == 0) {
             break;
@@ -361,6 +371,12 @@ static int send_file(link_t *lk, int *seq, const char *path) {
             return -1;
         }
         *seq = (*seq + 1) & 63;
+    }
+    if (ferror(f)) {
+        fprintf(stderr, "kermit: read error\n");
+        fclose(f);
+        send_pkt(lk, *seq, 'E', NULL, 0);
+        return -1;
     }
     fclose(f);
 
@@ -442,7 +458,7 @@ static int decode_data(link_t *lk, const pkt_t *p, unsigned char *out,
     int i = 0, n = 0;
     while (i < p->dlen && n < cap) {
         int c = p->data[i++];
-        if (c == lk->qctl && i < p->dlen) {
+        if (c == lk->qctl_recv && i < p->dlen) {
             int x = p->data[i++];
             int y = x ^ 64;
             if ((y & 0x7f) < 32 || (y & 0x7f) == 127) {
@@ -549,6 +565,19 @@ static int do_receive(void) {
             expect = (p.seq + 1) & 63;
             continue;
         }
+        if (p.type == 'E') {
+            fprintf(stderr, "kermit: peer error");
+            if (p.dlen > 0) {
+                fputc(':', stderr);
+                fputc(' ', stderr);
+                fwrite(p.data, 1, (size_t)p.dlen, stderr);
+            }
+            fputc('\n', stderr);
+            if (out) {
+                fclose(out);
+            }
+            return 1;
+        }
         if (p.seq == ((expect - 1) & 63)) {
             /* A retransmission of the packet we already have: re-ACK. */
             send_pkt(&lk, p.seq, 'Y', NULL, 0);
@@ -582,15 +611,26 @@ static int do_receive(void) {
             unsigned char plain[128];
             int n = decode_data(&lk, &p, plain, (int)sizeof(plain));
             if (out && n > 0) {
-                fwrite(plain, 1, (size_t)n, out);
-                total += n;
+                size_t w = fwrite(plain, 1, (size_t)n, out);
+                total += (long)w;
+                if (w != (size_t)n || ferror(out)) {
+                    fprintf(stderr, "kermit: write failed\n");
+                    send_pkt(&lk, p.seq, 'E', NULL, 0);
+                    fclose(out);
+                    return 1;
+                }
             }
             break;
         }
         case 'Z':
             if (out) {
-                fclose(out);
+                int cr = fclose(out);
                 out = NULL;
+                if (cr != 0) {
+                    fprintf(stderr, "kermit: close failed\n");
+                    send_pkt(&lk, p.seq, 'E', NULL, 0);
+                    return 1;
+                }
                 printf("OK (%ld bytes)\n", total);
             }
             break;
@@ -598,7 +638,9 @@ static int do_receive(void) {
             done = 1;
             break;
         default:
-            break;
+            /* Unknown type: NAK, do not ACK as Y or bump SEQ. */
+            send_pkt(&lk, expect, 'N', NULL, 0);
+            continue;
         }
         send_pkt(&lk, p.seq, 'Y', NULL, 0);
         expect = (expect + 1) & 63;
