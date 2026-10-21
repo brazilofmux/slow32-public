@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 #define EVP_MAX_MD_SIZE 64
-#define EVP_MAX_BLOCK_LENGTH 128
+#define EVP_MAX_BLOCK_LENGTH 32
 
 typedef struct evp_md_st EVP_MD;
 typedef struct evp_md_ctx_st EVP_MD_CTX;
