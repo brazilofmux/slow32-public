@@ -57,6 +57,11 @@ fi
 
 echo "=== Building hello.s32x for exec ==="
 LLVM_BIN="${LLVM_BIN:-$HOME/llvm-project/build/bin}"
+if [ ! -x "$LLVM_BIN/clang" ]; then
+    echo "clang not found at $LLVM_BIN/clang; skipping EXEC tests"
+    echo "=== All tests passed (exec skipped) ==="
+    exit 0
+fi
 "$LLVM_BIN/clang" -target slow32-unknown-none -S -emit-llvm -O1 \
     -I"$ROOT/runtime/include" "$SCRIPT_DIR/hello.c" -o "$work/hello.ll"
 "$LLVM_BIN/llc" -mtriple=slow32-unknown-none "$work/hello.ll" -o "$work/hello.s"
@@ -73,6 +78,21 @@ if grep -q 'hello-from-child' "$work/exec.out"; then
 else
     echo "  FAIL hello-from-child"
     cat "$work/exec.out" "$work/exec.err"
+    exit 1
+fi
+
+# Dash-named guest: COMMAND.COM of `-t` looks up `-t.s32x`. Without `--`
+# in the host EXEC argv, the interpreter's getopt takes `-t` as trace.
+echo "=== Running dash-named child ==="
+cp "$work/hello.s32x" "$work/-t.s32x"
+printf '%s\n' '-t' 'EXIT' > "$work/dash.cmd"
+(cd "$work" && "$EMU" "$CMD_DIR/command.s32x") < "$work/dash.cmd" \
+    > "$work/dash.out" 2>"$work/dash.err" || true
+if grep -q 'hello-from-child' "$work/dash.out"; then
+    echo "  OK  dash-named hello-from-child"
+else
+    echo "  FAIL dash-named hello-from-child"
+    cat "$work/dash.out" "$work/dash.err"
     exit 1
 fi
 

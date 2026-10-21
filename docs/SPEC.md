@@ -1015,7 +1015,7 @@ Runs another SLOW-32 executable in a child host process and waits for it.
 |---|---|
 | Request | `length` = payload bytes (1..4095); `status` = `0xFFFFFFFF` to inherit the host's standard streams, or a guest fd whose host descriptor becomes the child's stdin, stdout and stderr |
 | Data in | at `off`: `path\0arg1\0arg2\0…` (the child's argv[0] is `path`; arg1… are argv[1]…); the payload need not end in NUL |
-| Action | child = the same emulator (resolved path of the host's own argv[0], else env `S32_EMU`), run as `emu -q [--deny LIST] [--allow LIST] path arg1 …` with the parent's policy lists; host blocks in waitpid |
+| Action | child = the same emulator (resolved path of the host's own argv[0], else env `S32_EMU`), run as `emu -q [policy] -- path arg1 …` with the parent's policy lists; host blocks in waitpid |
 | Response | `status` = child's exit code (0–255); 255 if the child died by a signal; 127 if the child could not be started or the given fd was not open |
 | Errors | `EINVAL` (`length` 0 or ≥ 4096, `off + length` > CAP, path empty, path not ending in `.s32x` (case-insensitive)); stat errno (no such file); `EACCES` (exists but is not a regular file); `ENOENT` (emulator path unknown); fork/waitpid errno |
 

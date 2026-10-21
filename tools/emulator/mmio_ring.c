@@ -39,18 +39,88 @@
 
 static char g_emu_path[4096];
 
-void mmio_ring_set_emulator(const char *argv0) {
+/* Store an absolute path for EXEC. Returns 1 if realpath succeeded. */
+static int emu_store_resolved(const char *path) {
     char resolved[4096];
+    if (!path || !path[0]) {
+        return 0;
+    }
+    if (realpath(path, resolved) == NULL) {
+        return 0;
+    }
+    strncpy(g_emu_path, resolved, sizeof(g_emu_path) - 1);
+    g_emu_path[sizeof(g_emu_path) - 1] = '\0';
+    return 1;
+}
+
+/* Look for basename on PATH. Empty PATH elements mean cwd. */
+static void emu_search_path(const char *base) {
+    const char *pathenv;
+    const char *p;
+    char candidate[4096];
+    size_t blen, dlen;
+    struct stat st;
+
+    if (!base || !base[0]) {
+        return;
+    }
+    pathenv = getenv("PATH");
+    if (!pathenv) {
+        return;
+    }
+    blen = strlen(base);
+    p = pathenv;
+    for (;;) {
+        const char *colon = strchr(p, ':');
+        dlen = colon ? (size_t)(colon - p) : strlen(p);
+        if (dlen == 0) {
+            if (blen + 1 > sizeof(candidate)) {
+                goto next;
+            }
+            memcpy(candidate, base, blen + 1);
+        } else if (dlen + 1 + blen + 1 > sizeof(candidate)) {
+            goto next;
+        } else {
+            memcpy(candidate, p, dlen);
+            candidate[dlen] = '/';
+            memcpy(candidate + dlen + 1, base, blen + 1);
+        }
+        if (stat(candidate, &st) == 0 && S_ISREG(st.st_mode) &&
+            emu_store_resolved(candidate)) {
+            return;
+        }
+    next:
+        if (!colon) {
+            break;
+        }
+        p = colon + 1;
+    }
+}
+
+void mmio_ring_set_emulator(const char *argv0) {
+    const char *base;
+    const char *p;
+
+    /* Unresolved names must not hide S32_EMU (GitHub issue 102). */
+    g_emu_path[0] = '\0';
+
+    if (argv0 && argv0[0] && emu_store_resolved(argv0)) {
+        return;
+    }
+    if (access("/proc/self/exe", F_OK) == 0 &&
+        emu_store_resolved("/proc/self/exe")) {
+        return;
+    }
     if (!argv0 || !argv0[0]) {
         return;
     }
-    if (realpath(argv0, resolved) != NULL) {
-        strncpy(g_emu_path, resolved, sizeof(g_emu_path) - 1);
-        g_emu_path[sizeof(g_emu_path) - 1] = '\0';
-        return;
+    base = argv0;
+    for (p = argv0; *p; p++) {
+        if (*p == '/') {
+            base = p + 1;
+        }
     }
-    strncpy(g_emu_path, argv0, sizeof(g_emu_path) - 1);
-    g_emu_path[sizeof(g_emu_path) - 1] = '\0';
+    emu_search_path(base);
 }
 
 static int ends_with_ci(const char *s, const char *suf) {
@@ -3607,6 +3677,9 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                     av[a++] = "--allow";
                     av[a++] = allow_csv;
                 }
+                /* Stop emulator getopt so a dash-named guest is the binary
+                 * (GitHub issue 102; engines already honour "--", issue 5). */
+                av[a++] = "--";
                 av[a++] = path;
                 for (i = 0; i < nextra && a < 31; i++) {
                     av[a++] = extra[i];
