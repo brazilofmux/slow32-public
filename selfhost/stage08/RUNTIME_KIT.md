@@ -221,13 +221,14 @@ restored, and the whole-program size work.  All in `cc.s32x` unless noted:
   `877afcf1` produces a working compiler for user programs but NOT a
   working gen2; only the fixed-point gate could see it, and that gate is
   now on by default (`run-tests.sh`, GitHub issue 75).
-- **Short calls by default, with linker veneers.**  `s32-ld` (host) now
-  punches 32KB islands at each end of `.text` and emits
-  `lui`/`addi`/`jalr` stubs for any JAL past +/-1MB, failing loudly if
-  none is reachable.  SQLite no longer needs `-mlong-calls`: 24,222
-  instructions, 15% of the excess over clang (GitHub issue 74).  This
-  lives in the HOST linker, not in the kit's `s32-ld.s32x`; a kit user
-  linking a >1MB program with the kit linker still needs `-mlong-calls`.
+- **Short calls by default, with linker veneers.**  `s32-ld` punches
+  32KB islands at each end of `.text` (and between input units about
+  every 960KB) and emits `lui`/`addi`/`jalr` stubs for any JAL past
+  +/-1MB, failing loudly if none is reachable.  SQLite no longer needs
+  `-mlong-calls`: 24,222 instructions, 15% of the excess over clang
+  (GitHub issue 74).  The same mechanism is in the kit's `s32-ld.s32x`
+  (GitHub issue 85); a single unit longer than the stride still needs
+  the compiler's `-mlong-calls`.  The kit linker has no `-r` output.
 - **Frame elision.**  A leaf with no live stack omits its prologue; any
   non-varargs function with a frame of at most 2047 bytes addresses its
   slots SP-relative and skips the `r30` save -- 1,929 of SQLite's 2,365

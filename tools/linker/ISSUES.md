@@ -105,3 +105,9 @@ their coordinates; up to S32_MAX_ISLANDS (32).  A single unit longer
 than the stride can still fail, as before.  test-veneer.sh's interior
 case (a call from the middle of three units) fails on the old linker
 and passes now.
+
+Kit port (GitHub issue 85): the same islands live in
+`selfhost/src/tools/s32-ld.c` (stage08's `s32-ld.s32x`).  test-veneer.sh
+runs the host cases, then the kit source host-built (no `-r`: the kit
+linker has no relocatable output).  A single unit longer than the
+stride still needs `-mlong-calls` in both linkers.

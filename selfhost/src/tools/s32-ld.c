@@ -5,6 +5,7 @@
  *   - Multiple .s32o object files with section merging
  *   - .s32a archive iterative pull loop
  *   - All 9 relocation types
+ *   - JAL veneer islands (start/end/interior, GitHub issue 85)
  *   - Linker-defined symbols (__bss_start, __mmio_base, etc.)
  *   - Dynamic expression resolution for __mmio_base+N patterns
  *
@@ -102,10 +103,14 @@ char *memset(char *dst, int c, int n);
 #define MAX_GSYM     4096
 #define MAX_GREL     32768
 #define GSYM_NBUF_SZ 131072
-#define TEXT_BUFSZ   1048576
+/* 8MB text / 4MB file: veneer tests use --code-size 2M/4M and .space
+ * gaps over 1MB.  Stage07 s32-as MAX_BSS is 16MB, so these plus data,
+ * rodata and the reloc tables must stay under that when this file is
+ * assembled during the stage08 tool build. */
+#define TEXT_BUFSZ   8388608
 #define DATA_BUFSZ   1048576
 #define RODATA_BUFSZ 262144
-#define FILE_BUFSZ   1048576
+#define FILE_BUFSZ   4194304
 /* Raised from 2048: s12cc.c crossed it simply by growing (the stage08
  * inliner's ~7 functions were enough), and a per-object symbol ceiling
  * is a poor thing to fail a self-host on.  Costs one int array --
@@ -127,6 +132,35 @@ int text_sz;
 int data_sz;
 int rodata_sz;
 int bss_sz;
+
+/* JAL veneer islands.  Same geometry as the host linker: 32KB at the
+ * start and end of .text, plus interior islands between input units
+ * every S32_ISLAND_STRIDE, never inside a unit. */
+#define S32_MAX_ISLANDS 32
+#define S32_MAX_VENEERS 4096
+#define S32_MAX_TEXT_PARTS 512
+#define S32_JAL_MIN (-1048576)
+#define S32_JAL_MAX  1048574
+#define S32_VENEER_BYTES 12
+#define S32_VENEER_ISLAND 0x8000
+#define S32_ISLAND_STRIDE 0x000F0000
+
+int gap_off[S32_MAX_ISLANDS];
+int gap_size[S32_MAX_ISLANDS];
+int gap_used[S32_MAX_ISLANDS];
+int ngaps;
+
+int veneer_target[S32_MAX_VENEERS];
+int veneer_vaddr[S32_MAX_VENEERS];
+int nveneers;
+
+int text_part_off[S32_MAX_TEXT_PARTS];
+int text_part_sz[S32_MAX_TEXT_PARTS];
+int text_part_cnt;
+
+int island_cuts[S32_MAX_ISLANDS];
+
+int code_size_arg;
 
 int init_array_base;
 int init_array_end_off;
@@ -602,6 +636,14 @@ void merge_sections() {
             /* Update merged section size */
             sec_sz_set(merge_type, base + ssize);
 
+            if (merge_type == SEC_CODE) {
+                if (text_part_cnt < S32_MAX_TEXT_PARTS) {
+                    text_part_off[text_part_cnt] = base;
+                    text_part_sz[text_part_cnt] = ssize;
+                    text_part_cnt = text_part_cnt + 1;
+                }
+            }
+
             /* Track .init_array */
             if (merge_type == SEC_DATA && sname_off > 0) {
                 sname = file_buf + obj_str_off + sname_off;
@@ -982,7 +1024,11 @@ void layout_sections() {
     text_va = 0;
     t = page_align(text_sz);
     if (!pack_sections) {
-        if (t < CODE_LIMIT_MIN) t = CODE_LIMIT_MIN;
+        if (code_size_arg > 0) {
+            if (t < code_size_arg) t = code_size_arg;
+        } else {
+            if (t < CODE_LIMIT_MIN) t = CODE_LIMIT_MIN;
+        }
     }
     rodata_va = t;
     t = page_align(rodata_va + rodata_sz);
@@ -1012,12 +1058,45 @@ void layout_sections() {
 
 /* === Symbol VA computation === */
 
+int map_code_off(int raw) {
+    int off;
+    int i;
+    off = raw;
+    i = 0;
+    while (i < ngaps) {
+        if (raw >= gap_off[i]) {
+            off = off + gap_size[i];
+        }
+        i = i + 1;
+    }
+    return off;
+}
+
+int gap_phys(int gi) {
+    int off;
+    int i;
+    off = gap_off[gi];
+    i = 0;
+    while (i < ngaps) {
+        if (gap_off[i] < gap_off[gi]) {
+            off = off + gap_size[i];
+        }
+        i = i + 1;
+    }
+    return off;
+}
+
 int gsym_va(int idx) {
+    int off;
     if (gsym_def[idx] == 2) {
         /* Linker-defined: value is absolute */
         return gsym_val[idx];
     }
-    return sec_va_get(gsym_sec[idx]) + gsym_val[idx];
+    off = gsym_val[idx];
+    if (gsym_sec[idx] == SEC_CODE) {
+        off = map_code_off(off);
+    }
+    return sec_va_get(gsym_sec[idx]) + off;
 }
 
 /* Get gsym name as NUL-terminated string pointer */
@@ -1294,6 +1373,262 @@ void collect_symtab() {
     }
 }
 
+/* === JAL veneer islands (GitHub issue 85; host: tools/linker/s32-ld.c) === */
+
+int jal_fits(int off) {
+    if (off & 1) return 0;
+    if (off < S32_JAL_MIN) return 0;
+    if (off > S32_JAL_MAX) return 0;
+    return 1;
+}
+
+int make_lui(int rd, int abs) {
+    int lo12;
+    int hi20;
+    lo12 = abs & MASK12;
+    hi20 = (abs >> 12) & MASK20;
+    if (lo12 & HALF12) {
+        hi20 = (hi20 + 1) & MASK20;
+    }
+    return 0x20 | (rd << 7) | (hi20 << 12);
+}
+
+int make_addi_lo(int rd, int rs, int abs) {
+    int imm;
+    imm = abs & MASK12;
+    return 0x10 | (rd << 7) | (rs << 15) | (imm << 20);
+}
+
+int make_jalr0(int rs) {
+    return 0x41 | (rs << 15);
+}
+
+void slide_addrs(int from, int delta) {
+    int cap;
+    int i;
+    int v;
+    cap = heap_va;
+    if (cap == 0 || cap < from) {
+        cap = 0x7FFFFFFF;
+    }
+    if (rodata_va >= from && rodata_va < cap) rodata_va = rodata_va + delta;
+    if (data_va >= from && data_va < cap) data_va = data_va + delta;
+    if (bss_va >= from && bss_va < cap) bss_va = bss_va + delta;
+    if (bss_end_va >= from && bss_end_va <= cap) bss_end_va = bss_end_va + delta;
+    if (heap_va >= from && heap_va <= cap) heap_va = heap_va + delta;
+    i = 0;
+    while (i < gsym_cnt) {
+        if (gsym_def[i] == 2) {
+            v = gsym_val[i];
+            /* Inclusive of cap: __heap_start is injected at heap_va, and
+             * heap_va itself uses <=.  Strict < skipped that symbol on
+             * the prepend island (from=0).  linker ISSUES-11. */
+            if (v >= from && v <= cap) {
+                gsym_val[i] = v + delta;
+            }
+        }
+        i = i + 1;
+    }
+}
+
+void insert_code_gap(int orig_off, int gap) {
+    int phys;
+    int i;
+    int old_sz;
+    if (ngaps >= S32_MAX_ISLANDS) {
+        fputs("error: too many JAL veneer islands\n", stderr);
+        link_error = 1;
+        return;
+    }
+    phys = map_code_off(orig_off);
+    old_sz = text_sz;
+    if (old_sz + gap > TEXT_BUFSZ) {
+        fputs("error: section buffer overflow\n", stderr);
+        link_error = 1;
+        return;
+    }
+    i = old_sz;
+    while (i > phys) {
+        i = i - 1;
+        text_buf[i + gap] = text_buf[i];
+    }
+    i = 0;
+    while (i < gap) {
+        text_buf[phys + i] = 0;
+        i = i + 1;
+    }
+    text_sz = old_sz + gap;
+    slide_addrs(text_va + orig_off, gap);
+    gap_off[ngaps] = orig_off;
+    gap_size[ngaps] = gap;
+    gap_used[ngaps] = 0;
+    ngaps = ngaps + 1;
+}
+
+int jal_needs_islands() {
+    int i;
+    int r_typ;
+    int val;
+    int ok;
+    int pc;
+    int off;
+    i = 0;
+    while (i < grel_cnt) {
+        r_typ = grel_typ[i];
+        if (r_typ == REL_JAL || r_typ == REL_CALL) {
+            if (grel_sec[i] == SEC_CODE) {
+                ok = gsym_va_rel(grel_sym[i], &val);
+                if (ok) {
+                    val = val + grel_add[i];
+                    pc = text_va + grel_off[i];
+                    off = val - pc;
+                    if (!jal_fits(off)) return 1;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+void insert_veneer_islands() {
+    int orig;
+    int ncut;
+    int last;
+    int i;
+    if (text_sz <= 0) return;
+    if (!jal_needs_islands()) return;
+    orig = text_sz;
+    /* Append first so orig still names the packed end; then interior
+     * highest first so lower cut points keep their coordinates; then
+     * prepend.  Never punch a hole in the middle of a unit. */
+    insert_code_gap(orig, S32_VENEER_ISLAND);
+    if (link_error) return;
+    ncut = 0;
+    last = 0;
+    i = 0;
+    while (i < text_part_cnt && ncut < S32_MAX_ISLANDS - 2) {
+        if (text_part_off[i] > last) {
+            if (text_part_off[i] + text_part_sz[i] - last > S32_ISLAND_STRIDE) {
+                island_cuts[ncut] = text_part_off[i];
+                ncut = ncut + 1;
+                last = text_part_off[i];
+            }
+        }
+        i = i + 1;
+    }
+    i = ncut;
+    while (i > 0) {
+        i = i - 1;
+        insert_code_gap(island_cuts[i], S32_VENEER_ISLAND);
+        if (link_error) return;
+    }
+    insert_code_gap(0, S32_VENEER_ISLAND);
+    if (link_error) return;
+    i = 0;
+    while (i < ngaps) {
+        if (gap_off[i] == 0) {
+            gap_used[i] = 4;
+        }
+        i = i + 1;
+    }
+}
+
+int alloc_veneer(int target, int from_pc, int rd, int *out_vaddr) {
+    int i;
+    int gi;
+    int vaddr;
+    int phys;
+    int va;
+    int scratch;
+    int slot;
+    i = 0;
+    while (i < nveneers) {
+        if (veneer_target[i] == target) {
+            if (jal_fits(veneer_vaddr[i] - from_pc)) {
+                *out_vaddr = veneer_vaddr[i];
+                return 0;
+            }
+        }
+        i = i + 1;
+    }
+    gi = -1;
+    vaddr = 0;
+    i = 0;
+    while (i < ngaps) {
+        if (gap_used[i] + S32_VENEER_BYTES <= gap_size[i]) {
+            phys = gap_phys(i) + gap_used[i];
+            va = text_va + phys;
+            if (jal_fits(va - from_pc)) {
+                gi = i;
+                vaddr = va;
+                break;
+            }
+        }
+        i = i + 1;
+    }
+    if (gi < 0) {
+        fputs("error: JAL offset out of range (no reachable veneer)\n", stderr);
+        return -1;
+    }
+    if (nveneers >= S32_MAX_VENEERS) {
+        fputs("error: too many JAL veneers\n", stderr);
+        return -1;
+    }
+    if (rd == 1) {
+        scratch = 2;
+    } else {
+        scratch = 1;
+    }
+    slot = gap_phys(gi) + gap_used[gi];
+    wr32(text_buf, slot, make_lui(scratch, target));
+    wr32(text_buf, slot + 4, make_addi_lo(scratch, scratch, target));
+    wr32(text_buf, slot + 8, make_jalr0(scratch));
+    gap_used[gi] = gap_used[gi] + S32_VENEER_BYTES;
+    veneer_target[nveneers] = target;
+    veneer_vaddr[nveneers] = vaddr;
+    nveneers = nveneers + 1;
+    *out_vaddr = vaddr;
+    return 0;
+}
+
+int apply_jal(int *p_insn, int pc, int val) {
+    int off;
+    int rd;
+    int vaddr;
+    int insn;
+    int imm20;
+    int imm19_12;
+    int imm11;
+    int imm10_1;
+    insn = *p_insn;
+    off = val - pc;
+    if (off & 1) {
+        fputs("error: JAL target misaligned (odd offset)\n", stderr);
+        return -1;
+    }
+    if (!jal_fits(off)) {
+        rd = (insn >> 7) & 31;
+        if (alloc_veneer(val, pc, rd, &vaddr) != 0) return -1;
+        off = vaddr - pc;
+        if (!jal_fits(off)) {
+            fputs("error: JAL veneer unreachable\n", stderr);
+            return -1;
+        }
+    }
+    imm20 = (off >> 20) & 1;
+    imm19_12 = (off >> 12) & MASK8;
+    imm11 = (off >> 11) & 1;
+    imm10_1 = (off >> 1) & MASK10;
+    insn = insn & MASK12;
+    insn = insn | (imm10_1 << 21);
+    insn = insn | (imm11 << 20);
+    insn = insn | (imm19_12 << 12);
+    insn = insn | (imm20 << 31);
+    *p_insn = insn;
+    return 0;
+}
+
 /* === Relocation application === */
 
 int is_store(int opcode) {
@@ -1361,6 +1696,12 @@ void apply_rel(int idx) {
         val = 0;
     }
 
+    /* Map through veneer islands so the physical offset is in the
+     * grown .text; packed reloc offsets stay as stored. */
+    if (r_sec == SEC_CODE) {
+        r_off = map_code_off(r_off);
+    }
+
     /* Check target is in range */
     if (!rel_tgt_ok(r_sec, r_off)) {
         fputs("error: reloc target out of range\n", stderr);
@@ -1371,7 +1712,7 @@ void apply_rel(int idx) {
     /* Target buffer address */
     tgt = sec_buf(r_sec) + r_off;
 
-    /* PC = section_va + offset */
+    /* PC = section_va + physical offset */
     pc = sec_va_get(r_sec) + r_off;
 
     if (r_typ == REL_32 || r_typ == REL_ABS32) {
@@ -1416,18 +1757,12 @@ void apply_rel(int idx) {
         wr32(tgt, 0, insn);
 
     } else if (r_typ == REL_JAL || r_typ == REL_CALL) {
-        offset = val - pc;
-        imm20 = (offset >> 20) & 1;
-        imm19_12 = (offset >> 12) & MASK8;
-        imm11 = (offset >> 11) & 1;
-        imm10_1 = (offset >> 1) & MASK10;
         insn = rd32(tgt, 0);
-        insn = insn & MASK12;
-        insn = insn | (imm10_1 << 21);
-        insn = insn | (imm11 << 20);
-        insn = insn | (imm19_12 << 12);
-        insn = insn | (imm20 << 31);
-        wr32(tgt, 0, insn);
+        if (apply_jal(&insn, pc, val) != 0) {
+            link_error = 1;
+        } else {
+            wr32(tgt, 0, insn);
+        }
 
     } else if (r_typ == REL_PCREL_HI20) {
         offset = val - pc;
@@ -1451,6 +1786,9 @@ void apply_rel(int idx) {
                     grel_add[j] == r_add &&
                     grel_file[j] == grel_file[idx]) {
                     hi_pc = sec_va_get(grel_sec[j]) + grel_off[j];
+                    if (grel_sec[j] == SEC_CODE) {
+                        hi_pc = sec_va_get(grel_sec[j]) + map_code_off(grel_off[j]);
+                    }
                     break;
                 }
             }
@@ -1587,9 +1925,15 @@ void link_emit(char *out_path) {
     int flags;
     int i;
 
-    /* Layout and resolve */
+    /* Layout and resolve.  Islands after inject so slide_addrs can
+     * keep __heap_start in lockstep with heap_va (linker ISSUES-11). */
     layout_sections();
     inject_linker_symbols();
+    insert_veneer_islands();
+    if (link_error) {
+        fputs("error: link failed due to errors\n", stderr);
+        return;
+    }
     collect_symtab();
     apply_relocations();
     find_entry();
@@ -1664,7 +2008,11 @@ void link_emit(char *out_path) {
 
     code_limit = page_align(text_sz);
     if (!pack_sections) {
-        if (code_limit < CODE_LIMIT_MIN) code_limit = CODE_LIMIT_MIN;
+        if (code_size_arg > 0) {
+            if (code_limit < code_size_arg) code_limit = code_size_arg;
+        } else {
+            if (code_limit < CODE_LIMIT_MIN) code_limit = CODE_LIMIT_MIN;
+        }
     }
     wb_wr32(32, code_limit);                                    /* code_limit */
     wb_wr32(36, page_align(rodata_va + rodata_sz));            /* rodata_limit */
@@ -1787,6 +2135,11 @@ void link_emit(char *out_path) {
 
     fclose(f);
 
+    if (nveneers > 0) {
+        fputs("s32-ld: ", stderr);
+        fprintf(stderr, "%u", nveneers);
+        fputs(" JAL veneers\n", stderr);
+    }
     fputs("Link complete.\n", stderr);
 }
 
@@ -1849,9 +2202,13 @@ int main(int argc, char **argv) {
 
     out_path = NULL;
     mmio_size_arg = 0;
+    code_size_arg = 0;
     pack_sections = 1;
     input_file_idx = 0;
     link_error = 0;
+    ngaps = 0;
+    nveneers = 0;
+    text_part_cnt = 0;
 
     /* Initialize state */
     text_sz = 0;
@@ -1876,7 +2233,7 @@ int main(int argc, char **argv) {
     ostrtab_init();
 
     if (argc < 3) {
-        fputs("Usage: s32-ld-port -o output.s32x [--mmio SIZE] file1 file2 ...\n", stderr);
+        fputs("Usage: s32-ld-port -o output.s32x [--mmio SIZE] [--code-size SIZE] file1 file2 ...\n", stderr);
         return 1;
     }
 
@@ -1897,6 +2254,16 @@ int main(int argc, char **argv) {
                 return 1;
             }
             mmio_size_arg = parse_mmio_size(argv[i]);
+        } else if (streq(argv[i], "--code-size")) {
+            i = i + 1;
+            if (i >= argc) {
+                fputs("error: --code-size requires an argument\n", stderr);
+                return 1;
+            }
+            code_size_arg = parse_mmio_size(argv[i]);
+        } else if (streq(argv[i], "-r") || streq(argv[i], "--relocatable")) {
+            fputs("error: -r (relocatable) is not supported\n", stderr);
+            return 1;
         } else if (streq(argv[i], "--pack-sections")) {
             pack_sections = 1;
         } else if (streq(argv[i], "--no-pack-sections")) {
