@@ -1,0 +1,3 @@
+kettle filled 2
+pot holds 2
+kettle emptied 2

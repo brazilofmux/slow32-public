@@ -53,6 +53,21 @@ void __cxa_guard_abort(long long *guard) {
 }
 
 /* ========================================================================
+ * thread_local destructors
+ * ======================================================================== */
+
+/*
+ * The name clang emits for a thread_local object's destructor (the
+ * Itanium ABI's); libc++abi defines it the same way, which is why it is
+ * here and not in libc.  The list itself is libc's (cxxabi.c), run at
+ * exit before the static destructors.
+ */
+int __cxa_thread_atexit_impl(void (*destructor)(void *), void *obj, void *dso_symbol);
+int __cxa_thread_atexit(void (*destructor)(void *), void *obj, void *dso_symbol) {
+    return __cxa_thread_atexit_impl(destructor, obj, dso_symbol);
+}
+
+/* ========================================================================
  * Pure Virtual Function Handler
  * ======================================================================== */
 

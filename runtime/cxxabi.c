@@ -100,12 +100,6 @@ int __cxa_thread_atexit_impl(void (*destructor)(void *), void *obj, void *dso_sy
     return list_add(&tls_list, tls_static, destructor, obj, dso_symbol);
 }
 
-/* libc++abi's name, and the one clang emits for thread_local
- * destructors on the Itanium ABI; the same list as _impl. */
-int __cxa_thread_atexit(void (*destructor)(void *), void *obj, void *dso_symbol) {
-    return __cxa_thread_atexit_impl(destructor, obj, dso_symbol);
-}
-
 /*
  * atexit - C's registration: the same list, so functions and static
  * destructors run in the reverse of the order they were registered in,
