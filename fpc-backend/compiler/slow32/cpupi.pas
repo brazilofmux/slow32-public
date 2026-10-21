@@ -72,8 +72,14 @@ unit cpupi;
              exit;
           end;
 
+        { Temps start below the largest register save area a prologue can
+          build: g_proc_entry stores the used callee-saved registers,
+          r11-r28 (eighteen, the F-class aliases among them), fp and lr,
+          downwards from fp.  -(1+12)*4 was RISC-V's ra + s0-s11, and
+          temps at fp-52 overlapped the saves of a function that kept more
+          than thirteen registers (slow-32 GitHub issue 114). }
         if tg.direction = -1 then
-          tg.setfirsttemp(-(1+12)*4)
+          tg.setfirsttemp(-(2+18)*4)
         else
           tg.setfirsttemp(maxpushedparasize);
       end;

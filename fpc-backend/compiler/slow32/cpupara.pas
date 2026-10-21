@@ -195,9 +195,11 @@ implementation
              end
            else
              begin
+               { the ninth parameter is the first stack word, as
+                 create_paraloc_for_def places it (stack_offset from 0) }
                loc:=LOC_REFERENCE;
                paraloc^.reference.index:=NR_STACK_POINTER_REG;
-               reference.offset:=sizeof(pint)*nr;
+               reference.offset:=sizeof(pint)*(nr-9);
              end;
           end;
       end;

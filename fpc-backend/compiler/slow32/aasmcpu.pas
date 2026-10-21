@@ -391,7 +391,21 @@ uses cutils, cclasses;
           A_SEQ,A_SNE,A_SGT,A_SGTU,A_SGE,A_SGEU,A_SLE,A_SLEU,
 
           A_MUL,A_MULH,A_MULHU,
-          A_DIV,A_REM:
+          A_DIV,A_REM,
+          { FP ops are R type too: destination first.  Missing here, the
+            register allocator's spill pass hit the "play safe" internal
+            error on any -CfSLOW32 function it had to spill (-O2). }
+          A_FADD_S,A_FSUB_S,A_FMUL_S,A_FDIV_S,A_FSQRT_S,
+          A_FEQ_S,A_FLT_S,A_FLE_S,
+          A_FCVT_W_S,A_FCVT_WU_S,A_FCVT_S_W,A_FCVT_S_WU,
+          A_FNEG_S,A_FABS_S,
+          A_FADD_D,A_FSUB_D,A_FMUL_D,A_FDIV_D,A_FSQRT_D,
+          A_FEQ_D,A_FLT_D,A_FLE_D,
+          A_FCVT_W_D,A_FCVT_WU_D,A_FCVT_D_W,A_FCVT_D_WU,
+          A_FCVT_D_S,A_FCVT_S_D,
+          A_FNEG_D,A_FABS_D,
+          A_FCVT_L_S,A_FCVT_LU_S,A_FCVT_S_L,A_FCVT_S_LU,
+          A_FCVT_L_D,A_FCVT_LU_D,A_FCVT_D_L,A_FCVT_D_LU:
             if opnr=0 then
               result:=operand_write
             else

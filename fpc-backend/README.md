@@ -159,8 +159,11 @@ conventions apart (a double after an int, an int64 after the hole that
 leaves, a double or int64 at r10, fixed and variadic arguments of a varargs
 function), in both directions, with the C side printing what arrived.
 `tests/shift64/run.sh` checks 64-bit shifts by a variable count against what
-a host Free Pascal prints.  Both must say PASS after a compiler change;
-neither is part of the FPC suite above.
+a host Free Pascal prints.  `tests/frametemps/run.sh` (-O2 -CfSLOW32, the FPU
+RTL) keeps more than thirteen callee-saved registers live across a call and
+checks the caller's values survive: frame temporaries must lie below the
+register save area.  All three must say PASS after a compiler change; none
+is part of the FPC suite above.
 
 ## Compiler Flags Reference
 
