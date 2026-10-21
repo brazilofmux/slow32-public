@@ -2374,14 +2374,14 @@ static void nml_store(const struct nml_val *v, int code, char *p, int elen) {
     const char *s = nml_text + v->start;
     int n = v->len;
     if (code == 6) {
-        int i = 0, v = 0;
+        int i = 0, lv = 0;
         if (i < n && s[i] == '.') i++;
-        if (i < n && toupper((unsigned char)s[i]) == 'T') v = 1;
-        else if (i < n && toupper((unsigned char)s[i]) == 'F') v = 0;
+        if (i < n && toupper((unsigned char)s[i]) == 'T') lv = 1;
+        else if (i < n && toupper((unsigned char)s[i]) == 'F') lv = 0;
         else nml_fail("a LOGICAL value is not T or F");
-        if (elen == 1) *(unsigned char *)p = (unsigned char)v;
-        else if (elen == 2) *(short *)p = (short)v;
-        else *(int *)p = v;
+        if (elen == 1) *(unsigned char *)p = (unsigned char)lv;
+        else if (elen == 2) *(short *)p = (short)lv;
+        else *(int *)p = lv;
         return;
     }
     if (code == 7) {
