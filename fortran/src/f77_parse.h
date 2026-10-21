@@ -5010,9 +5010,12 @@ static int f77_actual_addr(void) {
 
     if (lx_t == T_NAME && f77_actual_is_simple()) {
         /* A bare name that is a procedure -- EXTERNAL, a unit of this
-         * file, INTRINSIC, or an intrinsic no variable is using --
-         * passes the procedure's address.  A name the unit has typed,
-         * stored, shaped or received as a dummy is its variable. */
+         * file, or INTRINSIC -- passes the procedure's address.  A name
+         * the unit has typed, stored, shaped or received as a dummy is
+         * its variable; so is a bare intrinsic name no INTRINSIC
+         * statement covers (F77 8.8, 15.10): CALL SETOUT(IFIX) passes
+         * the implicitly typed variable IFIX, which the callee may store
+         * through.  Found by fort370 in NPSOL's LSADDS. */
         int after;
         int sf;
         after = (int)(lx_rte - lx_stmt);
@@ -5027,7 +5030,7 @@ static int f77_actual_addr(void) {
                     f77_act_len = -1;
                     return hi_emit(HI_FADDR, HL_ADDR_TY, -1, -1, 0, pn);
                 }
-                if ((sf >= 0 && f77_sintrinsic[sf]) || f77_intrinsic(lex_name) != IN_NONE) {
+                if (sf >= 0 && f77_sintrinsic[sf]) {
                     char *rn;
                     rn = f77_intrinsic_proc(lex_name);
                     f77_tok();
