@@ -6635,3 +6635,22 @@ Tests 2014/stddec (the visible differences from NATIVE: 2 / 3 * 3 is 2,
 comparison, 2 ** -2; one contained program per rounding mode; a NATIVE
 one; EC-SIZE-OVERFLOW checked last), bad/std2014-arith-standard-binary,
 bad/std2002-arith-standard-decimal.
+
+
+### 134. SORT's alphabet reordered national keys (2026-10-20, fixed)
+
+A SORT, MERGE or table SORT under an alphabet (the COLLATING SEQUENCE
+phrase, or the PROGRAM COLLATING SEQUENCE) put a national key's bytes
+through that alphabet's 256-entry table, one byte of each UTF-16 code
+unit at a time: with `ALPHABET flip IS "y" "x"`, national keys w, x, y,
+é sorted y x w é. An alphabet is an alphanumeric collating sequence;
+2023 14.9.40.4 general rule 5 gives national keys the national one,
+which with no FOR NATIONAL (not implemented, 12.3.6) is the native
+order, the code units. sort_key_build now leaves a national key's bytes
+as they are: w x y é. The general comparison (cob_cmp) already compared
+national operands by code unit with no table. Found asking whether
+dfsort/s32sort needs to know NATIONAL: it does not -- its CH fields
+compare bytes, which for big-endian UTF-16 in fixed-length records is
+this same order. Test 2002/natsortcoll (file and table SORT, a national
+and an alphanumeric key under one alphabet; no oracle: GnuCOBOL's USAGE
+NATIONAL is unfinished and refuses it).

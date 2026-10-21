@@ -4646,7 +4646,10 @@ static void sort_key_build(const cob_sorter *so, const char *rec, unsigned seq, 
         } else {
             const unsigned char *p = (const unsigned char *)rec + k->offset;
             unsigned n = d->size;
-            if (t) for (unsigned b = 0; b < n; b++) o[b] = t[p[b]];
+            /* an alphabet is an alphanumeric collating sequence: a national
+             * key keeps the native national one, its code units big-endian
+             * (2023 14.9.40.4 general rule 5) */
+            if (t && d->cat != COB_NATIONAL) for (unsigned b = 0; b < n; b++) o[b] = t[p[b]];
             else memcpy(o, p, n);
             out += n;
         }
