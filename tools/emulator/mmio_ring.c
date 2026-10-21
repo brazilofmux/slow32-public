@@ -243,8 +243,8 @@ static int alloc_guest_fd(mmio_ring_state_t *mmio, int host_fd, bool owned) {
     return -1;
 }
 
-static int alloc_guest_dir_fd(mmio_ring_state_t *mmio, DIR *host_dir) {
-    for (uint32_t i = 0; i < S32_MMIO_MAX_FDS; ++i) {
+static int alloc_guest_dir_fd_from(mmio_ring_state_t *mmio, DIR *host_dir, uint32_t lowest) {
+    for (uint32_t i = lowest; i < S32_MMIO_MAX_FDS; ++i) {
         if (mmio->host_fds[i] == -1 && mmio->host_dirs[i] == NULL) {
             mmio->host_fds[i] = -1;  // No underlying file descriptor
             mmio->host_fd_owned[i] = true;
@@ -255,6 +255,10 @@ static int alloc_guest_dir_fd(mmio_ring_state_t *mmio, DIR *host_dir) {
         }
     }
     return -1;
+}
+
+static int alloc_guest_dir_fd(mmio_ring_state_t *mmio, DIR *host_dir) {
+    return alloc_guest_dir_fd_from(mmio, host_dir, 0);
 }
 
 static DIR *host_dir_for_guest(mmio_ring_state_t *mmio, uint32_t guest_fd) {
@@ -3371,7 +3375,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                 break;
             }
             if (mmio->fd_types[guest_fd] == S32_FD_TYPE_DIR && mmio->host_dirs[guest_fd]) {
-                int rc = closedir(mmio->host_dirs[guest_fd]);
+                int rc = closedir(mmio->host_dirs[guest_fd]) == 0 ? 0 : errno > 0 ? errno : EIO;
                 mmio->host_dirs[guest_fd] = NULL;
                 mmio->host_fds[guest_fd] = -1;
                 mmio->host_fd_owned[guest_fd] = false;
@@ -3381,7 +3385,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                     resp.status = S32_MMIO_STATUS_OK;
                     resp.length = 0;
                 } else {
-                    mmio_fail(&resp, errno > 0 ? errno : EIO);
+                    mmio_fail(&resp, rc);
                 }
                 break;
             }
@@ -4063,18 +4067,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                     if (dup_fd < 0) { mmio_fail(&resp, errno > 0 ? errno : EIO); break; }
                     DIR *ndir = fdopendir(dup_fd);
                     if (!ndir) { close(dup_fd); mmio_fail(&resp, errno > 0 ? errno : EIO); break; }
-                    int slot = -1;
-                    for (uint32_t i = req->offset; i < S32_MMIO_MAX_FDS; i++) {
-                        if (mmio->host_fds[i] == -1 && mmio->host_dirs[i] == NULL) {
-                            mmio->host_fds[i] = -1;
-                            mmio->host_fd_owned[i] = true;
-                            mmio->fd_cloexec[i] = false;
-                            mmio->fd_types[i] = S32_FD_TYPE_DIR;
-                            mmio->host_dirs[i] = ndir;
-                            slot = (int)i;
-                            break;
-                        }
-                    }
+                    int slot = alloc_guest_dir_fd_from(mmio, ndir, req->offset);
                     if (slot < 0) { closedir(ndir); mmio_fail(&resp, EMFILE); break; }
                     resp.status = (uint32_t)slot;
                     break;

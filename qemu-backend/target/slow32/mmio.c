@@ -478,9 +478,10 @@ static int slow32_mmio_alloc_guest_fd(Slow32MMIOContext *ctx, int host_fd,
     return -1;
 }
 
-static int slow32_mmio_alloc_guest_dir_fd(Slow32MMIOContext *ctx, DIR *host_dir)
+static int slow32_mmio_alloc_guest_dir_fd_from(Slow32MMIOContext *ctx, DIR *host_dir,
+                                               uint32_t lowest)
 {
-    for (uint32_t i = 0; i < S32_MMIO_MAX_FDS; ++i) {
+    for (uint32_t i = lowest; i < S32_MMIO_MAX_FDS; ++i) {
         if (ctx->host_fds[i] == -1 && ctx->host_dirs[i] == NULL) {
             ctx->host_fds[i] = -1;
             ctx->host_fd_owned[i] = true;
@@ -491,6 +492,11 @@ static int slow32_mmio_alloc_guest_dir_fd(Slow32MMIOContext *ctx, DIR *host_dir)
         }
     }
     return -1;
+}
+
+static int slow32_mmio_alloc_guest_dir_fd(Slow32MMIOContext *ctx, DIR *host_dir)
+{
+    return slow32_mmio_alloc_guest_dir_fd_from(ctx, host_dir, 0);
 }
 
 static DIR *slow32_mmio_host_dir_for_guest(Slow32MMIOContext *ctx,
@@ -2640,17 +2646,7 @@ static void slow32_mmio_handle_fcntl(Slow32MMIOContext *ctx,
                 slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
                 return;
             }
-            for (uint32_t i = req->offset; i < S32_MMIO_MAX_FDS; i++) {
-                if (ctx->host_fds[i] == -1 && ctx->host_dirs[i] == NULL) {
-                    ctx->host_fds[i] = -1;
-                    ctx->host_fd_owned[i] = true;
-                    ctx->fd_cloexec[i] = false;
-                    ctx->fd_types[i] = S32_FD_TYPE_DIR;
-                    ctx->host_dirs[i] = ndir;
-                    slot = (int)i;
-                    break;
-                }
-            }
+            slot = slow32_mmio_alloc_guest_dir_fd_from(ctx, ndir, req->offset);
             if (slot < 0) {
                 closedir(ndir);
                 slow32_mmio_fail(resp, EMFILE);

@@ -930,9 +930,9 @@ and `"+"` adds 0x03.
 | | |
 |---|---|
 | Request | `status` = guest fd |
-| Action | close the host descriptor if the host opened it (not for 0–2); free the slot; then complete any posted read on that fd with 0 bytes (§8.12) |
+| Action | close the host descriptor if the host opened it (not for 0–2), or the directory stream if the slot is one (as CLOSEDIR); free the slot; then complete any posted read on that fd with 0 bytes (§8.12) |
 | Response | `status` 0 |
-| Errors | `EBADF` (fd ≥ 128, slot free, or slot is a directory stream); host close errno (slot is freed anyway) |
+| Errors | `EBADF` (fd ≥ 128, or slot free); host close or closedir errno (slot is freed anyway) |
 
 #### 0x07 SEEK
 | | |
@@ -1027,9 +1027,9 @@ changed by `CHDIR`).
 | | |
 |---|---|
 | Request | `status` = fd; `length` = command: 0 F_DUPFD, 1 F_GETFD, 2 F_SETFD, 3 F_GETFL, 4 F_SETFL; `off` = the argument (not a data-buffer offset) |
-| Action | F_DUPFD gives the same host file or socket a second slot, the lowest free one at or above the argument; the duplicate is the host's own descriptor (closing it closes only it) with close-on-exec clear. F_GETFD/F_SETFD read and set the slot's close-on-exec bit (1). Nothing is inherited across EXEC whatever it says; the bit is kept so that a program reads back what it set, and a new slot starts with it clear. F_GETFL reports the host descriptor's access mode and status flags in the guest's `O_*` encoding: 1 read-only, 2 write-only, 3 read-write, `0x04` append, `0x0800` non-blocking. F_SETFL changes only append and non-blocking. |
+| Action | F_DUPFD gives the same host file, socket or directory stream a second slot (a directory a second stream over a duplicate of its descriptor), the lowest free one at or above the argument; the duplicate is the host's own descriptor (closing it closes only it) with close-on-exec clear. F_GETFD/F_SETFD read and set the slot's close-on-exec bit (1). Nothing is inherited across EXEC whatever it says; the bit is kept so that a program reads back what it set, and a new slot starts with it clear. F_GETFL reports the host descriptor's access mode and status flags in the guest's `O_*` encoding: 1 read-only, 2 write-only, 3 read-write, `0x04` append, `0x0800` non-blocking. F_SETFL changes only append and non-blocking. |
 | Response | F_DUPFD: `status` the new fd; F_GETFD: `status` 0 or 1; F_GETFL: `status` the flags; the setters: `status` 0 |
-| Errors | `EBADF` (no such fd, or a directory stream); `EINVAL` (another command; F_DUPFD's argument ≥ 128); `EMFILE` (F_DUPFD: no free slot at or above it); `EPERM` (F_SETFL changing fd 0, 1 or 2 while it is still the host's own stream: those are shared with whatever started the emulator, and stay as they are); fcntl errno |
+| Errors | `EBADF` (no such fd); `EINVAL` (another command; F_DUPFD's argument ≥ 128); `EMFILE` (F_DUPFD: no free slot at or above it); `EPERM` (F_SETFL changing fd 0, 1 or 2 while it is still the host's own stream: those are shared with whatever started the emulator, and stay as they are); fcntl errno |
 
 On a non-blocking socket READ, WRITE and ACCEPT fail with `EAGAIN` instead
 of waiting, and CONNECT with `EINPROGRESS` (then FDPOLL for writing, and
@@ -1059,8 +1059,10 @@ Success: `status` 0, `length` 0. Failure: host errno, except where noted.
 | 0x2A | CLOSEDIR | `status` = directory fd | `EBADF` if not a directory stream. Frees the slot. |
 | 0x2B | REWINDDIR | `status` = directory fd | `EBADF` if not a directory stream. |
 
-A directory fd is not a byte stream: READ, WRITE and CLOSE on it give
-`EBADF` (CLOSEDIR closes it).
+A directory fd is not a byte stream: READ and WRITE on it give `EBADF`.
+CLOSE closes it as CLOSEDIR does, so that `dup2` onto one works; FCNTL
+reaches the stream's host descriptor, and F_DUPFD of one is a second
+directory stream on a duplicate of it (§8.6).
 
 ##### 8.7.1 `dirent` (272 bytes, packed)
 

@@ -335,6 +335,15 @@ DIR *opendir(const char *name) {
     return d;
 }
 
+DIR *fdopendir(int fd) {
+    DIR *d = (DIR *)malloc(sizeof(DIR));
+    if (d == 0) { errno = 12; return 0; }
+    d->fd = fd;
+    d->pos = 0;
+    d->len = 0;
+    return d;
+}
+
 struct dirent *readdir(DIR *d) {
     struct dirent *e;
     if (d->pos >= d->len) {
