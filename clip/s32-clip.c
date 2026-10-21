@@ -502,12 +502,23 @@ static int emit_stmt(emit_t *e, const char *p) {
         }
         return 0;
     }
-    if (e->in_fn && (is_kw(p, "PRIVATE") || is_kw(p, "LOCAL"))) {
-        p = skip_ws(p + (is_kw(p, "PRIVATE") ? 7 : 5));
+    if (e->in_fn && is_kw(p, "PRIVATE")) {
+        p = skip_ws(p + 7);
         n = parse_namelist(p, names, MAX_PARAMS);
         for (i = 0; i < n; i++) {
             emit_indent(e->out, e->depth);
             fprintf(e->out, "clip_private(&scope, ");
+            c_escape(e->out, names[i]);
+            fprintf(e->out, ");\n");
+        }
+        return 0;
+    }
+    if (e->in_fn && is_kw(p, "LOCAL")) {
+        p = skip_ws(p + 5);
+        n = parse_namelist(p, names, MAX_PARAMS);
+        for (i = 0; i < n; i++) {
+            emit_indent(e->out, e->depth);
+            fprintf(e->out, "clip_local(&scope, ");
             c_escape(e->out, names[i]);
             fprintf(e->out, ");\n");
         }

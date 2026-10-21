@@ -138,16 +138,11 @@ int clip_truth(const char *expr) {
     if (eval_expr(expr, &v) != 0) {
         return 0;
     }
-    switch (v.type) {
-    case VAL_LOGIC:
+    /* Interpreter IF/WHILE/CASE require VAL_LOGIC. */
+    if (v.type == VAL_LOGIC) {
         return v.logic != 0;
-    case VAL_NUM:
-        return v.num != 0.0;
-    case VAL_CHAR:
-        return v.str[0] != '\0';
-    default:
-        return 0;
     }
+    return 0;
 }
 
 void clip_q(const char *expr, int newline) {
@@ -214,7 +209,9 @@ static void scope_save(clip_scope_t *s, const char *name) {
 }
 
 void clip_enter(clip_scope_t *s) {
+    memvar_store_t *store = cmd_get_memvar_store();
     s->count = 0;
+    store->current_depth++;
 }
 
 void clip_param(clip_scope_t *s, const char *name, value_t *args, int nargs, int idx) {
@@ -233,6 +230,14 @@ void clip_private(clip_scope_t *s, const char *name) {
     memvar_release(cmd_get_memvar_store(), name);
 }
 
+void clip_local(clip_scope_t *s, const char *name) {
+    value_t nil = val_nil();
+    memvar_store_t *store = cmd_get_memvar_store();
+    scope_save(s, name);
+    memvar_release(store, name);
+    memvar_set_local(store, name, &nil);
+}
+
 void clip_leave(clip_scope_t *s) {
     memvar_store_t *store = cmd_get_memvar_store();
     int i;
@@ -244,6 +249,9 @@ void clip_leave(clip_scope_t *s) {
         }
     }
     s->count = 0;
+    if (store->current_depth > 0) {
+        store->current_depth--;
+    }
 }
 
 void clip_return(clip_scope_t *s, const char *expr, value_t *result) {

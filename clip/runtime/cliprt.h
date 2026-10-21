@@ -28,6 +28,7 @@ void clip_do(const char *name);
 void clip_enter(clip_scope_t *s);
 void clip_param(clip_scope_t *s, const char *name, value_t *args, int nargs, int idx);
 void clip_private(clip_scope_t *s, const char *name);
+void clip_local(clip_scope_t *s, const char *name);
 void clip_leave(clip_scope_t *s);
 void clip_return(clip_scope_t *s, const char *expr, value_t *result);
 void clip_end(clip_scope_t *s, value_t *result);
