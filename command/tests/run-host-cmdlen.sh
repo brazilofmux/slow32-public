@@ -16,7 +16,11 @@ int s32_execv(const char *path, char *const argv[]) {
 }
 EOF
 
-gcc -Wall -Wextra -O2 -o "$work/command" \
+# The stub's prototype comes from the SLOW-32 <unistd.h>, which the host's
+# does not have; declare it ahead of every file (clang makes the implicit
+# declaration an error).
+printf 'int s32_execv(const char *path, char *const argv[]);\n' > "$work/s32_execv.h"
+${CC:-cc} -Wall -Wextra -O2 -include "$work/s32_execv.h" -o "$work/command" \
     "$CMD_DIR/src/command.c" "$work/s32_execv.c"
 
 # 40-character stem plus .s32x — used to truncate at 31.
