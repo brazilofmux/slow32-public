@@ -6,7 +6,9 @@
 ; with "no libcall available for flog" (and fmaxnum, for a plain fmax()
 ; call), llvm.sin/cos/pow could not be
 ; selected, and frem was expanded inline into calls to rint and fma, which
-; the runtime does not ship; frem is the runtime's fmodf/fmod.
+; the runtime did not then ship; frem is the runtime's fmodf/fmod.  fma was
+; Expand -- a multiply and an add, two roundings -- and is now the runtime's
+; fmaf/fma (GitHub issue 99).
 
 ; CHECK-LABEL: f_log:
 ; CHECK: jal r31, logf
@@ -78,6 +80,34 @@ define float @f_min(float %x, float %y) {
   ret float %r
 }
 
+; one call, no fmul/fadd pair
+; CHECK-LABEL: d_fma:
+; CHECK: jal r31, fma
+; CHECK-NOT: fmul.d
+define double @d_fma(double %x, double %y, double %z) {
+  %r = call double @llvm.fma.f64(double %x, double %y, double %z)
+  ret double %r
+}
+
+; CHECK-LABEL: f_fma:
+; CHECK: jal r31, fmaf
+; CHECK-NOT: fmul.s
+define float @f_fma(float %x, float %y, float %z) {
+  %r = call float @llvm.fma.f32(float %x, float %y, float %z)
+  ret float %r
+}
+
+; fmuladd may be split, and on this machine always is
+; CHECK-LABEL: d_fmuladd:
+; CHECK-NOT: jal r31, fma
+define double @d_fmuladd(double %x, double %y, double %z) {
+  %r = call double @llvm.fmuladd.f64(double %x, double %y, double %z)
+  ret double %r
+}
+
+declare double @llvm.fma.f64(double, double, double)
+declare float @llvm.fma.f32(float, float, float)
+declare double @llvm.fmuladd.f64(double, double, double)
 declare double @llvm.maxnum.f64(double, double)
 declare float @llvm.minnum.f32(float, float)
 declare float @llvm.log.f32(float)

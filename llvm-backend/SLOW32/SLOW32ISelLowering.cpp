@@ -427,10 +427,16 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   // instruction for them: an llvm.sin/cos/pow could not be selected.
   // Expanded, each is its libm call (SLOW32RuntimeLibcalls.h); sincos
   // becomes the two calls.
+  //
+  // fma is the runtime's fmaf/fma (GitHub issue 99).  As Expand it became
+  // fmul+fadd, two roundings, so std::fma and __builtin_fma were silently
+  // not fused.  fmuladd is unaffected: it is contracted only where
+  // isFMAFasterThanFMulAndFAdd says so, and the machine has no fused
+  // instruction, so it stays a multiply and an add.
   for (MVT VT : {MVT::f32, MVT::f64}) {
     setOperationAction(ISD::FREM, VT, LibCall);
     setOperationAction({ISD::FSIN, ISD::FCOS, ISD::FSINCOS, ISD::FPOW}, VT, Expand);
-    setOperationAction(ISD::FMA, VT, Expand);
+    setOperationAction(ISD::FMA, VT, LibCall);
     setOperationAction(ISD::FRINT, VT, Expand);
     setOperationAction(ISD::FNEARBYINT, VT, Expand);
     setOperationAction(ISD::FTRUNC, VT, Expand);

@@ -21,7 +21,7 @@ CXXFLAGS = -target $(TARGET) -S -emit-llvm -Iinclude -funwind-tables \
 
 # Compiler runtime objects (always needed, linked last)
 # These provide compiler support functions like division, intrinsics
-COMPILER_RT_OBJS = intrinsics.s32o intrinsics_extra.s32o math_hw.s32o math_soft.s32o \
+COMPILER_RT_OBJS = intrinsics.s32o intrinsics_extra.s32o math_hw.s32o math_soft.s32o math_fma.s32o \
                    math_cordic.s32o builtins.s32o builtins_hk.s32o divsi3.s32o \
                    debug_char.s32o
 
@@ -94,7 +94,7 @@ C_SOURCES = printf_enhanced.c convert.c builtins.c string.c malloc.c stdlib_util
             term_mmio.c term_stub.c net_mmio.c net_stub.c \
             exec_mmio.c exec_stub.c tube_mmio.c tube_stub.c dpc_mmio.c \
             sched_mmio.c poll.c crypto_mmio.c \
-            math_hw.c math_soft.c math_cordic.c \
+            math_hw.c math_soft.c math_fma.c math_cordic.c \
             unwind.c posix_extra.c locale.c locale_state.c locales.c netdb.c process.c getpid.c mman.c environ.c \
             cxa_support.c cxa_exception.c cxa_personality.c cxa_typeinfo.c
 
@@ -156,6 +156,10 @@ math_hw.ll: math_hw.c
 
 math_soft.ll: OPT_LEVEL = -O2
 math_soft.ll: math_soft.c
+	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) -fno-builtin $< -o $@
+
+math_fma.ll: OPT_LEVEL = -O2
+math_fma.ll: math_fma.c
 	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) -fno-builtin $< -o $@
 
 math_cordic.ll: OPT_LEVEL = -O2

@@ -101,6 +101,10 @@ float truncf(float x);
 double fmod(double x, double y);
 float fmodf(float x, float y);
 
+/* x*y+z with one rounding (C99 7.12.13.1); llvm.fma lowers to these */
+double fma(double x, double y, double z);
+float fmaf(float x, float y, float z);
+
 double copysign(double x, double y);
 float copysignf(float x, float y);
 
