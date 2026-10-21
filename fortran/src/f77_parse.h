@@ -53,6 +53,22 @@ static int f77_adjustable(int s) {
     return 0;
 }
 static int  f77_nsym;
+/* fort370: NAMELIST groups of the unit (fort370 issue 4): a group's
+ * name and its items' symbols, f77_nml_isym[first..first+count).  Reset
+ * with the symbols at each unit (f77.c). */
+#define F77_MAX_NML 64
+#define F77_MAX_NMLITEM 512
+static char f77_nml_gname[F77_MAX_NML][32];
+static int  f77_nml_gfirst[F77_MAX_NML];
+static int  f77_nml_gcount[F77_MAX_NML];
+static int  f77_nml_isym[F77_MAX_NMLITEM];
+static int  f77_nnml, f77_nnmlitem;
+static int  f77_io_nml;        /* the group of the READ or WRITE in hand */
+static int f77_nml_find(char *nm) {
+    int g;
+    for (g = 0; g < f77_nnml; g++) if (strcmp(f77_nml_gname[g], nm) == 0) return g;
+    return -1;
+}
 
 /* Lookups start here, not at 0.  Inlining a subprogram pushes a fresh
  * scope so the callee's locals cannot resolve to identically-named
@@ -346,6 +362,26 @@ static void f77_esc_scan(int unit) {
             }
             if (i < lx_stmt_len) i = i + 1;
         }
+    }
+    /* NAMELIST /G/ item, item: the runtime stores through the items'
+     * addresses (fort370 issue 4); the group names between slashes are
+     * not variables */
+    if (strncmp(lx_stmt, "NAMELIST", 8) == 0) {
+        int slashes;
+        slashes = 0;
+        i = 8;
+        while (i < lx_stmt_len) {
+            if (lx_stmt[i] == '/') { slashes = slashes + 1; i = i + 1; continue; }
+            if (lx_isalpha(lx_stmt[i])) {
+                j = i;
+                while (j < lx_stmt_len && (lx_isalpha(lx_stmt[j]) || lx_isdigit(lx_stmt[j]))) j = j + 1;
+                if (slashes % 2 == 0) f77_esc_add(unit, lx_stmt + i, j - i);
+                i = j;
+                continue;
+            }
+            i = i + 1;
+        }
+        return;
     }
     /* IDENT( item, item ) anywhere: a call or a subscript */
     i = 0;
@@ -6181,9 +6217,19 @@ static void f77_wr_finish(void) {
 static int f77_fmt_digits(const char *s, int n, int *i) {
     int v;
     v = 0;
+    while (*i < n && s[*i] == ' ') *i = *i + 1;
     if (*i >= n || s[*i] < '0' || s[*i] > '9') return -1;
-    while (*i < n && s[*i] >= '0' && s[*i] <= '9') { v = v * 10 + (s[*i] - '0'); *i = *i + 1; }
+    while (*i < n && ((s[*i] >= '0' && s[*i] <= '9') || s[*i] == ' ')) {
+        if (s[*i] != ' ') v = v * 10 + (s[*i] - '0');
+        *i = *i + 1;
+    }
     return v;
+}
+/* the next character that is not a blank, or 0 at the end; blanks in a
+ * format are not significant outside its strings (fort370 issue 25) */
+static int f77_fmt_peek(const char *s, int n, int *i) {
+    while (*i < n && s[*i] == ' ') *i = *i + 1;
+    return *i < n ? s[*i] : 0;
 }
 static void f77_fmt_bad(const char *what) {
     char m[96];
@@ -6228,13 +6274,15 @@ static void f77_check_format(const char *s, int n) {
         if (c == '+' || c == '-') {          /* a scale factor's sign: -2P */
             i = i + 1;
             cnt = f77_fmt_digits(s, n, &i);
-            if (cnt < 0 || i >= n || (s[i] != 'P' && s[i] != 'p')) { f77_fmt_bad("a sign belongs to a scale factor, nP"); return; }
+            k = f77_fmt_peek(s, n, &i);
+            if (cnt < 0 || (k != 'P' && k != 'p')) { f77_fmt_bad("a sign belongs to a scale factor, nP"); return; }
         } else if (c >= '0' && c <= '9') {
             cnt = f77_fmt_digits(s, n, &i);
         }
-        if (i >= n) { f77_fmt_bad("the format ends without its )"); return; }
+        if (f77_fmt_peek(s, n, &i) == 0) { f77_fmt_bad("the format ends without its )"); return; }
         c = s[i];
         if (c >= 'a' && c <= 'z') c = c - 'a' + 'A';
+        if (cnt < 0 && c == 'H') { f77_fmt_bad("H needs its count, nH"); return; }
         if (cnt >= 0 && c == 'H') {
             if (cnt == 0) { f77_fmt_bad("0H is no Hollerith string"); return; }
             if (i + 1 + cnt > n) {
@@ -6251,18 +6299,21 @@ static void f77_check_format(const char *s, int n) {
         if (c == 'X') { i = i + 1; continue; }        /* X alone: IBM's 1X */
         if (c == 'T') {
             i = i + 1;
-            if (i < n && (s[i] == 'L' || s[i] == 'R' || s[i] == 'l' || s[i] == 'r')) i = i + 1;
+            k = f77_fmt_peek(s, n, &i);
+            if (k == 'L' || k == 'R' || k == 'l' || k == 'r') i = i + 1;
             if (f77_fmt_digits(s, n, &i) < 0) { f77_fmt_bad("T, TL and TR take a column"); return; }
             continue;
         }
         if (c == 'S') {
             i = i + 1;
-            if (i < n && (s[i] == 'P' || s[i] == 'S' || s[i] == 'p' || s[i] == 's')) i = i + 1;
+            k = f77_fmt_peek(s, n, &i);
+            if (k == 'P' || k == 'S' || k == 'p' || k == 's') i = i + 1;
             continue;
         }
         if (c == 'B') {
             i = i + 1;
-            if (i < n && (s[i] == 'N' || s[i] == 'Z' || s[i] == 'n' || s[i] == 'z')) { i = i + 1; continue; }
+            k = f77_fmt_peek(s, n, &i);
+            if (k == 'N' || k == 'Z' || k == 'n' || k == 'z') { i = i + 1; continue; }
             f77_fmt_bad("B is BN or BZ");
             return;
         }
@@ -6279,11 +6330,12 @@ static void f77_check_format(const char *s, int n) {
                 f77_fmt_bad(m);
                 return;
             }
-            if (i < n && s[i] == '.') {
+            if (f77_fmt_peek(s, n, &i) == '.') {
                 i = i + 1;
                 if (f77_fmt_digits(s, n, &i) < 0) { f77_fmt_bad("a . needs digits after it"); return; }
             }
-            if ((c == 'E' || c == 'G' || c == 'D') && i < n && (s[i] == 'E' || s[i] == 'e')) {
+            k = f77_fmt_peek(s, n, &i);
+            if ((c == 'E' || c == 'G' || c == 'D') && (k == 'E' || k == 'e')) {
                 i = i + 1;
                 if (f77_fmt_digits(s, n, &i) < 0) { f77_fmt_bad("Ee needs its digits"); return; }
             }
@@ -6318,6 +6370,12 @@ static int f77_io_rec;         /* REC= value, or -1 */
 
 static int f77_io_fmt_spec(void) {
     if (lx_t == T_STAR) { f77_tok(); return -1; }
+    if (lx_t == T_NAME && f77_nml_find(lex_name) >= 0) {
+        /* a NAMELIST group: -5, the group in f77_io_nml */
+        f77_io_nml = f77_nml_find(lex_name);
+        f77_tok();
+        return -5;
+    }
     if (lx_t == T_ICON) { int l; l = lex_ival; f77_tok(); return l; }
     if (lx_t == T_SCON || (lx_t == T_NAME && f77_sty[f77_sym(lex_name)] == TY_CHAR)) {
         /* fort370: a format that is one character constant is checked
@@ -6390,8 +6448,9 @@ static int f77_io_control(int is_read, int *unit_val, int *fmt_label) {
             else *unit_val = f77_io_unit_expr();
             have_unit = 1;
             pos = pos < 1 ? 1 : pos;
-        } else if (strcmp(kw, "FMT") == 0) {
+        } else if (strcmp(kw, "FMT") == 0 || strcmp(kw, "NML") == 0) {
             *fmt_label = f77_io_fmt_spec();
+            if (kw[0] == 'N' && *fmt_label != -5) { f77_error("NML= names a NAMELIST group"); return 0; }
             pos = 2;
         } else if (strcmp(kw, "END") == 0 || strcmp(kw, "ERR") == 0) {
             if (lx_t != T_ICON) { f77_error("END=/ERR= needs a statement label"); return 0; }
@@ -6461,12 +6520,106 @@ static void f77_io_after_read(int r) {
     }
 }
 
+/* READ or WRITE of a NAMELIST group: the runtime is told the group,
+ * then each item's name, kind, address and size (an array's bounds
+ * first), and reads or writes the lot at f77_nml_end (runtime/libf77.c,
+ * NAMELIST).  A READ's END=, ERR= and IOSTAT= take f77_nml_end's code.
+ * (fort370 issue 4.  This front end has no DOUBLE COMPLEX, the runtime's code 5.) */
+static int f77_nml_name(char *nm) {
+    int sidx;
+    sidx = f77_intern_str(nm, (int)strlen(nm));
+    return hi_emit(HI_SADDR, HL_ADDR_TY, -1, -1, sidx, NULL);
+}
+static void f77_nml_io(int unit_val, int reading) {
+    int g, k, args[6], r;
+    g = f77_io_nml;
+    args[0] = unit_val;
+    args[1] = f77_nml_name(f77_nml_gname[g]);
+    args[2] = f77_iconst((int)strlen(f77_nml_gname[g]));
+    args[3] = f77_iconst(reading);
+    args[4] = f77_iconst((f77_io_end_label >= 0 ? 1 : 0) |
+                         ((f77_io_err_label >= 0 || f77_io_iostat >= 0) ? 2 : 0));
+    f77_call_i("f77_nml_begin", 5, args);
+    for (k = 0; k < f77_nml_gcount[g]; k++) {
+        int s, code, ty, d, n;
+        s = f77_nml_isym[f77_nml_gfirst[g] + k];
+        ty = f77_sty[s];
+        if (ty == TY_CHAR) code = 7;
+        else if (ty == TY_CPLX) code = 4;
+        else if (ty == TY_DOUBLE) code = 3;
+        else if (ty == TY_FLOAT) code = 2;
+        else code = f77_slog[s] ? 6 : 1;
+        n = f77_iconst(1);
+        for (d = 0; d < f77_srank[s]; d++) {
+            int lo, ext;
+            lo = f77_slov[s][d] >= 0 ? f77_slov[s][d] : f77_iconst(f77_slo[s][d]);
+            ext = f77_sextv[s][d] >= 0 ? f77_sextv[s][d] : f77_iconst(f77_sext[s][d]);
+            args[0] = lo;
+            args[1] = ext;
+            f77_call_i("f77_nml_dim", 2, args);
+            n = f77_srank[s] == 1 && d == 0 ? ext : hi_emit(HI_MUL, TY_INT, n, ext, 0, NULL);
+        }
+        args[0] = f77_nml_name(f77_sname[s]);
+        args[1] = f77_iconst((int)strlen(f77_sname[s]));
+        args[2] = f77_iconst(code);
+        args[3] = f77_sval[s];
+        if (ty == TY_CHAR) args[4] = f77_slen[s] >= 0 ? f77_iconst(f77_slen[s]) : f77_slenv[s];
+        else args[4] = f77_iconst(f77_tysize(ty));
+        args[5] = n;
+        f77_call_i("f77_nml_item", 6, args);
+    }
+    r = f77_call_i("f77_nml_end", 0, args);
+    if (reading) f77_io_after_read(r);
+}
+
+/* NAMELIST /GROUP/ item, item... [/GROUP/ ...]: FORTRAN H's, its items
+ * variables and arrays of the unit. */
+static void f77_stmt_namelist(int skip) {
+    f77_scan_from(skip);
+    while (lx_t == T_SLASH) {
+        int g;
+        f77_tok();
+        if (lx_t != T_NAME) { f77_error("NAMELIST needs a group name between slashes"); return; }
+        if (f77_nml_find(lex_name) >= 0) { f77_error("a NAMELIST group of that name is already defined"); return; }
+        if (f77_nnml >= F77_MAX_NML) { f77_error("too many NAMELIST groups in one unit"); return; }
+        g = f77_nnml;
+        f77_nnml = f77_nnml + 1;
+        strncpy(f77_nml_gname[g], lex_name, 31);
+        f77_nml_gname[g][31] = 0;
+        f77_nml_gfirst[g] = f77_nnmlitem;
+        f77_nml_gcount[g] = 0;
+        f77_tok();
+        if (lx_t != T_SLASH) { f77_error("expected / after the NAMELIST group name"); return; }
+        f77_tok();
+        while (lx_t == T_NAME) {
+            int s;
+            s = f77_sym(lex_name);
+            if (f77_sexternal[s] || f77_sparam[s]) { f77_error("a NAMELIST item is a variable or an array"); return; }
+            if (f77_nnmlitem >= F77_MAX_NMLITEM) { f77_error("too many NAMELIST items in one unit"); return; }
+            f77_sstored[s] = 1;
+            f77_nml_isym[f77_nnmlitem] = s;
+            f77_nnmlitem = f77_nnmlitem + 1;
+            f77_nml_gcount[g] = f77_nml_gcount[g] + 1;
+            f77_tok();
+            if (lx_t == T_COMMA) { f77_tok(); continue; }
+            break;
+        }
+        if (f77_nml_gcount[g] == 0) { f77_error("a NAMELIST group needs at least one item"); return; }
+    }
+    if (lx_t != T_EOF) f77_error("NAMELIST is /GROUP/ followed by names");
+}
+
 static void f77_stmt_write(int skip) {
     int unit_val;
     int fmt_label;
     f77_scan_from(skip);
     if (!f77_io_control(0, &unit_val, &fmt_label)) return;
     f77_io_announce();
+    if (fmt_label == -5) {
+        if (lx_t != T_EOF) { f77_error("a NAMELIST WRITE has no list"); return; }
+        f77_nml_io(unit_val, 0);
+        return;
+    }
     if (fmt_label == -4) {
         /* Unformatted: raw bytes, one runtime call per item. */
         int r;
@@ -6528,6 +6681,11 @@ static void f77_stmt_read(int skip) {
     }
     f77_io_announce();
 
+    if (fmt_label == -5) {
+        if (lx_t != T_EOF) { f77_error("a NAMELIST READ has no list"); return; }
+        f77_nml_io(unit_val, 1);
+        return;
+    }
     if (fmt_label == -4) {
         int args[2];
         args[0] = unit_val;
@@ -6981,6 +7139,7 @@ static int f77_stmt_is_declaration(int cls) {
     if (f77_starts("BLOCKDATA")) return 1;
     if (f77_starts("EXTERNAL")) return 1;
     if (f77_starts("INTRINSIC")) return 1;
+    if (f77_starts("NAMELIST")) return 1;
     if (f77_starts("SAVE")) return 1;
     if (f77_starts("DATA")) return 1;
     if (f77_starts("PARAMETER")) return 1;
@@ -7223,6 +7382,7 @@ static void f77_statement(void) {
         }
         goto done;
     }
+    if ((n = f77_starts("NAMELIST")) != 0) { f77_stmt_namelist(n); goto done; }
     if ((n = f77_starts("ASSIGN")) != 0) { f77_stmt_assign_label(n); goto done; }
     if ((n = f77_starts("PAUSE")) != 0) {
         int args[2];

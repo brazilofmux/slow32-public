@@ -20,6 +20,7 @@
 #include <string.h>
 #include <math.h>
 #include <stdlib.h>
+#include <ctype.h>
 
 #define FIO_MAXFMT   1024
 #define FIO_MAXLINE  1024
@@ -289,6 +290,224 @@ static int fio_number(void) {
     return v;
 }
 
+/* fort370: a format given at run time -- a CHARACTER variable, an
+ * array, an expression -- is checked before it is used, as the compiler
+ * checks the ones it can see (fort370 issues 24, 25).  Blanks are not
+ * significant in a format outside its quoted strings and nH text (F77
+ * 13.1.2, 3.1.6): VS FORTRAN takes ( 3I 2), and a format built with
+ * WRITE (FMT, '(''('',I2,''I'',I2,'')'')') has them.  fio_fmt_prep
+ * copies the format to fio_fbuf without them, up to its closing ),
+ * a "string" made an 'string'; fio_fmt_check then refuses what is
+ * certainly wrong.  A malformed format used to be read some other way:
+ * (HI,MOM) skipped the M, O and M and reverted with no data descriptor,
+ * one empty record per pass, 150,000 records. */
+static char fio_fbuf[FIO_MAXFMT];
+static const char *fio_fmt_why;          /* why the format was refused */
+static int   fio_since_data;             /* a data descriptor since the last reversion */
+static int   fio_ftext;                  /* fio_fbuf's end of the last nH or quoted text */
+
+/* Digits here are a width, not a count: the last character copied
+ * takes one (Iw, Tc, TLc, Fw.d, Ew.dEe), and BZ's Z does not. */
+static int fio_fmt_width_next(int j) {
+    int c, b;
+    if (j == 0 || j == fio_ftext) return 0;
+    c = toupper((unsigned char)fio_fbuf[j - 1]);
+    b = j >= 2 ? toupper((unsigned char)fio_fbuf[j - 2]) : 0;
+    if (c == 'Z') return b != 'B';
+    return c == 'I' || c == 'F' || c == 'E' || c == 'D' || c == 'G' ||
+           c == 'L' || c == 'A' || c == 'O' || c == 'T' || c == 'R' || c == '.';
+}
+
+static int fio_fmt_prep(const char *fmt) {
+    int i, j, depth, q, n;
+    i = 0;
+    j = 0;
+    depth = 0;
+    fio_ftext = -1;
+    while (fmt[i] == ' ') i++;
+    if (fmt[i] != '(') { fio_fmt_why = "a format begins with ("; return -1; }
+    for (;;) {
+        int c = fmt[i];
+        if (j >= FIO_MAXFMT - 2) { fio_fmt_why = "the format is too long, or ends without its )"; return -1; }
+        if (c == 0) { fio_fmt_why = "the format ends without its )"; return -1; }
+        if (c == ' ') { i++; continue; }
+        if (c == '\'' || c == '"') {
+            q = c;
+            fio_fbuf[j++] = '\'';
+            i++;
+            for (;;) {
+                if (fmt[i] == 0 || j >= FIO_MAXFMT - 3) { fio_fmt_why = "a quoted string runs past the end of the format"; return -1; }
+                if (fmt[i] == q) {
+                    if (fmt[i + 1] != q) { i++; break; }
+                    i++;                             /* '' or "" stands for one */
+                }
+                if (fmt[i] == '\'') fio_fbuf[j++] = '\'';
+                fio_fbuf[j++] = fmt[i++];
+            }
+            fio_fbuf[j++] = '\'';
+            fio_ftext = j;
+            continue;
+        }
+        if (fio_isdigit(c) && !fio_fmt_width_next(j)) {
+            /* a count: nH takes the n characters after it as they are */
+            n = 0;
+            while (fio_isdigit(fmt[i]) || fmt[i] == ' ') {
+                if (fmt[i] != ' ') {
+                    if (j >= FIO_MAXFMT - 2) { fio_fmt_why = "the format is too long"; return -1; }
+                    n = n * 10 + (fmt[i] - '0');
+                    fio_fbuf[j++] = fmt[i];
+                }
+                i++;
+            }
+            if (fmt[i] == 'H' || fmt[i] == 'h') {
+                if (n == 0) { fio_fmt_why = "0H is no Hollerith string"; return -1; }
+                if (j + n >= FIO_MAXFMT - 2) { fio_fmt_why = "the format is too long"; return -1; }
+                fio_fbuf[j++] = fmt[i++];
+                while (n-- > 0) {
+                    if (fmt[i] == 0) { fio_fmt_why = "nH wants more characters than the format has"; return -1; }
+                    fio_fbuf[j++] = fmt[i++];
+                }
+                fio_ftext = j;
+            }
+            continue;
+        }
+        fio_fbuf[j++] = (char)c;
+        i++;
+        if (c == '(') depth++;
+        if (c == ')' && --depth == 0) break;  /* what follows is ignored (F77 13.1.1) */
+    }
+    fio_fbuf[j] = 0;
+    return 0;
+}
+
+static int fio_fmt_digits(const char *s, int *i) {
+    int v = 0;
+    if (!fio_isdigit(s[*i])) return -1;
+    while (fio_isdigit(s[*i])) { v = v * 10 + (s[*i] - '0'); *i = *i + 1; }
+    return v;
+}
+
+/* The compiler's f77_check_format, on fio_fbuf: no blanks, an nH's
+ * count known good, one ) at the end. */
+static int fio_fmt_check(void) {
+    const char *s = fio_fbuf;
+    static char why[64];
+    int i = 1, c, cnt;
+    for (;;) {
+        c = s[i];
+        if (c == 0) return 0;
+        if (c == ',' || c == '/' || c == ':' || c == '(' || c == ')') { i++; continue; }
+        if (c == '\'') {
+            i++;
+            for (;;) {
+                if (s[i] == '\'') { if (s[i + 1] == '\'') { i += 2; continue; } i++; break; }
+                i++;
+            }
+            continue;
+        }
+        cnt = -1;
+        if (c == '+' || c == '-') {
+            i++;
+            cnt = fio_fmt_digits(s, &i);
+            if (cnt < 0 || toupper((unsigned char)s[i]) != 'P') { fio_fmt_why = "a sign belongs to a scale factor, nP"; return -1; }
+        } else if (fio_isdigit(c)) {
+            cnt = fio_fmt_digits(s, &i);
+        }
+        c = toupper((unsigned char)s[i]);
+        if (c == 'H') {
+            if (cnt < 0) { fio_fmt_why = "H needs its count, nH"; return -1; }
+            i = i + 1 + cnt;                 /* fio_fmt_prep counted it */
+            continue;
+        }
+        if (cnt >= 0 && c == '(') { i++; continue; }
+        if (c == 'X' || (cnt >= 0 && c == 'P')) { i++; continue; }
+        if (c == 'T') {
+            i++;
+            c = toupper((unsigned char)s[i]);
+            if (c == 'L' || c == 'R') i++;
+            if (fio_fmt_digits(s, &i) < 0) { fio_fmt_why = "T, TL and TR take a column"; return -1; }
+            continue;
+        }
+        if (c == 'S') {
+            i++;
+            c = toupper((unsigned char)s[i]);
+            if (c == 'P' || c == 'S') i++;
+            continue;
+        }
+        if (c == 'B') {
+            i++;
+            c = toupper((unsigned char)s[i]);
+            if (c == 'N' || c == 'Z') { i++; continue; }
+            fio_fmt_why = "B is BN or BZ";
+            return -1;
+        }
+        if (c == 'A' || c == 'Z' || c == 'O') {
+            i++;
+            (void)fio_fmt_digits(s, &i);
+            continue;
+        }
+        if (c == 'I' || c == 'F' || c == 'E' || c == 'D' || c == 'G' || c == 'L') {
+            i++;
+            if (fio_fmt_digits(s, &i) < 0) {
+                sprintf(why, "%c needs a width", c);
+                fio_fmt_why = why;
+                return -1;
+            }
+            if (s[i] == '.') {
+                i++;
+                if (fio_fmt_digits(s, &i) < 0) { fio_fmt_why = "a . needs digits after it"; return -1; }
+            }
+            if ((c == 'E' || c == 'G' || c == 'D') && toupper((unsigned char)s[i]) == 'E') {
+                i++;
+                if (fio_fmt_digits(s, &i) < 0) { fio_fmt_why = "Ee needs its digits"; return -1; }
+            }
+            continue;
+        }
+        if (cnt >= 0) {
+            fio_fmt_why = c == ')' || c == ',' || c == '/' || c == ':' ? "a count with no descriptor after it"
+                                                : "a count before something that is no edit descriptor";
+            return -1;
+        }
+        sprintf(why, "%c is no edit descriptor", s[i]);
+        fio_fmt_why = why;
+        return -1;
+    }
+}
+
+/* The format as it was given, for the message: up to its ) or 80
+ * characters. */
+static void fio_fmt_fail(const char *fmt) {
+    int n = 0, depth = 0;
+    while (fmt[n] && n < 80) {
+        if (fmt[n] == '(') depth++;
+        if (fmt[n] == ')' && --depth == 0) { n++; break; }
+        n++;
+    }
+    fprintf(stderr, "f77: FORMAT: %s\n  in: %.*s\n", fio_fmt_why, n, fmt);
+}
+
+/* 0, fio_fmt the checked format; -1 refused, the message written. */
+static int fio_fmt_use(const char *fmt) {
+    if (fmt != fio_fbuf) {
+        if (fio_fmt_prep(fmt) < 0 || fio_fmt_check() < 0) { fio_fmt_fail(fmt); return -1; }
+    }
+    fio_fmt = fio_fbuf;
+    return 0;
+}
+
+/* Items remain and the format is at its end: it is used again from
+ * the reversion point (F77 13.3) -- unless it has had no data
+ * descriptor since it last was, when it would make empty records for
+ * ever.  F77 forbids it; VS FORTRAN stops the program too. */
+static void fio_no_data(void) {
+    if (!fio_since_data) {
+        fio_flush_line();
+        fprintf(stderr, "f77: FORMAT: no data edit descriptor for the items left\n");
+        exit(2);
+    }
+    fio_since_data = 0;
+}
+
 /* Walk the format, emitting literal items, until a DATA descriptor is
  * reached.  Returns its letter, or 0 if the format ran out with no data
  * descriptor left (which ends the record). */
@@ -310,6 +529,7 @@ static int fio_next_desc(void) {
              * line. */
             if (fio_gdepth > 0) { fio_gdepth = 0; }
             if (fio_draining || fio_revert < 0) return 0;
+            fio_no_data();
             fio_pos = fio_revert;
             if (fio_fmt[fio_pos] == 0) return 0;
             if (fio_reading) fio_next_record();
@@ -375,6 +595,7 @@ static int fio_next_desc(void) {
                  * a CHARACTER entity has no terminator after it, so
                  * this, not the NUL, is what ends it. */
                 if (fio_draining || fio_revert < 0) return 0;
+                fio_no_data();
                 fio_pos = fio_revert;
                 if (fio_fmt[fio_pos] == 0) return 0;
                 if (fio_reading) fio_next_record();
@@ -463,7 +684,8 @@ static int fio_next_desc(void) {
                 else fio_pos = save;
             }
             fio_rep = n;
-            fio_desc = (c >= 'a' && c <= 'z') ? c - 'a' + 'A' : c;
+            fio_desc = toupper((unsigned char)c);
+            fio_since_data = 1;
             return fio_desc;
         }
 
@@ -812,9 +1034,10 @@ static void fio_wr_setup(const char *fmt) {
         return;
     }
     fio_listed = 0;
-    fio_fmt = fmt;
+    if (fio_fmt_use(fmt) < 0) exit(2);
     fio_pos = 0;
     fio_revert = -1;
+    fio_since_data = 0;
     /* Skip the outer parenthesis; just inside it is the reversion
      * point.  (It was the parenthesis itself, so a reversion made the
      * whole format a group and its last ')' a group's end, not the
@@ -1534,9 +1757,15 @@ static int fio_rd_setup(const char *fmt, int has_end) {
     fio_desc = 0;
     fio_len = 0;
     fio_listed = (fmt == 0);
-    fio_fmt = fmt ? fmt : "";
+    fio_fmt = "";
     fio_pos = 0;
     fio_revert = -1;
+    fio_since_data = 0;
+    if (!fio_listed && fio_fmt_use(fmt) < 0) {
+        fio_reading = 0;
+        if (has_end & 2) return 2;
+        exit(2);
+    }
     if (!fio_listed) {
         while (fio_fmt[fio_pos] == ' ') fio_pos++;
         if (fio_fmt[fio_pos] == '(') { fio_pos++; fio_revert = fio_pos; }   /* inside it: see fio_wr_setup's */
@@ -1710,9 +1939,559 @@ void f77_rd_c(float *p) {
     f77_rd_r(p + 1);
 }
 
+/* DOUBLE COMPLEX input, as f77_rd_c (fort370; only NAMELIST's code 5
+ * reaches it from this front end, which has no DOUBLE COMPLEX) */
+void f77_rd_z(double *p) {
+    if (fio_listed) {
+        int t;
+        if (fio_ldone) return;
+        t = fio_list_tok();
+        if (t == 1) { fio_ldone = 1; return; }
+        if (t == 2) return;
+        if (fio_ltok[0] == '(') {
+            char *comma;
+            char *close;
+            close = strchr(fio_ltok, ')');
+            if (close) *close = 0;
+            comma = strchr(fio_ltok + 1, ',');
+            if (comma) *comma = 0;
+            memmove(fio_ltok, fio_ltok + 1, strlen(fio_ltok + 1) + 1);
+            p[0] = fio_list_real();
+            if (comma) { strcpy(fio_ltok, comma + 1); p[1] = fio_list_real(); }
+            else p[1] = 0.0;
+            return;
+        }
+        p[0] = fio_list_real();
+        p[1] = 0.0;
+        return;
+    }
+    f77_rd_d(p);
+    f77_rd_d(p + 1);
+}
+
 void f77_rd_end(void) {
     fio_reading = 0;
     fio_ibuf = 0;
+}
+
+/* --- NAMELIST --------------------------------------------------------- */
+
+/* fort370: READ (u, name) and WRITE (u, name) of a NAMELIST group, as
+ * FORTRAN H has them (fort370 issue 4).  The compiler calls
+ *
+ *     f77_nml_begin(unit, group, glen, reading, flags)
+ *     f77_nml_dim(lo, extent)          -- per dimension, before an array
+ *     f77_nml_item(name, nlen, code, addr, elen, nelem)   -- per item
+ *     r = f77_nml_end()                -- 0, 1 end of file, 2 error
+ *
+ * Item codes: 1 INTEGER, 2 REAL, 3 DOUBLE PRECISION, 4 COMPLEX,
+ * 5 COMPLEX*16, 6 LOGICAL, 7 CHARACTER (elen its length).
+ *
+ * WRITE writes FORTRAN H's layout: a record " &GROUP", then the items
+ * as NAME=value,value,... packed into records, a NAME= or a value with
+ * its comma never split, and " &END".  Each record begins with a
+ * blank.  H fills 132 columns after it; here a record is as long as
+ * the unit's records are (fio_nml_width), so a NAMELIST written to an
+ * 80-byte data set can be punched, and read back.  Fields are H's:
+ * INTEGER I11, REAL G15.8, DOUBLE PRECISION G23.16 with D for E,
+ * zero as 0.0, COMPLEX (re,im) right-justified in 2w+3, LOGICAL T or
+ * F; CHARACTER, which H has not, 'text' with each ' doubled.  The
+ * digits are this runtime's own, exact.
+ *
+ * READ looks for &GROUP (or $GROUP) after column 1 of a record,
+ * skipping the records before it, and takes what follows up to &END
+ * ($END, or /): NAME=, NAME(s,...)= and values separated by commas or
+ * blanks, r*value for r of them, r* or an empty place for values left
+ * as they are.  It is all read and parsed at f77_nml_begin; each
+ * f77_nml_item then stores its own values, so storage changes only in
+ * the call that is given its address.  A name that is no item of the
+ * group, a subscript out of range and too many values are errors. */
+
+#define NML_MAXDIM 7
+static int   nml_unit, nml_reading, nml_flags, nml_status;
+static char  nml_grp[32];
+static int   nml_ndim, nml_lo[NML_MAXDIM], nml_ext[NML_MAXDIM];
+/* writing */
+static char  nml_line[FIO_MAXLINE];
+static int   nml_len, nml_width;
+static char  nml_pend[FIO_MAXLINE];
+static int   nml_npend;
+/* reading: the group's text, and the assignments parsed from it */
+static char *nml_text;
+static int   nml_tlen, nml_tcap;
+struct nml_asg { char name[32]; int nsub; int sub[NML_MAXDIM]; int first, count, used; };
+struct nml_val { int start, len, rep; };          /* len 0: a null value */
+static struct nml_asg *nml_asg;
+static int   nml_nasg, nml_casg;
+static struct nml_val *nml_val;
+static int   nml_nval, nml_cval;
+static char  nml_err[96];
+
+/* The length of the unit's records, for the width of what WRITE packs
+ * into them: 133 where nothing says (H's 132 columns and the blank). */
+static int fio_nml_width(int unit) {
+    (void)unit;
+    return 133;
+}
+
+static void nml_record(const char *s, int n) {
+    f77_wr_begin(nml_unit, "(A)");
+    f77_wr_a(s, n);
+    f77_wr_end();
+}
+
+static void nml_flush(void) {
+    if (nml_len > 1) nml_record(nml_line, nml_len);
+    nml_line[0] = ' ';
+    nml_len = 1;
+}
+
+/* One unit of output: a NAME= or a value with its comma. */
+static void nml_put(const char *s, int n) {
+    if (nml_len > 1 && nml_len + n > nml_width) nml_flush();
+    if (nml_len + n > FIO_MAXLINE) n = FIO_MAXLINE - nml_len;
+    memcpy(nml_line + nml_len, s, (size_t)n);
+    nml_len += n;
+}
+
+/* A value waits for the next, which says whether a comma follows it. */
+static void nml_put_pending(int comma) {
+    if (nml_npend < 0) return;
+    if (comma) nml_pend[nml_npend++] = ',';
+    nml_put(nml_pend, nml_npend);
+    nml_npend = -1;
+}
+
+static void nml_value(const char *s, int n) {
+    nml_put_pending(1);
+    if (n > FIO_MAXLINE - 2) n = FIO_MAXLINE - 2;
+    memcpy(nml_pend, s, (size_t)n);
+    nml_npend = n;
+}
+
+/* A value formatted by this runtime's own editing, into buf (w wide). */
+static void nml_fmt(char *buf, int w, const char *fmt, int code, const void *p) {
+    f77_wr_begin_int(buf, w, 1, fmt);
+    if (code == 1) f77_wr_i(*(const int *)p);
+    else if (code == 2) f77_wr_r(*(const float *)p);
+    else f77_wr_d(*(const double *)p);
+    f77_wr_end();
+    buf[w] = 0;
+}
+
+/* REAL (w 15) or DOUBLE PRECISION (w 23) as H writes it. */
+static void nml_real(char *buf, double v, int dbl) {
+    int w = dbl ? 23 : 15;
+    int i;
+    if (v == 0.0) {
+        memset(buf, ' ', (size_t)w);
+        memcpy(buf + 1, "0.0", 3);
+        buf[w] = 0;
+        return;
+    }
+    if (dbl) {
+        nml_fmt(buf, w, "(G23.16)", 3, &v);
+        for (i = 0; i < w; i++) if (buf[i] == 'E') buf[i] = 'D';
+    } else {
+        float r = (float)v;
+        nml_fmt(buf, w, "(G15.8)", 2, &r);
+    }
+}
+
+/* s without its leading blanks, and but for a zero (0.0 and its
+ * padding, as H has it) its trailing ones, appended to out */
+static int nml_trim_cat(char *out, int n, const char *s) {
+    int a = 0, b = (int)strlen(s);
+    while (a < b && s[a] == ' ') a++;
+    if (!(b - a >= 3 && memcmp(s + a, "0.0", 3) == 0 && (a + 3 == b || s[a + 3] == ' ')))
+        while (b > a && s[b - 1] == ' ') b--;
+    memcpy(out + n, s + a, (size_t)(b - a));
+    return n + (b - a);
+}
+
+void f77_nml_begin(int unit, const char *grp, int glen, int reading, int flags);
+void f77_nml_dim(int lo, int ext);
+void f77_nml_item(const char *name, int nlen, int code, void *addr, int elen, int nelem);
+int f77_nml_end(void);
+
+static void nml_text_add(const char *s, int n) {
+    if (nml_tlen + n + 2 > nml_tcap) {
+        int cap = nml_tcap ? nml_tcap * 2 : 4096;
+        char *t;
+        while (cap < nml_tlen + n + 2) cap *= 2;
+        t = (char *)realloc(nml_text, (size_t)cap);
+        if (!t) { fprintf(stderr, "f77: out of storage for a NAMELIST\n"); exit(2); }
+        nml_text = t;
+        nml_tcap = cap;
+    }
+    memcpy(nml_text + nml_tlen, s, (size_t)n);
+    nml_tlen += n;
+    nml_text[nml_tlen] = 0;
+}
+
+static void nml_fail(const char *what) {
+    if (nml_status == 0) {
+        nml_status = 2;
+        strncpy(nml_err, what, sizeof nml_err - 1);
+        nml_err[sizeof nml_err - 1] = 0;
+    }
+}
+
+static int nml_namech(int c) { return isalnum((unsigned char)c) || c == '_' || c == '$' || c == '@' || c == '#'; }
+
+/* Is the text at i a NAME= or NAME(...)= ?  Its end (past the =) in *end. */
+static int nml_is_name(int i, int *end) {
+    int j = i;
+    if (j >= nml_tlen || !isalpha((unsigned char)nml_text[j])) return 0;
+    while (j < nml_tlen && nml_namech(nml_text[j])) j++;
+    while (j < nml_tlen && nml_text[j] == ' ') j++;
+    if (j < nml_tlen && nml_text[j] == '(') {
+        while (j < nml_tlen && nml_text[j] != ')') j++;
+        if (j >= nml_tlen) return 0;
+        j++;
+        while (j < nml_tlen && nml_text[j] == ' ') j++;
+    }
+    if (j < nml_tlen && nml_text[j] == '=') { *end = j + 1; return 1; }
+    return 0;
+}
+
+/* H writes a positive exponent with a blank for its sign, 0.5E 10:
+ * a blank after the E or D of a number, before its digits, is a +. */
+static int nml_exp_blank(int j) {
+    int k;
+    if (j < 2 || j + 1 >= nml_tlen) return 0;
+    k = toupper((unsigned char)nml_text[j - 1]);
+    if (k != 'E' && k != 'D') return 0;
+    if (!isdigit((unsigned char)nml_text[j - 2]) && nml_text[j - 2] != '.') return 0;
+    return isdigit((unsigned char)nml_text[j + 1]);
+}
+
+static void nml_parse(void) {
+    int i = 0;
+    struct nml_asg *a = 0;
+    int sep = 1;                 /* a separator was the last thing seen */
+    nml_nasg = 0;
+    nml_nval = 0;
+    while (i < nml_tlen && nml_status == 0) {
+        int c = nml_text[i];
+        int end;
+        if (c == ' ') { i++; continue; }
+        if (c == ',') {
+            if (sep && a) {             /* an empty place: a null value */
+                if (nml_nval >= nml_cval) {
+                    nml_cval = nml_cval ? nml_cval * 2 : 64;
+                    nml_val = (struct nml_val *)realloc(nml_val, sizeof *nml_val * (size_t)nml_cval);
+                }
+                nml_val[nml_nval].start = i; nml_val[nml_nval].len = 0; nml_val[nml_nval].rep = 1;
+                nml_nval++; a->count++;
+            }
+            sep = 1;
+            i++;
+            continue;
+        }
+        if (nml_is_name(i, &end)) {
+            int j = i, k = 0;
+            if (nml_nasg >= nml_casg) {
+                nml_casg = nml_casg ? nml_casg * 2 : 16;
+                nml_asg = (struct nml_asg *)realloc(nml_asg, sizeof *nml_asg * (size_t)nml_casg);
+            }
+            a = &nml_asg[nml_nasg++];
+            while (j < nml_tlen && nml_namech(nml_text[j]) && k < 31) a->name[k++] = (char)toupper((unsigned char)nml_text[j++]);
+            a->name[k] = 0;
+            while (j < nml_tlen && nml_namech(nml_text[j])) j++;
+            while (j < nml_tlen && nml_text[j] == ' ') j++;
+            a->nsub = 0;
+            if (nml_text[j] == '(') {
+                j++;
+                for (;;) {
+                    char *e;
+                    long v;
+                    while (nml_text[j] == ' ') j++;
+                    v = strtol(nml_text + j, &e, 10);
+                    if (e == nml_text + j) { nml_fail("a subscript is no integer"); return; }
+                    if (a->nsub < NML_MAXDIM) a->sub[a->nsub++] = (int)v;
+                    j = (int)(e - nml_text);
+                    while (nml_text[j] == ' ') j++;
+                    if (nml_text[j] == ',') { j++; continue; }
+                    break;
+                }
+            }
+            a->first = nml_nval;
+            a->count = 0;
+            a->used = 0;
+            i = end;
+            sep = 1;
+            continue;
+        }
+        if (!a) { nml_fail("a value before the first NAME="); return; }
+        {
+            /* one value: up to a separator, outside quotes and parentheses */
+            int s = i, rep = 1, depth = 0, q = 0;
+            int j = i;
+            while (j < nml_tlen && isdigit((unsigned char)nml_text[j])) j++;
+            if (j > i && j < nml_tlen && nml_text[j] == '*') {
+                rep = atoi(nml_text + i);
+                if (rep <= 0) { nml_fail("a repeat count is not positive"); return; }
+                s = j + 1;
+            }
+            j = s;
+            while (j < nml_tlen) {
+                int d = nml_text[j];
+                if (q) { if (d == q) { if (j + 1 < nml_tlen && nml_text[j + 1] == q) j++; else q = 0; } j++; continue; }
+                if (d == '\'' || d == '"') { q = d; j++; continue; }
+                if (d == '(') depth++;
+                else if (d == ')') depth--;
+                else if (d == ' ' && nml_exp_blank(j)) nml_text[j] = '+';
+                else if (depth <= 0 && (d == ',' || d == ' ')) break;
+                j++;
+            }
+            if (nml_nval >= nml_cval) {
+                nml_cval = nml_cval ? nml_cval * 2 : 64;
+                nml_val = (struct nml_val *)realloc(nml_val, sizeof *nml_val * (size_t)nml_cval);
+            }
+            nml_val[nml_nval].start = s;
+            nml_val[nml_nval].len = j - s;         /* r* alone: a null, r times */
+            nml_val[nml_nval].rep = rep;
+            nml_nval++;
+            a->count++;
+            i = j;
+            sep = 0;
+        }
+    }
+}
+
+/* The group's text: from the record that starts &GROUP, after it, up
+ * to &END.  Returns 1 at an end of file before or inside the group. */
+static int nml_read_group(void) {
+    char rec[FIO_MAXLINE];
+    int in = 0;
+    int glen = (int)strlen(nml_grp);
+    nml_tlen = 0;
+    nml_text_add("", 0);
+    for (;;) {
+        int r, i, n;
+        r = f77_rd_begin(nml_unit, "(A)", 3);
+        if (r == 1) return 1;
+        if (r != 0) { nml_fail("the record could not be read"); return 0; }
+        f77_rd_s(rec, FIO_MAXLINE - 1);
+        f77_rd_end();
+        n = FIO_MAXLINE - 1;
+        while (n > 1 && rec[n - 1] == ' ') n--;
+        i = 1;                                       /* column 1 is not read, as on H */
+        if (!in) {
+            int k;
+            while (i < n && rec[i] == ' ') i++;
+            if (i >= n || (rec[i] != '&' && rec[i] != '$')) continue;
+            for (k = 0; k < glen; k++)
+                if (i + 1 + k >= n || toupper((unsigned char)rec[i + 1 + k]) != nml_grp[k]) break;
+            if (k < glen || (i + 1 + glen < n && nml_namech(rec[i + 1 + glen]))) continue;
+            in = 1;
+            i = i + 1 + glen;
+        }
+        /* look for the end in this record, outside quotes */
+        {
+            int j, q = 0;
+            for (j = i; j < n; j++) {
+                int c = rec[j];
+                if (q) { if (c == q) q = 0; continue; }
+                if (c == '\'' || c == '"') { q = c; continue; }
+                if (c == '/' || ((c == '&' || c == '$') && j + 3 < n + 1 &&
+                    toupper((unsigned char)rec[j + 1]) == 'E' && toupper((unsigned char)rec[j + 2]) == 'N' &&
+                    toupper((unsigned char)rec[j + 3]) == 'D')) {
+                    nml_text_add(rec + i, j - i);
+                    return 0;
+                }
+            }
+            nml_text_add(rec + i, n - i);
+            nml_text_add(" ", 1);
+        }
+    }
+}
+
+void f77_nml_begin(int unit, const char *grp, int glen, int reading, int flags) {
+    int k;
+    nml_unit = unit;
+    nml_reading = reading;
+    nml_flags = flags;
+    nml_status = 0;
+    nml_ndim = 0;
+    nml_err[0] = 0;
+    if (glen > 31) glen = 31;
+    for (k = 0; k < glen; k++) nml_grp[k] = (char)toupper((unsigned char)grp[k]);
+    nml_grp[glen] = 0;
+    if (!reading) {
+        char hdr[40];
+        hdr[0] = ' ';
+        hdr[1] = '&';
+        memcpy(hdr + 2, nml_grp, (size_t)glen);
+        nml_record(hdr, glen + 2);
+        nml_width = fio_nml_width(unit);
+        if (nml_width < 20) nml_width = 20;
+        if (nml_width > FIO_MAXLINE) nml_width = FIO_MAXLINE;
+        nml_line[0] = ' ';
+        nml_len = 1;
+        nml_npend = -1;
+        return;
+    }
+    nml_nasg = 0;
+    nml_nval = 0;
+    if (nml_read_group()) { nml_status = 1; return; }
+    nml_parse();
+}
+
+void f77_nml_dim(int lo, int ext) {
+    if (nml_ndim < NML_MAXDIM) { nml_lo[nml_ndim] = lo; nml_ext[nml_ndim] = ext; nml_ndim++; }
+}
+
+/* One value of the input into element p of an item. */
+static void nml_store(const struct nml_val *v, int code, char *p, int elen) {
+    const char *s = nml_text + v->start;
+    int n = v->len;
+    if (code == 6) {
+        int i = 0;
+        if (i < n && s[i] == '.') i++;
+        if (i < n && toupper((unsigned char)s[i]) == 'T') *(int *)p = 1;
+        else if (i < n && toupper((unsigned char)s[i]) == 'F') *(int *)p = 0;
+        else nml_fail("a LOGICAL value is not T or F");
+        return;
+    }
+    if (code == 7) {
+        int i = 0, k = 0, q;
+        if (n < 1 || (s[0] != '\'' && s[0] != '"')) { nml_fail("a CHARACTER value is not in quotes"); return; }
+        q = s[0];
+        for (i = 1; i < n; i++) {
+            if (s[i] == q) { if (i + 1 < n && s[i + 1] == q) i++; else break; }
+            if (k < elen) p[k++] = s[i];
+        }
+        while (k < elen) p[k++] = ' ';
+        return;
+    }
+    {
+        char buf[FIO_MAXLINE];
+        int r;
+        if (n >= FIO_MAXLINE) n = FIO_MAXLINE - 1;
+        memcpy(buf, s, (size_t)n);
+        buf[n] = 0;
+        r = f77_rd_begin_int(buf, n, 1, 0, 3);
+        if (r != 0) { nml_fail("a value could not be read"); return; }
+        if (code == 1) f77_rd_i((int *)p);
+        else if (code == 2) f77_rd_r((float *)p);
+        else if (code == 3) f77_rd_d((double *)p);
+        else if (code == 4) f77_rd_c((float *)p);
+        else f77_rd_z((double *)p);
+        f77_rd_end();
+    }
+}
+
+void f77_nml_item(const char *name, int nlen, int code, void *addr, int elen, int nelem) {
+    char nm[32];
+    int k, size;
+    if (nlen > 31) nlen = 31;
+    for (k = 0; k < nlen; k++) nm[k] = (char)toupper((unsigned char)name[k]);
+    nm[nlen] = 0;
+    size = code == 1 || code == 2 || code == 6 ? 4 : code == 3 || code == 4 ? 8 : code == 5 ? 16 : elen;
+    if (!nml_reading) {
+        char buf[64];
+        char eq[40];
+        int e;
+        memcpy(eq, nm, (size_t)nlen);
+        eq[nlen] = '=';
+        nml_put_pending(1);
+        nml_put(eq, nlen + 1);
+        for (e = 0; e < nelem; e++) {
+            char *p = (char *)addr + (long)e * size;
+            if (code == 1) { nml_fmt(buf, 11, "(I11)", 1, p); nml_value(buf, 11); }
+            else if (code == 2) { nml_real(buf, *(float *)p, 0); nml_value(buf, 15); }
+            else if (code == 3) { nml_real(buf, *(double *)p, 1); nml_value(buf, 23); }
+            else if (code == 4 || code == 5) {
+                char out[80], part[32];
+                int n = 0, w = code == 5 ? 49 : 33, pad;
+                double re = code == 5 ? ((double *)p)[0] : ((float *)p)[0];
+                double im = code == 5 ? ((double *)p)[1] : ((float *)p)[1];
+                out[n++] = '(';
+                nml_real(part, re, code == 5);
+                n = nml_trim_cat(out, n, part);
+                out[n++] = ',';
+                nml_real(part, im, code == 5);
+                n = nml_trim_cat(out, n, part);
+                out[n++] = ')';
+                pad = w - n;
+                if (pad > 0) { memmove(out + pad, out, (size_t)n); memset(out, ' ', (size_t)pad); n = w; }
+                nml_value(out, n);
+            }
+            else if (code == 6) nml_value(*(int *)p ? "T" : "F", 1);
+            else {
+                char out[FIO_MAXLINE];
+                int n = 0, i;
+                out[n++] = '\'';
+                for (i = 0; i < elen && n < FIO_MAXLINE - 3; i++) {
+                    out[n++] = p[i];
+                    if (p[i] == '\'') out[n++] = '\'';
+                }
+                out[n++] = '\'';
+                nml_value(out, n);
+            }
+        }
+        nml_ndim = 0;
+        return;
+    }
+    if (nml_status == 0) {
+        int a;
+        for (a = 0; a < nml_nasg && nml_status == 0; a++) {
+            struct nml_asg *g = &nml_asg[a];
+            int el = 0, v;
+            if (strcmp(g->name, nm) != 0) continue;
+            g->used = 1;
+            if (g->nsub > 0) {
+                int stride = 1, d;
+                if (g->nsub != nml_ndim) { nml_fail("the subscripts do not match the array"); break; }
+                for (d = 0; d < g->nsub; d++) {
+                    int s = g->sub[d] - nml_lo[d];
+                    if (s < 0 || s >= nml_ext[d]) { nml_fail("a subscript is out of range"); break; }
+                    el += s * stride;
+                    stride *= nml_ext[d];
+                }
+                if (nml_status) break;
+            }
+            for (v = g->first; v < g->first + g->count && nml_status == 0; v++) {
+                int r;
+                for (r = 0; r < nml_val[v].rep; r++) {
+                    if (el >= nelem) { nml_fail("more values than the item has elements"); break; }
+                    if (nml_val[v].len > 0) nml_store(&nml_val[v], code, (char *)addr + (long)el * size, elen);
+                    el++;
+                }
+            }
+        }
+    }
+    nml_ndim = 0;
+}
+
+int f77_nml_end(void) {
+    if (!nml_reading) {
+        nml_put_pending(0);
+        nml_flush();
+        nml_record(" &END", 5);
+        return 0;
+    }
+    if (nml_status == 0) {
+        int a;
+        for (a = 0; a < nml_nasg; a++)
+            if (!nml_asg[a].used) {
+                char m[96];
+                sprintf(m, "%s is no item of the NAMELIST", nml_asg[a].name);
+                nml_fail(m);
+                break;
+            }
+    }
+    if (nml_status == 1 && !(nml_flags & 1)) {
+        fprintf(stderr, "f77: end of file on unit %d looking for NAMELIST &%s\n", nml_unit, nml_grp);
+        exit(2);
+    }
+    if (nml_status == 2 && !(nml_flags & 2)) {
+        fprintf(stderr, "f77: NAMELIST &%s on unit %d: %s\n", nml_grp, nml_unit, nml_err);
+        exit(2);
+    }
+    return nml_status;
 }
 
 /* --- ** with an INTEGER exponent -------------------------------------- */
