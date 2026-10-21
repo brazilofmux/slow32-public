@@ -264,24 +264,27 @@ fi
 # symbols is therefore sanctioned, not a cheat -- sbasic.s32x carries
 # sqrt/atan2/floor and runs them on the host under the DBT by design.
 #
-# What this reports is a code-quality fact worth watching.  Arithmetic
-# and SQRT stay hardware instructions; EXP, LOG, ATAN2, the trig
-# functions and real-exponent ** emit libm names so the DBT can
-# intercept them (trans1.f, sumsq.f).  The LINPACK kernel still has
-# none.  Printed rather than enforced.
+# What this reports is a code-quality fact worth watching: the libm
+# calls a program's OWN code makes.  Arithmetic and SQRT stay hardware
+# instructions; EXP, LOG, ATAN2, the trig functions and real-exponent **
+# emit libm names so the DBT can intercept them (trans1.f, sumsq.f).
+# The LINPACK kernel has none.  Printed rather than enforced.
+#
+# Read from the program's assembly, not its linked .s32x: libf77 is one
+# object that calls libm itself (complex arithmetic, the intrinsic
+# wrappers), and one math symbol links the whole math_soft member, so
+# every linked program carries every name (docs/plans/fortran77.md) --
+# a report from the .s32x listed all ~40 names for all ~75 programs and
+# said nothing about any of them.
 INTERCEPTABLE="sqrt sqrtf sin cos tan asin acos atan atan2 atan2f sinh cosh tanh exp log log10 pow powf ceil floor round trunc fabs fmod fmodf sinf cosf tanf asinf acosf atanf sinhf coshf tanhf expf logf log10f ceilf floorf roundf truncf fabsf"
 leaked=""
 for f in "$HERE"/f77/*.f; do
     [ -e "$f" ] || continue
     b="$(basename "$f" .f)"
     "$F77" "$f" "$W/$b.lm.s" >/dev/null 2>&1 || continue
-    "$AS" "$W/$b.lm.s" "$W/$b.lm.s32o" >/dev/null 2>&1 || continue
-    "$LD" -o "$W/$b.lm.s32x" --mmio 64K "$RT/crt0.s32o" "$W/$b.lm.s32o" \
-          "$LIBF77" \
-          "$RT/libc_mmio.s32a" "$RT/libs32.s32a" >/dev/null 2>&1 || continue
     for n in $INTERCEPTABLE; do
-        # -n 3: sin/cos/exp/log/pow are 3 chars, below strings' default
-        if strings -a -n 3 "$W/$b.lm.s32x" 2>/dev/null | grep -qx "$n"; then
+        # a call, or a tail call: jal rN, name
+        if grep -Eq "^[[:space:]]*jal r[0-9]+, $n\$" "$W/$b.lm.s"; then
             leaked="$leaked $b:$n"
         fi
     done
