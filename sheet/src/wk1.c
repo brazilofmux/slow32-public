@@ -14,6 +14,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <limits.h>
 
 #define WK1_BOF     0x0000
 #define WK1_EOF     0x0001
@@ -136,14 +137,17 @@ int sheet_save_wk1(const sheet_t *sh, const char *path) {
 }
 
 static int put_number(sheet_t *sh, int col, int row, double v) {
-    char buf[32];
+    char buf[64];
     if (col < 0 || col >= SHEET_COLS || row < 0 || row >= SHEET_ROWS) {
         return 0;
     }
-    if (v == (double)(long)v) {
-        snprintf(buf, sizeof(buf), "%ld", (long)v);
+    /* ILP32 long wraps above 2³¹−1; %.10g drops bits. Integers that fit
+     * in int64 go through %lld; everything else is a round-tripable %.17g. */
+    if (v >= (double)INT64_MIN && v <= (double)INT64_MAX &&
+        v == (double)(int64_t)v) {
+        snprintf(buf, sizeof(buf), "%lld", (long long)(int64_t)v);
     } else {
-        snprintf(buf, sizeof(buf), "%.10g", v);
+        snprintf(buf, sizeof(buf), "%.17g", v);
     }
     return sheet_set(sh, col, row, buf);
 }
@@ -174,13 +178,25 @@ int sheet_load_wk1(sheet_t *sh, const char *path) {
     while (rd16(f, &op) == 0 && rd16(f, &len) == 0) {
         int col;
         int row;
-        if (len > WK1_MAX_REC) {
+        uint16_t got = len;
+        /* Lotus FORMULA bodies go to 2K. Keep the prefix (cached IEEE is
+         * in the first 13 bytes) and skip the rest; do not abort a sheet
+         * that already loaded earlier cells. */
+        if (got > WK1_MAX_REC) {
+            got = WK1_MAX_REC;
+        }
+        if (got > 0 && fread(rec, 1, got, f) != got) {
             fclose(f);
             return -1;
         }
-        if (len > 0 && fread(rec, 1, len, f) != len) {
-            fclose(f);
-            return -1;
+        if (len > got) {
+            uint16_t skip = (uint16_t)(len - got);
+            while (skip--) {
+                if (fgetc(f) == EOF) {
+                    fclose(f);
+                    return -1;
+                }
+            }
         }
         if (op == WK1_BOF) {
             saw_bof = 1;
