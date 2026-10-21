@@ -162,11 +162,7 @@ int sheet_save_dbf(const sheet_t *sh, const char *path) {
                 tmp[sizeof(tmp) - 1] = '\0';
                 pad_left((char *)rec + off, flen[c], tmp);
             } else if (cell->kind != CELL_EMPTY && cell->err == SERR_OK) {
-                if (cell->value == (double)(long)cell->value) {
-                    snprintf(tmp, sizeof(tmp), "%ld", (long)cell->value);
-                } else {
-                    snprintf(tmp, sizeof(tmp), "%.8g", cell->value);
-                }
+                sheet_fmt_number(tmp, sizeof(tmp), cell->value, "%.8g");
                 pad_right((char *)rec + off, flen[c], tmp);
             }
             off += flen[c];

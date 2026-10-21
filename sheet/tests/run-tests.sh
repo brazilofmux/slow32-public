@@ -23,8 +23,17 @@ run_script() {
         < "$SCRIPT_DIR/$name.cmd" > "$work/out.txt" 2>"$work/err.txt" || true
     local fail=0
     local pat
+    # A round-trip script CLEARs between SAVE and LOAD.  Only what follows
+    # the last "cleared" counts, or the echo of each assignment before the
+    # SAVE would satisfy the check and the load could print anything.
+    if grep -q '^>cleared' "$work/out.txt"; then
+        awk '/^>cleared/ { n = 0 } { l[n++] = $0 } END { for (i = 0; i < n; i++) print l[i] }' \
+            "$work/out.txt" > "$work/after.txt"
+    else
+        cp "$work/out.txt" "$work/after.txt"
+    fi
     for pat in "$@"; do
-        if grep -q "$pat" "$work/out.txt"; then
+        if grep -q "$pat" "$work/after.txt"; then
             echo "  OK  $name: $pat"
         else
             echo "  FAIL $name: $pat"
@@ -49,8 +58,10 @@ run_script sumexpr "A3: 30" "A4: 30" "A5: 30" \
     "C1: 0" "C2: 0" "C3: 0" "C4: 0" "C5: 10" || fail=1
 run_script cycle "#CYCLE!" "#DIV/0!" || fail=1
 run_script saveload "A1: 42" "B1: hello" "C1: 43" || fail=1
-# Formulas flatten to cached values in WK1. C1 was A1+1.
-run_script wk1 "A1: 42" "B1: hello" "C1: 43" "D1: 3.5" || fail=1
+# Formulas flatten to cached values in WK1. C1 was A1+1.  E1 has eleven
+# digits, past what %.10g kept; Y1 magnifies the digits of pi in F1 that
+# %.10g dropped (GitHub issue 115).
+run_script wk1 "A1: 42" "B1: hello" "C1: 43" "D1: 3.5" "E1: 12345678901" "Y1: 3.58979" || fail=1
 run_script dbf "A1: 10" "B1: hello" "A2: 20" "B2: world" || fail=1
 
 if command -v python3 >/dev/null 2>&1; then

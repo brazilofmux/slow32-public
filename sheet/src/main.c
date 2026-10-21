@@ -54,12 +54,15 @@ static void print_cell(int col, int row) {
         printf("%s: %s\n", name, sheet_err_str(cell->err));
         return;
     }
-    if (cell->kind == CELL_FORMULA) {
-        printf("%s: %g    [%s]\n", name, cell->value,
-               cell->raw ? cell->raw : "");
-        return;
+    {
+        char num[64];
+        sheet_fmt_number(num, sizeof(num), cell->value, "%g");
+        if (cell->kind == CELL_FORMULA) {
+            printf("%s: %s    [%s]\n", name, num, cell->raw ? cell->raw : "");
+            return;
+        }
+        printf("%s: %s\n", name, num);
     }
-    printf("%s: %g\n", name, cell->value);
 }
 
 static void help(void) {

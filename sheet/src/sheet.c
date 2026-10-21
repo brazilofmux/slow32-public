@@ -221,11 +221,17 @@ void sheet_format_value(const cell_t *cell, char *buf, int cap) {
         snprintf(buf, (size_t)cap, "%s", cell->raw ? cell->raw : "");
         return;
     }
-    if (cell->value == (double)(long)cell->value) {
-        snprintf(buf, (size_t)cap, "%ld", (long)cell->value);
-    } else {
-        snprintf(buf, (size_t)cap, "%g", cell->value);
+    sheet_fmt_number(buf, (size_t)cap, cell->value, "%g");
+}
+
+int sheet_fmt_number(char *buf, size_t cap, double v, const char *gfmt) {
+    /* (double)INT64_MAX rounds up to 2^63, which the cast cannot hold:
+     * the bounds are strict against 2^63 itself. */
+    if (v > -9223372036854775808.0 && v < 9223372036854775808.0 &&
+        v == (double)(long long)v) {
+        return snprintf(buf, cap, "%lld", (long long)v);
     }
+    return snprintf(buf, cap, gfmt, v);
 }
 
 void sheet_list(const sheet_t *sh, FILE *out) {

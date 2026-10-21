@@ -14,7 +14,6 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <limits.h>
 
 #define WK1_BOF     0x0000
 #define WK1_EOF     0x0001
@@ -57,12 +56,7 @@ static int rd16(FILE *f, uint16_t *out) {
 }
 
 static int is_int16(double v) {
-    long n;
-    if (v != (double)(long)v) {
-        return 0;
-    }
-    n = (long)v;
-    return n >= -32768L && n <= 32767L;
+    return v >= -32768.0 && v <= 32767.0 && v == (double)(int)v;
 }
 
 int sheet_save_wk1(const sheet_t *sh, const char *path) {
@@ -141,14 +135,9 @@ static int put_number(sheet_t *sh, int col, int row, double v) {
     if (col < 0 || col >= SHEET_COLS || row < 0 || row >= SHEET_ROWS) {
         return 0;
     }
-    /* ILP32 long wraps above 2³¹−1; %.10g drops bits. Integers that fit
-     * in int64 go through %lld; everything else is a round-tripable %.17g. */
-    if (v >= (double)INT64_MIN && v <= (double)INT64_MAX &&
-        v == (double)(int64_t)v) {
-        snprintf(buf, sizeof(buf), "%lld", (long long)(int64_t)v);
-    } else {
-        snprintf(buf, sizeof(buf), "%.17g", v);
-    }
+    /* ILP32 long wrapped above 2^31-1 and %.10g dropped bits: integers go
+     * through %lld, everything else through a round-trippable %.17g. */
+    sheet_fmt_number(buf, sizeof(buf), v, "%.17g");
     return sheet_set(sh, col, row, buf);
 }
 

@@ -66,4 +66,9 @@ void sheet_ui(sheet_t *sh, char *filename, int filename_cap);
 
 int formula_eval(sheet_t *sh, const char *expr, double *out, int *err);
 
+/* v as text: an integer (|v| below 2^63) through %lld, anything else
+ * through gfmt (a %g form).  long is 32 bits on SLOW-32, so a cast to it
+ * wrapped integers above 2^31-1 (GitHub issue 115). */
+int sheet_fmt_number(char *buf, size_t cap, double v, const char *gfmt);
+
 #endif
