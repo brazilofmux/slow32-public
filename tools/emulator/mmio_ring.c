@@ -285,7 +285,7 @@ static int parse_guest_sockaddr_in(mmio_ring_state_t *mmio,
         return EINVAL;
     }
     uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
-    if (offset > (S32_MMIO_DATA_CAPACITY - sizeof(s32_mmio_sockaddr_in_t))) {
+    if (!s32_mmio_sockaddr_in_fits(offset)) {
         return EINVAL;
     }
 
@@ -302,16 +302,17 @@ static int parse_guest_sockaddr_in(mmio_ring_state_t *mmio,
     return 0;
 }
 
-static void write_guest_sockaddr_in(mmio_ring_state_t *mmio, uint32_t offset,
-                                    const struct sockaddr_in *in) {
-    if (offset > (S32_MMIO_DATA_CAPACITY - sizeof(s32_mmio_sockaddr_in_t))) {
-        return;
+static int write_guest_sockaddr_in(mmio_ring_state_t *mmio, uint32_t offset,
+                                   const struct sockaddr_in *in) {
+    if (!s32_mmio_sockaddr_in_fits(offset)) {
+        return EINVAL;
     }
     s32_mmio_sockaddr_in_t g;
     g.addr = ntohl(in->sin_addr.s_addr);
     g.port = ntohs(in->sin_port);
     g.family = S32_AF_INET;
     memcpy(mmio->data_buffer + offset, &g, sizeof(g));
+    return 0;
 }
 
 static int guest_socket_fd(mmio_ring_state_t *mmio, int host_fd) {
@@ -3941,7 +3942,10 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                 break;
             }
             uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
-            write_guest_sockaddr_in(mmio, offset, &bound);
+            if (write_guest_sockaddr_in(mmio, offset, &bound) != 0) {
+                mmio_fail(&resp, EINVAL);
+                break;
+            }
             resp.status = S32_MMIO_STATUS_OK;
             resp.length = sizeof(s32_mmio_sockaddr_in_t);
             break;
@@ -4019,7 +4023,16 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             }
 
             uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
-            write_guest_sockaddr_in(mmio, offset, &peer);
+            if (write_guest_sockaddr_in(mmio, offset, &peer) != 0) {
+                if (mmio->host_fd_owned[guest_fd]) {
+                    close(new_host);
+                }
+                mmio->host_fds[guest_fd] = -1;
+                mmio->host_fd_owned[guest_fd] = false;
+                mmio->fd_types[guest_fd] = S32_FD_TYPE_FILE;
+                mmio_fail(&resp, EINVAL);
+                break;
+            }
             resp.status = (uint32_t)guest_fd;
             resp.length = sizeof(s32_mmio_sockaddr_in_t);
             if (trace_io_enabled) {
@@ -4133,7 +4146,10 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                 break;
             }
             uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
-            write_guest_sockaddr_in(mmio, offset, &other);
+            if (write_guest_sockaddr_in(mmio, offset, &other) != 0) {
+                mmio_fail(&resp, EINVAL);
+                break;
+            }
             resp.status = S32_MMIO_STATUS_OK;
             resp.length = sizeof(s32_mmio_sockaddr_in_t);
             break;

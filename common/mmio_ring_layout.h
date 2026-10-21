@@ -246,6 +246,14 @@ typedef struct s32_mmio_sockaddr_in {
     uint16_t family;
 } s32_mmio_sockaddr_in_t;
 
+/* Offset of a sockaddr_in payload in the data buffer. A write that would
+ * wrap the buffer must fail (EINVAL), not skip and still report OK. */
+static inline int s32_mmio_sockaddr_in_fits(uint32_t offset)
+{
+    return offset <= (S32_MMIO_DATA_CAPACITY -
+                      (uint32_t)sizeof(s32_mmio_sockaddr_in_t));
+}
+
 typedef struct s32_mmio_timepair64 {
     uint32_t seconds_lo;   // low 32 bits of seconds
     uint32_t seconds_hi;   // high 32 bits of seconds

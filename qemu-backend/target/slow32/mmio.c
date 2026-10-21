@@ -186,6 +186,12 @@ typedef struct QEMU_PACKED s32_mmio_sockaddr_in {
     uint16_t family;
 } s32_mmio_sockaddr_in_t;
 
+static inline int s32_mmio_sockaddr_in_fits(uint32_t offset)
+{
+    return offset <= (S32_MMIO_DATA_CAPACITY -
+                      (uint32_t)sizeof(s32_mmio_sockaddr_in_t));
+}
+
 #define S32_MMIO_OP_ARGS_INFO 0x60
 #define S32_MMIO_OP_ARGS_DATA 0x61
 #define S32_MMIO_OP_ENVP_INFO 0x62
@@ -2453,17 +2459,22 @@ static int slow32_mmio_parse_sockaddr_in(Slow32MMIOContext *ctx,
     return 0;
 }
 
-static void slow32_mmio_write_sockaddr_in(Slow32MMIOContext *ctx,
-                                          CPUSlow32State *env,
-                                          uint32_t offset,
-                                          const struct sockaddr_in *in)
+static int slow32_mmio_write_sockaddr_in(Slow32MMIOContext *ctx,
+                                         CPUSlow32State *env,
+                                         uint32_t offset,
+                                         const struct sockaddr_in *in)
 {
     s32_mmio_sockaddr_in_t g;
+    uint32_t off = offset % S32_MMIO_DATA_CAPACITY;
+    if (!s32_mmio_sockaddr_in_fits(off)) {
+        return EINVAL;
+    }
     g.addr = ntohl(in->sin_addr.s_addr);
     g.port = ntohs(in->sin_port);
     g.family = S32_AF_INET;
     memcpy(ctx->scratch, &g, sizeof(g));
-    slow32_mmio_copy_to_guest(env, offset, ctx->scratch, sizeof(g));
+    slow32_mmio_copy_to_guest(env, off, ctx->scratch, sizeof(g));
+    return 0;
 }
 
 static int slow32_mmio_guest_socket_fd(Slow32MMIOContext *ctx, int host_fd)
@@ -3424,7 +3435,16 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
             slow32_mmio_fail(resp, EMFILE);
             break;
         }
-        slow32_mmio_write_sockaddr_in(ctx, env, req->offset, &peer);
+        if (slow32_mmio_write_sockaddr_in(ctx, env, req->offset, &peer) != 0) {
+            if (ctx->host_fd_owned[guest_fd]) {
+                close(new_host);
+            }
+            ctx->host_fds[guest_fd] = -1;
+            ctx->host_fd_owned[guest_fd] = false;
+            ctx->fd_types[guest_fd] = S32_FD_TYPE_FILE;
+            slow32_mmio_fail(resp, EINVAL);
+            break;
+        }
         resp->status = (uint32_t)guest_fd;
         resp->length = sizeof(s32_mmio_sockaddr_in_t);
         break;
@@ -3443,7 +3463,10 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
             slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
             break;
         }
-        slow32_mmio_write_sockaddr_in(ctx, env, req->offset, &bound);
+        if (slow32_mmio_write_sockaddr_in(ctx, env, req->offset, &bound) != 0) {
+            slow32_mmio_fail(resp, EINVAL);
+            break;
+        }
         resp->status = S32_MMIO_STATUS_OK;
         resp->length = sizeof(s32_mmio_sockaddr_in_t);
         break;
@@ -3470,7 +3493,10 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
             slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
             break;
         }
-        slow32_mmio_write_sockaddr_in(ctx, env, req->offset, &other);
+        if (slow32_mmio_write_sockaddr_in(ctx, env, req->offset, &other) != 0) {
+            slow32_mmio_fail(resp, EINVAL);
+            break;
+        }
         resp->status = S32_MMIO_STATUS_OK;
         resp->length = sizeof(s32_mmio_sockaddr_in_t);
         break;
