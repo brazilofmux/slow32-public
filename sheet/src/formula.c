@@ -244,8 +244,13 @@ static double parse_func(parser_t *p) {
                     return 0.0;
                 }
                 fold_range(p, &fold, which, c1, r1, c2, r2);
+            } else if (*p->p == ',' || *p->p == ')' || *p->p == '\0') {
+                /* Bare cell: skip empty/label like a one-cell range. */
+                fold_range(p, &fold, which, c1, r1, c1, r1);
             } else {
-                fold_add(&fold, which, eval_cell(p, c1, r1));
+                /* A1+A2 is one list item, not a leftover operator. */
+                p->p = save;
+                fold_add(&fold, which, parse_expr(p));
             }
         } else {
             p->p = save;

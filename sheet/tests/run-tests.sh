@@ -45,6 +45,8 @@ echo "=== Sheet tests ==="
 fail=0
 run_script arithmetic "A3: 50" "A4: 60" || fail=1
 run_script sum "A4: 6" "A5: 2" "A6: 1" "A7: 3" || fail=1
+run_script sumexpr "A3: 30" "A4: 30" "A5: 30" \
+    "C1: 0" "C2: 0" "C3: 0" "C4: 0" "C5: 10" || fail=1
 run_script cycle "#CYCLE!" "#DIV/0!" || fail=1
 run_script saveload "A1: 42" "B1: hello" "C1: 43" || fail=1
 # Formulas flatten to cached values in WK1. C1 was A1+1.
