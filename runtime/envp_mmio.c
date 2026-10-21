@@ -143,12 +143,33 @@ static int fetch_envp_from_host(void) {
 // A kept answer has storage of its own, so a second getenv no longer
 // overwrites the first one's, as glibc's does not; and a name asked for
 // again (a debugging switch read in a loop) is not a request again.
-// Past GETENV_KEEP_MAX names, or out of memory, the answer goes in one
-// shared buffer, as before.
-#define GETENV_KEEP_MAX 64
-static char *getenv_keep_name[GETENV_KEEP_MAX];
-static char *getenv_keep_val[GETENV_KEEP_MAX];
-static int getenv_keep_n = 0;
+// The table grows from 64 like the atexit list; only an allocation
+// failure falls back to one shared buffer.
+static char **getenv_keep_name;
+static char **getenv_keep_val;
+static int getenv_keep_n;
+static int getenv_keep_cap;
+
+static int getenv_keep_grow(void) {
+    int ncap = getenv_keep_cap ? getenv_keep_cap * 2 : 64;
+    char **nn = (char **)malloc((size_t)ncap * sizeof *nn);
+    char **nv = (char **)malloc((size_t)ncap * sizeof *nv);
+    if (!nn || !nv) {
+        free(nn);
+        free(nv);
+        return 0;
+    }
+    if (getenv_keep_n) {
+        memcpy(nn, getenv_keep_name, (size_t)getenv_keep_n * sizeof *nn);
+        memcpy(nv, getenv_keep_val, (size_t)getenv_keep_n * sizeof *nv);
+    }
+    free(getenv_keep_name);
+    free(getenv_keep_val);
+    getenv_keep_name = nn;
+    getenv_keep_val = nv;
+    getenv_keep_cap = ncap;
+    return 1;
+}
 
 char *getenv(const char *name) {
     if (!name || !*name) {
@@ -179,7 +200,7 @@ char *getenv(const char *name) {
     memcpy((void *)data_buffer, name, name_len + 1);
 
     // Request: length = name length + 1 (for NUL), status = 0
-    // Response: status = value length (0 if not found), value in data buffer
+    // Response: status = value length; not found is ERR/ENOENT
     unsigned int status = (unsigned int)s32_mmio_request(
         S32_MMIO_OP_GETENV,
         (unsigned int)(name_len + 1),
@@ -191,7 +212,9 @@ char *getenv(const char *name) {
         return NULL;
     }
 
-    if (getenv_keep_n < GETENV_KEEP_MAX) {
+    if (getenv_keep_n == getenv_keep_cap)
+        getenv_keep_grow();
+    if (getenv_keep_n < getenv_keep_cap) {
         char *kn = (char *)malloc(name_len + 1);
         char *kv = NULL;
         if (kn && status != S32_MMIO_STATUS_ERR) {

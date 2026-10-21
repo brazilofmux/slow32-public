@@ -4319,7 +4319,9 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
 
         case S32_MMIO_OP_GETENV: {
             // Request: name in data buffer, length = name length (including NUL)
-            // Response: value in data buffer, status = value length (0 if not found)
+            // Response: value in data buffer, status = value length;
+            // not found is ERR/ENOENT (the guest treats ERR as unset,
+            // status 0 as an empty value).
             if (req->length == 0 || req->length > S32_MMIO_DATA_CAPACITY) {
                 mmio_fail(&resp, EINVAL);
                 break;
