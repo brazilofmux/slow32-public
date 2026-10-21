@@ -2,8 +2,9 @@ C     ** Type lengths.  REAL*8 FUNCTION was not taken for a header (the
 C     unit became a second main program), and a name starting with H
 C     after a length -- REAL*8 HALF, CHARACTER*8 HUE -- was read as a
 C     Hollerith constant once the blanks were gone (*8H...).  INTEGER*2
-C     and LOGICAL*1 are read as fort370 reads them, a fullword, so
-C     values here stay in 16 bits; COMPLEX*16 is refused, which
+C     and LOGICAL*1 are a halfword and a byte, as in fort370
+C     (int2width1 tests that), and values here stay in 16 bits;
+C     COMPLEX*16 is refused, which
 C     tests/run-tests.sh checks.  From fort370, which found the header.
 C     Self-checking; success reaches STOP 0.
       PROGRAM REAL8F
