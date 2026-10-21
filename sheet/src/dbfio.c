@@ -10,6 +10,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 
@@ -178,6 +179,25 @@ int sheet_save_dbf(const sheet_t *sh, const char *path) {
     return 0;
 }
 
+/* Force a label even when the text looks numeric ("00123"). */
+static int set_label(sheet_t *sh, int col, int row, const char *s) {
+    cell_t *cell = sheet_cell(sh, col, row);
+    char *copy;
+    if (!cell) {
+        return -1;
+    }
+    free(cell->raw);
+    memset(cell, 0, sizeof(*cell));
+    copy = (char *)malloc(strlen(s) + 1);
+    if (!copy) {
+        return -1;
+    }
+    memcpy(copy, s, strlen(s) + 1);
+    cell->raw = copy;
+    cell->kind = CELL_LABEL;
+    return 0;
+}
+
 static void trim_spaces(char *s) {
     char *p = s;
     char *end;
@@ -265,32 +285,42 @@ int sheet_load_dbf(sheet_t *sh, const char *path) {
     }
 
     sheet_clear(sh);
-    for (recno = 0; recno < nrec && recno < (uint32_t)SHEET_ROWS; recno++) {
-        uint8_t rec[1 + 26 * 64];
-        int off = 1;
-        if (rec_size > sizeof(rec)) {
-            break;
-        }
-        if (fread(rec, 1, rec_size, f) != rec_size) {
-            break;
-        }
-        if (rec[0] == '*') {
-            continue; /* deleted — leave the sheet row empty */
-        }
-        for (i = 0; i < nf && i < SHEET_COLS; i++) {
-            char tmp[65];
-            int n = flen[i];
-            if (n > 64) {
-                n = 64;
+    {
+        int row = 0;
+        for (recno = 0; recno < nrec && row < SHEET_ROWS; recno++) {
+            uint8_t rec[1 + 26 * 64];
+            int off = 1;
+            if (rec_size > sizeof(rec)) {
+                break;
             }
-            memcpy(tmp, rec + off, (size_t)n);
-            tmp[n] = '\0';
-            trim_spaces(tmp);
-            if (tmp[0]) {
-                sheet_set(sh, i, (int)recno, tmp);
+            if (fread(rec, 1, rec_size, f) != rec_size) {
+                break;
             }
-            off += flen[i];
-            (void)ftype;
+            if (rec[0] == '*') {
+                continue; /* deleted — do not occupy a sheet row */
+            }
+            for (i = 0; i < nf && i < SHEET_COLS; i++) {
+                char tmp[65];
+                int n = flen[i];
+                char kind;
+                if (n > 64) {
+                    n = 64;
+                }
+                memcpy(tmp, rec + off, (size_t)n);
+                tmp[n] = '\0';
+                trim_spaces(tmp);
+                kind = ftype[i];
+                if (tmp[0]) {
+                    if (kind == 'C' || kind == 'c' || kind == 'D' || kind == 'd' ||
+                        kind == 'L' || kind == 'l') {
+                        set_label(sh, i, row, tmp);
+                    } else {
+                        sheet_set(sh, i, row, tmp);
+                    }
+                }
+                off += flen[i];
+            }
+            row++;
         }
     }
 
