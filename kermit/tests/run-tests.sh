@@ -97,10 +97,53 @@ import sys
 open(sys.argv[1], 'wb').write(bytes((i * 7 + (i >> 8)) & 255 for i in range(65536)))
 PY
 
-# fwrite/fclose/ferror fail paths are not injected here: a full guest disk
-# is hard, and a transfer that prints OK does not prove those arms. They
-# are structurally handled in kermit.c (short D write, Z fclose, sender
-# ferror). Happy-path and lossy-wire transfers still have to pass.
+# One fail path can be provoked without a full disk: a directory opens for
+# reading and then fails to read (EISDIR), so sending one exercises the
+# sender's read-error arm, and the E packet it sends exercises the
+# receiver's peer-error arm.  The write and close failures on the receiving
+# side stay structural (GitHub issue 101).
+transfer_fail() { # transfer_fail <label> <path>: must NOT complete
+    local label="$1" path="$2"
+    local inbox="$work/in-$label"
+    mkdir -p "$inbox"
+    rm -f "$inbox/kermit.port"
+    (cd "$inbox" && "$EMU" "$KERMIT" -r -t 1) \
+        >"$inbox/recv.out" 2>"$inbox/recv.err" &
+    recv_pid=$!
+    local port=""
+    for _ in $(seq 1 50); do
+        if [ -f "$inbox/kermit.port" ]; then
+            port="$(tr -d '[:space:]' < "$inbox/kermit.port" || true)"
+            [ -n "$port" ] && break
+        fi
+        sleep 0.1
+    done
+    if [ -z "$port" ]; then
+        echo "  FAIL $label: receiver never wrote kermit.port"
+        fail=1
+        return
+    fi
+    local src=0
+    (cd "$work/out" && "$EMU" "$KERMIT" -s -t 1 "$port" "$path") \
+        >"$work/send.out" 2>"$work/send.err" || src=$?
+    wait "$recv_pid" || true
+    recv_pid=""
+    if [ "$src" -ne 0 ] && grep -q "read error" "$work/send.err" && \
+       ! grep -q "^OK" "$work/send.out"; then
+        echo "  OK  $label: sender failed on the read error"
+    else
+        echo "  FAIL $label: sender rc=$src"
+        cat "$work/send.out" "$work/send.err"
+        fail=1
+    fi
+    if grep -q "peer error" "$inbox/recv.err" && ! grep -q "^OK" "$inbox/recv.out"; then
+        echo "  OK  $label: receiver reported the peer error, no OK"
+    else
+        echo "  FAIL $label: receiver output"
+        cat "$inbox/recv.out" "$inbox/recv.err"
+        fail=1
+    fi
+}
 
 echo "=== Kermit tests ==="
 transfer text notes.txt
@@ -108,6 +151,8 @@ transfer binary allbytes.bin
 transfer quoting hashes.txt
 transfer big big.bin
 transfer multi notes.txt allbytes.bin hashes.txt
+mkdir -p "$work/out/notafile.d"
+transfer_fail dir-send notafile.d
 
 # Lossy wire.  Both sides advertise TIME=1 so a lost packet costs a second,
 # and each side's timeout path is provoked in turn: the sender loses its 5th
