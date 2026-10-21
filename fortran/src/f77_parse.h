@@ -46,6 +46,9 @@ static int  f77_sext[F77_MAX_SYM][F77_MAX_RANK];  /* constant extent */
 static int  f77_sextsym[F77_MAX_SYM][F77_MAX_RANK];   /* now: HIR value of the extent, or -1 */
 static int  f77_slov[F77_MAX_SYM][F77_MAX_RANK];      /* HIR value of the lower bound, or -1 */
 #define f77_sextv f77_sextsym
+/* An assumed-size dummy, A(*) or A(N,*): its size is not known anywhere
+ * (the * is recorded as an extent of 1). */
+static int  f77_sassz[F77_MAX_SYM];
 static int f77_adjustable(int s) {
     int k;
     for (k = 0; k < f77_srank[s]; k++)
@@ -3185,12 +3188,13 @@ static void f77_cexpr(void) {
  * PARAMETER (a dummy, say: A(LDA, 2*N+1)) is an adjustable bound,
  * evaluated here in the declaration part -- the entry block, which
  * dominates every subscript -- and returned through *val. */
+static int f77_bound_star;      /* set by f77_bound on a `*` */
 static int f77_bound(int *val) {
     int i;
     int depth;
     int runtime;
     *val = -1;
-    if (lx_t == T_STAR) { f77_tok(); return 1; }   /* assumed size */
+    if (lx_t == T_STAR) { f77_tok(); f77_bound_star = 1; return 1; }   /* assumed size */
     runtime = 0;
     i = (int)(lx_rts - lx_stmt);
     depth = 0;
@@ -3237,6 +3241,7 @@ static void f77_parse_dims(int s) {
     int hisym;
     rank = 0;
     f77_tok();                       /* past ( */
+    f77_bound_star = 0;
     for (;;) {
         lo = 1;
         losym = -1;
@@ -3272,6 +3277,7 @@ static void f77_parse_dims(int s) {
     else f77_tok();
     if (rank > F77_MAX_RANK) { f77_error("too many dimensions"); rank = F77_MAX_RANK; }
     f77_srank[s] = rank;
+    f77_sassz[s] = f77_bound_star;
 }
 
 /* A CHARACTER length after the `*`: n, (cexpr), or (*) for an
@@ -6550,16 +6556,28 @@ static int f77_io_fmt_spec(void) {
         {
             /* an unsubscripted CHARACTER array is the concatenation of
              * its elements (F77 13.1.1); a single element is one item. */
-            int nelem = 1;
+            /* an assumed-size one has no known size: walked as before,
+             * to its ); an adjustable one's count is the run-time
+             * product of its extents */
+            int nelem = 1, whole = -1;
             if (lx_t == T_NAME) {
                 int s = f77_sym(lex_name);
                 int after = (int)(lx_rte - lx_stmt);
-                if (f77_srank[s] > 0 && (after >= lx_stmt_len || lx_stmt[after] != '('))
+                if (f77_srank[s] > 0 && (after >= lx_stmt_len || lx_stmt[after] != '(')) {
+                    whole = s;
                     nelem = f77_sym_nelem(s);
+                }
             }
             f77_fmt_dyn = f77_expr();
             f77_fmt_dyn_len = ex_len;
-            if (nelem > 1)
+            if (whole >= 0 && f77_sassz[whole])
+                f77_fmt_dyn_len = f77_iconst(-1);
+            else if (whole >= 0 && f77_adjustable(whole)) {
+                int k, n = f77_iconst(1);
+                for (k = 0; k < f77_srank[whole]; k++)
+                    n = hi_emit(HI_MUL, TY_INT, n, f77_sextv[whole][k] >= 0 ? f77_sextv[whole][k] : f77_iconst(f77_sext[whole][k]), 0, NULL);
+                f77_fmt_dyn_len = hi_emit(HI_MUL, TY_INT, ex_len, n, 0, NULL);
+            } else if (nelem > 1)
                 f77_fmt_dyn_len = hi_emit(HI_MUL, TY_INT, ex_len, f77_iconst(nelem), 0, NULL);
             return -3;
         }
