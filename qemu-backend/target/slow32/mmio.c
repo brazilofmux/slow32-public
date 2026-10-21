@@ -2041,15 +2041,13 @@ static void slow32_mmio_handle_gettime(const CPUSlow32State *env,
                                        const Slow32MMIODesc *req,
                                        Slow32MMIODesc *resp)
 {
-    /* status selects the clock: 0 the wall clock, 1 a monotonic one
-     * (slow-32 common/mmio_ring_layout.h, S32_MMIO_CLOCK_*). */
+    /* status selects the clock: 0 the wall clock, 1 a monotonic one,
+     * 2 this process's processor time (S32_MMIO_CLOCK_*).  Clock 2 is
+     * the guest's, though QEMU's other threads count in it too. */
     if (req->length < sizeof(s32_mmio_timepair64_t) || req->status > 2) {
         slow32_mmio_fail(resp, EINVAL);
         return;
     }
-
-    /* 2: this process's processor time -- the guest's, though QEMU's other
-     * threads count in it too */
     struct timespec ts = {0};
     clockid_t clk = req->status == S32_MMIO_CLOCK_MONOTONIC ? CLOCK_MONOTONIC
                   : req->status == S32_MMIO_CLOCK_PROCESS ? CLOCK_PROCESS_CPUTIME_ID
