@@ -1,5 +1,6 @@
 /* HOSTLEG -- the clocks and the sleeps: time passes while a program
  * sleeps, by about as much as it asked for. */
+#include <errno.h>
 #include <stdio.h>
 #include <time.h>
 #include <unistd.h>
@@ -32,7 +33,9 @@ int main(void) {
     printf("nanosleep with no remainder asked for: %d\n", r);
 
     req.tv_nsec = 1000000000;
-    printf("nanosleep with a billion nanoseconds: %s\n", nanosleep(&req, 0) != 0 ? "refused" : "ACCEPTED");
+    errno = 0;
+    r = nanosleep(&req, 0);
+    printf("nanosleep with a billion nanoseconds: %s EINVAL %d\n", r != 0 ? "refused" : "ACCEPTED", errno == EINVAL);
 
     clock_gettime(CLOCK_REALTIME, &t0);
     r = usleep(20000);

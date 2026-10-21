@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -61,6 +62,34 @@ int main() {
         if (strstr(s, "Sat Jan  1 00:00:00 2000") == NULL) {
             printf("asctime format wrong: '%s'\n", s);
             errors++;
+        }
+    }
+
+    /* libc_debug: the clock and sleep exist as symbols; without MMIO they
+     * refuse.  A bad clock id or a null timespec is EINVAL either way. */
+    {
+        struct timespec ts, req;
+        errno = 0;
+        if (!(clock_gettime(CLOCK_REALTIME, &ts) == -1 && errno == ENOSYS)) {
+            printf("clock_gettime REALTIME should be ENOSYS\n"); errors++;
+        }
+        errno = 0;
+        if (!(clock_gettime(CLOCK_REALTIME, 0) == -1 && errno == EINVAL)) {
+            printf("clock_gettime NULL ts should be EINVAL\n"); errors++;
+        }
+        errno = 0;
+        if (!(clock_gettime(7, &ts) == -1 && errno == EINVAL)) {
+            printf("clock_gettime bad clock should be EINVAL\n"); errors++;
+        }
+        req.tv_sec = 0;
+        req.tv_nsec = 1000000000;
+        errno = 0;
+        if (!(nanosleep(&req, 0) == -1 && errno == EINVAL)) {
+            printf("nanosleep 1e9 nsec should be EINVAL\n"); errors++;
+        }
+        errno = 0;
+        if (!(nanosleep(0, 0) == -1 && errno == EINVAL)) {
+            printf("nanosleep NULL req should be EINVAL\n"); errors++;
         }
     }
 

@@ -144,9 +144,11 @@ time_t time(time_t *t) {
 
 int nanosleep(const struct timespec *req, struct timespec *rem) {
     if (!req) {
+        errno = EINVAL;
         return -1;
     }
     if (req->tv_nsec >= S32_NSEC_PER_SEC) {
+        errno = EINVAL;
         return -1;
     }
 
