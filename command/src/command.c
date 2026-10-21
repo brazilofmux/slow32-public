@@ -408,7 +408,7 @@ static int try_run(const char *cmd, const char *args) {
 
 /* Returns 1 to keep looping, 0 to exit. */
 static int dispatch(char *line) {
-    char cmd[32];
+    char cmd[PATH_MAX_CMD];
     char *args;
 
     trim(line);
