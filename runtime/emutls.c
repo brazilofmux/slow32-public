@@ -27,6 +27,8 @@ void *__emutls_get_address(__emutls_control *ctl) {
     // Over-allocate and round up; the block is never freed, so the raw
     // pointer does not need to be retained.
     char *raw = malloc(ctl->size + align - 1);
+    if (!raw)
+      return NULL;
     p = (void *)(((uintptr_t)raw + align - 1) & ~(uintptr_t)(align - 1));
     if (ctl->templ)
       memcpy(p, ctl->templ, ctl->size);
