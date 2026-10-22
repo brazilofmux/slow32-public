@@ -220,6 +220,8 @@ if [ -x "$F77" ]; then
     printf '      WRITE (6, 10) 1\n   10 FORMAT (1X, Q5)\n      END\n' > "$W/fmtlet.f"
     printf '      WRITE (6, 10) 1\n   10 FORMAT ((1X, I5)\n      END\n' > "$W/fmtpar.f"
     printf "      WRITE (6, '(1X, F)') 2.5\n      END\n" > "$W/fmtcon.f"
+    printf "      READ ('(I4)') M\n      END\n" > "$W/intnofmt.f"
+    printf '      CHARACTER*8 B\n      WRITE (B) 3.5\n      END\n' > "$W/intunf.f"
     for c in "noend:line 3: PROGRAM statement inside a subprogram: the END before it is missing" \
              "twomain:line 3: more than one main program" \
              "nolabel:line 2: statement label 99 is referred to but never defined" \
@@ -242,7 +244,9 @@ if [ -x "$F77" ]; then
              "fmtwid:line 2: FORMAT: I needs a width" \
              "fmtlet:line 2: FORMAT: Q is no edit descriptor" \
              "fmtpar:line 2: FORMAT: the format ends without its )" \
-             "fmtcon:line 1: FORMAT: F needs a width"; do
+             "fmtcon:line 1: FORMAT: F needs a width" \
+             "intnofmt:line 1: a CHARACTER unit is an internal file and needs a format" \
+             "intunf:line 2: a CHARACTER unit is an internal file and needs a format"; do
         b="${c%%:*}"; msg="${c#*:}"
         if "$F77" "$W/$b.f" "$W/$b.s" >"$W/$b.err" 2>&1; then
             report "refuse:$b" 1 "compiled"
