@@ -192,12 +192,14 @@ static void fio_flush_line(void) {
             fprintf(stderr, "f77: record longer than RECL (%d > %d)\n", fio_len, recl);
             exit(2);
         }
-        fputs(fio_line, f);
+        fwrite(fio_line, 1, (size_t)fio_len, f);
         for (i = fio_len; i < recl; i++) fputc(' ', f);
         fio_len = 0;
         return;
     }
-    fputs(fio_line, f);
+    /* All fio_len bytes: a CHARACTER item may hold CHAR(0), which
+     * fputs took for the end of the record and dropped the rest. */
+    fwrite(fio_line, 1, (size_t)fio_len, f);
     fputc('\n', f);
     fio_len = 0;
     if (fio_unit > 0 && fio_unit < FIO_MAXUNIT && fio_unit != 5 && fio_unit != 6)
@@ -262,11 +264,21 @@ static int fio_getrec(void) {
         fio_rpos = 0;
         return 0;
     }
-    if (!fgets(fio_rec, FIO_MAXLINE, fio_in ? fio_in : stdin)) {
-        if (fio_unit > 0 && fio_unit < FIO_MAXUNIT) fio_uaeof[fio_unit] = 1;
-        return 1;
+    /* fgets, counted: a record may hold CHAR(0), where strlen stopped. */
+    {
+        FILE *in = fio_in ? fio_in : stdin;
+        int c = 0, n = 0;
+        while (n < FIO_MAXLINE - 1 && (c = getc(in)) != EOF) {
+            fio_rec[n++] = (char)c;
+            if (c == '\n') break;
+        }
+        if (n == 0) {
+            if (fio_unit > 0 && fio_unit < FIO_MAXUNIT) fio_uaeof[fio_unit] = 1;
+            return 1;
+        }
+        fio_rec[n] = '\0';
+        fio_rlen = n;
     }
-    fio_rlen = (int)strlen(fio_rec);
     while (fio_rlen > 0 &&
            (fio_rec[fio_rlen - 1] == '\n' || fio_rec[fio_rlen - 1] == '\r'))
         fio_rlen--;

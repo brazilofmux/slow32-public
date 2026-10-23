@@ -222,6 +222,9 @@ if [ -x "$F77" ]; then
     printf "      WRITE (6, '(1X, F)') 2.5\n      END\n" > "$W/fmtcon.f"
     printf "      READ ('(I4)') M\n      END\n" > "$W/intnofmt.f"
     printf '      CHARACTER*8 B\n      WRITE (B) 3.5\n      END\n' > "$W/intunf.f"
+    printf "      CHARACTER*6 G\n      G = 'KLMNOP'\n      WRITE (6, *) G(0:4)\n      END\n" > "$W/sub0.f"
+    printf "      CHARACTER*6 G\n      G(2:7) = 'R'\n      END\n" > "$W/sublen.f"
+    printf "      CHARACTER*6 G\n      G = 'KLMNOP'\n      WRITE (6, *) G(4:3)\n      END\n" > "$W/subrev.f"
     for c in "noend:line 3: PROGRAM statement inside a subprogram: the END before it is missing" \
              "twomain:line 3: more than one main program" \
              "nolabel:line 2: statement label 99 is referred to but never defined" \
@@ -246,7 +249,10 @@ if [ -x "$F77" ]; then
              "fmtpar:line 2: FORMAT: the format ends without its )" \
              "fmtcon:line 1: FORMAT: F needs a width" \
              "intnofmt:line 1: a CHARACTER unit is an internal file and needs a format" \
-             "intunf:line 2: a CHARACTER unit is an internal file and needs a format"; do
+             "intunf:line 2: a CHARACTER unit is an internal file and needs a format" \
+             "sub0:line 3: substring outside its string" \
+             "sublen:line 2: substring outside its string" \
+             "subrev:line 3: substring outside its string"; do
         b="${c%%:*}"; msg="${c#*:}"
         if "$F77" "$W/$b.f" "$W/$b.s" >"$W/$b.err" 2>&1; then
             report "refuse:$b" 1 "compiled"

@@ -6891,8 +6891,9 @@ fio_flush_line:                         # @fio_flush_line
 .LBB86_12:
 	lui r3, %hi(fio_line)
 	addi r3, r3, %lo(fio_line)
-	add r4, r11, r0
-	jal r31, fputs
+	addi r4, r0, 1
+	add r6, r11, r0
+	jal r31, fwrite
 	ldw r1, r14+0
 	ble r12, r1, .LBB86_7
 .LBB86_13:
@@ -6908,8 +6909,9 @@ fio_flush_line:                         # @fio_flush_line
 .LBB86_15:
 	lui r3, %hi(fio_line)
 	addi r3, r3, %lo(fio_line)
-	add r4, r11, r0
-	jal r31, fputs
+	addi r4, r0, 1
+	add r6, r11, r0
+	jal r31, fwrite
 	addi r3, r0, 10
 	add r4, r11, r0
 	jal r31, fputc
@@ -16582,12 +16584,16 @@ fio_number:                             # @fio_number
 	.type	fio_getrec,@function
 fio_getrec:                             # @fio_getrec
 # %bb.0:
-	addi sp, sp, -32
+	addi sp, sp, -48
 	stw sp+0, lr
-	stw sp+28, r11
-	stw sp+24, r12
-	stw sp+20, r13
-	stw sp+16, r14
+	stw sp+44, r11
+	stw sp+40, r12
+	stw sp+36, r13
+	stw sp+32, r14
+	stw sp+28, r15
+	stw sp+24, r16
+	stw sp+20, r17
+	stw sp+16, r18
 	lui r1, %hi(fio_ibuf)
 	addi r1, r1, %lo(fio_ibuf)
 	ldw r1, r1+0
@@ -16600,7 +16606,7 @@ fio_getrec:                             # @fio_getrec
 	lui r4, %hi(fio_inrec)
 	addi r4, r4, %lo(fio_inrec)
 	ldw r4, r4+0
-	bge r3, r4, .LBB122_21
+	bge r3, r4, .LBB122_27
 .LBB122_2:
 	lui r13, %hi(fio_ilen)
 	addi r13, r13, %lo(fio_ilen)
@@ -16620,7 +16626,7 @@ fio_getrec:                             # @fio_getrec
 	ldw r1, r12+0
 	addi r1, r1, 1
 	stw r12+0, r1
-	jal r0, .LBB122_25
+	jal r0, .LBB122_30
 .LBB122_3:
 	lui r12, %hi(fio_unit)
 	addi r12, r12, %lo(fio_unit)
@@ -16647,7 +16653,7 @@ fio_getrec:                             # @fio_getrec
 	slli r3, r3, 2
 	add r4, r3, r14
 	ldw r4, r4+0
-	bge r1, r4, .LBB122_22
+	bge r1, r4, .LBB122_28
 .LBB122_7:
 	ldw r1, r12+0
 	addi r3, r1, -1
@@ -16677,7 +16683,7 @@ fio_getrec:                             # @fio_getrec
 	addi r11, r0, 1
 	add r4, r11, r0
 	jal r31, fread
-	beq r1, r14, .LBB122_25
+	beq r1, r14, .LBB122_30
 .LBB122_10:
 	lui r3, %hi(fio_rlen)
 	addi r3, r3, %lo(fio_rlen)
@@ -16686,84 +16692,111 @@ fio_getrec:                             # @fio_getrec
 	addi r1, r1, %lo(fio_rpos)
 	stw r1+0, r14
 	add r11, r14, r0
-	jal r0, .LBB122_25
+	jal r0, .LBB122_30
 .LBB122_11:
 	ldw r1, r11+0
-	addi r11, r0, 0
-	seq r3, r1, r11
-	lui r4, %hi(stdin)
-	addi r4, r4, %lo(stdin)
-	ldw r4, r4+0
-	xor r4, r4, r1
-	sub r3, r0, r3
-	and r3, r4, r3
-	xor r5, r1, r3
-	lui r3, %hi(fio_rec)
-	addi r3, r3, %lo(fio_rec)
-	addi r4, r0, 1024
-	jal r31, fgets
-	beq r1, r11, .LBB122_19
+	addi r3, r0, 0
+	seq r4, r1, r3
+	lui r5, %hi(stdin)
+	addi r5, r5, %lo(stdin)
+	ldw r5, r5+0
+	xor r5, r5, r1
+	sub r4, r0, r4
+	and r4, r5, r4
+	xor r11, r1, r4
+	addi r16, r0, -1
+	lui r15, %hi(fio_rec)
+	addi r15, r15, %lo(fio_rec)
+	addi r14, r0, 10
+	addi r17, r0, 1022
 .LBB122_12:
-	lui r3, %hi(fio_rec)
-	addi r3, r3, %lo(fio_rec)
-	jal r31, strlen
-	addi r3, r0, 1
-	blt r1, r3, .LBB122_18
+	add r18, r3, r0
+	add r3, r11, r0
+	jal r31, getc
+	beq r1, r16, .LBB122_17
 .LBB122_13:
-	addi r4, r1, 1
+	addi r3, r18, 1
+	add r4, r18, r15
+	stb r4+0, r1
+	beq r1, r14, .LBB122_15
+.LBB122_14:
+	bltu r18, r17, .LBB122_12
+.LBB122_15:
+	addi r11, r0, 0
+	beq r3, r11, .LBB122_18
+.LBB122_16:
+	add r1, r3, r15
+	stb r1+0, r11
+	lui r1, %hi(fio_rlen)
+	addi r1, r1, %lo(fio_rlen)
+	stw r1+0, r3
+	jal r0, .LBB122_20
+.LBB122_17:
+	add r3, r18, r0
+	addi r11, r0, 0
+	bne r3, r11, .LBB122_16
+.LBB122_18:
+	ldw r1, r12+0
+	addi r4, r1, -1
+	bgtu r4, r13, .LBB122_20
+.LBB122_19:
+	slli r1, r1, 2
+	lui r4, %hi(fio_uaeof)
+	addi r4, r4, %lo(fio_uaeof)
+	add r1, r1, r4
+	addi r4, r0, 1
+	stw r1+0, r4
+.LBB122_20:
+	beq r3, r11, .LBB122_27
+.LBB122_21:
+	lui r1, %hi(fio_rlen)
+	addi r1, r1, %lo(fio_rlen)
+	ldw r4, r1+0
+	addi r3, r0, 1
+	blt r4, r3, .LBB122_26
+.LBB122_22:
+	addi r4, r4, 1
 	lui r5, %hi(fio_rec-2)
 	addi r5, r5, %lo(fio_rec-2)
 	addi r6, r0, 13
-	addi r1, r0, 0
-	addi r7, r0, 10
-	jal r0, .LBB122_15
-.LBB122_14:
+	jal r0, .LBB122_24
+.LBB122_23:
+	addi r7, r4, -2
+	stw r1+0, r7
 	addi r4, r4, -1
-	ble r4, r3, .LBB122_18
-.LBB122_15:
-	add r8, r4, r5
-	ldbu r8, r8+0
-	beq r8, r6, .LBB122_14
-.LBB122_16:
-	beq r8, r7, .LBB122_14
-.LBB122_17:
-	addi r1, r4, -1
-.LBB122_18:
-	lui r3, %hi(fio_rlen)
-	addi r3, r3, %lo(fio_rlen)
-	stw r3+0, r1
+	ble r4, r3, .LBB122_26
+.LBB122_24:
+	add r7, r4, r5
+	ldbu r7, r7+0
+	beq r7, r6, .LBB122_23
+.LBB122_25:
+	beq r7, r14, .LBB122_23
+.LBB122_26:
 	lui r1, %hi(fio_rpos)
 	addi r1, r1, %lo(fio_rpos)
-	jal r0, .LBB122_24
-.LBB122_19:
-	ldw r1, r12+0
-	addi r3, r1, -1
-	bgtu r3, r13, .LBB122_21
-.LBB122_20:
-	slli r1, r1, 2
-	lui r3, %hi(fio_uaeof)
-	addi r3, r3, %lo(fio_uaeof)
-	add r1, r1, r3
-	jal r0, .LBB122_23
-.LBB122_21:
+	jal r0, .LBB122_29
+.LBB122_27:
 	addi r11, r0, 1
-	jal r0, .LBB122_25
-.LBB122_22:
+	jal r0, .LBB122_30
+.LBB122_28:
 	lui r1, %hi(fio_uaeof)
 	addi r1, r1, %lo(fio_uaeof)
 	add r1, r3, r1
-.LBB122_23:
 	addi r11, r0, 1
-.LBB122_24:
+.LBB122_29:
 	stw r1+0, r11
-.LBB122_25:
+.LBB122_30:
 	add r1, r11, r0
-	ldw r14, sp+16
-	ldw r13, sp+20
-	ldw r12, sp+24
-	ldw r11, sp+28
+	ldw r18, sp+16
+	ldw r17, sp+20
+	ldw r16, sp+24
+	ldw r15, sp+28
+	ldw r14, sp+32
+	ldw r13, sp+36
+	ldw r12, sp+40
+	ldw r11, sp+44
 	ldw lr, sp+0
-	addi sp, sp, 32
+	addi sp, sp, 48
 	jalr r0, r31, 0
 .Lfunc_end122:
 	.size	fio_getrec, .Lfunc_end122-fio_getrec
@@ -17675,5 +17708,5 @@ nml_text_add:                           # @nml_text_add
 	.word	.L.str.81
 	.size	.Lswitch.table.fio_fmt_use, 72
 
-	.ident	"clang version 24.0.0git (https://github.com/llvm/llvm-project.git 53ed108f6aa13a0be178e54f68d36210ead648de)"
+	.ident	"clang version 24.0.0git (https://github.com/llvm/llvm-project.git 732ffcb6281afb050e70a68b47aa40e7ab93d1d6)"
 	.section	".note.GNU-stack","",@progbits
