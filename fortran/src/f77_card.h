@@ -75,6 +75,214 @@ static int lx_upper(int c) {
     return c;
 }
 
+/* --- INCLUDE (MIL-STD-1753 2.3) -------------------------------------
+ *
+ * INCLUDE 'name', INCLUDE (name) or INCLUDE name, alone on its line,
+ * copies the named text into the source in its place.  It is done when
+ * the source is loaded (lx_expand): the INCLUDE line becomes a comment
+ * and the text follows it, so everything after sees one source.  The
+ * text is a file beside the source, then in the current directory, as
+ * written or in lower case, with or without .f, .for or .inc.  An
+ * included text may INCLUDE another, eight deep, but not one it is
+ * being read from.  Messages name an included text's own lines
+ * (lx_where): lx_seg says where in the source each piece begins. */
+#define LX_INC_DEPTH 8
+#define LX_MAX_SEG   512
+static int   lx_seg_x[LX_MAX_SEG];     /* the source's line where a piece begins */
+static int   lx_seg_o[LX_MAX_SEG];     /* its first line in its file */
+static int   lx_seg_f[LX_MAX_SEG];     /* its file: an index into lx_seg_nm, -1 the source */
+static char  lx_seg_nm[64][64];
+static int   lx_seg_nnm;
+static int   lx_nseg;
+static char  lx_inc_nm[LX_INC_DEPTH][64];   /* the texts being read */
+static int   lx_inc_n;
+static int   lx_xline;                       /* lines of the expanded source so far */
+static const char *lx_inname;
+
+static int lx_seg_file(char *nm) {
+    int j;
+    for (j = 0; j < lx_seg_nnm; j++) if (strcmp(lx_seg_nm[j], nm) == 0) return j;
+    if (lx_seg_nnm >= 64) return 63;
+    strcpy(lx_seg_nm[j], nm);
+    lx_seg_nnm = lx_seg_nnm + 1;
+    return j;
+}
+
+static void lx_seg_note(int file, int oline) {
+    if (lx_nseg >= LX_MAX_SEG) return;
+    lx_seg_x[lx_nseg] = lx_xline + 1;
+    lx_seg_o[lx_nseg] = oline;
+    lx_seg_f[lx_nseg] = file;
+    lx_nseg = lx_nseg + 1;
+}
+
+/* The file and line of the source's line x: the file's name, or 0 for
+ * the source itself. */
+static char *lx_where(int x, int *line) {
+    int i;
+    for (i = lx_nseg - 1; i >= 0; i--)
+        if (lx_seg_x[i] <= x) {
+            *line = lx_seg_o[i] + (x - lx_seg_x[i]);
+            return lx_seg_f[i] < 0 ? 0 : lx_seg_nm[lx_seg_f[i]];
+        }
+    *line = x;
+    return 0;
+}
+
+/* "line n", or "NAME line n" for a line an INCLUDE brought in. */
+static char *lx_where_text(int x) {
+    static char b[96];
+    int line;
+    char *f;
+    f = lx_where(x, &line);
+    if (f) sprintf(b, "%.60s line %d", f, line);
+    else sprintf(b, "line %d", line);
+    return b;
+}
+
+static void lx_put_where(int x) {
+    int line;
+    char *f;
+    f = lx_where(x, &line);
+    fdputs("f77: ", 2);
+    if (f) { fdputs(f, 2); fdputc(' ', 2); }
+    fdputs("line ", 2);
+    fdputuint(2, (unsigned int)line);
+    fdputs(": ", 2);
+}
+
+/* Is the line an INCLUDE?  Its name into nm, 1 when it is. */
+static int lx_inc_is(const char *ln, int n, char *nm) {
+    int i;
+    int k;
+    int col;
+    const char *kw;
+    if (n == 0 || ln[0] == 'C' || ln[0] == 'c' || ln[0] == '*' || ln[0] == '!') return 0;
+    col = 1;
+    i = 0;
+    if (ln[0] == '\t') { i = 1; col = 7; }
+    while (col <= 6 && i < n) {
+        if (ln[i] == '\t') { i = i + 1; col = 7; break; }
+        if (col == 6 ? (ln[i] != ' ' && ln[i] != '0') : ln[i] != ' ') return 0;
+        i = i + 1;
+        col = col + 1;
+    }
+    if (n > 72 && ln[0] != '\t') n = 72;              /* columns 73-80 are sequence numbers */
+    while (i < n && ln[i] == ' ') i = i + 1;
+    for (kw = "INCLUDE"; *kw; kw++, i++)
+        if (i >= n || lx_upper(ln[i]) != *kw) return 0;
+    while (i < n && ln[i] == ' ') i = i + 1;
+    k = 0;
+    if (i < n && (ln[i] == '\'' || ln[i] == '(')) {
+        int close;
+        close = ln[i] == '(' ? ')' : '\'';
+        i = i + 1;
+        while (i < n && ln[i] != close && k < 63) nm[k++] = ln[i++];
+        if (i >= n) return 0;
+        i = i + 1;
+    } else {
+        while (i < n && (lx_isalpha(ln[i]) || lx_isdigit(ln[i])) && k < 63)
+            nm[k++] = ln[i++];
+    }
+    while (k > 0 && nm[k - 1] == ' ') k = k - 1;
+    nm[k] = 0;
+    while (i < n && (ln[i] == ' ' || ln[i] == '\r')) i = i + 1;
+    if (i < n && ln[i] != '!') return 0;               /* more on the line: some other statement */
+    return k > 0;
+}
+
+/* Read the text an INCLUDE names into a fresh buffer; 0 if none. */
+static char *lx_inc_load(char *nm, int *len) {
+    static const char *sfx[4] = { "", ".f", ".for", ".inc" };
+    char path[1024];
+    char low[64];
+    char dir[960];
+    int d, c, x, k, fd, n, cap;
+    char *b;
+    dir[0] = 0;
+    if (lx_inname) {
+        k = (int)strlen(lx_inname);
+        while (k > 0 && lx_inname[k - 1] != '/') k = k - 1;
+        if (k > 0 && k < (int)sizeof dir) { memcpy(dir, lx_inname, (size_t)k); dir[k] = 0; }
+    }
+    for (k = 0; nm[k] && k < 63; k++) low[k] = (char)(nm[k] >= 'A' && nm[k] <= 'Z' ? nm[k] - 'A' + 'a' : nm[k]);
+    low[k] = 0;
+    for (d = 0; d < 2; d++)
+        for (c = 0; c < 2; c++)
+            for (x = 0; x < 4; x++) {
+                if (d == 0 && !dir[0]) continue;
+                if (strlen(dir) + strlen(nm) + 5 >= sizeof path) continue;
+                sprintf(path, "%s%s%s", d == 0 ? dir : "", c ? low : nm, sfx[x]);
+                fd = open(path, 0);
+                if (fd < 0) continue;
+                cap = 1 << 16; n = 0;
+                b = malloc((size_t)cap);
+                for (;;) {
+                    int r;
+                    if (n == cap) { cap = cap * 2; b = realloc(b, (size_t)cap); }
+                    r = (int)read(fd, b + n, (size_t)(cap - n));
+                    if (r <= 0) break;
+                    n = n + r;
+                }
+                close(fd);
+                *len = n;
+                return b;
+            }
+    return 0;
+}
+
+static void lx_inc_error(char *msg, char *nm) {
+    lx_put_where(lx_xline);
+    fdputs(msg, 2);
+    fdputs(nm, 2);
+    fdputc('\n', 2);
+    f77_nerr = f77_nerr + 1;
+}
+
+/* Copy the text t[0..n) into out, INCLUDEs done; file is its index in
+ * lx_seg_nm, -1 for the source.  Returns 0 when out is full. */
+static int lx_expand(const char *t, int n, int file, char *out, int cap, int *olen) {
+    int p;
+    int q;
+    int oline;
+    int isinc;
+    int j;
+    int tl;
+    char *tx;
+    char nm[64];
+    p = 0;
+    oline = 0;
+    while (p < n) {
+        q = p;
+        while (q < n && t[q] != '\n') q = q + 1;
+        oline = oline + 1;
+        if (*olen + (q - p) + 2 >= cap) return 0;
+        isinc = lx_inc_is(t + p, q - p, nm);
+        memcpy(out + *olen, t + p, (size_t)(q - p));
+        if (isinc) out[*olen] = 'C';                   /* the INCLUDE line, now a comment */
+        *olen = *olen + (q - p);
+        out[*olen] = '\n';
+        *olen = *olen + 1;
+        lx_xline = lx_xline + 1;
+        p = q < n ? q + 1 : q;
+        if (!isinc) continue;
+        for (j = 0; j < lx_inc_n; j++)
+            if (strcmp(lx_inc_nm[j], nm) == 0) break;
+        if (j < lx_inc_n) { lx_inc_error("INCLUDE of a text being read: ", nm); continue; }
+        if (lx_inc_n >= LX_INC_DEPTH) { lx_inc_error("INCLUDEs nested too deep: ", nm); continue; }
+        tx = lx_inc_load(nm, &tl);
+        if (!tx) { lx_inc_error("INCLUDE: no file ", nm); continue; }
+        strcpy(lx_inc_nm[lx_inc_n], nm);
+        lx_inc_n = lx_inc_n + 1;
+        lx_seg_note(lx_seg_file(nm), 1);
+        if (!lx_expand(tx, tl, lx_seg_nnm > 0 ? lx_seg_file(nm) : -1, out, cap, olen)) { free(tx); return 0; }
+        free(tx);
+        lx_inc_n = lx_inc_n - 1;
+        lx_seg_note(file, oline + 1);                  /* back in this text, after the INCLUDE */
+    }
+    return 1;
+}
+
 /* --- statement assembly --------------------------------------------- */
 
 /* True when the line starting at `p` is a comment or is entirely blank.

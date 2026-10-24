@@ -35,9 +35,7 @@ static int f77_nerr;      /* errors reported; the parser checks it per statement
 
 
 static void f77_error(char *msg) {
-    fdputs("f77: line ", 2);
-    fdputuint(2, (unsigned int)lx_stmt_line);
-    fdputs(": ", 2);
+    lx_put_where(lx_stmt_line);
     fdputs(msg, 2);
     fdputc('\n', 2);
     fdputs("  in: ", 2);
@@ -51,9 +49,7 @@ static void f77_error(char *msg) {
  * and, on MVS, two names that are one external name there, the first
  * eight characters, which IEWL would take for one. */
 static void f77_report_at(int line, char *msg) {
-    fdputs("f77: line ", 2);
-    fdputuint(2, (unsigned int)line);
-    fdputs(": ", 2);
+    lx_put_where(line);
     fdputs(msg, 2);
     fdputc('\n', 2);
     f77_nerr = f77_nerr + 1;
@@ -61,7 +57,7 @@ static void f77_report_at(int line, char *msg) {
 static void f77_check_unit_names(void) {
     int i;
     int j;
-    char m[160];
+    char m[256];
     for (j = 0; j < f77_nunit; j++) {
         if (f77_ukind[j] != F77_UNIT_SUBR && f77_ukind[j] != F77_UNIT_FUNC) continue;
         for (i = 0; i < j; i++) {
@@ -74,7 +70,7 @@ static void f77_check_unit_names(void) {
                 a = f77_uline[i] <= f77_uline[j] ? i : j;
                 b = a == i ? j : i;
                 if (strcmp(f77_uname[i], f77_uname[j]) == 0) {
-                    sprintf(m, "%s is already a subprogram or ENTRY name (line %d)", f77_uname[b], f77_uline[a]);
+                    sprintf(m, "%s is already a subprogram or ENTRY name (%s)", f77_uname[b], lx_where_text(f77_uline[a]));
                     f77_report_at(f77_uline[b], m);
                     break;
                 }
@@ -499,8 +495,10 @@ static void hl_func(Node *fn) {
 
 int main(int argc, char **argv) {
     static char src[1 << 20];
+    static char xsrc[1 << 22];        /* the source, INCLUDEs done */
     int fd;
     int n;
+    int xn;
 
     if (argc < 3) {
         fdputs("usage: f77 source.f output.s\n", 2);
@@ -519,8 +517,15 @@ int main(int argc, char **argv) {
     src[n] = 0;
     close(fd);
 
-    lx_src = src;
-    lx_len = n;
+    lx_inname = argv[1];
+    xn = 0;
+    if (!lx_expand(src, n, -1, xsrc, (int)sizeof(xsrc), &xn)) {
+        fdputs("f77: the source with its INCLUDEs is too long\n", 2);
+        return 1;
+    }
+    if (f77_nerr > 0) return 1;
+    lx_src = xsrc;
+    lx_len = xn;
     lx_pos = 0;
     lx_line = 1;
 

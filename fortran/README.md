@@ -18,6 +18,15 @@ unformatted, OPEN/CLOSE/INQUIRE with their specifiers, REWIND,
 BACKSPACE, ENDFILE, END=/ERR=/IOSTAT=, preconnected units as fort.N.
 LINPACK and the FCVS inspection programs match gfortran's output.
 
+Beyond F77, MIL-STD-1753 (taken from fort370): INCLUDE in its three
+spellings (`'name'`, `(name)`, bare), nested eight deep, the text a
+file beside the source or in the current directory, as written or in
+lower case, with or without `.f`, `.for` or `.inc`; the bit functions
+IAND, IOR, IEOR, NOT, ISHFT, ISHFTC, IBITS, BTEST, IBSET, IBCLR and
+MVBITS, in line; and `Z'..'`/`O'..'` constants in DATA for INTEGER,
+LOGICAL, REAL and DOUBLE PRECISION items.  fort370's IBM extensions
+(DEFINE FILE, `u'r`, FIND, PUNCH, unquoted `Z1F`) are not taken.
+
 The transcendentals are calls by their C libm names, on purpose:
 slow32 and slow32-fast execute the Newton-series SLOW-32 code linked
 from `libs32.s32a`, while slow32-dbt and qemu-tcg find those names in

@@ -196,6 +196,9 @@ static void f77_assign_params(int n);
  * word -- so every pair site (split frame slots, load/store, return in
  * r1/r2, CALLHI) carries it with a type test added. */
 #define TY_CPLX 9
+/* A hexadecimal or octal constant of DATA (MIL-STD-1753 Z'1F', O'17'),
+ * only ever the type of a DATA value: its bits are in f77_cx_u. */
+#define TY_HEXC 11
 
 /* fort370: the storage width of a length on INTEGER or LOGICAL --
  * INTEGER*2 a halfword, LOGICAL*1 a byte, as FORTRAN H has them (issue
@@ -1360,6 +1363,116 @@ static int f77_select(int cond, int a, int b) {
 #define IN_AIMAG  40   /* COMPLEX intrinsics */
 #define IN_CMPLX  41
 #define IN_CONJG  42
+/* MIL-STD-1753's bit functions, in line (its 2.6 hopes so) */
+#define IN_IAND   44
+#define IN_IOR    45
+#define IN_IEOR   46
+#define IN_NOT    47
+#define IN_ISHFT  48
+#define IN_ISHFTC 49
+#define IN_IBITS  50
+#define IN_BTEST  51
+#define IN_IBSET  52
+#define IN_IBCLR  53
+
+/* The rightmost len bits, 0 <= len <= 32: SRL(-1, 32-len), with no
+ * shift of 32 (which the hardware takes as one of 0). */
+static int f77_bitmask(int len) {
+    int t;
+    int c;
+    int m;
+    c = f77_iconst(32);
+    t = hi_emit(HI_SUB, TY_INT, c, len, 0, NULL);
+    c = f77_iconst(-1);
+    m = hi_emit(HI_SRL, TY_INT, c, t, 0, NULL);
+    c = f77_iconst(0);
+    t = hi_emit(HI_SEQ, TY_INT, len, c, 0, NULL);
+    return f77_select(t, c, m);
+}
+
+/* The bit functions of MIL-STD-1753 2.6 on their arguments' values v:
+ * bit 0 is the rightmost.  A shift count, bit position or length out
+ * of the standard's range gives whatever the shifts give.  One emit a
+ * statement: C leaves the order of a call's arguments open, and the
+ * instructions' order must not depend on the host's compiler. */
+static int f77_bits(int in, int *v) {
+    int m;
+    int t;
+    int k;
+    int c;
+    if (in == IN_IAND) return hi_emit(HI_AND, TY_INT, v[0], v[1], 0, NULL);
+    if (in == IN_IOR) return hi_emit(HI_OR, TY_INT, v[0], v[1], 0, NULL);
+    if (in == IN_IEOR) return hi_emit(HI_XOR, TY_INT, v[0], v[1], 0, NULL);
+    if (in == IN_NOT) return hi_emit(HI_BNOT, TY_INT, v[0], -1, 0, NULL);
+    if (in == IN_ISHFT) {
+        k = v[1];
+        if (h_kind[k] == HI_ICONST) {
+            if (h_val[k] >= 32 || h_val[k] <= -32) return f77_iconst(0);
+            if (h_val[k] >= 0) return hi_emit(HI_SLL, TY_INT, v[0], k, 0, NULL);
+            c = f77_iconst(-h_val[k]);
+            return hi_emit(HI_SRL, TY_INT, v[0], c, 0, NULL);
+        }
+        m = hi_emit(HI_SLL, TY_INT, v[0], k, 0, NULL);
+        c = hi_emit(HI_NEG, TY_INT, k, -1, 0, NULL);
+        t = hi_emit(HI_SRL, TY_INT, v[0], c, 0, NULL);
+        c = f77_iconst(0);
+        c = hi_emit(HI_SGE, TY_INT, k, c, 0, NULL);
+        m = f77_select(c, m, t);
+        /* a shift of 32 either way is all zeros (|SHIFT| <= 32) */
+        c = f77_iconst(32);
+        t = hi_emit(HI_SGE, TY_INT, k, c, 0, NULL);
+        c = f77_iconst(0);
+        m = f77_select(t, c, m);
+        c = f77_iconst(-32);
+        t = hi_emit(HI_SLE, TY_INT, k, c, 0, NULL);
+        c = f77_iconst(0);
+        return f77_select(t, c, m);
+    }
+    if (in == IN_ISHFTC) {
+        /* the rightmost ic bits rotated left k places, k taken into
+         * 0..ic-1; the rest of the word as it was */
+        int ic;
+        int w;
+        int r;
+        ic = v[2];
+        m = f77_bitmask(ic);
+        c = f77_iconst(0);
+        c = hi_emit(HI_SLT, TY_INT, v[1], c, 0, NULL);
+        t = hi_emit(HI_ADD, TY_INT, v[1], ic, 0, NULL);
+        k = f77_select(c, t, v[1]);
+        c = hi_emit(HI_SEQ, TY_INT, k, ic, 0, NULL);
+        t = f77_iconst(0);
+        k = f77_select(c, t, k);
+        w = hi_emit(HI_AND, TY_INT, v[0], m, 0, NULL);
+        r = hi_emit(HI_SLL, TY_INT, w, k, 0, NULL);
+        c = hi_emit(HI_SUB, TY_INT, ic, k, 0, NULL);
+        t = hi_emit(HI_SRL, TY_INT, w, c, 0, NULL);
+        r = hi_emit(HI_OR, TY_INT, r, t, 0, NULL);
+        c = f77_iconst(0);
+        c = hi_emit(HI_SEQ, TY_INT, k, c, 0, NULL);
+        r = f77_select(c, w, r);
+        r = hi_emit(HI_AND, TY_INT, r, m, 0, NULL);
+        c = hi_emit(HI_BNOT, TY_INT, m, -1, 0, NULL);
+        t = hi_emit(HI_AND, TY_INT, v[0], c, 0, NULL);
+        return hi_emit(HI_OR, TY_INT, t, r, 0, NULL);
+    }
+    if (in == IN_IBITS) {
+        t = hi_emit(HI_SRL, TY_INT, v[0], v[1], 0, NULL);
+        m = f77_bitmask(v[2]);
+        return hi_emit(HI_AND, TY_INT, t, m, 0, NULL);
+    }
+    if (in == IN_BTEST) {
+        ex_log = 1;
+        t = hi_emit(HI_SRL, TY_INT, v[0], v[1], 0, NULL);
+        c = f77_iconst(1);
+        return hi_emit(HI_AND, TY_INT, t, c, 0, NULL);
+    }
+    c = f77_iconst(1);
+    t = hi_emit(HI_SLL, TY_INT, c, v[1], 0, NULL);
+    if (in == IN_IBSET) return hi_emit(HI_OR, TY_INT, v[0], t, 0, NULL);
+    t = hi_emit(HI_BNOT, TY_INT, t, -1, 0, NULL);
+    return hi_emit(HI_AND, TY_INT, v[0], t, 0, NULL);
+}
 
 /* F77 intrinsic names are type-decorated (ABS/IABS/DABS, MAX0/AMAX1/
  * DMAX1); the operation is the same and the operand types decide the
@@ -1423,6 +1536,16 @@ static int f77_intrinsic(char *nm) {
     if (strcmp(nm, "CLOG") == 0) return IN_LOG;
     if (strcmp(nm, "CSIN") == 0) return IN_SIN;
     if (strcmp(nm, "CCOS") == 0) return IN_COS;
+    if (strcmp(nm, "IAND") == 0) return IN_IAND;
+    if (strcmp(nm, "IOR") == 0) return IN_IOR;
+    if (strcmp(nm, "IEOR") == 0) return IN_IEOR;
+    if (strcmp(nm, "NOT") == 0) return IN_NOT;
+    if (strcmp(nm, "ISHFT") == 0) return IN_ISHFT;
+    if (strcmp(nm, "ISHFTC") == 0) return IN_ISHFTC;
+    if (strcmp(nm, "IBITS") == 0) return IN_IBITS;
+    if (strcmp(nm, "BTEST") == 0) return IN_BTEST;
+    if (strcmp(nm, "IBSET") == 0) return IN_IBSET;
+    if (strcmp(nm, "IBCLR") == 0) return IN_IBCLR;
     return IN_NONE;
 }
 
@@ -1743,6 +1866,26 @@ static int f77_primary(void) {
             if (lx_t != T_LP) { f77_error("intrinsic needs arguments"); return f77_iconst(0); }
             f77_tok();
             a = f77_expr(); aty = ex_ty; ahi = ex_hi;
+
+            if (in >= IN_IAND && in <= IN_IBCLR) {
+                int v[3];
+                int n;
+                int want;
+                v[0] = a;
+                n = 1;
+                if (aty != TY_INT) f77_error("this intrinsic needs INTEGER arguments");
+                while (lx_t == T_COMMA && n < 3) {
+                    f77_tok();
+                    v[n] = f77_expr();
+                    if (ex_ty != TY_INT) f77_error("this intrinsic needs INTEGER arguments");
+                    n = n + 1;
+                }
+                if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                want = in == IN_NOT ? 1 : (in == IN_ISHFTC || in == IN_IBITS) ? 3 : 2;
+                if (n != want) { f77_error("wrong number of arguments to a bit intrinsic"); return f77_iconst(0); }
+                ex_ty = TY_INT; ex_hi = -1; ex_log = 0;
+                return f77_bits(in, v);
+            }
 
             if (in == IN_AIMAG || in == IN_CONJG || in == IN_CMPLX) {
                 if (in == IN_CMPLX) {
@@ -2070,9 +2213,9 @@ static int f77_primary(void) {
                 }
                 ulog = f77_uentry_parent[u] >= 0 ? f77_urlog[f77_uentry_parent[u]] : f77_urlog[u];
                 if (cty >= 0 && (cty != rty || (rty == TY_INT && clog != ulog))) {
-                    char m[160];
-                    sprintf(m, "%s is %s here but %s where it is defined (line %d)", nm,
-                            f77_tyname(cty, clog), f77_tyname(rty, ulog), f77_uline[u]);
+                    char m[256];
+                    sprintf(m, "%s is %s here but %s where it is defined (%s)", nm,
+                            f77_tyname(cty, clog), f77_tyname(rty, ulog), lx_where_text(f77_uline[u]));
                     f77_error(m);
                 }
             }
@@ -2997,6 +3140,7 @@ static int    f77_cx_i;
 static double f77_cx_d;
 static int    f77_cx_sidx;   /* TY_CHAR: string index; f77_cx_i is the length */
 static double f77_cx_d2;     /* TY_CPLX: the imaginary part (f77_cx_d is the real) */
+static unsigned long long f77_cx_u;   /* TY_HEXC: the constant's bits */
 #define F77_MAX_CXB 8
 static char f77_cxb_name[F77_MAX_CXB][F77_MAX_NAME];
 static int  f77_cxb_val[F77_MAX_CXB];
@@ -3790,8 +3934,35 @@ static int    f77_di_i[F77_MAX_DINIT];
 static double f77_di_d[F77_MAX_DINIT];
 static int    f77_di_sidx[F77_MAX_DINIT];
 static double f77_di_d2[F77_MAX_DINIT];
+static unsigned long long f77_di_u[F77_MAX_DINIT];   /* TY_HEXC */
 static int    f77_di_sub[F77_MAX_DINIT];   /* substring target: byte length, elem is a byte offset */
 static int    f77_di_n;
+
+/* Z'1F' or O'17' (MIL-STD-1753): digits of base 16 or 8 into
+ * f77_cx_u.  Digits past 64 bits push the leftmost out, as the item
+ * would.  Returns 0 if one of the digits is not. */
+static int f77_bitconst(const char *d, int n, int base) {
+    unsigned long long v;
+    int k;
+    int x;
+    char c;
+    if (n == 0) return 0;
+    v = 0;
+    for (k = 0; k < n; k++) {
+        c = d[k];
+        if (c >= '0' && c <= '9') x = c - '0';
+        else if (c >= 'A' && c <= 'F') x = c - 'A' + 10;
+        else if (c >= 'a' && c <= 'f') x = c - 'a' + 10;
+        else return 0;
+        if (x >= base) return 0;
+        v = v * (unsigned long long)base + (unsigned long long)x;
+    }
+    f77_cx_ty = TY_HEXC;
+    f77_cx_u = v;
+    f77_cx_i = (int)(unsigned int)v;
+    f77_cx_d = (double)f77_cx_i;
+    return 1;
+}
 
 /* One DATA constant: sign, literal, .TRUE./.FALSE., or a PARAMETER
  * name.  NOT f77_cexpr: `/` is the value-list delimiter here, and the
@@ -3825,14 +3996,23 @@ static void f77_data_const(void) {
     }
     else if (lx_t == T_NAME) {
         int s;
-        s = f77_sym(lex_name);
+        char nm[F77_MAX_NAME];
+        strcpy(nm, lex_name);
+        f77_tok();
+        if (nm[1] == 0 && (nm[0] == 'Z' || nm[0] == 'O') && lx_t == T_SCON) {
+            if (neg) { f77_error("a sign cannot precede a hexadecimal or octal constant"); neg = 0; }
+            if (!f77_bitconst(lex_strpool + lex_str_off[lex_sidx], lex_slen, nm[0] == 'Z' ? 16 : 8))
+                f77_error(nm[0] == 'Z' ? "bad hexadecimal constant" : "bad octal constant");
+            f77_tok();
+            return;
+        }
+        s = f77_sym(nm);
         if (!f77_sparam[s]) { f77_error("DATA value must be a constant"); f77_cx_ty = TY_INT; f77_cx_i = 0; f77_cx_d = 0.0; return; }
         f77_cx_ty = f77_sty[s];
         f77_cx_i = f77_spival[s];
         f77_cx_d = f77_spdval[s];
         f77_cx_d2 = f77_spdval2[s];
         if (f77_cx_ty == TY_CHAR) { f77_cx_sidx = f77_spstr[s]; f77_cx_i = f77_slen[s]; }
-        f77_tok();
     } else {
         f77_error("DATA value must be a constant");
         f77_cx_ty = TY_INT; f77_cx_i = 0; f77_cx_d = 0.0;
@@ -3999,6 +4179,7 @@ static int f77_data_values(void) {
             f77_di_d[f77_di_n] = f77_cx_d;
             f77_di_sidx[f77_di_n] = f77_cx_sidx;
             f77_di_d2[f77_di_n] = f77_cx_d2;
+            f77_di_u[f77_di_n] = f77_cx_u;
             f77_di_sub[f77_di_n] = f77_dt_sublen[ti];
             f77_di_n = f77_di_n + 1;
             te = te + 1;
@@ -4449,6 +4630,16 @@ static void f77_layout_static(void) {
         } else if (f77_sty[s] == TY_CHAR) {
             f77_error("a CHARACTER item needs a character constant in DATA");
             return;
+        } else if (f77_di_ty[i] == TY_HEXC) {
+            /* the constant's bits, right-justified in the item: zeros
+             * on the left of one too short, the leftmost bits of one
+             * too long lost (MIL-STD-1753 2.8) */
+            if (f77_sty[s] == TY_CPLX) {
+                f77_error("a hexadecimal or octal constant cannot initialize a COMPLEX item");
+                return;
+            }
+            for (k = 0; k < esz; k++)
+                ps_ginit_pool[off + k] = k < 8 ? (unsigned char)((f77_di_u[i] >> (k * 8)) & 255) : 0;
         } else if (f77_sty[s] == TY_CPLX) {
             union { float f; unsigned char b[4]; } u;
             u.f = (f77_di_ty[i] == TY_INT) ? (float)f77_di_i[i] : (float)f77_di_d[i];
@@ -5502,6 +5693,28 @@ static void f77_stmt_call(int skip) {
         int ds;
         ds = f77_sym_find(nm);
         if (ds >= 0 && f77_sarg[ds] && f77_srank[ds] == 0) fptr = f77_sval[ds];   /* dummy procedure */
+        /* MIL-STD-1753's MVBITS(M, I, LEN, N, J), in line unless a unit
+         * of the file or EXTERNAL makes it the program's: LEN bits of M
+         * from bit I into N from bit J.  The items are taken as
+         * fullword INTEGERs. */
+        if (strcmp(nm, "MVBITS") == 0 && fptr < 0 && nalt == 0 && f77_find_unit(nm) < 0 &&
+            !(ds >= 0 && f77_sexternal[ds])) {
+            int v[5];
+            int k;
+            int m;
+            if (nargs != 5) { f77_error("MVBITS needs five arguments"); return; }
+            for (k = 0; k < 5; k++) v[k] = hi_emit(HI_LOAD, TY_INT, addrs[k], -1, 0, NULL);
+            m = f77_bitmask(v[2]);
+            k = hi_emit(HI_SRL, TY_INT, v[0], v[1], 0, NULL);
+            k = hi_emit(HI_AND, TY_INT, k, m, 0, NULL);
+            k = hi_emit(HI_SLL, TY_INT, k, v[4], 0, NULL);
+            m = hi_emit(HI_SLL, TY_INT, m, v[4], 0, NULL);
+            m = hi_emit(HI_BNOT, TY_INT, m, -1, 0, NULL);
+            m = hi_emit(HI_AND, TY_INT, v[3], m, 0, NULL);
+            m = hi_emit(HI_OR, TY_INT, m, k, 0, NULL);
+            hi_emit(HI_STORE, TY_INT, addrs[3], m, 0, NULL);
+            return;
+        }
     }
     if (fptr < 0 && nalt == 0) {
         int u;

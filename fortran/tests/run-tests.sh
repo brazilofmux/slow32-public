@@ -225,6 +225,19 @@ if [ -x "$F77" ]; then
     printf "      CHARACTER*6 G\n      G = 'KLMNOP'\n      WRITE (6, *) G(0:4)\n      END\n" > "$W/sub0.f"
     printf "      CHARACTER*6 G\n      G(2:7) = 'R'\n      END\n" > "$W/sublen.f"
     printf "      CHARACTER*6 G\n      G = 'KLMNOP'\n      WRITE (6, *) G(4:3)\n      END\n" > "$W/subrev.f"
+    printf "      INTEGER K\n      DATA K /Z'12G4'/\n      END\n" > "$W/bozdig.f"
+    printf "      INTEGER K\n      DATA K /-O'17'/\n      END\n" > "$W/bozneg.f"
+    printf "      COMPLEX C\n      DATA C /Z'3F800000'/\n      END\n" > "$W/bozcx.f"
+    printf "      K = IAND(1, 2.0)\n      END\n" > "$W/bitty.f"
+    printf "      K = IBITS(5, 1)\n      END\n" > "$W/bitnarg.f"
+    printf "      K = 1\n      CALL MVBITS(K, 0, 1, K)\n      END\n" > "$W/mvbnarg.f"
+    printf "      INCLUDE 'nosuch'\n      END\n" > "$W/incnone.f"
+    printf "      INCLUDE 'incloop'\n      END\n" > "$W/incself.f"
+    printf "C     the text includes itself\n      INCLUDE 'incloop'\n" > "$W/incloop.inc"
+    printf "      X = 1.0\n      INCLUDE (INCBAD)\n      END\n" > "$W/incerr.f"
+    printf "      Y = 2.0\n      DIMENSION A(3) B(2)\n" > "$W/incbad.inc"
+    printf "      INCLUDE 'incok'\n      GO TO 99\n      END\n" > "$W/incafter.f"
+    printf "      I = 1\n      J = 2\n      K = 3\n" > "$W/incok.inc"
     for c in "noend:line 3: PROGRAM statement inside a subprogram: the END before it is missing" \
              "twomain:line 3: more than one main program" \
              "nolabel:line 2: statement label 99 is referred to but never defined" \
@@ -252,7 +265,17 @@ if [ -x "$F77" ]; then
              "intunf:line 2: a CHARACTER unit is an internal file and needs a format" \
              "sub0:line 3: substring outside its string" \
              "sublen:line 2: substring outside its string" \
-             "subrev:line 3: substring outside its string"; do
+             "subrev:line 3: substring outside its string" \
+             "bozdig:line 2: bad hexadecimal constant" \
+             "bozneg:line 2: a sign cannot precede a hexadecimal or octal constant" \
+             "bozcx:a hexadecimal or octal constant cannot initialize a COMPLEX item" \
+             "bitty:line 1: this intrinsic needs INTEGER arguments" \
+             "bitnarg:line 1: wrong number of arguments to a bit intrinsic" \
+             "mvbnarg:line 2: MVBITS needs five arguments" \
+             "incnone:f77: line 1: INCLUDE: no file nosuch" \
+             "incself:f77: incloop line 2: INCLUDE of a text being read: incloop" \
+             "incerr:f77: INCBAD line 2: unexpected text after the statement" \
+             "incafter:f77: line 3: statement label 99 is referred to but never defined"; do
         b="${c%%:*}"; msg="${c#*:}"
         if "$F77" "$W/$b.f" "$W/$b.s" >"$W/$b.err" 2>&1; then
             report "refuse:$b" 1 "compiled"

@@ -9,6 +9,7 @@
 #include "f77_shim.h"
 #include "f77_contract.h"
 static void f77_error(char *msg);
+static int f77_nerr;      /* the card reader's INCLUDE counts its errors here */
 #include "f77_card.h"
 #include "f77_lexer_gen.c"
 
