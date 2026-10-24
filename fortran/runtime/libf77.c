@@ -1402,6 +1402,20 @@ int    f77i_len(const char *s, int len) { (void)s; return len; }
 int    f77i_index(const char *a, const char *b, int la, int lb) { return f77_index(a, la, b, lb); }
 float  f77i_aimag(float *z)           { return z[1]; }
 float  f77i_cabs(float *z)            { return (float)sqrt((double)z[0] * z[0] + (double)z[1] * z[1]); }
+/* A COMPLEX function's value comes back as a function returning COMPLEX
+ * does: the real part in r1, the imaginary in r2 -- a 64-bit value,
+ * the real part its low word. */
+static unsigned long long f77i_cret(const float *o) {
+    union { float f[2]; unsigned long long u; } v;
+    v.f[0] = o[0]; v.f[1] = o[1];
+    return v.u;
+}
+unsigned long long f77i_csqrt(float *z) { float o[2]; f77_csqrt(o, z[0], z[1]); return f77i_cret(o); }
+unsigned long long f77i_cexp(float *z)  { float o[2]; f77_cexp(o, z[0], z[1]); return f77i_cret(o); }
+unsigned long long f77i_clog(float *z)  { float o[2]; f77_clog(o, z[0], z[1]); return f77i_cret(o); }
+unsigned long long f77i_csin(float *z)  { float o[2]; f77_csin(o, z[0], z[1]); return f77i_cret(o); }
+unsigned long long f77i_ccos(float *z)  { float o[2]; f77_ccos(o, z[0], z[1]); return f77i_cret(o); }
+unsigned long long f77i_conjg(float *z) { float o[2]; o[0] = z[0]; o[1] = -z[1]; return f77i_cret(o); }
 
 /* --- CHARACTER primitives --------------------------------------------- */
 

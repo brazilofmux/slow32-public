@@ -5196,7 +5196,7 @@ static char *f77_intrinsic_proc(char *nm) {
         "SINH", "DSINH", "COSH", "DCOSH", "TANH", "DTANH", "AINT", "DINT",
         "ANINT", "DNINT", "NINT", "IDNINT", "MOD", "AMOD", "DMOD", "SIGN",
         "ISIGN", "DSIGN", "DIM", "IDIM", "DDIM", "DPROD", "LEN", "INDEX",
-        "AIMAG", "CABS", 0 };
+        "AIMAG", "CABS", "CSQRT", "CEXP", "CLOG", "CSIN", "CCOS", "CONJG", 0 };
     static char buf[F77_MAX_NAME + 8];
     int i;
     for (i = 0; tab[i]; i++) {
