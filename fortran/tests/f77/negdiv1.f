@@ -1,0 +1,28 @@
+C     THE MOST NEGATIVE INTEGER DIVIDED BY -1, FOLDED AND AT RUN TIME.
+C     SLOW-32 DIV GIVES -2**31 AND REM GIVES 0; THE FOLDS MUST AGREE.
+      PROGRAM NEGDIV
+      INTEGER KLOW, KQ, I, M, J, L, IR, MR
+      PARAMETER (KLOW = -2147483647 - 1)
+      PARAMETER (KQ = KLOW / (-1))
+      IF (KQ .NE. KLOW) STOP 1
+      I = KLOW
+      M = -1
+      J = I / M
+      L = MOD(I, M)
+      IF (J .NE. KLOW) STOP 2
+      IF (L .NE. 0) STOP 3
+      J = (-2147483647 - 1) / (-1)
+      IF (J .NE. KLOW) STOP 4
+      CALL PICK(IR, MR)
+      IF (IR / MR .NE. KLOW) STOP 5
+      IF (MOD(IR, MR) .NE. 0) STOP 6
+      IF (KLOW / 7 .NE. -306783378) STOP 7
+      IF (MOD(KLOW, 7) .NE. -2) STOP 8
+      PRINT 10, KQ, J
+   10 FORMAT (' QUOTIENTS', 2I13)
+      END
+      SUBROUTINE PICK(IR, MR)
+      INTEGER IR, MR
+      IR = -2147483647 - 1
+      MR = -1
+      END
