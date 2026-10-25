@@ -350,6 +350,31 @@ static int ho_const_fold(void) {
                 }
             }
 
+            /* The high word of x * 2^k is x >> (32 - k), and of x * 1 is
+             * 0: a 64-bit 2 * m (BlaMka's multiply-add) asked MULHU for
+             * the bits its low word shifts out, and a 2 to ask with. */
+            if (h_kind[i] == HI_MULHU && (s1c || s2c)) {
+                int other;
+                if (s2c) { b = h_val[h_src2[i]]; other = h_src1[i]; }
+                else { b = h_val[h_src1[i]]; other = h_src2[i]; }
+                if (b == 1) {
+                    h_kind[i] = HI_ICONST;
+                    h_val[i] = 0;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    changed = 1;
+                } else if (b > 1 && (b & (b - 1)) == 0) {
+                    shift = 0; tmp = b;
+                    while (tmp > 1) { shift = shift + 1; tmp = tmp >> 1; }
+                    ci = hi_emit(HI_ICONST, TY_INT, -1, -1, 32 - shift, NULL);
+                    h_blk[ci] = h_blk[i];
+                    h_kind[i] = HI_SRL;
+                    h_src1[i] = other;
+                    h_src2[i] = ci;
+                    changed = 1;
+                }
+            }
+
             /* Strength reduction: MUL by power-of-2 -> SLL */
             if (h_kind[i] == HI_MUL) {
                 if (s2c) {
@@ -1012,6 +1037,22 @@ static int ho_cse(void) {
 
 static int ho_stat_dse;
 
+static int ho_may_alias(int a, int sza, int b, int szb);
+static int ho_addr_resolve(int id, int *base, int *off);
+static int ho_acc_size(int ty);
+
+/* Does the store at j overwrite every byte the store at i wrote? */
+static int ho_dse_covers(int i, int j) {
+    int bi; int oi; int ki;
+    int bj; int oj; int kj;
+    if (h_src1[j] == h_src1[i])
+        return ho_acc_size(h_ty[j]) >= ho_acc_size(h_ty[i]);
+    ki = ho_addr_resolve(h_src1[i], &bi, &oi);
+    kj = ho_addr_resolve(h_src1[j], &bj, &oj);
+    if (ki == 0 || ki != kj || bi != bj) return 0;
+    return oj <= oi && oj + ho_acc_size(h_ty[j]) >= oi + ho_acc_size(h_ty[i]);
+}
+
 static int ho_dse_pass(void) {
     int changed;
     int i;
@@ -1036,14 +1077,20 @@ static int ho_dse_pass(void) {
         while (j < end && alive) {
             jk = h_kind[j];
             if (jk == HI_NOP) { j = j + 1; continue; }
-            /* If any LOAD/CALL/CALLP, the stored value might be observed */
-            if (jk == HI_LOAD || jk == HI_CALL || jk == HI_CALLP ||
+            /* A load that may read the stored bytes, or a call, observes
+             * them.  A load that cannot -- another word off the same
+             * pointer, another frame slot -- does not: BlaMka's z[k] were
+             * stored twice per permutation, the first dead under loads of
+             * their neighbours. */
+            if ((jk == HI_LOAD &&
+                 ho_may_alias(addr, ho_acc_size(h_ty[i]), h_src1[j], ho_acc_size(h_ty[j]))) ||
+                jk == HI_CALL || jk == HI_CALLP ||
                 jk == HI_A64_DBT_TRAMPOLINE || hi_is_a64_cache_asm(jk) ||
                 jk == HI_X64_DBT_TRAMPOLINE || jk == HI_X64_RDTSC) {
                 alive = 0;
             }
-            /* Found another STORE to same address — first store is dead */
-            if (jk == HI_STORE && h_src1[j] == addr) {
+            /* Found another STORE over the same bytes — first store is dead */
+            if (alive && jk == HI_STORE && ho_dse_covers(i, j)) {
                 h_kind[i] = HI_NOP;
                 h_src1[i] = -1;
                 h_src2[i] = -1;
@@ -1126,7 +1173,13 @@ static int ho_addr_resolve(int id, int *base, int *off) {
             *off = *off + h_val[h_src2[id]]; id = h_src1[id];
         } else if (k == HI_ADD && h_src1[id] >= 0 && h_kind[h_src1[id]] == HI_ICONST) {
             *off = *off + h_val[h_src1[id]]; id = h_src2[id];
-        } else return 0;
+        } else {
+            /* Any other value: a pointer, and off is from it (3).  Two
+             * accesses off one pointer value are told apart by their
+             * bytes; a pointer against anything else may alias. */
+            *base = id;
+            return 3;
+        }
         depth = depth + 1;
     }
     return 0;
@@ -1149,8 +1202,12 @@ static int ho_may_alias(int a, int sza, int b, int szb) {
     ka = ho_addr_resolve(a, &ba, &oa);
     kb = ho_addr_resolve(b, &bb, &ob);
     if (ka == 0 || kb == 0) return 1;
-    if (ka != kb) return 0;               /* a frame slot vs a global */
-    if (ba != bb) {
+    if (ka == 3 || kb == 3) {
+        /* BlaMka's z[k]: the store of a word's high half forgot the low
+         * half's value, and every G step reloaded it */
+        if (ka != kb || ba != bb) return 1;
+    } else if (ka != kb) return 0;        /* a frame slot vs a global */
+    else if (ba != bb) {
         if (ka == 1) return 0;            /* two distinct frame slots */
         if (h_name[ba] == NULL || h_name[bb] == NULL) return 1;
         if (strcmp(h_name[ba], h_name[bb]) != 0) return 0;
