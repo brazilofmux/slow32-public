@@ -103,6 +103,19 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-25 (`765ca6e1`).  `cc.s32x`, `libc.s32a` and
+`s32-ld.s32x`; the other tools and `include/` rebuild identical.
+`s32-ld.s32x` takes `--heap-size SIZE` (`c45872a1`): the heap below the
+MMIO window was always 64 MB, too small for Argon2 at a 64 MiB memory
+cost; the default is unchanged.  The compiler (`41d24594`, `765ca6e1`)
+keeps char and short parameters in registers, drops masks that change
+no bit (`andi 255` after a byte load), inlines bodies of 14 AST nodes
+or fewer at every site, fully unrolls counted loops of up to 16 trips,
+and folds constant offsets and shared frame addresses into the loads
+and stores that use them.  A byte-oriented AES-256 went from 7x clang's
+executed instructions to 2.4x; SQLite under stage08, -3.4% shell
+dynamic.
+
 Rebuilt 2026-10-25 (`c451b7f9`).  `cc.s32x`, `libc.s32a` and
 `include/unistd.h`; the tools rebuild identical.  The compiler
 bottom-tests `while` and `for` loops (`7be0f6c9`) and no longer computes
