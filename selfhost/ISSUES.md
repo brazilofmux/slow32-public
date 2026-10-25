@@ -3405,3 +3405,43 @@ since the functions arrived.  Declared now, with the float forms;
 `regression/libc-tests/math_decl.c`, the header test with a host leg,
 asks for them.  Declared but not defined are not added: `fma`,
 `fpclassify` and `signbit` stay out until the library has them.
+
+### 95. [RESOLVED 2026-10-25] An unsigned int beside a long long made the expression unsigned; SQLite's integer multiply went through floating point
+
+The 200,000-row SQLite workload ran 6.83 G instructions under the
+stage08 build against 3.42 G under clang's, and the per-function
+profile (the reference emulator's `-p` histogram mapped through the
+object symbol tables) put the excess in `sqlite3VdbeRecordCompareWithSkip`,
+`sqlite3VdbeSerialGet`, `sqlite3VdbeRealValue` and `fabs` -- the sorter
+was comparing the index keys as generic records, and the integer
+column was being read as a double.  The outputs differed too: the
+build printed every `shade` as `0.0`, where the acceptance SQL, which
+never multiplies two integers, had agreed byte for byte all along.
+`typeof(5*7919)` said `real`.
+
+`OP_Multiply` calls `sqlite3MulInt64`, which tests
+`iA > LARGEST_INT64/iB` and `iA < SMALLEST_INT64/iB` before
+multiplying.  `LARGEST_INT64` is `(0xffffffff|(((i64)0x7fffffff)<<32))`
+and `SMALLEST_INT64` is `(((i64)-1) - LARGEST_INT64)`.  `0xffffffff`
+is an `unsigned int`; C99 6.3.1.8 converts it to `long long`, which
+represents every unsigned int, so both constants are signed `long
+long`.  `nd_binop` (ast.h) and `sema_arith_type` (sema.h) both made
+the result unsigned whenever either operand was, so `SMALLEST_INT64 /
+iB` went to `__udivdi3` and came back positive for every negative
+dividend: `5 * 5` overflowed, and every product became a double that
+the INTEGER affinity could not always fold back.  The comparison
+rule had the same shape -- `-1LL < 0xffffffffU` compared unsigned, and
+so did `unsigned char c; c < -1`, where the char has promoted to int.
+Present in every saved compiler back to 2026-10-20 (the oldest kept);
+the 64-bit regression tests are clang-built and never ran a byte of
+it.
+
+`ty_common_unsigned` in ast.h states the rule once: unsigned only when
+an unsigned operand has the common type's rank.  `nd_binop`,
+`sema_arith_type` and sema's comparison marking call it; the cross
+backends' 64-bit comparison path reads the node's type instead of the
+left operand's.  `tests/test_usual_conv.c` checks the conversions, the
+divisions and SQLite's overflow test and fails on the old compiler
+(18 of its lines); `sqlite/tests/acceptance.sql` now asks `typeof` of
+integer products and builds an index on a 300-row integer column, so
+the sorter's comparator choice is exercised by the gate.

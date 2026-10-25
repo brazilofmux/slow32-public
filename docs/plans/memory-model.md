@@ -184,3 +184,42 @@ crypto benchmarks must assemble to the same bytes before and after.
   Both fixed.  What this pass finds in real code is small -- the scalar replacement and
   mem2reg take most slots first -- but DSE now reads the CFG and the
   escape set through the facility, which is what step 5 will want.
+- 2026-10-25, evening: before step 5, the measure the rules ask for --
+  a per-function profile of the 200,000-row SQLite run (the reference
+  emulator's `-p` histogram, mapped through the object symbol tables
+  with every function label made global; `scratchpad/ra/pcprof2.py`'s
+  method, worth a tool).  It said the run was 6.72 G instructions
+  under stage08 against 3.42 G under clang, and that the difference
+  was not the allocator: `sqlite3VdbeRecordCompareWithSkip` 413 M
+  against 50 M, `sqlite3VdbeSerialGet` 247 M against 35 M,
+  `sqlite3VdbeRealValue` and `fabs` where clang's build had none.
+  The sorter was comparing integer keys as generic records because the
+  integer column had become REAL: `typeof(5*7919)` was `real`, and the
+  run's output differed from clang's, which the acceptance SQL (no
+  integer product in it) had never asked.  A parser rule -- unsigned
+  int with long long typed unsigned -- sent SQLite's overflow test
+  through `__udivdi3` (selfhost ISSUES-95).  Fixed, with the acceptance
+  SQL extended.  Found on the way, each measured and left for later:
+  (a) `sqlite3VdbeExec`'s 184-case switch is a compare tree, not a jump
+  table, because `case OP_OpenRead:` sits inside `OP_ReopenIdx`'s block
+  and the Duff check refuses any case nested in a statement; a case in
+  a plain block only needs the fall-through trampoline (hot: the tree
+  costs ~25 instructions per opcode dispatched against 6);
+  (b) 13.0 M `memcpy` calls against clang's 4.3 M: struct copies over
+  32 bytes and constant-size `memcpy` through pointers go out of line
+  (928 M instructions in the kit's memcpy);
+  (c) `sqlite3GetToken` keeps two scalar locals in the frame: one
+  alloca holds both (ADDI +4 off it), mem2reg refuses the step and the
+  late scalar replacement does not take it either -- 116 frame reloads
+  against clang's 2;
+  (d) `sqlite3VdbeRecordCompareWithSkip` saves and restores 20
+  callee-saved registers on every call (3.9 M calls; its prologue and
+  epilogue are its two hottest runs) because values live across cold
+  calls take callee-saved colours -- the allocator question for step 5
+  is this one, not forwarding: save around the cold call instead;
+  (e) `nVmStep`, a 64-bit counter in `sqlite3VdbeExec`'s loop, lives
+  in memory (7 instructions per opcode against clang's 4 in registers).
+  Also fixed tonight: a phi whose argument has no value on an edge (a
+  loop-body variable at loop entry) sent the whole edge through the
+  push/pop path -- 28 instructions per record compared, 115 M in this
+  run.

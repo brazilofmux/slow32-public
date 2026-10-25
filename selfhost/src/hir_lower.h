@@ -287,7 +287,16 @@ static int hl_stmt_terminates(Node *s) {
 /* A case/default nested under this statement list (not an inner switch). */
 static int hl_sw_has_nested_label(Node *cs) {
     while (cs) {
-        if (cs->kind == ND_CASE || cs->kind == ND_DEFAULT) return 1;
+        if (cs->kind == ND_CASE || cs->kind == ND_DEFAULT) {
+            if (getenv("HIR_SW_DEBUG")) {
+                fdputs("  nested label kind=", 2);
+                fdputuint(2, (unsigned)cs->kind);
+                fdputs(" val=", 2);
+                fdputuint(2, (unsigned)cs->val);
+                fdputc(10, 2);
+            }
+            return 1;
+        }
         if (cs->kind != ND_SWITCH) {
             if (cs->body && hl_sw_has_nested_label(cs->body)) return 1;
             if (cs->els && hl_sw_has_nested_label(cs->els)) return 1;
@@ -499,9 +508,24 @@ static int hl_sw_emit_jumptable(int lv, int def_blk, int sw_b, int sw_n,
      * reaches HL_JT_MAX_SPAN keeps span a small positive int, which also keeps
      * every `hl_jt_tgt[caseval - lo]` index below in [0,span). */
     urange = (unsigned)hi - (unsigned)lo;
-    if (urange >= (unsigned)HL_JT_MAX_SPAN) return 0;  /* too big */
+    if (getenv("HIR_SW_DEBUG")) {
+        fdputs("SWITCH cases=", 2);
+        fdputuint(2, (unsigned)sw_n);
+        fdputs(" lo=", 2);
+        fdputuint(2, (unsigned)lo);
+        fdputs(" hi=", 2);
+        fdputuint(2, (unsigned)hi);
+        fdputc(10, 2);
+    }
+    if (urange >= (unsigned)HL_JT_MAX_SPAN) {
+        if (getenv("HIR_SW_DEBUG")) fdputs("  declined: range\n", 2);
+        return 0;  /* too big */
+    }
     span = (int)urange + 1;
-    if (span > 4 * sw_n) return 0;                     /* too sparse */
+    if (span > 4 * sw_n) {
+        if (getenv("HIR_SW_DEBUG")) fdputs("  declined: sparse\n", 2);
+        return 0;                     /* too sparse */
+    }
 
     has_holes = (span > sw_n);
     dtramp = -1;
@@ -2428,22 +2452,22 @@ static int hl_expr(Node *n) {
             if (n->op == TK_EQ) return hi_emit(HI_SEQ, TY_INT, lv, rv, 0, NULL);
             if (n->op == TK_NE) return hi_emit(HI_SNE, TY_INT, lv, rv, 0, NULL);
             if (n->op == TK_LT) {
-                if (llong_cmp && (n->lhs->ty & TY_UNSIGNED))
+                if (llong_cmp && (n->ty & TY_UNSIGNED))
                     return hi_emit(HI_SLTU, TY_INT, lv, rv, 0, NULL);
                 return hi_emit(HI_SLT, TY_INT, lv, rv, 0, NULL);
             }
             if (n->op == TK_GT) {
-                if (llong_cmp && (n->lhs->ty & TY_UNSIGNED))
+                if (llong_cmp && (n->ty & TY_UNSIGNED))
                     return hi_emit(HI_SGTU, TY_INT, lv, rv, 0, NULL);
                 return hi_emit(HI_SGT, TY_INT, lv, rv, 0, NULL);
             }
             if (n->op == TK_LE) {
-                if (llong_cmp && (n->lhs->ty & TY_UNSIGNED))
+                if (llong_cmp && (n->ty & TY_UNSIGNED))
                     return hi_emit(HI_SLEU, TY_INT, lv, rv, 0, NULL);
                 return hi_emit(HI_SLE, TY_INT, lv, rv, 0, NULL);
             }
             if (n->op == TK_GE) {
-                if (llong_cmp && (n->lhs->ty & TY_UNSIGNED))
+                if (llong_cmp && (n->ty & TY_UNSIGNED))
                     return hi_emit(HI_SGEU, TY_INT, lv, rv, 0, NULL);
                 return hi_emit(HI_SGE, TY_INT, lv, rv, 0, NULL);
             }
@@ -4112,6 +4136,10 @@ static void hl_stmt(Node *n) {
 #ifndef S12CC_TARGET_A64
         if (sw_n >= 5 && !hl_switch_nested_labels(n->body)) {
             use_jt = hl_sw_emit_jumptable(lv, def_blk, sw_b, sw_n, n->body);
+        } else if (getenv("HIR_SW_DEBUG")) {
+            fdputs("SWITCH cases=", 2);
+            fdputuint(2, (unsigned)sw_n);
+            fdputs(sw_n >= 5 ? " declined: nested labels\n" : " declined: small\n", 2);
         }
 #endif
         if (!use_jt) {

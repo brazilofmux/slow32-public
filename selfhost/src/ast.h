@@ -314,18 +314,41 @@ static Node *nd_var(char *nm, int off, int ty) {
     return n;
 }
 
+/* Is the common type of two arithmetic operands unsigned?  An operand
+ * counts only when it is unsigned at the common type's rank: an
+ * unsigned char or short has promoted to int by then, and an unsigned
+ * int beside a long long has widened to long long.  Pointers are not
+ * asked (pointer compares are unsigned, and the lowering knows). */
+static int ty_common_unsigned(int lt, int rt) {
+    int wide;
+    wide = ty_is_llong(lt) || ty_is_llong(rt);
+    if (wide)
+        return (ty_is_llong(lt) && (lt & TY_UNSIGNED)) ||
+               (ty_is_llong(rt) && (rt & TY_UNSIGNED));
+    return ((lt & TY_UNSIGNED) && ty_size(lt) >= 4) ||
+           ((rt & TY_UNSIGNED) && ty_size(rt) >= 4);
+}
+
 static Node *nd_binop(int op, Node *l, Node *r) {
     Node *n;
     n = nd_new(ND_BINOP);
     n->op = op;
     n->lhs = l;
     n->rhs = r;
-    /* type: comparisons→int, pointer arithmetic→pointer, else int */
+    /* type: comparisons→int, pointer arithmetic→pointer, else the
+     * usual arithmetic conversions (C99 6.3.1.8).  The result is
+     * unsigned only when an unsigned operand has the common type's
+     * rank: unsigned char and unsigned short promote to int, and
+     * unsigned int meeting long long widens to long long, which holds
+     * every unsigned int.  "Unsigned if either side is" made SQLite's
+     * SMALLEST_INT64, (long long)-1 minus (0xffffffff | hi << 32),
+     * unsigned, so every integer multiply overflowed into floating
+     * point (selfhost ISSUES-95); the comparison bit is what the
+     * lowering reads for sltu versus slt, so it follows the same rule. */
     if (op == TK_EQ || op == TK_NE || op == TK_LT || op == TK_GT ||
         op == TK_LE || op == TK_GE) {
         n->ty = TY_INT;
-        /* Mark unsigned if either operand is unsigned (for codegen) */
-        if ((l->ty & TY_UNSIGNED) || (r->ty & TY_UNSIGNED))
+        if (ty_common_unsigned(l->ty, r->ty))
             n->ty = TY_INT | TY_UNSIGNED;
     } else if (op == TK_LAND || op == TK_LOR) {
         n->ty = TY_INT;
@@ -335,12 +358,11 @@ static Node *nd_binop(int op, Node *l, Node *r) {
         n->ty = r->ty;
     } else if (ty_is_llong(l->ty) || ty_is_llong(r->ty)) {
         n->ty = TY_LLONG;
-        if ((l->ty & TY_UNSIGNED) || (r->ty & TY_UNSIGNED))
+        if (ty_common_unsigned(l->ty, r->ty))
             n->ty = TY_LLONG | TY_UNSIGNED;
     } else {
         n->ty = TY_INT;
-        /* Propagate unsigned for arithmetic/bitwise ops */
-        if ((l->ty & TY_UNSIGNED) || (r->ty & TY_UNSIGNED))
+        if (ty_common_unsigned(l->ty, r->ty))
             n->ty = TY_INT | TY_UNSIGNED;
     }
     n->is_volptr = (l != NULL && l->is_volptr) || (r != NULL && r->is_volptr);

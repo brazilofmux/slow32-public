@@ -33,8 +33,13 @@ static int sema_arith_type(int lty, int rty) {
     /* Float promotion: double > float > long long > int */
     if (ty_is_double(lty) || ty_is_double(rty)) return TY_DOUBLE;
     if (ty_is_float(lty) || ty_is_float(rty)) return TY_FLOAT;
+    /* C99 6.3.1.8: the result is unsigned only when an unsigned operand
+     * has the common rank.  An unsigned int beside a long long widens
+     * to long long, which holds every unsigned int; "unsigned if either
+     * side is" made SQLite's SMALLEST_INT64 unsigned and sent every
+     * integer multiply through floating point (selfhost ISSUES-95). */
     if (ty_is_llong(lty) || ty_is_llong(rty)) {
-        if ((lty & TY_UNSIGNED) || (rty & TY_UNSIGNED))
+        if (ty_common_unsigned(lty, rty))
             return TY_LLONG | TY_UNSIGNED;
         return TY_LLONG;
     }
@@ -102,11 +107,17 @@ static void sema_expr(Node *n) {
         rty = n->rhs ? n->rhs->ty : TY_INT;
 
         if (sema_is_cmp(n->op)) {
-            /* Comparisons: result is int, but mark unsigned if either
-             * operand is -- after the integer promotions (sema_promote) */
+            /* Comparisons: result is int; the unsigned bit is what the
+             * lowering reads for sltu against slt, and it follows the
+             * operands' common type: -1LL < 0xffffffffU compares as
+             * long long, signed.  Pointers keep the old rule. */
             n->ty = TY_INT;
-            if ((sema_promote(lty) & TY_UNSIGNED) || (sema_promote(rty) & TY_UNSIGNED))
+            if (ty_is_ptr(lty) || ty_is_ptr(rty)) {
+                if ((sema_promote(lty) & TY_UNSIGNED) || (sema_promote(rty) & TY_UNSIGNED))
+                    n->ty = TY_INT | TY_UNSIGNED;
+            } else if (sema_arith_type(lty, rty) & TY_UNSIGNED) {
                 n->ty = TY_INT | TY_UNSIGNED;
+            }
         } else if (n->op == TK_LAND || n->op == TK_LOR) {
             n->ty = TY_INT;
         } else if (n->op == TK_LSHIFT || n->op == TK_RSHIFT) {
