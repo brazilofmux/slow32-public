@@ -239,6 +239,10 @@ int main(int argc, char **argv) {
         return 1;
     }
     n = read(fd, src, LEX_SRC_SZ - 1);
+    if (n == LEX_SRC_SZ - 1 && read(fd, src, 1) > 0) {
+        fdputs("s12cc: source too large for LEX_SRC_SZ\n", 2);
+        return 1;
+    }
     close(fd);
     if (n < 0) n = 0;
     src[n] = 0;

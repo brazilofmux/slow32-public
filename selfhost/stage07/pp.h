@@ -701,6 +701,7 @@ static void pp_splice_file(char *path) {
     int tail_len;
     int i;
     char *tmp;
+    char one[4];
 
     fd = open(path, 0);
     if (fd < 0) {
@@ -715,6 +716,15 @@ static void pp_splice_file(char *path) {
         exit(1);
     }
     n = read(fd, tmp, LEX_SRC_SZ - lex_len - 1);
+    if (n >= 0 && n == LEX_SRC_SZ - lex_len - 1 && read(fd, one, 1) > 0) {
+        /* The rest would have been dropped without a word, and the
+         * parse failed (or did not) on a cut-off token far away --
+         * selfhost ISSUES-92. */
+        fdputs("s12cc: source too large for LEX_SRC_SZ at include: ", 2);
+        fdputs(path, 2);
+        fdputc(10, 2);
+        exit(1);
+    }
     close(fd);
     if (n < 0) n = 0;
 

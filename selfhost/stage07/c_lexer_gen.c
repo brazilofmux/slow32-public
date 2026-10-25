@@ -123,7 +123,7 @@ void exit(int status);
 
 /* === Lexer globals === */
 
-#define LEX_SRC_SZ   1100000
+#define LEX_SRC_SZ   4000000   /* was 1100000: stage08 outgrew it (selfhost ISSUES-92); stage06 s32-as caps BSS at 16MB */
 #define LEX_STR_SZ   256
 #define LEX_POOL_SZ  524288
 #define LEX_POOL_MAX 16384

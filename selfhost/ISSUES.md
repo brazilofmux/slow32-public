@@ -3327,7 +3327,7 @@ old linker refuses it.  stage07's frozen copy (`stage07/tools/s32-ld.c`)
 keeps the old table; it links only stage08's tools.
 
 
-### 92. [OPEN 2026-10-25] stage07 refuses, or silently drops, valid stage08 source once s12cc.c reaches some size
+### 92. [RESOLVED 2026-10-25] stage07 cut stage08's source off at 1.1MB without a word
 
 Twice while building 2298875d, stage07 mishandled valid code added to
 `stage08/hir_regalloc.h`:
@@ -3351,3 +3351,17 @@ it is reached without a diagnostic.  Until it is found, a stage08
 build that fails with a parse error on code that looks right, or that
 does not change size when code was added, is this item.  Reproduce by
 re-adding a block like the one above to `gc_irc`.
+
+**Cause.**  stage07 reads the whole translation unit into `lex_src`,
+`LEX_SRC_SZ` = 1,100,000 bytes, and stage08's s12cc.c with its headers
+had reached 1,100,513.  `pp.h`'s include splice read at most what was
+left and dropped the rest silently, so the end of `hir_codegen.h` was
+cut off: the next failure named the truncated identifier outright
+(`undeclared identifier 'cg_fn_l'`).  Which symptom appeared depended
+on where the cut fell.  stage08's lexer had been raised to 12MB long
+ago; stage07's never was.
+
+**Fix.**  stage07's `LEX_SRC_SZ` is 4,000,000 (12MB, like stage08,
+overflows stage06 s32-as's 16MB BSS ceiling), and both reads -- the
+main file in `s12cc.c` and each include in `pp.h` -- now probe one byte
+past the room and stop with "source too large for LEX_SRC_SZ".
