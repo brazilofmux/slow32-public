@@ -1702,6 +1702,7 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
     int off;
     int phi;
     int dreg;
+    int nskip;
 
     /* Collect PHIs in to_blk */
     n = 0;
@@ -1728,6 +1729,7 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
      * spilled phi feeding another phi), a far (>12-bit) destination
      * slot, or r2 itself appearing as a copy endpoint. */
     fast_ok = 1;
+    nskip = 0;
     j = 0;
     while (j < n) {
         phi = hcg_phi_tmp[j];
@@ -1741,8 +1743,19 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
             hcg_phi_const_val[j] = c;
             hcg_phi_src_reg[j] = -1;
         } else if (v < 0) {
-            fast_ok = 0;
-            break;
+            /* No value on this edge: a variable declared inside the
+             * loop body has none when the loop is entered
+             * (serial_type in sqlite3VdbeRecordCompareWithSkip).
+             * Nothing to copy.  Treating it as a hazard sent every
+             * value on the edge through the push/pop path: 28
+             * instructions per record compared, 3.9 million times
+             * in the 200,000-row run. */
+            hcg_phi_is_const[j] = 3;
+            hcg_phi_src_reg[j] = -1;
+            hcg_phi_active[j] = 0;
+            nskip = nskip + 1;
+            j = j + 1;
+            continue;
         } else if (hcg_ret_direct[v]) {
             hcg_phi_is_const[j] = 0;
             hcg_phi_src_reg[j] = 1;
@@ -1777,11 +1790,11 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
 
     if (fast_ok) {
         /* Memory destinations first: cycle-free by construction. */
-        rem = n;
+        rem = n - nskip;
         j = 0;
         while (j < n) {
             phi = hcg_phi_tmp[j];
-            if (hcg_phi_dst_reg[j] < 0) {
+            if (hcg_phi_active[j] && hcg_phi_dst_reg[j] < 0) {
                 off = ra_spill_off[phi];
                 v = hcg_phi_src_inst[j];
                 if (off == 0) {
@@ -1882,6 +1895,43 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
             }
         }
         return;
+    }
+
+    if (getenv("HIR_RA_DEBUG")) {
+        /* Which hazard sent this edge to the push/pop path: one
+         * line per phi, source value and its register, destination
+         * register and slot. */
+        fdputs("PHISLOW to=", 2);
+        fdputuint(2, (unsigned)to_blk);
+        fdputs(" from=", 2);
+        fdputuint(2, (unsigned)from_blk);
+        fdputs(" n=", 2);
+        fdputuint(2, (unsigned)n);
+        fdputc(10, 2);
+        j = 0;
+        while (j < n) {
+            phi = hcg_phi_tmp[j];
+            v = ssa_phi_find_arg(phi, from_blk);
+            fdputs("  phi=", 2);
+            fdputuint(2, (unsigned)phi);
+            fdputs(" dreg=", 2);
+            fdputuint(2, (unsigned)ra_reg[phi]);
+            fdputs(" dslot=", 2);
+            fdputuint(2, (unsigned)ra_spill_off[phi]);
+            fdputs(" v=", 2);
+            fdputuint(2, (unsigned)v);
+            if (v >= 0) {
+                fdputs(" vreg=", 2);
+                fdputuint(2, (unsigned)ra_reg[v]);
+                fdputs(" vslot=", 2);
+                fdputuint(2, (unsigned)ra_spill_off[v]);
+                fdputs(" vkind=", 2);
+                fdputuint(2, (unsigned)h_kind[v]);
+                if (hcg_ret_direct[v]) fdputs(" retdirect", 2);
+            }
+            fdputc(10, 2);
+            j = j + 1;
+        }
     }
 
     /* Push non-constant argument values onto runtime stack. */
