@@ -103,6 +103,20 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-25 (`7c16eb9f`).  `cc.s32x` and `libc.s32a`; the
+tools and `include/` rebuild identical.  The compiler inlines small
+bodies of up to 16 nodes with casts counted free (`e5c73238`): Argon2's
+BlaMka multiply-add is no longer a call at each of its 64 sites.  It
+keeps values stored through a pointer known across stores to other
+words off the same pointer, drops a store a later one overwrites when
+only unrelated loads come between, and computes the high word of a
+multiply by a power of two with a shift (`7c16eb9f`).  The parser
+takes `*` after a comma in a block-scope static list, keeps a typedef'd
+pointer's star for each declarator in a list (`str a, b;` made `b` a
+`char`), resolves `&` of a static local in a static initializer, and
+predefines `__SLOW32__` and `__slow32__` (`07c4bff1`).  Argon2's fill
+loop: 2.0x clang's executed instructions down to 1.3x.
+
 Rebuilt 2026-10-25 (`0641e04f`).  `cc.s32x`, `libc.s32a`, all five
 tools and `include/termios.h`.  The C library has `<termios.h>`,
 `tcgetattr`, `tcsetattr` and an `isatty` that answers, on the term
