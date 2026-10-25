@@ -113,7 +113,7 @@ no bit (`andi 255` after a byte load), inlines bodies of 14 AST nodes
 or fewer at every site, fully unrolls counted loops of up to 16 trips,
 and folds constant offsets and shared frame addresses into the loads
 and stores that use them.  A byte-oriented AES-256 went from 7x clang's
-executed instructions to 2.4x; SQLite under stage08, -3.4% shell
+executed instructions to 2.4x; SQLite under stage08, -5% shell
 dynamic.
 
 Rebuilt 2026-10-25 (`c451b7f9`).  `cc.s32x`, `libc.s32a` and
