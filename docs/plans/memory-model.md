@@ -308,3 +308,52 @@ crypto benchmarks must assemble to the same bytes before and after.
   is the spill *placement* -- a value defined in the hot loop head and
   used in a cold arm should be stored where it is used, not at every
   definition -- and that is what will let this land.
+
+## Step 5b: spill placement (designed 2026-10-25 night, not started)
+
+What the profile says after the webs, in sqlite3VdbeExec's 146 M frame
+instructions per 200,000-row run: 38% is `nVmStep`, a `u64` counter in
+memory (ld, ld, add, sltu, add, st, st per opcode); the rest is spread
+over 70 slots, none above 7 M.  The counter is in memory because the
+pair splitter refuses its `++` (ISSUES-98's set-aside half); promoting
+it with the RMW patch promotes every case-local `i64` with it, and the
+allocator then spills worse: 102 victims against 54, and the new ones
+are not the transients -- they are `addi`/`add` values defined in the
+header and used in 140 arms (reloaded 140 times), header phis with
+hundreds of uses, and `load` #16 from the entry block used in nine
+arms.  Spill-everywhere makes a transient pressure peak in one arm
+cost a long-lived value its register in every arm.
+
+The piece, in order of return for effort, each measured on the heavy
+run before the next:
+
+1. **Rematerialize address arithmetic.**  `hi_inst_remat` covers
+   constants and global addresses.  An `addi`/`add` of a register-
+   resident value is one instruction to recompute, the same as a
+   reload, and needs no store and no slot: when such a value is a
+   respill victim, mark it remat (recompute at each use) instead of
+   mem_forced, provided its operand is live at every use (it is, when
+   the operand is a header value).  VdbeExec's #163/#166 (142 and 143
+   uses) are this shape.
+2. **Reload once per block.**  A mem_forced value used several times in
+   one block reloads at each use; one reload at the first use into a
+   caller-saved register, kept to the last use, needs the emitter to
+   know the register is free -- the allocator must own the reload as a
+   value.  Mechanism: for each victim, per block with uses, a new
+   `LOAD slot` instruction at the first use whose users are that
+   block's uses; a short node for the next colouring round (if it
+   fails, it falls back to mem_forced at use).  Static same-block
+   repeats were 6% of all reloads; in VdbeExec the arms are longer.
+3. **Store at the use region, not the definition**, for a value defined
+   in a hot block and used in cold arms: the per-iteration store is the
+   last of the hot-block frame traffic.  Equivalent to keeping the
+   value in a register through the hot block and spilling it on entry
+   to the arms that use it -- live-range splitting at the arm entry,
+   with the register freed inside the arm.  Needs 2's reload values
+   plus a store placed on the arm's entry edge; the webs' slot-sharing
+   argument (one slot, stores only where the variable changes) is the
+   model.
+
+Then re-measure the RMW patch; it lands when 1-3 hold the line on
+VdbeExec.  Rule as always: heavy-run instructions, frame traffic and
+the hottest blocks first, then DBT time on both machines.
