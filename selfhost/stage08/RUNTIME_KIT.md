@@ -117,7 +117,7 @@ other copies through the push/pop path (`baa67d3a`).  Gated: kit
 differential 119/0, kit tools 21/0, islisp, libcob 490/0, dfsort,
 mdfix 95 runs, tz.
 
-Header only, 2026-10-25 (`a914ed38`): `include/fcntl.h` now declares
+Header only, 2026-10-25 (`8c5f8e19`): `include/fcntl.h` now declares
 `open` itself.  Its comment said `<unistd.h>` did; nothing did, and
 every `open` call in a program compiled against the kit went through
 the implicit `int` declaration -- harmless by accident, since the
