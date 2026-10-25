@@ -223,3 +223,7 @@ crypto benchmarks must assemble to the same bytes before and after.
   loop-body variable at loop entry) sent the whole edge through the
   push/pop path -- 28 instructions per record compared, 115 M in this
   run.
+- 2026-10-25, later: follow-up (a).  A case label inside a plain block
+  no longer refuses the jump table (selfhost ISSUES-96); sqlite3VdbeExec
+  dispatches through a table.  Heavy run 3.91 G -> 3.71 G, static
+  281,124 -> 280,587, arm64 DBT 0.95 -> 0.87 s, output unchanged.

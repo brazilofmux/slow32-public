@@ -284,75 +284,93 @@ static int hl_stmt_terminates(Node *s) {
     return 0;
 }
 
-/* A case/default nested under this statement list (not an inner switch). */
-static int hl_sw_has_nested_label(Node *cs) {
+/* A case/default under a CONTROL statement of this list -- a loop or
+ * an if, not an inner switch (its labels are its own).  under_ctrl
+ * says the list itself is inside one.  A plain compound statement
+ * passes the flag through: `case A: { ...; case B: ... }` is
+ * sqlite3VdbeExec's OP_ReopenIdx falling into OP_OpenRead, and its
+ * 184-case switch was a compare tree for it, ~25 instructions per
+ * opcode dispatched against a table's 6.  A label in a block is
+ * reached by fall-through from the block, which hl_sw_mark_ft gives a
+ * trampoline; a label inside a loop (Duff's device) would make the
+ * table an entry into the loop's middle, and that still declines
+ * (GitHub issue 51 / test_duff_jt.c). */
+static int hl_sw_has_nested_label(Node *cs, int under_ctrl) {
     while (cs) {
         if (cs->kind == ND_CASE || cs->kind == ND_DEFAULT) {
-            if (getenv("HIR_SW_DEBUG")) {
-                fdputs("  nested label kind=", 2);
-                fdputuint(2, (unsigned)cs->kind);
-                fdputs(" val=", 2);
-                fdputuint(2, (unsigned)cs->val);
-                fdputc(10, 2);
+            if (under_ctrl) {
+                if (getenv("HIR_SW_DEBUG")) {
+                    fdputs("  nested label kind=", 2);
+                    fdputuint(2, (unsigned)cs->kind);
+                    fdputs(" val=", 2);
+                    fdputuint(2, (unsigned)cs->val);
+                    fdputc(10, 2);
+                }
+                return 1;
             }
-            return 1;
-        }
-        if (cs->kind != ND_SWITCH) {
-            if (cs->body && hl_sw_has_nested_label(cs->body)) return 1;
-            if (cs->els && hl_sw_has_nested_label(cs->els)) return 1;
+        } else if (cs->kind == ND_BLOCK) {
+            if (cs->body && hl_sw_has_nested_label(cs->body, under_ctrl)) return 1;
+        } else if (cs->kind != ND_SWITCH) {
+            if (cs->body && hl_sw_has_nested_label(cs->body, 1)) return 1;
+            if (cs->els && hl_sw_has_nested_label(cs->els, 1)) return 1;
         }
         cs = cs->next;
     }
     return 0;
 }
 
-/* Nested case labels (Duff's device) still refuse a jump table
- * (GitHub issue 51 / test_duff_jt.c).  Top-level sibling fall-through
- * is handled by per-case trampolines (GitHub issue 64). */
+/* Case labels under a loop or an if (Duff's device) refuse a jump
+ * table (GitHub issue 51 / test_duff_jt.c).  Top-level fall-through
+ * and labels inside plain blocks take per-case trampolines (GitHub
+ * issue 64). */
 static int hl_switch_nested_labels(Node *body) {
-    Node *s;
     if (!body || body->kind != ND_BLOCK) return 1;  /* unknown shape: be safe */
-    s = body->body;
-    while (s) {
-        if (s->kind != ND_SWITCH) {
-            if (s->body && hl_sw_has_nested_label(s->body)) return 1;
-            if (s->els && hl_sw_has_nested_label(s->els)) return 1;
-        }
-        s = s->next;
-    }
-    return 0;
+    return hl_sw_has_nested_label(body->body, 0);
 }
 
-/* Mark case slots entered by fall-through from the previous top-level
- * statement.  `case A: case B:` is coalesced (one block, no extra edge). */
-static void hl_sw_mark_ft(Node *body, int sw_b, int sw_n) {
-    Node *s;
+/* Mark case slots entered by fall-through.  Slots are numbered in
+ * hl_sw_prescan's order, so this walk recurses exactly as it does.  At
+ * the top level a label follows its predecessor unless that one
+ * transfers control; `case A: case B:` is coalesced (one block, no
+ * extra edge).  A label inside a nested block is reached from the
+ * block's flow and is marked without looking: the trampoline costs one
+ * jump on entry from the table, and ssa_jmptab_split_multi would add
+ * it anyway once the CFG shows the second predecessor. */
+static int hl_sw_ft_idx;
+static void hl_sw_mark_ft_walk(Node *s, int depth, int sw_b, int sw_n) {
     Node *prev;
     int seen_label;
-    int idx;
-    int i;
-    i = 0;
-    while (i < sw_n) { hl_sw_ft[sw_b + i] = 0; i = i + 1; }
-    if (!body || body->kind != ND_BLOCK) return;
     prev = NULL;
     seen_label = 0;
-    idx = 0;
-    s = body->body;
     while (s) {
         if (s->kind == ND_CASE) {
             int coalesced;
             coalesced = (prev && prev->kind == ND_CASE);
-            if (seen_label && !coalesced && !hl_stmt_terminates(prev)) {
-                if (idx < sw_n) hl_sw_ft[sw_b + idx] = 1;
+            if (hl_sw_ft_idx < sw_n) {
+                if (depth > 0) hl_sw_ft[sw_b + hl_sw_ft_idx] = 1;
+                else if (seen_label && !coalesced && !hl_stmt_terminates(prev))
+                    hl_sw_ft[sw_b + hl_sw_ft_idx] = 1;
             }
             seen_label = 1;
-            idx = idx + 1;
+            hl_sw_ft_idx = hl_sw_ft_idx + 1;
         } else if (s->kind == ND_DEFAULT) {
             seen_label = 1;
+        } else if (s->kind != ND_SWITCH) {
+            if (s->body) hl_sw_mark_ft_walk(s->body, depth + 1, sw_b, sw_n);
+            if (s->els) hl_sw_mark_ft_walk(s->els, depth + 1, sw_b, sw_n);
         }
         prev = s;
         s = s->next;
     }
+}
+
+static void hl_sw_mark_ft(Node *body, int sw_b, int sw_n) {
+    int i;
+    i = 0;
+    while (i < sw_n) { hl_sw_ft[sw_b + i] = 0; i = i + 1; }
+    if (!body || body->kind != ND_BLOCK) return;
+    hl_sw_ft_idx = 0;
+    hl_sw_mark_ft_walk(body->body, 0, sw_b, sw_n);
 }
 
 static int hl_sw_less_val(int a, int b, int is_unsigned) {

@@ -3445,3 +3445,32 @@ divisions and SQLite's overflow test and fails on the old compiler
 (18 of its lines); `sqlite/tests/acceptance.sql` now asks `typeof` of
 integer products and builds an index on a 300-row integer column, so
 the sorter's comparator choice is exercised by the gate.
+
+### 96. [RESOLVED 2026-10-25] A case label inside a plain block cost the whole switch its jump table
+
+`sqlite3VdbeExec`'s 184-case opcode switch was a balanced compare
+tree: about 25 instructions per opcode dispatched, where a table
+costs 6, and the tree's first levels were the run's hottest blocks.
+The Duff's-device check (`hl_sw_has_nested_label`, GitHub issue 51)
+refused a table for any case label nested under a statement, and
+SQLite writes `case OP_ReopenIdx: { ...; goto open_cursor_set_hints; }
+case OP_OpenRead: case OP_OpenWrite: { ... } }` -- OP_OpenRead's label
+sits inside OP_ReopenIdx's braces so the one can fall into the other.
+
+A label inside a plain compound statement is reached by fall-through
+from that block and from the table, which is exactly what the per-case
+trampolines of GitHub issue 64 handle; only a label under a loop or an
+if makes the table an entry into the middle of a control structure,
+and those still decline (`test_duff_jt.c` keeps its compare tree).
+`hl_sw_has_nested_label` passes a plain block through and flags only
+labels under control statements; `hl_sw_mark_ft` recurses in
+`hl_sw_prescan`'s slot order and marks every nested label as entered
+by fall-through, since `ssa_jmptab_split_multi` would give a
+two-predecessor table target its trampoline anyway.  `HIR_SW_DEBUG=1`
+prints each switch's decision and the label that declined it.
+
+The 200,000-row SQLite run: 3.91 G -> 3.71 G instructions executed,
+281,124 -> 280,587 static, arm64 DBT 0.95 -> 0.87 s, output unchanged.
+`tests/test_jt_block_case.c` has the SQLite shape (fall-through into a
+block-nested label, a label under an if that must still decline) and
+the harness requires exactly one table in its assembly.
