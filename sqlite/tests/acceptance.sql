@@ -19,6 +19,8 @@ with recursive seq(n) as (select 1 union all select n+1 from seq where n<300) in
 create index p_shade on p(shade);
 select shade, typeof(shade), count(*), sum(mass) from p group by shade order by shade limit 6;
 select count(*) from p a join p b on a.shade = b.shade and a.id < b.id and a.id % 50 = 0;
+select tag, avg(mass) from p indexed by p_shade where shade between 10 and 30 group by tag order by avg(mass) desc limit 3;
+select count(*), sum(mass) from p indexed by p_shade where shade between 40 and 60;
 update t set c = c + 100 where a = 2;
 delete from t where a = 3;
 select * from t;

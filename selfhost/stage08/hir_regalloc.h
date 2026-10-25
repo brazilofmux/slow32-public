@@ -68,6 +68,13 @@ static int ra_stat_r30;              /* values colored to r30 */
  * this single translation unit. */
 static int ra_crosses_call[HIR_MAX_INST];
 static int ra_mem_forced[HIR_MAX_INST];  /* iterated-spill victims (gc_respill) */
+/* Phi webs sharing one spill slot (ra_phi_webs): ra_web_of[A] = the
+ * spilled phi P whose slot A takes, -1 for its own; ra_web_s/e[P] = the
+ * slot range P's slot must also cover for its aliases. */
+static int ra_web_of[HIR_MAX_INST];
+static int ra_web_s[HIR_MAX_INST];
+static int ra_web_e[HIR_MAX_INST];
+static int ra_stat_phiweb;
 /* COPY insts emitted immediately before a call to split a live range
  * that is used as a call argument (or CALLP callee) and also lives
  * after the call.  Chained through ra_csplit_next. */
@@ -845,6 +852,8 @@ static void ra_slot_range(int v, int *ps, int *pe) {
             j = j + 1;
         }
     }
+    if (ra_web_s[v] >= 0 && ra_web_s[v] < s) s = ra_web_s[v];
+    if (ra_web_e[v] > e) e = ra_web_e[v];
     *ps = s;
     *pe = e;
 }
@@ -866,7 +875,7 @@ static void ra_assign_spill_slots(void) {
      * position (unreachable) are handled after the scan. */
     i = h_ninst - 1;
     while (i >= 0) {
-        if (ra_spill_wants_slot(i) && ra_pos[i] >= 0 && ra_pos[i] < npos) {
+        if (ra_spill_wants_slot(i) && ra_web_of[i] < 0 && ra_pos[i] >= 0 && ra_pos[i] < npos) {
             ra_slot_range(i, &s, &e);
             if (s < 0) s = 0;
             if (s >= npos) s = npos - 1;
@@ -904,12 +913,18 @@ static void ra_assign_spill_slots(void) {
     /* Unreachable values: private slots, as before. */
     i = 0;
     while (i < h_ninst) {
-        if (ra_spill_wants_slot(i) && !(ra_pos[i] >= 0 && ra_pos[i] < npos)) {
+        if (ra_spill_wants_slot(i) && ra_web_of[i] < 0 && !(ra_pos[i] >= 0 && ra_pos[i] < npos)) {
             hl_temp_stack = hl_temp_stack + 4;
             ra_spill_off[i] = 0 - hl_temp_stack;
             ra_stat_spills = ra_stat_spills + 1;
             ra_stat_sslots = ra_stat_sslots + 1;
         }
+        i = i + 1;
+    }
+    /* Web members take their phi's slot. */
+    i = 0;
+    while (i < h_ninst) {
+        if (ra_web_of[i] >= 0) ra_spill_off[i] = ra_spill_off[ra_web_of[i]];
         i = i + 1;
     }
 }
@@ -2991,6 +3006,147 @@ static int gc_respill(void) {
     return nv;
 }
 
+/* =================================================================
+ * Phi webs: a spilled phi and the phi that feeds it share one slot.
+ *
+ * A loop-carried variable assigned in a few arms of a switch and read
+ * in a few others is, after SSA, P = phi(init, M) at the header and
+ * M = phi(P, P, ..., X, P, ...) at the join after the switch: M carries
+ * the header's value on every pass-through edge.  Under pressure P is
+ * spilled -- it lives across the whole loop -- while M, live only
+ * across the join, keeps a register, and the back edge stores M into
+ * P's slot on every iteration: four such stores per opcode dispatched
+ * in sqlite3VdbeExec.  Before SSA the variable sat in its frame slot
+ * and the pass-through arms touched nothing.
+ *
+ * So, once colouring is final: for a spilled phi P, an argument phi M
+ * whose every reference is as P's argument and that does not interfere
+ * with P (neither is live where the other is defined; exact liveness,
+ * so only with lv_on) gives up its register and takes P's slot.  The
+ * copy P := M is then memory to memory in one slot, a no-op to the
+ * emitter; M := P on the pass-through edges likewise; M := X on an
+ * assigning edge stores X into the slot, which is what the variable
+ * always was.  P's slot range is widened to cover M's.  Pairs are left
+ * alone.  (docs/plans/memory-model.md, step 5.) */
+static int ra_web_mark[HIR_MAX_INST];
+
+static int ra_web_live_in(int b, int v) {
+    if (b < 0 || b >= bb_nblk || lv_id[v] < 0) return 1;   /* unknown: say yes */
+    return (lv_in[(b * lv_w) + (lv_id[v] >> 5)] >> (lv_id[v] & 31)) & 1;
+}
+
+static int ra_web_spilled(int v) {
+    int n;
+    if (ra_mem_forced[v]) return 1;
+    n = gc_node[v];
+    if (n < 0) return 0;
+    if (gc_force_spill[n]) return 1;
+    return gc_color[n] < 0;
+}
+
+static void ra_phi_webs(void) {
+    int p;
+    int j;
+    int a;
+    int i;
+    int n;
+    int ok;
+    int s;
+    int e;
+    if (!lv_on) return;
+    i = 0;
+    while (i < h_ninst) { ra_web_mark[i] = -1; i = i + 1; }
+    p = 0;
+    while (p < h_ninst) {
+        if (h_kind[p] == HI_PHI && h_pbase[p] >= 0 && !hi_inst_remat(p) &&
+            ra_pair_of[p] < 0 && ra_web_of[p] < 0 && ra_web_spilled(p)) {
+            j = 0;
+            while (j < h_pcnt[p]) {
+                a = h_pval[h_pbase[p] + j];
+                j = j + 1;
+                if (a < 0 || a == p || h_kind[a] != HI_PHI || h_pbase[a] < 0) continue;
+                if (ra_web_mark[a] == p) continue;
+                ra_web_mark[a] = p;
+                if (ra_web_of[a] >= 0 || ra_pair_of[a] >= 0 || hi_inst_remat(a)) continue;
+                if (ra_web_s[a] >= 0) continue;          /* a is itself a web head */
+                if (ra_web_live_in(h_blk[p], a) || ra_web_live_in(h_blk[a], p)) {
+                    if (getenv("HIR_RA_DEBUG")) {
+                        fdputs("PHIWEB-NO phi=", 2);
+                        fdputuint(2, (unsigned)p);
+                        fdputs(" arg=", 2);
+                        fdputuint(2, (unsigned)a);
+                        fdputs(lv_id[a] < 0 || lv_id[p] < 0 ? " untracked\n" : " interferes\n", 2);
+                    }
+                    continue;
+                }
+                /* every reference to a is a phi's argument: p's, or
+                 * another phi's -- the loop's exit phi takes the join's
+                 * value too, and reads it from the shared slot, which
+                 * holds a's value until p's own copy, a no-op.  A
+                 * non-phi use would need a as a register value. */
+                ok = 1;
+                i = 0;
+                while (i < h_ninst && ok) {
+                    if (h_kind[i] != HI_PHI && h_kind[i] != HI_NOP) {
+                        /* lv_uses, not hi_ref: a compare fused into a
+                         * BRC is a NOP whose operands the branch
+                         * re-reads, and a BURG fold reads its base --
+                         * sqlite3WhereCodeOneLoopStart's slot-mate fed
+                         * a fused compare and the walk over hi_ref did
+                         * not see it. */
+                        int nu;
+                        int q;
+                        nu = lv_uses(i);
+                        q = 0;
+                        while (q < nu) {
+                            if (lv_ubuf[q] == a) { ok = 0; break; }
+                            q = q + 1;
+                        }
+                    }
+                    i = i + 1;
+                }
+                /* Two members of one web must not be live together:
+                 * each one's assigning edges store into the shared slot
+                 * while the other may still be read from it. */
+                i = 0;
+                while (i < h_ninst && ok) {
+                    if (ra_web_of[i] == p &&
+                        (ra_web_live_in(h_blk[a], i) || ra_web_live_in(h_blk[i], a)))
+                        ok = 0;
+                    i = i + 1;
+                }
+                if (!ok) {
+                    if (getenv("HIR_RA_DEBUG")) {
+                        fdputs("PHIWEB-NO phi=", 2);
+                        fdputuint(2, (unsigned)p);
+                        fdputs(" arg=", 2);
+                        fdputuint(2, (unsigned)a);
+                        fdputs(" other-use=", 2);
+                        fdputuint(2, (unsigned)(i - 1));
+                        fdputc(10, 2);
+                    }
+                    continue;
+                }
+                n = gc_node[a];
+                if (n >= 0) gc_force_spill[n] = 1;
+                ra_web_of[a] = p;
+                ra_slot_range(a, &s, &e);
+                if (ra_web_s[p] < 0 || s < ra_web_s[p]) ra_web_s[p] = s;
+                if (e > ra_web_e[p]) ra_web_e[p] = e;
+                ra_stat_phiweb = ra_stat_phiweb + 1;
+                if (getenv("HIR_RA_DEBUG")) {
+                    fdputs("PHIWEB phi=", 2);
+                    fdputuint(2, (unsigned)p);
+                    fdputs(" takes=", 2);
+                    fdputuint(2, (unsigned)a);
+                    fdputc(10, 2);
+                }
+            }
+        }
+        p = p + 1;
+    }
+}
+
 static void gc_alloc(void) {
     int iter;
 
@@ -3007,6 +3163,7 @@ static void gc_alloc(void) {
         if (gc_respill() == 0) break;
         iter = iter + 1;
     }
+    ra_phi_webs();
     gc_writeback();
 }
 
@@ -3378,7 +3535,7 @@ static void hir_regalloc(void) {
     ra_mark_call_crossing();
     lv_prepare();          /* per-block liveness; lv_on gates gc_build */
     ra_mark_arg_prefs();
-    { int z; z = 0; while (z < h_ninst) { ra_mem_forced[z] = 0; z = z + 1; } }
+    { int z; z = 0; while (z < h_ninst) { ra_mem_forced[z] = 0; ra_web_of[z] = -1; ra_web_s[z] = -1; ra_web_e[z] = -1; z = z + 1; } }
     /* (ra_mark_clobbers removed — x64 RCX/RDX clobber arrays were never populated or used for SLOW-32) */
 
     ra_stat_caller_used = 0;

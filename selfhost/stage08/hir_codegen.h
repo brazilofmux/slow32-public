@@ -1772,12 +1772,24 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
             off = ra_spill_off[phi];
             if (hcg_slot_off(off) < -2048 || hcg_slot_off(off) > 2047) { fast_ok = 0; break; }
             /* Slot written here and read by another copy on this
-             * edge?  (The reader's source can only be this phi.) */
+             * edge?  Compared by slot, not by value: a phi web
+             * (ra_phi_webs) puts two values in one slot, so the
+             * reader's source may be this phi or its slot-mate.  A
+             * reader whose own destination is the same slot does not
+             * read (its copy is the no-op below). */
             i = 0;
             while (i < n) {
-                if (i != j &&
-                    ssa_phi_find_arg(hcg_phi_tmp[i], from_blk) == phi &&
-                    ra_reg[phi] < 0) { fast_ok = 0; break; }
+                if (i != j) {
+                    int w;
+                    w = ssa_phi_find_arg(hcg_phi_tmp[i], from_blk);
+                    if (w >= 0 && !hcg_ret_direct[w] && ra_reg[w] < 0 &&
+                        !hi_inst_remat(w) && ra_spill_off[w] == off &&
+                        !(ra_reg[hcg_phi_tmp[i]] < 0 &&
+                          ra_spill_off[hcg_phi_tmp[i]] == off)) {
+                        fast_ok = 0;
+                        break;
+                    }
+                }
                 i = i + 1;
             }
             if (!fast_ok) break;

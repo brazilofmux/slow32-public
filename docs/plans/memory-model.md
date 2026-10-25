@@ -271,3 +271,30 @@ crypto benchmarks must assemble to the same bytes before and after.
   reading of 1.05 G at budget 16, taken while kit batch 39 ran
   alongside, did not reproduce -- measure with the machine quiet, the
   DBT timings said the same.
+- 2026-10-25, night: step 5 begins where the dispatch loop's profile
+  pointed.  VdbeExec's hot block stored four words to the frame on every
+  opcode: a loop-carried variable assigned in two arms and read in two
+  others is P = phi(init, M) at the header and M = phi(P, P, ..., X) at
+  the join; P, live across the whole loop, is spilled, M keeps a
+  register, and the back edge stores M into P's slot every iteration --
+  before SSA the variable sat in its slot and the pass-through arms
+  touched nothing.  `ra_phi_webs` (hir_regalloc.h) runs once colouring
+  is final: for a spilled phi P, an argument phi M that does not
+  interfere with P and whose every non-phi reference is none gives up
+  its register and takes P's slot, so P := M and M := P are memory-to-
+  memory in one slot (no-ops to the emitter) and only the assigning
+  edges store.  Three things the first versions got wrong, each caught
+  by the heavy run's output: (1) the emitter's "slot written and read on
+  one edge" hazard compared values, not slots -- compares slots now;
+  (2) the reference walk used hi_ref and missed a compare fused into a
+  BRC (a NOP whose operands the branch re-reads) -- it uses lv_uses,
+  the liveness builder's own enumeration; (3) two members of one web
+  were not checked against each other -- M1 live while M2's assigning
+  edge stored into the slot (sqlite3WhereCodeOneLoopStart, the
+  index-range aggregate came out wrong; that query shape is in
+  acceptance.sql now, `indexed by` so the planner takes the index at
+  300 rows).  Numbers: 153 webs in SQLite, 12 in VdbeExec; VdbeExec
+  frame reloads 1,340 -> 802, stores -> 324; heavy run 3.647 -> 3.565 G
+  (-2.3%), static 280,891 -> 280,559; arm64 DBT 0.85-0.86 -> 0.84 s,
+  quiet machine, interleaved.  test_phi_web: 33 loop-carried variables
+  and one assigned in a single arm; the harness requires a PHIWEB line.
