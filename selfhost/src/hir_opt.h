@@ -1122,7 +1122,7 @@ static int ho_mem_find(int addr) {
     int k;
     k = 0;
     while (k < ho_mem_cnt) {
-        if (ho_mem_addr[k] == addr) return k;
+        if (al_same_loc(ho_mem_addr[k], addr)) return k;
         k = k + 1;
     }
     return -1;
@@ -1154,7 +1154,7 @@ static void ho_mem_kill_aliases(int addr, int sz) {
     int k;
     k = 0;
     while (k < ho_mem_cnt) {
-        if (ho_mem_addr[k] != addr &&
+        if (!al_same_loc(ho_mem_addr[k], addr) &&
             al_may_alias(addr, sz, ho_mem_addr[k], al_acc_size(ho_mem_ty[k]), 0)) {
             ho_mem_cnt = ho_mem_cnt - 1;
             ho_mem_addr[k] = ho_mem_addr[ho_mem_cnt];

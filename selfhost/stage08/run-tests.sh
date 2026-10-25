@@ -700,6 +700,14 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
                 continue
             fi
         fi
+        # Two namings of one global in a statement are one load.
+        if [[ "$tname" == "test_mem_join" ]]; then
+            if [[ "$(awk '$1=="global_twice:"{p=1;next} p&&/^[A-Za-z_]/{exit} p' "$WORKDIR/${tname}.s" | grep -cE '^[[:space:]]+ldw[[:space:]]')" != 1 ]]; then
+                printf "  %-30s FAIL (global_twice loads knob twice)\n" "$tname:"
+                FAIL=$((FAIL + 1))
+                continue
+            fi
+        fi
         # Loads out of loops: a hoisted load sits before the loop's first
         # label; one that stays is after it.
         if [[ "$tname" == "test_loop_load" ]]; then

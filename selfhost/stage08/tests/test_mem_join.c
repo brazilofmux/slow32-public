@@ -58,6 +58,14 @@ int stored_then(int *p, int c, int v) {
     return *p + v;
 }
 
+/* The same global named twice in one statement: one load.  Each
+ * naming builds its own address value, and forwarding compares them as
+ * locations, not as values.  (A plain global, not a volatile one.) */
+static int knob;
+int global_twice(void) {
+    return knob * 3 + knob;
+}
+
 /* A call on one path forgets everything. */
 static int g;
 static void bump(void) { g = g + 1; }
@@ -85,5 +93,7 @@ int main(void) {
     if (stored_then(&x, 1, 7) != 7 + 14 || x != 7) return 7;
     x = 1; g = 0;
     if (call_arm(&x, 1) != 2 || g != 1) return 8;
+    knob = 6;
+    if (global_twice() != 24) return 10;
     return 0;
 }

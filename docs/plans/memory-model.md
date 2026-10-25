@@ -55,6 +55,11 @@ crypto benchmarks must assemble to the same bytes before and after.
    live at the join costs nothing and gains nothing measurable.  The
    test (`test_mem_join`) stays as the correctness line.
 
+2b. **Addresses compared as locations.**  Forwarding keyed its table by
+   address value; two namings of one global in a statement each build
+   a GADDR, so both loaded.  `al_same_loc` compares two addresses as
+   what they name (object and offset), and the table uses it.
+
 2a. **`volatile` as a barrier.**  The parser drops the qualifier.  Carry
    it to the HIR (a type flag on the access), and have forwarding, DSE,
    dead slots and LICM treat a volatile access as a call does: nothing
@@ -78,9 +83,16 @@ crypto benchmarks must assemble to the same bytes before and after.
 
 ## Rules
 
-- Executed-instruction counts are not the measure.  Every step that
-  changes code is timed under slow32-dbt on arm64 and on kagura's
-  x86-64, and its frame traffic (`(ldw|stw) .., r29`) is compared.
+- Executed-instruction counts are not the measure, and neither is one
+  DBT's wall time by itself.  Every step that changes code is judged on
+  guest work first -- instructions executed, frame traffic (`(ldw|stw)
+  .., r29`), the hottest superblocks and their counts (`slow32-dbt -s`)
+  -- and then timed under slow32-dbt on arm64 and on kagura's x86-64.
+  A wall-time move with the guest work unchanged is the DBT's to
+  explain (tools/dbt/ISSUES.md 28: a two-load reorder in one block of
+  sqlite3VdbeExec cost 15% more dispatcher entries on x86-64 and 6-8%
+  of the run, with arm64 unmoved); one with the guest work changed is
+  the compiler's (33874324).
 - The five differentials are the correctness gate: run-tests with the
   fixed point, SQLite acceptance, libc, stage07, FP.  An alias bug is
   wrong code, and only they see it.
@@ -141,3 +153,11 @@ crypto benchmarks must assemble to the same bytes before and after.
   under the x86-64 DBT, unchanged on arm64.  The compiler's object
   crossed stage07's linker input buffer (1 MB, FILE_BUFSZ) by 1,108
   bytes; the buffer is 4 MB now, as stage08's own linker's has been.
+- 2026-10-25: step 2b.  `al_same_loc`; forwarding's table matches by
+  location.  Benchmarks byte-identical; SQLite 281,623 -> 281,594
+  static in ten functions (a global read twice in one statement), frame
+  accesses unchanged, instructions executed on the 200,000-row run
+  6,834,216,050 -> 6,834,216,032, hottest superblocks identical;
+  arm64 1.57-1.60 -> 1.56-1.58 s; x86-64 12.58-12.82 -> 13.67-13.87 s
+  from 15% more dispatcher entries -- the DBT's (ISSUES 28 there), and
+  the origin of the rule above.

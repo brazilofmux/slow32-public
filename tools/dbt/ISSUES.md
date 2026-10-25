@@ -913,3 +913,43 @@ Then the same day, the three things left:
   glibc on 26 cases.
 The -Q probe then found a cc-x64 variadic-double bug (selfhost
 ISSUES-87), fixed in the same commit.
+
+## 28. x86-64: 15% More Dispatcher Entries From a Two-Load Reorder in One Guest Block (OPEN 2026-10-25)
+
+Two builds of the stage08 SQLite shell differ in eleven functions, ten
+of them cold (`sqlite3_initialize`, `pcache1Alloc`, ...: one global
+read twice in a statement became one load, 29 instructions fewer in
+all) and `sqlite3VdbeExec`, where one block has the same instructions
+with two loads moved up two places and two registers swapped.  On a
+200,000-row workload (a recursive-CTE insert, an index build, grouped
+aggregates, a self-join, an update) both execute 6,834,216,0xx guest
+instructions, write the same bytes, have the same frame traffic, the
+same hottest superblocks with the same execution counts, the same
+chain and side-exit counts.  Under slow32-dbt on kagura the second is
+6-8% slower, every run, across all eight `DBT_LAYOUT_PAD` placements,
+and padding the first build's guest code by the same 116 bytes does
+not reproduce it: it is this code, not where it sits.
+
+`-s` says why: `Cache lookups` 110,993,808 against 127,784,381.  That
+counter is `cache_lookup`, called once per return to the C dispatch
+loop -- a block exit that neither a chain nor the inline table
+resolved.  `Inline lookup misses` (EXIT_INDIRECT) went the other way,
+2,161,758 to 1,467,226, and `Chains made` is 2,187 in both.  So the
+seventeen million extra dispatches are direct exits of hot blocks that
+chaining left unpatched in one build and not the other, and nothing in
+the printed statistics names them.  arm64 does not show it (1.56-1.58
+against 1.57-1.60 s, the second build slightly faster).
+
+Reproduce: `sqlite/build-stage08.sh` with the compiler at bff0412c and
+at the commit after it (the one that keys forwarding by location),
+`slow32-dbt -s sqlite3.s32x t.db < heavy.sql` with the workload above
+(any 200,000-row table with an index and a GROUP BY shows it).  A
+first step would be a per-exit-site count of dispatcher entries, to
+see which block's exit stopped chaining.
+
+What this means for measuring the compiler: x86-64 wall time is not
+the judge when the guest work is identical.  The compiler's rule
+(docs/plans/memory-model.md) now reads instruction counts, frame
+traffic and the hottest-superblock profile first, both DBTs' times
+after, and treats a wall-time move without a guest-work move as this
+DBT's to explain.

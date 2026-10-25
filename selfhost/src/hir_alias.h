@@ -90,6 +90,24 @@ static int al_may_alias(int a, int sza, int b, int szb, int ptr_apart) {
     return 1;
 }
 
+/* Do two address values name the same bytes?  Two GADDRs of one symbol
+ * are distinct ids (hl_addr makes one per access), as are two ADDIs
+ * off one slot; forwarding keyed by the id read a global twice in one
+ * statement (docs/plans/memory-model.md, step 2b).  A pointer against
+ * a pointer must be the same value plus the same offset. */
+static int al_same_loc(int a, int b) {
+    int ba; int oa; int ka;
+    int bb; int ob; int kb;
+    if (a == b) return 1;
+    ka = al_resolve(a, &ba, &oa);
+    kb = al_resolve(b, &bb, &ob);
+    if (ka == AL_UNKNOWN || ka != kb || oa != ob) return 0;
+    if (ba == bb) return 1;
+    if (ka != AL_GLOBAL) return 0;
+    if (h_name[ba] == NULL || h_name[bb] == NULL) return 0;
+    return strcmp(h_name[ba], h_name[bb]) == 0;
+}
+
 /* Roots: for every instruction, the ALLOCA its value is an address
  * into, through ADDI, COPY and ADD-of-a-constant steps, and the byte
  * offset; -1 for a value that is not such an address.  Computed to a
