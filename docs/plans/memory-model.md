@@ -98,6 +98,9 @@ crypto benchmarks must assemble to the same bytes before and after.
 - The five differentials are the correctness gate: run-tests with the
   fixed point, SQLite acceptance, libc, stage07, FP.  An alias bug is
   wrong code, and only they see it.
+- Measure with the machine quiet.  A kit batch or a gate running
+  alongside moved the arm64 DBT time 5% and once produced an
+  instruction count a third of the true one; neither reproduced.
 - The Fortran and COBOL copies of these headers are not touched; the
   user's ruling of 2026-10-25 keeps this on the C compiler.
 - No new pass may answer a memory question its own way.  If
@@ -248,3 +251,23 @@ crypto benchmarks must assemble to the same bytes before and after.
   and ND_POST_INC/DEC paths, `old_val = hi_emit(HI_LOAD, n->ty, addr,
   ...)` becomes `hl_rmw_lo_ty(n->ty)`, which is TY_INT for long long
   (not S12CC_X64_HOST) and double (not S12CC_NATIVE_F64).
+- 2026-10-25, end of day.  Follow-up (d) is moot as stated: clang's
+  sqlite3VdbeRecordCompareWithSkip also saves 20 callee-saved registers
+  (478 instructions to stage08's 475); the 413 M the function cost was
+  the comparator choice, gone with ISSUES-95.  The x86-64 side of the
+  rule, from Kagura (Xeon 8259CL, idle, batch-38 cc = bca7cde7): stage08
+  8.61-8.68 s, clang 6.91-6.96 s, 1.25x on 1.084x the instructions
+  (3,707,551,448 against 3,421,617,042, outputs byte-identical); `-p`
+  says dispatch is ~40% of either build and the kit binary takes none
+  of the DBT's native div/mod hooks (tools/dbt/ISSUES.md 29).  arm64
+  0.87-0.92 s.  What remains of the 1.084x, by function: VdbeExec
+  1,179 M against 991 M (1.19x); insertCellFast + fillInCell +
+  allocateSpace 144 M that clang inlines into sqlite3BtreeInsert (ours
+  65 M + 144 M against its 115 M -- single-site statics refused into a
+  caller over S12CC_INLINE_HUGE = 500 nodes); sqlite3BtreeTableMoveto
+  1.28x; vdbeSorterMerge 1.57x; our memcpy 261 M against clang's 644 M
+  and our division helpers 98 M against its 207 M run the other way.
+  Inliner budgets 16-20 are within 0.1% of each other on this run; a
+  reading of 1.05 G at budget 16, taken while kit batch 39 ran
+  alongside, did not reproduce -- measure with the machine quiet, the
+  DBT timings said the same.
