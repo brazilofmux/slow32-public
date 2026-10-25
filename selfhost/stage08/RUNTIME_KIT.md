@@ -103,6 +103,13 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-24 (`1c13e70c`).  `cc.s32x` and `libc.s32a`: a 64-bit
+shift by a run-time count is inline instead of a helper call, 8-byte
+parameters stay in registers instead of being stored to the frame, and
+statics of up to 12 AST nodes are inlined by default (`S12CC_INLINE`
+unset; giving it selects the full policy as before).  SHA-512 under
+the DBT went from 6x clang to 1.5x.  `libc.s32a` grows 1.8%.
+
 Fixed 2026-10-24 (`302a417e`).  In `s32-ld.s32x` only: an object's
 local symbols stay its own instead of filling the linker's 4,096-entry
 global table, so a unit with thousands of string literals links.
