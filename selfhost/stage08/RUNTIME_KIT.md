@@ -103,6 +103,15 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-25 (`0641e04f`).  `cc.s32x`, `libc.s32a`, all five
+tools and `include/termios.h`.  The C library has `<termios.h>`,
+`tcgetattr`, `tcsetattr` and an `isatty` that answers, on the term
+service's local modes (docs/SPEC.md 8.14.6) -- enough to read a
+password without echo -- and a failed request now leaves the host's
+`errno` (EBADF, ENOTTY, ...) instead of EIO (`aa9fa804`).  The tools
+link that request code, hence new binaries; their output is
+byte-identical.  The compiler has `__has_include` (`0641e04f`).
+
 Rebuilt 2026-10-25 (`4ce16c36`).  `cc.s32x` and `libc.s32a`; the
 tools and `include/` rebuild identical.  When colouring fails, the
 register allocator now spills a long-lived value that clears several
