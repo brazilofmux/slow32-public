@@ -2057,6 +2057,13 @@ static int gc_select_spill(void) {
              * (writeback clears h_no_remat), no slot, no loads.  Prefer
              * it over anything that would pay real memory traffic. */
             if (h_kind[inst] == HI_ICONST && h_no_remat[inst]) cost = 0;
+            /* A value that lives a few instructions frees no register
+             * by spilling: its store and reload sit where it lived, in
+             * the scratch registers.  Prefer anything with a real range
+             * (see gc_respill_cost). */
+            else if (ra_pos[inst] >= 0 && ra_iend[inst] >= ra_pos[inst] &&
+                     ra_iend[inst] - ra_pos[inst] <= 8)
+                cost = cost + 1000000;
             if (cost < best_cost) {
                 best_cost = cost;
                 best = n;
@@ -2884,6 +2891,30 @@ static void gc_writeback(void) {
  * constant victim is unpinned back to remat instead, and a pair half
  * takes its partner along (share fate).
  * ================================================================= */
+/* Respill victims.  The failed node itself pays its weighted uses; a
+ * neighbour pays its uses once however many failures it clears, so it
+ * is charged per failed neighbour.  Uses alone always chose the failed
+ * temporary -- one def, one use -- over the long-lived neighbour that
+ * held the colour: BLAKE2b's compress respilled some 500 temporaries,
+ * each a store and an immediate reload, while the state words kept
+ * their registers.  Uses over live span fixed that and spilled
+ * BlaMka's hot pointers instead (+39%): a long range is not a cheap
+ * one.  A failure next to a victim already chosen this round waits for
+ * the next colouring. */
+static int gc_rs_nfail[GC_MAX_NODE];
+static char gc_rs_taken[GC_MAX_NODE];
+
+static int gc_respill_cost(int inst, int nfail) {
+    int span;
+    if (h_kind[inst] == HI_ICONST && h_no_remat[inst]) return 0;
+    if (nfail < 1) nfail = 1;
+    span = 1;
+    if (ra_pos[inst] >= 0 && ra_iend[inst] > ra_pos[inst])
+        span = (ra_iend[inst] - ra_pos[inst]) / 16 + 1;
+    if (span > 8) span = 8;
+    return (ra_wuses[inst] * 64) / (nfail * span);
+}
+
 static int gc_respill(void) {
     int n;
     int nv;
@@ -2894,29 +2925,43 @@ static int gc_respill(void) {
     int bcost;
     int cost;
 
+    n = 0;
+    while (n < gc_nnode) { gc_rs_nfail[n] = 0; gc_rs_taken[n] = 0; n = n + 1; }
+    n = 0;
+    while (n < gc_nnode) {
+        if (gc_color[n] < 0 || gc_force_spill[n]) {
+            e = gc_adj_head[n];
+            while (e >= 0) {
+                a = gc_get_alias(gc_adj_peer[e]);
+                gc_rs_nfail[a] = gc_rs_nfail[a] + 1;
+                e = gc_adj_next[e];
+            }
+        }
+        n = n + 1;
+    }
+
     nv = 0;
     n = 0;
     while (n < gc_nnode) {
         if (gc_color[n] < 0 || gc_force_spill[n]) {
             /* Cheapest of the failed node and its neighbors. */
             best = n;
-            bcost = ra_wuses[gc_inst[n]];
-            if (h_kind[gc_inst[n]] == HI_ICONST && h_no_remat[gc_inst[n]])
-                bcost = 0;
+            bcost = gc_respill_cost(gc_inst[n], 1);
             e = gc_adj_head[n];
             while (e >= 0) {
                 a = gc_get_alias(gc_adj_peer[e]);
                 inst = gc_inst[a];
+                if (gc_rs_taken[a]) { best = -1; break; }
                 if (!ra_mem_forced[inst]) {
-                    cost = ra_wuses[inst];
-                    if (h_kind[inst] == HI_ICONST && h_no_remat[inst])
-                        cost = 0;
+                    cost = gc_respill_cost(inst, gc_rs_nfail[a]);
                     if (cost < bcost) { best = a; bcost = cost; }
                 }
                 e = gc_adj_next[e];
             }
+            if (best < 0) { n = n + 1; nv = nv + 1; continue; }
             inst = gc_inst[best];
             if (!ra_mem_forced[inst]) {
+                gc_rs_taken[best] = 1;
                 if (h_kind[inst] == HI_ICONST && h_no_remat[inst]) {
                     h_no_remat[inst] = 0;   /* back to remat, no slot */
                 } else {
