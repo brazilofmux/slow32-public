@@ -22,6 +22,7 @@ int close(int fd);
 #include "optimize.h"
 #include "hir.h"
 #include "hir_lower.h"
+#include "hir_alias.h"
 #include "hir_ssa.h"
 #include "hir_opt.h"
 #include "hir_licm.h"

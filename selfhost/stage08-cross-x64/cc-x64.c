@@ -116,6 +116,7 @@ static void fdputuint(int f, int v) {
 #include "optimize.h"
 #include "../stage08/hir.h"
 #include "../stage08/hir_lower.h"
+#include "../stage08/hir_alias.h"
 #include "../stage08/hir_ssa.h"
 #include "../stage08/hir_opt.h"
 #include "../stage08/hir_licm.h"

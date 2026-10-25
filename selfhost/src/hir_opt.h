@@ -25,15 +25,7 @@ static int ho_resolve(int inst) {
 }
 
 /* Is src2 an instruction reference (not a block number)? */
-static int ho_src2_is_ref(int k) {
-    if (hi_is_binop(k)) return 1;
-    if (k == HI_STORE) return 1;
-    if (k == HI_RET) return 1;
-    /* FP binary ops: FADD..FDIV, FEQ/FLT/FLE */
-    if (k >= HI_FADD && k <= HI_FDIV) return 1;
-    if (k >= HI_FEQ && k <= HI_FLE) return 1;
-    return 0;
-}
+static int ho_src2_is_ref(int k) { return hi_src2_is_ref(k); }
 
 /* ----------------------------------------------------------------
  * Pass 1: Copy propagation
@@ -1037,21 +1029,16 @@ static int ho_cse(void) {
 
 static int ho_stat_dse;
 
-static int ho_may_alias(int a, int sza, int b, int szb);
-static int ho_addr_resolve(int id, int *base, int *off);
-static int ho_alias_ptr;   /* ho_may_alias: same-pointer words apart (DSE) */
-static int ho_acc_size(int ty);
-
 /* Does the store at j overwrite every byte the store at i wrote? */
 static int ho_dse_covers(int i, int j) {
     int bi; int oi; int ki;
     int bj; int oj; int kj;
     if (h_src1[j] == h_src1[i])
-        return ho_acc_size(h_ty[j]) >= ho_acc_size(h_ty[i]);
-    ki = ho_addr_resolve(h_src1[i], &bi, &oi);
-    kj = ho_addr_resolve(h_src1[j], &bj, &oj);
-    if (ki == 0 || ki != kj || bi != bj) return 0;
-    return oj <= oi && oj + ho_acc_size(h_ty[j]) >= oi + ho_acc_size(h_ty[i]);
+        return al_acc_size(h_ty[j]) >= al_acc_size(h_ty[i]);
+    ki = al_resolve(h_src1[i], &bi, &oi);
+    kj = al_resolve(h_src1[j], &bj, &oj);
+    if (ki == AL_UNKNOWN || ki != kj || bi != bj) return 0;
+    return oj <= oi && oj + al_acc_size(h_ty[j]) >= oi + al_acc_size(h_ty[i]);
 }
 
 static int ho_dse_pass(void) {
@@ -1083,12 +1070,9 @@ static int ho_dse_pass(void) {
              * pointer, another frame slot -- does not: BlaMka's z[k] were
              * stored twice per permutation, the first dead under loads of
              * their neighbours. */
-            if (jk == HI_LOAD) {
-                ho_alias_ptr = 1;
-                if (ho_may_alias(addr, ho_acc_size(h_ty[i]), h_src1[j], ho_acc_size(h_ty[j])))
-                    alive = 0;
-                ho_alias_ptr = 0;
-            }
+            if (jk == HI_LOAD &&
+                al_may_alias(addr, al_acc_size(h_ty[i]), h_src1[j], al_acc_size(h_ty[j]), 1))
+                alive = 0;
             if (jk == HI_CALL || jk == HI_CALLP ||
                 jk == HI_A64_DBT_TRAMPOLINE || hi_is_a64_cache_asm(jk) ||
                 jk == HI_X64_DBT_TRAMPOLINE || jk == HI_X64_RDTSC) {
@@ -1159,75 +1143,6 @@ static void ho_mem_set(int addr, int val, int ty) {
     }
 }
 
-/* Resolve an address value to (base, byte offset).  Returns 1 for a
- * frame slot (base = the HI_ALLOCA), 2 for a global (base = the
- * HI_GADDR; compare by h_name, two GADDRs of one symbol are distinct
- * ids), 0 when the base is unknown (a pointer from anywhere). */
-static int ho_addr_resolve(int id, int *base, int *off) {
-    int depth;
-    int k;
-    *off = 0;
-    depth = 0;
-    while (id >= 0 && depth < 64) {
-        k = h_kind[id];
-        if (k == HI_ALLOCA) { *base = id; return 1; }
-        if (k == HI_GADDR) { *base = id; return 2; }
-        if (k == HI_ADDI) { *off = *off + h_val[id]; id = h_src1[id]; }
-        else if (k == HI_COPY) { id = h_src1[id]; }
-        else if (k == HI_ADD && h_src2[id] >= 0 && h_kind[h_src2[id]] == HI_ICONST) {
-            *off = *off + h_val[h_src2[id]]; id = h_src1[id];
-        } else if (k == HI_ADD && h_src1[id] >= 0 && h_kind[h_src1[id]] == HI_ICONST) {
-            *off = *off + h_val[h_src1[id]]; id = h_src2[id];
-        } else {
-            /* Any other value: a pointer, and off is from it (3).  Two
-             * accesses off one pointer value are told apart by their
-             * bytes; a pointer against anything else may alias. */
-            *base = id;
-            return 3;
-        }
-        depth = depth + 1;
-    }
-    return 0;
-}
-
-static int ho_acc_size(int ty) {
-    int sz;
-    sz = ty_size(ty);
-    if (sz <= 0) sz = 4;
-    return sz;
-}
-
-/* May a `sza`-byte access at address value `a` touch the same bytes as
- * a `szb`-byte access at `b`?  Sound in the conservative direction: any
- * base we cannot resolve may alias anything. */
-static int ho_may_alias(int a, int sza, int b, int szb) {
-    int ba; int oa; int ka;
-    int bb; int ob; int kb;
-    if (a == b) return 1;
-    ka = ho_addr_resolve(a, &ba, &oa);
-    kb = ho_addr_resolve(b, &bb, &ob);
-    if (ka == 0 || kb == 0) return 1;
-    if (ka == 3 || kb == 3) {
-        /* Two words off one pointer are told apart by their bytes for
-         * dead-store elimination only (ho_alias_ptr): BlaMka's z[k] were
-         * stored twice per permutation.  Forwarding through them as well
-         * held every word of a row in a register across the G steps,
-         * and the spills cost more than the reloads they replaced --
-         * fill's frame traffic 152 -> 540 instructions, Argon2 12%
-         * slower under the x86-64 DBT for no fewer instructions. */
-        if (!ho_alias_ptr || ka != kb || ba != bb) return 1;
-    } else if (ka != kb) return 0;        /* a frame slot vs a global */
-    else if (ba != bb) {
-        if (ka == 1) return 0;            /* two distinct frame slots */
-        if (h_name[ba] == NULL || h_name[bb] == NULL) return 1;
-        if (strcmp(h_name[ba], h_name[bb]) != 0) return 0;
-    }
-    /* same object: byte ranges */
-    if (oa + sza <= ob) return 0;
-    if (ob + szb <= oa) return 0;
-    return 1;
-}
-
 /* A STORE to `addr` of `sz` bytes: forget every remembered value whose
  * bytes it may overwrite.  Entries keyed by a different address value
  * used to survive any store -- `*p = 10; *q = 20; return *p;` returned
@@ -1239,7 +1154,7 @@ static void ho_mem_kill_aliases(int addr, int sz) {
     k = 0;
     while (k < ho_mem_cnt) {
         if (ho_mem_addr[k] != addr &&
-            ho_may_alias(addr, sz, ho_mem_addr[k], ho_acc_size(ho_mem_ty[k]))) {
+            al_may_alias(addr, sz, ho_mem_addr[k], al_acc_size(ho_mem_ty[k]), 0)) {
             ho_mem_cnt = ho_mem_cnt - 1;
             ho_mem_addr[k] = ho_mem_addr[ho_mem_cnt];
             ho_mem_val[k] = ho_mem_val[ho_mem_cnt];
@@ -1289,7 +1204,7 @@ static int ho_mem_fwd(void) {
                 } else {
                     /* Record: after this STORE, addr holds val -- and
                      * nothing it may overlap is known any more. */
-                    ho_mem_kill_aliases(addr, ho_acc_size(h_ty[i]));
+                    ho_mem_kill_aliases(addr, al_acc_size(h_ty[i]));
                     ho_mem_set(addr, val, h_ty[i]);
                 }
             }
@@ -1727,84 +1642,41 @@ static int ho_known_bits(void) {
  * memory on purpose.
  * ---------------------------------------------------------------- */
 
-static int ho_ds_root[HIR_MAX_INST];
 static char ho_ds_bad[HIR_MAX_INST];
 static int ho_stat_dslot;
 
-static void ho_ds_use(int user, int r, int ok) {
-    if (r < 0 || r >= h_ninst || ho_ds_root[r] < 0) return;
-    if (!ok) ho_ds_bad[ho_ds_root[r]] = 1;
-}
-
-static int ho_ds_derive(int i) {
-    int k;
-    int a;
-    int b;
-    k = h_kind[i];
-    a = h_src1[i];
-    if ((k == HI_ADDI || k == HI_COPY) && a >= 0 && ho_ds_root[a] >= 0)
-        return ho_ds_root[a];
-    if (k == HI_ADD) {
-        b = h_src2[i];
-        if (a >= 0 && b >= 0) {
-            if (ho_ds_root[a] >= 0 && h_kind[b] == HI_ICONST) return ho_ds_root[a];
-            if (ho_ds_root[b] >= 0 && h_kind[a] == HI_ICONST) return ho_ds_root[b];
-        }
-    }
-    return -1;
+/* v is used; fine or not.  A root with a use that is not fine keeps
+ * its stores. */
+static void ho_ds_use(int v, int ok) {
+    if (v < 0 || v >= al_n || al_root[v] < 0) return;
+    if (!ok) ho_ds_bad[al_root[v]] = 1;
 }
 
 static int ho_dead_slots(void) {
     int i;
     int j;
     int k;
+    int n;
     int r;
-    int moved;
-    int changed;
     int any;
+    int changed;
 
     if (ssa_fn_setjmp) return 0;
+    al_roots();
     any = 0;
     i = 0;
     while (i < h_ninst) {
-        ho_ds_root[i] = -1;
         ho_ds_bad[i] = 0;
-        if (h_kind[i] == HI_ALLOCA) { ho_ds_root[i] = i; any = 1; }
+        if (h_kind[i] == HI_ALLOCA) any = 1;
         i = i + 1;
     }
     if (!any) return 0;
-    moved = 1;
-    while (moved) {
-        moved = 0;
-        i = 0;
-        while (i < h_ninst) {
-            if (ho_ds_root[i] < 0 && h_kind[i] != HI_NOP) {
-                r = ho_ds_derive(i);
-                if (r >= 0) { ho_ds_root[i] = r; moved = 1; }
-            }
-            i = i + 1;
-        }
-    }
     i = 0;
     while (i < h_ninst) {
         k = h_kind[i];
         if (k != HI_NOP) {
-            r = ho_ds_root[i];
-            /* src1: the address of a STORE, or the base of a derivation */
-            ho_ds_use(i, h_src1[i],
-                      k == HI_STORE || (r >= 0 && h_kind[i] != HI_ALLOCA &&
-                                        r == ho_ds_root[h_src1[i]]));
-            if (ho_src2_is_ref(k) && h_src2[i] >= 0)
-                ho_ds_use(i, h_src2[i],
-                          k == HI_ADD && r >= 0 && r == ho_ds_root[h_src2[i]]);
-            if (h_cbase[i] >= 0 && (k == HI_CALL || k == HI_CALLP ||
-                k == HI_A64_DBT_TRAMPOLINE || k == HI_X64_DBT_TRAMPOLINE)) {
-                j = 0;
-                while (j < h_val[i]) {
-                    ho_ds_use(i, h_carg[h_cbase[i] + j], 0);
-                    j = j + 1;
-                }
-            } else if (h_cbase[i] >= 0) {
+            r = al_root[i];
+            if (h_cbase[i] >= 0 && hi_nargs(i) == 0) {
                 /* an argument list on a kind not known here: keep all */
                 j = 0;
                 while (j < h_ninst) {
@@ -1812,12 +1684,17 @@ static int ho_dead_slots(void) {
                     j = j + 1;
                 }
             }
-            if (k == HI_PHI && h_pbase[i] >= 0) {
-                j = 0;
-                while (j < h_pcnt[i]) {
-                    ho_ds_use(i, h_pval[h_pbase[i] + j], 0);
-                    j = j + 1;
-                }
+            /* fine: the address a STORE writes, or the base of a step off
+             * the same root; anything else reads the slot or lets its
+             * address out */
+            n = 0;
+            while (n < hi_nrefs(i)) {
+                j = hi_ref(i, n);
+                if (al_is_step(i))
+                    ho_ds_use(j, j >= 0 && j < al_n && al_root[j] == r);
+                else
+                    ho_ds_use(j, k == HI_STORE && hi_ref_is_addr(i, n));
+                n = n + 1;
             }
         }
         i = i + 1;
@@ -1825,8 +1702,8 @@ static int ho_dead_slots(void) {
     changed = 0;
     i = 0;
     while (i < h_ninst) {
-        if (h_kind[i] == HI_STORE && h_src1[i] >= 0) {
-            r = ho_ds_root[h_src1[i]];
+        if (h_kind[i] == HI_STORE && h_src1[i] >= 0 && h_src1[i] < al_n) {
+            r = al_root[h_src1[i]];
             if (r >= 0 && !ho_ds_bad[r]) {
                 h_kind[i] = HI_NOP;
                 h_src1[i] = -1;

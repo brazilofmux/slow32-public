@@ -834,30 +834,19 @@ static int sr_res(int x) {
 /* All uses of j inside the loop body (and none in phi pools outside)? */
 static int sr_uses_local(int j) {
     int i;
-    int k;
+    int n;
     int x;
     i = 0;
     while (i < h_ninst) {
-        k = h_kind[i];
-        if (k == HI_NOP || i == j) { i = i + 1; continue; }
+        if (h_kind[i] == HI_NOP || i == j) { i = i + 1; continue; }
         x = 0;
-        if (sr_res(h_src1[i]) == j) x = 1;
-        if (sr_res(h_src2[i]) == j && ho_src2_is_ref(k)) x = 1;
-        if ((k == HI_CALL || k == HI_CALLP) && h_cbase[i] >= 0) {
-            int q;
-            q = 0;
-            while (q < h_val[i]) {
-                if (sr_res(h_carg[h_cbase[i] + q]) == j) x = 1;
-                q = q + 1;
+        n = 0;
+        while (n < hi_nrefs(i)) {
+            if (sr_res(hi_ref(i, n)) == j) {
+                if (h_kind[i] == HI_PHI) return 0;
+                x = 1;
             }
-        }
-        if (k == HI_PHI && h_pbase[i] >= 0) {
-            int q;
-            q = 0;
-            while (q < h_pcnt[i]) {
-                if (sr_res(h_pval[h_pbase[i] + q]) == j) return 0;
-                q = q + 1;
-            }
+            n = n + 1;
         }
         if (x) {
             if (h_blk[i] < 0 || h_blk[i] >= bb_nblk || !ssa_vis[h_blk[i]])
@@ -876,67 +865,38 @@ static int sr_uses_local(int j) {
  * would hand that user a NOP. */
 static int sr_count_refs(int old) {
     int i;
-    int k;
-    int q;
     int n;
-    n = 0;
+    int cnt;
+    cnt = 0;
     i = 0;
     while (i < h_ninst) {
-        k = h_kind[i];
-        if (k == HI_NOP) { i = i + 1; continue; }
-        if (sr_res(h_src1[i]) == old) n = n + 1;
-        if (sr_res(h_src2[i]) == old && ho_src2_is_ref(k)) n = n + 1;
-        if ((k == HI_CALL || k == HI_CALLP) && h_cbase[i] >= 0) {
-            q = 0;
-            while (q < h_val[i]) {
-                if (sr_res(h_carg[h_cbase[i] + q]) == old) n = n + 1;
-                q = q + 1;
-            }
-        }
-        if (k == HI_PHI && h_pbase[i] >= 0) {
-            q = 0;
-            while (q < h_pcnt[i]) {
-                if (sr_res(h_pval[h_pbase[i] + q]) == old) n = n + 1;
-                q = q + 1;
-            }
+        if (h_kind[i] == HI_NOP) { i = i + 1; continue; }
+        n = 0;
+        while (n < hi_nrefs(i)) {
+            if (sr_res(hi_ref(i, n)) == old) cnt = cnt + 1;
+            n = n + 1;
         }
         i = i + 1;
     }
-    return n;
+    return cnt;
 }
 
 /* Rewrite every reference to old with nw. */
 static int sr_rewrite_n;
 static void sr_rewrite(int old, int nw) {
     int i;
-    int k;
-    int q;
+    int n;
     sr_rewrite_n = 0;
     i = 0;
     while (i < h_ninst) {
-        k = h_kind[i];
-        if (k == HI_NOP || i == nw) { i = i + 1; continue; }
-        if (sr_res(h_src1[i]) == old) { h_src1[i] = nw; sr_rewrite_n = sr_rewrite_n + 1; }
-        if (sr_res(h_src2[i]) == old && ho_src2_is_ref(k)) { h_src2[i] = nw; sr_rewrite_n = sr_rewrite_n + 1; }
-        if ((k == HI_CALL || k == HI_CALLP) && h_cbase[i] >= 0) {
-            q = 0;
-            while (q < h_val[i]) {
-                if (sr_res(h_carg[h_cbase[i] + q]) == old) {
-                    h_carg[h_cbase[i] + q] = nw;
-                    sr_rewrite_n = sr_rewrite_n + 1;
-                }
-                q = q + 1;
+        if (h_kind[i] == HI_NOP || i == nw) { i = i + 1; continue; }
+        n = 0;
+        while (n < hi_nrefs(i)) {
+            if (sr_res(hi_ref(i, n)) == old) {
+                hi_ref_set(i, n, nw);
+                sr_rewrite_n = sr_rewrite_n + 1;
             }
-        }
-        if (k == HI_PHI && h_pbase[i] >= 0) {
-            q = 0;
-            while (q < h_pcnt[i]) {
-                if (sr_res(h_pval[h_pbase[i] + q]) == old) {
-                    h_pval[h_pbase[i] + q] = nw;
-                    sr_rewrite_n = sr_rewrite_n + 1;
-                }
-                q = q + 1;
-            }
+            n = n + 1;
         }
         i = i + 1;
     }

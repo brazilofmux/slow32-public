@@ -404,6 +404,81 @@ static int hi_is_pure(int k) {
     return 0;
 }
 
+/* --- Operand references ---------------------------------------------
+ * An instruction refers to other instructions through src1 (always a
+ * reference when >= 0), src2 (a reference for a binop, STORE, RET and
+ * the FP ops; a block number for BR and BRC, a variable index for a
+ * PHI), its call arguments, and its phi arguments.  Five passes walked
+ * those four places by hand, each with its own list of the kinds that
+ * carry an argument list, and two of the lists disagreed.  This is the
+ * one walk: reference n of instruction i is src1 first, then src2, then
+ * the arguments in order (docs/plans/memory-model.md, step 1). */
+static int hi_src2_is_ref(int k) {
+    if (hi_is_binop(k)) return 1;
+    if (k == HI_STORE) return 1;
+    if (k == HI_RET) return 1;
+    if (k >= HI_FADD && k <= HI_FDIV) return 1;
+    if (k >= HI_FEQ && k <= HI_FLE) return 1;
+    return 0;
+}
+
+static int hi_nargs(int i) {
+    int k;
+    if (h_cbase[i] < 0) return 0;
+    k = h_kind[i];
+    if (k == HI_CALL || k == HI_CALLP ||
+        k == HI_A64_DBT_TRAMPOLINE || k == HI_X64_DBT_TRAMPOLINE) return h_val[i];
+    return 0;
+}
+
+static int hi_nrefs(int i) {
+    int n;
+    int k;
+    k = h_kind[i];
+    n = 0;
+    if (h_src1[i] >= 0) n = n + 1;
+    if (h_src2[i] >= 0 && hi_src2_is_ref(k)) n = n + 1;
+    n = n + hi_nargs(i);
+    if (k == HI_PHI && h_pbase[i] >= 0) n = n + h_pcnt[i];
+    return n;
+}
+
+/* The slot index reference n of i lives in: 0 src1, 1 src2, 2 + j the
+ * j-th call argument, -2 - j the j-th phi argument. */
+static int hi_ref_slot(int i, int n) {
+    int k;
+    int na;
+    k = h_kind[i];
+    if (h_src1[i] >= 0) { if (n == 0) return 0; n = n - 1; }
+    if (h_src2[i] >= 0 && hi_src2_is_ref(k)) { if (n == 0) return 1; n = n - 1; }
+    na = hi_nargs(i);
+    if (n < na) return 2 + n;
+    return -2 - (n - na);
+}
+
+static int hi_ref(int i, int n) {
+    int s;
+    s = hi_ref_slot(i, n);
+    if (s == 0) return h_src1[i];
+    if (s == 1) return h_src2[i];
+    if (s >= 2) return h_carg[h_cbase[i] + (s - 2)];
+    return h_pval[h_pbase[i] + (-2 - s)];
+}
+
+static void hi_ref_set(int i, int n, int v) {
+    int s;
+    s = hi_ref_slot(i, n);
+    if (s == 0) h_src1[i] = v;
+    else if (s == 1) h_src2[i] = v;
+    else if (s >= 2) h_carg[h_cbase[i] + (s - 2)] = v;
+    else h_pval[h_pbase[i] + (-2 - s)] = v;
+}
+
+/* Is reference n of i the address a LOAD reads or a STORE writes? */
+static int hi_ref_is_addr(int i, int n) {
+    return n == 0 && h_src1[i] >= 0 && (h_kind[i] == HI_LOAD || h_kind[i] == HI_STORE);
+}
+
 /* Control-flow terminators that end a basic block (define its CFG successors).
  * BR/BRC/RET/JMPTAB. (Calls are regular value-producing instructions here.) */
 static int hi_is_terminator(int kind) {

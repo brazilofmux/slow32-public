@@ -46,7 +46,7 @@ for f in "$EMU" "$STAGE7_CC" "$STAGE7_AS" "$STAGE7_LD" \
          "$SCRIPT_DIR/s12cc.c" "$SCRIPT_DIR/c_lexer_gen.c" \
          "$SCRIPT_DIR/ast.h" "$SCRIPT_DIR/parser.h" "$SCRIPT_DIR/sema.h" \
          "$SCRIPT_DIR/optimize.h" "$SCRIPT_DIR/pp.h" \
-         "$SCRIPT_DIR/hir.h" "$SCRIPT_DIR/hir_lower.h" "$SCRIPT_DIR/hir_ssa.h" \
+         "$SCRIPT_DIR/hir.h" "$SCRIPT_DIR/hir_lower.h" "$SCRIPT_DIR/hir_alias.h" "$SCRIPT_DIR/hir_ssa.h" \
          "$SCRIPT_DIR/hir_opt.h" "$SCRIPT_DIR/hir_licm.h" \
          "$SCRIPT_DIR/hir_burg.h" "$SCRIPT_DIR/hir_regalloc.h" \
          "$SCRIPT_DIR/hir_codegen.h"; do

@@ -38,7 +38,7 @@ CC_DEPS = cc-a64.c codegen_a64.h crt0_emit.h elf_writer.h obj_writer.h \
           hir_codegen_a64.h hir_burg_a64.h hir_regalloc_a64.h \
           ../src/parser.h ../src/ast.h ../src/sema.h \
           ../src/optimize.h ../src/pp.h ../src/c_lexer_gen.c \
-          ../src/hir.h ../src/hir_lower.h ../src/hir_ssa.h \
+          ../src/hir.h ../src/hir_lower.h ../src/hir_alias.h ../src/hir_ssa.h \
           ../src/hir_opt.h ../src/hir_licm.h ../src/c_lexer.rl
 
 $(OUT)/cc-a64: $(CC_DEPS)
