@@ -1261,6 +1261,45 @@ if [[ -s "$GEN1_CC_EXE" && -s "$STAGE_AS_EXE" && -s "$STAGE_LD_EXE" ]]; then
         fi
     done
 
+    # Test: s32-ld --heap-size moves the MMIO window up.  The same
+    # object must fail to get its block at the default gap (exit 3),
+    # succeed at 96M, and a heap that would reach the stack is refused.
+    TST_SRC="$TESTS_DIR/test_heap_size.c"
+    if [[ -f "$TST_SRC" ]]; then
+        TOTAL=$((TOTAL + 1))
+        HS_OK=1
+        run_exe "$GEN1_CC_EXE" "$WORKDIR/e2e-heap-cc.log" "$TST_SRC" "$WORKDIR/e2e-heap.s"
+        run_exe "$STAGE_AS_EXE" "$WORKDIR/e2e-heap-as.log" "$WORKDIR/e2e-heap.s" "$WORKDIR/e2e-heap.s32o"
+        for hs in default 96M 300M; do
+            HS_ARG=()
+            [[ "$hs" == default ]] || HS_ARG=(--heap-size "$hs")
+            set +e
+            "$EMU" "$STAGE_LD_EXE" -o "$WORKDIR/e2e-heap-$hs.s32x" --mmio 64K "${HS_ARG[@]}" \
+                "$RUNTIME_CRT0" "$WORKDIR/e2e-heap.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
+                $BUILTINS64_OBJ $BUILTINS_FP64_OBJ $LIBC_OBJS >"$WORKDIR/e2e-heap-$hs-ld.log" 2>&1
+            set -e
+            if [[ "$hs" == 300M ]]; then
+                [[ -s "$WORKDIR/e2e-heap-$hs.s32x" ]] && HS_OK=0
+                grep -q "reach the stack" "$WORKDIR/e2e-heap-$hs-ld.log" || HS_OK=0
+                continue
+            fi
+            if [[ ! -s "$WORKDIR/e2e-heap-$hs.s32x" ]]; then HS_OK=0; continue; fi
+            set +e
+            run_exe_rc "$WORKDIR/e2e-heap-$hs.s32x" "$WORKDIR/e2e-heap-$hs-run.log"
+            RUN_RC=$?
+            set -e
+            if [[ "$hs" == default && "$RUN_RC" -ne 3 ]]; then HS_OK=0; fi
+            if [[ "$hs" == 96M && "$RUN_RC" -ne 0 ]]; then HS_OK=0; fi
+        done
+        if [[ "$HS_OK" -eq 1 ]]; then
+            printf "  %-30s PASS\n" "e2e-heap-size:"
+            PASS=$((PASS + 1))
+        else
+            printf "  %-30s FAIL\n" "e2e-heap-size:"
+            FAIL=$((FAIL + 1))
+        fi
+    fi
+
     # Test: use stage08 archiver to create a libc archive, then link with it
     if [[ -s "$STAGE_AR_EXE" ]]; then
         TOTAL=$((TOTAL + 1))

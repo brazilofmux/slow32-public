@@ -247,6 +247,9 @@ int link_error;
 /* MMIO size from command line */
 int mmio_size_arg;
 
+/* Heap reserved below the MMIO window (--heap-size); HEAP_GAP when absent */
+int heap_size_arg;
+
 /* Pack sections flag: 1=packed (default), 0=fixed 1MB floor */
 int pack_sections;
 
@@ -1072,7 +1075,12 @@ void layout_sections() {
     heap_va = page_align(t);
 
     if (mmio_size_arg > 0) {
-        mmio_va = page_align(heap_va + HEAP_GAP);
+        mmio_va = page_align(heap_va + heap_size_arg);
+        if (mmio_va + mmio_size_arg > STACK_BASE - STACK_SIZE) {
+            fputs("error: --heap-size: heap and MMIO window reach the stack\n",
+                  stderr);
+            link_error = 1;
+        }
     } else {
         mmio_va = 0;
     }
@@ -2241,6 +2249,7 @@ int main(int argc, char **argv) {
 
     out_path = NULL;
     mmio_size_arg = 0;
+    heap_size_arg = HEAP_GAP;
     code_size_arg = 0;
     pack_sections = 1;
     input_file_idx = 0;
@@ -2272,7 +2281,7 @@ int main(int argc, char **argv) {
     ostrtab_init();
 
     if (argc < 3) {
-        fputs("Usage: s32-ld-port -o output.s32x [--mmio SIZE] [--code-size SIZE] file1 file2 ...\n", stderr);
+        fputs("Usage: s32-ld-port -o output.s32x [--mmio SIZE] [--heap-size SIZE] [--code-size SIZE] file1 file2 ...\n", stderr);
         return 1;
     }
 
@@ -2293,6 +2302,17 @@ int main(int argc, char **argv) {
                 return 1;
             }
             mmio_size_arg = parse_mmio_size(argv[i]);
+        } else if (streq(argv[i], "--heap-size")) {
+            i = i + 1;
+            if (i >= argc) {
+                fputs("error: --heap-size requires an argument\n", stderr);
+                return 1;
+            }
+            heap_size_arg = parse_mmio_size(argv[i]);
+            if (heap_size_arg <= 0) {
+                fputs("error: bad --heap-size\n", stderr);
+                return 1;
+            }
         } else if (streq(argv[i], "--code-size")) {
             i = i + 1;
             if (i >= argc) {
