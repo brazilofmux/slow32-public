@@ -102,11 +102,16 @@ s32_mmio_request:
     ldw r1, r12, 0
     ldw r3, r11, 0
     beq r1, r3, .Lmmio_req_wait2
+# A failed request (status -1) carries the host's errno in the response's
+# length word, 8 bytes before its status (common/mmio_ring_layout.h), as
+# runtime/mmio_request.c reads it; EIO when the host sent none.  It was
+# EIO always: tcgetattr could not tell EBADF from ENOTTY.
 .Lmmio_resp_ready:
     slli r1, r3, 4
     lui r4, %hi(__mmio_base+12300)
     addi r4, r4, %lo(__mmio_base+12300)
     add r1, r1, r4
+    addi r5, r1, -8
     ldw r1, r1, 0
     addi r3, r3, 1
     andi r3, r3, 255
@@ -115,6 +120,8 @@ s32_mmio_request:
     beq r1, r3, .Lmmio_err_io
     addi r3, r0, -1
     bne r1, r3, .Lmmio_done
+    ldw r3, r5, 0
+    bne r3, r0, .Lmmio_set_errno
     addi r3, r0, 5
     jal r0, .Lmmio_set_errno
 .Lmmio_err_io:

@@ -1,0 +1,11 @@
+fd 0: isatty 0 (ENOTTY), tcgetattr -1 (ENOTTY)
+fd 1: isatty 0 (ENOTTY), tcgetattr -1 (ENOTTY)
+fd 2: isatty 0 (ENOTTY), tcgetattr -1 (ENOTTY)
+fd 17: isatty 0 (EBADF), tcgetattr -1 (EBADF)
+set fd 1 when 0 modes 0x11: -1 (ENOTTY)
+set fd 0 when 1 modes 0x60: -1 (ENOTTY)
+set fd 17 when 2 modes 0x8: -1 (EBADF)
+set fd 1 when 5 modes 0x1: -1 (EINVAL)
+set fd 1 when -2 modes 0x1: -1 (EINVAL)
+set fd 1 when 0 modes 0x100: -1 (EINVAL)
+ECHO 0x1 ECHOE 0x2 ECHOK 0x4 ECHONL 0x8 ICANON 0x10 ISIG 0x20 IEXTEN 0x40

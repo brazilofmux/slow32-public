@@ -210,7 +210,7 @@ rm -f "$LIBC_OUT_DIR/posix_more.s32o"
 # string_std, stdlib_std, stdio_std: the rest of <string.h>, <stdlib.h> and
 # <stdio.h> (selfhost ISSUES-75).  Phase 2 only, like string_case and qsort:
 # nothing the compiler or the tools call.
-for name in string_extra string_more ctype convert stdio malloc posix_fs posix_time posix_math posix_proc string_case qsort math_hw string_std stdlib_std stdio_std system; do
+for name in string_extra string_more ctype convert stdio malloc posix_fs posix_time posix_math posix_proc string_case qsort math_hw string_std stdlib_std stdio_std system termios; do
     compile_gen1 "$LIBC_DIR/${name}.c" "$WORKDIR/g1_${name}.s" "$WORKDIR/g1_${name}.cc.log"
     assemble_gen1 "$WORKDIR/g1_${name}.s" "$LIBC_OUT_DIR/${name}.s32o" "$WORKDIR/g1_${name}.as.log"
 done
