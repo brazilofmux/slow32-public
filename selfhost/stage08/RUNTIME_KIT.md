@@ -103,6 +103,14 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-25 (`3eeace11`).  `cc.s32x` and `libc.s32a`; the
+tools and `include/` rebuild identical.  The compiler builds a global
+table's address once before a loop that indexes it at run time,
+instead of before each lookup; lowers `c ? K1 : K2` with integer
+constants to a mask instead of a branch; and drops stores to a local
+nothing ever reads.  The AES-256 benchmark: 2.4x clang's executed
+instructions down to 1.7x, 2.2x its time under the DBT.
+
 Rebuilt 2026-10-25 (`765ca6e1`).  `cc.s32x`, `libc.s32a` and
 `s32-ld.s32x`; the other tools and `include/` rebuild identical.
 `s32-ld.s32x` takes `--heap-size SIZE` (`c45872a1`): the heap below the
