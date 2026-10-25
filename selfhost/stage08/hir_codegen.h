@@ -2135,6 +2135,57 @@ static void hcg_condbr_finish(int idx, char *bt, char *bf, int ra, int rb) {
         }
     }
 
+    /* One edge without copies: branch straight to it, then the other
+     * edge's copies and a fall-through (or jump).  A rotated loop's
+     * back edge rarely needs copies while its exit often does; the
+     * generic form below paid a jump back on every iteration. */
+    {
+        int tok;
+        int fok;
+        tok = hcg_edge_nocopy(hcg_cur_blk, t) && hcg_bnear(hcg_cur_blk, ft);
+        fok = hcg_edge_nocopy(hcg_cur_blk, f) && hcg_bnear(hcg_cur_blk, ff);
+        if (tok && (ff == ne || !fok || ft != ne)) {
+            cg_s("    ");
+            cg_s(bt);
+            cg_s(" r");
+            cg_n(ra);
+            cg_s(", r");
+            cg_n(rb);
+            cg_s(", ");
+            cg_lref(hcg_blk_lbl[ft]);
+            cg_c(10);
+            hcg_phi_copies(h_blk[idx], f);
+            if (ff >= bb_nblk || ff != ne) {
+                cg_s("    jal r0, ");
+                cg_lref(hcg_blk_lbl[ff]);
+                cg_c(10);
+            } else {
+                hcg_stat_br_fallthru = hcg_stat_br_fallthru + 1;
+            }
+            return;
+        }
+        if (fok) {
+            cg_s("    ");
+            cg_s(bf);
+            cg_s(" r");
+            cg_n(ra);
+            cg_s(", r");
+            cg_n(rb);
+            cg_s(", ");
+            cg_lref(hcg_blk_lbl[ff]);
+            cg_c(10);
+            hcg_phi_copies(h_blk[idx], t);
+            if (ft >= bb_nblk || ft != ne) {
+                cg_s("    jal r0, ");
+                cg_lref(hcg_blk_lbl[ft]);
+                cg_c(10);
+            } else {
+                hcg_stat_br_fallthru = hcg_stat_br_fallthru + 1;
+            }
+            return;
+        }
+    }
+
     /* Generic: branch-if-false over the taken jump */
     skip = cg_label();
     cg_s("    ");

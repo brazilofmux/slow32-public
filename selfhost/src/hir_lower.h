@@ -3655,6 +3655,47 @@ static void hl_stmt(Node *n) {
         return;
     }
 
+    /* While and for with a condition are rotated: tested once on entry,
+     * then at the bottom, so a pass costs one conditional branch where
+     * the top-tested shape paid that plus a jump back (SQLite's hottest
+     * jumps were back edges).  The condition is lowered twice -- the
+     * way the inliner re-lowers a body -- and each evaluation still
+     * happens exactly when the source says.  The entry test goes to a
+     * preheader block of its own, so LICM keeps a single-entry place to
+     * hoist into; codegen falls through it. */
+    if ((n->kind == ND_WHILE || n->kind == ND_FOR) && n->cond) {
+        int pre_blk;
+        int latch_blk;
+        pre_blk = hir_new_block();
+        body_blk = hir_new_block();
+        latch_blk = hir_new_block();
+        exit_blk = hir_new_block();
+
+        if (n->kind == ND_FOR && n->init) hl_expr(n->init);
+        cv = hl_cond_val(n->cond);
+        hi_emit(HI_BRC, 0, cv, pre_blk, exit_blk, NULL);
+
+        hl_switch_block(pre_blk);
+        hi_emit(HI_BR, 0, -1, -1, body_blk, NULL);
+
+        hl_break_blk[hl_loop_depth] = exit_blk;
+        hl_cont_blk[hl_loop_depth] = latch_blk;
+        hl_loop_depth = hl_loop_depth + 1;
+
+        hl_switch_block(body_blk);
+        hl_stmt(n->body);
+        if (!hl_terminated()) hi_emit(HI_BR, 0, -1, -1, latch_blk, NULL);
+
+        hl_switch_block(latch_blk);
+        if (n->kind == ND_FOR && n->step) hl_expr(n->step);
+        cv = hl_cond_val(n->cond);
+        hi_emit(HI_BRC, 0, cv, body_blk, exit_blk, NULL);
+
+        hl_loop_depth = hl_loop_depth - 1;
+        hl_switch_block(exit_blk);
+        return;
+    }
+
     /* While */
     if (n->kind == ND_WHILE) {
         head_blk = hir_new_block();
