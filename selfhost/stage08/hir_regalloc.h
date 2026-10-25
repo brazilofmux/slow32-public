@@ -1173,6 +1173,8 @@ static int gc_k(int n) {
  * the merged node keeps the CROSSING side's palette (the swap in
  * gc_coalesce puts the crossing node in u before gc_combine(u, v)). */
 static char gc_mv_phi[GC_MAX_MOVE];
+static int gc_mv_blk[GC_MAX_MOVE];   /* a phi copy's predecessor block, where it runs */
+static int gc_mv_pblk[GC_MAX_MOVE];  /* and the phi's own block */
 
 static void gc_add_move_tag(int a, int b, int is_phi) {
     int mv;
@@ -1182,6 +1184,7 @@ static void gc_add_move_tag(int a, int b, int is_phi) {
     gc_mv_b[mv] = b;
     gc_mv_status[mv] = GC_MV_WORKLIST;
     gc_mv_phi[mv] = (char)is_phi;
+    gc_mv_blk[mv] = -1;
     gc_nmove = gc_nmove + 1;
     gc_add_node_move(a, mv);
     gc_add_node_move(b, mv);
@@ -1755,7 +1758,11 @@ static void gc_find_moves(void) {
                 a = h_pval[h_pbase[inst] + j];
                 if (a >= 0) {
                     na = gc_node[a];
-                    if (na >= 0) gc_add_move_tag(nd, na, 1);
+                    if (na >= 0) {
+                        gc_add_move_tag(nd, na, 1);
+                        gc_mv_blk[gc_nmove - 1] = h_pblk[h_pbase[inst] + j];
+                        gc_mv_pblk[gc_nmove - 1] = h_blk[inst];
+                    }
                 }
                 j = j + 1;
             }
@@ -2263,6 +2270,70 @@ static int ra_pair_claim(int n, int inst, int maxc, int *used) {
     return -1;
 }
 
+/* Would colouring node n with col close a cycle among the phi copies
+ * on the edge pred -> blk?  A cycle costs the parallel copy a scratch
+ * move, so a bias that makes one copy free can make the edge dearer:
+ * sha512_block's eight-way rotation went from 16 moves to 17. */
+static int gc_cyc_src[64];
+static int gc_cyc_node_color(int nd, int n, int col) {
+    if (nd < 0) return -1;
+    nd = gc_get_alias(nd);
+    if (nd == n) return col;
+    return gc_color[nd];
+}
+
+static int gc_edge_cycle(int pred, int blk, int n, int col) {
+    int q;
+    int a;
+    int d;
+    int sc;
+    int c;
+    int steps;
+    if (pred < 0 || blk < 0 || blk >= bb_nblk) return 0;
+    c = 0;
+    while (c < 64) { gc_cyc_src[c] = -1; c = c + 1; }
+    q = ssa_phi_head[blk];
+    while (q >= 0) {
+        if (h_kind[q] == HI_PHI) {
+            a = ssa_phi_find_arg(q, pred);
+            if (a >= 0) {
+                d = gc_cyc_node_color(gc_node[q], n, col);
+                sc = gc_cyc_node_color(gc_node[a], n, col);
+                if (d >= 0 && sc >= 0 && d < 64 && sc < 64 && d != sc)
+                    gc_cyc_src[d] = sc;
+            }
+        }
+        q = ssa_phi_next[q];
+    }
+    /* each destination is written once: follow dst -> src from every
+     * destination; coming back to the start is a cycle */
+    c = 0;
+    while (c < 64) {
+        if (gc_cyc_src[c] >= 0) {
+            d = gc_cyc_src[c];
+            steps = 0;
+            while (d >= 0 && d != c && steps < 64) { d = gc_cyc_src[d]; steps = steps + 1; }
+            if (d == c) return 1;
+        }
+        c = c + 1;
+    }
+    return 0;
+}
+
+/* Any edge of n's phi copies that col would close a cycle on? */
+static int gc_bias_cycles(int n, int col) {
+    int e;
+    int mv;
+    e = gc_nmlist_head[n];
+    while (e >= 0) {
+        mv = gc_nmlist_mv[e];
+        if (gc_mv_phi[mv] && gc_edge_cycle(gc_mv_blk[mv], gc_mv_pblk[mv], n, col))
+            return 1;
+        e = gc_nmlist_next[e];
+    }
+    return 0;
+}
+
 static void gc_select(void) {
     int i, n, inst, e, peer, pa, pc, c;
     int used[RA_NPHY_TOTAL];
@@ -2462,6 +2533,45 @@ static void gc_select(void) {
                         ra_stat_secondary_reuse = ra_stat_secondary_reuse + 1;
                     }
                 }
+            }
+
+            /* Biased colouring: a phi copy the coalescer froze (its
+             * conservative tests failed under pressure) still costs
+             * nothing if both ends land in one register.  Take the
+             * register of the already coloured partner whose copy runs
+             * most often (by its block's loop depth) when it is free --
+             * AES's round loop froze 48 of its 67 phi copies and paid
+             * some 33 moves a round for them. */
+            if (gc_color[n] < 0) {
+                int e2;
+                int mv3;
+                int pn;
+                int col;
+                int bw;
+                int bc;
+                int w;
+                bw = 9;     /* copies in a loop only: a cold one would
+                             * take a register a hot partner wants */
+                bc = -1;
+                e2 = gc_nmlist_head[n];
+                while (e2 >= 0) {
+                    mv3 = gc_nmlist_mv[e2];
+                    if (gc_mv_phi[mv3] && (gc_mv_status[mv3] == GC_MV_FROZEN ||
+                                           gc_mv_status[mv3] == GC_MV_ACTIVE)) {
+                        pn = gc_get_alias(gc_mv_a[mv3]);
+                        if (pn == n) pn = gc_get_alias(gc_mv_b[mv3]);
+                        col = (pn != n) ? gc_color[pn] : -1;
+                        if (col >= ra_ncal && !ra_prefers_caller_for_inst(inst)) col = -1;
+                        w = ra_depth_w(gc_mv_blk[mv3]);
+                        if (col >= 0 && col < maxc && !used[col] && w > bw &&
+                            !gc_bias_cycles(n, col)) {
+                            bw = w;
+                            bc = col;
+                        }
+                    }
+                    e2 = gc_nmlist_next[e2];
+                }
+                if (bc >= 0) gc_color[n] = bc;
             }
 
             /* Two-phase color selection (classification hook) + PARAM bias.

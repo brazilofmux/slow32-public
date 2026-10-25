@@ -1180,7 +1180,7 @@ static void ssa_split_pair_allocas(void) {
  * function that calls setjmp keeps its locals in memory, as
  * ssa_find_promo does.
  * ================================================================= */
-#define SSA_SR_MAXB 64
+#define SSA_SR_MAXB 128
 #define SSA_SR_MAXN 128
 static int ssa_sr_node[SSA_SR_MAXN];    /* the alloca and the ADDIs off it */
 static int ssa_sr_noff[SSA_SR_MAXN];
