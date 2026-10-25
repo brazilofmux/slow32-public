@@ -3499,3 +3499,29 @@ s both builds, measured under load).  `tests/test_memcpy_inline.c`
 copies through pointers, into a double's bytes, at unaligned ends and
 a 63-byte struct, and the harness requires exactly one `memcpy` call
 left in it (a 100-byte struct).
+
+### 98. [RESOLVED 2026-10-25] The pair-alloca splitter refused an 8-byte local with more than eight hi-half accesses
+
+`ssa_split_pair_allocas` kept the `ADDI(A, 4)` nodes of an 8-byte
+local in an array of eight and refused the local past that -- enough
+for a loop's double, not for an `i64` a function assigns in every arm.
+`sqlite3GetToken`'s `i64 i` has sixteen, so it stayed in the frame:
+116 frame reloads where clang's build has two.  The cap is 256 now;
+`tests/test_pair_many.c` assigns an i64 and a double in twelve arms
+and the harness requires the i64's function to touch no frame slot.
+`HIR_RA_DEBUG=1` reports the instruction that refuses a split
+(PAIRSPLIT).
+
+Found with it and set aside: a `++`, `--` or compound assignment on
+an 8-byte local loads its old value typed as the whole `long long` or
+`double` (`hl_expr`, ND_POST_INC and the compound path), an 8-byte
+access the splitter also refuses, so GetToken's `i++` kept `i` in the
+frame even with the cap raised.  Typing that load as a word is right
+and brought GetToken to 7 reloads -- but it also promoted every i64 in
+`sqlite3VdbeExec`, whose respills went 54 -> 102 and frame reloads
+1,340 -> 1,840, and the 200,000-row run 3.647 G -> 3.714 G.  More live
+values in a 10,000-instruction function cost more than the frame did;
+that is the allocator's spill choice (memory model step 5).  The
+two-line change is `scratchpad/ra/rmw_lo_ty.patch` of this session
+and is described in docs/plans/memory-model.md; it lands with the
+allocator work.

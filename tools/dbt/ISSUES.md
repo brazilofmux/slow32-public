@@ -961,3 +961,20 @@ the judge when the guest work is identical.  The compiler's rule
 traffic and the hottest-superblock profile first, both DBTs' times
 after, and treats a wall-time move without a guest-work move as this
 DBT's to explain.
+
+## 29. The Kit's 64-bit Helpers Carry No Hook Symbols, So a stage08-Built Program Gets No Native div/mod (OPEN 2026-10-25)
+
+A routine is hookable when its entry carries a second symbol
+`__s32hk_<name>_<tag>` and begins with `jal r0, impl` (hooks.h); the
+clang runtime's `__udivdi3`/`__umoddi3`/`__moddi3`/`__divdi3` have
+them, the kit's `selfhost/stage08/builtins64.s` versions do not.
+Kagura's `-p` run of the 200,000-row SQLite workload (x86-64, 2026-10-25)
+shows the clang build taking 2.1 M hook calls (`__udivdi3` 562,459,
+`__umoddi3` 362,556, `__moddi3` 1,200,737) and the stage08 build none;
+its division helpers run as translated guest code (~98 M instructions
+of 3.7 G), part of why the wall-clock ratio against clang (1.25x) is
+wider than the instruction ratio (1.084x).  Fix on the kit side: give
+the kit helpers the stub shape and the same tag; the tag is the cksum
+of the contract source (`HK_SRC_BUILTINS` in the Makefile), which the
+selfhost build would have to carry or recompute from a copy it owns
+(the two-universes rule: selfhost/ builds everything itself).

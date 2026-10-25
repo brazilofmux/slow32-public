@@ -232,3 +232,19 @@ crypto benchmarks must assemble to the same bytes before and after.
   Heavy run 3.71 G -> 3.65 G, static 280,587 -> 280,911; the arm64 DBT
   sweep over DBT_LAYOUT_PAD put both builds at 0.91-0.96 s with the
   gate running alongside -- re-time quiet, and on kagura.
+- 2026-10-25, later: follow-ups (c) and (e) turned out to be one
+  thing: 8-byte locals.  GetToken's `i64 i` was refused by the pair
+  splitter's cap of eight hi-half access sites (selfhost ISSUES-98,
+  raised to 256: heavy run unchanged to within 200 instructions, pb10
+  frame reloads 54 -> 53), and then by its `i++`, whose old-value load
+  is typed as the whole 8 bytes.  Typing that load as a word (the
+  `hl_rmw_lo_ty` patch, kept in the session's scratchpad and
+  reproduced below) promotes every i64 in sqlite3VdbeExec too, and
+  under spill-everywhere that costs more than the frame: VdbeExec
+  respills 54 -> 102, frame reloads 1,340 -> 1,840, heavy run 3.647 G
+  -> 3.714 G, GetToken 116 -> 7.  Set aside; it is the first thing to
+  re-measure once step 5 (the allocator) can spill around cold regions
+  instead of everywhere.  The patch: in hl_expr's compound-assignment
+  and ND_POST_INC/DEC paths, `old_val = hi_emit(HI_LOAD, n->ty, addr,
+  ...)` becomes `hl_rmw_lo_ty(n->ty)`, which is TY_INT for long long
+  (not S12CC_X64_HOST) and double (not S12CC_NATIVE_F64).

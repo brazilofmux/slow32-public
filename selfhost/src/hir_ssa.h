@@ -982,7 +982,12 @@ static void ssa_split_pair_allocas(void) {
     int q;
     int a_inst;
     int nhi;
-    int hi_nodes[8];
+    /* One ADDI(A, 4) per hi-half access site.  Eight was enough for a
+     * loop's double and not for an i64 that a function touches in
+     * every arm: sqlite3GetToken's `i64 i` has sixteen, so it stayed in
+     * the frame -- 116 reloads where clang's build has two -- and so
+     * did sqlite3VdbeExec's nVmStep (selfhost ISSUES-98). */
+    int hi_nodes[256];
 
     j = 0;
     while (j < hl_nalloca) {
@@ -1007,7 +1012,7 @@ static void ssa_split_pair_allocas(void) {
                     h_val[i] == 0) {
                     /* lo-half access: stays on A */
                 } else if (k == HI_ADDI && h_val[i] == 4) {
-                    if (nhi >= 8) { ok = 0; }
+                    if (nhi >= 256) { ok = 0; }
                     else { hi_nodes[nhi] = i; nhi = nhi + 1; }
                 } else {
                     ok = 0;
@@ -1016,6 +1021,19 @@ static void ssa_split_pair_allocas(void) {
             if (ok && h_src2[i] == a_inst &&
                 k != HI_BR && k != HI_BRC && k != HI_PHI)
                 ok = 0;
+            if (!ok && getenv("HIR_RA_DEBUG")) {
+                fdputs("PAIRSPLIT refused alloca=", 2);
+                fdputuint(2, (unsigned)a_inst);
+                fdputs(" at inst=", 2);
+                fdputuint(2, (unsigned)i);
+                fdputs(" kind=", 2);
+                fdputuint(2, (unsigned)k);
+                fdputs(" ty=", 2);
+                fdputuint(2, (unsigned)h_ty[i]);
+                fdputs(" val=", 2);
+                fdputuint(2, (unsigned)h_val[i]);
+                fdputc(10, 2);
+            }
             if (ok && (k == HI_CALL || k == HI_CALLP ||
                        k == HI_A64_DBT_TRAMPOLINE ||
                        k == HI_X64_DBT_TRAMPOLINE) && h_cbase[i] >= 0) {
