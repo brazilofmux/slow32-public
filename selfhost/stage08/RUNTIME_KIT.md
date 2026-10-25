@@ -103,6 +103,14 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-25 (`33874324`).  `cc.s32x` and `libc.s32a`; the
+tools and `include/` rebuild identical.  Undoes half of `7c16eb9f`:
+keeping values stored through a pointer known across stores to other
+words off it held Argon2's rows in registers that then spilled, and
+Argon2 ran 12% slower under the x86-64 DBT than with the kit before.
+Words off one pointer are now told apart for dead-store elimination
+only.
+
 Rebuilt 2026-10-25 (`7c16eb9f`).  `cc.s32x` and `libc.s32a`; the
 tools and `include/` rebuild identical.  The compiler inlines small
 bodies of up to 16 nodes with casts counted free (`e5c73238`): Argon2's
