@@ -298,3 +298,13 @@ crypto benchmarks must assemble to the same bytes before and after.
   (-2.3%), static 280,891 -> 280,559; arm64 DBT 0.85-0.86 -> 0.84 s,
   quiet machine, interleaved.  test_phi_web: 33 loop-carried variables
   and one assigned in a single arm; the harness requires a PHIWEB line.
+- 2026-10-25, night: the RMW word-typed load re-measured on top of the
+  phi webs, as the plan said to.  Still worse: VdbeExec respills 54 ->
+  102, frame reloads 802 -> 1,293, stores 324 -> 735, heavy run 3.565 G
+  -> 3.609 G (+1.2%); GetToken 116 -> 7 as before.  The webs took the
+  pass-through stores out, but promoting every i64 in a 10,000-
+  instruction function still puts more live values on the table than
+  spill-everywhere can hold.  Set aside again; the next allocator piece
+  is the spill *placement* -- a value defined in the hot loop head and
+  used in a cold arm should be stored where it is used, not at every
+  definition -- and that is what will let this land.

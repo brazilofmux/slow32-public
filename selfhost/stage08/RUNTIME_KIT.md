@@ -103,6 +103,15 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-25 (`929b3a19`).  `cc.s32x` and `libc.s32a`; the tools
+rebuild identical.  The allocator's first step-5 piece: a spilled
+loop-header phi and the join phi that feeds it share one spill slot, so
+the pass-through edges of a switch in a loop no longer store the
+variable every iteration (docs/plans/memory-model.md; sqlite3VdbeExec's
+dispatch loop lost four stores per opcode, the 200,000-row run 2.3% of
+its instructions).  Gated: kit differential 122/0, kit tools 21/0,
+islisp, libcob 490/0, dfsort, mdfix 95 runs, tz.
+
 Rebuilt 2026-10-25 (`4bd8ac7c`).  `cc.s32x` and `libc.s32a`; the tools
 rebuild identical.  A `memcpy` of a constant size through pointers, and
 a struct copy up to 64 bytes, now copy inline as words with a byte tail
