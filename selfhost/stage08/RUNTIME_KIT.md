@@ -103,6 +103,12 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-25 (`c451b7f9`).  `cc.s32x`, `libc.s32a` and
+`include/unistd.h`; the tools rebuild identical.  The compiler
+bottom-tests `while` and `for` loops (`7be0f6c9`) and no longer computes
+two returns' values into r1 when both are phis of one block (`6748e15e`,
+wrong code from ordinary C).  `libc.s32a` gains `getcwd`.
+
 Rebuilt 2026-10-25 (`2b610f81`).  `cc.s32x`, `libc.s32a` and the five
 tools.  The compiler treats equal literals as one operand in CSE and
 folds the strides strength reduction builds (`cdf06a4c`); `memcpy` and
