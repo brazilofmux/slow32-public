@@ -103,6 +103,20 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-25 (`11c93b47`).  `cc.s32x` and `libc.s32a`; the tools
+rebuild identical.  A wrong-code fix: an `unsigned int` operand beside a
+`long long` made the whole expression unsigned (C99 says `long long`),
+and a comparison went unsigned whenever either side was, `unsigned char`
+against a negative int included.  SQLite's `SMALLEST_INT64` was
+unsigned, its overflow test divided with `__udivdi3`, and every integer
+product became a double -- the 200,000-row run printed its integer
+column as `0.0` and took twice clang's instructions (selfhost
+ISSUES-95).  Every kit since 2026-10-20 at least carried it.  Also: a
+phi with no value on a loop's entry edge no longer sends the edge's
+other copies through the push/pop path (`baa67d3a`).  Gated: kit
+differential 119/0, kit tools 21/0, islisp, libcob 490/0, dfsort,
+mdfix 95 runs, tz.
+
 Header only, 2026-10-25 (`a914ed38`): `include/fcntl.h` now declares
 `open` itself.  Its comment said `<unistd.h>` did; nothing did, and
 every `open` call in a program compiled against the kit went through
