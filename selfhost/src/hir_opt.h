@@ -880,7 +880,7 @@ static int ho_dce(void) {
 
         /* Delete if: produces value, no uses, no side effects */
         if (hi_has_value(k) && ho_use[i] == 0 &&
-            k != HI_CALL && k != HI_CALLP) {
+            k != HI_CALL && k != HI_CALLP && !(k == HI_LOAD && h_vol[i])) {
             h_kind[i] = HI_NOP;
             h_src1[i] = -1;
             h_src2[i] = -1;
@@ -1054,7 +1054,7 @@ static int ho_dse_pass(void) {
     changed = 0;
     i = 0;
     while (i < h_ninst) {
-        if (h_kind[i] != HI_STORE) { i = i + 1; continue; }
+        if (h_kind[i] != HI_STORE || h_vol[i]) { i = i + 1; continue; }
         addr = h_src1[i];  /* address operand of STORE */
         blk = h_blk[i];
         end = bb_end[blk];
@@ -1070,6 +1070,7 @@ static int ho_dse_pass(void) {
              * pointer, another frame slot -- does not: BlaMka's z[k] were
              * stored twice per permutation, the first dead under loads of
              * their neighbours. */
+            if ((jk == HI_LOAD || jk == HI_STORE) && h_vol[j]) alive = 0;
             if (jk == HI_LOAD &&
                 al_may_alias(addr, al_acc_size(h_ty[i]), h_src1[j], al_acc_size(h_ty[j]), 1))
                 alive = 0;
@@ -1189,6 +1190,13 @@ static int ho_mem_fwd(void) {
             k = h_kind[i];
             if (k == HI_NOP) { i = i + 1; continue; }
 
+            if ((k == HI_LOAD || k == HI_STORE) && h_vol[i]) {
+                /* a volatile access: made as written, and nothing is
+                 * known across it */
+                ho_mem_clear();
+                i = i + 1;
+                continue;
+            }
             if (k == HI_STORE) {
                 addr = h_src1[i];
                 val = h_src2[i];
@@ -1321,6 +1329,7 @@ static int ho_promote_single_store_alloca(void) {
                 s2 = h_src2[j];
 
                 if (k == HI_LOAD && s1 == i) {
+                    if (h_vol[j]) has_bad = 1;
                     /* Direct load via alloca: OK — but only when the
                      * load's type matches the alloca's.  A type-PUNNED
                      * load (`*(unsigned long long *)&d`) must read the
@@ -1332,6 +1341,7 @@ static int ho_promote_single_store_alloca(void) {
                         ty_size(h_ty[j]) != ty_size(h_ty[i]))
                         has_bad = 1;
                 } else if (k == HI_STORE && s1 == i) {
+                    if (h_vol[j]) has_bad = 1;
                     /* Direct store *into* alloca.  But if the value being
                      * stored is also the alloca itself, the address
                      * escapes through itself — bail.  A type-punned
@@ -1693,7 +1703,7 @@ static int ho_dead_slots(void) {
                 if (al_is_step(i))
                     ho_ds_use(j, j >= 0 && j < al_n && al_root[j] == r);
                 else
-                    ho_ds_use(j, k == HI_STORE && hi_ref_is_addr(i, n));
+                    ho_ds_use(j, k == HI_STORE && hi_ref_is_addr(i, n) && !h_vol[i]);
                 n = n + 1;
             }
         }

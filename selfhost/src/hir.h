@@ -301,6 +301,13 @@ static void hl_switch_block(int blk) {
  * Nothing in a C-compiler frontend sets it, so the mechanism is inert
  * when ported. */
 static char h_ld_ro[HIR_MAX_INST];
+/* volatile (docs/plans/memory-model.md, step 2a).  h_voladdr marks an
+ * address value the lowering computed for a volatile-qualified lvalue;
+ * an ADDI or COPY off one is one too.  A LOAD or STORE through such an
+ * address is a volatile access, h_vol: never forwarded, never removed,
+ * never hoisted, and nothing is known about memory across it. */
+static char h_voladdr[HIR_MAX_INST];
+static char h_vol[HIR_MAX_INST];
 
 static int hi_emit(int kind, int ty, int s1, int s2, int val, char *name) {
     int idx;
@@ -324,6 +331,12 @@ static int hi_emit(int kind, int ty, int s1, int s2, int val, char *name) {
     h_cbase[idx] = -1;
     h_pbase[idx] = -1;
     h_pcnt[idx] = 0;
+    h_voladdr[idx] = 0;
+    h_vol[idx] = 0;
+    if (s1 >= 0 && h_voladdr[s1]) {
+        if (kind == HI_ADDI || kind == HI_COPY) h_voladdr[idx] = 1;
+        if (kind == HI_LOAD || kind == HI_STORE) h_vol[idx] = 1;
+    }
     h_ninst = h_ninst + 1;
     if (hl_cur_blk >= 0) {
         bb_end[hl_cur_blk] = h_ninst;

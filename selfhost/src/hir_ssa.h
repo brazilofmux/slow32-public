@@ -563,7 +563,7 @@ static void ssa_find_promo(void) {
             a = hi_ref(i, n2);
             if (a >= 0 && h_kind[a] == HI_ALLOCA) {
                 bad = 1;
-                if (hi_ref_is_addr(i, n2))
+                if (hi_ref_is_addr(i, n2) && !h_vol[i])
                     bad = (ty_is_fp(h_ty[i]) != ty_is_fp(h_ty[a]) ||
                            ty_size(h_ty[i]) != ty_size(h_ty[a]));
                 if (bad) {
@@ -1189,7 +1189,7 @@ static void ssa_sr_filter(void) {
         if (k == HI_NOP || al_is_step(i)) { i = i + 1; continue; }
         n = 0;
         while (n < hi_nrefs(i)) {
-            ssa_sr_mark(hi_ref(i, n), hi_ref_is_addr(i, n) && h_val[i] == 0);
+            ssa_sr_mark(hi_ref(i, n), hi_ref_is_addr(i, n) && h_val[i] == 0 && !h_vol[i]);
             n = n + 1;
         }
         i = i + 1;

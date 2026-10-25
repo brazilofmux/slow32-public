@@ -3221,6 +3221,7 @@ static int ra_new_split_copy(int src, int blk) {
     h_pbase[cl] = -1;
     h_pcnt[cl] = 0;
     h_ld_ro[cl] = 0;
+    h_vol[cl] = 0;
     h_no_remat[cl] = 0;
     bg_sel[cl] = -1;
     bg_uses[cl] = 0;

@@ -43,6 +43,7 @@ static int   st_count;
 
 static char *stm_name[ST_MAX_MEMBERS];
 static int   stm_type[ST_MAX_MEMBERS];
+static int   stm_vol[ST_MAX_MEMBERS];  /* declared volatile */
 static int   stm_off[ST_MAX_MEMBERS];
 static int   stm_is_arr[ST_MAX_MEMBERS]; /* 1 if array member (address, no load) */
 static int   stm_arr_size[ST_MAX_MEMBERS]; /* total byte size for array members */
@@ -230,6 +231,9 @@ struct Node {
     int slot_id;      /* VAR: per-declaration identity (GitHub issue 77) */
     int is_local;     /* VAR: 1=local, 0=global */
     int is_array;     /* VAR: 1=array (address, no load) */
+    int is_vol;       /* lvalue: the object it names is volatile-qualified */
+    int is_volptr;    /* pointer value: what it points to is volatile-qualified
+                         (so a dereference of it is a volatile lvalue) */
     int is_fnptr;     /* MEMBER: a function-pointer member; (*p->m)(args) strips the star */
     int arr_cols;     /* VAR/MEMBER: 2D array column count (0 = 1D/scalar) */
     int nparams;      /* FUNC: number of parameters */
@@ -339,6 +343,7 @@ static Node *nd_binop(int op, Node *l, Node *r) {
         if ((l->ty & TY_UNSIGNED) || (r->ty & TY_UNSIGNED))
             n->ty = TY_INT | TY_UNSIGNED;
     }
+    n->is_volptr = (l != NULL && l->is_volptr) || (r != NULL && r->is_volptr);
     return n;
 }
 
@@ -355,6 +360,13 @@ static Node *nd_unary(int op, Node *operand) {
         n->ty = operand->ty;
     } else {
         n->ty = TY_INT;
+    }
+    if (operand != NULL) {
+        /* *p names a volatile object when p points to one; &x points to
+         * one when x is one; anything else keeps the pointee bit */
+        n->is_volptr = operand->is_volptr;
+        if (op == TK_STAR) n->is_vol = operand->is_volptr;
+        if (op == TK_AMP) n->is_volptr = operand->is_vol;
     }
     return n;
 }
@@ -461,6 +473,7 @@ static Node *nd_cast(Node *expr, int ty) {
     n = nd_new(ND_CAST);
     n->lhs = expr;
     n->ty = ty;
+    n->is_volptr = expr != NULL && expr->is_volptr;
     return n;
 }
 
@@ -486,6 +499,7 @@ static Node *nd_member(Node *lhs, int offset, int mty, int is_arr, int arr_size,
     n->val_hi = arr_size;
     n->bit_off = bit_off;
     n->bit_width = bit_width;
+    n->is_vol = lhs != NULL && lhs->is_vol;     /* a member of a volatile struct */
     return n;
 }
 

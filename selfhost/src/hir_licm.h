@@ -382,7 +382,7 @@ static void licm_mark(int body_count) {
                  * speculation is safe: the address is a dummy
                  * argument the caller already dereferenced. */
                 if (!ho_use[i] &&
-                    (hi_is_pure(k) || (k == HI_LOAD && h_ld_ro[i]))) {
+                    (hi_is_pure(k) || (k == HI_LOAD && h_ld_ro[i] && !h_vol[i]))) {
                     /* Check all operands */
                     if (licm_operand_ok(h_src1[i]) &&
                         (ho_src2_is_ref(k) ? licm_operand_ok(h_src2[i]) : 1)) {
@@ -424,6 +424,7 @@ static int licm_clone(int orig) {
     h_val[cl] = h_val[orig];
     h_name[cl] = h_name[orig];
     h_ld_ro[cl] = h_ld_ro[orig];   /* direct writes bypass hi_emit's clear */
+    h_vol[cl] = h_vol[orig];
     h_cbase[cl] = -1;
     h_pbase[cl] = -1;
     h_pcnt[cl] = 0;
@@ -570,6 +571,7 @@ static int sp_new_inst(int kind, int ty, int s1, int s2, int val, int blk) {
     h_pbase[cl] = -1;
     h_pcnt[cl] = 0;
     h_ld_ro[cl] = 0;
+    h_vol[cl] = 0;
     h_no_remat[cl] = 0;
     licm_map[cl] = -1;
     licm_next[cl] = -1;

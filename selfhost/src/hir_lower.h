@@ -860,7 +860,9 @@ static int hl_bf_store(int base_addr, int unit_ty, int width, int boff,
 static int hl_bf_unit_addr(Node *member) {
     int addr;
     addr = hl_addr(member->lhs);
-    return hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, member->val, NULL);
+    addr = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, member->val, NULL);
+    if (member->is_vol) h_voladdr[addr] = 1;
+    return addr;
 }
 
 /* Storage-unit load type for a bit-field's declared base type.  Use the
@@ -875,19 +877,28 @@ static int hl_bf_unit_ty(int member_ty) {
 static int hl_addr(Node *n) {
     int addr;
 
+    /* A volatile lvalue's address is marked (h_voladdr), and every
+     * LOAD and STORE through it, or through an ADDI off it, is a volatile
+     * access (hi_emit).  A volatile local's alloca stays marked for the
+     * function: every access to it is volatile. */
     if (n->kind == ND_VAR) {
         if (n->is_local) {
             /* hl_map_off relocates an inlined callee's frame; identity
              * when not inlining. */
-            return hl_get_alloca_id(hl_map_off(n->offset), n->ty, n->slot_id);
+            addr = hl_get_alloca_id(hl_map_off(n->offset), n->ty, n->slot_id);
+        } else {
+            /* Global variable address */
+            addr = hi_emit(HI_GADDR, TY_PTR + (n->ty & TY_BASE_MASK), -1, -1, 0, n->name);
         }
-        /* Global variable address */
-        return hi_emit(HI_GADDR, TY_PTR + (n->ty & TY_BASE_MASK), -1, -1, 0, n->name);
+        if (n->is_vol) h_voladdr[addr] = 1;
+        return addr;
     }
 
     /* Dereference: address of *p is just value of p */
     if (n->kind == ND_UNARY && n->op == TK_STAR) {
-        return hl_expr(n->lhs);
+        addr = hl_expr(n->lhs);
+        if (n->is_vol && addr >= 0) h_voladdr[addr] = 1;
+        return addr;
     }
 
     /* Member access: base address + offset.  Use HL_ADDR_TY (8-byte ptr
@@ -901,7 +912,9 @@ static int hl_addr(Node *n) {
         addr = hl_addr(n->lhs);
         /* Keep field-zero aggregate accesses distinct from plain scalar
          * allocas; mem2reg is allowed to promote scalars, not subobjects. */
-        return hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, n->val, NULL);
+        addr = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, n->val, NULL);
+        if (n->is_vol) h_voladdr[addr] = 1;
+        return addr;
     }
 
     if (n->kind == ND_COMMA) {
@@ -2290,6 +2303,7 @@ static int hl_expr(Node *n) {
         }
         if (n->op == TK_STAR) {
             lv = hl_expr(n->lhs);
+            if (n->is_vol && lv >= 0) h_voladdr[lv] = 1;
             if (ty_is_struct(n->ty)) return lv;
 #ifdef S12CC_X64_HOST
             if (ty_is_llong(n->ty)) {

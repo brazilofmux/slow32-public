@@ -96,12 +96,38 @@ static int gnu_float_ident_ty(void) {
     return -1;
 }
 
+/* parse_type saw volatile (or __volatile__): before the first star
+ * (ps_type_volb, the base object -- or the pointee, when stars follow)
+ * or after one (ps_type_volp, the pointer object itself).  Declarations
+ * record both and read them against the declared type (ps_var_vol);
+ * casts carry the base bit onto a pointer (docs/plans/memory-model.md,
+ * step 2a).  Declared here, ahead of skip_decl_qualifiers. */
+static int ps_type_volb;
+static int ps_type_volp;
+
+/* The bits of a declaration read against its shape: an array's elements
+ * are volatile when the base was (and so is what its decayed pointer
+ * reaches); a pointer object is volatile when the qualifier followed a
+ * star, and points to volatile when it preceded one; anything else is
+ * volatile when the base was. */
+static void ps_var_vol(Node *n, int ty, int is_arr, int volb, int volp) {
+    if (is_arr) { n->is_vol = volb; n->is_volptr = volb; }
+    else if (ty_is_ptr(ty)) { n->is_vol = volp; n->is_volptr = volb; }
+    else { n->is_vol = volb; n->is_volptr = 0; }
+}
+
+static int ps_tok_volatile(void) {
+    if (lex_tok == TK_VOLATILE) return 1;
+    return lex_tok == TK_IDENT && strncmp(lex_str, "__volatile", 10) == 0;
+}
+
 static void skip_decl_qualifiers(void) {
     while (1) {
         if (lex_tok == TK_CONST || lex_tok == TK_VOLATILE ||
             lex_tok == TK_RESTRICT || lex_tok == TK_INLINE ||
             is_gnu_qual_ident() || is_gnu_extension_ident() ||
             is_gnu_inline_ident()) {
+            if (ps_tok_volatile()) ps_type_volp = 1;
             next();
             continue;
         }
@@ -214,6 +240,8 @@ static int   ps_lcols[P_MAX_LOCALS];  /* 2D arrays: last-dim count (0 = 1D) */
 static int   ps_lsize[P_MAX_LOCALS];  /* total byte size (arrays: elem_sz*count) */
 static int   ps_lstatic[P_MAX_LOCALS]; /* 1 = static local, 0 = normal */
 static char *ps_lsname[P_MAX_LOCALS];  /* mangled name (static locals only) */
+static int   ps_lvolb[P_MAX_LOCALS];   /* volatile before the stars, at declaration */
+static int   ps_lvolp[P_MAX_LOCALS];   /* ... and after them */
 static int   ps_lfpbase[P_MAX_LOCALS]; /* function-pointer local: base into ps_fptypes, -1 = none */
 static int   ps_lfpn[P_MAX_LOCALS];
 static int   ps_nlocals;
@@ -230,6 +258,8 @@ static int   ps_retptr_off;           /* stack offset of hidden __retptr param *
 static int   ps_comp_lit_id;          /* unique hidden locals for compound literals */
 
 static char *ps_gname[P_MAX_GLOBALS]; /* global var names */
+static int   ps_gvolb[P_MAX_GLOBALS]; /* volatile before the stars, at declaration */
+static int   ps_gvolp[P_MAX_GLOBALS]; /* ... and after them */
 static int   ps_gtype[P_MAX_GLOBALS]; /* global var types */
 static int   ps_gsize[P_MAX_GLOBALS]; /* size in bytes (0=scalar, >0=array) */
 static int   ps_ginit[P_MAX_GLOBALS]; /* initial value for scalars */
@@ -882,6 +912,7 @@ static void add_anonymous_aggregate_members(int owner_si, int nested_ty, int bas
     stm_fpn[stm_count] = 0;
     stm_isfp[stm_count] = 0;
     stm_type[stm_count] = nested_ty;
+    stm_vol[stm_count] = ps_type_volb;
     stm_off[stm_count] = base_off;
     stm_is_arr[stm_count] = 0;
                         stm_arr_cols[stm_count] = 0;
@@ -905,6 +936,7 @@ static void add_anonymous_aggregate_members(int owner_si, int nested_ty, int bas
             stm_fpn[stm_count] = stm_fpn[i];
             stm_isfp[stm_count] = stm_isfp[i];
             stm_type[stm_count] = stm_type[i];
+            stm_vol[stm_count] = stm_vol[i];
             stm_off[stm_count] = base_off + stm_off[i];
             stm_is_arr[stm_count] = stm_is_arr[i];
             stm_arr_size[stm_count] = stm_arr_size[i];
@@ -1028,6 +1060,8 @@ static int parse_type(void) {
     ps_type_arrcount = 0;
     ps_type_fpbase = -1;
     ps_type_fpn = 0;
+    ps_type_volb = 0;
+    ps_type_volp = 0;
     saw_signed = 0;
     /* Skip const/volatile/signed/restrict qualifiers */
     while (1) {
@@ -1036,6 +1070,7 @@ static int parse_type(void) {
             is_gnu_qual_ident() || is_gnu_extension_ident() ||
             is_gnu_inline_ident()) {
             if (lex_tok == TK_SIGNED) saw_signed = 1;
+            if (ps_tok_volatile()) ps_type_volb = 1;
             next();
             continue;
         }
@@ -1325,6 +1360,7 @@ static int parse_type(void) {
                                  &bf_byte_off, &bf_bit_off);
                         stm_owner[stm_count] = si;
                         stm_type[stm_count] = dty;
+                        stm_vol[stm_count] = ps_type_volb;
                         stm_is_arr[stm_count] = 0;
                         stm_arr_cols[stm_count] = 0;
                         stm_arr_size[stm_count] = 0;
@@ -1416,6 +1452,7 @@ static int parse_type(void) {
                         }
                         stm_owner[stm_count] = si;
                         stm_type[stm_count] = member_ty + TY_PTR;
+                        stm_vol[stm_count] = ps_type_volb;
                         stm_is_arr[stm_count] = 1;
                         stm_arr_cols[stm_count] = (arr_ndims == 2) ? arr_last : 0;
                         stm_arr_size[stm_count] = flex_member ? 0 : ty_size(member_ty) * arr_count;
@@ -1426,6 +1463,7 @@ static int parse_type(void) {
                         require_complete_type(member_ty, "incomplete struct member");
                         stm_owner[stm_count] = si;
                         stm_type[stm_count] = member_ty;
+                        stm_vol[stm_count] = ps_type_volb;
                         stm_is_arr[stm_count] = 0;
                         stm_arr_cols[stm_count] = ptr_row_cols;
                         stm_arr_size[stm_count] = 0;
@@ -1636,6 +1674,7 @@ static int parse_type(void) {
                         }
                         stm_owner[stm_count] = si;
                         stm_type[stm_count] = dty;
+                        stm_vol[stm_count] = ps_type_volb;
                         stm_is_arr[stm_count] = 0;
                         stm_arr_cols[stm_count] = 0;
                         stm_arr_size[stm_count] = 0;
@@ -1669,6 +1708,7 @@ static int parse_type(void) {
                         require_complete_type(member_ty, "incomplete union member");
                         stm_owner[stm_count] = si;
                         stm_type[stm_count] = member_ty + TY_PTR;
+                        stm_vol[stm_count] = ps_type_volb;
                         stm_is_arr[stm_count] = 1;
                         stm_arr_cols[stm_count] = 0;
                         stm_arr_size[stm_count] = ty_size(member_ty) * arr_count;
@@ -1682,6 +1722,7 @@ static int parse_type(void) {
                         require_complete_type(member_ty, "incomplete union member");
                         stm_owner[stm_count] = si;
                         stm_type[stm_count] = member_ty;
+                        stm_vol[stm_count] = ps_type_volb;
                         stm_is_arr[stm_count] = 0;
                         stm_arr_cols[stm_count] = ptr_row_cols;
                         stm_arr_size[stm_count] = 0;
@@ -1732,7 +1773,10 @@ static int parse_type(void) {
     else if (saw_signed) { ty = TY_INT; }   /* bare `signed`, as in (signed)sizeof(unsigned) */
     else { p_error("expected type"); return TY_INT; }
     /* qualifiers after the base type: char const *z (SQLite) */
-    while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE || is_gnu_qual_ident()) next();
+    while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE || is_gnu_qual_ident()) {
+        if (ps_tok_volatile()) ps_type_volb = 1;
+        next();
+    }
     ps_type_nostar = ty;
     while (lex_tok == TK_STAR) {
         /* ps_type_fpbase is kept: `dfn *tab` and `dfn tab[N]` reach the
@@ -1742,7 +1786,10 @@ static int parse_type(void) {
          * describes what one [] or unary * yields, and is only ever read
          * through those, so a pointer carrying it is not callable. */
         ty = ty + TY_PTR; ps_type_arrcount = 0; next();
-        while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE || lex_tok == TK_RESTRICT || is_gnu_qual_ident()) next();   /* u8 * const p */
+        while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE || lex_tok == TK_RESTRICT || is_gnu_qual_ident()) {   /* u8 * const p */
+            if (ps_tok_volatile()) ps_type_volp = 1;
+            next();
+        }
     }
     return ty;
 }
@@ -1796,6 +1843,8 @@ static int add_local(char *name, int ty) {
     if (ps_stack > ps_stack_max) ps_stack_max = ps_stack;
     idx = ps_nlocals;
     ps_lname[idx] = strdup(name);
+    ps_lvolb[idx] = ps_type_volb;
+    ps_lvolp[idx] = ps_type_volp;
     ps_loff[idx] = 0 - ps_stack;
     ps_slot_gen = ps_slot_gen + 1;
     ps_lslot[idx] = ps_slot_gen;
@@ -1842,6 +1891,8 @@ static int add_local_array(char *name, int elem_ty, int count) {
     if (ps_stack > ps_stack_max) ps_stack_max = ps_stack;
     idx = ps_nlocals;
     ps_lname[idx] = strdup(name);
+    ps_lvolb[idx] = ps_type_volb;
+    ps_lvolp[idx] = ps_type_volp;
     ps_loff[idx] = 0 - ps_stack;
     ps_slot_gen = ps_slot_gen + 1;
     ps_lslot[idx] = ps_slot_gen;
@@ -1878,6 +1929,8 @@ static int add_global(char *name, int ty, int size_bytes) {
     }
     idx = ps_nglobals;
     ps_gname[idx] = strdup(name);
+    ps_gvolb[idx] = ps_type_volb;
+    ps_gvolp[idx] = ps_type_volp;
     ps_gtype[idx] = ty;
     ps_gsize[idx] = size_bytes;
     ps_ginit[idx] = 0;
@@ -3668,6 +3721,7 @@ static Node *parse_gnu_asm_stmt(void) {
 static Node *parse_compound_literal_expr(int ty, int arr_count);
 
 static Node *parse_primary(void) {
+    int cast_vol;
     Node *n;
     int v;
     int ty;
@@ -3757,11 +3811,13 @@ static Node *parse_primary(void) {
         if (li >= 0) {
             if (ps_lstatic[li]) {
                 n = nd_var(ps_lsname[li], 0, ps_ltype[li]);
+                ps_var_vol(n, ps_ltype[li], ps_larr[li], ps_lvolb[li], ps_lvolp[li]);
                 n->is_local = 0;
                 n->is_array = ps_larr[li];
                 n->arr_cols = ps_lcols[li];
             } else {
                 n = nd_var(nm, ps_loff[li], ps_ltype[li]);
+                ps_var_vol(n, ps_ltype[li], ps_larr[li], ps_lvolb[li], ps_lvolp[li]);
                 ps_bind_var(n, li);
             }
             /* Locals are popped before sema, so the signature has to
@@ -3779,6 +3835,7 @@ static Node *parse_primary(void) {
         gi = find_global(nm);
         if (gi >= 0) {
             n = nd_var(nm, 0, ps_gtype[gi]);
+            ps_var_vol(n, ps_gtype[gi], ps_gsize[gi] > 0, ps_gvolb[gi], ps_gvolp[gi]);
             n->is_local = 0;
             n->is_array = (ps_gsize[gi] > 0) ? 1 : 0;
             n->arr_cols = ps_gcols[gi];
@@ -3990,6 +4047,7 @@ static Node *parse_primary(void) {
         }
         if (is_type()) {
             ty = parse_type();
+            cast_vol = ps_type_volb;
             arr_count = 0;
             while (lex_tok == TK_LBRACK) {
                 next();
@@ -4011,7 +4069,9 @@ static Node *parse_primary(void) {
             }
             if (arr_count != 0) p_error("array cast unsupported");
             n = parse_unary();
-            return nd_cast(n, ty);
+            n = nd_cast(n, ty);
+            if (cast_vol && ty_is_ptr(ty)) n->is_volptr = 1;   /* (volatile u8 *)REG */
+            return n;
         }
         n = parse_expr();
         expect(TK_RPAREN);
@@ -4171,6 +4231,7 @@ static Node *parse_postfix_from(Node *n) {
             }
             n = nd_member(n, stm_off[mi], stm_type[mi], stm_is_arr[mi], stm_arr_size[mi],
                           stm_bit_off[mi], stm_bit_width[mi]);
+            if (stm_vol[mi]) ps_var_vol(n, stm_type[mi], stm_is_arr[mi], 1, 0);
             n->offset = stm_fpbase[mi];
             n->nparams = stm_fpn[mi];
             n->is_fnptr = stm_isfp[mi];
@@ -4198,6 +4259,7 @@ static Node *parse_postfix_from(Node *n) {
             }
             n = nd_member(n, stm_off[mi], stm_type[mi], stm_is_arr[mi], stm_arr_size[mi],
                           stm_bit_off[mi], stm_bit_width[mi]);
+            if (stm_vol[mi]) ps_var_vol(n, stm_type[mi], stm_is_arr[mi], 1, 0);
             n->offset = stm_fpbase[mi];
             n->nparams = stm_fpn[mi];
             n->is_fnptr = stm_isfp[mi];
@@ -5590,6 +5652,8 @@ static Node *parse_stmt(void) {
                         sl_li = ps_nlocals;
                         if (sl_li >= P_MAX_LOCALS) { p_error("too many locals"); return nd_num(0); }
                         ps_lname[sl_li] = strdup(nm);
+                ps_lvolb[sl_li] = ps_type_volb;
+                ps_lvolp[sl_li] = ps_type_volp;
                         ps_loff[sl_li] = 0;
                         ps_ltype[sl_li] = ty + TY_PTR;
                         ps_larr[sl_li] = 1;
@@ -5660,6 +5724,8 @@ static Node *parse_stmt(void) {
                 sl_li = ps_nlocals;
                 if (sl_li >= P_MAX_LOCALS) { p_error("too many locals"); return nd_num(0); }
                 ps_lname[sl_li] = strdup(nm);
+                ps_lvolb[sl_li] = ps_type_volb;
+                ps_lvolp[sl_li] = ps_type_volp;
                 ps_loff[sl_li] = 0;
                 ps_ltype[sl_li] = TY_INT + TY_PTR;
                 ps_larr[sl_li] = 1;
@@ -5821,6 +5887,8 @@ static_scalar_decl:
                 sl_li = ps_nlocals;
                 if (sl_li >= P_MAX_LOCALS) { p_error("too many locals"); return nd_num(0); }
                 ps_lname[sl_li] = strdup(nm);
+                ps_lvolb[sl_li] = ps_type_volb;
+                ps_lvolp[sl_li] = ps_type_volp;
                 ps_loff[sl_li] = 0;
                 ps_ltype[sl_li] = ty;
                 ps_larr[sl_li] = 0;
@@ -5949,6 +6017,8 @@ static_array_decl:
             sl_li = ps_nlocals;
             if (sl_li >= P_MAX_LOCALS) { p_error("too many locals"); return nd_num(0); }
             ps_lname[sl_li] = strdup(nm);
+                ps_lvolb[sl_li] = ps_type_volb;
+                ps_lvolp[sl_li] = ps_type_volp;
             ps_loff[sl_li] = 0;
             ps_ltype[sl_li] = ty + TY_PTR;
             ps_larr[sl_li] = 1;

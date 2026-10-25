@@ -110,3 +110,20 @@ crypto benchmarks must assemble to the same bytes before and after.
   static, VdbeExec identical, times identical.  Set aside; the
   allocator decides this one.  Not committed; the pass as built is in
   this session's record.
+- 2026-10-25: step 2a.  `volatile` reaches the code: the parser keeps
+  the qualifier as two bits (before the first star: the object, or the
+  pointee when stars follow; after one: the pointer itself), a
+  declaration or cast puts them on the nodes that name the object
+  (is_vol) or point to it (is_volptr), the lowering marks a volatile
+  lvalue's address (h_voladdr, carried by ADDI), and hi_emit marks each
+  LOAD and STORE through one (h_vol).  Forwarding, DSE, dead slots,
+  mem2reg, the late scalar replacement, DCE and LICM treat the access
+  as a barrier.  The five crypto benchmarks are byte-identical; SQLite
+  changes in dekkerMul2, kahanBabuskaNeumaierStep and
+  sqlite3_test_control, the three places it says volatile, and the
+  200,000-row run is 1.5% slower under the x86-64 DBT (unchanged on
+  arm64): sum() calls the two Kahan-Babuska helpers once per row, and
+  their doubles now stay in memory as written.  Found on the way: two
+  reads of one plain global in an expression are two loads, because
+  each access builds its own GADDR and forwarding matches by address
+  value -- a candidate for the alias facility to answer.
