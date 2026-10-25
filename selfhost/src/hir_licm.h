@@ -788,6 +788,28 @@ static int sr_invariant(int v) {
 }
 
 /* Is value x one of the recorded IVs?  Returns record index or -1. */
+/* op(a, b) for the strength-reduced IV, folded when both are
+ * constants: nothing optimizes after LICM, and an unfolded stride
+ * `1 << 3` is an SLL the allocator cannot rematerialize -- it held a
+ * register through sha512_block's 80-round loop and the round state
+ * spilled.  An ICONST remats, and the latch add takes it as an
+ * immediate. */
+static int sr_new_op(int kind, int ty, int a, int b, int blk) {
+    unsigned va;
+    unsigned vb;
+    unsigned v;
+    if (a >= 0 && b >= 0 && h_kind[a] == HI_ICONST && h_kind[b] == HI_ICONST &&
+        ty_size(ty) == 4) {
+        va = (unsigned)h_val[a];
+        vb = (unsigned)h_val[b];
+        if (kind == HI_SLL) v = va << (vb & 31);
+        else if (kind == HI_MUL) v = va * vb;
+        else v = va + vb;
+        return sp_new_inst(HI_ICONST, ty, -1, -1, (int)v, blk);
+    }
+    return sp_new_inst(kind, ty, a, b, 0, blk);
+}
+
 static int sr_find(int x) {
     int i;
     i = 0;
@@ -1037,7 +1059,7 @@ static void licm_strred(int header, int latch) {
                 int okind;
                 okind = (knd == 1) ? HI_SLL : ((knd == 2) ? HI_MUL : HI_ADD);
                 /* init = op(iv.init, other), in the preheader */
-                ninit = sp_new_inst(okind, h_ty[i], sr_init[r], other, 0, pre);
+                ninit = sr_new_op(okind, h_ty[i], sr_init[r], other, pre);
                 if (licm_tail[pre] >= 0) licm_next[licm_tail[pre]] = ninit;
                 else licm_head[pre] = ninit;
                 licm_tail[pre] = ninit;
@@ -1045,7 +1067,7 @@ static void licm_strred(int header, int latch) {
                 if (knd == 3) {
                     nstep = sr_step[r];
                 } else {
-                    nstep = sp_new_inst(okind, TY_INT, sr_step[r], other, 0, pre);
+                    nstep = sr_new_op(okind, TY_INT, sr_step[r], other, pre);
                     licm_next[licm_tail[pre]] = nstep;
                     licm_tail[pre] = nstep;
                 }

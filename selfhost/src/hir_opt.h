@@ -908,6 +908,30 @@ static int ho_cse_hash(int kind, int s1, int s2, int val) {
     return h & HO_CSE_MASK;
 }
 
+/* Operands as CSE sees them: every literal lowers to its own ICONST,
+ * so `w[i-15]` written three times was three SUBs against three
+ * different 15s, three addresses and three loads (SHA-512's message
+ * schedule).  Two ICONSTs of one value and type are the same operand;
+ * the nodes themselves stay apart, so each use keeps its immediate.
+ * Only within a block: across blocks it matched &c->h[k] at the top
+ * of sha512_block with the same address after its 80-round loop and
+ * held all eight through it.  On SQLite (static / shell dynamic insns)
+ * block-local is the best of the variants tried: 306,449 / 2,897,362
+ * before, 294,261 / 2,882,384 after; across dominating blocks
+ * 292,065 / 2,888,514. */
+static int ho_cse_key(int x) {
+    if (x >= 0 && h_kind[x] == HI_ICONST)
+        return h_val[x] * 7919 + h_ty[x] * 31 + 5;
+    return x;
+}
+
+static int ho_cse_same(int a, int b) {
+    if (a == b) return 1;
+    if (a < 0 || b < 0) return 0;
+    return h_kind[a] == HI_ICONST && h_kind[b] == HI_ICONST &&
+           h_val[a] == h_val[b] && h_ty[a] == h_ty[b];
+}
+
 static int ho_cse_eligible(int k) {
     /* Binary arithmetic/logic/comparison (not div/rem) */
     if (hi_is_binop(k) && k != HI_DIV && k != HI_REM) return 1;
@@ -942,14 +966,18 @@ static int ho_cse(void) {
         s1 = h_src1[i];
         s2 = h_src2[i];
         v = h_val[i];
-        slot = ho_cse_hash(k, s1, s2, v);
+        slot = ho_cse_hash(k, ho_cse_key(s1), ho_cse_key(s2), v);
 
         /* Search chain for match */
         found = -1;
         j = ho_cse_head[slot];
         while (j >= 0) {
-            if (h_kind[j] == k && h_src1[j] == s1 && h_src2[j] == s2 &&
-                h_val[j] == v && ho_dominates(h_blk[j], h_blk[i])) {
+            if (h_kind[j] == k && h_val[j] == v &&
+                ((h_src1[j] == s1 && h_src2[j] == s2 &&
+                  ho_dominates(h_blk[j], h_blk[i])) ||
+                 (h_blk[j] == h_blk[i] &&
+                  ho_cse_same(h_src1[j], s1) &&
+                  ho_cse_same(h_src2[j], s2)))) {
                 found = j;
                 j = -1;  /* break */
             } else {
