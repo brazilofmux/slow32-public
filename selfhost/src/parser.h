@@ -294,6 +294,9 @@ static int   ps_in_body;    /* parsing a function's body: its locals are in scop
  * type must create a real array, not the decayed pointer (SHA1_Final
  * wrote its digest through an uninitialized 4-byte 'pointer'). */
 static int   ps_type_arrcount;
+static int   ps_type_nostar;    /* parse_type's answer before its trailing stars:
+                                 * what a declarator after a comma starts from
+                                 * (`str a, b;` with str a typedef'd pointer) */
 static int   ps_type_fpbase;  /* function-pointer typedef: signature of this parse_type */
 static int   ps_type_fpn;
 
@@ -1048,6 +1051,7 @@ static int parse_type(void) {
             next();
             ty = parse_type();
             expect(TK_RPAREN);
+            ps_type_nostar = ty;
             while (lex_tok == TK_STAR) { ty = ty + TY_PTR; next(); skip_decl_qualifiers(); }
             return ty;
         }
@@ -1729,6 +1733,7 @@ static int parse_type(void) {
     else { p_error("expected type"); return TY_INT; }
     /* qualifiers after the base type: char const *z (SQLite) */
     while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE || is_gnu_qual_ident()) next();
+    ps_type_nostar = ty;
     while (lex_tok == TK_STAR) {
         /* ps_type_fpbase is kept: `dfn *tab` and `dfn tab[N]` reach the
          * side tables with the identical type (elem + TY_PTR, arrays
@@ -1762,6 +1767,17 @@ static int find_global(char *name) {
         i = i - 1;
     }
     return -1;
+}
+
+/* A static local's object is a global under its mangled name, so an
+ * address constant naming one -- static int x; static int *p = &x; --
+ * must name that; it named plain `x` and the link failed. */
+static char *ps_static_local_sym(char *name) {
+    int li;
+    if (!ps_in_body) return 0;
+    li = find_local(name);
+    if (li < 0 || !ps_lstatic[li] || !ps_lsname[li]) return 0;
+    return ps_lsname[li];
 }
 
 static int add_local(char *name, int ty) {
@@ -2913,6 +2929,7 @@ static int parse_global_init_symbol_reloc_at(int gidx, int rel_off, int sz) {
     }
     memcpy(nm, lex_str, lex_slen + 1);
     next();
+    if (ps_static_local_sym(nm)) strcpy(nm, ps_static_local_sym(nm));
     ps_ginit_add_sym_reloc_at(gidx, rel_off, nm, sz);
     /* &sym[const]: address constant with a byte addend
      * (tables.c: const fixed_t *finecosine = &finesine[FINEANGLES/4]).
@@ -5496,6 +5513,7 @@ static Node *parse_stmt(void) {
         int was_enum;
         was_enum = (lex_tok == TK_ENUM);
         ty = parse_type();
+        base = ps_type_nostar;   /* before an initializer parses a type */
         tdac = ps_type_arrcount;
         td_elem = -1;
         skip_decl_qualifiers();
@@ -5754,7 +5772,11 @@ local_plain_name:
             return nd_block(NULL);
         }
 
-        /* Static local scalar: emit as global with mangled name */
+        /* Static local scalar: emit as global with mangled name.  A
+         * declarator list goes back and forth between this and the array
+         * case below as each declarator's shape says: static char
+         * cells[3], *pc = cells; */
+static_scalar_decl:
         if (is_static && lex_tok != TK_LBRACK && ps_decl_inner == 0) {
             ps_mangle_static(ps_cur_func, nm);
             sl_gi = add_global(ps_sl_buf, ty,
@@ -5785,14 +5807,16 @@ local_plain_name:
                 } else if (ty_is_ptr(ty) &&
                            (lex_tok == TK_AMP ||
                             (lex_tok == TK_IDENT && find_const(lex_str) < 0 &&
-                             find_global(lex_str) >= 0))) {
+                             (find_global(lex_str) >= 0 || ps_static_local_sym(lex_str))))) {
                     ps_ptr_init_at(sl_gi, ty);
                 } else {
                     ps_set_scalar_init(sl_gi, parse_const_int(), 0);
                 }
             }
             /* Register, then loop on comma for further declarators:
-             * static int lastlevel = -1, lastepisode = -1; (am_map) */
+             * static int lastlevel = -1, lastepisode = -1; (am_map).
+             * Each brings its own stars and qualifiers, as an automatic
+             * local's do: static const char *const a = "x", *const b. */
             while (1) {
                 sl_li = ps_nlocals;
                 if (sl_li >= P_MAX_LOCALS) { p_error("too many locals"); return nd_num(0); }
@@ -5811,9 +5835,13 @@ local_plain_name:
                 ps_nlocals = ps_nlocals + 1;
                 if (lex_tok != TK_COMMA) break;
                 next();
+                ty = base;
+                while (lex_tok == TK_STAR) { ty = ty + TY_PTR; next(); skip_decl_qualifiers(); }
+                skip_decl_qualifiers();
                 if (lex_tok != TK_IDENT) { p_error("expected name after comma"); return nd_num(0); }
                 memcpy(nm, lex_str, lex_slen + 1);
                 next();
+                if (lex_tok == TK_LBRACK) goto static_array_decl;
                 ps_mangle_static(ps_cur_func, nm);
                 sl_gi = add_global(ps_sl_buf, ty,
                                    ty_is_struct(ty) ? ty_size(ty) : 0);
@@ -5837,7 +5865,7 @@ local_plain_name:
                     } else if (ty_is_ptr(ty) &&
                                (lex_tok == TK_AMP ||
                                 (lex_tok == TK_IDENT && find_const(lex_str) < 0 &&
-                                 find_global(lex_str) >= 0))) {
+                                 (find_global(lex_str) >= 0 || ps_static_local_sym(lex_str))))) {
                         ps_ptr_init_at(sl_gi, ty);
                     } else {
                         ps_set_scalar_init(sl_gi, parse_const_int(), 0);
@@ -5849,6 +5877,7 @@ local_plain_name:
         }
 
         /* Static local array: emit as global with mangled name */
+static_array_decl:
         if ((lex_tok == TK_LBRACK || ps_decl_inner > 0) && is_static) {
           /* A static array declarator list: `static char a[4096],
            * b[4096];` (regal's test_keyword.c).  Each name gets its own
@@ -5931,13 +5960,14 @@ local_plain_name:
             ps_nlocals = ps_nlocals + 1;
             if (lex_tok != TK_COMMA) break;
             next();
+            ty = base;
+            while (lex_tok == TK_STAR) { ty = ty + TY_PTR; next(); skip_decl_qualifiers(); }
+            skip_decl_qualifiers();
             if (lex_tok != TK_IDENT) { p_error("expected name after comma"); return nd_num(0); }
             memcpy(nm, lex_str, lex_slen + 1);
             next();
-            if (lex_tok != TK_LBRACK) {
-                p_error("static declarator list: arrays only after an array");
-                return nd_num(0);
-            }
+            ps_decl_inner = 0;
+            if (lex_tok != TK_LBRACK) goto static_scalar_decl;
           }
             expect(TK_SEMI);
             return nd_block(NULL);
@@ -5948,8 +5978,6 @@ local_plain_name:
          * that initialize them run in declaration order. */
         head = NULL;
         tail = NULL;
-        base = ty;
-        while (ty_is_ptr(base)) base = ty_deref(base);
         while (1) {
             t = parse_local_declarator(nm, ty);
             if (t != NULL) {
@@ -6326,7 +6354,7 @@ plain_name:
                 } else if (ty_is_ptr(xty) &&
                            (lex_tok == TK_AMP ||
                             (lex_tok == TK_IDENT && find_const(lex_str) < 0 &&
-                             find_global(lex_str) >= 0))) {
+                             (find_global(lex_str) >= 0 || ps_static_local_sym(lex_str))))) {
                     /* Pointer global initialized with an address constant:
                      * `const fixed_t *finecosine = &finesine[FINEANGLES/4];`
                      * Route through the init-pool reloc machinery. */
@@ -6810,6 +6838,15 @@ static Node *parse_program(void) {
 #ifdef S12CC_TARGET_X64
     pp_add("__x86_64__", 1);
     pp_add("__LP64__", 1);
+#endif
+#ifndef S12CC_TARGET_A64
+#ifndef S12CC_TARGET_X64
+    /* clang's names for the target (and stage01 cc.fth's): code that
+     * keys off them -- mdfix's shims, s32sort's heap sizing -- took the
+     * host branch under stage08. */
+    pp_add("__SLOW32__", 1);
+    pp_add("__slow32__", 1);
+#endif
 #endif
     if (ty_ptr_size == 8) {
         pp_add("__SIZEOF_POINTER__", 8);
