@@ -1039,6 +1039,7 @@ static int ho_stat_dse;
 
 static int ho_may_alias(int a, int sza, int b, int szb);
 static int ho_addr_resolve(int id, int *base, int *off);
+static int ho_alias_ptr;   /* ho_may_alias: same-pointer words apart (DSE) */
 static int ho_acc_size(int ty);
 
 /* Does the store at j overwrite every byte the store at i wrote? */
@@ -1082,9 +1083,13 @@ static int ho_dse_pass(void) {
              * pointer, another frame slot -- does not: BlaMka's z[k] were
              * stored twice per permutation, the first dead under loads of
              * their neighbours. */
-            if ((jk == HI_LOAD &&
-                 ho_may_alias(addr, ho_acc_size(h_ty[i]), h_src1[j], ho_acc_size(h_ty[j]))) ||
-                jk == HI_CALL || jk == HI_CALLP ||
+            if (jk == HI_LOAD) {
+                ho_alias_ptr = 1;
+                if (ho_may_alias(addr, ho_acc_size(h_ty[i]), h_src1[j], ho_acc_size(h_ty[j])))
+                    alive = 0;
+                ho_alias_ptr = 0;
+            }
+            if (jk == HI_CALL || jk == HI_CALLP ||
                 jk == HI_A64_DBT_TRAMPOLINE || hi_is_a64_cache_asm(jk) ||
                 jk == HI_X64_DBT_TRAMPOLINE || jk == HI_X64_RDTSC) {
                 alive = 0;
@@ -1203,9 +1208,14 @@ static int ho_may_alias(int a, int sza, int b, int szb) {
     kb = ho_addr_resolve(b, &bb, &ob);
     if (ka == 0 || kb == 0) return 1;
     if (ka == 3 || kb == 3) {
-        /* BlaMka's z[k]: the store of a word's high half forgot the low
-         * half's value, and every G step reloaded it */
-        if (ka != kb || ba != bb) return 1;
+        /* Two words off one pointer are told apart by their bytes for
+         * dead-store elimination only (ho_alias_ptr): BlaMka's z[k] were
+         * stored twice per permutation.  Forwarding through them as well
+         * held every word of a row in a register across the G steps,
+         * and the spills cost more than the reloads they replaced --
+         * fill's frame traffic 152 -> 540 instructions, Argon2 12%
+         * slower under the x86-64 DBT for no fewer instructions. */
+        if (!ho_alias_ptr || ka != kb || ba != bb) return 1;
     } else if (ka != kb) return 0;        /* a frame slot vs a global */
     else if (ba != bb) {
         if (ka == 1) return 0;            /* two distinct frame slots */
