@@ -3302,8 +3302,8 @@ symbols to the global table through `gsym_add_new`, which holds
 (the kit's s32-as keeps those labels in the object's symbol table as
 `NOTYPE LOCAL`).  A unit with 5,000 literals -- 5,003 symbols, 5,001 of
 them local -- linked on the LLVM route and failed on the kit with
-`error: gsym table full` 912 times.  Found porting recycledreply's
-diceware (7,776 words as an array of literals).
+`error: gsym table full` 912 times.  Found porting a diceware
+generator (7,776 words as an array of literals).
 
 Locals now stay with their object: `lsym_sec`/`lsym_val` hold a defined
 local's section and value while the object is merged, `sym_map` carries

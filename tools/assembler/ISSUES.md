@@ -121,7 +121,7 @@ relax its own branches — llc pre-relaxes, but nothing else did.
 longer than that reached `process_string_literal` without its closing
 quote and failed as `Invalid string literal`.  clang emits a C string
 constant of any size as one `.asciz` on one line; a 62 KB word list
-(recycledreply's diceware) could not be assembled on the LLVM route,
+(a diceware port's) could not be assembled on the LLVM route,
 while the kit's s32-as took the same source.  Tokens now go into a pool
 the size of a line (`TOKEN_POOL`: `MAX_LINE` plus a terminator per
 token), each token exactly as long as it is, so the bound is the line's
