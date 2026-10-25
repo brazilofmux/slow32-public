@@ -103,6 +103,13 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-25 (`2b610f81`).  `cc.s32x`, `libc.s32a` and the five
+tools.  The compiler treats equal literals as one operand in CSE and
+folds the strides strength reduction builds (`cdf06a4c`); `memcpy` and
+`memset` in `libc.s32a` and in every tool loop with one branch per 16
+bytes.  SQLite under stage08: -5.5% static, -7% shell dynamic.  The
+tools' output is byte-identical to before (checked on s12cc.c).
+
 Rebuilt 2026-10-24 (`1c13e70c`).  `cc.s32x` and `libc.s32a`: a 64-bit
 shift by a run-time count is inline instead of a helper call, 8-byte
 parameters stay in registers instead of being stored to the frame, and
