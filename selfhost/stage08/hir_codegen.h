@@ -201,6 +201,35 @@ static int hcg_frame;      /* total frame size */
 static int hcg_frame_escapes; /* an alloca's address may reach a callee:
                                  tail calls must not pop the frame first */
 static int hcg_frameless;  /* leaf, no stack: omit prologue/epilogue */
+static int hcg_slot_used;  /* a frame slot is read or written, by any address
+                            * chain (hcg_note_slots, taken before hir_burg
+                            * folds the ADDIs and NOPs them) */
+
+/* Does any load or store reach a frame slot?  Asked before BURG: its
+ * address folds NOP the ADDI steps, after which a slot addressed only
+ * through them looks unreferenced.  copysign's two unions, once the
+ * dead-store pass had removed their low words' stores, were reached
+ * only through +4 steps: the function went frameless, saved no
+ * callee-saved register, and wrote below the caller's stack pointer. */
+static void hcg_note_slots(void) {
+    int i;
+    int n;
+    int v;
+    hcg_slot_used = 0;
+    al_roots();
+    i = 0;
+    while (i < h_ninst && !hcg_slot_used) {
+        if (h_kind[i] != HI_NOP && !al_is_step(i) && h_kind[i] != HI_ALLOCA) {
+            n = 0;
+            while (n < hi_nrefs(i)) {
+                v = hi_ref(i, n);
+                if (v >= 0 && v < al_n && al_root[v] >= 0) hcg_slot_used = 1;
+                n = n + 1;
+            }
+        }
+        i = i + 1;
+    }
+}
 static int hcg_save_lr;    /* 0 on leaves: incoming r31 stays the return */
 static int hcg_omit_fp;    /* SP-relative slots; r30 is not the frame pointer */
 static int hcg_sp_delta;   /* extra SP decrement below the frame (stack args) */
@@ -4100,6 +4129,7 @@ static void hcg_classify_frame(Node *fn) {
     hcg_save_lr = 0;
     need_stack = 0;
     if (ra_ncsave > 0) need_stack = 1;
+    if (hcg_slot_used) need_stack = 1;
     i = 0;
     while (i < h_ninst) {
         if (ra_spill_off[i] != 0) need_stack = 1;
@@ -4167,6 +4197,9 @@ static void hcg_func(Node *fn) {
 
     /* -dhir=NAME: the function's HIR after the optimizer, to stderr */
     hir_dump("HIR");
+
+    /* Frame slots in use, before BURG folds their address steps away */
+    hcg_note_slots();
 
     /* BURG instruction selection: labels + selects patterns */
     hir_burg();

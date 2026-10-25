@@ -3374,3 +3374,34 @@ tools rebuilt byte-identical.  The build chain for the compiler is:
 stage07 `cc` compiles it, the *stage08* assembler built first in the
 same run assembles it (stage07's `s32-as` caps BSS at 16MB and the
 compiler's tables are 177MB), stage07's `s32-ld` links it.
+
+### 93. [RESOLVED 2026-10-25] A leaf whose frame slots were reached only through folded address steps went frameless
+
+`hcg_classify_frame` ran after BURG, and counted a frame slot as in
+use when a live instruction named its ALLOCA.  BURG folds a slot's
+ADDI steps into the loads' and stores' offsets and NOPs them, so a slot
+addressed only through steps -- a union's high word, a struct member,
+an array element -- had no live instruction naming it: the leaf went
+frameless, saved no callee-saved register it used, and addressed the
+slot at a negative offset from the caller's stack pointer.  Latent as
+long as something else kept a frame; the dead-store pass of
+docs/plans/memory-model.md step 4 removed `copysign`'s and `fmin`'s
+low-word stores and left exactly that shape, found by the math values
+coming out wrong in sequence (a caller's pair in r12:r13 clobbered).
+
+Fix: `hcg_note_slots` asks, before BURG, whether any load or store
+reaches a slot through any address chain (hir_alias.h's roots), and
+`hcg_classify_frame` keeps the frame when one does.  `test_dead_store`
+covers the shape.
+
+### 94. [RESOLVED 2026-10-25] The kit's <math.h> did not declare fmax, fmin, fdim
+
+`runtime/math_soft.c` defines them and the kit libc carries them, but
+`selfhost/stage08/include/math.h` never declared them, so a call went
+through the compiler's implicit `int` declaration and the caller
+converted a stray register to double: `fmin(2.5, -3.25)` printed 2.5,
+and three of them in one `printf` printed noise.  Present in every kit
+since the functions arrived.  Declared now, with the float forms;
+`regression/libc-tests/math_decl.c`, the header test with a host leg,
+asks for them.  Declared but not defined are not added: `fma`,
+`fpclassify` and `signbit` stay out until the library has them.
