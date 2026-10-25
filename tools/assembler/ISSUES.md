@@ -113,3 +113,23 @@ relax its own branches — llc pre-relaxes, but nothing else did.
   branch untouched) and `asm-branch-relax-cascade` (a branch in range by one
   word until another relaxation pushes it out — fails to assemble if the
   fixed-point iteration breaks).
+
+### 13. A `.asciz` of 16 KB or more was cut off and rejected (GitHub issue 124, fixed 2026-10-25)
+
+`tokenize()` copied each token into one of 512 slots of `MAX_TOKEN_LEN`
+(16384) bytes, stopping silently at the slot's end, so a string directive
+longer than that reached `process_string_literal` without its closing
+quote and failed as `Invalid string literal`.  clang emits a C string
+constant of any size as one `.asciz` on one line; a 62 KB word list
+(recycledreply's diceware) could not be assembled on the LLVM route,
+while the kit's s32-as took the same source.  Tokens now go into a pool
+the size of a line (`TOKEN_POOL`: `MAX_LINE` plus a terminator per
+token), each token exactly as long as it is, so the bound is the line's
+64 KB and not a slot's.  `tokens[]` became an array of pointers; the one
+place that wrote into a token's slot -- swapping the register operands of
+`bgt`/`ble`/`bgtu`/`bleu` -- swaps the pointers instead.  Checked: 120 .s
+files in the tree assemble byte-identically before and after, the
+regression suite and the cross-engine differential agree, 17 KB and 64 KB
+strings assemble, and `regression/tests/asm-long-string` (a 20,000-
+character constant) fails on the old binary and passes on the new.
+

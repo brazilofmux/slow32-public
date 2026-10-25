@@ -12,6 +12,11 @@
 #define MAX_LINE 65536
 #define MAX_TOKENS 512
 #define MAX_TOKEN_LEN 16384
+/* Tokens are copied into one pool the size of a line (plus a terminator
+ * each), so a token is bounded by the line and not by a slot: clang emits a
+ * string constant of any size as one .asciz, and a 16 KB slot cut a 62 KB
+ * word list off (GitHub issue 124). */
+#define TOKEN_POOL (MAX_LINE + MAX_TOKENS + 1)
 #define INITIAL_INSTRUCTION_CAPACITY 65536
 #define MAX_DATA_SIZE (1024 * 1024)  // 1MB max data section
 
@@ -967,7 +972,7 @@ static void cfi_emit_advance_loc(assembler_t *as) {
 
 static int find_label_index(assembler_t *as, const char *name);
 
-static bool handle_cfi_directive(assembler_t *as, char tokens[][MAX_TOKEN_LEN], int num_tokens) {
+static bool handle_cfi_directive(assembler_t *as, char **tokens, int num_tokens) {
     if (strcmp(tokens[0], ".cfi_startproc") == 0) {
         as->cfi_in_proc = true;
         as->cfi_cfa_offset = 0;   // the CIE's: CFA = sp + 0
@@ -1197,7 +1202,10 @@ static char *trim(char *str) {
     return str;
 }
 
-static int tokenize(char *line, char tokens[][MAX_TOKEN_LEN]) {
+static int tokenize(char *line, char **tokens) {
+    static char pool[TOKEN_POOL];
+    char *const pool_end = pool + TOKEN_POOL - 1;
+    char *cursor = pool;
     int count = 0;
     char *p = line;
     
@@ -1206,22 +1214,24 @@ static int tokenize(char *line, char tokens[][MAX_TOKEN_LEN]) {
         while (*p && (*p == ' ' || *p == '\t' || *p == ',')) p++;
         if (!*p) break;
         
-        char *token_start = tokens[count];
+        char *token_start = cursor;
         char *token_ptr = token_start;
         int paren_depth = 0;
         bool in_quotes = false;
+        tokens[count] = token_start;
         
         // Handle brackets as standalone tokens (maintained from original)
         if ((*p == '[' || *p == ']') && paren_depth == 0 && !in_quotes) {
             *token_ptr++ = *p++;
             *token_ptr = '\0';
+            cursor = token_ptr + 1;
             count++;
             continue;
         }
 
         while (*p) {
             if (*p == '\\' && *(p+1)) {
-                if (token_ptr - token_start < MAX_TOKEN_LEN - 2) {
+                if (token_ptr + 2 < pool_end) {
                     *token_ptr++ = *p++;
                     *token_ptr++ = *p++;
                 } else {
@@ -1242,13 +1252,14 @@ static int tokenize(char *line, char tokens[][MAX_TOKEN_LEN]) {
                 }
             }
             
-            if (token_ptr - token_start < MAX_TOKEN_LEN - 1) {
+            if (token_ptr + 1 < pool_end) {
                 *token_ptr++ = *p++;
             } else {
                 p++;
             }
         }
         *token_ptr = '\0';
+        cursor = token_ptr + 1;
         if (token_ptr > token_start) {
             count++;
         }
@@ -1837,7 +1848,7 @@ static bool assemble_line(assembler_t *as, char *line) {
     line = trim(line);
     if (strlen(line) == 0) return true;
     
-    static char tokens[MAX_TOKENS][MAX_TOKEN_LEN];
+    static char *tokens[MAX_TOKENS];
     int num_tokens = tokenize(line, tokens);
     if (num_tokens < 0) return false;  // tokenizer overflow
     if (num_tokens == 0) return true;
@@ -1873,11 +1884,11 @@ static bool assemble_line(assembler_t *as, char *line) {
             return false;
         }
 
-        // Swap the register operands so we can reuse the existing encoding.
-        char tmp[MAX_TOKEN_LEN];
-        strcpy(tmp, tokens[1]);
-        strcpy(tokens[1], tokens[2]);
-        strcpy(tokens[2], tmp);
+        // Swap the register operands so we can reuse the existing encoding
+        // (the pointers: a token's room in the pool is its own length).
+        char *tmp = tokens[1];
+        tokens[1] = tokens[2];
+        tokens[2] = tmp;
         swap_branch_regs = true;
 
         if (!strcmp(tokens[0], "bgt")) {
