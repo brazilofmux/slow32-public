@@ -103,6 +103,14 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-25 (`4bd8ac7c`).  `cc.s32x` and `libc.s32a`; the tools
+rebuild identical.  A `memcpy` of a constant size through pointers, and
+a struct copy up to 64 bytes, now copy inline as words with a byte tail
+(selfhost ISSUES-97; the libc's own small copies changed with it), and
+the pair-alloca splitter takes an 8-byte local with up to 256 hi-half
+access sites instead of eight (ISSUES-98).  Gated: kit differential
+122/0, kit tools 21/0, islisp, libcob 490/0, dfsort, mdfix 95 runs, tz.
+
 Rebuilt 2026-10-25 (`bca7cde7`).  `cc.s32x` only; `libc.s32a` and the
 tools rebuild identical.  A case label inside a plain block no longer
 costs the switch its jump table (selfhost ISSUES-96): sqlite3VdbeExec's
