@@ -103,6 +103,16 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Header only, 2026-10-25 (`a914ed38`): `include/fcntl.h` now declares
+`open` itself.  Its comment said `<unistd.h>` did; nothing did, and
+every `open` call in a program compiled against the kit went through
+the implicit `int` declaration -- harmless by accident, since the
+function returns `int` and the host ignores the mode.  Found by the
+syntax-only pass over the kit's users that Kagura's agent suggested
+(`-Werror=implicit-function-declaration` with `-nostdinc -isystem
+include`); the pass also flags `va_arg` and `offsetof`, which stage08
+cc recognises as builtins and the kit headers do not spell.
+
 Rebuilt 2026-10-25 (`a36994f9`).  `cc.s32x`, `libc.s32a` and
 `include/math.h`; the tools rebuild identical.  Two fixes a program
 could meet: `<math.h>` now declares `fmax`, `fmin` and `fdim` (and the
