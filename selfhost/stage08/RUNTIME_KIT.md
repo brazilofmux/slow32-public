@@ -103,6 +103,20 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-25 (`bff0412c`).  `cc.s32x` and `libc.s32a`; the
+tools and `include/` rebuild identical.  The compiler honours
+`volatile` (`23aa0fb3`): the parser had dropped the qualifier, so a
+volatile read could be forwarded from an earlier one, a volatile store
+dropped as dead, a volatile local kept in a register -- device-register
+polling and `setjmp` locals included.  It hoists a load out of a loop
+when the address does not change and nothing in the loop may write
+those bytes (`bff0412c`).  Under it, the optimizer's passes answer
+memory questions through one facility (`cce2a178`,
+docs/plans/memory-model.md) instead of one each.  SQLite's `sum()` is
+about 1.5% slower under the x86-64 DBT -- its Kahan-Babuska helpers
+declare volatile doubles on purpose -- and a 200,000-row run is
+otherwise a little faster.
+
 Rebuilt 2026-10-25 (`33874324`).  `cc.s32x` and `libc.s32a`; the
 tools and `include/` rebuild identical.  Undoes half of `7c16eb9f`:
 keeping values stored through a pointer known across stores to other
