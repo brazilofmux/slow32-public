@@ -1,0 +1,16 @@
+isatty(0) = 0, errno ENOTTY
+isatty(1) = 0, errno ENOTTY
+isatty(2) = 0, errno ENOTTY
+isatty(9) = 0, errno EBADF
+isatty(1000) = 0, errno EBADF
+tcgetattr(0) = -1, errno ENOTTY
+tcgetattr(1) = -1, errno ENOTTY
+tcgetattr(9) = -1, errno EBADF
+tcsetattr(0, 0, 0x31) = -1, errno ENOTTY
+tcsetattr(1, 2, 0) = -1, errno ENOTTY
+tcsetattr(9, 1, 0x10) = -1, errno EBADF
+tcsetattr(0, 3, 0x1) = -1, errno EINVAL
+tcsetattr(0, -1, 0x1) = -1, errno EINVAL
+tcsetattr(0, 0, 0x80) = -1, errno EINVAL
+bits 0x1 0x2 0x4 0x8 0x10 0x20 0x40
+

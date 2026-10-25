@@ -2,8 +2,11 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "errno.h"
 #include "mmio_ring.h"
 #include "include/term.h"
+#include "include/termios.h"
+#include "include/unistd.h"
 #include "include/s32dpc.h"
 
 static uint32_t term_base_opcode = 0;
@@ -186,4 +189,40 @@ void term_begin_update(void) {
 void term_end_update(void) {
     if (!term_initialized) return;
     s32_mmio_request(term_base_opcode + 13, 0, 0, 0);
+}
+
+/* <termios.h> and isatty on the term service's GET_LFLAG / SET_LFLAG, which
+ * a host from before version 3 does not have: no descriptor is then a
+ * terminal, as before. */
+static int term_lflag_ready(void) {
+    if (term_init() != 0 || term_opcode_count <= S32_TERM_SET_LFLAG) {
+        errno = ENOTTY;
+        return 0;
+    }
+    return 1;
+}
+
+int tcgetattr(int fd, struct termios *t) {
+    int r;
+    if (!term_lflag_ready()) return -1;
+    r = s32_mmio_request(term_base_opcode + S32_TERM_GET_LFLAG, 0, (unsigned int)fd, 0);
+    if (r == (int)S32_MMIO_STATUS_ERR) return -1;
+    memset(t, 0, sizeof *t);
+    t->c_lflag = (tcflag_t)r;
+    return 0;
+}
+
+int tcsetattr(int fd, int optional_actions, const struct termios *t) {
+    if (optional_actions < TCSANOW || optional_actions > TCSAFLUSH || (t->c_lflag & ~S32_TERM_LF_ALL) != 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (!term_lflag_ready()) return -1;
+    return s32_mmio_request(term_base_opcode + S32_TERM_SET_LFLAG, 0, (unsigned int)fd,
+                            t->c_lflag | ((unsigned int)optional_actions << 16)) == 0 ? 0 : -1;
+}
+
+int isatty(int fd) {
+    struct termios t;
+    return tcgetattr(fd, &t) == 0;
 }

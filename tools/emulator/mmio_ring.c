@@ -473,6 +473,7 @@ void mmio_cleanup_services(mmio_ring_state_t *mmio) {
 #define TERM_MAX_COLS 256
 #define TERM_MAX_SAVE_DEPTH 8
 #define TERM_MAX_PENDING_CLEARS 8
+#define TERM_MAX_LFLAG_FDS 4
 
 // A cell holds a grapheme cluster, not a byte: output is decoded as UTF-8,
 // split into clusters by UAX #29, and each cluster takes its display width
@@ -537,7 +538,19 @@ typedef struct {
     // The cursor's style (SET_CURSOR; docs/SPEC.md 8.14.5): the terminal's,
     // not the shadow's
     int cursor_style;
+    // Each terminal SET_LFLAG has changed, with its termios from before the
+    // first change: cleanup puts them back (docs/SPEC.md 8.14.6)
+    struct { int fd; struct termios before; } lflag_saved[TERM_MAX_LFLAG_FDS];
+    int n_lflag_saved;
 } term_state_t;
+
+// The machine's local-mode bits (S32_TERM_LF_*) and the host's
+static const struct { uint32_t s32; tcflag_t host; } term_lflag_map[] = {
+    { S32_TERM_LF_ECHO, ECHO },     { S32_TERM_LF_ECHOE, ECHOE },
+    { S32_TERM_LF_ECHOK, ECHOK },   { S32_TERM_LF_ECHONL, ECHONL },
+    { S32_TERM_LF_ICANON, ICANON }, { S32_TERM_LF_ISIG, ISIG },
+    { S32_TERM_LF_IEXTEN, IEXTEN },
+};
 
 // A cursor style's bytes: DECTCEM, and DECSCUSR's steady shapes
 static void term_emit_cursor(int style) {
@@ -585,6 +598,9 @@ static void term_cleanup(void *state) {
     if (!ts) return;
     if (ts->raw_mode && ts->termios_saved) {
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &ts->saved_termios);
+    }
+    for (int i = 0; i < ts->n_lflag_saved; i++) {
+        tcsetattr(ts->lflag_saved[i].fd, TCSANOW, &ts->lflag_saved[i].before);
     }
     if (ts->cursor_style != 1) term_emit_cursor(1);    // the terminal gets its cursor back
     for (int i = 0; i < ts->save_depth; i++) {
@@ -1183,6 +1199,58 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
             }
             ts->cursor_style = (int)req->status;
             term_emit_cursor(ts->cursor_style);
+            resp->status = S32_MMIO_STATUS_OK;
+            break;
+        }
+        case S32_TERM_GET_LFLAG:
+        case S32_TERM_SET_LFLAG: {
+            // offset: the guest fd; ENOTTY when it is not a terminal
+            int host_fd = host_fd_for_guest(mmio, offset);
+            struct termios t;
+            if (host_fd < 0) {
+                mmio_fail(resp, EBADF);
+                break;
+            }
+            if (!isatty(host_fd) || tcgetattr(host_fd, &t) != 0) {
+                mmio_fail(resp, ENOTTY);
+                break;
+            }
+            if (sub_opcode == S32_TERM_GET_LFLAG) {
+                uint32_t bits = 0;
+                for (size_t i = 0; i < sizeof term_lflag_map / sizeof term_lflag_map[0]; i++) {
+                    if (t.c_lflag & term_lflag_map[i].host) bits |= term_lflag_map[i].s32;
+                }
+                resp->status = bits;
+                break;
+            }
+            // status: the bits, and in the high half tcsetattr's when
+            uint32_t bits = req->status & 0xFFFFu, when = req->status >> 16;
+            static const int when_host[] = { TCSANOW, TCSADRAIN, TCSAFLUSH };
+            if ((bits & ~S32_TERM_LF_ALL) != 0 || when > S32_TERM_WHEN_FLUSH) {
+                mmio_fail(resp, EINVAL);
+                break;
+            }
+            int known = 0;
+            for (int i = 0; i < ts->n_lflag_saved; i++) {
+                if (ts->lflag_saved[i].fd == host_fd) known = 1;
+            }
+            if (!known) {
+                if (ts->n_lflag_saved == TERM_MAX_LFLAG_FDS) {
+                    mmio_fail(resp, ENOMEM);
+                    break;
+                }
+                ts->lflag_saved[ts->n_lflag_saved].fd = host_fd;
+                ts->lflag_saved[ts->n_lflag_saved].before = t;
+                ts->n_lflag_saved++;
+            }
+            for (size_t i = 0; i < sizeof term_lflag_map / sizeof term_lflag_map[0]; i++) {
+                if (bits & term_lflag_map[i].s32) t.c_lflag |= term_lflag_map[i].host;
+                else t.c_lflag &= ~term_lflag_map[i].host;
+            }
+            if (tcsetattr(host_fd, when_host[when], &t) != 0) {
+                mmio_fail(resp, errno);
+                break;
+            }
             resp->status = S32_MMIO_STATUS_OK;
             break;
         }
@@ -2288,7 +2356,7 @@ static const builtin_service_t builtin_services[] = {
     {
         .name = "term",
         .opcode_count = S32_TERM_OPCODE_COUNT,
-        .version = 2,
+        .version = 3,
         .create = term_create,
         .cleanup = term_cleanup,
         .handle = term_handle,

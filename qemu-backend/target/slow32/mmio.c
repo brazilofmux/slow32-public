@@ -235,7 +235,20 @@ static inline int s32_mmio_sockaddr_in_fits(uint32_t offset)
 #define S32_TERM_END_UPDATE   13
 #define S32_TERM_READ_CHAR    14
 #define S32_TERM_SET_CURSOR   15
-#define S32_TERM_OPCODE_COUNT 16
+#define S32_TERM_GET_LFLAG    16
+#define S32_TERM_SET_LFLAG    17
+#define S32_TERM_OPCODE_COUNT 18
+
+/* the machine's local-mode bits (slow-32 common/mmio_ring_layout.h) */
+#define S32_TERM_LF_ECHO      0x01u
+#define S32_TERM_LF_ECHOE     0x02u
+#define S32_TERM_LF_ECHOK     0x04u
+#define S32_TERM_LF_ECHONL    0x08u
+#define S32_TERM_LF_ICANON    0x10u
+#define S32_TERM_LF_ISIG      0x20u
+#define S32_TERM_LF_IEXTEN    0x40u
+#define S32_TERM_LF_ALL       0x7Fu
+#define S32_TERM_WHEN_FLUSH   2u
 
 typedef struct Slow32MMIODesc {
     uint32_t opcode;
@@ -611,6 +624,7 @@ static void slow32_mmio_cleanup_services(Slow32MMIOContext *ctx)
 #define TERM_MAX_COLS 256
 #define TERM_MAX_SAVE_DEPTH 8
 #define TERM_MAX_PENDING_CLEARS 8
+#define TERM_MAX_LFLAG_FDS 4
 
 /* A cell holds a grapheme cluster: output is decoded as UTF-8, split into
  * clusters by UAX #29, and each cluster takes its display width in cells
@@ -672,7 +686,19 @@ typedef struct {
     int key_pushback;
     /* the cursor's style (SET_CURSOR; docs/SPEC.md 8.14.5) */
     int cursor_style;
+    /* each terminal SET_LFLAG has changed, with its termios from before the
+     * first change: cleanup puts them back (docs/SPEC.md 8.14.6) */
+    struct { int fd; struct termios before; } lflag_saved[TERM_MAX_LFLAG_FDS];
+    int n_lflag_saved;
 } Slow32TermState;
+
+/* the machine's local-mode bits (S32_TERM_LF_*) and the host's */
+static const struct { uint32_t s32; tcflag_t host; } slow32_term_lflag_map[] = {
+    { S32_TERM_LF_ECHO, ECHO },     { S32_TERM_LF_ECHOE, ECHOE },
+    { S32_TERM_LF_ECHOK, ECHOK },   { S32_TERM_LF_ECHONL, ECHONL },
+    { S32_TERM_LF_ICANON, ICANON }, { S32_TERM_LF_ISIG, ISIG },
+    { S32_TERM_LF_IEXTEN, IEXTEN },
+};
 
 static void *slow32_term_create(void)
 {
@@ -728,6 +754,9 @@ static void slow32_term_cleanup(void *state)
     }
     if (ts->raw_mode && ts->termios_saved) {
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &ts->saved_termios);
+    }
+    for (int i = 0; i < ts->n_lflag_saved; i++) {
+        tcsetattr(ts->lflag_saved[i].fd, TCSANOW, &ts->lflag_saved[i].before);
     }
     if (ts->cursor_style != 1) {
         slow32_term_emit_cursor(1);     /* the terminal gets its cursor back */
@@ -1456,6 +1485,68 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
         resp->status = S32_MMIO_STATUS_OK;
         break;
 
+    case S32_TERM_GET_LFLAG:
+    case S32_TERM_SET_LFLAG: {
+        /* offset: the guest fd; ENOTTY when it is not a terminal */
+        int host_fd = slow32_mmio_host_fd_for_guest(ctx, req->offset);
+        struct termios t;
+        uint32_t bits = 0, when;
+        static const int when_host[] = { TCSANOW, TCSADRAIN, TCSAFLUSH };
+        bool known = false;
+
+        if (host_fd < 0) {
+            slow32_mmio_fail(resp, EBADF);
+            break;
+        }
+        if (!isatty(host_fd) || tcgetattr(host_fd, &t) != 0) {
+            slow32_mmio_fail(resp, ENOTTY);
+            break;
+        }
+        if (sub_opcode == S32_TERM_GET_LFLAG) {
+            for (size_t i = 0; i < ARRAY_SIZE(slow32_term_lflag_map); i++) {
+                if (t.c_lflag & slow32_term_lflag_map[i].host) {
+                    bits |= slow32_term_lflag_map[i].s32;
+                }
+            }
+            resp->status = bits;
+            break;
+        }
+        /* status: the bits, and in the high half tcsetattr's when */
+        bits = req->status & 0xFFFFu;
+        when = req->status >> 16;
+        if ((bits & ~S32_TERM_LF_ALL) != 0 || when > S32_TERM_WHEN_FLUSH) {
+            slow32_mmio_fail(resp, EINVAL);
+            break;
+        }
+        for (int i = 0; i < ts->n_lflag_saved; i++) {
+            if (ts->lflag_saved[i].fd == host_fd) {
+                known = true;
+            }
+        }
+        if (!known) {
+            if (ts->n_lflag_saved == TERM_MAX_LFLAG_FDS) {
+                slow32_mmio_fail(resp, ENOMEM);
+                break;
+            }
+            ts->lflag_saved[ts->n_lflag_saved].fd = host_fd;
+            ts->lflag_saved[ts->n_lflag_saved].before = t;
+            ts->n_lflag_saved++;
+        }
+        for (size_t i = 0; i < ARRAY_SIZE(slow32_term_lflag_map); i++) {
+            if (bits & slow32_term_lflag_map[i].s32) {
+                t.c_lflag |= slow32_term_lflag_map[i].host;
+            } else {
+                t.c_lflag &= ~slow32_term_lflag_map[i].host;
+            }
+        }
+        if (tcsetattr(host_fd, when_host[when], &t) != 0) {
+            slow32_mmio_fail(resp, errno);
+            break;
+        }
+        resp->status = S32_MMIO_STATUS_OK;
+        break;
+    }
+
     default:
         slow32_mmio_fail(resp, EINVAL);
         break;
@@ -1617,7 +1708,7 @@ static const Slow32BuiltinService builtin_services[] = {
     {
         .name = "term",
         .opcode_count = S32_TERM_OPCODE_COUNT,
-        .version = 2,
+        .version = 3,
         .create = slow32_term_create,
         .cleanup = slow32_term_cleanup,
         .handle = slow32_term_handle,
@@ -1736,6 +1827,16 @@ void slow32_mmio_context_init(Slow32CPU *cpu)
     cpu->mmio->policy.default_allow = true;
     cpu->mmio->policy.allow_count = 0;
     cpu->mmio->policy.deny_count = 0;
+}
+
+/* The services' sessions end with the guest, as in the other engines: term
+ * puts back the terminal modes it changed.  QEMU exits without destroying
+ * the CPU, so the halt does this itself. */
+void slow32_mmio_end_sessions(Slow32CPU *cpu)
+{
+    if (cpu->mmio) {
+        slow32_mmio_cleanup_services(cpu->mmio);
+    }
 }
 
 void slow32_mmio_context_destroy(Slow32CPU *cpu)

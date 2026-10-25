@@ -96,8 +96,9 @@ int execvp(const char *file, char *const argv[]);
 long sysconf(int name);
 int getdtablesize(void);
 
-/* The machine has no way to ask whether a descriptor is a terminal, so
- * isatty() says it is not: 0, with errno ENOTTY. */
+/* 1 when fd is a terminal, else 0 with errno ENOTTY: the term service's
+ * GET_LFLAG says (<termios.h>).  0 in the DEBUG library, and on a host
+ * whose term service predates the request. */
 int isatty(int fd);
 
 /* Command-line options (runtime/getopt.c); <getopt.h> has the long ones */

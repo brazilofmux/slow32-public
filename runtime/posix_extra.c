@@ -1,6 +1,7 @@
-/* Small POSIX and C99 pieces common to both C libraries: isatty, the
- * <fenv.h> functions, and the calls the machine has no service for
- * (utimes, statvfs), which say so with ENOSYS. */
+/* Small POSIX and C99 pieces common to both C libraries: the <fenv.h>
+ * functions, and the calls the machine has no service for (utimes,
+ * statvfs), which say so with ENOSYS.  isatty is the term service's
+ * (term_mmio.c; term_stub.c in the DEBUG library). */
 #include <errno.h>
 #include <fcntl.h>
 #include <fenv.h>
@@ -11,13 +12,6 @@
 #include <sys/statvfs.h>
 #include <sys/time.h>
 #include <unistd.h>
-
-/* The machine has no terminal query: no descriptor is a terminal. */
-int isatty(int fd) {
-    (void)fd;
-    errno = ENOTTY;
-    return 0;
-}
 
 /* One rounding mode, no exception flags: the floating-point environment
  * holds nothing, so these succeed when asked for what there is and fail

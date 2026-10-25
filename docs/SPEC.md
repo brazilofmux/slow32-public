@@ -1314,7 +1314,7 @@ entry; the post completion is the wake-up.
 ### 8.13 Service negotiation (0xF0–0xF4)
 
 Negotiated services are reached through opcodes 0x80–0xEF that the host
-allocates. Two services exist: `"term"` (16 opcodes, version 2) and `"tube"`
+allocates. Two services exist: `"term"` (18 opcodes, version 3) and `"tube"`
 (16 opcodes, version 1).
 
 A service grows by adding sub-opcodes at the end of its range and raising
@@ -1323,7 +1323,8 @@ sub-opcode n added later shall check that the granted `opcode_count` is
 greater than n before using it, and do without it otherwise: a host
 built before the addition grants the shorter range, and an opcode past
 the range belongs to nobody (or to another session).  `"term"` version 1
-(before 2026-10-04) was sub-opcodes 0–14.
+(before 2026-10-04) was sub-opcodes 0–14, version 2 (before 2026-10-25)
+0–15.
 
 #### 8.13.1 Wire format (as implemented)
 
@@ -1393,7 +1394,7 @@ denying `fs` or `env` leaves `printf` and `argv` working. A non-empty allow
 list denies every name not on it, including the fixed ones.
 
 
-### 8.14 Term service (`"term"`, 16 opcodes)
+### 8.14 Term service (`"term"`, 18 opcodes)
 
 Sub-opcodes (opcode = base + n). Requests carry arguments in `status`
 unless noted; responses are `status` 0, `length` 0 unless noted. For the
@@ -1418,12 +1419,15 @@ sub-opcodes that use the data buffer (GET_SIZE, READ_KEY, PUTS) an
 | 13 | END_UPDATE | | Ends the update and paints the difference (§8.14.3). `EINVAL` if not in one. |
 | 14 | READ_CHAR | | Blocks for one UTF-8 character (§8.14.4). `status` = code point, `length` 0. End of input: `status` `0xFFFFFFFD`. |
 | 15 | SET_CURSOR | `status` = style: 0 hidden, 1 the terminal's own, 2 block, 3 underline, 4 bar | Version 2. Emits the style's bytes (§8.14.5) at once, inside an update as well as outside. Cursor style := status. `EINVAL`, and nothing emitted or changed, for any other value of the whole 32-bit `status`. |
+| 16 | GET_LFLAG | `off` = a guest fd | Version 3. `status` = that terminal's local modes now, in the machine's bits (§8.14.6). `EBADF` if the fd is not open, `ENOTTY` if it is not a terminal. Nothing changes. |
+| 17 | SET_LFLAG | `off` = a guest fd; `status` = bits \| when<<16 | Version 3. Sets the terminal's local modes the bits name (§8.14.6) and clears the others the machine has, leaving the host's remaining modes as they are; when 0, 1, 2 is `TCSANOW`, `TCSADRAIN`, `TCSAFLUSH`. Errors as GET_LFLAG; `EINVAL` for a bit above 0x40 or a when above 2; `ENOMEM` once four terminals have been changed and this is a fifth. |
 
-Unused sub-opcodes cannot occur (the range is exactly 16). All term output
+Unused sub-opcodes cannot occur (the range is exactly 18). All term output
 goes to host standard output and is flushed after every request; `ESC` is
 byte 0x1B. Session cleanup (release or exit) restores the saved termios if
-raw mode is on; it emits nothing, unless the cursor style is not 1, in
-which case it then emits style 1's bytes (§8.14.5) and flushes. (A guest
+raw mode is on, then each terminal SET_LFLAG changed as it was before the
+first change (`TCSANOW`); it emits nothing, unless the cursor style is not
+1, in which case it then emits style 1's bytes (§8.14.5) and flushes. (A guest
 that set style 1 itself has already emitted them.) An update still open
 at cleanup is dropped: nothing of it is painted.
 
@@ -1626,6 +1630,30 @@ SET_CURSOR emits, whether or not the style changes (`SP` is byte 0x20):
 (DECTCEM and DECSCUSR; the shapes are the steady ones. What a terminal
 that knows neither does with them is presentation.)
 
+#### 8.14.6 Local modes
+
+GET_LFLAG and SET_LFLAG carry a terminal's local modes (`c_lflag`) in the
+machine's own bits, which `<termios.h>` gives the POSIX names; the host maps
+each to its own:
+
+| Bit | Mode |
+|---|---|
+| 0x01 | ECHO |
+| 0x02 | ECHOE |
+| 0x04 | ECHOK |
+| 0x08 | ECHONL |
+| 0x10 | ICANON |
+| 0x20 | ISIG |
+| 0x40 | IEXTEN |
+
+The fd is mapped as for READ (8.2), so fd 0 is host standard input unless the
+guest has reopened it; the stdin prefix (§8.16) does not make fd 0 a
+terminal or stop it being one. The input, output and control modes are not
+carried: a guest reads them as 0 and cannot change them (SET_MODE's raw mode
+is the way to those). Cleanup's restore (above) happens only where the
+session ends: an engine that a signal kills before it can end the session
+leaves the modes as the guest set them.
+
 ### 8.15 Tube service (`"tube"`, 16 opcodes)
 
 `docs/TUBE.md` (v0.2) is accurate for the guest-visible surface except for
@@ -1825,7 +1853,7 @@ writing).
   version, word3 = SVC status`); it is a blob in the data buffer
   `[result, base, count, version]` (16 bytes on grant, 4 bytes otherwise) with
   descriptor `status` 0.
-- "opcode_count (e.g. 8 — so term is 0x80-0x87)": term has 16 opcodes (15 before 2026-10-04), tube 16.
+- "opcode_count (e.g. 8 — so term is 0x80-0x87)": term has 18 opcodes (15 before 2026-10-04, 16 before 2026-10-25), tube 16.
 - Response codes: SVC_OK is not "at requested opcode base"; SVC_VERSION_ERR
   is never returned.
 - "Versioning (Resolved)": the guest cannot request a minimum version.
@@ -1833,7 +1861,8 @@ writing).
   exist; options must precede the program path; there is no default-deny
   mode.
 - "Session Lifecycle": cleanup does not flush output buffers; term cleanup
-  only restores termios.
+  restores termios (raw mode's, and the local modes SET_LFLAG changed) and
+  the cursor style.
 - Term opcode table: MOVE_CURSOR packs `row<<16 | col`, 1-based;
   SET_COLOR packs `fg<<8 | bg`; SET_ATTR is a raw SGR number; READ_KEY/
   READ_CHAR return `0xFFFFFFFD` at end of input. The "Guest Library" listing

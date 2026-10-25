@@ -872,6 +872,11 @@ void dbt_cpu_destroy(dbt_cpu_state_t *cpu) {
     if (cpu->mem_base && cpu->mem_base != MAP_FAILED) {
         munmap(cpu->mem_base, cpu->mem_size);
     }
+    // The services' sessions end with the guest, as in the interpreters:
+    // term puts back the terminal modes it changed
+    if (mmio_initialized) {
+        mmio_cleanup_services(&mmio_state);
+    }
     // Reset MMIO state so it gets re-initialized with new memory addresses
     mmio_initialized = false;
 }

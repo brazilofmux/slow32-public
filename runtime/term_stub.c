@@ -1,5 +1,30 @@
 #include <stdio.h>
+#include "errno.h"
 #include "include/term.h"
+#include "include/termios.h"
+#include "include/unistd.h"
+
+/* No term service: no descriptor is a terminal. */
+int tcgetattr(int fd, struct termios *t) {
+    (void)fd;
+    (void)t;
+    errno = ENOTTY;
+    return -1;
+}
+
+int tcsetattr(int fd, int optional_actions, const struct termios *t) {
+    (void)fd;
+    (void)optional_actions;
+    (void)t;
+    errno = ENOTTY;
+    return -1;
+}
+
+int isatty(int fd) {
+    (void)fd;
+    errno = ENOTTY;
+    return 0;
+}
 
 int term_init(void) {
     return -1;

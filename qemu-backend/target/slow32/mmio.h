@@ -7,6 +7,7 @@ typedef struct Slow32MMIOContext Slow32MMIOContext;
 
 void slow32_mmio_context_init(Slow32CPU *cpu);
 void slow32_mmio_context_destroy(Slow32CPU *cpu);
+void slow32_mmio_end_sessions(Slow32CPU *cpu);
 void slow32_mmio_reset(Slow32CPU *cpu);
 void slow32_mmio_reconfigure(Slow32CPU *cpu);
 void slow32_mmio_process(Slow32CPU *cpu);

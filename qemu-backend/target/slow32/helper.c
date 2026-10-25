@@ -3,6 +3,7 @@
 #include <inttypes.h>
 
 #include "cpu.h"
+#include "mmio.h"
 #include "exec/helper-proto.h"
 #include "exec/target_page.h"
 #include "accel/tcg/cpu-ldst.h"
@@ -31,6 +32,7 @@ void slow32_cpu_complete_halt(Slow32CPU *cpu)
                                           : (int)cpu->env.regs[1];
 
     slow32_console_flush();
+    slow32_mmio_end_sessions(cpu);
     cs->halted = 1;
     qemu_system_shutdown_request_with_code(SHUTDOWN_CAUSE_GUEST_SHUTDOWN,
                                            exit_code);
