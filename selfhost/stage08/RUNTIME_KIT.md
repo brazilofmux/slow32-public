@@ -103,6 +103,15 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-25 (`4ce16c36`).  `cc.s32x` and `libc.s32a`; the
+tools and `include/` rebuild identical.  When colouring fails, the
+register allocator now spills a long-lived value that clears several
+failures, not the failed short temporary (whose spill is a store and an
+immediate reload that free nothing).  An RFC 7693 BLAKE2b: 1.9x clang's
+executed instructions down to 1.1x; Argon2's BlaMka fill loop, 2.5x to
+2.0x; SQLite under stage08, 3.9% smaller and 0.9% fewer instructions
+executed.
+
 Rebuilt 2026-10-25 (`2298875d`).  `cc.s32x` and `libc.s32a`; the
 tools and `include/` rebuild identical.  The compiler keeps a small
 local array (up to 128 bytes) in registers once its indexes are
