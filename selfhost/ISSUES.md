@@ -3474,3 +3474,28 @@ The 200,000-row SQLite run: 3.91 G -> 3.71 G instructions executed,
 `tests/test_jt_block_case.c` has the SQLite shape (fall-through into a
 block-nested label, a label under an if that must still decline) and
 the harness requires exactly one table in its assembly.
+
+### 97. [RESOLVED 2026-10-25] Constant-size memcpy through pointers, and struct copies over 32 bytes, went out of line
+
+`hl_small_memcpy` copied a constant-size `memcpy` inline only when one
+argument was a local array (the AES state's bytes), and `hl_copy_block`
+called `memcpy` for any struct over 32 bytes.  In the 200,000-row
+SQLite run that was 5.04 M calls against clang's 4.29 M:
+`sqlite3VdbeMemShallowCopy`'s `memcpy(pTo, pFrom, MEMCELLSIZE)` a
+million times, `sqlite3IsNaN`'s eight bytes into a `u64`,
+`sqlite3VdbeSerialGet`'s eight into a double -- each a call, a
+sixteen-byte-at-a-time loop and a byte tail for twenty bytes.
+
+A constant size up to `HL_COPY_INLINE` through any addresses now
+copies as `hl_copy_block` copies a struct, words and a byte tail
+(unaligned words are permitted by ruling), and `HL_COPY_INLINE` is 64:
+sixteen word pairs at most, far from the 16 KB return-by-value that
+set the old limit (regal's ReconcileResult).  The local-array path
+keeps its element-typed copies so the late scalar replacement still
+sees the AES state as bytes.  Call sites in `sqlite3.s` 217 -> 139;
+the heavy run 3.71 G -> 3.65 G instructions executed, static 280,587
+-> 280,911; arm64 DBT time within the layout sweep's spread (0.91-0.96
+s both builds, measured under load).  `tests/test_memcpy_inline.c`
+copies through pointers, into a double's bytes, at unaligned ends and
+a 63-byte struct, and the harness requires exactly one `memcpy` call
+left in it (a 100-byte struct).

@@ -227,3 +227,8 @@ crypto benchmarks must assemble to the same bytes before and after.
   no longer refuses the jump table (selfhost ISSUES-96); sqlite3VdbeExec
   dispatches through a table.  Heavy run 3.91 G -> 3.71 G, static
   281,124 -> 280,587, arm64 DBT 0.95 -> 0.87 s, output unchanged.
+- 2026-10-25, later: follow-up (b).  Constant-size memcpy through
+  pointers and struct copies to 64 bytes inline (selfhost ISSUES-97).
+  Heavy run 3.71 G -> 3.65 G, static 280,587 -> 280,911; the arm64 DBT
+  sweep over DBT_LAYOUT_PAD put both builds at 0.91-0.96 s with the
+  gate running alongside -- re-time quiet, and on kagura.

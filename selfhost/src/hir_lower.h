@@ -988,7 +988,7 @@ static int hl_addr(Node *n) {
  * 16KB ReconcileResult returned by value became 4,100 word copies,
  * each lui+addi+add+ldw / lui+addi+add+stw on a far frame slot --
  * reconcile() alone was 178,000 instructions, 100x clang's file. */
-#define HL_COPY_INLINE 32
+#define HL_COPY_INLINE 64
 static void hl_copy_block(int dst_addr, int src_addr, int sz) {
     int off;
     int sp;
@@ -1903,7 +1903,14 @@ static int hl_small_memcpy_ok(Node *n) {
     if (!z || z->next || z->kind != ND_NUM) return 0;
     v = hl_mc_local(d);
     if (!v) v = hl_mc_local(s);
-    if (!v) return 0;
+    if (!v) {
+        /* Through pointers: words and a byte tail, as hl_copy_block
+         * copies a struct (unaligned words are permitted).  SQLite's
+         * sqlite3VdbeMemShallowCopy copies MEMCELLSIZE bytes a million
+         * times in the 200,000-row run, sqlite3IsNaN eight bytes into a
+         * double; each was a call. */
+        return (z->val > 0 && z->val <= HL_COPY_INLINE) ? 2 : 0;
+    }
     ty = hl_mc_elem(v);
     if (ty < 0) return 0;
     if (z->val <= 0 || z->val > 64 || z->val % ty_size(ty) != 0 ||
@@ -1922,10 +1929,14 @@ static int hl_small_memcpy(Node *n) {
     int t;
     v = hl_mc_local(n->args);
     if (!v) v = hl_mc_local(n->args->next);
-    ty = hl_mc_elem(v);
-    sz = ty_size(ty);
     dv = hl_expr(n->args);
     sv = hl_expr(n->args->next);
+    if (!v) {
+        hl_copy_block(dv, sv, (int)n->args->next->next->val);
+        return dv;
+    }
+    ty = hl_mc_elem(v);
+    sz = ty_size(ty);
     off = 0;
     while (off < n->args->next->next->val) {
         t = hi_emit(HI_LOAD, ty, off ? hi_emit(HI_ADDI, HL_ADDR_TY, sv, -1, off, NULL) : sv,
