@@ -3293,3 +3293,36 @@ compiler, 15 with only the first fix), and
 cc-x64 (kagura) and cc-a64 (arm64 container).  SQLite stays
 byte-identical to clang; the stage08 DOOM build still matches clang's
 demo3 frame hashes.
+
+### 91. [RESOLVED 2026-10-25] The kit linker gave every local symbol a gsym slot; 4,000 string literals filled the table (GitHub issue 125)
+
+`merge_symbols` in `src/tools/s32-ld.c` added an object's `LOCAL`
+symbols to the global table through `gsym_add_new`, which holds
+`MAX_GSYM` = 4096, and the stage08 compiler labels every string literal
+(the kit's s32-as keeps those labels in the object's symbol table as
+`NOTYPE LOCAL`).  A unit with 5,000 literals -- 5,003 symbols, 5,001 of
+them local -- linked on the LLVM route and failed on the kit with
+`error: gsym table full` 912 times.  Found porting recycledreply's
+diceware (7,776 words as an array of literals).
+
+Locals now stay with their object: `lsym_sec`/`lsym_val` hold a defined
+local's section and value while the object is merged, `sym_map` carries
+`-2 - i` for local `i`, and `merge_relocs` copies the place onto each
+relocation that names one (`grel_lsec`, `grel_lval`, with `grel_sym` =
+`SYM_LOCAL_REL`).  `rel_va()` resolves a relocation's symbol either way
+and replaces the two `gsym_va_rel(grel_sym[...])` calls; the
+PCREL_HI20/LO12 pairing compares the local's place as well as the
+sentinel, so two locals are never taken for one.  Nothing else read a
+local's gsym entry: the output symbol table lists globals only, and the
+veneer and island shifts touch linker-defined symbols only.  The gsym
+table is for globals and undefineds now; a large unit's literals cost it
+nothing.
+
+Checked: the 5,000-literal unit links and runs; every program of the
+kit differential corpus relinked with the old linker is byte-identical
+to the new linker's output; run-kit-differential and
+run-kit-tools-differential agree; stage08 run-tests with the fixed
+point.  `tests/test_many_literals.c` (4,500 literals) is the guard: the
+old linker refuses it.  stage07's frozen copy (`stage07/tools/s32-ld.c`)
+keeps the old table; it links only stage08's tools.
+

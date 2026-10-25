@@ -183,6 +183,8 @@ int grel_typ[MAX_GREL];
 int grel_add[MAX_GREL];
 int grel_sym[MAX_GREL];
 int grel_file[MAX_GREL];
+int grel_lsec[MAX_GREL];   /* the local symbol's section and value, when grel_sym is SYM_LOCAL_REL */
+int grel_lval[MAX_GREL];
 int grel_cnt;
 
 /* === Layout variables === */
@@ -203,6 +205,15 @@ char file_buf[FILE_BUFSZ];
 #define MAX_OBJ_SEC 32
 int sec_base_by_idx[MAX_OBJ_SEC];
 int sym_map[MAX_FILE_SYM];
+/* An object's local symbols stay its own: their section and value are
+ * kept here while the object is merged and copied onto each relocation
+ * that names one (grel_lsec, grel_lval), and sym_map holds -2 - i for
+ * local i.  They used to take gsym slots, and a unit with 4,000 string
+ * literals -- stage08 cc labels every one -- filled the 4096-entry table
+ * (GitHub issue 125). */
+int lsym_sec[MAX_FILE_SYM];
+int lsym_val[MAX_FILE_SYM];
+#define SYM_LOCAL_REL (-2)
 
 /* Object header parse state */
 int obj_nsec;
@@ -711,8 +722,10 @@ void merge_symbols() {
             sy_val = sec_base_by_idx[sy_sec - 1] + sy_val;
 
             if (sy_bind == BIND_LOCAL) {
-                /* Locals are file-scoped */
-                gidx = gsym_add_new(name, sy_sectype, sy_val, sy_bind, 1);
+                /* Locals are file-scoped: kept here, not in gsym */
+                lsym_sec[i] = sy_sectype;
+                lsym_val[i] = sy_val;
+                gidx = -2 - i;
             } else {
                 gidx = gsym_upsert(name, sy_sectype, sy_val, sy_bind);
             }
@@ -727,6 +740,7 @@ void merge_symbols() {
 
 void merge_relocs() {
     int i;
+    int li;
     int sec_off;
     int stype;
     int merge_type;
@@ -764,11 +778,19 @@ void merge_relocs() {
                 grel_add[grel_cnt] = rl_add;
                 grel_typ[grel_cnt] = rl_typ;
 
-                /* Map file-local symbol to gsym */
+                /* Map file-local symbol to gsym, or carry a local's place */
                 if (rl_sym < MAX_FILE_SYM) {
                     mapped_sym = sym_map[rl_sym];
                 } else {
                     mapped_sym = -1;
+                }
+                grel_lsec[grel_cnt] = 0;
+                grel_lval[grel_cnt] = 0;
+                if (mapped_sym <= -2) {
+                    li = -2 - mapped_sym;
+                    grel_lsec[grel_cnt] = lsym_sec[li];
+                    grel_lval[grel_cnt] = lsym_val[li];
+                    mapped_sym = SYM_LOCAL_REL;
                 }
                 grel_sym[grel_cnt] = mapped_sym;
 
@@ -1202,6 +1224,21 @@ int gsym_va_rel(int idx, int *out_va) {
     return 1;
 }
 
+/* The VA a relocation's symbol resolves to: a local's from its own
+ * section and value, anything else through gsym. */
+int rel_va(int ridx, int *out_va) {
+    int off;
+    if (grel_sym[ridx] == SYM_LOCAL_REL) {
+        off = grel_lval[ridx];
+        if (grel_lsec[ridx] == SEC_CODE) {
+            off = map_code_off(off);
+        }
+        *out_va = sec_va_get(grel_lsec[ridx]) + off;
+        return 1;
+    }
+    return gsym_va_rel(grel_sym[ridx], out_va);
+}
+
 /* === Inject linker-defined symbols === */
 
 void inject_sym(char *name, int value) {
@@ -1477,7 +1514,7 @@ int jal_needs_islands() {
         r_typ = grel_typ[i];
         if (r_typ == REL_JAL || r_typ == REL_CALL) {
             if (grel_sec[i] == SEC_CODE) {
-                ok = gsym_va_rel(grel_sym[i], &val);
+                ok = rel_va(i, &val);
                 if (ok) {
                     val = val + grel_add[i];
                     pc = text_va + grel_off[i];
@@ -1681,7 +1718,7 @@ void apply_rel(int idx) {
     r_gsym = grel_sym[idx];
 
     /* Compute value = sym_va + addend */
-    ok = gsym_va_rel(r_gsym, &val);
+    ok = rel_va(idx, &val);
     if (ok) {
         val = val + r_add;
     } else {
@@ -1782,6 +1819,8 @@ void apply_rel(int idx) {
         while (j < grel_cnt) {
             if (grel_typ[j] == REL_PCREL_HI20) {
                 if (grel_sym[j] == r_gsym &&
+                    (r_gsym != SYM_LOCAL_REL ||
+                     (grel_lsec[j] == grel_lsec[idx] && grel_lval[j] == grel_lval[idx])) &&
                     grel_sec[j] == r_sec &&
                     grel_add[j] == r_add &&
                     grel_file[j] == grel_file[idx]) {
