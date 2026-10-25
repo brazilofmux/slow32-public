@@ -912,6 +912,17 @@ static int hcg_rp_block_clobbers(int b) {
         }
         i = i + 1;
     }
+    /* The block's phis too: a phi pinned to r1 for ANOTHER return is
+     * written at this block's entry and is live beside our web.  The
+     * scan above walks bb_start..bb_end, which holds no phis, so two
+     * returns whose values merged in one block (a rotated loop's exit:
+     * strrchr's `s` and `last`) both got r1. */
+    i = ssa_phi_head[b];
+    while (i >= 0) {
+        if (h_kind[i] == HI_PHI && hcg_rp_stamp[i] != hcg_rp_tick &&
+            i < HIR_MAX_INST && hcg_ret_direct[i]) return 1;
+        i = ssa_phi_next[i];
+    }
     i = licm_head[b];
     while (i >= 0) {
         if (hcg_rp_stamp[i] != hcg_rp_tick && hcg_retpin_clobbers_r1(i)) return 1;
