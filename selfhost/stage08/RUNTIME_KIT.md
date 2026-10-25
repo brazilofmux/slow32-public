@@ -103,6 +103,14 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-25 (`bca7cde7`).  `cc.s32x` only; `libc.s32a` and the
+tools rebuild identical.  A case label inside a plain block no longer
+costs the switch its jump table (selfhost ISSUES-96): sqlite3VdbeExec's
+184-case opcode switch was a compare tree because `case OP_OpenRead:`
+sits inside `OP_ReopenIdx`'s braces.  Labels under a loop or an if
+still decline.  Gated: kit differential 119/0, kit tools 21/0, islisp,
+libcob 490/0, dfsort, mdfix 95 runs, tz.
+
 Rebuilt 2026-10-25 (`11c93b47`).  `cc.s32x` and `libc.s32a`; the tools
 rebuild identical.  A wrong-code fix: an `unsigned int` operand beside a
 `long long` made the whole expression unsigned (C99 says `long long`),
