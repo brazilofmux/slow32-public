@@ -346,12 +346,94 @@ static void licm_prune(int body_count) {
     }
 }
 
+/* Loads out of loops (docs/plans/memory-model.md, step 3).  A LOAD in
+ * the body is invariant when its address is, no call in the body can
+ * write anything, and no store in the body may touch its bytes
+ * (al_may_alias, words off one pointer apart).  Hoisting it is also
+ * speculation: a load the body might not have made must not fault at
+ * the preheader, so a load through a pointer moves only when the body
+ * makes it on every trip -- its block is the header, or dominates the
+ * latch in a loop that exits only at the latch -- while a frame slot or
+ * a global cannot fault and moves regardless.  A volatile load never
+ * moves (h_vol).  The front end's read-only promise (h_ld_ro) remains
+ * the other way to say so. */
+#define LICM_MAX_ST 512
+static int licm_st[LICM_MAX_ST];
+static int licm_nst;
+static int licm_body_calls;       /* a call, asm or trampoline in the body */
+static int licm_body_exits_latch; /* every exit edge leaves from the latch */
+
+static void licm_scan_body(int body_count) {
+    int bi;
+    int b;
+    int i;
+    int k;
+    int si;
+    int t;
+    licm_nst = 0;
+    licm_body_calls = 0;
+    licm_body_exits_latch = 1;
+    bi = 0;
+    while (bi < body_count) {
+        b = licm_body[bi];
+        i = bb_start[b];
+        while (i < bb_end[b]) {
+            k = h_kind[i];
+            if (k == HI_STORE) {
+                if (licm_nst < LICM_MAX_ST) licm_st[licm_nst] = i;
+                licm_nst = licm_nst + 1;
+            } else if (k == HI_CALL || k == HI_CALLP || k == HI_A64_DBT_TRAMPOLINE ||
+                       k == HI_X64_DBT_TRAMPOLINE || k == HI_X64_RDTSC ||
+                       hi_is_a64_cache_asm(k)) {
+                licm_body_calls = 1;
+            }
+            i = i + 1;
+        }
+        if (b != licm_cur_latch) {
+            si = 0;
+            while (si < ssa_nsucc[b]) {
+                t = ssa_succ[ssa_soff[b] + si];
+                if (t < 0 || t >= bb_nblk || !ssa_vis[t]) licm_body_exits_latch = 0;
+                si = si + 1;
+            }
+        }
+        bi = bi + 1;
+    }
+}
+
+static int licm_load_invariant(int i) {
+    int kind;
+    int base;
+    int off;
+    int q;
+    int st;
+    if (h_vol[i] || licm_body_calls || licm_nst > LICM_MAX_ST) return 0;
+    kind = al_resolve(h_src1[i], &base, &off);
+    if (kind == AL_UNKNOWN) return 0;
+    if (kind == AL_PTR) {
+        if (h_blk[i] != licm_cur_header &&
+            !(licm_body_exits_latch && licm_cur_latch >= 0 &&
+              licm_dominates(h_blk[i], licm_cur_latch)))
+            return 0;
+    }
+    q = 0;
+    while (q < licm_nst) {
+        st = licm_st[q];
+        if (al_may_alias(h_src1[st], al_acc_size(h_ty[st]), h_src1[i], al_acc_size(h_ty[i]), 1))
+            return 0;
+        q = q + 1;
+    }
+    return 1;
+}
+
 static void licm_mark(int body_count) {
     int changed;
     int bi;
     int b;
     int i;
     int k;
+
+    licm_scan_body(body_count);
 
     /* Clear marking for all instructions in loop body */
     bi = 0;
@@ -382,7 +464,8 @@ static void licm_mark(int body_count) {
                  * speculation is safe: the address is a dummy
                  * argument the caller already dereferenced. */
                 if (!ho_use[i] &&
-                    (hi_is_pure(k) || (k == HI_LOAD && h_ld_ro[i] && !h_vol[i]))) {
+                    (hi_is_pure(k) ||
+                     (k == HI_LOAD && !h_vol[i] && (h_ld_ro[i] || licm_load_invariant(i))))) {
                     /* Check all operands */
                     if (licm_operand_ok(h_src1[i]) &&
                         (ho_src2_is_ref(k) ? licm_operand_ok(h_src2[i]) : 1)) {

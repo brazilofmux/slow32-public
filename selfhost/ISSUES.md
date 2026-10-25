@@ -3365,3 +3365,12 @@ ago; stage07's never was.
 overflows stage06 s32-as's 16MB BSS ceiling), and both reads -- the
 main file in `s12cc.c` and each include in `pp.h` -- now probe one byte
 past the room and stop with "source too large for LEX_SRC_SZ".
+
+The same evening the compiler's object crossed the next frozen ceiling:
+stage07's `s32-ld` read each input into a 1MB `file_buf` (FILE_BUFSZ)
+and said "file too large" at 1,049,684 bytes.  That one reported itself.
+It is 4MB now, as `src/tools/s32-ld.c` has been; stage07's other four
+tools rebuilt byte-identical.  The build chain for the compiler is:
+stage07 `cc` compiles it, the *stage08* assembler built first in the
+same run assembles it (stage07's `s32-as` caps BSS at 16MB and the
+compiler's tables are 177MB), stage07's `s32-ld` links it.

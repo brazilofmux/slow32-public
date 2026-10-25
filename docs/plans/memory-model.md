@@ -127,3 +127,17 @@ crypto benchmarks must assemble to the same bytes before and after.
   reads of one plain global in an expression are two loads, because
   each access builds its own GADDR and forwarding matches by address
   value -- a candidate for the alias facility to answer.
+- 2026-10-25: step 3.  A load in a loop body whose address is invariant,
+  with no call in the body and no store in the body that may touch its
+  bytes (al_may_alias, words off one pointer apart), is hoisted to the
+  preheader.  Through a pointer it moves only when the body makes it on
+  every trip (header block, or dominates the latch in a loop that exits
+  only there), since the preheader's copy could fault where the loop's
+  would not have run; a frame slot or global cannot fault.  LICM's
+  dominance rule still declines anything inside an if, loads included.
+  Benchmarks byte-identical (their loop loads are table lookups with
+  moving addresses); SQLite 281,656 -> 281,623 static, frame accesses
+  34,634 -> 34,606, the 200,000-row run 12.75-13.07 -> 12.54-12.82 s
+  under the x86-64 DBT, unchanged on arm64.  The compiler's object
+  crossed stage07's linker input buffer (1 MB, FILE_BUFSZ) by 1,108
+  bytes; the buffer is 4 MB now, as stage08's own linker's has been.

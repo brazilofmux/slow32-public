@@ -116,7 +116,7 @@ int fdputuint(int f, int v);
 #define TEXT_BUFSZ   1048576
 #define DATA_BUFSZ   1048576
 #define RODATA_BUFSZ 262144
-#define FILE_BUFSZ   1048576
+#define FILE_BUFSZ   4194304   /* was 1MB: stage08's s12cc.s32o passed it (memory model, step 3) */
 /* Raised from 2048: s12cc.c crossed it simply by growing (the stage08
  * inliner's ~7 functions were enough), and a per-object symbol ceiling
  * is a poor thing to fail a self-host on.  Costs one int array --
