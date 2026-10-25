@@ -46,13 +46,20 @@ crypto benchmarks must assemble to the same bytes before and after.
    offset).  Every pass above calls these; none keeps its own copy.
    No answer changes.  The gate is the byte-identity one.
 
-2. **Memory state across blocks.**  Forwarding and load-load
-   elimination work on one block's "last known value" table today.
-   Carry the table across blocks as a dataflow: what is known at a
-   block's entry is what every predecessor knows at its exit, meeting
-   by intersection; a back edge starts empty.  This makes `x = *p; if
-   (c) ...; y = *p` one load without a store in between, and it is the
-   foundation for step 3.
+2. **Memory state across blocks** -- measured and set aside (see the
+   log).  Carrying the "last known value" table across blocks as a
+   dataflow (meet by intersection, empty over a back edge) is sound and
+   was built; what it forwards is worth having only when the forwarded
+   value can be held in a register across the join, and whether it can
+   is the allocator's question (step 5).  Forwarding only values already
+   live at the join costs nothing and gains nothing measurable.  The
+   test (`test_mem_join`) stays as the correctness line.
+
+2a. **`volatile` as a barrier.**  The parser drops the qualifier.  Carry
+   it to the HIR (a type flag on the access), and have forwarding, DSE,
+   dead slots and LICM treat a volatile access as a call does: nothing
+   known across it, never forwarded, never removed, never hoisted.  A
+   prerequisite for step 3, and a correctness fix on its own.
 
 3. **Loads out of loops.**  A load whose address is invariant and whose
    bytes no store in the loop body may touch is invariant.  LICM hoists
@@ -81,7 +88,25 @@ crypto benchmarks must assemble to the same bytes before and after.
   user's ruling of 2026-10-25 keeps this on the C compiler.
 - No new pass may answer a memory question its own way.  If
   `hir_alias.h` cannot answer it, the facility grows.
+- `volatile` never reaches the HIR: the parser reads the qualifier and
+  drops it (found at step 2).  The within-block forwarding has always
+  ignored it, and the kit's own MMIO accesses go through calls, which
+  are barriers.  Step 3 must not start until a volatile access is a
+  barrier in the IR: a hoisted poll of a device register would never
+  see it change.
 
 ## Log
 
-- 2026-10-25: step 1.
+- 2026-10-25: step 1 (cce2a178).  Byte-identical output.
+- 2026-10-25: step 2, measured.  The full join meet: SQLite 281,696 ->
+  279,246 static, 2,471,316 -> 2,457,872 executed (-0.5%), PBKDF2
+  -0.1%; but sqlite3VdbeExec, the hottest function, +65 instructions
+  and +152 frame accesses, and a 200,000-row SQLite workload slower
+  under the DBT: arm64 1.60 -> 1.63 s, x86-64 12.77 -> 13.5 s, for
+  0.1% fewer instructions executed.  The dispatch block's loads were
+  forwarded into the 190 cases and held in registers across the
+  dispatch.  Straight-line-only (one predecessor with one successor):
+  -36 static, nothing else.  Only values already live at the load: -22
+  static, VdbeExec identical, times identical.  Set aside; the
+  allocator decides this one.  Not committed; the pass as built is in
+  this session's record.
