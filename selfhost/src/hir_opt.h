@@ -1600,6 +1600,134 @@ static int ho_known_bits(void) {
 }
 #endif
 
+#ifndef S12CC_X64_HOST
+/* ----------------------------------------------------------------
+ * Write-only frame slots.  An ALLOCA whose every derived address
+ * (ADDI, COPY, ADD of a constant) is used only as the address of a
+ * STORE is never read and never escapes, so its stores are dead.  A
+ * fully unrolled loop over a local array whose loads all forwarded or
+ * folded left exactly that: test_unroll's tally8 computed 580 at
+ * compile time and still stored all eight elements.  Any other use
+ * -- a load, a call argument, a phi, the address stored as a value,
+ * anything this does not recognise -- keeps every store.  Not in a
+ * function that calls setjmp (ssa_fn_setjmp), whose locals stay in
+ * memory on purpose.
+ * ---------------------------------------------------------------- */
+
+static int ho_ds_root[HIR_MAX_INST];
+static char ho_ds_bad[HIR_MAX_INST];
+static int ho_stat_dslot;
+
+static void ho_ds_use(int user, int r, int ok) {
+    if (r < 0 || r >= h_ninst || ho_ds_root[r] < 0) return;
+    if (!ok) ho_ds_bad[ho_ds_root[r]] = 1;
+}
+
+static int ho_ds_derive(int i) {
+    int k;
+    int a;
+    int b;
+    k = h_kind[i];
+    a = h_src1[i];
+    if ((k == HI_ADDI || k == HI_COPY) && a >= 0 && ho_ds_root[a] >= 0)
+        return ho_ds_root[a];
+    if (k == HI_ADD) {
+        b = h_src2[i];
+        if (a >= 0 && b >= 0) {
+            if (ho_ds_root[a] >= 0 && h_kind[b] == HI_ICONST) return ho_ds_root[a];
+            if (ho_ds_root[b] >= 0 && h_kind[a] == HI_ICONST) return ho_ds_root[b];
+        }
+    }
+    return -1;
+}
+
+static int ho_dead_slots(void) {
+    int i;
+    int j;
+    int k;
+    int r;
+    int moved;
+    int changed;
+    int any;
+
+    if (ssa_fn_setjmp) return 0;
+    any = 0;
+    i = 0;
+    while (i < h_ninst) {
+        ho_ds_root[i] = -1;
+        ho_ds_bad[i] = 0;
+        if (h_kind[i] == HI_ALLOCA) { ho_ds_root[i] = i; any = 1; }
+        i = i + 1;
+    }
+    if (!any) return 0;
+    moved = 1;
+    while (moved) {
+        moved = 0;
+        i = 0;
+        while (i < h_ninst) {
+            if (ho_ds_root[i] < 0 && h_kind[i] != HI_NOP) {
+                r = ho_ds_derive(i);
+                if (r >= 0) { ho_ds_root[i] = r; moved = 1; }
+            }
+            i = i + 1;
+        }
+    }
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k != HI_NOP) {
+            r = ho_ds_root[i];
+            /* src1: the address of a STORE, or the base of a derivation */
+            ho_ds_use(i, h_src1[i],
+                      k == HI_STORE || (r >= 0 && h_kind[i] != HI_ALLOCA &&
+                                        r == ho_ds_root[h_src1[i]]));
+            if (ho_src2_is_ref(k) && h_src2[i] >= 0)
+                ho_ds_use(i, h_src2[i],
+                          k == HI_ADD && r >= 0 && r == ho_ds_root[h_src2[i]]);
+            if (h_cbase[i] >= 0 && (k == HI_CALL || k == HI_CALLP ||
+                k == HI_A64_DBT_TRAMPOLINE || k == HI_X64_DBT_TRAMPOLINE)) {
+                j = 0;
+                while (j < h_val[i]) {
+                    ho_ds_use(i, h_carg[h_cbase[i] + j], 0);
+                    j = j + 1;
+                }
+            } else if (h_cbase[i] >= 0) {
+                /* an argument list on a kind not known here: keep all */
+                j = 0;
+                while (j < h_ninst) {
+                    if (h_kind[j] == HI_ALLOCA) ho_ds_bad[j] = 1;
+                    j = j + 1;
+                }
+            }
+            if (k == HI_PHI && h_pbase[i] >= 0) {
+                j = 0;
+                while (j < h_pcnt[i]) {
+                    ho_ds_use(i, h_pval[h_pbase[i] + j], 0);
+                    j = j + 1;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    changed = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_STORE && h_src1[i] >= 0) {
+            r = ho_ds_root[h_src1[i]];
+            if (r >= 0 && !ho_ds_bad[r]) {
+                h_kind[i] = HI_NOP;
+                h_src1[i] = -1;
+                h_src2[i] = -1;
+                ho_stat_dslot = ho_stat_dslot + 1;
+                changed = 1;
+            }
+        }
+        i = i + 1;
+    }
+    return changed;
+}
+#endif
+
 static int ho_stat_elim;
 
 /* -fopt=MASK (s12cc.c): which passes run; a bisection aid.  Bits: 1 copy
@@ -1638,6 +1766,7 @@ static void hir_opt(void) {
         if (ho_mask & 256) changed = changed | ho_promote_single_store_alloca();
 #ifndef S12CC_X64_HOST
         if (ho_mask & 2048) changed = changed | ho_known_bits();
+        if (ho_mask & 4096) changed = changed | ho_dead_slots();
 #endif
         if (ho_mask & 512) changed = changed | ho_dce();
         iter = iter + 1;

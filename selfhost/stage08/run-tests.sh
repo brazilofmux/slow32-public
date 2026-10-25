@@ -529,7 +529,7 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
     echo ""
     echo "=== Step 3: gen1_cc compiler tests ==="
 
-    for tst in "$TESTS_DIR"/test_spike.c "$TESTS_DIR"/test_phase2.c "$TESTS_DIR"/test_phase3.c "$TESTS_DIR"/test_phase4.c "$TESTS_DIR"/test_phase5.c "$TESTS_DIR"/test_phase6.c "$TESTS_DIR"/test_phase7.c "$TESTS_DIR"/test_phase8.c "$TESTS_DIR"/test_phase9.c "$TESTS_DIR"/test_phase10.c "$TESTS_DIR"/test_phase11.c "$TESTS_DIR"/test_phase12.c "$TESTS_DIR"/test_phase13.c "$TESTS_DIR"/test_phase14.c "$TESTS_DIR"/test_phase15.c "$TESTS_DIR"/test_phase16.c "$TESTS_DIR"/test_phase17.c "$TESTS_DIR"/test_phase18.c "$TESTS_DIR"/test_phase19.c "$TESTS_DIR"/test_phase20.c "$TESTS_DIR"/test_phase21.c "$TESTS_DIR"/test_phase22.c "$TESTS_DIR"/test_phase23.c "$TESTS_DIR"/test_phase24.c "$TESTS_DIR"/test_phase25.c "$TESTS_DIR"/test_phase26.c "$TESTS_DIR"/test_phase27.c "$TESTS_DIR"/test_phase28.c "$TESTS_DIR"/test_phase29.c "$TESTS_DIR"/test_phase30.c "$TESTS_DIR"/test_phase31.c "$TESTS_DIR"/test_phase32.c "$TESTS_DIR"/test_phase33.c "$TESTS_DIR"/test_short.c "$TESTS_DIR"/test_bitfields.c "$TESTS_DIR"/test_many_args.c "$TESTS_DIR"/test_pp_predefs.c "$TESTS_DIR"/test_ret_widen.c "$TESTS_DIR"/test_libutf_bugs.c "$TESTS_DIR"/test_decl_list.c "$TESTS_DIR"/test_sqlite_bugs.c "$TESTS_DIR"/test_narrow_rmw.c "$TESTS_DIR"/test_tentative_init.c "$TESTS_DIR"/test_grouped_ptr_array.c "$TESTS_DIR"/test_const_shift.c "$TESTS_DIR"/test_const_wide.c "$TESTS_DIR"/test_pp_if_text.c "$TESTS_DIR"/test_addr_paren.c "$TESTS_DIR"/test_int_to_ptr_paren.c "$TESTS_DIR"/test_define_big.c "$TESTS_DIR"/test_string_concat.c "$TESTS_DIR"/test_duff_jt.c "$TESTS_DIR"/test_jt_fallthrough.c "$TESTS_DIR"/test_jt_goto_case.c "$TESTS_DIR"/test_pp_dis_args.c "$TESTS_DIR"/test_fnptr_local.c "$TESTS_DIR"/test_fp64_split.c "$TESTS_DIR"/test_fnptr_double.c "$TESTS_DIR"/test_inline.c "$TESTS_DIR"/test_dce_inline.c "$TESTS_DIR"/test_leaf_frame.c "$TESTS_DIR"/test_retpin.c "$TESTS_DIR"/test_bigframe_r30.c "$TESTS_DIR"/test_spill_slots.c "$TESTS_DIR"/test_block_slots.c "$TESTS_DIR"/test_inline_loop.c "$TESTS_DIR"/test_2d_init.c "$TESTS_DIR"/test_pp_param_in_string.c "$TESTS_DIR"/test_static_list.c "$TESTS_DIR"/test_row_param.c "$TESTS_DIR"/test_pp_octal.c "$TESTS_DIR"/test_big_agg.c "$TESTS_DIR"/test_clit_init.c "$TESTS_DIR"/test_nan_inf.c "$TESTS_DIR"/test_fp_convert.c "$TESTS_DIR"/test_typedef_array.c "$TESTS_DIR"/test_setjmp.c "$TESTS_DIR"/test_tail_escape.c "$TESTS_DIR"/test_udiv32.c "$TESTS_DIR"/test_typedef_shadow.c "$TESTS_DIR"/test_member_addr_call.c "$TESTS_DIR"/test_hex_escape.c "$TESTS_DIR"/test_sizeof_string.c "$TESTS_DIR"/test_frameless_args.c "$TESTS_DIR"/test_phi_undef.c "$TESTS_DIR"/test_float_promote.c "$TESTS_DIR"/test_ll_shift_var.c "$TESTS_DIR"/test_cse_literal.c "$TESTS_DIR"/test_sr_stride.c "$TESTS_DIR"/test_mem_blocks.c "$TESTS_DIR"/test_retpin_phis.c "$TESTS_DIR"/test_loop_rotate.c "$TESTS_DIR"/test_known_bits.c "$TESTS_DIR"/test_unroll.c; do
+    for tst in "$TESTS_DIR"/test_spike.c "$TESTS_DIR"/test_phase2.c "$TESTS_DIR"/test_phase3.c "$TESTS_DIR"/test_phase4.c "$TESTS_DIR"/test_phase5.c "$TESTS_DIR"/test_phase6.c "$TESTS_DIR"/test_phase7.c "$TESTS_DIR"/test_phase8.c "$TESTS_DIR"/test_phase9.c "$TESTS_DIR"/test_phase10.c "$TESTS_DIR"/test_phase11.c "$TESTS_DIR"/test_phase12.c "$TESTS_DIR"/test_phase13.c "$TESTS_DIR"/test_phase14.c "$TESTS_DIR"/test_phase15.c "$TESTS_DIR"/test_phase16.c "$TESTS_DIR"/test_phase17.c "$TESTS_DIR"/test_phase18.c "$TESTS_DIR"/test_phase19.c "$TESTS_DIR"/test_phase20.c "$TESTS_DIR"/test_phase21.c "$TESTS_DIR"/test_phase22.c "$TESTS_DIR"/test_phase23.c "$TESTS_DIR"/test_phase24.c "$TESTS_DIR"/test_phase25.c "$TESTS_DIR"/test_phase26.c "$TESTS_DIR"/test_phase27.c "$TESTS_DIR"/test_phase28.c "$TESTS_DIR"/test_phase29.c "$TESTS_DIR"/test_phase30.c "$TESTS_DIR"/test_phase31.c "$TESTS_DIR"/test_phase32.c "$TESTS_DIR"/test_phase33.c "$TESTS_DIR"/test_short.c "$TESTS_DIR"/test_bitfields.c "$TESTS_DIR"/test_many_args.c "$TESTS_DIR"/test_pp_predefs.c "$TESTS_DIR"/test_ret_widen.c "$TESTS_DIR"/test_libutf_bugs.c "$TESTS_DIR"/test_decl_list.c "$TESTS_DIR"/test_sqlite_bugs.c "$TESTS_DIR"/test_narrow_rmw.c "$TESTS_DIR"/test_tentative_init.c "$TESTS_DIR"/test_grouped_ptr_array.c "$TESTS_DIR"/test_const_shift.c "$TESTS_DIR"/test_const_wide.c "$TESTS_DIR"/test_pp_if_text.c "$TESTS_DIR"/test_addr_paren.c "$TESTS_DIR"/test_int_to_ptr_paren.c "$TESTS_DIR"/test_define_big.c "$TESTS_DIR"/test_string_concat.c "$TESTS_DIR"/test_duff_jt.c "$TESTS_DIR"/test_jt_fallthrough.c "$TESTS_DIR"/test_jt_goto_case.c "$TESTS_DIR"/test_pp_dis_args.c "$TESTS_DIR"/test_fnptr_local.c "$TESTS_DIR"/test_fp64_split.c "$TESTS_DIR"/test_fnptr_double.c "$TESTS_DIR"/test_inline.c "$TESTS_DIR"/test_dce_inline.c "$TESTS_DIR"/test_leaf_frame.c "$TESTS_DIR"/test_retpin.c "$TESTS_DIR"/test_bigframe_r30.c "$TESTS_DIR"/test_spill_slots.c "$TESTS_DIR"/test_block_slots.c "$TESTS_DIR"/test_inline_loop.c "$TESTS_DIR"/test_2d_init.c "$TESTS_DIR"/test_pp_param_in_string.c "$TESTS_DIR"/test_static_list.c "$TESTS_DIR"/test_row_param.c "$TESTS_DIR"/test_pp_octal.c "$TESTS_DIR"/test_big_agg.c "$TESTS_DIR"/test_clit_init.c "$TESTS_DIR"/test_nan_inf.c "$TESTS_DIR"/test_fp_convert.c "$TESTS_DIR"/test_typedef_array.c "$TESTS_DIR"/test_setjmp.c "$TESTS_DIR"/test_tail_escape.c "$TESTS_DIR"/test_udiv32.c "$TESTS_DIR"/test_typedef_shadow.c "$TESTS_DIR"/test_member_addr_call.c "$TESTS_DIR"/test_hex_escape.c "$TESTS_DIR"/test_sizeof_string.c "$TESTS_DIR"/test_frameless_args.c "$TESTS_DIR"/test_phi_undef.c "$TESTS_DIR"/test_float_promote.c "$TESTS_DIR"/test_ll_shift_var.c "$TESTS_DIR"/test_cse_literal.c "$TESTS_DIR"/test_sr_stride.c "$TESTS_DIR"/test_mem_blocks.c "$TESTS_DIR"/test_retpin_phis.c "$TESTS_DIR"/test_loop_rotate.c "$TESTS_DIR"/test_known_bits.c "$TESTS_DIR"/test_unroll.c "$TESTS_DIR"/test_const_select.c "$TESTS_DIR"/test_gbase.c "$TESTS_DIR"/test_dead_slots.c; do
         [[ -f "$tst" ]] || continue
         tname="$(basename "$tst" .c)"
         TOTAL=$((TOTAL + 1))
@@ -634,6 +634,30 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
                 continue
             fi
         fi
+        # xtime's (x & 0x80) ? 0x1b : 0 is a mask, not a branch.
+        if [[ "$tname" == "test_const_select" ]]; then
+            if awk '/^dbl:/{p=1;next} p&&/^[A-Za-z_]/{exit} p' "$WORKDIR/${tname}.s" | grep -qE '^[[:space:]]+b[a-z]+[[:space:]]'; then
+                printf "  %-30s FAIL (dbl branches)\n" "$tname:"
+                FAIL=$((FAIL + 1))
+                continue
+            fi
+        fi
+        # The table's address is built once, outside mix's loop.
+        if [[ "$tname" == "test_gbase" ]]; then
+            if [[ "$(awk '/^mix:/{p=1;next} p&&/^[A-Za-z_]/{exit} p' "$WORKDIR/${tname}.s" | grep -c '%hi(squares)')" != 1 ]]; then
+                printf "  %-30s FAIL (mix rebuilds the address of squares)\n" "$tname:"
+                FAIL=$((FAIL + 1))
+                continue
+            fi
+        fi
+        # scratch's array and long long are never read: no stores.
+        if [[ "$tname" == "test_dead_slots" ]]; then
+            if awk '/^scratch:/{p=1;next} p&&/^[A-Za-z_]/{exit} p' "$WORKDIR/${tname}.s" | grep -qE '^[[:space:]]+st[bhw][[:space:]]'; then
+                printf "  %-30s FAIL (scratch stores to a slot nothing reads)\n" "$tname:"
+                FAIL=$((FAIL + 1))
+                continue
+            fi
+        fi
         # A byte xor a byte needs no mask.
         if [[ "$tname" == "test_known_bits" ]]; then
             if awk '/^mixb:/{p=1;next} p&&/^[A-Za-z_]/{exit} p' "$WORKDIR/${tname}.s" | grep -q 'andi .*, 255'; then
@@ -699,7 +723,7 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
         # GitHub issue 77: sibling 80-int arrays share one 320-byte slot.
         # Without reuse the frame is ~640; with it, one array plus scalars.
         if [[ "$tname" == "test_block_slots" ]]; then
-            fsz=$(awk '/^sibling:/{p=1;next} p&&/^[A-Za-z_]/{exit} p' "$WORKDIR/${tname}.s" | grep -m1 -oE 'addi r29, r29, -[0-9]+' | grep -oE '[0-9]+$')
+            fsz=$(awk '/^sibling:/{p=1;next} p&&/^[A-Za-z_]/{exit} p' "$WORKDIR/${tname}.s" | grep -m1 -oE 'addi r29, r29, -[0-9]+' | grep -oE '[0-9]+$' || true)   # no frame: FAIL below, not a set -e exit
             if [[ -z "$fsz" || "$fsz" -gt 400 ]]; then
                 printf "  %-30s FAIL (sibling frame is ${fsz:-?} bytes; block slots not reused)\n" "$tname:"
                 FAIL=$((FAIL + 1))
@@ -707,7 +731,7 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
             fi
         fi
         if [[ "$tname" == "test_spill_slots" ]]; then
-            fsz=$(awk '/^phases:/{p=1;next} p&&/^[A-Za-z_]/{exit} p' "$WORKDIR/${tname}.s" | grep -m1 -oE 'addi r29, r29, -[0-9]+' | grep -oE '[0-9]+$')
+            fsz=$(awk '/^phases:/{p=1;next} p&&/^[A-Za-z_]/{exit} p' "$WORKDIR/${tname}.s" | grep -m1 -oE 'addi r29, r29, -[0-9]+' | grep -oE '[0-9]+$' || true)   # no frame: FAIL below, not a set -e exit
             if [[ -z "$fsz" || "$fsz" -gt 320 ]]; then
                 printf "  %-30s FAIL (phases frame is ${fsz:-?} bytes; spill slots not shared)\n" "$tname:"
                 FAIL=$((FAIL + 1))

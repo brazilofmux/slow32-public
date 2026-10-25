@@ -2622,6 +2622,13 @@ static void hcg_inst(int idx) {
         hcg_maybe_spill(idx);
         return;
     }
+    /* A global base pinned in a loop preheader (licm_gaddr_bases). */
+    if (k == HI_GADDR) {
+        rd = hcg_dst(idx);
+        hcg_la(rd, h_name[idx]);
+        hcg_maybe_spill(idx);
+        return;
+    }
 
     ty = h_ty[idx];
     s1 = h_src1[idx];

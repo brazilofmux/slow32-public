@@ -1367,6 +1367,90 @@ static void licm_fp64_consts(int header, int latch) {
     }
 }
 
+/* A table indexed by a run-time value inside a leaf loop -- SBOX[x]
+ * in an AES round -- is ADD(GADDR, x).  GADDR is rematerializable, so
+ * every such ADD rebuilt the address with lui+addi before it.  One
+ * clone per symbol in the preheader, pinned like the fp64 constants
+ * above, turns that into a register.  Direct loads and stores of a
+ * global (GADDR or ADDI(GADDR) as the address) are left alone: they
+ * fold to lui + %lo already.  At most S12CC_LICM_GBASE (default 4)
+ * symbols per loop. */
+static int licm_gbase_max = -1;
+
+static void licm_gaddr_bases(int header, int latch) {
+    int target;
+    int body_count;
+    int bi;
+    int b;
+    int i;
+    int o;
+    int a;
+    int d;
+    int cl;
+    int nd;
+    int dg[8];
+    int dc[8];
+
+    if (licm_gbase_max < 0) {
+        licm_gbase_max = 4;
+        if (getenv("S12CC_LICM_GBASE")) licm_gbase_max = atoi(getenv("S12CC_LICM_GBASE"));
+        if (licm_gbase_max > 8) licm_gbase_max = 8;
+    }
+    if (licm_gbase_max == 0) return;
+    target = ssa_idom[header];
+    if (target < 0 || target >= bb_nblk) return;
+    body_count = licm_find_body(header, latch);
+    bi = 0;
+    while (bi < body_count) {
+        if (licm_depth[licm_body[bi]] != licm_depth[header]) return;
+        bi = bi + 1;
+    }
+    nd = 0;
+    bi = 0;
+    while (bi < body_count) {
+        b = licm_body[bi];
+        i = bb_start[b];
+        while (i < bb_end[b]) {
+            if (h_kind[i] == HI_ADD) {
+                o = 0;
+                while (o < 2) {
+                    a = (o == 0) ? h_src1[i] : h_src2[i];
+                    if (a >= 0 && licm_map[a] >= 0) a = licm_map[a];
+                    if (a >= 0 && h_kind[a] == HI_GADDR && !licm_cpin[a] && h_name[a]) {
+                        cl = -1;
+                        d = 0;
+                        while (d < nd) {
+                            if (strcmp(h_name[dg[d]], h_name[a]) == 0) { cl = dc[d]; break; }
+                            d = d + 1;
+                        }
+                        if (cl < 0 && nd < licm_gbase_max) {
+                            cl = licm_clone(a);
+                            if (cl < 0) return;
+                            h_blk[cl] = target;
+                            licm_cpin[cl] = 1;
+                            licm_next[cl] = -1;
+                            if (licm_tail[target] >= 0)
+                                licm_next[licm_tail[target]] = cl;
+                            else
+                                licm_head[target] = cl;
+                            licm_tail[target] = cl;
+                            dg[nd] = a;
+                            dc[nd] = cl;
+                            nd = nd + 1;
+                        }
+                        if (cl >= 0) {
+                            if (o == 0) h_src1[i] = cl; else h_src2[i] = cl;
+                        }
+                    }
+                    o = o + 1;
+                }
+            }
+            i = i + 1;
+        }
+        bi = bi + 1;
+    }
+}
+
 static void hir_licm(void) {
     int b;
     int i;
@@ -1454,8 +1538,10 @@ static void hir_licm(void) {
             si = 0;
             while (si < ssa_nsucc[b]) {
                 s = ssa_succ[ssa_soff[b] + si];
-                if (s >= 0 && s < bb_nblk && licm_dominates(s, b))
+                if (s >= 0 && s < bb_nblk && licm_dominates(s, b)) {
                     licm_fp64_consts(s, b);
+                    licm_gaddr_bases(s, b);
+                }
                 si = si + 1;
             }
             b = b + 1;

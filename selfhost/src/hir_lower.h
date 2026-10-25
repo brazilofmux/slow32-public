@@ -1769,6 +1769,43 @@ static int hl_narrow(int ty, int lv) {
 
 static int hl_ret_ty;   /* the current function's return type, for hl_narrow at return */
 
+#ifndef S12CC_X64_HOST
+/* c ? K1 : K2 for integer constants: K2 ^ ((K1 ^ K2) & -(c != 0)).
+ * Three or four instructions in line, against a branch, a block split
+ * and a phi; AES's xtime, (x & 0x80) ? 0x1b : 0, sat in every
+ * MixColumns step and cut the round into blocks that CSE and load
+ * forwarding could not see across.  Out of hl_expr, whose frame
+ * stage07 can no longer grow. */
+static int hl_const_select_ok(Node *n) {
+    return n->lhs->kind == ND_NUM && n->rhs->kind == ND_NUM &&
+           !ty_is_llong(n->ty) && !ty_is_fp(n->ty) && !ty_is_ptr(n->ty) &&
+           !ty_is_llong(n->lhs->ty) && !ty_is_llong(n->rhs->ty) &&
+           !ty_is_llong(n->cond->ty) && !ty_is_fp(n->cond->ty) &&
+           !ty_is_ptr(n->cond->ty);
+}
+
+static int hl_const_select(Node *n) {
+    int cv;
+    int k;
+    int sb;
+    int sc;
+    cv = hl_cond_val(n->cond);
+    k = h_kind[cv];
+    if (k >= HI_SEQ && k <= HI_SGEU) {
+        sb = cv;
+    } else {
+        sc = hi_emit(HI_ICONST, TY_INT, -1, -1, 0, NULL);
+        sb = hi_emit(HI_SNE, TY_INT, cv, sc, 0, NULL);
+    }
+    sb = hi_emit(HI_NEG, TY_INT, sb, -1, 0, NULL);
+    sc = hi_emit(HI_ICONST, TY_INT, -1, -1, n->lhs->val ^ n->rhs->val, NULL);
+    sb = hi_emit(HI_AND, TY_INT, sb, sc, 0, NULL);
+    if (n->rhs->val == 0) return sb;
+    sc = hi_emit(HI_ICONST, TY_INT, -1, -1, n->rhs->val, NULL);
+    return hi_emit(HI_XOR, TY_INT, sb, sc, 0, NULL);
+}
+#endif
+
 static int hl_expr(Node *n) {
     int lv;
     int rv;
@@ -3068,6 +3105,10 @@ static int hl_expr(Node *n) {
             zero = hi_emit(HI_ICONST, TY_INT, -1, -1, 0, NULL);
             return hi_emit(HI_SEQ, TY_INT, cv, zero, 0, NULL);
         }
+#ifndef S12CC_X64_HOST
+        /* Any two integer constants: a mask, not a diamond. */
+        if (hl_const_select_ok(n)) return hl_const_select(n);
+#endif
         tmp_off = hl_alloc_temp();
         tmp = hl_emit_temp_alloca(n->ty, tmp_off);
         cv = hl_cond_val(n->cond);
