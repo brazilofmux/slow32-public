@@ -3326,3 +3326,28 @@ point.  `tests/test_many_literals.c` (4,500 literals) is the guard: the
 old linker refuses it.  stage07's frozen copy (`stage07/tools/s32-ld.c`)
 keeps the old table; it links only stage08's tools.
 
+
+### 92. [OPEN 2026-10-25] stage07 refuses, or silently drops, valid stage08 source once s12cc.c reaches some size
+
+Twice while building 2298875d, stage07 mishandled valid code added to
+`stage08/hir_regalloc.h`:
+
+- A debug block in `gc_irc` with a local `int st[5][2]` and a few
+  `fdputs` literals built without complaint, but the block was not in
+  the result (no output; cc.s32x the same size as before).  The same
+  2D-array code compiles and runs correctly in a small file.
+- With that block (rewritten with 1D arrays, and now working) still
+  present, adding three small functions before `gc_select`
+  (`gc_cyc_node_color`, `gc_edge_cycle`, `gc_bias_cycles`, as
+  committed) failed with `s12cc:31527: expected token 56 got 50`
+  (`;` expected, `(` found).  Either part alone builds; removing the
+  debug block made the committed form build.
+
+The functions compile alone with stage07, and no fixed table checked
+so far is close to full: 1,317 string literals (LEX_POOL_MAX 16384),
+331 macros (PP_MAX_DEFS 512), named globals well under P_MAX_GLOBALS.
+So some other stage07 ceiling is being reached by s12cc.c's size, and
+it is reached without a diagnostic.  Until it is found, a stage08
+build that fails with a parse error on code that looks right, or that
+does not change size when code was added, is this item.  Reproduce by
+re-adding a block like the one above to `gc_irc`.
