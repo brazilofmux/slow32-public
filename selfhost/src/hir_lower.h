@@ -1806,6 +1806,79 @@ static int hl_const_select(Node *n) {
 }
 #endif
 
+#ifndef S12CC_X64_HOST
+/* memcpy(d, s, N) with N a small constant and d or s a local array:
+ * copy element by element, in the array's own element type.  As a call
+ * the array's address escapes and ssa_sroa_late leaves it in memory --
+ * AES's `memcpy(out, s, 16)` kept the whole state in the frame; as
+ * element loads and stores the state stays in registers and the copy
+ * is sixteen stores. */
+static Node *hl_mc_local(Node *a) {
+    while (a && a->kind == ND_CAST) a = a->lhs;
+    if (!a || a->kind != ND_VAR || !a->is_local || !a->is_array || a->arr_cols)
+        return 0;
+    return a;
+}
+
+static int hl_mc_elem(Node *v) {
+    int ty;
+    ty = v->ty;
+    if (ty_is_ptr(ty)) ty = ty_deref(ty);
+    if (ty_is_struct(ty) || ty_is_fp(ty)) return -1;
+    if (ty_size(ty) != 1 && ty_size(ty) != 2 && ty_size(ty) != 4) return -1;
+    return ty;
+}
+
+static int hl_small_memcpy_ok(Node *n) {
+    Node *d;
+    Node *s;
+    Node *z;
+    Node *v;
+    int ty;
+    if (!n->name || strcmp(n->name, "memcpy") != 0) return 0;
+    d = n->args;
+    if (!d) return 0;
+    s = d->next;
+    if (!s) return 0;
+    z = s->next;
+    if (!z || z->next || z->kind != ND_NUM) return 0;
+    v = hl_mc_local(d);
+    if (!v) v = hl_mc_local(s);
+    if (!v) return 0;
+    ty = hl_mc_elem(v);
+    if (ty < 0) return 0;
+    if (z->val <= 0 || z->val > 64 || z->val % ty_size(ty) != 0 ||
+        z->val / ty_size(ty) > 16)
+        return 0;
+    return 1;
+}
+
+static int hl_small_memcpy(Node *n) {
+    Node *v;
+    int ty;
+    int sz;
+    int dv;
+    int sv;
+    int off;
+    int t;
+    v = hl_mc_local(n->args);
+    if (!v) v = hl_mc_local(n->args->next);
+    ty = hl_mc_elem(v);
+    sz = ty_size(ty);
+    dv = hl_expr(n->args);
+    sv = hl_expr(n->args->next);
+    off = 0;
+    while (off < n->args->next->next->val) {
+        t = hi_emit(HI_LOAD, ty, off ? hi_emit(HI_ADDI, HL_ADDR_TY, sv, -1, off, NULL) : sv,
+                    -1, 0, NULL);
+        hi_emit(HI_STORE, ty, off ? hi_emit(HI_ADDI, HL_ADDR_TY, dv, -1, off, NULL) : dv,
+                t, 0, NULL);
+        off = off + sz;
+    }
+    return dv;
+}
+#endif
+
 static int hl_expr(Node *n) {
     int lv;
     int rv;
@@ -3416,6 +3489,9 @@ static int hl_expr(Node *n) {
             inl_fn = hl_inl_candidate(n);
             if (inl_fn) return hl_inline_call(n, inl_fn);
         }
+#ifndef S12CC_X64_HOST
+        if (hl_small_memcpy_ok(n)) return hl_small_memcpy(n);
+#endif
         int is64[32];   /* 0 = word, 1 = llong pair, 2 = double pair.
                            (No extra arrays: hl_expr's frame is near
                            stage07's 12-bit offset ceiling.) */

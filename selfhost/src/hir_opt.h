@@ -1733,7 +1733,8 @@ static int ho_stat_elim;
 /* -fopt=MASK (s12cc.c): which passes run; a bisection aid.  Bits: 1 copy
  * propagation, 2 constant folding, 4 CSE, 8 branch simplification,
  * 16 dead blocks, 32 phi simplification, 64 DSE, 128 store-load forwarding,
- * 256 single-store alloca promotion, 512 DCE, 1024 LICM. */
+ * 256 single-store alloca promotion, 512 DCE, 1024 LICM, 2048 known bits,
+ * 4096 dead slots, 8192 late scalar replacement (stage08 hcg_func). */
 static int ho_mask = -1;
 
 static void hir_opt(void) {

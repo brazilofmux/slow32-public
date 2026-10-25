@@ -4149,6 +4149,10 @@ static void hcg_func(Node *fn) {
     /* Run SSA optimizations */
     hir_opt();
 
+    /* Small local arrays the optimizer left with constant indexes
+     * become one register each (ssa_sroa_late); clean up after them. */
+    if ((ho_mask & 8192) && ssa_sroa_late()) hir_opt();
+
     /* Loop-invariant code motion */
     licm_loopopt = 1;   /* SLOW-32 regalloc/codegen walk the split and
                          * clone lists these passes create; the cross

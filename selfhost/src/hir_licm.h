@@ -944,6 +944,144 @@ static void sr_rewrite(int old, int nw) {
 
 static int licm_stat_sr;
 
+/* Derived ADD IVs, so equal derivations share one phi. */
+static int sr_cphi[SR_MAX_IV];
+static int sr_cinv[SR_MAX_IV];
+static int sr_cres[SR_MAX_IV];
+static int sr_ncache;
+static int sr_kept[SR_MAX_IV];      /* sums rewritten to (inv + iv) + k */
+static int sr_nkept;
+
+static int sr_cached(int phi, int inv) {
+    int q;
+    q = 0;
+    while (q < sr_ncache) {
+        if (sr_cphi[q] == phi && sr_cinv[q] == inv) return sr_cres[q];
+        q = q + 1;
+    }
+    return -1;
+}
+
+static void sr_cache(int phi, int inv, int res) {
+    if (sr_ncache >= SR_MAX_IV) return;
+    sr_cphi[sr_ncache] = phi;
+    sr_cinv[sr_ncache] = inv;
+    sr_cres[sr_ncache] = res;
+    sr_ncache = sr_ncache + 1;
+}
+
+static int sr_was_kept(int x) {
+    int q;
+    q = 0;
+    while (q < sr_nkept) {
+        if (sr_kept[q] == x) return 1;
+        q = q + 1;
+    }
+    return 0;
+}
+
+/* x = ADD(iv, ICONST k), k an i12: an IV plus a displacement.  Returns
+ * the IV's record and leaves k's ICONST in sr_dk, or -1. */
+static int sr_dk;
+static int sr_disp(int x) {
+    int a;
+    int b;
+    if (x < 0 || h_kind[x] != HI_ADD) return -1;
+    a = sr_res(h_src1[x]);
+    b = sr_res(h_src2[x]);
+    if (a < 0 || b < 0) return -1;
+    if (h_kind[a] == HI_ICONST) { int t; t = a; a = b; b = t; }
+    if (h_kind[b] != HI_ICONST || h_val[b] < -2048 || h_val[b] > 2047) return -1;
+    if (sr_find(a) < 0) return -1;
+    sr_dk = b;
+    return sr_find(a);
+}
+
+/* Is every reference to x an in-loop ADD with an invariant other
+ * operand -- one that the reassociation below takes apart? */
+static int sr_disp_only(int x) {
+    int i;
+    int k;
+    int n;
+    int o;
+    n = 0;
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k == HI_NOP || i == x) { i = i + 1; continue; }
+        o = -2;
+        if (sr_res(h_src1[i]) == x) o = sr_res(h_src2[i]);
+        else if (sr_res(h_src2[i]) == x && ho_src2_is_ref(k)) o = sr_res(h_src1[i]);
+        if (o != -2) {
+            if (k != HI_ADD || !sr_invariant(o) || h_kind[o] == HI_ICONST) return 0;
+            if (h_blk[i] < 0 || h_blk[i] >= bb_nblk || !ssa_vis[h_blk[i]]) return 0;
+            n = n + 1;
+        }
+        if ((k == HI_CALL || k == HI_CALLP) && h_cbase[i] >= 0) {
+            int q;
+            q = 0;
+            while (q < h_val[i]) {
+                if (sr_res(h_carg[h_cbase[i] + q]) == x) return 0;
+                q = q + 1;
+            }
+        }
+        if (k == HI_PHI && h_pbase[i] >= 0) {
+            int q;
+            q = 0;
+            while (q < h_pcnt[i]) {
+                if (sr_res(h_pval[h_pbase[i] + q]) == x) return 0;
+                q = q + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return n > 0;
+}
+
+/* A new IV iv + inv (inv invariant): init in the preheader, phi in the
+ * header, step in the latch.  Returns the phi, -1 when out of room. */
+static int sr_derive_add(int r, int inv, int ty, int header, int latch, int pre) {
+    int ninit;
+    int nphi;
+    int nnext;
+    int q;
+    if (sr_niv >= SR_MAX_IV || h_ninst + 4 >= HIR_MAX_INST ||
+        h_nparg + 2 > HIR_MAX_PARG) return -1;
+    ninit = sr_new_op(HI_ADD, ty, sr_init[r], inv, pre);
+    if (licm_tail[pre] >= 0) licm_next[licm_tail[pre]] = ninit;
+    else licm_head[pre] = ninit;
+    licm_tail[pre] = ninit;
+    nphi = sp_new_inst(HI_PHI, ty, -1, -1, 0, header);
+    h_pbase[nphi] = h_nparg;
+    h_pcnt[nphi] = 2;
+    q = 0;
+    while (q < 2) {
+        h_pblk[h_nparg] = h_pblk[h_pbase[sr_phi[r]] + q];
+        h_pval[h_nparg] = (h_pblk[h_nparg] == latch) ? -1 : ninit;
+        h_nparg = h_nparg + 1;
+        q = q + 1;
+    }
+    ssa_phi_next[nphi] = ssa_phi_head[header];
+    ssa_phi_head[header] = nphi;
+    nnext = sp_new_inst(HI_ADD, ty, nphi, sr_step[r], 0, latch);
+    if (licm_tail[latch] >= 0) licm_next[licm_tail[latch]] = nnext;
+    else licm_head[latch] = nnext;
+    licm_tail[latch] = nnext;
+    q = 0;
+    while (q < 2) {
+        if (h_pblk[h_pbase[nphi] + q] == latch) h_pval[h_pbase[nphi] + q] = nnext;
+        q = q + 1;
+    }
+    sr_cache(sr_phi[r], inv, nphi);
+    sr_phi[sr_niv] = nphi;
+    sr_init[sr_niv] = ninit;
+    sr_step[sr_niv] = sr_step[r];
+    sr_inc[sr_niv] = nnext;
+    sr_niv = sr_niv + 1;
+    licm_stat_sr = licm_stat_sr + 1;
+    return nphi;
+}
+
 static void licm_strred(int header, int latch) {
     int pre;
     int phi;
@@ -1000,6 +1138,8 @@ static void licm_strred(int header, int latch) {
         phi = ssa_phi_next[phi];
     }
     if (sr_niv == 0) return;
+    sr_ncache = 0;
+    sr_nkept = 0;
 
     nderived = 0;
     round = 0;
@@ -1039,6 +1179,64 @@ static void licm_strred(int header, int latch) {
                     } else if (sr_find(o2) >= 0 && sr_invariant(o1)) {
                         r = sr_find(o2); other = o1; knd = 3;
                     }
+                }
+            }
+            /* inv + (iv + k) is (inv + iv) + k: one IV for every k,
+             * and k folds into the load or store that uses the sum
+             * (AES's c->rk[16 * r + i] took a phi per i).  An iv + k
+             * whose users are all of that shape is left for them. */
+            if (k == HI_ADD && r >= 0 && knd == 3 && sr_disp(i) >= 0 &&
+                (sr_was_kept(i) || sr_disp_only(i))) {
+                r = -1;
+            } else if (k == HI_ADD && h_blk[i] >= 0 && h_blk[i] < bb_nblk &&
+                       ssa_vis[h_blk[i]]) {
+                int o1;
+                int o2;
+                int dr;
+                int kc;
+                int inv;
+                int x;
+                int np;
+                o1 = sr_res(h_src1[i]);
+                o2 = sr_res(h_src2[i]);
+                dr = -1;
+                inv = -1;
+                x = -1;
+                kc = -1;
+                if (sr_invariant(o2) && h_kind[o2] != HI_ICONST && sr_disp(o1) >= 0) {
+                    dr = sr_disp(o1); kc = sr_dk; inv = o2; x = o1;
+                } else if (sr_invariant(o1) && h_kind[o1] != HI_ICONST && sr_disp(o2) >= 0) {
+                    dr = sr_disp(o2); kc = sr_dk; inv = o1; x = o2;
+                }
+                if (dr >= 0) {
+                    np = sr_cached(sr_phi[dr], inv);
+                    if (np < 0 && nderived < 6) {
+                        np = sr_derive_add(dr, inv, h_ty[i], header, latch, pre);
+                        if (np >= 0) nderived = nderived + 1;
+                    }
+                    if (np >= 0 && sr_nkept < SR_MAX_IV) {
+                        sr_kept[sr_nkept] = i;
+                        sr_nkept = sr_nkept + 1;
+                        h_src1[i] = np;
+                        h_src2[i] = kc;
+                        if (sr_count_refs(x) == 0) {
+                            h_kind[x] = HI_NOP;
+                            h_src1[x] = -1;
+                            h_src2[x] = -1;
+                        }
+                        r = -1;
+                    }
+                }
+            }
+            if (r >= 0 && knd == 3) {
+                int np;
+                np = sr_cached(sr_phi[r], other);
+                if (np >= 0 && sr_uses_local(i) && sr_count_refs(i) > 0) {
+                    sr_rewrite(i, np);
+                    h_kind[i] = HI_NOP;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    r = -1;
                 }
             }
             if (r >= 0 && other >= 0 && getenv("HIR_SR_DEBUG") &&
@@ -1142,6 +1340,7 @@ static void licm_strred(int header, int latch) {
                 h_kind[i] = HI_NOP;
                 h_src1[i] = -1;
                 h_src2[i] = -1;
+                if (knd == 3) sr_cache(sr_phi[r], other, nphi);
                 /* register as an IV for round 2 */
                 sr_phi[sr_niv] = nphi;
                 sr_init[sr_niv] = ninit;
