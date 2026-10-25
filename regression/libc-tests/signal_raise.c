@@ -32,7 +32,11 @@ int main(void) {
     void (*prev)(int);
     int r;
 
-    prev = signal(SIGINT, on_signal);
+    /* SIGALRM, not SIGINT: a shell runs a background job with SIGINT
+     * ignored, and the host leg then answered "something else" -- the
+     * gate script runs this in the background.  (SIGALRM is one both
+     * libraries' <signal.h> define.) */
+    prev = signal(SIGALRM, on_signal);
     printf("first signal(): previous was %s\n", prev == SIG_DFL ? "SIG_DFL" : "something else");
     prev = signal(SIGINT, other);
     printf("second: previous was %s\n", prev == on_signal ? "the first handler" : "something else");
