@@ -3,8 +3,8 @@
  * byte, an unsigned, a pointer (which keeps the diamond) -- arms that
  * are zero, negative or too wide for an immediate, a result narrowed
  * on assignment, a nested select, and a condition with a side effect
- * evaluated exactly once.  run-tests.sh checks that dbl has no
- * branch. */
+ * evaluated exactly once.  A single-bit test's mask is two shifts:
+ * run-tests.sh checks that dbl has no branch and no sne. */
 static int calls;
 
 unsigned char dbl(unsigned char x) {
@@ -21,6 +21,10 @@ unsigned char narrow(int c) { unsigned char v; v = c ? 300 : 2; return v; }
 short shorty(int c) { return c ? 40000 : -3; }
 int tick(int v) { calls = calls + 1; return v; }
 int once(int v) { return tick(v) ? 8 : 9; }
+int bit5(int x) { return (x & 32) ? 0x55 : 0; }
+int topbit(unsigned x) { return (x & 0x80000000u) ? 7 : 0; }
+int lowbit(int x) { return (x & 1) ? -1 : 0; }
+int twobits(int x) { return (x & 6) ? 9 : 0; }
 
 int main(void) {
     int z;
@@ -37,5 +41,9 @@ int main(void) {
     if (shorty(1) != -25536 || shorty(0) != -3) return 10;
     calls = 0;
     if (once(0) != 9 || once(3) != 8 || calls != 2) return 11;
+    if (bit5(32) != 0x55 || bit5(-1) != 0x55 || bit5(31) != 0 || bit5(64) != 0) return 12;
+    if (topbit(0x80000000u) != 7 || topbit(0x7fffffffu) != 0) return 13;
+    if (lowbit(3) != -1 || lowbit(-2) != 0) return 14;
+    if (twobits(2) != 9 || twobits(4) != 9 || twobits(9) != 0) return 15;
     return 0;
 }

@@ -634,10 +634,16 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
                 continue
             fi
         fi
-        # xtime's (x & 0x80) ? 0x1b : 0 is a mask, not a branch.
+        # xtime's (x & 0x80) ? 0x1b : 0 is a mask, not a branch, and the
+        # mask is two shifts, not a compare and a negate.
         if [[ "$tname" == "test_const_select" ]]; then
             if awk '/^dbl:/{p=1;next} p&&/^[A-Za-z_]/{exit} p' "$WORKDIR/${tname}.s" | grep -qE '^[[:space:]]+b[a-z]+[[:space:]]'; then
                 printf "  %-30s FAIL (dbl branches)\n" "$tname:"
+                FAIL=$((FAIL + 1))
+                continue
+            fi
+            if awk '/^dbl:/{p=1;next} p&&/^[A-Za-z_]/{exit} p' "$WORKDIR/${tname}.s" | grep -qE '^[[:space:]]+sne[[:space:]]'; then
+                printf "  %-30s FAIL (dbl builds its mask with sne)\n" "$tname:"
                 FAIL=$((FAIL + 1))
                 continue
             fi

@@ -1546,6 +1546,9 @@ static int ho_known_bits(void) {
     unsigned int m;
     unsigned int c;
     int x;
+    int y;
+    int z;
+    int b;
 
     i = 0;
     while (i < h_ninst) { ho_kb[i] = 0; i = i + 1; }
@@ -1566,6 +1569,7 @@ static int ho_known_bits(void) {
     }
 
     changed = 0;
+    ho_count_uses();
     i = 0;
     while (i < h_ninst) {
         if (h_kind[i] == HI_AND && h_src2[i] >= 0 &&
@@ -1590,6 +1594,48 @@ static int ho_known_bits(void) {
                 h_kind[i] = HI_COPY;
                 h_src1[i] = h_src1[x];
                 h_src2[i] = -1;
+                ho_stat_kb = ho_stat_kb + 1;
+                changed = 1;
+            }
+        } else if (h_kind[i] == HI_NEG && h_src1[i] >= 0 &&
+                   h_kind[h_src1[i]] == HI_SNE && ho_use[h_src1[i]] == 1 &&
+                   !ty_is_llong(h_ty[i])) {
+            /* -((x & (1 << b)) != 0), the AND used only here: (x << (31
+             * - b)) >> 31, arithmetic -- xtime's (x & 0x80) ? 0x1b : 0
+             * mask in two instructions, not three.  Without an AND to
+             * drop it is two for two, and the shifts only stir the
+             * allocator (three such sites cost sqlite3VdbeExec 200
+             * instructions of spill code). */
+            x = h_src1[i];
+            y = h_src1[x];
+            z = h_src2[x];
+            if (y >= 0 && z >= 0 && h_kind[y] == HI_ICONST) { b = y; y = z; z = b; }
+            m = ho_kb_of(y);
+            if (y >= 0 && z >= 0 && h_kind[z] == HI_ICONST && h_val[z] == 0 &&
+                m != 0 && (m & (m - 1)) == 0 && !ty_is_llong(h_ty[y])) {
+                b = 0;
+                while ((m >> b) != 1) b = b + 1;
+                if (h_kind[y] == HI_AND && ho_use[y] == 1 &&
+                    h_src1[y] >= 0 && h_src2[y] >= 0 &&
+                    h_kind[h_src2[y]] == HI_ICONST &&
+                    (unsigned int)h_val[h_src2[y]] == m)
+                    y = h_src1[y];
+                else
+                    y = -1;
+            } else {
+                y = -1;
+            }
+            if (y >= 0) {
+                z = hi_emit(HI_ICONST, TY_INT, -1, -1, 31 - b, NULL);
+                h_blk[z] = h_blk[x];
+                h_kind[x] = HI_SLL;
+                h_ty[x] = TY_INT;
+                h_src1[x] = y;
+                h_src2[x] = z;
+                z = hi_emit(HI_ICONST, TY_INT, -1, -1, 31, NULL);
+                h_blk[z] = h_blk[i];
+                h_kind[i] = HI_SRA;
+                h_src2[i] = z;
                 ho_stat_kb = ho_stat_kb + 1;
                 changed = 1;
             }
