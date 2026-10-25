@@ -103,6 +103,18 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-25 (`a36994f9`).  `cc.s32x`, `libc.s32a` and
+`include/math.h`; the tools rebuild identical.  Two fixes a program
+could meet: `<math.h>` now declares `fmax`, `fmin` and `fdim` (and the
+float forms), which the library had and the header had not -- a call
+went through the implicit `int` declaration and came back wrong
+(`a36994f9`, selfhost ISSUES-94); and a leaf function whose only frame
+slot was reached through address arithmetic no longer goes frameless,
+which left it saving no callee-saved register and writing below the
+caller's stack pointer (`d0ad933c`, selfhost ISSUES-93).  The compiler
+also drops a store that every path overwrites or that a non-escaping
+slot carries to the return (`4f871792`, memory model step 4).
+
 Rebuilt 2026-10-25 (`bff0412c`).  `cc.s32x` and `libc.s32a`; the
 tools and `include/` rebuild identical.  The compiler honours
 `volatile` (`23aa0fb3`): the parser had dropped the qualifier, so a
