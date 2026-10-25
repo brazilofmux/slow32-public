@@ -36,6 +36,7 @@ int ftruncate(int fd, int length);
 #define W_OK 2
 #define R_OK 4
 int chdir(const char *path);
+char *getcwd(char *buf, unsigned long size);   /* size_t */
 int fsync(int fd);
 int getpid(void);
 int getuid(void);

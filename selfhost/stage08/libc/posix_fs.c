@@ -1,5 +1,5 @@
 /* posix_fs.c -- filesystem calls over the MMIO ring: access, ftruncate,
- * stat/lstat, mkdir, chdir, fsync, utimes, opendir/readdir/closedir.
+ * stat/lstat, mkdir, chdir, getcwd, fsync, utimes, opendir/readdir/closedir.
  * Split from posix_more.c (GitHub issue 65).  Plain C: stage07 compiles
  * this libc too. */
 
@@ -22,6 +22,7 @@ void free(void *p);
 #define MMIO_OP_MKDIR       0x22
 #define MMIO_OP_LSTAT       0x24
 #define MMIO_OP_CHDIR       0x26
+#define MMIO_OP_GETCWD      0x27
 #define MMIO_OP_OPENDIR     0x28
 #define MMIO_OP_READDIR     0x29
 #define MMIO_OP_CLOSEDIR    0x2A
@@ -73,6 +74,20 @@ int mkdir(const char *path, unsigned int mode) {
 
 int chdir(const char *path) {
     return pm_path_request(MMIO_OP_CHDIR, path, 0) == 0 ? 0 : -1;
+}
+
+/* The host writes the NUL-terminated directory into the data buffer and
+ * answers with its length including the NUL, or fails (ERANGE when it
+ * does not fit in `size`) -- docs/SPEC.md, GETCWD. */
+char *getcwd(char *buf, unsigned int size) {
+    int n;
+    if (buf == 0 || size == 0) return (char *)0;
+    if (size > MMIO_DATA_CAPACITY) size = MMIO_DATA_CAPACITY;
+    n = s32_mmio_request(MMIO_OP_GETCWD, size, 0, 0);
+    if (n <= 0 || (unsigned int)n > size) return (char *)0;
+    memcpy(buf, MMIO_DATA, n);
+    buf[n - 1] = 0;
+    return buf;
 }
 
 int fsync(int fd) { (void)fd; return 0; }               /* the host writes through */
