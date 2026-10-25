@@ -1,7 +1,9 @@
 # The stage08 inliner
 
-Added 2026-08-31.  **Ships disabled** (`S12CC_INLINE=<n>` enables it);
-the reason is capacity, not correctness.
+Added 2026-08-31.  Shipped disabled until 2026-10-24; since then the
+default is **tiny bodies only** -- budget 12, no single-site moves --
+and `S12CC_INLINE=<n>` selects the full policy described here.  The
+reason the full policy stays opt-in is capacity, not correctness.
 
 ## Why it exists
 
@@ -90,8 +92,19 @@ predates it.
 ## Enabling
 
 ```bash
-S12CC_INLINE=20 cc program.c program.s   # node budget; 0 = off
+cc program.c program.s                   # default: budget 12, no moves
+S12CC_INLINE=20 cc program.c program.s   # node budget, moves at 400; 0 = off
 ```
+
+The default exists for statics no bigger than the call they replace.
+`ror64(uint64_t x, int c)` on SHA-512 was the case: twelve sites, ten
+calls per block, each a 64-bit argument and result in register pairs,
+so the size model (six nodes saved per call) refused it.  The model now
+charges two more per 64-bit argument or result.  Spliced with its
+constant count, the variable 64-bit shifts inside it fold to four
+instructions per rotate.  On the s12cc.c self-compile the default
+costs +0.2% output and ~5% compile time; budget 20 with moves was +17%
+and +35%, which is what kept the full policy off.
 
 Correctness is gated by `selfhost/stage08/tests/` plus a dedicated
 semantic torture test covering early return, loops and `break` in the

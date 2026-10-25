@@ -4664,17 +4664,25 @@ static void gen_program(Node *prog) {
         /* Inlining + dead-static DCE (GitHub issue 73).  S12CC_INLINE=<n>
          * splices statics up to that AST-node budget when the whole-TU
          * copy count is a size win; DCE then drops the out-of-line
-         * body.  Default 0: budget 20 is -0.52% / -1,294 insns on
-         * sqlite at c6e6a7ab.  sqlite/build-stage08.sh opts in.
-         * Default-on makes the gen2 self-compile of s12cc.c too slow. */
+         * body.  Budget 20 is -0.52% / -1,294 insns on sqlite at
+         * c6e6a7ab; sqlite/build-stage08.sh opts in.  That much by
+         * default made the gen2 self-compile of s12cc.c too slow. */
         char *e;
+        int moves_default;
         hl_prog = prog;
         hl_stat_inlined = 0;
         hl_stat_inl_sel = 0;
         hl_stat_inl_direct = 0;
         e = getenv("S12CC_INLINE");
-        hl_inline_max = e ? atoi(e) : 0;
-        /* Single-site statics get S12CC_INLINE_MOVE (default 400) and
+        hl_inline_max = e ? atoi(e) : 12;
+        /* Unset, the default is bodies no bigger than the call they
+         * replace (12 nodes: ror64 on uint64_t, whose ten calls per
+         * SHA-512 block cost 4x against clang) and no single-site
+         * moves: +0.2% output and ~5% time on the s12cc.c self-compile,
+         * where budget 20 with moves was +17% and +35%. */
+        moves_default = e ? 400 : 0;
+        /* Single-site statics get S12CC_INLINE_MOVE (default 400 when
+         * S12CC_INLINE is given, else 0) and
          * are refused into callers over S12CC_INLINE_HUGE nodes (default
          * 500).  Swept on sqlite at budget 20 (248,466 without):
          *   MOVE 200/no guard 250,328 (VdbeExec +5,156 -- the sink)
@@ -4682,7 +4690,7 @@ static void gen_program(Node *prog) {
          *   MOVE 400/2000 246,121   MOVE 400/500 245,840   MOVE 400/250 246,682
          *   MOVE 800/500 245,778    MOVE 1600/500 246,933 */
         e = getenv("S12CC_INLINE_MOVE");
-        hl_inl_move_max = e ? atoi(e) : 400;
+        hl_inl_move_max = e ? atoi(e) : moves_default;
         e = getenv("S12CC_INLINE_HUGE");
         hl_inl_huge = e ? atoi(e) : 500;
         hl_inl_prepare(prog);

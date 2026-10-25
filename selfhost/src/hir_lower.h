@@ -1061,6 +1061,52 @@ static int hl_ll_mul(int lv, int lv_hi, int rv, int rv_hi) {
     hl_hi = hi_emit(HI_ADD, TY_INT, r_hi, hi_emit(HI_MUL, TY_INT, lv_hi, rv, 0, NULL), 0, NULL);
     return r_lo;
 }
+/* A pair shift by a count known only at run time, without branches
+ * (was a __ashldi3/__lshrdi3/__ashrdi3 call).  m = n & 31 shifts within
+ * a word; bit 5 of n, spread to a mask, picks the word that crossed.
+ * The picks are and/or selects rather than xor tricks so that a count
+ * which turns constant later -- an inlined ror64(x, 14) -- folds back
+ * to the constant-shift sequence: a mask of 0 or -1 erases one arm.
+ * The bits crossing words move by 32 - m, which is 32 when m is 0;
+ * zm (0 then, else -1) drops that term rather than trusting what a
+ * shift by 32 gives. */
+static int hl_ll_shift_var(int op, int uns, int lv, int lv_hi, int n) {
+    int m;
+    int sh;
+    int zm;
+    int bm;
+    int nbm;
+    int t;
+    int u;
+    int s;
+    m = hi_emit(HI_AND, TY_INT, n, hi_emit(HI_ICONST, TY_INT, -1, -1, 31, NULL), 0, NULL);
+    sh = hi_emit(HI_SUB, TY_INT, hi_emit(HI_ICONST, TY_INT, -1, -1, 32, NULL), m, 0, NULL);
+    zm = hi_emit(HI_SNE, TY_INT, m, hi_emit(HI_ICONST, TY_INT, -1, -1, 0, NULL), 0, NULL);
+    zm = hi_emit(HI_NEG, TY_INT, zm, -1, 0, NULL);
+    bm = hi_emit(HI_SLL, TY_INT, n, hi_emit(HI_ICONST, TY_INT, -1, -1, 26, NULL), 0, NULL);
+    bm = hi_emit(HI_SRA, TY_INT, bm, hi_emit(HI_ICONST, TY_INT, -1, -1, 31, NULL), 0, NULL);
+    nbm = hi_emit(HI_BNOT, TY_INT, bm, -1, 0, NULL);
+    if (op == TK_LSHIFT) {
+        t = hi_emit(HI_SLL, TY_INT, lv, m, 0, NULL);
+        u = hi_emit(HI_AND, TY_INT, hi_emit(HI_SRL, TY_INT, lv, sh, 0, NULL), zm, 0, NULL);
+        u = hi_emit(HI_OR, TY_INT, hi_emit(HI_SLL, TY_INT, lv_hi, m, 0, NULL), u, 0, NULL);
+        hl_hi = hi_emit(HI_OR, TY_INT, hi_emit(HI_AND, TY_INT, u, nbm, 0, NULL),
+                        hi_emit(HI_AND, TY_INT, t, bm, 0, NULL), 0, NULL);
+        return hi_emit(HI_AND, TY_INT, t, nbm, 0, NULL);
+    }
+    t = hi_emit(uns ? HI_SRL : HI_SRA, TY_INT, lv_hi, m, 0, NULL);
+    u = hi_emit(HI_AND, TY_INT, hi_emit(HI_SLL, TY_INT, lv_hi, sh, 0, NULL), zm, 0, NULL);
+    u = hi_emit(HI_OR, TY_INT, hi_emit(HI_SRL, TY_INT, lv, m, 0, NULL), u, 0, NULL);
+    if (uns)
+        hl_hi = hi_emit(HI_AND, TY_INT, t, nbm, 0, NULL);
+    else {
+        s = hi_emit(HI_SRA, TY_INT, lv_hi, hi_emit(HI_ICONST, TY_INT, -1, -1, 31, NULL), 0, NULL);
+        hl_hi = hi_emit(HI_OR, TY_INT, hi_emit(HI_AND, TY_INT, t, nbm, 0, NULL),
+                        hi_emit(HI_AND, TY_INT, s, bm, 0, NULL), 0, NULL);
+    }
+    return hi_emit(HI_OR, TY_INT, hi_emit(HI_AND, TY_INT, u, nbm, 0, NULL),
+                   hi_emit(HI_AND, TY_INT, t, bm, 0, NULL), 0, NULL);
+}
 #ifndef S12CC_X64_HOST
 /* Pair llong binary op for the RMW paths (compound assign, ++/--),
  * mirroring the ND_BINOP pair lowering: result lo returned, hi left
@@ -1103,21 +1149,8 @@ static int hl_ll_op(int op, int uns, int lv, int lv_hi, int rv, int rv_hi) {
         hl_hi = hi_emit(HI_XOR, TY_INT, lv_hi, rv_hi, 0, NULL);
         return r_lo;
     }
-    if (op == TK_LSHIFT || op == TK_RSHIFT) {
-        cb = h_ncarg;
-        h_carg[h_ncarg] = lv; h_ncarg = h_ncarg + 1;
-        h_carg[h_ncarg] = lv_hi; h_ncarg = h_ncarg + 1;
-        h_carg[h_ncarg] = rv; h_ncarg = h_ncarg + 1;
-        if (op == TK_LSHIFT)
-            r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 3, "__ashldi3");
-        else if (uns)
-            r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 3, "__lshrdi3");
-        else
-            r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 3, "__ashrdi3");
-        h_cbase[r_lo] = cb;
-        hl_hi = hi_emit(HI_CALLHI, TY_INT, r_lo, -1, 0, NULL);
-        return r_lo;
-    }
+    if (op == TK_LSHIFT || op == TK_RSHIFT)
+        return hl_ll_shift_var(op, uns, lv, lv_hi, rv);
     if (op == TK_STAR) return hl_ll_mul(lv, lv_hi, rv, rv_hi);
     /* div / rem via libcalls */
     cb = h_ncarg;
@@ -1265,8 +1298,20 @@ static int hl_inl_sel_one(Node *fn, int k) {
     sz = hl_inl_size(fn->body, lim);
     if (sz > lim) return 0;
     if (ncalls > 1) {
+        int per;
         extra = (ncalls - 1) * sz;
-        saved = 8 + ncalls * 6;
+        /* A 64-bit argument or result travels as a register pair, so
+         * the call site the splice removes is that much bigger: ror64
+         * on uint64_t was refused at 12 sites and every SHA-512 round
+         * paid for twelve calls. */
+        per = 6;
+        if (ty_is_llong(fn->ty) || ty_is_double(fn->ty)) per = per + 2;
+        pp = fn->args;
+        while (pp) {
+            if (ty_is_llong(pp->ty) || ty_is_double(pp->ty)) per = per + 2;
+            pp = pp->next;
+        }
+        saved = 8 + ncalls * per;
         if (extra >= saved) return 0;
     }
     return 1;
@@ -1507,7 +1552,11 @@ static int hl_inline_call(Node *call, Node *fn) {
             slot = hl_get_alloca_id(hl_map_off(pp->offset), pp->ty, pp->slot_id);
             hi_emit(HI_STORE, pp->ty, slot, av[i], 0, NULL);
 #else
-            slot = hl_get_alloca_id(hl_map_off(pp->offset), TY_INT, pp->slot_id);
+            /* 8-byte typed, like a local of the type, so that
+             * ssa_split_pair_allocas can take the word pair apart and
+             * mem2reg promote it; a TY_INT slot kept every pair in
+             * memory, stored and never read again. */
+            slot = hl_get_alloca_id(hl_map_off(pp->offset), pp->ty, pp->slot_id);
             hi_emit(HI_STORE, TY_INT, slot, av[i], 0, NULL);
             {
                 int a4;
@@ -2301,7 +2350,7 @@ static int hl_expr(Node *n) {
                 return r_lo;
             }
             if (n->op == TK_LSHIFT) {
-                /* Inline constant shifts, call helper for variable shifts */
+                /* Constant shifts directly; variable ones via hl_ll_shift_var */
                 if (n->rhs->kind == ND_NUM && n->rhs->val >= 0 && n->rhs->val <= 63) {
                     int sn;
                     int sc;
@@ -2329,17 +2378,10 @@ static int hl_expr(Node *n) {
                     hl_hi = hi_emit(HI_SLL, TY_INT, lv, sc, 0, NULL);
                     return hi_emit(HI_ICONST, TY_INT, -1, -1, 0, NULL);
                 }
-                carg_base2 = h_ncarg;
-                h_carg[h_ncarg] = lv;      h_ncarg = h_ncarg + 1;
-                h_carg[h_ncarg] = lv_hi;   h_ncarg = h_ncarg + 1;
-                h_carg[h_ncarg] = rv;      h_ncarg = h_ncarg + 1;
-                r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 3, "__ashldi3");
-                h_cbase[r_lo] = carg_base2;
-                hl_hi = hi_emit(HI_CALLHI, TY_INT, r_lo, -1, 0, NULL);
-                return r_lo;
+                return hl_ll_shift_var(TK_LSHIFT, 0, lv, lv_hi, rv);
             }
             if (n->op == TK_RSHIFT) {
-                /* Inline constant shifts, call helper for variable shifts */
+                /* Constant shifts directly; variable ones via hl_ll_shift_var */
                 if (n->rhs->kind == ND_NUM && n->rhs->val >= 0 && n->rhs->val <= 63) {
                     int sn;
                     int sc;
@@ -2383,18 +2425,8 @@ static int hl_expr(Node *n) {
                     }
                     return r_lo;
                 }
-                carg_base2 = h_ncarg;
-                h_carg[h_ncarg] = lv;      h_ncarg = h_ncarg + 1;
-                h_carg[h_ncarg] = lv_hi;   h_ncarg = h_ncarg + 1;
-                h_carg[h_ncarg] = rv;      h_ncarg = h_ncarg + 1;
-                if (n->ty & TY_UNSIGNED) {
-                    r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 3, "__lshrdi3");
-                } else {
-                    r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 3, "__ashrdi3");
-                }
-                h_cbase[r_lo] = carg_base2;
-                hl_hi = hi_emit(HI_CALLHI, TY_INT, r_lo, -1, 0, NULL);
-                return r_lo;
+                return hl_ll_shift_var(TK_RSHIFT, (n->ty & TY_UNSIGNED) != 0,
+                                       lv, lv_hi, rv);
             }
             /* Logical && || handled elsewhere */
         }
@@ -4020,7 +4052,8 @@ static void hl_func(Node *fn) {
                 /* Both llong and double arrive as a lo/hi word pair. */
                 param_inst = hl_pp_inst[phys_idx];
                 param_hi = hl_pp_inst[phys_idx + 1];
-                param_alloca = hl_get_alloca_id(pp->offset, TY_INT, pp->slot_id);
+                /* 8-byte typed for ssa_split_pair_allocas (hl_inline_call) */
+                param_alloca = hl_get_alloca_id(pp->offset, pp->ty, pp->slot_id);
                 hi_emit(HI_STORE, TY_INT, param_alloca, param_inst, 0, NULL);
                 a4 = hi_emit(HI_ADDI, TY_INT, param_alloca, -1, 4, NULL);
                 hi_emit(HI_STORE, TY_INT, a4, param_hi, 0, NULL);
