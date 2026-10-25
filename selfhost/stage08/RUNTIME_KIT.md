@@ -103,6 +103,10 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Fixed 2026-10-24 (`302a417e`).  In `s32-ld.s32x` only: an object's
+local symbols stay its own instead of filling the linker's 4,096-entry
+global table, so a unit with thousands of string literals links.
+
 Rebuilt 2026-10-21 (tree at `59a6c7e2`).  The clang-built apps only;
 `cc.s32x`, the tools, `crt0.s32o`, every `libc.s32a` member and
 `include/` rebuild byte-identical.  The apps carry the runtime's
