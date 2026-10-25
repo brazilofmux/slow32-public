@@ -1041,6 +1041,113 @@ static int ho_dse_covers(int i, int j) {
     return oj <= oi && oj + al_acc_size(h_ty[j]) >= oi + al_acc_size(h_ty[i]);
 }
 
+/* A store with nothing after it in its block (ho_dse_pass): is it dead
+ * on every path from the block's end?  Walk the successors; in each
+ * block scan from its start.  A load that may read the bytes, or a
+ * volatile access, keeps the store; so does a call, unless the store
+ * is to a frame slot whose address never escaped, which no callee can
+ * reach.  A store that covers the bytes ends the path dead; a return
+ * ends it dead for a frame slot (the frame is gone) and live for
+ * anything else.  A block reached twice adds nothing.  More than
+ * HO_DSE_WALK blocks: keep the store (docs/plans/memory-model.md,
+ * step 4). */
+#define HO_DSE_WALK 48
+static int ho_dse_seen[HO_DSE_WALK];
+static int ho_dse_stack[HO_DSE_WALK];
+
+static int ho_dse_dead_after(int st) {
+    int addr;
+    int sz;
+    int kind;
+    int base;
+    int off;
+    int frame;
+    int nseen;
+    int sp;
+    int b;
+    int j;
+    int k;
+    int si;
+    int t;
+    int q;
+    int live;
+    int startb;
+    int from;
+    int upto;
+    addr = h_src1[st];
+    sz = al_acc_size(h_ty[st]);
+    kind = al_resolve(addr, &base, &off);
+    if (kind == AL_UNKNOWN) return 0;
+    frame = (kind == AL_FRAME && base >= 0 && base < al_n && !al_escaped[base]);
+    nseen = 0;
+    sp = 0;
+    /* The store's own block first, from the store on: its terminator
+     * decides what a return means (a global or a pointer's bytes are
+     * observable after it), and the walk starts only past a block that
+     * fell off its end.  That block is not marked seen by this partial
+     * scan: a back edge may bring the walk to its start, and the loads
+     * above the store are reads on that path (log's loop kept `term` in
+     * a slot, loaded at the top and stored at the bottom of one block;
+     * the first version called the store dead). */
+    startb = h_blk[st];
+    if (startb < 0 || startb >= bb_nblk) return 0;
+    ho_dse_stack[0] = startb;
+    sp = 1;
+    from = st + 1;
+    while (sp > 0) {
+        sp = sp - 1;
+        b = ho_dse_stack[sp];
+        if (b < 0 || b >= bb_nblk) return 0;
+        q = 0;
+        while (q < nseen && ho_dse_seen[q] != b) q = q + 1;
+        if (q < nseen) continue;
+        if (from < 0) {
+            /* a later visit: the whole block, and only up to the store
+             * when it is the store's own */
+            if (nseen >= HO_DSE_WALK) return 0;
+            ho_dse_seen[nseen] = b;
+            nseen = nseen + 1;
+            j = bb_start[b];
+            upto = (b == startb) ? st : bb_end[b];
+        } else {
+            j = from;
+            upto = bb_end[b];
+            from = -1;
+        }
+        live = 0;      /* 0: fell off the block's end; 1: a read; 2: covered */
+        while (j < upto && live == 0) {
+            k = h_kind[j];
+            if (k == HI_NOP) { j = j + 1; continue; }
+            if ((k == HI_LOAD || k == HI_STORE) && h_vol[j]) live = 1;
+            else if (k == HI_LOAD) {
+                if (al_may_alias(addr, sz, h_src1[j], al_acc_size(h_ty[j]), 1)) live = 1;
+            } else if (k == HI_CALL || k == HI_CALLP || k == HI_A64_DBT_TRAMPOLINE ||
+                       hi_is_a64_cache_asm(k) || k == HI_X64_DBT_TRAMPOLINE ||
+                       k == HI_X64_RDTSC) {
+                if (!frame) live = 1;
+            } else if (k == HI_STORE) {
+                if (ho_dse_covers(st, j)) live = 2;
+            } else if (k == HI_RET) {
+                live = frame ? 2 : 1;
+            }
+            j = j + 1;
+        }
+        if (live == 1) return 0;
+        if (live == 2) continue;
+        if (b == startb && upto == st) return 0;   /* reached the store again: a loop keeps it */
+        if (ssa_nsucc[b] == 0) return 0;   /* fell off a block with no successor: keep it */
+        si = 0;
+        while (si < ssa_nsucc[b]) {
+            t = ssa_succ[ssa_soff[b] + si];
+            if (sp >= HO_DSE_WALK) return 0;
+            ho_dse_stack[sp] = t;
+            sp = sp + 1;
+            si = si + 1;
+        }
+    }
+    return 1;
+}
+
 static int ho_dse_pass(void) {
     int changed;
     int i;
@@ -1052,6 +1159,8 @@ static int ho_dse_pass(void) {
     int jk;
 
     changed = 0;
+    if (bb_nblk < 1) return 0;
+    al_escapes();
     i = 0;
     while (i < h_ninst) {
         if (h_kind[i] != HI_STORE || h_vol[i]) { i = i + 1; continue; }
@@ -1089,6 +1198,15 @@ static int ho_dse_pass(void) {
                 alive = 0;
             }
             j = j + 1;
+        }
+        /* Nothing in its block reads or covers it: is every path from
+         * the block's end dead for it too? */
+        if (alive && j >= end && ho_dse_dead_after(i)) {
+            h_kind[i] = HI_NOP;
+            h_src1[i] = -1;
+            h_src2[i] = -1;
+            changed = 1;
+            ho_stat_dse = ho_stat_dse + 1;
         }
         i = i + 1;
     }

@@ -947,6 +947,14 @@ at the commit after it (the one that keys forwarding by location),
 first step would be a per-exit-site count of dispatcher entries, to
 see which block's exit stopped chaining.
 
+The next compiler change (step 4 of the same plan: 21 instructions
+fewer in three cold functions) took the same workload back to
+112,736,085 lookups and 12.7-12.9 s, with the sqlite3VdbeExec block in
+question unchanged.  So whatever stops a hot exit from chaining is
+decided by something that moves with unrelated code -- a hash, an
+order of translation, a threshold -- and bisecting it needs the
+per-exit count, not more A/B runs.
+
 What this means for measuring the compiler: x86-64 wall time is not
 the judge when the guest work is identical.  The compiler's rule
 (docs/plans/memory-model.md) now reads instruction counts, frame

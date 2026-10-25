@@ -167,6 +167,40 @@ static void al_roots(void) {
     }
 }
 
+/* Has a root's address left the function?  A use of the root, or of a
+ * step off it, that is neither another step nor the address of a LOAD
+ * or STORE -- stored as a value, passed to a call, merged by a phi,
+ * computed with -- lets a callee or a later load through a pointer
+ * reach the slot.  A slot that never escapes is invisible to calls and
+ * to loads through pointers, and dead at the function's return
+ * (docs/plans/memory-model.md, step 4).  Computed with al_roots. */
+static char al_escaped[HIR_MAX_INST];
+
+static void al_escapes(void) {
+    int i;
+    int n;
+    int r;
+    int v;
+    al_roots();
+    i = 0;
+    while (i < al_n) { al_escaped[i] = 0; i = i + 1; }
+    i = 0;
+    while (i < al_n) {
+        if (h_kind[i] != HI_NOP && !(al_root[i] >= 0 && h_kind[i] != HI_ALLOCA)) {
+            n = 0;
+            while (n < hi_nrefs(i)) {
+                v = hi_ref(i, n);
+                if (v >= 0 && v < al_n && al_root[v] >= 0 && !hi_ref_is_addr(i, n)) {
+                    r = al_root[v];
+                    al_escaped[r] = 1;
+                }
+                n = n + 1;
+            }
+        }
+        i = i + 1;
+    }
+}
+
 /* Is i a step off a root rather than the root itself? */
 static int al_is_step(int i) {
     return i >= 0 && i < al_n && al_root[i] >= 0 && h_kind[i] != HI_ALLOCA;

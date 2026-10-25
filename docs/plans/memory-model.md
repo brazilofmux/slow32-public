@@ -73,7 +73,9 @@ crypto benchmarks must assemble to the same bytes before and after.
 
 4. **Stores dead across blocks.**  A store is dead when every path from
    it to the function's exit overwrites its bytes before any may-read.
-   Today a store is dead only within its block.
+   Today a store is dead only within its block.  Done: `al_escapes`
+   (a frame slot whose address never left is invisible to calls and
+   dead at return), and `ho_dse_dead_after` walks the successors.
 
 5. **Then, measured on both DBTs:** whether forwarding through pointer
    offsets (the half of 7c16eb9f that was undone) pays once the
@@ -161,3 +163,24 @@ crypto benchmarks must assemble to the same bytes before and after.
   arm64 1.57-1.60 -> 1.56-1.58 s; x86-64 12.58-12.82 -> 13.67-13.87 s
   from 15% more dispatcher entries -- the DBT's (ISSUES 28 there), and
   the origin of the rule above.
+- 2026-10-25: step 4.  Stores dead across blocks: `al_escapes` in
+  hir_alias.h, `ho_dse_dead_after` in hir_opt.h, bounded to 48 blocks.
+  The first version judged a block with no successor dead without
+  reading its terminator, so every store before a `return` went -- the
+  kit libc lost `srand`'s seed, `atexit`'s handler, all of `s_init`;
+  the smoke test caught it, and the libc comparison showed the shape
+  at once.  Fixed, the libc is byte-identical, the benchmarks too;
+  SQLite 281,594 -> 281,573 static in three functions (varint buffers),
+  6,834,216,032 -> 6,832,736,152 executed, arm64 unchanged; x86-64
+  13.7 -> 12.7-12.9 s as the dispatcher entries fell back to 112.7 M
+  (ISSUES 28: the anomaly moves with unrelated code shape).  A second
+  wrong version followed: the walk marked the store's own block seen
+  after scanning only below the store, so a loop's back edge into it
+  never saw the loads above -- `log`'s `term` slot, loaded at the top
+  and stored at the bottom of one block, lost its store; the libc
+  differential's math_decl caught it.  And the pass exposed selfhost
+  ISSUES-93: a slot reached only through address steps that BURG folds
+  looked unused to the frame classifier, and the leaf went frameless.
+  Both fixed.  What this pass finds in real code is small -- the scalar replacement and
+  mem2reg take most slots first -- but DSE now reads the CFG and the
+  escape set through the facility, which is what step 5 will want.
