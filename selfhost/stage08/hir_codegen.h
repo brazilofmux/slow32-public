@@ -4755,6 +4755,12 @@ static void gen_program(Node *prog) {
         hl_inl_move_max = e ? atoi(e) : moves_default;
         e = getenv("S12CC_INLINE_HUGE");
         hl_inl_huge = e ? atoi(e) : 500;
+        /* Bodies of S12CC_INLINE_TINY nodes or fewer (default 14)
+         * go into every site, outside the size model: AES's xtime,
+         * nine sites and just over 12 nodes, was a call in each MixColumns
+         * step.  SQLite: +2.2% static, -0.9% dynamic. */
+        e = getenv("S12CC_INLINE_TINY");
+        hl_inl_tiny = e ? atoi(e) : 14;
         hl_inl_prepare(prog);
     }
 

@@ -164,6 +164,10 @@ static int   hl_inline_max;      /* node budget; 0 disables inlining */
  * splice there only grows a frame that is already the worst one. */
 static int   hl_inl_move_max;    /* budget for ncalls==1 statics */
 static int   hl_inl_huge;        /* caller size above which medium bodies are refused */
+/* A body this small goes into every site whatever the call count: the
+ * splice is about the size of the call it replaces, and the call
+ * clobbers every caller-saved register besides. */
+static int   hl_inl_tiny;
 static int   hl_inl_caller_sz;   /* current function's body size, capped at hl_inl_huge+1 */
 static int   hl_inl_depth;
 static Node *hl_inl_stack[HL_INL_MAX_DEPTH];
@@ -1294,10 +1298,11 @@ static int hl_inl_sel_one(Node *fn, int k) {
     if (ncalls < 1) return 0;
     if (hl_inl_has_labels(fn->body)) return 0;
     lim = hl_inline_max;
+    if (hl_inl_tiny > lim) lim = hl_inl_tiny;
     if (ncalls == 1 && hl_inl_move_max > lim) lim = hl_inl_move_max;
     sz = hl_inl_size(fn->body, lim);
     if (sz > lim) return 0;
-    if (ncalls > 1) {
+    if (ncalls > 1 && sz > hl_inl_tiny) {
         int per;
         extra = (ncalls - 1) * sz;
         /* A 64-bit argument or result travels as a register pair, so
@@ -1394,12 +1399,14 @@ static Node *hl_inl_candidate(Node *call) {
         if (na != np) return NULL;
     }
     lim = hl_inline_max;
+    if (hl_inl_tiny > lim) lim = hl_inl_tiny;
     if (hl_inl_move_max > lim) lim = hl_inl_move_max;
     sz = hl_inl_size(fn->body, lim);
     /* A medium body (over the ordinary budget) does not go into a huge
      * caller; the out-of-line copy stays for that site (DCE keeps any
      * body still referenced). */
-    if (sz > hl_inline_max && hl_inl_caller_sz > hl_inl_huge) return NULL;
+    if (sz > hl_inline_max && sz > hl_inl_tiny &&
+        hl_inl_caller_sz > hl_inl_huge) return NULL;
     /* Degrade gracefully rather than failing the compile.  The HIR
      * headroom is proportional to what this splice will emit --
      * a flat margin let s12cc.c's biggest functions run the arrays
@@ -4107,10 +4114,13 @@ static void hl_func(Node *fn) {
                 param_alloca = hl_get_alloca_id(pp->offset, pp->ty, pp->slot_id);
                 hi_emit(HI_STORE, pp->ty, param_alloca, param_inst, 0, NULL);
 #else
+                /* Typed as declared: a char or short slot typed TY_INT
+                 * made every byte LOAD of the parameter a pun, and
+                 * mem2reg left it in memory (stw then ldbu at entry). */
                 param_inst = hl_pp_inst[phys_idx];
-                param_alloca = hl_get_alloca_id(pp->offset, TY_INT, pp->slot_id);
+                param_alloca = hl_get_alloca_id(pp->offset, pp->ty, pp->slot_id);
                 param_inst = hl_narrow(pp->ty, param_inst);   /* a u8 arrives as the caller left it */
-                hi_emit(HI_STORE, TY_INT, param_alloca, param_inst, 0, NULL);
+                hi_emit(HI_STORE, pp->ty, param_alloca, param_inst, 0, NULL);
 #endif
                 phys_idx = phys_idx + 1;
             }

@@ -1458,6 +1458,148 @@ static int ho_promote_single_store_alloca(void) {
  * ---------------------------------------------------------------- */
 
 /* Cumulative count of HIR instructions eliminated across all functions */
+#ifndef S12CC_X64_HOST
+/* ----------------------------------------------------------------
+ * Known bits: for each 32-bit integer value, a mask of the bits that
+ * may be set.  An AND whose constant keeps every such bit is a COPY,
+ * and so is the SLL/SRA sign-extension pair on a value whose sign bit
+ * at that width is known clear.  Every unsigned char the source reads
+ * and every byte it computes was narrowed again at each assignment,
+ * cast and store: `andi rX, rX, 255` after an `ldbu`, twice after an
+ * xor of two bytes -- an AES round was a third masks.
+ *
+ * Least fixed point from all-zero: the transfer functions are
+ * monotone, so phis around a loop settle on the bits that can really
+ * arrive.  SLOW-32 only: the crosses carry 64-bit values in the same
+ * instruction kinds.
+ * ---------------------------------------------------------------- */
+
+static unsigned int ho_kb[HIR_MAX_INST];
+static int ho_stat_kb;
+
+static unsigned int ho_kb_of(int v) {
+    if (v < 0 || v >= h_ninst) return 0xFFFFFFFFu;
+    return ho_kb[v];
+}
+
+static unsigned int ho_kb_eval(int i) {
+    int k;
+    int ty;
+    int c;
+    int j;
+    int hb;
+    unsigned int a;
+    unsigned int b;
+
+    k = h_kind[i];
+    ty = h_ty[i];
+    if (ty_is_fp(ty) || ty_is_struct(ty) || ty_is_llong(ty)) return 0xFFFFFFFFu;
+    if (k == HI_ICONST) return (unsigned int)h_val[i];
+    if (k == HI_LOAD) {
+        if ((ty & TY_PTR_MASK) == 0 && (ty & TY_UNSIGNED)) {
+            if ((ty & TY_BASE_MASK) == TY_CHAR) return 0xFFu;
+            if ((ty & TY_BASE_MASK) == TY_SHORT) return 0xFFFFu;
+        }
+        return 0xFFFFFFFFu;
+    }
+    if (k == HI_COPY) return ho_kb_of(h_src1[i]);
+    if (k == HI_PHI) {
+        if (h_pbase[i] < 0) return 0xFFFFFFFFu;
+        a = 0;
+        j = 0;
+        while (j < h_pcnt[i]) {
+            a = a | ho_kb_of(h_pval[h_pbase[i] + j]);
+            j = j + 1;
+        }
+        return a;
+    }
+    if (k == HI_NOT || (k >= HI_SEQ && k <= HI_SGEU)) return 1;
+    if (k == HI_AND || k == HI_OR || k == HI_XOR || k == HI_ADD) {
+        a = ho_kb_of(h_src1[i]);
+        b = ho_kb_of(h_src2[i]);
+        if (k == HI_AND) return a & b;
+        if (k != HI_ADD) return a | b;
+        /* Two values below 2**(hb+1) sum below 2**(hb+2). */
+        a = a | b;
+        if (a & 0xC0000000u) return 0xFFFFFFFFu;
+        if (a == 0) return 0;
+        hb = 0;
+        while ((a >> hb) > 1) hb = hb + 1;
+        return (1u << (hb + 2)) - 1;
+    }
+    if (k == HI_SLL || k == HI_SRL || k == HI_SRA) {
+        if (h_src2[i] < 0 || h_kind[h_src2[i]] != HI_ICONST) return 0xFFFFFFFFu;
+        c = h_val[h_src2[i]] & 31;
+        a = ho_kb_of(h_src1[i]);
+        if (k == HI_SLL) return a << c;
+        if (k == HI_SRL) return a >> c;
+        return (unsigned int)((int)a >> c);
+    }
+    return 0xFFFFFFFFu;
+}
+
+static int ho_known_bits(void) {
+    int i;
+    int pass;
+    int moved;
+    int changed;
+    unsigned int m;
+    unsigned int c;
+    int x;
+
+    i = 0;
+    while (i < h_ninst) { ho_kb[i] = 0; i = i + 1; }
+    pass = 0;
+    moved = 1;
+    while (moved) {
+        if (pass >= 64) return 0;   /* not settled: transform nothing */
+        moved = 0;
+        i = 0;
+        while (i < h_ninst) {
+            if (h_kind[i] != HI_NOP) {
+                m = ho_kb_eval(i) | ho_kb[i];
+                if (m != ho_kb[i]) { ho_kb[i] = m; moved = 1; }
+            }
+            i = i + 1;
+        }
+        pass = pass + 1;
+    }
+
+    changed = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_AND && h_src2[i] >= 0 &&
+            h_kind[h_src2[i]] == HI_ICONST && h_src1[i] >= 0 &&
+            !ty_is_llong(h_ty[i])) {
+            c = (unsigned int)h_val[h_src2[i]];
+            if ((ho_kb_of(h_src1[i]) & ~c) == 0) {
+                h_kind[i] = HI_COPY;
+                h_src2[i] = -1;
+                ho_stat_kb = ho_stat_kb + 1;
+                changed = 1;
+            }
+        } else if (h_kind[i] == HI_SRA && h_src2[i] >= 0 &&
+                   h_kind[h_src2[i]] == HI_ICONST && h_src1[i] >= 0 &&
+                   h_kind[h_src1[i]] == HI_SLL && !ty_is_llong(h_ty[i])) {
+            x = h_src1[i];
+            c = (unsigned int)(h_val[h_src2[i]] & 31);
+            if (c > 0 && h_src2[x] >= 0 && h_kind[h_src2[x]] == HI_ICONST &&
+                (unsigned int)(h_val[h_src2[x]] & 31) == c && h_src1[x] >= 0 &&
+                !ty_is_llong(h_ty[x]) &&
+                (ho_kb_of(h_src1[x]) >> (31 - c)) == 0) {
+                h_kind[i] = HI_COPY;
+                h_src1[i] = h_src1[x];
+                h_src2[i] = -1;
+                ho_stat_kb = ho_stat_kb + 1;
+                changed = 1;
+            }
+        }
+        i = i + 1;
+    }
+    return changed;
+}
+#endif
+
 static int ho_stat_elim;
 
 /* -fopt=MASK (s12cc.c): which passes run; a bisection aid.  Bits: 1 copy
@@ -1494,6 +1636,9 @@ static void hir_opt(void) {
         if (ho_mask & 64)  changed = changed | ho_dse_pass();
         if (ho_mask & 128) changed = changed | ho_mem_fwd();
         if (ho_mask & 256) changed = changed | ho_promote_single_store_alloca();
+#ifndef S12CC_X64_HOST
+        if (ho_mask & 1024) changed = changed | ho_known_bits();
+#endif
         if (ho_mask & 512) changed = changed | ho_dce();
         iter = iter + 1;
     }
