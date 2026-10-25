@@ -103,6 +103,18 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-25 (`2298875d`).  `cc.s32x` and `libc.s32a`; the
+tools and `include/` rebuild identical.  The compiler keeps a small
+local array (up to 128 bytes) in registers once its indexes are
+constant, and copies one with a small `memcpy` element by element
+(`ffef9ff9`); gives a strided loop one pointer for every constant
+offset instead of one per offset; builds a single-bit test's select
+mask with two shifts (`d48e18ac`); and puts both ends of a phi copy the
+coalescer gave up on in one register where that is free and closes no
+copy cycle (`2298875d`).  The AES-256 benchmark: 1.7x clang's executed
+instructions down to 1.14x, level with clang under the DBT; an RFC
+7693 BLAKE2b, 2.7x down to 1.9x.
+
 Rebuilt 2026-10-25 (`3eeace11`).  `cc.s32x` and `libc.s32a`; the
 tools and `include/` rebuild identical.  The compiler builds a global
 table's address once before a loop that indexes it at run time,
