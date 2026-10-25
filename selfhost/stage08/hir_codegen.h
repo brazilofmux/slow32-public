@@ -4798,17 +4798,19 @@ static void gen_program(Node *prog) {
         hl_inl_move_max = e ? atoi(e) : moves_default;
         e = getenv("S12CC_INLINE_HUGE");
         hl_inl_huge = e ? atoi(e) : 500;
-        /* Bodies of S12CC_INLINE_TINY nodes or fewer (default 14)
-         * go into every site, outside the size model: AES's xtime,
-         * nine sites and just over 12 nodes, was a call in each MixColumns
-         * step.  SQLite: +2.2% static, -0.9% dynamic. */
+        /* Bodies of S12CC_INLINE_TINY nodes or fewer (default 16;
+         * casts count 0) go into every site, outside the size model:
+         * AES's xtime, nine sites and just over 12 nodes, was a call in
+         * each MixColumns step; BlaMka's multiply-add, 64 sites in
+         * Argon2's fill loop, at 16.  SQLite: +2.2% static, -0.9%
+         * dynamic at 14; 16 adds +0.2% and saves another 0.3%. */
         /* Counted loops fully unrolled into S12CC_UNROLL nodes
          * (default 512; 0 = off), hl_unroll_trips.  AES KDF:
          * 2.96G -> 1.41G executed; SQLite +0.4% static, -0.25%. */
         e = getenv("S12CC_UNROLL");
         hl_unroll_budget = e ? atoi(e) : 512;
         e = getenv("S12CC_INLINE_TINY");
-        hl_inl_tiny = e ? atoi(e) : 14;
+        hl_inl_tiny = e ? atoi(e) : 16;
         hl_inl_prepare(prog);
     }
 

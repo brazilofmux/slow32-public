@@ -107,13 +107,17 @@ costs +0.2% output and ~5% compile time; budget 20 with moves was +17%
 and +35%, which is what kept the full policy off.
 
 Under either policy, a body of `S12CC_INLINE_TINY` nodes or fewer
-(default 14; 0 turns the rule off) is spliced at every site and the
-size model is not consulted: such a body is about the size of the call
-it replaces, and the call also clobbers every caller-saved register.
-AES's `xtime(unsigned char)`, nine sites and just over 12 nodes, was
-refused by the model and called eight times per MixColumns column.
-On SQLite (budget 20) the rule costs +2.2% static and saves 0.9% of
-executed instructions.
+(default 16; 0 turns the rule off; a cast counts as no node, being free
+or one instruction) is spliced at every site and the size model is not
+consulted: such a body is about the size of the call it replaces, and
+the call also clobbers every caller-saved register.  AES's
+`xtime(unsigned char)`, nine sites and just over 12 nodes, was refused
+by the model and called eight times per MixColumns column; Argon2's
+BlaMka multiply-add, `x + y + 2 * (uint64_t)(uint32_t)x *
+(uint32_t)y`, was a call at each of 64 sites in the fill loop until
+casts stopped counting and the limit went from 14 to 16 (an RFC 9106
+fill benchmark: 134M -> 94M executed).  On SQLite (budget 20) the rule
+costs +2.4% static and saves 1.2% of executed instructions.
 
 Correctness is gated by `selfhost/stage08/tests/` plus a dedicated
 semantic torture test covering early return, loops and `break` in the

@@ -1183,7 +1183,11 @@ static int hl_ll_op(int op, int uns, int lv, int lv_hi, int rv, int rv_hi) {
 static int hl_inl_size(Node *n, int limit) {
     int c;
     if (!n) return 0;
-    c = 1;
+    /* A cast is free or one instruction: BlaMka's x + y + 2 *
+     * (uint64_t)(uint32_t)x * (uint32_t)y was five casts over the
+     * tiny-inline limit, and its 64 call sites in Argon2's fill loop
+     * cost a third of the run. */
+    c = (n->kind == ND_CAST) ? 0 : 1;
     if (c > limit) return c;
     c = c + hl_inl_size(n->lhs, limit - c);
     if (c > limit) return c;
