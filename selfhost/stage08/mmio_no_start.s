@@ -747,14 +747,29 @@ memset:
     or   r4, r4, r7
     slli r7, r4, 16
     or   r4, r4, r7          # r4 = the byte, four times
-    addi r8, r0, 4
+    # Loops test at the bottom, counting r5 down past zero, so each
+    # pass is one branch: the top-tested word loop with a jump back
+    # was a fifth of every memset's instructions.
+    addi r5, r5, -16
+    blt  r5, r0, .Lmemset_lt16
+.Lmemset_16:
+    stw  r6, r4, 0
+    stw  r6, r4, 4
+    stw  r6, r4, 8
+    stw  r6, r4, 12
+    addi r6, r6, 16
+    addi r5, r5, -16
+    bge  r5, r0, .Lmemset_16
+.Lmemset_lt16:
+    addi r5, r5, 12          # remaining - 4
+    blt  r5, r0, .Lmemset_lt4
 .Lmemset_w:
-    blt  r5, r8, .Lmemset_tail
     stw  r6, r4, 0
     addi r6, r6, 4
     addi r5, r5, -4
-    jal  r0, .Lmemset_w
-.Lmemset_tail:
+    bge  r5, r0, .Lmemset_w
+.Lmemset_lt4:
+    addi r5, r5, 4           # remaining 0..3
     beq  r5, r0, .Lmemset_done
 .Lmemset_b:
     stb  r6, r4, 0
@@ -774,16 +789,34 @@ memcpy:
     add  r1, r3, r0          # return value: original dst
     add  r6, r3, r0          # dst cursor
     add  r7, r4, r0          # src cursor
-    addi r8, r0, 4
+    # Bottom-tested, sixteen bytes a pass, as memset.
+    addi r5, r5, -16
+    blt  r5, r0, .Lmemcpy_lt16
+.Lmemcpy_16:
+    ldw  r2, r7, 0
+    ldw  r8, r7, 4
+    ldw  r9, r7, 8
+    ldw  r10, r7, 12
+    stw  r6, r2, 0
+    stw  r6, r8, 4
+    stw  r6, r9, 8
+    stw  r6, r10, 12
+    addi r7, r7, 16
+    addi r6, r6, 16
+    addi r5, r5, -16
+    bge  r5, r0, .Lmemcpy_16
+.Lmemcpy_lt16:
+    addi r5, r5, 12          # remaining - 4
+    blt  r5, r0, .Lmemcpy_lt4
 .Lmemcpy_w:
-    blt  r5, r8, .Lmemcpy_tail
     ldw  r9, r7, 0
     stw  r6, r9, 0
-    addi r6, r6, 4
     addi r7, r7, 4
+    addi r6, r6, 4
     addi r5, r5, -4
-    jal  r0, .Lmemcpy_w
-.Lmemcpy_tail:
+    bge  r5, r0, .Lmemcpy_w
+.Lmemcpy_lt4:
+    addi r5, r5, 4           # remaining 0..3
     beq  r5, r0, .Lmemcpy_done
 .Lmemcpy_b:
     ldbu r9, r7, 0
