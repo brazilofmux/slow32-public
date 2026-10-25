@@ -15,6 +15,8 @@ int main(void) {
     printf("log10 %.6f log2 %.6f cbrt %.6f\n", log10(1000.0), log2(8.0), cbrt(27.0));
     printf("round %.1f %.1f %.1f trunc %.1f %.1f\n", round(2.5), round(-2.5), round(2.4), trunc(2.9), trunc(-2.9));
     printf("copysign %.1f %.1f\n", copysign(3.0, -1.0), copysign(-3.0, 1.0));
+    printf("fmax %.2f fmin %.2f fdim %.2f %.2f\n", fmax(x, -y), fmin(x, -y), fdim(y, x), fdim(x, y));
+    printf("fmaxf %.2f fminf %.2f fdimf %.2f\n", fmaxf(fx, -2.0f), fminf(fx, -2.0f), fdimf(2.0f, fx));
     printf("fabs %.2f fabsf %.2f\n", fabs(-1.25), (double)fabsf(-2.5f));
     printf("floor %.1f ceil %.1f fmod %.2f\n", floor(-1.5), ceil(-1.5), fmod(7.5, 2.0));
     printf("sqrt %.6f pow %.3f exp %.6f log %.6f\n", sqrt(2.0), pow(2.0, 10.0), exp(1.0), log(10.0));

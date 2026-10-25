@@ -52,6 +52,15 @@ double cbrt(double x);
 double round(double x);
 double trunc(double x);
 double copysign(double x, double y);
+/* fmax, fmin and fdim were defined (runtime/math_soft.c) and not declared
+ * here: a call went through the implicit int declaration and came back
+ * as a stray register converted to double (fmin(2.5, -3.25) was 2.5). */
+double fmax(double x, double y);
+double fmin(double x, double y);
+double fdim(double x, double y);
+float  fmaxf(float x, float y);
+float  fminf(float x, float y);
+float  fdimf(float x, float y);
 
 float  asinf(float x);
 float  acosf(float x);
