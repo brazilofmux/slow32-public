@@ -438,6 +438,13 @@ static int pp_find(char *name) {
     return -1;
 }
 
+/* #ifdef, #ifndef and defined(): a macro, or __has_include itself, so
+ * that `#if defined(__has_include)` guards its use. */
+static int pp_is_defined(char *name) {
+    if (pp_find(name) >= 0) return 1;
+    return strcmp(name, "__has_include") == 0;
+}
+
 static void pp_add(char *name, int val) {
     int i;
     i = pp_find(name);
@@ -1441,14 +1448,60 @@ static void pp_splice_file(char *path) {
     pp_sync();
 }
 
-static void pp_include(void) {
-    char path[512];
-    char fname[256];
+/* Fill path with the first place fname is found by #include's search
+ * -- angle: each -I directory; quoted: the including file's directory,
+ * then the source's, then the -I directories -- and say whether it was.
+ * #include and __has_include share it. */
+static int pp_try_path(char *path, char *dir, char *fname) {
     int pi;
     int fi;
     int fd;
-    int angle;
+    pi = 0;
+    fi = 0;
+    while (dir[fi] != 0) {
+        path[pi] = dir[fi];
+        pi = pi + 1;
+        fi = fi + 1;
+    }
+    fi = 0;
+    while (fname[fi] != 0) {
+        path[pi] = fname[fi];
+        pi = pi + 1;
+        fi = fi + 1;
+    }
+    path[pi] = 0;
+    fd = open(path, 0);
+    if (fd < 0) return 0;
+    close(fd);
+    return 1;
+}
+
+static int pp_find_include(char *fname, int angle, char *path) {
     int idir;
+    if (!angle) {
+        /* Quoted: the including file's own directory first (C's rule --
+         * libutf's include/utf/nfc.h does #include "utf_types.h" for a
+         * sibling), then the top-level source directory, then the -I
+         * directories like a real C preprocessor (vecscope's quoted
+         * "tube.h" lives in -Iruntime/include). */
+        if (pp_incdepth > 0 && pp_incdepth <= PP_MAX_INCDEPTH &&
+            pp_try_path(path, pp_incdir + (pp_incdepth - 1) * 256, fname))
+            return 1;
+        if (pp_try_path(path, pp_sdir, fname)) return 1;
+    }
+    idir = 0;
+    while (idir < pp_nidirs) {
+        if (pp_try_path(path, pp_idir + idir * PP_IDIR_LEN, fname)) return 1;
+        idir = idir + 1;
+    }
+    return 0;
+}
+
+static void pp_include(void) {
+    char path[512];
+    char fname[256];
+    int fi;
+    int angle;
 
     pp_skip_ws();
     angle = 0;
@@ -1481,116 +1534,48 @@ static void pp_include(void) {
     }
     pp_skip_line();
 
-    if (angle) {
-        /* Angle-bracket: search each -I directory in order. */
-        idir = 0;
-        while (idir < pp_nidirs) {
-            pi = 0;
-            fi = 0;
-            while (pp_idir[idir * PP_IDIR_LEN + fi] != 0) {
-                path[pi] = pp_idir[idir * PP_IDIR_LEN + fi];
-                pi = pi + 1;
-                fi = fi + 1;
-            }
-            fi = 0;
-            while (fname[fi] != 0) {
-                path[pi] = fname[fi];
-                pi = pi + 1;
-                fi = fi + 1;
-            }
-            path[pi] = 0;
-            fd = open(path, 0);
-            if (fd >= 0) {
-                close(fd);
-                pp_splice_file(path);
-                return;
-            }
-            idir = idir + 1;
-        }
-        fdputs("s12cc: cannot open include: ", 2);
-        fdputs(fname, 2);
-        fdputc(10, 2);
-        exit(1);
-    } else {
-        /* Quoted: the including file's own directory first (C's rule --
-         * libutf's include/utf/nfc.h does #include "utf_types.h" for a
-         * sibling), then the top-level source directory, then the -I
-         * directories like a real C preprocessor (vecscope's quoted
-         * "tube.h" lives in -Iruntime/include). */
-        if (pp_incdepth > 0 && pp_incdepth <= PP_MAX_INCDEPTH) {
-            pi = 0;
-            fi = 0;
-            while (pp_incdir[(pp_incdepth - 1) * 256 + fi] != 0) {
-                path[pi] = pp_incdir[(pp_incdepth - 1) * 256 + fi];
-                pi = pi + 1;
-                fi = fi + 1;
-            }
-            fi = 0;
-            while (fname[fi] != 0) {
-                path[pi] = fname[fi];
-                pi = pi + 1;
-                fi = fi + 1;
-            }
-            path[pi] = 0;
-            fd = open(path, 0);
-            if (fd >= 0) {
-                close(fd);
-                pp_splice_file(path);
-                return;
-            }
-        }
-        pi = 0;
-        fi = 0;
-        while (pp_sdir[fi] != 0) {
-            path[pi] = pp_sdir[fi];
-            pi = pi + 1;
-            fi = fi + 1;
-        }
-        fi = 0;
-        while (fname[fi] != 0) {
-            path[pi] = fname[fi];
-            pi = pi + 1;
-            fi = fi + 1;
-        }
-        path[pi] = 0;
-        fd = open(path, 0);
-        if (fd >= 0) {
-            close(fd);
-            pp_splice_file(path);
-            return;
-        }
-        idir = 0;
-        while (idir < pp_nidirs) {
-            pi = 0;
-            fi = 0;
-            while (pp_idir[idir * PP_IDIR_LEN + fi] != 0) {
-                path[pi] = pp_idir[idir * PP_IDIR_LEN + fi];
-                pi = pi + 1;
-                fi = fi + 1;
-            }
-            fi = 0;
-            while (fname[fi] != 0) {
-                path[pi] = fname[fi];
-                pi = pi + 1;
-                fi = fi + 1;
-            }
-            path[pi] = 0;
-            fd = open(path, 0);
-            if (fd >= 0) {
-                close(fd);
-                pp_splice_file(path);
-                return;
-            }
-            idir = idir + 1;
-        }
-        fdputs("s12cc: cannot open include: ", 2);
-        fdputs(fname, 2);
-        fdputc(10, 2);
-        exit(1);
+    if (pp_find_include(fname, angle, path)) {
+        pp_splice_file(path);
+        return;
     }
+    fdputs("s12cc: cannot open include: ", 2);
+    fdputs(fname, 2);
+    fdputc(10, 2);
+    exit(1);
 }
 
 /* --- #if expression evaluator --- */
+
+/* __has_include(<name>) or __has_include("name"), just read: 1 when
+ * #include would find it (C23 6.10.2; GCC and clang had it first). */
+static int pp_ev_has_include(void) {
+    char path[512];
+    char fname[256];
+    int fi;
+    int angle;
+    int close_ch;
+    pp_skip_ws();
+    if (lex_src[lex_pos] != 40) return 0;          /* '(' */
+    lex_pos = lex_pos + 1;
+    pp_skip_ws();
+    angle = 0;
+    close_ch = 34;
+    if (lex_src[lex_pos] == 60) { angle = 1; close_ch = 62; }
+    else if (lex_src[lex_pos] != 34) return 0;
+    lex_pos = lex_pos + 1;
+    fi = 0;
+    while (lex_src[lex_pos] != close_ch && lex_src[lex_pos] != 0 &&
+           lex_src[lex_pos] != 10 && fi < 255) {
+        fname[fi] = lex_src[lex_pos];
+        fi = fi + 1;
+        lex_pos = lex_pos + 1;
+    }
+    fname[fi] = 0;
+    if (lex_src[lex_pos] == close_ch) lex_pos = lex_pos + 1;
+    pp_skip_ws();
+    if (lex_src[lex_pos] == 41) lex_pos = lex_pos + 1;   /* ')' */
+    return pp_find_include(fname, angle, path);
+}
 
 /* Arithmetic is long long (GitHub issue 60).  The public result of
  * pp_ev_expr stays an int 0/1 so a `#if` condition does not depend
@@ -1674,6 +1659,7 @@ static long long pp_ev_primary(void) {
     /* Identifier: 'defined' or macro name */
     if ((c >= 97 && c <= 122) || (c >= 65 && c <= 90) || c == 95) {
         pp_read_name(name);
+        if (strcmp(name, "__has_include") == 0) return pp_ev_has_include();
         if (strcmp(name, "defined") == 0) {
             int has_paren;
             pp_skip_ws();
@@ -1690,8 +1676,7 @@ static long long pp_ev_primary(void) {
                     lex_pos = lex_pos + 1;
                 }
             }
-            if (pp_find(name) >= 0) return 1;
-            return 0;
+            return pp_is_defined(name);
         }
         /* Regular macro — expand to value, or 0 if undefined */
         val = pp_find(name);
@@ -2032,7 +2017,7 @@ static void pp_directive(void) {
         }
         pp_stk[pp_dep] = pp_skip;
         pp_taken[pp_dep] = 0;
-        if (pp_find(name) >= 0) {
+        if (pp_is_defined(name)) {
             pp_taken[pp_dep] = 1;
         } else {
             pp_skip = 1;
@@ -2051,7 +2036,7 @@ static void pp_directive(void) {
         }
         pp_stk[pp_dep] = pp_skip;
         pp_taken[pp_dep] = 0;
-        if (pp_find(name) < 0) {
+        if (!pp_is_defined(name)) {
             pp_taken[pp_dep] = 1;
         } else {
             pp_skip = 1;
