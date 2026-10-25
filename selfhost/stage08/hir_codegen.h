@@ -3673,6 +3673,37 @@ static void hcg_inst(int idx) {
  * register and one materialization at the def (constants live in
  * the entry block, so the def IS the preheader).  A constant used
  * only outside loops stays remat — no live-range cost. */
+/* ADD of a 12-bit constant becomes ADDI once LICM (whose strength
+ * reduction matches ADD) is done: a load or store then takes the
+ * constant as its displacement through the ADDI fold.  An index that
+ * was a variable at lowering and a constant after mem2reg -- every
+ * copy of an unrolled loop -- arrives as ADD(base, iconst), and was
+ * computed into a register ahead of each access. */
+static void hcg_add_to_addi(void) {
+    int i;
+    int a;
+    int b;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_ADD && !ty_is_llong(h_ty[i]) && !ty_is_fp(h_ty[i])) {
+            a = h_src1[i];
+            b = h_src2[i];
+            if (a >= 0 && b >= 0 && h_kind[a] == HI_ICONST && h_kind[b] != HI_ICONST) {
+                a = h_src2[i];
+                b = h_src1[i];
+            }
+            if (a >= 0 && b >= 0 && h_kind[b] == HI_ICONST && h_kind[a] != HI_ICONST &&
+                h_val[b] >= -2048 && h_val[b] <= 2047) {
+                h_kind[i] = HI_ADDI;
+                h_src1[i] = a;
+                h_src2[i] = -1;
+                h_val[i] = h_val[b];
+            }
+        }
+        i = i + 1;
+    }
+}
+
 static void hcg_mark_loop_consts(void) {
     int i;
     int j;
@@ -4117,6 +4148,7 @@ static void hcg_func(Node *fn) {
                          * backends sharing hir_licm.h do not, and leave
                          * this off. */
     if (ho_mask & 1024) hir_licm();
+    hcg_add_to_addi();
 
     /* Promote big loop-used constants out of remat (needs the loop
      * map hir_licm just built; must precede regalloc node creation) */
@@ -4759,6 +4791,11 @@ static void gen_program(Node *prog) {
          * go into every site, outside the size model: AES's xtime,
          * nine sites and just over 12 nodes, was a call in each MixColumns
          * step.  SQLite: +2.2% static, -0.9% dynamic. */
+        /* Counted loops fully unrolled into S12CC_UNROLL nodes
+         * (default 512; 0 = off), hl_unroll_trips.  AES KDF:
+         * 2.96G -> 1.41G executed; SQLite +0.4% static, -0.25%. */
+        e = getenv("S12CC_UNROLL");
+        hl_unroll_budget = e ? atoi(e) : 512;
         e = getenv("S12CC_INLINE_TINY");
         hl_inl_tiny = e ? atoi(e) : 14;
         hl_inl_prepare(prog);

@@ -1428,6 +1428,117 @@ static Node *hl_inl_candidate(Node *call) {
     return fn;
 }
 
+/* Full unrolling of small counted loops.  A `for` whose init sets a
+ * local int to a constant, whose condition compares it with a
+ * constant and whose step adds a constant, and whose body neither
+ * changes the variable nor leaves early (no assignment to it, no
+ * address taken, no break or continue of its own), runs exactly the
+ * number of times hl_unroll_trips simulates.  It is lowered as that
+ * many straight-line copies of body-then-step, with no tests and no
+ * blocks between them; mem2reg then makes the variable a constant in
+ * each copy and the indexes fold.  AES's sixteen-byte state loops,
+ * with indexes like (i + 4*(i%4)) % 16, became fixed offsets, and
+ * stores and loads of the state met in one block; clang unrolls them
+ * all.  Innermost loops only, into a budget of S12CC_UNROLL nodes
+ * (copies times body size). */
+static int hl_unroll_budget;
+
+static int hl_same_lvar(Node *a, Node *b) {
+    return a && b && a->kind == ND_VAR && b->kind == ND_VAR &&
+           a->is_local && b->is_local && !a->is_array &&
+           a->offset == b->offset && a->slot_id == b->slot_id;
+}
+
+/* Anything in the body that makes the trip count other than the
+ * simulated one, or that cannot be lowered twice: a nested loop, goto
+ * or label, asm, a statement expression, the variable assigned or its
+ * address taken, a break (outside a nested switch) or a continue. */
+static int hl_unroll_blocked(Node *n, Node *v, int in_sw) {
+    int k;
+    if (!n) return 0;
+    k = n->kind;
+    if (k == ND_WHILE || k == ND_FOR || k == ND_DO_WHILE ||
+        k == ND_GOTO || k == ND_LABEL || k == ND_ASM ||
+        k == ND_STMT_EXPR || k == ND_CONTINUE)
+        return 1;
+    if (k == ND_BREAK && !in_sw) return 1;
+    if (k == ND_UNARY && n->op == TK_AMP && hl_same_lvar(n->lhs, v))
+        return 1;
+    if ((k == ND_ASSIGN || k == ND_COMP_ASSIGN || k == ND_POST_INC ||
+         k == ND_POST_DEC) && hl_same_lvar(n->lhs, v))
+        return 1;
+    if (k == ND_SWITCH) in_sw = 1;
+    if (hl_unroll_blocked(n->lhs, v, in_sw)) return 1;
+    if (hl_unroll_blocked(n->rhs, v, in_sw)) return 1;
+    if (hl_unroll_blocked(n->cond, v, in_sw)) return 1;
+    if (hl_unroll_blocked(n->body, v, in_sw)) return 1;
+    if (hl_unroll_blocked(n->init, v, in_sw)) return 1;
+    if (hl_unroll_blocked(n->step, v, in_sw)) return 1;
+    if (hl_unroll_blocked(n->els, v, in_sw)) return 1;
+    if (hl_unroll_blocked(n->args, v, in_sw)) return 1;
+    return hl_unroll_blocked(n->next, v, in_sw);
+}
+
+static int hl_unroll_trips(Node *n) {
+    Node *v;
+    Node *c;
+    Node *s;
+    int x;
+    int lim;
+    int stp;
+    int trips;
+    int go;
+    int sz;
+    int uns;
+
+    if (hl_unroll_budget <= 0 || hl_inl_depth > 0) return 0;
+    if (n->kind != ND_FOR || !n->init || !n->cond || !n->step || !n->body) return 0;
+    if (n->init->kind != ND_ASSIGN || !n->init->rhs || n->init->rhs->kind != ND_NUM) return 0;
+    v = n->init->lhs;
+    if (!v || v->kind != ND_VAR || !v->is_local || v->is_array) return 0;
+    if ((v->ty & ~TY_UNSIGNED) != TY_INT) return 0;
+    uns = (v->ty & TY_UNSIGNED) != 0;
+    c = n->cond;
+    if (c->kind != ND_BINOP || !hl_same_lvar(c->lhs, v) ||
+        !c->rhs || c->rhs->kind != ND_NUM) return 0;
+    if (c->op != TK_LT && c->op != TK_LE && c->op != TK_GT &&
+        c->op != TK_GE && c->op != TK_NE) return 0;
+    s = n->step;
+    if (s->kind == ND_POST_INC && hl_same_lvar(s->lhs, v)) stp = 1;
+    else if (s->kind == ND_POST_DEC && hl_same_lvar(s->lhs, v)) stp = -1;
+    else if (s->kind == ND_COMP_ASSIGN && hl_same_lvar(s->lhs, v) &&
+             s->rhs && s->rhs->kind == ND_NUM &&
+             (s->op == TK_PLUS || s->op == TK_MINUS)) {
+        stp = s->rhs->val;
+        if (s->op == TK_MINUS) stp = 0 - stp;
+    } else return 0;
+    if (stp == 0 || stp > 4096 || stp < -4096) return 0;
+    x = n->init->rhs->val;
+    lim = c->rhs->val;
+    if (x > 65536 || x < -65536 || lim > 65536 || lim < -65536) return 0;
+    if (uns && (x < 0 || lim < 0)) return 0;
+    trips = 0;
+    while (1) {
+        if (c->op == TK_LT) go = x < lim;
+        else if (c->op == TK_LE) go = x <= lim;
+        else if (c->op == TK_GT) go = x > lim;
+        else if (c->op == TK_GE) go = x >= lim;
+        else go = x != lim;
+        if (uns && x < 0) return 0;
+        if (!go) break;
+        trips = trips + 1;
+        if (trips > 16) return 0;
+        x = x + stp;
+    }
+    if (trips < 2) return 0;
+    if (hl_unroll_blocked(n->body, v, 0)) return 0;
+    sz = hl_inl_size(n->body, hl_unroll_budget + 1);
+    if (sz * trips > hl_unroll_budget) return 0;
+    if (h_ninst + sz * trips * 16 + 4096 >= HIR_MAX_INST) return 0;
+    if (bb_nblk + (sz + 4) * trips + 64 >= HIR_MAX_BLOCK) return 0;
+    return trips;
+}
+
 static int hl_inl_count_returns(Node *n) {
     int c;
     if (!n) return 0;
@@ -3673,6 +3784,19 @@ static void hl_stmt(Node *n) {
     if ((n->kind == ND_WHILE || n->kind == ND_FOR) && n->cond) {
         int pre_blk;
         int latch_blk;
+        int ntrips;
+        ntrips = hl_unroll_trips(n);
+        if (ntrips > 0) {
+            /* The condition is a variable against a constant: no side
+             * effect is skipped by not evaluating it. */
+            hl_expr(n->init);
+            while (ntrips > 0) {
+                hl_stmt(n->body);
+                hl_expr(n->step);
+                ntrips = ntrips - 1;
+            }
+            return;
+        }
         pre_blk = hir_new_block();
         body_blk = hir_new_block();
         latch_blk = hir_new_block();

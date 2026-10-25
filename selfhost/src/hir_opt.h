@@ -1637,7 +1637,7 @@ static void hir_opt(void) {
         if (ho_mask & 128) changed = changed | ho_mem_fwd();
         if (ho_mask & 256) changed = changed | ho_promote_single_store_alloca();
 #ifndef S12CC_X64_HOST
-        if (ho_mask & 1024) changed = changed | ho_known_bits();
+        if (ho_mask & 2048) changed = changed | ho_known_bits();
 #endif
         if (ho_mask & 512) changed = changed | ho_dce();
         iter = iter + 1;

@@ -60,6 +60,7 @@ static int bg_sel[HIR_MAX_INST];
 /* Folding */
 static int bg_fold[HIR_MAX_INST];  /* 1 = folded into parent */
 static int bg_uses[HIR_MAX_INST];  /* use count per value */
+static int bg_mu[HIR_MAX_INST];    /* faddr load/store users (phase 3) */
 static int bg_foff[HIR_MAX_INST];  /* precomputed faddr offset */
 static int bg_ssym[HIR_MAX_INST];  /* base symbol inst for SADDR chain (-1=none) */
 static int bg_soff[HIR_MAX_INST];  /* accumulated offset for SADDR chain */
@@ -951,6 +952,38 @@ static void bg_select(void) {
             }
         }
 
+        i = i + 1;
+    }
+
+    /* Phase 3: a frame address with several users, all of them loads
+     * or stores through it as faddr.  Those read sp+offset from
+     * bg_foff and never the address's register, so it need not exist;
+     * phase 2 keeps it (uses != 1) and the allocator then holds it
+     * live from its def to its last user.  One per state byte of an
+     * unrolled AES round, shared by CSE between SubBytes, ShiftRows
+     * and AddRoundKey, was 179 spills. */
+    i = 0;
+    while (i < h_ninst) { bg_mu[i] = 0; i = i + 1; }
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        s1 = h_src1[i];
+        pat = bg_sel[i];
+        if ((k == HI_LOAD || k == HI_STORE) && s1 >= 0 && h_kind[s1] == HI_ADDI &&
+            pat >= 0 && bg_plnt[pat] == BG_FADDR &&
+            (k == HI_LOAD || h_src2[i] != s1))
+            bg_mu[s1] = bg_mu[s1] + 1;
+        i = i + 1;
+    }
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_ADDI && !bg_fold[i] && bg_uses[i] > 1 &&
+            bg_mu[i] == bg_uses[i] && bg_cost[i * BG_NNT + BG_FADDR] < BG_INF) {
+            bg_fold[i] = 1;
+            bg_sel[i] = -1;
+            h_kind[i] = HI_NOP;
+            bg_stat_folded = bg_stat_folded + 1;
+        }
         i = i + 1;
     }
 }
