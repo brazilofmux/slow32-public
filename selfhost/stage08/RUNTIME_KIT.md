@@ -103,6 +103,16 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-25 (`b316da9a`).  `cc.s32x` and `libc.s32a`; the tools
+rebuild identical.  Memory model step 5b.1: a respill victim that is an
+address ADDI of a register-resident value is recomputed at its uses (or
+folded into the load's displacement) instead of stored to a slot and
+reloaded -- SQLite's static spill stores 1,017 -> 818, the 200,000-row
+run -0.09%, VdbeExec nearly unchanged (its victims are phis, constants
+and loads; this piece is for the shape the pending i64-promotion patch
+creates).  Gated: kit differential 123/0, kit tools 21/0, islisp,
+libcob 490/0, dfsort, mdfix 95 runs, tz.
+
 Rebuilt 2026-10-25 (`929b3a19`).  `cc.s32x` and `libc.s32a`; the tools
 rebuild identical.  The allocator's first step-5 piece: a spilled
 loop-header phi and the join phi that feeds it share one spill slot, so
