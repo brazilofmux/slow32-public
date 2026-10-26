@@ -103,6 +103,17 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-26 (`fb3dea7b`).  `cc.s32x` only; `libc.s32a` and the
+tools rebuild identical.  A wrong-code fix in the allocator's phi webs
+(in the kit since batch 40, `929b3a19`): two spilled phis of ONE block
+could be tied to one spill slot, because the interference test asks
+whether each is live into the other's block and a phi never is into
+its own; the block's entry copies then stored both values into the
+slot.  Seen in wherePathSolver's aFrom/aTo swap pair under an opt-in
+spill weighting; no kit program is known to have hit it, and SQLite's
+default code is byte-identical.  Gated: kit differential 125/0, kit
+tools 21/0, islisp, libcob 490/0, dfsort, mdfix 95 runs, tz.
+
 Rebuilt 2026-10-26 (`9ca39c80`).  `cc.s32x` and `libc.s32a`; the tools
 rebuild identical.  Two allocator liveness fixes (memory model step
 5b.4): the address operand of a load or store whose chain the emitter
