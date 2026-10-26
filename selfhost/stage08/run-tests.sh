@@ -529,7 +529,7 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
     echo ""
     echo "=== Step 3: gen1_cc compiler tests ==="
 
-    for tst in "$TESTS_DIR"/test_spike.c "$TESTS_DIR"/test_phase2.c "$TESTS_DIR"/test_phase3.c "$TESTS_DIR"/test_phase4.c "$TESTS_DIR"/test_phase5.c "$TESTS_DIR"/test_phase6.c "$TESTS_DIR"/test_phase7.c "$TESTS_DIR"/test_phase8.c "$TESTS_DIR"/test_phase9.c "$TESTS_DIR"/test_phase10.c "$TESTS_DIR"/test_phase11.c "$TESTS_DIR"/test_phase12.c "$TESTS_DIR"/test_phase13.c "$TESTS_DIR"/test_phase14.c "$TESTS_DIR"/test_phase15.c "$TESTS_DIR"/test_phase16.c "$TESTS_DIR"/test_phase17.c "$TESTS_DIR"/test_phase18.c "$TESTS_DIR"/test_phase19.c "$TESTS_DIR"/test_phase20.c "$TESTS_DIR"/test_phase21.c "$TESTS_DIR"/test_phase22.c "$TESTS_DIR"/test_phase23.c "$TESTS_DIR"/test_phase24.c "$TESTS_DIR"/test_phase25.c "$TESTS_DIR"/test_phase26.c "$TESTS_DIR"/test_phase27.c "$TESTS_DIR"/test_phase28.c "$TESTS_DIR"/test_phase29.c "$TESTS_DIR"/test_phase30.c "$TESTS_DIR"/test_phase31.c "$TESTS_DIR"/test_phase32.c "$TESTS_DIR"/test_phase33.c "$TESTS_DIR"/test_short.c "$TESTS_DIR"/test_bitfields.c "$TESTS_DIR"/test_many_args.c "$TESTS_DIR"/test_pp_predefs.c "$TESTS_DIR"/test_ret_widen.c "$TESTS_DIR"/test_libutf_bugs.c "$TESTS_DIR"/test_decl_list.c "$TESTS_DIR"/test_sqlite_bugs.c "$TESTS_DIR"/test_narrow_rmw.c "$TESTS_DIR"/test_tentative_init.c "$TESTS_DIR"/test_grouped_ptr_array.c "$TESTS_DIR"/test_const_shift.c "$TESTS_DIR"/test_const_wide.c "$TESTS_DIR"/test_pp_if_text.c "$TESTS_DIR"/test_addr_paren.c "$TESTS_DIR"/test_int_to_ptr_paren.c "$TESTS_DIR"/test_define_big.c "$TESTS_DIR"/test_string_concat.c "$TESTS_DIR"/test_duff_jt.c "$TESTS_DIR"/test_jt_fallthrough.c "$TESTS_DIR"/test_jt_goto_case.c "$TESTS_DIR"/test_pp_dis_args.c "$TESTS_DIR"/test_fnptr_local.c "$TESTS_DIR"/test_fp64_split.c "$TESTS_DIR"/test_fnptr_double.c "$TESTS_DIR"/test_inline.c "$TESTS_DIR"/test_dce_inline.c "$TESTS_DIR"/test_leaf_frame.c "$TESTS_DIR"/test_retpin.c "$TESTS_DIR"/test_bigframe_r30.c "$TESTS_DIR"/test_spill_slots.c "$TESTS_DIR"/test_block_slots.c "$TESTS_DIR"/test_inline_loop.c "$TESTS_DIR"/test_2d_init.c "$TESTS_DIR"/test_pp_param_in_string.c "$TESTS_DIR"/test_static_list.c "$TESTS_DIR"/test_row_param.c "$TESTS_DIR"/test_pp_octal.c "$TESTS_DIR"/test_big_agg.c "$TESTS_DIR"/test_clit_init.c "$TESTS_DIR"/test_nan_inf.c "$TESTS_DIR"/test_fp_convert.c "$TESTS_DIR"/test_typedef_array.c "$TESTS_DIR"/test_setjmp.c "$TESTS_DIR"/test_tail_escape.c "$TESTS_DIR"/test_udiv32.c "$TESTS_DIR"/test_typedef_shadow.c "$TESTS_DIR"/test_member_addr_call.c "$TESTS_DIR"/test_hex_escape.c "$TESTS_DIR"/test_sizeof_string.c "$TESTS_DIR"/test_frameless_args.c "$TESTS_DIR"/test_phi_undef.c "$TESTS_DIR"/test_float_promote.c "$TESTS_DIR"/test_ll_shift_var.c "$TESTS_DIR"/test_cse_literal.c "$TESTS_DIR"/test_sr_stride.c "$TESTS_DIR"/test_mem_blocks.c "$TESTS_DIR"/test_retpin_phis.c "$TESTS_DIR"/test_loop_rotate.c "$TESTS_DIR"/test_known_bits.c "$TESTS_DIR"/test_unroll.c "$TESTS_DIR"/test_const_select.c "$TESTS_DIR"/test_gbase.c "$TESTS_DIR"/test_dead_slots.c "$TESTS_DIR"/test_sroa.c "$TESTS_DIR"/test_phi_bias.c "$TESTS_DIR"/test_respill.c "$TESTS_DIR"/test_has_include.c "$TESTS_DIR"/test_decl_stars.c "$TESTS_DIR"/test_ptr_alias.c "$TESTS_DIR"/test_mem_join.c "$TESTS_DIR"/test_volatile.c "$TESTS_DIR"/test_loop_load.c "$TESTS_DIR"/test_dead_store.c "$TESTS_DIR"/test_usual_conv.c "$TESTS_DIR"/test_jt_block_case.c "$TESTS_DIR"/test_memcpy_inline.c "$TESTS_DIR"/test_pair_many.c "$TESTS_DIR"/test_phi_web.c "$TESTS_DIR"/test_blk_reload.c; do
+    for tst in "$TESTS_DIR"/test_spike.c "$TESTS_DIR"/test_phase2.c "$TESTS_DIR"/test_phase3.c "$TESTS_DIR"/test_phase4.c "$TESTS_DIR"/test_phase5.c "$TESTS_DIR"/test_phase6.c "$TESTS_DIR"/test_phase7.c "$TESTS_DIR"/test_phase8.c "$TESTS_DIR"/test_phase9.c "$TESTS_DIR"/test_phase10.c "$TESTS_DIR"/test_phase11.c "$TESTS_DIR"/test_phase12.c "$TESTS_DIR"/test_phase13.c "$TESTS_DIR"/test_phase14.c "$TESTS_DIR"/test_phase15.c "$TESTS_DIR"/test_phase16.c "$TESTS_DIR"/test_phase17.c "$TESTS_DIR"/test_phase18.c "$TESTS_DIR"/test_phase19.c "$TESTS_DIR"/test_phase20.c "$TESTS_DIR"/test_phase21.c "$TESTS_DIR"/test_phase22.c "$TESTS_DIR"/test_phase23.c "$TESTS_DIR"/test_phase24.c "$TESTS_DIR"/test_phase25.c "$TESTS_DIR"/test_phase26.c "$TESTS_DIR"/test_phase27.c "$TESTS_DIR"/test_phase28.c "$TESTS_DIR"/test_phase29.c "$TESTS_DIR"/test_phase30.c "$TESTS_DIR"/test_phase31.c "$TESTS_DIR"/test_phase32.c "$TESTS_DIR"/test_phase33.c "$TESTS_DIR"/test_short.c "$TESTS_DIR"/test_bitfields.c "$TESTS_DIR"/test_many_args.c "$TESTS_DIR"/test_pp_predefs.c "$TESTS_DIR"/test_ret_widen.c "$TESTS_DIR"/test_libutf_bugs.c "$TESTS_DIR"/test_decl_list.c "$TESTS_DIR"/test_sqlite_bugs.c "$TESTS_DIR"/test_narrow_rmw.c "$TESTS_DIR"/test_tentative_init.c "$TESTS_DIR"/test_grouped_ptr_array.c "$TESTS_DIR"/test_const_shift.c "$TESTS_DIR"/test_const_wide.c "$TESTS_DIR"/test_pp_if_text.c "$TESTS_DIR"/test_addr_paren.c "$TESTS_DIR"/test_int_to_ptr_paren.c "$TESTS_DIR"/test_define_big.c "$TESTS_DIR"/test_string_concat.c "$TESTS_DIR"/test_duff_jt.c "$TESTS_DIR"/test_jt_fallthrough.c "$TESTS_DIR"/test_jt_goto_case.c "$TESTS_DIR"/test_pp_dis_args.c "$TESTS_DIR"/test_fnptr_local.c "$TESTS_DIR"/test_fp64_split.c "$TESTS_DIR"/test_fnptr_double.c "$TESTS_DIR"/test_inline.c "$TESTS_DIR"/test_dce_inline.c "$TESTS_DIR"/test_leaf_frame.c "$TESTS_DIR"/test_retpin.c "$TESTS_DIR"/test_bigframe_r30.c "$TESTS_DIR"/test_spill_slots.c "$TESTS_DIR"/test_block_slots.c "$TESTS_DIR"/test_inline_loop.c "$TESTS_DIR"/test_2d_init.c "$TESTS_DIR"/test_pp_param_in_string.c "$TESTS_DIR"/test_static_list.c "$TESTS_DIR"/test_row_param.c "$TESTS_DIR"/test_pp_octal.c "$TESTS_DIR"/test_big_agg.c "$TESTS_DIR"/test_clit_init.c "$TESTS_DIR"/test_nan_inf.c "$TESTS_DIR"/test_fp_convert.c "$TESTS_DIR"/test_typedef_array.c "$TESTS_DIR"/test_setjmp.c "$TESTS_DIR"/test_tail_escape.c "$TESTS_DIR"/test_udiv32.c "$TESTS_DIR"/test_typedef_shadow.c "$TESTS_DIR"/test_member_addr_call.c "$TESTS_DIR"/test_hex_escape.c "$TESTS_DIR"/test_sizeof_string.c "$TESTS_DIR"/test_frameless_args.c "$TESTS_DIR"/test_phi_undef.c "$TESTS_DIR"/test_float_promote.c "$TESTS_DIR"/test_ll_shift_var.c "$TESTS_DIR"/test_cse_literal.c "$TESTS_DIR"/test_sr_stride.c "$TESTS_DIR"/test_mem_blocks.c "$TESTS_DIR"/test_retpin_phis.c "$TESTS_DIR"/test_loop_rotate.c "$TESTS_DIR"/test_known_bits.c "$TESTS_DIR"/test_unroll.c "$TESTS_DIR"/test_const_select.c "$TESTS_DIR"/test_gbase.c "$TESTS_DIR"/test_dead_slots.c "$TESTS_DIR"/test_sroa.c "$TESTS_DIR"/test_phi_bias.c "$TESTS_DIR"/test_respill.c "$TESTS_DIR"/test_has_include.c "$TESTS_DIR"/test_decl_stars.c "$TESTS_DIR"/test_ptr_alias.c "$TESTS_DIR"/test_mem_join.c "$TESTS_DIR"/test_volatile.c "$TESTS_DIR"/test_loop_load.c "$TESTS_DIR"/test_dead_store.c "$TESTS_DIR"/test_usual_conv.c "$TESTS_DIR"/test_jt_block_case.c "$TESTS_DIR"/test_memcpy_inline.c "$TESTS_DIR"/test_pair_many.c "$TESTS_DIR"/test_phi_web.c "$TESTS_DIR"/test_blk_reload.c "$TESTS_DIR"/test_join_split.c; do
         [[ -f "$tst" ]] || continue
         tname="$(basename "$tst" .c)"
         TOTAL=$((TOTAL + 1))
@@ -948,40 +948,57 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
         fi
     done
 
-    # Memory model step 5b.3 (regional spill, opt-in HIR_REGION=1): the
-    # phi-web test compiled with regions on must still be right, and at
-    # least one region must form.  Its loop-entry copies are where a
-    # rematerialized ADDI source read its base's register after another
-    # copy had overwritten it (the parallel-copy hazard, hcg_remat_reg_src)
-    # -- the regions exposed it, the plain run does not.
-    TOTAL=$((TOTAL + 1))
-    set +e
-    HIR_REGION=1 HIR_RA_DEBUG=1 run_exe_rc "$GEN1_CC_EXE" "$WORKDIR/test_phi_web_region-cc.log" \
-        "$TESTS_DIR/test_phi_web.c" "$WORKDIR/test_phi_web_region.s"
-    PR_RC=$?
-    set -e
-    PR_OK=0
-    if [[ "$PR_RC" -eq 0 && -s "$WORKDIR/test_phi_web_region.s" ]] && grep -q '^REGION' "$WORKDIR/test_phi_web_region-cc.log"; then
-        run_exe "$AS_EXE" "$WORKDIR/test_phi_web_region-as.log" "$WORKDIR/test_phi_web_region.s" "$WORKDIR/test_phi_web_region.s32o"
-        run_exe "$LD_EXE" "$WORKDIR/test_phi_web_region-ld.log" \
-            -o "$WORKDIR/test_phi_web_region.s32x" --mmio 64K \
-            "$RUNTIME_CRT0" "$WORKDIR/test_phi_web_region.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-            $BUILTINS64_OBJ $BUILTINS_FP64_OBJ $LIBC_OBJS
-        if [[ -s "$WORKDIR/test_phi_web_region.s32x" ]]; then
-            set +e
-            run_exe_rc "$WORKDIR/test_phi_web_region.s32x" "$WORKDIR/test_phi_web_region-run.log"
-            PR_RC=$?
-            set -e
-            [[ "$PR_RC" -eq 0 ]] && PR_OK=1
+    # Allocator variants, opt-in knobs the plain run never sets.  Each
+    # test is compiled with the knob on and HIR_RA_DEBUG=1, must still be
+    # right, and the named shape must show in the debug log.
+    #  - test_phi_web, HIR_REGION=1 (memory model step 5b.3): at least one
+    #    region; its loop-entry copies are where a rematerialized ADDI
+    #    source read its base's register after another copy had
+    #    overwritten it (the parallel-copy hazard, hcg_remat_reg_src).
+    #  - test_join_split, HIR_REGION=1 (step 5b.4): a region whose value
+    #    is live out of it, so a join phi was placed (joins=1 or more).
+    #  - test_phi_web, HIR_LINEAR_LIVE=1: the interval model.  It carried
+    #    the fused-compare interval bug (ra_compute_ends saw nothing of a
+    #    compare NOPed by an earlier ra_extend_fused_cmp once intervals
+    #    were recomputed after the block reloads) as a wrong answer here.
+    for rt in "region:test_phi_web:^REGION:HIR_REGION=1" \
+              "region:test_join_split:^REGION.* joins=[1-9]:HIR_REGION=1" \
+              "linear:test_phi_web:^RA fn=:HIR_LINEAR_LIVE=1"; do
+        rtag="${rt%%:*}"; rt="${rt#*:}"
+        rname="${rt%%:*}"; rt="${rt#*:}"
+        rpat="${rt%%:*}"; renv="${rt#*:}"
+        rbase="${rname}_${rtag}"
+        TOTAL=$((TOTAL + 1))
+        set +e
+        export "$renv"
+        HIR_RA_DEBUG=1 run_exe_rc "$GEN1_CC_EXE" "$WORKDIR/${rbase}-cc.log" \
+            "$TESTS_DIR/${rname}.c" "$WORKDIR/${rbase}.s"
+        PR_RC=$?
+        unset "${renv%%=*}"
+        set -e
+        PR_OK=0
+        if [[ "$PR_RC" -eq 0 && -s "$WORKDIR/${rbase}.s" ]] && grep -q "$rpat" "$WORKDIR/${rbase}-cc.log"; then
+            run_exe "$AS_EXE" "$WORKDIR/${rbase}-as.log" "$WORKDIR/${rbase}.s" "$WORKDIR/${rbase}.s32o"
+            run_exe "$LD_EXE" "$WORKDIR/${rbase}-ld.log" \
+                -o "$WORKDIR/${rbase}.s32x" --mmio 64K \
+                "$RUNTIME_CRT0" "$WORKDIR/${rbase}.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
+                $BUILTINS64_OBJ $BUILTINS_FP64_OBJ $LIBC_OBJS
+            if [[ -s "$WORKDIR/${rbase}.s32x" ]]; then
+                set +e
+                run_exe_rc "$WORKDIR/${rbase}.s32x" "$WORKDIR/${rbase}-run.log"
+                PR_RC=$?
+                set -e
+                [[ "$PR_RC" -eq 0 ]] && PR_OK=1
+            fi
         fi
-    fi
-    if [[ "$PR_OK" -eq 1 ]]; then
-        printf "  %-30s PASS\n" "test_phi_web (HIR_REGION=1):"
-        PASS=$((PASS + 1))
-    else
-        printf "  %-30s FAIL (rc=%d, or no region formed)\n" "test_phi_web (HIR_REGION=1):" "$PR_RC"
-        FAIL=$((FAIL + 1))
-    fi
+        if [[ "$PR_OK" -eq 1 ]]; then
+            printf "  %-30s PASS\n" "$rname ($renv):"
+            PASS=$((PASS + 1))
+        else
+            printf "  %-30s FAIL (rc=%d, or the shape did not form)\n" "$rname ($renv):" "$PR_RC"
+            FAIL=$((FAIL + 1))
+        fi
+    done
 
     # GitHub issue 55: getenv reaches the host environment.  Needs a
     # variable actually set, so it cannot ride the plain test loop.

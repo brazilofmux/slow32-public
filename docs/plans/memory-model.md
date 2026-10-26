@@ -309,7 +309,7 @@ crypto benchmarks must assemble to the same bytes before and after.
   used in a cold arm should be stored where it is used, not at every
   definition -- and that is what will let this land.
 
-## Step 5b: spill placement (designed 2026-10-25 night; 1 and 2 landed 2026-10-26, 3 built and parked -- see the log below)
+## Step 5b: spill placement (designed 2026-10-25 night; 1 and 2 landed 2026-10-26, 3 and 4 built and opt-in; 4 found two liveness fixes that landed -- see the log below)
 
 What the profile says after the webs, in sqlite3VdbeExec's 146 M frame
 instructions per 200,000-row run: 38% is `nVmStep`, a `u64` counter in
@@ -495,3 +495,75 @@ the hottest blocks first, then DBT time on both machines.
   the shell objects), output byte-identical to clang's; idle three-run
   x86-64 DBT 8.48-8.55 s (batch 40 8.54-8.58, clang 6.91-6.96).  This is
   the baseline the join-phi design is measured against.
+- 2026-10-26: **5b.4, the join form, built; it found two allocator
+  bugs that landed, and stays opt-in itself.**  `ra_region_split` no
+  longer refuses a value live out of the region: the variable has two
+  definitions (v at d, the copy m at e) and gets a phi at every block
+  of e's iterated dominance frontier where v is live in (`ssa_df`, built
+  with the SSA and valid since nothing after it alters the CFG), with m
+  as the argument from the region's exits and the reaching definition
+  (nearest join, m, or v up the dominator tree, `ra_region_reach`) from
+  everywhere else; every read of v is renamed to what reaches it.  A
+  region inside a loop whose value comes from before it gets its join
+  at the loop header -- the header phi the design asked for -- and the
+  loop's reads name that.  test_join_split (a step counter stepped at
+  the loop top and read after the loop, a table pointer from before it,
+  two arms holding eight temporaries across an indirect call) shows
+  both shapes, the joins coalesced into the value's register.  Rules
+  added on the way: a value that is the operand of a rematerialized
+  ADDI is not split and an ADDI of a split value is not rematerialized
+  (the recompute reads the operand's register at the ADDI's users, past
+  the joins); a failing node live into e, or a phi at e, is not served
+  (the copy at e's top reads v while it is live, and the next round
+  would split v there again -- wherePathSolver split one ADDI four
+  times, each copy a copy of the last); the region must not run on
+  every iteration of its loop (`ra_region_every_iter`); and the victim
+  must hold a colour this round, so the joins can inherit it.
+  The first SQLite build with it answered the join query "no query
+  solution": wherePathSolver's `mxChoice`, a phi whose only use in the
+  loop is a compare fused into a BRC, read back 0.  Function splice,
+  then per-candidate `HIR_REGION_MAX`, then a `-t -r` trace of a
+  300-row reproducer replayed against the asm listing (scratchpad
+  calls.py/norm.py: calls, branches and memory accesses by value, the
+  two builds diffed) found the slot: **ra_compute_ends saw nothing of a
+  compare already NOPed by ra_extend_fused_cmp** when intervals were
+  recomputed after appended copies (call splits, block reloads, region
+  copies), so the operands got no cross-block extension and the phi
+  looked dead from the branch to the latch, where the region copy's
+  store shared its slot.  Older than this step (5b.2's recompute had it;
+  test_phi_web under HIR_LINEAR_LIVE=1 failed on it, and passes now);
+  fixed by reading the fused compare's operands in ra_compute_ends,
+  both passes.  Second find, from a REGION-LEAK diagnostic for the
+  repeated splits: **lv_uses listed the address operand of a folding
+  load or store as a read** although the emitter folds through it to
+  the chain's base and never touches its register; an address ADDI
+  therefore stayed live through every access that folded past it.
+  Fixed -- a folding access reads only its base, as 5b.2 already said
+  for the reload rewiring -- and that alone, regions off, is the
+  step's result: SQLite static frame reloads 4,503 -> 3,013, stores 824
+  -> 516, callee-save traffic 20,401 -> 18,051, heavy run
+  3,560,217,280 -> 3,471,233,866 (-2.5%), output identical; gates:
+  run-tests 147/147 with the fixed point, SQLite acceptance, libc 27/0,
+  stage07, host frontend, FP 288 bit-identical.
+  The join form itself, on top of that: 209 regions / 559 joins,
+  3,510,626,177 (+1.1%); with the colour rule 160 / 524,
+  3,555,723,405 (+2.4%).  All of the loss is sqlite3VdbeExec (the
+  per-function profile has everything else within noise): a join at the
+  dispatch loop's merge blocks -- where every loop-carried value is
+  live -- is spilled, and then the value's reads past the join reload
+  where v had a register, and the latch pays memory-to-memory copies
+  into the header phis the webs used to tie (5 frame instructions per
+  opcode).  Opt-in (`HIR_REGION=1`, `HIR_REGION_ANY=1` lifts the
+  every-iteration and colour rules, `HIR_REGION_SAME=1` the parked
+  form's same-depth rule) until a cost model says where a join will
+  keep a register.  arm64 DBT on heavy.sql, quiet, interleaved three
+  runs: kit batch 43 0.87-0.88 s, this default 0.82-0.83 s.
+- 2026-10-26: the RMW patch re-measured on the new default (fold-aware
+  liveness): 3,471,233,866 -> 3,669,514,044 (+5.7%), regions on
+  3,607,573,905 (+3.9%, 130 regions / 391 joins -- the join form does
+  reach the shape it was built for, 62 M of the 198 M back, and not the
+  rest).  Still set aside.  Without the patch the loop counter stays a
+  memory pair at 7 instructions per opcode; with it, the promoted pair
+  and the other case-local i64s cost more in the arms than the
+  dispatch block saves, until the joins at the dispatch loop's merge
+  blocks can keep a register.
