@@ -429,3 +429,64 @@ the hottest blocks first, then DBT time on both machines.
   hot blocks of VdbeExec do not re-read spilled values within a block;
   the machinery (reload values the allocator owns) is what piece 3
   needs.
+- 2026-10-26: the RMW patch re-measured on 5b.1+5b.2: heavy run
+  3,561,020,599 -> 3,599,919,103 (+1.1%), all of it sqlite3VdbeExec,
+  all of it the dispatch block: nVmStep's two words become a spilled
+  pair and the block goes from 10 instructions to 13, plus 3 in the
+  latch (the lo word reloaded, incremented, reloaded again for the
+  carry compare, the hi word stored; the latch recomputes lo+1 and
+  stores it, and reloads hi).  12.82 M opcodes x 3 = the 38.9 M.
+- 2026-10-26: **5b.3 built, measured, parked (opt-in `HIR_REGION=1`).**
+  Regional spill (`ra_region_split`): when a node fails to colour and
+  the victim is live across the region the failure is in, the victim
+  goes to memory in that region only -- a COPY at the region entry (the
+  top-of-block list), reads inside the region and phi arguments on its
+  exit edges name the copy (the phi copy reloads), and the value keeps
+  its register elsewhere.  Region = the smallest dominator subtree
+  holding the failing node's live range; only inside loops, never a
+  loop header, same loop as the definition, one split per value per
+  respill round, the value not live into any exit target except as a
+  phi argument; liveness and everything downstream rebuilt after a
+  round that split.  Correct (heavy run output identical in every
+  configuration, five differentials green) but it does not pay:
+  alone, SQLite static reloads 4,501 -> 4,519, stores 810 -> 876, 54
+  regions (11 in VdbeExec), heavy run 3,560,324,456 (-0.02%); with the
+  RMW patch on top, 3,689,777,782 against 3,599,919,103 without it --
+  VdbeExec's respill ran 57 rounds instead of 23 (161 victims, 57
+  pinned constants unpinned, 53 phis) and its frame stores went 698 ->
+  1,326.  And the value it was built for is not reachable by this
+  shape: nVmStep's new lo word is defined in the header and live
+  THROUGH every arm into the join (its only use after the arms is the
+  back-edge phi copy), so every arm's exit fails the "not live into the
+  exit target" test.  Serving it needs the reload at the region exit
+  as a value -- a phi at the join (and, for a loop-invariant, a header
+  phi) with the region copy as its argument from the region's exits,
+  and the uses after the join renamed -- the webs' P/M shape built on
+  demand.  That is the next design, not a tuning of this one.  The
+  first version (region = dominator child of the DEFINING block, any
+  depth) split 1,889 values, most in straight-line code or the whole
+  switch dispatch, and tripled the stores.
+  Two wrong-code defects found on the way, both older than this piece
+  and both landed: (1) a rematerialized ADDI (5b.1) as a parallel-copy
+  source -- a phi argument on an edge, a call argument -- reads its
+  base's register AT THE COPY, but the phi-copy fast path and the
+  argument marshaller classed it "constant-like" and materialized it
+  whenever convenient: test_phi_web's loop-entry copies wrote `step :=
+  0` into the register still holding `seed` before `h := seed + 7` read
+  it.  `hcg_remat_reg_src`: such a source is sequenced as a move from
+  the base's register and emitted as `addi dst, base, imm`; a remat
+  ADDI of a spilled base counts the base's slot in the slot-hazard
+  check; and the respill no longer remats the operand of a remat
+  victim (one immediate, not a chain).  Live in kit batches 41 and 42.
+  (2) The allocator's per-value state (ra_mem_forced, ra_web_of, ...)
+  is reset for [0, h_ninst) at the start of hir_regalloc; a copy
+  appended later (5b.2's block reloads too) inherited the previous
+  function's entry -- a stale ra_web_of handed test_phi_web's region
+  copy another value's slot.  ra_new_split_copy clears them.  Also:
+  the -d dump carries phi arguments and a block table (dominator,
+  depth, successors, top-of-block list), and `HIR_REGION_FN`/`_SKIP`/
+  `_MAX` bisect region candidates within one function.  The harness
+  compiles test_phi_web a second time with HIR_REGION=1 and requires a
+  REGION line and the right answer.  Default build: SQLite static
+  reloads 4,501 -> 4,503, stores 810 -> 824 (the remat-chain rule),
+  heavy run 3,561,020,599 -> 3,560,217,280, output identical.

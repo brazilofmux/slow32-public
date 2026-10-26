@@ -948,6 +948,41 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
         fi
     done
 
+    # Memory model step 5b.3 (regional spill, opt-in HIR_REGION=1): the
+    # phi-web test compiled with regions on must still be right, and at
+    # least one region must form.  Its loop-entry copies are where a
+    # rematerialized ADDI source read its base's register after another
+    # copy had overwritten it (the parallel-copy hazard, hcg_remat_reg_src)
+    # -- the regions exposed it, the plain run does not.
+    TOTAL=$((TOTAL + 1))
+    set +e
+    HIR_REGION=1 HIR_RA_DEBUG=1 run_exe_rc "$GEN1_CC_EXE" "$WORKDIR/test_phi_web_region-cc.log" \
+        "$TESTS_DIR/test_phi_web.c" "$WORKDIR/test_phi_web_region.s"
+    PR_RC=$?
+    set -e
+    PR_OK=0
+    if [[ "$PR_RC" -eq 0 && -s "$WORKDIR/test_phi_web_region.s" ]] && grep -q '^REGION' "$WORKDIR/test_phi_web_region-cc.log"; then
+        run_exe "$AS_EXE" "$WORKDIR/test_phi_web_region-as.log" "$WORKDIR/test_phi_web_region.s" "$WORKDIR/test_phi_web_region.s32o"
+        run_exe "$LD_EXE" "$WORKDIR/test_phi_web_region-ld.log" \
+            -o "$WORKDIR/test_phi_web_region.s32x" --mmio 64K \
+            "$RUNTIME_CRT0" "$WORKDIR/test_phi_web_region.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
+            $BUILTINS64_OBJ $BUILTINS_FP64_OBJ $LIBC_OBJS
+        if [[ -s "$WORKDIR/test_phi_web_region.s32x" ]]; then
+            set +e
+            run_exe_rc "$WORKDIR/test_phi_web_region.s32x" "$WORKDIR/test_phi_web_region-run.log"
+            PR_RC=$?
+            set -e
+            [[ "$PR_RC" -eq 0 ]] && PR_OK=1
+        fi
+    fi
+    if [[ "$PR_OK" -eq 1 ]]; then
+        printf "  %-30s PASS\n" "test_phi_web (HIR_REGION=1):"
+        PASS=$((PASS + 1))
+    else
+        printf "  %-30s FAIL (rc=%d, or no region formed)\n" "test_phi_web (HIR_REGION=1):" "$PR_RC"
+        FAIL=$((FAIL + 1))
+    fi
+
     # GitHub issue 55: getenv reaches the host environment.  Needs a
     # variable actually set, so it cannot ride the plain test loop.
     TOTAL=$((TOTAL + 1))

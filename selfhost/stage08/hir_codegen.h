@@ -1230,6 +1230,42 @@ static int hcg_argmap[HIR_MAX_CARG]; /* per-call ABI register map */
 static int hcg_shuf_dst[HCG_ARGSHUF_MAX];
 static int hcg_shuf_src[HCG_ARGSHUF_MAX];   /* physical reg, -1 = materialize */
 static int hcg_shuf_val[HCG_ARGSHUF_MAX];
+static int hcg_shuf_imm[HCG_ARGSHUF_MAX];   /* added to src: a rematerialized ADDI's immediate */
+
+/* A rematerialized ADDI (memory model 5b.1) read as a parallel-copy
+ * source is `addi dst, base, imm` at the copy: it READS the base's
+ * register there, so the sequencer must order it like a move from
+ * that register, not materialize it whenever convenient -- the
+ * loop-entry copies of test_phi_web wrote `step := 0` into the
+ * register still holding `seed` before `h := seed + 7` read it.
+ * Returns the base's register (1 for a ret-direct base) and sets
+ * *imm, or -1 when v is not such a value or its base has no register
+ * (a memory base is reloaded, and slots are not what a parallel copy
+ * overwrites, except by a memory-destination phi copy: see the slot
+ * hazard check in hcg_phi_copies). */
+static int hcg_remat_reg_src(int v, int *imm) {
+    int b;
+    if (v < 0 || v >= h_ninst || !ra_remat_op[v] || h_kind[v] != HI_ADDI) return -1;
+    b = h_src1[v];
+    if (b < 0 || b >= h_ninst) return -1;
+    *imm = h_val[v];
+    if (hcg_ret_direct[b]) return 1;
+    if (ra_reg[b] >= 0) return ra_reg[b];
+    return -1;
+}
+
+/* The slot a copy source is read from: its own, or, for a
+ * rematerialized ADDI of a spilled base, the base's.  0 if none. */
+static int hcg_src_slot(int v) {
+    if (v < 0 || v >= h_ninst) return 0;
+    if (ra_remat_op[v] && h_kind[v] == HI_ADDI) {
+        v = h_src1[v];
+        if (v < 0 || v >= h_ninst || ra_reg[v] >= 0 || hi_inst_remat(v)) return 0;
+        return ra_spill_off[v];
+    }
+    if (ra_reg[v] >= 0 || hi_inst_remat(v)) return 0;
+    return ra_spill_off[v];
+}
 static int hcg_shuf_done[HCG_ARGSHUF_MAX];
 static int hcg_stat_argshuf;                /* cycles broken via the scratch */
 
@@ -1261,8 +1297,8 @@ static void hcg_parallel_copy(int n) {
                 }
                 if (!blocked) {
                     if (hcg_shuf_src[j] >= 0) {
-                        if (hcg_shuf_src[j] != hcg_shuf_dst[j]) {
-                            cg_rri("addi", hcg_shuf_dst[j], hcg_shuf_src[j], 0);
+                        if (hcg_shuf_src[j] != hcg_shuf_dst[j] || hcg_shuf_imm[j] != 0) {
+                            cg_rri("addi", hcg_shuf_dst[j], hcg_shuf_src[j], hcg_shuf_imm[j]);
                         }
                     } else {
                         hcg_into(hcg_shuf_dst[j], hcg_shuf_val[j]);
@@ -1303,9 +1339,10 @@ static void hcg_move_vals(int *dst, int *vals, int n) {
         v = vals[i];
         hcg_shuf_dst[i] = dst[i];
         hcg_shuf_val[i] = v;
+        hcg_shuf_imm[i] = 0;
         if (v >= 0 && v < HIR_MAX_INST && hcg_ret_direct[v]) hcg_shuf_src[i] = 1;
         else if (v >= 0 && ra_reg[v] >= 0) hcg_shuf_src[i] = ra_reg[v];
-        else hcg_shuf_src[i] = -1;
+        else hcg_shuf_src[i] = hcg_remat_reg_src(v, &hcg_shuf_imm[i]);
         hcg_shuf_done[i] = 0;
         i = i + 1;
     }
@@ -1328,9 +1365,10 @@ static void hcg_marshal_reg_args(int base, int nargs) {
             v = h_carg[base + i];
             hcg_shuf_dst[n] = hcg_argmap[i];
             hcg_shuf_val[n] = v;
+            hcg_shuf_imm[n] = 0;
             if (v >= 0 && v < HIR_MAX_INST && hcg_ret_direct[v]) hcg_shuf_src[n] = 1;
             else if (v >= 0 && ra_reg[v] >= 0) hcg_shuf_src[n] = ra_reg[v];
-            else hcg_shuf_src[n] = -1;
+            else hcg_shuf_src[n] = hcg_remat_reg_src(v, &hcg_shuf_imm[n]);
             hcg_shuf_done[n] = 0;
             n = n + 1;
         }
@@ -1657,7 +1695,8 @@ static void hcg_store_off(int base, int vreg, int off, int ty) {
 
 static int hcg_phi_tmp[SSA_MAX_PROMO];
 static int hcg_phi_push_ix[SSA_MAX_PROMO];
-static int hcg_phi_is_const[SSA_MAX_PROMO];
+static int hcg_phi_is_const[SSA_MAX_PROMO];   /* 0 reg, 1 const, 2 memory, 3 none, 4 remat of a reg base */
+static int hcg_phi_imm[SSA_MAX_PROMO];        /* class 4: added to the source register */
 static int hcg_phi_const_val[SSA_MAX_PROMO];
 static int hcg_phi_src_reg[SSA_MAX_PROMO];
 static int hcg_phi_dst_reg[SSA_MAX_PROMO];
@@ -1776,8 +1815,14 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
             if (ra_reg[v] == 2) { fast_ok = 0; break; }
             hcg_phi_is_const[j] = 0;
             hcg_phi_src_reg[j] = ra_reg[v];
+        } else if (hcg_remat_reg_src(v, &hcg_phi_imm[j]) >= 0) {
+            /* a rematerialized ADDI of a register: reads that
+             * register at the copy, so it is sequenced as a move */
+            hcg_phi_src_reg[j] = hcg_remat_reg_src(v, &hcg_phi_imm[j]);
+            if (hcg_phi_src_reg[j] == 2) { fast_ok = 0; break; }
+            hcg_phi_is_const[j] = 4;
         } else {
-            /* memory (or remat) source: const-like, no register held */
+            /* memory (or remat of memory) source: const-like, no register held */
             hcg_phi_is_const[j] = 2;
             hcg_phi_src_reg[j] = -1;
         }
@@ -1795,8 +1840,9 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
                 if (i != j) {
                     int w;
                     w = ssa_phi_find_arg(hcg_phi_tmp[i], from_blk);
-                    if (w >= 0 && !hcg_ret_direct[w] && ra_reg[w] < 0 &&
-                        !hi_inst_remat(w) && ra_spill_off[w] == off &&
+                    /* the slot a reader reads: its own, or its
+                     * rematerialized ADDI's spilled base's */
+                    if (w >= 0 && !hcg_ret_direct[w] && hcg_src_slot(w) == off &&
                         !(ra_reg[hcg_phi_tmp[i]] < 0 &&
                           ra_spill_off[hcg_phi_tmp[i]] == off)) {
                         fast_ok = 0;
@@ -1855,30 +1901,22 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
                 if (!hcg_phi_active[j]) { j = j + 1; continue; }
                 dst = hcg_phi_dst_reg[j];
                 blocked = 0;
-                if (hcg_phi_is_const[j]) {
-                    i = 0;
-                    while (i < n) {
-                        if (hcg_phi_active[i] && !hcg_phi_is_const[i] && hcg_phi_src_reg[i] == dst) {
-                            blocked = 1;
-                            break;
-                        }
-                        i = i + 1;
+                /* a pending copy that reads dst's register: a move, or
+                 * a rematerialized ADDI of it (class 4) */
+                i = 0;
+                while (i < n) {
+                    if (hcg_phi_active[i] && i != j &&
+                        (hcg_phi_is_const[i] == 0 || hcg_phi_is_const[i] == 4) &&
+                        hcg_phi_src_reg[i] == dst) {
+                        blocked = 1;
+                        break;
                     }
-                } else {
-                    src = hcg_phi_src_reg[j];
-                    if (src != dst) {
-                        i = 0;
-                        while (i < n) {
-                            if (hcg_phi_active[i] && !hcg_phi_is_const[i] && hcg_phi_src_reg[i] == dst) {
-                                blocked = 1;
-                                break;
-                            }
-                            i = i + 1;
-                        }
-                    }
+                    i = i + 1;
                 }
                 if (!blocked) {
-                    if (hcg_phi_is_const[j] == 2) {
+                    if (hcg_phi_is_const[j] == 4) {
+                        cg_rri("addi", dst, hcg_phi_src_reg[j], hcg_phi_imm[j]);
+                    } else if (hcg_phi_is_const[j] == 2) {
                         /* memory/remat source: load straight into dst */
                         hcg_into(dst, hcg_phi_src_inst[j]);
                     } else if (hcg_phi_is_const[j]) {
@@ -1902,7 +1940,7 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
             j = 0;
             srcv = -1;
             while (j < n) {
-                if (hcg_phi_active[j] && !hcg_phi_is_const[j]) {
+                if (hcg_phi_active[j] && (hcg_phi_is_const[j] == 0 || hcg_phi_is_const[j] == 4)) {
                     dst = hcg_phi_dst_reg[j];
                     src = hcg_phi_src_reg[j];
                     if (dst != src) { srcv = src; break; }
@@ -1913,7 +1951,8 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
             cg_rri("addi", 2, srcv, 0);
             j = 0;
             while (j < n) {
-                if (hcg_phi_active[j] && !hcg_phi_is_const[j] && hcg_phi_src_reg[j] == srcv) {
+                if (hcg_phi_active[j] && (hcg_phi_is_const[j] == 0 || hcg_phi_is_const[j] == 4) &&
+                    hcg_phi_src_reg[j] == srcv) {
                     hcg_phi_src_reg[j] = 2;
                 }
                 j = j + 1;
@@ -3777,6 +3816,24 @@ static void hcg_inst(int idx) {
             hcg_maybe_spill(idx);
             return;
         }
+        /* A memory destination from a register source is one store
+         * (the step 5b.3 region copy at an arm's entry is this). */
+        if (ra_reg[idx] < 0 && !hi_inst_remat(idx) && ra_spill_off[idx] != 0 &&
+            !(idx < HIR_MAX_INST && hcg_ret_direct[idx]) &&
+            !(s1 < HIR_MAX_INST && hcg_ret_direct[s1])) {
+            off = hcg_slot_off(ra_spill_off[idx]);
+            if (off >= -2048 && off <= 2047) {
+                hcg_stat_spillst = hcg_stat_spillst + 1;
+                cg_s("    stw r");
+                cg_n(hcg_slot_base());
+                cg_s(", r");
+                cg_n(ra_reg[s1]);
+                cg_s(", ");
+                cg_n(off);
+                cg_c(10);
+                return;
+            }
+        }
         rs1 = hcg_src(s1, 1);
         if (rd != rs1) {
             cg_rri("addi", rd, rs1, 0);
@@ -4310,6 +4367,7 @@ static void hcg_func(Node *fn) {
         fdputs(fn->name, 2);
         fdputc(10, 2);
     }
+    ra_cur_fname = fn->name;
     hir_regalloc();
 
     /* Optional per-function regalloc dump (Issue #31 diagnostic) */

@@ -397,6 +397,8 @@ int main(int argc, char **argv) {
     fdputuint(2, ra_stat_reload_ins - ra_stat_reload_del);
     fdputs("/", 2);
     fdputuint(2, ra_stat_reload_ins);
+    fdputs(" region=", 2);
+    fdputuint(2, ra_stat_region);
     fdputs(" csave_restore=", 2);
     fdputuint(2, hcg_stat_csave);
     fdputs(" retpin=", 2);
