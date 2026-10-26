@@ -269,11 +269,18 @@ static int   hl_cur_blk;
  * test_respill's blam read through another function's ADDI). */
 static char ra_remat_op[HIR_MAX_INST];
 
+/* Memory model step 5b.2: a COPY the allocator appended to reload a
+ * spilled value once for a run of reads in one block (ra_insert_reloads
+ * in hir_regalloc.h).  The address-fold walks stop at one -- a load
+ * folding through it must read ITS register, not reload the original
+ * -- so the flag is read by the emitter and declared here. */
+static char ra_is_reload[HIR_MAX_INST];
+
 static void hir_reset(void) {
     {
         int hi_i;
         hi_i = 0;
-        while (hi_i < h_ninst && hi_i < HIR_MAX_INST) { ra_remat_op[hi_i] = 0; hi_i = hi_i + 1; }
+        while (hi_i < h_ninst && hi_i < HIR_MAX_INST) { ra_remat_op[hi_i] = 0; ra_is_reload[hi_i] = 0; hi_i = hi_i + 1; }
     }
     h_ninst = 0;
     h_ncarg = 0;

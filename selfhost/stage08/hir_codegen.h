@@ -577,7 +577,7 @@ static int hcg_addr_base_off(int inst, int *base_out, int *off_out) {
     lim = 0;
     while (inst >= 0 && lim < 64) {
         k = h_kind[inst];
-        if (k == HI_COPY) {
+        if (k == HI_COPY && !ra_is_reload[inst]) {
             inst = h_src1[inst];
             lim = lim + 1;
             continue;
@@ -588,6 +588,8 @@ static int hcg_addr_base_off(int inst, int *base_out, int *off_out) {
             lim = lim + 1;
             continue;
         }
+        /* A reload COPY (step 5b.2) is the base: its register holds
+         * the spilled value for this block's reads. */
         *base_out = inst;
         *off_out = off;
         return (inst >= 0);
@@ -3324,6 +3326,7 @@ static void hcg_inst(int idx) {
         } else {
             /* LOAD(reg): try to fold ADDI-chain base+offset shape. */
             if (hcg_addr_base_off(s1, &base_i, &off) && hcg_is_i12(off)) {
+                if (rl_fold_sub[idx] >= 0) base_i = rl_fold_sub[idx];   /* step 5b.2 reload */
                 rs1 = hcg_src(base_i, 1);
                 hcg_load_off(rd, rs1, off, ty);
             } else {
@@ -3357,6 +3360,7 @@ static void hcg_inst(int idx) {
         } else {
             /* STORE(reg, reg) */
             if (hcg_addr_base_off(s1, &base_i, &off) && hcg_is_i12(off)) {
+                if (rl_fold_sub[idx] >= 0) base_i = rl_fold_sub[idx];   /* step 5b.2 reload */
                 rs1 = hcg_src(base_i, 1);
                 if (hcg_const_is_zero(s2)) vreg = 0;
                 else vreg = hcg_src(s2, 2);
@@ -3761,6 +3765,15 @@ static void hcg_inst(int idx) {
         rd = hcg_dst(idx);
         if (hcg_const_imm_inst(s1, &off)) {
             hcg_li(rd, off);
+            hcg_maybe_spill(idx);
+            return;
+        }
+        /* A source with no register (spilled, or recomputed) is
+         * materialized straight into the destination: one ldw or addi,
+         * not a reload into r1 and a move.  The step 5b.2 reload values
+         * are exactly this COPY. */
+        if (ra_reg[s1] < 0 && !(s1 < HIR_MAX_INST && hcg_ret_direct[s1])) {
+            hcg_into(rd, s1);
             hcg_maybe_spill(idx);
             return;
         }

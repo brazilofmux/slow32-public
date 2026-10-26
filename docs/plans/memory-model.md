@@ -389,3 +389,43 @@ the hottest blocks first, then DBT time on both machines.
   the design said: the shape it is for is the one the RMW patch
   creates.  Gates: run-tests 142/142 with the fixed point, SQLite
   acceptance identical, libc 27/0, stage07 5/5, FP 288 bit-identical.
+- 2026-10-26: **5b.2 landed** -- one reload per block.  Once the first
+  colouring has settled, every spilled scalar gets, per block and per
+  run of reads with no call between them, a COPY of itself hung before
+  its first reader (the pre-instruction chain the call splitter uses,
+  `ra_insert_reloads`), and the run's reads name the COPY; a second
+  colouring places those (short, never across a call, so r3-r10), and
+  a COPY it cannot place is deleted by the respill (reads back to the
+  slot, `ra_delete_reload`), never spilled.  The emitter loads a COPY
+  of a spilled value straight into its register (one ldw, not ldw+addi
+  -- call-split copies of spilled values gained the same).  Two kinds
+  of read are served: operand slots, and the base a load's or store's
+  address chain folds down to (`rl_fold_sub`: the emitter's two fold
+  sites take the base from it; `ra_codegen_fold_base` reports it to
+  liveness).  Reads through an ADDI or COPY operand are left alone --
+  the emitter's folds walk through those from other blocks, and a
+  reload must stay block-local; 239 of the remaining 541 same-block
+  repeat reloads in SQLite are materialized address ADDIs of this
+  shape, the next piece's material.  Also: `ra_build_wuses` now counts
+  the fold-base reads (a reload serving only such reads had weight 0
+  and was always the cheapest victim); that alone moved spill choices
+  across SQLite -- static reloads 5,524 -> 4,662 but the heavy run
+  +0.12% -- and with the reloads on top: reloads 4,501 (-18.5%),
+  stores 818 -> 810, VdbeExec reloads 800 -> 679, same-block repeats
+  1,086 -> 541, heavy run 3,561,562,038 -> 3,561,020,599 (-0.015%),
+  output identical, arm64 DBT 0.86-0.87 s both.  Two wrong versions on
+  the way, both caught by the heavy run: the fold table was reset after
+  liveness had read it (strcmp's old pointer looked dead at its step;
+  a stale entry named instruction 0 as a base), and an access with a
+  folding address chain was served twice -- its ADDI operand AND the
+  chain's base -- so the emitter, folding from the reload COPY of the
+  ADDI, dropped the displacement (sqlite3Insert read p->f28 at p+0;
+  found by splicing the 36 differing functions between the good and
+  bad builds, scratchpad `splice.py` now carries jump tables).  The
+  address operand of a folding access is not a read.  Test
+  test_blk_reload (gather: 58 -> 29 frame reloads; the harness
+  requires a RELOAD line).  Gates as above, host frontend OK.
+  Verdict: a static win, dynamically neutral on this workload -- the
+  hot blocks of VdbeExec do not re-read spilled values within a block;
+  the machinery (reload values the allocator owns) is what piece 3
+  needs.

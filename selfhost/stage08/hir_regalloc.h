@@ -68,6 +68,11 @@ static int ra_stat_r30;              /* values colored to r30 */
  * this single translation unit. */
 static int ra_crosses_call[HIR_MAX_INST];
 static int ra_mem_forced[HIR_MAX_INST];  /* iterated-spill victims (gc_respill) */
+/* Step 5b.2: a LOAD/STORE whose address chain the emitter folds down
+ * to a spilled base reads, in this block, the reload named here
+ * instead (-1: the base itself).  ra_codegen_fold_base and the
+ * emitter's two fold sites apply it. */
+static int rl_fold_sub[HIR_MAX_INST];
 /* Phi webs sharing one spill slot (ra_phi_webs): ra_web_of[A] = the
  * spilled phi P whose slot A takes, -1 for its own; ra_web_s/e[P] = the
  * slot range P's slot must also cover for its aliases. */
@@ -609,6 +614,7 @@ static int ra_codegen_fold_base(int inst, int *base_out) {
         while (chain >= 0 && chlim < 64) {
             ck = h_kind[chain];
             if (ck == HI_COPY) {
+                if (ra_is_reload[chain]) break;   /* the reload's register is the base */
                 chain = h_src1[chain];
                 chlim = chlim + 1;
                 continue;
@@ -623,6 +629,7 @@ static int ra_codegen_fold_base(int inst, int *base_out) {
         }
         if (chain >= 0 && chain != s1 && ra_is_i12(off)) {
             *base_out = chain;
+            if (rl_fold_sub[inst] >= 0) *base_out = rl_fold_sub[inst];
             return 1;
         }
         return 0;
@@ -2075,6 +2082,11 @@ static void ra_build_wuses(void) {
                 j = j + 1;
             }
         }
+        /* The base an access folds its address chain down to is read
+         * at the access (step 5b.2: a reload serving such reads must
+         * be charged for them, or it is always the cheapest victim). */
+        if ((k == HI_LOAD || k == HI_STORE) && ra_codegen_fold_base(i, &base))
+            ra_wuses[base] = ra_wuses[base] + w;
         if (hi_has_value(k))
             ra_wuses[i] = ra_wuses[i] + w;
         if (ra_wuses[i] > 1000000) ra_wuses[i] = 1000000;
@@ -2953,9 +2965,308 @@ static char gc_rs_taken[GC_MAX_NODE];
 static int gc_rs_nremat;        /* remat victims made this round */
 static int ra_stat_remat;       /* ... and per function */
 
-/* Already chosen as a victim: in memory, or recomputed at its uses. */
+/* Already chosen as a victim: in memory, recomputed at its uses, or a
+ * reload value deleted this round (a NOP now). */
 static int gc_rs_victim(int inst) {
-    return ra_mem_forced[inst] || ra_remat_op[inst];
+    return ra_mem_forced[inst] || ra_remat_op[inst] || h_kind[inst] == HI_NOP;
+}
+
+/* =================================================================
+ * Memory model step 5b.2: one reload per block.
+ *
+ * A spilled value read several times in one block was reloaded at
+ * each read into the emitter's scratch.  Once colouring has settled,
+ * every spilled scalar gets, per block and per run of reads with no
+ * call between them, a COPY of itself hung before its first reader
+ * (the pre-instruction chain the call splitter uses), and the run's
+ * reads name the COPY.  The COPY is a short value for a second
+ * colouring: it never crosses a call, so it may take r3-r10; if it
+ * cannot be coloured the respill deletes it (reads go back to the
+ * slot) rather than spill it.  The emitter loads a COPY of a spilled
+ * value straight into its register.  Reads that are not operand
+ * slots -- address chains the emitter folds through an ADDI or a COPY
+ * -- are left alone, or the reload would be read from other blocks
+ * through the chain; those stay reload-at-use.
+ * ================================================================= */
+static int ra_stat_reload_ins;
+static int ra_stat_reload_del;
+static int ra_new_split_copy(int src, int blk);     /* defined with the call splitter below */
+static void ra_mark_call_crossing(void);
+static int rl_stamp[HIR_MAX_INST];     /* segment tick of v's last read */
+static int rl_first[HIR_MAX_INST];     /* body instruction the first read hangs on */
+static int rl_first_u[HIR_MAX_INST];   /* the first reader itself */
+static char rl_first_fold[HIR_MAX_INST]; /* ... read v as a folded address base */
+static int rl_cur[HIR_MAX_INST];       /* reload serving v in this segment */
+static int rl_tick;
+
+/* Spilled after the last colouring, and a scalar a reload may stand for. */
+static int ra_rl_spilled(int v) {
+    int n;
+    if (v < 0 || v >= h_ninst) return 0;
+    if (h_kind[v] == HI_NOP || !hi_has_value(h_kind[v])) return 0;
+    if (hi_inst_remat(v)) return 0;
+    if (ra_pair_of[v] >= 0) return 0;
+    if (ra_is_reload[v]) return 0;
+    if (ra_mem_forced[v]) return 1;
+    n = gc_node[v];
+    if (n < 0) return 0;
+    if (gc_force_spill[n]) return 1;
+    return gc_color[n] < 0;
+}
+
+/* Operand slots of i that read old now read nw: src1, src2 when it is
+ * a reference, call arguments.  Not the chain copies hanging off i (a
+ * reload's own source stays), and not an ADDI or COPY (the emitter's
+ * address folds walk through those from other blocks). */
+static int ra_rl_kind_ok(int k) {
+    if (k == HI_ADDI || k == HI_COPY || k == HI_PHI || k == HI_NOP) return 0;
+    if (k == HI_CALLHI) return 0;     /* src1 names the CALL instruction, not a value read */
+    return 1;
+}
+
+static void ra_rl_rewire_inst(int i, int old, int nw) {
+    int j;
+    int n;
+    int base;
+    int k;
+    k = h_kind[i];
+    if (!ra_rl_kind_ok(k)) return;
+    if (h_src1[i] == old) h_src1[i] = nw;
+    if (h_src2[i] == old && ho_src2_is_ref(k)) h_src2[i] = nw;
+    if ((k == HI_CALL || k == HI_CALLP) && h_cbase[i] >= 0) {
+        n = h_val[i];
+        base = h_cbase[i];
+        j = 0;
+        while (j < n) {
+            if (h_carg[base + j] == old) h_carg[base + j] = nw;
+            j = j + 1;
+        }
+    }
+}
+
+/* A fused compare is a NOP whose operands the branch re-reads. */
+static int ra_rl_fused_cmp(int term) {
+    int cmp;
+    if (term < 0 || h_kind[term] != HI_BRC) return -1;
+    cmp = hcg_brc_fuse[term];
+    if (cmp < 0 || h_kind[cmp] != HI_NOP) return -1;
+    return cmp;
+}
+
+static void ra_rl_rewire_cmp(int cmp, int old, int nw) {
+    if (h_src1[cmp] == old) h_src1[cmp] = nw;
+    if (h_src2[cmp] == old) h_src2[cmp] = nw;
+}
+
+/* u reads v: as an operand (fold 0), or as the base its address chain
+ * folds down to (fold 1; the emitter then takes the base from
+ * rl_fold_sub[u]). */
+static void ra_rl_serve(int u, int v, int r, int fold) {
+    if (fold) rl_fold_sub[u] = r;
+    else ra_rl_rewire_inst(u, v, r);
+}
+
+/* One read of v by u.  anc is the body instruction whose chain a
+ * reload would hang on, -1 where none can (terminator, hoisted list):
+ * such a read is served by a reload already made, never starts one. */
+static void ra_rl_read(int v, int u, int anc, int fold) {
+    int r;
+    if (!ra_rl_spilled(v)) return;
+    if (rl_stamp[v] != rl_tick) {
+        if (anc < 0) return;
+        rl_stamp[v] = rl_tick;
+        rl_first[v] = anc;
+        rl_first_u[v] = u;
+        rl_first_fold[v] = fold;
+        rl_cur[v] = -1;
+        return;
+    }
+    if (rl_cur[v] < 0) {
+        r = ra_new_split_copy(v, h_blk[rl_first[v]]);
+        if (r < 0) return;
+        ra_is_csplit[r] = 0;
+        ra_is_reload[r] = 1;
+        ra_csplit_next[r] = ra_csplit_head[rl_first[v]];
+        ra_csplit_head[rl_first[v]] = r;
+        rl_cur[v] = r;
+        ra_rl_serve(rl_first_u[v], v, r, rl_first_fold[v]);
+        ra_stat_reload_ins = ra_stat_reload_ins + 1;
+        if (getenv("HIR_RA_DEBUG")) {
+            fdputs("RELOAD v=", 2);
+            fdputuint(2, (unsigned)v);
+            fdputs(" r=", 2);
+            fdputuint(2, (unsigned)r);
+            fdputs(" blk=", 2);
+            fdputuint(2, (unsigned)h_blk[r]);
+            fdputc(10, 2);
+        }
+    }
+    ra_rl_serve(u, v, rl_cur[v], fold);
+}
+
+static void ra_rl_reads_of(int u, int anc) {
+    int k;
+    int j;
+    int n;
+    int base;
+    int a;
+    int fold;
+    k = h_kind[u];
+    if (!ra_rl_kind_ok(k)) return;
+    /* An access whose address chain folds reads the chain's BASE, not
+     * its address operand: the emitter never touches the ADDI's
+     * register.  Serving both put a reload of the ADDI in src1 and the
+     * base's reload in rl_fold_sub, and the emitter, folding from the
+     * reload COPY, lost the displacement (sqlite3Insert: p->f28 read
+     * at p+0). */
+    fold = (k == HI_LOAD || k == HI_STORE) && ra_codegen_fold_base(u, &a);
+    if (h_src1[u] >= 0 && !fold) ra_rl_read(h_src1[u], u, anc, 0);
+    if (h_src2[u] >= 0 && ho_src2_is_ref(k)) ra_rl_read(h_src2[u], u, anc, 0);
+    if ((k == HI_CALL || k == HI_CALLP) && h_cbase[u] >= 0) {
+        n = h_val[u];
+        base = h_cbase[u];
+        j = 0;
+        while (j < n) {
+            if (h_carg[base + j] >= 0) ra_rl_read(h_carg[base + j], u, anc, 0);
+            j = j + 1;
+        }
+    }
+    /* The base a load's or store's address chain folds down to is read
+     * at the access (the chain's ADDIs emit nothing): the common shape
+     * of a spilled pointer, p->a and p->b in one block. */
+    if (fold) ra_rl_read(a, u, anc, 1);
+}
+
+static int ra_rl_block_term(int b) {
+    int i;
+    i = bb_end[b] - 1;
+    while (i >= bb_start[b]) {
+        if (hi_is_terminator(h_kind[i])) return i;
+        if (h_kind[i] != HI_NOP) return -1;
+        i = i - 1;
+    }
+    return -1;
+}
+
+static int ra_insert_reloads(void) {
+    int b;
+    int i;
+    int term;
+    int cmp;
+    int before;
+    before = ra_stat_reload_ins;
+    i = 0;
+    while (i < h_ninst) { rl_stamp[i] = -1; i = i + 1; }
+    rl_tick = 0;
+    b = 0;
+    while (b < bb_nblk) {
+        rl_tick = rl_tick + 1;
+        term = ra_rl_block_term(b);
+        i = bb_start[b];
+        while (i < bb_end[b]) {
+            if (i == term) break;
+            if (h_kind[i] != HI_NOP) {
+                /* The chain copies before i (call splits) are COPYs:
+                 * not rewired, so not read here. */
+                ra_rl_reads_of(i, i);
+                if (lv_is_callkind(h_kind[i])) rl_tick = rl_tick + 1;
+            }
+            i = i + 1;
+        }
+        i = licm_head[b];
+        while (i >= 0) {
+            if (h_kind[i] != HI_NOP) ra_rl_reads_of(i, -1);
+            i = licm_next[i];
+        }
+        if (term >= 0) {
+            ra_rl_reads_of(term, -1);
+            cmp = ra_rl_fused_cmp(term);
+            if (cmp >= 0) {
+                if (h_src1[cmp] >= 0 && ra_rl_spilled(h_src1[cmp]) &&
+                    rl_stamp[h_src1[cmp]] == rl_tick && rl_cur[h_src1[cmp]] >= 0)
+                    h_src1[cmp] = rl_cur[h_src1[cmp]];
+                if (h_src2[cmp] >= 0 && ra_rl_spilled(h_src2[cmp]) &&
+                    rl_stamp[h_src2[cmp]] == rl_tick && rl_cur[h_src2[cmp]] >= 0)
+                    h_src2[cmp] = rl_cur[h_src2[cmp]];
+            }
+        }
+        b = b + 1;
+    }
+    return ra_stat_reload_ins - before;
+}
+
+/* A reload the second colouring could not place: its readers go back
+ * to the slot and it becomes a NOP (the chains and the order skip
+ * NOPs).  Its liveness bits may linger; it has no node to carry them. */
+static void ra_delete_reload(int r) {
+    int v;
+    int b;
+    int i;
+    int term;
+    int cmp;
+    v = h_src1[r];
+    b = h_blk[r];
+    term = ra_rl_block_term(b);
+    i = bb_start[b];
+    while (i < bb_end[b]) {
+        if (h_kind[i] != HI_NOP) {
+            ra_rl_rewire_inst(i, r, v);
+            if (rl_fold_sub[i] == r) rl_fold_sub[i] = -1;
+        }
+        i = i + 1;
+    }
+    i = licm_head[b];
+    while (i >= 0) {
+        if (h_kind[i] != HI_NOP) {
+            ra_rl_rewire_inst(i, r, v);
+            if (rl_fold_sub[i] == r) rl_fold_sub[i] = -1;
+        }
+        i = licm_next[i];
+    }
+    cmp = ra_rl_fused_cmp(term);
+    if (cmp >= 0) ra_rl_rewire_cmp(cmp, r, v);
+    h_kind[r] = HI_NOP;
+    ra_is_reload[r] = 0;
+    ra_stat_reload_del = ra_stat_reload_del + 1;
+    if (getenv("HIR_RA_DEBUG")) {
+        fdputs("RELOAD-DEL r=", 2);
+        fdputuint(2, (unsigned)r);
+        fdputs(" v=", 2);
+        fdputuint(2, (unsigned)v);
+        fdputc(10, 2);
+    }
+}
+
+/* Instructions were appended and operands rewired: the order,
+ * intervals, fused-compare extension, call-crossing marks, exact
+ * liveness, weighted uses and argument preferences are all rebuilt.
+ * The remat victims' operand intervals are widened again (gc_respill
+ * did it on the old intervals). */
+static void ra_recompute_after_insert(void) {
+    int i;
+    int changed;
+    int lim;
+    ra_build_wuses();
+    ra_compute_pos();
+    ra_compute_ends();
+    ra_extend_fused_cmp();
+    ra_mark_call_crossing();
+    lv_prepare();
+    ra_mark_arg_prefs();
+    changed = 1;
+    lim = 0;
+    while (changed && lim < 64) {
+        changed = 0;
+        i = 0;
+        while (i < h_ninst) {
+            if (ra_remat_op[i] && h_src1[i] >= 0 && ra_iend[i] > ra_iend[h_src1[i]]) {
+                ra_iend[h_src1[i]] = ra_iend[i];
+                changed = 1;
+            }
+            i = i + 1;
+        }
+        lim = lim + 1;
+    }
 }
 
 /* Memory model step 5b.1: may this victim be recomputed at each use
@@ -3041,6 +3352,8 @@ static int gc_respill(void) {
                 gc_rs_taken[best] = 1;
                 if (h_kind[inst] == HI_ICONST && h_no_remat[inst]) {
                     h_no_remat[inst] = 0;   /* back to remat, no slot */
+                } else if (ra_is_reload[inst]) {
+                    ra_delete_reload(inst); /* readers back to the slot */
                 } else if (gc_remat_ok(inst)) {
                     ra_remat_op[inst] = 2;  /* this round's; 1 once liveness is re-solved */
                     gc_rs_nremat = gc_rs_nremat + 1;
@@ -3246,7 +3559,7 @@ static void gc_remat_resolve(void) {
     }
 }
 
-static void gc_alloc(void) {
+static void gc_alloc_rounds(void) {
     int iter;
 
     iter = 0;
@@ -3262,6 +3575,16 @@ static void gc_alloc(void) {
         if (gc_respill() == 0) break;
         if (gc_rs_nremat > 0) gc_remat_resolve();
         iter = iter + 1;
+    }
+}
+
+static void gc_alloc(void) {
+    gc_alloc_rounds();
+    /* Step 5b.2: the spilled set is known; give each spilled scalar one
+     * reload per block run of reads, and colour again with those. */
+    if (!getenv("HIR_NO_RELOADS") && ra_insert_reloads() > 0) {
+        ra_recompute_after_insert();
+        gc_alloc_rounds();
     }
     ra_phi_webs();
     gc_writeback();
@@ -3511,6 +3834,7 @@ static int ra_new_split_copy(int src, int blk) {
     ra_pair_of[cl] = -1;
     ra_pair_lo[cl] = 0;
     ra_is_csplit[cl] = 1;
+    rl_fold_sub[cl] = -1;
     h_ninst = h_ninst + 1;
     return cl;
 }
@@ -3626,6 +3950,13 @@ static void hir_regalloc(void) {
     /* SLOW-32 IRC path (George-Appel Iterated Register Coalescing) */
     ra_init_phys_regs();   /* populates classification tables (safe, knob==0 today) */
     { int z; z = 0; while (z < GC_MAX_NODE) { gc_pin[z] = -1; z = z + 1; } }
+    /* Before anything asks ra_codegen_fold_base: the weighted uses,
+     * intervals and liveness below all read rl_fold_sub, and a stale
+     * entry (the previous function's, or 0 for the first) named an
+     * unrelated base -- strcmp's old pointer looked dead at its
+     * increment and the load of *s1 folded off a register already
+     * stepped.  Copies appended later clear their own entry. */
+    { int z; z = 0; while (z < h_ninst) { rl_fold_sub[z] = -1; z = z + 1; } }
     ra_build_pairs();      /* fp64 halves that want adjacent registers */
     ra_split_at_calls();   /* chop crossing webs so the pre-call half can use r3-r10 */
     ra_build_wuses();      /* loop-depth-weighted use counts for spill cost */
