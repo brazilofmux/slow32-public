@@ -578,7 +578,7 @@ the hottest blocks first, then DBT time on both machines.
   8.35, 8.51 s (batch 43 8.48-8.55, clang 6.91-6.96).  Baseline for
   step 5b.5.
 
-## Step 5b.5: the join cost model (designed 2026-10-26, not started)
+## Step 5b.5: the join cost model (designed and measured 2026-10-26; does not pay, opt-in; found the same-block web bug)
 
 What the colour-rule build (`HIR_REGION=1`, the 5b.4 rules) says,
 from its `-d` dump of SQLite: 162 joins, of which 111 took their
@@ -645,3 +645,52 @@ a register and only the cold arms store it.  (3) If the latch shows
 pass-through moves, add their term to S.  Rules as always: heavy-run
 instructions and the hottest blocks first, then DBT time on both
 machines, five differentials green, the machine quiet.
+
+### Log
+
+- 2026-10-26: **built and measured; it does not pay, and it found a
+  wrong-code bug that landed.**  `ra_build_bfreq` (the frequency, with
+  the share rules selectable: `HIR_RA_FREQ=1` even shares, `=2` a
+  jump table half per target, `=3` that and whole branches, `=4` even
+  table and whole branches, `=5` the depth weights themselves),
+  `ra_region_plan`/`ra_region_commit` (the split's checks apart from
+  its mutation), `ra_region_cost` (S), and in gc_respill the cheapest
+  action over the four cheapest neighbours when the frequency is on
+  with `HIR_REGION=1`.  Heavy run, output identical in every case,
+  default 3,471 M:
+
+  | weighting | regions off | regions on (regions/joins) |
+  |---|---|---|
+  | 1 even shares | 3,561 M (+2.6%) | 3,527 M |
+  | 2 table halves | 3,512 M (+1.2%) | 3,528 M (151/426) |
+  | 3 table halves, whole branches | 3,552 M (+2.3%) | 3,482 M (+0.3%, 42/75) |
+  | 4 even table, whole branches | 3,568 M (+2.8%) | -- |
+  | 5 depth weights, S/G in depth units | = default | 3,530 M (111/345) |
+
+  Every frequency variant chooses respill victims worse than the depth
+  weights: an even jump-table share makes an arm-only value look free
+  to spill and VdbeExec's hot arms pay; halving the branches
+  undercounts reads deep in a loop body.  The depth weights cannot
+  reject a split (an arm weighs as the dispatch block, so S looks
+  cheap: mode 5 still put 15 splits on the busiest arm), and the
+  frequency that rejects best (3) chooses victims worst.  The model's
+  other error, visible in the mode-5 splits: a header phi's G counts a
+  store at the definition and ten per read, where the webs make the
+  store free and the reads sit in arms entered one time in 186 -- G
+  is overstated for exactly the victims that should be spilled
+  globally.  What would settle it is a profile, which this platform
+  does not have (slow32 -p could feed one; that is a different step).
+  Default unchanged, the machinery opt-in.
+  The bug: modes 3 and 4 produced a SQLite that failed its first
+  statement.  Splice to wherePathSolver, a three-row reproducer, the
+  trace replay (regb/calls.py, addresses normalized for the data
+  segment's shift): two different pointers stored into one frame slot
+  back to back on the loop-entry edge.  **ra_phi_webs webbed two phis of
+  the same block** -- the aFrom/aTo swap pair, both spilled under those
+  weights -- because its interference test asks whether each is live
+  into the other's block, and a phi is never live into its own: both
+  took one slot and the entry copies stored both into it.  Latent
+  since step 5 (any two spilled phis of one block with the right use
+  shape); a phi of p's own block is refused now, for the argument and
+  for web members.  The harness runs test_phi_web under HIR_RA_FREQ=3
+  as well.  SQLite's default code is byte-identical with the fix.

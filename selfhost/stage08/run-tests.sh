@@ -963,7 +963,8 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
     #    were recomputed after the block reloads) as a wrong answer here.
     for rt in "region:test_phi_web:^REGION:HIR_REGION=1" \
               "region:test_join_split:^REGION.* joins=[1-9]:HIR_REGION=1" \
-              "linear:test_phi_web:^RA fn=:HIR_LINEAR_LIVE=1"; do
+              "linear:test_phi_web:^RA fn=:HIR_LINEAR_LIVE=1" \
+              "freq:test_phi_web:^RA fn=:HIR_RA_FREQ=3"; do
         rtag="${rt%%:*}"; rt="${rt#*:}"
         rname="${rt%%:*}"; rt="${rt#*:}"
         rpat="${rt%%:*}"; renv="${rt#*:}"

@@ -2084,6 +2084,138 @@ static int ra_depth_w(int b) {
     return 1000;
 }
 
+/* =================================================================
+ * Memory model step 5b.5: a static block frequency.
+ *
+ * The respill's costs weighed a read by 10^(loop depth), so a read in
+ * a cold switch arm counted as much as one in the dispatch block; and
+ * a regional split (5b.3/5b.4) pays per ENTRY of its region whether
+ * or not the region reads the value -- a region split pays for
+ * liveness, a global spill pays for uses -- which needs a frequency to
+ * compare them by.  Forward over the forward edges in reverse
+ * postorder: the entry block RA_FREQ_SCALE; a conditional branch gives
+ * each successor half, except that an edge leaving a loop gets 1/L and
+ * the other side the rest; a loop header multiplies what reaches it
+ * from outside by L; a jump table gives each target an equal share.
+ * No profile exists on this platform (slow32 -p could feed one), so
+ * for charging a REGION the entry's frequency is taken pessimistically
+ * (ra_bfreq_pess): no less than half its dominator's, since any one
+ * arm of a switch may dominate the run -- sqlite3VdbeExec's does, at
+ * one opcode in ten where the even share says one in 186.
+ * ================================================================= */
+#define RA_FREQ_SCALE 256
+#define RA_FREQ_LOOP 8
+#define RA_FREQ_CAP 4194304
+static int ra_bfreq[HIR_MAX_BLOCK];
+static int ra_freq_on;                  /* HIR_RA_FREQ=1 */
+static int ra_is_loop_hdr(int b);       /* with the regional spill below */
+
+/* The share, out of 256, of p's frequency that the edge p -> s takes. */
+static int ra_edge_share(int p, int s) {
+    int i;
+    int k;
+    int n;
+    int j;
+    int t;
+    int exits;
+    n = ssa_nsucc[p];
+    if (n <= 1) return 256;
+    k = -1;
+    i = bb_end[p] - 1;
+    while (i >= bb_start[p]) {
+        if (h_kind[i] != HI_NOP) { k = h_kind[i]; break; }
+        i = i - 1;
+    }
+    /* HIR_RA_FREQ=1: even shares (a jump table 1/n, a branch 1/2).
+     * =2: a jump table gives each target HALF (any arm may dominate).
+     * =3: that, and a branch gives each side the whole (every block in
+     *     a loop counts as the loop, as the depth weights did).
+     * =4: even jump table, whole branches.  Measured against each
+     * other on the heavy run (plan log, step 5b.5). */
+    if (k == HI_BRC) {
+        if (ra_freq_on == 3 || ra_freq_on == 4) {
+            if (s >= 0 && s < bb_nblk && licm_depth[s] < licm_depth[p]) return 256 / RA_FREQ_LOOP;
+            return 256;
+        }
+        exits = 0;
+        j = 0;
+        while (j < n) {
+            t = ssa_succ[ssa_soff[p] + j];
+            if (t >= 0 && t < bb_nblk && licm_depth[t] < licm_depth[p]) exits = exits + 1;
+            j = j + 1;
+        }
+        if (exits == 0 || exits == n) return 128;
+        if (s >= 0 && s < bb_nblk && licm_depth[s] < licm_depth[p]) return 256 / RA_FREQ_LOOP;
+        return 256 - (256 / RA_FREQ_LOOP);
+    }
+    if (ra_freq_on == 2 || ra_freq_on == 3) return 128;
+    if (256 / n < 1) return 1;
+    return 256 / n;
+}
+
+static void ra_build_bfreq(void) {
+    int ri;
+    int b;
+    int j;
+    int p;
+    int f;
+    int pf;
+    b = 0;
+    while (b < bb_nblk) { ra_bfreq[b] = 0; b = b + 1; }
+    ri = 0;
+    while (ri < ssa_rpo_cnt) {
+        b = ssa_rpo_ord[ri];
+        if (b >= 0 && b < bb_nblk) {
+            if (ri == 0) {
+                f = RA_FREQ_SCALE;
+            } else {
+                f = 0;
+                j = 0;
+                while (j < ssa_npred[b]) {
+                    p = ssa_pred[ssa_pbase[b] + j];
+                    /* a back edge (b dominates p) is the loop multiplier's business */
+                    if (p >= 0 && p < bb_nblk && !licm_dominates(b, p)) {
+                        pf = ra_bfreq[p];
+                        if (pf > RA_FREQ_CAP) pf = RA_FREQ_CAP;
+                        f = f + ((pf * ra_edge_share(p, b)) >> 8);
+                        if (f > RA_FREQ_CAP) f = RA_FREQ_CAP;
+                    }
+                    j = j + 1;
+                }
+                if (ra_is_loop_hdr(b)) f = f * RA_FREQ_LOOP;
+            }
+            if (f < 1) f = 1;
+            if (f > RA_FREQ_CAP) f = RA_FREQ_CAP;
+            ra_bfreq[b] = f;
+        }
+        ri = ri + 1;
+    }
+}
+
+static int ra_bfreq_w(int b) {
+    if (b < 0 || b >= bb_nblk) return 1;
+    /* =5: the depth weights themselves (every block in a loop counts
+     * as the loop), with the split's cost compared in the same units
+     * -- the frequency variants all chose victims worse than the depth
+     * weights on the heavy run. */
+    if (ra_freq_on == 5) return ra_depth_w(b);
+    if (ra_bfreq[b] < 1) return 1;
+    return ra_bfreq[b];
+}
+
+/* The frequency a region entered at e is charged with: pessimistic,
+ * no less than half its dominator's (see above). */
+static int ra_bfreq_pess(int e) {
+    int f;
+    int g;
+    f = ra_bfreq_w(e);
+    if (e >= 0 && e < bb_nblk && ssa_idom[e] >= 0 && ssa_idom[e] != e) {
+        g = ra_bfreq_w(ssa_idom[e]) / 2;
+        if (g > f) f = g;
+    }
+    return f;
+}
+
 static void ra_build_wuses(void) {
     int i;
     int w;
@@ -2097,7 +2229,7 @@ static void ra_build_wuses(void) {
     while (i < h_ninst) {
         k = h_kind[i];
         if (k == HI_NOP) { i = i + 1; continue; }
-        w = ra_depth_w(h_blk[i]);
+        w = ra_freq_on ? ra_bfreq_w(h_blk[i]) : ra_depth_w(h_blk[i]);
         if (h_src1[i] >= 0) ra_wuses[h_src1[i]] = ra_wuses[h_src1[i]] + w;
         if (h_src2[i] >= 0 && ho_src2_is_ref(k))
             ra_wuses[h_src2[i]] = ra_wuses[h_src2[i]] + w;
@@ -3511,24 +3643,14 @@ static void ra_region_rewire_block(int b, int old, int nw) {
  * The joins are move-related to v through their arguments and
  * coalesce with it where they do not interfere; where they do, the
  * copy on the edge is the price. */
-static int ra_region_split(int v, int bn, int forwhom) {
+/* The checks: may v be put in memory across the region holding bn,
+ * for the failing node forwhom?  1 and the entry in *pe (the region
+ * marked in ra_in_region) if so.  Nothing is changed. */
+static int ra_region_plan(int v, int bn, int forwhom, int *pe) {
     int d;
     int e;
     int b;
-    int m;
     int k;
-    int nwl;
-    int x;
-    int f;
-    int i;
-    int j;
-    int q;
-    int p;
-    int r;
-    int jp;
-    int nj;
-    int save_ninst;
-    int save_nparg;
     if (!lv_on) return 0;
     /* HIR_REGION_FN=name: splits only in that function; with it,
      * HIR_REGION_MAX=n / HIR_REGION_SKIP=k: only candidates k..n-1
@@ -3612,6 +3734,31 @@ static int ra_region_split(int v, int bn, int forwhom) {
     if (!ra_web_live_in(e, v)) return 0;          /* nothing of v in there */
     ra_region_mark(e);
     if (ra_in_region[d]) return 0;
+    *pe = e;
+    return 1;
+}
+
+/* The split itself, after ra_region_plan said yes to (v, e). */
+static int ra_region_commit(int v, int e, int forwhom) {
+    int d;
+    int b;
+    int m;
+    int k;
+    int nwl;
+    int x;
+    int f;
+    int i;
+    int j;
+    int q;
+    int p;
+    int r;
+    int jp;
+    int nj;
+    int save_ninst;
+    int save_nparg;
+    d = h_blk[v];
+    k = h_kind[v];
+    ra_region_mark(e);      /* other candidates' plans ran since */
     save_ninst = h_ninst;
     save_nparg = h_nparg;
     m = ra_new_split_copy(v, e);
@@ -3762,6 +3909,70 @@ static int ra_region_split(int v, int bn, int forwhom) {
     return 1;
 }
 
+static int ra_region_split(int v, int bn, int forwhom) {
+    int e;
+    if (!ra_region_plan(v, bn, forwhom, &e)) return 0;
+    return ra_region_commit(v, e, forwhom);
+}
+
+/* Step 5b.5: S(v, R), what the split of v across the region entered at
+ * e costs, in the frequency scale: the store at the entry, a reload
+ * at the exits if v is live out of the region, and v's reads inside
+ * the region (which the global spill would pay too); the entry's
+ * frequency pessimistic (ra_bfreq_pess), and the in-region reads
+ * scaled up by the same ratio.  ra_in_region must hold the region. */
+static int ra_region_cost(int v, int e) {
+    int fe;
+    int ratio;
+    int liveout;
+    int inreads;
+    int b;
+    int si;
+    int t;
+    int i;
+    int x;
+    int nu;
+    int q;
+    fe = ra_bfreq_pess(e);
+    ratio = fe / ra_bfreq_w(e);
+    if (ratio < 1) ratio = 1;
+    liveout = 0;
+    b = 0;
+    while (b < bb_nblk && !liveout) {
+        if (ra_in_region[b]) {
+            si = 0;
+            while (si < ssa_nsucc[b]) {
+                t = ssa_succ[ssa_soff[b] + si];
+                if (t >= 0 && t < bb_nblk && !ra_in_region[t] && ra_web_live_in(t, v)) liveout = 1;
+                si = si + 1;
+            }
+        }
+        b = b + 1;
+    }
+    inreads = 0;
+    i = 0;
+    while (i < ra_norder) {
+        x = ra_order[i];
+        b = h_blk[x];
+        if (b >= 0 && b < bb_nblk && ra_in_region[b] && h_kind[x] != HI_PHI) {
+            nu = lv_uses(x);
+            q = 0;
+            while (q < nu) {
+                if (lv_ubuf[q] == v) {
+                    inreads = inreads + ra_bfreq_w(b) * ratio;
+                    if (inreads > 1000000) inreads = 1000000;
+                    break;
+                }
+                q = q + 1;
+            }
+        }
+        i = i + 1;
+    }
+    fe = fe * (1 + liveout) + inreads;
+    if (fe > 1000000) fe = 1000000;
+    return fe;
+}
+
 /* Instructions were appended and operands rewired: the order,
  * intervals, fused-compare extension, call-crossing marks, exact
  * liveness, weighted uses and argument preferences are all rebuilt.
@@ -3825,15 +4036,45 @@ static int gc_remat_ok(int inst) {
     return 1;
 }
 
-static int gc_respill_cost(int inst, int nfail) {
+/* A raw cost (weighted uses, or a split's S) normalized for comparison
+ * between victims: cheaper when it frees more failing neighbours and
+ * when the value is long-lived. */
+static int gc_respill_scale(int raw, int inst, int nfail) {
     int span;
-    if (h_kind[inst] == HI_ICONST && h_no_remat[inst]) return 0;
     if (nfail < 1) nfail = 1;
     span = 1;
     if (ra_pos[inst] >= 0 && ra_iend[inst] > ra_pos[inst])
         span = (ra_iend[inst] - ra_pos[inst]) / 16 + 1;
     if (span > 8) span = 8;
-    return (ra_wuses[inst] * 64) / (nfail * span);
+    if (raw > 1000000) raw = 1000000;
+    return (raw * 64) / (nfail * span);
+}
+
+static int gc_respill_cost(int inst, int nfail) {
+    if (h_kind[inst] == HI_ICONST && h_no_remat[inst]) return 0;
+    return gc_respill_scale(ra_wuses[inst], inst, nfail);
+}
+
+/* Step 5b.5: the cheapest few neighbours of a failing node, kept for
+ * the split's own cost to be weighed against their global spill. */
+#define GC_RS_NCAND 4
+static int gc_rs_cand[GC_RS_NCAND];
+static int gc_rs_ccost[GC_RS_NCAND];
+static int gc_rs_ncand;
+
+static void gc_rs_cand_add(int a, int cost) {
+    int i;
+    int worst;
+    if (gc_rs_ncand < GC_RS_NCAND) {
+        gc_rs_cand[gc_rs_ncand] = a;
+        gc_rs_ccost[gc_rs_ncand] = cost;
+        gc_rs_ncand = gc_rs_ncand + 1;
+        return;
+    }
+    worst = 0;
+    i = 1;
+    while (i < GC_RS_NCAND) { if (gc_rs_ccost[i] > gc_rs_ccost[worst]) worst = i; i = i + 1; }
+    if (cost < gc_rs_ccost[worst]) { gc_rs_cand[worst] = a; gc_rs_ccost[worst] = cost; }
 }
 
 static int gc_respill(void) {
@@ -3845,6 +4086,7 @@ static int gc_respill(void) {
     int best;
     int bcost;
     int cost;
+    int region_e;
 
     n = 0;
     while (n < gc_nnode) { gc_rs_nfail[n] = 0; gc_rs_taken[n] = 0; n = n + 1; }
@@ -3871,6 +4113,8 @@ static int gc_respill(void) {
             /* Cheapest of the failed node and its neighbors. */
             best = n;
             bcost = gc_respill_cost(gc_inst[n], 1);
+            gc_rs_ncand = 0;
+            gc_rs_cand_add(n, bcost);
             e = gc_adj_head[n];
             while (e >= 0) {
                 a = gc_get_alias(gc_adj_peer[e]);
@@ -3879,22 +4123,47 @@ static int gc_respill(void) {
                 if (!gc_rs_victim(inst)) {
                     cost = gc_respill_cost(inst, gc_rs_nfail[a]);
                     if (cost < bcost) { best = a; bcost = cost; }
+                    if (ra_freq_on) gc_rs_cand_add(a, cost);
                 }
                 e = gc_adj_next[e];
             }
             if (best < 0) { n = n + 1; nv = nv + 1; continue; }
+            region_e = -1;
+            if (ra_freq_on && getenv("HIR_REGION")) {
+                /* Step 5b.5: for the cheapest few, the split's own cost
+                 * (ra_region_cost) against the best global spill found;
+                 * a split is taken only when it is the cheapest action
+                 * of all, ties to the spill. */
+                int c;
+                int ce;
+                int sc;
+                c = 0;
+                while (c < gc_rs_ncand) {
+                    a = gc_rs_cand[c];
+                    inst = gc_inst[a];
+                    if (!gc_rs_victim(inst) &&
+                        ra_region_plan(inst, h_blk[gc_inst[n]], gc_inst[n], &ce)) {
+                        sc = gc_respill_scale(ra_region_cost(inst, ce), inst,
+                                              (a == n) ? 1 : gc_rs_nfail[a]);
+                        if (sc < bcost) { bcost = sc; best = a; region_e = ce; }
+                    }
+                    c = c + 1;
+                }
+            }
             inst = gc_inst[best];
             if (!gc_rs_victim(inst)) {
                 gc_rs_taken[best] = 1;
-                if (h_kind[inst] == HI_ICONST && h_no_remat[inst]) {
+                if (region_e >= 0) {
+                    ra_region_commit(inst, region_e, gc_inst[n]);
+                } else if (h_kind[inst] == HI_ICONST && h_no_remat[inst]) {
                     h_no_remat[inst] = 0;   /* back to remat, no slot */
                 } else if (ra_is_reload[inst]) {
                     ra_delete_reload(inst); /* readers back to the slot */
-                } else if (getenv("HIR_REGION") &&
+                } else if (!ra_freq_on && getenv("HIR_REGION") &&
                            ra_region_split(inst, h_blk[gc_inst[n]], gc_inst[n])) {
                     /* in memory across the failing region only (step
-                     * 5b.3, opt-in: measured neutral alone and worse
-                     * under the i64-promotion patch -- see the plan) */
+                     * 5b.3/5b.4, opt-in: without the frequencies the
+                     * split is taken whenever it is possible) */
                 } else if (gc_remat_ok(inst)) {
                     ra_remat_op[inst] = 2;  /* this round's; 1 once liveness is re-solved */
                     gc_rs_nremat = gc_rs_nremat + 1;
@@ -3997,6 +4266,14 @@ static void ra_phi_webs(void) {
                 ra_web_mark[a] = p;
                 if (ra_web_of[a] >= 0 || ra_pair_of[a] >= 0 || hi_inst_remat(a)) continue;
                 if (ra_web_s[a] >= 0) continue;          /* a is itself a web head */
+                /* A phi of p's own block: both are defined at that
+                 * block's top and both live after it, so they
+                 * interfere -- but the live-in tests below see neither
+                 * (a phi is never live INTO its block).  wherePathSolver's
+                 * aFrom/aTo swap pair, both spilled under the step 5b.5
+                 * weights, took one slot, and the loop-entry copies
+                 * stored both into it. */
+                if (h_blk[a] == h_blk[p]) continue;
                 if (ra_web_live_in(h_blk[p], a) || ra_web_live_in(h_blk[a], p)) {
                     if (getenv("HIR_RA_DEBUG")) {
                         fdputs("PHIWEB-NO phi=", 2);
@@ -4039,7 +4316,8 @@ static void ra_phi_webs(void) {
                 i = 0;
                 while (i < h_ninst && ok) {
                     if (ra_web_of[i] == p &&
-                        (ra_web_live_in(h_blk[a], i) || ra_web_live_in(h_blk[i], a)))
+                        (h_blk[i] == h_blk[a] ||
+                         ra_web_live_in(h_blk[a], i) || ra_web_live_in(h_blk[i], a)))
                         ok = 0;
                     i = i + 1;
                 }
@@ -4520,7 +4798,9 @@ static void hir_regalloc(void) {
     { int z; z = 0; while (z < h_ninst) { rl_fold_sub[z] = -1; z = z + 1; } }
     ra_build_pairs();      /* fp64 halves that want adjacent registers */
     ra_split_at_calls();   /* chop crossing webs so the pre-call half can use r3-r10 */
-    ra_build_wuses();      /* loop-depth-weighted use counts for spill cost */
+    ra_freq_on = getenv("HIR_RA_FREQ") ? atoi(getenv("HIR_RA_FREQ")) : 0;
+    if (ra_freq_on && ra_freq_on != 5) ra_build_bfreq();   /* step 5b.5: static block frequencies */
+    ra_build_wuses();      /* weighted use counts for spill cost: loop depth, or the frequencies */
     ra_compute_pos();
     ra_compute_ends();
     ra_extend_fused_cmp();
