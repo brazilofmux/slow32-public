@@ -103,6 +103,20 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-26 (`9ca39c80`).  `cc.s32x` and `libc.s32a`; the tools
+rebuild identical.  Two allocator liveness fixes (memory model step
+5b.4): the address operand of a load or store whose chain the emitter
+folds is no longer counted as a read (its register is never touched
+there), so address arithmetic stops staying live through every access
+that folds past it -- SQLite's static frame reloads 4,503 -> 3,013,
+stores 824 -> 516, the 200,000-row run -2.5%, arm64 DBT 0.87 -> 0.82 s;
+and the interval recompute after appended copies reads the operands of
+a compare fused into a branch (a loop-invariant whose only in-loop use
+was such a compare could share its spill slot with a later value; seen
+only with the opt-in regional spill, latent for the block reloads).
+Gated: kit differential 125/0, kit tools 21/0, islisp, libcob 490/0,
+dfsort, mdfix 95 runs, tz.
+
 Rebuilt 2026-10-26 (`50b7a3b7`).  `cc.s32x` and `libc.s32a`; the tools
 rebuild identical.  A wrong-code fix in the compiler: a rematerialized
 address ADDI (5b.1, in the kit since `b316da9a`) used as a phi argument
