@@ -567,6 +567,16 @@ the hottest blocks first, then DBT time on both machines.
   and the other case-local i64s cost more in the arms than the
   dispatch block saves, until the joins at the dispatch loop's merge
   blocks can keep a register.
+- 2026-10-26: Kagura on batch 44 (`9ca39c80`): comparison 1033/0,
+  heavy.sql output byte-identical to clang's, slow32-fast count
+  3,471,242,483 (-2.50% from batch 43's 3,560,240,662 there; 8,617
+  above the Mac's 3,471,233,866 where the offset was 23,382 at batch 43
+  -- so part of the offset is compiled code the two builds do not
+  share: the Mac's runs reuse the shell and VFS objects built by the
+  tree's compiler at gate time and the tree's libc archive, kagura
+  rebuilds all of it with the kit); idle three-run x86-64 DBT 8.35,
+  8.35, 8.51 s (batch 43 8.48-8.55, clang 6.91-6.96).  Baseline for
+  step 5b.5.
 
 ## Step 5b.5: the join cost model (designed 2026-10-26, not started)
 
