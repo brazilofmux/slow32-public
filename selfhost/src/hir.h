@@ -255,7 +255,26 @@ static int   hl_cur_blk;
 
 /* --- Functions --- */
 
+/* Rematerialized address arithmetic (memory model, step 5b.1): an
+ * ADDI of a register-resident value chosen as a respill victim is
+ * recomputed at each use -- one instruction, like a reload, but no
+ * store and no slot.  Set by gc_respill, read through hi_inst_remat
+ * so the allocator gives it no node and the emitter nothing at its
+ * definition; hcg_into emits `addi reg, src, imm` at the use, and the
+ * liveness builder reads the operand where the value is read
+ * (lv_uses).  Cleared here, per function, before anything reads it:
+ * LICM and the loop-constant pass ask hi_inst_remat long before the
+ * allocator, and liveness is computed before the allocator's own
+ * per-function reset (a stale flag from the previous function made
+ * test_respill's blam read through another function's ADDI). */
+static char ra_remat_op[HIR_MAX_INST];
+
 static void hir_reset(void) {
+    {
+        int hi_i;
+        hi_i = 0;
+        while (hi_i < h_ninst && hi_i < HIR_MAX_INST) { ra_remat_op[hi_i] = 0; hi_i = hi_i + 1; }
+    }
     h_ninst = 0;
     h_ncarg = 0;
     {
@@ -385,6 +404,7 @@ static int h_no_remat[HIR_MAX_INST];
  * kind) is in hand. */
 static int hi_inst_remat(int i) {
     if (i < 0) return 0;
+    if (ra_remat_op[i]) return 1;
     if (h_no_remat[i]) return 0;
     return hi_is_remat(h_kind[i]);
 }

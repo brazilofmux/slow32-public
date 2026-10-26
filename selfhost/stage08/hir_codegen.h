@@ -238,6 +238,7 @@ static int hcg_epilog;     /* epilog label */
  * of the whole instruction excess.  Split it by who emits it. */
 static int hcg_stat_reload;    /* ldw from a spill slot */
 static int hcg_stat_spillst;   /* stw to a spill slot */
+static int hcg_stat_remat;     /* addi recomputing a remat victim at a use */
 static int hcg_stat_csave;     /* prologue saves + epilogue restores */
 static int hcg_stat_frameless;
 static int hcg_stat_leaf_nolr;
@@ -414,6 +415,16 @@ static void hcg_into(int reg, int inst) {
     }
 
     k = h_kind[inst];
+
+    /* A respill victim recomputed at its uses (ra_remat_op): its
+     * operand's register, or that operand staged through reg. */
+    if (k == HI_ADDI && ra_remat_op[inst]) {
+        int rs;
+        rs = hcg_src(h_src1[inst], reg);
+        cg_rri("addi", reg, rs, h_val[inst]);
+        hcg_stat_remat = hcg_stat_remat + 1;
+        return;
+    }
 
     /* Rematerializable instructions */
     if (k == HI_ICONST) {

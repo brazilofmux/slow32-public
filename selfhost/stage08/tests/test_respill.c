@@ -5,7 +5,14 @@
  * immediate reload that free nothing.  Sixteen 64-bit words mixed
  * BLAKE2b-style hold more than the registers; run-tests.sh checks that
  * round16 has few slots stored only to be reloaded at once, and every
- * result must still be right. */
+ * result must still be right.
+ *
+ * Memory model step 5b.1: the in[k] addresses round16 spills are ADDIs
+ * of the register-resident `in`; as respill victims they are recomputed
+ * at their uses (or fold into the load's displacement) instead of being
+ * stored to the frame -- fifteen `addi r1, r3, N; stw r29, r1` pairs
+ * before.  run-tests.sh requires a RESPILL ... remat line and no such
+ * pair in round16. */
 #include <stdint.h>
 
 static uint64_t rotr(uint64_t x, int n) { return (x >> n) | (x << (64 - n)); }

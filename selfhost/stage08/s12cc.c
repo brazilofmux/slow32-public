@@ -389,6 +389,10 @@ int main(int argc, char **argv) {
     fdputuint(2, hcg_stat_reload);
     fdputs(" spill_st=", 2);
     fdputuint(2, hcg_stat_spillst);
+    fdputs(" remat=", 2);
+    fdputuint(2, hcg_stat_remat);
+    fdputs("/", 2);
+    fdputuint(2, ra_stat_remat);
     fdputs(" csave_restore=", 2);
     fdputuint(2, hcg_stat_csave);
     fdputs(" retpin=", 2);

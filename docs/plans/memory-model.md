@@ -357,3 +357,35 @@ run before the next:
 Then re-measure the RMW patch; it lands when 1-3 hold the line on
 VdbeExec.  Rule as always: heavy-run instructions, frame traffic and
 the hottest blocks first, then DBT time on both machines.
+
+### Log
+
+- 2026-10-25, night: the x86-64 starting line, from Kagura (Xeon
+  8259CL, idle, three runs, batch-40 cc): 8.54-8.58 s on heavy.sql,
+  outputs byte-identical to clang's; batch 38 was 8.61-8.68, clang
+  6.91-6.96.
+- 2026-10-25, night: **5b.1 landed.**  `ra_remat_op` (hir.h): a respill
+  victim that is an ADDI with an i12 immediate of a register-allocated
+  value is recomputed at each use instead of stored and reloaded --
+  no node, no slot, nothing at the definition; `hcg_into` emits `addi
+  reg, src, imm` at the use (or the use folds it into a displacement
+  and emits nothing).  The liveness builder reads the operand where the
+  victim was read (`lv_remat_src` in `lv_uses` and the phi-argument
+  walk), and the fixpoint is re-solved from the old sets after each
+  round that made remat victims (`lv_solve`, factored out of
+  lv_prepare; a non-convergence sends the round's victims to memory
+  instead).  The operand's interval end is widened to the victim's for
+  the slot sharing, should a later round spill the operand.  Exact
+  liveness only; pairs stay in memory.  One wrong version: the flag was
+  cleared with the allocator's state, after liveness had already read
+  it, so a function inherited the previous function's flags
+  (test_respill's blam read through round16's ADDI and faulted); it is
+  cleared in hir_reset now.  Numbers: SQLite 222 remat victims (85
+  recomputed, the rest fold), static frame reloads 5,556 -> 5,524,
+  stores 1,017 -> 818; VdbeExec 802 -> 800 and 324 -> 316 (its 54
+  victims: 18 phis, 15 constants, 8 ADDIs, 5 loads, 3 calls, 5 other);
+  heavy run 3,564,780,038 -> 3,561,562,038 (-0.09%), output identical;
+  arm64 DBT 0.95-0.99 -> 0.97-0.98 s, unchanged.  Small on its own, as
+  the design said: the shape it is for is the one the RMW patch
+  creates.  Gates: run-tests 142/142 with the fixed point, SQLite
+  acceptance identical, libc 27/0, stage07 5/5, FP 288 bit-identical.

@@ -1291,6 +1291,20 @@ static int lv_tracked(int inst) {
  * are uses at the end of the predecessor and the dataflow adds them
  * on the edge.  Returns the count in lv_ubuf. */
 static int lv_ubuf[128];
+
+/* The value whose register a read of v touches: v itself, or, for a
+ * rematerialized ADDI (ra_remat_op), the operand it is recomputed
+ * from -- chased, since that operand may be one too. */
+static int lv_remat_src(int v) {
+    int lim;
+    lim = 0;
+    while (v >= 0 && ra_remat_op[v] && lim < 64) {
+        v = h_src1[v];
+        lim = lim + 1;
+    }
+    return v;
+}
+
 static int lv_uses(int inst) {
     int nu;
     int k;
@@ -1324,6 +1338,13 @@ static int lv_uses(int inst) {
             if (h_src1[cmp] >= 0) { lv_ubuf[nu] = h_src1[cmp]; nu = nu + 1; }
             if (h_src2[cmp] >= 0) { lv_ubuf[nu] = h_src2[cmp]; nu = nu + 1; }
         }
+    }
+    /* A rematerialized ADDI is recomputed where it is read: the
+     * register read there is its operand's. */
+    j = 0;
+    while (j < nu) {
+        lv_ubuf[j] = lv_remat_src(lv_ubuf[j]);
+        j = j + 1;
     }
     return nu;
 }
@@ -1384,7 +1405,7 @@ static void lv_out_of(int b) {
                     j = 0;
                     while (j < h_pcnt[phi]) {
                         if (h_pblk[h_pbase[phi] + j] == b) {
-                            a = h_pval[h_pbase[phi] + j];
+                            a = lv_remat_src(h_pval[h_pbase[phi] + j]);
                             if (lv_tracked(a))
                                 lv_live[lv_id[a] >> 5] =
                                     lv_live[lv_id[a] >> 5] | (1u << (lv_id[a] & 31));
@@ -1399,15 +1420,51 @@ static void lv_out_of(int b) {
     }
 }
 
+/* Backward dataflow to fixpoint, reverse-RPO sweeps, from whatever
+ * lv_in/lv_out hold: zero at first, or the previous solution when a
+ * respill round rematerialized a value and so moved reads onto its
+ * operand (only ever more liveness, so the old sets are a sound start
+ * and the sweep only grows them).  Returns 1 on convergence. */
+static int lv_solve(void) {
+    int b;
+    int w;
+    int ri;
+    int changed;
+    int sweeps;
+
+    changed = 1;
+    sweeps = 0;
+    while (changed && sweeps < 64) {
+        changed = 0;
+        ri = ssa_rpo_cnt;
+        while (ri > 0) {
+            ri = ri - 1;
+            b = ssa_rpo_ord[ri];
+            if (b < 0 || b >= bb_nblk) continue;
+            lv_out_of(b);
+            w = 0;
+            while (w < lv_nw) { lv_out[(b * lv_w) + w] = lv_live[w]; w = w + 1; }
+            lv_transfer(b);
+            w = 0;
+            while (w < lv_nw) {
+                if (lv_in[(b * lv_w) + w] != lv_live[w]) {
+                    lv_in[(b * lv_w) + w] = lv_live[w];
+                    changed = 1;
+                }
+                w = w + 1;
+            }
+        }
+        sweeps = sweeps + 1;
+    }
+    return changed == 0;
+}
+
 static void lv_prepare(void) {
     int i;
     int b;
     int inst;
     int k;
     int w;
-    int ri;
-    int changed;
-    int sweeps;
 
     lv_on = 0;
     if (getenv("HIR_LINEAR_LIVE")) return;
@@ -1467,32 +1524,7 @@ static void lv_prepare(void) {
         i = i + 1;
     }
 
-    /* Backward dataflow to fixpoint, reverse-RPO sweeps. */
-    changed = 1;
-    sweeps = 0;
-    while (changed && sweeps < 64) {
-        changed = 0;
-        ri = ssa_rpo_cnt;
-        while (ri > 0) {
-            ri = ri - 1;
-            b = ssa_rpo_ord[ri];
-            if (b < 0 || b >= bb_nblk) continue;
-            lv_out_of(b);
-            w = 0;
-            while (w < lv_nw) { lv_out[(b * lv_w) + w] = lv_live[w]; w = w + 1; }
-            lv_transfer(b);
-            w = 0;
-            while (w < lv_nw) {
-                if (lv_in[(b * lv_w) + w] != lv_live[w]) {
-                    lv_in[(b * lv_w) + w] = lv_live[w];
-                    changed = 1;
-                }
-                w = w + 1;
-            }
-        }
-        sweeps = sweeps + 1;
-    }
-    if (changed) return;   /* did not converge: stay on intervals */
+    if (!lv_solve()) return;   /* did not converge: stay on intervals */
 
     lv_on = 1;
 }
@@ -2918,6 +2950,35 @@ static void gc_writeback(void) {
  * the next colouring. */
 static int gc_rs_nfail[GC_MAX_NODE];
 static char gc_rs_taken[GC_MAX_NODE];
+static int gc_rs_nremat;        /* remat victims made this round */
+static int ra_stat_remat;       /* ... and per function */
+
+/* Already chosen as a victim: in memory, or recomputed at its uses. */
+static int gc_rs_victim(int inst) {
+    return ra_mem_forced[inst] || ra_remat_op[inst];
+}
+
+/* Memory model step 5b.1: may this victim be recomputed at each use
+ * instead of stored and reloaded?  An ADDI with an i12 immediate of a
+ * value that is itself register-allocated (not a constant or global
+ * address, which have their own remat; not in memory, where the
+ * recompute would be a reload and an add).  Exact liveness only: the
+ * operand's live range grows to the victim's uses, and only lv_solve
+ * can say by how much.  A pair half shares fate with its partner and
+ * stays in memory. */
+static int gc_remat_ok(int inst) {
+    int s;
+    if (!lv_on) return 0;
+    if (h_kind[inst] != HI_ADDI) return 0;
+    if (ra_pair_of[inst] >= 0) return 0;
+    if (!ra_is_i12(h_val[inst])) return 0;
+    s = h_src1[inst];
+    if (s < 0 || s >= h_ninst) return 0;
+    if (hi_inst_remat(s) || ra_mem_forced[s]) return 0;
+    if (!hi_has_value(h_kind[s]) || h_kind[s] == HI_NOP) return 0;
+    if (h_kind[s] == HI_ALLOCA) return 0;
+    return 1;
+}
 
 static int gc_respill_cost(int inst, int nfail) {
     int span;
@@ -2956,6 +3017,7 @@ static int gc_respill(void) {
     }
 
     nv = 0;
+    gc_rs_nremat = 0;
     n = 0;
     while (n < gc_nnode) {
         if (gc_color[n] < 0 || gc_force_spill[n]) {
@@ -2967,7 +3029,7 @@ static int gc_respill(void) {
                 a = gc_get_alias(gc_adj_peer[e]);
                 inst = gc_inst[a];
                 if (gc_rs_taken[a]) { best = -1; break; }
-                if (!ra_mem_forced[inst]) {
+                if (!gc_rs_victim(inst)) {
                     cost = gc_respill_cost(inst, gc_rs_nfail[a]);
                     if (cost < bcost) { best = a; bcost = cost; }
                 }
@@ -2975,10 +3037,19 @@ static int gc_respill(void) {
             }
             if (best < 0) { n = n + 1; nv = nv + 1; continue; }
             inst = gc_inst[best];
-            if (!ra_mem_forced[inst]) {
+            if (!gc_rs_victim(inst)) {
                 gc_rs_taken[best] = 1;
                 if (h_kind[inst] == HI_ICONST && h_no_remat[inst]) {
                     h_no_remat[inst] = 0;   /* back to remat, no slot */
+                } else if (gc_remat_ok(inst)) {
+                    ra_remat_op[inst] = 2;  /* this round's; 1 once liveness is re-solved */
+                    gc_rs_nremat = gc_rs_nremat + 1;
+                    ra_stat_remat = ra_stat_remat + 1;
+                    /* The operand is read wherever the victim was: its
+                     * interval must say so too, for the slot sharing
+                     * (by interval) should a later round spill it. */
+                    a = h_src1[inst];
+                    if (ra_iend[inst] > ra_iend[a]) ra_iend[a] = ra_iend[inst];
                 } else {
                     ra_mem_forced[inst] = 1;
                 }
@@ -2993,10 +3064,13 @@ static int gc_respill(void) {
                 if (getenv("HIR_RA_DEBUG")) {
                     fdputs("RESPILL victim=", 2);
                     fdputuint(2, (unsigned)inst);
+                    fdputs(" kind=", 2);
+                    fdputuint(2, (unsigned)h_kind[inst]);
                     fdputs(" wuses=", 2);
                     fdputuint(2, (unsigned)ra_wuses[inst]);
                     fdputs(" for=", 2);
                     fdputuint(2, (unsigned)gc_inst[n]);
+                    if (ra_remat_op[inst]) fdputs(" remat", 2);
                     fdputc(10, 2);
                 }
             }
@@ -3147,6 +3221,31 @@ static void ra_phi_webs(void) {
     }
 }
 
+/* After a respill round made remat victims: their reads now fall on
+ * their operands, so the liveness sets must grow to match before the
+ * next colouring sees the operands' interference.  Should the sweep
+ * not converge (it did from zero; from the old solution it has less
+ * to do), this round's remat victims go to memory instead, and the
+ * partly grown sets stay: more liveness than needed is sound. */
+static void gc_remat_resolve(void) {
+    int i;
+    int ok;
+    ok = lv_solve();
+    i = 0;
+    while (i < h_ninst) {
+        if (ra_remat_op[i] == 2) {
+            if (ok) {
+                ra_remat_op[i] = 1;
+            } else {
+                ra_remat_op[i] = 0;
+                ra_mem_forced[i] = 1;
+                ra_stat_remat = ra_stat_remat - 1;
+            }
+        }
+        i = i + 1;
+    }
+}
+
 static void gc_alloc(void) {
     int iter;
 
@@ -3161,6 +3260,7 @@ static void gc_alloc(void) {
         gc_select();
         if (iter >= 32) break;
         if (gc_respill() == 0) break;
+        if (gc_rs_nremat > 0) gc_remat_resolve();
         iter = iter + 1;
     }
     ra_phi_webs();
@@ -3536,6 +3636,7 @@ static void hir_regalloc(void) {
     lv_prepare();          /* per-block liveness; lv_on gates gc_build */
     ra_mark_arg_prefs();
     { int z; z = 0; while (z < h_ninst) { ra_mem_forced[z] = 0; ra_web_of[z] = -1; ra_web_s[z] = -1; ra_web_e[z] = -1; z = z + 1; } }
+    /* ra_remat_op is cleared by hir_reset: liveness above already read it. */
     /* (ra_mark_clobbers removed — x64 RCX/RDX clobber arrays were never populated or used for SLOW-32) */
 
     ra_stat_caller_used = 0;

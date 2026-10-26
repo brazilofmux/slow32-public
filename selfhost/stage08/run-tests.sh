@@ -548,7 +548,7 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
             S12CC_INLINE=200 run_exe "$GEN1_CC_EXE" "$WORKDIR/${tname}-gen1_cc.log" $EXTRA_CC_ARGS "$tst" "$WORKDIR/${tname}.s"
         elif [[ "$tname" == "test_dce_inline" || "$tname" == "test_inline" ]]; then
             S12CC_INLINE=20 run_exe "$GEN1_CC_EXE" "$WORKDIR/${tname}-gen1_cc.log" $EXTRA_CC_ARGS "$tst" "$WORKDIR/${tname}.s"
-        elif [[ "$tname" == "test_phi_web" ]]; then
+        elif [[ "$tname" == "test_phi_web" || "$tname" == "test_respill" ]]; then
             HIR_RA_DEBUG=1 run_exe "$GEN1_CC_EXE" "$WORKDIR/${tname}-gen1_cc.log" $EXTRA_CC_ARGS "$tst" "$WORKDIR/${tname}.s"
         else
             run_exe "$GEN1_CC_EXE" "$WORKDIR/${tname}-gen1_cc.log" $EXTRA_CC_ARGS "$tst" "$WORKDIR/${tname}.s"
@@ -714,6 +714,21 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
             pp=$(awk '/^round16:/{p=1;next} p&&/^[A-Za-z_]/{exit} p' "$WORKDIR/${tname}.s" | awk '/^[[:space:]]+stw r29,/{split($0,a,","); s=a[3]; next} /^[[:space:]]+ldw r[0-9]+, r29,/{split($0,b,","); if (s!="" && b[3]==s) n++} {s=""} END{print n+0}')
             if [[ "$pp" -gt 8 ]]; then
                 printf "  %-30s FAIL (round16 spills temporaries: %s store-reload pairs)\n" "$tname:" "$pp"
+                FAIL=$((FAIL + 1))
+                continue
+            fi
+            # Memory model step 5b.1: round16's in[k] addresses (ADDI of the
+            # register-resident `in`) are respill victims recomputed at their
+            # uses, not stored to the frame -- 15 `addi r1, r3, N; stw r29, r1`
+            # pairs before, none now -- and the allocator says so.
+            if ! grep -q '^RESPILL.* remat$' "$WORKDIR/${tname}-gen1_cc.log"; then
+                printf "  %-30s FAIL (no address ADDI rematerialized)\n" "$tname:"
+                FAIL=$((FAIL + 1))
+                continue
+            fi
+            ast=$(awk '/^round16:/{p=1;next} p&&/^[A-Za-z_]/{exit} p' "$WORKDIR/${tname}.s" | awk '/^[[:space:]]+addi r1, r3, /{a=1;next} /^[[:space:]]+stw r29, r1,/{if(a)n++} {a=0} END{print n+0}')
+            if [[ "$ast" -gt 0 ]]; then
+                printf "  %-30s FAIL (round16 stores %s in[k] addresses to its frame)\n" "$tname:" "$ast"
                 FAIL=$((FAIL + 1))
                 continue
             fi
