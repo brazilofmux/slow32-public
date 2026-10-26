@@ -567,3 +567,71 @@ the hottest blocks first, then DBT time on both machines.
   and the other case-local i64s cost more in the arms than the
   dispatch block saves, until the joins at the dispatch loop's merge
   blocks can keep a register.
+
+## Step 5b.5: the join cost model (designed 2026-10-26, not started)
+
+What the colour-rule build (`HIR_REGION=1`, the 5b.4 rules) says,
+from its `-d` dump of SQLite: 162 joins, of which 111 took their
+value's register, 34 another register (a move on each pass-through
+edge) and 17 were spilled -- nearly all of the 17 where the value
+itself was spilled in a later round.  So the joins keep a register:
+the colour rule and the phi-move bias answer that question, no pin is
+needed.  The loss (+84 M, all of it sqlite3VdbeExec) is the split
+itself.  Its 43 splits land on eight entry blocks -- 13 on one arm, 9
+and 9 on two others -- and 36 of the 43 victims are header phis.  The
+arm with 13 is entered 1.29 M times in 12.8 M opcodes, one opcode in
+ten, where the static view (one target of a 186-way jump table) says
+one in 186.  Each split stores at the entry and reloads at every exit
+the value is live into, whether or not the arm reads the value; the
+global spill the respill would otherwise have chosen pays only where
+the value is read, and these victims were the cheapest precisely
+because they are read little.  **A region split pays for liveness; a
+global spill pays for uses.**  Thirteen values stored and reloaded on
+one opcode in ten is the 84 M.
+
+The model.  One static block frequency f, and per failing node the
+cheapest of three actions over all its neighbours -- not, as now, the
+cheapest neighbour by weighted uses and then whatever action it
+admits:
+
+- global spill  G(v) = f(def) + Σ f(B) over the blocks B that read v
+  (one reload per block, 5b.2's rule).  For a phi the "store at the
+  definition" is the back-edge copy, which the webs often make a
+  no-op: count f(def)/2.
+- region split  S(v, R) = f(e) + Σ f(x) over the exit edges x -> t with
+  v live into t + Σ f(B) over the blocks in R that read v.  (A move on
+  each pass-through edge when the join does not coalesce -- 34 of 162
+  -- is not known at decision time; left out, to be checked against
+  the latch afterwards.)
+- rematerialize  M(v) = Σ f(B) over the blocks that read v, for an
+  ADDI that qualifies: no store, no slot.
+
+The frequency: forward over the forward edges in reverse postorder,
+entry 1; a BRC gives each successor half, except that an edge leaving
+a loop gets 1/L; a loop header multiplies by L (8) per depth; a
+jump table gives EACH target half -- pessimistic by design, because
+any one arm may dominate and VdbeExec's does, and a profile is what we
+do not have (slow32 -p could feed one later).  With that, an arm's
+split costs about f(dispatch), and the split is chosen only when the
+value is read on the hot path at least that often.  Checked against
+the shapes at hand: the promoted loop counter `lo' = lo + 1` under the
+RMW patch, G = 1 (store at the def) + 2 (the header's carry compare,
+the back-edge copy) = 3 against S = 0.5 + 0.5 = 1 -> split, which is
+the point of the step; a loop-invariant read in two arms, G = 0 + 1
+against S = 1 -> no split; a header phi read only inside the arm, G =
+0.5 + 0.5 against S = 1 + 0.5 -> no split; the 13-split arm, whose
+victims are read little, keeps at most the one or two that are read
+in the dispatch block.
+
+f also replaces the depth weights in `ra_build_wuses` (today a read in
+a cold arm weighs as much as one in the dispatch block, 10^depth
+either way), which changes every respill decision on its own.  So the
+order of work: (1) f and the weights, regions off, measured alone
+(`HIR_RA_FREQ=1`, then default if it holds); (2) the G/S/M choice in
+gc_respill with regions on, measured; the targets are the 13-split
+arm receiving 0-2 splits, the heavy run at or under 3,471 M with
+regions on, and then the RMW patch: the dispatch block keeps `lo'` in
+a register and only the cold arms store it.  (3) If the latch shows
+pass-through moves, add their term to S.  Rules as always: heavy-run
+instructions and the hottest blocks first, then DBT time on both
+machines, five differentials green, the machine quiet.
