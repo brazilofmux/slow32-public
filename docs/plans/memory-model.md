@@ -309,7 +309,7 @@ crypto benchmarks must assemble to the same bytes before and after.
   used in a cold arm should be stored where it is used, not at every
   definition -- and that is what will let this land.
 
-## Step 5b: spill placement (designed 2026-10-25 night, not started)
+## Step 5b: spill placement (designed 2026-10-25 night; 1 and 2 landed 2026-10-26, 3 built and parked -- see the log below)
 
 What the profile says after the webs, in sqlite3VdbeExec's 146 M frame
 instructions per 200,000-row run: 38% is `nVmStep`, a `u64` counter in

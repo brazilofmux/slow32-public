@@ -103,6 +103,16 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-26 (`50b7a3b7`).  `cc.s32x` and `libc.s32a`; the tools
+rebuild identical.  A wrong-code fix in the compiler: a rematerialized
+address ADDI (5b.1, in the kit since `b316da9a`) used as a phi argument
+on an edge or as a call argument reads its base's register at the
+parallel copy, and the copy sequencer treated it as a constant and
+could overwrite that register first.  Found by the parked regional
+spill (step 5b.3, opt-in `HIR_REGION=1`); no kit program is known to
+have hit it.  Gated: kit differential 124/0, kit tools 21/0, islisp,
+libcob 490/0, dfsort, mdfix 95 runs, tz.
+
 Rebuilt 2026-10-26 (`56b4e960`).  `cc.s32x` and `libc.s32a`; the tools
 rebuild identical.  Memory model step 5b.2: a spilled value read several
 times in one block (with no call between the reads) is reloaded once
