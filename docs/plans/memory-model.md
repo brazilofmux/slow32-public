@@ -490,3 +490,8 @@ the hottest blocks first, then DBT time on both machines.
   REGION line and the right answer.  Default build: SQLite static
   reloads 4,501 -> 4,503, stores 810 -> 824 (the remat-chain rule),
   heavy run 3,561,020,599 -> 3,560,217,280, output identical.
+- 2026-10-26: Kagura on batch 43 (`50b7a3b7`): comparison 1033/0,
+  heavy.sql 3,560,240,662 under slow32-fast (the usual 23k offset from
+  the shell objects), output byte-identical to clang's; idle three-run
+  x86-64 DBT 8.48-8.55 s (batch 40 8.54-8.58, clang 6.91-6.96).  This is
+  the baseline the join-phi design is measured against.
