@@ -200,6 +200,16 @@ static void f77_scan_units(void) {
                 f77_starts("ENTRY") || f77_starts("EXTERNAL") ||
                 f77_starts("CHARACTER") || f77_starts("NAMELIST"))
                 f77_unosplice[f77_nunit - 1] = 1;
+            /* A type statement with initial values (INTEGER L/1/) is
+             * DATA: the variable is set once and carries from call to
+             * call.  Spliced into a caller it became the caller's
+             * temporary, never set (fort370's issue 32, ported).  A
+             * false match -- a slash elsewhere at top level -- only
+             * costs a missed inline. */
+            if ((f77_starts("INTEGER") || f77_starts("REAL") ||
+                 f77_starts("LOGICAL") || f77_starts("DOUBLE") ||
+                 f77_starts("COMPLEX")) && f77_toplevel('/', 0) >= 0)
+                f77_unosplice[f77_nunit - 1] = 1;
         }
         if (started && f77_nunit > 0 && f77_starts("ENTRY") &&
             f77_ukind[f77_nunit - 1] != F77_UNIT_PROGRAM && f77_nent < F77_MAX_ENTRY) {
