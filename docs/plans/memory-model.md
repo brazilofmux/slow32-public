@@ -694,3 +694,7 @@ machines, five differentials green, the machine quiet.
   shape); a phi of p's own block is refused now, for the argument and
   for web members.  The harness runs test_phi_web under HIR_RA_FREQ=3
   as well.  SQLite's default code is byte-identical with the fix.
+- 2026-10-26: Kagura on batch 45 (`fb3dea7b`): comparison 1033/0; every
+  kit tool rebuilds byte-identical to batch 44, and so does its SQLite
+  build -- the default code is unchanged, as claimed, so no count or
+  timing was re-run.
