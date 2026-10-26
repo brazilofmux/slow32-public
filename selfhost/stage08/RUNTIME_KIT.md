@@ -103,6 +103,16 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-26 (`56b4e960`).  `cc.s32x` and `libc.s32a`; the tools
+rebuild identical.  Memory model step 5b.2: a spilled value read several
+times in one block (with no call between the reads) is reloaded once
+into a register for that block instead of at each read, the reload
+being a value the allocator colours in a second pass; and spill costs
+now count the reads an address fold makes of its base.  SQLite's static
+frame reloads 5,524 -> 4,501, the 200,000-row run -0.015%, output
+identical.  Gated: kit differential 124/0, kit tools 21/0, islisp,
+libcob 490/0, dfsort, mdfix 95 runs, tz.
+
 Rebuilt 2026-10-25 (`b316da9a`).  `cc.s32x` and `libc.s32a`; the tools
 rebuild identical.  Memory model step 5b.1: a respill victim that is an
 address ADDI of a register-resident value is recomputed at its uses (or
