@@ -103,6 +103,19 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-27 (`cc359989`).  `cc.s32x` and `libc.s32a`; the tools
+rebuild identical.  Two wrong-code fixes, both live in every earlier
+kit: return pinning could put an ADDI chain's inner ADDI in r1 beside
+the base the folded outer ADDI reads (`x = x * 2 + 5; return x + 1000;`
+returned x * 2 + 1010), and a branch folded to one arm left the other
+arm's phis an argument for the edge that was gone (with full unrolling,
+a loop computing 388 returned 598).  Also: the last pass of a counted
+loop is peeled when the body tests the variable one way on that pass
+alone, and in a function with no calls loop phi copies coalesce past
+the conservative tests (AES KDF -5.1% executed).  SQLite heavy +0.085%,
+output identical.  Gated: kit differential 127/0, kit tools 21/0,
+islisp, libcob 492/0, dfsort, mdfix 95 runs.
+
 Rebuilt 2026-10-27 (`694d26f2`).  `cc.s32x` and `libc.s32a`; the tools
 rebuild identical.  A codegen fix found by re-syncing the Fortran
 backend: an address ADDI chosen for recomputation at its uses while its
