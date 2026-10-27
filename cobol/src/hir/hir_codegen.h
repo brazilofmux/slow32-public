@@ -1,4 +1,5 @@
-/* COPIED from selfhost/stage08/hir_codegen.h at 694d26f2 (see hir.h for the ruling). */
+/* COPIED from selfhost/stage08/hir_codegen.h at 694d26f2 (see hir.h for the ruling).
+ * Plus cc359989's two wrong-code fixes (return pinning beside an ADDI chain; phi args of a folded branch), ported 2026-10-27. */
 /* hir_codegen.h -- HIR to SLOW-32 assembly for s12cc
  *
  * Phase 8: Linear scan register allocation (r11-r28, callee-saved).
@@ -643,6 +644,12 @@ static void hcg_use_bump(int v) {
     if (hcg_usecnt[v] < 2) hcg_usecnt[v] = hcg_usecnt[v] + 1;
 }
 
+/* An ADDI another ADDI folds through at emission (the outer reads the
+ * chain's base, ra_codegen_fold_base): the inner one is still emitted,
+ * into its own register, while the base must survive it -- so it never
+ * joins a web pinned to r1 beside that base (stage08 cc359989). */
+static char hcg_rp_inner[HIR_MAX_INST];
+
 /* Every reader of a value, in the same shape as ra_csplit_on_inst:
  * src1, src2 (when it is a value reference), call arguments, phi args,
  * and the issue-67 split copies that hang off an instruction. */
@@ -653,7 +660,15 @@ static void hcg_build_usecnt(void) {
     int base;
     int sp;
     i = 0;
-    while (i < h_ninst) { hcg_usecnt[i] = 0; hcg_ret_direct[i] = 0; i = i + 1; }
+    while (i < h_ninst) { hcg_usecnt[i] = 0; hcg_ret_direct[i] = 0; hcg_rp_inner[i] = 0; i = i + 1; }
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_ADDI && ra_codegen_fold_base(i, &j)) {
+            n = h_src1[i];
+            while (n >= 0 && n != j && h_kind[n] == HI_ADDI) { hcg_rp_inner[n] = 1; n = h_src1[n]; }
+        }
+        i = i + 1;
+    }
     i = 0;
     while (i < h_ninst) {
         if (h_kind[i] != HI_NOP) {
@@ -927,6 +942,7 @@ static void hcg_rp_flood_add(int a) {
     int k;
     if (a < 0 || a >= h_ninst) return;
     if (hcg_rp_stamp[a] == hcg_rp_tick) return;
+    if (hcg_rp_inner[a]) return;
     k = h_kind[a];
     if (k == HI_PARAM || k == HI_ICONST || k == HI_NOP) return;
     if (ty_is_llong(h_ty[a]) || ty_is_double(h_ty[a])) return;
@@ -1106,6 +1122,15 @@ static void hcg_mark_ret_direct(void) {
                             hcg_rp_flood_add(h_pval[h_pbase[v] + j]);
                             j = j + 1;
                         }
+                    } else if (h_kind[v] == HI_ADDI && ra_codegen_fold_base(v, &j)) {
+                        /* An ADDI chain is folded at emission: v reads
+                         * the chain's base, not its src1, and the inner
+                         * ADDI is still emitted.  Pinning the inner one
+                         * too put both in r1 and the inner write
+                         * clobbered the base v reads: `x = x * 2 + 5;
+                         * return x + 1000;` returned x * 2 + 1010.  The
+                         * web follows what v reads. */
+                        hcg_rp_flood_add(j);
                     } else if (h_kind[v] != HI_CALL && h_kind[v] != HI_CALLP) {
                         /* Do not flood call arguments: pinning them to r1
                          * fights the ABI marshaller (r3-r10).  The CALL
