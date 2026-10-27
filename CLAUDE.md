@@ -362,6 +362,7 @@ cd ~/slow-32/regression && ./run-libc-differential.sh
 # while/do, goto -- with at most one call per full expression and none
 # beside shared memory, C leaving that order open) and requires stage08's
 # output to match clang's;
+# llc runs with -verify-machineinstrs (a failure is `clang-verify`);
 # when they differ it asks the host compiler, and a case where stage08
 # agrees with the host is `clang-differs` (an LLVM backend bug, not ours).
 # Its first day (2026-10-27) found seven stage08 defects the harnesses

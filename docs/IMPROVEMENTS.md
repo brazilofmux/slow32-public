@@ -32,6 +32,14 @@ This document consolidates feedback and improvement suggestions for the SLOW-32 
     `eliminateFrameIndex`.
   Guards: lit `select-poison-arm.ll`, `gprpair-spill-greedy.ll`; regression
   `bug-llvm-select-poison-arm`, `bug-llvm-gprpair-spill` (both at -O2) ✅
+- **Machine verifier clean** (2026-10-27): with `-verify-machineinstrs`
+  over the runtime, libcob, libf77 and SQLite, two more defects: an
+  indirect call's explicit r31 def was live beside the implicit dead one
+  (ten runtime files), and the optsize SELECT_PSEUDO inserter copied the
+  head block's physical live-ins onto its new blocks (SQLite's
+  slow32Open).  All of them verify now; cfuzz runs llc with the verifier
+  and reports `clang-verify`.  Guards: lit `verify-indirect-call.ll`,
+  `select-optsize-liveins.ll` ✅
 
 ### Toolchain (all resolved)
 

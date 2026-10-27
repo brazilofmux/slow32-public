@@ -731,7 +731,12 @@ def build_clang(src, d):
     rt = os.path.join(ROOT, 'runtime')
     steps = [[os.path.join(LLVM, 'clang'), '-target', 'slow32-unknown-none', '-S', '-emit-llvm', '-O2', '-w',
               '-I' + os.path.join(rt, 'include'), src, '-o', d + '/c.ll'],
-             [os.path.join(LLVM, 'llc'), '-mtriple=slow32-unknown-none', d + '/c.ll', '-o', d + '/c.s'],
+             # The machine verifier checks every function llc builds, so a
+             # backend defect is caught even when this program's output
+             # happens to come out right (the GPRPair spill bug of
+             # 2026-10-27 failed it all along).
+             [os.path.join(LLVM, 'llc'), '-mtriple=slow32-unknown-none', '-verify-machineinstrs',
+              d + '/c.ll', '-o', d + '/c.s'],
              [AS, d + '/c.s', d + '/c.s32o'],
              [LD, '-o', d + '/c.s32x', '--mmio', '64K', rt + '/crt0.s32o', d + '/c.s32o',
               rt + '/libc_mmio.s32a', rt + '/libs32.s32a']]
@@ -756,13 +761,15 @@ def build_s08(src, d, cc):
 
 
 def check(text, cc):
-    """('ok'|'skip'|'differ'|'s08-build'|'s08-run', detail)"""
+    """('ok'|'skip'|'differ'|'clang-differs'|'clang-verify'|'s08-build'|'s08-run', detail)"""
     d = tempfile.mkdtemp(prefix='cfuzz.')
     try:
         src = d + '/p.c'
         open(src, 'w').write(text)
         ce, why = build_clang(src, d)
         if not ce:
+            if 'Bad machine code' in why:
+                return 'clang-verify', why[why.index('Bad machine code'):][:600]
             return 'skip', 'clang: ' + why[-300:]
         crc, cout = run_out(ce, d)
         if crc == 124:

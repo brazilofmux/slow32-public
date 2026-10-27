@@ -534,9 +534,12 @@ bool SLOW32InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     MachineBasicBlock &MBB = *MI.getParent();
     const DebugLoc &DL = MI.getDebugLoc();
 
+    // The link register is dead after the call, as the Defs list's implicit
+    // def of r31 says; a live explicit def beside it fails the verifier
+    // ("Dead def has a live def of the same register").
     MachineInstrBuilder MIB =
         BuildMI(MBB, MI, DL, get(SLOW32::JALR_CALLR))
-            .addReg(SLOW32::R31, RegState::Define);
+            .addReg(SLOW32::R31, RegState::Define | RegState::Dead);
 
     MIB.add(MI.getOperand(0));
     addCallOperands(MIB, MI);

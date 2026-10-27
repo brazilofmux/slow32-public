@@ -1953,10 +1953,11 @@ SLOW32TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
         .addReg(SLOW32::R0)
         .addMBB(TailMBB);
 
-    for (const auto &LI : HeadMBB->liveins()) {
-      IfFalseMBB->addLiveIn(LI);
-      TailMBB->addLiveIn(LI);
-    }
+    // No live-ins are copied to the new blocks: this runs before register
+    // allocation, where the entry block has already copied every argument
+    // register into a virtual one.  Copying them made r3-r7 and r29-r31
+    // live into mid-function blocks, which -verify-machineinstrs rejects
+    // ("MBB has allocatable live-in, but isn't entry").
 
     BuildMI(*TailMBB, TailMBB->begin(), DL, TII.get(SLOW32::PHI),
             MI.getOperand(0).getReg())
