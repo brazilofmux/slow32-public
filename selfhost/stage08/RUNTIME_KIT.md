@@ -103,6 +103,20 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-27 (`047d26ea`).  `cc.s32x` and `libc.s32a`; the tools
+rebuild identical.  Replaces batch 48, which had a wrong-code defect
+exposed by cc359989: a large constant pinned as a loop constant was
+loaded in a `?:` arm's block after LICM had hoisted its reader.  Also
+fixed, found by the widened random-program differential and live in
+every earlier kit: LICM strength reduction reading a pinned constant in
+the preheader before the loop loaded it; return pinning giving r1 to
+two values live at once (it now asks the allocator's interference
+graph); the full unroller emitting code past a body that always
+returns (a compile error).  20,000 wide and 10,000 narrow cfuzz seeds
+pass with this compiler.  SQLite heavy +0.12% over batch 48, output
+identical.  Gated: kit differential 131/0, kit tools 21/0, islisp,
+libcob 492/0, dfsort, mdfix 95 runs.
+
 Rebuilt 2026-10-27 (`d634e454`).  `cc.s32x` and `libc.s32a`; the tools
 rebuild identical.  Replaces batch 47, which carried a regression:
 cc359989's phi fix exposed an old flaw in the block-reload deletion
