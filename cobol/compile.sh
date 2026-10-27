@@ -15,7 +15,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         -free|-fixed) fmt="$1" ;;
         -std=*) std="$1" ;;
-        -fixed-columns=*|-fbinary-byteorder=*|-fcomp1=*|-fno-hot-arith|-fno-loop-reg|-fno-avail-reg|-fno-native-items|-fno-hir|-fprofile-lines|-dialect=*) cols="$cols $1" ;;
+        -fixed-columns=*|-fbinary-byteorder=*|-fcomp1=*|-fno-hot-arith|-fno-loop-reg|-fno-avail-reg|-fno-native-items|-fnumproc=*|-fno-hir|-fprofile-lines|-dialect=*) cols="$cols $1" ;;
         -o) out="$2"; shift ;;
         -D) cols="$cols -D $2"; shift ;;               # a >>DEFINE ... PARAMETER value
         -D*) cols="$cols $1" ;;

@@ -303,6 +303,14 @@ typedef struct { const Sym *s; char reg[4]; int at; } CenPend;
 static CenPend g_cen_pend[32]; static int g_cen_npend;      /* addresses formed, not yet accounted for: whose, in which register, where in the code */
 static int g_cen_hold;                                      /* >0: addresses formed now are accounted for by the one forming them */
 static int g_cen_quiet;                                     /* >0: a length asked now is asked for nothing an item's form can change */
+/* -fnumproc=pfd (IBM's NUMPROC(PFD) in spirit): a numeric item holds what
+ * its picture says, so a MOVE or relation between two items of one
+ * description may be done by value -- the census then does not keep an
+ * item as written for a partner that must be (census.h).  Off by default:
+ * a numeric item holding spaces or other non-digits is carried and
+ * compared byte for byte, as GnuCOBOL does (the user's ruling,
+ * 2026-10-27).  Only that undefined content can tell the two apart. */
+static int g_numproc_pfd;
 static char g_cen_why[64][28]; static int g_cen_nwhy;       /* what pinned: a routine's name, "inline/VERB", ... */
 static struct { int a, b; } *g_cen_edge; static int g_cen_nedge, g_cen_edgecap;   /* a copied to b byte for byte: one form for both */
 static char **g_asm; static int g_nasm;                     /* (the code, emit.h) */

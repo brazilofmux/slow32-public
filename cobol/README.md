@@ -221,9 +221,13 @@ PATH install (optional, for majesty and friends):
 `s32-cobc [-free|-fixed] [-std=85|2002|2014|2023] [-dialect=mf|gnucobol]
 [-warn-74] [-warn-extensions] [-I dir] [-D name[=value]] [-m] [-fnsig]
 [-fixed-columns=bytes] [-fbinary-byteorder=native] [-fcomp1=binary|float]
-[-fno-hir] [-o out.s] source.cbl`; `s32-cobc` alone prints the list.
-Fixed format is the default (the standard's reference format); majesty
-passes `-free`, as it already does to GnuCOBOL. The harness takes about
+[-fnumproc=pfd] [-fno-hir] [-o out.s] source.cbl`; `s32-cobc` alone
+prints the list.  Fixed format is the default (the standard's reference
+format); majesty passes `-free`, as it already does to GnuCOBOL, and
+`-fnumproc=pfd`: its numeric items hold what their pictures say, so a
+MOVE or compare between two of one picture may be done by value and more
+items live in registers (by default a numeric item holding spaces is
+carried byte for byte, as GnuCOBOL does). The harness takes about
 nine minutes with both oracles; the other gates (majesty,
 majesty-functions, Open Systems, CCVS, selfhost-libcob, ACAS) run after
 it before anything is committed, and none of the compiler's sources is

@@ -461,6 +461,8 @@ static void usage(void)
         "  -fixed-columns=bytes  count reference-format columns in bytes, not characters (UTF-8 source)\n"
         "  -fbinary-byteorder=native  COMP/BINARY in SLOW-32's little-endian order, not big-endian (docs/usage.md)\n"
         "  -fcomp1=binary|float  COMP-1 as RM's binary or MF's float, whatever its PICTURE (default: binary with one)\n"
+        "  -fnumproc=pfd  numeric items hold what their pictures say: a MOVE or compare between two of one description\n"
+        "                 may be by value, so more items live in registers (default nopfd: non-digits carried as bytes)\n"
         "  -warn-74 warn where a COBOL 74 program needs updating (docs/behavior-points.md)\n"
         "  -warn-extensions warn where a program uses an extension to the standard it is compiled for\n", VERSION);
     exit(2);
@@ -492,6 +494,8 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-fno-loop-reg")) g_noloopreg = 1;
         else if (!strcmp(argv[i], "-fno-avail-reg")) g_noavailreg = 1;
         else if (!strcmp(argv[i], "-fno-native-items")) g_native_on = 0;
+        else if (!strcmp(argv[i], "-fnumproc=pfd")) g_numproc_pfd = 1;
+        else if (!strcmp(argv[i], "-fnumproc=nopfd")) g_numproc_pfd = 0;
         else if (!strcmp(argv[i], "-fnative-items")) g_native_on = 1;
         else if (!strcmp(argv[i], "-fno-hir")) g_hir_on = 0;
         else if (!strcmp(argv[i], "-fhir")) g_hir_on = 1;

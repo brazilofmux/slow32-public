@@ -412,7 +412,17 @@ Staged; each step is measured before the next is begun.
      picture it is copied to or from.
      Whether a copy between two numeric items of one description must
      carry bytes that are not a number is a ruling, not an analysis
-     (IBM's NUMPROC(PFD) is the same question).
+     (IBM's NUMPROC(PFD) is the same question).  **Ruled 2026-10-27:
+     opt-in.**  `-fnumproc=pfd` drops the rule (the census lets a partner
+     go native and the MOVE or compare is by value); the default carries
+     the bytes, as GnuCOBOL does.  Measured first: csv2fw -2.7% (its parse
+     state, a PIC 99 moved from a table of PIC 99s, goes into a register)
+     with all its output files identical, and majesty, majesty-functions,
+     Open Systems and CCVS-85 unchanged under the flag; only programs
+     that put non-digits in numeric items on purpose differ
+     (`tests/free/cmpbytes`, the native generator's "dirty" group;
+     `tests/free/pfd-cmpbytes` pins both readings).  majesty builds with
+     the flag.
 3. **PERFORM classified.**  Done as a census (above): 91.6% of
    PERFORMs name a procedure; the facts per range are in the
    `.perform` files for the lowering to read.

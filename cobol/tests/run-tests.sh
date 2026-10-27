@@ -425,6 +425,10 @@ for fmt in fixed free 2002 2014 2023; do
         case "$name" in mf-*) stdflag="$stdflag -dialect=mf"; ostd="-std=mf" ;; esac
         # gnu-*: GnuCOBOL's own forms (-dialect=gnucobol), the oracle in its default dialect
         case "$name" in gnu-*) stdflag="$stdflag -dialect=gnucobol"; ostd="-std=default" ;; esac
+        # pfd-*: compiled with -fnumproc=pfd (numeric items hold what their
+        # pictures say); where that differs, GnuCOBOL's answer is the
+        # .oracle-expected beside the test
+        case "$name" in pfd-*) stdflag="$stdflag -fnumproc=pfd" ;; esac
         # a .link file beside the test names further sources (subprogram
         # .cbl, .c) relative to tests/, for us and for the oracle
         extra=(); needs_cc=0

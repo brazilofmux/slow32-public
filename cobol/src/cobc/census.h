@@ -284,7 +284,7 @@ static void census_unit(void)
     }
     /* two items copied or compared byte for byte are written one way:
      * the machine's only if both may be */
-    for (int again = 1; again; ) {
+    for (int again = !g_numproc_pfd; again; ) {     /* -fnumproc=pfd: partners need not agree */
         again = 0;
         for (int e = 0; e < g_cen_nedge; e++) {
             int a = g_cen_edge[e].a, b = g_cen_edge[e].b;
