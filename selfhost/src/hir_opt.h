@@ -807,7 +807,12 @@ static int ho_dead_blocks(void) {
             j = 0;
             while (j < h_pcnt[i]) {
                 t = h_pblk[h_pbase[i] + j];
-                if (t >= 0 && t < bb_nblk && !ho_use[t]) {
+                /* only an argument not yet self-referential is a change:
+                 * re-marking the done ones every round reported progress
+                 * forever, and the loop ran to its cap (68 of 192 FCVS
+                 * programs; found by fort370) */
+                if (t >= 0 && t < bb_nblk && !ho_use[t] &&
+                    h_pval[h_pbase[i] + j] != i) {
                     h_pval[h_pbase[i] + j] = i;
                     changed = 1;
                 }
