@@ -119,6 +119,41 @@ static int ho_copy_prop(void) {
  * Pass 2: Constant folding and algebraic simplifications
  * ---------------------------------------------------------------- */
 
+/* The edge pred -> b is gone (a BRC folded to the other arm): b's phis
+ * lose pred's argument.  Left in place, the argument named a value the
+ * phi never receives, and passes that read phi arguments without asking
+ * which edges exist took it for one: after full unrolling, every copy's
+ * `if (i != 7)` folded, and return pinning put the stale argument and
+ * the value an emitter-folded ADDI chain reads in r1 together. */
+static void ho_phi_drop_pred(int b, int pred) {
+    int i;
+    int j;
+    int base;
+    int cnt;
+    if (b < 0 || pred < 0) return;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_PHI && h_blk[i] == b && h_pbase[i] >= 0) {
+            base = h_pbase[i];
+            cnt = h_pcnt[i];
+            j = 0;
+            while (j < cnt) {
+                if (h_pblk[base + j] == pred) {
+                    while (j + 1 < cnt) {
+                        h_pblk[base + j] = h_pblk[base + j + 1];
+                        h_pval[base + j] = h_pval[base + j + 1];
+                        j = j + 1;
+                    }
+                    h_pcnt[i] = cnt - 1;
+                    break;
+                }
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+}
+
 static int ho_const_fold(void) {
     int changed;
     int i;
@@ -541,10 +576,12 @@ static int ho_const_fold(void) {
             h_kind[h_src1[i]] == HI_ICONST) {
             if (h_val[h_src1[i]] != 0) {
                 /* Always true: branch to then-block (src2) */
+                if (h_val[i] != h_src2[i]) ho_phi_drop_pred(h_val[i], h_blk[i]);
                 h_kind[i] = HI_BR;
                 h_val[i] = h_src2[i];
             } else {
                 /* Always false: branch to else-block (val unchanged) */
+                if (h_val[i] != h_src2[i]) ho_phi_drop_pred(h_src2[i], h_blk[i]);
                 h_kind[i] = HI_BR;
             }
             h_src1[i] = -1;

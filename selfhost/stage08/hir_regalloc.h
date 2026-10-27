@@ -1976,6 +1976,20 @@ static void gc_combine(int u, int v) {
     }
 }
 
+static int gc_aggr_phi;     /* phi copies in loops coalesce without the conservative tests (below) */
+static int gc_aggr_nphi;    /* ... when the phi's block carries at most this many (HIR_AGGR_NPHI, default 20) */
+static int gc_blk_nphi(int b) {
+    int q;
+    int n;
+    n = 0;
+    if (b < 0 || b >= bb_nblk) return 999;
+    q = ssa_phi_head[b];
+    while (q >= 0) {
+        if (h_kind[q] == HI_PHI) n = n + 1;
+        q = ssa_phi_next[q];
+    }
+    return n;
+}
 static int gc_coalesce(void) {
     int mv, u, v, tmp;
     mv = 0;
@@ -2023,7 +2037,9 @@ static int gc_coalesce(void) {
             gc_mv_status[mv] = GC_MV_CONSTRAINED;
             return 1;
         }
-        if (gc_george(u, v) || gc_briggs(u, v)) {
+        if (gc_george(u, v) || gc_briggs(u, v) ||
+            (gc_aggr_phi && gc_mv_phi[mv] && ra_depth_w(gc_mv_blk[mv]) >= 10 &&
+             gc_blk_nphi(gc_mv_pblk[mv]) <= gc_aggr_nphi)) {
             gc_mv_status[mv] = GC_MV_COALESCED;
             gc_combine(u, v);
             if (!gc_move_related(u) && gc_degree[u] < gc_k(u)) {
@@ -5010,6 +5026,32 @@ static void hir_regalloc(void) {
      * function the training run never entered keeps the defaults. */
     if (getenv("HIR_PGO")) ra_freq_on = ra_pgo_fill() ? 6 : 0;
     ra_pgo_cost = getenv("HIR_PGO_COST") ? atoi(getenv("HIR_PGO_COST")) : 0;
+    /* Aggressive phi coalescing: in a function with no calls, a phi copy
+     * in a loop coalesces without Briggs's and George's tests (default;
+     * HIR_AGGR_PHI=0 off, =2 in every function).  Those tests refuse
+     * under pressure, and a loop's back-edge copies are paid every pass:
+     * AES's peeled round loop carried its sixteen state bytes through 15
+     * moves a round.  Where calls cross the loop the merged ranges spill
+     * instead (SQLite heavy +2.0% with it everywhere; with the leaf rule,
+     * unchanged to 76 instructions), and so does a loop carrying more
+     * values than the registers hold: only a phi whose block has at most
+     * HIR_AGGR_NPHI phis (default 20) -- AES's round carries 17 or so,
+     * test_respill's BLAKE2b round 33 (16 words, as pairs). */
+    {
+        const char *ae;
+        int z;
+        ae = getenv("HIR_AGGR_NPHI");
+        gc_aggr_nphi = ae ? atoi(ae) : 20;
+        ae = getenv("HIR_AGGR_PHI");
+        gc_aggr_phi = ae ? atoi(ae) : 1;
+        if (gc_aggr_phi == 1) {
+            z = 0;
+            while (z < h_ninst) {
+                if (lv_is_callkind(h_kind[z])) { gc_aggr_phi = 0; break; }
+                z = z + 1;
+            }
+        }
+    }
     if (ra_freq_on && ra_freq_on != 5 && ra_freq_on != 6) ra_build_bfreq();   /* step 5b.5: static block frequencies */
     ra_build_wuses();      /* weighted use counts for spill cost: loop depth, or the frequencies */
     ra_compute_pos();

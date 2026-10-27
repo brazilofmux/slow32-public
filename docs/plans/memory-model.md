@@ -760,3 +760,39 @@ made by this pipeline (tests/test_phi_web.pgo) and requires `PGO
 fn=run`.  A profile fits builds that allocate differently, not ones
 that lower differently: the RMW build numbers 46 blocks differently and
 needed its own.
+
+## AES round loop: last-iteration peeling and leaf phi coalescing (2026-10-27)
+
+The "SROA of small arrays" item was already done: full unrolling had
+made AES's sixteen-byte state sixteen registers.  The remaining gap
+(680.0M executed vs clang 595.0M on the 200,000-block KDF) was copies:
+28 frozen phi moves a round.  The join after `if (r != 14)` merged
+the S-box outputs with the MixColumns outputs, which interfere, so no
+colouring makes it free; the back edge's copies were refused by
+Briggs and George under pressure.  Tried and measured at zero: phi
+bias before src1 reuse, edge-frequency bias under a profile, local
+recolouring after select (an interfering neighbour holds the register
+every time).  Aggressive phi coalescing alone: -0.3%, and +4% with
+spills on a variant.
+
+Landed: (1) hl_peel_plan / hl_for_peeled (hir_lower.h): a counted
+`for` whose body tests the variable one way on every pass but the
+last runs to `v != last` with that `if` decided, then one more body
+decided the other way (S12CC_PEEL, default 512 nodes).  (2) In a
+function with no calls, a loop phi copy whose block carries at most
+20 phis coalesces without the conservative tests (HIR_AGGR_PHI,
+HIR_AGGR_NPHI).  AES 680.0M -> 645.4M (-5.1%; clang 595.0M).  SQLite heavy +0.085%,
+other +0.10%, outputs identical -- that is all fix (3) below; the
+leaf rule alone is -76 / -76.
+
+Found on the way, wrong code in batch 46: (3) a BRC folded to a BR
+left the dropped arm's phis an argument for it (ho_phi_drop_pred now
+removes it); (4) return pinning put an ADDI chain's inner ADDI and the
+base the emitter-folded outer reads in r1 together: `x = x * 2 + 5;
+return x + 1000;` returned x * 2 + 1010.  (5) Correct SSA lost
+test_respill's round16 64 accidental split points; a spilled address
+ADDI whose consumers all fold is now suppressed (it was stored to its
+slot for nothing), and round16 is still +3.4% (15.47M vs 14.96M) --
+an allocator without live-range splitting.  b2b and blamka unchanged.
+Tests: test_peel (rounds keeps one conditional branch),
+test_retpin_chain.

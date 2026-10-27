@@ -1598,6 +1598,248 @@ static int hl_unroll_trips(Node *n) {
     return trips;
 }
 
+/* Peeling the last iteration.  A counted `for` (as above, but any trip
+ * count and nested loops allowed) whose body tests the variable against
+ * a constant, where the test comes out one way on every pass but the
+ * last -- AES's `if (r != 14)` round, MixColumns skipped on the final
+ * round -- is lowered as the loop for all passes but the last, with
+ * that `if` lowered as decided, then the body once more, decided the
+ * other way, and the step.  The loop keeps no branch for it, and no join
+ * where the two arms' values meet: there the arms' results interfered
+ * (each MixColumns output is born while the round's other inputs are
+ * still live), so the allocator paid a copy for most of them every pass.
+ * The loop's own test becomes `v != last`.  Refused: an early exit from
+ * this loop (break or continue of its own), goto, labels, asm, statement
+ * expressions, the variable assigned or its address taken, inside an
+ * inlined body, or a body over S12CC_PEEL nodes (it is lowered twice). */
+static int hl_peel_budget;
+static Node *hl_peel_if[16];      /* the decided ifs, while their copy is lowered */
+static int hl_peel_take[16];      /* 1: the then-arm, 0: the else-arm */
+static int hl_npeel_if;
+static Node *hl_pp_if[8];         /* hl_peel_plan's result: the ifs ... */
+static int hl_pp_loop[8];         /* ... what each tests to inside the loop ... */
+static int hl_pp_n;               /* ... and how many */
+
+static int hl_peel_blocked(Node *n, Node *v, int in_loop, int in_sw) {
+    int k;
+    if (!n) return 0;
+    k = n->kind;
+    if (k == ND_GOTO || k == ND_LABEL || k == ND_ASM || k == ND_STMT_EXPR)
+        return 1;
+    if (k == ND_BREAK && !in_loop && !in_sw) return 1;
+    if (k == ND_CONTINUE && !in_loop) return 1;
+    if (k == ND_UNARY && n->op == TK_AMP && hl_same_lvar(n->lhs, v))
+        return 1;
+    if ((k == ND_ASSIGN || k == ND_COMP_ASSIGN || k == ND_POST_INC ||
+         k == ND_POST_DEC) && hl_same_lvar(n->lhs, v))
+        return 1;
+    if (k == ND_WHILE || k == ND_FOR || k == ND_DO_WHILE) in_loop = 1;
+    if (k == ND_SWITCH) in_sw = 1;
+    if (hl_peel_blocked(n->lhs, v, in_loop, in_sw)) return 1;
+    if (hl_peel_blocked(n->rhs, v, in_loop, in_sw)) return 1;
+    if (hl_peel_blocked(n->cond, v, in_loop, in_sw)) return 1;
+    if (hl_peel_blocked(n->body, v, in_loop, in_sw)) return 1;
+    if (hl_peel_blocked(n->init, v, in_loop, in_sw)) return 1;
+    if (hl_peel_blocked(n->step, v, in_loop, in_sw)) return 1;
+    if (hl_peel_blocked(n->els, v, in_loop, in_sw)) return 1;
+    if (hl_peel_blocked(n->args, v, in_loop, in_sw)) return 1;
+    return hl_peel_blocked(n->next, v, in_loop, in_sw);
+}
+
+/* A comparison of v with a constant, at v = x: 1/0, or -1 if c is not one */
+static int hl_peel_test(Node *c, Node *v, int x, int uns) {
+    int a;
+    int b;
+    int op;
+    if (!c || c->kind != ND_BINOP || !c->lhs || !c->rhs) return -1;
+    op = c->op;
+    if (op != TK_EQ && op != TK_NE && op != TK_LT && op != TK_LE &&
+        op != TK_GT && op != TK_GE) return -1;
+    if (hl_same_lvar(c->lhs, v) && c->rhs->kind == ND_NUM) { a = x; b = c->rhs->val; }
+    else if (hl_same_lvar(c->rhs, v) && c->lhs->kind == ND_NUM) { a = c->lhs->val; b = x; }
+    else return -1;
+    if (uns && (a < 0 || b < 0)) return -1;
+    if (op == TK_EQ) return a == b;
+    if (op == TK_NE) return a != b;
+    if (op == TK_LT) return a < b;
+    if (op == TK_LE) return a <= b;
+    if (op == TK_GT) return a > b;
+    return a >= b;
+}
+
+/* The ifs in the body the last pass decides differently.  x0, stp and
+ * trips give the variable's values. */
+static void hl_peel_find(Node *n, Node *v, int x0, int stp, int trips, int uns) {
+    int t;
+    int k;
+    int first;
+    int same;
+    if (!n) return;
+    if (n->kind == ND_IF && hl_pp_n < 8) {
+        first = hl_peel_test(n->cond, v, x0, uns);
+        if (first >= 0) {
+            same = 1;
+            k = 1;
+            while (k < trips - 1) {
+                t = hl_peel_test(n->cond, v, x0 + k * stp, uns);
+                if (t != first) { same = 0; break; }
+                k = k + 1;
+            }
+            if (same && hl_peel_test(n->cond, v, x0 + (trips - 1) * stp, uns) != first) {
+                hl_pp_if[hl_pp_n] = n;
+                hl_pp_loop[hl_pp_n] = first;
+                hl_pp_n = hl_pp_n + 1;
+            }
+        }
+    }
+    hl_peel_find(n->lhs, v, x0, stp, trips, uns);
+    hl_peel_find(n->rhs, v, x0, stp, trips, uns);
+    hl_peel_find(n->body, v, x0, stp, trips, uns);
+    hl_peel_find(n->els, v, x0, stp, trips, uns);
+    hl_peel_find(n->init, v, x0, stp, trips, uns);
+    hl_peel_find(n->step, v, x0, stp, trips, uns);
+    hl_peel_find(n->next, v, x0, stp, trips, uns);
+}
+
+/* The loop's new condition (v != last), or NULL: no peel. */
+static Node *hl_peel_plan(Node *n) {
+    Node *v;
+    Node *c;
+    Node *s;
+    Node *nc;
+    Node *nn;
+    int x;
+    int x0;
+    int lim;
+    int stp;
+    int trips;
+    int go;
+    int uns;
+
+    hl_pp_n = 0;
+    if (hl_peel_budget <= 0 || hl_inl_depth > 0) return NULL;
+    if (n->kind != ND_FOR || !n->init || !n->cond || !n->step || !n->body) return NULL;
+    if (n->init->kind != ND_ASSIGN || !n->init->rhs || n->init->rhs->kind != ND_NUM) return NULL;
+    v = n->init->lhs;
+    if (!v || v->kind != ND_VAR || !v->is_local || v->is_array) return NULL;
+    if ((v->ty & ~TY_UNSIGNED) != TY_INT) return NULL;
+    uns = (v->ty & TY_UNSIGNED) != 0;
+    c = n->cond;
+    if (c->kind != ND_BINOP || !hl_same_lvar(c->lhs, v) ||
+        !c->rhs || c->rhs->kind != ND_NUM) return NULL;
+    if (c->op != TK_LT && c->op != TK_LE && c->op != TK_GT &&
+        c->op != TK_GE && c->op != TK_NE) return NULL;
+    s = n->step;
+    if (s->kind == ND_POST_INC && hl_same_lvar(s->lhs, v)) stp = 1;
+    else if (s->kind == ND_POST_DEC && hl_same_lvar(s->lhs, v)) stp = -1;
+    else if (s->kind == ND_COMP_ASSIGN && hl_same_lvar(s->lhs, v) &&
+             s->rhs && s->rhs->kind == ND_NUM &&
+             (s->op == TK_PLUS || s->op == TK_MINUS)) {
+        stp = s->rhs->val;
+        if (s->op == TK_MINUS) stp = 0 - stp;
+    } else return NULL;
+    if (stp == 0 || stp > 4096 || stp < -4096) return NULL;
+    x0 = n->init->rhs->val;
+    lim = c->rhs->val;
+    if (x0 > 65536 || x0 < -65536 || lim > 65536 || lim < -65536) return NULL;
+    if (uns && (x0 < 0 || lim < 0)) return NULL;
+    x = x0;
+    trips = 0;
+    while (1) {
+        if (c->op == TK_LT) go = x < lim;
+        else if (c->op == TK_LE) go = x <= lim;
+        else if (c->op == TK_GT) go = x > lim;
+        else if (c->op == TK_GE) go = x >= lim;
+        else go = x != lim;
+        if (uns && x < 0) return NULL;
+        if (!go) break;
+        trips = trips + 1;
+        if (trips > 200000) return NULL;
+        x = x + stp;
+    }
+    if (trips < 2) return NULL;
+    if (hl_peel_blocked(n->body, v, 0, 0)) return NULL;
+    if (hl_inl_size(n->body, hl_peel_budget + 1) > hl_peel_budget) return NULL;
+    hl_peel_find(n->body, v, x0, stp, trips, uns);
+    if (hl_pp_n == 0) return NULL;
+    nc = (Node *)malloc(sizeof(Node));
+    nn = (Node *)malloc(sizeof(Node));
+    if (!nc || !nn) { hl_pp_n = 0; return NULL; }
+    memcpy(nc, c, sizeof(Node));
+    memcpy(nn, c->rhs, sizeof(Node));
+    nn->val = x0 + (trips - 1) * stp;
+    nc->op = TK_NE;
+    nc->rhs = nn;
+    return nc;
+}
+
+/* The decided arm of an if this peel fixed: 1 then, 0 else, -1 not one */
+static int hl_peel_decided(Node *n) {
+    int j;
+    j = hl_npeel_if - 1;
+    while (j >= 0) {
+        if (hl_peel_if[j] == n) return hl_peel_take[j];
+        j = j - 1;
+    }
+    return -1;
+}
+
+/* Lower n peeled (hl_peel_plan gave nc): the rotated loop on nc, its ifs
+ * decided as inside the loop, then one more body + step with them
+ * decided as on the last pass. */
+static void hl_for_peeled(Node *n, Node *nc) {
+    int base;
+    int np;
+    int j;
+    int cv;
+    int pre_blk;
+    int body_blk;
+    int latch_blk;
+    int exit_blk;
+    np = hl_pp_n;
+    base = hl_npeel_if;
+    if (base + np > 16) np = 16 - base;
+    j = 0;
+    while (j < np) {
+        hl_peel_if[base + j] = hl_pp_if[j];
+        hl_peel_take[base + j] = hl_pp_loop[j];
+        j = j + 1;
+    }
+    hl_npeel_if = base + np;
+
+    pre_blk = hir_new_block();
+    body_blk = hir_new_block();
+    latch_blk = hir_new_block();
+    exit_blk = hir_new_block();
+    hl_expr(n->init);
+    cv = hl_cond_val(nc);
+    hi_emit(HI_BRC, 0, cv, pre_blk, exit_blk, NULL);
+    hl_switch_block(pre_blk);
+    hi_emit(HI_BR, 0, -1, -1, body_blk, NULL);
+    hl_break_blk[hl_loop_depth] = exit_blk;
+    hl_cont_blk[hl_loop_depth] = latch_blk;
+    hl_loop_depth = hl_loop_depth + 1;
+    hl_switch_block(body_blk);
+    hl_stmt(n->body);
+    if (!hl_terminated()) hi_emit(HI_BR, 0, -1, -1, latch_blk, NULL);
+    hl_switch_block(latch_blk);
+    hl_expr(n->step);
+    cv = hl_cond_val(nc);
+    hi_emit(HI_BRC, 0, cv, body_blk, exit_blk, NULL);
+    hl_loop_depth = hl_loop_depth - 1;
+    hl_switch_block(exit_blk);
+
+    /* the last pass: every decided if the other way */
+    j = 0;
+    while (j < np) {
+        hl_peel_take[base + j] = !hl_peel_take[base + j];
+        j = j + 1;
+    }
+    hl_stmt(n->body);
+    if (!hl_terminated()) hl_expr(n->step);
+    hl_npeel_if = base;
+}
+
 static int hl_inl_count_returns(Node *n) {
     int c;
     if (!n) return 0;
@@ -3931,6 +4173,12 @@ static void hl_stmt(Node *n) {
 
     /* If / If-else */
     if (n->kind == ND_IF) {
+        if (hl_npeel_if > 0 && hl_peel_decided(n) >= 0) {
+            /* a test a peeled loop decided (hl_for_peeled) */
+            if (hl_peel_decided(n)) hl_stmt(n->body);
+            else if (n->els) hl_stmt(n->els);
+            return;
+        }
         cv = hl_cond_val(n->cond);
         if (n->els) {
             then_blk = hir_new_block();
@@ -3974,6 +4222,11 @@ static void hl_stmt(Node *n) {
         int latch_blk;
         int ntrips;
         ntrips = hl_unroll_trips(n);
+        if (ntrips == 0 && n->kind == ND_FOR) {
+            Node *pc;
+            pc = hl_peel_plan(n);
+            if (pc) { hl_for_peeled(n, pc); return; }
+        }
         if (ntrips > 0) {
             /* The condition is a variable against a constant: no side
              * effect is skipped by not evaluating it. */
