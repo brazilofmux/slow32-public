@@ -1,4 +1,4 @@
-/* COPIED from selfhost/stage08/hir_regalloc.h at 30e16a57.  See note in hir.h. */
+/* COPIED from selfhost/stage08/hir_regalloc.h at 370629f9.  See note in hir.h. */
 /* hir_regalloc.h -- IRC graph-coloring register allocation for s12cc (SLOW-32)
  *
  * Iterated Register Coalescing (George-Appel 1996) for the SLOW-32 selfhost
@@ -69,6 +69,18 @@ static int ra_stat_r30;              /* values colored to r30 */
  * this single translation unit. */
 static int ra_crosses_call[HIR_MAX_INST];
 static int ra_mem_forced[HIR_MAX_INST];  /* iterated-spill victims (gc_respill) */
+/* Step 5b.2: a LOAD/STORE whose address chain the emitter folds down
+ * to a spilled base reads, in this block, the reload named here
+ * instead (-1: the base itself).  ra_codegen_fold_base and the
+ * emitter's two fold sites apply it. */
+static int rl_fold_sub[HIR_MAX_INST];
+/* Phi webs sharing one spill slot (ra_phi_webs): ra_web_of[A] = the
+ * spilled phi P whose slot A takes, -1 for its own; ra_web_s/e[P] = the
+ * slot range P's slot must also cover for its aliases. */
+static int ra_web_of[HIR_MAX_INST];
+static int ra_web_s[HIR_MAX_INST];
+static int ra_web_e[HIR_MAX_INST];
+static int ra_stat_phiweb;
 /* COPY insts emitted immediately before a call to split a live range
  * that is used as a call argument (or CALLP callee) and also lives
  * after the call.  Chained through ra_csplit_next. */
@@ -603,6 +615,7 @@ static int ra_codegen_fold_base(int inst, int *base_out) {
         while (chain >= 0 && chlim < 64) {
             ck = h_kind[chain];
             if (ck == HI_COPY) {
+                if (ra_is_reload[chain]) break;   /* the reload's register is the base */
                 chain = h_src1[chain];
                 chlim = chlim + 1;
                 continue;
@@ -617,6 +630,7 @@ static int ra_codegen_fold_base(int inst, int *base_out) {
         }
         if (chain >= 0 && chain != s1 && ra_is_i12(off)) {
             *base_out = chain;
+            if (rl_fold_sub[inst] >= 0) *base_out = rl_fold_sub[inst];
             return 1;
         }
         return 0;
@@ -702,6 +716,20 @@ static void ra_compute_ends(void) {
             ra_extend(src, p);
         }
 
+        /* A compare fused into this BRC and already NOPed by an earlier
+         * ra_extend_fused_cmp (the allocator recomputes intervals after
+         * appending copies: call splits, block reloads, region copies)
+         * is read here.  Without this its operands' intervals ended at
+         * the BRC with no cross-block extension, so a loop-invariant
+         * whose only use in the loop was such a compare looked dead
+         * from the branch to the latch -- and the slot sharing gave a
+         * region copy its slot there (wherePathSolver's mxChoice read
+         * back as 0: "no query solution"). */
+        if (k == HI_BRC && hcg_brc_fuse[inst] >= 0 && h_kind[hcg_brc_fuse[inst]] == HI_NOP) {
+            ra_extend(h_src1[hcg_brc_fuse[inst]], p);
+            ra_extend(h_src2[hcg_brc_fuse[inst]], p);
+        }
+
         /* Call arguments */
         if ((k == HI_CALL || k == HI_CALLP) && h_cbase[inst] >= 0) {
             j = 0;
@@ -763,6 +791,18 @@ static void ra_compute_ends(void) {
         if (ra_codegen_fold_base(inst, &src) && ra_pos[src] >= 0 &&
             h_blk[src] != h_blk[inst]) {
             ra_backprop(src, h_blk[inst]);
+        }
+
+        /* The operands of a fused, NOPed compare: mirror the above. */
+        if (k == HI_BRC && hcg_brc_fuse[inst] >= 0 && h_kind[hcg_brc_fuse[inst]] == HI_NOP) {
+            j = 0;
+            while (j < 2) {
+                src = (j == 0) ? h_src1[hcg_brc_fuse[inst]] : h_src2[hcg_brc_fuse[inst]];
+                if (src >= 0 && ra_pos[src] >= 0 && h_blk[src] != h_blk[inst]) {
+                    ra_backprop(src, h_blk[inst]);
+                }
+                j = j + 1;
+            }
         }
 
         /* Call arguments */
@@ -846,6 +886,8 @@ static void ra_slot_range(int v, int *ps, int *pe) {
             j = j + 1;
         }
     }
+    if (ra_web_s[v] >= 0 && ra_web_s[v] < s) s = ra_web_s[v];
+    if (ra_web_e[v] > e) e = ra_web_e[v];
     *ps = s;
     *pe = e;
 }
@@ -867,7 +909,7 @@ static void ra_assign_spill_slots(void) {
      * position (unreachable) are handled after the scan. */
     i = h_ninst - 1;
     while (i >= 0) {
-        if (ra_spill_wants_slot(i) && ra_pos[i] >= 0 && ra_pos[i] < npos) {
+        if (ra_spill_wants_slot(i) && ra_web_of[i] < 0 && ra_pos[i] >= 0 && ra_pos[i] < npos) {
             ra_slot_range(i, &s, &e);
             if (s < 0) s = 0;
             if (s >= npos) s = npos - 1;
@@ -905,12 +947,18 @@ static void ra_assign_spill_slots(void) {
     /* Unreachable values: private slots, as before. */
     i = 0;
     while (i < h_ninst) {
-        if (ra_spill_wants_slot(i) && !(ra_pos[i] >= 0 && ra_pos[i] < npos)) {
+        if (ra_spill_wants_slot(i) && ra_web_of[i] < 0 && !(ra_pos[i] >= 0 && ra_pos[i] < npos)) {
             hl_temp_stack = hl_temp_stack + 4;
             ra_spill_off[i] = 0 - hl_temp_stack;
             ra_stat_spills = ra_stat_spills + 1;
             ra_stat_sslots = ra_stat_sslots + 1;
         }
+        i = i + 1;
+    }
+    /* Web members take their phi's slot. */
+    i = 0;
+    while (i < h_ninst) {
+        if (ra_web_of[i] >= 0) ra_spill_off[i] = ra_spill_off[ra_web_of[i]];
         i = i + 1;
     }
 }
@@ -1174,6 +1222,8 @@ static int gc_k(int n) {
  * the merged node keeps the CROSSING side's palette (the swap in
  * gc_coalesce puts the crossing node in u before gc_combine(u, v)). */
 static char gc_mv_phi[GC_MAX_MOVE];
+static int gc_mv_blk[GC_MAX_MOVE];   /* a phi copy's predecessor block, where it runs */
+static int gc_mv_pblk[GC_MAX_MOVE];  /* and the phi's own block */
 
 static void gc_add_move_tag(int a, int b, int is_phi) {
     int mv;
@@ -1183,6 +1233,7 @@ static void gc_add_move_tag(int a, int b, int is_phi) {
     gc_mv_b[mv] = b;
     gc_mv_status[mv] = GC_MV_WORKLIST;
     gc_mv_phi[mv] = (char)is_phi;
+    gc_mv_blk[mv] = -1;
     gc_nmove = gc_nmove + 1;
     gc_add_node_move(a, mv);
     gc_add_node_move(b, mv);
@@ -1274,6 +1325,20 @@ static int lv_tracked(int inst) {
  * are uses at the end of the predecessor and the dataflow adds them
  * on the edge.  Returns the count in lv_ubuf. */
 static int lv_ubuf[128];
+
+/* The value whose register a read of v touches: v itself, or, for a
+ * rematerialized ADDI (ra_remat_op), the operand it is recomputed
+ * from -- chased, since that operand may be one too. */
+static int lv_remat_src(int v) {
+    int lim;
+    lim = 0;
+    while (v >= 0 && ra_remat_op[v] && lim < 64) {
+        v = h_src1[v];
+        lim = lim + 1;
+    }
+    return v;
+}
+
 static int lv_uses(int inst) {
     int nu;
     int k;
@@ -1283,12 +1348,24 @@ static int lv_uses(int inst) {
 
     nu = 0;
     k = h_kind[inst];
-    if (h_src1[inst] >= 0) { lv_ubuf[nu] = h_src1[inst]; nu = nu + 1; }
+    /* A load or store whose address chain folds reads the chain's base,
+     * not its address operand: the emitter never touches the operand's
+     * register there (ra_codegen_fold_base mirrors its fold, range check
+     * included).  Listing the operand too kept an address ADDI live
+     * through every access that folded past it; a regional split of
+     * such an ADDI then found it still live in the region and split it
+     * again each round (sqlite3VdbeExec, step 5b.4). */
+    if ((k == HI_LOAD || k == HI_STORE) && ra_codegen_fold_base(inst, &a)) {
+        lv_ubuf[nu] = a;
+        nu = nu + 1;
+    } else {
+        if (h_src1[inst] >= 0) { lv_ubuf[nu] = h_src1[inst]; nu = nu + 1; }
+        if (ra_codegen_fold_base(inst, &a)) { lv_ubuf[nu] = a; nu = nu + 1; }
+    }
     if (h_src2[inst] >= 0 && ho_src2_is_ref(k)) {
         lv_ubuf[nu] = h_src2[inst];
         nu = nu + 1;
     }
-    if (ra_codegen_fold_base(inst, &a)) { lv_ubuf[nu] = a; nu = nu + 1; }
     if ((k == HI_CALL || k == HI_CALLP) && h_cbase[inst] >= 0) {
         j = 0;
         while (j < h_val[inst] && nu < 120) {
@@ -1307,6 +1384,13 @@ static int lv_uses(int inst) {
             if (h_src1[cmp] >= 0) { lv_ubuf[nu] = h_src1[cmp]; nu = nu + 1; }
             if (h_src2[cmp] >= 0) { lv_ubuf[nu] = h_src2[cmp]; nu = nu + 1; }
         }
+    }
+    /* A rematerialized ADDI is recomputed where it is read: the
+     * register read there is its operand's. */
+    j = 0;
+    while (j < nu) {
+        lv_ubuf[j] = lv_remat_src(lv_ubuf[j]);
+        j = j + 1;
     }
     return nu;
 }
@@ -1367,7 +1451,7 @@ static void lv_out_of(int b) {
                     j = 0;
                     while (j < h_pcnt[phi]) {
                         if (h_pblk[h_pbase[phi] + j] == b) {
-                            a = h_pval[h_pbase[phi] + j];
+                            a = lv_remat_src(h_pval[h_pbase[phi] + j]);
                             if (lv_tracked(a))
                                 lv_live[lv_id[a] >> 5] =
                                     lv_live[lv_id[a] >> 5] | (1u << (lv_id[a] & 31));
@@ -1382,15 +1466,51 @@ static void lv_out_of(int b) {
     }
 }
 
+/* Backward dataflow to fixpoint, reverse-RPO sweeps, from whatever
+ * lv_in/lv_out hold: zero at first, or the previous solution when a
+ * respill round rematerialized a value and so moved reads onto its
+ * operand (only ever more liveness, so the old sets are a sound start
+ * and the sweep only grows them).  Returns 1 on convergence. */
+static int lv_solve(void) {
+    int b;
+    int w;
+    int ri;
+    int changed;
+    int sweeps;
+
+    changed = 1;
+    sweeps = 0;
+    while (changed && sweeps < 64) {
+        changed = 0;
+        ri = ssa_rpo_cnt;
+        while (ri > 0) {
+            ri = ri - 1;
+            b = ssa_rpo_ord[ri];
+            if (b < 0 || b >= bb_nblk) continue;
+            lv_out_of(b);
+            w = 0;
+            while (w < lv_nw) { lv_out[(b * lv_w) + w] = lv_live[w]; w = w + 1; }
+            lv_transfer(b);
+            w = 0;
+            while (w < lv_nw) {
+                if (lv_in[(b * lv_w) + w] != lv_live[w]) {
+                    lv_in[(b * lv_w) + w] = lv_live[w];
+                    changed = 1;
+                }
+                w = w + 1;
+            }
+        }
+        sweeps = sweeps + 1;
+    }
+    return changed == 0;
+}
+
 static void lv_prepare(void) {
     int i;
     int b;
     int inst;
     int k;
     int w;
-    int ri;
-    int changed;
-    int sweeps;
 
     lv_on = 0;
     if (getenv("HIR_LINEAR_LIVE")) return;
@@ -1450,32 +1570,7 @@ static void lv_prepare(void) {
         i = i + 1;
     }
 
-    /* Backward dataflow to fixpoint, reverse-RPO sweeps. */
-    changed = 1;
-    sweeps = 0;
-    while (changed && sweeps < 64) {
-        changed = 0;
-        ri = ssa_rpo_cnt;
-        while (ri > 0) {
-            ri = ri - 1;
-            b = ssa_rpo_ord[ri];
-            if (b < 0 || b >= bb_nblk) continue;
-            lv_out_of(b);
-            w = 0;
-            while (w < lv_nw) { lv_out[(b * lv_w) + w] = lv_live[w]; w = w + 1; }
-            lv_transfer(b);
-            w = 0;
-            while (w < lv_nw) {
-                if (lv_in[(b * lv_w) + w] != lv_live[w]) {
-                    lv_in[(b * lv_w) + w] = lv_live[w];
-                    changed = 1;
-                }
-                w = w + 1;
-            }
-        }
-        sweeps = sweeps + 1;
-    }
-    if (changed) return;   /* did not converge: stay on intervals */
+    if (!lv_solve()) return;   /* did not converge: stay on intervals */
 
     lv_on = 1;
 }
@@ -1756,7 +1851,11 @@ static void gc_find_moves(void) {
                 a = h_pval[h_pbase[inst] + j];
                 if (a >= 0) {
                     na = gc_node[a];
-                    if (na >= 0) gc_add_move_tag(nd, na, 1);
+                    if (na >= 0) {
+                        gc_add_move_tag(nd, na, 1);
+                        gc_mv_blk[gc_nmove - 1] = h_pblk[h_pbase[inst] + j];
+                        gc_mv_pblk[gc_nmove - 1] = h_blk[inst];
+                    }
                 }
                 j = j + 1;
             }
@@ -1986,6 +2085,138 @@ static int ra_depth_w(int b) {
     return 1000;
 }
 
+/* =================================================================
+ * Memory model step 5b.5: a static block frequency.
+ *
+ * The respill's costs weighed a read by 10^(loop depth), so a read in
+ * a cold switch arm counted as much as one in the dispatch block; and
+ * a regional split (5b.3/5b.4) pays per ENTRY of its region whether
+ * or not the region reads the value -- a region split pays for
+ * liveness, a global spill pays for uses -- which needs a frequency to
+ * compare them by.  Forward over the forward edges in reverse
+ * postorder: the entry block RA_FREQ_SCALE; a conditional branch gives
+ * each successor half, except that an edge leaving a loop gets 1/L and
+ * the other side the rest; a loop header multiplies what reaches it
+ * from outside by L; a jump table gives each target an equal share.
+ * No profile exists on this platform (slow32 -p could feed one), so
+ * for charging a REGION the entry's frequency is taken pessimistically
+ * (ra_bfreq_pess): no less than half its dominator's, since any one
+ * arm of a switch may dominate the run -- sqlite3VdbeExec's does, at
+ * one opcode in ten where the even share says one in 186.
+ * ================================================================= */
+#define RA_FREQ_SCALE 256
+#define RA_FREQ_LOOP 8
+#define RA_FREQ_CAP 4194304
+static int ra_bfreq[HIR_MAX_BLOCK];
+static int ra_freq_on;                  /* HIR_RA_FREQ=1 */
+static int ra_is_loop_hdr(int b);       /* with the regional spill below */
+
+/* The share, out of 256, of p's frequency that the edge p -> s takes. */
+static int ra_edge_share(int p, int s) {
+    int i;
+    int k;
+    int n;
+    int j;
+    int t;
+    int exits;
+    n = ssa_nsucc[p];
+    if (n <= 1) return 256;
+    k = -1;
+    i = bb_end[p] - 1;
+    while (i >= bb_start[p]) {
+        if (h_kind[i] != HI_NOP) { k = h_kind[i]; break; }
+        i = i - 1;
+    }
+    /* HIR_RA_FREQ=1: even shares (a jump table 1/n, a branch 1/2).
+     * =2: a jump table gives each target HALF (any arm may dominate).
+     * =3: that, and a branch gives each side the whole (every block in
+     *     a loop counts as the loop, as the depth weights did).
+     * =4: even jump table, whole branches.  Measured against each
+     * other on the heavy run (plan log, step 5b.5). */
+    if (k == HI_BRC) {
+        if (ra_freq_on == 3 || ra_freq_on == 4) {
+            if (s >= 0 && s < bb_nblk && licm_depth[s] < licm_depth[p]) return 256 / RA_FREQ_LOOP;
+            return 256;
+        }
+        exits = 0;
+        j = 0;
+        while (j < n) {
+            t = ssa_succ[ssa_soff[p] + j];
+            if (t >= 0 && t < bb_nblk && licm_depth[t] < licm_depth[p]) exits = exits + 1;
+            j = j + 1;
+        }
+        if (exits == 0 || exits == n) return 128;
+        if (s >= 0 && s < bb_nblk && licm_depth[s] < licm_depth[p]) return 256 / RA_FREQ_LOOP;
+        return 256 - (256 / RA_FREQ_LOOP);
+    }
+    if (ra_freq_on == 2 || ra_freq_on == 3) return 128;
+    if (256 / n < 1) return 1;
+    return 256 / n;
+}
+
+static void ra_build_bfreq(void) {
+    int ri;
+    int b;
+    int j;
+    int p;
+    int f;
+    int pf;
+    b = 0;
+    while (b < bb_nblk) { ra_bfreq[b] = 0; b = b + 1; }
+    ri = 0;
+    while (ri < ssa_rpo_cnt) {
+        b = ssa_rpo_ord[ri];
+        if (b >= 0 && b < bb_nblk) {
+            if (ri == 0) {
+                f = RA_FREQ_SCALE;
+            } else {
+                f = 0;
+                j = 0;
+                while (j < ssa_npred[b]) {
+                    p = ssa_pred[ssa_pbase[b] + j];
+                    /* a back edge (b dominates p) is the loop multiplier's business */
+                    if (p >= 0 && p < bb_nblk && !licm_dominates(b, p)) {
+                        pf = ra_bfreq[p];
+                        if (pf > RA_FREQ_CAP) pf = RA_FREQ_CAP;
+                        f = f + ((pf * ra_edge_share(p, b)) >> 8);
+                        if (f > RA_FREQ_CAP) f = RA_FREQ_CAP;
+                    }
+                    j = j + 1;
+                }
+                if (ra_is_loop_hdr(b)) f = f * RA_FREQ_LOOP;
+            }
+            if (f < 1) f = 1;
+            if (f > RA_FREQ_CAP) f = RA_FREQ_CAP;
+            ra_bfreq[b] = f;
+        }
+        ri = ri + 1;
+    }
+}
+
+static int ra_bfreq_w(int b) {
+    if (b < 0 || b >= bb_nblk) return 1;
+    /* =5: the depth weights themselves (every block in a loop counts
+     * as the loop), with the split's cost compared in the same units
+     * -- the frequency variants all chose victims worse than the depth
+     * weights on the heavy run. */
+    if (ra_freq_on == 5) return ra_depth_w(b);
+    if (ra_bfreq[b] < 1) return 1;
+    return ra_bfreq[b];
+}
+
+/* The frequency a region entered at e is charged with: pessimistic,
+ * no less than half its dominator's (see above). */
+static int ra_bfreq_pess(int e) {
+    int f;
+    int g;
+    f = ra_bfreq_w(e);
+    if (e >= 0 && e < bb_nblk && ssa_idom[e] >= 0 && ssa_idom[e] != e) {
+        g = ra_bfreq_w(ssa_idom[e]) / 2;
+        if (g > f) f = g;
+    }
+    return f;
+}
+
 static void ra_build_wuses(void) {
     int i;
     int w;
@@ -1999,7 +2230,7 @@ static void ra_build_wuses(void) {
     while (i < h_ninst) {
         k = h_kind[i];
         if (k == HI_NOP) { i = i + 1; continue; }
-        w = ra_depth_w(h_blk[i]);
+        w = ra_freq_on ? ra_bfreq_w(h_blk[i]) : ra_depth_w(h_blk[i]);
         if (h_src1[i] >= 0) ra_wuses[h_src1[i]] = ra_wuses[h_src1[i]] + w;
         if (h_src2[i] >= 0 && ho_src2_is_ref(k))
             ra_wuses[h_src2[i]] = ra_wuses[h_src2[i]] + w;
@@ -2022,6 +2253,11 @@ static void ra_build_wuses(void) {
                 j = j + 1;
             }
         }
+        /* The base an access folds its address chain down to is read
+         * at the access (step 5b.2: a reload serving such reads must
+         * be charged for them, or it is always the cheapest victim). */
+        if ((k == HI_LOAD || k == HI_STORE) && ra_codegen_fold_base(i, &base))
+            ra_wuses[base] = ra_wuses[base] + w;
         if (hi_has_value(k))
             ra_wuses[i] = ra_wuses[i] + w;
         if (ra_wuses[i] > 1000000) ra_wuses[i] = 1000000;
@@ -2051,6 +2287,13 @@ static int gc_select_spill(void) {
              * (writeback clears h_no_remat), no slot, no loads.  Prefer
              * it over anything that would pay real memory traffic. */
             if (h_kind[inst] == HI_ICONST && h_no_remat[inst]) cost = 0;
+            /* A value that lives a few instructions frees no register
+             * by spilling: its store and reload sit where it lived, in
+             * the scratch registers.  Prefer anything with a real range
+             * (see gc_respill_cost). */
+            else if (ra_pos[inst] >= 0 && ra_iend[inst] >= ra_pos[inst] &&
+                     ra_iend[inst] - ra_pos[inst] <= 8)
+                cost = cost + 1000000;
             if (cost < best_cost) {
                 best_cost = cost;
                 best = n;
@@ -2264,6 +2507,70 @@ static int ra_pair_claim(int n, int inst, int maxc, int *used) {
     return -1;
 }
 
+/* Would colouring node n with col close a cycle among the phi copies
+ * on the edge pred -> blk?  A cycle costs the parallel copy a scratch
+ * move, so a bias that makes one copy free can make the edge dearer:
+ * sha512_block's eight-way rotation went from 16 moves to 17. */
+static int gc_cyc_src[64];
+static int gc_cyc_node_color(int nd, int n, int col) {
+    if (nd < 0) return -1;
+    nd = gc_get_alias(nd);
+    if (nd == n) return col;
+    return gc_color[nd];
+}
+
+static int gc_edge_cycle(int pred, int blk, int n, int col) {
+    int q;
+    int a;
+    int d;
+    int sc;
+    int c;
+    int steps;
+    if (pred < 0 || blk < 0 || blk >= bb_nblk) return 0;
+    c = 0;
+    while (c < 64) { gc_cyc_src[c] = -1; c = c + 1; }
+    q = ssa_phi_head[blk];
+    while (q >= 0) {
+        if (h_kind[q] == HI_PHI) {
+            a = ssa_phi_find_arg(q, pred);
+            if (a >= 0) {
+                d = gc_cyc_node_color(gc_node[q], n, col);
+                sc = gc_cyc_node_color(gc_node[a], n, col);
+                if (d >= 0 && sc >= 0 && d < 64 && sc < 64 && d != sc)
+                    gc_cyc_src[d] = sc;
+            }
+        }
+        q = ssa_phi_next[q];
+    }
+    /* each destination is written once: follow dst -> src from every
+     * destination; coming back to the start is a cycle */
+    c = 0;
+    while (c < 64) {
+        if (gc_cyc_src[c] >= 0) {
+            d = gc_cyc_src[c];
+            steps = 0;
+            while (d >= 0 && d != c && steps < 64) { d = gc_cyc_src[d]; steps = steps + 1; }
+            if (d == c) return 1;
+        }
+        c = c + 1;
+    }
+    return 0;
+}
+
+/* Any edge of n's phi copies that col would close a cycle on? */
+static int gc_bias_cycles(int n, int col) {
+    int e;
+    int mv;
+    e = gc_nmlist_head[n];
+    while (e >= 0) {
+        mv = gc_nmlist_mv[e];
+        if (gc_mv_phi[mv] && gc_edge_cycle(gc_mv_blk[mv], gc_mv_pblk[mv], n, col))
+            return 1;
+        e = gc_nmlist_next[e];
+    }
+    return 0;
+}
+
 static void gc_select(void) {
     int i, n, inst, e, peer, pa, pc, c;
     int used[RA_NPHY_TOTAL];
@@ -2463,6 +2770,45 @@ static void gc_select(void) {
                         ra_stat_secondary_reuse = ra_stat_secondary_reuse + 1;
                     }
                 }
+            }
+
+            /* Biased colouring: a phi copy the coalescer froze (its
+             * conservative tests failed under pressure) still costs
+             * nothing if both ends land in one register.  Take the
+             * register of the already coloured partner whose copy runs
+             * most often (by its block's loop depth) when it is free --
+             * AES's round loop froze 48 of its 67 phi copies and paid
+             * some 33 moves a round for them. */
+            if (gc_color[n] < 0) {
+                int e2;
+                int mv3;
+                int pn;
+                int col;
+                int bw;
+                int bc;
+                int w;
+                bw = 9;     /* copies in a loop only: a cold one would
+                             * take a register a hot partner wants */
+                bc = -1;
+                e2 = gc_nmlist_head[n];
+                while (e2 >= 0) {
+                    mv3 = gc_nmlist_mv[e2];
+                    if (gc_mv_phi[mv3] && (gc_mv_status[mv3] == GC_MV_FROZEN ||
+                                           gc_mv_status[mv3] == GC_MV_ACTIVE)) {
+                        pn = gc_get_alias(gc_mv_a[mv3]);
+                        if (pn == n) pn = gc_get_alias(gc_mv_b[mv3]);
+                        col = (pn != n) ? gc_color[pn] : -1;
+                        if (col >= ra_ncal && !ra_prefers_caller_for_inst(inst)) col = -1;
+                        w = ra_depth_w(gc_mv_blk[mv3]);
+                        if (col >= 0 && col < maxc && !used[col] && w > bw &&
+                            !gc_bias_cycles(n, col)) {
+                            bw = w;
+                            bc = col;
+                        }
+                    }
+                    e2 = gc_nmlist_next[e2];
+                }
+                if (bc >= 0) gc_color[n] = bc;
             }
 
             /* Two-phase color selection (classification hook) + PARAM bias.
@@ -2775,6 +3121,964 @@ static void gc_writeback(void) {
  * constant victim is unpinned back to remat instead, and a pair half
  * takes its partner along (share fate).
  * ================================================================= */
+/* Respill victims.  The failed node itself pays its weighted uses; a
+ * neighbour pays its uses once however many failures it clears, so it
+ * is charged per failed neighbour.  Uses alone always chose the failed
+ * temporary -- one def, one use -- over the long-lived neighbour that
+ * held the colour: BLAKE2b's compress respilled some 500 temporaries,
+ * each a store and an immediate reload, while the state words kept
+ * their registers.  Uses over live span fixed that and spilled
+ * BlaMka's hot pointers instead (+39%): a long range is not a cheap
+ * one.  A failure next to a victim already chosen this round waits for
+ * the next colouring. */
+static int gc_rs_nfail[GC_MAX_NODE];
+static char gc_rs_taken[GC_MAX_NODE];
+static int gc_rs_nremat;        /* remat victims made this round */
+static int ra_stat_remat;       /* ... and per function */
+static int ra_stat_unremat;     /* remat victims sent to memory with their operand */
+
+/* Already chosen as a victim: in memory, recomputed at its uses, or a
+ * reload value deleted this round (a NOP now). */
+static int gc_rs_victim(int inst) {
+    return ra_mem_forced[inst] || ra_remat_op[inst] || h_kind[inst] == HI_NOP;
+}
+
+/* =================================================================
+ * Memory model step 5b.2: one reload per block.
+ *
+ * A spilled value read several times in one block was reloaded at
+ * each read into the emitter's scratch.  Once colouring has settled,
+ * every spilled scalar gets, per block and per run of reads with no
+ * call between them, a COPY of itself hung before its first reader
+ * (the pre-instruction chain the call splitter uses), and the run's
+ * reads name the COPY.  The COPY is a short value for a second
+ * colouring: it never crosses a call, so it may take r3-r10; if it
+ * cannot be coloured the respill deletes it (reads go back to the
+ * slot) rather than spill it.  The emitter loads a COPY of a spilled
+ * value straight into its register.  Reads that are not operand
+ * slots -- address chains the emitter folds through an ADDI or a COPY
+ * -- are left alone, or the reload would be read from other blocks
+ * through the chain; those stay reload-at-use.
+ * ================================================================= */
+static int ra_stat_reload_ins;
+static int ra_stat_reload_del;
+static int ra_new_split_copy(int src, int blk);     /* defined with the call splitter below */
+static void ra_mark_call_crossing(void);
+static int rl_stamp[HIR_MAX_INST];     /* segment tick of v's last read */
+static int rl_first[HIR_MAX_INST];     /* body instruction the first read hangs on */
+static int rl_first_u[HIR_MAX_INST];   /* the first reader itself */
+static char rl_first_fold[HIR_MAX_INST]; /* ... read v as a folded address base */
+static int rl_cur[HIR_MAX_INST];       /* reload serving v in this segment */
+static int rl_tick;
+
+/* Spilled after the last colouring, and a scalar a reload may stand for. */
+static int ra_rl_spilled(int v) {
+    int n;
+    if (v < 0 || v >= h_ninst) return 0;
+    if (h_kind[v] == HI_NOP || !hi_has_value(h_kind[v])) return 0;
+    if (hi_inst_remat(v)) return 0;
+    if (ra_pair_of[v] >= 0) return 0;
+    if (ra_is_reload[v] && !ra_mem_forced[v]) return 0;   /* a region copy (5b.3) may be served */
+    if (ra_mem_forced[v]) return 1;
+    n = gc_node[v];
+    if (n < 0) return 0;
+    if (gc_force_spill[n]) return 1;
+    return gc_color[n] < 0;
+}
+
+/* Operand slots of i that read old now read nw: src1, src2 when it is
+ * a reference, call arguments.  Not the chain copies hanging off i (a
+ * reload's own source stays), and not an ADDI or COPY (the emitter's
+ * address folds walk through those from other blocks). */
+static int ra_rl_kind_ok(int k) {
+    if (k == HI_ADDI || k == HI_COPY || k == HI_PHI || k == HI_NOP) return 0;
+    if (k == HI_CALLHI) return 0;     /* src1 names the CALL instruction, not a value read */
+    return 1;
+}
+
+static void ra_rl_rewire_inst(int i, int old, int nw) {
+    int j;
+    int n;
+    int base;
+    int k;
+    k = h_kind[i];
+    if (!ra_rl_kind_ok(k)) return;
+    if (h_src1[i] == old) h_src1[i] = nw;
+    if (h_src2[i] == old && ho_src2_is_ref(k)) h_src2[i] = nw;
+    if ((k == HI_CALL || k == HI_CALLP) && h_cbase[i] >= 0) {
+        n = h_val[i];
+        base = h_cbase[i];
+        j = 0;
+        while (j < n) {
+            if (h_carg[base + j] == old) h_carg[base + j] = nw;
+            j = j + 1;
+        }
+    }
+}
+
+/* A fused compare is a NOP whose operands the branch re-reads. */
+static int ra_rl_fused_cmp(int term) {
+    int cmp;
+    if (term < 0 || h_kind[term] != HI_BRC) return -1;
+    cmp = hcg_brc_fuse[term];
+    if (cmp < 0 || h_kind[cmp] != HI_NOP) return -1;
+    return cmp;
+}
+
+static void ra_rl_rewire_cmp(int cmp, int old, int nw) {
+    if (h_src1[cmp] == old) h_src1[cmp] = nw;
+    if (h_src2[cmp] == old) h_src2[cmp] = nw;
+}
+
+/* u reads v: as an operand (fold 0), or as the base its address chain
+ * folds down to (fold 1; the emitter then takes the base from
+ * rl_fold_sub[u]). */
+static void ra_rl_serve(int u, int v, int r, int fold) {
+    if (fold) rl_fold_sub[u] = r;
+    else ra_rl_rewire_inst(u, v, r);
+}
+
+/* One read of v by u.  anc is the body instruction whose chain a
+ * reload would hang on, -1 where none can (terminator, hoisted list):
+ * such a read is served by a reload already made, never starts one. */
+static void ra_rl_read(int v, int u, int anc, int fold) {
+    int r;
+    if (!ra_rl_spilled(v)) return;
+    if (rl_stamp[v] != rl_tick) {
+        if (anc < 0) return;
+        rl_stamp[v] = rl_tick;
+        rl_first[v] = anc;
+        rl_first_u[v] = u;
+        rl_first_fold[v] = fold;
+        rl_cur[v] = -1;
+        return;
+    }
+    if (rl_cur[v] < 0) {
+        r = ra_new_split_copy(v, h_blk[rl_first[v]]);
+        if (r < 0) return;
+        ra_is_csplit[r] = 0;
+        ra_is_reload[r] = 1;
+        ra_csplit_next[r] = ra_csplit_head[rl_first[v]];
+        ra_csplit_head[rl_first[v]] = r;
+        rl_cur[v] = r;
+        ra_rl_serve(rl_first_u[v], v, r, rl_first_fold[v]);
+        ra_stat_reload_ins = ra_stat_reload_ins + 1;
+        if (getenv("HIR_RA_DEBUG")) {
+            fdputs("RELOAD v=", 2);
+            fdputuint(2, (unsigned)v);
+            fdputs(" r=", 2);
+            fdputuint(2, (unsigned)r);
+            fdputs(" blk=", 2);
+            fdputuint(2, (unsigned)h_blk[r]);
+            fdputc(10, 2);
+        }
+    }
+    ra_rl_serve(u, v, rl_cur[v], fold);
+}
+
+static void ra_rl_reads_of(int u, int anc) {
+    int k;
+    int j;
+    int n;
+    int base;
+    int a;
+    int fold;
+    k = h_kind[u];
+    if (!ra_rl_kind_ok(k)) return;
+    /* An access whose address chain folds reads the chain's BASE, not
+     * its address operand: the emitter never touches the ADDI's
+     * register.  Serving both put a reload of the ADDI in src1 and the
+     * base's reload in rl_fold_sub, and the emitter, folding from the
+     * reload COPY, lost the displacement (sqlite3Insert: p->f28 read
+     * at p+0). */
+    fold = (k == HI_LOAD || k == HI_STORE) && ra_codegen_fold_base(u, &a);
+    if (h_src1[u] >= 0 && !fold) ra_rl_read(h_src1[u], u, anc, 0);
+    if (h_src2[u] >= 0 && ho_src2_is_ref(k)) ra_rl_read(h_src2[u], u, anc, 0);
+    if ((k == HI_CALL || k == HI_CALLP) && h_cbase[u] >= 0) {
+        n = h_val[u];
+        base = h_cbase[u];
+        j = 0;
+        while (j < n) {
+            if (h_carg[base + j] >= 0) ra_rl_read(h_carg[base + j], u, anc, 0);
+            j = j + 1;
+        }
+    }
+    /* The base a load's or store's address chain folds down to is read
+     * at the access (the chain's ADDIs emit nothing): the common shape
+     * of a spilled pointer, p->a and p->b in one block. */
+    if (fold) ra_rl_read(a, u, anc, 1);
+}
+
+static int ra_rl_block_term(int b) {
+    int i;
+    i = bb_end[b] - 1;
+    while (i >= bb_start[b]) {
+        if (hi_is_terminator(h_kind[i])) return i;
+        if (h_kind[i] != HI_NOP) return -1;
+        i = i - 1;
+    }
+    return -1;
+}
+
+static int ra_insert_reloads(void) {
+    int b;
+    int i;
+    int term;
+    int cmp;
+    int before;
+    before = ra_stat_reload_ins;
+    i = 0;
+    while (i < h_ninst) { rl_stamp[i] = -1; i = i + 1; }
+    rl_tick = 0;
+    b = 0;
+    while (b < bb_nblk) {
+        rl_tick = rl_tick + 1;
+        term = ra_rl_block_term(b);
+        i = bb_start[b];
+        while (i < bb_end[b]) {
+            if (i == term) break;
+            if (h_kind[i] != HI_NOP) {
+                /* The chain copies before i (call splits) are COPYs:
+                 * not rewired, so not read here. */
+                ra_rl_reads_of(i, i);
+                if (lv_is_callkind(h_kind[i])) rl_tick = rl_tick + 1;
+            }
+            i = i + 1;
+        }
+        i = licm_head[b];
+        while (i >= 0) {
+            if (h_kind[i] != HI_NOP) ra_rl_reads_of(i, -1);
+            i = licm_next[i];
+        }
+        if (term >= 0) {
+            ra_rl_reads_of(term, -1);
+            cmp = ra_rl_fused_cmp(term);
+            if (cmp >= 0) {
+                if (h_src1[cmp] >= 0 && ra_rl_spilled(h_src1[cmp]) &&
+                    rl_stamp[h_src1[cmp]] == rl_tick && rl_cur[h_src1[cmp]] >= 0)
+                    h_src1[cmp] = rl_cur[h_src1[cmp]];
+                if (h_src2[cmp] >= 0 && ra_rl_spilled(h_src2[cmp]) &&
+                    rl_stamp[h_src2[cmp]] == rl_tick && rl_cur[h_src2[cmp]] >= 0)
+                    h_src2[cmp] = rl_cur[h_src2[cmp]];
+            }
+        }
+        b = b + 1;
+    }
+    return ra_stat_reload_ins - before;
+}
+
+/* A reload the second colouring could not place: its readers go back
+ * to the slot and it becomes a NOP (the chains and the order skip
+ * NOPs).  Its liveness bits may linger; it has no node to carry them. */
+static void ra_delete_reload(int r) {
+    int v;
+    int b;
+    int i;
+    int term;
+    int cmp;
+    v = h_src1[r];
+    b = h_blk[r];
+    term = ra_rl_block_term(b);
+    i = bb_start[b];
+    while (i < bb_end[b]) {
+        if (h_kind[i] != HI_NOP) {
+            ra_rl_rewire_inst(i, r, v);
+            if (rl_fold_sub[i] == r) rl_fold_sub[i] = -1;
+        }
+        i = i + 1;
+    }
+    i = licm_head[b];
+    while (i >= 0) {
+        if (h_kind[i] != HI_NOP) {
+            ra_rl_rewire_inst(i, r, v);
+            if (rl_fold_sub[i] == r) rl_fold_sub[i] = -1;
+        }
+        i = licm_next[i];
+    }
+    cmp = ra_rl_fused_cmp(term);
+    if (cmp >= 0) ra_rl_rewire_cmp(cmp, r, v);
+    h_kind[r] = HI_NOP;
+    ra_is_reload[r] = 0;
+    ra_stat_reload_del = ra_stat_reload_del + 1;
+    if (getenv("HIR_RA_DEBUG")) {
+        fdputs("RELOAD-DEL r=", 2);
+        fdputuint(2, (unsigned)r);
+        fdputs(" v=", 2);
+        fdputuint(2, (unsigned)v);
+        fdputc(10, 2);
+    }
+}
+
+/* =================================================================
+ * Memory model step 5b.3: regional spill.
+ *
+ * Spill-everywhere let one arm's pressure peak cost a value its
+ * register in every arm: sqlite3VdbeExec's loop counter, live across
+ * 190 cases, was stored and reloaded in the dispatch block on every
+ * opcode because a few cases could not hold it.  When a node fails to
+ * colour and the victim chosen is live across the REGION the failure
+ * is in -- the dominator-tree child of the victim's defining block
+ * that holds the failing node -- the victim is put in memory in that
+ * region only: a COPY of it at the region's entry (the top-of-block
+ * list) takes a slot, every read inside the region names the COPY,
+ * and a phi argument on an edge leaving the region names it too (the
+ * phi copy reloads).  The value is dead inside the region and keeps
+ * its register everywhere else; the store runs only when the region
+ * is entered.  Conditions: exact liveness; the region is not a loop
+ * header and is in a loop.  Pairs are left to the global spill.
+ *
+ * Step 5b.4 (the join form, see ra_region_split): a value live out of
+ * the region gets a phi where the region's exits meet the paths around
+ * it, with the copy as the argument from the exits, and the reads past
+ * the join name the phi.  The first form refused such values, and the
+ * one it was built for -- a counter stepped in the loop header and
+ * live through every arm to the back edge -- was exactly that.
+ * ================================================================= */
+static int ra_stat_region;
+static int gc_rs_nregion;
+static int ra_region_cand;              /* candidates seen (HIR_REGION_FN bisection) */
+static char *ra_cur_fname;              /* set by the codegen before hir_regalloc() */
+static int gc_round_no;                 /* respill rounds, never reset: a stamp */
+static int ra_region_round[HIR_MAX_INST];   /* the round a value was last split in */
+static char ra_in_region[HIR_MAX_BLOCK];
+static int ra_jphi[HIR_MAX_BLOCK];      /* the current split's join phi in each block, -1 */
+static char ra_idf_seen[HIR_MAX_BLOCK];
+static int ra_stat_join;                /* join phis placed (step 5b.4) */
+static void ra_csplit_on_inst(int i, int old, int nw);   /* with the call splitter below */
+static int ra_web_live_in(int b, int v);                 /* with the phi webs below */
+
+/* Step 5b.4: a phi for the split variable at block f, arguments filled
+ * in once every join is placed.  Built on the split-copy constructor,
+ * which initializes the per-instruction state a late instruction
+ * needs; linked at the head of f's phi list. */
+static int ra_new_join_phi(int v, int f) {
+    int cl;
+    int np;
+    int j;
+    np = ssa_npred[f];
+    if (np < 1 || h_nparg + np > HIR_MAX_PARG) return -1;
+    cl = ra_new_split_copy(v, f);
+    if (cl < 0) return -1;
+    h_kind[cl] = HI_PHI;
+    h_src1[cl] = -1;
+    ra_is_csplit[cl] = 0;
+    h_pbase[cl] = h_nparg;
+    h_pcnt[cl] = np;
+    j = 0;
+    while (j < np) {
+        h_pblk[h_nparg + j] = ssa_pred[ssa_pbase[f] + j];
+        h_pval[h_nparg + j] = -1;
+        j = j + 1;
+    }
+    h_nparg = h_nparg + np;
+    ssa_phi_next[cl] = ssa_phi_head[f];
+    ssa_phi_head[f] = cl;
+    return cl;
+}
+
+/* The definition of the split variable in force at the end of block b
+ * -- so for phi arguments arriving from b, and, the joins and the
+ * region copy both sitting at block tops, for b's own body: the
+ * region copy m from the entry e down (the region is e's dominator
+ * subtree), else the nearest join phi up the dominator tree, else v
+ * itself from its block d.  -1 where v is not defined at all. */
+static int ra_region_reach(int b, int v, int d, int e, int m) {
+    int lim;
+    lim = 0;
+    while (b >= 0 && b < bb_nblk && lim < HIR_MAX_BLOCK) {
+        if (b == e) return m;
+        if (ra_jphi[b] >= 0) return ra_jphi[b];
+        if (b == d) return v;
+        if (ssa_idom[b] == b || ssa_idom[b] < 0) return -1;
+        b = ssa_idom[b];
+        lim = lim + 1;
+    }
+    return -1;
+}
+
+static int ra_is_loop_hdr(int b) {
+    int j;
+    int p;
+    j = 0;
+    while (j < ssa_npred[b]) {
+        p = ssa_pred[ssa_pbase[b] + j];
+        if (p >= 0 && p < bb_nblk && licm_dominates(b, p)) return 1;
+        j = j + 1;
+    }
+    return 0;
+}
+
+/* The dominator-tree child of d on the path to bn, -1 if bn is not
+ * strictly dominated by d. */
+static int ra_region_of(int d, int bn) {
+    int e;
+    int lim;
+    if (d < 0 || bn < 0 || bn == d) return -1;
+    e = bn;
+    lim = 0;
+    while (lim < HIR_MAX_BLOCK) {
+        if (ssa_idom[e] == d) return e;
+        if (ssa_idom[e] < 0 || ssa_idom[e] == e) return -1;
+        e = ssa_idom[e];
+        lim = lim + 1;
+    }
+    return -1;
+}
+
+/* Does block e run on every iteration of its innermost loop?  Then a
+ * store at its top is no cheaper than one at the definition, and for a
+ * value defined outside the loop it is a store per iteration where the
+ * global spill stores once: the split can only pay in a conditional
+ * region, one that does not dominate a latch of the loop it is in.
+ * The loop: the nearest dominator of e (e itself included) that heads a
+ * loop at e's depth; its latches are the predecessors it dominates. */
+static int ra_region_every_iter(int e) {
+    int h;
+    int j;
+    int p;
+    int lim;
+    h = e;
+    lim = 0;
+    while (h >= 0 && h < bb_nblk && lim < HIR_MAX_BLOCK) {
+        if (licm_depth[h] == licm_depth[e] && ra_is_loop_hdr(h)) break;
+        if (ssa_idom[h] == h || ssa_idom[h] < 0) return 1;   /* no loop found: say yes */
+        h = ssa_idom[h];
+        lim = lim + 1;
+    }
+    if (h < 0 || h >= bb_nblk) return 1;
+    j = 0;
+    while (j < ssa_npred[h]) {
+        p = ssa_pred[ssa_pbase[h] + j];
+        if (p >= 0 && p < bb_nblk && licm_dominates(h, p) && licm_dominates(e, p)) return 1;
+        j = j + 1;
+    }
+    return 0;
+}
+
+static void ra_region_mark(int e) {
+    int nwl;
+    int b;
+    int i;
+    b = 0;
+    while (b < bb_nblk) { ra_in_region[b] = 0; b = b + 1; }
+    nwl = 0;
+    ra_dom_wl[nwl] = e;
+    nwl = nwl + 1;
+    while (nwl > 0) {
+        nwl = nwl - 1;
+        b = ra_dom_wl[nwl];
+        if (b < 0 || b >= bb_nblk || ra_in_region[b]) continue;
+        ra_in_region[b] = 1;
+        i = 0;
+        while (i < ssa_dtc_cnt[b] && nwl < HIR_MAX_BLOCK) {
+            ra_dom_wl[nwl] = ssa_dtc[ssa_dtc_base[b] + i];
+            nwl = nwl + 1;
+            i = i + 1;
+        }
+    }
+}
+
+/* Every read of old in block b names nw: body operands and the chain
+ * copies hanging off them, the hoisted and the top-of-block lists
+ * (except nw itself), and a fused compare's operands.  Phi arguments
+ * are renamed by their predecessor, in ra_region_split. */
+/* One instruction's reads of old, including the base its address
+ * chain folds down to: that read happens at the access through an
+ * ADDI that may be defined outside the region, so the fold table
+ * (rl_fold_sub) names the copy for it, as piece 2 does. */
+static void ra_region_rewire_inst(int i, int old, int nw) {
+    int a;
+    int k;
+    int sp;
+    k = h_kind[i];
+    if (k == HI_NOP) return;
+    if ((k == HI_LOAD || k == HI_STORE) && ra_codegen_fold_base(i, &a)) {
+        /* A folding access reads its chain's base, never its address
+         * operand: serving the operand too (when the ADDI it names is
+         * split after its base was) left the emitter folding from a
+         * copy with the displacement dropped -- selectExpander read
+         * p+0 for p->f4. */
+        if (a == old) rl_fold_sub[i] = nw;
+        if (k == HI_STORE && h_src2[i] == old) h_src2[i] = nw;
+        sp = ra_csplit_head[i];
+        while (sp >= 0) {
+            if (h_src1[sp] == old) h_src1[sp] = nw;
+            sp = ra_csplit_next[sp];
+        }
+        return;
+    }
+    ra_csplit_on_inst(i, old, nw);
+}
+
+static void ra_region_rewire_block(int b, int old, int nw) {
+    int i;
+    int term;
+    int cmp;
+    i = bb_start[b];
+    while (i < bb_end[b]) {
+        ra_region_rewire_inst(i, old, nw);
+        i = i + 1;
+    }
+    i = licm_head[b];
+    while (i >= 0) { ra_region_rewire_inst(i, old, nw); i = licm_next[i]; }
+    i = split_head[b];
+    while (i >= 0) { if (i != nw) ra_region_rewire_inst(i, old, nw); i = licm_next[i]; }
+    term = ra_rl_block_term(b);
+    cmp = ra_rl_fused_cmp(term);
+    if (cmp >= 0) ra_rl_rewire_cmp(cmp, old, nw);
+}
+
+/* Put v in memory across the region holding block bn.  1 if done.
+ *
+ * Step 5b.4, the join form: the value may be live out of the region.
+ * The variable then has two definitions, v at d and the region copy m
+ * at e, and gets a phi wherever paths from the two meet -- the
+ * iterated dominance frontier of e, pruned to the blocks v is live
+ * into (ssa_df, built with the SSA and unchanged since: nothing after
+ * it alters the CFG).  A join's argument from a region exit is m (the
+ * phi copy reloads it: the reload at the region exit, as a value);
+ * from anywhere else, whatever definition reaches that predecessor.
+ * Every read of v is renamed to the definition reaching it, found up
+ * the dominator tree (ra_region_reach).  A region inside a loop whose
+ * value comes from outside gets its join at the loop header -- the
+ * header phi the plan asked for -- and the loop's reads name that.
+ * The joins are move-related to v through their arguments and
+ * coalesce with it where they do not interfere; where they do, the
+ * copy on the edge is the price. */
+/* The checks: may v be put in memory across the region holding bn,
+ * for the failing node forwhom?  1 and the entry in *pe (the region
+ * marked in ra_in_region) if so.  Nothing is changed. */
+static int ra_region_plan(int v, int bn, int forwhom, int *pe) {
+    int d;
+    int e;
+    int b;
+    int k;
+    if (!lv_on) return 0;
+    /* HIR_REGION_FN=name: splits only in that function; with it,
+     * HIR_REGION_MAX=n / HIR_REGION_SKIP=k: only candidates k..n-1
+     * there (bisection). */
+    if (getenv("HIR_REGION_FN")) {
+        int c;
+        if (!ra_cur_fname || strcmp(ra_cur_fname, getenv("HIR_REGION_FN")) != 0) return 0;
+        c = ra_region_cand;
+        ra_region_cand = ra_region_cand + 1;
+        if (getenv("HIR_REGION_MAX") && c >= atoi(getenv("HIR_REGION_MAX"))) return 0;
+        if (getenv("HIR_REGION_SKIP") && c < atoi(getenv("HIR_REGION_SKIP"))) return 0;
+    }
+    if (v < 0 || v >= h_ninst) return 0;
+    k = h_kind[v];
+    if (k == HI_NOP || !hi_has_value(k) || hi_inst_remat(v)) return 0;
+    if (ra_pair_of[v] >= 0 || ra_is_reload[v] || ra_mem_forced[v]) return 0;
+    if (lv_id[v] < 0) return 0;
+    /* Only a value that holds a register this round: the pressure is
+     * the failing node's, and the joins can inherit v's colour outside
+     * the region.  A victim that failed to colour itself would hand its
+     * joins the same fate, and a spilled join at a hot merge costs a
+     * reload at every use past it where v had a register before --
+     * sqlite3VdbeExec's dispatch latch grew five frame instructions per
+     * opcode that way. */
+    if (!getenv("HIR_REGION_ANY") && (gc_node[v] < 0 || gc_color[gc_node[v]] < 0)) return 0;
+    d = h_blk[v];
+    if (d < 0 || d >= bb_nblk || bn < 0 || bn >= bb_nblk) return 0;
+    /* One split of a value per respill round: the liveness the next
+     * candidate would be judged by is this round's, before the split. */
+    if (ra_region_round[v] == gc_round_no) return 0;
+    /* Not the operand of a rematerialized ADDI: that reads v's register
+     * at each of ITS users, which the renaming below cannot reach -- a
+     * user past a join would still read v where the value is in the
+     * join's register.  (gc_remat_ok refuses the converse.) */
+    { int z; z = 0; while (z < h_ninst) { if (ra_remat_op[z] && h_src1[z] == v) return 0; z = z + 1; } }
+    if (ra_region_of(d, bn) < 0) return 0;         /* bn not strictly below d */
+    /* The region: the smallest dominator subtree holding the failing
+     * node's whole live range (its block and every block it is live
+     * into), so the register is freed exactly where the conflict is
+     * -- the dominator child of the definition would be the whole
+     * dispatch of a switch in a loop, entered on every pass. */
+    e = bn;
+    if (forwhom >= 0 && forwhom < h_ninst && lv_id[forwhom] >= 0) {
+        int lim;
+        lim = 0;
+        while (lim < HIR_MAX_BLOCK) {
+            int ok;
+            ok = 1;
+            b = 0;
+            while (b < bb_nblk && ok) {
+                if ((ra_web_live_in(b, forwhom) || h_blk[forwhom] == b) && !licm_dominates(e, b)) ok = 0;
+                b = b + 1;
+            }
+            if (ok) break;
+            if (e == d || ssa_idom[e] == e || ssa_idom[e] < 0) return 0;
+            e = ssa_idom[e];
+            if (e == d) return 0;
+            lim = lim + 1;
+        }
+    }
+    if (e == d) return 0;
+    if (ra_is_loop_hdr(e)) return 0;
+    /* The copy at e's top reads v while everything live into e, and
+     * e's phis, are live: a failing node among those still interferes
+     * with v after the split, and the next round would split v here
+     * again (wherePathSolver split one ADDI four times in one region,
+     * each copy a copy of the last). */
+    if (forwhom >= 0 && forwhom < h_ninst &&
+        (ra_web_live_in(e, forwhom) || (h_kind[forwhom] == HI_PHI && h_blk[forwhom] == e)))
+        return 0;
+    /* Only where it can pay: the region is in a loop, so its entry (a
+     * cold arm) runs less often than the hot blocks that keep the
+     * register.  Straight-line code stores once either way.  The
+     * definition may sit outside the loop (then the store at e runs
+     * per entry where a global spill would store once -- the price of
+     * keeping the register in the hot arms; HIR_REGION_SAME=1 asks for
+     * the same loop depth, the parked form's rule, for comparison). */
+    if (licm_depth[e] < 1) return 0;
+    if (getenv("HIR_REGION_SAME") && licm_depth[e] != licm_depth[d]) return 0;
+    if (!getenv("HIR_REGION_ANY") && ra_region_every_iter(e)) return 0;
+    if (!ra_web_live_in(e, v)) return 0;          /* nothing of v in there */
+    ra_region_mark(e);
+    if (ra_in_region[d]) return 0;
+    *pe = e;
+    return 1;
+}
+
+/* The split itself, after ra_region_plan said yes to (v, e). */
+static int ra_region_commit(int v, int e, int forwhom) {
+    int d;
+    int b;
+    int m;
+    int k;
+    int nwl;
+    int x;
+    int f;
+    int i;
+    int j;
+    int q;
+    int p;
+    int r;
+    int jp;
+    int nj;
+    int save_ninst;
+    int save_nparg;
+    d = h_blk[v];
+    k = h_kind[v];
+    ra_region_mark(e);      /* other candidates' plans ran since */
+    save_ninst = h_ninst;
+    save_nparg = h_nparg;
+    m = ra_new_split_copy(v, e);
+    if (m < 0) return 0;
+    /* Joins: the iterated dominance frontier of e, pruned by liveness.
+     * The entry itself may be in it (a merge block reached again from
+     * its own exits around a loop that does not head at e): then the
+     * join at e feeds the copy, and the copy serves e's body. */
+    b = 0;
+    while (b < bb_nblk) { ra_jphi[b] = -1; ra_idf_seen[b] = 0; b = b + 1; }
+    nj = 0;
+    nwl = 0;
+    ra_dom_wl[nwl] = e;
+    nwl = nwl + 1;
+    while (nwl > 0) {
+        nwl = nwl - 1;
+        x = ra_dom_wl[nwl];
+        i = 0;
+        while (i < ssa_dfc[x]) {
+            f = ssa_df[(x * SSA_DF_W) + i];
+            i = i + 1;
+            if (f < 0 || f >= bb_nblk || ra_idf_seen[f]) continue;
+            ra_idf_seen[f] = 1;
+            if (f == d || !ra_web_live_in(f, v)) continue;
+            jp = ra_new_join_phi(v, f);
+            if (jp < 0) {
+                /* Out of room: unlink the joins made so far (each at the
+                 * head of its block's list, one per block) and drop the
+                 * appended instructions; nothing names them yet. */
+                j = save_ninst;
+                while (j < h_ninst) {
+                    if (h_kind[j] == HI_PHI) ssa_phi_head[h_blk[j]] = ssa_phi_next[j];
+                    j = j + 1;
+                }
+                h_ninst = save_ninst;
+                h_nparg = save_nparg;
+                return 0;
+            }
+            ra_jphi[f] = jp;
+            nj = nj + 1;
+            if (nwl < HIR_MAX_BLOCK) { ra_dom_wl[nwl] = f; nwl = nwl + 1; }
+        }
+    }
+    ra_is_csplit[m] = 0;
+    ra_mem_forced[m] = 1;
+    /* The copy's own slot is the base of any address chain reaching
+     * it: the fold walks stop here, as at a block reload, or an ADDI
+     * of the copy inside the region would fold back to v's register. */
+    ra_is_reload[m] = 1;
+    licm_next[m] = split_head[e];
+    split_head[e] = m;
+    /* The copy stores whatever reaches the top of e: a join at e, or
+     * the definition in force at the end of e's dominator. */
+    if (ra_jphi[e] >= 0) h_src1[m] = ra_jphi[e];
+    else {
+        r = ra_region_reach(ssa_idom[e], v, d, e, m);
+        if (r >= 0) h_src1[m] = r;
+    }
+    /* The joins' arguments, by predecessor. */
+    j = save_ninst;
+    while (j < h_ninst) {
+        if (h_kind[j] == HI_PHI && h_pbase[j] >= 0) {
+            q = 0;
+            while (q < h_pcnt[j]) {
+                p = h_pblk[h_pbase[j] + q];
+                h_pval[h_pbase[j] + q] = ra_region_reach(p, v, d, e, m);
+                q = q + 1;
+            }
+        }
+        j = j + 1;
+    }
+    /* Every read of v, by the definition reaching it: bodies by their
+     * block, phi arguments by their predecessor. */
+    b = 0;
+    while (b < bb_nblk) {
+        r = ra_region_reach(b, v, d, e, m);
+        if (r >= 0 && r != v) ra_region_rewire_block(b, v, r);
+        jp = ssa_phi_head[b];
+        while (jp >= 0) {
+            if (jp < save_ninst && h_kind[jp] == HI_PHI && h_pbase[jp] >= 0) {
+                q = 0;
+                while (q < h_pcnt[jp]) {
+                    if (h_pval[h_pbase[jp] + q] == v) {
+                        p = h_pblk[h_pbase[jp] + q];
+                        r = ra_region_reach(p, v, d, e, m);
+                        if (r >= 0 && r != v) h_pval[h_pbase[jp] + q] = r;
+                    }
+                    q = q + 1;
+                }
+            }
+            jp = ssa_phi_next[jp];
+        }
+        b = b + 1;
+    }
+    ra_stat_region = ra_stat_region + 1;
+    ra_stat_join = ra_stat_join + nj;
+    gc_rs_nregion = gc_rs_nregion + 1;
+    ra_region_round[v] = gc_round_no;
+    if (getenv("HIR_RA_DEBUG")) {
+        /* Diagnostic: a read of v left inside the region would keep it
+         * live there and make it this failing node's victim again. */
+        b = 0;
+        while (b < bb_nblk) {
+            if (ra_in_region[b]) {
+                i = 0;
+                while (i < ra_norder) {
+                    x = ra_order[i];
+                    if (h_blk[x] == b && x != m) {
+                        int nu;
+                        nu = lv_uses(x);
+                        q = 0;
+                        while (q < nu) {
+                            if (lv_ubuf[q] == v) {
+                                fdputs("REGION-LEAK v=", 2);
+                                fdputuint(2, (unsigned)v);
+                                fdputs(" reader=", 2);
+                                fdputuint(2, (unsigned)x);
+                                fdputs(" kind=", 2);
+                                fdputuint(2, (unsigned)h_kind[x]);
+                                fdputs(" b=", 2);
+                                fdputuint(2, (unsigned)b);
+                                fdputc(10, 2);
+                            }
+                            q = q + 1;
+                        }
+                    }
+                    i = i + 1;
+                }
+            }
+            b = b + 1;
+        }
+        fdputs("REGION v=", 2);
+        fdputuint(2, (unsigned)v);
+        fdputs(" kind=", 2);
+        fdputuint(2, (unsigned)k);
+        fdputs(" e=", 2);
+        fdputuint(2, (unsigned)e);
+        fdputs(" m=", 2);
+        fdputuint(2, (unsigned)m);
+        fdputs(" for=", 2);
+        fdputuint(2, (unsigned)forwhom);
+        fdputs(" joins=", 2);
+        fdputuint(2, (unsigned)nj);
+        fdputs(" cand=", 2);
+        fdputuint(2, (unsigned)(ra_region_cand - 1));
+        fdputc(10, 2);
+    }
+    return 1;
+}
+
+static int ra_region_split(int v, int bn, int forwhom) {
+    int e;
+    if (!ra_region_plan(v, bn, forwhom, &e)) return 0;
+    return ra_region_commit(v, e, forwhom);
+}
+
+/* Step 5b.5: S(v, R), what the split of v across the region entered at
+ * e costs, in the frequency scale: the store at the entry, a reload
+ * at the exits if v is live out of the region, and v's reads inside
+ * the region (which the global spill would pay too); the entry's
+ * frequency pessimistic (ra_bfreq_pess), and the in-region reads
+ * scaled up by the same ratio.  ra_in_region must hold the region. */
+static int ra_region_cost(int v, int e) {
+    int fe;
+    int ratio;
+    int liveout;
+    int inreads;
+    int b;
+    int si;
+    int t;
+    int i;
+    int x;
+    int nu;
+    int q;
+    fe = ra_bfreq_pess(e);
+    ratio = fe / ra_bfreq_w(e);
+    if (ratio < 1) ratio = 1;
+    liveout = 0;
+    b = 0;
+    while (b < bb_nblk && !liveout) {
+        if (ra_in_region[b]) {
+            si = 0;
+            while (si < ssa_nsucc[b]) {
+                t = ssa_succ[ssa_soff[b] + si];
+                if (t >= 0 && t < bb_nblk && !ra_in_region[t] && ra_web_live_in(t, v)) liveout = 1;
+                si = si + 1;
+            }
+        }
+        b = b + 1;
+    }
+    inreads = 0;
+    i = 0;
+    while (i < ra_norder) {
+        x = ra_order[i];
+        b = h_blk[x];
+        if (b >= 0 && b < bb_nblk && ra_in_region[b] && h_kind[x] != HI_PHI) {
+            nu = lv_uses(x);
+            q = 0;
+            while (q < nu) {
+                if (lv_ubuf[q] == v) {
+                    inreads = inreads + ra_bfreq_w(b) * ratio;
+                    if (inreads > 1000000) inreads = 1000000;
+                    break;
+                }
+                q = q + 1;
+            }
+        }
+        i = i + 1;
+    }
+    fe = fe * (1 + liveout) + inreads;
+    if (fe > 1000000) fe = 1000000;
+    return fe;
+}
+
+/* Instructions were appended and operands rewired: the order,
+ * intervals, fused-compare extension, call-crossing marks, exact
+ * liveness, weighted uses and argument preferences are all rebuilt.
+ * The remat victims' operand intervals are widened again (gc_respill
+ * did it on the old intervals). */
+static void ra_recompute_after_insert(void) {
+    int i;
+    int changed;
+    int lim;
+    ra_build_wuses();
+    ra_compute_pos();
+    ra_compute_ends();
+    ra_extend_fused_cmp();
+    ra_mark_call_crossing();
+    lv_prepare();
+    ra_mark_arg_prefs();
+    changed = 1;
+    lim = 0;
+    while (changed && lim < 64) {
+        changed = 0;
+        i = 0;
+        while (i < h_ninst) {
+            if (ra_remat_op[i] && h_src1[i] >= 0 && ra_iend[i] > ra_iend[h_src1[i]]) {
+                ra_iend[h_src1[i]] = ra_iend[i];
+                changed = 1;
+            }
+            i = i + 1;
+        }
+        lim = lim + 1;
+    }
+}
+
+/* Memory model step 5b.1: may this victim be recomputed at each use
+ * instead of stored and reloaded?  An ADDI with an i12 immediate of a
+ * value that is itself register-allocated (not a constant or global
+ * address, which have their own remat; not in memory, where the
+ * recompute would be a reload and an add).  Exact liveness only: the
+ * operand's live range grows to the victim's uses, and only lv_solve
+ * can say by how much.  A pair half shares fate with its partner and
+ * stays in memory. */
+static int gc_remat_ok(int inst) {
+    int s;
+    if (!lv_on) return 0;
+    if (h_kind[inst] != HI_ADDI) return 0;
+    if (ra_pair_of[inst] >= 0) return 0;
+    if (!ra_is_i12(h_val[inst])) return 0;
+    s = h_src1[inst];
+    if (s < 0 || s >= h_ninst) return 0;
+    if (hi_inst_remat(s) || ra_mem_forced[s]) return 0;
+    if (!hi_has_value(h_kind[s]) || h_kind[s] == HI_NOP) return 0;
+    if (h_kind[s] == HI_ALLOCA) return 0;
+    /* Not of a value that has been split with joins (step 5b.4): the
+     * recompute reads the operand's register wherever the victim is
+     * used, and past a join the value is in the join phi's register,
+     * not the operand's. */
+    if (ra_region_round[s] != 0) return 0;
+    /* Not the operand of a remat victim already: the parallel copies
+     * (hcg_remat_reg_src) take one ADDI's immediate off the base's
+     * register, not a chain's. */
+    { int z; z = 0; while (z < h_ninst) { if (ra_remat_op[z] && h_src1[z] == inst) return 0; z = z + 1; } }
+    return 1;
+}
+
+/* A raw cost (weighted uses, or a split's S) normalized for comparison
+ * between victims: cheaper when it frees more failing neighbours and
+ * when the value is long-lived. */
+static int gc_respill_scale(int raw, int inst, int nfail) {
+    int span;
+    if (nfail < 1) nfail = 1;
+    span = 1;
+    if (ra_pos[inst] >= 0 && ra_iend[inst] > ra_pos[inst])
+        span = (ra_iend[inst] - ra_pos[inst]) / 16 + 1;
+    if (span > 8) span = 8;
+    if (raw > 1000000) raw = 1000000;
+    return (raw * 64) / (nfail * span);
+}
+
+static int gc_respill_cost(int inst, int nfail) {
+    if (h_kind[inst] == HI_ICONST && h_no_remat[inst]) return 0;
+    return gc_respill_scale(ra_wuses[inst], inst, nfail);
+}
+
+/* Step 5b.5: the cheapest few neighbours of a failing node, kept for
+ * the split's own cost to be weighed against their global spill. */
+#define GC_RS_NCAND 4
+static int gc_rs_cand[GC_RS_NCAND];
+static int gc_rs_ccost[GC_RS_NCAND];
+static int gc_rs_ncand;
+
+static void gc_rs_cand_add(int a, int cost) {
+    int i;
+    int worst;
+    if (gc_rs_ncand < GC_RS_NCAND) {
+        gc_rs_cand[gc_rs_ncand] = a;
+        gc_rs_ccost[gc_rs_ncand] = cost;
+        gc_rs_ncand = gc_rs_ncand + 1;
+        return;
+    }
+    worst = 0;
+    i = 1;
+    while (i < GC_RS_NCAND) { if (gc_rs_ccost[i] > gc_rs_ccost[worst]) worst = i; i = i + 1; }
+    if (cost < gc_rs_ccost[worst]) { gc_rs_cand[worst] = a; gc_rs_ccost[worst] = cost; }
+}
+
 static int gc_respill(void) {
     int n;
     int nv;
@@ -2784,34 +4088,118 @@ static int gc_respill(void) {
     int best;
     int bcost;
     int cost;
+    int region_e;
+
+    n = 0;
+    while (n < gc_nnode) { gc_rs_nfail[n] = 0; gc_rs_taken[n] = 0; n = n + 1; }
+    n = 0;
+    while (n < gc_nnode) {
+        if (gc_color[n] < 0 || gc_force_spill[n]) {
+            e = gc_adj_head[n];
+            while (e >= 0) {
+                a = gc_get_alias(gc_adj_peer[e]);
+                gc_rs_nfail[a] = gc_rs_nfail[a] + 1;
+                e = gc_adj_next[e];
+            }
+        }
+        n = n + 1;
+    }
 
     nv = 0;
+    gc_rs_nremat = 0;
+    gc_rs_nregion = 0;
+    gc_round_no = gc_round_no + 1;
     n = 0;
     while (n < gc_nnode) {
         if (gc_color[n] < 0 || gc_force_spill[n]) {
             /* Cheapest of the failed node and its neighbors. */
             best = n;
-            bcost = ra_wuses[gc_inst[n]];
-            if (h_kind[gc_inst[n]] == HI_ICONST && h_no_remat[gc_inst[n]])
-                bcost = 0;
+            bcost = gc_respill_cost(gc_inst[n], 1);
+            gc_rs_ncand = 0;
+            gc_rs_cand_add(n, bcost);
             e = gc_adj_head[n];
             while (e >= 0) {
                 a = gc_get_alias(gc_adj_peer[e]);
                 inst = gc_inst[a];
-                if (!ra_mem_forced[inst]) {
-                    cost = ra_wuses[inst];
-                    if (h_kind[inst] == HI_ICONST && h_no_remat[inst])
-                        cost = 0;
+                if (gc_rs_taken[a]) { best = -1; break; }
+                if (!gc_rs_victim(inst)) {
+                    cost = gc_respill_cost(inst, gc_rs_nfail[a]);
                     if (cost < bcost) { best = a; bcost = cost; }
+                    if (ra_freq_on) gc_rs_cand_add(a, cost);
                 }
                 e = gc_adj_next[e];
             }
+            if (best < 0) { n = n + 1; nv = nv + 1; continue; }
+            region_e = -1;
+            if (ra_freq_on && getenv("HIR_REGION")) {
+                /* Step 5b.5: for the cheapest few, the split's own cost
+                 * (ra_region_cost) against the best global spill found;
+                 * a split is taken only when it is the cheapest action
+                 * of all, ties to the spill. */
+                int c;
+                int ce;
+                int sc;
+                c = 0;
+                while (c < gc_rs_ncand) {
+                    a = gc_rs_cand[c];
+                    inst = gc_inst[a];
+                    if (!gc_rs_victim(inst) &&
+                        ra_region_plan(inst, h_blk[gc_inst[n]], gc_inst[n], &ce)) {
+                        sc = gc_respill_scale(ra_region_cost(inst, ce), inst,
+                                              (a == n) ? 1 : gc_rs_nfail[a]);
+                        if (sc < bcost) { bcost = sc; best = a; region_e = ce; }
+                    }
+                    c = c + 1;
+                }
+            }
             inst = gc_inst[best];
-            if (!ra_mem_forced[inst]) {
-                if (h_kind[inst] == HI_ICONST && h_no_remat[inst]) {
+            if (!gc_rs_victim(inst)) {
+                gc_rs_taken[best] = 1;
+                if (region_e >= 0) {
+                    ra_region_commit(inst, region_e, gc_inst[n]);
+                } else if (h_kind[inst] == HI_ICONST && h_no_remat[inst]) {
                     h_no_remat[inst] = 0;   /* back to remat, no slot */
+                } else if (ra_is_reload[inst]) {
+                    ra_delete_reload(inst); /* readers back to the slot */
+                } else if (!ra_freq_on && getenv("HIR_REGION") &&
+                           ra_region_split(inst, h_blk[gc_inst[n]], gc_inst[n])) {
+                    /* in memory across the failing region only (step
+                     * 5b.3/5b.4, opt-in: without the frequencies the
+                     * split is taken whenever it is possible) */
+                } else if (gc_remat_ok(inst)) {
+                    ra_remat_op[inst] = 2;  /* this round's; 1 once liveness is re-solved */
+                    gc_rs_nremat = gc_rs_nremat + 1;
+                    ra_stat_remat = ra_stat_remat + 1;
+                    /* The operand is read wherever the victim was: its
+                     * interval must say so too, for the slot sharing
+                     * (by interval) should a later round spill it. */
+                    a = h_src1[inst];
+                    if (ra_iend[inst] > ra_iend[a]) ra_iend[a] = ra_iend[inst];
                 } else {
                     ra_mem_forced[inst] = 1;
+                    /* A rematerialized ADDI of this value (5b.1) was
+                     * chosen while the value had a register; with the
+                     * value in memory the recompute is a reload AND an
+                     * add at every use, where the ADDI's own slot would
+                     * be one load: it goes to memory too, stored once
+                     * at its definition.  (The f77 resync found it:
+                     * LINPACK's DGEFA reloaded LDA and added 1 at each
+                     * of 806,400 uses of LDA+1.)  Its reads already
+                     * moved onto the operand in the liveness sets;
+                     * more liveness than needed is sound. */
+                    {
+                        int z;
+                        z = 0;
+                        while (z < h_ninst) {
+                            if (ra_remat_op[z] && h_src1[z] == inst) {
+                                ra_remat_op[z] = 0;
+                                ra_mem_forced[z] = 1;
+                                ra_stat_remat = ra_stat_remat - 1;
+                                ra_stat_unremat = ra_stat_unremat + 1;
+                            }
+                            z = z + 1;
+                        }
+                    }
                 }
                 if (ra_pair_of[inst] >= 0) {
                     a = ra_pair_of[inst];
@@ -2824,10 +4212,13 @@ static int gc_respill(void) {
                 if (getenv("HIR_RA_DEBUG")) {
                     fdputs("RESPILL victim=", 2);
                     fdputuint(2, (unsigned)inst);
+                    fdputs(" kind=", 2);
+                    fdputuint(2, (unsigned)h_kind[inst]);
                     fdputs(" wuses=", 2);
                     fdputuint(2, (unsigned)ra_wuses[inst]);
                     fdputs(" for=", 2);
                     fdputuint(2, (unsigned)gc_inst[n]);
+                    if (ra_remat_op[inst]) fdputs(" remat", 2);
                     fdputc(10, 2);
                 }
             }
@@ -2837,7 +4228,182 @@ static int gc_respill(void) {
     return nv;
 }
 
-static void gc_alloc(void) {
+/* =================================================================
+ * Phi webs: a spilled phi and the phi that feeds it share one slot.
+ *
+ * A loop-carried variable assigned in a few arms of a switch and read
+ * in a few others is, after SSA, P = phi(init, M) at the header and
+ * M = phi(P, P, ..., X, P, ...) at the join after the switch: M carries
+ * the header's value on every pass-through edge.  Under pressure P is
+ * spilled -- it lives across the whole loop -- while M, live only
+ * across the join, keeps a register, and the back edge stores M into
+ * P's slot on every iteration: four such stores per opcode dispatched
+ * in sqlite3VdbeExec.  Before SSA the variable sat in its frame slot
+ * and the pass-through arms touched nothing.
+ *
+ * So, once colouring is final: for a spilled phi P, an argument phi M
+ * whose every reference is as P's argument and that does not interfere
+ * with P (neither is live where the other is defined; exact liveness,
+ * so only with lv_on) gives up its register and takes P's slot.  The
+ * copy P := M is then memory to memory in one slot, a no-op to the
+ * emitter; M := P on the pass-through edges likewise; M := X on an
+ * assigning edge stores X into the slot, which is what the variable
+ * always was.  P's slot range is widened to cover M's.  Pairs are left
+ * alone.  (docs/plans/memory-model.md, step 5.) */
+static int ra_web_mark[HIR_MAX_INST];
+
+static int ra_web_live_in(int b, int v) {
+    if (b < 0 || b >= bb_nblk || lv_id[v] < 0) return 1;   /* unknown: say yes */
+    return (lv_in[(b * lv_w) + (lv_id[v] >> 5)] >> (lv_id[v] & 31)) & 1;
+}
+
+static int ra_web_spilled(int v) {
+    int n;
+    if (ra_mem_forced[v]) return 1;
+    n = gc_node[v];
+    if (n < 0) return 0;
+    if (gc_force_spill[n]) return 1;
+    return gc_color[n] < 0;
+}
+
+static void ra_phi_webs(void) {
+    int p;
+    int j;
+    int a;
+    int i;
+    int n;
+    int ok;
+    int s;
+    int e;
+    if (!lv_on) return;
+    i = 0;
+    while (i < h_ninst) { ra_web_mark[i] = -1; i = i + 1; }
+    p = 0;
+    while (p < h_ninst) {
+        if (h_kind[p] == HI_PHI && h_pbase[p] >= 0 && !hi_inst_remat(p) &&
+            ra_pair_of[p] < 0 && ra_web_of[p] < 0 && ra_web_spilled(p)) {
+            j = 0;
+            while (j < h_pcnt[p]) {
+                a = h_pval[h_pbase[p] + j];
+                j = j + 1;
+                if (a < 0 || a == p || h_kind[a] != HI_PHI || h_pbase[a] < 0) continue;
+                if (ra_web_mark[a] == p) continue;
+                ra_web_mark[a] = p;
+                if (ra_web_of[a] >= 0 || ra_pair_of[a] >= 0 || hi_inst_remat(a)) continue;
+                if (ra_web_s[a] >= 0) continue;          /* a is itself a web head */
+                /* A phi of p's own block: both are defined at that
+                 * block's top and both live after it, so they
+                 * interfere -- but the live-in tests below see neither
+                 * (a phi is never live INTO its block).  wherePathSolver's
+                 * aFrom/aTo swap pair, both spilled under the step 5b.5
+                 * weights, took one slot, and the loop-entry copies
+                 * stored both into it. */
+                if (h_blk[a] == h_blk[p]) continue;
+                if (ra_web_live_in(h_blk[p], a) || ra_web_live_in(h_blk[a], p)) {
+                    if (getenv("HIR_RA_DEBUG")) {
+                        fdputs("PHIWEB-NO phi=", 2);
+                        fdputuint(2, (unsigned)p);
+                        fdputs(" arg=", 2);
+                        fdputuint(2, (unsigned)a);
+                        fdputs(lv_id[a] < 0 || lv_id[p] < 0 ? " untracked\n" : " interferes\n", 2);
+                    }
+                    continue;
+                }
+                /* every reference to a is a phi's argument: p's, or
+                 * another phi's -- the loop's exit phi takes the join's
+                 * value too, and reads it from the shared slot, which
+                 * holds a's value until p's own copy, a no-op.  A
+                 * non-phi use would need a as a register value. */
+                ok = 1;
+                i = 0;
+                while (i < h_ninst && ok) {
+                    if (h_kind[i] != HI_PHI && h_kind[i] != HI_NOP) {
+                        /* lv_uses, not hi_ref: a compare fused into a
+                         * BRC is a NOP whose operands the branch
+                         * re-reads, and a BURG fold reads its base --
+                         * sqlite3WhereCodeOneLoopStart's slot-mate fed
+                         * a fused compare and the walk over hi_ref did
+                         * not see it. */
+                        int nu;
+                        int q;
+                        nu = lv_uses(i);
+                        q = 0;
+                        while (q < nu) {
+                            if (lv_ubuf[q] == a) { ok = 0; break; }
+                            q = q + 1;
+                        }
+                    }
+                    i = i + 1;
+                }
+                /* Two members of one web must not be live together:
+                 * each one's assigning edges store into the shared slot
+                 * while the other may still be read from it. */
+                i = 0;
+                while (i < h_ninst && ok) {
+                    if (ra_web_of[i] == p &&
+                        (h_blk[i] == h_blk[a] ||
+                         ra_web_live_in(h_blk[a], i) || ra_web_live_in(h_blk[i], a)))
+                        ok = 0;
+                    i = i + 1;
+                }
+                if (!ok) {
+                    if (getenv("HIR_RA_DEBUG")) {
+                        fdputs("PHIWEB-NO phi=", 2);
+                        fdputuint(2, (unsigned)p);
+                        fdputs(" arg=", 2);
+                        fdputuint(2, (unsigned)a);
+                        fdputs(" other-use=", 2);
+                        fdputuint(2, (unsigned)(i - 1));
+                        fdputc(10, 2);
+                    }
+                    continue;
+                }
+                n = gc_node[a];
+                if (n >= 0) gc_force_spill[n] = 1;
+                ra_web_of[a] = p;
+                ra_slot_range(a, &s, &e);
+                if (ra_web_s[p] < 0 || s < ra_web_s[p]) ra_web_s[p] = s;
+                if (e > ra_web_e[p]) ra_web_e[p] = e;
+                ra_stat_phiweb = ra_stat_phiweb + 1;
+                if (getenv("HIR_RA_DEBUG")) {
+                    fdputs("PHIWEB phi=", 2);
+                    fdputuint(2, (unsigned)p);
+                    fdputs(" takes=", 2);
+                    fdputuint(2, (unsigned)a);
+                    fdputc(10, 2);
+                }
+            }
+        }
+        p = p + 1;
+    }
+}
+
+/* After a respill round made remat victims: their reads now fall on
+ * their operands, so the liveness sets must grow to match before the
+ * next colouring sees the operands' interference.  Should the sweep
+ * not converge (it did from zero; from the old solution it has less
+ * to do), this round's remat victims go to memory instead, and the
+ * partly grown sets stay: more liveness than needed is sound. */
+static void gc_remat_resolve(void) {
+    int i;
+    int ok;
+    ok = lv_solve();
+    i = 0;
+    while (i < h_ninst) {
+        if (ra_remat_op[i] == 2) {
+            if (ok) {
+                ra_remat_op[i] = 1;
+            } else {
+                ra_remat_op[i] = 0;
+                ra_mem_forced[i] = 1;
+                ra_stat_remat = ra_stat_remat - 1;
+            }
+        }
+        i = i + 1;
+    }
+}
+
+static void gc_alloc_rounds(void) {
     int iter;
 
     iter = 0;
@@ -2851,8 +4417,27 @@ static void gc_alloc(void) {
         gc_select();
         if (iter >= 32) break;
         if (gc_respill() == 0) break;
+        if (gc_rs_nregion > 0) {
+            /* Regional splits appended copies and moved reads: rebuild
+             * everything (which also serves this round's remat victims). */
+            { int z; z = 0; while (z < h_ninst) { if (ra_remat_op[z] == 2) ra_remat_op[z] = 1; z = z + 1; } }
+            ra_recompute_after_insert();
+        } else if (gc_rs_nremat > 0) {
+            gc_remat_resolve();
+        }
         iter = iter + 1;
     }
+}
+
+static void gc_alloc(void) {
+    gc_alloc_rounds();
+    /* Step 5b.2: the spilled set is known; give each spilled scalar one
+     * reload per block run of reads, and colour again with those. */
+    if (!getenv("HIR_NO_RELOADS") && ra_insert_reloads() > 0) {
+        ra_recompute_after_insert();
+        gc_alloc_rounds();
+    }
+    ra_phi_webs();
     gc_writeback();
 }
 
@@ -3067,6 +4652,7 @@ static int ra_new_split_copy(int src, int blk) {
     h_pbase[cl] = -1;
     h_pcnt[cl] = 0;
     h_ld_ro[cl] = 0;
+    h_vol[cl] = 0;
     h_no_remat[cl] = 0;
     bg_sel[cl] = -1;
     bg_uses[cl] = 0;
@@ -3099,6 +4685,20 @@ static int ra_new_split_copy(int src, int blk) {
     ra_pair_of[cl] = -1;
     ra_pair_lo[cl] = 0;
     ra_is_csplit[cl] = 1;
+    rl_fold_sub[cl] = -1;
+    /* The allocator's own per-value state is reset for [0, h_ninst) at
+     * the start of hir_regalloc; a copy appended after that (a block
+     * reload, a region copy) inherits the previous function's entries
+     * at this index.  A stale ra_web_of handed test_phi_web's region
+     * copy another value's spill slot. */
+    ra_mem_forced[cl] = 0;
+    ra_remat_op[cl] = 0;
+    ra_is_reload[cl] = 0;
+    ra_web_of[cl] = -1;
+    ra_web_s[cl] = -1;
+    ra_web_e[cl] = -1;
+    ra_crosses_call[cl] = 0;
+    ra_region_round[cl] = 0;
     h_ninst = h_ninst + 1;
     return cl;
 }
@@ -3214,16 +4814,26 @@ static void hir_regalloc(void) {
     /* SLOW-32 IRC path (George-Appel Iterated Register Coalescing) */
     ra_init_phys_regs();   /* populates classification tables (safe, knob==0 today) */
     { int z; z = 0; while (z < GC_MAX_NODE) { gc_pin[z] = -1; z = z + 1; } }
+    /* Before anything asks ra_codegen_fold_base: the weighted uses,
+     * intervals and liveness below all read rl_fold_sub, and a stale
+     * entry (the previous function's, or 0 for the first) named an
+     * unrelated base -- strcmp's old pointer looked dead at its
+     * increment and the load of *s1 folded off a register already
+     * stepped.  Copies appended later clear their own entry. */
+    { int z; z = 0; while (z < h_ninst) { rl_fold_sub[z] = -1; z = z + 1; } }
     ra_build_pairs();      /* fp64 halves that want adjacent registers */
     ra_split_at_calls();   /* chop crossing webs so the pre-call half can use r3-r10 */
-    ra_build_wuses();      /* loop-depth-weighted use counts for spill cost */
+    ra_freq_on = getenv("HIR_RA_FREQ") ? atoi(getenv("HIR_RA_FREQ")) : 0;
+    if (ra_freq_on && ra_freq_on != 5) ra_build_bfreq();   /* step 5b.5: static block frequencies */
+    ra_build_wuses();      /* weighted use counts for spill cost: loop depth, or the frequencies */
     ra_compute_pos();
     ra_compute_ends();
     ra_extend_fused_cmp();
     ra_mark_call_crossing();
     lv_prepare();          /* per-block liveness; lv_on gates gc_build */
     ra_mark_arg_prefs();
-    { int z; z = 0; while (z < h_ninst) { ra_mem_forced[z] = 0; z = z + 1; } }
+    { int z; z = 0; while (z < h_ninst) { ra_mem_forced[z] = 0; ra_web_of[z] = -1; ra_web_s[z] = -1; ra_web_e[z] = -1; ra_region_round[z] = 0; z = z + 1; } }
+    /* ra_remat_op is cleared by hir_reset: liveness above already read it. */
     /* (ra_mark_clobbers removed — x64 RCX/RDX clobber arrays were never populated or used for SLOW-32) */
 
     ra_stat_caller_used = 0;
@@ -3290,6 +4900,45 @@ static void ra_dump_intervals(char *fname) {
         ra_dump_signed(h_src2[i]);
         fdputs(" x=", 2);
         ra_dump_signed(ra_crosses_call[i]);
+        if (h_kind[i] == HI_PHI && h_pbase[i] >= 0) {
+            int dj;
+            fdputs(" args=", 2);
+            dj = 0;
+            while (dj < h_pcnt[i]) {
+                ra_dump_signed(h_pblk[h_pbase[i] + dj]);
+                fdputc(58, 2);   /* ':' */
+                ra_dump_signed(h_pval[h_pbase[i] + dj]);
+                fdputc(44, 2);   /* ',' */
+                dj = dj + 1;
+            }
+        }
+        if (rl_fold_sub[i] >= 0) {
+            fdputs(" fold=", 2);
+            ra_dump_signed(rl_fold_sub[i]);
+        }
+        fdputc(10, 2);
+        i = i + 1;
+    }
+    /* The blocks: dominator, loop depth, successors. */
+    i = 0;
+    while (i < bb_nblk) {
+        int dj;
+        fdputs("DUMPB b=", 2);
+        fdputuint(2, (unsigned)i);
+        fdputs(" idom=", 2);
+        ra_dump_signed(ssa_idom[i]);
+        fdputs(" depth=", 2);
+        ra_dump_signed(licm_depth[i]);
+        fdputs(" succ=", 2);
+        dj = 0;
+        while (dj < ssa_nsucc[i]) {
+            ra_dump_signed(ssa_succ[ssa_soff[i] + dj]);
+            fdputc(44, 2);
+            dj = dj + 1;
+        }
+        fdputs(" split=", 2);
+        dj = split_head[i];
+        while (dj >= 0) { ra_dump_signed(dj); fdputc(44, 2); dj = licm_next[dj]; }
         fdputc(10, 2);
         i = i + 1;
     }

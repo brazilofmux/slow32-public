@@ -1,4 +1,4 @@
-/* COPIED from selfhost/stage08/hir_codegen.h at 30e16a57.  See note in hir.h. */
+/* COPIED from selfhost/stage08/hir_codegen.h at 370629f9.  See note in hir.h. */
 /* hir_codegen.h -- HIR to SLOW-32 assembly for s12cc
  *
  * Phase 8: Linear scan register allocation (r11-r28, callee-saved).
@@ -202,6 +202,35 @@ static int hcg_frame;      /* total frame size */
 static int hcg_frame_escapes; /* an alloca's address may reach a callee:
                                  tail calls must not pop the frame first */
 static int hcg_frameless;  /* leaf, no stack: omit prologue/epilogue */
+static int hcg_slot_used;  /* a frame slot is read or written, by any address
+                            * chain (hcg_note_slots, taken before hir_burg
+                            * folds the ADDIs and NOPs them) */
+
+/* Does any load or store reach a frame slot?  Asked before BURG: its
+ * address folds NOP the ADDI steps, after which a slot addressed only
+ * through them looks unreferenced.  copysign's two unions, once the
+ * dead-store pass had removed their low words' stores, were reached
+ * only through +4 steps: the function went frameless, saved no
+ * callee-saved register, and wrote below the caller's stack pointer. */
+static void hcg_note_slots(void) {
+    int i;
+    int n;
+    int v;
+    hcg_slot_used = 0;
+    al_roots();
+    i = 0;
+    while (i < h_ninst && !hcg_slot_used) {
+        if (h_kind[i] != HI_NOP && !al_is_step(i) && h_kind[i] != HI_ALLOCA) {
+            n = 0;
+            while (n < hi_nrefs(i)) {
+                v = hi_ref(i, n);
+                if (v >= 0 && v < al_n && al_root[v] >= 0) hcg_slot_used = 1;
+                n = n + 1;
+            }
+        }
+        i = i + 1;
+    }
+}
 static int hcg_save_lr;    /* 0 on leaves: incoming r31 stays the return */
 static int hcg_omit_fp;    /* SP-relative slots; r30 is not the frame pointer */
 static int hcg_sp_delta;   /* extra SP decrement below the frame (stack args) */
@@ -210,6 +239,7 @@ static int hcg_epilog;     /* epilog label */
  * of the whole instruction excess.  Split it by who emits it. */
 static int hcg_stat_reload;    /* ldw from a spill slot */
 static int hcg_stat_spillst;   /* stw to a spill slot */
+static int hcg_stat_remat;     /* addi recomputing a remat victim at a use */
 static int hcg_stat_csave;     /* prologue saves + epilogue restores */
 static int hcg_stat_frameless;
 static int hcg_stat_leaf_nolr;
@@ -364,6 +394,8 @@ static char hcg_ret_direct[HIR_MAX_INST];
 
 /* --- Materialize a HIR value into a specific register --- */
 
+static int hcg_src(int inst, int scratch);   /* below; a remat source stages through it */
+
 static void hcg_into(int reg, int inst) {
     int k;
     int off;
@@ -386,6 +418,16 @@ static void hcg_into(int reg, int inst) {
     }
 
     k = h_kind[inst];
+
+    /* A respill victim recomputed at its uses (ra_remat_op): its
+     * operand's register, or that operand staged through reg. */
+    if (k == HI_ADDI && ra_remat_op[inst]) {
+        int rs;
+        rs = hcg_src(h_src1[inst], reg);
+        cg_rri("addi", reg, rs, h_val[inst]);
+        hcg_stat_remat = hcg_stat_remat + 1;
+        return;
+    }
 
     /* Rematerializable instructions */
     if (k == HI_ICONST) {
@@ -538,7 +580,7 @@ static int hcg_addr_base_off(int inst, int *base_out, int *off_out) {
     lim = 0;
     while (inst >= 0 && lim < 64) {
         k = h_kind[inst];
-        if (k == HI_COPY) {
+        if (k == HI_COPY && !ra_is_reload[inst]) {
             inst = h_src1[inst];
             lim = lim + 1;
             continue;
@@ -549,6 +591,8 @@ static int hcg_addr_base_off(int inst, int *base_out, int *off_out) {
             lim = lim + 1;
             continue;
         }
+        /* A reload COPY (step 5b.2) is the base: its register holds
+         * the spilled value for this block's reads. */
         *base_out = inst;
         *off_out = off;
         return (inst >= 0);
@@ -1189,6 +1233,42 @@ static int hcg_argmap[HIR_MAX_CARG]; /* per-call ABI register map */
 static int hcg_shuf_dst[HCG_ARGSHUF_MAX];
 static int hcg_shuf_src[HCG_ARGSHUF_MAX];   /* physical reg, -1 = materialize */
 static int hcg_shuf_val[HCG_ARGSHUF_MAX];
+static int hcg_shuf_imm[HCG_ARGSHUF_MAX];   /* added to src: a rematerialized ADDI's immediate */
+
+/* A rematerialized ADDI (memory model 5b.1) read as a parallel-copy
+ * source is `addi dst, base, imm` at the copy: it READS the base's
+ * register there, so the sequencer must order it like a move from
+ * that register, not materialize it whenever convenient -- the
+ * loop-entry copies of test_phi_web wrote `step := 0` into the
+ * register still holding `seed` before `h := seed + 7` read it.
+ * Returns the base's register (1 for a ret-direct base) and sets
+ * *imm, or -1 when v is not such a value or its base has no register
+ * (a memory base is reloaded, and slots are not what a parallel copy
+ * overwrites, except by a memory-destination phi copy: see the slot
+ * hazard check in hcg_phi_copies). */
+static int hcg_remat_reg_src(int v, int *imm) {
+    int b;
+    if (v < 0 || v >= h_ninst || !ra_remat_op[v] || h_kind[v] != HI_ADDI) return -1;
+    b = h_src1[v];
+    if (b < 0 || b >= h_ninst) return -1;
+    *imm = h_val[v];
+    if (hcg_ret_direct[b]) return 1;
+    if (ra_reg[b] >= 0) return ra_reg[b];
+    return -1;
+}
+
+/* The slot a copy source is read from: its own, or, for a
+ * rematerialized ADDI of a spilled base, the base's.  0 if none. */
+static int hcg_src_slot(int v) {
+    if (v < 0 || v >= h_ninst) return 0;
+    if (ra_remat_op[v] && h_kind[v] == HI_ADDI) {
+        v = h_src1[v];
+        if (v < 0 || v >= h_ninst || ra_reg[v] >= 0 || hi_inst_remat(v)) return 0;
+        return ra_spill_off[v];
+    }
+    if (ra_reg[v] >= 0 || hi_inst_remat(v)) return 0;
+    return ra_spill_off[v];
+}
 static int hcg_shuf_done[HCG_ARGSHUF_MAX];
 static int hcg_stat_argshuf;                /* cycles broken via the scratch */
 
@@ -1220,8 +1300,8 @@ static void hcg_parallel_copy(int n) {
                 }
                 if (!blocked) {
                     if (hcg_shuf_src[j] >= 0) {
-                        if (hcg_shuf_src[j] != hcg_shuf_dst[j]) {
-                            cg_rri("addi", hcg_shuf_dst[j], hcg_shuf_src[j], 0);
+                        if (hcg_shuf_src[j] != hcg_shuf_dst[j] || hcg_shuf_imm[j] != 0) {
+                            cg_rri("addi", hcg_shuf_dst[j], hcg_shuf_src[j], hcg_shuf_imm[j]);
                         }
                     } else {
                         hcg_into(hcg_shuf_dst[j], hcg_shuf_val[j]);
@@ -1262,9 +1342,10 @@ static void hcg_move_vals(int *dst, int *vals, int n) {
         v = vals[i];
         hcg_shuf_dst[i] = dst[i];
         hcg_shuf_val[i] = v;
+        hcg_shuf_imm[i] = 0;
         if (v >= 0 && v < HIR_MAX_INST && hcg_ret_direct[v]) hcg_shuf_src[i] = 1;
         else if (v >= 0 && ra_reg[v] >= 0) hcg_shuf_src[i] = ra_reg[v];
-        else hcg_shuf_src[i] = -1;
+        else hcg_shuf_src[i] = hcg_remat_reg_src(v, &hcg_shuf_imm[i]);
         hcg_shuf_done[i] = 0;
         i = i + 1;
     }
@@ -1287,9 +1368,10 @@ static void hcg_marshal_reg_args(int base, int nargs) {
             v = h_carg[base + i];
             hcg_shuf_dst[n] = hcg_argmap[i];
             hcg_shuf_val[n] = v;
+            hcg_shuf_imm[n] = 0;
             if (v >= 0 && v < HIR_MAX_INST && hcg_ret_direct[v]) hcg_shuf_src[n] = 1;
             else if (v >= 0 && ra_reg[v] >= 0) hcg_shuf_src[n] = ra_reg[v];
-            else hcg_shuf_src[n] = -1;
+            else hcg_shuf_src[n] = hcg_remat_reg_src(v, &hcg_shuf_imm[n]);
             hcg_shuf_done[n] = 0;
             n = n + 1;
         }
@@ -1616,7 +1698,8 @@ static void hcg_store_off(int base, int vreg, int off, int ty) {
 
 static int hcg_phi_tmp[SSA_MAX_PROMO];
 static int hcg_phi_push_ix[SSA_MAX_PROMO];
-static int hcg_phi_is_const[SSA_MAX_PROMO];
+static int hcg_phi_is_const[SSA_MAX_PROMO];   /* 0 reg, 1 const, 2 memory, 3 none, 4 remat of a reg base */
+static int hcg_phi_imm[SSA_MAX_PROMO];        /* class 4: added to the source register */
 static int hcg_phi_const_val[SSA_MAX_PROMO];
 static int hcg_phi_src_reg[SSA_MAX_PROMO];
 static int hcg_phi_dst_reg[SSA_MAX_PROMO];
@@ -1674,6 +1757,7 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
     int off;
     int phi;
     int dreg;
+    int nskip;
 
     /* Collect PHIs in to_blk */
     n = 0;
@@ -1700,6 +1784,7 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
      * spilled phi feeding another phi), a far (>12-bit) destination
      * slot, or r2 itself appearing as a copy endpoint. */
     fast_ok = 1;
+    nskip = 0;
     j = 0;
     while (j < n) {
         phi = hcg_phi_tmp[j];
@@ -1713,8 +1798,19 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
             hcg_phi_const_val[j] = c;
             hcg_phi_src_reg[j] = -1;
         } else if (v < 0) {
-            fast_ok = 0;
-            break;
+            /* No value on this edge: a variable declared inside the
+             * loop body has none when the loop is entered
+             * (serial_type in sqlite3VdbeRecordCompareWithSkip).
+             * Nothing to copy.  Treating it as a hazard sent every
+             * value on the edge through the push/pop path: 28
+             * instructions per record compared, 3.9 million times
+             * in the 200,000-row run. */
+            hcg_phi_is_const[j] = 3;
+            hcg_phi_src_reg[j] = -1;
+            hcg_phi_active[j] = 0;
+            nskip = nskip + 1;
+            j = j + 1;
+            continue;
         } else if (hcg_ret_direct[v]) {
             hcg_phi_is_const[j] = 0;
             hcg_phi_src_reg[j] = 1;
@@ -1722,8 +1818,14 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
             if (ra_reg[v] == 2) { fast_ok = 0; break; }
             hcg_phi_is_const[j] = 0;
             hcg_phi_src_reg[j] = ra_reg[v];
+        } else if (hcg_remat_reg_src(v, &hcg_phi_imm[j]) >= 0) {
+            /* a rematerialized ADDI of a register: reads that
+             * register at the copy, so it is sequenced as a move */
+            hcg_phi_src_reg[j] = hcg_remat_reg_src(v, &hcg_phi_imm[j]);
+            if (hcg_phi_src_reg[j] == 2) { fast_ok = 0; break; }
+            hcg_phi_is_const[j] = 4;
         } else {
-            /* memory (or remat) source: const-like, no register held */
+            /* memory (or remat of memory) source: const-like, no register held */
             hcg_phi_is_const[j] = 2;
             hcg_phi_src_reg[j] = -1;
         }
@@ -1731,12 +1833,25 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
             off = ra_spill_off[phi];
             if (hcg_slot_off(off) < -2048 || hcg_slot_off(off) > 2047) { fast_ok = 0; break; }
             /* Slot written here and read by another copy on this
-             * edge?  (The reader's source can only be this phi.) */
+             * edge?  Compared by slot, not by value: a phi web
+             * (ra_phi_webs) puts two values in one slot, so the
+             * reader's source may be this phi or its slot-mate.  A
+             * reader whose own destination is the same slot does not
+             * read (its copy is the no-op below). */
             i = 0;
             while (i < n) {
-                if (i != j &&
-                    ssa_phi_find_arg(hcg_phi_tmp[i], from_blk) == phi &&
-                    ra_reg[phi] < 0) { fast_ok = 0; break; }
+                if (i != j) {
+                    int w;
+                    w = ssa_phi_find_arg(hcg_phi_tmp[i], from_blk);
+                    /* the slot a reader reads: its own, or its
+                     * rematerialized ADDI's spilled base's */
+                    if (w >= 0 && !hcg_ret_direct[w] && hcg_src_slot(w) == off &&
+                        !(ra_reg[hcg_phi_tmp[i]] < 0 &&
+                          ra_spill_off[hcg_phi_tmp[i]] == off)) {
+                        fast_ok = 0;
+                        break;
+                    }
+                }
                 i = i + 1;
             }
             if (!fast_ok) break;
@@ -1749,11 +1864,11 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
 
     if (fast_ok) {
         /* Memory destinations first: cycle-free by construction. */
-        rem = n;
+        rem = n - nskip;
         j = 0;
         while (j < n) {
             phi = hcg_phi_tmp[j];
-            if (hcg_phi_dst_reg[j] < 0) {
+            if (hcg_phi_active[j] && hcg_phi_dst_reg[j] < 0) {
                 off = ra_spill_off[phi];
                 v = hcg_phi_src_inst[j];
                 if (off == 0) {
@@ -1789,30 +1904,22 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
                 if (!hcg_phi_active[j]) { j = j + 1; continue; }
                 dst = hcg_phi_dst_reg[j];
                 blocked = 0;
-                if (hcg_phi_is_const[j]) {
-                    i = 0;
-                    while (i < n) {
-                        if (hcg_phi_active[i] && !hcg_phi_is_const[i] && hcg_phi_src_reg[i] == dst) {
-                            blocked = 1;
-                            break;
-                        }
-                        i = i + 1;
+                /* a pending copy that reads dst's register: a move, or
+                 * a rematerialized ADDI of it (class 4) */
+                i = 0;
+                while (i < n) {
+                    if (hcg_phi_active[i] && i != j &&
+                        (hcg_phi_is_const[i] == 0 || hcg_phi_is_const[i] == 4) &&
+                        hcg_phi_src_reg[i] == dst) {
+                        blocked = 1;
+                        break;
                     }
-                } else {
-                    src = hcg_phi_src_reg[j];
-                    if (src != dst) {
-                        i = 0;
-                        while (i < n) {
-                            if (hcg_phi_active[i] && !hcg_phi_is_const[i] && hcg_phi_src_reg[i] == dst) {
-                                blocked = 1;
-                                break;
-                            }
-                            i = i + 1;
-                        }
-                    }
+                    i = i + 1;
                 }
                 if (!blocked) {
-                    if (hcg_phi_is_const[j] == 2) {
+                    if (hcg_phi_is_const[j] == 4) {
+                        cg_rri("addi", dst, hcg_phi_src_reg[j], hcg_phi_imm[j]);
+                    } else if (hcg_phi_is_const[j] == 2) {
                         /* memory/remat source: load straight into dst */
                         hcg_into(dst, hcg_phi_src_inst[j]);
                     } else if (hcg_phi_is_const[j]) {
@@ -1836,7 +1943,7 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
             j = 0;
             srcv = -1;
             while (j < n) {
-                if (hcg_phi_active[j] && !hcg_phi_is_const[j]) {
+                if (hcg_phi_active[j] && (hcg_phi_is_const[j] == 0 || hcg_phi_is_const[j] == 4)) {
                     dst = hcg_phi_dst_reg[j];
                     src = hcg_phi_src_reg[j];
                     if (dst != src) { srcv = src; break; }
@@ -1847,13 +1954,51 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
             cg_rri("addi", 2, srcv, 0);
             j = 0;
             while (j < n) {
-                if (hcg_phi_active[j] && !hcg_phi_is_const[j] && hcg_phi_src_reg[j] == srcv) {
+                if (hcg_phi_active[j] && (hcg_phi_is_const[j] == 0 || hcg_phi_is_const[j] == 4) &&
+                    hcg_phi_src_reg[j] == srcv) {
                     hcg_phi_src_reg[j] = 2;
                 }
                 j = j + 1;
             }
         }
         return;
+    }
+
+    if (getenv("HIR_RA_DEBUG")) {
+        /* Which hazard sent this edge to the push/pop path: one
+         * line per phi, source value and its register, destination
+         * register and slot. */
+        fdputs("PHISLOW to=", 2);
+        fdputuint(2, (unsigned)to_blk);
+        fdputs(" from=", 2);
+        fdputuint(2, (unsigned)from_blk);
+        fdputs(" n=", 2);
+        fdputuint(2, (unsigned)n);
+        fdputc(10, 2);
+        j = 0;
+        while (j < n) {
+            phi = hcg_phi_tmp[j];
+            v = ssa_phi_find_arg(phi, from_blk);
+            fdputs("  phi=", 2);
+            fdputuint(2, (unsigned)phi);
+            fdputs(" dreg=", 2);
+            fdputuint(2, (unsigned)ra_reg[phi]);
+            fdputs(" dslot=", 2);
+            fdputuint(2, (unsigned)ra_spill_off[phi]);
+            fdputs(" v=", 2);
+            fdputuint(2, (unsigned)v);
+            if (v >= 0) {
+                fdputs(" vreg=", 2);
+                fdputuint(2, (unsigned)ra_reg[v]);
+                fdputs(" vslot=", 2);
+                fdputuint(2, (unsigned)ra_spill_off[v]);
+                fdputs(" vkind=", 2);
+                fdputuint(2, (unsigned)h_kind[v]);
+                if (hcg_ret_direct[v]) fdputs(" retdirect", 2);
+            }
+            fdputc(10, 2);
+            j = j + 1;
+        }
     }
 
     /* Push non-constant argument values onto runtime stack. */
@@ -2132,6 +2277,57 @@ static void hcg_condbr_finish(int idx, char *bt, char *bf, int ra, int rb) {
             cg_lref(hcg_blk_lbl[ft]);
             cg_c(10);
             hcg_stat_br_fallthru = hcg_stat_br_fallthru + 1;
+            return;
+        }
+    }
+
+    /* One edge without copies: branch straight to it, then the other
+     * edge's copies and a fall-through (or jump).  A rotated loop's
+     * back edge rarely needs copies while its exit often does; the
+     * generic form below paid a jump back on every iteration. */
+    {
+        int tok;
+        int fok;
+        tok = hcg_edge_nocopy(hcg_cur_blk, t) && hcg_bnear(hcg_cur_blk, ft);
+        fok = hcg_edge_nocopy(hcg_cur_blk, f) && hcg_bnear(hcg_cur_blk, ff);
+        if (tok && (ff == ne || !fok || ft != ne)) {
+            cg_s("    ");
+            cg_s(bt);
+            cg_s(" r");
+            cg_n(ra);
+            cg_s(", r");
+            cg_n(rb);
+            cg_s(", ");
+            cg_lref(hcg_blk_lbl[ft]);
+            cg_c(10);
+            hcg_phi_copies(h_blk[idx], f);
+            if (ff >= bb_nblk || ff != ne) {
+                cg_s("    jal r0, ");
+                cg_lref(hcg_blk_lbl[ff]);
+                cg_c(10);
+            } else {
+                hcg_stat_br_fallthru = hcg_stat_br_fallthru + 1;
+            }
+            return;
+        }
+        if (fok) {
+            cg_s("    ");
+            cg_s(bf);
+            cg_s(" r");
+            cg_n(ra);
+            cg_s(", r");
+            cg_n(rb);
+            cg_s(", ");
+            cg_lref(hcg_blk_lbl[ff]);
+            cg_c(10);
+            hcg_phi_copies(h_blk[idx], t);
+            if (ft >= bb_nblk || ft != ne) {
+                cg_s("    jal r0, ");
+                cg_lref(hcg_blk_lbl[ft]);
+                cg_c(10);
+            } else {
+                hcg_stat_br_fallthru = hcg_stat_br_fallthru + 1;
+            }
             return;
         }
     }
@@ -2569,6 +2765,13 @@ static void hcg_inst(int idx) {
         if (h_val[idx] == 0) cg_rri("addi", rd, 0, 0);
         else if (hcg_is_i12(h_val[idx])) cg_rri("addi", rd, 0, h_val[idx]);
         else hcg_li(rd, h_val[idx]);
+        hcg_maybe_spill(idx);
+        return;
+    }
+    /* A global base pinned in a loop preheader (licm_gaddr_bases). */
+    if (k == HI_GADDR) {
+        rd = hcg_dst(idx);
+        hcg_la(rd, h_name[idx]);
         hcg_maybe_spill(idx);
         return;
     }
@@ -3165,6 +3368,7 @@ static void hcg_inst(int idx) {
         } else {
             /* LOAD(reg): try to fold ADDI-chain base+offset shape. */
             if (hcg_addr_base_off(s1, &base_i, &off) && hcg_is_i12(off)) {
+                if (rl_fold_sub[idx] >= 0) base_i = rl_fold_sub[idx];   /* step 5b.2 reload */
                 rs1 = hcg_src(base_i, 1);
                 hcg_load_off(rd, rs1, off, ty);
             } else {
@@ -3198,6 +3402,7 @@ static void hcg_inst(int idx) {
         } else {
             /* STORE(reg, reg) */
             if (hcg_addr_base_off(s1, &base_i, &off) && hcg_is_i12(off)) {
+                if (rl_fold_sub[idx] >= 0) base_i = rl_fold_sub[idx];   /* step 5b.2 reload */
                 rs1 = hcg_src(base_i, 1);
                 if (hcg_const_is_zero(s2)) vreg = 0;
                 else vreg = hcg_src(s2, 2);
@@ -3605,6 +3810,33 @@ static void hcg_inst(int idx) {
             hcg_maybe_spill(idx);
             return;
         }
+        /* A source with no register (spilled, or recomputed) is
+         * materialized straight into the destination: one ldw or addi,
+         * not a reload into r1 and a move.  The step 5b.2 reload values
+         * are exactly this COPY. */
+        if (ra_reg[s1] < 0 && !(s1 < HIR_MAX_INST && hcg_ret_direct[s1])) {
+            hcg_into(rd, s1);
+            hcg_maybe_spill(idx);
+            return;
+        }
+        /* A memory destination from a register source is one store
+         * (the step 5b.3 region copy at an arm's entry is this). */
+        if (ra_reg[idx] < 0 && !hi_inst_remat(idx) && ra_spill_off[idx] != 0 &&
+            !(idx < HIR_MAX_INST && hcg_ret_direct[idx]) &&
+            !(s1 < HIR_MAX_INST && hcg_ret_direct[s1])) {
+            off = hcg_slot_off(ra_spill_off[idx]);
+            if (off >= -2048 && off <= 2047) {
+                hcg_stat_spillst = hcg_stat_spillst + 1;
+                cg_s("    stw r");
+                cg_n(hcg_slot_base());
+                cg_s(", r");
+                cg_n(ra_reg[s1]);
+                cg_s(", ");
+                cg_n(off);
+                cg_c(10);
+                return;
+            }
+        }
         rs1 = hcg_src(s1, 1);
         if (rd != rs1) {
             cg_rri("addi", rd, rs1, 0);
@@ -3623,6 +3855,37 @@ static void hcg_inst(int idx) {
  * register and one materialization at the def (constants live in
  * the entry block, so the def IS the preheader).  A constant used
  * only outside loops stays remat — no live-range cost. */
+/* ADD of a 12-bit constant becomes ADDI once LICM (whose strength
+ * reduction matches ADD) is done: a load or store then takes the
+ * constant as its displacement through the ADDI fold.  An index that
+ * was a variable at lowering and a constant after mem2reg -- every
+ * copy of an unrolled loop -- arrives as ADD(base, iconst), and was
+ * computed into a register ahead of each access. */
+static void hcg_add_to_addi(void) {
+    int i;
+    int a;
+    int b;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_ADD && !ty_is_llong(h_ty[i]) && !ty_is_fp(h_ty[i])) {
+            a = h_src1[i];
+            b = h_src2[i];
+            if (a >= 0 && b >= 0 && h_kind[a] == HI_ICONST && h_kind[b] != HI_ICONST) {
+                a = h_src2[i];
+                b = h_src1[i];
+            }
+            if (a >= 0 && b >= 0 && h_kind[b] == HI_ICONST && h_kind[a] != HI_ICONST &&
+                h_val[b] >= -2048 && h_val[b] <= 2047) {
+                h_kind[i] = HI_ADDI;
+                h_src1[i] = a;
+                h_src2[i] = -1;
+                h_val[i] = h_val[b];
+            }
+        }
+        i = i + 1;
+    }
+}
+
 static void hcg_mark_loop_consts(void) {
     int i;
     int j;
@@ -4012,6 +4275,7 @@ static void hcg_classify_frame(Node *fn) {
     hcg_save_lr = 0;
     need_stack = 0;
     if (ra_ncsave > 0) need_stack = 1;
+    if (hcg_slot_used) need_stack = 1;
     i = 0;
     while (i < h_ninst) {
         if (ra_spill_off[i] != 0) need_stack = 1;
@@ -4061,12 +4325,17 @@ static void hcg_func(Node *fn) {
     /* Run SSA optimizations */
     hir_opt();
 
+    /* Small local arrays the optimizer left with constant indexes
+     * become one register each (ssa_sroa_late); clean up after them. */
+    if ((ho_mask & 8192) && ssa_sroa_late()) hir_opt();
+
     /* Loop-invariant code motion */
     licm_loopopt = 1;   /* SLOW-32 regalloc/codegen walk the split and
                          * clone lists these passes create; the cross
                          * backends sharing hir_licm.h do not, and leave
                          * this off. */
     if (ho_mask & 1024) hir_licm();
+    hcg_add_to_addi();
 
     /* Promote big loop-used constants out of remat (needs the loop
      * map hir_licm just built; must precede regalloc node creation) */
@@ -4074,6 +4343,9 @@ static void hcg_func(Node *fn) {
 
     /* -dhir=NAME: the function's HIR after the optimizer, to stderr */
     hir_dump("HIR");
+
+    /* Frame slots in use, before BURG folds their address steps away */
+    hcg_note_slots();
 
     /* BURG instruction selection: labels + selects patterns */
     hir_burg();
@@ -4098,6 +4370,7 @@ static void hcg_func(Node *fn) {
         fdputs(fn->name, 2);
         fdputc(10, 2);
     }
+    ra_cur_fname = fn->name;
     hir_regalloc();
 
     /* Optional per-function regalloc dump (Issue #31 diagnostic) */
@@ -4676,17 +4949,25 @@ static void gen_program(Node *prog) {
         /* Inlining + dead-static DCE (GitHub issue 73).  S12CC_INLINE=<n>
          * splices statics up to that AST-node budget when the whole-TU
          * copy count is a size win; DCE then drops the out-of-line
-         * body.  Default 0: budget 20 is -0.52% / -1,294 insns on
-         * sqlite at c6e6a7ab.  sqlite/build-stage08.sh opts in.
-         * Default-on makes the gen2 self-compile of s12cc.c too slow. */
+         * body.  Budget 20 is -0.52% / -1,294 insns on sqlite at
+         * c6e6a7ab; sqlite/build-stage08.sh opts in.  That much by
+         * default made the gen2 self-compile of s12cc.c too slow. */
         char *e;
+        int moves_default;
         hl_prog = prog;
         hl_stat_inlined = 0;
         hl_stat_inl_sel = 0;
         hl_stat_inl_direct = 0;
         e = getenv("S12CC_INLINE");
-        hl_inline_max = e ? atoi(e) : 0;
-        /* Single-site statics get S12CC_INLINE_MOVE (default 400) and
+        hl_inline_max = e ? atoi(e) : 12;
+        /* Unset, the default is bodies no bigger than the call they
+         * replace (12 nodes: ror64 on uint64_t, whose ten calls per
+         * SHA-512 block cost 4x against clang) and no single-site
+         * moves: +0.2% output and ~5% time on the s12cc.c self-compile,
+         * where budget 20 with moves was +17% and +35%. */
+        moves_default = e ? 400 : 0;
+        /* Single-site statics get S12CC_INLINE_MOVE (default 400 when
+         * S12CC_INLINE is given, else 0) and
          * are refused into callers over S12CC_INLINE_HUGE nodes (default
          * 500).  Swept on sqlite at budget 20 (248,466 without):
          *   MOVE 200/no guard 250,328 (VdbeExec +5,156 -- the sink)
@@ -4694,9 +4975,22 @@ static void gen_program(Node *prog) {
          *   MOVE 400/2000 246,121   MOVE 400/500 245,840   MOVE 400/250 246,682
          *   MOVE 800/500 245,778    MOVE 1600/500 246,933 */
         e = getenv("S12CC_INLINE_MOVE");
-        hl_inl_move_max = e ? atoi(e) : 400;
+        hl_inl_move_max = e ? atoi(e) : moves_default;
         e = getenv("S12CC_INLINE_HUGE");
         hl_inl_huge = e ? atoi(e) : 500;
+        /* Bodies of S12CC_INLINE_TINY nodes or fewer (default 16;
+         * casts count 0) go into every site, outside the size model:
+         * AES's xtime, nine sites and just over 12 nodes, was a call in
+         * each MixColumns step; BlaMka's multiply-add, 64 sites in
+         * Argon2's fill loop, at 16.  SQLite: +2.2% static, -0.9%
+         * dynamic at 14; 16 adds +0.2% and saves another 0.3%. */
+        /* Counted loops fully unrolled into S12CC_UNROLL nodes
+         * (default 512; 0 = off), hl_unroll_trips.  AES KDF:
+         * 2.96G -> 1.41G executed; SQLite +0.4% static, -0.25%. */
+        e = getenv("S12CC_UNROLL");
+        hl_unroll_budget = e ? atoi(e) : 512;
+        e = getenv("S12CC_INLINE_TINY");
+        hl_inl_tiny = e ? atoi(e) : 16;
         hl_inl_prepare(prog);
     }
 

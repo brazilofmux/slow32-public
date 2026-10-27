@@ -3134,6 +3134,7 @@ static int gc_rs_nfail[GC_MAX_NODE];
 static char gc_rs_taken[GC_MAX_NODE];
 static int gc_rs_nremat;        /* remat victims made this round */
 static int ra_stat_remat;       /* ... and per function */
+static int ra_stat_unremat;     /* remat victims sent to memory with their operand */
 
 /* Already chosen as a victim: in memory, recomputed at its uses, or a
  * reload value deleted this round (a NOP now). */
@@ -4175,6 +4176,29 @@ static int gc_respill(void) {
                     if (ra_iend[inst] > ra_iend[a]) ra_iend[a] = ra_iend[inst];
                 } else {
                     ra_mem_forced[inst] = 1;
+                    /* A rematerialized ADDI of this value (5b.1) was
+                     * chosen while the value had a register; with the
+                     * value in memory the recompute is a reload AND an
+                     * add at every use, where the ADDI's own slot would
+                     * be one load: it goes to memory too, stored once
+                     * at its definition.  (The f77 resync found it:
+                     * LINPACK's DGEFA reloaded LDA and added 1 at each
+                     * of 806,400 uses of LDA+1.)  Its reads already
+                     * moved onto the operand in the liveness sets;
+                     * more liveness than needed is sound. */
+                    {
+                        int z;
+                        z = 0;
+                        while (z < h_ninst) {
+                            if (ra_remat_op[z] && h_src1[z] == inst) {
+                                ra_remat_op[z] = 0;
+                                ra_mem_forced[z] = 1;
+                                ra_stat_remat = ra_stat_remat - 1;
+                                ra_stat_unremat = ra_stat_unremat + 1;
+                            }
+                            z = z + 1;
+                        }
+                    }
                 }
                 if (ra_pair_of[inst] >= 0) {
                     a = ra_pair_of[inst];

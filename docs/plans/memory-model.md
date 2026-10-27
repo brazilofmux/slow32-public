@@ -698,3 +698,13 @@ machines, five differentials green, the machine quiet.
   kit tool rebuilds byte-identical to batch 44, and so does its SQLite
   build -- the default code is unchanged, as claimed, so no count or
   timing was re-run.
+- 2026-10-27: the Fortran re-sync (fortran/src's copied backend brought
+  level with stage08) found a step-5b.1 cost on its first measurement:
+  LINPACK's DGEFA got 806,400 instructions slower.  A rematerialized
+  ADDI (`LDA+1`) was chosen while its operand had a register; a later
+  respill round put `LDA` in memory, and every use became a reload and
+  an add where the ADDI's own slot is one load.  Now a value sent to
+  memory takes any rematerialized ADDI of it along (stored once at its
+  definition).  LINPACK 509,008,169 -> 508,104,169 (0.01% under the
+  pre-re-sync compiler), mandel unchanged, SQLite heavy 3,471,219,082
+  -> 3,471,219,117 (+35), output identical.

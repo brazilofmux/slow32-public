@@ -10,6 +10,7 @@
 #include "f77_shim.h"
 #include "f77_contract.h"
 #include "hir.h"
+#include "hir_alias.h"
 #include "hir_ssa.h"
 #include "hir_opt.h"
 #include "hir_licm.h"

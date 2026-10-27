@@ -25,6 +25,7 @@ static int f77_nerr;      /* errors reported; the parser checks it per statement
 #include "f77_card.h"
 #include "f77_lexer_gen.c"
 #include "hir.h"
+#include "hir_alias.h"
 #include "hir_ssa.h"
 #include "hir_opt.h"
 #include "hir_licm.h"

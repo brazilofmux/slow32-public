@@ -114,6 +114,8 @@ static int   hl_inl_huge;
 static int   hl_stat_inlined;
 static int   hl_stat_inl_sel;
 static int   hl_stat_inl_direct;
+static int   hl_inl_tiny;            /* S12CC_INLINE_TINY, the tiny-body budget */
+static int   hl_unroll_budget;       /* S12CC_UNROLL, the C unroller's budget */
 static void  hl_inl_prepare(Node *prog) { (void)prog; }
 
 /* --- 4. global data tables walked by gen_data() --------------------- */

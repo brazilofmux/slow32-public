@@ -393,6 +393,8 @@ static char hcg_ret_direct[HIR_MAX_INST];
 
 /* --- Materialize a HIR value into a specific register --- */
 
+static int hcg_src(int inst, int scratch);   /* below; a remat source stages through it */
+
 static void hcg_into(int reg, int inst) {
     int k;
     int off;

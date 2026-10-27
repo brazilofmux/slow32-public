@@ -71,9 +71,11 @@ spilling, live-range splitting, strength reduction, the fused FP
 compare-branch, the hardware `FSQRT.D`/`FSQRT.S` for `__fp64_sqrt` and
 `__fp32_sqrt` -- was ported to stage08 and came back identical. The
 `DIVERGENCE` comments still in the sources are history, not a to-do.
-One has opened since: `hir_opt.h` lets CSE match two equal integer
-constants within a block (`ho_cse_key`, from fort370, 2026-10-13), which
-stage08 does not have yet.
+The one that opened after that (`hir_opt.h` letting CSE match two equal
+integer constants within a block, `ho_cse_key`, from fort370) closed
+when stage08 took the same rule; since the 2026-10-27 re-sync the copied
+headers equal stage08's again past their banners, and `hir_alias.h`
+(the memory model's alias analysis) is copied with them.
 
 The 2026-10-11 re-sync is what a re-sync is for. The six weeks of
 stage08 work it brought in (call-site live-range splitting, frameless
@@ -87,6 +89,18 @@ walked them: selfhost ISSUES-86) and a front-end liberty the old
 backend had tolerated (statements after RETURN emitted into the block
 RETURN closed). Both are fixed on both sides, and `tests/f77/entry2.f`
 and `charfn1.f` hold the two shapes.
+
+The 2026-10-27 re-sync brought in the memory model (alias analysis,
+loads out of loops, cross-block dead stores) and the allocator's step 5
+(phi webs, rematerialized address arithmetic, one reload per block, and
+the fixes those turned up). Every Fortran-local change since the last
+copy was already in stage08, so the copy is plain again. It found one
+thing on the first measurement: LINPACK's DGEFA got 806,400
+instructions slower because a rematerialized `LDA+1` kept being
+recomputed after a later spill round put `LDA` in memory, a load and an
+add at every use. Fixed in stage08 -- such an ADDI now goes to memory
+with its operand -- and LINPACK ended 0.01% faster than before the
+re-sync, mandel 0.08% faster, SQLite unchanged.
 
 ## fort370 is a cousin, not a twin
 
