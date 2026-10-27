@@ -152,6 +152,7 @@ typedef struct Node {
 static Node *hl_prog;
 static int hl_stat_inlined, hl_stat_inl_sel, hl_stat_inl_direct;
 static int hl_inline_max, hl_inl_move_max, hl_inl_huge;
+static int hl_inl_tiny, hl_unroll_budget;   /* the C inliner's tiny-body and unroll budgets: inert here */
 static void hl_inl_prepare(Node *prog) { (void)prog; }
 
 static int s12cc_dump_intervals;     /* the backend's -dintervals; never set here */

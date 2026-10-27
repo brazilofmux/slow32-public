@@ -1,4 +1,5 @@
-/* COPIED from selfhost/src/hir.h at 49712a93.
+/* COPIED from selfhost/src/hir.h at 694d26f2 (re-sync 2026-10-27; the
+ * previous vintage was 49712a93, 2026-10-03).
  * cobol/ keeps its own copy by ruling (docs/plans/census.md): selfhost must be
  * free to evolve without breaking s32-cobc, and selfhost never depends on
  * anything built elsewhere in the tree.  Do NOT symlink this back.  Re-sync
@@ -6,25 +7,19 @@
  *
  * DIVERGENCES from the original, marked "DIVERGENCE (cobol" where they
  * are, so a re-sync carries them over or upstream:
- *   - hcg_frame_reserve, hcg_text_call/hcg_text_is (hir_codegen.h) and
- *     ra_callee_skip (hir_regalloc.h), 2026-10-03: a front end's own code
- *     inside a HIR function (docs/plans/hir.md, milestone 2).
- *   - HI_MULH, HI_MULHU (2026-10-03): the high word of a product, in
- *     hir.h (the kinds, hi_is_binop), hir_opt.h (folding, CSE, src2),
- *     hir_burg.h (patterns, names), hir_regalloc.h (src1 reuse),
- *     hir_codegen.h (mulh, mulhu).  Ported upstream the same day
- *     (bcc42652, selfhost ISSUES-79): the next re-sync carries nothing
- *     for it but the hi_is_binop spelling.
- *   - SEQ/SNE against 0 (hir_codegen.h, 2026-10-03): seq/sne against r0
- *     alone; upstream xori-ed by 0 first.  Ported to stage08 and fortran
- *     the same day: the next re-sync carries nothing for it.
- *   - ra_new_split_copy carries bg_foff/bg_ssym/bg_soff from its source
- *     (hir_regalloc.h, selfhost ISSUES-81, upstream e98e1926): ported
- *     here 2026-10-07, so a re-sync carries nothing for it.
- *   - ho_mem_avail (hir_opt.h, 2026-10-08; ho_mask bit 2048): loads
- *     known by location across blocks, intersection over predecessors;
- *     calls kill all but what ho_call_effect's named callees write.
- *     An upstream candidate (the names would be the C library's). */
+ *   - hcg_frame_reserve, hcg_r30_keep, hcg_text_call/hcg_text_is
+ *     (hir_codegen.h) and ra_callee_skip (hir_regalloc.h), 2026-10-03: a
+ *     front end's own code inside a HIR function (docs/plans/hir.md,
+ *     milestone 2).
+ *   - ho_mem_avail (hir_opt.h, 2026-10-08; ho_mask bit 16384, moved from
+ *     2048 at the 2026-10-27 re-sync because stage08's known-bits pass
+ *     took 2048): loads known by location across blocks, intersection
+ *     over predecessors; calls kill all but what ho_call_effect's named
+ *     callees write.  An upstream candidate (the names would be the C
+ *     library's).
+ * Upstream since, so a re-sync carries nothing for them: HI_MULH and
+ * HI_MULHU (bcc42652, selfhost ISSUES-79), SEQ/SNE against 0 alone,
+ * ra_new_split_copy keeping bg_foff/bg_ssym/bg_soff (selfhost ISSUES-81). */
 /* hir.h -- High-level IR for s12cc
  *
  * Parallel-array instruction representation.
@@ -127,11 +122,12 @@
  * instructions that several passes rewrite, but these are block numbers. */
 #define HI_JMPTAB   70
 
-/* DIVERGENCE (cobol, port upstream candidate): the high word of a
- * product, signed and unsigned -- SLOW-32's mulh and mulhu.  A 64-bit
- * product is then lo = MUL, hi = MULH (both operands sign-extended words)
- * or MULHU + two MULs (pairs), where the C front end calls __muldi3.
- * Binary like ADD..SGEU, pure, CSE-able, reusing src1's register. */
+/* The high word of a product, signed and unsigned -- SLOW-32's mulh and
+ * mulhu.  A 64-bit product is lo = MUL, hi = MULH when both operands are
+ * sign-extended words, else MULHU + two MULs (hir_lower.h hl_ll_op); it
+ * was a __muldi3 call.  Binary like ADD..SGEU: pure, CSE-able, the result
+ * may reuse src1's register.  Came up from the COBOL front's copy of these
+ * headers (cobol/src/hir), 2026-10-03. */
 #define HI_MULH     71
 #define HI_MULHU    72
 /* a binary operation over two value operands (the ADD..SGEU range and
@@ -281,7 +277,34 @@ static int   hl_cur_blk;
 
 /* --- Functions --- */
 
+/* Rematerialized address arithmetic (memory model, step 5b.1): an
+ * ADDI of a register-resident value chosen as a respill victim is
+ * recomputed at each use -- one instruction, like a reload, but no
+ * store and no slot.  Set by gc_respill, read through hi_inst_remat
+ * so the allocator gives it no node and the emitter nothing at its
+ * definition; hcg_into emits `addi reg, src, imm` at the use, and the
+ * liveness builder reads the operand where the value is read
+ * (lv_uses).  Cleared here, per function, before anything reads it:
+ * LICM and the loop-constant pass ask hi_inst_remat long before the
+ * allocator, and liveness is computed before the allocator's own
+ * per-function reset (a stale flag from the previous function made
+ * test_respill's blam read through another function's ADDI). */
+static char ra_remat_op[HIR_MAX_INST];
+
+/* Memory model step 5b.2/5b.3: a COPY the allocator appended -- a
+ * block reload of a spilled value (ra_insert_reloads), or the memory
+ * copy a value becomes across one region (ra_region_split) -- whose
+ * OWN storage is where its readers find the value.  The address-fold
+ * walks stop at one: a load folding through it must read its register
+ * or slot, not the original's.  Read by the emitter, so declared here. */
+static char ra_is_reload[HIR_MAX_INST];
+
 static void hir_reset(void) {
+    {
+        int hi_i;
+        hi_i = 0;
+        while (hi_i < h_ninst && hi_i < HIR_MAX_INST) { ra_remat_op[hi_i] = 0; ra_is_reload[hi_i] = 0; hi_i = hi_i + 1; }
+    }
     h_ninst = 0;
     h_ncarg = 0;
     {
@@ -327,6 +350,13 @@ static void hl_switch_block(int blk) {
  * Nothing in a C-compiler frontend sets it, so the mechanism is inert
  * when ported. */
 static char h_ld_ro[HIR_MAX_INST];
+/* volatile (docs/plans/memory-model.md, step 2a).  h_voladdr marks an
+ * address value the lowering computed for a volatile-qualified lvalue;
+ * an ADDI or COPY off one is one too.  A LOAD or STORE through such an
+ * address is a volatile access, h_vol: never forwarded, never removed,
+ * never hoisted, and nothing is known about memory across it. */
+static char h_voladdr[HIR_MAX_INST];
+static char h_vol[HIR_MAX_INST];
 
 static int hi_emit(int kind, int ty, int s1, int s2, int val, char *name) {
     int idx;
@@ -350,6 +380,12 @@ static int hi_emit(int kind, int ty, int s1, int s2, int val, char *name) {
     h_cbase[idx] = -1;
     h_pbase[idx] = -1;
     h_pcnt[idx] = 0;
+    h_voladdr[idx] = 0;
+    h_vol[idx] = 0;
+    if (s1 >= 0 && h_voladdr[s1]) {
+        if (kind == HI_ADDI || kind == HI_COPY) h_voladdr[idx] = 1;
+        if (kind == HI_LOAD || kind == HI_STORE) h_vol[idx] = 1;
+    }
     h_ninst = h_ninst + 1;
     if (hl_cur_blk >= 0) {
         bb_end[hl_cur_blk] = h_ninst;
@@ -398,6 +434,7 @@ static int h_no_remat[HIR_MAX_INST];
  * kind) is in hand. */
 static int hi_inst_remat(int i) {
     if (i < 0) return 0;
+    if (ra_remat_op[i]) return 1;
     if (h_no_remat[i]) return 0;
     return hi_is_remat(h_kind[i]);
 }
@@ -428,6 +465,81 @@ static int hi_is_pure(int k) {
     if (k == HI_GETFP) return 1;
     if (k == HI_FSQRT) return 1;
     return 0;
+}
+
+/* --- Operand references ---------------------------------------------
+ * An instruction refers to other instructions through src1 (always a
+ * reference when >= 0), src2 (a reference for a binop, STORE, RET and
+ * the FP ops; a block number for BR and BRC, a variable index for a
+ * PHI), its call arguments, and its phi arguments.  Five passes walked
+ * those four places by hand, each with its own list of the kinds that
+ * carry an argument list, and two of the lists disagreed.  This is the
+ * one walk: reference n of instruction i is src1 first, then src2, then
+ * the arguments in order (docs/plans/memory-model.md, step 1). */
+static int hi_src2_is_ref(int k) {
+    if (hi_is_binop(k)) return 1;
+    if (k == HI_STORE) return 1;
+    if (k == HI_RET) return 1;
+    if (k >= HI_FADD && k <= HI_FDIV) return 1;
+    if (k >= HI_FEQ && k <= HI_FLE) return 1;
+    return 0;
+}
+
+static int hi_nargs(int i) {
+    int k;
+    if (h_cbase[i] < 0) return 0;
+    k = h_kind[i];
+    if (k == HI_CALL || k == HI_CALLP ||
+        k == HI_A64_DBT_TRAMPOLINE || k == HI_X64_DBT_TRAMPOLINE) return h_val[i];
+    return 0;
+}
+
+static int hi_nrefs(int i) {
+    int n;
+    int k;
+    k = h_kind[i];
+    n = 0;
+    if (h_src1[i] >= 0) n = n + 1;
+    if (h_src2[i] >= 0 && hi_src2_is_ref(k)) n = n + 1;
+    n = n + hi_nargs(i);
+    if (k == HI_PHI && h_pbase[i] >= 0) n = n + h_pcnt[i];
+    return n;
+}
+
+/* The slot index reference n of i lives in: 0 src1, 1 src2, 2 + j the
+ * j-th call argument, -2 - j the j-th phi argument. */
+static int hi_ref_slot(int i, int n) {
+    int k;
+    int na;
+    k = h_kind[i];
+    if (h_src1[i] >= 0) { if (n == 0) return 0; n = n - 1; }
+    if (h_src2[i] >= 0 && hi_src2_is_ref(k)) { if (n == 0) return 1; n = n - 1; }
+    na = hi_nargs(i);
+    if (n < na) return 2 + n;
+    return -2 - (n - na);
+}
+
+static int hi_ref(int i, int n) {
+    int s;
+    s = hi_ref_slot(i, n);
+    if (s == 0) return h_src1[i];
+    if (s == 1) return h_src2[i];
+    if (s >= 2) return h_carg[h_cbase[i] + (s - 2)];
+    return h_pval[h_pbase[i] + (-2 - s)];
+}
+
+static void hi_ref_set(int i, int n, int v) {
+    int s;
+    s = hi_ref_slot(i, n);
+    if (s == 0) h_src1[i] = v;
+    else if (s == 1) h_src2[i] = v;
+    else if (s >= 2) h_carg[h_cbase[i] + (s - 2)] = v;
+    else h_pval[h_pbase[i] + (-2 - s)] = v;
+}
+
+/* Is reference n of i the address a LOAD reads or a STORE writes? */
+static int hi_ref_is_addr(int i, int n) {
+    return n == 0 && h_src1[i] >= 0 && (h_kind[i] == HI_LOAD || h_kind[i] == HI_STORE);
 }
 
 /* Control-flow terminators that end a basic block (define its CFG successors).

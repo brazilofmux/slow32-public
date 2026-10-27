@@ -93,6 +93,7 @@
 #pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
 #endif
 #include "hir/hir.h"
+#include "hir/hir_alias.h"
 #include "hir/hir_ssa.h"
 #include "hir/hir_opt.h"
 #include "hir/hir_licm.h"

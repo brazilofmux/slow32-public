@@ -1,4 +1,4 @@
-/* COPIED from selfhost/src/hir_ssa.h at 49712a93.
+/* COPIED from selfhost/src/hir_ssa.h at 694d26f2.
  * cobol/ keeps its own copy by ruling (docs/plans/census.md): selfhost must be
  * free to evolve without breaking s32-cobc, and selfhost never depends on
  * anything built elsewhere in the tree.  Do NOT symlink this back.  Re-sync
@@ -85,6 +85,7 @@ static int ssa_is_setjmp_name(char *nm) {
     return 0;
 }
 static int ssa_phi_base; /* h_ninst before phi insertion */
+static int ssa_late;     /* ssa_sroa_late is promoting: older phis stay */
 
 /* --- PHI optimization (linked lists per block) --- */
 static int ssa_phi_head[HIR_MAX_BLOCK];
@@ -514,9 +515,9 @@ static void ssa_find_promo(void) {
     int i;
     int j;
     int k;
-    int ai;
     int a;
-    int off;
+    int n2;
+    int bad;
     int ok[HL_MAX_ALLOCA];
 
     /* The promo list is rebuilt at the end of this scan; clear it up
@@ -547,71 +548,38 @@ static void ssa_find_promo(void) {
         }
     }
 
-    /* Scan instructions for non-promotable uses */
+    /* Every reference to an alloca other than as the address of a LOAD
+     * or STORE of its own type takes its address: stored as a value, a
+     * call argument, an operand of arithmetic, a phi's argument.  A
+     * PUNNED access counts too: `*(unsigned long long *)&d` is a LOAD on
+     * d's alloca, so the old scan happily promoted d -- the pun then
+     * read a stale slot or a wrong-class register (cc-a64: every such
+     * pun returned stack junk; d35_fp_loads).  fp-ness or width
+     * mismatch blocks promotion; same-width integer sign punning stays
+     * promotable.  (An earlier version consulted ssa_promo[] here while
+     * it still held the previous function's list, and promoted an
+     * escaping alloca whose id collided with a stale entry.) */
     i = 0;
     while (i < h_ninst) {
         k = h_kind[i];
-        /* src1: only OK as addr in a LOAD or STORE whose type MATCHES
-         * the alloca's.  Reject unconditionally otherwise — an earlier
-         * ssa_find_promo_idx() guard here consulted ssa_promo[], which
-         * at this point still held the PREVIOUS function's list, so an
-         * escaping alloca whose inst id collided with a stale entry
-         * skipped rejection and got promoted (cc-a64: a double
-         * literal's temp alloca escaping into ADDI+4 was promoted, and
-         * the f64 LOAD collapsed to its lo-word ICONST).
-         *
-         * The type check treats a PUNNED access as address-taken:
-         * `*(unsigned long long *)&d` is a LOAD on d's alloca, so the
-         * old scan happily promoted d — the pun then read a stale slot
-         * or a wrong-class register (cc-a64: every such pun returned
-         * stack junk; d35_fp_loads).  fp-ness or width mismatch
-         * blocks promotion; same-width integer sign punning stays
-         * promotable. */
-        if (h_src1[i] >= 0 && h_kind[h_src1[i]] == HI_ALLOCA) {
-            int punned;
-            punned = 0;
-            if (k == HI_LOAD || k == HI_STORE) {
-                if (ty_is_fp(h_ty[i]) != ty_is_fp(h_ty[h_src1[i]]) ||
-                    ty_size(h_ty[i]) != ty_size(h_ty[h_src1[i]]))
-                    punned = 1;
-            }
-            if ((k != HI_LOAD && k != HI_STORE) || punned) {
-                j = 0;
-                while (j < hl_nalloca) {
-                    if (hl_ainst[j] == h_src1[i]) { ok[j] = 0; }
-                    j = j + 1;
-                }
-            }
-        }
-        /* src2: any alloca as src2 means address-taken (STORE val).
-         * Only check when src2 is actually an inst reference -- for
-         * HI_BR/HI_BRC, src2 is a block index that can coincidentally
-         * match an alloca's inst index, which would falsely reject the
-         * alloca.  Inlined to avoid a forward dep on hir_opt.h. */
-        if (h_src2[i] >= 0 && k != HI_BR && k != HI_BRC &&
-            k != HI_PHI && k != HI_NOP &&
-            h_kind[h_src2[i]] == HI_ALLOCA) {
-            j = 0;
-            while (j < hl_nalloca) {
-                if (hl_ainst[j] == h_src2[i]) { ok[j] = 0; }
-                j = j + 1;
-            }
-        }
-        /* Call arguments */
-        if (k == HI_CALL || k == HI_CALLP ||
-            k == HI_A64_DBT_TRAMPOLINE || k == HI_X64_DBT_TRAMPOLINE) {
-            j = 0;
-            while (j < h_val[i]) {
-                a = h_carg[h_cbase[i] + j];
-                if (a >= 0 && h_kind[a] == HI_ALLOCA) {
-                    ai = 0;
-                    while (ai < hl_nalloca) {
-                        if (hl_ainst[ai] == a) { ok[ai] = 0; }
-                        ai = ai + 1;
+        if (k == HI_NOP) { i = i + 1; continue; }
+        n2 = 0;
+        while (n2 < hi_nrefs(i)) {
+            a = hi_ref(i, n2);
+            if (a >= 0 && h_kind[a] == HI_ALLOCA) {
+                bad = 1;
+                if (hi_ref_is_addr(i, n2) && !h_vol[i])
+                    bad = (ty_is_fp(h_ty[i]) != ty_is_fp(h_ty[a]) ||
+                           ty_size(h_ty[i]) != ty_size(h_ty[a]));
+                if (bad) {
+                    j = 0;
+                    while (j < hl_nalloca) {
+                        if (hl_ainst[j] == a) ok[j] = 0;
+                        j = j + 1;
                     }
                 }
-                j = j + 1;
             }
+            n2 = n2 + 1;
         }
         i = i + 1;
     }
@@ -824,9 +792,11 @@ static void ssa_insert_phis(void) {
         v = v + 1;
     }
 
-    /* Build PHI lists per block for fast lookup in ssa_rename */
+    /* Build PHI lists per block for fast lookup in ssa_rename.  A late
+     * pass (ssa_sroa_late) keeps the first construction's phis on the
+     * lists and adds its own in front of them. */
     b = 0;
-    while (b < bb_nblk) { ssa_phi_head[b] = -1; b = b + 1; }
+    while (b < bb_nblk && !ssa_late) { ssa_phi_head[b] = -1; b = b + 1; }
     i = ssa_phi_base;
     while (i < h_ninst) {
         if (h_kind[i] == HI_PHI) {
@@ -900,7 +870,7 @@ static void ssa_rename(void) {
             i = ssa_phi_head[b];
             while (i >= 0) {
                 phi_v = h_val[i];
-                ssa_vpush(phi_v, i);
+                if (i >= ssa_phi_base) ssa_vpush(phi_v, i);
                 i = ssa_phi_next[i];
             }
 
@@ -940,7 +910,7 @@ static void ssa_rename(void) {
                     val = ssa_vcur(phi_v);
                     /* Find this pred's slot in phi args */
                     j = 0;
-                    while (j < h_pcnt[i]) {
+                    while (j < h_pcnt[i] && i >= ssa_phi_base) {
                         if (h_pblk[h_pbase[i] + j] == b) {
                             h_pval[h_pbase[i] + j] = val;
                         }
@@ -1017,7 +987,12 @@ static void ssa_split_pair_allocas(void) {
     int q;
     int a_inst;
     int nhi;
-    int hi_nodes[8];
+    /* One ADDI(A, 4) per hi-half access site.  Eight was enough for a
+     * loop's double and not for an i64 that a function touches in
+     * every arm: sqlite3GetToken's `i64 i` has sixteen, so it stayed in
+     * the frame -- 116 reloads where clang's build has two -- and so
+     * did sqlite3VdbeExec's nVmStep (selfhost ISSUES-98). */
+    int hi_nodes[256];
 
     j = 0;
     while (j < hl_nalloca) {
@@ -1042,7 +1017,7 @@ static void ssa_split_pair_allocas(void) {
                     h_val[i] == 0) {
                     /* lo-half access: stays on A */
                 } else if (k == HI_ADDI && h_val[i] == 4) {
-                    if (nhi >= 8) { ok = 0; }
+                    if (nhi >= 256) { ok = 0; }
                     else { hi_nodes[nhi] = i; nhi = nhi + 1; }
                 } else {
                     ok = 0;
@@ -1051,6 +1026,19 @@ static void ssa_split_pair_allocas(void) {
             if (ok && h_src2[i] == a_inst &&
                 k != HI_BR && k != HI_BRC && k != HI_PHI)
                 ok = 0;
+            if (!ok && getenv("HIR_RA_DEBUG")) {
+                fdputs("PAIRSPLIT refused alloca=", 2);
+                fdputuint(2, (unsigned)a_inst);
+                fdputs(" at inst=", 2);
+                fdputuint(2, (unsigned)i);
+                fdputs(" kind=", 2);
+                fdputuint(2, (unsigned)k);
+                fdputs(" ty=", 2);
+                fdputuint(2, (unsigned)h_ty[i]);
+                fdputs(" val=", 2);
+                fdputuint(2, (unsigned)h_val[i]);
+                fdputc(10, 2);
+            }
             if (ok && (k == HI_CALL || k == HI_CALLP ||
                        k == HI_A64_DBT_TRAMPOLINE ||
                        k == HI_X64_DBT_TRAMPOLINE) && h_cbase[i] >= 0) {
@@ -1157,6 +1145,276 @@ static void ssa_split_pair_allocas(void) {
 
         j = j + 1;
     }
+}
+
+/* =================================================================
+ * Late scalar replacement of small local arrays (SLOW-32 only)
+ *
+ * `unsigned char s[16]` indexed by an unrolled loop's counter is
+ * s[i] with i a variable when SSA is first built, so ssa_find_promo
+ * sees ADD(A, i) and keeps the array in the frame.  Once hir_opt has
+ * folded the counter, every access is LOAD/STORE [ADDI(A, c)], and
+ * the array is sixteen independent bytes that only happen to live
+ * next to each other: AES's state went to memory and back sixteen
+ * times a round.
+ *
+ * ssa_sroa_late runs after hir_opt.  An alloca qualifies when every
+ * use of it, or of an ADDI chain off it, is the address of a LOAD or
+ * STORE at displacement 0, the accesses at each offset agree on type,
+ * and no two overlap.  Each offset becomes its own alloca (the
+ * original keeps offset 0), the ADDIs are NOPed, and phis and renaming
+ * run again for the new allocas alone: ssa_late keeps the first
+ * construction's phis where they are.  The caller reruns hir_opt.
+ * Anything else -- an address passed to a call, stored, merged by a
+ * phi, an access past SSA_SR_MAXB -- leaves the alloca alone.  A
+ * function that calls setjmp keeps its locals in memory, as
+ * ssa_find_promo does.
+ * ================================================================= */
+#define SSA_SR_MAXB 128
+#define SSA_SR_MAXN 128
+static int ssa_sr_node[SSA_SR_MAXN];    /* the alloca and the ADDIs off it */
+static int ssa_sr_noff[SSA_SR_MAXN];
+static int ssa_sr_fty[SSA_SR_MAXB];     /* access type of the field at this offset */
+static int ssa_sr_cov[SSA_SR_MAXB];     /* 1 + offset of the field covering this byte */
+static int ssa_sr_fa[SSA_SR_MAXB];      /* the field's alloca */
+
+static char ssa_sr_flag[HIR_MAX_INST];  /* per alloca: 1 accessed, 2 refused */
+
+/* One pass over the function to find the allocas worth checking one
+ * at a time: those with a field access and no use that refuses them.
+ * Roots and offsets are al_roots' (hir_alias.h). */
+static void ssa_sr_mark(int v, int ok_use) {
+    int r;
+    if (v < 0 || v >= al_n) return;
+    r = al_root[v];
+    if (r < 0) return;
+    if (!ok_use) ssa_sr_flag[r] = 2;
+    else if (ssa_sr_flag[r] == 0) ssa_sr_flag[r] = 1;
+}
+
+static void ssa_sr_filter(void) {
+    int i;
+    int k;
+    int n;
+    al_roots();
+    i = 0;
+    while (i < al_n) { ssa_sr_flag[i] = 0; i = i + 1; }
+    i = 0;
+    while (i < al_n) {
+        if (al_is_step(i) && (al_roff[i] < 0 || al_roff[i] >= SSA_SR_MAXB))
+            ssa_sr_flag[al_root[i]] = 2;
+        i = i + 1;
+    }
+    i = 0;
+    while (i < al_n) {
+        k = h_kind[i];
+        /* a step's operands are accounted for by the root it derives */
+        if (k == HI_NOP || al_is_step(i)) { i = i + 1; continue; }
+        n = 0;
+        while (n < hi_nrefs(i)) {
+            ssa_sr_mark(hi_ref(i, n), hi_ref_is_addr(i, n) && h_val[i] == 0 && !h_vol[i]);
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+}
+
+static int ssa_sr_find(int n, int inst) {
+    int q;
+    q = 0;
+    while (q < n) {
+        if (ssa_sr_node[q] == inst) return q;
+        q = q + 1;
+    }
+    return -1;
+}
+
+/* The steps off a: every instruction rooted at it.  0 when there are
+ * more than SSA_SR_MAXN or one leaves the field window. */
+static int ssa_sr_nodes(int a) {
+    int n;
+    int i;
+    n = 1;
+    ssa_sr_node[0] = a;
+    ssa_sr_noff[0] = 0;
+    i = 0;
+    while (i < al_n) {
+        if (i != a && al_root[i] == a && h_kind[i] != HI_NOP) {
+            if (n >= SSA_SR_MAXN) return 0;
+            if (al_roff[i] < 0 || al_roff[i] >= SSA_SR_MAXB) return 0;
+            ssa_sr_node[n] = i;
+            ssa_sr_noff[n] = al_roff[i];
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+/* Every use of the n nodes is a field access that fits; record the
+ * fields.  Returns the number of accesses, or -1 to leave a alone. */
+static int ssa_sr_check(int n) {
+    int i;
+    int k;
+    int q;
+    int m;
+    int b;
+    int off;
+    int sz;
+    int nacc;
+    b = 0;
+    while (b < SSA_SR_MAXB) { ssa_sr_fty[b] = -1; ssa_sr_cov[b] = 0; b = b + 1; }
+    nacc = 0;
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k == HI_NOP) { i = i + 1; continue; }
+        m = 0;
+        while (m < hi_nrefs(i)) {
+            q = ssa_sr_find(n, hi_ref(i, m));
+            if (q >= 0) {
+                if (hi_ref_is_addr(i, m)) {
+                    /* a field access: record it */
+                    if (h_val[i] != 0) return -1;
+                    off = ssa_sr_noff[q];
+                    sz = ty_size(h_ty[i]);
+                    if (sz <= 0 || off + sz > SSA_SR_MAXB) return -1;
+                    if (ssa_sr_fty[off] == -1) {
+                        b = off;
+                        while (b < off + sz) {
+                            if (ssa_sr_cov[b]) return -1;
+                            ssa_sr_cov[b] = off + 1;
+                            b = b + 1;
+                        }
+                        ssa_sr_fty[off] = h_ty[i];
+                    } else if (ssa_sr_fty[off] != h_ty[i]) {
+                        return -1;
+                    }
+                    nacc = nacc + 1;
+                } else if (ssa_sr_find(n, i) < 0) {
+                    /* a use that is not a step off the array: stored as
+                     * a value, passed, merged, computed with */
+                    return -1;
+                }
+            }
+            m = m + 1;
+        }
+        i = i + 1;
+    }
+    /* A field must start where its bytes say it does: an access in the
+     * middle of another one's bytes was refused above, and a field
+     * whose start byte is also covered by an earlier one is too. */
+    b = 0;
+    while (b < SSA_SR_MAXB) {
+        if (ssa_sr_fty[b] != -1 && ssa_sr_cov[b] != b + 1) return -1;
+        b = b + 1;
+    }
+    return nacc;
+}
+
+/* Split a (hl_ainst[j]) into one alloca per field. */
+static void ssa_sr_split(int j, int n) {
+    int a;
+    int b;
+    int i;
+    int q;
+    int f;
+    a = hl_ainst[j];
+    b = 0;
+    while (b < SSA_SR_MAXB) {
+        ssa_sr_fa[b] = -1;
+        if (ssa_sr_fty[b] != -1) {
+            if (b == 0) {
+                f = a;
+            } else {
+                f = h_ninst;
+                h_kind[f] = HI_ALLOCA;
+                h_src1[f] = -1;
+                h_src2[f] = -1;
+                h_val[f] = hl_aoff[j] + b;
+                h_name[f] = 0;
+                h_blk[f] = h_blk[a];
+                h_cbase[f] = -1;
+                h_pbase[f] = -1;
+                h_pcnt[f] = 0;
+                h_ld_ro[f] = 0;
+                h_no_remat[f] = 0;
+                h_ninst = h_ninst + 1;
+                hl_aoff[hl_nalloca] = hl_aoff[j] + b;
+                hl_aslot[hl_nalloca] = hl_aslot[j];
+                hl_ainst[hl_nalloca] = f;
+                hl_nalloca = hl_nalloca + 1;
+            }
+            h_ty[f] = ssa_sr_fty[b];
+            ssa_sr_fa[b] = f;
+            ssa_promo[ssa_npromo] = f;
+            ssa_npromo = ssa_npromo + 1;
+        }
+        b = b + 1;
+    }
+    i = 0;
+    while (i < h_ninst) {
+        if ((h_kind[i] == HI_LOAD || h_kind[i] == HI_STORE) && h_src1[i] >= 0) {
+            q = ssa_sr_find(n, h_src1[i]);
+            if (q >= 0) h_src1[i] = ssa_sr_fa[ssa_sr_noff[q]];
+        }
+        i = i + 1;
+    }
+    q = 1;
+    while (q < n) {
+        i = ssa_sr_node[q];
+        h_kind[i] = HI_NOP;
+        h_src1[i] = -1;
+        h_src2[i] = -1;
+        q = q + 1;
+    }
+}
+
+static int ssa_sroa_late(void) {
+    int j;
+    int nj;
+    int a;
+    int n;
+    int nf;
+    int b;
+
+    if (ssa_fn_setjmp || bb_nblk < 1) return 0;
+    ssa_sr_filter();
+    ssa_npromo = 0;
+    nj = hl_nalloca;
+    j = 0;
+    while (j < nj) {
+        a = hl_ainst[j];
+        if (a >= 0 && h_kind[a] == HI_ALLOCA && ssa_sr_flag[a] == 1) {
+            n = ssa_sr_nodes(a);
+            if (n > 0 && ssa_sr_check(n) > 0) {
+                nf = 0;
+                b = 0;
+                while (b < SSA_SR_MAXB) {
+                    if (ssa_sr_fty[b] != -1) nf = nf + 1;
+                    b = b + 1;
+                }
+                if (hl_nalloca + nf <= HL_MAX_ALLOCA &&
+                    h_ninst + nf < HIR_MAX_INST &&
+                    ssa_npromo + nf <= SSA_MAX_PROMO)
+                    ssa_sr_split(j, n);
+            }
+        }
+        j = j + 1;
+    }
+    if (ssa_npromo == 0) return 0;
+
+    ssa_build_cfg();
+    ssa_compute_rpo();
+    ssa_compute_idom();
+    ssa_compute_df();
+    ssa_build_dtree();
+    hl_cur_blk = -1;
+    ssa_late = 1;
+    ssa_insert_phis();
+    ssa_rename();
+    ssa_late = 0;
+    return 1;
 }
 
 /* JMPTAB edges cannot carry phi copies (hir_codegen.h).  Lowering already
