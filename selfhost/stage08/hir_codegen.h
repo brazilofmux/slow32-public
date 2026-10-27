@@ -900,6 +900,64 @@ static int hcg_rp_multi_read(int ret_src, int ret_inst) {
     return dropped;
 }
 
+/* The allocator's own verdict: two web members whose nodes interfere
+ * were live at once, and r1 cannot hold both.  The rules above (one
+ * operand, one phi per join, one reader that writes) each named a shape;
+ * a loop that recomputes v0 = v1 - 16 and then v1 itself, returning v0,
+ * fit none of them, and v1's new value overwrote v0 in r1 (cfuzz seed
+ * 42467: 0 for 0xfffffff0).  A member without a node has no verdict and
+ * leaves the web.  Returns 1 if any member left. */
+static int hcg_rp_interferes(int a, int b) {
+    int na;
+    int nb;
+    int e;
+    na = gc_node[a];
+    nb = gc_node[b];
+    if (na < 0 || nb < 0) return 1;
+    na = gc_get_alias(na);
+    nb = gc_get_alias(nb);
+    if (na == nb) return 0;
+    e = gc_adj_head[na];
+    while (e >= 0) {
+        if (gc_get_alias(gc_adj_peer[e]) == nb) return 1;
+        e = gc_adj_next[e];
+    }
+    e = gc_adj_head[nb];
+    while (e >= 0) {
+        if (gc_get_alias(gc_adj_peer[e]) == na) return 1;
+        e = gc_adj_next[e];
+    }
+    return 0;
+}
+
+static int hcg_rp_conflicts(int ret_src) {
+    int i;
+    int j;
+    int a;
+    int b;
+    int dropped;
+    dropped = 0;
+    i = 0;
+    while (i < hcg_rp_ns) {
+        a = hcg_rp_s[i];
+        if (hcg_rp_stamp[a] == hcg_rp_tick) {
+            j = i + 1;
+            while (j < hcg_rp_ns) {
+                b = hcg_rp_s[j];
+                if (hcg_rp_stamp[b] == hcg_rp_tick && hcg_rp_interferes(a, b)) {
+                    if (b != ret_src) hcg_rp_stamp[b] = 0;
+                    else hcg_rp_stamp[a] = 0;
+                    dropped = 1;
+                    if (hcg_rp_stamp[a] != hcg_rp_tick) break;
+                }
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return dropped;
+}
+
 static void hcg_rp_shrink(int ret_src, int ret_inst) {
     int changed;
     int i;
@@ -982,6 +1040,7 @@ static void hcg_rp_shrink(int ret_src, int ret_inst) {
             i = i + 1;
         }
         if (hcg_rp_multi_read(ret_src, ret_inst)) changed = 1;
+        if (hcg_rp_conflicts(ret_src)) changed = 1;
         if (changed) hcg_rp_prune(ret_inst);
     }
 }
@@ -3978,6 +4037,19 @@ static void hcg_add_to_addi(void) {
     }
 }
 
+/* A pinned constant is materialized once, at its definition, so the
+ * definition must come before every use.  Constants usually sit in the
+ * entry block, but one the optimizer made inside a block -- a ?: arm
+ * folded to its constant -- does not: pinned, it was loaded inside an
+ * inner loop while an expression LICM had hoisted to the outer loop read
+ * the register first (cfuzz seed 16026 of the wide generator).  Nor is
+ * the user's own block enough: a constant has other users, and LICM's
+ * strength reduction put one in the preheader (seed 39992).  Only the
+ * entry block is before every use. */
+static int hcg_pin_before(int a, int use_blk) {
+    return h_blk[a] == 0;
+}
+
 static void hcg_mark_loop_consts(void) {
     int i;
     int j;
@@ -4015,7 +4087,8 @@ static void hcg_mark_loop_consts(void) {
                         p = h_pblk[h_pbase[i] + j];
                         if (a >= 0 && p >= 0 && p < bb_nblk &&
                             licm_in_any_loop[p] &&
-                            h_kind[a] == HI_ICONST && !hcg_is_i12(h_val[a])) {
+                            h_kind[a] == HI_ICONST && !hcg_is_i12(h_val[a]) &&
+                            hcg_pin_before(a, p)) {
                             h_no_remat[a] = 1;
                         }
                         j = j + 1;
@@ -4023,18 +4096,18 @@ static void hcg_mark_loop_consts(void) {
                 }
             } else if (inloop) {
                 a = h_src1[i];
-                if (a >= 0 && h_kind[a] == HI_ICONST && !hcg_is_i12(h_val[a]))
+                if (a >= 0 && h_kind[a] == HI_ICONST && !hcg_is_i12(h_val[a]) && hcg_pin_before(a, b))
                     h_no_remat[a] = 1;
                 if (ho_src2_is_ref(k)) {
                     a = h_src2[i];
-                    if (a >= 0 && h_kind[a] == HI_ICONST && !hcg_is_i12(h_val[a]))
+                    if (a >= 0 && h_kind[a] == HI_ICONST && !hcg_is_i12(h_val[a]) && hcg_pin_before(a, b))
                         h_no_remat[a] = 1;
                 }
                 if ((k == HI_CALL || k == HI_CALLP) && h_cbase[i] >= 0) {
                     j = 0;
                     while (j < h_val[i]) {
                         a = h_carg[h_cbase[i] + j];
-                        if (a >= 0 && h_kind[a] == HI_ICONST && !hcg_is_i12(h_val[a]))
+                        if (a >= 0 && h_kind[a] == HI_ICONST && !hcg_is_i12(h_val[a]) && hcg_pin_before(a, b))
                             h_no_remat[a] = 1;
                         j = j + 1;
                     }

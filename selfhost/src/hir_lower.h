@@ -4242,6 +4242,10 @@ static void hl_stmt(Node *n) {
             hl_expr(n->init);
             while (ntrips > 0) {
                 hl_stmt(n->body);
+                /* a copy that always returns ends the loop: nothing after
+                 * it runs, and nothing may follow a terminator ("instructions
+                 * after a block's terminator"; cfuzz, `{ x; return k; }`) */
+                if (hl_terminated()) break;
                 hl_expr(n->step);
                 ntrips = ntrips - 1;
             }

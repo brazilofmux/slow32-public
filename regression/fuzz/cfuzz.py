@@ -55,13 +55,19 @@ class Fn:
         self.nparams = nparams
         self.locals = []        # (name, ctype, init expr)
         self.arrays = []        # (name, ctype, n)
+        self.ptrs = []          # unsigned * locals
+        self.structs = []       # struct S locals
         self.body = []          # statements
         self.ret = None         # expression
+
+
+PROFILE = 'wide'     # 'narrow': scalars, local arrays and counted loops only
 
 
 class Gen:
     def __init__(self, seed):
         self.r = random.Random(seed)
+        self.wide_on = PROFILE != 'narrow'
         self.fns = []
         self.depth = 0
         self.loopvars = []      # loop variables in scope (read-only in bodies)
@@ -85,6 +91,14 @@ class Gen:
         if c < 0.58 and f.arrays:
             a = r.choice(f.arrays)
             return ('idx', a[0], a[2], self.expr(2))
+        if c < 0.64 and self.wide_on:
+            return ('v', r.choice(GLOBALS))
+        if c < 0.68 and self.wide_on:
+            return ('idx', 'ga', 8, self.expr(1))
+        if c < 0.74 and f.ptrs:
+            return ('deref', r.choice(f.ptrs))
+        if c < 0.80 and f.structs:
+            return ('fld', r.choice(f.structs), r.choice('abcd'))
         if f.locals:
             return ('v', r.choice(f.locals)[0])
         return ('k', r.randrange(1 << 16))
@@ -122,7 +136,46 @@ class Gen:
             if callees and self.loop_nest <= 1:
                 g = r.choice(callees)
                 return ('call', g.name, [self.expr(d - 2) for _ in range(g.nparams)])
+        if c < 0.95 and self.wide_on:
+            return self.wide(d)
         return ('addk', self.expr(d - 1), r.choice([1, 4, 5, 100, 1000, 2047, -1, -5, -2048]))
+
+    def wide(self, d):
+        """The second-tier forms: 64-bit, signed in range, floating point,
+        and the fixed helpers that take pointers and structs."""
+        r = self.r
+        f = self.cur
+        c = r.random()
+        if c < 0.30:
+            return ('w64', r.choice(['+', '-', '*', '^', '/', '%', '>>']),
+                    self.expr(d - 1), self.expr(d - 1), r.randrange(64))
+        if c < 0.55:
+            return ('sgn', r.choice(['+', '-', '*', '/', '%', '>>', '<', '>=']),
+                    self.expr(d - 1), self.expr(d - 1))
+        if c < 0.80:
+            return ('flt', self.dexpr(2))
+        u4 = [a for a in f.arrays if a[1] == 'unsigned' and a[2] >= 4] + [('ga', 'unsigned', 8)]
+        if c < 0.90:
+            return ('sum4', r.choice(u4)[0])
+        if f.structs:
+            return ('shash', r.choice(f.structs))
+        return ('sum4', 'ga')
+
+    def dexpr(self, d):
+        r = self.r
+        if d <= 0 or r.random() < 0.3:
+            if r.random() < 0.3:
+                return ('dk', r.choice(['0.5', '1.0', '3.25', '-2.75', '1e3', '0.1']))
+            return ('dv', self.expr(1))
+        c = r.random()
+        if c < 0.55:
+            return ('dbin', r.choice(['+', '-', '*']), self.dexpr(d - 1), self.dexpr(d - 1))
+        if c < 0.75:
+            return ('ddiv', self.dexpr(d - 1), self.expr(1))
+        if c < 0.90:
+            return ('dflt', self.dexpr(d - 1))
+        return ('dsel', r.choice(['<', '>=', '==']), self.dexpr(d - 1), self.dexpr(d - 1),
+                self.dexpr(d - 1), self.dexpr(d - 1))
 
     def cond(self, d=2):
         r = self.r
@@ -137,9 +190,18 @@ class Gen:
     # -- statements
     def lvalue(self):
         f = self.cur
-        if f.arrays and self.r.random() < 0.3:
+        c = self.r.random()
+        if f.arrays and c < 0.25:
             a = self.r.choice(f.arrays)
             return ('idx', a[0], a[2], self.expr(1))
+        if c < 0.33 and self.wide_on:
+            return ('v', self.r.choice(GLOBALS))
+        if c < 0.38 and self.wide_on:
+            return ('idx', 'ga', 8, self.expr(1))
+        if c < 0.48 and f.ptrs:
+            return ('deref', self.r.choice(f.ptrs))
+        if c < 0.58 and f.structs:
+            return ('fld', self.r.choice(f.structs), self.r.choice('abcd'))
         return ('v', self.r.choice([l for l in f.locals if not l[0].startswith('i')])[0])
 
     def stmts(self, n):
@@ -171,11 +233,59 @@ class Gen:
                 for k in r.sample(range(6), r.randrange(1, 4)):
                     cases.append((k, self.stmts(r.randrange(1, 3)), r.random() < 0.7))
                 return ('switch', self.expr(2), cases)
-            if c < 0.97 and self.loop_nest > 0:
+            if c < 0.95 and self.loop_nest > 0:
                 return ('brk', r.choice(['break', 'continue']), self.cond())
-            return ('asg', '=', self.lvalue(), self.expr())
+            if not self.wide_on:
+                return ('asg', '=', self.lvalue(), self.expr())
+            return self.stmt2()
         finally:
             self.depth -= 1
+
+    def stmt2(self):
+        """Pointers, structs, while/do and goto."""
+        r = self.r
+        f = self.cur
+        c = r.random()
+        if c < 0.18 and f.ptrs:
+            return ('pset', r.choice(f.ptrs), self.ptarget())
+        if c < 0.28 and f.ptrs:
+            return ('bump', r.choice(f.ptrs), self.expr(2))
+        if c < 0.36 and len(f.structs) >= 2:
+            a, b = r.sample(f.structs, 2)
+            return ('scopy', a, b)
+        if c < 0.46 and f.structs:
+            return ('smix', r.choice(f.structs), r.choice(f.structs), self.expr(2))
+        if c < 0.70 and self.loop_nest < 2:
+            return self.wloop()
+        if c < 0.80:
+            return ('goto', self.cond())
+        return ('asg', '=', self.lvalue(), self.expr())
+
+    def ptarget(self):
+        """Something an unsigned * may point at, valid for the whole call."""
+        r = self.r
+        f = self.cur
+        opts = [('addr', g) for g in GLOBALS[:3]]
+        opts += [('addr', n) for (n, t, _) in f.locals if t == 'unsigned' and not n.startswith('i')]
+        opts += [('addre', a[0], a[2], self.expr(1)) for a in f.arrays if a[1] == 'unsigned']
+        opts += [('addre', 'ga', 8, self.expr(1))]
+        opts += [('addrf', st) for st in f.structs]
+        return r.choice(opts)
+
+    def wloop(self):
+        r = self.r
+        v = 'i%d' % self.nloop
+        self.nloop += 1
+        self.cur.locals.append((v, 'int', ('k', 0)))
+        kind = r.choice(['while', 'do'])
+        lim = r.randrange(1, 12)
+        self.loopvars.append(v)
+        self.loop_nest += 1
+        cond = self.cond()
+        body = self.stmts(r.randrange(1, 4))
+        self.loop_nest -= 1
+        self.loopvars.pop()
+        return (kind, v, lim, cond, body)
 
     def loop(self):
         r = self.r
@@ -205,6 +315,10 @@ class Gen:
         for k in range(r.randrange(0, 3)):
             f.arrays.append(('a%d' % k, r.choice(['unsigned', 'unsigned char', 'unsigned short']),
                              r.choice([4, 8, 16])))
+        for k in range(r.choice([0, 0, 1, 2]) if self.wide_on else 0):
+            f.structs.append('s%d' % k)
+        for k in range(r.choice([0, 0, 1, 2]) if self.wide_on else 0):
+            f.ptrs.append('q%d' % k)
         f.locals = [(n, t, self.expr(2)) for (n, t, _) in f.locals]
         f.body = self.stmts(r.randrange(2, 7))
         f.ret = self.expr()
@@ -262,13 +376,100 @@ def rx(e):
         return '%s(%s)' % (e[1], ', '.join(rx(a) for a in e[2]) or '')
     if k == 'addk':
         return '(%s + %du)' % (rx(e[1]), e[2]) if e[2] >= 0 else '(%s - %du)' % (rx(e[1]), -e[2])
+    if k == 'deref':
+        return '(*%s)' % e[1]
+    if k == 'fld':
+        return '(unsigned)%s.%s' % (e[1], e[2])
+    if k == 'w64':
+        a = '(((unsigned long long)%s << 17) | %s)' % (rx(e[2]), rx(e[3]))
+        b = '((unsigned long long)%s * 2654435761u + 1u)' % rx(e[3])
+        if e[1] in ('/', '%'):
+            return '(unsigned)((%s %s (%s | 1u)) >> %d)' % (a, e[1], b, e[4] % 32)
+        if e[1] == '>>':
+            return '(unsigned)(%s >> %d)' % (a, e[4])
+        return '(unsigned)((%s %s %s) >> %d)' % (a, e[1], b, e[4] % 48)
+    if k == 'sgn':
+        a = '((int)(%s & 0xffffu) - 32768)' % rx(e[2])
+        b = '((int)(%s & 0x7fffu))' % rx(e[3])
+        if e[1] in ('/', '%'):
+            return '(unsigned)(%s %s (%s | 1))' % (a, e[1], b)
+        if e[1] == '>>':
+            return '(unsigned)(%s >> (int)(%s & 15u))' % (a, rx(e[3]))
+        return '(unsigned)(%s %s %s)' % (a, e[1], b)
+    if k == 'flt':
+        return 'fcv(%s)' % rd(e[1])
+    if k == 'sum4':
+        return 'sum4(%s)' % e[1]
+    if k == 'shash':
+        return 'shash(%s)' % e[1]
     raise ValueError(k)
+
+
+def rd(e):
+    k = e[0]
+    if k == 'dk':
+        return e[1]
+    if k == 'dv':
+        return '(double)(%s & 0xffffu)' % rx(e[1])
+    if k == 'dbin':
+        return '(%s %s %s)' % (rd(e[2]), e[1], rd(e[3]))
+    if k == 'ddiv':
+        return '(%s / ((double)(%s & 0xffu) + 1.0))' % (rd(e[1]), rx(e[2]))
+    if k == 'dflt':
+        return '(double)(float)%s' % rd(e[1])
+    if k == 'dsel':
+        return '(%s %s %s ? %s : %s)' % (rd(e[2]), e[1], rd(e[3]), rd(e[4]), rd(e[5]))
+    # an unsigned expression the reducer put in a double's place
+    return '(double)%s' % rx(e)
+
+
+FIELD_T = {'a': 'unsigned', 'b': 'unsigned short', 'c': 'unsigned char', 'd': 'unsigned long long'}
+GLOBALS = ['g0', 'g1', 'g2', 'g3']
+PRELUDE = '''struct S { unsigned a; unsigned short b; unsigned char c; unsigned long long d; };
+static unsigned g0 = 11u, g1 = 0x9e3779b9u, g2, g3 = 7u;
+static unsigned ga[8] = { 3u, 1u, 4u, 1u, 5u, 9u, 2u, 6u };
+static unsigned fcv(double d) {
+    if (d != d) return 1u;
+    if (d > 1e15) return 2u;
+    if (d < -1e15) return 3u;
+    return (unsigned)(long long)d;
+}
+static void bump(unsigned *q, unsigned k) { q[0] += k; q[0] ^= k >> 3; }
+static unsigned sum4(const unsigned *q) { return q[0] + q[1] * 3u + q[2] * 5u + q[3] * 7u; }
+static struct S smix(struct S x, unsigned k) {
+    x.a += k; x.b ^= (unsigned short)k; x.c += 1u; x.d = x.d * 3u + k;
+    return x;
+}
+static unsigned shash(struct S x) { return x.a ^ x.b ^ ((unsigned)x.c << 8) ^ (unsigned)(x.d >> 7); }
+'''
 
 
 def rlv(lv, types):
     if lv[0] == 'idx':
         return '%s[(%s) & %du]' % (lv[1], rx(lv[3]), lv[2] - 1)
+    if lv[0] == 'deref':
+        return '*%s' % lv[1]
+    if lv[0] == 'fld':
+        return '%s.%s' % (lv[1], lv[2])
     return lv[1]
+
+
+def lv_type(lv, types):
+    if lv[0] == 'v':
+        return types.get(lv[1], 'unsigned')
+    if lv[0] == 'fld':
+        return FIELD_T[lv[2]]
+    if lv[0] == 'idx' and lv[1] in types:
+        return types[lv[1]]
+    return 'unsigned'
+
+
+def rtarget(t):
+    if t[0] == 'addr':
+        return '&%s' % t[1]
+    if t[0] == 'addre':
+        return '&%s[(%s) & %du]' % (t[1], rx(t[3]), t[2] - 1)
+    return '&%s.a' % t[1]
 
 
 def rs(s, ind, out, types):
@@ -276,7 +477,7 @@ def rs(s, ind, out, types):
     k = s[0]
     if k == 'asg':
         lv = rlv(s[2], types)
-        t = types.get(s[2][1], 'unsigned') if s[2][0] == 'v' else 'unsigned'
+        t = lv_type(s[2], types)
         if t == 'int' and s[1] != '=':
             # compound arithmetic on an int could overflow: do it unsigned
             out.append('%s%s = (int)((unsigned)%s %s %s);' % (p, lv, lv, s[1][0], rx(s[3])))
@@ -313,12 +514,38 @@ def rs(s, ind, out, types):
         out.append('%s}' % p)
     elif k == 'brk':
         out.append('%sif (%s) %s;' % (p, rx(s[2]), s[1]))
+    elif k == 'pset':
+        out.append('%s%s = %s;' % (p, s[1], rtarget(s[2])))
+    elif k == 'bump':
+        out.append('%sbump(%s, %s);' % (p, s[1], rx(s[2])))
+    elif k == 'scopy':
+        out.append('%s%s = %s;' % (p, s[1], s[2]))
+    elif k == 'smix':
+        out.append('%s%s = smix(%s, %s);' % (p, s[1], s[2], rx(s[3])))
+    elif k in ('while', 'do'):
+        _, v, lim, cond, body = s
+        if k == 'while':
+            out.append('%s%s = 0;' % (p, v))
+            out.append('%swhile (%s < %d && %s) {' % (p, v, lim, rx(cond)))
+            out.append('%s    %s++;' % (p, v))
+        else:
+            out.append('%s%s = 0;' % (p, v))
+            out.append('%sdo {' % p)
+            out.append('%s    %s++;' % (p, v))
+        for t in body:
+            rs(t, ind + 1, out, types)
+        if k == 'while':
+            out.append('%s}' % p)
+        else:
+            out.append('%s} while (%s < %d && %s);' % (p, v, lim, rx(cond)))
+    elif k == 'goto':
+        out.append('%sif (%s) goto done;' % (p, rx(s[1])))
     else:
         raise ValueError(k)
 
 
 def render(fns, calls):
-    out = ['#include <stdio.h>', '']
+    out = ['#include <stdio.h>', '', PRELUDE]
     for f in fns:
         out.append('static unsigned %s(%s);' % (f.name, ', '.join('unsigned p%d' % i for i in range(f.nparams))))
     out.append('')
@@ -330,19 +557,28 @@ def render(fns, calls):
             out.append('    %s %s = 0;' % (t, n))
         for (n, t, sz) in f.arrays:
             out.append('    %s %s[%d];' % (t, n, sz))
+        for n in f.structs:
+            out.append('    struct S %s;' % n)
+        for n in f.ptrs:
+            out.append('    unsigned *%s = &g%d;' % (n, int(n[1:]) % 3))
         for (n, t, sz) in f.arrays:
             out.append('    { int z; for (z = 0; z < %d; z++) %s[z] = (%s)(z * 37u + %du); }' % (sz, n, t, sz))
+        for i, n in enumerate(f.structs):
+            out.append('    %s.a = %du; %s.b = %du; %s.c = %du; %s.d = %dull;' %
+                       (n, 1000 + i, n, 77 + i, n, 5 + i, n, 0x123456789 * (i + 1)))
         for (n, t, init) in f.locals:
             if not n.startswith('i'):
                 out.append('    %s = (%s)%s;' % (n, t, rx(init) if init else '0u'))
         for s in f.body:
             rs(s, 1, out, types)
+        out.append('done:')
         out.append('    return %s;' % rx(f.ret) if f.ret else '    return 0u;')
         out.append('}')
         out.append('')
     out.append('int main(void) {')
     for (name, args) in calls:
         out.append('    printf("%%s %%u\\n", "%s", %s(%s));' % (name, name, ', '.join('%uu' % a for a in args)))
+    out.append('    printf("g %u %u %u %u %u\\n", g0, g1, g2, g3, sum4(ga) ^ sum4(ga + 4));')
     out.append('    return 0;')
     out.append('}')
     return '\n'.join(out) + '\n'
@@ -369,10 +605,106 @@ def no_upward_calls(fns):
         f.ret = fix(f.ret, f.name)
 
 
+# Generated functions write the globals and ga.  C leaves the order of a
+# call's side effects and the other reads in its full expression
+# indeterminate (C11 6.5.2.2p10), so `g2 |= f1()` with f1 bumping g2 has
+# two right answers (clang read g2 after the call, stage08 before: seed
+# 1011 of the widened generator).  A full expression may therefore hold
+# one call, and then touch no memory a callee can change -- the globals,
+# ga, anything through a pointer, sum4 of ga; otherwise its calls become
+# constants.
+def touches_shared(e):
+    if isinstance(e, tuple) and e:
+        k = e[0]
+        if k == 'v' and e[1] in GLOBALS:
+            return True
+        if k == 'idx' and e[1] == 'ga':
+            return True
+        if k in ('deref', 'pset'):
+            return True
+        if k == 'sum4' and e[1] == 'ga':
+            return True
+    if isinstance(e, (tuple, list)):
+        return any(touches_shared(x) for x in e if isinstance(x, (tuple, list)))
+    return False
+
+
+def count_calls(e):
+    n = 0
+    if isinstance(e, tuple) and e and e[0] == 'call':
+        n = 1
+    if isinstance(e, (tuple, list)):
+        n += sum(count_calls(x) for x in e if isinstance(x, (tuple, list)))
+    return n
+
+
+def drop_calls(e):
+    if isinstance(e, tuple) and e and e[0] == 'call':
+        return ('k', 7)
+    if isinstance(e, tuple):
+        return tuple(drop_calls(x) if isinstance(x, (tuple, list)) else x for x in e)
+    if isinstance(e, list):
+        return [drop_calls(x) for x in e]
+    return e
+
+
+def full_expr(*parts):
+    """parts of one full expression, rewritten so its order is fixed"""
+    n = sum(count_calls(x) for x in parts)
+    if n > 1 or (n == 1 and any(touches_shared(x) for x in parts)):
+        return tuple(drop_calls(x) for x in parts)
+    return parts
+
+
+def sequence(stmts):
+    out = []
+    for s in stmts:
+        k = s[0]
+        if k == 'asg':
+            lv, e = full_expr(s[2], s[3])
+            s = ('asg', s[1], lv, e)
+        elif k == 'if':
+            (c,) = full_expr(s[1])
+            s = ('if', c, sequence(s[2]), sequence(s[3]) if s[3] else s[3])
+        elif k == 'for':
+            s = s[:6] + (sequence(s[6]),)
+        elif k == 'ret':
+            (c,) = full_expr(s[1])
+            (e,) = full_expr(s[2])
+            s = ('ret', c, e)
+        elif k == 'switch':
+            (c,) = full_expr(s[1])
+            s = ('switch', c, [(cv, sequence(b), brk) for (cv, b, brk) in s[2]])
+        elif k in ('brk',):
+            (c,) = full_expr(s[2])
+            s = ('brk', s[1], c)
+        elif k in ('while', 'do'):
+            (c,) = full_expr(s[3])
+            s = (k, s[1], s[2], c, sequence(s[4]))
+        elif k == 'goto':
+            (c,) = full_expr(s[1])
+            s = ('goto', c)
+        elif k == 'pset':
+            (t,) = full_expr(s[2])
+            s = ('pset', s[1], t)
+        elif k == 'bump':
+            (e,) = full_expr(('deref', s[1]), s[2])[1:] or (s[2],)
+            s = ('bump', s[1], e)
+        elif k == 'smix':
+            (e,) = full_expr(s[3])
+            s = ('smix', s[1], s[2], e)
+        out.append(s)
+    return out
+
+
 def make(seed):
     g = Gen(seed)
     fns, calls = g.program()
     no_upward_calls(fns)
+    for f in fns:
+        f.locals = [(n, t, full_expr(i)[0] if i else i) for (n, t, i) in f.locals]
+        f.body = sequence(f.body)
+        (f.ret,) = full_expr(f.ret) if f.ret else (f.ret,)
     return fns, calls
 
 
@@ -488,6 +820,8 @@ def candidates(fns, calls):
                     repl += [s[2], s[3] or []]
                 if s[0] == 'for':
                     repl.append(s[6])
+                if s[0] in ('while', 'do'):
+                    repl.append(s[4])
                 for r in repl:
                     nb = replace_list(f.body, path, lst[:j] + r + lst[j + 1:])
                     yield with_fn(fns, fi, body=nb), calls
@@ -514,6 +848,7 @@ def with_fn(fns, fi, **kw):
         if i == fi:
             g = Fn(f.name, f.nparams)
             g.locals, g.arrays, g.body, g.ret = f.locals, f.arrays, f.body, f.ret
+            g.ptrs, g.structs = f.ptrs, f.structs
             for k, v in kw.items():
                 setattr(g, k, v)
             out.append(g)
@@ -531,6 +866,8 @@ def stmt_lists(body, path=()):
                 yield from stmt_lists(s[3], path + (j, 3))
         elif s[0] == 'for':
             yield from stmt_lists(s[6], path + (j, 6))
+        elif s[0] in ('while', 'do'):
+            yield from stmt_lists(s[4], path + (j, 4))
         elif s[0] == 'switch':
             for ci, (c, b, brk) in enumerate(s[2]):
                 yield from stmt_lists(b, path + (j, 2, ci))
@@ -554,7 +891,8 @@ def replace_list(body, path, new):
     return nb
 
 
-EXPR_KINDS = {'bin', 'shl', 'shr', 'sar', 'cmp', 'sel', 'cast', 'div', 'mulhi', 'un', 'call', 'addk', 'idx'}
+EXPR_KINDS = {'bin', 'shl', 'shr', 'sar', 'cmp', 'sel', 'cast', 'div', 'mulhi', 'un', 'call', 'addk', 'idx',
+              'w64', 'sgn', 'flt', 'sum4', 'shash', 'deref', 'fld'}
 
 
 def shrink_tree(t):
@@ -614,7 +952,11 @@ def main():
     ap.add_argument('--cc', default=CC08)
     ap.add_argument('--keep', default=os.path.join(ROOT, 'regression/results-fuzz'))
     ap.add_argument('-o', default=None)
+    ap.add_argument('--profile', choices=['wide', 'narrow'], default='wide',
+                    help='narrow: the first generator\'s scalar subset, where the shapes it found stay dense')
     a = ap.parse_args()
+    global PROFILE
+    PROFILE = a.profile
     if a.cmd == 'show':
         sys.stdout.write(render(*make(a.seed)))
         return 0

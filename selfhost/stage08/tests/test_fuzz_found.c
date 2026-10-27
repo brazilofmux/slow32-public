@@ -18,7 +18,15 @@
  *   never emitted.
  * ivret: return pinning put a loop's strength-reduced induction variable
  *   and the value returned from it in r1 together; the IV's increment
- *   still read it after the returned value was written. */
+ *   still read it after the returned value was written.
+ * pinconst: a ?: arm folded to a large constant left the constant in the
+ *   arm's block; pinned as a loop constant it was loaded in the inner
+ *   loop, after the outer loop's hoisted subtraction had read it.
+ * retbody: a counted loop whose body always returns was unrolled copy
+ *   after copy past the return ("instructions after a block's
+ *   terminator").
+ * twovals: return pinning put v0 and v1's next value in r1 together;
+ *   they were live at once (the allocator said so; nothing asked it). */
 int ternary_switch(int i0) {
     unsigned long long v2 = 0;
     unsigned long long v3 = 0;
@@ -109,6 +117,48 @@ unsigned ivret(unsigned p0) {
     return v4 + p0;
 }
 
+unsigned pg3 = 7u;
+unsigned pg0 = 11u;
+
+unsigned pinconst(unsigned p0) {
+    int i1 = 0;
+    int i2;
+    int i4;
+    unsigned n = 0;
+    for (i2 = 1; i2 < 7; i2 += 2) {
+        for (i4 = 14; i4 >= 0; i4 -= 1) {
+            if (((unsigned)i2 - (((unsigned)i1 <= 4294967295u) ? 4096u : pg0)) > pg3) return 100u + (unsigned)i2;
+            n = n + p0;
+        }
+    }
+    return n;
+}
+
+unsigned rb_g;
+
+unsigned retbody(unsigned p1) {
+    int i0;
+    for (i0 = 3; i0 < 15; i0 += 1) {
+        rb_g -= p1;
+        return 100u + rb_g;
+    }
+    return 0u;
+}
+
+unsigned twovals(void) {
+    unsigned v0 = 0;
+    unsigned v1 = 0;
+    int i0;
+    int i1;
+    for (i0 = 1; i0 < 8; i0 += 2) {
+        v0 = v1 - 16u;
+        for (i1 = 2; i1 < 3; i1 += 1) {
+            v1 = (unsigned)!(unsigned)i0;
+        }
+    }
+    return v0;
+}
+
 int main(void) {
     if (ternary_switch(3) != 58930) return 1;
     if (switch_then_break(1) != 463 || switch_then_break(0) != 63) return 2;
@@ -117,5 +167,8 @@ int main(void) {
     if (twophis(1) != 0 || twophis(0) != 0xffffffffu) return 5;
     if (capped(3302909072u) != 9 || capped(5) != 9) return 6;
     if (ivret(0) != 8) return 7;
+    if (pinconst(1) != 101) return 8;
+    if (retbody(1) != 99u || rb_g != 0xffffffffu) return 9;
+    if (twovals() != 0xfffffff0u) return 10;
     return 0;
 }

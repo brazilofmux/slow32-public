@@ -357,14 +357,18 @@ cd ~/slow-32/regression && ./run-libc-differential.sh
 # And another axis: random programs.  cfuzz.py generates
 # deterministic C with no undefined behaviour (unsigned arithmetic, masked
 # array indexes, counted loops that the unroller and peeler take, switch,
-# break/continue, calls) and requires stage08's output to match clang's;
+# break/continue, calls; in the wide profile also globals, pointers into
+# locals/arrays/fields, structs by value, 64-bit, signed in range, doubles,
+# while/do, goto -- with at most one call per full expression and none
+# beside shared memory, C leaving that order open) and requires stage08's
+# output to match clang's;
 # when they differ it asks the host compiler, and a case where stage08
 # agrees with the host is `clang-differs` (an LLVM backend bug, not ours).
 # Its first day (2026-10-27) found seven stage08 defects the harnesses
 # above had all passed, several in the kit for weeks.  `reduce SEED`
 # shrinks a failure to a test for selfhost/stage08/tests.  ~3,000/min (M5).
-cd ~/slow-32/regression && ./run-stage08-fuzz.sh            # 2,000 seeds
-cd ~/slow-32/regression/fuzz && ./cfuzz.py reduce 8710       # shrink one
+cd ~/slow-32/regression && ./run-stage08-fuzz.sh            # 2,000 seeds x 2 profiles
+cd ~/slow-32/regression/fuzz && ./cfuzz.py reduce SEED --profile wide   # shrink one
 
 # Forth kernel (the stage01 bootstrap seed): the kernel's own tests, then the
 # Forth 2012 suite as gforth ships it (read from the gforth install, GPL, not

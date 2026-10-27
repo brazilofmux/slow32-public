@@ -98,7 +98,9 @@ for all future codegen). None blocking — parity is reached.
   and `f1 65470` at -O0, under stage08 and with the host compiler.  f0
   is inlined into f1 with constant arguments; a 64-bit accumulator
   feeds `(int)(unsigned)v3 >> 5` stored to an `unsigned short` element.
-  Not yet reduced at the IR level.  cfuzz reports such cases as
+  Not yet reduced at the IR level.  A second, `llvm-o2-seed5406.c`
+  (the wide generator), goes through double-to-integer conversions;
+  same cause or not is unknown.  cfuzz reports such cases as
   `clang-differs` (stage08 agrees with the host), not as stage08 bugs.
 - Negative-input tests for the toolchain (malformed objects/archives/
   relocations) — the linker's hardened paths have no test coverage.
