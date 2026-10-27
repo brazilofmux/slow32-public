@@ -1008,7 +1008,7 @@ static int move_needs_temp(const Opnd *src, const Ref *dst, int n)
     return 0;
 }
 
-static int lw_move(Opnd *src, Ref *dst, int n);     /* lower.h */
+static int lw_move(Opnd *src, Ref *dst, int n, int src_tp);     /* lower.h */
 static void parse_move(void)
 {
     if (accept_word("corresponding") || accept_word("corr")) {
@@ -1020,6 +1020,7 @@ static void parse_move(void)
      * the sender as a scan, so a user function in it is called below,
      * where the statement's code begins */
     g_noemit++;
+    int src_tp = g_tp;                  /* where the sender begins: a function sender is lowered as an expression */
     Opnd src; g_vlg_ok++; parse_operand(&src); g_vlg_ok--;   /* a variable-length group may be sent whole, to one of its shape */
     expect_word("to");
     int n = 0, cap = 0;
@@ -1032,7 +1033,7 @@ static void parse_move(void)
     }
     g_noemit--;
     if (!n) die_at(cur()->line, "MOVE needs a receiving item");
-    lw_move(&src, dst, n);              /* an island's too (lower.h): its placeholder, then the text */
+    lw_move(&src, dst, n, src_tp);      /* an island's too (lower.h): its placeholder, then the text */
     ucall_make(&src);
     emit_incompat(&src);                /* a numeric sender's content (14.6.13.2 rule 2; MOVE GR 6d1) */
     /* the sender is identified once, before the first move (general rule

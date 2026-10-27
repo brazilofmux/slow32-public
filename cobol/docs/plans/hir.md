@@ -279,6 +279,16 @@ Numeric editing in line followed (2026-10-03): the common pictures (9 Z
 rules cob_edit_apply's; kedit 0.45 -> 0.27 s, kreport -13%.  It found a
 DBT gap on the way (DBT-22: the block-length exit was never chained).
 
+A MOVE whose sender is an intrinsic function the register trees take
+(MIN, MAX, MOD, REM, INTEGER, ...) is lowered as COMPUTE lowers it, a
+one-leaf expression (2026-10-27).  `MOVE FUNCTION MIN(cur-len, 4096) TO
+keep-len` had stayed a 32-line text node, and kept csv2fw's whole
+save-field paragraph in the text with its items synced round it --
+found when majesty's csv2fw stopped clearing a 4,096-byte slot per
+field (it now clears only what the last field left there): with the
+MOVE lowered, 2.237 G -> 1.277 G instructions and 149.6 -> 139.6 ms
+under the DBT, every output identical.  `tests/free/movefn.cbl`.
+
 What the profile leaves: the per-record runtime (cob_write, cob_read),
 STRING and the class conditions (text verbs, per field), the footprint by
 item per paragraph, the rest of editing (*, B 0 /, BLANK WHEN ZERO, the

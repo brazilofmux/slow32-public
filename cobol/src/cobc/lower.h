@@ -785,8 +785,12 @@ undo:
     return 0;
 }
 
-/* MOVE of a number to numeric items: the store, truncating */
-static int lw_move(Opnd *src, Ref *dst, int n)
+/* MOVE of a number to numeric items: the store, truncating.  src_tp:
+ * the sender's first token, which an intrinsic function's value needs
+ * to be formed as COMPUTE forms it (a one-leaf expression).  MOVE
+ * FUNCTION MIN(cur-len, 4096) TO k stayed text, and its text node kept
+ * the whole paragraph around it in the text (majesty's csv2fw). */
+static int lw_move(Opnd *src, Ref *dst, int n, int src_tp)
 {
     if (lw_off()) return 0;
     const char *why = lw_stmt_refused(0);
@@ -802,6 +806,16 @@ static int lw_move(Opnd *src, Ref *dst, int n)
             lw_place(st);
             return 1;
         }
+    }
+    if (src->kind == O_FUNC) {
+        if (!opnd_fn_numeric(src)) return 0;
+        for (int i = 0; i < n; i++) if (!lw_recv_ok(&dst[i])) { lw_refuse(src->line, "MOVE", "a receiver"); return 0; }
+        if (refs_pending(dst, n)) { lw_refuse(src->line, "MOVE", "a receiver's call"); return 0; }
+        Expr e; memset(&e, 0, sizeof e); e.o = src; e.tp = src_tp;
+        int x = lw_expr(&e, 1);
+        if (x < 0) { lw_refuse(src->line, "MOVE", "the function"); return 0; }
+        int rd[MAXOPS] = { 0 };
+        return lw_store_stmt(x, dst, rd, n, NULL, src->line, "MOVE");
     }
     if (src->kind != O_REF && src->kind != O_NUM && src->kind != O_FIG) return 0;
     if (src->kind == O_REF && !lw_opnd_item_ok(&src->ref)) { lw_refuse(src->line, "MOVE", "the sender"); return 0; }
