@@ -789,6 +789,13 @@ SDValue SLOW32TargetLowering::LowerSELECT(SDValue Op, SelectionDAG &DAG) const {
   // Default (speed): branchless mask.
   // mask = -C (0 -> 0x00000000, 1 -> 0xFFFFFFFF)
   // result = F ^ ((T ^ F) & mask)
+  // Both arms are now computed and combined whatever the condition, so an arm
+  // the select would have discarded must not stay poison: without the freezes
+  // a combine reasons from the dead arm's flags.  "c ? 4 : (sub nuw 4, y)"
+  // let the nuw (y <= 4) rewrite T ^ F = 4 ^ (4 - y) as 8 - y, wrong for
+  // y = 7 (cfuzz seed 5262, regression/fuzz/known/).
+  TrueV = DAG.getFreeze(TrueV);
+  FalseV = DAG.getFreeze(FalseV);
   SDValue Zero = DAG.getConstant(0, DL, MVT::i32);
   SDValue Mask = DAG.getNode(ISD::SUB, DL, MVT::i32, Zero, Cond);
   SDValue TF = DAG.getNode(ISD::XOR, DL, VT, TrueV, FalseV);

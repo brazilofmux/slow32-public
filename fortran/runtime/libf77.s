@@ -336,7 +336,7 @@ fio_resolve:                            # @fio_resolve
 	xor r5, r5, r4
 	sub r1, r0, r1
 	and r1, r5, r1
-	xor r6, r1, r4
+	xor r6, r4, r1
 	lui r4, %hi(.L.str.63)
 	addi r4, r4, %lo(.L.str.63)
 	add r5, r11, r0
@@ -1444,7 +1444,7 @@ f77_wr_i:                               # @f77_wr_i
 	xor r4, r4, r3
 	sub r1, r0, r1
 	and r1, r4, r1
-	xor r12, r1, r3
+	xor r12, r3, r1
 	ldw r1, r19+0
 	sgt r3, r1, r15
 	sub r1, r1, r15
@@ -2813,6 +2813,7 @@ fio_efmt:                               # @fio_efmt
 	stw sp+124, r19
 	stw sp+120, r20
 	stw sp+116, r21
+	stw sp+112, r22
 	add r11, r7, r0
 	add r13, r6, r0
 	add r12, r5, r0
@@ -2834,8 +2835,9 @@ fio_efmt:                               # @fio_efmt
 	and r3, r3, r5
 	sub r4, r0, r4
 	and r18, r3, r4
-	addi r19, r0, 0
-	sgt r3, r18, r19
+	add r19, r18, r0
+	addi r20, r0, 0
+	sgt r3, r18, r20
 	add r4, r18, r1
 	xori r5, r4, 1
 	sgt r4, r4, r17
@@ -2849,22 +2851,22 @@ fio_efmt:                               # @fio_efmt
 	xor r6, r4, r1
 	lui r5, %hi(.L.str.85)
 	addi r5, r5, %lo(.L.str.85)
-	addi r15, sp, 36
+	addi r15, sp, 32
 	addi r4, r0, 16
 	add r3, r15, r0
 	jal r31, snprintf
-	addi r16, sp, 52
+	addi r16, sp, 48
 	addi r4, r0, 64
 	add r3, r16, r0
 	add r5, r15, r0
 	add r6, r12, r0
 	add r7, r13, r0
 	jal r31, snprintf
-	ldbu r21, sp+52
-	addi r20, r0, 45
-	seq r1, r21, r20
+	ldbu r22, sp+48
+	addi r21, r0, 45
+	seq r1, r22, r21
 	addi r3, r0, 43
-	seq r3, r21, r3
+	seq r3, r22, r3
 	or  r1, r1, r3
 	or  r1, r1, r16
 	addi r3, r1, 1
@@ -2872,10 +2874,10 @@ fio_efmt:                               # @fio_efmt
 	addi r16, r0, 46
 	addi r4, r0, 69
 	addi r5, r0, 101
-	add r15, r19, r0
+	add r15, r20, r0
 	jal r0, .LBB15_3
 .LBB15_1:
-	addi r7, sp, 52
+	addi r7, sp, 48
 	add r7, r7, r15
 	stb r7+40, r6
 	addi r15, r15, 1
@@ -2887,7 +2889,7 @@ fio_efmt:                               # @fio_efmt
 .LBB15_4:
 	beq r6, r16, .LBB15_2
 .LBB15_5:
-	bne r6, r19, .LBB15_1
+	bne r6, r20, .LBB15_1
 	jal r0, .LBB15_9
 .LBB15_6:
 	beq r6, r4, .LBB15_8
@@ -2910,13 +2912,13 @@ fio_efmt:                               # @fio_efmt
 	sub r3, r0, r3
 	and r3, r1, r3
 	add r7, r14, r0
-	bne r21, r20, .LBB15_12
+	bne r22, r21, .LBB15_12
 .LBB15_11:
 	addi r7, r14, 1
-	stb r14+0, r20
+	stb r14+0, r21
 .LBB15_12:
 	xor r1, r1, r3
-	blt r18, r17, .LBB15_17
+	blt r19, r17, .LBB15_17
 .LBB15_13:
 	blt r15, r17, .LBB15_22
 .LBB15_14:
@@ -2925,7 +2927,7 @@ fio_efmt:                               # @fio_efmt
 	sub r6, r0, r6
 	and r3, r3, r6
 	xor r3, r15, r3
-	addi r6, sp, 52
+	addi r6, sp, 48
 	addi r8, r6, 40
 	addi r6, r0, 0
 .LBB15_15:
@@ -2945,24 +2947,23 @@ fio_efmt:                               # @fio_efmt
 	stb r7+1, r16
 	addi r6, r0, 0
 	addi r8, r0, 55
-	beq r18, r6, .LBB15_28
+	beq r19, r6, .LBB15_28
 .LBB15_18:
 	sub r3, r10, r14
 	bgt r3, r8, .LBB15_28
 .LBB15_19:
 	sub r3, r7, r14
-	addi r19, r3, 3
+	addi r16, r3, 3
 	addi r7, r0, -2
 	addi lr, r0, 56
-	add r16, r18, r0
 .LBB15_20:
 	addi r3, r10, 1
 	stb r10+0, r9
-	bgt r16, r7, .LBB15_29
+	bgt r19, r7, .LBB15_29
 .LBB15_21:
-	add r20, r19, r0
-	addi r16, r16, 1
+	add r20, r16, r0
 	addi r19, r19, 1
+	addi r16, r16, 1
 	add r10, r3, r0
 	blt r20, lr, .LBB15_20
 	jal r0, .LBB15_29
@@ -2979,7 +2980,7 @@ fio_efmt:                               # @fio_efmt
 .LBB15_25:
 	sub r7, r7, r14
 	addi r9, r7, 2
-	addi r7, sp, 52
+	addi r7, sp, 48
 	addi r7, r7, 40
 	addi r8, r0, 56
 .LBB15_26:
@@ -3002,7 +3003,7 @@ fio_efmt:                               # @fio_efmt
 	sub r9, r3, r14
 	bgt r9, r8, .LBB15_35
 .LBB15_31:
-	addi r7, sp, 52
+	addi r7, sp, 48
 	addi r7, r7, 40
 	addi r8, r9, 1
 	addi r9, r0, 56
@@ -3064,7 +3065,7 @@ fio_efmt:                               # @fio_efmt
 	sub r1, r6, r1
 	ori  r11, r1, 48
 	addi r1, r10, 1
-	addi r12, sp, 20
+	addi r12, sp, 16
 	add r12, r12, r10
 	stb r12+0, r11
 	bltu r6, r8, .LBB15_42
@@ -3084,7 +3085,7 @@ fio_efmt:                               # @fio_efmt
 	xori r5, r5, 15
 	and r5, r5, r6
 	xor r5, r7, r5
-	addi r6, sp, 20
+	addi r6, sp, 16
 	bge r1, r5, .LBB15_46
 .LBB15_43:
 	add r6, r6, r1
@@ -3099,7 +3100,7 @@ fio_efmt:                               # @fio_efmt
 	add r1, r5, r0
 .LBB15_46:
 	addi r4, r4, 1
-	addi r5, sp, 20
+	addi r5, sp, 16
 	addi r5, r5, -1
 .LBB15_47:
 	add r6, r1, r0
@@ -3111,6 +3112,7 @@ fio_efmt:                               # @fio_efmt
 	bgt r6, r17, .LBB15_47
 .LBB15_48:
 	stb r4+0, r3
+	ldw r22, sp+112
 	ldw r21, sp+116
 	ldw r20, sp+120
 	ldw r19, sp+124
@@ -3840,8 +3842,8 @@ f77_cdiv:                               # @f77_cdiv
 	add r4, r1, r0
 	add r5, r2, r0
 	flt.d r1, r4, r18
-	xor r3, r15, r17
 	sub r1, r0, r1
+	xor r3, r15, r17
 	and r3, r3, r1
 	xor r4, r17, r3
 	xor r3, r14, r16
@@ -12345,7 +12347,7 @@ f77_nml_item:                           # @f77_nml_item
 	xor r4, r4, r3
 	sub r1, r0, r1
 	and r1, r4, r1
-	xor r4, r1, r3
+	xor r4, r3, r1
 	lui r3, %hi(nml_pend)
 	addi r3, r3, %lo(nml_pend)
 	addi r24, r0, 1
@@ -15181,10 +15183,10 @@ f77_inquire:                            # @f77_inquire
 	xor r5, r5, r1
 	sub r3, r0, r3
 	and r3, r5, r3
-	xor r1, r3, r1
+	xor r1, r1, r3
 	lui r3, %hi(.L.str.53)
 	addi r3, r3, %lo(.L.str.53)
-	xor r3, r1, r3
+	xor r3, r3, r1
 	sub r4, r0, r4
 	and r3, r3, r4
 	xor r4, r1, r3
@@ -15347,13 +15349,13 @@ f77_inq:                                # @f77_inq
 	xor r5, r5, r4
 	sub r3, r0, r3
 	and r3, r5, r3
-	xor r3, r3, r4
+	xor r3, r4, r3
 	lui r4, %hi(.L.str.47)
 	addi r4, r4, %lo(.L.str.47)
 	xor r3, r3, r4
 	sub r1, r0, r1
 	and r1, r3, r1
-	xor r13, r1, r4
+	xor r13, r4, r1
 	add r3, r13, r0
 	jal r31, strlen
 	addi r3, r0, 1
@@ -15413,13 +15415,13 @@ f77_inq:                                # @f77_inq
 	xor r5, r5, r4
 	sub r3, r0, r3
 	and r3, r5, r3
-	xor r3, r3, r4
+	xor r3, r4, r3
 	lui r4, %hi(.L.str.47)
 	addi r4, r4, %lo(.L.str.47)
 	xor r3, r3, r4
 	sub r1, r0, r1
 	and r1, r3, r1
-	xor r13, r1, r4
+	xor r13, r4, r1
 	add r3, r13, r0
 	jal r31, strlen
 	addi r3, r0, 1
@@ -15471,13 +15473,13 @@ f77_inq:                                # @f77_inq
 	xor r5, r5, r4
 	sub r3, r0, r3
 	and r3, r5, r3
-	xor r3, r3, r4
+	xor r3, r4, r3
 	lui r4, %hi(.L.str.56)
 	addi r4, r4, %lo(.L.str.56)
 	xor r3, r3, r4
 	sub r1, r0, r1
 	and r1, r3, r1
-	xor r13, r1, r4
+	xor r13, r4, r1
 	add r3, r13, r0
 	jal r31, strlen
 	addi r3, r0, 1
@@ -15517,7 +15519,7 @@ f77_inq:                                # @f77_inq
 	xor r6, r6, r5
 	sub r4, r0, r4
 	and r4, r6, r4
-	xor r4, r4, r5
+	xor r4, r5, r4
 	lui r5, %hi(.L.str.56)
 	addi r5, r5, %lo(.L.str.56)
 	xor r4, r4, r5
@@ -15525,7 +15527,7 @@ f77_inq:                                # @f77_inq
 	and r3, r4, r3
 	sub r1, r0, r1
 	and r1, r3, r1
-	xor r13, r1, r5
+	xor r13, r5, r1
 	add r3, r13, r0
 	jal r31, strlen
 	addi r3, r0, 1
@@ -15561,13 +15563,13 @@ f77_inq:                                # @f77_inq
 	xor r5, r5, r4
 	sub r3, r0, r3
 	and r3, r5, r3
-	xor r3, r3, r4
+	xor r3, r4, r3
 	lui r4, %hi(.L.str.47)
 	addi r4, r4, %lo(.L.str.47)
 	xor r3, r3, r4
 	sub r1, r0, r1
 	and r1, r3, r1
-	xor r13, r1, r4
+	xor r13, r4, r1
 	add r3, r13, r0
 	jal r31, strlen
 	addi r3, r0, 1
@@ -15603,13 +15605,13 @@ f77_inq:                                # @f77_inq
 	xor r5, r5, r4
 	sub r3, r0, r3
 	and r3, r5, r3
-	xor r3, r3, r4
+	xor r3, r4, r3
 	lui r4, %hi(.L.str.47)
 	addi r4, r4, %lo(.L.str.47)
 	xor r3, r3, r4
 	sub r1, r0, r1
 	and r1, r3, r1
-	xor r13, r1, r4
+	xor r13, r4, r1
 	add r3, r13, r0
 	jal r31, strlen
 	addi r3, r0, 1
@@ -15645,13 +15647,13 @@ f77_inq:                                # @f77_inq
 	xor r5, r5, r4
 	sub r3, r0, r3
 	and r3, r5, r3
-	xor r3, r3, r4
+	xor r3, r4, r3
 	lui r4, %hi(.L.str.56)
 	addi r4, r4, %lo(.L.str.56)
 	xor r3, r3, r4
 	sub r1, r0, r1
 	and r1, r3, r1
-	xor r13, r1, r4
+	xor r13, r4, r1
 	add r3, r13, r0
 	jal r31, strlen
 	addi r3, r0, 1
@@ -18054,5 +18056,5 @@ nml_text_add:                           # @nml_text_add
 	.word	.L.str.81
 	.size	.Lswitch.table.fio_fmt_use, 72
 
-	.ident	"clang version 24.0.0git (https://github.com/llvm/llvm-project.git 732ffcb6281afb050e70a68b47aa40e7ab93d1d6)"
+	.ident	"clang version 24.0.0git (https://github.com/llvm/llvm-project.git f7e02ec8b8590e678db2596f62c08dbdae5522d7)"
 	.section	".note.GNU-stack","",@progbits

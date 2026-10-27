@@ -183,6 +183,17 @@ let isPseudo = 1, isCodeGenOnly = 1, hasSideEffects = 0 in {
   let mayLoad = 0, mayStore = 1 in
   def STW_FI : Pseudo<(outs), (ins GPR:$rs1, GPR:$rs2, i32imm:$fi, i32imm:$off),
                       "# STW_FI $rs1+$fi+$off, $rs2", []>;
+  // A virtual GPRPair is spilled and reloaded by ONE instruction on the
+  // whole pair: the inline spiller keeps its live intervals per instruction,
+  // and two sub-register halves (the second an undef partial def) left the
+  // first half dead to the allocator.  Frame index elimination, after
+  // allocation, splits each into an LDW_FI/STW_FI pair on the physical halves.
+  let mayLoad = 1, mayStore = 0 in
+  def LDW64_FI : Pseudo<(outs GPRPair:$rd), (ins GPR:$rs1, i32imm:$fi),
+                        "# LDW64_FI $rd, $rs1+$fi", []>;
+  let mayLoad = 0, mayStore = 1 in
+  def STW64_FI : Pseudo<(outs), (ins GPR:$rs1, GPRPair:$rs2, i32imm:$fi),
+                        "# STW64_FI $rs1+$fi, $rs2", []>;
 }
 
 // Branch instructions

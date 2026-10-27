@@ -191,18 +191,12 @@ void SLOW32InstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
           .addFrameIndex(FrameIndex)
           .addImm(4);
     } else {
-      // Virtual register: pass subreg index on the operand so the register
-      // allocator can resolve it later.
-      BuildMI(MBB, I, DL, get(SLOW32::STW_FI))
+      // Virtual register: one whole-pair instruction (see LDW64_FI/STW64_FI
+      // in SLOW32InstrInfo.td), split after allocation.
+      BuildMI(MBB, I, DL, get(SLOW32::STW64_FI))
           .addReg(FrameReg)
-          .addReg(SrcReg, RegState(), gsub_0)
-          .addFrameIndex(FrameIndex)
-          .addImm(0);
-      BuildMI(MBB, I, DL, get(SLOW32::STW_FI))
-          .addReg(FrameReg)
-          .addReg(SrcReg, getKillRegState(isKill), gsub_1)
-          .addFrameIndex(FrameIndex)
-          .addImm(4);
+          .addReg(SrcReg, getKillRegState(isKill))
+          .addFrameIndex(FrameIndex);
     }
     return;
   }
@@ -240,17 +234,14 @@ void SLOW32InstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
           .addFrameIndex(FrameIndex)
           .addImm(4);
     } else {
-      // Virtual register: define subregs so the allocator can resolve later.
-      BuildMI(MBB, I, DL, get(SLOW32::LDW_FI))
-          .addReg(DestReg, RegState::DefineNoRead, gsub_0)
+      // Virtual register: one whole-pair instruction.  This was two LDW_FIs
+      // defining gsub_0 and gsub_1, both undef; the second undef killed the
+      // first half, so the allocator placed the pair in r22:r23 and left the
+      // low word in r4, clobbering a live r4 (cfuzz seed 5406,
+      // regression/fuzz/known/).
+      BuildMI(MBB, I, DL, get(SLOW32::LDW64_FI), DestReg)
           .addReg(FrameReg)
-          .addFrameIndex(FrameIndex)
-          .addImm(0);
-      BuildMI(MBB, I, DL, get(SLOW32::LDW_FI))
-          .addReg(DestReg, RegState::DefineNoRead, gsub_1)
-          .addReg(FrameReg)
-          .addFrameIndex(FrameIndex)
-          .addImm(4);
+          .addFrameIndex(FrameIndex);
     }
     return;
   }

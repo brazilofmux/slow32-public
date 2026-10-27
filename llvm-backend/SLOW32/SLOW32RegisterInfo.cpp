@@ -113,6 +113,32 @@ bool SLOW32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
 
   unsigned Opc = MI.getOpcode();
 
+  // Whole-pair spill pseudos: emit the low half as its own LDW_FI/STW_FI
+  // (eliminated here and now), then turn MI into the high half and let it
+  // fall through to the LDW_FI/STW_FI rewrite below.  MI itself is never
+  // erased, which PEI's backward walk would not expect.
+  if (Opc == SLOW32::LDW64_FI || Opc == SLOW32::STW64_FI) {
+    const bool Ld = Opc == SLOW32::LDW64_FI;
+    const unsigned ValIdx = Ld ? 0 : 1;
+    Register Pair = MI.getOperand(ValIdx).getReg();
+    const bool Kill = !Ld && MI.getOperand(ValIdx).isKill();
+    Register Lo = getSubReg(Pair, gsub_0);
+    Register Hi = getSubReg(Pair, gsub_1);
+    Register Base = MI.getOperand(Ld ? 1 : 0).getReg();
+    MachineInstrBuilder LoMI =
+        Ld ? BuildMI(MBB, II, DL, TII->get(SLOW32::LDW_FI), Lo).addReg(Base)
+           : BuildMI(MBB, II, DL, TII->get(SLOW32::STW_FI))
+                 .addReg(Base)
+                 .addReg(Lo, getKillRegState(Kill));
+    LoMI.addFrameIndex(FrameIndex).addImm(0).cloneMemRefs(MI);
+    eliminateFrameIndex(LoMI.getInstr()->getIterator(), SPAdj, 2, RS);
+
+    MI.setDesc(TII->get(Ld ? SLOW32::LDW_FI : SLOW32::STW_FI));
+    MI.getOperand(ValIdx).setReg(Hi);
+    MI.addOperand(MF, MachineOperand::CreateImm(4));
+    Opc = MI.getOpcode();
+  }
+
   // GPRPair spill pseudos: (base, val/def, FI, half-off) → real LDW/STW.
   if (Opc == SLOW32::STW_FI || Opc == SLOW32::LDW_FI) {
     assert(FIOperandNum + 1 < MI.getNumOperands() &&

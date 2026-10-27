@@ -1,6 +1,10 @@
-/* cfuzz seed 5262, reduced (2026-10-27).  The SLOW-32 LLVM backend at -O2
- * prints "f1 65472"; clang -O0 for SLOW-32, the host compiler and stage08
- * all print "f1 65470".  Not yet diagnosed: see docs/IMPROVEMENTS.md. */
+/* cfuzz seed 5262, reduced.  clang -O2 for SLOW-32 printed "f1 65472".
+ * CorrelatedValuePropagation turns "4 % y" into "4 < y ? 4 : 4 - y" with
+ * the sub marked nuw; the SLOW32 backend lowers SELECT branchless,
+ * F ^ ((T ^ F) & -C), computing the discarded arm too, and a combine used
+ * that arm's nuw to fold 4 ^ (4 - y) into 8 - y -- wrong for y = 7.  The
+ * arms are frozen first now (SLOW32ISelLowering.cpp LowerSELECT;
+ * llvm/test/CodeGen/SLOW32/select-poison-arm.ll). */
 #include <stdio.h>
 
 static unsigned f0(unsigned p0, unsigned p1, unsigned p2);
