@@ -708,3 +708,6 @@ machines, five differentials green, the machine quiet.
   definition).  LINPACK 509,008,169 -> 508,104,169 (0.01% under the
   pre-re-sync compiler), mandel unchanged, SQLite heavy 3,471,219,082
   -> 3,471,219,117 (+35), output identical.
+- 2026-10-27: Kagura on batch 46 (`694d26f2`): comparison 1033/0;
+  heavy.sql 3,471,242,518, exactly the Mac's +35 over batch 45
+  (3,471,242,483 there), output byte-identical to clang's.
