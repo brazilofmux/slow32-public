@@ -103,6 +103,17 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-27 (`694d26f2`).  `cc.s32x` and `libc.s32a`; the tools
+rebuild identical.  A codegen fix found by re-syncing the Fortran
+backend: an address ADDI chosen for recomputation at its uses while its
+operand had a register kept being recomputed after a later spill round
+put the operand in memory -- a load and an add at every use where one
+load of the stored sum would do (LINPACK's DGEFA, 806,400 extra
+instructions).  Such an ADDI now goes to memory with its operand.
+SQLite's heavy run is unchanged (+35 instructions), output identical.
+Gated: kit differential 125/0, kit tools 21/0, islisp, libcob 490/0,
+dfsort, mdfix 95 runs, tz.
+
 Rebuilt 2026-10-26 (`fb3dea7b`).  `cc.s32x` only; `libc.s32a` and the
 tools rebuild identical.  A wrong-code fix in the allocator's phi webs
 (in the kit since batch 40, `929b3a19`): two spilled phis of ONE block
