@@ -92,6 +92,14 @@ for all future codegen). None blocking — parity is reached.
 - **x64 DBT back-edge fix validation**: the superblock back-edge guard
   (`is_backedge_target` in `translate.c`) was applied to the x86-64 backend by
   inspection; it needs a Linux build+test pass.
+- **LLVM backend, -O2 wrong output** (found 2026-10-27 by
+  `regression/fuzz/cfuzz.py`, seed 5262): `regression/fuzz/known/
+  llvm-o2-seed5262.c` prints `f1 65472` built by clang -O2 for SLOW-32
+  and `f1 65470` at -O0, under stage08 and with the host compiler.  f0
+  is inlined into f1 with constant arguments; a 64-bit accumulator
+  feeds `(int)(unsigned)v3 >> 5` stored to an `unsigned short` element.
+  Not yet reduced at the IR level.  cfuzz reports such cases as
+  `clang-differs` (stage08 agrees with the host), not as stage08 bugs.
 - Negative-input tests for the toolchain (malformed objects/archives/
   relocations) — the linker's hardened paths have no test coverage.
 - See `docs/issues/` and the per-tool `ISSUES.md` files for older, lower

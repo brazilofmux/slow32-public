@@ -1976,6 +1976,7 @@ static void gc_combine(int u, int v) {
     }
 }
 
+static int ra_depth_w(int b);
 static int gc_aggr_phi;     /* phi copies in loops coalesce without the conservative tests (below) */
 static int gc_aggr_nphi;    /* ... when the phi's block carries at most this many (HIR_AGGR_NPHI, default 20) */
 static int gc_blk_nphi(int b) {
@@ -3585,6 +3586,12 @@ static void ra_delete_reload(int r) {
     }
     cmp = ra_rl_fused_cmp(term);
     if (cmp >= 0) ra_rl_rewire_cmp(cmp, r, v);
+    /* The readers are v's again: v lives as far as the reload did.  Its
+     * interval was computed while the reload stood in for it and ended
+     * at the reload; spilled, v then shared its slot with a value born
+     * before the readers -- `a[i] ^= x` stored through an address whose
+     * slot already held x (cfuzz seed 8710; 5b.2, live since batch 42). */
+    if (ra_pos[r] >= 0) ra_extend(v, ra_iend[r]);
     h_kind[r] = HI_NOP;
     ra_is_reload[r] = 0;
     ra_stat_reload_del = ra_stat_reload_del + 1;

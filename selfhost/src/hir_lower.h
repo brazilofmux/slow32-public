@@ -1514,6 +1514,7 @@ static int hl_same_lvar(Node *a, Node *b) {
  * address taken, a break (outside a nested switch) or a continue. */
 static int hl_unroll_blocked(Node *n, Node *v, int in_sw) {
     int k;
+    int sw;
     if (!n) return 0;
     k = n->kind;
     if (k == ND_WHILE || k == ND_FOR || k == ND_DO_WHILE ||
@@ -1526,15 +1527,20 @@ static int hl_unroll_blocked(Node *n, Node *v, int in_sw) {
     if ((k == ND_ASSIGN || k == ND_COMP_ASSIGN || k == ND_POST_INC ||
          k == ND_POST_DEC) && hl_same_lvar(n->lhs, v))
         return 1;
-    if (k == ND_SWITCH) in_sw = 1;
-    if (hl_unroll_blocked(n->lhs, v, in_sw)) return 1;
-    if (hl_unroll_blocked(n->rhs, v, in_sw)) return 1;
-    if (hl_unroll_blocked(n->cond, v, in_sw)) return 1;
-    if (hl_unroll_blocked(n->body, v, in_sw)) return 1;
-    if (hl_unroll_blocked(n->init, v, in_sw)) return 1;
-    if (hl_unroll_blocked(n->step, v, in_sw)) return 1;
-    if (hl_unroll_blocked(n->els, v, in_sw)) return 1;
-    if (hl_unroll_blocked(n->args, v, in_sw)) return 1;
+    /* A switch covers its own body's breaks, not its siblings': the flag
+     * goes to the children only.  Passed along n->next too, a `break`
+     * after a switch in the loop body counted as the switch's, the loop
+     * was unrolled and the break left with no loop around it ("break
+     * outside loop/switch"; cfuzz seed 94). */
+    sw = in_sw || k == ND_SWITCH;
+    if (hl_unroll_blocked(n->lhs, v, sw)) return 1;
+    if (hl_unroll_blocked(n->rhs, v, sw)) return 1;
+    if (hl_unroll_blocked(n->cond, v, sw)) return 1;
+    if (hl_unroll_blocked(n->body, v, sw)) return 1;
+    if (hl_unroll_blocked(n->init, v, sw)) return 1;
+    if (hl_unroll_blocked(n->step, v, sw)) return 1;
+    if (hl_unroll_blocked(n->els, v, sw)) return 1;
+    if (hl_unroll_blocked(n->args, v, sw)) return 1;
     return hl_unroll_blocked(n->next, v, in_sw);
 }
 
@@ -1622,6 +1628,8 @@ static int hl_pp_n;               /* ... and how many */
 
 static int hl_peel_blocked(Node *n, Node *v, int in_loop, int in_sw) {
     int k;
+    int lp;
+    int sw;
     if (!n) return 0;
     k = n->kind;
     if (k == ND_GOTO || k == ND_LABEL || k == ND_ASM || k == ND_STMT_EXPR)
@@ -1633,16 +1641,17 @@ static int hl_peel_blocked(Node *n, Node *v, int in_loop, int in_sw) {
     if ((k == ND_ASSIGN || k == ND_COMP_ASSIGN || k == ND_POST_INC ||
          k == ND_POST_DEC) && hl_same_lvar(n->lhs, v))
         return 1;
-    if (k == ND_WHILE || k == ND_FOR || k == ND_DO_WHILE) in_loop = 1;
-    if (k == ND_SWITCH) in_sw = 1;
-    if (hl_peel_blocked(n->lhs, v, in_loop, in_sw)) return 1;
-    if (hl_peel_blocked(n->rhs, v, in_loop, in_sw)) return 1;
-    if (hl_peel_blocked(n->cond, v, in_loop, in_sw)) return 1;
-    if (hl_peel_blocked(n->body, v, in_loop, in_sw)) return 1;
-    if (hl_peel_blocked(n->init, v, in_loop, in_sw)) return 1;
-    if (hl_peel_blocked(n->step, v, in_loop, in_sw)) return 1;
-    if (hl_peel_blocked(n->els, v, in_loop, in_sw)) return 1;
-    if (hl_peel_blocked(n->args, v, in_loop, in_sw)) return 1;
+    /* a nested loop or switch covers its own children, not its siblings */
+    lp = in_loop || k == ND_WHILE || k == ND_FOR || k == ND_DO_WHILE;
+    sw = in_sw || k == ND_SWITCH;
+    if (hl_peel_blocked(n->lhs, v, lp, sw)) return 1;
+    if (hl_peel_blocked(n->rhs, v, lp, sw)) return 1;
+    if (hl_peel_blocked(n->cond, v, lp, sw)) return 1;
+    if (hl_peel_blocked(n->body, v, lp, sw)) return 1;
+    if (hl_peel_blocked(n->init, v, lp, sw)) return 1;
+    if (hl_peel_blocked(n->step, v, lp, sw)) return 1;
+    if (hl_peel_blocked(n->els, v, lp, sw)) return 1;
+    if (hl_peel_blocked(n->args, v, lp, sw)) return 1;
     return hl_peel_blocked(n->next, v, in_loop, in_sw);
 }
 

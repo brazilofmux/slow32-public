@@ -902,6 +902,12 @@ static void ssa_rename(void) {
                 s = ssa_succ[ssa_soff[b] + si];
                 i = ssa_phi_head[s];
                 while (i >= 0) {
+                    /* A phi from before SSA construction (i < ssa_phi_base:
+                     * a ?: or && the lowering joined itself) has no variable
+                     * behind it -- its h_val is not a promoted-variable index,
+                     * and looking it up read ssa_vtop out of bounds (stage08,
+                     * cfuzz seed 40). */
+                    if (i < ssa_phi_base) { i = ssa_phi_next[i]; continue; }
                     phi_v = h_val[i];
                     val = ssa_vcur(phi_v);
                     /* Find this pred's slot in phi args */

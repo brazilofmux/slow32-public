@@ -844,6 +844,62 @@ static void hcg_rp_prune(int ret_inst) {
  * live names (fib's t=a+b, mixed10's s1+s2).  Drop extra S operands of
  * a non-PHI, and extra S phis in the same block, then re-prune.  The
  * RET source is kept if it still has a closed web of its own. */
+/* A web member read by two members of the web, one of them an
+ * instruction that writes r1 (not a phi, whose write is an edge copy,
+ * and not the RET), is still live when that reader writes: r1 cannot
+ * hold both.  A loop's strength-reduced induction variable read by the
+ * returned value and by its own increment kept r1 while the returned
+ * value was computed into r1 every pass (cfuzz seed 31379:
+ * `v = (i << 13) >> 11` in a loop returned 8196 for 8).  Such a member
+ * leaves the web; returns 1 if any did. */
+static int hcg_rp_rd[HIR_MAX_INST];
+static int hcg_rp_rdw[HIR_MAX_INST];
+static void hcg_rp_rd_one(int a, int writes) {
+    if (a < 0 || a >= h_ninst || hcg_rp_stamp[a] != hcg_rp_tick) return;
+    hcg_rp_rd[a] = hcg_rp_rd[a] + 1;
+    if (writes) hcg_rp_rdw[a] = hcg_rp_rdw[a] + 1;
+}
+static int hcg_rp_multi_read(int ret_src, int ret_inst) {
+    int i;
+    int u;
+    int k;
+    int w;
+    int j;
+    int dropped;
+    i = 0;
+    while (i < hcg_rp_ns) { hcg_rp_rd[hcg_rp_s[i]] = 0; hcg_rp_rdw[hcg_rp_s[i]] = 0; i = i + 1; }
+    i = 0;
+    while (i <= hcg_rp_ns) {
+        u = i < hcg_rp_ns ? hcg_rp_s[i] : ret_inst;
+        i = i + 1;
+        if (u != ret_inst && hcg_rp_stamp[u] != hcg_rp_tick) continue;
+        k = h_kind[u];
+        w = u != ret_inst && k != HI_PHI;
+        if (k == HI_PHI && h_pbase[u] >= 0) {
+            j = 0;
+            while (j < h_pcnt[u]) { hcg_rp_rd_one(h_pval[h_pbase[u] + j], 0); j = j + 1; }
+            continue;
+        }
+        hcg_rp_rd_one(h_src1[u], w);
+        if (ho_src2_is_ref(k) && h_src2[u] != h_src1[u]) hcg_rp_rd_one(h_src2[u], w);
+        if ((k == HI_CALL || k == HI_CALLP) && h_cbase[u] >= 0) {
+            j = 0;
+            while (j < h_val[u]) { hcg_rp_rd_one(h_carg[h_cbase[u] + j], w); j = j + 1; }
+        }
+    }
+    dropped = 0;
+    i = 0;
+    while (i < hcg_rp_ns) {
+        u = hcg_rp_s[i];
+        if (hcg_rp_stamp[u] == hcg_rp_tick && hcg_rp_rd[u] >= 2 && hcg_rp_rdw[u] >= 1) {
+            hcg_rp_stamp[u] = 0;
+            dropped = 1;
+        }
+        i = i + 1;
+    }
+    return dropped;
+}
+
 static void hcg_rp_shrink(int ret_src, int ret_inst) {
     int changed;
     int i;
@@ -897,10 +953,16 @@ static void hcg_rp_shrink(int ret_src, int ret_inst) {
                     }
                 }
                 if (k == HI_PHI) {
+                    /* A block's phis are on its ssa_phi_head list, not
+                     * between bb_start and bb_end: walking that range
+                     * found none, and two phis of one join both kept r1
+                     * -- their edge copies wrote each other's register
+                     * (cfuzz seed 8646: `return p ? v1 : v2;` after a
+                     * switch returned the other variable). */
                     bblk = h_blk[v];
                     if (bblk >= 0 && bblk < bb_nblk) {
-                        p = bb_start[bblk];
-                        while (p < bb_end[bblk]) {
+                        p = ssa_phi_head[bblk];
+                        while (p >= 0) {
                             if (h_kind[p] == HI_PHI && p != v &&
                                 hcg_rp_stamp[p] == hcg_rp_tick) {
                                 if (v != ret_src) {
@@ -912,13 +974,14 @@ static void hcg_rp_shrink(int ret_src, int ret_inst) {
                                     changed = 1;
                                 }
                             }
-                            p = p + 1;
+                            p = ssa_phi_next[p];
                         }
                     }
                 }
             }
             i = i + 1;
         }
+        if (hcg_rp_multi_read(ret_src, ret_inst)) changed = 1;
         if (changed) hcg_rp_prune(ret_inst);
     }
 }
@@ -996,10 +1059,10 @@ static int hcg_rp_phi_roommates_ok(void) {
         if (h_kind[v] == HI_PHI) {
             b = h_blk[v];
             if (b >= 0 && b < bb_nblk) {
-                p = bb_start[b];
-                while (p < bb_end[b]) {
+                p = ssa_phi_head[b];    /* the block's phis (see hcg_rp_shrink) */
+                while (p >= 0) {
                     if (h_kind[p] == HI_PHI && p != v && ra_reg[p] < 0) return 0;
-                    p = p + 1;
+                    p = ssa_phi_next[p];
                 }
             }
         }

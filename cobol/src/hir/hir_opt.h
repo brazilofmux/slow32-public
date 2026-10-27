@@ -547,9 +547,13 @@ static int ho_const_fold(void) {
                 changed = 1;
             }
         }
-        /* NOT(NOT(x)) -> COPY(x) */
+        /* NOT(NOT(x)) -> COPY(x), when x is already 0 or 1 (a comparison
+         * or a NOT).  NOT is the logical !: !!x is x != 0, not x
+         * (stage08, cfuzz seed 500). */
         if (k == HI_NOT && h_src1[i] >= 0 &&
-            h_kind[h_src1[i]] == HI_NOT) {
+            h_kind[h_src1[i]] == HI_NOT && h_src1[h_src1[i]] >= 0 &&
+            (h_kind[h_src1[h_src1[i]]] == HI_NOT ||
+             (h_kind[h_src1[h_src1[i]]] >= HI_SEQ && h_kind[h_src1[h_src1[i]]] <= HI_SGEU))) {
             h_kind[i] = HI_COPY;
             h_src1[i] = h_src1[h_src1[i]];
             changed = 1;
@@ -2227,6 +2231,10 @@ static void hir_opt(void) {
         if (ho_mask & 512) changed = changed | ho_dce();
         iter = iter + 1;
     }
+    /* Stopped by the iteration cap with work left, a phi just turned
+     * COPY may still have readers, and a COPY on a phi list is never
+     * emitted (stage08, cfuzz seed 4267): one more copy propagation. */
+    if (changed && (ho_mask & 1)) ho_copy_prop();
 
     /* Count live instructions after */
     after = 0;

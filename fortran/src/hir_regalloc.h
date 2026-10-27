@@ -3397,6 +3397,9 @@ static void ra_delete_reload(int r) {
     }
     cmp = ra_rl_fused_cmp(term);
     if (cmp >= 0) ra_rl_rewire_cmp(cmp, r, v);
+    /* the readers are v's again: v lives as far as the reload did
+     * (stage08, cfuzz seed 8710) */
+    if (ra_pos[r] >= 0) ra_extend(v, ra_iend[r]);
     h_kind[r] = HI_NOP;
     ra_is_reload[r] = 0;
     ra_stat_reload_del = ra_stat_reload_del + 1;
