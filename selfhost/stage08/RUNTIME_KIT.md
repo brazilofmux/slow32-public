@@ -103,6 +103,21 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-27 (`d634e454`).  `cc.s32x` and `libc.s32a`; the tools
+rebuild identical.  Replaces batch 47, which carried a regression:
+cc359989's phi fix exposed an old flaw in the block-reload deletion
+(5b.2), and a spilled address could share its slot with a value born
+before its last reader (`a[i] ^= x` in a function under heavy pressure
+stored to address 0x35).  Six more defects found by the new random-
+program differential (regression/fuzz/cfuzz.py), most live in every
+earlier kit: a compiler fault on a 64-bit ?: before a switch; "break
+outside loop/switch" for a break after a switch in a counted loop;
+!!x compiled as x; return pinning giving two phis of one join r1, and
+an induction variable and the value returned from it r1 together;
+and a phi turned COPY left with readers at the optimizer's round cap.
+SQLite heavy identical to batch 47.  Gated: kit differential 129/0,
+kit tools 21/0, islisp, libcob 492/0, dfsort, mdfix 95 runs.
+
 Rebuilt 2026-10-27 (`cc359989`).  `cc.s32x` and `libc.s32a`; the tools
 rebuild identical.  Two wrong-code fixes, both live in every earlier
 kit: return pinning could put an ADDI chain's inner ADDI in r1 beside
