@@ -12,6 +12,7 @@
 static char cg_out[CG_MAX_OUT];
 static int  cg_olen;
 static int  cg_fd = -1;
+static int  hcg_pgo_labels;   /* HIR_PGO_LABELS: per-block profile labels (step 5b.6) */
 static int  cg_long_calls;  /* -mlong-calls: direct calls form the address; a jal reaches +/-1MB, SQLite's library is 1.2MB */     /* the output file, once the driver has opened it: a full buffer is flushed to it */
 
 /* Dead-static DCE (GitHub issue 73): record .text file offsets per
@@ -4146,6 +4147,18 @@ static void hcg_block(int b) {
      * final target and nothing falls into it — emit only the label. */
     if (hcg_skip[b]) return;
 
+    /* HIR_PGO_LABELS=1: a named label at every emitted block, which a
+     * relink with the labels made global puts in the link map, so a
+     * `slow32 -p` histogram turns into per-block counts (step 5b.6,
+     * HIR_PGO).  A label is no code: the program is the same. */
+    if (hcg_pgo_labels && ra_cur_fname) {
+        cg_s("__pgo_");
+        cg_s(ra_cur_fname);
+        cg_c('_');
+        cg_n(b);
+        cg_s(":\n");
+    }
+
     /* Split-pass reloads: top of block, before every use. */
     i = split_head[b];
     while (i >= 0) {
@@ -4370,6 +4383,7 @@ static void hcg_func(Node *fn) {
         fdputc(10, 2);
     }
     ra_cur_fname = fn->name;
+    hcg_pgo_labels = getenv("HIR_PGO_LABELS") != 0;
     hir_regalloc();
 
     /* Optional per-function regalloc dump (Issue #31 diagnostic) */

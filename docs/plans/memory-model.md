@@ -711,3 +711,52 @@ machines, five differentials green, the machine quiet.
 - 2026-10-27: Kagura on batch 46 (`694d26f2`): comparison 1033/0;
   heavy.sql 3,471,242,518, exactly the Mac's +35 over batch 45
   (3,471,242,483 there), output byte-identical to clang's.
+
+## Step 5b.6: profile-guided allocation (built and measured 2026-10-27; opt-in)
+
+The question 5b.5 left: with real block frequencies instead of static
+guesses, do the regional splits and the RMW patch pay?  Built: block
+labels behind `HIR_PGO_LABELS=1` (`__pgo_<function>_<block>` at every
+emitted block, no code changed -- SQLite's labelled build is the
+default one plus 45,576 labels), `selfhost/stage08/pgo-profile.sh`
+(link map + `slow32 -p` histogram -> `function block count`), and
+`HIR_PGO=<file>` (`ra_pgo_fill`: ra_bfreq from the counts, normalized
+to the function's hottest block = 4096, unexecuted blocks 1, functions
+the training run never entered keep the defaults; mode 6 of
+ra_freq_on).  Trained on heavy.sql (12,208 blocks ran, 740 functions);
+measured on heavy.sql and on a second workload it never saw
+(scratchpad other.sql: 60,000-row ledger, LIKE, upper(), DELETE,
+group_concat DISTINCT, a self join).  Outputs identical throughout.
+
+| build | heavy | other |
+|---|---|---|
+| default | 3,471,217,446 | 2,115,739,729 |
+| profile, cost as before | +0.02% | +0.02% |
+| profile, cost as before, regions | +2.9% | +2.3% |
+| profile, cost = weighted uses | **-0.19%** | **-0.13%** |
+| that, with regions | -0.07% | +0.31% |
+| RMW patch alone | +6.0% | +3.9% |
+| RMW, its own profile | +7.0% | +5.0% |
+| RMW, its own profile, regions | +2.8% | +1.7% |
+
+What it found: the respill's cost divides weighted uses by the
+failing neighbours and by the lifetime.  With depth weights every value
+in a loop weighs about the same and the divisors only break ties; with
+measured counts (a factor of 4,096 apart) they made the hottest,
+longest-lived values look cheapest -- the regional build sent
+sqlite3VdbeExec's opcode pointer to memory, along with join phis
+carrying ~625,000 of weight.  In profile mode the cost is now the
+weighted uses alone (`HIR_PGO_COST=1` keeps the neighbour divisor, =3
+both, for measuring).  That is the -0.19%, and it carries over to the
+workload the profile never saw, so it is not training on the test.
+
+Verdict: measured frequencies are worth a little, and do not rescue
+the regional splits or the RMW patch.  The RMW patch's cost is not
+where the allocator puts values: promoting every case-local i64 in a
+10,000-instruction function puts more on the table than 19 callee-
+saved registers hold, whatever the weights.  Landed opt-in; nothing
+changes by default.  The harness compiles test_phi_web with a profile
+made by this pipeline (tests/test_phi_web.pgo) and requires `PGO
+fn=run`.  A profile fits builds that allocate differently, not ones
+that lower differently: the RMW build numbers 46 blocks differently and
+needed its own.

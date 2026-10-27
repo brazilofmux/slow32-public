@@ -957,6 +957,9 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
     #    overwritten it (the parallel-copy hazard, hcg_remat_reg_src).
     #  - test_join_split, HIR_REGION=1 (step 5b.4): a region whose value
     #    is live out of it, so a join phi was placed (joins=1 or more).
+    #  - test_phi_web, HIR_PGO: the allocator on a measured profile
+    #    (step 5b.6; tests/test_phi_web.pgo was made by the pipeline in
+    #    pgo-profile.sh's header) -- loaded, and used for run().
     #  - test_phi_web, HIR_LINEAR_LIVE=1: the interval model.  It carried
     #    the fused-compare interval bug (ra_compute_ends saw nothing of a
     #    compare NOPed by an earlier ra_extend_fused_cmp once intervals
@@ -964,7 +967,8 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
     for rt in "region:test_phi_web:^REGION:HIR_REGION=1" \
               "region:test_join_split:^REGION.* joins=[1-9]:HIR_REGION=1" \
               "linear:test_phi_web:^RA fn=:HIR_LINEAR_LIVE=1" \
-              "freq:test_phi_web:^RA fn=:HIR_RA_FREQ=3"; do
+              "freq:test_phi_web:^RA fn=:HIR_RA_FREQ=3" \
+              "pgo:test_phi_web:^PGO fn=run:HIR_PGO=$TESTS_DIR/test_phi_web.pgo"; do
         rtag="${rt%%:*}"; rt="${rt#*:}"
         rname="${rt%%:*}"; rt="${rt#*:}"
         rpat="${rt%%:*}"; renv="${rt#*:}"

@@ -2192,6 +2192,178 @@ static void ra_build_bfreq(void) {
     }
 }
 
+/* =================================================================
+ * Step 5b.6: block frequencies from a profile (HIR_PGO=<file>).
+ *
+ * The file is lines of `function block count`: the executions of the
+ * block's first instruction in a training run, from a build with
+ * HIR_PGO_LABELS=1 (a label per emitted block, nothing else changed),
+ * relinked with the labels global, `slow32 -p`, and the link map.
+ * Block numbers are the HIR's, fixed before allocation, so the profile
+ * fits a build that allocates differently.  A function with lines gets
+ * ra_bfreq from them, normalized to its hottest block (RA_PGO_HOT);
+ * a block with no line ran zero times and weighs 1.  A function with
+ * no lines never ran in training and keeps the default weights.
+ * ================================================================= */
+static char *ra_cur_fname;              /* set by the codegen before hir_regalloc() */
+#define RA_PGO_HOT 4096
+#define RA_PGO_SLOTS 16384
+static char *ra_pgo_buf;
+static int ra_pgo_loaded;
+static char *ra_pgo_name[RA_PGO_SLOTS];
+static int ra_pgo_lo[RA_PGO_SLOTS];
+static int ra_pgo_hi[RA_PGO_SLOTS];
+static int *ra_pgo_b;
+static int *ra_pgo_c;
+static int ra_pgo_n;
+static int ra_pgo_cost;                  /* HIR_PGO_COST, see gc_respill_scale */
+
+static unsigned ra_pgo_hash(char *s) {
+    unsigned h;
+    h = 5381;
+    while (*s) { h = h * 33 + (unsigned)(*s & 255); s = s + 1; }
+    return h;
+}
+
+static int ra_pgo_find(char *name) {
+    unsigned h;
+    int lim;
+    h = ra_pgo_hash(name) & (RA_PGO_SLOTS - 1);
+    lim = 0;
+    while (ra_pgo_name[h] && lim < RA_PGO_SLOTS) {
+        if (strcmp(ra_pgo_name[h], name) == 0) return (int)h;
+        h = (h + 1) & (RA_PGO_SLOTS - 1);
+        lim = lim + 1;
+    }
+    return -1;
+}
+
+static int ra_pgo_num(char **pp) {
+    char *p;
+    int v;
+    p = *pp;
+    v = 0;
+    while (*p == 32 || *p == 9) p = p + 1;
+    while (*p >= 48 && *p <= 57) {
+        if (v < 200000000) v = v * 10 + (*p - 48);
+        p = p + 1;
+    }
+    *pp = p;
+    return v;
+}
+
+static void ra_pgo_load(void) {
+    char *path;
+    int fd;
+    int cap;
+    int len;
+    int n;
+    int lines;
+    char *p;
+    char *name;
+    char *prev;
+    unsigned h;
+    int lim;
+    ra_pgo_loaded = 1;
+    path = getenv("HIR_PGO");
+    if (!path) return;
+    fd = open(path, 0);
+    if (fd < 0) {
+        fdputs("s12cc: HIR_PGO: cannot open ", 2);
+        fdputs(path, 2);
+        fdputc(10, 2);
+        return;
+    }
+    cap = 1 << 20;
+    ra_pgo_buf = malloc(cap + 1);
+    len = 0;
+    for (;;) {
+        if (len == cap) {
+            char *nb;
+            nb = malloc(cap * 2 + 1);
+            if (!nb) break;
+            memcpy(nb, ra_pgo_buf, len);
+            free(ra_pgo_buf);
+            ra_pgo_buf = nb;
+            cap = cap * 2;
+        }
+        n = read(fd, ra_pgo_buf + len, cap - len);
+        if (n <= 0) break;
+        len = len + n;
+    }
+    close(fd);
+    ra_pgo_buf[len] = 0;
+    lines = 1;
+    p = ra_pgo_buf;
+    while (*p) { if (*p == 10) lines = lines + 1; p = p + 1; }
+    ra_pgo_b = malloc(lines * 4);
+    ra_pgo_c = malloc(lines * 4);
+    ra_pgo_n = 0;
+    prev = 0;
+    h = 0;
+    p = ra_pgo_buf;
+    while (*p) {
+        while (*p == 32 || *p == 9 || *p == 10 || *p == 13) p = p + 1;
+        if (!*p) break;
+        name = p;
+        while (*p && *p != 32 && *p != 9 && *p != 10) p = p + 1;
+        if (*p == 10 || !*p) { if (*p) p = p + 1; continue; }   /* malformed: no numbers */
+        *p = 0;
+        p = p + 1;
+        if (!prev || strcmp(prev, name) != 0) {
+            if (prev) ra_pgo_hi[h] = ra_pgo_n;
+            h = ra_pgo_hash(name) & (RA_PGO_SLOTS - 1);
+            lim = 0;
+            while (ra_pgo_name[h] && lim < RA_PGO_SLOTS) { h = (h + 1) & (RA_PGO_SLOTS - 1); lim = lim + 1; }
+            if (lim >= RA_PGO_SLOTS) break;
+            ra_pgo_name[h] = name;
+            ra_pgo_lo[h] = ra_pgo_n;
+            prev = name;
+        }
+        ra_pgo_b[ra_pgo_n] = ra_pgo_num(&p);
+        ra_pgo_c[ra_pgo_n] = ra_pgo_num(&p);
+        ra_pgo_n = ra_pgo_n + 1;
+        while (*p && *p != 10) p = p + 1;
+    }
+    if (prev) ra_pgo_hi[h] = ra_pgo_n;
+}
+
+/* ra_bfreq for the function being allocated, from the profile.
+ * 1 if it has profile lines, 0 if not (the caller keeps the default). */
+static int ra_pgo_fill(void) {
+    int s;
+    int i;
+    int b;
+    int mx;
+    int q;
+    if (!ra_pgo_loaded) ra_pgo_load();
+    if (!ra_cur_fname || !ra_pgo_b) return 0;
+    s = ra_pgo_find(ra_cur_fname);
+    if (s < 0) return 0;
+    mx = 1;
+    i = ra_pgo_lo[s];
+    while (i < ra_pgo_hi[s]) { if (ra_pgo_c[i] > mx) mx = ra_pgo_c[i]; i = i + 1; }
+    q = (mx >> 12) + 1;           /* the hottest block -> about RA_PGO_HOT */
+    b = 0;
+    while (b < bb_nblk) { ra_bfreq[b] = 1; b = b + 1; }
+    i = ra_pgo_lo[s];
+    while (i < ra_pgo_hi[s]) {
+        b = ra_pgo_b[i];
+        if (b >= 0 && b < bb_nblk) ra_bfreq[b] = 1 + ra_pgo_c[i] / q;
+        i = i + 1;
+    }
+    if (getenv("HIR_RA_DEBUG")) {
+        fdputs("PGO fn=", 2);
+        fdputs(ra_cur_fname, 2);
+        fdputs(" blocks=", 2);
+        fdputuint(2, (unsigned)(ra_pgo_hi[s] - ra_pgo_lo[s]));
+        fdputs(" max=", 2);
+        fdputuint(2, (unsigned)mx);
+        fdputc(10, 2);
+    }
+    return 1;
+}
+
 static int ra_bfreq_w(int b) {
     if (b < 0 || b >= bb_nblk) return 1;
     /* =5: the depth weights themselves (every block in a loop counts
@@ -2209,6 +2381,7 @@ static int ra_bfreq_pess(int e) {
     int f;
     int g;
     f = ra_bfreq_w(e);
+    if (ra_freq_on == 6) return f;     /* a profile: the count is the count */
     if (e >= 0 && e < bb_nblk && ssa_idom[e] >= 0 && ssa_idom[e] != e) {
         g = ra_bfreq_w(ssa_idom[e]) / 2;
         if (g > f) f = g;
@@ -3436,7 +3609,6 @@ static void ra_delete_reload(int r) {
 static int ra_stat_region;
 static int gc_rs_nregion;
 static int ra_region_cand;              /* candidates seen (HIR_REGION_FN bisection) */
-static char *ra_cur_fname;              /* set by the codegen before hir_regalloc() */
 static int gc_round_no;                 /* respill rounds, never reset: a stamp */
 static int ra_region_round[HIR_MAX_INST];   /* the round a value was last split in */
 static char ra_in_region[HIR_MAX_BLOCK];
@@ -4048,6 +4220,17 @@ static int gc_respill_scale(int raw, int inst, int nfail) {
         span = (ra_iend[inst] - ra_pos[inst]) / 16 + 1;
     if (span > 8) span = 8;
     if (raw > 1000000) raw = 1000000;
+    /* Under a profile (step 5b.6) the cost is the weighted uses alone.
+     * With depth weights every value in a loop weighs about the same and
+     * the two divisors only break ties; with measured counts, a factor
+     * of 4096 apart, they made the hottest, longest-lived values look
+     * cheapest -- sqlite3VdbeExec's opcode pointer went to memory.
+     * HIR_PGO_COST=1 keeps the failing-neighbour divisor, =3 both, for
+     * measuring (the plan log has the numbers). */
+    if (ra_freq_on == 6 && ra_pgo_cost != 3) {
+        span = 1;
+        if (ra_pgo_cost != 1) nfail = 1;
+    }
     return (raw * 64) / (nfail * span);
 }
 
@@ -4160,7 +4343,7 @@ static int gc_respill(void) {
                     h_no_remat[inst] = 0;   /* back to remat, no slot */
                 } else if (ra_is_reload[inst]) {
                     ra_delete_reload(inst); /* readers back to the slot */
-                } else if (!ra_freq_on && getenv("HIR_REGION") &&
+                } else if (!ra_freq_on && getenv("HIR_REGION") && !getenv("HIR_PGO") &&
                            ra_region_split(inst, h_blk[gc_inst[n]], gc_inst[n])) {
                     /* in memory across the failing region only (step
                      * 5b.3/5b.4, opt-in: without the frequencies the
@@ -4823,7 +5006,11 @@ static void hir_regalloc(void) {
     ra_build_pairs();      /* fp64 halves that want adjacent registers */
     ra_split_at_calls();   /* chop crossing webs so the pre-call half can use r3-r10 */
     ra_freq_on = getenv("HIR_RA_FREQ") ? atoi(getenv("HIR_RA_FREQ")) : 0;
-    if (ra_freq_on && ra_freq_on != 5) ra_build_bfreq();   /* step 5b.5: static block frequencies */
+    /* HIR_PGO=<file>: measured frequencies (step 5b.6, mode 6); a
+     * function the training run never entered keeps the defaults. */
+    if (getenv("HIR_PGO")) ra_freq_on = ra_pgo_fill() ? 6 : 0;
+    ra_pgo_cost = getenv("HIR_PGO_COST") ? atoi(getenv("HIR_PGO_COST")) : 0;
+    if (ra_freq_on && ra_freq_on != 5 && ra_freq_on != 6) ra_build_bfreq();   /* step 5b.5: static block frequencies */
     ra_build_wuses();      /* weighted use counts for spill cost: loop depth, or the frequencies */
     ra_compute_pos();
     ra_compute_ends();
