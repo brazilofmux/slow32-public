@@ -169,7 +169,12 @@ class Gen:
         r = self.r
         if d <= 0 or r.random() < 0.3:
             if r.random() < 0.3:
-                return ('dk', r.choice(['0.5', '1.0', '3.25', '-2.75', '1e3', '0.1']))
+                # integer literals too: d * 2 (an int power of two beside a
+                # double) was miscompiled for weeks with every double
+                # constant here written as a floating literal
+                # (selfhost ISSUES-100)
+                return ('dk', r.choice(['0.5', '1.0', '3.25', '-2.75', '1e3', '0.1',
+                                        '2', '4', '8', '3', '-2', '16']))
             return ('dv', self.expr(1))
         c = r.random()
         if c < 0.55:
