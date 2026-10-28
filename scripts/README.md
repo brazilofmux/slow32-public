@@ -14,7 +14,7 @@ This gives you convenient shortcuts:
 - `s32run program.s32x` - Run with the default engine (slow32-dbt)
 - `s32run-fast program.s32x` - Run with optimized emulator
 - `s32run-qemu program.s32x` - Run with QEMU
-- `s32run-trace program.s32x` - `-t` (instruction tracing; add `-i` for the interpreter)
+- `s32run-trace program.s32x` - `-t` (instruction tracing, on the reference interpreter)
 - `s32run-debug program.s32x` - `-t -r` (likewise)
 
 To make this permanent, add the source command to your `~/.bashrc` or `~/.zshrc`.
@@ -83,9 +83,10 @@ s32run [options] program.s32x [args...]
 - `-b ADDR` - Set breakpoint at address
 - `-w RANGE` - Watch memory range (e.g., 0x1000-0x2000)
 
-These are the reference interpreter's flags; use them with `-i`.  `s32run`
-drops them for slow32-fast and qemu and passes them through to slow32-dbt,
-whose own `-s`/`-t` mean other things (`slow32-dbt -h`).
+These are the reference interpreter's flags.  With no engine named, any of
+them selects it (`-i` is implied); with another engine named, `s32run` warns
+and drops them -- slow32-dbt's own `-s`/`-t` mean statistics and profiling
+(`slow32-dbt -h`), and slow32-fast and qemu have none.
 
 **Other Options:**
 

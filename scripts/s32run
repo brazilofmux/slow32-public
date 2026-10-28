@@ -3,6 +3,7 @@
 # Usage: s32run [options] program.s32x [args...]
 
 EMULATOR="slow32-dbt"
+EMULATOR_CHOSEN=0
 DEBUG_OPTS=""
 PROGRAM=""
 PROGRAM_ARGS=()
@@ -12,12 +13,13 @@ function show_help() {
     echo "Usage: s32run [options] program.s32x [args...]"
     echo ""
     echo "Emulator Selection (default: slow32-dbt):"
-    echo "  -f, --fast        Use optimized C++ emulator (slow32-fast)"
+    echo "  -f, --fast        Use the pre-decoding interpreter (slow32-fast)"
     echo "  -d, --dbt         Use dynamic binary translator (slow32-dbt) [default]"
-    echo "  -i, --interp      Use C++ interpreter (slow32)"
+    echo "  -i, --interp      Use the reference interpreter (slow32)"
     echo "  -q, --qemu        Use QEMU TCG emulator (qemu-system-slow32)"
     echo ""
-    echo "Debug Options (slow32 and slow32-dbt only - not supported by slow32-fast or qemu):"
+    echo "Debug Options (the reference interpreter, slow32, only; with no engine"
+    echo "named, any of these selects slow32):"
     echo "  -s, --step        Step through each instruction"
     echo "  -t, --trace       Trace every instruction"
     echo "  -r, --registers   Show register changes"
@@ -31,7 +33,8 @@ function show_help() {
     echo "Notes:"
     echo "  - Program arguments are passed after the program name"
     echo "  - For QEMU, arguments are passed via -append"
-    echo "  - Debug options are supported by slow32 and slow32-dbt, not slow32-fast or qemu"
+    echo "  - Debug options belong to slow32 alone: slow32-dbt's own -s and -t mean"
+    echo "    statistics and profiling, and slow32-fast and qemu have none"
     exit 0
 }
 
@@ -39,18 +42,22 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         -f|--fast)
             EMULATOR="slow32-fast"
+            EMULATOR_CHOSEN=1
             shift
             ;;
         -d|--dbt)
             EMULATOR="slow32-dbt"
+            EMULATOR_CHOSEN=1
             shift
             ;;
         -i|--interp)
             EMULATOR="slow32"
+            EMULATOR_CHOSEN=1
             shift
             ;;
         -q|--qemu)
             EMULATOR="qemu-system-slow32"
+            EMULATOR_CHOSEN=1
             shift
             ;;
         -s|--step)
@@ -104,10 +111,16 @@ if [ ! -f "$PROGRAM" ]; then
     exit 1
 fi
 
-# Warn if debug options used with emulators that don't support them
-if [ -n "$DEBUG_OPTS" ] && [ "$EMULATOR" != "slow32" ] && [ "$EMULATOR" != "slow32-dbt" ]; then
-    echo "Warning: Debug options are only supported by slow32 and slow32-dbt, ignoring: $DEBUG_OPTS"
-    DEBUG_OPTS=""
+# Debug options are the reference interpreter's.  With no engine named they
+# select it; with another engine named they are dropped, not passed on --
+# slow32-dbt has flags of the same letters that mean something else.
+if [ -n "$DEBUG_OPTS" ] && [ "$EMULATOR" != "slow32" ]; then
+    if [ "$EMULATOR_CHOSEN" = 0 ]; then
+        EMULATOR="slow32"
+    else
+        echo "Warning: debug options are only supported by slow32, ignoring:$DEBUG_OPTS" >&2
+        DEBUG_OPTS=""
+    fi
 fi
 
 echo "=== Running $PROGRAM with $EMULATOR ==="
@@ -131,8 +144,8 @@ elif [ "$EMULATOR" = "slow32-fast" ]; then
     # slow32-fast doesn't support debug options, just program and args
     exec $EMULATOR "$PROGRAM" "${PROGRAM_ARGS[@]}"
 elif [ "$EMULATOR" = "slow32-dbt" ]; then
-    # slow32-dbt: Stage 4 is the default
-    exec $EMULATOR $DEBUG_OPTS "$PROGRAM" "${PROGRAM_ARGS[@]}"
+    # slow32-dbt: Stage 4 is the default; no debug options reach it
+    exec $EMULATOR "$PROGRAM" "${PROGRAM_ARGS[@]}"
 else
     # slow32 supports debug options
     exec $EMULATOR $DEBUG_OPTS "$PROGRAM" "${PROGRAM_ARGS[@]}"
