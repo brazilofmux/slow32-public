@@ -253,6 +253,20 @@ probe.  **Rule for the rest of S3: read every assembly diff in SQLite
 before trusting a switch to C types; a gate that passes does not cover
 the code paths a probe never wrote.**
 
+**S3, bit-field promotion** (2026-10-28): a bit-field promotes by its
+width, not its declared type (6.3.1.1p2): narrower than `int` it is an
+`int`, as wide an unsigned one is `unsigned int`; a wider (long long)
+one keeps its type -- clang's reading of what 6.3.1.1 leaves to the
+implementation, `nd_bf_promoted`.  Sema writes the promotion as a cast
+on each operand that promotes (arithmetic, comparison, `?:` arms, unary
+`-`/`~`, a variadic argument), and unary `+` takes it in the parser, so
+`x.u - 2 < 0` on an `unsigned u : 4` is true at last.  The member node
+keeps its declared type: that is what the load and the store read.
+SQLite changed in two compares (a 2-bit and a 4-bit field against 2,
+now signed; the same answer for every value they hold); the compiler
+itself, byte-identical.  Probes `6.3.1.1-bitfield-promote`,
+`6.7.2.1-bitfield-promote`, `6.3.1.1-bitfield-widths`.
+
 ## Constraints on the work
 
 - stage07 builds stage08: the new code keeps stage07's dialect (ints

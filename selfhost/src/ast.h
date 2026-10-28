@@ -537,6 +537,19 @@ static Node *nd_member(Node *lhs, int offset, int mty, int is_arr, int arr_size,
     return n;
 }
 
+/* The type a bit-field's value promotes to (6.3.1.1p2), or -1 when e is
+ * not a bit-field or keeps its declared type.  Narrower than int, every
+ * value fits in int, unsigned or not; exactly as wide, an unsigned one is
+ * unsigned int.  A wider one -- a long long bit-field -- stays what it
+ * is.  This is clang's reading for the long long bit-fields 6.3.1.1
+ * leaves to the implementation, so the two compilers agree. */
+static int nd_bf_promoted(Node *e) {
+    if (!e || e->kind != ND_MEMBER || e->bit_width <= 0) return -1;
+    if (e->bit_width < 32) return TY_INT;
+    if (e->bit_width == 32) return TY_INT | (e->ty & TY_UNSIGNED);
+    return -1;
+}
+
 static Node *nd_goto(int label_id) {
     Node *n;
     n = nd_new(ND_GOTO);

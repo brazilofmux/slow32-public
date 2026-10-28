@@ -26,8 +26,10 @@ set at once, with one probe added since, `6.5.5-double-times-pow2-int`.)
 2-D `2[m][1]`), W5, W7, W8, W9, W10 and W14's octal escapes fixed, and
 `&function` accepted; `probe.sh --check` against `verdicts.txt` now
 gates every change.  Then the type work (docs/TYPES.md): S3 fixed W2,
-`_Bool` (185 PASS, 32 WRONG, 83 REJECTS, 81 DIAG, 135 ACCEPTS).  The tables
-below are the survey as taken.
+`_Bool`; comparison and pointer-difference types; W12, `sizeof` of
+computed values and bit-field promotion (195 PASS, 26 WRONG, 83
+REJECTS, 81 DIAG, 135 ACCEPTS).  The tables below are the survey as
+taken.
 
 The 52 WRONG probes come from about fifteen defects, listed below by
 root cause, most dangerous first: a program that compiles and silently

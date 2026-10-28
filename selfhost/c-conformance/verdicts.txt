@@ -122,7 +122,8 @@
 6.2.8-alignment PASS
 6.2.8-alignof REJECTS
 6.3.1.1-bitfield-init REJECTS
-6.3.1.1-bitfield-promote WRONG
+6.3.1.1-bitfield-promote PASS
+6.3.1.1-bitfield-widths PASS
 6.3.1.1-promotions PASS
 6.3.1.1-rank-ushort PASS
 6.3.1.1-sizeof-promoted PASS
@@ -333,7 +334,7 @@
 6.7.2.1-bitfield-address DIAG
 6.7.2.1-bitfield-init REJECTS
 6.7.2.1-bitfield-layout WRONG
-6.7.2.1-bitfield-promote WRONG
+6.7.2.1-bitfield-promote PASS
 6.7.2.1-bitfield-too-wide DIAG
 6.7.2.1-bitfield-zero-named DIAG
 6.7.2.1-bitfields PASS

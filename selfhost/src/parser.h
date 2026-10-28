@@ -4691,8 +4691,10 @@ static Node *parse_unary(void) {
          * short operand becomes int, so sizeof(+c) is int's size */
         next();
         n = parse_unary();
-        if (!ty_is_ptr(n->ty) && ((n->ty & TY_BASE_MASK) == TY_CHAR ||
-                                  (n->ty & TY_BASE_MASK) == TY_SHORT))
+        if (nd_bf_promoted(n) >= 0)
+            n = nd_cast(n, nd_bf_promoted(n));
+        else if (!ty_is_ptr(n->ty) && ((n->ty & TY_BASE_MASK) == TY_CHAR ||
+                                       (n->ty & TY_BASE_MASK) == TY_SHORT))
             n = nd_cast(n, TY_INT);
         return n;
     }

@@ -107,6 +107,23 @@ static Node *sema_to_bool(Node *e) {
     return n;
 }
 
+/* e as an operand: a bit-field promoted by its width (6.3.1.1p2,
+ * nd_bf_promoted), written as a conversion the cast lowering performs.
+ * It promoted by its declared type, so an unsigned :4 field stayed
+ * unsigned and x.u - 2 < 0 was never true (W12). */
+static Node *sema_bf_operand(Node *e) {
+    Node *n;
+    int ty;
+    ty = nd_bf_promoted(e);
+    if (ty < 0) return e;
+    n = nd_cast(e, ty);
+    n->cty = ct_from_mty(ty, 0);
+    n->next = e->next;
+    e->next = NULL;
+    sema_attr_node(n);
+    return n;
+}
+
 static void sema_expr_mty(Node *n) {
     Node *a;
     Node *prev;
@@ -135,6 +152,8 @@ static void sema_expr_mty(Node *n) {
     /* ND_NUM, ND_VAR, ND_STRING, ND_FUNC_REF: already typed by parser */
 
     if (n->kind == ND_BINOP) {
+        n->lhs = sema_bf_operand(n->lhs);
+        n->rhs = sema_bf_operand(n->rhs);
         lty = n->lhs ? n->lhs->ty : TY_INT;
         rty = n->rhs ? n->rhs->ty : TY_INT;
 
@@ -173,6 +192,7 @@ static void sema_expr_mty(Node *n) {
 
     if (n->kind == ND_UNARY) {
         if (n->op == TK_MINUS || n->op == TK_TILDE) {
+            n->lhs = sema_bf_operand(n->lhs);
             n->ty = n->lhs ? sema_promote(n->lhs->ty) : TY_INT;
         }
         /* !, *, & already typed correctly by parser */
@@ -207,6 +227,8 @@ static void sema_expr_mty(Node *n) {
     }
 
     if (n->kind == ND_TERNARY) {
+        n->lhs = sema_bf_operand(n->lhs);
+        n->rhs = sema_bf_operand(n->rhs);
         lty = n->lhs ? n->lhs->ty : TY_INT;
         rty = n->rhs ? n->rhs->ty : TY_INT;
         n->ty = sema_arith_type(lty, rty);
@@ -248,6 +270,7 @@ static void sema_expr_mty(Node *n) {
              * float handed to printf arrived as its 32-bit pattern where
              * va_arg(ap, double) reads a pair. */
             if (pt < 0 && ty_is_float(a->ty)) pt = TY_DOUBLE;
+            if (pt < 0) pt = nd_bf_promoted(a);    /* likewise the integer promotions */
             if (pt >= 0 &&
                 sema_arg_class(a->ty) != sema_arg_class(pt) &&
                 sema_arg_class(a->ty) != 4 && sema_arg_class(pt) != 4) {
@@ -286,6 +309,7 @@ static void sema_expr_mty(Node *n) {
             while (a) {
                 pt = (idx < fpn) ? ps_fptypes[fpbase + idx] : -1;
                 if (pt < 0 && ty_is_float(a->ty)) pt = TY_DOUBLE;
+            if (pt < 0) pt = nd_bf_promoted(a);    /* likewise the integer promotions */
                 if (pt >= 0 &&
                     sema_arg_class(a->ty) != sema_arg_class(pt) &&
                     sema_arg_class(a->ty) != 4 && sema_arg_class(pt) != 4) {
