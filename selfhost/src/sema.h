@@ -75,7 +75,14 @@ static int sema_arg_class(int ty) {
 
 /* --- Expression walk --- */
 
-static void sema_expr(Node *n) {
+/* sema_expr: each node's machine type and conversions (sema_expr_mty,
+ * the walk as it was), then its C type (sema_cty_node, docs/TYPES.md).
+ * The recursion goes through here, so every node gets both, children
+ * first. */
+static void sema_expr(Node *n);
+static void sema_cty_node(Node *n);
+
+static void sema_expr_mty(Node *n) {
     Node *a;
     Node *prev;
     Node *cast;
@@ -254,6 +261,106 @@ static void sema_expr(Node *n) {
     /* ND_CALL_PTR otherwise: stays TY_INT (no return type info) */
     /* ND_CAST: preserve parser-assigned type */
     /* ND_MEMBER: preserve member type */
+}
+
+/* --- C types: the attribute grammar's cty (docs/TYPES.md S2) --- */
+
+static int sema_cty_check = -1;
+
+/* A child's C type: its own, or one rebuilt from its machine type where
+ * nothing has given it one (a node sema made, a kind without a rule). */
+static int sema_cty_of(Node *c) {
+    if (!c) return ct_basic[CT_INT];
+    if (c->cty > 0) return c->cty;
+    return ct_from_mty(c->ty, 0);
+}
+
+/* S12CC_CTY_CHECK=1: report where the C type sema derives maps to a
+ * machine type other than the one the node carries -- where the old
+ * typing departs from C, kind and operator named. */
+static void sema_cty_report(Node *n) {
+    if (sema_cty_check < 0) sema_cty_check = getenv("S12CC_CTY_CHECK") != 0;
+    if (!sema_cty_check || ct_mty(n->cty) == n->ty) return;
+    fdputs("cty-mismatch kind=", 2);
+    fdputuint(2, (unsigned)n->kind);
+    fdputs(" op=", 2);
+    fdputuint(2, (unsigned)n->op);
+    fdputs(" ty=", 2);
+    fdputuint(2, (unsigned)n->ty);
+    fdputs(" c-says=", 2);
+    fdputuint(2, (unsigned)ct_mty(n->cty));
+    if (n->name) { fdputs(" name=", 2); fdputs(n->name, 2); }
+    if (n->lhs) {
+        fdputs(" L=", 2); fdputuint(2, (unsigned)n->lhs->kind);
+        fdputs("/", 2); fdputuint(2, (unsigned)n->lhs->ty);
+        fdputs("/", 2); fdputuint(2, (unsigned)ct_kindof(sema_cty_of(n->lhs)));
+    }
+    if (n->rhs) {
+        fdputs(" R=", 2); fdputuint(2, (unsigned)n->rhs->kind);
+        fdputs("/", 2); fdputuint(2, (unsigned)n->rhs->ty);
+        fdputs("/", 2); fdputuint(2, (unsigned)ct_kindof(sema_cty_of(n->rhs)));
+    }
+    fdputs("\n", 2);
+}
+
+/* The C type of an operator's result, from its operands' (6.5).  Kinds
+ * without a rule yet keep a type rebuilt from the machine type. */
+static void sema_cty_node(Node *n) {
+    int l;
+    int r;
+    if (n->cty > 0 && n->kind == ND_VAR) { sema_cty_report(n); return; }
+    if (n->kind == ND_STRING) {
+        n->cty = ct_array(ct_basic[CT_CHAR], lex_str_len[n->val] + 1);
+    } else if (n->kind == ND_FUNC_REF) {
+        n->cty = ct_func(ct_from_mty(find_func_type(n->name), 0), 0, -1, 0);
+    } else if (n->kind == ND_BINOP) {
+        l = ct_decay(sema_cty_of(n->lhs));
+        r = ct_decay(sema_cty_of(n->rhs));
+        if (sema_is_cmp(n->op) || n->op == TK_LAND || n->op == TK_LOR) {
+            n->cty = ct_basic[CT_INT];
+        } else if (n->op == TK_LSHIFT || n->op == TK_RSHIFT) {
+            n->cty = ct_promote(l);
+        } else if ((n->op == TK_PLUS || n->op == TK_MINUS) && ct_is_ptr(l) && ct_is_ptr(r)) {
+            n->cty = ct_basic[ty_ptr_size == 8 ? CT_LONG : CT_INT];   /* ptrdiff_t */
+        } else if ((n->op == TK_PLUS || n->op == TK_MINUS) && ct_is_ptr(l)) {
+            n->cty = l;
+        } else if (n->op == TK_PLUS && ct_is_ptr(r)) {
+            n->cty = r;
+        } else if (ct_is_arith(l) && ct_is_arith(r)) {
+            n->cty = ct_usual(l, r);
+        } else {
+            n->cty = ct_from_mty(n->ty, 0);
+            return;
+        }
+    } else if (n->kind == ND_UNARY) {
+        l = sema_cty_of(n->lhs);
+        if (n->op == TK_MINUS || n->op == TK_TILDE) n->cty = ct_promote(ct_decay(l));
+        else if (n->op == TK_BANG) n->cty = ct_basic[CT_INT];
+        else if (n->op == TK_AMP) n->cty = ct_ptr(l);
+        else if (n->op == TK_STAR && ct_is_ptr(ct_decay(l))) n->cty = ct_baseof(ct_decay(l));
+        else { n->cty = ct_from_mty(n->ty, 0); return; }
+    } else if (n->kind == ND_ASSIGN || n->kind == ND_COMP_ASSIGN ||
+               n->kind == ND_POST_INC || n->kind == ND_POST_DEC) {
+        n->cty = ct_unqual(sema_cty_of(n->lhs));
+    } else if (n->kind == ND_COMMA) {
+        n->cty = ct_decay(sema_cty_of(n->rhs));
+    } else if (n->kind == ND_TERNARY) {
+        l = ct_decay(sema_cty_of(n->lhs));
+        r = ct_decay(sema_cty_of(n->rhs));
+        if (ct_is_arith(l) && ct_is_arith(r)) n->cty = ct_usual(l, r);
+        else if (l == r) n->cty = l;
+        else { n->cty = ct_from_mty(n->ty, 0); return; }
+    } else {
+        if (n->cty <= 0) n->cty = ct_from_mty(n->ty, 0);
+        return;
+    }
+    sema_cty_report(n);
+}
+
+static void sema_expr(Node *n) {
+    if (!n) return;
+    sema_expr_mty(n);
+    sema_cty_node(n);
 }
 
 /* --- Statement walk --- */

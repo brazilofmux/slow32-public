@@ -129,6 +129,7 @@ static int ps_type_nstar;
  * still loses the C type (docs/TYPES.md, S1). */
 static int ps_cty_check = -1;
 static int ps_cty_fallbacks;
+static int ps_global_cty(int ty, int size_bytes);
 static int ps_obj_cty(int ty) {
     if (ps_type_cty > 0 && ct_mty(ps_type_cty) == ty) return ps_type_cty;
     if (ps_cty_check < 0) ps_cty_check = getenv("S12CC_CTY_CHECK") != 0;
@@ -1997,8 +1998,9 @@ static int add_local(char *name, int ty) {
 
 /* A local-table entry that names a global: a static local (sym is its
  * mangled name) or a block-scope extern (sym is the global's own).  It
- * shadows outer locals like any declaration and allocates no slot. */
-static int ps_add_local_alias(char *name, int ty, char *sym) {
+ * shadows outer locals like any declaration and allocates no slot.
+ * cty is its C type; ps_add_local_alias takes the one parse_type built. */
+static int ps_add_local_alias_cty(char *name, int ty, char *sym, int cty) {
     int idx;
     idx = ps_nlocals;
     if (idx >= P_MAX_LOCALS) { p_error("too many locals"); return -1; }
@@ -2007,8 +2009,9 @@ static int ps_add_local_alias(char *name, int ty, char *sym) {
     ps_lvolp[idx] = ps_type_volp;
     ps_loff[idx] = 0;
     ps_ltype[idx] = ty;
-    ps_lcty[idx] = ps_obj_cty(ty);
+    ps_lcty[idx] = cty;
     ps_larr[idx] = 0;
+    ps_lcols[idx] = 0;
     ps_lstatic[idx] = 1;
     ps_lsname[idx] = strdup(sym);
     ps_lfpbase[idx] = -1;
@@ -2018,6 +2021,23 @@ static int ps_add_local_alias(char *name, int ty, char *sym) {
         ps_lfpn[idx] = ps_type_fpn;
     }
     ps_nlocals = ps_nlocals + 1;
+    return idx;
+}
+
+static int ps_add_local_alias(char *name, int ty, char *sym) {
+    return ps_add_local_alias_cty(name, ty, sym, ps_obj_cty(ty));
+}
+
+/* A static local array: the alias of global gi, an array of elem_ty
+ * (cols: a 2-D array's row width).  Its C type is the global's, taken
+ * now that an initializer has fixed the size. */
+static int ps_add_static_array_alias(char *name, int elem_ty, int cols, int gi) {
+    int idx;
+    idx = ps_add_local_alias_cty(name, elem_ty + TY_PTR, ps_sl_buf,
+                                 ps_global_cty(elem_ty + TY_PTR, ps_gsize[gi]));
+    if (idx < 0) return -1;
+    ps_larr[idx] = 1;
+    ps_lcols[idx] = cols;
     return idx;
 }
 
@@ -5863,20 +5883,7 @@ static Node *parse_stmt(void) {
                             return nd_num(0);
                         }
                         expect(TK_SEMI);
-                        sl_li = ps_nlocals;
-                        if (sl_li >= P_MAX_LOCALS) { p_error("too many locals"); return nd_num(0); }
-                        ps_lname[sl_li] = strdup(nm);
-                ps_lvolb[sl_li] = ps_type_volb;
-                ps_lvolp[sl_li] = ps_type_volp;
-                        ps_loff[sl_li] = 0;
-                        ps_ltype[sl_li] = ty + TY_PTR;
-                        ps_larr[sl_li] = 1;
-                        ps_lcols[sl_li] = 0;
-                        ps_lstatic[sl_li] = 1;
-                        ps_lsname[sl_li] = strdup(ps_sl_buf);
-                        ps_lfpbase[sl_li] = -1;
-                        ps_lfpn[sl_li] = 0;
-                        ps_nlocals = ps_nlocals + 1;
+                        if (ps_add_static_array_alias(nm, ty, 0, sl_gi) < 0) return nd_num(0);
                         return nd_block(NULL);
                     }
                     if (lex_tok == TK_ASSIGN) {
@@ -5935,22 +5942,12 @@ static Node *parse_stmt(void) {
                     return nd_num(0);
                 }
                 expect(TK_SEMI);
-                sl_li = ps_nlocals;
-                if (sl_li >= P_MAX_LOCALS) { p_error("too many locals"); return nd_num(0); }
-                ps_lname[sl_li] = strdup(nm);
-                ps_lvolb[sl_li] = ps_type_volb;
-                ps_lvolp[sl_li] = ps_type_volp;
-                ps_loff[sl_li] = 0;
-                ps_ltype[sl_li] = TY_INT + TY_PTR;
-                ps_larr[sl_li] = 1;
-                ps_lcols[sl_li] = 0;
-                ps_lstatic[sl_li] = 1;
-                ps_lsname[sl_li] = strdup(ps_sl_buf);
+                sl_li = ps_add_static_array_alias(nm, TY_INT, 0, sl_gi);
+                if (sl_li < 0) return nd_num(0);
                 ps_lfpbase[sl_li] = afpb;
                 ps_lfpn[sl_li] = afpn;
                 ps_gfpbase[sl_gi] = afpb;
                 ps_gfpn[sl_gi] = afpn;
-                ps_nlocals = ps_nlocals + 1;
                 return nd_block(NULL);
             }
             expect(TK_RPAREN);
@@ -6218,20 +6215,7 @@ static_array_decl:
                 ps_ginit_ensure_len(sl_gi, ps_gsize[sl_gi]);
                 ps_ginit_finish(sl_gi);
             }
-            sl_li = ps_nlocals;
-            if (sl_li >= P_MAX_LOCALS) { p_error("too many locals"); return nd_num(0); }
-            ps_lname[sl_li] = strdup(nm);
-                ps_lvolb[sl_li] = ps_type_volb;
-                ps_lvolp[sl_li] = ps_type_volp;
-            ps_loff[sl_li] = 0;
-            ps_ltype[sl_li] = ty + TY_PTR;
-            ps_larr[sl_li] = 1;
-            ps_lcols[sl_li] = lcols2;
-            ps_lstatic[sl_li] = 1;
-            ps_lsname[sl_li] = strdup(ps_sl_buf);
-            ps_lfpbase[sl_li] = -1;
-            ps_lfpn[sl_li] = 0;
-            ps_nlocals = ps_nlocals + 1;
+            if (ps_add_static_array_alias(nm, ty, lcols2, sl_gi) < 0) return nd_num(0);
             if (lex_tok != TK_COMMA) break;
             next();
             ty = ps_declarator_stars(base, base_cty);

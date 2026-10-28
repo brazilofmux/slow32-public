@@ -301,3 +301,86 @@ static int ct_from_mty(int ty, int hint) {
     }
     return t;
 }
+
+/* --- Conversions (6.3) --- */
+
+/* Integer conversion rank (6.3.1.1p1): bool < char < short < int < long
+ * < long long < __int128; an enum ranks as int, its compatible type. */
+static int ct_rank(int t) {
+    int k;
+    k = ct_kindof(t);
+    if (k == CT_BOOL) return 1;
+    if (k == CT_CHAR || k == CT_SCHAR || k == CT_UCHAR) return 2;
+    if (k == CT_SHORT || k == CT_USHORT) return 3;
+    if (k == CT_INT || k == CT_UINT || k == CT_ENUM) return 4;
+    if (k == CT_LONG || k == CT_ULONG) return 5;
+    if (k == CT_LLONG || k == CT_ULLONG) return 6;
+    if (k == CT_I128 || k == CT_UI128) return 7;
+    return 0;
+}
+
+/* Bytes in an integer type's value, for "can the signed type hold every
+ * value of the unsigned one" (6.3.1.8p1).  long follows the target. */
+static int ct_int_bytes(int t) {
+    int r;
+    r = ct_rank(t);
+    if (r <= 2) return 1;
+    if (r == 3) return 2;
+    if (r == 4) return 4;
+    if (r == 5) return ty_ptr_size == 8 ? 8 : 4;
+    if (r == 6) return 8;
+    return 16;
+}
+
+/* The unsigned type of an integer type's rank. */
+static int ct_to_unsigned(int t) {
+    int r;
+    r = ct_rank(t);
+    if (r <= 2) return ct_basic[CT_UCHAR];
+    if (r == 3) return ct_basic[CT_USHORT];
+    if (r == 4) return ct_basic[CT_UINT];
+    if (r == 5) return ct_basic[CT_ULONG];
+    if (r == 6) return ct_basic[CT_ULLONG];
+    return ct_basic[CT_UI128];
+}
+
+/* The integer promotions (6.3.1.1p2): below int's rank, to int (every
+ * such value fits); otherwise the type itself, unqualified.  An enum is
+ * int.  A non-integer is returned unqualified. */
+static int ct_promote(int t) {
+    t = ct_unqual(t);
+    if (ct_kindof(t) == CT_ATOMIC) t = ct_unqual(ct_baseof(t));
+    if (!ct_is_integer(t)) return t;
+    if (ct_rank(t) < 4 || ct_kindof(t) == CT_ENUM) return ct_basic[CT_INT];
+    return t;
+}
+
+/* The usual arithmetic conversions (6.3.1.8p1): the common real type. */
+static int ct_usual(int a, int b) {
+    int ka;
+    int kb;
+    a = ct_promote(a);
+    b = ct_promote(b);
+    ka = ct_kindof(a);
+    kb = ct_kindof(b);
+    if (ka == CT_LDOUBLE || kb == CT_LDOUBLE) return ct_basic[CT_LDOUBLE];
+    if (ka == CT_DOUBLE || kb == CT_DOUBLE) return ct_basic[CT_DOUBLE];
+    if (ka == CT_FLOAT || kb == CT_FLOAT) return ct_basic[CT_FLOAT];
+    if (a == b) return a;
+    if (ct_is_unsigned(a) == ct_is_unsigned(b))
+        return ct_rank(a) >= ct_rank(b) ? a : b;
+    /* one signed, one unsigned: u the unsigned, s the signed */
+    if (ct_is_unsigned(b)) { ka = a; a = b; b = ka; }
+    if (ct_rank(a) >= ct_rank(b)) return a;
+    if (ct_int_bytes(b) > ct_int_bytes(a)) return b;
+    return ct_to_unsigned(b);
+}
+
+/* Array and function decay (6.3.2.1p3-4): what an expression of type t
+ * is as an rvalue -- an array its element's pointer, a function its
+ * pointer -- and an lvalue's value drops its qualifiers (p2). */
+static int ct_decay(int t) {
+    if (ct_kindof(t) == CT_ARRAY) return ct_ptr(ct_baseof(t));
+    if (ct_kindof(t) == CT_FUNC) return ct_ptr(ct_unqual(t));
+    return ct_unqual(t);
+}

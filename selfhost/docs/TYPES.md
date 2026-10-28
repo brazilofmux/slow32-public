@@ -160,6 +160,30 @@ compile `s12cc.c` and `sqlite3.c` to the same bytes as before.
   initializers (W6), `_Generic`, `_Alignof`/`_Alignas`, `__func__`,
   pointer-to-array declarators, function-typed parameters.
 
+## Progress and findings
+
+**S1** (2026-10-28, d54ecf5e): C types on every declaration and variable
+node; `S12CC_CTY_CHECK=1` lists declarations whose C type the parser
+cannot yet build (none in the compiler's source; 225 in SQLite, mostly
+function-pointer objects, whose machine type is `int`).
+
+**S2, first part** (2026-10-28): sema computes every expression's C
+type by the 6.3/6.5 rules (`sema_cty_node`), and the same check now
+reports where that C type's machine type differs from the one the node
+carries -- where the old typing departs from C.  Over SQLite, after the
+known families are set aside, every remaining case is one of these:
+
+| departure | count in SQLite | effect |
+|---|---|---|
+| a comparison's machine type is `unsigned int` when its operands compare unsigned: the bit says how to compare, not what the result is | ~1,660 | the bit leaks: `n + (u < v)` is unsigned arithmetic, so `(n + (u < v)) < 0` is never true |
+| a pointer difference `p - q` is typed as the pointer | ~85, and what is computed from them | the value is right (the lowering divides); its type is not -- `(p - q) & 7`, `sizeof (p - q)` |
+| a function name is typed `int` | 176 | the designator has no type to check against |
+| `&a` on an array is a pointer to the element's pointer | 1 | `&a + 1` steps by a pointer, not by the array |
+| `c ? s1 : s2` on two structs is `int` | 1 | (and `(c ? s1 : s2).m` is refused) |
+
+These are S3's list: when the lowering reads C types, each becomes
+right by construction.  Output was byte-identical throughout.
+
 ## Constraints on the work
 
 - stage07 builds stage08: the new code keeps stage07's dialect (ints
