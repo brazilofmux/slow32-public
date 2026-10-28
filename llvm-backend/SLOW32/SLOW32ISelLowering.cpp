@@ -591,12 +591,15 @@ SDValue SLOW32TargetLowering::LowerRETURNADDR(SDValue Op,
   if (Depth != 0)
     report_fatal_error("SLOW32: RETURNADDR with depth > 0 not supported");
 
+  // r31 as it was on entry, copied to a virtual register in the entry
+  // block.  A copy from the physical r31 where the intrinsic is used read
+  // whatever the last call left there: after a call, an address in this
+  // function rather than its caller (the machine verifier: "Using an
+  // undefined physical register").
   SDLoc DL(Op);
   EVT VT = Op.getValueType();
-  MF.getRegInfo().addLiveIn(SLOW32::R31);
-  SDValue RetAddr = DAG.getCopyFromReg(DAG.getEntryNode(), DL,
-                                       SLOW32::R31, VT);
-  return RetAddr;
+  Register Reg = MF.addLiveIn(SLOW32::R31, &SLOW32::GPRRegClass);
+  return DAG.getCopyFromReg(DAG.getEntryNode(), DL, Reg, VT);
 }
 
 SDValue SLOW32TargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const {

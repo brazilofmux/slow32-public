@@ -18,6 +18,13 @@ public:
 
   bool hasFPImpl(const MachineFunction &MF) const override;
 
+  /// Shrink-wrapping: the prologue and epilogue go where ShrinkWrap puts
+  /// them, so an early exit that needs no frame pays for none.  Not for
+  /// functions that need CFI (yet), nor for one that uses r31 other than
+  /// through calls and returns -- r31 is not in the callee-saved list, so
+  /// ShrinkWrap could not see such a use and could save LR after it.
+  bool enableShrinkWrapping(const MachineFunction &MF) const override;
+
   /// Always materialise call frames with ADJCALLSTACK* so outgoing stack
   /// arguments sit below the fixed LR/FP save slots at SP+0/+4.
   bool hasReservedCallFrame(const MachineFunction &MF) const override {

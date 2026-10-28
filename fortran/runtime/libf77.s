@@ -15243,6 +15243,10 @@ f77_inquire:                            # @f77_inquire
 	.type	f77_inq,@function
 f77_inq:                                # @f77_inq
 # %bb.0:
+	addi r1, r3, -1
+	addi r3, r0, 13
+	bgtu r1, r3, .LBB124_32
+.LBB124_1:
 	addi sp, sp, -48
 	stw sp+0, lr
 	stw sp+44, r11
@@ -15250,10 +15254,6 @@ f77_inq:                                # @f77_inq
 	stw sp+36, r13
 	stw sp+32, r14
 	stw sp+28, r15
-	addi r1, r3, -1
-	addi r3, r0, 13
-	bgtu r1, r3, .LBB124_31
-.LBB124_1:
 	add r12, r5, r0
 	add r11, r4, r0
 	slli r1, r1, 2
@@ -15456,8 +15456,9 @@ f77_inq:                                # @f77_inq
 	ldw r11, sp+44
 	ldw lr, sp+0
 	addi sp, sp, 48
-	jalr r0, r31, 0
 .LBB124_32:
+	jalr r0, r31, 0
+.LBB124_33:
 	lui r1, %hi(inq_opened)
 	addi r1, r1, %lo(inq_opened)
 	ldbu r1, r1+0
@@ -15484,22 +15485,22 @@ f77_inq:                                # @f77_inq
 	jal r31, strlen
 	addi r3, r0, 1
 	blt r12, r3, .LBB124_31
-.LBB124_33:
-	addi r3, r0, 32
-	jal r0, .LBB124_35
 .LBB124_34:
+	addi r3, r0, 32
+	jal r0, .LBB124_36
+.LBB124_35:
 	add r5, r11, r14
 	stb r5+0, r4
 	addi r14, r14, 1
 	beq r12, r14, .LBB124_31
-.LBB124_35:
-	add r4, r3, r0
-	bge r14, r1, .LBB124_34
 .LBB124_36:
+	add r4, r3, r0
+	bge r14, r1, .LBB124_35
+.LBB124_37:
 	add r4, r13, r14
 	ldbu r4, r4+0
-	jal r0, .LBB124_34
-.LBB124_37:
+	jal r0, .LBB124_35
+.LBB124_38:
 	lui r1, %hi(inq_opened)
 	addi r1, r1, %lo(inq_opened)
 	ldbu r1, r1+0
@@ -15532,22 +15533,22 @@ f77_inq:                                # @f77_inq
 	jal r31, strlen
 	addi r3, r0, 1
 	blt r12, r3, .LBB124_31
-.LBB124_38:
-	addi r3, r0, 32
-	jal r0, .LBB124_40
 .LBB124_39:
+	addi r3, r0, 32
+	jal r0, .LBB124_41
+.LBB124_40:
 	add r5, r11, r14
 	stb r5+0, r4
 	addi r14, r14, 1
 	beq r12, r14, .LBB124_31
-.LBB124_40:
-	add r4, r3, r0
-	bge r14, r1, .LBB124_39
 .LBB124_41:
+	add r4, r3, r0
+	bge r14, r1, .LBB124_40
+.LBB124_42:
 	add r4, r13, r14
 	ldbu r4, r4+0
-	jal r0, .LBB124_39
-.LBB124_42:
+	jal r0, .LBB124_40
+.LBB124_43:
 	lui r1, %hi(inq_opened)
 	addi r1, r1, %lo(inq_opened)
 	ldbu r1, r1+0
@@ -15574,22 +15575,22 @@ f77_inq:                                # @f77_inq
 	jal r31, strlen
 	addi r3, r0, 1
 	blt r12, r3, .LBB124_31
-.LBB124_43:
-	addi r3, r0, 32
-	jal r0, .LBB124_45
 .LBB124_44:
+	addi r3, r0, 32
+	jal r0, .LBB124_46
+.LBB124_45:
 	add r5, r11, r14
 	stb r5+0, r4
 	addi r14, r14, 1
 	beq r12, r14, .LBB124_31
-.LBB124_45:
-	add r4, r3, r0
-	bge r14, r1, .LBB124_44
 .LBB124_46:
+	add r4, r3, r0
+	bge r14, r1, .LBB124_45
+.LBB124_47:
 	add r4, r13, r14
 	ldbu r4, r4+0
-	jal r0, .LBB124_44
-.LBB124_47:
+	jal r0, .LBB124_45
+.LBB124_48:
 	lui r1, %hi(inq_opened)
 	addi r1, r1, %lo(inq_opened)
 	ldbu r1, r1+0
@@ -15616,22 +15617,22 @@ f77_inq:                                # @f77_inq
 	jal r31, strlen
 	addi r3, r0, 1
 	blt r12, r3, .LBB124_31
-.LBB124_48:
-	addi r3, r0, 32
-	jal r0, .LBB124_50
 .LBB124_49:
+	addi r3, r0, 32
+	jal r0, .LBB124_51
+.LBB124_50:
 	add r5, r11, r14
 	stb r5+0, r4
 	addi r14, r14, 1
 	beq r12, r14, .LBB124_31
-.LBB124_50:
-	add r4, r3, r0
-	bge r14, r1, .LBB124_49
 .LBB124_51:
+	add r4, r3, r0
+	bge r14, r1, .LBB124_50
+.LBB124_52:
 	add r4, r13, r14
 	ldbu r4, r4+0
-	jal r0, .LBB124_49
-.LBB124_52:
+	jal r0, .LBB124_50
+.LBB124_53:
 	lui r1, %hi(inq_opened)
 	addi r1, r1, %lo(inq_opened)
 	ldbu r1, r1+0
@@ -15658,21 +15659,21 @@ f77_inq:                                # @f77_inq
 	jal r31, strlen
 	addi r3, r0, 1
 	blt r12, r3, .LBB124_31
-.LBB124_53:
-	addi r3, r0, 32
-	jal r0, .LBB124_55
 .LBB124_54:
+	addi r3, r0, 32
+	jal r0, .LBB124_56
+.LBB124_55:
 	add r5, r11, r14
 	stb r5+0, r4
 	addi r14, r14, 1
 	beq r12, r14, .LBB124_31
-.LBB124_55:
-	add r4, r3, r0
-	bge r14, r1, .LBB124_54
 .LBB124_56:
+	add r4, r3, r0
+	bge r14, r1, .LBB124_55
+.LBB124_57:
 	add r4, r13, r14
 	ldbu r4, r4+0
-	jal r0, .LBB124_54
+	jal r0, .LBB124_55
 .Lfunc_end124:
 	.size	f77_inq, .Lfunc_end124-f77_inq
 	.section	.rodata,"a",@progbits
@@ -15684,15 +15685,15 @@ f77_inq:                                # @f77_inq
 	.word	.LBB124_21
 	.word	.LBB124_22
 	.word	.LBB124_6
-	.word	.LBB124_32
-	.word	.LBB124_42
+	.word	.LBB124_33
+	.word	.LBB124_43
 	.word	.LBB124_23
-	.word	.LBB124_52
+	.word	.LBB124_53
 	.word	.LBB124_16
-	.word	.LBB124_47
+	.word	.LBB124_48
 	.word	.LBB124_3
 	.word	.LBB124_13
-	.word	.LBB124_37
+	.word	.LBB124_38
 	.size	.LJTI124_0, 56
                                         # -- End function
 	.text
@@ -18056,5 +18057,5 @@ nml_text_add:                           # @nml_text_add
 	.word	.L.str.81
 	.size	.Lswitch.table.fio_fmt_use, 72
 
-	.ident	"clang version 24.0.0git (https://github.com/llvm/llvm-project.git 45f503b1bfbad262991cb304f90837703d1b75b0)"
+	.ident	"clang version 24.0.0git (https://github.com/llvm/llvm-project.git 4ae5cc47e157604603b18d86a83b7f8a25485429)"
 	.section	".note.GNU-stack","",@progbits

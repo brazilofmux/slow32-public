@@ -6,6 +6,7 @@
 #include "SLOW32MachineFunctionInfo.h"
 #include "SLOW32RegisterInfo.h"
 #include "SLOW32Subtarget.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/CodeGen/CFIInstBuilder.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -49,6 +50,61 @@ bool SLOW32FrameLowering::hasFPImpl(const MachineFunction &MF) const {
          RegInfo->hasStackRealignment(MF) || MFI.hasVarSizedObjects() ||
          MFI.isFrameAddressTaken() || MFI.hasStackMap() ||
          MFI.hasPatchPoint();
+}
+
+bool SLOW32FrameLowering::enableShrinkWrapping(
+    const MachineFunction &MF) const {
+  if (MF.getFunction().hasOptNone() || needsDwarfCFI(MF))
+    return false;
+  for (const MachineBasicBlock &MBB : MF)
+    for (const MachineInstr &MI : MBB) {
+      if (MI.isCall() || MI.isReturn())
+        continue;
+      for (const MachineOperand &MO : MI.operands())
+        if (MO.isReg() && MO.getReg() == LinkReg)
+          return false;
+    }
+  return true;
+}
+
+// The fixed saves of r31 (and r30) are outside PEI's callee-saved list, so
+// PEI's own liveness update does not cover them: when ShrinkWrap moved the
+// prologue off the entry block, they are live from the entry to the save
+// point and after the restore point.  The same region PEI computes
+// (PrologEpilogInserter.cpp, updateLiveness).
+static void addFixedSaveLiveIns(MachineFunction &MF, bool SaveFP) {
+  MachineFrameInfo &MFI = MF.getFrameInfo();
+  MachineBasicBlock *Entry = &MF.front();
+  MachineBasicBlock *Save = MFI.getSavePoints().empty()
+                                ? Entry
+                                : MFI.getSavePoints().begin()->first;
+  MachineBasicBlock *Restore = MFI.getRestorePoints().empty()
+                                   ? nullptr
+                                   : MFI.getRestorePoints().begin()->first;
+  SmallPtrSet<MachineBasicBlock *, 8> Visited;
+  SmallVector<MachineBasicBlock *, 8> WorkList;
+  if (Entry != Save) {
+    WorkList.push_back(Entry);
+    Visited.insert(Entry);
+  }
+  Visited.insert(Save);
+  if (Restore)
+    WorkList.push_back(Restore);
+  while (!WorkList.empty()) {
+    MachineBasicBlock *Cur = WorkList.pop_back_val();
+    if (Cur == Save && Save != Restore)
+      continue;
+    for (MachineBasicBlock *Succ : Cur->successors())
+      if (Visited.insert(Succ).second)
+        WorkList.push_back(Succ);
+  }
+  const MachineRegisterInfo &MRI = MF.getRegInfo();
+  for (MachineBasicBlock *MBB : Visited) {
+    if (!MBB->isLiveIn(LinkReg))
+      MBB->addLiveIn(LinkReg);
+    if (SaveFP && !MRI.isReserved(FramePtr) && !MBB->isLiveIn(FramePtr))
+      MBB->addLiveIn(FramePtr);
+  }
 }
 
 bool SLOW32FrameLowering::needsLRSave(const MachineFunction &MF) const {
@@ -165,6 +221,8 @@ void SLOW32FrameLowering::emitPrologue(MachineFunction &MF,
       if (!MBB.isLiveIn(FramePtr))
         MBB.addLiveIn(FramePtr);
     }
+  } else {
+    addFixedSaveLiveIns(MF, SaveFP);
   }
 
   // sp = sp - FrameSize
@@ -255,8 +313,10 @@ void SLOW32FrameLowering::emitEpilogue(MachineFunction &MF,
   const SLOW32InstrInfo *TII =
       static_cast<const SLOW32InstrInfo *>(MF.getSubtarget().getInstrInfo());
 
-  MachineBasicBlock::iterator MBBI = MBB.getLastNonDebugInstr();
-  DebugLoc DL = MBBI->getDebugLoc();
+  // Before the block's terminators: a shrink-wrapped restore point need
+  // not end in the return -- it may branch to it, or fall through.
+  MachineBasicBlock::iterator MBBI = MBB.getFirstTerminator();
+  DebugLoc DL = MBBI != MBB.end() ? MBBI->getDebugLoc() : DebugLoc();
 
   const bool HasFP = hasFP(MF);
   const bool SaveLR = needsLRSave(MF);
