@@ -7,7 +7,7 @@
 define i64 @and_srl_i64(i64 %x) {
 ; CHECK-LABEL: and_srl_i64:
 ; CHECK: srli r1, r3, 16
-; CHECK: addi r2, r0, 0
+; CHECK: add r2, r0, r0
   %s = lshr i64 %x, 16
   %a = and i64 %s, 65535
   ret i64 %a

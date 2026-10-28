@@ -11,8 +11,7 @@ declare void @slow(ptr)
 
 ; CHECK-LABEL: early:
 ; CHECK: # %bb.0:
-; CHECK-NOT: sp
-; CHECK: beq r4, r{{[0-9]+}}, [[RET:.LBB[0-9_]+]]
+; CHECK-NEXT: beq r4, r0, [[RET:.LBB[0-9_]+]]
 ; CHECK: addi sp, sp, -
 ; CHECK: stw sp+0, lr
 ; CHECK: jal r31, slow
@@ -20,7 +19,7 @@ declare void @slow(ptr)
 ; CHECK: addi sp, sp,
 ; CHECK-NEXT: jalr r0, r31, 0
 ; CHECK: [[RET]]:
-; CHECK-NEXT: addi r1, r0, 0
+; CHECK-NEXT: add r1, r0, r0
 ; CHECK-NEXT: jalr r0, r31, 0
 ; NOSW-LABEL: early:
 ; NOSW: # %bb.0:
@@ -67,8 +66,7 @@ declare ptr @llvm.returnaddress(i32)
 ; CHECK-LABEL: unwinds:
 ; CHECK: .cfi_startproc
 ; CHECK-NEXT: # %bb.0:
-; CHECK-NOT: sp
-; CHECK: beq r4, r{{[0-9]+}}, [[RET:.LBB[0-9_]+]]
+; CHECK-NEXT: beq r4, r0, [[RET:.LBB[0-9_]+]]
 ; CHECK: addi sp, sp, -16
 ; CHECK-NEXT: .cfi_def_cfa_offset 16
 ; CHECK-NEXT: stw sp+0, lr
@@ -80,7 +78,7 @@ declare ptr @llvm.returnaddress(i32)
 ; CHECK-NEXT: .cfi_def_cfa_offset 0
 ; CHECK-NEXT: jalr r0, r31, 0
 ; CHECK-NEXT: [[RET]]:
-; CHECK-NEXT: addi r1, r0, 0
+; CHECK-NEXT: add r1, r0, r0
 ; CHECK-NEXT: jalr r0, r31, 0
 define i32 @unwinds(ptr %p, i32 %n) {
 entry:

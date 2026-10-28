@@ -11,7 +11,7 @@
 
 define i32 @loop(i32 %n) {
 ; CHECK: Contents of section .text:
-; CHECK-NEXT: 0000 90000000 90801000 ca8c30fe
+; CHECK-NEXT: 0000 80000000 90801000 ca8c30fe
 entry:
   br label %head
 head:

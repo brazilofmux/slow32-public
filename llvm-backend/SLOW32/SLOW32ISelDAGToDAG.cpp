@@ -228,7 +228,18 @@ public:
       // Handle large constants that don't fit in immediate fields
       auto *CN = cast<ConstantSDNode>(N);
       int64_t Imm = CN->getSExtValue();
-      
+
+      // Zero is r0, as on RISC-V.  "addi rN, r0, 0" took a register for
+      // every compare against zero and every zero store -- in a function
+      // that calls, a callee-saved one set in the entry block, which also
+      // kept shrink-wrapping from moving the prologue past an early exit.
+      if (Imm == 0) {
+        SDValue Zero = CurDAG->getCopyFromReg(CurDAG->getEntryNode(), SDLoc(N),
+                                              SLOW32::R0, N->getValueType(0));
+        ReplaceNode(N, Zero.getNode());
+        return;
+      }
+
       // If the constant fits in 12 bits (sign-extended), let normal patterns handle it
       if (Imm >= -2048 && Imm <= 2047) {
         break;
