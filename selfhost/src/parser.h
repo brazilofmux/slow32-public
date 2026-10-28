@@ -953,14 +953,37 @@ static int find_or_add_label(char *name) {
 
 /* --- Struct helpers --- */
 
+/* Structure and union tags have block scope (6.2.1p4).  st_depth is
+ * the block nesting a tag was declared at, 0 for file scope, -1 once its
+ * block has closed: the entry stays (types name it by index), only the
+ * name is gone. */
+static int ps_block_depth;
+static int st_depth[ST_MAX_STRUCTS];
+
 static int find_struct(char *name) {
     int i;
     i = st_count - 1;
     while (i >= 0) {
-        if (strcmp(name, st_name[i]) == 0) return i;
+        if (st_depth[i] >= 0 && strcmp(name, st_name[i]) == 0) return i;
         i = i - 1;
     }
     return -1;
+}
+
+/* A definition declares a new type unless the tag is already declared
+ * in this same scope: struct t { ... } in a block shadows an outer t. */
+static int ps_tag_for_definition(int si) {
+    return si >= 0 && st_depth[si] == ps_block_depth;
+}
+
+/* The tags declared in the block now closing go out of scope. */
+static void ps_end_block_tags(void) {
+    int i;
+    i = st_count - 1;
+    while (i >= 0 && st_depth[i] >= ps_block_depth) {
+        st_depth[i] = -1;
+        i = i - 1;
+    }
 }
 
 static int add_struct(char *name) {
@@ -976,6 +999,7 @@ static int add_struct(char *name) {
     st_size[idx] = 0;
     st_align[idx] = 1;
     st_is_union[idx] = 0;
+    st_depth[idx] = ps_block_depth;
     st_count = st_count + 1;
     return idx;
 }
@@ -1381,7 +1405,7 @@ static int parse_type(void) {
             int max_align;
             int bfbit;      /* the bit-field cursor; see bf_alloc */
             next();
-            if (si < 0) {
+            if (!ps_tag_for_definition(si)) {
                 si = add_struct(nm);
             } else if (st_nfields[si] == 0 && st_size[si] == 0) {
                 st_first[si] = stm_count;
@@ -1705,7 +1729,7 @@ static int parse_type(void) {
             /* Union definition: union Name { ... } */
             int max_align;
             next();
-            if (si < 0) {
+            if (!ps_tag_for_definition(si)) {
                 si = add_struct(nm);
             } else if (st_nfields[si] == 0 && st_size[si] == 0) {
                 st_first[si] = stm_count;
@@ -2508,23 +2532,52 @@ static int ps_sizeof_type_tail(int ty, int tdn) {
     return v;
 }
 
-/* After a type in a cast or sizeof: an abstract function-pointer
- * declarator, T (*)(params) or T (**)(params) -- SQLite's
- * (void(*)(void*))0 -- is an opaque pointer here. */
+/* The array dimensions [N][M]... after an abstract declarator, as the
+ * C type of an array of elem: the first dimension is the outermost. */
+static int ps_abstract_dims(int elem) {
+    int n;
+    if (lex_tok != TK_LBRACK) return elem;
+    next();
+    n = parse_const_int();
+    expect(TK_RBRACK);
+    return ct_array(ps_abstract_dims(elem), n);
+}
+
+/* After a type in a cast or sizeof: a parenthesized abstract declarator.
+ * T (*)(params) or T (**)(params) -- SQLite's (void(*)(void*))0 -- is an
+ * opaque pointer here; T (*)[N] is a pointer to an array, one pointer
+ * wide (the [N] was left for sizeof to multiply: sizeof(int (*)[3]) was
+ * 12, W11).  Its machine type is a pointer to the element, which cannot
+ * say how far p[1] is from p, so ps_abs_rowptr tells a caller making a
+ * value of it to refuse: only sizeof may use one yet. */
+static int ps_abs_rowptr;
+
+static void ps_no_rowptr_value(void) {
+    if (ps_abs_rowptr) p_error("pointer-to-array type name unsupported here");
+}
+
 static int ps_abstract_fnptr(int ty) {
     int nstar;
+    ps_abs_rowptr = 0;
     if (lex_tok != TK_LPAREN) return ty;
     next();
     if (lex_tok != TK_STAR) { p_error("expected * in abstract declarator"); return ty; }
     nstar = 0;
     while (lex_tok == TK_STAR) { next(); skip_decl_qualifiers(); nstar = nstar + 1; }
     expect(TK_RPAREN);
-    if (lex_tok == TK_LPAREN) { next(); p_skip_to_rparen(); }
-    /* the C type: that many pointers to a function returning the type
-     * read so far (its parameters are not recorded yet) */
-    ps_type_cty = ct_func(ps_type_cty, 0, -1, 0);
+    if (lex_tok == TK_LBRACK) {
+        ps_type_cty = ps_abstract_dims(ps_type_cty);
+        ty = ty + TY_PTR * nstar;
+        ps_abs_rowptr = 1;
+    } else {
+        if (lex_tok == TK_LPAREN) { next(); p_skip_to_rparen(); }
+        /* the C type: that many pointers to a function returning the
+         * type read so far (its parameters are not recorded yet) */
+        ps_type_cty = ct_func(ps_type_cty, 0, -1, 0);
+        ty = TY_PTR + TY_INT;
+    }
     while (nstar > 0) { ps_type_cty = ct_ptr(ps_type_cty); nstar = nstar - 1; }
-    return TY_PTR + TY_INT;
+    return ty;
 }
 
 static int parse_const_primary(void) {
@@ -3725,6 +3778,77 @@ static void ps_fp_init_store_at(int ty, int gidx, int rel_off) {
     }
 }
 
+/* Lexer mark and rewind, for a parse that must look past the current
+ * token before it commits: ps_lex_mark saves the position, then either
+ * ps_lex_rewind returns to it or ps_lex_commit keeps what was read.  One
+ * mark at a time.  (The older probes in this file each save the same
+ * fields by hand -- all but the line number, so a rewind across a
+ * newline counts it twice.) */
+static int ps_mk_tok;
+static int ps_mk_val;
+static int ps_mk_slen;
+static int ps_mk_rcs;
+static int ps_mk_ract;
+static int ps_mk_line;
+static char *ps_mk_rp;
+static char *ps_mk_rts;
+static char *ps_mk_rte;
+static char ps_mk_str[LEX_STR_SZ];
+
+static void ps_lex_mark(void) {
+    ps_mk_tok = lex_tok; ps_mk_val = lex_val; ps_mk_slen = lex_slen;
+    ps_mk_rcs = lex_rcs; ps_mk_ract = lex_ract;
+    ps_mk_rp = lex_rp; ps_mk_rts = lex_rts; ps_mk_rte = lex_rte;
+    ps_mk_line = lex_line;
+    memcpy(ps_mk_str, lex_str, lex_slen + 1);
+    pp_peek_depth = pp_peek_depth + 1;
+}
+
+static void ps_lex_commit(void) {
+    pp_peek_depth = pp_peek_depth - 1;
+}
+
+static void ps_lex_rewind(void) {
+    lex_tok = ps_mk_tok; lex_val = ps_mk_val; lex_slen = ps_mk_slen;
+    lex_rcs = ps_mk_rcs; lex_ract = ps_mk_ract;
+    lex_rp = ps_mk_rp; lex_rts = ps_mk_rts; lex_rte = ps_mk_rte;
+    lex_line = ps_mk_line;      /* the newlines read past the mark come again */
+    memcpy(lex_str, ps_mk_str, ps_mk_slen + 1);
+    pp_peek_depth = pp_peek_depth - 1;
+}
+
+/* Is ty a character type, the element of an array a string may initialize? */
+static int ps_is_char_ty(int ty) {
+    return (ty & TY_BASE_MASK) == TY_CHAR && (ty & TY_PTR_MASK) == 0;
+}
+
+/* A character array's initializer may be its string literal in braces,
+ * { "hi" } (6.7.9p14); it was taken for a list of one element, and
+ * char a[] = { "hi" } was one byte.  Before a string-literal test, for
+ * a one-dimensional char array (in char m[2][8] = { "ab", "cd" } the
+ * braces are the outer array's), ps_braced_string_open consumes a `{`
+ * that a string follows and anything else is left as it was;
+ * ps_braced_string_close, after the string, consumes the matching `}`.
+ * The flag between them is a global so the callers -- parse_stmt and
+ * parse_top_decl among them -- grow no locals. */
+static int ps_str_braced;
+
+static void ps_braced_string_open(int char_array) {
+    ps_str_braced = 0;
+    if (!char_array || lex_tok != TK_LBRACE) return;
+    ps_lex_mark();
+    next();
+    if (lex_tok == TK_STRING) { ps_lex_commit(); ps_str_braced = 1; return; }
+    ps_lex_rewind();
+}
+
+static void ps_braced_string_close(void) {
+    if (!ps_str_braced) return;
+    ps_str_braced = 0;
+    if (lex_tok == TK_COMMA) next();
+    expect(TK_RBRACE);
+}
+
 /* A cast in an initializer position: `(const unsigned char *)"abc"`.
    The cast cannot change the value -- the target type comes from the
    declaration being initialized -- so consume it and let the dispatch
@@ -4239,6 +4363,7 @@ static Node *parse_primary(void) {
             ty = parse_type();
             ty = ps_declarator_stars(ty, ps_type_cty);
             ty = ps_abstract_fnptr(ty);
+            ps_no_rowptr_value();
             skip_decl_qualifiers();
             expect(TK_RPAREN);
             n = nd_new(ND_VA_ARG);
@@ -4426,6 +4551,7 @@ static Node *parse_primary(void) {
                 }
             }
             ty = ps_abstract_fnptr(ty);   /* (int (**)(sqlite3_vtab *))p */
+            ps_no_rowptr_value();
             cast_cty = ps_type_cty;       /* before the operand runs parse_type again */
             skip_decl_qualifiers();
             expect(TK_RPAREN);
@@ -5406,9 +5532,11 @@ static Node *parse_local_declarator(char *nm, int ty) {
         head = NULL;
         if (lex_tok == TK_ASSIGN) {
             next();
+            ps_braced_string_open(lcols2 == 0 && ps_is_char_ty(ty));
             if (lex_tok == TK_STRING) {
                 /* String array init: char s[N] = "str" or char s[] = "str" */
                 sp_idx = parse_string_literal();
+                ps_braced_string_close();
                 slen = lex_str_len[sp_idx];
                 if (count < 0) count = slen + 1;
                 off = add_local_array(nm, ty, count);
@@ -6333,8 +6461,10 @@ static_array_decl:
             if (count < 0) {
                 if (lex_tok == TK_ASSIGN) {
                     next();
+                    ps_braced_string_open(lcols2 == 0 && ps_is_char_ty(ty));
                     if (lex_tok == TK_STRING) {
                         sp_idx = parse_string_literal();
+                        ps_braced_string_close();
                         count = lex_str_len[sp_idx] + 1;
                     } else if (lex_tok == TK_LBRACE) {
                         neg = 1;
@@ -6349,8 +6479,10 @@ static_array_decl:
             }
             if (sp_idx < 0 && lex_tok == TK_ASSIGN) {
                 next();
+                ps_braced_string_open(lcols2 == 0 && ps_is_char_ty(ty));
                 if (lex_tok == TK_STRING) {
                     sp_idx = parse_string_literal();
+                    ps_braced_string_close();
                 } else if (lex_tok == TK_LBRACE) {
                     neg = 1;
                 } else {
@@ -6476,10 +6608,13 @@ static Node *parse_block(void) {
     Node *s;
     int saved_nlocals;
     int saved_stack;
+    int saved_nconsts;
 
     expect(TK_LBRACE);
     saved_nlocals = ps_nlocals;
     saved_stack = ps_stack;
+    saved_nconsts = ps_nconsts;
+    ps_block_depth = ps_block_depth + 1;
     head = NULL;
     tail = NULL;
     while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
@@ -6494,6 +6629,13 @@ static Node *parse_block(void) {
     }
     expect(TK_RBRACE);
     ps_nlocals = saved_nlocals;
+    /* the block's enumerators and structure tags go out of scope with
+     * it (6.2.1p4); they leaked, so an inner `enum { X = 100 }` was X
+     * for the rest of the file, and an inner `struct t { ... }`
+     * redefined the outer t (W11) */
+    ps_nconsts = saved_nconsts;
+    ps_end_block_tags();
+    ps_block_depth = ps_block_depth - 1;
     /* a block's frame space goes back for the next block to use -- but
      * not once the function has called setjmp: a longjmp may come back
      * into this block after a later one has run, and what this one's
@@ -6916,10 +7058,12 @@ array_after_brackets:
             ps_ginit_finish(idx);
         } else if (lex_tok == TK_ASSIGN) {
             next();
+            ps_braced_string_open(ps_is_char_ty(xty));
             if (lex_tok == TK_STRING) {
                 /* String array init: char s[N] = "str" or char s[] = "str"
                  * (with adjacent-string concatenation via parse_string_literal). */
                 sp_idx = parse_string_literal();
+                ps_braced_string_close();
                 slen = lex_str_len[sp_idx];
                 if (count < 0) count = slen + 1;
                 require_complete_type(xty, "incomplete element type");

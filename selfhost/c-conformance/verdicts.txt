@@ -95,6 +95,7 @@
 6.10.8.3-feature-vla REJECTS
 6.10.9-pragma-once REJECTS
 6.10.9-pragma-operator REJECTS
+6.2.1-block-scope-forms PASS
 6.2.1-label-scope PASS
 6.2.1-scopes PASS
 6.2.1-tag-scope PASS
@@ -348,9 +349,9 @@
 6.7.2.1-struct-layout PASS
 6.7.2.2-enum PASS
 6.7.2.2-enum-nonconst DIAG
-6.7.2.2-enum-scope WRONG
+6.7.2.2-enum-scope PASS
 6.7.2.2-enum-too-big ACCEPTS
-6.7.2.3-block-tag-shadow WRONG
+6.7.2.3-block-tag-shadow PASS
 6.7.2.3-enum-forward ACCEPTS
 6.7.2.3-redefinition ACCEPTS
 6.7.2.3-tag-kind-mismatch ACCEPTS
@@ -407,7 +408,7 @@
 6.7.6.3-too-many-args ACCEPTS
 6.7.6.3-void-plus ACCEPTS
 6.7.7-array-of-fnptr-type REJECTS
-6.7.7-type-names WRONG
+6.7.7-type-names PASS
 6.7.8-array-typedef REJECTS
 6.7.8-typedef PASS
 6.7.8-typedef-array-align PASS
@@ -416,7 +417,7 @@
 6.7.8-typedef-signed DIAG
 6.7.9-automatic-nonconst PASS
 6.7.9-bad-member-designator DIAG
-6.7.9-braced-string WRONG
+6.7.9-braced-string PASS
 6.7.9-designated PASS
 6.7.9-designator-range DIAG
 6.7.9-eval-order-side PASS

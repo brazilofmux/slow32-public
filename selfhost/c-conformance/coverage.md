@@ -29,7 +29,9 @@ gates every change.  Then the type work (docs/TYPES.md): S3 fixed W2,
 `_Bool`; comparison and pointer-difference types; W12, `sizeof` of
 computed values and bit-field promotion; W13, bit-field layout now
 clang's; typedef'd array members aligned; `__STDC_HOSTED__` 1 and
-`__STDC_VERSION__` 199901L (C11's value waits for S6's keywords) (199 PASS, 24 WRONG, 83 REJECTS, 81 DIAG, 135 ACCEPTS).  The tables below are the survey as
+`__STDC_VERSION__` 199901L (C11's value waits for S6's keywords); W11's
+four (pointer-to-array type names in `sizeof`, block-scope tags and
+enumerators, braced string initializers) (204 PASS, 20 WRONG, 83 REJECTS, 81 DIAG, 135 ACCEPTS).  The tables below are the survey as
 taken.
 
 The 52 WRONG probes come from about fifteen defects, listed below by
