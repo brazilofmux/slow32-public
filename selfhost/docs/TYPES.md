@@ -218,6 +218,18 @@ same; `<stdbool.h>` defines `bool` as `_Bool` (7.18), where it was a
 typedef of `unsigned char`.  The nine W2 probes pass; SQLite and the
 compiler, which use no `_Bool`, compile to the same bytes.
 
+**S3, comparisons** (2026-10-28): a comparison's type is `int`; whether
+its operands compare unsigned is the operation's (`AT_UCMP`), read by
+the lowering (`hl_cmp_ty`) and the AST folder.  The unsigned bit had
+been the result's, and leaked into the arithmetic and comparisons
+around it.  The rule for which comparisons are unsigned is unchanged
+by design, and is itself a finding for later: for pointers it follows
+the pointee's signedness, so `char *` comparisons are signed -- harmless
+while every address is below 2^31, but not C (6.5.8p5 compares
+addresses).  Disagreements over SQLite: 1,977 -> 310.  SQLite's code
+changed in four functions, each a comparison result feeding a
+comparison or a 64-bit widening; probe `6.5.8-result-is-int` pins it.
+
 ## Constraints on the work
 
 - stage07 builds stage08: the new code keeps stage07's dialect (ints

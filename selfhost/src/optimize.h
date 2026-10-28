@@ -106,7 +106,7 @@ static void opt_fold(Node *n) {
         result = 0;
 
         /* Skip folding ops that differ between signed/unsigned */
-        if (n->ty & TY_UNSIGNED) {
+        if ((n->ty & TY_UNSIGNED) || (n->attr & AT_UCMP)) {
             if (n->op == TK_LT || n->op == TK_GT ||
                 n->op == TK_LE || n->op == TK_GE ||
                 n->op == TK_SLASH || n->op == TK_PERCENT ||

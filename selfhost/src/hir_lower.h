@@ -828,6 +828,13 @@ static int hl_udivmod32(int lv, int rv, int is_rem) {
 }
 
 /* Map AST binary operator token to HIR instruction kind */
+/* A binary node's machine type for choosing its operation: a comparison
+ * is int, and whether it compares unsigned is sema's AT_UCMP. */
+static int hl_cmp_ty(Node *n) {
+    if (n->attr & AT_UCMP) return n->ty | TY_UNSIGNED;
+    return n->ty;
+}
+
 static int hl_binop_kind(int op, int ty) {
     if (op == TK_PLUS) return HI_ADD;
     if (op == TK_MINUS) return HI_SUB;
@@ -2822,22 +2829,22 @@ static int hl_expr(Node *n) {
             if (n->op == TK_EQ) return hi_emit(HI_SEQ, TY_INT, lv, rv, 0, NULL);
             if (n->op == TK_NE) return hi_emit(HI_SNE, TY_INT, lv, rv, 0, NULL);
             if (n->op == TK_LT) {
-                if (llong_cmp && (n->ty & TY_UNSIGNED))
+                if (llong_cmp && (hl_cmp_ty(n) & TY_UNSIGNED))
                     return hi_emit(HI_SLTU, TY_INT, lv, rv, 0, NULL);
                 return hi_emit(HI_SLT, TY_INT, lv, rv, 0, NULL);
             }
             if (n->op == TK_GT) {
-                if (llong_cmp && (n->ty & TY_UNSIGNED))
+                if (llong_cmp && (hl_cmp_ty(n) & TY_UNSIGNED))
                     return hi_emit(HI_SGTU, TY_INT, lv, rv, 0, NULL);
                 return hi_emit(HI_SGT, TY_INT, lv, rv, 0, NULL);
             }
             if (n->op == TK_LE) {
-                if (llong_cmp && (n->ty & TY_UNSIGNED))
+                if (llong_cmp && (hl_cmp_ty(n) & TY_UNSIGNED))
                     return hi_emit(HI_SLEU, TY_INT, lv, rv, 0, NULL);
                 return hi_emit(HI_SLE, TY_INT, lv, rv, 0, NULL);
             }
             if (n->op == TK_GE) {
-                if (llong_cmp && (n->ty & TY_UNSIGNED))
+                if (llong_cmp && (hl_cmp_ty(n) & TY_UNSIGNED))
                     return hi_emit(HI_SGEU, TY_INT, lv, rv, 0, NULL);
                 return hi_emit(HI_SGE, TY_INT, lv, rv, 0, NULL);
             }
@@ -2906,7 +2913,7 @@ static int hl_expr(Node *n) {
                 return hi_emit(HI_OR, TY_INT, eq_lo, eq_hi, 0, NULL);
             }
             if (n->op == TK_LT) {
-                if (n->ty & TY_UNSIGNED) {
+                if (hl_cmp_ty(n) & TY_UNSIGNED) {
                     hi_lt = hi_emit(HI_SLTU, TY_INT, lv_hi, rv_hi, 0, NULL);
                     hi_eq = hi_emit(HI_SEQ, TY_INT, lv_hi, rv_hi, 0, NULL);
                 } else {
@@ -2918,7 +2925,7 @@ static int hl_expr(Node *n) {
                 return hi_emit(HI_OR, TY_INT, hi_lt, tmp2, 0, NULL);
             }
             if (n->op == TK_GT) {
-                if (n->ty & TY_UNSIGNED) {
+                if (hl_cmp_ty(n) & TY_UNSIGNED) {
                     hi_lt = hi_emit(HI_SLTU, TY_INT, rv_hi, lv_hi, 0, NULL);
                     hi_eq = hi_emit(HI_SEQ, TY_INT, lv_hi, rv_hi, 0, NULL);
                 } else {
@@ -2931,7 +2938,7 @@ static int hl_expr(Node *n) {
             }
             if (n->op == TK_LE) {
                 /* a <= b  is  !(b < a) */
-                if (n->ty & TY_UNSIGNED) {
+                if (hl_cmp_ty(n) & TY_UNSIGNED) {
                     hi_lt = hi_emit(HI_SLTU, TY_INT, rv_hi, lv_hi, 0, NULL);
                     hi_eq = hi_emit(HI_SEQ, TY_INT, lv_hi, rv_hi, 0, NULL);
                 } else {
@@ -2945,7 +2952,7 @@ static int hl_expr(Node *n) {
             }
             if (n->op == TK_GE) {
                 /* a >= b  is  !(a < b) */
-                if (n->ty & TY_UNSIGNED) {
+                if (hl_cmp_ty(n) & TY_UNSIGNED) {
                     hi_lt = hi_emit(HI_SLTU, TY_INT, lv_hi, rv_hi, 0, NULL);
                     hi_eq = hi_emit(HI_SEQ, TY_INT, lv_hi, rv_hi, 0, NULL);
                 } else {
@@ -2965,7 +2972,7 @@ static int hl_expr(Node *n) {
                 h_carg[h_ncarg] = lv_hi;   h_ncarg = h_ncarg + 1;
                 h_carg[h_ncarg] = rv;      h_ncarg = h_ncarg + 1;
                 h_carg[h_ncarg] = rv_hi;   h_ncarg = h_ncarg + 1;
-                if (n->ty & TY_UNSIGNED) {
+                if (hl_cmp_ty(n) & TY_UNSIGNED) {
                     r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__udivdi3");
                 } else {
                     r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__divdi3");
@@ -2980,7 +2987,7 @@ static int hl_expr(Node *n) {
                 h_carg[h_ncarg] = lv_hi;   h_ncarg = h_ncarg + 1;
                 h_carg[h_ncarg] = rv;      h_ncarg = h_ncarg + 1;
                 h_carg[h_ncarg] = rv_hi;   h_ncarg = h_ncarg + 1;
-                if (n->ty & TY_UNSIGNED) {
+                if (hl_cmp_ty(n) & TY_UNSIGNED) {
                     r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__umoddi3");
                 } else {
                     r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__moddi3");
@@ -3273,7 +3280,7 @@ static int hl_expr(Node *n) {
         /* Regular binary op */
         lv = hl_expr(n->lhs);
         rv = hl_expr(n->rhs);
-        kind = hl_binop_kind(n->op, n->ty);
+        kind = hl_binop_kind(n->op, hl_cmp_ty(n));
 #ifndef S12CC_X64_HOST
         /* SLOW-32 has only signed DIV/REM instructions; unsigned goes
          * through the libs32 libcalls.  Cross hosts divide natively. */

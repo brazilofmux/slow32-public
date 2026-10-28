@@ -286,6 +286,7 @@
 6.5.7-shifts PASS
 6.5.8-rel-ptr-int ACCEPTS
 6.5.8-relational PASS
+6.5.8-result-is-int PASS
 6.5.9-eq-mismatch ACCEPTS
 6.5.9-equality PASS
 6.6-address-const-cast REJECTS

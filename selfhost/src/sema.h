@@ -6,6 +6,13 @@
  * Compiled by stage03 s32-cc.
  */
 
+/* --- Attributes (docs/TYPES.md S2) --- */
+#define AT_LV   1   /* an lvalue (6.3.2.1p1) */
+#define AT_MOD  2   /* a modifiable lvalue (6.3.2.1p1) */
+#define AT_NPC  4   /* a null pointer constant (6.3.2.3p3) */
+#define AT_ICX  8   /* an integer constant expression (6.6p6); cval/cval_hi hold it */
+#define AT_UCMP 16  /* a comparison whose operands compare unsigned (the lowering's SLTU) */
+
 /* --- State --- */
 static int sema_ret_ty;   /* current function's return type */
 static int sema_ret_cty;  /* ... its C type (0: unknown) */
@@ -143,12 +150,16 @@ static void sema_expr_mty(Node *n) {
              * lowering reads for sltu against slt, and it follows the
              * operands' common type: -1LL < 0xffffffffU compares as
              * long long, signed.  Pointers keep the old rule. */
+            /* The result is int (6.5.8p6, 6.5.9p3).  Whether the
+             * operands compare unsigned is the operation's, not the
+             * value's: it was the result's unsigned bit, and leaked --
+             * n + (u < v) became unsigned arithmetic (docs/TYPES.md). */
             n->ty = TY_INT;
             if (ty_is_ptr(lty) || ty_is_ptr(rty)) {
                 if ((sema_promote(lty) & TY_UNSIGNED) || (sema_promote(rty) & TY_UNSIGNED))
-                    n->ty = TY_INT | TY_UNSIGNED;
+                    n->attr = n->attr | AT_UCMP;
             } else if (sema_arith_type(lty, rty) & TY_UNSIGNED) {
-                n->ty = TY_INT | TY_UNSIGNED;
+                n->attr = n->attr | AT_UCMP;
             }
         } else if (n->op == TK_LAND || n->op == TK_LOR) {
             n->ty = TY_INT;
@@ -424,10 +435,6 @@ static void sema_cty_node(Node *n) {
 
 /* --- The other attributes (docs/TYPES.md S2) --- */
 
-#define AT_LV  1   /* an lvalue (6.3.2.1p1) */
-#define AT_MOD 2   /* a modifiable lvalue (6.3.2.1p1) */
-#define AT_NPC 4   /* a null pointer constant (6.3.2.3p3) */
-#define AT_ICX 8   /* an integer constant expression (6.6p6); cval/cval_hi hold it */
 
 /* Does struct or union type t have a const-qualified member, at any
  * depth (6.3.2.1p1: then it is not a modifiable lvalue)? */
@@ -532,7 +539,7 @@ static void sema_attr_node(Node *n) {
     double d;
     float f;
     int w[2];
-    n->attr = 0;
+    n->attr = n->attr & AT_UCMP;    /* set by sema_expr_mty, kept */
     t = n->cty;
     k = n->kind;
     /* lvalues */
