@@ -830,6 +830,26 @@ static int hl_udivmod32(int lv, int rv, int is_rem) {
 /* Map AST binary operator token to HIR instruction kind */
 /* A binary node's machine type for choosing its operation: a comparison
  * is int, and whether it compares unsigned is sema's AT_UCMP. */
+/* Is n's value an array, by its C type -- *p where p points to one? */
+static int hl_is_array_value(Node *n) {
+    return n->cty > 0 && ct_is_array(n->cty);
+}
+
+/* The bytes one step of pointer p moves (6.5.6p8).  The machine type
+ * says, except for a pointer to an array, which it spells as a pointer
+ * to the element -- int (*q)[3] is an int * -- so q + 1 stepped 4 bytes
+ * and not 12; the C type knows.  The parser's own rows (a[i] on a 2-D
+ * array: the sum it builds carries arr_cols and is already scaled by the
+ * row) are not asked: op is that sum. */
+static int hl_pointee_size(Node *op, Node *p) {
+    int t;
+    t = p->cty > 0 ? ct_decay(p->cty) : 0;
+    if (op->arr_cols == 0 && t > 0 && ct_is_ptr(t) && ct_is_array(ct_baseof(t)) &&
+        ct_sizeof(ct_baseof(t)) > 0)
+        return ct_sizeof(ct_baseof(t));
+    return ty_size(ty_deref(p->ty));
+}
+
 static int hl_cmp_ty(Node *n) {
     if (n->attr & AT_UCMP) return n->ty | TY_UNSIGNED;
     return n->ty;
@@ -2706,6 +2726,9 @@ static int hl_expr(Node *n) {
             lv = hl_expr(n->lhs);
             if (n->is_vol && lv >= 0) h_voladdr[lv] = 1;
             if (ty_is_struct(n->ty)) return lv;
+            /* *q, q pointing to an array: the array, decayed -- the
+             * address q holds, not a load from it */
+            if (hl_is_array_value(n)) return lv;
 #ifdef S12CC_X64_HOST
             if (ty_is_llong(n->ty)) {
                 return hi_emit(HI_LOAD, TY_LLONG, lv, -1, 0, NULL);
@@ -3085,7 +3108,7 @@ static int hl_expr(Node *n) {
         if (n->op == TK_MINUS && ty_is_ptr(n->lhs->ty) && ty_is_ptr(n->rhs->ty)) {
             int diff;
             int diff_ty;
-            elem_sz = ty_size(ty_deref(n->lhs->ty));
+            elem_sz = hl_pointee_size(n, n->lhs);
             lv = hl_expr(n->lhs);
             rv = hl_expr(n->rhs);
             /* The difference is as wide as a pointer.  On the 64-bit
@@ -3110,7 +3133,7 @@ static int hl_expr(Node *n) {
 
         /* Pointer arithmetic: scale the integer operand */
         if ((n->op == TK_PLUS || n->op == TK_MINUS) && ty_is_ptr(n->lhs->ty)) {
-            elem_sz = ty_size(ty_deref(n->lhs->ty));
+            elem_sz = hl_pointee_size(n, n->lhs);
             lv = hl_expr(n->lhs);
             rv = hl_expr(n->rhs);
             if (elem_sz > 1) {
@@ -3126,7 +3149,7 @@ static int hl_expr(Node *n) {
          * the left, is the one scaled.  3 + ia added 3 bytes, and 2[a] --
          * *(2 + a) -- read between elements. */
         if (n->op == TK_PLUS && ty_is_ptr(n->rhs->ty)) {
-            elem_sz = ty_size(ty_deref(n->rhs->ty));
+            elem_sz = hl_pointee_size(n, n->rhs);
             lv = hl_expr(n->lhs);
             rv = hl_expr(n->rhs);
             if (elem_sz > 1) {
@@ -3380,7 +3403,7 @@ static int hl_expr(Node *n) {
         }
         /* Scale for pointer arithmetic */
         if (ty_is_ptr(n->ty) && (n->op == TK_PLUS || n->op == TK_MINUS)) {
-            elem_sz = ty_size(ty_deref(n->ty));
+            elem_sz = hl_pointee_size(n, n->lhs);
             if (elem_sz > 1) {
                 scale = hi_emit(HI_ICONST, TY_INT, -1, -1, elem_sz, NULL);
                 rv = hi_emit(HI_MUL, TY_INT, rv, scale, 0, NULL);
@@ -3565,7 +3588,7 @@ static int hl_expr(Node *n) {
             return old_val;
         }
         if (ty_is_ptr(n->ty)) {
-            elem_sz = ty_size(ty_deref(n->ty));
+            elem_sz = hl_pointee_size(n, n->lhs);
         } else {
             elem_sz = 1;
         }

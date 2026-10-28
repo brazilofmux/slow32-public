@@ -385,6 +385,18 @@ static void sema_cty_rebuilt(Node *n) {
 
 /* The C type of an operator's result, from its operands' (6.5).  Kinds
  * without a rule yet keep a type rebuilt from the machine type. */
+/* *p's machine type, from its operand's as sema leaves it: the parser
+ * typed *p from p as it stood, and sema may retype p -- (*q)[j] is
+ * *((*q) + j), whose sum the parser saw as an int.  When *p is an array
+ * (p points to one: int (*q)[3], a 2-D array decayed, a jmp_buf *) its
+ * value is the array decayed -- the address p holds -- typed as the C
+ * type says, the machine types of those three spelling it differently. */
+static void sema_deref_mty(Node *n) {
+    if (!n->lhs || !ty_is_ptr(n->lhs->ty)) return;
+    if (ct_is_array(n->cty)) n->ty = ct_mty(ct_decay(n->cty));
+    else n->ty = ty_deref(n->lhs->ty);
+}
+
 static void sema_cty_node(Node *n) {
     int l;
     int r;
@@ -433,7 +445,10 @@ static void sema_cty_node(Node *n) {
         if (n->op == TK_MINUS || n->op == TK_TILDE) n->cty = ct_promote(ct_decay(l));
         else if (n->op == TK_BANG) n->cty = ct_basic[CT_INT];
         else if (n->op == TK_AMP) n->cty = ct_ptr(l);
-        else if (n->op == TK_STAR && ct_is_ptr(ct_decay(l))) n->cty = ct_baseof(ct_decay(l));
+        else if (n->op == TK_STAR && ct_is_ptr(ct_decay(l))) {
+            n->cty = ct_baseof(ct_decay(l));
+            sema_deref_mty(n);
+        }
         else { n->cty = ct_from_mty(n->ty, 0); return; }
     } else if (n->kind == ND_ASSIGN || n->kind == ND_COMP_ASSIGN ||
                n->kind == ND_POST_INC || n->kind == ND_POST_DEC) {

@@ -31,7 +31,8 @@ computed values and bit-field promotion; W13, bit-field layout now
 clang's; typedef'd array members aligned; `__STDC_HOSTED__` 1 and
 `__STDC_VERSION__` 199901L (C11's value waits for S6's keywords); W11's
 four (pointer-to-array type names in `sizeof`, block-scope tags and
-enumerators, braced string initializers) (204 PASS, 20 WRONG, 83 REJECTS, 81 DIAG, 135 ACCEPTS).  The tables below are the survey as
+enumerators, braced string initializers); pointers to arrays and
+`2[m][1]` (207 PASS, 19 WRONG, 82 REJECTS, 81 DIAG, 135 ACCEPTS).  The tables below are the survey as
 taken.
 
 The 52 WRONG probes come from about fifteen defects, listed below by

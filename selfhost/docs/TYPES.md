@@ -294,6 +294,27 @@ SQLite: three offsets in `sqlite3VdbeUsesBtree` and `sqlite3VdbeExec`.
 The layout program now differs from clang only where `FLEXARRAY` does.
 Probe `6.7.8-typedef-array-align`.
 
+**S3, pointers to arrays** (2026-10-28): the lowering takes a pointer's
+step from its C type when the pointee is an array (`hl_pointee_size`):
+`int (*q)[3]` is spelled `int *`, so `q + 1`, `q++`, `q -= 2` stepped 4
+bytes and `q - p` divided by 4.  `*q` is the array, decayed -- the
+address q holds, not a load (`hl_is_array_value`), its machine type the
+decayed C type's (`sema_deref_mty`), its `sizeof` the row's.  The
+parser's own rows (`a[i]` on a 2-D array, already scaled) are not
+asked.  For that the declarations had to carry the type: parameters and
+members of `T (*name)[N]` were typed as function pointers (the
+declarator goes through that path, and `ps_obj_cty` took its C type,
+which "agrees" with int); 2-D globals without an initializer and every
+2-D local were registered flat (`ps_local_rows_cty`); and a local
+`T (*name)[N]` was refused (`ps_local_rowptr`).  `2[m][1]` falls out.
+A 2-D local gets its rows only after its initializer: the stores the
+parser writes for one step through it element by element, and the
+first build, typing the local first, made `char rows[2][4] = {"ab",
+"cde"}` store words a row apart -- stage08's own test_2d_init caught it;
+SQLite has no such local, and the probe's int one took another path.
+SQLite and the compiler byte-identical: nothing there took these paths.
+Probe `6.5.6-pointer-to-array`.
+
 ## Constraints on the work
 
 - stage07 builds stage08: the new code keeps stage07's dialect (ints

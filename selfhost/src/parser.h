@@ -13,6 +13,8 @@ static int parse_string_literal(void);
 static int parse_const_int(void);
 static int parse_const_unary(void);
 static int pc_hi_of(int lo);
+static int ps_rowptr_cty(int elem_ty, int cols);
+static void ps_local_rows_cty(int li);
 static void next(void);
 static void skip_gnu_attributes(void);
 
@@ -207,6 +209,13 @@ static int ps_member_cty(int mi) {
     int esz;
     int count;
     int t;
+    if (!stm_is_arr[mi] && stm_arr_cols[mi] > 0 && ty_is_ptr(stm_type[mi])) {
+        /* T (*name)[N]: a pointer to an array of N (its declarator went
+         * through the function-pointer path, so the pending C type is a
+         * function pointer's) */
+        ps_pending_member_cty = 0;
+        return ps_rowptr_cty(ty_deref(stm_type[mi]), stm_arr_cols[mi]);
+    }
     if (ps_pending_member_cty > 0 && !stm_is_arr[mi]) {
         t = ps_pending_member_cty;
         ps_pending_member_cty = 0;
@@ -2143,6 +2152,7 @@ static int ps_add_static_array_alias(char *name, int elem_ty, int cols, int gi) 
     if (idx < 0) return -1;
     ps_larr[idx] = 1;
     ps_lcols[idx] = cols;
+    ps_local_rows_cty(idx);     /* its initializer is data, already written */
     return idx;
 }
 
@@ -2153,6 +2163,45 @@ static void ps_bind_var(Node *n, int li) {
     n->slot_id = ps_lslot[li];
     n->is_array = ps_larr[li];
     n->arr_cols = ps_lcols[li];
+}
+
+/* The C type of T (*name)[cols]: a pointer to an array of cols T.  The
+ * element is built from its machine type: what parse_type left in
+ * ps_type_cty is the declarator's function-pointer type by now, and it
+ * "agrees" with int. */
+static int ps_rowptr_cty(int elem_ty, int cols) {
+    return ct_ptr(ct_array(ct_from_mty(elem_ty, 0), cols));
+}
+
+/* A local T (*name)[N] = ...;, the cursor on the `[`: a pointer to an
+ * array of N, its machine type T * with the row width beside it, as a
+ * parameter of that type has.  It was refused. */
+static Node *ps_local_rowptr(char *nm, int ty, int nstars, int is_static) {
+    int cols;
+    int off;
+    int li;
+    Node *n;
+    next();
+    cols = parse_const_int();
+    expect(TK_RBRACK);
+    if (lex_tok == TK_LBRACK || nstars != 1 || is_static) {
+        p_error("pointer to array: only a local T (*name)[N] is supported");
+        return nd_num(0);
+    }
+    off = add_local(nm, ty + TY_PTR);
+    li = ps_nlocals - 1;
+    ps_lcols[li] = cols;
+    ps_lcty[li] = ps_rowptr_cty(ty, cols);
+    if (lex_tok != TK_ASSIGN) {
+        expect(TK_SEMI);
+        return nd_block(NULL);
+    }
+    next();
+    n = nd_var(nm, off, ty + TY_PTR);
+    ps_bind_var(n, li);
+    n = nd_assign(n, parse_assign());
+    expect(TK_SEMI);
+    return nd_expr_stmt(n);
 }
 
 /* Add a local array. Returns offset of start of array. */
@@ -2220,6 +2269,21 @@ static void ps_fix_global_array(int idx, int count, int cols) {
     if (!ct_is_array(elem)) return;
     while (ct_is_array(elem)) elem = ct_baseof(elem);
     ps_gcty[idx] = ps_array_cty(elem, count, cols);
+}
+
+/* Local li, a 2-D array with rows of ps_lcols[li]: give its C type the
+ * rows.  It is registered flat, and stays flat while the parser writes
+ * its initializer -- those stores step through it element by element --
+ * but user code sees the rows: *m on int m[3][4] is a row of four, and
+ * m + 1 steps over one (it was an int, and 4 bytes). */
+static void ps_local_rows_cty(int li) {
+    int elem;
+    int count;
+    elem = ps_lcty[li];
+    if (ps_lcols[li] <= 0 || elem <= 0 || !ct_is_array(elem) ||
+        ct_is_array(ct_baseof(elem))) return;
+    count = ct_countof(elem);
+    ps_lcty[li] = ps_array_cty(ct_baseof(elem), count, ps_lcols[li]);
 }
 
 /* A global's C type: an array when the parser records one (a pointer
@@ -2438,6 +2502,9 @@ static int ps_sizeof_node(Node *n) {
      * types of declarations are still being completed: a global array
      * of function pointers was typed as a pointer, and an all-C-type
      * sizeof turned its length 3 into 1.) */
+    /* ... except *p where p points to an array, which the declarations
+     * never recorded: its C type is the array's (int (*q)[3]: 12) */
+    if (n->kind == ND_UNARY && n->op == TK_STAR && ct_is_array(n->cty) && cs > 0) return cs;
     if ((n->attr & AT_LV) || ct_is_array(n->cty) || ct_is_func(n->cty)) return old;
     return cs;
 }
@@ -5511,7 +5578,21 @@ static void parse_local_array_dims(int *pcount, int *plcols2) {
  * so a `,` after a brace initializer, or a `[` after a `,`, was a
  * parse error (GitHub #8: `cob_num a = { getv(), 2 }, b = st[n];`,
  * `int a[2] = { 1, 2 }, b = 3;`, `int a = 1, b[2];`). */
+static Node *ps_local_declarator_body(char *nm, int ty);
+
+/* One declarator of a local declaration and its initializer: the body
+ * below, and then a 2-D array gets its rows (ps_local_rows_cty), once
+ * the initializer's own stores are written. */
 static Node *parse_local_declarator(char *nm, int ty) {
+    Node *t;
+    int li;
+    t = ps_local_declarator_body(nm, ty);
+    li = find_local(nm);
+    if (li >= 0) ps_local_rows_cty(li);
+    return t;
+}
+
+static Node *ps_local_declarator_body(char *nm, int ty) {
     Node *n;
     Node *a;
     Node *head;
@@ -6252,6 +6333,7 @@ static Node *parse_stmt(void) {
                 return nd_block(NULL);
             }
             expect(TK_RPAREN);
+            if (lex_tok == TK_LBRACK) return ps_local_rowptr(nm, ty, nstars, is_static);
             /* Record the parameter list so a call through this local
              * converts i64 args (GitHub issue 41). */
             {
@@ -7112,6 +7194,7 @@ array_after_brackets:
             else           idx = add_defined_global(nm, xty + TY_PTR, ty_size(xty) * count);
             if (is_static) ps_glocal[idx] = 1; /* file-scope static: TU-local */
             ps_gcols[idx] = g2cols;
+            ps_fix_global_array(idx, count, g2cols);   /* its rows, as an initialized one has */
         }
         if (lex_tok != TK_COMMA) {
             expect(TK_SEMI);
@@ -7232,8 +7315,10 @@ function_decl:
                 if (p != NULL) {
                     ps_ltype[ps_nlocals - 1] = pty;
                     ps_lcols[ps_nlocals - 1] = pcols;
+                    ps_lcty[ps_nlocals - 1] = ps_rowptr_cty(ty_deref(pty), pcols);
                     p->ty = pty;
                     p->arr_cols = pcols;
+                    p->cty = ps_lcty[ps_nlocals - 1];
                 }
             } else {
             if (lex_tok == TK_LPAREN) {
@@ -7330,8 +7415,10 @@ function_decl:
                     if (p != NULL) {
                         ps_ltype[ps_nlocals - 1] = pty;
                         ps_lcols[ps_nlocals - 1] = pcols;
+                        ps_lcty[ps_nlocals - 1] = ps_rowptr_cty(ty_deref(pty), pcols);
                         p->ty = pty;
                         p->arr_cols = pcols;
+                        p->cty = ps_lcty[ps_nlocals - 1];
                     }
                 } else {
                 if (lex_tok == TK_LPAREN) {
