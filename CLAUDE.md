@@ -372,6 +372,16 @@ cd ~/slow-32/regression && ./run-libc-differential.sh
 cd ~/slow-32/regression && ./run-stage08-fuzz.sh            # 2,000 seeds x 2 profiles
 cd ~/slow-32/regression/fuzz && ./cfuzz.py reduce SEED --profile wide   # shrink one
 
+# And random MACHINE CODE, below every compiler: isafuzz.py generates SLOW-32
+# assembly with every Unspecified case of docs/SPEC.md avoided by construction
+# (masked memory, NaNs canonicalized, safe conversion operands, labelled jump
+# targets) and requires slow32-fast, the DBT in seven modes and qemu to print
+# what the reference interpreter prints.  Compilers have habits; this reaches
+# what none of them emits.  Its first run (2026-10-27) found the qemu
+# translator sign-extending SLTIU's immediate.  ~4,000 programs/min x 10 runs.
+cd ~/slow-32/regression/fuzz && ./isafuzz.py run -n 5000      # after any engine change
+cd ~/slow-32/regression/fuzz && ./isafuzz.py reduce SEED --engines dbt
+
 # And after ANY change under llvm/lib/Target/SLOW32: the LLVM machine
 # verifier over every C library clang builds for SLOW-32 (runtime, libcob,
 # libf77, SQLite; 90 units).  Output-comparing gates see a backend defect

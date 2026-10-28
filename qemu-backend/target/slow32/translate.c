@@ -700,7 +700,11 @@ static bool translate_one(DisasContext *ctx, uint32_t raw)
         slow32_queue_cmp_imm(ctx, rd, TCG_COND_LT, rs1, decode_i_imm(raw));
         break;
     case OP_SLTIU:
-        slow32_queue_cmp_imm(ctx, rd, TCG_COND_LTU, rs1, decode_i_imm(raw));
+        /* SLTIU zero-extends its immediate, like ORI/ANDI/XORI (SPEC.md
+         * 4.2); decode_i_imm sign-extended it, so "sltiu rd, rs, 2048"
+         * compared against 0xFFFFF800 (found by regression/fuzz/isafuzz.py;
+         * no compiler emits an immediate of 2048 or more). */
+        slow32_queue_cmp_imm(ctx, rd, TCG_COND_LTU, rs1, decode_i_uimm(raw));
         break;
     case OP_LUI:
         store_gpr_imm(rd, raw & 0xFFFFF000);
