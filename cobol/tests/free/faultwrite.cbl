@@ -4,11 +4,12 @@ program-id. faultwrite.
 *> faultwrite.env fails the first two file writes with ENOSPC;
 *> tools/emulator/mmio_ring.c).  X3.23-1985 VII-3: 34 a write beyond the
 *> file's externally defined boundaries -- here the device full; 30 a
-*> permanent error with no more to say.  The guest's stdio buffers 4K:
+*> permanent error with no more to say.  libcob gives a sequential file
+*> a 32K buffer (setvbuf; it was the C library's 4K, and b wrote six):
 *> file a's three short records reach the device only at CLOSE, where a
 *> failure was reported as 00 (libcob ignored fclose, and fclose its
 *> flush); file b's long records reach it during a WRITE, which takes 34
-*> and runs b's declarative.  The four records buffered before it were
+*> and runs b's declarative.  The 32 records buffered before it were
 *> in the failed flush too: buffered output reports a device error at
 *> the first statement that sees it.  No oracle: the faults are this
 *> platform's.
@@ -46,7 +47,7 @@ m1.
     close fa
     display "fa close, device full: " sta
     open output fb
-    perform varying k from 1 by 1 until k > 6
+    perform varying k from 1 by 1 until k > 34
         move all "B" to rb
         write rb
         display "fb write " k ": " stb

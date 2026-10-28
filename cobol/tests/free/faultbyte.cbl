@@ -5,11 +5,11 @@ program-id. faultbyte.
 *> the long records).  A one-byte WRITE is a store into the stream's buffer
 *> (libcob.c, "The short entries of READ and WRITE") until the buffer
 *> has no room; the record that finds it full goes through fwrite, which
-*> empties the buffer -- and that WRITE, the 4,096th, is the one that
+*> empties the buffer -- and that WRITE, the 32,768th, is the one that
 *> takes 34 and runs the declarative, exactly where it did when every
-*> record went through fwrite.  The 4,095 before it were in the failed
+*> record went through fwrite.  The 32,767 before it were in the failed
 *> write and are lost; what is written after it arrives.  Then records of
-*> eight bytes, which fill the buffer exactly: the 512th is the one that
+*> eight bytes, which fill the buffer exactly: the 4,096th is the one that
 *> fills it, and the one refused -- not the one after.  (Until the C
 *> library's fwrite was repaired -- runtime ISSUES-28 -- neither file
 *> reported anything: a request that filled the buffer exactly was
@@ -42,7 +42,7 @@ end declaratives.
 main section.
 m1.
     open output f
-    perform varying i from 1 by 1 until i > 5000
+    perform varying i from 1 by 1 until i > 40000
         move "x" to r
         write r
         if st not = "00" display "write " i ": " st end-if
@@ -56,7 +56,7 @@ m1.
     close f
     display "records in the file: " n
     open output g
-    perform varying i from 1 by 1 until i > 600
+    perform varying i from 1 by 1 until i > 4800
         move "eightbyt" to r8
         write r8
         if st not = "00" display "write " i ": " st end-if

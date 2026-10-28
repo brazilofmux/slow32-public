@@ -4,7 +4,35 @@ fb write 01: 00
 fb write 02: 00
 fb write 03: 00
 fb write 04: 00
-  declarative for fb: 34
-fb write 05: 34
+fb write 05: 00
 fb write 06: 00
+fb write 07: 00
+fb write 08: 00
+fb write 09: 00
+fb write 10: 00
+fb write 11: 00
+fb write 12: 00
+fb write 13: 00
+fb write 14: 00
+fb write 15: 00
+fb write 16: 00
+fb write 17: 00
+fb write 18: 00
+fb write 19: 00
+fb write 20: 00
+fb write 21: 00
+fb write 22: 00
+fb write 23: 00
+fb write 24: 00
+fb write 25: 00
+fb write 26: 00
+fb write 27: 00
+fb write 28: 00
+fb write 29: 00
+fb write 30: 00
+fb write 31: 00
+fb write 32: 00
+  declarative for fb: 34
+fb write 33: 34
+fb write 34: 00
 fb close: 00

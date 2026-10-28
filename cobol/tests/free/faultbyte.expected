@@ -1,8 +1,8 @@
+  declarative: 34 at record 32768
+write 32768: 34
+close: 00
+records in the file: 07232
   declarative: 34 at record 04096
 write 04096: 34
 close: 00
-records in the file: 00904
-  declarative: 34 at record 00512
-write 00512: 34
-close: 00
-records in the file: 00088
+records in the file: 00704

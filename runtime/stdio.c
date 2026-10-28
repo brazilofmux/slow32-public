@@ -729,8 +729,12 @@ int ungetc(int c, FILE *stream) {
 int setvbuf(FILE *stream, char *buf, int mode, size_t size) {
     /* The public header speaks POSIX (_IOFBF 0, _IOLBF 1, _IONBF 2);
      * this file's internal constants are historically reversed.
-     * Translate; custom buffers are not supported (ignored). */
-    (void)buf; (void)size;
+     * Translate.  A caller's array is not used (C lets the library
+     * decide), but its size is: a file that has done no I/O yet gets a
+     * buffer of that size of its own -- COBOL's sequential files ask for
+     * 32K, which halved a 1 GB WRITE loop's time (the host's write per
+     * 4K block was most of it). */
+    (void)buf;
     if (!stream) {
         return -1;
     }
@@ -739,6 +743,11 @@ int setvbuf(FILE *stream, char *buf, int mode, size_t size) {
         case 1: stream->mode = _IOLBF; break;  /* public _IOLBF */
         case 2: stream->mode = _IONBF; break;  /* public _IONBF */
         default: return -1;
+    }
+    if (mode != 2 && size > 0 && size != stream->buf_size && stream->buffer &&
+        !(stream->flags & FLAG_MEMSTREAM) && stream->buf_pos == 0 && stream->buf_len == 0 && stream->ungetc_char < 0) {
+        char *nb = malloc(size);
+        if (nb) { free(stream->buffer); stream->buffer = nb; stream->buf_size = size; }
     }
     return 0;
 }

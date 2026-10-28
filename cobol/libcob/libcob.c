@@ -3438,6 +3438,9 @@ static int cob_open_1(cob_file *f, int mode)
         return file_result(f, "30", name);
     }
     f->fp = fp; f->open_mode = (unsigned char)mode;
+    /* a sequential file is read and written front to back: a bigger block
+     * per host call (a 4K one made the host's write most of a WRITE loop) */
+    if (f->org == COB_ORG_SEQ || f->org == COB_ORG_LINESEQ) setvbuf(fp, NULL, _IOFBF, 32768);
     if (mode == COB_OPEN_EXTEND && fseek(fp, 0, 2) == 0) { long e = ftell(fp); f->fpos = e > 0 ? (unsigned)e : 0; }
     if (f->linage) { f->lin_needs_top = 1; lin_values(f); if (!(f->lin_needs_top & 2)) f->lin_counter = 1; f->lin_eop = 0; }
     return file_result(f, "00", name);
