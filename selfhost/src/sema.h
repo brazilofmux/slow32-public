@@ -280,7 +280,7 @@ static int sema_cty_of(Node *c) {
  * typing departs from C, kind and operator named. */
 static void sema_cty_report(Node *n) {
     if (sema_cty_check < 0) sema_cty_check = getenv("S12CC_CTY_CHECK") != 0;
-    if (!sema_cty_check || ct_mty(n->cty) == n->ty) return;
+    if (!sema_cty_check || ct_mty_agrees(n->cty, n->ty)) return;
     fdputs("cty-mismatch kind=", 2);
     fdputuint(2, (unsigned)n->kind);
     fdputs(" op=", 2);
@@ -322,7 +322,14 @@ static void sema_cty_node(Node *n) {
     if (n->kind == ND_STRING) {
         n->cty = ct_array(ct_basic[CT_CHAR], lex_str_len[n->val] + 1);
     } else if (n->kind == ND_FUNC_REF) {
-        n->cty = ct_func(ct_from_mty(find_func_type(n->name), 0), 0, -1, 0);
+        n->cty = find_func_cty(n->name);
+        if (n->cty <= 0) n->cty = ct_func(ct_from_mty(find_func_type(n->name), 0), 0, -1, 0);
+    } else if (n->kind == ND_CALL && find_func_cty(n->name) > 0) {
+        /* the callee's return type (6.5.2.2p5) */
+        n->cty = ct_unqual(ct_baseof(find_func_cty(n->name)));
+    } else if (n->kind == ND_CALL_PTR && ct_is_ptr(ct_decay(sema_cty_of(n->lhs))) &&
+               ct_is_func(ct_baseof(ct_decay(sema_cty_of(n->lhs))))) {
+        n->cty = ct_unqual(ct_baseof(ct_baseof(ct_decay(sema_cty_of(n->lhs)))));
     } else if (n->kind == ND_BINOP) {
         l = ct_decay(sema_cty_of(n->lhs));
         r = ct_decay(sema_cty_of(n->rhs));

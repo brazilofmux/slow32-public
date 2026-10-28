@@ -384,3 +384,14 @@ static int ct_decay(int t) {
     if (ct_kindof(t) == CT_FUNC) return ct_ptr(ct_unqual(t));
     return ct_unqual(t);
 }
+
+/* Does C type t agree with machine type ty?  ct_mty(t) == ty, except that
+ * a pointer to a function has two machine spellings: the parser types a
+ * function-pointer object as int and a cast to one as int *; both are
+ * the same word to the code generators. */
+static int ct_mty_agrees(int t, int ty) {
+    if (ct_mty(t) == ty) return 1;
+    if (ct_kindof(t) == CT_PTR && ct_kindof(ct_baseof(t)) == CT_FUNC)
+        return ty == TY_INT || ty == TY_INT + TY_PTR;
+    return 0;
+}

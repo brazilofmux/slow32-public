@@ -184,6 +184,17 @@ known families are set aside, every remaining case is one of these:
 These are S3's list: when the lowering reads C types, each becomes
 right by construction.  Output was byte-identical throughout.
 
+**S2, second part** (2026-10-28): C types for struct members (qualified
+by their structure's qualifiers), casts, constants, and functions --
+`ps_fpctypes` beside every stored parameter list, `ps_fcty` per
+function, so a call has its callee's return type and a function name
+its function type; function-pointer declarators are pointers to
+functions (`ct_mty_agrees`: their machine type is spelled `int` or
+`int *`).  Global arrays sized by their initializer get their length.
+Over SQLite, nodes whose C type is rebuilt from the machine type fell
+from 84,000 to under 300, and declarations the parser cannot type from
+661 to 105, the rest scattered over rarer paths.
+
 ## Constraints on the work
 
 - stage07 builds stage08: the new code keeps stage07's dialect (ints

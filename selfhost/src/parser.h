@@ -130,8 +130,25 @@ static int ps_type_nstar;
 static int ps_cty_check = -1;
 static int ps_cty_fallbacks;
 static int ps_global_cty(int ty, int size_bytes);
+/* A function-pointer member's C type, taken when its (*name) is read and
+ * consumed when the member is registered (its parameter list, between,
+ * runs parse_type again). */
+static int ps_pending_member_cty;
+
+/* The pointer to function that a (*name)(...) declarator makes of the
+ * type read before it; the parameters are not recorded here. */
+static int ps_fnptr_cty(int ret_cty) {
+    return ct_ptr(ct_func(ret_cty, 0, -1, 0));
+}
+
+/* ps_obj_cty without the report: for a type already recorded once. */
+static int ps_cty_quiet(int ty) {
+    if (ps_type_cty > 0 && ct_mty_agrees(ps_type_cty, ty)) return ps_type_cty;
+    return ct_from_mty(ty, 0);
+}
+
 static int ps_obj_cty(int ty) {
-    if (ps_type_cty > 0 && ct_mty(ps_type_cty) == ty) return ps_type_cty;
+    if (ps_type_cty > 0 && ct_mty_agrees(ps_type_cty, ty)) return ps_type_cty;
     if (ps_cty_check < 0) ps_cty_check = getenv("S12CC_CTY_CHECK") != 0;
     if (ps_cty_check) {
         ps_cty_fallbacks = ps_cty_fallbacks + 1;
@@ -174,6 +191,13 @@ static int ps_member_cty(int mi) {
     int elem;
     int esz;
     int count;
+    int t;
+    if (ps_pending_member_cty > 0 && !stm_is_arr[mi]) {
+        t = ps_pending_member_cty;
+        ps_pending_member_cty = 0;
+        if (ct_mty_agrees(t, stm_type[mi])) return t;
+    }
+    ps_pending_member_cty = 0;
     if (!stm_is_arr[mi]) return ps_obj_cty(stm_type[mi]);
     elem = ps_obj_cty(ty_deref(stm_type[mi]));
     esz = ty_size(ty_deref(stm_type[mi]));
@@ -441,12 +465,14 @@ static int   ps_type_fpn;
 #define PS_MAX_FPARAM 65536   /* was 16384 */
 static char *ps_fname[PS_MAX_FUNCS];
 static int   ps_ftype[PS_MAX_FUNCS];
+static int   ps_fcty[PS_MAX_FUNCS];   /* the function's C type (ctype.h), docs/TYPES.md */
 static int   ps_fvar[PS_MAX_FUNCS];   /* 1 = variadic (affects f64 arg ABI) */
 static int   ps_fpbase[PS_MAX_FUNCS]; /* base into ps_fptypes, -1 = unknown */
 static int   ps_fpn[PS_MAX_FUNCS];    /* declared param count */
 static int   ps_fretfpbase[PS_MAX_FUNCS]; /* return type is a function pointer */
 static int   ps_fretfpn[PS_MAX_FUNCS];
 static int   ps_fptypes[PS_MAX_FPARAM];
+static int   ps_fpctypes[PS_MAX_FPARAM]; /* ... their C types, unqualified (6.7.6.3p15) */
 static int   ps_fpret[PS_MAX_FPARAM];  /* return type of the fnptr signature at this base; 0 = TY_INT */
 static int   ps_fpvar[PS_MAX_FPARAM];  /* 1 = the signature at this base ends in `...` */
 static int   ps_nfptypes;
@@ -465,7 +491,7 @@ static Node *parse_block(void);
 /* ps_parse_fp_params sits above these and calls them (GitHub issue 71). */
 static int is_type(void);
 static int parse_type(void);
-static int ps_fp_store(int *ptys, int np);
+static int ps_fp_store(int *ptys, int *pctys, int np);
 
 /* --- Utilities --- */
 
@@ -601,6 +627,8 @@ static void p_skip_to_rparen(void) {
  * sqlite3_int64) received a literal 0 as one word without this. */
 static int ps_parse_fp_params(int *np_out) {
     int ptys[64];
+    int pctys[64];
+    int pcty;
     int np;
     int ty;
     int var;
@@ -608,21 +636,21 @@ static int ps_parse_fp_params(int *np_out) {
     np = 0;
     var = 0;
     *np_out = 0;
-    if (lex_tok == TK_RPAREN) { next(); return ps_fp_store(ptys, 0); }
+    if (lex_tok == TK_RPAREN) { next(); return ps_fp_store(ptys, pctys, 0); }
     while (lex_tok != TK_EOF) {
         if (lex_tok == TK_ELLIPSIS) { next(); var = 1; break; }
         if (!is_type()) { p_skip_to_rparen(); return -1; }
         ty = parse_type();
-        while (lex_tok == TK_STAR || lex_tok == TK_CONST || lex_tok == TK_VOLATILE || lex_tok == TK_RESTRICT) {
-            if (lex_tok == TK_STAR) ty = ty + TY_PTR;
-            next();
-        }
+        skip_decl_qualifiers();
+        ty = ps_declarator_stars(ty, ps_type_cty);
+        pcty = ps_type_cty;
         if (lex_tok == TK_LPAREN) {
             /* a function-pointer parameter: (*name)(...) -- a pointer */
             next();
             p_skip_to_rparen();
             if (lex_tok == TK_LPAREN) { next(); p_skip_to_rparen(); }
             ty = TY_INT + TY_PTR;
+            pcty = ct_ptr(ct_func(pcty, 0, -1, 0));
         } else {
             if (lex_tok == TK_IDENT) next();
             while (lex_tok == TK_LBRACK) {
@@ -630,9 +658,10 @@ static int ps_parse_fp_params(int *np_out) {
                 while (lex_tok != TK_RBRACK && lex_tok != TK_EOF) next();
                 next();
                 ty = ty + TY_PTR;    /* an array parameter is a pointer */
+                pcty = ct_ptr(pcty);
             }
         }
-        if (np < 64) { ptys[np] = ty; np = np + 1; }
+        if (np < 64) { ptys[np] = ty; pctys[np] = pcty; np = np + 1; }
         if (lex_tok == TK_COMMA) { next(); continue; }
         break;
     }
@@ -640,7 +669,7 @@ static int ps_parse_fp_params(int *np_out) {
     if (lex_tok == TK_RPAREN) next();
     if (np == 1 && ptys[0] == TY_VOID) np = 0;
     *np_out = np;
-    base = ps_fp_store(ptys, np);
+    base = ps_fp_store(ptys, pctys, np);
     /* A call through a variadic signature packs its doubles the way a
      * direct call to a variadic function does (hl_expr, ND_CALL_PTR). */
     if (base >= 0 && base < PS_MAX_FPARAM) ps_fpvar[base] = var;
@@ -768,7 +797,9 @@ static int find_func_varargs(char *name) {
     return 0;
 }
 
-static int ps_fp_store(int *ptys, int np) {
+/* A parameter-type list: machine types, and C types beside them (pctys
+ * 0: rebuilt from the machine types). */
+static int ps_fp_store(int *ptys, int *pctys, int np) {
     int base;
     int i;
     if (np < 0 || ps_nfptypes + np > PS_MAX_FPARAM) return -1;
@@ -777,10 +808,19 @@ static int ps_fp_store(int *ptys, int np) {
     i = 0;
     while (i < np) {
         ps_fptypes[ps_nfptypes] = ptys[i];
+        if (pctys) ps_fpctypes[ps_nfptypes] = ct_unqual(pctys[i]);
+        else ps_fpctypes[ps_nfptypes] = ct_from_mty(ptys[i], 0);
         ps_nfptypes = ps_nfptypes + 1;
         i = i + 1;
     }
     return base;
+}
+
+/* The function type a stored signature describes: ret, the list at
+ * base (np entries; np < 0, no prototype), variadic. */
+static int ps_fp_cty(int ret_cty, int base, int np, int var) {
+    if (base < 0 || np < 0) return ct_func(ret_cty, 0, -1, 0);
+    return ct_func(ret_cty, ps_fpctypes + base, np, var);
 }
 
 /* Return type of a function-pointer signature.  Indexed by the same
@@ -804,7 +844,7 @@ static int ps_fp_ret_of_callee(Node *lhs) {
     return ps_fp_get_ret(fpb);
 }
 
-static void add_func_type(char *name, int ty, int *ptys, int np) {
+static void add_func_type(char *name, int ty, int *ptys, int *pctys, int np, int ret_cty) {
     int i;
     /* Update existing entry if already registered */
     i = ps_nfuncs - 1;
@@ -813,9 +853,10 @@ static void add_func_type(char *name, int ty, int *ptys, int np) {
             ps_ftype[i] = ty;
             ps_fvar[i] = ps_is_varargs;
             if (np >= 0) {
-                ps_fpbase[i] = ps_fp_store(ptys, np);
+                ps_fpbase[i] = ps_fp_store(ptys, pctys, np);
                 ps_fpn[i] = (ps_fpbase[i] >= 0) ? np : 0;
             }
+            ps_fcty[i] = ps_fp_cty(ret_cty, ps_fpbase[i], ps_fpn[i], ps_is_varargs);
             ps_fretfpbase[i] = ps_pending_retfpbase;
             ps_fretfpn[i] = ps_pending_retfpn;
             return;
@@ -826,11 +867,24 @@ static void add_func_type(char *name, int ty, int *ptys, int np) {
     ps_fname[ps_nfuncs] = strdup(name);
     ps_ftype[ps_nfuncs] = ty;
     ps_fvar[ps_nfuncs] = ps_is_varargs;
-    ps_fpbase[ps_nfuncs] = (np >= 0) ? ps_fp_store(ptys, np) : -1;
+    ps_fpbase[ps_nfuncs] = (np >= 0) ? ps_fp_store(ptys, pctys, np) : -1;
     ps_fpn[ps_nfuncs] = (ps_fpbase[ps_nfuncs] >= 0) ? np : 0;
+    ps_fcty[ps_nfuncs] = ps_fp_cty(ret_cty, ps_fpbase[ps_nfuncs],
+                                   ps_fpbase[ps_nfuncs] >= 0 ? np : -1, ps_is_varargs);
     ps_fretfpbase[ps_nfuncs] = ps_pending_retfpbase;
     ps_fretfpn[ps_nfuncs] = ps_pending_retfpn;
     ps_nfuncs = ps_nfuncs + 1;
+}
+
+/* A function's C type, or 0 when it has none recorded. */
+static int find_func_cty(char *name) {
+    int i;
+    i = ps_nfuncs - 1;
+    while (i >= 0) {
+        if (strcmp(name, ps_fname[i]) == 0) return ps_fcty[i];
+        i = i - 1;
+    }
+    return 0;
 }
 
 /* Declared type of parameter `idx` of `name`, or -1 when unknown
@@ -1425,6 +1479,7 @@ static int parse_type(void) {
                         } else {
                             is_fn_ptr_member = 1;
                         }
+                        ps_pending_member_cty = ps_fnptr_cty(ps_type_cty);
                         if (lex_tok != TK_IDENT) {
                             p_error("expected member name");
                             return TY_INT;
@@ -1747,6 +1802,7 @@ static int parse_type(void) {
                         } else {
                             is_fn_ptr_member = 1;
                         }
+                        ps_pending_member_cty = ps_fnptr_cty(ps_type_cty);
                         if (lex_tok != TK_IDENT) {
                             p_error("expected member name");
                             return TY_INT;
@@ -2128,6 +2184,23 @@ static int add_local_array(char *name, int elem_ty, int count) {
     }
     ps_nlocals = ps_nlocals + 1;
     return ps_loff[idx];
+}
+
+/* An array of elem: count elements (-1 unknown); with cols, count is the
+ * flattened total of a 2-D array of rows of cols. */
+static int ps_array_cty(int elem, int count, int cols) {
+    if (cols > 0)
+        return ct_array(ct_array(elem, cols), count > 0 ? count / cols : -1);
+    return ct_array(elem, count > 0 ? count : -1);
+}
+
+/* An initializer fixed global idx's length: its C type takes it. */
+static void ps_fix_global_array(int idx, int count, int cols) {
+    int elem;
+    elem = ps_gcty[idx];
+    if (!ct_is_array(elem)) return;
+    while (ct_is_array(elem)) elem = ct_baseof(elem);
+    ps_gcty[idx] = ps_array_cty(elem, count, cols);
 }
 
 /* A global's C type: an array when the parser records one (a pointer
@@ -6004,6 +6077,7 @@ static Node *parse_stmt(void) {
                     lfpb = ps_parse_fp_params(&lfpn);
                     ps_fp_set_ret(lfpb, ty);
                 }
+                ps_type_cty = ps_fnptr_cty(ps_type_cty);
                 off = add_local(nm, TY_INT);
                 ps_lfpbase[ps_nlocals - 1] = lfpb;
                 ps_lfpn[ps_nlocals - 1] = lfpn;
@@ -6392,6 +6466,8 @@ static Node *parse_top_decl(void) {
     int ty;
     int pty;
     int fp_tys[64];
+    int fp_ctys[64];    /* the parameters' C types, beside fp_tys */
+    int ret_cty;        /* the declared type's C type: a function's return type */
     int fp_n;
     int off;
     int i;
@@ -6473,6 +6549,7 @@ static Node *parse_top_decl(void) {
     /* Parse return type / variable type */
     was_enum = (lex_tok == TK_ENUM);
     ty = parse_type();
+    ret_cty = ps_type_cty;
     g2cols = ps_type_arrcount;  /* reuse: typedef'd array element count */
     gtdac = 0;
     ps_pending_retfpbase = ps_type_fpbase;
@@ -6580,6 +6657,7 @@ static Node *parse_top_decl(void) {
             expect(TK_SEMI);
             return NULL;
         }
+        ps_type_cty = ps_fnptr_cty(ret_cty);
         if (is_extern) idx = add_extern_global(nm, TY_INT, 0);
         else           idx = add_defined_global(nm, TY_INT, 0);
         if (is_static) ps_glocal[idx] = 1; /* file-scope static: TU-local */
@@ -6751,6 +6829,10 @@ plain_name:
         skip_gnu_decl_suffixes();
 array_after_brackets:
         ps_decl_objconst = decl_const;
+        /* An array's C type before it is registered: an initializer may
+         * fix its length after add_*_global has run (T a[] = {...}), and
+         * a size-0 registration would look like a pointer. */
+        ps_type_cty = ps_array_cty(ps_cty_quiet(xty), count, g2cols);
         if (g2cols > 0 && lex_tok == TK_ASSIGN) {
             next();
             if (lex_tok != TK_LBRACE) {
@@ -6766,6 +6848,7 @@ array_after_brackets:
                                                  g2cols, idx, 0);
             count = count * g2cols;
             ps_gsize[idx] = ty_size(xty) * count;
+            ps_fix_global_array(idx, count, g2cols);
             ps_ginit_ensure_len(idx, ps_gsize[idx]);
             ps_ginit_finish(idx);
         } else if (lex_tok == TK_ASSIGN) {
@@ -6802,6 +6885,7 @@ array_after_brackets:
                 count = parse_global_init_array_at(xty, count, idx, 0);
                 require_complete_type(xty, "incomplete element type");
                 ps_gsize[idx] = ty_size(xty) * count;
+                ps_fix_global_array(idx, count, 0);
                 ps_ginit_ensure_len(idx, ps_gsize[idx]);
                 ps_ginit_finish(idx);
             } else {
@@ -6912,6 +6996,7 @@ function_decl:
                 nested_fp = 1;
             }
             if (lex_tok == TK_IDENT) {
+                ps_type_cty = ps_fnptr_cty(ps_type_cty);
                 off = add_local(lex_str, TY_INT);
                 p = nd_var(lex_str, off, TY_INT);
                 ps_bind_var(p, ps_nlocals - 1);
@@ -6973,7 +7058,7 @@ function_decl:
             ps_bind_var(p, ps_nlocals - 1);
         }
         skip_gnu_decl_suffixes();
-        if (fp_n < 64) { fp_tys[fp_n] = pty; fp_n = fp_n + 1; }
+        if (fp_n < 64) { fp_tys[fp_n] = pty; fp_ctys[fp_n] = ps_cty_quiet(pty); fp_n = fp_n + 1; }
         ps_nparams = 1;
         phead = p;
         ptail = p;
@@ -7008,7 +7093,8 @@ function_decl:
                     nested_fp = 1;
                 }
                 if (lex_tok == TK_IDENT) {
-                    off = add_local(lex_str, TY_INT);
+                    ps_type_cty = ps_fnptr_cty(ps_type_cty);
+                off = add_local(lex_str, TY_INT);
                     p = nd_var(lex_str, off, TY_INT);
                     ps_bind_var(p, ps_nlocals - 1);
                     next();
@@ -7094,7 +7180,7 @@ function_decl:
                 ptail->next = p;
                 ptail = p;
             }
-            if (fp_n < 64) { fp_tys[fp_n] = pty; fp_n = fp_n + 1; }
+            if (fp_n < 64) { fp_tys[fp_n] = pty; fp_ctys[fp_n] = ps_cty_quiet(pty); fp_n = fp_n + 1; }
             ps_nparams = ps_nparams + 1;
         }
     }
@@ -7110,7 +7196,8 @@ params_done:
     /* Prototype: type name(params); */
     if (lex_tok == TK_SEMI) {
         next();
-        add_func_type(nm, ty, fp_tys, fp_n);
+        add_func_type(nm, ty, fp_tys, fp_ctys, fp_n,
+                      fn_ret_fnptr ? ct_ptr(ct_func(ret_cty, 0, -1, 0)) : ret_cty);
         return NULL;
     }
 
@@ -7119,7 +7206,8 @@ params_done:
         p_error("expected param name");
         return NULL;
     }
-    add_func_type(nm, ty, fp_tys, fp_n);
+    add_func_type(nm, ty, fp_tys, fp_ctys, fp_n,
+                  fn_ret_fnptr ? ct_ptr(ct_func(ret_cty, 0, -1, 0)) : ret_cty);
     fn = nd_new(ND_FUNC);
     fn->name = strdup(nm);
     fn->ty = ty;  /* store return type for sema pass */
