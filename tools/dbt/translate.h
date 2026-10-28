@@ -369,6 +369,51 @@ translated_block_t *translate_block_cached(translate_ctx_t *ctx, uint32_t guest_
 #define OP_FCVT_D_LU 0x78
 #define OP_HALT   0x7F
 
+// Register pairs.  A double or a 64-bit integer is (rN, rN+1), and the
+// instruction names only rN, so rN+1 is read or written without appearing
+// in rd/rs1/rs2.  Every analysis that asks what an instruction reads or
+// writes -- liveness, the loop-written set, def search -- must ask these
+// too.  Found by regression/fuzz/isafuzz.py (2026-10-27): the a64
+// dead-temporary scan skipped a store whose register an FLE.D read as the
+// high half of rs2, and the loop-written set missed FABS.D's rd+1, so the
+// register cache carried a stale value across the back-edge.
+static inline bool op_writes_rd_pair(uint8_t op) {
+    switch (op) {
+        case OP_FADD_D: case OP_FSUB_D: case OP_FMUL_D: case OP_FDIV_D:
+        case OP_FSQRT_D: case OP_FCVT_D_W: case OP_FCVT_D_WU: case OP_FCVT_D_S:
+        case OP_FNEG_D: case OP_FABS_D:
+        case OP_FCVT_L_S: case OP_FCVT_LU_S: case OP_FCVT_L_D: case OP_FCVT_LU_D:
+        case OP_FCVT_D_L: case OP_FCVT_D_LU:
+            return true;
+        default:
+            return false;
+    }
+}
+
+static inline bool op_reads_rs1_pair(uint8_t op) {
+    switch (op) {
+        case OP_FADD_D: case OP_FSUB_D: case OP_FMUL_D: case OP_FDIV_D:
+        case OP_FSQRT_D: case OP_FEQ_D: case OP_FLT_D: case OP_FLE_D:
+        case OP_FCVT_W_D: case OP_FCVT_WU_D: case OP_FCVT_S_D:
+        case OP_FNEG_D: case OP_FABS_D:
+        case OP_FCVT_S_L: case OP_FCVT_S_LU: case OP_FCVT_L_D: case OP_FCVT_LU_D:
+        case OP_FCVT_D_L: case OP_FCVT_D_LU:
+            return true;
+        default:
+            return false;
+    }
+}
+
+static inline bool op_reads_rs2_pair(uint8_t op) {
+    switch (op) {
+        case OP_FADD_D: case OP_FSUB_D: case OP_FMUL_D: case OP_FDIV_D:
+        case OP_FEQ_D: case OP_FLT_D: case OP_FLE_D:
+            return true;
+        default:
+            return false;
+    }
+}
+
 // ============================================================================
 // Instruction format types
 // ============================================================================

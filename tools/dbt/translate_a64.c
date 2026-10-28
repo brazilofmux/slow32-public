@@ -310,12 +310,18 @@ static uint8_t inst_def_reg(const decoded_inst_t *d) {
     }
 }
 
+// True if d writes reg: its rd, or rd+1 for a register-pair result.
+static bool inst_defines(const decoded_inst_t *d, uint8_t reg) {
+    uint8_t rd = inst_def_reg(d);
+    return rd != 0 && (rd == reg || (op_writes_rd_pair(d->opcode) && rd + 1 == reg));
+}
+
 // True if `reg` is defined by any instruction in (lo, hi) exclusive.
 static bool defined_between(const decoded_inst_t *decoded, int lo, int hi,
                             uint8_t reg) {
     if (reg == 0) return false;
     for (int i = lo + 1; i < hi; i++) {
-        if (inst_def_reg(&decoded[i]) == reg) return true;
+        if (inst_defines(&decoded[i], reg)) return true;
     }
     return false;
 }
@@ -325,7 +331,7 @@ static int last_def_before(const decoded_inst_t *decoded, int before,
                            uint8_t reg) {
     if (reg == 0) return -1;
     for (int i = before - 1; i >= 0; i--) {
-        if (inst_def_reg(&decoded[i]) == reg) return i;
+        if (inst_defines(&decoded[i], reg)) return i;
     }
     return -1;
 }
@@ -539,6 +545,8 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
                                     default: break;
                                 }
                                 if (wr != 0) ctx->loop_written_regs |= (1u << wr);
+                                if (wr != 0 && wr < 31 && op_writes_rd_pair(decoded[k].opcode))
+                                    ctx->loop_written_regs |= (1u << (wr + 1));
                             }
                         }
                     }
@@ -609,10 +617,22 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
             if (wr != 0) {
                 ctx->dead_temp_skip[i] = (read_count_before_write[wr] <= 1);
                 read_count_before_write[wr] = 0;
+                // a pair result overwrites rd+1 as well
+                if (wr < 31 && op_writes_rd_pair(dinst->opcode))
+                    read_count_before_write[wr + 1] = 0;
             }
 
             if (r1 != 0) read_count_before_write[r1]++;
             if (r2 != 0) read_count_before_write[r2]++;
+            // ...and a pair operand reads rs+1, which the instruction does
+            // not name: without this an FLE.D reading r25 as rs2+1 let the
+            // store of r25 before it be skipped (isafuzz seed 2813)
+            if (dinst->format == FMT_R) {
+                if (r1 != 0 && r1 < 31 && op_reads_rs1_pair(dinst->opcode))
+                    read_count_before_write[r1 + 1]++;
+                if (r2 != 0 && r2 < 31 && op_reads_rs2_pair(dinst->opcode))
+                    read_count_before_write[r2 + 1]++;
+            }
         }
     }
 

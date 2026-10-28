@@ -978,3 +978,35 @@ the kit helpers the stub shape and the same tag; the tag is the cksum
 of the contract source (`HK_SRC_BUILTINS` in the Makefile), which the
 selfhost build would have to carry or recompute from a copy it owns
 (the two-universes rule: selfhost/ builds everything itself).
+
+## 30. Register Pairs Invisible to the Block Analyses (FIXED 2026-10-27)
+
+A double or a 64-bit integer is a register pair (rN, rN+1), and the
+instruction names only rN.  The translators' per-block analyses took what
+an instruction reads and writes from rd/rs1/rs2 by format, so the hidden
+half was invisible to all of them:
+
+- **a64 dead-temporary scan** (`reg_alloc_prescan`): a value written, read
+  once, then read again as a pair's high half and overwritten had its
+  store skipped, and the pair instruction loaded stale memory.  `sge r25,
+  ...; add r11, r25, ...; flt.d r25, r2, r24` compared against the old
+  r25.  Showed in stage 1 and with the register cache off (`-1`, `-R`),
+  where values go through the pending-write path.
+- **Loop-written set** (both translators): `fabs.d r18, r16` writes r19,
+  but the set held only r18, so the register cache kept r19's value from
+  before the loop across the back-edge.  Stages 2-4 with the cache on.
+- **Def search** for the select-idiom fusion (both translators):
+  `inst_def_reg` returned rd only, so a pair instruction writing a
+  pattern register as rd+1 between the matched instructions went unseen.
+  No case hit this one; same class, fixed with the rest.
+
+Nothing a compiler writes had shown it: the toolchain's doubles move
+through pairs in patterns that never put a cached loop register or a
+read-once temporary in a pair's high half.  Found by
+`regression/fuzz/isafuzz.py`, 14 divergences in its first 50,000
+programs, every one of them this class.  Fix: `op_writes_rd_pair`,
+`op_reads_rs1_pair`, `op_reads_rs2_pair` in `translate.h`, asked by every
+analysis.  Guard: `regression/tests/asm-dbt-pair-regs` (one case per
+path; the old a64 DBT fails two cases at `-1`/`-R` and the other two at
+`-2`..`-4`).  The x86-64 changes (loop-written set, def search) compiled
+here with `-arch x86_64`; they wait on an x86-64 run.
