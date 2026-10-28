@@ -537,7 +537,9 @@ def main():
         sys.stdout.write(render(*make(a.seed)))
         return 0
     if a.cmd == 'reduce':
-        return reduce(a.seed, engines, a.o or 'isafuzz-%d.s' % a.seed)
+        # into the results directory (gitignored), not the cwd -- the tree
+        os.makedirs(a.keep, exist_ok=True)
+        return reduce(a.seed, engines, a.o or os.path.join(a.keep, 'reduced-%d.s' % a.seed))
     os.makedirs(a.keep, exist_ok=True)
     seeds = range(a.s, a.s + a.n)
     tally = {}
