@@ -3525,3 +3525,49 @@ that is the allocator's spill choice (memory model step 5).  The
 two-line change is `scratchpad/ra/rmw_lo_ty.patch` of this session
 and is described in docs/plans/memory-model.md; it lands with the
 allocator work.
+
+### 99. [OPEN 2026-10-28] stage08 cc puts const globals, string literals and jump tables in .data, not .rodata
+
+`gen_data` (stage08/hir_codegen.h) opens one `.data` section and emits
+everything into it: jump tables, the string-literal pool (`.LS<n>`), and
+initialized globals, const-qualified or not.  Under clang the same three
+go to `.rodata`, which the linker places below `rodata_limit` and every
+engine maps unwritable (docs/SPEC.md 6.3).  So a stage08-built program
+gets no W^X protection for its constants: a write through a cast-away
+const, or into a string literal, lands silently where a clang-built
+program faults.  Not wrong code -- the write is undefined either way --
+but the two compilers' programs behave differently on the same mistake,
+and stage08's hides it.
+
+Seen with `const int x = 14; int *y = (int *)&x; *y = 16;` (as a global):
+clang -O0 faults at the store on slow32, slow32-fast, the DBT and qemu;
+clang -O2 deletes the store and prints 14; stage08 cc prints 16 (its
+assembly: `x: .word 14` under `.data`, and the stored 16 forwarded to
+both reads).
+
+What the fix needs:
+
+- **String literals and jump tables** can move today: nothing about them
+  depends on type information.  Emit them under `.rodata` (jump-table
+  entries are absolute `.word` relocations; the kit's s32-as and s32-ld
+  already take `.rodata` and relocations in it).
+- **Const globals** need the front end first: `const` is lexed
+  (TK_CONST) and skipped -- `parser.h` consumes it in the declarator and
+  qualifier loops and records nothing, so gen_data cannot tell `const
+  int x` from `int x`.  The qualifier that matters is the object's own
+  (`const int x`, `const char *const p`), not a pointee's
+  (`const char *p` is a writable pointer).  An object holding an address
+  that needs a relocation can still go in `.rodata`; the linker resolves
+  it before load.
+- **Capacity:** the kit linker holds read-only data in a fixed
+  `RODATA_BUFSZ` of 256 KB (src/tools/s32-ld.c), against 1 MB for data.
+  SQLite's or DOOM's literal pool moving across could cross it; grow it,
+  or make it grow on demand as the assembler's buffers do (sv_grow in
+  src/tools/s32-as.c) -- the linker first, then the compiler.
+- **Risk:** any program built with stage08 that writes into a string
+  literal (old-style `mktemp("/tmp/fooXXXXXX")`, `strtok` on a literal)
+  starts faulting.  That is the point, but run the whole corpus before
+  landing: `run-tests.sh` (with the fixed-point gate), the kit and kit-tools
+  differentials, `sqlite/check-stage08.sh`, the stage08 builds of DOOM,
+  sbasic, rogue and ISLISP, and `run-stage08-fuzz.sh`.  stage07 is not
+  part of this; the libc and tools it builds keep its layout.
