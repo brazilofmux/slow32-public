@@ -114,7 +114,39 @@ static int ps_type_volp;
  * cleared it.  A miss leaves an object writable, as every object was
  * before; only a false "const" could break a program. */
 static int ps_type_constb;
+/* The C type parse_type read (docs/TYPES.md): the base, its qualifiers,
+ * and a ct_ptr per star.  Declarators beyond the stars -- arrays,
+ * functions -- are the declaration's to add. */
+static int ps_type_cty;
+static int ps_type_nostar_cty;   /* ... and its base, before the stars (ps_type_nostar's) */
+static int ps_skipq_cq;          /* CQ_ bits skip_decl_qualifiers consumed */
 static int ps_type_nstar;
+
+/* The C type to record for an object whose machine type is ty: the one
+ * parse_type built, when it agrees -- else one rebuilt from ty, which
+ * loses what the int encoding cannot say.  S12CC_CTY_CHECK=1 counts the
+ * rebuilds by machine type on stderr at exit: where a declaration path
+ * still loses the C type (docs/TYPES.md, S1). */
+static int ps_cty_check = -1;
+static int ps_cty_fallbacks;
+static int ps_obj_cty(int ty) {
+    if (ps_type_cty > 0 && ct_mty(ps_type_cty) == ty) return ps_type_cty;
+    if (ps_cty_check < 0) ps_cty_check = getenv("S12CC_CTY_CHECK") != 0;
+    if (ps_cty_check) {
+        ps_cty_fallbacks = ps_cty_fallbacks + 1;
+        fdputs("cty-fallback ty=", 2);
+        fdputuint(2, (unsigned)ty);
+        fdputs(" parsed=", 2);
+        fdputuint(2, (unsigned)(ps_type_cty > 0 ? ct_mty(ps_type_cty) : 0));
+        fdputs(" at line ", 2);
+        fdputuint(2, (unsigned)lex_line);
+        fdputs(" before ", 2);
+        if (lex_tok == TK_IDENT) fdputs(lex_str, 2);
+        else fdputs("(punct)", 2);
+        fdputs("\n", 2);
+    }
+    return ct_from_mty(ty, 0);
+}
 static int ps_type_constp;
 static int ps_skipq_const;
 
@@ -134,6 +166,15 @@ static int ps_tok_volatile(void) {
     return lex_tok == TK_IDENT && strncmp(lex_str, "__volatile", 10) == 0;
 }
 
+/* The qualifier a qualifier token adds to a C type (0 for an attribute
+ * or other GNU qualifier word). */
+static int ps_tok_cq(void) {
+    if (lex_tok == TK_CONST) return CQ_CONST;
+    if (lex_tok == TK_RESTRICT) return CQ_RESTRICT;
+    if (ps_tok_volatile()) return CQ_VOLATILE;
+    return 0;
+}
+
 static void skip_decl_qualifiers(void) {
     while (1) {
         if (lex_tok == TK_CONST || lex_tok == TK_VOLATILE ||
@@ -142,6 +183,7 @@ static void skip_decl_qualifiers(void) {
             is_gnu_inline_ident()) {
             if (ps_tok_volatile()) ps_type_volp = 1;
             if (lex_tok == TK_CONST) ps_skipq_const = 1;
+            ps_skipq_cq = ps_skipq_cq | ps_tok_cq();
             next();
             continue;
         }
@@ -156,6 +198,28 @@ static void skip_decl_qualifiers(void) {
         }
         break;
     }
+}
+
+/* A declarator's stars after the first: `*` and their qualifiers, onto
+ * machine type ty and C type cty (0: rebuild it from ty).  Leaves the
+ * C type in ps_type_cty, the count in ps_type_nstar, and in
+ * ps_type_constp whether the last star was const-qualified (what
+ * ISSUES-99's .rodata placement reads). */
+static int ps_declarator_stars(int ty, int cty) {
+    ps_type_cty = cty > 0 ? cty : ct_from_mty(ty, 0);
+    ps_type_nstar = 0;
+    ps_type_constp = 0;
+    while (lex_tok == TK_STAR) {
+        ty = ty + TY_PTR;
+        next();
+        ps_skipq_const = 0;
+        ps_skipq_cq = 0;
+        skip_decl_qualifiers();
+        ps_type_nstar = ps_type_nstar + 1;
+        ps_type_constp = ps_skipq_const;
+        ps_type_cty = ct_qualify(ct_ptr(ps_type_cty), ps_skipq_cq);
+    }
+    return ty;
 }
 
 /* Grouping parens around a declarator: `char *(name[])` is `char *name[]`,
@@ -249,6 +313,7 @@ static int cg_label(void) {
 static char *ps_lname[P_MAX_LOCALS];  /* local var names */
 static int   ps_loff[P_MAX_LOCALS];   /* local var offsets from fp */
 static int   ps_ltype[P_MAX_LOCALS];  /* local var types */
+static int   ps_lcty[P_MAX_LOCALS];   /* ... their C types (ctype.h) */
 static int   ps_larr[P_MAX_LOCALS];   /* 1 if array (addr, no load) */
 static int   ps_lcols[P_MAX_LOCALS];  /* 2D arrays: last-dim count (0 = 1D) */
 static int   ps_lsize[P_MAX_LOCALS];  /* total byte size (arrays: elem_sz*count) */
@@ -280,6 +345,7 @@ static int   ps_gconst[P_MAX_GLOBALS]; /* the object itself is const: .rodata (I
  * by that call, so it cannot reach a later declaration. */
 static int   ps_decl_objconst;
 static int   ps_gtype[P_MAX_GLOBALS]; /* global var types */
+static int   ps_gcty[P_MAX_GLOBALS];  /* ... their C types (ctype.h) */
 static int   ps_gsize[P_MAX_GLOBALS]; /* size in bytes (0=scalar, >0=array) */
 static int   ps_ginit[P_MAX_GLOBALS]; /* initial value for scalars */
 static int   ps_ginit_hi[P_MAX_GLOBALS]; /* hi word for 64-bit global initializers */
@@ -333,6 +399,7 @@ static int   ps_nconsts;
 #define PS_MAX_TYPEDEFS 4096   /* was 1024 */
 static char *ps_tdname[PS_MAX_TYPEDEFS];
 static int   ps_tdtype[PS_MAX_TYPEDEFS];
+static int   ps_tdcty[PS_MAX_TYPEDEFS];   /* the typedef's C type, declarator included */
 static int   ps_tdarr[PS_MAX_TYPEDEFS];  /* array typedefs: element count (0 = scalar) */
 static int   ps_tdfpbase[PS_MAX_TYPEDEFS]; /* function-pointer typedef: ps_fptypes base */
 static int   ps_tdfpn[PS_MAX_TYPEDEFS];
@@ -644,6 +711,7 @@ static void add_typedef(char *name, int ty) {
     }
     ps_tdname[ps_ntypedefs] = strdup(name);
     ps_tdtype[ps_ntypedefs] = ty;
+    ps_tdcty[ps_ntypedefs] = ct_from_mty(ty, 0);   /* a caller with better knowledge sets it after */
     ps_tdarr[ps_ntypedefs] = 0;
     ps_tdfpbase[ps_ntypedefs] = -1;
     ps_tdfpn[ps_ntypedefs] = 0;
@@ -1058,9 +1126,22 @@ static int ps_tdfind(char *nm) {
     return tdi;
 }
 
+/* parse_type's base C type: a typedef's own, or the machine type read
+ * with the hint for what it cannot say, then the base's qualifiers. */
+static int ps_base_cty(int ty, int ckhint, int td_cty, int is_const, int is_vol) {
+    int c;
+    if (td_cty >= 0) c = td_cty;
+    else c = ct_from_mty(ty, ckhint);
+    if (is_const) c = ct_qualify(c, CQ_CONST);
+    if (is_vol) c = ct_qualify(c, CQ_VOLATILE);
+    return c;
+}
+
 static int parse_type(void) {
     int saw_signed;
     int lead_const;
+    int ckhint;          /* a CT_ kind the int encoding loses: long, signed char, long double, enum */
+    int td_cty;          /* the base came from a typedef: its C type */
     int ty;
     int si;
     int mty;
@@ -1083,6 +1164,8 @@ static int parse_type(void) {
     ps_type_volb = 0;
     ps_type_volp = 0;
     lead_const = 0;
+    ckhint = 0;
+    td_cty = -1;
     saw_signed = 0;
     /* Skip const/volatile/signed/restrict qualifiers */
     while (1) {
@@ -1112,6 +1195,7 @@ static int parse_type(void) {
             while (lex_tok == TK_STAR) { ty = ty + TY_PTR; next(); skip_decl_qualifiers(); }
             /* never const: the bits are the parenthesised type's, and
              * these stars were not counted (ISSUES-99) */
+            ps_type_cty = ct_from_mty(ty, 0);
             ps_type_constb = 0;
             ps_type_nstar = 0;
             ps_type_constp = 0;
@@ -1120,7 +1204,7 @@ static int parse_type(void) {
         return parse_type();
     }
     if (lex_tok == TK_INT)  { ty = TY_INT;  next(); }
-    else if (lex_tok == TK_CHAR) { ty = TY_CHAR; next(); }
+    else if (lex_tok == TK_CHAR) { ty = TY_CHAR; if (saw_signed) ckhint = CT_SCHAR; next(); }
     else if (lex_tok == TK_VOID) { ty = TY_VOID; next(); }
     else if (lex_tok == TK_SHORT) {
         next();
@@ -1142,6 +1226,7 @@ static int parse_type(void) {
                 ty = TY_LLONG | TY_UNSIGNED; next();
             } else {
                 ty = target_long_ty() | TY_UNSIGNED;
+                ckhint = CT_ULONG;
             }
             if (lex_tok == TK_INT) next();
         }
@@ -1150,19 +1235,21 @@ static int parse_type(void) {
     else if (lex_tok == TK_LONG) {
         next();
         if (lex_tok == TK_LONG) { ty = TY_LLONG; next(); if (lex_tok == TK_INT) next(); }
-        else if (lex_tok == TK_INT) { ty = target_long_ty(); next(); }
+        else if (lex_tok == TK_INT) { ty = target_long_ty(); ckhint = CT_LONG; next(); }
         else if (lex_tok == TK_UNSIGNED) {
             ty = target_long_ty() | TY_UNSIGNED;
+            ckhint = CT_ULONG;
             next();
             if (lex_tok == TK_INT) next();
         }
         else if (lex_tok == TK_SIGNED) {
             ty = target_long_ty();
+            ckhint = CT_LONG;
             next();
             if (lex_tok == TK_INT) next();
         }
-        else if (lex_tok == TK_DOUBLE) { ty = TY_DOUBLE; next(); }
-        else { ty = target_long_ty(); }
+        else if (lex_tok == TK_DOUBLE) { ty = TY_DOUBLE; ckhint = CT_LDOUBLE; next(); }
+        else { ty = target_long_ty(); ckhint = CT_LONG; }
     }
     else if (lex_tok == TK_FLOAT) { ty = TY_FLOAT; next(); }
     else if (lex_tok == TK_DOUBLE) { ty = TY_DOUBLE; next(); }
@@ -1205,6 +1292,7 @@ static int parse_type(void) {
             expect(TK_RBRACE);
         }
         ty = TY_INT;
+        ckhint = CT_ENUM;
     }
     else if (lex_tok == TK_STRUCT) {
         next();
@@ -1792,6 +1880,7 @@ static int parse_type(void) {
         while (tdi >= 0 && strcmp(lex_str, ps_tdname[tdi]) != 0) tdi = tdi - 1;
         if (tdi < 0) { p_error("expected type"); return TY_INT; }
         ty = ps_tdtype[tdi];
+        td_cty = ps_tdcty[tdi];
         ps_type_arrcount = ps_tdarr[tdi];
         ps_type_fpbase = ps_tdfpbase[tdi];
         ps_type_fpn = ps_tdfpn[tdi];
@@ -1811,7 +1900,9 @@ static int parse_type(void) {
         if (lex_tok == TK_CONST) ps_type_constb = 1;
         next();
     }
+    ps_type_cty = ps_base_cty(ty, ckhint, td_cty, ps_type_constb, ps_type_volb);
     ps_type_nostar = ty;
+    ps_type_nostar_cty = ps_type_cty;
     while (lex_tok == TK_STAR) {
         /* ps_type_fpbase is kept: `dfn *tab` and `dfn tab[N]` reach the
          * side tables with the identical type (elem + TY_PTR, arrays
@@ -1822,9 +1913,11 @@ static int parse_type(void) {
         ty = ty + TY_PTR; ps_type_arrcount = 0; next();
         ps_type_nstar = ps_type_nstar + 1;
         ps_type_constp = 0;
+        ps_type_cty = ct_ptr(ps_type_cty);
         while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE || lex_tok == TK_RESTRICT || is_gnu_qual_ident()) {   /* u8 * const p */
             if (ps_tok_volatile()) ps_type_volp = 1;
             if (lex_tok == TK_CONST) ps_type_constp = 1;
+            ps_type_cty = ct_qualify(ps_type_cty, ps_tok_cq());
             next();
         }
     }
@@ -1886,6 +1979,7 @@ static int add_local(char *name, int ty) {
     ps_slot_gen = ps_slot_gen + 1;
     ps_lslot[idx] = ps_slot_gen;
     ps_ltype[idx] = ty;
+    ps_lcty[idx] = ps_obj_cty(ty);
     ps_larr[idx] = 0;
     ps_lcols[idx] = 0;
     ps_lsize[idx] = sz;
@@ -1913,6 +2007,7 @@ static int ps_add_local_alias(char *name, int ty, char *sym) {
     ps_lvolp[idx] = ps_type_volp;
     ps_loff[idx] = 0;
     ps_ltype[idx] = ty;
+    ps_lcty[idx] = ps_obj_cty(ty);
     ps_larr[idx] = 0;
     ps_lstatic[idx] = 1;
     ps_lsname[idx] = strdup(sym);
@@ -1928,6 +2023,7 @@ static int ps_add_local_alias(char *name, int ty, char *sym) {
 
 /* Stamp a VAR node with the live local's slot_id (GitHub issue 77). */
 static void ps_bind_var(Node *n, int li) {
+    n->cty = ps_lcty[li];
     n->is_local = 1;
     n->slot_id = ps_lslot[li];
     n->is_array = ps_larr[li];
@@ -1959,6 +2055,7 @@ static int add_local_array(char *name, int elem_ty, int count) {
     ps_slot_gen = ps_slot_gen + 1;
     ps_lslot[idx] = ps_slot_gen;
     ps_ltype[idx] = elem_ty + TY_PTR;  /* array decays to pointer */
+    ps_lcty[idx] = ct_array(ps_obj_cty(elem_ty), count);
     ps_larr[idx] = 1;
     ps_lcols[idx] = 0;
     ps_lsize[idx] = total;
@@ -1983,6 +2080,17 @@ static int add_local_array(char *name, int elem_ty, int count) {
     return ps_loff[idx];
 }
 
+/* A global's C type: an array when the parser records one (a pointer
+ * machine type with a size -- the element pointer of a decayed array). */
+static int ps_global_cty(int ty, int size_bytes) {
+    int esz;
+    if (size_bytes > 0 && ty_is_ptr(ty)) {
+        esz = ty_size(ty_deref(ty));
+        return ct_array(ps_obj_cty(ty_deref(ty)), esz > 0 ? size_bytes / esz : -1);
+    }
+    return ps_obj_cty(ty);
+}
+
 static int add_global(char *name, int ty, int size_bytes) {
     int idx;
     if (ps_nglobals >= P_MAX_GLOBALS) {
@@ -1993,6 +2101,7 @@ static int add_global(char *name, int ty, int size_bytes) {
     ps_gname[idx] = strdup(name);
     ps_gconst[idx] = ps_decl_objconst;
     ps_decl_objconst = 0;
+    ps_gcty[idx] = ps_global_cty(ty, size_bytes);
     ps_gvolb[idx] = ps_type_volb;
     ps_gvolp[idx] = ps_type_volp;
     ps_gtype[idx] = ty;
@@ -2071,6 +2180,7 @@ static int add_defined_global(char *name, int ty, int size_bytes) {
          * resetting here zeroed it (GitHub issue 46).  Two initializers
          * are a redefinition; ps_mark_global_init rejects that. */
         ps_gtype[idx] = ty;
+        ps_gcty[idx] = ps_global_cty(ty, size_bytes);
         ps_gsize[idx] = size_bytes;
         ps_glocal[idx] = 0;
         ps_gextern[idx] = 0;
@@ -2104,6 +2214,10 @@ static int ps_parse_param_dims(int *pty) {
     }
     if (ndims > 2) p_error("parameter arrays of more than 2 dimensions unsupported");
     if (ndims > 0) *pty = *pty + TY_PTR;
+    /* the C type too: a parameter declared as an array is a pointer to
+     * its element, a row of `last` for T a[][M] (6.7.6.3p7) */
+    if (ndims == 2) ps_type_cty = ct_ptr(ct_array(ps_type_cty, last));
+    else if (ndims == 1) ps_type_cty = ct_ptr(ps_type_cty);
     if (ndims == 2) return last;
     return 0;
 }
@@ -2453,7 +2567,7 @@ static int parse_const_unary(void) {
         next();
         if (is_type()) {
             ty = parse_type();
-            while (lex_tok == TK_STAR) { ty = ty + TY_PTR; next(); skip_decl_qualifiers(); }
+            ty = ps_declarator_stars(ty, ps_type_cty);
             ty = ps_abstract_fnptr(ty);
             skip_decl_qualifiers();
             expect(TK_RPAREN);
@@ -3877,6 +3991,7 @@ static Node *parse_primary(void) {
         if (li >= 0) {
             if (ps_lstatic[li]) {
                 n = nd_var(ps_lsname[li], 0, ps_ltype[li]);
+                n->cty = ps_lcty[li];
                 ps_var_vol(n, ps_ltype[li], ps_larr[li], ps_lvolb[li], ps_lvolp[li]);
                 n->is_local = 0;
                 n->is_array = ps_larr[li];
@@ -3901,6 +4016,7 @@ static Node *parse_primary(void) {
         gi = find_global(nm);
         if (gi >= 0) {
             n = nd_var(nm, 0, ps_gtype[gi]);
+            n->cty = ps_gcty[gi];
             ps_var_vol(n, ps_gtype[gi], ps_gsize[gi] > 0, ps_gvolb[gi], ps_gvolp[gi]);
             n->is_local = 0;
             n->is_array = (ps_gsize[gi] > 0) ? 1 : 0;
@@ -3939,7 +4055,7 @@ static Node *parse_primary(void) {
             arg = parse_assign();
             expect(TK_COMMA);
             ty = parse_type();
-            while (lex_tok == TK_STAR) { ty = ty + TY_PTR; next(); skip_decl_qualifiers(); }
+            ty = ps_declarator_stars(ty, ps_type_cty);
             ty = ps_abstract_fnptr(ty);
             skip_decl_qualifiers();
             expect(TK_RPAREN);
@@ -5299,8 +5415,10 @@ static Node *parse_block(void);
  * file-scope typedef table either way (fine for this C subset). */
 static void parse_typedef_decl(void) {
     int ty;
+    int cty;
     char nm[256];
         ty = parse_type();
+        cty = ps_type_cty;     /* before a parameter list runs parse_type again */
         if (lex_tok == TK_LPAREN) {
             /* Function pointer typedef: typedef int (*Name)(args); */
             next();  /* skip ( */
@@ -5325,6 +5443,8 @@ static void parse_typedef_decl(void) {
                     ps_fp_set_ret(tfpb, ty);
                 }
                 add_typedef(nm, TY_INT);
+                /* a pointer to a function (no prototype recorded yet: S2) */
+                ps_tdcty[ps_ntypedefs - 1] = ct_ptr(ct_func(cty, 0, -1, 0));
                 ps_tdfpbase[ps_ntypedefs - 1] = tfpb;
                 ps_tdfpn[ps_ntypedefs - 1] = tfpn;
             }
@@ -5342,6 +5462,7 @@ static void parse_typedef_decl(void) {
             while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
             expect(TK_RPAREN);
             add_typedef(nm, TY_INT);  /* function types decay to pointer use-sites here */
+            ps_tdcty[ps_ntypedefs - 1] = ct_func(cty, 0, -1, 0);
             skip_gnu_decl_suffixes();
             expect(TK_SEMI);
             return;
@@ -5353,6 +5474,7 @@ static void parse_typedef_decl(void) {
             if (lex_tok != TK_RBRACK) tdcount = parse_const_int();
             expect(TK_RBRACK);
             add_typedef(nm, ty + TY_PTR);
+            ps_tdcty[ps_ntypedefs - 1] = ct_array(cty, tdcount > 0 ? tdcount : -1);
             /* Object declarations of this type must materialize the
              * array; parameters still decay. */
             ps_tdarr[ps_ntypedefs - 1] = tdcount;
@@ -5361,6 +5483,7 @@ static void parse_typedef_decl(void) {
             return;
         }
         add_typedef(nm, ty);
+        ps_tdcty[ps_ntypedefs - 1] = cty;
         skip_gnu_decl_suffixes();
         expect(TK_SEMI);
         return;
@@ -5390,6 +5513,7 @@ static Node *parse_stmt(void) {
     int neg;
     int si;
     int base;
+    int base_cty;
     int nf;
     int nsi;
     int nnf;
@@ -5665,6 +5789,7 @@ static Node *parse_stmt(void) {
         was_enum = (lex_tok == TK_ENUM);
         ty = parse_type();
         base = ps_type_nostar;   /* before an initializer parses a type */
+        base_cty = ps_type_nostar_cty;
         tdac = ps_type_arrcount;
         td_elem = -1;
         skip_decl_qualifiers();
@@ -5983,8 +6108,7 @@ static_scalar_decl:
                 if (sl_li < 0) return nd_num(0);
                 if (lex_tok != TK_COMMA) break;
                 next();
-                ty = base;
-                while (lex_tok == TK_STAR) { ty = ty + TY_PTR; next(); skip_decl_qualifiers(); }
+                ty = ps_declarator_stars(base, base_cty);
                 skip_decl_qualifiers();
                 if (lex_tok != TK_IDENT) { p_error("expected name after comma"); return nd_num(0); }
                 memcpy(nm, lex_str, lex_slen + 1);
@@ -6110,8 +6234,7 @@ static_array_decl:
             ps_nlocals = ps_nlocals + 1;
             if (lex_tok != TK_COMMA) break;
             next();
-            ty = base;
-            while (lex_tok == TK_STAR) { ty = ty + TY_PTR; next(); skip_decl_qualifiers(); }
+            ty = ps_declarator_stars(base, base_cty);
             skip_decl_qualifiers();
             if (lex_tok != TK_IDENT) { p_error("expected name after comma"); return nd_num(0); }
             memcpy(nm, lex_str, lex_slen + 1);
@@ -6138,13 +6261,13 @@ static_array_decl:
             }
             if (lex_tok != TK_COMMA) break;
             next();
-            ty = base;
             if (tdac > 0 && td_elem >= 0 && lex_tok != TK_STAR) {
                 /* the next name is of the typedef'd array type too */
-                ty = td_elem;
+                ty = ps_declarator_stars(td_elem, 0);
                 ps_decl_inner = tdac;
+            } else {
+                ty = ps_declarator_stars(base, base_cty);
             }
-            while (lex_tok == TK_STAR) { ty = ty + TY_PTR; next(); skip_decl_qualifiers(); }
             skip_decl_qualifiers();
             if (lex_tok != TK_IDENT) break;
             memcpy(nm, lex_str, lex_slen + 1);
@@ -6267,9 +6390,9 @@ static Node *parse_top_decl(void) {
     int is_static;
     int decl_had_init;
     int lead_const;     /* const among the storage-class words */
+    int gbase_cty;      /* the base C type, for the declarators after a comma */
     int base_const;     /* the declaration's base type is const */
     int decl_const;     /* the current declarator's object is const */
-    int nst;
     char *sp;
 
     /* _Static_assert(expr, "message") — compile-time check, no codegen */
@@ -6333,6 +6456,7 @@ static Node *parse_top_decl(void) {
      * .rodata against .data (selfhost ISSUES-99).  Saved now: an
      * initializer's cast or sizeof runs parse_type again. */
     base_const = lead_const || ps_type_constb;
+    gbase_cty = ps_type_nostar_cty;
     ps_skipq_const = 0;
     skip_decl_qualifiers();
     if (ps_type_nstar > 0) decl_const = ps_type_constp || ps_skipq_const;
@@ -6546,12 +6670,11 @@ plain_name:
             next();
             xty = ty;
             while (ty_is_ptr(xty)) xty = ty_deref(xty);
-            nst = 0;
-            while (lex_tok == TK_STAR) { xty = xty + TY_PTR; next(); nst = nst + 1; }
+            xty = ps_declarator_stars(xty, gbase_cty);
             ps_skipq_const = 0;
             skip_decl_qualifiers();
-            if (nst > 0) decl_const = ps_skipq_const;
-            else         decl_const = base_const || ps_skipq_const;
+            if (ps_type_nstar > 0) decl_const = ps_type_constp || ps_skipq_const;
+            else                   decl_const = base_const || ps_skipq_const;
             if (lex_tok != TK_IDENT) {
                 p_error("expected name in declaration");
                 return NULL;
@@ -6682,12 +6805,11 @@ array_after_brackets:
         next();
         xty = ty;
         while (ty_is_ptr(xty)) xty = ty_deref(xty);
-        nst = 0;
-        while (lex_tok == TK_STAR) { xty = xty + TY_PTR; next(); nst = nst + 1; }
+        xty = ps_declarator_stars(xty, gbase_cty);
         ps_skipq_const = 0;
         skip_decl_qualifiers();
-        if (nst > 0) decl_const = ps_skipq_const;
-        else         decl_const = base_const || ps_skipq_const;
+        if (ps_type_nstar > 0) decl_const = ps_type_constp || ps_skipq_const;
+        else                   decl_const = base_const || ps_skipq_const;
         if (lex_tok != TK_IDENT) {
             p_error("expected name in declaration");
             return NULL;
@@ -6750,11 +6872,7 @@ function_decl:
             pty = parse_type();
             skip_decl_qualifiers();
         }
-        while (lex_tok == TK_STAR) {
-            pty = pty + TY_PTR;
-            next();
-            skip_decl_qualifiers();
-        }
+        pty = ps_declarator_stars(pty, ps_type_cty);
         /* Function pointer param: type (*name)(args) */
         if (lex_tok == TK_LPAREN) {
             int nested_fp;
@@ -6824,7 +6942,7 @@ function_decl:
             memcpy(pnm, lex_str, lex_slen + 1);
             next();
             pcols = ps_parse_param_dims(&pty);
-            off = add_local(pnm, pty);
+            off = add_local(pnm, pty);      /* ps_parse_param_dims adjusted ps_type_cty */
             ps_lcols[ps_nlocals - 1] = pcols;
             p = nd_var(pnm, off, pty);
             ps_bind_var(p, ps_nlocals - 1);
@@ -6848,11 +6966,7 @@ function_decl:
             }
             pty = parse_type();
             skip_decl_qualifiers();
-            while (lex_tok == TK_STAR) {
-                pty = pty + TY_PTR;
-                next();
-                skip_decl_qualifiers();
-            }
+            pty = ps_declarator_stars(pty, ps_type_cty);
             /* Function pointer param: type (*name)(args) */
             if (lex_tok == TK_LPAREN) {
                 int nested_fp;
@@ -7010,6 +7124,7 @@ static Node *parse_program(void) {
     ps_ginit_pool_len = 0;
     ps_ngirelocs = 0;
     ps_comp_lit_id = 0;
+    ct_init();
     pp_install_predefs();
 #ifdef S12CC_TARGET_A64
     pp_add("__aarch64__", 1);
@@ -7047,7 +7162,9 @@ static Node *parse_program(void) {
      * else linked into the same binary.  Was TY_INT for a long time,
      * which silently corrupted any struct containing a bool field. */
     add_typedef("_Bool", TY_CHAR | TY_UNSIGNED);
+    ps_tdcty[ps_ntypedefs - 1] = ct_basic[CT_BOOL];
     add_typedef("bool", TY_CHAR | TY_UNSIGNED);
+    ps_tdcty[ps_ntypedefs - 1] = ct_basic[CT_BOOL];
     add_typedef("size_t", usize_ty);
     add_typedef("ptrdiff_t", isize_ty);
     add_typedef("intptr_t", isize_ty);

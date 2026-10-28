@@ -222,7 +222,8 @@ static int ty_is_unsigned(int ty) {
 /* --- AST node --- */
 struct Node {
     int kind;
-    int ty;           /* expression type: TY_INT, TY_PTR+TY_CHAR, etc */
+    int ty;           /* expression type: TY_INT, TY_PTR+TY_CHAR, etc -- the MACHINE type */
+    int cty;          /* the C type (ctype.h; 0 = not yet known), docs/TYPES.md */
     int op;           /* BINOP/UNARY: operator token (TK_PLUS etc) */
     int val;          /* NUM: integer value; STRING: string pool index; FNUM: lo bits */
     int val_hi;       /* FNUM: hi 32 bits for f64 literal */

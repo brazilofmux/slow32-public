@@ -232,8 +232,11 @@ static int ct_mty(int t) {
     if (k == CT_CHAR || k == CT_SCHAR) return TY_CHAR;
     if (k == CT_SHORT) return TY_SHORT;
     if (k == CT_USHORT) return TY_SHORT | TY_UNSIGNED;
-    if (k == CT_INT || k == CT_LONG || k == CT_ENUM) return TY_INT;
-    if (k == CT_UINT || k == CT_ULONG) return TY_INT | TY_UNSIGNED;
+    if (k == CT_INT || k == CT_ENUM) return TY_INT;
+    if (k == CT_UINT) return TY_INT | TY_UNSIGNED;
+    /* long is the target's: int on SLOW-32, long long on the 64-bit crosses */
+    if (k == CT_LONG) return ty_ptr_size == 8 ? TY_LLONG : TY_INT;
+    if (k == CT_ULONG) return (ty_ptr_size == 8 ? TY_LLONG : TY_INT) | TY_UNSIGNED;
     if (k == CT_LLONG) return TY_LLONG;
     if (k == CT_ULLONG) return TY_LLONG | TY_UNSIGNED;
     if (k == CT_I128) return TY_I128;
@@ -242,9 +245,59 @@ static int ct_mty(int t) {
     if (k == CT_DOUBLE || k == CT_LDOUBLE) return TY_DOUBLE;
     if (k == CT_STRUCT || k == CT_UNION) return TY_STRUCT_BASE + ct_countof(t);
     if (k == CT_ATOMIC) return ct_mty(ct_baseof(t));
-    if (k == CT_ARRAY) return ct_mty(ct_baseof(t)) + TY_PTR;
+    if (k == CT_ARRAY) {
+        /* the machine flattens: an array of arrays is its innermost
+         * element's pointer, the column count kept beside it */
+        while (ct_kindof(ct_baseof(t)) == CT_ARRAY) t = ct_baseof(t);
+        return ct_mty(ct_baseof(t)) + TY_PTR;
+    }
     if (k == CT_FUNC) return TY_INT + TY_PTR;
     /* CT_PTR */
     if (ct_kindof(ct_baseof(t)) == CT_FUNC) return TY_INT + TY_PTR;
+    /* a pointer to an array is, as the machine has it, a pointer to the
+     * innermost element, the row width kept beside it: T (*p)[M] */
+    if (ct_kindof(ct_baseof(t)) == CT_ARRAY) return ct_mty(ct_baseof(t));
     return ct_mty(ct_baseof(t)) + TY_PTR;
+}
+
+/* --- From a machine type --- */
+
+/* The C type a machine type stands for, where the parser has nothing
+ * better: hint is a CT_ kind for what the int encoding cannot say --
+ * CT_LONG/CT_ULONG for long, CT_SCHAR for signed char, CT_LDOUBLE,
+ * CT_ENUM -- or 0.  Pointer levels are rebuilt from the depth. */
+static int ct_from_mty(int ty, int hint) {
+    int base;
+    int depth;
+    int uns;
+    int t;
+    base = ty & TY_BASE_MASK;
+    depth = (ty & TY_PTR_MASK) / TY_PTR;
+    uns = (ty & TY_UNSIGNED) != 0;
+    if (base >= TY_STRUCT_BASE) t = ct_struct(base - TY_STRUCT_BASE);
+    else if (base == TY_VOID) t = ct_basic[CT_VOID];
+    else if (base == TY_CHAR) {
+        if (uns) t = ct_basic[CT_UCHAR];
+        else if (hint == CT_SCHAR) t = ct_basic[CT_SCHAR];
+        else t = ct_basic[CT_CHAR];
+    }
+    else if (base == TY_SHORT) t = ct_basic[uns ? CT_USHORT : CT_SHORT];
+    else if (base == TY_INT) {
+        if (hint == CT_ENUM && !uns) t = ct_enum(0);
+        else if (hint == CT_LONG || hint == CT_ULONG) t = ct_basic[uns ? CT_ULONG : CT_LONG];
+        else t = ct_basic[uns ? CT_UINT : CT_INT];
+    }
+    else if (base == TY_LLONG) {
+        if (hint == CT_LONG || hint == CT_ULONG) t = ct_basic[uns ? CT_ULONG : CT_LONG];
+        else t = ct_basic[uns ? CT_ULLONG : CT_LLONG];
+    }
+    else if (base == TY_I128) t = ct_basic[uns ? CT_UI128 : CT_I128];
+    else if (base == TY_FLOAT) t = ct_basic[CT_FLOAT];
+    else if (base == TY_DOUBLE) t = ct_basic[hint == CT_LDOUBLE ? CT_LDOUBLE : CT_DOUBLE];
+    else t = ct_basic[CT_INT];
+    while (depth > 0) {
+        t = ct_ptr(t);
+        depth = depth - 1;
+    }
+    return t;
 }
