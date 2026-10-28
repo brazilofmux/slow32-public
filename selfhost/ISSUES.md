@@ -3617,7 +3617,7 @@ with the new cc and tools, the kit differential 132 agree + 2 rejected
 of 134, kit-tools 21/21, and selfhost-libcob 492/0.  The kit in ~/s32x
 still carries the previous cc.s32x until its next batch.
 
-### 100. [RESOLVED 2026-10-28] Wrong code the C11 survey found: d * 2, postfix ++ on a double, goto into a block, int + pointer, long long switch, main's return
+### 100. [RESOLVED 2026-10-28] Wrong code the C11 survey found: d * 2, postfix ++ on a double, goto into a block, int + pointer, long long switch, main's return, octal escapes, block extern
 
 The first batch from `c-conformance/coverage.md` (W1, W3, W4, W5, W7,
 W8, W9): programs that compiled cleanly and computed the wrong thing.
@@ -3660,7 +3660,17 @@ against `verdicts.txt` is the regression gate for all 516.
   was refused** (W9): both are the function itself now, in a block and
   in a function-pointer initializer.
 
-Probe verdicts 159 PASS / 52 WRONG -> 173 / 44, 0 worse.  Left for the
+- **Octal escapes beginning `\0`** (W14): `"\001"` was NUL, '0', '1'
+  -- `\0` had its own branch that stopped after the 0 unless a 1-7
+  followed, then took three more digits.  One to three octal digits,
+  0 among them (`c_lexer.rl`, regenerated).
+- **A block-scope `extern int x;` named a visible local `x`** (W10), not
+  the file-scope object: it now adds a local-table alias resolving to the
+  global's name, as a static local's entry does
+  (`ps_add_local_alias`, now shared by both; four older hand-written
+  copies for static arrays remain, for a cleanup pass).
+
+Probe verdicts 159 PASS / 52 WRONG -> 176 / 41, 0 worse.  Left for the
 type-representation work: W2 (`_Bool`), W6 (constant folding of static
 initializers -- it wants a typed constant evaluator), W10-W13.
 Gates: stage08 156/156 with the fixed point, host frontend, SQLite

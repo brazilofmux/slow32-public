@@ -1901,6 +1901,31 @@ static int add_local(char *name, int ty) {
     return ps_loff[idx];
 }
 
+/* A local-table entry that names a global: a static local (sym is its
+ * mangled name) or a block-scope extern (sym is the global's own).  It
+ * shadows outer locals like any declaration and allocates no slot. */
+static int ps_add_local_alias(char *name, int ty, char *sym) {
+    int idx;
+    idx = ps_nlocals;
+    if (idx >= P_MAX_LOCALS) { p_error("too many locals"); return -1; }
+    ps_lname[idx] = strdup(name);
+    ps_lvolb[idx] = ps_type_volb;
+    ps_lvolp[idx] = ps_type_volp;
+    ps_loff[idx] = 0;
+    ps_ltype[idx] = ty;
+    ps_larr[idx] = 0;
+    ps_lstatic[idx] = 1;
+    ps_lsname[idx] = strdup(sym);
+    ps_lfpbase[idx] = -1;
+    ps_lfpn[idx] = 0;
+    if (ps_type_fpbase >= 0) {
+        ps_lfpbase[idx] = ps_type_fpbase;
+        ps_lfpn[idx] = ps_type_fpn;
+    }
+    ps_nlocals = ps_nlocals + 1;
+    return idx;
+}
+
 /* Stamp a VAR node with the live local's slot_id (GitHub issue 77). */
 static void ps_bind_var(Node *n, int li) {
     n->is_local = 1;
@@ -5897,6 +5922,12 @@ local_plain_name:
                 add_extern_global(nm, ty + TY_PTR, 1);
             } else {
                 add_extern_global(nm, ty, 0);
+                /* With a local of the name visible, the extern names the
+                 * file-scope object, not the local (6.2.2p4): an alias
+                 * entry shadows it, as a static local's does, resolving
+                 * to the global's own name.  Lookup found the local. */
+                if (find_local(nm) >= 0 && ps_add_local_alias(nm, ty, nm) < 0)
+                    return nd_num(0);
             }
             expect(TK_SEMI);
             return nd_block(NULL);
@@ -5948,23 +5979,8 @@ static_scalar_decl:
              * Each brings its own stars and qualifiers, as an automatic
              * local's do: static const char *const a = "x", *const b. */
             while (1) {
-                sl_li = ps_nlocals;
-                if (sl_li >= P_MAX_LOCALS) { p_error("too many locals"); return nd_num(0); }
-                ps_lname[sl_li] = strdup(nm);
-                ps_lvolb[sl_li] = ps_type_volb;
-                ps_lvolp[sl_li] = ps_type_volp;
-                ps_loff[sl_li] = 0;
-                ps_ltype[sl_li] = ty;
-                ps_larr[sl_li] = 0;
-                ps_lstatic[sl_li] = 1;
-                ps_lsname[sl_li] = strdup(ps_sl_buf);
-                ps_lfpbase[sl_li] = -1;
-                ps_lfpn[sl_li] = 0;
-                if (ps_type_fpbase >= 0) {
-                    ps_lfpbase[sl_li] = ps_type_fpbase;
-                    ps_lfpn[sl_li] = ps_type_fpn;
-                }
-                ps_nlocals = ps_nlocals + 1;
+                sl_li = ps_add_local_alias(nm, ty, ps_sl_buf);
+                if (sl_li < 0) return nd_num(0);
                 if (lex_tok != TK_COMMA) break;
                 next();
                 ty = base;

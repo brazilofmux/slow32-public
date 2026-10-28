@@ -23,9 +23,10 @@ at least one row on its page.  Totals from one run of `./probe.sh`:
 set at once, with one probe added since, `6.5.5-double-times-pow2-int`.)
 
 **Progress.**  2026-10-28, selfhost ISSUES-100: W1, W3, W4 (except the
-2-D `2[m][1]`), W5, W7, W8, W9 fixed, and `&function` accepted;
-`probe.sh --check` against `verdicts.txt` now gates every change
-(173 PASS, 44 WRONG, 83 REJECTS, 81 DIAG, 135 ACCEPTS).  The tables
+2-D `2[m][1]`), W5, W7, W8, W9, W10 and W14's octal escapes fixed, and
+`&function` accepted; `probe.sh --check` against `verdicts.txt` now
+gates every change (176 PASS, 41 WRONG, 83 REJECTS, 81 DIAG,
+135 ACCEPTS).  The tables
 below are the survey as taken.
 
 The 52 WRONG probes come from about fifteen defects, listed below by

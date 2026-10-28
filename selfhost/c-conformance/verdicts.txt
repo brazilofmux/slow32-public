@@ -98,7 +98,7 @@
 6.2.1-label-scope PASS
 6.2.1-scopes PASS
 6.2.1-tag-scope PASS
-6.2.2-block-extern-shadow WRONG
+6.2.2-block-extern-shadow PASS
 6.2.2-linkage PASS
 6.2.2-linkage-conflict ACCEPTS
 6.2.2-tentative PASS
@@ -177,10 +177,10 @@
 6.4.4.4-char-constants PASS
 6.4.4.4-empty ACCEPTS
 6.4.4.4-multichar WRONG
-6.4.4.4-octal-zero WRONG
+6.4.4.4-octal-zero PASS
 6.4.4.4-wchar-header REJECTS
 6.4.4.4-wide-chars REJECTS
-6.4.5-escapes WRONG
+6.4.5-escapes PASS
 6.4.5-mixed-prefix DIAG
 6.4.5-string-array PASS
 6.4.5-strings PASS

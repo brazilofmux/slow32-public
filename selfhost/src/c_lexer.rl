@@ -280,20 +280,6 @@ static int lex_parse_esc(char *s, int *posout) {
     if (ch == 110) { *posout = pos; return 10; }
     if (ch == 116) { *posout = pos; return 9; }
     if (ch == 114) { *posout = pos; return 13; }
-    if (ch == 48) {
-        ch = s[pos] & 255;
-        if (ch >= 49 && ch <= 55) {
-            val = 0; i = 0;
-            while (i < 3) {
-                ch = s[pos] & 255;
-                if (ch < 48 || ch > 55) break;
-                val = val * 8 + (ch - 48);
-                pos = pos + 1; i = i + 1;
-            }
-            *posout = pos; return val;
-        }
-        *posout = pos; return 0;
-    }
     if (ch == 97)  { *posout = pos; return 7; }
     if (ch == 98)  { *posout = pos; return 8; }
     if (ch == 102) { *posout = pos; return 12; }
@@ -322,7 +308,11 @@ static int lex_parse_esc(char *s, int *posout) {
         if (val > 255) p_error("hex escape sequence out of range");
         *posout = pos; return val;
     }
-    if (ch >= 49 && ch <= 55) {
+    /* An octal escape is one to three octal digits, 0 among them
+     * (6.4.4.4): "\001" is 0x01.  \0 had a branch of its own that
+     * stopped after the 0 unless a 1-7 followed, and then took three
+     * more -- "\001" was NUL '0' '1', "\0123" four digits. */
+    if (ch >= 48 && ch <= 55) {
         val = ch - 48; i = 0;
         while (i < 2) {
             ch = s[pos] & 255;
