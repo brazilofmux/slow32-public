@@ -4932,8 +4932,115 @@ static int cg_jt_keep(int ji) {
     return 0;
 }
 
-/* --- Emit .data and .bss sections --- */
+/* One initialized global's label and bytes, wherever the caller has put
+ * the section; 0 when it has no initializer to emit (it belongs in .bss,
+ * or, const, is zero-filled in .rodata). */
+static int gen_global_init(int i) {
+    int j;
+    int len;
+    if (ps_ginit_start[i] >= 0) {
+        /* Array/struct initializer list.
+         * ps_ginit_count is the byte count; the pool stores one byte
+         * per slot.  Emit .byte per slot — relocations (handled inside
+         * the loop) emit a 4-byte .word that advances by reloc_size. */
+        int reli;
+        int relend;
+        int off;
+        /* DIVERGENCE (f77): word-align every emitted global.  The
+         * string literals just above are byte streams of arbitrary
+         * length, so a global emitted after an odd-length FORMAT
+         * text would land misaligned -- f77's DATA images carry
+         * word and doubleword values.  Candidate to port upstream:
+         * stage08's gen_data has the same latent hazard. */
+        cg_s(".align 2\n");
+        if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
+        cg_s(ps_gname[i]);
+        cg_s(":\n");
+        reli = ps_girel_start[i];
+        relend = reli + ps_girel_count[i];
+        off = 0;
+        while (off < ps_ginit_count[i]) {
+            if (reli < relend && ps_girel_off[reli] == off) {
+                if (ps_girel_kind[reli] == GIRELOC_STRING) {
+                    cg_s("    .word .LS");
+                    cg_n(ps_girel_idx[reli]);
+                } else {
+                    cg_s("    .word ");
+                    /* Named symbol relocs carry the target in
+                     * ps_girel_name; ps_girel_idx is 0 for them
+                     * (every named reloc used to emit gname[0] —
+                     * doom's doom_defaults pointed at stdin). */
+                    if (ps_girel_name[reli] != 0)
+                        cg_s(ps_girel_name[reli]);
+                    else
+                        cg_s(ps_gname[ps_girel_idx[reli]]);
+                    if (ps_girel_add[reli] != 0) {
+                        cg_c(43); /* '+' */
+                        cg_n(ps_girel_add[reli]);
+                    }
+                }
+                cg_c(10);
+                off = off + ps_girel_size[reli];
+                reli = reli + 1;
+            } else {
+                cg_s("    .byte ");
+                cg_n(ps_ginit_pool[ps_ginit_start[i] + off]);
+                cg_c(10);
+                off = off + 1;
+            }
+        }
+        /* Remaining bytes zero-filled */
+        len = ps_gsize[i] - ps_ginit_count[i];
+        if (len > 0) {
+            cg_s("    .space ");
+            cg_n(len);
+            cg_c(10);
+        }
+    } else if (ps_gsize[i] == 0 && ps_gstr[i] >= 0) {
+        if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
+        cg_s(ps_gname[i]);
+        cg_s(":\n    .word .LS");
+        cg_n(ps_gstr[i]);
+        cg_c(10);
+    } else if (ps_gsize[i] == 0 && ty_is_llong(ps_gtype[i]) && (ps_ginit[i] != 0 || ps_ginit_hi[i] != 0)) {
+        /* 64-bit initialized global */
+        if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
+        cg_s(ps_gname[i]);
+        cg_s(":\n    .word ");
+        cg_n(ps_ginit[i]);
+        cg_s("\n    .word ");
+        cg_n(ps_ginit_hi[i]);
+        cg_c(10);
+    } else if (ps_gsize[i] == 0 && ps_ginit[i] != 0) {
+        if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
+        cg_s(ps_gname[i]);
+        cg_s(":\n    .word ");
+        cg_n(ps_ginit[i]);
+        cg_c(10);
+    }
+    else return 0;
+    return 1;
+}
 
+/* A const global with no initializer: zero-filled, in .rodata.  The
+ * sizes are the .bss walk's below. */
+static void gen_global_zero(int i) {
+    if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
+    cg_s(ps_gname[i]);
+    cg_s(":\n    .space ");
+    if (ps_gsize[i] > 0) cg_n(ps_gsize[i]);
+    else if (ty_is_llong(ps_gtype[i]) || ty_is_double(ps_gtype[i])) cg_n(8);
+    else cg_n(4);
+    cg_c(10);
+}
+
+/* --- Emit .rodata, .data and .bss sections --- */
+
+/* What the program must not write -- jump tables, string literals, and
+ * globals whose object is const -- goes in .rodata, which the linker
+ * places below rodata_limit and every engine maps unwritable, as clang's
+ * output has it.  It was all .data: a write through a cast-away const
+ * or into a literal landed silently (selfhost ISSUES-99). */
 static void gen_data(void) {
     int i;
     int j;
@@ -4941,7 +5048,7 @@ static void gen_data(void) {
     int elem_sz;
     char *sp;
 
-    cg_s(".data\n");
+    cg_s(".rodata\n");
 
     /* Jump tables (issue #32).  Emitted first, 4-byte aligned, so the
      * `ldw` in the dispatch reads aligned words.  Entries are absolute
@@ -4996,89 +5103,21 @@ static void gen_data(void) {
         i = i + 1;
     }
 
-    /* Global variables (initialized -> .data) */
+    /* Const globals (ps_gconst: the object itself, not a pointee) */
     i = 0;
     while (i < ps_nglobals) {
-        if (ps_ginit_start[i] >= 0) {
-            /* Array/struct initializer list.
-             * ps_ginit_count is the byte count; the pool stores one byte
-             * per slot.  Emit .byte per slot — relocations (handled inside
-             * the loop) emit a 4-byte .word that advances by reloc_size. */
-            int reli;
-            int relend;
-            int off;
-            /* DIVERGENCE (f77): word-align every emitted global.  The
-             * string literals just above are byte streams of arbitrary
-             * length, so a global emitted after an odd-length FORMAT
-             * text would land misaligned -- f77's DATA images carry
-             * word and doubleword values.  Candidate to port upstream:
-             * stage08's gen_data has the same latent hazard. */
+        if (ps_gconst[i] && !ps_gextern[i]) {
             cg_s(".align 2\n");
-            if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
-            cg_s(ps_gname[i]);
-            cg_s(":\n");
-            reli = ps_girel_start[i];
-            relend = reli + ps_girel_count[i];
-            off = 0;
-            while (off < ps_ginit_count[i]) {
-                if (reli < relend && ps_girel_off[reli] == off) {
-                    if (ps_girel_kind[reli] == GIRELOC_STRING) {
-                        cg_s("    .word .LS");
-                        cg_n(ps_girel_idx[reli]);
-                    } else {
-                        cg_s("    .word ");
-                        /* Named symbol relocs carry the target in
-                         * ps_girel_name; ps_girel_idx is 0 for them
-                         * (every named reloc used to emit gname[0] —
-                         * doom's doom_defaults pointed at stdin). */
-                        if (ps_girel_name[reli] != 0)
-                            cg_s(ps_girel_name[reli]);
-                        else
-                            cg_s(ps_gname[ps_girel_idx[reli]]);
-                        if (ps_girel_add[reli] != 0) {
-                            cg_c(43); /* '+' */
-                            cg_n(ps_girel_add[reli]);
-                        }
-                    }
-                    cg_c(10);
-                    off = off + ps_girel_size[reli];
-                    reli = reli + 1;
-                } else {
-                    cg_s("    .byte ");
-                    cg_n(ps_ginit_pool[ps_ginit_start[i] + off]);
-                    cg_c(10);
-                    off = off + 1;
-                }
-            }
-            /* Remaining bytes zero-filled */
-            len = ps_gsize[i] - ps_ginit_count[i];
-            if (len > 0) {
-                cg_s("    .space ");
-                cg_n(len);
-                cg_c(10);
-            }
-        } else if (ps_gsize[i] == 0 && ps_gstr[i] >= 0) {
-            if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
-            cg_s(ps_gname[i]);
-            cg_s(":\n    .word .LS");
-            cg_n(ps_gstr[i]);
-            cg_c(10);
-        } else if (ps_gsize[i] == 0 && ty_is_llong(ps_gtype[i]) && (ps_ginit[i] != 0 || ps_ginit_hi[i] != 0)) {
-            /* 64-bit initialized global */
-            if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
-            cg_s(ps_gname[i]);
-            cg_s(":\n    .word ");
-            cg_n(ps_ginit[i]);
-            cg_s("\n    .word ");
-            cg_n(ps_ginit_hi[i]);
-            cg_c(10);
-        } else if (ps_gsize[i] == 0 && ps_ginit[i] != 0) {
-            if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
-            cg_s(ps_gname[i]);
-            cg_s(":\n    .word ");
-            cg_n(ps_ginit[i]);
-            cg_c(10);
+            if (!gen_global_init(i)) gen_global_zero(i);
         }
+        i = i + 1;
+    }
+
+    /* Global variables (initialized -> .data) */
+    cg_s(".data\n");
+    i = 0;
+    while (i < ps_nglobals) {
+        if (!(ps_gconst[i] && !ps_gextern[i])) gen_global_init(i);
         i = i + 1;
     }
 
@@ -5091,6 +5130,8 @@ static void gen_data(void) {
              * .space here made every stdio.h includer DEFINE stdout et
              * al. — the stage08 linker merged them common-style, the
              * host linker correctly refused the multiple definition. */
+        } else if (ps_gconst[i]) {
+            /* Already emitted in .rodata */
         } else if (ps_ginit_start[i] >= 0) {
             /* Already emitted in .data */
         } else if (ps_gsize[i] > 0) {

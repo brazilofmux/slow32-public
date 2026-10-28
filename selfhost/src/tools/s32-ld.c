@@ -26,6 +26,15 @@
  * build passes its include directory to whichever compiler builds this) */
 #include <stdio.h>
 
+/* Grow-on-demand read-only data (s32vec.h).  Declared explicitly, as in
+ * s32-as.c: <stdlib.h> is not included, and the implicit int return
+ * cannot hold a pointer. */
+char *malloc(int size);
+char *realloc(char *ptr, int size);
+void exit(int status);
+
+#include "s32vec.h"
+
 #define S32O_MAGIC 0x5333324F
 #define S32X_MAGIC 0x53333258
 #define S32A_MAGIC 0x53333241
@@ -109,7 +118,9 @@ char *memset(char *dst, int c, int n);
  * assembled during the stage08 tool build. */
 #define TEXT_BUFSZ   8388608
 #define DATA_BUFSZ   1048576
-#define RODATA_BUFSZ 262144
+/* Read-only data grows (rodata_buf, sv_grow): since selfhost ISSUES-99
+ * stage08 puts its string literals, jump tables and const globals there,
+ * and SQLite's literal pool alone is past the 256KB this once was. */
 #define FILE_BUFSZ   4194304
 /* Raised from 2048: s12cc.c crossed it simply by growing (the stage08
  * inliner's ~7 functions were enough), and a per-object symbol ceiling
@@ -127,7 +138,8 @@ char *memset(char *dst, int c, int n);
 /* === Merged section buffers === */
 char text_buf[TEXT_BUFSZ];
 char data_buf[DATA_BUFSZ];
-char rodata_buf[RODATA_BUFSZ];
+char *rodata_buf;
+int rodata_cap;
 int text_sz;
 int data_sz;
 int rodata_sz;
@@ -530,7 +542,7 @@ char *sec_buf(int sec_type) {
 int sec_cap(int sec_type) {
     if (sec_type == SEC_CODE) return TEXT_BUFSZ;
     if (sec_type == SEC_DATA) return DATA_BUFSZ;
-    if (sec_type == SEC_RODATA) return RODATA_BUFSZ;
+    if (sec_type == SEC_RODATA) return SV_MAX_ELEMS;
     return 0;
 }
 
@@ -631,6 +643,10 @@ void merge_sections() {
 
             /* Copy data (skip BSS) */
             if (merge_type != SEC_BSS) {
+                /* Grown even with no bytes to copy, so rodata_buf covers
+                 * rodata_sz whenever the output is written. */
+                if (merge_type == SEC_RODATA)
+                    rodata_buf = sv_grow(rodata_buf, &rodata_cap, base + ssize, 1, "rodata");
                 if (ssize > 0 && sfileoff > 0) {
                     if (base + ssize > sec_cap(merge_type)) {
                         fputs("error: section buffer overflow\n", stderr);

@@ -105,6 +105,19 @@ static int gnu_float_ident_ty(void) {
 static int ps_type_volb;
 static int ps_type_volp;
 
+/* const, tracked only far enough to say whether a file-scope object is
+ * itself const, so that stage08 can place it in .rodata (selfhost
+ * ISSUES-99): ps_type_constb is const before the first star (the base
+ * object, or the pointee when stars follow), ps_type_nstar the stars,
+ * ps_type_constp const after the LAST star (the pointer object itself).
+ * ps_skipq_const is const seen by skip_decl_qualifiers since its caller
+ * cleared it.  A miss leaves an object writable, as every object was
+ * before; only a false "const" could break a program. */
+static int ps_type_constb;
+static int ps_type_nstar;
+static int ps_type_constp;
+static int ps_skipq_const;
+
 /* The bits of a declaration read against its shape: an array's elements
  * are volatile when the base was (and so is what its decayed pointer
  * reaches); a pointer object is volatile when the qualifier followed a
@@ -128,6 +141,7 @@ static void skip_decl_qualifiers(void) {
             is_gnu_qual_ident() || is_gnu_extension_ident() ||
             is_gnu_inline_ident()) {
             if (ps_tok_volatile()) ps_type_volp = 1;
+            if (lex_tok == TK_CONST) ps_skipq_const = 1;
             next();
             continue;
         }
@@ -260,6 +274,11 @@ static int   ps_comp_lit_id;          /* unique hidden locals for compound liter
 static char *ps_gname[P_MAX_GLOBALS]; /* global var names */
 static int   ps_gvolb[P_MAX_GLOBALS]; /* volatile before the stars, at declaration */
 static int   ps_gvolp[P_MAX_GLOBALS]; /* ... and after them */
+static int   ps_gconst[P_MAX_GLOBALS]; /* the object itself is const: .rodata (ISSUES-99) */
+/* The const-ness of the declarator about to be added, set by
+ * parse_top_decl just before its add_*_global call and consumed (reset)
+ * by that call, so it cannot reach a later declaration. */
+static int   ps_decl_objconst;
 static int   ps_gtype[P_MAX_GLOBALS]; /* global var types */
 static int   ps_gsize[P_MAX_GLOBALS]; /* size in bytes (0=scalar, >0=array) */
 static int   ps_ginit[P_MAX_GLOBALS]; /* initial value for scalars */
@@ -1041,6 +1060,7 @@ static int ps_tdfind(char *nm) {
 
 static int parse_type(void) {
     int saw_signed;
+    int lead_const;
     int ty;
     int si;
     int mty;
@@ -1062,6 +1082,7 @@ static int parse_type(void) {
     ps_type_fpn = 0;
     ps_type_volb = 0;
     ps_type_volp = 0;
+    lead_const = 0;
     saw_signed = 0;
     /* Skip const/volatile/signed/restrict qualifiers */
     while (1) {
@@ -1071,6 +1092,7 @@ static int parse_type(void) {
             is_gnu_inline_ident()) {
             if (lex_tok == TK_SIGNED) saw_signed = 1;
             if (ps_tok_volatile()) ps_type_volb = 1;
+            if (lex_tok == TK_CONST) lead_const = 1;
             next();
             continue;
         }
@@ -1088,6 +1110,11 @@ static int parse_type(void) {
             expect(TK_RPAREN);
             ps_type_nostar = ty;
             while (lex_tok == TK_STAR) { ty = ty + TY_PTR; next(); skip_decl_qualifiers(); }
+            /* never const: the bits are the parenthesised type's, and
+             * these stars were not counted (ISSUES-99) */
+            ps_type_constb = 0;
+            ps_type_nstar = 0;
+            ps_type_constp = 0;
             return ty;
         }
         return parse_type();
@@ -1772,9 +1799,16 @@ static int parse_type(void) {
     }
     else if (saw_signed) { ty = TY_INT; }   /* bare `signed`, as in (signed)sizeof(unsigned) */
     else { p_error("expected type"); return TY_INT; }
+    /* The const bits are set here, after the base type: a struct or union
+     * body above ran parse_type for each member, and a member's const
+     * must not become the declaration's. */
+    ps_type_constb = lead_const;
+    ps_type_nstar = 0;
+    ps_type_constp = 0;
     /* qualifiers after the base type: char const *z (SQLite) */
     while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE || is_gnu_qual_ident()) {
         if (ps_tok_volatile()) ps_type_volb = 1;
+        if (lex_tok == TK_CONST) ps_type_constb = 1;
         next();
     }
     ps_type_nostar = ty;
@@ -1786,8 +1820,11 @@ static int parse_type(void) {
          * describes what one [] or unary * yields, and is only ever read
          * through those, so a pointer carrying it is not callable. */
         ty = ty + TY_PTR; ps_type_arrcount = 0; next();
+        ps_type_nstar = ps_type_nstar + 1;
+        ps_type_constp = 0;
         while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE || lex_tok == TK_RESTRICT || is_gnu_qual_ident()) {   /* u8 * const p */
             if (ps_tok_volatile()) ps_type_volp = 1;
+            if (lex_tok == TK_CONST) ps_type_constp = 1;
             next();
         }
     }
@@ -1929,6 +1966,8 @@ static int add_global(char *name, int ty, int size_bytes) {
     }
     idx = ps_nglobals;
     ps_gname[idx] = strdup(name);
+    ps_gconst[idx] = ps_decl_objconst;
+    ps_decl_objconst = 0;
     ps_gvolb[idx] = ps_type_volb;
     ps_gvolp[idx] = ps_type_volp;
     ps_gtype[idx] = ty;
@@ -1987,7 +2026,7 @@ static void ps_set_str_init(int idx, int sp) {
 static int add_extern_global(char *name, int ty, int size_bytes) {
     int idx;
     idx = find_global(name);
-    if (idx >= 0) return idx;
+    if (idx >= 0) { ps_decl_objconst = 0; return idx; }
     idx = add_global(name, ty, size_bytes);
     ps_gextern[idx] = 1;
     return idx;
@@ -2010,6 +2049,8 @@ static int add_defined_global(char *name, int ty, int size_bytes) {
         ps_gsize[idx] = size_bytes;
         ps_glocal[idx] = 0;
         ps_gextern[idx] = 0;
+        ps_gconst[idx] = ps_decl_objconst;   /* the definition decides */
+        ps_decl_objconst = 0;
         if (!ps_ghasinit[idx])
             ps_reset_global_init(idx);
         return idx;
@@ -6186,6 +6227,10 @@ static Node *parse_top_decl(void) {
     int is_extern;
     int is_static;
     int decl_had_init;
+    int lead_const;     /* const among the storage-class words */
+    int base_const;     /* the declaration's base type is const */
+    int decl_const;     /* the current declarator's object is const */
+    int nst;
     char *sp;
 
     /* _Static_assert(expr, "message") — compile-time check, no codegen */
@@ -6212,6 +6257,10 @@ static Node *parse_top_decl(void) {
     is_extern = 0;
     fp_n = 0;
     is_static = 0;
+    lead_const = 0;
+    base_const = 0;
+    decl_const = 0;
+    ps_decl_objconst = 0;
     skip_gnu_attributes();
     while (lex_tok == TK_STATIC || lex_tok == TK_CONST ||
            lex_tok == TK_EXTERN || lex_tok == TK_INLINE ||
@@ -6221,6 +6270,7 @@ static Node *parse_top_decl(void) {
            is_gnu_attr_ident()) {
         if (lex_tok == TK_EXTERN) is_extern = 1;
         if (lex_tok == TK_STATIC) is_static = 1;
+        if (lex_tok == TK_CONST) lead_const = 1;
         if (is_gnu_attr_ident()) skip_gnu_attributes();
         else next();
     }
@@ -6240,7 +6290,14 @@ static Node *parse_top_decl(void) {
     gtdac = 0;
     ps_pending_retfpbase = ps_type_fpbase;
     ps_pending_retfpn = ps_type_fpn;
+    /* Whether the object each declarator names is itself const decides
+     * .rodata against .data (selfhost ISSUES-99).  Saved now: an
+     * initializer's cast or sizeof runs parse_type again. */
+    base_const = lead_const || ps_type_constb;
+    ps_skipq_const = 0;
     skip_decl_qualifiers();
+    if (ps_type_nstar > 0) decl_const = ps_type_constp || ps_skipq_const;
+    else                   decl_const = base_const || ps_skipq_const;
 
     /* Bare tag definition with no declarator: `struct Foo { ... };` or
        `enum { A, B };`.  An enum decays to TY_INT, so the type alone
@@ -6258,6 +6315,7 @@ static Node *parse_top_decl(void) {
     if (lex_tok == TK_LPAREN) {
         next();
         if (ps_try_grouping_paren()) goto plain_name;
+        decl_const = 0;     /* (*name)(...), (*name[N]): left writable */
         fp_nstars = 0;
         while (lex_tok == TK_STAR) {         /* (**name)(...) */
             fp_nstars = fp_nstars + 1;
@@ -6369,6 +6427,7 @@ plain_name:
 
     /* Typedef'd array global: sha1_digest_t g;  — real array storage. */
     if (g2cols > 0 && lex_tok == TK_SEMI) {
+        ps_decl_objconst = decl_const;
         if (is_extern) idx = add_extern_global(nm, ty, ty_size(ty_deref(ty)) * g2cols);
         else           idx = add_defined_global(nm, ty, ty_size(ty_deref(ty)) * g2cols);
         if (is_static) ps_glocal[idx] = 1;
@@ -6389,6 +6448,7 @@ plain_name:
     if (lex_tok == TK_SEMI || lex_tok == TK_ASSIGN || lex_tok == TK_COMMA) {
         while (1) {
             decl_had_init = (lex_tok == TK_ASSIGN);
+            ps_decl_objconst = decl_const;
             if (ty_is_struct(xty)) {
                 require_complete_type(xty, "incomplete global type");
                 if (is_extern && !decl_had_init)
@@ -6445,8 +6505,12 @@ plain_name:
             next();
             xty = ty;
             while (ty_is_ptr(xty)) xty = ty_deref(xty);
-            while (lex_tok == TK_STAR) { xty = xty + TY_PTR; next(); }
+            nst = 0;
+            while (lex_tok == TK_STAR) { xty = xty + TY_PTR; next(); nst = nst + 1; }
+            ps_skipq_const = 0;
             skip_decl_qualifiers();
+            if (nst > 0) decl_const = ps_skipq_const;
+            else         decl_const = base_const || ps_skipq_const;
             if (lex_tok != TK_IDENT) {
                 p_error("expected name in declaration");
                 return NULL;
@@ -6497,6 +6561,7 @@ plain_name:
         }
         skip_gnu_decl_suffixes();
 array_after_brackets:
+        ps_decl_objconst = decl_const;
         if (g2cols > 0 && lex_tok == TK_ASSIGN) {
             next();
             if (lex_tok != TK_LBRACE) {
@@ -6576,8 +6641,12 @@ array_after_brackets:
         next();
         xty = ty;
         while (ty_is_ptr(xty)) xty = ty_deref(xty);
-        while (lex_tok == TK_STAR) { xty = xty + TY_PTR; next(); }
+        nst = 0;
+        while (lex_tok == TK_STAR) { xty = xty + TY_PTR; next(); nst = nst + 1; }
+        ps_skipq_const = 0;
         skip_decl_qualifiers();
+        if (nst > 0) decl_const = ps_skipq_const;
+        else         decl_const = base_const || ps_skipq_const;
         if (lex_tok != TK_IDENT) {
             p_error("expected name in declaration");
             return NULL;

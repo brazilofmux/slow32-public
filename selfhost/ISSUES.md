@@ -3526,7 +3526,7 @@ two-line change is `scratchpad/ra/rmw_lo_ty.patch` of this session
 and is described in docs/plans/memory-model.md; it lands with the
 allocator work.
 
-### 99. [OPEN 2026-10-28] stage08 cc puts const globals, string literals and jump tables in .data, not .rodata
+### 99. [RESOLVED 2026-10-28] stage08 cc put const globals, string literals and jump tables in .data, not .rodata
 
 `gen_data` (stage08/hir_codegen.h) opens one `.data` section and emits
 everything into it: jump tables, the string-literal pool (`.LS<n>`), and
@@ -3571,3 +3571,48 @@ What the fix needs:
   differentials, `sqlite/check-stage08.sh`, the stage08 builds of DOOM,
   sbasic, rogue and ISLISP, and `run-stage08-fuzz.sh`.  stage07 is not
   part of this; the libc and tools it builds keep its layout.
+
+**Resolved, the same day.**  `gen_data` emits three sections: `.rodata`
+holds the jump tables, the literal pool and every global with
+`ps_gconst` set (a const global with no initializer is zero-filled there
+with `.space`); `.data` and `.bss` hold the rest, as before.  The
+per-global emitter is `gen_global_init`, shared by the two walks.
+
+The front end records const only as far as placement needs.
+`parse_type` keeps `ps_type_constb` (const before the first star),
+`ps_type_nstar` and `ps_type_constp` (const after the last star), set
+once the base type is complete -- a struct body in between runs
+parse_type for its members, and a member's const leaking out put a
+writable struct into .rodata in a mutation run.  `parse_top_decl`
+saves the base's const-ness (with a `const` among the storage-class
+words, which parse_type never sees) before any initializer can run
+parse_type again, and computes each declarator's: stars, const after
+the last; none, the base's.  Comma declarators count their own stars.
+It reaches `add_global` through `ps_decl_objconst`, which the add
+consumes, so nothing leaks to a later declaration.  Left writable on
+purpose: function-pointer declarators, `_Atomic(T)`, typedef'd const
+types, and static locals -- a miss keeps the old behaviour, and only a
+false "const" could break a program.
+
+The kit linker's read-only buffer grows (sv_grow, as the assembler's
+do) instead of stopping at 256 KB.  stage08's own build is still linked
+by stage07's s32-ld, whose buffer is fixed; cc.s32x's literal pool is
+17 KB.
+
+`tests/test_rodata.c` checks, against the linker's `__rodata_start`
+and `__rodata_end`, that the const objects, literals and a const array
+of const pointers are read-only, and that a pointer to const, a struct
+with a const member, a mixed comma declaration's writable half and an
+array of pointers are not -- and writes those, so a misplaced one
+faults; the harness checks the jump table follows `.rodata`.  Built by
+the previous compiler it reports every const object writable.
+
+Gates: run-tests.sh 156/156 with the fixed point; check-host-frontend;
+sqlite/check-stage08.sh identical (stage08's SQLite now has 138 KB of
+.rodata); run-stage08-fuzz.sh 2,000 x 2 ok; DOOM timedemo 2173 frames
+on slow32-fast and the DBT; stage08 graphics; rogue's stage08 tests;
+ISLISP's stage08 build identical over 23 files; interop with clang;
+libc differential 27/0; stage07 differential 5/0; and, through a kit
+with the new cc and tools, the kit differential 132 agree + 2 rejected
+of 134, kit-tools 21/21, and selfhost-libcob 492/0.  The kit in ~/s32x
+still carries the previous cc.s32x until its next batch.
