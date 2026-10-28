@@ -2530,6 +2530,56 @@ static int ps_sizeof_node_mty(Node *n) {
     return ty_size(n->ty);
 }
 
+/* Lexer mark and rewind, for a parse that must look past the current
+ * token before it commits: ps_lex_mark saves the position, then either
+ * ps_lex_rewind returns to it or ps_lex_commit keeps what was read.
+ * Marks nest, PS_MK_MAX deep: a constant tried as an expression may hold
+ * a type whose dimension is another.  (The older probes in this file
+ * each save the same fields by hand -- all but the line number, so a
+ * rewind across a newline counts it twice.) */
+#define PS_MK_MAX 8
+static int ps_mk_depth;
+static int ps_mk_tok[PS_MK_MAX];
+static int ps_mk_val[PS_MK_MAX];
+static int ps_mk_slen[PS_MK_MAX];
+static int ps_mk_rcs[PS_MK_MAX];
+static int ps_mk_ract[PS_MK_MAX];
+static int ps_mk_line[PS_MK_MAX];
+static char *ps_mk_rp[PS_MK_MAX];
+static char *ps_mk_rts[PS_MK_MAX];
+static char *ps_mk_rte[PS_MK_MAX];
+static char ps_mk_str[PS_MK_MAX * LEX_STR_SZ];
+
+static void ps_lex_mark(void) {
+    int d;
+    d = ps_mk_depth;
+    if (d >= PS_MK_MAX) p_error("lexer marks nested too deep");
+    ps_mk_tok[d] = lex_tok; ps_mk_val[d] = lex_val; ps_mk_slen[d] = lex_slen;
+    ps_mk_rcs[d] = lex_rcs; ps_mk_ract[d] = lex_ract;
+    ps_mk_rp[d] = lex_rp; ps_mk_rts[d] = lex_rts; ps_mk_rte[d] = lex_rte;
+    ps_mk_line[d] = lex_line;
+    memcpy(ps_mk_str + d * LEX_STR_SZ, lex_str, lex_slen + 1);
+    ps_mk_depth = d + 1;
+    pp_peek_depth = pp_peek_depth + 1;
+}
+
+static void ps_lex_commit(void) {
+    ps_mk_depth = ps_mk_depth - 1;
+    pp_peek_depth = pp_peek_depth - 1;
+}
+
+static void ps_lex_rewind(void) {
+    int d;
+    d = ps_mk_depth - 1;
+    lex_tok = ps_mk_tok[d]; lex_val = ps_mk_val[d]; lex_slen = ps_mk_slen[d];
+    lex_rcs = ps_mk_rcs[d]; lex_ract = ps_mk_ract[d];
+    lex_rp = ps_mk_rp[d]; lex_rts = ps_mk_rts[d]; lex_rte = ps_mk_rte[d];
+    lex_line = ps_mk_line[d];   /* the newlines read past the mark come again */
+    memcpy(lex_str, ps_mk_str + d * LEX_STR_SZ, ps_mk_slen[d] + 1);
+    ps_mk_depth = d;
+    pp_peek_depth = pp_peek_depth - 1;
+}
+
 /* The constant evaluator is 32-bit.  A long long literal keeps its high
  * word here: pc_wide says the last leaf was such a literal and pc_hi is
  * its high word (negated along with the low word by unary minus);
@@ -3218,8 +3268,66 @@ static int parse_const_cond(void) {
     return c;
 }
 
-/* Parse a compile-time constant integer (for initializers and array sizes) */
+/* A constant expression evaluated as C evaluates it (W6): parsed as an
+ * expression, typed by sema, its value sema's (cval, in the expression's
+ * type -- 0x7FFFFFFF * 2LL is a long long, and the token evaluator
+ * below, 32-bit, made it -2).  Returns 0, the lexer back where it was,
+ * when sema does not find an integer constant expression: the token
+ * evaluator then takes the address constants and casts sema does not
+ * fold (&((T *)0)->m, (char *)&x + 4). */
+static Node *parse_conditional(void);
+
+/* Is the cursor on a lone literal, maybe negated, that ends the
+ * constant -- 5, or -1.5, then , } ; ] : or )?  Its token: TK_NUM, or
+ * TK_FNUM for a double literal; 0 otherwise.  The token evaluators read
+ * those as C does, and the large tables of them in SQLite would each
+ * build an expression tree (it ran out of memory).  A float literal is
+ * not one: its token holds float bits, which the FP token path took
+ * for a double's. */
+static int ps_const_lone_literal(void) {
+    int tok;
+    int t;
+    if (lex_tok != TK_NUM && lex_tok != TK_FNUM && lex_tok != TK_MINUS) return 0;
+    ps_lex_mark();
+    if (lex_tok == TK_MINUS) next();
+    tok = lex_tok;
+    t = 0;
+    if (tok == TK_NUM || (tok == TK_FNUM && !ty_is_float(lex_fty))) {
+        next();
+        t = lex_tok == TK_COMMA || lex_tok == TK_RBRACE || lex_tok == TK_SEMI ||
+            lex_tok == TK_RBRACK || lex_tok == TK_COLON || lex_tok == TK_RPAREN;
+    }
+    ps_lex_rewind();
+    return t ? tok : 0;
+}
+
+static int ps_const_typed(int *lo, int *hi) {
+    Node *n;
+    if (ps_const_lone_literal()) return 0;
+    ps_lex_mark();
+    n = parse_conditional();
+    sema_expr(n);
+    if ((n->attr & AT_ICX) == 0) {
+        ps_lex_rewind();
+        return 0;
+    }
+    ps_lex_commit();
+    *lo = n->cval;
+    *hi = n->cval_hi;
+    return 1;
+}
+
+/* Parse a compile-time constant integer (for initializers and array
+ * sizes).  pc_wide/pc_hi carry the high word to parse_const_ll_hi. */
 static int parse_const_int(void) {
+    int lo;
+    int hi;
+    if (ps_const_typed(&lo, &hi)) {
+        pc_wide = 1;
+        pc_hi = hi;
+        pc_nleaf = pc_nleaf + 1;
+        return lo;
+    }
     return parse_const_cond();
 }
 
@@ -3770,6 +3878,28 @@ static int ps_fp_builtin_bits(int *lo, int *hi) {
     return 1;
 }
 
+/* A floating static initializer evaluated as C evaluates it: parsed as
+ * an expression, typed by sema, folded by sema_fp_const (W6).  Returns
+ * 0, the lexer back where it was, for a lone literal (the token path
+ * below reads it as C does) and for what sema_fp_const does not take. */
+static int sema_fp_const(Node *n, double *out);    /* sema.h */
+
+static int ps_fp_const_typed(double *d) {
+    Node *n;
+    /* a lone double literal only: an integer one, converted by the
+     * token path, went through int (18446744073709551615ULL was -1) */
+    if (ps_const_lone_literal() == TK_FNUM) return 0;
+    ps_lex_mark();
+    n = parse_conditional();
+    sema_expr(n);
+    if (!sema_fp_const(n, d)) {
+        ps_lex_rewind();
+        return 0;
+    }
+    ps_lex_commit();
+    return 1;
+}
+
 static void ps_fp_init_store_at(int ty, int gidx, int rel_off) {
     int fneg;
     int flo;
@@ -3780,6 +3910,12 @@ static void ps_fp_init_store_at(int ty, int gidx, int rel_off) {
     double fd;
     double rv;
 
+    if (ps_fp_const_typed(&fd)) {
+        memcpy(fw, &fd, 8);
+        flo = fw[0];
+        fhi = fw[1];
+        goto store;
+    }
     fneg = 0;
     if (lex_tok == TK_MINUS) { fneg = 1; next(); }
     else if (lex_tok == TK_PLUS) next();
@@ -3823,6 +3959,7 @@ static void ps_fp_init_store_at(int ty, int gidx, int rel_off) {
         flo = fw[0];
         fhi = fw[1];
     }
+store:
     if (ty_is_double(ty)) {
         i = 0;
         while (i < 4) {
@@ -3843,45 +3980,6 @@ static void ps_fp_init_store_at(int ty, int gidx, int rel_off) {
             i = i + 1;
         }
     }
-}
-
-/* Lexer mark and rewind, for a parse that must look past the current
- * token before it commits: ps_lex_mark saves the position, then either
- * ps_lex_rewind returns to it or ps_lex_commit keeps what was read.  One
- * mark at a time.  (The older probes in this file each save the same
- * fields by hand -- all but the line number, so a rewind across a
- * newline counts it twice.) */
-static int ps_mk_tok;
-static int ps_mk_val;
-static int ps_mk_slen;
-static int ps_mk_rcs;
-static int ps_mk_ract;
-static int ps_mk_line;
-static char *ps_mk_rp;
-static char *ps_mk_rts;
-static char *ps_mk_rte;
-static char ps_mk_str[LEX_STR_SZ];
-
-static void ps_lex_mark(void) {
-    ps_mk_tok = lex_tok; ps_mk_val = lex_val; ps_mk_slen = lex_slen;
-    ps_mk_rcs = lex_rcs; ps_mk_ract = lex_ract;
-    ps_mk_rp = lex_rp; ps_mk_rts = lex_rts; ps_mk_rte = lex_rte;
-    ps_mk_line = lex_line;
-    memcpy(ps_mk_str, lex_str, lex_slen + 1);
-    pp_peek_depth = pp_peek_depth + 1;
-}
-
-static void ps_lex_commit(void) {
-    pp_peek_depth = pp_peek_depth - 1;
-}
-
-static void ps_lex_rewind(void) {
-    lex_tok = ps_mk_tok; lex_val = ps_mk_val; lex_slen = ps_mk_slen;
-    lex_rcs = ps_mk_rcs; lex_ract = ps_mk_ract;
-    lex_rp = ps_mk_rp; lex_rts = ps_mk_rts; lex_rte = ps_mk_rte;
-    lex_line = ps_mk_line;      /* the newlines read past the mark come again */
-    memcpy(lex_str, ps_mk_str, ps_mk_slen + 1);
-    pp_peek_depth = pp_peek_depth - 1;
 }
 
 /* Is ty a character type, the element of an array a string may initialize? */

@@ -315,6 +315,23 @@ SQLite has no such local, and the probe's int one took another path.
 SQLite and the compiler byte-identical: nothing there took these paths.
 Probe `6.5.6-pointer-to-array`.
 
+**S3, constant expressions** (2026-10-28, W6): a constant is first
+parsed as an expression and typed by sema; when sema finds an integer
+constant expression its value is sema's, in the expression's type
+(`ps_const_typed` in front of `parse_const_int`), so `0x7FFFFFFF * 2LL`
+is a long long and `(unsigned char)300` is 44.  A floating static
+initializer is folded by `sema_fp_const` -- literals, integer constants,
+casts, unary minus, `+ - * /`, `?:`, a float result rounded at each
+step.  What sema does not take (address constants, `&((T *)0)->m`) goes
+back to the token evaluator, the lexer rewound (`ps_lex_mark` now
+nests).  Lone literals skip the tree: SQLite's tables of them ran the
+compiler out of memory.  Found on the way: a float-suffixed literal in a
+static initializer stored 0 (`float g = 2.5f`), its token holding float
+bits the FP path read as a double's; and no function in the compiler may
+return a double -- stage07 cannot, and the first version's helpers came
+back 0.  SQLite and the compiler byte-identical.  Probes
+`6.6-arith-const-double`, `6.6-arith-const-llong`, `6.6-const-typed`.
+
 ## Constraints on the work
 
 - stage07 builds stage08: the new code keeps stage07's dialect (ints

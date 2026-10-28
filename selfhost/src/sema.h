@@ -651,6 +651,95 @@ static void sema_attr_node(Node *n) {
         n->attr = n->attr | AT_NPC;
 }
 
+/* Float bits fb widened to a double in *out, on the bits: exact. */
+static void sema_float_bits(int fb, double *out) {
+    int e;
+    int w[2];
+    e = (fb >> 23) & 255;
+    if (e == 0) {
+        /* zero or subnormal: the 23-bit fraction times 2^-149, exact */
+        *out = (double)(fb & 0x7FFFFF) * 1.401298464324817070923729583289916e-45;
+        if (fb < 0) *out = 0.0 - *out;
+        return;
+    }
+    w[1] = (fb & (1 << 31)) | ((fb >> 3) & 0xFFFFF);
+    if (e == 255) w[1] = w[1] | 0x7FF00000;              /* inf, NaN */
+    else w[1] = w[1] | ((e - 127 + 1023) << 20);
+    w[0] = fb << 29;
+    memcpy(out, w, 8);
+}
+
+/* *a rounded to float.  The narrowing is a (float) cast; the widening
+ * goes through the bits.  (No function here returns a double: stage07,
+ * which builds this compiler, cannot, c_lexer.rl says -- the first
+ * version did, and every float constant came back 0.) */
+static void sema_round_float(double *a) {
+    float f;
+    int fb;
+    f = (float)*a;
+    memcpy(&fb, &f, 4);
+    sema_float_bits(fb, a);
+}
+
+/* An integer constant's value as a double in *out (6.3.1.4p2): its two
+ * words, each converted exactly, then one rounding in the sum. */
+static void sema_int_to_double(Node *n, double *out) {
+    double hi;
+    double lo;
+    hi = (double)n->cval_hi;
+    if (n->cval_hi < 0 && ct_is_unsigned(n->cty)) hi = hi + 4294967296.0;
+    lo = (double)n->cval;
+    if (n->cval < 0) lo = lo + 4294967296.0;
+    *out = hi * 4294967296.0 + lo;
+}
+
+/* The value of an arithmetic constant expression of floating type (6.6p8)
+ * in *out: literals, integer constants, casts between arithmetic types,
+ * unary minus, + - * /, and ?: on an integer constant.  A float result is
+ * rounded to float at each step, as C evaluates it.  Returns 0 for
+ * anything else.  (Static initializers were folded by a token evaluator
+ * that knew only a leading * / chain: 2 + 0.25 stored 2.0, W6.) */
+static int sema_fp_const(Node *n, double *out) {
+    double a;
+    double b;
+    int w[2];
+    if (!n) return 0;
+    if (n->attr & AT_ICX) {
+        sema_int_to_double(n, out);
+        return 1;
+    }
+    if (n->kind == ND_FNUM && ty_is_float(n->ty)) {
+        sema_float_bits(n->val, &a);     /* a float literal holds float bits */
+    } else if (n->kind == ND_FNUM) {
+        w[0] = n->val;
+        w[1] = n->val_hi;
+        memcpy(&a, w, 8);
+    } else if (n->kind == ND_CAST && n->cty > 0 && ct_is_arith(n->cty)) {
+        if (!sema_fp_const(n->lhs, &a)) return 0;
+    } else if (n->kind == ND_UNARY && n->op == TK_MINUS) {
+        if (!sema_fp_const(n->lhs, &a)) return 0;
+        a = 0.0 - a;
+    } else if (n->kind == ND_BINOP && (n->op == TK_PLUS || n->op == TK_MINUS ||
+                                       n->op == TK_STAR || n->op == TK_SLASH)) {
+        if (!sema_fp_const(n->lhs, &a) || !sema_fp_const(n->rhs, &b)) return 0;
+        if (n->op == TK_PLUS) a = a + b;
+        else if (n->op == TK_MINUS) a = a - b;
+        else if (n->op == TK_STAR) a = a * b;
+        else a = a / b;
+    } else if (n->kind == ND_TERNARY && n->cond && (n->cond->attr & AT_ICX)) {
+        if (sema_cvalof(n->cond) != 0) return sema_fp_const(n->lhs, out);
+        return sema_fp_const(n->rhs, out);
+    } else {
+        return 0;
+    }
+    /* an integer-typed result here (a cast of a floating constant to
+     * int) is not this evaluator's: sema did not call it a constant */
+    if (n->cty <= 0 || !ct_is_arith(n->cty) || ct_is_integer(n->cty)) return 0;
+    if (ct_kindof(ct_unqual(n->cty)) == CT_FLOAT) sema_round_float(&a);
+    *out = a;
+    return 1;
+}
+
 static void sema_expr(Node *n) {
     if (!n) return;
     sema_expr_mty(n);
