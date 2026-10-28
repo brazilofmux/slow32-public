@@ -126,7 +126,7 @@
 6.3.1.1-promotions PASS
 6.3.1.1-rank-ushort PASS
 6.3.1.1-sizeof-promoted WRONG
-6.3.1.2-bool WRONG
+6.3.1.2-bool PASS
 6.3.1.3-impl-signed PASS
 6.3.1.3-int-conv PASS
 6.3.1.4-float-int PASS
@@ -220,7 +220,7 @@
 6.5.16-assign-const-member ACCEPTS
 6.5.16-assign-nonlvalue DIAG
 6.5.16-assign-value PASS
-6.5.16.1-assign-bool WRONG
+6.5.16.1-assign-bool PASS
 6.5.16.1-assign-drop-const ACCEPTS
 6.5.16.1-assign-incompat-ptr ACCEPTS
 6.5.16.1-assign-int-to-ptr ACCEPTS
@@ -241,7 +241,7 @@
 6.5.2.3-arrow-nonptr DIAG
 6.5.2.3-member-missing DIAG
 6.5.2.3-members PASS
-6.5.2.4-postfix-bool WRONG
+6.5.2.4-postfix-bool PASS
 6.5.2.4-postfix-double PASS
 6.5.2.4-postfix-incdec PASS
 6.5.2.4-postfix-rvalue ACCEPTS
@@ -251,7 +251,7 @@
 6.5.2.5-compound-vla DIAG
 6.5.3-unary-chain PASS
 6.5.3.1-prefix-bad ACCEPTS
-6.5.3.1-prefix-bool WRONG
+6.5.3.1-prefix-bool PASS
 6.5.3.1-prefix-incdec PASS
 6.5.3.2-addr-bitfield DIAG
 6.5.3.2-addr-deref PASS
@@ -270,7 +270,7 @@
 6.5.3.4-sizeof-function DIAG
 6.5.3.4-sizeof-incomplete ACCEPTS
 6.5.3.4-sizeof-vla REJECTS
-6.5.4-cast-bool WRONG
+6.5.4-cast-bool PASS
 6.5.4-cast-ptr-float ACCEPTS
 6.5.4-cast-struct ACCEPTS
 6.5.4-casts PASS
@@ -302,7 +302,7 @@
 6.6-assign-in-const DIAG
 6.6-case-nonconst DIAG
 6.6-comma-in-ice DIAG
-6.6-const-bool WRONG
+6.6-const-bool PASS
 6.6-constant-expr PASS
 6.6-enum-float ACCEPTS
 6.6-nonconst-static-init DIAG
@@ -322,7 +322,7 @@
 6.7.10-static-assert-member REJECTS
 6.7.10-static-assert-nonconst ACCEPTS
 6.7.2-bad-combo DIAG
-6.7.2-bool-object WRONG
+6.7.2-bool-object PASS
 6.7.2-complex REJECTS
 6.7.2-no-type-specifier DIAG
 6.7.2-specifier-order REJECTS
@@ -440,7 +440,7 @@
 6.8.4.2-case-not-constant DIAG
 6.8.4.2-default-twice ACCEPTS
 6.8.4.2-nested-switch PASS
-6.8.4.2-switch-bool WRONG
+6.8.4.2-switch-bool PASS
 6.8.4.2-switch-dense-sparse PASS
 6.8.4.2-switch-double ACCEPTS
 6.8.4.2-switch-into-vla DIAG
@@ -475,7 +475,7 @@
 6.8.6.2-continue-switch-in-loop PASS
 6.8.6.3-break PASS
 6.8.6.3-break-outside DIAG
-6.8.6.4-return-bool WRONG
+6.8.6.4-return-bool PASS
 6.8.6.4-return-conversion PASS
 6.8.6.4-return-incompatible ACCEPTS
 6.8.6.4-return-noexpr-nonvoid ACCEPTS

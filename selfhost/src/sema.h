@@ -8,6 +8,7 @@
 
 /* --- State --- */
 static int sema_ret_ty;   /* current function's return type */
+static int sema_ret_cty;  /* ... its C type (0: unknown) */
 
 /* --- Helpers --- */
 
@@ -81,6 +82,30 @@ static int sema_arg_class(int ty) {
  * first. */
 static void sema_expr(Node *n);
 static void sema_cty_node(Node *n);
+static void sema_attr_node(Node *n);
+
+/* Is C type t _Bool? */
+static int sema_is_bool(int t) {
+    return t > 0 && ct_kindof(ct_unqual(t)) == CT_BOOL;
+}
+
+/* e converted to _Bool: 1 when it compares unequal to 0, else 0
+ * (6.3.1.2), written as the C it means -- e != 0 -- which the lowering
+ * handles for every scalar type.  _Bool had been unsigned char, and the
+ * conversion a truncation: 256 was 0, 0.5 was 0 (W2). */
+static Node *sema_to_bool(Node *e) {
+    Node *n;
+    if (!e || sema_is_bool(e->cty)) return e;
+    n = nd_binop(TK_NE, e, nd_num(0));
+    n->ty = TY_INT;
+    n->cty = ct_basic[CT_INT];
+    n->next = e->next;
+    e->next = NULL;
+    n->rhs->cty = ct_basic[CT_INT];
+    sema_attr_node(n->rhs);
+    sema_attr_node(n);
+    return n;
+}
 
 static void sema_expr_mty(Node *n) {
     Node *a;
@@ -147,6 +172,7 @@ static void sema_expr_mty(Node *n) {
 
     if (n->kind == ND_ASSIGN) {
         n->ty = n->lhs ? n->lhs->ty : TY_INT;
+        if (n->lhs && sema_is_bool(n->lhs->cty)) n->rhs = sema_to_bool(n->rhs);
         /* Across the integer/floating-point line, or between float and
          * double, the stored value is the converted one: the cast
          * lowering does it.  Without this `u = d` stored the double's
@@ -183,6 +209,11 @@ static void sema_expr_mty(Node *n) {
         return;
     }
 
+    if (n->kind == ND_CAST) {
+        if (sema_is_bool(n->cty) && n->lhs) n->lhs = sema_to_bool(n->lhs);
+        return;
+    }
+
     /* ND_CALL: return type set by parser via find_func_type().  Here we
      * apply the implicit argument conversions the parser cannot: it may
      * not have seen the prototype yet at the call site, but by sema time
@@ -195,6 +226,12 @@ static void sema_expr_mty(Node *n) {
         prev = NULL;
         a = n->args;
         while (a) {
+            if (sema_is_bool(find_func_param_cty(n->name, idx))) {
+                cast = sema_to_bool(a);
+                if (prev) prev->next = cast;
+                else n->args = cast;
+                a = cast;
+            }
             pt = find_func_param(n->name, idx);
             /* No declared parameter -- a variadic function's `...`, or a
              * callee without a prototype: the default argument promotions
@@ -605,6 +642,7 @@ static void sema_stmt(Node *n) {
 
     if (n->kind == ND_RETURN) {
         sema_expr(n->lhs);
+        if (n->lhs && sema_is_bool(sema_ret_cty)) n->lhs = sema_to_bool(n->lhs);
         /* The value's marshalling class must be the function's: a 32-bit
          * value returned from a long long function is otherwise handed
          * back with the pair's high register untouched (GitHub #13, the
@@ -679,6 +717,8 @@ static void sema(Node *prog) {
     while (fn) {
         if (fn->kind == ND_FUNC) {
             sema_ret_ty = fn->ty;
+            sema_ret_cty = find_func_cty(fn->name);
+            if (sema_ret_cty > 0) sema_ret_cty = ct_baseof(sema_ret_cty);
             sema_stmt(fn->body);
         }
         fn = fn->next;

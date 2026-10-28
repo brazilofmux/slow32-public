@@ -2242,6 +2242,16 @@ static int hl_small_memcpy(Node *n) {
 }
 #endif
 
+/* A value stored into a _Bool is 0 or 1 (6.3.1.2): the C type says when.
+ * For the stores whose new value the lowering computes itself --
+ * compound assignment, ++ and -- -- where sema cannot insert the test. */
+static int hl_bool_value(Node *n, int v) {
+    int z;
+    if (n->cty <= 0 || ct_kindof(ct_unqual(n->cty)) != CT_BOOL) return v;
+    z = hi_emit(HI_ICONST, TY_INT, -1, -1, 0, NULL);
+    return hi_emit(HI_SNE, TY_INT, v, z, 0, NULL);
+}
+
 #ifndef S12CC_NATIVE_F64
 /* Postfix ++/-- on a soft-pair double, as the compound-assignment path
  * does it: old_lo is only the LO word, and HI_FADD with TY_DOUBLE has
@@ -3356,6 +3366,7 @@ static int hl_expr(Node *n) {
                 return new_val;
             }
 #endif
+            new_val = hl_bool_value(n, new_val);
             new_val = hl_narrow(n->ty, new_val);
             hi_emit(HI_STORE, n->ty, addr, new_val, 0, NULL);
             return new_val;
@@ -3470,6 +3481,7 @@ static int hl_expr(Node *n) {
 #endif
         /* Prefix ++ is this node.  Wrap before the store so a promoted
          * u8/u16 local is 4 after 250+10, not 260 (GitHub issue 43). */
+        new_val = hl_bool_value(n, new_val);
         new_val = hl_narrow(n->ty, new_val);
         hi_emit(HI_STORE, n->ty, addr, new_val, 0, NULL);
         return new_val;
@@ -3556,6 +3568,7 @@ static int hl_expr(Node *n) {
         } else {
             new_val = hi_emit(HI_SUB, n->ty, old_val, scale, 0, NULL);
         }
+        new_val = hl_bool_value(n, new_val);
         new_val = hl_narrow(n->ty, new_val);
         hi_emit(HI_STORE, n->ty, addr, new_val, 0, NULL);
         return old_val;

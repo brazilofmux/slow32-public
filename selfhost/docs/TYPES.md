@@ -208,6 +208,16 @@ disagreements over SQLite and the compiler itself.  This step found
 selfhost ISSUES-101: three more ints in `Node` changed SQLite's output,
 because dead-static removal gave up silently when the heap was full.
 
+**S3, `_Bool`** (2026-10-28): conversion to `_Bool` is a test against 0
+(6.3.1.2), decided by the C type -- the machine type cannot tell `_Bool`
+from `unsigned char`.  sema writes it as `e != 0` at assignment,
+initialization, casts, `_Bool` parameters and returns; the lowering
+normalizes the values it computes itself (compound assignment, `++`,
+`--`); the parser's constant evaluator and static initializers do the
+same; `<stdbool.h>` defines `bool` as `_Bool` (7.18), where it was a
+typedef of `unsigned char`.  The nine W2 probes pass; SQLite and the
+compiler, which use no `_Bool`, compile to the same bytes.
+
 ## Constraints on the work
 
 - stage07 builds stage08: the new code keeps stage07's dialect (ints

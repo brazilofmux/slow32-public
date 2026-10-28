@@ -12,6 +12,7 @@ static Node *parse_unary(void);
 static int parse_string_literal(void);
 static int parse_const_int(void);
 static int parse_const_unary(void);
+static int pc_hi_of(int lo);
 static void next(void);
 static void skip_gnu_attributes(void);
 
@@ -883,6 +884,20 @@ static int find_func_cty(char *name) {
     while (i >= 0) {
         if (strcmp(name, ps_fname[i]) == 0) return ps_fcty[i];
         i = i - 1;
+    }
+    return 0;
+}
+
+/* The C type of parameter idx of name, or 0 when unknown. */
+static int find_func_param_cty(char *name, int idx) {
+    int i;
+    i = 0;
+    while (i < ps_nfuncs) {
+        if (strcmp(name, ps_fname[i]) == 0) {
+            if (ps_fpbase[i] < 0 || idx >= ps_fpn[i]) return 0;
+            return ps_fpctypes[ps_fpbase[i] + idx];
+        }
+        i = i + 1;
     }
     return 0;
 }
@@ -2270,6 +2285,11 @@ static void ps_mark_global_init(int idx) {
 }
 
 static void ps_set_scalar_init(int idx, int lo, int hi) {
+    /* a _Bool object holds 0 or 1 (6.3.1.2): static _Bool s = 5 is 1 */
+    if (ps_gcty[idx] > 0 && ct_kindof(ct_unqual(ps_gcty[idx])) == CT_BOOL) {
+        lo = (lo != 0 || hi != 0);
+        hi = 0;
+    }
     ps_mark_global_init(idx);
     ps_ginit[idx] = lo;
     ps_ginit_hi[idx] = hi;
@@ -2702,6 +2722,15 @@ static int parse_const_unary(void) {
             expect(TK_RPAREN);
             pp_peek_depth = pp_peek_depth - 1;
             pc_cast_ty = ty;
+            if (ct_kindof(ct_unqual(ps_type_cty)) == CT_BOOL) {
+                /* (_Bool)v is 0 or 1 (6.3.1.2); W6 replaces this
+                 * evaluator with sema's typed one (docs/TYPES.md S3) */
+                ty = parse_const_unary();
+                ty = (ty != 0 || pc_hi_of(ty) != 0);
+                pc_wide = 0;
+                pc_hi = 0;
+                return ty;
+            }
             return parse_const_unary();
         }
         lex_tok = sv_tok; lex_val = sv_val; lex_slen = sv_slen;
