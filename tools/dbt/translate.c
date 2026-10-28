@@ -2182,7 +2182,12 @@ void translate_mulh(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) 
 
     if (ctx->reg_cache_enabled) {
         x64_reg_t h1 = rc_read(ctx, rs1);
-        x64_reg_t h2 = rc_read(ctx, rs2);
+        // rc_read(r0) zeroes RAX and returns it, and the MOV below then
+        // overwrites that zero: "mulhu rd, rX, r0" computed rX * rX
+        // (isafuzz on kagura).  Give r0 its own zeroed scratch.
+        x64_reg_t h2 = RCX;
+        if (rs2 == 0) emit_xor_r32_r32(e, RCX, RCX);
+        else h2 = rc_read(ctx, rs2);
         emit_mov_r32_r32(e, RAX, h1);
         emit_imul_one_r32(e, h2);   // edx:eax = eax * h2 (signed)
         x64_reg_t hd = rc_write(ctx, rd);
@@ -2202,7 +2207,12 @@ void translate_mulhu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2)
 
     if (ctx->reg_cache_enabled) {
         x64_reg_t h1 = rc_read(ctx, rs1);
-        x64_reg_t h2 = rc_read(ctx, rs2);
+        // rc_read(r0) zeroes RAX and returns it, and the MOV below then
+        // overwrites that zero: "mulhu rd, rX, r0" computed rX * rX
+        // (isafuzz on kagura).  Give r0 its own zeroed scratch.
+        x64_reg_t h2 = RCX;
+        if (rs2 == 0) emit_xor_r32_r32(e, RCX, RCX);
+        else h2 = rc_read(ctx, rs2);
         emit_mov_r32_r32(e, RAX, h1);
         emit_mul_r32(e, h2);   // edx:eax = eax * h2 (unsigned)
         x64_reg_t hd = rc_write(ctx, rd);
@@ -4834,7 +4844,13 @@ void translate_fp_r_type(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8
         }
     }
 
-    // Set up System V AMD64 ABI call: RDI=cpu, ESI=opcode, EDX=rd, ECX=rs1, R8D=rs2
+    // Set up System V AMD64 ABI call: RDI=cpu, ESI=opcode, EDX=rd, ECX=rs1, R8D=rs2.
+    // Block code runs with RSP 8 mod 16, like every other call site here,
+    // so push once to give the helper an aligned stack.  This one did not:
+    // only sqrt (glibc's, with aligned SSE spills) noticed, and FSQRT.D
+    // died with SIGSEGV addr 0 -- a #GP -- in every mode (isafuzz; clang
+    // lowers sqrt() to a hooked libm call, never to the instruction).
+    emit_push_r64(e, RAX);
     emit_mov_r64_r64(e, RDI, RBP);                  // cpu state
     emit_mov_r32_imm32(e, RSI, opcode);              // opcode
     emit_mov_r32_imm32(e, RDX, rd);                  // rd
@@ -4842,6 +4858,7 @@ void translate_fp_r_type(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8
     emit_mov_r32_imm32(e, R8, rs2);                  // rs2
     emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)dbt_fp_helper);
     emit_call_r64(e, RAX);
+    emit_pop_r64(e, RAX);
 
     // Reload reg cache from memory (helper may have modified any guest regs)
     if (ctx->reg_cache_enabled) {

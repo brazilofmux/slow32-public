@@ -1010,3 +1010,23 @@ analysis.  Guard: `regression/tests/asm-dbt-pair-regs` (one case per
 path; the old a64 DBT fails two cases at `-1`/`-R` and the other two at
 `-2`..`-4`).  The x86-64 changes (loop-written set, def search) compiled
 here with `-arch x86_64`; they wait on an x86-64 run.
+
+## 31. x86-64: MULH/MULHU With rs2 = r0, and FSQRT.D Faulting (FIXED 2026-10-27)
+
+Two x86-64-only DBT bugs isafuzz found on kagura, 1,844 of 20,000
+programs between them, both much older than the fuzzer:
+
+- **MULH/MULHU, register-cache path.** `rc_read(r0)` zeroes RAX and
+  returns it; the `mov eax, h1` that loads the multiplicand then
+  overwrote that zero, so `mulhu rd, rX, r0` computed rX * rX.  r0 now
+  gets its own zeroed RCX (not a cache host register).
+- **FSQRT.D: SIGSEGV addr 0 in every mode.** `translate_fp_r_type` called
+  `dbt_fp_helper` with RSP 8 mod 16; every other host call in
+  translate.c pushes once first.  Only glibc's `sqrt`, with aligned SSE
+  spills, noticed, and a #GP reports as SIGSEGV at address 0.  clang
+  lowers `sqrt()` to a libm call the DBT hooks natively, so no compiled
+  program executed the instruction.
+
+Validated on kagura: the reduced cases in all seven modes, isafuzz
+20,000 clean, regression/engine/kit/kit-tools differentials green.  The
+a64 translator had neither bug (70,000 isafuzz seeds on the M5).
