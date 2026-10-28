@@ -733,3 +733,17 @@ unsigned SLOW32InstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
 
   return MI.getDesc().getSize();
 }
+
+std::pair<unsigned, unsigned>
+SLOW32InstrInfo::decomposeMachineOperandsTargetFlags(unsigned TF) const {
+  return std::make_pair(TF, 0u);
+}
+
+ArrayRef<std::pair<unsigned, const char *>>
+SLOW32InstrInfo::getSerializableDirectMachineOperandTargetFlags() const {
+  static const std::pair<unsigned, const char *> TargetFlags[] = {
+      {SLOW32II::MO_HI, "slow32-hi"},
+      {SLOW32II::MO_LO, "slow32-lo"},
+  };
+  return ArrayRef(TargetFlags);
+}

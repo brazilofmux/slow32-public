@@ -231,6 +231,19 @@ public:
     if (!Value)
       return;
 
+    // A %lo in a store's offset: S-type splits the immediate, imm[11:5] at
+    // bits 31:25 and imm[4:0] at bits 11:7 (STB/STH/STW, opcodes 0x38-0x3A
+    // -- the test s32-ld makes for the same LO12 relocation).
+    if (Fixup.getKind() == SLOW32::fixup_slow32_lo12) {
+      unsigned Opcode = Data[0] & 0x7F;
+      if (Opcode == 0x38 || Opcode == 0x39 || Opcode == 0x3A) {
+        uint32_t S = ((Value & 0x1F) << 7) | (((Value >> 5) & 0x7F) << 25);
+        for (unsigned I = 0; I != 4; ++I)
+          Data[I] |= uint8_t((S >> (I * 8)) & 0xff);
+        return;
+      }
+    }
+
     MCFixupKindInfo Info = getFixupKindInfo(Fixup.getKind());
     Value <<= Info.TargetOffset;
 

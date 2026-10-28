@@ -27,12 +27,11 @@ define i32 @const_round_up() {
   ret i32 305422335
 }
 
-; Ensure we still fold to ADDI when loading from globals offset
+; A load from a global: %hi in the LUI, %lo in the load's offset
 define i32 @load_global() {
 ; CHECK-LABEL: load_global:
-; CHECK: lui r{{[0-9]+}}, %hi(glob)
-; CHECK-NEXT: addi r{{[0-9]+}}, r{{[0-9]+}}, %lo(glob)
-; CHECK: ldw
+; CHECK: lui [[R:r[0-9]+]], %hi(glob)
+; CHECK-NEXT: ldw r{{[0-9]+}}, [[R]]+%lo(glob)
   %v = load i32, ptr @glob
   ret i32 %v
 }

@@ -1,4 +1,7 @@
 # RUN: llc -mtriple=slow32-unknown-none -run-pass=slow32-load-addr-opt %s -o - | FileCheck %s
+# The %hi/%lo flags print by name and read back in:
+# RUN: llc -mtriple=slow32-unknown-none -run-pass=slow32-load-addr-opt %s -o - \
+# RUN:   | llc -mtriple=slow32-unknown-none -x mir -run-pass=none - -o - | FileCheck %s
 # REQUIRES: slow32-registered-target
 
 --- |
@@ -128,9 +131,12 @@ debugValueSubstitutions: []
 constants:       []
 machineFunctionInfo: {}
 # CHECK-LABEL: name: test_fold_new_reg
-# CHECK: %{{[0-9]+}}:gpr = LOAD_ADDR @glob
+# The ADDI becomes a LOAD_ADDR of glob+20; glob itself, now only a store's
+# base, becomes LUI %hi with %lo in the store.
+# CHECK: %{{[0-9]+}}:gpr = LUI target-flags(slow32-hi) @glob
 # CHECK: %{{[0-9]+}}:gpr = LOAD_ADDR @glob + 20
 # CHECK-NOT: ADDI
+# CHECK: STW %{{[0-9]+}}, %{{[0-9]+}}, target-flags(slow32-lo) @glob
 body:             |
   bb.0:
     renamable %0:gpr = LOAD_ADDR @glob

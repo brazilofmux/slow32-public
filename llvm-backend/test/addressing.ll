@@ -9,8 +9,7 @@
 define i32 @load_gep_large() {
 ; CHECK-LABEL: load_gep_large:
 ; CHECK: lui [[BASE:r[0-9]+]], %hi(arr+2048)
-; CHECK-NEXT: addi [[BASE]], [[BASE]], %lo(arr+2048)
-; CHECK-NEXT: ldw [[VAL:r[0-9]+]], [[BASE]]+0
+; CHECK-NEXT: ldw [[VAL:r[0-9]+]], [[BASE]]+%lo(arr+2048)
 ; CHECK-NEXT: jalr r0, r31, 0
 ; CHECK-NOT: lui r{{[0-9]+}}, 1
 ; CHECK-NOT: add r{{[0-9]+}}, r{{[0-9]+}}, r{{[0-9]+}}
@@ -43,12 +42,12 @@ entry:
 }
 
 ; Folding also applies when starting from an existing LOAD_ADDR.
-; SelectAddr folds +4 into the %hi/%lo pair (glob+4).
+; SelectAddr folds +4 into the %hi/%lo pair (glob+4), and the %lo half goes
+; into the load.
 define i32 @reload_from_global() {
 ; CHECK-LABEL: reload_from_global:
 ; CHECK: lui [[BASE:r[0-9]+]], %hi(glob+4)
-; CHECK-NEXT: addi [[BASE]], [[BASE]], %lo(glob+4)
-; CHECK-NEXT: ldw [[VAL:r[0-9]+]], [[BASE]]+0
+; CHECK-NEXT: ldw [[VAL:r[0-9]+]], [[BASE]]+%lo(glob+4)
 ; CHECK-NEXT: jalr r0, r31, 0
 entry:
   %ptr = getelementptr inbounds i32, ptr @glob, i32 1

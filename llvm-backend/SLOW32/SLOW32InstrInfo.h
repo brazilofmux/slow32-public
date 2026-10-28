@@ -87,6 +87,13 @@ public:
       const DebugLoc &DL, Register DestReg, Register SrcReg, int64_t Amount,
       bool StopWhenImmLegal = false,
       MachineInstr::MIFlag Flag = MachineInstr::NoFlags) const;
+
+  // %hi/%lo operand flags by name in MIR ("slow32-hi", "slow32-lo"), so a
+  // dump that carries them reads back in.
+  std::pair<unsigned, unsigned>
+  decomposeMachineOperandsTargetFlags(unsigned TF) const override;
+  ArrayRef<std::pair<unsigned, const char *>>
+  getSerializableDirectMachineOperandTargetFlags() const override;
 };
 
 } // end namespace llvm
