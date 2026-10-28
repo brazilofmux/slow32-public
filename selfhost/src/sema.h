@@ -6,13 +6,6 @@
  * Compiled by stage03 s32-cc.
  */
 
-/* --- Attributes (docs/TYPES.md S2) --- */
-#define AT_LV   1   /* an lvalue (6.3.2.1p1) */
-#define AT_MOD  2   /* a modifiable lvalue (6.3.2.1p1) */
-#define AT_NPC  4   /* a null pointer constant (6.3.2.3p3) */
-#define AT_ICX  8   /* an integer constant expression (6.6p6); cval/cval_hi hold it */
-#define AT_UCMP 16  /* a comparison whose operands compare unsigned (the lowering's SLTU) */
-
 /* --- State --- */
 static int sema_ret_ty;   /* current function's return type */
 static int sema_ret_cty;  /* ... its C type (0: unknown) */
@@ -383,6 +376,15 @@ static void sema_cty_node(Node *n) {
     } else if (n->kind == ND_CALL_PTR && ct_is_ptr(ct_decay(sema_cty_of(n->lhs))) &&
                ct_is_func(ct_baseof(ct_decay(sema_cty_of(n->lhs))))) {
         n->cty = ct_unqual(ct_baseof(ct_baseof(ct_decay(sema_cty_of(n->lhs)))));
+    } else if (n->kind == ND_BINOP && n->op == TK_PLUS && n->arr_cols > 0 &&
+               (ct_is_array(sema_cty_of(n->lhs)) || ct_is_ptr(sema_cty_of(n->lhs)))) {
+        /* the parser's row of a 2-D subscript, a[i] or p[i] on a pointer
+         * to an array: written as the row's address, typed as the row
+         * itself (6.5.2.1p3), arr_cols of the innermost element -- the
+         * declaration may hold the array flattened, the width beside it */
+        l = ct_baseof(sema_cty_of(n->lhs));
+        while (ct_is_array(l)) l = ct_baseof(l);
+        n->cty = ct_array(l, n->arr_cols);
     } else if (n->kind == ND_BINOP) {
         l = ct_decay(sema_cty_of(n->lhs));
         r = ct_decay(sema_cty_of(n->rhs));

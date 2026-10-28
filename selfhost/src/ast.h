@@ -260,6 +260,13 @@ struct Node {
 
 typedef struct Node Node;
 
+/* Node.attr: sema's attributes (docs/TYPES.md S2) */
+#define AT_LV   1   /* an lvalue (6.3.2.1p1) */
+#define AT_MOD  2   /* a modifiable lvalue (6.3.2.1p1) */
+#define AT_NPC  4   /* a null pointer constant (6.3.2.3p3) */
+#define AT_ICX  8   /* an integer constant expression (6.6p6); cval/cval_hi hold it */
+#define AT_UCMP 16  /* a comparison whose operands compare unsigned (the lowering's SLTU) */
+
 /* --- Constructors --- */
 
 static Node *nd_new(int kind) {

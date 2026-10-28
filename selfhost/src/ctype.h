@@ -395,3 +395,23 @@ static int ct_mty_agrees(int t, int ty) {
         return ty == TY_INT || ty == TY_INT + TY_PTR;
     return 0;
 }
+
+/* --- Sizes (6.5.3.4) --- */
+
+/* sizeof a C type, in bytes.  Structs and unions take the parser's
+ * layout (ast.h's ty_size); an array of unknown length is 0. */
+static int ct_sizeof(int t) {
+    int k;
+    k = ct_kindof(t);
+    if (k == CT_ATOMIC) return ct_sizeof(ct_baseof(t));
+    if (k == CT_ARRAY) {
+        if (ct_countof(t) < 0) return 0;
+        return ct_countof(t) * ct_sizeof(ct_baseof(t));
+    }
+    if (k == CT_PTR) return ty_ptr_size;
+    if (k == CT_STRUCT || k == CT_UNION) return ty_size(TY_STRUCT_BASE + ct_countof(t));
+    if (k == CT_VOID || k == CT_FUNC) return 1;   /* a GNU extension; a constraint violation in C */
+    if (ct_is_integer(t)) return k == CT_BOOL ? 1 : ct_int_bytes(t);
+    if (k == CT_FLOAT) return 4;
+    return 8;   /* double, long double */
+}

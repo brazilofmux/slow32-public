@@ -237,6 +237,22 @@ could not be true.  SQLite's code changed in six functions, each a
 difference widened to 64 bits (now sign- rather than zero-extended);
 probe `6.5.6-ptrdiff-signed`.  Disagreements: 310 -> 199.
 
+**S3, `sizeof`** (2026-10-28): `sizeof expr` runs sema on its operand
+and, when the operand is a value an operator computed, takes its C
+type's size -- `sizeof(+c)`, `sizeof(d + d)`, `sizeof(1 << ll)` (W12);
+unary `+` now promotes.  An object operand (an lvalue, an array, a
+function) keeps the size its declaration recorded, because the
+declarations' C types are still being completed, and twice in this step
+a wrong C type became a wrong size: a `(**name)` declarator was typed
+with one pointer, so in SQLite `sizeof(aExt[0])` became 1 and an
+allocation lost its `* 4` -- no gate exercises that path; it was caught
+reading the assembly diff -- and a global array of function pointers
+was typed as a pointer, so `sizeof one / sizeof one[0]` was 1.  Both are
+fixed (`ps_fnptr_cty` counts stars, the array gets its type), with a
+probe.  **Rule for the rest of S3: read every assembly diff in SQLite
+before trusting a switch to C types; a gate that passes does not cover
+the code paths a probe never wrote.**
+
 ## Constraints on the work
 
 - stage07 builds stage08: the new code keeps stage07's dialect (ints

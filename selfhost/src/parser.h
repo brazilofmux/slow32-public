@@ -136,10 +136,24 @@ static int ps_global_cty(int ty, int size_bytes);
  * runs parse_type again). */
 static int ps_pending_member_cty;
 
-/* The pointer to function that a (*name)(...) declarator makes of the
- * type read before it; the parameters are not recorded here. */
+/* The stars of a (**name)(...) declarator, consumed and counted. */
+static int ps_fnptr_nstar = 1;
+static void ps_skip_fnptr_stars(void) {
+    ps_fnptr_nstar = 0;
+    while (lex_tok == TK_STAR) { next(); ps_fnptr_nstar = ps_fnptr_nstar + 1; }
+}
+
+/* The type a (**name)(...) declarator makes of the type read before it:
+ * as many pointers as it had stars (ps_fnptr_nstar), to a function; the
+ * parameters are not recorded here.  It was always one pointer, so
+ * void (**aExt)(void) made aExt[0] a function, sizeof 1. */
 static int ps_fnptr_cty(int ret_cty) {
-    return ct_ptr(ct_func(ret_cty, 0, -1, 0));
+    int t;
+    int k;
+    t = ct_func(ret_cty, 0, -1, 0);
+    k = ps_fnptr_nstar > 0 ? ps_fnptr_nstar : 1;
+    while (k > 0) { t = ct_ptr(t); k = k - 1; }
+    return t;
 }
 
 /* ps_obj_cty without the report: for a type already recorded once. */
@@ -1481,7 +1495,7 @@ static int parse_type(void) {
                     }
                     if (lex_tok == TK_LPAREN) {
                         next();
-                        while (lex_tok == TK_STAR) next();   /* (**name)(...) */
+                        ps_skip_fnptr_stars();   /* (**name)(...) */
                         /* T (*(*name)(params))(params): a pointer to a
                          * function returning a function pointer (SQLite's
                          * sqlite3_vfs.xDlSym).  Both are opaque pointers
@@ -1489,7 +1503,7 @@ static int parse_type(void) {
                          * now and the outer ) ( params ) below. */
                         if (lex_tok == TK_LPAREN) {
                             next();
-                            while (lex_tok == TK_STAR) next();   /* (**name)(...) */
+                            ps_skip_fnptr_stars();   /* (**name)(...) */
                             is_fn_ptr_member = 2;
                         } else {
                             is_fn_ptr_member = 1;
@@ -1804,7 +1818,7 @@ static int parse_type(void) {
                     }
                     if (lex_tok == TK_LPAREN) {
                         next();
-                        while (lex_tok == TK_STAR) next();   /* (**name)(...) */
+                        ps_skip_fnptr_stars();   /* (**name)(...) */
                         /* T (*(*name)(params))(params): a pointer to a
                          * function returning a function pointer (SQLite's
                          * sqlite3_vfs.xDlSym).  Both are opaque pointers
@@ -1812,7 +1826,7 @@ static int parse_type(void) {
                          * now and the outer ) ( params ) below. */
                         if (lex_tok == TK_LPAREN) {
                             next();
-                            while (lex_tok == TK_STAR) next();   /* (**name)(...) */
+                            ps_skip_fnptr_stars();   /* (**name)(...) */
                             is_fn_ptr_member = 2;
                         } else {
                             is_fn_ptr_member = 1;
@@ -2395,7 +2409,50 @@ static void ps_mangle_static(char *func, char *var) {
 /* Size of the object an already-parsed sizeof operand denotes.
  * Arrays report their stored total size; a row of a pointer-to-array
  * member reports cols * element size; everything else is ty_size. */
+static void sema_expr(Node *n);    /* sema.h: sizeof's operand gets its C type */
+static int ps_sizeof_node_mty(Node *n);
+
+/* sizeof expr: the size of the operand's C type, which sema works out
+ * (the operand is not evaluated, and is discarded) -- so sizeof(+c) is
+ * int's, sizeof(d + d) double's, sizeof(1 << ll) int's, where the size
+ * of the machine type had been the operand's before promotion (W12).
+ * Over SQLite the two sizes agree everywhere.  (The one difference first
+ * seen there was a C-type bug, not the old size's: a (**name) declarator
+ * typed with one pointer, so aExt[0] looked like a function, size 1 --
+ * caught reading the assembly diff, fixed in ps_fnptr_cty.)
+ * S12CC_CTY_CHECK=1 still reports each difference from the old size. */
 static int ps_sizeof_node(Node *n) {
+    int old;
+    int cs;
+    old = ps_sizeof_node_mty(n);
+    sema_expr(n);
+    if (n->cty <= 0) return old;
+    cs = ct_sizeof(n->cty);
+    if (cs != old) {
+        if (ps_cty_check < 0) ps_cty_check = getenv("S12CC_CTY_CHECK") != 0;
+        if (ps_cty_check) {
+            fdputs("sizeof-mismatch kind=", 2);
+            fdputuint(2, (unsigned)n->kind);
+            fdputs(" ty=", 2);
+            fdputuint(2, (unsigned)n->ty);
+            fdputs(" old=", 2);
+            fdputuint(2, (unsigned)old);
+            fdputs(" c=", 2);
+            fdputuint(2, (unsigned)cs);
+            fdputs("\n", 2);
+        }
+    }
+    /* An object -- a variable, member or element, an lvalue -- keeps
+     * the size its declaration recorded; a value an operator computed
+     * takes its C type's, which is where the promotions live.  (The C
+     * types of declarations are still being completed: a global array
+     * of function pointers was typed as a pointer, and an all-C-type
+     * sizeof turned its length 3 into 1.) */
+    if ((n->attr & AT_LV) || ct_is_array(n->cty) || ct_is_func(n->cty)) return old;
+    return cs;
+}
+
+static int ps_sizeof_node_mty(Node *n) {
     int li;
     int gi;
     if (n->kind == ND_VAR && n->is_array) {
@@ -4630,9 +4687,14 @@ static Node *parse_unary(void) {
     Node *n;
 
     if (lex_tok == TK_PLUS) {
-        /* unary plus: the operand, promoted as it stands */
+        /* unary plus: the operand, promoted (6.5.3.3p2) -- a char or
+         * short operand becomes int, so sizeof(+c) is int's size */
         next();
-        return parse_unary();
+        n = parse_unary();
+        if (!ty_is_ptr(n->ty) && ((n->ty & TY_BASE_MASK) == TY_CHAR ||
+                                  (n->ty & TY_BASE_MASK) == TY_SHORT))
+            n = nd_cast(n, TY_INT);
+        return n;
     }
     if (lex_tok == TK_MINUS) {
         next();
@@ -5585,7 +5647,7 @@ static void parse_typedef_decl(void) {
         if (lex_tok == TK_LPAREN) {
             /* Function pointer typedef: typedef int (*Name)(args); */
             next();  /* skip ( */
-            while (lex_tok == TK_STAR) next();   /* (**name)(...) */  /* skip * */
+            ps_skip_fnptr_stars();   /* (**name)(...) */
             if (lex_tok != TK_IDENT) {
                 p_error("expected typedef name");
                 return;
@@ -5607,7 +5669,7 @@ static void parse_typedef_decl(void) {
                 }
                 add_typedef(nm, TY_INT);
                 /* a pointer to a function (no prototype recorded yet: S2) */
-                ps_tdcty[ps_ntypedefs - 1] = ct_ptr(ct_func(cty, 0, -1, 0));
+                ps_tdcty[ps_ntypedefs - 1] = ps_fnptr_cty(cty);
                 ps_tdfpbase[ps_ntypedefs - 1] = tfpb;
                 ps_tdfpn[ps_ntypedefs - 1] = tfpn;
             }
@@ -6106,6 +6168,7 @@ static Node *parse_stmt(void) {
                     lfpb = ps_parse_fp_params(&lfpn);
                     ps_fp_set_ret(lfpb, ty);
                 }
+                ps_fnptr_nstar = nstars;
                 ps_type_cty = ps_fnptr_cty(ps_type_cty);
                 off = add_local(nm, TY_INT);
                 ps_lfpbase[ps_nlocals - 1] = lfpb;
@@ -6673,6 +6736,8 @@ static Node *parse_top_decl(void) {
                 ps_ginit_begin(idx);
                 fp_count = parse_global_init_array_at(TY_INT, fp_count, idx, 0);
                 ps_gsize[idx] = 4 * fp_count;
+                ps_fnptr_nstar = fp_nstars;
+                ps_gcty[idx] = ct_array(ps_fnptr_cty(ret_cty), fp_count);
                 ps_ginit_ensure_len(idx, ps_gsize[idx]);
                 ps_ginit_finish(idx);
             } else {
@@ -6686,6 +6751,7 @@ static Node *parse_top_decl(void) {
             expect(TK_SEMI);
             return NULL;
         }
+        ps_fnptr_nstar = fp_nstars;
         ps_type_cty = ps_fnptr_cty(ret_cty);
         if (is_extern) idx = add_extern_global(nm, TY_INT, 0);
         else           idx = add_defined_global(nm, TY_INT, 0);
@@ -7015,13 +7081,13 @@ function_decl:
         if (lex_tok == TK_LPAREN) {
             int nested_fp;
             next();
-            while (lex_tok == TK_STAR) next();   /* (**name)(...) */
+            ps_skip_fnptr_stars();   /* (**name)(...) */
             /* T (*(*name)(params))(params), as in a struct member: the
              * inner ( * name ) ( params ) here, the outer ) ( params ) below */
             nested_fp = 0;
             if (lex_tok == TK_LPAREN) {
                 next();
-                while (lex_tok == TK_STAR) next();   /* (**name)(...) */
+                ps_skip_fnptr_stars();   /* (**name)(...) */
                 nested_fp = 1;
             }
             if (lex_tok == TK_IDENT) {
@@ -7112,13 +7178,13 @@ function_decl:
                 int fp_ret_ty;
                 fp_ret_ty = pty;  /* T in T (*name)(params) */
                 next();
-                while (lex_tok == TK_STAR) next();   /* (**name)(...) */
+                ps_skip_fnptr_stars();   /* (**name)(...) */
                 /* T (*(*name)(params))(params), as in a struct member: the
                  * inner ( * name ) ( params ) here, the outer ) ( params ) below */
                 nested_fp = 0;
                 if (lex_tok == TK_LPAREN) {
                     next();
-                    while (lex_tok == TK_STAR) next();   /* (**name)(...) */
+                    ps_skip_fnptr_stars();   /* (**name)(...) */
                     nested_fp = 1;
                 }
                 if (lex_tok == TK_IDENT) {
