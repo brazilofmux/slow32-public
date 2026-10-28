@@ -18057,5 +18057,5 @@ nml_text_add:                           # @nml_text_add
 	.word	.L.str.81
 	.size	.Lswitch.table.fio_fmt_use, 72
 
-	.ident	"clang version 24.0.0git (https://github.com/llvm/llvm-project.git 4ae5cc47e157604603b18d86a83b7f8a25485429)"
+	.ident	"clang version 24.0.0git (https://github.com/llvm/llvm-project.git 901d6aa3093d29a2e138b57242630386bb9995df)"
 	.section	".note.GNU-stack","",@progbits

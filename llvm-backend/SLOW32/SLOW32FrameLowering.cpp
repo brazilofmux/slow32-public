@@ -54,7 +54,7 @@ bool SLOW32FrameLowering::hasFPImpl(const MachineFunction &MF) const {
 
 bool SLOW32FrameLowering::enableShrinkWrapping(
     const MachineFunction &MF) const {
-  if (MF.getFunction().hasOptNone() || needsDwarfCFI(MF))
+  if (MF.getFunction().hasOptNone())
     return false;
   for (const MachineBasicBlock &MBB : MF)
     for (const MachineInstr &MI : MBB) {
@@ -374,7 +374,30 @@ void SLOW32FrameLowering::emitEpilogue(MachineFunction &MF,
   if (needsDwarfCFI(MF)) {
     CFIInstBuilder CFIBuilder(MBB, MBBI, MachineInstr::FrameDestroy);
     CFIBuilder.buildDefCFAOffset(0);
+    // PEI restored the callee-saved registers before this point: each is
+    // its own value again.  Without this the state an epilogue leaves (and
+    // CFIFixup takes as "no frame" for the blocks laid out after it) still
+    // had them in the frame just freed.
+    for (const CalleeSavedInfo &CS : MFI.getCalleeSavedInfo())
+      CFIBuilder.buildRestore(CS.getReg());
   }
+}
+
+// CFIFixup: a block laid out after one that has a frame, which itself has
+// none (a shrink-wrapped early exit after the epilogue) -- the state on
+// entry: the CFA at SP+0 and every register the prologue described in its
+// own place.
+void SLOW32FrameLowering::resetCFIToInitialState(
+    MachineBasicBlock &MBB) const {
+  MachineFunction &MF = *MBB.getParent();
+  CFIInstBuilder CFIBuilder(MBB, MBB.begin(), MachineInstr::NoFlags);
+  CFIBuilder.buildDefCFA(StackPtr, 0);
+  if (needsLRSave(MF))
+    CFIBuilder.buildRestore(LinkReg);
+  if (needsFPSave(MF))
+    CFIBuilder.buildRestore(FramePtr);
+  for (const CalleeSavedInfo &CS : MF.getFrameInfo().getCalleeSavedInfo())
+    CFIBuilder.buildRestore(CS.getReg());
 }
 
 MachineBasicBlock::iterator SLOW32FrameLowering::eliminateCallFramePseudoInstr(

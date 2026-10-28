@@ -61,11 +61,27 @@ done:
 }
 declare ptr @llvm.returnaddress(i32)
 
-; Stage 1 leaves a function that needs unwind information alone: the CFI
-; for a prologue off the entry block is not described yet.
+; A function that needs unwind information is shrink-wrapped too: the CFA
+; moves with the prologue, and the epilogue leaves the state on entry (lr
+; restored, the CFA at sp+0) for the frameless return laid out after it.
 ; CHECK-LABEL: unwinds:
-; CHECK: # %bb.0:
-; CHECK-NEXT: addi sp, sp, -
+; CHECK: .cfi_startproc
+; CHECK-NEXT: # %bb.0:
+; CHECK-NOT: sp
+; CHECK: beq r4, r{{[0-9]+}}, [[RET:.LBB[0-9_]+]]
+; CHECK: addi sp, sp, -16
+; CHECK-NEXT: .cfi_def_cfa_offset 16
+; CHECK-NEXT: stw sp+0, lr
+; CHECK-NEXT: .cfi_offset lr, -16
+; CHECK: jal r31, slow
+; CHECK: ldw lr, sp+0
+; CHECK-NEXT: .cfi_restore lr
+; CHECK-NEXT: addi sp, sp, 16
+; CHECK-NEXT: .cfi_def_cfa_offset 0
+; CHECK-NEXT: jalr r0, r31, 0
+; CHECK-NEXT: [[RET]]:
+; CHECK-NEXT: addi r1, r0, 0
+; CHECK-NEXT: jalr r0, r31, 0
 define i32 @unwinds(ptr %p, i32 %n) {
 entry:
   %z = icmp eq i32 %n, 0
