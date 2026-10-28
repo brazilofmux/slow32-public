@@ -142,8 +142,11 @@ static void opt_fold(Node *n) {
         return;
     }
 
-    /* Strength reduction: multiply by power-of-2 → left shift */
-    if (n->kind == ND_BINOP && n->op == TK_STAR) {
+    /* Strength reduction: multiply by power-of-2 → left shift.  Integer
+     * multiplies only: a double times the int literal 2 became d << 1,
+     * which the lowering made a divide, and d * 2 returned d. */
+    if (n->kind == ND_BINOP && n->op == TK_STAR && !ty_is_fp(n->ty) &&
+        n->lhs && n->rhs && !ty_is_fp(n->lhs->ty) && !ty_is_fp(n->rhs->ty)) {
         /* rhs is constant power-of-2 */
         if (n->rhs && n->rhs->kind == ND_NUM) {
             shift = opt_is_pow2(n->rhs->val);

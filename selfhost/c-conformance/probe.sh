@@ -5,6 +5,8 @@
 #   ./probe.sh probes/6.7.5-alignas.c ...     # named probes
 #   ./probe.sh                                # every probe under probes/
 #   ./probe.sh -v probes/x.c                  # show stage08's error and the diff
+#   ./probe.sh --check                        # every probe against verdicts.txt
+#   ./probe.sh --update                       # record this run as verdicts.txt
 #
 # A probe is a C program whose first line names the clause it exercises:
 #
@@ -29,6 +31,11 @@
 # stage08 here is the tree's: selfhost/stage08/cc.s32x, its s32-as/s32-ld,
 # include/ and lib/ (archived once per run).  Exit status: 0 when every
 # probe is PASS or DIAG.
+#
+# verdicts.txt holds each probe's last recorded verdict, so the survey is
+# also a regression gate while the gaps are closed: --check runs every
+# probe and fails if one that was PASS or DIAG is now anything else, and
+# names the ones that got better (run --update then, and commit it).
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -40,7 +47,12 @@ REF="$ROOT/tools/emulator/slow32"
 LIMIT="${LIMIT:-60}"
 
 VERBOSE=0
-if [ "${1:-}" = "-v" ]; then VERBOSE=1; shift; fi
+MODE=run
+case "${1:-}" in
+    -v) VERBOSE=1; shift ;;
+    --check) MODE=check; shift ;;
+    --update) MODE=update; shift ;;
+esac
 
 for f in "$S08/cc.s32x" "$S08/s32-as.s32x" "$S08/s32-ld.s32x" "$S08/s32-ar.s32x" \
          "$LLVM_BIN/clang" "$DBT" "$REF"; do
@@ -126,11 +138,33 @@ for src in "$@"; do
     fi
 
     case $verdict in PASS|DIAG) ;; *) fail=1 ;; esac
-    printf "%-8s %-36s %s\n" "$verdict" "$name" "${note:-$clause}"
+    echo "$name $verdict" >>"$W/verdicts.now"
+    [ $MODE = run ] && printf "%-8s %-36s %s\n" "$verdict" "$name" "${note:-$clause}"
     if [ $VERBOSE = 1 ] && [ "$verdict" != PASS ]; then
         [ -s "$d/cc.log" ] && { echo "  -- stage08:"; grep -v '^\s*$' "$d/cc.log" | grep -i -E 'error|expected|warn' | head -5 | sed 's/^/     /'; }
         [ -s "$d/clang.log" ] && { echo "  -- clang:"; head -5 "$d/clang.log" | sed 's/^/     /'; }
         [ -f "$d/s08.txt" ] && diff "$d/clang.txt" "$d/s08.txt" | head -8 | sed 's/^/     /'
     fi
 done
+
+good() { case "$1" in PASS|DIAG) return 0 ;; *) return 1 ;; esac; }
+if [ $MODE = update ]; then
+    sort "$W/verdicts.now" >"$HERE/verdicts.txt"
+    awk '{print $2}' "$HERE/verdicts.txt" | sort | uniq -c | sort -rn
+    exit 0
+fi
+if [ $MODE = check ]; then
+    worse=0; better=0
+    while read -r name now; do
+        was="$(awk -v n="$name" '$1 == n {print $2}' "$HERE/verdicts.txt")"
+        if [ -z "$was" ]; then echo "NEW      $name $now"; continue; fi
+        [ "$was" = "$now" ] && continue
+        if good "$was" && ! good "$now"; then echo "WORSE    $name $was -> $now"; worse=$((worse + 1))
+        elif good "$now"; then echo "BETTER   $name $was -> $now"; better=$((better + 1))
+        else echo "CHANGED  $name $was -> $now"; fi
+    done < <(sort "$W/verdicts.now")
+    awk '{print $2}' "$W/verdicts.now" | sort | uniq -c | sort -rn | tr '\n' ' '; echo
+    echo "c-conformance: $worse worse, $better better than verdicts.txt"
+    [ $worse -eq 0 ]; exit $?
+fi
 exit $fail

@@ -22,6 +22,12 @@ at least one row on its page.  Totals from one run of `./probe.sh`:
 (Page counts are each agent's own run; the totals above are the whole
 set at once, with one probe added since, `6.5.5-double-times-pow2-int`.)
 
+**Progress.**  2026-10-28, selfhost ISSUES-100: W1, W3, W4 (except the
+2-D `2[m][1]`), W5, W7, W8, W9 fixed, and `&function` accepted;
+`probe.sh --check` against `verdicts.txt` now gates every change
+(173 PASS, 44 WRONG, 83 REJECTS, 81 DIAG, 135 ACCEPTS).  The tables
+below are the survey as taken.
+
 The 52 WRONG probes come from about fifteen defects, listed below by
 root cause, most dangerous first: a program that compiles and silently
 computes the wrong thing is worse than one that is refused.

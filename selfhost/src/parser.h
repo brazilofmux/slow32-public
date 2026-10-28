@@ -4364,6 +4364,10 @@ static Node *parse_unary(void) {
         int dfpn;
         next();
         n = parse_unary();
+        /* *f on a function designator is f again (6.5.3.2p4, which then
+         * decays back, 6.3.2.1p4): it loaded through the code address,
+         * and *f called as a pointer faulted. */
+        if (n->kind == ND_FUNC_REF) return n;
         dfpb = n->is_fnptr ? n->val : -1;
         dfpn = n->is_fnptr ? n->nparams : 0;
         n = nd_unary(TK_STAR, n);
@@ -4384,6 +4388,9 @@ static Node *parse_unary(void) {
         if (n->kind == ND_MEMBER && n->bit_width > 0) {
             p_error("cannot take address of bit-field");
         }
+        /* &f is the function's address, the value f decays to (6.5.3.2p3);
+         * it was refused as "not an lvalue". */
+        if (n->kind == ND_FUNC_REF) return n;
         /* &arr2d[i]: the first subscript of a 2D array already yields
          * the row ADDRESS (an ADD node, not an lvalue).  C's pointer-
          * to-row has the same numeric value, so the node stands as-is
@@ -5354,6 +5361,7 @@ static Node *parse_stmt(void) {
     int ci;
     int ci_stack;
     int cv;
+    int cv_hi;
     int neg;
     int si;
     int base;
@@ -5527,6 +5535,20 @@ static Node *parse_stmt(void) {
         c = parse_expr();
         expect(TK_RPAREN);
         t = parse_stmt();
+        /* An unbraced body that is a label -- switch (x) case 9: r = 99;
+         * or switch (x) default: ... -- is the label and the statement it
+         * labels.  A label parses as a statement of its own, so the
+         * labelled statement became the one after the switch, run
+         * always, and the switch had no case blocks (6.8.4.2). */
+        if (t && (t->kind == ND_CASE || t->kind == ND_DEFAULT)) {
+            Node *last;
+            last = t;
+            while (last && (last->kind == ND_CASE || last->kind == ND_DEFAULT)) {
+                last->next = parse_stmt();
+                last = last->next;
+            }
+            t = nd_block(t);
+        }
         n = nd_new(ND_SWITCH);
         n->cond = c;
         n->body = t;
@@ -5538,11 +5560,12 @@ static Node *parse_stmt(void) {
     if (lex_tok == TK_CASE) {
         next();
         neg = 0;
-        cv = parse_const_int();
+        cv_hi = parse_const_ll_hi(&cv);   /* both words: a long long switch compares them */
         if (neg) cv = 0 - cv;
         expect(TK_COLON);
         n = nd_new(ND_CASE);
         n->val = cv;
+        n->val_hi = cv_hi;
         return n;
     }
 
@@ -6399,8 +6422,10 @@ static Node *parse_top_decl(void) {
         ps_gfpn[idx] = fp_n;
         if (lex_tok == TK_ASSIGN) {
             /* fn-ptr global initializer: NULL/0 or a function name
-             * (sbasic: env_deftype_hook = NULL) */
+             * (sbasic: env_deftype_hook = NULL), or &name, the same
+             * address (6.6p9; a leading & can only be address-of) */
             next();
+            if (lex_tok == TK_AMP) next();
             if (lex_tok == TK_IDENT && find_const(lex_str) < 0 &&
                 (is_known_func(lex_str) || find_global(lex_str) >= 0)) {
                 ps_ginit_begin(idx);

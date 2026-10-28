@@ -39,6 +39,7 @@ static int hl_inl_sw_base;
 #define HL_MAX_SW_DEPTH 32   /* was 8 */
 #define HL_MAX_CASE 1024   /* was 256 */
 static int hl_sw_val[HL_MAX_CASE];
+static int hl_sw_valhi[HL_MAX_CASE];   /* a case value's HI word, for long long switches */
 static int hl_sw_blk[HL_MAX_CASE];
 static int hl_sw_base[HL_MAX_SW_DEPTH];
 static int hl_sw_count[HL_MAX_SW_DEPTH];
@@ -62,6 +63,7 @@ static int hl_jt_tgt[HL_JT_MAX_SPAN];   /* per-index target block (build buffer)
 #define HL_MAX_GOTO 4096   /* was 512 */
 static int hl_goto_id[HL_MAX_GOTO];
 static int hl_goto_blk[HL_MAX_GOTO];
+static int hl_goto_def[HL_MAX_GOTO];  /* the label was lowered: a goto to one that never was is an error */
 static int hl_ngoto;
 
 /* --- 64-bit twin-value tracking --- */
@@ -268,9 +270,19 @@ static int hl_label_block(int label_id) {
         exit(1);
     }
     hl_goto_id[hl_ngoto] = label_id;
+    hl_goto_def[hl_ngoto] = 0;
     hl_goto_blk[hl_ngoto] = hir_new_block();
     hl_ngoto = hl_ngoto + 1;
     return hl_goto_blk[hl_ngoto - 1];
+}
+
+static void hl_label_defined(int label_id) {
+    int i;
+    i = 0;
+    while (i < hl_ngoto) {
+        if (hl_goto_id[i] == label_id) hl_goto_def[i] = 1;
+        i = i + 1;
+    }
 }
 
 /* A statement that unconditionally transfers control, so the next case
@@ -406,6 +418,36 @@ static void hl_sw_sort_cases(int sw_b, int sw_n, int is_unsigned) {
         i = i + 1;
     }
 }
+
+#ifndef S12CC_X64_HOST
+/* A switch on a long long: compare both words of every case.  It
+ * dispatched on the LO word with 32-bit case values, so 0x100000001
+ * matched case 1 (6.8.4.2p5: the controlling expression keeps its
+ * promoted type, and so do the case constants).  A linear chain: long
+ * long switches are rare, and the jump table and binary search are
+ * 32-bit. */
+static void hl_sw_emit_chain64(int lo, int hi, int def_blk, int sw_b, int sw_n) {
+    int sw_i;
+    int cv;
+    int eq_lo;
+    int eq_hi;
+    int both;
+    int next_blk;
+    sw_i = 0;
+    while (sw_i < sw_n) {
+        cv = hi_emit(HI_ICONST, TY_INT, -1, -1, hl_sw_val[sw_b + sw_i], NULL);
+        eq_lo = hi_emit(HI_SEQ, TY_INT, lo, cv, 0, NULL);
+        cv = hi_emit(HI_ICONST, TY_INT, -1, -1, hl_sw_valhi[sw_b + sw_i], NULL);
+        eq_hi = hi_emit(HI_SEQ, TY_INT, hi, cv, 0, NULL);
+        both = hi_emit(HI_AND, TY_INT, eq_lo, eq_hi, 0, NULL);
+        next_blk = hir_new_block();
+        hi_emit(HI_BRC, 0, both, hl_sw_blk[sw_b + sw_i], next_blk, NULL);
+        hl_switch_block(next_blk);
+        sw_i = sw_i + 1;
+    }
+    hi_emit(HI_BR, 0, -1, -1, def_blk, NULL);
+}
+#endif
 
 static void hl_sw_emit_chain(int lv, int def_blk, int sw_b, int sw_n) {
     int sw_i;
@@ -2200,6 +2242,44 @@ static int hl_small_memcpy(Node *n) {
 }
 #endif
 
+#ifndef S12CC_NATIVE_F64
+/* Postfix ++/-- on a soft-pair double, as the compound-assignment path
+ * does it: old_lo is only the LO word, and HI_FADD with TY_DOUBLE has
+ * no slow32 pattern -- the float path added a float 1.0 to the low word,
+ * and d++ left d as it was.  The value is the old pair (hl_hi = its HI).
+ * Kept out of hl_expr, which is already the largest function stage07
+ * compiles. */
+static int hl_postincdec_f64(int addr, int old_lo, int inc) {
+    int a4;
+    int old_hi;
+    int one;
+    int one_hi;
+    int cb;
+    int r_lo;
+    a4 = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, 4, NULL);
+    old_hi = hi_emit(HI_LOAD, TY_INT, a4, -1, 0, NULL);
+    one = hi_emit(HI_ICONST, TY_INT, -1, -1, 1, NULL);
+    one = hl_promote_to_f64(one, TY_INT);
+    one_hi = hl_hi;
+    cb = h_ncarg;
+    h_carg[h_ncarg] = old_lo;  h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = old_hi;  h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = one;     h_ncarg = h_ncarg + 1;
+    h_carg[h_ncarg] = one_hi;  h_ncarg = h_ncarg + 1;
+    if (inc)
+        r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_add");
+    else
+        r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_sub");
+    h_cbase[r_lo] = cb;
+    hl_hi = hi_emit(HI_CALLHI, TY_INT, r_lo, -1, 0, NULL);
+    hi_emit(HI_STORE, TY_INT, addr, r_lo, 0, NULL);
+    a4 = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, 4, NULL);
+    hi_emit(HI_STORE, TY_INT, a4, hl_hi, 0, NULL);
+    hl_hi = old_hi;
+    return old_lo;
+}
+#endif
+
 static int hl_expr(Node *n) {
     int lv;
     int rv;
@@ -3025,6 +3105,19 @@ static int hl_expr(Node *n) {
             }
             return hi_emit(HI_SUB, n->ty, lv, rv, 0, NULL);
         }
+        /* integer + pointer (6.5.6p2: either order): the integer, now on
+         * the left, is the one scaled.  3 + ia added 3 bytes, and 2[a] --
+         * *(2 + a) -- read between elements. */
+        if (n->op == TK_PLUS && ty_is_ptr(n->rhs->ty)) {
+            elem_sz = ty_size(ty_deref(n->rhs->ty));
+            lv = hl_expr(n->lhs);
+            rv = hl_expr(n->rhs);
+            if (elem_sz > 1) {
+                scale = hi_emit(HI_ICONST, TY_INT, -1, -1, elem_sz, NULL);
+                lv = hi_emit(HI_MUL, TY_INT, lv, scale, 0, NULL);
+            }
+            return hi_emit(HI_ADD, n->ty, lv, rv, 0, NULL);
+        }
 
         /* Floating-point binary operations (f64).
          *
@@ -3431,6 +3524,10 @@ static int hl_expr(Node *n) {
             hl_hi = old_hi;
             return old_val;
         }
+#endif
+#ifndef S12CC_NATIVE_F64
+        if (ty_is_double(n->ty))
+            return hl_postincdec_f64(addr, old_val, n->kind == ND_POST_INC);
 #endif
         /* Float / double: scale is a 1.0 of the right FP type, op is
          * HI_FADD / HI_FSUB. */
@@ -4041,6 +4138,7 @@ static void hl_sw_prescan(Node *cs, int sw_d, int sw_b) {
                 exit(1);
             }
             hl_sw_val[sw_b + sw_n] = cs->val;
+            hl_sw_valhi[sw_b + sw_n] = cs->val_hi;
             /* `case A: case B:` -- labels with no statement between them --
              * SHARE one block rather than getting one each.  Giving each its
              * own made the first fall through to the second.  Jump-table
@@ -4066,7 +4164,38 @@ static void hl_sw_prescan(Node *cs, int sw_d, int sw_b) {
     }
 }
 
+/* Does statement s hold a label anywhere inside it?  A block walk that
+ * skips what follows a terminator must not skip one: goto in; { in: ... }
+ * dropped the block with its label, then every statement after it, and
+ * left the function empty (6.8.6.1: a goto may jump into a block). */
+static int hl_stmt_has_label(Node *s) {
+    Node *c;
+    if (!s) return 0;
+    if (s->kind == ND_LABEL || s->kind == ND_CASE || s->kind == ND_DEFAULT) return 1;
+    if (s->kind == ND_BLOCK) {
+        c = s->body;
+        while (c) {
+            if (hl_stmt_has_label(c)) return 1;
+            c = c->next;
+        }
+        return 0;
+    }
+    if (s->kind == ND_EXPR_STMT || s->kind == ND_RETURN) return 0;
+    return hl_stmt_has_label(s->body) || hl_stmt_has_label(s->els);
+}
+
+/* At a function's end: every label a goto named must have been lowered. */
+static void hl_check_labels(void) {
+    int i;
+    i = 0;
+    while (i < hl_ngoto) {
+        if (!hl_goto_def[i]) p_error("goto to a label not defined in this function");
+        i = i + 1;
+    }
+}
+
 static void hl_stmt(Node *n) {
+    int sw_hi;
     int cv;
     int lv;
     int cmp;
@@ -4409,6 +4538,10 @@ static void hl_stmt(Node *n) {
 
         /* Evaluate switch expression */
         lv = hl_expr(n->cond);
+        sw_hi = -1;
+#ifndef S12CC_X64_HOST
+        if (n->cond && ty_is_llong(n->cond->ty)) sw_hi = hl_hi;
+#endif
 
         sw_n = hl_sw_count[sw_d];
         if (n->cond && (n->cond->ty & TY_UNSIGNED)) lt_kind = HI_SLTU;
@@ -4428,8 +4561,14 @@ static void hl_stmt(Node *n) {
          * switches; gate it off for a64 (it falls back to the binary-search /
          * comparison-chain paths below, which are correct). */
         use_jt = 0;
+#ifndef S12CC_X64_HOST
+        if (sw_hi >= 0) {
+            hl_sw_emit_chain64(lv, sw_hi, def_blk, sw_b, sw_n);
+            use_jt = 1;      /* dispatched: skip the 32-bit paths */
+        }
+#endif
 #ifndef S12CC_TARGET_A64
-        if (sw_n >= 5 && !hl_switch_nested_labels(n->body)) {
+        if (!use_jt && sw_n >= 5 && !hl_switch_nested_labels(n->body)) {
             use_jt = hl_sw_emit_jumptable(lv, def_blk, sw_b, sw_n, n->body);
         } else if (getenv("HIR_SW_DEBUG")) {
             fdputs("SWITCH cases=", 2);
@@ -4510,6 +4649,7 @@ static void hl_stmt(Node *n) {
     /* Label */
     if (n->kind == ND_LABEL) {
         lbl_blk = hl_label_block(n->val);
+        hl_label_defined(n->val);
         if (!hl_terminated()) hi_emit(HI_BR, 0, -1, -1, lbl_blk, NULL);
         hl_switch_block(lbl_blk);
         if (n->body) hl_stmt(n->body);
@@ -4522,8 +4662,13 @@ static void hl_stmt(Node *n) {
         while (s) {
             if (hl_terminated() && s->kind != ND_LABEL &&
                 s->kind != ND_CASE && s->kind != ND_DEFAULT) {
-                s = s->next;
-                continue;
+                if (!hl_stmt_has_label(s)) {
+                    s = s->next;
+                    continue;
+                }
+                /* unreachable from above, reachable through its label:
+                 * lowered into a block of its own */
+                hl_switch_block(hir_new_block());
             }
             hl_stmt(s);
             s = s->next;
@@ -4739,8 +4884,18 @@ static void hl_func(Node *fn) {
 
     hl_stmt(fn->body);
 
-    /* Ensure function ends with a return */
+    hl_check_labels();
+
+    /* Ensure function ends with a return.  Reaching the } of main
+     * returns 0 (C99 5.1.2.2.3); it returned whatever r1 last held --
+     * printf's count, for a program ending in a printf. */
     if (!hl_terminated()) {
-        hi_emit(HI_RET, 0, -1, -1, 0, NULL);
+        if (fn->name && strcmp(fn->name, "main") == 0) {
+            int zero;
+            zero = hi_emit(HI_ICONST, TY_INT, -1, -1, 0, NULL);
+            hi_emit(HI_RET, 0, zero, -1, 0, NULL);
+        } else {
+            hi_emit(HI_RET, 0, -1, -1, 0, NULL);
+        }
     }
 }

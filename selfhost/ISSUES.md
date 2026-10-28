@@ -3616,3 +3616,55 @@ libc differential 27/0; stage07 differential 5/0; and, through a kit
 with the new cc and tools, the kit differential 132 agree + 2 rejected
 of 134, kit-tools 21/21, and selfhost-libcob 492/0.  The kit in ~/s32x
 still carries the previous cc.s32x until its next batch.
+
+### 100. [RESOLVED 2026-10-28] Wrong code the C11 survey found: d * 2, postfix ++ on a double, goto into a block, int + pointer, long long switch, main's return
+
+The first batch from `c-conformance/coverage.md` (W1, W3, W4, W5, W7,
+W8, W9): programs that compiled cleanly and computed the wrong thing.
+Each has a probe under `c-conformance/probes/`; `probe.sh --check`
+against `verdicts.txt` is the regression gate for all 516.
+
+- **`d * 2` returned `d`** (W1).  The AST optimizer's strength reduction
+  turned a multiply by an integer power of two into a shift whatever
+  the operands' type; on a double the shift was lowered as a divide.
+  Integer multiplies only now (`optimize.h`).  cfuzz never wrote an
+  integer literal beside a double.
+- **Postfix `++`/`--` on a double did nothing** (W5): the float path
+  added a float 1.0 to the LO word.  `hl_postincdec_f64` does it as the
+  compound-assignment path does, with `__fp64_add`/`__fp64_sub` on the
+  pair.  Written inline in `hl_expr` the same code made stage07 build a
+  gen1 compiler that faulted compiling `libc/string_extra.c`; as a
+  separate function it is fine.  stage07 is frozen, so that is recorded
+  here, not fixed: **a stage07 miscompile triggered by hl_expr's size**
+  (1,850 lines, ~200 locals).  Grow hl_expr and hl_stmt by helpers.
+- **A label reached only by a goto into its block emptied the function**
+  (W3): the block walk skipped every statement after a terminator that
+  was not itself a label, so `goto in; { in: ... }` dropped the block,
+  then everything after it.  A statement holding a label anywhere
+  (`hl_stmt_has_label`) is lowered into a block of its own.  A goto to a
+  label never defined (or defined in another function) is now an error
+  where it also emptied the function.  Known limit: the AST optimizer
+  deletes `if (0) { ... }` bodies, so a goto into one is now refused.
+- **`3 + p` was not scaled** (W4): only the left operand was taken as
+  the pointer.  `2[a]` works with it; `2[m][1]` on a 2-D array waits for
+  types that can say "pointer to array".
+- **`switch` on a long long compared the low word, with 32-bit case
+  values** (W7): `case` labels keep both words (`val_hi`, through
+  `parse_const_ll_hi`), and a long long switch dispatches through
+  `hl_sw_emit_chain64`, comparing both.
+- **An unbraced switch body that is a label** (`switch (x) case 9: ...`)
+  took the labelled statement as the one after the switch (W7); the
+  parser now gives the switch the label and its statement as a block.
+- **Falling off the end of `main` returned r1's leftover** (W8), not 0.
+- **`*f` / `**f` on a function loaded through its address, and `&f`
+  was refused** (W9): both are the function itself now, in a block and
+  in a function-pointer initializer.
+
+Probe verdicts 159 PASS / 52 WRONG -> 173 / 44, 0 worse.  Left for the
+type-representation work: W2 (`_Bool`), W6 (constant folding of static
+initializers -- it wants a typed constant evaluator), W10-W13.
+Gates: stage08 156/156 with the fixed point, host frontend, SQLite
+identical, cfuzz 2,000 x 2, DOOM, graphics, rogue, ISLISP, interop,
+libc 27/0, stage07 5/0, and through a kit with the new cc: kit
+differential 132 + 2 rejected of 134, kit-tools 21/21,
+selfhost-libcob 492/0.
