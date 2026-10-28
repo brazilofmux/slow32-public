@@ -87,7 +87,7 @@
 6.10.8.1-file-in-header WRONG
 6.10.8.1-file-line WRONG
 6.10.8.1-stdc PASS
-6.10.8.1-stdc-hosted WRONG
+6.10.8.1-stdc-hosted PASS
 6.10.8.1-stdc-version WRONG
 6.10.8.2-environment PASS
 6.10.8.3-feature-atomics PASS
