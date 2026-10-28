@@ -4809,13 +4809,40 @@ static void cg_mark_data_refs(void) {
     }
 }
 
+static char cg_dce_buf[32768];
+static char cg_dce_tmp[1024];
+static int  cg_dce_in;              /* bytes of the original read so far */
+
+/* Copy bytes [a, b) of the original (open on fd, read up to cg_dce_in)
+ * to cg_fd, reading and discarding what lies before a. */
+static void cg_dce_copy(int fd, int a, int b) {
+    int want;
+    int n;
+    while (cg_dce_in < b) {
+        want = (int)sizeof(cg_dce_buf);
+        if (cg_dce_in < a && cg_dce_in + want > a) want = a - cg_dce_in;
+        if (cg_dce_in + want > b) want = b - cg_dce_in;
+        n = read(fd, cg_dce_buf, want);
+        if (n <= 0) {
+            fdputs("s12cc: dce: read failed\n", 2);
+            exit(1);
+        }
+        if (cg_dce_in >= a) {
+            if (write(cg_fd, cg_dce_buf, n) != n) {
+                fdputs("s12cc: dce: write failed\n", 2);
+                exit(1);
+            }
+            cg_file_pos = cg_file_pos + n;
+        }
+        cg_dce_in = cg_dce_in + n;
+    }
+}
+
 static void cg_dce_rewrite_text(void) {
     int i;
     int n;
-    int off;
     int total;
     int hdr;
-    char *buf;
     int fd;
     cg_stat_dce_drop = 0;
     cg_stat_dce_keep = 0;
@@ -4863,61 +4890,46 @@ static void cg_dce_rewrite_text(void) {
     cg_flush();
     total = cg_file_pos;
     if (total <= 0) return;
-    buf = malloc(total);
-    if (!buf) return;
+    /* Stream the kept ranges, in file order, into <output>.dce and rename
+     * it over the output: memory does not grow with the output.  It read
+     * the whole file into one malloc and, when that failed, silently kept
+     * every dead function -- SQLite's 5.5 MB of assembly needed it with
+     * the heap nearly full, so any growth of the AST changed the output
+     * (2026-10-28). */
     close(cg_fd);
     fd = open(cg_outpath, 1); /* O_RDONLY */
     if (fd < 0) {
-        free(buf);
         fdputs("s12cc: dce: cannot reopen output\n", 2);
         exit(1);
     }
-    off = 0;
-    while (off < total) {
-        n = read(fd, buf + off, total - off);
-        if (n <= 0) {
-            close(fd);
-            free(buf);
-            fdputs("s12cc: dce: read failed\n", 2);
-            exit(1);
-        }
-        off = off + n;
-    }
-    close(fd);
-    fd = open(cg_outpath, 26); /* O_WRONLY|O_CREAT|O_TRUNC */
-    if (fd < 0) {
-        free(buf);
-        fdputs("s12cc: dce: cannot rewrite output\n", 2);
+    n = strlen(cg_outpath);
+    if (n + 5 > (int)sizeof(cg_dce_tmp)) {
+        fdputs("s12cc: dce: output path too long\n", 2);
         exit(1);
     }
-    cg_fd = fd;
+    memcpy(cg_dce_tmp, cg_outpath, n);
+    memcpy(cg_dce_tmp + n, ".dce", 5);
+    cg_fd = open(cg_dce_tmp, 26); /* O_WRONLY|O_CREAT|O_TRUNC */
+    if (cg_fd < 0) {
+        fdputs("s12cc: dce: cannot write output\n", 2);
+        exit(1);
+    }
     cg_file_pos = 0;
+    cg_dce_in = 0;
     hdr = 0;
     if (cg_nfn > 0) hdr = cg_fn_start[0];
-    if (hdr > 0) {
-        n = write(cg_fd, buf, hdr);
-        if (n != hdr) {
-            fdputs("s12cc: dce: write failed\n", 2);
-            exit(1);
-        }
-        cg_file_pos = cg_file_pos + n;
-    }
+    if (hdr > 0) cg_dce_copy(fd, 0, hdr);
     i = 0;
     while (i < cg_nfn) {
-        if (cg_fn_live[i]) {
-            off = cg_fn_start[i];
-            n = cg_fn_end[i] - off;
-            if (n > 0) {
-                if (write(cg_fd, buf + off, n) != n) {
-                    fdputs("s12cc: dce: write failed\n", 2);
-                    exit(1);
-                }
-                cg_file_pos = cg_file_pos + n;
-            }
-        }
+        if (cg_fn_live[i] && cg_fn_end[i] > cg_fn_start[i])
+            cg_dce_copy(fd, cg_fn_start[i], cg_fn_end[i]);
         i = i + 1;
     }
-    free(buf);
+    close(fd);
+    if (rename(cg_dce_tmp, cg_outpath) != 0) {
+        fdputs("s12cc: dce: cannot replace output\n", 2);
+        exit(1);
+    }
 }
 
 static int cg_jt_keep(int ji) {

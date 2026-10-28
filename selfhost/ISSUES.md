@@ -3678,3 +3678,23 @@ identical, cfuzz 2,000 x 2, DOOM, graphics, rogue, ISLISP, interop,
 libc 27/0, stage07 5/0, and through a kit with the new cc: kit
 differential 132 + 2 rejected of 134, kit-tools 21/21,
 selfhost-libcob 492/0.
+
+### 101. [RESOLVED 2026-10-28] Dead-static removal gave up silently when the heap was nearly full, so AST growth changed SQLite's output
+
+`cg_dce_rewrite_text` read the whole output back with one `malloc` the
+size of the file and, if that failed, returned -- keeping every dead
+static function, with no message.  Compiling SQLite, stage08's heap (the
+linker's default 64 MB above 185 MB of static tables) was nearly full,
+and SQLite's 5.5 MB of assembly needed that buffer on top: adding three
+ints to `Node` (the attributes of docs/TYPES.md S2) tipped it, and 280
+inlined-and-dead statics reappeared in the output.  The compiler's own
+source, smaller, never showed it.  Bisected by switching the new
+attribute computation off (output still changed: the fields, not the
+values), then by finding that the extra functions had no references.
+
+The removal now streams: the kept ranges, in file order, through a fixed
+32 KB buffer into `<output>.dce`, renamed over the output.  Memory no
+longer grows with the output, and no path keeps dead code quietly.
+Output with the attributes is byte-identical to before them.  The heap
+margin itself is still thin (a SQLite-sized compile runs near 64 MB);
+the static tables (185 MB of BSS) are where room would come from.
