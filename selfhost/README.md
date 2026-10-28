@@ -27,6 +27,7 @@ Other checks at this level:
 - `verify-emu-sums.sh <label> <emu-path>`: rebuilds stages 1–8 under one emulator and compares against [`sha256sums.md`](sha256sums.md).
 - `isa-conformance/run-isa-conformance.sh`: a generated, self-checking instruction corpus run on every available engine.
 - `tools/layout-sweep.sh`: times a cross-built `s32fast-hir` across code-layout offsets.
+- `c-conformance/probe.sh`: stage08 cc against C11 chapter 6, one probe program per rule, clang as the oracle; [`c-conformance/coverage.md`](c-conformance/coverage.md) is the ranked gap list.
 
 Reference docs:
 
