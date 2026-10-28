@@ -8543,21 +8543,28 @@ void cob_inspect_backward(void) { cin.backward = 1; }
  * calls with the same literals) and the sweep kernel; one TALLYING phrase
  * FOR CHARACTERS or FOR ALL of one byte: the count into phrase 0, which
  * cob_inspect_count(0) then hands the compiler's ADD. */
+/* from and to are literals (verbs.h emits nothing else), in .rodata, so
+ * the table's key is their addresses: two memcmps of the 26 letters were
+ * 4% of kstring.  The bytes stay the second key: the same literal at
+ * another address (another program's copy) keeps the table. */
 void cob_inspect_convert_plain(char *item, int n, const char *from, int fl, const char *to)
 {
-    static unsigned char tab[256], cfrom[256], cto[256]; static int cn = -1;
-    if (!(fl == cn && fl <= 256 && !memcmp(from, cfrom, (size_t)fl) && !memcmp(to, cto, (size_t)fl))) {
+    static unsigned char tab[256], cfrom[256], cto[256]; static int cn = -1; static const char *pfrom, *pto;
+    if (!(fl == cn && from == pfrom && to == pto) &&
+        !(fl == cn && fl <= 256 && !memcmp(from, cfrom, (size_t)fl) && !memcmp(to, cto, (size_t)fl))) {
         for (int c = 0; c < 256; c++) tab[c] = (unsigned char)c;
         for (int i = fl - 1; i >= 0; i--) tab[(unsigned char)from[i]] = (unsigned char)to[i];
         if (fl <= 256) { memcpy(cfrom, from, (size_t)fl); memcpy(cto, to, (size_t)fl); cn = fl; } else cn = -1;
     }
+    pfrom = from; pto = to;
     if (n > 0) cob_bytes_xlat((unsigned char *)item, n, tab);
 }
 void cob_inspect_tally_plain(char *item, int n, int kind, int c)
 {
     cin.np = 1; cin.ph[0].tallying = 1; cin.ph[0].kind = kind; cin.ph[0].done = 0; cin.ph[0].count = 0;
     if (kind == 0) { cin.ph[0].count = n; return; }
-    unsigned char who[256]; memset(who, 0xFF, sizeof who); who[(unsigned char)c] = 0;
+    static unsigned char who[256]; static int wc = -1;     /* the phrase table, kept while the byte is the same */
+    if (wc != (unsigned char)c) { memset(who, 0xFF, sizeof who); who[(unsigned char)c] = 0; wc = (unsigned char)c; }
     unsigned char rep = 0, tally = 1; int cnt = 0;
     if (n > 0) cob_bytes_sweep((unsigned char *)item, n, who, &rep, &tally, &cnt, 1);
     cin.ph[0].count = cnt;

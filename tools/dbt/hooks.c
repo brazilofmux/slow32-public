@@ -227,8 +227,12 @@ static int hk_cob_bytes_sweep(dbt_cpu_state_t *cpu, uint8_t *mem)
     const unsigned char *who = hk_ptr(cpu, mem, R(5), 256, 0), *rep = hk_ptr(cpu, mem, R(6), (uint32_t)np, 0), *tally = hk_ptr(cpu, mem, R(7), (uint32_t)np, 0);
     int *cnt = hk_ptr(cpu, mem, R(8), (uint32_t)np * 4, 1);
     if (!p || !who || !rep || !tally || !cnt) return HK_DECLINE;
-    // who[] must name phrases below np, else the kernel would read past rep/tally/cnt
-    for (int b = 0; b < 256; b++) if (who[b] != 255 && who[b] >= np) return HK_DECLINE;
+    // who[] must name phrases below np, else the kernel would read past rep/tally/cnt;
+    // no early exit, so the check vectorizes (with one it was most of
+    // kstring's time: 256 bytes looked at one by one to sweep 60)
+    unsigned bad = 0;
+    for (int b = 0; b < 256; b++) bad |= (who[b] != 255) & (who[b] >= np);
+    if (bad) return HK_DECLINE;
     cob_k_bytes_sweep(p, n, who, rep, tally, cnt, np);
     return HK_DONE;
 }
