@@ -1140,72 +1140,37 @@ static void add_anonymous_aggregate_members(int owner_si, int nested_ty, int bas
     }
 }
 
-/* --- Bit-field allocation (C99 6.7.2.1) ---
+/* --- Bit-field allocation (6.7.2.1p11) ---
  *
- * State is per-struct: kept in a 3-int array (bs[0]=uoff, bs[1]=usize,
- * bs[2]=ubits) so nested struct definitions don't clobber each other.
- * uoff = -1 means no active storage unit.  Packing is LSB-first
- * (little-endian), matching gcc/clang on slow-32 / x64 / aarch64; no
- * straddling across units.
+ * The layout is clang's, so a structure means the same bytes to both
+ * compilers: a field of type T takes the next free bit, low bits first,
+ * unless it would cross a boundary T is aligned to -- then it starts at
+ * that boundary; `:0` moves to the next boundary of its type.  The bits
+ * share bytes with the members around them (`char c; unsigned x : 3;` is
+ * 4 bytes, x in the second), and only a named field gives the structure
+ * its type's alignment.  The old layout opened a fresh T-aligned unit
+ * whenever the type changed or a field did not fit, so
+ * `{unsigned x : 3; _Bool f : 1;}` was 8 bytes to clang's 4 (W13).
  *
- * Subsequent bit-fields of the same base type pack into the same unit
- * until either the next field won't fit or the base type's size changes,
- * at which point a fresh unit is opened at the aligned byte cursor.
+ * *bfbit, per structure so nested definitions keep their own: the bit
+ * after the last bit-field, or -1 when the last member was not one and
+ * the next starts at the byte cursor *cur_off.
  *
- * Bundling the unit state keeps every helper's parameter list at or
- * below 7 — the selfhost compiler's stack-arg handling is unreliable
- * past 8 register args, so we stay well clear.
- */
-#define BF_UOFF  0
-#define BF_USIZE 1
-#define BF_UBITS 2
-
-static void bf_alloc(int dty, int width,
-                     int *cur_off, int *max_align, int *bs,
-                     int *byte_off_out, int *bit_off_out) {
-    int u_size;
-    int u_align;
-    int need_new;
-    int aligned;
-    u_size = ty_size(dty);
-    u_align = ty_align(dty);
-    need_new = (bs[BF_UOFF] < 0) || (bs[BF_USIZE] != u_size) ||
-               (bs[BF_UBITS] + width > u_size * 8);
-    if (need_new) {
-        aligned = ((*cur_off + u_align - 1) / u_align) * u_align;
-        bs[BF_UOFF]  = aligned;
-        bs[BF_USIZE] = u_size;
-        bs[BF_UBITS] = 0;
-        *cur_off = aligned + u_size;
-    }
-    if (u_align > *max_align) *max_align = u_align;
-    *byte_off_out = bs[BF_UOFF];
-    *bit_off_out  = bs[BF_UBITS];
-    bs[BF_UBITS]  = bs[BF_UBITS] + width;
-}
-
-/* :0 — flush the current unit so the next bit-field starts fresh, and
- * align the byte cursor to dty's alignment if no unit is active. */
-static void bf_flush_for_zero(int dty, int *cur_off, int *max_align, int *bs) {
-    int u_align;
-    int aligned;
-    u_align = ty_align(dty);
-    if (bs[BF_UOFF] < 0) {
-        aligned = ((*cur_off + u_align - 1) / u_align) * u_align;
-        *cur_off = aligned;
-    }
-    if (u_align > *max_align) *max_align = u_align;
-    bs[BF_UOFF]  = -1;
-    bs[BF_USIZE] = 0;
-    bs[BF_UBITS] = 0;
-}
-
-/* Close any open unit before a non-bit-field member; cur_off was already
- * advanced past the unit when it was opened, so just reset state. */
-static void bf_close(int *bs) {
-    bs[BF_UOFF]  = -1;
-    bs[BF_USIZE] = 0;
-    bs[BF_UBITS] = 0;
+ * bf_alloc places a field of width bits (0 for `:0`) and returns the
+ * byte offset of the T-sized unit the lowering loads and stores, its bit
+ * offset within that unit in *bit_off_out; *cur_off becomes the first
+ * byte wholly past the bits. */
+static int bf_alloc(int dty, int width, int *cur_off, int *bfbit, int *bit_off_out) {
+    int ubits;
+    int p;
+    ubits = ty_align(dty) * 8;
+    p = *bfbit >= 0 ? *bfbit : *cur_off * 8;
+    if (width == 0 || p / ubits != (p + width - 1) / ubits)
+        p = ((p + ubits - 1) / ubits) * ubits;
+    *bfbit = p + width;
+    *cur_off = (*bfbit + 7) / 8;
+    *bit_off_out = p % ubits;
+    return (p / ubits) * ty_align(dty);
 }
 
 /* Bit-fields are restricted to integer base types no wider than 32 bits.
@@ -1414,7 +1379,7 @@ static int parse_type(void) {
         if (lex_tok == TK_LBRACE) {
             /* Struct definition: struct Name { ... } */
             int max_align;
-            int bs[3];      /* bit-field storage-unit state; see bf_alloc */
+            int bfbit;      /* the bit-field cursor; see bf_alloc */
             next();
             if (si < 0) {
                 si = add_struct(nm);
@@ -1423,9 +1388,7 @@ static int parse_type(void) {
             }
             off = 0;
             max_align = 1;
-            bs[BF_UOFF]  = -1;
-            bs[BF_USIZE] = 0;
-            bs[BF_UBITS] = 0;
+            bfbit = -1;
             while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
                 mty = parse_type();
                 mcty = ps_type_cty;
@@ -1469,12 +1432,7 @@ static int parse_type(void) {
                             p_error("bit-field width exceeds type size");
                             return TY_INT;
                         }
-                        if (bf_width == 0) {
-                            bf_flush_for_zero(dty, &off, &max_align, bs);
-                        } else {
-                            bf_alloc(dty, bf_width, &off, &max_align, bs,
-                                     &bf_byte_off, &bf_bit_off);
-                        }
+                        bf_alloc(dty, bf_width, &off, &bfbit, &bf_bit_off);
                         goto struct_comma_check;
                     }
                     is_fn_ptr_member = 0;
@@ -1484,7 +1442,7 @@ static int parse_type(void) {
                     if (lex_tok == TK_SEMI && ty_is_struct(member_ty)) {
                         int malign;
                         require_complete_type(member_ty, "incomplete anonymous struct member");
-                        bf_close(bs);
+                        bfbit = -1;
                         malign = ty_align(member_ty);
                         if (malign > 1)
                             off = ((off + malign - 1) / malign) * malign;
@@ -1560,9 +1518,7 @@ static int parse_type(void) {
                         }
                     }
                     /* Named bit-field: 'type name :W;'.  Must run BEFORE the
-                     * non-bit-field bf_close/alignment block below — otherwise
-                     * each named bit-field would clear the storage-unit state
-                     * and start a fresh unit instead of packing. */
+                     * non-bit-field block below, which ends the run of bits. */
                     if (!is_fn_ptr_member && lex_tok == TK_COLON) {
                         next();
                         bf_width = parse_const_int();
@@ -1579,8 +1535,8 @@ static int parse_type(void) {
                             p_error("bit-field width exceeds type size");
                             return TY_INT;
                         }
-                        bf_alloc(dty, bf_width, &off, &max_align, bs,
-                                 &bf_byte_off, &bf_bit_off);
+                        bf_byte_off = bf_alloc(dty, bf_width, &off, &bfbit, &bf_bit_off);
+                        if (ty_align(dty) > max_align) max_align = ty_align(dty);
                         stm_owner[stm_count] = si;
                         stm_type[stm_count] = dty;
                         stm_vol[stm_count] = ps_type_volb;
@@ -1598,10 +1554,9 @@ static int parse_type(void) {
                         goto struct_comma_check;
                     }
                     /* Past the bit-field check: this is a regular member.
-                     * End any open bit-field unit (cur_off was already
-                     * advanced past it) and align off to the member's
-                     * natural alignment. */
-                    bf_close(bs);
+                     * It ends a run of bit-fields (off is already past
+                     * their bits) and aligns off to its own alignment. */
+                    bfbit = -1;
                     {
                         int malign = ty_align(member_ty);
                         if (malign > 1)
@@ -1709,9 +1664,8 @@ static int parse_type(void) {
                 }
             }
             expect(TK_RBRACE);
-            /* Any trailing bit-field unit is implicitly closed here.  The
-             * byte cursor `off` is already past it (bf_alloc advances
-             * cur_off when opening the unit), so sizeof is correct. */
+            /* The byte cursor `off` is past any trailing bit-fields
+             * (bf_alloc keeps it there), so sizeof is correct. */
             /* Round total size up to the struct's alignment so that arrays
              * of struct keep each element naturally aligned.  The historical
              * "round to 4" rule is a special case of this when max_align <= 4. */

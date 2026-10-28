@@ -267,6 +267,23 @@ now signed; the same answer for every value they hold); the compiler
 itself, byte-identical.  Probes `6.3.1.1-bitfield-promote`,
 `6.7.2.1-bitfield-promote`, `6.3.1.1-bitfield-widths`.
 
+**S3, bit-field layout** (2026-10-28, W13): bit-fields are laid out as
+clang lays them out, so a structure is the same bytes to both compilers
+-- the next free bit unless a field would cross a boundary its type is
+aligned to, `:0` to the next boundary, bits sharing bytes with the
+members beside them, alignment from named fields only (`bf_alloc`, one
+bit cursor where three words of unit state were).  The old layout
+opened a fresh unit whenever the type changed or a field did not fit:
+`{unsigned x : 3; _Bool f : 1;}` was 8 bytes to clang's 4.  Checked on
+SQLite by a generated program that prints, for every structure with
+bit-fields (62 of its 73 fields), each member's offset and the bytes
+each field occupies when set to all ones: 134 lines differed from
+clang's build, now none that bit-fields cause.  What is left there is
+not layout: stage08 does not define `__STDC_VERSION__`, so SQLite's
+`FLEXARRAY` is `[1]` (W15), and a typedef'd `unsigned char[16]` member
+is aligned to 4 (`6.7.8-typedef-array-align`).  run-interop-llvm.sh
+gains a bit-field structure each side writes and the other reads.
+
 ## Constraints on the work
 
 - stage07 builds stage08: the new code keeps stage07's dialect (ints

@@ -65,6 +65,19 @@ int mixlayout(struct Mix *m) {
     m->t = 78;
     return 0;
 }
+/* Bit-field LAYOUT across the boundary (W13): bits share bytes with
+ * the members around them, a field that would cross its type's
+ * boundary starts at the next one, :0 skips to a boundary.  Each side
+ * writes fields the other reads. */
+struct Bits { char c; unsigned a : 3; _Bool f : 1; unsigned short h : 9;
+              char e; unsigned w : 30; int : 0; signed char s : 4; };
+int bitslayout(struct Bits *b) {
+    if (sizeof(struct Bits) != 16) return -1;
+    if (b->c != 'b' || b->a != 5 || b->f != 1 || b->h != 300 || b->e != 'e' ||
+        b->w != 0x2345678 || b->s != -3) return -2;
+    b->a = 2; b->h = 511; b->s = 7; b->w = 1;
+    return 0;
+}
 /* s12cc caller -> LLVM-built byval callee: the callee mutates its
  * copy; our local must come back untouched (proves the caller-side
  * copy). */
@@ -92,6 +105,7 @@ int drive_promote(void) {
 EOF
 cat > "$W/main_clang.c" <<'EOF'
 #include <stdio.h>
+#include <string.h>
 extern int add3(int, int, int);
 extern int sum9(int,int,int,int,int,int,int,int,int);
 extern unsigned long long mul64(unsigned long long, unsigned int);
@@ -105,6 +119,9 @@ struct Big { int a[6]; };
 extern int bigmix(int,int,int,int,int,int,int,int, struct Big, int, int);
 struct Mix { char c; double d; int t; };
 extern int mixlayout(struct Mix *m);
+struct Bits { char c; unsigned a : 3; _Bool f : 1; unsigned short h : 9;
+              char e; unsigned w : 30; int : 0; signed char s : 4; };
+extern int bitslayout(struct Bits *b);
 extern int drive_cmut(void);
 extern int drive_promote(void);
 long long negate64(long long v) { return -v; }
@@ -130,6 +147,12 @@ int main(void) {
     if (sizeof(struct Mix) != 16 || mixlayout(&mx) != 0 || mx.t != 78) {
         fail = 1; printf("GATE struct-layout FAIL\n");
     }
+    struct Bits bt; memset(&bt, 0, sizeof bt);
+    bt.c = 'b'; bt.a = 5; bt.f = 1; bt.h = 300; bt.e = 'e'; bt.w = 0x2345678; bt.s = -3;
+    if (sizeof(struct Bits) != 16 || bitslayout(&bt) != 0 || bt.c != 'b' || bt.a != 2 ||
+        bt.f != 1 || bt.h != 511 || bt.e != 'e' || bt.w != 1 || bt.s != 7) {
+        fail = 1; printf("GATE bit-field-layout FAIL\n");
+    }
     if (!fail) printf("INTEROP OK\n");
     return fail;
 }
@@ -144,6 +167,7 @@ EOF
 "$AS" "$SCRIPT_DIR/builtins_fp64.s" "$W/bfp64.s32o" >/dev/null
 "$LD" -o "$W/interop.s32x" "$ROOT/runtime/crt0.s32o" "$W/main.s32o" "$W/lib_s12.s32o" \
       "$W/b64.s32o" "$W/bfp64.s32o" "$ROOT/runtime/libc_debug.s32a" "$ROOT/runtime/libs32.s32a" >/dev/null
-out="$("$RUN" "$W/interop.s32x" 2>&1)"
+# main returns nonzero when a gate fails: keep going, so the gate is named
+out="$("$RUN" "$W/interop.s32x" 2>&1)" || true
 echo "$out" | grep -E "GATE|diverge|INTEROP"
 echo "$out" | grep -q "INTEROP OK" && echo "PASS: LLVM<->stage08 scalar interop" || { echo "FAIL"; exit 1; }

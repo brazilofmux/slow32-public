@@ -333,8 +333,9 @@
 6.7.2.1-anonymous PASS
 6.7.2.1-bitfield-address DIAG
 6.7.2.1-bitfield-init REJECTS
-6.7.2.1-bitfield-layout WRONG
+6.7.2.1-bitfield-layout PASS
 6.7.2.1-bitfield-promote PASS
+6.7.2.1-bitfield-share PASS
 6.7.2.1-bitfield-too-wide DIAG
 6.7.2.1-bitfield-zero-named DIAG
 6.7.2.1-bitfields PASS

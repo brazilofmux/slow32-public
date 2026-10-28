@@ -27,8 +27,8 @@ set at once, with one probe added since, `6.5.5-double-times-pow2-int`.)
 `&function` accepted; `probe.sh --check` against `verdicts.txt` now
 gates every change.  Then the type work (docs/TYPES.md): S3 fixed W2,
 `_Bool`; comparison and pointer-difference types; W12, `sizeof` of
-computed values and bit-field promotion (195 PASS, 26 WRONG, 83
-REJECTS, 81 DIAG, 135 ACCEPTS).  The tables below are the survey as
+computed values and bit-field promotion; W13, bit-field layout now
+clang's (197 PASS, 25 WRONG, 83 REJECTS, 81 DIAG, 135 ACCEPTS).  The tables below are the survey as
 taken.
 
 The 52 WRONG probes come from about fifteen defects, listed below by
