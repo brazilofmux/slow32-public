@@ -33,6 +33,7 @@ Reference docs:
 
 - [`docs/BOOTSTRAP.md`](docs/BOOTSTRAP.md) — canonical bootstrap roadmap: the stages as they exist, the sibling cross-compiler track, the trust model, and how the original sixteen-stage plan became these nine.
 - [`docs/DIALECT.md`](docs/DIALECT.md) — live C dialect map (what `src/` actually supports; plan dialect work here).
+- [`docs/TYPES.md`](docs/TYPES.md) — the plan for real C types and an attribute-grammar sema (C types vs machine types, the attributes, steps S1-S6).
 - [`TOOL-NAMING.md`](TOOL-NAMING.md) — tool-name conventions across the stages.
 - [`ISSUES.md`](ISSUES.md) — code-review findings (closed and active) across the toolchain.
 
