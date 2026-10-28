@@ -9,7 +9,7 @@ common HIR infrastructure used by:
 
 ## What lives here
 
-- Lexer + parser + sema + AST (`c_lexer*`, `ast.h`, `parser.h`, `sema.h`, ...)
+- Lexer + parser + sema + AST (`c_lexer*`, `ast.h`, `ctype.h` -- the C type table, `parser.h`, `sema.h`, ...)
 - Preprocessor (`pp.h`) and the AST-level optimizer (`optimize.h`)
 - Common HIR/SSA/optimizer pieces (`hir*.h` except target-specific backends)
 - Generation script for the Ragel lexer (`gen_lexer.sh`, `c_lexer.rl`)

@@ -63,9 +63,9 @@ and qualification is a mask on the handle (`ct_unqual(t) = t & ~7`).
 it differs from identity: incomplete arrays, functions without
 prototypes, enum against its integer type.
 
-The table follows the tools' style: parallel global arrays growing
-through `s32vec.h` (no ceiling), ints and `char *` only, so stage07
-compiles it.
+The table is `src/ctype.h`: parallel global arrays of fixed capacity,
+as the compiler's other tables (an error when one fills), ints and
+`char *` only, so stage07 compiles it.
 
 ## The attribute grammar
 

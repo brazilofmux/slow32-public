@@ -28,7 +28,7 @@ CC_DEPS = cc-x64.c hir_regalloc_x64.h hir_codegen_x64.h hir_burg_x64.h \
           x64_encode.h elf_writer.h obj_writer.h codegen_x64.h libc_x64.h \
           ../src/hir.h ../src/hir_lower.h ../src/hir_alias.h ../src/hir_ssa.h \
           ../src/hir_opt.h ../src/hir_licm.h ../src/hir_burg.h \
-          ../src/parser.h ../src/ast.h ../src/sema.h \
+          ../src/parser.h ../src/ast.h ../src/ctype.h ../src/sema.h \
           ../src/optimize.h ../src/pp.h c_lexer_gen.c ../src/c_lexer_gen.c ../src/c_lexer.rl
 
 .PHONY: all test bench clean libc diff-test check-frontend

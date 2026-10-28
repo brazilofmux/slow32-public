@@ -570,3 +570,6 @@ static Node *nd_asm(char *tmpl, Node *out, Node *in, int kind, int nin) {
     else n->ty = TY_INT;
     return n;
 }
+
+/* C types (docs/TYPES.md): after the struct tables they index. */
+#include "ctype.h"

@@ -2,7 +2,7 @@
 # All C sources compiled by Stage 07 compiler, assembled by Stage 07 s32-as.s32x,
 # linked by Stage 07 s32-ld.s32x.
 
-COMPILER_SRCS = s12cc.c c_lexer_gen.c ast.h parser.h sema.h optimize.h pp.h \
+COMPILER_SRCS = s12cc.c c_lexer_gen.c ast.h ctype.h parser.h sema.h optimize.h pp.h \
                 hir.h hir_lower.h hir_alias.h hir_ssa.h hir_opt.h hir_licm.h \
                 hir_burg.h hir_regalloc.h hir_codegen.h
 LIBC_SRCS = libc/start.c libc/stdio.c libc/string_extra.c libc/string_more.c libc/ctype.c libc/convert.c libc/malloc.c libc/posix_fs.c libc/posix_time.c libc/posix_math.c libc/posix_proc.c
