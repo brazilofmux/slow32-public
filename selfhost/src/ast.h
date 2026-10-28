@@ -43,6 +43,7 @@ static int   st_count;
 
 static char *stm_name[ST_MAX_MEMBERS];
 static int   stm_type[ST_MAX_MEMBERS];
+static int   stm_cty[ST_MAX_MEMBERS];   /* the member's C type (ctype.h), docs/TYPES.md */
 static int   stm_vol[ST_MAX_MEMBERS];  /* declared volatile */
 static int   stm_off[ST_MAX_MEMBERS];
 static int   stm_is_arr[ST_MAX_MEMBERS]; /* 1 if array member (address, no load) */

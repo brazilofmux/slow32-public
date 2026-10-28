@@ -303,6 +303,16 @@ static void sema_cty_report(Node *n) {
     fdputs("\n", 2);
 }
 
+/* S12CC_CTY_CHECK=1: a node whose C type nothing gave, rebuilt from its
+ * machine type -- the measure of how far S2 has to go. */
+static void sema_cty_rebuilt(Node *n) {
+    if (sema_cty_check < 0) sema_cty_check = getenv("S12CC_CTY_CHECK") != 0;
+    if (!sema_cty_check) return;
+    fdputs("cty-rebuilt kind=", 2);
+    fdputuint(2, (unsigned)n->kind);
+    fdputs("\n", 2);
+}
+
 /* The C type of an operator's result, from its operands' (6.5).  Kinds
  * without a rule yet keep a type rebuilt from the machine type. */
 static void sema_cty_node(Node *n) {
@@ -350,8 +360,19 @@ static void sema_cty_node(Node *n) {
         if (ct_is_arith(l) && ct_is_arith(r)) n->cty = ct_usual(l, r);
         else if (l == r) n->cty = l;
         else { n->cty = ct_from_mty(n->ty, 0); return; }
+    } else if (n->kind == ND_MEMBER && n->cty > 0) {
+        /* a member of a qualified structure is qualified too (6.5.2.3p3) */
+        n->cty = ct_qualify(n->cty, ct_qual(sema_cty_of(n->lhs)));
+    } else if (n->kind == ND_NUM || n->kind == ND_FNUM) {
+        /* a constant's type is the lexer's, from its suffix and value
+         * (6.4.4.1p5, 6.4.4.2p4): the machine type says it */
+        n->cty = ct_from_mty(n->ty, 0);
+        return;
+    } else if (n->cty > 0) {
+        /* the parser gave it one: a cast's named type */
     } else {
-        if (n->cty <= 0) n->cty = ct_from_mty(n->ty, 0);
+        n->cty = ct_from_mty(n->ty, 0);
+        sema_cty_rebuilt(n);
         return;
     }
     sema_cty_report(n);

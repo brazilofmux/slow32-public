@@ -167,6 +167,22 @@ static int ps_tok_volatile(void) {
     return lex_tok == TK_IDENT && strncmp(lex_str, "__volatile", 10) == 0;
 }
 
+/* A struct member's C type, from what its registration recorded: an
+ * array of its element (a row of arr_cols for a 2-D one), or the
+ * object type -- the one parse_type built when it agrees (ps_obj_cty). */
+static int ps_member_cty(int mi) {
+    int elem;
+    int esz;
+    int count;
+    if (!stm_is_arr[mi]) return ps_obj_cty(stm_type[mi]);
+    elem = ps_obj_cty(ty_deref(stm_type[mi]));
+    esz = ty_size(ty_deref(stm_type[mi]));
+    count = (esz > 0 && stm_arr_size[mi] > 0) ? stm_arr_size[mi] / esz : -1;
+    if (stm_arr_cols[mi] > 0 && count > 0)
+        return ct_array(ct_array(elem, stm_arr_cols[mi]), count / stm_arr_cols[mi]);
+    return ct_array(elem, count);
+}
+
 /* The qualifier a qualifier token adds to a C type (0 for an attribute
  * or other GNU qualifier word). */
 static int ps_tok_cq(void) {
@@ -1007,6 +1023,7 @@ static void add_anonymous_aggregate_members(int owner_si, int nested_ty, int bas
     stm_arr_size[stm_count] = 0;
     stm_owner[stm_count] = owner_si;
     stm_synth[stm_count] = 0;
+    stm_cty[stm_count] = ps_member_cty(stm_count);
     stm_count = stm_count + 1;
     st_nfields[owner_si] = st_nfields[owner_si] + 1;
 
@@ -1024,6 +1041,7 @@ static void add_anonymous_aggregate_members(int owner_si, int nested_ty, int bas
             stm_fpn[stm_count] = stm_fpn[i];
             stm_isfp[stm_count] = stm_isfp[i];
             stm_type[stm_count] = stm_type[i];
+            stm_cty[stm_count] = stm_cty[i];
             stm_vol[stm_count] = stm_vol[i];
             stm_off[stm_count] = base_off + stm_off[i];
             stm_is_arr[stm_count] = stm_is_arr[i];
@@ -1141,6 +1159,8 @@ static int ps_base_cty(int ty, int ckhint, int td_cty, int is_const, int is_vol)
 static int parse_type(void) {
     int saw_signed;
     int lead_const;
+    int mcty;            /* a member declaration's C type ... */
+    int mbase_cty;       /* ... and its base, for the declarators after a comma */
     int ckhint;          /* a CT_ kind the int encoding loses: long, signed char, long double, enum */
     int td_cty;          /* the base came from a typedef: its C type */
     int ty;
@@ -1325,6 +1345,8 @@ static int parse_type(void) {
             bs[BF_UBITS] = 0;
             while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
                 mty = parse_type();
+                mcty = ps_type_cty;
+                mbase_cty = ps_type_nostar_cty;
                 mtdac = ps_type_arrcount;
                 first_decl = 1;
                 flex_member = 0;
@@ -1339,11 +1361,12 @@ static int parse_type(void) {
 
                     if (first_decl) {
                         dty = mty;
+                        ps_type_cty = mcty;
                         first_decl = 0;
                     } else {
                         dty = mty;
                         while (ty_is_ptr(dty)) dty = ty_deref(dty);
-                        while (lex_tok == TK_STAR) { dty = dty + TY_PTR; next(); }
+                        dty = ps_declarator_stars(dty, mbase_cty);
                     }
                     /* Anonymous bit-field: 'type :W;' — reserves bits, no
                      * member entry; ':0' flushes the current storage unit. */
@@ -1484,6 +1507,7 @@ static int parse_type(void) {
                         stm_synth[stm_count] = 0;
                         stm_bit_off[stm_count] = bf_bit_off;
                         stm_bit_width[stm_count] = bf_width;
+                        stm_cty[stm_count] = ps_member_cty(stm_count);
                         stm_count = stm_count + 1;
                         st_nfields[si] = st_nfields[si] + 1;
                         skip_gnu_decl_suffixes();
@@ -1587,6 +1611,7 @@ static int parse_type(void) {
                         stm_synth[stm_count] = 0;
                         off = off + ty_size(member_ty);
                     }
+                    stm_cty[stm_count] = ps_member_cty(stm_count);
                     stm_count = stm_count + 1;
                     st_nfields[si] = st_nfields[si] + 1;
                 struct_comma_check:
@@ -1648,6 +1673,8 @@ static int parse_type(void) {
             max_align = 1;
             while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
                 mty = parse_type();
+                mcty = ps_type_cty;
+                mbase_cty = ps_type_nostar_cty;
                 first_decl = 1;
                 while (1) {
                     int is_fn_ptr_member;
@@ -1658,11 +1685,12 @@ static int parse_type(void) {
 
                     if (first_decl) {
                         dty = mty;
+                        ps_type_cty = mcty;
                         first_decl = 0;
                     } else {
                         dty = mty;
                         while (ty_is_ptr(dty)) dty = ty_deref(dty);
-                        while (lex_tok == TK_STAR) { dty = dty + TY_PTR; next(); }
+                        dty = ps_declarator_stars(dty, mbase_cty);
                     }
                     /* Anonymous bit-field in union: 'type :W;' — affects
                      * sizeof / alignment only.  Unions don't pack, so
@@ -1798,6 +1826,7 @@ static int parse_type(void) {
                         stm_synth[stm_count] = 0;
                         stm_bit_off[stm_count] = 0;
                         stm_bit_width[stm_count] = bf_width;
+                        stm_cty[stm_count] = ps_member_cty(stm_count);
                         stm_count = stm_count + 1;
                         st_nfields[si] = st_nfields[si] + 1;
                         if (ty_size(dty) > max_sz) max_sz = ty_size(dty);
@@ -1848,6 +1877,7 @@ static int parse_type(void) {
                         malign = ty_align(member_ty);
                         if (malign > max_align) max_align = malign;
                     }
+                    stm_cty[stm_count] = ps_member_cty(stm_count);
                     stm_count = stm_count + 1;
                     st_nfields[si] = st_nfields[si] + 1;
                 union_comma_check:
@@ -2366,12 +2396,18 @@ static int ps_sizeof_type_tail(int ty, int tdn) {
  * declarator, T (*)(params) or T (**)(params) -- SQLite's
  * (void(*)(void*))0 -- is an opaque pointer here. */
 static int ps_abstract_fnptr(int ty) {
+    int nstar;
     if (lex_tok != TK_LPAREN) return ty;
     next();
     if (lex_tok != TK_STAR) { p_error("expected * in abstract declarator"); return ty; }
-    while (lex_tok == TK_STAR) { next(); skip_decl_qualifiers(); }
+    nstar = 0;
+    while (lex_tok == TK_STAR) { next(); skip_decl_qualifiers(); nstar = nstar + 1; }
     expect(TK_RPAREN);
     if (lex_tok == TK_LPAREN) { next(); p_skip_to_rparen(); }
+    /* the C type: that many pointers to a function returning the type
+     * read so far (its parameters are not recorded yet) */
+    ps_type_cty = ct_func(ps_type_cty, 0, -1, 0);
+    while (nstar > 0) { ps_type_cty = ct_ptr(ps_type_cty); nstar = nstar - 1; }
     return TY_PTR + TY_INT;
 }
 
@@ -3921,6 +3957,7 @@ static Node *parse_gnu_asm_stmt(void) {
 static Node *parse_compound_literal_expr(int ty, int arr_count);
 
 static Node *parse_primary(void) {
+    int cast_cty;
     int cast_vol;
     Node *n;
     int v;
@@ -4264,6 +4301,7 @@ static Node *parse_primary(void) {
                 }
             }
             ty = ps_abstract_fnptr(ty);   /* (int (**)(sqlite3_vtab *))p */
+            cast_cty = ps_type_cty;       /* before the operand runs parse_type again */
             skip_decl_qualifiers();
             expect(TK_RPAREN);
             if (lex_tok == TK_LBRACE) {
@@ -4272,6 +4310,7 @@ static Node *parse_primary(void) {
             if (arr_count != 0) p_error("array cast unsupported");
             n = parse_unary();
             n = nd_cast(n, ty);
+            n->cty = cast_cty;
             if (cast_vol && ty_is_ptr(ty)) n->is_volptr = 1;   /* (volatile u8 *)REG */
             return n;
         }
@@ -4433,6 +4472,7 @@ static Node *parse_postfix_from(Node *n) {
             }
             n = nd_member(n, stm_off[mi], stm_type[mi], stm_is_arr[mi], stm_arr_size[mi],
                           stm_bit_off[mi], stm_bit_width[mi]);
+            n->cty = stm_cty[mi];     /* sema adds the structure's qualifiers */
             if (stm_vol[mi]) ps_var_vol(n, stm_type[mi], stm_is_arr[mi], 1, 0);
             n->offset = stm_fpbase[mi];
             n->nparams = stm_fpn[mi];
@@ -4461,6 +4501,7 @@ static Node *parse_postfix_from(Node *n) {
             }
             n = nd_member(n, stm_off[mi], stm_type[mi], stm_is_arr[mi], stm_arr_size[mi],
                           stm_bit_off[mi], stm_bit_width[mi]);
+            n->cty = stm_cty[mi];     /* sema adds the structure's qualifiers */
             if (stm_vol[mi]) ps_var_vol(n, stm_type[mi], stm_is_arr[mi], 1, 0);
             n->offset = stm_fpbase[mi];
             n->nparams = stm_fpn[mi];
