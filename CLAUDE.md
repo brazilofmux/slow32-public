@@ -359,17 +359,27 @@ cd ~/slow-32/regression && ./run-libc-differential.sh
 # array indexes, counted loops that the unroller and peeler take, switch,
 # break/continue, calls; in the wide profile also globals, pointers into
 # locals/arrays/fields, structs by value, 64-bit, signed in range, doubles,
-# while/do, goto -- with at most one call per full expression and none
-# beside shared memory, C leaving that order open) and requires stage08's
-# output to match clang's;
+# while/do, goto, calls through function-pointer tables -- with at most one
+# call per full expression and none beside shared memory, C leaving that
+# order open) and requires stage08's output to match clang's at -O2 AND -Os;
 # llc runs with -verify-machineinstrs (a failure is `clang-verify`);
 # when they differ it asks the host compiler, and a case where stage08
 # agrees with the host is `clang-differs` (an LLVM backend bug, not ours).
 # Its first day (2026-10-27) found seven stage08 defects the harnesses
 # above had all passed, several in the kit for weeks.  `reduce SEED`
-# shrinks a failure to a test for selfhost/stage08/tests.  ~3,000/min (M5).
+# shrinks a failure to a test for selfhost/stage08/tests.  ~1,400/min wide,
+# ~2,200 narrow (M5; clang builds each program twice).
 cd ~/slow-32/regression && ./run-stage08-fuzz.sh            # 2,000 seeds x 2 profiles
 cd ~/slow-32/regression/fuzz && ./cfuzz.py reduce SEED --profile wide   # shrink one
+
+# And after ANY change under llvm/lib/Target/SLOW32: the LLVM machine
+# verifier over every C library clang builds for SLOW-32 (runtime, libcob,
+# libf77, SQLite; 90 units).  Output-comparing gates see a backend defect
+# only when some program's answer changes; the verifier sees it in every
+# function.  It had been rejecting a wrong-code GPRPair spill bug all along,
+# unrun, and found two more defects the day it was turned on (2026-10-27).
+# Self-validating (an older llc fails it).  ~7 seconds.
+cd ~/slow-32/regression && ./run-llvm-verify.sh
 
 # Forth kernel (the stage01 bootstrap seed): the kernel's own tests, then the
 # Forth 2012 suite as gforth ships it (read from the gforth install, GPL, not

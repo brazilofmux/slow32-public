@@ -135,7 +135,11 @@ class Gen:
             callees = [g for g in self.fns if g is not self.cur]
             if callees and self.loop_nest <= 1:
                 g = r.choice(callees)
-                return ('call', g.name, [self.expr(d - 2) for _ in range(g.nparams)])
+                args = [self.expr(d - 2) for _ in range(g.nparams)]
+                if self.wide_on and r.random() < 0.35:
+                    # through a function-pointer table: an indirect call
+                    return ('icall', g.nparams, self.expr(d - 2), args)
+                return ('call', g.name, args)
         if c < 0.95 and self.wide_on:
             return self.wide(d)
         return ('addk', self.expr(d - 1), r.choice([1, 4, 5, 100, 1000, 2047, -1, -5, -2048]))
@@ -374,6 +378,16 @@ def rx(e):
         return '(~%s)' % rx(e[2])
     if k == 'call':
         return '%s(%s)' % (e[1], ', '.join(rx(a) for a in e[2]) or '')
+    if k == 'icall':
+        # ft<n> lists the n-parameter functions in program order; index
+        # only the ones before the caller, so calls still never go upward
+        # (worked out here, not at generation, so a reduction that drops
+        # functions keeps the rule)
+        tables, order, me = ICALL_CTX
+        k = sum(1 for nm in tables.get(e[1], []) if order[nm] < order[me])
+        if k == 0:
+            return '7u'
+        return 'ft%d[(%s) %% %du](%s)' % (e[1], rx(e[2]), k, ', '.join(rx(a) for a in e[3]))
     if k == 'addk':
         return '(%s + %du)' % (rx(e[1]), e[2]) if e[2] >= 0 else '(%s - %du)' % (rx(e[1]), -e[2])
     if k == 'deref':
@@ -544,12 +558,27 @@ def rs(s, ind, out, types):
         raise ValueError(k)
 
 
+ICALL_CTX = ({}, {}, None)
+
+
 def render(fns, calls):
+    global ICALL_CTX
     out = ['#include <stdio.h>', '', PRELUDE]
     for f in fns:
         out.append('static unsigned %s(%s);' % (f.name, ', '.join('unsigned p%d' % i for i in range(f.nparams))))
+    tables = {}
+    for f in fns:
+        tables.setdefault(f.nparams, []).append(f.name)
+    if any('icall' in repr((f.body, f.ret, f.locals)) for f in fns):
+        for n in sorted(tables):
+            # extern, not const: a static const table is folded into
+            # direct calls, and the point is the indirect call
+            out.append('unsigned (*ft%d[])(%s) = { %s };' %
+                       (n, ', '.join(['unsigned'] * n) or 'void', ', '.join(tables[n])))
+    order = {f.name: i for i, f in enumerate(fns)}
     out.append('')
     for f in fns:
+        ICALL_CTX = (tables, order, f.name)
         types = {n: t for (n, t, _) in f.locals}
         out.append('static unsigned %s(%s) {' % (f.name, ', '.join('unsigned p%d' % i for i in range(f.nparams))))
         # parameters are read before any local is set: initializers may use them
@@ -631,7 +660,7 @@ def touches_shared(e):
 
 def count_calls(e):
     n = 0
-    if isinstance(e, tuple) and e and e[0] == 'call':
+    if isinstance(e, tuple) and e and e[0] in ('call', 'icall'):
         n = 1
     if isinstance(e, (tuple, list)):
         n += sum(count_calls(x) for x in e if isinstance(x, (tuple, list)))
@@ -639,7 +668,7 @@ def count_calls(e):
 
 
 def drop_calls(e):
-    if isinstance(e, tuple) and e and e[0] == 'call':
+    if isinstance(e, tuple) and e and e[0] in ('call', 'icall'):
         return ('k', 7)
     if isinstance(e, tuple):
         return tuple(drop_calls(x) if isinstance(x, (tuple, list)) else x for x in e)
@@ -727,9 +756,14 @@ def run_out(exe, d):
     return rc, '\n'.join(lines)
 
 
-def build_clang(src, d):
+CLANG_OPTS = ('-O2', '-Os')
+
+
+def build_clang(src, d, opt='-O2'):
     rt = os.path.join(ROOT, 'runtime')
-    steps = [[os.path.join(LLVM, 'clang'), '-target', 'slow32-unknown-none', '-S', '-emit-llvm', '-O2', '-w',
+    d = d + '/' + opt.lstrip('-')
+    os.makedirs(d, exist_ok=True)
+    steps = [[os.path.join(LLVM, 'clang'), '-target', 'slow32-unknown-none', '-S', '-emit-llvm', opt, '-w',
               '-I' + os.path.join(rt, 'include'), src, '-o', d + '/c.ll'],
              # The machine verifier checks every function llc builds, so a
              # backend defect is caught even when this program's output
@@ -766,31 +800,39 @@ def check(text, cc):
     try:
         src = d + '/p.c'
         open(src, 'w').write(text)
-        ce, why = build_clang(src, d)
-        if not ce:
-            if 'Bad machine code' in why:
-                return 'clang-verify', why[why.index('Bad machine code'):][:600]
-            return 'skip', 'clang: ' + why[-300:]
-        crc, cout = run_out(ce, d)
-        if crc == 124:
-            return 'skip', 'clang build loops'
+        # clang twice: -O2, and -Os, where selects become branches
+        # (SELECT_PSEUDO) and other size-only lowering runs
+        couts = {}
+        for opt in CLANG_OPTS:
+            ce, why = build_clang(src, d, opt)
+            if not ce:
+                if 'Bad machine code' in why:
+                    return 'clang-verify', opt + ': ' + why[why.index('Bad machine code'):][:600]
+                return 'skip', 'clang %s: %s' % (opt, why[-300:])
+            crc, couts[opt] = run_out(ce, d)
+            if crc == 124:
+                return 'skip', 'clang build loops'
+        cout = couts['-O2']
         se, why = build_s08(src, d, cc)
         if not se:
             return 's08-build', why
         src_, sout = run_out(se, d)
         if src_ == 124:
             return 's08-run', 'timeout'
-        if sout != cout:
+        odd = [opt for opt in CLANG_OPTS if couts[opt] != sout]
+        if odd:
             # a third opinion: the host's compiler, run natively.  When
             # stage08 agrees with it, the SLOW-32 clang build is the odd
             # one out (the LLVM backend, not stage08).
+            cout = couts[odd[0]]
             hrc, hout = sh(['cc', '-O0', '-w', src, '-o', d + '/h.exe'])
             if hrc == 0:
                 hrc, hout = sh([d + '/h.exe'], timeout=60)
                 hout = '\n'.join(l for l in hout.splitlines() if l.strip())
                 if hout == sout:
-                    return 'clang-differs', '--- clang\n%s\n--- stage08 = host\n%s' % (cout[:600], sout[:600])
-            return 'differ', '--- clang\n%s\n--- stage08\n%s' % (cout[:600], sout[:600])
+                    return 'clang-differs', '--- clang %s\n%s\n--- stage08 = host\n%s' % (
+                        ' '.join(odd), cout[:600], sout[:600])
+            return 'differ', '--- clang %s\n%s\n--- stage08\n%s' % (' '.join(odd), cout[:600], sout[:600])
         return 'ok', ''
     finally:
         shutil.rmtree(d, ignore_errors=True)
@@ -898,7 +940,7 @@ def replace_list(body, path, new):
     return nb
 
 
-EXPR_KINDS = {'bin', 'shl', 'shr', 'sar', 'cmp', 'sel', 'cast', 'div', 'mulhi', 'un', 'call', 'addk', 'idx',
+EXPR_KINDS = {'bin', 'shl', 'shr', 'sar', 'cmp', 'sel', 'cast', 'div', 'mulhi', 'un', 'call', 'icall', 'addk', 'idx',
               'w64', 'sgn', 'flt', 'sum4', 'shash', 'deref', 'fld'}
 
 
