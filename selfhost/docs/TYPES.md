@@ -230,6 +230,13 @@ addresses).  Disagreements over SQLite: 1,977 -> 310.  SQLite's code
 changed in four functions, each a comparison result feeding a
 comparison or a 64-bit widening; probe `6.5.8-result-is-int` pins it.
 
+**S3, pointer differences** (2026-10-28): `p - q` is `ptrdiff_t`
+(6.5.6p9), signed and pointer-wide, where it was typed as the pointer;
+on `u8 *` operands `(p - q) / 2` divided unsigned and `(p - q) < 0`
+could not be true.  SQLite's code changed in six functions, each a
+difference widened to 64 bits (now sign- rather than zero-extended);
+probe `6.5.6-ptrdiff-signed`.  Disagreements: 310 -> 199.
+
 ## Constraints on the work
 
 - stage07 builds stage08: the new code keeps stage07's dialect (ints

@@ -166,6 +166,11 @@ static void sema_expr_mty(Node *n) {
         } else if (n->op == TK_LSHIFT || n->op == TK_RSHIFT) {
             /* Shift: signedness from LHS, promoted */
             n->ty = sema_promote(lty);
+        } else if (n->op == TK_MINUS && ty_is_ptr(lty) && ty_is_ptr(rty)) {
+            /* p - q is ptrdiff_t, signed and as wide as a pointer
+             * (6.5.6p9); it was typed as the pointer, so (p - q) / 2 on
+             * u8 * divided unsigned and (p - q) < 0 was never true */
+            n->ty = ty_ptr_size == 8 ? TY_LLONG : TY_INT;
         } else {
             /* Arithmetic/bitwise: propagate unsigned */
             n->ty = sema_arith_type(lty, rty);
