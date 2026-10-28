@@ -1557,12 +1557,6 @@ static int parse_type(void) {
                      * It ends a run of bit-fields (off is already past
                      * their bits) and aligns off to its own alignment. */
                     bfbit = -1;
-                    {
-                        int malign = ty_align(member_ty);
-                        if (malign > 1)
-                            off = ((off + malign - 1) / malign) * malign;
-                        if (malign > max_align) max_align = malign;
-                    }
                     /* Check for array member: type name[N][M]...;  A final
                      * unsized member is a C99 flexible array member: it has
                      * array-address semantics but contributes zero bytes to
@@ -1584,6 +1578,16 @@ static int parse_type(void) {
                          * taken for an array of pointers.) */
                         td_inner = mtdac;
                         member_ty = ty_deref(member_ty);
+                    }
+                    /* Aligned as its element type: a typedef'd array was
+                     * still spelled as a pointer here, and an unsigned
+                     * char[16] member took a pointer's 4 (SQLite's
+                     * yDbMask; 6.7.8-typedef-array-align). */
+                    {
+                        int malign = ty_align(member_ty);
+                        if (malign > 1)
+                            off = ((off + malign - 1) / malign) * malign;
+                        if (malign > max_align) max_align = malign;
                     }
                     while (lex_tok == TK_LBRACK) {
                         next();
@@ -1713,6 +1717,7 @@ static int parse_type(void) {
                 mty = parse_type();
                 mcty = ps_type_cty;
                 mbase_cty = ps_type_nostar_cty;
+                mtdac = ps_type_arrcount;
                 first_decl = 1;
                 while (1) {
                     int is_fn_ptr_member;
@@ -1874,8 +1879,15 @@ static int parse_type(void) {
                         skip_gnu_decl_suffixes();
                         goto union_comma_check;
                     }
-                    /* Check for array member: type name[N][M]...; */
+                    /* Check for array member: type name[N][M]...; a
+                     * typedef'd array is one too, its element type the
+                     * member's (it was a pointer, and a union of a
+                     * char[16] typedef was 4 bytes). */
                     arr_count = 0;
+                    if (mtdac > 0 && member_ty == mty) {
+                        arr_count = mtdac;
+                        member_ty = ty_deref(member_ty);
+                    }
                     while (lex_tok == TK_LBRACK) {
                         next();
                         if (lex_tok == TK_RBRACK) {

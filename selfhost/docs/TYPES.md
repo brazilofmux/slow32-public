@@ -284,6 +284,16 @@ not layout: stage08 does not define `__STDC_VERSION__`, so SQLite's
 is aligned to 4 (`6.7.8-typedef-array-align`).  run-interop-llvm.sh
 gains a bit-field structure each side writes and the other reads.
 
+**Typedef'd array members** (2026-10-28): a member whose type is a
+typedef'd array is aligned as its element type -- the type was still
+spelled as a pointer when the struct parser aligned it, so SQLite's
+`yDbMask` (`unsigned char[16]`) sat at 148 in `Vdbe` where clang puts
+it at 146 -- and in a union it is an array at all: it was a pointer
+there, so a union of one was 4 bytes and storing past them crashed.
+SQLite: three offsets in `sqlite3VdbeUsesBtree` and `sqlite3VdbeExec`.
+The layout program now differs from clang only where `FLEXARRAY` does.
+Probe `6.7.8-typedef-array-align`.
+
 ## Constraints on the work
 
 - stage07 builds stage08: the new code keeps stage07's dialect (ints

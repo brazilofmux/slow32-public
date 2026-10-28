@@ -410,6 +410,7 @@
 6.7.7-type-names WRONG
 6.7.8-array-typedef REJECTS
 6.7.8-typedef PASS
+6.7.8-typedef-array-align PASS
 6.7.8-typedef-conflict ACCEPTS
 6.7.8-typedef-multi REJECTS
 6.7.8-typedef-signed DIAG
