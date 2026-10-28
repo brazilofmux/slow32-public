@@ -195,6 +195,19 @@ Over SQLite, nodes whose C type is rebuilt from the machine type fell
 from 84,000 to under 300, and declarations the parser cannot type from
 661 to 105, the rest scattered over rarer paths.
 
+**S2, attributes** (2026-10-28): `attr` on every expression node --
+`AT_LV` lvalue, `AT_MOD` modifiable lvalue (not an array, function,
+const, incomplete, or a struct with a const member at any depth),
+`AT_NPC` null pointer constant, `AT_ICX` integer constant expression
+with its value in `cval`/`cval_hi`, evaluated in 64 bits and converted
+to the expression's type (6.6p6: casts of floating constants included;
+division by zero and shifts past the width are not constant).  Checked
+against the AST optimizer, an evaluator written apart: after
+`optimize()`, every node it folded must hold sema's value -- 0
+disagreements over SQLite and the compiler itself.  This step found
+selfhost ISSUES-101: three more ints in `Node` changed SQLite's output,
+because dead-static removal gave up silently when the heap was full.
+
 ## Constraints on the work
 
 - stage07 builds stage08: the new code keeps stage07's dialect (ints

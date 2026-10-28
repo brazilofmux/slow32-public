@@ -385,10 +385,215 @@ static void sema_cty_node(Node *n) {
     sema_cty_report(n);
 }
 
+/* --- The other attributes (docs/TYPES.md S2) --- */
+
+#define AT_LV  1   /* an lvalue (6.3.2.1p1) */
+#define AT_MOD 2   /* a modifiable lvalue (6.3.2.1p1) */
+#define AT_NPC 4   /* a null pointer constant (6.3.2.3p3) */
+#define AT_ICX 8   /* an integer constant expression (6.6p6); cval/cval_hi hold it */
+
+/* Does struct or union type t have a const-qualified member, at any
+ * depth (6.3.2.1p1: then it is not a modifiable lvalue)? */
+static int sema_has_const_member(int t) {
+    int si;
+    int mi;
+    if (!ct_is_record(t)) return 0;
+    si = ct_countof(t);
+    mi = 0;
+    while (mi < stm_count) {
+        if (stm_owner[mi] == si && stm_cty[mi] > 0) {
+            if (ct_qual(stm_cty[mi]) & CQ_CONST) return 1;
+            if (ct_is_record(stm_cty[mi]) && ct_countof(stm_cty[mi]) != si &&
+                sema_has_const_member(stm_cty[mi])) return 1;
+        }
+        mi = mi + 1;
+    }
+    return 0;
+}
+
+/* v converted to integer type t (6.3.1.3): kept modulo 2^N when t is
+ * unsigned; for a signed t the value wraps here, as the target does. */
+static long long sema_conv(long long v, int t) {
+    int b;
+    b = ct_int_bytes(t);
+    if (b >= 8) return v;
+    if (ct_is_unsigned(t)) {
+        if (b == 4) return v & 4294967295LL;
+        if (b == 2) return v & 65535;
+        return v & 255;
+    }
+    if (b == 4) return (v << 32) >> 32;
+    if (b == 2) return (v << 48) >> 48;
+    return (v << 56) >> 56;
+}
+
+static long long sema_cvalof(Node *c) {
+    return ((long long)c->cval_hi << 32) | (long long)(unsigned)c->cval;
+}
+
+static void sema_set_cval(Node *n, long long v) {
+    if (!ct_is_integer(n->cty) || ct_rank(n->cty) > 6) return;
+    v = sema_conv(v, n->cty);
+    n->cval = (int)v;
+    n->cval_hi = (int)(v >> 32);
+    n->attr = n->attr | AT_ICX;
+}
+
+/* The value of binary operator op on integer constants a and b, both
+ * already in their common type t; *ok cleared where the result is not a
+ * constant (division by zero, a shift past the width). */
+static long long sema_fold(int op, long long a, long long b, int t, int *ok) {
+    int uns;
+    int bits;
+    uns = ct_is_unsigned(t);
+    bits = ct_int_bytes(t) * 8;
+    if (op == TK_PLUS) return a + b;
+    if (op == TK_MINUS) return a - b;
+    if (op == TK_STAR) return a * b;
+    if (op == TK_SLASH || op == TK_PERCENT) {
+        if (b == 0) { *ok = 0; return 0; }
+        if (uns) {
+            if (op == TK_SLASH) return (long long)((unsigned long long)a / (unsigned long long)b);
+            return (long long)((unsigned long long)a % (unsigned long long)b);
+        }
+        if (op == TK_SLASH) return a / b;
+        return a % b;
+    }
+    if (op == TK_AMP) return a & b;
+    if (op == TK_PIPE) return a | b;
+    if (op == TK_CARET) return a ^ b;
+    if (op == TK_LSHIFT || op == TK_RSHIFT) {
+        if (b < 0 || b >= bits) { *ok = 0; return 0; }
+        if (op == TK_LSHIFT) return a << b;
+        if (uns) return (long long)((unsigned long long)a >> b);
+        return a >> b;
+    }
+    if (op == TK_EQ) return a == b;
+    if (op == TK_NE) return a != b;
+    if (uns) {
+        if (op == TK_LT) return (unsigned long long)a < (unsigned long long)b;
+        if (op == TK_GT) return (unsigned long long)a > (unsigned long long)b;
+        if (op == TK_LE) return (unsigned long long)a <= (unsigned long long)b;
+        if (op == TK_GE) return (unsigned long long)a >= (unsigned long long)b;
+    }
+    if (op == TK_LT) return a < b;
+    if (op == TK_GT) return a > b;
+    if (op == TK_LE) return a <= b;
+    if (op == TK_GE) return a >= b;
+    *ok = 0;
+    return 0;
+}
+
+static void sema_attr_node(Node *n) {
+    int t;
+    int k;
+    int ok;
+    int ct;
+    long long a;
+    long long b;
+    long long v;
+    double d;
+    float f;
+    int w[2];
+    n->attr = 0;
+    t = n->cty;
+    k = n->kind;
+    /* lvalues */
+    if (k == ND_VAR || k == ND_STRING) {
+        if (!ct_is_func(t)) n->attr = AT_LV;
+    } else if (k == ND_UNARY && n->op == TK_STAR) {
+        if (!ct_is_func(t)) n->attr = AT_LV;
+    } else if (k == ND_MEMBER && n->lhs) {
+        n->attr = n->lhs->attr & AT_LV;
+    }
+    if ((n->attr & AT_LV) && !ct_is_array(t) && !ct_is_func(t) && ct_kindof(t) != CT_VOID &&
+        !(ct_qual(t) & CQ_CONST) && !ty_is_incomplete_struct(n->ty) &&
+        !sema_has_const_member(ct_unqual(t)) && k != ND_STRING)
+        n->attr = n->attr | AT_MOD;
+    /* integer constant expressions */
+    if (k == ND_NUM) {
+        if (ct_int_bytes(t) >= 8) v = ((long long)n->val_hi << 32) | (long long)(unsigned)n->val;
+        else v = (long long)n->val;
+        sema_set_cval(n, v);
+    } else if (k == ND_CAST && n->lhs) {
+        if (n->lhs->attr & AT_ICX) {
+            sema_set_cval(n, sema_cvalof(n->lhs));
+        } else if (n->lhs->kind == ND_FNUM && ct_is_integer(t)) {
+            /* a floating constant as the immediate operand of a cast (6.6p6) */
+            w[0] = n->lhs->val;
+            w[1] = n->lhs->val_hi;
+            if (ty_is_double(n->lhs->ty)) memcpy(&d, w, 8);
+            else { memcpy(&f, w, 4); d = f; }
+            sema_set_cval(n, (long long)d);
+        }
+        if ((n->lhs->attr & AT_NPC) && ct_is_ptr(t) &&
+            ct_kindof(ct_baseof(t)) == CT_VOID && ct_qual(ct_baseof(t)) == 0)
+            n->attr = n->attr | AT_NPC;
+    } else if (k == ND_UNARY && n->lhs && (n->lhs->attr & AT_ICX)) {
+        a = sema_cvalof(n->lhs);
+        if (n->op == TK_MINUS) sema_set_cval(n, 0 - a);
+        else if (n->op == TK_TILDE) sema_set_cval(n, ~a);
+        else if (n->op == TK_BANG) sema_set_cval(n, a == 0);
+    } else if (k == ND_BINOP && n->lhs && n->rhs && (n->lhs->attr & AT_ICX)) {
+        a = sema_cvalof(n->lhs);
+        if (n->op == TK_LAND && a == 0) sema_set_cval(n, 0);
+        else if (n->op == TK_LOR && a != 0) sema_set_cval(n, 1);
+        else if (n->rhs->attr & AT_ICX) {
+            b = sema_cvalof(n->rhs);
+            if (n->op == TK_LAND || n->op == TK_LOR) {
+                sema_set_cval(n, b != 0);
+            } else {
+                /* the operands in their common type: the result's for
+                 * arithmetic, the promoted left's for a shift */
+                if (n->op == TK_LSHIFT || n->op == TK_RSHIFT) ct = ct_promote(n->lhs->cty);
+                else ct = ct_usual(n->lhs->cty, n->rhs->cty);
+                ok = 1;
+                v = sema_fold(n->op, sema_conv(a, ct), sema_conv(b, ct), ct, &ok);
+                if (ok) sema_set_cval(n, v);
+            }
+        }
+    } else if (k == ND_TERNARY && n->cond && (n->cond->attr & AT_ICX) && n->lhs && n->rhs) {
+        if (sema_cvalof(n->cond) != 0) { if (n->lhs->attr & AT_ICX) sema_set_cval(n, sema_cvalof(n->lhs)); }
+        else if (n->rhs->attr & AT_ICX) sema_set_cval(n, sema_cvalof(n->rhs));
+    }
+    /* null pointer constants: an integer constant expression of value 0 */
+    if ((n->attr & AT_ICX) && n->cval == 0 && n->cval_hi == 0)
+        n->attr = n->attr | AT_NPC;
+}
+
 static void sema_expr(Node *n) {
     if (!n) return;
     sema_expr_mty(n);
     sema_cty_node(n);
+    sema_attr_node(n);
+}
+
+/* S12CC_CTY_CHECK=1, after optimize(): every node the AST optimizer
+ * folded to a literal must hold the value sema computed for it -- two
+ * evaluators, written apart, held against each other. */
+static void sema_check_folds(Node *n) {
+    if (!n) return;
+    if (sema_cty_check < 0) sema_cty_check = getenv("S12CC_CTY_CHECK") != 0;
+    if (!sema_cty_check) return;
+    if (n->kind == ND_NUM && (n->attr & AT_ICX) &&
+        (n->val != n->cval || (ty_is_llong(n->ty) && n->val_hi != n->cval_hi))) {
+        fdputs("cval-mismatch folded=", 2);
+        fdputuint(2, (unsigned)n->val);
+        fdputs(" sema=", 2);
+        fdputuint(2, (unsigned)n->cval);
+        fdputs(" ty=", 2);
+        fdputuint(2, (unsigned)n->ty);
+        fdputs("\n", 2);
+    }
+    sema_check_folds(n->lhs);
+    sema_check_folds(n->rhs);
+    sema_check_folds(n->cond);
+    sema_check_folds(n->body);
+    sema_check_folds(n->init);
+    sema_check_folds(n->step);
+    sema_check_folds(n->els);
+    sema_check_folds(n->args);
+    sema_check_folds(n->next);
 }
 
 /* --- Statement walk --- */

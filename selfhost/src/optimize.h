@@ -153,6 +153,7 @@ static void opt_fold(Node *n) {
             if (shift > 0) {
                 n->op = TK_LSHIFT;
                 n->rhs->val = shift;
+                n->rhs->attr = n->rhs->attr & ~AT_ICX;   /* no longer sema's value */
                 return;
             }
         }
@@ -165,6 +166,7 @@ static void opt_fold(Node *n) {
                 n->rhs = tmp;
                 n->op = TK_LSHIFT;
                 n->rhs->val = shift;
+                n->rhs->attr = n->rhs->attr & ~AT_ICX;
                 return;
             }
         }

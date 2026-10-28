@@ -225,6 +225,9 @@ struct Node {
     int kind;
     int ty;           /* expression type: TY_INT, TY_PTR+TY_CHAR, etc -- the MACHINE type */
     int cty;          /* the C type (ctype.h; 0 = not yet known), docs/TYPES.md */
+    int attr;         /* sema's attributes: AT_LV, AT_MOD, AT_NPC, AT_ICX (sema.h) */
+    int cval;         /* AT_ICX: the integer constant's value, low word ... */
+    int cval_hi;      /* ... and high word, in the expression's type */
     int op;           /* BINOP/UNARY: operator token (TK_PLUS etc) */
     int val;          /* NUM: integer value; STRING: string pool index; FNUM: lo bits */
     int val_hi;       /* FNUM: hi 32 bits for f64 literal */

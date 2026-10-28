@@ -303,6 +303,7 @@ int main(int argc, char **argv) {
 
     /* Optimize AST */
     optimize(prog);
+    sema_check_folds(prog);   /* S12CC_CTY_CHECK=1 only */
 
     /* Codegen (cg_lbl not reset — parser may have allocated goto labels) */
     cg_olen = 0;
