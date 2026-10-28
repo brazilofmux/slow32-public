@@ -12,7 +12,6 @@ void exit(int status);
 #define MAX_LINE 65536
 #define MAX_TOK 8       /* a line's tokens to begin with; the array grows */
 #define MAX_LBL 32768
-#define MAX_REL 65536
 #define MAX_SYM 32768
 #define MAX_TEXT 1048576
 #define MAX_RODATA 1048576
@@ -60,14 +59,27 @@ static void grow_lbl(int need) {
 }
 static int g_nlbl;
 
-/* NOT converted -- see the note on mark_refd.  23% used, so there is
- * room to wait for a root cause. */
-static int g_rel_sec[65536];
-static int g_rel_off[65536];
-static int g_rel_typ[65536];
-static int g_rel_sym[65536];
-static int g_rel_add[65536];
-static int g_nrel;
+/* Relocations, grown as the label tables are (the note on mark_refd
+ * has their history).  The compiler's own source crossed the old fixed
+ * 65,536 on 2026-10-28. */
+static int  *g_rel_sec;
+static int  *g_rel_off;
+static int  *g_rel_typ;
+static int  *g_rel_sym;
+static int  *g_rel_add;
+static int   g_rel_cap;
+static int   g_nrel;
+
+static void grow_rel(int need) {
+    int c;
+    if (need <= g_rel_cap) return;
+    c = g_rel_cap; g_rel_sec = (int *)sv_grow((char *)g_rel_sec, &c, need, 4, "relocations");
+    c = g_rel_cap; g_rel_off = (int *)sv_grow((char *)g_rel_off, &c, need, 4, "relocations");
+    c = g_rel_cap; g_rel_typ = (int *)sv_grow((char *)g_rel_typ, &c, need, 4, "relocations");
+    c = g_rel_cap; g_rel_sym = (int *)sv_grow((char *)g_rel_sym, &c, need, 4, "relocations");
+    c = g_rel_cap; g_rel_add = (int *)sv_grow((char *)g_rel_add, &c, need, 4, "relocations");
+    g_rel_cap = c;
+}
 
 static int g_diff_sec[16384];
 static int g_diff_off[16384];
@@ -677,8 +689,8 @@ int emit_word_list(char *p) {
  * have moved it.  Cheap, and it removes a whole class of stale-base
  * hazard from the conversions that follow.
  *
- * The RELOCATION tables are still fixed arrays, for a reason that is
- * gone.  Converting them made the assembler emit one spurious symbol --
+ * The RELOCATION tables were the last fixed arrays here, converted
+ * 2026-10-28.  Converting them once made the assembler emit one spurious symbol --
  * in stage07-compiled builds only, and only once a table actually grew
  * -- and for a month (2026-09) that was bisected as far as "stage07
  * miscompiles handle()" and no further.  It was a tail call: stage07
@@ -687,7 +699,7 @@ int emit_word_list(char *p) {
  * name survived the shallow call chain under add_reloc_ex and was
  * overwritten by the deep one a table's growth takes.  stage07 no
  * longer makes a tail call from a function whose locals' addresses
- * escape (selfhost ISSUES-76), so the conversion can be made.
+ * escape (selfhost ISSUES-76), so the conversion could be made.
  */
 static void mark_refd(int li) {
     g_lbl_refd[li] = 1;
@@ -695,10 +707,10 @@ static void mark_refd(int li) {
 
 int add_reloc_ex(int typ, int off, char *name, int add) {
     int li;
-    if (g_nrel >= MAX_REL) return -1;
     li = get_lbl(name);
     if (li < 0) return -1;
     mark_refd(li);
+    grow_rel(g_nrel + 1);   /* after get_lbl, which may grow its own tables */
     g_rel_sec[g_nrel] = g_sec;
     g_rel_off[g_nrel] = off;
     g_rel_typ[g_nrel] = typ;
