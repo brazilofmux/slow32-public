@@ -1,16 +1,25 @@
 # dBase III Clone — Implementation Status
 
-Current as of February 2026. 52/52 tests passing.
+The command, function and SET tables below were written in February
+2026 and have been extended since, not rewritten; "Added since February"
+lists what landed after them. Open work is in `../ISSUES.md`.
+`tests/run-tests.sh`: 108/108 passing (2026-10-28).
 
 ## Architecture
 
 ```
 src/main.c       — REPL loop, banner
-src/command.c    — Command dispatch (str_imatch pattern), ~75 commands
+src/command.c    — Command dispatch (a verb table), ~80 verbs
 src/expr.c       — Expression evaluator (lexer-based recursive descent)
+src/ast.c        — Expressions compiled once to trees, evaluated many times
 src/lex.c        — Tokenizer (identifiers, strings, numbers, dates, operators)
-src/func.c       — 39 built-in functions
-src/dbf.c        — DBF file format read/write
+src/func.c       — 124 built-in functions (a hashed table)
+src/dbf.c        — DBF file format read/write; memo fields (.DBT)
+src/area.c       — Work areas
+src/browse.c     — BROWSE and EDIT, full screen
+src/menu.c       — @PROMPT/MENU TO, DEFINE MENU/PAD/POPUP/BAR
+src/csv_import.rl — APPEND FROM ... DELIMITED, a Ragel -G2 CSV parser
+                   (gen_csv_parser.sh writes csv_import.c)
 src/field.c      — Field type helpers (C/N/D/L)
 src/memvar.c     — Memory variable store (256 vars)
 src/set.c        — SET option management
@@ -155,7 +164,37 @@ Test:  `bash tests/run-tests.sh`
 | Line continuation | `;` at end of line |
 | Macro substitution | `&varname` or `&varname.` |
 
-## Built-in Functions (57)
+## Added since February
+
+Verified against the verb table in `src/command.c`, `src/program.c` and
+`src/func.c`; the git log of `dbase/` has the detail.
+
+| Area | Commands |
+|------|----------|
+| Full screen | `BROWSE`, `EDIT`, `CHANGE`; `SAVE SCREEN` / `RESTORE SCREEN` |
+| Menus | `@ ... PROMPT` / `MENU TO`; `DEFINE MENU`/`PAD`/`POPUP`/`BAR`, `ACTIVATE`, `DEACTIVATE`, `ON SELECTION POPUP`/`PAD ... DO` |
+| Records | `SCATTER` / `GATHER`, `CALCULATE`, `SCAN` / `ENDSCAN`, `JOIN WITH`, `TOTAL ON`, `UPDATE ON` |
+| Files | `APPEND FROM ... DELIMITED`, `COPY TO ... DELIMITED`, `LIST STRUCTURE`, `COPY STRUCTURE EXTENDED TO`, `TYPE`, memo fields (.DBT) |
+| Programs | `TEXT` ... `ENDTEXT`, `DECLARE` / `DIMENSION` arrays, `LOCAL` (shadows, does not destroy, the outer variable), `DO ... WITH` by reference, `SET KEY TO` / `ON KEY`, `RUN` (runs `DO`) |
+| Runtime errors | about 40 error sites go through `ON ERROR` |
+
+Functions added (the February list is below): `ALLTRIM`, `EMPTY`,
+`RAT`, `PROPER`, `STRTRAN`, `CHRTRAN`, `LIKE`, `SOUNDEX`, `DIFFERENCE`,
+`BETWEEN`, `OCCURS`; `TIME`, `SECONDS`, `GOMONTH`, `DMY`, `MDY`;
+`SELECT`, `ALIAS`, `DBF`, `USED`, `FIELD`, `FCOUNT`, `FSIZE`,
+`FIELDNUM`, `FIELDPOS`, `NDX`, `KEY`, `ORDER`, `LUPDATE`, `RECSIZE`,
+`HEADER`, `SEEK`, `LOOKUP`, `RLOCK`, `FLOCK`, `DBSTRUCT`, `AFIELDS`;
+the arrays' `ALEN`, `ASCAN`, `ASORT`, `ACOPY`, `AINS`, `ADEL`; the
+low-level files' `FOPEN`, `FCREATE`, `FCLOSE`, `FREAD`, `FWRITE`,
+`FSEEK`, `FERROR`, `ADIR`, `CURDIR`, `DISKSPACE`; `BAR`, `PROMPT`,
+`PAD`, `POPUP`; `GETENV`, `MEMORY`, `SYS`, `SET`.
+
+SET options added: `ALTERNATE`, `MARGIN`, `MARK`, `MEMOWIDTH`,
+`MESSAGE`, `WRAP`, `EPOCH`, `SOFTSEEK` (and `NEAR`). `CENTURY`, `ECHO`,
+`ESCAPE` and `UNIQUE` are now stored rather than discarded, and
+`PATH` keeps its directory.
+
+## Built-in Functions (57, February)
 
 ### Status (6)
 `EOF()`, `BOF()`, `RECNO()`, `RECCOUNT()`, `DELETED()`, `FOUND()`
@@ -268,7 +307,9 @@ RANGE validation on @GET fields. EJECT resets printer position.
 
 ## Test Suite
 
-52 tests covering: CREATE, navigation, expressions, functions, memory
+108 tests (`tests/run-tests.sh`, on slow32-fast with the terminal
+service denied; `tests/run-host-date-numeric.sh` checks the N-field and
+date code with the host compiler). The first 52, from February, cover: CREATE, navigation, expressions, functions, memory
 variables, SET options, work areas, file operations, screen I/O,
 programming constructs, procedures, functions, indexing, multi-index,
 filters, scope clauses, comments, print device routing, exponentiation,

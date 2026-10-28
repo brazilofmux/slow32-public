@@ -1,7 +1,7 @@
 # SLOW-32 Rogue
 
 The Saturday afternoon. 80x24, `@` and `%` and `D`, permadeath.
-Item #4 on the 1987-desk plan — `term.h` is why it exists.
+Item 4 on the 1987-desk plan — `term.h` is why it exists.
 
 Fetch the Amulet of Yendor from dungeon level 26 and climb back out.
 Rooms reveal as you enter them, monsters get meaner with depth, food

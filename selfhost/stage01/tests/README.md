@@ -23,7 +23,7 @@ These are the files exercised by normal regression and conformance gates
 - `conformance/known-gaps/` — tracked cases that are intentionally not yet gating
   (currently contains only one implicit-repeat-call repro).
 
-Manifests for these live in `../manifests/` (top-level) so the main runners do not
+Manifests for these live in `tests/manifests/`, outside `conformance/`, so the main runners do not
 need path changes.
 
 ## Historical Debug / Porting Artifacts

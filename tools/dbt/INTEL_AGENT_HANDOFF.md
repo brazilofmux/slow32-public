@@ -11,6 +11,13 @@
 # (build the corpus first: cd regression && ./run-tests.sh)
 tools/dbt/scripts/diff-test.sh
 
+# The engine gates in regression/ (see regression/README.md): every engine
+# against the reference interpreter on the clang-built suite, on the
+# stage08-built kit corpus, and on random machine code (the DBT in seven
+# modes). Run all three after a DBT change.
+(cd regression && ./run-differential.sh && ./run-kit-differential.sh)
+(cd regression/fuzz && ./isafuzz.py run -n 5000)
+
 # SLOW BASIC (44 tests). EMU must be an ABSOLUTE path: the runner cd's
 # into sbasic/ before invoking it, so a relative path silently runs nothing.
 cd sbasic/tests && EMU="$PWD/../../tools/dbt/slow32-dbt" bash ./run-tests.sh
@@ -18,8 +25,8 @@ cd sbasic/tests && EMU="$PWD/../../tools/dbt/slow32-dbt" bash ./run-tests.sh
 # Lua (11 tests). EMULATOR is overridable (absolute path for the same reason).
 EMULATOR="$PWD/tools/dbt/slow32-dbt" bash lua/tests/run-tests.sh
 
-# Forth sanity (23 test files)
-cat forth/prelude.fth forth/tests/test-core-arith.fth | tools/dbt/slow32-dbt forth/kernel.s32x
+# Forth kernel suite under the DBT (EMU overrides the interpreter)
+EMU="$PWD/tools/dbt/slow32-dbt" forth/tests/run-tests.sh
 
 # ISA-conformance oracle (expected values from an independent Python reference)
 selfhost/isa-conformance/run-isa-conformance.sh
@@ -46,7 +53,7 @@ superblock interaction (back-edges, deferred side exits, pending writes).
 
 If *every* stage including `-1` fails identically, the culprit is something
 the stage flags don't gate — the select fusion is the first thing to rule out
-with `S32_DBT_NO_SELECT_FUSE=1` (that is exactly how ISSUES.md #13 was found).
+with `S32_DBT_NO_SELECT_FUSE=1` (that is exactly how DBT-13 was found).
 
 ## Debugging Tools
 
@@ -91,7 +98,7 @@ SLOW32_DBT_EMIT_TRACE=1 SLOW32_DBT_EMIT_TRACE_PC=0xD8C0 slow32-dbt prog.s32x
 
 # Exact guest-register corruption: hardware watchpoint on the guest reg file
 gdb --args ./slow32-dbt prog.s32x
-(gdb) break dbt.c:2346   # right after g_dbt_cpu is set
+(gdb) break dbt_install_sigint   # called right after g_dbt_cpu is set
 (gdb) run
 (gdb) watch -l ((dbt_cpu_state_t*)g_dbt_cpu)->regs[13] if \
       ((dbt_cpu_state_t*)g_dbt_cpu)->regs[13] == 0x6f

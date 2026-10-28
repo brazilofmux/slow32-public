@@ -86,12 +86,12 @@ Used for JAL. Immediates are encoded with a 21-bit signed offset (multiples of 2
 
 | Instruction | Opcode | Format | Description | Status | Notes |
 |------------|--------|--------|-------------|--------|-------|
-| SLL rd, rs1, rs2 | 0x05 | R | rd = rs1 << rs2 | ✅ | Logical left shift |
-| SRL rd, rs1, rs2 | 0x06 | R | rd = rs1 >> rs2 | ✅ | Logical right shift |
-| SRA rd, rs1, rs2 | 0x07 | R | rd = rs1 >>> rs2 | ✅ | Arithmetic right shift |
-| SLLI rd, rs1, imm| 0x13 | I | rd = rs1 << imm | ✅ | |
-| SRLI rd, rs1, imm| 0x14 | I | rd = rs1 >> imm | ✅ | |
-| SRAI rd, rs1, imm| 0x15 | I | rd = rs1 >>> imm | ✅ | |
+| SLL rd, rs1, rs2 | 0x05 | R | rd = rs1 << (rs2 & 31) | ✅ | Logical left shift |
+| SRL rd, rs1, rs2 | 0x06 | R | rd = rs1 >> (rs2 & 31) | ✅ | Logical right shift |
+| SRA rd, rs1, rs2 | 0x07 | R | rd = rs1 >>> (rs2 & 31) | ✅ | Arithmetic right shift |
+| SLLI rd, rs1, imm| 0x13 | I | rd = rs1 << (imm & 31) | ✅ | |
+| SRLI rd, rs1, imm| 0x14 | I | rd = rs1 >> (imm & 31) | ✅ | |
+| SRAI rd, rs1, imm| 0x15 | I | rd = rs1 >>> (imm & 31) | ✅ | |
 
 ## Comparison Instructions
 
@@ -251,8 +251,11 @@ f64 instructions use register pairs `(rN, rN+1)`. The specified register must be
 The following operations are too complex for dedicated instructions and remain as library calls:
 
 - `fmodf` / `fmod` -- floating-point remainder
-- `__unordsf2` / `__unorddf2` -- NaN detection (or use `x != x`)
 - All transcendentals: `sin`, `cos`, `tan`, `exp`, `log`, `pow`, etc.
+  (C in `runtime/math_soft.c`, built from the instructions above)
+
+Unordered comparison (NaN detection) needs no libcall: the LLVM backend
+emits `FEQ x, x` for each operand.
 
 ---
 
@@ -318,13 +321,13 @@ selection, data definition, and symbol control.
 | Register | Name | Alias | Purpose | Saved |
 |----------|------|-------|---------|-------|
 | r0 | zero | - | Hardwired Zero | - |
-| r1 | rv | - | Return Value | No |
-| r2 | t0 | - | Temporary | No |
+| r1 | rv | - | Return Value (low half of 64-bit) | No |
+| r2 | t0 | - | Return Value high half; temporary (an indirect tail call's target) | No |
 | r3-r10 | a0-a7 | - | Function Arguments | No |
 | r11-r28 | s0-s17 | - | Saved Registers | Yes |
 | r29 | sp | - | Stack Pointer | Yes |
 | r30 | fp | - | Frame Pointer | Yes |
-| r31 | lr | - | Link Register | Yes |
+| r31 | lr | - | Link Register | No (clobbered by calls; a calling function saves its own) |
 
 *Note: Assembler supports `zero`, `sp`, `fp`, and `lr` aliases. The compiler uses full ABI aliases.*
 
@@ -378,7 +381,10 @@ the exact regions.
 
 ## Performance
 
-- **Standard**: 1 cycle per instruction.
-- **Memory**: 3 cycles.
-- **Multiply**: 32 cycles.
-- **Divide/Rem**: 64 cycles.
+No timing is architectural. `slow32-fast` reports simulated cycles with
+this model (`slow32` counts one per instruction):
+
+- **Standard**: 1 cycle per instruction, FP instructions included.
+- **Loads/stores**: 4 cycles.
+- **MUL/MULH/MULHU**: 32 cycles.
+- **DIV/REM**: 64 cycles.

@@ -1,6 +1,6 @@
 # SLOW32 Backend Status
 
-Last Reviewed: 2026-08-08
+Last Reviewed: 2026-10-28
 
 ## Overview
 - Backend tracks LLVM main; `llc` and `clang` build with SLOW32 as the default
@@ -36,8 +36,21 @@ Last Reviewed: 2026-08-08
   argument is in a register and there is no byval, no struct return, and
   the caller is not variadic.  A function whose only call is a tail call
   has no frame.  `musttail` is honoured or is a fatal error.
+- Shrink-wrapping: the prologue and epilogue go where ShrinkWrap puts them,
+  so an early exit that makes no call builds no frame.  Functions with
+  unwind tables included (CFIFixup, `resetCFIToInitialState`).  Off for
+  `optnone` and for any function that reads or writes `r31` other than by
+  a call or return (`r31` is not in the CSR list, so ShrinkWrap cannot see
+  it).  `__builtin_return_address(0)` reads `r31` as a function live-in.
+- The constant 0 is `r0` (a CopyFromReg, as RISC-V's `x0`): no register
+  is spent on compares against zero or on zero stores.
 - Globals/JT/CPI/blockaddr via `LOAD_ADDR` → `%hi`/`%lo`; jump tables via
-  Expand → load + `BRIND` (`jalr`).
+  Expand → load + `BRIND` (`jalr`).  `SLOW32LoadAddrOpt` folds the `%lo`
+  into the loads and stores when every use of the address is a memory
+  base at one offset (`lui` + `ldw sym+%lo`): a store's `%lo` is the
+  S-type split, which the MC layer and `s32-ld` both apply.  Uses at
+  different offsets keep `lui` + `addi`, since the carry out of `%lo` is
+  only known at link time.
 - Long-branch relaxation PostRA-only (AsmPrinter asserts if a long-branch
   pseudo leaks through).
 - f32/f64 when `+f`; NaN-correct compares; i64↔fp via FCVT_* pairs.
@@ -54,11 +67,26 @@ Last Reviewed: 2026-08-08
 - `SLOW32Schedule.td` exists for TableGen; not heavily tuned against real RTL.
 - f64 inline-asm operands still unsupported (pair printing).
 
+## Verification
+- `-verify-machineinstrs` is clean over every C library clang builds for
+  SLOW-32 (runtime, libcob, libf77, SQLite):
+  `~/slow-32/regression/run-llvm-verify.sh`.  Run it after any change here;
+  turned on 2026-10-27, it flagged the GPRPair spill bug and two liveness
+  defects at once.
+- `~/slow-32/regression/run-stage08-fuzz.sh` compiles random C with clang
+  and with stage08 cc at -O2 and -Os, llc under `-verify-machineinstrs`;
+  a case where stage08 agrees with the host compiler is a backend bug.
+
 ## Known Pitfalls (fixed or documented)
 - ~~MBB long-branch ops dropped `%hi`/`%lo`~~ — fixed.
 - ~~`(shl imm, 16) → LUI`~~ — removed.
 - ~~Duplicate signed `extload` / inverted LoadStorePat / ADDC stubs~~ — removed.
 - ~~R30/R31 double-spilled~~ — omitted from CSR; prologue owns them.
+- ~~Branchless SELECT computed the discarded poison arm~~ — both arms frozen.
+- ~~Virtual GPRPair spill reloaded as two undef halves~~ — one
+  `LDW64_FI`/`STW64_FI` split in `eliminateFrameIndex`.
+- ~~`__builtin_return_address(0)` after a call read the clobbered `r31`~~ —
+  `r31` is a function live-in.
 - Handwritten asm that triggers MC branch relaxation must treat `r2` as clobbered.
 - `r2` has two jobs: the long-branch scratch, and the carrier of an
   indirect tail call's target across the epilogue.  They cannot meet -- the
@@ -75,20 +103,17 @@ varargs/f64 straddle, atomics+emutls, bitint, large frames, extload zext,
 elf relocs, fp encoding, optional FP, SELECT optsize, memcpy/memmove/memset
 names, i64/i32 udiv libcalls, `+m` feature, CFI smoke, tail calls
 (`tail-call.ll`: what is one and what is not, the epilogue before the jump,
-a kept pointer moved to `r2`, a frame past the 12-bit offset).
+a kept pointer moved to `r2`, a frame past the 12-bit offset), GPRPair
+spills, SELECT poison arms, shrink-wrapping (`shrink-wrap.ll`, with and
+without unwind tables), `returnaddr-after-call.ll`, `zero-register.ll`,
+and the `%lo` fold (`global-lo-fold.ll`, `load-addr-fold.mir`).
 
 ## Future Opportunities
-- Fold `%lo` into the load or store that uses the address: a word of a
-  global is `lui` + `addi` + `ldw` today, three instructions for two.
-  Loads can take the existing LO12 relocation; a store's immediate is
-  split, and needs a relocation kind the assembler and linker do not have.
-- Shrink-wrapping: a function with a call on some path saves the return
-  address on every path.  Tail calls remove the commonest case (a short
-  path, and "otherwise the general routine"); the rest wants the
-  prologue placed where it is needed.
 - Callee-saved registers are spilled at the top of the frame: in a frame
   past 2 KB each save and restore is three instructions of address
   arithmetic.  Nearer the stack pointer they would be one.
+- The `%lo` fold takes one offset per address; a global struct read at
+  several offsets still pays `lui` + `addi` once and a load per field.
 - Soft-float libcall completeness when `-mattr=-f` (ensure full RTLIB map).
 - f64 / GPRPair inline-asm constraint if external asm needs it.
 - Schedule model tuning against the soft-core pipeline.

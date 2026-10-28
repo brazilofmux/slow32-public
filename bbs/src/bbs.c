@@ -1,8 +1,8 @@
 /*
- * SLOW-32 BBS v0.2 — sockets + two .DBF files.
+ * SLOW-32 BBS — a board on sockets and two .DBF files.  The version
+ * is the banner in session(); the features are in README.md.
  *
  * USERS.DBF: NAME / PASS.  MSG.DBF: FROM / TO / SUBJ / TEXT.
- * Menu: L list, R read, P post (blank line ends), W who, G goodbye.
  */
 
 #include "dbfuser.h"

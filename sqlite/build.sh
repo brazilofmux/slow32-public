@@ -11,10 +11,11 @@
 # size and nothing else, and a library wants them; so are the progress
 # handler, the authorizer, trace and column decltype, which the shell uses.
 #
-# -Os, not -O2: a JAL reaches +/-1MB and the linker has no veneers yet
-# (tools/linker/ISSUES.md), so a program's callers must all sit within 1MB of
-# their callees.  The library is 697KB of code at -Os and 995KB at -O2, and
-# at -O2 the libc behind it was out of main's reach.
+# -Os, not -O2.  It was chosen when a JAL reached only +/-1MB and the linker
+# could not reach further (the library was 697KB of code at -Os, 995KB at
+# -O2, and at -O2 the libc behind it was out of main's reach).  s32-ld now
+# veneers out-of-range calls (GitHub issue 74), so that limit is gone; the
+# build stays -Os until someone measures -O2.
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$SCRIPT_DIR/.."

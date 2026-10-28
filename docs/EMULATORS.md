@@ -6,11 +6,18 @@ Five emulators exist with different trade-offs between capability, speed, and po
 
 | Emulator | Type | Speed | Full ISA | Full MMIO | Intrinsic Hooks | Source |
 |----------|------|-------|----------|-----------|-----------------|--------|
-| s32-emu | Interpreter | ~50 MIPS | Subset | Minimal | No | `selfhost/stage00/` |
+| s32-emu | Interpreter | ~24 MIPS | Integer only | Minimal | No | `selfhost/stage00/` |
 | slow32 | Interpreter | ~240 MIPS | Yes | Yes | No | `tools/emulator/` |
-| slow32-fast | Pre-decoded | ~240 MIPS | Yes | Yes | No | `tools/emulator/` |
-| qemu-system-slow32 | TCG JIT | ~1 BIPS | Yes | Yes | Yes | `~/qemu` (separate repo) |
+| slow32-fast | Pre-decoded | ~505 MIPS | Yes | Yes | No | `tools/emulator/` |
+| qemu-system-slow32 | TCG JIT | ~4 BIPS | Yes | Yes | Yes | `~/qemu` (separate repo) |
 | slow32-dbt | DBT JIT | 8.26 BIPS (M5 Max, 2026-08-23) / 4.07 BIPS (Xeon 8259CL, virtualized) | Yes | Yes | Yes | `tools/dbt/` |
+
+The four interpreter/QEMU figures are from an Apple M5 Max on 2026-10-28,
+running the checked-in `~/s32x/benchmark_core.s32x` (285 M instructions);
+the QEMU figure is wall time including start-up, so it is a floor. s32-emu
+was built from source with `cc -O2`. On the Ryzen 5 3600 of
+[benchmarks.md](benchmarks.md) (2026-02-05) an earlier build of the same benchmark measured
+149 / 380 MIPS and 1.16 BIPS for slow32 / slow32-fast / QEMU.
 
 ## s32-emu (Selfhost Bootstrap Emulator)
 
@@ -18,9 +25,11 @@ A minimal interpretive emulator used in the selfhost bootstrap chain. Implements
 enough of the ISA to run the Forth kernel and selfhost toolchain. Supports a
 restricted MMIO model (ring buffer I/O with a fixed set of opcodes).
 
-- **Build**: `make -C selfhost/stage00` (gcc, no dependencies)
+- **Build**: `make -C selfhost/stage00` (host `cc`, no dependencies). When
+  `tools/dbt/slow32-dbt` exists, `make` symlinks `s32-emu` to it instead of
+  compiling, so time it only from a fresh `cc s32-emu.c` build.
 - **Use case**: Selfhost bootstrap, CI validation
-- **Limitations**: Subset of instructions, limited MMIO
+- **Limitations**: Integer instructions only, limited MMIO
 
 ## slow32 (Reference Interpreter)
 
@@ -31,7 +40,7 @@ stepping, breakpoints, and memory watches.
 - **Build**: `make emulator` (gcc, no dependencies)
 - **Run**: `./tools/emulator/slow32 program.s32x`
 - **Debug flags**: `-s` step, `-t` trace, `-r` register changes, `-b ADDR` breakpoint, `-w RANGE` memory watch, `-c N` cycle limit
-- **Performance**: ~240 MIPS at -O2
+- **Performance**: ~240 MIPS (M5 Max, 2026-10-28)
 
 ## slow32-fast (Pre-decoded Interpreter)
 
@@ -41,8 +50,9 @@ path and pre-computes branch targets.
 
 - **Build**: Built alongside slow32 by `make emulator`
 - **Run**: `./tools/emulator/slow32-fast program.s32x`
-- **Performance**: ~240 MIPS (similar to slow32 -O2; the gcc optimizer closes
-  most of the gap that pre-decoding would otherwise provide)
+- **Performance**: ~505 MIPS on the M5 Max, about 2x slow32 (2.5x on the
+  Ryzen in [benchmarks.md](benchmarks.md)). An August 2025 note that the two
+  ran at the same speed predates the current slow32-fast.
 
 ## qemu-system-slow32 (QEMU TCG)
 
@@ -53,8 +63,9 @@ native-speed execution of common library calls.
 
 - **Build**: Separate `~/qemu` checkout with SLOW-32 target patches
 - **Availability**: `slow32:emulator` Docker container, or build from source
-- **Run**: `qemu-system-slow32 -kernel program.s32x`
-- **Performance**: ~1 BIPS
+- **Run**: `qemu-system-slow32 -machine slow32-tcg -nographic -kernel program.s32x`
+  (`s32run --qemu` supplies these; program arguments go in `-append`)
+- **Performance**: ~4 BIPS on the M5 Max, 1.16 BIPS on the Ryzen 5 3600
 
 ## slow32-dbt (Dynamic Binary Translator)
 
@@ -198,10 +209,16 @@ See `docs/dbt/` for design documents and stage specifications.
 
 ## Docker Containers
 
-Two containers provide clean environments without requiring local builds:
+The images form a chain (`Dockerfile.emulator` -> `Dockerfile.base` -> the
+rest), published for amd64 and arm64 as `hurriedreformist/slow32:<variant>`:
 
-- **slow32:toolchain** — Full development environment with LLVM, clang, assembler, linker, and all emulators
-- **slow32:emulator** — Lightweight runtime with slow32, slow32-fast, slow32-dbt, and qemu-system-slow32
+- **slow32:emulator** — the four engines (slow32, slow32-fast, slow32-dbt,
+  qemu-system-slow32) and `s32run`; no compilers
+- **slow32:base** — + assembler, linker, archiver, dump/disassembler and the
+  runtime archives and headers
+- **slow32:toolchain** — + LLVM/clang, libc++ and the `s32c++` driver, Free Pascal
+- **slow32:cobol**, **slow32:fortran**, **slow32:forth**, **slow32:kit** —
+  the COBOL 85, Fortran 77 and Forth compilers, and the self-hosted kit
 
 ```bash
 # Run a program with the emulator container
@@ -212,7 +229,8 @@ Two containers provide clean environments without requiring local builds:
 
 ## Putting a file in front of stdin (`S32_STDIN_PREFIX`)
 
-The C++ engines (`slow32`, `slow32-fast`, `slow32-dbt`) read
+The engines built in this tree (`slow32`, `slow32-fast`, `slow32-dbt`;
+all C, sharing `tools/emulator/mmio_ring.c`) read
 `S32_STDIN_PREFIX=FILE`: the guest's reads of fd 0 are served from FILE
 first, then from the real stdin. It exists for interactive sessions that
 need a prelude, such as the Forth kernel: with the prefix the emulator is

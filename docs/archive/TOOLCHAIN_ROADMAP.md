@@ -1,5 +1,14 @@
 # Toolchain Roadmap: Dual-Path Strategy
 
+> **Status (2026-10-28).** Path B happened, by a different route than
+> planned: `selfhost/` bootstraps assembler, archiver, linker, C compiler
+> and libc from a ~950-line emulator through a Forth stage (stages 00-08;
+> `selfhost/README.md`), and the kit's tools run on SLOW-32. The host
+> `slow32asm`/`s32-ld` were not themselves ported. Path A (ELF objects and
+> executables, an ELF loader, a GDB stub) was not pursued: no engine loads
+> ELF and none has a GDB stub. The phase checklists below are as written
+> in February 2026.
+
 ## Vision
 
 SLOW-32 pursues two complementary toolchain paths simultaneously. They share

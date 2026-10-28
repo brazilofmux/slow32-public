@@ -1,5 +1,12 @@
 # SLOW-32 Emulator Optimization Results
 
+> **Historical record (August 2025).** The files listed under "Files
+> Created" no longer exist; the result lives on as
+> `tools/emulator/slow32-fast.c`. Current speeds, with machine and date,
+> are in [EMULATORS.md](EMULATORS.md); on an Apple M5 Max (2026-10-28)
+> slow32-fast runs about twice as fast as slow32 (~505 vs ~240 MIPS),
+> so the "similar speed" finding below no longer holds.
+
 ## Summary
 Implemented ChatGPT 5's suggested optimizations: predecode + dispatch table for the SLOW-32 emulator. Achieved **3.6x speedup** vs unoptimized baseline, matching the predicted 2-3x improvement.
 
@@ -85,7 +92,7 @@ As noted: "Those function calls can sometimes be like little cache bombs."
 5. `tests/benchmark.s` - 730K instruction benchmark
 6. `tests/big-benchmark.s` - 10.8M instruction benchmark
 7. `perf-test.sh` - Performance comparison script
-8. `docs/optimization-roadmap.md` - ChatGPT 5's full optimization plan
+8. `docs/archive/optimization-roadmap.md` - ChatGPT 5's full optimization plan
 
 ## Key Lessons
 

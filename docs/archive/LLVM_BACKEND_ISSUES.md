@@ -1,5 +1,12 @@
 # LLVM Backend Issues to Fix
 
+> **Historical (September 2025); status checked 2026-10-28.** Every item
+> below is resolved. Machine LICM and Block Placement were re-enabled the
+> next day (`b85ada20`, 2025-09-09), and the ISA gained f32/f64
+> instructions on 2026-02-01, which the backend emits. Current backend
+> state: `llvm-backend/SLOW32/STATUS.md`; later defects:
+> [IMPROVEMENTS.md](IMPROVEMENTS.md).
+
 ~~**IMPORTANT**: Inline assembly support has NOT been added to the Clang SLOW-32 target yet!~~ ✅ FIXED (2025-09-08)
 
 ## Critical Issues Found in stdlib Implementation
@@ -32,11 +39,10 @@
   - Disabled integrated assembler to bypass parser requirement
 - **Impact**: Full inline assembly support for stdlib development
 
-### 5. Missing Floating Point Support
+### ~~5. Missing Floating Point Support~~ ✅ FIXED (2026-02-01)
 
-- **Location**: Math library functions use float/double
-- **Status**: Software emulation works but is slow
-- **Fix needed**: Consider adding FP instructions or optimized soft-float
+- **Solution**: f32/f64 instructions in the ISA (operating on GPRs and GPR
+  pairs), emitted by the backend
 
 ### ~~6. Missing UREM/SREM Support~~ ✅ FIXED (2025-09-08)
 

@@ -22,6 +22,8 @@ No `.BAT` yet.
 | `MD path` | `MKDIR` |
 | `RD path` | `RMDIR` |
 | `ECHO text` | |
+| `REM text` | |
+| `name [args]` | runs `name.s32x` (host exec, waits) |
 | `CLS` | |
 | `VER` | |
 | `HELP` | `?` |

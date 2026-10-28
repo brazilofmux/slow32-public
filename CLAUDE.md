@@ -39,13 +39,14 @@ make
 
 - 32 registers: r0=0, r1-r2=return, r3-r10=args, r29=sp, r30=fp, r31=lr
 - No condition codes - comparisons return 0/1 in registers
-- W^X protection - code segment is execute-only, based at 0x0.  Its size is a
+- W^X protection - code and rodata are not writable, and fetch is only from
+  code (loads from code are allowed; docs/SPEC.md 6.3), based at 0x0.  Its size is a
   linker default (1MB), not an architectural limit: `s32-ld --code-size` raises
   it, `--rodata-size`/`--data-size` likewise (1MB each), and the emulator takes
   the limits from the .s32x header.  256MB total address space.
 - Stack at 0x0FFFFFF0 growing down
 - DEBUG instruction outputs character; MMIO ring buffers for full I/O (files, args, env)
-- Five emulators from ~50 MIPS to ~8.3 BIPS (M5 Max, 2026-08-23) — see [docs/EMULATORS.md](docs/EMULATORS.md)
+- Five emulators from ~24 MIPS (stage00) to ~8.3 BIPS (DBT) on the M5 Max — see [docs/EMULATORS.md](docs/EMULATORS.md)
 
 ## Working Features
 
@@ -69,17 +70,17 @@ make
 
 ✅ Native Clang target: `-target slow32-unknown-none` (note: single dash)  
 ✅ XORI instruction (opcode 0x1E) for XOR immediate operations
-✅ LLVM backend updated for latest LLVM API (Sep 2025)
+✅ LLVM backend tracks upstream LLVM (re-pinned 2026-10-20; llvm-backend/)
 ✅ LLVM backend makes tail calls (Oct 2026): `jal r0, sym` / `jalr r0, r2, 0` after the epilogue; a function whose only call is a tail call has no frame
-✅ Regression tests: ALL 62/62 PASSING (plus cross-engine differential harness)
-✅ Runtime libraries built as archives: libs32.s32a (6KB), libc_debug.s32a (44KB), libc_mmio.s32a (72KB)
-✅ Optimization passes fixed - no more LLC hangs
+✅ LLVM backend shrink-wraps (2026-10-28): the prologue moves off early-exit paths, CFI functions included; the constant 0 is r0; a global's `%lo` folds into the loads/stores when every use shares one offset
+✅ Clang driver links too: `SLOW32_HOME=~/slow-32 clang --target=slow32-unknown-none prog.c -o prog.s32x` (crt0, libc_mmio, libs32, `--mmio 64K`)
+✅ Regression tests: 138 in regression/tests, all passing on every engine (run-differential.sh)
+✅ Runtime libraries built as archives: libs32.s32a, libc_debug.s32a, libc_mmio.s32a, libs32cxx.s32a (C++ ABI), plus crt0.s32o and locales.s32o -- all tracked, so a backend change means `make -B -C runtime` and committing them
 ✅ MMIO support: Emulators use MMIO base from executable header, linker provides __mmio_base symbol
 ✅ Fixed emulator MMIO bug: no longer treats address 0x0-0xFFFF as MMIO when mmio_base=0
 ✅ Fixed LLVM backend stack argument bug: arguments 9+ now correctly accessed at fp+0, fp+4, etc.
 
-✅ Runtime builds successfully with -O0, -O1, and -O2
-✅ Some complex files (printf.c, stdio.c, etc.) use -O1 to avoid optimizer performance issues
+✅ Runtime builds at -O2 throughout (runtime/Makefile OPT_LEVEL)
 
 ⚠️ See docs/IMPROVEMENTS.md for known issues
 
@@ -90,7 +91,7 @@ make
 - **crt0.s32o must be explicitly linked first** - Contains _start at address 0 (not included in archives)
 - **Link order**: crt0.s32o, program.s32o, libc_debug.s32a (or libc_mmio.s32a), libs32.s32a
 - **Use -O2** - Default optimization level, -O1 also works
-- **Archives available**: libs32.s32a (runtime intrinsics + 64-bit builtins), libc_debug.s32a (DEBUG I/O), libc_mmio.s32a (MMIO ring buffer I/O)
+- **Archives available**: libs32.s32a (runtime intrinsics + 64-bit builtins), libc_debug.s32a (DEBUG I/O), libc_mmio.s32a (MMIO ring buffer I/O), libs32cxx.s32a (the runtime's C++ ABI)
 - **MMIO support**: Use `--mmio SIZE` flag with linker (e.g., `--mmio 64K`), access via __mmio_base symbol
 
 ## Working C Examples
@@ -120,10 +121,12 @@ int sum_to_n(int n) {
 
 ## Container Support (podman/docker)
 
-Containers provide a clean baseline for testing. Three images in a
+Containers provide a clean baseline for testing. The images form a
 chain, repo:tag naming — the same names ~/builder's jobs build per-arch
-and the ECR mirror serves. Podman is the local engine of choice; the
-commands below work with `docker` substituted 1:1.
+and the ECR mirror serves; each builder round also publishes them,
+both arches, as `docker.io/hurriedreformist/slow32:<variant>`. Podman is
+the local engine of choice; the commands below work with `docker`
+substituted 1:1.
 
 - `slow32:emulator`: the four engines (slow32, slow32-fast, slow32-dbt,
   qemu-system-slow32) + `s32run`. ~38 MB. No compilers.

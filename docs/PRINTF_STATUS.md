@@ -24,15 +24,20 @@ Test 7: Zero padding         ✅ Works correctly
 6. **%p** - Pointer output
 7. **%o** - Octal output
 8. **%%** - Literal percent sign
-9. **Width and Precision** - e.g., `%8d`, `%.10s`
-10. **Flags** - `-` (left justify), `0` (zero padding), `+` (show sign), `#` (alt form)
+9. **%f / %F / %e / %E / %g / %G** - Floating point, formatted from David Gay's `dtoa` (`runtime/dtoa.c`)
+10. **Width and Precision** - e.g., `%8d`, `%.10s`, `%.3d`, and `*` for either
+11. **Flags** - `-` (left justify), `0` (zero padding), `+` (show sign), `#` (alt form)
+12. **Length modifiers** - `hh`, `h`, `l`, `ll`, `j` (64-bit), `z`, `t` (32-bit), `L` (`long double` is `double`)
+
+Not supported: `%a`/`%A` and `%n`; an unknown conversion is printed as written.
 
 ## Implementation Details
 
 - Located in: `runtime/printf_enhanced.c`
 - Performance optimized using a 2-digit lookup table (`Digits100`) for fast decimal conversion.
 - 64-bit conversions use base-100 chunks and `__udivdi3` libcalls.
-- Buffer-safe: Internal buffer of 1KB for `printf`, supports `snprintf` with explicit limits.
+- Buffer-safe: `printf`, `vprintf` and `vfprintf` format into a 1KB stack buffer and switch to a heap buffer when the output is longer; `snprintf` honours its limit.
+- `regression/tests/feature-printf`, `feature-printf-float` and `feature-printf-llu` cover it, and `regression/libc-tests/printf_length.c` checks the length modifiers against the host's printf (a HOSTLEG test of `run-libc-differential.sh`; the self-hosted libc builds the same source).
 
 ## Analysis of Previous Issues
 The garbled ">>>>>>" output reported in earlier versions was caused by incorrect handling of the carry in the custom `UMUL_LOHI` lowering and issues in the string reversal logic during decimal conversion. These have been fixed, and the double-dabble BCD converter used as a workaround has been removed in favor of standard division-based conversion.

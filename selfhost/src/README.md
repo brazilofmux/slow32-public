@@ -10,9 +10,13 @@ common HIR infrastructure used by:
 ## What lives here
 
 - Lexer + parser + sema + AST (`c_lexer*`, `ast.h`, `parser.h`, `sema.h`, ...)
-- Preprocessor (`pp.h`, `optimize.h`)
+- Preprocessor (`pp.h`) and the AST-level optimizer (`optimize.h`)
 - Common HIR/SSA/optimizer pieces (`hir*.h` except target-specific backends)
 - Generation script for the Ragel lexer (`gen_lexer.sh`, `c_lexer.rl`)
+- `libc/`: the target-independent stage08 libc sources (`stdio.c`, `malloc.c`,
+  `convert.c`, ...), linked file by file from `stage08/libc/`
+- `tools/`: the kit's `s32-as`, `s32-ar`, `s32-ld`, `slow32dis`, `slow32dump`
+  sources; `stage08/tools` is a symlink to this directory
 
 ## What does *not* live here (per-target or per-stage)
 
@@ -47,20 +51,12 @@ compiler to produce stage07's toolchain.
 
 Do not replace historical stage contents with symlinks.
 
-## Creating a new stage snapshot
+## No new stage snapshots
 
-When cutting a new stage (e.g. stage09 from stage08):
-
-1. `mkdir -p selfhost/stage09`
-2. Either:
-   - Copy the thin view (`cp -R stage08/* stage09/`) — symlinks are preserved, or
-   - Materialize for a fully standalone historical tree:
-     `cp -RL src stage09/src` (or just rely on the symlinks under stage09/
-      pointing at the then-current src/, or freeze by dereferencing).
-
-3. Adjust `BOOTSTRAP_CC = ../stage08/cc.s32x` etc. in the new stage's Makefile.
-4. Commit the new stage dir (with whatever materialization policy the project
-   chooses for auditability).
+Stages are repaired in place: a fix to the compiler lands in `src/` (and so
+in stage08 and the cross trees), and an older stage is changed only where
+it is itself wrong.  There is no stage09 cut from stage08.  Each stage
+records what it had to overcome.
 
 ## Why this reduces duplication
 

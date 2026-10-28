@@ -9,6 +9,7 @@ which the tests use.
 ../tools/emulator/slow32-fast sheet.s32x
 ../tools/emulator/slow32-fast sheet.s32x --line
 ./tests/run-tests.sh
+./tests/run-host-dbf.sh; ./tests/run-host-wk1.sh   # the file formats, with the host compiler
 ```
 
 ```
@@ -31,10 +32,12 @@ A4: 60    [@SUM(A1:A3)]
 - `@SUM @AVG @MIN @MAX @COUNT` over ranges or lists
 - Cycle detection (`#CYCLE!`) and `#DIV/0!`
 - Text `.sht` save/load (keeps formulas)
-- Lotus `.wk1` / `.wks` subset: INTEGER, NUMBER, LABEL; FORMULA
-  reads the cached value. Formulas become numbers on WK1 export.
+- Lotus `.wk1` / `.wks` subset: INTEGER, NUMBER (IEEE bits kept
+  exactly), LABEL; FORMULA reads the cached value. Formulas become numbers on WK1 export.
 - dBase III `.dbf` interchange: columns A.. become fields A..,
-  used rows become records. SAVE/LOAD pick the format from the
+  used rows become records; on LOAD a C field stays a label (a
+  `00123` is text, not 123), N fields become numbers, and deleted
+  records are skipped. SAVE/LOAD pick the format from the
   extension.
 
 Grid is A–Z by rows 1–64. No macros, no 3D workbooks, no graphs.

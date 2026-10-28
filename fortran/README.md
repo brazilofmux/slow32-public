@@ -40,11 +40,18 @@ plan, the rulings behind it, and the milestone list.
 
 ## Layout
 
+    src/f77.c           the compiler, one translation unit including the rest
+    src/f77_card.h      fixed-form card reader, statements assembled
+    src/f77_lexer.rl    Ragel -G2 token scanner; f77_lexer_gen.c is the
+                        generated output, checked in; gen_lexer.sh regenerates it
+    src/f77_parse.h     recursive-descent parser, lowering straight to HIR
     src/f77_shim.h      the 6-field unit descriptor the backend reads
     src/f77_contract.h  the 45-symbol frontend contract (types, globals,
                         alloca registry, diagnostics)
     src/hir*.h          COPIED SLOW-32 backend (see below)
+    runtime/libf77.c    the guest runtime (I/O, formats, intrinsics), built by clang
     tests/              harness; backend_slice is the load-bearing gate
+    bench/              LINPACK and mandel, f77 against clang (RESULTS.md)
 
 ## The copied backend
 
@@ -73,9 +80,14 @@ compare-branch, the hardware `FSQRT.D`/`FSQRT.S` for `__fp64_sqrt` and
 `DIVERGENCE` comments still in the sources are history, not a to-do.
 The one that opened after that (`hir_opt.h` letting CSE match two equal
 integer constants within a block, `ho_cse_key`, from fort370) closed
-when stage08 took the same rule; since the 2026-10-27 re-sync the copied
-headers equal stage08's again past their banners, and `hir_alias.h`
-(the memory model's alias analysis) is copied with them.
+when stage08 took the same rule; the 2026-10-27 re-sync (at `370629f9`)
+left the copied headers equal to stage08's past their banners, and
+`hir_alias.h` (the memory model's alias analysis) is copied with them.
+stage08 has moved on since -- its opt-in profile-guided allocation, the
+peeled last pass and leaf phi coalescing of `cc359989` -- and only
+wrong-code fixes have come across since (`cc359989`'s two, and those
+the C fuzzer `regression/run-stage08-fuzz.sh` found); the rest waits for
+the next re-sync.
 
 The 2026-10-11 re-sync is what a re-sync is for. The six weeks of
 stage08 work it brought in (call-site live-range splitting, frameless
@@ -150,7 +162,8 @@ tree.
 
 `slow32:fortran` (`Dockerfile.fortran` at the tree root, FROM
 `slow32:base`) carries `f77`, `libf77.s32o` and `s32f77`, which is
-`compile.sh` pointed at the `/opt/slow32` install:
+`compile.sh` pointed at the `/opt/slow32` install; published as
+`hurriedreformist/slow32:fortran` (amd64 and arm64):
 
     podman run --rm -v $(pwd):/data slow32:fortran s32f77 prog.f -o prog.s32x
     podman run --rm -v $(pwd):/data slow32:fortran s32run prog.s32x

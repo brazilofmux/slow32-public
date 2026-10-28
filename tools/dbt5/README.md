@@ -31,7 +31,12 @@ The only allowed shared pieces are the obvious infrastructure:
 
 If you feel the temptation to call `translate_add`, `translate_ldw`, `reg_alloc_*`, or any of the fusion/peephole logic from the old translator — stop. That is exactly the gravity well this directory exists to escape.
 
-## Current status (2026-05-18)
+## Current status
+
+Parked.  Development stopped on 2026-05-18; the standing rule
+(`docs/plans/engine-room.md`) is that stage-5-style work stays binned
+until a workload demonstrates headroom over Stage 4.  What follows is
+the state it was left in.
 
 The full lifter + CFG + SSA + MIR + BURG + LIR + RA pipeline is wired
 into a working AArch64 emission path with a translate-on-miss
@@ -41,7 +46,7 @@ directly (e.g. `A8`, `G2+G3`, `E4`).
 
 Done so far (categories from `ISSUES.md`):
 
-- **A1–A10** — all known correctness bugs in `stage5_codegen_a64.c`
+- **A1–A10** — all known correctness bugs in `target/a64/codegen/stage5_codegen_a64.c`
   (value_to_host init, CMP/SETCC materialization, side-exit cond +
   target, terminal handling, negative immediates, silent default skip,
   prologue per-slot guest-reg selection, per-guest-reg writeback +
@@ -62,9 +67,10 @@ Done so far (categories from `ISSUES.md`):
 - **G1–G3** — translate-on-miss dispatcher loop, JAL/JALR call-graph
   exit semantics, distinguished HALT/YIELD/DEBUG exits.
 
-On x86-64 hosts the existing `stage5_codegen.c` (LIR → native x86-64)
-still works; the clean-room x86-64 port (`stage5_codegen_x64.{c,h}`)
-remains a placeholder for future Intel-hardware work — see below.
+On x86-64 hosts `target/x64/codegen/stage5_codegen_x64.c` (LIR →
+native x86-64, ported off the Stage 4 context in 464d3703) is reached
+with `S5_EMIT_X64=1`, as a compile-and-emit smoke only: no block cache
+is wired to it at the driver level.
 
 This is **not** wired into the production `slow32-dbt` — Stage 4 in
 `../dbt/` remains the production translator. dbt5 is the experiment.
@@ -78,6 +84,7 @@ make
 ./slow32-dbt5 some.s32x                 # run via shadow fallback (default)
 S5_EMIT_A64=1 ./slow32-dbt5 some.s32x   # try native a64 emit on the dispatcher path
 S5_E4=1 S5_EMIT_A64=1 ./slow32-dbt5 some.s32x  # + first-exec differential w/ eviction
+S5_EMIT_X64=1 ./slow32-dbt5 some.s32x   # x86-64 hosts: emit smoke for the clean x64 codegen
 ```
 
 ## Next real work
@@ -92,24 +99,16 @@ S5_E4=1 S5_EMIT_A64=1 ./slow32-dbt5 some.s32x  # + first-exec differential w/ ev
 - See ISSUES.md section F ("Suggested order of attack") for the
   current next-step recommendation.
 
-## x86-64 Migration Plan (Placeholders Added)
+## x86-64 port
 
-The original working x86-64 Stage 5 emitter lives in the legacy
-`stage5_codegen.c` (still coupled to the old translator runtime).
-
-As of this commit we have added:
-
-- `stage5_codegen_x64.h` + `stage5_codegen_x64.c` (clean-room target)
-- These are currently stubs with clear migration comments.
-
-The intent is that when someone is on an x86-64 host (or an x86-64 agent
-is working), they can finish the real independent port into these new
-files.  Once that is solid, the old coupled code can be removed from the
-production `./tools/dbt` tree.
-
-This keeps the clean-room boundary while still making the migration path
-visible in the repository.
+The x86-64 Stage 5 emitter that used to live in `../dbt/` as
+`stage5_codegen.c` (coupled to the Stage 4 translator context) was moved
+here as `target/x64/codegen/stage5_codegen_x64.{c,h}` on 2026-05-17
+(464d3703), with its own context and no `translate_*` calls, and the
+coupled copy and the `-5` flag were deleted from `../dbt/` (dfb65921).
+What remains for it is a driver path that runs its output rather than
+only emitting it.
 
 ## Relationship to the old "narrow owning" pilot
 
-The old pilot code that lived in `translate_a64.c` (the `stage5_replay_narrow_*`, `narrow_ownership_enabled` flag, lifter-driven prologue seeding, etc.) has been left behind in the production tree. It was a hybrid that ultimately still drove the Stage 4 helpers. The real experiment continues here without that scaffolding.
+The old pilot code that lived in `translate_a64.c` (the `stage5_replay_narrow_*`, `narrow_ownership_enabled` flag, lifter-driven prologue seeding, etc.) was a hybrid that ultimately still drove the Stage 4 helpers; it was deleted from the production tree in dfb65921. The real experiment continues here without that scaffolding.

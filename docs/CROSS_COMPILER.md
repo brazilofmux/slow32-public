@@ -2,6 +2,16 @@
 
 *Closing the bootstrap loop — a SLOW-32 program that generates native x86-64 binaries.*
 
+> **Status (2026-10-28).** This is the design as proposed; it lives on as
+> `selfhost/stage08-cross-x64/` (and its AArch64 sibling
+> `selfhost/stage08-cross-a64/`, Stage X7), not under `stage06-cross/`.
+> Stages X0-X6 are done: `cc-x64` compiles its own libc (`libc_x64.a`), the
+> pre-decoded emulator (`out/s32fast-hir`) and the DBT (`out/dbt-x64`), and
+> uses the HIR pipeline by default. Two things differ from the plan: `cc-x64`,
+> `ld-x64` and `ar-x64` are built by the host's gcc, not run as `.s32x`, so
+> the "cc-x64.s32x" loop below has not been built; and Stage X8 (PE) has not
+> been started. Build and test commands are in the root `CLAUDE.md`.
+
 ## Vision
 
 Today, SLOW-32 depends on external tools to exist. The LLVM backend requires a host C++ compiler. The emulators require a host C compiler. Even the self-hosted compiler (cc, Stage 06) produces SLOW-32 binaries that need a host-compiled emulator to run.

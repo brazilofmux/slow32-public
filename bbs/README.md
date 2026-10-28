@@ -25,7 +25,7 @@ whose scores land in the board's `rogue.scr`.
 run (`FROM`, `TO`, `SUBJ`, `TEXT`). dBase can `USE` either file.
 
 ```
-SLOW-32 BBS  v0.1
+SLOW-32 BBS  v0.5
 
 Name: alice
 Password: secret

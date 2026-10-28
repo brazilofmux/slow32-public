@@ -1,4 +1,4 @@
-# Stage 01: Forth Assembler + Archiver + Linker
+# Stage 01: Forth Assembler + Archiver + Linker + Compiler
 
 ## What Is Here
 
@@ -12,11 +12,17 @@ archive files (the SLOW-32 equivalent of Unix `.a` static libraries).
 A linker written in Forth that merges `.s32o` object files, resolves
 symbols from `.s32a` archives, and produces `.s32x` executables.
 
+A Subset-C compiler written in Forth (`cc.fth`) that compiles the
+stage02 tools; `SUBSET-C.md` is the contract it is held to.
+
 | File | Description |
 |------|-------------|
-| `asm.fth` | The assembler (~1200 lines of Forth) |
-| `ar.fth` | The archiver (~600 lines of Forth) |
-| `link.fth` | The linker (~1100 lines of Forth) |
+| `asm.fth` | The assembler (~1400 lines of Forth) |
+| `ar.fth` | The archiver (~730 lines of Forth) |
+| `link.fth` | The linker (~1400 lines of Forth) |
+| `cc.fth` | The Subset-C compiler (~4250 lines of Forth) |
+| `SUBSET-C.md` | The C subset `cc.fth` guarantees |
+| `include/` | Headers for programs `cc.fth` compiles |
 | `crt0_minimal.s` | Minimal C runtime startup code |
 | `mmio_minimal.s` | Minimal MMIO runtime (putchar, open, read, write, memset, memcpy) |
 | `hello_minimal.s` | Linked test program |
@@ -24,6 +30,7 @@ symbols from `.s32a` archives, and produces `.s32x` executables.
 | `run-regression-as.sh` | Assembler regression test runner |
 | `run-regression-ar.sh` | Archiver regression test runner |
 | `run-regression-ld.sh` | Linker regression test runner |
+| `run-regression-cc.sh`, `run-subset-conformance.sh`, `run-reject-tests.sh` | Compiler test runners |
 | `run-selfhost-kernel.sh` | Full self-hosting kernel pipeline |
 | `run-test*.fth` | Forth scripts that drive assembly of individual tests |
 
@@ -55,13 +62,13 @@ The Stage 01 assembler implements the **Bootstrap Core** subset of the SLOW-32 I
 
 ### Instructions
 
--   **Arithmetic**: `add`, `sub`, `mul`, `mulh`, `mulhu`
+-   **Arithmetic**: `add`, `sub`, `mul`, `mulh`, `mulhu`, `div`, `rem`
 -   **Logical**: `xor`, `or`, `and`, `sll`, `srl`, `sra`
 -   **Comparison**: `slt`, `sltu`, `seq`, `sne`, `sgt`, `sgtu`, `sle`, `sleu`, `sge`, `sgeu`
 -   **Immediate**: `addi`, `ori`, `andi`, `slli`, `srli`, `srai`, `xori`, `slti`, `sltiu`
 -   **Upper Immediate**: `lui`
 -   **Memory**: `ldb`, `ldh`, `ldw`, `ldbu`, `ldhu`, `stb`, `sth`, `stw`
-    -   Also supports aliases: `lb`, `lh`, `lw`, `lbu`, `lhu`
+    (the RISC-V spellings `lb`, `lw`, ... are rejected)
 -   **Control Flow**: `jal`, `jalr`, `beq`, `bne`, `blt`, `bge`, `bltu`, `bgeu`
 -   **System**: `debug`, `yield`, `halt`
 

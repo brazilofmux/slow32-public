@@ -7,7 +7,7 @@ bottom for what changed and why.
 ## Philosophy
 
 1. **Trust is auditable.** The only opaque binary is the Stage 0 emulator
-   (~780 lines of C). Everything above it is built from inspectable source.
+   (~950 lines of C). Everything above it is built from inspectable source.
 2. **A stage is one *agreement*, not one *artifact*.** Each stage delivers a
    mutually compatible cluster of tools that can rebuild the next stage.
 3. **Every cycle ends with a gate.** Fixed-point, purity, conformance, or
@@ -51,7 +51,7 @@ stricter constraints, and each answers a different question:
 
 ```
 Trust root
-  stage00   Minimal emulator, host C, ~780 lines          [host cc]
+  stage00   Minimal emulator, host C, ~950 lines          [host cc]
 
 Forth cycle
   stage01   as + ar + ld + cc, written in Forth           [stage00 + kernel.s32x]
@@ -117,7 +117,7 @@ The bootstrap crosses its trust boundary exactly **three** times.
 `check-bootstrap-purity.sh` enforces this over `stage00`..`stage08`, and names
 the permitted seeds:
 
-- `stage00/s32-emu` — built from ~780 lines of host C
+- `stage00/s32-emu` — built from ~950 lines of host C
 - `forth/kernel.s32x` — the Forth kernel binary
 - `forth/prelude.fth` — the Forth prelude
 
@@ -142,7 +142,7 @@ was kept is the rule, not the oracle.
 ### Stage 0: The Trust Root
 
 - **You need:** a C compiler on the host (gcc, clang, tcc — anything), and
-  `s32-emu.c` (~780 lines, POSIX-only, no external dependencies).
+  `s32-emu.c` (~950 lines, POSIX-only, no external dependencies).
 - **You produce:** `s32-emu`, a minimal emulator that loads and runs `.s32x`.
 - **It handles:** all 34 integer instructions; legacy MMIO (PUTCHAR, GETCHAR,
   BRK, EXIT); MMIO ring-buffer I/O (files, args, environment); `.s32x` header

@@ -3,6 +3,12 @@
 Prioritized work plan organized into phases. Each phase is independently
 committable and testable.
 
+**All seven phases are done** (February 2026, at 52 tests). This page is
+the record of that plan; what came after it (memo fields, BROWSE/EDIT,
+menus, arrays, CSV import and export, about seventy more functions; 108
+tests by 2026-10-28) is summarized in [STATUS.md](STATUS.md), and open
+work is in `../ISSUES.md`.
+
 ## Phase 1: Teacher's Pet Unblocking --- DONE
 
 **Goal**: Get sane.prg and tp.prg to run without errors.

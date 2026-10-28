@@ -1,5 +1,11 @@
 # SLOW-32 Coprocessor Model Design
 
+> **Historical design (August 2025), superseded.** The host interface that
+> shipped is the MMIO ring window serviced at YIELD and HALT (docs/SPEC.md
+> section 8). FLDW/FSTW were never added; the ISA has no fenced or atomic
+> memory instructions, and YIELD is a service point for that window and
+> otherwise does nothing.
+
 ## Philosophy
 
 SLOW-32 operates as a **coprocessor** that processes work from shared memory, not a traditional CPU with I/O devices. This eliminates the need for complex MMIO, interrupts, or I/O instructions.

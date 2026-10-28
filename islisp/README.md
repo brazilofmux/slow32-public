@@ -34,7 +34,8 @@ reference implementation and the places the text wins over it.
     src/builtin.c    §13, §21, §18, §30: predicates, lists, symbols, misc
     src/main.c       the driver
     lib/test.lsp     the verification suite's harness macros, our module
-    tests/           the gate, the oracle wrapper, two programs
+    tests/           the gate, the oracle wrapper, three programs with
+                     their expected output
 
 ## Building and running
 
@@ -77,8 +78,14 @@ The oracle image is built with
     podman build -t slow32:islisp-oracle -f Dockerfile.islisp-oracle .
 
 from the repo root.  Without it, `run-verify.sh` assumes an oracle
-count of zero failures per file, and `run-tests.sh` checks the programs'
-exit status alone and says so.
+count of zero failures per file, and `run-tests.sh` diffs the programs
+against their checked-in `<name>.expected` (the oracle's output, which
+the gate re-checks whenever the image is present) and says so.
+
+`regression/run-kit-islisp.sh` runs the kit's `islisp.s32x` over the same
+programs on slow32, slow32-fast, slow32-dbt and qemu (qemu through the
+read-eval-print loop on stdin, held to `<name>.repl.expected`); it needs
+neither the oracle image nor the verify suite.
 
 ## Implementation notes
 

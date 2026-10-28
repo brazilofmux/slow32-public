@@ -5,7 +5,7 @@
 
 ## Current Status (Fully Implemented)
 
-MMIO is now functional in both `slow32` and `slow32-fast` emulators with linker-controlled configuration.
+MMIO is functional in all four engines (`slow32`, `slow32-fast`, `slow32-dbt`, `qemu-system-slow32`) with linker-controlled configuration. The stage00 bootstrap emulator implements a subset.
 
 ### Key Features
 
@@ -18,7 +18,7 @@ MMIO is now functional in both `slow32` and `slow32-fast` emulators with linker-
 
 - **Detection**: Controlled by linker `--mmio` flag which sets S32X_FLAG_MMIO in header
 - **Initialization**: Immediate initialization when S32X_FLAG_MMIO is detected
-- **Memory Layout**: MMIO at `0x10000000`, 64KB region
+- **Memory Layout**: the linker places the window after the heap, 4 KB aligned, and records its base in the header (`mmio_base`); `--mmio 64K` is the usual size
 - **Ring Buffers**: Request/response queues for host-guest communication
 - **Guest Symbols**: Linker creates `__mmio_base` and `__mmio_end` symbols
 - **Linux-Compatible ABI**: Ring descriptors carry Linux-style syscalls (open/read/write/seek/stat/exit, etc.)
@@ -28,9 +28,11 @@ MMIO is now functional in both `slow32` and `slow32-fast` emulators with linker-
 
 ### Test Programs
 
-- `tests/test_mmio_simple.s` - Basic test that writes to MMIO and uses YIELD
-- Link with MMIO: `s32-ld --mmio 64k -o test.s32x test.o23s`
-- Link without: `s32-ld -o test.s32x test.o23s`
+- `regression/tests/` exercises the service through libc (`feature-argv-mmio`,
+  `feature-dpc-*`, `feature-socket-basic`, `feature-poll-socket`, ...) on every
+  engine via `regression/run-differential.sh`
+- Link with MMIO: `s32-ld --mmio 64K -o test.s32x crt0.s32o test.s32o libc_mmio.s32a libs32.s32a`
+- Link without: `s32-ld -o test.s32x crt0.s32o test.s32o libc_debug.s32a libs32.s32a`
 
 ## Implementation Details (2025-09-08)
 
@@ -72,8 +74,8 @@ When `--mmio <size>` is passed to the linker:
 
 - **Directionality**: `REQ_*` ring is single-producer guest → host, `RESP_*` ring (plus optional HP ring) is single-producer host → guest.
 - **Descriptor schema**: 16-byte entries (opcode, length, offset/pointer index, fd/flags/status) exactly as defined in `common/mmio_ring_layout.h`. Bulk arguments and result structs live in the shared data buffer.
-- **Linux correspondence**: Opcodes intentionally mirror Linux syscalls. The emulator behaves like the kernel, executing the host OS call and returning either success values or negative errno codes through the response ring.
-- **Synchronization**: Producers publish heads after writing payloads (store-release); consumers read descriptors with load-acquire before consuming. Guests TRAP after enqueuing work and YIELD while waiting so the emulator services the rings at deterministic points.
+- **Linux correspondence**: Opcodes intentionally mirror Linux syscalls. The emulator behaves like the kernel, executing the host OS call and returning a result, or status `ERR` with the errno in the response `length` (SPEC §8.4).
+- **Synchronization**: Producers publish heads after writing payloads (store-release); consumers read descriptors with load-acquire before consuming. Guests YIELD after enqueuing work and while waiting; the host services the rings only at YIELD or HALT, so at deterministic points.
 
 ### Next Expansion Steps
 

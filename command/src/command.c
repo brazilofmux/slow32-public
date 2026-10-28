@@ -1,9 +1,9 @@
 /*
  * command.c — A COMMAND.COM-shaped shell for SLOW-32.
  *
- * File commands only in v1. No .BAT, no PATH, no launching .s32x
- * (that waits on the host exec service). The prompt is theater;
- * DIR is the product.
+ * File commands, plus running NAME or NAME.s32x through the host exec
+ * service (try_run).  The commands it has are its HELP text and
+ * README.md.  The prompt is theater; DIR is the product.
  */
 
 #include <stdio.h>

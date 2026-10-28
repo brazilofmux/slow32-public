@@ -1,5 +1,10 @@
 # SLOW-32 Emulator Benchmark Results
 
+> **Dated measurement (2026-02-05, one Ryzen 5 3600).** Kept as a record.
+> Per-host figures with dates, and the caveats about the checked-in
+> 285 M-instruction `benchmark_core` build, are in
+> [EMULATORS.md](EMULATORS.md).
+
 **Date:** 2026-02-05
 **CPU:** AMD Ryzen 5 3600 6-Core Processor
 **Method:** Best of 3 runs, sequential execution to avoid interference

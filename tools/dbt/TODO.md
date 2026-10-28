@@ -2,7 +2,7 @@
 
 Optimization ideas identified from studying benchmark_core.s32x codegen.
 Baseline: ~3.5 BIPS on bench_arith/branch/mem (10M iterations, 0.081s).
-After item #1: ~4.6 BIPS (0.062s), 23.5% improvement.
+After item 1: ~4.6 BIPS (0.062s), 23.5% improvement.
 
 ## Queue
 
@@ -45,12 +45,15 @@ The trampoline does full linear-probe cache lookup; shared_branch_exit and
 inline lookup miss paths jump to it instead of returning to C.
 
 ### 6. Cross-block register allocation
-**Status: TODO (long-term)**
-Currently each block independently allocates registers. Hot loop back-edges
-re-load the same registers every entry. If the allocator could coordinate
-across chained blocks (at least for self-loops), the prologue/epilogue
-could be eliminated entirely for the steady-state path.
-(This subsumes item #1 for self-loops specifically.)
+**Status: TODO (long-term); the self-loop case is DONE**
+Self-loops keep their registers across iterations: on x86-64 the LRU
+cache's zero-cost back-edge and prescan pre-warm (78ed6a96, 7bd817e2);
+on AArch64 the static prescan allocator, whose back-edge needs no flush
+or reload.  General allocation across chained blocks is not done.
+Otherwise each block allocates independently, so a loop that spans
+chained blocks reloads its registers at each block entry; coordinating
+across chained blocks would remove those prologues and epilogues on the
+steady-state path.
 
 ### 7. SIB addressing for loads/stores
 **Status: DONE**
@@ -61,12 +64,18 @@ The address register threads through bounds/alignment checks and SIB memory acce
 
 ### 8. Compile-time memory check specialization
 **Status: DONE**
-
-### 9. Hybrid Stage 5 on AArch64 (lifter feeding Stage 4 + future real emitter)
-**Status: STARTED** — lifter now runs on arm64 under `-5`; first Option A win (CFG back-edges seeded into the existing fast in-block machinery) delivered 14 extra back-edges on benchmark_core with zero impact on the default path. 90/90 lift success on the perf binary proves the IR is already solid for A64. Long-term: real A64 codegen from the lifted region (or MIR) so Stage 5 can own hot blocks the way it does on x86.
 Memory access checks (bounds, alignment, MMIO, W^X) were always fully emitted
 at ~25 x86-64 instructions per access, with runtime branches to skip disabled
 features. Now checks are specialized at translation time using cpu state flags
 as compile-time constants: only the checks actually needed are emitted, with
 limits embedded as immediates. Typical case (no MMIO, no alignment traps)
 reduces from ~20-28 instructions to 2-4 per memory access.
+
+### 9. Hybrid Stage 5 on AArch64 (lifter feeding Stage 4 + future real emitter)
+**Status: REMOVED** — the `-5` flag, the hybrid lifter wiring in
+`translate_a64.c` and the coupled x86-64 Stage 5 emitter were deleted
+from this tree in dfb65921 (2026-05-17).  Stage 5 continues, parked, in
+`../dbt5/` (see its README).  When started, the lifter ran on arm64
+under `-5`: 90/90 blocks of benchmark_core lifted, and seeding the
+existing in-block back-edge machinery from its CFG found 14 extra
+back-edges.

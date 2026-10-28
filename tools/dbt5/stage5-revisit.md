@@ -28,6 +28,8 @@
 
 ## Hybrid (AArch64) Progress (May 2026)
 
+Superseded: the `-5` flag and this hybrid wiring were removed from `tools/dbt` in dfb65921 (2026-05-17); Stage 5 work continues, parked, in `tools/dbt5`.
+
 - Lifter (stage5_lift_superblock + CFG) is now wired into translate_a64.c under the existing `-5` / stage5_*_enabled flags.
 - On benchmark_core.s32x (the key perf workload): 90/90 blocks lifted successfully, 0 too-large/unsupported. Lift cost < 20 µs per block.
 - First Option A investment: after successful lift we seed `ctx->backedge_targets[]` / `has_backedge` from the lifter's CFG *before* the heuristic prescan. This feeds the proven fast in-block back-edge machinery (direct relative jumps, targeted flushes) with strictly richer data than the linear negative-imm scan.

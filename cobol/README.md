@@ -9,7 +9,7 @@ only under `-dialect=mf` / `-dialect=gnucobol`. Its brief is
 they were written to, running on a machine that will run anywhere
 QEMU does.
 
-Status, 2026-10-07:
+Status, 2026-10-28:
 
 - **COBOL 85 to NIST's satisfaction.** All 348 CCVS-85 programs
   compile and run to their summary; 8,068 of 8,175 tests pass and
@@ -20,11 +20,14 @@ Status, 2026-10-07:
   syntax and general rule of the sections swept a disposition --
   test, refused, n/a with the ruling, gap -- and
   [coverage.md](docs/conformance/coverage.md) (generated) says which
-  of the 2023 text's 324 numbered elements are covered (302 as of
-  this date). The work queue is
+  of the 2023 text's 324 numbered elements are covered (303 swept,
+  11 not implemented, 10 unswept). The work queue is
   [docs/plans/standard-queue.md](docs/plans/standard-queue.md): 51
-  items, taken in order, 45 of them done (file sharing in its first
-  stage); the rest are ruled, staged or deferred there.
+  items, taken in order, 47 of them done or landed in a first stage
+  (file sharing; locales, [docs/plans/locale.md](docs/plans/locale.md):
+  CLDR collation, the LOCALE functions, SET LOCALE); the other four
+  (FORMAT/SELECT WHEN, commit and rollback, asynchronous messaging,
+  object orientation) are deferred by ruling there.
 - **Real programs, byte for byte.** majesty (the user's ledger) runs
   its month-end on SLOW-32 from the database to the reports; the Open
   Systems accounting suite's papers match their references; ACAS
@@ -40,10 +43,10 @@ Status, 2026-10-07:
   compares the two on every run ([docs/plans/hir.md](docs/plans/hir.md),
   [docs/state-2026-10-03.md](docs/state-2026-10-03.md)). The decimal
   kernels are also DBT hooks ([../docs/dbt-hooks.md](../docs/dbt-hooks.md)).
-- **The harness**: about 1,200 programs under `tests/` with their
+- **The harness**: about 520 programs under `tests/` with their
   expected output, each also run under GnuCOBOL 4 and diffed, and
   since 2026-10-07 under gcobol (GCC 15) as a second, informational
-  oracle; 700-odd programs that must be refused, each with the one
+  oracle; some 740 programs that must be refused, each with the one
   message the text calls for; generators that judge random programs
   by the 85 rules written as code; the compiler under the sanitizers.
   What the oracles cannot judge -- screens, tty, locks within a run
@@ -170,6 +173,10 @@ defended in the docs under `docs/`.
                       runtime, exceptions, file sharing and record locks
     libcob/esql.c     embedded SQL: the SQLite binding and the PostgreSQL
                       client (pgwire.c, scram.c)
+    libcob/locale.c   locales (docs/plans/locale.md): with libutf's units
+                      under libcob/utf, built into libcobloc.s32a and
+                      linked only into programs that compare or format
+                      under a locale
     libcob/entries.s  the runtime's entries written out by hand (PERFORM's
                       push and exit), appended to libcob.c's assembly
     libcob/casemap.h  Unicode simple case mappings for UPPER-CASE and
@@ -261,7 +268,10 @@ edited while they run (the sanitizer gate compiles them mid-run).
 carries `s32-cobc`, `libcob.s32o` and `s32cob`, which is `compile.sh`
 pointed at the `/opt/slow32` install through the `S32_COBC`, `S32_LIBCOB`,
 `S32_AS`, `S32_LD`, `S32_RT` and `S32_RT_INCLUDE` knobs that `compile.sh`,
-`cctool.sh` and `tests/run-tests.sh` all honour:
+`cctool.sh` and `tests/run-tests.sh` all honour (`S32_ESQL`, `S32_SQLITE`
+and `S32_LOCALE` name the EXEC SQL runtime, SQLite and the locale
+library the image also carries). Published as `hurriedreformist/slow32:cobol`
+(amd64 and arm64):
 
     podman run --rm -v $(pwd):/data slow32:cobol s32cob -free prog.cbl -o prog.s32x
     podman run --rm -v $(pwd):/data slow32:cobol s32run prog.s32x

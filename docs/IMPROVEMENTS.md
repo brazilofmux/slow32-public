@@ -40,6 +40,10 @@ This document consolidates feedback and improvement suggestions for the SLOW-32 
   slow32Open).  All of them verify now; cfuzz runs llc with the verifier
   and reports `clang-verify`.  Guards: lit `verify-indirect-call.ll`,
   `select-optsize-liveins.ll` ✅
+- **`llvm.returnaddress(0)` after a call** (2026-10-28, `5055e0c4`): it
+  copied physical r31 where used, i.e. the address the last call returned
+  to; now the entry value via a virtual register. Nothing in the tree
+  used it; the verifier found it under the shrink-wrap test ✅
 
 ### Toolchain (all resolved)
 
@@ -56,7 +60,7 @@ This document consolidates feedback and improvement suggestions for the SLOW-32 
 ### Runtime Libraries (all resolved)
 
 1. **String-float conversions** ✅ — dtoa/strtod implemented.
-2. **Math library transcendentals** ✅ — sin, cos, exp, log, etc. implemented via DBT/QEMU runtime interception.
+2. **Math library transcendentals** ✅ — sin, cos, exp, log, etc. implemented in C (`runtime/math_soft.c`, compiled to the FP instructions); slow32-dbt and QEMU may replace them with host calls.
 
 ## Resolved — code layout / GCC parity (Jun 2026, Cascade Lake)
 
@@ -103,18 +107,18 @@ for all future codegen). None blocking — parity is reached.
   `info_reg` was W0 (overwrote the fault address with e.g. 7). Fixed by
   writing `exit_info` before reusing W0 as scratch. Differential
   `bug-dbt-intrinsic-bounds*` addresses now match the reference.
-- **QEMU fault reporting**: qemu-system-slow32 under-reports out-of-bounds
-  intrinsic accesses relative to `slow32` -- verified 2026-09-12 with the
-  local build: on all four `bug-dbt-intrinsic-bounds*` tests the reference,
-  slow32-fast and slow32-dbt print `FAULT addr=...` and qemu prints
-  nothing.  Those four are the expected divergences in
-  `run-differential.sh` until qemu's intrinsic stubs report the fault.
-- **QEMU guest exit codes**: `helper.c` now exits with guest `r1` via
-  `qemu_system_shutdown_request_with_code` — re-check differential CI;
-  the previous “does not propagate” note is likely stale.
-- **x64 DBT back-edge fix validation**: the superblock back-edge guard
-  (`is_backedge_target` in `translate.c`) was applied to the x86-64 backend by
-  inspection; it needs a Linux build+test pass.
+- **QEMU fault reporting** ✅ (2026-10-03): qemu exited silently on the four
+  `bug-dbt-intrinsic-bounds*` tests; fixed with the host-side pass
+  (docs/SPEC.md 7.2). `run-differential.sh`'s `KNOWN_DIVERGENT` list is now
+  empty.
+- **QEMU guest exit codes** ✅: `helper.c` exits with guest `r1` via
+  `qemu_system_shutdown_request_with_code` (checked 2026-10-28: a program
+  returning 7 exits 7 under qemu, as under slow32). `run-differential.sh`
+  still compares qemu's output only; its header comment says qemu does not
+  propagate exit codes.
+- **x64 DBT back-edge fix validation** ✅: the x86-64 DBT runs the
+  differential harnesses on Linux x86-64; `eb49434c` (2026-08-25) fixed an
+  x64-only back-edge bug found that way.
 - Negative-input tests for the toolchain (malformed objects/archives/
   relocations) — the linker's hardened paths have no test coverage.
 - See `docs/issues/` and the per-tool `ISSUES.md` files for older, lower

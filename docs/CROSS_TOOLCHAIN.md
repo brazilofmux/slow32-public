@@ -2,6 +2,13 @@
 
 *A complete native toolchain — compiler, archiver, linker — running on SLOW-32, targeting x86-64 Linux.*
 
+> **Status (2026-10-28).** The pipeline described here exists in
+> `selfhost/stage08-cross-x64/` (`cc-x64 -c`, `ld-x64`, `ar-x64`,
+> `libc_x64.a`, `crt0.o`; `make test` runs its tests) and in the AArch64
+> sibling `selfhost/stage08-cross-a64/`. Unlike the plan, the three tools
+> are host-gcc-built native programs, not `.s32x` binaries. The design text
+> below is kept as written.
+
 ## Motivation
 
 The cross-compiler (cc-x64) currently produces standalone ELF executables directly — no linking step. Every function the program calls must be defined in the same source file. This works for small self-contained programs but breaks for anything that uses libc or is split across files.

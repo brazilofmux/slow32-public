@@ -160,7 +160,15 @@ typedef struct {
 #define S32_SEC_DEBUG    0x0020  // Debug information
 #define S32_SEC_SYMTAB   0x0021  // Symbol table
 #define S32_SEC_STRTAB   0x0022  // String table for symbols
+#define S32_SEC_EH_FRAME     0x0030  // .eh_frame (DWARF CFI unwind info)
+#define S32_SEC_EH_FRAME_HDR 0x0031  // .eh_frame_hdr (FDE lookup table)
+#define S32_SEC_EXCEPT_TABLE 0x0032  // .gcc_except_table (LSDA data)
 ```
+
+The three unwind sections (`common/s32_formats.h`) carry C++ exception
+and unwind data; the linker merges each kind's subsections and defines
+`__eh_frame_start`/`__eh_frame_end` and `__eh_frame_hdr_start`/
+`__eh_frame_hdr_end` around them for the unwinder.
 
 ### Section Flags
 

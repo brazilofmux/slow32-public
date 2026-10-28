@@ -4,7 +4,7 @@ This tree implements the multi-cycle bootstrap plan documented in [`docs/BOOTSTR
 
 Stage directories at a glance:
 
-- `stage00`: standalone ~800 line emulator (the trust root). Builds via `make` with host `cc`. Optionally runtime-symlinks to `tools/dbt/slow32-dbt` for speed.
+- `stage00`: standalone ~950-line emulator (the trust root). Builds via `make` with host `cc`. Optionally runtime-symlinks to `tools/dbt/slow32-dbt` for speed.
 - `stage01`: assembler + archiver + linker + C compiler written in Forth (includes kernel fixed-point proof).
 - `stage02`: the same four tools (assembler, archiver, linker, compiler) re-authored in Subset C, still hosted by the Forth toolchain. After this stage, all Forth tools are retired.
 - `stage03`: first canonical `cc.s32x` compiler + tools (as, ar, ld) + libc/runtime. Self-sufficient toolchain. Compiled by stage02 cc-min.
@@ -20,9 +20,17 @@ Sibling cross-compiler trees (independent of the numbered cycle):
 - `stage08-cross-x64`: C → x86-64 ELF. Produces `cc-x64`, `ld-x64`, `ar-x64`, `libc_x64.a`, `s32fast-hir`, and `dbt-x64`. Frontend symlinked from `../src/`.
 - `stage08-cross-a64`: C → AArch64 ELF. AArch64 sibling. Frontend symlinked from `../src/`. Produces `cc-a64`, `ld-a64`, `ar-a64`, `libc_a64.a`, `s32fast-hir`, and `dbt-a64`.
 
+Other checks at this level:
+
+- `check-host-frontend.sh`: host-compiles the two cross drivers, which include the shared frontend; run it after a `src/` change (GitHub issue 71).
+- `check-bootstrap-purity.sh`: fails if a stage00–stage08 build script calls a host compiler or links the LLVM-built `runtime/` archives; `run-stages.sh` runs it first (`--skip-purity-guard` skips it).
+- `verify-emu-sums.sh <label> <emu-path>`: rebuilds stages 1–8 under one emulator and compares against [`sha256sums.md`](sha256sums.md).
+- `isa-conformance/run-isa-conformance.sh`: a generated, self-checking instruction corpus run on every available engine.
+- `tools/layout-sweep.sh`: times a cross-built `s32fast-hir` across code-layout offsets.
+
 Reference docs:
 
-- [`docs/BOOTSTRAP.md`](docs/BOOTSTRAP.md) — canonical bootstrap roadmap (V2 stages 0–16, sibling cross-compiler track, trust model).
+- [`docs/BOOTSTRAP.md`](docs/BOOTSTRAP.md) — canonical bootstrap roadmap: the stages as they exist, the sibling cross-compiler track, the trust model, and how the original sixteen-stage plan became these nine.
 - [`docs/DIALECT.md`](docs/DIALECT.md) — live C dialect map (what `src/` actually supports; plan dialect work here).
 - [`TOOL-NAMING.md`](TOOL-NAMING.md) — tool-name conventions across the stages.
 - [`ISSUES.md`](ISSUES.md) — code-review findings (closed and active) across the toolchain.

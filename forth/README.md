@@ -4,7 +4,8 @@
 The stage01 bootstrap seed: a DTC kernel in SLOW-32 assembly plus a Forth
 prelude, hosting asm.fth / cc.fth / link.fth / ar.fth and forthc.  Since the
 2026-10-10 pass it passes the Forth 2012 test suite as gforth ships it
-(`tests/run-forth2012.sh`; see "Forth 2012 conformance" below).  Floating
+(`tests/run-forth2012.sh`; see "Forth 2012 conformance" below); the
+kernel's own suite is `tests/run-tests.sh` (26 tests).  Floating
 point and file-system words beyond what the tools need are out of scope.
 
 ## Architecture
@@ -100,7 +101,7 @@ the display list, bumps the generation, and wipes for the next frame.
 
 ```bash
 cat prelude.fth tube.fth > /tmp/pre.fth; S32_STDIN_PREFIX=/tmp/pre.fth ../tools/emulator/slow32-fast kernel.s32x
-# in another terminal: ../tools/s32-crt-mac   (or s32-crt)
+# in another terminal: ../tools/s32-crt-mac/s32-crt-mac   (or ../tools/s32-crt/s32-crt)
 ```
 ```forth
 TUBE-ON .            \ -1 = glass ready; degrades to a message without a tube
@@ -184,8 +185,9 @@ implementation and no prefix; `s32forth` uses slow32-fast.
 
 ## Container
 
-`slow32:forth` (`Dockerfile.forth` at the tree root, FROM `slow32:base`)
-carries this kernel -- assembled and linked in the image from `kernel.s`
+`slow32:forth` (`Dockerfile.forth` at the tree root, FROM `slow32:base`;
+published as `hurriedreformist/slow32:forth`, amd64 and arm64) carries
+this kernel -- assembled and linked in the image from `kernel.s`
 by `build.sh`, which honours `S32_AS`, `S32_LD`, `S32_RT` and
 `FORTH_RUN=0` -- with `prelude.fth` and `tube.fth`, and forthc (see
 `../forthc/README.md`).  `s32forth` runs the kernel with the prelude

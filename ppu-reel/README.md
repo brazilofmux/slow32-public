@@ -42,7 +42,7 @@ and asserted against the `.ppm` journal. Two oracles, one artifact.
 ```bash
 ../tools/emulator/slow32-fast reel.s32x --show
 # in another terminal
-../tools/s32-crt-mac        # or ../tools/s32-crt/s32-crt
+../tools/s32-crt-mac/s32-crt-mac   # or ../tools/s32-crt/s32-crt
 ```
 
 `--show` paces the frames for the glass; it does not change their

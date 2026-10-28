@@ -17,12 +17,12 @@ needed.
 | `s32-ar-scan.c` | Archive symbol scanner source (subset C) |
 | `s32-ld.c` | Linker source (subset C) |
 | `cc-min.c` | Compiler main source (subset C) |
-| `cc-min-pass1.c` | Compiler pass 1 (lexer/parser) |
-| `cc-min-pass2.c` | Compiler pass 2 (code generation) |
-| `cc-min-pass3.c` | Compiler pass 3 (optimization) |
+| `cc-min-pass1.c` | Compiler pass 1 (parser + code generator) |
+| `cc-min-pass2.c` | Compiler pass 2 (validation stub) |
+| `cc-min-pass3.c` | Compiler pass 3 (writes the assembly output) |
 | `crt0.s` | Stage02-specific startup object (zeros BSS, calls `__slow32_start`) |
 | `mmio.s` / `mmio_no_start.s` | Minimal MMIO runtime (with/without fallback `__slow32_start`) |
-| `libc/` | Minimal C library: `start.c`, `stdio.c`, `string_extra.c`, `convert.c` |
+| `libc/` | Minimal C library: `start.c`, `stdio.c`, `string_extra.c`, `string_more.c`, `convert.c`, `ctype.c`, `malloc.c` |
 | `run-pipeline.sh` | Master A/B pipeline driver |
 
 ## What It Needs

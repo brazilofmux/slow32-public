@@ -1,8 +1,9 @@
 Third-Party Notices
 ===================
 
-The following file is distributed under its own license terms. Its notice must
-be retained in all copies and supporting documentation:
+The files and directories below are distributed under their own license
+terms, not the MIT License in LICENSE.  Each notice must be retained in all
+copies and supporting documentation:
 
 - runtime/dtoa.c
 
@@ -94,6 +95,44 @@ freely, subject to the following restrictions:
   programs and libraries built from them: the Unicode License V3,
   reproduced here as it requires.  A copy also travels with the vendored
   units as cobol/libcob/utf/LICENSE-UNICODE and runtime/utf/LICENSE-UNICODE.
+  The libutf code itself (cobol/libcob/utf/, runtime/utf/) is MIT,
+  Copyright (c) 2025 Stephen Dennis and the TinyMUX contributors; the text
+  is in cobol/libcob/utf/LICENSE and runtime/utf/LICENSE.
+
+- islisp/lib/test.lsp, adapted from Easy-ISLisp's library/test.lsp:
+  Copyright 2019 Kenichi Sasagawa, under the two-clause BSD licence, whose
+  full text the file carries.
+
+- llvm-backend/ (the SLOW32 target, its lit tests, and the patches to
+  LLVM and clang) and clang-target/: written as part of LLVM and marked
+  "Part of the LLVM Project", so under LLVM's licence, the Apache License
+  v2.0 with LLVM Exceptions (SPDX Apache-2.0 WITH LLVM-exception;
+  https://llvm.org/LICENSE.txt).
+
+- qemu-backend/ (the slow32 target and machine for QEMU, and the patches
+  to QEMU): built into qemu-system-slow32, which as a whole is under
+  QEMU's licence, the GNU General Public License, version 2.
+  target/slow32/cpu.h, cpu-param.h and cpu-qom.h are marked
+  LGPL-2.1-or-later (cpu-qom.h: Copyright (c) 2011-2012 Jia Liu, from
+  QEMU's OpenRISC target); the patches modify QEMU's own files under
+  their existing terms.
+
+- fpc-backend/ (the SLOW-32 code generator and run-time library for Free
+  Pascal, and the patches to it): the compiler units
+  (fpc-backend/compiler/slow32/) are adapted from other Free Pascal
+  targets, keep their authors' copyright lines, and are under the GNU
+  General Public License, version 2 or later; the run-time library
+  (fpc-backend/rtl/slow32/) is under Free Pascal's COPYING.FPC, the GNU
+  Library General Public License with a static-linking exception.
+
+The container images (Dockerfile.* here; published as
+hurriedreformist/slow32:<variant>) also carry builds of those upstream
+projects: LLVM, clang, libc++ and libc++abi (Apache-2.0 WITH
+LLVM-exception) in slow32:toolchain, Free Pascal (as above) in
+slow32:toolchain, and QEMU (GPL version 2) in slow32:emulator and every
+image built FROM it.  The source for each is the upstream commit pinned
+in the Dockerfile that builds it (LLVM_COMMIT, FPC_COMMIT, QEMU_COMMIT)
+plus the directory of this repository named above.
 
 UNICODE LICENSE V3
 

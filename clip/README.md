@@ -41,7 +41,10 @@ the interpreter.
 
 This slice: assignment, `STORE`, `?` / `??`, `IF/ELSEIF/ENDIF`,
 `DO WHILE/ENDDO`, `DO CASE`, `FUNCTION`/`PROCEDURE` (with
-`PARAMETERS`/`PRIVATE`/`RETURN`), `SET …`. Unknown single-line
+`PARAMETERS`/`PRIVATE`/`LOCAL`/`RETURN`; a `LOCAL` shadows the outer
+variable for the call and restores it after), `SET …`. `DO name` of a
+procedure compiled into the image is a direct call; with `WITH`
+arguments it is a compile error (they are not marshalled). Unknown single-line
 commands become `clip_cmd()` and ride the existing interpreter
 (`USE`, `REPLACE`, `DO file`, `INDEX`, `RESTORE`, …).
 

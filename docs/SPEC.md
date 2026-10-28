@@ -1881,7 +1881,7 @@ writing).
 - "Input is line-buffered (waits for newline)" depends on the host terminal
   mode, not on SLOW-32.
 
-**docs/MMIO_STATUS.md**
+**docs/MMIO_STATUS.md** (all three corrected there 2026-10-28)
 - "Memory Layout: MMIO at `0x10000000`" — the linker places the window after
   the heap (4 KB aligned) and records it in the header.
 - "Queue Contract Snapshot": the host does not return "negative errno codes";

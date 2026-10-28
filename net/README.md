@@ -3,7 +3,9 @@
 IPv4 TCP only. No DNS, no UDP, no Unix sockets. The guest talks
 `socket`/`bind`/`listen`/`accept`/`connect`/`send`/`recv`; the host
 opens a real host socket. Addresses are numeric (`127.0.0.1`, or
-`htonl(INADDR_LOOPBACK)`).
+`htonl(INADDR_LOOPBACK)`); `getaddrinfo`, `gethostbyname` and
+`inet_pton` translate numeric text and the name `localhost` without a
+resolver (`runtime/netdb.c`), and any other name is not found.
 
 ```bash
 # rebuild libc + emulators first

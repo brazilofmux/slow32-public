@@ -34,7 +34,7 @@ Full C11/GNU and “TCC compiles clean” are **optional**, not trust-root requi
 | Integers incl. `long long` | Full promotion ladder | `#33`, tests `test_llong`, d07 |
 | `float` / `double` | HIR + host FP units / soft builtins | `#34`, FLOATING-POINT.md |
 | Struct / union / enum / typedef | Layout, offsetof, multi-decl | layout / phase tests |
-| Struct **by value** (params + returns) | Hidden-pointer ABI; callee copies | `#51`, d31_struct_byval |
+| Struct **by value** (params + returns) | clang's byval ABI on SLOW-32 since 2026-08-24 (caller copies, address in a stack slot; sret in r3) | selfhost ISSUES-51, d31_struct_byval |
 | Anonymous struct/union members | C11 | phase27, d21/d22 |
 | Designated initializers | Sparse, nested, strings | phase28/29, d23/d24/d30 |
 | Compound literals (block scope) | phase30, d25/d26 | |
@@ -120,14 +120,14 @@ native `s32-ld` against clang's `crt0.s32o` + `libc_debug.s32a`):
 | Integer varargs (s12cc-defined, clang-called) | **interoperable** — the
 call-site convention is shared; each compiler's `va_*` machinery is
 callee-private |
-| `double` args/returns | **diverges** (FP word-order/pairing) |
-| struct by value | **diverges** (s12cc hidden-pointer ABI vs clang's) |
+| `double` args/returns | **interoperable** since 2026-08-24 (clang's aligned-pair convention) |
+| struct by value | **interoperable** since 2026-08-24, both directions (clang's byval convention; sret in r3) |
 
 **Link recipe:** add `stage08/builtins64.s` (`__muldi3` — clang inlines MUL via
 `UMUL_LOHI` so `libs32.s32a` never carried it) and `stage08/builtins_fp64.s`
 (`__fp64_mul` … — clang uses HW FP). Both coexist with `libs32.s32a`; archive
 members are only pulled for still-unresolved symbols.
 
-Convergence work, if wanted: pick one convention each for double passing and
-struct-by-value. Until then, mixed links are safe for the scalar/pointer core —
-which covers most real C library surfaces.
+The two divergences this table first recorded (double passing and
+struct-by-value) were closed on 2026-08-24 by adopting clang's conventions;
+`run-interop-llvm.sh` gates both.

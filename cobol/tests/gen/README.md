@@ -47,6 +47,16 @@ expression subscript is not in the 85 text). Under `run-gen.sh` it keeps
 every intermediate result at zero or above: GnuCOBOL computes a position
 in an unsigned BINARY operand's type (`docs/oracles.md`, 2002/refmodneg).
 
+`gen-flow.py SEED [PARAGRAPHS]` writes control flow for the front-end
+pass (`docs/plans/frontend-pass.md`), which lays conditional code out
+from nodes: paragraphs reached by fall-through and forward GO TO, IF
+with GO TO, NEXT SENTENCE and CONTINUE, EVALUATE, the PERFORM loops,
+the conditional phrases (SIZE ERROR, OVERFLOW, AT END, ON EXCEPTION),
+every loop counted so every program ends. Each paragraph DISPLAYs its
+name on entry, so a layout mistake changes the trace. Run it with
+`GEN=flow`; a NOT ON EXCEPTION GnuCOBOL shows after a fall-through ON
+EXCEPTION is counted apart (`docs/oracles.md`).
+
 `gen-perf.py SEED` writes programs of out-of-line PERFORMs behaving as
 old programs do: GO TO in and out of what is being performed, exits
 fallen through, contained programs and a second program in the file
@@ -117,9 +127,11 @@ seconds.
     GEN=string tests/gen/run-gen.sh 1 400 40
     GEN=table tests/gen/run-gen.sh 1 400 50
 
-The harness runs seeds 1 to 40 of each generator as Gate 7
-(`gen/arith`, `gen/edit`, `gen/cond`, `gen/string`, `gen/table`), about
-11,000 checks a run. A mutation check showed it fails with the old `0` insertion bug back
+The harness runs seeds 1 to 40 of each of these generators as Gate 7
+(`gen/arith`, `gen/edit`, `gen/cond`, `gen/string`, `gen/table`,
+`gen/flow`, `gen/pos`); the generators below that need no oracle
+(`gen/loop`, `gen/held`, `gen/native`, `gen/hir`, `gen/national`,
+`gen/stddec`) run after it, with python3 and no container. A mutation check showed it fails with the old `0` insertion bug back
 in place (18 of 40 edit programs disagree). Without the oracle's image the
 summary says the gate did not run.
 
@@ -241,7 +253,9 @@ through `run-flag.sh FLAG FIRST COUNT`: the same compiler twice, as it
 is and with FLAG (`-fno-loop-reg`), the two programs printing the same
 bytes.  The harness runs 60 of them (gen/loop), and 60 on other seeds
 with `-fno-avail-reg` (gen/held: the values held between statements,
-alone); no container is needed.
+alone), and 60 more with `-fno-hir` (gen/hir: the statements lowered to
+HIR islands against the same statements without them); no container is
+needed.
 
 `gen-national.py SEED [STATEMENTS]` writes a COBOL 2014 program over
 national (PIC N) items and, on stderr, the output the text's code-unit
@@ -271,3 +285,10 @@ pre-generated `national-SEED.cbl` and `national-SEED.ref` are used
 made with the gate's statement count, 40).  The 2026-10-08 audit:
 docs/national.md "Audit".
 
+`gen-stddec.py SEED [N]` writes a program whose arithmetic is
+`ARITHMETIC IS STANDARD-DECIMAL` (2014) and, on stderr, the lines it
+must print, computed with Python's `decimal` at precision 34 -- decimal128
+-- under each INTERMEDIATE ROUNDING mode the program names
+(`docs/wide.md`). It runs through `run-ref.sh` (GEN=stddec); no oracle:
+GnuCOBOL does not implement the clause and gcobol takes it as NATIVE.
+The harness runs 40 (gen/stddec).

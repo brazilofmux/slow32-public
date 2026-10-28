@@ -13,4 +13,18 @@
   and escape validation. Build with:
   `./slow32cc --libc=mmio -O2 examples/validatejson.c -o validatejson.s32x`
   and run:
-  `./tools/emulator/slow32-fast --mmio 0x10000 validatejson.s32x file.json`.
+  `./tools/emulator/slow32-fast validatejson.s32x file.json` (the MMIO size
+  comes from the executable header).  `make` here builds it, the Ragel CSV
+  validator `validatecsv_ragel.c` and its scheduler/serial variants;
+  `make parity` checks the two CSV variants agree on `csvtests/`.
+
+- `vecscope.c`, `fire.c`, `sprites.c` — the tube demos (vector, framebuffer,
+  PPU); `./build-tube-demos.sh` builds all three.  Watch them with
+  `tools/s32-crt-mac` on macOS; `tools/s32-crt` draws vec frames in a
+  terminal.
+
+- `cpp/` — small C++ programs (classes, templates, lambdas, exceptions);
+  `cpp/test_all.sh` builds and runs them.
+
+- `csvbench/` — splits CSV validation across several emulator instances
+  (`gen.sh`, then `bench.sh`).

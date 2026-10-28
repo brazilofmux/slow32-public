@@ -1,8 +1,13 @@
 # DBT Peephole Optimizer Ideas
 
-## Status: Active Development
+## Status
 
-Last updated after inline f32 FP SSE commit (2026-02-04).
+The x86-64 translator's peephole pass (`peephole_optimize_x64` and
+`nop_compact_x64` in `tools/dbt/translate.c`). Checked against the code
+2026-10-28: items 1, 2, 4 and 5 below are implemented, item 3 was tried and
+disabled as unsound (`f1a7a57d`, 2026-04-06), and items 6-8 are not
+implemented as peepholes. The non-peephole ideas at the end were not
+re-checked. The AArch64 translator does not run this pass.
 
 ## Completed
 
@@ -16,20 +21,20 @@ Last updated after inline f32 FP SSE commit (2026-02-04).
 
 ## High Priority — Patterns Observed in Hot Blocks
 
-### 1. Conditional-over-unconditional jump folding
+### 1. Conditional-over-unconditional jump folding — DONE (Pattern JCC, `e3294d9d`)
 **Pattern**: `ja/jae/jb/jbe/je/jne +5; jmp rel32` → invert to single `jbe/jb/jae/ja/jne/je rel32`
 **Observed**: Every memory bounds check emits this. In the CSV validator's hottest
 block (0x1300, 2085 bytes), this pattern occurs ~20 times.
 **Savings**: 5 bytes per occurrence (11 → 6 bytes)
 **Impact**: ~100 bytes per hot block, ~5% code size reduction
 
-### 2. Store-then-store to same address
+### 2. Store-then-store to same address — DONE for imm-to-mem (Patterns DSTORE/DSTORE32, `e3294d9d`)
 **Pattern**: `mov [rbp+d],imm1; mov [rbp+d],imm2` → remove first store
 **Observed**: At 0x18b-0x192 in CSV hot block: `movl $0x200000, 0x14(%rbp); movl $0x2000b4, 0x14(%rbp)`
 **Savings**: 7-10 bytes per occurrence
 **Note**: Generalizes pattern 0c. Need both imm-to-mem and reg-to-mem forms.
 
-### 3. Redundant mov before cmp
+### 3. Redundant mov before cmp — REMOVED (Pattern MOV_CMP; its local deadness test was unsound, `f1a7a57d`)
 **Pattern**: `mov rA,rB; mov rC,rD; cmp rC,rA` → `cmp rD,rB`
 **Observed**: At 0x79-0x7d in benchmark hot block and many comparison sequences
 **Savings**: 4 bytes per occurrence (two 2-byte movs eliminated)
@@ -39,11 +44,11 @@ block (0x1300, 2085 bytes), this pattern occurs ~20 times.
 **Pattern**: `[REX] mov r,imm; [REX] mov r,imm` (same dest) → remove first
 **Observed**: At 0x255-0x25b: `mov $0x200000,%r12d; mov $0x2000c0,%r12d`
 **Note**: Pattern C already handles non-REX form. Need to extend for REX prefix.
-**Status**: Pattern C already handles this via REX consumption. VERIFY.
+**Status**: Verified 2026-10-28: Pattern C consumes an optional REX prefix on both movs.
 
 ## Medium Priority
 
-### 5. NOP compaction
+### 5. NOP compaction — DONE (`nop_compact_x64`, `f49a00e5`; blocks over 16 KB are skipped)
 After peephole replaces instructions with NOPs, a final pass could compact them
 out and adjust relative jumps. Currently NOPs waste icache space.
 **Complexity**: High — requires relocation of all relative offsets

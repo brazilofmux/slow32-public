@@ -10,7 +10,7 @@
 | R11-R28 | General purpose | Callee |
 | R29 | Stack pointer (SP) | Callee |
 | R30 | Frame pointer (FP) | Callee |
-| R31 | Link register (LR) | Callee |
+| R31 | Link register (LR) | Clobbered by every call; a function that calls saves its own on entry |
 
 ## Standard Calls (non-varargs)
 
@@ -40,6 +40,27 @@ included, follows it, so it is the convention, and Free Pascal's `cdecl`
 calling convention packs everything sequentially.
 
 Return values use R1 (and R1:R2 for 64-bit).
+
+## Structs by Value
+
+A struct argument (clang's `byval`) is copied by the caller into its own
+frame, and the copy's address is passed in a stack slot, never in an
+argument register; the stack slots follow argument order. A struct return
+value is written through a hidden pointer the caller passes in R3
+(`sret`), so the declared arguments start at R4. stage08 cc has used the
+same convention since 2026-08-24 (docs/plans/engine-room.md), and
+`selfhost/stage08/run-interop-llvm.sh` checks both directions.
+
+## Tail Calls
+
+Since October 2026 the LLVM backend turns a call in tail position into a
+jump after the epilogue: `jal r0, sym`, or `jalr r0, r2, 0` for an
+indirect callee, whose address is carried in R2 (the one register that is
+neither restored by the epilogue nor an argument). A call is a tail call
+only when every argument is in a register, no argument is `byval` or
+`sret`, the caller is neither variadic nor returns through `sret`, and
+the callee preserves at least the registers the caller must. A function
+whose only call is a tail call has no frame.
 
 ## Varargs Calls
 

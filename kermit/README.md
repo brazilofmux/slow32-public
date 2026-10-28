@@ -4,7 +4,7 @@ The civilized file protocol. More polite than ZMODEM, and not faster:
 every packet is printable, ctl-quoted with `#`, carries a type-1
 checksum, and is individually acknowledged. SEQ mod 64, stop-and-wait.
 
-This is item #5 on the 1987-desk plan, and it exists because the `net`
+This is item 5 on the 1987-desk plan, and it exists because the `net`
 hose gave the machine a second endpoint. The two guests below share a
 TCP connection and **no directory** — which is the only situation where
 a file protocol earns its keep.
@@ -33,6 +33,10 @@ emulator's wait-for-any (`s32_dpc_wait_on`, docs/plans/dpc.md), not a
 spin. A silent peer is NAKed or resent to, MAXTRY times, then given
 up on. `-x N` loses our Nth outgoing packet, once, so the tests can
 provoke both timeout paths on a real wire.
+
+Errors end the session: a failed write, close or read sends an E packet
+(the bad D is not ACKed, and neither side prints OK), an inbound E is
+reported as the peer's error, and an unknown packet type is NAKed.
 
 Protocol subset: S/F/D/Z/B/Y/N/E packets, MAXL 94, ctl-quoting.
 No 8th-bit quoting (the hose is 8-bit clean), no repeat counts, no

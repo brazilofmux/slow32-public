@@ -1,5 +1,13 @@
 # SLOW-32 Optimization Roadmap
 
+> **Historical (August 2025), superseded.** Kept as a record. What became
+> of each item: predecode shipped as `slow32-fast`; the linker is `s32-ld`
+> with `.s32o`/`.s32x` (docs/file-formats.md); host I/O is the MMIO ring
+> window serviced at YIELD (docs/SPEC.md section 8, with DPC timers in place
+> of interrupts); block linking and fused patterns are in `slow32-dbt`.
+> FENCE, RDTIME, green-thread VCPUs and interrupts were not added to the
+> ISA (docs/SPEC.md has the instruction set).
+
 ## Immediate Wins (Low Risk, High Impact)
 
 ### 1. Speed Optimization: Predecode + Dispatch Table ✓

@@ -8,7 +8,7 @@ else runs on top of it.
 
 | File | Description |
 |------|-------------|
-| `s32-emu.c` | Emulator source (~735 lines of C) |
+| `s32-emu.c` | Emulator source (~950 lines of C) |
 | `Makefile` | Builds the emulator with the host C compiler |
 
 ## What It Needs
