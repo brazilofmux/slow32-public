@@ -1,7 +1,8 @@
 # s32-clip
 
 Clipper for SLOW-32: a `.prg` becomes a `.s32x`.  The plan:
-[docs/plans/clipper.md](../docs/plans/clipper.md) (steps 0-2 done).
+[docs/plans/clipper.md](../docs/plans/clipper.md) (steps 0-2 done, 4
+under way).
 
 s32-clip parses the program with dbase's own parser at compile time and
 writes C: control flow is C, and expressions are C calls on the
@@ -15,7 +16,11 @@ can be (macros).
 (`clip/tests`, `dbase/tests/*.PRG`) run by the interpreter and compiled
 must print the same bytes (45 of 45 that compile, 2026-10-29).  On
 `tests/bench1.prg` scaled up 50x, the compiled program runs 7.6x faster
-than the interpreter under slow32-dbt (0.18 s against 1.37 s).
+than the interpreter under slow32-dbt (0.18 s against 1.37 s).  A real
+dBASE III report suite (a ledger's import, balances and twelve reports,
+run locally) compiles whole -- the program files it DOes become compiled
+procedures -- and prints the same reports, leaving identical tables,
+2.9x to 3.6x faster per phase (11.5 s to 3.4 s for the suite).
 
 ```bash
 ./build.sh

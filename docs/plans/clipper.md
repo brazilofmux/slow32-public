@@ -4,8 +4,11 @@ Status 2026-10-29: steps 0-2 done -- the oracle harness
 (`clip/tests/run-oracle.sh`: 45 of 45 compiling programs agree), the
 rest of the control flow, and compiled expressions (7.6x the
 interpreter's speed under slow32-dbt on `clip/tests/bench1.prg` scaled
-up).  Next: step 3 (variables) and step 4 (commands).  The plan as
-written follows.
+up).  Step 4 under way: program files reached by DO compile in, and
+SELECT, SKIP, GO, APPEND BLANK, SEEK and REPLACE are direct calls; a real
+report suite runs 2.9x-3.6x faster per phase than interpreted, same
+output.  Variable lookup became a hash index in the interpreter itself
+(both gain).  The plan as written follows.
 
 dbase/ is a well-developed dBASE III Plus interpreter (23K lines, 109
 tests, Clipper and FoxPro additions, the last dBASE III Plus stubs
