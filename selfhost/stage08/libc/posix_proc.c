@@ -8,6 +8,7 @@ int s32_mmio_request(unsigned int opcode, unsigned int length,
 int strlen(const char *s);
 int write(int fd, const void *buf, int n);
 void _exit(int status);
+void abort(void);
 int fflush(void *stream);
 extern int errno;
 void *memcpy(void *d, const void *s, unsigned int n);
