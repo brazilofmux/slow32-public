@@ -103,6 +103,25 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-29 (`269d7c29`).  `cc.s32x`, `libc.s32a`, `crt0.s32o`
+and `include/`; the tools rebuild identical.  The C11 compliance pass:
+the compiler takes every valid probe of the survey (320) and refuses
+what C11 and clang's defaults refuse -- constraint violations,
+implicit function declarations and the incompatible conversions are
+errors now, where the batch 49 compiler accepted them.  Code that
+leaned on that may need declarations (the cross libcs did).  New: wide
+and u8 literals, UCNs, hex floats, digraphs, K&R definitions,
+`_Alignas` (locals realign the stack), `_Generic`, `_Static_assert`,
+address constants, mixed declarator lists, pointers to arrays,
+variable length arrays (`__STDC_NO_VLA__` is no longer defined), C11
+claimed (`__STDC_VERSION__` 201112L).  Wrong code fixed and live in
+every earlier kit: a negative object-like `#define` (`#define N
+-2000`) was unsigned, so `N / 2` was 2147482648; a static `_Bool` held
+the value given it; string literals in `(char[]){"abc"}` were dropped.
+Headers: `stdalign.h` and `stdnoreturn.h` are new; `stddef.h`'s
+offsetof is the builtin.  Gated: kit differential 133 + 2 of 135,
+kit tools 21/0, islisp, libcob 492/0, dfsort, mdfix 95 runs.
+
 Rebuilt 2026-10-27 (`047d26ea`).  `cc.s32x` and `libc.s32a`; the tools
 rebuild identical.  Replaces batch 48, which had a wrong-code defect
 exposed by cc359989: a large constant pinned as a loop constant was
