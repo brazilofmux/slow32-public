@@ -708,6 +708,30 @@ the function (6.7.6.3p8, `ps_fn_typed_param`).  And in type names,
 `(*[2])(void)`, an array of function pointers.  `S12CC_CONSTRAINT_WARN=1` turns
 the errors into warnings, to survey a corpus.
 
+**REJECTS: the last declarators** (2026-10-29).  `int (*row(int))[3]`,
+a function returning a pointer to an array, takes the path of a
+function returning a function pointer and was refused at the `[`;
+the outer declarator after the parameters is now either
+(`ps_fn_ret_outer`).  Its body's `return &m[i]` was refused next, and
+not only there: `&m[i]` on a 2-D array is the row's address, which
+the parser's sum `m[i]` already is, and the sum stood for it as-is --
+typed as the row decayed, an `int *`, so `int (*q)[3] = &m[i]` was an
+incompatible pointer conversion in any function.  It is now a cast of
+the sum to a pointer to the row (`ps_row_address`).  At file scope
+`int (*pa)[3];` was refused outright (`ps_global_rowptr`), and an
+address constant into a 2-D array, `int *q = &m[1][0];`, fell to the
+older token readers, which took `m` for a redeclaration with a
+different type; the row is an address constant like any other
+(`ps_addr_row`).  A declarator list mixing kinds, `int x = 4,
+(*fp)(void), f(void);` (6.7p1): each declarator path read only its
+own kind after a comma.  Now the path that cannot go on ends the call
+at the comma and keeps the base type, and the next call to
+parse_top_decl starts from that base instead of reading specifiers
+(`ps_decl_keep`, `ps_decl_more`) -- a few lines in parse_top_decl,
+which may not grow.  New probes for the two found on the way.  The
+REJECTS left are the two `_Alignas` stronger than 4 on a local, which
+need the stack realigned at entry: a back-end change, not this pass.
+
 ## Constraints on the work
 
 - stage07 builds stage08: the new code keeps stage07's dialect (ints

@@ -4067,6 +4067,23 @@ static int   ps_ac_off;
 
 static int ps_addr_value(Node *n);
 
+/* The parser's row of a 2-D array, m[i]: m plus i times the row width,
+ * counted in elements, as an address constant (&m[1][0], &m[1]).  It
+ * fell to the older readers, which took `m` for a redeclaration. */
+static int ps_addr_row(Node *n) {
+    int t;
+    int esz;
+    if (!n->lhs || !n->rhs || !(n->rhs->attr & AT_ICX) || !ps_addr_value(n->lhs)) return 0;
+    t = ct_decay(sema_vty(n->lhs));
+    if (!ct_is_ptr(t)) return 0;
+    t = ct_baseof(t);
+    while (ct_is_array(t)) t = ct_baseof(t);
+    esz = ct_sizeof(t);
+    if (esz <= 0) return 0;
+    ps_ac_off = ps_ac_off + (int)sema_cvalof(n->rhs) * esz;
+    return 1;
+}
+
 /* The address of lvalue n: a global or static local, a member of one
  * (its offset added), or what a pointer constant points at. */
 static int ps_addr_lvalue(Node *n) {
@@ -4095,6 +4112,7 @@ static int ps_addr_lvalue(Node *n) {
         return 1;
     }
     if (n->kind == ND_UNARY && n->op == TK_STAR && n->lhs) return ps_addr_value(n->lhs);
+    if (n->kind == ND_BINOP && n->op == TK_PLUS && n->arr_cols > 0) return ps_addr_row(n);
     return 0;
 }
 
@@ -5809,6 +5827,22 @@ static Node *parse_postfix_from(Node *n) {
     return n;
 }
 
+/* &a[i] on a 2-D array or a pointer to one: the row's address, which
+ * the sum a[i] already is, typed as a pointer to the row (6.5.3.2p3) --
+ * as it stood, the sum's own type, the row, decayed to a pointer to its
+ * first element, and int (*q)[3] = &m[i] was refused as incompatible. */
+static Node *ps_row_address(Node *n) {
+    int t;
+    if (n->arr_cols <= 0 || n->lhs == NULL || n->lhs->cty <= 0) return n;
+    t = ct_decay(n->lhs->cty);
+    if (!ct_is_ptr(t)) return n;
+    t = ct_baseof(t);
+    while (ct_is_array(t)) t = ct_baseof(t);
+    n = nd_cast(n, n->ty);
+    n->cty = ct_ptr(ct_array(t, n->lhs->arr_cols));
+    return n;
+}
+
 static Node *parse_unary(void) {
     Node *n;
 
@@ -5894,7 +5928,7 @@ static Node *parse_unary(void) {
          * (m_menu's fread(&savegamestrings[i], ...)).  Plain &(a+b)
          * is not legal C, so this only fires for that shape. */
         if (n->kind == ND_BINOP && n->op == TK_PLUS) {
-            return n;
+            return ps_row_address(n);
         }
         return nd_unary(TK_AMP, n);
     }
@@ -8058,6 +8092,101 @@ static Node *ps_fn_typed_param(char *pnm, int *pty) {
     return p;
 }
 
+/* A declaration whose declarator list goes on past a declarator its
+ * own path does not continue from -- int x = 4, (*fp)(void), f(void);
+ * (6.7p1) -- ends that call to parse_top_decl at the comma, keeping its
+ * base type; the next call takes the rest from there instead of reading
+ * specifiers. */
+static int ps_decl_resume;
+static int ps_dr_ty;
+static int ps_dr_cty;
+static int ps_dr_static;
+static int ps_dr_extern;
+static int ps_dr_const;
+static int ps_dr_fpbase;
+static int ps_dr_fpn;
+
+static void ps_decl_keep(int ty, int cty, int is_static, int is_extern, int base_const) {
+    while (ty_is_ptr(ty)) ty = ty_deref(ty);
+    ps_dr_ty = ty;
+    ps_dr_cty = cty;
+    ps_dr_static = is_static;
+    ps_dr_extern = is_extern;
+    ps_dr_const = base_const;
+    ps_dr_fpbase = ps_pending_retfpbase;
+    ps_dr_fpn = ps_pending_retfpn;
+}
+
+/* The resumed declaration's type, its declarator's stars read. */
+static int ps_decl_resumed(int *is_static, int *is_extern, int *base_const) {
+    ps_decl_resume = 0;
+    *is_static = ps_dr_static;
+    *is_extern = ps_dr_extern;
+    *base_const = ps_dr_const;
+    ps_decl_objconst = 0;
+    ps_pending_retfpbase = ps_dr_fpbase;
+    ps_pending_retfpn = ps_dr_fpn;
+    return ps_declarator_stars(ps_dr_ty, ps_dr_cty);
+}
+
+/* The end of a declarator: `;`, or `,` and the next one resumed. */
+static void ps_decl_more(void) {
+    if (lex_tok == TK_COMMA) {
+        next();
+        ps_decl_resume = 1;
+        return;
+    }
+    expect(TK_SEMI);
+}
+
+/* After a comma, a declarator that opens with ( is left to a resumed
+ * call: (*fp)(void), (name). */
+static int ps_decl_paren_next(void) {
+    if (lex_tok != TK_LPAREN) return 0;
+    ps_decl_resume = 1;
+    return 1;
+}
+
+/* A file-scope T (*name)[N], the cursor on the `[`: a pointer to an
+ * array of N T, as a local of that type is -- its machine type T *, the
+ * row width beside it.  It was refused at the `[`. */
+static void ps_global_rowptr(char *nm, int ty, int is_static, int is_extern) {
+    int cols;
+    int idx;
+    next();
+    cols = parse_const_int();
+    expect(TK_RBRACK);
+    if (lex_tok == TK_LBRACK) p_error("pointer to array: only T (*name)[N] is supported");
+    if (is_extern) idx = add_extern_global(nm, ty + TY_PTR, 0);
+    else           idx = add_defined_global(nm, ty + TY_PTR, 0);
+    if (is_static) ps_glocal[idx] = 1;
+    ps_gcols[idx] = cols;
+    ps_gcty[idx] = ps_rowptr_cty(ty, cols);
+    if (lex_tok == TK_ASSIGN) {
+        next();
+        ps_scalar_global_init(idx, ty + TY_PTR);
+    }
+    ps_decl_more();
+}
+
+/* The outer declarator of T (*name(params))..., the cursor after its
+ * `)`: (params) makes the return a function pointer (SQLite's
+ * memdbDlSym), [N] a pointer to an array of N T (6.7.6.1).  The machine
+ * type is a word pointer either way; the C type says how far a step
+ * moves. */
+static int ps_fn_ret_outer(int ret_cty) {
+    int cols;
+    if (lex_tok == TK_LBRACK) {
+        next();
+        cols = parse_const_int();
+        expect(TK_RBRACK);
+        return ct_ptr(ct_array(ret_cty, cols));
+    }
+    expect(TK_LPAREN);
+    p_skip_to_rparen();
+    return ct_ptr(ct_func(ret_cty, 0, -1, 0));
+}
+
 /* A function's declarator after its name, at the '(': the parameters,
  * then a prototype's ';' or the body.  Split from parse_top_decl, whose
  * size stage07 compiles only so far (selfhost ISSUES-100), so that the
@@ -8358,17 +8487,16 @@ params_done:
     expect(TK_RPAREN);
     if (fn_ret_fnptr) {
         expect(TK_RPAREN);
-        expect(TK_LPAREN);
-        p_skip_to_rparen();
+        ret_cty = ps_fn_ret_outer(ret_cty);
     }
     skip_gnu_decl_suffixes();
 
     /* Prototype: type name(params); */
-    if (lex_tok == TK_SEMI) {
+    if (lex_tok == TK_SEMI || lex_tok == TK_COMMA) {
         if (kr) p_error("a parameter list without types is only allowed in a function definition");
-        next();
+        ps_decl_more();
         add_func_type(nm, ty, fp_tys, fp_ctys, fp_n,
-                      fn_ret_fnptr ? ct_ptr(ct_func(ret_cty, 0, -1, 0)) : ret_cty);
+                      ret_cty);
         return NULL;
     }
 
@@ -8382,7 +8510,7 @@ params_done:
         fp_n = -1;      /* no prototype: calls promote their arguments */
     }
     add_func_type(nm, ty, fp_tys, fp_ctys, fp_n,
-                  fn_ret_fnptr ? ct_ptr(ct_func(ret_cty, 0, -1, 0)) : ret_cty);
+                  ret_cty);
     fn = nd_new(ND_FUNC);
     fn->name = strdup(nm);
     fn->ty = ty;  /* store return type for sema pass */
@@ -8473,8 +8601,18 @@ static Node *parse_top_decl(void) {
      * function definitions (emit STB_LOCAL); other qualifiers (const,
      * inline, register, restrict, auto, GNU attrs) have no semantic
      * effect in this single-file compiler. */
-    is_extern = 0;
     fp_n = 0;
+    if (ps_decl_resume) {
+        ty = ps_decl_resumed(&is_static, &is_extern, &base_const);
+        lead_const = base_const;
+        ret_cty = ps_type_cty;
+        gbase_cty = ps_dr_cty;
+        was_enum = 0;
+        g2cols = 0;
+        gtdac = 0;
+        goto declarators;
+    }
+    is_extern = 0;
     is_static = 0;
     lead_const = 0;
     base_const = 0;
@@ -8515,6 +8653,8 @@ static Node *parse_top_decl(void) {
      * initializer's cast or sizeof runs parse_type again. */
     base_const = lead_const || ps_type_constb;
     gbase_cty = ps_type_nostar_cty;
+declarators:
+    ps_decl_keep(ty, gbase_cty, is_static, is_extern, base_const);
     ps_skipq_const = 0;
     skip_decl_qualifiers();
     if (ps_type_nstar > 0) decl_const = ps_type_constp || ps_skipq_const;
@@ -8566,6 +8706,10 @@ static Node *parse_top_decl(void) {
             goto function_decl;
         }
         expect(TK_RPAREN);
+        if (lex_tok == TK_LBRACK && !fp_is_arr && fp_nstars == 1) {
+            ps_global_rowptr(nm, ty, is_static, is_extern);
+            return NULL;
+        }
         fp_has_params = 0;
         fp_n = 0;
         fp_tys[0] = -1;
@@ -8612,7 +8756,7 @@ static Node *parse_top_decl(void) {
             ps_gcty[idx] = ct_array(ps_fnptr_cty(ret_cty), fp_count);
             ps_gfpbase[idx] = fp_tys[0];
             ps_gfpn[idx] = fp_n;
-            expect(TK_SEMI);
+            ps_decl_more();
             return NULL;
         }
         ps_fnptr_nstar = fp_nstars;
@@ -8638,7 +8782,7 @@ static Node *parse_top_decl(void) {
                 ps_set_scalar_init(idx, parse_const_int(), 0);
             }
         }
-        expect(TK_SEMI);
+        ps_decl_more();
         return NULL;
     }
 
@@ -8734,6 +8878,7 @@ plain_name:
             }
             if (lex_tok != TK_COMMA) break;
             next();
+            if (ps_decl_paren_next()) return NULL;
             xty = ty;
             while (ty_is_ptr(xty)) xty = ty_deref(xty);
             xty = ps_declarator_stars(xty, gbase_cty);
@@ -8748,6 +8893,7 @@ plain_name:
             memcpy(nm, lex_str, lex_slen + 1);
             next();
             skip_gnu_decl_suffixes();
+            if (lex_tok == TK_LPAREN) goto list_function;
             if (lex_tok == TK_LBRACK) break;        /* an array declarator: the branch below */
         }
         if (lex_tok == TK_LBRACK) continue;
@@ -8874,6 +9020,7 @@ array_after_brackets:
         }
         /* another declarator in the same declaration */
         next();
+        if (ps_decl_paren_next()) return NULL;
         xty = ty;
         while (ty_is_ptr(xty)) xty = ty_deref(xty);
         xty = ps_declarator_stars(xty, gbase_cty);
@@ -8888,6 +9035,7 @@ array_after_brackets:
         memcpy(nm, lex_str, lex_slen + 1);
         next();
         skip_gnu_decl_suffixes();
+        if (lex_tok == TK_LPAREN) goto list_function;
         continue;
     }
     }
@@ -8895,6 +9043,9 @@ array_after_brackets:
     /* Function: type name(params) { body } or type name(params); */
 function_decl:
     return ps_function_decl(nm, ty, ret_cty, is_static, fn_ret_fnptr);
+    /* f(void) after a comma: a function declarator in the list */
+list_function:
+    return ps_function_decl(nm, xty, ps_type_cty, is_static, 0);
 
 }
 

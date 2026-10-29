@@ -301,6 +301,7 @@
 6.6-address-const-func PASS
 6.6-address-const-member PASS
 6.6-address-const-offset PASS
+6.6-address-const-row PASS
 6.6-address-constants PASS
 6.6-arith-const-double PASS
 6.6-arith-const-double-int PASS
@@ -319,7 +320,7 @@
 6.7-declarations PASS
 6.7-empty-declaration DIAG
 6.7-incompatible-redecl DIAG
-6.7-mixed-declarators REJECTS
+6.7-mixed-declarators PASS
 6.7-redeclare-no-linkage DIAG
 6.7.1-register-address DIAG
 6.7.1-static-local PASS
@@ -390,7 +391,8 @@
 6.7.5-alignof PASS
 6.7.5-stdalign PASS
 6.7.6.1-fnptr-levels PASS
-6.7.6.1-pointer-to-array REJECTS
+6.7.6.1-pointer-to-array PASS
+6.7.6.1-pointer-to-array-file PASS
 6.7.6.1-pointers PASS
 6.7.6.2-array-of-functions DIAG
 6.7.6.2-arrays PASS
