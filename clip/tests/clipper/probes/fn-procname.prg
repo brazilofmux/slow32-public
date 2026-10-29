@@ -1,0 +1,6 @@
+* Functions: PROCNAME() and PROCLINE()
+Inner()
+
+PROCEDURE Inner()
+? PROCNAME(), PROCNAME(1)
+RETURN

@@ -1,0 +1,100 @@
+# clip against CA-Clipper 5.2: the first survey
+
+Status: survey, 2026-10-29.  The goal (user, 2026-10-29): a tool someone
+who used Clipper would recognize -- Clipper 5.2 behaviour, not COBOL
+speed.  Summer '87 programs are the subset they are.
+
+## Method
+
+- **Authority:** the CA-Clipper 5.2 guides (Computer Associates, 1993),
+  held locally in `~/refs/clipper` and never copied into this tree; this
+  page names their entries and paraphrases, nothing more.
+- **Oracle:** Harbour, an independent open-source reimplementation that
+  aims at Clipper 5.2/5.3 compatibility (`Dockerfile.harbour-oracle`,
+  pinned).  It answers the small questions by running them; the guides
+  win where it departs from Clipper.
+- **Probes:** `tests/clipper/probes/<area>-<slug>.prg`, original programs
+  of one feature each; `tests/clipper/run-probes.sh` compiles each with
+  s32-clip and runs it beside Harbour.  Verdicts PASS, DIFFER, NOCOMPILE,
+  ORACLE (Harbour refuses it: the probe is wrong).
+- The interpreter (dbase/) stays the oracle for what dBASE III and
+  Clipper share (`tests/run-oracle.sh`).  Where they differ, a behaviour
+  point is recorded below and decided once: the dBASE dialect stays the
+  default, Clipper's behind a switch, unless the two agree that the
+  interpreter is simply wrong.
+
+## The inventory (the language guide's menus)
+
+| Section | Entries | Present in clip/dbase by name |
+|---|---|---|
+| Functions | 220 | 93 (127 missing) |
+| Commands | 110 | nearly all by first word; their clauses not yet checked |
+| Statements | 22 | the dBASE ones (DO, IF, FOR, PRIVATE, PUBLIC, PARAMETERS, RETURN, BEGIN SEQUENCE, LOCAL in part) |
+| Operators | 28 | the dBASE ones |
+| Directives (preprocessor) | 10 | none |
+| Classes (Error, Get, TBrowse, TBColumn) | 4 | none |
+| Get System | 10 | none (dbase has its own @ SAY/GET/READ) |
+| Drivers (RDD) | 31 | DBF/NDX2 only, by design (NDX ruling 2026-10-29) |
+
+The missing functions fall in clusters: arrays (AADD, ASIZE, ATAIL,
+AFILL, ACLONE, AEVAL, ARRAY), code blocks (EVAL, AEVAL, DBEVAL,
+FIELDBLOCK, MEMVARBLOCK, ERRORBLOCK), the DB*() functional forms of the
+database commands, introspection (PROCNAME, PROCLINE, PCOUNT, VALTYPE),
+screen and keyboard (SAVESCREEN, RESTSCREEN, SETCOLOR, SETPOS, DISPBOX,
+NEXTKEY, SETKEY), memo text (MEMOLINE, MLCOUNT, MEMOREAD, MEMOWRIT),
+binary conversion (BIN2I, I2BIN, ...), and output (QOUT, QQOUT, DEVOUT,
+OUTSTD).
+
+## The first probes (29), 2026-10-29: 1 PASS
+
+Everything else differs, and for a few causes, not 28:
+
+| Cause | Probes |
+|---|---|
+| Operators the parser does not have: `:=`, `!=`, `#` as not-equal in all places, `+=` and the other compound assignments, `++`/`--`, `@` by reference | op-inline-assign, op-not-equal-forms, op-compound-assign, op-increment, op-byref, stmt-for-step (`FOR i := ...`) |
+| `{ }`: literal arrays and code blocks | op-array-literal, op-codeblock, fn-aeval, fn-array-ops |
+| A function call as a statement (`Say("x")`), formal parameters in the header with PCOUNT() | stmt-procedure-return, stmt-function-params, op-byref |
+| LOCAL / STATIC / PUBLIC / PRIVATE with initializers; STATIC at all | stmt-local-init, stmt-static, stmt-public-private |
+| Functions missing (IF, VALTYPE, PROCNAME, QOUT, EVAL, ERRORBLOCK ...) | fn-iif-if, fn-valtype, fn-procname, fn-qout, fn-errorblock |
+| The preprocessor | dir-define, dir-ifdef, dir-command |
+| BREAK with a value, RECOVER USING | stmt-sequence-break-value |
+| MEMVAR / FIELD declarations, M-> | stmt-memvar-field-decl, op-alias-assign |
+| Numeric display (below) | most probes that print a number |
+
+## Behaviour points
+
+- **BP-Q1, `?`'s newline.**  Clipper writes the newline before the values
+  (`?` is QOUT: new line, then the list); the dBASE dialect here writes it
+  after.  The probe harness moves Harbour's to the end so the probes
+  compare content.  To decide: whether clip's Clipper mode writes it
+  first, as Clipper does.
+- **BP-N1, numbers carry a width and decimals.**  Clipper prints `? 5` in
+  ten columns (`         5`), a literal keeps its decimals (`1.5` prints
+  `1.5`), and division takes SET DECIMALS (`10/4` prints `2.50`).  dBASE
+  III does the same; this interpreter trims (`5`, `2.5`), so it is wrong
+  for both dialects.  A value representation change: a number needs its
+  display width and decimals alongside the double.
+
+## The order of work proposed
+
+Each step closes probes and is gated by both oracles (Harbour for the
+probes, the interpreter for the corpus and the user's own programs).
+The severe ones are marked.
+
+1. **Numeric display (BP-N1)** -- severe: the value representation, in
+   the interpreter as well as compiled code; every printed number moves.
+2. **The operators** (`:=`, `!=`, compound assignment, `++`/`--`) and
+   IF(): the shared expression parser.
+3. **Function calls as statements, formal parameters, PCOUNT(), `@`.**
+4. **Literal arrays and the array functions.**
+5. **LOCAL and STATIC as Clipper has them** -- severe: lexical, not
+   dynamic; compiled to C variables, which the interpreter's evaluator
+   cannot see, so anything that reaches it (a macro) needs a bridge.
+6. **Code blocks** -- severe: closures over LOCALs ("detached locals");
+   a new value type, compiled blocks as C functions with an environment,
+   macro-built blocks through the evaluator.
+7. **The preprocessor** -- #define, #include, #ifdef first; #command and
+   #translate are a subsystem of their own.
+8. **The error system** -- ERRORBLOCK, error objects, BREAK(value): needs
+   the `:` send operator and objects -- severe.
+9. **The Get system, TBrowse** -- objects again; after 8.
