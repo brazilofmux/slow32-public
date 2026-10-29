@@ -7,7 +7,10 @@
  * and are real too: dbt's fault handler and -Q probe timer work.
  */
 
+#include <unistd.h>    /* getpid, in ../cross-include/libc_linux.c */
+
 long __syscall();
+int clock_gettime(int clk, void *ts);   /* ../cross-include/libc_linux.c */
 
 /* ---- Process control ---- */
 

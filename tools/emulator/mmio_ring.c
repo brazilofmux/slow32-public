@@ -251,7 +251,7 @@ static int g_stdin_prefix_fd = -2;   /* -2 not looked up, -1 none or exhausted *
 static void stdin_prefix_open(void) {
     if (g_stdin_prefix_fd == -2) {
         const char *path = getenv("S32_STDIN_PREFIX");
-        g_stdin_prefix_fd = (path && path[0]) ? open(path, O_RDONLY) : -1;
+        g_stdin_prefix_fd = (path && path[0]) ? open(path, O_RDONLY, 0) : -1;
     }
 }
 

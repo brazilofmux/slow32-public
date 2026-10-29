@@ -26,6 +26,7 @@ int fgetc(struct _file *f);
 int fputc(int c, struct _file *f);
 int fflush(struct _file *f);
 int putchar(int c);
+void file_sys_init(void);   /* libc_x64/stdio.c */
 
 int write(int fd, char *buf, int len);
 int read(int fd, char *buf, int len);
@@ -1122,7 +1123,9 @@ static void h_invalid(struct emu *e, struct dinst *di) {
  * Opcode → handler mapping
  * ============================================================================ */
 
-static char *get_handler(int op) {
+/* void *: a function's address goes to a void * without a cast, not to
+ * a char * (6.3.2.3) -- the caller's char * handler takes the void * */
+static void *get_handler(int op) {
     if (op == 0x00) return h_add;  if (op == 0x01) return h_sub;
     if (op == 0x02) return h_xor;  if (op == 0x03) return h_or;
     if (op == 0x04) return h_and;  if (op == 0x05) return h_sll;

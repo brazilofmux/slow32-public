@@ -780,6 +780,15 @@ static int sema_compat(int a, int b) {
     return 0;
 }
 
+/* Are a and b one type when every qualifier, at every pointer level,
+ * is set aside? */
+static int sema_compat_but_quals(int a, int b) {
+    a = ct_unqual(a);
+    b = ct_unqual(b);
+    if (ct_is_ptr(a) && ct_is_ptr(b)) return sema_compat_but_quals(ct_baseof(a), ct_baseof(b));
+    return sema_compat(a, b);
+}
+
 /* An operand's type as a value (6.3.2.1): decayed, unqualified. */
 static int sema_vty(Node *x) {
     return ct_decay(sema_cty_of(x));
@@ -966,6 +975,12 @@ static void sema_assign_check(Node *at, int lt, Node *r) {
         return;
     }
     if (sema_compat(ct_unqual(lp), ct_unqual(rp))) return;
+    /* char *const * from const char **: the same but for qualifiers
+     * further in -- clang's discards-qualifiers warning, not an error */
+    if (sema_compat_but_quals(lp, rp)) {
+        sema_convert_diag(at, "discard-qual", "conversion discards qualifiers in nested pointer types");
+        return;
+    }
     if (ct_is_integer(lp) && ct_is_integer(rp) &&
         ct_to_unsigned(ct_unqual(lp)) == ct_to_unsigned(ct_unqual(rp)))
         sema_convert_diag(at, "ptr-sign", "pointers to integer types that differ in sign");

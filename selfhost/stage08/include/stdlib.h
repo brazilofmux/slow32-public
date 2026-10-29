@@ -47,4 +47,14 @@ void qsort(void *base, size_t nmemb, size_t size, int (*compar)(const void *, co
 void qsort_r(void *base, size_t nmemb, size_t size, int (*compar)(const void *, const void *, void *), void *arg);
 void *bsearch(const void *key, const void *base, size_t nmemb, size_t size,
               int (*compar)(const void *, const void *));
+/* realpath is the cross targets' alone (../../cross-include/libc_linux.c):
+ * the emulators they build resolve EXEC paths with it.  SLOW-32's libc
+ * has none. */
+#ifdef __x86_64__
+char *realpath(const char *path, char *resolved);
+#endif
+#ifdef __aarch64__
+char *realpath(const char *path, char *resolved);
+#endif
+
 #endif

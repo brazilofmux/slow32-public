@@ -9010,6 +9010,7 @@ static Node *ps_function_decl(char *nm, int ty, int ret_cty, int is_static, int 
     Node *fn;
     Node *kr_pre;
     int kr;
+    int noproto;        /* f(): no prototype (6.7.6.3p14), not f(void) */
     Node *phead;
     Node *ptail;
     Node *p;
@@ -9064,6 +9065,7 @@ static Node *ps_function_decl(char *nm, int ty, int ret_cty, int is_static, int 
     ptail = NULL;
     kr = 0;
     kr_pre = NULL;
+    noproto = lex_tok == TK_RPAREN;
     if (lex_tok == TK_IDENT && !is_type()) {
         ps_kr_read_ids();       /* an old-style identifier list */
         kr = 1;
@@ -9314,7 +9316,7 @@ params_done:
     if (lex_tok == TK_SEMI || lex_tok == TK_COMMA) {
         if (kr) p_error("a parameter list without types is only allowed in a function definition");
         ps_decl_more();
-        add_func_type(nm, ty, fp_tys, fp_ctys, fp_n,
+        add_func_type(nm, ty, fp_tys, fp_ctys, noproto ? -1 : fp_n,
                       ret_cty);
         return NULL;
     }
@@ -9328,6 +9330,7 @@ params_done:
         phead = ps_kr_declare(&kr_pre);
         fp_n = -1;      /* no prototype: calls promote their arguments */
     }
+    if (noproto) fp_n = -1;
     add_func_type(nm, ty, fp_tys, fp_ctys, fp_n,
                   ret_cty);
     fn = nd_new(ND_FUNC);

@@ -15,5 +15,5 @@ struct winsize {
 #define TIOCGWINSZ 0x5413
 #define FIONREAD   0x541B
 #define FIONBIO    0x5421
-int ioctl(int fd, unsigned long request, void *arg);
+int ioctl(int fd, unsigned long request, ...);
 #endif

@@ -853,6 +853,17 @@ static int hl_udivmod32(int lv, int rv, int is_rem) {
 /* Map AST binary operator token to HIR instruction kind */
 /* A binary node's machine type for choosing its operation: a comparison
  * is int, and whether it compares unsigned is sema's AT_UCMP. */
+/* Does binary n take the 64-bit path: a long long result or a long long
+ * compared -- but not p - q, typed ptrdiff_t (long long on the 64-bit
+ * crosses) yet a pointer difference, divided by the element further on
+ * (272d2fba sent int *'s here, undivided).  A helper: hl_expr may not
+ * grow (stage07). */
+static int hl_is_ll_binop(Node *n) {
+    if (n->op == TK_MINUS && ty_is_ptr(n->lhs->ty) && ty_is_ptr(n->rhs->ty)) return 0;
+    if (ty_is_llong(n->ty)) return 1;
+    return sema_is_cmp(n->op) && (ty_is_llong(n->lhs->ty) || ty_is_llong(n->rhs->ty));
+}
+
 /* A VLA object (parser.h ps_local_vla): a local whose C type's size is
  * known only at run time.  Its slot holds the array's address. */
 static int hl_is_vla_obj(Node *n) {
@@ -2886,7 +2897,7 @@ static int hl_expr(Node *n) {
         }
 
         /* 64-bit binary operations */
-        if (ty_is_llong(n->ty) || (sema_is_cmp(n->op) && (ty_is_llong(n->lhs->ty) || ty_is_llong(n->rhs->ty)))) {
+        if (hl_is_ll_binop(n)) {
 #ifdef S12CC_X64_HOST
         {
             int llong_cmp;

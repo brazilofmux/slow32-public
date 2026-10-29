@@ -26,6 +26,7 @@ int fgetc(struct _file *f);
 int fputc(int c, struct _file *f);
 int fflush(struct _file *f);
 int putchar(int c);
+void file_sys_init(void);   /* libc_x64/stdio.c */
 
 int write(int fd, char *buf, int len);
 int read(int fd, char *buf, int len);

@@ -32,7 +32,9 @@
 #define AT_SYMLINK_NOFOLLOW 0x100
 #define AT_REMOVEDIR        0x200
 
-int open(const char *path, int flags, int mode);
-int fcntl(int fd, int cmd, long arg);
+/* variadic, as POSIX has them: open(path, O_RDONLY) and fcntl(fd,
+ * F_GETFL) pass no third argument */
+int open(const char *path, int flags, ...);
+int fcntl(int fd, int cmd, ...);
 
 #endif

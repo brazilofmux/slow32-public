@@ -15,6 +15,7 @@
  * stat, poll, select or fork), and the syscall numbers are the only
  * difference.  Structures are the kernel's (../cross-include). */
 
+#include <stdarg.h>
 #include <stdint.h>
 #include <string.h>
 #include <time.h>
@@ -36,6 +37,7 @@
 long __syscall();
 char *malloc(int size);
 void free(char *p);
+char *getenv(const char *name);   /* TZ */
 
 #if defined(__aarch64__)
 #define NR_getcwd       17
@@ -148,7 +150,15 @@ static long sys_ret(long r) {
 
 /* ---- files ---- */
 
-int open(const char *path, int flags, int mode) {
+/* open, fcntl and ioctl are variadic (POSIX): the third argument is
+ * read whether or not the caller passed one -- unused then, as O_CREAT
+ * and the commands that take one are what make it matter */
+int open(const char *path, int flags, ...) {
+    va_list ap;
+    int mode;
+    va_start(ap, flags);
+    mode = va_arg(ap, int);
+    va_end(ap);
     return (int)sys_ret(__syscall(NR_openat, AT_FDCWD, path, flags, mode, 0, 0));
 }
 
@@ -180,7 +190,12 @@ int fstat(int fd, struct stat *st) {
     return (int)sys_ret(__syscall(NR_fstat, fd, st, 0, 0, 0, 0));
 }
 
-int fcntl(int fd, int cmd, long arg) {
+int fcntl(int fd, int cmd, ...) {
+    va_list ap;
+    long arg;
+    va_start(ap, cmd);
+    arg = va_arg(ap, long);
+    va_end(ap);
     return (int)sys_ret(__syscall(NR_fcntl, fd, cmd, arg, 0, 0, 0));
 }
 
@@ -407,7 +422,12 @@ int clock_gettime(int clk, struct timespec *ts) {
 
 /* ---- the terminal ---- */
 
-int ioctl(int fd, unsigned long request, void *arg) {
+int ioctl(int fd, unsigned long request, ...) {
+    va_list ap;
+    void *arg;
+    va_start(ap, request);
+    arg = va_arg(ap, void *);
+    va_end(ap);
     return (int)sys_ret(__syscall(NR_ioctl, fd, request, arg, 0, 0, 0));
 }
 

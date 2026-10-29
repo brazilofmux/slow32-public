@@ -7,8 +7,7 @@ char *memcpy(char *dst, char *src, int n);
 char *memset(char *dst, int c, int n);
 char *malloc(int size);
 int lseek(int fd, int offset, int whence);
-int printf(char *fmt, int a0, int a1, int a2, int a3,
-           int a4, int a5, int a6, int a7);
+int printf(char *fmt, ...);
 struct _file {
     int fd;
     int flags;
