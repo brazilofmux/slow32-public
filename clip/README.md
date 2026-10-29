@@ -1,6 +1,7 @@
 # s32-clip
 
-First-slice Clipper: a `.prg` becomes a `.s32x`.
+First-slice Clipper: a `.prg` becomes a `.s32x`.  Where it goes from
+here: [docs/plans/clipper.md](../docs/plans/clipper.md).
 
 Control flow is C (`IF`, `DO WHILE`, `EXIT`, `LOOP`). Expressions
 still go through the existing dBase evaluator, so `STR`, `MOD`,
