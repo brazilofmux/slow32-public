@@ -137,6 +137,9 @@ static int ps_global_cty(int ty, int size_bytes);
  * consumed when the member is registered (its parameter list, between,
  * runs parse_type again). */
 static int ps_pending_member_cty;
+/* inline in the file-scope declaration being read (ps_storage_next):
+ * an object may not be inline, nor main (6.7.4p3, 5.1.2.2.1) */
+static int ps_top_inline;
 
 /* The stars of a (**name)(...) declarator, consumed and counted. */
 static int ps_fnptr_nstar = 1;
@@ -391,6 +394,7 @@ static int   ps_lcols[P_MAX_LOCALS];  /* 2D arrays: last-dim count (0 = 1D) */
 static int   ps_lsize[P_MAX_LOCALS];  /* total byte size (arrays: elem_sz*count) */
 static int   ps_lstatic[P_MAX_LOCALS]; /* 1 = static local, 0 = normal */
 static char *ps_lsname[P_MAX_LOCALS];  /* mangled name (static locals only) */
+static int   ps_lreg[P_MAX_LOCALS];    /* 1 = declared register: no & (6.5.3.2p1) */
 static int   ps_lvolb[P_MAX_LOCALS];   /* volatile before the stars, at declaration */
 static int   ps_lvolp[P_MAX_LOCALS];   /* ... and after them */
 static int   ps_lfpbase[P_MAX_LOCALS]; /* function-pointer local: base into ps_fptypes, -1 = none */
@@ -524,6 +528,7 @@ static Node *parse_block(void);
 static int is_type(void);
 static int parse_type(void);
 static int ps_fp_store(int *ptys, int *pctys, int np);
+static int ps_enum_value(void);
 
 /* --- Utilities --- */
 
@@ -900,6 +905,16 @@ static int ps_fp_ret_of_callee(Node *lhs) {
 
 static void add_func_type(char *name, int ty, int *ptys, int *pctys, int np, int ret_cty) {
     int i;
+    /* a function declarator's own constraints (6.7.6.3p1-p2, 6.7.4p3, 5.1.2.2.1) */
+    if (ps_top_inline && strcmp(name, "main") == 0) p_error("'main' is not allowed to be declared inline");
+    ps_top_inline = 0;
+    if (ret_cty > 0 && (ct_is_array(ret_cty) || ct_is_func(ret_cty)))
+        p_error("function cannot return an array or function type");
+    i = 0;
+    while (i < np) {
+        if (ptys[i] == TY_VOID) p_error("'void' must be the first and only parameter if specified");
+        i = i + 1;
+    }
     /* Update existing entry if already registered */
     i = ps_nfuncs - 1;
     while (i >= 0) {
@@ -1289,9 +1304,32 @@ static int ps_base_cty(int ty, int ckhint, int td_cty, int is_const, int is_vol)
  * unqualified.  ps_storage_next steps over one of those words and keeps
  * the const for parse_type. */
 static int ps_lead_const;
+/* The storage classes of the declaration being read (6.7.1): at most
+ * one; neither auto nor register at file scope (6.9p2), a function
+ * there included; and register remembered, for & (6.5.3.2p1).  A
+ * declaration's parse_type takes them (ps_decl_register). */
+static int ps_pend_nstorage;
+static int ps_lead_restrict;    /* restrict before the base type: it must be a pointer (6.7.3p2) */
+static int ps_pend_register;
+static int ps_decl_register;
 static void ps_storage_next(void) {
     if (lex_tok == TK_CONST) ps_lead_const = 1;
+    if (lex_tok == TK_STATIC || lex_tok == TK_EXTERN || lex_tok == TK_AUTO || lex_tok == TK_REGISTER) {
+        ps_pend_nstorage = ps_pend_nstorage + 1;
+        if (ps_pend_nstorage > 1) p_error("cannot combine with previous storage class specifier");
+    }
+    if ((lex_tok == TK_AUTO || lex_tok == TK_REGISTER) && ps_block_depth == 0)
+        p_error("illegal storage class at file scope");
+    if (lex_tok == TK_REGISTER) ps_pend_register = 1;
+    if (lex_tok == TK_RESTRICT) ps_lead_restrict = 1;
+    if (lex_tok == TK_INLINE && ps_block_depth == 0) ps_top_inline = 1;
     next();
+}
+
+/* _Atomic on an array or a function type (6.7.2.4p3, 6.7.3p3) */
+static void ps_atomic_check(void) {
+    if (ps_type_arrcount > 0 || (ps_type_cty > 0 && (ct_is_array(ps_type_cty) || ct_is_func(ps_type_cty))))
+        p_error("_Atomic cannot be applied to an array or function type");
 }
 
 static int parse_type(void) {
@@ -1324,6 +1362,9 @@ static int parse_type(void) {
     ps_type_volp = 0;
     lead_const = ps_lead_const;     /* a const read with the storage class */
     ps_lead_const = 0;
+    ps_decl_register = ps_pend_register;
+    ps_pend_register = 0;
+    ps_pend_nstorage = 0;
     ckhint = 0;
     td_cty = -1;
     saw_signed = 0;
@@ -1336,6 +1377,7 @@ static int parse_type(void) {
             if (lex_tok == TK_SIGNED) saw_signed = 1;
             if (ps_tok_volatile()) ps_type_volb = 1;
             if (lex_tok == TK_CONST) lead_const = 1;
+            if (lex_tok == TK_RESTRICT) ps_lead_restrict = 1;
             next();
             continue;
         }
@@ -1350,6 +1392,7 @@ static int parse_type(void) {
         if (lex_tok == TK_LPAREN) {
             next();
             ty = parse_type();
+            ps_atomic_check();
             expect(TK_RPAREN);
             ps_type_nostar = ty;
             while (lex_tok == TK_STAR) { ty = ty + TY_PTR; next(); skip_decl_qualifiers(); }
@@ -1361,7 +1404,9 @@ static int parse_type(void) {
             ps_type_constp = 0;
             return ty;
         }
-        return parse_type();
+        ty = parse_type();
+        ps_atomic_check();
+        return ty;
     }
     if (lex_tok == TK_INT)  { ty = TY_INT;  next(); }
     else if (lex_tok == TK_CHAR) { ty = TY_CHAR; if (saw_signed) ckhint = CT_SCHAR; next(); }
@@ -1442,7 +1487,7 @@ static int parse_type(void) {
                 next();
                 if (lex_tok == TK_ASSIGN) {
                     next();
-                    val = parse_const_int();
+                    val = ps_enum_value();
                 }
                 ps_cval[ps_nconsts] = val;
                 ps_nconsts = ps_nconsts + 1;
@@ -2078,6 +2123,9 @@ static int parse_type(void) {
         next();
     }
     ps_type_cty = ps_base_cty(ty, ckhint, td_cty, ps_type_constb, ps_type_volb);
+    if (ps_lead_restrict && !ct_is_ptr(ps_type_cty))
+        p_error("restrict requires a pointer type");
+    ps_lead_restrict = 0;
     ps_type_nostar = ty;
     ps_type_nostar_cty = ps_type_cty;
     while (lex_tok == TK_STAR) {
@@ -2142,6 +2190,7 @@ static int add_local(char *name, int ty) {
         return 0;
     }
     sz = ty_size(ty);
+    if (ty == TY_VOID) p_error("variable has incomplete type 'void'");
     require_complete_type(ty, "incomplete type for local");
     /* The frame slot is rounded up to a multiple of 4, but the
      * recorded size is the true one: sizeof(local) reads ps_lsize,
@@ -2152,6 +2201,7 @@ static int add_local(char *name, int ty) {
     ps_lname[idx] = strdup(name);
     ps_lvolb[idx] = ps_type_volb;
     ps_lvolp[idx] = ps_type_volp;
+    ps_lreg[idx] = ps_decl_register;
     ps_loff[idx] = 0 - ps_stack;
     ps_slot_gen = ps_slot_gen + 1;
     ps_lslot[idx] = ps_slot_gen;
@@ -2183,6 +2233,7 @@ static int ps_add_local_alias_cty(char *name, int ty, char *sym, int cty) {
     ps_lname[idx] = strdup(name);
     ps_lvolb[idx] = ps_type_volb;
     ps_lvolp[idx] = ps_type_volp;
+    ps_lreg[idx] = 0;
     ps_loff[idx] = 0;
     ps_ltype[idx] = ty;
     ps_lcty[idx] = cty;
@@ -2297,6 +2348,7 @@ static int add_local_array(char *name, int elem_ty, int count) {
     ps_lname[idx] = strdup(name);
     ps_lvolb[idx] = ps_type_volb;
     ps_lvolp[idx] = ps_type_volp;
+    ps_lreg[idx] = ps_decl_register;
     ps_loff[idx] = 0 - ps_stack;
     ps_slot_gen = ps_slot_gen + 1;
     ps_lslot[idx] = ps_slot_gen;
@@ -2450,8 +2502,19 @@ static void ps_set_str_init(int idx, int sp) {
     ps_gstr[idx] = sp;
 }
 
+/* What an object's declaration may not be (6.7.4p3, 6.7p7): inline,
+ * or of type void. */
+static void ps_object_decl_check(int ty) {
+    if (ps_top_inline) {
+        ps_top_inline = 0;
+        p_error("'inline' can only appear on functions");
+    }
+    if (ty == TY_VOID) p_error("variable has incomplete type 'void'");
+}
+
 static int add_extern_global(char *name, int ty, int size_bytes) {
     int idx;
+    ps_top_inline = 0;      /* extern void v; is a declaration, not an object */
     idx = find_global(name);
     if (idx >= 0) { ps_decl_objconst = 0; return idx; }
     idx = add_global(name, ty, size_bytes);
@@ -2461,6 +2524,7 @@ static int add_extern_global(char *name, int ty, int size_bytes) {
 
 static int add_defined_global(char *name, int ty, int size_bytes) {
     int idx;
+    ps_object_decl_check(ty);
     idx = find_global(name);
     if (idx >= 0) {
         /* An extern declaration being defined, or a tentative definition
@@ -2561,6 +2625,8 @@ static int ps_sizeof_node_mty(Node *n);
 static int ps_sizeof_node(Node *n) {
     int old;
     int cs;
+    if (n->kind == ND_MEMBER && n->bit_width > 0)
+        p_error("invalid application of 'sizeof' to bit-field");   /* 6.5.3.4p1 */
     old = ps_sizeof_node_mty(n);
     sema_expr(n);
     if (n->cty <= 0) return old;
@@ -2722,6 +2788,8 @@ static int parse_offsetof_value(void) {
 static int ps_abstract_fnptr(int ty);
 static int ps_sizeof_type_tail(int ty, int tdn) {
     int v;
+    if (ty_is_incomplete_struct(ty) && lex_tok == TK_RPAREN)
+        p_error("invalid application of 'sizeof' to an incomplete type");   /* 6.5.3.4p1 */
     if (tdn > 0 && ty_is_ptr(ty) && lex_tok != TK_LPAREN) {
         v = ty_size(ty_deref(ty)) * tdn;
     } else {
@@ -3388,18 +3456,36 @@ static int ps_const_typed(int *lo, int *hi) {
     return 1;
 }
 
-/* A case label's value: an integer constant expression (6.8.4.2p3).
- * Typed by sema first, then evaluated as before -- case 1.5 was taken
- * as 1. */
+/* _Static_assert's expression: an integer constant expression (6.7.10p3),
+ * evaluated -- it was a literal or taken as true. */
+static int ps_static_assert_value(Node *e) {
+    sema_expr(e);
+    if (!(e->attr & AT_ICX)) p_error("static assertion expression is not an integral constant expression");
+    if (e->cval == 0 && e->cval_hi == 0) p_error("static assertion failed");
+    return 1;
+}
+
+/* A constant that must be an integer constant expression -- a case
+ * label (6.8.4.2p3), an enumerator's value (6.7.2.2p2): typed by sema
+ * first, then evaluated as before.  case 1.5 was 1, and E = 2.5 was 2. */
 static int parse_const_ll_hi(int *lo);
-static int ps_case_value(int *lo) {
+static void ps_require_integer_const(char *what) {
     Node *n;
     ps_lex_mark();
     n = parse_conditional();
     sema_expr(n);
     ps_lex_rewind();
-    if (!ct_is_integer(sema_vty(n))) p_error("case label is not an integer constant expression");
+    if (!ct_is_integer(sema_vty(n))) p_error(what);
+}
+
+static int ps_case_value(int *lo) {
+    ps_require_integer_const("case label is not an integer constant expression");
     return parse_const_ll_hi(lo);
+}
+
+static int ps_enum_value(void) {
+    ps_require_integer_const("enumerator value is not an integer constant expression");
+    return parse_const_int();
 }
 
 /* Parse a compile-time constant integer (for initializers and array
@@ -5023,6 +5109,9 @@ static Node *parse_unary(void) {
         if (n->kind == ND_MEMBER && n->bit_width > 0) {
             p_error("cannot take address of bit-field");
         }
+        if (n->kind == ND_VAR && n->is_local && find_local(n->name) >= 0 &&
+            ps_lreg[find_local(n->name)])
+            p_error("address of register variable requested");
         /* &f is the function's address, the value f decays to (6.5.3.2p3);
          * it was refused as "not an lvalue". */
         if (n->kind == ND_FUNC_REF) return n;
@@ -6102,7 +6191,7 @@ static Node *parse_stmt(void) {
         next();
         expect(TK_LPAREN);
         sa_expr = parse_assign();
-        sa_val = (sa_expr && sa_expr->kind == ND_NUM) ? sa_expr->val : 1;
+        sa_val = ps_static_assert_value(sa_expr);
         expect(TK_COMMA);
         while (lex_tok == TK_STRING) next(); /* message may be adjacent literals */
         expect(TK_RPAREN);
@@ -6938,7 +7027,7 @@ static Node *parse_top_decl(void) {
         expect(TK_LPAREN);
         sa_expr = parse_assign();
         /* Evaluate constant expression — only supports ND_NUM for now */
-        sa_val = (sa_expr && sa_expr->kind == ND_NUM) ? sa_expr->val : 1;
+        sa_val = ps_static_assert_value(sa_expr);
         expect(TK_COMMA);
         while (lex_tok == TK_STRING) next(); /* message may be adjacent literals */
         expect(TK_RPAREN);

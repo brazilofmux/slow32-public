@@ -521,7 +521,21 @@ assigned (`sema_return_check`).  Lexing: an octal constant with an 8
 or 9, a constant too large for any integer type, an empty character
 constant, a hexadecimal pp-number running on through `e+` (`0x1e+1`),
 and `_Complex`/`_Imaginary`, keywords stage08 does not implement
-(`lex_err`, reported by `next()` where the token is).  `S12CC_CONSTRAINT_WARN=1` turns
+(`lex_err`, reported by `next()` where the token is).
+
+**S5, declarations: the local rules** (2026-10-28).  The storage-class
+words of a declaration all pass `ps_storage_next` now: at most one
+storage class; neither `auto` nor `register` at file scope, a function
+included; `register` recorded on the local, and `&` of one refused;
+`inline` on an object, or on `main`, refused (`ps_top_inline`).  A
+leading `restrict` must qualify a pointer; an object may not have type
+void; a function may not return an array or a function, and `void` is
+a parameter list only alone; an enumerator's value, like a case
+label's, is an integer constant expression (`ps_require_integer_const`:
+`E = 2.5` was 2); `sizeof` of a bit-field or an incomplete structure;
+`_Atomic` of an array or function type; and `_Static_assert` evaluates
+its expression -- before, only a bare literal was looked at, anything
+else passed.  `S12CC_CONSTRAINT_WARN=1` turns
 the errors into warnings, to survey a corpus.
 
 ## Constraints on the work
