@@ -611,7 +611,24 @@ SQLite's assembly is byte-identical.  A string's relocation carries its
 addend now.  A compound literal at file scope has static storage
 (6.5.2.5p5): an anonymous TU-local global initialized from its braces
 (`ps_file_compound_literal`), where it had been built as a hidden local
-there are none of.  `S12CC_CONSTRAINT_WARN=1` turns
+there are none of.
+
+**Implicit function declarations refused** (2026-10-29).  A call to a
+function not declared is an error, as C99 made it and as clang's
+default has it (6.5.1p2; probe `6.5.1-implicit-function`) -- graded
+with the conversion classes, `implicit-fn`, so `S12CC_SURVEY_LOG`
+finds them.  The case for it came from the compiler itself:
+`sema_cvalof`, called in parser.h above its declaration in sema.h,
+was taken for an implicit int and its long long result cut to 32
+bits, which the host-compiled cross drivers caught.  The corpus had
+eleven such calls.  Two were not violations but a parser gap: a
+function declared at block scope (DOOM's `void WI_unloadData(void);`
+inside the caller) was skipped, its call then an implicit
+declaration; it is registered now (`ps_local_prototype`).  The rest
+were real, in our own code: the compiler used `write`, `strchr`,
+`strcpy`, `strncpy` and `rename` undeclared (the dialect block in
+c_lexer.rl declares them), and the libc's `posix_proc.c` called
+`abort` above its definition.  `S12CC_CONSTRAINT_WARN=1` turns
 the errors into warnings, to survey a corpus.
 
 ## Constraints on the work

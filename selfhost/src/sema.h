@@ -732,7 +732,7 @@ static void sema_convert_diag(Node *n, char *cls, char *msg) {
     if (strcmp(cls, "fn-void") == 0) return;
     if (strcmp(cls, "int-to-ptr") == 0 || strcmp(cls, "ptr-to-int") == 0 ||
         strcmp(cls, "incompat-ptr") == 0 || strcmp(cls, "ptr-diff") == 0 ||
-        strcmp(cls, "call-nonfunc") == 0) {
+        strcmp(cls, "call-nonfunc") == 0 || strcmp(cls, "implicit-fn") == 0) {
         sema_violation(n, msg);
         return;
     }

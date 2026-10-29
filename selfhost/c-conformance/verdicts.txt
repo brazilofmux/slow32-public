@@ -200,6 +200,7 @@
 6.5-sequencing PASS
 6.5-usual-conversions PASS
 6.5.1-func-name PASS
+6.5.1-implicit-function DIAG
 6.5.1-primary PASS
 6.5.1-undeclared DIAG
 6.5.1.1-generic PASS

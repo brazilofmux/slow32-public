@@ -2897,6 +2897,8 @@ static void ps_mangle_static(char *func, char *var) {
 static void sema_expr(Node *n);    /* sema.h: sizeof's operand gets its C type */
 static int sema_vty(Node *x);
 static long long sema_cvalof(Node *c);
+static void sema_convert_diag(Node *n, char *cls, char *msg);
+static char ps_implicit_msg[240];
 static int ps_sizeof_node_mty(Node *n);
 
 /* sizeof expr: the size of the operand's C type, which sema works out
@@ -5258,7 +5260,17 @@ static Node *parse_primary(void) {
                 }
             }
             expect(TK_RPAREN);
+            /* a function is declared before it is called (6.5.1p2; the
+             * implicit int declaration went with C99): sema_cvalof called
+             * above its declaration came back an int, its long long cut
+             * to 32 bits.  The compiler's own builtins are known by name. */
             n = nd_call(nm, head, nargs);
+            if (!is_known_func(nm) && strncmp(nm, "__builtin_", 10) != 0) {
+                memcpy(ps_implicit_msg, "call to undeclared function ", 28);
+                strncpy(ps_implicit_msg + 28, nm, 200);
+                ps_implicit_msg[228] = 0;
+                sema_convert_diag(n, "implicit-fn", ps_implicit_msg);
+            }
             if (strcmp(nm, "setjmp") == 0 || strcmp(nm, "_setjmp") == 0 ||
                 strcmp(nm, "sigsetjmp") == 0 || strcmp(nm, "__sigsetjmp") == 0)
                 ps_fn_setjmp = 1;
@@ -6764,6 +6776,36 @@ static void parse_typedef_decl(void) {
         return;
     }
 
+/* A function declared at block scope, `void WI_unloadData(void);`,
+ * the cursor on its '(': registered as a file-scope prototype is
+ * (6.2.2p5: it has external linkage).  It was skipped, and the call
+ * after it taken as an implicit declaration -- which went with C99. */
+static Node *ps_local_prototype(char *nm, int ty) {
+    int ptys[64];
+    int pctys[64];
+    int base;
+    int np;
+    int i;
+    int ret_cty;
+    int sv_var;
+    ret_cty = ps_type_cty;
+    next();
+    base = ps_parse_fp_params(&np);
+    i = 0;
+    while (i < np && i < 64 && base >= 0) {
+        ptys[i] = ps_fptypes[base + i];
+        pctys[i] = ps_fpctypes[base + i];
+        i = i + 1;
+    }
+    sv_var = ps_is_varargs;
+    ps_is_varargs = base >= 0 ? ps_fpvar[base] : 0;
+    add_func_type(nm, ty, ptys, pctys, base >= 0 ? np : -1, ret_cty);
+    ps_is_varargs = sv_var;
+    skip_gnu_decl_suffixes();
+    expect(TK_SEMI);
+    return nd_block(NULL);
+}
+
 static Node *parse_stmt(void) {
     int tdac;
     int td_elem;
@@ -7278,21 +7320,8 @@ local_plain_name:
         }
 
         /* Statement-scope function PROTOTYPE (doom's wi_stuff declares
-         * `void WI_unloadData(void);` inside a function).  Skip the
-         * parameter list; calls resolve like any direct call. */
-        if (lex_tok == TK_LPAREN) {
-            int pdepth;
-            pdepth = 0;
-            next();
-            pdepth = 1;
-            while (pdepth > 0 && lex_tok != TK_EOF) {
-                if (lex_tok == TK_LPAREN) pdepth = pdepth + 1;
-                if (lex_tok == TK_RPAREN) pdepth = pdepth - 1;
-                next();
-            }
-            expect(TK_SEMI);
-            return nd_block(NULL);
-        }
+         * `void WI_unloadData(void);` inside a function) */
+        if (lex_tok == TK_LPAREN) return ps_local_prototype(nm, ty);
 
         /* Function-scope extern declaration: bind the name as global, but
          * do not allocate a stack local. */

@@ -27,6 +27,13 @@ void *calloc(unsigned long n, unsigned long size);
 void *realloc(void *p, unsigned long n);
 void free(void *p);
 char *strdup(const char *s);
+char *getenv(const char *name);
+int atoi(const char *nptr);
+char *strchr(const char *s, int c);
+char *strcpy(char *dst, const char *src);
+char *strncpy(char *dst, const char *src, int n);
+int write(int fd, const void *buf, int n);
+int rename(const char *from, const char *to);
 void exit(int status);
 #endif
 
