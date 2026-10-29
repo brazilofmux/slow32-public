@@ -1,6 +1,7 @@
-/* s32-cobc -- COBOL 85 for SLOW-32.  Host cross-compiler.
+/* s32-cobc -- SLOW-32 COBOL.  Host cross-compiler.
  *
- * Reads ANSI X3.23-1985 COBOL (fixed or free reference format) plus the
+ * Reads COBOL through ISO/IEC 1989:2023 -- X3.23-1985 by default, 2002,
+ * 2014 and 2023 behind -std -- (fixed or free reference format) plus the
  * implementor modules listed in docs/dialect.md, and emits SLOW-32
  * assembler for slow32asm / s32-ld.  Not SSA, not BURG: the IR is the
  * symbol table (Sym[]), and each verb is a lowering against it -- an inline

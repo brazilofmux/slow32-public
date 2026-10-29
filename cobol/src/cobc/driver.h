@@ -446,17 +446,18 @@ static void emit_rodata(void)
 
 static void usage(void)
 {
-    fprintf(stderr, "s32-cobc %s -- COBOL 85 for SLOW-32\n"
-        "usage: s32-cobc [-free|-fixed] [-o out.s] source.cbl\n"
+    fprintf(stderr, "s32-cobc %s -- SLOW-32 COBOL\n"
+        "usage: s32-cobc [-free|-fixed] [-std=...] [-dialect=...] [-o out.s] source.cbl\n"
         "  -fixed   reference format (columns 7/8-72); the default\n"
         "  -free    free format (GnuCOBOL -free; majesty)\n"
         "  -m       module: no main entry, every unit a subprogram\n"
         "  -I dir   where COPY looks for copybooks (repeatable)\n"
         "  -D name[=value]  the value >>DEFINE name AS PARAMETER takes (repeatable; no value: 1)\n"
         "  -std=85  X3.23-1985 and the 1989 intrinsics; the default\n"
-        "  -std=2002 add the COBOL 2002 modules landed so far (docs/standards.md, Stage B)\n"
-        "  -std=2014 and the COBOL 2014 additions landed so far: the IEEE floating-point usages (docs/plans/standard-queue.md)\n"
-        "  -std=2023 and COBOL 2023's: its removals refused (docs/conformance/edition-2023.md)\n"
+        "  -std=2002 COBOL 2002 (docs/standards.md)\n"
+        "  -std=2014 COBOL 2014: 2002 and its additions (docs/conformance/edition-2014.md)\n"
+        "  -std=2023 COBOL 2023: 2014 and its additions, its removals refused (docs/conformance/edition-2023.md)\n"
+        "  -dialect=mf|gnucobol  take that dialect's own forms too (docs/behavior-points.md)\n"
         "  -fnsig   only write the user functions' .s32fn signature files (docs/functions.md)\n"
         "  -fixed-columns=bytes  count reference-format columns in bytes, not characters (UTF-8 source)\n"
         "  -fbinary-byteorder=native  COMP/BINARY in SLOW-32's little-endian order, not big-endian (docs/usage.md)\n"
@@ -464,7 +465,8 @@ static void usage(void)
         "  -fnumproc=pfd  numeric items hold what their pictures say: a MOVE or compare between two of one description\n"
         "                 may be by value, so more items live in registers (default nopfd: non-digits carried as bytes)\n"
         "  -warn-74 warn where a COBOL 74 program needs updating (docs/behavior-points.md)\n"
-        "  -warn-extensions warn where a program uses an extension to the standard it is compiled for\n", VERSION);
+        "  -warn-extensions warn where a program uses an extension to the standard it is compiled for\n"
+        "  -fno-hir  lower without the HIR islands (a reference build)\n", VERSION);
     exit(2);
 }
 
