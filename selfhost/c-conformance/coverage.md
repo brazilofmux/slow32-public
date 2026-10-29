@@ -36,7 +36,7 @@ enumerators, braced string initializers); pointers to arrays and
 and diagnostics at the presumed location; and W15's macro replacement --
 arguments expanded before substitution, painted names, stringizing,
 `#__VA_ARGS__`, unsigned `#if`; `sizeof` and `offsetof` as `size_t`; S5's
-first batch, the preprocessor's constraints; the expression constraints, 6.5.16.1's conversions graded as clang's defaults grade them (232 PASS, 4 WRONG, 76 REJECTS, 151 DIAG, 65 ACCEPTS).  The tables below are the survey as
+first batch, the preprocessor's constraints; the expression constraints, 6.5.16.1's conversions graded as clang's defaults grade them; statements and lexing (232 PASS, 4 WRONG, 76 REJECTS, 171 DIAG, 45 ACCEPTS).  The tables below are the survey as
 taken.
 
 The 52 WRONG probes come from about fifteen defects, listed below by

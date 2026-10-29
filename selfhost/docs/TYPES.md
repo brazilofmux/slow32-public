@@ -500,7 +500,28 @@ function pointer converted to or from `void *` is accepted -- an
 extension, which POSIX's `dlsym` depends on and DOOM uses.
 `sema_convert_diag` applies it; `-pedantic-errors`, the probes' oracle,
 would make all of these errors, so the probes for the warning classes
-stay ACCEPTS by this ruling, not by a gap.  `S12CC_CONSTRAINT_WARN=1` turns
+stay ACCEPTS by this ruling, not by a gap.
+
+**S5, statements and lexing** (2026-10-28).  The same principle,
+clang's default grading, for what remained: measured without
+`-pedantic`, nearly every remaining ACCEPTS is a hard error in clang,
+and four are GNU extensions clang takes unless `-pedantic` -- a label
+before a declaration, an enumeration declared before its definition,
+an enumerator outside int, a zero-length array -- which stage08 takes
+too, as extensions; a string longer than its char array is a warning.
+Statements (sema): `if`, `while`, `do` and `for` need a scalar
+controlling expression, `switch` an integer one; `case` and `default`
+only inside a switch; within one switch no two case values equal after
+conversion to the promoted controlling type, and one default
+(`sema_switch_check`); a case label must be an integer constant
+expression (`ps_case_value`: `case 1.5` was 1); a label once per
+function (`ps_define_label`); `return` with a value from a void
+function, without one from a non-void function, and its value as if
+assigned (`sema_return_check`).  Lexing: an octal constant with an 8
+or 9, a constant too large for any integer type, an empty character
+constant, a hexadecimal pp-number running on through `e+` (`0x1e+1`),
+and `_Complex`/`_Imaginary`, keywords stage08 does not implement
+(`lex_err`, reported by `next()` where the token is).  `S12CC_CONSTRAINT_WARN=1` turns
 the errors into warnings, to survey a corpus.
 
 ## Constraints on the work

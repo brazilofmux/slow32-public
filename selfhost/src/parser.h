@@ -459,6 +459,7 @@ static int ps_ngirelocs;
 /* goto/label table (per-function, reset at each function) */
 #define P_MAX_LABELS 4096   /* was 512 */
 static char *ps_lblname[P_MAX_LABELS];
+static int   ps_lbldef[P_MAX_LABELS];    /* 1 once `name:` has been read (goto alone does not) */
 static int   ps_lblid[P_MAX_LABELS];
 static int   ps_nlabels;
 
@@ -526,6 +527,7 @@ static int ps_fp_store(int *ptys, int *pctys, int np);
 
 /* --- Utilities --- */
 
+static void p_error(char *msg);
 static void next(void) {
     int di;
     int bol;
@@ -544,6 +546,7 @@ static void next(void) {
         lex_next();
         bol = lex_bol;
         lex_bol = 0;
+        if (lex_err) p_error(lex_err);
         /* A backslash-newline outside a directive or literal is a line
          * splice (translation phase 2), which the scanner has no rule for
          * and stops on as if at end of input: step over it and go on.
@@ -581,6 +584,10 @@ static void next(void) {
                 }
                 return;
             }
+            /* keywords (6.4.1) of the complex types, which are not
+             * implemented: as names they were taken as identifiers */
+            if (lex_str[0] == 95 && (strcmp(lex_str, "_Imaginary") == 0 || strcmp(lex_str, "_Complex") == 0))
+                p_error("_Complex and _Imaginary are not supported");
             di = pp_find(lex_str);
             if (di >= 0 && pp_disabled(di, (int)(lex_rp - lex_src) - lex_slen)) di = -1;
             if (di >= 0) {
@@ -978,9 +985,25 @@ static int find_or_add_label(char *name) {
         return 0;
     }
     ps_lblname[ps_nlabels] = strdup(name);
+    ps_lbldef[ps_nlabels] = 0;
     ps_lblid[ps_nlabels] = cg_label();
     ps_nlabels = ps_nlabels + 1;
     return ps_lblid[ps_nlabels - 1];
+}
+
+/* A label's definition: each name once in a function (6.8.1p3) --
+ * `here:` in two blocks was the same label twice, the later one taken. */
+static int ps_define_label(char *name) {
+    int id;
+    int i;
+    id = find_or_add_label(name);
+    i = 0;
+    while (i < ps_nlabels && strcmp(name, ps_lblname[i]) != 0) i = i + 1;
+    if (i < ps_nlabels) {
+        if (ps_lbldef[i]) p_error("redefinition of label");
+        ps_lbldef[i] = 1;
+    }
+    return id;
 }
 
 /* --- Struct helpers --- */
@@ -2523,6 +2546,7 @@ static void ps_mangle_static(char *func, char *var) {
  * Arrays report their stored total size; a row of a pointer-to-array
  * member reports cols * element size; everything else is ty_size. */
 static void sema_expr(Node *n);    /* sema.h: sizeof's operand gets its C type */
+static int sema_vty(Node *x);
 static int ps_sizeof_node_mty(Node *n);
 
 /* sizeof expr: the size of the operand's C type, which sema works out
@@ -3362,6 +3386,20 @@ static int ps_const_typed(int *lo, int *hi) {
     *lo = n->cval;
     *hi = n->cval_hi;
     return 1;
+}
+
+/* A case label's value: an integer constant expression (6.8.4.2p3).
+ * Typed by sema first, then evaluated as before -- case 1.5 was taken
+ * as 1. */
+static int parse_const_ll_hi(int *lo);
+static int ps_case_value(int *lo) {
+    Node *n;
+    ps_lex_mark();
+    n = parse_conditional();
+    sema_expr(n);
+    ps_lex_rewind();
+    if (!ct_is_integer(sema_vty(n))) p_error("case label is not an integer constant expression");
+    return parse_const_ll_hi(lo);
 }
 
 /* Parse a compile-time constant integer (for initializers and array
@@ -6226,7 +6264,7 @@ static Node *parse_stmt(void) {
     if (lex_tok == TK_CASE) {
         next();
         neg = 0;
-        cv_hi = parse_const_ll_hi(&cv);   /* both words: a long long switch compares them */
+        cv_hi = ps_case_value(&cv);   /* both words: a long long switch compares them */
         if (neg) cv = 0 - cv;
         expect(TK_COLON);
         n = nd_new(ND_CASE);
@@ -6785,7 +6823,7 @@ static_array_decl:
             ps_lex_commit();
             next();
             t = parse_stmt();
-            return nd_label(find_or_add_label(nm), t);
+            return nd_label(ps_define_label(nm), t);
         }
         ps_lex_rewind();    /* not a label */
     }

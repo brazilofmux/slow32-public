@@ -1100,6 +1100,95 @@ static void sema_check_folds(Node *n) {
     sema_check_folds(n->next);
 }
 
+/* --- Statement constraints (6.8) --- */
+
+static int sema_switch_depth;   /* switch statements around the one walked */
+
+/* A controlling expression: if, while, do and for need a scalar
+ * (6.8.4.1p1, 6.8.5p2); if (v) on a structure was taken. */
+static void sema_scalar_cond(Node *c) {
+    if (c && !ct_is_scalar(sema_vty(c)))
+        sema_violation(c, "statement requires expression of scalar type");
+}
+
+/* The case labels of one switch, those of a switch inside it left to
+ * that switch: no two values the same after conversion to the
+ * controlling expression's promoted type, at most one default
+ * (6.8.4.2p3).  wide: that type is 64-bit. */
+static int *sema_case_lo;
+static int *sema_case_hi;
+static int sema_ncases;
+static int sema_case_cap;
+static int sema_ndefaults;
+
+static void sema_collect_cases(Node *s, int wide) {
+    int i;
+    while (s) {
+        if (s->kind == ND_CASE) {
+            i = 0;
+            while (i < sema_ncases) {
+                if (sema_case_lo[i] == s->val && (!wide || sema_case_hi[i] == s->val_hi))
+                    sema_violation(s, "duplicate case value");
+                i = i + 1;
+            }
+            if (sema_ncases >= sema_case_cap) {
+                sema_case_cap = sema_case_cap > 0 ? sema_case_cap * 2 : 256;
+                sema_case_lo = realloc(sema_case_lo, sema_case_cap * 4);
+                sema_case_hi = realloc(sema_case_hi, sema_case_cap * 4);
+            }
+            sema_case_lo[sema_ncases] = s->val;
+            sema_case_hi[sema_ncases] = s->val_hi;
+            sema_ncases = sema_ncases + 1;
+        } else if (s->kind == ND_DEFAULT) {
+            sema_ndefaults = sema_ndefaults + 1;
+            if (sema_ndefaults > 1) sema_violation(s, "multiple default labels in one switch");
+        } else if (s->kind == ND_BLOCK) {
+            sema_collect_cases(s->body, wide);
+        } else if (s->kind == ND_IF) {
+            sema_collect_cases(s->body, wide);
+            sema_collect_cases(s->els, wide);
+        } else if (s->kind == ND_WHILE || s->kind == ND_DO_WHILE || s->kind == ND_FOR ||
+                   s->kind == ND_LABEL) {
+            sema_collect_cases(s->body, wide);
+        }
+        s = s->next;
+    }
+}
+
+static void sema_switch_check(Node *n) {
+    int t;
+    t = sema_vty(n->cond);
+    if (!ct_is_integer(t)) {
+        sema_violation(n, "statement requires expression of integer type");
+        return;
+    }
+    sema_ncases = 0;
+    sema_ndefaults = 0;
+    sema_collect_cases(n->body, ct_int_bytes(ct_promote(t)) >= 8);
+}
+
+/* return against the function's type (6.8.6.4p1): a value from a void
+ * function, none from a non-void one, and the value as if assigned. */
+static void sema_return_check(Node *n) {
+    int vt;
+    if (sema_ret_cty <= 0) return;
+    if (ct_kindof(sema_ret_cty) == CT_VOID) {
+        if (n->lhs && ct_kindof(sema_vty(n->lhs)) != CT_VOID)
+            sema_violation(n, "void function should not return a value");
+        return;
+    }
+    if (!n->lhs) {
+        sema_violation(n, "non-void function should return a value");
+        return;
+    }
+    vt = sema_vty(n->lhs);
+    if (ct_kindof(vt) == CT_VOID) {
+        sema_violation(n, "returning a void value from a non-void function");
+        return;
+    }
+    sema_assign_check(n, sema_ret_cty, n->lhs);
+}
+
 /* --- Statement walk --- */
 
 static void sema_stmt(Node *n) {
@@ -1109,6 +1198,7 @@ static void sema_stmt(Node *n) {
 
     if (n->kind == ND_RETURN) {
         sema_expr(n->lhs);
+        sema_return_check(n);
         if (n->lhs && sema_is_bool(sema_ret_cty)) n->lhs = sema_to_bool(n->lhs);
         /* The value's marshalling class must be the function's: a 32-bit
          * value returned from a long long function is otherwise handed
@@ -1124,6 +1214,7 @@ static void sema_stmt(Node *n) {
 
     if (n->kind == ND_IF) {
         sema_expr(n->cond);
+        sema_scalar_cond(n->cond);
         sema_stmt(n->body);
         sema_stmt(n->els);
         return;
@@ -1131,6 +1222,7 @@ static void sema_stmt(Node *n) {
 
     if (n->kind == ND_WHILE || n->kind == ND_DO_WHILE) {
         sema_expr(n->cond);
+        sema_scalar_cond(n->cond);
         sema_stmt(n->body);
         return;
     }
@@ -1138,6 +1230,7 @@ static void sema_stmt(Node *n) {
     if (n->kind == ND_FOR) {
         sema_expr(n->init);
         sema_expr(n->cond);
+        sema_scalar_cond(n->cond);
         sema_expr(n->step);
         sema_stmt(n->body);
         return;
@@ -1159,12 +1252,18 @@ static void sema_stmt(Node *n) {
 
     if (n->kind == ND_SWITCH) {
         sema_expr(n->cond);
+        sema_switch_check(n);
+        sema_switch_depth = sema_switch_depth + 1;
         sema_stmt(n->body);
+        sema_switch_depth = sema_switch_depth - 1;
         return;
     }
 
     if (n->kind == ND_CASE || n->kind == ND_DEFAULT) {
-        /* These are statement-level labels; nothing to walk */
+        /* statement-level labels, each inside a switch (6.8.1p2) */
+        if (sema_switch_depth == 0)
+            sema_violation(n, n->kind == ND_CASE ? "'case' statement not in switch statement"
+                                                 : "'default' statement not in switch statement");
         return;
     }
 

@@ -160,7 +160,8 @@ static int  lex_fty;       /* TY_FLOAT or TY_DOUBLE for float literals */
 static char lex_str[LEX_STR_SZ];
 static int  lex_slen;
 static int  lex_bol;       /* 1: no token yet on this line -- a # here begins a directive (6.10p2) */
-static int  lex_painted;   /* 1: the identifier was painted (pp_rescan_region), never to be replaced */
+static int  lex_painted;
+static char *lex_err;      /* a malformed token's message, for next() to report where it is */   /* 1: the identifier was painted (pp_rescan_region), never to be replaced */
 
 /* For lex_pos compatibility (parser uses it for #include save/restore) */
 static int  lex_pos;
@@ -350,12 +351,20 @@ static void lex_count_nl(char *from, char *to) {
 
 /* === Helper: parse number from ts..te range === */
 
+/* Has val * base + d left 64 bits? */
+static int lex_num_overflows(unsigned long long val, int base, int d) {
+    return val > (18446744073709551615ULL - (unsigned long long)d) / (unsigned long long)base;
+}
+
 static void lex_parse_num(char *ts, char *te) {
     unsigned long long val;  /* 64-bit accumulator; unsigned since 64-bit masks overflow signed (UB) */
     int ch;
+    int d;
+    int big;
     char *np;
     int n_l;
     val = 0;
+    big = 0;
     lex_val_hexoct = 0;
     lex_val_macro = 0;
     np = ts;
@@ -369,17 +378,23 @@ static void lex_parse_num(char *ts, char *te) {
                 np = np + 1;
                 while (np < te) {
                     ch = *np & 255;
-                    if (ch >= 48 && ch <= 57) val = val * 16 + (ch - 48);
-                    else if (ch >= 97 && ch <= 102) val = val * 16 + (ch - 87);
-                    else if (ch >= 65 && ch <= 70) val = val * 16 + (ch - 55);
+                    if (ch >= 48 && ch <= 57) d = ch - 48;
+                    else if (ch >= 97 && ch <= 102) d = ch - 87;
+                    else if (ch >= 65 && ch <= 70) d = ch - 55;
                     else break;
+                    if (lex_num_overflows(val, 16, d)) big = 1;
+                    val = val * 16 + d;
                     np = np + 1;
                 }
+                /* 0x1e+1 is one pp-number, not 0x1e + 1 (6.4.8) */
+                if ((te[-1] == 101 || te[-1] == 69) && (*te == 43 || *te == 45))
+                    lex_err = "invalid suffix on integer constant";
             } else if (ch >= 48 && ch <= 55) {
                 lex_val_hexoct = 1;
                 while (np < te) {
                     ch = *np & 255;
                     if (ch < 48 || ch > 55) break;
+                    if (lex_num_overflows(val, 8, ch - 48)) big = 1;
                     val = val * 8 + (ch - 48);
                     np = np + 1;
                 }
@@ -389,6 +404,7 @@ static void lex_parse_num(char *ts, char *te) {
         while (np < te) {
             ch = *np & 255;
             if (ch < 48 || ch > 57) break;
+            if (lex_num_overflows(val, 10, ch - 48)) big = 1;
             val = val * 10 + (ch - 48);
             np = np + 1;
         }
@@ -404,6 +420,9 @@ static void lex_parse_num(char *ts, char *te) {
         else break;
         np = np + 1;
     }
+    /* digits the constant's base has none of: 09, 08 (6.4.4.1) */
+    if (np < te) lex_err = "invalid digit in integer constant";
+    if (big) lex_err = "integer literal is too large to be represented in any integer type";
     lex_tok = TK_NUM;
     lex_val = (int)val;
     lex_val_hi = (int)(val >> 32);
@@ -764,6 +783,7 @@ static void lex_parse_chr(char *ts, char *te) {
     int ch;
     int pos;
     pos = 1;  /* skip opening quote */
+    if (te - ts == 2) lex_err = "empty character constant";   /* '' (6.4.4.4p1) */
     ch = ts[pos] & 255;
     if (ch == 92) {
         pos = pos + 1;
