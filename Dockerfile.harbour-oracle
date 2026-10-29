@@ -1,0 +1,40 @@
+# SLOW-32 Clipper Oracle Image
+#
+# Harbour, the open-source compiler that aims at CA-Clipper 5.2/5.3
+# compatibility, used ONLY as a differential oracle while clip/ (s32-clip,
+# Clipper for SLOW-32) grows toward Clipper's behaviour -- the way
+# gfortran serves fortran/ and GnuCOBOL serves cobol/.  The CA-Clipper 5.2
+# guides decide disputed points; this answers the small questions by
+# running them.
+#
+# A separate image: nothing here is needed to build or run SLOW-32
+# software; it only produces expected output to diff against.
+#
+# Build:  podman build -t slow32:harbour-oracle -f Dockerfile.harbour-oracle .
+# Use:    podman run --rm -v "$PWD":/work slow32:harbour-oracle prog.prg [args]
+
+FROM debian:bookworm-slim AS build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates git gcc make libc6-dev && rm -rf /var/lib/apt/lists/*
+
+# Pinned: the oracle must not move under the tests
+ARG HARBOUR_COMMIT=694428e1c12f726675b19324d62167fa77d68185
+RUN git clone https://github.com/harbour/core /src/harbour \
+    && cd /src/harbour && git checkout "$HARBOUR_COMMIT" \
+    && HB_INSTALL_PREFIX=/opt/harbour HB_BUILD_CONTRIBS=no make -j"$(nproc)" install
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc libc6-dev && rm -rf /var/lib/apt/lists/*
+COPY --from=build /opt/harbour /opt/harbour
+ENV PATH=/opt/harbour/bin:$PATH
+WORKDIR /work
+
+# Compile the given .prg with hbmk2 and run it, linked with GTCGI (plain
+# stdout, no screen painting): "source in, program output out".  A compile
+# failure says so.
+RUN printf '#!/bin/sh\nsrc="$1"; shift\nout=$(mktemp -d)\nhbmk2 -q0 -gtcgi -o"$out/prog" "$src" >"$out/log" 2>&1 || { cat "$out/log"; echo "ORACLE-COMPILE-FAIL"; exit 2; }\nexec "$out/prog" "$@"\n' > /usr/local/bin/hbrun-prg \
+    && chmod +x /usr/local/bin/hbrun-prg
+
+ENTRYPOINT ["/usr/local/bin/hbrun-prg"]
