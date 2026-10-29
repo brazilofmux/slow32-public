@@ -1935,19 +1935,25 @@ static void pp_set_source_file(char *path) {
 static void pp_install_predefs(void) {
     pp_add("__STDC__", 1);
     /* 6.10.8.1: a hosted implementation (there is a full libc), and the
-     * edition claimed is C99: code that sees 201112L goes on to use
-     * _Static_assert, _Alignas, _Generic, which are not here yet
-     * (docs/TYPES.md S6 raises it).  Undefined, both were read as 0 --
-     * SQLite took its pre-C99 FLEXARRAY, a one-element array, and two
-     * of its structures differed in size from clang's. */
+     * edition claimed is C11: _Static_assert, _Alignas, _Alignof,
+     * _Generic, _Noreturn, _Thread_local are here (docs/TYPES.md S6).
+     * Undefined, both were read as 0 -- SQLite took its pre-C99
+     * FLEXARRAY, a one-element array, and two of its structures differed
+     * in size from clang's.  The optional features left out are declared
+     * below (6.10.8.3). */
     pp_add("__STDC_HOSTED__", 1);
-    pp_add_cmdline_def("__STDC_VERSION__", "199901L");
+    pp_add_cmdline_def("__STDC_VERSION__", "201112L");
+    /* complex types and variable length arrays are optional in C11, and
+     * not implemented: say so, as 6.10.8.3 has an implementation do */
+    pp_add("__STDC_NO_COMPLEX__", 1);
+    pp_add("__STDC_NO_VLA__", 1);
     pp_add("__S12CC__", 1);
     /* C11 7.17.1: a freestanding implementation may omit <stdatomic.h> and
        must then define this.  We have no atomics and no threads to need
        them, so say so -- portable code keys off this to pick a plain-flag
        path instead of failing to find the header. */
     pp_add("__STDC_NO_ATOMICS__", 1);
+    pp_add("__STDC_NO_THREADS__", 1);     /* nor <threads.h> (7.26) */
     /* Arch-specific macros also installed from parse_program when the
      * target is known (S12CC_TARGET_A64, ty_ptr_size, …). */
 }

@@ -1,4 +1,5 @@
 // 6.5.3.4p2  sizeof of a VLA is computed at run time and its operand is evaluated
+// optional: __STDC_NO_VLA__
 #include <stdio.h>
 static size_t fsize(int n) { char b[n + 3]; return sizeof b; }
 int main(void) {

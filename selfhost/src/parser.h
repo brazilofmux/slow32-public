@@ -66,6 +66,7 @@ static int is_gnu_inline_ident(void) {
     if (strcmp(lex_str, "__inline__") == 0) return 1;
     if (strcmp(lex_str, "_Noreturn") == 0) return 1;
     if (strcmp(lex_str, "_Thread_local") == 0) return 1;
+    if (strcmp(lex_str, "_Alignas") == 0) return 1;    /* read by ps_read_alignas */
     return 0;
 }
 
@@ -139,6 +140,7 @@ static int ps_type_nstar;
 static int ps_cty_check = -1;
 static int ps_cty_fallbacks;
 static int ps_global_cty(int ty, int size_bytes);
+static void ps_global_alignas(int idx, int ty, int size_bytes);
 /* A function-pointer member's C type, taken when its (*name) is read and
  * consumed when the member is registered (its parameter list, between,
  * runs parse_type again). */
@@ -146,6 +148,10 @@ static int ps_pending_member_cty;
 /* inline in the file-scope declaration being read (ps_storage_next):
  * an object may not be inline, nor main (6.7.4p3, 5.1.2.2.1) */
 static int ps_top_inline;
+static int ps_pend_alignas;      /* _Alignas read before parse_type ... */
+static int ps_type_alignas;      /* ... and the declaration's, once parse_type has run */
+static void ps_read_alignas(void);
+static void ps_local_alignas(int elem_ty);
 /* static in the file-scope declaration being read: one that follows a
  * declaration with external linkage is an error (6.2.2p7) */
 static int ps_top_static;
@@ -261,6 +267,13 @@ static int ps_tok_cq(void) {
 
 static void skip_decl_qualifiers(void) {
     while (1) {
+        if (lex_tok == TK_IDENT && strcmp(lex_str, "_Alignas") == 0) {
+            ps_pend_alignas = ps_type_alignas;
+            ps_read_alignas();
+            ps_type_alignas = ps_pend_alignas;
+            ps_pend_alignas = 0;
+            continue;
+        }
         if (lex_tok == TK_CONST || lex_tok == TK_VOLATILE ||
             lex_tok == TK_RESTRICT || lex_tok == TK_INLINE ||
             is_gnu_qual_ident() || is_gnu_extension_ident() ||
@@ -432,6 +445,7 @@ static int   ps_comp_lit_id;          /* unique hidden locals for compound liter
 static char *ps_gname[P_MAX_GLOBALS]; /* global var names */
 static int   ps_gvolb[P_MAX_GLOBALS]; /* volatile before the stars, at declaration */
 static int   ps_gvolp[P_MAX_GLOBALS]; /* ... and after them */
+static int   ps_galign[P_MAX_GLOBALS]; /* _Alignas, in bytes: more than a word is .align'd (0 = none) */
 static int   ps_gconst[P_MAX_GLOBALS]; /* the object itself is const: .rodata (ISSUES-99) */
 /* The const-ness of the declarator about to be added, set by
  * parse_top_decl just before its add_*_global call and consumed (reset)
@@ -1409,7 +1423,64 @@ static int ps_pend_se;          /* ... and static or extern: at block scope it n
 static int ps_lead_restrict;    /* restrict before the base type: it must be a pointer (6.7.3p2) */
 static int ps_pend_register;
 static int ps_decl_register;
+static int ps_type_name_cty(void);
+
+/* _Alignas ( type-name ) or _Alignas ( constant-expression ) (6.7.5),
+ * the cursor on _Alignas: a power of two, or 0 for none; the strictest
+ * of a declaration's is kept in ps_pend_alignas.  A type-name operand
+ * runs parse_type, which takes the pending storage-class state: it is
+ * kept aside. */
+static void ps_read_alignas(void) {
+    int a;
+    int sv_al;
+    int sv_reg;
+    int sv_ns;
+    int sv_th;
+    int sv_se;
+    int sv_lc;
+    sv_al = ps_pend_alignas;
+    sv_reg = ps_pend_register;
+    sv_ns = ps_pend_nstorage;
+    sv_th = ps_pend_thread;
+    sv_se = ps_pend_se;
+    sv_lc = ps_lead_const;
+    ps_lead_const = 0;
+    next();
+    expect(TK_LPAREN);
+    if (is_type()) a = ct_alignof(ps_type_name_cty());
+    else a = parse_const_int();
+    expect(TK_RPAREN);
+    ps_pend_register = sv_reg;
+    ps_pend_nstorage = sv_ns;
+    ps_pend_thread = sv_th;
+    ps_pend_se = sv_se;
+    ps_lead_const = sv_lc;
+    if (a < 0 || (a & (a - 1)) != 0) p_error("requested alignment is not a power of 2");
+    ps_pend_alignas = a > sv_al ? a : sv_al;
+}
+
+/* What _Alignas asks of an object of machine type ty (6.7.5p4): no
+ * weaker than its own alignment.  Returns the alignment to give it. */
+/* A member's alignment: its type's, or its _Alignas (a). */
+static int ps_member_align(int ty, int a) {
+    if (a == 0) return ty_align(ty);
+    if (a < ty_align(ty)) p_error("requested alignment is less than minimum alignment");
+    return a;
+}
+
+static int ps_alignas_for(int ty) {
+    int nat;
+    nat = ty_align(ty);
+    if (ps_type_alignas == 0) return nat;
+    if (ps_type_alignas < nat) p_error("requested alignment is less than minimum alignment");
+    return ps_type_alignas;
+}
+
 static void ps_storage_next(void) {
+    if (lex_tok == TK_IDENT && strcmp(lex_str, "_Alignas") == 0) {
+        ps_read_alignas();
+        return;
+    }
     if (lex_tok == TK_CONST) ps_lead_const = 1;
     if (lex_tok == TK_STATIC || lex_tok == TK_EXTERN || lex_tok == TK_AUTO || lex_tok == TK_REGISTER) {
         ps_pend_nstorage = ps_pend_nstorage + 1;
@@ -1433,6 +1504,7 @@ static void ps_atomic_check(void) {
 }
 
 static int parse_type(void) {
+    int malignas;       /* a member declaration's _Alignas */
     int saw_signed;
     int lead_const;
     int mcty;            /* a member declaration's C type ... */
@@ -1465,6 +1537,8 @@ static int parse_type(void) {
     ps_decl_register = ps_pend_register;
     ps_pend_register = 0;
     ps_pend_nstorage = 0;
+    ps_type_alignas = ps_pend_alignas;
+    ps_pend_alignas = 0;
     if (ps_pend_thread && ps_block_depth > 0 && !ps_pend_se)
         p_error("_Thread_local at block scope requires static or extern");
     ps_pend_thread = 0;
@@ -1474,6 +1548,13 @@ static int parse_type(void) {
     saw_signed = 0;
     /* Skip const/volatile/signed/restrict qualifiers */
     while (1) {
+        if (lex_tok == TK_IDENT && strcmp(lex_str, "_Alignas") == 0) {
+            ps_pend_alignas = ps_type_alignas;
+            ps_read_alignas();
+            ps_type_alignas = ps_pend_alignas;
+            ps_pend_alignas = 0;
+            continue;
+        }
         if (lex_tok == TK_CONST || lex_tok == TK_VOLATILE ||
             lex_tok == TK_SIGNED || lex_tok == TK_RESTRICT ||
             is_gnu_qual_ident() || is_gnu_extension_ident() ||
@@ -1631,6 +1712,7 @@ static int parse_type(void) {
             bfbit = -1;
             while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
                 mty = parse_type();
+                malignas = ps_type_alignas;   /* before an array size runs parse_type again */
                 mcty = ps_type_cty;
                 mbase_cty = ps_type_nostar_cty;
                 mtdac = ps_type_arrcount;
@@ -1762,6 +1844,7 @@ static int parse_type(void) {
                     /* Named bit-field: 'type name :W;'.  Must run BEFORE the
                      * non-bit-field block below, which ends the run of bits. */
                     if (!is_fn_ptr_member && lex_tok == TK_COLON) {
+                        if (malignas) p_error("_Alignas may not be applied to a bit-field");
                         next();
                         bf_width = parse_const_int();
                         require_complete_type(dty, "incomplete bit-field type");
@@ -1826,7 +1909,7 @@ static int parse_type(void) {
                      * char[16] member took a pointer's 4 (SQLite's
                      * yDbMask; 6.7.8-typedef-array-align). */
                     {
-                        int malign = ty_align(member_ty);
+                        int malign = ps_member_align(member_ty, malignas);
                         if (malign > 1)
                             off = ((off + malign - 1) / malign) * malign;
                         if (malign > max_align) max_align = malign;
@@ -1958,6 +2041,7 @@ static int parse_type(void) {
             max_align = 1;
             while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
                 mty = parse_type();
+                malignas = ps_type_alignas;   /* before an array size runs parse_type again */
                 mcty = ps_type_cty;
                 mbase_cty = ps_type_nostar_cty;
                 mtdac = ps_type_arrcount;
@@ -2089,6 +2173,7 @@ static int parse_type(void) {
                     /* Named bit-field in union: each occupies bits 0..W-1
                      * at offset 0 (no packing across members). */
                     if (!is_fn_ptr_member && lex_tok == TK_COLON) {
+                        if (malignas) p_error("_Alignas may not be applied to a bit-field");
                         int malign;
                         next();
                         bf_width = parse_const_int();
@@ -2156,7 +2241,7 @@ static int parse_type(void) {
                         stm_off[stm_count] = 0;
                         stm_synth[stm_count] = 0;
                         if (ty_size(member_ty) * arr_count > max_sz) max_sz = ty_size(member_ty) * arr_count;
-                        malign = ty_align(member_ty);
+                        malign = ps_member_align(member_ty, malignas);
                         if (malign > max_align) max_align = malign;
                     } else {
                         int malign;
@@ -2170,7 +2255,7 @@ static int parse_type(void) {
                         stm_off[stm_count] = 0;
                         stm_synth[stm_count] = 0;
                         if (ty_size(member_ty) > max_sz) max_sz = ty_size(member_ty);
-                        malign = ty_align(member_ty);
+                        malign = ps_member_align(member_ty, malignas);
                         if (malign > max_align) max_align = malign;
                     }
                     stm_cty[stm_count] = ps_member_cty(stm_count);
@@ -2329,6 +2414,7 @@ static int add_local(char *name, int ty) {
     sz = ty_size(ty);
     if (ty == TY_VOID) p_error("variable has incomplete type 'void'");
     ps_local_redecl_check(name);
+    ps_local_alignas(ty);
     require_complete_type(ty, "incomplete type for local");
     /* The frame slot is rounded up to a multiple of 4, but the
      * recorded size is the true one: sizeof(local) reads ps_lsize,
@@ -2468,6 +2554,13 @@ static Node *ps_local_rowptr(char *nm, int ty, int nstars, int is_static) {
 }
 
 /* Add a local array. Returns offset of start of array. */
+/* A local's _Alignas: a frame is word-aligned, and a stronger one
+ * would need the stack realigned at entry, which is not done. */
+static void ps_local_alignas(int elem_ty) {
+    if (ps_type_alignas > 4) p_error("_Alignas stronger than 4 on a local is not supported");
+    if (ps_type_alignas > 0) ps_alignas_for(elem_ty);
+}
+
 static int add_local_array(char *name, int elem_ty, int count) {
     int idx;
     int total;
@@ -2476,6 +2569,7 @@ static int add_local_array(char *name, int elem_ty, int count) {
         p_error("too many locals");
         return 0;
     }
+    ps_local_alignas(elem_ty);
     elem_sz = ty_size(elem_ty);
     require_complete_type(elem_ty, "incomplete element type");
     total = elem_sz * count;
@@ -2582,6 +2676,8 @@ static int add_global(char *name, int ty, int size_bytes) {
     ps_gname[idx] = strdup(name);
     ps_gconst[idx] = ps_decl_objconst;
     ps_decl_objconst = 0;
+    ps_galign[idx] = 0;
+    ps_global_alignas(idx, ty, size_bytes);
     ps_gcty[idx] = ps_global_cty(ty, size_bytes);
     ps_gvolb[idx] = ps_type_volb;
     ps_gvolp[idx] = ps_type_volp;
@@ -2687,6 +2783,15 @@ static void ps_global_redecl_check(int idx, int ty, int size_bytes) {
         p_error("static declaration follows non-static declaration");
 }
 
+/* A global's _Alignas, onto global idx (6.7.5): the element's
+ * alignment for an array, which is held in pointer form. */
+static void ps_global_alignas(int idx, int ty, int size_bytes) {
+    int a;
+    if (ps_type_alignas == 0) return;
+    a = ps_alignas_for((size_bytes > 0 && ty_is_ptr(ty)) ? ty_deref(ty) : ty);
+    if (a > ps_galign[idx]) ps_galign[idx] = a;
+}
+
 static int add_extern_global(char *name, int ty, int size_bytes) {
     int idx;
     ps_top_inline = 0;      /* extern void v; is a declaration, not an object */
@@ -2722,6 +2827,7 @@ static int add_defined_global(char *name, int ty, int size_bytes) {
         ps_gextern[idx] = 0;
         ps_gconst[idx] = ps_decl_objconst;   /* the definition decides */
         ps_decl_objconst = 0;
+        ps_global_alignas(idx, ty, size_bytes);
         if (!ps_ghasinit[idx])
             ps_reset_global_init(idx);
         return idx;
@@ -6382,6 +6488,7 @@ static void parse_typedef_decl(void) {
     int cty;
     char nm[256];
         ty = parse_type();
+        if (ps_type_alignas) p_error("_Alignas may not appear in a typedef");   /* 6.7.5p2 */
         cty = ps_type_cty;     /* before a parameter list runs parse_type again */
         if (lex_tok == TK_LPAREN) {
             /* Function pointer typedef: typedef int (*Name)(args); */

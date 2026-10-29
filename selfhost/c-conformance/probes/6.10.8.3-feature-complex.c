@@ -1,4 +1,5 @@
 // 6.10.8.3p1,p2  without __STDC_NO_COMPLEX__, _Complex works; never both NO_COMPLEX and IEC_559_COMPLEX
+// optional: __STDC_NO_COMPLEX__
 #include <stdio.h>
 #if defined(__STDC_NO_COMPLEX__) && defined(__STDC_IEC_559_COMPLEX__)
 #error both __STDC_NO_COMPLEX__ and __STDC_IEC_559_COMPLEX__

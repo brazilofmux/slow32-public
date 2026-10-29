@@ -26,6 +26,9 @@
 #   DIAG     invalid; stage08 refuses it, as it must
 #   ACCEPTS  invalid; stage08 takes it without a word        -- a gap
 #   ORACLE   `expect: reject` and clang disagree: fix the probe
+#   OPTIONAL a probe of an optional C11 feature (`// optional: __STDC_NO_X__`)
+#            that stage08 declares it leaves out, which it then refuses or
+#            answers otherwise than clang, which has it -- a choice, not a gap
 #   HANG     a build or run passed its time limit
 #
 # stage08 here is the tree's: selfhost/stage08/cc.s32x, its s32-as/s32-ld,
@@ -70,6 +73,10 @@ done
 "$DBT" "$S08/s32-ar.s32x" rc "$W/libc.s32a" "${LIBC_OBJS[@]}" >/dev/null 2>&1 \
     || { echo "could not archive stage08/lib" >&2; exit 2; }
 
+s08_defines() {   # s08_defines MACRO -> 0 when stage08 predefines it
+    printf '#ifndef %s\n#error not defined\n#endif\nint s08_defines_probe;\n' "$1" >"$W/defines.c"
+    "$DBT" "$S08/cc.s32x" -I"$S08/include" "$W/defines.c" "$W/defines.s" >/dev/null 2>&1
+}
 run_limited() {   # run_limited OUT_FILE cmd...  -> the command's status, 124 on timeout
     local out="$1"; shift
     timeout "$LIMIT" "$@" >"$out" 2>&1
@@ -85,6 +92,7 @@ for src in "$@"; do
     clause="$(head -1 "$src" | sed -n 's|^// *||p')"
     expect_reject=0
     grep -q '^// expect: reject' "$src" && expect_reject=1
+    optional="$(sed -n 's|^// optional: *\([A-Za-z_0-9]*\).*|\1|p' "$src" | head -1)"
     d="$W/$name"; mkdir -p "$d"
 
     # clang, the oracle
@@ -137,7 +145,10 @@ for src in "$@"; do
         fi
     fi
 
-    case $verdict in PASS|DIAG) ;; *) fail=1 ;; esac
+    if [ -n "$optional" ] && { [ "$verdict" = WRONG ] || [ "$verdict" = REJECTS ]; } && s08_defines "$optional"; then
+        verdict=OPTIONAL; note="stage08 defines $optional"
+    fi
+    case $verdict in PASS|DIAG|OPTIONAL) ;; *) fail=1 ;; esac
     echo "$name $verdict" >>"$W/verdicts.now"
     [ $MODE = run ] && printf "%-8s %-36s %s\n" "$verdict" "$name" "${note:-$clause}"
     if [ $VERBOSE = 1 ] && [ "$verdict" != PASS ]; then
@@ -147,7 +158,7 @@ for src in "$@"; do
     fi
 done
 
-good() { case "$1" in PASS|DIAG) return 0 ;; *) return 1 ;; esac; }
+good() { case "$1" in PASS|DIAG|OPTIONAL) return 0 ;; *) return 1 ;; esac; }
 if [ $MODE = update ]; then
     sort "$W/verdicts.now" >"$HERE/verdicts.txt"
     awk '{print $2}' "$HERE/verdicts.txt" | sort | uniq -c | sort -rn

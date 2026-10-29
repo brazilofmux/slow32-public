@@ -1,4 +1,5 @@
 // 6.10.8.3p1  without __STDC_NO_VLA__, variable length arrays must work
+// optional: __STDC_NO_VLA__
 #include <stdio.h>
 static int sum(int n) {
 #ifndef __STDC_NO_VLA__

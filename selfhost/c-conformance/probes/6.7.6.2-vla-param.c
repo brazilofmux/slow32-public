@@ -1,4 +1,5 @@
 // 6.7.6.2p5/6.7.6.3p7  VLA parameter types: int a[n][m] and [*] in a prototype
+// optional: __STDC_NO_VLA__
 #include <stdio.h>
 int trace(int n, int a[*][*]);
 int trace(int n, int a[n][n]) { int s = 0; for (int i = 0; i < n; i++) s += a[i][i]; return s; }

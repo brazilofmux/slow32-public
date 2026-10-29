@@ -1,4 +1,5 @@
 // 6.7.6.2p4-5  variable length arrays: size evaluated at runtime, sizeof runtime, 2-D VLA
+// optional: __STDC_NO_VLA__
 #include <stdio.h>
 static int fill(int n) {
     int a[n];

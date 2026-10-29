@@ -1,4 +1,5 @@
 // 6.3.1.6p1  complex-to-complex conversion (complex types are conditional: __STDC_NO_COMPLEX__)
+// optional: __STDC_NO_COMPLEX__
 #include <stdio.h>
 int main(void) {
 #ifdef __STDC_NO_COMPLEX__

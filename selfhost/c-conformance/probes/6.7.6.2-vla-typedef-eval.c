@@ -1,4 +1,5 @@
 // 6.7.6.2p5  a VLA typedef's size is evaluated once, at the typedef
+// optional: __STDC_NO_VLA__
 #include <stdio.h>
 int main(void) {
     int n = 4;

@@ -4947,6 +4947,21 @@ static int cg_jt_keep(int ji) {
 /* One initialized global's label and bytes, wherever the caller has put
  * the section; 0 when it has no initializer to emit (it belongs in .bss,
  * or, const, is zero-filled in .rodata). */
+/* A global _Alignas made stronger than a word (6.7.5): the .align
+ * before its label.  The assembler keeps each section's strongest and
+ * the linker places the section at it. */
+static void hcg_overalign(int i) {
+    int a;
+    int k;
+    a = ps_galign[i];
+    if (a <= 4) return;
+    k = 0;
+    while ((1 << k) < a) k = k + 1;
+    cg_s(".align ");
+    cg_n(k);
+    cg_c(10);
+}
+
 static int gen_global_init(int i) {
     int j;
     int len;
@@ -4965,6 +4980,7 @@ static int gen_global_init(int i) {
          * word and doubleword values.  Candidate to port upstream:
          * stage08's gen_data has the same latent hazard. */
         cg_s(".align 2\n");
+        hcg_overalign(i);
         if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
         cg_s(ps_gname[i]);
         cg_s(":\n");
@@ -5009,6 +5025,7 @@ static int gen_global_init(int i) {
             cg_c(10);
         }
     } else if (ps_gsize[i] == 0 && ps_gstr[i] >= 0) {
+        hcg_overalign(i);
         if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
         cg_s(ps_gname[i]);
         cg_s(":\n    .word .LS");
@@ -5016,6 +5033,7 @@ static int gen_global_init(int i) {
         cg_c(10);
     } else if (ps_gsize[i] == 0 && ty_is_llong(ps_gtype[i]) && (ps_ginit[i] != 0 || ps_ginit_hi[i] != 0)) {
         /* 64-bit initialized global */
+        hcg_overalign(i);
         if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
         cg_s(ps_gname[i]);
         cg_s(":\n    .word ");
@@ -5024,6 +5042,7 @@ static int gen_global_init(int i) {
         cg_n(ps_ginit_hi[i]);
         cg_c(10);
     } else if (ps_gsize[i] == 0 && ps_ginit[i] != 0) {
+        hcg_overalign(i);
         if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
         cg_s(ps_gname[i]);
         cg_s(":\n    .word ");
@@ -5037,6 +5056,7 @@ static int gen_global_init(int i) {
 /* A const global with no initializer: zero-filled, in .rodata.  The
  * sizes are the .bss walk's below. */
 static void gen_global_zero(int i) {
+    hcg_overalign(i);
     if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
     cg_s(ps_gname[i]);
     cg_s(":\n    .space ");
@@ -5149,6 +5169,7 @@ static void gen_data(void) {
         } else if (ps_gsize[i] > 0) {
             /* DIVERGENCE (f77): word-align, as in the .data walk. */
             cg_s(".align 2\n");
+            hcg_overalign(i);
             if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
             cg_s(ps_gname[i]);
             cg_s(":\n    .space ");
@@ -5159,11 +5180,13 @@ static void gen_data(void) {
              * lo==0, hi!=0 from 1LL<<32) was already emitted in .data;
              * the 4-byte fallback below used to duplicate the label. */
             if (ps_ginit[i] == 0 && ps_ginit_hi[i] == 0 && ps_gstr[i] < 0) {
+                hcg_overalign(i);
                 if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
                 cg_s(ps_gname[i]);
                 cg_s(":\n    .space 8\n");
             }
         } else if (ps_ginit[i] == 0 && ps_gstr[i] < 0) {
+            hcg_overalign(i);
             if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
             cg_s(ps_gname[i]);
             cg_s(":\n    .space 4\n");

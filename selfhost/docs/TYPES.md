@@ -575,7 +575,26 @@ size and the wrong type; 64-bit hosts keep those); `1L` is a `long`
 and `1UL` an `unsigned long`, the size of an int and other types
 (`lex_val_l`; the parser names the type, sema keeps it); and a
 constant past `long long`'s range is `unsigned long long`
-(`0xFFFFFFFFFFFFFFFF` was a signed -1).  `max_align_t` added.  `S12CC_CONSTRAINT_WARN=1` turns
+(`0xFFFFFFFFFFFFFFFF` was a signed -1).  `max_align_t` added.
+
+`_Alignas` (6.7.5), a type name or a constant, among the storage-class
+words or the qualifiers (`ps_read_alignas`), the strictest of a
+declaration's kept: on a global, the `.align` before its label
+(`hcg_overalign`; the assembler keeps each section's strongest and the
+linker places the section there); on a structure member, its offset
+and the structure's alignment and size; never weaker than the type's
+own, never on a bit-field or in a typedef.  A local's stronger than a
+word is refused: the frame is word-aligned (clang's SLOW-32 target has
+4 as its biggest alignment too), and it would take realigning the
+stack at entry -- a gap, two probes.
+
+**C11 claimed.**  `__STDC_VERSION__` is 201112L.  The optional features
+not implemented are declared, as 6.10.8.3 has an implementation do:
+`__STDC_NO_COMPLEX__`, `__STDC_NO_VLA__`, `__STDC_NO_THREADS__`,
+`__STDC_NO_ATOMICS__`.  A probe of one of them carries
+`// optional: __STDC_NO_X__`, and when stage08 defines that macro and
+refuses the probe, or answers otherwise than clang (which has the
+feature), the verdict is OPTIONAL: a choice, not a gap (ten probes).  `S12CC_CONSTRAINT_WARN=1` turns
 the errors into warnings, to survey a corpus.
 
 ## Constraints on the work

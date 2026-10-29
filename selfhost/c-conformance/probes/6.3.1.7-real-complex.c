@@ -1,4 +1,5 @@
 // 6.3.1.7p1  real to complex: imaginary part zero (complex is conditional, 6.10.8.3 __STDC_NO_COMPLEX__)
+// optional: __STDC_NO_COMPLEX__
 #include <stdio.h>
 int main(void) {
 #ifdef __STDC_NO_COMPLEX__
