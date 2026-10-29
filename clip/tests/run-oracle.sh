@@ -7,6 +7,10 @@
 #   tests/run-oracle.sh             # the whole corpus
 #   tests/run-oracle.sh FOO.PRG ... # some programs (paths)
 #
+# A program whose data a dbase test script makes (CREATE, APPEND ...) before
+# it DOes the program gets that script's lines up to the DO run first, in
+# both copies, output discarded.
+#
 # Verdicts: AGREE; DIFFER (a gate failure: diff kept in out/oracle/);
 # NOCOMPILE (s32-clip refuses it -- the progress measure, not a failure);
 # SKIP (the program reads the keyboard, which this harness does not feed).
@@ -41,6 +45,18 @@ if s.endswith(b". "): s = s[:-2]
 sys.stdout.buffer.write(s)'
 }
 
+# The lines of the first dbase test script in dir that DOes name, up to it
+setup_for() {
+    local dir=$1 name=$2 t
+    for t in "$dir"/*.txt; do
+        [ -f "$t" ] || continue
+        if grep -qiE "^[[:space:]]*DO[[:space:]]+$name(\.PRG)?[[:space:]]*\$" "$t"; then
+            awk -v n="$name" 'BEGIN{IGNORECASE=1} toupper($0) ~ "^[ \t]*DO[ \t]+" toupper(n) "(\\.PRG)?[ \t]*$" {exit} {print}' "$t"
+            return
+        fi
+    done
+}
+
 agree=0; differ=0; nocomp=0; skip=0
 for prg in "${CORPUS[@]}"; do
     name=$(basename "$prg"); name="${name%.*}"
@@ -58,6 +74,13 @@ for prg in "${CORPUS[@]}"; do
     fi
     wi=$(mktemp -d "$OUT/i.XXXX"); wc=$(mktemp -d "$OUT/c.XXXX")
     cp -R "$dir/." "$wi/"; cp -R "$dir/." "$wc/"
+    setup=$(setup_for "$dir" "$name")
+    if [ -n "$setup" ]; then
+        for w in "$wi" "$wc"; do
+            (cd "$w" && { printf '%s\n' "$setup"; printf 'QUIT\n'; } |
+                timeout 60 "$EMU" -q --deny term "$DBASE" >/dev/null 2>&1)
+        done
+    fi
     (cd "$wi" && printf 'SET TALK OFF\nDO %s\nQUIT\n' "$(basename "$prg")" |
         timeout 60 "$EMU" -q --deny term "$DBASE" 2>&1 | strip_interp) > "$OUT/$name.interp"
     (cd "$wc" && timeout 60 "$EMU" -q --deny term "$OUT/$name.s32x" </dev/null 2>&1) > "$OUT/$name.clip"

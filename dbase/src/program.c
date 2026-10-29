@@ -148,6 +148,12 @@ void prog_set_do_hook(prog_do_hook_t hook) {
     do_hook = hook;
 }
 
+static int (*compiled_recover)(void);
+
+void prog_set_compiled_recover(int (*recover)(void)) {
+    compiled_recover = recover;
+}
+
 void prog_set_compiled_loc(const char *file, int line) {
     compiled_file = file;
     compiled_line = line;
@@ -224,6 +230,10 @@ void prog_error(int code, const char *message) {
         }
         return;
     }
+
+    /* Compiled code's BEGIN SEQUENCE: recovered, as above, without a word */
+    if (!state.running && compiled_recover && compiled_recover())
+        return;
 
     /* No handler — print error with context */
     if (error_state.lineno > 0 && error_state.program[0]) {
@@ -787,7 +797,15 @@ static int eval_dynamic_logical(expr_ctx_t *ctx, const char *expr, int *result) 
     return 0;
 }
 
+static int scan_clause_matches(clause_t *c, dbf_t *db, int *stop_scan);
+
 static int scan_record_matches(loop_entry_t *loop, dbf_t *db, int *stop_scan) {
+    return scan_clause_matches(&loop->scan_clause, db, stop_scan);
+}
+
+/* The record in db passes SET DELETED, SET FILTER and c's FOR (1), or not (0);
+ * c's WHILE failing ends the scan (*stop_scan); an error is -1. */
+static int scan_clause_matches(clause_t *c, dbf_t *db, int *stop_scan) {
     expr_ctx_t *ctx = cmd_get_expr_ctx();
     int ok;
 
@@ -804,19 +822,19 @@ static int scan_record_matches(loop_entry_t *loop, dbf_t *db, int *stop_scan) {
         if (!ok) return 0;
     }
 
-    if (loop->scan_clause.while_ast) {
-        if (eval_ast_logical(ctx, loop->scan_clause.while_ast, &ok) < 0) return -1;
+    if (c->while_ast) {
+        if (eval_ast_logical(ctx, c->while_ast, &ok) < 0) return -1;
         if (!ok) { *stop_scan = 1; return 0; }
-    } else if (loop->scan_clause.while_cond[0]) {
-        if (eval_dynamic_logical(ctx, loop->scan_clause.while_cond, &ok) < 0) return -1;
+    } else if (c->while_cond[0]) {
+        if (eval_dynamic_logical(ctx, c->while_cond, &ok) < 0) return -1;
         if (!ok) { *stop_scan = 1; return 0; }
     }
 
-    if (loop->scan_clause.for_ast) {
-        if (eval_ast_logical(ctx, loop->scan_clause.for_ast, &ok) < 0) return -1;
+    if (c->for_ast) {
+        if (eval_ast_logical(ctx, c->for_ast, &ok) < 0) return -1;
         if (!ok) return 0;
-    } else if (loop->scan_clause.for_cond[0]) {
-        if (eval_dynamic_logical(ctx, loop->scan_clause.for_cond, &ok) < 0) return -1;
+    } else if (c->for_cond[0]) {
+        if (eval_dynamic_logical(ctx, c->for_cond, &ok) < 0) return -1;
         if (!ok) return 0;
     }
 
@@ -2071,8 +2089,19 @@ void prog_next(void) {
     }
 }
 
+/* A SCAN that cannot start goes on after its ENDSCAN.  (It used to leave
+ * pc on the SCAN line, which then failed again, forever.) */
+static void scan_skip(int pc0) {
+    int target;
+    if (!state.running || state.pc != pc0)
+        return;  /* the error moved on already (BEGIN SEQUENCE) */
+    target = scan_endscan(state.current_prog, state.pc);
+    state.pc = target >= 0 ? target + 1 : state.pc + 1;
+}
+
 /* ---- SCAN [scope] [FOR cond] [WHILE cond] ---- */
 void prog_scan(const char *arg) {
+    int pc0 = state.pc;
     clause_t c;
     lexer_t l;
     uint32_t start, end;
@@ -2080,13 +2109,17 @@ void prog_scan(const char *arg) {
 
     if (!db || !dbf_is_open(db)) {
         prog_error(ERR_NO_DATABASE, "No database in use");
+        scan_skip(pc0);
         return;
     }
 
     clause_init(&c);
     c.scope.type = SCOPE_ALL_DEFAULT; /* SCAN default is ALL */
     lexer_init_ext(&l, arg, cmd_get_memvar_store());
-    if (parse_clauses(&l, &c) < 0) return;
+    if (parse_clauses(&l, &c) < 0) {
+        scan_skip(pc0);
+        return;
+    }
 
     /* Compile clause ASTs for scan loop */
     clause_compile(&c, cmd_get_memvar_store());
@@ -2103,12 +2136,14 @@ void prog_scan(const char *arg) {
     if (scope_bounds(db, &c.scope, &start, &end) < 0) {
         clause_free_ast(&c);
         prog_error(ERR_SYNTAX, "Invalid scope");
+        scan_skip(pc0);
         return;
     }
 
     if (state.loop_depth >= MAX_LOOP_DEPTH) {
         clause_free_ast(&c);
         prog_error(ERR_SYNTAX, "Loop nesting overflow");
+        scan_skip(pc0);
         return;
     }
 
@@ -2176,6 +2211,83 @@ void prog_scan(const char *arg) {
     } else {
         state.pc++;
     }
+    }
+}
+
+/* ---- SCAN for compiled code (clip/): the same walk, the state the caller's ---- */
+
+/* From s->cur, the first record that matches: 1 there, 0 none (or WHILE
+ * failed, or an error), with the clause freed. */
+static int prog_scan_seek(prog_scan_t *s) {
+    dbf_t *db = &area_get_current()->db;
+    while (s->cur <= s->end && s->cur <= db->record_count) {
+        int stop_scan = 0;
+        int matched = scan_clause_matches(&s->c, db, &stop_scan);
+        if (matched < 0 || stop_scan) break;
+        if (matched) return 1;
+        s->cur++;
+        if (s->cur <= s->end)
+            dbf_read_record(db, s->cur);
+    }
+    prog_scan_close(s);
+    return 0;
+}
+
+int prog_scan_open(prog_scan_t *s, const char *arg) {
+    lexer_t l;
+    uint32_t start;
+    dbf_t *db = area_get_current() ? &area_get_current()->db : NULL;
+
+    s->open = 0;
+    if (!db || !dbf_is_open(db)) {
+        prog_error(ERR_NO_DATABASE, "No database in use");
+        return 0;
+    }
+    clause_init(&s->c);
+    s->c.scope.type = SCOPE_ALL_DEFAULT; /* SCAN default is ALL */
+    lexer_init_ext(&l, arg, cmd_get_memvar_store());
+    if (parse_clauses(&l, &s->c) < 0) return 0;
+    clause_compile(&s->c, cmd_get_memvar_store());
+    s->open = 1;
+    if (!s->c.has_scope) {
+        if (s->c.for_cond[0]) s->c.scope.type = SCOPE_ALL;
+        else if (s->c.scope.type == SCOPE_ALL_DEFAULT) s->c.scope.type = SCOPE_ALL;
+        else if (s->c.scope.type == SCOPE_DEFAULT) {
+            s->c.scope.type = SCOPE_NEXT;
+            s->c.scope.count = 1;
+        }
+    }
+    if (scope_bounds(db, &s->c.scope, &start, &s->end) < 0) {
+        prog_scan_close(s);
+        prog_error(ERR_SYNTAX, "Invalid scope");
+        return 0;
+    }
+    if (start < 1 || start > s->end || start > db->record_count) {
+        prog_scan_close(s);
+        return 0;
+    }
+    dbf_read_record(db, start);
+    s->cur = start;
+    return prog_scan_seek(s);
+}
+
+int prog_scan_next(prog_scan_t *s) {
+    dbf_t *db = area_get_current() ? &area_get_current()->db : NULL;
+    if (!s->open) return 0;
+    if (!db || !dbf_is_open(db)) {
+        prog_scan_close(s);
+        return 0;
+    }
+    s->cur++;
+    if (s->cur <= s->end)
+        dbf_read_record(db, s->cur);
+    return prog_scan_seek(s);
+}
+
+void prog_scan_close(prog_scan_t *s) {
+    if (s->open) {
+        clause_free_ast(&s->c);
+        s->open = 0;
     }
 }
 

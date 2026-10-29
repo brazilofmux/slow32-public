@@ -25,7 +25,8 @@
 typedef struct {
     char text[MAX_LINE];
     char src[256];
-    int lineno;
+    int lineno;     /* the interpreter's: logical lines, ; continuations joined */
+    int is_text;    /* a line of a TEXT block, kept as it stands */
 } src_line_t;
 
 typedef struct {
@@ -257,10 +258,6 @@ static int find_store(const char *p, char *name, int nsz, char *expr, int esz) {
     return 1;
 }
 
-static int is_unlowered_block(const char *p) {
-    return is_kw(p, "FOR") || is_kw(p, "SCAN") || is_kw(p, "TEXT") ||
-           is_kw(p, "BEGIN");
-}
 
 static int parse_namelist(const char *p, char names[][MAX_NAME], int maxn) {
     int n = 0;
@@ -438,10 +435,29 @@ static void path_dir(const char *path, char *dir, int n) {
     dir[len] = '\0';
 }
 
+static int store_line(const char *path, const char *text, int lineno, int is_text) {
+    if (g_nlines >= MAX_LINES) {
+        fprintf(stderr, "%s: too many lines\n", path);
+        return -1;
+    }
+    strncpy(g_lines[g_nlines].text, text, MAX_LINE - 1);
+    g_lines[g_nlines].text[MAX_LINE - 1] = '\0';
+    strncpy(g_lines[g_nlines].src, path, 255);
+    g_lines[g_nlines].src[255] = '\0';
+    g_lines[g_nlines].lineno = lineno;
+    g_lines[g_nlines].is_text = is_text;
+    g_nlines++;
+    return 0;
+}
+
+/* Lines as the interpreter's prog_load reads them: trailing blanks off, a
+ * line ending in ; joined to the next, numbered by logical line. */
 static int load_prg(const char *path) {
     FILE *in;
     char buf[MAX_LINE];
+    char next[MAX_LINE];
     int lineno = 0;
+    int in_text = 0;
 
     if (already_loaded(path)) {
         return 0;
@@ -454,24 +470,45 @@ static int load_prg(const char *path) {
     mark_loaded(path);
     while (fgets(buf, sizeof(buf), in)) {
         const char *p;
-        lineno++;
+        int rc;
         rtrim(buf);
+        while (buf[0] && buf[strlen(buf) - 1] == ';') {
+            buf[strlen(buf) - 1] = '\0';
+            if (!fgets(next, sizeof(next), in)) {
+                break;
+            }
+            rtrim(next);
+            if (strlen(buf) + strlen(skip_ws(next)) < MAX_LINE - 1) {
+                strcat(buf, skip_ws(next));
+            }
+        }
+        lineno++;
+        if (in_text) {
+            p = skip_ws(buf);
+            if (is_kw(p, "ENDTEXT")) {
+                in_text = 0;
+                rc = store_line(path, "ENDTEXT", lineno, 0);
+            } else {
+                rc = store_line(path, buf, lineno, 1);
+            }
+            if (rc != 0) {
+                fclose(in);
+                return -1;
+            }
+            continue;
+        }
         strip_comment(buf);
         p = skip_ws(buf);
         if (*p == '\0') {
             continue;
         }
-        if (g_nlines >= MAX_LINES) {
-            fprintf(stderr, "%s: too many lines\n", path);
+        if (store_line(path, p, lineno, 0) != 0) {
             fclose(in);
             return -1;
         }
-        strncpy(g_lines[g_nlines].text, p, MAX_LINE - 1);
-        g_lines[g_nlines].text[MAX_LINE - 1] = '\0';
-        strncpy(g_lines[g_nlines].src, path, 255);
-        g_lines[g_nlines].src[255] = '\0';
-        g_lines[g_nlines].lineno = lineno;
-        g_nlines++;
+        if (is_kw(p, "TEXT")) {
+            in_text = 1;
+        }
     }
     fclose(in);
     return 0;
@@ -512,6 +549,24 @@ static int line_in_func(int idx, const func_t *fns, int nfns) {
             return 1;
         }
     }
+    return 0;
+}
+
+static int open_block(emit_t *e, char kind) {
+    if (e->depth >= MAX_NEST) {
+        fprintf(stderr, "%s:%d: nesting too deep\n", e->inpath, e->lineno);
+        return -1;
+    }
+    e->nest[e->depth++] = kind;
+    return 0;
+}
+
+static int close_block(emit_t *e, char kind, const char *msg) {
+    if (e->depth < 1 || e->nest[e->depth - 1] != kind) {
+        fprintf(stderr, "%s:%d: %s\n", e->inpath, e->lineno, msg);
+        return -1;
+    }
+    e->depth--;
     return 0;
 }
 
@@ -596,14 +651,125 @@ static int emit_stmt(emit_t *e, const char *p) {
         }
         return 0;
     }
-    if (is_kw(p, "EXIT")) {
+    if (is_kw(p, "EXIT") || is_kw(p, "LOOP")) {
+        int d;
+        for (d = e->depth - 1; d >= 0; d--) {
+            char k = e->nest[d];
+            if (k == 'W' || k == 'F' || k == 'S') {
+                break;
+            }
+            if (k == 'Q') {   /* leaving a BEGIN SEQUENCE body */
+                emit_indent(e->out, e->depth);
+                fprintf(e->out, "clip_seq_end();\n");
+            }
+        }
+        if (d < 0) {
+            fprintf(stderr, "%s:%d: %s outside a loop\n", e->inpath, e->lineno,
+                    is_kw(p, "EXIT") ? "EXIT" : "LOOP");
+            return -1;
+        }
         emit_indent(e->out, e->depth);
-        fprintf(e->out, "break;\n");
+        fprintf(e->out, is_kw(p, "EXIT") ? "break;\n" : "continue;\n");
         return 0;
     }
-    if (is_kw(p, "LOOP")) {
+    if (is_kw(p, "FOR")) {
+        if (open_block(e, 'F') != 0) {
+            return -1;
+        }
+        emit_indent(e->out, e->depth - 1);
+        fprintf(e->out, "{ clip_for_t clip_f%d; if ((", e->depth - 1);
+        emit_at_expr(e);
+        fprintf(e->out, ", clip_for_init(&clip_f%d, ", e->depth - 1);
+        c_escape(e->out, skip_ws(p + 3));
+        fprintf(e->out, "))) do {\n");
+        return 0;
+    }
+    if (is_kw(p, "NEXT")) {
+        if (close_block(e, 'F', "NEXT without FOR") != 0) {
+            return -1;
+        }
         emit_indent(e->out, e->depth);
-        fprintf(e->out, "continue;\n");
+        fprintf(e->out, "} while (clip_for_next(&clip_f%d)); }\n", e->depth);
+        return 0;
+    }
+    if (is_kw(p, "SCAN")) {
+        if (open_block(e, 'S') != 0) {
+            return -1;
+        }
+        emit_indent(e->out, e->depth - 1);
+        fprintf(e->out, "{ prog_scan_t clip_s%d; if ((", e->depth - 1);
+        emit_at_expr(e);
+        fprintf(e->out, ", prog_scan_open(&clip_s%d, ", e->depth - 1);
+        c_escape(e->out, skip_ws(p + 4));
+        fprintf(e->out, "))) do {\n");
+        return 0;
+    }
+    if (is_kw(p, "ENDSCAN")) {
+        if (close_block(e, 'S', "ENDSCAN without SCAN") != 0) {
+            return -1;
+        }
+        emit_indent(e->out, e->depth);
+        fprintf(e->out, "} while (prog_scan_next(&clip_s%d)); prog_scan_close(&clip_s%d); }\n",
+                e->depth, e->depth);
+        return 0;
+    }
+    if (is_kw(p, "TEXT")) {
+        if (open_block(e, 'T') != 0) {
+            return -1;
+        }
+        emit_indent(e->out, e->depth - 1);
+        fprintf(e->out, "{ /* TEXT */\n");
+        return 0;
+    }
+    if (is_kw(p, "ENDTEXT")) {
+        if (close_block(e, 'T', "ENDTEXT without TEXT") != 0) {
+            return -1;
+        }
+        emit_indent(e->out, e->depth);
+        fprintf(e->out, "}\n");
+        return 0;
+    }
+    if (is_kw(p, "BEGIN") && is_kw(skip_ws(p + 5), "SEQUENCE")) {
+        if (open_block(e, 'Q') != 0) {
+            return -1;
+        }
+        emit_indent(e->out, e->depth - 1);
+        fprintf(e->out, "{ clip_seq_t clip_q%d; if (setjmp(*clip_seq_begin(&clip_q%d)) == 0) {\n",
+                e->depth - 1, e->depth - 1);
+        return 0;
+    }
+    if (is_kw(p, "RECOVER")) {
+        if (e->depth < 1 || e->nest[e->depth - 1] != 'Q') {
+            fprintf(stderr, "%s:%d: RECOVER without BEGIN SEQUENCE\n", e->inpath, e->lineno);
+            return -1;
+        }
+        emit_indent(e->out, e->depth);
+        fprintf(e->out, "clip_seq_end();\n");
+        emit_indent(e->out, e->depth - 1);
+        fprintf(e->out, "} else {\n");
+        e->nest[e->depth - 1] = 'R';
+        return 0;
+    }
+    if (is_kw(p, "END") && (*skip_ws(p + 3) == '\0' || is_kw(skip_ws(p + 3), "SEQUENCE"))) {
+        if (e->depth < 1 || (e->nest[e->depth - 1] != 'Q' && e->nest[e->depth - 1] != 'R')) {
+            fprintf(stderr, "%s:%d: END without BEGIN SEQUENCE\n", e->inpath, e->lineno);
+            return -1;
+        }
+        if (e->nest[e->depth - 1] == 'Q') {
+            emit_indent(e->out, e->depth);
+            fprintf(e->out, "clip_seq_end();\n");
+        }
+        e->depth--;
+        emit_indent(e->out, e->depth);
+        fprintf(e->out, "} }\n");
+        return 0;
+    }
+    if (is_kw(p, "BREAK")) {
+        emit_indent(e->out, e->depth);
+        emit_at_expr(e);
+        fprintf(e->out, ";\n");
+        emit_indent(e->out, e->depth);
+        fprintf(e->out, "clip_break();\n");
         return 0;
     }
     if (is_kw(p, "ENDDO")) {
@@ -762,11 +928,6 @@ static int emit_stmt(emit_t *e, const char *p) {
                 e->inpath, e->lineno);
         return -1;
     }
-    if (is_unlowered_block(p) || is_kw(p, "NEXT") || is_kw(p, "ENDSCAN") ||
-        is_kw(p, "ENDTEXT") || is_kw(p, "RECOVER") || is_kw(p, "END")) {
-        fprintf(stderr, "%s:%d: unlowered block: %s\n", e->inpath, e->lineno, p);
-        return -1;
-    }
     /* What remains can fail at run time: say where it is first */
     emit_indent(e->out, e->depth);
     emit_at_expr(e);
@@ -819,6 +980,17 @@ static int emit_stmt(emit_t *e, const char *p) {
     return 0;
 }
 
+static int emit_line(emit_t *e, const src_line_t *ln) {
+    if (ln->is_text) {
+        emit_indent(e->out, e->depth);
+        fprintf(e->out, "clip_text(");
+        c_escape(e->out, ln->text);
+        fprintf(e->out, ");\n");
+        return 0;
+    }
+    return emit_stmt(e, ln->text);
+}
+
 static int emit_function(FILE *out, const func_t *fn) {
     emit_t e;
     int i;
@@ -840,7 +1012,7 @@ static int emit_function(FILE *out, const func_t *fn) {
     for (i = fn->start; i < fn->end; i++) {
         e.inpath = g_lines[i].src;
         e.lineno = g_lines[i].lineno;
-        if (emit_stmt(&e, g_lines[i].text) != 0) {
+        if (emit_line(&e, &g_lines[i]) != 0) {
             return -1;
         }
     }
@@ -900,8 +1072,9 @@ int main(int argc, char **argv) {
 
     i = 0;
     while (i < g_nlines) {
-        if (is_kw(g_lines[i].text, "FUNCTION") ||
-            is_kw(g_lines[i].text, "PROCEDURE")) {
+        if (!g_lines[i].is_text &&
+            (is_kw(g_lines[i].text, "FUNCTION") ||
+             is_kw(g_lines[i].text, "PROCEDURE"))) {
             if (nfns >= MAX_FUNCS) {
                 fprintf(stderr, "%s:%d: too many functions\n",
                         g_lines[i].src, g_lines[i].lineno);
@@ -917,8 +1090,9 @@ int main(int argc, char **argv) {
             fns[nfns].start = i + 1;
             j = i + 1;
             while (j < g_nlines &&
-                   !is_kw(g_lines[j].text, "FUNCTION") &&
-                   !is_kw(g_lines[j].text, "PROCEDURE")) {
+                   (g_lines[j].is_text ||
+                    (!is_kw(g_lines[j].text, "FUNCTION") &&
+                     !is_kw(g_lines[j].text, "PROCEDURE")))) {
                 j++;
             }
             fns[nfns].end = j;
@@ -962,7 +1136,7 @@ int main(int argc, char **argv) {
         }
         e.inpath = g_lines[i].src;
         e.lineno = g_lines[i].lineno;
-        if (emit_stmt(&e, g_lines[i].text) != 0) {
+        if (emit_line(&e, &g_lines[i]) != 0) {
             fclose(out);
             return 1;
         }

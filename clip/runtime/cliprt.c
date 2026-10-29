@@ -25,6 +25,10 @@ static struct {
 static int clip_nfn;
 static udf_callback_t clip_prev_udf;
 static clip_call_t *clip_next_call;   /* the DO ... WITH about to enter */
+static clip_scope_t *clip_scope_top;  /* the compiled function running */
+static clip_seq_t *clip_seq_top;      /* the innermost BEGIN SEQUENCE */
+
+static int clip_recover(void);
 
 static void name_upper(char *dst, const char *src, int n) {
     int i;
@@ -128,6 +132,7 @@ void clip_init(void) {
     clip_prev_udf = func_get_udf_callback();
     func_set_udf_callback(clip_udf_dispatch);
     prog_set_do_hook(clip_do_hook);
+    prog_set_compiled_recover(clip_recover);
     strcpy(line, "SET TALK OFF");
     cmd_execute(&clip_db, line);
 }
@@ -258,6 +263,8 @@ void clip_enter(clip_scope_t *s) {
     s->npnames = 0;
     s->call = clip_next_call;
     clip_next_call = NULL;
+    s->prev = clip_scope_top;
+    clip_scope_top = s;
     prog_get_compiled_loc(&s->at_file, &s->at_line);
     store->current_depth++;
 }
@@ -305,6 +312,11 @@ void clip_leave(clip_scope_t *s) {
         }
         s->call = NULL;
     }
+    /* A sequence begun in this call and still open ends with it (RETURN) */
+    while (clip_seq_top && clip_seq_top->scope == s) {
+        clip_seq_top = clip_seq_top->prev;
+    }
+    clip_scope_top = s->prev;
     /* LOCALs first, so a PRIVATE restore lands on what it shadowed */
     memvar_release_locals(store, store->current_depth);
     for (i = 0; i < s->count; i++) {
@@ -335,4 +347,119 @@ void clip_return(clip_scope_t *s, const char *expr, value_t *result) {
 void clip_end(clip_scope_t *s, value_t *result) {
     clip_leave(s);
     *result = val_nil();
+}
+
+/* ---- FOR ... NEXT, as the interpreter's prog_for / prog_next ---- */
+
+int clip_for_init(clip_for_t *f, const char *arg) {
+    const char *p = arg;
+    value_t start_val, end_val, step_val;
+    expr_ctx_t *ctx;
+    int i = 0;
+
+    cmd_ctx_setup();
+    ctx = cmd_get_expr_ctx();
+    while (*p == ' ' || *p == '\t') p++;
+    while ((isalnum((unsigned char)*p) || *p == '_') && i < MEMVAR_NAMELEN - 1)
+        f->var[i++] = *p++;
+    f->var[i] = '\0';
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p != '=') {
+        printf("Syntax error in FOR.\n");
+        return 0;
+    }
+    p++;
+    while (*p == ' ' || *p == '\t') p++;
+    if (expr_eval(ctx, &p, &start_val) != 0 || start_val.type != VAL_NUM) {
+        printf("FOR requires numeric expressions.\n");
+        return 0;
+    }
+    while (*p == ' ' || *p == '\t') p++;
+    if (!str_imatch(p, "TO")) {
+        printf("Missing TO in FOR.\n");
+        return 0;
+    }
+    p += 2;
+    while (*p == ' ' || *p == '\t') p++;
+    if (expr_eval(ctx, &p, &end_val) != 0 || end_val.type != VAL_NUM) {
+        printf("FOR requires numeric expressions.\n");
+        return 0;
+    }
+    step_val = val_num(1.0);
+    while (*p == ' ' || *p == '\t') p++;
+    if (str_imatch(p, "STEP")) {
+        p += 4;
+        while (*p == ' ' || *p == '\t') p++;
+        if (expr_eval(ctx, &p, &step_val) != 0 || step_val.type != VAL_NUM) {
+            printf("STEP requires numeric expression.\n");
+            return 0;
+        }
+    }
+    memvar_set(cmd_get_memvar_store(), f->var, &start_val);
+    f->end = end_val.num;
+    f->step = step_val.num;
+    return !((f->step > 0 && start_val.num > f->end) ||
+             (f->step < 0 && start_val.num < f->end));
+}
+
+int clip_for_next(clip_for_t *f) {
+    memvar_store_t *store = cmd_get_memvar_store();
+    value_t val;
+    if (memvar_find(store, f->var, &val) != 0 || val.type != VAL_NUM) {
+        return 0;
+    }
+    val.num += f->step;
+    memvar_set(store, f->var, &val);
+    if (f->step > 0) {
+        return !(val.num > f->end);
+    }
+    if (f->step < 0) {
+        return !(val.num < f->end);
+    }
+    return 1; /* STEP 0 loops forever, as in the interpreter */
+}
+
+/* ---- BEGIN SEQUENCE ---- */
+
+jmp_buf *clip_seq_begin(clip_seq_t *q) {
+    q->prev = clip_seq_top;
+    q->scope = clip_scope_top;
+    clip_seq_top = q;
+    return &q->jb;
+}
+
+void clip_seq_end(void) {
+    if (clip_seq_top) {
+        clip_seq_top = clip_seq_top->prev;
+    }
+}
+
+/* Back to the innermost sequence's RECOVER, leaving the calls made since */
+static void clip_seq_jump(void) {
+    clip_seq_t *q = clip_seq_top;
+    clip_seq_top = q->prev;
+    while (clip_scope_top && clip_scope_top != q->scope) {
+        clip_leave(clip_scope_top);
+    }
+    longjmp(q->jb, 1);
+}
+
+void clip_break(void) {
+    if (!clip_seq_top) {
+        prog_error(ERR_SYNTAX, "BREAK without BEGIN SEQUENCE");
+        return;
+    }
+    clip_seq_jump();
+}
+
+static int clip_recover(void) {
+    if (!clip_seq_top) {
+        return 0;
+    }
+    clip_seq_jump();
+    return 1;
+}
+
+void clip_text(const char *line) {
+    printf("%s\n", line);
 }

@@ -1,7 +1,9 @@
 #ifndef CLIPRT_H
 #define CLIPRT_H
 
+#include <setjmp.h>
 #include "expr.h"
+#include "program.h"
 #include "memvar.h"
 
 void clip_init(void);
@@ -25,7 +27,9 @@ typedef struct {
     int have[MAX_FUNC_ARGS];
 } clip_call_t;
 
-typedef struct {
+typedef struct clip_scope clip_scope_t;
+
+struct clip_scope {
     char names[CLIP_SCOPE_MAX][MEMVAR_NAMELEN];
     value_t saved[CLIP_SCOPE_MAX];
     int valid[CLIP_SCOPE_MAX];
@@ -35,7 +39,30 @@ typedef struct {
     clip_call_t *call;     /* a DO ... WITH with by-reference arguments, or NULL */
     char pnames[MAX_FUNC_ARGS][MEMVAR_NAMELEN];  /* parameter names by position */
     int npnames;
-} clip_scope_t;
+    clip_scope_t *prev;    /* the scope that called this one */
+};
+
+/* FOR var = start TO end [STEP step] ... NEXT */
+typedef struct {
+    char var[MEMVAR_NAMELEN];
+    double end, step;
+} clip_for_t;
+int clip_for_init(clip_for_t *f, const char *arg);
+int clip_for_next(clip_for_t *f);
+
+/* BEGIN SEQUENCE ... [RECOVER ...] END: BREAK, or an error inside, comes
+ * back to the setjmp with the scopes entered since unwound */
+typedef struct clip_seq {
+    jmp_buf jb;
+    struct clip_seq *prev;
+    clip_scope_t *scope;
+} clip_seq_t;
+jmp_buf *clip_seq_begin(clip_seq_t *q);
+void clip_seq_end(void);
+void clip_break(void);
+
+/* A line of a TEXT ... ENDTEXT block, printed as it stands */
+void clip_text(const char *line);
 
 /* Where the program is: the file and line the next statement came from */
 void clip_at(const char *file, int line);
