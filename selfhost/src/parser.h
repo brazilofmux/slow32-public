@@ -360,6 +360,13 @@ static int target_long_ty(void) {
     return TY_INT;
 }
 
+/* A sizeof or offsetof result: size_t, unsigned long (6.5.3.4p5,
+ * 7.19p2).  It was int, so (n + 1) * sizeof(double) sign-extended into
+ * a long long and -sizeof(struct s) was negative. */
+static Node *nd_size(int v) {
+    return nd_num64(v, 0, target_long_ty() | TY_UNSIGNED);
+}
+
 /* --- Shared label counter (used by both parser and codegen) --- */
 static int cg_lbl;    /* label counter (monotonically increasing) */
 
@@ -4645,7 +4652,7 @@ static Node *parse_primary(void) {
     if (lex_tok == TK_OFFSETOF) {
         next();
         v = parse_offsetof_value();
-        return nd_num(v);
+        return nd_size(v);
     }
 
     /* sizeof(type_or_expr) / sizeof unary-expression */
@@ -4653,7 +4660,7 @@ static Node *parse_primary(void) {
         next();
         if (lex_tok != TK_LPAREN) {
             n = parse_unary();
-            return nd_num(ps_sizeof_node(n));
+            return nd_size(ps_sizeof_node(n));
         }
         expect(TK_LPAREN);
         if (is_type()) {
@@ -4666,7 +4673,7 @@ static Node *parse_primary(void) {
             expect(TK_RPAREN);
             v = ps_sizeof_node(parse_postfix_from(n));
         }
-        return nd_num(v);
+        return nd_size(v);
     }
 
     p_error("unexpected token in expression");

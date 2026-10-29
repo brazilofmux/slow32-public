@@ -813,6 +813,29 @@ static int hl_promote_to_f64(int val, int from_ty) {
 static int hl_udivmod32(int lv, int rv, int is_rem) {
     int cb;
     int r;
+    unsigned a;
+    unsigned b;
+    int sh;
+    /* A constant divisor is folded, as clang does: both constant, the
+     * value; a power of two, a shift or a mask.  sizeof is size_t now,
+     * and sizeof(a) / sizeof(a[0]) had become a call to __udivsi3. */
+    if (h_kind[rv] == HI_ICONST && h_val[rv] != 0) {
+        b = (unsigned)h_val[rv];
+        if (h_kind[lv] == HI_ICONST) {
+            a = (unsigned)h_val[lv];
+            return hi_emit(HI_ICONST, TY_INT | TY_UNSIGNED, -1, -1,
+                           (int)(is_rem ? a % b : a / b), NULL);
+        }
+        if ((b & (b - 1u)) == 0u) {
+            if (is_rem)
+                return hi_emit(HI_AND, TY_INT | TY_UNSIGNED, lv,
+                               hi_emit(HI_ICONST, TY_INT, -1, -1, (int)(b - 1u), NULL), 0, NULL);
+            sh = 0;
+            while ((1u << sh) != b) sh = sh + 1;
+            return hi_emit(HI_SRL, TY_INT | TY_UNSIGNED, lv,
+                           hi_emit(HI_ICONST, TY_INT, -1, -1, sh, NULL), 0, NULL);
+        }
+    }
     cb = h_ncarg;
     h_carg[h_ncarg] = lv;
     h_ncarg = h_ncarg + 1;

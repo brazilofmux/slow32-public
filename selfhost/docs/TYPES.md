@@ -385,6 +385,17 @@ are `int`, not `size_t`.  Probes `6.10.1-if-unsigned`,
 `6.10.3.5-example7-variadic` (WRONG to PASS), `6.10.3-empty-args`,
 `6.10.3.5-example3-rescan` (REJECTS to PASS).
 
+**`sizeof` and `offsetof` are `size_t`** (2026-10-28): they were
+`int`, so `(n + 1) * sizeof(double)` sign-extended into a `long long`,
+`-sizeof(struct s)` was negative, and `n < sizeof(int)` compared
+signed (6.5.3.4p5, 7.19p2).  `nd_size` gives them `unsigned long`,
+as stddef.h spells `size_t`.  It made `sizeof(a) / sizeof(a[0])` a
+call to `__udivsi3`: unsigned division by a constant was never folded
+(`116u / 4u` was a call too).  `hl_udivmod32` now folds two constants,
+and a power-of-two divisor is a shift or a mask, as clang does --
+SQLite has 19 fewer such calls than before.  Probe
+`6.5.3.4-sizeof-size-t`.
+
 ## Constraints on the work
 
 - stage07 builds stage08: the new code keeps stage07's dialect (ints

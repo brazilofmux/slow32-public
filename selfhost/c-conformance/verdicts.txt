@@ -272,6 +272,7 @@
 6.5.3.4-sizeof-bitfield ACCEPTS
 6.5.3.4-sizeof-function DIAG
 6.5.3.4-sizeof-incomplete ACCEPTS
+6.5.3.4-sizeof-size-t PASS
 6.5.3.4-sizeof-vla REJECTS
 6.5.4-cast-bool PASS
 6.5.4-cast-ptr-float ACCEPTS
