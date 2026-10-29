@@ -411,7 +411,13 @@ static void sema_cty_node(Node *n) {
     int r;
     if (n->cty > 0 && n->kind == ND_VAR) { sema_cty_report(n); return; }
     if (n->kind == ND_STRING) {
-        n->cty = ct_array(ct_basic[CT_CHAR], lex_str_len[n->val] + 1);
+        /* an array of its elements: char, or a wide string's units */
+        if (lex_str_width[n->val] == 4)
+            n->cty = ct_array(ct_basic[CT_UINT], (lex_str_len[n->val] + 1) / 4);
+        else if (lex_str_width[n->val] == 2)
+            n->cty = ct_array(ct_basic[CT_USHORT], (lex_str_len[n->val] + 1) / 2);
+        else
+            n->cty = ct_array(ct_basic[CT_CHAR], lex_str_len[n->val] + 1);
     } else if (n->kind == ND_FUNC_REF) {
         n->cty = find_func_cty(n->name);
         if (n->cty <= 0) n->cty = ct_func(ct_from_mty(find_func_type(n->name), 0), 0, -1, 0);

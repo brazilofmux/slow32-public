@@ -308,8 +308,9 @@ static void pp_fast_skip_to_directive(void) {
             if (lex_pos < lex_len) lex_pos = lex_pos + 1;
             continue;
         }
-        /* Found a directive marker. */
+        /* Found a directive marker -- # or its digraph %: (6.4.6p3) */
         if (c == 35) return;
+        if (c == 37 && lex_pos + 1 < lex_len && lex_src[lex_pos + 1] == 58) return;
         /* Anything else: skip the byte. */
         lex_pos = lex_pos + 1;
     }
@@ -472,6 +473,18 @@ static int pp_read_body_text(char *buf) {
                 pp_body_putc(buf, &bi, 32);
                 continue;
             }
+        }
+        /* the digraphs %:%: and %: are ## and # (6.4.6p3): spelled as
+         * those here, the replacement list is read for the operators by
+         * its characters */
+        if (!in_str && !in_chr && c == 37 && lex_src[lex_pos + 1] == 58) {
+            pp_body_putc(buf, &bi, 35);
+            lex_pos = lex_pos + 2;
+            if (lex_src[lex_pos] == 37 && lex_src[lex_pos + 1] == 58) {
+                pp_body_putc(buf, &bi, 35);
+                lex_pos = lex_pos + 2;
+            }
+            continue;
         }
         pp_body_putc(buf, &bi, c);
         lex_pos = lex_pos + 1;
@@ -2195,6 +2208,7 @@ static void pp_splice_file(char *path) {
     lex_len = lex_len + total;
     lex_src[lex_len] = 0;
     free(tmp);
+    lex_ucn_idents(lex_pos + plen, lex_pos + plen + n);
     lex_bol = 1;    /* the marker is a line of its own, though no newline precedes it */
     pp_sync();
 }

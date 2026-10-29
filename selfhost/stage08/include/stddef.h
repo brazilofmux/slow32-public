@@ -18,6 +18,17 @@ typedef unsigned int size_t;
 typedef int ptrdiff_t;
 #endif
 
+/* wide characters: L'x' and L"" are of this type (6.4.4.4, 6.4.5) --
+ * unsigned int on SLOW-32, as clang's target has __WCHAR_TYPE__ */
+#ifndef _WCHAR_T_DEFINED
+#define _WCHAR_T_DEFINED
+#if __SIZEOF_POINTER__ == 8
+typedef int wchar_t;
+#else
+typedef unsigned int wchar_t;
+#endif
+#endif
+
 /* the type of greatest fundamental alignment (6.2.8p2) */
 typedef struct { long long __ll; double __d; } max_align_t;
 

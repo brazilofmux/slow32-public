@@ -5114,6 +5114,7 @@ static void gen_data(void) {
     /* String literals */
     i = 0;
     while (i < lex_str_count) {
+        if (lex_str_width[i] > 1) cg_s(".align 2\n");    /* a wide string's units are words or halfwords */
         cg_s(".LS");
         cg_n(i);
         cg_s(":\n    .byte ");

@@ -179,6 +179,13 @@ static char lex_strpool[LEX_POOL_SZ];
 static int  lex_strpool_len;
 static int  lex_str_off[LEX_POOL_MAX];
 static int  lex_str_len[LEX_POOL_MAX];
+/* bytes per element: 1 for "..." and u8"...", 2 for u"...", 4 for L"..."
+ * and U"..." (6.4.5).  A wide string's code units are pooled little-
+ * endian, its length width*n + width-1 so the emitter's closing 0 byte
+ * completes the terminating unit -- and sizeof, length + 1, is right. */
+static int  lex_str_width[LEX_POOL_MAX];
+static int  lex_str_pfx[LEX_POOL_MAX];    /* its prefix: 0, 'L', 'u', 'U', or 8 for u8 */
+static int  lex_chr_prefix;    /* L, u or U before a character constant, 0 for none */
 static int  lex_str_count;
 
 /* Ragel persistent state */
@@ -515,6 +522,89 @@ static void lex_two_prod(void) {
 
 /* === Helper: parse float literal from ts..te === */
 
+/* A hexadecimal floating constant, 0x1.8p1 (6.4.4.2): hex digits and a
+ * binary exponent, the value exact -- the mantissa taken to 53 bits (a
+ * double's, so it converts without rounding; further digits are
+ * dropped), then scaled by powers of two built from exponent bits,
+ * each product exact.  It was the constant 0x1 and the identifier p4. */
+static void lex_parse_hexfloat(char *ts, char *te) {
+    unsigned long long m;
+    double d;
+    double p2;
+    int *p2w;
+    int *pw;
+    int e;
+    int frac;
+    int ch;
+    int v;
+    int pe;
+    int psign;
+    int step;
+    int is_float;
+    char *p;
+    m = 0;
+    e = 0;
+    frac = 0;
+    p = ts + 2;
+    while (p < te) {
+        ch = *p & 255;
+        if (ch == 46) { frac = 1; p = p + 1; continue; }
+        if (ch >= 48 && ch <= 57) v = ch - 48;
+        else if (ch >= 97 && ch <= 102) v = ch - 87;
+        else if (ch >= 65 && ch <= 70) v = ch - 55;
+        else break;
+        if ((m >> 49) == 0) {
+            m = m * 16 + (unsigned long long)v;
+            if (frac) e = e - 4;
+        } else if (!frac) {
+            e = e + 4;
+        }
+        p = p + 1;
+    }
+    p = p + 1;                              /* the p or P */
+    psign = 1;
+    if (*p == 43) p = p + 1;
+    else if (*p == 45) { psign = -1; p = p + 1; }
+    pe = 0;
+    while (p < te && *p >= 48 && *p <= 57) {
+        if (pe < 100000) pe = pe * 10 + (*p - 48);
+        p = p + 1;
+    }
+    e = e + psign * pe;
+    is_float = p < te && (*p == 102 || *p == 70);
+    d = (double)(int)(m >> 26) * 67108864.0 + (double)(int)(m & 67108863);
+    while (e > 0 && d != 0.0) {
+        step = e > 60 ? 60 : e;
+        p2w = (int *)&p2;
+        p2w[0] = 0;
+        p2w[1] = (step + 1023) << 20;
+        d = d * p2;
+        e = e - step;
+    }
+    while (e < 0 && d != 0.0) {
+        step = 0 - e > 60 ? 60 : 0 - e;
+        p2w = (int *)&p2;
+        p2w[0] = 0;
+        p2w[1] = (1023 - step) << 20;
+        d = d * p2;
+        e = e + step;
+    }
+    if (is_float) {
+        float fv;
+        fv = (float)d;
+        pw = (int *)&fv;
+        lex_val = pw[0];
+        lex_fval_hi = 0;
+        lex_fty = 5;  /* TY_FLOAT */
+    } else {
+        pw = (int *)&d;
+        lex_val = pw[0];
+        lex_fval_hi = pw[1];
+        lex_fty = 6;  /* TY_DOUBLE */
+    }
+    lex_tok = TK_FNUM;
+}
+
 static void lex_parse_fnum(char *ts, char *te) {
     long long sig;
     double d;
@@ -736,19 +826,206 @@ static int lex_str_intern(int pool_start, int slen) {
     return -1;
 }
 
+/* A source character from UTF-8, for a wide literal: the code point,
+ * *posout advanced past it.  A malformed byte is taken as itself. */
+static int lex_utf8_decode(char *s, int *posout) {
+    int pos;
+    int c;
+    int n;
+    int cp;
+    pos = *posout;
+    c = s[pos] & 255;
+    pos = pos + 1;
+    n = 0;
+    cp = c;
+    if (c >= 240 && c < 248) { n = 3; cp = c & 7; }
+    else if (c >= 224 && c < 240) { n = 2; cp = c & 15; }
+    else if (c >= 192 && c < 224) { n = 1; cp = c & 31; }
+    while (n > 0 && (s[pos] & 192) == 128) {
+        cp = (cp << 6) | (s[pos] & 63);
+        pos = pos + 1;
+        n = n - 1;
+    }
+    *posout = pos;
+    return cp;
+}
+
+/* The hex digits of a universal character name (6.4.3), ndig of them
+ * (4 after \u, 8 after \U): the code point.  Fewer is an error. */
+static int lex_parse_ucn(char *s, int *posout, int ndig) {
+    int pos;
+    int i;
+    int ch;
+    int v;
+    pos = *posout;
+    v = 0;
+    i = 0;
+    while (i < ndig) {
+        ch = s[pos] & 255;
+        if (ch >= 48 && ch <= 57) v = v * 16 + (ch - 48);
+        else if (ch >= 97 && ch <= 102) v = v * 16 + (ch - 87);
+        else if (ch >= 65 && ch <= 70) v = v * 16 + (ch - 55);
+        else { lex_err = "incomplete universal character name"; break; }
+        pos = pos + 1;
+        i = i + 1;
+    }
+    *posout = pos;
+    return v;
+}
+
+/* An escape in a wide literal, the cursor after the backslash: a hex
+ * escape takes the digits a code unit holds, a universal character
+ * name its code point; the rest as in a narrow literal. */
+static int lex_parse_esc_wide(char *s, int *posout) {
+    int pos;
+    int ch;
+    int v;
+    pos = *posout;
+    ch = s[pos] & 255;
+    if (ch == 117 || ch == 85) {
+        pos = pos + 1;
+        v = lex_parse_ucn(s, &pos, ch == 117 ? 4 : 8);
+        *posout = pos;
+        return v;
+    }
+    if (ch == 120) {
+        pos = pos + 1;
+        v = 0;
+        while (1) {
+            ch = s[pos] & 255;
+            if (ch >= 48 && ch <= 57) v = v * 16 + (ch - 48);
+            else if (ch >= 97 && ch <= 102) v = v * 16 + (ch - 87);
+            else if (ch >= 65 && ch <= 70) v = v * 16 + (ch - 55);
+            else break;
+            pos = pos + 1;
+        }
+        *posout = pos;
+        return v;
+    }
+    return lex_parse_esc(s, posout);
+}
+
+/* Code point cp onto the pool as a narrow string has it, UTF-8
+ * (5.2.1.2) -- for a universal character name, which was the letter u
+ * and its digits.  Returns the bytes written. */
+static int lex_pool_utf8(int cp) {
+    int n;
+    if (lex_strpool_len + 4 >= LEX_POOL_SZ) return 0;
+    if (cp < 128) {
+        lex_strpool[lex_strpool_len] = cp;
+        n = 1;
+    } else if (cp < 2048) {
+        lex_strpool[lex_strpool_len] = 192 | (cp >> 6);
+        lex_strpool[lex_strpool_len + 1] = 128 | (cp & 63);
+        n = 2;
+    } else if (cp < 65536) {
+        lex_strpool[lex_strpool_len] = 224 | (cp >> 12);
+        lex_strpool[lex_strpool_len + 1] = 128 | ((cp >> 6) & 63);
+        lex_strpool[lex_strpool_len + 2] = 128 | (cp & 63);
+        n = 3;
+    } else {
+        lex_strpool[lex_strpool_len] = 240 | (cp >> 18);
+        lex_strpool[lex_strpool_len + 1] = 128 | ((cp >> 12) & 63);
+        lex_strpool[lex_strpool_len + 2] = 128 | ((cp >> 6) & 63);
+        lex_strpool[lex_strpool_len + 3] = 128 | (cp & 63);
+        n = 4;
+    }
+    lex_strpool_len = lex_strpool_len + n;
+    return n;
+}
+
+/* Code unit u onto the pool, width bytes little-endian. */
+static void lex_pool_unit(int u, int width) {
+    int i;
+    i = 0;
+    while (i < width && lex_strpool_len < LEX_POOL_SZ - 1) {
+        lex_strpool[lex_strpool_len] = u & 255;
+        lex_strpool_len = lex_strpool_len + 1;
+        u = u >> 8;
+        i = i + 1;
+    }
+}
+
+/* A wide string literal, L"" u"" U"" (6.4.5p5): its code units from
+ * UTF-8 source and escapes, u's beyond U+FFFF as surrogate pairs.  Not
+ * interned: a narrow string of the same bytes is another array. */
+static void lex_parse_wide_str(char *ts, char *te, int width) {
+    int pool_start;
+    int pos;
+    int end;
+    int cp;
+    int units;
+    pool_start = lex_strpool_len;
+    pos = 0;
+    while (ts[pos] != 34) pos = pos + 1;
+    pos = pos + 1;
+    end = (int)(te - ts) - 1;
+    units = 0;
+    while (pos < end) {
+        if ((ts[pos] & 255) == 92) {
+            pos = pos + 1;
+            cp = lex_parse_esc_wide(ts, &pos);
+        } else {
+            cp = lex_utf8_decode(ts, &pos);
+        }
+        if (width == 2 && cp > 65535) {
+            cp = cp - 65536;
+            lex_pool_unit(55296 + (cp >> 10), 2);
+            lex_pool_unit(56320 + (cp & 1023), 2);
+            units = units + 2;
+        } else {
+            lex_pool_unit(cp, width);
+            units = units + 1;
+        }
+    }
+    lex_pool_unit(0, width - 1);    /* the terminator, less the byte the emitter adds */
+    lex_strpool[lex_strpool_len] = 0;
+    lex_strpool_len = lex_strpool_len + 1;
+    lex_str[0] = 0;
+    lex_slen = 0;
+    if (lex_str_count < LEX_POOL_MAX) {
+        lex_str_off[lex_str_count] = pool_start;
+        lex_str_len[lex_str_count] = units * width + width - 1;
+        lex_str_width[lex_str_count] = width;
+        lex_str_pfx[lex_str_count] = ts[0];
+        lex_val = lex_str_count;
+        lex_str_count = lex_str_count + 1;
+    }
+    lex_tok = TK_STRING;
+}
+
 static void lex_parse_str(char *ts, char *te) {
+    int ucn_n;
+    int ucn_k;
     int pool_start;
     int slen;
     int ch;
     int pos;
     int end;
     int dup;
+    if (ts[0] == 76 || ts[0] == 85) { lex_parse_wide_str(ts, te, 4); return; }   /* L"" U"" */
+    if (ts[0] == 117 && ts[1] != 56) { lex_parse_wide_str(ts, te, 2); return; }  /* u"" */
     pool_start = lex_strpool_len;
     slen = 0;
-    pos = 1;  /* skip opening quote */
+    pos = 0;
+    while (ts[pos] != 34) pos = pos + 1;   /* past a u8 prefix */
+    pos = pos + 1;  /* skip opening quote */
     end = (int)(te - ts) - 1;  /* before closing quote */
     while (pos < end) {
         ch = ts[pos] & 255;
+        if (ch == 92 && (ts[pos + 1] == 117 || ts[pos + 1] == 85)) {
+            /* a universal character name: its code point in UTF-8 */
+            pos = pos + 2;
+            ch = lex_parse_ucn(ts, &pos, ts[pos - 1] == 117 ? 4 : 8);
+            ucn_n = lex_pool_utf8(ch);
+            ucn_k = 0;
+            while (ucn_k < ucn_n && slen < LEX_STR_SZ - 1) {
+                lex_str[slen] = lex_strpool[lex_strpool_len - ucn_n + ucn_k];
+                slen = slen + 1;
+                ucn_k = ucn_k + 1;
+            }
+            continue;
+        }
         if (ch == 92) {
             pos = pos + 1;
             ch = lex_parse_esc(ts, &pos);
@@ -770,7 +1047,7 @@ static void lex_parse_str(char *ts, char *te) {
     }
     lex_str[slen] = 0;
     lex_slen = slen;
-    dup = lex_str_intern(pool_start, slen);
+    dup = ts[0] == 117 ? -1 : lex_str_intern(pool_start, slen);   /* a u8 one keeps its own entry, and its prefix */
     if (dup >= 0) {
         lex_strpool_len = pool_start;   /* give the bytes back */
         lex_val = dup;
@@ -780,6 +1057,8 @@ static void lex_parse_str(char *ts, char *te) {
     if (lex_str_count < LEX_POOL_MAX) {
         lex_str_off[lex_str_count] = pool_start;
         lex_str_len[lex_str_count] = slen;
+        lex_str_width[lex_str_count] = 1;
+        lex_str_pfx[lex_str_count] = ts[0] == 117 ? 8 : 0;
         lex_val = lex_str_count;
         lex_str_count = lex_str_count + 1;
     }
@@ -791,18 +1070,52 @@ static void lex_parse_str(char *ts, char *te) {
 static void lex_parse_chr(char *ts, char *te) {
     int ch;
     int pos;
+    int end;
+    int n;
+    int v;
+    lex_chr_prefix = 0;
     pos = 1;  /* skip opening quote */
+    if (ts[0] != 39) {
+        /* L'x', u'x', U'x' (6.4.4.4p2): the code point, unconverted,
+         * of the type wchar_t, char16_t or char32_t is (the parser types
+         * it).  They were the identifier L and a constant. */
+        lex_chr_prefix = ts[0];
+        pos = 2;
+        if (te - ts == 3) lex_err = "empty character constant";
+        if ((ts[pos] & 255) == 92) {
+            pos = pos + 1;
+            ch = lex_parse_esc_wide(ts, &pos);
+        } else {
+            ch = lex_utf8_decode(ts, &pos);
+        }
+        if (lex_chr_prefix == 117) ch = ch & 65535;
+        lex_tok = TK_CHARLIT;
+        lex_val = ch;
+        return;
+    }
     if (te - ts == 2) lex_err = "empty character constant";   /* '' (6.4.4.4p1) */
-    ch = ts[pos] & 255;
-    if (ch == 92) {
-        pos = pos + 1;
-        ch = lex_parse_esc(ts, &pos);
+    end = (int)(te - ts) - 1;
+    n = 0;
+    v = 0;
+    while (pos < end) {
+        ch = ts[pos] & 255;
+        if (ch == 92) {
+            pos = pos + 1;
+            ch = lex_parse_esc(ts, &pos);
+        } else {
+            pos = pos + 1;
+        }
+        v = (v << 8) | (ch & 255);
+        n = n + 1;
     }
     /* C90 6.1.3.4: the constant's value is the byte read as a char, and
-     * char is signed here (ldb), as under clang: '\xff' is -1, not 255. */
-    if (ch > 127) ch = ch - 256;
+     * char is signed here (ldb), as under clang: '\xff' is -1, not 255.
+     * More than one character is implementation-defined (6.4.4.4p10):
+     * clang's int, the first in the high byte -- 'ab' is 0x6162.  Only
+     * the first was taken. */
+    if (n == 1 && v > 127) v = v - 256;
     lex_tok = TK_CHARLIT;
-    lex_val = ch;
+    lex_val = v;
 }
 
 /* === Helper: copy ident from ts..te, do keyword lookup === */
@@ -814,6 +1127,7 @@ static void lex_parse_id(char *ts, char *te) {
     if (len > LEX_STR_SZ - 1) len = LEX_STR_SZ - 1;
     memcpy(lex_str, ts, len);
     lex_str[len] = 0;
+
     lex_slen = len;
     lex_painted = 0;
     kw = lex_kw_lookup(lex_str);
@@ -856,6 +1170,12 @@ static void lex_parse_id(char *ts, char *te) {
             fbreak;
         };
 
+        # --- Hexadecimal floating constant (6.4.4.2) ---
+        '0' [xX] ( [0-9a-fA-F]* '.' [0-9a-fA-F]+ | [0-9a-fA-F]+ '.'? ) [pP] [+\-]? [0-9]+ [fFlL]? => {
+            lex_parse_hexfloat(ts, te);
+            fbreak;
+        };
+
         # --- Numeric literals ---
         '0' [xX] [0-9a-fA-F]+ [uUlL]* => {
             lex_parse_num(ts, te);
@@ -870,14 +1190,14 @@ static void lex_parse_id(char *ts, char *te) {
             fbreak;
         };
 
-        # --- String literal ---
-        '"' ( [^"\\\n] | '\\' any )* '"' => {
+        # --- String literal (u8 L u U prefixes: 6.4.5) ---
+        ( 'u8' | 'L' | 'u' | 'U' )? '"' ( [^"\\\n] | '\\' any )* '"' => {
             lex_parse_str(ts, te);
             fbreak;
         };
 
-        # --- Char literal ---
-        "'" ( [^'\\\n] | '\\' any )* "'" => {
+        # --- Char literal (L u U prefixes: 6.4.4.4) ---
+        ( 'L' | 'u' | 'U' )? "'" ( [^'\\\n] | '\\' any )* "'" => {
             lex_parse_chr(ts, te);
             fbreak;
         };
@@ -900,6 +1220,13 @@ static void lex_parse_id(char *ts, char *te) {
         '<<=' => { lex_tok = TK_LSHIFTEQ; fbreak; };
         '>>=' => { lex_tok = TK_RSHIFTEQ; fbreak; };
         '##'  => { lex_tok = TK_HASHHASH; fbreak; };
+        # --- Digraphs (6.4.6p3): the same tokens, other spellings ---
+        '%:%:' => { lex_tok = TK_HASHHASH; fbreak; };
+        '%:'  => { lex_tok = TK_HASH; fbreak; };
+        '<:'  => { lex_tok = TK_LBRACK; fbreak; };
+        ':>'  => { lex_tok = TK_RBRACK; fbreak; };
+        '<%'  => { lex_tok = TK_LBRACE; fbreak; };
+        '%>'  => { lex_tok = TK_RBRACE; fbreak; };
         '+='  => { lex_tok = TK_PLUSEQ; fbreak; };
         '-='  => { lex_tok = TK_MINUSEQ; fbreak; };
         '*='  => { lex_tok = TK_STAREQ; fbreak; };
@@ -956,6 +1283,65 @@ static void lex_parse_id(char *ts, char *te) {
 
 /* === lex_init === */
 
+/* Universal character names in identifiers (6.4.2.1, 6.4.3): outside
+ * literals, \u hhhh and \U hhhhhhhh are rewritten in place as _u hhhh
+ * and _U hhhhhhhh -- the same length, one name however it is spelled,
+ * and a label the assembler takes.  Done to the text, before the
+ * scanner: a rule for them made the scanner more than stage07 can
+ * compile.  lex_src[from..to). */
+static void lex_ucn_idents(int from, int to) {
+    int v;
+    int k;
+    int q;
+    int n;
+    int i;
+    int ok;
+    k = from;
+    while (k < to) {
+        q = lex_src[k];
+        if (q == 34 || q == 39) {
+            k = k + 1;
+            while (k < to && lex_src[k] != q && lex_src[k] != 10) {
+                if (lex_src[k] == 92) k = k + 1;
+                k = k + 1;
+            }
+            k = k + 1;
+            continue;
+        }
+        if (q == 47 && lex_src[k + 1] == 42) {
+            k = k + 2;
+            while (k + 1 < to && !(lex_src[k] == 42 && lex_src[k + 1] == 47)) k = k + 1;
+            k = k + 2;
+            continue;
+        }
+        if (q == 47 && lex_src[k + 1] == 47) {
+            while (k < to && lex_src[k] != 10) k = k + 1;
+            continue;
+        }
+        if (q == 92 && (lex_src[k + 1] == 117 || lex_src[k + 1] == 85)) {
+            n = lex_src[k + 1] == 117 ? 4 : 8;
+            ok = 1;
+            v = 0;
+            i = 0;
+            while (i < n) {
+                q = lex_src[k + 2 + i];
+                if (q >= 48 && q <= 57) v = v * 16 + (q - 48);
+                else if (q >= 97 && q <= 102) v = v * 16 + (q - 87);
+                else if (q >= 65 && q <= 70) v = v * 16 + (q - 55);
+                else ok = 0;
+                i = i + 1;
+            }
+            /* not a basic character, nor a surrogate (6.4.3p2): left as
+             * written, the backslash is refused */
+            if ((v < 160 && v != 36 && v != 64 && v != 96) || (v >= 55296 && v <= 57343)) ok = 0;
+            if (ok) lex_src[k] = 95;
+            k = k + 2;
+            continue;
+        }
+        k = k + 1;
+    }
+}
+
 void lex_init(char *src, int len) {
     int i;
     int cs;
@@ -969,6 +1355,7 @@ void lex_init(char *src, int len) {
     }
     lex_src[i] = 0;
     lex_len = i;
+    lex_ucn_idents(0, lex_len);
     lex_line = 1;
     lex_bol = 1;
     lex_col = 1;

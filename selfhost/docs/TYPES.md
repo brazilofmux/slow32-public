@@ -658,7 +658,27 @@ too, `_Pragma("once")` as `#pragma once`.  One expander defect: in
 place (under a parser peek) a function-like expansion went in at the
 `(` and left the name before it, read again after the rewind,
 disabled by then -- `k CAT(+, =) 4` reached the parser as `k CAT += 4`.
-The name is replaced with the call now.  `S12CC_CONSTRAINT_WARN=1` turns
+The name is replaced with the call now.
+
+**REJECTS: lexing** (2026-10-29).  The last two WRONG were here.  A
+multi-character constant has clang's value, the first character in
+the high byte (`'ab'` is 0x6162; only the first was taken), and a
+universal character name in a narrow string is its UTF-8 (`"\u00e9"`
+had been the letter u and its digits).  Prefixed literals (6.4.4.4,
+6.4.5): `L'x'`, `u'x'`, `U'x'` (the code point, typed wchar_t,
+char16_t, char32_t -- unsigned int, unsigned short, unsigned int, as
+clang's target has them); `u8""`; `L""`, `u""`, `U""` -- arrays of
+their code units, pooled little-endian with an element width
+(`lex_str_width`) that types the node, its C type and `sizeof`, and
+word-aligns it in .rodata; adjacent literals join to the wide kind, but
+not two different prefixes (6.4.5p2, `lex_str_pfx`).  `wchar_t` in
+stddef.h.  Hexadecimal floating constants, exact (`lex_parse_hexfloat`).
+Digraphs, in the scanner and in the preprocessor's raw readers (`%:`
+starts a directive; `%:` and `%:%:` in a macro's list are `#` and `##`).
+A universal character name in an identifier is rewritten in the text,
+outside literals, as `_u` and its digits before the scanner sees it
+(`lex_ucn_idents`: a scanner rule for it made more code than stage07
+compiles); one naming a basic character is refused.  `S12CC_CONSTRAINT_WARN=1` turns
 the errors into warnings, to survey a corpus.
 
 ## Constraints on the work

@@ -181,6 +181,13 @@ static char lex_strpool[LEX_POOL_SZ];
 static int  lex_strpool_len;
 static int  lex_str_off[LEX_POOL_MAX];
 static int  lex_str_len[LEX_POOL_MAX];
+/* bytes per element: 1 for "..." and u8"...", 2 for u"...", 4 for L"..."
+ * and U"..." (6.4.5).  A wide string's code units are pooled little-
+ * endian, its length width*n + width-1 so the emitter's closing 0 byte
+ * completes the terminating unit -- and sizeof, length + 1, is right. */
+static int  lex_str_width[LEX_POOL_MAX];
+static int  lex_str_pfx[LEX_POOL_MAX];    /* its prefix: 0, 'L', 'u', 'U', or 8 for u8 */
+static int  lex_chr_prefix;    /* L, u or U before a character constant, 0 for none */
 static int  lex_str_count;
 
 /* Ragel persistent state */
@@ -517,6 +524,89 @@ static void lex_two_prod(void) {
 
 /* === Helper: parse float literal from ts..te === */
 
+/* A hexadecimal floating constant, 0x1.8p1 (6.4.4.2): hex digits and a
+ * binary exponent, the value exact -- the mantissa taken to 53 bits (a
+ * double's, so it converts without rounding; further digits are
+ * dropped), then scaled by powers of two built from exponent bits,
+ * each product exact.  It was the constant 0x1 and the identifier p4. */
+static void lex_parse_hexfloat(char *ts, char *te) {
+    unsigned long long m;
+    double d;
+    double p2;
+    int *p2w;
+    int *pw;
+    int e;
+    int frac;
+    int ch;
+    int v;
+    int pe;
+    int psign;
+    int step;
+    int is_float;
+    char *p;
+    m = 0;
+    e = 0;
+    frac = 0;
+    p = ts + 2;
+    while (p < te) {
+        ch = *p & 255;
+        if (ch == 46) { frac = 1; p = p + 1; continue; }
+        if (ch >= 48 && ch <= 57) v = ch - 48;
+        else if (ch >= 97 && ch <= 102) v = ch - 87;
+        else if (ch >= 65 && ch <= 70) v = ch - 55;
+        else break;
+        if ((m >> 49) == 0) {
+            m = m * 16 + (unsigned long long)v;
+            if (frac) e = e - 4;
+        } else if (!frac) {
+            e = e + 4;
+        }
+        p = p + 1;
+    }
+    p = p + 1;                              /* the p or P */
+    psign = 1;
+    if (*p == 43) p = p + 1;
+    else if (*p == 45) { psign = -1; p = p + 1; }
+    pe = 0;
+    while (p < te && *p >= 48 && *p <= 57) {
+        if (pe < 100000) pe = pe * 10 + (*p - 48);
+        p = p + 1;
+    }
+    e = e + psign * pe;
+    is_float = p < te && (*p == 102 || *p == 70);
+    d = (double)(int)(m >> 26) * 67108864.0 + (double)(int)(m & 67108863);
+    while (e > 0 && d != 0.0) {
+        step = e > 60 ? 60 : e;
+        p2w = (int *)&p2;
+        p2w[0] = 0;
+        p2w[1] = (step + 1023) << 20;
+        d = d * p2;
+        e = e - step;
+    }
+    while (e < 0 && d != 0.0) {
+        step = 0 - e > 60 ? 60 : 0 - e;
+        p2w = (int *)&p2;
+        p2w[0] = 0;
+        p2w[1] = (1023 - step) << 20;
+        d = d * p2;
+        e = e + step;
+    }
+    if (is_float) {
+        float fv;
+        fv = (float)d;
+        pw = (int *)&fv;
+        lex_val = pw[0];
+        lex_fval_hi = 0;
+        lex_fty = 5;  /* TY_FLOAT */
+    } else {
+        pw = (int *)&d;
+        lex_val = pw[0];
+        lex_fval_hi = pw[1];
+        lex_fty = 6;  /* TY_DOUBLE */
+    }
+    lex_tok = TK_FNUM;
+}
+
 static void lex_parse_fnum(char *ts, char *te) {
     long long sig;
     double d;
@@ -738,19 +828,206 @@ static int lex_str_intern(int pool_start, int slen) {
     return -1;
 }
 
+/* A source character from UTF-8, for a wide literal: the code point,
+ * *posout advanced past it.  A malformed byte is taken as itself. */
+static int lex_utf8_decode(char *s, int *posout) {
+    int pos;
+    int c;
+    int n;
+    int cp;
+    pos = *posout;
+    c = s[pos] & 255;
+    pos = pos + 1;
+    n = 0;
+    cp = c;
+    if (c >= 240 && c < 248) { n = 3; cp = c & 7; }
+    else if (c >= 224 && c < 240) { n = 2; cp = c & 15; }
+    else if (c >= 192 && c < 224) { n = 1; cp = c & 31; }
+    while (n > 0 && (s[pos] & 192) == 128) {
+        cp = (cp << 6) | (s[pos] & 63);
+        pos = pos + 1;
+        n = n - 1;
+    }
+    *posout = pos;
+    return cp;
+}
+
+/* The hex digits of a universal character name (6.4.3), ndig of them
+ * (4 after \u, 8 after \U): the code point.  Fewer is an error. */
+static int lex_parse_ucn(char *s, int *posout, int ndig) {
+    int pos;
+    int i;
+    int ch;
+    int v;
+    pos = *posout;
+    v = 0;
+    i = 0;
+    while (i < ndig) {
+        ch = s[pos] & 255;
+        if (ch >= 48 && ch <= 57) v = v * 16 + (ch - 48);
+        else if (ch >= 97 && ch <= 102) v = v * 16 + (ch - 87);
+        else if (ch >= 65 && ch <= 70) v = v * 16 + (ch - 55);
+        else { lex_err = "incomplete universal character name"; break; }
+        pos = pos + 1;
+        i = i + 1;
+    }
+    *posout = pos;
+    return v;
+}
+
+/* An escape in a wide literal, the cursor after the backslash: a hex
+ * escape takes the digits a code unit holds, a universal character
+ * name its code point; the rest as in a narrow literal. */
+static int lex_parse_esc_wide(char *s, int *posout) {
+    int pos;
+    int ch;
+    int v;
+    pos = *posout;
+    ch = s[pos] & 255;
+    if (ch == 117 || ch == 85) {
+        pos = pos + 1;
+        v = lex_parse_ucn(s, &pos, ch == 117 ? 4 : 8);
+        *posout = pos;
+        return v;
+    }
+    if (ch == 120) {
+        pos = pos + 1;
+        v = 0;
+        while (1) {
+            ch = s[pos] & 255;
+            if (ch >= 48 && ch <= 57) v = v * 16 + (ch - 48);
+            else if (ch >= 97 && ch <= 102) v = v * 16 + (ch - 87);
+            else if (ch >= 65 && ch <= 70) v = v * 16 + (ch - 55);
+            else break;
+            pos = pos + 1;
+        }
+        *posout = pos;
+        return v;
+    }
+    return lex_parse_esc(s, posout);
+}
+
+/* Code point cp onto the pool as a narrow string has it, UTF-8
+ * (5.2.1.2) -- for a universal character name, which was the letter u
+ * and its digits.  Returns the bytes written. */
+static int lex_pool_utf8(int cp) {
+    int n;
+    if (lex_strpool_len + 4 >= LEX_POOL_SZ) return 0;
+    if (cp < 128) {
+        lex_strpool[lex_strpool_len] = cp;
+        n = 1;
+    } else if (cp < 2048) {
+        lex_strpool[lex_strpool_len] = 192 | (cp >> 6);
+        lex_strpool[lex_strpool_len + 1] = 128 | (cp & 63);
+        n = 2;
+    } else if (cp < 65536) {
+        lex_strpool[lex_strpool_len] = 224 | (cp >> 12);
+        lex_strpool[lex_strpool_len + 1] = 128 | ((cp >> 6) & 63);
+        lex_strpool[lex_strpool_len + 2] = 128 | (cp & 63);
+        n = 3;
+    } else {
+        lex_strpool[lex_strpool_len] = 240 | (cp >> 18);
+        lex_strpool[lex_strpool_len + 1] = 128 | ((cp >> 12) & 63);
+        lex_strpool[lex_strpool_len + 2] = 128 | ((cp >> 6) & 63);
+        lex_strpool[lex_strpool_len + 3] = 128 | (cp & 63);
+        n = 4;
+    }
+    lex_strpool_len = lex_strpool_len + n;
+    return n;
+}
+
+/* Code unit u onto the pool, width bytes little-endian. */
+static void lex_pool_unit(int u, int width) {
+    int i;
+    i = 0;
+    while (i < width && lex_strpool_len < LEX_POOL_SZ - 1) {
+        lex_strpool[lex_strpool_len] = u & 255;
+        lex_strpool_len = lex_strpool_len + 1;
+        u = u >> 8;
+        i = i + 1;
+    }
+}
+
+/* A wide string literal, L"" u"" U"" (6.4.5p5): its code units from
+ * UTF-8 source and escapes, u's beyond U+FFFF as surrogate pairs.  Not
+ * interned: a narrow string of the same bytes is another array. */
+static void lex_parse_wide_str(char *ts, char *te, int width) {
+    int pool_start;
+    int pos;
+    int end;
+    int cp;
+    int units;
+    pool_start = lex_strpool_len;
+    pos = 0;
+    while (ts[pos] != 34) pos = pos + 1;
+    pos = pos + 1;
+    end = (int)(te - ts) - 1;
+    units = 0;
+    while (pos < end) {
+        if ((ts[pos] & 255) == 92) {
+            pos = pos + 1;
+            cp = lex_parse_esc_wide(ts, &pos);
+        } else {
+            cp = lex_utf8_decode(ts, &pos);
+        }
+        if (width == 2 && cp > 65535) {
+            cp = cp - 65536;
+            lex_pool_unit(55296 + (cp >> 10), 2);
+            lex_pool_unit(56320 + (cp & 1023), 2);
+            units = units + 2;
+        } else {
+            lex_pool_unit(cp, width);
+            units = units + 1;
+        }
+    }
+    lex_pool_unit(0, width - 1);    /* the terminator, less the byte the emitter adds */
+    lex_strpool[lex_strpool_len] = 0;
+    lex_strpool_len = lex_strpool_len + 1;
+    lex_str[0] = 0;
+    lex_slen = 0;
+    if (lex_str_count < LEX_POOL_MAX) {
+        lex_str_off[lex_str_count] = pool_start;
+        lex_str_len[lex_str_count] = units * width + width - 1;
+        lex_str_width[lex_str_count] = width;
+        lex_str_pfx[lex_str_count] = ts[0];
+        lex_val = lex_str_count;
+        lex_str_count = lex_str_count + 1;
+    }
+    lex_tok = TK_STRING;
+}
+
 static void lex_parse_str(char *ts, char *te) {
+    int ucn_n;
+    int ucn_k;
     int pool_start;
     int slen;
     int ch;
     int pos;
     int end;
     int dup;
+    if (ts[0] == 76 || ts[0] == 85) { lex_parse_wide_str(ts, te, 4); return; }   /* L"" U"" */
+    if (ts[0] == 117 && ts[1] != 56) { lex_parse_wide_str(ts, te, 2); return; }  /* u"" */
     pool_start = lex_strpool_len;
     slen = 0;
-    pos = 1;  /* skip opening quote */
+    pos = 0;
+    while (ts[pos] != 34) pos = pos + 1;   /* past a u8 prefix */
+    pos = pos + 1;  /* skip opening quote */
     end = (int)(te - ts) - 1;  /* before closing quote */
     while (pos < end) {
         ch = ts[pos] & 255;
+        if (ch == 92 && (ts[pos + 1] == 117 || ts[pos + 1] == 85)) {
+            /* a universal character name: its code point in UTF-8 */
+            pos = pos + 2;
+            ch = lex_parse_ucn(ts, &pos, ts[pos - 1] == 117 ? 4 : 8);
+            ucn_n = lex_pool_utf8(ch);
+            ucn_k = 0;
+            while (ucn_k < ucn_n && slen < LEX_STR_SZ - 1) {
+                lex_str[slen] = lex_strpool[lex_strpool_len - ucn_n + ucn_k];
+                slen = slen + 1;
+                ucn_k = ucn_k + 1;
+            }
+            continue;
+        }
         if (ch == 92) {
             pos = pos + 1;
             ch = lex_parse_esc(ts, &pos);
@@ -772,7 +1049,7 @@ static void lex_parse_str(char *ts, char *te) {
     }
     lex_str[slen] = 0;
     lex_slen = slen;
-    dup = lex_str_intern(pool_start, slen);
+    dup = ts[0] == 117 ? -1 : lex_str_intern(pool_start, slen);   /* a u8 one keeps its own entry, and its prefix */
     if (dup >= 0) {
         lex_strpool_len = pool_start;   /* give the bytes back */
         lex_val = dup;
@@ -782,6 +1059,8 @@ static void lex_parse_str(char *ts, char *te) {
     if (lex_str_count < LEX_POOL_MAX) {
         lex_str_off[lex_str_count] = pool_start;
         lex_str_len[lex_str_count] = slen;
+        lex_str_width[lex_str_count] = 1;
+        lex_str_pfx[lex_str_count] = ts[0] == 117 ? 8 : 0;
         lex_val = lex_str_count;
         lex_str_count = lex_str_count + 1;
     }
@@ -793,18 +1072,52 @@ static void lex_parse_str(char *ts, char *te) {
 static void lex_parse_chr(char *ts, char *te) {
     int ch;
     int pos;
+    int end;
+    int n;
+    int v;
+    lex_chr_prefix = 0;
     pos = 1;  /* skip opening quote */
+    if (ts[0] != 39) {
+        /* L'x', u'x', U'x' (6.4.4.4p2): the code point, unconverted,
+         * of the type wchar_t, char16_t or char32_t is (the parser types
+         * it).  They were the identifier L and a constant. */
+        lex_chr_prefix = ts[0];
+        pos = 2;
+        if (te - ts == 3) lex_err = "empty character constant";
+        if ((ts[pos] & 255) == 92) {
+            pos = pos + 1;
+            ch = lex_parse_esc_wide(ts, &pos);
+        } else {
+            ch = lex_utf8_decode(ts, &pos);
+        }
+        if (lex_chr_prefix == 117) ch = ch & 65535;
+        lex_tok = TK_CHARLIT;
+        lex_val = ch;
+        return;
+    }
     if (te - ts == 2) lex_err = "empty character constant";   /* '' (6.4.4.4p1) */
-    ch = ts[pos] & 255;
-    if (ch == 92) {
-        pos = pos + 1;
-        ch = lex_parse_esc(ts, &pos);
+    end = (int)(te - ts) - 1;
+    n = 0;
+    v = 0;
+    while (pos < end) {
+        ch = ts[pos] & 255;
+        if (ch == 92) {
+            pos = pos + 1;
+            ch = lex_parse_esc(ts, &pos);
+        } else {
+            pos = pos + 1;
+        }
+        v = (v << 8) | (ch & 255);
+        n = n + 1;
     }
     /* C90 6.1.3.4: the constant's value is the byte read as a char, and
-     * char is signed here (ldb), as under clang: '\xff' is -1, not 255. */
-    if (ch > 127) ch = ch - 256;
+     * char is signed here (ldb), as under clang: '\xff' is -1, not 255.
+     * More than one character is implementation-defined (6.4.4.4p10):
+     * clang's int, the first in the high byte -- 'ab' is 0x6162.  Only
+     * the first was taken. */
+    if (n == 1 && v > 127) v = v - 256;
     lex_tok = TK_CHARLIT;
-    lex_val = ch;
+    lex_val = v;
 }
 
 /* === Helper: copy ident from ts..te, do keyword lookup === */
@@ -816,6 +1129,7 @@ static void lex_parse_id(char *ts, char *te) {
     if (len > LEX_STR_SZ - 1) len = LEX_STR_SZ - 1;
     memcpy(lex_str, ts, len);
     lex_str[len] = 0;
+
     lex_slen = len;
     lex_painted = 0;
     kw = lex_kw_lookup(lex_str);
@@ -828,22 +1142,81 @@ static void lex_parse_id(char *ts, char *te) {
  * ================================================================ */
 
 
-#line 951 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+#line 1278 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 
 
 /* === Ragel data tables === */
 
 
-#line 838 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
-static const int c_lexer_start = 16;
+#line 1152 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
+static const int c_lexer_start = 21;
 static const int c_lexer_error = 0;
 
-static const int c_lexer_en_main = 16;
+static const int c_lexer_en_main = 21;
 
 
-#line 956 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+#line 1283 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 
 /* === lex_init === */
+
+/* Universal character names in identifiers (6.4.2.1, 6.4.3): outside
+ * literals, \u hhhh and \U hhhhhhhh are rewritten in place as _u hhhh
+ * and _U hhhhhhhh -- the same length, one name however it is spelled,
+ * and a label the assembler takes.  Done to the text, before the
+ * scanner: a rule for them made the scanner more than stage07 can
+ * compile.  lex_src[from..to). */
+static void lex_ucn_idents(int from, int to) {
+    int v;
+    int k;
+    int q;
+    int n;
+    int i;
+    int ok;
+    k = from;
+    while (k < to) {
+        q = lex_src[k];
+        if (q == 34 || q == 39) {
+            k = k + 1;
+            while (k < to && lex_src[k] != q && lex_src[k] != 10) {
+                if (lex_src[k] == 92) k = k + 1;
+                k = k + 1;
+            }
+            k = k + 1;
+            continue;
+        }
+        if (q == 47 && lex_src[k + 1] == 42) {
+            k = k + 2;
+            while (k + 1 < to && !(lex_src[k] == 42 && lex_src[k + 1] == 47)) k = k + 1;
+            k = k + 2;
+            continue;
+        }
+        if (q == 47 && lex_src[k + 1] == 47) {
+            while (k < to && lex_src[k] != 10) k = k + 1;
+            continue;
+        }
+        if (q == 92 && (lex_src[k + 1] == 117 || lex_src[k + 1] == 85)) {
+            n = lex_src[k + 1] == 117 ? 4 : 8;
+            ok = 1;
+            v = 0;
+            i = 0;
+            while (i < n) {
+                q = lex_src[k + 2 + i];
+                if (q >= 48 && q <= 57) v = v * 16 + (q - 48);
+                else if (q >= 97 && q <= 102) v = v * 16 + (q - 87);
+                else if (q >= 65 && q <= 70) v = v * 16 + (q - 55);
+                else ok = 0;
+                i = i + 1;
+            }
+            /* not a basic character, nor a surrogate (6.4.3p2): left as
+             * written, the backslash is refused */
+            if ((v < 160 && v != 36 && v != 64 && v != 96) || (v >= 55296 && v <= 57343)) ok = 0;
+            if (ok) lex_src[k] = 95;
+            k = k + 2;
+            continue;
+        }
+        k = k + 1;
+    }
+}
 
 void lex_init(char *src, int len) {
     int i;
@@ -858,6 +1231,7 @@ void lex_init(char *src, int len) {
     }
     lex_src[i] = 0;
     lex_len = i;
+    lex_ucn_idents(0, lex_len);
     lex_line = 1;
     lex_bol = 1;
     lex_col = 1;
@@ -874,7 +1248,7 @@ void lex_init(char *src, int len) {
     lex_rpe = lex_src + lex_len;
 
     
-#line 878 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
+#line 1252 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
 	{
 	cs = c_lexer_start;
 	ts = 0;
@@ -882,7 +1256,7 @@ void lex_init(char *src, int len) {
 	act = 0;
 	}
 
-#line 988 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+#line 1375 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
     lex_rcs = cs;
     lex_ract = 0;
     lex_rts = 0;
@@ -913,394 +1287,456 @@ void lex_next(void) {
     if (p >= pe) return;
 
     
-#line 917 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
+#line 1291 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
 	{
 	if ( p == pe )
 		goto _test_eof;
 	switch ( cs )
 	{
-tr3:
-#line 874 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{
-            lex_parse_str(ts, te);
-            {p++; cs = 16; goto _out;}
-        }}
-	goto st16;
-tr6:
-#line 880 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{
-            lex_parse_chr(ts, te);
-            {p++; cs = 16; goto _out;}
-        }}
-	goto st16;
-tr8:
-#line 932 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{{p = ((te))-1;}{ lex_tok = TK_DOT; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr9:
-#line 899 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_ELLIPSIS; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr10:
-#line 850 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{{p = ((te))-1;}{
-            lex_parse_fnum(ts, te);
-            {p++; cs = 16; goto _out;}
-        }}
-	goto st16;
-tr13:
-#line 940 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{{p = ((te))-1;}{ lex_tok = TK_SLASH; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr16:
-#line 841 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{
-            lex_count_nl(ts, te);
-        }}
-	goto st16;
-tr17:
-#line 846 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{{p = ((te))-1;}{
-            lex_parse_fnum(ts, te);
-            {p++; cs = 16; goto _out;}
-        }}
-	goto st16;
-tr20:
+tr2:
 #line 1 "NONE"
 	{	switch( act ) {
+	case 0:
+	{{goto st0;}}
+	break;
 	case 9:
 	{{p = ((te))-1;}
             lex_parse_num(ts, te);
-            {p++; cs = 16; goto _out;}
+            {p++; cs = 21; goto _out;}
         }
 	break;
 	case 10:
 	{{p = ((te))-1;}
             lex_parse_num(ts, te);
-            {p++; cs = 16; goto _out;}
+            {p++; cs = 21; goto _out;}
+        }
+	break;
+	case 11:
+	{{p = ((te))-1;}
+            lex_parse_num(ts, te);
+            {p++; cs = 21; goto _out;}
+        }
+	break;
+	case 15:
+	{{p = ((te))-1;}
+            lex_parse_id(ts, te);
+            {p++; cs = 21; goto _out;}
         }
 	break;
 	}
 	}
-	goto st16;
-tr23:
-#line 868 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	goto st21;
+tr4:
+#line 1194 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{
+            lex_parse_str(ts, te);
+            {p++; cs = 21; goto _out;}
+        }}
+	goto st21;
+tr6:
+#line 1225 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{{p = ((te))-1;}{ lex_tok = TK_HASH; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr7:
+#line 1224 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_HASHHASH; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr9:
+#line 1200 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{
+            lex_parse_chr(ts, te);
+            {p++; cs = 21; goto _out;}
+        }}
+	goto st21;
+tr11:
+#line 1259 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{{p = ((te))-1;}{ lex_tok = TK_DOT; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr12:
+#line 1219 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_ELLIPSIS; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr13:
+#line 1164 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{{p = ((te))-1;}{
+            lex_parse_fnum(ts, te);
+            {p++; cs = 21; goto _out;}
+        }}
+	goto st21;
+tr16:
+#line 1267 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{{p = ((te))-1;}{ lex_tok = TK_SLASH; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr19:
+#line 1155 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{
+            lex_count_nl(ts, te);
+        }}
+	goto st21;
+tr20:
+#line 1160 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{{p = ((te))-1;}{
+            lex_parse_fnum(ts, te);
+            {p++; cs = 21; goto _out;}
+        }}
+	goto st21;
+tr25:
+#line 1188 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{{p = ((te))-1;}{
             lex_parse_num(ts, te);
-            {p++; cs = 16; goto _out;}
+            {p++; cs = 21; goto _out;}
         }}
-	goto st16;
-tr27:
-#line 835 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	goto st21;
+tr34:
+#line 1149 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p+1;{ lex_line = lex_line + 1; lex_bol = 1; }}
-	goto st16;
-tr32:
-#line 924 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_LPAREN; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr33:
-#line 925 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_RPAREN; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr36:
-#line 931 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_COMMA; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr42:
-#line 933 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_COLON; {p++; cs = 16; goto _out;} }}
-	goto st16;
+	goto st21;
+tr39:
+#line 1251 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_LPAREN; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr40:
+#line 1252 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_RPAREN; {p++; cs = 21; goto _out;} }}
+	goto st21;
 tr43:
-#line 930 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_SEMI; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr47:
-#line 934 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_QMARK; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr49:
-#line 926 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_LBRACK; {p++; cs = 16; goto _out;} }}
-	goto st16;
+#line 1258 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_COMMA; {p++; cs = 21; goto _out;} }}
+	goto st21;
 tr50:
-#line 927 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_RBRACK; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr52:
-#line 928 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_LBRACE; {p++; cs = 16; goto _out;} }}
-	goto st16;
+#line 1257 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_SEMI; {p++; cs = 21; goto _out;} }}
+	goto st21;
 tr54:
-#line 929 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_RBRACE; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr55:
-#line 935 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_TILDE; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr56:
-#line 886 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+#line 1261 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_QMARK; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr57:
+#line 1253 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_LBRACK; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr58:
+#line 1254 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_RBRACK; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr61:
+#line 1255 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_LBRACE; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr63:
+#line 1256 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_RBRACE; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr64:
+#line 1262 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_TILDE; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr65:
+#line 1206 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{
             lex_parse_id(ts + 1, te);
             lex_painted = 1;
-            {p++; cs = 16; goto _out;}
+            {p++; cs = 21; goto _out;}
         }}
-	goto st16;
-tr57:
-#line 834 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p;p--;{ /* skip */ }}
-	goto st16;
-tr58:
-#line 945 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p;p--;{ lex_tok = TK_BANG; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr59:
-#line 912 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_NE; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr60:
-#line 936 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p;p--;{ lex_tok = TK_HASH; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr61:
-#line 902 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_HASHHASH; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr62:
-#line 941 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p;p--;{ lex_tok = TK_PERCENT; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr63:
-#line 907 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_PERCENTEQ; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr64:
-#line 942 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p;p--;{ lex_tok = TK_AMP; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr65:
-#line 917 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_LAND; {p++; cs = 16; goto _out;} }}
-	goto st16;
+	goto st21;
 tr66:
-#line 908 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_AMPEQ; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr67:
-#line 939 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p;p--;{ lex_tok = TK_STAR; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr68:
-#line 905 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_STAREQ; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr69:
-#line 937 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p;p--;{ lex_tok = TK_PLUS; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr70:
-#line 919 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_INC; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr71:
-#line 903 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_PLUSEQ; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr72:
-#line 938 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p;p--;{ lex_tok = TK_MINUS; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr73:
-#line 920 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_DEC; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr74:
-#line 904 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_MINUSEQ; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr75:
-#line 921 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_ARROW; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr76:
-#line 932 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p;p--;{ lex_tok = TK_DOT; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr79:
-#line 850 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p;p--;{
-            lex_parse_fnum(ts, te);
-            {p++; cs = 16; goto _out;}
-        }}
-	goto st16;
-tr82:
-#line 940 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p;p--;{ lex_tok = TK_SLASH; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr84:
-#line 906 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_SLASHEQ; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr85:
-#line 838 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+#line 1148 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{ /* skip */ }}
-	goto st16;
+	goto st21;
+tr67:
+#line 1272 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p;p--;{ lex_tok = TK_BANG; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr68:
+#line 1239 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_NE; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr69:
+#line 1263 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p;p--;{ lex_tok = TK_HASH; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr70:
+#line 1222 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_HASHHASH; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr71:
+#line 1268 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p;p--;{ lex_tok = TK_PERCENT; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr73:
+#line 1234 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_PERCENTEQ; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr74:
+#line 1229 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_RBRACE; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr75:
+#line 1225 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p;p--;{ lex_tok = TK_HASH; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr77:
+#line 1269 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p;p--;{ lex_tok = TK_AMP; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr78:
+#line 1244 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_LAND; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr79:
+#line 1235 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_AMPEQ; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr80:
+#line 1266 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p;p--;{ lex_tok = TK_STAR; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr81:
+#line 1232 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_STAREQ; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr82:
+#line 1264 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p;p--;{ lex_tok = TK_PLUS; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr83:
+#line 1246 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_INC; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr84:
+#line 1230 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_PLUSEQ; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr85:
+#line 1265 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p;p--;{ lex_tok = TK_MINUS; {p++; cs = 21; goto _out;} }}
+	goto st21;
 tr86:
-#line 868 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p;p--;{
-            lex_parse_num(ts, te);
-            {p++; cs = 16; goto _out;}
-        }}
-	goto st16;
+#line 1247 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_DEC; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr87:
+#line 1231 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_MINUSEQ; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr88:
+#line 1248 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_ARROW; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr89:
+#line 1259 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p;p--;{ lex_tok = TK_DOT; {p++; cs = 21; goto _out;} }}
+	goto st21;
 tr92:
-#line 846 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+#line 1164 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{
             lex_parse_fnum(ts, te);
-            {p++; cs = 16; goto _out;}
+            {p++; cs = 21; goto _out;}
         }}
-	goto st16;
+	goto st21;
 tr95:
-#line 864 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+#line 1267 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p;p--;{ lex_tok = TK_SLASH; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr97:
+#line 1233 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_SLASHEQ; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr98:
+#line 1152 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p;p--;{ /* skip */ }}
+	goto st21;
+tr99:
+#line 1188 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{
             lex_parse_num(ts, te);
-            {p++; cs = 16; goto _out;}
+            {p++; cs = 21; goto _out;}
         }}
-	goto st16;
-tr97:
-#line 854 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	goto st21;
+tr105:
+#line 1160 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{
             lex_parse_fnum(ts, te);
-            {p++; cs = 16; goto _out;}
+            {p++; cs = 21; goto _out;}
         }}
-	goto st16;
-tr99:
-#line 860 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	goto st21;
+tr108:
+#line 1184 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{
             lex_parse_num(ts, te);
-            {p++; cs = 16; goto _out;}
+            {p++; cs = 21; goto _out;}
         }}
-	goto st16;
-tr101:
-#line 947 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p;p--;{ lex_tok = TK_LT; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr103:
-#line 913 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_LE; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr104:
-#line 915 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p;p--;{ lex_tok = TK_LSHIFT; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr105:
-#line 900 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_LSHIFTEQ; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr106:
-#line 946 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p;p--;{ lex_tok = TK_ASSIGN; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr107:
-#line 911 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_EQ; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr108:
-#line 948 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p;p--;{ lex_tok = TK_GT; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr109:
-#line 914 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_GE; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr111:
-#line 916 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p;p--;{ lex_tok = TK_RSHIFT; {p++; cs = 16; goto _out;} }}
-	goto st16;
+	goto st21;
+tr110:
+#line 1168 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p;p--;{
+            lex_parse_fnum(ts, te);
+            {p++; cs = 21; goto _out;}
+        }}
+	goto st21;
 tr112:
-#line 901 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_RSHIFTEQ; {p++; cs = 16; goto _out;} }}
-	goto st16;
+#line 1174 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p;p--;{
+            lex_parse_hexfloat(ts, te);
+            {p++; cs = 21; goto _out;}
+        }}
+	goto st21;
 tr113:
-#line 893 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+#line 1174 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{
+            lex_parse_hexfloat(ts, te);
+            {p++; cs = 21; goto _out;}
+        }}
+	goto st21;
+tr114:
+#line 1180 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p;p--;{
+            lex_parse_num(ts, te);
+            {p++; cs = 21; goto _out;}
+        }}
+	goto st21;
+tr116:
+#line 1260 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p;p--;{ lex_tok = TK_COLON; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr117:
+#line 1227 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_RBRACK; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr118:
+#line 1274 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p;p--;{ lex_tok = TK_LT; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr119:
+#line 1228 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_LBRACE; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr120:
+#line 1226 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_LBRACK; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr122:
+#line 1240 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_LE; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr123:
+#line 1242 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p;p--;{ lex_tok = TK_LSHIFT; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr124:
+#line 1220 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_LSHIFTEQ; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr125:
+#line 1273 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p;p--;{ lex_tok = TK_ASSIGN; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr126:
+#line 1238 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_EQ; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr127:
+#line 1275 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p;p--;{ lex_tok = TK_GT; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr128:
+#line 1241 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_GE; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr130:
+#line 1243 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p;p--;{ lex_tok = TK_RSHIFT; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr131:
+#line 1221 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_RSHIFTEQ; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr132:
+#line 1213 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 	{te = p;p--;{
             lex_parse_id(ts, te);
-            {p++; cs = 16; goto _out;}
+            {p++; cs = 21; goto _out;}
         }}
-	goto st16;
-tr114:
-#line 944 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p;p--;{ lex_tok = TK_CARET; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr115:
-#line 910 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_CARETEQ; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr116:
-#line 943 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p;p--;{ lex_tok = TK_PIPE; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr117:
-#line 909 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_PIPEEQ; {p++; cs = 16; goto _out;} }}
-	goto st16;
-tr118:
-#line 918 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{te = p+1;{ lex_tok = TK_LOR; {p++; cs = 16; goto _out;} }}
-	goto st16;
-st16:
+	goto st21;
+tr133:
+#line 1271 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p;p--;{ lex_tok = TK_CARET; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr134:
+#line 1237 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_CARETEQ; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr136:
+#line 1270 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p;p--;{ lex_tok = TK_PIPE; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr137:
+#line 1236 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_PIPEEQ; {p++; cs = 21; goto _out;} }}
+	goto st21;
+tr138:
+#line 1245 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{te = p+1;{ lex_tok = TK_LOR; {p++; cs = 21; goto _out;} }}
+	goto st21;
+st21:
 #line 1 "NONE"
 	{ts = 0;}
+#line 1 "NONE"
+	{act = 0;}
 	if ( ++p == pe )
-		goto _test_eof16;
-case 16:
+		goto _test_eof21;
+case 21:
 #line 1 "NONE"
 	{ts = p;}
-#line 1259 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
+#line 1692 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
 	switch( (*p) ) {
 		case 1: goto st1;
-		case 10: goto tr27;
-		case 32: goto st18;
-		case 33: goto st19;
+		case 10: goto tr34;
+		case 32: goto st23;
+		case 33: goto st24;
 		case 34: goto st2;
-		case 35: goto st20;
-		case 37: goto st21;
-		case 38: goto st22;
-		case 39: goto st4;
-		case 40: goto tr32;
-		case 41: goto tr33;
-		case 42: goto st23;
-		case 43: goto st24;
-		case 44: goto tr36;
-		case 45: goto st25;
-		case 46: goto tr38;
-		case 47: goto tr39;
-		case 48: goto tr40;
-		case 58: goto tr42;
-		case 59: goto tr43;
-		case 60: goto st44;
-		case 61: goto st46;
-		case 62: goto st47;
-		case 63: goto tr47;
-		case 91: goto tr49;
-		case 93: goto tr50;
-		case 94: goto st50;
-		case 95: goto st49;
-		case 123: goto tr52;
-		case 124: goto st51;
-		case 125: goto tr54;
-		case 126: goto tr55;
+		case 35: goto st25;
+		case 37: goto st26;
+		case 38: goto st28;
+		case 39: goto st5;
+		case 40: goto tr39;
+		case 41: goto tr40;
+		case 42: goto st29;
+		case 43: goto st30;
+		case 44: goto tr43;
+		case 45: goto st31;
+		case 46: goto tr45;
+		case 47: goto tr46;
+		case 48: goto tr47;
+		case 58: goto st51;
+		case 59: goto tr50;
+		case 60: goto st52;
+		case 61: goto st54;
+		case 62: goto st55;
+		case 63: goto tr54;
+		case 76: goto tr56;
+		case 85: goto tr56;
+		case 91: goto tr57;
+		case 93: goto tr58;
+		case 94: goto st59;
+		case 95: goto st57;
+		case 117: goto tr60;
+		case 123: goto tr61;
+		case 124: goto st62;
+		case 125: goto tr63;
+		case 126: goto tr64;
 	}
 	if ( (*p) < 49 ) {
 		if ( 9 <= (*p) && (*p) <= 13 )
-			goto st18;
+			goto st23;
 	} else if ( (*p) > 57 ) {
 		if ( (*p) > 90 ) {
 			if ( 97 <= (*p) && (*p) <= 122 )
-				goto st49;
+				goto st57;
 		} else if ( (*p) >= 65 )
-			goto st49;
+			goto st57;
 	} else
-		goto tr41;
+		goto tr48;
 	goto st0;
 st0:
 cs = 0;
@@ -1310,53 +1746,53 @@ st1:
 		goto _test_eof1;
 case 1:
 	if ( (*p) == 95 )
-		goto st17;
+		goto st22;
 	if ( (*p) > 90 ) {
 		if ( 97 <= (*p) && (*p) <= 122 )
-			goto st17;
+			goto st22;
 	} else if ( (*p) >= 65 )
-		goto st17;
+		goto st22;
 	goto st0;
-st17:
+st22:
 	if ( ++p == pe )
-		goto _test_eof17;
-case 17:
+		goto _test_eof22;
+case 22:
 	if ( (*p) == 95 )
-		goto st17;
+		goto st22;
 	if ( (*p) < 65 ) {
 		if ( 48 <= (*p) && (*p) <= 57 )
-			goto st17;
+			goto st22;
 	} else if ( (*p) > 90 ) {
 		if ( 97 <= (*p) && (*p) <= 122 )
-			goto st17;
+			goto st22;
 	} else
-		goto st17;
-	goto tr56;
-st18:
+		goto st22;
+	goto tr65;
+st23:
 	if ( ++p == pe )
-		goto _test_eof18;
-case 18:
+		goto _test_eof23;
+case 23:
 	switch( (*p) ) {
-		case 9: goto st18;
-		case 32: goto st18;
+		case 9: goto st23;
+		case 32: goto st23;
 	}
 	if ( 11 <= (*p) && (*p) <= 13 )
-		goto st18;
-	goto tr57;
-st19:
+		goto st23;
+	goto tr66;
+st24:
 	if ( ++p == pe )
-		goto _test_eof19;
-case 19:
+		goto _test_eof24;
+case 24:
 	if ( (*p) == 61 )
-		goto tr59;
-	goto tr58;
+		goto tr68;
+	goto tr67;
 st2:
 	if ( ++p == pe )
 		goto _test_eof2;
 case 2:
 	switch( (*p) ) {
-		case 10: goto st0;
-		case 34: goto tr3;
+		case 10: goto tr2;
+		case 34: goto tr4;
 		case 92: goto st3;
 	}
 	goto st2;
@@ -1365,92 +1801,24 @@ st3:
 		goto _test_eof3;
 case 3:
 	goto st2;
-st20:
-	if ( ++p == pe )
-		goto _test_eof20;
-case 20:
-	if ( (*p) == 35 )
-		goto tr61;
-	goto tr60;
-st21:
-	if ( ++p == pe )
-		goto _test_eof21;
-case 21:
-	if ( (*p) == 61 )
-		goto tr63;
-	goto tr62;
-st22:
-	if ( ++p == pe )
-		goto _test_eof22;
-case 22:
-	switch( (*p) ) {
-		case 38: goto tr65;
-		case 61: goto tr66;
-	}
-	goto tr64;
-st4:
-	if ( ++p == pe )
-		goto _test_eof4;
-case 4:
-	switch( (*p) ) {
-		case 10: goto st0;
-		case 39: goto tr6;
-		case 92: goto st5;
-	}
-	goto st4;
-st5:
-	if ( ++p == pe )
-		goto _test_eof5;
-case 5:
-	goto st4;
-st23:
-	if ( ++p == pe )
-		goto _test_eof23;
-case 23:
-	if ( (*p) == 61 )
-		goto tr68;
-	goto tr67;
-st24:
-	if ( ++p == pe )
-		goto _test_eof24;
-case 24:
-	switch( (*p) ) {
-		case 43: goto tr70;
-		case 61: goto tr71;
-	}
-	goto tr69;
 st25:
 	if ( ++p == pe )
 		goto _test_eof25;
 case 25:
-	switch( (*p) ) {
-		case 45: goto tr73;
-		case 61: goto tr74;
-		case 62: goto tr75;
-	}
-	goto tr72;
-tr38:
-#line 1 "NONE"
-	{te = p+1;}
-	goto st26;
+	if ( (*p) == 35 )
+		goto tr70;
+	goto tr69;
 st26:
 	if ( ++p == pe )
 		goto _test_eof26;
 case 26:
-#line 1441 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
-	if ( (*p) == 46 )
-		goto st6;
-	if ( 48 <= (*p) && (*p) <= 57 )
-		goto tr78;
-	goto tr76;
-st6:
-	if ( ++p == pe )
-		goto _test_eof6;
-case 6:
-	if ( (*p) == 46 )
-		goto tr9;
-	goto tr8;
-tr78:
+	switch( (*p) ) {
+		case 58: goto tr72;
+		case 61: goto tr73;
+		case 62: goto tr74;
+	}
+	goto tr71;
+tr72:
 #line 1 "NONE"
 	{te = p+1;}
 	goto st27;
@@ -1458,127 +1826,89 @@ st27:
 	if ( ++p == pe )
 		goto _test_eof27;
 case 27:
-#line 1462 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
-	switch( (*p) ) {
-		case 69: goto st7;
-		case 70: goto st29;
-		case 76: goto st29;
-		case 101: goto st7;
-		case 102: goto st29;
-		case 108: goto st29;
-	}
-	if ( 48 <= (*p) && (*p) <= 57 )
-		goto tr78;
-	goto tr79;
-st7:
+#line 1830 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
+	if ( (*p) == 37 )
+		goto st4;
+	goto tr75;
+st4:
 	if ( ++p == pe )
-		goto _test_eof7;
-case 7:
-	switch( (*p) ) {
-		case 43: goto st8;
-		case 45: goto st8;
-	}
-	if ( 48 <= (*p) && (*p) <= 57 )
-		goto st28;
-	goto tr10;
-st8:
-	if ( ++p == pe )
-		goto _test_eof8;
-case 8:
-	if ( 48 <= (*p) && (*p) <= 57 )
-		goto st28;
-	goto tr10;
+		goto _test_eof4;
+case 4:
+	if ( (*p) == 58 )
+		goto tr7;
+	goto tr6;
 st28:
 	if ( ++p == pe )
 		goto _test_eof28;
 case 28:
 	switch( (*p) ) {
-		case 70: goto st29;
-		case 76: goto st29;
-		case 102: goto st29;
-		case 108: goto st29;
+		case 38: goto tr78;
+		case 61: goto tr79;
 	}
-	if ( 48 <= (*p) && (*p) <= 57 )
-		goto st28;
-	goto tr79;
+	goto tr77;
+st5:
+	if ( ++p == pe )
+		goto _test_eof5;
+case 5:
+	switch( (*p) ) {
+		case 10: goto tr2;
+		case 39: goto tr9;
+		case 92: goto st6;
+	}
+	goto st5;
+st6:
+	if ( ++p == pe )
+		goto _test_eof6;
+case 6:
+	goto st5;
 st29:
 	if ( ++p == pe )
 		goto _test_eof29;
 case 29:
-	switch( (*p) ) {
-		case 70: goto st29;
-		case 76: goto st29;
-		case 102: goto st29;
-		case 108: goto st29;
-	}
-	goto tr79;
-tr39:
-#line 1 "NONE"
-	{te = p+1;}
-	goto st30;
+	if ( (*p) == 61 )
+		goto tr81;
+	goto tr80;
 st30:
 	if ( ++p == pe )
 		goto _test_eof30;
 case 30:
-#line 1524 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
 	switch( (*p) ) {
-		case 42: goto st9;
-		case 47: goto st31;
+		case 43: goto tr83;
 		case 61: goto tr84;
 	}
 	goto tr82;
-st9:
-	if ( ++p == pe )
-		goto _test_eof9;
-case 9:
-	if ( (*p) == 42 )
-		goto st10;
-	goto st9;
-st10:
-	if ( ++p == pe )
-		goto _test_eof10;
-case 10:
-	switch( (*p) ) {
-		case 42: goto st10;
-		case 47: goto tr16;
-	}
-	goto st9;
 st31:
 	if ( ++p == pe )
 		goto _test_eof31;
 case 31:
-	if ( (*p) == 10 )
-		goto tr85;
-	goto st31;
-tr40:
+	switch( (*p) ) {
+		case 45: goto tr86;
+		case 61: goto tr87;
+		case 62: goto tr88;
+	}
+	goto tr85;
+tr45:
 #line 1 "NONE"
 	{te = p+1;}
-#line 868 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{act = 10;}
 	goto st32;
 st32:
 	if ( ++p == pe )
 		goto _test_eof32;
 case 32:
-#line 1564 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
-	switch( (*p) ) {
-		case 46: goto tr87;
-		case 69: goto st13;
-		case 76: goto st40;
-		case 85: goto st40;
-		case 88: goto st15;
-		case 101: goto st13;
-		case 108: goto st40;
-		case 117: goto st40;
-		case 120: goto st15;
-	}
-	if ( (*p) > 55 ) {
-		if ( 56 <= (*p) && (*p) <= 57 )
-			goto tr41;
-	} else if ( (*p) >= 48 )
-		goto tr88;
-	goto tr86;
-tr87:
+#line 1899 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
+	if ( (*p) == 46 )
+		goto st7;
+	if ( 48 <= (*p) && (*p) <= 57 )
+		goto tr91;
+	goto tr89;
+st7:
+	if ( ++p == pe )
+		goto _test_eof7;
+case 7:
+	if ( (*p) == 46 )
+		goto tr12;
+	goto tr11;
+tr91:
 #line 1 "NONE"
 	{te = p+1;}
 	goto st33;
@@ -1586,36 +1916,36 @@ st33:
 	if ( ++p == pe )
 		goto _test_eof33;
 case 33:
-#line 1590 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
+#line 1920 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
 	switch( (*p) ) {
-		case 69: goto st11;
+		case 69: goto st8;
 		case 70: goto st35;
 		case 76: goto st35;
-		case 101: goto st11;
+		case 101: goto st8;
 		case 102: goto st35;
 		case 108: goto st35;
 	}
 	if ( 48 <= (*p) && (*p) <= 57 )
-		goto tr87;
+		goto tr91;
 	goto tr92;
-st11:
+st8:
 	if ( ++p == pe )
-		goto _test_eof11;
-case 11:
+		goto _test_eof8;
+case 8:
 	switch( (*p) ) {
-		case 43: goto st12;
-		case 45: goto st12;
+		case 43: goto st9;
+		case 45: goto st9;
 	}
 	if ( 48 <= (*p) && (*p) <= 57 )
 		goto st34;
-	goto tr17;
-st12:
+	goto tr13;
+st9:
 	if ( ++p == pe )
-		goto _test_eof12;
-case 12:
+		goto _test_eof9;
+case 9:
 	if ( 48 <= (*p) && (*p) <= 57 )
 		goto st34;
-	goto tr17;
+	goto tr13;
 st34:
 	if ( ++p == pe )
 		goto _test_eof34;
@@ -1640,341 +1970,652 @@ case 35:
 		case 108: goto st35;
 	}
 	goto tr92;
-tr88:
+tr46:
 #line 1 "NONE"
 	{te = p+1;}
-#line 864 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{act = 9;}
 	goto st36;
 st36:
 	if ( ++p == pe )
 		goto _test_eof36;
 case 36:
-#line 1654 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
+#line 1982 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
 	switch( (*p) ) {
-		case 46: goto tr87;
-		case 69: goto st13;
-		case 76: goto st41;
-		case 85: goto st41;
-		case 101: goto st13;
-		case 108: goto st41;
-		case 117: goto st41;
+		case 42: goto st10;
+		case 47: goto st37;
+		case 61: goto tr97;
 	}
-	if ( (*p) > 55 ) {
-		if ( 56 <= (*p) && (*p) <= 57 )
-			goto tr41;
-	} else if ( (*p) >= 48 )
-		goto tr88;
 	goto tr95;
-tr41:
-#line 1 "NONE"
-	{te = p+1;}
-#line 868 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
-	{act = 10;}
-	goto st37;
+st10:
+	if ( ++p == pe )
+		goto _test_eof10;
+case 10:
+	if ( (*p) == 42 )
+		goto st11;
+	goto st10;
+st11:
+	if ( ++p == pe )
+		goto _test_eof11;
+case 11:
+	switch( (*p) ) {
+		case 42: goto st11;
+		case 47: goto tr19;
+	}
+	goto st10;
 st37:
 	if ( ++p == pe )
 		goto _test_eof37;
 case 37:
-#line 1680 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
-	switch( (*p) ) {
-		case 46: goto tr87;
-		case 69: goto st13;
-		case 76: goto st40;
-		case 85: goto st40;
-		case 101: goto st13;
-		case 108: goto st40;
-		case 117: goto st40;
-	}
-	if ( 48 <= (*p) && (*p) <= 57 )
-		goto tr41;
-	goto tr86;
-st13:
-	if ( ++p == pe )
-		goto _test_eof13;
-case 13:
-	switch( (*p) ) {
-		case 43: goto st14;
-		case 45: goto st14;
-	}
-	if ( 48 <= (*p) && (*p) <= 57 )
-		goto st38;
-	goto tr20;
-st14:
-	if ( ++p == pe )
-		goto _test_eof14;
-case 14:
-	if ( 48 <= (*p) && (*p) <= 57 )
-		goto st38;
-	goto tr20;
+	if ( (*p) == 10 )
+		goto tr98;
+	goto st37;
+tr47:
+#line 1 "NONE"
+	{te = p+1;}
+#line 1188 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{act = 11;}
+	goto st38;
 st38:
 	if ( ++p == pe )
 		goto _test_eof38;
 case 38:
+#line 2022 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
 	switch( (*p) ) {
-		case 70: goto st39;
-		case 76: goto st39;
-		case 102: goto st39;
-		case 108: goto st39;
+		case 46: goto tr100;
+		case 69: goto st14;
+		case 76: goto st46;
+		case 85: goto st46;
+		case 88: goto st16;
+		case 101: goto st14;
+		case 108: goto st46;
+		case 117: goto st46;
+		case 120: goto st16;
 	}
-	if ( 48 <= (*p) && (*p) <= 57 )
-		goto st38;
-	goto tr97;
+	if ( (*p) > 55 ) {
+		if ( 56 <= (*p) && (*p) <= 57 )
+			goto tr48;
+	} else if ( (*p) >= 48 )
+		goto tr101;
+	goto tr99;
+tr100:
+#line 1 "NONE"
+	{te = p+1;}
+	goto st39;
 st39:
 	if ( ++p == pe )
 		goto _test_eof39;
 case 39:
+#line 2048 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
 	switch( (*p) ) {
-		case 70: goto st39;
-		case 76: goto st39;
-		case 102: goto st39;
-		case 108: goto st39;
+		case 69: goto st12;
+		case 70: goto st41;
+		case 76: goto st41;
+		case 101: goto st12;
+		case 102: goto st41;
+		case 108: goto st41;
 	}
-	goto tr97;
+	if ( 48 <= (*p) && (*p) <= 57 )
+		goto tr100;
+	goto tr105;
+st12:
+	if ( ++p == pe )
+		goto _test_eof12;
+case 12:
+	switch( (*p) ) {
+		case 43: goto st13;
+		case 45: goto st13;
+	}
+	if ( 48 <= (*p) && (*p) <= 57 )
+		goto st40;
+	goto tr20;
+st13:
+	if ( ++p == pe )
+		goto _test_eof13;
+case 13:
+	if ( 48 <= (*p) && (*p) <= 57 )
+		goto st40;
+	goto tr20;
 st40:
 	if ( ++p == pe )
 		goto _test_eof40;
 case 40:
 	switch( (*p) ) {
-		case 76: goto st40;
-		case 85: goto st40;
-		case 108: goto st40;
-		case 117: goto st40;
+		case 70: goto st41;
+		case 76: goto st41;
+		case 102: goto st41;
+		case 108: goto st41;
 	}
-	goto tr86;
+	if ( 48 <= (*p) && (*p) <= 57 )
+		goto st40;
+	goto tr105;
 st41:
 	if ( ++p == pe )
 		goto _test_eof41;
 case 41:
 	switch( (*p) ) {
+		case 70: goto st41;
 		case 76: goto st41;
-		case 85: goto st41;
+		case 102: goto st41;
 		case 108: goto st41;
-		case 117: goto st41;
 	}
-	goto tr95;
-st15:
-	if ( ++p == pe )
-		goto _test_eof15;
-case 15:
-	if ( (*p) < 65 ) {
-		if ( 48 <= (*p) && (*p) <= 57 )
-			goto st42;
-	} else if ( (*p) > 70 ) {
-		if ( 97 <= (*p) && (*p) <= 102 )
-			goto st42;
-	} else
-		goto st42;
-	goto tr23;
+	goto tr105;
+tr101:
+#line 1 "NONE"
+	{te = p+1;}
+#line 1184 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{act = 10;}
+	goto st42;
 st42:
 	if ( ++p == pe )
 		goto _test_eof42;
 case 42:
+#line 2112 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
 	switch( (*p) ) {
-		case 76: goto st43;
-		case 85: goto st43;
-		case 108: goto st43;
-		case 117: goto st43;
+		case 46: goto tr100;
+		case 69: goto st14;
+		case 76: goto st47;
+		case 85: goto st47;
+		case 101: goto st14;
+		case 108: goto st47;
+		case 117: goto st47;
 	}
-	if ( (*p) < 65 ) {
-		if ( 48 <= (*p) && (*p) <= 57 )
-			goto st42;
-	} else if ( (*p) > 70 ) {
-		if ( 97 <= (*p) && (*p) <= 102 )
-			goto st42;
-	} else
-		goto st42;
-	goto tr99;
+	if ( (*p) > 55 ) {
+		if ( 56 <= (*p) && (*p) <= 57 )
+			goto tr48;
+	} else if ( (*p) >= 48 )
+		goto tr101;
+	goto tr108;
+tr48:
+#line 1 "NONE"
+	{te = p+1;}
+#line 1188 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{act = 11;}
+	goto st43;
 st43:
 	if ( ++p == pe )
 		goto _test_eof43;
 case 43:
+#line 2138 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
 	switch( (*p) ) {
-		case 76: goto st43;
-		case 85: goto st43;
-		case 108: goto st43;
-		case 117: goto st43;
+		case 46: goto tr100;
+		case 69: goto st14;
+		case 76: goto st46;
+		case 85: goto st46;
+		case 101: goto st14;
+		case 108: goto st46;
+		case 117: goto st46;
 	}
+	if ( 48 <= (*p) && (*p) <= 57 )
+		goto tr48;
 	goto tr99;
+st14:
+	if ( ++p == pe )
+		goto _test_eof14;
+case 14:
+	switch( (*p) ) {
+		case 43: goto st15;
+		case 45: goto st15;
+	}
+	if ( 48 <= (*p) && (*p) <= 57 )
+		goto st44;
+	goto tr2;
+st15:
+	if ( ++p == pe )
+		goto _test_eof15;
+case 15:
+	if ( 48 <= (*p) && (*p) <= 57 )
+		goto st44;
+	goto tr2;
 st44:
 	if ( ++p == pe )
 		goto _test_eof44;
 case 44:
 	switch( (*p) ) {
-		case 60: goto st45;
-		case 61: goto tr103;
+		case 70: goto st45;
+		case 76: goto st45;
+		case 102: goto st45;
+		case 108: goto st45;
 	}
-	goto tr101;
+	if ( 48 <= (*p) && (*p) <= 57 )
+		goto st44;
+	goto tr110;
 st45:
 	if ( ++p == pe )
 		goto _test_eof45;
 case 45:
-	if ( (*p) == 61 )
-		goto tr105;
-	goto tr104;
+	switch( (*p) ) {
+		case 70: goto st45;
+		case 76: goto st45;
+		case 102: goto st45;
+		case 108: goto st45;
+	}
+	goto tr110;
 st46:
 	if ( ++p == pe )
 		goto _test_eof46;
 case 46:
-	if ( (*p) == 61 )
-		goto tr107;
-	goto tr106;
+	switch( (*p) ) {
+		case 76: goto st46;
+		case 85: goto st46;
+		case 108: goto st46;
+		case 117: goto st46;
+	}
+	goto tr99;
 st47:
 	if ( ++p == pe )
 		goto _test_eof47;
 case 47:
 	switch( (*p) ) {
-		case 61: goto tr109;
-		case 62: goto st48;
+		case 76: goto st47;
+		case 85: goto st47;
+		case 108: goto st47;
+		case 117: goto st47;
 	}
 	goto tr108;
+st16:
+	if ( ++p == pe )
+		goto _test_eof16;
+case 16:
+	if ( (*p) == 46 )
+		goto st17;
+	if ( (*p) < 65 ) {
+		if ( 48 <= (*p) && (*p) <= 57 )
+			goto tr27;
+	} else if ( (*p) > 70 ) {
+		if ( 97 <= (*p) && (*p) <= 102 )
+			goto tr27;
+	} else
+		goto tr27;
+	goto tr25;
+st17:
+	if ( ++p == pe )
+		goto _test_eof17;
+case 17:
+	if ( (*p) < 65 ) {
+		if ( 48 <= (*p) && (*p) <= 57 )
+			goto st18;
+	} else if ( (*p) > 70 ) {
+		if ( 97 <= (*p) && (*p) <= 102 )
+			goto st18;
+	} else
+		goto st18;
+	goto tr25;
+st18:
+	if ( ++p == pe )
+		goto _test_eof18;
+case 18:
+	switch( (*p) ) {
+		case 80: goto st19;
+		case 112: goto st19;
+	}
+	if ( (*p) < 65 ) {
+		if ( 48 <= (*p) && (*p) <= 57 )
+			goto st18;
+	} else if ( (*p) > 70 ) {
+		if ( 97 <= (*p) && (*p) <= 102 )
+			goto st18;
+	} else
+		goto st18;
+	goto tr2;
+st19:
+	if ( ++p == pe )
+		goto _test_eof19;
+case 19:
+	switch( (*p) ) {
+		case 43: goto st20;
+		case 45: goto st20;
+	}
+	if ( 48 <= (*p) && (*p) <= 57 )
+		goto st48;
+	goto tr2;
+st20:
+	if ( ++p == pe )
+		goto _test_eof20;
+case 20:
+	if ( 48 <= (*p) && (*p) <= 57 )
+		goto st48;
+	goto tr2;
 st48:
 	if ( ++p == pe )
 		goto _test_eof48;
 case 48:
-	if ( (*p) == 61 )
-		goto tr112;
-	goto tr111;
+	switch( (*p) ) {
+		case 70: goto tr113;
+		case 76: goto tr113;
+		case 102: goto tr113;
+		case 108: goto tr113;
+	}
+	if ( 48 <= (*p) && (*p) <= 57 )
+		goto st48;
+	goto tr112;
+tr27:
+#line 1 "NONE"
+	{te = p+1;}
+#line 1180 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{act = 9;}
+	goto st49;
 st49:
 	if ( ++p == pe )
 		goto _test_eof49;
 case 49:
-	if ( (*p) == 95 )
-		goto st49;
+#line 2301 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
+	switch( (*p) ) {
+		case 46: goto st18;
+		case 76: goto st50;
+		case 80: goto st19;
+		case 85: goto st50;
+		case 108: goto st50;
+		case 112: goto st19;
+		case 117: goto st50;
+	}
 	if ( (*p) < 65 ) {
 		if ( 48 <= (*p) && (*p) <= 57 )
-			goto st49;
-	} else if ( (*p) > 90 ) {
-		if ( 97 <= (*p) && (*p) <= 122 )
-			goto st49;
+			goto tr27;
+	} else if ( (*p) > 70 ) {
+		if ( 97 <= (*p) && (*p) <= 102 )
+			goto tr27;
 	} else
-		goto st49;
-	goto tr113;
+		goto tr27;
+	goto tr114;
 st50:
 	if ( ++p == pe )
 		goto _test_eof50;
 case 50:
-	if ( (*p) == 61 )
-		goto tr115;
+	switch( (*p) ) {
+		case 76: goto st50;
+		case 85: goto st50;
+		case 108: goto st50;
+		case 117: goto st50;
+	}
 	goto tr114;
 st51:
 	if ( ++p == pe )
 		goto _test_eof51;
 case 51:
-	switch( (*p) ) {
-		case 61: goto tr117;
-		case 124: goto tr118;
-	}
+	if ( (*p) == 62 )
+		goto tr117;
 	goto tr116;
+st52:
+	if ( ++p == pe )
+		goto _test_eof52;
+case 52:
+	switch( (*p) ) {
+		case 37: goto tr119;
+		case 58: goto tr120;
+		case 60: goto st53;
+		case 61: goto tr122;
 	}
-	_test_eof16: cs = 16; goto _test_eof; 
-	_test_eof1: cs = 1; goto _test_eof; 
-	_test_eof17: cs = 17; goto _test_eof; 
-	_test_eof18: cs = 18; goto _test_eof; 
-	_test_eof19: cs = 19; goto _test_eof; 
-	_test_eof2: cs = 2; goto _test_eof; 
-	_test_eof3: cs = 3; goto _test_eof; 
-	_test_eof20: cs = 20; goto _test_eof; 
+	goto tr118;
+st53:
+	if ( ++p == pe )
+		goto _test_eof53;
+case 53:
+	if ( (*p) == 61 )
+		goto tr124;
+	goto tr123;
+st54:
+	if ( ++p == pe )
+		goto _test_eof54;
+case 54:
+	if ( (*p) == 61 )
+		goto tr126;
+	goto tr125;
+st55:
+	if ( ++p == pe )
+		goto _test_eof55;
+case 55:
+	switch( (*p) ) {
+		case 61: goto tr128;
+		case 62: goto st56;
+	}
+	goto tr127;
+st56:
+	if ( ++p == pe )
+		goto _test_eof56;
+case 56:
+	if ( (*p) == 61 )
+		goto tr131;
+	goto tr130;
+st57:
+	if ( ++p == pe )
+		goto _test_eof57;
+case 57:
+	if ( (*p) == 95 )
+		goto st57;
+	if ( (*p) < 65 ) {
+		if ( 48 <= (*p) && (*p) <= 57 )
+			goto st57;
+	} else if ( (*p) > 90 ) {
+		if ( 97 <= (*p) && (*p) <= 122 )
+			goto st57;
+	} else
+		goto st57;
+	goto tr132;
+tr56:
+#line 1 "NONE"
+	{te = p+1;}
+#line 1213 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{act = 15;}
+	goto st58;
+st58:
+	if ( ++p == pe )
+		goto _test_eof58;
+case 58:
+#line 2404 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
+	switch( (*p) ) {
+		case 34: goto st2;
+		case 39: goto st5;
+		case 95: goto st57;
+	}
+	if ( (*p) < 65 ) {
+		if ( 48 <= (*p) && (*p) <= 57 )
+			goto st57;
+	} else if ( (*p) > 90 ) {
+		if ( 97 <= (*p) && (*p) <= 122 )
+			goto st57;
+	} else
+		goto st57;
+	goto tr132;
+st59:
+	if ( ++p == pe )
+		goto _test_eof59;
+case 59:
+	if ( (*p) == 61 )
+		goto tr134;
+	goto tr133;
+tr60:
+#line 1 "NONE"
+	{te = p+1;}
+#line 1213 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{act = 15;}
+	goto st60;
+st60:
+	if ( ++p == pe )
+		goto _test_eof60;
+case 60:
+#line 2436 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
+	switch( (*p) ) {
+		case 34: goto st2;
+		case 39: goto st5;
+		case 56: goto tr135;
+		case 95: goto st57;
+	}
+	if ( (*p) < 65 ) {
+		if ( 48 <= (*p) && (*p) <= 57 )
+			goto st57;
+	} else if ( (*p) > 90 ) {
+		if ( 97 <= (*p) && (*p) <= 122 )
+			goto st57;
+	} else
+		goto st57;
+	goto tr132;
+tr135:
+#line 1 "NONE"
+	{te = p+1;}
+#line 1213 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+	{act = 15;}
+	goto st61;
+st61:
+	if ( ++p == pe )
+		goto _test_eof61;
+case 61:
+#line 2462 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer_gen.c"
+	switch( (*p) ) {
+		case 34: goto st2;
+		case 95: goto st57;
+	}
+	if ( (*p) < 65 ) {
+		if ( 48 <= (*p) && (*p) <= 57 )
+			goto st57;
+	} else if ( (*p) > 90 ) {
+		if ( 97 <= (*p) && (*p) <= 122 )
+			goto st57;
+	} else
+		goto st57;
+	goto tr132;
+st62:
+	if ( ++p == pe )
+		goto _test_eof62;
+case 62:
+	switch( (*p) ) {
+		case 61: goto tr137;
+		case 124: goto tr138;
+	}
+	goto tr136;
+	}
 	_test_eof21: cs = 21; goto _test_eof; 
+	_test_eof1: cs = 1; goto _test_eof; 
 	_test_eof22: cs = 22; goto _test_eof; 
-	_test_eof4: cs = 4; goto _test_eof; 
-	_test_eof5: cs = 5; goto _test_eof; 
 	_test_eof23: cs = 23; goto _test_eof; 
 	_test_eof24: cs = 24; goto _test_eof; 
+	_test_eof2: cs = 2; goto _test_eof; 
+	_test_eof3: cs = 3; goto _test_eof; 
 	_test_eof25: cs = 25; goto _test_eof; 
 	_test_eof26: cs = 26; goto _test_eof; 
-	_test_eof6: cs = 6; goto _test_eof; 
 	_test_eof27: cs = 27; goto _test_eof; 
-	_test_eof7: cs = 7; goto _test_eof; 
-	_test_eof8: cs = 8; goto _test_eof; 
+	_test_eof4: cs = 4; goto _test_eof; 
 	_test_eof28: cs = 28; goto _test_eof; 
+	_test_eof5: cs = 5; goto _test_eof; 
+	_test_eof6: cs = 6; goto _test_eof; 
 	_test_eof29: cs = 29; goto _test_eof; 
 	_test_eof30: cs = 30; goto _test_eof; 
-	_test_eof9: cs = 9; goto _test_eof; 
-	_test_eof10: cs = 10; goto _test_eof; 
 	_test_eof31: cs = 31; goto _test_eof; 
 	_test_eof32: cs = 32; goto _test_eof; 
+	_test_eof7: cs = 7; goto _test_eof; 
 	_test_eof33: cs = 33; goto _test_eof; 
-	_test_eof11: cs = 11; goto _test_eof; 
-	_test_eof12: cs = 12; goto _test_eof; 
+	_test_eof8: cs = 8; goto _test_eof; 
+	_test_eof9: cs = 9; goto _test_eof; 
 	_test_eof34: cs = 34; goto _test_eof; 
 	_test_eof35: cs = 35; goto _test_eof; 
 	_test_eof36: cs = 36; goto _test_eof; 
+	_test_eof10: cs = 10; goto _test_eof; 
+	_test_eof11: cs = 11; goto _test_eof; 
 	_test_eof37: cs = 37; goto _test_eof; 
-	_test_eof13: cs = 13; goto _test_eof; 
-	_test_eof14: cs = 14; goto _test_eof; 
 	_test_eof38: cs = 38; goto _test_eof; 
 	_test_eof39: cs = 39; goto _test_eof; 
+	_test_eof12: cs = 12; goto _test_eof; 
+	_test_eof13: cs = 13; goto _test_eof; 
 	_test_eof40: cs = 40; goto _test_eof; 
 	_test_eof41: cs = 41; goto _test_eof; 
-	_test_eof15: cs = 15; goto _test_eof; 
 	_test_eof42: cs = 42; goto _test_eof; 
 	_test_eof43: cs = 43; goto _test_eof; 
+	_test_eof14: cs = 14; goto _test_eof; 
+	_test_eof15: cs = 15; goto _test_eof; 
 	_test_eof44: cs = 44; goto _test_eof; 
 	_test_eof45: cs = 45; goto _test_eof; 
 	_test_eof46: cs = 46; goto _test_eof; 
 	_test_eof47: cs = 47; goto _test_eof; 
+	_test_eof16: cs = 16; goto _test_eof; 
+	_test_eof17: cs = 17; goto _test_eof; 
+	_test_eof18: cs = 18; goto _test_eof; 
+	_test_eof19: cs = 19; goto _test_eof; 
+	_test_eof20: cs = 20; goto _test_eof; 
 	_test_eof48: cs = 48; goto _test_eof; 
 	_test_eof49: cs = 49; goto _test_eof; 
 	_test_eof50: cs = 50; goto _test_eof; 
 	_test_eof51: cs = 51; goto _test_eof; 
+	_test_eof52: cs = 52; goto _test_eof; 
+	_test_eof53: cs = 53; goto _test_eof; 
+	_test_eof54: cs = 54; goto _test_eof; 
+	_test_eof55: cs = 55; goto _test_eof; 
+	_test_eof56: cs = 56; goto _test_eof; 
+	_test_eof57: cs = 57; goto _test_eof; 
+	_test_eof58: cs = 58; goto _test_eof; 
+	_test_eof59: cs = 59; goto _test_eof; 
+	_test_eof60: cs = 60; goto _test_eof; 
+	_test_eof61: cs = 61; goto _test_eof; 
+	_test_eof62: cs = 62; goto _test_eof; 
 
 	_test_eof: {}
 	if ( p == eof )
 	{
 	switch ( cs ) {
-	case 17: goto tr56;
-	case 18: goto tr57;
-	case 19: goto tr58;
-	case 20: goto tr60;
-	case 21: goto tr62;
-	case 22: goto tr64;
-	case 23: goto tr67;
-	case 24: goto tr69;
-	case 25: goto tr72;
-	case 26: goto tr76;
-	case 6: goto tr8;
-	case 27: goto tr79;
-	case 7: goto tr10;
-	case 8: goto tr10;
-	case 28: goto tr79;
-	case 29: goto tr79;
+	case 22: goto tr65;
+	case 23: goto tr66;
+	case 24: goto tr67;
+	case 2: goto tr2;
+	case 3: goto tr2;
+	case 25: goto tr69;
+	case 26: goto tr71;
+	case 27: goto tr75;
+	case 4: goto tr6;
+	case 28: goto tr77;
+	case 5: goto tr2;
+	case 6: goto tr2;
+	case 29: goto tr80;
 	case 30: goto tr82;
-	case 9: goto tr13;
-	case 10: goto tr13;
 	case 31: goto tr85;
-	case 32: goto tr86;
+	case 32: goto tr89;
+	case 7: goto tr11;
 	case 33: goto tr92;
-	case 11: goto tr17;
-	case 12: goto tr17;
+	case 8: goto tr13;
+	case 9: goto tr13;
 	case 34: goto tr92;
 	case 35: goto tr92;
 	case 36: goto tr95;
-	case 37: goto tr86;
+	case 10: goto tr16;
+	case 11: goto tr16;
+	case 37: goto tr98;
+	case 38: goto tr99;
+	case 39: goto tr105;
+	case 12: goto tr20;
 	case 13: goto tr20;
-	case 14: goto tr20;
-	case 38: goto tr97;
-	case 39: goto tr97;
-	case 40: goto tr86;
-	case 41: goto tr95;
-	case 15: goto tr23;
-	case 42: goto tr99;
+	case 40: goto tr105;
+	case 41: goto tr105;
+	case 42: goto tr108;
 	case 43: goto tr99;
-	case 44: goto tr101;
-	case 45: goto tr104;
-	case 46: goto tr106;
+	case 14: goto tr2;
+	case 15: goto tr2;
+	case 44: goto tr110;
+	case 45: goto tr110;
+	case 46: goto tr99;
 	case 47: goto tr108;
-	case 48: goto tr111;
-	case 49: goto tr113;
+	case 16: goto tr25;
+	case 17: goto tr25;
+	case 18: goto tr2;
+	case 19: goto tr2;
+	case 20: goto tr2;
+	case 48: goto tr112;
+	case 49: goto tr114;
 	case 50: goto tr114;
 	case 51: goto tr116;
+	case 52: goto tr118;
+	case 53: goto tr123;
+	case 54: goto tr125;
+	case 55: goto tr127;
+	case 56: goto tr130;
+	case 57: goto tr132;
+	case 58: goto tr132;
+	case 59: goto tr133;
+	case 60: goto tr132;
+	case 61: goto tr132;
+	case 62: goto tr136;
 	}
 	}
 
 	_out: {}
 	}
 
-#line 1018 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
+#line 1405 "/Users/sdennis/slow-32/selfhost/stage08/c_lexer.rl"
 
     lex_rp = p;
     lex_rcs = cs;

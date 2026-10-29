@@ -4762,6 +4762,68 @@ static void parse_global_init_value(int ty, int gidx) {
     parse_global_init_value_at(ty, 0, gidx, ps_ginit_cur_off(gidx));
 }
 
+/* Adjacent literals of which one is wide (6.4.5p5): one wide string,
+ * a narrow piece's bytes widened to units.  Returns the pool index, or
+ * -1 when all are narrow (the caller joins those as bytes). */
+static int ps_wide_concat(int *idxs, int nidx) {
+    int w;
+    int i;
+    int j;
+    int units;
+    int start;
+    int wi;
+    int src;
+    w = 1;
+    i = 0;
+    while (i < nidx) {
+        wi = lex_str_width[idxs[i]];
+        /* no two different prefixes (6.4.5p2: u8 with a wide one; L
+         * with U or u implementation-defined, and refused, as clang does) */
+        j = 0;
+        while (j < i) {
+            if (lex_str_pfx[idxs[i]] && lex_str_pfx[idxs[j]] && lex_str_pfx[idxs[i]] != lex_str_pfx[idxs[j]])
+                p_error("unsupported concatenation of string literals with different prefixes");
+            j = j + 1;
+        }
+        if (wi > w) w = wi;
+        i = i + 1;
+    }
+    if (w == 1) return -1;
+    if (lex_str_count >= LEX_POOL_MAX) p_error("too many string literals");
+    start = lex_strpool_len;
+    units = 0;
+    i = 0;
+    while (i < nidx) {
+        wi = lex_str_width[idxs[i]];
+        src = lex_str_off[idxs[i]];
+        if (wi == w) {
+            j = 0;
+            while (j < (lex_str_len[idxs[i]] + 1) - w) {      /* its units, not its terminator */
+                lex_strpool[lex_strpool_len] = lex_strpool[src + j];
+                lex_strpool_len = lex_strpool_len + 1;
+                j = j + 1;
+            }
+            units = units + (lex_str_len[idxs[i]] + 1) / w - 1;
+        } else {
+            j = 0;
+            while (j < lex_str_len[idxs[i]]) {
+                lex_pool_unit(lex_strpool[src + j] & 255, w);
+                j = j + 1;
+            }
+            units = units + lex_str_len[idxs[i]];
+        }
+        i = i + 1;
+    }
+    lex_pool_unit(0, w - 1);
+    lex_strpool[lex_strpool_len] = 0;
+    lex_strpool_len = lex_strpool_len + 1;
+    lex_str_off[lex_str_count] = start;
+    lex_str_len[lex_str_count] = units * w + w - 1;
+    lex_str_width[lex_str_count] = w;
+    lex_str_count = lex_str_count + 1;
+    return lex_str_count - 1;
+}
+
 static int parse_string_literal(void) {
     static int idxs[1024];   /* was a 64-entry local: SQLite's shell builds one SQL statement from hundreds of adjacent literals; static because 4KB per frame of the recursive expression parser overran the stack */
     int nidx;
@@ -4781,6 +4843,8 @@ static int parse_string_literal(void) {
         next();
     }
     if (nidx == 1) return idxs[0];
+    i = ps_wide_concat(idxs, nidx);
+    if (i >= 0) return i;
     if (lex_str_count >= LEX_POOL_MAX) p_error("too many string literals");
     if (lex_strpool_len + total + 1 > LEX_POOL_SZ) p_error("string pool overflow");
     start = lex_strpool_len;
@@ -4804,6 +4868,7 @@ static int parse_string_literal(void) {
     }
     lex_str_off[lex_str_count] = start;
     lex_str_len[lex_str_count] = total;
+    lex_str_width[lex_str_count] = 1;
     lex_str_count = lex_str_count + 1;
     return lex_str_count - 1;
 }
@@ -5145,14 +5210,24 @@ static Node *parse_primary(void) {
     /* Character literal */
     if (lex_tok == TK_CHARLIT) {
         v = lex_val;
+        i = lex_chr_prefix;
         next();
-        return nd_num(v);
+        n = nd_num(v);
+        /* L'x' is a wchar_t, U'x' a char32_t (unsigned int, as clang's
+         * target has them), u'x' a char16_t (6.4.4.4p2) */
+        if (i == 76 || i == 85) n->ty = TY_INT | TY_UNSIGNED;
+        else if (i == 117) n->ty = TY_SHORT | TY_UNSIGNED;
+        return n;
     }
 
     /* String literal */
     if (lex_tok == TK_STRING) {
         v = parse_string_literal();
-        return nd_string(v);
+        n = nd_string(v);
+        /* a wide one points at its code units (6.4.5p6) */
+        if (lex_str_width[v] == 4) n->ty = TY_PTR + (TY_INT | TY_UNSIGNED);
+        else if (lex_str_width[v] == 2) n->ty = TY_PTR + (TY_SHORT | TY_UNSIGNED);
+        return n;
     }
 
     /* Identifier: variable, enum constant, function call, or function ref */
