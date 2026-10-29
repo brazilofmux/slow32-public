@@ -688,7 +688,24 @@ by designator; they were refused.  A member of a `?:` of structures,
 `(t ? a : b).y`, with both arms lvalues, is read as `(*(t ? &a :
 &b)).y` (`ps_cond_struct_lvalue`; the lowering wanted an address and
 the `?:` has none).  An object of a typedef'd array type at file scope
-is the array (`A x = { 1, 2, 3 };` went to the scalars).  `S12CC_CONSTRAINT_WARN=1` turns
+is the array (`A x = { 1, 2, 3 };` went to the scalars).
+
+**REJECTS: function declarators** (2026-10-29).  parse_top_decl had
+grown past what stage07 compiles safely (selfhost ISSUES-100; 784
+lines), so a function's declarator after its name -- the parameters,
+a prototype's `;` or the body -- became a function of its own,
+`ps_function_decl`, the move byte-identical on SQLite and the compiler.
+In it: old-style definitions (6.9.1p6), `int f(a, b) int a; char b;
+{...}` -- the identifier list, the declaration list in any order, every
+name declared and nothing else (no implicit int); each parameter
+arrives as its default-promoted type, and where that differs from the
+declared one (char, short, float) a local of the declared type is
+assigned from it at entry; the function is recorded without a
+prototype, so calls promote their arguments; an identifier list in a
+mere declaration is refused (`ps_kr_read_ids`, `ps_kr_declare`).  A
+parameter declared with function type, `int f(int)`, is a pointer to
+the function (6.7.6.3p8, `ps_fn_typed_param`).  And in type names,
+`(*[2])(void)`, an array of function pointers.  `S12CC_CONSTRAINT_WARN=1` turns
 the errors into warnings, to survey a corpus.
 
 ## Constraints on the work

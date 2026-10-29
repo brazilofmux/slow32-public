@@ -564,6 +564,7 @@ static Node *parse_primary(void);
 static int parse_type(void);
 static int ps_fp_store(int *ptys, int *pctys, int np);
 static int ps_enum_value(void);
+static int ps_array_size(void);
 
 /* --- Utilities --- */
 
@@ -3134,6 +3135,8 @@ static int ps_sizeof_type_tail(int ty, int tdn) {
         ty = ps_abstract_fnptr(ty);
         skip_decl_qualifiers();
         v = ty_size(ty);
+        if (ps_type_cty > 0 && ct_is_array(ps_type_cty) && tdn == 0)
+            v = ct_sizeof(ps_type_cty);      /* (*[2])(void): the array's */
     }
     while (lex_tok == TK_LBRACK) {
         next();
@@ -3169,12 +3172,20 @@ static void ps_no_rowptr_value(void) {
 
 static int ps_abstract_fnptr(int ty) {
     int nstar;
+    int ndim;
     ps_abs_rowptr = 0;
     if (lex_tok != TK_LPAREN) return ty;
     next();
     if (lex_tok != TK_STAR) { p_error("expected * in abstract declarator"); return ty; }
     nstar = 0;
     while (lex_tok == TK_STAR) { next(); skip_decl_qualifiers(); nstar = nstar + 1; }
+    /* (*[N])(params): an array of N function pointers (6.7.7) */
+    ndim = -1;
+    if (lex_tok == TK_LBRACK) {
+        next();
+        ndim = ps_array_size();
+        expect(TK_RBRACK);
+    }
     expect(TK_RPAREN);
     if (lex_tok == TK_LBRACK) {
         ps_type_cty = ps_abstract_dims(ps_type_cty);
@@ -3188,6 +3199,7 @@ static int ps_abstract_fnptr(int ty) {
         ty = TY_PTR + TY_INT;
     }
     while (nstar > 0) { ps_type_cty = ct_ptr(ps_type_cty); nstar = nstar - 1; }
+    if (ndim >= 0) ps_type_cty = ct_array(ps_type_cty, ndim);
     return ty;
 }
 
@@ -7896,6 +7908,504 @@ static void parse_type_and_stars(int *out_ty) {
     *out_ty = parse_type();
 }
 
+/* --- Old-style (K&R) definitions: int f(a, b) int a; char b; { ... } --- */
+
+#define PS_KR_MAX 64
+static char *ps_kr_names[PS_KR_MAX];   /* the identifier list, in order */
+static int   ps_kr_ty[PS_KR_MAX];      /* each one's declared machine type; -1 = not declared */
+static int   ps_kr_cty[PS_KR_MAX];
+static int   ps_kr_n;
+
+/* The identifier list (6.9.1p6), the cursor on its first name; left on
+ * the ')'. */
+static void ps_kr_read_ids(void) {
+    ps_kr_n = 0;
+    while (lex_tok == TK_IDENT) {
+        if (ps_kr_n >= PS_KR_MAX) p_error("too many parameters");
+        ps_kr_names[ps_kr_n] = strdup(lex_str);
+        ps_kr_ty[ps_kr_n] = -1;
+        ps_kr_n = ps_kr_n + 1;
+        next();
+        if (lex_tok != TK_COMMA) break;
+        next();
+    }
+}
+
+/* What an argument is in a call to a function without a prototype: the
+ * default argument promotions (6.5.2.2p6) -- float to double, the small
+ * integers to int.  The parameter arrives as that. */
+static int ps_kr_promoted(int ty) {
+    if (ty == TY_FLOAT) return TY_DOUBLE;
+    if (!ty_is_ptr(ty) && !ty_is_struct(ty) && !ty_is_fp(ty) && ty_size(ty) < 4) return TY_INT;
+    return ty;
+}
+
+/* The declaration list (6.9.1p6), the cursor after the identifier
+ * list's ')': each name's type, then the parameters made in the list's
+ * order -- each in its promoted type, and where that differs from the
+ * declared one a local of the declared type assigned from it at entry,
+ * those assignments in *pre.  Returns the parameter list; every name is
+ * declared, and nothing else is (no implicit int since C99). */
+static Node *ps_kr_declare(Node **pre) {
+    int bty;
+    int bcty;
+    int ty;
+    int k;
+    int i;
+    int off;
+    int pt;
+    Node *head;
+    Node *tail;
+    Node *p;
+    Node *v;
+    Node *a;
+    Node *ptail;
+    char hid[280];
+    while (is_type()) {
+        bty = parse_type();
+        bcty = ps_type_nostar_cty;
+        ty = bty;
+        while (1) {
+            if (lex_tok != TK_IDENT) p_error("expected parameter name in declaration list");
+            k = 0;
+            while (k < ps_kr_n && strcmp(ps_kr_names[k], lex_str) != 0) k = k + 1;
+            if (k >= ps_kr_n) p_error("declaration of a name not in the identifier list");
+            next();
+            ps_parse_param_dims(&ty);       /* an array parameter is a pointer */
+            ps_kr_ty[k] = ty;
+            ps_kr_cty[k] = ps_type_cty;
+            if (lex_tok != TK_COMMA) break;
+            next();
+            ty = ps_declarator_stars(ps_type_nostar, bcty);
+        }
+        expect(TK_SEMI);
+    }
+    head = NULL;
+    tail = NULL;
+    i = 0;
+    while (i < ps_kr_n) {
+        if (ps_kr_ty[i] < 0) p_error("parameter not declared in the declaration list");
+        pt = ps_kr_promoted(ps_kr_ty[i]);
+        if (pt == ps_kr_ty[i]) {
+            ps_type_cty = ps_kr_cty[i];
+            off = add_local(ps_kr_names[i], pt);
+            p = nd_var(ps_kr_names[i], off, pt);
+        } else {
+            memcpy(hid, "__kr_", 5);
+            strcpy(hid + 5, ps_kr_names[i]);
+            ps_type_cty = 0;
+            off = add_local(hid, pt);
+            p = nd_var(hid, off, pt);
+        }
+        ps_bind_var(p, ps_nlocals - 1);
+        if (head == NULL) head = p;
+        else tail->next = p;
+        tail = p;
+        ps_nparams = ps_nparams + 1;
+        i = i + 1;
+    }
+    /* the declared types, from the promoted arrivals */
+    *pre = NULL;
+    ptail = NULL;
+    i = 0;
+    p = head;
+    while (i < ps_kr_n) {
+        if (ps_kr_promoted(ps_kr_ty[i]) != ps_kr_ty[i]) {
+            ps_type_cty = ps_kr_cty[i];
+            off = add_local(ps_kr_names[i], ps_kr_ty[i]);
+            v = nd_var(ps_kr_names[i], off, ps_kr_ty[i]);
+            ps_bind_var(v, ps_nlocals - 1);
+            memcpy(hid, "__kr_", 5);
+            strcpy(hid + 5, ps_kr_names[i]);
+            a = nd_var(hid, p->offset, p->ty);
+            ps_bind_var(a, find_local(hid));
+            a = nd_expr_stmt(nd_assign(v, nd_cast(a, ps_kr_ty[i])));
+            if (*pre == NULL) *pre = a;
+            else ptail->next = a;
+            ptail = a;
+        }
+        p = p->next;
+        i = i + 1;
+    }
+    return head;
+}
+
+/* A parameter declared as a function, int f(int), the cursor on its
+ * '(': adjusted to a pointer to the function (6.7.6.3p8), as
+ * int (*f)(int) is read -- the signature recorded, the local a word
+ * typed as that pointer.  *pty becomes the word's machine type. */
+static Node *ps_fn_typed_param(char *pnm, int *pty) {
+    int base;
+    int n;
+    int ret_cty;
+    int off;
+    Node *p;
+    ret_cty = ps_type_cty;
+    next();
+    base = ps_parse_fp_params(&n);
+    ps_fp_set_ret(base, *pty);
+    ps_fnptr_nstar = 1;
+    ps_type_cty = ps_fnptr_cty(ret_cty);
+    off = add_local(pnm, TY_INT);
+    ps_lfpbase[ps_nlocals - 1] = base;
+    ps_lfpn[ps_nlocals - 1] = n;
+    p = nd_var(pnm, off, TY_INT);
+    ps_bind_var(p, ps_nlocals - 1);
+    p->is_fnptr = 1;
+    p->val = base;
+    p->nparams = n;
+    *pty = TY_INT;
+    return p;
+}
+
+/* A function's declarator after its name, at the '(': the parameters,
+ * then a prototype's ';' or the body.  Split from parse_top_decl, whose
+ * size stage07 compiles only so far (selfhost ISSUES-100), so that the
+ * parameter list may grow -- K&R definitions, function-typed
+ * parameters.  nm and ty the declarator's name and type (the return
+ * type), ret_cty its C type; fn_ret_fnptr when the function returns a
+ * function pointer, T (*name(params))(params). */
+static Node *ps_function_decl(char *nm, int ty, int ret_cty, int is_static, int fn_ret_fnptr) {
+    Node *fn;
+    Node *kr_pre;
+    int kr;
+    Node *phead;
+    Node *ptail;
+    Node *p;
+    char pnm[256];
+    int pcols;
+    int pty;
+    int fp_tys[64];
+    int fp_ctys[64];
+    int fp_n;
+    int off;
+    int i;
+    int saw_unnamed_param;
+    fp_n = 0;
+    expect(TK_LPAREN);
+
+    /* Reset locals for this function */
+    i = 0;
+    while (i < ps_nlocals) {
+        free(ps_lname[i]);
+        if (ps_lsname[i]) free(ps_lsname[i]);
+        i = i + 1;
+    }
+    ps_nlocals = 0;
+    ps_fn_setjmp = 0;
+    ps_stack = 8;  /* reserve 8 bytes: saved r31 + saved r30 */
+    ps_stack_max = 8;
+    ps_slot_gen = 0;
+    ps_nparams = 0;
+    ps_is_varargs = 0;
+    ps_struct_ret = 0;
+    ps_retptr_off = 0;
+    ps_nlabels = 0;
+    saw_unnamed_param = 0;
+
+    /* Hidden first param for struct return */
+    if (ty_is_struct(ty)) {
+        require_complete_type(ty, "incomplete return type");
+        ps_struct_ret = 1;
+        ps_retptr_off = add_local("__retptr", TY_PTR + TY_INT);
+        ps_nparams = 1;
+    }
+
+    /* Parameters */
+    phead = NULL;
+    ptail = NULL;
+    kr = 0;
+    kr_pre = NULL;
+    if (lex_tok == TK_IDENT && !is_type()) {
+        ps_kr_read_ids();       /* an old-style identifier list */
+        kr = 1;
+        goto params_done;
+    }
+    if (lex_tok != TK_RPAREN) {
+        /* first param — or (void) meaning no params */
+        if (!is_type()) {
+            p_error("expected type in params");
+            return NULL;
+        }
+        if (lex_tok == TK_VOID) {
+            pty = parse_type();
+            skip_decl_qualifiers();
+            /* (void) → no params; parse_type takes the stars, so (void *)
+             * also ends at the ')' -- and was recorded as no parameters */
+            if (lex_tok == TK_RPAREN && pty == TY_VOID) {
+                goto params_done;
+            }
+        } else {
+            pty = parse_type();
+            skip_decl_qualifiers();
+        }
+        pty = ps_declarator_stars(pty, ps_type_cty);
+        /* Function pointer param: type (*name)(args) */
+        if (lex_tok == TK_LPAREN) {
+            int nested_fp;
+            next();
+            ps_skip_fnptr_stars();   /* (**name)(...) */
+            /* T (*(*name)(params))(params), as in a struct member: the
+             * inner ( * name ) ( params ) here, the outer ) ( params ) below */
+            nested_fp = 0;
+            if (lex_tok == TK_LPAREN) {
+                next();
+                ps_skip_fnptr_stars();   /* (**name)(...) */
+                nested_fp = 1;
+            }
+            ps_type_cty = ps_fnptr_cty(nested_fp ? ct_ptr(ct_func(ps_type_cty, 0, -1, 0)) : ps_type_cty);
+            if (lex_tok == TK_IDENT) {
+                off = add_local(lex_str, TY_INT);
+                p = nd_var(lex_str, off, TY_INT);
+                ps_bind_var(p, ps_nlocals - 1);
+                next();
+            } else {
+                /* an unnamed function-pointer parameter in a prototype:
+                 * int (*)(void*,int) (SQLite's API declarations) */
+                p = NULL;
+                saw_unnamed_param = 1;
+            }
+            if (nested_fp) {
+                expect(TK_RPAREN);
+                expect(TK_LPAREN);
+                p_skip_to_rparen();
+            }
+            expect(TK_RPAREN);
+            if (lex_tok == TK_LBRACK && !nested_fp) {
+                /* T (*name)[M]: a pointer to a row of M elements -- the
+                 * spelled-out form of `T name[][M]`.  Retype the local
+                 * (added above as a word) and record the row width. */
+                next();
+                pcols = parse_const_int();
+                expect(TK_RBRACK);
+                if (lex_tok == TK_LBRACK) p_error("parameter arrays of more than 2 dimensions unsupported");
+                pty = pty + TY_PTR;
+                if (p != NULL) {
+                    ps_ltype[ps_nlocals - 1] = pty;
+                    ps_lcols[ps_nlocals - 1] = pcols;
+                    ps_lcty[ps_nlocals - 1] = ps_rowptr_cty(ty_deref(pty), pcols);
+                    p->ty = pty;
+                    p->arr_cols = pcols;
+                    p->cty = ps_lcty[ps_nlocals - 1];
+                }
+            } else {
+            if (lex_tok == TK_LPAREN) {
+                next();
+                p_skip_to_rparen();
+            }
+            pty = TY_INT;  /* record fn-ptr param as a word */
+            }
+        } else if (lex_tok == TK_LBRACK) {
+            ps_parse_param_dims(&pty);
+            p = NULL;
+            saw_unnamed_param = 1;
+        } else if (lex_tok != TK_IDENT) {
+            if (lex_tok == TK_COMMA || lex_tok == TK_RPAREN) {
+                p = NULL;
+                saw_unnamed_param = 1;
+            } else {
+                p_error("expected param name");
+                return NULL;
+            }
+        } else {
+            require_complete_type(pty, "incomplete parameter type");
+            memcpy(pnm, lex_str, lex_slen + 1);
+            next();
+            if (lex_tok == TK_LPAREN) {
+                p = ps_fn_typed_param(pnm, &pty);
+            } else {
+            pcols = ps_parse_param_dims(&pty);
+            off = add_local(pnm, pty);      /* ps_parse_param_dims adjusted ps_type_cty */
+            ps_lcols[ps_nlocals - 1] = pcols;
+            p = nd_var(pnm, off, pty);
+            ps_bind_var(p, ps_nlocals - 1);
+            }
+        }
+        skip_gnu_decl_suffixes();
+        if (fp_n < 64) { fp_tys[fp_n] = pty; fp_ctys[fp_n] = (p != NULL && p->cty > 0) ? p->cty : ps_cty_quiet(pty); fp_n = fp_n + 1; }
+        ps_nparams = 1;
+        phead = p;
+        ptail = p;
+
+        while (lex_tok == TK_COMMA) {
+            next();
+            if (lex_tok == TK_ELLIPSIS) {
+                ps_is_varargs = 1;
+                next();
+                break;
+            }
+            if (!is_type()) {
+                p_error("expected type in params");
+                return NULL;
+            }
+            pty = parse_type();
+            skip_decl_qualifiers();
+            pty = ps_declarator_stars(pty, ps_type_cty);
+            /* Function pointer param: type (*name)(args) */
+            if (lex_tok == TK_LPAREN) {
+                int nested_fp;
+                int fp_ret_ty;
+                fp_ret_ty = pty;  /* T in T (*name)(params) */
+                next();
+                ps_skip_fnptr_stars();   /* (**name)(...) */
+                /* T (*(*name)(params))(params), as in a struct member: the
+                 * inner ( * name ) ( params ) here, the outer ) ( params ) below */
+                nested_fp = 0;
+                if (lex_tok == TK_LPAREN) {
+                    next();
+                    ps_skip_fnptr_stars();   /* (**name)(...) */
+                    nested_fp = 1;
+                }
+                ps_type_cty = ps_fnptr_cty(nested_fp ? ct_ptr(ct_func(ps_type_cty, 0, -1, 0)) : ps_type_cty);
+                if (lex_tok == TK_IDENT) {
+                off = add_local(lex_str, TY_INT);
+                    p = nd_var(lex_str, off, TY_INT);
+                    ps_bind_var(p, ps_nlocals - 1);
+                    next();
+                } else {
+                    /* an unnamed function-pointer parameter in a prototype:
+                     * int (*)(void*,int) (SQLite's API declarations) */
+                    p = NULL;
+                    saw_unnamed_param = 1;
+                }
+                if (nested_fp) {
+                    expect(TK_RPAREN);
+                    expect(TK_LPAREN);
+                    p_skip_to_rparen();
+                    fp_ret_ty = TY_PTR + TY_INT;
+                }
+                expect(TK_RPAREN);
+                if (lex_tok == TK_LBRACK && !nested_fp) {
+                    /* T (*name)[M]: a pointer to a row of M elements -- the
+                     * spelled-out form of `T name[][M]`.  Retype the local
+                     * (added above as a word) and record the row width. */
+                    next();
+                    pcols = parse_const_int();
+                    expect(TK_RBRACK);
+                    if (lex_tok == TK_LBRACK) p_error("parameter arrays of more than 2 dimensions unsupported");
+                    pty = pty + TY_PTR;
+                    if (p != NULL) {
+                        ps_ltype[ps_nlocals - 1] = pty;
+                        ps_lcols[ps_nlocals - 1] = pcols;
+                        ps_lcty[ps_nlocals - 1] = ps_rowptr_cty(ty_deref(pty), pcols);
+                        p->ty = pty;
+                        p->arr_cols = pcols;
+                        p->cty = ps_lcty[ps_nlocals - 1];
+                    }
+                } else {
+                if (lex_tok == TK_LPAREN) {
+                    int pfpb;
+                    int pfn;
+                    next();
+                    if (nested_fp) {
+                        p_skip_to_rparen();
+                    } else {
+                        /* Record the signature so a call through this
+                         * parameter keeps the return type (GitHub issue 69)
+                         * and converts i64 args (GitHub issue 41). */
+                        pfpb = ps_parse_fp_params(&pfn);
+                        ps_fp_set_ret(pfpb, fp_ret_ty);
+                        if (p != NULL) {
+                            ps_lfpbase[ps_nlocals - 1] = pfpb;
+                            ps_lfpn[ps_nlocals - 1] = pfn;
+                            p->is_fnptr = 1;
+                            p->val = pfpb;
+                            p->nparams = pfn;
+                        }
+                    }
+                }
+                pty = TY_INT;  /* record fn-ptr param as a word */
+                }
+            } else if (lex_tok == TK_LBRACK) {
+                ps_parse_param_dims(&pty);
+                p = NULL;
+                saw_unnamed_param = 1;
+            } else if (lex_tok != TK_IDENT) {
+                if (lex_tok == TK_COMMA || lex_tok == TK_RPAREN) {
+                    p = NULL;
+                    saw_unnamed_param = 1;
+                } else {
+                    p_error("expected param name");
+                    return NULL;
+                }
+            } else {
+                require_complete_type(pty, "incomplete parameter type");
+                memcpy(pnm, lex_str, lex_slen + 1);
+                next();
+                if (lex_tok == TK_LPAREN) {
+                    p = ps_fn_typed_param(pnm, &pty);
+                } else {
+                pcols = ps_parse_param_dims(&pty);
+                off = add_local(pnm, pty);
+                ps_lcols[ps_nlocals - 1] = pcols;
+                p = nd_var(pnm, off, pty);
+                ps_bind_var(p, ps_nlocals - 1);
+                }
+            }
+            skip_gnu_decl_suffixes();
+            if (phead == NULL) {
+                phead = p;
+                ptail = p;
+            } else if (p != NULL) {
+                ptail->next = p;
+                ptail = p;
+            }
+            if (fp_n < 64) { fp_tys[fp_n] = pty; fp_ctys[fp_n] = (p != NULL && p->cty > 0) ? p->cty : ps_cty_quiet(pty); fp_n = fp_n + 1; }
+            ps_nparams = ps_nparams + 1;
+        }
+    }
+params_done:
+    expect(TK_RPAREN);
+    if (fn_ret_fnptr) {
+        expect(TK_RPAREN);
+        expect(TK_LPAREN);
+        p_skip_to_rparen();
+    }
+    skip_gnu_decl_suffixes();
+
+    /* Prototype: type name(params); */
+    if (lex_tok == TK_SEMI) {
+        if (kr) p_error("a parameter list without types is only allowed in a function definition");
+        next();
+        add_func_type(nm, ty, fp_tys, fp_ctys, fp_n,
+                      fn_ret_fnptr ? ct_ptr(ct_func(ret_cty, 0, -1, 0)) : ret_cty);
+        return NULL;
+    }
+
+    /* Function body */
+    if (saw_unnamed_param) {
+        p_error("expected param name");
+        return NULL;
+    }
+    if (kr) {
+        phead = ps_kr_declare(&kr_pre);
+        fp_n = -1;      /* no prototype: calls promote their arguments */
+    }
+    add_func_type(nm, ty, fp_tys, fp_ctys, fp_n,
+                  fn_ret_fnptr ? ct_ptr(ct_func(ret_cty, 0, -1, 0)) : ret_cty);
+    fn = nd_new(ND_FUNC);
+    fn->name = strdup(nm);
+    fn->ty = ty;  /* store return type for sema pass */
+    fn->args = phead;
+    fn->nparams = ps_nparams;
+    fn->is_varargs = ps_is_varargs;
+    fn->is_static = is_static;
+    fn->offset = ps_struct_ret ? ps_retptr_off : 0; /* hidden __retptr offset */
+    ps_cur_func = fn->name;
+    ps_in_body = 1;
+    fn->body = parse_block();
+    ps_in_body = 0;
+    if (kr_pre) {           /* the K&R parameters' conversions come first */
+        p = kr_pre;
+        while (p->next) p = p->next;
+        p->next = fn->body->body;
+        fn->body->body = kr_pre;
+    }
+    fn->locals_size = ps_stack_max;
+
+    return fn;
+}
+
 static Node *parse_top_decl(void) {
     int fp_is_arr;
     int fp_count;
@@ -8384,302 +8894,8 @@ array_after_brackets:
 
     /* Function: type name(params) { body } or type name(params); */
 function_decl:
-    expect(TK_LPAREN);
+    return ps_function_decl(nm, ty, ret_cty, is_static, fn_ret_fnptr);
 
-    /* Reset locals for this function */
-    i = 0;
-    while (i < ps_nlocals) {
-        free(ps_lname[i]);
-        if (ps_lsname[i]) free(ps_lsname[i]);
-        i = i + 1;
-    }
-    ps_nlocals = 0;
-    ps_fn_setjmp = 0;
-    ps_stack = 8;  /* reserve 8 bytes: saved r31 + saved r30 */
-    ps_stack_max = 8;
-    ps_slot_gen = 0;
-    ps_nparams = 0;
-    ps_is_varargs = 0;
-    ps_struct_ret = 0;
-    ps_retptr_off = 0;
-    ps_nlabels = 0;
-    saw_unnamed_param = 0;
-
-    /* Hidden first param for struct return */
-    if (ty_is_struct(ty)) {
-        require_complete_type(ty, "incomplete return type");
-        ps_struct_ret = 1;
-        ps_retptr_off = add_local("__retptr", TY_PTR + TY_INT);
-        ps_nparams = 1;
-    }
-
-    /* Parameters */
-    phead = NULL;
-    ptail = NULL;
-    if (lex_tok != TK_RPAREN) {
-        /* first param — or (void) meaning no params */
-        if (!is_type()) {
-            p_error("expected type in params");
-            return NULL;
-        }
-        if (lex_tok == TK_VOID) {
-            pty = parse_type();
-            skip_decl_qualifiers();
-            /* (void) → no params; parse_type takes the stars, so (void *)
-             * also ends at the ')' -- and was recorded as no parameters */
-            if (lex_tok == TK_RPAREN && pty == TY_VOID) {
-                goto params_done;
-            }
-        } else {
-            pty = parse_type();
-            skip_decl_qualifiers();
-        }
-        pty = ps_declarator_stars(pty, ps_type_cty);
-        /* Function pointer param: type (*name)(args) */
-        if (lex_tok == TK_LPAREN) {
-            int nested_fp;
-            next();
-            ps_skip_fnptr_stars();   /* (**name)(...) */
-            /* T (*(*name)(params))(params), as in a struct member: the
-             * inner ( * name ) ( params ) here, the outer ) ( params ) below */
-            nested_fp = 0;
-            if (lex_tok == TK_LPAREN) {
-                next();
-                ps_skip_fnptr_stars();   /* (**name)(...) */
-                nested_fp = 1;
-            }
-            ps_type_cty = ps_fnptr_cty(nested_fp ? ct_ptr(ct_func(ps_type_cty, 0, -1, 0)) : ps_type_cty);
-            if (lex_tok == TK_IDENT) {
-                off = add_local(lex_str, TY_INT);
-                p = nd_var(lex_str, off, TY_INT);
-                ps_bind_var(p, ps_nlocals - 1);
-                next();
-            } else {
-                /* an unnamed function-pointer parameter in a prototype:
-                 * int (*)(void*,int) (SQLite's API declarations) */
-                p = NULL;
-                saw_unnamed_param = 1;
-            }
-            if (nested_fp) {
-                expect(TK_RPAREN);
-                expect(TK_LPAREN);
-                p_skip_to_rparen();
-            }
-            expect(TK_RPAREN);
-            if (lex_tok == TK_LBRACK && !nested_fp) {
-                /* T (*name)[M]: a pointer to a row of M elements -- the
-                 * spelled-out form of `T name[][M]`.  Retype the local
-                 * (added above as a word) and record the row width. */
-                next();
-                pcols = parse_const_int();
-                expect(TK_RBRACK);
-                if (lex_tok == TK_LBRACK) p_error("parameter arrays of more than 2 dimensions unsupported");
-                pty = pty + TY_PTR;
-                if (p != NULL) {
-                    ps_ltype[ps_nlocals - 1] = pty;
-                    ps_lcols[ps_nlocals - 1] = pcols;
-                    ps_lcty[ps_nlocals - 1] = ps_rowptr_cty(ty_deref(pty), pcols);
-                    p->ty = pty;
-                    p->arr_cols = pcols;
-                    p->cty = ps_lcty[ps_nlocals - 1];
-                }
-            } else {
-            if (lex_tok == TK_LPAREN) {
-                next();
-                p_skip_to_rparen();
-            }
-            pty = TY_INT;  /* record fn-ptr param as a word */
-            }
-        } else if (lex_tok == TK_LBRACK) {
-            ps_parse_param_dims(&pty);
-            p = NULL;
-            saw_unnamed_param = 1;
-        } else if (lex_tok != TK_IDENT) {
-            if (lex_tok == TK_COMMA || lex_tok == TK_RPAREN) {
-                p = NULL;
-                saw_unnamed_param = 1;
-            } else {
-                p_error("expected param name");
-                return NULL;
-            }
-        } else {
-            require_complete_type(pty, "incomplete parameter type");
-            memcpy(pnm, lex_str, lex_slen + 1);
-            next();
-            pcols = ps_parse_param_dims(&pty);
-            off = add_local(pnm, pty);      /* ps_parse_param_dims adjusted ps_type_cty */
-            ps_lcols[ps_nlocals - 1] = pcols;
-            p = nd_var(pnm, off, pty);
-            ps_bind_var(p, ps_nlocals - 1);
-        }
-        skip_gnu_decl_suffixes();
-        if (fp_n < 64) { fp_tys[fp_n] = pty; fp_ctys[fp_n] = (p != NULL && p->cty > 0) ? p->cty : ps_cty_quiet(pty); fp_n = fp_n + 1; }
-        ps_nparams = 1;
-        phead = p;
-        ptail = p;
-
-        while (lex_tok == TK_COMMA) {
-            next();
-            if (lex_tok == TK_ELLIPSIS) {
-                ps_is_varargs = 1;
-                next();
-                break;
-            }
-            if (!is_type()) {
-                p_error("expected type in params");
-                return NULL;
-            }
-            pty = parse_type();
-            skip_decl_qualifiers();
-            pty = ps_declarator_stars(pty, ps_type_cty);
-            /* Function pointer param: type (*name)(args) */
-            if (lex_tok == TK_LPAREN) {
-                int nested_fp;
-                int fp_ret_ty;
-                fp_ret_ty = pty;  /* T in T (*name)(params) */
-                next();
-                ps_skip_fnptr_stars();   /* (**name)(...) */
-                /* T (*(*name)(params))(params), as in a struct member: the
-                 * inner ( * name ) ( params ) here, the outer ) ( params ) below */
-                nested_fp = 0;
-                if (lex_tok == TK_LPAREN) {
-                    next();
-                    ps_skip_fnptr_stars();   /* (**name)(...) */
-                    nested_fp = 1;
-                }
-                ps_type_cty = ps_fnptr_cty(nested_fp ? ct_ptr(ct_func(ps_type_cty, 0, -1, 0)) : ps_type_cty);
-                if (lex_tok == TK_IDENT) {
-                off = add_local(lex_str, TY_INT);
-                    p = nd_var(lex_str, off, TY_INT);
-                    ps_bind_var(p, ps_nlocals - 1);
-                    next();
-                } else {
-                    /* an unnamed function-pointer parameter in a prototype:
-                     * int (*)(void*,int) (SQLite's API declarations) */
-                    p = NULL;
-                    saw_unnamed_param = 1;
-                }
-                if (nested_fp) {
-                    expect(TK_RPAREN);
-                    expect(TK_LPAREN);
-                    p_skip_to_rparen();
-                    fp_ret_ty = TY_PTR + TY_INT;
-                }
-                expect(TK_RPAREN);
-                if (lex_tok == TK_LBRACK && !nested_fp) {
-                    /* T (*name)[M]: a pointer to a row of M elements -- the
-                     * spelled-out form of `T name[][M]`.  Retype the local
-                     * (added above as a word) and record the row width. */
-                    next();
-                    pcols = parse_const_int();
-                    expect(TK_RBRACK);
-                    if (lex_tok == TK_LBRACK) p_error("parameter arrays of more than 2 dimensions unsupported");
-                    pty = pty + TY_PTR;
-                    if (p != NULL) {
-                        ps_ltype[ps_nlocals - 1] = pty;
-                        ps_lcols[ps_nlocals - 1] = pcols;
-                        ps_lcty[ps_nlocals - 1] = ps_rowptr_cty(ty_deref(pty), pcols);
-                        p->ty = pty;
-                        p->arr_cols = pcols;
-                        p->cty = ps_lcty[ps_nlocals - 1];
-                    }
-                } else {
-                if (lex_tok == TK_LPAREN) {
-                    int pfpb;
-                    int pfn;
-                    next();
-                    if (nested_fp) {
-                        p_skip_to_rparen();
-                    } else {
-                        /* Record the signature so a call through this
-                         * parameter keeps the return type (GitHub issue 69)
-                         * and converts i64 args (GitHub issue 41). */
-                        pfpb = ps_parse_fp_params(&pfn);
-                        ps_fp_set_ret(pfpb, fp_ret_ty);
-                        if (p != NULL) {
-                            ps_lfpbase[ps_nlocals - 1] = pfpb;
-                            ps_lfpn[ps_nlocals - 1] = pfn;
-                            p->is_fnptr = 1;
-                            p->val = pfpb;
-                            p->nparams = pfn;
-                        }
-                    }
-                }
-                pty = TY_INT;  /* record fn-ptr param as a word */
-                }
-            } else if (lex_tok == TK_LBRACK) {
-                ps_parse_param_dims(&pty);
-                p = NULL;
-                saw_unnamed_param = 1;
-            } else if (lex_tok != TK_IDENT) {
-                if (lex_tok == TK_COMMA || lex_tok == TK_RPAREN) {
-                    p = NULL;
-                    saw_unnamed_param = 1;
-                } else {
-                    p_error("expected param name");
-                    return NULL;
-                }
-            } else {
-                require_complete_type(pty, "incomplete parameter type");
-                memcpy(pnm, lex_str, lex_slen + 1);
-                next();
-                pcols = ps_parse_param_dims(&pty);
-                off = add_local(pnm, pty);
-                ps_lcols[ps_nlocals - 1] = pcols;
-                p = nd_var(pnm, off, pty);
-                ps_bind_var(p, ps_nlocals - 1);
-            }
-            skip_gnu_decl_suffixes();
-            if (phead == NULL) {
-                phead = p;
-                ptail = p;
-            } else if (p != NULL) {
-                ptail->next = p;
-                ptail = p;
-            }
-            if (fp_n < 64) { fp_tys[fp_n] = pty; fp_ctys[fp_n] = (p != NULL && p->cty > 0) ? p->cty : ps_cty_quiet(pty); fp_n = fp_n + 1; }
-            ps_nparams = ps_nparams + 1;
-        }
-    }
-params_done:
-    expect(TK_RPAREN);
-    if (fn_ret_fnptr) {
-        expect(TK_RPAREN);
-        expect(TK_LPAREN);
-        p_skip_to_rparen();
-    }
-    skip_gnu_decl_suffixes();
-
-    /* Prototype: type name(params); */
-    if (lex_tok == TK_SEMI) {
-        next();
-        add_func_type(nm, ty, fp_tys, fp_ctys, fp_n,
-                      fn_ret_fnptr ? ct_ptr(ct_func(ret_cty, 0, -1, 0)) : ret_cty);
-        return NULL;
-    }
-
-    /* Function body */
-    if (saw_unnamed_param) {
-        p_error("expected param name");
-        return NULL;
-    }
-    add_func_type(nm, ty, fp_tys, fp_ctys, fp_n,
-                  fn_ret_fnptr ? ct_ptr(ct_func(ret_cty, 0, -1, 0)) : ret_cty);
-    fn = nd_new(ND_FUNC);
-    fn->name = strdup(nm);
-    fn->ty = ty;  /* store return type for sema pass */
-    fn->args = phead;
-    fn->nparams = ps_nparams;
-    fn->is_varargs = ps_is_varargs;
-    fn->is_static = is_static;
-    fn->offset = ps_struct_ret ? ps_retptr_off : 0; /* hidden __retptr offset */
-    ps_cur_func = fn->name;
-    ps_in_body = 1;
-    fn->body = parse_block();
-    ps_in_body = 0;
-    fn->locals_size = ps_stack_max;
-
-    return fn;
 }
 
 static Node *parse_program(void) {

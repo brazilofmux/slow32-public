@@ -1999,6 +1999,7 @@ long time(long *t);
  * clock -- or from SOURCE_DATE_EPOCH, for a build that is to come out
  * the same each time.  The civil date from days since 1970 is Howard
  * Hinnant's.  They were undefined. */
+static char pp_months[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
 static void pp_install_date_time(void) {
     char *e;
     long t;
@@ -2031,7 +2032,7 @@ static void pp_install_date_time(void) {
     d = doy - (153 * mp + 2) / 5 + 1;
     m = mp < 10 ? mp + 3 : mp - 9;
     if (m <= 2) y = y + 1;
-    mon = "JanFebMarAprMayJunJulAugSepOctNovDec" + 3 * (m - 1);
+    mon = pp_months + 3 * (m - 1);
     buf[0] = 34;
     buf[1] = mon[0];
     buf[2] = mon[1];
