@@ -2896,6 +2896,7 @@ static void ps_mangle_static(char *func, char *var) {
  * member reports cols * element size; everything else is ty_size. */
 static void sema_expr(Node *n);    /* sema.h: sizeof's operand gets its C type */
 static int sema_vty(Node *x);
+static long long sema_cvalof(Node *c);
 static int ps_sizeof_node_mty(Node *n);
 
 /* sizeof expr: the size of the operand's C type, which sema works out
@@ -3934,6 +3935,150 @@ static int try_consume_type_cast(void) {
     return 1;
 }
 
+/* --- Address constants (6.6p9) --- */
+
+/* An address constant's base, from ps_addr_value/ps_addr_lvalue: a
+ * named symbol, or a string literal (pool index), and a byte offset. */
+static char *ps_ac_sym;
+static int   ps_ac_str;      /* the string's pool index; -1 = not a string */
+static int   ps_ac_off;
+
+static int ps_addr_value(Node *n);
+
+/* The address of lvalue n: a global or static local, a member of one
+ * (its offset added), or what a pointer constant points at. */
+static int ps_addr_lvalue(Node *n) {
+    char *ss;
+    if (n->kind == ND_VAR) {
+        if (n->is_local) {
+            ss = ps_static_local_sym(n->name);
+            if (!ss) return 0;      /* an automatic object has no constant address */
+            ps_ac_sym = ss;
+        } else {
+            ps_ac_sym = n->name;
+        }
+        ps_ac_str = -1;
+        ps_ac_off = 0;
+        return 1;
+    }
+    if (n->kind == ND_STRING) {
+        ps_ac_sym = NULL;
+        ps_ac_str = n->val;
+        ps_ac_off = 0;
+        return 1;
+    }
+    if (n->kind == ND_MEMBER && n->lhs && n->bit_width == 0) {
+        if (!ps_addr_lvalue(n->lhs)) return 0;
+        ps_ac_off = ps_ac_off + n->val;
+        return 1;
+    }
+    if (n->kind == ND_UNARY && n->op == TK_STAR && n->lhs) return ps_addr_value(n->lhs);
+    return 0;
+}
+
+/* The value of n as an address constant: an array or function
+ * designator, &lvalue, a cast of one, or one plus or minus an integer
+ * constant expression scaled by what it points to. */
+static int ps_addr_value(Node *n) {
+    int t;
+    int esz;
+    long long c;
+    if (n->kind == ND_CAST && n->lhs) return ps_addr_value(n->lhs);
+    if (n->kind == ND_FUNC_REF) {
+        ps_ac_sym = n->name;
+        ps_ac_str = -1;
+        ps_ac_off = 0;
+        return 1;
+    }
+    if (n->kind == ND_STRING) return ps_addr_lvalue(n);
+    /* an array decays to its address, a function designator likewise */
+    if (n->cty > 0 && (ct_is_array(n->cty) || (n->kind == ND_VAR && ct_is_func(n->cty))))
+        return ps_addr_lvalue(n);
+    if (n->kind == ND_COMMA && n->op == TK_LBRACE && n->rhs) return ps_addr_value(n->rhs);
+    if (n->kind == ND_UNARY && n->op == TK_AMP && n->lhs) return ps_addr_lvalue(n->lhs);
+    if (n->kind == ND_BINOP && (n->op == TK_PLUS || n->op == TK_MINUS) && n->lhs && n->rhs) {
+        if ((n->rhs->attr & AT_ICX) && ct_is_ptr(sema_vty(n->lhs))) {
+            if (!ps_addr_value(n->lhs)) return 0;
+            t = ct_baseof(sema_vty(n->lhs));
+            c = sema_cvalof(n->rhs);
+        } else if (n->op == TK_PLUS && (n->lhs->attr & AT_ICX) && ct_is_ptr(sema_vty(n->rhs))) {
+            if (!ps_addr_value(n->rhs)) return 0;
+            t = ct_baseof(sema_vty(n->rhs));
+            c = sema_cvalof(n->lhs);
+        } else {
+            return 0;
+        }
+        esz = ct_kindof(t) == CT_VOID ? 1 : ct_sizeof(t);
+        if (esz <= 0) return 0;
+        if (n->op == TK_MINUS) c = 0 - c;
+        ps_ac_off = ps_ac_off + (int)c * esz;
+        return 1;
+    }
+    return 0;
+}
+
+/* A static initializer that is an address constant (6.6p9, 6.7.9p4):
+ * the whole expression, typed by sema, a symbol or string plus a byte
+ * offset -- garr + 4, &gs.b[2], &garr[5] - 2, "hello" + 1,
+ * (char *)&gs + sizeof(int).  The token-level reader below took a name
+ * and stopped at the `+` or the `.`.  Rewinds and returns 0 for
+ * anything else, which the older paths then read as before. */
+static int ps_init_addr_const(int gidx, int rel_off, int sz) {
+    Node *n;
+    ps_lex_mark();
+    n = parse_assign();
+    sema_expr(n);
+    if (!ps_addr_value(n) || (lex_tok != TK_COMMA && lex_tok != TK_RBRACE && lex_tok != TK_SEMI)) {
+        ps_lex_rewind();
+        return 0;
+    }
+    ps_lex_commit();
+    if (ps_ac_str >= 0) {
+        ps_ginit_add_reloc_at(gidx, rel_off, GIRELOC_STRING, ps_ac_str, sz);
+    } else {
+        ps_ginit_add_sym_reloc_at(gidx, rel_off, ps_ac_sym, sz);
+    }
+    ps_girel_add[ps_girel_last_pos] = ps_ac_off;
+    return 1;
+}
+
+/* Is the string literal just read followed by + or - (after any
+ * literals it concatenates with)?  Then the initializer is "hello" + 1,
+ * an address constant, not the string.  Read from the raw text: lexing
+ * a string adds it to the pool. */
+static int ps_string_then_offset(void) {
+    char *p;
+    p = lex_rp;
+    while (1) {
+        while (*p == 32 || *p == 9 || *p == 10 || *p == 13) p = p + 1;
+        if (*p != 34) break;
+        p = p + 1;
+        while (*p != 0 && *p != 34) {
+            if (*p == 92 && p[1] != 0) p = p + 1;
+            p = p + 1;
+        }
+        if (*p == 34) p = p + 1;
+    }
+    return *p == 43 || *p == 45;
+}
+
+/* A file-scope scalar's initializer that is not a literal or a name:
+ * for a pointer, an address constant if it is one ((char *)&gs + 4),
+ * otherwise an integer constant as before. */
+static void ps_scalar_global_init(int idx, int ty) {
+    if (ty_is_ptr(ty) && lex_tok != TK_NUM) {
+        ps_ginit_begin(idx);
+        if (ps_init_addr_const(idx, 0, ty_size(ty))) {
+            ps_ginit_ensure_len(idx, ty_size(ty));
+            ps_ginit_finish(idx);
+            return;
+        }
+        ps_ginit_start[idx] = -1;       /* not one: as if never begun */
+        ps_ghasinit[idx] = 0;
+    }
+    ps_set_scalar_init(idx, parse_const_int(), 0);
+}
+
 static int parse_global_init_symbol_reloc_at(int gidx, int rel_off, int sz) {
     char nm[256];
     int ci;
@@ -3944,6 +4089,7 @@ static int parse_global_init_symbol_reloc_at(int gidx, int rel_off, int sz) {
     int nparen;
     int got_idx;
 
+    if (ps_init_addr_const(gidx, rel_off, sz)) return 1;
     while (try_consume_type_cast()) {
     }
     amp = 0;
@@ -6077,6 +6223,59 @@ static Node *ps_cl_string(char *nm, int ty, int count) {
  * (GitHub issue 79: d25/d26 in the cross-compiler corpus, and the same
  * on SLOW-32; the assignment form `q = &(int){7}` was never affected).
  * Save the outer state on entry and put it back on every return. */
+/* A compound literal at file scope has static storage (6.5.2.5p5): an
+ * anonymous TU-local global, its braces read as a static initializer,
+ * and the literal that global -- so &(struct P){11, 12} and
+ * (int[]){4, 5, 6} are address constants.  It was built as a hidden
+ * local, and there are none at file scope. */
+static int ps_file_clit_id;
+static Node *ps_file_compound_literal(int ty, int arr_count) {
+    char nm[64];
+    int gi;
+    int cnt;
+    int k;
+    int v;
+    Node *n;
+    /* "__fclit." and the number */
+    memcpy(nm, "__fclit.", 9);
+    k = 8;
+    v = ps_file_clit_id;
+    ps_file_clit_id = ps_file_clit_id + 1;
+    if (v >= 1000) { nm[k] = 48 + (v / 1000) % 10; k = k + 1; }
+    if (v >= 100) { nm[k] = 48 + (v / 100) % 10; k = k + 1; }
+    if (v >= 10) { nm[k] = 48 + (v / 10) % 10; k = k + 1; }
+    nm[k] = 48 + v % 10;
+    nm[k + 1] = 0;
+    if (arr_count != 0) {
+        gi = add_defined_global(nm, ty + TY_PTR, 0);
+        ps_glocal[gi] = 1;
+        ps_ginit_begin(gi);
+        cnt = parse_global_init_array_at(ty, arr_count, gi, 0);
+        ps_gsize[gi] = ty_size(ty) * cnt;
+        ps_gcty[gi] = ct_array(ct_from_mty(ty, 0), cnt);
+        ps_ginit_ensure_len(gi, ps_gsize[gi]);
+        ps_ginit_finish(gi);
+    } else if (ty_is_struct(ty)) {
+        gi = add_defined_global(nm, ty, 0);
+        ps_glocal[gi] = 1;
+        ps_ginit_begin(gi);
+        parse_global_init_value(ty, gi);
+        ps_ginit_finish(gi);
+    } else {
+        gi = add_defined_global(nm, ty, 0);
+        ps_glocal[gi] = 1;
+        expect(TK_LBRACE);
+        ps_set_scalar_init(gi, parse_const_int(), 0);
+        if (lex_tok == TK_COMMA) next();
+        expect(TK_RBRACE);
+    }
+    n = nd_var(ps_gname[gi], 0, ps_gtype[gi]);
+    n->cty = ps_gcty[gi];
+    n->is_local = 0;
+    n->is_array = arr_count != 0;
+    return n;
+}
+
 static Node *parse_compound_literal_expr(int ty, int arr_count) {
     char nm[256];
     int off;
@@ -6094,6 +6293,7 @@ static Node *parse_compound_literal_expr(int ty, int arr_count) {
     Node *sv_head;
     Node *sv_tail;
 
+    if (!ps_in_body) return ps_file_compound_literal(ty, arr_count);
     sv_name = ps_li_name;
     sv_off = ps_li_off;
     sv_slot = ps_li_slot;
@@ -7692,7 +7892,7 @@ plain_name:
                     ps_ginit_begin(idx);
                     parse_global_init_value(xty, idx);
                     ps_ginit_finish(idx);
-                } else if (lex_tok == TK_STRING) {
+                } else if (lex_tok == TK_STRING && !ps_string_then_offset()) {
                     ps_set_str_init(idx, parse_string_literal());
                 } else if (ty_is_fp(xty)) {
                     /* float/double global initializer: FP literal or
@@ -7718,7 +7918,7 @@ plain_name:
                         ghi = parse_const_ll_hi(&glo);
                         ps_set_scalar_init(idx, glo, ghi);
                     } else {
-                        ps_set_scalar_init(idx, parse_const_int(), 0);
+                        ps_scalar_global_init(idx, xty);
                     }
                 }
             }

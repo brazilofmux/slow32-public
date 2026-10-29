@@ -248,7 +248,7 @@
 6.5.2.4-postfix-double PASS
 6.5.2.4-postfix-incdec PASS
 6.5.2.4-postfix-rvalue DIAG
-6.5.2.5-compound-file-scope REJECTS
+6.5.2.5-compound-file-scope PASS
 6.5.2.5-compound-literal PASS
 6.5.2.5-compound-literal-string PASS
 6.5.2.5-compound-loop PASS
@@ -296,10 +296,10 @@
 6.5.8-result-is-int PASS
 6.5.9-eq-mismatch ACCEPTS
 6.5.9-equality PASS
-6.6-address-const-cast REJECTS
+6.6-address-const-cast PASS
 6.6-address-const-func PASS
-6.6-address-const-member REJECTS
-6.6-address-const-offset REJECTS
+6.6-address-const-member PASS
+6.6-address-const-offset PASS
 6.6-address-constants PASS
 6.6-arith-const-double PASS
 6.6-arith-const-double-int PASS
@@ -427,7 +427,7 @@
 6.7.9-designator-range DIAG
 6.7.9-eval-order-side PASS
 6.7.9-scalar-aggregate PASS
-6.7.9-static-address-arith REJECTS
+6.7.9-static-address-arith PASS
 6.7.9-static-address-const PASS
 6.7.9-static-nonconst DIAG
 6.7.9-string-too-long ACCEPTS

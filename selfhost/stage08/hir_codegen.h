@@ -4992,6 +4992,10 @@ static int gen_global_init(int i) {
                 if (ps_girel_kind[reli] == GIRELOC_STRING) {
                     cg_s("    .word .LS");
                     cg_n(ps_girel_idx[reli]);
+                    if (ps_girel_add[reli] != 0) {      /* "hello" + 1 */
+                        cg_c(43);
+                        cg_n(ps_girel_add[reli]);
+                    }
                 } else {
                     cg_s("    .word ");
                     /* Named symbol relocs carry the target in

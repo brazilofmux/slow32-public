@@ -594,7 +594,24 @@ not implemented are declared, as 6.10.8.3 has an implementation do:
 `__STDC_NO_ATOMICS__`.  A probe of one of them carries
 `// optional: __STDC_NO_X__`, and when stage08 defines that macro and
 refuses the probe, or answers otherwise than clang (which has the
-feature), the verdict is OPTIONAL: a choice, not a gap (ten probes).  `S12CC_CONSTRAINT_WARN=1` turns
+feature), the verdict is OPTIONAL: a choice, not a gap (ten probes).
+
+**The REJECTS: address constants** (2026-10-29).  A static initializer
+that is an address constant (6.6p9) is evaluated on its type, not read
+by its tokens: the whole expression is parsed, typed by sema, and
+walked to a base -- a global, a static local, a function, a string
+literal -- and a byte offset: members add theirs, `*` and `[]` follow
+the address, `+` and `-` with an integer constant scale by the pointee's
+C type, casts pass through (`ps_addr_value`, `ps_addr_lvalue`,
+`ps_init_addr_const`).  The token reader took a name and stopped at the
+`+` or the `.`: `garr + 4`, `&gs.b[2]`, `&garr[5] - 2`, `"hello" + 1`
+and `(char *)&gs + sizeof(int)` were refused.  It still reads what the
+evaluator does not claim, and what both read gives one relocation, so
+SQLite's assembly is byte-identical.  A string's relocation carries its
+addend now.  A compound literal at file scope has static storage
+(6.5.2.5p5): an anonymous TU-local global initialized from its braces
+(`ps_file_compound_literal`), where it had been built as a hidden local
+there are none of.  `S12CC_CONSTRAINT_WARN=1` turns
 the errors into warnings, to survey a corpus.
 
 ## Constraints on the work
