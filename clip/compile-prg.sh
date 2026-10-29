@@ -42,12 +42,15 @@ bash "$CLIP_DIR/build.sh" >/dev/null
 
 # dBase runtime objects (everything except the REPL)
 OBJECTS=""
+# The newest dbase header: an object older than it is stale too
+NEWEST_H=$(ls -t "$ROOT/dbase/src"/*.h | head -1)
 for src in "$ROOT/dbase/src"/*.c; do
     b="$(basename "$src" .c)"
     if [ "$b" = "main" ]; then
         continue
     fi
-    if [ ! -f "$ROOT/dbase/src/$b.s32o" ] || [ "$src" -nt "$ROOT/dbase/src/$b.s32o" ]; then
+    if [ ! -f "$ROOT/dbase/src/$b.s32o" ] || [ "$src" -nt "$ROOT/dbase/src/$b.s32o" ] ||
+       [ "$NEWEST_H" -nt "$ROOT/dbase/src/$b.s32o" ]; then
         echo "  compile dbase $b.c"
         "$CLANG" $CFLAGS $OPT -DNDEBUG "$src" -o "$ROOT/dbase/src/$b.ll"
         "$LLC" -mtriple=$TARGET "$ROOT/dbase/src/$b.ll" -o "$ROOT/dbase/src/$b.s"
