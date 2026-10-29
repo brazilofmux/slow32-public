@@ -452,7 +452,20 @@ in the corpus: a prototype with an unnamed `void *` parameter --
 `parse_type` takes the star and the `(void)` test saw the `)`; and a
 pointer to a function returning a function pointer (`void
 (*(*xDlSym)(void *, const char *))(void)`, as member or parameter) was
-typed one function level short, its call a void value.  `S12CC_CONSTRAINT_WARN=1` turns
+typed one function level short, its call a void value.
+
+The survey, run over SQLite, then the whole corpus through the gates
+(`S12CC_SURVEY_LOG=path` appends the reports to a file), found the C
+types' remaining gaps before it found SQLite's violations: a `const`
+read with the storage class (`static const char *z`) never reached the
+C type -- every such local's and global's pointee was unqualified
+(`ps_storage_next`); `ps_parse_fp_params` left the last parameter's
+type in `ps_type_cty`, so an unnamed function-pointer parameter after
+the first (`sqlite3_result_text(..., void(*)(void*))`) was an int;
+`va_arg(ap, T)` had no C type; `?:` on two pointers fell back to the
+machine type; and a pointer to a function pointer at any depth (`void
+(**aExt)(void)`) did not agree with its int machine spelling and fell
+back to int.  SQLite now has no report left.  `S12CC_CONSTRAINT_WARN=1` turns
 the errors into warnings, to survey a corpus.
 
 ## Constraints on the work

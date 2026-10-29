@@ -673,13 +673,20 @@ static int ps_parse_fp_params(int *np_out) {
     int ty;
     int var;
     int base;
+    int outer_cty;
+    /* The parameters' types are read with parse_type, which sets
+     * ps_type_cty; the declarator they belong to is still using it.  An
+     * unnamed fn-pointer parameter after the first took its last
+     * parameter's type -- SQLite's sqlite3_result_text(..., void(*)(void*))
+     * had an int where the destructor goes. */
+    outer_cty = ps_type_cty;
     np = 0;
     var = 0;
     *np_out = 0;
-    if (lex_tok == TK_RPAREN) { next(); return ps_fp_store(ptys, pctys, 0); }
+    if (lex_tok == TK_RPAREN) { next(); ps_type_cty = outer_cty; return ps_fp_store(ptys, pctys, 0); }
     while (lex_tok != TK_EOF) {
         if (lex_tok == TK_ELLIPSIS) { next(); var = 1; break; }
-        if (!is_type()) { p_skip_to_rparen(); return -1; }
+        if (!is_type()) { p_skip_to_rparen(); ps_type_cty = outer_cty; return -1; }
         ty = parse_type();
         skip_decl_qualifiers();
         ty = ps_declarator_stars(ty, ps_type_cty);
@@ -713,6 +720,7 @@ static int ps_parse_fp_params(int *np_out) {
     /* A call through a variadic signature packs its doubles the way a
      * direct call to a variadic function does (hl_expr, ND_CALL_PTR). */
     if (base >= 0 && base < PS_MAX_FPARAM) ps_fpvar[base] = var;
+    ps_type_cty = outer_cty;
     return base;
 }
 
@@ -1252,6 +1260,17 @@ static int ps_base_cty(int ty, int ckhint, int td_cty, int is_const, int is_vol)
     return c;
 }
 
+/* A const among a declaration's storage-class words (static const char
+ * *z): the declaration loops read it before parse_type runs, and the C
+ * type lost it -- the pointee of every such local and global was
+ * unqualified.  ps_storage_next steps over one of those words and keeps
+ * the const for parse_type. */
+static int ps_lead_const;
+static void ps_storage_next(void) {
+    if (lex_tok == TK_CONST) ps_lead_const = 1;
+    next();
+}
+
 static int parse_type(void) {
     int saw_signed;
     int lead_const;
@@ -1280,7 +1299,8 @@ static int parse_type(void) {
     ps_type_fpn = 0;
     ps_type_volb = 0;
     ps_type_volp = 0;
-    lead_const = 0;
+    lead_const = ps_lead_const;     /* a const read with the storage class */
+    ps_lead_const = 0;
     ckhint = 0;
     td_cty = -1;
     saw_signed = 0;
@@ -4466,6 +4486,7 @@ static Node *parse_primary(void) {
             n = nd_new(ND_VA_ARG);
             n->lhs = arg;
             n->ty = ty;
+            n->cty = ps_type_cty;   /* va_arg(ap, fnptr_t) was an int */
             return n;
         }
 
@@ -6212,7 +6233,7 @@ static Node *parse_stmt(void) {
         if (lex_tok == TK_STATIC) is_static = 1;
         if (lex_tok == TK_EXTERN) is_extern = 1;
         if (is_gnu_attr_ident()) skip_gnu_attributes();
-        else next();
+        else ps_storage_next();
     }
 
     /* local variable declaration */
@@ -6846,7 +6867,7 @@ static Node *parse_top_decl(void) {
         if (lex_tok == TK_STATIC) is_static = 1;
         if (lex_tok == TK_CONST) lead_const = 1;
         if (is_gnu_attr_ident()) skip_gnu_attributes();
-        else next();
+        else ps_storage_next();
     }
 
     /* Typedef */
@@ -7313,8 +7334,8 @@ function_decl:
                 ps_skip_fnptr_stars();   /* (**name)(...) */
                 nested_fp = 1;
             }
+            ps_type_cty = ps_fnptr_cty(nested_fp ? ct_ptr(ct_func(ps_type_cty, 0, -1, 0)) : ps_type_cty);
             if (lex_tok == TK_IDENT) {
-                ps_type_cty = ps_fnptr_cty(nested_fp ? ct_ptr(ct_func(ps_type_cty, 0, -1, 0)) : ps_type_cty);
                 off = add_local(lex_str, TY_INT);
                 p = nd_var(lex_str, off, TY_INT);
                 ps_bind_var(p, ps_nlocals - 1);
@@ -7412,8 +7433,8 @@ function_decl:
                     ps_skip_fnptr_stars();   /* (**name)(...) */
                     nested_fp = 1;
                 }
+                ps_type_cty = ps_fnptr_cty(nested_fp ? ct_ptr(ct_func(ps_type_cty, 0, -1, 0)) : ps_type_cty);
                 if (lex_tok == TK_IDENT) {
-                    ps_type_cty = ps_fnptr_cty(nested_fp ? ct_ptr(ct_func(ps_type_cty, 0, -1, 0)) : ps_type_cty);
                 off = add_local(lex_str, TY_INT);
                     p = nd_var(lex_str, off, TY_INT);
                     ps_bind_var(p, ps_nlocals - 1);

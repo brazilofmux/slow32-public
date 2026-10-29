@@ -84,6 +84,7 @@ static void sema_expr(Node *n);
 static void sema_cty_node(Node *n);
 static void sema_attr_node(Node *n);
 static void sema_constraints(Node *n);
+static int sema_compat(int a, int b);
 static int sema_callee_cty(Node *n);
 static void sema_call_check(Node *n, int ft);
 
@@ -468,6 +469,14 @@ static void sema_cty_node(Node *n) {
         r = ct_decay(sema_cty_of(n->rhs));
         if (ct_is_arith(l) && ct_is_arith(r)) n->cty = ct_usual(l, r);
         else if (l == r) n->cty = l;
+        /* pointer arms (6.5.15p6): a null pointer constant takes the
+         * other's type, void * wins, compatible ones are one type */
+        else if (ct_is_ptr(l) && (n->rhs->attr & AT_NPC)) n->cty = l;
+        else if (ct_is_ptr(r) && (n->lhs->attr & AT_NPC)) n->cty = r;
+        else if (ct_is_ptr(l) && ct_is_ptr(r) && ct_kindof(ct_baseof(l)) == CT_VOID) n->cty = l;
+        else if (ct_is_ptr(l) && ct_is_ptr(r) && ct_kindof(ct_baseof(r)) == CT_VOID) n->cty = r;
+        else if (ct_is_ptr(l) && ct_is_ptr(r) && sema_compat(ct_unqual(ct_baseof(l)), ct_unqual(ct_baseof(r))))
+            n->cty = ct_nparms(ct_baseof(l)) < 0 ? r : l;   /* the one with a prototype */
         else { n->cty = ct_from_mty(n->ty, 0); return; }
     } else if (n->kind == ND_MEMBER && n->cty > 0) {
         /* a member of a qualified structure is qualified too (6.5.2.3p3) */
@@ -681,16 +690,36 @@ static void sema_violation(Node *n, char *msg) {
 
 /* The conversions 6.5.16.1 constrains, held back until the corpus says
  * what they cost: S12CC_SURVEY=1 reports each, tagged by class. */
+/* S12CC_SURVEY_LOG=path appends them to a file instead, so a corpus
+ * built by scripts that keep the compiler's stderr can be surveyed. */
+#ifdef O_APPEND
+#define SEMA_OPEN_LOG(p) open((p), O_WRONLY | O_CREAT | O_APPEND, 0644)
+#else
+#define SEMA_OPEN_LOG(p) open((p), 14)     /* the selfhost libc's O_WRONLY|O_CREAT|O_APPEND */
+#endif
 static int sema_survey_on = -1;
+static int sema_survey_fd = 2;
 static void sema_survey(Node *n, char *cls, char *msg) {
-    if (sema_survey_on < 0) sema_survey_on = getenv("S12CC_SURVEY") != 0;
+    char *lp;
+    int fd;
+    if (sema_survey_on < 0) {
+        sema_survey_on = getenv("S12CC_SURVEY") != 0;
+        lp = getenv("S12CC_SURVEY_LOG");
+        if (lp != 0) {
+            fd = SEMA_OPEN_LOG(lp);
+            if (fd >= 0) { sema_survey_fd = fd; sema_survey_on = 1; }
+        }
+    }
     if (!sema_survey_on) return;
-    pp_where_at(n->file, n->line);
-    fdputs("survey[", 2);
-    fdputs(cls, 2);
-    fdputs("]: ", 2);
-    fdputs(msg, 2);
-    fdputc(10, 2);
+    fd = sema_survey_fd;
+    if (n->file >= 0 && n->file < pp_nfiles && pp_files[n->file][0] != 0) fdputs(pp_files[n->file], fd);
+    fdputc(58, fd);
+    fdputuint(fd, n->line);
+    fdputs(": survey[", fd);
+    fdputs(cls, fd);
+    fdputs("]: ", fd);
+    fdputs(msg, fd);
+    fdputc(10, fd);
 }
 
 /* Compatible types (6.2.7): types are interned, so mostly the same
@@ -773,7 +802,8 @@ static void sema_assign_check(Node *at, int lt, Node *r) {
         return;
     }
     if (sema_compat(ct_unqual(lp), ct_unqual(rp))) return;
-    if (ct_is_integer(lp) && ct_is_integer(rp) && ct_int_bytes(lp) == ct_int_bytes(rp))
+    if (ct_is_integer(lp) && ct_is_integer(rp) &&
+        ct_to_unsigned(ct_unqual(lp)) == ct_to_unsigned(ct_unqual(rp)))
         sema_survey(at, "ptr-sign", "pointers to integer types that differ in sign");
     else
         sema_survey(at, "incompat-ptr", "conversion between incompatible pointer types");

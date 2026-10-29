@@ -390,9 +390,17 @@ static int ct_decay(int t) {
  * function-pointer object as int and a cast to one as int *; both are
  * the same word to the code generators. */
 static int ct_mty_agrees(int t, int ty) {
+    int b;
     if (ct_mty(t) == ty) return 1;
     if (ct_kindof(t) == CT_PTR && ct_kindof(ct_baseof(t)) == CT_FUNC)
         return ty == TY_INT || ty == TY_INT + TY_PTR;
+    /* a pointer to a function pointer, at any depth, is spelled as int
+     * words too: void (**aExt)(void) fell back to int, and aExt[i]
+     * compared with a function pointer as an integer */
+    b = t;
+    while (ct_kindof(b) == CT_PTR) b = ct_baseof(b);
+    if (ct_kindof(b) == CT_FUNC && ct_kindof(ct_baseof(t)) == CT_PTR)
+        return (ty & ~TY_PTR_MASK) == TY_INT;
     return 0;
 }
 

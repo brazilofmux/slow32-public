@@ -141,7 +141,7 @@
 6.3.1.8-usual PASS
 6.3.2.1-array-address PASS
 6.3.2.1-array-assign DIAG
-6.3.2.1-const-lvalue ACCEPTS
+6.3.2.1-const-lvalue DIAG
 6.3.2.1-func-address PASS
 6.3.2.1-func-designator PASS
 6.3.2.1-lvalues PASS
@@ -219,7 +219,7 @@
 6.5.15-cond-struct-member REJECTS
 6.5.15-conditional PASS
 6.5.16-assign-array DIAG
-6.5.16-assign-const ACCEPTS
+6.5.16-assign-const DIAG
 6.5.16-assign-const-member DIAG
 6.5.16-assign-nonlvalue DIAG
 6.5.16-assign-value PASS
@@ -247,7 +247,7 @@
 6.5.2.4-postfix-bool PASS
 6.5.2.4-postfix-double PASS
 6.5.2.4-postfix-incdec PASS
-6.5.2.4-postfix-rvalue ACCEPTS
+6.5.2.4-postfix-rvalue DIAG
 6.5.2.5-compound-file-scope REJECTS
 6.5.2.5-compound-literal PASS
 6.5.2.5-compound-loop PASS
@@ -365,11 +365,11 @@
 6.7.2.4-atomic-specifier PASS
 6.7.3-atomic-qual-array ACCEPTS
 6.7.3-atomic-qualifier PASS
-6.7.3-const-assign ACCEPTS
-6.7.3-const-global ACCEPTS
-6.7.3-const-increment ACCEPTS
+6.7.3-const-assign DIAG
+6.7.3-const-global DIAG
+6.7.3-const-increment DIAG
 6.7.3-const-member DIAG
-6.7.3-const-through-pointer ACCEPTS
+6.7.3-const-through-pointer DIAG
 6.7.3-discard-qualifier ACCEPTS
 6.7.3-qualifiers PASS
 6.7.3-restrict PASS
