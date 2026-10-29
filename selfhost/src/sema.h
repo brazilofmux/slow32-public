@@ -611,7 +611,7 @@ static void sema_attr_node(Node *n) {
     double d;
     float f;
     int w[2];
-    n->attr = n->attr & (AT_UCMP | AT_INIT);    /* sema_expr_mty's, the parser's: kept */
+    n->attr = n->attr & (AT_UCMP | AT_INIT | AT_HEXOCT | AT_AMPF);    /* sema_expr_mty's, the parser's: kept */
     t = n->cty;
     k = n->kind;
     /* lvalues */
@@ -793,6 +793,142 @@ static int sema_is_objptr(int t) {
     return ct_is_ptr(t) && !ct_is_func(ct_baseof(t));
 }
 
+/* --- Constants that change value in an implicit conversion ---
+ * Not constraints: clang's default warnings (-Wconstant-conversion,
+ * -Wbitfield-constant-conversion, -Wliteral-conversion), which the
+ * ruling has stage08 give where clang gives them. */
+
+/* v kept to w bits, sign-extended for a signed target. */
+static long long sema_trunc(long long v, int w, int uns) {
+    long long m;
+    m = ((long long)1 << w) - 1;
+    v = v & m;
+    if (!uns && (v >> (w - 1)) != 0) v = v - ((long long)1 << w);
+    return v;
+}
+
+/* A floating literal, maybe signed (clang warns for a literal only, not
+ * for 1.0 / 4): its value in *d. */
+static int sema_fp_literal(Node *r, double *d) {
+    int neg;
+    int w[2];
+    float f;
+    neg = 0;
+    while (r->kind == ND_UNARY && (r->op == TK_MINUS || r->op == TK_PLUS) && r->lhs) {
+        if (r->op == TK_MINUS) neg = !neg;
+        r = r->lhs;
+    }
+    if (r->kind != ND_FNUM) return 0;
+    if (ty_is_double(r->ty)) {
+        w[0] = r->val;
+        w[1] = r->val_hi;
+        memcpy(d, w, 8);
+    } else {
+        memcpy(&f, &r->val, 4);
+        *d = f;
+    }
+    if (neg) *d = 0.0 - *d;
+    return 1;
+}
+
+/* Is integer v (unsigned when uns64: past long long's range, held
+ * negative) exact in a binary floating type of p significant bits?
+ * Counted in bits: the host's own conversions are stage07's. */
+static int sema_int_exact_fp(long long v, int uns64, int p) {
+    unsigned long long m;
+    int bits;
+    m = (unsigned long long)v;
+    if (!uns64 && v < 0) m = 0 - m;
+    while (m != 0 && (m & 1) == 0) m = m >> 1;
+    bits = 0;
+    while (m != 0) {
+        bits = bits + 1;
+        m = m >> 1;
+    }
+    return bits <= p;
+}
+
+/* A constant r converted to integer type lt, a bit-field of bits bits
+ * when bits > 0: does the value change?  A negative value going to an
+ * unsigned type of its width is a sign conversion, not warned; a
+ * positive one filling a signed type's width is warned, unless it was
+ * written in hex or octal (not for a bit-field, where clang warns). */
+static void sema_const_conv(Node *at, int lt, Node *r, int bits) {
+    long long v;
+    int w;
+    int uns;
+    int rt;
+    double d;
+    lt = ct_unqual(lt);
+    if (ct_is_floating(lt) && (r->attr & AT_ICX)) {
+        /* an integer constant a float or double cannot hold exactly
+         * (-Wimplicit-const-int-float-conversion): float x = 16777217 */
+        rt = sema_vty(r);
+        if (!sema_int_exact_fp(sema_cvalof(r), ct_is_unsigned(rt) && ct_int_bytes(rt) >= 8,
+                               ct_kindof(lt) == CT_FLOAT ? 24 : 53))
+            sema_convert_diag(at, "const-int-float", "implicit conversion of a constant to a floating type changes its value");
+        return;
+    }
+    if (!ct_is_integer(lt)) return;
+    if (ct_kindof(lt) == CT_BOOL) return;      /* sema_bool_ctx's */
+    if (sema_fp_literal(r, &d)) {
+        w = bits > 0 ? bits : ct_int_bytes(lt) * 8;
+        uns = ct_is_unsigned(lt);
+        if (d <= -9.3e18 || d >= 1.85e19 || (uns && d <= -1.0) ||
+            (w < 64 && (uns ? d >= (double)((long long)1 << w)
+                            : (d >= (double)((long long)1 << (w - 1)) ||
+                               d <= 0.0 - (double)((long long)1 << (w - 1)) - 1.0))))
+            sema_convert_diag(at, "literal-conv", "implicit conversion of an out-of-range floating constant to an integer type is undefined");
+        else if (d != (double)(long long)d)
+            sema_convert_diag(at, "literal-conv", "implicit conversion of a floating constant to an integer type changes its value");
+        return;
+    }
+    if (!(r->attr & AT_ICX)) return;
+    w = bits > 0 ? bits : ct_int_bytes(lt) * 8;
+    if (w >= 64) return;
+    uns = ct_is_unsigned(lt);
+    v = sema_cvalof(r);
+    rt = sema_vty(r);
+    if (v < 0 && ct_is_unsigned(rt) && ct_int_bytes(rt) >= 8) {
+        /* past long long's range: changes in any narrower type */
+    } else {
+        if (sema_trunc(v, w, uns) == v) return;
+        if (uns && v < 0 && v >= 0 - ((long long)1 << (w - 1))) return;
+        if (!uns && v > 0 && v < ((long long)1 << w) && bits == 0 && (r->attr & AT_HEXOCT)) return;
+    }
+    if (bits > 0)
+        sema_convert_diag(at, "bitfield-conv", "implicit truncation of a constant to a bit-field changes its value");
+    else
+        sema_convert_diag(at, "const-conv", "implicit conversion of a constant changes its value");
+}
+
+/* Does n name an object -- x, s.m, s.a.b -- whose address cannot be
+ * null?  Not through a pointer: &p->m may be. */
+static int sema_names_object(Node *n) {
+    if (n->kind == ND_VAR) return 1;
+    if (n->kind == ND_MEMBER && n->bit_width == 0 && n->lhs) return sema_names_object(n->lhs);
+    return 0;
+}
+
+/* r converted to _Bool, as a condition, an operand of !, && or ||, or a
+ * _Bool's value: where clang's defaults warn that the answer is fixed
+ * -- an object's address, an array, a function named without & are
+ * never null (-Wpointer-bool-conversion), a floating literal other than
+ * 0 or 1 changes value (-Wliteral-conversion). */
+static void sema_bool_ctx(Node *r) {
+    double d;
+    if (!r) return;
+    if (sema_fp_literal(r, &d)) {
+        if (d != 0.0 && d != 1.0)
+            sema_convert_diag(r, "literal-conv", "implicit conversion of a floating constant to _Bool changes its value");
+        return;
+    }
+    if ((r->kind == ND_FUNC_REF && !(r->attr & AT_AMPF)) ||
+        (r->kind == ND_VAR && r->cty > 0 && ct_is_array(r->cty)) ||
+        (r->kind == ND_UNARY && r->op == TK_AMP && r->lhs && sema_names_object(r->lhs)))
+        sema_convert_diag(r, "pointer-bool", "an address that is never null always converts to true");
+}
+
 /* Simple assignment's constraints (6.5.16.1p1), which initialization
  * (6.7.9p11), argument passing (6.5.2.2p7) and return (6.8.6.4p3)
  * share: the value r converted to type lt. */
@@ -803,7 +939,9 @@ static void sema_assign_check(Node *at, int lt, Node *r) {
     lt = ct_unqual(lt);
     rt = sema_vty(r);
     if (sema_is_void(rt)) { sema_violation(at, "void value used where a value is required"); return; }
+    if (ct_kindof(lt) == CT_BOOL) sema_bool_ctx(r);
     if (ct_is_arith(lt)) {
+        sema_const_conv(at, lt, r, 0);
         if (ct_is_ptr(rt) && ct_kindof(lt) != CT_BOOL)
             sema_convert_diag(at, "ptr-to-int", "pointer converted to an integer without a cast");
         else if (!ct_is_scalar(rt))
@@ -868,6 +1006,8 @@ static void sema_constraints(Node *n) {
             }
         } else if (op == TK_LAND || op == TK_LOR) {
             if (!ct_is_scalar(l) || !ct_is_scalar(r)) sema_violation(n, "operands of && and || must have scalar type");
+            sema_bool_ctx(n->lhs);
+            sema_bool_ctx(n->rhs);
         } else if (op == TK_LT || op == TK_GT || op == TK_LE || op == TK_GE) {
             if (ct_is_ptr(l) && ct_is_ptr(r)) {
                 if (!sema_compat(ct_unqual(ct_baseof(l)), ct_unqual(ct_baseof(r))))
@@ -896,11 +1036,13 @@ static void sema_constraints(Node *n) {
         if (op == TK_MINUS && !ct_is_arith(l)) sema_violation(n, "operand of unary - must have arithmetic type");
         if (op == TK_TILDE && !ct_is_integer(l)) sema_violation(n, "operand of ~ must have integer type");
         if (op == TK_BANG && !ct_is_scalar(l)) sema_violation(n, "operand of ! must have scalar type");
+        if (op == TK_BANG) sema_bool_ctx(n->lhs);
         if (op == TK_STAR && !ct_is_ptr(l)) sema_violation(n, "indirection requires a pointer operand");
         return;
     }
     if (k == ND_TERNARY && n->cond) {
         if (!ct_is_scalar(sema_vty(n->cond))) sema_violation(n, "the condition of ?: must have scalar type");
+        sema_bool_ctx(n->cond);
         if (n->lhs && n->rhs && ct_is_ptr(l) && ct_is_ptr(r) &&
             !sema_is_void(ct_baseof(l)) && !sema_is_void(ct_baseof(r)) &&
             !sema_compat(ct_unqual(ct_baseof(l)), ct_unqual(ct_baseof(r))))
@@ -922,6 +1064,8 @@ static void sema_constraints(Node *n) {
     if (k == ND_ASSIGN && n->lhs && n->rhs &&
         (op == TK_ASSIGN || n->lhs->kind == ND_VAR || (n->attr & AT_INIT))) {
         sema_assign_check(n, sema_cty_of(n->lhs), n->rhs);
+        if (n->lhs->kind == ND_MEMBER && n->lhs->bit_width > 0)
+            sema_const_conv(n, sema_cty_of(n->lhs), n->rhs, n->lhs->bit_width);
         return;
     }
     if (k == ND_COMP_ASSIGN && n->lhs && n->rhs) {
@@ -1118,6 +1262,7 @@ static int sema_switch_depth;   /* switch statements around the one walked */
 static void sema_scalar_cond(Node *c) {
     if (c && !ct_is_scalar(sema_vty(c)))
         sema_violation(c, "statement requires expression of scalar type");
+    sema_bool_ctx(c);
 }
 
 /* The case labels of one switch, those of a switch inside it left to

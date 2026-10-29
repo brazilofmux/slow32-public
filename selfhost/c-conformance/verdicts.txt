@@ -30,6 +30,7 @@
 6.10.3-function-like PASS
 6.10.3-line-after-call PASS
 6.10.3-name-without-paren PASS
+6.10.3-negative-object-macro PASS
 6.10.3-no-space-after-name-reject DIAG
 6.10.3-object-like PASS
 6.10.3-paren-next-line PASS
@@ -131,9 +132,11 @@
 6.3.1.1-sizeof-promoted PASS
 6.3.1.2-bool PASS
 6.3.1.2-bool-static-init PASS
+6.3.1.3-constant-conversion PASS
 6.3.1.3-impl-signed PASS
 6.3.1.3-int-conv PASS
 6.3.1.4-float-int PASS
+6.3.1.4-literal-conversion PASS
 6.3.1.5-float-float PASS
 6.3.1.6-complex OPTIONAL
 6.3.1.7-real-complex OPTIONAL
@@ -181,6 +184,7 @@
 6.4.4.4-char-constants PASS
 6.4.4.4-empty DIAG
 6.4.4.4-multichar PASS
+6.4.4.4-multichar-warning PASS
 6.4.4.4-octal-zero PASS
 6.4.4.4-wchar-header PASS
 6.4.4.4-wide-chars PASS
@@ -342,6 +346,7 @@
 6.7.2-type-specifier-combos PASS
 6.7.2.1-anonymous PASS
 6.7.2.1-bitfield-address DIAG
+6.7.2.1-bitfield-constant PASS
 6.7.2.1-bitfield-init PASS
 6.7.2.1-bitfield-layout PASS
 6.7.2.1-bitfield-promote PASS

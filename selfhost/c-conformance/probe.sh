@@ -18,6 +18,10 @@
 # return 0; any output works, since the two builds' stdout and exit status
 # are compared.  `// expect: reject` on a later line marks a program that
 # violates a constraint or syntax rule, and the oracle must agree.
+# `// expect: warnings` marks a valid program on which clang's default
+# warnings fire (not -pedantic-errors: they are not errors there): the
+# lines stage08 warns on must be the lines clang does, or the probe is
+# WARNS -- the ruling has stage08 warn where clang's defaults warn.
 #
 # Verdicts (one line per probe):
 #   PASS     valid; stage08 builds it and prints what clang's build prints
@@ -30,6 +34,7 @@
 #            that stage08 declares it leaves out, which it then refuses or
 #            answers otherwise than clang, which has it -- a choice, not a gap
 #   HANG     a build or run passed its time limit
+#   WARNS    `expect: warnings`, PASS but for warnings on other lines
 #
 # stage08 here is the tree's: selfhost/stage08/cc.s32x, its s32-as/s32-ld,
 # include/ and lib/ (archived once per run).  Exit status: 0 when every
@@ -92,6 +97,8 @@ for src in "$@"; do
     clause="$(head -1 "$src" | sed -n 's|^// *||p')"
     expect_reject=0
     grep -q '^// expect: reject' "$src" && expect_reject=1
+    expect_warn=0
+    grep -q '^// expect: warnings' "$src" && expect_warn=1
     optional="$(sed -n 's|^// optional: *\([A-Za-z_0-9]*\).*|\1|p' "$src" | head -1)"
     d="$W/$name"; mkdir -p "$d"
 
@@ -145,6 +152,16 @@ for src in "$@"; do
         fi
     fi
 
+    if [ "$verdict" = PASS ] && [ $expect_warn -eq 1 ]; then
+        # the lines each warns on, in the probe itself (not in a header)
+        SLOW32_HOME="$ROOT" "$LLVM_BIN/clang" --target=slow32-unknown-none -std=c11 -fsyntax-only \
+            "$src" 2>&1 | sed -n -E "s|^.*$name\.c:([0-9]+):[0-9]+: warning: .*|\1|p" | sort -n >"$d/clang.warn"
+        sed -n -E "s|^.*$name\.c:([0-9]+): warning: .*|\1|p" "$d/cc.log" | sort -n >"$d/s08.warn"
+        if ! cmp -s "$d/clang.warn" "$d/s08.warn"; then
+            verdict=WARNS
+            note="warning lines: clang $(tr '\n' ' ' <"$d/clang.warn")/ stage08 $(tr '\n' ' ' <"$d/s08.warn")"
+        fi
+    fi
     if [ -n "$optional" ] && { [ "$verdict" = WRONG ] || [ "$verdict" = REJECTS ]; } && s08_defines "$optional"; then
         verdict=OPTIONAL; note="stage08 defines $optional"
     fi

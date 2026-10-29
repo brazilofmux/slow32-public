@@ -269,6 +269,8 @@ typedef struct Node Node;
 #define AT_ICX  8   /* an integer constant expression (6.6p6); cval/cval_hi hold it */
 #define AT_UCMP 16  /* a comparison whose operands compare unsigned (the lowering's SLTU) */
 #define AT_INIT 32  /* an initializer's store whose target the parser typed as C types it */
+#define AT_HEXOCT 64 /* an integer literal written in hex or octal */
+#define AT_AMPF 128  /* a function designator written &f (the parser folds it to f) */
 
 /* --- Constructors --- */
 

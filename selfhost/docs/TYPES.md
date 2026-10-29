@@ -763,6 +763,43 @@ silent.  Still not diagnosed: an implicit conversion that changes a
 constant's value (`unsigned short k = 70000`, clang's
 -Wconstant-conversion, a warning).
 
+**Warnings: constants that change in a conversion** (2026-10-29).  By
+the ruling stage08 warns where clang's defaults warn; the gaps pass
+left the one family named open.  An integer constant converted to a
+narrower integer type warns when its value changes
+(`sema_const_conv`, as -Wconstant-conversion): not a negative value
+going to an unsigned type of its width, a sign conversion, and not a
+positive one filling a signed type's width when it was written in hex
+or octal (`AT_HEXOCT`; `signed char c = 0377`).  A bit-field is held
+to its width (-Wbitfield-constant-conversion), without the hex
+exemption.  An integer constant a float or double cannot hold exactly
+warns, counted in significant bits (`sema_int_exact_fp`: the host's
+own conversions are stage07's).  A floating literal -- a literal,
+not a folded `1.0 / 4` -- warns going to an integer type when it has
+a fraction or is out of range (-Wliteral-conversion).  Where a value
+is converted to `_Bool` -- a condition, an operand of `!`, `&&` or
+`||`, a `_Bool`'s value -- an object's address, an array or a
+function named without `&` (`AT_AMPF`) is always true, and a floating
+literal other than 0 or 1 changes (`sema_bool_ctx`).  A
+multi-character constant warns from the lexer (`lex_warn`, once per
+token across a parser's rewind).  probe.sh learned `// expect:
+warnings`: the lines stage08 warns on must be the lines clang does,
+or the probe is WARNS.  Swept over every probe, the families above
+now agree; what clang warns of beyond them -- old-style declarations,
+`switch` coverage, `sizeof` of a decayed array, dangling else,
+unevaluated or unused values, tautological comparisons, overflow in a
+constant expression, and a few more, 31 probes -- is not attempted.
+
+Two defects on the way.  A static `_Bool` bit-field kept the low bit of
+its initializer (`_Bool b : 1 = 2` was 0).  And SQLite drew five
+warnings clang does not give, which were a miscompile: a `#define`
+whose value is a negative integer is injected as one token, and the
+parser took any negative token without a `u` for a hex literal past
+INT_MAX -- unsigned.  `#define N -2000` made `N / 2` 2147482648 and
+`N < 0` false; in SQLite, `journalSizeLimit =
+SQLITE_DEFAULT_JOURNAL_SIZE_LIMIT` (-1, an i64) stored 4294967295.
+That one line of SQLite's assembly changed, to clang's value.
+
 ## Constraints on the work
 
 - stage07 builds stage08: the new code keeps stage07's dialect (ints

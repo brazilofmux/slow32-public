@@ -148,6 +148,7 @@ static int ps_pending_member_cty;
 static int ps_init_cty;           /* an initializer's target C type (ps_init_check) */
 static int ps_desig_cty;          /* ... and a designator's, as it walks */
 static void ps_init_bool_at(int gidx, int rel_off);
+static void sema_const_conv(Node *at, int lt, Node *r, int bits);    /* sema.h */
 /* inline in the file-scope declaration being read (ps_storage_next):
  * an object may not be inline, nor main (6.7.4p3, 5.1.2.2.1) */
 static int ps_top_inline;
@@ -572,6 +573,7 @@ static int ps_array_size(void);
 /* --- Utilities --- */
 
 static void p_error(char *msg);
+static void ps_lex_warning(void);
 static void next(void);
 
 /* The _Pragma operator (6.10.9): _Pragma ( string-literal ), the string
@@ -616,6 +618,7 @@ static void next(void) {
         bol = lex_bol;
         lex_bol = 0;
         if (lex_err) p_error(lex_err);
+        if (lex_warn) ps_lex_warning();
         /* A backslash-newline outside a directive or literal is a line
          * splice (translation phase 2), which the scanner has no rule for
          * and stops on as if at end of input: step over it and go on.
@@ -691,6 +694,15 @@ static void next(void) {
         }
         return;
     }
+}
+
+/* A lexer warning (lex_warn), where the token is. */
+static void ps_lex_warning(void) {
+    pp_where();
+    fdputs("warning: ", 2);
+    fdputs(lex_warn, 2);
+    fdputs("\n", 2);
+    lex_warn = 0;
 }
 
 /* Print the text of the stream line the lexer is on, so a diagnostic
@@ -3992,12 +4004,25 @@ static int ps_desig_bf = -1;
 
 /* A bit-field member mi of a static initializer, at rel_off (its unit):
  * an integer constant expression, in braces or not. */
+/* A static bit-field's initializer, read once to be graded at the
+ * field's width (sema_const_conv) and put back for the reader. */
+static void ps_bf_init_check(int mi) {
+    Node *n;
+    ps_lex_mark();
+    n = parse_assign();
+    sema_expr(n);
+    sema_const_conv(n, stm_cty[mi], n, stm_bit_width[mi]);
+    ps_lex_rewind();
+}
+
 static void ps_ginit_bitfield(int gidx, int rel_off, int mi) {
     int v;
     int br;
     br = lex_tok == TK_LBRACE;
     if (br) next();
+    ps_bf_init_check(mi);
     v = parse_const_int();
+    if (stm_cty[mi] > 0 && ct_kindof(stm_cty[mi]) == CT_BOOL) v = v != 0;   /* 6.3.1.2: _Bool b : 1 = 2 is 1 */
     if (br) {
         if (lex_tok == TK_COMMA) next();
         expect(TK_RBRACE);
@@ -5362,6 +5387,14 @@ static Node *ps_parse_generic(void) {
     return chosen;
 }
 
+/* An integer literal, marked when it was written in hex or octal:
+ * clang does not warn when one such fills a signed type's width
+ * (signed char c = 0377), as it does for the same value in decimal. */
+static Node *ps_num_spelled(Node *n, int hexoct) {
+    if (hexoct) n->attr = n->attr | AT_HEXOCT;
+    return n;
+}
+
 /* The C11 primaries that look like identifiers: _Alignof, _Generic, and
  * __func__ (6.4.2.2), a string of the function's name -- each was an
  * undeclared identifier.  NULL when the token is none of them. */
@@ -5428,7 +5461,7 @@ static Node *parse_primary(void) {
             /* past long long's range only unsigned long long holds it
              * (6.4.4.1p5): 0xFFFFFFFFFFFFFFFF was a signed -1 */
             if (v_u || v_hi < 0) t = t | TY_UNSIGNED;
-            return nd_num64(v, v_hi, t);
+            return ps_num_spelled(nd_num64(v, v_hi, t), v_hexoct);
         }
         /* Unsuffixed decimal that does not fit int goes to long long
          * (C11 6.4.4.1); it is never unsigned int.  Hex/octal that does
@@ -5443,11 +5476,15 @@ static Node *parse_primary(void) {
         {
             Node *nn;
             nn = nd_num(v);
-            if (v_u || v < 0) nn->ty = TY_INT | TY_UNSIGNED;
+            /* negative here: hex or octal past INT_MAX, unsigned int --
+             * but not a #define's value, injected as one token, which
+             * is the int it was (`#define N -2000` was 4294965296 and
+             * N / 2 was 2147482648) */
+            if (v_u || (v < 0 && !v_macro)) nn->ty = TY_INT | TY_UNSIGNED;
             /* 1L is a long and 1UL an unsigned long: the size of int
              * here, but other types (6.4.4.1p5), as _Generic sees */
             if (v_l) nn->cty = ct_basic[(nn->ty & TY_UNSIGNED) ? CT_ULONG : CT_LONG];
-            return nn;
+            return ps_num_spelled(nn, v_hexoct);
         }
     }
 
@@ -6091,7 +6128,10 @@ static Node *parse_unary(void) {
             p_error("address of register variable requested");
         /* &f is the function's address, the value f decays to (6.5.3.2p3);
          * it was refused as "not an lvalue". */
-        if (n->kind == ND_FUNC_REF) return n;
+        if (n->kind == ND_FUNC_REF) {
+            n->attr = n->attr | AT_AMPF;    /* clang's always-true warning spares &f */
+            return n;
+        }
         /* &arr2d[i]: the first subscript of a 2D array already yields
          * the row ADDRESS (an ADD node, not an lvalue).  C's pointer-
          * to-row has the same numeric value, so the node stands as-is
@@ -6388,7 +6428,10 @@ static void local_init_bitfield(int rel_off, int mi) {
     }
     m = nd_member(local_init_base(), rel_off + stm_off[mi], stm_type[mi], 0, 0,
                   stm_bit_off[mi], stm_bit_width[mi]);
-    local_init_append(nd_expr_stmt(nd_assign(m, e)));
+    m->cty = stm_cty[mi] > 0 ? ct_unqual(stm_cty[mi]) : 0;
+    m = nd_assign(m, e);
+    if (stm_cty[mi] > 0) m->attr = AT_INIT;    /* graded at the field's width */
+    local_init_append(nd_expr_stmt(m));
 }
 
 static void local_init_emit_assign(int rel_off, int target_ty, Node *rhs) {

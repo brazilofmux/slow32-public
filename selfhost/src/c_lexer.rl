@@ -169,7 +169,9 @@ static char lex_str[LEX_STR_SZ];
 static int  lex_slen;
 static int  lex_bol;       /* 1: no token yet on this line -- a # here begins a directive (6.10p2) */
 static int  lex_painted;
-static char *lex_err;      /* a malformed token's message, for next() to report where it is */   /* 1: the identifier was painted (pp_rescan_region), never to be replaced */
+static char *lex_err;      /* a malformed token's message, for next() to report where it is */
+static char *lex_warn;     /* ... and a warning's, once per token: lex_warn_ts is the last one warned */
+static char *lex_warn_ts;   /* 1: the identifier was painted (pp_rescan_region), never to be replaced */
 
 /* For lex_pos compatibility (parser uses it for #include save/restore) */
 static int  lex_pos;
@@ -1114,6 +1116,12 @@ static void lex_parse_chr(char *ts, char *te) {
      * clang's int, the first in the high byte -- 'ab' is 0x6162.  Only
      * the first was taken. */
     if (n == 1 && v > 127) v = v - 256;
+    /* implementation-defined, and clang warns (-Wmultichar); a token
+     * read again after a parser's rewind is not warned twice */
+    if (n > 1 && ts != lex_warn_ts) {
+        lex_warn = "multi-character character constant";
+        lex_warn_ts = ts;
+    }
     lex_tok = TK_CHARLIT;
     lex_val = v;
 }
