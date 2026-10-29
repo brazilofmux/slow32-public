@@ -219,6 +219,11 @@ static int ty_is_unsigned(int ty) {
 #define ASM_A64_ISB             6
 #define ASM_X64_RDTSC           7  /* lfence; rdtsc — split eax/edx outputs */
 #define ASM_X64_DBT_TRAMPOLINE  8  /* execute_translated trampoline */
+/* SLOW-32's stack pointer, for variable length arrays (parser.h): read
+ * it, set it, and move it down by args' bytes, the new value the result */
+#define ASM_S32_GETSP           9
+#define ASM_S32_SETSP          10
+#define ASM_S32_VLA_ALLOC      11
 
 /* --- AST node --- */
 struct Node {

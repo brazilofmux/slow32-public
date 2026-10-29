@@ -404,6 +404,18 @@ static int ct_mty_agrees(int t, int ty) {
     return 0;
 }
 
+/* Is t's size known only at run time: a variable length array, or an
+ * array of them (6.7.6.2p4)?  A VLA's count is -2 - id, id naming the
+ * hidden local that holds it (parser.h ps_vc_var); -1 is an array of
+ * unknown size, [] or [*]. */
+static int ct_runtime_size(int t) {
+    while (t > 0 && ct_kindof(t) == CT_ARRAY) {
+        if (ct_countof(t) <= -2) return 1;
+        t = ct_baseof(t);
+    }
+    return 0;
+}
+
 /* The alignment of t (6.2.8): an array's is its element's, the rest
  * the machine type's -- a structure's, its members' greatest. */
 static int ct_alignof(int t) {

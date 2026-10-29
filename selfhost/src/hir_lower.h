@@ -853,6 +853,26 @@ static int hl_udivmod32(int lv, int rv, int is_rem) {
 /* Map AST binary operator token to HIR instruction kind */
 /* A binary node's machine type for choosing its operation: a comparison
  * is int, and whether it compares unsigned is sema's AT_UCMP. */
+/* A VLA object (parser.h ps_local_vla): a local whose C type's size is
+ * known only at run time.  Its slot holds the array's address. */
+static int hl_is_vla_obj(Node *n) {
+    return n->kind == ND_VAR && n->is_local && n->cty > 0 && ct_runtime_size(n->cty);
+}
+
+/* sp moved down by sz bytes, rounded to a word: the new sp, the VLA. */
+static int hl_vla_alloc(int sz) {
+    int t;
+    int m;
+    int sp;
+    t = hi_emit(HI_ADDI, TY_INT, sz, -1, 3, NULL);
+    m = hi_emit(HI_ICONST, TY_INT, -1, -1, -4, NULL);
+    t = hi_emit(HI_AND, TY_INT, t, m, 0, NULL);
+    sp = hi_emit(HI_GETSP, TY_INT, -1, -1, 0, NULL);
+    sp = hi_emit(HI_SUB, HL_ADDR_TY, sp, t, 0, NULL);
+    hi_emit(HI_SETSP, TY_INT, sp, -1, 0, NULL);
+    return sp;
+}
+
 /* Is n's value an array, by its C type -- *p where p points to one? */
 static int hl_is_array_value(Node *n) {
     return n->cty > 0 && ct_is_array(n->cty);
@@ -871,6 +891,28 @@ static int hl_pointee_size(Node *op, Node *p) {
         ct_sizeof(ct_baseof(t)) > 0)
         return ct_sizeof(ct_baseof(t));
     return ty_size(ty_deref(p->ty));
+}
+
+/* The size of what p points to when it is known only at run time -- a
+ * pointer to a VLA, int (*q)[n] -- as a value; -1 otherwise. */
+static int hl_pointee_vm(Node *op, Node *p) {
+    int t;
+    t = p->cty > 0 ? ct_decay(p->cty) : 0;
+    if (op->arr_cols == 0 && t > 0 && ct_is_ptr(t) && ct_runtime_size(ct_baseof(t)))
+        return hl_expr(ps_vla_size(ct_baseof(t)));
+    return -1;
+}
+
+/* v, an index, scaled by what p points to (6.5.6p8). */
+static int hl_scale(int v, Node *op, Node *p) {
+    int sz;
+    int c;
+    sz = hl_pointee_vm(op, p);
+    if (sz >= 0) return hi_emit(HI_MUL, TY_INT, v, sz, 0, NULL);
+    sz = hl_pointee_size(op, p);
+    if (sz <= 1) return v;
+    c = hi_emit(HI_ICONST, TY_INT, -1, -1, sz, NULL);
+    return hi_emit(HI_MUL, TY_INT, v, c, 0, NULL);
 }
 
 static int hl_cmp_ty(Node *n) {
@@ -1020,6 +1062,8 @@ static int hl_addr(Node *n) {
             /* hl_map_off relocates an inlined callee's frame; identity
              * when not inlining. */
             addr = hl_get_alloca_id(hl_map_off(n->offset), n->ty, n->slot_id);
+            /* a VLA object: the array is where its slot points */
+            if (hl_is_vla_obj(n)) return hi_emit(HI_LOAD, HL_ADDR_TY, addr, -1, 0, NULL);
         } else {
             /* Global variable address */
             addr = hi_emit(HI_GADDR, TY_PTR + (n->ty & TY_BASE_MASK), -1, -1, 0, n->name);
@@ -1441,6 +1485,7 @@ static int hl_inl_sel_one(Node *fn, int k) {
     if (fn->is_varargs) return 0;
     if (ty_is_struct(fn->ty)) return 0;
     if (fn->bit_width > 4) return 0;    /* its frame is realigned: a caller's would not be */
+    if (fn->arr_cols) return 0;         /* variably modified: sizes in its own frame's locals */
     pp = fn->args;
     while (pp) {
         if (ty_is_struct(pp->ty)) return 0;
@@ -2527,13 +2572,20 @@ static int hl_expr(Node *n) {
             h_cbase[val] = base;
             return val;
         }
+        if (n->val == ASM_S32_GETSP) return hi_emit(HI_GETSP, TY_INT, -1, -1, 0, NULL);
+        if (n->val == ASM_S32_SETSP) {
+            val = hl_expr(n->args);
+            hi_emit(HI_SETSP, TY_INT, val, -1, 0, NULL);
+            return val;
+        }
+        if (n->val == ASM_S32_VLA_ALLOC) return hl_vla_alloc(hl_expr(n->args));
         p_error("unsupported inline asm");
         return -1;
     }
 
     /* Variable */
     if (n->kind == ND_VAR) {
-        if (n->is_array || ty_is_struct(n->ty)) {
+        if (n->is_array || ty_is_struct(n->ty) || hl_is_vla_obj(n)) {
             return hl_addr(n);
         }
         addr = hl_addr(n);
@@ -3148,6 +3200,8 @@ static int hl_expr(Node *n) {
             diff_ty = TY_INT;
 #endif
             diff = hi_emit(HI_SUB, diff_ty, lv, rv, 0, NULL);
+            scale = hl_pointee_vm(n, n->lhs);
+            if (scale >= 0) return hi_emit(HI_DIV, diff_ty, diff, scale, 0, NULL);
             if (elem_sz > 1) {
                 scale = hi_emit(HI_ICONST, diff_ty, -1, -1, elem_sz, NULL);
                 diff = hi_emit(HI_DIV, diff_ty, diff, scale, 0, NULL);
@@ -3157,13 +3211,8 @@ static int hl_expr(Node *n) {
 
         /* Pointer arithmetic: scale the integer operand */
         if ((n->op == TK_PLUS || n->op == TK_MINUS) && ty_is_ptr(n->lhs->ty)) {
-            elem_sz = hl_pointee_size(n, n->lhs);
             lv = hl_expr(n->lhs);
-            rv = hl_expr(n->rhs);
-            if (elem_sz > 1) {
-                scale = hi_emit(HI_ICONST, TY_INT, -1, -1, elem_sz, NULL);
-                rv = hi_emit(HI_MUL, TY_INT, rv, scale, 0, NULL);
-            }
+            rv = hl_scale(hl_expr(n->rhs), n, n->lhs);
             if (n->op == TK_PLUS) {
                 return hi_emit(HI_ADD, n->ty, lv, rv, 0, NULL);
             }
@@ -3173,13 +3222,8 @@ static int hl_expr(Node *n) {
          * the left, is the one scaled.  3 + ia added 3 bytes, and 2[a] --
          * *(2 + a) -- read between elements. */
         if (n->op == TK_PLUS && ty_is_ptr(n->rhs->ty)) {
-            elem_sz = hl_pointee_size(n, n->rhs);
-            lv = hl_expr(n->lhs);
+            lv = hl_scale(hl_expr(n->lhs), n, n->rhs);
             rv = hl_expr(n->rhs);
-            if (elem_sz > 1) {
-                scale = hi_emit(HI_ICONST, TY_INT, -1, -1, elem_sz, NULL);
-                lv = hi_emit(HI_MUL, TY_INT, lv, scale, 0, NULL);
-            }
             return hi_emit(HI_ADD, n->ty, lv, rv, 0, NULL);
         }
 
@@ -3427,11 +3471,7 @@ static int hl_expr(Node *n) {
         }
         /* Scale for pointer arithmetic */
         if (ty_is_ptr(n->ty) && (n->op == TK_PLUS || n->op == TK_MINUS)) {
-            elem_sz = hl_pointee_size(n, n->lhs);
-            if (elem_sz > 1) {
-                scale = hi_emit(HI_ICONST, TY_INT, -1, -1, elem_sz, NULL);
-                rv = hi_emit(HI_MUL, TY_INT, rv, scale, 0, NULL);
-            }
+            rv = hl_scale(rv, n, n->lhs);
         }
         /* Float / double LHS: promote the rhs to the LHS's FP type and
          * emit HI_F*.  hl_binop_kind below would return integer HI_ADD
@@ -3611,12 +3651,13 @@ static int hl_expr(Node *n) {
             hi_emit(HI_STORE, n->ty, addr, new_val, 0, NULL);
             return old_val;
         }
+        elem_sz = 1;
+        scale = -1;
         if (ty_is_ptr(n->ty)) {
             elem_sz = hl_pointee_size(n, n->lhs);
-        } else {
-            elem_sz = 1;
+            scale = hl_pointee_vm(n, n->lhs);
         }
-        scale = hi_emit(HI_ICONST, TY_INT, -1, -1, elem_sz, NULL);
+        if (scale < 0) scale = hi_emit(HI_ICONST, TY_INT, -1, -1, elem_sz, NULL);
         if (n->kind == ND_POST_INC) {
             new_val = hi_emit(HI_ADD, n->ty, old_val, scale, 0, NULL);
         } else {

@@ -822,6 +822,40 @@ parser and the inlining rule, not this realignment, which is the
 SLOW-32 back end's; what they do with such a local is not checked
 here.
 
+**Variable length arrays** (2026-10-29), by the user's choice of the
+two features C11 makes optional (complex types stay declared absent).
+A VLA's C type is an array whose count is `-2 - id` (`ct_runtime_size`),
+id naming a hidden local, `__vla.N`, that holds the count, assigned
+where the declarator is read (`ps_vla_dims`); a constant dimension
+stays a count.  The object is a hidden pointer: its declaration saves
+sp into another hidden local, moves sp down by the size
+(`ASM_S32_VLA_ALLOC`, lowered to `HI_GETSP`, a subtraction and
+`HI_SETSP`), and keeps the result.  The lowering asks the C type, not
+the declaration: a local whose type's size is known only at run time
+has the array where its slot points (`hl_is_vla_obj`), and a pointer
+to such a type steps by a size computed from the counts (`hl_scale`,
+`hl_pointee_vm`, at every scaling site: `+`, `-`, a difference, `+=`,
+`++`).  So `int g[r][c]`, `int (*p)[m] = g`, a parameter `int a[n][n]`
+-- a pointer to a VLA, its count taken at the body's entry
+(`ps_vla_param_pre`; 6.9.1p10) -- `[*]` in a prototype, three
+dimensions, rows of structures and a VLA typedef (sized once, at the
+typedef) all come from the one rule.  `sizeof` of a VLA is computed at
+run time and evaluates its operand (6.5.3.4p2).  Leaving a VLA's scope
+frees it: each object keeps the one in scope before it, so a block's
+end, and a `break`, `continue` or `goto` out of its scope, set sp back
+to what it was before the first of them left (`ps_vla_block_end`,
+`ps_vla_loop`, `ps_vla_gotos`); a `return` pops the frame, which such a
+function addresses from fp (`hcg_dyn_sp`: fp kept, no tail calls, not
+inlined).  A goto or a switch into a VLA's scope, an initializer, and
+a static one are refused.  A probe allocates in loops left every way,
+twenty thousand times, and checks the VLAs land in the same place:
+with the restores switched off it ran out of stack.  The cross
+compilers share the front end but not this back end: there
+`__STDC_NO_VLA__` stays defined and a VLA is refused.  `HI_GETSP` and
+`HI_SETSP` are past the BURG table, emitted by the fallback, and the
+optimizer needs no list of them: CSE takes only an allow-list of kinds,
+and DCE keeps every kind with no value.
+
 ## Constraints on the work
 
 - stage07 builds stage08: the new code keeps stage07's dialect (ints

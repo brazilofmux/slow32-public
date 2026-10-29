@@ -254,6 +254,10 @@ static int hcg_va_save_size; /* varargs register save area size */
  * stack-passed parameters are read through it. */
 static int hcg_align;
 static int hcg_entry_off;
+/* A function that moves sp (HI_SETSP: a variable length array) keeps
+ * fp, and addresses its frame from it: sp is not where the frame's
+ * bottom is.  The epilogue takes sp back from fp. */
+static int hcg_dyn_sp;
 
 /* Frame slot addressing.  Offsets in the rest of codegen are fp-relative
  * (negative locals, non-negative incoming stack args).  When the frame
@@ -2355,6 +2359,7 @@ static int hcg_is_tailcall(int idx) {
     /* Conservative guards */
     if (hcg_va_save_size > 0) return 0;       /* varargs fn */
     if (hcg_align) return 0;                  /* sp is restored from a slot */
+    if (hcg_dyn_sp) return 0;                 /* sp is restored from fp */
     if (h_val[idx] > 8) return 0;              /* stack args */
     if (hcg_frame_escapes) return 0;          /* callee may see our frame */
 
@@ -3018,6 +3023,17 @@ static void hcg_inst(int idx) {
             hcg_params_emitted = 1;
             hcg_emit_param_entry();
         }
+        return;
+    }
+
+    if (k == HI_GETSP) {
+        rd = hcg_dst(idx);
+        cg_rri("addi", rd, 29, 0);
+        hcg_maybe_spill(idx);
+        return;
+    }
+    if (k == HI_SETSP) {
+        cg_rri("addi", 29, hcg_src(s1, 1), 0);
         return;
     }
 
@@ -4602,8 +4618,14 @@ static void hcg_func(Node *fn) {
     /* GitHub issue 73: r30 is an extra callee-saved color when we will
      * not need it as a frame pointer.  Varargs keeps r30 as FP.
      * Large frames that actually take the color omit FP too (li+sub). */
+    hcg_dyn_sp = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_SETSP) hcg_dyn_sp = 1;
+        i = i + 1;
+    }
     ra_r30_alloc = 0;
-    if (!fn->is_varargs) ra_r30_alloc = 1;
+    if (!fn->is_varargs && !hcg_dyn_sp) ra_r30_alloc = 1;
     /* Register allocation: assigns ra_reg[], ra_spill_off[],
      * callee-save info, and updates hl_temp_stack */
     if (getenv("HIR_RA_DEBUG")) {
@@ -4642,11 +4664,9 @@ static void hcg_func(Node *fn) {
     fs = hl_temp_stack;
     fs = ((fs + 3) / 4) * 4;
     hcg_classify_frame(fn);
+    if (hcg_align || hcg_dyn_sp) hcg_frameless = 0;
     if (hcg_frameless) fs = 0;
-    if (hcg_align) {
-        hcg_frameless = 0;
-        fs = ((fs + hcg_align - 1) / hcg_align) * hcg_align;
-    }
+    if (hcg_align) fs = ((fs + hcg_align - 1) / hcg_align) * hcg_align;
     hcg_locals = fn->locals_size;
     hcg_frame = fs;
     hcg_sp_delta = 0;
@@ -4668,6 +4688,7 @@ static void hcg_func(Node *fn) {
      * where the caller left them.  The ninth argument was read from the
      * caller's frame (fort370's ANCORR test cmpscr, a 15-argument leaf). */
     if (hcg_frameless) hcg_omit_fp = 1;
+    if (hcg_dyn_sp) hcg_omit_fp = 0;
 
     /* Frame-escape scan for the tail-call guard.  A tail call pops this
      * frame BEFORE entering the callee; if any local's address escaped
@@ -4826,6 +4847,7 @@ static void hcg_func(Node *fn) {
      * emitted jalr r0, r31, 0, so there is nothing to restore. */
     if (!hcg_frameless) {
         cg_ldef(hcg_epilog);
+        if (hcg_dyn_sp && fs <= 2047) cg_rri("addi", 29, 30, 0 - fs);
         i = 0;
         while (i < ra_ncsave) {
             hcg_restore_reg(ra_csave_reg[i], ra_csave_off[i]);

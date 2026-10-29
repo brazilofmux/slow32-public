@@ -94,7 +94,7 @@
 6.10.8.2-environment PASS
 6.10.8.3-feature-atomics PASS
 6.10.8.3-feature-complex PASS
-6.10.8.3-feature-vla OPTIONAL
+6.10.8.3-feature-vla PASS
 6.10.9-pragma-once PASS
 6.10.9-pragma-operator PASS
 6.2.1-block-scope-forms PASS
@@ -280,7 +280,7 @@
 6.5.3.4-sizeof-function DIAG
 6.5.3.4-sizeof-incomplete DIAG
 6.5.3.4-sizeof-size-t PASS
-6.5.3.4-sizeof-vla OPTIONAL
+6.5.3.4-sizeof-vla PASS
 6.5.4-cast-bool PASS
 6.5.4-cast-ptr-float DIAG
 6.5.4-cast-struct DIAG
@@ -407,11 +407,13 @@
 6.7.6.2-incomplete-completed PASS
 6.7.6.2-negative-size DIAG
 6.7.6.2-static-outside-param DIAG
-6.7.6.2-vla OPTIONAL
+6.7.6.2-vla PASS
 6.7.6.2-vla-file-scope DIAG
-6.7.6.2-vla-param OPTIONAL
-6.7.6.2-vla-sizeof OPTIONAL
-6.7.6.2-vla-typedef-eval OPTIONAL
+6.7.6.2-vla-param PASS
+6.7.6.2-vla-pointers PASS
+6.7.6.2-vla-sizeof PASS
+6.7.6.2-vla-static DIAG
+6.7.6.2-vla-typedef-eval PASS
 6.7.6.2-zero-size ACCEPTS
 6.7.6.3-array-param-qualifiers PASS
 6.7.6.3-conflicting-proto DIAG
@@ -448,6 +450,7 @@
 6.7.9-too-many DIAG
 6.7.9-union-init PASS
 6.7.9-vla-init DIAG
+6.7.9-vla-initializer DIAG
 6.8.1-case-outside-switch DIAG
 6.8.1-default-outside-switch DIAG
 6.8.1-duffs-device PASS
@@ -456,7 +459,7 @@
 6.8.1-label-before-declaration ACCEPTS
 6.8.1-labels-namespace PASS
 6.8.2-block-scope PASS
-6.8.2-vla-per-entry OPTIONAL
+6.8.2-vla-per-entry PASS
 6.8.3-null-and-expression PASS
 6.8.4.1-if-else PASS
 6.8.4.1-if-struct DIAG
@@ -476,6 +479,7 @@
 6.8.4.2-switch-semantics PASS
 6.8.4.2-switch-skip-decl PASS
 6.8.4.2-switch-unbraced-body PASS
+6.8.4.2-switch-vla-before-case DIAG
 6.8.5-for-controlling-struct DIAG
 6.8.5-loop-controlling-struct DIAG
 6.8.5.1-while PASS
@@ -490,6 +494,7 @@
 6.8.5.3-for-omitted PASS
 6.8.5.3-for-static-decl DIAG
 6.8.5.3-for-typedef-decl DIAG
+6.8.6-vla-jumps-free PASS
 6.8.6.1-goto PASS
 6.8.6.1-goto-into-block PASS
 6.8.6.1-goto-into-loop PASS

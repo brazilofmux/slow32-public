@@ -158,6 +158,26 @@ static void ps_read_alignas(void);
 static void ps_member_static_assert(void);
 static int ps_local_alignas(int elem_ty);
 static int ps_fn_align;           /* the strongest _Alignas on a local of this function */
+/* Variable length arrays: the VLA objects of the function, each with
+ * its enclosing one (the innermost in scope when it was declared) and
+ * the hidden local that holds sp from before it was allocated --
+ * setting sp back to that frees it and everything since.  ps_vd_top is
+ * the innermost in scope, -1 none. */
+#define PS_MAX_VD 1024
+static int   ps_vd_parent[PS_MAX_VD];
+static Node *ps_vd_save[PS_MAX_VD];
+static int   ps_nvd;
+static int   ps_vd_top;
+static int   ps_fn_vm;           /* the function declares a variably modified type */
+static void sema_expr(Node *n);  /* sema.h */
+static long long sema_cvalof(Node *c);
+static void ps_lex_mark(void);
+static void ps_lex_commit(void);
+static void ps_lex_rewind(void);
+static void ps_typedef_check(void);
+static int ps_vla_ahead(void);
+static Node *ps_local_vm_ptr(char *nm, int ty, int nstars, int is_static);
+static int ps_decl_inner;          /* a typedef'd array's own dimension (parse_local_array_dims) */
 static void ps_align_stack(int a);
 /* static in the file-scope declaration being read: one that follows a
  * declaration with external linkage is an error (6.2.2p7) */
@@ -502,6 +522,7 @@ static int ps_ngirelocs;
 #define P_MAX_LABELS 4096   /* was 512 */
 static char *ps_lblname[P_MAX_LABELS];
 static int   ps_lbldef[P_MAX_LABELS];    /* 1 once `name:` has been read (goto alone does not) */
+static int   ps_lblvtop[P_MAX_LABELS];  /* the VLA object innermost in scope at it (ps_vd_top) */
 static int   ps_lblid[P_MAX_LABELS];
 static int   ps_nlabels;
 
@@ -1136,6 +1157,7 @@ static int ps_define_label(char *name) {
     if (i < ps_nlabels) {
         if (ps_lbldef[i]) p_error("redefinition of label");
         ps_lbldef[i] = 1;
+        ps_lblvtop[i] = ps_vd_top;
     }
     return id;
 }
@@ -2594,6 +2616,7 @@ static Node *ps_local_rowptr(char *nm, int ty, int nstars, int is_static) {
     int off;
     int li;
     Node *n;
+    if (ps_vla_ahead()) return ps_local_vm_ptr(nm, ty, nstars, is_static);
     next();
     cols = parse_const_int();
     expect(TK_RBRACK);
@@ -2941,6 +2964,522 @@ static int add_defined_global(char *name, int ty, int size_bytes) {
     return idx;
 }
 
+/* --- Variable length arrays (6.7.6.2) ---
+ * A VLA's C type is an array whose count is -2 - id, id naming the
+ * hidden local that holds the count (ps_vc_var), evaluated where the
+ * declarator is.  The object is a hidden pointer: sp is moved down by
+ * its size and the pointer kept, and the C type tells the lowering both
+ * that (its address and its value are the pointer, hir_lower.h
+ * hl_is_vla_obj) and how far a step through it goes (a pointer to a VLA
+ * scales at run time, hl_scale).  The sp from before it is kept too;
+ * leaving its scope -- a block's end, a break, continue or goto out of
+ * it -- sets sp back (ps_vla_restore), and a return pops the frame.
+ * SLOW-32 only: the cross targets keep __STDC_NO_VLA__. */
+#define PS_MAX_VC 8192
+static Node *ps_vc_var[PS_MAX_VC];     /* NULL for [*], or a prototype's count */
+static int   ps_nvc;
+#define PS_MAX_VPEND 64
+static Node *ps_vpend[PS_MAX_VPEND];   /* count assignments read, not yet placed */
+static int   ps_nvpend;
+static Node *ps_vpp_expr[PS_MAX_VPEND]; /* a parameter's counts, for the body's entry */
+static int   ps_vpp_id[PS_MAX_VPEND];
+static int   ps_nvpp;
+#define PS_MAX_VGOTO 1024
+static Node *ps_vgoto[PS_MAX_VGOTO];
+static int   ps_nvgoto;
+static int   ps_vla_names;
+
+static void ps_vla_target_check(void) {
+#ifdef S12CC_TARGET_X64
+    p_error("variable length arrays are not supported on this target");
+#endif
+#ifdef S12CC_TARGET_A64
+    p_error("variable length arrays are not supported on this target");
+#endif
+}
+
+/* A fresh reference to local v (a node is not shared between uses). */
+static Node *ps_var_copy(Node *v) {
+    Node *n;
+    n = nd_var(v->name, v->offset, v->ty);
+    n->is_local = 1;
+    n->slot_id = v->slot_id;
+    n->cty = v->cty;
+    return n;
+}
+
+/* A hidden int local, __vla.N: a count, or a saved sp. */
+static Node *ps_vla_hidden(void) {
+    char nm[24];
+    int v;
+    int i;
+    int d;
+    int sv_al;
+    int sv_reg;
+    int li;
+    Node *n;
+    memcpy(nm, "__vla.", 6);
+    i = 6;
+    v = ps_vla_names;
+    ps_vla_names = ps_vla_names + 1;
+    d = 1;
+    while (d * 10 <= v) d = d * 10;
+    while (d > 0) {
+        nm[i] = (char)(48 + (v / d) % 10);
+        i = i + 1;
+        d = d / 10;
+    }
+    nm[i] = 0;
+    sv_al = ps_type_alignas;
+    sv_reg = ps_decl_register;
+    ps_type_alignas = 0;
+    ps_decl_register = 0;
+    add_local(nm, TY_INT);
+    ps_type_alignas = sv_al;
+    ps_decl_register = sv_reg;
+    li = ps_nlocals - 1;
+    ps_lcty[li] = ct_basic[CT_INT];
+    n = nd_var(nm, ps_loff[li], TY_INT);
+    ps_bind_var(n, li);
+    return n;
+}
+
+/* Does a declarator's dimension list, at the cursor, hold one that is
+ * not an integer constant expression -- or [*]?  Read ahead and put
+ * back; `[ number ]` and `[]` are taken without parsing. */
+static int ps_vla_ahead(void) {
+    int vm;
+    Node *e;
+    if (lex_tok != TK_LBRACK) return 0;
+    vm = 0;
+    ps_lex_mark();
+    while (lex_tok == TK_LBRACK && !vm) {
+        next();
+        while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE || lex_tok == TK_RESTRICT ||
+               lex_tok == TK_STATIC || is_gnu_qual_ident())
+            next();
+        if (lex_tok == TK_NUM) {
+            next();
+            if (lex_tok == TK_RBRACK) { next(); continue; }
+        }
+        if (lex_tok == TK_STAR) {
+            next();
+            if (lex_tok == TK_RBRACK) { vm = 1; break; }
+        }
+        if (lex_tok != TK_RBRACK) {
+            e = parse_assign();
+            sema_expr(e);
+            if (!(e->attr & AT_ICX)) vm = 1;
+        }
+        if (lex_tok != TK_RBRACK) break;
+        next();
+    }
+    ps_lex_rewind();
+    return vm;
+}
+
+/* A dimension's count that is not a constant: an id for its C type, and
+ * the assignment to its hidden local -- pending, for the declaration to
+ * place, or for a parameter's at the body's entry (6.9.1p10). */
+static int ps_vla_count(Node *e, int param) {
+    int id;
+    Node *v;
+    if (ps_nvc >= PS_MAX_VC || ps_nvpend >= PS_MAX_VPEND || ps_nvpp >= PS_MAX_VPEND)
+        p_error("too many variable length array dimensions");
+    id = ps_nvc;
+    ps_nvc = ps_nvc + 1;
+    ps_vc_var[id] = NULL;
+    if (param) {
+        ps_vpp_expr[ps_nvpp] = e;
+        ps_vpp_id[ps_nvpp] = id;
+        ps_nvpp = ps_nvpp + 1;
+        return id;
+    }
+    v = ps_vla_hidden();
+    ps_vc_var[id] = v;
+    ps_vpend[ps_nvpend] = nd_assign(ps_var_copy(v), e);
+    ps_nvpend = ps_nvpend + 1;
+    return id;
+}
+
+/* The dimensions at the cursor, over element type elem: the C type.  A
+ * parameter's first is adjusted away and not kept; [*] is unspecified. */
+static int ps_vla_dims(int elem, int param) {
+    int cnt[16];
+    int nd;
+    int c;
+    Node *e;
+    nd = 0;
+    while (lex_tok == TK_LBRACK) {
+        next();
+        while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE || lex_tok == TK_RESTRICT ||
+               lex_tok == TK_STATIC || is_gnu_qual_ident())
+            next();
+        c = -1;
+        if (lex_tok == TK_STAR) {
+            ps_lex_mark();
+            next();
+            if (lex_tok == TK_RBRACK) ps_lex_commit();
+            else ps_lex_rewind();
+        }
+        if (lex_tok != TK_RBRACK) {
+            e = parse_assign();
+            sema_expr(e);
+            if (e->attr & AT_ICX) {
+                c = (int)sema_cvalof(e);
+                if (c < 0) p_error("array has a negative size");
+            } else if (!(param && nd == 0)) {
+                c = -2 - ps_vla_count(e, param);
+            }
+        }
+        expect(TK_RBRACK);
+        if (nd >= 16) p_error("too many array dimensions");
+        cnt[nd] = c;
+        nd = nd + 1;
+    }
+    while (nd > 0) {
+        nd = nd - 1;
+        elem = ct_array(elem, cnt[nd]);
+    }
+    return elem;
+}
+
+/* The size of type t, a Node: a product of counts when it is known only
+ * at run time. */
+static Node *ps_vla_size(int t) {
+    Node *n;
+    Node *c;
+    int k;
+    if (!ct_runtime_size(t)) return nd_size(ct_sizeof(t));
+    k = ct_countof(t);
+    if (k >= 0) {
+        c = nd_size(k);
+    } else {
+        if (k == -1 || ps_vc_var[-2 - k] == NULL)
+            p_error("the size of an array of unspecified size is needed");
+        c = ps_var_copy(ps_vc_var[-2 - k]);
+    }
+    n = nd_binop(TK_STAR, c, ps_vla_size(ct_baseof(t)));
+    n->ty = TY_INT | TY_UNSIGNED;
+    return n;
+}
+
+/* The pending count assignments, as statements before tail ... */
+static Node *ps_vla_pend_stmts(Node *tail) {
+    Node *head;
+    Node *s;
+    int i;
+    head = tail;
+    i = ps_nvpend;
+    while (i > 0) {
+        i = i - 1;
+        s = nd_expr_stmt(ps_vpend[i]);
+        s->next = head;
+        head = s;
+    }
+    ps_nvpend = 0;
+    return head;
+}
+
+/* ... or evaluated before expression e. */
+static Node *ps_vla_pend_comma(Node *e) {
+    int i;
+    i = ps_nvpend;
+    while (i > 0) {
+        i = i - 1;
+        e = nd_comma(ps_vpend[i], e);
+    }
+    ps_nvpend = 0;
+    return e;
+}
+
+static Node *ps_vla_asm(int kind, Node *arg) {
+    return nd_asm("", NULL, arg, kind, arg != NULL);
+}
+
+/* sp set back to what it was before VLA object id. */
+static Node *ps_vla_restore(int id) {
+    return nd_expr_stmt(ps_vla_asm(ASM_S32_SETSP, ps_var_copy(ps_vd_save[id])));
+}
+
+/* The first VLA object, on top's chain, inside mark: the one whose sp a
+ * jump from top to mark restores (-1: mark is not on the chain). */
+static int ps_vla_first(int top, int mark) {
+    while (top >= 0 && ps_vd_parent[top] != mark) top = ps_vd_parent[top];
+    return top;
+}
+
+/* A block-scope declaration of a VLA object, the cursor after its name:
+ * dimensions to read, or (elem a VLA type already) none. */
+static Node *ps_local_vla(char *nm, int elem) {
+    int cty;
+    int inner;
+    int pty;
+    int li;
+    Node *v;
+    Node *save;
+    Node *s;
+    Node *a;
+    ps_vla_target_check();
+    if (ps_type_alignas) p_error("_Alignas on a variable length array is not supported");
+    cty = elem;
+    if (lex_tok == TK_LBRACK) cty = ps_vla_dims(elem, 0);
+    if (lex_tok == TK_ASSIGN) p_error("variable-sized object may not be initialized");   /* 6.7.9p3 */
+    inner = cty;
+    while (ct_kindof(inner) == CT_ARRAY) inner = ct_baseof(inner);
+    pty = ct_mty(inner) + TY_PTR;
+    save = ps_vla_hidden();
+    add_local(nm, pty);
+    li = ps_nlocals - 1;
+    ps_lcty[li] = cty;
+    v = nd_var(nm, ps_loff[li], pty);
+    ps_bind_var(v, li);
+    v->cty = ct_ptr(inner);         /* the slot itself, a pointer: stored to */
+    s = nd_expr_stmt(nd_assign(ps_var_copy(save), ps_vla_asm(ASM_S32_GETSP, NULL)));
+    a = ps_vla_asm(ASM_S32_VLA_ALLOC, ps_vla_size(cty));
+    a->ty = pty;
+    a->cty = ct_ptr(inner);
+    s->next = nd_expr_stmt(nd_assign(v, a));
+    if (ps_nvd >= PS_MAX_VD) p_error("too many variable length arrays");
+    ps_vd_parent[ps_nvd] = ps_vd_top;
+    ps_vd_save[ps_nvd] = save;
+    ps_vd_top = ps_nvd;
+    ps_nvd = ps_nvd + 1;
+    ps_fn_vm = 1;
+    return nd_block(ps_vla_pend_stmts(s));
+}
+
+/* Is the declarator at the cursor a VLA object's: a dimension not
+ * constant, or an object of a VLA type (a VLA typedef's)? */
+static int ps_vla_object_ahead(void) {
+    if (ps_decl_inner > 0) return 0;
+    if (ps_type_cty > 0 && ct_runtime_size(ps_type_cty)) return 1;
+    return ps_vla_ahead();
+}
+
+/* A block-scope T (*name)[n]: a pointer to a VLA, the cursor on `[`. */
+static Node *ps_local_vm_ptr(char *nm, int ty, int nstars, int is_static) {
+    int cty;
+    int i;
+    int li;
+    Node *n;
+    Node *init;
+    ps_vla_target_check();
+    if (is_static) p_error("an object of static storage duration may not have a variably modified type");
+    cty = ps_vla_dims(ct_from_mty(ty, 0), 0);
+    i = 0;
+    while (i < nstars) {
+        cty = ct_ptr(cty);
+        ty = ty + TY_PTR;
+        i = i + 1;
+    }
+    add_local(nm, ty);
+    li = ps_nlocals - 1;
+    ps_lcty[li] = cty;
+    ps_fn_vm = 1;
+    init = NULL;
+    if (lex_tok == TK_ASSIGN) {
+        next();
+        n = nd_var(nm, ps_loff[li], ty);
+        ps_bind_var(n, li);
+        init = nd_expr_stmt(nd_assign(n, parse_assign()));
+    }
+    expect(TK_SEMI);
+    return nd_block(ps_vla_pend_stmts(init));
+}
+
+/* typedef T name[n]; in a block, the cursor on `[`: the size evaluated
+ * here, once (6.7.6.2p5); the statements are pending for parse_stmt. */
+static void ps_vla_typedef(char *nm, int cty) {
+    int inner;
+    ps_vla_target_check();
+    if (ps_block_depth == 0) p_error("variably modified type at file scope");   /* 6.7.6.2p2 */
+    cty = ps_vla_dims(cty, 0);
+    inner = cty;
+    while (ct_kindof(inner) == CT_ARRAY) inner = ct_baseof(inner);
+    add_typedef(nm, ct_mty(inner) + TY_PTR);
+    ps_tdcty[ps_ntypedefs - 1] = cty;
+    ps_tdarr[ps_ntypedefs - 1] = 0;
+    ps_typedef_check();
+    ps_fn_vm = 1;
+    skip_gnu_decl_suffixes();
+    expect(TK_SEMI);
+}
+
+/* sizeof of a VLA type at the cursor -- T[n] or a VLA typedef -- after
+ * its base type: the counts evaluated, then the size (6.5.3.4p2). */
+static int ps_vla_sizeof_ahead(void) {
+    if (lex_tok == TK_RPAREN) return ps_type_cty > 0 && ct_runtime_size(ps_type_cty);
+    return ps_vla_ahead();
+}
+
+static Node *ps_vla_sizeof_type(void) {
+    int cty;
+    ps_vla_target_check();
+    if (ps_block_depth == 0) p_error("variably modified type at file scope");
+    cty = ps_type_cty;
+    if (lex_tok == TK_LBRACK) cty = ps_vla_dims(cty, 0);
+    expect(TK_RPAREN);
+    return ps_vla_pend_comma(ps_vla_size(cty));
+}
+
+/* sizeof expression: a VLA's size at run time, its operand evaluated
+ * (6.5.3.4p2); any other's, the constant. */
+static int ps_sizeof_node(Node *n);
+static Node *ps_sizeof_value(Node *n) {
+    sema_expr(n);
+    if (n->cty > 0 && ct_runtime_size(n->cty)) return nd_comma(n, ps_vla_size(n->cty));
+    return nd_size(ps_sizeof_node(n));
+}
+
+/* p[i] where p points to a VLA -- int g[n][m], int (*p)[m] -- is a row,
+ * an array: its value is its address, as p's machine type has it, and
+ * its C type the row's.  The parser needs that before sema does: a row
+ * of structures is subscripted and then a member taken. */
+static void ps_vla_row(Node *n) {
+    Node *p;
+    int t;
+    p = n->lhs->lhs;
+    t = p->cty > 0 ? ct_decay(p->cty) : 0;
+    if (t > 0 && ct_is_ptr(t) && ct_runtime_size(ct_baseof(t))) {
+        n->ty = p->ty;
+        n->cty = ct_baseof(t);
+    }
+}
+
+/* A parameter's dimensions, when one is not constant: a pointer to the
+ * element (6.7.6.3p7) whose type is variably modified -- int a[n][m] is
+ * int (*a)[m], m's count taken at the body's entry. */
+static int ps_vla_param_dims(int *pty) {
+    int cty;
+    ps_vla_target_check();
+    cty = ps_vla_dims(ps_type_cty, 1);
+    *pty = *pty + TY_PTR;
+    ps_type_cty = ct_ptr(ct_baseof(cty));
+    ps_fn_vm = 1;
+    return 0;
+}
+
+/* At a definition's body: the parameters' counts, into hidden locals,
+ * the statements before pre. */
+static Node *ps_vla_param_pre(Node *pre) {
+    int k;
+    Node *v;
+    Node *s;
+    Node *head;
+    Node *tail;
+    head = NULL;
+    tail = NULL;
+    k = 0;
+    while (k < ps_nvpp) {
+        v = ps_vla_hidden();
+        ps_vc_var[ps_vpp_id[k]] = v;
+        s = nd_expr_stmt(nd_assign(ps_var_copy(v), ps_vpp_expr[k]));
+        if (head == NULL) head = s;
+        else tail->next = s;
+        tail = s;
+        k = k + 1;
+    }
+    ps_nvpp = 0;
+    if (head == NULL) return pre;
+    tail->next = pre;
+    return head;
+}
+
+/* break, continue, goto, case and default keep the VLA object innermost
+ * in scope where they are (offset, + 1: 0 is none); a goto is listed
+ * for the check at the function's end. */
+static Node *ps_vla_jump(Node *n) {
+    n->offset = ps_vd_top + 1;
+    if (n->kind == ND_GOTO && ps_nvgoto < PS_MAX_VGOTO) {
+        ps_vgoto[ps_nvgoto] = n;
+        ps_nvgoto = ps_nvgoto + 1;
+    }
+    return n;
+}
+
+/* Jump s leaving VLA objects for mark: { sp set back; s }, s mutated in
+ * place so its parent keeps it. */
+static void ps_vla_wrap(Node *s, int mark) {
+    int first;
+    Node *j;
+    Node *r;
+    first = ps_vla_first(s->offset - 1, mark);
+    if (s->offset - 1 == mark || first < 0) return;
+    j = nd_new(s->kind);
+    j->val = s->val;
+    j->offset = mark + 1;
+    j->line = s->line;
+    j->file = s->file;
+    r = ps_vla_restore(first);
+    r->next = j;
+    s->kind = ND_BLOCK;
+    s->body = r;
+}
+
+/* The jumps out of a loop or switch body: break (brk), continue (cont);
+ * a switch's case labels may not be inside a VLA's scope (cases). */
+static void ps_vla_fix(Node *s, int mark, int brk, int cont, int cases) {
+    int k;
+    while (s) {
+        k = s->kind;
+        if (k == ND_BREAK && brk) ps_vla_wrap(s, mark);
+        else if (k == ND_CONTINUE && cont) ps_vla_wrap(s, mark);
+        else if ((k == ND_CASE || k == ND_DEFAULT) && cases) {
+            if (s->offset - 1 != mark)
+                p_error("switch jumps into the scope of a variably modified object");   /* 6.8.4.2p2 */
+        } else if (k == ND_SWITCH) {
+            if (cont) ps_vla_fix(s->body, mark, 0, 1, 0);
+        } else if (k == ND_BLOCK || k == ND_LABEL || k == ND_IF) {
+            ps_vla_fix(s->body, mark, brk, cont, cases);
+            if (k == ND_IF) ps_vla_fix(s->els, mark, brk, cont, cases);
+        }
+        s = s->next;
+    }
+}
+
+static Node *ps_vla_loop(Node *n, int is_loop) {
+    if (ps_nvd > 0) ps_vla_fix(n->body, ps_vd_top, 1, is_loop, !is_loop);
+    return n;
+}
+
+/* At a block's end: sp set back for its VLA objects (appended to the
+ * statements head..tail). */
+static Node *ps_vla_block_end(Node *head, Node *tail, int vtop) {
+    Node *r;
+    if (ps_vd_top == vtop) return head;
+    r = ps_vla_restore(ps_vla_first(ps_vd_top, vtop));
+    ps_vd_top = vtop;
+    if (head == NULL) return r;
+    tail->next = r;
+    return head;
+}
+
+/* At a function's end: each goto into a VLA's scope refused (6.8.6.1p1),
+ * each out of one given its restore. */
+static void ps_vla_gotos(void) {
+    int g;
+    int i;
+    int lt;
+    int t;
+    Node *n;
+    if (ps_nvd == 0) return;
+    g = 0;
+    while (g < ps_nvgoto) {
+        n = ps_vgoto[g];
+        i = 0;
+        while (i < ps_nlabels && ps_lblid[i] != n->val) i = i + 1;
+        if (i < ps_nlabels && ps_lbldef[i]) {
+            lt = ps_lblvtop[i];
+            t = n->offset - 1;
+            while (t >= 0 && t != lt) t = ps_vd_parent[t];
+            if (t != lt) p_error("goto jumps into the scope of a variably modified object");
+            ps_vla_wrap(n, lt);
+        }
+        g = g + 1;
+    }
+}
+
 /* Array dimensions on a parameter.  `T a[N]` is `T *a`; `T a[N][M]` is a
  * pointer to a row of M elements, ONE pointer level with the row width
  * recorded so a[i] scales by the row and stays a row pointer (the
@@ -2951,6 +3490,7 @@ static int add_defined_global(char *name, int ty, int size_bytes) {
 static int ps_parse_param_dims(int *pty) {
     int ndims;
     int last;
+    if (ps_vla_ahead()) return ps_vla_param_dims(pty);
     ndims = 0;
     last = 0;
     while (lex_tok == TK_LBRACK) {
@@ -5843,18 +6383,19 @@ static Node *parse_primary(void) {
         next();
         if (lex_tok != TK_LPAREN) {
             n = parse_unary();
-            return nd_size(ps_sizeof_node(n));
+            return ps_sizeof_value(n);
         }
         expect(TK_LPAREN);
         if (is_type()) {
             int sz_ty;
             sz_ty = parse_type();
+            if (ps_vla_sizeof_ahead()) return ps_vla_sizeof_type();
             v = ps_sizeof_type_tail(sz_ty, ps_type_arrcount);
             expect(TK_RPAREN);
         } else {
             n = parse_expr();
             expect(TK_RPAREN);
-            v = ps_sizeof_node(parse_postfix_from(n));
+            return ps_sizeof_value(parse_postfix_from(n));
         }
         return nd_size(v);
     }
@@ -5976,6 +6517,7 @@ static Node *parse_postfix_from(Node *n) {
                     if (n->kind == ND_CALL) fpn = n->val_hi;
                     n = nd_binop(TK_PLUS, n, idx);
                     n = nd_unary(TK_STAR, n);
+                    ps_vla_row(n);
                     if (fpb >= 0) {
                         n->is_fnptr = 1;
                         n->val = fpb;
@@ -6908,7 +7450,6 @@ static Node *parse_compound_literal_expr(int ty, int arr_count) {
 
 /* The dimensions of a block-scope array declarator, cursor on `[`.
  * Two dimensions at most; a second one must be sized. */
-static int ps_decl_inner;
 
 static void parse_local_array_dims(int *pcount, int *plcols2) {
     int count;
@@ -6999,6 +7540,7 @@ static Node *ps_local_declarator_body(char *nm, int ty) {
     int slen;
     char *sp;
 
+    if (ps_vla_object_ahead()) return ps_local_vla(nm, ps_type_cty);
     if (lex_tok == TK_LBRACK || ps_decl_inner > 0) {
         parse_local_array_dims(&count, &lcols2);
         head = NULL;
@@ -7294,6 +7836,10 @@ static void parse_typedef_decl(void) {
         }
         if (lex_tok == TK_LBRACK) {
             int tdcount;
+            if (ps_vla_ahead()) {
+                ps_vla_typedef(nm, cty);
+                return;
+            }
             next();
             tdcount = 0;
             if (lex_tok != TK_RBRACK) tdcount = parse_const_int();
@@ -7512,7 +8058,7 @@ static Node *parse_stmt(void) {
         c = parse_expr();
         expect(TK_RPAREN);
         expect(TK_SEMI);
-        return nd_do_while(c, t);
+        return ps_vla_loop(nd_do_while(c, t), 1);
     }
 
     /* while statement */
@@ -7522,7 +8068,7 @@ static Node *parse_stmt(void) {
         c = parse_expr();
         expect(TK_RPAREN);
         t = parse_stmt();
-        return nd_while(c, t);
+        return ps_vla_loop(nd_while(c, t), 1);
     }
 
     /* for statement (first-class node) */
@@ -7562,7 +8108,7 @@ static Node *parse_stmt(void) {
         t = parse_stmt();
         ps_scope_end(ci);
         if (!ps_fn_setjmp) ps_stack = ci_stack;
-        return ps_for_node(a, nd_for(n, c, e, t));
+        return ps_for_node(a, ps_vla_loop(nd_for(n, c, e, t), 1));
     }
 
     /* switch statement */
@@ -7589,7 +8135,7 @@ static Node *parse_stmt(void) {
         n = nd_new(ND_SWITCH);
         n->cond = c;
         n->body = t;
-        return n;
+        return ps_vla_loop(n, 0);
     }
 
     /* case label: any constant expression (doom packs chars with
@@ -7603,28 +8149,28 @@ static Node *parse_stmt(void) {
         n = nd_new(ND_CASE);
         n->val = cv;
         n->val_hi = cv_hi;
-        return n;
+        return ps_vla_jump(n);
     }
 
     /* default label */
     if (lex_tok == TK_DEFAULT) {
         next();
         expect(TK_COLON);
-        return nd_new(ND_DEFAULT);
+        return ps_vla_jump(nd_new(ND_DEFAULT));
     }
 
     /* break statement */
     if (lex_tok == TK_BREAK) {
         next();
         expect(TK_SEMI);
-        return nd_new(ND_BREAK);
+        return ps_vla_jump(nd_new(ND_BREAK));
     }
 
     /* continue statement */
     if (lex_tok == TK_CONTINUE) {
         next();
         expect(TK_SEMI);
-        return nd_new(ND_CONTINUE);
+        return ps_vla_jump(nd_new(ND_CONTINUE));
     }
 
     /* goto statement */
@@ -7636,7 +8182,7 @@ static Node *parse_stmt(void) {
         memcpy(nm, lex_str, lex_slen + 1);
         next();
         expect(TK_SEMI);
-        return nd_goto(find_or_add_label(nm));
+        return ps_vla_jump(nd_goto(find_or_add_label(nm)));
     }
 
     /* block */
@@ -7657,7 +8203,7 @@ static Node *parse_stmt(void) {
     if (lex_tok == TK_TYPEDEF) {
         next();
         parse_typedef_decl();
-        return nd_block(NULL);
+        return nd_block(ps_vla_pend_stmts(NULL));
     }
     while (lex_tok == TK_STATIC || lex_tok == TK_CONST ||
            lex_tok == TK_EXTERN ||
@@ -8162,8 +8708,10 @@ static Node *parse_block(void) {
     int saved_nlocals;
     int saved_stack;
     int saved_nconsts;
+    int vtop;
 
     expect(TK_LBRACE);
+    vtop = ps_vd_top;
     saved_nlocals = ps_scope_begin();
     saved_stack = ps_stack;
     saved_nconsts = ps_nconsts;
@@ -8181,6 +8729,7 @@ static Node *parse_block(void) {
         }
     }
     expect(TK_RBRACE);
+    head = ps_vla_block_end(head, tail, vtop);
     ps_scope_end(saved_nlocals);
     /* the block's enumerators and structure tags go out of scope with
      * it (6.2.1p4); they leaked, so an inner `enum { X = 100 }` was X
@@ -8488,6 +9037,12 @@ static Node *ps_function_decl(char *nm, int ty, int ret_cty, int is_static, int 
     ps_stack = 8;  /* reserve 8 bytes: saved r31 + saved r30 */
     ps_stack_max = 8;
     ps_fn_align = 0;
+    ps_nvd = 0;
+    ps_vd_top = -1;
+    ps_nvgoto = 0;
+    ps_nvpp = 0;
+    ps_nvpend = 0;
+    ps_fn_vm = 0;
     ps_slot_gen = 0;
     ps_nparams = 0;
     ps_is_varargs = 0;
@@ -8785,7 +9340,9 @@ params_done:
     fn->offset = ps_struct_ret ? ps_retptr_off : 0; /* hidden __retptr offset */
     ps_cur_func = fn->name;
     ps_in_body = 1;
+    kr_pre = ps_vla_param_pre(kr_pre);
     fn->body = parse_block();
+    ps_vla_gotos();
     ps_in_body = 0;
     if (kr_pre) {           /* the K&R parameters' conversions come first */
         p = kr_pre;
@@ -8795,6 +9352,7 @@ params_done:
     }
     fn->locals_size = ps_stack_max;
     fn->bit_width = ps_fn_align;
+    fn->arr_cols = ps_fn_vm;        /* not inlined: hl_inl_sel_one */
 
     return fn;
 }

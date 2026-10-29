@@ -108,6 +108,13 @@
  * headers (cobol/src/hir), 2026-10-03. */
 #define HI_MULH     71
 #define HI_MULHU    72
+/* The stack pointer, read and set (ASM_S32_GETSP / ASM_S32_SETSP): a
+ * variable length array is allocated by moving sp down, and freed by
+ * setting it back.  GETSP is not pure -- never CSE'd or hoisted -- and
+ * SETSP, having no value, is kept by DCE as every value-less kind is.
+ * SLOW-32 only: the cross targets refuse VLAs. */
+#define HI_GETSP    73
+#define HI_SETSP    74
 /* a binary operation over two value operands (the ADD..SGEU range and
  * the two above); the passes that classified by the range ask this */
 static int hi_is_binop(int k) { return (k >= HI_ADD && k <= HI_SGEU) || k == HI_MULH || k == HI_MULHU; }
@@ -386,6 +393,7 @@ static int hi_has_value(int kind) {
     if (kind == HI_X64_RDTSC) return 0;
     if (kind == HI_X64_DBT_TRAMPOLINE) return 0;
     if (kind == HI_JMPTAB) return 0;
+    if (kind == HI_SETSP) return 0;
     return 1;
 }
 
