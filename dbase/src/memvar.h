@@ -21,8 +21,14 @@ typedef struct {
     int is_local;       /* 1 = LOCAL variable, only visible at exact scope */
 } memvar_t;
 
+#define MEMVAR_BUCKETS 512   /* power of two */
+
 typedef struct memvar_store {
     memvar_t vars[MEMVAR_MAX];
+    /* The used slots chained by name hash: a lookup visits the slots whose
+     * names share a bucket, not every live slot */
+    short bucket[MEMVAR_BUCKETS];
+    short next[MEMVAR_MAX];
     int count;
     int hw;             /* slots at or above this index are unused: a lookup walks hw slots, not 256 */
     int current_depth;  /* updated on push/pop frame */

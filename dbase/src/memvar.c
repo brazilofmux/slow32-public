@@ -23,6 +23,22 @@ static unsigned name_hash(const char *s) {
     return h;
 }
 
+static void slot_link(memvar_store_t *store, int i) {
+    int b = (int)(store->vars[i].hash & (MEMVAR_BUCKETS - 1));
+    store->next[i] = store->bucket[b];
+    store->bucket[b] = (short)i;
+}
+
+/* Slot i leaves use: off its chain, then marked free */
+static void slot_free(memvar_store_t *store, int i) {
+    short *pp = &store->bucket[store->vars[i].hash & (MEMVAR_BUCKETS - 1)];
+    while (*pp >= 0) {
+        if (*pp == i) { *pp = store->next[i]; break; }
+        pp = &store->next[*pp];
+    }
+    store->vars[i].used = 0;
+}
+
 static void hw_grow(memvar_store_t *store, int i) { if (i + 1 > store->hw) store->hw = i + 1; }
 static void hw_shrink(memvar_store_t *store) { while (store->hw > 0 && !store->vars[store->hw - 1].used) store->hw--; }
 
@@ -30,6 +46,8 @@ void memvar_init(memvar_store_t *store) {
     int i;
     for (i = 0; i < MEMVAR_MAX; i++)
         store->vars[i].used = 0;
+    for (i = 0; i < MEMVAR_BUCKETS; i++)
+        store->bucket[i] = -1;
     store->count = 0;
     store->hw = 0;
 }
@@ -40,18 +58,19 @@ void memvar_init(memvar_store_t *store) {
  * (LOCAL used to release the variable it shadowed, so a callee saw nothing
  * and the caller's value was gone on return: GitHub issue 113.) */
 static int memvar_slot(const memvar_store_t *store, const char *uname, unsigned h) {
-    int i, best = -1;
-    for (i = 0; i < store->hw; i++) {
-        if (store->vars[i].used && store->vars[i].hash == h &&
-            strcmp(store->vars[i].name, uname) == 0) {
+    int i, best = -1, local = -1;
+    /* The chain is in no particular order, so "first" is the lowest slot */
+    for (i = store->bucket[h & (MEMVAR_BUCKETS - 1)]; i >= 0; i = store->next[i]) {
+        if (store->vars[i].hash == h && strcmp(store->vars[i].name, uname) == 0) {
             if (store->vars[i].is_local) {
-                if (store->vars[i].scope_depth == store->current_depth) return i;
+                if (store->vars[i].scope_depth == store->current_depth &&
+                    (local < 0 || i < local)) local = i;
                 continue;
             }
-            if (best < 0) best = i;
+            if (best < 0 || i < best) best = i;
         }
     }
-    return best;
+    return local >= 0 ? local : best;
 }
 
 int memvar_find(const memvar_store_t *store, const char *name, value_t *val) {
@@ -95,6 +114,7 @@ int memvar_set(memvar_store_t *store, const char *name, const value_t *val) {
             store->vars[i].hash = name_hash(store->vars[i].name);
             store->vars[i].val = *val;
             store->vars[i].used = 1;
+            slot_link(store, i);
             store->vars[i].scope_depth = store->current_depth;
             store->vars[i].is_local = 0;
             store->count++;
@@ -131,6 +151,7 @@ int memvar_set_local(memvar_store_t *store, const char *name, const value_t *val
             store->vars[i].hash = name_hash(store->vars[i].name);
             store->vars[i].val = *val;
             store->vars[i].used = 1;
+            slot_link(store, i);
             store->vars[i].scope_depth = store->current_depth;
             store->vars[i].is_local = 1;
             store->count++;
@@ -152,7 +173,7 @@ int memvar_release(memvar_store_t *store, const char *name) {
     if (i < 0) return -1;
     if (store->vars[i].val.type == VAL_ARRAY)
         array_free(store->vars[i].val.array);
-    store->vars[i].used = 0;
+    slot_free(store, i);
     store->count--;
     hw_shrink(store);
     return 0;
@@ -166,7 +187,7 @@ void memvar_release_locals(memvar_store_t *store, int depth) {
             store->vars[i].scope_depth != depth) continue;
         if (store->vars[i].val.type == VAL_ARRAY)
             array_free(store->vars[i].val.array);
-        store->vars[i].used = 0;
+        slot_free(store, i);
         store->count--;
     }
     hw_shrink(store);
@@ -180,7 +201,7 @@ void memvar_release_all(memvar_store_t *store) {
         if (store->vars[i].scope_depth < store->current_depth) continue;
         if (store->vars[i].val.type == VAL_ARRAY)
             array_free(store->vars[i].val.array);
-        store->vars[i].used = 0;
+        slot_free(store, i);
         store->count--;
     }
     hw_shrink(store);
@@ -201,7 +222,7 @@ int memvar_release_matching(memvar_store_t *store, const char *pattern, int like
         if ((like && matches) || (!like && !matches)) {
             if (store->vars[i].val.type == VAL_ARRAY)
                 array_free(store->vars[i].val.array);
-            store->vars[i].used = 0;
+            slot_free(store, i);
             store->count--;
             count++;
         }

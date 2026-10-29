@@ -527,13 +527,9 @@ int ast_eval_field(expr_ctx_t *ctx, const char *name, value_t *result) {
 int ast_eval_name(expr_ctx_t *ctx, const char *name, value_t *result) {
     /* Field-first lookup, then memvar — matches parse_primary in expr.c */
     if (eval_field_from_db(ctx->db, name, result) == 0) return 0;
-    if (ctx->vars) {
-        value_t mv;
-        if (memvar_find(ctx->vars, name, &mv) == 0) {
-            *result = mv;
-            return 0;
-        }
-    }
+    /* memvar_find writes *result only when it finds the name */
+    if (ctx->vars && memvar_find(ctx->vars, name, result) == 0)
+        return 0;
     snprintf(ctx->err_msg, sizeof(ctx->err_msg), "Variable not found: %s", name);
     ctx->error = ctx->err_msg;
     return -1;
