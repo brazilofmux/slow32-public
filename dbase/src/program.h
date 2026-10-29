@@ -148,6 +148,18 @@ int prog_is_running(void);
 #define ERR_UNIQUE        143
 
 void prog_error(int code, const char *message);
+/* Compiled code (clip/) has no program running here; it says where it is,
+ * so errors name the file and line as they do for an interpreted program.
+ * file must outlive the call (a string literal); line 0 clears it. */
+void prog_set_compiled_loc(const char *file, int line);
+/* DO <name> [WITH ...] asks compiled code (clip/) first, after the running
+ * program's own procedures: the hook returns 1 when name is compiled in and
+ * it ran it.  ref_names[i] is the variable argument i was passed by reference
+ * from ("" for a value); the hook writes the callee's final value back. */
+typedef int (*prog_do_hook_t)(const char *name, value_t *args, int nargs,
+                              char ref_names[][MEMVAR_NAMELEN]);
+void prog_set_do_hook(prog_do_hook_t hook);
+void prog_get_compiled_loc(const char **file, int *line);
 void prog_error_fmt(int code, const char *fmt, ...);
 int expr_error_code(const char *msg);
 int prog_get_error_code(void);

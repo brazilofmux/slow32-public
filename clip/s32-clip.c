@@ -152,6 +152,41 @@ static void emit_cmd(FILE *out, int depth, const char *p) {
     fprintf(out, "); /* interp */\n");
 }
 
+/* The program name the interpreter would report: the file's base name, as
+ * DO would have it, with .PRG */
+static void file_label(const char *path, char *buf, int n) {
+    const char *b = strrchr(path, '/');
+    const char *dot;
+    int len;
+    b = b ? b + 1 : path;
+    dot = strrchr(b, '.');
+    len = dot ? (int)(dot - b) : (int)strlen(b);
+    if (len > n - 5) {
+        len = n - 5;
+    }
+    memcpy(buf, b, (size_t)len);
+    strcpy(buf + len, ".PRG");
+}
+
+/* clip_at(file, line) as an expression, for a condition's front */
+static void emit_at_expr(emit_t *e) {
+    char label[64];
+    file_label(e->inpath, label, (int)sizeof(label));
+    fprintf(e->out, "clip_at(");
+    c_escape(e->out, label);
+    fprintf(e->out, ", %d)", e->lineno);
+}
+
+/* A condition: "<pre>(clip_at(...), clip_truth("expr"))<post>" */
+static void emit_cond(emit_t *e, int depth, const char *pre, const char *expr, const char *post) {
+    emit_indent(e->out, depth);
+    fprintf(e->out, "%s(", pre);
+    emit_at_expr(e);
+    fprintf(e->out, ", clip_truth(");
+    c_escape(e->out, expr);
+    fprintf(e->out, "))%s\n", post);
+}
+
 static int find_assign(const char *p, char *name, int nsz, const char **expr) {
     const char *s;
     int n;
@@ -513,12 +548,12 @@ static int emit_stmt(emit_t *e, const char *p) {
         }
         return 0;
     }
-    if (e->in_fn && is_kw(p, "LOCAL")) {
+    if (is_kw(p, "LOCAL")) {
         p = skip_ws(p + 5);
         n = parse_namelist(p, names, MAX_PARAMS);
         for (i = 0; i < n; i++) {
             emit_indent(e->out, e->depth);
-            fprintf(e->out, "clip_local(&scope, ");
+            fprintf(e->out, e->in_fn ? "clip_local(&scope, " : "clip_local(NULL, ");
             c_escape(e->out, names[i]);
             fprintf(e->out, ");\n");
         }
@@ -526,6 +561,9 @@ static int emit_stmt(emit_t *e, const char *p) {
     }
     if (is_kw(p, "RETURN")) {
         const char *q = skip_ws(p + 6);
+        emit_indent(e->out, e->depth);
+        emit_at_expr(e);
+        fprintf(e->out, ";\n");
         if (e->in_fn) {
             emit_indent(e->out, e->depth);
             fprintf(e->out, "clip_return(&scope, ");
@@ -616,10 +654,7 @@ static int emit_stmt(emit_t *e, const char *p) {
         } else {
             q = skip_ws(skip_ws(p + 4) + 2);
         }
-        emit_indent(e->out, e->depth - 1);
-        fprintf(e->out, "} else if (clip_truth(");
-        c_escape(e->out, q);
-        fprintf(e->out, ")) {\n");
+        emit_cond(e, e->depth - 1, "} else if ", q, " {");
         return 0;
     }
     if (is_kw(p, "ELSE")) {
@@ -638,18 +673,12 @@ static int emit_stmt(emit_t *e, const char *p) {
             return -1;
         }
         if (e->nest[e->depth - 1] == 'C') {
-            emit_indent(e->out, e->depth - 1);
-            fprintf(e->out, "if (clip_truth(");
-            c_escape(e->out, q);
-            fprintf(e->out, ")) {\n");
+            emit_cond(e, e->depth - 1, "if ", q, " {");
             e->nest[e->depth - 1] = 'K';
             return 0;
         }
         if (e->nest[e->depth - 1] == 'K') {
-            emit_indent(e->out, e->depth - 1);
-            fprintf(e->out, "} else if (clip_truth(");
-            c_escape(e->out, q);
-            fprintf(e->out, ")) {\n");
+            emit_cond(e, e->depth - 1, "} else if ", q, " {");
             return 0;
         }
         fprintf(stderr, "%s:%d: CASE after OTHERWISE\n", e->inpath, e->lineno);
@@ -673,10 +702,7 @@ static int emit_stmt(emit_t *e, const char *p) {
                 fprintf(stderr, "%s:%d: nesting too deep\n", e->inpath, e->lineno);
                 return -1;
             }
-            emit_indent(e->out, e->depth);
-            fprintf(e->out, "while (clip_truth(");
-            c_escape(e->out, q);
-            fprintf(e->out, ")) {\n");
+            emit_cond(e, e->depth, "while ", q, " {");
             e->nest[e->depth++] = 'W';
             return 0;
         }
@@ -688,6 +714,9 @@ static int emit_stmt(emit_t *e, const char *p) {
             e->nest[e->depth++] = 'C';
             return 0;
         }
+        emit_indent(e->out, e->depth);
+        emit_at_expr(e);
+        fprintf(e->out, ";\n");
         /* DO <name> targeting a compiled-in procedure. SET PROCEDURE TO is
          * dropped when its file is inlined, so clip_cmd("DO name") would find
          * neither an on-disk .prg nor a procedure file and raise File-not-
@@ -705,14 +734,9 @@ static int emit_stmt(emit_t *e, const char *p) {
             }
             name[i] = '\0';
             r = skip_ws(r);
-            if (name[0] && was_compiled_fn(name)) {
-                if (*r != '\0') {
-                    fprintf(stderr,
-                            "%s:%d: DO %s with arguments/clauses is not "
-                            "supported for a compiled-in procedure\n",
-                            e->inpath, e->lineno, name);
-                    return -1;
-                }
+            /* With WITH arguments, the interpreter's DO parses them (and
+             * which are by reference) and its hook calls the compiled code */
+            if (name[0] && was_compiled_fn(name) && *r == '\0') {
                 emit_indent(e->out, e->depth);
                 fprintf(e->out, "clip_do(");
                 c_escape(e->out, name);
@@ -729,18 +753,25 @@ static int emit_stmt(emit_t *e, const char *p) {
             fprintf(stderr, "%s:%d: nesting too deep\n", e->inpath, e->lineno);
             return -1;
         }
-        emit_indent(e->out, e->depth);
-        fprintf(e->out, "if (clip_truth(");
-        c_escape(e->out, q);
-        fprintf(e->out, ")) {\n");
+        emit_cond(e, e->depth, "if ", q, " {");
         e->nest[e->depth++] = 'I';
         return 0;
+    }
+    if (is_kw(p, "SUSPEND")) {
+        fprintf(stderr, "%s:%d: SUSPEND: a compiled program has no interactive mode\n",
+                e->inpath, e->lineno);
+        return -1;
     }
     if (is_unlowered_block(p) || is_kw(p, "NEXT") || is_kw(p, "ENDSCAN") ||
         is_kw(p, "ENDTEXT") || is_kw(p, "RECOVER") || is_kw(p, "END")) {
         fprintf(stderr, "%s:%d: unlowered block: %s\n", e->inpath, e->lineno, p);
         return -1;
     }
+    /* What remains can fail at run time: say where it is first */
+    emit_indent(e->out, e->depth);
+    emit_at_expr(e);
+    fprintf(e->out, ";\n");
+
     if (is_kw(p, "SET")) {
         char proc[MAX_NAME];
         if (parse_set_proc(p, proc, MAX_NAME) && was_inlined(proc)) {

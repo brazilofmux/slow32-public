@@ -140,6 +140,24 @@ int expr_error_code(const char *msg) {
 
 /* ---- Error handling ---- */
 
+static const char *compiled_file;
+static int compiled_line;
+static prog_do_hook_t do_hook;
+
+void prog_set_do_hook(prog_do_hook_t hook) {
+    do_hook = hook;
+}
+
+void prog_set_compiled_loc(const char *file, int line) {
+    compiled_file = file;
+    compiled_line = line;
+}
+
+void prog_get_compiled_loc(const char **file, int *line) {
+    *file = compiled_file;
+    *line = compiled_line;
+}
+
 void prog_error(int code, const char *message) {
     error_state.code = code;
     str_copy(error_state.message, message, sizeof(error_state.message));
@@ -149,6 +167,9 @@ void prog_error(int code, const char *message) {
         error_state.lineno = state.pc + 1;  /* 1-based */
         str_copy(error_state.program, state.current_prog->filename,
                  sizeof(error_state.program));
+    } else if (compiled_line > 0 && compiled_file) {
+        error_state.lineno = compiled_line;
+        str_copy(error_state.program, compiled_file, sizeof(error_state.program));
     } else {
         error_state.lineno = 0;
         error_state.program[0] = '\0';
@@ -1520,6 +1541,10 @@ void prog_do(const char *arg) {
                 return;
             }
         }
+
+        /* A procedure compiled into this program (clip/) */
+        if (!in_file[0] && do_hook && do_hook(name, with_args, with_argc, ref_names))
+            return;
 
         /* Check SET PROCEDURE TO file */
         if (procedure_file) {

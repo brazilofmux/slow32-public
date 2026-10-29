@@ -24,6 +24,7 @@ static struct {
 } clip_fns[CLIP_MAX_FNS];
 static int clip_nfn;
 static udf_callback_t clip_prev_udf;
+static clip_call_t *clip_next_call;   /* the DO ... WITH about to enter */
 
 static void name_upper(char *dst, const char *src, int n) {
     int i;
@@ -70,6 +71,38 @@ void clip_do(const char *name) {
     }
 }
 
+/* The interpreter's DO, for a procedure compiled in: run it, then copy each
+ * by-reference parameter's final value back to the caller's variable. */
+static int clip_do_hook(const char *name, value_t *args, int nargs,
+                        char ref_names[][MEMVAR_NAMELEN]) {
+    char upper[MEMVAR_NAMELEN];
+    clip_call_t call;
+    value_t result;
+    int i;
+
+    name_upper(upper, name, (int)sizeof(upper));
+    for (i = 0; i < clip_nfn; i++) {
+        if (strcmp(clip_fns[i].name, upper) == 0) {
+            break;
+        }
+    }
+    if (i == clip_nfn) {
+        return 0;
+    }
+    memset(&call, 0, sizeof(call));
+    call.nargs = nargs;
+    call.ref_names = ref_names;
+    clip_next_call = &call;
+    clip_fns[i].fn(args, nargs, &result);
+    clip_next_call = NULL;
+    for (i = 0; i < nargs && i < MAX_FUNC_ARGS; i++) {
+        if (call.have[i]) {
+            memvar_set(cmd_get_memvar_store(), ref_names[i], &call.out[i]);
+        }
+    }
+    return 1;
+}
+
 void clip_register_fn(const char *name, clip_fn_t fn) {
     char upper[MEMVAR_NAMELEN];
     int i;
@@ -94,6 +127,7 @@ void clip_init(void) {
     prog_init();
     clip_prev_udf = func_get_udf_callback();
     func_set_udf_callback(clip_udf_dispatch);
+    prog_set_do_hook(clip_do_hook);
     strcpy(line, "SET TALK OFF");
     cmd_execute(&clip_db, line);
 }
@@ -114,12 +148,22 @@ void clip_cmd(const char *line) {
     }
 }
 
+void clip_at(const char *file, int line) {
+    prog_set_compiled_loc(file, line);
+}
+
+/* An expression error, reported as the interpreter reports one */
+static void expr_failed(expr_ctx_t *ctx) {
+    const char *msg = ctx->error ? ctx->error : "expression error";
+    prog_error(expr_error_code(msg), msg);
+}
+
 static int eval_expr(const char *expr, value_t *out) {
     expr_ctx_t *ctx;
     cmd_ctx_setup();
     ctx = cmd_get_expr_ctx();
     if (expr_eval_str(ctx, expr, out) != 0) {
-        printf("*** %s\n", ctx->error ? ctx->error : "expression error");
+        expr_failed(ctx);
         return -1;
     }
     return 0;
@@ -162,7 +206,7 @@ void clip_q(const char *expr, int newline) {
             break;
         }
         if (expr_eval(ctx, &p, &val) != 0) {
-            printf("*** %s\n", ctx->error ? ctx->error : "expression error");
+            expr_failed(ctx);
             return;
         }
         val_to_string(&val, buf, sizeof(buf));
@@ -211,12 +255,22 @@ static void scope_save(clip_scope_t *s, const char *name) {
 void clip_enter(clip_scope_t *s) {
     memvar_store_t *store = cmd_get_memvar_store();
     s->count = 0;
+    s->npnames = 0;
+    s->call = clip_next_call;
+    clip_next_call = NULL;
+    prog_get_compiled_loc(&s->at_file, &s->at_line);
     store->current_depth++;
 }
 
 void clip_param(clip_scope_t *s, const char *name, value_t *args, int nargs, int idx) {
     memvar_store_t *store = cmd_get_memvar_store();
     scope_save(s, name);
+    if (idx >= 0 && idx < MAX_FUNC_ARGS) {
+        name_upper(s->pnames[idx], name, MEMVAR_NAMELEN);
+        if (idx >= s->npnames) {
+            s->npnames = idx + 1;
+        }
+    }
     if (idx >= 0 && idx < nargs) {
         memvar_set(store, name, &args[idx]);
     } else {
@@ -241,6 +295,16 @@ void clip_local(clip_scope_t *s, const char *name) {
 void clip_leave(clip_scope_t *s) {
     memvar_store_t *store = cmd_get_memvar_store();
     int i;
+    /* By-reference parameters: their values now, before the unwinding */
+    if (s->call) {
+        for (i = 0; i < s->npnames && i < s->call->nargs; i++) {
+            if (s->call->ref_names[i][0] && s->pnames[i][0] &&
+                memvar_find(store, s->pnames[i], &s->call->out[i]) == 0) {
+                s->call->have[i] = 1;
+            }
+        }
+        s->call = NULL;
+    }
     /* LOCALs first, so a PRIVATE restore lands on what it shadowed */
     memvar_release_locals(store, store->current_depth);
     for (i = 0; i < s->count; i++) {
@@ -254,6 +318,7 @@ void clip_leave(clip_scope_t *s) {
     if (store->current_depth > 0) {
         store->current_depth--;
     }
+    prog_set_compiled_loc(s->at_file, s->at_line);
 }
 
 void clip_return(clip_scope_t *s, const char *expr, value_t *result) {
