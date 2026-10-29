@@ -71,7 +71,12 @@ expr_ctx_t *clip_ctx(void);
 void clip_fail(expr_ctx_t *c);
 int  clip_cond(expr_ctx_t *c, int failed, const value_t *v);
 void clip_setv(const char *name, value_t *v);
-int  clip_call(expr_ctx_t *c, const char *name, value_t *args, int nargs, value_t *result);
+typedef struct {
+    unsigned gen;       /* memvar_array_gen + 1 when decided; 0, never */
+    int is_array;
+} clip_site_t;
+int  clip_call(expr_ctx_t *c, const char *name, value_t *args, int nargs, value_t *result,
+               clip_site_t *site);
 void clip_qv(const value_t *v, int first);
 void clip_qnl(void);
 void clip_return_v(clip_scope_t *s, const value_t *v, value_t *result);

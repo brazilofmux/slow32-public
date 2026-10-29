@@ -326,12 +326,12 @@ static int gen_expr(sb_t *b, int *ntmp, ast_node_t *node) {
             }
             sb_printf(b, "} ");
         }
-        sb_printf(b, "e = e || clip_call(c, ");
+        sb_printf(b, "{ static clip_site_t site; e = e || clip_call(c, ");
         sb_cstr(b, node->call.name);
         if (a >= 0) {
-            sb_printf(b, ", a%d, %d, &t%d); ", a, node->call.nargs, t);
+            sb_printf(b, ", a%d, %d, &t%d, &site); } ", a, node->call.nargs, t);
         } else {
-            sb_printf(b, ", NULL, 0, &t%d); ", t);
+            sb_printf(b, ", NULL, 0, &t%d, &site); } ", t);
         }
         return t;
     case AST_UNOP:

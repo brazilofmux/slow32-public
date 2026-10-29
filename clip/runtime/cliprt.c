@@ -496,10 +496,18 @@ void clip_setv(const char *name, value_t *v) {
     memvar_set(store, name, v);
 }
 
-int clip_call(expr_ctx_t *c, const char *name, value_t *args, int nargs, value_t *result) {
-    value_t mv;
-    if ((nargs == 1 || nargs == 2) && c->vars &&
-        memvar_find(c->vars, name, &mv) == 0 && mv.type == VAL_ARRAY) {
+/* name(args): an element when name is an array, else a call.  The
+ * interpreter decides when it parses and keeps the tree until an array is
+ * declared or freed (memvar_array_gen); the call site's cache does the same. */
+int clip_call(expr_ctx_t *c, const char *name, value_t *args, int nargs, value_t *result,
+              clip_site_t *site) {
+    if (site->gen != memvar_array_gen + 1u) {
+        value_t mv;
+        site->is_array = (nargs == 1 || nargs == 2) && c->vars &&
+                         memvar_find(c->vars, name, &mv) == 0 && mv.type == VAL_ARRAY;
+        site->gen = memvar_array_gen + 1u;
+    }
+    if (site->is_array) {
         return ast_eval_elem(c, name, &args[0], nargs == 2 ? &args[1] : NULL, result);
     }
     return func_call(c, name, args, nargs, result);
