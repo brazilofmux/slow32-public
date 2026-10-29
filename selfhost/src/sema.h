@@ -890,7 +890,10 @@ static void sema_constraints(Node *n) {
             return;
         }
     }
-    if (k == ND_ASSIGN && n->lhs && n->rhs) {
+    /* An initializer's own stores into a member or element are made by
+     * offset, and their target's C type is the machine type's: only a
+     * whole variable's is checked (docs/TYPES.md, S5). */
+    if (k == ND_ASSIGN && n->lhs && n->rhs && (op == TK_ASSIGN || n->lhs->kind == ND_VAR)) {
         sema_assign_check(n, sema_cty_of(n->lhs), n->rhs);
         return;
     }

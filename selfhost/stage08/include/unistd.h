@@ -16,15 +16,15 @@
 #define _SC_PAGESIZE     30
 #define _SC_PAGE_SIZE    _SC_PAGESIZE
 
-int   read(int fd, char *buf, int len);
-int   write(int fd, char *buf, int len);
+int   read(int fd, void *buf, int len);
+int   write(int fd, const void *buf, int len);
 int   close(int fd);
 int   lseek(int fd, int offset, int whence);
 void  _exit(int code);
 long  sysconf(int name);
 int   getpid(void);
 int   isatty(int fd);
-int   unlink(char *path);
+int   unlink(const char *path);
 unsigned int sleep(unsigned int seconds);
 int   usleep(unsigned int usec);
 

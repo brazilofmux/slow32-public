@@ -2329,9 +2329,19 @@ static void ps_local_rows_cty(int li) {
  * machine type with a size -- the element pointer of a decayed array). */
 static int ps_global_cty(int ty, int size_bytes) {
     int esz;
-    if (size_bytes > 0 && ty_is_ptr(ty)) {
+    int elem;
+    /* size 0: an initializer is still to set the length (ps_fix_global_array) */
+    if (ty_is_ptr(ty) && (size_bytes > 0 || (ps_type_cty > 0 && ct_is_array(ps_type_cty)))) {
         esz = ty_size(ty_deref(ty));
-        return ct_array(ps_obj_cty(ty_deref(ty)), esz > 0 ? size_bytes / esz : -1);
+        /* the declaration's C type is the array, or its pointer form:
+         * either way its base is the element -- static H tab[4], H a
+         * function-pointer typedef, had int elements */
+        if (ps_type_cty > 0 && (ct_is_ptr(ps_type_cty) || ct_is_array(ps_type_cty)) &&
+            ct_mty_agrees(ct_baseof(ps_type_cty), ty_deref(ty)))
+            elem = ct_baseof(ps_type_cty);
+        else
+            elem = ps_obj_cty(ty_deref(ty));
+        return ct_array(elem, esz > 0 ? size_bytes / esz : -1);
     }
     return ps_obj_cty(ty);
 }
@@ -5481,6 +5491,47 @@ static Node *local_init_list_expr(Node *stmts, Node *result) {
     return nd_comma(expr, result);
 }
 
+/* (char[]){"abc"}: a character array from its string literal
+ * (6.7.9p14), the cursor on the string inside the literal's braces.
+ * It went through the element list, and its one element was the
+ * string's address: the array was empty (and the survey of 6.5.16.1
+ * had it as a pointer stored into a char).  The hidden array gets the
+ * string's bytes and zeros to its length; returns the stores, then the
+ * array. */
+static Node *ps_cl_string(char *nm, int ty, int count) {
+    Node *head;
+    Node *tail;
+    Node *a;
+    Node *n;
+    char *sp;
+    int sp_idx;
+    int slen;
+    int off;
+    int ci;
+    sp_idx = parse_string_literal();
+    ps_braced_string_close();
+    slen = lex_str_len[sp_idx];
+    if (count < 0) count = slen + 1;
+    off = add_local_array(nm, ty, count);
+    sp = lex_strpool + lex_str_off[sp_idx];
+    head = NULL;
+    tail = NULL;
+    ci = 0;
+    while (ci < count) {
+        n = nd_var(nm, off, ty + TY_PTR);
+        ps_bind_var(n, ps_nlocals - 1);
+        a = nd_unary(TK_STAR, nd_binop(TK_PLUS, n, nd_num(ci)));
+        a = nd_expr_stmt(nd_assign(a, nd_num(ci < slen ? (sp[ci] & 255) : 0)));
+        if (head == NULL) head = a;
+        else tail->next = a;
+        tail = a;
+        ci = ci + 1;
+    }
+    n = nd_var(nm, off, ty + TY_PTR);
+    ps_bind_var(n, ps_nlocals - 1);
+    return local_init_list_expr(head, n);
+}
+
 /* A compound literal builds its hidden local through the same
  * local_init_* machinery a declarator uses, and that machinery keeps its
  * in-progress state in the ps_li_* globals.  A literal that appears
@@ -5517,7 +5568,10 @@ static Node *parse_compound_literal_expr(int ty, int arr_count) {
     sv_tail = ps_li_tail;
 
     ps_make_compound_literal_name(nm);
-    if (arr_count != 0) {
+    if (arr_count != 0) ps_braced_string_open(ps_is_char_ty(ty));
+    if (arr_count != 0 && ps_str_braced) {
+        expr = ps_cl_string(nm, ty, arr_count);
+    } else if (arr_count != 0) {
         local_init_begin(nm, 0, ty + TY_PTR, 1);
         arr_count = parse_local_init_array_at(ty, arr_count, 0);
         head = ps_li_head;
@@ -6976,8 +7030,6 @@ static Node *parse_top_decl(void) {
                 ps_ginit_begin(idx);
                 fp_count = parse_global_init_array_at(TY_INT, fp_count, idx, 0);
                 ps_gsize[idx] = 4 * fp_count;
-                ps_fnptr_nstar = fp_nstars;
-                ps_gcty[idx] = ct_array(ps_fnptr_cty(ret_cty), fp_count);
                 ps_ginit_ensure_len(idx, ps_gsize[idx]);
                 ps_ginit_finish(idx);
             } else {
@@ -6986,6 +7038,8 @@ static Node *parse_top_decl(void) {
                 else           idx = add_defined_global(nm, TY_INT + TY_PTR, 4 * fp_count);
                 if (is_static) ps_glocal[idx] = 1;
             }
+            ps_fnptr_nstar = fp_nstars;     /* initialized or not: methods[2] had int elements */
+            ps_gcty[idx] = ct_array(ps_fnptr_cty(ret_cty), fp_count);
             ps_gfpbase[idx] = fp_tys[0];
             ps_gfpn[idx] = fp_n;
             expect(TK_SEMI);
@@ -7399,7 +7453,7 @@ function_decl:
             ps_bind_var(p, ps_nlocals - 1);
         }
         skip_gnu_decl_suffixes();
-        if (fp_n < 64) { fp_tys[fp_n] = pty; fp_ctys[fp_n] = ps_cty_quiet(pty); fp_n = fp_n + 1; }
+        if (fp_n < 64) { fp_tys[fp_n] = pty; fp_ctys[fp_n] = (p != NULL && p->cty > 0) ? p->cty : ps_cty_quiet(pty); fp_n = fp_n + 1; }
         ps_nparams = 1;
         phead = p;
         ptail = p;
@@ -7523,7 +7577,7 @@ function_decl:
                 ptail->next = p;
                 ptail = p;
             }
-            if (fp_n < 64) { fp_tys[fp_n] = pty; fp_ctys[fp_n] = ps_cty_quiet(pty); fp_n = fp_n + 1; }
+            if (fp_n < 64) { fp_tys[fp_n] = pty; fp_ctys[fp_n] = (p != NULL && p->cty > 0) ? p->cty : ps_cty_quiet(pty); fp_n = fp_n + 1; }
             ps_nparams = ps_nparams + 1;
         }
     }

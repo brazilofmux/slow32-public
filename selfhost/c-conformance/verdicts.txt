@@ -250,6 +250,7 @@
 6.5.2.4-postfix-rvalue DIAG
 6.5.2.5-compound-file-scope REJECTS
 6.5.2.5-compound-literal PASS
+6.5.2.5-compound-literal-string PASS
 6.5.2.5-compound-loop PASS
 6.5.2.5-compound-vla DIAG
 6.5.3-unary-chain PASS

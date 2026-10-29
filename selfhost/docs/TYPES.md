@@ -465,7 +465,26 @@ the first (`sqlite3_result_text(..., void(*)(void*))`) was an int;
 `va_arg(ap, T)` had no C type; `?:` on two pointers fell back to the
 machine type; and a pointer to a function pointer at any depth (`void
 (**aExt)(void)`) did not agree with its int machine spelling and fell
-back to int.  SQLite now has no report left.  `S12CC_CONSTRAINT_WARN=1` turns
+back to int.  SQLite now has no report left.
+
+The corpus then.  More type gaps: a global array of a function-pointer
+typedef (`static H tab[4]`, initialized or not) and an uninitialized
+`static int (*m[2])(long long)` had int elements; a prototype recorded
+a parameter's machine type where its variable had the C type (a row
+pointer `char (*rows)[8]`).  An initializer's own stores into members
+and elements are made by offset, their targets typed from the machine
+type, so for now only an initializer of a whole variable is checked
+(a gap: member initializers).  One finding was a miscompile: a
+compound literal of character array type initialized by a string,
+`(char[]){"abc"}`, took the string for its one element and stored its
+address into a char -- the array was empty (`ps_cl_string`; probe
+`6.5.2.5-compound-literal-string`).  And real violations, in our own
+code, fixed where they were: the compiler declared `memcpy` with
+`char *` parameters and called `malloc`, `calloc` and `strdup` with no
+declaration at all (an implicit int, assigned to pointers) -- the
+dialect block in c_lexer.rl now has the library's types; the selfhost
+`<unistd.h>` had `read`, `write` and `unlink` without `void *` and
+`const`.  `S12CC_CONSTRAINT_WARN=1` turns
 the errors into warnings, to survey a corpus.
 
 ## Constraints on the work

@@ -13,11 +13,20 @@
  * and include the real headers instead — redeclaring strlen as
  * `int strlen(char *)` there is a GCC 14 hard error. See ISSUES #57. */
 #ifndef S12CC_HOSTED
-int strcmp(char *a, char *b);
-int strncmp(char *a, char *b, int n);
-int strlen(char *s);
-char *memcpy(char *dst, char *src, int n);
-char *memset(char *dst, int c, int n);
+/* The pointers as the library has them (void *, const): the compiler's
+ * own memcpy(&d, w, 8) and strdup(name) were 6.5.16.1 violations --
+ * pointer types that do not convert, and an implicit int malloc
+ * assigned to a pointer -- which S5's checks find in its own source. */
+int strcmp(const char *a, const char *b);
+int strncmp(const char *a, const char *b, int n);
+int strlen(const char *s);
+void *memcpy(void *dst, const void *src, int n);
+void *memset(void *dst, int c, int n);
+void *malloc(unsigned long n);
+void *calloc(unsigned long n, unsigned long size);
+void *realloc(void *p, unsigned long n);
+void free(void *p);
+char *strdup(const char *s);
 void exit(int status);
 #endif
 
