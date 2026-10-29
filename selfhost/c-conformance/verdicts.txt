@@ -123,7 +123,7 @@
 6.2.8-alignas-stronger REJECTS
 6.2.8-alignment PASS
 6.2.8-alignof PASS
-6.3.1.1-bitfield-init REJECTS
+6.3.1.1-bitfield-init PASS
 6.3.1.1-bitfield-promote PASS
 6.3.1.1-bitfield-widths PASS
 6.3.1.1-promotions PASS
@@ -217,7 +217,7 @@
 6.5.14-or-struct DIAG
 6.5.15-cond-first-struct DIAG
 6.5.15-cond-mismatch DIAG
-6.5.15-cond-struct-member REJECTS
+6.5.15-cond-struct-member PASS
 6.5.15-conditional PASS
 6.5.16-assign-array DIAG
 6.5.16-assign-const DIAG
@@ -339,7 +339,7 @@
 6.7.2-type-specifier-combos PASS
 6.7.2.1-anonymous PASS
 6.7.2.1-bitfield-address DIAG
-6.7.2.1-bitfield-init REJECTS
+6.7.2.1-bitfield-init PASS
 6.7.2.1-bitfield-layout PASS
 6.7.2.1-bitfield-promote PASS
 6.7.2.1-bitfield-share PASS
@@ -415,7 +415,7 @@
 6.7.6.3-void-plus DIAG
 6.7.7-array-of-fnptr-type REJECTS
 6.7.7-type-names PASS
-6.7.8-array-typedef REJECTS
+6.7.8-array-typedef PASS
 6.7.8-typedef PASS
 6.7.8-typedef-array-align PASS
 6.7.8-typedef-conflict DIAG

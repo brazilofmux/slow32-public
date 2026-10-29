@@ -3897,6 +3897,53 @@ static void ps_ginit_store_int_at(int gidx, int rel_off, int v, int sz) {
     }
 }
 
+/* A bit-field's value into a static initializer: its storage unit's
+ * bytes read, the field's bits replaced, written back (little-endian,
+ * as bf_alloc numbers the bits). */
+static void ps_ginit_store_bits_at(int gidx, int rel_off, int mi, int v) {
+    unsigned cur;
+    unsigned mask;
+    int usz;
+    int i;
+    int p;
+    usz = ty_size(stm_type[mi]);
+    ps_ginit_ensure_len(gidx, rel_off + usz);
+    p = ps_ginit_start[gidx] + rel_off;
+    cur = 0;
+    i = usz - 1;
+    while (i >= 0) {
+        cur = (cur << 8) | (unsigned)(ps_ginit_pool[p + i] & 255);
+        i = i - 1;
+    }
+    mask = stm_bit_width[mi] >= 32 ? 4294967295u : (1u << stm_bit_width[mi]) - 1u;
+    cur = (cur & ~(mask << stm_bit_off[mi])) | (((unsigned)v & mask) << stm_bit_off[mi]);
+    i = 0;
+    while (i < usz) {
+        ps_ginit_pool[p + i] = cur & 255;
+        cur = cur >> 8;
+        i = i + 1;
+    }
+}
+
+/* The member a designator ended on, when it is a bit-field: the
+ * initializer loops store it as one.  -1 for none. */
+static int ps_desig_bf = -1;
+
+/* A bit-field member mi of a static initializer, at rel_off (its unit):
+ * an integer constant expression, in braces or not. */
+static void ps_ginit_bitfield(int gidx, int rel_off, int mi) {
+    int v;
+    int br;
+    br = lex_tok == TK_LBRACE;
+    if (br) next();
+    v = parse_const_int();
+    if (br) {
+        if (lex_tok == TK_COMMA) next();
+        expect(TK_RBRACE);
+    }
+    ps_ginit_store_bits_at(gidx, rel_off, mi, v);
+}
+
 static void ps_ginit_begin(int gidx) {
     ps_mark_global_init(gidx);
     ps_ginit_start[gidx] = ps_ginit_pool_len;
@@ -4289,8 +4336,7 @@ static void parse_global_init_designator(int base_ty, int base_arr_count,
             if (mi < 0) p_error("unknown field in initializer");
             if (struct_member_is_flexible_array(mi))
                 p_error("flexible array initializer unsupported");
-            if (stm_bit_width[mi] > 0)
-                p_error("bit-field in struct initializer unsupported");
+            ps_desig_bf = stm_bit_width[mi] > 0 ? mi : -1;
             rel = rel + stm_off[mi];
             ty = stm_type[mi];
             arr_count = struct_member_array_count(mi);
@@ -4436,10 +4482,12 @@ static void parse_global_init_struct_at(int ty, int gidx, int base_rel) {
             }
         }
         if (lex_tok == TK_DOT) {
+            ps_desig_bf = -1;
             parse_global_init_designator(ty, 0, &rel, &target_ty,
                                          &target_arr_count, &root);
             expect(TK_ASSIGN);
-            parse_global_init_value_at(target_ty, target_arr_count, gidx, base_rel + rel);
+            if (ps_desig_bf >= 0) ps_ginit_bitfield(gidx, base_rel + rel, ps_desig_bf);
+            else parse_global_init_value_at(target_ty, target_arr_count, gidx, base_rel + rel);
             if (root >= 0) i = root + 1;
             else i = i + 1;
         } else {
@@ -4448,8 +4496,11 @@ static void parse_global_init_struct_at(int ty, int gidx, int base_rel) {
             if (mi < 0) p_error("missing struct field");
             if (struct_member_is_flexible_array(mi))
                 p_error("flexible array initializer unsupported");
-            if (stm_bit_width[mi] > 0)
-                p_error("bit-field in struct initializer unsupported");
+            if (stm_bit_width[mi] > 0) {
+                ps_ginit_bitfield(gidx, base_rel + stm_off[mi], mi);
+                i = i + 1;
+                continue;
+            }
             field_ty = stm_type[mi];
             arr_count = struct_member_array_count(mi);
             if (stm_arr_cols[mi] > 0 && lex_tok == TK_LBRACE) {
@@ -5562,6 +5613,23 @@ static Node *parse_postfix(void) { return parse_postfix_from(parse_primary()); }
  * parse_postfix, and by sizeof, whose "( expression )" is the start of a
  * postfix-expression, not the whole operand: sizeof("abc")[0] is
  * sizeof(("abc")[0]), 1 (C90 6.3.3 / 6.3.2; selfhost ISSUES-84) */
+/* A member of a ?: of structures, (t ? a : b).y: the lowering takes a
+ * member through its structure's address, and a ?: result has none
+ * ("not an lvalue").  With both arms lvalues, the value is that of
+ * (*(t ? &a : &b)).y -- one arm's member, read. */
+static int ps_is_lvalue_node(Node *x) {
+    return x->kind == ND_VAR || x->kind == ND_MEMBER ||
+           (x->kind == ND_UNARY && x->op == TK_STAR);
+}
+
+static Node *ps_cond_struct_lvalue(Node *n) {
+    Node *t;
+    if (n->kind != ND_TERNARY || !ty_is_struct(n->ty) || !n->lhs || !n->rhs) return n;
+    if (!ps_is_lvalue_node(n->lhs) || !ps_is_lvalue_node(n->rhs)) return n;
+    t = nd_ternary(n->cond, nd_unary(TK_AMP, n->lhs), nd_unary(TK_AMP, n->rhs));
+    return nd_unary(TK_STAR, t);
+}
+
 static Node *parse_postfix_from(Node *n) {
     Node *idx;
     Node *pi;
@@ -5666,6 +5734,7 @@ static Node *parse_postfix_from(Node *n) {
             }
             memcpy(mnm, lex_str, lex_slen + 1);
             next();
+            n = ps_cond_struct_lvalue(n);
             sty = n->ty;
             if (!ty_is_struct(sty)) {
                 p_error("'.' on non-struct type");
@@ -6082,6 +6151,25 @@ static Node *local_init_lvalue(int rel_off, int target_ty, int target_arr_count)
     return nd_member(n, rel_off, target_ty, target_arr_count != 0, arr_sz, 0, 0);
 }
 
+/* A bit-field member mi of a local's initializer, the structure at
+ * rel_off in it: a store through the member, which the lowering does
+ * as a bit-field's (the bytes were zeroed before). */
+static void local_init_bitfield(int rel_off, int mi) {
+    Node *m;
+    Node *e;
+    int br;
+    br = lex_tok == TK_LBRACE;
+    if (br) next();
+    e = parse_assign();
+    if (br) {
+        if (lex_tok == TK_COMMA) next();
+        expect(TK_RBRACE);
+    }
+    m = nd_member(local_init_base(), rel_off + stm_off[mi], stm_type[mi], 0, 0,
+                  stm_bit_off[mi], stm_bit_width[mi]);
+    local_init_append(nd_expr_stmt(nd_assign(m, e)));
+}
+
 static void local_init_emit_assign(int rel_off, int target_ty, Node *rhs) {
     Node *a;
     a = local_init_lvalue(rel_off, target_ty, 0);
@@ -6267,10 +6355,12 @@ static void parse_local_init_struct_at(int ty, int rel_off) {
             }
         }
         if (lex_tok == TK_DOT) {
+            ps_desig_bf = -1;
             parse_global_init_designator(ty, 0, &rel, &target_ty,
                                          &target_arr_count, &root);
             expect(TK_ASSIGN);
-            parse_local_init_value_at(target_ty, target_arr_count, rel_off + rel);
+            if (ps_desig_bf >= 0) local_init_bitfield(rel_off + rel - stm_off[ps_desig_bf], ps_desig_bf);
+            else parse_local_init_value_at(target_ty, target_arr_count, rel_off + rel);
             if (root >= 0) i = root + 1;
             else i = i + 1;
         } else {
@@ -6279,8 +6369,11 @@ static void parse_local_init_struct_at(int ty, int rel_off) {
             if (mi < 0) p_error("missing struct field");
             if (struct_member_is_flexible_array(mi))
                 p_error("flexible array initializer unsupported");
-            if (stm_bit_width[mi] > 0)
-                p_error("bit-field in struct initializer unsupported");
+            if (stm_bit_width[mi] > 0) {
+                local_init_bitfield(rel_off, mi);
+                i = i + 1;
+                continue;
+            }
             field_ty = stm_type[mi];
             field_arr_count = struct_member_array_count(mi);
             parse_local_init_value_at(field_ty, field_arr_count, rel_off + stm_off[mi]);
@@ -8062,6 +8155,9 @@ plain_name:
     gtdac = g2cols;         /* a typedef'd array type's own dimension, if it is one */
     g2cols = 0;
     xty = ty;
+    /* an object of a typedef'd array type is the array (A x = {...};
+     * went to the scalars, its braces an "unexpected token") */
+    if (gtdac > 0 && lex_tok != TK_LBRACK) { xty = ty_deref(ty); count = gtdac; goto array_after_brackets; }
 
     /* Global declarators: a comma-separated list of scalars and arrays --
      * `int a, b[3], *c, d[2][4];` (GitHub #31: an array declarator used

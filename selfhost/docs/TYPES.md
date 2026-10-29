@@ -678,7 +678,17 @@ starts a directive; `%:` and `%:%:` in a macro's list are `#` and `##`).
 A universal character name in an identifier is rewritten in the text,
 outside literals, as `_u` and its digits before the scanner sees it
 (`lex_ucn_idents`: a scanner rule for it made more code than stage07
-compiles); one naming a basic character is refused.  `S12CC_CONSTRAINT_WARN=1` turns
+compiles); one naming a basic character is refused.
+
+**REJECTS: initializers and expressions** (2026-10-29).  Bit-fields
+in brace initializers -- static ones by their bits merged into the
+storage unit's bytes (`ps_ginit_store_bits_at`), locals by a store
+through the bit-field member (`local_init_bitfield`), positionally and
+by designator; they were refused.  A member of a `?:` of structures,
+`(t ? a : b).y`, with both arms lvalues, is read as `(*(t ? &a :
+&b)).y` (`ps_cond_struct_lvalue`; the lowering wanted an address and
+the `?:` has none).  An object of a typedef'd array type at file scope
+is the array (`A x = { 1, 2, 3 };` went to the scalars).  `S12CC_CONSTRAINT_WARN=1` turns
 the errors into warnings, to survey a corpus.
 
 ## Constraints on the work
