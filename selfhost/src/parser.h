@@ -140,6 +140,16 @@ static int ps_pending_member_cty;
 /* inline in the file-scope declaration being read (ps_storage_next):
  * an object may not be inline, nor main (6.7.4p3, 5.1.2.2.1) */
 static int ps_top_inline;
+/* static in the file-scope declaration being read: one that follows a
+ * declaration with external linkage is an error (6.2.2p7) */
+static int ps_top_static;
+/* The scope a local is declared in: a block, or a for statement's
+ * clause-1.  Redeclaring an identifier with no linkage in one scope is
+ * an error (6.7p3); in an inner one it is shadowing. */
+static int ps_scope_id;
+static int ps_scope_next;
+static int ps_block_depth;      /* block nesting: 0 at file scope */
+static int sema_compat(int a, int b);
 
 /* The stars of a (**name)(...) declarator, consumed and counted. */
 static int ps_fnptr_nstar = 1;
@@ -385,6 +395,7 @@ static int cg_label(void) {
 #define P_MAX_GLOBALS 32768   /* was 8192 */
 #define PS_MAX_CONSTS 16384   /* was 2048 */
 
+static int   ps_lscope[P_MAX_LOCALS];  /* the scope it was declared in (ps_scope_id) */
 static char *ps_lname[P_MAX_LOCALS];  /* local var names */
 static int   ps_loff[P_MAX_LOCALS];   /* local var offsets from fp */
 static int   ps_ltype[P_MAX_LOCALS];  /* local var types */
@@ -474,6 +485,7 @@ static int   ps_nconsts;
 
 /* Typedef table */
 #define PS_MAX_TYPEDEFS 4096   /* was 1024 */
+static int   ps_tddepth[PS_MAX_TYPEDEFS];  /* block depth declared at; -1 = the compiler's own */
 static char *ps_tdname[PS_MAX_TYPEDEFS];
 static int   ps_tdtype[PS_MAX_TYPEDEFS];
 static int   ps_tdcty[PS_MAX_TYPEDEFS];   /* the typedef's C type, declarator included */
@@ -499,6 +511,7 @@ static int   ps_type_fpn;
  * int 7 as ONE register slot, leaving the pair's high word stale). */
 #define PS_MAX_FUNCS 16384   /* was 4096 */
 #define PS_MAX_FPARAM 65536   /* was 16384 */
+static int   ps_fdefined[PS_MAX_FUNCS]; /* 1 once its body has been read */
 static char *ps_fname[PS_MAX_FUNCS];
 static int   ps_ftype[PS_MAX_FUNCS];
 static int   ps_fcty[PS_MAX_FUNCS];   /* the function's C type (ctype.h), docs/TYPES.md */
@@ -815,6 +828,7 @@ static void add_typedef(char *name, int ty) {
         return;
     }
     ps_tdname[ps_ntypedefs] = strdup(name);
+    ps_tddepth[ps_ntypedefs] = ps_block_depth;
     ps_tdtype[ps_ntypedefs] = ty;
     ps_tdcty[ps_ntypedefs] = ct_from_mty(ty, 0);   /* a caller with better knowledge sets it after */
     ps_tdarr[ps_ntypedefs] = 0;
@@ -903,11 +917,42 @@ static int ps_fp_ret_of_callee(Node *lhs) {
     return ps_fp_get_ret(fpb);
 }
 
+/* A redeclaration of function i: its type compatible with the earlier
+ * (6.7p4) -- int g(int); int g(double); was taken, the later winning. */
+static void ps_func_redecl_check(int i, int ret_cty, int *ptys, int *pctys, int np) {
+    int t;
+    int k;
+    int pc[64];
+    if (ps_fcty[i] <= 0) return;
+    if (np < 0) {
+        t = ct_func(ret_cty, 0, -1, ps_is_varargs);
+    } else {
+        k = 0;
+        while (k < np && k < 64) {
+            pc[k] = pctys ? ct_unqual(pctys[k]) : ct_from_mty(ptys[k], 0);
+            k = k + 1;
+        }
+        t = ct_func(ret_cty, pc, k, ps_is_varargs);
+    }
+    if (!sema_compat(ps_fcty[i], t)) p_error("conflicting types for function");
+}
+
+/* A function's body: one per function (6.9p3). */
+static void ps_func_defined(char *name) {
+    int i;
+    i = ps_nfuncs - 1;
+    while (i >= 0 && strcmp(name, ps_fname[i]) != 0) i = i - 1;
+    if (i < 0) return;
+    if (ps_fdefined[i]) p_error("redefinition of function");
+    ps_fdefined[i] = 1;
+}
+
 static void add_func_type(char *name, int ty, int *ptys, int *pctys, int np, int ret_cty) {
     int i;
     /* a function declarator's own constraints (6.7.6.3p1-p2, 6.7.4p3, 5.1.2.2.1) */
     if (ps_top_inline && strcmp(name, "main") == 0) p_error("'main' is not allowed to be declared inline");
     ps_top_inline = 0;
+    ps_top_static = 0;
     if (ret_cty > 0 && (ct_is_array(ret_cty) || ct_is_func(ret_cty)))
         p_error("function cannot return an array or function type");
     i = 0;
@@ -919,6 +964,7 @@ static void add_func_type(char *name, int ty, int *ptys, int *pctys, int np, int
     i = ps_nfuncs - 1;
     while (i >= 0) {
         if (strcmp(name, ps_fname[i]) == 0) {
+            ps_func_redecl_check(i, ret_cty, ptys, pctys, np);
             ps_ftype[i] = ty;
             ps_fvar[i] = ps_is_varargs;
             if (np >= 0) {
@@ -934,6 +980,7 @@ static void add_func_type(char *name, int ty, int *ptys, int *pctys, int np, int
     }
     if (ps_nfuncs >= PS_MAX_FUNCS) return;
     ps_fname[ps_nfuncs] = strdup(name);
+    ps_fdefined[ps_nfuncs] = 0;
     ps_ftype[ps_nfuncs] = ty;
     ps_fvar[ps_nfuncs] = ps_is_varargs;
     ps_fpbase[ps_nfuncs] = (np >= 0) ? ps_fp_store(ptys, pctys, np) : -1;
@@ -1027,7 +1074,6 @@ static int ps_define_label(char *name) {
  * the block nesting a tag was declared at, 0 for file scope, -1 once its
  * block has closed: the entry stays (types name it by index), only the
  * name is gone. */
-static int ps_block_depth;
 static int st_depth[ST_MAX_STRUCTS];
 
 static int find_struct(char *name) {
@@ -1044,6 +1090,46 @@ static int find_struct(char *name) {
  * in this same scope: struct t { ... } in a block shadows an outer t. */
 static int ps_tag_for_definition(int si) {
     return si >= 0 && st_depth[si] == ps_block_depth;
+}
+
+/* A tag looked up for struct (is_union 0) or union (1): one already
+ * declared as the other kind is an error where the name refers to it
+ * (6.7.2.3p2) -- not where a definition in an inner block declares a
+ * new one. */
+static int ps_find_tag(char *name, int is_union) {
+    int si;
+    si = find_struct(name);
+    if (si >= 0 && st_is_union[si] != is_union &&
+        (lex_tok != TK_LBRACE || st_depth[si] == ps_block_depth))
+        p_error("use of tag with a kind that does not match its previous declaration");
+    return si;
+}
+
+/* A definition of tag si: a new type unless already declared in this
+ * scope (ps_tag_for_definition), and not twice there (6.7.2.3p1). */
+static int ps_tag_defines_here(int si) {
+    if (!ps_tag_for_definition(si)) return 0;
+    if (st_size[si] > 0) p_error("redefinition of struct or union");
+    return 1;
+}
+
+/* No two members of si with one name (6.7.2.1p2, members of anonymous
+ * structures and unions included). */
+static void ps_check_dup_members(int si) {
+    int i;
+    int j;
+    i = 0;
+    while (i < stm_count) {
+        if (stm_owner[i] == si && stm_name[i][0] != 0) {
+            j = i + 1;
+            while (j < stm_count) {
+                if (stm_owner[j] == si && strcmp(stm_name[i], stm_name[j]) == 0)
+                    p_error("duplicate member");
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
 }
 
 /* The tags declared in the block now closing go out of scope. */
@@ -1323,6 +1409,7 @@ static void ps_storage_next(void) {
     if (lex_tok == TK_REGISTER) ps_pend_register = 1;
     if (lex_tok == TK_RESTRICT) ps_lead_restrict = 1;
     if (lex_tok == TK_INLINE && ps_block_depth == 0) ps_top_inline = 1;
+    if (lex_tok == TK_STATIC && ps_block_depth == 0) ps_top_static = 1;
     next();
 }
 
@@ -1504,7 +1591,7 @@ static int parse_type(void) {
         if (lex_tok == TK_IDENT) {
             memcpy(nm, lex_str, lex_slen + 1);
             next();
-            si = find_struct(nm);
+            si = ps_find_tag(nm, 0);
         } else if (lex_tok == TK_LBRACE) {
             make_anon_tag(nm, "__anon_struct_");
             si = -1;
@@ -1517,7 +1604,7 @@ static int parse_type(void) {
             int max_align;
             int bfbit;      /* the bit-field cursor; see bf_alloc */
             next();
-            if (!ps_tag_for_definition(si)) {
+            if (!ps_tag_defines_here(si)) {
                 si = add_struct(nm);
             } else if (st_nfields[si] == 0 && st_size[si] == 0) {
                 st_first[si] = stm_count;
@@ -1818,6 +1905,7 @@ static int parse_type(void) {
              * instead of 10, so mpatch++ strode past the on-disk data
              * and the first multi-patch texture (COMP2) read garbage. */
             st_size[si] = ((off + max_align - 1) / max_align) * max_align;
+            ps_check_dup_members(si);
         } else {
             /* Forward declaration or reference: struct Name (no brace) */
             if (si < 0) {
@@ -1831,7 +1919,7 @@ static int parse_type(void) {
         if (lex_tok == TK_IDENT) {
             memcpy(nm, lex_str, lex_slen + 1);
             next();
-            si = find_struct(nm);
+            si = ps_find_tag(nm, 1);
         } else if (lex_tok == TK_LBRACE) {
             make_anon_tag(nm, "__anon_union_");
             si = -1;
@@ -1843,7 +1931,7 @@ static int parse_type(void) {
             /* Union definition: union Name { ... } */
             int max_align;
             next();
-            if (!ps_tag_for_definition(si)) {
+            if (!ps_tag_defines_here(si)) {
                 si = add_struct(nm);
             } else if (st_nfields[si] == 0 && st_size[si] == 0) {
                 st_first[si] = stm_count;
@@ -2082,6 +2170,7 @@ static int parse_type(void) {
              * of union keep each element naturally aligned. */
             st_align[si] = max_align;
             st_size[si] = ((max_sz + max_align - 1) / max_align) * max_align;
+            ps_check_dup_members(si);
         } else {
             /* Forward declaration or reference: union Name (no brace) */
             if (si < 0) {
@@ -2182,6 +2271,37 @@ static char *ps_static_local_sym(char *name) {
     return ps_lsname[li];
 }
 
+/* An identifier declared again in the scope it was declared in, with
+ * no linkage: int a = 1; int a = 2; (6.7p3).  The visible locals of
+ * this scope are the last ones with its id. */
+static void ps_local_redecl_check(char *name) {
+    int j;
+    j = ps_nlocals - 1;
+    while (j >= 0 && ps_lscope[j] == ps_scope_id) {
+        if (strcmp(ps_lname[j], name) == 0) p_error("redefinition of a local");
+        j = j - 1;
+    }
+}
+
+/* A new scope for locals -- a block, a for statement -- and its end;
+ * ps_scope_begin returns ps_nlocals and the enclosing scope id is
+ * restored from what is passed back (the for statement keeps both in
+ * its own locals). */
+static int ps_scope_saved[256];
+static int ps_scope_sp;
+static int ps_scope_begin(void) {
+    if (ps_scope_sp < 256) ps_scope_saved[ps_scope_sp] = ps_scope_id;
+    ps_scope_sp = ps_scope_sp + 1;
+    ps_scope_next = ps_scope_next + 1;
+    ps_scope_id = ps_scope_next;
+    return ps_nlocals;
+}
+static void ps_scope_end(int nlocals) {
+    ps_nlocals = nlocals;
+    ps_scope_sp = ps_scope_sp - 1;
+    if (ps_scope_sp < 256) ps_scope_id = ps_scope_saved[ps_scope_sp];
+}
+
 static int add_local(char *name, int ty) {
     int idx;
     int sz;
@@ -2191,6 +2311,7 @@ static int add_local(char *name, int ty) {
     }
     sz = ty_size(ty);
     if (ty == TY_VOID) p_error("variable has incomplete type 'void'");
+    ps_local_redecl_check(name);
     require_complete_type(ty, "incomplete type for local");
     /* The frame slot is rounded up to a multiple of 4, but the
      * recorded size is the true one: sizeof(local) reads ps_lsize,
@@ -2202,6 +2323,7 @@ static int add_local(char *name, int ty) {
     ps_lvolb[idx] = ps_type_volb;
     ps_lvolp[idx] = ps_type_volp;
     ps_lreg[idx] = ps_decl_register;
+    ps_lscope[idx] = ps_scope_id;
     ps_loff[idx] = 0 - ps_stack;
     ps_slot_gen = ps_slot_gen + 1;
     ps_lslot[idx] = ps_slot_gen;
@@ -2234,6 +2356,7 @@ static int ps_add_local_alias_cty(char *name, int ty, char *sym, int cty) {
     ps_lvolb[idx] = ps_type_volb;
     ps_lvolp[idx] = ps_type_volp;
     ps_lreg[idx] = 0;
+    ps_lscope[idx] = ps_scope_id;
     ps_loff[idx] = 0;
     ps_ltype[idx] = ty;
     ps_lcty[idx] = cty;
@@ -2349,6 +2472,7 @@ static int add_local_array(char *name, int elem_ty, int count) {
     ps_lvolb[idx] = ps_type_volb;
     ps_lvolp[idx] = ps_type_volp;
     ps_lreg[idx] = ps_decl_register;
+    ps_lscope[idx] = ps_scope_id;
     ps_loff[idx] = 0 - ps_stack;
     ps_slot_gen = ps_slot_gen + 1;
     ps_lslot[idx] = ps_slot_gen;
@@ -2512,10 +2636,46 @@ static void ps_object_decl_check(int ty) {
     if (ty == TY_VOID) p_error("variable has incomplete type 'void'");
 }
 
+/* The innermost element of an array type -- or of an array held in
+ * pointer form, as a global declared before its size is known is. */
+static int ps_array_elem(int t, int is_arr) {
+    t = ct_unqual(t);
+    if (!ct_is_array(t) && ct_is_ptr(t) && is_arr) t = ct_baseof(t);
+    while (ct_is_array(t)) t = ct_baseof(t);
+    return t;
+}
+
+/* Two declarations of one global, compatible (6.7p4).  Where either is
+ * an array, the elements are compared: an array declared before its
+ * size is known is held in pointer form, and a 2-D one may be held flat
+ * or by rows -- extern int a[]; extern int a[3]; is one array, and so
+ * is DOOM's scalelight[LIGHTLEVELS][MAXLIGHTSCALE] in r_state.h and
+ * r_main.c. */
+static int ps_global_types_agree(int a, int b) {
+    int arr;
+    arr = ct_is_array(a) || ct_is_array(b);
+    if (!arr) return sema_compat(ct_unqual(a), ct_unqual(b));
+    return sema_compat(ps_array_elem(a, 1), ps_array_elem(b, 1));
+}
+
+/* A redeclaration of global idx as type ty (size bytes): compatible
+ * with what was declared (6.7p4), and not static after a declaration
+ * with external linkage (6.2.2p7). */
+static void ps_global_redecl_check(int idx, int ty, int size_bytes) {
+    int t;
+    t = ps_global_cty(ty, size_bytes);
+    if (ps_gcty[idx] > 0 && t > 0 && !ps_global_types_agree(ps_gcty[idx], t))
+        p_error("redeclaration with a different type");
+    if (ps_top_static && !ps_glocal[idx])
+        p_error("static declaration follows non-static declaration");
+}
+
 static int add_extern_global(char *name, int ty, int size_bytes) {
     int idx;
     ps_top_inline = 0;      /* extern void v; is a declaration, not an object */
     idx = find_global(name);
+    if (idx >= 0) ps_global_redecl_check(idx, ty, size_bytes);
+    ps_top_static = 0;
     if (idx >= 0) { ps_decl_objconst = 0; return idx; }
     idx = add_global(name, ty, size_bytes);
     ps_gextern[idx] = 1;
@@ -2526,6 +2686,8 @@ static int add_defined_global(char *name, int ty, int size_bytes) {
     int idx;
     ps_object_decl_check(ty);
     idx = find_global(name);
+    if (idx >= 0 && ps_block_depth == 0) ps_global_redecl_check(idx, ty, size_bytes);
+    ps_top_static = 0;
     if (idx >= 0) {
         /* An extern declaration being defined, or a tentative definition
          * (`u32 sqlite3WhereTrace;`) followed by the real one
@@ -6061,6 +6223,30 @@ static Node *parse_block(void);
  * Called from both file scope and statement scope — vecscope declares
  * `typedef struct {...} key_t;` inside main.  Names register in the
  * file-scope typedef table either way (fine for this C subset). */
+/* The typedef just added, against an earlier one of the name in the
+ * same scope: a redefinition must name the same type (6.7p3).  The
+ * compiler's own (size_t, bool) are left to the headers. */
+static void ps_typedef_check(void) {
+    int n;
+    int i;
+    n = ps_ntypedefs - 1;
+    i = n - 1;
+    while (i >= 0 && strcmp(ps_tdname[i], ps_tdname[n]) != 0) i = i - 1;
+    if (i < 0 || ps_tddepth[i] != ps_tddepth[n]) return;
+    if (ps_tdcty[i] > 0 && ps_tdcty[n] > 0 && !sema_compat(ps_tdcty[i], ps_tdcty[n]))
+        p_error("typedef redefinition with different types");
+}
+
+/* The compiler's own typedefs, installed before the source: exempt. */
+static void ps_typedefs_builtin(void) {
+    int i;
+    i = 0;
+    while (i < ps_ntypedefs) {
+        ps_tddepth[i] = -1;
+        i = i + 1;
+    }
+}
+
 static void parse_typedef_decl(void) {
     int ty;
     int cty;
@@ -6095,6 +6281,7 @@ static void parse_typedef_decl(void) {
                 ps_tdcty[ps_ntypedefs - 1] = ps_fnptr_cty(cty);
                 ps_tdfpbase[ps_ntypedefs - 1] = tfpb;
                 ps_tdfpn[ps_ntypedefs - 1] = tfpn;
+                ps_typedef_check();
             }
             expect(TK_SEMI);
             return;
@@ -6111,6 +6298,7 @@ static void parse_typedef_decl(void) {
             expect(TK_RPAREN);
             add_typedef(nm, TY_INT);  /* function types decay to pointer use-sites here */
             ps_tdcty[ps_ntypedefs - 1] = ct_func(cty, 0, -1, 0);
+            ps_typedef_check();
             skip_gnu_decl_suffixes();
             expect(TK_SEMI);
             return;
@@ -6126,12 +6314,14 @@ static void parse_typedef_decl(void) {
             /* Object declarations of this type must materialize the
              * array; parameters still decay. */
             ps_tdarr[ps_ntypedefs - 1] = tdcount;
+            ps_typedef_check();
             skip_gnu_decl_suffixes();
             expect(TK_SEMI);
             return;
         }
         add_typedef(nm, ty);
         ps_tdcty[ps_ntypedefs - 1] = cty;
+        ps_typedef_check();
         skip_gnu_decl_suffixes();
         expect(TK_SEMI);
         return;
@@ -6262,7 +6452,7 @@ static Node *parse_stmt(void) {
     if (lex_tok == TK_FOR) {
         next();
         expect(TK_LPAREN);
-        ci = ps_nlocals;  /* save scope for for-init declarations */
+        ci = ps_scope_begin();  /* save scope for for-init declarations */
         ci_stack = ps_stack;
         /* init */
         if (lex_tok == TK_SEMI) {
@@ -6316,7 +6506,7 @@ static Node *parse_stmt(void) {
         }
         /* body */
         t = parse_stmt();
-        ps_nlocals = ci;
+        ps_scope_end(ci);
         if (!ps_fn_setjmp) ps_stack = ci_stack;
         return nd_for(n, c, e, t);
     }
@@ -6932,7 +7122,7 @@ static Node *parse_block(void) {
     int saved_nconsts;
 
     expect(TK_LBRACE);
-    saved_nlocals = ps_nlocals;
+    saved_nlocals = ps_scope_begin();
     saved_stack = ps_stack;
     saved_nconsts = ps_nconsts;
     ps_block_depth = ps_block_depth + 1;
@@ -6949,7 +7139,7 @@ static Node *parse_block(void) {
         }
     }
     expect(TK_RBRACE);
-    ps_nlocals = saved_nlocals;
+    ps_scope_end(saved_nlocals);
     /* the block's enumerators and structure tags go out of scope with
      * it (6.2.1p4); they leaked, so an inner `enum { X = 100 }` was X
      * for the rest of the file, and an inner `struct t { ... }`
@@ -7829,6 +8019,7 @@ static Node *parse_program(void) {
     add_typedef("__int128", TY_I128);
     add_typedef("__int128_t", TY_I128);
     add_typedef("__uint128_t", TY_I128 | TY_UNSIGNED);
+    ps_typedefs_builtin();
     next();  /* prime the first token */
 
     fhead = NULL;
@@ -7838,6 +8029,7 @@ static Node *parse_program(void) {
          * with the macro empty.  Every compiler accepts it. */
         if (lex_tok == TK_SEMI) { next(); continue; }
         f = parse_top_decl();
+        if (f && f->kind == ND_FUNC) ps_func_defined(f->name);
         if (f) {
             if (fhead == NULL) {
                 fhead = f;

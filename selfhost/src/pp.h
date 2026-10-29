@@ -2151,6 +2151,21 @@ static int pp_include_from_macro(char *fname, int *angle) {
     return b[fi + 1] == close;
 }
 
+/* Files that said #pragma once, by the path they were included as. */
+#define PP_MAX_ONCE 512
+static char *pp_once[PP_MAX_ONCE];
+static int pp_nonce;
+
+static int pp_is_once(char *path) {
+    int i;
+    i = 0;
+    while (i < pp_nonce) {
+        if (strcmp(pp_once[i], path) == 0) return 1;
+        i = i + 1;
+    }
+    return 0;
+}
+
 static void pp_include(void) {
     char path[512];
     char fname[256];
@@ -2192,7 +2207,8 @@ static void pp_include(void) {
     pp_skip_line();
 
     if (pp_find_include(fname, angle, path)) {
-        pp_splice_file(path);
+        if (!pp_is_once(path)) pp_splice_file(path);
+        else pp_sync();
         return;
     }
     fdputs("s12cc: cannot open include: ", 2);
@@ -3112,8 +3128,22 @@ static void pp_directive(void) {
         return;
     }
 
-    /* #pragma is implementation-defined, and skipped; a lone # is the
-     * null directive.  Any other name in a live group is not a
+    /* #pragma once: this file is not to be included again.  It was
+     * skipped with the other pragmas, and a header's function, included
+     * twice, was defined twice -- unseen until that became an error. */
+    if (strcmp(name, "pragma") == 0) {
+        pp_skip_ws();
+        pp_read_name(name);
+        if (strcmp(name, "once") == 0 && pp_nonce < PP_MAX_ONCE) {
+            pp_once[pp_nonce] = strdup(pp_curfile);
+            pp_nonce = pp_nonce + 1;
+        }
+        pp_skip_line();
+        pp_sync();
+        return;
+    }
+    /* Other pragmas are implementation-defined, and skipped; a lone # is
+     * the null directive.  Any other name in a live group is not a
      * directive (6.10p3): #frobnicate was skipped without a word. */
     if (strcmp(name, "pragma") != 0) {
         pp_skip_ws();

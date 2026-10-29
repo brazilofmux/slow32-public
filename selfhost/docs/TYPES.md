@@ -535,7 +535,30 @@ label's, is an integer constant expression (`ps_require_integer_const`:
 `E = 2.5` was 2); `sizeof` of a bit-field or an incomplete structure;
 `_Atomic` of an array or function type; and `_Static_assert` evaluates
 its expression -- before, only a bare literal was looked at, anything
-else passed.  `S12CC_CONSTRAINT_WARN=1` turns
+else passed.
+
+**S5, redeclarations** (2026-10-29).  A tag used as the other kind
+(`struct t` then `union t *p`) where it refers to the earlier one
+(`ps_find_tag`); a tag defined twice in one scope
+(`ps_tag_defines_here`); two members of one name, anonymous members'
+included (`ps_check_dup_members`); a typedef redefined in its scope as
+a different type (`ps_typedef_check`; the compiler's own -- `size_t`,
+`bool` -- are left to the headers); a function redeclared with an
+incompatible type (`ps_func_redecl_check`) or given two bodies
+(`ps_func_defined`); a global redeclared with an incompatible type --
+where either declaration is an array, by its innermost elements: an
+array declared before its size is known is held in pointer form, and a
+2-D one flat or by rows, so `extern int a[]; extern int a[3];` and
+DOOM's `scalelight[LIGHTLEVELS][MAXLIGHTSCALE]` (r_state.h, r_main.c)
+are one array each (`ps_global_types_agree`; array sizes are not
+compared) -- and
+`static` after a declaration with external linkage
+(`ps_global_redecl_check`); a local declared twice in one scope -- a
+block, or a `for` statement's first clause, which is a scope of its
+own (`ps_scope_begin`/`ps_scope_end`, `ps_lscope`).  One finding:
+`#pragma once` was skipped with the other pragmas, and a header that
+relied on it, included twice, defined its function twice -- accepted
+until now; it is implemented (`pp_once`).  `S12CC_CONSTRAINT_WARN=1` turns
 the errors into warnings, to survey a corpus.
 
 ## Constraints on the work

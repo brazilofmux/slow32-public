@@ -102,7 +102,7 @@
 6.2.1-tag-scope PASS
 6.2.2-block-extern-shadow PASS
 6.2.2-linkage PASS
-6.2.2-linkage-conflict ACCEPTS
+6.2.2-linkage-conflict DIAG
 6.2.2-tentative PASS
 6.2.2-tentative-array REJECTS
 6.2.3-namespaces PASS
@@ -117,8 +117,8 @@
 6.2.6.1-representation PASS
 6.2.6.2-integer-rep PASS
 6.2.7-compatible PASS
-6.2.7-incompatible-func ACCEPTS
-6.2.7-incompatible-redecl ACCEPTS
+6.2.7-incompatible-func DIAG
+6.2.7-incompatible-redecl DIAG
 6.2.7-struct-compat DIAG
 6.2.8-alignas-stronger REJECTS
 6.2.8-alignment PASS
@@ -317,9 +317,9 @@
 6.6-nonconst-static-init DIAG
 6.7-declarations PASS
 6.7-empty-declaration DIAG
-6.7-incompatible-redecl ACCEPTS
+6.7-incompatible-redecl DIAG
 6.7-mixed-declarators REJECTS
-6.7-redeclare-no-linkage ACCEPTS
+6.7-redeclare-no-linkage DIAG
 6.7.1-register-address DIAG
 6.7.1-static-local PASS
 6.7.1-thread-local REJECTS
@@ -345,7 +345,7 @@
 6.7.2.1-bitfield-too-wide DIAG
 6.7.2.1-bitfield-zero-named DIAG
 6.7.2.1-bitfields PASS
-6.7.2.1-duplicate-member ACCEPTS
+6.7.2.1-duplicate-member DIAG
 6.7.2.1-flex-alone DIAG
 6.7.2.1-flex-not-last DIAG
 6.7.2.1-flexible-array PASS
@@ -358,8 +358,8 @@
 6.7.2.2-enum-too-big ACCEPTS
 6.7.2.3-block-tag-shadow PASS
 6.7.2.3-enum-forward ACCEPTS
-6.7.2.3-redefinition ACCEPTS
-6.7.2.3-tag-kind-mismatch ACCEPTS
+6.7.2.3-redefinition DIAG
+6.7.2.3-tag-kind-mismatch DIAG
 6.7.2.3-tags PASS
 6.7.2.4-atomic-array DIAG
 6.7.2.4-atomic-function DIAG
@@ -403,7 +403,7 @@
 6.7.6.2-vla-typedef-eval REJECTS
 6.7.6.2-zero-size ACCEPTS
 6.7.6.3-array-param-qualifiers REJECTS
-6.7.6.3-conflicting-proto ACCEPTS
+6.7.6.3-conflicting-proto DIAG
 6.7.6.3-function-param REJECTS
 6.7.6.3-old-style REJECTS
 6.7.6.3-param-storage DIAG
@@ -417,7 +417,7 @@
 6.7.8-array-typedef REJECTS
 6.7.8-typedef PASS
 6.7.8-typedef-array-align PASS
-6.7.8-typedef-conflict ACCEPTS
+6.7.8-typedef-conflict DIAG
 6.7.8-typedef-multi REJECTS
 6.7.8-typedef-signed DIAG
 6.7.9-automatic-nonconst PASS
@@ -493,7 +493,7 @@
 6.8.6.4-return-noexpr-nonvoid DIAG
 6.8.6.4-return-value-in-void DIAG
 6.9-auto-file-scope DIAG
-6.9-function-defined-twice ACCEPTS
+6.9-function-defined-twice DIAG
 6.9-internal-linkage PASS
 6.9-register-file-scope DIAG
 6.9-static-two-definitions DIAG
@@ -520,7 +520,7 @@
 6.9.1-varargs-definition PASS
 6.9.2-extern-incomplete-struct REJECTS
 6.9.2-extern-then-define PASS
-6.9.2-linkage-conflict ACCEPTS
+6.9.2-linkage-conflict DIAG
 6.9.2-static-tentative-incomplete DIAG
 6.9.2-tentative PASS
 6.9.2-tentative-array-completed REJECTS
