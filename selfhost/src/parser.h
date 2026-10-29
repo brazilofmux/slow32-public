@@ -2195,6 +2195,16 @@ static int ps_add_static_array_alias(char *name, int elem_ty, int cols, int gi) 
     return idx;
 }
 
+/* A block-scope static array of function pointers, static int
+ * (*slot[2])(long long): its C type an array of them, from the return
+ * type in ps_type_cty and the declarator's stars -- it had int
+ * elements, and slot[1] = sink stored a pointer into an int. */
+static int ps_add_static_fnptr_alias(char *name, int nstars, int gi) {
+    ps_fnptr_nstar = nstars;
+    ps_type_cty = ct_array(ps_fnptr_cty(ps_type_cty), -1);
+    return ps_add_static_array_alias(name, TY_INT, 0, gi);
+}
+
 /* Stamp a VAR node with the live local's slot_id (GitHub issue 77). */
 static void ps_bind_var(Node *n, int li) {
     n->cty = ps_lcty[li];
@@ -6429,7 +6439,7 @@ static Node *parse_stmt(void) {
                     return nd_num(0);
                 }
                 expect(TK_SEMI);
-                sl_li = ps_add_static_array_alias(nm, TY_INT, 0, sl_gi);
+                sl_li = ps_add_static_fnptr_alias(nm, nstars, sl_gi);
                 if (sl_li < 0) return nd_num(0);
                 ps_lfpbase[sl_li] = afpb;
                 ps_lfpn[sl_li] = afpn;

@@ -147,8 +147,8 @@
 6.3.2.1-lvalues PASS
 6.3.2.2-void PASS
 6.3.2.2-void-value DIAG
-6.3.2.3-incompatible-ptr ACCEPTS
-6.3.2.3-int-to-ptr ACCEPTS
+6.3.2.3-incompatible-ptr DIAG
+6.3.2.3-int-to-ptr DIAG
 6.3.2.3-pointers PASS
 6.4-maximal-munch DIAG
 6.4-tokens PASS
@@ -225,8 +225,8 @@
 6.5.16-assign-value PASS
 6.5.16.1-assign-bool PASS
 6.5.16.1-assign-drop-const ACCEPTS
-6.5.16.1-assign-incompat-ptr ACCEPTS
-6.5.16.1-assign-int-to-ptr ACCEPTS
+6.5.16.1-assign-incompat-ptr DIAG
+6.5.16.1-assign-int-to-ptr DIAG
 6.5.16.1-assign-struct-mismatch DIAG
 6.5.16.1-simple-assign PASS
 6.5.16.2-compound-assign PASS
@@ -240,7 +240,7 @@
 6.5.2.2-call PASS
 6.5.2.2-call-argcount DIAG
 6.5.2.2-call-argtype DIAG
-6.5.2.2-call-nonfunc ACCEPTS
+6.5.2.2-call-nonfunc DIAG
 6.5.2.3-arrow-nonptr DIAG
 6.5.2.3-member-missing DIAG
 6.5.2.3-members PASS
@@ -286,7 +286,7 @@
 6.5.6-int-plus-ptr PASS
 6.5.6-pointer-to-array PASS
 6.5.6-ptr-plus-ptr DIAG
-6.5.6-ptr-sub-mismatch ACCEPTS
+6.5.6-ptr-sub-mismatch DIAG
 6.5.6-ptrdiff-signed PASS
 6.5.7-shift-float DIAG
 6.5.7-shift-result-type PASS

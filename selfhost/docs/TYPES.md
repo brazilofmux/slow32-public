@@ -484,7 +484,23 @@ code, fixed where they were: the compiler declared `memcpy` with
 declaration at all (an implicit int, assigned to pointers) -- the
 dialect block in c_lexer.rl now has the library's types; the selfhost
 `<unistd.h>` had `read`, `write` and `unlink` without `void *` and
-`const`.  `S12CC_CONSTRAINT_WARN=1` turns
+`const`.  (And one more gap: a block-scope `static int
+(*slot[2])(long long)` had int elements, `ps_add_static_fnptr_alias`.)
+
+**Ruling, 2026-10-28: 6.5.16.1's conversions are graded as clang grades
+them by default.**  What the corpus left was DOOM passing callbacks
+through `void *` (`M_StartMessage`'s routine, the save code's action
+pointers).  Clang's own grading, measured: an integer converted to or
+from a pointer, incompatible pointer types (function pointers among
+them), a difference of incompatible pointers and a call of something
+not a function are errors; a dropped qualifier, a pointer-sign
+mismatch, a pointer compared with an integer or with a pointer of a
+distinct type, and `?:` arms of mismatched types are warnings; a
+function pointer converted to or from `void *` is accepted -- an
+extension, which POSIX's `dlsym` depends on and DOOM uses.
+`sema_convert_diag` applies it; `-pedantic-errors`, the probes' oracle,
+would make all of these errors, so the probes for the warning classes
+stay ACCEPTS by this ruling, not by a gap.  `S12CC_CONSTRAINT_WARN=1` turns
 the errors into warnings, to survey a corpus.
 
 ## Constraints on the work
