@@ -149,6 +149,17 @@ void prog_set_do_hook(prog_do_hook_t hook) {
 }
 
 static int (*compiled_recover)(void);
+static int (*pcount_hook)(void);
+
+void prog_set_pcount_hook(int (*hook)(void)) {
+    pcount_hook = hook;
+}
+
+int prog_pcount(void) {
+    if (state.running && state.call_depth > 0)
+        return state.call_stack[state.call_depth - 1].with_argc;
+    return pcount_hook ? pcount_hook() : 0;
+}
 
 void prog_set_compiled_recover(int (*recover)(void)) {
     compiled_recover = recover;
@@ -1965,6 +1976,8 @@ void prog_for(const char *arg) {
     varname[i] = '\0';
 
     p = skip_ws(p);
+    if (p[0] == ':' && p[1] == '=')   /* Clipper's FOR i := ... */
+        p++;
     if (*p != '=') {
         printf("Syntax error in FOR.\n");
         state.pc++;
@@ -2445,16 +2458,15 @@ void prog_parameters(lexer_t *l) {
 }
 
 /* ---- PRIVATE ---- */
-void prog_private(lexer_t *l) {
+/* PRIVATE / PUBLIC / LOCAL name [:= value] [, ...]: each name declared as
+ * its kind does, then given its value when one follows (Clipper).  kind
+ * 'P' PRIVATE, 'U' PUBLIC, 'L' LOCAL.  At the top level (or typed at the
+ * prompt) PRIVATE and LOCAL declare nothing, as before; an initializer
+ * still assigns. */
+static void prog_declare(lexer_t *l, int kind) {
     memvar_store_t *store = cmd_get_memvar_store();
     char name[MEMVAR_NAMELEN];
-
-    if (!state.running || state.call_depth <= 0) {
-        /* In interactive mode or top level, PRIVATE is ignored */
-        while (l->current.type != TOK_EOF) lex_next(l);
-        if (state.running) state.pc++;
-        return;
-    }
+    int framed = state.running && state.call_depth > 0;
 
     while (l->current.type == TOK_IDENT) {
         str_copy(name, l->current.text, sizeof(name));
@@ -2466,91 +2478,70 @@ void prog_private(lexer_t *l) {
             prog_error(ERR_SYNTAX, err);
             return;
         }
-        save_private(&state.call_stack[state.call_depth - 1], name);
-        /* Release the current value - create fresh */
-        memvar_release(store, name);
+        if (kind == 'P' && framed) {
+            save_private(&state.call_stack[state.call_depth - 1], name);
+            /* Release the current value - create fresh */
+            memvar_release(store, name);
+        } else if (kind == 'U') {
+            value_t existing;
+            /* Create variable if it doesn't exist */
+            if (memvar_find(store, name, &existing) != 0) {
+                value_t v = val_logic(0); /* PUBLIC vars default to .F. */
+                memvar_set(store, name, &v);
+            }
+        } else if (kind == 'L' && framed) {
+            /* A fresh LOCAL at this depth.  It shadows a PRIVATE or PUBLIC of
+             * the name without touching it, and pop_frame releases it; it
+             * used to release the outer variable, so a callee saw nothing and
+             * the caller's value was gone on return (GitHub issue 113). */
+            value_t nil_val = val_nil();
+            memvar_set_local(store, name, &nil_val);
+        }
 
         lex_next(l);
+        if (l->current.type == TOK_ASSIGN) {
+            const char *pp = l->token_start + 2;   /* past := */
+            const char *err = NULL;
+            ast_node_t *n = ast_compile_adv(&pp, store, &err);
+            value_t v;
+            if (!n) {
+                prog_error(ERR_SYNTAX, err ? err : "Syntax error");
+                return;
+            }
+            if (ast_eval(n, cmd_get_expr_ctx(), &v) != 0) {
+                ast_free(n);
+                if (cmd_get_expr_ctx()->error)
+                    prog_error(expr_error_code(cmd_get_expr_ctx()->error), cmd_get_expr_ctx()->error);
+                return;
+            }
+            ast_free(n);
+            if (kind == 'L' && framed) memvar_set_local(store, name, &v);
+            else memvar_set(store, name, &v);
+            lexer_init_ext(l, pp, store);
+        }
         if (l->current.type == TOK_COMMA) {
             lex_next(l);
         } else {
             break;
         }
     }
+}
 
-    state.pc++;
+void prog_private(lexer_t *l) {
+    prog_declare(l, 'P');
+    if (state.running) state.pc++;
 }
 
 /* ---- PUBLIC ---- */
 void prog_public(lexer_t *l) {
-    memvar_store_t *store = cmd_get_memvar_store();
-    char name[MEMVAR_NAMELEN];
-
-    while (l->current.type == TOK_IDENT) {
-        value_t existing;
-        str_copy(name, l->current.text, sizeof(name));
-        str_upper(name);
-
-        if (lex_is_reserved(name)) {
-            char err[128];
-            snprintf(err, sizeof(err), "%s is a reserved keyword", name);
-            prog_error(ERR_SYNTAX, err);
-            return;
-        }
-        /* Create variable if it doesn't exist */
-        if (memvar_find(store, name, &existing) != 0) {
-            value_t v = val_logic(0); /* PUBLIC vars default to .F. */
-            memvar_set(store, name, &v);
-        }
-
-        lex_next(l);
-        if (l->current.type == TOK_COMMA) {
-            lex_next(l);
-        } else {
-            break;
-        }
-    }
-
+    prog_declare(l, 'U');
     if (state.running) state.pc++;
 }
 
 /* ---- LOCAL ---- */
 void prog_local(lexer_t *l) {
-    memvar_store_t *store = cmd_get_memvar_store();
-    char name[MEMVAR_NAMELEN];
-    value_t nil_val = val_nil();
-
-    if (!state.running || state.call_depth <= 0) {
-        while (l->current.type != TOK_EOF) lex_next(l);
-        if (state.running) state.pc++;
-        return;
-    }
-
-    while (l->current.type == TOK_IDENT) {
-        str_copy(name, l->current.text, sizeof(name));
-        str_upper(name);
-
-        if (lex_is_reserved(name)) {
-            char err[128];
-            snprintf(err, sizeof(err), "%s is a reserved keyword", name);
-            prog_error(ERR_SYNTAX, err);
-            return;
-        }
-        /* A fresh LOCAL at this depth.  It shadows a PRIVATE or PUBLIC of
-         * the name without touching it, and pop_frame releases it; it
-         * used to release the outer variable, so a callee saw nothing and
-         * the caller's value was gone on return (GitHub issue 113). */
-        memvar_set_local(store, name, &nil_val);
-
-        lex_next(l);
-        if (l->current.type == TOK_COMMA) {
-            lex_next(l);
-        } else {
-            break;
-        }
-    }
-
-    state.pc++;
+    prog_declare(l, 'L');
+    if (state.running) state.pc++;
 }
 
 /* ---- CANCEL ---- */

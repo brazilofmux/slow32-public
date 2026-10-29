@@ -14,14 +14,18 @@ typedef enum {
     AST_ARRAY_ACCESS,   /* arr[i] or arr[i,j] */
     AST_BINOP,          /* left OP right */
     AST_UNOP,           /* OP child (negate, .NOT.) */
-    AST_FUNC_CALL       /* name(args...) */
+    AST_FUNC_CALL,      /* name(args...) */
+    AST_ASSIGN,         /* target := value, target op= value */
+    AST_INCDEC          /* ++target, target++, --target, target-- */
 } ast_type_t;
 
 typedef enum {
     OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_POWER,
     OP_EQ, OP_EXACT_EQ, OP_NE, OP_LT, OP_GT, OP_LE, OP_GE, OP_SUBSTR,
     OP_AND, OP_OR,
-    OP_NOT, OP_NEGATE
+    OP_NOT, OP_NEGATE,
+    OP_MOD,
+    OP_NONE             /* AST_ASSIGN: plain := */
 } ast_op_t;
 
 typedef struct ast_node {
@@ -37,6 +41,10 @@ typedef struct ast_node {
         struct { ast_op_t op; struct ast_node *child; } unop;   /* AST_UNOP */
         struct { char name[64]; struct ast_node **args;
                  int nargs; } call;                             /* AST_FUNC_CALL */
+        struct { ast_op_t op; struct ast_node *target;
+                 struct ast_node *value; } assign;              /* AST_ASSIGN */
+        struct { int delta; int prefix;
+                 struct ast_node *target; } incdec;             /* AST_INCDEC */
     };
 } ast_node_t;
 
@@ -71,6 +79,16 @@ int ast_eval_elem(expr_ctx_t *ctx, const char *name, const value_t *row,
 int ast_eval_unop(expr_ctx_t *ctx, ast_op_t op, const value_t *child, value_t *result);
 int ast_eval_binop(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const value_t *right,
                    value_t *result);
+
+/* Stores, for := and its kin.  An undeclared name is a memory variable
+ * (CA-Clipper: an ambiguous reference is assumed MEMVAR); M-> and MEMVAR->
+ * name one, FIELD-> a field of the current work area, another alias a
+ * field there. */
+int ast_store_name(expr_ctx_t *ctx, const char *name, const value_t *val);
+int ast_store_elem(expr_ctx_t *ctx, const char *name, const value_t *row,
+                   const value_t *col, const value_t *val);
+int ast_store_alias_field(expr_ctx_t *ctx, const char *alias, const char *field,
+                          const value_t *val);
 
 /* Free AST recursively.  Safe to call with NULL. */
 void ast_free(ast_node_t *node);

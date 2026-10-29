@@ -301,10 +301,11 @@ static int parse_mul(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
     for (;;) {
         token_type_t op = lex_peek(l);
         value_t right;
-        if (op != TOK_MUL && op != TOK_DIV) break;
+        if (op != TOK_MUL && op != TOK_DIV && op != TOK_MOD) break;
         lex_next(l);
         if (parse_power(ctx, l, &right) != 0) return -1;
-        if (apply_binop(ctx, op == TOK_MUL ? OP_MUL : OP_DIV, result, &right) != 0) return -1;
+        if (apply_binop(ctx, op == TOK_MUL ? OP_MUL : op == TOK_DIV ? OP_DIV : OP_MOD,
+                        result, &right) != 0) return -1;
     }
     return 0;
 }

@@ -42,6 +42,7 @@ struct clip_scope {
     char pnames[MAX_FUNC_ARGS][MEMVAR_NAMELEN];  /* parameter names by position */
     int npnames;
     clip_scope_t *prev;    /* the scope that called this one */
+    int nargs;             /* PCOUNT() */
 };
 
 /* FOR var = start TO end [STEP step] ... NEXT */

@@ -543,6 +543,12 @@ static int fn_right(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
     return 0;
 }
 
+static int fn_pcount(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_num(prog_pcount());
+    return 0;
+}
+
 static int fn_str(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     char buf[64];
     (void)ctx;
@@ -2292,7 +2298,7 @@ static const func_entry_t func_table[] = {
     { "FERROR",    fn_ferror },
     /* Misc */
     { "EMPTY",     fn_empty },
-    { "IIF",       fn_iif },
+    { "IIF",       fn_iif }, { "IF", fn_iif }, { "PCOUNT", fn_pcount },
     /* System */
     { "VERSION",   fn_version },
     { "OS",        fn_os },

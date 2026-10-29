@@ -162,6 +162,10 @@ void prog_set_do_hook(prog_do_hook_t hook);
 /* An error while compiled code runs a BEGIN SEQUENCE: the hook recovers it
  * (it does not return) or returns 0 when no sequence is active. */
 void prog_set_compiled_recover(int (*recover)(void));
+/* PCOUNT(): the arguments the running procedure was given; compiled code
+ * answers through the hook when no interpreted program runs */
+int  prog_pcount(void);
+void prog_set_pcount_hook(int (*hook)(void));
 
 /* SCAN ... ENDSCAN for compiled code: open positions on the first record
  * that matches (1) or finds none (0); next moves to the next (1) or ends

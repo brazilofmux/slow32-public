@@ -93,7 +93,17 @@ The severe ones are marked.
    the interpreter as well as compiled code; every printed number moves.
    Done 2026-10-29 (see BP-N1).
 2. **The operators** (`:=`, `!=`, compound assignment, `++`/`--`) and
-   IF(): the shared expression parser.
+   IF(): the shared expression parser.  Done 2026-10-29: `:=` and the
+   compound assignments and `++`/`--` (prefix and postfix) are expression
+   nodes stored through shared helpers (an undeclared name is a memory
+   variable, as the guide says; FIELD-> and alias-> assign fields, M->
+   memory variables); `!=`, `%`; expression statements (x := e, x++,
+   f(x) where f is no command); FOR i := ...; LOCAL / PRIVATE / PUBLIC
+   with initializers; IF(), PCOUNT(); MEMVAR / FIELD as declarations.
+   Found on the way: at run time / and % take SET DECIMALS even when the
+   quotient is whole (24/4 from variables shows 6.00); two integer
+   literals with a whole quotient fold to an integer at compile time
+   (10/5 shows 2).
 3. **Function calls as statements, formal parameters, PCOUNT(), `@`.**
 4. **Literal arrays and the array functions.**
 5. **LOCAL and STATIC as Clipper has them** -- severe: lexical, not

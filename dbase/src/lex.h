@@ -44,6 +44,18 @@ typedef enum {
     TOK_OR,         /* .OR. */
     TOK_NOT,        /* .NOT. or ! */
     
+    /* Clipper 5: assignment, increment, modulus */
+    TOK_ASSIGN,     /* := */
+    TOK_ADDEQ,      /* += */
+    TOK_SUBEQ,      /* -= */
+    TOK_MULEQ,      /* *= */
+    TOK_DIVEQ,      /* /= */
+    TOK_MODEQ,      /* %= */
+    TOK_POWEQ,      /* ^= */
+    TOK_INC,        /* ++ */
+    TOK_DEC,        /* -- */
+    TOK_MOD,        /* % */
+
     /* Macro */
     TOK_MACRO,      /* & */
     TOK_DOT,        /* . */

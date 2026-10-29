@@ -30,6 +30,10 @@ static clip_seq_t *clip_seq_top;      /* the innermost BEGIN SEQUENCE */
 
 static int clip_recover(void);
 
+static int clip_pcount(void) {
+    return clip_scope_top ? clip_scope_top->nargs : 0;
+}
+
 static void name_upper(char *dst, const char *src, int n) {
     int i;
     for (i = 0; src[i] && i < n - 1; i++) {
@@ -133,6 +137,7 @@ void clip_init(void) {
     func_set_udf_callback(clip_udf_dispatch);
     prog_set_do_hook(clip_do_hook);
     prog_set_compiled_recover(clip_recover);
+    prog_set_pcount_hook(clip_pcount);
     strcpy(line, "SET TALK OFF");
     cmd_execute(&clip_db, line);
 }
@@ -261,6 +266,7 @@ void clip_enter(clip_scope_t *s) {
     memvar_store_t *store = cmd_get_memvar_store();
     s->count = 0;
     s->npnames = 0;
+    s->nargs = 0;
     s->call = clip_next_call;
     clip_next_call = NULL;
     s->prev = clip_scope_top;
@@ -364,6 +370,8 @@ int clip_for_init(clip_for_t *f, const char *arg) {
         f->var[i++] = *p++;
     f->var[i] = '\0';
     while (*p == ' ' || *p == '\t') p++;
+    if (p[0] == ':' && p[1] == '=')   /* Clipper's FOR i := ... */
+        p++;
     if (*p != '=') {
         printf("Syntax error in FOR.\n");
         return 0;

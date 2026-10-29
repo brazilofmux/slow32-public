@@ -12,6 +12,7 @@
 #include <math.h>
 #include <errno.h>
 #include "ast.h"
+#include "command.h"
 #include "memvar.h"
 #include "set.h"
 #include "date.h"
@@ -62,8 +63,28 @@ static ast_node_t *node_array(const char *name, ast_node_t *idx1, ast_node_t *id
     return n;
 }
 
+static ast_node_t *node_literal(value_t v);
+
+static int int_literal(const ast_node_t *n) {
+    return n && n->type == AST_LITERAL && n->literal.type == VAL_NUM && n->literal.ndec == 0;
+}
+
 static ast_node_t *node_binop(ast_op_t op, ast_node_t *left, ast_node_t *right) {
-    ast_node_t *n = node_alloc(AST_BINOP);
+    ast_node_t *n;
+    /* Two integer literals divided with a whole quotient fold to an integer
+     * at compile time (10/5 shows 2); at run time / and % take SET
+     * DECIMALS (24/4 from variables shows 6.00) */
+    if ((op == OP_DIV || op == OP_MOD) && int_literal(left) && int_literal(right) &&
+        right->literal.num != 0.0) {
+        double q = op == OP_DIV ? left->literal.num / right->literal.num
+                                : fmod(left->literal.num, right->literal.num);
+        if (q == floor(q)) {
+            ast_free(left);
+            ast_free(right);
+            return node_literal(val_num_dec(q, 0, 0));
+        }
+    }
+    n = node_alloc(AST_BINOP);
     if (n) {
         n->binop.op = op;
         n->binop.left = left;
@@ -122,6 +143,13 @@ void ast_free(ast_node_t *node) {
             ast_free(node->call.args[i]);
         free(node->call.args);
         break;
+    case AST_ASSIGN:
+        ast_free(node->assign.target);
+        ast_free(node->assign.value);
+        break;
+    case AST_INCDEC:
+        ast_free(node->incdec.target);
+        break;
     }
     free(node);
 }
@@ -142,9 +170,60 @@ static ast_node_t *ast_parse_power(lexer_t *l, memvar_store_t *store, const char
 static ast_node_t *ast_parse_unary(lexer_t *l, memvar_store_t *store, const char **error);
 static ast_node_t *ast_parse_primary(lexer_t *l, memvar_store_t *store, const char **error);
 
-/* expr → or_expr */
+static int is_lvalue(const ast_node_t *n) {
+    return n && (n->type == AST_MEMVAR || n->type == AST_ARRAY_ACCESS ||
+                 n->type == AST_ALIAS_FIELD || n->type == AST_FIELD);
+}
+
+/* expr → or_expr [ (:= | += | -= | *= | /= | %= | ^=) expr ]  (right associative) */
 static ast_node_t *ast_parse_expr(lexer_t *l, memvar_store_t *store, const char **error) {
-    return ast_parse_or(l, store, error);
+    ast_node_t *left = ast_parse_or(l, store, error);
+    token_type_t t;
+    ast_op_t op;
+    if (!left) return NULL;
+    t = lex_peek(l);
+    switch (t) {
+    case TOK_ASSIGN: op = OP_NONE; break;
+    case TOK_ADDEQ:  op = OP_ADD; break;
+    case TOK_SUBEQ:  op = OP_SUB; break;
+    case TOK_MULEQ:  op = OP_MUL; break;
+    case TOK_DIVEQ:  op = OP_DIV; break;
+    case TOK_MODEQ:  op = OP_MOD; break;
+    case TOK_POWEQ:  op = OP_POWER; break;
+    default: return left;
+    }
+    if (!is_lvalue(left)) {
+        *error = "Invalid assignment target";
+        ast_free(left);
+        return NULL;
+    }
+    lex_next(l);
+    {
+        ast_node_t *value = ast_parse_expr(l, store, error);
+        ast_node_t *n;
+        if (!value) { ast_free(left); return NULL; }
+        n = node_alloc(AST_ASSIGN);
+        if (!n) { ast_free(left); ast_free(value); *error = "Out of memory"; return NULL; }
+        n->assign.op = op;
+        n->assign.target = left;
+        n->assign.value = value;
+        return n;
+    }
+}
+
+static ast_node_t *node_incdec(int delta, int prefix, ast_node_t *target, const char **error) {
+    ast_node_t *n;
+    if (!is_lvalue(target)) {
+        *error = "Invalid ++ or -- operand";
+        ast_free(target);
+        return NULL;
+    }
+    n = node_alloc(AST_INCDEC);
+    if (!n) { ast_free(target); *error = "Out of memory"; return NULL; }
+    n->incdec.delta = delta;
+    n->incdec.prefix = prefix;
+    n->incdec.target = target;
+    return n;
 }
 
 /* or_expr → and_expr [ .OR. and_expr ]* */
@@ -257,6 +336,7 @@ static ast_node_t *ast_parse_mul(lexer_t *l, memvar_store_t *store, const char *
 
         if (op == TOK_MUL)       ast_op = OP_MUL;
         else if (op == TOK_DIV)  ast_op = OP_DIV;
+        else if (op == TOK_MOD)  ast_op = OP_MOD;
         else break;
 
         lex_next(l);
@@ -300,7 +380,23 @@ static ast_node_t *ast_parse_unary(lexer_t *l, memvar_store_t *store, const char
         lex_next(l);
     }
 
-    return ast_parse_primary(l, store, error);
+    if (op == TOK_INC || op == TOK_DEC) {   /* prefix ++ / -- */
+        ast_node_t *target;
+        lex_next(l);
+        target = ast_parse_primary(l, store, error);
+        if (!target) return NULL;
+        return node_incdec(op == TOK_INC ? 1 : -1, 1, target, error);
+    }
+
+    {
+        ast_node_t *n = ast_parse_primary(l, store, error);
+        if (n && (lex_peek(l) == TOK_INC || lex_peek(l) == TOK_DEC) && is_lvalue(n)) {
+            int delta = lex_peek(l) == TOK_INC ? 1 : -1;   /* postfix */
+            lex_next(l);
+            return node_incdec(delta, 0, n, error);
+        }
+        return n;
+    }
 }
 
 /* primary → number | string | .T./.F. | {date} | (expr) | func(args) |
@@ -542,6 +638,14 @@ int ast_eval_name(expr_ctx_t *ctx, const char *name, value_t *result) {
 }
 
 int ast_eval_alias_field(expr_ctx_t *ctx, const char *alias, const char *field, value_t *result) {
+    if (str_icmp(alias, "M") == 0 || str_icmp(alias, "MEMVAR") == 0) {
+        if (ctx->vars && memvar_find(ctx->vars, field, result) == 0) return 0;
+        snprintf(ctx->err_msg, sizeof(ctx->err_msg), "Variable not found: %s", field);
+        ctx->error = ctx->err_msg;
+        return -1;
+    }
+    if (str_icmp(alias, "FIELD") == 0)
+        return ast_eval_field(ctx, field, result);
     if (ctx->area_lookup) {
         dbf_t *adb = ctx->area_lookup(alias);
         if (eval_field_from_db(adb, field, result) == 0) return 0;
@@ -589,7 +693,6 @@ static value_t num_result(ast_op_t op, double r, const value_t *left, const valu
     switch (op) {
     case OP_ADD: case OP_SUB: return val_num_dec(r, dl > dr ? dl : dr, 0);
     case OP_MUL:              return val_num_dec(r, dl + dr, 0);
-    case OP_DIV:              return val_num(r);
     default:                  return val_num_dec(r, val_set_decimals, 0);
     }
 }
@@ -687,6 +790,14 @@ int ast_eval_binop(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const valu
         *result = num_result(op, left->num / right->num, left, right);
         return 0;
 
+    case OP_MOD:
+        if (left->type != VAL_NUM || right->type != VAL_NUM) {
+            ctx->error = "Type mismatch in %"; return -1;
+        }
+        if (right->num == 0.0) { ctx->error = "Division by zero"; return -1; }
+        *result = num_result(OP_MOD, fmod(left->num, right->num), left, right);
+        return 0;
+
     case OP_POWER:
         if (left->type != VAL_NUM || right->type != VAL_NUM) {
             ctx->error = "Type mismatch in **"; return -1;
@@ -768,6 +879,84 @@ int ast_eval_binop(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const valu
     return -1;
 }
 
+int ast_store_name(expr_ctx_t *ctx, const char *name, const value_t *val) {
+    if (!ctx->vars || memvar_set(ctx->vars, name, val) != 0) {
+        ctx->error = "Too many memory variables";
+        return -1;
+    }
+    return 0;
+}
+
+int ast_store_elem(expr_ctx_t *ctx, const char *name, const value_t *row_v,
+                   const value_t *col_v, const value_t *val) {
+    int row, col = 1, res;
+    if (row_v->type != VAL_NUM || (col_v && col_v->type != VAL_NUM)) {
+        ctx->error = "Array index must be numeric";
+        return -1;
+    }
+    row = (int)row_v->num;
+    if (col_v) col = (int)col_v->num;
+    res = memvar_set_elem(ctx->vars, name, row, col, val);
+    if (res == 0) return 0;
+    ctx->error = res == -2 ? "Array index out of bounds" : "Variable is not an array";
+    return -1;
+}
+
+int ast_store_alias_field(expr_ctx_t *ctx, const char *alias, const char *field,
+                          const value_t *val) {
+    if (str_icmp(alias, "M") == 0 || str_icmp(alias, "MEMVAR") == 0)
+        return ast_store_name(ctx, field, val);
+    if (cmd_api_field_assign(str_icmp(alias, "FIELD") == 0 ? NULL : alias, field, val) != 0) {
+        snprintf(ctx->err_msg, sizeof(ctx->err_msg), "Cannot assign %s->%s", alias, field);
+        ctx->error = ctx->err_msg;
+        return -1;
+    }
+    return 0;
+}
+
+static int store_to(ast_node_t *t, expr_ctx_t *ctx, const value_t *row, const value_t *col,
+                    const value_t *val) {
+    switch (t->type) {
+    case AST_MEMVAR:       return ast_store_name(ctx, t->name, val);
+    case AST_FIELD:        return ast_store_alias_field(ctx, "FIELD", t->name, val);
+    case AST_ALIAS_FIELD:  return ast_store_alias_field(ctx, t->alias_field.alias, t->alias_field.field, val);
+    case AST_ARRAY_ACCESS: return ast_store_elem(ctx, t->array.name, row, col, val);
+    default: ctx->error = "Invalid assignment target"; return -1;
+    }
+}
+
+/* := op= ++ --: an element's indexes are evaluated once */
+static int eval_store(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
+    ast_node_t *t = node->type == AST_ASSIGN ? node->assign.target : node->incdec.target;
+    value_t row, col, cur, rhs, nv;
+    int has_col = 0;
+    if (t->type == AST_ARRAY_ACCESS) {
+        if (ast_eval(t->array.index1, ctx, &row) != 0) return -1;
+        if (t->array.index2) {
+            if (ast_eval(t->array.index2, ctx, &col) != 0) return -1;
+            has_col = 1;
+        }
+    }
+    if (node->type == AST_ASSIGN && node->assign.op == OP_NONE) {
+        if (ast_eval(node->assign.value, ctx, &nv) != 0) return -1;
+    } else {
+        if (t->type == AST_ARRAY_ACCESS) {
+            if (ast_eval_elem(ctx, t->array.name, &row, has_col ? &col : NULL, &cur) != 0) return -1;
+        } else if (ast_eval(t, ctx, &cur) != 0) return -1;
+        if (node->type == AST_ASSIGN) {
+            if (ast_eval(node->assign.value, ctx, &rhs) != 0) return -1;
+            if (ast_eval_binop(ctx, node->assign.op, &cur, &rhs, &nv) != 0) return -1;
+        } else {
+            value_t one = val_num_dec(1, 0, 0);
+            if (ast_eval_binop(ctx, node->incdec.delta > 0 ? OP_ADD : OP_SUB, &cur, &one, &nv) != 0)
+                return -1;
+        }
+    }
+    if (store_to(t, ctx, &row, has_col ? &col : NULL, &nv) != 0) return -1;
+    *result = (node->type == AST_INCDEC && !node->incdec.prefix) ? cur : nv;
+    return 0;
+}
+
 int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
     if (!node) { ctx->error = "NULL AST node"; return -1; }
 
@@ -836,6 +1025,10 @@ int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
         if (ast_eval(node->binop.right, ctx, &right) != 0) return -1;
         return ast_eval_binop(ctx, node->binop.op, &left, &right, result);
     }
+
+    case AST_ASSIGN:
+    case AST_INCDEC:
+        return eval_store(node, ctx, result);
 
     } /* end switch(node->type) */
 

@@ -280,6 +280,17 @@ token_type_t lex_next(lexer_t *l) {
     if (c == '-' && next == '>') { t->type = TOK_ARROW; return t->type; }
     if (c == '*' && next == '*') { t->type = TOK_POWER; return t->type; }
     if (c == '=' && next == '=') { t->type = TOK_EXACT_EQ; return t->type; }
+    /* Clipper 5 */
+    if (c == '!' && next == '=') { t->type = TOK_NE; return t->type; }
+    if (c == ':' && next == '=') { t->type = TOK_ASSIGN; return t->type; }
+    if (c == '+' && next == '=') { t->type = TOK_ADDEQ; return t->type; }
+    if (c == '-' && next == '=') { t->type = TOK_SUBEQ; return t->type; }
+    if (c == '*' && next == '=') { t->type = TOK_MULEQ; return t->type; }
+    if (c == '/' && next == '=') { t->type = TOK_DIVEQ; return t->type; }
+    if (c == '%' && next == '=') { t->type = TOK_MODEQ; return t->type; }
+    if (c == '^' && next == '=') { t->type = TOK_POWEQ; return t->type; }
+    if (c == '+' && next == '+') { t->type = TOK_INC; return t->type; }
+    if (c == '-' && next == '-') { t->type = TOK_DEC; return t->type; }
     lex_unget_char(l, next);
 
     /* Single character operators */
@@ -309,6 +320,7 @@ token_type_t lex_next(lexer_t *l) {
         case '>': t->type = TOK_GT; break;
         case '#': t->type = TOK_NE; break;
         case '$': t->type = TOK_SUBSTR; break;
+        case '%': t->type = TOK_MOD; break;
         case '&': t->type = TOK_MACRO; break;
         case '^': t->type = TOK_POWER; break;
         case '!': t->type = TOK_NOT; break;

@@ -6116,7 +6116,7 @@ static void h_restore(dbf_t *db, lexer_t *l) {
                 char name[MEMVAR_NAMELEN]; int type; value_t v;
                 fread(name, MEMVAR_NAMELEN, 1, fp); fread(&type, 4, 1, fp);
                 v.type = type;
-                if (type == VAL_NUM) fread(&v.num, 8, 1, fp);
+                if (type == VAL_NUM) { double d = 0; fread(&d, 8, 1, fp); v = val_num(d); }
                 else if (type == VAL_CHAR) {
                     int len = 0; fread(&len, 4, 1, fp);
                     if (len >= (int)sizeof(v.str)) len = sizeof(v.str) - 1;
@@ -6719,6 +6719,10 @@ static void h_update(dbf_t *db, lexer_t *l) {
     lex_get_remaining(l, arg, sizeof(arg));
     cmd_update(db, arg);
 }
+/* MEMVAR / FIELD name, ...: Clipper's compile-time declarations; nothing
+ * to do when the program runs */
+static void h_declaration(dbf_t *db, lexer_t *l) { (void)db; (void)l; }
+
 /* QUIT and EXIT are handled directly in cmd_execute() because they
    must return 1 to signal the interpreter to exit.  They are NOT in
    the dispatch table. */
@@ -6826,6 +6830,37 @@ void cmd_api_replace_end(cmd_replace_state_t *st) {
 
 void cmd_api_replace_abort(cmd_replace_state_t *st) {
     free(st);
+}
+
+/* alias->field := value (alias NULL: the current work area): the current
+ * record's field, through the REPLACE steps so the indexes keep up. */
+int cmd_api_field_assign(const char *alias, const char *field, const value_t *val) {
+    int saved, area, fi;
+    dbf_t *db;
+    replace_state_t st;
+    char name[DBF_MAX_FIELD_NAME];
+
+    ctx_setup();
+    saved = area_get_current_idx();
+    area = alias ? area_resolve_alias(alias) : saved;
+    if (area < 0)
+        return -1;
+    area_set_current_idx(area);
+    db = cur_db();
+    str_copy(name, field, sizeof(name));
+    str_upper(name);
+    fi = dbf_is_open(db) ? dbf_find_field(db, name) : -1;
+    if (fi < 0 || db->current_record == 0 || db->current_record > db->record_count) {
+        area_set_current_idx(saved);
+        return -1;
+    }
+    dbf_read_record(db, db->current_record);
+    replace_begin(db, &st);
+    replace_set(db, &st, fi, val);
+    replace_finish(db, &st);
+    area_set_current_idx(saved);
+    ctx_setup();
+    return 0;
 }
 int cmd_get_deleted(void)               { return set_opts.deleted; }
 
@@ -7098,7 +7133,7 @@ static cmd_entry_t cmd_table[] = {
     { "SCAN", h_scan }, { "SCATTER", h_scatter }, { "SEEK", h_seek },
     { "SELECT", h_select }, { "SET", h_set },
     { "SKIP", h_skip }, { "SORT", h_sort },
-    { "STORE", h_store }, { "SUM", h_sum },
+    { "STORE", h_store }, { "SUM", h_sum }, { "MEMVAR", h_declaration }, { "FIELD", h_declaration },
     { "SUSPEND", h_suspend }, { "TOTAL", h_total },
     { "TYPE", h_type }, { "UPDATE", h_update }, { "USE", h_use },
     { "WAIT", h_wait }, { "ZAP", h_zap },
@@ -7152,6 +7187,58 @@ static int cmd_table_abbrev(const char *ident, int *ambiguous) {
         match = i;
     }
     return match;
+}
+
+static int is_assign_tok(token_type_t t) {
+    return t == TOK_ASSIGN || t == TOK_ADDEQ || t == TOK_SUBEQ || t == TOK_MULEQ ||
+           t == TOK_DIVEQ || t == TOK_MODEQ || t == TOK_POWEQ || t == TOK_INC || t == TOK_DEC;
+}
+
+/* A command word, exactly or as an abbreviation (s32-clip asks, to tell
+ * f(x) the statement from a command) */
+int cmd_is_command_word(const char *ident) {
+    int ambiguous;
+    return cmd_table_exact(ident) >= 0 || cmd_table_abbrev(ident, &ambiguous) >= 0;
+}
+
+/* 1 when the line was an expression statement (run, errors reported) */
+static int try_expression_statement(const lexer_t *l, const char *p) {
+    lexer_t t = *l;
+    token_type_t first = t.current.type, second;
+    int ambiguous;
+    const char *pp, *err = NULL;
+    ast_node_t *n;
+    value_t v;
+
+    if (first == TOK_INC || first == TOK_DEC) {
+        /* ++x */
+    } else if (first == TOK_IDENT) {
+        lex_next(&t);
+        second = t.current.type;
+        if (second == TOK_LPAREN) {
+            /* f(...): only a name that is no command */
+            if (cmd_table_exact(l->current.text) >= 0 ||
+                cmd_table_abbrev(l->current.text, &ambiguous) >= 0)
+                return 0;
+        } else if (!is_assign_tok(second) && second != TOK_ARROW && second != TOK_LBRACKET) {
+            return 0;
+        }
+    } else {
+        return 0;
+    }
+    pp = p;
+    n = ast_compile_adv(&pp, expr_ctx.vars, &err);
+    if (!n)
+        return 0;
+    if (*skip_ws(pp) != '\0' ||
+        (n->type != AST_ASSIGN && n->type != AST_INCDEC && n->type != AST_FUNC_CALL)) {
+        ast_free(n);
+        return 0;
+    }
+    if (ast_eval(n, &expr_ctx, &v) != 0)
+        report_expr_error();
+    ast_free(n);
+    return 1;
 }
 
 int cmd_execute(dbf_t *db, char *line) {
@@ -7243,6 +7330,11 @@ int cmd_execute(dbf_t *db, char *line) {
             }
         }
     }
+
+    /* Clipper 5: an expression as a statement -- x := e, x += e, x++, ++x,
+     * f(args), M->x := e -- when the line is not a command */
+    if (try_expression_statement(&l, p))
+        return 0;
 
     /* Standard command dispatch (exact match, then unique abbreviation) */
     if (l.current.type == TOK_IDENT) {

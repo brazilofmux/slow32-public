@@ -16,6 +16,7 @@
 #include <string.h>
 
 #include "lex.h"
+#include "command.h"
 #include "ast.h"   /* dbase's own parser: expressions are parsed here, at compile time */
 
 #define MAX_LINE  512
@@ -252,9 +253,73 @@ static const char *op_name(ast_op_t op) {
     static const char *names[] = {
         "OP_ADD", "OP_SUB", "OP_MUL", "OP_DIV", "OP_POWER",
         "OP_EQ", "OP_EXACT_EQ", "OP_NE", "OP_LT", "OP_GT", "OP_LE", "OP_GE", "OP_SUBSTR",
-        "OP_AND", "OP_OR", "OP_NOT", "OP_NEGATE"
+        "OP_AND", "OP_OR", "OP_NOT", "OP_NEGATE", "OP_MOD", "OP_NONE"
     };
     return names[op];
+}
+
+/* Declarations an expression's code needs beyond its temporaries (argument
+ * arrays), collected as the code is generated */
+static sb_t *g_decl;
+
+static int gen_expr(sb_t *b, int *ntmp, ast_node_t *node);
+
+/* The current value of an assignment target, into t<cur>; r and c are its
+ * element indexes (already computed) when it is an element */
+static void gen_target_read(sb_t *b, ast_node_t *t, int r, int c, int cur) {
+    switch (t->type) {
+    case AST_MEMVAR:
+        sb_printf(b, "e = e || ast_eval_name(c, ");
+        sb_cstr(b, t->name);
+        sb_printf(b, ", &t%d); ", cur);
+        break;
+    case AST_FIELD:
+        sb_printf(b, "e = e || ast_eval_field(c, ");
+        sb_cstr(b, t->name);
+        sb_printf(b, ", &t%d); ", cur);
+        break;
+    case AST_ALIAS_FIELD:
+        sb_printf(b, "e = e || ast_eval_alias_field(c, ");
+        sb_cstr(b, t->alias_field.alias);
+        sb_printf(b, ", ");
+        sb_cstr(b, t->alias_field.field);
+        sb_printf(b, ", &t%d); ", cur);
+        break;
+    default: /* AST_ARRAY_ACCESS */
+        sb_printf(b, "e = e || ast_eval_elem(c, ");
+        sb_cstr(b, t->array.name);
+        if (c >= 0) sb_printf(b, ", &t%d, &t%d, &t%d); ", r, c, cur);
+        else sb_printf(b, ", &t%d, NULL, &t%d); ", r, cur);
+        break;
+    }
+}
+
+static void gen_target_store(sb_t *b, ast_node_t *t, int r, int c, int val) {
+    switch (t->type) {
+    case AST_MEMVAR:
+        sb_printf(b, "e = e || ast_store_name(c, ");
+        sb_cstr(b, t->name);
+        sb_printf(b, ", &t%d); ", val);
+        break;
+    case AST_FIELD:
+        sb_printf(b, "e = e || ast_store_alias_field(c, \"FIELD\", ");
+        sb_cstr(b, t->name);
+        sb_printf(b, ", &t%d); ", val);
+        break;
+    case AST_ALIAS_FIELD:
+        sb_printf(b, "e = e || ast_store_alias_field(c, ");
+        sb_cstr(b, t->alias_field.alias);
+        sb_printf(b, ", ");
+        sb_cstr(b, t->alias_field.field);
+        sb_printf(b, ", &t%d); ", val);
+        break;
+    default:
+        sb_printf(b, "e = e || ast_store_elem(c, ");
+        sb_cstr(b, t->array.name);
+        if (c >= 0) sb_printf(b, ", &t%d, &t%d, &t%d); ", r, c, val);
+        else sb_printf(b, ", &t%d, NULL, &t%d); ", r, val);
+        break;
+    }
 }
 
 /* Code that leaves node's value in temporary t<n> (returned); `e` becomes
@@ -321,6 +386,7 @@ static int gen_expr(sb_t *b, int *ntmp, ast_node_t *node) {
                 args[i] = gen_expr(b, ntmp, node->call.args[i]);
             }
             a = (*ntmp)++;
+            sb_printf(g_decl, "value_t a%d[%d]; ", a, node->call.nargs);
             sb_printf(b, "{ value_t *av = a%d; ", a);
             for (i = 0; i < node->call.nargs; i++) {
                 sb_printf(b, "av[%d] = t%d; ", i, args[i]);
@@ -345,40 +411,39 @@ static int gen_expr(sb_t *b, int *ntmp, ast_node_t *node) {
         sb_printf(b, "e = e || ast_eval_binop(c, %s, &t%d, &t%d, &t%d); ",
                   op_name(node->binop.op), l, r, t);
         return t;
+    case AST_ASSIGN:
+    case AST_INCDEC: {
+        /* as ast.c's eval_store: indexes once, then the current value
+         * (compound and ++/--), the right side, the operation, the store */
+        ast_node_t *tg = node->type == AST_ASSIGN ? node->assign.target : node->incdec.target;
+        int ri = -1, ci = -1, cur = -1, nv;
+        if (tg->type == AST_ARRAY_ACCESS) {
+            ri = gen_expr(b, ntmp, tg->array.index1);
+            if (tg->array.index2) ci = gen_expr(b, ntmp, tg->array.index2);
+        }
+        if (node->type == AST_ASSIGN && node->assign.op == OP_NONE) {
+            nv = gen_expr(b, ntmp, node->assign.value);
+        } else {
+            cur = (*ntmp)++;
+            gen_target_read(b, tg, ri, ci, cur);
+            nv = (*ntmp)++;
+            if (node->type == AST_ASSIGN) {
+                int rhs = gen_expr(b, ntmp, node->assign.value);
+                sb_printf(b, "e = e || ast_eval_binop(c, %s, &t%d, &t%d, &t%d); ",
+                          op_name(node->assign.op), cur, rhs, nv);
+            } else {
+                int one = (*ntmp)++;
+                sb_printf(b, "t%d = val_num_dec(1, 0, 0); e = e || ast_eval_binop(c, %s, &t%d, &t%d, &t%d); ",
+                          one, node->incdec.delta > 0 ? "OP_ADD" : "OP_SUB", cur, one, nv);
+            }
+        }
+        gen_target_store(b, tg, ri, ci, nv);
+        sb_printf(b, "if (!e) t%d = t%d; ", t,
+                  (node->type == AST_INCDEC && !node->incdec.prefix) ? cur : nv);
+        return t;
+    }
     }
     return t;
-}
-
-/* Temporaries t0..t<n-1> (and argument arrays where calls need them) */
-static void sb_decls(sb_t *b, ast_node_t *node, int *ntmp, int *arrays) {
-    int t = (*ntmp)++;
-    int i;
-    (void)t;
-    switch (node->type) {
-    case AST_ARRAY_ACCESS:
-        sb_decls(b, node->array.index1, ntmp, arrays);
-        if (node->array.index2) {
-            sb_decls(b, node->array.index2, ntmp, arrays);
-        }
-        break;
-    case AST_FUNC_CALL:
-        for (i = 0; i < node->call.nargs; i++) {
-            sb_decls(b, node->call.args[i], ntmp, arrays);
-        }
-        if (node->call.nargs > 0) {
-            sb_printf(b, "value_t a%d[%d]; ", (*ntmp)++, node->call.nargs);
-        }
-        break;
-    case AST_UNOP:
-        sb_decls(b, node->unop.child, ntmp, arrays);
-        break;
-    case AST_BINOP:
-        sb_decls(b, node->binop.left, ntmp, arrays);
-        sb_decls(b, node->binop.right, ntmp, arrays);
-        break;
-    default:
-        break;
-    }
 }
 
 /* The expression text compiled, or NULL: a macro (&) or text the parser
@@ -404,14 +469,16 @@ static ast_node_t *parse_expr(const char *text) {
 /* An expression's code in a block: the context, temporaries, code; leaves
  * the value in t<return>. */
 static int gen_block(sb_t *b, ast_node_t **nodes, int nnodes, int *results) {
-    int ntmp = 0, i, dummy = 0;
-    sb_t code = {0};
+    int ntmp = 0, i;
+    sb_t code = {0}, decl = {0};
+    g_decl = &decl;
     sb_printf(b, "expr_ctx_t *c = clip_ctx(); int e = 0; ");
     for (i = 0; i < nnodes; i++) {
-        sb_decls(b, nodes[i], &dummy, NULL);
-    }
-    for (i = 0; i < nnodes; i++) {
         results[i] = gen_expr(&code, &ntmp, nodes[i]);
+    }
+    if (decl.buf) {
+        sb_printf(b, "%s", decl.buf);
+        free(decl.buf);
     }
     if (ntmp > 0) {
         sb_printf(b, "value_t");
@@ -476,16 +543,18 @@ static int emit_print(emit_t *e, const char *list, int newline) {
     }
     {
         /* Declarations for all items, then each item's code and its output */
-        int ntmp = 0, dummy = 0;
+        int ntmp = 0;
         sb_printf(&b, "expr_ctx_t *c = clip_ctx(); int e = 0; ");
-        for (i = 0; i < n; i++) {
-            sb_decls(&b, nodes[i], &dummy, NULL);
-        }
         {
-            sb_t code = {0};
+            sb_t code = {0}, decl = {0};
+            g_decl = &decl;
             for (i = 0; i < n; i++) {
                 res[i] = gen_expr(&code, &ntmp, nodes[i]);
                 sb_printf(&code, "if (!e) clip_qv(&t%d, %d); ", res[i], i == 0);
+            }
+            if (decl.buf) {
+                sb_printf(&b, "%s", decl.buf);
+                free(decl.buf);
             }
             if (ntmp > 0) {
                 sb_printf(&b, "value_t");
@@ -526,7 +595,7 @@ static const char *cmd_arg(const char *p, int kwlen) {
 static int emit_replace(emit_t *e, const char *args) {
     char fields[MAX_FUNC_ARGS][MAX_NAME];
     ast_node_t *nodes[MAX_FUNC_ARGS];
-    int n = 0, i, ntmp = 0, dummy = 0;
+    int n = 0, i, ntmp = 0;
     const char *pp = args;
     sb_t b = {0}, code = {0};
 
@@ -572,12 +641,17 @@ static int emit_replace(emit_t *e, const char *args) {
     }
     sb_printf(&b, "}; cmd_replace_state_t *rs = cmd_api_replace_begin(rf, %d); if (rs) { "
                   "expr_ctx_t *c = clip_ctx(); int e = 0; ", n);
-    for (i = 0; i < n; i++) {
-        sb_decls(&b, nodes[i], &dummy, NULL);
-    }
-    for (i = 0; i < n; i++) {
-        int r = gen_expr(&code, &ntmp, nodes[i]);
-        sb_printf(&code, "if (!e) cmd_api_replace_set(rs, %d, &t%d); ", i, r);
+    {
+        sb_t decl = {0};
+        g_decl = &decl;
+        for (i = 0; i < n; i++) {
+            int r = gen_expr(&code, &ntmp, nodes[i]);
+            sb_printf(&code, "if (!e) cmd_api_replace_set(rs, %d, &t%d); ", i, r);
+        }
+        if (decl.buf) {
+            sb_printf(&b, "%s", decl.buf);
+            free(decl.buf);
+        }
     }
     sb_printf(&b, "value_t");
     for (i = 0; i < ntmp; i++) {
@@ -599,6 +673,134 @@ refuse:
     }
     free(code.buf);
     return 0;
+}
+
+/* Clipper 5: an expression as a statement -- x := e, x += e, x++, ++x,
+ * f(args) (a name that is no command), M->x := e; 0 when the line is not */
+static int emit_expr_stmt(emit_t *e, const char *p) {
+    const char *q = p;
+    char word[MAX_NAME];
+    int k = 0;
+    ast_node_t *n;
+    sb_t b = {0};
+    int r;
+
+    if (!((q[0] == '+' && q[1] == '+') || (q[0] == '-' && q[1] == '-'))) {
+        if (!isalpha((unsigned char)*q) && *q != '_') {
+            return 0;
+        }
+        while ((isalnum((unsigned char)*q) || *q == '_') && k < MAX_NAME - 1) {
+            word[k++] = *q++;
+        }
+        word[k] = '\0';
+        q = skip_ws(q);
+        if (*q == '(') {
+            if (cmd_is_command_word(word)) {
+                return 0;
+            }
+        } else if (!(q[0] == ':' && q[1] == '=') && !(q[1] == '=' && strchr("+-*/%^", q[0])) &&
+                   !(q[0] == '+' && q[1] == '+') && !(q[0] == '-' && q[1] == '-') &&
+                   !(q[0] == '-' && q[1] == '>') && q[0] != '[') {
+            return 0;
+        }
+    }
+    n = parse_expr(p);
+    if (!n) {
+        return 0;
+    }
+    if (n->type != AST_ASSIGN && n->type != AST_INCDEC && n->type != AST_FUNC_CALL) {
+        ast_free(n);
+        return 0;
+    }
+    gen_block(&b, &n, 1, &r);
+    emit_indent(e->out, e->depth);
+    fprintf(e->out, "{ %sif (e) clip_fail(c); }\n", b.buf);
+    free(b.buf);
+    ast_free(n);
+    return 1;
+}
+
+/* LOCAL / PRIVATE / PUBLIC name [:= value] [, ...]: each declared, then
+ * assigned its value; 0 leaves the statement as it was (an array
+ * dimension, say) */
+static int emit_decl(emit_t *e, const char *kw, const char *list) {
+    char items[MAX_PARAMS][MAX_LINE];
+    int n = 0, depth = 0, i, k = 0;
+    char quote = 0;
+    const char *p;
+
+    for (p = list; ; p++) {   /* split at the top-level commas */
+        if (*p == '\0' || (*p == ',' && depth == 0 && !quote)) {
+            if (n >= MAX_PARAMS) {
+                return 0;
+            }
+            items[n][k] = '\0';
+            n++;
+            k = 0;
+            if (*p == '\0') {
+                break;
+            }
+            continue;
+        }
+        if (quote) {
+            if (*p == quote) quote = 0;
+        } else if (*p == '"' || *p == '\'') {
+            quote = *p;
+        } else if (*p == '(' || *p == '[' || *p == '{') {
+            depth++;
+        } else if (*p == ')' || *p == ']' || *p == '}') {
+            depth--;
+        }
+        if (k < MAX_LINE - 1) {
+            items[n][k++] = *p;
+        }
+    }
+    for (i = 0; i < n; i++) {   /* only names and := initializers here */
+        const char *q = skip_ws(items[i]);
+        if (!isalpha((unsigned char)*q) && *q != '_') {
+            return 0;
+        }
+        while (isalnum((unsigned char)*q) || *q == '_') q++;
+        q = skip_ws(q);
+        if (*q && !(q[0] == ':' && q[1] == '=')) {
+            return 0;
+        }
+    }
+    for (i = 0; i < n; i++) {
+        char name[MAX_NAME];
+        const char *q = skip_ws(items[i]);
+        int m = 0;
+        while ((isalnum((unsigned char)*q) || *q == '_') && m < MAX_NAME - 1) {
+            name[m++] = *q++;
+        }
+        name[m] = '\0';
+        q = skip_ws(q);
+        emit_indent(e->out, e->depth);
+        if (!strcmp(kw, "LOCAL")) {
+            fprintf(e->out, e->in_fn ? "clip_local(&scope, " : "clip_local(NULL, ");
+            c_escape(e->out, name);
+            fprintf(e->out, ");\n");
+        } else if (!strcmp(kw, "PRIVATE") && e->in_fn) {
+            fprintf(e->out, "clip_private(&scope, ");
+            c_escape(e->out, name);
+            fprintf(e->out, ");\n");
+        } else {
+            char line[MAX_LINE];
+            snprintf(line, sizeof(line), "%s %s", kw, name);
+            fprintf(e->out, "clip_cmd(");
+            c_escape(e->out, line);
+            fprintf(e->out, ");\n");
+        }
+        if (q[0] == ':') {
+            char asg[MAX_LINE + MAX_NAME];
+            snprintf(asg, sizeof(asg), "%s %s", name, q);
+            if (!emit_expr_stmt(e, asg)) {
+                fprintf(stderr, "%s:%d: initializer of %s does not compile\n", e->inpath, e->lineno, name);
+                return -1;
+            }
+        }
+    }
+    return 1;
 }
 
 /* Commands compiled to direct calls; 0 leaves the line to clip_cmd */
@@ -1138,6 +1340,15 @@ static int emit_stmt(emit_t *e, const char *p) {
         }
         return 0;
     }
+    if (is_kw(p, "LOCAL") || is_kw(p, "PRIVATE") || is_kw(p, "PUBLIC")) {
+        const char *kw = is_kw(p, "LOCAL") ? "LOCAL" : is_kw(p, "PRIVATE") ? "PRIVATE" : "PUBLIC";
+        if (strstr(p, ":=")) {
+            int rc = emit_decl(e, kw, skip_ws(p + strlen(kw)));
+            if (rc != 0) {
+                return rc < 0 ? -1 : 0;
+            }
+        }
+    }
     if (e->in_fn && is_kw(p, "PRIVATE")) {
         p = skip_ws(p + 7);
         n = parse_namelist(p, names, MAX_PARAMS);
@@ -1477,11 +1688,19 @@ static int emit_stmt(emit_t *e, const char *p) {
                 e->inpath, e->lineno);
         return -1;
     }
+    /* MEMVAR / FIELD: declarations, nothing at run time */
+    if ((is_kw(p, "MEMVAR") || is_kw(p, "FIELD")) && skip_ws(p + (is_kw(p, "MEMVAR") ? 6 : 5))[0] != '-') {
+        return 0;
+    }
+
     /* What remains can fail at run time: say where it is first */
     emit_indent(e->out, e->depth);
     emit_at_expr(e);
     fprintf(e->out, ";\n");
 
+    if (emit_expr_stmt(e, p)) {
+        return 0;
+    }
     if (emit_command(e, p)) {
         return 0;
     }
@@ -1577,6 +1796,7 @@ static int emit_function(FILE *out, const func_t *fn) {
             fn->name);
     fprintf(out, "    clip_scope_t scope;\n");
     fprintf(out, "    clip_enter(&scope);\n");
+    fprintf(out, "    scope.nargs = nargs;\n");
     for (i = 0; i < fn->nparams; i++) {
         fprintf(out, "    clip_param(&scope, ");
         c_escape(out, fn->params[i]);
