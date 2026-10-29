@@ -31,4 +31,4 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width
 . . DO WHILE result: 5
 Nested WHILE: 36 9
 . . SCAN matches: 3
-
+. . 

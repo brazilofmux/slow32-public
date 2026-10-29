@@ -22,4 +22,4 @@ Stage 9: AST Expressions
 . *** Array index out of bounds
 . . --- STORE to array without index ---
 . *** Array assignment requires index
-
+. . 

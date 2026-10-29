@@ -1743,6 +1743,10 @@ int main(int argc, char **argv) {
         if (cpu.mmio.enabled) {
             printf("MMIO enabled for this program\n");
         }
+        /* The guest writes through the file descriptor, not this stdio
+         * buffer: flush the banner now or it lands after the guest's
+         * output, on its last line when that has no newline. */
+        fflush(stdout);
     }
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
@@ -1777,8 +1781,10 @@ int main(int argc, char **argv) {
     double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
 
     if (!quiet) {
-        printf("HALT at PC 0x%08x\n", cpu.pc);
-        printf("\nProgram halted.\n");
+        /* The newline first, as slow32 does: a guest whose last line has
+         * no newline keeps that line to itself. */
+        printf("\nHALT at PC 0x%08x\n", cpu.pc);
+        printf("Program halted.\n");
         printf("Exit code: %d\n", cpu.fault_status ? (int)cpu.fault_status : (int)cpu.regs[1]);
         printf("Instructions executed: %" PRIu64 "\n", cpu.inst_count);
         printf("Simulated cycles: %" PRIu64 "\n", cpu.cycle_count);

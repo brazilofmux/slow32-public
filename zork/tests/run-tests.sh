@@ -40,7 +40,7 @@ run_test() {
     # out at exit since 3a5ee514 (before that it was lost, and the expected
     # files were recorded without it).
     local actual
-    actual=$(printf '%s' "$input" | $EMULATOR "$ZORK" "$STORY" 2>/dev/null | sed 's/Starting execution at PC 0x[0-9A-Fa-f]*$//' | grep -v "^Starting execution\|^MMIO enabled\|^HALT at\|^Program halted\|^Exit code:\|^Instructions executed\|^Simulated cycles\|^Wall time:\|^Performance:\|instructions/second")
+    actual=$(printf '%s' "$input" | $EMULATOR "$ZORK" "$STORY" 2>/dev/null | grep -v "^Starting execution\|^MMIO enabled\|^HALT at\|^Program halted\|^Exit code:\|^Instructions executed\|^Simulated cycles\|^Cycles:\|^Wall time:\|^Performance:\|instructions/second")
 
     local expected
     expected=$(cat "$expected_file")

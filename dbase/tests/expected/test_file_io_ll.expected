@@ -11,3 +11,4 @@ File opened for read, handle = 1
 FSEEK to end: 26
 File size (tell): 26
 FCLOSE: .T.
+. 
