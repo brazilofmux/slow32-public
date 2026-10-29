@@ -60,6 +60,18 @@ int ast_eval_dynamic(const char *expr, expr_ctx_t *ctx, value_t *result);
    advance *pp past it (the advancing form of ast_eval_dynamic). */
 int ast_eval_adv(expr_ctx_t *ctx, const char **pp, value_t *result);
 
+/* The operation of each node kind, which ast_eval applies as it walks the
+ * tree; compiled code (clip/) calls them directly.  0, or -1 with
+ * ctx->error set. */
+int ast_eval_field(expr_ctx_t *ctx, const char *name, value_t *result);
+int ast_eval_name(expr_ctx_t *ctx, const char *name, value_t *result);
+int ast_eval_alias_field(expr_ctx_t *ctx, const char *alias, const char *field, value_t *result);
+int ast_eval_elem(expr_ctx_t *ctx, const char *name, const value_t *row,
+                  const value_t *col, value_t *result);   /* col NULL: one index */
+int ast_eval_unop(expr_ctx_t *ctx, ast_op_t op, const value_t *child, value_t *result);
+int ast_eval_binop(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const value_t *right,
+                   value_t *result);
+
 /* Free AST recursively.  Safe to call with NULL. */
 void ast_free(ast_node_t *node);
 

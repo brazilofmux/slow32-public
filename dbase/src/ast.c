@@ -513,6 +513,247 @@ static int eval_field_from_db(dbf_t *db, const char *name, value_t *result) {
     return -1;
 }
 
+/* ---- The operations, one per node kind: ast_eval walks the tree with
+ * these, and compiled code (clip/) calls them directly, so both compute
+ * the same thing.  0, or -1 with ctx->error set. ---- */
+
+int ast_eval_field(expr_ctx_t *ctx, const char *name, value_t *result) {
+    if (eval_field_from_db(ctx->db, name, result) == 0) return 0;
+    snprintf(ctx->err_msg, sizeof(ctx->err_msg), "Field not found: %s", name);
+    ctx->error = ctx->err_msg;
+    return -1;
+}
+
+int ast_eval_name(expr_ctx_t *ctx, const char *name, value_t *result) {
+    /* Field-first lookup, then memvar — matches parse_primary in expr.c */
+    if (eval_field_from_db(ctx->db, name, result) == 0) return 0;
+    if (ctx->vars) {
+        value_t mv;
+        if (memvar_find(ctx->vars, name, &mv) == 0) {
+            *result = mv;
+            return 0;
+        }
+    }
+    snprintf(ctx->err_msg, sizeof(ctx->err_msg), "Variable not found: %s", name);
+    ctx->error = ctx->err_msg;
+    return -1;
+}
+
+int ast_eval_alias_field(expr_ctx_t *ctx, const char *alias, const char *field, value_t *result) {
+    if (ctx->area_lookup) {
+        dbf_t *adb = ctx->area_lookup(alias);
+        if (eval_field_from_db(adb, field, result) == 0) return 0;
+    }
+    snprintf(ctx->err_msg, sizeof(ctx->err_msg), "Cannot resolve %s->%s", alias, field);
+    ctx->error = ctx->err_msg;
+    return -1;
+}
+
+int ast_eval_elem(expr_ctx_t *ctx, const char *name, const value_t *row_v,
+                  const value_t *col_v, value_t *result) {
+    int row, col = 1, res;
+    if (row_v->type != VAL_NUM) { ctx->error = "Array index must be numeric"; return -1; }
+    row = (int)row_v->num;
+    if (col_v) {
+        if (col_v->type != VAL_NUM) { ctx->error = "Array index must be numeric"; return -1; }
+        col = (int)col_v->num;
+    }
+    res = memvar_get_elem(ctx->vars, name, row, col, result);
+    if (res == 0) return 0;
+    if (res == -2) { ctx->error = "Array index out of bounds"; return -1; }
+    ctx->error = "Variable is not an array";
+    return -1;
+}
+
+int ast_eval_unop(expr_ctx_t *ctx, ast_op_t op, const value_t *child, value_t *result) {
+    if (op == OP_NEGATE) {
+        if (child->type != VAL_NUM) { ctx->error = "Unary minus requires number"; return -1; }
+        *result = val_num(-child->num);
+        return 0;
+    }
+    if (op == OP_NOT) {
+        if (child->type != VAL_LOGIC) { ctx->error = "Type mismatch in .NOT."; return -1; }
+        *result = val_logic(!child->logic);
+        return 0;
+    }
+    ctx->error = "Unknown unary operator";
+    return -1;
+}
+
+int ast_eval_binop(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const value_t *right,
+                   value_t *result) {
+    switch (op) {
+
+    /* ---- Arithmetic ---- */
+    case OP_ADD:
+        if (left->type == VAL_NUM && right->type == VAL_NUM) {
+            *result = val_num(left->num + right->num);
+        } else if (left->type == VAL_CHAR && right->type == VAL_CHAR) {
+            /* String concatenation (truncate if too long) */
+            char buf[256];
+            str_copy(buf, left->str, sizeof(buf));
+            {
+                int len = strlen(buf);
+                int rlen = strlen(right->str);
+                int avail = (int)sizeof(buf) - 1 - len;
+                if (avail > 0) {
+                    if (rlen > avail) rlen = avail;
+                    memcpy(buf + len, right->str, rlen);
+                    buf[len + rlen] = '\0';
+                }
+            }
+            *result = val_str(buf);
+        } else if (left->type == VAL_DATE && right->type == VAL_NUM) {
+            *result = val_date(left->date + (int32_t)right->num);
+        } else if (left->type == VAL_NUM && right->type == VAL_DATE) {
+            *result = val_date(right->date + (int32_t)left->num);
+        } else {
+            ctx->error = "Type mismatch in +"; return -1;
+        }
+        return 0;
+
+    case OP_SUB:
+        if (left->type == VAL_NUM && right->type == VAL_NUM) {
+            *result = val_num(left->num - right->num);
+        } else if (left->type == VAL_DATE && right->type == VAL_DATE) {
+            *result = val_num((double)(left->date - right->date));
+        } else if (left->type == VAL_DATE && right->type == VAL_NUM) {
+            *result = val_date(left->date - (int32_t)right->num);
+        } else if (left->type == VAL_CHAR && right->type == VAL_CHAR) {
+            /* Clipper/FoxPro-style trim-concat:
+               trim trailing spaces from left, append right,
+               then append trimmed spaces to preserve total length. */
+            char buf[256];
+            int len;
+            int left_len;
+            int trimmed_spaces;
+            str_copy(buf, left->str, sizeof(buf));
+            left_len = strlen(buf);
+            len = left_len;
+            while (len > 0 && buf[len - 1] == ' ') len--;
+            trimmed_spaces = left_len - len;
+            buf[len] = '\0';
+            {
+                int rlen = strlen(right->str);
+                int avail = (int)sizeof(buf) - 1 - len;
+                if (avail > 0) {
+                    if (rlen > avail) rlen = avail;
+                    memcpy(buf + len, right->str, rlen);
+                    len += rlen;
+                }
+            }
+            {
+                int avail = (int)sizeof(buf) - 1 - len;
+                if (avail > 0 && trimmed_spaces > 0) {
+                    int add_spaces = trimmed_spaces;
+                    if (add_spaces > avail) add_spaces = avail;
+                    memset(buf + len, ' ', add_spaces);
+                    len += add_spaces;
+                }
+            }
+            buf[len] = '\0';
+            *result = val_str(buf);
+        } else {
+            ctx->error = "Type mismatch in -"; return -1;
+        }
+        return 0;
+
+    case OP_MUL:
+        if (left->type != VAL_NUM || right->type != VAL_NUM) {
+            ctx->error = "Type mismatch in * or /"; return -1;
+        }
+        *result = val_num(left->num * right->num);
+        return 0;
+
+    case OP_DIV:
+        if (left->type != VAL_NUM || right->type != VAL_NUM) {
+            ctx->error = "Type mismatch in * or /"; return -1;
+        }
+        if (right->num == 0.0) { ctx->error = "Division by zero"; return -1; }
+        *result = val_num(left->num / right->num);
+        return 0;
+
+    case OP_POWER:
+        if (left->type != VAL_NUM || right->type != VAL_NUM) {
+            ctx->error = "Type mismatch in **"; return -1;
+        }
+        {
+            double r;
+            errno = 0;
+            r = pow(left->num, right->num);
+            if (!isfinite(r) || errno != 0) {
+                ctx->error = "Invalid exponentiation"; return -1;
+            }
+            *result = val_num(r);
+        }
+        return 0;
+
+    /* ---- Substring ---- */
+    case OP_SUBSTR:
+        if (left->type != VAL_CHAR || right->type != VAL_CHAR) {
+            ctx->error = "$ requires strings"; return -1;
+        }
+        *result = val_logic(strstr(right->str, left->str) != NULL);
+        return 0;
+
+    /* ---- Comparison ---- */
+    case OP_EQ: case OP_EXACT_EQ: case OP_NE:
+    case OP_LT: case OP_GT: case OP_LE: case OP_GE: {
+        int cmp = 0;
+
+        if (left->type == VAL_NUM && right->type == VAL_NUM) {
+            double d = left->num - right->num;
+            cmp = (d < 0) ? -1 : (d > 0) ? 1 : 0;
+        } else if (left->type == VAL_CHAR && right->type == VAL_CHAR) {
+            if (op == OP_EXACT_EQ)
+                cmp = str_icmp(left->str, right->str);
+            else if (ctx->opts && !((set_options_t *)ctx->opts)->exact)
+                cmp = str_nicmp(left->str, right->str, strlen(right->str));
+            else
+                cmp = str_icmp(left->str, right->str);
+        } else if (left->type == VAL_DATE && right->type == VAL_DATE) {
+            int32_t d = left->date - right->date;
+            cmp = (d < 0) ? -1 : (d > 0) ? 1 : 0;
+        } else if (left->type == VAL_LOGIC && right->type == VAL_LOGIC) {
+            cmp = left->logic - right->logic;
+        } else {
+            ctx->error = "Type mismatch in comparison"; return -1;
+        }
+
+        switch (op) {
+        case OP_EQ:       case OP_EXACT_EQ: *result = val_logic(cmp == 0); break;
+        case OP_NE:       *result = val_logic(cmp != 0); break;
+        case OP_LT:       *result = val_logic(cmp < 0); break;
+        case OP_GT:       *result = val_logic(cmp > 0); break;
+        case OP_LE:       *result = val_logic(cmp <= 0); break;
+        case OP_GE:       *result = val_logic(cmp >= 0); break;
+        default: break;
+        }
+        return 0;
+    }
+
+    /* ---- Logical ---- */
+    case OP_AND:
+        if (left->type != VAL_LOGIC || right->type != VAL_LOGIC) {
+            ctx->error = "Type mismatch in .AND."; return -1;
+        }
+        *result = val_logic(left->logic && right->logic);
+        return 0;
+
+    case OP_OR:
+        if (left->type != VAL_LOGIC || right->type != VAL_LOGIC) {
+            ctx->error = "Type mismatch in .OR."; return -1;
+        }
+        *result = val_logic(left->logic || right->logic);
+        return 0;
+
+    default:
+        ctx->error = "Unknown binary operator";
+        return -1;
+    }
+    return -1;
+}
+
 int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
     if (!node) { ctx->error = "NULL AST node"; return -1; }
 
@@ -523,54 +764,23 @@ int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
         return 0;
 
     case AST_FIELD:
-        if (eval_field_from_db(ctx->db, node->name, result) == 0) return 0;
-        snprintf(ctx->err_msg, sizeof(ctx->err_msg), "Field not found: %s", node->name);
-        ctx->error = ctx->err_msg;
-        return -1;
+        return ast_eval_field(ctx, node->name, result);
 
     case AST_MEMVAR:
-        /* Field-first lookup, then memvar — matches parse_primary in expr.c */
-        if (eval_field_from_db(ctx->db, node->name, result) == 0) return 0;
-        if (ctx->vars) {
-            value_t mv;
-            if (memvar_find(ctx->vars, node->name, &mv) == 0) {
-                *result = mv;
-                return 0;
-            }
-        }
-        snprintf(ctx->err_msg, sizeof(ctx->err_msg), "Variable not found: %s", node->name);
-        ctx->error = ctx->err_msg;
-        return -1;
+        return ast_eval_name(ctx, node->name, result);
 
     case AST_ALIAS_FIELD:
-        if (ctx->area_lookup) {
-            dbf_t *adb = ctx->area_lookup(node->alias_field.alias);
-            if (eval_field_from_db(adb, node->alias_field.field, result) == 0) return 0;
-        }
-        snprintf(ctx->err_msg, sizeof(ctx->err_msg), "Cannot resolve %s->%s",
-                 node->alias_field.alias, node->alias_field.field);
-        ctx->error = ctx->err_msg;
-        return -1;
+        return ast_eval_alias_field(ctx, node->alias_field.alias, node->alias_field.field, result);
 
     case AST_ARRAY_ACCESS: {
         value_t row_v, col_v;
-        int row, col = 1, res;
-
         if (ast_eval(node->array.index1, ctx, &row_v) != 0) return -1;
         if (row_v.type != VAL_NUM) { ctx->error = "Array index must be numeric"; return -1; }
-        row = (int)row_v.num;
-
         if (node->array.index2) {
             if (ast_eval(node->array.index2, ctx, &col_v) != 0) return -1;
-            if (col_v.type != VAL_NUM) { ctx->error = "Array index must be numeric"; return -1; }
-            col = (int)col_v.num;
+            return ast_eval_elem(ctx, node->array.name, &row_v, &col_v, result);
         }
-
-        res = memvar_get_elem(ctx->vars, node->array.name, row, col, result);
-        if (res == 0) return 0;
-        if (res == -2) { ctx->error = "Array index out of bounds"; return -1; }
-        ctx->error = "Variable is not an array";
-        return -1;
+        return ast_eval_elem(ctx, node->array.name, &row_v, NULL, result);
     }
 
     case AST_FUNC_CALL: {
@@ -603,196 +813,15 @@ int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
     case AST_UNOP: {
         value_t child;
         if (ast_eval(node->unop.child, ctx, &child) != 0) return -1;
-
-        if (node->unop.op == OP_NEGATE) {
-            if (child.type != VAL_NUM) { ctx->error = "Unary minus requires number"; return -1; }
-            *result = val_num(-child.num);
-            return 0;
-        }
-        if (node->unop.op == OP_NOT) {
-            if (child.type != VAL_LOGIC) { ctx->error = "Type mismatch in .NOT."; return -1; }
-            *result = val_logic(!child.logic);
-            return 0;
-        }
-        ctx->error = "Unknown unary operator";
-        return -1;
+        return ast_eval_unop(ctx, node->unop.op, &child, result);
     }
 
     case AST_BINOP: {
         value_t left, right;
         if (ast_eval(node->binop.left, ctx, &left) != 0) return -1;
         if (ast_eval(node->binop.right, ctx, &right) != 0) return -1;
-
-        switch (node->binop.op) {
-
-        /* ---- Arithmetic ---- */
-        case OP_ADD:
-            if (left.type == VAL_NUM && right.type == VAL_NUM) {
-                *result = val_num(left.num + right.num);
-            } else if (left.type == VAL_CHAR && right.type == VAL_CHAR) {
-                /* String concatenation (truncate if too long) */
-                char buf[256];
-                str_copy(buf, left.str, sizeof(buf));
-                {
-                    int len = strlen(buf);
-                    int rlen = strlen(right.str);
-                    int avail = (int)sizeof(buf) - 1 - len;
-                    if (avail > 0) {
-                        if (rlen > avail) rlen = avail;
-                        memcpy(buf + len, right.str, rlen);
-                        buf[len + rlen] = '\0';
-                    }
-                }
-                *result = val_str(buf);
-            } else if (left.type == VAL_DATE && right.type == VAL_NUM) {
-                *result = val_date(left.date + (int32_t)right.num);
-            } else if (left.type == VAL_NUM && right.type == VAL_DATE) {
-                *result = val_date(right.date + (int32_t)left.num);
-            } else {
-                ctx->error = "Type mismatch in +"; return -1;
-            }
-            return 0;
-
-        case OP_SUB:
-            if (left.type == VAL_NUM && right.type == VAL_NUM) {
-                *result = val_num(left.num - right.num);
-            } else if (left.type == VAL_DATE && right.type == VAL_DATE) {
-                *result = val_num((double)(left.date - right.date));
-            } else if (left.type == VAL_DATE && right.type == VAL_NUM) {
-                *result = val_date(left.date - (int32_t)right.num);
-            } else if (left.type == VAL_CHAR && right.type == VAL_CHAR) {
-                /* Clipper/FoxPro-style trim-concat:
-                   trim trailing spaces from left, append right,
-                   then append trimmed spaces to preserve total length. */
-                char buf[256];
-                int len;
-                int left_len;
-                int trimmed_spaces;
-                str_copy(buf, left.str, sizeof(buf));
-                left_len = strlen(buf);
-                len = left_len;
-                while (len > 0 && buf[len - 1] == ' ') len--;
-                trimmed_spaces = left_len - len;
-                buf[len] = '\0';
-                {
-                    int rlen = strlen(right.str);
-                    int avail = (int)sizeof(buf) - 1 - len;
-                    if (avail > 0) {
-                        if (rlen > avail) rlen = avail;
-                        memcpy(buf + len, right.str, rlen);
-                        len += rlen;
-                    }
-                }
-                {
-                    int avail = (int)sizeof(buf) - 1 - len;
-                    if (avail > 0 && trimmed_spaces > 0) {
-                        int add_spaces = trimmed_spaces;
-                        if (add_spaces > avail) add_spaces = avail;
-                        memset(buf + len, ' ', add_spaces);
-                        len += add_spaces;
-                    }
-                }
-                buf[len] = '\0';
-                *result = val_str(buf);
-            } else {
-                ctx->error = "Type mismatch in -"; return -1;
-            }
-            return 0;
-
-        case OP_MUL:
-            if (left.type != VAL_NUM || right.type != VAL_NUM) {
-                ctx->error = "Type mismatch in * or /"; return -1;
-            }
-            *result = val_num(left.num * right.num);
-            return 0;
-
-        case OP_DIV:
-            if (left.type != VAL_NUM || right.type != VAL_NUM) {
-                ctx->error = "Type mismatch in * or /"; return -1;
-            }
-            if (right.num == 0.0) { ctx->error = "Division by zero"; return -1; }
-            *result = val_num(left.num / right.num);
-            return 0;
-
-        case OP_POWER:
-            if (left.type != VAL_NUM || right.type != VAL_NUM) {
-                ctx->error = "Type mismatch in **"; return -1;
-            }
-            {
-                double r;
-                errno = 0;
-                r = pow(left.num, right.num);
-                if (!isfinite(r) || errno != 0) {
-                    ctx->error = "Invalid exponentiation"; return -1;
-                }
-                *result = val_num(r);
-            }
-            return 0;
-
-        /* ---- Substring ---- */
-        case OP_SUBSTR:
-            if (left.type != VAL_CHAR || right.type != VAL_CHAR) {
-                ctx->error = "$ requires strings"; return -1;
-            }
-            *result = val_logic(strstr(right.str, left.str) != NULL);
-            return 0;
-
-        /* ---- Comparison ---- */
-        case OP_EQ: case OP_EXACT_EQ: case OP_NE:
-        case OP_LT: case OP_GT: case OP_LE: case OP_GE: {
-            int cmp = 0;
-
-            if (left.type == VAL_NUM && right.type == VAL_NUM) {
-                double d = left.num - right.num;
-                cmp = (d < 0) ? -1 : (d > 0) ? 1 : 0;
-            } else if (left.type == VAL_CHAR && right.type == VAL_CHAR) {
-                if (node->binop.op == OP_EXACT_EQ)
-                    cmp = str_icmp(left.str, right.str);
-                else if (ctx->opts && !((set_options_t *)ctx->opts)->exact)
-                    cmp = str_nicmp(left.str, right.str, strlen(right.str));
-                else
-                    cmp = str_icmp(left.str, right.str);
-            } else if (left.type == VAL_DATE && right.type == VAL_DATE) {
-                int32_t d = left.date - right.date;
-                cmp = (d < 0) ? -1 : (d > 0) ? 1 : 0;
-            } else if (left.type == VAL_LOGIC && right.type == VAL_LOGIC) {
-                cmp = left.logic - right.logic;
-            } else {
-                ctx->error = "Type mismatch in comparison"; return -1;
-            }
-
-            switch (node->binop.op) {
-            case OP_EQ:       case OP_EXACT_EQ: *result = val_logic(cmp == 0); break;
-            case OP_NE:       *result = val_logic(cmp != 0); break;
-            case OP_LT:       *result = val_logic(cmp < 0); break;
-            case OP_GT:       *result = val_logic(cmp > 0); break;
-            case OP_LE:       *result = val_logic(cmp <= 0); break;
-            case OP_GE:       *result = val_logic(cmp >= 0); break;
-            default: break;
-            }
-            return 0;
-        }
-
-        /* ---- Logical ---- */
-        case OP_AND:
-            if (left.type != VAL_LOGIC || right.type != VAL_LOGIC) {
-                ctx->error = "Type mismatch in .AND."; return -1;
-            }
-            *result = val_logic(left.logic && right.logic);
-            return 0;
-
-        case OP_OR:
-            if (left.type != VAL_LOGIC || right.type != VAL_LOGIC) {
-                ctx->error = "Type mismatch in .OR."; return -1;
-            }
-            *result = val_logic(left.logic || right.logic);
-            return 0;
-
-        default:
-            ctx->error = "Unknown binary operator";
-            return -1;
-        }
-    } /* end AST_BINOP */
+        return ast_eval_binop(ctx, node->binop.op, &left, &right, result);
+    }
 
     } /* end switch(node->type) */
 

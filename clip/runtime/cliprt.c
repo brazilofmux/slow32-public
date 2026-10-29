@@ -463,3 +463,54 @@ static int clip_recover(void) {
 void clip_text(const char *line) {
     printf("%s\n", line);
 }
+
+/* ---- Compiled expressions ---- */
+
+expr_ctx_t *clip_ctx(void) {
+    cmd_ctx_setup();
+    return cmd_get_expr_ctx();
+}
+
+void clip_fail(expr_ctx_t *c) {
+    expr_failed(c);
+}
+
+int clip_cond(expr_ctx_t *c, int failed, const value_t *v) {
+    if (failed) {
+        expr_failed(c);
+        return 0;
+    }
+    /* Interpreter IF/WHILE/CASE require VAL_LOGIC. */
+    return v->type == VAL_LOGIC && v->logic != 0;
+}
+
+void clip_setv(const char *name, value_t *v) {
+    memvar_set(cmd_get_memvar_store(), name, v);
+}
+
+int clip_call(expr_ctx_t *c, const char *name, value_t *args, int nargs, value_t *result) {
+    value_t mv;
+    if ((nargs == 1 || nargs == 2) && c->vars &&
+        memvar_find(c->vars, name, &mv) == 0 && mv.type == VAL_ARRAY) {
+        return ast_eval_elem(c, name, &args[0], nargs == 2 ? &args[1] : NULL, result);
+    }
+    return func_call(c, name, args, nargs, result);
+}
+
+void clip_qv(const value_t *v, int first) {
+    char buf[256];
+    val_to_string(v, buf, sizeof(buf));
+    if (!first) {
+        cmd_output(" ");
+    }
+    cmd_output(buf);
+}
+
+void clip_qnl(void) {
+    cmd_output("\n");
+}
+
+void clip_return_v(clip_scope_t *s, const value_t *v, value_t *result) {
+    *result = *v;
+    clip_leave(s);
+}

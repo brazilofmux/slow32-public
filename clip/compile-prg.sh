@@ -37,15 +37,7 @@ OUT="${OUT:-$CLIP_DIR/$BASE.s32x}"
 GEN="$CLIP_DIR/out/${BASE}.c"
 mkdir -p "$CLIP_DIR/out"
 
-if [ ! -x "$CLIP_DIR/s32-clip" ]; then
-    (cd "$CLIP_DIR" && gcc -Wall -Wextra -O2 -o s32-clip s32-clip.c)
-else
-    if [ "$CLIP_DIR/s32-clip.c" -nt "$CLIP_DIR/s32-clip" ]; then
-        (cd "$CLIP_DIR" && gcc -Wall -Wextra -O2 -o s32-clip s32-clip.c)
-    fi
-fi
-
-echo "  clip $PRG $*"
+bash "$CLIP_DIR/build.sh" >/dev/null
 "$CLIP_DIR/s32-clip" "$PRG" "$@" -o "$GEN"
 
 # dBase runtime objects (everything except the REPL)

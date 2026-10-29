@@ -4,6 +4,7 @@
 #include <setjmp.h>
 #include "expr.h"
 #include "program.h"
+#include "ast.h"
 #include "memvar.h"
 
 void clip_init(void);
@@ -60,6 +61,19 @@ typedef struct clip_seq {
 jmp_buf *clip_seq_begin(clip_seq_t *q);
 void clip_seq_end(void);
 void clip_break(void);
+
+/* Compiled expressions: the context for a statement, a failure reported as
+ * the interpreter reports one, a condition's truth, an assignment, a call
+ * (an array element when name is an array, as the parser decides), and ?'s
+ * output of one value. */
+expr_ctx_t *clip_ctx(void);
+void clip_fail(expr_ctx_t *c);
+int  clip_cond(expr_ctx_t *c, int failed, const value_t *v);
+void clip_setv(const char *name, value_t *v);
+int  clip_call(expr_ctx_t *c, const char *name, value_t *args, int nargs, value_t *result);
+void clip_qv(const value_t *v, int first);
+void clip_qnl(void);
+void clip_return_v(clip_scope_t *s, const value_t *v, value_t *result);
 
 /* A line of a TEXT ... ENDTEXT block, printed as it stands */
 void clip_text(const char *line);
