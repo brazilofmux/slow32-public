@@ -306,6 +306,11 @@ static void pp_read_name(char *buf) {
     buf[i] = 0;
 }
 
+/* 1 = the value the #if evaluator last produced is uintmax_t (C11
+ * 6.10.1p4): each level sets it for its result, and a binary operator
+ * reads its left operand's before evaluating the right. */
+static int pp_ev_u;
+
 /* #if arithmetic is intmax_t (GitHub issue 60).  Accumulate in
  * unsigned long long so 2147483648 and 0x80000000 do not wrap to
  * a negative int; the signed result is what C11 6.10.1 uses. */
@@ -357,9 +362,11 @@ static long long pp_read_int(void) {
             c = lex_src[lex_pos];
         }
     }
-    /* Skip U/L suffixes */
+    /* Skip U/L suffixes; a u, or a value past intmax_t, is uintmax_t */
+    pp_ev_u = uval > 9223372036854775807ULL;
     c = lex_src[lex_pos];
     while (c == 85 || c == 117 || c == 76 || c == 108) {
+        if (c == 85 || c == 117) pp_ev_u = 1;
         lex_pos = lex_pos + 1;
         c = lex_src[lex_pos];
     }
@@ -538,28 +545,27 @@ static void pp_sync(void) {
  * shift) rather than run backwards into the prefix. */
 static int pp_peek_depth;
 
-#define PP_DIS_MAX 64
-#define PP_DIS_ARGS 32   /* was 8; a 9th parameter stayed painted (GitHub issue 48) */
+#define PP_DIS_MAX 256
 static int pp_dis_di[PP_DIS_MAX];
 static int pp_dis_end[PP_DIS_MAX];
-/* Where substituted ARGUMENT text sits inside each expansion.  C expands
- * a macro's arguments before substituting them, so the macro's own name
- * inside an argument is expanded (ROUND8(SZ_VDBECURSOR(n)), where
- * SZ_VDBECURSOR's body holds a ROUND8); this expander substitutes raw
- * text and rescans, and the rescan must not paint those regions blue. */
-static int pp_dis_nreg[PP_DIS_MAX];
-static int pp_dis_rlo[PP_DIS_MAX * PP_DIS_ARGS];
-static int pp_dis_rhi[PP_DIS_MAX * PP_DIS_ARGS];
 static int pp_ndis;
+/* Entries below pp_dis_base belong to the text around a call whose
+ * argument is being pre-expanded (pp_preexpand): they hold for the
+ * whole argument and are not popped by positions in it. */
+static int pp_dis_base;
+/* Where the replacement just laid down by pp_expand_func/obj ends. */
+static int pp_xend;
 
-/* Argument regions of the expansion being built, as pp_exp offsets. */
-static int pp_sub_lo[PP_DIS_ARGS];
-static int pp_sub_hi[PP_DIS_ARGS];
-static int pp_nsub;
-
-/* `base` is where pp_exp[0] landed in lex_src. */
-static void pp_dis_push(int di, int end, int base) {
-    int j;
+/* Each expansion's macro stays disabled until the scan passes `end`.
+ * There used to be a second list, the argument regions inside each
+ * expansion, exempt from it: arguments were substituted raw and
+ * expanded only on the rescan, so a macro's own name in its argument
+ * (ROUND8(SZ_VDBECURSOR(n))) had to stay live there.  Arguments are now
+ * expanded before substitution (pp_preexpand), as 6.10.3.1 has it, and
+ * the exemption is gone: in m(m), the m substituted for a(w) is met
+ * during m's own rescan and is not replaced again (6.10.3.4p2) -- it
+ * recursed until the stack ran out. */
+static void pp_dis_push(int di, int end) {
     if (pp_ndis >= PP_DIS_MAX) {
         /* Dropping the entry and still emitting the body is the vfsList
          * infinite-expansion class, now silent (GitHub issue 48). */
@@ -568,87 +574,89 @@ static void pp_dis_push(int di, int end, int base) {
     }
     pp_dis_di[pp_ndis] = di;
     pp_dis_end[pp_ndis] = end;
-    pp_dis_nreg[pp_ndis] = pp_nsub;
-    j = 0;
-    while (j < pp_nsub) {
-        pp_dis_rlo[pp_ndis * PP_DIS_ARGS + j] = base + pp_sub_lo[j];
-        pp_dis_rhi[pp_ndis * PP_DIS_ARGS + j] = base + pp_sub_hi[j];
-        j = j + 1;
-    }
     pp_ndis = pp_ndis + 1;
-    pp_nsub = 0;
 }
 
-/* The tail of the buffer was shifted by delta at ins: keep the ends true. */
+/* Entries that end at or before `at` are finished. */
+static void pp_dis_pop(int at) {
+    while (pp_ndis > pp_dis_base && pp_dis_end[pp_ndis - 1] <= at) pp_ndis = pp_ndis - 1;
+}
+
+/* The text after `ins` moved by delta: keep the ends true.  A caller
+ * replacing text passes its last replaced position, so an expansion
+ * whose last token was the replaced call or name moves with it -- with
+ * `end > end of the call` the enclosing COUNT in COUNT(a) stayed
+ * disabled past its shrunken text, and the next COUNT(a, b) with it. */
 static void pp_dis_shift(int ins, int delta) {
     int k;
-    int j;
-    k = 0;
+    k = pp_dis_base;
     while (k < pp_ndis) {
         if (pp_dis_end[k] > ins) pp_dis_end[k] = pp_dis_end[k] + delta;
-        j = 0;
-        while (j < pp_dis_nreg[k]) {
-            if (pp_dis_rlo[k * PP_DIS_ARGS + j] > ins) pp_dis_rlo[k * PP_DIS_ARGS + j] = pp_dis_rlo[k * PP_DIS_ARGS + j] + delta;
-            if (pp_dis_rhi[k * PP_DIS_ARGS + j] > ins) pp_dis_rhi[k * PP_DIS_ARGS + j] = pp_dis_rhi[k * PP_DIS_ARGS + j] + delta;
-            j = j + 1;
-        }
-        k = k + 1;
-    }
-}
-
-/* A call ending at `pos` was expanded backwards to start at `start`:
- * an argument region the call lay in now begins there too. */
-static void pp_dis_backfill(int pos, int start) {
-    int k;
-    int j;
-    k = 0;
-    while (k < pp_ndis) {
-        j = 0;
-        while (j < pp_dis_nreg[k]) {
-            if (pos > pp_dis_rlo[k * PP_DIS_ARGS + j] && pos <= pp_dis_rhi[k * PP_DIS_ARGS + j] &&
-                start < pp_dis_rlo[k * PP_DIS_ARGS + j])
-                pp_dis_rlo[k * PP_DIS_ARGS + j] = start;
-            j = j + 1;
-        }
         k = k + 1;
     }
 }
 
 static int pp_disabled(int di, int at) {
     int k;
-    int j;
-    int inarg;
-    while (pp_ndis > 0 && pp_dis_end[pp_ndis - 1] <= at) pp_ndis = pp_ndis - 1;
+    pp_dis_pop(at);
     k = 0;
     while (k < pp_ndis) {
-        if (pp_dis_di[k] == di) {
-            inarg = 0;
-            j = 0;
-            while (j < pp_dis_nreg[k]) {
-                if (at >= pp_dis_rlo[k * PP_DIS_ARGS + j] && at < pp_dis_rhi[k * PP_DIS_ARGS + j]) inarg = 1;
-                j = j + 1;
-            }
-            if (!inarg) return 1;
-        }
+        if (pp_dis_di[k] == di) return 1;
         k = k + 1;
     }
     return 0;
 }
 
-/* The newlines of a macro invocation that spans lines.  Inside the
- * call they are white space (6.10.3p10), and become spaces here, in
- * lex_src[from..to) -- a line splice, two -- before the arguments are
- * substituted: an argument that broke across a line and appeared twice
- * in the body brought its newline twice (SQLite's
- * sqlite3ResolveNotValid, three of them: __LINE__ ran 3 ahead).
- * Returns how many there were, for pp_keep_newlines. */
+/* The newlines and comments of a macro invocation.  Inside the call a
+ * newline is white space (6.10.3p10), and a comment already was
+ * (5.1.1.2p3); both become spaces here, in lex_src[from..to), before
+ * the arguments are substituted.  An argument that broke across a line
+ * and appeared twice in the body brought its newline twice (SQLite's
+ * sqlite3ResolveNotValid, three of them: __LINE__ ran 3 ahead); #x
+ * spelled a comment into its string; and a // comment, its newline
+ * gone, swallowed the rest of the expansion.  Returns how many newlines
+ * there were, for pp_keep_newlines. */
 static int pp_call_newlines(int from, int to) {
     int k;
     int n;
+    int q;
     n = 0;
     k = from;
     while (k < to) {
-        if (lex_src[k] == 10) {
+        q = lex_src[k];
+        if (q == 34 || q == 39) {
+            k = k + 1;
+            while (k < to && lex_src[k] != q) {
+                if (lex_src[k] == 92) k = k + 1;
+                k = k + 1;
+            }
+            k = k + 1;
+            continue;
+        }
+        if (q == 47 && k + 1 < to && lex_src[k + 1] == 42) {
+            lex_src[k] = 32;
+            lex_src[k + 1] = 32;
+            k = k + 2;
+            while (k < to && !(lex_src[k] == 42 && k + 1 < to && lex_src[k + 1] == 47)) {
+                if (lex_src[k] == 10) n = n + 1;
+                lex_src[k] = 32;
+                k = k + 1;
+            }
+            if (k < to) {
+                lex_src[k] = 32;
+                lex_src[k + 1] = 32;
+                k = k + 2;
+            }
+            continue;
+        }
+        if (q == 47 && k + 1 < to && lex_src[k + 1] == 47) {
+            while (k < to && lex_src[k] != 10) {
+                lex_src[k] = 32;
+                k = k + 1;
+            }
+            continue;
+        }
+        if (q == 10) {
             n = n + 1;
             lex_src[k] = 32;
             if (k > from && lex_src[k - 1] == 92) lex_src[k - 1] = 32;
@@ -672,24 +680,531 @@ static int pp_keep_newlines(int n, int len) {
     return len;
 }
 
+static int pp_exp_putc(int len, int c) {
+    if (len < PP_EXP_SZ - 1) {
+        pp_exp[len] = c;
+        len = len + 1;
+    }
+    return len;
+}
+
+/* #param: lex_src[from..to) as a string literal, appended to pp_exp at
+ * len (6.10.3.2p2).  A run of white space is one space, and leading and
+ * trailing runs vanish -- an assert whose expression spanned two lines
+ * put a raw newline inside the string.  Inside a string or character
+ * literal the text is kept as it is, with a \ before each " and \;
+ * outside one a \ is copied bare: S(a\n) is "a\n", which the literal
+ * then reads as a newline, as clang's does.  Returns the new length. */
+static int pp_stringize(int from, int to, int len) {
+    int k;
+    int ch;
+    int q;
+    int pend_sp;    /* whitespace seen, not yet emitted */
+    int any;        /* a non-blank character has been emitted */
+    pend_sp = 0;
+    any = 0;
+    q = 0;
+    len = pp_exp_putc(len, 34);
+    k = from;
+    while (k < to) {
+        ch = lex_src[k];
+        k = k + 1;
+        if (q == 0 && ch == 1) continue;     /* paint (pp_rescan_region) */
+        if (q == 0 && (ch == 32 || ch == 9 || ch == 10 || ch == 13)) {
+            pend_sp = 1;
+            continue;
+        }
+        if (pend_sp && any) len = pp_exp_putc(len, 32);
+        pend_sp = 0;
+        any = 1;
+        if (q == 0) {
+            if (ch == 34 || ch == 39) q = ch;
+        } else if (ch == 92 && k < to) {
+            len = pp_exp_putc(len, 92);
+            len = pp_exp_putc(len, 92);
+            ch = lex_src[k];
+            k = k + 1;
+        } else if (ch == q) {
+            q = -1;
+        }
+        if (q != 0 && (ch == 34 || ch == 92)) len = pp_exp_putc(len, 92);
+        len = pp_exp_putc(len, ch);
+        if (q == -1) q = 0;
+    }
+    return pp_exp_putc(len, 34);
+}
+
+#define PP_MAX_ARGS 32
+#define PP_PRE_SZ 1048576
+/* Pre-expanded arguments, stacked: each call takes what it needs above
+ * pp_pre_top and gives it back when its body is laid down. */
+static char pp_pre[PP_PRE_SZ];
+static int pp_pre_top;
+static int pp_pre_n;            /* length of the last pp_preexpand result */
+static char pp_iname[256];
+#define PP_SPELL_SZ 1100
+static char pp_spell[PP_SPELL_SZ];
+
+static int pp_expand_func(int di);
+static void pp_expand_obj(int di);
+
+static int pp_is_idstart(int c) {
+    return (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || c == 95;
+}
+
+static int pp_is_idch(int c) {
+    return pp_is_idstart(c) || (c >= 48 && c <= 57);
+}
+
+/* The identifier at lex_src[k] into pp_iname; returns where it ends. */
+static int pp_read_ident_at(int k) {
+    int n;
+    n = 0;
+    while (pp_is_idch(lex_src[k])) {
+        if (n < 255) { pp_iname[n] = lex_src[k]; n = n + 1; }
+        k = k + 1;
+    }
+    pp_iname[n] = 0;
+    return k;
+}
+
+/* Past the literal, or the pp-number, that starts at lex_src[k]. */
+static int pp_skip_literal(int k, int to) {
+    int q;
+    q = lex_src[k];
+    k = k + 1;
+    while (k < to && lex_src[k] != q) {
+        if (lex_src[k] == 92) k = k + 1;
+        k = k + 1;
+    }
+    return k + 1;
+}
+
+static int pp_skip_ppnum(int k, int to) {
+    int c;
+    while (k < to) {
+        c = lex_src[k];
+        if ((c == 43 || c == 45) && (lex_src[k - 1] == 101 || lex_src[k - 1] == 69 ||
+                                     lex_src[k - 1] == 112 || lex_src[k - 1] == 80)) {
+            k = k + 1;
+            continue;
+        }
+        if (!pp_is_idch(c) && c != 46) break;
+        k = k + 1;
+    }
+    return k;
+}
+
+/* Would the two characters run together into one token?  A replacement
+ * is spliced into text, and in pp_preexpand the result is kept as text:
+ * x-NEG with NEG -1 must not become x--1. */
+static int pp_glues(int a, int b) {
+    if ((pp_is_idch(a) || a == 46) && (pp_is_idch(b) || b == 46 || b == 1 || b == 34 || b == 39)) return 1;
+    if (a == 0 || b == 0) return 0;
+    return strchr("+-*/%&|^<>=!#:.", a) != 0 && strchr("+-*/%&|^<>=!#:.", b) != 0;
+}
+
+/* lex_src[at..at+dellen) becomes ins[0..inslen), the tail moving. */
+static void pp_splice(int at, int dellen, char *ins, int inslen) {
+    int delta;
+    int tail;
+    int i;
+    delta = inslen - dellen;
+    tail = lex_len - (at + dellen);
+    if (lex_len + delta >= LEX_SRC_SZ - 1) {
+        fdputs("s12cc: macro expansion overflows the source buffer\n", 2);
+        exit(1);
+    }
+    if (delta > 0) {
+        i = tail - 1;
+        while (i >= 0) {
+            lex_src[at + inslen + i] = lex_src[at + dellen + i];
+            i = i - 1;
+        }
+    } else if (delta < 0) {
+        i = 0;
+        while (i < tail) {
+            lex_src[at + inslen + i] = lex_src[at + dellen + i];
+            i = i + 1;
+        }
+    }
+    i = 0;
+    while (i < inslen) {
+        lex_src[at + i] = ins[i];
+        i = i + 1;
+    }
+    lex_len = lex_len + delta;
+    lex_src[lex_len] = 0;
+    if (dellen > 0) pp_dis_shift(at + dellen - 1, delta);
+    else pp_dis_shift(at, delta);
+}
+
+/* A space where lex_src[at-1] and lex_src[at] would glue. */
+static void pp_unglue_at(int at) {
+    if (pp_glues(lex_src[at - 1], lex_src[at])) pp_splice(at, 0, " ", 1);
+}
+
+static int pp_spell_int(int v) {
+    unsigned u;
+    int n;
+    int i;
+    int j;
+    char t;
+    n = 0;
+    u = (unsigned)v;
+    if (v < 0) {
+        pp_spell[0] = 45;
+        n = 1;
+        u = 0u - u;
+    }
+    i = n;
+    do {
+        pp_spell[n] = 48 + (int)(u % 10u);
+        n = n + 1;
+        u = u / 10u;
+    } while (u != 0u);
+    j = n - 1;
+    while (i < j) {
+        t = pp_spell[i];
+        pp_spell[i] = pp_spell[j];
+        pp_spell[j] = t;
+        i = i + 1;
+        j = j - 1;
+    }
+    return n;
+}
+
+static int pp_spell_file(void) {
+    int n;
+    int k;
+    n = 0;
+    pp_spell[n] = 34;
+    n = n + 1;
+    k = 0;
+    while (pp_curfile[k] != 0 && n < PP_SPELL_SZ - 3) {
+        if (pp_curfile[k] == 34 || pp_curfile[k] == 92) {
+            pp_spell[n] = 92;
+            n = n + 1;
+        }
+        pp_spell[n] = pp_curfile[k];
+        n = n + 1;
+        k = k + 1;
+    }
+    pp_spell[n] = 34;
+    return n + 1;
+}
+
+/* Does lex_src[from..to) hold a name that would expand?  Most
+ * arguments do not, and are their own expansion. */
+static int pp_has_macro(int from, int to) {
+    int k;
+    int c;
+    k = from;
+    while (k < to) {
+        c = lex_src[k];
+        if (c == 34 || c == 39) {
+            k = pp_skip_literal(k, to);
+        } else if (c >= 48 && c <= 57) {
+            k = pp_skip_ppnum(k, to);
+        } else if (c == 1) {
+            k = pp_read_ident_at(k + 1);
+        } else if (pp_is_idstart(c)) {
+            k = pp_read_ident_at(k);
+            if (pp_find(pp_iname) >= 0) return 1;
+            if (strcmp(pp_iname, "__LINE__") == 0 || strcmp(pp_iname, "__FILE__") == 0) return 1;
+        } else {
+            k = k + 1;
+        }
+    }
+    return 0;
+}
+
+/* Expand every macro in lex_src[r..lex_len), in place, rescanning each
+ * replacement.  A name that is disabled here is painted -- a 0x01 byte
+ * goes in front of it, which the lexer reads as "an identifier never to
+ * be replaced" (6.10.3.4p2: it stays unreplaced even where it would
+ * otherwise be). */
+static void pp_rescan_region(int r) {
+    int k;
+    int s;
+    int e;
+    int c;
+    int di;
+    int n;
+    k = r;
+    while (k < lex_len) {
+        c = lex_src[k];
+        if (c == 34 || c == 39) { k = pp_skip_literal(k, lex_len); continue; }
+        if (c >= 48 && c <= 57) { k = pp_skip_ppnum(k, lex_len); continue; }
+        if (c == 1) { k = pp_read_ident_at(k + 1); continue; }
+        if (!pp_is_idstart(c)) { k = k + 1; continue; }
+        s = k;
+        e = pp_read_ident_at(k);
+        if (strcmp(pp_iname, "__LINE__") == 0 || strcmp(pp_iname, "__FILE__") == 0) {
+            if (pp_iname[2] == 76) n = pp_spell_int(lex_line);
+            else n = pp_spell_file();
+            pp_splice(s, e - s, pp_spell, n);
+            pp_xend = s + n;
+        } else {
+            di = pp_find(pp_iname);
+            if (di < 0) { k = e; continue; }
+            if (pp_disabled(di, s)) {
+                pp_spell[0] = 1;        /* stage07 reads "\001" as 0 */
+                pp_splice(s, 0, pp_spell, 1);
+                k = e + 1;
+                continue;
+            }
+            if (pp_dnpar[di] >= 0) {
+                lex_rp = lex_src + e;
+                if (!pp_expand_func(di)) { k = e; continue; }
+                /* The replacement went in at the '('; the name is still
+                 * in front of it. */
+                n = lex_pos - s;
+                pp_splice(s, n, pp_spell, 0);
+                pp_xend = pp_xend - n;
+            } else if (pp_dbody[di] != 0) {
+                lex_rp = lex_src + e;
+                lex_slen = e - s;
+                pp_expand_obj(di);
+            } else {
+                n = pp_spell_int(pp_dval[di]);
+                pp_splice(s, e - s, pp_spell, n);
+                pp_xend = s + n;
+            }
+        }
+        if (pp_xend < lex_len) pp_unglue_at(pp_xend);
+        if (s > r) pp_unglue_at(s);
+        k = s;
+    }
+}
+
+/* Argument pre-expansion (6.10.3.1p1): lex_src[from..to), with every
+ * macro in it replaced as if it were the rest of the file, onto the
+ * pp_pre stack; returns the offset, the length in pp_pre_n.  The text
+ * is copied past the end of the buffer and expanded there in place;
+ * whatever is disabled around the call stays disabled for it.  Without
+ * this, XSTR(VAL) gave "VAL", not "42", and an argument next to ## or
+ * after # was the only kind there was. */
+static int pp_preexpand(int from, int to) {
+    int r;
+    int n;
+    int i;
+    int off;
+    int saved_len;
+    int saved_pos;
+    int saved_peek;
+    int saved_base;
+    saved_len = lex_len;
+    saved_pos = lex_pos;
+    saved_peek = pp_peek_depth;
+    saved_base = pp_dis_base;
+    pp_dis_pop(from);
+    pp_dis_base = pp_ndis;
+    n = to - from;
+    r = lex_len + 2;
+    if (r + n + 2 >= LEX_SRC_SZ) {
+        fdputs("s12cc: macro argument overflows the source buffer\n", 2);
+        exit(1);
+    }
+    i = 0;
+    while (i < n) {
+        lex_src[r + i] = lex_src[from + i];
+        i = i + 1;
+    }
+    lex_len = r + n;
+    lex_src[lex_len] = 0;
+    pp_peek_depth = 1;          /* replace in place: the text is the result */
+    pp_rescan_region(r);
+    n = lex_len - r;
+    if (pp_pre_top + n > PP_PRE_SZ) {
+        fdputs("s12cc: macro arguments too large\n", 2);
+        exit(1);
+    }
+    off = pp_pre_top;
+    i = 0;
+    while (i < n) {
+        pp_pre[off + i] = lex_src[r + i];
+        i = i + 1;
+    }
+    pp_pre_top = off + n;
+    pp_pre_n = n;
+    pp_ndis = pp_dis_base;
+    pp_dis_base = saved_base;
+    lex_len = saved_len;
+    lex_pos = saved_pos;
+    pp_peek_depth = saved_peek;
+    return off;
+}
+
+/* Which parameter slot is the name in pp_iname: its index, npar for
+ * __VA_ARGS__ of a variadic macro, or -1. */
+static int pp_param_slot(int di) {
+    char *dp;
+    int pi;
+    int k;
+    dp = pp_dparm[di];
+    if (dp != 0) {
+        pi = 0;
+        k = 0;
+        while (pi < pp_dnpar[di]) {
+            if (strcmp(pp_iname, dp + k) == 0) return pi;
+            while (dp[k] != 0) k = k + 1;
+            k = k + 1;
+            pi = pi + 1;
+        }
+    }
+    if (pp_dvar[di] && strcmp(pp_iname, "__VA_ARGS__") == 0) return pp_dnpar[di];
+    return -1;
+}
+
+/* The body of function-like macro di into pp_exp, its parameters
+ * replaced (6.10.3.1).  Slot i's argument is lex_src[rfrom[i]..rto[i]);
+ * where pre_off[i] >= 0 its expansion is pp_pre[pre_off[i]..+pre_len[i]),
+ * and that is what a parameter outside # and ## becomes.  need[i] is
+ * set for each slot used so.  Returns the length. */
+static int pp_subst(int di, int *rfrom, int *rto, int *pre_off, int *pre_len, int *need) {
+    char *body;
+    int len;
+    int j;
+    int k;
+    int c;
+    int q;
+    int slot;
+    int paste;      /* the last operator was ## */
+    body = pp_dbody[di];
+    len = 0;
+    j = 0;
+    paste = 0;
+    while (body[j] != 0) {
+        c = body[j];
+        /* A string or character literal in the body is copied whole: a
+         * parameter name inside it is text, not a parameter (C99
+         * 6.10.3p10 substitutes preprocessing tokens, and a literal is
+         * one token).  regal's TEST_EQ_STR(r, actual, expected, msg)
+         * printed "(got '%s', expected '%s')" -- and `expected` inside
+         * that string came out as the argument, "2025-10-15". */
+        if (c == 34 || c == 39) {
+            q = c;
+            len = pp_exp_putc(len, c);
+            j = j + 1;
+            while (body[j] != 0 && body[j] != q) {
+                if (body[j] == 92 && body[j + 1] != 0) {
+                    len = pp_exp_putc(len, body[j]);
+                    j = j + 1;
+                }
+                len = pp_exp_putc(len, body[j]);
+                j = j + 1;
+            }
+            if (body[j] == q) {
+                len = pp_exp_putc(len, q);
+                j = j + 1;
+            }
+            paste = 0;
+            continue;
+        }
+
+        /* Token paste: ## — drop operator and adjacent body whitespace so
+         * the preceding and following tokens abut.  A pasted name is a
+         * new token: any paint on the left one comes off. */
+        if (c == 35 && body[j + 1] == 35) {  /* '#' '#' */
+            j = j + 2;
+            while (body[j] == 32 || body[j] == 9) j = j + 1;
+            while (len > 0 && (pp_exp[len - 1] == 32 || pp_exp[len - 1] == 9)) len = len - 1;
+            k = len;
+            while (k > 0 && pp_is_idch(pp_exp[k - 1])) k = k - 1;
+            if (k > 0 && pp_exp[k - 1] == 1) {
+                while (k < len) {
+                    pp_exp[k - 1] = pp_exp[k];
+                    k = k + 1;
+                }
+                len = len - 1;
+            }
+            paste = 1;
+            continue;
+        }
+
+        /* Stringize: # param  →  "argument text" with escapes */
+        if (c == 35) {
+            j = j + 1;
+            while (body[j] == 32 || body[j] == 9) j = j + 1;
+            k = 0;
+            while (pp_is_idch(body[j])) {
+                if (k < 255) { pp_iname[k] = body[j]; k = k + 1; }
+                j = j + 1;
+            }
+            pp_iname[k] = 0;
+            slot = -1;
+            if (k > 0) slot = pp_param_slot(di);
+            if (slot >= 0) len = pp_stringize(rfrom[slot], rto[slot], len);
+            else len = pp_stringize(0, 0, len);
+            paste = 0;
+            continue;
+        }
+
+        if (pp_is_idstart(c)) {
+            k = 0;
+            while (pp_is_idch(body[j])) {
+                if (k < 255) { pp_iname[k] = body[j]; k = k + 1; }
+                j = j + 1;
+            }
+            pp_iname[k] = 0;
+            slot = pp_param_slot(di);
+            if (slot < 0) {
+                k = 0;
+                while (pp_iname[k] != 0) {
+                    len = pp_exp_putc(len, pp_iname[k]);
+                    k = k + 1;
+                }
+                paste = 0;
+                continue;
+            }
+            k = j;
+            while (body[k] == 32 || body[k] == 9) k = k + 1;
+            if (!paste && !(body[k] == 35 && body[k + 1] == 35)) {
+                need[slot] = 1;
+                if (pre_off[slot] >= 0) {
+                    k = 0;
+                    while (k < pre_len[slot]) {
+                        len = pp_exp_putc(len, pp_pre[pre_off[slot] + k]);
+                        k = k + 1;
+                    }
+                    continue;
+                }
+            }
+            k = rfrom[slot];
+            if (paste && k < rto[slot] && lex_src[k] == 1) k = k + 1;
+            while (k < rto[slot]) {
+                len = pp_exp_putc(len, lex_src[k]);
+                k = k + 1;
+            }
+            paste = 0;
+            continue;
+        }
+        len = pp_exp_putc(len, c);
+        if (c != 32 && c != 9) paste = 0;
+        j = j + 1;
+    }
+    return len;
+}
+
 static int pp_expand_func(int di) {
     int call_nl;
     int pos;
     int ins_pos;
     int depth;
     int nargs;
-    int arg_start[16];
-    int arg_len[16];
+    int arg_start[PP_MAX_ARGS];
+    int arg_len[PP_MAX_ARGS];
+    int rfrom[PP_MAX_ARGS + 1];
+    int rto[PP_MAX_ARGS + 1];
+    int pre_off[PP_MAX_ARGS + 1];
+    int pre_len[PP_MAX_ARGS + 1];
+    int need[PP_MAX_ARGS + 1];
+    int nslot;
+    int base;
+    int again;
     int exp_len;
-    char *body;
-    char *dp;
-    int pi;
-    int ni;
-    char iname[256];
     int c;
-    int j;
-    int k;
-    int matched;
     int remove_len;
     int delta;
     int tail_len;
@@ -775,7 +1290,11 @@ static int pp_expand_func(int di) {
                 nargs = nargs + 1;
                 pos = pos + 1;
                 while (lex_src[pos] == 32 || lex_src[pos] == 9) pos = pos + 1;
-                if (nargs < 16) arg_start[nargs] = pos;
+                if (nargs >= PP_MAX_ARGS) {
+                    fdputs("s12cc: too many macro arguments\n", 2);
+                    exit(1);
+                }
+                arg_start[nargs] = pos;
             } else {
                 pos = pos + 1;
             }
@@ -784,224 +1303,53 @@ static int pp_expand_func(int di) {
 
     call_nl = pp_call_newlines(ins_pos, pos);
 
-    /* Build expanded text in pp_exp.
-     * Supports #param (stringize) and ## (token paste). */
-    body = pp_dbody[di];
-    exp_len = 0;
-    j = 0;
-    while (body[j] != 0) {
-        c = body[j];
-        /* A string or character literal in the body is copied whole: a
-         * parameter name inside it is text, not a parameter (C99
-         * 6.10.3p10 substitutes preprocessing tokens, and a literal is
-         * one token).  regal's TEST_EQ_STR(r, actual, expected, msg)
-         * printed "(got '%s', expected '%s')" -- and `expected` inside
-         * that string came out as the argument, "2025-10-15". */
-        if (c == 34 || c == 39) {
-            int q;
-            q = c;
-            if (exp_len < PP_EXP_SZ - 1) { pp_exp[exp_len] = c; exp_len = exp_len + 1; }
-            j = j + 1;
-            while (body[j] != 0 && body[j] != q) {
-                if (body[j] == 92 && body[j + 1] != 0) {
-                    if (exp_len < PP_EXP_SZ - 1) { pp_exp[exp_len] = body[j]; exp_len = exp_len + 1; }
-                    j = j + 1;
-                }
-                if (exp_len < PP_EXP_SZ - 1) { pp_exp[exp_len] = body[j]; exp_len = exp_len + 1; }
-                j = j + 1;
-            }
-            if (body[j] == q) {
-                if (exp_len < PP_EXP_SZ - 1) { pp_exp[exp_len] = q; exp_len = exp_len + 1; }
-                j = j + 1;
-            }
-            continue;
+    /* The parameter slots: one per argument, and for a variadic macro
+     * one more, the variable arguments from the first to the last. */
+    nslot = pp_dnpar[di];
+    i = 0;
+    while (i < nslot) {
+        rfrom[i] = 0;
+        rto[i] = 0;
+        if (i < nargs) {
+            rfrom[i] = arg_start[i];
+            rto[i] = arg_start[i] + arg_len[i];
         }
-
-        /* Token paste: ## — drop operator and adjacent body whitespace so
-         * the preceding and following tokens abut. */
-        if (c == 35 && body[j + 1] == 35) {  /* '#' '#' */
-            j = j + 2;
-            while (body[j] == 32 || body[j] == 9) j = j + 1;
-            while (exp_len > 0 &&
-                   (pp_exp[exp_len - 1] == 32 || pp_exp[exp_len - 1] == 9)) {
-                exp_len = exp_len - 1;
-            }
-            continue;
-        }
-
-        /* Stringize: # param  →  "argument text" with escapes */
-        if (c == 35) {
-            j = j + 1;
-            while (body[j] == 32 || body[j] == 9) j = j + 1;
-            c = body[j];
-            ni = 0;
-            while ((c >= 97 && c <= 122) || (c >= 65 && c <= 90) ||
-                   (c >= 48 && c <= 57) || c == 95) {
-                iname[ni] = c;
-                ni = ni + 1;
-                j = j + 1;
-                c = body[j];
-            }
-            iname[ni] = 0;
-            matched = -1;
-            dp = pp_dparm[di];
-            if (dp != 0 && iname[0] != 0) {
-                pi = 0;
-                k = 0;
-                while (pi < pp_dnpar[di]) {
-                    if (strcmp(iname, dp + k) == 0) {
-                        matched = pi;
-                        break;
-                    }
-                    while (dp[k] != 0) k = k + 1;
-                    k = k + 1;
-                    pi = pi + 1;
-                }
-            }
-            if (exp_len < PP_EXP_SZ - 1) {
-                pp_exp[exp_len] = 34;  /* '"' */
-                exp_len = exp_len + 1;
-            }
-            if (matched >= 0 && matched < nargs) {
-                int pend_sp;    /* whitespace seen, not yet emitted */
-                int any;        /* a non-blank character has been emitted */
-                pend_sp = 0;
-                any = 0;
-                k = 0;
-                while (k < arg_len[matched]) {
-                    int ch;
-                    ch = lex_src[arg_start[matched] + k];
-                    /* A run of whitespace, newlines included, becomes one
-                     * space; leading and trailing runs vanish (C11
-                     * 6.10.3.2).  An assert whose expression spanned two
-                     * lines put a raw newline inside the string. */
-                    if (ch == 32 || ch == 9 || ch == 10 || ch == 13) {
-                        pend_sp = 1;
-                        k = k + 1;
-                        continue;
-                    }
-                    if (pend_sp && any && exp_len < PP_EXP_SZ - 1) {
-                        pp_exp[exp_len] = 32;
-                        exp_len = exp_len + 1;
-                    }
-                    pend_sp = 0;
-                    any = 1;
-                    if ((ch == 34 || ch == 92) && exp_len < PP_EXP_SZ - 2) {
-                        pp_exp[exp_len] = 92;  /* '\\' */
-                        exp_len = exp_len + 1;
-                    }
-                    if (exp_len < PP_EXP_SZ - 1) {
-                        pp_exp[exp_len] = ch;
-                        exp_len = exp_len + 1;
-                    }
-                    k = k + 1;
-                }
-            }
-            if (exp_len < PP_EXP_SZ - 1) {
-                pp_exp[exp_len] = 34;
-                exp_len = exp_len + 1;
-            }
-            continue;
-        }
-
-        if ((c >= 97 && c <= 122) || (c >= 65 && c <= 90) || c == 95) {
-            /* Read identifier from body */
-            ni = 0;
-            while ((c >= 97 && c <= 122) || (c >= 65 && c <= 90) ||
-                   (c >= 48 && c <= 57) || c == 95) {
-                iname[ni] = c;
-                ni = ni + 1;
-                j = j + 1;
-                c = body[j];
-            }
-            iname[ni] = 0;
-
-            /* Check if it's a parameter name */
-            matched = -1;
-            dp = pp_dparm[di];
-            if (dp != 0) {
-                pi = 0;
-                k = 0;
-                while (pi < pp_dnpar[di]) {
-                    if (strcmp(iname, dp + k) == 0) {
-                        matched = pi;
-                        break;
-                    }
-                    while (dp[k] != 0) k = k + 1;
-                    k = k + 1;
-                    pi = pi + 1;
-                }
-            }
-
-            if (matched >= 0 && matched < nargs) {
-                /* Substitute argument text, remembering where it went */
-                if (pp_nsub >= PP_DIS_ARGS) {
-                    fdputs("s12cc: too many macro argument regions\n", 2);
-                    exit(1);
-                }
-                pp_sub_lo[pp_nsub] = exp_len;
-                k = 0;
-                while (k < arg_len[matched]) {
-                    if (exp_len < PP_EXP_SZ - 1) {
-                        pp_exp[exp_len] = lex_src[arg_start[matched] + k];
-                        exp_len = exp_len + 1;
-                    }
-                    k = k + 1;
-                }
-                pp_sub_hi[pp_nsub] = exp_len;
-                pp_nsub = pp_nsub + 1;
-            } else if (pp_dvar[di] && strcmp(iname, "__VA_ARGS__") == 0) {
-                /* Substitute variadic arguments (all args from npar onwards).
-                 * Record the whole splice as one argument region so a
-                 * self-name inside __VA_ARGS__ still expands (GitHub issue 48). */
-                int va;
-                if (pp_nsub >= PP_DIS_ARGS) {
-                    fdputs("s12cc: too many macro argument regions\n", 2);
-                    exit(1);
-                }
-                pp_sub_lo[pp_nsub] = exp_len;
-                va = pp_dnpar[di];
-                while (va < nargs) {
-                    if (va > pp_dnpar[di]) {
-                        /* Insert ", " separator between variadic args */
-                        if (exp_len < PP_EXP_SZ - 1) {
-                            pp_exp[exp_len] = 44; exp_len = exp_len + 1;
-                        }
-                        if (exp_len < PP_EXP_SZ - 1) {
-                            pp_exp[exp_len] = 32; exp_len = exp_len + 1;
-                        }
-                    }
-                    k = 0;
-                    while (k < arg_len[va]) {
-                        if (exp_len < PP_EXP_SZ - 1) {
-                            pp_exp[exp_len] = lex_src[arg_start[va] + k];
-                            exp_len = exp_len + 1;
-                        }
-                        k = k + 1;
-                    }
-                    va = va + 1;
-                }
-                pp_sub_hi[pp_nsub] = exp_len;
-                pp_nsub = pp_nsub + 1;
-            } else {
-                /* Copy identifier as-is */
-                k = 0;
-                while (iname[k] != 0) {
-                    if (exp_len < PP_EXP_SZ - 1) {
-                        pp_exp[exp_len] = iname[k];
-                        exp_len = exp_len + 1;
-                    }
-                    k = k + 1;
-                }
-            }
-        } else {
-            if (exp_len < PP_EXP_SZ - 1) {
-                pp_exp[exp_len] = c;
-                exp_len = exp_len + 1;
-            }
-            j = j + 1;
-        }
+        i = i + 1;
     }
+    if (pp_dvar[di]) {
+        rfrom[nslot] = 0;
+        rto[nslot] = 0;
+        if (nargs > nslot) {
+            rfrom[nslot] = arg_start[nslot];
+            rto[nslot] = arg_start[nargs - 1] + arg_len[nargs - 1];
+        }
+        nslot = nslot + 1;
+    }
+    i = 0;
+    while (i < nslot) {
+        pre_off[i] = -1;
+        pre_len[i] = 0;
+        need[i] = 0;
+        i = i + 1;
+    }
+
+    /* Laid down once with the arguments as written; if one used outside
+     * # and ## holds a macro, it is expanded and the body laid again (the
+     * expansions used pp_exp too). */
+    exp_len = pp_subst(di, rfrom, rto, pre_off, pre_len, need);
+    base = pp_pre_top;
+    again = 0;
+    i = 0;
+    while (i < nslot) {
+        if (need[i] && pp_has_macro(rfrom[i], rto[i])) {
+            pre_off[i] = pp_preexpand(rfrom[i], rto[i]);
+            pre_len[i] = pp_pre_n;
+            again = 1;
+        }
+        i = i + 1;
+    }
+    if (again) exp_len = pp_subst(di, rfrom, rto, pre_off, pre_len, need);
+    pp_pre_top = base;
     exp_len = pp_keep_newlines(call_nl, exp_len);
     pp_exp[exp_len] = 0;
     if (getenv("S12CC_PP_DUMP")) {   /* trace every function-like expansion */
@@ -1035,15 +1383,16 @@ static int pp_expand_func(int di) {
         /* Strictly before: an entry ending exactly at `pos` is the
          * enclosing expansion whose last token is this very call
          * (`#define SELF SELF`), and it must stay disabled. */
-        while (pp_ndis > 0 && pp_dis_end[pp_ndis - 1] < pos) pp_ndis = pp_ndis - 1;
-        pp_dis_backfill(pos, ins_pos);
-        pp_dis_push(di, pos, ins_pos);
+        while (pp_ndis > pp_dis_base && pp_dis_end[pp_ndis - 1] < pos) pp_ndis = pp_ndis - 1;
+        pp_dis_push(di, pos);
+        pp_xend = pos;
         lex_pos = ins_pos;
         pp_sync();
         return 1;
     }
-    pp_dis_shift(pos, delta);
-    pp_dis_push(di, pos + delta, pos + delta - exp_len);
+    pp_dis_shift(pos - 1, delta);
+    pp_dis_push(di, pos + delta);
+    pp_xend = ins_pos + exp_len;
     if (delta > 0) {
         i = tail_len - 1;
         while (i >= 0) {
@@ -1105,17 +1454,16 @@ static void pp_expand_obj(int di) {
             lex_src[start_pos + i] = body[i];
             i = i + 1;
         }
-        while (pp_ndis > 0 && pp_dis_end[pp_ndis - 1] < ins_pos) pp_ndis = pp_ndis - 1;   /* as above */
-        pp_dis_backfill(ins_pos, start_pos);
-        pp_nsub = 0;                      /* an object-like macro has no arguments */
-        pp_dis_push(di, ins_pos, start_pos);
+        while (pp_ndis > pp_dis_base && pp_dis_end[pp_ndis - 1] < ins_pos) pp_ndis = pp_ndis - 1;   /* as above */
+        pp_dis_push(di, ins_pos);
+        pp_xend = ins_pos;
         lex_pos = start_pos;
         pp_sync();
         return;
     }
-    pp_dis_shift(ins_pos, delta);
-    pp_nsub = 0;
-    pp_dis_push(di, ins_pos + delta, ins_pos + delta - body_len);
+    pp_dis_shift(ins_pos - 1, delta);
+    pp_dis_push(di, ins_pos + delta);
+    pp_xend = start_pos + body_len;
     if (delta > 0) {
         /* Shift tail right when the expansion is longer than the name. */
         i = tail_len - 1;
@@ -1646,7 +1994,7 @@ static int pp_ev_has_include(void) {
  * inside the evaluator, which stage07 now wraps (cd14ef67). */
 
 /* Forward declarations for recursive descent */
-static long long pp_ev_or(void);
+static long long pp_ev_cond(void);
 
 static int pp_ev_depth;
 static int pp_ev_park;          /* grow-down parking in unused lex_src tail */
@@ -1683,7 +2031,7 @@ static long long pp_ev_from_text(char *body) {
     pp_ev_park = place;
     saved_pos = lex_pos;
     lex_pos = place;
-    val = pp_ev_or();
+    val = pp_ev_cond();
     lex_pos = saved_pos;
     pp_ev_park = saved_park;
     return val;
@@ -1695,10 +2043,11 @@ static long long pp_ev_primary(void) {
     char name[256];
     pp_skip_ws();
     c = lex_src[lex_pos];
+    pp_ev_u = 0;
     /* Parenthesized expression */
     if (c == 40) {  /* '(' */
         lex_pos = lex_pos + 1;
-        val = pp_ev_or();
+        val = pp_ev_cond();
         pp_skip_ws();
         if (lex_src[lex_pos] == 41) {  /* ')' */
             lex_pos = lex_pos + 1;
@@ -1772,13 +2121,61 @@ static long long pp_ev_primary(void) {
     return 0;
 }
 
+/* One binary operator under the usual arithmetic conversions of C11
+ * 6.10.1p4: either operand in uintmax_t makes the arithmetic and the
+ * comparison unsigned; a shift has its left operand's type; a
+ * comparison is a signed 0 or 1.  -1 < 0u was true, and
+ * 0xFFFFFFFFFFFFFFFF >> 63 was -1. */
+static long long pp_ev_apply(int op, long long a, long long b, int lu, int ru) {
+    unsigned long long ua;
+    unsigned long long ub;
+    int u;
+    ua = (unsigned long long)a;
+    ub = (unsigned long long)b;
+    u = lu || ru;
+    pp_ev_u = u;
+    if (op == 42) return a * b;
+    if (op == 43) return a + b;
+    if (op == 45) return a - b;
+    if (op == 38) return a & b;
+    if (op == 94) return a ^ b;
+    if (op == 124) return a | b;
+    if (op == 47 || op == 37) {
+        if (b == 0) return 0;
+        if (u && op == 47) return (long long)(ua / ub);
+        if (u) return (long long)(ua % ub);
+        if (op == 47) return a / b;
+        return a % b;
+    }
+    if (op == 108 || op == 114) {   /* << >> */
+        pp_ev_u = lu;
+        if (op == 108) return a << (int)b;
+        if (lu) return (long long)(ua >> (int)b);
+        return a >> (int)b;
+    }
+    pp_ev_u = 0;
+    if (u) {
+        if (op == 60) return ua < ub;
+        if (op == 62) return ua > ub;
+        if (op == 76) return ua <= ub;
+        return ua >= ub;
+    }
+    if (op == 60) return a < b;
+    if (op == 62) return a > b;
+    if (op == 76) return a <= b;
+    return a >= b;
+}
+
 static long long pp_ev_unary(void) {
     int c;
+    long long v;
     pp_skip_ws();
     c = lex_src[lex_pos];
     if (c == 33) {  /* '!' */
         lex_pos = lex_pos + 1;
-        return !pp_ev_unary();
+        v = !pp_ev_unary();
+        pp_ev_u = 0;
+        return v;
     }
     if (c == 126) {  /* '~' */
         lex_pos = lex_pos + 1;
@@ -1802,23 +2199,14 @@ static long long pp_ev_unary(void) {
 static long long pp_ev_mul(void) {
     long long val;
     int c;
+    int lu;
     val = pp_ev_unary();
     pp_skip_ws();
     c = lex_src[lex_pos];
     while (c == 42 || c == 47 || c == 37) {  /* '*', '/', '%' */
         lex_pos = lex_pos + 1;
-        if (c == 42) val = val * pp_ev_unary();
-        else if (c == 47) {
-            long long d;
-            d = pp_ev_unary();
-            if (d != 0) val = val / d;
-            else val = 0;
-        } else {
-            long long d;
-            d = pp_ev_unary();
-            if (d != 0) val = val % d;
-            else val = 0;
-        }
+        lu = pp_ev_u;
+        val = pp_ev_apply(c, val, pp_ev_unary(), lu, pp_ev_u);
         pp_skip_ws();
         c = lex_src[lex_pos];
     }
@@ -1828,13 +2216,14 @@ static long long pp_ev_mul(void) {
 static long long pp_ev_add(void) {
     long long val;
     int c;
+    int lu;
     val = pp_ev_mul();
     pp_skip_ws();
     c = lex_src[lex_pos];
     while (c == 43 || c == 45) {  /* '+', '-' */
         lex_pos = lex_pos + 1;
-        if (c == 43) val = val + pp_ev_mul();
-        else val = val - pp_ev_mul();
+        lu = pp_ev_u;
+        val = pp_ev_apply(c, val, pp_ev_mul(), lu, pp_ev_u);
         pp_skip_ws();
         c = lex_src[lex_pos];
     }
@@ -1844,14 +2233,15 @@ static long long pp_ev_add(void) {
 static long long pp_ev_shift(void) {
     long long val;
     int c;
+    int lu;
     val = pp_ev_add();
     pp_skip_ws();
     c = lex_src[lex_pos];
     while ((c == 60 && lex_src[lex_pos + 1] == 60) ||
            (c == 62 && lex_src[lex_pos + 1] == 62)) {  /* '<<', '>>' */
         lex_pos = lex_pos + 2;
-        if (c == 60) val = val << (int)pp_ev_add();
-        else val = val >> (int)pp_ev_add();
+        lu = pp_ev_u;
+        val = pp_ev_apply(c == 60 ? 108 : 114, val, pp_ev_add(), lu, pp_ev_u);
         pp_skip_ws();
         c = lex_src[lex_pos];
     }
@@ -1862,27 +2252,21 @@ static long long pp_ev_rel(void) {
     long long val;
     int c;
     int c2;
+    int op;
+    int lu;
     val = pp_ev_shift();
     pp_skip_ws();
     c = lex_src[lex_pos];
     c2 = lex_src[lex_pos + 1];
-    while ((c == 60 && c2 != 60 && c2 != 61) ||  /* '<' but not '<<' or '<=' */
-           (c == 62 && c2 != 62 && c2 != 61) ||  /* '>' but not '>>' or '>=' */
-           (c == 60 && c2 == 61) ||               /* '<=' */
-           (c == 62 && c2 == 61)) {               /* '>=' */
-        if (c == 60 && c2 == 61) {
-            lex_pos = lex_pos + 2;
-            val = val <= pp_ev_shift();
-        } else if (c == 62 && c2 == 61) {
-            lex_pos = lex_pos + 2;
-            val = val >= pp_ev_shift();
-        } else if (c == 60) {
+    while ((c == 60 && c2 != 60) || (c == 62 && c2 != 62)) {  /* < > <= >= */
+        op = c;
+        lex_pos = lex_pos + 1;
+        if (c2 == 61) {
+            op = c == 60 ? 76 : 71;
             lex_pos = lex_pos + 1;
-            val = val < pp_ev_shift();
-        } else {
-            lex_pos = lex_pos + 1;
-            val = val > pp_ev_shift();
         }
+        lu = pp_ev_u;
+        val = pp_ev_apply(op, val, pp_ev_shift(), lu, pp_ev_u);
         pp_skip_ws();
         c = lex_src[lex_pos];
         c2 = lex_src[lex_pos + 1];
@@ -1901,6 +2285,7 @@ static long long pp_ev_eq(void) {
         lex_pos = lex_pos + 2;
         if (c == 61) val = val == pp_ev_rel();
         else val = val != pp_ev_rel();
+        pp_ev_u = 0;
         pp_skip_ws();
         c = lex_src[lex_pos];
     }
@@ -1910,12 +2295,14 @@ static long long pp_ev_eq(void) {
 static long long pp_ev_bitand(void) {
     long long val;
     int c;
+    int lu;
     val = pp_ev_eq();
     pp_skip_ws();
     c = lex_src[lex_pos];
     while (c == 38 && lex_src[lex_pos + 1] != 38) {  /* '&' but not '&&' */
         lex_pos = lex_pos + 1;
-        val = val & pp_ev_eq();
+        lu = pp_ev_u;
+        val = pp_ev_apply(c, val, pp_ev_eq(), lu, pp_ev_u);
         pp_skip_ws();
         c = lex_src[lex_pos];
     }
@@ -1925,12 +2312,14 @@ static long long pp_ev_bitand(void) {
 static long long pp_ev_bitxor(void) {
     long long val;
     int c;
+    int lu;
     val = pp_ev_bitand();
     pp_skip_ws();
     c = lex_src[lex_pos];
     while (c == 94) {  /* '^' */
         lex_pos = lex_pos + 1;
-        val = val ^ pp_ev_bitand();
+        lu = pp_ev_u;
+        val = pp_ev_apply(c, val, pp_ev_bitand(), lu, pp_ev_u);
         pp_skip_ws();
         c = lex_src[lex_pos];
     }
@@ -1940,12 +2329,14 @@ static long long pp_ev_bitxor(void) {
 static long long pp_ev_bitor(void) {
     long long val;
     int c;
+    int lu;
     val = pp_ev_bitxor();
     pp_skip_ws();
     c = lex_src[lex_pos];
     while (c == 124 && lex_src[lex_pos + 1] != 124) {  /* '|' but not '||' */
         lex_pos = lex_pos + 1;
-        val = val | pp_ev_bitxor();
+        lu = pp_ev_u;
+        val = pp_ev_apply(c, val, pp_ev_bitxor(), lu, pp_ev_u);
         pp_skip_ws();
         c = lex_src[lex_pos];
     }
@@ -1961,6 +2352,7 @@ static long long pp_ev_and(void) {
     while (c == 38 && lex_src[lex_pos + 1] == 38) {  /* '&&' */
         lex_pos = lex_pos + 2;
         val = pp_ev_bitor() && val;
+        pp_ev_u = 0;
         pp_skip_ws();
         c = lex_src[lex_pos];
     }
@@ -1976,16 +2368,40 @@ static long long pp_ev_or(void) {
     while (c == 124 && lex_src[lex_pos + 1] == 124) {  /* '||' */
         lex_pos = lex_pos + 2;
         val = pp_ev_and() || val;
+        pp_ev_u = 0;
         pp_skip_ws();
         c = lex_src[lex_pos];
     }
     return val;
 }
 
+/* c ? a : b.  There was no rule for it: `(1 ? 2 : 3) == 2` came out
+ * right only because the stray tokens after the 1 were skipped.  Both
+ * arms are evaluated (a division by zero is 0 here), and the result
+ * has their common type. */
+static long long pp_ev_cond(void) {
+    long long val;
+    long long a;
+    long long b;
+    int au;
+    val = pp_ev_or();
+    pp_skip_ws();
+    if (lex_src[lex_pos] != 63) return val;   /* '?' */
+    lex_pos = lex_pos + 1;
+    a = pp_ev_cond();
+    au = pp_ev_u;
+    pp_skip_ws();
+    if (lex_src[lex_pos] == 58) lex_pos = lex_pos + 1;   /* ':' */
+    b = pp_ev_cond();
+    pp_ev_u = au || pp_ev_u;
+    if (val) return a;
+    return b;
+}
+
 static int pp_ev_expr(void) {
     long long val;
     pp_ev_ndis = 0;
-    val = pp_ev_or();
+    val = pp_ev_cond();
     pp_skip_line();
     pp_sync();
     return val != 0;

@@ -542,7 +542,10 @@ static void next(void) {
         }
         if (lex_tok == TK_HASH) { pp_directive(); continue; }
         if (pp_skip) { continue; }
-        if (lex_tok == TK_IDENT) {
+        /* offsetof is a keyword only where no macro of that name is
+         * defined: arguments are expanded as text (pp_preexpand), and a
+         * program's own offsetof must mean one thing in both. */
+        if ((lex_tok == TK_IDENT || (lex_tok == TK_OFFSETOF && lex_str[0] == 111)) && !lex_painted) {
             /* Dynamic predefs: values track position / primary source path. */
             if (strcmp(lex_str, "__LINE__") == 0) {
                 lex_tok = TK_NUM;

@@ -352,6 +352,39 @@ rewind -- they use `ps_lex_mark` now.  Probes `6.10.4-line`,
 `6.10.4-line-macro`, `6.10.8.1-file-in-header`, `6.10.8.1-file-line`,
 `6.10.3-line-after-call`.
 
+**S4, macro replacement** (2026-10-28): the rest of W15 but `##`
+forming a `##`.  Arguments are macro-expanded before substitution
+unless `#` or `##` is applied to them (6.10.3.1): `pp_preexpand` copies
+the argument past the end of the source buffer and expands it there in
+place, with whatever is disabled around the call still disabled; a name
+disabled there is *painted* -- a 0x01 byte in front of it, which the
+lexer reads as an identifier never to be replaced (6.10.3.4p2).  So
+`XSTR(VAL)` is `"42"`, `XSTR(__LINE__)` the line, and the expander's
+second list -- argument regions exempt from disabling, which stood in
+for pre-expansion -- is gone, and with it `m(m)` recursing until the
+stack ran out.  Shifting text in place exposed an off-by-one the old
+in-place path (used only under a parser peek) had too: an expansion
+whose last token was the replaced call did not move with it, and stayed
+disabled past its end.  Stringizing became `pp_stringize`: escapes
+only inside literals, a stray `\` copied bare; comments and newlines
+in a call are spaces before anything sees them (a `//` comment, its
+newline gone, had swallowed the rest of the expansion); `#__VA_ARGS__`
+spells the variable arguments.  `#if` tracks uintmax_t through the
+usual conversions (`-1 < 0u` is false) and has `?:`, which it never
+had -- the probe passed because the tokens after the condition were
+skipped.  One finding off the path: `offsetof` was a lexer keyword, so
+SQLite's own `#define offsetof` held inside a pre-expanded argument and
+nowhere else.  stddef.h now defines it as `__builtin_offsetof`, and a
+program's macro of that name is expanded.  With that, SQLite's assembly
+is byte-identical: the new expander is token-neutral on 265,876 lines.
+The difference had shown a real defect, next: `sizeof` and `offsetof`
+are `int`, not `size_t`.  Probes `6.10.1-if-unsigned`,
+`6.10.3-variadic-stringize`, `6.10.3.2-stray-backslash`,
+`6.10.3.2-stringize-comment`, `6.10.3.2-xstr`, `6.10.3.3-placemarker`,
+`6.10.3.4-painted-arg`, `6.10.3.5-example4-str-glue`,
+`6.10.3.5-example7-variadic` (WRONG to PASS), `6.10.3-empty-args`,
+`6.10.3.5-example3-rescan` (REJECTS to PASS).
+
 ## Constraints on the work
 
 - stage07 builds stage08: the new code keeps stage07's dialect (ints

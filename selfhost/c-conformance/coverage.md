@@ -33,7 +33,9 @@ clang's; typedef'd array members aligned; `__STDC_HOSTED__` 1 and
 four (pointer-to-array type names in `sizeof`, block-scope tags and
 enumerators, braced string initializers); pointers to arrays and
 `2[m][1]`; W6, constants evaluated by sema; S4, `__LINE__`, `__FILE__`, `#line`
-and diagnostics at the presumed location (218 PASS, 13 WRONG, 79 REJECTS, 81 DIAG, 135 ACCEPTS).  The tables below are the survey as
+and diagnostics at the presumed location; and W15's macro replacement --
+arguments expanded before substitution, painted names, stringizing,
+`#__VA_ARGS__`, unsigned `#if` (229 PASS, 4 WRONG, 77 REJECTS, 81 DIAG, 135 ACCEPTS).  The tables below are the survey as
 taken.
 
 The 52 WRONG probes come from about fifteen defects, listed below by

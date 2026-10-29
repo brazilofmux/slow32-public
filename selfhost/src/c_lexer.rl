@@ -150,6 +150,7 @@ static int  lex_fval_hi;   /* high 32 bits for double literals */
 static int  lex_fty;       /* TY_FLOAT or TY_DOUBLE for float literals */
 static char lex_str[LEX_STR_SZ];
 static int  lex_slen;
+static int  lex_painted;   /* 1: the identifier was painted (pp_rescan_region), never to be replaced */
 
 /* For lex_pos compatibility (parser uses it for #include save/restore) */
 static int  lex_pos;
@@ -775,6 +776,7 @@ static void lex_parse_id(char *ts, char *te) {
     memcpy(lex_str, ts, len);
     lex_str[len] = 0;
     lex_slen = len;
+    lex_painted = 0;
     kw = lex_kw_lookup(lex_str);
     if (kw != 0) lex_tok = kw;
     else lex_tok = TK_IDENT;
@@ -838,6 +840,13 @@ static void lex_parse_id(char *ts, char *te) {
         # --- Char literal ---
         "'" ( [^'\\\n] | '\\' any )* "'" => {
             lex_parse_chr(ts, te);
+            fbreak;
+        };
+
+        # --- Painted identifier: 0x01 then the name (pp_rescan_region) ---
+        0x01 [a-zA-Z_][a-zA-Z0-9_]* => {
+            lex_parse_id(ts + 1, te);
+            lex_painted = 1;
             fbreak;
         };
 

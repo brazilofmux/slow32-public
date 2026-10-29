@@ -12,4 +12,9 @@ typedef long ptrdiff_t;
 
 #define NULL 0
 
+/* The compiler's own: a program's #define offsetof is honoured too (the
+ * lexer's offsetof keyword is a fallback for code without this header),
+ * and SQLite's `#ifndef offsetof` keeps it from defining its own. */
+#define offsetof(type, member) __builtin_offsetof(type, member)
+
 #endif
