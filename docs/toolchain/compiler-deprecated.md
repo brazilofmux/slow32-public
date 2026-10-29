@@ -1,6 +1,6 @@
 # DEPRECATED - Historical Standalone Compiler
 
-The `tools/compiler-deprecated/` directory contains the original standalone SLOW-32 compiler that attempted to parse x86-targeted LLVM IR and translate it to SLOW-32 assembly.
+The original standalone SLOW-32 compiler (formerly `tools/compiler-deprecated/`, removed in cd1a122b) was the one that attempted to parse x86-targeted LLVM IR and translate it to SLOW-32 assembly.
 
 ## Why It's Deprecated
 
@@ -30,11 +30,11 @@ This led to developing a proper LLVM backend for SLOW-32, which:
 
 Use the modern compilation flow:
 ```bash
-~/llvm-project/build/bin/clang -target slow32-unknown-none -S -emit-llvm -O1 program.c -o program.ll
+~/llvm-project/build/bin/clang -target slow32-unknown-none -S -emit-llvm -O2 -Iruntime/include program.c -o program.ll
 ~/llvm-project/build/bin/llc -mtriple=slow32-unknown-none program.ll -o program.s
 ./tools/assembler/slow32asm program.s program.s32o
-./tools/linker/s32-ld -o program.s32x runtime/crt0.s32o program.s32o runtime/intrinsics.s32o
+./tools/linker/s32-ld -o program.s32x runtime/crt0.s32o program.s32o runtime/libc_debug.s32a runtime/libs32.s32a
 ./tools/emulator/slow32 program.s32x
 ```
 
-The directory is preserved for historical reference only.
+It is gone from the tree; git history has it.

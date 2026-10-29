@@ -1399,6 +1399,8 @@ Bitfields have **parse + HIR load/store** (`hl_bf_*`, `test_bitfields.c`); not �
 | **#47 headers** | Host-shaped ports | Add shims only when a real port needs them (`dlfcn`, richer `sys/*`, …) |
 | **#46** | Frame/stack limits | Ops limit when compiling huge TUs — not a missing syntax feature |
 
+2026-10-29: selfhost ISSUES-35b's residual (`#line`, nested-include `__FILE__`) closed with docs/TYPES.md S4.
+
 ### TCC probe (historical)
 
 2026-05: first non-header failure was anonymous struct/union (since fixed).

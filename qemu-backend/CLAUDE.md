@@ -61,8 +61,11 @@ make distclean
 
 ### Memory Layout
 
-- Code segment: 0x0000_0000 - 0x000F_FFFF (1MB, execute-only, W^X enforced)
-- Data segment: 0x0010_0000 - 0x0FFF_FFFF (255MB, read/write)
+- Code at 0x0, sized by the `.s32x` header (s32-ld default 1MB, raised by
+  `--code-size`); instructions are fetched only from code, which is never
+  writable; loads from code are allowed (`slow-32/docs/SPEC.md` 6.3)
+- Rodata and data follow, also sized by the header (`--rodata-size`,
+  `--data-size`)
 - Stack: starts at 0x0FFF_FFF0, grows downward
 - Optional MMIO window (linker provides `__mmio_base` symbol)
 
@@ -71,7 +74,7 @@ The complete SLOW-32 toolchain lives in `slow-32/`:
 
 - Assembler: `slow-32/tools/assembler/slow32asm`
 - Linker: `slow-32/tools/linker/s32-ld`
-- Emulators: `slow-32/tools/emulator/slow32` (reference) and `slow32-fast` (~385 MIPS)
+- Emulators: `slow-32/tools/emulator/slow32` (reference) and `slow32-fast`; measured speeds in `slow-32/docs/EMULATORS.md`
 - Runtime: `slow-32/runtime/` (crt0, libc, intrinsics)
 - LLVM backend: Built in `~/llvm-project/build/bin` (Clang with `-target slow32-unknown-none`)
 
@@ -81,11 +84,13 @@ See `slow-32/CLAUDE.md` and `slow-32/README.md` for toolchain commands.
 
 ### Current Status (see `docs/slow32-tcg/todo.md`)
 
-- ✅ Target skeleton created (`target/slow32/`)
-- ✅ Machine implementation (`hw/slow32/slow32-tcg.c`)
-- ✅ Basic TCG translation for arithmetic, loads/stores, branches
-- ⚠️ `.s32x` loader not yet implemented (currently loads raw binaries)
-- ⚠️ ISA not complete (missing some branch/comparison variants)
+- ✅ Target (`target/slow32/`) and machine (`hw/slow32/slow32-tcg.c`)
+- ✅ `.s32x` loader: `-kernel prog.s32x` (`slow32_load_s32x`)
+- ✅ Full ISA, including FP
+- ✅ MMIO service window (`target/slow32/mmio.c`)
+- ✅ Exit status from `r1` / MMIO EXIT
+- Gated by `slow-32/regression/run-differential.sh` (qemu is one of its
+  engines) and `slow-32/regression/fuzz/isafuzz.py`
 
 ### Key Files
 
@@ -131,12 +136,10 @@ cd slow-32
 # Run in reference emulator
 ./tools/emulator/slow32 hello.s32x
 
-# Run in QEMU (once loader is implemented)
+# Run in QEMU
 cd ..
-./build/qemu-system-slow32 -M slow32 -kernel slow-32/hello.s32x -nographic
+./build/qemu-system-slow32 -machine slow32-tcg -nographic -monitor none -kernel slow-32/hello.s32x
 ```
-
-Currently QEMU expects raw binaries. The `.s32x` loader implementation is pending in Phase 3 of the TODO.
 
 ## Testing
 
@@ -173,7 +176,7 @@ cd regression
 ```bash
 # Run same binary in both and compare traces
 slow-32/tools/emulator/slow32 -t program.s32x > ref_trace.txt
-./build/qemu-system-slow32 -M slow32 -kernel program.s32x -d in_asm,exec > qemu_trace.txt
+./build/qemu-system-slow32 -machine slow32-tcg -nographic -monitor none -kernel program.s32x -d in_asm,exec > qemu_trace.txt
 diff ref_trace.txt qemu_trace.txt
 ```
 
@@ -218,7 +221,7 @@ Reference: `slow-32/tools/emulator/s32x_loader.h`
 
 ### Adding New TCG Instructions
 
-1. Check opcode definition in `slow-32/docs/INSTRUCTION-SET.md`
+1. Check opcode definition in `slow-32/docs/SPEC.md` (normative)
 2. Find reference implementation in `slow-32/tools/emulator/slow32.c`
 3. Add opcode enum constant to `target/slow32/translate.c`
 4. Implement decoder case in `slow32_tr_translate_insn()`
@@ -234,9 +237,9 @@ For operations too complex to inline (e.g., MUL/DIV, MMIO):
 3. Call from `translate.c`: `gen_helper_*()`
 4. Helper has access to full CPU state (`CPUSlow32State *env`)
 
-### Implementing the .s32x Loader
+### The .s32x Loader
 
-The loader needs to:
+The loader is `slow32_load_s32x` in `hw/slow32/slow32-tcg.c`. Its steps:
 
 1. Read `.s32x` header (magic bytes, section sizes, entry point)
 2. Allocate QEMU MemoryRegions for code/data/stack
@@ -270,15 +273,14 @@ See `slow-32/tools/emulator/s32x_loader.h` for format details.
 
 ### ISA Documentation
 
-- `slow-32/docs/INSTRUCTION-SET.md` - Complete instruction reference
+- `slow-32/docs/SPEC.md` - Normative machine specification (ISA, `.s32x`, MMIO)
+- `slow-32/docs/INSTRUCTION-SET.md` - Toolchain-facing instruction summary
 - `slow-32/docs/file-formats.md` - Object and executable format specs
 - `slow-32/tools/emulator/slow32.c` - Executable specification (shows exact semantics)
 
 ### Performance Notes
 
-- Reference interpreter: ~45 MIPS (`slow32`)
-- Optimized interpreter: ~385 MIPS (`slow32-fast`)
-- TCG backend should eventually exceed interpreter performance through JIT compilation
+- Measured speeds of all five engines: `slow-32/docs/EMULATORS.md`
 - Instruction timing: most ops 1 cycle, memory 3 cycles, MUL 32 cycles, DIV 64 cycles
 
 ## External Dependencies

@@ -34,7 +34,8 @@ Open defects and their history are kept in `runtime/ISSUES.md`.
 ### Standard I/O (stdio.h) - WORKING ✅
 
 - `printf` family with integer and floating-point conversions (see [PRINTF_STATUS.md](PRINTF_STATUS.md))
-- `scanf`, `fscanf`, `sscanf`, `vsscanf`
+- `sscanf`, `vsscanf` (MMIO build); `scanf` and `fscanf` are declared but
+  not implemented
 - `fopen`, `fclose`, `fread`, `fwrite`, `fdopen`, `tmpfile`, `getline`, `setvbuf` (honours its size) - buffered, MMIO-based
 - `fmemopen`, `open_memstream`
 - `stat`, `fstat`, directories (`dirent.h`) - MMIO-based

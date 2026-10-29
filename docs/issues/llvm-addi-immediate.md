@@ -1,5 +1,8 @@
 # LLVM Backend Bug: ADDI Immediate Sign Extension
 
+**Status**: Resolved -- immediates print sign-extended (`x / 10` and
+`x - 819` both give `addi ..., -819`; checked 2026-10-29).
+
 ## Problem Summary
 The SLOW32 LLVM backend is incorrectly printing immediate values for ADDI instructions. It's printing the raw 12-bit immediate value without sign-extending negative values, causing incorrect assembly output.
 

@@ -21,13 +21,11 @@ make
 ./tools/linker/s32-ld -o program.s32x runtime/crt0.s32o program.s32o runtime/libc_debug.s32a runtime/libs32.s32a
 ./tools/emulator/slow32 program.s32x
 
-# Alternative: Standalone compiler (DEPRECATED - DO NOT USE)
-# The standalone compiler in compiler/ is deprecated and should not be used.
-# It cannot properly handle varargs and other complex C features.
-# Always use the native LLVM backend method above.
+# The other C compiler is stage08 cc, the self-hosted one (selfhost/,
+# a C11 compiler; the kit runs it on the emulator -- see slow32:kit below).
 
 # Debug mode
-./tools/emulator/slow32 program.s32x -s  # step through each instruction
+./tools/emulator/slow32 -s program.s32x  # step through each instruction
 ./tools/emulator/slow32 -t program.s32x  # trace every instruction
 ./tools/emulator/slow32 -r program.s32x  # show register changes
 ./tools/emulator/slow32 -c 1000 program.s32x  # limit to 1000 cycles
@@ -132,9 +130,10 @@ substituted 1:1.
   qemu-system-slow32) + `s32run`. ~38 MB. No compilers.
 - `slow32:base` (FROM emulator): + slow32asm, s32-ld, s32-ar, slow32dump,
   slow32dis, and the runtime archives/headers under /opt/slow32. Everything
-  language-independent; per-language images (COBOL 85, Fortran 77, Forth)
+  language-independent; per-language images (COBOL, Fortran 77, Forth)
   build FROM this, not from the LLVM image.
-- `slow32:toolchain` (FROM base): + LLVM 22/clang, libc++/libc++abi
+- `slow32:toolchain` (FROM base): + LLVM/clang (upstream main at the pinned
+  commit; LLVM 24 since the 2026-10-20 re-pin), libc++/libc++abi
   (/opt/slow32/libcxx) and the `s32c++` driver (`s32c++ [--locales]
   prog.cpp -o prog.s32x`; a 16 MB heap unless `--heap-size` says
   otherwise -- s32-ld's own default is 1 MB), Free Pascal `ppcs32`, cc-x64/cc-a64. The big
@@ -173,10 +172,10 @@ scripts/build-kit-image.sh   # slow32:kit, context = staged ~/s32x, gated
 # Run programs with the emulator container (easy wrapper script;
 # auto-detects podman/docker and falls back to the legacy
 # slow32-emulator image name if that's what is present)
-./scripts/run-in-docker.sh program.s32x              # Use default slow32 emulator
+./scripts/run-in-docker.sh program.s32x              # Default engine (slow32-dbt)
 ./scripts/run-in-docker.sh --fast program.s32x      # Use optimized slow32-fast
 ./scripts/run-in-docker.sh --qemu program.s32x      # Use QEMU TCG emulator
-./scripts/run-in-docker.sh -t program.s32x          # Trace mode (C++ emulators only)
+./scripts/run-in-docker.sh -t program.s32x          # Trace mode (reference interpreter slow32 only)
 ./scripts/run-in-docker.sh --help                   # Show all options
 
 # Manual commands (if you prefer)
@@ -197,7 +196,7 @@ podman run --rm -v $(pwd):/workspace slow32:toolchain bash -c "cd /workspace && 
 ## Cross-Compiler (stage08-cross-x64) — Build, Test, Benchmark
 
 The cross-compiler (`selfhost/stage08-cross-x64/`) compiles C to native x86-64 ELF.
-It pulls its C frontend (parser/sema/HIR/etc.) via symlinks from `../stage08/`.
+It pulls its C frontend (parser/sema/HIR/etc.) via symlinks into `../src/` (two HIR headers come from `../stage08/`).
 It has its own Makefile. The HIR pipeline is the default since GitHub issue 81 (`--hir` is accepted and is a no-op); `--tree` selects the old tree-walk codegen, which the a64 Makefile still uses as a reference in its plain smoke tests and which is known to miscompile `*p++`.
 
 ```bash
@@ -208,7 +207,7 @@ cd selfhost/stage08-cross-x64
 # it had silently stopped building against the selfhost <ucontext.h>)
 make
 
-# Run all tests (23 tests)
+# Run all tests (27 tests)
 make test
 
 # Benchmark: compare cross-compiled emulator vs GCC-compiled emulator
@@ -221,7 +220,7 @@ make
 
 # Manual compilation (if needed):
 out/cc-x64 --hir -c somefile.c -o somefile.o     # compile to .o
-gcc -nostdlib -static -o binary out/crt0.o somefile.o out/libc_x64.a  # link
+out/ld-x64 -o binary out/crt0.o somefile.o out/libc_x64.a  # link
 
 # Compare codegen quality (inspect hot function):
 # NOTE: disassemble the .o — the linked out/s32fast-hir has no section headers
@@ -260,7 +259,7 @@ objdump -d tools/emulator/slow32-fast | sed -n '/<op_add>:/,/ret/p'  # gcc code
 
 **Bootstrap chain**: host GCC compiles `cc-x64.c` → `out/cc-x64` (the cross-compiler binary).
 Then `cc-x64 --hir` compiles everything else (libc, emulator, tests).
-`out/crt0.o` and `out/libc_x64.a` are pre-built; `make libc` rebuilds them.
+`out/crt0.o` and `out/libc_x64.a` are built by cc-x64 as part of `make`; `make libc` rebuilds just them.
 
 **Architecture**: `cc-x64.c` `#include`s all headers — the compiler is a single translation unit.
 Key files for codegen performance:
@@ -279,7 +278,7 @@ issue 81); nothing should ask for it except the a64 Makefile's plain smoke rules
 ```bash
 # After a stage08 frontend change: host-compile the cross drivers
 # (parser.h is shared by symlink; clang rejects implicit statics that
-# s12cc accepts — GitHub issue 71).
+# stage08 cc accepts — GitHub issue 71).
 bash selfhost/check-host-frontend.sh
 
 # stage08's own suite, INCLUDING the self-rebuild gate (gen1 -> gen2 ->
@@ -338,8 +337,8 @@ cd ~/slow-32/regression && ./run-stage07-differential.sh
 
 # And a fifth, the one that matters for stage08 FRONT-END changes: build
 # pristine SQLite 3.51.0 (265,876 lines) with clang and with stage08 and
-# require the two programs to print the SAME BYTES. The small suite is 60
-# tiny programs and stays green through defects the amalgamation dies on --
+# require the two programs to print the SAME BYTES. The small suite was 60
+# tiny programs then and stayed green through defects the amalgamation dies on --
 # the GitHub-issue-39 batch (Sep 2026) made `#elif !defined(X) /* comment */`
 # select the right branch at last, which changed which SQLITE_INT_TO_PTR
 # spelling SQLite uses, and sqlite3.c stopped compiling with run-tests.sh
@@ -356,6 +355,23 @@ cd ~/slow-32/sqlite && ./check-stage08.sh
 # strftime, freopen were wrong in runtime/ with the two in agreement).
 # Arguments name tests; none runs all.  ~1 minute.
 cd ~/slow-32/regression && ./run-libc-differential.sh
+
+# The C11 conformance probes, after any stage08 FRONT-END change, beside
+# check-stage08.sh: every probe in selfhost/c-conformance/probes against
+# its recorded verdict (verdicts.txt; clang -std=c11 as the oracle).  It
+# fails when a PASS or DIAG probe becomes anything else, and names those
+# that got better (record them with --update and commit verdicts.txt).
+cd ~/slow-32/selfhost/c-conformance && ./probe.sh --check
+
+# C++ on libc++/libc++abi, every engine, -O0 and -O2: after a change to the
+# runtime's C++ ABI (libs32cxx), exception handling in the backend, or libc
+# pieces C++ leans on.  SKIPs without the libc++ install build-libcxx.sh makes.
+cd ~/slow-32/regression && ./run-libcxx.sh
+
+# The host assembler and linker against the self-hosted ones: the same
+# object bytes from both assemblers, the same loaded image and behaviour
+# from both linkers.  After touching either side of either tool.
+cd ~/slow-32/regression && ./run-as-differential.sh && ./run-ld-differential.sh
 
 # And another axis: random programs.  cfuzz.py generates
 # deterministic C with no undefined behaviour (unsigned arithmetic, masked
@@ -407,7 +423,7 @@ cd ~/slow-32/forth && ./tests/run-tests.sh && ./tests/run-forth2012.sh
 ./tools/utilities/slow32dis file.s32x [start] [end]  # Disassembler
 
 # Performance test
-time ./tools/emulator/slow32 program.s32x  # ~350M inst/sec
+time ./tools/emulator/slow32 program.s32x  # ~240 MIPS (M5 Max)
 time ./tools/emulator/slow32-fast program.s32x  # Optimized version
 ```
 
@@ -472,16 +488,17 @@ writing to.
   any checkout. Deep debugging narratives belong here, not in a tracker —
   `eb49434c` was cracked using a lead recorded in `tools/dbt/ISSUES.md`.
 
-Do **not** bulk-migrate the in-tree logs into GitHub issues. ~285 numbered
-items across ~3,800 lines, many of them defensive code-review suggestions
+Do **not** bulk-migrate the in-tree logs into GitHub issues. Hundreds of numbered
+items across ~13,600 lines, many of them defensive code-review suggestions
 rather than actionable bugs; filing them would destroy the tracker's signal.
 Promote items one at a time, on the criteria above.
 
 **CRITICAL — citing an in-tree item: never write a bare `#N`.**
 The two numbering spaces overlap. Commit subjects already cite in-tree item
 numbers across the range #1–#60 (48 commits, 36 distinct numbers, mostly
-`selfhost/ISSUES.md`), while the GitHub counter is still climbing through
-that same range from single digits. Consequences:
+`selfhost/ISSUES.md`), and the GitHub counter has since passed through that
+whole range (it is past 120), so each such bare `#N` names a real, unrelated
+GitHub issue. Consequences:
 
 - GitHub resolves `#N` in a commit message at *render* time, so every new
   GitHub issue retroactively repoints an old in-tree reference at something

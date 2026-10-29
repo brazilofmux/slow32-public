@@ -1,5 +1,9 @@
 # SLOW-32 DBT Optimization Roadmap
 
+> Status 2026-10-29: historical (August 2026, DBT Stage 4).  Current
+> engine numbers are in docs/EMULATORS.md; open DBT items are in
+> tools/dbt/ISSUES.md.
+
 This document tracks DBT-side opportunities, roughly priority-ordered. LLVM
 already handles most low-level codegen work, so we only pursue items that
 measurably reduce DBT overhead or correct DBT-specific behavior.

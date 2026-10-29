@@ -1,5 +1,7 @@
 # Stage 3: Forth-Hosted Minimal Linker
 
+> **Status:** legacy V1/V2 playbook (2026-02). The V2 stage numbers and the `selfhost/stageN/` paths below no longer exist; this work now lives in `selfhost/stage00` and `selfhost/stage01` (see [BOOTSTRAP.md](BOOTSTRAP.md) and the stage READMEs). Kept for its design rationale.
+
 > **V2 cross-reference:** This is **Stage 3** in [BOOTSTRAP.md](BOOTSTRAP.md) (Layer B: Forth Self-Hosting). The linker has been merged into **Stage 1** (`selfhost/stage01/link.fth`).
 
 ## Goal

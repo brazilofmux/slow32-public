@@ -82,7 +82,7 @@ Do not reopen lightly. Full sentences live in the cited docs.
 | One instance = one thread of control. A host interrupt becomes a queue entry, never a vector. Concurrency is **between** instances. | [dpc.md](dpc.md) |
 
 Level 3 is partly landed: `EXEC` (COMMAND.COM, BBS doors), IPv4 TCP
-hose (`net/`, opcodes `0x40–0x48`). Level 1’s timer→DPC path, posted
+hose (`net/`, opcodes `0x40–0x4B`). Level 1’s timer→DPC path, posted
 read (`POST_READ`), and wait-for-any on `OP_POLL` are landed. Level 2
 is named in `dpc.md` as the second step and is not built (`mmio_state`
 is still global — [AUDIT-2026-08.md](../AUDIT-2026-08.md)). Level 4 is

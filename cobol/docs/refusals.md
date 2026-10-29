@@ -5,8 +5,8 @@ A refusal says one of four things, and the message should say which:
 1. **The standard forbids it.** The message cites the rule and reads
    as an error in the program ("... shall not be reference-modified
    (2023 14.9.43.3 rule 4)"), not as a promise.
-2. **A gap in an edition this compiler targets** (-std=85 or
-   -std=2002). The message says "not implemented".
+2. **A gap in an edition this compiler targets** (-std=85, 2002,
+   2014 or 2023). The message says "not implemented".
 3. **Out of scope, by ruling.** Object orientation, the Communication
    module, the Debug module and VALIDATE. The message names the ruling.
    (The functions of later editions were here until 2026-10-06; the
@@ -59,12 +59,18 @@ COBOL 2002/2023 (Stage B):
 - compiler directives other than >>SOURCE, >>TURN, >>DEFINE, >>IF,
   >>EVALUATE, >>CALL-CONVENTION, >>LEAP-SECOND, >>LISTING, >>PAGE,
   >>PROPAGATE (the last eight since 2026-10-06, docs/conformance/directives.md)
-  and >>REF-MOD-ZERO-LENGTH (2026-10-07, queue item 24, under -std=2014):
-  that is 2023's COBOL-WORDS, DISPLAY, FLAG-14, PUSH and POP; and boolean
-  expressions in a directive;
+  and >>REF-MOD-ZERO-LENGTH (2026-10-07, queue item 24, under -std=2014),
+  and 2023's COBOL-WORDS, DISPLAY, FLAG-14, PUSH and POP (2026-10-07,
+  queue item 34): what is left is boolean expressions in a directive and
+  the rule checks directives.md marks **gap**;
 - exceptions: the conditions docs/conformance/exceptions.md marks
-  **gap** -- EC-RANGE-INVALID, EC-I-O-EOP and -LINAGE, EC-FLOW-GLOBAL-*,
-  EC-SCREEN-*, and those of features not built (USE AFTER EXCEPTION
+  **gap** -- EC-BOUND-PTR, EC-RANGE-PTR and EC-SIZE-ADDRESS (pointer
+  arithmetic unchecked), EC-DATA-NOT-FINITE and EC-DATA-OVERFLOW,
+  EC-REPORT-SUM-SIZE, EC-SCREEN-ITEM-TRUNCATED, and parts of
+  EC-REPORT-PAGE-LIMIT and EC-SIZE-UNDERFLOW (EC-RANGE-INVALID,
+  EC-I-O-EOP and -LINAGE and EC-FLOW-GLOBAL-* came 2026-10-08, queue
+  item 4; the other EC-SCREEN conditions 2026-10-07, item 38), and those of features not
+  built (USE AFTER EXCEPTION
   CONDITION ... FILE and WHEN EXCEPTION with a file-name or open mode
   since 2026-10-06, fourteen more conditions raised the same day; ON EXCEPTION on ACCEPT FROM
   ARGUMENT-NUMBER, ARGUMENT-VALUE and COMMAND-LINE is not a gap of the
@@ -77,12 +83,15 @@ COBOL 2002/2023 (Stage B):
   literal length is passed since 2026-10-06, docs/conformance/refmod.md);
 - a user-defined function in the places listed by g_ufn_forbid;
 - in the screen section (the list is docs/conformance/screen.md's
-  "Open"): GLOBAL; colours, LINE and COLUMN from an identifier; MINUS;
-  LINE and COLUMN phrases on ACCEPT and DISPLAY of a screen; ON
-  EXCEPTION on DISPLAY of a screen; OCCURS on a group or over FROM, TO,
-  USING items; FROM with TO in one entry; BLANK LINE; JUSTIFIED and
-  USAGE NATIONAL on national pictures; EC-SCREEN (above).  (CURSOR IS, SIGN, JUSTIFIED, status 8000 and ON
-  EXCEPTION landed 2026-10-04, ISSUES-125.)  ACCEPT FROM the remaining
+  "Open"): OCCURS on a group, and an identifier for LINE, COLUMN or a
+  colour under OCCURS; combined display attributes; boolean screen
+  input; JUSTIFIED and USAGE NATIONAL on national pictures;
+  EC-SCREEN-ITEM-TRUNCATED; a GLOBAL screen's item with a run-time
+  address.  (CURSOR IS, SIGN, JUSTIFIED, status 8000 and ON
+  EXCEPTION landed 2026-10-04, ISSUES-125; GLOBAL, identifiers for
+  LINE, COLUMN and the colours, MINUS, the AT phrase, DISPLAY's ON
+  EXCEPTION, OCCURS over FROM, TO and USING, FROM with TO and BLANK
+  LINE 2026-10-07, queue item 38.)  ACCEPT FROM the remaining
   sources; the SPECIAL-NAMES clauses not yet taken;
 - bits: a bit table inside an occurring bit group (two bit
   dimensions); a bit item's part at a computed position in a SCREEN

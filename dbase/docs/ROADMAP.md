@@ -7,7 +7,9 @@ committable and testable.
 the record of that plan; what came after it (memo fields, BROWSE/EDIT,
 menus, arrays, CSV import and export, about seventy more functions; 108
 tests by 2026-10-28) is summarized in [STATUS.md](STATUS.md), and open
-work is in `../ISSUES.md`.
+work is in `../ISSUES.md`.  One exception to "done": 4b-4d (`JOIN WITH`,
+`UPDATE ON`, `TOTAL ON`) are in the verb table but print "not
+implemented" (`src/command.c`).
 
 ## Phase 1: Teacher's Pet Unblocking --- DONE
 
@@ -293,10 +295,10 @@ hitting an unimplemented feature?
 
 | Phase | What | Why | When |
 |-------|------|-----|------|
-| 1 | Unblocking | sane.prg must parse cleanly | Next |
-| 2 | Screen/output | Menus and reports must display | After 1 |
-| 3 | Functions | IIF, FILE, DTOS commonly needed | After 2 |
-| 4 | Data commands | SET RELATION, JOIN (less common) | After 3 |
+| 1 | Unblocking | sane.prg must parse cleanly | **DONE** |
+| 2 | Screen/output | Menus and reports must display | **DONE** |
+| 3 | Functions | IIF, FILE, DTOS commonly needed | **DONE** |
+| 4 | Data commands | SET RELATION, JOIN (less common) | **DONE** (JOIN/UPDATE/TOTAL stubbed) |
 | 5 | Error handling | ON ERROR for robustness | **DONE** |
 | 6 | Reports | REPORT FORM (binary format) | **DONE** |
 | 7 | B+ tree | Incremental index maintenance | **DONE** |

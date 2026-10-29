@@ -7,7 +7,7 @@
 - **Key Characteristics:** 
     - 32-bit fixed-width instructions.
     - No condition codes (comparisons return 0/1).
-    - W^X memory protection (Execute-only code).
+    - W^X memory protection (code is not writable; instructions are fetched only from code, which loads may read).
     - Single-ported memory (deliberately slow).
     - Two I/O modes: `DEBUG` instruction (char output) and MMIO ring buffer.
 
@@ -93,7 +93,8 @@ SLOW32_HOME=$PWD ~/llvm-project/build/bin/clang --target=slow32-unknown-none -O2
 ## Development Conventions
 
 -   **Code Style:** Standard C style (4-space indent, snake_case).
--   **Commits:** Imperative mood, clear descriptions.
+-   **Commits:** a component prefix and a plain statement of what changed (`LLVM backend: the constant 0 is r0`). Cite in-tree issue items as `DBT-14` or `selfhost ISSUES-48`, never a bare `#N` (that is reserved for GitHub issues, and `fixes #N` closes one).
+-   **Private data:** Nothing from the user's private ledger (`~/majesty`: ledger codes and the report names built on them, account numbers, amounts, payees) and no private repository names go into files or commit messages: this tree is copied to a public mirror. See `CLAUDE.md`, "Public mirror".
 -   **Testing:** Always run regression tests after touching `llvm-backend` or `runtime`.
 -   **I/O:** Default is `DEBUG` instruction (simple). Use `LIBC=mmio` for MMIO-based high-performance I/O.
 
@@ -107,10 +108,7 @@ SLOW32_HOME=$PWD ~/llvm-project/build/bin/clang --target=slow32-unknown-none -O2
 ## Gemini Added Memories
 
 - The SLOW-32 assembler syntax for stores is `stw base+offset, src` (e.g. `stw sp+4, r3`) and for loads `ldw rd, base+offset`, which differs from the standard RISC-V `sw src, offset(base)`.
-- The slow32asm assembler seems to crash (segfault) when encountering .byte sequences for strings that contain certain characters or in specific contexts, or perhaps it's a general issue with my extensive editing of the assembly file. It crashed after I replaced .ascii strings with .byte sequences.
-- The `rs` directory contains a native C++ Reed-Solomon toolchain that is for reference only. It is ignored by `.gitignore` and is not a primary part of the project's build process.
 - When linking with `libc_mmio.s32a`, the linker (`s32-ld`) requires the `--mmio <SIZE>` flag (e.g., `--mmio 0x10000`) to define the MMIO memory space, otherwise execution may fail with a memory fault.
-- Fixed stack overflow risks in Regal by moving large `EditJournal` structs to static memory and adding recursion depth limits to JSON and expression parsers.
 - The `malloc` implementation in `runtime/malloc.c` has been upgraded to use boundary tags and a doubly-linked free list, enabling O(1) free and coalescing. A regression test `regression/tests/stdlib-malloc` has been added.
 - The `malloc` implementation has been further upgraded to use Segregated Free Lists (8 bins) with Sentinel Nodes, significantly optimizing small allocations. This builds upon the previous boundary tag implementation.
 - `__heap_start` is 4KB aligned by the linker (`s32-ld`), satisfying the 8-byte alignment requirement for `malloc`.
@@ -120,4 +118,4 @@ SLOW32_HOME=$PWD ~/llvm-project/build/bin/clang --target=slow32-unknown-none -O2
     - **Buffered I/O:** `stdio.c` now implements full buffering (`_IOFBF`) for files and line buffering (`_IOLBF`) for `stdout`. `stderr` remains unbuffered.
     - **Performance:** `fwrite` chunks large writes into `S32_MMIO_DATA_CAPACITY` blocks and uses `S32_MMIO_OP_WRITE` for all streams, significantly improving `printf` and bulk write performance.
     - **Safety:** `putint` stack corruption fixed (buffer moved to valid stack frame).
-    - **Completeness:** Added `stdlib` (abs, atoi, rand) and `time` (gmtime, mktime) functions in `runtime/stdlib_missing.c` and `runtime/time_extra.c`.
+    - **Completeness:** Added `stdlib` (abs, atoi, rand) and `time` (gmtime, mktime) functions (now in `runtime/stdlib_utils.c` and `runtime/time_extra.c`).

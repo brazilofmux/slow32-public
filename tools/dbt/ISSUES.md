@@ -42,6 +42,9 @@ The generated code masks the PC hash with `lookup_mask`.
 
 - **Problem**: For large programs or long-running sessions with many unique code paths, this buffer will fill up. There is no logic to flush the cache or grow the buffer.
 - **Recommendation**: Implement a code buffer management strategy (e.g., ring buffer, flush-on-full, or `mremap` growth).
+- **Status (2026-10-29)**: Resolved.  `CODE_BUFFER_SIZE` is 32MB
+  (`block_cache.h`), flushed when full (`cache_flush`, `cache_needs_flush`
+  in `block_cache.c`).
 
 ### 7. Global `mmio_state` Limits Concurrency
 `mmio_state` is a static global variable in `dbt.c`.
@@ -54,6 +57,8 @@ The profiling code uses inline assembly `rdtsc`, which is x86-specific.
 
 - **Problem**: The DBT won't compile on ARM64 (e.g., Apple Silicon) or other hosts.
 - **Recommendation**: Use `clock_gettime` or compiler intrinsics for portable high-resolution timing.
+- **Status (2026-10-29)**: Resolved.  On aarch64 `rdtsc()` reads
+  `cntvct_el0` (`dbt.c`); the DBT builds and runs on Apple Silicon.
 
 ---
 

@@ -1,5 +1,11 @@
 # COBOL 85 on SLOW-32
 
+> Status 2026-10-29: historical.  Written before the compiler existed.
+> `s32-cobc` now runs all 348 CCVS-85 programs and implements COBOL
+> through 2023 behind `-std` (85 is the default); current state is in
+> [cobol/README.md](../../cobol/README.md).  The rulings below are the
+> 2026-08 originals.
+
 Status: **specifications only** (2026-08-29). No compiler yet.
 
 The documents live in [`cobol/`](../../cobol/README.md), next to

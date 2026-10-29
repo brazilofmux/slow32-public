@@ -1,5 +1,10 @@
 # Linker Memory Layout Configuration Options
 
+> Status 2026-10-29: plan from 2025-09. Phase 1 shipped (`--code-size`,
+> `--rodata-size`, `--data-size`, `--stack-size`, `--heap-size`,
+> `--print-map`, `--pack-sections` as the default, `--compact`); see
+> `s32-ld --help`. Phases 2 and 3 are not done.
+
 ## Current State
 The linker currently has hardcoded memory layout with limited options:
 
@@ -72,10 +77,10 @@ SECTIONS {
 
 ### Phase 1 (Immediate)
 
-- [ ] --stack-size option
-- [ ] --code-size, --rodata-size, --data-size options
-- [ ] --print-map to generate .map file
-- [ ] --pack-sections for tighter packing
+- [x] --stack-size option
+- [x] --code-size, --rodata-size, --data-size options
+- [x] --print-map to generate .map file
+- [x] --pack-sections for tighter packing
 
 ### Phase 2 (Next)
 

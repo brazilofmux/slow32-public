@@ -1,5 +1,10 @@
 # SLOW BASIC — Implementation Plan
 
+> Status 2026-10-29: all seven stages are implemented and the suite passes
+> 45/45.  The plan below is kept as the record; since it was written,
+> `COLOR`, `LOCATE` and the Stage 7 graphics have landed (`SOUND` parses
+> as a no-op).
+
 ## Context
 
 I wanted a custom BASIC that feels like the BASICs they grew up with (CoCo, GWBASIC, QuickBASIC, Business BASIC): recursive-descent parser, no line numbers, labels, real SUB/FUNCTION, optional LET, DATA/READ, stronger typing. SLOW-32 can't do SOUND/COLOR/DRAW, but it has full file I/O, floating-point, and plenty of memory for an interpreter.
@@ -14,7 +19,7 @@ I wanted a custom BASIC that feels like the BASICs they grew up with (CoCo, GWBA
 - **Types**: INTEGER (32-bit), DOUBLE (64-bit IEEE float), STRING (heap-allocated). Type suffixes: `%`=int, `#`=double, `$`=string. Bare names default to double.
 - **Strings**: Reference-counted. No circular refs possible in BASIC, so refcount is sufficient — no mark-sweep needed.
 - **Scope**: Local by default in SUB/FUNCTION. `SHARED` keyword to access globals. Variables auto-create with default values (0 or "").
-- **Errors**: No setjmp/longjmp on SLOW-32. Every eval function returns an error code, checked via `EVAL_CHECK()` macro.
+- **Errors**: Every eval function returns an error code, checked via `EVAL_CHECK()` macro (chosen when SLOW-32 had no setjmp/longjmp; the runtime has them now).
 - **Build**: Per-file compilation at `-O1` (avoids LLC hangs), linked with `libc_mmio.s32a` + `--mmio 64K`.
 
 ## Source Layout
@@ -28,13 +33,13 @@ sbasic/
     parser.h/c    Recursive-descent parser
     value.h/c     Value types, string refcounting, type coercion
     env.h/c       Scope chain (local/global/shared lookup)
-    eval.h/c      Tree-walk evaluator
+    eval.h/c      Tree-walk evaluator (also PRINT USING, TYPE records)
     builtin.h/c   Built-in functions (ABS, LEN, LEFT$, etc.)
     error.h/c     Error codes, formatting, line numbers
     array.h/c     Arrays (Stage 3)
-    format.h/c    PRINT USING engine (Stage 4)
     fileio.h/c    File I/O handles (Stage 5)
-    type.h/c      TYPE records (Stage 6)
+    graphics.h/c  GW-BASIC graphics over the tube (Stage 7)
+    terminal.h/c  term.h screen wrapper (CLS, LOCATE, COLOR)
   build.sh        Auto-discovers src/*.c, compiles each, links
   tests/          Test .bas programs + .expected output per stage
 ```
@@ -109,9 +114,9 @@ Structured programming: real procedures, richer control flow.
 
 **String functions**: `INSTR UCASE$ LCASE$ LTRIM$ RTRIM$ TRIM$ SPACE$ STRING$ HEX$ OCT$ REPLACE$`
 
-**Math functions**: `SIN COS TAN ATN ATN2 EXP LOG LOG10 FIX CINT CDBL RND RANDOMIZE` (all trig/exp/log use inline Taylor series — no libc math dependency)
+**Math functions**: `SIN COS TAN ATN ATN2 EXP LOG LOG10 FIX CINT CDBL RND RANDOMIZE` (trig/exp/log call libm `<math.h>`)
 
-**Formatting**: `PRINT USING "format"; expr; expr` with `# . + - $$ ** ^^^^` for numbers, `\ \ ! &` for strings. Custom format engine avoids broken `%*.*f` varargs on SLOW-32.
+**Formatting**: `PRINT USING "format"; expr; expr` with `# . + - $$ ** ^^^^` for numbers, `\ \ ! &` for strings. Custom format engine (in eval.c; written when `%*.*f` varargs were broken on SLOW-32).
 
 **Other**: `TAB(n) SPC(n) TIMER SWAP`
 
@@ -195,6 +200,8 @@ across slow32 / slow32-fast / slow32-dbt via S32_TUBE_DUMP.
 | 7 | ~600 | ~13,200 | Graphics on the tube ✅ |
 
 ## Verification
+
+Current suite: `bash tests/run-tests.sh` passes 45/45 (2026-10-29).
 
 After each stage:
 

@@ -1,8 +1,10 @@
 # Types and the attribute grammar (stage08 front end)
 
-Status: **plan**, 2026-10-28.  Step S1 is next.  The C11 survey
-(`selfhost/c-conformance/`) is the measure of progress; its
-`probe.sh --check` gates every step.
+Status: **done**, 2026-10-29.  Steps S1-S6 landed 2026-10-28 and 29,
+and variable length arrays (SLOW-32 only) followed 2026-10-29.  The C11
+survey (`selfhost/c-conformance/`) measured the progress, and its
+`probe.sh --check` still gates every change.  The plan below is kept
+as written; "Progress and findings" is the record.
 
 ## Why
 

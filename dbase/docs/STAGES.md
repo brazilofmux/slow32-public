@@ -5,35 +5,38 @@ against the MMIO runtime. Target: run real 1986 dBase III programs.
 
 ## Current Status
 
-**44/44 tests passing.** Core engine is solid. See [STATUS.md](STATUS.md)
-for the complete feature inventory.
+**108/108 tests passing** (`tests/run-tests.sh`, 2026-10-29).  See
+[STATUS.md](STATUS.md) for the complete feature inventory and
+`../ISSUES.md` for open work.
 
 What works today:
 
-- DBF file format (CREATE, USE, read/write records)
-- 75+ commands (navigation, editing, display, file ops, bulk ops)
-- 39 built-in functions (string, numeric, date, status)
-- 13 SET options
-- Expression evaluator with lexer-based recursive descent
+- DBF file format (CREATE, USE, read/write records), memo fields (.DBT)
+- About 80 commands in the verb table (navigation, editing, display,
+  file ops, bulk ops); `JOIN WITH`, `UPDATE ON` and `TOTAL ON` are
+  recognised but not implemented
+- 124 built-in functions (string, numeric, date, status, arrays,
+  low-level files, work areas)
+- SET options (the list is in STATUS.md)
+- Expression evaluator with lexer-based recursive descent, compiled to
+  ASTs
 - 10 work areas with cross-area field references
-- Memory variables with PRIVATE/PUBLIC scoping
-- Programming language (PRG files, IF/ELSE, DO WHILE, DO CASE, FOR/NEXT)
+- Memory variables with PRIVATE/PUBLIC/LOCAL scoping, arrays
+- Programming language (PRG files, IF/ELSE, DO WHILE, DO CASE, FOR/NEXT,
+  SCAN, TEXT)
 - Procedures and user-defined FUNCTION with parameters
-- Screen I/O (@SAY, @GET, READ, CLEAR, box drawing)
-- Index files (INDEX ON, SEEK, FIND, multi-index, SET ORDER)
+- Screen I/O (@SAY, @GET, READ, CLEAR, box drawing), BROWSE/EDIT, menus
+- Index files (B+ tree NDX: INDEX ON, SEEK, FIND, multi-index, SET ORDER)
+- Report and label generators (REPORT FORM, LABEL FORM)
 - Macro substitution (&varname)
 - SET FILTER, SET PROCEDURE, scope clauses
 
 ## What's Next
 
-See [ROADMAP.md](ROADMAP.md) for the prioritized work plan.
-See [TEACHERS-PET-ANALYSIS.md](TEACHERS-PET-ANALYSIS.md) for the
-feature gap analysis against the akron/ legacy application.
-
-Short version: ~8 small gaps block Teacher's Pet from running.
-Phase 1 (no-op SETs, CLOSE DATABASES, RELEASE ALL LIKE) is a
-single session of work. Phase 2 (SET DEVICE, RANGE, ROW/COL)
-is another 1-2 sessions.
+The phased plan in [ROADMAP.md](ROADMAP.md) is complete; it and
+[TEACHERS-PET-ANALYSIS.md](TEACHERS-PET-ANALYSIS.md) (the gap analysis
+against the akron/ legacy application) are kept as the record.  Open
+work is in `../ISSUES.md`.
 
 ## Architecture
 
@@ -45,7 +48,7 @@ dBase III is a database management system with:
 - **Full-screen terminal UI** for data entry (`@...SAY...GET`)
 - A **programming language** (`.PRG` files with control flow)
 - **Index files** (`.NDX`) for fast lookups
-- **Report/label generators** (not yet implemented)
+- **Report/label generators** (`.FRM`, `.LBL`)
 
 ## Data Types
 
@@ -55,7 +58,7 @@ dBase III is a database management system with:
 | Numeric | N | ASCII decimal | `"  1234.56"` |
 | Date | D | 8-byte YYYYMMDD | `"19850315"` |
 | Logical | L | 1-byte T/F/Y/N | `"T"` |
-| Memo | M | 10-byte block number | (deferred) |
+| Memo | M | 10-byte block number | (text in the .DBT) |
 
 All field data is stored as printable ASCII text in fixed-width fields.
 
@@ -69,7 +72,7 @@ All field data is stored as printable ASCII text in fixed-width fields.
 | 4A | Programming — PRG files, control flow, procedures, functions | Complete |
 | 4B | Screen I/O — @SAY/@GET/READ, CLEAR, box drawing, colors | Complete |
 | 4C | Indexing — INDEX ON, SEEK, FIND, multi-index, SET ORDER | Complete |
-| 5+ | [Roadmap](ROADMAP.md) — Teacher's Pet compatibility | In progress |
+| 5+ | [Roadmap](ROADMAP.md) — Teacher's Pet compatibility | Complete |
 
 The original stage 4-6-7 plan was reorganized during implementation.
 Programming, screen I/O, and indexing were delivered as 4A/4B/4C

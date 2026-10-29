@@ -322,6 +322,9 @@ the same DBT, same machine. Stretch: parity with gforth-fast on the
 Mac — noting that ratio is partly environmental (leg 1's gap; gforth
 0.7.3 vintage), so the honest scoreboard is our own before/after.
 
+**Landed 2026-08-23** -- five milestones in one sitting; see
+[forthc.md](forthc.md).
+
 ## 3. stage08 takes over from LLVM
 
 The long game: the day the desk's applications build with the

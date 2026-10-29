@@ -16,21 +16,27 @@ Review scope: `c1c8e8600bd024df6650c6624aad65a36d805b99..HEAD`
 
 ## February 2026 Additional Review Findings
 
-### 3) Minimal `strftime` Implementation (Medium)
+### 3) Minimal `strftime` Implementation (Medium) — RESOLVED
+
+- Status 2026-10-29: `strftime` is now `runtime/time_std.c`'s (shared with the selfhost libc) and handles `%b`, `%B` and `%p`; `time_stubs.c` no longer defines it.
 
 - File: `runtime/time_stubs.c`
 - Problem: `strftime` only supports a small subset of format specifiers.
 - Risk: `os.date()` will return incomplete or incorrect strings for standard specifiers like `%b`, `%B`, or `%p`.
 - Suggested fix: Expand specifier support to cover full ISO C / POSIX standard.
 
-### 4) `ungetc` is a no-op Stub (Medium)
+### 4) `ungetc` is a no-op Stub (Medium) — RESOLVED
+
+- Status 2026-10-29: `runtime/stdio.c` keeps a one-character pushback (`ungetc_char`).
 
 - File: `runtime/stdio.c`
 - Problem: `ungetc` just returns the character without pushing it back into the stream buffer.
 - Risk: Scripts performing lookahead character parsing via `io.read()` will lose characters or read them out of order.
 - Suggested fix: Implement a 1-character pushback buffer in the `FILE` structure.
 
-### 5) Soft-Float Bottleneck (Low / Performance)
+### 5) Soft-Float Bottleneck (Low / Performance) — OBSOLETE
+
+- Status 2026-10-29: SLOW-32 has hardware floating point (`FADD.D` etc., docs/SPEC.md); only the libm transcendentals are soft-float, and slow32-dbt and qemu substitute the host's.
 
 - Observation: SLOW-32 relies on software emulation for all `double` operations.
 - Risk: Lua scripts performing intensive mathematics will be significantly slower than logic-heavy scripts.

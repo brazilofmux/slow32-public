@@ -99,9 +99,12 @@ REDEFINES (ISSUES-85) starts at the first bit of the redefined item
 first bit, a bit item over a bit item at that item's bit, and a
 character item may redefine a bit item that starts a byte.
 
-Not implemented, refused by name: OCCURS DEPENDING ON on a bit array,
-OCCURS on a bit group, and a character item redefining a bit item that
-starts inside a byte. The ALIGNED clause (13.18.1) is not implemented.
+Still refused: a bit table inside an occurring bit group; a bit part
+at a computed position in a SCREEN SECTION item; a character item
+redefining a bit item that starts inside a byte (a ruling). OCCURS on
+a bit group, OCCURS DEPENDING ON on a bit array and the ALIGNED clause
+(13.18.1) came 2026-10-06 (standard-queue items 11-12;
+conformance/national-boolean.md, conformance/data-division.md).
 
 After the Stage B review (ISSUES-94): INITIALIZE sets bit items by MOVE,
 so the bits beside them keep their values; boolean relations are EQUAL
@@ -116,7 +119,7 @@ rules 1-2, 14.9.43.3 rule 1, 14.9.48.3 rules 2 and 4) (ISSUES-86).
 
 ## Not yet
 
-The items listed under USAGE BIT. (B-NOT of an ALL literal is an ALL
+The items still refused, listed under USAGE BIT. (B-NOT of an ALL literal is an ALL
 literal with each position inverted, ISSUES-93.)
 
 ## Oracle

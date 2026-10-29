@@ -58,7 +58,7 @@ The SLOW-32 ISA provides native `FSQRT.S`, `FSQRT.D`, `FABS.S`, and `FABS.D` ins
 
 ### 7. CORDIC Math Optimization (Guest-side) (Resolved)
 
-- **Status**: Fixed in `[COMMIT_HASH]`. CORDIC is now the default implementation for `sin`, `cos`, `atan2`, and `exp`.
+- **Status**: Fixed in `818bc25a`. CORDIC is now the default implementation for `sin`, `cos`, `atan2`, and `exp`.
 - **Benefit**: Since `MUL` takes 32 cycles on SLOW-32, CORDIC (using only 1-cycle shifts and adds) is significantly faster. It also reduced the `math_soft.o` binary size by ~12%.
 - **Context**: Inspired by the performance gap between classic 8-bit BASICs and OS/9's BASIC09.
 
@@ -67,6 +67,10 @@ The SLOW-32 ISA provides native `FSQRT.S`, `FSQRT.D`, `FABS.S`, and `FABS.D` ins
 - **Opportunity**: Add MMIO opcodes for `AES-256`, `SHA-256`, and `Ed25519`.
 - **Benefit**: Reimplementing crypto in the guest is slow and highly vulnerable to side-channels. Offloading to host-native routines via MMIO provides security, verification, and speed.
 - **Implementation**: Define a standard "Security Engine" opcode range (`0x50-0x5F`).
+- **Status (2026-10-29)**: Partly met by the crypto service
+  (`runtime/crypto_mmio.c`, `docs/SPEC.md` 8.17): digests, HMAC and random
+  bytes from the host's platform library, behind an OpenSSL EVP-shaped
+  guest shim.  No opcode range was reserved; no ciphers or signatures.
 
 ### 9. High-Resolution `TIMER`
 The current `TIMER` uses 1-second resolution `time()`.

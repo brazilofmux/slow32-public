@@ -43,7 +43,7 @@ taken on purpose, and every one of these is the edition's own rule.
 | 25 | subscripting and qualification restricted where they made no sense | each rule its own (the sweeps) | the same |
 | 26 | SET index limits are the OCCURS clause's; EC-RANGE-INDEX narrowed | **ruling** stands: no range is enforced on an index value, an element outside the table is EC-BOUND-SUBSCRIPT when used (exceptions.md) | the same |
 | 27 | STANDARD-COMPARE's default table | **n/a** (item 22) | the same |
-| 28 | TERMINATE with a non-integer VARYING: EC-REPORT-VARYING | **n/a**: Report Writer VARYING is not implemented (refusals.md) | the same |
+| 28 | TERMINATE with a non-integer VARYING: EC-REPORT-VARYING | **gap**: Report Writer VARYING is implemented (2026-10-07, queue item 37; reportwriter.md), but its value is not checked, so the condition is never raised (exceptions.md) | the same |
 | 29 | WRITE's LOCK and RETRY phrases before AT EOP | **n/a**: record locking and RETRY are not implemented | the same |
 | E.3 7 | currency symbols equivalent as the repertoire has it | **n/a**: one CURRENCY SIGN clause | the same |
 | E.3 18 | currency symbols from outside the COBOL character repertoire in a PICTURE | a multi-byte (UTF-8) symbol is **refused** ("one character"); the PICTURE is scanned by bytes | the same: **gap**, kept with the picture scanner's byte characters (docs/dialect.md); WITH PICTURE SYMBOL gives such a currency its string |

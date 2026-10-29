@@ -2,7 +2,9 @@
 
 Runtime support for the self-hosted compiler `../cc.s32x` and tools
 (`../s32-as.s32x`, `../s32-ld.s32x`, `../s32-ar.s32x`), built from
-`slow-32/selfhost/stage08`.
+`slow-32/selfhost/stage08`.  stage08 cc is a C11 compiler
+(`__STDC_VERSION__` 201112L; complex types absent, variable length arrays
+supported); see `selfhost/c-conformance/` in the tree.
 
 > **Source of truth.** This file is the master copy. It is deployed as
 > `~/s32x/selfhost/README.md` alongside the kit — edit it here, not there.

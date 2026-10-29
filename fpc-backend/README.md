@@ -18,6 +18,12 @@ fpc-backend/
 
 ## Quick Start
 
+The `slow32:toolchain` image (`docker.io/hurriedreformist/slow32:toolchain`)
+carries a built `ppcs32`, its RTL (`/opt/slow32/lib/fpc`, and
+`/opt/slow32/lib/fpc-fpu` for `-CfSLOW32`) and `s32pc input.pas
+[output.s32x]`, which compiles, assembles and links in one step.  The steps
+below build the same from source.
+
 ### Prerequisites
 
 - A working FPC installation (3.2.2+ or trunk) that can compile for the host (e.g. x86_64-linux)

@@ -1,4 +1,7 @@
-# BURG Migration Audit (Stage07)
+# BURG Migration Audit (stage07, carried into stage08)
+
+> Completed audit; the `hir_opt.h` line numbers are from the stage07
+> snapshot (stage08's `hir_opt.h` is now a symlink to `../src/hir_opt.h`).
 
 Goal: move codegen-shape rewrites out of `hir_opt.h` and into BURG selection so we stop generating fixup patterns and reduce peephole debt.
 
@@ -61,5 +64,5 @@ handled in emission, optimizer rewrite removed).
 Run all after each batch:
 
 1. `bash selfhost/stage08/run-tests.sh`
-2. Fixed-point proof (`gen1 == gen2`) in the normal stage08 workflow
+2. Fixed-point proof (`gen2 == gen3`), on by default in `run-tests.sh`
 3. ABI conformance suite (existing stage08 ABI script)

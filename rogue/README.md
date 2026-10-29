@@ -13,7 +13,11 @@ runs out, and the save file is consumed by loading it.
 ../tools/emulator/slow32-fast rogue.s32x --line     # line mode (tests, no term)
 ../tools/emulator/slow32-fast rogue.s32x --seed 7   # deterministic dungeon
 ./tests/run-tests.sh
+./tests/run-tests-s08.sh                            # same checks on rogue_s08.s32x, a stage08 cc build
 ```
+
+`rogue_s08.s32x` is not made by `build.sh`: it is rogue's five
+translation units compiled by stage08 cc.
 
 Keys: `hjkl`/arrows and `yubn` move, `>`/`<` take the staircase (`%`),
 `i` inventory, `e` eat, `q` quaff, `r` read, `w` wield, `W` wear,

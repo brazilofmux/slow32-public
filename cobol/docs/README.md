@@ -6,8 +6,8 @@ the reading order.
 
 | document | job |
 |---|---|
-| [requirements.md](requirements.md) | product test, dialect, v1 done, deliberately out |
-| [architecture.md](architecture.md) | pipeline, IR, which compiler toys earn their keep |
+| [requirements.md](requirements.md) | product test, dialect, v1 done, deliberately out (the v1 design, 2026-08-29) |
+| [architecture.md](architecture.md) | pipeline, IR, which compiler toys earn their keep (the v1 design, 2026-08-29) |
 | [standards.md](standards.md) | standards first, dialects second; the `-std` rows; what is out by ruling |
 | [behavior-points.md](behavior-points.md) | the `bp()` registry behind `-std`, `-dialect` and `-warn-74` |
 | [dialect.md](dialect.md) | COBOL 85 vs cobc370's 74 vs majesty's GnuCOBOL |
@@ -34,7 +34,7 @@ the reading order.
 | [plan.md](plan.md) | Stages 1-63, the 85 compiler, in order |
 | [plans/](plans/) | the work queues: standard-queue.md (the road to 2023), locale.md, performance.md, census.md, hir.md, frontend-pass.md, screen-input.md |
 | state-2026-09-30.md, state-2026-10-03.md | dated state reports, not kept current |
-| [open-questions.md](open-questions.md) | decisions not yet ruled |
+| [open-questions.md](open-questions.md) | the v1 design's open questions, 2026-08-29; most since settled |
 
 Prose style is cobc370's: measured claims, refuse-with-a-message,
 the standard as authority and an implementation as oracle.

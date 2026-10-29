@@ -173,7 +173,7 @@ Verified against the verb table in `src/command.c`, `src/program.c` and
 |------|----------|
 | Full screen | `BROWSE`, `EDIT`, `CHANGE`; `SAVE SCREEN` / `RESTORE SCREEN` |
 | Menus | `@ ... PROMPT` / `MENU TO`; `DEFINE MENU`/`PAD`/`POPUP`/`BAR`, `ACTIVATE`, `DEACTIVATE`, `ON SELECTION POPUP`/`PAD ... DO` |
-| Records | `SCATTER` / `GATHER`, `CALCULATE`, `SCAN` / `ENDSCAN`, `JOIN WITH`, `TOTAL ON`, `UPDATE ON` |
+| Records | `SCATTER` / `GATHER`, `CALCULATE`, `SCAN` / `ENDSCAN`; `JOIN WITH`, `TOTAL ON`, `UPDATE ON` are recognised but print "not implemented" |
 | Files | `APPEND FROM ... DELIMITED`, `COPY TO ... DELIMITED`, `LIST STRUCTURE`, `COPY STRUCTURE EXTENDED TO`, `TYPE`, memo fields (.DBT) |
 | Programs | `TEXT` ... `ENDTEXT`, `DECLARE` / `DIMENSION` arrays, `LOCAL` (shadows, does not destroy, the outer variable), `DO ... WITH` by reference, `SET KEY TO` / `ON KEY`, `RUN` (runs `DO`) |
 | Runtime errors | about 40 error sites go through `ON ERROR` |
@@ -231,7 +231,7 @@ SET options added: `ALTERNATE`, `MARGIN`, `MARK`, `MEMOWIDTH`,
 ### Debug (4) — fully wired
 `ERROR()`, `MESSAGE()`, `LINENO()`, `PROGRAM()`
 
-## SET Options (14 active + 14 no-op)
+## SET Options (the February table; more under "Added since February")
 | Option | Values | Default | Notes |
 |--------|--------|---------|-------|
 | TALK | ON/OFF | ON | |
@@ -248,18 +248,18 @@ SET options added: `ALTERNATE`, `MARGIN`, `MARK`, `MEMOWIDTH`,
 | ORDER | 0-7 | 1 | |
 | PROCEDURE | filename | (none) | |
 | DEVICE | SCREEN/PRINT | SCREEN | Routes @SAY output |
-| ECHO | ON/OFF | ON | No-op |
+| ECHO | ON/OFF | ON | Echoes program lines during DO |
 | MENU(S) | ON/OFF | ON | No-op |
 | STATUS | ON/OFF | OFF | No-op |
 | SCOREBOARD | ON/OFF | ON | No-op |
-| ESCAPE | ON/OFF | ON | No-op |
+| ESCAPE | ON/OFF | ON | Esc interrupts a program |
 | INTENSITY | ON/OFF | ON | No-op |
-| UNIQUE | ON/OFF | OFF | No-op |
+| UNIQUE | ON/OFF | OFF | INDEX creates unique indexes |
 | FUNCTION | n TO str | — | No-op |
 | PRINT | ON/OFF | OFF | No-op |
 | HELP | ON/OFF | ON | No-op |
-| CENTURY | ON/OFF | OFF | No-op |
-| PATH | dir | — | No-op |
+| CENTURY | ON/OFF | OFF | 4-digit years in date display |
+| PATH | dir | — | Searched when opening files |
 
 ## Expression Operators
 

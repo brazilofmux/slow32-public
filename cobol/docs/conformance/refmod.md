@@ -87,7 +87,7 @@ return false for a size of zero (`cob_class`, `cob_class_bytes`,
 | 14.9.43.3 SR 3, 14.9.43.4 | STRING's delimiter literal not zero-length; a zero-length source ignored, a zero-length delimiter item as SIZE (14.9.43.4 rule 3c) | **test**: zerolen; **refused**: bad/std2014-zero-delimiter |
 | 14.9.48.3 SR 1, 14.9.48.4 GR 2 | UNSTRING's delimiter literals not zero-length; a zero-length sender ends the statement (GR 2), a zero-length delimiter item ignored (GR 9) | **test**: zerolen; **refused**: bad/std2014-zero-unstring |
 | 14.9.4.3 SR 2, 14.9.5.3 SR 2 | CALL and CANCEL literal-1 not zero-length | **refused**: bad/std2014-zero-call, -zero-cancel |
-| 14.9.42.3 SR 4 (14.9.18.3 SR 8) | STOP RUN WITH ... STATUS literal not zero-length (GOBACK's the same; GOBACK WITH STATUS is not implemented) | **refused**: bad/std2014-zero-stop-status |
+| 14.9.42.3 SR 4 (14.9.18.3 SR 8) | STOP RUN WITH ... STATUS literal not zero-length (GOBACK's the same, under -std=2023: control.md) | **refused**: bad/std2014-zero-stop-status |
 | 14.9.37.3 SR 13 | SEARCH ALL's WHEN values not zero-length literals | **refused**: bad/std2014-zero-search |
 | 13.16.3 SR 9, 13.15.3 SR 14, 13.17.3 SR 10 | a VALUE literal implies a PICTURE only when it is not zero-length | **refused**: bad/std2014-zero-value-nopic (then rule 8: no PICTURE) |
 | 13.18.25.3 SR 5 | a screen FROM literal not zero-length | **refused** by rule |

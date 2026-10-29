@@ -1,5 +1,9 @@
 # f77 vs clang on SLOW-32 — LINPACK, 2026-08-27
 
+> Status 2026-10-29: a dated journal; the opening table is 2026-08-27.
+> The latest entry (2026-10-14, at the end) has LINPACK at 1.026x clang's
+> instructions, and mandel went under clang on the way ("Morning after").
+
 Same kernel, same column-major indexing, same by-reference argument
 passing, both targeting SLOW-32. The comparison measures **code
 generation**, not ISA or algorithm (`linpack.f` and `linpack.c` are

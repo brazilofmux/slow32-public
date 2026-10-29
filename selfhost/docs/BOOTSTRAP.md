@@ -78,8 +78,8 @@ Capability
   stage07   stage06 shape + richer headers (assert.h, math.h,
             signal.h, stdio.h, time.h, ucontext.h, sys/*) so the
             DBT and full emulator build inside SLOW-32     [stage06]
-  stage08   fork of stage07; active head for new language
-            features (e.g. bitfields)                      [stage07]
+  stage08   fork of stage07; active head: stage08 cc, a C11
+            compiler, its tools and libc (the kit)         [stage07]
 
 Shared sources
   src/      canonical live frontend/HIR (lex, parser, sema, HIR/SSA).
@@ -105,7 +105,7 @@ Sibling cross-compilers (independent of the numbered cycle)
 | stage05 | + HIR/SSA, BURG, graph colouring | C | stage04 |
 | stage06 | same, `--fixed-point` gate | C | stage05 |
 | stage07 | + richer headers | C | stage06 |
-| stage08 | active head | C | stage07 |
+| stage08 | active head, C11 (`c-conformance/`) | C | stage07 |
 | cross-x64 | cc-x64 → x86-64 ELF | C | stage08 / host |
 | cross-a64 | cc-a64 → AArch64 ELF | C | stage08 / host |
 
@@ -144,7 +144,8 @@ was kept is the rule, not the oracle.
 - **You need:** a C compiler on the host (gcc, clang, tcc — anything), and
   `s32-emu.c` (~950 lines, POSIX-only, no external dependencies).
 - **You produce:** `s32-emu`, a minimal emulator that loads and runs `.s32x`.
-- **It handles:** all 34 integer instructions; legacy MMIO (PUTCHAR, GETCHAR,
+- **It handles:** every integer instruction (the 34-instruction bootstrap
+  core and the extensions; no floating point); legacy MMIO (PUTCHAR, GETCHAR,
   BRK, EXIT); MMIO ring-buffer I/O (files, args, environment); `.s32x` header
   parsing and section loading.
 - **It does NOT handle:** debugging (trace, breakpoints, step), service
@@ -166,15 +167,17 @@ was kept is the rule, not the oracle.
 |------|---------------|--------|
 | Stage chain | `run-stages.sh` | each stage rebuilds the next |
 | Purity | `check-bootstrap-purity.sh` | no seeds beyond the permitted three, `stage00`..`stage08` |
-| Fixed point | stage06 `--fixed-point` | `gen2 == gen3` |
+| Fixed point | stage06/07 `--fixed-point`; stage08 by default (`--no-fixed-point` skips) | `gen2 == gen3` |
 | Reproducibility | `sha256sums.md`, `verify-emu-sums.sh` | bit-identical artifacts across platforms *and* emulators |
 | ISA conformance | `isa-conformance/` | instruction semantics |
 | ABI conformance | `run-abi-conformance.sh` | calling convention |
+| C11 conformance | `c-conformance/probe.sh --check` | stage08 cc against C11 chapter 6, clang as oracle |
 
 `sha256sums.md` records bit-identical output across a Raspberry Pi 4, a Ryzen 5
 3600, a Celeron N4500 and a Lenovo Cortex-A720/X4, under `s32-emu`,
 `slow32-fast` and `slow32-dbt` (stages 4/5/6). The naive interpreter on a Pi and
-the JIT on a Ryzen emit the same bytes.
+the JIT on a Ryzen emit the same bytes. Its stage05-08 sums date from
+2026-08-27 and predate the in-place repairs since (see the note at its top).
 
 ---
 

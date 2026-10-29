@@ -1,5 +1,9 @@
 # SLOW-32 LLVM Backend Bug: varargs f64 stack arguments
 
+> Status 2026-10-29: resolved.  `test_printf_4doubles.c`, built with
+> `clang --target=slow32-unknown-none -O2`, prints `4 args: 1.0 2.0 3.0 4.0`.
+> Kept as the investigation record.
+
 ## Symptom
 When a printf call has 4 or more f64 (double) arguments, the 4th and subsequent
 arguments are read incorrectly (showing as 0.0 instead of their actual values).

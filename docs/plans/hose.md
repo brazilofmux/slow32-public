@@ -75,6 +75,11 @@ Guest libc in `runtime/net_mmio.c`. Host handling in
 Out of v1: DNS, UDP, Unix sockets, `poll`, non-blocking, `getpeername`,
 options other than implicit `SO_REUSEADDR` on bind.
 
+Since v1 (2026-10-20): `poll` (FDPOLL 0x36), non-blocking sockets
+(FCNTL 0x0F), `getpeername` (0x49), `setsockopt`/`getsockopt`
+(0x4A/0x4B), and numeric-only `getaddrinfo` in `runtime/netdb.c`.
+Still out: DNS, UDP, Unix sockets.
+
 See `net/README.md` for the two-guest echo, and
 `regression/tests/feature-socket-basic/` for the single-process
 smoke test.

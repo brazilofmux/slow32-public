@@ -1,5 +1,8 @@
 # SLOW-32 Changelog
 
+> Status 2026-10-29: frozen at 2025-09-08 and not maintained; `git log` is
+> the change history.
+
 ## 2025-09-08: Ring Buffer MMIO Framework (Design Phase)
 
 ### MMIO Architecture Designed

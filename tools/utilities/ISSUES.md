@@ -69,6 +69,8 @@ The current tool primarily supports `c` (create/replace) and `t` (list).
 
 - **Opportunity**: Standard `ar` supports deleting members or updating them based on timestamps.
 - **Recommendation**: Implement `d` (delete) and `u` (update) commands.
+- **Status (2026-10-29)**: Partly resolved.  `s32-ar` now has `r`, `c`,
+  `t`, `x`, `p`, `d` and `m`; `u` does not exist.
 
 ### 10. Disassembler Missing Branch/Jump Target Resolution (Resolved)
 `slow32dis` showed the raw hex address for branch targets.

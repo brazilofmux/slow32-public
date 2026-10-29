@@ -12,8 +12,8 @@ Stage directories at a glance:
 - `stage05`: code-quality cycle introducing HIR/SSA, BURG instruction selection, and graph-coloring register allocation. Compiled by stage04.
 - `stage06`: next selfhost cycle seeded from stage05; supports a `--fixed-point` gate that enforces gen2 == gen3.
 - `stage07`: same toolchain shape as stage06 plus richer headers (`assert.h`, `math.h`, `signal.h`, `stdio.h`, `time.h`, `ucontext.h`, `sys/*`) so non-trivial SLOW-32 programs (DBT, full emulator) build inside SLOW-32.
-- `stage08`: fork of stage07; the active head for new language features (e.g. bitfields) and future evolution.
-- `src/`: canonical live sources for the shared frontend/HIR (lex, parser, sema, common HIR/SSA pieces). The active trees (stage08 + cross compilers) reference it via symlinks to avoid duplication while developing. Historical stage03–stage07 keep full source snapshots for reproducibility.
+- `stage08`: fork of stage07 and the active head: stage08 cc, a C11 compiler (see `c-conformance/`), with its tools and libc. The gen2 == gen3 fixed-point gate runs by default. It ships as the kit described in [`stage08/RUNTIME_KIT.md`](stage08/RUNTIME_KIT.md) (also the `slow32:kit` container).
+- `src/`: canonical live sources for the shared frontend/HIR (lex, parser, sema, common HIR/SSA pieces), plus the target-independent stage08 libc (`src/libc/`) and the kit's tools (`src/tools/`). The active trees (stage08 + cross compilers) reference it via symlinks to avoid duplication while developing. Historical stage03–stage07 keep full source snapshots for reproducibility.
 
 Sibling cross-compiler trees (independent of the numbered cycle):
 
@@ -27,13 +27,15 @@ Other checks at this level:
 - `verify-emu-sums.sh <label> <emu-path>`: rebuilds stages 1–8 under one emulator and compares against [`sha256sums.md`](sha256sums.md).
 - `isa-conformance/run-isa-conformance.sh`: a generated, self-checking instruction corpus run on every available engine.
 - `tools/layout-sweep.sh`: times a cross-built `s32fast-hir` across code-layout offsets.
-- `c-conformance/probe.sh`: stage08 cc against C11 chapter 6, one probe program per rule, clang as the oracle; [`c-conformance/coverage.md`](c-conformance/coverage.md) is the ranked gap list.
+- `c-conformance/probe.sh`: stage08 cc against C11 chapter 6, one probe program per rule, clang as the oracle; [`c-conformance/coverage.md`](c-conformance/coverage.md) is the first survey and the progress log since (now 320 PASS, 0 WRONG, 0 REJECTS; `probe.sh --check` gates every change).
+- Gates in `regression/` built from stage08 output: `run-kit-differential.sh`, `run-kit-tools-differential.sh`, `run-stage07-differential.sh`, `run-stage08-fuzz.sh` (cfuzz); and `sqlite/check-stage08.sh`.
 
 Reference docs:
 
 - [`docs/BOOTSTRAP.md`](docs/BOOTSTRAP.md) — canonical bootstrap roadmap: the stages as they exist, the sibling cross-compiler track, the trust model, and how the original sixteen-stage plan became these nine.
 - [`docs/DIALECT.md`](docs/DIALECT.md) — live C dialect map (what `src/` actually supports; plan dialect work here).
-- [`docs/TYPES.md`](docs/TYPES.md) — the plan for real C types and an attribute-grammar sema (C types vs machine types, the attributes, steps S1-S6).
+- [`docs/TYPES.md`](docs/TYPES.md) — real C types and an attribute-grammar sema (C types vs machine types, the attributes): the plan, steps S1-S6, and the record of carrying it out, VLAs included.
+- [`stage08/RUNTIME_KIT.md`](stage08/RUNTIME_KIT.md) — the kit (stage08 cc + tools + libc): how to use it, the clang-interop status, and the dated log of every kit rebuild.
 - [`TOOL-NAMING.md`](TOOL-NAMING.md) — tool-name conventions across the stages.
 - [`ISSUES.md`](ISSUES.md) — code-review findings (closed and active) across the toolchain.
 

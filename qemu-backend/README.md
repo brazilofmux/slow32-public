@@ -132,7 +132,8 @@ service change.
 - `target/meson.build` - Build integration
 - `hw/Kconfig` - Add SLOW32 machine
 - `hw/meson.build` - Build integration
-- `include/system/arch_init.h` - Architecture enum
+- `include/system/arch_init.h` - Architecture enum (no longer patched; `03-arch-support.patch` is empty)
+- `qapi/machine.json` - Machine type
 - `README.rst` - Documentation updates
 - `.gitignore` - Ignore slow-32 local copy
 
@@ -148,12 +149,10 @@ service change.
 
 ## Current Status
 
-✅ Basic TCG backend working
-✅ Simple machine model
-✅ Debug output via DEBUG instruction
-✅ Arithmetic, loads/stores, branches implemented
-⚠️ .s32x loader not yet implemented (raw binary mode)
-⚠️ Full ISA not complete
+✅ `.s32x` loader (`-kernel prog.s32x`, `slow32_load_s32x` in `hw/slow32/slow32-tcg.c`)
+✅ Full ISA, including FP
+✅ MMIO service window (`target/slow32/mmio.c`)
+✅ Exit status from `r1` / MMIO EXIT
 
 See `docs/todo.md` for detailed implementation checklist.
 
@@ -169,7 +168,13 @@ Run the same program in both emulators:
 ~/qemu/build/qemu-system-slow32 -machine slow32-tcg -kernel program.s32x -nographic
 ```
 
-Compare outputs to verify correctness.
+Compare outputs to verify correctness.  After any change run the gates,
+which diff qemu (and the other engines) against the reference interpreter:
+
+```bash
+cd ~/slow-32/regression && ./run-differential.sh && ./run-kit-differential.sh
+cd fuzz && ./isafuzz.py run -n 5000
+```
 
 ## Documentation
 

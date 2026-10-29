@@ -1,5 +1,14 @@
 # Architecture
 
+> Status 2026-10-29: the design of 2026-08-29, before any code; kept
+> as the original design. Since then `libcob` exists (`libcob/`,
+> linked as `libcob.s32o`); the source tokens are Ragel too
+> (`src/lex.rl`); numbers reach 31 digits ([wide.md](wide.md)); and
+> the hot statements go through a copy of stage08's HIR in `src/hir/`
+> ([plans/hir.md](plans/hir.md)) -- the "No" verdicts on SSA, BURG and
+> register allocation below hold for the program IR, not for those
+> islands.
+
 COBOL is a data-description language that happens to have verbs. The
 compiler is a lowering of those verbs against a symbol table, plus a
 handful of parameterized runtimes. It is not an Algol pipeline with a

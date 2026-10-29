@@ -1,5 +1,9 @@
 # C++ Support Plan for SLOW32
 
+> Status 2026-10-29: complete.  Every phase below landed, and libc++ and
+> libc++abi build on top (iostreams, locales; `s32c++` in the toolchain
+> image, `regression/run-libcxx.sh` the gate).  Kept as the original plan.
+
 ## Overview
 
 This document outlines the work required to add C++ language support to the

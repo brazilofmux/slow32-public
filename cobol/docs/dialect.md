@@ -4,20 +4,20 @@ Three COBOL dialects sit in this orbit. They are not interchangeable.
 
 | | cobc370 | this compiler | majesty today |
 |---|---|---|---|
-| standard | X3.23-1974 | X3.23-1985 | GnuCOBOL's 85-shaped dialect |
+| standard | X3.23-1974 | X3.23-1985 by default; 2002, 2014 and 2023 under `-std` | GnuCOBOL's 85-shaped dialect |
 | source | fixed format | fixed **and** free | free (`*> ` comments, lowercase) |
 | character set | EBCDIC CP037 | UTF-8 source; bytes, native collating; national UTF-16BE | ASCII |
 | packed hardware | yes | no (library) | host GnuCOBOL |
 | I-O | QSAM, ISAM, VSAM | framing in [framing.md](framing.md) | line sequential + indexed + relative |
 | X3.23a-1989 intrinsic functions (all 42) | amendment | yes | yes |
-| SCREEN SECTION | no | yes (implementor) | yes |
+| SCREEN SECTION | no | yes (implementor under 85; standard since 2002) | yes |
 | Report Writer (entire: CONTROL, SUM, RH/RF, NEXT GROUP, GROUP INDICATE, USE BEFORE REPORTING) | level 1 | yes | yes |
 | Report Writer | 1974 tables, complete | 85; v1 is majesty's subset | GnuCOBOL RW |
 | `COMP` > 9 digits | refused | i64 | GnuCOBOL |
 | `PERFORM … AFTER` | 74 reset order | 85 reset order | 85 |
 | ODO receiving group | current count (74) | maximum (85) | 85 |
 | ALTER | implemented (74) | implemented: an obsolete element in the 85 text (CCVS-85 NC303M, NC401M; the Open Systems suite) | unused |
-| user-defined `FUNCTION-ID` (2002) | no | **no — corpus rewritten to `CALL`** | yes, today |
+| user-defined `FUNCTION-ID` (2002) | no | yes, under `-std=2002` ([functions.md](functions.md)); majesty's corpus itself was rewritten to `CALL` | yes, today |
 | `CALL … BY VALUE / RETURNING` | no | yes, C-ABI implementor only | yes |
 | `CALL … BY CONTENT` | yes | yes (Stage 31) | yes |
 
@@ -53,7 +53,8 @@ From `~/majesty/src/cobol/` and `~/majesty/docs/cobol-programs.md`:
 - **Not** user-defined functions. The corpus uses them today
   (`c_lineartofielded(x)`, `taskdt()`), and is being rewritten to
   plain `CALL … USING` — see [functions.md](functions.md). The
-  compiler never learns `FUNCTION-ID` or `REPOSITORY`.
+  compiler never learns `FUNCTION-ID` or `REPOSITORY`. (It did,
+  under `-std=2002`, 2026-09-28: functions.md.)
 - `CALL … USING BY VALUE … BY REFERENCE … RETURNING …` — only in
   `clinkages.cbl`, only to reach C; C-ABI implementor module
 - User-words containing `_` (`ltf_lineardate`, `is_valid`) — not in
@@ -71,7 +72,8 @@ From `~/majesty/src/cobol/` and `~/majesty/docs/cobol-programs.md`:
 - `ASSIGN` to a literal or to a data-name (`ws-output-filename`)
 - `SHARING WITH ALL OTHER` — accept and ignore on this machine
   (single process, no file locking service yet); refuse only if a
-  program depends on the lock semantics
+  program depends on the lock semantics. (SHARING has its meaning
+  since 2026-10-07: conformance/locking.md.)
 - `OPTIONAL` files (`w001`)
 
 ## Implementor modules, named as such
@@ -259,7 +261,8 @@ given, because majesty's `.prn` oracles were produced under it.
   plain digits (a negative one zoned in the last digit), read through
   the callee's own picture (GnuCOBOL hands over a binary word instead
   -- docs/oracles.md; the 85 text leaves a literal's class to the
-  callee). Not yet: BY CONTENT of a reference-modified item.
+  callee). BY CONTENT of a reference-modified item followed
+  (ISSUES-94, 2026-09-28).
 - **`UNSTRING`** (Stage 34): `UNSTRING src [DELIMITED BY [ALL] d [OR
   [ALL] d]...] INTO {r [DELIMITER IN r] [COUNT IN r]}... [WITH POINTER
   p] [TALLYING IN t] [[NOT] ON OVERFLOW] [END-UNSTRING]`. The runtime
@@ -676,7 +679,7 @@ each is refused or behaves as the standard says.
   An abandoned range is dropped when it is performed again.
 - **Locked records:** one process, so no locking.
 
-## COBOL 85 we will grow into, not v1
+## COBOL 85 beyond v1 (all landed by 2026-08-31)
 
 Nucleus Level 2 at full width (abbreviated conditions; `UNSTRING`
 landed in Stage 34, `INSPECT` at full width in Stage 35,

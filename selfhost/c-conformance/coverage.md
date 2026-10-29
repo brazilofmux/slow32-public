@@ -39,8 +39,9 @@ arguments expanded before substitution, painted names, stringizing,
 first batch, the preprocessor's constraints; the expression constraints, 6.5.16.1's conversions graded as clang's defaults grade them; statements and lexing; the declarations' local rules and redeclarations.  The 9 ACCEPTS left are rulings, not gaps: five warnings and four GNU extensions, graded as clang's defaults grade them (docs/TYPES.md, S5) (232 PASS, 4 WRONG, 76 REJECTS, 207 DIAG, 9 ACCEPTS).  S6: _Alignof, _Generic, __func__, _Noreturn, _Thread_local, _Alignas; C11 claimed, with its optional complex types, VLAs, threads and atomics declared absent -- their probes are OPTIONAL (253 PASS, 3 WRONG, 46 REJECTS, 207 DIAG, 10 OPTIONAL, 9 ACCEPTS).  REJECTS: address constants, file-scope compound literals; implicit function declarations refused; declarators -- for-clause declarations, specifier order, register parameters, typedef lists; tentative definitions, #include of macro-replaced text, _Pragma, __DATE__/__TIME__; lexing -- wide and u8 literals, multi-character constants, UCNs, hex floats, digraphs; bit-field initializers, a member of a struct ?:, typedef'd array objects; old-style definitions, function-typed parameters, arrays of function pointers in type names (298 PASS, 0 WRONG, 4 REJECTS, 208 DIAG, 10 OPTIONAL, 9 ACCEPTS).  Pointers to arrays -- returned, at file scope, `&m[i]` typed as one, rows as address constants -- and mixed declarator lists; the 2 REJECTS left are `_Alignas` > 4 on locals, which needs stack realignment (302 PASS, 0 WRONG, 2 REJECTS, 208 DIAG, 10 OPTIONAL, 9 ACCEPTS).  S5's gaps: initializers converted as by assignment, static and member ones included; static _Bool initializers; strings too long for their arrays warn; array sizes compared on redeclaration (303 PASS, 0 WRONG, 2 REJECTS, 212 DIAG, 10 OPTIONAL, 9 ACCEPTS).  Warnings where clang's defaults warn, for constants that change in a conversion (integer, bit-field, floating literal, int to float, always-true addresses in boolean contexts) and multi-character constants -- probe.sh `// expect: warnings`; a negative #define value was typed unsigned (wrong code, SQLite's journalSizeLimit) (308 PASS, 0 WRONG, 2 REJECTS, 212 DIAG, 10 OPTIONAL, 9 ACCEPTS).  _Alignas beyond 4 on locals: the prologue realigns the stack -- no REJECTS left (311 PASS, 0 WRONG, 0 REJECTS, 212 DIAG, 10 OPTIONAL, 9 ACCEPTS).  Variable length arrays, on SLOW-32 (the cross targets keep `__STDC_NO_VLA__`): objects, pointers to them, parameters, `[*]`, typedefs, runtime `sizeof`, freed on every way out of their scope; only complex types are declared absent now (320 PASS, 0 WRONG, 0 REJECTS, 215 DIAG, 3 OPTIONAL, 9 ACCEPTS).  The tables below are the survey as
 taken.
 
-The 52 WRONG probes come from about fifteen defects, listed below by
-root cause, most dangerous first: a program that compiles and silently
+The 52 WRONG probes of the survey came from about fifteen defects,
+listed below by root cause as found (all fixed since; see Progress),
+most dangerous first: a program that compiles and silently
 computes the wrong thing is worse than one that is refused.
 
 ## 1. Wrong code
@@ -126,11 +127,14 @@ Clustered; the pages have the probes.
 
 ## 4. Headers (clause 7, noted only)
 
-stage08's `include/` lacks `<float.h>`, `<stdalign.h>`, `<stdnoreturn.h>`;
-its `<stddef.h>` lacks `wchar_t`; neither libc's `<assert.h>` defines
-`static_assert`.
+stage08's `include/` lacks `<float.h>`; neither libc's `<assert.h>`
+defines `static_assert`.  (`<stdalign.h>`, `<stdnoreturn.h>` and
+`wchar_t` in `<stddef.h>` were added by 2026-10-29.)
 
 ## Suggested order
+
+> Done: items 1-4 were carried out 2026-10-28/29 (docs/TYPES.md S1-S6);
+> kept as the order the work took.
 
 1. **W1-W10**: wrong code first, smallest fixes with the widest reach --
    W1 (float scaling) and W2 (`_Bool`) above all; W3 loses functions.

@@ -42,10 +42,10 @@ this sweep; all 90 now agree.
 | 6a | an alphanumeric-class receiver: alignment, padding; the operational sign not moved, a separate one not counted; P positions count as zeros | **test**: free/moverules (signed, separate), free/picmix (P) |
 | 6b | the same item as sender and receiver: undefined when edited; a variable-length one through a temporary | **n/a**: undefined; variable-length items are 2014's |
 | 6c | the same usage: the bytes unchanged (and endianness) | **test**: free/identmove. Endianness phrases are 2014's: **n/a** |
-| 6d1 | a numeric-edited sender de-edited; invalid numeric content sets EC-DATA-INCOMPATIBLE | de-editing **test**: free/moverules. EC-DATA-INCOMPATIBLE is **gap**: it is in the exception table but no statement raises it yet (docs/refusals.md, the rest of Table 13) |
-| 6d2 | a numeric value: the sign kept for a signed receiver, the absolute value for an unsigned one; float usages | **test**: CCVS NC1xx, free/moverules. Float: **n/a** until -std=2014 (the ruling of 2026-09-28) |
+| 6d1 | a numeric-edited sender de-edited; invalid numeric content sets EC-DATA-INCOMPATIBLE | de-editing **test**: free/moverules. EC-DATA-INCOMPATIBLE: **test**, 2002/ecincompat, ecincompat2 (exceptions.md) |
+| 6d2 | a numeric value: the sign kept for a signed receiver, the absolute value for an unsigned one; float usages | **test**: CCVS NC1xx, free/moverules. Float: **test**, 2014/floatdec (`move -2.5` to a decimal128 and on to a signed picture), 2014/floatbin |
 | 6d3 | an alphanumeric or national sender as an unsigned integer: its digits (the rightmost 31), a figurative constant replicated to the receiver's digits, a literal's characters (rightmost 31) | **test**: free/moverules (rightmost digits, ALL to an integer). Past 18 digits the receiver takes the rightmost integer digits it holds (docs/wide.md phase 1; 2002/wide1) |
-| 6d4 | floating-point receivers | **n/a** until -std=2014 |
+| 6d4 | floating-point receivers | **test**: 2014/floatdec, 2014/floatbin (-std=2014, queue item 20; usage.md) |
 | 6d5 | a value too far from zero for the receiver's usage is EC-DATA-OVERFLOW; too near is zero | **n/a**: those are the floating-point usages' |
 | 7 | the category of literals and figurative constants (Table 17) | **test**: free/moverules (ZERO to numeric-edited), 2002/natconv, 2002/boolean |
 | 8 | dynamic-length items | **n/a**: 2014's |

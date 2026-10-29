@@ -283,17 +283,21 @@ int main() {
   QEMU TCG target (~4 BIPS), and a DBT at ~8.3 BIPS (Apple M5 Max) — see [docs/EMULATORS.md](docs/EMULATORS.md)
 - ✅ **Runtime** - crt0, buffered stdio, malloc, dual DEBUG/MMIO libc builds,
   64-bit builtins, CORDIC transcendentals, locales, C++ EH runtime
-- ✅ **Self-hosting** - `selfhost/` bootstraps from an 800-line emulator to a
-  near-C99 compiler that rebuilds itself byte-identically, plus cross-compilers
-  (x86-64, AArch64) that compile the project's own DBT
+- ✅ **Self-hosting** - `selfhost/` bootstraps from a ~950-line emulator to a
+  C11 compiler that rebuilds itself byte-identically, plus cross-compilers
+  (x86-64, AArch64) that compile the project's own DBT.  Every valid probe of
+  the C11 survey passes (`selfhost/c-conformance/`: 320 PASS, 0 WRONG,
+  0 REJECTS), VLAs included; complex types are left out by choice, and
+  diagnostics follow clang's defaults
 - ✅ **stage08 cc as a peer toolchain** - the self-hosted compiler builds
   real applications end-to-end on SLOW-32: SQLite (output byte-identical to
   the clang build, `sqlite/check-stage08.sh`), DOOM (`-timedemo` bit-exact
   with the clang build), rogue, the graphics demos, sbasic, and the ISLISP
   interpreter.  It shares clang's ABI, so stage08 and clang objects link and
   interoperate in both directions (`selfhost/stage08/run-interop-llvm.sh`)
-- ✅ **COBOL** - `cobol/` (`s32-cobc`) compiles COBOL 85 by default and the
-  2002–2023 editions behind `-std`; all 348 NIST CCVS-85 programs compile
+- ✅ **COBOL** - `cobol/` (`s32-cobc`) implements COBOL through the 2023
+  standard; 85, where the work began, is the default `-std`, and 2002, 2014
+  and 2023 are a switch away; all 348 NIST CCVS-85 programs compile
   and run with no failures; embedded SQL on SQLite and PostgreSQL — see
   [cobol/README.md](cobol/README.md)
 - ✅ **Fortran 77** - `fortran/` is a one-pass F77 compiler with its own
@@ -317,7 +321,8 @@ int main() {
   host's (`run-libc-differential.sh`); two fuzzers generate random C
   (`regression/fuzz/cfuzz.py`, stage08 against clang) and random machine
   code (`regression/fuzz/isafuzz.py`, every engine against the reference
-  interpreter).  [CLAUDE.md](CLAUDE.md) lists them all with when to run each
+  interpreter).  [CLAUDE.md](CLAUDE.md) lists the main ones with when to
+  run each, and [regression/README.md](regression/README.md) the rest
 
 ## Known Limitations
 
@@ -341,7 +346,7 @@ make assembler    # Builds slow32asm
 make linker       # Builds s32-ld
 make utilities    # Builds slow32dump, slow32dis, s32-ar
 make dbt          # Builds slow32-dbt (dynamic binary translator)
-make runtime      # Builds crt0.s32o, libs32.s32a, libc_debug.s32a, libc_mmio.s32a
+make runtime      # Builds crt0.s32o, locales.s32o, libs32.s32a, libc_debug.s32a, libc_mmio.s32a, libs32cxx.s32a
 ```
 
 ## Documentation
@@ -357,7 +362,7 @@ make runtime      # Builds crt0.s32o, libs32.s32a, libc_debug.s32a, libc_mmio.s3
 - [The hose](docs/plans/hose.md) - How two SLOW-32 programs talk (sockets, not shared memory)
 - [Engine Room](docs/plans/engine-room.md) - DBT and codegen performance work
 - [COBOL](cobol/README.md), [Fortran 77](fortran/README.md), [Forth](forth/README.md), [Self-hosting](selfhost/README.md) - the larger fronts each have their own README
-- [CLAUDE.md](CLAUDE.md) - AI assistant instructions and quick reference, including every test harness
+- [CLAUDE.md](CLAUDE.md) - AI assistant instructions and quick reference, including the main test harnesses
 
 ## History
 

@@ -1,5 +1,7 @@
 # Stage 0: Minimal Bootstrap Emulator
 
+> **Status:** legacy V1/V2 playbook (2026-02). The V2 stage numbers and the `selfhost/stageN/` paths below no longer exist; this work now lives in `selfhost/stage00` and `selfhost/stage01` (see [BOOTSTRAP.md](BOOTSTRAP.md) and the stage READMEs). Kept for its design rationale.
+
 > **V2 cross-reference:** This is **Stage 0** in [BOOTSTRAP.md](BOOTSTRAP.md) (Layer A: Foundation).
 
 ## Goal

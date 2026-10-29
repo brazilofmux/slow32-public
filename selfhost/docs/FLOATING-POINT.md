@@ -1,5 +1,12 @@
 # Floating-Point Support in SLOW-32
 
+> Status 2026-10-29: everything this document planned for the
+> self-hosted compiler is done.  stage08 cc compiles `float`/`double` to
+> the hardware FP instructions, and its libc prints through dtoa
+> (`stage08/RUNTIME_KIT.md`).  The sections on s12cc are the plan as
+> written; the ISA, calling-convention, emulator and runtime sections
+> remain reference.
+
 ## Current State
 
 SLOW-32 has extensive floating-point infrastructure already in place across
@@ -91,7 +98,7 @@ for traced examples including the history of the "gap bug."
 | slow32-fast     | yes | yes | no  | Optimized interpreter |
 | slow32-dbt      | yes | yes | yes | JIT; intercepts 40+ libm calls via SYMTAB |
 | qemu-system-slow32 | yes | yes | yes | TCG backend; helper.c implements FP ops |
-| s32-emu         | no  | no  | no  | Minimal Forth-based emulator |
+| s32-emu         | no  | no  | no  | stage00 trust-root emulator (integer only) |
 
 The DBT and QEMU emulators intercept transcendental function calls by
 symbol name and execute them via host libm. This means math-heavy programs

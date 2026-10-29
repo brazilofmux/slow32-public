@@ -1,5 +1,7 @@
 # Stage 2: Forth-Hosted SLOW-32 Assembler
 
+> **Status:** legacy V1/V2 playbook (2026-02). The V2 stage numbers and the `selfhost/stageN/` paths below no longer exist; this work now lives in `selfhost/stage00` and `selfhost/stage01` (see [BOOTSTRAP.md](BOOTSTRAP.md) and the stage READMEs). Kept for its design rationale.
+
 > **V2 cross-reference:** This is **Stage 1** in [BOOTSTRAP.md](BOOTSTRAP.md) (Layer B: Forth Self-Hosting).
 
 ## Goal

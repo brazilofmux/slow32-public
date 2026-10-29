@@ -2,9 +2,7 @@
 
 The `llvm-backend/` directory in this repository contains the complete SLOW32 backend for LLVM and Clang.
 
-**Status**: Fully functional with optimization passes fixed (no more LLC hangs).
-**Libraries**: Runtime archives built: libs32.s32a (2.1KB), libc.s32a (30KB)
-**Testing**: 14/19 regression tests passing (5 skipped due to missing test files)
+Status, features and tests: [llvm-backend/SLOW32/STATUS.md](../../llvm-backend/SLOW32/STATUS.md).
 
 ## Directory Structure
 
@@ -14,7 +12,7 @@ llvm-backend/
 ├── clang/            # Clang target files (from ~/llvm-project/clang/lib/Basic/Targets/)
 ├── patches/          # Integration patches for LLVM build system
 ├── scripts/          # Maintenance scripts
-└── (docs)            # Reference: docs/llvm-backend/overview.md
+└── test/             # lit tests (mirror of llvm/test/CodeGen/SLOW32/)
 ```
 
 ## Workflow
@@ -59,13 +57,7 @@ If ~/llvm-project gets corrupted:
 
 ## Features
 
-✅ Complete inline assembly support  
-✅ Function pointers and indirect calls  
-✅ 64-bit integer operations  
-✅ Unsigned division/remainder via libcalls  
-✅ Varargs support  
-✅ Jump tables for switch statements  
-✅ Optimization levels -O1 and -O2  
+See [STATUS.md](../../llvm-backend/SLOW32/STATUS.md).
 
 ## Testing
 
@@ -73,6 +65,7 @@ After any changes:
 ```bash
 cd ~/slow-32/regression
 ./run-tests.sh
+./run-llvm-verify.sh
 ```
 
 ## Integration Patches
@@ -83,5 +76,7 @@ The patches directory contains minimal changes needed to integrate SLOW32 into L
 2. `02-llvm-cmake.patch` - Add SLOW32 to llvm/lib/Target/CMakeLists.txt
 3. `03-clang-targets.patch` - Register SLOW32 target in Clang
 4. `04-clang-cmake.patch` - Add SLOW32 to clang/lib/Basic/CMakeLists.txt
+5. `05-clang-driver.patch` - The clang driver toolchain (`clang/lib/Driver/ToolChains/SLOW32.cpp`)
+6. `06-libcxx.patch` - libc++ support for SLOW-32 (locale base API, filesystem)
 
 These patches are automatically applied by `apply-patches.sh`.

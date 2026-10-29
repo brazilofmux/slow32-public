@@ -24,6 +24,9 @@ parser is shared.
 - **Ragel on PICTURE, hand scanner on source.** `picture.rl` only
   tokenises; `picture.c` assigns meaning. The surrounding token
   stream has context flags and continuation. Keep that split.
+  (Since then the source tokens are Ragel too: `src/lex.rl`, one
+  grammar for 8.3's lexical elements, read one lexeme at a time; the
+  context stays in copy.h and the tokenizer.)
 - **`pic_scan` itself.** The PICTURE character-string language barely
   moved 74→85. The scanner can be re-hosted. `pic_analyse` cannot be
   copied as-is: it emits S/370 `ED`/`EDMK` masks in CP037. Keep the
@@ -40,7 +43,7 @@ parser is shared.
 - **V-record RDW cell in front of the record.** Same four bytes
   tapemgr writes. The QSAM around it does not travel.
 - **Report every error, not only the first.** cobc370 did this
-  (its #41) with a recipe that transfers as a design: recover at the
+  (cobc370 issue 41) with a recipe that transfers as a design: recover at the
   next period, whether the error was inside a sentence or inside a
   data entry; drop the failed sentence or entry; generate nothing once
   anything has failed; cap the listing (thirty there); keep the
@@ -86,9 +89,10 @@ crossover list: in each, *this* compiler must do the other thing.
   still have to be adjudicated, but the prior is reversed.
 - **`COMP-1` / `COMP-2` is a dialect collision, not a gap.** Neither
   standard year defines them. cobc370 implements IBM hexadecimal
-  floating point (#40). Here `COMP-1` is RM/COBOL's binary integer
+  floating point (cobc370 issue 40). Here `COMP-1` is RM/COBOL's binary integer
   with a PICTURE, because the Open Systems suite's items carry one,
-  and `COMP-2`/`FLOAT-SHORT`/`FLOAT-LONG` are refused with a message.
+  and `COMP-2` is an IEEE double, as are the standard's FLOAT-* usages
+  ([usage.md](usage.md)).
   A program written for IBM means something different here, silently.
   Real floating point, when a program asks, is SLOW-32's IEEE
   hardware, not hex.
@@ -142,7 +146,9 @@ runtime. It would still not be this compiler.
 `bin/cobc-ccvs` ranks missing features against NIST CCVS-85 by
 feeding programs to a 74 compiler. Once this compiler exists, a
 sibling script here should do the same job against *this* front
-end. The histogram idea is the borrow; the binary is not.
+end. The histogram idea is the borrow; the binary is not. That script
+is `tests/ccvs-histogram.sh` (and `tests/ccvs-run.sh`, the suite as a
+gate).
 
 cobc370's sequential-V tests (`tests/vrec`) plus tapemgr are the
 RDW round-trip. The programs will not compile here (74, EBCDIC),

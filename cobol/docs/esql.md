@@ -2,7 +2,13 @@
 
 ## Status
 
-Phase 1, 2026-09-29. `tests/nist-sql-run.sh` (harness gate 5b, 22
+Now (`tests/nist-sql-baseline.txt`, which gate 5b holds): 429
+programs, 421 compile, 421 run to the end; tests 386 pass, 445 fail;
+8 do not compile, 14 not run (concurrent pairs, C); 35 schema
+elements refused. Phases 2 and 3 and the PostgreSQL backend landed
+2026-09-30, below.
+
+At phase 1, 2026-09-29, `tests/nist-sql-run.sh` (harness gate 5b, 22
 seconds) against the NIST embedded COBOL programs:
 
 | | count |
@@ -341,7 +347,8 @@ of the month-end not on SLOW-32 but `accounts`.  Majesty's
    indicator variables, host structures (a group as a list of host
    variables), CONNECT. Done 2026-09-30.
 3. **Dynamic SQL:** EXECUTE IMMEDIATE, PREPARE and EXECUTE, DESCRIBE,
-   ALLOCATE and GET/SET DESCRIPTOR; GET DIAGNOSTICS.
+   ALLOCATE and GET/SET DESCRIPTOR; GET DIAGNOSTICS. Done 2026-09-30
+   (3a, 3b), less scroll cursors.
 4. **The rest of Intermediate SQL, as far as SQLite goes.** Every failure
    left is a behavior point: SQLite's semantics, recorded, not emulated.
 
@@ -357,6 +364,10 @@ of the month-end not on SLOW-32 but `accounts`.  Majesty's
   - domains, privileges, and deferred constraints.
 
 ## Roadmap
+
+(Superseded 2026-09-30: the backend was built in the guest instead,
+over its own TCP -- "The PostgreSQL backend" above. The plan as it
+stood:)
 
 **PostgreSQL as a second target** (the user, 2026-09-30: on the roadmap,
 not now). SQLite stays the default and is used as it is (the ruling

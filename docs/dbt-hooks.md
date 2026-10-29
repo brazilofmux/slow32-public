@@ -1,6 +1,7 @@
 # DBT hooks: native routines the guest opts into
 
-Status, 2026-09-29: steps 1 to 3 are done and validated on both hosts.
+Status, 2026-10-08: steps 1 to 5 are done; steps 1 to 3 were validated on
+both hosts 2026-09-29.
 
 Seconds on the M-series, best of 3, for all nine cobol/bench/vs kernels:
 
@@ -193,7 +194,7 @@ declines is not paying for itself.
 
 The strongest guard against drift is not to have two implementations.
 The hot libcob routines get factored into **kernels**: pure C
-functions, each in the kernel file (`libcob/kern.c`), under these rules:
+functions, each in the kernel file (`libcob/kern.h`), under these rules:
 
 - they touch no globals. Anything like DECIMAL-POINT IS COMMA or the
   currency sign comes in as an argument;
@@ -203,7 +204,7 @@ functions, each in the kernel file (`libcob/kern.c`), under these rules:
   `KP(p)`. In the guest that is a cast. In the DBT it is `hk_ptr`, and a
   NULL makes the hook decline.
 
-libcob compiles `kern.c` for SLOW-32 and calls the kernels through
+libcob compiles `kern.h` for SLOW-32 and calls the kernels through
 their thunks. The DBT compiles the *same file* for the host, with
 `KP()` bound to `hk_ptr`. Each hook is a few lines of glue:
 

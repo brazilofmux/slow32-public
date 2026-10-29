@@ -33,4 +33,7 @@ stage03-stage06 build/script boundaries.
 - Stage04: canonical compiler alias enabled.
 - Stage05: canonical compiler alias enabled.
 - Stage06: canonical compiler alias enabled.
-- Stage00-stage02: pending (not currently targeted by this policy).
+- Stage07: canonical names.
+- Stage08: canonical names (also `slow32dis.s32x`, `slow32dump.s32x`).
+- Stage00-stage02: out of scope (stage01's tools are Forth; stage02's compiler
+  is `cc-min.s32x` by design).

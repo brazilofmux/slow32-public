@@ -1202,7 +1202,7 @@ as the environment blob). Guests fetch blobs in chunks of at most CAP
 
 Any opcode not listed in §8.6–§8.10, §8.12, §8.13 and not inside an active
 negotiated range (§8.13) gets `status` ERR, `length` = `EINVAL`. This includes
-0x08 (once BRK), 0x0F, 0x11–0x1F, 0x2C–0x2F, 0x36–0x3F, 0x49–0x5F,
+0x08 (once BRK), 0x11–0x1F, 0x2C–0x2F, 0x37–0x3F, 0x4C–0x5F,
 0x65–0x7F, unallocated 0x80–0xEF, 0xF5–0xFF.
 
 
@@ -1314,8 +1314,9 @@ entry; the post completion is the wake-up.
 ### 8.13 Service negotiation (0xF0–0xF4)
 
 Negotiated services are reached through opcodes 0x80–0xEF that the host
-allocates. Two services exist: `"term"` (18 opcodes, version 3) and `"tube"`
-(16 opcodes, version 1).
+allocates. Three services exist: `"term"` (18 opcodes, version 3), `"tube"`
+(16 opcodes, version 1) and `"crypto"` (8 opcodes, version 1, §8.17; absent
+from a host built without a platform crypto library).
 
 A service grows by adding sub-opcodes at the end of its range and raising
 its version; nothing already defined changes.  A guest that wants a

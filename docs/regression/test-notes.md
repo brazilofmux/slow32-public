@@ -37,8 +37,6 @@ Location: `regression/tests/bug005-getelementptr`
 
 - **Original failure**: At `-O0`, LLVM lowered `llvm.memcpy` calls to repeated byte loads from offset `0`, so copying "ABC\0" resulted in `"   "`. Array and struct accesses were effectively broken.
 - **Investigations (2025-09-11)**: Implemented `SLOW32Addr` ComplexPattern, `SelectAddr`, and frame index fixes. Assembly now uses incrementing offsets (`ldbu r2, r1+3`, etc.).
-- **Workarounds applied**: Runtime `memcpy` switched to byte-wise copying in `intrinsics.s`; backend adjustments ensure %hi/%lo pairs for `GlobalAddress+offset`.
-- **Current risk**: Runtime still hit a memory fault (0xFFFFFFF4) after ~154K instructions, suggesting remaining frame or stack issues when the optimizer is disabled.
-- **Reproduction**: Compile `test.c` with `-O0`, assemble, link with runtime archives, and run the emulator to observe the faulty output; `-O1` and above no longer exhibit the bug.
-- **Next steps noted**: Debug the memory fault, request assembler support for `symbol+offset`, and re-validate at all optimization levels.
+- **Workarounds applied**: backend adjustments ensure %hi/%lo pairs for `GlobalAddress+offset`.
+- **Status**: Fixed.  The test passes at `-O0`, the suite's default level, printing `ABC`.  `%hi`/`%lo(symbol+offset)` relocations and a word-wise `memcpy` in `intrinsics.s` landed since.
 

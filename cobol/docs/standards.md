@@ -173,14 +173,14 @@ loud where it needs updating. The points, their ids and the audit of
 the Open Systems suite (no class M hits in 217 programs) are in
 [behavior-points.md](behavior-points.md).
 
-If `s32-cobc.c` (9,500 lines) outgrows navigation, the answer is to
-split it into files within this one compiler, not to fork the
-directory.
+When `s32-cobc.c` (9,500 lines) outgrew navigation, it was split
+into files within this one compiler (`src/cobc/*.h`), not forked
+into a second directory.
 
 ## Stage A — finish COBOL 85
 
-X3.23-1985 plus the X3.23a-1989 intrinsic functions is the current
-target. Per the README, CCVS-85 is at 348 of 348 programs compiling
+X3.23-1985 plus the X3.23a-1989 intrinsic functions was the target
+when this was written (2026-09-27). The README then had CCVS-85 at 348 of 348 programs compiling
 and 8049 of 8160 tests passing. Closing that gap, or recording each
 remaining failure as a ruling against the text, finishes the stage.
 
@@ -285,7 +285,9 @@ refused with a message naming the switch.
   floating indicator `"-` or `'-` in either format, comment lines allowed
   between the parts. The floating comment `*>` stays accepted in both
   standards, as majesty needs. Other compiler directives (`>>DEFINE`,
-  `>>IF`, `>>D` ...) are refused by name.
+  `>>IF`, `>>D` ...) were refused by name; >>DEFINE, >>IF, >>EVALUATE and
+  the small 2002 directives came 2026-10-06 (conformance/directives.md);
+  >>D stays out with the Debug module.
 - **The 2002 intrinsic functions** that need no other module (2026-09-28,
   ISSUES-52): the numeric, date-window, BYTE-LENGTH, NUMVAL-F and
   TEST-NUMVAL families; the rest refused naming the module or edition
@@ -303,8 +305,9 @@ refused with a message naming the switch.
   and EC-PROGRAM-RECURSIVE-CALL at the caller (ISSUES-60), and
   EC-BOUND-ODO (ISSUES-61), and EXCEPTION-LOCATION and EXCEPTION-FILE
   with their national forms (ISSUES-65), and TURN for one file
-  (ISSUES-87), and 2023's exception-checking PERFORM (ISSUES-89). Still
-  to come: the rest of Table 13's conditions. No oracle: GnuCOBOL 4
+  (ISSUES-87), and 2023's exception-checking PERFORM (ISSUES-89). The
+  rest of Table 13 followed (standard-queue item 4, 2026-10-08;
+  conformance/exceptions.md). No oracle: GnuCOBOL 4
   does not implement exception declaratives.
 - **NATIONAL** (2026-09-28, ISSUES-62 to -75). docs/national.md.
   - Part one: PICTURE N and national literals, stored UTF-16 big-endian,
@@ -358,7 +361,7 @@ orientation is part of it; it comes last, after everything else in
 docs/plans/standard-queue.md, as its own module with its own design
 note.
 
-It waits until someone brings a program that needs it. By then Stages
+It waits until the rest of the queue is done (the ruling above). By then Stages
 A and B give it a suite to land against. It also cannot compromise the
 layer: object references, dispatch and whatever memory management it
 needs all live in the COBOL runtime above SLOW-32, and none of it
@@ -399,9 +402,8 @@ its changes from 2002, 2023's its changes from 2014. For Stage B:
   to a numeric item, except `ALL` with a literal of digits to an
   *integer* item, which 2023 keeps as obsolete (Annex F): the case behind BP-O9 (ISSUES-47),
   still defined, now only for integers. None of this touches `-std=85`,
-  and all of it is on the watch list in
-  [behavior-points.md](behavior-points.md) for the day a 2023 switch
-  needs points of its own.
+  and all of it is behind `-std=2023` as class R points
+  ([behavior-points.md](behavior-points.md); conformance/edition-2023.md).
 
 The order of Stage B is unchanged: `RECURSIVE` and `LOCAL-STORAGE`
 first, the module the rest (user-defined functions especially) stand on.

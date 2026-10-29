@@ -1,5 +1,9 @@
 # SLOW-32 Substack Article Series Plan
 
+> Status 2026-10-29: articles 005-007 have been written since this plan
+> (see "Written since the plan" below and [README.md](README.md)).  The
+> numbers in the upcoming sections are the plan's, not the files'.
+
 ## Overview
 This document outlines the article series for SLOW-32, a modern educational CPU architecture and toolchain. Rather than massive comprehensive articles, we're taking a focused, story-driven approach where each article solves one interesting problem or explores one key concept.
 
@@ -34,14 +38,28 @@ This document outlines the article series for SLOW-32, a modern educational CPU 
    - Performance that beats traditional jump tables
    - Security benefits of no indirect jumps
 
-## Upcoming LLVM Backend Stories
+## Written since the plan
 
 ### 5. The SELECT Problem: Why Conditional Moves Are Tricky
+
+[`005-select-problem-conditional-moves.md`](005-select-problem-conditional-moves.md)
 
    - LLVM's ISD:: SELECT operation
    - Why our first attempt generated 8 instructions
    - The branch vs conditional move tradeoff
    - Final 3-instruction solution
+
+### 6. I Built a 6 BIPS JIT in Five Months (and Why That Matters)
+
+[`006-six-billion-instructions-per-second.md`](006-six-billion-instructions-per-second.md)
+(not in the original plan)
+
+### 7. Closing the Bootstrap: SLOW-32 Now Carries Itself to Any Host
+
+[`007-closing-the-bootstrap-portable-slow32.md`](007-closing-the-bootstrap-portable-slow32.md)
+(not in the original plan)
+
+## Upcoming LLVM Backend Stories
 
 ### 6. Calling Convention Crimes: The Register Clobber Mystery
 

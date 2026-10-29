@@ -204,6 +204,8 @@ These are sufficient for a complete bootstrap toolchain. The Stage00 emulator im
 
 Beyond the 34-instruction bootstrap core, all emulators implement these extensions.
 
+Floating-point instructions (from opcode 0x53, on GPRs and even register pairs) are not listed here: see `docs/SPEC.md` §4.7 and [FLOATING-POINT.md](FLOATING-POINT.md). The stage00 `s32-emu` does not implement them.
+
 ### Arithmetic / Comparison Extensions
 
 | Mnemonic | Opcode | Operation |
@@ -237,7 +239,8 @@ Beyond the 34-instruction bootstrap core, all emulators implement these extensio
 
 **Sign-extended** (12-bit value fills upper 20 bits with sign bit):
 
-- ADDI, SLTI, SLTIU
+- ADDI, SLTI
+- SLLI, SRLI, SRAI (only the low 5 bits of the immediate are used)
 - All loads (LDB, LDH, LDW, LDBU, LDHU)
 - All stores (STB, STH, STW) — the immediate offset
 - JALR
@@ -245,7 +248,9 @@ Beyond the 34-instruction bootstrap core, all emulators implement these extensio
 **Zero-extended** (12-bit value, upper 20 bits are zero):
 
 - ORI, ANDI, XORI
-- SLLI, SRLI, SRAI
+- SLTIU
+
+`docs/SPEC.md` §3 is normative.
 
 This means `ADDI r1, r0, -1` produces `0xFFFFFFFF` (sign-extended), but `ORI r1, r0, 0xFFF` produces `0x00000FFF` (zero-extended).
 
@@ -376,9 +381,13 @@ imm_4_1  = ((-8) >> 1) & 0xF = 0xC
 ## Memory Layout
 
 ```
-0x00000000 - 0x000FFFFF   Code region (1 MB, execute-only with W^X)
-0x00100000 - ...           Data/BSS region (read/write)
+0x00000000 - code_limit   Code region (linker default 1 MB, s32-ld --code-size;
+                          not writable, readable, the only fetchable region)
+code_limit - rodata_limit  Read-only data (linker default 1 MB, --rodata-size)
+rodata_limit - ...         Data/BSS region (read/write)
      Heap follows BSS, grows upward (size set by linker HEAP_GAP)
      MMIO region follows heap (if enabled via --mmio)
      Stack starts at 0x0FFFFFF0, grows downward
 ```
+
+`docs/SPEC.md` §6 is the full memory map.

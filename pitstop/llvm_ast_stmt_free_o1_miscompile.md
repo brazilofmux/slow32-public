@@ -1,5 +1,10 @@
 # Suspected LLVM Miscompile: `sbasic` `stmt_free` at `-O1`
 
+> Status 2026-10-29: closed.  The `optnone` workaround below is gone
+> (`stmt_free` in `sbasic/src/ast.c` is a plain function and sbasic passes
+> 45/45 at -O1); docs/AUDIT-2026-08.md records the fix as the sbasic AST
+> cleanup.  If it recurs, reduce the IR and file it as a backend bug.
+
 ## Summary
 
 On Intel host, `sbasic` built with the SLOW-32 LLVM pipeline at default `-O1`

@@ -19,9 +19,9 @@ carry the compiler's own reason.
 | 12 ENVIRONMENT DIVISION | 22 | 22 | 0 | 0 |
 | 13 DATA DIVISION | 78 | 70 | 0 | 8 |
 | 14 PROCEDURE DIVISION | 54 | 48 | 6 | 0 |
-| 15 intrinsic functions | 94 | 89 | 5 | 0 |
+| 15 intrinsic functions | 94 | 94 | 0 | 0 |
 | 16 standard classes | 0 | 0 | 0 | 0 |
-| **all** | **324** | **303** | **11** | **10** |
+| **all** | **324** | **308** | **6** | **10** |
 
 ## 7 COPY, REPLACE and directives
 
@@ -109,24 +109,24 @@ carry the compiler's own reason.
 | 11.6 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 11.7 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 11.8 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
-| 11.9 |  | [edition-2023](edition-2023.md), [options](options.md) | 8 | 10 | 0 | 0 | 0 |
-| 11.9.5 | ARITHMETIC clause | [options](options.md) | 8 | 5 | 0 | 0 | 0 |
-| 11.9.6 | DEFAULT ROUNDED clause | [options](options.md) | 8 | 5 | 0 | 0 | 0 |
-| 11.9.7 | ENTRY-CONVENTION clause | [options](options.md) | 8 | 5 | 0 | 0 | 0 |
-| 11.9.8 | FLOAT-BINARY clause | [options](options.md) | 8 | 5 | 0 | 0 | 0 |
-| 11.9.9 | FLOAT-DECIMAL clause | [options](options.md) | 8 | 5 | 0 | 0 | 0 |
-| 11.9.10 | INITIALIZE clause | [edition-2023](edition-2023.md), [options](options.md) | 8 | 10 | 0 | 0 | 0 |
-| 11.9.11 | INTERMEDIATE ROUNDING clause | [options](options.md) | 8 | 5 | 0 | 0 | 0 |
+| 11.9 |  | [edition-2023](edition-2023.md), [options](options.md) | 10 | 8 | 0 | 0 | 0 |
+| 11.9.5 | ARITHMETIC clause | [options](options.md) | 10 | 3 | 0 | 0 | 0 |
+| 11.9.6 | DEFAULT ROUNDED clause | [options](options.md) | 10 | 3 | 0 | 0 | 0 |
+| 11.9.7 | ENTRY-CONVENTION clause | [options](options.md) | 10 | 3 | 0 | 0 | 0 |
+| 11.9.8 | FLOAT-BINARY clause | [options](options.md) | 10 | 3 | 0 | 0 | 0 |
+| 11.9.9 | FLOAT-DECIMAL clause | [options](options.md) | 10 | 3 | 0 | 0 | 0 |
+| 11.9.10 | INITIALIZE clause | [edition-2023](edition-2023.md), [options](options.md) | 10 | 8 | 0 | 0 | 0 |
+| 11.9.11 | INTERMEDIATE ROUNDING clause | [options](options.md) | 10 | 3 | 0 | 0 | 0 |
 | 11.10 |  | [call](call.md) | 30 | 18 | 3 | 4 | 0 |
 
 ## 12 ENVIRONMENT DIVISION
 
 | section | element | page | test | refused | gap | n/a | ruling |
 |---|---|---|---|---|---|---|---|
-| 12.3 |  | [call](call.md), [data-division](data-division.md), [environment](environment.md), [screen](screen.md) | 155 | 133 | 12 | 11 | 12 |
+| 12.3 |  | [call](call.md), [data-division](data-division.md), [environment](environment.md), [screen](screen.md) | 156 | 132 | 12 | 11 | 12 |
 | 12.3.5 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 12.3.6 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
-| 12.3.7 |  | [data-division](data-division.md), [screen](screen.md) | 99 | 81 | 6 | 4 | 8 |
+| 12.3.7 |  | [data-division](data-division.md), [screen](screen.md) | 100 | 80 | 6 | 4 | 8 |
 | 12.3.8 |  | [call](call.md) | 30 | 18 | 3 | 4 | 0 |
 | 12.4 |  | [environment](environment.md), [files](files.md), [locking](locking.md) | 29 | 60 | 3 | 3 | 4 |
 | 12.4.4 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
@@ -150,22 +150,22 @@ carry the compiler's own reason.
 
 | section | element | page | test | refused | gap | n/a | ruling |
 |---|---|---|---|---|---|---|---|
-| 13.2 |  | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
-| 13.4 |  | [data-division](data-division.md), [environment](environment.md), [files](files.md) | 70 | 115 | 8 | 6 | 9 |
-| 13.4.5 |  | [data-division](data-division.md), [files](files.md) | 44 | 81 | 5 | 3 | 5 |
+| 13.2 |  | [data-division](data-division.md) | 43 | 62 | 5 | 3 | 5 |
+| 13.4 |  | [data-division](data-division.md), [environment](environment.md), [files](files.md) | 71 | 114 | 8 | 6 | 9 |
+| 13.4.5 |  | [data-division](data-division.md), [files](files.md) | 45 | 80 | 5 | 3 | 5 |
 | 13.4.6 |  | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
-| 13.5 |  | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
-| 13.6 |  | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
-| 13.7 |  | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
+| 13.5 |  | [data-division](data-division.md) | 43 | 62 | 5 | 3 | 5 |
+| 13.6 |  | [data-division](data-division.md) | 43 | 62 | 5 | 3 | 5 |
+| 13.7 |  | [data-division](data-division.md) | 43 | 62 | 5 | 3 | 5 |
 | 13.8 |  | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
 | 13.9 |  | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
-| 13.10 |  | [data-division](data-division.md), [directives](directives.md) | 94 | 83 | 7 | 6 | 7 |
+| 13.10 |  | [data-division](data-division.md), [directives](directives.md) | 95 | 82 | 7 | 6 | 7 |
 | 13.14 |  | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
-| 13.15 |  | [data-division](data-division.md), [reportwriter](reportwriter.md) | 52 | 100 | 6 | 3 | 5 |
-| 13.16 |  | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
+| 13.15 |  | [data-division](data-division.md), [reportwriter](reportwriter.md) | 53 | 99 | 6 | 3 | 5 |
+| 13.16 |  | [data-division](data-division.md) | 43 | 62 | 5 | 3 | 5 |
 | 13.17 |  | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
-| 13.18.1 | ALIGNED clause | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
-| 13.18.2 | ANY LENGTH clause | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
+| 13.18.1 | ALIGNED clause | [data-division](data-division.md) | 43 | 62 | 5 | 3 | 5 |
+| 13.18.2 | ANY LENGTH clause | [data-division](data-division.md) | 43 | 62 | 5 | 3 | 5 |
 | 13.18.3 | AUTO clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
 | 13.18.4 | BACKGROUND-COLOR clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
 | 13.18.5 | BASED clause | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
@@ -176,21 +176,21 @@ carry the compiler's own reason.
 | 13.18.10 | BLOCK CONTAINS clause | [files](files.md) | 2 | 18 | 0 | 0 | 0 |
 | 13.18.11 | CLASS clause | *unswept* | | | | | |
 | 13.18.12 | CODE clause | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
-| 13.18.13 | CODE-SET clause | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
+| 13.18.13 | CODE-SET clause | [data-division](data-division.md) | 43 | 62 | 5 | 3 | 5 |
 | 13.18.14 | COLUMN clause | [reportwriter](reportwriter.md), [screen](screen.md) | 67 | 55 | 2 | 1 | 3 |
-| 13.18.15 | CONSTANT RECORD clause | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
+| 13.18.15 | CONSTANT RECORD clause | [data-division](data-division.md) | 43 | 62 | 5 | 3 | 5 |
 | 13.18.16 | CONTROL clause | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
 | 13.18.17 | DEFAULT clause | *unswept* | | | | | |
 | 13.18.18 | DESTINATION clause | *unswept* | | | | | |
-| 13.18.19 | DYNAMIC LENGTH clause | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
-| 13.18.20 |  | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
+| 13.18.19 | DYNAMIC LENGTH clause | [data-division](data-division.md) | 43 | 62 | 5 | 3 | 5 |
+| 13.18.20 |  | [data-division](data-division.md) | 43 | 62 | 5 | 3 | 5 |
 | 13.18.21 | ERASE clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
-| 13.18.22 | EXTERNAL clause | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
+| 13.18.22 | EXTERNAL clause | [data-division](data-division.md) | 43 | 62 | 5 | 3 | 5 |
 | 13.18.23 | FOREGROUND-COLOR clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
 | 13.18.24 | FORMAT clause | *unswept* | | | | | |
 | 13.18.25 | FROM clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
 | 13.18.26 | FULL clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
-| 13.18.27 | GLOBAL clause | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
+| 13.18.27 | GLOBAL clause | [data-division](data-division.md) | 43 | 62 | 5 | 3 | 5 |
 | 13.18.28 | GROUP INDICATE clause | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
 | 13.18.29 | GROUP-USAGE clause | [national-boolean](national-boolean.md) | 15 | 13 | 0 | 0 | 1 |
 | 13.18.30 | HIGHLIGHT clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
@@ -212,7 +212,7 @@ carry the compiler's own reason.
 | 13.18.46 | REPORT clause | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
 | 13.18.47 | REQUIRED clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
 | 13.18.48 | REVERSE-VIDEO clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
-| 13.18.49 | SAME AS clause | [data-division](data-division.md) | 42 | 63 | 5 | 3 | 5 |
+| 13.18.49 | SAME AS clause | [data-division](data-division.md) | 43 | 62 | 5 | 3 | 5 |
 | 13.18.50 | SECURE clause | [screen](screen.md) | 57 | 18 | 1 | 1 | 3 |
 | 13.18.51 | SELECT WHEN clause | *unswept* | | | | | |
 | 13.18.52 | SIGN clause | [clauses](clauses.md) | 1 | 7 | 0 | 0 | 0 |
@@ -237,17 +237,17 @@ carry the compiler's own reason.
 | 14.7.4 | ROUNDED phrase | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 14.7.9 | RETRY phrase | [locking](locking.md) | 1 | 8 | 0 | 0 | 0 |
 | 14.9.1 | ACCEPT statement | [accept](accept.md), [screen](screen.md) | 59 | 28 | 1 | 1 | 3 |
-| 14.9.2 | ADD statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
+| 14.9.2 | ADD statement | [arithmetic](arithmetic.md) | 10 | 6 | 0 | 1 | 0 |
 | 14.9.3 | ALLOCATE statement | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
 | 14.9.4 | CALL statement | [call](call.md) | 30 | 18 | 3 | 4 | 0 |
 | 14.9.5 | CANCEL statement | [control](control.md) | 10 | 10 | 0 | 1 | 0 |
 | 14.9.6 | CLOSE statement | [io-statements](io-statements.md) | 2 | 20 | 0 | 0 | 0 |
 | 14.9.7 | COMMIT statement | **not implemented**: COMMIT is COBOL 2023; not implemented | | | | | |
-| 14.9.8 | COMPUTE statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
+| 14.9.8 | COMPUTE statement | [arithmetic](arithmetic.md) | 10 | 6 | 0 | 1 | 0 |
 | 14.9.9 | CONTINUE statement | [control](control.md) | 10 | 10 | 0 | 1 | 0 |
 | 14.9.10 | DELETE statement | [io-statements](io-statements.md) | 2 | 20 | 0 | 0 | 0 |
 | 14.9.11 | DISPLAY statement | [accept](accept.md), [screen](screen.md) | 59 | 28 | 1 | 1 | 3 |
-| 14.9.12 | DIVIDE statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
+| 14.9.12 | DIVIDE statement | [arithmetic](arithmetic.md) | 10 | 6 | 0 | 1 | 0 |
 | 14.9.13 | EVALUATE statement | [evaluate](evaluate.md) | 4 | 7 | 0 | 1 | 0 |
 | 14.9.14 | EXIT statement | [exit](exit.md) | 10 | 8 | 0 | 2 | 0 |
 | 14.9.15 | FREE statement | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
@@ -260,8 +260,8 @@ carry the compiler's own reason.
 | 14.9.22 | INSPECT statement | [string](string.md) | 3 | 20 | 0 | 2 | 0 |
 | 14.9.23 | INVOKE statement | **not implemented**: INVOKE is object orientation, not implemented | | | | | |
 | 14.9.24 | MERGE statement | [sort](sort.md) | 4 | 11 | 0 | 0 | 0 |
-| 14.9.25 | MOVE statement | [move](move.md) | 14 | 9 | 0 | 8 | 0 |
-| 14.9.26 | MULTIPLY statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
+| 14.9.25 | MOVE statement | [move](move.md) | 15 | 9 | 0 | 7 | 0 |
+| 14.9.26 | MULTIPLY statement | [arithmetic](arithmetic.md) | 10 | 6 | 0 | 1 | 0 |
 | 14.9.27 | OPEN statement | [io-statements](io-statements.md), [locking](locking.md) | 3 | 28 | 0 | 0 | 0 |
 | 14.9.28 | PERFORM statement | [perform](perform.md) | 22 | 10 | 0 | 0 | 1 |
 | 14.9.29 | RAISE statement | [raise](raise.md) | 1 | 3 | 0 | 1 | 0 |
@@ -279,7 +279,7 @@ carry the compiler's own reason.
 | 14.9.41 | START statement | [io-statements](io-statements.md) | 2 | 20 | 0 | 0 | 0 |
 | 14.9.42 | STOP statement | [control](control.md) | 10 | 10 | 0 | 1 | 0 |
 | 14.9.43 | STRING statement | [string](string.md) | 3 | 20 | 0 | 2 | 0 |
-| 14.9.44 | SUBTRACT statement | [arithmetic](arithmetic.md) | 10 | 5 | 0 | 2 | 0 |
+| 14.9.44 | SUBTRACT statement | [arithmetic](arithmetic.md) | 10 | 6 | 0 | 1 | 0 |
 | 14.9.45 | SUPPRESS statement | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
 | 14.9.46 | TERMINATE statement | [reportwriter](reportwriter.md) | 10 | 37 | 1 | 0 | 0 |
 | 14.9.47 | UNLOCK statement | [environment](environment.md) | 26 | 34 | 3 | 3 | 4 |
@@ -336,10 +336,10 @@ carry the compiler's own reason.
 | 15.48 | INTEGER-OF-FORMATTED-DATE function | [functions](functions.md) (implemented) | | | | | |
 | 15.49 | INTEGER-PART function | [functions](functions.md) (implemented) | | | | | |
 | 15.50 | LENGTH function | [functions](functions.md) (implemented) | | | | | |
-| 15.51 | LOCALE-COMPARE function | implemented 2026-10-09 (docs/plans/locale.md step 1; ISSUES 130): the locale-name's collation (libutf, CLDR 46), the 8.8.4.2.11 trimming, national operands converted; EC-LOCALE-MISSING when the current locale stands in for one the environment named | 2002/localecmp, localemiss | |
-| 15.52 | LOCALE-DATE function | implemented 2026-10-09 (step 2; ISSUES 131): CLDR 46's medium date format as d_fmt, from locale_data.h; 1601-9999, a valid day, else EC-ARGUMENT-FUNCTION and an empty result | 2002/localedate | |
-| 15.53 | LOCALE-TIME function | implemented 2026-10-09 (step 2): CLDR 46's medium time format as t_fmt; hours 00-24 and seconds 00-99 as rule 3 says | 2002/localedate | |
-| 15.54 | LOCALE-TIME-FROM-SECONDS function | implemented 2026-10-09 (step 2): standard numeric time form, the fraction dropped, 86400 and up EC-ARGUMENT-FUNCTION | 2002/localedate | |
+| 15.51 | LOCALE-COMPARE function | [functions](functions.md) (implemented) | | | | | |
+| 15.52 | LOCALE-DATE function | [functions](functions.md) (implemented) | | | | | |
+| 15.53 | LOCALE-TIME function | [functions](functions.md) (implemented) | | | | | |
+| 15.54 | LOCALE-TIME-FROM-SECONDS function | [functions](functions.md) (implemented) | | | | | |
 | 15.55 | LOG function | [functions](functions.md) (implemented) | | | | | |
 | 15.56 | LOG10 function | [functions](functions.md) (implemented) | | | | | |
 | 15.57 | LOWER-CASE function | [functions](functions.md) (implemented) | | | | | |
@@ -370,7 +370,7 @@ carry the compiler's own reason.
 | 15.82 | SIN function | [functions](functions.md) (implemented) | | | | | |
 | 15.83 | SMALLEST-ALGEBRAIC function | [functions](functions.md) (implemented) | | | | | |
 | 15.84 | SQRT function | [functions](functions.md) (implemented) | | | | | |
-| 15.85 | STANDARD-COMPARE function | implemented 2026-10-09 (docs/plans/locale.md step 1; ISSUES 130): the DUCET of Unicode 16.0 under the UCA as 'ISO_14651_2020_TABLE1', the one ORDER TABLE taken; argument-4 the level (1-4: the sort keys cut there); a zero-length literal refused; a level the table has not is EC-ORDER-NOT-SUPPORTED (a literal refused at compile time) | 2002/stdcompare | |
+| 15.85 | STANDARD-COMPARE function | [functions](functions.md) (implemented) | | | | | |
 | 15.86 | STANDARD-DEVIATION function | [functions](functions.md) (implemented) | | | | | |
 | 15.87 | SUBSTITUTE function | [functions](functions.md) (implemented) | | | | | |
 | 15.88 | SUM function | [functions](functions.md) (implemented) | | | | | |

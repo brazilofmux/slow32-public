@@ -1,5 +1,11 @@
 # Selfhost SHA256 Checksums
 
+> Status 2026-10-29: stages 01-04 are current.  The stage05-08 sums date
+> from 2026-08-27 and predate the in-place repairs since (stage05/06
+> `hir_opt.h` 2026-10-14, stage07 selfhost ISSUES-76 and ISSUES-92,
+> stage08 every kit batch); regenerate them before running
+> `verify-emu-sums.sh` on those stages.
+
 All platforms and emulators produce bit-identical artifacts.
 
 ## Verified Platforms & Emulators

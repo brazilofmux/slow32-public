@@ -1,5 +1,7 @@
 # SLOW32 Public Release - 64-bit Integer Support
 
+> Status 2026-10-29: history -- the record of the 2025-09 release sync.
+
 ## Release Status
 
 - ✅ Development repository committed (`~/slow-32`)

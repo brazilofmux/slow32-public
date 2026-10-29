@@ -1,5 +1,10 @@
 # Slow32 TCG Port — Overview & Requirements
 
+> Status 2026-10-29: the requirements below were written before the target
+> existed; the target now meets them (loader, full ISA, MMIO). The normative
+> machine specification is `slow-32/docs/SPEC.md`; measured engine speeds
+> are in `slow-32/docs/EMULATORS.md`.
+
 ## Motivation
 
 The SLOW-32 ISA already has a fast interpreter (`slow-32/tools/emulator/slow32-fast`, ~385 MIPS). The next milestone is a QEMU Tiny Code Generator backend that can execute `.s32x` binaries directly (`qemu-system-slow32 -kernel program.s32x`). This document captures the functional requirements before writing code, so we can implement the target incrementally and validate each step against the reference emulator.
@@ -66,6 +71,7 @@ Future extensions (cycle counters, MMU flags) can be added later. The key is mir
 ## Dependencies & References
 
 - Primary specs:
+  - `slow-32/docs/SPEC.md` (normative)
   - `slow-32/docs/INSTRUCTION-SET.md`
   - `slow-32/docs/file-formats.md`
   - `slow-32/tools/emulator/slow32.c` and `slow32_format.h`

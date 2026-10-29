@@ -23,8 +23,8 @@ MMIO is functional in all four engines (`slow32`, `slow32-fast`, `slow32-dbt`, `
 - **Guest Symbols**: Linker creates `__mmio_base` and `__mmio_end` symbols
 - **Linux-Compatible ABI**: Ring descriptors carry Linux-style syscalls (open/read/write/seek/stat/exit, etc.)
 - **Opcode Registry**: Stable IDs captured in `docs/mmio/opcode-map.md`
-  (time/timers/`POLL` at `0x30–0x35`, sockets at `0x40–0x48`, `EXEC` at
-  `0x10`; none of these is a guest interrupt)
+  (time/timers/`POLL`/`FDPOLL` at `0x30–0x36`, sockets at `0x40–0x4B`,
+  `EXEC` at `0x10`, `FCNTL` at `0x0F`; none of these is a guest interrupt)
 
 ### Test Programs
 

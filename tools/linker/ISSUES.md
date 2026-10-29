@@ -52,6 +52,10 @@ The linker assumes 4-byte alignment for most things but does not strictly honor 
 
 - **Problem**: If an object file requests 16-byte alignment for a specific data structure (e.g., SIMD-like structures or page-aligned buffers), the linker might misalign it.
 - **Recommendation**: Rigorously use `(current + align - 1) & ~(align - 1)` in `merge_sections` and `layout_sections`.
+- **Status (2026-10-29)**: Resolved.  Section merging and both layouts
+  (packed and `--no-pack-sections`) round to each section's `align`; a
+  `.data` input with `.p2align 4` and another with `.p2align 6` link to
+  16- and 64-byte-aligned symbols in both modes (`--print-map`).
 
 ### 7. Fixed Stack Base
 `DEFAULT_STACK_BASE` is hardcoded at `0x0FFFFFF0`.

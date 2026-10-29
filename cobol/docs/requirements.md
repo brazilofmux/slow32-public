@@ -1,5 +1,13 @@
 # Requirements
 
+> Status 2026-10-29: v1's requirements, written 2026-08-29 and met
+> by Stage 11 ([plan.md](plan.md)); kept as the original design.
+> Since then COBOL 2002, 2014 and 2023 came in behind `-std`, 85
+> staying the default ([standards.md](standards.md)); SORT and MERGE
+> are implemented ([conformance/sort.md](conformance/sort.md));
+> sources are UTF-8 and national data UTF-16 ([national.md](national.md));
+> and the hot numeric statements lower to HIR ([plans/hir.md](plans/hir.md)).
+
 ## Product test
 
 GnuCOBOL is no longer on `~/majesty`'s report path. The programs under

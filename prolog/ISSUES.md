@@ -2,7 +2,7 @@
 
 Review date: February 12, 2026.
 
-Current test status: 16/16 passing (Stabilized core + arity guards).
+Current test status: 17/17 passing (2026-10-29).
 
 ## 1) `findall/3` and `\+/1` Corrupt Engine State (Resolved 2026-08 Pack E)
 

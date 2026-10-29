@@ -1,10 +1,15 @@
 # SLOW-32 Toolchain Issues Discovered During Regal Port
 
+> Status 2026-10-29: all three issues are fixed (1: 2026-01-19, 2: `s32-ld
+> --heap-size`, 3: Jul 2026).  Kept as the regal port's record.
+
 These issues were discovered while porting the Regal accounting system to SLOW-32. The application is a real-world C program with ~15K lines of code, making it a good stress test for the toolchain.
 
 ---
 
 ## Issue 1: LLVM Codegen Optimization Bug in Tight Loops
+
+**Status: FIXED 2026-01-19** -- see [csv-heisenbug/README.md](csv-heisenbug/README.md).
 
 ### Summary
 The LLVM backend generates incorrect code for tight loops with switch statements at `-O2`. The compiler appears to incorrectly cache values across loop iterations, causing state machine logic to fail.
@@ -65,6 +70,8 @@ for (size_t i = 0; i < len; i++) {
 ---
 
 ## Issue 2: Hardcoded 1MB Heap Limit When MMIO is Enabled
+
+**Status: FIXED** -- `s32-ld --heap-size SIZE` (default 1MB).
 
 ### Summary
 The linker (`s32-ld`) hardcodes a 1MB heap size when MMIO is enabled, regardless of available memory. This prevents applications from allocating more than ~1MB total heap space.

@@ -228,7 +228,7 @@ section finds only the USE procedures declared before it in the source
 | EC-REPORT-PAGE-LIMIT | NF | **refused** at compile time for absolute lines; a group taller than its region at run time (PRESENT WHEN, OCCURS ... DEPENDING, item 37's forms) is a **gap**: the engine starts a new page and goes on |
 | EC-REPORT-PAGE-WIDTH | NF | **refused** at compile time: an item past the page width |
 | EC-REPORT-SUM-SIZE | Fatal | **gap**: a sum counter overflow is truncated silently (the 2002 Report Writer, item 37, left it so) |
-| EC-REPORT-VARYING | Fatal | **n/a**: VARYING in a report group is the 2002 Report Writer (queue item 37) |
+| EC-REPORT-VARYING | Fatal | **gap**: VARYING in a report group is implemented (queue item 37, 2026-10-07; reportwriter.md), but its value is not checked: the condition is in the table (control.h) and never raised |
 
 ## EC-SCREEN
 

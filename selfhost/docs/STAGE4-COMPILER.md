@@ -1,5 +1,7 @@
 # Stage 4: Minimal C Compiler
 
+> **Status:** legacy V1/V2 playbook (2026-02). The V2 stage numbers and the `selfhost/stageN/` paths below no longer exist; this work now lives in `selfhost/stage00` and `selfhost/stage01` (see [BOOTSTRAP.md](BOOTSTRAP.md) and the stage READMEs). Kept for its design rationale.
+
 > **V2 cross-reference:** This is **Stage 4** in [BOOTSTRAP.md](BOOTSTRAP.md) (Layer C: Subset C Self-Hosting). The Forth-based compiler (`cc.fth`) is the starting point. Stages 5-8 progressively replace it with C-based tools.
 
 ## Goal

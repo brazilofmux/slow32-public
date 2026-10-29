@@ -1,15 +1,16 @@
 # The road to ISO/IEC 1989:2023 -- a work queue for s32-cobc
 
-Drafted 2026-10-06 for the owner's review; nothing in it is started. Items are taken one at a
-time and checked off here; the order may change as the coverage matrix fills in.
+Drafted 2026-10-06 for the owner's review; taken item by item since. As of 2026-10-09, 47 of the
+51 items are done or landed in a first stage; items 41, 46, 48 and 51 are deferred by ruling. Items
+are taken one at a time and checked off here; the order may change as the coverage matrix fills in.
 
 ## Scope and method
 
 **Target text.** ISO/IEC 1989:2023, the current edition, minus what the owner has ruled out (section
-"Out by ruling"). The compiler's model stays one compiler with a `-std` switch: today `-std=85`
-(default) and `-std=2002` exist (`src/cobc/driver.h`; any other value is refused). This queue
-assumes two more rows, `-std=2014` and `-std=2023`, each accepting the one before plus its own
-additions, and each the place where a later edition's *removals* go behind the switch.
+"Out by ruling"). The compiler's model stays one compiler with a `-std` switch: when this was drafted
+`-std=85` (default) and `-std=2002` existed (`src/cobc/driver.h`). This queue assumed two more
+rows, `-std=2014` and `-std=2023` (both added 2026-10-07, items 20 and 30), each accepting the one
+before plus its own additions, and each the place where a later edition's *removals* go behind the switch.
 
 **Editions.** "Ed." below is the edition that introduced the construct, checked by searching the
 2002, 2014 and 2023 texts, and Annex E of 2014 (changes from 2002) and of 2023 (changes from 2014).

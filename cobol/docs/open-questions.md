@@ -1,5 +1,13 @@
 # Open questions
 
+> Status 2026-10-29: the v1 design's open questions, 2026-08-29.
+> Most were settled by the stages in [plan.md](plan.md): fixed format
+> is the default with `-free` a flag; the command is `s32-cobc`;
+> numbers are a 64-bit scaled integer with a 31-digit wide path
+> ([wide.md](wide.md)); indexed files are a B+tree (`libcob/btree.h`);
+> relative I-O landed (cobol ISSUES-1); the PICTURE scanner was
+> re-hosted (`src/picture.rl`). Kept as history.
+
 Rulings belong in [requirements.md](requirements.md) and
 [architecture.md](architecture.md). This file is what is *not* yet
 ruled. An implementer who hits one should stop and ask, not guess

@@ -1,5 +1,8 @@
 # FIX PLAN: Implement RISC-V-Style 32-bit Constant Loading
 
+> Status 2026-10-29: implemented, in the assembler (`li`), the linker's
+> `%hi`/`%lo` relocations and the LLVM backend.  Kept as the original plan.
+
 ## Decision: RISC-V Approach
 
 Use RISC-V's proven method:

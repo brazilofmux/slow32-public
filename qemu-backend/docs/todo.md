@@ -3,7 +3,7 @@
 ## Phase 0 — Repo Plumbing
 
 - [x] Ensure `docs/slow32-tcg/` stays tracked; add links from `AGENTS.md` or `README.rst`.
-- [ ] Decide where `.s32x` assets live for testing (e.g., `tests/tcg/slow32/` or reuse `slow-32/regression` outputs via relative paths).
+- [x] Decide where `.s32x` assets live for testing (e.g., `tests/tcg/slow32/` or reuse `slow-32/regression` outputs via relative paths). Decided: `slow-32/regression/results/`.
 
 ## Phase 1 — Target Skeleton
 
@@ -49,7 +49,7 @@
 ## Phase 6 — Testing & Tooling
 
 - [x] Local functional parity harness: `scripts/slow32/functional.py` (stdout + exit code vs reference `slow32`).
-- [ ] Automate full regression: build via `slow-32/regression/run-tests.sh`, then feed each result `.s32x` through `functional.py`.
+- [x] Automate full regression: done as `slow-32/regression/run-differential.sh`, where qemu is one of the engines diffed against `slow32`; random machine code via `slow-32/regression/fuzz/isafuzz.py`.
 - [ ] Add Avocado or meson `tests/tcg/slow32` cases with tiny programs checked into the repo.
 - [ ] Document the workflow in `docs/system/target/slow32.rst` (build steps, limitations).
 - [ ] Track performance vs. `slow32-fast` (optional stretch goal); optional guest-side stats instrumentation was removed for peak speed — restore behind a machine property if needed.

@@ -50,17 +50,23 @@ intended to be upstreamed" category above.
 
 # AGENTS.md — QEMU + SLOW-32 Integration Guide
 
+> Status 2026-10-29: written before the target existed. The TCG target is
+> complete (loader, full ISA, MMIO) and gated by
+> `slow-32/regression/run-differential.sh` and `regression/fuzz/isafuzz.py`;
+> the checklist in section 7 is done. For current facts use
+> `slow-32/CLAUDE.md` and `slow-32/docs/SPEC.md` (normative).
+
 ## 1. Repository Context
 
 - Upstream QEMU tree plus a private copy of the `slow-32/` toolchain lives side-by-side in this workspace (`~/qemu`). The immediate goal is to grow a `slow32-tcg` emulator by teaching QEMU’s Tiny Code Generator how to execute SLOW-32 binaries.
 - `slow-32/tools/emulator/slow32-fast` already reaches ~385 MIPS; it exists as a behavioral reference whose ISA, loader, and MMIO semantics must match whatever the TCG backend produces.
-- The LLVM SLOW-32 backend is already built under `~/llvm-project` (see `slow-32/LLVM_BACKEND_WORK_NEEDED.md` for the current status). Inline assembly and the full C toolchain are available, so you can generate fresh `.s32x` workloads without touching host compilers.
+- The LLVM SLOW-32 backend is already built under `~/llvm-project` (see `~/slow-32/llvm-backend/SLOW32/STATUS.md` for the current status). Inline assembly and the full C toolchain are available, so you can generate fresh `.s32x` workloads without touching host compilers.
 
 ## 2. Immediate Points of Interest
 
 - `slow-32/` — complete assembler, linker, runtime, emulators, docs, and regression inputs. Use its `AGENTS.md`, `README.md`, and `CLAUDE.md` for day-to-day toolchain workflows.
 - `slow-32/docs/INSTRUCTION-SET.md` & `docs/file-formats.md` — authoritative ISA and executable/object format descriptions.
-- `slow-32/tools/emulator/` — the existing C-based interpreter (`slow32.c`, `slow32-fast.c`, `slow32_mmio.c`, `mmio_ring.c`). Treat this directory as executable documentation for instruction semantics, MMIO handoffs, and W^X enforcement (`slow32_format.h`, `s32x_loader.h`).
+- `slow-32/tools/emulator/` — the existing C-based interpreter (`slow32.c`, `slow32-fast.c`, `mmio_ring.c`). Treat this directory as executable documentation for instruction semantics, MMIO handoffs, and W^X enforcement (`slow32_format.h`, `s32x_loader.h`).
 - `tcg/`, `target/`, `include/tcg/`, `accel/tcg/` — QEMU subsystems you will extend when adding a `slow32` target. Follow the pattern used by other small softmmu targets (e.g., `target/riscv` or `target/openrisc`) rather than digging through unrelated devices.
 - External dependency: `~/llvm-project` (already configured with the SLOW-32 backend). Clang lives in `~/llvm-project/build/bin`; scripts inside `slow-32/tools/` default to that path.
 
@@ -93,7 +99,7 @@ intended to be upstreamed" category above.
 
 - `slow32` — straightforward interpreter with per-instruction tracing, stepping (`-s`), register diffs (`-r`), breakpoints (`-b`), and watchpoints (`-w`). Use it as the oracle when validating new TCG translations.
 - `slow32-fast` — optimized interpreter emphasizing throughput (~385 MIPS). Useful when benchmarking parity against the forthcoming TCG backend.
-- `slow32_mmio` plus `mmio_ring.c` — demonstrates how the MMIO console buffer integrates with the runtime; mirror the behavior inside QEMU’s device emulation or delegate to existing chardevs.
+- `mmio_ring.c` — demonstrates how the MMIO console buffer integrates with the runtime; mirror the behavior inside QEMU’s device emulation or delegate to existing chardevs.
 
 ## 7. QEMU TCG Integration Checklist
 
@@ -110,13 +116,12 @@ intended to be upstreamed" category above.
 - Toolchain smoke test: `cd slow-32 && ./scripts/test-quick.sh`.
 - Full regression: `cd slow-32/regression && ./run-tests.sh` (expects LLVM tools in `~/llvm-project/build/bin` or exported via `LLVM_BIN`). Artifacts land in `slow-32/regression/results/<case>/`.
 - Emulator comparison: run the same `.s32x` via `slow32-fast` and the TCG-powered `qemu-system-slow32`, capture traces (`-d in_asm,exec`) and compare with `slow32 -t`.
-- When modifying the LLVM backend, follow the checklist in `slow-32/LLVM_BACKEND_WORK_NEEDED.md` (notably the 64-bit division bug and the `__udivdi3` safeguard).
+- When modifying the LLVM backend, run the gates listed in `slow-32/CLAUDE.md` (regression suite, `run-llvm-verify.sh`).
 
 ## 9. Known Pitfalls & References
 
-- The LLVM backend currently works around a 64-bit divide/modulo issue (see `slow-32/docs/issues/llvm-i64-division.md`). Do not assume optimizer-generated `div`/`rem` sequences are trustworthy until that fix lands.
 - Some runtime objects (e.g., `printf_enhanced.s32o`) rely on MMIO syscalls introduced in the private tree—ensure your QEMU device model exposes the same addresses before claiming feature parity.
-- Always link with `crt0.s32o` first, followed by program objects, `runtime/libs32.s32a`, and `runtime/libc.s32a`; the helper script `slow-32/scripts/compile.sh` encodes the canonical order.
+- Always link with `crt0.s32o` first, followed by program objects, `runtime/libc_mmio.s32a` (or `libc_debug.s32a`), then `runtime/libs32.s32a`; the helper script `slow-32/scripts/compile.sh` encodes the canonical order.
 - Documentation map: `slow-32/README.md` (project overview), `slow-32/AGENTS.md` (repository etiquette inside the toolchain), `slow-32/CLAUDE.md` (assistant cheat sheet), `slow-32/docs/` (ISA, formats, release notes), `slow-32/examples/` (sample workloads). Consult these before touching generic QEMU subsystems.
 
 Armed with the above, new agents can focus on SLOW-32 specifics instead of rediscovering how to build toolchains or where the ISA is documented, and can stand up the TCG backend incrementally without spelunking unrelated QEMU code.

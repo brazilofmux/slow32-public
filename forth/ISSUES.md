@@ -28,7 +28,8 @@ Primitives that advanced `HERE` lacked overflow protection.
   conversion, while the `PAD` word returned `HERE 128 +`.
 - **Status**: Split into dedicated buffers:
   - `word_buf` (256 B) — parse / define name buffer; length capped at 255
-    for `WORD`, 127 for dictionary headers (IMMEDIATE uses length bit 7)
+    for `WORD`, 127 for dictionary headers (IMMEDIATE uses length bit 7;
+    31 since 2026-10-10, see "Closed the same day" below)
   - `pno_buf` (128 B) — pictured numeric output and `.`
   - `PAD` remains `HERE 128 +` (ANS transient region above the dictionary)
 - Covered by `tests/test-pad-isolation.fth`.
@@ -58,7 +59,7 @@ These were implemented as byte-by-byte loops in `prelude.fth`.
 The `FIND` word performs a linear search through a linked list of word headers.
 
 - **Note**: While standard for Stage 4, as the dictionary grows (prelude + user code), lookups will slow down significantly.
-- **Future**: Consider a hashed dictionary or a more efficient search structure for Stage 5. Not blocking; stage01 tools remain usable.
+- **Future**: Consider a hashed dictionary or a more efficient search structure for Stage 5. Not blocking; stage01 tools remain usable.  (Done 2026-10-10: the `dict_find` cache, see "Closed the same day" below.)
 
 ---
 

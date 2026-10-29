@@ -5,8 +5,8 @@ Status: **the verification suite passes, 23 files and 9,585 checks
 1 through 6 landed in one pass of 2026-10-11/12, and the stage08 leg of
 milestone 7 with them: the interpreter built by the kit's stage08 cc
 prints the same bytes as the clang build over the whole suite.  `islisp.s32x` is
-in the kit and `lisp/` is retired (2026-10-12); the images pick it up
-on the next builder run.
+in the kit and `lisp/` is retired (2026-10-12); it ships in the
+`slow32:kit` image (`Dockerfile.kit`, gated by `run-kit-islisp.sh`).
 `islisp/README.md` has the layout and the commands, `islisp/docs/
 oracle.md` the conventions taken from the oracle and the places the
 text wins over it.

@@ -56,7 +56,9 @@ when it is installed, docker otherwise.
 
 - podman or docker
 - the `slow32:emulator` image: `podman build -t slow32:emulator -f Dockerfile.emulator .`
-  (an older local image named `slow32-emulator` is used if that is all there is)
+  (an older local image named `slow32-emulator` is used if that is all there is),
+  or the published one, tagged with the local name the script looks for:
+  `podman pull docker.io/hurriedreformist/slow32:emulator && podman tag docker.io/hurriedreformist/slow32:emulator slow32:emulator`
 
 ### `s32run` - In-Container Emulator Selector
 

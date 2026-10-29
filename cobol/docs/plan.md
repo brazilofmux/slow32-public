@@ -1,5 +1,13 @@
 # Plan
 
+> Status 2026-10-29: the plan for the COBOL 85 compiler, Stages 0-63,
+> complete by 2026-08-31; history. What came after is
+> [standards.md](standards.md) and
+> [plans/standard-queue.md](plans/standard-queue.md): COBOL 2002-2023
+> behind `-std`, SORT, the user-defined functions, and HIR islands
+> ([plans/hir.md](plans/hir.md)), all of which the "After v1" and
+> "What not to start a stage with" lists at the end predate.
+
 No code until this document says a stage has started. The stages
 are ordered so each one is a claim the project can make, and so
 work that shares machinery lands together. Sizes are honest

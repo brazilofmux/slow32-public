@@ -6,11 +6,11 @@ a stable id. The id appears here, in the compiler's message, and in the
 tests, so the three stay in step.
 
 The rule for the compiler: every site that meets a point calls
-`bp(point, line)` in `src/s32-cobc.c`, and the policy (silent, warn, and
+`bp(point, line)` (`src/cobc/diag.h`), and the policy (silent, warn, and
 later refuse) lives in that one function and its table, keyed by `-std`
 and the warning flags. A site never decides for itself. That is what
-lets a new switch be one table change instead of a hunt through 9,500
-lines.
+lets a new switch be one table change instead of a hunt through the
+compiler.
 
 Plan and reasoning: [standards.md](standards.md).
 
@@ -18,7 +18,7 @@ Plan and reasoning: [standards.md](standards.md).
 
 | switch | today |
 |---|---|
-| `-std=85` (also `-std=cobol85`) | the default and the only standard implemented: X3.23-1985 and the X3.23a-1989 intrinsic functions |
+| `-std=85` (also `-std=cobol85`) | the default: X3.23-1985 and the X3.23a-1989 intrinsic functions |
 | `-std=74` | refused: 74 programs compile as 85, and `-warn-74` flags where their meaning changed; full COBOL 74 is cobc370's job |
 | `-std=2002` | COBOL 2002, Stage B of standards.md (any other `-std` is refused) |
 | `-std=2014` | COBOL 2014 (2026-10-07): 2002 and the 2014 additions as they land |

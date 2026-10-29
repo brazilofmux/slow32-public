@@ -1,5 +1,7 @@
 # C Language Subset for Self-Hosting
 
+> Status 2026-10-29: an audit of the native tools as they stood in early 2026. The line counts are from then (the same files total ~9.7K lines now), and the selfhost tools were rewritten from stage02 on, so this is no longer a target list.
+
 ## Overview
 
 The SLOW-32 native toolchain comprises 5 tools totaling ~7K lines of C plus shared headers. This document catalogs the C features and libc functions they use, defining the target language surface for the selfhost subset-C compilers (s12cc and successors).

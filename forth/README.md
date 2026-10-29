@@ -32,12 +32,13 @@ point and file-system words beyond what the tools need are out of scope.
 - **Loops**: `DO`, `?DO`, `LOOP`, `+LOOP`, `I`, `J`, `UNLOOP`, `LEAVE`
 - **Variables**: `STATE`, `BASE`, `BASE!`, `LATEST`, `DP` (the pointer `HERE` reads), `NUMBER-HOOK`, `TIB`, `TOIN`, `NTIB`
 - **Dictionary**: `IMMEDIATE`, `COMPILE-ONLY`, `DICT-CACHE-CLEAR` (FIND's lookup cache; MARKER runs it)
-- **Parser**: `WORD` (standard: any delimiter, >IN past it, its own buffer), `(WORD)` (the interpreter's: blank-delimited, uppercased, into `word_buf`), `FIND`, `NUMBER`, `PARSE-WORD`, `PARSE`, `INTERPRET`
+- **Parser**: `WORD` (standard: any delimiter, >IN past it, its own buffer), `(WORD)` (the interpreter's: blank-delimited, uppercased, into `word_buf`), `FIND`, `NUMBER`, `PARSE-WORD`, `PARSE-NAME`, `PARSE`, `INTERPRET`
 - **Strings**: `COUNT`
 - **Pictured Output**: `<#`, `HOLD`, `#>`
 - **Exception**: `CATCH`, `THROW`
 - **Search-Order**: `FORTH-WORDLIST`, `GET-CURRENT`, `SET-CURRENT`, `GET-ORDER`, `SET-ORDER`, `SEARCH-WORDLIST`, `WORDLIST`
-- **System**: `ABORT`, `EVALUATE`
+- **System**: `ABORT`, `QUIT`, `EVALUATE`, `SOURCE-ID`
+- **File**: `OPEN-FILE`, `CLOSE-FILE`, `READ-FILE`, `WRITE-FILE`, `DELETE-FILE`, `RENAME-FILE`, `FILE-SIZE`, `FILE-POSITION`, `REPOSITION-FILE`, `BIN`
 - **Facility**: `MS`
 - **Tube** (docs/TUBE.md): `TUBE-INIT`, `TUBE-OPEN`, `TUBE-CLOSE`, `TUBE-PRESENT`, `TUBE-INFO`, `TUBE-STATUS`, `TUBE-KEYS`
 - **Other**: `HELLO`, `PROMPTS-ON`

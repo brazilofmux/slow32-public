@@ -1,5 +1,8 @@
 # Teacher's Pet — Gap Analysis
 
+> Status 2026-10-29: historical (February 2026).  The gaps below were
+> closed by ROADMAP.md phases 1-4; the current inventory is STATUS.md.
+
 Cross-reference of every dBase III feature used in the akron/ "Teacher's Pet"
 programs (1986) against the current clone implementation.
 

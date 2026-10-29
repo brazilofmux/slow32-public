@@ -1,6 +1,10 @@
 # Pass 1 Security Audit Report: Memory Safety & Crash Defects
 ## SLOW-32 Host-Side Toolchain
 
+> Status 2026-10-29: fixed.  Every finding below was fixed on 2026-06-20
+> (d15de86c, 819353c8, f7815780; db799b2c closes out the pass).  The report
+> is kept as written.
+
 ## Executive Summary
 
 This pass confirmed **20 distinct memory-safety/crash defects** across the host-side toolchain (after deduplicating two read/write mirrors of the same MMIO root cause). The worst cluster is the **linker (`s32-ld.c`)** with 7 confirmed bugs, including an attacker-controlled heap **OOB write** (relocation-count integer overflow) and multiple OOB reads from un-NUL-terminated string tables and unbounded section/symbol indices. The second major cluster is the **DBT JIT (`tools/dbt/`)** with 3 high-severity bugs forming a single exploit chain: an undetected code-buffer overflow whose `code_buffer_used` overshoot underflows the next block's capacity to ~4GB, yielding unbounded OOB writes into an RWX mapping. The remaining findings are spread across the **assembler** (a clean stack-buffer overflow from a hostile `.s` file), the **emulator MMIO path** (bounded 1–3 byte OOB), and the **archiver/dump utilities** (string-table OOB reads). No critical-after-verification findings survived as "critical"; the two originally-critical linker findings were downgraded to **high** because they are read/DoS-dominant in an offline build tool. The dominant theme: **untrusted file-format fields (offsets, counts, sizes) are consumed without 64-bit-safe bounds checks or NUL-termination guarantees.**

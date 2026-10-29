@@ -119,7 +119,7 @@ and no dependency on any C library's locale files.  (glibc's localedata
 was the other candidate -- the POSIX corpus by the letter -- but reading
 it ties the generator to a glibc installation; rejected 2026-10-08.)
 
-## What we have today
+## What we had (2026-10-08, before step 0)
 
 - Every door refused by name: `fn_refuse` (operand_parse.h) for the
   five functions, `fn_phrase_nyi` for the LOCALE phrase, divisions.h

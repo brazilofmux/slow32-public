@@ -2,7 +2,7 @@
 
 > **V2 cross-reference:** V2 has two fixed-point checkpoints today: **Stage 9** (Subset C) and **Stage 16** (final optimized toolchain) in [BOOTSTRAP.md](BOOTSTRAP.md). Additional fixed-point gates may be inserted as the full C plan (Stage 13+) solidifies.
 >
-> **Status:** This document is a legacy V1-style explanation. For active milestone tracking and sequencing, use `BOOTSTRAP.md`.
+> **Status:** legacy V1-style explanation (2026-02). Fixed point has since been reached: stage06 has the `--fixed-point` gate, and stage08 runs it by default. For the trust model -- which names `forth/kernel.s32x` as a binary seed and records that diverse double-compiling has not been done -- see `BOOTSTRAP.md`. The status, line counts and stage numbers below are as of 2026-02.
 
 ## Goal
 

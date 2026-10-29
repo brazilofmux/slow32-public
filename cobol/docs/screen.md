@@ -4,6 +4,7 @@ ISO COBOL 85 has no SCREEN SECTION. Micro Focus did, RM did, GnuCOBOL
 does, and majesty already writes it (`usescreen.cbl`, `menu.cbl`,
 `taskdt.cbl`). It is an implementor module of the same rank as LINE
 SEQUENTIAL: documented, tested, not pretended to be X3.23-1985.
+(It is standard since 2002: conformance/screen.md.)
 
 Retiring GnuCOBOL without it leaves the interactive programs behind.
 

@@ -1,5 +1,10 @@
 # SLOW-32 LLVM Backend Bug List
 
+> Status 2026-10-29: history.  These were bugs in the standalone
+> IR-to-SLOW-32 compiler (`tools/compiler-deprecated/`), removed in
+> cd1a122b; none applies to the LLVM backend.  "Open" below means open
+> when that compiler was abandoned.
+
 ## Bug #1: Function Arguments Clobbered by llvm.lifetime Intrinsics
 
 **Status:** Open  

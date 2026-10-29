@@ -1,15 +1,20 @@
 # cobol — standard COBOL for SLOW-32
 
 `s32-cobc` is a host cross-compiler from COBOL to SLOW-32 assembler,
-with `libcob`, its guest runtime. It reads COBOL 85 by default and,
-behind a `-std` switch, the 2002, 2014 and 2023 editions as far as
-they have landed; Micro Focus's and GnuCOBOL's own forms are taken
-only under `-dialect=mf` / `-dialect=gnucobol`. Its brief is
-**preservation**: the programs of the '80s and '90s, and the standard
-they were written to, running on a machine that will run anywhere
-QEMU does.
+with `libcob`, its guest runtime. It implements COBOL through
+ISO/IEC 1989:2023. `-std=85` is the default and the project's
+history, not its ceiling; `-std=2002`, `-std=2014` and `-std=2023`
+take each later edition, and what is deferred by ruling (object
+orientation, FORMAT/SELECT WHEN, commit and rollback, asynchronous
+messaging) is refused by name. Micro Focus's and GnuCOBOL's own forms
+are taken only under `-dialect=mf` / `-dialect=gnucobol`. Its brief is
+**preservation and use**: programs of every era -- RM/COBOL and
+Micro Focus on micros, IBM's on the mainframe (an IBM ANS COBOL
+witness on MVT, cobc370, IBM's packed-decimal signs, EBCDIC by
+CODE-SET) -- and the standards they were written to, running on a
+machine that will run anywhere QEMU does.
 
-Status, 2026-10-28:
+Status, 2026-10-29:
 
 - **COBOL 85 to NIST's satisfaction.** All 348 CCVS-85 programs
   compile and run to their summary; 8,068 of 8,175 tests pass and
@@ -20,8 +25,8 @@ Status, 2026-10-28:
   syntax and general rule of the sections swept a disposition --
   test, refused, n/a with the ruling, gap -- and
   [coverage.md](docs/conformance/coverage.md) (generated) says which
-  of the 2023 text's 324 numbered elements are covered (303 swept,
-  11 not implemented, 10 unswept). The work queue is
+  of the 2023 text's 324 numbered elements are covered (308 swept,
+  6 not implemented, 10 unswept). The work queue is
   [docs/plans/standard-queue.md](docs/plans/standard-queue.md): 51
   items, taken in order, 47 of them done or landed in a first stage
   (file sharing; locales, [docs/plans/locale.md](docs/plans/locale.md):
@@ -65,8 +70,9 @@ subtle and damning.
 
 ## Why this one
 
-`docs/plans/1987-desk.md` §8: *"GnuCOBOL is a compiler story; a COBOL
-that `WRITE`s `.DBF` is a business story."* The refinement, 2026-08-29:
+[`../docs/plans/1987-desk.md`](../docs/plans/1987-desk.md) §8:
+*"GnuCOBOL is a compiler story; a COBOL that `WRITE`s `.DBF` is a
+business story."* The refinement, 2026-08-29:
 reuse the **machinery** of DBF/NDX (slots, btree, an honest delete-byte
 when we opt in). File-level compatibility with dBase is a nice-to-have,
 not an invariant. COBOL can legally describe records dBase cannot store.
@@ -229,7 +235,7 @@ PATH install (optional, for majesty and friends):
 [-warn-74] [-warn-extensions] [-I dir] [-D name[=value]] [-m] [-fnsig]
 [-fixed-columns=bytes] [-fbinary-byteorder=native] [-fcomp1=binary|float]
 [-fnumproc=pfd] [-fno-hir] [-o out.s] source.cbl`; `s32-cobc` alone
-prints the list.  Fixed format is the default (the standard's reference
+prints most of them.  Fixed format is the default (the standard's reference
 format); majesty passes `-free`, as it already does to GnuCOBOL, and
 `-fnumproc=pfd`: its numeric items hold what their pictures say, so a
 MOVE or compare between two of one picture may be done by value and more
@@ -243,7 +249,9 @@ edited while they run (the sanitizer gate compiles them mid-run).
 ## Reading order
 
 1. [docs/requirements.md](docs/requirements.md) — product, dialect, done
-2. [docs/architecture.md](docs/architecture.md) — shape, toys, IR
+   (the original v1 design, 2026-08-29)
+2. [docs/architecture.md](docs/architecture.md) — shape, toys, IR (the
+   original design; the HIR islands came later)
 3. [docs/standards.md](docs/standards.md) — standards first, dialects
    second; the `-std` rows; what is out by ruling
 4. [docs/plans/standard-queue.md](docs/plans/standard-queue.md) — the

@@ -78,7 +78,7 @@ Three additions, no new wait machinery.
 |---|---|---|
 | `SPAWN` | `0x11` | role name + argv in `DATA_BUFFER`; `status` = guest cookie. Returns a **handle** `0 .. CHILD_MAX-1`, or `EAGAIN` (partition full) / `EPERM` (no such role, or ceiling reached). Optionally pre-wires a hose (below). |
 | `CHILD_KILL` | `0x12` | `status` = handle. The child ends; its completion DPC still arrives, with reason `KILLED`. |
-| `SOCKETPAIR` | `0x49` | Two connected guest fds, or one end handed to a spawned child. hose.md item 3. `0x49–0x4F` are free in the IPC range. |
+| `SOCKETPAIR` | `0x49` | Two connected guest fds, or one end handed to a spawned child. hose.md item 3. `0x49–0x4F` are free in the IPC range. (2026-10-29: 0x49 is now GETPEERNAME and 0x4A/0x4B the socket options; free: `0x4C–0x4F`.) |
 
 Completion is a DPC in the existing ring:
 
@@ -239,7 +239,7 @@ exists.
 
 ## Order of work
 
-1. `SOCKETPAIR` (0x49) + a desk file. hose.md item 3. Independently
+1. `SOCKETPAIR` (0x49; now taken, see the table) + a desk file. hose.md item 3. Independently
    useful — two pre-wired guests with no supervisor at all — and
    simpler. Reserve `SPAWN`'s wire-me-a-pair field now so spawn does
    not need a v2.

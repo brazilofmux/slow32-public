@@ -1,5 +1,13 @@
 # Lowering
 
+> Status 2026-10-29: the v1 lowering design, 2026-08-29. The
+> conversion matrix stands; since then the hot numeric statements go
+> to HIR, with BURG selection ([plans/hir.md](plans/hir.md)), and the
+> "after v1" and "later" items below arrived: nested programs (Stage
+> 29, [plan.md](plan.md)), EXTERNAL
+> ([conformance/data-division.md](conformance/data-division.md)), and
+> `CALL identifier` (resolved at run time by `cob_resolve`).
+
 After `Sym[]` exists, each verb is a lowering: either a short
 instruction sequence or a call into `libcob` with a descriptor the
 compiler built. That is cobc370's `STRING`/`UNSTRING`/`INSPECT`
