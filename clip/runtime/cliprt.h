@@ -5,6 +5,7 @@
 #include "expr.h"
 #include "program.h"
 #include "ast.h"
+#include "command.h"
 #include "memvar.h"
 
 void clip_init(void);

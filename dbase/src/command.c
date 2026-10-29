@@ -1910,22 +1910,104 @@ static int wa_writes_eager(dbf_t *db) {
     return cur_wa()->num_indexes > 0 || area_open_count(db->filename) > 1;
 }
 
+/* One REPLACE on the current record, in three steps the interpreter and
+ * compiled code (clip/) share: begin (the keys the indexes hold now), a
+ * value stored into each field in turn (a later expression sees an earlier
+ * field's new value), finish (indexes updated, or the record restored when
+ * UNIQUE refuses it). */
+typedef struct cmd_replace_state {
+    int has_indexes;
+    char old_keys[MAX_INDEXES][MAX_INDEX_KEY + 1];
+    memo_snapshot_t memo_snap;
+    int nfields;
+    int field_idx[MAX_REPLACE_PAIRS];
+} replace_state_t;
+
+static void replace_begin(dbf_t *db, replace_state_t *st) {
+    st->has_indexes = (cur_wa()->num_indexes > 0);
+    if (st->has_indexes)
+        indexes_capture_keys(db, st->old_keys);
+    st->memo_snap.valid = 0;
+}
+
+static void replace_set(dbf_t *db, replace_state_t *st, int idx, const value_t *val) {
+    char formatted[256];
+    char valbuf[256];
+
+    val_to_string(val, valbuf, sizeof(valbuf));
+    switch (db->fields[idx].type) {
+    case 'C':
+        if (val->type == VAL_CHAR)
+            field_format_char(formatted, db->fields[idx].length, val->str);
+        else
+            field_format_char(formatted, db->fields[idx].length, valbuf);
+        break;
+    case 'F':
+    case 'N':
+        field_format_numeric(formatted, db->fields[idx].length,
+                             db->fields[idx].decimals, valbuf);
+        break;
+    case 'D':
+        if (val->type == VAL_DATE) date_to_dbf(val->date, formatted);
+        else field_format_date(formatted, valbuf);
+        break;
+    case 'L':
+        if (val->type == VAL_LOGIC) {
+            formatted[0] = val->logic ? 'T' : 'F';
+            formatted[1] = '\0';
+        } else field_format_logical(formatted, valbuf);
+        break;
+    case 'M': {
+        const char *memo_text = (val->type == VAL_CHAR) ? val->str : valbuf;
+        if (!st->memo_snap.valid)
+            dbf_memo_snapshot(db, &st->memo_snap);
+        int nb = dbf_memo_write(db, memo_text, strlen(memo_text));
+        if (nb > 0)
+            snprintf(formatted, sizeof(formatted), "%10d", nb);
+        else
+            memset(formatted, ' ', 10);
+        formatted[10] = '\0';
+        break;
+    }
+    default:
+        field_format_char(formatted, db->fields[idx].length, valbuf);
+        break;
+    }
+
+    dbf_set_field_raw(db, idx, formatted);
+}
+
+static void replace_finish(dbf_t *db, replace_state_t *st) {
+    /* Update indexes before flush — if UNIQUE violated, discard changes */
+    if (st->has_indexes) {
+        if (indexes_update_current(db, st->old_keys) != 0) {
+            if (st->memo_snap.valid)
+                dbf_memo_restore(db, &st->memo_snap);
+            db->record_dirty = 0;
+            dbf_cache_invalidate(db);  /* cache has new values; force re-read from disk */
+            dbf_read_record(db, db->current_record);
+            return;  /* skip, not fatal */
+        }
+    }
+
+    /* The record may stay dirty: every movement (read, GOTO, APPEND, the EOF
+     * move) and CLOSE flushes it first, so eleven REPLACEs on one record cost
+     * one write instead of eleven.  Two cases keep the write eager: indexes
+     * open (the UNIQUE rollback above re-reads the disk copy), and the same
+     * file open in another work area (which reads the disk, not this buffer;
+     * the flush invalidates its cache). */
+    if (wa_writes_eager(db))
+        dbf_flush_record(db);
+}
+
 static int replace_cb(dbf_t *db, uint32_t recno, void *userdata) {
     replace_ctx_t *rctx = userdata;
-    char formatted[256];
-    char old_keys[MAX_INDEXES][MAX_INDEX_KEY + 1];
+    replace_state_t st;
     (void)recno;
 
-    int has_indexes = (cur_wa()->num_indexes > 0);
-    if (has_indexes)
-        indexes_capture_keys(db, old_keys);
-
-    memo_snapshot_t memo_snap;
-    memo_snap.valid = 0;
-
+    replace_begin(db, &st);
     for (int p = 0; p < rctx->npairs; p++) {
         value_t val;
-        char valbuf[256];
 
         if (rctx->pairs[p].ast) {
             if (ast_eval(rctx->pairs[p].ast, &expr_ctx, &val) != 0) {
@@ -1938,72 +2020,9 @@ static int replace_cb(dbf_t *db, uint32_t recno, void *userdata) {
                 return REC_ERROR;
             }
         }
-
-        val_to_string(&val, valbuf, sizeof(valbuf));
-        int idx = rctx->pairs[p].field_idx;
-
-        switch (db->fields[idx].type) {
-        case 'C':
-            if (val.type == VAL_CHAR)
-                field_format_char(formatted, db->fields[idx].length, val.str);
-            else
-                field_format_char(formatted, db->fields[idx].length, valbuf);
-            break;
-        case 'F':
-        case 'N':
-            field_format_numeric(formatted, db->fields[idx].length,
-                                 db->fields[idx].decimals, valbuf);
-            break;
-        case 'D':
-            if (val.type == VAL_DATE) date_to_dbf(val.date, formatted);
-            else field_format_date(formatted, valbuf);
-            break;
-        case 'L':
-            if (val.type == VAL_LOGIC) {
-                formatted[0] = val.logic ? 'T' : 'F';
-                formatted[1] = '\0';
-            } else field_format_logical(formatted, valbuf);
-            break;
-        case 'M': {
-            const char *memo_text = (val.type == VAL_CHAR) ? val.str : valbuf;
-            if (!memo_snap.valid)
-                dbf_memo_snapshot(db, &memo_snap);
-            int nb = dbf_memo_write(db, memo_text, strlen(memo_text));
-            if (nb > 0)
-                snprintf(formatted, sizeof(formatted), "%10d", nb);
-            else
-                memset(formatted, ' ', 10);
-            formatted[10] = '\0';
-            break;
-        }
-        default:
-            field_format_char(formatted, db->fields[idx].length, valbuf);
-            break;
-        }
-
-        dbf_set_field_raw(db, idx, formatted);
+        replace_set(db, &st, rctx->pairs[p].field_idx, &val);
     }
-
-    /* Update indexes before flush — if UNIQUE violated, discard changes */
-    if (has_indexes) {
-        if (indexes_update_current(db, old_keys) != 0) {
-            if (memo_snap.valid)
-                dbf_memo_restore(db, &memo_snap);
-            db->record_dirty = 0;
-            dbf_cache_invalidate(db);  /* cache has new values; force re-read from disk */
-            dbf_read_record(db, db->current_record);
-            return REC_CONTINUE;  /* skip, not fatal */
-        }
-    }
-
-    /* The record may stay dirty: every movement (read, GOTO, APPEND, the EOF
-     * move) and CLOSE flushes it first, so eleven REPLACEs on one record cost
-     * one write instead of eleven.  Two cases keep the write eager: indexes
-     * open (the UNIQUE rollback above re-reads the disk copy), and the same
-     * file open in another work area (which reads the disk, not this buffer;
-     * the flush invalidates its cache). */
-    if (wa_writes_eager(db))
-        dbf_flush_record(db);
+    replace_finish(db, &st);
     return REC_CONTINUE;
 }
 
@@ -4644,29 +4663,25 @@ static void cmd_set_index(dbf_t *db, const char *arg) {
 }
 
 /* ---- SEEK <expr> ---- */
-static void cmd_seek(dbf_t *db, const char *arg) {
-    const char *p = skip_ws(arg);
-    value_t val;
-    char key[MAX_INDEX_KEY + 1];
+/* SEEK in two steps the interpreter and compiled code share: the index to
+ * search (NULL, reported, when there is none), then the search for a key
+ * value (evaluated between the two, as SEEK always has). */
+static index_t *seek_index(dbf_t *db) {
     index_t *idx;
-
     if (!dbf_is_open(db)) {
         prog_error(ERR_NO_DATABASE, "No database in use");
-        return;
+        return NULL;
     }
-
     idx = controlling_index();
-    if (!idx) {
+    if (!idx)
         printf("No index active.\n");
-        return;
-    }
+    return idx;
+}
 
-    if (ast_eval_dynamic(p, &expr_ctx, &val) != 0) {
-        report_expr_error();
-        return;
-    }
+static void seek_value(dbf_t *db, index_t *idx, const value_t *val) {
+    char key[MAX_INDEX_KEY + 1];
 
-    index_format_key_value(idx->key_type, &val, key, sizeof(key));
+    index_format_key_value(idx->key_type, val, key, sizeof(key));
     if (idx->key_type == 0)
         trim_right(key);
 
@@ -4698,6 +4713,20 @@ static void cmd_seek(dbf_t *db, const char *arg) {
         if (set_opts.talk && !set_opts.softseek) printf("Not found.\n");
     }
     } /* match_len scope */
+}
+
+static void cmd_seek(dbf_t *db, const char *arg) {
+    const char *p = skip_ws(arg);
+    value_t val;
+    index_t *idx = seek_index(db);
+
+    if (!idx)
+        return;
+    if (ast_eval_dynamic(p, &expr_ctx, &val) != 0) {
+        report_expr_error();
+        return;
+    }
+    seek_value(db, idx, &val);
 }
 
 /* ---- FIND <literal> ---- */
@@ -6718,6 +6747,86 @@ void cmd_indexes_capture_keys(dbf_t *db, char keys[][MAX_INDEX_KEY+1])  { indexe
 int cmd_indexes_update_current(dbf_t *db, char keys[][MAX_INDEX_KEY+1]) { return indexes_update_current(db, keys); }
 void cmd_indexes_insert_current(dbf_t *db) { indexes_insert_current(db); indexes_flush_all(); }
 void cmd_ctx_setup(void)                { ctx_setup(); }
+
+/* ---- Commands for compiled code (clip/): what the handlers do, without
+ * the dispatch and the re-parsing of the line ---- */
+void cmd_api_select(const char *arg)    { ctx_setup(); cmd_select(arg); }
+void cmd_api_skip(const char *arg)      { ctx_setup(); cmd_skip(cur_db(), arg); follow_relations(); }
+void cmd_api_go(const char *arg)        { ctx_setup(); cmd_go(cur_db(), arg); follow_relations(); }
+void cmd_api_append_blank(void)         { ctx_setup(); cmd_append_blank(cur_db()); }
+
+int cmd_api_seek_ready(void) {
+    ctx_setup();
+    return seek_index(cur_db()) != NULL;
+}
+
+void cmd_api_seek_value(const value_t *val) {
+    index_t *idx = controlling_index();
+    if (idx)
+        seek_value(cur_db(), idx, val);
+}
+
+/* REPLACE f1 WITH e1 [, ...] on the current record (no scope, FOR or
+ * WHILE): NULL when there is nothing to do -- no database (reported), a
+ * field that is not there (reported), no current record, or a record SET
+ * DELETED / SET FILTER hide -- as cmd_replace decides before it evaluates
+ * anything.  Then each value in turn, and end (or abort, after a failed
+ * expression, which leaves what was stored, as the interpreter does). */
+cmd_replace_state_t *cmd_api_replace_begin(const char *const *fields, int nfields) {
+    dbf_t *db;
+    replace_state_t *st;
+    int i;
+
+    ctx_setup();
+    db = cur_db();
+    if (!dbf_is_open(db)) {
+        prog_error(ERR_NO_DATABASE, "No database in use");
+        return NULL;
+    }
+    if (nfields > MAX_REPLACE_PAIRS) {
+        prog_error(ERR_SYNTAX, "Too many REPLACE fields");
+        return NULL;
+    }
+    st = malloc(sizeof(*st));
+    if (!st)
+        return NULL;
+    for (i = 0; i < nfields; i++) {
+        char field_name[DBF_MAX_FIELD_NAME];
+        str_copy(field_name, fields[i], sizeof(field_name));
+        str_upper(field_name);
+        st->field_idx[i] = dbf_find_field(db, field_name);
+        if (st->field_idx[i] < 0) {
+            prog_error_fmt(ERR_SYNTAX, "Field not found: %s", field_name);
+            free(st);
+            return NULL;
+        }
+    }
+    st->nfields = nfields;
+    if (db->current_record == 0 || db->current_record > db->record_count) {
+        free(st);
+        return NULL;
+    }
+    dbf_read_record(db, db->current_record);
+    if (skip_deleted(db->record_buf) || !check_filter(db)) {
+        free(st);
+        return NULL;
+    }
+    replace_begin(db, st);
+    return st;
+}
+
+void cmd_api_replace_set(cmd_replace_state_t *st, int i, const value_t *val) {
+    replace_set(cur_db(), st, st->field_idx[i], val);
+}
+
+void cmd_api_replace_end(cmd_replace_state_t *st) {
+    replace_finish(cur_db(), st);
+    free(st);
+}
+
+void cmd_api_replace_abort(cmd_replace_state_t *st) {
+    free(st);
+}
 int cmd_get_deleted(void)               { return set_opts.deleted; }
 
 /* ---- DEFINE POPUP / DEFINE BAR ---- */

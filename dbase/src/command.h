@@ -50,6 +50,19 @@ void cmd_indexes_capture_keys(dbf_t *db, char keys[][MAX_INDEX_KEY+1]);
 int cmd_indexes_update_current(dbf_t *db, char keys[][MAX_INDEX_KEY+1]);
 void cmd_indexes_insert_current(dbf_t *db);
 void cmd_ctx_setup(void);
+
+/* Commands for compiled code (clip/), without dispatch or re-parsing */
+void cmd_api_select(const char *arg);
+void cmd_api_skip(const char *arg);
+void cmd_api_go(const char *arg);
+void cmd_api_append_blank(void);
+int  cmd_api_seek_ready(void);
+void cmd_api_seek_value(const value_t *val);
+typedef struct cmd_replace_state cmd_replace_state_t;
+cmd_replace_state_t *cmd_api_replace_begin(const char *const *fields, int nfields);
+void cmd_api_replace_set(cmd_replace_state_t *st, int i, const value_t *val);
+void cmd_api_replace_end(cmd_replace_state_t *st);
+void cmd_api_replace_abort(cmd_replace_state_t *st);
 int cmd_get_deleted(void);
 int cmd_get_softseek(void);
 int cmd_get_unique(void);

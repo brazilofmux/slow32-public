@@ -15,13 +15,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "lex.h"
 #include "ast.h"   /* dbase's own parser: expressions are parsed here, at compile time */
 
 #define MAX_LINE  512
 #define MAX_NEST  32
 #define MAX_LINES 4000
 #define MAX_FUNCS 64
-#define MAX_FILES 16
+#define MAX_FILES 64
 #define MAX_PARAMS 16
 #define MAX_NAME  32
 
@@ -513,6 +514,142 @@ refuse:
     return 0;
 }
 
+/* The argument text of a command as its handler would get it (after the
+ * keyword), or NULL when it holds a macro */
+static const char *cmd_arg(const char *p, int kwlen) {
+    const char *a = skip_ws(p + kwlen);
+    return strchr(a, '&') ? NULL : a;
+}
+
+/* REPLACE f WITH e [, f WITH e ...] with no scope, FOR or WHILE */
+static int emit_replace(emit_t *e, const char *args) {
+    char fields[MAX_FUNC_ARGS][MAX_NAME];
+    ast_node_t *nodes[MAX_FUNC_ARGS];
+    int n = 0, i, ntmp = 0, dummy = 0;
+    const char *pp = args;
+    sb_t b = {0}, code = {0};
+
+    while (*pp) {
+        const char *err = NULL;
+        int k = 0;
+        if (n >= MAX_FUNC_ARGS || (!isalpha((unsigned char)*pp) && *pp != '_')) {
+            goto refuse;
+        }
+        while ((isalnum((unsigned char)*pp) || *pp == '_') && k < MAX_NAME - 1) {
+            fields[n][k++] = *pp++;
+        }
+        fields[n][k] = '\0';
+        pp = skip_ws(pp);
+        if (!is_kw(pp, "WITH")) {
+            goto refuse;
+        }
+        pp = skip_ws(pp + 4);
+        nodes[n] = ast_compile_adv(&pp, NULL, &err);
+        if (!nodes[n]) {
+            goto refuse;
+        }
+        n++;
+        pp = skip_ws(pp);
+        if (*pp == ',') {
+            pp = skip_ws(pp + 1);
+        } else if (*pp) {
+            goto refuse;   /* a scope, FOR, WHILE: the interpreter's REPLACE */
+        }
+    }
+    if (n == 0) {
+        return 0;
+    }
+    for (i = 0; i < n; i++) {
+        if (lex_is_reserved(fields[i])) {
+            goto refuse;
+        }
+    }
+    sb_printf(&b, "{ static const char *const rf[] = {");
+    for (i = 0; i < n; i++) {
+        sb_printf(&b, "%s", i ? ", " : "");
+        sb_cstr(&b, fields[i]);
+    }
+    sb_printf(&b, "}; cmd_replace_state_t *rs = cmd_api_replace_begin(rf, %d); if (rs) { "
+                  "expr_ctx_t *c = clip_ctx(); int e = 0; ", n);
+    for (i = 0; i < n; i++) {
+        sb_decls(&b, nodes[i], &dummy, NULL);
+    }
+    for (i = 0; i < n; i++) {
+        int r = gen_expr(&code, &ntmp, nodes[i]);
+        sb_printf(&code, "if (!e) cmd_api_replace_set(rs, %d, &t%d); ", i, r);
+    }
+    sb_printf(&b, "value_t");
+    for (i = 0; i < ntmp; i++) {
+        sb_printf(&b, "%s t%d", i ? "," : "", i);
+    }
+    sb_printf(&b, "; %s", code.buf ? code.buf : "");
+    sb_printf(&b, "if (e) { clip_fail(c); cmd_api_replace_abort(rs); } else cmd_api_replace_end(rs); } }");
+    emit_indent(e->out, e->depth);
+    fprintf(e->out, "%s\n", b.buf);
+    free(b.buf);
+    free(code.buf);
+    for (i = 0; i < n; i++) {
+        ast_free(nodes[i]);
+    }
+    return 1;
+refuse:
+    for (i = 0; i < n; i++) {
+        ast_free(nodes[i]);
+    }
+    free(code.buf);
+    return 0;
+}
+
+/* Commands compiled to direct calls; 0 leaves the line to clip_cmd */
+static int emit_command(emit_t *e, const char *p) {
+    const char *a;
+    if (is_kw(p, "SELECT") && (a = cmd_arg(p, 6)) && !strchr(a, '(')) {
+        emit_indent(e->out, e->depth);
+        fprintf(e->out, "cmd_api_select(");
+        c_escape(e->out, a);
+        fprintf(e->out, ");\n");
+        return 1;
+    }
+    if (is_kw(p, "SKIP") && (a = cmd_arg(p, 4))) {
+        emit_indent(e->out, e->depth);
+        fprintf(e->out, "cmd_api_skip(");
+        c_escape(e->out, a);
+        fprintf(e->out, ");\n");
+        return 1;
+    }
+    if (is_kw(p, "GO") && (a = cmd_arg(p, 2))) {
+        emit_indent(e->out, e->depth);
+        fprintf(e->out, "cmd_api_go(");
+        c_escape(e->out, a);
+        fprintf(e->out, ");\n");
+        return 1;
+    }
+    if (is_kw(p, "APPEND") && is_kw(skip_ws(p + 6), "BLANK") && *skip_ws(skip_ws(p + 6) + 5) == '\0') {
+        emit_indent(e->out, e->depth);
+        fprintf(e->out, "cmd_api_append_blank();\n");
+        return 1;
+    }
+    if (is_kw(p, "SEEK") && (a = cmd_arg(p, 4)) && *a) {
+        ast_node_t *n = parse_expr(a);
+        sb_t b = {0};
+        int r;
+        if (!n) {
+            return 0;
+        }
+        gen_block(&b, &n, 1, &r);
+        emit_indent(e->out, e->depth);
+        fprintf(e->out, "if (cmd_api_seek_ready()) { %sif (e) clip_fail(c); else cmd_api_seek_value(&t%d); }\n",
+                b.buf, r);
+        free(b.buf);
+        ast_free(n);
+        return 1;
+    }
+    if (is_kw(p, "REPLACE") && (a = cmd_arg(p, 7)) && *a) {
+        return emit_replace(e, a);
+    }
+    return 0;
+}
+
 /* RETURN expr in a function, compiled when expr parses */
 static int emit_return(emit_t *e, const char *expr) {
     ast_node_t *n = parse_expr(expr);
@@ -590,6 +727,9 @@ static int find_store(const char *p, char *name, int nsz, char *expr, int esz) {
     q = to;
     while (isalnum((unsigned char)*q) || *q == '_') {
         q++;
+    }
+    if (*skip_ws(q) == '[' || *skip_ws(q) == '(') {
+        return 0;   /* an element: STORE's own code assigns it */
     }
     elen = (int)(q - to);
     if (elen <= 0 || elen >= nsz) {
@@ -882,6 +1022,69 @@ static int try_load_proc(const char *from_src, const char *name) {
         return 0;
     }
     return 0;
+}
+
+/* Program files reached by DO name: each compiles to a procedure NAME
+ * whose body is the file's top-level code, as Clipper linked them */
+typedef struct {
+    char name[MAX_NAME];
+    int start, end;     /* its lines in g_lines */
+} progfile_t;
+static progfile_t g_progs[MAX_FILES];
+static int g_nprogs;
+
+static int try_load_prog(const char *from_src, const char *name) {
+    char dir[256];
+    char path[512];
+    const char *exts[] = {".prg", ".PRG", NULL};
+    int i, k;
+
+    path_dir(from_src, dir, (int)sizeof(dir));
+    for (i = 0; exts[i]; i++) {
+        FILE *fp;
+        snprintf(path, sizeof(path), "%s/%s%s", dir, name, exts[i]);
+        fp = fopen(path, "r");
+        if (!fp) {
+            continue;
+        }
+        fclose(fp);
+        if (already_loaded(path)) {
+            return 0;
+        }
+        if (g_nprogs >= MAX_FILES) {
+            fprintf(stderr, "%s: too many program files\n", path);
+            return -1;
+        }
+        g_progs[g_nprogs].start = g_nlines;
+        if (load_prg(path) != 0) {
+            return -1;
+        }
+        g_progs[g_nprogs].end = g_nlines;
+        for (k = 0; name[k] && k < MAX_NAME - 1; k++) {
+            g_progs[g_nprogs].name[k] = (char)toupper((unsigned char)name[k]);
+        }
+        g_progs[g_nprogs].name[k] = '\0';
+        g_nprogs++;
+        return 0;
+    }
+    return 0;
+}
+
+/* DO <name>: the name, when the line is a DO of a program or procedure */
+static int parse_do_target(const char *p, char *name, int nsz) {
+    int i = 0;
+    if (!is_kw(p, "DO")) {
+        return 0;
+    }
+    p = skip_ws(p + 2);
+    if (is_kw(p, "WHILE") || is_kw(p, "CASE")) {
+        return 0;
+    }
+    while ((isalnum((unsigned char)*p) || *p == '_') && i < nsz - 1) {
+        name[i++] = *p++;
+    }
+    name[i] = '\0';
+    return name[0] != '\0';
 }
 
 static int line_in_func(int idx, const func_t *fns, int nfns) {
@@ -1278,6 +1481,10 @@ static int emit_stmt(emit_t *e, const char *p) {
     emit_at_expr(e);
     fprintf(e->out, ";\n");
 
+    if (emit_command(e, p)) {
+        return 0;
+    }
+
     if (is_kw(p, "SET")) {
         char proc[MAX_NAME];
         if (parse_set_proc(p, proc, MAX_NAME) && was_inlined(proc)) {
@@ -1319,6 +1526,14 @@ static int emit_stmt(emit_t *e, const char *p) {
         c_escape(e->out, expr);
         fprintf(e->out, ");\n");
         return 0;
+    }
+    {
+        const char *whole = p;
+        if (find_assign(p, name, (int)sizeof(name), &p) && lex_is_reserved(name)) {
+            emit_cmd(e->out, e->depth, whole);   /* the interpreter refuses it, and says so */
+            return 0;
+        }
+        p = whole;
     }
     if (find_assign(p, name, (int)sizeof(name), &p)) {
         if (emit_assign(e, name, p)) {
@@ -1417,11 +1632,20 @@ int main(int argc, char **argv) {
         }
     }
 
-    /* Pull in SET PROCEDURE files sitting next to any loaded source. */
+    /* Pull in SET PROCEDURE files, and the program files DO reaches,
+     * sitting next to the source that names them (lines appended as they
+     * load are scanned in turn). */
     for (scan = 0; scan < g_nlines; scan++) {
         char proc[MAX_NAME];
+        if (g_lines[scan].is_text) {
+            continue;
+        }
         if (parse_set_proc(g_lines[scan].text, proc, MAX_NAME)) {
             if (try_load_proc(g_lines[scan].src, proc) != 0) {
+                return 1;
+            }
+        } else if (parse_do_target(g_lines[scan].text, proc, MAX_NAME)) {
+            if (try_load_prog(g_lines[scan].src, proc) != 0) {
                 return 1;
             }
         }
@@ -1446,7 +1670,7 @@ int main(int argc, char **argv) {
             fns[nfns].header = i;
             fns[nfns].start = i + 1;
             j = i + 1;
-            while (j < g_nlines &&
+            while (j < g_nlines && strcmp(g_lines[j].src, g_lines[i].src) == 0 &&
                    (g_lines[j].is_text ||
                     (!is_kw(g_lines[j].text, "FUNCTION") &&
                      !is_kw(g_lines[j].text, "PROCEDURE")))) {
@@ -1459,6 +1683,30 @@ int main(int argc, char **argv) {
             continue;
         }
         i++;
+    }
+
+    /* Each program file: a procedure of its top-level lines */
+    for (i = 0; i < g_nprogs; i++) {
+        int k = g_progs[i].start;
+        if (was_compiled_fn(g_progs[i].name)) {
+            continue;   /* a procedure of that name is found first, as DO finds it */
+        }
+        if (nfns >= MAX_FUNCS) {
+            fprintf(stderr, "too many functions\n");
+            return 1;
+        }
+        while (k < g_progs[i].end &&
+               (g_lines[k].is_text || (!is_kw(g_lines[k].text, "FUNCTION") &&
+                                       !is_kw(g_lines[k].text, "PROCEDURE")))) {
+            k++;
+        }
+        strcpy(fns[nfns].name, g_progs[i].name);
+        fns[nfns].nparams = 0;
+        fns[nfns].header = g_progs[i].start;
+        fns[nfns].start = g_progs[i].start;
+        fns[nfns].end = k;
+        mark_compiled_fn(fns[nfns].name);
+        nfns++;
     }
 
     out = fopen(outpath, "w");

@@ -484,8 +484,16 @@ int clip_cond(expr_ctx_t *c, int failed, const value_t *v) {
     return v->type == VAL_LOGIC && v->logic != 0;
 }
 
+/* name = value, refusing an array as the interpreter's assignment and
+ * STORE do */
 void clip_setv(const char *name, value_t *v) {
-    memvar_set(cmd_get_memvar_store(), name, v);
+    memvar_store_t *store = cmd_get_memvar_store();
+    value_t mv;
+    if (memvar_find(store, name, &mv) == 0 && mv.type == VAL_ARRAY) {
+        prog_error(ERR_SYNTAX, "Array assignment requires index");
+        return;
+    }
+    memvar_set(store, name, v);
 }
 
 int clip_call(expr_ctx_t *c, const char *name, value_t *args, int nargs, value_t *result) {
