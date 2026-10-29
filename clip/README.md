@@ -1,12 +1,21 @@
 # s32-clip
 
-First-slice Clipper: a `.prg` becomes a `.s32x`.  Where it goes from
-here: [docs/plans/clipper.md](../docs/plans/clipper.md).
+Clipper for SLOW-32: a `.prg` becomes a `.s32x`.  The plan:
+[docs/plans/clipper.md](../docs/plans/clipper.md) (steps 0-2 done).
 
-Control flow is C (`IF`, `DO WHILE`, `EXIT`, `LOOP`). Expressions
-still go through the existing dBase evaluator, so `STR`, `MOD`,
-dates, and field names keep interpreter semantics. The generated
-program links the dBase sources minus the REPL.
+s32-clip parses the program with dbase's own parser at compile time and
+writes C: control flow is C, and expressions are C calls on the
+interpreter's own operations (`ast_eval_binop`, `ast_eval_name`, ...),
+so `STR`, `MOD`, dates and field names keep interpreter semantics by
+construction.  The generated program links the dBase sources minus the
+REPL, which runs what is not compiled yet (most commands) and what never
+can be (macros).
+
+`tests/run-oracle.sh` is the gate: every program of the corpus
+(`clip/tests`, `dbase/tests/*.PRG`) run by the interpreter and compiled
+must print the same bytes (45 of 45 that compile, 2026-10-29).  On
+`tests/bench1.prg` scaled up 50x, the compiled program runs 7.6x faster
+than the interpreter under slow32-dbt (0.18 s against 1.37 s).
 
 ```bash
 ./build.sh
@@ -40,14 +49,19 @@ report drivers (`reports_all`, `pl`, `bs`, `journal`, `activity`,
 `runbal`) also compile; they `DO` the remaining `.prg` files through
 the interpreter.
 
-This slice: assignment, `STORE`, `?` / `??`, `IF/ELSEIF/ENDIF`,
-`DO WHILE/ENDDO`, `DO CASE`, `FUNCTION`/`PROCEDURE` (with
-`PARAMETERS`/`PRIVATE`/`LOCAL`/`RETURN`; a `LOCAL` shadows the outer
-variable for the call and restores it after), `SET …`. `DO name` of a
-procedure compiled into the image is a direct call; with `WITH`
-arguments it is a compile error (they are not marshalled). Unknown single-line
-commands become `clip_cmd()` and ride the existing interpreter
-(`USE`, `REPLACE`, `DO file`, `INDEX`, `RESTORE`, …).
+Compiled: assignment, `STORE`, `?` / `??`, `IF/ELSEIF/ENDIF`,
+`DO WHILE/ENDDO`, `DO CASE`, `FOR/NEXT`, `SCAN/ENDSCAN`,
+`TEXT/ENDTEXT`, `BEGIN SEQUENCE/BREAK/RECOVER/END`,
+`FUNCTION`/`PROCEDURE` (with `PARAMETERS`/`PRIVATE`/`LOCAL`/`RETURN`; a
+`LOCAL` shadows the outer variable for the call and restores it after),
+and every expression without a macro.  `DO name` of a procedure compiled
+into the image is a direct call; with `WITH` it goes through the
+interpreter's `DO`, which reaches compiled procedures through a hook and
+passes variables by reference as dBASE does.  Errors name the file and
+line, as the interpreter's do.  Other single-line commands become
+`clip_cmd()` and ride the interpreter (`USE`, `REPLACE`, `DO file`,
+`INDEX`, `RESTORE`, …).  `SUSPEND` is refused: a compiled program has no
+interactive mode.
 
 | Program          | How it compiles                                      |
 |------------------|------------------------------------------------------|
@@ -56,7 +70,6 @@ commands become `clip_cmd()` and ride the existing interpreter
 | `bal_run.prg`    | `RESTORE` + `DO balances` via the interpreter        |
 | `util.prg`       | compiled into whoever `SET PROCEDURE TO util`s       |
 
-`FOR`/`SCAN`/`TEXT`/`BEGIN SEQUENCE` are still compile errors.
 
 A full report-suite A/B against the interpreter (`import` / `bal_run` /
 `runbal_run` / `reports_all` on `slow32-dbt`) produced byte-identical
