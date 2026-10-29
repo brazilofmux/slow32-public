@@ -152,6 +152,7 @@ static int  lex_tok;
 static int  lex_val;
 static int  lex_val_hi;    /* high 32 bits for 64-bit integer literals */
 static int  lex_val_ll;    /* 1 if the literal had an LL/ll suffix */
+static int  lex_val_l;     /* 1 if the literal had a single L suffix: long, not int */
 static int  lex_val_u;     /* 1 if the literal had a U/u suffix */
 static int  lex_val_hexoct; /* 1 if the literal was hex or octal (C11 6.4.4.1) */
 static int  lex_val_macro;  /* 1 if TK_NUM was injected from a #define / __LINE__ */
@@ -427,6 +428,7 @@ static void lex_parse_num(char *ts, char *te) {
     lex_val = (int)val;
     lex_val_hi = (int)(val >> 32);
     lex_val_ll = (n_l >= 2) ? 1 : 0;
+    lex_val_l = (n_l == 1) ? 1 : 0;
 }
 
 /* === Decimal -> IEEE 754 binary64 via native doubles ===

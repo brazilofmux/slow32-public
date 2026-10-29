@@ -56,10 +56,16 @@ static int is_c11_atomic_ident(void) {
     return 0;
 }
 
+/* Function specifiers and storage words taken and set aside: GNU's
+ * inline spellings; C11's _Noreturn (6.7.4: a promise, nothing to
+ * emit); and _Thread_local (6.7.1) -- a program here has one thread, so
+ * thread storage duration is static storage duration. */
 static int is_gnu_inline_ident(void) {
     if (lex_tok != TK_IDENT) return 0;
     if (strcmp(lex_str, "__inline") == 0) return 1;
     if (strcmp(lex_str, "__inline__") == 0) return 1;
+    if (strcmp(lex_str, "_Noreturn") == 0) return 1;
+    if (strcmp(lex_str, "_Thread_local") == 0) return 1;
     return 0;
 }
 
@@ -539,6 +545,7 @@ static Node *parse_gnu_asm_stmt(void);
 static Node *parse_block(void);
 /* ps_parse_fp_params sits above these and calls them (GitHub issue 71). */
 static int is_type(void);
+static Node *parse_primary(void);
 static int parse_type(void);
 static int ps_fp_store(int *ptys, int *pctys, int np);
 static int ps_enum_value(void);
@@ -589,6 +596,7 @@ static void next(void) {
                 lex_val = lex_line;
                 lex_val_hi = 0;
                 lex_val_ll = 0;
+                lex_val_l = 0;
                 lex_val_u = 0;
                 lex_val_hexoct = 0;
                 lex_val_macro = 1;
@@ -626,6 +634,7 @@ static void next(void) {
                  * lexer-originated decimal tokens. */
                 lex_val_hi = 0;
                 lex_val_ll = 0;
+                lex_val_l = 0;
                 lex_val_u = 0;
                 lex_val_hexoct = 0;
                 lex_val_macro = 1;
@@ -1395,6 +1404,8 @@ static int ps_lead_const;
  * there included; and register remembered, for & (6.5.3.2p1).  A
  * declaration's parse_type takes them (ps_decl_register). */
 static int ps_pend_nstorage;
+static int ps_pend_thread;      /* _Thread_local read with the storage class ... */
+static int ps_pend_se;          /* ... and static or extern: at block scope it needs one (6.7.1p3) */
 static int ps_lead_restrict;    /* restrict before the base type: it must be a pointer (6.7.3p2) */
 static int ps_pend_register;
 static int ps_decl_register;
@@ -1407,6 +1418,8 @@ static void ps_storage_next(void) {
     if ((lex_tok == TK_AUTO || lex_tok == TK_REGISTER) && ps_block_depth == 0)
         p_error("illegal storage class at file scope");
     if (lex_tok == TK_REGISTER) ps_pend_register = 1;
+    if (lex_tok == TK_STATIC || lex_tok == TK_EXTERN) ps_pend_se = 1;
+    if (lex_tok == TK_IDENT && strcmp(lex_str, "_Thread_local") == 0) ps_pend_thread = 1;
     if (lex_tok == TK_RESTRICT) ps_lead_restrict = 1;
     if (lex_tok == TK_INLINE && ps_block_depth == 0) ps_top_inline = 1;
     if (lex_tok == TK_STATIC && ps_block_depth == 0) ps_top_static = 1;
@@ -1452,6 +1465,10 @@ static int parse_type(void) {
     ps_decl_register = ps_pend_register;
     ps_pend_register = 0;
     ps_pend_nstorage = 0;
+    if (ps_pend_thread && ps_block_depth > 0 && !ps_pend_se)
+        p_error("_Thread_local at block scope requires static or extern");
+    ps_pend_thread = 0;
+    ps_pend_se = 0;
     ckhint = 0;
     td_cty = -1;
     saw_signed = 0;
@@ -4628,6 +4645,109 @@ static Node *parse_gnu_asm_stmt(void) {
 
 static Node *parse_compound_literal_expr(int ty, int arr_count);
 
+/* A type name in an expression -- _Alignof's operand, a _Generic
+ * association: its C type, in ps_type_cty.  Array dimensions after it
+ * are read and left out (neither use needs them). */
+static int ps_type_name_cty(void) {
+    int ty;
+    ty = parse_type();
+    ty = ps_abstract_fnptr(ty);
+    skip_decl_qualifiers();
+    while (lex_tok == TK_LBRACK) {
+        while (lex_tok != TK_RBRACK && lex_tok != TK_EOF) next();
+        expect(TK_RBRACK);
+    }
+    return ps_type_cty;
+}
+
+/* _Alignof ( type-name ) (6.5.3.4p3), size_t; and GNU's __alignof__,
+ * which also takes an expression. */
+static Node *ps_parse_alignof(void) {
+    Node *e;
+    int t;
+    int gnu;
+    gnu = lex_str[1] == 95;     /* __alignof__: GNU's, which also takes an expression */
+    next();
+    expect(TK_LPAREN);
+    if (is_type()) {
+        t = ps_type_name_cty();
+    } else {
+        if (!gnu) p_error("_Alignof requires a type name");
+        e = parse_expr();
+        sema_expr(e);
+        t = e->cty;
+    }
+    expect(TK_RPAREN);
+    return nd_size(ct_alignof(t));
+}
+
+/* _Generic ( assignment-expression , generic-assoc-list ) (6.5.1.1):
+ * the association whose type is compatible with the controlling
+ * expression's, after lvalue conversion -- which is typed, not
+ * evaluated -- or the default.  The others are read and dropped. */
+static Node *ps_parse_generic(void) {
+    Node *ctrl;
+    Node *e;
+    Node *chosen;
+    Node *deflt;
+    int ct;
+    int at;
+    int seen[64];
+    int nseen;
+    int k;
+    next();
+    expect(TK_LPAREN);
+    nseen = 0;
+    ctrl = parse_assign();
+    sema_expr(ctrl);
+    ct = sema_vty(ctrl);
+    chosen = NULL;
+    deflt = NULL;
+    while (lex_tok == TK_COMMA) {
+        next();
+        if (lex_tok == TK_DEFAULT) {
+            next();
+            expect(TK_COLON);
+            e = parse_assign();
+            if (deflt) p_error("duplicate default generic association");
+            deflt = e;
+        } else {
+            at = ps_type_name_cty();
+            /* no two associations of compatible types (6.5.1.1p2) */
+            k = 0;
+            while (k < nseen) {
+                if (sema_compat(seen[k], at)) p_error("type in generic association compatible with a previous one");
+                k = k + 1;
+            }
+            if (nseen < 64) { seen[nseen] = at; nseen = nseen + 1; }
+            expect(TK_COLON);
+            e = parse_assign();
+            if (chosen == NULL && sema_compat(at, ct)) chosen = e;
+        }
+    }
+    expect(TK_RPAREN);
+    if (chosen == NULL) chosen = deflt;
+    if (chosen == NULL) p_error("controlling expression type not compatible with any generic association type");
+    return chosen;
+}
+
+/* The C11 primaries that look like identifiers: _Alignof, _Generic, and
+ * __func__ (6.4.2.2), a string of the function's name -- each was an
+ * undeclared identifier.  NULL when the token is none of them. */
+static Node *ps_c11_primary(void) {
+    if (lex_tok != TK_IDENT || lex_str[0] != 95) return NULL;
+    if (strcmp(lex_str, "_Alignof") == 0 || strcmp(lex_str, "__alignof__") == 0 ||
+        strcmp(lex_str, "__alignof") == 0)
+        return ps_parse_alignof();
+    if (strcmp(lex_str, "_Generic") == 0) return ps_parse_generic();
+    if ((strcmp(lex_str, "__func__") == 0 || strcmp(lex_str, "__FUNCTION__") == 0) &&
+        ps_in_body && ps_cur_func) {
+        pp_emit_string_token(ps_cur_func);   /* now a string literal token */
+        return parse_primary();
+    }
+    return NULL;
+}
+
 static Node *parse_primary(void) {
     int cast_cty;
     int cast_vol;
@@ -4646,6 +4766,9 @@ static Node *parse_primary(void) {
     int ci;
     int i;
 
+    n = ps_c11_primary();
+    if (n) return n;
+
     /* Number literal */
     if (lex_tok == TK_NUM) {
         int v_hi;
@@ -4653,9 +4776,11 @@ static Node *parse_primary(void) {
         int v_u;
         int v_hexoct;
         int v_macro;
+        int v_l;
         v    = lex_val;
         v_hi = lex_val_hi;
         v_ll = lex_val_ll;
+        v_l  = lex_val_l;
         v_u  = lex_val_u;
         v_hexoct = lex_val_hexoct;
         v_macro = lex_val_macro;
@@ -4669,7 +4794,9 @@ static Node *parse_primary(void) {
         if (v_ll || v_hi != 0) {
             int t;
             t = TY_LLONG;
-            if (v_u) t = t | TY_UNSIGNED;
+            /* past long long's range only unsigned long long holds it
+             * (6.4.4.1p5): 0xFFFFFFFFFFFFFFFF was a signed -1 */
+            if (v_u || v_hi < 0) t = t | TY_UNSIGNED;
             return nd_num64(v, v_hi, t);
         }
         /* Unsuffixed decimal that does not fit int goes to long long
@@ -4686,6 +4813,9 @@ static Node *parse_primary(void) {
             Node *nn;
             nn = nd_num(v);
             if (v_u || v < 0) nn->ty = TY_INT | TY_UNSIGNED;
+            /* 1L is a long and 1UL an unsigned long: the size of int
+             * here, but other types (6.4.4.1p5), as _Generic sees */
+            if (v_l) nn->cty = ct_basic[(nn->ty & TY_UNSIGNED) ? CT_ULONG : CT_LONG];
             return nn;
         }
     }

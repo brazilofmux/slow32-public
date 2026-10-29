@@ -483,8 +483,10 @@ static void sema_cty_node(Node *n) {
         n->cty = ct_qualify(n->cty, ct_qual(sema_cty_of(n->lhs)));
     } else if (n->kind == ND_NUM || n->kind == ND_FNUM) {
         /* a constant's type is the lexer's, from its suffix and value
-         * (6.4.4.1p5, 6.4.4.2p4): the machine type says it */
-        n->cty = ct_from_mty(n->ty, 0);
+         * (6.4.4.1p5, 6.4.4.2p4): the machine type says it, but for a
+         * long, which the parser names (its machine type is int's) */
+        if (!(n->kind == ND_NUM && n->cty > 0 && ct_mty_agrees(n->cty, n->ty)))
+            n->cty = ct_from_mty(n->ty, 0);
         return;
     } else if (n->cty > 0) {
         /* the parser gave it one: a cast's named type */

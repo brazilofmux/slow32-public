@@ -558,7 +558,24 @@ block, or a `for` statement's first clause, which is a scope of its
 own (`ps_scope_begin`/`ps_scope_end`, `ps_lscope`).  One finding:
 `#pragma once` was skipped with the other pragmas, and a header that
 relied on it, included twice, defined its function twice -- accepted
-until now; it is implemented (`pp_once`).  `S12CC_CONSTRAINT_WARN=1` turns
+until now; it is implemented (`pp_once`).
+
+**S6, C11's own** (2026-10-29).  `_Alignof` (a type name; GNU's
+`__alignof__` an expression too), `size_t` (`ct_alignof`); `_Generic`,
+the association whose type is compatible with the controlling
+expression's after lvalue conversion -- typed by sema, not evaluated --
+with no two associations compatible (`ps_parse_generic`); `__func__`,
+a string of the function's name; `_Noreturn`, a promise with nothing
+to emit; `_Thread_local`, static storage in a one-threaded program,
+needing `static` or `extern` at block scope; `<stdalign.h>`,
+`<stdnoreturn.h>`.  `_Generic` sees what sizes never did: on SLOW-32
+`size_t` and `ptrdiff_t` are `unsigned int` and `int`, as clang's
+target has them (stddef.h said `unsigned long` and `long`, the right
+size and the wrong type; 64-bit hosts keep those); `1L` is a `long`
+and `1UL` an `unsigned long`, the size of an int and other types
+(`lex_val_l`; the parser names the type, sema keeps it); and a
+constant past `long long`'s range is `unsigned long long`
+(`0xFFFFFFFFFFFFFFFF` was a signed -1).  `max_align_t` added.  `S12CC_CONSTRAINT_WARN=1` turns
 the errors into warnings, to survey a corpus.
 
 ## Constraints on the work

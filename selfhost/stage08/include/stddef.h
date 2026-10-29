@@ -7,8 +7,19 @@
 #ifndef _STDDEF_H
 #define _STDDEF_H
 
+/* On SLOW-32 they are unsigned int and int, as clang's target has them
+ * (__SIZE_TYPE__, __PTRDIFF_TYPE__): the same size as unsigned long and
+ * long, but other types, which _Generic tells apart. */
+#if __SIZEOF_POINTER__ == 8
 typedef unsigned long size_t;
 typedef long ptrdiff_t;
+#else
+typedef unsigned int size_t;
+typedef int ptrdiff_t;
+#endif
+
+/* the type of greatest fundamental alignment (6.2.8p2) */
+typedef struct { long long __ll; double __d; } max_align_t;
 
 #define NULL 0
 

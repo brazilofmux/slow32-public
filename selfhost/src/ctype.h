@@ -404,6 +404,14 @@ static int ct_mty_agrees(int t, int ty) {
     return 0;
 }
 
+/* The alignment of t (6.2.8): an array's is its element's, the rest
+ * the machine type's -- a structure's, its members' greatest. */
+static int ct_alignof(int t) {
+    while (ct_kindof(t) == CT_ARRAY) t = ct_baseof(t);
+    if (ct_kindof(t) == CT_FUNC || ct_kindof(t) == CT_VOID) return 1;
+    return ty_align(ct_mty(t));
+}
+
 /* --- Sizes (6.5.3.4) --- */
 
 /* sizeof a C type, in bytes.  Structs and unions take the parser's
