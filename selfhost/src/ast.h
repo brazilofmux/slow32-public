@@ -247,6 +247,8 @@ struct Node {
     int locals_size;  /* FUNC: total local stack bytes */
     int bit_off;      /* MEMBER: bit offset within storage unit (bit-fields) */
     int bit_width;    /* MEMBER: bit-field width in bits; 0 = not a bit-field */
+    int line;         /* where it was read: the presumed line ... */
+    int file;         /* ... and file, an index into pp_files */
     struct Node *lhs; /* BINOP/ASSIGN/UNARY: left/operand */
     struct Node *rhs; /* BINOP/ASSIGN: right */
     struct Node *cond;/* IF/WHILE: condition */
@@ -277,6 +279,8 @@ static Node *nd_new(int kind) {
         exit(1);
     }
     n->kind = kind;
+    n->line = lex_line;
+    n->file = pp_file_id;
     return n;
 }
 

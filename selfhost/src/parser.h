@@ -1514,7 +1514,9 @@ static int parse_type(void) {
                         } else {
                             is_fn_ptr_member = 1;
                         }
-                        ps_pending_member_cty = ps_fnptr_cty(ps_type_cty);
+                        /* (*(*name)(..))(..): the function returns a pointer to a function */
+                        ps_pending_member_cty = ps_fnptr_cty(is_fn_ptr_member == 2 ?
+                            ct_ptr(ct_func(ps_type_cty, 0, -1, 0)) : ps_type_cty);
                         if (lex_tok != TK_IDENT) {
                             p_error("expected member name");
                             return TY_INT;
@@ -1838,7 +1840,9 @@ static int parse_type(void) {
                         } else {
                             is_fn_ptr_member = 1;
                         }
-                        ps_pending_member_cty = ps_fnptr_cty(ps_type_cty);
+                        /* (*(*name)(..))(..): the function returns a pointer to a function */
+                        ps_pending_member_cty = ps_fnptr_cty(is_fn_ptr_member == 2 ?
+                            ct_ptr(ct_func(ps_type_cty, 0, -1, 0)) : ps_type_cty);
                         if (lex_tok != TK_IDENT) {
                             p_error("expected member name");
                             return TY_INT;
@@ -5099,7 +5103,9 @@ static Node *parse_assign(void) {
     n = parse_conditional();
     if (lex_tok == TK_ASSIGN) {
         next();
-        return nd_assign(n, parse_assign());
+        n = nd_assign(n, parse_assign());
+        n->op = TK_ASSIGN;      /* the program's own, not an initializer */
+        return n;
     }
     /* Compound assignment operators */
     op = 0;
@@ -5527,6 +5533,9 @@ static Node *parse_compound_literal_expr(int ty, int arr_count) {
         ps_bind_var(result, li);
         expr = local_init_list_expr(ps_li_head, result);
     }
+    /* A compound literal is an lvalue (6.5.2.5p4): its stores, then its
+     * hidden variable -- a comma sema reads as the variable. */
+    if (expr->kind == ND_COMMA) expr->op = TK_LBRACE;
 
     ps_li_name = sv_name;
     ps_li_off = sv_off;
@@ -6360,16 +6369,23 @@ static Node *parse_stmt(void) {
             {
                 int lfpb;
                 int lfpn;
+                int lrcty;
                 lfpb = -1;
                 lfpn = 0;
+                /* the return type's, before the parameters overwrite it:
+                 * int (*fp)(void) was a pointer to a function returning void */
+                lrcty = ps_type_cty;
                 if (lex_tok == TK_LPAREN) {
                     next();
                     lfpb = ps_parse_fp_params(&lfpn);
                     ps_fp_set_ret(lfpb, ty);
                 }
                 ps_fnptr_nstar = nstars;
-                ps_type_cty = ps_fnptr_cty(ps_type_cty);
+                ps_type_cty = ps_fnptr_cty(lrcty);
                 off = add_local(nm, TY_INT);
+                /* the machine type is int whatever the stars; the C type
+                 * is what was declared -- void (**pp)(void) fell back to int */
+                ps_lcty[ps_nlocals - 1] = ps_type_cty;
                 ps_lfpbase[ps_nlocals - 1] = lfpb;
                 ps_lfpn[ps_nlocals - 1] = lfpn;
             }
@@ -7274,8 +7290,9 @@ function_decl:
         if (lex_tok == TK_VOID) {
             pty = parse_type();
             skip_decl_qualifiers();
-            if (lex_tok == TK_RPAREN) {
-                /* (void) → no params */
+            /* (void) → no params; parse_type takes the stars, so (void *)
+             * also ends at the ')' -- and was recorded as no parameters */
+            if (lex_tok == TK_RPAREN && pty == TY_VOID) {
                 goto params_done;
             }
         } else {
@@ -7297,7 +7314,7 @@ function_decl:
                 nested_fp = 1;
             }
             if (lex_tok == TK_IDENT) {
-                ps_type_cty = ps_fnptr_cty(ps_type_cty);
+                ps_type_cty = ps_fnptr_cty(nested_fp ? ct_ptr(ct_func(ps_type_cty, 0, -1, 0)) : ps_type_cty);
                 off = add_local(lex_str, TY_INT);
                 p = nd_var(lex_str, off, TY_INT);
                 ps_bind_var(p, ps_nlocals - 1);
@@ -7396,7 +7413,7 @@ function_decl:
                     nested_fp = 1;
                 }
                 if (lex_tok == TK_IDENT) {
-                    ps_type_cty = ps_fnptr_cty(ps_type_cty);
+                    ps_type_cty = ps_fnptr_cty(nested_fp ? ct_ptr(ct_func(ps_type_cty, 0, -1, 0)) : ps_type_cty);
                 off = add_local(lex_str, TY_INT);
                     p = nd_var(lex_str, off, TY_INT);
                     ps_bind_var(p, ps_nlocals - 1);

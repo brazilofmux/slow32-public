@@ -423,6 +423,38 @@ compiler read SQLite within a megabyte of its heap: s12cc.c kept the
 came back NULL showed up as an unterminated `#if` 54,000 lines on.
 SQLite's assembly is byte-identical.
 
+**S5, expression constraints** (2026-10-28): every node now records
+where it was read (`Node.line`, `Node.file`, an index into the interned
+`pp_files`), so sema's diagnostics carry `file:line`.  `sema_constraints`
+runs on each expression node once its operands are typed and before
+sema's conversions wrap them in casts: integer-only operators (`%`, `&`,
+`|`, `^`, shifts, `~`), arithmetic `*` and `/`, the forms `+` and `-`
+allow (no pointer + pointer), scalar operands for `!`, `&&`, `||` and
+`?:`'s condition, `*` only on a pointer, assignment, compound assignment
+and `++`/`--` only to a modifiable lvalue (the program's own `=` is
+marked `op = TK_ASSIGN`, an initializer's is not), casts only to void or
+a scalar from a scalar and never between pointer and floating, a void
+value used as one, a call's argument count against its prototype.
+The conversions 6.5.16.1 constrains -- assignment, initialization,
+argument, return, and the pointer comparisons -- are written
+(`sema_assign_check`) but held back: `S12CC_SURVEY=1` reports each by
+class, and on SQLite they are mostly our own C types, not SQLite's
+(`const char *z2 = z;` reported as dropping a qualifier, a cast to a
+function-pointer typedef as an integer).  They are enabled class by
+class as the types become exact.  Three such gaps fixed on the way,
+each a false error first: a local function pointer's C type took the
+last parameter's type for its return (`int (*fp)(void)` returned
+void), a local pointer to function pointers fell back to int, and a
+compound literal was not an lvalue (it is a comma, its stores and then
+its variable; the comma is marked).  The argument count found two more,
+in the corpus: a prototype with an unnamed `void *` parameter --
+`void sqlite3_free(void*);` -- was recorded as taking none, because
+`parse_type` takes the star and the `(void)` test saw the `)`; and a
+pointer to a function returning a function pointer (`void
+(*(*xDlSym)(void *, const char *))(void)`, as member or parameter) was
+typed one function level short, its call a void value.  `S12CC_CONSTRAINT_WARN=1` turns
+the errors into warnings, to survey a corpus.
+
 ## Constraints on the work
 
 - stage07 builds stage08: the new code keeps stage07's dialect (ints

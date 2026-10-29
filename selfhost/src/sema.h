@@ -83,6 +83,9 @@ static int sema_arg_class(int ty) {
 static void sema_expr(Node *n);
 static void sema_cty_node(Node *n);
 static void sema_attr_node(Node *n);
+static void sema_constraints(Node *n);
+static int sema_callee_cty(Node *n);
+static void sema_call_check(Node *n, int ft);
 
 /* Is C type t _Bool? */
 static int sema_is_bool(int t) {
@@ -148,6 +151,11 @@ static void sema_expr_mty(Node *n) {
         sema_expr(a);
         a = a->next;
     }
+
+    /* Its operands typed, the node's constraints -- before the
+     * conversions below hide the operands' own types in casts. */
+    sema_constraints(n);
+    if (n->kind == ND_CALL || n->kind == ND_CALL_PTR) sema_call_check(n, sema_callee_cty(n));
 
     /* ND_NUM, ND_VAR, ND_STRING, ND_FUNC_REF: already typed by parser */
 
@@ -575,6 +583,7 @@ static long long sema_fold(int op, long long a, long long b, int t, int *ok) {
 }
 
 static void sema_attr_node(Node *n) {
+    Node *x;
     int t;
     int k;
     int ok;
@@ -595,6 +604,10 @@ static void sema_attr_node(Node *n) {
         if (!ct_is_func(t)) n->attr = AT_LV;
     } else if (k == ND_MEMBER && n->lhs) {
         n->attr = n->lhs->attr & AT_LV;
+    } else if (k == ND_COMMA && n->op == TK_LBRACE) {
+        x = n;      /* a compound literal: the variable at the end */
+        while (x->kind == ND_COMMA && x->rhs) x = x->rhs;
+        n->attr = x->attr & AT_LV;
     }
     if ((n->attr & AT_LV) && !ct_is_array(t) && !ct_is_func(t) && ct_kindof(t) != CT_VOID &&
         !(ct_qual(t) & CQ_CONST) && !ty_is_incomplete_struct(n->ty) &&
@@ -649,6 +662,267 @@ static void sema_attr_node(Node *n) {
     /* null pointer constants: an integer constant expression of value 0 */
     if ((n->attr & AT_ICX) && n->cval == 0 && n->cval_hi == 0)
         n->attr = n->attr | AT_NPC;
+}
+
+/* --- Constraints (docs/TYPES.md S5) --- */
+
+/* A constraint violation in an expression: an error at the place the
+ * node was read (5.1.1.3).  S12CC_CONSTRAINT_WARN=1 reports and goes
+ * on, to survey a corpus. */
+static int sema_cwarn = -1;
+static void sema_violation(Node *n, char *msg) {
+    if (sema_cwarn < 0) sema_cwarn = getenv("S12CC_CONSTRAINT_WARN") != 0;
+    pp_where_at(n->file, n->line);
+    fdputs(sema_cwarn ? "warning: " : "error: ", 2);
+    fdputs(msg, 2);
+    fdputc(10, 2);
+    if (!sema_cwarn) exit(1);
+}
+
+/* The conversions 6.5.16.1 constrains, held back until the corpus says
+ * what they cost: S12CC_SURVEY=1 reports each, tagged by class. */
+static int sema_survey_on = -1;
+static void sema_survey(Node *n, char *cls, char *msg) {
+    if (sema_survey_on < 0) sema_survey_on = getenv("S12CC_SURVEY") != 0;
+    if (!sema_survey_on) return;
+    pp_where_at(n->file, n->line);
+    fdputs("survey[", 2);
+    fdputs(cls, 2);
+    fdputs("]: ", 2);
+    fdputs(msg, 2);
+    fdputc(10, 2);
+}
+
+/* Compatible types (6.2.7): types are interned, so mostly the same
+ * type -- with an array of unknown size, a function without a
+ * prototype, and an enumeration and its integer type besides. */
+static int sema_compat(int a, int b) {
+    int ka;
+    int kb;
+    int i;
+    if (a == b) return 1;
+    if (ct_qual(a) != ct_qual(b)) return 0;
+    ka = ct_kindof(a);
+    kb = ct_kindof(b);
+    if (ka == CT_ENUM && (kb == CT_INT || kb == CT_UINT)) return 1;
+    if (kb == CT_ENUM && (ka == CT_INT || ka == CT_UINT)) return 1;
+    if (ka != kb) return 0;
+    if (ka == CT_PTR) return sema_compat(ct_baseof(a), ct_baseof(b));
+    if (ka == CT_ARRAY)
+        return sema_compat(ct_baseof(a), ct_baseof(b)) &&
+               (ct_countof(a) < 0 || ct_countof(b) < 0 || ct_countof(a) == ct_countof(b));
+    if (ka == CT_FUNC) {
+        if (!sema_compat(ct_baseof(a), ct_baseof(b))) return 0;
+        if (ct_nparms(a) < 0 || ct_nparms(b) < 0) return 1;
+        if (ct_nparms(a) != ct_nparms(b) || ct_variadic(a) != ct_variadic(b)) return 0;
+        i = 0;
+        while (i < ct_nparms(a)) {
+            if (!sema_compat(ct_unqual(ct_parmty(a, i)), ct_unqual(ct_parmty(b, i)))) return 0;
+            i = i + 1;
+        }
+        return 1;
+    }
+    return 0;
+}
+
+/* An operand's type as a value (6.3.2.1): decayed, unqualified. */
+static int sema_vty(Node *x) {
+    return ct_decay(sema_cty_of(x));
+}
+
+static int sema_is_void(int t) {
+    return ct_kindof(t) == CT_VOID;
+}
+
+static int sema_is_objptr(int t) {
+    return ct_is_ptr(t) && !ct_is_func(ct_baseof(t));
+}
+
+/* Simple assignment's constraints (6.5.16.1p1), which initialization
+ * (6.7.9p11), argument passing (6.5.2.2p7) and return (6.8.6.4p3)
+ * share: the value r converted to type lt. */
+static void sema_assign_check(Node *at, int lt, Node *r) {
+    int rt;
+    int lp;
+    int rp;
+    lt = ct_unqual(lt);
+    rt = sema_vty(r);
+    if (sema_is_void(rt)) { sema_violation(at, "void value used where a value is required"); return; }
+    if (ct_is_arith(lt)) {
+        if (ct_is_ptr(rt) && ct_kindof(lt) != CT_BOOL)
+            sema_survey(at, "ptr-to-int", "pointer converted to an integer without a cast");
+        else if (!ct_is_scalar(rt))
+            sema_violation(at, "assigning a value of incompatible type");
+        return;
+    }
+    if (ct_is_record(lt)) {
+        if (ct_unqual(rt) != lt) sema_violation(at, "assigning a structure or union of a different type");
+        return;
+    }
+    if (!ct_is_ptr(lt)) return;
+    if (r->attr & AT_NPC) return;
+    if (ct_is_integer(rt)) { sema_survey(at, "int-to-ptr", "integer converted to a pointer without a cast"); return; }
+    if (!ct_is_ptr(rt)) { sema_violation(at, "assigning a value of incompatible type to a pointer"); return; }
+    lp = ct_baseof(lt);
+    rp = ct_baseof(rt);
+    if ((ct_qual(rp) & ~ct_qual(lp)) != 0)
+        sema_survey(at, "discard-qual", "conversion discards qualifiers from the pointed-to type");
+    if (sema_is_void(lp) || sema_is_void(rp)) {
+        if (ct_is_func(lp) || ct_is_func(rp))
+            sema_survey(at, "fn-void", "conversion between a function pointer and void *");
+        return;
+    }
+    if (sema_compat(ct_unqual(lp), ct_unqual(rp))) return;
+    if (ct_is_integer(lp) && ct_is_integer(rp) && ct_int_bytes(lp) == ct_int_bytes(rp))
+        sema_survey(at, "ptr-sign", "pointers to integer types that differ in sign");
+    else
+        sema_survey(at, "incompat-ptr", "conversion between incompatible pointer types");
+}
+
+/* The constraints of 6.5 on one expression node, its operands done. */
+static void sema_constraints(Node *n) {
+    int k;
+    int op;
+    int l;
+    int r;
+    k = n->kind;
+    op = n->op;
+    l = n->lhs ? sema_vty(n->lhs) : 0;
+    r = n->rhs ? sema_vty(n->rhs) : 0;
+    if (k == ND_BINOP && n->lhs && n->rhs) {
+        if (sema_is_void(l) || sema_is_void(r)) {
+            sema_violation(n, "void value used where a value is required");
+            return;
+        }
+        if (op == TK_PERCENT || op == TK_AMP || op == TK_PIPE || op == TK_CARET ||
+            op == TK_LSHIFT || op == TK_RSHIFT) {
+            if (!ct_is_integer(l) || !ct_is_integer(r)) sema_violation(n, "operands must have integer type");
+        } else if (op == TK_STAR || op == TK_SLASH) {
+            if (!ct_is_arith(l) || !ct_is_arith(r)) sema_violation(n, "operands must have arithmetic type");
+        } else if (op == TK_PLUS) {
+            if (!(ct_is_arith(l) && ct_is_arith(r)) && !(ct_is_ptr(l) && ct_is_integer(r)) &&
+                !(ct_is_integer(l) && ct_is_ptr(r)))
+                sema_violation(n, "invalid operands to binary +");
+        } else if (op == TK_MINUS) {
+            if (ct_is_ptr(l) && ct_is_ptr(r)) {
+                if (!sema_compat(ct_unqual(ct_baseof(l)), ct_unqual(ct_baseof(r))))
+                    sema_survey(n, "ptr-diff", "subtracting pointers to incompatible types");
+            } else if (!(ct_is_arith(l) && ct_is_arith(r)) && !(ct_is_ptr(l) && ct_is_integer(r))) {
+                sema_violation(n, "invalid operands to binary -");
+            }
+        } else if (op == TK_LAND || op == TK_LOR) {
+            if (!ct_is_scalar(l) || !ct_is_scalar(r)) sema_violation(n, "operands of && and || must have scalar type");
+        } else if (op == TK_LT || op == TK_GT || op == TK_LE || op == TK_GE) {
+            if (ct_is_ptr(l) && ct_is_ptr(r)) {
+                if (!sema_compat(ct_unqual(ct_baseof(l)), ct_unqual(ct_baseof(r))))
+                    sema_survey(n, "ptr-cmp", "ordering pointers to incompatible types");
+            } else if (ct_is_ptr(l) || ct_is_ptr(r)) {
+                sema_survey(n, "ptr-int-cmp", "ordering a pointer against an integer");
+            } else if (!ct_is_arith(l) || !ct_is_arith(r)) {
+                sema_violation(n, "invalid operands to a relational operator");
+            }
+        } else if (op == TK_EQ || op == TK_NE) {
+            if (ct_is_ptr(l) && ct_is_ptr(r)) {
+                if (!sema_is_void(ct_baseof(l)) && !sema_is_void(ct_baseof(r)) &&
+                    !sema_compat(ct_unqual(ct_baseof(l)), ct_unqual(ct_baseof(r))))
+                    sema_survey(n, "ptr-cmp", "comparing pointers to incompatible types");
+            } else if (ct_is_ptr(l) || ct_is_ptr(r)) {
+                if (!(ct_is_ptr(l) ? (n->rhs->attr & AT_NPC) : (n->lhs->attr & AT_NPC)))
+                    sema_survey(n, "ptr-int-cmp", "comparing a pointer with an integer");
+            } else if (!ct_is_arith(l) || !ct_is_arith(r)) {
+                sema_violation(n, "invalid operands to an equality operator");
+            }
+        }
+        return;
+    }
+    if (k == ND_UNARY && n->lhs) {
+        if (sema_is_void(l) && op != TK_AMP) { sema_violation(n, "void value used where a value is required"); return; }
+        if (op == TK_MINUS && !ct_is_arith(l)) sema_violation(n, "operand of unary - must have arithmetic type");
+        if (op == TK_TILDE && !ct_is_integer(l)) sema_violation(n, "operand of ~ must have integer type");
+        if (op == TK_BANG && !ct_is_scalar(l)) sema_violation(n, "operand of ! must have scalar type");
+        if (op == TK_STAR && !ct_is_ptr(l)) sema_violation(n, "indirection requires a pointer operand");
+        return;
+    }
+    if (k == ND_TERNARY && n->cond) {
+        if (!ct_is_scalar(sema_vty(n->cond))) sema_violation(n, "the condition of ?: must have scalar type");
+        if (n->lhs && n->rhs && ct_is_ptr(l) && ct_is_ptr(r) &&
+            !sema_is_void(ct_baseof(l)) && !sema_is_void(ct_baseof(r)) &&
+            !sema_compat(ct_unqual(ct_baseof(l)), ct_unqual(ct_baseof(r))))
+            sema_survey(n, "ptr-cond", "?: arms are pointers to incompatible types");
+        else if (n->lhs && n->rhs && (ct_is_ptr(l) != ct_is_ptr(r)) &&
+                 !(ct_is_ptr(l) ? (n->rhs->attr & AT_NPC) : (n->lhs->attr & AT_NPC)))
+            sema_survey(n, "ptr-int-cond", "?: arms are a pointer and an integer");
+        return;
+    }
+    if ((k == ND_ASSIGN && op == TK_ASSIGN) || k == ND_COMP_ASSIGN || k == ND_POST_INC || k == ND_POST_DEC) {
+        if (n->lhs && !(n->lhs->attr & AT_MOD)) {
+            sema_violation(n, "expression is not assignable (not a modifiable lvalue)");
+            return;
+        }
+    }
+    if (k == ND_ASSIGN && n->lhs && n->rhs) {
+        sema_assign_check(n, sema_cty_of(n->lhs), n->rhs);
+        return;
+    }
+    if (k == ND_COMP_ASSIGN && n->lhs && n->rhs) {
+        if (sema_is_void(r)) sema_violation(n, "void value used where a value is required");
+        else if (op == TK_PLUS || op == TK_MINUS) {
+            if (!(ct_is_arith(l) && ct_is_arith(r)) && !(ct_is_ptr(l) && ct_is_integer(r)))
+                sema_violation(n, "invalid operands to a compound assignment");
+        } else if (op == TK_STAR || op == TK_SLASH) {
+            if (!ct_is_arith(l) || !ct_is_arith(r)) sema_violation(n, "invalid operands to a compound assignment");
+        } else if (!ct_is_integer(l) || !ct_is_integer(r)) {
+            sema_violation(n, "invalid operands to a compound assignment");
+        }
+        return;
+    }
+    if ((k == ND_POST_INC || k == ND_POST_DEC) && n->lhs) {
+        if (!(ct_is_arith(l) || ct_is_ptr(l))) sema_violation(n, "operand of ++ or -- must have real or pointer type");
+        return;
+    }
+    if (k == ND_CAST && n->lhs && n->cty > 0) {
+        r = ct_unqual(n->cty);
+        if (sema_is_void(r)) return;
+        if (!ct_is_scalar(r)) { sema_violation(n, "a cast must name a scalar type or void"); return; }
+        if (!ct_is_scalar(l)) { sema_violation(n, "operand of a cast must have scalar type"); return; }
+        if ((ct_is_ptr(r) && ct_is_floating(l)) || (ct_is_floating(r) && ct_is_ptr(l)))
+            sema_violation(n, "a pointer cannot be cast to or from a floating type");
+        return;
+    }
+}
+
+/* The callee's type: the prototype a direct call names, the pointed-to
+ * function of an indirect one (6.5.2.2p1); 0 when not known. */
+static int sema_callee_cty(Node *n) {
+    int t;
+    if (n->kind == ND_CALL) return find_func_cty(n->name);
+    if (n->kind != ND_CALL_PTR || !n->lhs) return 0;
+    t = sema_vty(n->lhs);
+    if (ct_is_ptr(t) && ct_is_func(ct_baseof(t))) return ct_baseof(t);
+    if (ct_is_arith(t) && !n->lhs->is_fnptr)
+        sema_survey(n, "call-nonfunc", "called object is not a function or function pointer");
+    return 0;
+}
+
+/* A call against its prototype (6.5.2.2p2): the argument count, and
+ * each argument as if assigned to its parameter. */
+static void sema_call_check(Node *n, int ft) {
+    Node *a;
+    int i;
+    int np;
+    if (ft <= 0 || !ct_is_func(ft)) return;
+    np = ct_nparms(ft);
+    if (np < 0) return;
+    i = 0;
+    a = n->args;
+    while (a) {
+        if (i < np) sema_assign_check(a, ct_parmty(ft, i), a);
+        else if (sema_is_void(sema_vty(a))) sema_violation(a, "void value used where a value is required");
+        i = i + 1;
+        a = a->next;
+    }
+    if (i < np) sema_violation(n, "too few arguments to function call");
+    if (i > np && !ct_variadic(ft)) sema_violation(n, "too many arguments to function call");
 }
 
 /* Float bits fb widened to a double in *out, on the bits: exact. */

@@ -61,6 +61,36 @@ static char pp_curfile[PP_FILE_LEN];
 /* Where a diagnostic is: "file:line: ", the presumed name and line, as
  * clang and gcc write it (it was "s12cc:" and the line counted through
  * every included header). */
+/* The presumed file names, interned: a node records the index of the
+ * one it was read in (Node.file), so a diagnostic after parsing can name
+ * it.  pp_file_note runs wherever pp_curfile changes. */
+#define PP_MAX_FILES 1024
+static char *pp_files[PP_MAX_FILES];
+static int pp_nfiles;
+static int pp_file_id;
+
+static void pp_file_note(void) {
+    int i;
+    i = 0;
+    while (i < pp_nfiles) {
+        if (strcmp(pp_files[i], pp_curfile) == 0) { pp_file_id = i; return; }
+        i = i + 1;
+    }
+    if (pp_nfiles >= PP_MAX_FILES) { pp_file_id = 0; return; }
+    pp_files[pp_nfiles] = strdup(pp_curfile);
+    pp_file_id = pp_nfiles;
+    pp_nfiles = pp_nfiles + 1;
+}
+
+/* "file:line: " for a place recorded earlier. */
+static void pp_where_at(int file, int line) {
+    if (file >= 0 && file < pp_nfiles && pp_files[file][0] != 0) fdputs(pp_files[file], 2);
+    else fdputs("s12cc", 2);
+    fdputc(58, 2);
+    fdputuint(2, line);
+    fdputs(": ", 2);
+}
+
 static void pp_where(void) {
     fdputs(pp_curfile[0] != 0 ? pp_curfile : "s12cc", 2);
     fdputc(58, 2);      /* ':' */
@@ -1888,6 +1918,7 @@ static void pp_set_source_file(char *path) {
     i = 0;
     if (!path) {
         pp_curfile[0] = 0;
+        pp_file_note();
         return;
     }
     while (path[i] != 0 && i < PP_FILE_LEN - 1) {
@@ -1895,6 +1926,7 @@ static void pp_set_source_file(char *path) {
         i = i + 1;
     }
     pp_curfile[i] = 0;
+    pp_file_note();
 }
 
 /* Static predefs available for #ifdef / #if defined().  Dynamic
@@ -2749,6 +2781,7 @@ static void pp_pushdir(void) {
             lex_pos = lex_pos + 1;
         }
         pp_curfile[i] = 0;
+        pp_file_note();
         if (last_slash > 254) last_slash = -1;
         pp_incdir[d * 256 + last_slash + 1] = 0;   /* the directory: up to its last '/' */
         lex_line = 0;
@@ -2769,6 +2802,7 @@ static void pp_popdir(void) {
     if (d < PP_MAX_INCDEPTH && pp_dep > pp_incif[d]) pp_error("unterminated conditional directive");
     if (d < PP_MAX_INCDEPTH) {
         memcpy(pp_curfile, pp_incfile + d * PP_FILE_LEN, PP_FILE_LEN);
+        pp_file_note();
         lex_line = pp_incline[d] - 1;
     }
     pp_skip_line();
@@ -2830,6 +2864,7 @@ static void pp_line_directive(void) {
             k = k + 1;
         }
         pp_curfile[i] = 0;
+        pp_file_note();
     }
     lex_line = n - 1;       /* the directive's newline makes the next line n */
     pp_skip_line();
