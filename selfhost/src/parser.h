@@ -151,6 +151,7 @@ static int ps_top_inline;
 static int ps_pend_alignas;      /* _Alignas read before parse_type ... */
 static int ps_type_alignas;      /* ... and the declaration's, once parse_type has run */
 static void ps_read_alignas(void);
+static void ps_member_static_assert(void);
 static void ps_local_alignas(int elem_ty);
 /* static in the file-scope declaration being read: one that follows a
  * declaration with external linkage is an error (6.2.2p7) */
@@ -788,6 +789,7 @@ static void expect(int tok) {
 
 static int is_type(void) {
     if (lex_tok == TK_INT) return 1;
+    if (lex_tok == TK_REGISTER) return 1;   /* register int x, a parameter's too (6.7.6.3p2) */
     if (lex_tok == TK_VOID) return 1;
     if (lex_tok == TK_CHAR) return 1;
     if (lex_tok == TK_STRUCT) return 1;
@@ -1503,6 +1505,55 @@ static void ps_atomic_check(void) {
         p_error("_Atomic cannot be applied to an array or function type");
 }
 
+/* The arithmetic type specifiers, in any order (6.7.2p2): int signed,
+ * int long long, short unsigned int -- each was read in one order only.
+ * signed_seen: a `signed` already read before them.  The C type's hint
+ * for what the machine type cannot say goes in *hint. */
+static int ps_arith_specifiers(int signed_seen, int *hint) {
+    int nint;
+    int nchar;
+    int nshort;
+    int nlong;
+    int nsig;
+    int nuns;
+    int ndbl;
+    nint = 0;
+    nchar = 0;
+    nshort = 0;
+    nlong = 0;
+    nsig = signed_seen;
+    nuns = 0;
+    ndbl = 0;
+    while (1) {
+        if (lex_tok == TK_INT) nint = nint + 1;
+        else if (lex_tok == TK_CHAR) nchar = nchar + 1;
+        else if (lex_tok == TK_SHORT) nshort = nshort + 1;
+        else if (lex_tok == TK_LONG) nlong = nlong + 1;
+        else if (lex_tok == TK_SIGNED) nsig = nsig + 1;
+        else if (lex_tok == TK_UNSIGNED) nuns = nuns + 1;
+        else if (lex_tok == TK_DOUBLE && nlong == 1) ndbl = ndbl + 1;
+        else break;
+        next();
+    }
+    if (nsig && nuns) p_error("cannot combine signed and unsigned");
+    if (nint > 1 || nchar > 1 || nshort > 1 || nlong > 2 || (nchar && (nshort || nlong || nint)) ||
+        (nshort && nlong))
+        p_error("invalid combination of type specifiers");
+    if (ndbl) { *hint = CT_LDOUBLE; return TY_DOUBLE; }
+    if (nchar) {
+        if (nuns) return TY_CHAR | TY_UNSIGNED;
+        if (nsig) *hint = CT_SCHAR;
+        return TY_CHAR;
+    }
+    if (nshort) return nuns ? TY_SHORT | TY_UNSIGNED : TY_SHORT;
+    if (nlong == 2) return nuns ? TY_LLONG | TY_UNSIGNED : TY_LLONG;
+    if (nlong == 1) {
+        *hint = nuns ? CT_ULONG : CT_LONG;
+        return nuns ? target_long_ty() | TY_UNSIGNED : target_long_ty();
+    }
+    return nuns ? TY_INT | TY_UNSIGNED : TY_INT;
+}
+
 static int parse_type(void) {
     int malignas;       /* a member declaration's _Alignas */
     int saw_signed;
@@ -1555,6 +1606,11 @@ static int parse_type(void) {
             ps_pend_alignas = 0;
             continue;
         }
+        if (lex_tok == TK_REGISTER) {   /* a parameter's: its address may not be taken */
+            ps_decl_register = 1;
+            next();
+            continue;
+        }
         if (lex_tok == TK_CONST || lex_tok == TK_VOLATILE ||
             lex_tok == TK_SIGNED || lex_tok == TK_RESTRICT ||
             is_gnu_qual_ident() || is_gnu_extension_ident() ||
@@ -1593,54 +1649,11 @@ static int parse_type(void) {
         ps_atomic_check();
         return ty;
     }
-    if (lex_tok == TK_INT)  { ty = TY_INT;  next(); }
-    else if (lex_tok == TK_CHAR) { ty = TY_CHAR; if (saw_signed) ckhint = CT_SCHAR; next(); }
+    if (lex_tok == TK_INT || lex_tok == TK_CHAR || lex_tok == TK_SHORT ||
+        lex_tok == TK_UNSIGNED || lex_tok == TK_LONG) {
+        ty = ps_arith_specifiers(saw_signed, &ckhint);
+    }
     else if (lex_tok == TK_VOID) { ty = TY_VOID; next(); }
-    else if (lex_tok == TK_SHORT) {
-        next();
-        if (lex_tok == TK_INT) { ty = TY_SHORT; next(); }
-        else { ty = TY_SHORT; }
-    }
-    else if (lex_tok == TK_UNSIGNED) {
-        next();
-        if (lex_tok == TK_CHAR) { ty = TY_CHAR | TY_UNSIGNED; next(); }
-        else if (lex_tok == TK_SHORT) {
-            ty = TY_SHORT | TY_UNSIGNED;
-            next();
-            if (lex_tok == TK_INT) next();
-        }
-        else if (lex_tok == TK_INT) { ty = TY_INT | TY_UNSIGNED; next(); }
-        else if (lex_tok == TK_LONG) {
-            next();
-            if (lex_tok == TK_LONG) {
-                ty = TY_LLONG | TY_UNSIGNED; next();
-            } else {
-                ty = target_long_ty() | TY_UNSIGNED;
-                ckhint = CT_ULONG;
-            }
-            if (lex_tok == TK_INT) next();
-        }
-        else { ty = TY_INT | TY_UNSIGNED; }
-    }
-    else if (lex_tok == TK_LONG) {
-        next();
-        if (lex_tok == TK_LONG) { ty = TY_LLONG; next(); if (lex_tok == TK_INT) next(); }
-        else if (lex_tok == TK_INT) { ty = target_long_ty(); ckhint = CT_LONG; next(); }
-        else if (lex_tok == TK_UNSIGNED) {
-            ty = target_long_ty() | TY_UNSIGNED;
-            ckhint = CT_ULONG;
-            next();
-            if (lex_tok == TK_INT) next();
-        }
-        else if (lex_tok == TK_SIGNED) {
-            ty = target_long_ty();
-            ckhint = CT_LONG;
-            next();
-            if (lex_tok == TK_INT) next();
-        }
-        else if (lex_tok == TK_DOUBLE) { ty = TY_DOUBLE; ckhint = CT_LDOUBLE; next(); }
-        else { ty = target_long_ty(); ckhint = CT_LONG; }
-    }
     else if (lex_tok == TK_FLOAT) { ty = TY_FLOAT; next(); }
     else if (lex_tok == TK_DOUBLE) { ty = TY_DOUBLE; next(); }
     else if (gnu_float_ident_ty() >= 0) {
@@ -1711,6 +1724,7 @@ static int parse_type(void) {
             max_align = 1;
             bfbit = -1;
             while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
+                if (lex_tok == TK_STATIC_ASSERT) { ps_member_static_assert(); continue; }
                 mty = parse_type();
                 malignas = ps_type_alignas;   /* before an array size runs parse_type again */
                 mcty = ps_type_cty;
@@ -2040,6 +2054,7 @@ static int parse_type(void) {
             max_sz = 0;
             max_align = 1;
             while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
+                if (lex_tok == TK_STATIC_ASSERT) { ps_member_static_assert(); continue; }
                 mty = parse_type();
                 malignas = ps_type_alignas;   /* before an array size runs parse_type again */
                 mcty = ps_type_cty;
@@ -2850,6 +2865,12 @@ static int ps_parse_param_dims(int *pty) {
     while (lex_tok == TK_LBRACK) {
         next();
         last = 0;
+        /* a[restrict static 1], a[const]: the qualifiers of the pointer
+         * the parameter becomes, and static's promise of at least that
+         * many elements (6.7.6.3p7) -- nothing to emit */
+        while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE || lex_tok == TK_RESTRICT ||
+               lex_tok == TK_STATIC || is_gnu_qual_ident())
+            next();
         if (lex_tok != TK_RBRACK) last = parse_const_int();
         expect(TK_RBRACK);
         ndims = ndims + 1;
@@ -3751,6 +3772,17 @@ static int ps_static_assert_value(Node *e) {
     if (!(e->attr & AT_ICX)) p_error("static assertion expression is not an integral constant expression");
     if (e->cval == 0 && e->cval_hi == 0) p_error("static assertion failed");
     return 1;
+}
+
+/* _Static_assert among a structure's members (6.7.2.1p1). */
+static void ps_member_static_assert(void) {
+    next();
+    expect(TK_LPAREN);
+    ps_static_assert_value(parse_assign());
+    expect(TK_COMMA);
+    while (lex_tok == TK_STRING) next();
+    expect(TK_RPAREN);
+    expect(TK_SEMI);
 }
 
 /* A constant that must be an integer constant expression -- a case
@@ -6698,10 +6730,14 @@ static void ps_typedefs_builtin(void) {
 static void parse_typedef_decl(void) {
     int ty;
     int cty;
+    int bty;
+    int bcty;
     char nm[256];
         ty = parse_type();
         if (ps_type_alignas) p_error("_Alignas may not appear in a typedef");   /* 6.7.5p2 */
         cty = ps_type_cty;     /* before a parameter list runs parse_type again */
+        bty = ps_type_nostar;  /* the base, for the declarators after a ',' */
+        bcty = ps_type_nostar_cty;
         if (lex_tok == TK_LPAREN) {
             /* Function pointer typedef: typedef int (*Name)(args); */
             next();  /* skip ( */
@@ -6772,9 +6808,48 @@ static void parse_typedef_decl(void) {
         ps_tdcty[ps_ntypedefs - 1] = cty;
         ps_typedef_check();
         skip_gnu_decl_suffixes();
+        /* typedef int A, *AP; -- each declarator its own name (6.7p1) */
+        while (lex_tok == TK_COMMA) {
+            next();
+            ty = ps_declarator_stars(bty, bcty);
+            cty = ps_type_cty;
+            if (lex_tok != TK_IDENT) {
+                p_error("expected typedef name");
+                return;
+            }
+            memcpy(nm, lex_str, lex_slen + 1);
+            next();
+            add_typedef(nm, ty);
+            ps_tdcty[ps_ntypedefs - 1] = cty;
+            ps_typedef_check();
+            skip_gnu_decl_suffixes();
+        }
         expect(TK_SEMI);
         return;
     }
+
+/* A for statement's first clause when it is a declaration (6.8.5p3):
+ * read as one, by parse_stmt -- several declarators, arrays and their
+ * initializers, struct types, register.  It took one name, `*`s and an
+ * optional `= expr`.  A single `name = value` is still the loop's init
+ * expression, as before; anything else comes back in *pre, statements
+ * to run ahead of the loop, in its scope. */
+static Node *ps_for_decl(Node **pre) {
+    Node *d;
+    d = parse_stmt();
+    if (d && d->kind == ND_EXPR_STMT && d->lhs && d->lhs->kind == ND_ASSIGN && d->next == NULL)
+        return d->lhs;
+    if (d && d->kind == ND_BLOCK && d->body == NULL) return NULL;
+    *pre = d;
+    return NULL;
+}
+
+/* The for statement, its declaration's statements (if any) first. */
+static Node *ps_for_node(Node *pre, Node *f) {
+    if (pre == NULL) return f;
+    pre->next = f;
+    return nd_block(pre);
+}
 
 /* A function declared at block scope, `void WI_unloadData(void);`,
  * the cursor on its '(': registered as a file-scope prototype is
@@ -6933,36 +7008,13 @@ static Node *parse_stmt(void) {
         expect(TK_LPAREN);
         ci = ps_scope_begin();  /* save scope for for-init declarations */
         ci_stack = ps_stack;
+        a = NULL;
         /* init */
         if (lex_tok == TK_SEMI) {
             next();
             n = NULL;
-        } else if (is_type()) {
-            /* for-loop init declaration: for (int i = 0; ...) */
-            ty = parse_type();
-            skip_decl_qualifiers();
-            while (lex_tok == TK_STAR) {
-                ty = ty + TY_PTR;
-                next();
-                skip_decl_qualifiers();
-            }
-            if (lex_tok != TK_IDENT) {
-                p_error("expected identifier in for-init");
-                return nd_num(0);
-            }
-            memcpy(nm, lex_str, lex_slen + 1);
-            next();
-            off = add_local(nm, ty);
-            if (lex_tok == TK_ASSIGN) {
-                int li;
-                li = ps_nlocals - 1;   /* before the initializer (issue 79) */
-                next();
-                n = nd_assign(nd_var(nm, off, ty), parse_assign());
-                ps_bind_var(n->lhs, li);
-            } else {
-                n = NULL;
-            }
-            expect(TK_SEMI);
+        } else if (is_type() || lex_tok == TK_REGISTER) {
+            n = ps_for_decl(&a);     /* for (int i = 0; ...), and any declaration */
         } else {
             n = parse_expr();
             expect(TK_SEMI);
@@ -6987,7 +7039,7 @@ static Node *parse_stmt(void) {
         t = parse_stmt();
         ps_scope_end(ci);
         if (!ps_fn_setjmp) ps_stack = ci_stack;
-        return nd_for(n, c, e, t);
+        return ps_for_node(a, nd_for(n, c, e, t));
     }
 
     /* switch statement */

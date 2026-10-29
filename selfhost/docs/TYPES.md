@@ -628,7 +628,20 @@ declaration; it is registered now (`ps_local_prototype`).  The rest
 were real, in our own code: the compiler used `write`, `strchr`,
 `strcpy`, `strncpy` and `rename` undeclared (the dialect block in
 c_lexer.rl declares them), and the libc's `posix_proc.c` called
-`abort` above its definition.  `S12CC_CONSTRAINT_WARN=1` turns
+`abort` above its definition.
+
+**REJECTS: declarators** (2026-10-29).  A `for` statement's first
+clause is a declaration and is read as one, by parse_stmt
+(`ps_for_decl`): several declarators, an initialized array, a struct
+type defined there, `register` -- it took one name, its stars and an
+`= expr`.  A single `name = value` stays the loop's init expression, so
+the loops the unroller knows look as they did.  The arithmetic type
+specifiers in any order (`ps_arith_specifiers`: `int signed`, `int long
+long`, `short unsigned int`; and two of signed and unsigned, or `long
+short`, refused).  `register` on a parameter; qualifiers and `static`
+inside an array parameter's brackets (`int a[restrict static 1]`);
+`_Static_assert` among a structure's members; one typedef declaring
+several names (`typedef int A, *AP;`).  `S12CC_CONSTRAINT_WARN=1` turns
 the errors into warnings, to survey a corpus.
 
 ## Constraints on the work
