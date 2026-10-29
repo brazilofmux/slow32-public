@@ -2007,6 +2007,64 @@ static int replace_cb(dbf_t *db, uint32_t recno, void *userdata) {
     return REC_CONTINUE;
 }
 
+/* Parse REPLACE's "<field> WITH <expr> [, <field> WITH <expr> ...]" from
+ * body, stopping at a clause keyword (FOR, WHILE, a scope) or at extra_stop
+ * when given.  Each expression is captured and, without macros, compiled
+ * once.  On return *npairs counts the pairs parsed, for the caller to free
+ * even on error (-1). */
+static int parse_replace_pairs(dbf_t *db, const char *body, const char *extra_stop,
+                               replace_pair_t *pairs, int *npairs) {
+    lexer_t parse_l;
+    lexer_init_ext(&parse_l, body, expr_ctx.vars);
+    *npairs = 0;
+
+    while (parse_l.current.type == TOK_IDENT &&
+           !is_keyword(parse_l.current.text, "FOR") &&
+           !is_keyword(parse_l.current.text, "WHILE") &&
+           !is_keyword(parse_l.current.text, "ALL") &&
+           !is_keyword(parse_l.current.text, "NEXT") &&
+           !is_keyword(parse_l.current.text, "RECORD") &&
+           !is_keyword(parse_l.current.text, "REST") &&
+           !(extra_stop && is_keyword(parse_l.current.text, extra_stop))) {
+        replace_pair_t *rp = &pairs[*npairs];
+        char field_name[DBF_MAX_FIELD_NAME];
+
+        if (*npairs >= MAX_REPLACE_PAIRS) {
+            prog_error(ERR_SYNTAX, "Too many REPLACE fields");
+            return -1;
+        }
+
+        /* Field name lookup (once) */
+        str_copy(field_name, parse_l.current.text, sizeof(field_name));
+        str_upper(field_name);
+        lex_next(&parse_l);
+
+        rp->field_idx = dbf_find_field(db, field_name);
+        if (rp->field_idx < 0) {
+            prog_error_fmt(ERR_SYNTAX, "Field not found: %s", field_name);
+            return -1;
+        }
+
+        if (cmd_kw(&parse_l, "WITH")) lex_next(&parse_l);
+
+        /* Capture expression boundaries without evaluating side effects. */
+        if (replace_capture_expr(&parse_l, rp->expr, sizeof(rp->expr)) != 0)
+            return -1;
+
+        /* Pre-compile AST if no macros */
+        rp->ast = NULL;
+        if (!strchr(rp->expr, '&')) {
+            const char *error;
+            rp->ast = ast_compile(rp->expr, expr_ctx.vars, &error);
+        }
+        (*npairs)++;
+
+        lexer_init_ext(&parse_l, parse_l.token_start, expr_ctx.vars);
+        if (parse_l.current.type == TOK_COMMA) lex_next(&parse_l);
+    }
+    return 0;
+}
+
 static void cmd_replace(dbf_t *db, lexer_t *l) {
     clause_t c;
     replace_pair_t pairs[MAX_REPLACE_PAIRS];
@@ -2039,56 +2097,8 @@ static void cmd_replace(dbf_t *db, lexer_t *l) {
     if (parse_clauses(&temp_l, &c) < 0) return;
 
     /* --- Pre-parse field/expression pairs (parse once) --- */
-    {
-        lexer_t parse_l;
-        lexer_init_ext(&parse_l, body_start, expr_ctx.vars);
-
-        while (parse_l.current.type == TOK_IDENT &&
-               !is_keyword(parse_l.current.text, "FOR") &&
-               !is_keyword(parse_l.current.text, "WHILE") &&
-               !is_keyword(parse_l.current.text, "ALL") &&
-               !is_keyword(parse_l.current.text, "NEXT") &&
-               !is_keyword(parse_l.current.text, "RECORD") &&
-               !is_keyword(parse_l.current.text, "REST")) {
-
-            if (npairs >= MAX_REPLACE_PAIRS) {
-                prog_error(ERR_SYNTAX, "Too many REPLACE fields");
-                goto cleanup;
-            }
-
-            /* Field name lookup (once) */
-            char field_name[DBF_MAX_FIELD_NAME];
-            str_copy(field_name, parse_l.current.text, sizeof(field_name));
-            str_upper(field_name);
-            lex_next(&parse_l);
-
-            pairs[npairs].field_idx = dbf_find_field(db, field_name);
-            if (pairs[npairs].field_idx < 0) {
-                prog_error_fmt(ERR_SYNTAX, "Field not found: %s", field_name);
-                goto cleanup;
-            }
-
-            if (cmd_kw(&parse_l, "WITH")) lex_next(&parse_l);
-
-            /* Capture expression boundaries without evaluating side effects. */
-            if (replace_capture_expr(&parse_l, pairs[npairs].expr,
-                                     sizeof(pairs[npairs].expr)) != 0) {
-                goto cleanup;
-            }
-
-            /* Pre-compile AST if no macros */
-            pairs[npairs].ast = NULL;
-            if (!strchr(pairs[npairs].expr, '&')) {
-                const char *error;
-                pairs[npairs].ast = ast_compile(pairs[npairs].expr,
-                                                expr_ctx.vars, &error);
-            }
-
-            lexer_init_ext(&parse_l, parse_l.token_start, expr_ctx.vars);
-            if (parse_l.current.type == TOK_COMMA) lex_next(&parse_l);
-            npairs++;
-        }
-    }
+    if (parse_replace_pairs(db, body_start, NULL, pairs, &npairs) != 0)
+        goto cleanup;
 
     replace_ctx_t rctx = { pairs, npairs };
 
@@ -6156,9 +6166,530 @@ static void h_blank(dbf_t *db, lexer_t *l) {
     cmd_blank(db);
 }
 
-static void h_total(dbf_t *db, lexer_t *l) { (void)db; (void)l; printf("TOTAL ON not implemented.\n"); }
-static void h_join(dbf_t *db, lexer_t *l) { (void)db; (void)l; printf("JOIN WITH not implemented.\n"); }
-static void h_update(dbf_t *db, lexer_t *l) { (void)db; (void)l; printf("UPDATE ON not implemented.\n"); }
+/* ---- TOTAL, JOIN, UPDATE ---- */
+
+/* Scan text up to the first of the keywords (a word at a token boundary,
+ * outside quotes and parentheses); copy it, trimmed, to out and return a
+ * pointer to the keyword, or to the end of text. */
+static const char *take_until_kw(const char *text, const char *const *kws,
+                                 char *out, int size) {
+    const char *p = text;
+    int depth = 0;
+    char q = 0;
+    int n;
+
+    while (*p) {
+        if (q) { if (*p == q) q = 0; p++; continue; }
+        if (*p == '"' || *p == '\'' || *p == '[') { q = (*p == '[') ? ']' : *p; p++; continue; }
+        if (*p == '(') depth++;
+        else if (*p == ')' && depth > 0) depth--;
+        else if (depth == 0 && (p == text || p[-1] == ' ' || p[-1] == '\t')) {
+            int k;
+            for (k = 0; kws[k]; k++) {
+                if (str_imatch(p, kws[k])) goto found;
+            }
+        }
+        p++;
+    }
+found:
+    n = (int)(p - text);
+    if (n >= size) n = size - 1;
+    memcpy(out, text, n);
+    out[n] = '\0';
+    trim_right(out);
+    {
+        const char *s = skip_ws(out);
+        if (s != out) memmove(out, s, strlen(s) + 1);
+    }
+    return p;
+}
+
+/* Create filename with these fields (a .DBF extension if none) and open
+ * it in dest.  Returns 0, or -1 having reported the error. */
+static int create_and_open(dbf_t *dest, char *filename, dbf_field_t *fields, int nfields) {
+    uint16_t off = 0;
+    int f;
+
+    if (!has_extension(filename))
+        strcat(filename, ".DBF");
+    for (f = 0; f < nfields; f++) {
+        fields[f].offset = off;
+        off += fields[f].length;
+    }
+    if (dbf_create(filename, fields, nfields) < 0) {
+        prog_error_fmt(ERR_CANNOT_CREATE, "Error creating %s", filename);
+        return -1;
+    }
+    dbf_init(dest);
+    if (dbf_open(dest, filename) < 0) {
+        prog_error_fmt(ERR_CANNOT_OPEN, "Error opening %s", filename);
+        return -1;
+    }
+    return 0;
+}
+
+/* TOTAL ON <key> TO <file> [FIELDS <numeric fields>] [scope] [FOR] [WHILE]:
+ * one record per run of consecutive records with the same key -- the run's
+ * first record, its numeric fields (or the FIELDS listed) summed over the
+ * run.  The file should be sorted or indexed on the key, as in dBASE: a
+ * key that comes back after another starts a new record.  Memo fields are
+ * left out of the new file. */
+typedef struct {
+    ast_node_t *key_ast;
+    char key_expr[256];
+    char cur_key[256];
+    int have_group;
+    dbf_t *dest;
+    int nfields;                 /* dest fields */
+    int src_of[DBF_MAX_FIELDS];  /* dest field -> source field */
+    int summed[DBF_MAX_FIELDS];  /* dest field is totalled */
+    double sum[DBF_MAX_FIELDS];
+    char first[DBF_MAX_RECORD_SIZE];  /* the run's first record */
+    int generated;
+} total_ctx_t;
+
+static total_ctx_t total_ctx;    /* large: off the guest stack */
+
+static void total_flush(dbf_t *db, total_ctx_t *t) {
+    char raw[256];
+    char num[64];
+    int f;
+
+    if (!t->have_group) return;
+    dbf_append_blank(t->dest);
+    for (f = 0; f < t->nfields; f++) {
+        const dbf_field_t *sf = &db->fields[t->src_of[f]];
+        if (t->summed[f]) {
+            snprintf(num, sizeof(num), "%.*f", sf->decimals, t->sum[f]);
+            field_format_numeric(raw, sf->length, sf->decimals, num);
+        } else {
+            memcpy(raw, t->first + 1 + sf->offset, sf->length);
+            raw[sf->length] = '\0';
+        }
+        dbf_set_field_raw(t->dest, f, raw);
+    }
+    dbf_flush_record(t->dest);
+    t->generated++;
+}
+
+static int total_cb(dbf_t *db, uint32_t recno, void *userdata) {
+    total_ctx_t *t = userdata;
+    value_t kv;
+    char key[256];
+    char raw[256];
+    int f;
+    (void)recno;
+
+    if (t->key_ast ? ast_eval(t->key_ast, &expr_ctx, &kv) != 0
+                   : ast_eval_dynamic(t->key_expr, &expr_ctx, &kv) != 0) {
+        report_expr_error();
+        return REC_ERROR;
+    }
+    val_to_string(&kv, key, sizeof(key));
+
+    if (!t->have_group || strcmp(key, t->cur_key) != 0) {
+        total_flush(db, t);
+        str_copy(t->cur_key, key, sizeof(t->cur_key));
+        memcpy(t->first, db->record_buf, db->record_size);
+        for (f = 0; f < t->nfields; f++) t->sum[f] = 0.0;
+        t->have_group = 1;
+    }
+    for (f = 0; f < t->nfields; f++) {
+        if (!t->summed[f]) continue;
+        dbf_get_field_raw(db, t->src_of[f], raw, sizeof(raw));
+        t->sum[f] += atof(raw);
+    }
+    return REC_CONTINUE;
+}
+
+static void cmd_total(dbf_t *db, const char *arg) {
+    static const char *const to_kw[] = { "TO", NULL };
+    total_ctx_t *t = &total_ctx;
+    char filename[64];
+    const char *p;
+    int listed[DBF_MAX_FIELDS];
+    int nlisted = 0;
+    dbf_t dest;
+    dbf_field_t dest_fields[DBF_MAX_FIELDS];
+    clause_t c;
+    lexer_t l;
+    int count, f, k;
+
+    if (!dbf_is_open(db)) {
+        prog_error(ERR_NO_DATABASE, "No database in use");
+        return;
+    }
+    memset(t, 0, sizeof(*t));
+
+    p = take_until_kw(arg, to_kw, t->key_expr, sizeof(t->key_expr));
+    if (t->key_expr[0] == '\0' || !str_imatch(p, "TO")) {
+        printf("Syntax: TOTAL ON <key> TO <filename> [FIELDS <list>] [scope] [FOR <cond>] [WHILE <cond>]\n");
+        return;
+    }
+    p = parse_filename_raw(skip_ws(p + 2), filename, sizeof(filename));
+    if (filename[0] == '\0') {
+        printf("Syntax: TOTAL ON <key> TO <filename> [FIELDS <list>] [scope] [FOR <cond>] [WHILE <cond>]\n");
+        return;
+    }
+    p = skip_ws(p);
+    if (str_imatch(p, "FIELDS")) {
+        nlisted = parse_field_list(db, skip_ws(p + 6), listed, DBF_MAX_FIELDS, &p);
+        if (nlisted < 0) return;
+        for (k = 0; k < nlisted; k++) {
+            char ty = db->fields[listed[k]].type;
+            if (ty != 'N' && ty != 'F') {
+                prog_error_fmt(ERR_SYNTAX, "Not a numeric field: %s", db->fields[listed[k]].name);
+                return;
+            }
+        }
+    }
+
+    /* The new file: every field but memos; numeric ones (or those listed) totalled */
+    for (f = 0; f < db->field_count; f++) {
+        char ty = db->fields[f].type;
+        int sum = 0;
+        if (ty == 'M') continue;
+        if (nlisted == 0) sum = (ty == 'N' || ty == 'F');
+        else for (k = 0; k < nlisted; k++) if (listed[k] == f) sum = 1;
+        dest_fields[t->nfields] = db->fields[f];
+        t->src_of[t->nfields] = f;
+        t->summed[t->nfields] = sum;
+        t->nfields++;
+    }
+
+    clause_init(&c);
+    c.scope.type = SCOPE_ALL_DEFAULT;
+    lexer_init_ext(&l, p, expr_ctx.vars);
+    if (parse_clauses(&l, &c) < 0) return;
+
+    if (!strchr(t->key_expr, '&')) {
+        const char *error;
+        t->key_ast = ast_compile(t->key_expr, expr_ctx.vars, &error);
+    }
+    if (create_and_open(&dest, filename, dest_fields, t->nfields) < 0) {
+        if (t->key_ast) ast_free(t->key_ast);
+        return;
+    }
+    t->dest = &dest;
+
+    count = process_records(db, &c, PROC_USE_FILTER | PROC_SKIP_DELETED_SET, total_cb, t);
+    if (count >= 0) total_flush(db, t);
+    dbf_close(&dest);
+    if (t->key_ast) ast_free(t->key_ast);
+    if (count >= 0 && set_opts.talk) {
+        printf("%d record(s) totalled\n", count);
+        printf("%d record(s) generated\n", t->generated);
+    }
+}
+
+/* JOIN WITH <alias> TO <file> FOR <cond> [FIELDS <list>]: a record in the
+ * new file for every pair -- a record of this work area and one of the
+ * other -- for which the condition holds.  Without FIELDS, this area's
+ * fields and then the other's whose names are new; a FIELDS entry is a
+ * name in this area or <alias>-><name>.  Memo fields are not joined. */
+typedef struct {
+    dbf_t *other;
+    ast_node_t *for_ast;
+    char for_expr[256];
+    dbf_t *dest;
+    int nfields;
+    int from_other[DBF_MAX_FIELDS];
+    int src_of[DBF_MAX_FIELDS];
+    int generated;
+} join_ctx_t;
+
+static int join_cb(dbf_t *db, uint32_t recno, void *userdata) {
+    join_ctx_t *j = userdata;
+    dbf_t *o = j->other;
+    char raw[256];
+    uint32_t r;
+    int f;
+    (void)recno;
+
+    for (r = 1; r <= o->record_count; r++) {
+        value_t cond;
+        dbf_read_record(o, r);
+        if (skip_deleted(o->record_buf)) continue;
+        if (j->for_ast ? ast_eval(j->for_ast, &expr_ctx, &cond) != 0
+                       : ast_eval_dynamic(j->for_expr, &expr_ctx, &cond) != 0) {
+            report_expr_error();
+            return REC_ERROR;
+        }
+        if (cond.type != VAL_LOGIC || !cond.logic) continue;
+        dbf_append_blank(j->dest);
+        for (f = 0; f < j->nfields; f++) {
+            dbf_get_field_raw(j->from_other[f] ? o : db, j->src_of[f], raw, sizeof(raw));
+            dbf_set_field_raw(j->dest, f, raw);
+        }
+        dbf_flush_record(j->dest);
+        j->generated++;
+    }
+    return REC_CONTINUE;
+}
+
+/* Add one JOIN field: from this area's db or the other's.  0, or -1 reported. */
+static int join_add_field(join_ctx_t *j, dbf_field_t *fields, dbf_t *src, int from_other, int fi) {
+    int k;
+    if (src->fields[fi].type == 'M') return 0;
+    for (k = 0; k < j->nfields; k++) {
+        if (str_icmp(fields[k].name, src->fields[fi].name) == 0) {
+            prog_error_fmt(ERR_SYNTAX, "Duplicate field name: %s", src->fields[fi].name);
+            return -1;
+        }
+    }
+    if (j->nfields >= DBF_MAX_FIELDS) {
+        prog_error(ERR_SYNTAX, "Too many fields");
+        return -1;
+    }
+    fields[j->nfields] = src->fields[fi];
+    j->from_other[j->nfields] = from_other;
+    j->src_of[j->nfields] = fi;
+    j->nfields++;
+    return 0;
+}
+
+static void cmd_join(dbf_t *db, const char *arg) {
+    static const char *const kws[] = { "TO", "FOR", "FIELDS", NULL };
+    join_ctx_t j;
+    char alias[64], filename[64], fields_txt[512];
+    const char *p, *rest;
+    int oi, f;
+    work_area_t *owa;
+    dbf_field_t dest_fields[DBF_MAX_FIELDS];
+    dbf_t dest;
+    uint32_t o_saved;
+    clause_t c;
+    int count;
+
+    if (!dbf_is_open(db)) {
+        prog_error(ERR_NO_DATABASE, "No database in use");
+        return;
+    }
+    memset(&j, 0, sizeof(j));
+    fields_txt[0] = '\0';
+    filename[0] = '\0';
+
+    p = take_until_kw(arg, kws, alias, sizeof(alias));
+    oi = alias[0] ? area_resolve_alias(alias) : -1;
+    if (oi < 0 || oi == area_get_current_idx() || !dbf_is_open(&area_get(oi)->db)) {
+        prog_error(ERR_ALIAS_NOT_FOUND, "JOIN WITH: no database open under that alias");
+        return;
+    }
+    owa = area_get(oi);
+    j.other = &owa->db;
+
+    while (*p) {
+        if (str_imatch(p, "TO")) {
+            p = parse_filename_raw(skip_ws(p + 2), filename, sizeof(filename));
+            p = skip_ws(p);
+        } else if (str_imatch(p, "FOR")) {
+            p = take_until_kw(skip_ws(p + 3), kws + 2, j.for_expr, sizeof(j.for_expr));
+        } else if (str_imatch(p, "FIELDS")) {
+            static const char *const fk[] = { "TO", "FOR", NULL };
+            p = take_until_kw(skip_ws(p + 6), fk, fields_txt, sizeof(fields_txt));
+        } else {
+            break;
+        }
+    }
+    if (filename[0] == '\0' || j.for_expr[0] == '\0' || *skip_ws(p)) {
+        printf("Syntax: JOIN WITH <alias> TO <filename> FOR <cond> [FIELDS <list>]\n");
+        return;
+    }
+
+    if (fields_txt[0] == '\0') {
+        for (f = 0; f < db->field_count; f++)
+            if (join_add_field(&j, dest_fields, db, 0, f) < 0) return;
+        for (f = 0; f < j.other->field_count; f++) {
+            if (j.other->fields[f].type == 'M' || dbf_find_field(db, j.other->fields[f].name) >= 0)
+                continue;
+            if (j.nfields >= DBF_MAX_FIELDS) break;
+            if (join_add_field(&j, dest_fields, j.other, 1, f) < 0) return;
+        }
+    } else {
+        rest = fields_txt;
+        while (*(rest = skip_ws(rest))) {
+            char item[128];
+            const char *arrow;
+            dbf_t *src = db;
+            int from_other = 0, fi, n = 0;
+
+            while (rest[n] && rest[n] != ',') n++;
+            if (n >= (int)sizeof(item)) n = (int)sizeof(item) - 1;
+            memcpy(item, rest, n);
+            item[n] = '\0';
+            trim_right(item);
+            rest += n;
+            if (*rest == ',') rest++;
+
+            arrow = strstr(item, "->");
+            if (arrow) {
+                char a[64];
+                int an = (int)(arrow - item);
+                int ai;
+                if (an >= (int)sizeof(a)) an = (int)sizeof(a) - 1;
+                memcpy(a, item, an);
+                a[an] = '\0';
+                trim_right(a);
+                ai = area_resolve_alias(a);
+                if (ai == oi) { src = j.other; from_other = 1; }
+                else if (ai != area_get_current_idx()) {
+                    prog_error_fmt(ERR_ALIAS_NOT_FOUND, "JOIN FIELDS: %s is neither file", a);
+                    return;
+                }
+                memmove(item, skip_ws(arrow + 2), strlen(skip_ws(arrow + 2)) + 1);
+            }
+            fi = dbf_find_field(src, item);
+            if (fi < 0) {
+                prog_error_fmt(ERR_SYNTAX, "Field not found: %s", item);
+                return;
+            }
+            if (join_add_field(&j, dest_fields, src, from_other, fi) < 0) return;
+        }
+    }
+    if (j.nfields == 0) {
+        prog_error(ERR_SYNTAX, "JOIN: no fields to write");
+        return;
+    }
+
+    if (!strchr(j.for_expr, '&')) {
+        const char *error;
+        j.for_ast = ast_compile(j.for_expr, expr_ctx.vars, &error);
+    }
+    if (create_and_open(&dest, filename, dest_fields, j.nfields) < 0) {
+        if (j.for_ast) ast_free(j.for_ast);
+        return;
+    }
+    j.dest = &dest;
+
+    o_saved = j.other->current_record;
+    clause_init(&c);
+    c.scope.type = SCOPE_ALL_DEFAULT;
+    count = process_records(db, &c, PROC_USE_FILTER | PROC_SKIP_DELETED_SET, join_cb, &j);
+    dbf_close(&dest);
+    if (j.for_ast) ast_free(j.for_ast);
+    if (o_saved >= 1 && o_saved <= j.other->record_count)
+        dbf_read_record(j.other, o_saved);
+    if (count >= 0 && set_opts.talk)
+        printf("%d record(s) joined\n", j.generated);
+}
+
+/* UPDATE ON <key field> FROM <alias> REPLACE <field> WITH <expr> [, ...]
+ * [RANDOM]: for every record of the other work area, the first record here
+ * whose key field holds the same value gets the REPLACEs, evaluated with
+ * that record of the other area current (so <alias>-><field> reads it).
+ * Several records with one key update the same record in turn, so
+ * REPLACE QTY WITH QTY + B->QTY accumulates.  dBASE asks for both files
+ * sorted on the key (or this one indexed, with RANDOM); here the target
+ * is searched, so neither is required and RANDOM is accepted. */
+static void cmd_update(dbf_t *db, const char *arg) {
+    static const char *const kws[] = { "FROM", "REPLACE", "RANDOM", NULL };
+    char key[DBF_MAX_FIELD_NAME + 8], alias[64];
+    const char *p;
+    int oi, kt, ks;
+    dbf_t *src;
+    work_area_t *owa;
+    replace_pair_t pairs[MAX_REPLACE_PAIRS];
+    int npairs = 0;
+    uint32_t r, t, s_saved, t_saved;
+    int updated = 0;
+    index_t *sidx;
+
+    if (!dbf_is_open(db)) {
+        prog_error(ERR_NO_DATABASE, "No database in use");
+        return;
+    }
+    p = take_until_kw(arg, kws, key, sizeof(key));
+    if (!str_imatch(p, "FROM")) goto syntax;
+    p = take_until_kw(skip_ws(p + 4), kws, alias, sizeof(alias));
+    if (!str_imatch(p, "REPLACE")) goto syntax;
+    p = skip_ws(p + 7);
+
+    kt = dbf_find_field(db, key);
+    oi = alias[0] ? area_resolve_alias(alias) : -1;
+    if (oi < 0 || oi == area_get_current_idx() || !dbf_is_open(&area_get(oi)->db)) {
+        prog_error(ERR_ALIAS_NOT_FOUND, "UPDATE FROM: no database open under that alias");
+        return;
+    }
+    owa = area_get(oi);
+    src = &owa->db;
+    ks = dbf_find_field(src, key);
+    if (kt < 0 || ks < 0) {
+        prog_error_fmt(ERR_SYNTAX, "UPDATE ON: %s must be a field of both files", key);
+        return;
+    }
+
+    if (parse_replace_pairs(db, p, "RANDOM", pairs, &npairs) != 0) goto done;
+    if (npairs == 0) goto syntax;
+
+    {
+        replace_ctx_t rctx = { pairs, npairs };
+        s_saved = src->current_record;
+        t_saved = db->current_record;
+        sidx = (owa->order > 0 && owa->order <= owa->num_indexes)
+               ? &owa->indexes[owa->order - 1] : NULL;
+        if (sidx) index_top(sidx);
+
+        for (r = 1; r <= src->record_count; r++) {
+            char skey[256], tkey[256];
+            uint32_t srec = r;
+            if (sidx) {
+                if (r > 1 && index_next(sidx) < 0) break;
+                srec = index_current_recno(sidx);
+                if (srec == 0) break;
+            }
+            dbf_read_record(src, srec);
+            if (skip_deleted(src->record_buf)) continue;
+            dbf_get_field_raw(src, ks, skey, sizeof(skey));
+            trim_right(skey);
+
+            for (t = 1; t <= db->record_count; t++) {
+                dbf_read_record(db, t);
+                if (skip_deleted(db->record_buf)) continue;
+                dbf_get_field_raw(db, kt, tkey, sizeof(tkey));
+                trim_right(tkey);
+                if (strcmp(skip_ws(tkey), skip_ws(skey)) != 0) continue;
+                if (replace_cb(db, t, &rctx) == REC_ERROR) goto done;
+                updated++;
+                break;
+            }
+        }
+        if (s_saved >= 1 && s_saved <= src->record_count) dbf_read_record(src, s_saved);
+        if (t_saved >= 1 && t_saved <= db->record_count) dbf_read_record(db, t_saved);
+        if (set_opts.talk) printf("%d record(s) updated\n", updated);
+    }
+    goto done;
+
+syntax:
+    printf("Syntax: UPDATE ON <key field> FROM <alias> REPLACE <field> WITH <expr> [, ...] [RANDOM]\n");
+done:
+    for (int i = 0; i < npairs; i++)
+        if (pairs[i].ast) ast_free(pairs[i].ast);
+}
+
+static void h_total(dbf_t *db, lexer_t *l) {
+    char arg[512];
+    lex_next(l);
+    if (!cmd_kw(l, "ON")) { printf("Syntax: TOTAL ON <key> TO <filename> [FIELDS <list>] [scope] [FOR <cond>] [WHILE <cond>]\n"); return; }
+    lex_next(l);
+    lex_get_remaining(l, arg, sizeof(arg));
+    cmd_total(db, arg);
+}
+static void h_join(dbf_t *db, lexer_t *l) {
+    char arg[512];
+    lex_next(l);
+    if (!cmd_kw(l, "WITH")) { printf("Syntax: JOIN WITH <alias> TO <filename> FOR <cond> [FIELDS <list>]\n"); return; }
+    lex_next(l);
+    lex_get_remaining(l, arg, sizeof(arg));
+    cmd_join(db, arg);
+}
+static void h_update(dbf_t *db, lexer_t *l) {
+    char arg[512];
+    lex_next(l);
+    if (!cmd_kw(l, "ON")) { printf("Syntax: UPDATE ON <key field> FROM <alias> REPLACE <field> WITH <expr> [, ...] [RANDOM]\n"); return; }
+    lex_next(l);
+    lex_get_remaining(l, arg, sizeof(arg));
+    cmd_update(db, arg);
+}
 /* QUIT and EXIT are handled directly in cmd_execute() because they
    must return 1 to signal the interpreter to exit.  They are NOT in
    the dispatch table. */

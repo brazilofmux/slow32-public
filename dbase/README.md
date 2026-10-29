@@ -52,7 +52,7 @@ Record# NAME         AGE
 
 ## Tests
 
-    ./tests/run-tests.sh              # 108/108 passed (2026-10-29), ~3 s
+    ./tests/run-tests.sh              # 109/109 passed (2026-10-29), ~3 s
     ./tests/run-host-date-numeric.sh  # date and N-field code, host compiler
 
 `run-tests.sh` feeds each `tests/*.txt` to the interpreter on slow32-fast
@@ -76,9 +76,11 @@ memory variables with `PRIVATE`/`PUBLIC`/`LOCAL`, macro substitution,
 
 ## What it does not
 
-- `JOIN WITH`, `UPDATE ON` and `TOTAL ON` are recognised but print
-  "not implemented"; so do `MODIFY REPORT` and `MODIFY LABEL`, and
+- `MODIFY REPORT` and `MODIFY LABEL` print "not implemented", and
   any other `MODIFY` (`STRUCTURE`, `COMMAND`) does nothing at all.
+- `UPDATE ON` searches the target for each key rather than walking two
+  sorted files, so it needs neither sorted (`RANDOM` is accepted); `JOIN`
+  and `TOTAL` leave memo fields out of the file they write.
 - `.NDX` files are this interpreter's own B+ tree format (`NDX2`), not
   dBASE III's: an index built by dBASE cannot be opened; rebuild it
   with `INDEX ON`. No `.NTX`, `.MDX` or `.CDX`.

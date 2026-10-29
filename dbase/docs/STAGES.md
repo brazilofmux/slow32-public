@@ -5,7 +5,7 @@ against the MMIO runtime. Target: run real 1986 dBase III programs.
 
 ## Current Status
 
-**108/108 tests passing** (`tests/run-tests.sh`, 2026-10-29).  See
+**109/109 tests passing** (`tests/run-tests.sh`, 2026-10-29).  See
 [STATUS.md](STATUS.md) for the complete feature inventory and
 `../ISSUES.md` for open work.
 
@@ -13,8 +13,8 @@ What works today:
 
 - DBF file format (CREATE, USE, read/write records), memo fields (.DBT)
 - About 80 commands in the verb table (navigation, editing, display,
-  file ops, bulk ops); `JOIN WITH`, `UPDATE ON` and `TOTAL ON` are
-  recognised but not implemented
+  file ops, bulk ops), `JOIN WITH`, `UPDATE ON` and `TOTAL ON` among
+  them
 - 124 built-in functions (string, numeric, date, status, arrays,
   low-level files, work areas)
 - SET options (the list is in STATUS.md)

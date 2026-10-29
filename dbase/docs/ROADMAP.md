@@ -5,11 +5,10 @@ committable and testable.
 
 **All seven phases are done** (February 2026, at 52 tests). This page is
 the record of that plan; what came after it (memo fields, BROWSE/EDIT,
-menus, arrays, CSV import and export, about seventy more functions; 108
+menus, arrays, CSV import and export, about seventy more functions; 109
 tests by 2026-10-28) is summarized in [STATUS.md](STATUS.md), and open
-work is in `../ISSUES.md`.  One exception to "done": 4b-4d (`JOIN WITH`,
-`UPDATE ON`, `TOTAL ON`) are in the verb table but print "not
-implemented" (`src/command.c`).
+work is in `../ISSUES.md`.  4b-4d (`JOIN WITH`, `UPDATE ON`, `TOTAL ON`),
+the last stubs, landed 2026-10-29 (`tests/test_total_join_update.txt`).
 
 ## Phase 1: Teacher's Pet Unblocking --- DONE
 
@@ -298,7 +297,7 @@ hitting an unimplemented feature?
 | 1 | Unblocking | sane.prg must parse cleanly | **DONE** |
 | 2 | Screen/output | Menus and reports must display | **DONE** |
 | 3 | Functions | IIF, FILE, DTOS commonly needed | **DONE** |
-| 4 | Data commands | SET RELATION, JOIN (less common) | **DONE** (JOIN/UPDATE/TOTAL stubbed) |
+| 4 | Data commands | SET RELATION, JOIN (less common) | **DONE** |
 | 5 | Error handling | ON ERROR for robustness | **DONE** |
 | 6 | Reports | REPORT FORM (binary format) | **DONE** |
 | 7 | B+ tree | Incremental index maintenance | **DONE** |

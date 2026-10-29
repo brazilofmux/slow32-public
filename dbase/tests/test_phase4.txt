@@ -30,7 +30,7 @@ LIST OFF FOR NAME = "Bob"
 * Test RUN stub
 RUN DIR
 
-* Test TOTAL ON / JOIN WITH stubs
+* TOTAL ON, and JOIN WITH an alias that is not open
 TOTAL ON NAME TO TOTFILE
 JOIN WITH NOBODY TO JFILE FOR .T.
 

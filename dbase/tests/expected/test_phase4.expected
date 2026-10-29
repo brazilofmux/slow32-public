@@ -17,7 +17,8 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Database TEST.DBF creat
 .  NAME      
  Bob       
 . . . *** File not found: dir.prg
-. . . TOTAL ON not implemented.
-. JOIN WITH not implemented.
+. . . 2 record(s) totalled
+2 record(s) generated
+. *** JOIN WITH: no database open under that alias
 . . . File erased.
 

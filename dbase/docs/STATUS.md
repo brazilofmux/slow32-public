@@ -3,7 +3,7 @@
 The command, function and SET tables below were written in February
 2026 and have been extended since, not rewritten; "Added since February"
 lists what landed after them. Open work is in `../ISSUES.md`.
-`tests/run-tests.sh`: 108/108 passing (2026-10-28).
+`tests/run-tests.sh`: 109/109 passing (2026-10-29).
 
 ## Architecture
 
@@ -173,7 +173,7 @@ Verified against the verb table in `src/command.c`, `src/program.c` and
 |------|----------|
 | Full screen | `BROWSE`, `EDIT`, `CHANGE`; `SAVE SCREEN` / `RESTORE SCREEN` |
 | Menus | `@ ... PROMPT` / `MENU TO`; `DEFINE MENU`/`PAD`/`POPUP`/`BAR`, `ACTIVATE`, `DEACTIVATE`, `ON SELECTION POPUP`/`PAD ... DO` |
-| Records | `SCATTER` / `GATHER`, `CALCULATE`, `SCAN` / `ENDSCAN`; `JOIN WITH`, `TOTAL ON`, `UPDATE ON` are recognised but print "not implemented" |
+| Records | `SCATTER` / `GATHER`, `CALCULATE`, `SCAN` / `ENDSCAN`, `JOIN WITH`, `TOTAL ON`, `UPDATE ON` |
 | Files | `APPEND FROM ... DELIMITED`, `COPY TO ... DELIMITED`, `LIST STRUCTURE`, `COPY STRUCTURE EXTENDED TO`, `TYPE`, memo fields (.DBT) |
 | Programs | `TEXT` ... `ENDTEXT`, `DECLARE` / `DIMENSION` arrays, `LOCAL` (shadows, does not destroy, the outer variable), `DO ... WITH` by reference, `SET KEY TO` / `ON KEY`, `RUN` (runs `DO`) |
 | Runtime errors | about 40 error sites go through `ON ERROR` |
@@ -307,7 +307,7 @@ RANGE validation on @GET fields. EJECT resets printer position.
 
 ## Test Suite
 
-108 tests (`tests/run-tests.sh`, on slow32-fast with the terminal
+109 tests (`tests/run-tests.sh`, on slow32-fast with the terminal
 service denied; `tests/run-host-date-numeric.sh` checks the N-field and
 date code with the host compiler). The first 52, from February, cover: CREATE, navigation, expressions, functions, memory
 variables, SET options, work areas, file operations, screen I/O,
