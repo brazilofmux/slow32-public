@@ -5,10 +5,10 @@ Stage 9: AST Expressions
 Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: Type (C/N/D/L/M): Field name: Database BIGNUM.DBF created with 3 field(s).
 . . . Database BIGNUM.DBF opened with 0 record(s).
 . Record 1 added.
-. . 3000000000
-. 12.5
-. . -2500000000
-. . 8
+. .   3000000000
+.    12.50
+. .  -2500000000
+. .            8
 . .         
 . .T.
 . . 02/28/86

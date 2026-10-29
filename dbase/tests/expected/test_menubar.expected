@@ -11,7 +11,7 @@ Popup FILEPOP:
   3. Quit
 . PAD(): P_FILE
 . POPUP(): FILEPOP
-. BAR(): 1
+. BAR():          1
 . PROMPT(): New
 . . . Menu not defined: mainbar
 . . . . . . . Menu not defined: bar1

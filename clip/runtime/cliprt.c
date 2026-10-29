@@ -214,7 +214,7 @@ void clip_q(const char *expr, int newline) {
             expr_failed(ctx);
             return;
         }
-        val_to_string(&val, buf, sizeof(buf));
+        val_to_display(&val, buf, sizeof(buf));
         if (!first) {
             cmd_output(" ");
         }
@@ -515,7 +515,7 @@ int clip_call(expr_ctx_t *c, const char *name, value_t *args, int nargs, value_t
 
 void clip_qv(const value_t *v, int first) {
     char buf[256];
-    val_to_string(v, buf, sizeof(buf));
+    val_to_display(v, buf, sizeof(buf));
     if (!first) {
         cmd_output(" ");
     }

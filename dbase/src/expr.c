@@ -8,6 +8,7 @@
 #include "set.h"
 #include "date.h"
 #include "command.h"
+#include "ast.h"
 #include "util.h"
 #include "lex.h"
 
@@ -27,11 +28,53 @@ static int parse_primary(expr_ctx_t *ctx, lexer_t *l, value_t *result);
 
 /* ---- Value constructors ---- */
 
+int val_set_decimals = 2;
+int val_set_fixed;
+
+/* A computed number: an integer when it is whole, else SET DECIMALS
+ * places, as Clipper gives a function's result */
 value_t val_num(double n) {
     value_t v;
     v.type = VAL_NUM;
     v.num = n;
+    v.ndec = (n == floor(n) && fabs(n) < 1e15) ? 0 : (short)val_set_decimals;
+    v.nwidth = 0;
     return v;
+}
+
+value_t val_num_dec(double n, int ndec, int nwidth) {
+    value_t v;
+    v.type = VAL_NUM;
+    v.num = n;
+    v.ndec = (short)(ndec < 0 ? 0 : ndec > 18 ? 18 : ndec);
+    v.nwidth = (short)(nwidth < 0 ? 0 : nwidth);
+    return v;
+}
+
+value_t val_num_literal(double n, const char *text) {
+    const char *dot = text ? strchr(text, '.') : NULL;
+    int dec = 0;
+    if (dot) {
+        while (dot[1 + dec] >= '0' && dot[1 + dec] <= '9') dec++;
+    }
+    return val_num_dec(n, dec, 0);
+}
+
+void val_to_display(const value_t *v, char *buf, int size) {
+    if (v->type == VAL_NUM) {
+        int dec = val_set_fixed ? val_set_decimals : v->ndec;
+        int width = v->nwidth;
+        if (width <= 0) {
+            /* ten columns, or the integer digits and one more */
+            double a = fabs(v->num);
+            int digits = 1;
+            while (a >= 10.0 && digits < 40) { a /= 10.0; digits++; }
+            width = digits + 1 > 10 ? digits + 1 : 10;
+        }
+        snprintf(buf, size, "%*.*f", width + (dec > 0 ? dec + 1 : 0), dec, v->num);
+        return;
+    }
+    val_to_string(v, buf, size);
 }
 
 value_t val_str(const char *s) {
@@ -228,82 +271,25 @@ static int parse_compare(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
 }
 
 /* add_expr → mul_expr [ (+ | -) mul_expr ]* */
+/* The arithmetic is ast.c's (ast_eval_binop), so the two evaluators agree,
+ * numeric decimals and widths included. */
+static int apply_binop(expr_ctx_t *ctx, ast_op_t op, value_t *result, const value_t *right) {
+    value_t r;
+    if (ast_eval_binop(ctx, op, result, right, &r) != 0) return -1;
+    *result = r;
+    return 0;
+}
+
 static int parse_add(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
     if (parse_mul(ctx, l, result) != 0) return -1;
 
     for (;;) {
         token_type_t op = lex_peek(l);
+        value_t right;
         if (op != TOK_PLUS && op != TOK_MINUS) break;
-
         lex_next(l);
-
-        {
-            value_t right;
-            if (parse_mul(ctx, l, &right) != 0) return -1;
-
-            if (op == TOK_PLUS) {
-                if (result->type == VAL_NUM && right.type == VAL_NUM) {
-                    result->num += right.num;
-                } else if (result->type == VAL_CHAR && right.type == VAL_CHAR) {
-                    /* String concatenation (truncate if too long) */
-                    int len = strlen(result->str);
-                    int rlen = strlen(right.str);
-                    int avail = (int)sizeof(result->str) - 1 - len;
-                    if (avail > 0) {
-                        if (rlen > avail) rlen = avail;
-                        memcpy(result->str + len, right.str, rlen);
-                        result->str[len + rlen] = '\0';
-                    }
-                } else if (result->type == VAL_DATE && right.type == VAL_NUM) {
-                    result->date += (int32_t)right.num;
-                } else if (result->type == VAL_NUM && right.type == VAL_DATE) {
-                    *result = val_date(right.date + (int32_t)result->num);
-                } else {
-                    ctx->error = "Type mismatch in +";
-                    return -1;
-                }
-            } else { /* '-' */
-                if (result->type == VAL_NUM && right.type == VAL_NUM) {
-                    result->num -= right.num;
-                } else if (result->type == VAL_DATE && right.type == VAL_DATE) {
-                    /* Date - Date = number of days */
-                    *result = val_num((double)(result->date - right.date));
-                } else if (result->type == VAL_DATE && right.type == VAL_NUM) {
-                    result->date -= (int32_t)right.num;
-                } else if (result->type == VAL_CHAR && right.type == VAL_CHAR) {
-                    /* Clipper/FoxPro-style trim-concat:
-                       trim trailing spaces from left, append right,
-                       then append trimmed spaces to preserve total length. */
-                    int left_len = strlen(result->str);
-                    int len = left_len;
-                    int trimmed_spaces;
-                    int rlen = strlen(right.str);
-                    int avail;
-                    while (len > 0 && result->str[len-1] == ' ') len--;
-                    trimmed_spaces = left_len - len;
-                    result->str[len] = '\0';
-
-                    avail = (int)sizeof(result->str) - 1 - len;
-                    if (avail > 0) {
-                        if (rlen > avail) rlen = avail;
-                        memcpy(result->str + len, right.str, rlen);
-                        len += rlen;
-                    }
-
-                    avail = (int)sizeof(result->str) - 1 - len;
-                    if (avail > 0 && trimmed_spaces > 0) {
-                        int add_spaces = trimmed_spaces;
-                        if (add_spaces > avail) add_spaces = avail;
-                        memset(result->str + len, ' ', add_spaces);
-                        len += add_spaces;
-                    }
-                    result->str[len] = '\0';
-                } else {
-                    ctx->error = "Type mismatch in -";
-                    return -1;
-                }
-            }
-        }
+        if (parse_mul(ctx, l, &right) != 0) return -1;
+        if (apply_binop(ctx, op == TOK_PLUS ? OP_ADD : OP_SUB, result, &right) != 0) return -1;
     }
     return 0;
 }
@@ -314,28 +300,11 @@ static int parse_mul(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
 
     for (;;) {
         token_type_t op = lex_peek(l);
+        value_t right;
         if (op != TOK_MUL && op != TOK_DIV) break;
         lex_next(l);
-
-        {
-            value_t right;
-            if (parse_power(ctx, l, &right) != 0) return -1;
-
-            if (result->type != VAL_NUM || right.type != VAL_NUM) {
-                ctx->error = "Type mismatch in * or /";
-                return -1;
-            }
-
-            if (op == TOK_MUL)
-                result->num *= right.num;
-            else {
-                if (right.num == 0.0) {
-                    ctx->error = "Division by zero";
-                    return -1;
-                }
-                result->num /= right.num;
-            }
-        }
+        if (parse_power(ctx, l, &right) != 0) return -1;
+        if (apply_binop(ctx, op == TOK_MUL ? OP_MUL : OP_DIV, result, &right) != 0) return -1;
     }
     return 0;
 }
@@ -348,20 +317,7 @@ static int parse_power(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
         value_t right;
         lex_next(l);
         if (parse_unary(ctx, l, &right) != 0) return -1;
-        if (result->type != VAL_NUM || right.type != VAL_NUM) {
-            ctx->error = "Type mismatch in **";
-            return -1;
-        }
-        {
-            double base = result->num;
-            double exponent = right.num;
-            errno = 0;
-            result->num = pow(base, exponent);
-            if (!isfinite(result->num) || errno != 0) {
-                ctx->error = "Invalid exponentiation";
-                return -1;
-            }
-        }
+        return apply_binop(ctx, OP_POWER, result, &right);
     }
     return 0;
 }
@@ -377,7 +333,7 @@ static int parse_unary(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
             ctx->error = "Unary minus requires number";
             return -1;
         }
-        result->num = -result->num;
+        result->num = -result->num;   /* decimals and width kept */
         return 0;
     }
 
@@ -394,7 +350,7 @@ static int parse_primary(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
 
     switch (t.type) {
     case TOK_NUMBER:
-        *result = val_num(t.num_val);
+        *result = val_num_literal(t.num_val, t.text);
         lex_next(l);
         return 0;
 

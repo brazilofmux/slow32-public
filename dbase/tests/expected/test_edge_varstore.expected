@@ -9,7 +9,7 @@ Created 254 + 2 loop vars = 256 total
 *** Too many memory variables in VARSTORE.PRG line 17
 After full DECLARE (should not have succeeded)
 --- Release vars, then DECLARE ---
-Array[1]: 42
-Array[2]: 99
+Array[1]:         42
+Array[2]:         99
 --- Done ---
 . 

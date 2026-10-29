@@ -71,9 +71,17 @@ Everything else differs, and for a few causes, not 28:
 - **BP-N1, numbers carry a width and decimals.**  Clipper prints `? 5` in
   ten columns (`         5`), a literal keeps its decimals (`1.5` prints
   `1.5`), and division takes SET DECIMALS (`10/4` prints `2.50`).  dBASE
-  III does the same; this interpreter trims (`5`, `2.5`), so it is wrong
-  for both dialects.  A value representation change: a number needs its
-  display width and decimals alongside the double.
+  III does the same; this interpreter trimmed (`5`, `2.5`), wrong for both
+  dialects.  **Done 2026-10-29**, in the interpreter and clip alike: a
+  number carries its decimals and integer width (value_t ndec, nwidth);
+  literals keep their written decimals, + and - the larger, * the sum,
+  / and ** SET DECIMALS unless whole, fields their own width, a computed
+  value (SQRT ...) SET DECIMALS; ? and ?? print it right-justified, SET
+  FIXED ON with SET DECIMALS places (probe num-display).
+- **BP-S1, STR() without a width.**  dBASE III gave ten columns and no
+  decimals (`STR(1.5)` is `         2`); Clipper gives the number's own
+  width and decimals (`       1.5`).  Taken Clipper's (2026-10-29); a
+  width too small fills with asterisks, as Clipper does.
 
 ## The order of work proposed
 
@@ -83,6 +91,7 @@ The severe ones are marked.
 
 1. **Numeric display (BP-N1)** -- severe: the value representation, in
    the interpreter as well as compiled code; every printed number moves.
+   Done 2026-10-29 (see BP-N1).
 2. **The operators** (`:=`, `!=`, compound assignment, `++`/`--`) and
    IF(): the shared expression parser.
 3. **Function calls as statements, formal parameters, PCOUNT(), `@`.**

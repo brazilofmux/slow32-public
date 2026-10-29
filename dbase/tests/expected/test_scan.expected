@@ -10,19 +10,19 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width
 . . Record 4 added.
 . . . Database NAMES.DBF opened with 4 record(s).
 --- SCAN ALL ---
-1 Alice               
-2 Bob                 
-3 Carol               
-4 Dave                
+         1 Alice               
+         2 Bob                 
+         3 Carol               
+         4 Dave                
 --- SCAN NEXT 2 ---
-1 Alice               
-2 Bob                 
+         1 Alice               
+         2 Bob                 
 --- SCAN FOR ---
-2 Bob                  35
-3 Carol                32
-4 Dave                 45
+         2 Bob                   35
+         3 Carol                 32
+         4 Dave                  45
 --- SCAN WHILE ---
-1 Alice                25
-2 Bob                  35
-3 Carol                32
+         1 Alice                 25
+         2 Bob                   35
+         3 Carol                 32
 . 

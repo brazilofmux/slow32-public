@@ -311,7 +311,7 @@ static ast_node_t *ast_parse_primary(lexer_t *l, memvar_store_t *store, const ch
     switch (t.type) {
     case TOK_NUMBER:
         lex_next(l);
-        return node_literal(val_num(t.num_val));
+        return node_literal(val_num_literal(t.num_val, t.text));
 
     case TOK_STRING:
         lex_next(l);
@@ -496,7 +496,13 @@ static int eval_field_from_db(dbf_t *db, const char *name, value_t *result) {
         switch (db->fields[idx].type) {
         case 'C': *result = val_str(raw); return 0;
         case 'F':
-        case 'N': *result = val_num(atof(raw)); return 0;
+        case 'N': {
+            /* a field shows at its own width and decimals */
+            int fdec = db->fields[idx].decimals;
+            int fw = db->fields[idx].length - (fdec > 0 ? fdec + 1 : 0);
+            *result = val_num_dec(atof(raw), fdec, fw);
+            return 0;
+        }
         case 'D': *result = val_date(date_from_dbf(raw)); return 0;
         case 'L': *result = val_logic(raw[0] == 'T' || raw[0] == 't'); return 0;
         case 'M': {
@@ -564,7 +570,7 @@ int ast_eval_elem(expr_ctx_t *ctx, const char *name, const value_t *row_v,
 int ast_eval_unop(expr_ctx_t *ctx, ast_op_t op, const value_t *child, value_t *result) {
     if (op == OP_NEGATE) {
         if (child->type != VAL_NUM) { ctx->error = "Unary minus requires number"; return -1; }
-        *result = val_num(-child->num);
+        *result = val_num_dec(-child->num, child->ndec, child->nwidth);
         return 0;
     }
     if (op == OP_NOT) {
@@ -576,6 +582,18 @@ int ast_eval_unop(expr_ctx_t *ctx, ast_op_t op, const value_t *child, value_t *r
     return -1;
 }
 
+/* The decimals Clipper gives an arithmetic result: + and - the larger of
+ * the two, * their sum, / and ** SET DECIMALS unless the quotient is whole */
+static value_t num_result(ast_op_t op, double r, const value_t *left, const value_t *right) {
+    int dl = left->ndec, dr = right->ndec;
+    switch (op) {
+    case OP_ADD: case OP_SUB: return val_num_dec(r, dl > dr ? dl : dr, 0);
+    case OP_MUL:              return val_num_dec(r, dl + dr, 0);
+    case OP_DIV:              return val_num(r);
+    default:                  return val_num_dec(r, val_set_decimals, 0);
+    }
+}
+
 int ast_eval_binop(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const value_t *right,
                    value_t *result) {
     switch (op) {
@@ -583,7 +601,7 @@ int ast_eval_binop(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const valu
     /* ---- Arithmetic ---- */
     case OP_ADD:
         if (left->type == VAL_NUM && right->type == VAL_NUM) {
-            *result = val_num(left->num + right->num);
+            *result = num_result(op, left->num + right->num, left, right);
         } else if (left->type == VAL_CHAR && right->type == VAL_CHAR) {
             /* String concatenation (truncate if too long) */
             char buf[256];
@@ -610,7 +628,7 @@ int ast_eval_binop(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const valu
 
     case OP_SUB:
         if (left->type == VAL_NUM && right->type == VAL_NUM) {
-            *result = val_num(left->num - right->num);
+            *result = num_result(op, left->num - right->num, left, right);
         } else if (left->type == VAL_DATE && right->type == VAL_DATE) {
             *result = val_num((double)(left->date - right->date));
         } else if (left->type == VAL_DATE && right->type == VAL_NUM) {
@@ -658,7 +676,7 @@ int ast_eval_binop(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const valu
         if (left->type != VAL_NUM || right->type != VAL_NUM) {
             ctx->error = "Type mismatch in * or /"; return -1;
         }
-        *result = val_num(left->num * right->num);
+        *result = num_result(op, left->num * right->num, left, right);
         return 0;
 
     case OP_DIV:
@@ -666,7 +684,7 @@ int ast_eval_binop(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const valu
             ctx->error = "Type mismatch in * or /"; return -1;
         }
         if (right->num == 0.0) { ctx->error = "Division by zero"; return -1; }
-        *result = val_num(left->num / right->num);
+        *result = num_result(op, left->num / right->num, left, right);
         return 0;
 
     case OP_POWER:
@@ -680,7 +698,7 @@ int ast_eval_binop(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const valu
             if (!isfinite(r) || errno != 0) {
                 ctx->error = "Invalid exponentiation"; return -1;
             }
-            *result = val_num(r);
+            *result = num_result(op, r, left, right);
         }
         return 0;
 

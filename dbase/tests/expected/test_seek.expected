@@ -10,7 +10,7 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width
 . . Record 4 added.
 . . 4 record(s) indexed.
 . . .T.
-. Bob 35
+. Bob  35
 . . Not found.
 . .F.
 . Bob
@@ -19,8 +19,8 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width
 . . Not found.
 . .F.
 . . .T.
-. Alice 25
+. Alice  25
 . . .T.
-. David 28
+. David  28
 . Database closed.
 . 

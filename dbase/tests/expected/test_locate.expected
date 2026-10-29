@@ -10,15 +10,15 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width
 . . Record 4 added.
 . . Record = 2
 . .T.
-. 2
+.          2
 . Bob
 . Record = 4
 . .T.
-. 4
+.          4
 . Dave
 . End of LOCATE scope
 . .F.
 . Record = 3
 . .T.
-. 3
+.          3
 . 

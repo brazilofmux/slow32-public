@@ -8,12 +8,12 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width
 . . Record 2 added.
 . . . . John      
 . Smith     
-. 30
+.  30
 . .T.
-. . . . . Bob        Smith      99 .T.
+. . . . . Bob        Smith       99 .T.
 . . . Jane      
-. 25
-. . . . Sue        Doe        25 .F.
+.  25
+. . . . Sue        Doe         25 .F.
 . . . Bob       
 . . . . Max       
 . . 

@@ -12,7 +12,7 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: Type (C/N/D/L/M): Width (1-254): Field name: Database PEOPLE2.DBF created with 4 field(s).
 . Database PEOPLE2.DBF opened with 0 record(s).
 . 3 record(s) appended.
-. 3
+.          3
 . Record# LAST                 FIRST           AGE ADDR                          
       1 Smith                John             35 123 Main St                   
       2 Doe                  Jane             28 456 Oak Ave                   
@@ -25,7 +25,7 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: Database PEOPLE3.DBF created with 2 field(s).
 . Database PEOPLE3.DBF opened with 0 record(s).
 . 2 record(s) appended.
-. 2
+.          2
 . Record# LAST                 AGE
       1 Smith                 35
       2 O'Brien               42

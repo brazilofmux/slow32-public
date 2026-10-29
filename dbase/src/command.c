@@ -3114,7 +3114,7 @@ static void cmd_print_expr(const char *arg, int newline) {
             return;
         }
 
-        val_to_string(&val, buf, sizeof(buf));
+        val_to_display(&val, buf, sizeof(buf));
         if (!first) {
             if (is_print) screen_print_text(" ");
             else cmd_output(" ");

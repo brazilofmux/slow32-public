@@ -17,7 +17,7 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Field
 . This is a memo for Alice
 . . Bob's memo text here
 . . 
-. 0
+.          0
 . 3 record(s) copied.
 . Database MCOPY.DBF opened with 3 record(s).
 . Record# NAME            NOTES

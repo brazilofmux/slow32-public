@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "set.h"
+#include "expr.h"
 #include "util.h"
 
 void set_init(set_options_t *opts) {
@@ -14,6 +15,9 @@ void set_init(set_options_t *opts) {
     opts->safety = 1;
     opts->console = 1;
     opts->decimals = 2;
+    opts->fixed = 0;
+    val_set_decimals = 2;
+    val_set_fixed = 0;
     opts->date_format = DATE_AMERICAN;
     opts->device = 0;  /* SCREEN */
     opts->century = 0;
@@ -149,10 +153,17 @@ void set_execute(set_options_t *opts, const char *arg) {
         p = skip_ws(p + 8);
         if (str_imatch(p, "TO")) p = skip_ws(p + 2);
         val = atoi(p);
-        if (val >= 0 && val <= 18)
+        if (val >= 0 && val <= 18) {
             opts->decimals = val;
-        else
+            val_set_decimals = val;
+        } else
             printf("DECIMALS must be 0-18.\n");
+        return;
+    }
+    if (str_imatch(p, "FIXED")) {
+        val = parse_on_off(p + 5);
+        if (val >= 0) { opts->fixed = val; val_set_fixed = val; }
+        else printf("Syntax: SET FIXED ON/OFF\n");
         return;
     }
     if (str_imatch(p, "DATE")) {

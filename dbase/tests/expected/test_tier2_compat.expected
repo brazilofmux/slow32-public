@@ -1,8 +1,8 @@
 dBASE III Clone for SLOW-32
 Stage 9: AST Expressions
 
-. . . . . . . . . 5
-. 3
+. . . . . . . . .          5
+.          3
 . . Alice
 . Bob
 . Charlie
@@ -18,14 +18,14 @@ Stage 9: AST Expressions
 . .F.
 . HeLLO
 . xx
-. 4
-. 1
+.          4
+.          1
 . . 04/15/25
 . 02/28/25
 . 04 July 2026
 . December 25, 2025
-. . 640
-. 100000000
+. .        640
+.  100000000
 . . . . . Settings changed
 . . . . . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: Database SDFTEST.DBF created with 2 field(s).
@@ -48,12 +48,12 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width
 . . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: Database AFTEST.DBF created with 4 field(s).
 . Database AFTEST.DBF opened with 0 record(s).
-. . 4
+. .          4
 . FNAME
 . C
 . LNAME
 . AGE
-. 3
+.          3
 . Database closed.
 . File erased.
 . 

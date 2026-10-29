@@ -9,16 +9,16 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width
 . . Record 3 added.
 . . . --- CALCULATE with macro expression ---
 . . 3 record(s)
-. Sum: 7
+. Sum:          7
 . . . 3 record(s)
-. Doubled: 14
+. Doubled:         14
 . . --- CALCULATE with macro in FOR ---
 . . 1 record(s)
-. Expensive: 3.5
+. Expensive:          3.50
 . . --- Non-macro CALCULATE ---
 . 3 record(s)
-. Average: 2.3333333333
+. Average:          2.33
 . . --- Nested parens with macro ---
 . . 3 record(s)
-. Nested: 8
+. Nested:          8
 . . 

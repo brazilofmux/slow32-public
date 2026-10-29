@@ -5,7 +5,7 @@ Stage 9: AST Expressions
   1. Open
   2. Save
   3. Quit
-. BAR(): 1
+. BAR():          1
 . PROMPT(): Open
 . . . . Popup not defined: mypop
 . . . . . . . Popup not defined: pop1
@@ -13,12 +13,12 @@ Stage 9: AST Expressions
 . . . . . Popup SIZED:
   1. First
   2. Second
-. BAR(): 1
+. BAR():          1
 . PROMPT(): First
 . . . . . . . Popup SKIPMENU:
   1. Enabled
   2. Disabled (skipped)
   3. Also OK
-. BAR(): 1
+. BAR():          1
 . PROMPT(): Enabled
 . . 

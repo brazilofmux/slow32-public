@@ -35,12 +35,12 @@ Field  Name        Type  Width  Dec
 . Database LSEXT.DBF opened with 5 record(s).
 . Extended structure DBF:
 . Record 1:
-. . NAME       C 20 0
-. . AGE        N 3 0
-. . HIRED      D 8 0
-. . ACTIVE     L 1 0
-. . SALARY     N 10 2
-. Field count: 5
+. . NAME       C  20   0
+. . AGE        N   3   0
+. . HIRED      D   8   0
+. . ACTIVE     L   1   0
+. . SALARY     N  10   2
+. Field count:          5
 . Database closed.
 . Done
 . 

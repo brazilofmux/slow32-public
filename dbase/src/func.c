@@ -550,18 +550,24 @@ static int fn_str(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         ctx->error = "STR requires (number [, width [, decimals]])";
         return -1;
     }
-    {
-        int width = 10;
+    if (nargs < 2 || args[1].type != VAL_NUM) {
+        /* no width: the number as ? shows it, its own width and decimals
+         * (Clipper; dBASE III gave ten columns and no decimals) */
+        val_to_display(&args[0], buf, sizeof(buf));
+    } else {
+        int width = (int)args[1].num;
         int dec = 0;
-        if (nargs >= 2 && args[1].type == VAL_NUM) width = (int)args[1].num;
+        double n = args[0].num;
         if (nargs >= 3 && args[2].type == VAL_NUM) dec = (int)args[2].num;
         if (width > (int)sizeof(buf) - 1) width = (int)sizeof(buf) - 1;
+        if (width < 1) width = 1;
         if (dec > 0)
-            snprintf(buf, sizeof(buf), "%*.*f", width, dec, args[0].num);
-        else {
-            double n = args[0].num;
-            int rounded = (n >= 0.0) ? (int)(n + 0.5) : (int)(n - 0.5);
-            snprintf(buf, sizeof(buf), "%*d", width, rounded);
+            snprintf(buf, sizeof(buf), "%*.*f", width, dec, n);
+        else  /* half away from zero, in a double: no 32-bit wrap */
+            snprintf(buf, sizeof(buf), "%*.0f", width, n >= 0.0 ? floor(n + 0.5) : -floor(0.5 - n));
+        if ((int)strlen(buf) > width) {   /* too wide: asterisks, as Clipper */
+            memset(buf, '*', width);
+            buf[width] = '\0';
         }
     }
     *result = val_str(buf);
@@ -574,7 +580,16 @@ static int fn_val(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         ctx->error = "VAL requires (string)";
         return -1;
     }
-    *result = val_num(atof(args[0].str));
+    {
+        /* as wide as its string, with the string's own decimals */
+        const char *s = args[0].str;
+        const char *dot = strchr(s, '.');
+        int len = (int)strlen(s), dec = 0, w;
+        if (dot)
+            while (dot[1 + dec] >= '0' && dot[1 + dec] <= '9') dec++;
+        w = len - (dec > 0 ? dec + 1 : 0);
+        *result = val_num_dec(atof(s), dec, w > 0 ? w : 1);
+    }
     return 0;
 }
 
@@ -642,7 +657,7 @@ static int fn_round(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
         int i;
         p = 1.0;
         for (i = 0; i < dec; i++) p *= 10.0;
-        *result = val_num(floor(n * p + 0.5) / p);
+        *result = val_num_dec(floor(n * p + 0.5) / p, dec > 0 ? dec : 0, 0);
     }
     return 0;
 }
@@ -653,7 +668,7 @@ static int fn_abs(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         ctx->error = "ABS requires (number)";
         return -1;
     }
-    *result = val_num(my_fabs(args[0].num));
+    *result = val_num_dec(my_fabs(args[0].num), args[0].ndec, args[0].nwidth);
     return 0;
 }
 
@@ -677,7 +692,7 @@ static int fn_sqrt(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         ctx->error = "SQRT requires (number)";
         return -1;
     }
-    *result = val_num(my_sqrt(args[0].num));
+    *result = val_num_dec(my_sqrt(args[0].num), val_set_decimals, 0);
     return 0;
 }
 
@@ -687,7 +702,7 @@ static int fn_max(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         ctx->error = "MAX requires (number, number)";
         return -1;
     }
-    *result = val_num(args[0].num > args[1].num ? args[0].num : args[1].num);
+    *result = args[0].num > args[1].num ? args[0] : args[1];   /* the argument, as it is */
     return 0;
 }
 
@@ -697,7 +712,7 @@ static int fn_min(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         ctx->error = "MIN requires (number, number)";
         return -1;
     }
-    *result = val_num(args[0].num < args[1].num ? args[0].num : args[1].num);
+    *result = args[0].num < args[1].num ? args[0] : args[1];
     return 0;
 }
 

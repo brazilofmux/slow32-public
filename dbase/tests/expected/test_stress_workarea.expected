@@ -64,9 +64,9 @@ Area 2 after: Modified
 Database WAMASTER.DBF opened with 3 record(s).
 Database WADETAIL.DBF opened with 3 record(s).
 3 record(s) indexed.
-Master 1: 1 Detail: Detail-A
-Master 2: 2 Detail: Detail-B
-Master 3: 3 Detail: Detail-C
+Master 1:     1 Detail: Detail-A
+Master 2:     2 Detail: Detail-B
+Master 3:     3 Detail: Detail-C
 --- 10 work areas ---
 Database WA_A.DBF opened with 1 record(s).
 Database WA_B.DBF opened with 1 record(s).

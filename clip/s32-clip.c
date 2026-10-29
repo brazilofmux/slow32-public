@@ -266,7 +266,8 @@ static int gen_expr(sb_t *b, int *ntmp, ast_node_t *node) {
     case AST_LITERAL:
         switch (node->literal.type) {
         case VAL_NUM:
-            sb_printf(b, "t%d = val_num(%.17g); ", t, node->literal.num);
+            sb_printf(b, "t%d = val_num_dec(%.17g, %d, %d); ", t, node->literal.num,
+                      node->literal.ndec, node->literal.nwidth);
             break;
         case VAL_CHAR:
             sb_printf(b, "t%d = val_str(", t);

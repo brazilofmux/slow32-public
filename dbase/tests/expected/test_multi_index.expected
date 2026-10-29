@@ -13,25 +13,25 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width
 . Database closed.
 . Database PEOPLE.DBF opened with 4 record(s).
 . Order 1 (NAME):
-. . Alice 25
-. . Bob 35
-. . Charlie 30
-. . David 28
+. . Alice  25
+. . Bob  35
+. . Charlie  30
+. . David  28
 . Order set to 2 (AGES.NDX).
 . Order 2 (AGE):
-. . Alice 25
-. . David 28
-. . Charlie 30
-. . Bob 35
+. . Alice  25
+. . David  28
+. . Charlie  30
+. . Bob  35
 . Natural record order.
 . Natural order:
-. . Charlie 30
-. . Alice 25
-. . Bob 35
-. . David 28
+. . Charlie  30
+. . Alice  25
+. . Bob  35
+. . David  28
 . Order set to 1 (NAMES.NDX).
-. . .T. Charlie 30
+. . .T. Charlie  30
 . Order set to 2 (AGES.NDX).
-. . .T. David 28
+. . .T. David  28
 . Database closed.
 . 

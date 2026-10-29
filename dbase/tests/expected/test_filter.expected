@@ -10,21 +10,21 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width
 . . Record 4 added.
 . . Record 5 added.
 . . All records:
-Alice 25
-Bob 35
-Charlie 30
-David 20
-Eve 40
+Alice  25
+Bob  35
+Charlie  30
+David  20
+Eve  40
 Filter: AGE >= 30
 Filtered (AGE >= 30):
-Bob 35
-Charlie 30
-Eve 40
+Bob  35
+Charlie  30
+Eve  40
 Count:
 3 record(s)
 Filter removed.
 After removing filter:
-Alice 25
-Bob 35
+Alice  25
+Bob  35
 . Database closed.
 . 

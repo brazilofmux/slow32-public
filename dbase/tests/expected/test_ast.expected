@@ -1,13 +1,13 @@
 dBASE III Clone for SLOW-32
 Stage 9: AST Expressions
 
-. . . 14
-. 21
+. . .         14
+.         21
 . . .F.
 . .T.
 . .T.
 . . Hello World
-. . 1024
+. .       1024.00
 . . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: Database ASTDB.DBF created with 2 field(s).
 . Database ASTDB.DBF opened with 0 record(s).
@@ -28,7 +28,7 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width
       4 Davis                  70000.00
       5 Smith                  55000.00
 . Filter removed.
-. . DO WHILE result: 5
-Nested WHILE: 36 9
-. . SCAN matches: 3
+. . DO WHILE result:          5
+Nested WHILE:         36          9
+. . SCAN matches:          3
 . . 
