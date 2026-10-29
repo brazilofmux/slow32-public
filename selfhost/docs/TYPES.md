@@ -332,6 +332,26 @@ return a double -- stage07 cannot, and the first version's helpers came
 back 0.  SQLite and the compiler byte-identical.  Probes
 `6.6-arith-const-double`, `6.6-arith-const-llong`, `6.6-const-typed`.
 
+**S4, source locations** (2026-10-28): `__FILE__`, `__LINE__` and
+every diagnostic carry the presumed file and line (6.10.8.1).  The
+splice's `#s12cc_pushdir` marker now names the included file, and its
+handler saves the includer's name and line and starts the file at 1;
+`#s12cc_popdir` restores them.  `#line` sets both, its operands from
+macros if need be (6.10.4).  Diagnostics read `file:line: error: ...`
+(`pp_where`), the header's own name and line.  Exactness was measured,
+not assumed: every function in SQLite reports the line of its opening
+brace (2,269 of 2,269), and every line number SQLite passes to
+`sqlite3_log` names a line with its `_BKPT` macro (169 of 169; before,
+2).  Three counting faults stood between: a macro call spanning lines
+dropped its newlines (each two-line `assert` cost one -- now newlines
+in a call are spaces, 6.10.3p10, and appended once to the expansion,
+`pp_call_newlines`/`pp_keep_newlines`); an argument broken across a
+line and used twice brought its newline twice; and the six
+hand-written lexer peeks in parser.h did not restore the line on a
+rewind -- they use `ps_lex_mark` now.  Probes `6.10.4-line`,
+`6.10.4-line-macro`, `6.10.8.1-file-in-header`, `6.10.8.1-file-line`,
+`6.10.3-line-after-call`.
+
 ## Constraints on the work
 
 - stage07 builds stage08: the new code keeps stage07's dialect (ints

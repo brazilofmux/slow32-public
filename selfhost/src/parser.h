@@ -614,11 +614,8 @@ static void p_show_line(void) {
 }
 
 static void p_error(char *msg) {
-
-
-    fdputs("s12cc:", 2);
-    fdputuint(2, lex_line);
-    fdputs(": error: ", 2);
+    pp_where();
+    fdputs("error: ", 2);
     fdputs(msg, 2);
     fdputc(10, 2);
     p_show_line();
@@ -702,9 +699,8 @@ static int ps_parse_fp_params(int *np_out) {
 
 static void expect(int tok) {
     if (lex_tok != tok) {
-        fdputs("s12cc:", 2);
-        fdputuint(2, lex_line);
-        fdputs(": expected token ", 2);
+        pp_where();
+        fdputs("error: expected token ", 2);
         fdputuint(2, tok);
         fdputs(" got ", 2);
         fdputuint(2, lex_tok);
@@ -2534,9 +2530,9 @@ static int ps_sizeof_node_mty(Node *n) {
  * token before it commits: ps_lex_mark saves the position, then either
  * ps_lex_rewind returns to it or ps_lex_commit keeps what was read.
  * Marks nest, PS_MK_MAX deep: a constant tried as an expression may hold
- * a type whose dimension is another.  (The older probes in this file
- * each save the same fields by hand -- all but the line number, so a
- * rewind across a newline counts it twice.) */
+ * a type whose dimension is another.  The six probes that saved these
+ * fields by hand, all but the line number, now use it: a rewind across
+ * a newline counted it twice, and __LINE__ ran a few ahead in SQLite. */
 #define PS_MK_MAX 8
 static int ps_mk_depth;
 static int ps_mk_tok[PS_MK_MAX];
@@ -2821,15 +2817,6 @@ static int parse_const_primary(void) {
  * links.) */
 static int parse_const_unary(void) {
     int ty;
-    int sv_tok;
-    int sv_val;
-    int sv_slen;
-    int sv_rcs;
-    int sv_ract;
-    char *sv_rp;
-    char *sv_rts;
-    char *sv_rte;
-    char sv_str[256];
 
     if (lex_tok == TK_PLUS) {
         next();
@@ -2901,11 +2888,7 @@ static int parse_const_unary(void) {
         return base;
     }
     if (lex_tok == TK_LPAREN) {
-        sv_tok = lex_tok; sv_val = lex_val; sv_slen = lex_slen;
-        sv_rcs = lex_rcs; sv_ract = lex_ract;
-        sv_rp = lex_rp; sv_rts = lex_rts; sv_rte = lex_rte;
-        pp_peek_depth = pp_peek_depth + 1;
-        memcpy(sv_str, lex_str, lex_slen + 1);
+        ps_lex_mark();
         next();
         if (is_type()) {
             ty = parse_type();
@@ -2913,7 +2896,7 @@ static int parse_const_unary(void) {
             ty = ps_abstract_fnptr(ty);
             skip_decl_qualifiers();
             expect(TK_RPAREN);
-            pp_peek_depth = pp_peek_depth - 1;
+            ps_lex_commit();
             pc_cast_ty = ty;
             if (ct_kindof(ct_unqual(ps_type_cty)) == CT_BOOL) {
                 /* (_Bool)v is 0 or 1 (6.3.1.2); W6 replaces this
@@ -2926,11 +2909,7 @@ static int parse_const_unary(void) {
             }
             return parse_const_unary();
         }
-        lex_tok = sv_tok; lex_val = sv_val; lex_slen = sv_slen;
-        lex_rcs = sv_rcs; lex_ract = sv_ract;
-        lex_rp = sv_rp; lex_rts = sv_rts; lex_rte = sv_rte;
-        pp_peek_depth = pp_peek_depth - 1;
-        memcpy(lex_str, sv_str, sv_slen + 1);
+        ps_lex_rewind();
     }
     return parse_const_primary();
 }
@@ -3458,31 +3437,14 @@ static void ps_ginit_add_sym_reloc_at(int gidx, int rel_off, char *name, int sz)
 
 
 static int try_consume_type_cast(void) {
-    int sv_tok;
-    int sv_val;
-    int sv_slen;
-    int sv_rcs;
-    int sv_ract;
-    char *sv_rp;
-    char *sv_rts;
-    char *sv_rte;
-    char sv_str[256];
     int ty;
 
     if (lex_tok != TK_LPAREN) return 0;
-    sv_tok = lex_tok; sv_val = lex_val; sv_slen = lex_slen;
-    sv_rcs = lex_rcs; sv_ract = lex_ract;
-    sv_rp = lex_rp; sv_rts = lex_rts; sv_rte = lex_rte;
-    pp_peek_depth = pp_peek_depth + 1;
-    memcpy(sv_str, lex_str, lex_slen + 1);
+    ps_lex_mark();
 
     next();
     if (!is_type()) {
-        lex_tok = sv_tok; lex_val = sv_val; lex_slen = sv_slen;
-        lex_rcs = sv_rcs; lex_ract = sv_ract;
-        lex_rp = sv_rp; lex_rts = sv_rts; lex_rte = sv_rte;
-        pp_peek_depth = pp_peek_depth - 1;
-        memcpy(lex_str, sv_str, sv_slen + 1);
+        ps_lex_rewind();
         return 0;
     }
     ty = parse_type();
@@ -3491,7 +3453,7 @@ static int try_consume_type_cast(void) {
     (void)ps_abstract_fnptr(0);
     skip_decl_qualifiers();
     expect(TK_RPAREN);
-    pp_peek_depth = pp_peek_depth - 1;
+    ps_lex_commit();
     return 1;
 }
 
@@ -3504,15 +3466,6 @@ static int parse_global_init_symbol_reloc_at(int gidx, int rel_off, int sz) {
     int sidx;
     int nparen;
     int got_idx;
-    int sv_tok;
-    int sv_val;
-    int sv_slen;
-    int sv_rcs;
-    int sv_ract;
-    char *sv_rp;
-    char *sv_rts;
-    char *sv_rte;
-    char sv_str[256];
 
     while (try_consume_type_cast()) {
     }
@@ -3531,11 +3484,7 @@ static int parse_global_init_symbol_reloc_at(int gidx, int rel_off, int sz) {
          * a cast-of-zero (&(((char*)0)[i]), GitHub issue 62) do not
          * leave an identifier here, so we rewind and let the fold path
          * take them. */
-        sv_tok = lex_tok; sv_val = lex_val; sv_slen = lex_slen;
-        sv_rcs = lex_rcs; sv_ract = lex_ract;
-        sv_rp = lex_rp; sv_rts = lex_rts; sv_rte = lex_rte;
-        memcpy(sv_str, lex_str, lex_slen + 1);
-        pp_peek_depth = pp_peek_depth + 1;
+        ps_lex_mark();
         amp = 1;
         next();
         while (try_consume_type_cast()) {
@@ -3544,31 +3493,20 @@ static int parse_global_init_symbol_reloc_at(int gidx, int rel_off, int sz) {
             next();
             nparen = nparen + 1;
         }
-        if (lex_tok != TK_IDENT) {
-            lex_tok = sv_tok; lex_val = sv_val; lex_slen = sv_slen;
-            lex_rcs = sv_rcs; lex_ract = sv_ract;
-            lex_rp = sv_rp; lex_rts = sv_rts; lex_rte = sv_rte;
-            memcpy(lex_str, sv_str, sv_slen + 1);
-            pp_peek_depth = pp_peek_depth - 1;
+        if (lex_tok != TK_IDENT ||
+            (find_const(lex_str) >= 0 && nparen > 0)) {
+            /* not a name, or &(SOME_ENUM): not a relocation; the '&'
+             * comes back so the constant-fold path sees the parens */
+            ps_lex_rewind();
             return 0;
         }
-        pp_peek_depth = pp_peek_depth - 1;
+        ps_lex_commit();
     }
     if (lex_tok != TK_IDENT) {
         return 0;
     }
     ci = find_const(lex_str);
-    if (ci >= 0) {
-        /* &(SOME_ENUM): not a relocation.  Restore the '&' so the
-         * constant-fold path still sees the grouping parens. */
-        if (nparen > 0) {
-            lex_tok = sv_tok; lex_val = sv_val; lex_slen = sv_slen;
-            lex_rcs = sv_rcs; lex_ract = sv_ract;
-            lex_rp = sv_rp; lex_rts = sv_rts; lex_rte = sv_rte;
-            memcpy(lex_str, sv_str, sv_slen + 1);
-        }
-        return 0;
-    }
+    if (ci >= 0) return 0;
     memcpy(nm, lex_str, lex_slen + 1);
     next();
     if (ps_static_local_sym(nm)) strcpy(nm, ps_static_local_sym(nm));
@@ -4026,22 +3964,9 @@ static void ps_braced_string_close(void) {
    as parse_const_unary, since `(` may instead open a parenthesized
    constant expression. */
 static int skip_init_cast(void) {
-    int sv_tok;
-    int sv_val;
-    int sv_slen;
-    int sv_rcs;
-    int sv_ract;
-    char *sv_rp;
-    char *sv_rts;
-    char *sv_rte;
-    char sv_str[256];
 
     if (lex_tok != TK_LPAREN) return 0;
-    sv_tok = lex_tok; sv_val = lex_val; sv_slen = lex_slen;
-    sv_rcs = lex_rcs; sv_ract = lex_ract;
-    sv_rp = lex_rp; sv_rts = lex_rts; sv_rte = lex_rte;
-    pp_peek_depth = pp_peek_depth + 1;
-    memcpy(sv_str, lex_str, lex_slen + 1);
+    ps_lex_mark();
     next();
     if (is_type()) {
         parse_type();
@@ -4049,14 +3974,10 @@ static int skip_init_cast(void) {
         (void)ps_abstract_fnptr(0);
         skip_decl_qualifiers();
         expect(TK_RPAREN);
-        pp_peek_depth = pp_peek_depth - 1;
+        ps_lex_commit();
         return 1;
     }
-    lex_tok = sv_tok; lex_val = sv_val; lex_slen = sv_slen;
-    lex_rcs = sv_rcs; lex_ract = sv_ract;
-    lex_rp = sv_rp; lex_rts = sv_rts; lex_rte = sv_rte;
-    pp_peek_depth = pp_peek_depth - 1;
-    memcpy(lex_str, sv_str, sv_slen + 1);
+    ps_lex_rewind();
     return 0;
 }
 
@@ -4069,21 +3990,8 @@ static int skip_init_cast(void) {
    parens would strand the `* 3`. */
 static int init_string_wrappers(void) {
     int depth;
-    int sv_tok;
-    int sv_val;
-    int sv_slen;
-    int sv_rcs;
-    int sv_ract;
-    char *sv_rp;
-    char *sv_rts;
-    char *sv_rte;
-    char sv_str[256];
 
-    sv_tok = lex_tok; sv_val = lex_val; sv_slen = lex_slen;
-    sv_rcs = lex_rcs; sv_ract = lex_ract;
-    sv_rp = lex_rp; sv_rts = lex_rts; sv_rte = lex_rte;
-    pp_peek_depth = pp_peek_depth + 1;
-    memcpy(sv_str, lex_str, lex_slen + 1);
+    ps_lex_mark();
 
     depth = 0;
     while (lex_tok == TK_LPAREN) {
@@ -4099,13 +4007,9 @@ static int init_string_wrappers(void) {
             depth = depth + 1;      /* grouping paren, still open */
         }
     }
-    if (lex_tok == TK_STRING) { pp_peek_depth = pp_peek_depth - 1; return depth; }
+    if (lex_tok == TK_STRING) { ps_lex_commit(); return depth; }
 
-    lex_tok = sv_tok; lex_val = sv_val; lex_slen = sv_slen;
-    lex_rcs = sv_rcs; lex_ract = sv_ract;
-    lex_rp = sv_rp; lex_rts = sv_rts; lex_rte = sv_rte;
-    pp_peek_depth = pp_peek_depth - 1;
-    memcpy(lex_str, sv_str, sv_slen + 1);
+    ps_lex_rewind();
     return -1;
 }
 
@@ -4652,9 +4556,8 @@ static Node *parse_primary(void) {
         if (is_known_func(nm)) {
             return nd_func_ref(nm);
         }
-        fdputs("s12cc:", 2);
-        fdputuint(2, lex_line);
-        fdputs(": error: undeclared identifier '", 2);
+        pp_where();
+        fdputs("error: undeclared identifier '", 2);
         fdputs(nm, 2);
         fdputs("'\n", 2);
         exit(1);
@@ -6028,10 +5931,6 @@ static Node *parse_stmt(void) {
     char *sp;
     char nm[256];
     char dnm[256];
-    /* Lexer save/restore for label lookahead */
-    int sv_tok; int sv_val; int sv_slen; int sv_rcs; int sv_ract;
-    char *sv_rp; char *sv_rts; char *sv_rte;
-    char sv_str[256];
 
     /* GNU inline asm statement. */
     if (is_gnu_asm_ident()) {
@@ -6753,27 +6652,17 @@ static_array_decl:
 
     /* Label detection: identifier followed by colon */
     if (lex_tok == TK_IDENT) {
-        /* Save lexer state for lookahead */
         memcpy(nm, lex_str, lex_slen + 1);
-        sv_tok = lex_tok; sv_val = lex_val; sv_slen = lex_slen;
-        sv_rcs = lex_rcs; sv_ract = lex_ract;
-        sv_rp = lex_rp; sv_rts = lex_rts; sv_rte = lex_rte;
-        pp_peek_depth = pp_peek_depth + 1;
-        memcpy(sv_str, lex_str, lex_slen + 1);
+        ps_lex_mark();
         next();
         if (lex_tok == TK_COLON) {
             /* It's a label */
-            pp_peek_depth = pp_peek_depth - 1;
+            ps_lex_commit();
             next();
             t = parse_stmt();
             return nd_label(find_or_add_label(nm), t);
         }
-        /* Not a label — restore lexer state */
-        lex_tok = sv_tok; lex_val = sv_val; lex_slen = sv_slen;
-        lex_rcs = sv_rcs; lex_ract = sv_ract;
-        lex_rp = sv_rp; lex_rts = sv_rts; lex_rte = sv_rte;
-        pp_peek_depth = pp_peek_depth - 1;
-        memcpy(lex_str, sv_str, sv_slen + 1);
+        ps_lex_rewind();    /* not a label */
     }
 
     /* expression statement */

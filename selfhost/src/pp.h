@@ -2,7 +2,7 @@
  *
  * Directives: #define (object + function-like + __VA_ARGS__), #undef,
  * #include, #if / #elif / #ifdef / #ifndef / #else / #endif, #error.
- * #line / #pragma / unknown: skipped.  # stringize / ## paste: expanded.
+ * #line.  #pragma / unknown: skipped.  # stringize / ## paste: expanded.
  *
  * Token-level: next() calls pp_directive() on TK_HASH, expands macros on
  * TK_IDENT.  Predefs: __STDC__, __LINE__, __FILE__, arch macros (see
@@ -47,10 +47,25 @@ static void pp_hash_reset(void) {
 }
 static int   pp_ndefs;
 
-/* Current translation-unit path for __FILE__ (main input; includes do not
- * push a stack yet — nested-include names stay the top-level path). */
+/* The presumed file name, for __FILE__ and diagnostics (6.10.8.1): the
+ * file the lexer is in -- an included file's own path while its text is
+ * read -- or what #line last named.  lex_line is the presumed line in
+ * it.  The splice marks each included file (#s12cc_pushdir); its handler
+ * saves the includer's name and line here and pp_popdir puts them back.
+ * They were the top-level file's, and lex_line counted the whole
+ * translation unit: __LINE__ after #include <stdio.h> was in the 200s. */
 #define PP_FILE_LEN 512
 static char pp_curfile[PP_FILE_LEN];
+
+/* Where a diagnostic is: "file:line: ", the presumed name and line, as
+ * clang and gcc write it (it was "s12cc:" and the line counted through
+ * every included header). */
+static void pp_where(void) {
+    fdputs(pp_curfile[0] != 0 ? pp_curfile : "s12cc", 2);
+    fdputc(58, 2);      /* ':' */
+    fdputuint(2, lex_line);
+    fdputs(": ", 2);
+}
 
 #define PP_EXP_SZ 8192
 static char pp_exp[PP_EXP_SZ];
@@ -76,6 +91,8 @@ static char pp_sdir[256];         /* source directory prefix for includes */
 #define PP_MAX_INCDEPTH 16
 static char pp_incdir[PP_MAX_INCDEPTH * 256];
 static int pp_incdepth;
+static char pp_incfile[PP_MAX_INCDEPTH * PP_FILE_LEN];   /* the includer's name ... */
+static int pp_incline[PP_MAX_INCDEPTH];                 /* ... and its #include's line */
 #define PP_MAX_IDIRS 16
 #define PP_IDIR_LEN  256
 /* Flat layout (stage06's parser accepts only literal-int array dimensions
@@ -618,7 +635,45 @@ static int pp_disabled(int di, int at) {
     return 0;
 }
 
+/* The newlines of a macro invocation that spans lines.  Inside the
+ * call they are white space (6.10.3p10), and become spaces here, in
+ * lex_src[from..to) -- a line splice, two -- before the arguments are
+ * substituted: an argument that broke across a line and appeared twice
+ * in the body brought its newline twice (SQLite's
+ * sqlite3ResolveNotValid, three of them: __LINE__ ran 3 ahead).
+ * Returns how many there were, for pp_keep_newlines. */
+static int pp_call_newlines(int from, int to) {
+    int k;
+    int n;
+    n = 0;
+    k = from;
+    while (k < to) {
+        if (lex_src[k] == 10) {
+            n = n + 1;
+            lex_src[k] = 32;
+            if (k > from && lex_src[k - 1] == 92) lex_src[k - 1] = 32;
+        }
+        k = k + 1;
+    }
+    return n;
+}
+
+/* ... and appended, n of them, to the expansion pp_exp[0..len), so the
+ * lexer still counts them -- on every scan of the text, a rewound one
+ * too.  Dropped, each two-line assert( ... ) in SQLite cost __LINE__
+ * one: 6 by sqlite3_status64, hundreds by the end.  Returns the new
+ * length. */
+static int pp_keep_newlines(int n, int len) {
+    while (n > 0 && len < PP_EXP_SZ - 1) {
+        pp_exp[len] = 10;
+        len = len + 1;
+        n = n - 1;
+    }
+    return len;
+}
+
 static int pp_expand_func(int di) {
+    int call_nl;
     int pos;
     int ins_pos;
     int depth;
@@ -726,6 +781,8 @@ static int pp_expand_func(int di) {
             }
         }
     }
+
+    call_nl = pp_call_newlines(ins_pos, pos);
 
     /* Build expanded text in pp_exp.
      * Supports #param (stringize) and ## (token paste). */
@@ -945,6 +1002,7 @@ static int pp_expand_func(int di) {
             j = j + 1;
         }
     }
+    exp_len = pp_keep_newlines(call_nl, exp_len);
     pp_exp[exp_len] = 0;
     if (getenv("S12CC_PP_DUMP")) {   /* trace every function-like expansion */
         int q;
@@ -1370,7 +1428,7 @@ static void pp_splice_file(char *path) {
     int tail_len;
     int i;
     char *tmp;
-    char pre[300];
+    char pre[600];
     int plen;
     char *tag;
     char *suf;
@@ -1392,16 +1450,13 @@ static void pp_splice_file(char *path) {
         exit(1);
     }
 
-    /* Marker lines: "#s12cc_pushdir <dir>\n" before the file's text and
+    /* Marker lines: "#s12cc_pushdir <path>\n" before the file's text and
        "\n#s12cc_popdir\n" after it, so a quoted #include inside the file
-       resolves against the file's own directory (see pp_incdir).  <dir> is
-       the path up to and including its last '/', or empty. */
-    last_slash = -1;
-    i = 0;
-    while (path[i] != 0) {
-        if (path[i] == 47) last_slash = i;  /* '/' */
-        i = i + 1;
-    }
+       resolves against the file's own directory (see pp_incdir), and
+       __FILE__ and the line count are the file's own (pp_curfile). */
+    last_slash = 0;
+    while (path[last_slash] != 0) last_slash = last_slash + 1;
+    last_slash = last_slash - 1;        /* the whole path */
     tag = "#s12cc_pushdir ";
     plen = 0;
     i = 0;
@@ -1411,7 +1466,7 @@ static void pp_splice_file(char *path) {
         i = i + 1;
     }
     i = 0;
-    while (i <= last_slash && plen < 290) {
+    while (i <= last_slash && plen < 590) {
         pre[plen] = path[i];
         plen = plen + 1;
         i = i + 1;
@@ -1938,6 +1993,108 @@ static int pp_ev_expr(void) {
 
 /* --- Directives --- */
 
+/* "#s12cc_pushdir <path>": an included file begins.  Its directory
+ * goes on pp_incdir; the includer's name and line are saved and the
+ * file's own take over -- the marker's newline, still to be read, makes
+ * its first line 1. */
+static void pp_pushdir(void) {
+    int i;
+    int d;
+    int last_slash;
+    pp_skip_ws();
+    d = pp_incdepth;
+    if (d < PP_MAX_INCDEPTH) {
+        memcpy(pp_incfile + d * PP_FILE_LEN, pp_curfile, PP_FILE_LEN);
+        pp_incline[d] = lex_line;
+        i = 0;
+        last_slash = -1;
+        while (lex_src[lex_pos] != 10 && lex_src[lex_pos] != 0 && i < PP_FILE_LEN - 1) {
+            pp_curfile[i] = lex_src[lex_pos];
+            if (i < 255) pp_incdir[d * 256 + i] = lex_src[lex_pos];
+            if (lex_src[lex_pos] == 47) last_slash = i;   /* '/' */
+            i = i + 1;
+            lex_pos = lex_pos + 1;
+        }
+        pp_curfile[i] = 0;
+        if (last_slash > 254) last_slash = -1;
+        pp_incdir[d * 256 + last_slash + 1] = 0;   /* the directory: up to its last '/' */
+        lex_line = 0;
+    }
+    pp_incdepth = d + 1;  /* counted past the cap too, so pops balance */
+    pp_skip_line();
+    pp_sync();
+}
+
+/* "#s12cc_popdir": the included file ended.  The includer's name and
+ * line come back: two newlines are still to be read, the marker's and
+ * the #include line's own, before the line after the #include. */
+static void pp_popdir(void) {
+    int d;
+    if (pp_incdepth > 0) pp_incdepth = pp_incdepth - 1;
+    d = pp_incdepth;
+    if (d < PP_MAX_INCDEPTH) {
+        memcpy(pp_curfile, pp_incfile + d * PP_FILE_LEN, PP_FILE_LEN);
+        lex_line = pp_incline[d] - 1;
+    }
+    pp_skip_line();
+    pp_sync();
+}
+
+/* #line digits ["name"] (6.10.4): the next line is line digits, of file
+ * name.  The operands may come from macros (6.10.4p5): an identifier is
+ * replaced by its definition, an int or a body of digits or a string.
+ * It was skipped.  Anything malformed is skipped as before. */
+static void pp_line_directive(void) {
+    char word[256];
+    char *src;
+    int di;
+    int n;
+    int i;
+    int k;
+    pp_skip_ws();
+    n = -1;
+    i = 0;
+    while (lex_src[lex_pos] >= 48 && lex_src[lex_pos] <= 57) {
+        if (n < 0) n = 0;
+        n = n * 10 + (lex_src[lex_pos] - 48);
+        lex_pos = lex_pos + 1;
+    }
+    if (n < 0) {
+        pp_read_name(word);
+        di = word[0] != 0 ? pp_find(word) : -1;
+        if (di >= 0 && pp_dnpar[di] < 0) {
+            if (pp_dbody[di] == 0) n = pp_dval[di];
+            else n = atoi(pp_dbody[di]);
+        }
+    }
+    if (n < 0) { pp_skip_line(); pp_sync(); return; }
+    pp_skip_ws();
+    src = 0;
+    k = lex_pos;
+    if (lex_src[lex_pos] == 34) {
+        src = lex_src + lex_pos;
+    } else {
+        pp_read_name(word);
+        di = word[0] != 0 ? pp_find(word) : -1;
+        if (di >= 0 && pp_dnpar[di] < 0 && pp_dbody[di] != 0 && pp_dbody[di][0] == 34)
+            src = pp_dbody[di];
+    }
+    if (src != 0) {
+        /* the string's contents, escapes left as written */
+        i = 0;
+        k = 1;
+        while (src[k] != 34 && src[k] != 0 && src[k] != 10 && i < PP_FILE_LEN - 1) {
+            pp_curfile[i] = src[k];
+            i = i + 1;
+            k = k + 1;
+        }
+        pp_curfile[i] = 0;
+    }
+    lex_line = n - 1;       /* the directive's newline makes the next line n */
+    pp_skip_line();
+    pp_sync();
+}
+
 static void pp_directive(void) {
     char name[256];
     int i;
@@ -2086,9 +2243,8 @@ static void pp_directive(void) {
     if (strcmp(name, "error") == 0) {
         /* Consume rest of line as the message and hard-fail. */
         pp_skip_ws();
-        fdputs("s12cc:", 2);
-        fdputuint(2, lex_line);
-        fdputs(": #error", 2);
+        pp_where();
+        fdputs("error: #error", 2);
         if (lex_src[lex_pos] != 0 && lex_src[lex_pos] != 10) {
             fdputs(": ", 2);
             while (lex_src[lex_pos] != 0 && lex_src[lex_pos] != 10) {
@@ -2102,29 +2258,19 @@ static void pp_directive(void) {
 
     /* Internal markers written by pp_splice_file (see pp_incdir). */
     if (strcmp(name, "s12cc_pushdir") == 0) {
-        pp_skip_ws();
-        if (pp_incdepth < PP_MAX_INCDEPTH) {
-            i = 0;
-            while (lex_src[lex_pos] != 10 && lex_src[lex_pos] != 0 && i < 255) {
-                pp_incdir[pp_incdepth * 256 + i] = lex_src[lex_pos];
-                i = i + 1;
-                lex_pos = lex_pos + 1;
-            }
-            pp_incdir[pp_incdepth * 256 + i] = 0;
-        }
-        pp_incdepth = pp_incdepth + 1;  /* counted past the cap too, so pops balance */
-        pp_skip_line();
-        pp_sync();
+        pp_pushdir();
         return;
     }
     if (strcmp(name, "s12cc_popdir") == 0) {
-        if (pp_incdepth > 0) pp_incdepth = pp_incdepth - 1;
-        pp_skip_line();
-        pp_sync();
+        pp_popdir();
+        return;
+    }
+    if (strcmp(name, "line") == 0) {
+        pp_line_directive();
         return;
     }
 
-    /* Unknown directive (#line, #pragma, etc.) — skip */
+    /* Unknown directive (#pragma, etc.) — skip */
     pp_skip_line();
     pp_sync();
 }

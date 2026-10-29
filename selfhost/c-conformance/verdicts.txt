@@ -28,6 +28,7 @@
 6.10.3-dup-param-reject ACCEPTS
 6.10.3-empty-args REJECTS
 6.10.3-function-like PASS
+6.10.3-line-after-call PASS
 6.10.3-name-without-paren PASS
 6.10.3-no-space-after-name-reject ACCEPTS
 6.10.3-object-like PASS
@@ -68,8 +69,8 @@
 6.10.3.5-example5-placemarker PASS
 6.10.3.5-example7-variadic WRONG
 6.10.3.5-undef-scope PASS
-6.10.4-line WRONG
-6.10.4-line-macro WRONG
+6.10.4-line PASS
+6.10.4-line-macro PASS
 6.10.4-line-nonumber-reject ACCEPTS
 6.10.4-line-notstring-reject ACCEPTS
 6.10.4-line-toobig-reject ACCEPTS
@@ -84,8 +85,8 @@
 6.10.8-no-cplusplus PASS
 6.10.8-undef-predefined-reject ACCEPTS
 6.10.8.1-date-time REJECTS
-6.10.8.1-file-in-header WRONG
-6.10.8.1-file-line WRONG
+6.10.8.1-file-in-header PASS
+6.10.8.1-file-line PASS
 6.10.8.1-stdc PASS
 6.10.8.1-stdc-hosted PASS
 6.10.8.1-stdc-version WRONG
