@@ -18,6 +18,7 @@ static char *pp_dbody[PP_MAX_DEFS];   /* body text (strdup'd), NULL = int-only *
 static int   pp_dnpar[PP_MAX_DEFS];   /* param count, -1 = object-like */
 static char *pp_dparm[PP_MAX_DEFS];   /* packed param names "a\0b\0" (strdup'd) */
 static int   pp_dvar[PP_MAX_DEFS];    /* 1 = variadic macro (.../__VA_ARGS__) */
+static char *pp_dsig[PP_MAX_DEFS];   /* the definition as compared on redefinition (strdup'd); NULL = none */
 /* A hash index over the table: SQLite defines 2,800 macros, and a linear
  * scan with strcmp on every identifier token was 93% of its compile
  * (the DBT's PC probe: strcmp 62%, pp_find 31%).  Chains run newest
@@ -67,6 +68,16 @@ static void pp_where(void) {
     fdputs(": ", 2);
 }
 
+/* A constraint or syntax violation in a directive or a macro use: the
+ * program is not valid C, and stops here (C11 5.1.1.3). */
+static void pp_error(char *msg) {
+    pp_where();
+    fdputs("error: ", 2);
+    fdputs(msg, 2);
+    fdputc(10, 2);
+    exit(1);
+}
+
 #define PP_EXP_SZ 8192
 static char pp_exp[PP_EXP_SZ];
 
@@ -79,6 +90,7 @@ static char pp_def_parms[1024];
 static int pp_skip;                /* 1 = skipping tokens (ifdef false branch) */
 static int pp_stk[PP_MAX_IF];     /* ifdef nesting: was-skipping before this level */
 static int pp_dep;                 /* ifdef nesting depth */
+static int pp_elsed[PP_MAX_IF];   /* 1 once this level's #else is seen */
 static int pp_taken[PP_MAX_IF];   /* 1 if any branch taken at this depth */
 
 static char pp_sdir[256];         /* source directory prefix for includes */
@@ -92,6 +104,7 @@ static char pp_sdir[256];         /* source directory prefix for includes */
 static char pp_incdir[PP_MAX_INCDEPTH * 256];
 static int pp_incdepth;
 static char pp_incfile[PP_MAX_INCDEPTH * PP_FILE_LEN];   /* the includer's name ... */
+static int pp_incif[PP_MAX_INCDEPTH];    /* pp_dep when the file began */
 static int pp_incline[PP_MAX_INCDEPTH];                 /* ... and its #include's line */
 #define PP_MAX_IDIRS 16
 #define PP_IDIR_LEN  256
@@ -490,6 +503,7 @@ static void pp_add(char *name, int val) {
     pp_dnpar[pp_ndefs] = -1;
     pp_dparm[pp_ndefs] = 0;
     pp_dvar[pp_ndefs] = 0;
+    pp_dsig[pp_ndefs] = 0;
     if (!pp_hash_ready) pp_hash_reset();
     i = pp_hash(name);
     pp_dnext[pp_ndefs] = pp_hhead[i];
@@ -1302,6 +1316,7 @@ static int pp_expand_func(int di) {
     }
 
     call_nl = pp_call_newlines(ins_pos, pos);
+    if (nargs > pp_dnpar[di] && !pp_dvar[di]) pp_error("too many arguments to function-like macro");
 
     /* The parameter slots: one per argument, and for a variadic macro
      * one more, the variable arguments from the first to the last. */
@@ -1495,8 +1510,164 @@ static void pp_expand_obj(int di) {
 
 /* --- Directives --- */
 
+/* Names a program may neither #define nor #undef (6.10.8p2). */
+static int pp_reserved_name(char *name) {
+    return strcmp(name, "defined") == 0 || strcmp(name, "__LINE__") == 0 ||
+           strcmp(name, "__FILE__") == 0 || strcmp(name, "__DATE__") == 0 ||
+           strcmp(name, "__TIME__") == 0 || strcmp(name, "__STDC__") == 0 ||
+           strcmp(name, "__STDC_VERSION__") == 0 || strcmp(name, "__STDC_HOSTED__") == 0;
+}
+
+/* The index of name among the first `len` bytes of a packed parameter
+ * list ("a\0b\0"), or -1. */
+static int pp_parm_index(char *parms, int len, char *name) {
+    int k;
+    int pi;
+    k = 0;
+    pi = 0;
+    while (k < len) {
+        if (strcmp(parms + k, name) == 0) return pi;
+        while (parms[k] != 0) k = k + 1;
+        k = k + 1;
+        pi = pi + 1;
+    }
+    return -1;
+}
+
+/* The replacement list's constraints (6.10.3p5, 6.10.3.2p1, 6.10.3.3p1):
+ * __VA_ARGS__ only in a variadic macro; in a function-like macro, #
+ * before a parameter; ## at neither end. */
+static void pp_check_body(char *body, int is_func, int is_var, char *parms, int plen) {
+    int j;
+    int k;
+    int c;
+    int q;
+    char id[256];
+    j = 0;
+    while (body[j] == 32 || body[j] == 9) j = j + 1;
+    if (body[j] == 35 && body[j + 1] == 35) pp_error("'##' cannot appear at either end of a macro expansion");
+    k = j;
+    while (body[k] != 0) k = k + 1;
+    while (k > j && (body[k - 1] == 32 || body[k - 1] == 9)) k = k - 1;
+    if (k - j >= 2 && body[k - 1] == 35 && body[k - 2] == 35)
+        pp_error("'##' cannot appear at either end of a macro expansion");
+    while (body[j] != 0) {
+        c = body[j];
+        if (c == 34 || c == 39) {
+            q = c;
+            j = j + 1;
+            while (body[j] != 0 && body[j] != q) {
+                if (body[j] == 92 && body[j + 1] != 0) j = j + 1;
+                j = j + 1;
+            }
+            if (body[j] != 0) j = j + 1;
+            continue;
+        }
+        if (c == 35 && body[j + 1] == 35) { j = j + 2; continue; }
+        if (c == 35 && is_func) {
+            j = j + 1;
+            while (body[j] == 32 || body[j] == 9) j = j + 1;
+            k = 0;
+            while (pp_is_idch(body[j]) && k < 255) { id[k] = body[j]; k = k + 1; j = j + 1; }
+            id[k] = 0;
+            if (k == 0 || (pp_parm_index(parms, plen, id) < 0 &&
+                           !(is_var && strcmp(id, "__VA_ARGS__") == 0)))
+                pp_error("'#' is not followed by a macro parameter");
+            continue;
+        }
+        if (pp_is_idstart(c)) {
+            k = 0;
+            while (pp_is_idch(body[j])) { if (k < 255) { id[k] = body[j]; k = k + 1; } j = j + 1; }
+            id[k] = 0;
+            if (!is_var && strcmp(id, "__VA_ARGS__") == 0)
+                pp_error("__VA_ARGS__ can only appear in a variadic macro");
+            continue;
+        }
+        if (c >= 48 && c <= 57) {   /* a pp-number: 1e5, 0x1F */
+            while (pp_is_idch(body[j]) || body[j] == 46) j = j + 1;
+            continue;
+        }
+        j = j + 1;
+    }
+}
+
+/* What a redefinition is compared on (6.10.3p2): object- or function-
+ * like, the parameters, and the replacement list with each run of white
+ * space one space -- (1+2) and (1 + 2) differ.  Read ahead from the
+ * name, the position left where it was. */
+#define PP_SIG_SZ (PP_DEF_BODY_SZ + 1100)
+static char pp_sig[PP_SIG_SZ];
+static char pp_sig_body[PP_DEF_BODY_SZ];
+
+static void pp_define_sig(char *name) {
+    int save_pos;
+    int save_line;
+    int n;
+    int j;
+    int q;
+    int sp;
+    int c;
+    save_pos = lex_pos;
+    save_line = lex_line;
+    n = 0;
+    if (lex_src[lex_pos] == 40) {
+        pp_sig[n] = 70;   /* 'F' */
+        n = n + 1;
+        while (lex_src[lex_pos] != 41 && lex_src[lex_pos] != 10 && lex_src[lex_pos] != 0 && n < 1000) {
+            c = lex_src[lex_pos];
+            if (c != 32 && c != 9 && c != 92 && c != 13) { pp_sig[n] = c; n = n + 1; }
+            lex_pos = lex_pos + 1;
+        }
+        if (lex_src[lex_pos] == 41) lex_pos = lex_pos + 1;
+    } else {
+        pp_sig[n] = 79;   /* 'O' */
+        n = n + 1;
+    }
+    pp_sig[n] = 32;
+    n = n + 1;
+    pp_skip_ws();
+    pp_read_body_text(pp_sig_body);
+    j = 0;
+    q = 0;
+    sp = 0;
+    while (pp_sig_body[j] != 0 && n < PP_SIG_SZ - 2) {
+        c = pp_sig_body[j];
+        j = j + 1;
+        if (q == 0 && (c == 32 || c == 9)) { sp = 1; continue; }
+        if (sp) { pp_sig[n] = 32; n = n + 1; sp = 0; }
+        if (q == 0 && (c == 34 || c == 39)) q = c;
+        else if (q != 0 && c == 92 && pp_sig_body[j] != 0) {
+            pp_sig[n] = c;
+            n = n + 1;
+            c = pp_sig_body[j];
+            j = j + 1;
+        } else if (q != 0 && c == q) q = 0;
+        pp_sig[n] = c;
+        n = n + 1;
+    }
+    pp_sig[n] = 0;
+    lex_pos = save_pos;
+    lex_line = save_line;
+    j = pp_find(name);
+    if (j >= 0 && pp_dsig[j] != 0 && strcmp(pp_dsig[j], pp_sig) != 0) {
+        pp_where();
+        fdputs("error: '", 2);
+        fdputs(name, 2);
+        fdputs("' macro redefined differently\n", 2);
+        exit(1);
+    }
+}
+
+static void pp_define_done(char *name) {
+    int i;
+    i = pp_find(name);
+    if (pp_dsig[i] != 0) free(pp_dsig[i]);
+    pp_dsig[i] = strdup(pp_sig);
+}
+
 static void pp_define(void) {
     char name[256];
+    int k;
     int npar;
     int val;
     int c;
@@ -1506,10 +1677,16 @@ static void pp_define(void) {
 
     pp_skip_ws();
     pp_read_name(name);
-    if (name[0] == 0) {
-        pp_skip_line();
-        return;
-    }
+    if (name[0] == 0) pp_error("macro name must be an identifier");
+    if (pp_reserved_name(name)) pp_error("cannot #define a predefined macro or 'defined'");
+    pp_define_sig(name);
+    c = lex_src[lex_pos];
+    /* An object-like macro's name is followed by white space (6.10.3p3):
+     * #define PLUS+1 */
+    if (c != 40 && c != 32 && c != 9 && c != 10 && c != 13 && c != 0 &&
+        !(c == 47 && (lex_src[lex_pos + 1] == 42 || lex_src[lex_pos + 1] == 47)) &&
+        !(c == 92 && (lex_src[lex_pos + 1] == 10 || lex_src[lex_pos + 1] == 13)))
+        pp_error("whitespace required after the macro name");
 
     /* Function-like macro: name followed by '(' with no space */
     if (lex_src[lex_pos] == 40) {  /* '(' */
@@ -1529,6 +1706,8 @@ static void pp_define(void) {
                     break;
                 }
                 c = lex_src[lex_pos];
+                if (!pp_is_idstart(c)) pp_error("invalid macro parameter");
+                k = pi;
                 while ((c >= 97 && c <= 122) || (c >= 65 && c <= 90) ||
                        (c >= 48 && c <= 57) || c == 95) {
                     pp_def_parms[pi] = c;
@@ -1538,6 +1717,8 @@ static void pp_define(void) {
                 }
                 pp_def_parms[pi] = 0;
                 pi = pi + 1;
+                if (pp_parm_index(pp_def_parms, k, pp_def_parms + k) >= 0)
+                    pp_error("duplicate macro parameter name");
                 npar = npar + 1;
                 pp_skip_ws();
                 if (lex_src[lex_pos] == 44) {  /* ',' */
@@ -1548,15 +1729,16 @@ static void pp_define(void) {
             }
         }
         pp_skip_ws();
-        if (lex_src[lex_pos] == 41) {  /* ')' */
-            lex_pos = lex_pos + 1;
-        }
+        if (lex_src[lex_pos] != 41) pp_error("missing ')' in macro parameter list");
+        lex_pos = lex_pos + 1;
         pp_skip_ws();
         bi = pp_read_body_text(pp_def_body);
+        pp_check_body(pp_def_body, 1, is_var, pp_def_parms, pi);
         pp_add_func(name, npar, pp_def_parms, pi, pp_def_body);
         if (is_var) {
             pp_dvar[pp_find(name)] = 1;
         }
+        pp_define_done(name);
         pp_skip_line();
         pp_sync();
         return;
@@ -1614,6 +1796,7 @@ static void pp_define(void) {
             bi = pp_read_body_text(pp_def_body);
             pp_add(name, 0);
             pp_dbody[pp_find(name)] = strdup(pp_def_body);
+            pp_define_done(name);
             pp_skip_line();
             pp_sync();
             return;
@@ -1625,20 +1808,24 @@ static void pp_define(void) {
          * existing for #ifdef.  Store an empty text body. */
         pp_add(name, 0);
         pp_dbody[pp_find(name)] = strdup("");
+        pp_define_done(name);
         pp_skip_line();
         pp_sync();
         return;
     } else {
         /* Non-numeric value — store as text body */
         bi = pp_read_body_text(pp_def_body);
+        pp_check_body(pp_def_body, 0, 0, pp_def_parms, 0);
         pp_add(name, 0);
         pp_dbody[pp_find(name)] = strdup(pp_def_body);
+        pp_define_done(name);
         pp_skip_line();
         pp_sync();
         return;
     }
     pp_skip_line();
     pp_add(name, val);
+    pp_define_done(name);
     pp_sync();
 }
 
@@ -1680,17 +1867,15 @@ static void pp_undef(void) {
     int i;
     pp_skip_ws();
     pp_read_name(name);
-    if (name[0] == 0) {
-        pp_skip_line();
-        pp_sync();
-        return;
-    }
+    if (name[0] == 0) pp_error("macro name missing");
+    if (pp_reserved_name(name)) pp_error("cannot #undef a predefined macro");
     i = pp_find(name);
     if (i >= 0) {
         free(pp_dname[i]);
         pp_dname[i] = 0;
         if (pp_dbody[i] != 0) { free(pp_dbody[i]); pp_dbody[i] = 0; }
         if (pp_dparm[i] != 0) { free(pp_dparm[i]); pp_dparm[i] = 0; }
+        if (pp_dsig[i] != 0) { free(pp_dsig[i]); pp_dsig[i] = 0; }
         pp_dnpar[i] = -1;
     }
     pp_skip_line();
@@ -1856,6 +2041,7 @@ static void pp_splice_file(char *path) {
     lex_len = lex_len + total;
     lex_src[lex_len] = 0;
     free(tmp);
+    lex_bol = 1;    /* the marker is a line of its own, though no newline precedes it */
     pp_sync();
 }
 
@@ -1908,6 +2094,31 @@ static int pp_find_include(char *fname, int angle, char *path) {
     return 0;
 }
 
+/* #include NAME, NAME an object-like macro whose replacement is
+ * "file" or <file> (6.10.2p4).  Returns 1 with fname and *angle set. */
+static int pp_include_from_macro(char *fname, int *angle) {
+    char name[256];
+    char *b;
+    int di;
+    int fi;
+    int close;
+    pp_read_name(name);
+    if (name[0] == 0) return 0;
+    di = pp_find(name);
+    if (di < 0 || pp_dnpar[di] >= 0 || pp_dbody[di] == 0) return 0;
+    b = pp_dbody[di];
+    if (b[0] != 34 && b[0] != 60) return 0;
+    close = b[0] == 34 ? 34 : 62;
+    *angle = b[0] == 60;
+    fi = 0;
+    while (b[fi + 1] != 0 && b[fi + 1] != close && fi < 255) {
+        fname[fi] = b[fi + 1];
+        fi = fi + 1;
+    }
+    fname[fi] = 0;
+    return b[fi + 1] == close;
+}
+
 static void pp_include(void) {
     char path[512];
     char fname[256];
@@ -1938,10 +2149,13 @@ static void pp_include(void) {
         }
         fname[fi] = 0;
         if (lex_src[lex_pos] == 62) lex_pos = lex_pos + 1;
+    } else if (pp_include_from_macro(fname, &angle)) {
+        /* fname and angle are set */
     } else {
-        pp_skip_line();
-        pp_sync();
-        return;
+        /* After replacement the operand must be "..." or <...>
+         * (6.10.2p4); `#include NAME` with NAME a number, or nothing,
+         * was skipped. */
+        pp_error("expected \"FILENAME\" or <FILENAME>");
     }
     pp_skip_line();
 
@@ -2037,6 +2251,89 @@ static long long pp_ev_from_text(char *body) {
     return val;
 }
 
+/* A function-like macro in #if: its call replaced and the result
+ * evaluated (6.10.1p4).  The name alone, with no '(', is an identifier,
+ * 0.  SQLite's `#if GCC_VERSION>=4007000 || __has_extension(c_atomic)`
+ * with its own `#define __has_extension(x) 0` gave 0 by luck: the call
+ * was dropped with the rest of the line. */
+static long long pp_ev_call(int di) {
+    int rfrom[PP_MAX_ARGS + 1];
+    int rto[PP_MAX_ARGS + 1];
+    int pre_off[PP_MAX_ARGS + 1];
+    int pre_len[PP_MAX_ARGS + 1];
+    int need[PP_MAX_ARGS + 1];
+    int nargs;
+    int depth;
+    int nslot;
+    int c;
+    int i;
+    int k;
+    char *text;
+    long long val;
+    pp_skip_ws();
+    if (lex_src[lex_pos] != 40) return 0;
+    lex_pos = lex_pos + 1;
+    pp_skip_ws();
+    nargs = 0;
+    depth = 0;
+    if (lex_src[lex_pos] == 41) {
+        lex_pos = lex_pos + 1;
+    } else {
+        rfrom[0] = lex_pos;
+        while (1) {
+            c = lex_src[lex_pos];
+            if (c == 10 || c == 0) pp_error("unterminated macro call in #if");
+            if (c == 34 || c == 39) { lex_pos = pp_skip_literal(lex_pos, lex_len); continue; }
+            if (c == 40) depth = depth + 1;
+            if ((c == 41 && depth == 0) || (c == 44 && depth == 0)) {
+                if (nargs >= PP_MAX_ARGS) pp_error("too many macro arguments");
+                rto[nargs] = lex_pos;
+                nargs = nargs + 1;
+                lex_pos = lex_pos + 1;
+                if (c == 41) break;
+                pp_skip_ws();
+                rfrom[nargs] = lex_pos;
+                continue;
+            }
+            if (c == 41) depth = depth - 1;
+            lex_pos = lex_pos + 1;
+        }
+    }
+    nslot = pp_dnpar[di];
+    if (nargs > nslot && !pp_dvar[di]) pp_error("too many arguments to function-like macro");
+    if (nargs < nslot && !(nslot == 1 && nargs == 0)) pp_error("too few arguments to function-like macro");
+    i = nargs;
+    while (i < nslot) { rfrom[i] = 0; rto[i] = 0; i = i + 1; }
+    if (pp_dvar[di]) {
+        if (nargs > nslot) rto[nslot] = rto[nargs - 1];
+        else { rfrom[nslot] = 0; rto[nslot] = 0; }
+        nslot = nslot + 1;
+    }
+    i = 0;
+    while (i < nslot) {
+        pre_off[i] = -1;
+        pre_len[i] = 0;
+        need[i] = 0;
+        i = i + 1;
+    }
+    k = pp_subst(di, rfrom, rto, pre_off, pre_len, need);
+    pp_exp[k] = 0;
+    if (k == 0) pp_error("macro in #if expands to nothing");
+    text = strdup(pp_exp);
+    k = 0;
+    while (k < pp_ev_ndis) {
+        if (pp_ev_dis[k] == di) pp_error("recursive macro in #if expression");
+        k = k + 1;
+    }
+    if (pp_ev_ndis >= 32) pp_error("macros nested too deeply in #if expression");
+    pp_ev_dis[pp_ev_ndis] = di;
+    pp_ev_ndis = pp_ev_ndis + 1;
+    val = pp_ev_from_text(text);
+    pp_ev_ndis = pp_ev_ndis - 1;
+    free(text);
+    return val;
+}
+
 static long long pp_ev_primary(void) {
     long long val;
     int c;
@@ -2049,9 +2346,8 @@ static long long pp_ev_primary(void) {
         lex_pos = lex_pos + 1;
         val = pp_ev_cond();
         pp_skip_ws();
-        if (lex_src[lex_pos] == 41) {  /* ')' */
-            lex_pos = lex_pos + 1;
-        }
+        if (lex_src[lex_pos] != 41) pp_error("missing ')' in #if expression");
+        lex_pos = lex_pos + 1;
         return val;
     }
     /* Integer literal (decimal or hex) */
@@ -2060,12 +2356,21 @@ static long long pp_ev_primary(void) {
     }
     /* Character constant: 'x' */
     if (c == 39) {  /* single quote */
+        int ep;
         lex_pos = lex_pos + 1;
-        val = lex_src[lex_pos];
-        lex_pos = lex_pos + 1;
-        if (lex_src[lex_pos] == 39) {
+        if (lex_src[lex_pos] == 92) {
+            /* '\n', '\x41', '\101': the escape was read as a backslash,
+             * and the rest skipped with the line */
+            ep = lex_pos + 1;
+            val = lex_parse_esc(lex_src, &ep);
+            lex_pos = ep;
+        } else {
+            val = lex_src[lex_pos];
             lex_pos = lex_pos + 1;
         }
+        if (val > 127) val = val - 256;   /* char is signed, as in the lexer */
+        if (lex_src[lex_pos] != 39) pp_error("invalid character constant in #if");
+        lex_pos = lex_pos + 1;
         return val;
     }
     /* Identifier: 'defined' or macro name */
@@ -2082,16 +2387,17 @@ static long long pp_ev_primary(void) {
                 pp_skip_ws();
             }
             pp_read_name(name);
+            if (name[0] == 0) pp_error("defined requires an identifier");
             if (has_paren) {
                 pp_skip_ws();
-                if (lex_src[lex_pos] == 41) {  /* ')' */
-                    lex_pos = lex_pos + 1;
-                }
+                if (lex_src[lex_pos] != 41) pp_error("missing ')' after defined");
+                lex_pos = lex_pos + 1;
             }
             return pp_is_defined(name);
         }
         /* Regular macro — expand to value, or 0 if undefined */
         val = pp_find(name);
+        if (val >= 0 && pp_dnpar[val] >= 0) return pp_ev_call((int)val);
         if (val >= 0) {
             if (pp_dbody[val] != 0 && pp_dnpar[val] < 0 && pp_ev_depth < 32) {
                 /* Text body: park it in the unused lex_src tail and parse
@@ -2117,7 +2423,7 @@ static long long pp_ev_primary(void) {
         }
         return 0;
     }
-    /* Unknown — return 0 */
+    pp_error("invalid token in #if expression");
     return 0;
 }
 
@@ -2398,10 +2704,20 @@ static long long pp_ev_cond(void) {
     return b;
 }
 
+static int pp_ev_at_eol(void) {
+    pp_skip_ws();
+    return lex_src[lex_pos] == 10 || lex_src[lex_pos] == 13 || lex_src[lex_pos] == 0;
+}
+
+/* The whole line is one constant expression (6.10.1p1): `#if` alone,
+ * `#if 1 +`, `#if 1 = 1` and `#if 1.5 > 1` were taken -- the tokens the
+ * evaluator could not read were skipped with the line. */
 static int pp_ev_expr(void) {
     long long val;
     pp_ev_ndis = 0;
+    if (pp_ev_at_eol()) pp_error("#if with no expression");
     val = pp_ev_cond();
+    if (!pp_ev_at_eol()) pp_error("invalid token in #if expression");
     pp_skip_line();
     pp_sync();
     return val != 0;
@@ -2422,6 +2738,7 @@ static void pp_pushdir(void) {
     if (d < PP_MAX_INCDEPTH) {
         memcpy(pp_incfile + d * PP_FILE_LEN, pp_curfile, PP_FILE_LEN);
         pp_incline[d] = lex_line;
+        pp_incif[d] = pp_dep;
         i = 0;
         last_slash = -1;
         while (lex_src[lex_pos] != 10 && lex_src[lex_pos] != 0 && i < PP_FILE_LEN - 1) {
@@ -2448,6 +2765,8 @@ static void pp_popdir(void) {
     int d;
     if (pp_incdepth > 0) pp_incdepth = pp_incdepth - 1;
     d = pp_incdepth;
+    /* An if-section ends in the file it began in (6.10p1, 6.10.2p3). */
+    if (d < PP_MAX_INCDEPTH && pp_dep > pp_incif[d]) pp_error("unterminated conditional directive");
     if (d < PP_MAX_INCDEPTH) {
         memcpy(pp_curfile, pp_incfile + d * PP_FILE_LEN, PP_FILE_LEN);
         lex_line = pp_incline[d] - 1;
@@ -2472,6 +2791,9 @@ static void pp_line_directive(void) {
     i = 0;
     while (lex_src[lex_pos] >= 48 && lex_src[lex_pos] <= 57) {
         if (n < 0) n = 0;
+        /* 1 to 2147483647 (6.10.4p3) */
+        if (n > 214748364 || (n == 214748364 && lex_src[lex_pos] > 55))
+            pp_error("#line number out of range");
         n = n * 10 + (lex_src[lex_pos] - 48);
         lex_pos = lex_pos + 1;
     }
@@ -2483,7 +2805,8 @@ static void pp_line_directive(void) {
             else n = atoi(pp_dbody[di]);
         }
     }
-    if (n < 0) { pp_skip_line(); pp_sync(); return; }
+    if (n < 0) pp_error("#line directive requires a digit sequence");
+    if (n == 0) pp_error("#line number out of range");
     pp_skip_ws();
     src = 0;
     k = lex_pos;
@@ -2494,6 +2817,8 @@ static void pp_line_directive(void) {
         di = word[0] != 0 ? pp_find(word) : -1;
         if (di >= 0 && pp_dnpar[di] < 0 && pp_dbody[di] != 0 && pp_dbody[di][0] == 34)
             src = pp_dbody[di];
+        else if (word[0] != 0 || !pp_ev_at_eol())
+            pp_error("invalid filename for #line directive");
     }
     if (src != 0) {
         /* the string's contents, escapes left as written */
@@ -2511,15 +2836,77 @@ static void pp_line_directive(void) {
     pp_sync();
 }
 
+/* The conditional state at each parser lexer mark (ps_lex_mark).  A
+ * peek that lexes past a directive runs it, and the rewind lexes it
+ * again: SQLite's `= {` then #ifdef SQLITE_ASCII (the braced-string
+ * peek) pushed its level twice, and pp_dep stayed one deep to the end
+ * of the file -- unseen until an unterminated #if became an error. */
+#define PP_MK_MAX 8
+static int pp_mk_dep[PP_MK_MAX];
+static int pp_mk_skip[PP_MK_MAX];
+static int pp_mk_incdepth[PP_MK_MAX];
+static int pp_mk_stk[PP_MK_MAX * PP_MAX_IF];
+static int pp_mk_taken[PP_MK_MAX * PP_MAX_IF];
+static int pp_mk_elsed[PP_MK_MAX * PP_MAX_IF];
+
+static void pp_cond_save(int d) {
+    int i;
+    pp_mk_dep[d] = pp_dep;
+    pp_mk_skip[d] = pp_skip;
+    pp_mk_incdepth[d] = pp_incdepth;
+    i = 0;
+    while (i < pp_dep) {
+        pp_mk_stk[d * PP_MAX_IF + i] = pp_stk[i];
+        pp_mk_taken[d * PP_MAX_IF + i] = pp_taken[i];
+        pp_mk_elsed[d * PP_MAX_IF + i] = pp_elsed[i];
+        i = i + 1;
+    }
+}
+
+static void pp_cond_restore(int d) {
+    int i;
+    pp_dep = pp_mk_dep[d];
+    pp_skip = pp_mk_skip[d];
+    pp_incdepth = pp_mk_incdepth[d];
+    i = 0;
+    while (i < pp_dep) {
+        pp_stk[i] = pp_mk_stk[d * PP_MAX_IF + i];
+        pp_taken[i] = pp_mk_taken[d * PP_MAX_IF + i];
+        pp_elsed[i] = pp_mk_elsed[d * PP_MAX_IF + i];
+        i = i + 1;
+    }
+}
+
+/* The if-section's shape (6.10.1): #elif and #else inside one, #else
+ * once and last, #endif closing one -- in a skipped group too. */
+static void pp_cond_check(char *name) {
+    int el;
+    int ei;
+    el = strcmp(name, "else") == 0;
+    ei = strcmp(name, "elif") == 0;
+    if (!el && !ei && strcmp(name, "endif") != 0) return;
+    if (pp_dep == 0) {
+        if (el) pp_error("#else without #if");
+        if (ei) pp_error("#elif without #if");
+        pp_error("#endif without #if");
+    }
+    if ((el || ei) && pp_elsed[pp_dep - 1]) pp_error(el ? "#else after #else" : "#elif after #else");
+    if (el) pp_elsed[pp_dep - 1] = 1;
+}
+
 static void pp_directive(void) {
     char name[256];
     int i;
 
     pp_skip_ws();
     pp_read_name(name);
+    pp_cond_check(name);
 
     /* When skipping, only track nesting and check elif/else transitions */
     if (pp_skip) {
+        /* An included file that ends inside a skipped group: its popdir
+         * marker is met while skipping. */
+        if (strcmp(name, "s12cc_popdir") == 0) pp_error("unterminated conditional directive");
         if (strcmp(name, "ifdef") == 0 || strcmp(name, "ifndef") == 0 ||
             strcmp(name, "if") == 0) {
             if (pp_dep >= PP_MAX_IF) {
@@ -2527,6 +2914,7 @@ static void pp_directive(void) {
                 exit(1);
             }
             pp_stk[pp_dep] = pp_skip;
+            pp_elsed[pp_dep] = 0;
             pp_taken[pp_dep] = 1;  /* suppress nested elif evaluation */
             pp_dep = pp_dep + 1;
             /* Stay in skip mode */
@@ -2579,6 +2967,7 @@ static void pp_directive(void) {
             exit(1);
         }
         pp_stk[pp_dep] = pp_skip;
+        pp_elsed[pp_dep] = 0;
         pp_taken[pp_dep] = 0;
         val = pp_ev_expr();  /* evals, skip_line, sync */
         if (val) {
@@ -2597,6 +2986,7 @@ static void pp_directive(void) {
             exit(1);
         }
         pp_stk[pp_dep] = pp_skip;
+        pp_elsed[pp_dep] = 0;
         pp_taken[pp_dep] = 0;
         if (pp_is_defined(name)) {
             pp_taken[pp_dep] = 1;
@@ -2616,6 +3006,7 @@ static void pp_directive(void) {
             exit(1);
         }
         pp_stk[pp_dep] = pp_skip;
+        pp_elsed[pp_dep] = 0;
         pp_taken[pp_dep] = 0;
         if (!pp_is_defined(name)) {
             pp_taken[pp_dep] = 1;
@@ -2686,7 +3077,14 @@ static void pp_directive(void) {
         return;
     }
 
-    /* Unknown directive (#pragma, etc.) — skip */
+    /* #pragma is implementation-defined, and skipped; a lone # is the
+     * null directive.  Any other name in a live group is not a
+     * directive (6.10p3): #frobnicate was skipped without a word. */
+    if (strcmp(name, "pragma") != 0) {
+        pp_skip_ws();
+        if (name[0] != 0 || (lex_src[lex_pos] != 10 && lex_src[lex_pos] != 13 && lex_src[lex_pos] != 0))
+            pp_error("invalid preprocessing directive");
+    }
     pp_skip_line();
     pp_sync();
 }

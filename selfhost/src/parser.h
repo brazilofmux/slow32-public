@@ -528,10 +528,13 @@ static int ps_fp_store(int *ptys, int *pctys, int np);
 
 static void next(void) {
     int di;
+    int bol;
     while (1) {
         if (pp_skip) {
             pp_fast_skip_to_directive();
+            lex_bol = 1;
             if (lex_pos >= lex_len) {
+                pp_error("unterminated conditional directive");
                 lex_tok = TK_EOF;
                 pp_sync();
                 return;
@@ -539,6 +542,8 @@ static void next(void) {
             pp_sync();
         }
         lex_next();
+        bol = lex_bol;
+        lex_bol = 0;
         /* A backslash-newline outside a directive or literal is a line
          * splice (translation phase 2), which the scanner has no rule for
          * and stops on as if at end of input: step over it and go on.
@@ -547,7 +552,11 @@ static void next(void) {
             if (lex_src[lex_pos + 1] == 10) { lex_pos = lex_pos + 2; lex_line = lex_line + 1; pp_sync(); continue; }
             if (lex_src[lex_pos + 1] == 13 && lex_src[lex_pos + 2] == 10) { lex_pos = lex_pos + 3; lex_line = lex_line + 1; pp_sync(); continue; }
         }
-        if (lex_tok == TK_HASH) { pp_directive(); continue; }
+        if (lex_tok == TK_EOF && lex_pos >= lex_len && pp_dep > 0)
+            pp_error("unterminated conditional directive");
+        /* A # begins a directive only as a line's first token: one a
+         * macro produced is a stray token (6.10p8: EMPTY # define Z). */
+        if (lex_tok == TK_HASH && bol) { pp_directive(); continue; }
         if (pp_skip) { continue; }
         /* offsetof is a keyword only where no macro of that name is
          * defined: arguments are expanded as text (pp_preexpand), and a
@@ -2546,6 +2555,7 @@ static int ps_sizeof_node_mty(Node *n) {
 #define PS_MK_MAX 8
 static int ps_mk_depth;
 static int ps_mk_tok[PS_MK_MAX];
+static int ps_mk_bol[PS_MK_MAX];
 static int ps_mk_val[PS_MK_MAX];
 static int ps_mk_slen[PS_MK_MAX];
 static int ps_mk_rcs[PS_MK_MAX];
@@ -2564,7 +2574,9 @@ static void ps_lex_mark(void) {
     ps_mk_rcs[d] = lex_rcs; ps_mk_ract[d] = lex_ract;
     ps_mk_rp[d] = lex_rp; ps_mk_rts[d] = lex_rts; ps_mk_rte[d] = lex_rte;
     ps_mk_line[d] = lex_line;
+    ps_mk_bol[d] = lex_bol;
     memcpy(ps_mk_str + d * LEX_STR_SZ, lex_str, lex_slen + 1);
+    pp_cond_save(d);
     ps_mk_depth = d + 1;
     pp_peek_depth = pp_peek_depth + 1;
 }
@@ -2581,7 +2593,9 @@ static void ps_lex_rewind(void) {
     lex_rcs = ps_mk_rcs[d]; lex_ract = ps_mk_ract[d];
     lex_rp = ps_mk_rp[d]; lex_rts = ps_mk_rts[d]; lex_rte = ps_mk_rte[d];
     lex_line = ps_mk_line[d];   /* the newlines read past the mark come again */
+    lex_bol = ps_mk_bol[d];
     memcpy(lex_str, ps_mk_str + d * LEX_STR_SZ, ps_mk_slen[d] + 1);
+    pp_cond_restore(d);     /* directives read past the mark run again */
     ps_mk_depth = d;
     pp_peek_depth = pp_peek_depth - 1;
 }

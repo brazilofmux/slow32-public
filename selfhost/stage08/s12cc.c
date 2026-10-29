@@ -296,6 +296,9 @@ int main(int argc, char **argv) {
 
     /* Lex + Parse */
     lex_init(src, n);
+    /* lex_init copied it into lex_src: 12MB back to the heap, where
+     * SQLite's parse had come within a megabyte of the end. */
+    free(src);
     prog = parse_program();
 
     /* Semantic analysis (type propagation) */

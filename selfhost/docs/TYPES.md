@@ -396,6 +396,33 @@ and a power-of-two divisor is a shift or a mask, as clang does --
 SQLite has 19 fewer such calls than before.  Probe
 `6.5.3.4-sizeof-size-t`.
 
+**S5, the preprocessor's constraints** (2026-10-28): the 30 ACCEPTS in
+6.10 are now errors (`pp_error`, at the presumed file and line).  The
+if-section's shape -- `#else` once and last, `#elif` not after it,
+`#endif` with an `#if`, every section closed in the file it opened in,
+in skipped groups too; `#if` must be one whole constant expression (an
+empty one, a dangling operator, `=`, a floating constant), `defined`
+needs a name; an unknown directive name in a live group; `#include`
+and `#line` operands (and `#include MACRO` now works, 6.10.2p4);
+`#define`'s rules -- unique parameters, white space after an
+object-like name, `__VA_ARGS__` only in a variadic macro, `#` before a
+parameter, `##` at neither end, `defined` and the predefined names
+neither defined nor undefined; a redefinition must match (6.10.3p2: kind,
+parameters, and the list with white-space runs as one space --
+`pp_dsig`); too many arguments; and a `#` begins a directive only as a
+line's first token (`lex_bol`), so `EMPTY # define Z 1` is not one.
+Four findings on the way.  `#if` never expanded a function-like macro:
+SQLite's `__has_extension(c_atomic)`, defined as 0, came out 0 because
+the call was dropped with the rest of the line (`pp_ev_call`).  `#if`
+character constants skipped escapes the same way.  A parser peek that
+lexed past a directive ran it twice -- SQLite's `= {` then `#ifdef
+SQLITE_ASCII` pushed a level that stayed to the end of the file; a
+lexer mark now saves the conditional state (`pp_cond_save`).  And the
+compiler read SQLite within a megabyte of its heap: s12cc.c kept the
+12MB input buffer after copying it into `lex_src`, and a `strdup` that
+came back NULL showed up as an unterminated `#if` 54,000 lines on.
+SQLite's assembly is byte-identical.
+
 ## Constraints on the work
 
 - stage07 builds stage08: the new code keeps stage07's dialect (ints

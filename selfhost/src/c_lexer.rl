@@ -150,6 +150,7 @@ static int  lex_fval_hi;   /* high 32 bits for double literals */
 static int  lex_fty;       /* TY_FLOAT or TY_DOUBLE for float literals */
 static char lex_str[LEX_STR_SZ];
 static int  lex_slen;
+static int  lex_bol;       /* 1: no token yet on this line -- a # here begins a directive (6.10p2) */
 static int  lex_painted;   /* 1: the identifier was painted (pp_rescan_region), never to be replaced */
 
 /* For lex_pos compatibility (parser uses it for #include save/restore) */
@@ -793,7 +794,7 @@ static void lex_parse_id(char *ts, char *te) {
 
         # --- Whitespace ---
         [ \t\r\f\v]+ => { /* skip */ };
-        '\n' => { lex_line = lex_line + 1; };
+        '\n' => { lex_line = lex_line + 1; lex_bol = 1; };
 
         # --- Line comment ---
         '//' [^\n]* => { /* skip */ };
@@ -931,6 +932,7 @@ void lex_init(char *src, int len) {
     lex_src[i] = 0;
     lex_len = i;
     lex_line = 1;
+    lex_bol = 1;
     lex_col = 1;
     lex_tok = TK_EOF;
     lex_val = 0;
