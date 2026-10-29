@@ -83,7 +83,7 @@ for (size_t i = 0; i < p->len; i++) {
 ## Reproduction
 
 ```bash
-# From /ztank/secret/sdennis/regal
+# From ~/regal
 cd src/regal
 
 # Build without barrier (broken)
@@ -91,7 +91,7 @@ cd src/regal
 ./build-slow32.sh
 
 # Test
-cd /ztank/secret/sdennis/regal
+cd ~/regal
 ~/slow-32/tools/emulator/slow32 ./src/regal/regal.s32x stats
 # Result: Companies: 0 / 4, Accounts: 0 / 512, etc.
 

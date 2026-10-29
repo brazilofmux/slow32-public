@@ -1,5 +1,11 @@
 # The Engine Room
 
+> Status 2026-10-29: the plan of a push, not a contract.  Its rules
+> were that push's working rules; nothing here was expected to be
+> finished as written or to stay unchanged.  The LLVM backend freeze
+> below, for one, has since lapsed: the backend gained tail calls,
+> shrink-wrapping and the zero-as-r0 and `%lo` folds in October 2026.
+
 Declared 2026-08-23, from the Redmond condo, the evening the ppu reel
 froze the last graphics spec. The 1987 desk (1987-desk.md) is the
 showroom: the apps, the glasses, the culture. This document is the
@@ -830,7 +836,8 @@ change those would have needed — carrying through f77, stage08 and
   workload (standing rule, reaffirmed).
 - No parallel improvement of the LLVM backend — it is frozen except
   for bugs the differential harness finds. Improving both compilers
-  at once destroys the oracle.
+  at once destroys the oracle.  (A rule of the push; lapsed since --
+  see the status note at the top.)
 - No leg starts without its number: leg 1 starts with a profile,
   leg 2 has its baseline, leg 3's gates are enumerated above.
 

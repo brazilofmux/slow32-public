@@ -1,10 +1,12 @@
 # Selfhost SHA256 Checksums
 
-> Status 2026-10-29: stages 01-04 are current.  The stage05-08 sums date
-> from 2026-08-27 and predate the in-place repairs since (stage05/06
-> `hir_opt.h` 2026-10-14, stage07 selfhost ISSUES-76 and ISSUES-92,
-> stage08 every kit batch); regenerate them before running
-> `verify-emu-sums.sh` on those stages.
+> Stages 05-08 regenerated 2026-10-29 (tree at b8942204), after the in-place
+> repairs since 2026-08-27 (stage05/06 `hir_opt.h`, stage07 selfhost
+> ISSUES-76 and ISSUES-92, stage08's C11 work).  Stages 01-08 rebuilt to
+> these sums under `slow32-dbt`, `slow32-fast` and `slow32` on an Apple
+> M5 Max.  stage08 is the moving head: its sums change with its sources,
+> so refresh them (run `verify-emu-sums.sh`, take the new sums) when
+> stage08 changes.
 
 All platforms and emulators produce bit-identical artifacts.
 
@@ -60,34 +62,34 @@ All platforms and emulators produce bit-identical artifacts.
 
 - d4015589b90ebacf001fb2f2dbd2e36b88c606bcdac605115b22f73c96e8faeb  s32-as.s32x
 - 38e80138287bc650c827a5fe60baf92bda839b182eac27714b5a2ca7c464745b  s32-ld.s32x
-- 4e2553f7fe2247fe7263218ac87c176cd288348ac5704c325727843e22c8aeb8  cc.s32x
+- 159d5c7e25d2f42921ff0d9fcb915c5475fb02c2030827fa5589c702e9e92b9f  cc.s32x
 - 5f1ff425e5145f1320037e15795efeaa4855da2a6ec26336702f8ca804c73f6c  slow32dump.s32x
 - 8eb1944677a4aecd62915bbb9798e1f306fa08747439807fb009573031464c80  slow32dis.s32x
 - b9277ad1321c76d47b8a7af2f793f39d422d19fcaa90272020b388ebb2e9101c  s32-ar.s32x
 
 ## Stage 06 (fixed-point proven)
 
-- 2d6164f8613400db323238f2e69ea4ba66cf5e588cfe0b8624712fe105a1e59f  cc.s32x
+- ab90fb01e7e45b884bbfb82121d6d929e9a900862533d94da67565cf7067014e  cc.s32x
 - 4d4289a4be0981ac94747b6e1f2367d1299792e8b942608888f77465dcc5a71b  slow32dis.s32x
-- 6145e162904dfd7708ac80dd8a2e50bc4f3a16695978e3c130798018cec178cf  s32-ar.s32x
-- 2d393c181459b43f9f1f560fe848658f5a1651d15cc5d6d03883c18dec5353e9  s32-as.s32x
-- 8cab38cb9a77ca5fc140cba589eacf07103e6406671bb2c53614ba3a0cb1a657  s32-ld.s32x
+- a66aac753b78debc7c3c22b33a03c7412ea6308d4a8331bac0bfee22ff592349  s32-ar.s32x
+- cab6553b0519090179ef327fc0a196d29b70378db07d42b0a797c346f90af6ce  s32-as.s32x
+- a30c0d101153888f82926cc44ce1c85aa71dc9586343c59fb89f53e661c4c4d0  s32-ld.s32x
 - e67b2f1f6519ce643bc81ff3ba202cc064dfeba74fbce6e0945e1937cb237f20  slow32dump.s32x
 
 ## Stage 07
 
-- 868208e7fc76d11fce2b1d70187eacb0d033105efdd266d3e1549ca169b5de91  s32-as.s32x
-- 789d955845e39d721188e63b644414c886bae3b88221b6ee8a0897e56646bbec  cc.s32x
-- 8bf82cf422aa55662bf0b004797aa5cd9301c815a083ba7116a948a9c9f68878  slow32dump.s32x
-- a73f8673f628a427ee2c23e5c1ce9bf6cccdfe80f0391600a3cb4862263a8bbd  slow32dis.s32x
-- bfdaf67b543f0bb0a29065dece1a00d5d1026cb76e3f2105f266c2dab198516b  s32-ar.s32x
-- e1b2cc3a441ab9a560756f332115f49842133476647025fcd24fe6386904415c  s32-ld.s32x
+- 40f93ea67db2ccc3f956fd186af21827427553fb5cfc1a37e908a73a544cdbfc  s32-as.s32x
+- ee0926dd0909618c76fd9c88088663f307fe6802bbc4585b86f4c55605d0c512  cc.s32x
+- da8f1c429a599b9bba1553f79140ef05000d4c902354e34f3c06fb072144e2d7  slow32dump.s32x
+- 60a7333e3dbd142c509ebf877f23e7ae8435651cb3a35027c402a3f6e4e0b827  slow32dis.s32x
+- afe81bfc1ca56575152c5bd40b8475295cca6cdc89b5748dc847470b8558c483  s32-ar.s32x
+- ef348118cf1e5b525b81445c43a4d8d74781f24ab541a650e0de8454b1334a21  s32-ld.s32x
 
 ## Stage 08
 
-- 740fbec99b57c5d83c10d19a1ed11400560ed3eb7be46d272c130938daaaf07e  cc.s32x
-- ac2f0a1c8cfcd6d204560cb75d577b5fccf3bb53c51aa3baffd9ff7c029df26e  s32-ar.s32x
-- 20c46ed5ad6595c070f7abf1411b4b73f3bd963a340fdbf52ac9144585f9946d  s32-as.s32x
-- 8364f4e5a78cc17c50c1013ef9de16901358c3c2af654cbfbfaf8d6ce573856f  s32-ld.s32x
-- 45c918b6e2ad9a063bf9f2fa9b6e6c0f75253bf7ec90bb8b030b101288e2de82  slow32dis.s32x
-- 4a5a940837f246f45f5f6afc07ac48fbc992ed0246382c1260c522682969ce61  slow32dump.s32x
+- 30871cc5aed8da8180f0493a748669fed107417836d6ba64f4669f3557362c03  cc.s32x
+- 6ca483fa8dab1ede122fe59f3a1ab7c13b96fb423be2fefff692107e9ae376cb  s32-ar.s32x
+- 6781571cdbd0d8050e222abc6b0e78795929c4c03499ca8cf8005fba6c1d0feb  s32-as.s32x
+- e859937912bad591af48361ea3b24897664b12fbb40213b87aa2b6180c81ee99  s32-ld.s32x
+- f93ce93d495631e6f8e1b74124bdd4f8aaa7333fbf81006e6a5688735f2c5272  slow32dis.s32x
+- dc64f040340a581765953d486c5d804c958e9c5f77a0a380b27ed221ef772b1d  slow32dump.s32x

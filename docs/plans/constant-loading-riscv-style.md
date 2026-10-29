@@ -31,7 +31,7 @@ Result:
 
 ## Changes Required
 
-### 1. LLVM Backend (/ztank/secret/sdennis/llvm-project/llvm/lib/Target/SLOW32/)
+### 1. LLVM Backend (~/llvm-project/llvm/lib/Target/SLOW32/)
 
 **SLOW32ISelDAGToDAG.cpp - materializeImmediate()**
 
@@ -45,7 +45,7 @@ Result:
 - Use ADDI instead of ORI for constant materialization
 - May need custom pattern for immediate loading
 
-### 2. Assembler (/ztank/secret/sdennis/slow-32/assembler/slow32asm.c)
+### 2. Assembler (~/slow-32/tools/assembler/slow32asm.c)
 
 **encode_u() function**
 

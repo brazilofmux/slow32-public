@@ -17,8 +17,11 @@ LIBC="$RUNTIME/libc_debug.s32a"
 LIBS32="$RUNTIME/libs32.s32a"
 LIBS32CXX="$RUNTIME/libs32cxx.s32a"   # the C++ run time (guards, new/delete, ...)
 
-# C++ flags
-CPP_FLAGS="-target slow32-unknown-none -fno-exceptions -fno-rtti -nostdinc++ -O1"
+# C++ flags: exceptions and RTTI on; libs32cxx.s32a carries the EH run time
+CPP_FLAGS="-target slow32-unknown-none -fexceptions -frtti -funwind-tables -nostdinc++ -O1"
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
 
 echo "=== SLOW32 C++ Build & Run Tests ==="
 echo ""
@@ -31,7 +34,7 @@ for src in "$SCRIPT_DIR"/*.cpp; do
     echo -n "[$name] "
 
     # Compile C++ -> LLVM IR
-    ll_file="/tmp/${name}.ll"
+    ll_file="$WORK/${name}.ll"
     if ! "$CLANG" $CPP_FLAGS -S -emit-llvm "$src" -o "$ll_file" 2>/dev/null; then
         echo "FAIL (clang)"
         ((failed++))
@@ -39,7 +42,7 @@ for src in "$SCRIPT_DIR"/*.cpp; do
     fi
 
     # LLVM IR -> Assembly
-    s_file="/tmp/${name}.s"
+    s_file="$WORK/${name}.s"
     if ! "$LLC" -mtriple=slow32-unknown-none "$ll_file" -o "$s_file" 2>/dev/null; then
         echo "FAIL (llc)"
         ((failed++))
@@ -47,15 +50,15 @@ for src in "$SCRIPT_DIR"/*.cpp; do
     fi
 
     # Assembly -> Object
-    o_file="/tmp/${name}.s32o"
-    if ! "$ASM" "$s_file" "$o_file" 2>/dev/null; then
+    o_file="$WORK/${name}.s32o"
+    if ! "$ASM" "$s_file" "$o_file" >/dev/null 2>&1; then
         echo "FAIL (asm)"
         ((failed++))
         continue
     fi
 
     # Link
-    x_file="/tmp/${name}.s32x"
+    x_file="$WORK/${name}.s32x"
     if ! "$LD" -o "$x_file" "$CRT0" "$o_file" "$LIBS32CXX" "$LIBC" "$LIBS32" 2>/dev/null; then
         echo "FAIL (link)"
         ((failed++))
@@ -83,8 +86,5 @@ done
 
 echo ""
 echo "=== Results: $passed passed, $failed failed ==="
-
-# Cleanup
-rm -f /tmp/*.ll /tmp/*.s /tmp/*.s32o /tmp/*.s32x 2>/dev/null
 
 exit $failed

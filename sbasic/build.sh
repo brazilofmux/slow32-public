@@ -45,4 +45,4 @@ echo "OK"
 
 echo ""
 echo "Success! Run with:"
-echo "  echo 'PRINT \"hello\"' | ../tools/emulator/slow32-fast sbasic.s32x"
+echo "  printf 'PRINT \"hello\"\\nRUN\\n' | ../tools/emulator/slow32-fast sbasic.s32x"

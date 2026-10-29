@@ -64,7 +64,7 @@ for (size_t i = 0; i < len; i++) {
 
 ### Files for Reproduction
 
-- `/ztank/secret/sdennis/regal/src/regal/csv.c` - The CSV parser that exhibits the bug
+- `~/regal/src/regal/csv.c` - The CSV parser that exhibits the bug
 - Test by building regal for SLOW-32 and running `regal stats`
 
 ---
@@ -157,7 +157,7 @@ Cannot use lower optimization levels to work around Issue 1.
 
 Build regal for SLOW-32 and run:
 ```bash
-cd /ztank/secret/sdennis/regal
+cd ~/regal
 ./src/regal/build-slow32.sh
 ~/slow-32/tools/emulator/slow32 ./src/regal/regal.s32x stats
 ```

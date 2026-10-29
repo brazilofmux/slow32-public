@@ -5,7 +5,7 @@
 ## Release Status
 
 - ✅ Development repository committed (`~/slow-32`)
-- ✅ Public repository staged (`/ztank/secret/sdennis/slow32-public`)
+- ✅ Public repository staged (`~/slow32-public`)
 - ⏳ Awaiting review before pushing externally
 
 ## Changes Ready for Public Release
@@ -78,7 +78,7 @@ The LLVM backend changes in `llvm-backend/SLOW32/` should be synchronized with t
 ### Public Repository Checklist
 
 ```
-cd /ztank/secret/sdennis/slow32-public
+cd ~/slow32-public
 git diff            # review staged changes
 git add -A
 git commit -m "Add complete 64-bit integer support

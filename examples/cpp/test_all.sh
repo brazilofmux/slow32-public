@@ -8,9 +8,9 @@ RUNTIME_INC="$SCRIPT_DIR/../../runtime/include"
 CLANG="$LLVM_BIN/clang++"
 LLC="$LLVM_BIN/llc"
 
-# Standard flags for embedded C++ without exceptions/RTTI
+# C++ with exceptions and RTTI (libs32cxx.s32a carries the EH run time)
 # Note: Don't use -ffreestanding as it mangles main()
-CPP_FLAGS="-target slow32-unknown-none -fno-exceptions -fno-rtti -nostdinc++ -O1"
+CPP_FLAGS="-target slow32-unknown-none -fexceptions -frtti -funwind-tables -nostdinc++ -O1"
 
 echo "=== SLOW32 C++ Compilation Tests ==="
 echo "Using clang: $CLANG"

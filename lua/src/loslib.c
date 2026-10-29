@@ -107,7 +107,7 @@
 /* }================================================================== */
 
 
-/* SLOW-32: no process/filesystem support for system, tmpnam, remove, rename */
+/* SLOW-32: no process support for system */
 #if !defined(l_system)
 #define l_system(cmd) ((cmd) == NULL ? 0 : -1)
 #endif

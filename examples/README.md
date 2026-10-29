@@ -26,8 +26,8 @@
 - `cpp/` — small C++ programs (classes, templates, lambdas, exceptions);
   `cpp/build_and_run.sh` builds and runs them; `cpp/test_all.sh` only
   compiles each to assembly and lists the C++ runtime symbols it needs.
-  Both compile with `-fno-exceptions -fno-rtti`, so `12_exception_basic.cpp`
-  fails under both; build it with `s32c++` (toolchain image).
+  Both compile with exceptions and RTTI on and link `libs32cxx.s32a`,
+  the run time that carries them.
 
 - `csvbench/` — splits CSV validation across several emulator instances
   (`gen.sh`, then `bench.sh`).

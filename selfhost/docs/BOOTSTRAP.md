@@ -176,8 +176,10 @@ was kept is the rule, not the oracle.
 `sha256sums.md` records bit-identical output across a Raspberry Pi 4, a Ryzen 5
 3600, a Celeron N4500 and a Lenovo Cortex-A720/X4, under `s32-emu`,
 `slow32-fast` and `slow32-dbt` (stages 4/5/6). The naive interpreter on a Pi and
-the JIT on a Ryzen emit the same bytes. Its stage05-08 sums date from
-2026-08-27 and predate the in-place repairs since (see the note at its top).
+the JIT on a Ryzen emit the same bytes. The stage05-08 sums were
+regenerated 2026-10-29 after the in-place repairs and agree under
+`slow32`, `slow32-fast` and `slow32-dbt`; stage08's move with every
+change to its sources, so refresh them when stage08 changes.
 
 ---
 

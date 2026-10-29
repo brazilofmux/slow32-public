@@ -64,6 +64,25 @@ Current test status: 17/17 passing (2026-10-29).
 - **Risk:** Performance will degrade as the number of atoms grows toward `MAX_ATOMS (2048)`.
 - **Suggested Fix:** Implement a simple hash table for atom lookups.
 
+## October 2026 Findings (README pass, 2026-10-29)
+
+### 10) Cut is not local to its clause (High: wrong answers)
+
+- **Problem:** `cut_barrier` is never set when a clause body is entered, so
+  `!` removes every choice point back to the start of the query instead of
+  those created since its clause was called.
+- **Repro:** `b(1). b(2). c(1). c(2). once_b(X) :- b(X), !.` then
+  `?- c(Y), once_b(X), Y > 1.` answers `false.`; it must succeed with
+  `Y = 2` (the cut in `once_b` must not discard `c/1`'s choice point).
+- **Coverage gap:** `tests/cut.pl` only cuts at the top of a query.
+
+### 11) Reader takes `name (` as `name(` (Medium)
+
+- **Problem:** a space between an atom and `(` still starts an argument
+  list, so a parenthesised operand after a prefix operator is misread.
+- **Repro:** `?- \+ (fail, true).` is read as `\+/2` and fails (it must
+  succeed); `?- (A ; B).` is a syntax error.
+
 ---
 
 ## Completed / Fixed Items
