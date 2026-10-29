@@ -1233,6 +1233,7 @@ static int pp_subst(int di, int *rfrom, int *rto, int *pre_off, int *pre_len, in
 
 static int pp_expand_func(int di) {
     int call_nl;
+    int name_end;
     int pos;
     int ins_pos;
     int depth;
@@ -1256,9 +1257,12 @@ static int pp_expand_func(int di) {
 
     /* pos starts at current Ragel scan position (after identifier) */
     pos = lex_rp - lex_src;
+    name_end = pos;
 
-    /* Skip whitespace */
-    while (lex_src[pos] == 32 || lex_src[pos] == 9) pos = pos + 1;
+    /* Skip white space, newlines too: SQ then (7) on the next line is
+     * still the invocation (6.10.3p10).  Their count is kept below. */
+    while (lex_src[pos] == 32 || lex_src[pos] == 9 || lex_src[pos] == 10 || lex_src[pos] == 13)
+        pos = pos + 1;
 
     /* If no '(', not an invocation */
     if (lex_src[pos] != 40) return 0;
@@ -1345,7 +1349,7 @@ static int pp_expand_func(int di) {
         }
     }
 
-    call_nl = pp_call_newlines(ins_pos, pos);
+    call_nl = pp_call_newlines(name_end, pos);
     if (nargs > pp_dnpar[di] && !pp_dvar[di]) pp_error("too many arguments to function-like macro");
 
     /* The parameter slots: one per argument, and for a variadic macro
@@ -1435,6 +1439,13 @@ static int pp_expand_func(int di) {
         pp_sync();
         return 1;
     }
+    /* In place, the name goes too: left before the '(' it was read again
+     * after a parser peek's rewind -- disabled by now, an identifier, so
+     * k CAT(+, =) 4 reached the parser as `k CAT += 4`. */
+    ins_pos = name_end;
+    while (ins_pos > 0 && pp_is_idch(lex_src[ins_pos - 1])) ins_pos = ins_pos - 1;
+    remove_len = pos - ins_pos;
+    delta = exp_len - remove_len;
     pp_dis_shift(pos - 1, delta);
     pp_dis_push(di, pos + delta);
     pp_xend = ins_pos + exp_len;
@@ -1688,6 +1699,37 @@ static void pp_define_sig(char *name) {
     }
 }
 
+/* ## in an object-like macro (6.10.3.3): with no parameters, the
+ * pastes are the same at every use, and are made here, in the body --
+ * the operator and the white space around it taken out, so ab ## cd is
+ * abcd.  It was copied as written, and `ab ## cd` reached the parser. */
+static void pp_paste_object_body(char *b) {
+    int r;
+    int w;
+    int q;
+    r = 0;
+    w = 0;
+    q = 0;
+    while (b[r] != 0) {
+        if (q == 0 && b[r] == 35 && b[r + 1] == 35) {
+            while (w > 0 && (b[w - 1] == 32 || b[w - 1] == 9)) w = w - 1;
+            r = r + 2;
+            while (b[r] == 32 || b[r] == 9) r = r + 1;
+            continue;
+        }
+        if (q == 0 && (b[r] == 34 || b[r] == 39)) q = b[r];
+        else if (q != 0 && b[r] == 92 && b[r + 1] != 0) {
+            b[w] = b[r];
+            w = w + 1;
+            r = r + 1;
+        } else if (q != 0 && b[r] == q) q = 0;
+        b[w] = b[r];
+        w = w + 1;
+        r = r + 1;
+    }
+    b[w] = 0;
+}
+
 static void pp_define_done(char *name) {
     int i;
     i = pp_find(name);
@@ -1824,6 +1866,7 @@ static void pp_define(void) {
             /* More than a number: store the full text body. */
             lex_pos = save_pos;
             bi = pp_read_body_text(pp_def_body);
+            pp_paste_object_body(pp_def_body);
             pp_add(name, 0);
             pp_dbody[pp_find(name)] = strdup(pp_def_body);
             pp_define_done(name);
@@ -1846,6 +1889,7 @@ static void pp_define(void) {
         /* Non-numeric value — store as text body */
         bi = pp_read_body_text(pp_def_body);
         pp_check_body(pp_def_body, 0, 0, pp_def_parms, 0);
+        pp_paste_object_body(pp_def_body);
         pp_add(name, 0);
         pp_dbody[pp_find(name)] = strdup(pp_def_body);
         pp_define_done(name);
@@ -1932,6 +1976,77 @@ static void pp_set_source_file(char *path) {
 /* Static predefs available for #ifdef / #if defined().  Dynamic
  * __LINE__ / __FILE__ are handled in next() so their values track the
  * current position. */
+#ifdef S12CC_HOSTED
+#include <time.h>
+#else
+long time(long *t);
+#endif
+
+/* __DATE__ "Mmm dd yyyy" and __TIME__ "hh:mm:ss" (6.10.8.1), from the
+ * clock -- or from SOURCE_DATE_EPOCH, for a build that is to come out
+ * the same each time.  The civil date from days since 1970 is Howard
+ * Hinnant's.  They were undefined. */
+static void pp_install_date_time(void) {
+    char *e;
+    long t;
+    int days;
+    int secs;
+    int z;
+    int era;
+    int doe;
+    int yoe;
+    int y;
+    int doy;
+    int mp;
+    int d;
+    int m;
+    char buf[16];
+    char *mon;
+    e = getenv("SOURCE_DATE_EPOCH");
+    if (e != 0) t = atoi(e);
+    else t = time(0);
+    if (t < 0) t = 0;
+    days = (int)(t / 86400);
+    secs = (int)(t % 86400);
+    z = days + 719468;
+    era = z / 146097;
+    doe = z - era * 146097;
+    yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    y = yoe + era * 400;
+    doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    mp = (5 * doy + 2) / 153;
+    d = doy - (153 * mp + 2) / 5 + 1;
+    m = mp < 10 ? mp + 3 : mp - 9;
+    if (m <= 2) y = y + 1;
+    mon = "JanFebMarAprMayJunJulAugSepOctNovDec" + 3 * (m - 1);
+    buf[0] = 34;
+    buf[1] = mon[0];
+    buf[2] = mon[1];
+    buf[3] = mon[2];
+    buf[4] = 32;
+    buf[5] = d >= 10 ? 48 + d / 10 : 32;
+    buf[6] = 48 + d % 10;
+    buf[7] = 32;
+    buf[8] = 48 + (y / 1000) % 10;
+    buf[9] = 48 + (y / 100) % 10;
+    buf[10] = 48 + (y / 10) % 10;
+    buf[11] = 48 + y % 10;
+    buf[12] = 34;
+    buf[13] = 0;
+    pp_add_cmdline_def("__DATE__", buf);
+    buf[1] = 48 + secs / 36000;
+    buf[2] = 48 + (secs / 3600) % 10;
+    buf[3] = 58;
+    buf[4] = 48 + (secs % 3600) / 600;
+    buf[5] = 48 + (secs % 600) / 60;
+    buf[6] = 58;
+    buf[7] = 48 + (secs % 60) / 10;
+    buf[8] = 48 + secs % 10;
+    buf[9] = 34;
+    buf[10] = 0;
+    pp_add_cmdline_def("__TIME__", buf);
+}
+
 static void pp_install_predefs(void) {
     pp_add("__STDC__", 1);
     /* 6.10.8.1: a hosted implementation (there is a full libc), and the
@@ -1943,6 +2058,7 @@ static void pp_install_predefs(void) {
      * below (6.10.8.3). */
     pp_add("__STDC_HOSTED__", 1);
     pp_add_cmdline_def("__STDC_VERSION__", "201112L");
+    pp_install_date_time();
     /* complex types and variable length arrays are optional in C11, and
      * not implemented: say so, as 6.10.8.3 has an implementation do */
     pp_add("__STDC_NO_COMPLEX__", 1);
@@ -2134,17 +2250,34 @@ static int pp_find_include(char *fname, int angle, char *path) {
 
 /* #include NAME, NAME an object-like macro whose replacement is
  * "file" or <file> (6.10.2p4).  Returns 1 with fname and *angle set. */
+static int pp_preexpand(int from, int to);
+static int pp_include_operand(char *b, char *fname, int *angle);
 static int pp_include_from_macro(char *fname, int *angle) {
-    char name[256];
     char *b;
-    int di;
+    int eol;
+    int off;
+    int ok;
+    /* the rest of the line, macro-replaced as text is (6.10.2p4):
+     * #include STR(inc/v1.h), a function-like macro, as well as NAME */
+    if (!pp_is_idstart(lex_src[lex_pos])) return 0;
+    eol = lex_pos;
+    while (lex_src[eol] != 10 && lex_src[eol] != 13 && lex_src[eol] != 0 &&
+           !(lex_src[eol] == 47 && (lex_src[eol + 1] == 47 || lex_src[eol + 1] == 42)))
+        eol = eol + 1;
+    off = pp_preexpand(lex_pos, eol);
+    pp_pre[off + pp_pre_n] = 0;
+    b = pp_pre + off;
+    while (*b == 32 || *b == 9) b = b + 1;
+    lex_pos = eol;
+    ok = pp_include_operand(b, fname, angle);
+    pp_pre_top = off;
+    return ok;
+}
+
+/* "file" or <file> from text b into fname: 1 when it is one. */
+static int pp_include_operand(char *b, char *fname, int *angle) {
     int fi;
     int close;
-    pp_read_name(name);
-    if (name[0] == 0) return 0;
-    di = pp_find(name);
-    if (di < 0 || pp_dnpar[di] >= 0 || pp_dbody[di] == 0) return 0;
-    b = pp_dbody[di];
     if (b[0] != 34 && b[0] != 60) return 0;
     close = b[0] == 34 ? 34 : 62;
     *angle = b[0] == 60;

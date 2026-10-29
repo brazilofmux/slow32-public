@@ -19,7 +19,7 @@
 6.10.1-unterminated-if-reject DIAG
 6.10.2-include-bare-reject DIAG
 6.10.2-include-computed PASS
-6.10.2-include-computed-angle REJECTS
+6.10.2-include-computed-angle PASS
 6.10.2-include-empty-reject DIAG
 6.10.2-include-missing-reject DIAG
 6.10.2-include-quoted PASS
@@ -32,7 +32,7 @@
 6.10.3-name-without-paren PASS
 6.10.3-no-space-after-name-reject DIAG
 6.10.3-object-like PASS
-6.10.3-paren-next-line REJECTS
+6.10.3-paren-next-line PASS
 6.10.3-redefine-different-reject DIAG
 6.10.3-redefine-identical PASS
 6.10.3-redefine-kind-reject DIAG
@@ -53,12 +53,12 @@
 6.10.3.2-stringize-comment PASS
 6.10.3.2-stringize-escapes PASS
 6.10.3.2-xstr PASS
-6.10.3.3-hash-hash-token WRONG
-6.10.3.3-object-paste REJECTS
+6.10.3.3-hash-hash-token PASS
+6.10.3.3-object-paste PASS
 6.10.3.3-paste PASS
 6.10.3.3-paste-at-end-reject DIAG
 6.10.3.3-paste-at-start-reject DIAG
-6.10.3.3-paste-punct REJECTS
+6.10.3.3-paste-punct PASS
 6.10.3.3-placemarker PASS
 6.10.3.4-no-recursion PASS
 6.10.3.4-painted-arg PASS
@@ -84,7 +84,7 @@
 6.10.8-define-defined-reject DIAG
 6.10.8-no-cplusplus PASS
 6.10.8-undef-predefined-reject DIAG
-6.10.8.1-date-time REJECTS
+6.10.8.1-date-time PASS
 6.10.8.1-file-in-header PASS
 6.10.8.1-file-line PASS
 6.10.8.1-stdc PASS
@@ -94,8 +94,8 @@
 6.10.8.3-feature-atomics PASS
 6.10.8.3-feature-complex PASS
 6.10.8.3-feature-vla OPTIONAL
-6.10.9-pragma-once REJECTS
-6.10.9-pragma-operator REJECTS
+6.10.9-pragma-once PASS
+6.10.9-pragma-operator PASS
 6.2.1-block-scope-forms PASS
 6.2.1-label-scope PASS
 6.2.1-scopes PASS
@@ -104,7 +104,7 @@
 6.2.2-linkage PASS
 6.2.2-linkage-conflict DIAG
 6.2.2-tentative PASS
-6.2.2-tentative-array REJECTS
+6.2.2-tentative-array PASS
 6.2.3-namespaces PASS
 6.2.4-compound-literal-lifetime PASS
 6.2.4-storage PASS
@@ -519,11 +519,11 @@
 6.9.1-storage-typedef DIAG
 6.9.1-typedef-function-def DIAG
 6.9.1-varargs-definition PASS
-6.9.2-extern-incomplete-struct REJECTS
+6.9.2-extern-incomplete-struct PASS
 6.9.2-extern-then-define PASS
 6.9.2-linkage-conflict DIAG
 6.9.2-static-tentative-incomplete DIAG
 6.9.2-tentative PASS
-6.9.2-tentative-array-completed REJECTS
-6.9.2-tentative-array-one REJECTS
+6.9.2-tentative-array-completed PASS
+6.9.2-tentative-array-one PASS
 6.9.2-two-initializers DIAG

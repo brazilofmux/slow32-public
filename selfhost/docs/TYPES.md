@@ -641,7 +641,24 @@ long`, `short unsigned int`; and two of signed and unsigned, or `long
 short`, refused).  `register` on a parameter; qualifiers and `static`
 inside an array parameter's brackets (`int a[restrict static 1]`);
 `_Static_assert` among a structure's members; one typedef declaring
-several names (`typedef int A, *AP;`).  `S12CC_CONSTRAINT_WARN=1` turns
+several names (`typedef int A, *AP;`).
+
+**REJECTS: tentative definitions and the preprocessor** (2026-10-29).
+`int arr[];` with no initializer is a tentative definition, one element
+unless a later declaration completes it (6.9.2p2) -- not with internal
+linkage (6.9.2p3), and a negative size is refused where the size is
+read (`ps_array_size`; -1 had been both "negative" and "no size");
+`extern struct pt pv;` may come before `pt` is complete.  `#include`'s
+operand is macro-replaced whole, as text (`pp_preexpand`), so
+`#include STR(inc/v1.h)` works; a function-like macro's `(` may come on
+a later line, its newlines counted; `##` in an object-like macro is
+pasted when it is defined; `__DATE__` and `__TIME__` exist, from the
+clock or `SOURCE_DATE_EPOCH`; and the `_Pragma` operator, from a macro
+too, `_Pragma("once")` as `#pragma once`.  One expander defect: in
+place (under a parser peek) a function-like expansion went in at the
+`(` and left the name before it, read again after the rewind,
+disabled by then -- `k CAT(+, =) 4` reached the parser as `k CAT += 4`.
+The name is replaced with the call now.  `S12CC_CONSTRAINT_WARN=1` turns
 the errors into warnings, to survey a corpus.
 
 ## Constraints on the work

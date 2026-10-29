@@ -568,6 +568,31 @@ static int ps_enum_value(void);
 /* --- Utilities --- */
 
 static void p_error(char *msg);
+static void next(void);
+
+/* The _Pragma operator (6.10.9): _Pragma ( string-literal ), the string
+ * destringized and taken as a #pragma -- only `once` does anything, as
+ * for the directive; the rest are skipped.  The cursor is on _Pragma.
+ * A macro may produce it: DO_PRAGMA(x) _Pragma(#x).  It was an
+ * undeclared identifier. */
+static void ps_pragma_operator(void) {
+    char *sp;
+    int n;
+    next();
+    if (lex_tok != TK_LPAREN) p_error("_Pragma takes a parenthesized string literal");
+    next();
+    if (lex_tok != TK_STRING) p_error("_Pragma takes a parenthesized string literal");
+    sp = lex_strpool + lex_str_off[lex_val];
+    n = lex_str_len[lex_val];
+    while (n > 0 && (*sp == 32 || *sp == 9)) { sp = sp + 1; n = n - 1; }
+    if (n >= 4 && strncmp(sp, "once", 4) == 0 && (n == 4 || sp[4] == 32) && pp_nonce < PP_MAX_ONCE) {
+        pp_once[pp_nonce] = strdup(pp_curfile);
+        pp_nonce = pp_nonce + 1;
+    }
+    next();
+    if (lex_tok != TK_RPAREN) p_error("_Pragma takes a parenthesized string literal");
+}
+
 static void next(void) {
     int di;
     int bol;
@@ -624,6 +649,10 @@ static void next(void) {
                     pp_emit_string_token("");
                 }
                 return;
+            }
+            if (lex_str[0] == 95 && strcmp(lex_str, "_Pragma") == 0) {
+                ps_pragma_operator();
+                continue;
             }
             /* keywords (6.4.1) of the complex types, which are not
              * implemented: as names they were taken as identifiers */
@@ -6881,6 +6910,24 @@ static Node *ps_local_prototype(char *nm, int ty) {
     return nd_block(NULL);
 }
 
+/* An array's size, read: positive (6.7.6.2p1) -- zero is GNU's, and
+ * taken.  (-1 is what the callers use for no size at all.) */
+static int ps_array_size(void) {
+    int n;
+    n = parse_const_int();
+    if (n < 0) p_error("array has a negative size");
+    return n;
+}
+
+/* An array declared with no size and no initializer: an extern
+ * reference, or a tentative definition, one element unless a later
+ * declaration completes it (6.9.2p2) -- but not one with internal
+ * linkage, which must be complete (6.9.2p3). */
+static int ps_tentative_count(int is_static) {
+    if (is_static) p_error("tentative definition with internal linkage has incomplete type");
+    return 1;
+}
+
 static Node *parse_stmt(void) {
     int tdac;
     int td_elem;
@@ -7952,7 +7999,8 @@ plain_name:
             decl_had_init = (lex_tok == TK_ASSIGN);
             ps_decl_objconst = decl_const;
             if (ty_is_struct(xty)) {
-                require_complete_type(xty, "incomplete global type");
+                /* extern struct pt pv; may precede pt's completion (6.7p7) */
+                if (!is_extern || decl_had_init) require_complete_type(xty, "incomplete global type");
                 if (is_extern && !decl_had_init)
                     idx = add_extern_global(nm, xty, ty_size(xty));
                 else
@@ -8029,7 +8077,7 @@ plain_name:
         next();
         count = -1;
         if (lex_tok != TK_RBRACK) {
-            count = parse_const_int();
+            count = ps_array_size();
         }
         expect(TK_RBRACK);
         g2cols = 0;
@@ -8129,13 +8177,9 @@ array_after_brackets:
                 return NULL;
             }
         } else {
-            if (count < 0) {
-                if (!is_extern) {
-                    p_error("array size required without initializer");
-                    return NULL;
-                }
-                count = 1;
-            }
+            /* an extern declaration, or a tentative definition: one element
+             * unless a later declaration completes it (6.9.2p2) */
+            if (count < 0) count = ps_tentative_count(is_static);
             require_complete_type(xty, "incomplete element type");
             if (is_extern) idx = add_extern_global(nm, xty + TY_PTR, ty_size(xty) * count);
             else           idx = add_defined_global(nm, xty + TY_PTR, ty_size(xty) * count);
