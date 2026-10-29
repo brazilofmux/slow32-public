@@ -113,9 +113,10 @@ for all future codegen). None blocking — parity is reached.
   empty.
 - **QEMU guest exit codes** ✅: `helper.c` exits with guest `r1` via
   `qemu_system_shutdown_request_with_code` (checked 2026-10-28: a program
-  returning 7 exits 7 under qemu, as under slow32). `run-differential.sh`
-  still compares qemu's output only; its header comment says qemu does not
-  propagate exit codes.
+  returning 7 exits 7 under qemu, as under slow32). Since 2026-10-29
+  `run-differential.sh` compares qemu's exit codes as well as its output
+  (138/138 agree; a wrapper that rewrites qemu's 42 to 7 makes
+  feature-exit-status diverge).
 - **x64 DBT back-edge fix validation** ✅: the x86-64 DBT runs the
   differential harnesses on Linux x86-64; `eb49434c` (2026-08-25) fixed an
   x64-only back-edge bug found that way.

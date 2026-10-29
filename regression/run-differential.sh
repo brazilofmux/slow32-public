@@ -11,8 +11,7 @@
 #   slow32       reference interpreter      output + exit code compared
 #   slow32-fast  predecoded interpreter     output + exit code compared
 #   slow32-dbt   dynamic binary translator  output + exit code compared
-#   qemu         qemu-system-slow32 (TCG)   output only (QEMU does not
-#                                           propagate guest exit codes)
+#   qemu         qemu-system-slow32 (TCG)   output + exit code compared
 #
 # Missing engines are reported as loud SKIPs, never silently dropped.
 # Tests with args.txt are skipped under QEMU (-kernel has no guest argv).
@@ -67,7 +66,7 @@ ENGINES=()
 SKIPPED_ENGINES=()
 for spec in "slow32-fast|$SLOW32_FAST|1" \
             "slow32-dbt|$SLOW32_DBT|1" \
-            "qemu|$QEMU_S32|0"; do
+            "qemu|$QEMU_S32|1"; do
     name="${spec%%|*}"
     path="$(echo "$spec" | cut -d'|' -f2)"
     if [ -x "$path" ]; then
