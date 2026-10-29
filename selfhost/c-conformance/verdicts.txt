@@ -121,7 +121,7 @@
 6.2.7-incompatible-func DIAG
 6.2.7-incompatible-redecl DIAG
 6.2.7-struct-compat DIAG
-6.2.8-alignas-stronger REJECTS
+6.2.8-alignas-stronger PASS
 6.2.8-alignment PASS
 6.2.8-alignof PASS
 6.3.1.1-bitfield-init PASS
@@ -390,9 +390,10 @@
 6.7.4-noreturn PASS
 6.7.4-stdnoreturn PASS
 6.7.5-alignas-bitfield DIAG
+6.7.5-alignas-local-frames PASS
 6.7.5-alignas-member PASS
 6.7.5-alignas-not-pow2 DIAG
-6.7.5-alignas-object REJECTS
+6.7.5-alignas-object PASS
 6.7.5-alignas-typedef DIAG
 6.7.5-alignas-weaker DIAG
 6.7.5-alignof PASS

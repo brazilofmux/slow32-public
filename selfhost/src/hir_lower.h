@@ -1440,6 +1440,7 @@ static int hl_inl_sel_one(Node *fn, int k) {
     if (hl_inl_taken[k] || hl_inl_recur[k]) return 0;
     if (fn->is_varargs) return 0;
     if (ty_is_struct(fn->ty)) return 0;
+    if (fn->bit_width > 4) return 0;    /* its frame is realigned: a caller's would not be */
     pp = fn->args;
     while (pp) {
         if (ty_is_struct(pp->ty)) return 0;

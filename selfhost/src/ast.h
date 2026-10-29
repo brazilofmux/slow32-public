@@ -246,7 +246,9 @@ struct Node {
     int is_static;    /* FUNC: 1 if `static` storage class — emit STB_LOCAL */
     int locals_size;  /* FUNC: total local stack bytes */
     int bit_off;      /* MEMBER: bit offset within storage unit (bit-fields) */
-    int bit_width;    /* MEMBER: bit-field width in bits; 0 = not a bit-field */
+    int bit_width;    /* MEMBER: bit-field width in bits; 0 = not a bit-field.
+                       * FUNC: the frame's alignment, when a local needs more
+                       * than 4 (the prologue realigns sp); 0 otherwise */
     int line;         /* where it was read: the presumed line ... */
     int file;         /* ... and file, an index into pp_files */
     struct Node *lhs; /* BINOP/ASSIGN/UNARY: left/operand */

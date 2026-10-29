@@ -156,7 +156,9 @@ static int ps_pend_alignas;      /* _Alignas read before parse_type ... */
 static int ps_type_alignas;      /* ... and the declaration's, once parse_type has run */
 static void ps_read_alignas(void);
 static void ps_member_static_assert(void);
-static void ps_local_alignas(int elem_ty);
+static int ps_local_alignas(int elem_ty);
+static int ps_fn_align;           /* the strongest _Alignas on a local of this function */
+static void ps_align_stack(int a);
 /* static in the file-scope declaration being read: one that follows a
  * declaration with external linkage is an error (6.2.2p7) */
 static int ps_top_static;
@@ -2467,6 +2469,7 @@ static void ps_scope_end(int nlocals) {
 static int add_local(char *name, int ty) {
     int idx;
     int sz;
+    int al;
     if (ps_nlocals >= P_MAX_LOCALS) {
         p_error("too many locals");
         return 0;
@@ -2474,12 +2477,13 @@ static int add_local(char *name, int ty) {
     sz = ty_size(ty);
     if (ty == TY_VOID) p_error("variable has incomplete type 'void'");
     ps_local_redecl_check(name);
-    ps_local_alignas(ty);
+    al = ps_local_alignas(ty);
     require_complete_type(ty, "incomplete type for local");
     /* The frame slot is rounded up to a multiple of 4, but the
      * recorded size is the true one: sizeof(local) reads ps_lsize,
      * and a 5-byte struct is 5, not 8. */
     ps_stack = ps_stack + ((sz + 3) / 4) * 4;
+    ps_align_stack(al);
     if (ps_stack > ps_stack_max) ps_stack_max = ps_stack;
     idx = ps_nlocals;
     ps_lname[idx] = strdup(name);
@@ -2614,14 +2618,29 @@ static Node *ps_local_rowptr(char *nm, int ty, int nstars, int is_static) {
 }
 
 /* Add a local array. Returns offset of start of array. */
-/* A local's _Alignas: a frame is word-aligned, and a stronger one
- * would need the stack realigned at entry, which is not done. */
-static void ps_local_alignas(int elem_ty) {
-    if (ps_type_alignas > 4) p_error("_Alignas stronger than 4 on a local is not supported");
-    if (ps_type_alignas > 0) ps_alignas_for(elem_ty);
+/* A local's _Alignas: the alignment its slot needs beyond the frame's
+ * word, or 0.  A stronger one than 4 has the function's prologue
+ * realign sp (hir_codegen.h; the function is not inlined) and the slot
+ * placed at a multiple of it from the frame's top (ps_align_stack). */
+static int ps_local_alignas(int elem_ty) {
+    int a;
+    if (ps_type_alignas == 0) return 0;
+    a = ps_alignas_for(elem_ty);
+    if (a <= 4) return 0;
+    if (a > 2048) p_error("_Alignas on a local is limited to 2048");
+    if (ps_is_varargs) p_error("_Alignas stronger than 4 on a local of a variadic function is not supported");
+    if (a > ps_fn_align) ps_fn_align = a;
+    return a;
+}
+
+/* The frame's top is aligned to ps_fn_align: a slot ending ps_stack
+ * bytes below it is aligned to a when ps_stack is a multiple of a. */
+static void ps_align_stack(int a) {
+    if (a > 4) ps_stack = ((ps_stack + a - 1) / a) * a;
 }
 
 static int add_local_array(char *name, int elem_ty, int count) {
+    int al;
     int idx;
     int total;
     int elem_sz;
@@ -2629,7 +2648,7 @@ static int add_local_array(char *name, int elem_ty, int count) {
         p_error("too many locals");
         return 0;
     }
-    ps_local_alignas(elem_ty);
+    al = ps_local_alignas(elem_ty);
     elem_sz = ty_size(elem_ty);
     require_complete_type(elem_ty, "incomplete element type");
     total = elem_sz * count;
@@ -2637,6 +2656,7 @@ static int add_local_array(char *name, int elem_ty, int count) {
      * sizeof(char x[] = {5 bytes}) is 5, not 8 (libutf's harness passed
      * the padded size into co_right/co_reverse and both misbehaved). */
     ps_stack = ps_stack + ((total + 3) / 4) * 4;
+    ps_align_stack(al);
     if (ps_stack > ps_stack_max) ps_stack_max = ps_stack;
     idx = ps_nlocals;
     ps_lname[idx] = strdup(name);
@@ -8467,6 +8487,7 @@ static Node *ps_function_decl(char *nm, int ty, int ret_cty, int is_static, int 
     ps_fn_setjmp = 0;
     ps_stack = 8;  /* reserve 8 bytes: saved r31 + saved r30 */
     ps_stack_max = 8;
+    ps_fn_align = 0;
     ps_slot_gen = 0;
     ps_nparams = 0;
     ps_is_varargs = 0;
@@ -8773,6 +8794,7 @@ params_done:
         fn->body->body = kr_pre;
     }
     fn->locals_size = ps_stack_max;
+    fn->bit_width = ps_fn_align;
 
     return fn;
 }

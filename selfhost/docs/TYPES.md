@@ -800,6 +800,28 @@ INT_MAX -- unsigned.  `#define N -2000` made `N / 2` 2147482648 and
 SQLITE_DEFAULT_JOURNAL_SIZE_LIMIT` (-1, an i64) stored 4294967295.
 That one line of SQLite's assembly changed, to clang's value.
 
+**`_Alignas` beyond 4 on a local** (2026-10-29): the last REJECTS.  A
+SLOW-32 stack is word-aligned, so a stronger alignment needs the frame
+realigned at entry.  The parser places such a local at a multiple of
+its alignment below the frame's top (`ps_align_stack`) and records the
+strongest in the function node (`bit_width`, which a function does not
+otherwise use: a field of its own would grow every node).  The back end
+(`hcg_align`) has the prologue keep the entry sp in r2, round sp down
+to the alignment, and build the frame under that -- the frame size a
+multiple of it, so the frame's top is aligned whether locals are
+addressed from fp or, with fp omitted, from sp.  The entry sp goes in
+a slot of its own: the epilogue restores sp from it, and the
+parameters past the eighth, which the caller left above it, are read
+through it.  Such a function makes no tail calls and is not inlined
+(its locals would land at an arbitrary offset in the caller's frame);
+a variadic one is refused, its register save area sitting against the
+caller's arguments.  Limited to 2048, the reach of one `addi`.  A
+probe drives it at varying depths, through a leaf, a frame over 2047
+bytes and a ten-parameter function.  The cross compilers share the
+parser and the inlining rule, not this realignment, which is the
+SLOW-32 back end's; what they do with such a local is not checked
+here.
+
 ## Constraints on the work
 
 - stage07 builds stage08: the new code keeps stage07's dialect (ints

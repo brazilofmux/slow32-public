@@ -245,6 +245,15 @@ static int hcg_stat_frameless;
 static int hcg_stat_leaf_nolr;
 static int hcg_stat_omit_fp;
 static int hcg_va_save_size; /* varargs register save area size */
+/* A frame realigned for a local's _Alignas beyond 4 (fn->bit_width):
+ * the prologue keeps the entry sp in r2, rounds sp down to hcg_align
+ * and builds the frame under it -- sp + fs, the frame's top, is then
+ * aligned, and so is every local the parser placed at a multiple of
+ * the alignment below it.  The entry sp is kept in a frame slot
+ * (hcg_entry_off, fp-relative): the epilogue restores sp from it, and
+ * stack-passed parameters are read through it. */
+static int hcg_align;
+static int hcg_entry_off;
 
 /* Frame slot addressing.  Offsets in the rest of codegen are fp-relative
  * (negative locals, non-negative incoming stack args).  When the frame
@@ -1418,6 +1427,51 @@ static int hcg_src_slot(int v) {
 static int hcg_shuf_done[HCG_ARGSHUF_MAX];
 static int hcg_stat_argshuf;                /* cycles broken via the scratch */
 
+/* The entry sp's frame slot, for a realigned frame (hcg_align): stored
+ * by the prologue from r2, read into r1 for stack-passed parameters, and
+ * loaded into sp by the epilogue -- from sp + sp_off, where sp_off is
+ * fs while sp is still the frame's bottom, 0 once it is the top. */
+static void hcg_entry_sp_store(void) {
+    int off;
+    off = hcg_slot_off(hcg_entry_off);
+    if (off >= -2048 && off <= 2047) {
+        cg_s("    stw r");
+        cg_n(hcg_slot_base());
+        cg_s(", r2, ");
+        cg_n(off);
+        cg_c(10);
+    } else {
+        hcg_li(1, off);
+        cg_rrr("add", 1, hcg_slot_base(), 1);
+        cg_s("    stw r1, r2, 0\n");
+    }
+}
+
+static void hcg_entry_sp_to_r1(void) {
+    int off;
+    off = hcg_slot_off(hcg_entry_off);
+    if (off >= -2048 && off <= 2047) {
+        cg_rri("ldw", 1, hcg_slot_base(), off);
+    } else {
+        hcg_li(1, off);
+        cg_rrr("add", 1, hcg_slot_base(), 1);
+        cg_rri("ldw", 1, 1, 0);
+    }
+}
+
+static void hcg_entry_sp_load(int sp_off) {
+    int off;
+    off = sp_off + hcg_entry_off;
+    if (off >= -2048 && off <= 2047) {
+        cg_rri("ldw", 29, 29, off);
+    } else {
+        /* r3 is dead at a return (see the large-frame epilogue) */
+        hcg_li(3, off);
+        cg_rrr("add", 3, 29, 3);
+        cg_rri("ldw", 29, 3, 0);
+    }
+}
+
 /* Run the sequencer over hcg_shuf_[dst,src,val,done][0..n). */
 static void hcg_parallel_copy(int n) {
     int j;
@@ -1623,7 +1677,16 @@ static void hcg_emit_param_entry(void) {
             hl_param_map[h_val[i]] < 0) {
             pidx = h_val[i];
             off = hcg_slot_off(hl_param_stkord[pidx]);
-            if (off > 2047 || off < -2048) {
+            if (hcg_align) {
+                /* above the entry sp, which the realigned frame is not */
+                hcg_entry_sp_to_r1();
+                if (ra_reg[i] >= 0) {
+                    cg_rri("ldw", ra_reg[i], 1, hl_param_stkord[pidx]);
+                } else {
+                    cg_rri("ldw", 1, 1, hl_param_stkord[pidx]);
+                    hcg_maybe_spill(i);
+                }
+            } else if (off > 2047 || off < -2048) {
                 /* Earlier byval slots pushed this offset past LDW's imm
                  * range: form the address in the r1 scratch. */
                 hcg_li(1, off);
@@ -2291,6 +2354,7 @@ static int hcg_is_tailcall(int idx) {
 
     /* Conservative guards */
     if (hcg_va_save_size > 0) return 0;       /* varargs fn */
+    if (hcg_align) return 0;                  /* sp is restored from a slot */
     if (h_val[idx] > 8) return 0;              /* stack args */
     if (hcg_frame_escapes) return 0;          /* callee may see our frame */
 
@@ -4549,6 +4613,12 @@ static void hcg_func(Node *fn) {
     }
     ra_cur_fname = fn->name;
     hcg_pgo_labels = getenv("HIR_PGO_LABELS") != 0;
+    hcg_align = fn->bit_width > 4 ? fn->bit_width : 0;
+    hcg_entry_off = 0;
+    if (hcg_align) {
+        hl_temp_stack = hl_temp_stack + 4;
+        hcg_entry_off = 0 - hl_temp_stack;
+    }
     hir_regalloc();
 
     /* Optional per-function regalloc dump (Issue #31 diagnostic) */
@@ -4573,6 +4643,10 @@ static void hcg_func(Node *fn) {
     fs = ((fs + 3) / 4) * 4;
     hcg_classify_frame(fn);
     if (hcg_frameless) fs = 0;
+    if (hcg_align) {
+        hcg_frameless = 0;
+        fs = ((fs + hcg_align - 1) / hcg_align) * hcg_align;
+    }
     hcg_locals = fn->locals_size;
     hcg_frame = fs;
     hcg_sp_delta = 0;
@@ -4699,6 +4773,12 @@ static void hcg_func(Node *fn) {
         }
     }
 
+    if (hcg_align) {
+        cg_rri("addi", 2, 29, 0);
+        cg_rri("addi", 1, 0, 0 - hcg_align);
+        cg_rrr("and", 29, 29, 1);
+    }
+
     /* Prologue — handle large frames (>2047 bytes).  Frameless leaves
      * omit it entirely (GitHub issue 73). */
     if (!hcg_frameless) {
@@ -4733,6 +4813,7 @@ static void hcg_func(Node *fn) {
         hcg_save_reg(ra_csave_reg[i], ra_csave_off[i]);
         i = i + 1;
     }
+    if (hcg_align) hcg_entry_sp_store();
 
     /* Emit all basic blocks, in layout order */
     b = 0;
@@ -4762,7 +4843,8 @@ static void hcg_func(Node *fn) {
                 cg_n(fs - 8);
                 cg_c(10);
             }
-            cg_rri("addi", 29, 29, fs);
+            if (hcg_align) hcg_entry_sp_load(fs);
+            else cg_rri("addi", 29, 29, fs);
         } else {
             if (hcg_omit_fp) {
                 /* r1/r2 carry the return value here; r3 is dead at a
@@ -4778,6 +4860,7 @@ static void hcg_func(Node *fn) {
                 cg_s("    ldw r31, r29, -4\n");
             if (!hcg_omit_fp)
                 cg_s("    ldw r30, r29, -8\n");
+            if (hcg_align) hcg_entry_sp_load(0);
         }
         if (hcg_va_save_size > 0) {
             cg_rri("addi", 29, 29, hcg_va_save_size);
