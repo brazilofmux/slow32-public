@@ -268,6 +268,7 @@ typedef struct Node Node;
 #define AT_NPC  4   /* a null pointer constant (6.3.2.3p3) */
 #define AT_ICX  8   /* an integer constant expression (6.6p6); cval/cval_hi hold it */
 #define AT_UCMP 16  /* a comparison whose operands compare unsigned (the lowering's SLTU) */
+#define AT_INIT 32  /* an initializer's store whose target the parser typed as C types it */
 
 /* --- Constructors --- */
 

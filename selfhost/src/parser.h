@@ -145,6 +145,9 @@ static void ps_global_alignas(int idx, int ty, int size_bytes);
  * consumed when the member is registered (its parameter list, between,
  * runs parse_type again). */
 static int ps_pending_member_cty;
+static int ps_init_cty;           /* an initializer's target C type (ps_init_check) */
+static int ps_desig_cty;          /* ... and a designator's, as it walks */
+static void ps_init_bool_at(int gidx, int rel_off);
 /* inline in the file-scope declaration being read (ps_storage_next):
  * an object may not be inline, nor main (6.7.4p3, 5.1.2.2.1) */
 static int ps_top_inline;
@@ -2816,6 +2819,19 @@ static int ps_global_types_agree(int a, int b) {
     return sema_compat(ps_array_elem(a, 1), ps_array_elem(b, 1));
 }
 
+/* The size an array's declaration wrote, kept for the next to agree
+ * with: the first one written, in bytes.  An array declared without
+ * one is given an element at once (ps_tentative_count), and says so in
+ * ps_decl_unsized, so its 1 is not taken for a written [1]. */
+static int ps_gdeclsz[P_MAX_GLOBALS];
+static int ps_decl_unsized;
+
+static void ps_note_declsz(int idx, int ty, int size_bytes) {
+    if (!ps_decl_unsized && ty_is_ptr(ty) && size_bytes > 0 && ps_gdeclsz[idx] == 0)
+        ps_gdeclsz[idx] = size_bytes;
+    ps_decl_unsized = 0;
+}
+
 /* A redeclaration of global idx as type ty (size bytes): compatible
  * with what was declared (6.7p4), and not static after a declaration
  * with external linkage (6.2.2p7). */
@@ -2823,6 +2839,11 @@ static void ps_global_redecl_check(int idx, int ty, int size_bytes) {
     int t;
     t = ps_global_cty(ty, size_bytes);
     if (ps_gcty[idx] > 0 && t > 0 && !ps_global_types_agree(ps_gcty[idx], t))
+        p_error("redeclaration with a different type");
+    /* an array's two sizes, where both are written, are one size
+     * (6.7.6.2p6), counted in bytes: rows or flat alike */
+    if (!ps_decl_unsized && ty_is_ptr(ty) && size_bytes > 0 && ps_gdeclsz[idx] > 0 &&
+        ps_gdeclsz[idx] != size_bytes)
         p_error("redeclaration with a different type");
     if (ps_top_static && !ps_glocal[idx])
         p_error("static declaration follows non-static declaration");
@@ -2843,9 +2864,14 @@ static int add_extern_global(char *name, int ty, int size_bytes) {
     idx = find_global(name);
     if (idx >= 0) ps_global_redecl_check(idx, ty, size_bytes);
     ps_top_static = 0;
-    if (idx >= 0) { ps_decl_objconst = 0; return idx; }
+    if (idx >= 0) {
+        ps_decl_objconst = 0;
+        ps_note_declsz(idx, ty, size_bytes);
+        return idx;
+    }
     idx = add_global(name, ty, size_bytes);
     ps_gextern[idx] = 1;
+    ps_note_declsz(idx, ty, size_bytes);
     return idx;
 }
 
@@ -2875,9 +2901,12 @@ static int add_defined_global(char *name, int ty, int size_bytes) {
         ps_global_alignas(idx, ty, size_bytes);
         if (!ps_ghasinit[idx])
             ps_reset_global_init(idx);
+        ps_note_declsz(idx, ty, size_bytes);
         return idx;
     }
-    return add_global(name, ty, size_bytes);
+    idx = add_global(name, ty, size_bytes);
+    ps_note_declsz(idx, ty, size_bytes);
+    return idx;
 }
 
 /* Array dimensions on a parameter.  `T a[N]` is `T *a`; `T a[N][M]` is a
@@ -3038,6 +3067,24 @@ static char *ps_mk_rp[PS_MK_MAX];
 static char *ps_mk_rts[PS_MK_MAX];
 static char *ps_mk_rte[PS_MK_MAX];
 static char ps_mk_str[PS_MK_MAX * LEX_STR_SZ];
+/* the current token's literal: its high words, suffixes and type, and
+ * whether it was painted.  Not saved, a rewind onto 1.0 or 2LL kept the
+ * last literal's high word (1.0/4 + 2.0 was 2.5 once a static
+ * initializer was read twice). */
+#define PS_MK_NUM 9
+static int ps_mk_num[PS_MK_MAX * PS_MK_NUM];
+
+static void ps_mk_num_save(int *v) {
+    v[0] = lex_val_hi; v[1] = lex_val_ll; v[2] = lex_val_l; v[3] = lex_val_u;
+    v[4] = lex_val_hexoct; v[5] = lex_val_macro; v[6] = lex_fval_hi; v[7] = lex_fty;
+    v[8] = lex_painted;
+}
+
+static void ps_mk_num_restore(int *v) {
+    lex_val_hi = v[0]; lex_val_ll = v[1]; lex_val_l = v[2]; lex_val_u = v[3];
+    lex_val_hexoct = v[4]; lex_val_macro = v[5]; lex_fval_hi = v[6]; lex_fty = v[7];
+    lex_painted = v[8];
+}
 
 static void ps_lex_mark(void) {
     int d;
@@ -3049,6 +3096,7 @@ static void ps_lex_mark(void) {
     ps_mk_line[d] = lex_line;
     ps_mk_bol[d] = lex_bol;
     memcpy(ps_mk_str + d * LEX_STR_SZ, lex_str, lex_slen + 1);
+    ps_mk_num_save(ps_mk_num + d * PS_MK_NUM);
     pp_cond_save(d);
     ps_mk_depth = d + 1;
     pp_peek_depth = pp_peek_depth + 1;
@@ -3068,6 +3116,7 @@ static void ps_lex_rewind(void) {
     lex_line = ps_mk_line[d];   /* the newlines read past the mark come again */
     lex_bol = ps_mk_bol[d];
     memcpy(lex_str, ps_mk_str + d * LEX_STR_SZ, ps_mk_slen[d] + 1);
+    ps_mk_num_restore(ps_mk_num + d * PS_MK_NUM);
     pp_cond_restore(d);     /* directives read past the mark run again */
     ps_mk_depth = d;
     pp_peek_depth = pp_peek_depth - 1;
@@ -3957,6 +4006,7 @@ static void ps_ginit_bitfield(int gidx, int rel_off, int mi) {
 }
 
 static void ps_ginit_begin(int gidx) {
+    ps_init_cty = ps_gcty[gidx];        /* the walk's first reader takes it */
     ps_mark_global_init(gidx);
     ps_ginit_start[gidx] = ps_ginit_pool_len;
     ps_ginit_count[gidx] = 0;
@@ -4206,6 +4256,13 @@ static int ps_string_then_offset(void) {
  * for a pointer, an address constant if it is one ((char *)&gs + 4),
  * otherwise an integer constant as before. */
 static void ps_scalar_global_init(int idx, int ty) {
+    if (ps_gcty[idx] > 0 && ct_kindof(ps_gcty[idx]) == CT_BOOL) {
+        ps_ginit_begin(idx);
+        ps_init_bool_at(idx, 0);
+        ps_ginit_ensure_len(idx, 1);
+        ps_ginit_finish(idx);
+        return;
+    }
     if (ty_is_ptr(ty) && lex_tok != TK_NUM) {
         ps_ginit_begin(idx);
         if (ps_init_addr_const(idx, 0, ty_size(ty))) {
@@ -4325,6 +4382,96 @@ static int parse_global_init_array_at(int elem_ty, int count, int gidx, int base
 static int parse_global_init_array2d_at(int elem_ty, int rows, int cols, int gidx, int base_rel);
 static void parse_global_init_struct_at(int ty, int gidx, int base_rel);
 
+/* Initializers checked as assignments are (6.7.9p11): each scalar an
+ * initializer list sets, converted to its target's C type and graded
+ * as sema grades an assignment.  The readers here walk machine types,
+ * so the target's C type rides beside them in ps_init_cty -- set by
+ * whoever knows it (ps_ginit_begin, local_init_begin, the walk itself)
+ * and taken by the reader it is meant for.  An array's is the innermost
+ * element's (the walks hold arrays flat); 0 is unknown, not checked. */
+static void sema_assign_check(Node *at, int lt, Node *r);    /* sema.h */
+static int sema_fp_const(Node *n, double *out);             /* sema.h */
+static int ps_addr_value(Node *n);
+
+static int ps_init_take(void) {
+    int c;
+    c = ps_init_cty;
+    ps_init_cty = 0;
+    return c;
+}
+
+static int ps_init_elem_cty(int c) {
+    if (c <= 0) return 0;
+    while (ct_is_array(c)) c = ct_baseof(c);
+    return c;
+}
+
+/* Is a compound literal next, (T){...}?  Not read twice: it defines
+ * an object. */
+static int ps_compound_literal_ahead(void) {
+    int r;
+    if (lex_tok != TK_LPAREN) return 0;
+    ps_lex_mark();
+    next();
+    r = 0;
+    if (is_type()) {
+        parse_type();
+        while (lex_tok == TK_STAR) { next(); skip_decl_qualifiers(); }
+        (void)ps_abstract_fnptr(0);
+        skip_decl_qualifiers();
+        if (lex_tok == TK_RPAREN) {
+            next();
+            r = lex_tok == TK_LBRACE;
+        }
+    }
+    ps_lex_rewind();
+    return r;
+}
+
+/* A static _Bool's initializer, converted as C converts to _Bool
+ * (6.3.1.2): 0 or 1 -- an integer or floating constant compared with
+ * zero, an address constant never null.  The integer reader stored the
+ * value itself, and _Bool b = 2 held 2. */
+static void ps_init_bool_at(int gidx, int rel_off) {
+    Node *n;
+    double d;
+    int v;
+    n = parse_assign();
+    sema_expr(n);
+    if (n->attr & AT_ICX) v = sema_cvalof(n) != 0;
+    else if (sema_fp_const(n, &d)) v = d != 0.0;
+    else if (ps_addr_value(n)) v = 1;
+    else {
+        p_error("initializer element is not a compile-time constant");
+        v = 0;
+    }
+    ps_ginit_store_int_at(gidx, rel_off, v, 1);
+}
+
+/* A static object's scalar initializer, checked against its target's
+ * C type c: read as an expression, graded, and the lexer put back for
+ * the readers that store it.  Only where the C type agrees with the
+ * machine type ty the reader has -- where the two walks part, nothing
+ * is said. */
+static void ps_init_check(int c, int ty) {
+    Node *n;
+    if (c <= 0 || !ct_is_scalar(c) || !ct_mty_agrees(c, ty)) return;
+    if (lex_tok == TK_LBRACE || ps_compound_literal_ahead()) return;
+    ps_lex_mark();
+    n = parse_assign();
+    sema_expr(n);
+    sema_assign_check(n, ct_unqual(c), n);
+    ps_lex_rewind();
+}
+
+/* A string longer than the character array it initializes, its
+ * terminating null aside (6.7.9p14 allows dropping only that): clang
+ * warns, and so does this. */
+static void ps_init_string_fits(int sp_idx, int count) {
+    if (lex_str_width[sp_idx] == 1 && count >= 0 && lex_str_len[sp_idx] > count)
+        sema_convert_diag(nd_num(0), "str-too-long", "initializer-string for char array is too long");
+}
+
 static void parse_global_init_designator(int base_ty, int base_arr_count,
                                          int *rel_out, int *ty_out,
                                          int *arr_count_out, int *root_out) {
@@ -4341,6 +4488,7 @@ static void parse_global_init_designator(int base_ty, int base_arr_count,
     arr_count = base_arr_count;
     rel = 0;
     *root_out = -1;
+    ps_desig_cty = ps_init_take();      /* the aggregate's */
     while (lex_tok == TK_LBRACK || lex_tok == TK_DOT) {
         if (lex_tok == TK_LBRACK) {
             next();
@@ -4354,6 +4502,7 @@ static void parse_global_init_designator(int base_ty, int base_arr_count,
             rel = rel + (idx * ty_size(elem_ty));
             ty = elem_ty;
             arr_count = 0;
+            ps_desig_cty = ps_init_elem_cty(ps_desig_cty);
             if (*root_out < 0) *root_out = idx;
         } else {
             next();
@@ -4370,15 +4519,18 @@ static void parse_global_init_designator(int base_ty, int base_arr_count,
             rel = rel + stm_off[mi];
             ty = stm_type[mi];
             arr_count = struct_member_array_count(mi);
+            ps_desig_cty = stm_cty[mi];
             if (*root_out < 0) *root_out = struct_member_nth_for_idx(si, mi);
         }
     }
     *rel_out = rel;
     *ty_out = ty;
     *arr_count_out = arr_count;
+    ps_init_cty = ps_desig_cty;         /* the designated object's */
 }
 
 static int parse_global_init_array_at(int elem_ty, int count, int gidx, int base_rel) {
+    int ec;             /* the element's C type */
     int i;
     int max_i;
     int elem_sz;
@@ -4392,9 +4544,11 @@ static int parse_global_init_array_at(int elem_ty, int count, int gidx, int base
     int has_brace;
 
     elem_sz = ty_size(elem_ty);
+    ec = ps_init_elem_cty(ps_init_take());
     if ((elem_ty & TY_BASE_MASK) == TY_CHAR && lex_tok == TK_STRING) {
         sp_idx = parse_string_literal();
         slen = lex_str_len[sp_idx];
+        ps_init_string_fits(sp_idx, count);
         if (count < 0) count = slen + 1;
         sp = lex_strpool + lex_str_off[sp_idx];
         i = 0;
@@ -4426,6 +4580,7 @@ static int parse_global_init_array_at(int elem_ty, int count, int gidx, int base
             }
         }
         if (lex_tok == TK_LBRACK) {
+            ps_init_cty = ec > 0 ? ct_array(ec, -1) : 0;
             parse_global_init_designator(elem_ty + TY_PTR, count, &rel,
                                          &target_ty, &target_arr_count, &root);
             expect(TK_ASSIGN);
@@ -4436,6 +4591,7 @@ static int parse_global_init_array_at(int elem_ty, int count, int gidx, int base
             }
         } else {
             if (has_brace && count >= 0 && i >= count) p_error("too many initializers");
+            ps_init_cty = ec;
             parse_global_init_value_at(elem_ty, 0, gidx, base_rel + (i * elem_sz));
             i = i + 1;
             if (i > max_i) max_i = i;
@@ -4458,8 +4614,10 @@ static int parse_global_init_array_at(int elem_ty, int count, int gidx, int base
 static int parse_global_init_array2d_at(int elem_ty, int rows, int cols, int gidx, int base_rel) {
     int i;
     int row_sz;
+    int ec;
 
     row_sz = ty_size(elem_ty) * cols;
+    ec = ps_init_elem_cty(ps_init_take());
     expect(TK_LBRACE);
     i = 0;
     while (lex_tok != TK_EOF) {
@@ -4469,6 +4627,7 @@ static int parse_global_init_array2d_at(int elem_ty, int rows, int cols, int gid
             if (lex_tok == TK_RBRACE) break;
         }
         if (rows >= 0 && i >= rows) p_error("too many 2D initializer rows");
+        ps_init_cty = ec;
         parse_global_init_array_at(elem_ty, cols, gidx, base_rel + i * row_sz);
         i = i + 1;
     }
@@ -4480,6 +4639,7 @@ static int parse_global_init_array2d_at(int elem_ty, int rows, int cols, int gid
 }
 
 static void parse_global_init_struct_at(int ty, int gidx, int base_rel) {
+    int sc;             /* the structure's C type: a designator starts there */
     int si;
     int nf;
     int i;
@@ -4494,6 +4654,7 @@ static void parse_global_init_struct_at(int ty, int gidx, int base_rel) {
 
     si = ty_struct_idx(ty);
     nf = st_nfields[si];
+    sc = ps_init_take();
     /* Brace is optional for nested struct fields inside a flat-form parent
      * initializer (e.g. `struct Rect gr = {10, 20, 30, 40}`). */
     has_brace = (lex_tok == TK_LBRACE);
@@ -4513,6 +4674,7 @@ static void parse_global_init_struct_at(int ty, int gidx, int base_rel) {
         }
         if (lex_tok == TK_DOT) {
             ps_desig_bf = -1;
+            ps_init_cty = sc;
             parse_global_init_designator(ty, 0, &rel, &target_ty,
                                          &target_arr_count, &root);
             expect(TK_ASSIGN);
@@ -4533,6 +4695,7 @@ static void parse_global_init_struct_at(int ty, int gidx, int base_rel) {
             }
             field_ty = stm_type[mi];
             arr_count = struct_member_array_count(mi);
+            ps_init_cty = stm_cty[mi];
             if (stm_arr_cols[mi] > 0 && lex_tok == TK_LBRACE) {
                 /* 2D member array: rows of cols elements */
                 parse_global_init_array2d_at(ty_deref(field_ty),
@@ -4587,8 +4750,6 @@ static int ps_fp_builtin_bits(int *lo, int *hi) {
  * an expression, typed by sema, folded by sema_fp_const (W6).  Returns
  * 0, the lexer back where it was, for a lone literal (the token path
  * below reads it as C does) and for what sema_fp_const does not take. */
-static int sema_fp_const(Node *n, double *out);    /* sema.h */
-
 static int ps_fp_const_typed(double *d) {
     Node *n;
     /* a lone double literal only: an integer one, converted by the
@@ -4784,7 +4945,14 @@ static void parse_global_init_value_at(int ty, int arr_count, int gidx, int rel_
     int v;
     int sp_idx;
     int wrap;
+    int c;
 
+    c = ps_init_take();
+    if (!(arr_count != 0 && ty_is_ptr(ty)) && !ty_is_struct(ty)) ps_init_check(c, ty);
+    if (c > 0 && ct_kindof(c) == CT_BOOL && arr_count == 0) {
+        ps_init_bool_at(gidx, rel_off);
+        return;
+    }
     if (ty_is_ptr(ty) && lex_tok == TK_LPAREN) {
         wrap = init_string_wrappers();
         if (wrap >= 0) {
@@ -4798,10 +4966,12 @@ static void parse_global_init_value_at(int ty, int arr_count, int gidx, int rel_
     skip_init_cast();
 
     if (arr_count != 0 && ty_is_ptr(ty)) {
+        ps_init_cty = c;
         parse_global_init_array_at(ty_deref(ty), arr_count, gidx, rel_off);
         return;
     }
     if (ty_is_struct(ty)) {
+        ps_init_cty = c;
         parse_global_init_struct_at(ty, gidx, rel_off);
         return;
     }
@@ -6129,6 +6299,11 @@ static void local_init_begin(char *nm, int off, int base_ty, int base_is_array) 
     ps_li_base_is_array = base_is_array;
     ps_li_head = NULL;
     ps_li_tail = NULL;
+    /* the target's C type: the local's, or -- an array is allocated
+     * after its initializer -- the declaration's, as add_local_array
+     * will take it */
+    if (ps_li_slot != 0) ps_init_cty = ps_lcty[ps_nlocals - 1];
+    else                 ps_init_cty = ps_type_cty;
 }
 
 static void ps_make_compound_literal_name(char *buf) {
@@ -6315,11 +6490,14 @@ static int parse_local_init_array_at(int elem_ty, int count, int rel_off) {
     int target_arr_count;
     int root;
     int has_brace;
+    int ec;
 
     elem_sz = ty_size(elem_ty);
+    ec = ps_init_elem_cty(ps_init_take());
     if ((elem_ty & TY_BASE_MASK) == TY_CHAR && lex_tok == TK_STRING) {
         sp_idx = parse_string_literal();
         slen = lex_str_len[sp_idx];
+        ps_init_string_fits(sp_idx, count);
         if (count < 0) count = slen + 1;
         sp = lex_strpool + lex_str_off[sp_idx];
         i = 0;
@@ -6347,6 +6525,7 @@ static int parse_local_init_array_at(int elem_ty, int count, int rel_off) {
             }
         }
         if (lex_tok == TK_LBRACK) {
+            ps_init_cty = ec > 0 ? ct_array(ec, -1) : 0;
             parse_global_init_designator(elem_ty + TY_PTR, count, &rel,
                                          &target_ty, &target_arr_count, &root);
             expect(TK_ASSIGN);
@@ -6357,6 +6536,7 @@ static int parse_local_init_array_at(int elem_ty, int count, int rel_off) {
             }
         } else {
             if (has_brace && count >= 0 && i >= count) p_error("too many initializers");
+            ps_init_cty = ec;
             parse_local_init_value_at(elem_ty, 0, rel_off + (i * elem_sz));
             i = i + 1;
             if (i > max_i) max_i = i;
@@ -6382,9 +6562,11 @@ static void parse_local_init_struct_at(int ty, int rel_off) {
     int target_ty;
     int target_arr_count;
     int root;
+    int sc;
 
     si = ty_struct_idx(ty);
     nf = st_nfields[si];
+    sc = ps_init_take();
     has_brace = (lex_tok == TK_LBRACE);
     if (has_brace) next();
     i = 0;
@@ -6402,6 +6584,7 @@ static void parse_local_init_struct_at(int ty, int rel_off) {
         }
         if (lex_tok == TK_DOT) {
             ps_desig_bf = -1;
+            ps_init_cty = sc;
             parse_global_init_designator(ty, 0, &rel, &target_ty,
                                          &target_arr_count, &root);
             expect(TK_ASSIGN);
@@ -6422,6 +6605,7 @@ static void parse_local_init_struct_at(int ty, int rel_off) {
             }
             field_ty = stm_type[mi];
             field_arr_count = struct_member_array_count(mi);
+            ps_init_cty = stm_cty[mi];
             parse_local_init_value_at(field_ty, field_arr_count, rel_off + stm_off[mi]);
             i = i + 1;
         }
@@ -6434,15 +6618,28 @@ static void parse_local_init_struct_at(int ty, int rel_off) {
 }
 
 static void parse_local_init_value_at(int ty, int arr_count, int rel_off) {
+    Node *a;
+    int c;
+    c = ps_init_take();
     if (arr_count != 0 && ty_is_ptr(ty)) {
+        ps_init_cty = c;
         parse_local_init_array_at(ty_deref(ty), arr_count, rel_off);
         return;
     }
     if (ty_is_struct(ty)) {
+        ps_init_cty = c;
         parse_local_init_struct_at(ty, rel_off);
         return;
     }
-    local_init_emit_assign(rel_off, ty, parse_assign());
+    /* the target typed as C types it, so sema grades the conversion as
+     * an assignment's (6.7.9p11); its qualifiers do not make it one */
+    a = local_init_lvalue(rel_off, ty, 0);
+    a = nd_assign(a, parse_assign());
+    if (c > 0 && ct_is_scalar(c) && ct_mty_agrees(c, ty)) {
+        a->lhs->cty = ct_unqual(c);
+        a->attr = AT_INIT;
+    }
+    local_init_append(nd_expr_stmt(a));
 }
 
 static Node *local_init_list_expr(Node *stmts, Node *result) {
@@ -6750,6 +6947,7 @@ static Node *ps_local_declarator_body(char *nm, int ty) {
                 sp_idx = parse_string_literal();
                 ps_braced_string_close();
                 slen = lex_str_len[sp_idx];
+                ps_init_string_fits(sp_idx, count);
                 if (count < 0) count = slen + 1;
                 off = add_local_array(nm, ty, count);
                 sp = lex_strpool + lex_str_off[sp_idx];
@@ -7139,6 +7337,7 @@ static int ps_array_size(void) {
  * linkage, which must be complete (6.9.2p3). */
 static int ps_tentative_count(int is_static) {
     if (is_static) p_error("tentative definition with internal linkage has incomplete type");
+    ps_decl_unsized = 1;
     return 1;
 }
 
@@ -7783,6 +7982,7 @@ static_array_decl:
                 if (lex_tok == TK_STRING) {
                     sp_idx = parse_string_literal();
                     ps_braced_string_close();
+                    ps_init_string_fits(sp_idx, count);
                 } else if (lex_tok == TK_LBRACE) {
                     neg = 1;
                 } else {
@@ -8841,6 +9041,7 @@ plain_name:
             skip_gnu_decl_suffixes();
             if (lex_tok == TK_ASSIGN) {
                 next();
+                ps_init_check(ps_gcty[idx], xty);
                 if (lex_tok == TK_LBRACE && ty_is_struct(xty)) {
                     /* Struct initializer: struct S s = { ... }; */
                     ps_ginit_begin(idx);
@@ -8969,6 +9170,7 @@ array_after_brackets:
                 sp_idx = parse_string_literal();
                 ps_braced_string_close();
                 slen = lex_str_len[sp_idx];
+                ps_init_string_fits(sp_idx, count);
                 if (count < 0) count = slen + 1;
                 require_complete_type(xty, "incomplete element type");
                 idx = add_defined_global(nm, xty + TY_PTR, ty_size(xty) * count);

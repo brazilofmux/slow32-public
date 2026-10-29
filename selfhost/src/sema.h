@@ -611,7 +611,7 @@ static void sema_attr_node(Node *n) {
     double d;
     float f;
     int w[2];
-    n->attr = n->attr & AT_UCMP;    /* set by sema_expr_mty, kept */
+    n->attr = n->attr & (AT_UCMP | AT_INIT);    /* sema_expr_mty's, the parser's: kept */
     t = n->cty;
     k = n->kind;
     /* lvalues */
@@ -917,9 +917,10 @@ static void sema_constraints(Node *n) {
         }
     }
     /* An initializer's own stores into a member or element are made by
-     * offset, and their target's C type is the machine type's: only a
-     * whole variable's is checked (docs/TYPES.md, S5). */
-    if (k == ND_ASSIGN && n->lhs && n->rhs && (op == TK_ASSIGN || n->lhs->kind == ND_VAR)) {
+     * offset: checked where the parser gave the target its C type
+     * (AT_INIT, 6.7.9p11), not where it is only the machine type's. */
+    if (k == ND_ASSIGN && n->lhs && n->rhs &&
+        (op == TK_ASSIGN || n->lhs->kind == ND_VAR || (n->attr & AT_INIT))) {
         sema_assign_check(n, sema_cty_of(n->lhs), n->rhs);
         return;
     }

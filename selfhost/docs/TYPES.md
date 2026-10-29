@@ -474,7 +474,7 @@ a parameter's machine type where its variable had the C type (a row
 pointer `char (*rows)[8]`).  An initializer's own stores into members
 and elements are made by offset, their targets typed from the machine
 type, so for now only an initializer of a whole variable is checked
-(a gap: member initializers).  One finding was a miscompile: a
+(a gap: member initializers; closed by the gaps pass below).  One finding was a miscompile: a
 compound literal of character array type initialized by a string,
 `(char[]){"abc"}`, took the string for its one element and stored its
 address into a char -- the array was empty (`ps_cl_string`; probe
@@ -550,8 +550,8 @@ where either declaration is an array, by its innermost elements: an
 array declared before its size is known is held in pointer form, and a
 2-D one flat or by rows, so `extern int a[]; extern int a[3];` and
 DOOM's `scalelight[LIGHTLEVELS][MAXLIGHTSCALE]` (r_state.h, r_main.c)
-are one array each (`ps_global_types_agree`; array sizes are not
-compared) -- and
+are one array each (`ps_global_types_agree`; array sizes, at first
+not compared, are since the gaps pass below) -- and
 `static` after a declaration with external linkage
 (`ps_global_redecl_check`); a local declared twice in one scope -- a
 block, or a `for` statement's first clause, which is a scope of its
@@ -731,6 +731,37 @@ parse_top_decl starts from that base instead of reading specifiers
 which may not grow.  New probes for the two found on the way.  The
 REJECTS left are the two `_Alignas` stronger than 4 on a local, which
 need the stack realigned at entry: a back-end change, not this pass.
+
+**S5 gaps closed** (2026-10-29), graded as clang's defaults grade them
+(the ruling confirmed for all of S5).  An initializer is converted as
+by assignment (6.7.9p11), and was checked only where it initialized a
+whole automatic variable: a static object's initializer never reached
+sema -- `int *p = 5;` at file scope was silent -- and an aggregate's
+members and elements, static or automatic, were set by offset with
+only machine types to go by, where `long *` and `int *` are one type.
+The target's C type now rides beside the machine type through the
+initializer readers (`ps_init_cty`: `ps_ginit_begin` and
+`local_init_begin` set it, each reader takes it and hands the element's
+or member's on, a designator walks it as it walks the offsets).  A
+static scalar is read once as an expression, graded by
+`sema_assign_check`, and the lexer put back for the readers that store
+it (`ps_init_check`; a compound literal, which defines an object, is
+not read twice); an automatic one's store gets its target's C type
+and `AT_INIT`, which sema checks as it checks an assignment.  Only
+where the C type and the machine type agree: where the two walks part
+nothing is said.  The second reading found two defects.  The lexer's
+mark kept no literal's high word, so a rewind onto `1.0` or `2LL`
+brought back the previous literal's (`ps_mk_num_save`); nothing before
+had rewound onto one.  And a static `_Bool` held what it was given,
+`_Bool b = 2` holding 2 (`ps_init_bool_at`: 0 or 1, as 6.3.1.2 has
+it).  A string longer than its char array, its null aside, now warns
+(`ps_init_string_fits`), and an array redeclared with another written
+size is an error (`ps_gdeclsz`: the first size written; an array
+declared without one gets its tentative element at once, and says so,
+`ps_decl_unsized`).  Five new probes; SQLite byte-identical and
+silent.  Still not diagnosed: an implicit conversion that changes a
+constant's value (`unsigned short k = 70000`, clang's
+-Wconstant-conversion, a warning).
 
 ## Constraints on the work
 
