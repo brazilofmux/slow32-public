@@ -12,7 +12,7 @@ Default disk drive: .
 TALK      = OFF
 DELETED   = OFF
 EXACT     = OFF
-HEADING   = ON
+HEADING   = OFF
 CONFIRM   = OFF
 BELL      = ON
 SAFETY    = ON

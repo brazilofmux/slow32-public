@@ -18,12 +18,12 @@ Database TEST.DBF created with 2 field(s).
       SUM: 150
 . . 2 record(s) summed
       SUM: 50
-. . Record# NAME       VAL  
-      1 Alpha         10
-      2 Beta          20
-      3 Gamma         30
-. . Record# NAME       VAL  
-      3 Gamma         30
-      4 Delta         40
-      5 Epsilon       50
+. . 
+      1  Alpha         10 
+      2  Beta          20 
+      3  Gamma         30 
+. . 
+      3  Gamma         30 
+      4  Delta         40 
+      5  Epsilon       50 
 . 

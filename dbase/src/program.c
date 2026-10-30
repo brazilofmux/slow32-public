@@ -3015,7 +3015,7 @@ int prog_execute_line(char *line) {
                 state.pc++;
                 break;
             }
-            printf("%s\n", raw);
+            printf("\n%s", raw);   /* each line as ? writes it: new line first (Clipper) */
             state.pc++;
         }
         return 0;

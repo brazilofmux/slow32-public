@@ -10,15 +10,15 @@ Database DATA.DBF created with 2 field(s).
 . . Record 3 added.
 . . 3 record(s) sorted.
 . Database BYNAME.DBF opened with 3 record(s).
-. Record# NAME       SCORE
-      1 Alice         92
-      2 Bob           85
-      3 Charlie       78
+. 
+      1  Alice         92 
+      2  Bob           85 
+      3  Charlie       78 
 . Database DATA.DBF opened with 3 record(s).
 . 3 record(s) sorted.
 . Database BYSCORE.DBF opened with 3 record(s).
-. Record# NAME       SCORE
-      1 Alice         92
-      2 Bob           85
-      3 Charlie       78
+. 
+      1  Alice         92 
+      2  Bob           85 
+      3  Charlie       78 
 . 

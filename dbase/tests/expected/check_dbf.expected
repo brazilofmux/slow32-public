@@ -6,6 +6,6 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width
 Database CHECKDB.DBF created with 2 field(s).
 . Database CHECKDB.DBF opened with 0 record(s).
 . Record 1 added.
-. . Record# NAME                 AGE
-      1 Alice                 25
+. . 
+      1  Alice                 25 
 . 

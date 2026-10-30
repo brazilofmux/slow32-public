@@ -1150,8 +1150,8 @@ static int find_store(const char *p, char *name, int nsz, char *expr, int esz) {
     while (isalnum((unsigned char)*q) || *q == '_') {
         q++;
     }
-    if (*skip_ws(q) == '[' || *skip_ws(q) == '(') {
-        return 0;   /* an element: STORE's own code assigns it */
+    if (*skip_ws(q) == '[' || *skip_ws(q) == '(' || *skip_ws(q) == ',') {
+        return 0;   /* an element, or a list of names: STORE's own code assigns them */
     }
     elen = (int)(q - to);
     if (elen <= 0 || elen >= nsz) {
@@ -2675,6 +2675,11 @@ static int emit_stmt(emit_t *e, const char *p) {
                 e->inpath, e->lineno);
         return -1;
     }
+    /* EXTERNAL / REQUEST / ANNOUNCE: for a linker; nothing here */
+    if (is_kw(p, "EXTERNAL") || is_kw(p, "REQUEST") || is_kw(p, "ANNOUNCE")) {
+        return 0;
+    }
+
     /* MEMVAR / FIELD: declarations, nothing at run time */
     if ((is_kw(p, "MEMVAR") || is_kw(p, "FIELD")) && skip_ws(p + (is_kw(p, "MEMVAR") ? 6 : 5))[0] != '-') {
         return 0;

@@ -26,46 +26,46 @@ Database STOCK.DBF created with 2 field(s).
 . 5 record(s) totalled
 5 record(s) generated
 . . Database SALESTOT.DBF opened with 3 record(s).
-. Record# ITEM       QTY  PRICE 
-      1 Bolt          7   0.25
-      2 Gadget        8  25.00
-      3 Widget       18  10.00
+. 
+      1  Bolt          7   0.25 
+      2  Gadget        8  25.00 
+      3  Widget       18  10.00 
 . Database SALESQ.DBF opened with 3 record(s).
-. Record# ITEM       QTY  PRICE 
-      1 Bolt          7   0.25
-      2 Gadget        5  12.50
-      3 Widget       18   5.00
+. 
+      1  Bolt          7   0.25 
+      2  Gadget        5  12.50 
+      3  Widget       18   5.00 
 . Database SALESRUN.DBF opened with 5 record(s).
-. Record# ITEM       QTY  PRICE 
-      1 Widget       10   5.00
-      2 Gadget        5  12.50
-      3 Widget        8   5.00
-      4 Gadget        3  12.50
-      5 Bolt          7   0.25
+. 
+      1  Widget       10   5.00 
+      2  Gadget        5  12.50 
+      3  Widget        8   5.00 
+      4  Gadget        3  12.50 
+      5  Bolt          7   0.25 
 . Database closed.
 . . . . 4 record(s) joined
 . 2 record(s) joined
 . . Database SALESJ.DBF opened with 4 record(s).
-. Record# ITEM       QTY  PRICE  ONHAND
-      1 Widget       10   5.00    100
-      2 Gadget        5  12.50     40
-      3 Widget        8   5.00    100
-      4 Gadget        3  12.50     40
+. 
+      1  Widget       10   5.00  100 
+      2  Gadget        5  12.50   40 
+      3  Widget        8   5.00  100 
+      4  Gadget        3  12.50   40 
 . Database SALESJF.DBF opened with 2 record(s).
-. Record# ITEM       ONHAND QTY 
-      1 Widget        100   10
-      2 Widget        100    8
+. 
+      1  Widget      100   10 
+      2  Widget      100    8 
 . Database closed.
 . . . . 4 record(s) updated
-. Record# ITEM       ONHAND
-      1 Widget         82
-      2 Gadget         32
-      3 Sprocket        9
+. 
+      1  Widget       82 
+      2  Gadget       32 
+      3  Sprocket      9 
 . 4 record(s) updated
-. Record# ITEM       ONHAND
-      1 Widget         84
-      2 Gadget         34
-      3 Sprocket        9
+. 
+      1  Widget       84 
+      2  Gadget       34 
+      3  Sprocket      9 
 . . . *** Not a numeric field: ITEM
 . *** JOIN WITH: no database open under that alias
 . *** UPDATE ON: NOSUCH must be a field of both files

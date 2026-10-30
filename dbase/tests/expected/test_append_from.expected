@@ -16,10 +16,10 @@ Database DEST.DBF created with 2 field(s).
 . 3 record(s) appended.
 . 
          3
-. Record# NAME            SCORE
-      1 Alice              85
-      2 Bob                92
-      3 Carol              78
+. 
+      1  Alice              85 
+      2  Bob                92 
+      3  Carol              78 
 . Database closed.
 . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: 
@@ -28,7 +28,7 @@ Database DEST2.DBF created with 2 field(s).
 . 2 record(s) appended.
 . 
          2
-. Record# NAME            SCORE
-      1 Alice              85
-      2 Bob                92
+. 
+      1  Alice              85 
+      2  Bob                92 
 . 

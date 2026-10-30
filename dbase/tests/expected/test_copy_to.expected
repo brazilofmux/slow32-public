@@ -10,21 +10,21 @@ Database SRC.DBF created with 2 field(s).
 . . Record 3 added.
 . . 3 record(s) copied.
 . Database BACKUP.DBF opened with 3 record(s).
-. Record# NAME            SCORE
-      1 Alice              85
-      2 Bob                92
-      3 Carol              78
+. 
+      1  Alice              85 
+      2  Bob                92 
+      3  Carol              78 
 . Database SRC.DBF opened with 3 record(s).
 . 2 record(s) copied.
 . Database HIGH.DBF opened with 2 record(s).
-. Record# NAME            SCORE
-      1 Alice              85
-      2 Bob                92
+. 
+      1  Alice              85 
+      2  Bob                92 
 . Database SRC.DBF opened with 3 record(s).
 . 3 record(s) copied.
 . Database NAMES.DBF opened with 3 record(s).
-. Record# NAME           
-      1 Alice          
-      2 Bob            
-      3 Carol          
+. 
+      1  Alice           
+      2  Bob             
+      3  Carol           
 . 

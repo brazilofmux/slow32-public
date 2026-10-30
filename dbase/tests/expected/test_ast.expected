@@ -24,17 +24,17 @@ Database ASTDB.DBF created with 2 field(s).
 . . Record 3 added.
 . . Record 4 added.
 . . Record 5 added.
-. . . Record# NAME                 SALARY    
-      2 Jones                  60000.00
-      4 Davis                  70000.00
-      5 Smith                  55000.00
+. . . 
+      2  Jones                  60000.00 
+      4  Davis                  70000.00 
+      5  Smith                  55000.00 
 . . 2 record(s)
 . . Filter: SALARY >= 50000
-. Record# NAME                 SALARY    
-      1 Smith                  50000.00
-      2 Jones                  60000.00
-      4 Davis                  70000.00
-      5 Smith                  55000.00
+. 
+      1  Smith                  50000.00 
+      2  Jones                  60000.00 
+      4  Davis                  70000.00 
+      5  Smith                  55000.00 
 . Filter removed.
 . . 
 DO WHILE result:          5

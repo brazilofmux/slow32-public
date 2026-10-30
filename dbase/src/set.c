@@ -9,7 +9,7 @@ void set_init(set_options_t *opts) {
     opts->talk = 1;
     opts->deleted = 0;    /* OFF = show deleted records */
     opts->exact = 0;      /* OFF = prefix matching */
-    opts->heading = 1;
+    opts->heading = 0;   /* Clipper's LIST has no heading; SET HEADING ON gives dBASE III's */
     opts->confirm = 0;
     opts->bell = 1;
     opts->safety = 1;

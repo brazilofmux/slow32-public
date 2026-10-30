@@ -8,10 +8,10 @@ Database MTEST.DBF created with 2 field(s).
 . Record 1 added.
 . . Record 2 added.
 . . Record 3 added.
-. . Record# NAME            NOTES
-      1 Alice           memo 
-      2 Bob             memo 
-      3 Carol                
+. . 
+      1  Alice                 
+      2  Bob                   
+      3  Carol                 
 . . Record# 1
       NAME: Alice
      NOTES: This is a memo for Alice
@@ -24,10 +24,10 @@ Bob's memo text here
          0
 . 3 record(s) copied.
 . Database MCOPY.DBF opened with 3 record(s).
-. Record# NAME            NOTES
-      1 Alice           memo 
-      2 Bob             memo 
-      3 Carol                
+. 
+      1  Alice                 
+      2  Bob                   
+      3  Carol                 
 . . 
 This is a memo for Alice
 . . 

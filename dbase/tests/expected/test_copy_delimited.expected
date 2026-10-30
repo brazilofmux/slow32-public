@@ -16,10 +16,10 @@ Database PEOPLE2.DBF created with 4 field(s).
 . 3 record(s) appended.
 . 
          3
-. Record# LAST                 FIRST           AGE ADDR                          
-      1 Smith                John             35 123 Main St                   
-      2 Doe                  Jane             28 456 Oak Ave                   
-      3 O'Brien              Pat              42 789 Elm Dr                    
+. 
+      1  Smith                John             35 123 Main St                    
+      2  Doe                  Jane             28 456 Oak Ave                    
+      3  O'Brien              Pat              42 789 Elm Dr                     
 . . . Database PEOPLE.DBF opened with 3 record(s).
 . 3 record(s) copied.
 . . . Database PEOPLE.DBF opened with 3 record(s).
@@ -31,9 +31,9 @@ Database PEOPLE3.DBF created with 2 field(s).
 . 2 record(s) appended.
 . 
          2
-. Record# LAST                 AGE
-      1 Smith                 35
-      2 O'Brien               42
+. 
+      1  Smith                 35 
+      2  O'Brien               42 
 . . . Database PEOPLE.DBF opened with 3 record(s).
 . 3 record(s) copied.
 . Database closed.

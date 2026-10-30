@@ -36,6 +36,18 @@ static int stage3_initialized;
 
 /* Forward declarations */
 /* area_lookup_dbf from area.h is used as callback */
+static int field_display_width(dbf_t *db, int f);
+
+/* A value's width in a LIST line (Clipper's): the field's own, not the
+ * name's as dBASE III's headed listing had it */
+static int list_value_width(dbf_t *db, int f) {
+    switch (db->fields[f].type) {
+    case 'C': case 'N': return db->fields[f].length;
+    case 'L': return 1;
+    default: return field_display_width(db, f);   /* dates by SET CENTURY, memos */
+    }
+}
+
 static void common_list_display(dbf_t *db, lexer_t *l, int is_display);
 static void cmd_list(dbf_t *db, lexer_t *l);
 static void cmd_display(dbf_t *db, lexer_t *l);
@@ -326,11 +338,12 @@ static int parse_field_list(dbf_t *db, const char *arg, int *indices, int max_fi
     while (*p && count < max_fields) {
         int i, idx;
 
-        if (str_imatch(p, "FOR")) break;
+        if (str_imatch(p, "FOR") || str_imatch(p, "WHILE")) break;
         /* Also stop at scope keywords that might appear in COPY TO context */
         if (str_imatch(p, "ALL") || str_imatch(p, "REST") ||
             str_imatch(p, "NEXT") || str_imatch(p, "RECORD")) break;
-        if (str_imatch(p, "DELIMITED")) break;
+        if (str_imatch(p, "DELIMITED") || str_imatch(p, "SDF")) break;
+        if (str_imatch(p, "OFF") || str_imatch(p, "TO")) break;
 
         i = 0;
         while (*p && *p != ',' && *p != ' ' && *p != '\t' && i < DBF_MAX_FIELD_NAME - 1)
@@ -347,7 +360,8 @@ static int parse_field_list(dbf_t *db, const char *arg, int *indices, int max_fi
         indices[count++] = idx;
 
         p = skip_ws(p);
-        if (*p == ',') { p++; p = skip_ws(p); }
+        if (*p != ',') break;   /* the list ends where the commas do: LIST CODE, QTY OFF */
+        p = skip_ws(p + 1);
     }
 
     *rest = p;
@@ -356,6 +370,37 @@ static int parse_field_list(dbf_t *db, const char *arg, int *indices, int max_fi
 
 /* ---- Helper: display one field value ---- */
 #define PRINT_TO(f, ...) do { if (f) fprintf(f, __VA_ARGS__); else printf(__VA_ARGS__); } while(0)
+
+/* One LIST cell appended to row: a blank, then the value in its width
+ * (characters and dates left, numbers right, logicals one column) */
+static void list_cell(dbf_t *db, int f, char *raw, char *display, int width, char *row, int size) {
+    size_t have = strlen(row);
+    char *out = row + have;
+    int room = size - (int)have;
+    if (room <= 1) return;
+    dbf_get_field_raw(db, f, raw, 256);
+    switch (db->fields[f].type) {
+    case 'C':
+        field_display_char(display, raw, db->fields[f].length);
+        snprintf(out, (size_t)room, " %-*s", width, display);
+        break;
+    case 'F': case 'N':
+        field_display_numeric(display, raw, db->fields[f].length);
+        snprintf(out, (size_t)room, " %*s", width, display);
+        break;
+    case 'D':
+        field_display_date(display, raw);
+        snprintf(out, (size_t)room, " %-*s", width, display);
+        break;
+    case 'L':
+        field_display_logical(display, raw);
+        snprintf(out, (size_t)room, " %-1s", display[0] == '.' ? display + 1 : display);   /* T or F */
+        break;
+    default:
+        snprintf(out, (size_t)room, " %-*s", width, raw[0] && raw[0] != ' ' ? "memo" : "");
+        break;
+    }
+}
 
 static void print_field_value(dbf_t *db, int f, char *raw, char *display, FILE *to_file, int for_list, int width) {
     dbf_get_field_raw(db, f, raw, 256);
@@ -668,12 +713,6 @@ static void cmd_use(dbf_t *db, const char *arg) {
         return;
     }
 
-    if (dbf_is_open(db)) {
-        dbf_close(db);
-        close_all_indexes(wa);
-        wa->alias[0] = '\0';
-    }
-
     /* Parse filename (up to whitespace) */
     p = arg;
     i = 0;
@@ -691,6 +730,34 @@ static void cmd_use(dbf_t *db, const char *arg) {
         char resolved[320];
         if (cmd_resolve_file(filename, resolved, sizeof(resolved)) == 0)
             str_copy(filename, resolved, sizeof(filename));
+    }
+
+    /* Clipper's clauses, in any order before INDEX / ALIAS: NEW (the
+     * lowest free area), SHARED / EXCLUSIVE / READONLY (one user here),
+     * VIA driver (one driver here) */
+    for (;;) {
+        p = skip_ws(p);
+        if (str_imatch(p, "NEW")) {
+            int k;
+            p += 3;
+            for (k = 0; k < MAX_AREAS; k++) {
+                if (!dbf_is_open(&area_get(k)->db)) { area_set_current_idx(k); break; }
+            }
+            wa = cur_wa();
+            db = &wa->db;
+        } else if (str_imatch(p, "SHARED")) p += 6;
+        else if (str_imatch(p, "EXCLUSIVE")) p += 9;
+        else if (str_imatch(p, "READONLY")) p += 8;
+        else if (str_imatch(p, "VIA")) {
+            p = skip_ws(p + 3);
+            while (*p && *p != ' ' && *p != '\t') p++;
+        } else break;
+    }
+
+    if (dbf_is_open(db)) {   /* the area the file goes into, now that NEW has had its say */
+        dbf_close(db);
+        close_all_indexes(wa);
+        wa->alias[0] = '\0';
     }
 
     if (dbf_open(db, filename) < 0) {
@@ -1401,10 +1468,11 @@ static void cmd_continue(dbf_t *db) {
     c.has_scope = 1;
     str_copy(c.for_cond, cur_wa()->locate_cond, sizeof(c.for_cond));
 
-    /* CONTINUE starts from NEXT record */
+    /* CONTINUE starts from NEXT record; a miss leaves the pointer at EOF */
     if (db->current_record < db->record_count) {
         dbf_read_record(db, db->current_record + 1);
     } else {
+        dbf_move_eof(db);
         expr_ctx.eof_flag = 1;
         expr_ctx.found = 0;
         if (set_opts.talk) printf("End of LOCATE scope\n");
@@ -1415,6 +1483,7 @@ static void cmd_continue(dbf_t *db) {
     count = process_records(db, &c, PROC_USE_FILTER | PROC_SKIP_DELETED_SET | PROC_LEAVE_ON_MATCH, locate_cb, NULL);
     if (count < 0) return;
     if (count == 0) {
+        dbf_move_eof(db);
         expr_ctx.found = 0;
         expr_ctx.eof_flag = 1;
         if (set_opts.talk) printf("End of LOCATE scope\n");
@@ -1606,7 +1675,7 @@ static void cmd_average(dbf_t *db, lexer_t *l) {
             printf("  AVERAGE: %s\n", buf);
         }
         if (c.to_var[0]) {
-            value_t tv = val_num(actx.total / count);
+            value_t tv = val_num_dec(actx.total / count, set_opts.decimals, 0);   /* a computed value */
             memvar_set(&memvar_store, c.to_var, &tv);
         }
     } else if (count == 0) {
@@ -2471,20 +2540,20 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
     }
 
     if (set_opts.heading && !(is_display && use_all_fields)) {
+        PRINT_TO(to_file, "\n");
         if (!c.off) PRINT_TO(to_file, "Record#");
         if (use_all_fields) {
             for (f = 0; f < db->field_count; f++) {
-                int w = field_display_width(db, f);
+                int w = list_value_width(db, f);
                 PRINT_TO(to_file, " %-*s", w, db->fields[f].name);
             }
         } else {
             for (f = 0; f < nfields; f++) {
                 int idx_f = field_indices[f];
-                int w = field_display_width(db, idx_f);
+                int w = list_value_width(db, idx_f);
                 PRINT_TO(to_file, " %-*s", w, db->fields[idx_f].name);
             }
         }
-        PRINT_TO(to_file, "\n");
     }
 
     expr_ctx.eof_flag = 0;
@@ -2522,20 +2591,20 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
                 for (f = 0; f < db->field_count; f++)
                     print_field_value(db, f, raw, display, to_file, 0, 0);
             } else {
-                if (!c.off) PRINT_TO(to_file, "%7d", (int)current_rec);
+                /* Clipper's row, written whole and newline first as ? writes:
+                 * Str(RecNo(), 7) and a blank unless OFF, each value after a
+                 * blank in its width, a blank at the end */
+                char row[1024];
+                if (c.off) snprintf(row, sizeof(row), "\n");
+                else snprintf(row, sizeof(row), "\n%7d ", (int)current_rec);
                 if (use_all_fields) {
-                    for (f = 0; f < db->field_count; f++) {
-                        int w = field_display_width(db, f);
-                        print_field_value(db, f, raw, display, to_file, 1, w);
-                    }
+                    for (f = 0; f < db->field_count; f++)
+                        list_cell(db, f, raw, display, list_value_width(db, f), row, (int)sizeof(row));
                 } else {
-                    for (f = 0; f < nfields; f++) {
-                        int idx_f = field_indices[f];
-                        int w = field_display_width(db, idx_f);
-                        print_field_value(db, idx_f, raw, display, to_file, 1, w);
-                    }
+                    for (f = 0; f < nfields; f++)
+                        list_cell(db, field_indices[f], raw, display, list_value_width(db, field_indices[f]), row, (int)sizeof(row));
                 }
-                PRINT_TO(to_file, "\n");
+                PRINT_TO(to_file, "%s ", row);
             }
             last_rec = current_rec;
             row_count++;
@@ -2738,6 +2807,15 @@ static void cmd_store(dbf_t *db, lexer_t *l) {
     }
 
     memvar_set(&memvar_store, name, &val);
+    /* STORE x TO a, b, c: the rest of the list */
+    while (tmp.current.type == TOK_COMMA) {
+        lex_next(&tmp);
+        if (tmp.current.type != TOK_IDENT) break;
+        str_copy(name, tmp.current.text, sizeof(name));
+        str_upper(name);
+        memvar_set(&memvar_store, name, &val);
+        lex_next(&tmp);
+    }
 }
 
 /* ---- RELEASE ---- */
@@ -3412,6 +3490,12 @@ static void cmd_copy_to(dbf_t *db, const char *arg) {
         if (str_imatch(p, "TYPE")) p = skip_ws(skip_ws(p + 4) + 3);
         else p = skip_ws(p + 3);
 
+        if (str_imatch(p, "FIELDS")) {   /* the clauses come in either order (Clipper) */
+            p = skip_ws(p + 6);
+            nfields = parse_field_list(db, p, field_indices, DBF_MAX_FIELDS, &p);
+            if (nfields < 0) return;
+            p = skip_ws(p);
+        }
         if (str_imatch(p, "FOR"))
             cond_str = skip_ws(p + 3);
 
@@ -3573,7 +3657,7 @@ static void cmd_copy_structure(dbf_t *db, const char *arg) {
         }
     }
 
-    printf("Structure copied to %s.\n", filename);
+    if (set_opts.talk) printf("Structure copied to %s.\n", filename);
 }
 
 /* ---- COPY STRUCTURE EXTENDED TO ---- */
@@ -3903,7 +3987,7 @@ static void cmd_append_from(dbf_t *db, const char *arg) {
                         int slen;
 
                         /* Extract fixed-width slice */
-                        slen = strlen(line + offset);
+                        slen = offset < (int)strlen(line) ? (int)strlen(line + offset) : 0;   /* past the line: blank */
                         if (slen > flen) slen = flen;
                         if (slen > 0) memcpy(slice, line + offset, slen);
                         if (slen < flen) memset(slice + slen, ' ', flen - slen);
@@ -4624,7 +4708,7 @@ static void cmd_set_index(dbf_t *db, const char *arg) {
 
     if (*p == '\0') {
         /* SET INDEX TO with no args = close all */
-        printf("Index closed.\n");
+        if (set_opts.talk) printf("Index closed.\n");
         return;
     }
 
@@ -4648,7 +4732,7 @@ static void cmd_set_index(dbf_t *db, const char *arg) {
             if (index_read(&cur_wa()->indexes[slot], filename) == 0) {
                 index_compile_key_ast(&cur_wa()->indexes[slot], &memvar_store);
                 cur_wa()->num_indexes++;
-                printf("Index %s opened (%d entries).\n", filename,
+                if (set_opts.talk) printf("Index %s opened (%d entries).\n", filename,
                        cur_wa()->indexes[slot].nentries);
             } else {
                 prog_error_fmt(ERR_CANNOT_OPEN, "Cannot open index: %s", filename);
@@ -7286,6 +7370,7 @@ int cmd_execute(dbf_t *db, char *line) {
 
     lexer_init_ext(&l, p, expr_ctx.vars);
     if (cmd_kw(&l, "NOTE")) return 0;
+    if (cmd_kw(&l, "EXTERNAL") || cmd_kw(&l, "REQUEST") || cmd_kw(&l, "ANNOUNCE")) return 0;   /* for a linker */
 
     /* Handle specific non-keyword prefix commands */
     if (p[0] == '@') { screen_at_cmd(p); return 0; }

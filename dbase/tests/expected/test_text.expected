@@ -6,9 +6,7 @@ Before TEXT block
 This is line 1
   This has leading spaces
 Line 3 with special chars: @#$%
-
 After TEXT block
 IF-true text
-
 Done
 . 

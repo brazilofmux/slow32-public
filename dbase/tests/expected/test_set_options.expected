@@ -4,7 +4,7 @@ Stage 9: AST Expressions
 . TALK      = ON
 DELETED   = OFF
 EXACT     = OFF
-HEADING   = ON
+HEADING   = OFF
 CONFIRM   = OFF
 BELL      = ON
 SAFETY    = ON

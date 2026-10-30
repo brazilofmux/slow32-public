@@ -9,15 +9,15 @@ Database ITEMS.DBF created with 2 field(s).
 . . Record 2 added.
 . . Record 3 added.
 . . Record 4 added.
-. . Record# PRODUCT    PRICE 
-      1 Apple        1.50
-      2 Banana       0.75
-      3 Cherry       3.25
-      4 Date         5.00
-. Record# PRODUCT   
-      3 Cherry    
-      4 Date      
-. Record# PRODUCT    PRICE 
-      1 Apple        1.50
-      2 Banana       0.75
+. . 
+      1  Apple        1.50 
+      2  Banana       0.75 
+      3  Cherry       3.25 
+      4  Date         5.00 
+. 
+      3  Cherry     
+      4  Date       
+. 
+      1  Apple        1.50 
+      2  Banana       0.75 
 . 

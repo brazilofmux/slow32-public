@@ -28,7 +28,7 @@ speed.  Summer '87 programs are the subset they are.
 | Section | Entries | Present in clip/dbase by name |
 |---|---|---|
 | Functions | 220 | all 219 names by 2026-10-29 (the batch after step 9; the approximations are listed below) |
-| Commands | 110 | nearly all by first word; their clauses not yet checked |
+| Commands | 110 | nearly all by first word; the database and program clauses probed 2026-10-29 (below) |
 | Statements | 22 | the dBASE ones (DO, IF, FOR, PRIVATE, PUBLIC, PARAMETERS, RETURN, BEGIN SEQUENCE, LOCAL in part) |
 | Operators | 28 | the dBASE ones |
 | Directives (preprocessor) | 10 | all ten in s32-clip (step 7), #command's full grammar; the interpreter has none |
@@ -142,6 +142,44 @@ command word written as a function with no blank before the
 parenthesis -- SET(...), SELECT(...) -- is the function on both
 engines (it was the command, and "Unknown SET option").  Not provided:
 std.ch (the commands are built in), and 5.3's headers.
+
+## The commands' clauses (2026-10-29)
+
+Two probes against Harbour, each statement leaving a checkable mark:
+`cmd-database-clauses` (USE NEW / ALIAS, the scopes and FOR / WHILE on
+COUNT, SUM, AVERAGE, REPLACE, DELETE, RECALL, LOCATE and CONTINUE,
+INDEX ON ... DESCENDING / FOR, SET INDEX TO a list and SET ORDER, PACK,
+COPY TO with FIELDS / FOR / DELIMITED / SDF, COPY STRUCTURE, APPEND
+FROM DELIMITED / SDF, ZAP, SORT /D, TOTAL ON ... FIELDS, SKIP ALIAS,
+STORE TO a list, RELEASE ALL LIKE, CLOSE DATABASES) and
+`cmd-program-clauses` (PRIVATE / PUBLIC / DECLARE with initializers,
+FOR ... STEP, LOOP and EXIT, DO CASE / OTHERWISE, STORE, SAVE TO ALL
+LIKE / RESTORE FROM ADDITIVE, TEXT / ENDTEXT, the three comment forms,
+EXTERNAL / REQUEST).  Both pass.  Fixed on the way:
+
+- USE takes NEW (the lowest free area), SHARED / EXCLUSIVE / READONLY /
+  VIA, in any order before INDEX and ALIAS -- and closes the area the
+  file goes into only once NEW has had its say (it closed the current
+  one first, which emptied the alias NEW was meant to leave alone).
+- **LIST and DISPLAY print Clipper's lines**: no heading, a new line
+  first as ? writes, `Str(RecNo(), 7)` and a blank unless OFF, each value
+  after a blank in its field's own width, a blank at the end.  dBASE
+  III's headed listing is still there under SET HEADING ON (the default
+  is OFF now).  A field list ends where its commas do (`LIST CODE, QTY
+  OFF` took OFF for a field).  25 of the dBASE test expectations were
+  re-recorded for this; the diffs were the heading and the widths only.
+- AVERAGE's result carries SET DECIMALS; a CONTINUE that finds nothing
+  leaves the pointer at EOF; STORE x TO a, b, c stores to all three;
+  COPY TO ... SDF takes FIELDS after SDF as well as before; APPEND FROM
+  ... SDF leaves blank the fields a short line does not reach (it read
+  past the line's end into the previous record's bytes); the "Index
+  opened / closed" and "Structure copied" messages come under SET TALK;
+  TEXT lines are written as ? writes them (new line first); EXTERNAL,
+  REQUEST and ANNOUNCE are accepted and do nothing.
+
+Not probed yet: @ SAY / GET's clauses beyond PICTURE / VALID / WHEN /
+RANGE, SET RELATION ADDITIVE, JOIN / UPDATE's forms, REPORT / LABEL
+FORM, the console commands that need a terminal.
 
 ## The order of work proposed
 

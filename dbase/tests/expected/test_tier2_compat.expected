@@ -66,9 +66,9 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width
 Database SDFTEST2.DBF created with 2 field(s).
 . Database SDFTEST2.DBF opened with 0 record(s).
 . 2 record(s) added.
-. Record# NAME                 AGE
-      1 Alice                 25
-      2 Bob                   30
+. 
+      1  Alice                 25 
+      2  Bob                   30 
 . Database closed.
 . File erased.
 . File erased.

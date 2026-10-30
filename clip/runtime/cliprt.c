@@ -559,7 +559,8 @@ static int clip_recover(void) {
 }
 
 void clip_text(const char *line) {
-    printf("%s\n", line);
+    cmd_output("\n");   /* as ? writes: the new line first (Clipper's TEXT is QOut) */
+    printf("%s", line);
 }
 
 /* ---- Compiled expressions ---- */
