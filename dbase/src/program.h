@@ -129,6 +129,15 @@ void prog_begin_sequence(void);
 void prog_end_sequence(void);
 void prog_recover(void);
 void prog_break(void);
+/* The error system: ERRORBLOCK()'s handler (VAL_NIL: none), the value BREAK
+ * carries to RECOVER USING (set with it pending; read where it lands), and
+ * an Error object made for an error */
+value_t prog_get_errorblock(void);
+void prog_set_errorblock(const value_t *block);
+void prog_set_break_value(const value_t *v);
+value_t prog_break_value(void);
+void prog_break_landed(void);
+struct object_s *prog_new_error_object(int code, const char *description);
 
 /* Check if program is running */
 int prog_is_running(void);

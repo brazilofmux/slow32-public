@@ -7219,7 +7219,8 @@ static int try_expression_statement(const lexer_t *l, const char *p) {
             if (cmd_table_exact(l->current.text) >= 0 ||
                 cmd_table_abbrev(l->current.text, &ambiguous) >= 0)
                 return 0;
-        } else if (!is_assign_tok(second) && second != TOK_ARROW && second != TOK_LBRACKET) {
+        } else if (!is_assign_tok(second) && second != TOK_ARROW && second != TOK_LBRACKET &&
+                   second != TOK_COLON) {   /* o:ivar := e, o:method() */
             return 0;
         }
     } else {
@@ -7230,7 +7231,8 @@ static int try_expression_statement(const lexer_t *l, const char *p) {
     if (!n)
         return 0;
     if (*skip_ws(pp) != '\0' ||
-        (n->type != AST_ASSIGN && n->type != AST_INCDEC && n->type != AST_FUNC_CALL)) {
+        (n->type != AST_ASSIGN && n->type != AST_INCDEC && n->type != AST_FUNC_CALL &&
+         !(n->type == AST_SEND && n->send.is_call))) {
         ast_free(n);
         return 0;
     }

@@ -105,6 +105,32 @@ value_t val_nil(void) {
     return v;
 }
 
+value_t val_object(object_t *o) {
+    value_t v;
+    v.type = VAL_OBJECT;
+    v.ndec = 0;
+    v.nwidth = 0;
+    v.obj = o;
+    return v;
+}
+
+object_t *object_new(const char *cls) {
+    object_t *o = calloc(1, sizeof(*o));
+    if (o) snprintf(o->cls, sizeof(o->cls), "%s", cls);
+    return o;
+}
+
+value_t *object_ivar(object_t *o, const char *name, int create) {
+    int i;
+    for (i = 0; i < o->n; i++) {
+        if (str_icmp(o->names[i], name) == 0) return &o->vals[i];
+    }
+    if (!create || o->n >= OBJECT_MAX_IVARS) return NULL;
+    snprintf(o->names[o->n], sizeof(o->names[0]), "%s", name);
+    o->vals[o->n] = val_nil();
+    return &o->vals[o->n++];
+}
+
 /* ---- Display formatting ---- */
 
 void val_to_string(const value_t *v, char *buf, int size) {
@@ -114,6 +140,9 @@ void val_to_string(const value_t *v, char *buf, int size) {
         return;
     case VAL_BLOCK:
         snprintf(buf, size, "{||...}");
+        return;
+    case VAL_OBJECT:
+        snprintf(buf, size, "%s", v->obj ? v->obj->cls : "NIL");
         return;
     case VAL_NUM: {
         /* Print integer if no fractional part, else strip trailing zeros */

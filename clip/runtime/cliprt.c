@@ -517,15 +517,37 @@ static void clip_seq_jump(void) {
     while (clip_scope_top && clip_scope_top != q->scope) {
         clip_leave(clip_scope_top);
     }
+    prog_break_landed();
     longjmp(q->jb, 1);
 }
 
 void clip_break(void) {
     if (!clip_seq_top) {
+        prog_break_landed();
         prog_error(ERR_SYNTAX, "BREAK without BEGIN SEQUENCE");
         return;
     }
     clip_seq_jump();
+}
+
+void clip_break_v(const value_t *v) {
+    prog_set_break_value(v);
+    clip_break();
+}
+
+static int eval_expr(const char *expr, value_t *out);
+
+void clip_break_s(const char *expr) {
+    value_t v;
+    if (eval_expr(expr, &v) != 0) {
+        return;
+    }
+    clip_break_v(&v);
+}
+
+void clip_recover_using(const char *name) {
+    value_t v = prog_break_value();
+    memvar_set(cmd_get_memvar_store(), name, &v);
 }
 
 static int clip_recover(void) {

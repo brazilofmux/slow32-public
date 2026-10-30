@@ -161,6 +161,12 @@ void ast_free(ast_node_t *node) {
         ast_free(node->index.base);
         ast_free(node->index.index);
         break;
+    case AST_SEND:
+        ast_free(node->send.base);
+        for (i = 0; i < node->send.nargs; i++)
+            ast_free(node->send.args[i]);
+        free(node->send.args);
+        break;
     case AST_BLOCK:
         for (i = 0; i < node->block.n; i++)
             ast_free(node->block.exprs[i]);
@@ -190,7 +196,8 @@ static ast_node_t *ast_parse_primary(lexer_t *l, memvar_store_t *store, const ch
 static int is_lvalue(const ast_node_t *n) {
     return n && (n->type == AST_MEMVAR || n->type == AST_ARRAY_ACCESS ||
                  n->type == AST_ALIAS_FIELD || n->type == AST_FIELD ||
-                 n->type == AST_INDEX);
+                 n->type == AST_INDEX ||
+                 (n->type == AST_SEND && !n->send.is_call));
 }
 
 /* {| p, q | e1, e2, ... }, with the { taken: the parameters, then the
@@ -271,6 +278,11 @@ static ast_node_t *ast_clone(const ast_node_t *n) {
         c->index.base = ast_clone(n->index.base);
         c->index.index = ast_clone(n->index.index);
         break;
+    case AST_SEND:
+        c->send.base = ast_clone(n->send.base);
+        c->send.args = n->send.nargs ? malloc((size_t)n->send.nargs * sizeof(ast_node_t *)) : NULL;
+        for (i = 0; i < n->send.nargs; i++) c->send.args[i] = ast_clone(n->send.args[i]);
+        break;
     case AST_BLOCK:
         c->block.params = malloc(MAX_BLOCK_PARAMS * MEMVAR_NAMELEN);
         if (c->block.params) memcpy(c->block.params, n->block.params, MAX_BLOCK_PARAMS * MEMVAR_NAMELEN);
@@ -283,10 +295,48 @@ static ast_node_t *ast_clone(const ast_node_t *n) {
     return c;
 }
 
-/* primary [ i ] [ i, j ] ...: x[i,j] is x[i][j] */
+/* primary [ i ] [ i, j ] ...: x[i,j] is x[i][j]; and primary:name or
+ * primary:name(args), the send operator, in the same chain */
 static ast_node_t *parse_postfix_index(lexer_t *l, memvar_store_t *store, const char **error,
                                        ast_node_t *base) {
-    while (base && lex_peek(l) == TOK_LBRACKET) {
+    while (base && (lex_peek(l) == TOK_LBRACKET || lex_peek(l) == TOK_COLON)) {
+        if (lex_peek(l) == TOK_COLON) {
+            ast_node_t *n;
+            lex_next(l);
+            if (lex_peek(l) != TOK_IDENT) {
+                *error = "Expected a name after :";
+                ast_free(base);
+                return NULL;
+            }
+            n = node_alloc(AST_SEND);
+            if (!n) { ast_free(base); *error = "Out of memory"; return NULL; }
+            str_copy(n->send.name, l->current.text, sizeof(n->send.name));
+            n->send.base = base;
+            base = n;
+            lex_next(l);
+            if (lex_peek(l) == TOK_LPAREN) {
+                n->send.is_call = 1;
+                lex_next(l);
+                while (lex_peek(l) != TOK_RPAREN) {
+                    ast_node_t *arg = ast_parse_expr(l, store, error);
+                    ast_node_t **grown;
+                    if (!arg) { ast_free(base); return NULL; }
+                    grown = realloc(n->send.args, (size_t)(n->send.nargs + 1) * sizeof(ast_node_t *));
+                    if (!grown) { ast_free(arg); ast_free(base); *error = "Out of memory"; return NULL; }
+                    n->send.args = grown;
+                    n->send.args[n->send.nargs++] = arg;
+                    if (lex_peek(l) != TOK_COMMA) break;
+                    lex_next(l);
+                }
+                if (lex_peek(l) != TOK_RPAREN) {
+                    *error = "Missing closing parenthesis";
+                    ast_free(base);
+                    return NULL;
+                }
+                lex_next(l);
+            }
+            continue;
+        }
         lex_next(l);
         for (;;) {
             ast_node_t *idx = ast_parse_expr(l, store, error);
@@ -1019,10 +1069,12 @@ int ast_eval_binop(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const valu
     case OP_LT: case OP_GT: case OP_LE: case OP_GE: {
         int cmp = 0;
 
-        /* NIL equals NIL and nothing else (Clipper) */
-        if ((left->type == VAL_NIL || right->type == VAL_NIL) &&
+        /* NIL equals NIL and nothing else (Clipper); an object only itself */
+        if ((left->type == VAL_NIL || right->type == VAL_NIL || left->type == VAL_OBJECT ||
+             right->type == VAL_OBJECT) &&
             (op == OP_EQ || op == OP_EXACT_EQ || op == OP_NE)) {
-            int same = left->type == right->type;
+            int same = left->type == right->type &&
+                       (left->type != VAL_OBJECT || left->obj == right->obj);
             *result = val_logic(op == OP_NE ? !same : same);
             return 0;
         }
@@ -1135,6 +1187,8 @@ static void free_names(const ast_node_t *n, const ast_node_t *blk, char (*out)[M
     case AST_ARRAY_LIT:    for (i = 0; i < n->list.n; i++) free_names(n->list.elems[i], blk, out, count); break;
     case AST_INDEX:        free_names(n->index.base, blk, out, count);
                            free_names(n->index.index, blk, out, count); break;
+    case AST_SEND:         free_names(n->send.base, blk, out, count);
+                           for (i = 0; i < n->send.nargs; i++) free_names(n->send.args[i], blk, out, count); break;
     case AST_BLOCK:        for (i = 0; i < n->block.n; i++) free_names(n->block.exprs[i], blk, out, count); break;
     default: break;
     }
@@ -1260,10 +1314,56 @@ int ast_store_index(expr_ctx_t *ctx, const value_t *base, const value_t *index, 
     return 0;
 }
 
+static value_t *ivar_ref(expr_ctx_t *ctx, const value_t *base, const char *name) {
+    value_t *p;
+    if (base->type != VAL_OBJECT || !base->obj) {
+        ctx->error = "Not an object";
+        return NULL;
+    }
+    p = object_ivar(base->obj, name, 0);
+    if (!p) {
+        snprintf(ctx->err_msg, sizeof(ctx->err_msg), "No exported variable: %s", name);
+        ctx->error = ctx->err_msg;
+    }
+    return p;
+}
+
+int ast_eval_send(expr_ctx_t *ctx, const value_t *base, const char *name, value_t *args, int nargs,
+                  int is_call, value_t *result) {
+    value_t *p;
+    (void)args;
+    (void)nargs;
+    if (is_call) {
+        if (base->type != VAL_OBJECT || !base->obj) {
+            ctx->error = "Not an object";
+            return -1;
+        }
+        if (str_icmp(name, "CLASSNAME") == 0) {   /* every object's */
+            *result = val_str(base->obj->cls);
+            return 0;
+        }
+        snprintf(ctx->err_msg, sizeof(ctx->err_msg), "No exported method: %s", name);
+        ctx->error = ctx->err_msg;
+        return -1;
+    }
+    p = ivar_ref(ctx, base, name);
+    if (!p) return -1;
+    *result = *p;
+    return 0;
+}
+
+int ast_store_send(expr_ctx_t *ctx, const value_t *base, const char *name, const value_t *val) {
+    value_t *p = ivar_ref(ctx, base, name);
+    if (!p) return -1;
+    *p = *val;
+    return 0;
+}
+
 static int store_to(ast_node_t *t, expr_ctx_t *ctx, const value_t *row, const value_t *col,
                     const value_t *val) {
     switch (t->type) {
     case AST_INDEX:        return ast_store_index(ctx, row, col, val);
+    case AST_SEND:         return ast_store_send(ctx, row, t->send.name, val);
     case AST_MEMVAR:       return ast_store_name(ctx, t->name, val);
     case AST_FIELD:        return ast_store_alias_field(ctx, "FIELD", t->name, val);
     case AST_ALIAS_FIELD:  return ast_store_alias_field(ctx, t->alias_field.alias, t->alias_field.field, val);
@@ -1287,6 +1387,8 @@ static int eval_store(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
         if (ast_eval(t->index.base, ctx, &row) != 0) return -1;
         if (ast_eval(t->index.index, ctx, &col) != 0) return -1;
         has_col = 1;
+    } else if (t->type == AST_SEND) {   /* row: the object */
+        if (ast_eval(t->send.base, ctx, &row) != 0) return -1;
     }
     if (node->type == AST_ASSIGN && node->assign.op == OP_NONE) {
         if (ast_eval(node->assign.value, ctx, &nv) != 0) return -1;
@@ -1295,6 +1397,8 @@ static int eval_store(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
             if (ast_eval_elem(ctx, t->array.name, &row, has_col ? &col : NULL, &cur) != 0) return -1;
         } else if (t->type == AST_INDEX) {
             if (ast_eval_index(ctx, &row, &col, &cur) != 0) return -1;
+        } else if (t->type == AST_SEND) {
+            if (ast_eval_send(ctx, &row, t->send.name, NULL, 0, 0, &cur) != 0) return -1;
         } else if (ast_eval(t, ctx, &cur) != 0) return -1;
         if (node->type == AST_ASSIGN) {
             if (ast_eval(node->assign.value, ctx, &rhs) != 0) return -1;
@@ -1426,6 +1530,24 @@ int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
         if (ast_eval(node->index.base, ctx, &base) != 0) return -1;
         if (ast_eval(node->index.index, ctx, &idx) != 0) return -1;
         return ast_eval_index(ctx, &base, &idx, result);
+    }
+
+    case AST_SEND: {   /* the arguments off the stack, as AST_FUNC_CALL keeps them */
+        value_t base;
+        value_t *args = NULL;
+        int i, rc;
+        if (node->send.nargs > MAX_FUNC_ARGS) { ctx->error = "Too many function arguments"; return -1; }
+        if (ast_eval(node->send.base, ctx, &base) != 0) return -1;
+        if (node->send.nargs > 0) {
+            args = malloc((size_t)node->send.nargs * sizeof(value_t));
+            if (!args) { ctx->error = "Out of memory"; return -1; }
+        }
+        for (i = 0; i < node->send.nargs; i++) {
+            if (ast_eval(node->send.args[i], ctx, &args[i]) != 0) { free(args); return -1; }
+        }
+        rc = ast_eval_send(ctx, &base, node->send.name, args, node->send.nargs, node->send.is_call, result);
+        free(args);
+        return rc;
     }
 
     } /* end switch(node->type) */

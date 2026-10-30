@@ -560,6 +560,7 @@ static int fn_valtype(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result
         case VAL_LOGIC: t = "L"; break;
         case VAL_ARRAY: t = "A"; break;
         case VAL_BLOCK: t = "B"; break;
+        case VAL_OBJECT: t = "O"; break;
         default:        t = "U"; break;
         }
     }
@@ -685,6 +686,7 @@ static int fn_type(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     switch (args[0].type) {
     case VAL_NUM:   *result = val_str("N"); break;
     case VAL_CHAR:  *result = val_str("C"); break;
+    case VAL_OBJECT: *result = val_str("O"); break;
     case VAL_DATE:  *result = val_str("D"); break;
     case VAL_LOGIC: *result = val_str("L"); break;
     default:        *result = val_str("U"); break;
@@ -1856,6 +1858,37 @@ static int fn_adel(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     return 0;
 }
 
+/* ---- The error system (Clipper's): ERRORBLOCK posts the handler, an
+ * Error object describes the error, BREAK carries a value to RECOVER ---- */
+
+/* ERRORBLOCK([block]): the handler posted; returns the one before */
+static int fn_errorblock(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    *result = prog_get_errorblock();
+    if (nargs >= 1) prog_set_errorblock(&args[0]);
+    return 0;
+}
+
+/* ERRORNEW(): a blank Error object */
+static int fn_errornew(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    object_t *o = prog_new_error_object(0, "");
+    (void)args;
+    (void)nargs;
+    if (!o) { ctx->error = "Out of memory"; return -1; }
+    *result = val_object(o);
+    return 0;
+}
+
+/* BREAK([value]), the function form: out to the innermost RECOVER.  It
+ * leaves as an expression error does; prog_error sees the pending BREAK
+ * and takes the sequence without a handler or a message. */
+static int fn_break(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)result;
+    prog_set_break_value(nargs >= 1 ? &args[0] : NULL);
+    ctx->error = "BREAK";
+    return -1;
+}
+
 /* EVAL(block, args...) */
 static int fn_eval(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     if (nargs < 1 || args[0].type != VAL_BLOCK) {
@@ -2480,6 +2513,7 @@ static const func_entry_t func_table[] = {
     { "SEEK",      fn_seek_func },
     /* Tier 2: Array functions */
     { "ALEN",      fn_alen },
+    { "ERRORBLOCK", fn_errorblock }, { "ERRORNEW", fn_errornew }, { "BREAK", fn_break },
     { "ARRAY",     fn_array },  { "EVAL", fn_eval },   { "AEVAL", fn_aeval },  { "AADD", fn_aadd },   { "ASIZE", fn_asize },
     { "ATAIL",     fn_atail },  { "AFILL", fn_afill }, { "ACLONE", fn_aclone },
     { "ASCAN",     fn_ascan },

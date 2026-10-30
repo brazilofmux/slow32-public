@@ -11,6 +11,7 @@
 #include "set.h"
 #include "ast.h"
 #include "screen.h"
+#include <ctype.h>
 
 static prog_state_t state;
 
@@ -27,6 +28,58 @@ static struct {
     int in_handler;         /* 1 = currently inside error handler */
     int retry;              /* set by RETRY command inside handler */
 } error_state;
+
+/* Clipper's error system: the block ERRORBLOCK() posted, and the value a
+ * BREAK carries to RECOVER USING -- the error's object when the error
+ * itself reaches the RECOVER */
+static value_t error_block;    /* VAL_NIL: none posted */
+static value_t break_value;
+static int break_pending;      /* a BREAK is on its way to RECOVER */
+
+value_t prog_get_errorblock(void) {
+    return error_block;
+}
+
+void prog_set_errorblock(const value_t *block) {
+    error_block = block && block->type == VAL_BLOCK ? *block : val_nil();
+}
+
+void prog_set_break_value(const value_t *v) {
+    break_value = v ? *v : val_nil();
+    break_pending = 1;
+}
+
+value_t prog_break_value(void) {
+    return break_value;
+}
+
+void prog_break_landed(void) {
+    break_pending = 0;
+    error_state.in_handler = 0;
+}
+
+/* The Error class as the guide lists it: args, canDefault, canRetry,
+ * canSubstitute, cargo, description, filename, genCode, operation,
+ * osCode, severity, subCode, subSystem, tries */
+object_t *prog_new_error_object(int code, const char *description) {
+    object_t *o = object_new("ERROR");
+    if (!o) return NULL;
+    *object_ivar(o, "args", 1) = val_nil();
+    *object_ivar(o, "canDefault", 1) = val_logic(0);
+    *object_ivar(o, "canRetry", 1) = val_logic(0);
+    *object_ivar(o, "canSubstitute", 1) = val_logic(0);
+    *object_ivar(o, "cargo", 1) = val_nil();
+    *object_ivar(o, "description", 1) = val_str(description);
+    *object_ivar(o, "filename", 1) = val_str("");
+    *object_ivar(o, "genCode", 1) = val_num_dec((double)code, 0, 0);
+    *object_ivar(o, "operation", 1) = val_str("");
+    *object_ivar(o, "osCode", 1) = val_num_dec(0, 0, 0);
+    *object_ivar(o, "severity", 1) = val_num_dec(2, 0, 0);
+    *object_ivar(o, "subCode", 1) = val_num_dec(0, 0, 0);
+    *object_ivar(o, "subSystem", 1) = val_str("BASE");
+    *object_ivar(o, "tries", 1) = val_num_dec(0, 0, 0);
+    return o;
+}
 
 /* User-defined FUNCTION support */
 static int udf_active;          /* >0 when executing a UDF call */
@@ -64,6 +117,7 @@ typedef struct {
 
 static sequence_frame_t seq_stack[MAX_SEQUENCE_DEPTH];
 static int seq_depth;
+static int seq_unwind(void);
 
 /* ---- Synchronous procedure call support ---- */
 /* When prog_call_sync is active, pop_frame stops execution when
@@ -241,6 +295,30 @@ void prog_error(int code, const char *message) {
         error_state.program[0] = '\0';
     }
 
+    /* A BREAK(value) on its way out: no handler, no message */
+    if (break_pending) goto recover;
+
+    /* The error's object: what ERRORBLOCK()'s handler is given and what a
+     * RECOVER USING receives when the error itself reaches it */
+    {
+        object_t *o = prog_new_error_object(code, message);
+        break_value = o ? val_object(o) : val_nil();
+    }
+
+    /* ERRORBLOCK()'s handler: it BREAKs to a RECOVER, or it returns and
+     * the statement that failed is abandoned */
+    if (error_block.type == VAL_BLOCK && !error_state.in_handler) {
+        value_t arg = break_value, r;
+        expr_ctx_t *ctx;
+        cmd_ctx_setup();
+        ctx = cmd_get_expr_ctx();
+        error_state.in_handler = 1;
+        (void)ast_eval_block(ctx, &error_block, &arg, 1, &r);
+        error_state.in_handler = 0;
+        if (break_pending) goto recover;
+        return;
+    }
+
     /* If ON ERROR handler is set and we're not already in it, invoke it.
        Use prog_call_sync so the handler runs to completion before we
        check RETRY — prog_do alone only pushes a frame and relies on
@@ -259,41 +337,23 @@ void prog_error(int code, const char *message) {
         return;
     }
 
-    /* BEGIN SEQUENCE recovery — scan forward for RECOVER/END SEQUENCE.
+recover:
+    /* BEGIN SEQUENCE recovery — to the RECOVER or END SEQUENCE line.
        Note: prog_execute_line does state.pc++ after cmd_execute returns,
        so we set pc to the target line; the increment lands on target+1. */
     if (seq_depth > 0 && state.running) {
-        seq_depth--;
-        sequence_frame_t *f = &seq_stack[seq_depth];
-
-        /* Unwind call/loop depth */
-        while (state.call_depth > f->call_depth)
-            state.call_depth--;
-        state.loop_depth = f->loop_depth;
-        state.current_prog = f->prog;
-        cmd_get_memvar_store()->current_depth = state.call_depth;
-
-        /* Scan from BEGIN SEQUENCE for RECOVER or END SEQUENCE */
-        int target = scan_sequence_end(f->prog, f->pc, 0);
-        if (target >= 0) {
-            char line[MAX_LINE_LEN];
-            char *p;
-            str_copy(line, f->prog->lines[target], MAX_LINE_LEN);
-            prog_preprocess(line, cmd_get_memvar_store());
-            p = skip_ws(line);
-            if (line_is_kw(p, "RECOVER"))
-                state.pc = target;  /* pc++ will land on first line after RECOVER */
-            else
-                state.pc = target;  /* pc++ will land on line after END SEQUENCE */
-        } else {
-            state.pc = f->pc;
-        }
+        state.pc = seq_unwind();
         return;
     }
 
     /* Compiled code's BEGIN SEQUENCE: recovered, as above, without a word */
     if (!state.running && compiled_recover && compiled_recover())
         return;
+
+    if (break_pending) {   /* a BREAK with no sequence to take */
+        prog_break_landed();
+        message = "BREAK without BEGIN SEQUENCE";
+    }
 
     /* No handler — print error with context */
     if (error_state.lineno > 0 && error_state.program[0]) {
@@ -940,7 +1000,7 @@ static int scan_sequence_end(program_t *prog, int from, int kind) {
         p = skip_ws(line);
         if (line_is_kw(p, "BEGIN") && str_imatch(skip_ws(p + 5), "SEQUENCE"))
             depth++;
-        else if (line_is_kw(p, "END") && str_imatch(skip_ws(p + 3), "SEQUENCE")) {
+        else if (line_is_kw(p, "END") && (*skip_ws(p + 3) == '\0' || str_imatch(skip_ws(p + 3), "SEQUENCE"))) {
             depth--;
             if (depth == 0) return i;
         } else if (kind == 0 && depth == 1 && line_is_kw(p, "RECOVER")) {
@@ -981,36 +1041,47 @@ void prog_recover(void) {
         seq_depth--;
 }
 
-void prog_break(void) {
-    if (seq_depth <= 0) {
-        prog_error(ERR_SYNTAX, "BREAK without BEGIN SEQUENCE");
-        return;
-    }
-    seq_depth--;
-    sequence_frame_t *f = &seq_stack[seq_depth];
+/* The innermost sequence left: calls and loops unwound to where it began,
+ * RECOVER USING's variable given the BREAK value; returns the line of its
+ * RECOVER or END SEQUENCE (the BEGIN SEQUENCE line when neither is found) */
+static int seq_unwind(void) {
+    sequence_frame_t *f = &seq_stack[--seq_depth];
+    int target;
 
-    /* Unwind call/loop depth */
-    while (state.call_depth > f->call_depth) {
+    while (state.call_depth > f->call_depth)
         state.call_depth--;
-    }
     state.loop_depth = f->loop_depth;
     state.current_prog = f->prog;
+    cmd_get_memvar_store()->current_depth = state.call_depth;
 
-    /* Scan from BEGIN SEQUENCE for RECOVER or END SEQUENCE */
-    int target = scan_sequence_end(f->prog, f->pc, 0);
+    target = scan_sequence_end(f->prog, f->pc, 0);
     if (target >= 0) {
         char line[MAX_LINE_LEN];
-        char *p;
+        const char *p;
         str_copy(line, f->prog->lines[target], MAX_LINE_LEN);
         prog_preprocess(line, cmd_get_memvar_store());
         p = skip_ws(line);
-        if (line_is_kw(p, "RECOVER"))
-            state.pc = target + 1;  /* execute lines after RECOVER */
-        else
-            state.pc = target + 1;  /* skip past END SEQUENCE */
-    } else {
-        state.pc = f->pc + 1;
+        if (line_is_kw(p, "RECOVER") && line_is_kw(skip_ws(p + 7), "USING")) {
+            char name[MEMVAR_NAMELEN];
+            int i = 0;
+            p = skip_ws(skip_ws(p + 7) + 5);
+            while ((isalnum((unsigned char)*p) || *p == '_') && i < MEMVAR_NAMELEN - 1)
+                name[i++] = *p++;
+            name[i] = '\0';
+            memvar_set(cmd_get_memvar_store(), name, &break_value);
+        }
     }
+    prog_break_landed();
+    return target >= 0 ? target : f->pc;
+}
+
+void prog_break(void) {
+    if (seq_depth <= 0) {
+        prog_break_landed();
+        prog_error(ERR_SYNTAX, "BREAK without BEGIN SEQUENCE");
+        return;
+    }
+    state.pc = seq_unwind() + 1;   /* the line after RECOVER or END SEQUENCE */
 }
 
 /* ---- Save PRIVATE variables ---- */
@@ -2850,12 +2921,24 @@ int prog_execute_line(char *line) {
         return 0;
     }
 
-    if (str_imatch(p, "END") && str_imatch(skip_ws(p + 3), "SEQUENCE")) {
-        prog_end_sequence();
+    if (line_is_kw(p, "END") && (*skip_ws(p + 3) == '\0' || str_imatch(skip_ws(p + 3), "SEQUENCE"))) {
+        prog_end_sequence();   /* END alone closes a sequence too (Clipper) */
         return 0;
     }
 
-    if (str_imatch(p, "BREAK")) {
+    if (str_imatch(p, "BREAK")) {   /* BREAK [value]: the value to RECOVER USING */
+        const char *a = skip_ws(p + 5);
+        value_t v = val_nil();
+        if (*a) {
+            expr_ctx_t *ctx;
+            cmd_ctx_setup();
+            ctx = cmd_get_expr_ctx();
+            if (expr_eval_str(ctx, a, &v) != 0) {
+                if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);
+                return 0;
+            }
+        }
+        prog_set_break_value(&v);
         prog_break();
         return 0;
     }

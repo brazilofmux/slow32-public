@@ -32,7 +32,7 @@ speed.  Summer '87 programs are the subset they are.
 | Statements | 22 | the dBASE ones (DO, IF, FOR, PRIVATE, PUBLIC, PARAMETERS, RETURN, BEGIN SEQUENCE, LOCAL in part) |
 | Operators | 28 | the dBASE ones |
 | Directives (preprocessor) | 10 | all ten in s32-clip (step 7); the interpreter has none |
-| Classes (Error, Get, TBrowse, TBColumn) | 4 | none |
+| Classes (Error, Get, TBrowse, TBColumn) | 4 | Error (step 8); the `:` send operator |
 | Get System | 10 | none (dbase has its own @ SAY/GET/READ) |
 | Drivers (RDD) | 31 | DBF/NDX2 only, by design (NDX ruling 2026-10-29) |
 
@@ -155,6 +155,24 @@ The severe ones are marked.
    abbreviation rule that #command (not #xcommand) allows, and the
    standard header STD.CH (the built-in commands are still parsed, not
    rules).
-8. **The error system** -- ERRORBLOCK, error objects, BREAK(value): needs
-   the `:` send operator and objects -- severe.
+8. **The error system** -- done 2026-10-29, interpreter and clip alike:
+   a value type for objects (VALTYPE O; shared by reference like arrays,
+   not collected -- the same debt), the `:` send operator (`o:name` reads
+   an exported variable, `o:name := e` assigns one, `o:name()` calls a
+   method; `:className()` on any object), ERRORBLOCK() posting a handler
+   block (returns the previous; NIL when none was), ERRORNEW(), the Error
+   class with the guide's exported variables (args, canDefault, canRetry,
+   canSubstitute, cargo, description, filename, genCode, operation,
+   osCode, severity, subCode, subSystem, tries), BREAK with a value --
+   statement and function form, so a handler can BREAK(e) -- and RECOVER
+   USING var; a bare END closes a sequence.  An error makes an Error
+   object and gives it to the handler; the handler BREAKs to the nearest
+   RECOVER, or returns and the failed statement is abandoned; with no
+   handler the sequence is recovered as before, RECOVER USING receiving
+   the object.  Not Clipper's yet: description and genCode are this
+   implementation's texts and codes, not the guide's ("argument error",
+   EG_ARG); operation and args are blank; canRetry / canSubstitute are
+   always false, so a handler's return value substitutes nothing;
+   ERRORBLOCK() with none posted returns NIL where Clipper returns the
+   default handler's block.
 9. **The Get system, TBrowse** -- objects again; after 8.

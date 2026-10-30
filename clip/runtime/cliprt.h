@@ -68,6 +68,11 @@ typedef struct clip_seq {
 jmp_buf *clip_seq_begin(clip_seq_t *q);
 void clip_seq_end(void);
 void clip_break(void);
+/* BREAK with a value (NULL: none), the value from expression text (a
+ * macro), and RECOVER USING's variable given what the BREAK carried */
+void clip_break_v(const value_t *v);
+void clip_break_s(const char *expr);
+void clip_recover_using(const char *name);
 
 /* Compiled expressions: the context for a statement, a failure reported as
  * the interpreter reports one, a condition's truth, an assignment, a call

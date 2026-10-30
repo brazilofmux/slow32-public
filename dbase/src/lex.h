@@ -59,6 +59,7 @@ typedef enum {
     TOK_RBRACE,     /* } */
     TOK_PIPE,       /* | */
     TOK_AT,         /* @ : a reference argument */
+    TOK_COLON,      /* : the send operator */
 
     /* Macro */
     TOK_MACRO,      /* & */

@@ -276,6 +276,11 @@ static void gen_target_read(sb_t *b, ast_node_t *t, int r, int c, int cur) {
     case AST_INDEX:
         sb_printf(b, "e = e || ast_eval_index(c, &t%d, &t%d, &t%d); ", r, c, cur);
         break;
+    case AST_SEND:
+        sb_printf(b, "e = e || ast_eval_send(c, &t%d, ", r);
+        sb_cstr(b, t->send.name);
+        sb_printf(b, ", NULL, 0, 0, &t%d); ", cur);
+        break;
     case AST_MEMVAR:
         sb_printf(b, "e = e || ast_eval_name(c, ");
         sb_cstr(b, t->name);
@@ -306,6 +311,11 @@ static void gen_target_store(sb_t *b, ast_node_t *t, int r, int c, int val) {
     switch (t->type) {
     case AST_INDEX:
         sb_printf(b, "e = e || ast_store_index(c, &t%d, &t%d, &t%d); ", r, c, val);
+        break;
+    case AST_SEND:
+        sb_printf(b, "e = e || ast_store_send(c, &t%d, ", r);
+        sb_cstr(b, t->send.name);
+        sb_printf(b, ", &t%d); ", val);
         break;
     case AST_MEMVAR:
         sb_printf(b, "e = e || ast_store_name(c, ");
@@ -498,6 +508,27 @@ static int gen_expr(sb_t *b, int *ntmp, ast_node_t *node) {
         r = gen_expr(b, ntmp, node->index.index);
         sb_printf(b, "e = e || ast_eval_index(c, &t%d, &t%d, &t%d); ", l, r, t);
         return t;
+    case AST_SEND:
+        l = gen_expr(b, ntmp, node->send.base);
+        a = -1;
+        if (node->send.nargs > 0) {
+            int args[MAX_FUNC_ARGS];
+            for (i = 0; i < node->send.nargs; i++) {
+                args[i] = gen_expr(b, ntmp, node->send.args[i]);
+            }
+            a = (*ntmp)++;
+            sb_printf(g_decl, "value_t a%d[%d]; ", a, node->send.nargs);
+            sb_printf(b, "{ value_t *av = a%d; ", a);
+            for (i = 0; i < node->send.nargs; i++) {
+                sb_printf(b, "av[%d] = t%d; ", i, args[i]);
+            }
+            sb_printf(b, "} ");
+        }
+        sb_printf(b, "e = e || ast_eval_send(c, &t%d, ", l);
+        sb_cstr(b, node->send.name);
+        if (a >= 0) sb_printf(b, ", a%d, %d, %d, &t%d); ", a, node->send.nargs, node->send.is_call, t);
+        else sb_printf(b, ", NULL, 0, %d, &t%d); ", node->send.is_call, t);
+        return t;
     case AST_ASSIGN:
     case AST_INCDEC: {
         /* as ast.c's eval_store: indexes once, then the current value
@@ -510,6 +541,8 @@ static int gen_expr(sb_t *b, int *ntmp, ast_node_t *node) {
         } else if (tg->type == AST_INDEX) {   /* ri: the array, ci: the index */
             ri = gen_expr(b, ntmp, tg->index.base);
             ci = gen_expr(b, ntmp, tg->index.index);
+        } else if (tg->type == AST_SEND) {   /* ri: the object */
+            ri = gen_expr(b, ntmp, tg->send.base);
         }
         if (node->type == AST_ASSIGN && node->assign.op == OP_NONE) {
             nv = gen_expr(b, ntmp, node->assign.value);
@@ -794,7 +827,8 @@ static int emit_expr_stmt(emit_t *e, const char *p) {
             }
         } else if (!(q[0] == ':' && q[1] == '=') && !(q[1] == '=' && strchr("+-*/%^", q[0])) &&
                    !(q[0] == '+' && q[1] == '+') && !(q[0] == '-' && q[1] == '-') &&
-                   !(q[0] == '-' && q[1] == '>') && q[0] != '[') {
+                   !(q[0] == '-' && q[1] == '>') && q[0] != '[' &&
+                   !(q[0] == ':' && q[1] != '=')) {   /* o:ivar := e, o:method() */
             return 0;
         }
     }
@@ -802,7 +836,8 @@ static int emit_expr_stmt(emit_t *e, const char *p) {
     if (!n) {
         return 0;
     }
-    if (n->type != AST_ASSIGN && n->type != AST_INCDEC && n->type != AST_FUNC_CALL) {
+    if (n->type != AST_ASSIGN && n->type != AST_INCDEC && n->type != AST_FUNC_CALL &&
+        !(n->type == AST_SEND && n->send.is_call)) {
         ast_free(n);
         return 0;
     }
@@ -2072,6 +2107,18 @@ static int emit_stmt(emit_t *e, const char *p) {
         emit_indent(e->out, e->depth - 1);
         fprintf(e->out, "} else {\n");
         e->nest[e->depth - 1] = 'R';
+        p = skip_ws(p + 7);
+        if (is_kw(p, "USING")) {   /* the variable given what BREAK carried */
+            char name[MEMVAR_NAMELEN];
+            int i = 0;
+            p = skip_ws(p + 5);
+            while ((isalnum((unsigned char)*p) || *p == '_') && i < MEMVAR_NAMELEN - 1) {
+                name[i++] = (char)toupper((unsigned char)*p++);
+            }
+            name[i] = '\0';
+            emit_indent(e->out, e->depth);
+            fprintf(e->out, "clip_recover_using(\"%s\");\n", name);
+        }
         return 0;
     }
     if (is_kw(p, "END") && (*skip_ws(p + 3) == '\0' || is_kw(skip_ws(p + 3), "SEQUENCE"))) {
@@ -2088,12 +2135,28 @@ static int emit_stmt(emit_t *e, const char *p) {
         fprintf(e->out, "} }\n");
         return 0;
     }
-    if (is_kw(p, "BREAK")) {
+    if (is_kw(p, "BREAK")) {   /* BREAK [value] */
+        const char *a = skip_ws(p + 5);
         emit_indent(e->out, e->depth);
         emit_at_expr(e);
         fprintf(e->out, ";\n");
         emit_indent(e->out, e->depth);
-        fprintf(e->out, "clip_break();\n");
+        if (*a == '\0') {
+            fprintf(e->out, "clip_break_v(NULL);\n");
+        } else {
+            ast_node_t *n = parse_expr(a);
+            sb_t b = {0};
+            int r;
+            if (n) {
+                gen_block(&b, &n, 1, &r);
+                fprintf(e->out, "{ %sif (e) clip_fail(c); else clip_break_v(&t%d); }\n", b.buf, r);
+                ast_free(n);
+            } else {
+                sb_cstr(&b, a);
+                fprintf(e->out, "clip_break_s(%s);\n", b.buf);
+            }
+            free(b.buf);
+        }
         return 0;
     }
     if (is_kw(p, "ENDDO")) {

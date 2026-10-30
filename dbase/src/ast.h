@@ -20,7 +20,8 @@ typedef enum {
     AST_ARRAY_LIT,      /* { a, b, ... } */
     AST_INDEX,          /* expr[i] -- on any value, so a[3][2] */
     AST_BLOCK,          /* {|p, q| e1, e2, ...} */
-    AST_REF             /* @name: an argument passed by reference */
+    AST_REF,            /* @name: an argument passed by reference */
+    AST_SEND            /* obj:name, obj:name(args): the send operator */
 } ast_type_t;
 
 typedef enum {
@@ -54,6 +55,8 @@ typedef struct ast_node {
                  struct ast_node *index; } index;               /* AST_INDEX */
         struct { char (*params)[MEMVAR_NAMELEN]; int nparams;
                  struct ast_node **exprs; int n; } block;       /* AST_BLOCK */
+        struct { struct ast_node *base; char name[64]; struct ast_node **args;
+                 int nargs; int is_call; } send;                 /* AST_SEND */
     };
 } ast_node_t;
 
@@ -103,6 +106,11 @@ int ast_store_alias_field(expr_ctx_t *ctx, const char *alias, const char *field,
 int ast_make_array(expr_ctx_t *ctx, const value_t *vals, int n, value_t *result);
 int ast_eval_index(expr_ctx_t *ctx, const value_t *base, const value_t *index, value_t *result);
 int ast_store_index(expr_ctx_t *ctx, const value_t *base, const value_t *index, const value_t *val);
+/* The send operator: an instance variable read (is_call 0) or a method
+ * called with args, and an instance variable stored */
+int ast_eval_send(expr_ctx_t *ctx, const value_t *base, const char *name, value_t *args, int nargs,
+                  int is_call, value_t *result);
+int ast_store_send(expr_ctx_t *ctx, const value_t *base, const char *name, const value_t *val);
 
 /* A code block value: its parameters, the call depth it was made at (EVAL
  * runs it there, so it sees its maker's LOCALs, not its caller's), and

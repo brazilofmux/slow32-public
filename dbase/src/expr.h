@@ -3,10 +3,11 @@
 
 #include "dbf.h"
 
-typedef enum { VAL_NIL, VAL_NUM, VAL_CHAR, VAL_DATE, VAL_LOGIC, VAL_ARRAY, VAL_BLOCK } val_type_t;
+typedef enum { VAL_NIL, VAL_NUM, VAL_CHAR, VAL_DATE, VAL_LOGIC, VAL_ARRAY, VAL_BLOCK, VAL_OBJECT } val_type_t;
 
 struct array_s;
 struct block_s;
+struct object_s;
 
 typedef struct {
     val_type_t type;
@@ -22,8 +23,23 @@ typedef struct {
         int logic;      /* 0 or 1 */
         struct array_s *array;
         struct block_s *block;   /* VAL_BLOCK: a code block (ast.h) */
+        struct object_s *obj;    /* VAL_OBJECT: shared by reference */
     };
 } value_t;
+
+/* An object (Clipper's Error class, so far): its class name and instance
+ * variables, reached with the : send operator; shared by reference, as
+ * arrays are, and not collected (the same debt) */
+#define OBJECT_MAX_IVARS 16
+typedef struct object_s {
+    char cls[32];
+    int n;
+    char names[OBJECT_MAX_IVARS][32];
+    value_t vals[OBJECT_MAX_IVARS];
+} object_t;
+object_t *object_new(const char *cls);
+/* The variable's slot, made when create is set; NULL when it has none */
+value_t *object_ivar(object_t *o, const char *name, int create);
 
 struct memvar_store;
 struct set_options;
@@ -68,5 +84,6 @@ value_t val_str(const char *s);
 value_t val_logic(int b);
 value_t val_date(int32_t jdn);
 value_t val_nil(void);
+value_t val_object(object_t *o);
 
 #endif
