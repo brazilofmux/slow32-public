@@ -28,6 +28,12 @@ void lbl_init(lbl_def_t *def);
 int lbl_read(const char *filename, lbl_def_t *def);
 int lbl_write(const char *filename, const lbl_def_t *def);
 
+/* CA-Clipper's LABEL FORM (CA's LBLRUN): a line whose expression gives
+ * blanks is dropped and the label closes up; band lines are trimmed; a
+ * last partial band prints as it stands.  SAMPLE is not offered here. */
+void label_generate_clipper(lbl_def_t *def, dbf_t *db, expr_ctx_t *ectx,
+                            const char *for_cond, FILE *outfile);
+
 /* Generate label output */
 void label_generate(lbl_def_t *def, dbf_t *db, expr_ctx_t *ectx,
                     const char *for_cond, int sample,

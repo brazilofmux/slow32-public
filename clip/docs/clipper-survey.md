@@ -585,8 +585,35 @@ people who wrote Clipper.
   fn-memoline-edges.  The runtime's command buffer is 2047 characters,
   matching s32-clip's statements.
 
-Not driven yet: RL's Label side; GETSYS.PRG's and ERRORSYS.PRG's
-dialogue paths under a terminal
+- **RL's Label side, DBEDIT, LABEL FORM** (2026-10-30).  RL's label
+  designer runs from keys: Label, a new file, the dimensions READ, F2
+  into the lines, two lines of contents typed, F10, Ok -- and the .LBL
+  it writes prints the same labels under Harbour's LABEL FORM and ours.
+  What it needed:
+  - DBEDIT() was a stub that ran BROWSE.  It is the guide's now, built
+    on our TBrowse (getsys.c): the columns from the array or every
+    field, pictures and headings, the double-line heading separator, the
+    cursor keys, the user function called once with DE_IDLE /
+    DE_HITTOP / DE_HITBOTTOM / DE_EMPTY when no key waits and with
+    DE_EXCEPT for every other key, its 0/1/2 answers obeyed;
+  - `@ ROW(), COL() GET &cur_field`: a macro GET target is expanded
+    (the GET was registered on nothing and the line kept no text);
+  - INKEY() did not make a function key LASTKEY() -- only positive codes
+    were kept, so RL's `CASE LASTKEY() = -9` (F10) never matched;
+  - a numeric GET is shown right-justified in its picture from the
+    start ("  5", not "5  ").
+  LABEL FORM in a compiled program prints CA-Clipper's layout (label.c
+  `label_generate_clipper`, under the same switch as REPORT FORM): a
+  label line whose value is blank is dropped and the label closes up,
+  a line with no expression stays as space, each band line is trimmed,
+  a last partial band prints as it stands -- CA's LBLRUN's rules.
+  Probe cmd-label-form writes its own .lbl (two across, gap, margin,
+  lines between, a blank value, an empty line, FOR) and agrees with
+  Harbour.  SAMPLE still takes the dBASE path; Harbour's waits for
+  "Do you want more samples?" and is not probed.
+
+Not driven yet: GETSYS.PRG's and ERRORSYS.PRG's dialogue paths under
+a terminal
 (ERRORSYS reaches Alert() only for open and append-lock errors with a
 retry or default on offer).
 

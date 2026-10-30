@@ -11,6 +11,7 @@
 #include "memvar.h"
 #include "expr.h"
 #include "ast.h"
+#include "lex.h"
 #include "getsys.h"
 #include "func.h"
 
@@ -577,6 +578,15 @@ static void get_show_initial(const get_entry_t *g) {
     char shown[256];
     int w = get_picture_window(g->picture, (int)strlen(g->initial));
     str_copy(shown, g->initial, sizeof(shown));
+    if (g->type == VAL_NUM) {
+        /* a number sits right-justified in its field, as the editor shows it
+         * (RL's "@ 06,16 GET lbl_height PICTURE "999"" showed "5  ") */
+        int n = (int)strlen(shown);
+        if (n < w && w < (int)sizeof(shown)) {
+            memmove(shown + (w - n), shown, (size_t)n + 1);
+            memset(shown, ' ', (size_t)(w - n));
+        }
+    }
     if (w < (int)strlen(shown)) shown[w] = '\0';
     goto_pos(g->row, g->col);
 #if HAS_TERM
@@ -1436,116 +1446,123 @@ void screen_set_color(const char *spec) {
  * variable, an array element, an alias->field), PICTURE, RANGE, VALID,
  * WHEN; p is the text after the word GET */
 static void at_get_clause(int row, int col, const char *p) {
-        char varname[MEMVAR_NAMELEN];
-        char picture[64] = "";
-        char valid_expr[256] = "";
-        char when_expr[256] = "";
-        int i = 0;
-        int has_range = 0;
-        value_t range_lo, range_hi;
+    char varname[MEMVAR_NAMELEN];
+    char picture[64] = "";
+    char valid_expr[256] = "";
+    char when_expr[256] = "";
+    char target[512] = "";   /* an array element or alias->field: read and stored through a block */
+    char expanded[1024];
+    int i = 0;
+    int has_range = 0;
+    value_t range_lo, range_hi;
 
-        char target[512] = "";   /* an array element or alias->field: read and stored through a block */
+    p = skip_ws(p);
+    if (*p == '&') {
+        /* @ ROW(), COL() GET &cur_field (RL's label editor): the macro is
+         * the target's text */
+        lex_macro_expand(p, cmd_get_memvar_store(), expanded, sizeof(expanded));
+        p = skip_ws(expanded);
+    }
+
+    /* Parse variable name; M-> and MEMVAR-> say what it is anyway
+     * (DBU's @ r, c GET M->wk_str) */
+    if (strncasecmp(p, "M->", 3) == 0) p += 3;
+    else if (strncasecmp(p, "MEMVAR->", 8) == 0) p += 8;
+    {
+        const char *tstart = p;
+        while (is_ident_char(*p) && i < MEMVAR_NAMELEN - 1)
+            varname[i++] = *p++;
+        varname[i] = '\0';
+        if (*p == '[' || (p[0] == '-' && p[1] == '>')) {
+            const char *ast_err, *q = tstart;
+            ast_node_t *tmp = ast_compile_adv(&q, cmd_get_memvar_store(), &ast_err);
+            int len = (int)(q - tstart);
+            ast_free(tmp);
+            if (len > (int)sizeof(target) - 1) len = (int)sizeof(target) - 1;
+            memcpy(target, tstart, len);
+            target[len] = '\0';
+            trim_right(target);
+            p = q;
+        }
+    }
+
+    /* Parse optional clauses */
+    for (;;) {
         p = skip_ws(p);
-
-        /* Parse variable name; M-> and MEMVAR-> say what it is anyway
-         * (DBU's @ r, c GET M->wk_str) */
-        if (strncasecmp(p, "M->", 3) == 0) p += 3;
-        else if (strncasecmp(p, "MEMVAR->", 8) == 0) p += 8;
-        {
-            const char *tstart = p;
-            while (is_ident_char(*p) && i < MEMVAR_NAMELEN - 1)
-                varname[i++] = *p++;
-            varname[i] = '\0';
-            if (*p == '[' || (p[0] == '-' && p[1] == '>')) {
-                const char *ast_err, *q = tstart;
-                ast_node_t *tmp = ast_compile_adv(&q, cmd_get_memvar_store(), &ast_err);
-                int len = (int)(q - tstart);
-                ast_free(tmp);
-                if (len > (int)sizeof(target) - 1) len = (int)sizeof(target) - 1;
-                memcpy(target, tstart, len);
-                target[len] = '\0';
-                trim_right(target);
-                p = q;
-            }
-        }
-
-        /* Parse optional clauses */
-        for (;;) {
-            p = skip_ws(p);
-            if (str_imatch(p, "PICTURE")) {
-                p = skip_ws(p + 7);
-                if (*p == '"' || *p == '\'') {
-                    char q = *p++;
-                    i = 0;
-                    while (*p && *p != q && i < 63)
-                        picture[i++] = *p++;
-                    picture[i] = '\0';
-                    if (*p) p++;
-                } else {
-                    /* an expression: PICTURE M->pfunc */
-                    value_t pv;
-                    expr_ctx_t *ctx = cmd_get_expr_ctx();
-                    if (ast_eval_adv(ctx, &p, &pv) == 0 && pv.type == VAL_CHAR)
-                        str_copy(picture, pv.str, sizeof(picture));
-                    else
-                        ctx->error = NULL;
-                }
-            } else if (str_imatch(p, "RANGE")) {
-                expr_ctx_t *ctx = cmd_get_expr_ctx();
-                p = skip_ws(p + 5);
-                if (ast_eval_adv(ctx, &p, &range_lo) == 0) {
-                    p = skip_ws(p);
-                    if (*p == ',') p++;
-                    p = skip_ws(p);
-                    if (ast_eval_adv(ctx, &p, &range_hi) == 0) {
-                        has_range = 1;
-                    }
-                }
-            } else if (str_imatch(p, "VALID")) {
-                const char *ast_err;
-                ast_node_t *tmp;
-                p = skip_ws(p + 5);
-                {
-                const char *start = p;
-                tmp = ast_compile_adv(&p, cmd_get_memvar_store(), &ast_err);
-                ast_free(tmp);  /* only needed to advance p */
-                {
-                int len = (int)(p - start);
-                if (len > 255) len = 255;
-                memcpy(valid_expr, start, len);
-                valid_expr[len] = '\0';
-                }
-                }
-            } else if (str_imatch(p, "WHEN")) {
-                const char *ast_err;
-                ast_node_t *tmp;
-                p = skip_ws(p + 4);
-                {
-                const char *start = p;
-                tmp = ast_compile_adv(&p, cmd_get_memvar_store(), &ast_err);
-                ast_free(tmp);  /* only needed to advance p */
-                {
-                int len = (int)(p - start);
-                if (len > 255) len = 255;
-                memcpy(when_expr, start, len);
-                when_expr[len] = '\0';
-                }
-                }
+        if (str_imatch(p, "PICTURE")) {
+            p = skip_ws(p + 7);
+            if (*p == '"' || *p == '\'') {
+                char q = *p++;
+                i = 0;
+                while (*p && *p != q && i < 63)
+                    picture[i++] = *p++;
+                picture[i] = '\0';
+                if (*p) p++;
             } else {
-                break;
+                /* an expression: PICTURE M->pfunc */
+                value_t pv;
+                expr_ctx_t *ctx = cmd_get_expr_ctx();
+                if (ast_eval_adv(ctx, &p, &pv) == 0 && pv.type == VAL_CHAR)
+                    str_copy(picture, pv.str, sizeof(picture));
+                else
+                    ctx->error = NULL;
             }
+        } else if (str_imatch(p, "RANGE")) {
+            expr_ctx_t *ctx = cmd_get_expr_ctx();
+            p = skip_ws(p + 5);
+            if (ast_eval_adv(ctx, &p, &range_lo) == 0) {
+                p = skip_ws(p);
+                if (*p == ',') p++;
+                p = skip_ws(p);
+                if (ast_eval_adv(ctx, &p, &range_hi) == 0) {
+                    has_range = 1;
+                }
+            }
+        } else if (str_imatch(p, "VALID")) {
+            const char *ast_err;
+            ast_node_t *tmp;
+            p = skip_ws(p + 5);
+            {
+            const char *start = p;
+            tmp = ast_compile_adv(&p, cmd_get_memvar_store(), &ast_err);
+            ast_free(tmp);  /* only needed to advance p */
+            {
+            int len = (int)(p - start);
+            if (len > 255) len = 255;
+            memcpy(valid_expr, start, len);
+            valid_expr[len] = '\0';
+            }
+            }
+        } else if (str_imatch(p, "WHEN")) {
+            const char *ast_err;
+            ast_node_t *tmp;
+            p = skip_ws(p + 4);
+            {
+            const char *start = p;
+            tmp = ast_compile_adv(&p, cmd_get_memvar_store(), &ast_err);
+            ast_free(tmp);  /* only needed to advance p */
+            {
+            int len = (int)(p - start);
+            if (len > 255) len = 255;
+            memcpy(when_expr, start, len);
+            when_expr[len] = '\0';
+            }
+            }
+        } else {
+            break;
         }
+    }
 
-        if (target[0])
-            screen_get_expr(row, col, target, picture,
-                            has_range ? &range_lo : NULL,
-                            has_range ? &range_hi : NULL,
-                            valid_expr, when_expr);
-        else
-            screen_get(row, col, varname, picture,
-                       has_range ? &range_lo : NULL,
-                       has_range ? &range_hi : NULL,
-                       valid_expr, when_expr);
+    if (target[0])
+        screen_get_expr(row, col, target, picture,
+                        has_range ? &range_lo : NULL,
+                        has_range ? &range_hi : NULL,
+                        valid_expr, when_expr);
+    else
+        screen_get(row, col, varname, picture,
+                   has_range ? &range_lo : NULL,
+                   has_range ? &range_hi : NULL,
+                   valid_expr, when_expr);
 
 }
 
@@ -1990,8 +2007,8 @@ int screen_inkey(double timeout) {
         }
 
         term_set_raw(0);
-        if (key > 0) {
-            last_key = key;
+        if (key != 0 && key != KEY_NONE) {
+            last_key = key;   /* function keys too: their codes are negative (F10 is -9) */
             if (screen_check_key_handler(key)) return 0;
         }
         return (key == KEY_NONE) ? 0 : key;

@@ -219,3 +219,79 @@ void label_generate(lbl_def_t *def, dbf_t *db, expr_ctx_t *ectx,
         }
     }
 }
+
+
+/* ---- CA-Clipper's layout ---- */
+void label_generate_clipper(lbl_def_t *def, dbf_t *db, expr_ctx_t *ectx,
+                            const char *for_cond, FILE *outfile) {
+    enum { BAND = 2048 };
+    char (*band)[BAND] = calloc(LBL_MAX_LINES, BAND);
+    int height = def->height < LBL_MAX_LINES ? def->height : LBL_MAX_LINES;
+    int width = def->width, col = 1, more = 1, i, j;
+    uint32_t rec;
+    if (!band) return;
+    if (width > 250) width = 250;
+    for (i = 0; i < height; i++) { memset(band[i], ' ', (size_t)def->left_margin); band[i][def->left_margin] = '\0'; }
+    for (rec = 1; rec <= db->record_count; rec++) {
+        char cells[LBL_MAX_LINES][300];
+        int has[LBL_MAX_LINES], n = 0;
+        if (dbf_read_record(db, rec) < 0) continue;
+        if (db->record_buf[0] == '*') continue;
+        if (for_cond && for_cond[0]) {
+            value_t c;
+            if (ast_eval_dynamic(for_cond, ectx, &c) != 0) { ectx->error = NULL; continue; }
+            if (c.type != VAL_LOGIC || !c.logic) continue;
+        }
+        /* the record's lines: an expression's value padded to the width
+         * and the gap, dropped when blank; a line with no expression a
+         * blank place-holder */
+        for (i = 0; i < height; i++) {
+            if (i < def->num_lines && def->lines[i][0]) {
+                value_t v;
+                char text[300];
+                int k, blank = 1;
+                text[0] = '\0';
+                if (ast_eval_dynamic(def->lines[i], ectx, &v) == 0) val_to_string(&v, text, sizeof(text));
+                else ectx->error = NULL;
+                text[width] = '\0';
+                k = (int)strlen(text);
+                while (k < width + def->spaces_between && k < (int)sizeof(text) - 1) text[k++] = ' ';
+                text[k] = '\0';
+                for (j = 0; text[j]; j++) if (text[j] != ' ') { blank = 0; break; }
+                if (!blank) { str_copy(cells[n], text, sizeof(cells[n])); has[n++] = 1; }
+            } else {
+                cells[n][0] = '\0';
+                has[n++] = 0;
+            }
+        }
+        for (; n < height; n++) has[n] = 0;
+        for (i = 0; i < height; i++) {
+            size_t len = strlen(band[i]);
+            if (has[i]) {
+                strncat(band[i], cells[i], BAND - len - 1);
+            } else {
+                int k = width + def->spaces_between;
+                while (k-- > 0 && len < BAND - 1) band[i][len++] = ' ';
+                band[i][len] = '\0';
+            }
+        }
+        if (col == def->across || def->across < 1) {
+            for (i = 0; i < height; i++) {
+                trim_right(band[i]);
+                fputs(band[i], outfile);
+                fputc('\n', outfile);
+            }
+            for (j = 0; j < def->lines_between; j++) fputc('\n', outfile);
+            for (i = 0; i < height; i++) { memset(band[i], ' ', (size_t)def->left_margin); band[i][def->left_margin] = '\0'; }
+            more = 0;
+            col = 1;
+        } else {
+            more = 1;
+            col++;
+        }
+    }
+    if (more) {
+        for (i = 0; i < height; i++) { fputs(band[i], outfile); fputc('\n', outfile); }
+    }
+    free(band);
+}

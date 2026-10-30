@@ -1287,9 +1287,6 @@ static int fn_browse(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result)
     return 0;
 }
 
-static int fn_dbedit(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    return fn_browse(ctx, args, nargs, result);
-}
 
 /* MEMOEDIT(string, ...): the text, shown and returned as it is -- there
  * is no editor to change it in */

@@ -5533,7 +5533,10 @@ static void cmd_label_form(dbf_t *db, const char *arg) {
         outfile = stdout;
 
     ctx_setup();
-    label_generate(&def, db, &expr_ctx, for_cond, sample, outfile);
+    if (report_clipper_layout() && !sample)
+        label_generate_clipper(&def, db, &expr_ctx, for_cond, outfile);
+    else
+        label_generate(&def, db, &expr_ctx, for_cond, sample, outfile);
 
     if (outfile != stdout)
         fclose(outfile);

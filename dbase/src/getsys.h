@@ -53,6 +53,7 @@ int fn_iscolor(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
 int fn_tbrowsenew(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
 int fn_tbrowsedb(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
 int fn_tbcolumnnew(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
+int fn_dbedit(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
 int fn_dbgotop(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
 int fn_dbgobottom(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
 int fn_dbskip(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);

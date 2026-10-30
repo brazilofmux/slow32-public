@@ -25,6 +25,8 @@
 #include "command.h"
 #include "memvar.h"
 #include "util.h"
+#include "keys.h"
+#include "gc.h"
 
 /* ---- objects: variables and method tables ---- */
 
@@ -1556,4 +1558,137 @@ int object_send(expr_ctx_t *ctx, const value_t *base, const char *name, value_t 
     snprintf(ctx->err_msg, sizeof(ctx->err_msg), "No exported %s: %s", is_call ? "method" : "variable", name);
     ctx->error = ctx->err_msg;
     return -1;
+}
+
+/* ---- DBEDIT() ----
+ * DBEDIT([t], [l], [b], [r], [acColumns], [cUserFunction], [pictures],
+ * [headers], [headSeps], [colSeps], [footSeps], [footings]): a TBrowse
+ * over the current work area, as Clipper's own later is.  The cursor keys
+ * are DBEDIT's; with no user function Enter and Esc end it, with one every
+ * other key is an exception the function answers (0 abort, 1 continue,
+ * 2 repaint).  When no key is waiting the function is called once, with
+ * DE_IDLE, DE_HITTOP, DE_HITBOTTOM or DE_EMPTY, before DBEDIT waits. */
+static const char *dbedit_item(const value_t *arg, int i) {
+    if (arg->type == VAL_CHAR) return val_text(arg);
+    if (arg->type == VAL_ARRAY && arg->array && i < arg->array->len && arg->array->el[i].type == VAL_CHAR)
+        return val_text(&arg->array->el[i]);
+    return NULL;
+}
+
+static int dbedit_call(expr_ctx_t *ctx, const char *udf, int mode, object_t *o) {
+    value_t a[2], r;
+    a[0] = vnum(mode);
+    a[1] = vnum(iv_num(o, "colPos"));
+    if (func_call(ctx, udf, a, 2, &r) != 0) { ctx->error = NULL; return 0; }
+    return r.type == VAL_NUM ? (int)r.num : 1;
+}
+
+static int dbedit_send(expr_ctx_t *ctx, value_t *tb, const char *msg) {
+    value_t r;
+    if (object_send(ctx, tb, msg, NULL, 0, 1, &r) != 0) { ctx->error = NULL; return -1; }
+    return 0;
+}
+
+int fn_dbedit(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    value_t tb, nil = val_nil();
+    const value_t *cols = nargs > 4 ? &args[4] : &nil;
+    const char *udf = nargs > 5 && args[5].type == VAL_CHAR && val_text(&args[5])[0] ? val_text(&args[5]) : NULL;
+    const value_t *pics = nargs > 6 ? &args[6] : &nil;
+    const value_t *heads = nargs > 7 ? &args[7] : &nil;
+    const value_t *hseps = nargs > 8 ? &args[8] : &nil;
+    const value_t *cseps = nargs > 9 ? &args[9] : &nil;
+    value_t tbargs[4];
+    char exprs[64][128];
+    int ncols = 0, i;
+    dbf_t *db = ctx->db;
+    char uname[MEMVAR_NAMELEN];
+    *result = val_nil();
+    if (!db || !dbf_is_open(db)) return 0;
+    /* the columns: the array's expressions, or every field */
+    if (cols->type == VAL_ARRAY && cols->array) {
+        for (i = 0; i < cols->array->len && ncols < 64; i++)
+            if (cols->array->el[i].type == VAL_CHAR) str_copy(exprs[ncols++], val_text(&cols->array->el[i]), 128);
+    } else {
+        for (i = 0; i < db->field_count && ncols < 64; i++) str_copy(exprs[ncols++], db->fields[i].name, 128);
+    }
+    tbargs[0] = vnum(arg_num(args, nargs, 0, 0));
+    tbargs[1] = vnum(arg_num(args, nargs, 1, 0));
+    {
+        value_t mr, mc;
+        fn_maxrow(ctx, NULL, 0, &mr);
+        fn_maxcol(ctx, NULL, 0, &mc);
+        tbargs[2] = vnum(arg_num(args, nargs, 2, (int)mr.num));
+        tbargs[3] = vnum(arg_num(args, nargs, 3, (int)mc.num));
+    }
+    if (fn_tbrowsedb(ctx, tbargs, 4, &tb) != 0) return -1;
+    gc_push_roots(&tb, 1);
+    {
+        const char *hs = dbedit_item(hseps, 0), *cs = dbedit_item(cseps, 0);
+        char dflt_h[4] = { (char)0xCD, (char)0xD1, (char)0xCD, 0 };   /* the double line, a single-line junction */
+        char dflt_c[4] = { ' ', (char)0xB3, ' ', 0 };
+        iv_set(tb.obj, "headSep", val_str(hs ? hs : dflt_h));
+        iv_set(tb.obj, "colSep", val_str(cs ? cs : dflt_c));
+    }
+    for (i = 0; i < ncols; i++) {
+        char text[200];
+        value_t block, col, r;
+        const char *h = dbedit_item(heads, i), *p = dbedit_item(pics, i);
+        object_t *c;
+        snprintf(text, sizeof(text), "{|| %s}", exprs[i]);
+        block = block_from_text(ctx, text);
+        c = tbcolumn_new(h ? h : exprs[i], block.type == VAL_BLOCK ? &block : NULL);
+        if (!c) continue;
+        if (p) iv_set(c, "picture", val_str(p));
+        col = val_object(c);
+        object_send(ctx, &tb, "ADDCOLUMN", &col, 1, 1, &r);
+        ctx->error = NULL;
+    }
+    str_copy(uname, udf ? udf : "", sizeof(uname));
+    for (;;) {
+        int key, rc;
+        dbedit_send(ctx, &tb, "FORCESTABLE");
+        if (!screen_key_pending()) {
+            if (udf) {
+                int mode = db->record_count == 0 ? 3
+                         : iv_logic(tb.obj, "hitTop") ? 1
+                         : iv_logic(tb.obj, "hitBottom") ? 2 : 0;
+                iv_set(tb.obj, "hitTop", val_logic(0));
+                iv_set(tb.obj, "hitBottom", val_logic(0));
+                rc = dbedit_call(ctx, uname, mode, tb.obj);
+                if (rc == 0) break;
+                if (rc == 2) { dbedit_send(ctx, &tb, "REFRESHALL"); continue; }
+                dbedit_send(ctx, &tb, "FORCESTABLE");   /* the function may have moved the record or painted over */
+            }
+            key = screen_inkey(-1.0);
+        } else {
+            key = screen_inkey(0.0);
+        }
+        if (key == 0) continue;   /* a SET KEY handler took it */
+        switch (key) {
+        case K_UP: dbedit_send(ctx, &tb, "UP"); continue;
+        case K_DOWN: dbedit_send(ctx, &tb, "DOWN"); continue;
+        case K_LEFT: dbedit_send(ctx, &tb, "LEFT"); continue;
+        case K_RIGHT: dbedit_send(ctx, &tb, "RIGHT"); continue;
+        case K_CTRL_LEFT: dbedit_send(ctx, &tb, "PANLEFT"); continue;
+        case K_CTRL_RIGHT: dbedit_send(ctx, &tb, "PANRIGHT"); continue;
+        case K_HOME: dbedit_send(ctx, &tb, "HOME"); continue;
+        case K_END: dbedit_send(ctx, &tb, "END"); continue;
+        case K_CTRL_HOME: dbedit_send(ctx, &tb, "PANHOME"); continue;
+        case K_CTRL_END: dbedit_send(ctx, &tb, "PANEND"); continue;
+        case K_PGUP: dbedit_send(ctx, &tb, "PAGEUP"); continue;
+        case K_PGDN: dbedit_send(ctx, &tb, "PAGEDOWN"); continue;
+        case K_CTRL_PGUP: dbedit_send(ctx, &tb, "GOTOP"); continue;
+        case K_CTRL_PGDN: dbedit_send(ctx, &tb, "GOBOTTOM"); continue;
+        default: break;
+        }
+        if (!udf) {
+            if (key == K_ENTER || key == K_ESC) break;
+            continue;
+        }
+        rc = dbedit_call(ctx, uname, 4, tb.obj);
+        if (rc == 0) break;
+        if (rc == 2) dbedit_send(ctx, &tb, "REFRESHALL");
+    }
+    gc_pop_roots();
+    return 0;
 }
