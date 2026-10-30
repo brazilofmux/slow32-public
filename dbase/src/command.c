@@ -6208,27 +6208,29 @@ static void h_set(dbf_t *db, lexer_t *l) {
             }
         }
     } else if (cmd_kw(l, "KEY")) {
-        /* SET KEY <keycode> TO [<procedure>] */
+        /* SET KEY <nKey> TO [<procedure>]: the key an expression (DBU's
+         * SET KEY -(M->i) TO clear_gets; a literal number read before, so
+         * every F-key handler landed on key 0 and an F-key inside a READ
+         * went nowhere) */
+        char rest[256];
+        const char *p;
+        value_t kv;
         lex_next(l);
-        if (l->current.type == TOK_NUMBER || l->current.type == TOK_MINUS) {
-            int neg = 0;
-            int keycode;
-            if (l->current.type == TOK_MINUS) {
-                neg = 1;
-                lex_next(l);
+        lex_get_remaining(l, rest, sizeof(rest));
+        p = rest;
+        if (ast_eval_adv(&expr_ctx, &p, &kv) == 0 && kv.type == VAL_NUM) {
+            int keycode = (int)kv.num;
+            p = skip_ws(p);
+            if (str_imatch(p, "TO")) {
+                char proc[MEMVAR_NAMELEN];
+                int i = 0;
+                p = skip_ws(p + 2);
+                while (*p && !isspace((unsigned char)*p) && i < MEMVAR_NAMELEN - 1) proc[i++] = *p++;
+                proc[i] = '\0';
+                screen_set_key_handler(keycode, proc[0] ? proc : NULL);
             }
-            keycode = (l->current.type == TOK_NUMBER) ? (int)l->current.num_val : 0;
-            if (neg) keycode = -keycode;
-            lex_next(l);
-            if (cmd_kw(l, "TO")) {
-                lex_next(l);
-                if (l->current.type == TOK_IDENT) {
-                    screen_set_key_handler(keycode, l->current.text);
-                    lex_next(l);
-                } else {
-                    screen_set_key_handler(keycode, NULL);
-                }
-            }
+        } else {
+            expr_ctx.error = NULL;
         }
     } else if (cmd_kw(l, "RELATION")) {
         lex_next(l);

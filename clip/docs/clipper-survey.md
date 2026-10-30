@@ -451,9 +451,17 @@ people who wrote Clipper.
   allocates past the threshold) survive in both the interpreter and
   compiled code.  `DBASE_GC_TRACE=1` prints each round.
 
-Not driven yet: DBU's Utility Append / Pack / Zap and the Create flow
-past its first screen, and GETSYS.PRG's and ERRORSYS.PRG's dialogue
-paths under a terminal (Alert()).
+- **Utility's Pack, Zap and Copy** run from keys ("PEOPLE.DBF Packed",
+  "Zapped", a copy with the five records); the Append dialog opens and
+  validates (its "cannot be appended from itself" when fed its own
+  file).  Found on the way: `SET KEY -(M->i) TO clear_gets` -- our
+  SET KEY took a literal number only, so every F-key handler DBU
+  installs around a READ landed on key 0 and an F-key pressed inside a
+  GET went nowhere; the key is an expression now.
+
+Not driven yet: the Create flow past its first screen, Append with the
+right keys, and GETSYS.PRG's and ERRORSYS.PRG's dialogue paths under a
+terminal (Alert()).
 
 ## The order of work proposed
 
