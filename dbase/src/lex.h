@@ -81,6 +81,8 @@ typedef struct lexer {
     const char *input;
     const char *p;
     const char *token_start;
+    const char *token_src;     /* where the token began in the input itself: the & of its macro when it came from one */
+    const char *macro_src;     /* the & that started the outermost macro being read */
     token_t current;
     token_type_t prev_type;  /* previous token type (for context-sensitive '[') */
     const char *error;

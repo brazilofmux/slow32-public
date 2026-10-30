@@ -621,9 +621,31 @@ static void get_store_value(get_entry_t *g, const value_t *v) {
         getsys_varput(&g->getobj, v);
         return;
     }
+    if (g->is_field) {
+        /* a field GET stores into the record only: it also made a memvar
+         * of the field's name once, and the next GET on the field found
+         * that memvar first (DBU's second field showed the first's name
+         * and kept none of its own) */
+        expr_ctx_t *fctx = cmd_get_expr_ctx();
+        dbf_t *fdb = fctx->db;
+        if (fdb && dbf_is_open(fdb)) {
+            char fraw[256];
+            val_to_string(v, fraw, sizeof(fraw));
+            dbf_set_field_raw(fdb, g->field_index, fraw);
+            dbf_flush_record(fdb);
+        }
+        return;
+    }
     if (g->varname[0]) memvar_set(cmd_get_memvar_store(), g->varname, v);
 }
 
+
+/* A field GET's value as it was shown, back into the record (VALID refused
+ * the entry) */
+static void get_store_initial(get_entry_t *g) {
+    value_t v = g->type == VAL_NUM ? val_num(atof(g->initial)) : val_str(g->initial);
+    get_store_value(g, &v);
+}
 
 /* ---- The GET editor's picture ---- */
 struct get_picture {
@@ -752,8 +774,19 @@ void screen_read(void) {
             nav = 0;
 
             str_copy(buf, scr.gets[i].initial, sizeof(buf));
-            /* Pad to field width */
             len = strlen(buf);
+            if (scr.gets[i].type == VAL_NUM) {
+                /* a number sits right-justified in its field, and the
+                 * first digit typed replaces it (Clipper's numeric GET;
+                 * "20" over 10 became 200 here) */
+                if (len < fwidth) {
+                    memmove(buf + (fwidth - len), buf, (size_t)len + 1);
+                    memset(buf, ' ', (size_t)(fwidth - len));
+                    len = fwidth;
+                }
+                pic.clear = 1;
+            }
+            /* Pad to field width */
             while (len < fwidth && len < 255) { buf[len++] = ' '; }
             buf[len] = '\0';
             pos = 0;  /* cursor at start of field (dBase convention) */
@@ -867,6 +900,7 @@ void screen_read(void) {
                               res.type == VAL_LOGIC && res.logic);
                     if (!ok) {
                         if (had_old) memvar_set(store, scr.gets[i].varname, &old_val);
+                        else if (scr.gets[i].is_field) get_store_initial(&scr.gets[i]);
                         screen_tgoto(24, 1);
                         screen_tputs("Invalid entry.");
                         term_getkey();  /* wait for acknowledgment */
@@ -884,17 +918,6 @@ void screen_read(void) {
                     char nv[256];
                     val_to_string(&v, nv, sizeof(nv));
                     if (strcmp(nv, scr.gets[i].initial) != 0) read_updated = 1;
-                }
-                /* Write back to database field if applicable */
-                if (scr.gets[i].is_field) {
-                    expr_ctx_t *fctx = cmd_get_expr_ctx();
-                    dbf_t *fdb = fctx->db;
-                    if (fdb && dbf_is_open(fdb)) {
-                        char fraw[256];
-                        val_to_string(&v, fraw, sizeof(fraw));
-                        dbf_set_field_raw(fdb, scr.gets[i].field_index, fraw);
-                        dbf_flush_record(fdb);
-                    }
                 }
                 break;  /* accepted */
             }
@@ -970,6 +993,7 @@ void screen_read(void) {
                               res.type == VAL_LOGIC && res.logic);
                     if (!ok) {
                         if (had_old) memvar_set(store, scr.gets[i].varname, &old_val);
+                        else if (scr.gets[i].is_field) get_store_initial(&scr.gets[i]);
                         printf("\nInvalid entry.\n");
                         continue;
                     }
@@ -980,17 +1004,6 @@ void screen_read(void) {
                     char nv[256];
                     val_to_string(&v, nv, sizeof(nv));
                     if (strcmp(nv, scr.gets[i].initial) != 0) read_updated = 1;
-                }
-                /* Write back to database field if applicable */
-                if (scr.gets[i].is_field) {
-                    expr_ctx_t *fctx = cmd_get_expr_ctx();
-                    dbf_t *fdb = fctx->db;
-                    if (fdb && dbf_is_open(fdb)) {
-                        char fraw[256];
-                        val_to_string(&v, fraw, sizeof(fraw));
-                        dbf_set_field_raw(fdb, scr.gets[i].field_index, fraw);
-                        dbf_flush_record(fdb);
-                    }
                 }
                 printf("\n");
                 break;
@@ -1844,7 +1857,10 @@ void screen_set_printer_pos(int row, int col) {
     print_col = col;
 }
 
+static int key_trace = -1;
 int screen_inkey(double timeout) {
+    if (key_trace < 0) { const char *e = getenv("DBASE_KEY_TRACE"); key_trace = e && *e; }
+    if (key_trace) fprintf(stderr, "[inkey t=%g pushed=%d ta=%d/%d handlers=%d term=%d]\n", timeout, pushed_key, typeahead_head, typeahead_len, key_handler_count, scr.term_available);
     if (pushed_key > 0) {
         int k = pushed_key;
         pushed_key = 0;
@@ -1869,6 +1885,7 @@ int screen_inkey(double timeout) {
                 return 0;
             }
             key = read_dbase_key();
+            if (key_trace) fprintf(stderr, "[inkey poll read %d]\n", key);
         } else if (timeout < 0.0) {
             /* Wait forever (INKEY(0) in dBase = wait forever) */
             key = read_dbase_key();

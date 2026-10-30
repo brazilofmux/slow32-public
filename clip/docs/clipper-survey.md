@@ -459,9 +459,33 @@ people who wrote Clipper.
   installs around a READ landed on key 0 and an F-key pressed inside a
   GET went nowhere; the key is an expression now.
 
-Not driven yet: the Create flow past its first screen, Append with the
-right keys, and GETSYS.PRG's and ERRORSYS.PRG's dialogue paths under a
-terminal (Alert()).
+- **The Create flow, end to end** (2026-10-30): F3 / Database, two
+  fields typed, F4 / Struct, a name, Ok -- NEWF.DBF with NAME C 20 and
+  AGE N 3, opened in the view.  Three things stood in the way, none of
+  them DBU's.  A GET on a field stored into the record and also into a
+  memvar of the field's name, so the next GET on that field found the
+  memvar first (the second field showed "NAME" and kept nothing); the
+  store goes to the record only, and a VALID refusal puts the shown
+  value back.  `CREATE &filename FROM ddbbuuuu.ext ALIAS cAlias` lost
+  everything after the macro: the lexer's rest-of-line began inside the
+  macro's expansion, and it begins at the macro in the input now
+  (`token_src`), so FROM and ALIAS are read -- the alias is CALIAS, as
+  Clipper's smart stringify makes it, and Harbour agrees (probe
+  cmd-create-from-macro).  ERASE said "File erased." whatever SET TALK
+  said; it is TALK's now, so a Clipper program's ERASE is silent.  Not
+  a bug but an hour: Enter on a Character field's width stays on that
+  item (DBU's own `l_usr` table), so a key script that typed on expecting
+  to have moved re-entered the width GET and left 0 there.  Also from
+  this round: Alert() under a terminal is a boxed dialogue (message
+  split at `;`, options with the current one in colour pair 1,
+  Left/Right/Tab/Space/Enter/Esc and first letters, screen restored,
+  the option's number returned); a numeric GET sits right-justified in
+  its field and the first digit typed replaces it (20 over 10 became
+  200).  `DBASE_KEY_TRACE=1` prints what INKEY() sees, beside
+  `CLIP_TRACE`.
+
+Not driven yet: Append with the right keys, and GETSYS.PRG's and
+ERRORSYS.PRG's dialogue paths under a terminal.
 
 ## The order of work proposed
 

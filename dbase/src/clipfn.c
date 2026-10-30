@@ -928,26 +928,95 @@ static int fn_zero(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
 
 /* ALERT(message, [options]): the message with its options; the first
  * option is chosen (1) when no terminal can offer the choice */
+/* ALERT(message [, options]) --> the option chosen (1-based), 0 for Esc.
+ * The message's lines (; between them) centred in a box in the middle of
+ * the screen, the options on the line below, Left / Right / Tab moving
+ * among them, Return choosing, a first letter choosing too; the screen
+ * under the box put back.  Without a terminal: the message and the
+ * options on one line, the first option chosen. */
 static int fn_alert(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    char line[512];
     const char *msg = arg_str(args, nargs, 0, "");
+    array_t *opts = nargs >= 2 && args[1].type == VAL_ARRAY ? args[1].array : NULL;
+    const char *optv[16];
+    int nopt = 0, i, nlines = 0, width = 0, cur = 0, top, left, height, row, key, optw = 0;
+    const char *lines[16];
+    int linelen[16];
+    char line[512];
     (void)ctx;
-    snprintf(line, sizeof(line), "%s", msg);
-    if (nargs >= 2 && args[1].type == VAL_ARRAY && args[1].array) {
-        array_t *o = args[1].array;
-        int i;
-        strncat(line, "  ", sizeof(line) - strlen(line) - 1);
-        for (i = 0; i < o->len; i++) {
-            if (o->el[i].type == VAL_CHAR) {
-                strncat(line, i ? "  " : "", sizeof(line) - strlen(line) - 1);
-                strncat(line, o->el[i].str, sizeof(line) - strlen(line) - 1);
-            }
+    /* the lines */
+    {
+        const char *p = msg;
+        while (nlines < 16) {
+            const char *q = strchr(p, ';');
+            lines[nlines] = p;
+            linelen[nlines] = q ? (int)(q - p) : (int)strlen(p);
+            if (linelen[nlines] > width) width = linelen[nlines];
+            nlines++;
+            if (!q) break;
+            p = q + 1;
         }
     }
-    screen_print_newline();
-    screen_print_text(line);
-    screen_print_newline();
-    *result = vnum(1);
+    if (opts) {
+        for (i = 0; i < opts->len && nopt < 16; i++)
+            if (opts->el[i].type == VAL_CHAR && opts->el[i].str[0]) optv[nopt++] = opts->el[i].str;
+    }
+    if (nopt == 0) { optv[0] = "Ok"; nopt = 1; }
+    for (i = 0; i < nopt; i++) optw += (int)strlen(optv[i]) + 2 + (i ? 2 : 0);
+    if (optw > width) width = optw;
+    if (!screen_term_available()) {
+        snprintf(line, sizeof(line), "%s", msg);
+        for (i = 0; i < nopt; i++) {
+            strncat(line, i ? "  " : "  ", sizeof(line) - strlen(line) - 1);
+            strncat(line, optv[i], sizeof(line) - strlen(line) - 1);
+        }
+        screen_print_newline();
+        screen_print_text(line);
+        screen_print_newline();
+        *result = vnum(1);
+        return 0;
+    }
+    height = nlines + 4;
+    if (width > 76) width = 76;
+    top = (25 - height) / 2;
+    left = (80 - (width + 4)) / 2;
+    {
+        value_t saved = screen_save_region(top, left, top + height - 1, left + width + 3);
+        screen_color_pair(2);
+        screen_box(top, left, top + height - 1, left + width + 3, 1);
+        for (row = 0; row < nlines; row++) {
+            int n = linelen[row] > width ? width : linelen[row], pad = (width - n) / 2;
+            memset(line, ' ', (size_t)width + 2);
+            memcpy(line + 1 + pad, lines[row], (size_t)n);
+            line[width + 2] = '\0';
+            screen_out_at(top + 1 + row, left + 1, line);
+        }
+        memset(line, ' ', (size_t)width + 2); line[width + 2] = '\0';
+        screen_out_at(top + 1 + nlines, left + 1, line);
+        screen_out_at(top + 2 + nlines, left + 1, line);
+        for (;;) {
+            int x = left + 2 + (width - optw) / 2;
+            for (i = 0; i < nopt; i++) {
+                char cell[80];
+                snprintf(cell, sizeof(cell), " %s ", optv[i]);
+                screen_color_pair(i == cur ? 1 : 2);
+                screen_out_at(top + 2 + nlines, x, cell);
+                x += (int)strlen(cell) + 2;
+            }
+            screen_color_pair(1);
+            key = screen_getkey();
+            if (key == K_ESC) { cur = -1; break; }
+            if (key == K_ENTER || key == 0) break;
+            if (key == K_LEFT || key == K_SH_TAB) cur = cur > 0 ? cur - 1 : nopt - 1;
+            else if (key == K_RIGHT || key == K_TAB || key == K_SPACE) cur = (cur + 1) % nopt;
+            else if (key >= 32 && key <= 255) {
+                for (i = 0; i < nopt; i++)
+                    if (toupper((unsigned char)optv[i][0]) == toupper(key)) { cur = i; key = K_ENTER; break; }
+                if (key == K_ENTER) break;
+            }
+        }
+        screen_restore_region(top, left, top + height - 1, left + width + 3, &saved);
+    }
+    *result = vnum(cur + 1);
     return 0;
 }
 

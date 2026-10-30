@@ -17,6 +17,8 @@ void lexer_init_ext(lexer_t *l, const char *input, memvar_store_t *store) {
      * every statement and most sub-clauses. */
     memset(&l->current, 0, sizeof(l->current));
     l->token_start = NULL;
+    l->token_src = NULL;
+    l->macro_src = NULL;
     l->prev_type = (token_type_t)0;
     l->macro_depth = 0;
     l->input = input;
@@ -35,7 +37,10 @@ static void macro_expand_into(const char *src, memvar_store_t *store,
                               char *dst, int size, int depth);
 
 void lex_get_remaining(lexer_t *l, char *out_buf, int size) {
-    const char *start = l->token_start ? l->token_start : "";
+    /* from the input itself: a token read out of a macro has the rest of
+     * the line after the macro, not just the rest of its expansion (CREATE
+     * &filename FROM ddbbuuuu.ext lost its FROM) */
+    const char *start = l->token_src ? l->token_src : l->token_start ? l->token_start : "";
     if (l->store) {
         macro_expand_into(start, l->store, out_buf, size, 0);
     } else {
@@ -74,6 +79,7 @@ static char lex_get_char(lexer_t *l) {
             if (!is_ident_start(n)) {
                 return c;
             }
+            if (l->macro_depth == 0) l->macro_src = l->p - 1;
 
             while (is_ident_char(n = lex_get_char(l)) && ni < MEMVAR_NAMELEN - 1) {
                 name[ni++] = n;
@@ -183,6 +189,7 @@ token_type_t lex_next(lexer_t *l) {
         c = lex_get_char(l);
         if (c == '\0') {
             l->token_start = l->p;
+            l->token_src = l->p;
             t->type = TOK_EOF;
             t->text[0] = '\0';
             return t->type;
@@ -195,6 +202,7 @@ token_type_t lex_next(lexer_t *l) {
        (e.g., FOR/WHILE condition strings) must memcpy immediately before the
        lexer advances or the stack is reused. */
     l->token_start = (l->macro_depth > 0) ? l->macro_stack[l->macro_depth - 1].p - 1 : l->p - 1;
+    l->token_src = (l->macro_depth > 0) ? l->macro_src : l->p - 1;
 
     t->text[0] = c;
     t->text[1] = '\0';

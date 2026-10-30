@@ -4609,8 +4609,8 @@ static void cmd_erase(const char *arg) {
     path_normalize(filename);
     if (remove(filename) != 0) {
         file_not_found(filename);
-    } else {
-        printf("File erased.\n");
+    } else if (set_opts.talk) {
+        printf("File erased.\n");   /* SET TALK's, like the other reports (Clipper's ERASE says nothing) */
     }
 }
 
