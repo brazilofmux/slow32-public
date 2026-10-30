@@ -10,11 +10,12 @@
 #include "program.h"
 #include "screen.h"
 #include "expr.h"
+#include "ast.h"
 #include "memvar.h"
 #include "func.h"
 #include "util.h"
 
-#define CLIP_MAX_FNS 64
+#define CLIP_MAX_FNS 2048   /* DBU alone has 152 functions */
 
 static dbf_t clip_db;
 
@@ -240,7 +241,7 @@ static int eval_expr(const char *expr, value_t *out) {
     expr_ctx_t *ctx;
     cmd_ctx_setup();
     ctx = cmd_get_expr_ctx();
-    if (expr_eval_str(ctx, expr, out) != 0) {
+    if (ast_eval_dynamic(expr, ctx, out) != 0) {
         expr_failed(ctx);
         return -1;
     }
@@ -280,7 +281,7 @@ void clip_q(const char *expr, int newline) {
     /* QOUT(): the arguments first, then the new line and the output */
     while (*p == ' ' || *p == '\t') p++;
     while (*p && n < MAX_FUNC_ARGS) {
-        if (expr_eval(ctx, &p, &vals[n]) != 0) {
+        if (ast_eval_adv(ctx, &p, &vals[n]) != 0) {
             expr_failed(ctx);
             return;
         }
@@ -447,7 +448,7 @@ int clip_for_init(clip_for_t *f, const char *arg) {
     }
     p++;
     while (*p == ' ' || *p == '\t') p++;
-    if (expr_eval(ctx, &p, &start_val) != 0 || start_val.type != VAL_NUM) {
+    if (ast_eval_adv(ctx, &p, &start_val) != 0 || start_val.type != VAL_NUM) {
         printf("FOR requires numeric expressions.\n");
         return 0;
     }
@@ -458,7 +459,7 @@ int clip_for_init(clip_for_t *f, const char *arg) {
     }
     p += 2;
     while (*p == ' ' || *p == '\t') p++;
-    if (expr_eval(ctx, &p, &end_val) != 0 || end_val.type != VAL_NUM) {
+    if (ast_eval_adv(ctx, &p, &end_val) != 0 || end_val.type != VAL_NUM) {
         printf("FOR requires numeric expressions.\n");
         return 0;
     }
@@ -467,7 +468,7 @@ int clip_for_init(clip_for_t *f, const char *arg) {
     if (str_imatch(p, "STEP")) {
         p += 4;
         while (*p == ' ' || *p == '\t') p++;
-        if (expr_eval(ctx, &p, &step_val) != 0 || step_val.type != VAL_NUM) {
+        if (ast_eval_adv(ctx, &p, &step_val) != 0 || step_val.type != VAL_NUM) {
             printf("STEP requires numeric expression.\n");
             return 0;
         }

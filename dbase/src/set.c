@@ -10,6 +10,7 @@ void set_init(set_options_t *opts) {
     opts->deleted = 0;    /* OFF = show deleted records */
     opts->exact = 0;      /* OFF = prefix matching */
     opts->heading = 0;   /* Clipper's LIST has no heading; SET HEADING ON gives dBASE III's */
+    opts->cursor = 1;
     opts->confirm = 0;
     opts->bell = 1;
     opts->safety = 1;
@@ -164,6 +165,12 @@ void set_execute(set_options_t *opts, const char *arg) {
         val = parse_on_off(p + 5);
         if (val >= 0) { opts->fixed = val; val_set_fixed = val; }
         else printf("Syntax: SET FIXED ON/OFF\n");
+        return;
+    }
+    if (str_imatch(p, "CURSOR")) {   /* SET CURSOR ON / OFF (Clipper) */
+        val = parse_on_off(p + 6);
+        if (val >= 0) opts->cursor = val;
+        else printf("Syntax: SET CURSOR ON/OFF\n");
         return;
     }
     if (str_imatch(p, "DATE")) {

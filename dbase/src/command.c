@@ -146,7 +146,7 @@ static int eval_index_key(index_t *idx, char *keybuf) {
         if (ast_eval(idx->key_ast, &expr_ctx, &val) != 0)
             return -1;
     } else {
-        if (expr_eval_str(&expr_ctx, idx->key_expr, &val) != 0)
+        if (ast_eval_dynamic(idx->key_expr, &expr_ctx, &val) != 0)
             return -1;
     }
     index_format_key_value(idx->key_type, &val, tmp, sizeof(tmp));
@@ -280,7 +280,7 @@ static void follow_relations(void) {
         value_t key;
         /* Evaluate relation expression in parent context */
         ctx_setup();
-        if (expr_eval_str(&expr_ctx, wa->relation_expr, &key) == 0) {
+        if (ast_eval_dynamic(wa->relation_expr, &expr_ctx, &key) == 0) {
             char buf[256];
             val_to_string(&key, buf, sizeof(buf));
             /* Switch to child, seek */
@@ -1135,7 +1135,7 @@ int parse_clauses(lexer_t *l, clause_t *c) {
             lex_next(l);
             const char *start = l->token_start;
             value_t dummy;
-            expr_eval(&expr_ctx, &start, &dummy);
+            ast_eval_adv(&expr_ctx, &start, &dummy);
             int len = (int)(start - l->token_start);
             if (len > (int)sizeof(c->for_cond) - 1) len = sizeof(c->for_cond) - 1;
             memcpy(c->for_cond, l->token_start, len);
@@ -1145,7 +1145,7 @@ int parse_clauses(lexer_t *l, clause_t *c) {
             lex_next(l);
             const char *start = l->token_start;
             value_t dummy;
-            expr_eval(&expr_ctx, &start, &dummy);
+            ast_eval_adv(&expr_ctx, &start, &dummy);
             int len = (int)(start - l->token_start);
             if (len > (int)sizeof(c->while_cond) - 1) len = sizeof(c->while_cond) - 1;
             memcpy(c->while_cond, l->token_start, len);
@@ -1529,7 +1529,7 @@ static int sum_cb(dbf_t *db, uint32_t recno, void *userdata) {
     value_t val;
     (void)db; (void)recno;
 
-    if (expr_eval_str(&expr_ctx, ctx->expr, &val) != 0) {
+    if (ast_eval_dynamic(ctx->expr, &expr_ctx, &val) != 0) {
         report_expr_error();
         return REC_ERROR;
     }
@@ -2568,13 +2568,13 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
 
         if (matched && c.for_cond[0]) {
             value_t cond;
-            if (expr_eval_str(&expr_ctx, c.for_cond, &cond) != 0) { report_expr_error(); break; }
+            if (ast_eval_dynamic(c.for_cond, &expr_ctx, &cond) != 0) { report_expr_error(); break; }
             if (cond.type != VAL_LOGIC || !cond.logic) matched = 0;
         }
 
         if (matched && c.while_cond[0]) {
             value_t cond;
-            if (expr_eval_str(&expr_ctx, c.while_cond, &cond) != 0) { report_expr_error(); break; }
+            if (ast_eval_dynamic(c.while_cond, &expr_ctx, &cond) != 0) { report_expr_error(); break; }
             if (cond.type != VAL_LOGIC || !cond.logic) break;
         }
 
@@ -2776,12 +2776,12 @@ static void cmd_store(dbf_t *db, lexer_t *l) {
         const char *next_p = tmp.token_start + 1; /* skip [ or ( */
         value_t row_v, col_v;
         int row = 0, col = -1;   /* col -1: no second index */
-        if (expr_eval(&expr_ctx, &next_p, &row_v) == 0 && row_v.type == VAL_NUM) {
+        if (ast_eval_adv(&expr_ctx, &next_p, &row_v) == 0 && row_v.type == VAL_NUM) {
             row = (int)row_v.num;
             lexer_init_ext(&tmp, next_p, expr_ctx.vars);
             if (tmp.current.type == TOK_COMMA) {
                 next_p = tmp.token_start + 1; /* skip , */
-                if (expr_eval(&expr_ctx, &next_p, &col_v) == 0 && col_v.type == VAL_NUM) {
+                if (ast_eval_adv(&expr_ctx, &next_p, &col_v) == 0 && col_v.type == VAL_NUM) {
                     col = (int)col_v.num;
                     lexer_init_ext(&tmp, next_p, expr_ctx.vars);
                 }
@@ -3114,7 +3114,7 @@ static void cmd_input(const char *arg) {
         line[0] = '\0';
 
     ctx_setup();
-    if (expr_eval_str(&expr_ctx, line, &val) != 0) {
+    if (ast_eval_dynamic(line, &expr_ctx, &val) != 0) {
         report_expr_error();
         val = val_num(0);
     }
@@ -3276,7 +3276,7 @@ static void copy_to_sdf(dbf_t *db, const char *filename,
 
         if (cond_str) {
             value_t cond;
-            if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
+            if (ast_eval_dynamic(cond_str, &expr_ctx, &cond) != 0) {
                 report_expr_error();
                 fclose(fp);
                 return;
@@ -3349,7 +3349,7 @@ static void copy_to_delimited(dbf_t *db, const char *filename,
 
         if (cond_str) {
             value_t cond;
-            if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
+            if (ast_eval_dynamic(cond_str, &expr_ctx, &cond) != 0) {
                 report_expr_error();
                 fclose(fp);
                 return;
@@ -3580,7 +3580,7 @@ static void cmd_copy_to(dbf_t *db, const char *arg) {
 
         if (cond_str) {
             value_t cond;
-            if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
+            if (ast_eval_dynamic(cond_str, &expr_ctx, &cond) != 0) {
                 report_expr_error();
                 dbf_close(&dest);
                 return;
@@ -3790,7 +3790,7 @@ static int append_row_cb(int line, const csv_row_t *row, void *ud) {
     if (ctx->cond_str) {
         value_t cond;
         ctx->ectx->db = db;
-        if (expr_eval_str(ctx->ectx, ctx->cond_str, &cond) != 0) {
+        if (ast_eval_dynamic(ctx->cond_str, ctx->ectx, &cond) != 0) {
             report_expr_error();
             ctx->ectx->db = ctx->saved_db;
             ctx->error = 1;
@@ -4005,7 +4005,7 @@ static void cmd_append_from(dbf_t *db, const char *arg) {
 
                     if (cond_str) {
                         value_t cond_v;
-                        if (expr_eval_str(&expr_ctx, cond_str, &cond_v) != 0) {
+                        if (ast_eval_dynamic(cond_str, &expr_ctx, &cond_v) != 0) {
                             report_expr_error();
                             fclose(fp);
                             return;
@@ -4072,7 +4072,7 @@ static void cmd_append_from(dbf_t *db, const char *arg) {
         if (cond_str) {
             value_t cond;
             expr_ctx.db = &source;
-            if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
+            if (ast_eval_dynamic(cond_str, &expr_ctx, &cond) != 0) {
                 report_expr_error();
                 expr_ctx.db = saved_db;
                 dbf_close(&source);
@@ -4257,7 +4257,7 @@ static void cmd_sort(dbf_t *db, const char *arg) {
 
         if (cond_str) {
             value_t cond;
-            if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
+            if (ast_eval_dynamic(cond_str, &expr_ctx, &cond) != 0) {
                 report_expr_error();
                 free(sort_entries);
                 cleanup_sort_chunks(chunk_names, nchunks);
@@ -5535,25 +5535,35 @@ static void h_declare(dbf_t *db, lexer_t *l) {
         str_copy(name, l->current.text, sizeof(name));
         lex_next(l);
         if (l->current.type == TOK_LPAREN || l->current.type == TOK_LBRACKET) {
+            /* the dimensions are expressions (DECLARE a[ADIR("*.DBF") + 20]),
+             * and may be zero: an empty array (Clipper) */
             token_type_t end_type = (l->current.type == TOK_LPAREN) ? TOK_RPAREN : TOK_RBRACKET;
-            lex_next(l);
-            if (l->current.type == TOK_NUMBER) {
-                rows = (int)l->current.num_val;
-                lex_next(l);
-                if (l->current.type == TOK_COMMA) {
-                    lex_next(l);
-                    if (l->current.type == TOK_NUMBER) {
-                        cols = (int)l->current.num_val;
-                        lex_next(l);
-                    }
+            const char *q = l->token_start + 1;
+            value_t dv;
+            int ok = 1;
+            if (ast_eval_adv(&expr_ctx, &q, &dv) != 0 || dv.type != VAL_NUM) ok = 0;
+            else rows = (int)dv.num;
+            if (ok) {
+                q = skip_ws(q);
+                if (*q == ',') {
+                    q++;
+                    if (ast_eval_adv(&expr_ctx, &q, &dv) != 0 || dv.type != VAL_NUM) ok = 0;
+                    else cols = (int)dv.num;
                 }
             }
+            if (!ok) {
+                report_expr_error();
+                return;
+            }
+            lexer_init_ext(l, q, expr_ctx.vars);
             if (l->current.type == end_type) {
                 lex_next(l);
             }
-        }
-        if (rows > 0) {
-            memvar_declare_array(&memvar_store, name, rows, cols);
+            if (rows >= 0) {
+                memvar_declare_array(&memvar_store, name, rows, cols);
+            } else {
+                prog_error_fmt(ERR_SYNTAX, "Invalid array dimensions for %s", name);
+            }
         } else {
             prog_error_fmt(ERR_SYNTAX, "Invalid array dimensions for %s", name);
         }
@@ -7058,7 +7068,7 @@ static void h_define(dbf_t *db, lexer_t *l) {
             /* Evaluate expression for prompt text */
             value_t pv;
             const char *ep = l->token_start;
-            if (ep && expr_eval(cmd_get_expr_ctx(), &ep, &pv) == 0) {
+            if (ep && ast_eval_adv(cmd_get_expr_ctx(), &ep, &pv) == 0) {
                 val_to_string(&pv, prompt, sizeof(prompt));
                 trim_right(prompt);
                 lexer_init_ext(l, ep, l->store);
@@ -7128,7 +7138,7 @@ static void h_define(dbf_t *db, lexer_t *l) {
         } else {
             value_t pv;
             const char *ep = l->token_start;
-            if (ep && expr_eval(cmd_get_expr_ctx(), &ep, &pv) == 0) {
+            if (ep && ast_eval_adv(cmd_get_expr_ctx(), &ep, &pv) == 0) {
                 val_to_string(&pv, prompt, sizeof(prompt));
                 trim_right(prompt);
                 lexer_init_ext(l, ep, l->store);
@@ -7401,12 +7411,12 @@ int cmd_execute(dbf_t *db, char *line) {
                 token_type_t end_type = (al.current.type == TOK_LPAREN) ? TOK_RPAREN : TOK_RBRACKET;
                 const char *next_p = al.token_start + 1; /* skip [ or ( */
                 value_t row_v, col_v;
-                if (expr_eval(&expr_ctx, &next_p, &row_v) == 0 && row_v.type == VAL_NUM) {
+                if (ast_eval_adv(&expr_ctx, &next_p, &row_v) == 0 && row_v.type == VAL_NUM) {
                     row = (int)row_v.num;
                     lexer_init_ext(&al, next_p, expr_ctx.vars);
                     if (al.current.type == TOK_COMMA) {
                         next_p = al.token_start + 1; /* skip , */
-                        if (expr_eval(&expr_ctx, &next_p, &col_v) == 0 && col_v.type == VAL_NUM) {
+                        if (ast_eval_adv(&expr_ctx, &next_p, &col_v) == 0 && col_v.type == VAL_NUM) {
                             col = (int)col_v.num;
                             lexer_init_ext(&al, next_p, expr_ctx.vars);
                         }

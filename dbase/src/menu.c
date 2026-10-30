@@ -4,6 +4,7 @@
 #include "screen.h"
 #include "command.h"
 #include "expr.h"
+#include "ast.h"
 #include "util.h"
 #include "program.h"
 
@@ -119,7 +120,7 @@ static int bar_is_skipped(const bar_entry_t *b) {
     if (b->skip_expr[0]) {
         expr_ctx_t *ctx = cmd_get_expr_ctx();
         value_t result;
-        if (expr_eval_str(ctx, b->skip_expr, &result) == 0 &&
+        if (ast_eval_dynamic(b->skip_expr, ctx, &result) == 0 &&
             result.type == VAL_LOGIC && result.logic)
             return 1;
     }

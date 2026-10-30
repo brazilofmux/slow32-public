@@ -251,7 +251,7 @@ void screen_say(int row, int col, const char *expr_str, const char *picture) {
     char buf[256];
     char formatted[256];
 
-    if (expr_eval_str(ctx, expr_str, &val) != 0) {
+    if (ast_eval_dynamic(expr_str, ctx, &val) != 0) {
         if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);
         return;
     }
@@ -754,6 +754,37 @@ void screen_box(int r1, int c1, int r2, int c2, int dbl) {
     (void)h; (void)v; (void)tl; (void)tr; (void)bl; (void)br;
 }
 
+void screen_box_frame(int r1, int c1, int r2, int c2, const char *frame) {
+    size_t n = strlen(frame);
+    char f[9];
+    int i;
+    if (n == 0) return;
+    for (i = 0; i < 9; i++) f[i] = (size_t)i < n ? frame[i] : (i == 8 ? '\0' : frame[n - 1]);
+    if (n == 1) { for (i = 0; i < 8; i++) f[i] = frame[0]; f[8] = '\0'; }
+#if HAS_TERM
+    if (scr.term_available) {
+        int r, c;
+        term_gotoxy(r1, c1);
+        term_putc(f[0]);
+        for (c = c1 + 1; c < c2; c++) term_putc(f[1]);
+        term_putc(f[2]);
+        for (r = r1 + 1; r < r2; r++) {
+            term_gotoxy(r, c1);
+            term_putc(f[7]);
+            if (f[8]) for (c = c1 + 1; c < c2; c++) term_putc(f[8]);
+            term_gotoxy(r, c2);
+            term_putc(f[3]);
+        }
+        term_gotoxy(r2, c1);
+        term_putc(f[6]);
+        for (c = c1 + 1; c < c2; c++) term_putc(f[5]);
+        term_putc(f[4]);
+        return;
+    }
+#endif
+    (void)r1; (void)c1; (void)r2; (void)c2;   /* no terminal: nothing to draw on */
+}
+
 /* ---- CLEAR ---- */
 void screen_clear(void) {
 #if HAS_TERM
@@ -1009,6 +1040,8 @@ void screen_set_color(const char *spec) {
 void screen_at_cmd(const char *line) {
     const char *p = skip_ws(line);
     int row, col;
+    expr_ctx_t *ctx = cmd_get_expr_ctx();
+    value_t v;
 
     /* Skip @ */
     if (*p != '@') return;
@@ -1017,9 +1050,7 @@ void screen_at_cmd(const char *line) {
 
     /* Parse row (expression) */
     {
-        expr_ctx_t *ctx = cmd_get_expr_ctx();
-        value_t v;
-        if (expr_eval(ctx, &p, &v) != 0 || v.type != VAL_NUM) {
+        if (ast_eval_adv(ctx, &p, &v) != 0 || v.type != VAL_NUM) {
             printf("Syntax: @ row,col SAY|GET|CLEAR TO|TO ...\n");
             return;
         }
@@ -1027,12 +1058,32 @@ void screen_at_cmd(const char *line) {
         p = skip_ws(p);
         if (*p == ',') p++;
         p = skip_ws(p);
-        if (expr_eval(ctx, &p, &v) != 0 || v.type != VAL_NUM) {
+        if (ast_eval_adv(ctx, &p, &v) != 0 || v.type != VAL_NUM) {
             printf("Syntax: @ row,col SAY|GET|CLEAR TO|TO ...\n");
             return;
         }
         col = (int)v.num;
         p = skip_ws(p);
+    }
+
+    /* @ top, left, bottom, right BOX frame (Clipper) */
+    if (*p == ',') {
+        int r2, c2;
+        value_t fv;
+        p = skip_ws(p + 1);
+        if (ast_eval_adv(ctx, &p, &v) != 0 || v.type != VAL_NUM) { printf("Syntax: @ t,l,b,r BOX frame\n"); return; }
+        r2 = (int)v.num;
+        p = skip_ws(p);
+        if (*p == ',') p++;
+        p = skip_ws(p);
+        if (ast_eval_adv(ctx, &p, &v) != 0 || v.type != VAL_NUM) { printf("Syntax: @ t,l,b,r BOX frame\n"); return; }
+        c2 = (int)v.num;
+        p = skip_ws(p);
+        if (!str_imatch(p, "BOX")) { printf("Syntax: @ t,l,b,r BOX frame\n"); return; }
+        p = skip_ws(p + 3);
+        if (ast_eval_adv(ctx, &p, &fv) != 0 || fv.type != VAL_CHAR) { printf("Syntax: @ t,l,b,r BOX frame\n"); return; }
+        screen_box_frame(row, col, r2, c2, fv.str);
+        return;
     }
 
     /* Sub-command */
@@ -1117,11 +1168,11 @@ void screen_at_cmd(const char *line) {
             } else if (str_imatch(p, "RANGE")) {
                 expr_ctx_t *ctx = cmd_get_expr_ctx();
                 p = skip_ws(p + 5);
-                if (expr_eval(ctx, &p, &range_lo) == 0) {
+                if (ast_eval_adv(ctx, &p, &range_lo) == 0) {
                     p = skip_ws(p);
                     if (*p == ',') p++;
                     p = skip_ws(p);
-                    if (expr_eval(ctx, &p, &range_hi) == 0) {
+                    if (ast_eval_adv(ctx, &p, &range_hi) == 0) {
                         has_range = 1;
                     }
                 }
@@ -1168,14 +1219,13 @@ void screen_at_cmd(const char *line) {
     } else if (str_imatch(p, "CLEAR")) {
         int r2 = 24, c2 = 79;
         p = skip_ws(p + 5);
-        if (str_imatch(p, "TO")) {
+        if (str_imatch(p, "TO")) {   /* the corner: expressions */
             p = skip_ws(p + 2);
-            r2 = atoi(p);
-            while (*p >= '0' && *p <= '9') p++;
+            if (ast_eval_adv(ctx, &p, &v) == 0 && v.type == VAL_NUM) r2 = (int)v.num;
             p = skip_ws(p);
             if (*p == ',') p++;
             p = skip_ws(p);
-            c2 = atoi(p);
+            if (ast_eval_adv(ctx, &p, &v) == 0 && v.type == VAL_NUM) c2 = (int)v.num;
         }
         screen_clear_region(row, col, r2, c2);
 
@@ -1183,13 +1233,12 @@ void screen_at_cmd(const char *line) {
         int r2, c2;
         int dbl = 0;
         p = skip_ws(p + 2);
-        r2 = atoi(p);
-        while (*p >= '0' && *p <= '9') p++;
+        r2 = row; c2 = col;
+        if (ast_eval_adv(ctx, &p, &v) == 0 && v.type == VAL_NUM) r2 = (int)v.num;
         p = skip_ws(p);
         if (*p == ',') p++;
         p = skip_ws(p);
-        c2 = atoi(p);
-        while (*p >= '0' && *p <= '9') p++;
+        if (ast_eval_adv(ctx, &p, &v) == 0 && v.type == VAL_NUM) c2 = (int)v.num;
         p = skip_ws(p);
         if (str_imatch(p, "DOUBLE")) dbl = 1;
         screen_box(row, col, r2, c2, dbl);
@@ -1228,6 +1277,9 @@ void screen_at_cmd(const char *line) {
 
         screen_prompt(row, col, text, message);
 
+    } else if (*p == '\0') {   /* @ row, col alone: the line cleared from there, the cursor left there */
+        screen_clear_region(row, col, row, SCREEN_COLS - 1);
+        screen_setpos(row, col);
     } else {
         printf("Syntax: @ row,col SAY|GET|PROMPT|CLEAR TO|TO ...\n");
     }

@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include "ast.h"
 #include "label.h"
 #include "util.h"
 
@@ -152,7 +153,7 @@ void label_generate(lbl_def_t *def, dbf_t *db, expr_ctx_t *ectx,
         /* FOR condition */
         if (for_cond && for_cond[0]) {
             value_t cond;
-            if (expr_eval_str(ectx, for_cond, &cond) != 0) continue;
+            if (ast_eval_dynamic(for_cond, ectx, &cond) != 0) continue;
             if (cond.type != VAL_LOGIC || !cond.logic) continue;
         }
 
@@ -161,7 +162,7 @@ void label_generate(lbl_def_t *def, dbf_t *db, expr_ctx_t *ectx,
             row_buf[col_count][line][0] = '\0';
             if (line < def->num_lines && def->lines[line][0]) {
                 value_t v;
-                if (expr_eval_str(ectx, def->lines[line], &v) == 0) {
+                if (ast_eval_dynamic(def->lines[line], ectx, &v) == 0) {
                     val_to_string(&v, row_buf[col_count][line], 256);
                     trim_right(row_buf[col_count][line]);
                 }

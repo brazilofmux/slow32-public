@@ -63,6 +63,9 @@ void screen_clear_region(int r1, int c1, int r2, int c2);
 
 /* @TO command (box drawing) */
 void screen_box(int r1, int c1, int r2, int c2, int dbl);
+/* @ ... BOX / DISPBOX with a frame string: top-left, top, top-right, right,
+ * bottom-right, bottom, bottom-left, left, and a ninth that fills */
+void screen_box_frame(int r1, int c1, int r2, int c2, const char *frame);
 
 /* READ command */
 void screen_read(void);

@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include "ast.h"
 #include "report.h"
 #include "date.h"
 #include "util.h"
@@ -274,7 +275,7 @@ static void print_page_header(frm_def_t *def, int page_num,
     if (def->title[0]) {
         value_t v;
         char title_text[256];
-        if (expr_eval_str(ectx, def->title, &v) == 0) {
+        if (ast_eval_dynamic(def->title, ectx, &v) == 0) {
             val_to_string(&v, title_text, sizeof(title_text));
         } else {
             str_copy(title_text, def->title, sizeof(title_text));
@@ -395,7 +396,7 @@ void report_generate(frm_def_t *def, dbf_t *db, expr_ctx_t *ectx,
         /* FOR condition */
         if (for_cond && for_cond[0]) {
             value_t cond;
-            if (expr_eval_str(ectx, for_cond, &cond) != 0) continue;
+            if (ast_eval_dynamic(for_cond, ectx, &cond) != 0) continue;
             if (cond.type != VAL_LOGIC || !cond.logic) continue;
         }
 
@@ -421,7 +422,7 @@ void report_generate(frm_def_t *def, dbf_t *db, expr_ctx_t *ectx,
             char cur_group[256];
             cur_group[0] = '\0';
 
-            if (expr_eval_str(ectx, def->group_expr, &gv) == 0)
+            if (ast_eval_dynamic(def->group_expr, ectx, &gv) == 0)
                 val_to_string(&gv, cur_group, sizeof(cur_group));
 
             if (str_icmp(cur_group, prev_group_val) != 0 && !first_record) {
@@ -458,7 +459,7 @@ void report_generate(frm_def_t *def, dbf_t *db, expr_ctx_t *ectx,
             char cur_subgroup[256];
             cur_subgroup[0] = '\0';
 
-            if (expr_eval_str(ectx, def->subgroup_expr, &sv) == 0)
+            if (ast_eval_dynamic(def->subgroup_expr, ectx, &sv) == 0)
                 val_to_string(&sv, cur_subgroup, sizeof(cur_subgroup));
 
             if (str_icmp(cur_subgroup, prev_subgroup_val) != 0 && !first_record) {
@@ -490,7 +491,7 @@ void report_generate(frm_def_t *def, dbf_t *db, expr_ctx_t *ectx,
             colbuf[0] = '\0';
 
             if (def->columns[i].content[0] &&
-                expr_eval_str(ectx, def->columns[i].content, &cv) == 0) {
+                ast_eval_dynamic(def->columns[i].content, ectx, &cv) == 0) {
                 val_to_string(&cv, colbuf, sizeof(colbuf));
 
                 /* Accumulate numeric totals */

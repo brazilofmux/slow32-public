@@ -337,6 +337,23 @@ void prog_get_compiled_loc(const char **file, int *line) {
 
 /* ---- Clipper's spellings at load time (program.h) ---- */
 
+int prog_cut_continuation(char *line) {
+    char *p, *end;
+    char quote = 0;
+    /* the line's text, without a trailing && or // comment */
+    for (p = line; *p; p++) {
+        if (quote) { if (*p == quote) quote = 0; continue; }
+        if (*p == '"' || *p == '\'') { quote = *p; continue; }
+        if ((p[0] == '&' && p[1] == '&') || (p[0] == '/' && p[1] == '/')) break;
+    }
+    end = p;
+    while (end > line && isspace((unsigned char)end[-1])) end--;
+    if (end == line || end[-1] != ';') return 0;
+    end[-1] = '\0';
+    return 1;
+}
+
+
 static int kw_here(const char *p, const char *kw, const char **after) {
     size_t n = strlen(kw);
     if (strncasecmp(p, kw, n) != 0) return 0;
@@ -680,9 +697,8 @@ static program_t *prog_load(const char *filename) {
         trim_right(line);
 
         /* Line continuation: ; at end */
-        while (strlen(line) > 0 && line[strlen(line) - 1] == ';') {
-            char next[MAX_LINE_LEN];
-            line[strlen(line) - 1] = '\0'; /* remove ; */
+        while (prog_cut_continuation(line)) {   /* a ; before a trailing comment continues too */
+            char next[MAX_LINE_LEN]; /* remove ; */
             if (!fgets(next, sizeof(next), fp)) break;
             trim_right(next);
             /* Skip leading whitespace of continuation */
@@ -1046,7 +1062,7 @@ static int scan_endcase(program_t *prog, int from) {
 
 static int eval_logical(expr_ctx_t *ctx, const char *expr, int *result) {
     value_t res;
-    if (expr_eval_str(ctx, expr, &res) != 0) {
+    if (ast_eval_dynamic(expr, ctx, &res) != 0) {
         if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);
         return -1;
     }
@@ -1612,7 +1628,7 @@ static void prog_run(void) {
                     char *cond = skip_ws(p + 4);
                     value_t val;
                     expr_ctx_t *ctx = cmd_get_expr_ctx();
-                    if (expr_eval_str(ctx, cond, &val) == 0 &&
+                    if (ast_eval_dynamic(cond, ctx, &val) == 0 &&
                         val.type == VAL_LOGIC && val.logic) {
                         case_skip = 0;
                         case_done = 1;
@@ -1804,7 +1820,7 @@ void prog_do(const char *arg) {
                         str_upper(ref_names[with_argc]);
                     }
                 }
-                if (expr_eval(ctx, &p, &val) != 0) {
+                if (ast_eval_adv(ctx, &p, &val) != 0) {
                     if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);
                     break;
                 }
@@ -2085,7 +2101,7 @@ void prog_case(const char *arg) {
     {
         value_t val;
         expr_ctx_t *ctx = cmd_get_expr_ctx();
-        if (expr_eval_str(ctx, arg, &val) != 0) {
+        if (ast_eval_dynamic(arg, ctx, &val) != 0) {
             if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);
             state.pc++;
             return;
@@ -2294,7 +2310,7 @@ void prog_for(const char *arg) {
 
     /* Parse start expression */
     p = skip_ws(p);
-    if (expr_eval(ctx, &p, &start_val) != 0 || start_val.type != VAL_NUM) {
+    if (ast_eval_adv(ctx, &p, &start_val) != 0 || start_val.type != VAL_NUM) {
         printf("FOR requires numeric expressions.\n");
         state.pc++;
         return;
@@ -2310,7 +2326,7 @@ void prog_for(const char *arg) {
     p = skip_ws(p + 2);
 
     /* Parse end expression */
-    if (expr_eval(ctx, &p, &end_val) != 0 || end_val.type != VAL_NUM) {
+    if (ast_eval_adv(ctx, &p, &end_val) != 0 || end_val.type != VAL_NUM) {
         printf("FOR requires numeric expressions.\n");
         state.pc++;
         return;
@@ -2321,7 +2337,7 @@ void prog_for(const char *arg) {
     p = skip_ws(p);
     if (str_imatch(p, "STEP")) {
         p = skip_ws(p + 4);
-        if (expr_eval(ctx, &p, &step_val) != 0 || step_val.type != VAL_NUM) {
+        if (ast_eval_adv(ctx, &p, &step_val) != 0 || step_val.type != VAL_NUM) {
             printf("STEP requires numeric expression.\n");
             state.pc++;
             return;
@@ -3084,7 +3100,7 @@ int prog_execute_line(char *line) {
             expr_ctx_t *ctx;
             cmd_ctx_setup();
             ctx = cmd_get_expr_ctx();
-            if (expr_eval_str(ctx, a, &v) != 0) {
+            if (ast_eval_dynamic(a, ctx, &v) != 0) {
                 if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);
                 return 0;
             }

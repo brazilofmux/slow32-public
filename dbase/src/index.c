@@ -1358,7 +1358,7 @@ static void index_probe_key_info(index_t *idx, dbf_t *db, expr_ctx_t *ctx,
         if (idx->key_ast) {
             if (ast_eval(idx->key_ast, ctx, &val) != 0) continue;
         } else {
-            if (expr_eval_str(ctx, key_expr, &val) != 0) continue;
+            if (ast_eval_dynamic(key_expr, ctx, &val) != 0) continue;
         }
 
         if (!key_type_set) {
@@ -1411,7 +1411,7 @@ static void index_build_incremental(index_t *idx, dbf_t *db, expr_ctx_t *ctx,
         if (idx->key_ast) {
             if (ast_eval(idx->key_ast, ctx, &val) != 0) continue;
         } else {
-            if (expr_eval_str(ctx, key_expr, &val) != 0) continue;
+            if (ast_eval_dynamic(key_expr, ctx, &val) != 0) continue;
         }
 
         index_format_key_value(idx->key_type, &val, keybuf, sizeof(keybuf));
@@ -1531,7 +1531,7 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
         if (idx->key_ast) {
             if (ast_eval(idx->key_ast, ctx, &val) != 0) continue;
         } else {
-            if (expr_eval_str(ctx, key_expr, &val) != 0) continue;
+            if (ast_eval_dynamic(key_expr, ctx, &val) != 0) continue;
         }
 
         if (!key_type_set) {

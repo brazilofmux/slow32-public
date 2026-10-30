@@ -235,5 +235,8 @@ typedef struct {
     int depth;
 } prog_block_stack_t;
 const char *prog_normalize_line(const char *line, prog_block_stack_t *st, char *out, int outsz);
+/* 1 when the line ends in a continuation ; (a trailing && or // comment
+ * after it allowed, as Clipper allows): the ; and the comment are cut */
+int prog_cut_continuation(char *line);
 
 #endif

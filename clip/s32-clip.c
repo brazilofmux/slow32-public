@@ -23,7 +23,7 @@
 
 #define MAX_LINE  512
 #define MAX_NEST  32
-#define MAX_LINES 4000
+#define MAX_LINES 4000   /* the first allocation; the table grows */
 #define MAX_FUNCS 512
 #define MAX_FILES 64
 #define MAX_PARAMS 16
@@ -51,6 +51,7 @@ typedef struct {
     int lineno;
     int depth;
     char nest[MAX_NEST];
+    int nest_line[MAX_NEST];   /* where each open block began (for the unclosed-block message) */
     int in_fn;
     int param_i;
     int ended;
@@ -61,7 +62,8 @@ typedef struct {
     int len, cap;
 } sb_t;
 
-static src_line_t g_lines[MAX_LINES];
+static src_line_t *g_lines;
+static int g_lines_cap;
 static int g_nlines;
 static char g_loaded[MAX_FILES][256];
 static int g_nloaded;
@@ -1341,9 +1343,15 @@ static void path_dir(const char *path, char *dir, int n) {
 }
 
 static int store_line(const char *path, const char *text, int lineno, int is_text) {
-    if (g_nlines >= MAX_LINES) {
-        fprintf(stderr, "%s: too many lines\n", path);
-        return -1;
+    if (g_nlines >= g_lines_cap) {   /* grown on demand: DBU is 6,000 lines */
+        int cap = g_lines_cap ? g_lines_cap * 2 : MAX_LINES;
+        src_line_t *g = realloc(g_lines, (size_t)cap * sizeof(src_line_t));
+        if (!g) {
+            fprintf(stderr, "%s: out of memory\n", path);
+            return -1;
+        }
+        g_lines = g;
+        g_lines_cap = cap;
     }
     strncpy(g_lines[g_nlines].text, text, MAX_LINE - 1);
     g_lines[g_nlines].text[MAX_LINE - 1] = '\0';
@@ -2101,8 +2109,7 @@ static int load_prg(const char *path) {
         const char *p;
         int rc;
         rtrim(buf);
-        while (buf[0] && buf[strlen(buf) - 1] == ';') {
-            buf[strlen(buf) - 1] = '\0';
+        while (prog_cut_continuation(buf)) {   /* a ; before a trailing comment continues too */
             if (!fgets(next, sizeof(next), in)) {
                 break;
             }
@@ -2280,6 +2287,7 @@ static int open_block(emit_t *e, char kind) {
         fprintf(stderr, "%s:%d: nesting too deep\n", e->inpath, e->lineno);
         return -1;
     }
+    e->nest_line[e->depth] = e->lineno;
     e->nest[e->depth++] = kind;
     return 0;
 }
@@ -2836,8 +2844,17 @@ static int emit_function(FILE *out, const func_t *fn) {
         }
     }
     if (e.depth != 0) {
-        fprintf(stderr, "%s:%d: unclosed block in FUNCTION %s\n",
-                g_lines[fn->header].src, g_lines[fn->header].lineno, fn->name);
+        {
+            static const char *const kinds = "IWFSTQRC";
+            static const char *const names[] = { "IF", "DO WHILE", "FOR", "SCAN", "TEXT", "BEGIN SEQUENCE", "RECOVER", "DO CASE" };
+            int d;
+            fprintf(stderr, "%s:%d: unclosed block in FUNCTION %s:", e.inpath, e.lineno, fn->name);
+            for (d = 0; d < e.depth; d++) {
+                const char *k = strchr(kinds, e.nest[d]);
+                fprintf(stderr, " %s(line %d)", k ? names[k - kinds] : "block", e.nest_line[d]);
+            }
+            fprintf(stderr, "\n");
+        }
         return -1;
     }
     fprintf(out, "    clip_end(&scope, result);\n");

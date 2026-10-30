@@ -558,8 +558,6 @@ int fn_getactive(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
 
 /* ---- the screen functions ---- */
 
-static int cursor_shape = 1;
-
 int fn_setpos(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx;
     screen_setpos(arg_num(args, nargs, 0, 0), arg_num(args, nargs, 1, 0));
@@ -599,9 +597,14 @@ int fn_setcolor(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
 }
 
 int fn_setcursor(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    char line[32];
     (void)ctx;
-    *result = vnum(cursor_shape);
-    if (nargs >= 1 && args[0].type == VAL_NUM) cursor_shape = (int)args[0].num;
+    *result = vnum(cmd_get_set_opts()->cursor);
+    if (nargs >= 1 && args[0].type == VAL_NUM) {   /* the shape, kept with SET CURSOR's switch */
+        snprintf(line, sizeof(line), "SET CURSOR %s", args[0].num != 0 ? "ON" : "OFF");
+        cmd_execute(NULL, line);
+        ((set_options_t *)cmd_get_set_opts())->cursor = (int)args[0].num;
+    }
     return 0;
 }
 
