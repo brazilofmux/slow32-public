@@ -5,6 +5,13 @@
 
 /* Call a built-in function by name. Returns 0 on success, -1 on error. */
 int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value_t *result);
+/* name(@x, ...): refs[i] is the variable argument i was passed by
+ * reference from (NULL or "" for a value); a user function writes its
+ * parameter's final value back */
+int func_call_refs(expr_ctx_t *ctx, const char *name, value_t *args, int nargs,
+                   const char *const *refs, value_t *result);
+/* For the UDF handlers: the references of the call being made (once) */
+const char *const *func_take_refs(void);
 
 /* User-defined function callback. Set by program.c. */
 typedef int (*udf_callback_t)(const char *name, value_t *args, int nargs, value_t *result);

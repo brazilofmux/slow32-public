@@ -13,6 +13,7 @@
 #include <errno.h>
 #include "ast.h"
 #include "command.h"
+#include "func.h"
 #include "memvar.h"
 #include "set.h"
 #include "date.h"
@@ -124,6 +125,7 @@ void ast_free(ast_node_t *node) {
     case AST_LITERAL:
     case AST_FIELD:
     case AST_MEMVAR:
+    case AST_REF:
         break;
     case AST_ALIAS_FIELD:
         break;
@@ -511,6 +513,17 @@ static ast_node_t *ast_parse_unary(lexer_t *l, memvar_store_t *store, const char
 
     if (op == TOK_PLUS) {
         lex_next(l);
+    }
+
+    if (op == TOK_AT) {   /* @name, in a call's arguments */
+        ast_node_t *n;
+        lex_next(l);
+        if (lex_peek(l) != TOK_IDENT) { *error = "Expected a variable after @"; return NULL; }
+        n = node_alloc(AST_REF);
+        if (!n) { *error = "Out of memory"; return NULL; }
+        str_copy(n->name, l->current.text, sizeof(n->name));
+        lex_next(l);
+        return n;
     }
 
     if (op == TOK_INC || op == TOK_DEC) {   /* prefix ++ / -- */
@@ -1310,6 +1323,7 @@ int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
         return ast_eval_field(ctx, node->name, result);
 
     case AST_MEMVAR:
+    case AST_REF:
         return ast_eval_name(ctx, node->name, result);
 
     case AST_ALIAS_FIELD:
@@ -1348,7 +1362,16 @@ int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
                 return -1;
             }
         }
-        rc = func_call(ctx, node->call.name, args, node->call.nargs, result);
+        {
+            const char *refs[MAX_FUNC_ARGS];
+            int any = 0;
+            for (i = 0; i < node->call.nargs; i++) {
+                refs[i] = node->call.args[i]->type == AST_REF ? node->call.args[i]->name : NULL;
+                if (refs[i]) any = 1;
+            }
+            rc = any ? func_call_refs(ctx, node->call.name, args, node->call.nargs, refs, result)
+                     : func_call(ctx, node->call.name, args, node->call.nargs, result);
+        }
         if (args) free(args);
         return rc;
     }

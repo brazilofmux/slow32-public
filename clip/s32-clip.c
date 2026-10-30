@@ -367,6 +367,7 @@ static int gen_expr(sb_t *b, int *ntmp, ast_node_t *node) {
         sb_printf(b, ", &t%d); ", t);
         return t;
     case AST_MEMVAR:
+    case AST_REF:
         sb_printf(b, "e = e || ast_eval_name(c, ");
         sb_cstr(b, node->name);
         sb_printf(b, ", &t%d); ", t);
@@ -403,6 +404,20 @@ static int gen_expr(sb_t *b, int *ntmp, ast_node_t *node) {
                 sb_printf(b, "av[%d] = t%d; ", i, args[i]);
             }
             sb_printf(b, "} ");
+        }
+        for (i = 0; i < node->call.nargs && node->call.args[i]->type != AST_REF; i++) {}
+        if (i < node->call.nargs) {   /* f(@x, ...): by reference */
+            int k = (*ntmp)++;
+            sb_printf(b, "{ static const char *const rf%d[] = {", k);
+            for (i = 0; i < node->call.nargs; i++) {
+                sb_printf(b, "%s", i ? ", " : "");
+                if (node->call.args[i]->type == AST_REF) sb_cstr(b, node->call.args[i]->name);
+                else sb_printf(b, "0");
+            }
+            sb_printf(b, "}; e = e || func_call_refs(c, ");
+            sb_cstr(b, node->call.name);
+            sb_printf(b, ", a%d, %d, rf%d, &t%d); } ", a, node->call.nargs, k, t);
+            return t;
         }
         sb_printf(b, "{ static clip_site_t site; e = e || clip_call(c, ");
         sb_cstr(b, node->call.name);
@@ -894,6 +909,64 @@ static int emit_decl(emit_t *e, const char *kw, const char *list) {
         }
     }
     return 1;
+}
+
+/* STATIC name [:= value] [, ...]: C static storage per variable,
+ * initialized the first time through, bound as a LOCAL of each call */
+static int g_nstatic;
+
+static int emit_static(emit_t *e, const char *list) {
+    const char *p = list;
+    while (*(p = skip_ws(p))) {
+        char name[MAX_NAME];
+        int m = 0, k = g_nstatic++;
+        while ((isalnum((unsigned char)*p) || *p == '_') && m < MAX_NAME - 1) {
+            name[m++] = *p++;
+        }
+        name[m] = '\0';
+        if (!name[0]) {
+            fprintf(stderr, "%s:%d: STATIC: a name expected\n", e->inpath, e->lineno);
+            return -1;
+        }
+        p = skip_ws(p);
+        emit_indent(e->out, e->depth);
+        fprintf(e->out, "{ static value_t sv%d; static int si%d; if (!si%d) { si%d = 1; sv%d = val_nil();", k, k, k, k, k);
+        if (p[0] == ':' && p[1] == '=') {
+            /* the initializer: up to the next top-level comma */
+            const char *q = p + 2;
+            int depth = 0;
+            char quote = 0, init[MAX_LINE];
+            ast_node_t *n;
+            sb_t b = {0};
+            int r;
+            while (*q && (depth > 0 || quote || *q != ',')) {
+                if (quote) { if (*q == quote) quote = 0; }
+                else if (*q == '"' || *q == '\'') quote = *q;
+                else if (*q == '(' || *q == '[' || *q == '{') depth++;
+                else if (*q == ')' || *q == ']' || *q == '}') depth--;
+                q++;
+            }
+            snprintf(init, sizeof(init), "%.*s", (int)(q - (p + 2)), p + 2);
+            n = parse_expr(init);
+            if (!n) {
+                fprintf(stderr, "%s:%d: STATIC %s: the initializer does not compile\n", e->inpath, e->lineno, name);
+                return -1;
+            }
+            gen_block(&b, &n, 1, &r);
+            fprintf(e->out, " { %sif (e) clip_fail(c); else sv%d = t%d; }", b.buf, k, r);
+            free(b.buf);
+            ast_free(n);
+            p = q;
+        }
+        fprintf(e->out, " } clip_static_bind(%s, ", e->in_fn ? "&scope" : "NULL");
+        c_escape(e->out, name);
+        fprintf(e->out, ", &sv%d); }\n", k);
+        p = skip_ws(p);
+        if (*p == ',') {
+            p++;
+        }
+    }
+    return 0;
 }
 
 /* Commands compiled to direct calls; 0 leaves the line to clip_cmd */
@@ -1432,6 +1505,9 @@ static int emit_stmt(emit_t *e, const char *p) {
             fprintf(e->out, ", args, nargs, %d);\n", e->param_i++);
         }
         return 0;
+    }
+    if (is_kw(p, "STATIC")) {   /* STATIC name [:= value] [, ...] */
+        return emit_static(e, skip_ws(p + 6));
     }
     if (is_kw(p, "LOCAL") || is_kw(p, "PRIVATE") || is_kw(p, "PUBLIC")) {
         const char *kw = is_kw(p, "LOCAL") ? "LOCAL" : is_kw(p, "PRIVATE") ? "PRIVATE" : "PUBLIC";

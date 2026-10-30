@@ -6,6 +6,7 @@
 #include "program.h"
 #include "ast.h"
 #include "command.h"
+#include "func.h"
 #include "memvar.h"
 
 void clip_init(void);
@@ -44,6 +45,9 @@ struct clip_scope {
     clip_scope_t *prev;    /* the scope that called this one */
     int nargs;             /* PCOUNT() */
     const char *name;      /* PROCNAME() */
+    int nstatics;          /* STATICs bound in this call, written back on return */
+    const char *static_names[16];
+    value_t *static_vals[16];
 };
 
 /* FOR var = start TO end [STEP step] ... NEXT */
@@ -88,6 +92,9 @@ void clip_text(const char *line);
 
 /* Where the program is: the file and line the next statement came from */
 void clip_at(const char *file, int line);
+/* STATIC name: its storage bound as a LOCAL of this call (s NULL: the
+ * main program), and kept on return */
+void clip_static_bind(clip_scope_t *s, const char *name, value_t *storage);
 /* The main program's name for PROCNAME(): its file's, upper case */
 void clip_main_name(const char *name);
 

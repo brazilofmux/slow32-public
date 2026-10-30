@@ -608,9 +608,15 @@ static int prog_udf_call(const char *name, value_t *args, int nargs, value_t *re
     {
         call_frame_t *frame = &state.call_stack[state.call_depth - 1];
         int i;
+        const char *const *refs = func_take_refs();
         frame->with_argc = nargs;
-        for (i = 0; i < nargs && i < MAX_FUNC_ARGS; i++)
+        for (i = 0; i < nargs && i < MAX_FUNC_ARGS; i++) {
             frame->with_args[i] = args[i];
+            if (refs && refs[i] && refs[i][0]) {   /* f(@x): written back on RETURN */
+                str_copy(frame->with_ref_names[i], refs[i], MEMVAR_NAMELEN);
+                str_upper(frame->with_ref_names[i]);
+            }
+        }
     }
 
     /* Execute the function body — prog_run will stop when RETURN sets running=0 */
@@ -1063,6 +1069,7 @@ static int push_frame(program_t *new_prog, int start_line) {
      * name arrays, so those are what a fresh frame needs. */
     frame->private_count = 0;
     frame->with_argc = 0;
+    frame->nstatics = 0;
     memset(frame->with_ref_names, 0, sizeof(frame->with_ref_names));
     memset(frame->param_names, 0, sizeof(frame->param_names));
     frame->caller_prog = state.current_prog;
@@ -1098,6 +1105,31 @@ static int push_frame(program_t *new_prog, int start_line) {
 }
 
 /* ---- Pop call frame ---- */
+/* STATIC storage: one per program, line and name, initialized once */
+#define MAX_STATICS 256
+static struct {
+    program_t *prog;
+    int line;
+    char name[MEMVAR_NAMELEN];
+    int init;
+    value_t val;
+} statics[MAX_STATICS];
+static int nstatics;
+
+static int static_entry(program_t *prog, int line, const char *name) {
+    int i;
+    for (i = 0; i < nstatics; i++)
+        if (statics[i].prog == prog && statics[i].line == line && strcmp(statics[i].name, name) == 0)
+            return i;
+    if (nstatics >= MAX_STATICS) return -1;
+    statics[nstatics].prog = prog;
+    statics[nstatics].line = line;
+    str_copy(statics[nstatics].name, name, MEMVAR_NAMELEN);
+    statics[nstatics].init = 0;
+    statics[nstatics].val = val_nil();
+    return nstatics++;
+}
+
 static void pop_frame(void) {
     call_frame_t *frame;
     memvar_store_t *store = cmd_get_memvar_store();
@@ -1115,6 +1147,10 @@ static void pop_frame(void) {
             memvar_find(store, frame->param_names[i], &ref_vals[i]);
         }
     }
+
+    /* STATICs keep what this call made of them */
+    for (i = 0; i < frame->nstatics; i++)
+        memvar_find(store, statics[frame->statics[i]].name, &statics[frame->statics[i]].val);
 
     /* The frame's LOCALs go first, so a PRIVATE restore below lands on
      * the variable it shadowed, not on the LOCAL */
@@ -2548,6 +2584,42 @@ static void prog_declare(lexer_t *l, int kind) {
         }
 
         lex_next(l);
+        if (kind == 'S') {
+            /* STATIC name [:= value]: its storage, initialized the first time
+             * only, bound as a LOCAL of this call */
+            int si = static_entry(state.current_prog, state.pc, name);
+            if (si < 0) {
+                prog_error(ERR_SYNTAX, "Too many STATIC variables");
+                return;
+            }
+            if (l->current.type == TOK_ASSIGN) {
+                const char *pp = l->token_start + 2;
+                const char *err = NULL;
+                ast_node_t *n = ast_compile_adv(&pp, store, &err);
+                if (!n) {
+                    prog_error(ERR_SYNTAX, err ? err : "Syntax error");
+                    return;
+                }
+                if (!statics[si].init && ast_eval(n, cmd_get_expr_ctx(), &statics[si].val) != 0) {
+                    ast_free(n);
+                    if (cmd_get_expr_ctx()->error)
+                        prog_error(expr_error_code(cmd_get_expr_ctx()->error), cmd_get_expr_ctx()->error);
+                    return;
+                }
+                ast_free(n);
+                lexer_init_ext(l, pp, store);
+            }
+            statics[si].init = 1;
+            if (framed) {
+                call_frame_t *f = &state.call_stack[state.call_depth - 1];
+                memvar_set_local(store, name, &statics[si].val);
+                if (f->nstatics < 16) f->statics[f->nstatics++] = (short)si;
+            } else {
+                memvar_set(store, name, &statics[si].val);
+            }
+            if (l->current.type == TOK_COMMA) { lex_next(l); continue; }
+            break;
+        }
         if (l->current.type == TOK_LBRACKET) {   /* name[d1, d2]: an ARRAY(d1, d2) */
             const char *open = l->token_start, *q = open + 1;
             const char *err = NULL;
@@ -2612,6 +2684,12 @@ void prog_private(lexer_t *l) {
 /* ---- PUBLIC ---- */
 void prog_public(lexer_t *l) {
     prog_declare(l, 'U');
+    if (state.running) state.pc++;
+}
+
+/* ---- STATIC ---- */
+void prog_static(lexer_t *l) {
+    prog_declare(l, 'S');
     if (state.running) state.pc++;
 }
 
@@ -2752,6 +2830,13 @@ int prog_execute_line(char *line) {
         lexer_t l;
         lexer_init_ext(&l, skip_ws(p + 5), cmd_get_memvar_store());
         prog_local(&l);
+        return 0;
+    }
+
+    if (str_imatch(p, "STATIC")) {
+        lexer_t l;
+        lexer_init_ext(&l, skip_ws(p + 6), cmd_get_memvar_store());
+        prog_static(&l);
         return 0;
     }
 

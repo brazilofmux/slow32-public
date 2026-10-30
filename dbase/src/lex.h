@@ -58,6 +58,7 @@ typedef enum {
     TOK_LBRACE,     /* { : an array literal or a code block */
     TOK_RBRACE,     /* } */
     TOK_PIPE,       /* | */
+    TOK_AT,         /* @ : a reference argument */
 
     /* Macro */
     TOK_MACRO,      /* & */

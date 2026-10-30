@@ -110,6 +110,9 @@ The severe ones are marked.
    literals with a whole quotient fold to an integer at compile time
    (10/5 shows 2).
 3. **Function calls as statements, formal parameters, PCOUNT(), `@`.**
+   Done 2026-10-29 (`@` last): f(@x) passes x by reference -- the
+   parameter's final value goes back to x when f returns, interpreted
+   (the frame's with_ref_names, as DO ... WITH) and compiled alike.
 4. **Literal arrays and the array functions.**  Done 2026-10-29: arrays
    are Clipper's -- one dimension, nested (DECLARE a[r,c] and a[i,j] are
    a[i][j]), resizable, shared by reference, not collected yet (a known
@@ -120,7 +123,12 @@ The severe ones are marked.
    PRIVATE / PUBLIC a[n]; assignment replaces an array (dBASE IV refused
    it without an index).  `{MM/DD/YY}` stays a date literal when the
    braces hold a date and nothing else.
-5. **LOCAL and STATIC as Clipper has them** -- severe: lexical, not
+5. **LOCAL and STATIC as Clipper has them** -- STATIC done 2026-10-29:
+   one storage per variable (C static in compiled code, a table by
+   program, line and name in the interpreter), initialized the first time
+   only, bound as a LOCAL of each call and written back on return.
+   LOCAL is still dynamic underneath (a memvar at the call's depth); the
+   code-block depth rule covers what that changes.  Was: -- severe: lexical, not
    dynamic; compiled to C variables, which the interpreter's evaluator
    cannot see, so anything that reaches it (a macro) needs a bridge.
 6. **Code blocks** -- severe: closures over LOCALs ("detached locals");

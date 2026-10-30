@@ -341,6 +341,7 @@ token_type_t lex_next(lexer_t *l) {
         case '%': t->type = TOK_MOD; break;
         case '}': t->type = TOK_RBRACE; break;
         case '|': t->type = TOK_PIPE; break;
+        case '@': t->type = TOK_AT; break;
         case '&': t->type = TOK_MACRO; break;
         case '^': t->type = TOK_POWER; break;
         case '!': t->type = TOK_NOT; break;

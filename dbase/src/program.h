@@ -53,6 +53,9 @@ typedef struct {
     int case_done;
     int case_skip;
     int loop_depth;
+    /* STATICs bound in this call: written back to their storage on return */
+    int nstatics;
+    short statics[16];
 } call_frame_t;
 
 /* Loop stack entry (DO WHILE / ENDDO / FOR / NEXT / SCAN / ENDSCAN) */
@@ -119,6 +122,7 @@ void prog_for(const char *arg);
 void prog_next(void);
 void prog_cancel(void);
 void prog_local(struct lexer *l);
+void prog_static(struct lexer *l);
 
 /* BEGIN SEQUENCE error recovery */
 void prog_begin_sequence(void);

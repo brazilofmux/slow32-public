@@ -19,7 +19,8 @@ typedef enum {
     AST_INCDEC,         /* ++target, target++, --target, target-- */
     AST_ARRAY_LIT,      /* { a, b, ... } */
     AST_INDEX,          /* expr[i] -- on any value, so a[3][2] */
-    AST_BLOCK           /* {|p, q| e1, e2, ...} */
+    AST_BLOCK,          /* {|p, q| e1, e2, ...} */
+    AST_REF             /* @name: an argument passed by reference */
 } ast_type_t;
 
 typedef enum {

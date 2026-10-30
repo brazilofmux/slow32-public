@@ -2548,6 +2548,23 @@ udf_callback_t func_get_udf_callback(void) {
     return udf_callback;
 }
 
+static const char *const *pending_refs;
+
+const char *const *func_take_refs(void) {
+    const char *const *r = pending_refs;
+    pending_refs = NULL;
+    return r;
+}
+
+int func_call_refs(expr_ctx_t *ctx, const char *name, value_t *args, int nargs,
+                   const char *const *refs, value_t *result) {
+    int rc;
+    pending_refs = refs;
+    rc = func_call(ctx, name, args, nargs, result);
+    pending_refs = NULL;
+    return rc;
+}
+
 int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value_t *result) {
     const func_entry_t *e;
     char upper[64];
@@ -2562,8 +2579,10 @@ int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value
     upper[i] = '\0';
 
     e = func_lookup(upper);
-    if (e)
+    if (e) {
+        pending_refs = NULL;   /* a built-in takes values */
         return e->fn(ctx, args, nargs, result);
+    }
 
     /* Try user-defined function.
        Callback returns: 0=handled, >0=not found, <0=execution error. */

@@ -72,7 +72,33 @@ static int clip_udf_dispatch(const char *name, value_t *args, int nargs, value_t
     int i;
     for (i = 0; i < clip_nfn; i++) {
         if (strcmp(clip_fns[i].name, name) == 0) {
-            return clip_fns[i].fn(args, nargs, result);
+            const char *const *refs = func_take_refs();
+            char ref_names[MAX_FUNC_ARGS][MEMVAR_NAMELEN];
+            clip_call_t call;
+            int k, rc;
+            if (!refs) {
+                return clip_fns[i].fn(args, nargs, result);
+            }
+            /* f(@x): the parameters' final values back to the caller's */
+            memset(&call, 0, sizeof(call));
+            memset(ref_names, 0, sizeof(ref_names));
+            for (k = 0; k < nargs && k < MAX_FUNC_ARGS; k++) {
+                if (refs[k] && refs[k][0]) {
+                    str_copy(ref_names[k], refs[k], MEMVAR_NAMELEN);
+                    str_upper(ref_names[k]);
+                }
+            }
+            call.nargs = nargs;
+            call.ref_names = ref_names;
+            clip_next_call = &call;
+            rc = clip_fns[i].fn(args, nargs, result);
+            clip_next_call = NULL;
+            for (k = 0; k < nargs && k < MAX_FUNC_ARGS; k++) {
+                if (call.have[k]) {
+                    memvar_set(cmd_get_memvar_store(), ref_names[k], &call.out[k]);
+                }
+            }
+            return rc;
         }
     }
     if (clip_prev_udf) {
@@ -185,6 +211,20 @@ void clip_cmd(const char *line) {
     }
 }
 
+void clip_static_bind(clip_scope_t *s, const char *name, value_t *storage) {
+    memvar_store_t *store = cmd_get_memvar_store();
+    if (!s) {
+        memvar_set(store, name, storage);
+        return;
+    }
+    memvar_set_local(store, name, storage);
+    if (s->nstatics < 16) {
+        s->static_names[s->nstatics] = name;
+        s->static_vals[s->nstatics] = storage;
+        s->nstatics++;
+    }
+}
+
 void clip_at(const char *file, int line) {
     prog_set_compiled_loc(file, line);
 }
@@ -290,6 +330,7 @@ void clip_enter(clip_scope_t *s) {
     s->npnames = 0;
     s->nargs = 0;
     s->name = NULL;
+    s->nstatics = 0;
     s->call = clip_next_call;
     clip_next_call = NULL;
     s->prev = clip_scope_top;
@@ -340,6 +381,10 @@ void clip_leave(clip_scope_t *s) {
             }
         }
         s->call = NULL;
+    }
+    /* STATICs keep what this call made of them */
+    for (i = 0; i < s->nstatics; i++) {
+        memvar_find(store, s->static_names[i], s->static_vals[i]);
     }
     /* A sequence begun in this call and still open ends with it (RETURN) */
     while (clip_seq_top && clip_seq_top->scope == s) {
