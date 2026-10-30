@@ -92,6 +92,7 @@ int ast_eval_alias_field(expr_ctx_t *ctx, const char *alias, const char *field, 
 int ast_eval_elem(expr_ctx_t *ctx, const char *name, const value_t *row,
                   const value_t *col, value_t *result);   /* col NULL: one index */
 int ast_eval_unop(expr_ctx_t *ctx, ast_op_t op, const value_t *child, value_t *result);
+int val_find(const value_t *hay, const value_t *needle, int from);   /* a byte search over values */
 int ast_eval_binop(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const value_t *right,
                    value_t *result);
 

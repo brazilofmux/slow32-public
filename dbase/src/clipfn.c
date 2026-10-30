@@ -528,48 +528,42 @@ static int fn_neterr(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result)
 
 static int fn_bin2i(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     const unsigned char *s;
+    int n;
     if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "BIN2I requires a string"; return -1; }
-    s = (const unsigned char *)args[0].str;
-    *result = vnum((int16_t)(s[0] | (s[0] ? s[1] : 0) << 8));
+    s = (const unsigned char *)val_text(&args[0]); n = val_len(&args[0]);
+    *result = vnum((int16_t)((n > 0 ? s[0] : 0) | (n > 1 ? s[1] : 0) << 8));
     return 0;
 }
 
 static int fn_bin2w(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     const unsigned char *s;
+    int n;
     if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "BIN2W requires a string"; return -1; }
-    s = (const unsigned char *)args[0].str;
-    *result = vnum((uint16_t)(s[0] | (s[0] ? s[1] : 0) << 8));
+    s = (const unsigned char *)val_text(&args[0]); n = val_len(&args[0]);
+    *result = vnum((uint16_t)((n > 0 ? s[0] : 0) | (n > 1 ? s[1] : 0) << 8));
     return 0;
 }
 
 static int fn_bin2l(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     const unsigned char *s;
     uint32_t v = 0;
-    int i;
+    int i, n;
     if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "BIN2L requires a string"; return -1; }
-    s = (const unsigned char *)args[0].str;
-    for (i = 0; i < 4 && (i == 0 || s[i - 1]); i++) v |= (uint32_t)s[i] << (8 * i);
+    s = (const unsigned char *)val_text(&args[0]); n = val_len(&args[0]);
+    for (i = 0; i < 4 && i < n; i++) v |= (uint32_t)s[i] << (8 * i);
     *result = vnum((int32_t)v);
     return 0;
 }
 
-/* The bytes, little-endian, up to the first zero byte: a string here ends
- * at a NUL, so a value whose high bytes are zero comes back shorter and
- * BIN2x reads the missing bytes as zero (a zero byte between non-zero
- * ones is the one case that does not round-trip) */
+/* The bytes, little-endian, zero bytes among them (a string value holds
+ * them now) */
 static int bin_string(int32_t v, int bytes, value_t *result) {
-    value_t r = val_str("");
+    char b[4];
     int i;
-    for (i = 0; i < bytes; i++) {
-        unsigned char c = (unsigned char)((uint32_t)v >> (8 * i));
-        if (!c) break;
-        r.str[i] = (char)c;
-    }
-    r.str[i] = '\0';
-    *result = r;
+    for (i = 0; i < bytes; i++) b[i] = (char)(unsigned char)((uint32_t)v >> (8 * i));
+    *result = val_strn(b, bytes);
     return 0;
 }
-
 static int fn_i2bin(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     if (nargs < 1 || args[0].type != VAL_NUM) { ctx->error = "I2BIN requires a number"; return -1; }
     return bin_string((int32_t)args[0].num, 2, result);
@@ -627,7 +621,7 @@ static int fn_memoline(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
     int len, width = arg_num(args, nargs, 1, 79), n = arg_num(args, nargs, 2, 1);
     value_t r = val_str("");
     if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MEMOLINE requires a string"; return -1; }
-    if (memo_line(args[0].str, width, n, &st, &len)) {
+    if (memo_line(val_text(&args[0]), width, n, &st, &len)) {
         snprintf(r.str, sizeof(r.str), "%.*s", len, st);
         len = (int)strlen(r.str);
         while (len < width && len < (int)sizeof(r.str) - 1) r.str[len++] = ' ';   /* padded to the width */
@@ -639,7 +633,7 @@ static int fn_memoline(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
 
 static int fn_mlcount(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MLCOUNT requires a string"; return -1; }
-    *result = vnum(memo_lines(args[0].str, arg_num(args, nargs, 1, 79)));
+    *result = vnum(memo_lines(val_text(&args[0]), arg_num(args, nargs, 1, 79)));
     return 0;
 }
 
@@ -647,10 +641,10 @@ static int fn_mlpos(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
     const char *st;
     int len;
     if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MLPOS requires (string, width, line)"; return -1; }
-    if (memo_line(args[0].str, arg_num(args, nargs, 1, 79), arg_num(args, nargs, 2, 1), &st, &len))
-        *result = vnum((int)(st - args[0].str) + 1);
+    if (memo_line(val_text(&args[0]), arg_num(args, nargs, 1, 79), arg_num(args, nargs, 2, 1), &st, &len))
+        *result = vnum((int)(st - val_text(&args[0])) + 1);
     else
-        *result = vnum((int)strlen(args[0].str) + 1);
+        *result = vnum((int)strlen(val_text(&args[0])) + 1);
     return 0;
 }
 
@@ -658,10 +652,10 @@ static int fn_mlctopos(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
     const char *st;
     int len;
     if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MLCTOPOS requires (string, width, line, col)"; return -1; }
-    if (memo_line(args[0].str, arg_num(args, nargs, 1, 79), arg_num(args, nargs, 2, 1), &st, &len))
-        *result = vnum((int)(st - args[0].str) + 1 + arg_num(args, nargs, 3, 0));
+    if (memo_line(val_text(&args[0]), arg_num(args, nargs, 1, 79), arg_num(args, nargs, 2, 1), &st, &len))
+        *result = vnum((int)(st - val_text(&args[0])) + 1 + arg_num(args, nargs, 3, 0));
     else
-        *result = vnum((int)strlen(args[0].str) + 1);
+        *result = vnum((int)strlen(val_text(&args[0])) + 1);
     return 0;
 }
 
@@ -673,8 +667,8 @@ static int fn_mpostolc(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
     if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MPOSTOLC requires (string, width, pos)"; return -1; }
     lc[0] = vnum(1);
     lc[1] = vnum(0);
-    while (memo_line(args[0].str, width, n, &st, &len)) {
-        int off = (int)(st - args[0].str) + 1;
+    while (memo_line(val_text(&args[0]), width, n, &st, &len)) {
+        int off = (int)(st - val_text(&args[0])) + 1;
         if (pos >= off && pos <= off + len) {
             lc[0] = vnum(n);
             lc[1] = vnum(pos - off);
@@ -705,7 +699,7 @@ static int fn_memotran(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
     const char *s, *hard = arg_str(args, nargs, 1, ";"), *soft = arg_str(args, nargs, 2, " ");
     int o = 0;
     if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MEMOTRAN requires a string"; return -1; }
-    for (s = args[0].str; *s && o < (int)sizeof(r.str) - 1; s++) {
+    for (s = val_text(&args[0]); *s && o < (int)sizeof(r.str) - 1; s++) {
         if ((*s == '\r' || (unsigned char)*s == 141) && s[1] == '\n') {
             r.str[o++] = (*s == '\r' ? hard : soft)[0];
             s++;
@@ -718,35 +712,40 @@ static int fn_memotran(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
     return 0;
 }
 
+/* MEMOREAD(file) --> the file's text, whole */
 static int fn_memoread(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     FILE *f;
-    value_t r = val_str("");
-    size_t n;
-    if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MEMOREAD requires a file name"; return -1; }
-    f = fopen(args[0].str, "rb");
-    if (f) {
-        n = fread(r.str, 1, sizeof(r.str) - 1, f);   /* a value_t string: 255 characters at most */
-        if (n > 0 && r.str[n - 1] == 26) n--;        /* the Ctrl-Z MEMOWRIT ends a file with */
-        r.str[n] = '\0';
-        fclose(f);
-    }
-    *result = r;
+    long size;
+    char *buf;
+    (void)ctx;
+    if (nargs < 1 || args[0].type != VAL_CHAR) { *result = val_str(""); return 0; }
+    f = fopen(val_text(&args[0]), "rb");
+    if (!f) { *result = val_str(""); return 0; }
+    fseek(f, 0, SEEK_END);
+    size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (size < 0) size = 0;
+    buf = malloc((size_t)size + 1);
+    if (!buf) { fclose(f); *result = val_str(""); return 0; }
+    size = (long)fread(buf, 1, (size_t)size, f);
+    fclose(f);
+    *result = val_strn(buf, (int)size);
+    free(buf);
     return 0;
 }
 
+/* MEMOWRIT(file, text) --> written whole */
 static int fn_memowrit(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     FILE *f;
-    if (nargs < 2 || args[0].type != VAL_CHAR || args[1].type != VAL_CHAR) {
-        ctx->error = "MEMOWRIT requires (file name, string)";
-        return -1;
-    }
-    f = fopen(args[0].str, "wb");
+    int ok = 0;
+    (void)ctx;
+    if (nargs < 2 || args[0].type != VAL_CHAR || args[1].type != VAL_CHAR) { *result = val_logic(0); return 0; }
+    f = fopen(val_text(&args[0]), "wb");
     if (f) {
-        fputs(args[1].str, f);
-        fputc(26, f);   /* Clipper ends the file with Ctrl-Z */
+        ok = fwrite(val_text(&args[1]), 1, (size_t)val_len(&args[1]), f) == (size_t)val_len(&args[1]);
         fclose(f);
     }
-    *result = val_logic(f != NULL);
+    *result = val_logic(ok);
     return 0;
 }
 

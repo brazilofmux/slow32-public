@@ -35,6 +35,8 @@ int val_set_fixed;
  * places, as Clipper gives a function's result */
 value_t val_num(double n) {
     value_t v;
+    v.ext = NULL;
+    v.len = 0;
     v.type = VAL_NUM;
     v.num = n;
     v.ndec = (n == floor(n) && fabs(n) < 1e15) ? 0 : (short)val_set_decimals;
@@ -44,6 +46,8 @@ value_t val_num(double n) {
 
 value_t val_num_dec(double n, int ndec, int nwidth) {
     value_t v;
+    v.ext = NULL;
+    v.len = 0;
     v.type = VAL_NUM;
     v.num = n;
     v.ndec = (short)(ndec < 0 ? 0 : ndec > 18 ? 18 : ndec);
@@ -81,15 +85,48 @@ void val_to_display(const value_t *v, char *buf, int size) {
     val_to_string(v, buf, size);
 }
 
-value_t val_str(const char *s) {
+value_t val_strn(const char *s, int n) {
     value_t v;
     v.type = VAL_CHAR;
-    str_copy(v.str, s, sizeof(v.str));
+    v.ndec = v.nwidth = 0;
+    v.ext = NULL;
+    v.len = 0;
+    if (n < 0) n = 0;
+    if (n <= 255 && memchr(s, 0, (size_t)n) == NULL) {
+        memcpy(v.str, s, (size_t)n);
+        v.str[n] = '\0';
+        return v;
+    }
+    v.ext = malloc((size_t)n + 1);
+    if (!v.ext) { v.str[0] = '\0'; return v; }
+    memcpy(v.ext, s, (size_t)n);
+    v.ext[n] = '\0';
+    v.len = n;
+    {
+        int k = n < 255 ? n : 255;
+        memcpy(v.str, s, (size_t)k);   /* the prefix; a NUL inside ends it for inline readers */
+        v.str[k] = '\0';
+    }
     return v;
+}
+
+value_t val_str(const char *s) {
+    return val_strn(s, (int)strlen(s));
+}
+
+const char *val_text(const value_t *v) {
+    return (v->type == VAL_CHAR && v->ext) ? v->ext : v->str;
+}
+
+int val_len(const value_t *v) {
+    if (v->type != VAL_CHAR) return 0;
+    return v->ext ? v->len : (int)strlen(v->str);
 }
 
 value_t val_logic(int b) {
     value_t v;
+    v.ext = NULL;
+    v.len = 0;
     v.type = VAL_LOGIC;
     v.logic = b ? 1 : 0;
     return v;
@@ -97,6 +134,8 @@ value_t val_logic(int b) {
 
 value_t val_date(int32_t jdn) {
     value_t v;
+    v.ext = NULL;
+    v.len = 0;
     v.type = VAL_DATE;
     v.date = jdn;
     return v;
@@ -104,6 +143,8 @@ value_t val_date(int32_t jdn) {
 
 value_t val_nil(void) {
     value_t v;
+    v.ext = NULL;
+    v.len = 0;
     v.type = VAL_NIL;
     v.num = 0;
     return v;
@@ -111,6 +152,8 @@ value_t val_nil(void) {
 
 value_t val_object(object_t *o) {
     value_t v;
+    v.ext = NULL;
+    v.len = 0;
     v.type = VAL_OBJECT;
     v.ndec = 0;
     v.nwidth = 0;
@@ -176,7 +219,7 @@ void val_to_string(const value_t *v, char *buf, int size) {
         break;
     }
     case VAL_CHAR:
-        str_copy(buf, v->str, size);
+        str_copy(buf, val_text(v), size);   /* as far as buf reaches */
         break;
     case VAL_DATE: {
         char mdy[16];

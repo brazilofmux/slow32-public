@@ -103,86 +103,76 @@ static int fn_fclose(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result)
 }
 
 /* FREADSTR(handle, count): up to count characters, stopping at a NUL */
+/* FREADSTR(handle, count): up to count characters, stopping at a NUL */
 static int fn_freadstr(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     int h, count, i = 0, c;
-    value_t r = val_str("");
+    char *buf;
     if (nargs < 2 || args[0].type != VAL_NUM || args[1].type != VAL_NUM) {
         ctx->error = "FREADSTR requires (handle, count)";
         return -1;
     }
     h = (int)args[0].num - 1;
     count = (int)args[1].num;
-    if (count > 255) count = 255;
+    if (count < 0) count = 0;
+    buf = malloc((size_t)count + 1);
+    if (!buf) { ctx->error = "Out of memory"; return -1; }
     if (h >= 0 && h < MAX_LL_FILES && ll_files[h]) {
-        while (i < count && (c = fgetc(ll_files[h])) != EOF && c != 0) r.str[i++] = (char)c;
+        while (i < count && (c = fgetc(ll_files[h])) != EOF && c != 0) buf[i++] = (char)c;
     }
-    r.str[i] = '\0';
-    *result = r;
+    *result = val_strn(buf, i);
+    free(buf);
     return 0;
 }
 
 static int fn_fread(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     int h, count;
-    (void)ctx;
+    char *buf;
+    size_t n = 0;
     /* Clipper's FREAD(handle, @buffer, bytes) --> bytes read, the buffer
-     * filled (as far as a string here reaches: 255 characters, to the
-     * first NUL).  FREAD(handle, count) --> the text is this interpreter's
-     * own form. */
-    if (nargs >= 3 && args[0].type == VAL_NUM && args[1].type == VAL_CHAR && args[2].type == VAL_NUM) {
-        const char *const *refs = func_take_refs();
-        char buf[256];
-        size_t n = 0;
-        h = (int)args[0].num - 1;
-        count = (int)args[2].num;
-        if (count > 255) count = 255;
-        if (h >= 0 && h < MAX_LL_FILES && ll_files[h] && count > 0) {
-            n = fread(buf, 1, (size_t)count, ll_files[h]);
-            ll_error = ferror(ll_files[h]) ? 1 : 0;
-        }
-        buf[n] = '\0';
-        if (refs && refs[1]) {
-            value_t v = val_str(buf);
-            ast_store_name(ctx, refs[1], &v);
-        }
-        *result = val_num((double)n);
-        return 0;
-    }
-    if (nargs < 2 || args[0].type != VAL_NUM || args[1].type != VAL_NUM) {
-        ctx->error = "FREAD requires (handle, count)";
+     * filled; FREAD(handle, count) --> the text, this interpreter's own form */
+    int byref = nargs >= 3 && args[0].type == VAL_NUM && args[1].type == VAL_CHAR && args[2].type == VAL_NUM;
+    if (!byref && (nargs < 2 || args[0].type != VAL_NUM || args[1].type != VAL_NUM)) {
+        ctx->error = "FREAD requires (handle, @buffer, bytes)";
         return -1;
     }
     h = (int)args[0].num - 1;
-    count = (int)args[1].num;
-    if (count > 255) count = 255;
+    count = (int)(byref ? args[2].num : args[1].num);
+    if (count < 0) count = 0;
+    buf = malloc((size_t)count + 1);
+    if (!buf) { ctx->error = "Out of memory"; return -1; }
     if (h >= 0 && h < MAX_LL_FILES && ll_files[h] && count > 0) {
-        char *buf = (char *)malloc(count + 1);
-        if (!buf) { *result = val_str(""); return 0; }
-        size_t n = fread(buf, 1, count, ll_files[h]);
-        buf[n] = '\0';
-        *result = val_str(buf);
-        free(buf);
+        n = fread(buf, 1, (size_t)count, ll_files[h]);
         ll_error = ferror(ll_files[h]) ? 1 : 0;
-    } else {
-        *result = val_str("");
     }
+    if (byref) {
+        const char *const *refs = func_take_refs();
+        if (refs && refs[1]) {
+            value_t v = val_strn(buf, (int)n);
+            ast_store_name(ctx, refs[1], &v);
+        }
+        *result = val_num((double)n);
+    } else {
+        *result = val_strn(buf, (int)n);
+    }
+    free(buf);
     return 0;
 }
 
 static int fn_fwrite(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    (void)ctx;
+    int h, count;
     if (nargs < 2 || args[0].type != VAL_NUM || args[1].type != VAL_CHAR) {
         ctx->error = "FWRITE requires (handle, string [, count])";
         return -1;
     }
-    int h = (int)args[0].num - 1;
-    int count = (int)strlen(args[1].str);
+    h = (int)args[0].num - 1;
+    count = val_len(&args[1]);
     if (nargs >= 3 && args[2].type == VAL_NUM) {
         int req = (int)args[2].num;
         if (req < count) count = req;
     }
     if (count < 0) count = 0;
     if (h >= 0 && h < MAX_LL_FILES && ll_files[h]) {
-        size_t n = fwrite(args[1].str, 1, count, ll_files[h]);
+        size_t n = fwrite(val_text(&args[1]), 1, (size_t)count, ll_files[h]);
         *result = val_num((double)n);
         ll_error = (n < (size_t)count) ? 1 : 0;
     } else {
@@ -305,124 +295,114 @@ static int fn_found(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
 
 static int fn_substr(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     int start, len, slen;
-    (void)ctx;
     if (nargs < 2 || args[0].type != VAL_CHAR || args[1].type != VAL_NUM) {
         ctx->error = "SUBSTR requires (string, start [, length])";
         return -1;
     }
-    slen = strlen(args[0].str);
+    slen = val_len(&args[0]);
     start = (int)args[1].num - 1; /* 1-based to 0-based */
     if ((int)args[1].num < 0) start = slen + (int)args[1].num;   /* from the end (Clipper) */
     if (start < 0) start = 0;
     if (start >= slen) { *result = val_str(""); return 0; }
-
     len = slen - start;
     if (nargs >= 3 && args[2].type == VAL_NUM) {
         int req = (int)args[2].num;
         if (req < len) len = req;
     }
     if (len < 0) len = 0;
-
-    {
-        char buf[256];
-        if (len > (int)sizeof(buf) - 1) len = (int)sizeof(buf) - 1;
-        memcpy(buf, args[0].str + start, len);
-        buf[len] = '\0';
-        *result = val_str(buf);
-    }
+    *result = val_strn(val_text(&args[0]) + start, len);
     return 0;
 }
 
 static int fn_trim(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    char buf[256];
     int len;
-    (void)ctx;
+    const char *s;
     if (nargs < 1 || args[0].type != VAL_CHAR) {
         ctx->error = "TRIM requires (string)";
         return -1;
     }
-    str_copy(buf, args[0].str, sizeof(buf));
-    len = strlen(buf);
-    while (len > 0 && buf[len-1] == ' ') len--;
-    buf[len] = '\0';
-    *result = val_str(buf);
+    s = val_text(&args[0]);
+    len = val_len(&args[0]);
+    while (len > 0 && s[len - 1] == ' ') len--;
+    *result = val_strn(s, len);
     return 0;
 }
 
 static int fn_ltrim(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    const char *p;
-    (void)ctx;
+    const char *s;
+    int len, i = 0;
     if (nargs < 1 || args[0].type != VAL_CHAR) {
         ctx->error = "LTRIM requires (string)";
         return -1;
     }
-    p = args[0].str;
-    while (*p == ' ') p++;
-    *result = val_str(p);
+    s = val_text(&args[0]);
+    len = val_len(&args[0]);
+    while (i < len && s[i] == ' ') i++;
+    *result = val_strn(s + i, len - i);
     return 0;
 }
 
 static int fn_alltrim(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    char buf[256];
-    int len;
-    const char *p;
-    (void)ctx;
+    const char *s;
+    int len, i = 0;
     if (nargs < 1 || args[0].type != VAL_CHAR) {
         ctx->error = "ALLTRIM requires (string)";
         return -1;
     }
-    p = args[0].str;
-    while (*p == ' ') p++;
-    str_copy(buf, p, sizeof(buf));
-    len = strlen(buf);
-    while (len > 0 && buf[len - 1] == ' ') len--;
-    buf[len] = '\0';
-    *result = val_str(buf);
+    s = val_text(&args[0]);
+    len = val_len(&args[0]);
+    while (i < len && s[i] == ' ') i++;
+    while (len > i && s[len - 1] == ' ') len--;
+    *result = val_strn(s + i, len - i);
     return 0;
 }
 
 static int fn_upper(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    char buf[256];
-    (void)ctx;
+    int len, i;
+    char *buf;
     if (nargs < 1 || args[0].type != VAL_CHAR) {
         ctx->error = "UPPER requires (string)";
         return -1;
     }
-    str_copy(buf, args[0].str, sizeof(buf));
-    str_upper(buf);
-    *result = val_str(buf);
+    len = val_len(&args[0]);
+    buf = malloc((size_t)len + 1);
+    if (!buf) { ctx->error = "Out of memory"; return -1; }
+    memcpy(buf, val_text(&args[0]), (size_t)len);
+    for (i = 0; i < len; i++) if (buf[i] >= 'a' && buf[i] <= 'z') buf[i] -= 32;
+    *result = val_strn(buf, len);
+    free(buf);
     return 0;
 }
 
 static int fn_lower(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    char buf[256];
-    int i;
-    (void)ctx;
+    int len, i;
+    char *buf;
     if (nargs < 1 || args[0].type != VAL_CHAR) {
         ctx->error = "LOWER requires (string)";
         return -1;
     }
-    str_copy(buf, args[0].str, sizeof(buf));
-    for (i = 0; buf[i]; i++)
-        if (buf[i] >= 'A' && buf[i] <= 'Z') buf[i] += 32;
-    *result = val_str(buf);
+    len = val_len(&args[0]);
+    buf = malloc((size_t)len + 1);
+    if (!buf) { ctx->error = "Out of memory"; return -1; }
+    memcpy(buf, val_text(&args[0]), (size_t)len);
+    for (i = 0; i < len; i++) if (buf[i] >= 'A' && buf[i] <= 'Z') buf[i] += 32;
+    *result = val_strn(buf, len);
+    free(buf);
     return 0;
 }
 
 static int fn_at(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    const char *p;
-    (void)ctx;
+    int at;
     if (nargs < 2 || args[0].type != VAL_CHAR || args[1].type != VAL_CHAR) {
         ctx->error = "AT requires (search, string)";
         return -1;
     }
-    p = strstr(args[1].str, args[0].str);
-    *result = val_num(p ? (double)(p - args[1].str + 1) : 0.0);
+    at = val_find(&args[1], &args[0], 0);
+    *result = val_num(at >= 0 ? (double)(at + 1) : 0.0);
     return 0;
 }
 
 static int fn_len(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    (void)ctx;
     if (nargs >= 1 && args[0].type == VAL_ARRAY && args[0].array) {   /* Clipper: an array's length */
         *result = val_num((double)args[0].array->len);
         return 0;
@@ -431,169 +411,118 @@ static int fn_len(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         ctx->error = "LEN requires (string)";
         return -1;
     }
-    *result = val_num((double)strlen(args[0].str));
+    *result = val_num((double)val_len(&args[0]));
     return 0;
 }
 
 static int fn_space(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    char buf[256];
-    int n, i;
-    (void)ctx;
+    char *buf;
+    int n;
     if (nargs < 1 || args[0].type != VAL_NUM) {
         ctx->error = "SPACE requires (number)";
         return -1;
     }
     n = (int)args[0].num;
     if (n < 0) n = 0;
-    if (n > 255) n = 255;
-    for (i = 0; i < n; i++) buf[i] = ' ';
-    buf[n] = '\0';
-    *result = val_str(buf);
+    if (n > 65535) n = 65535;
+    buf = malloc((size_t)n + 1);
+    if (!buf) { ctx->error = "Out of memory"; return -1; }
+    memset(buf, ' ', (size_t)n);
+    *result = val_strn(buf, n);
+    free(buf);
     return 0;
 }
 
 static int fn_replicate(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    char buf[256];
-    int n, slen, i, pos;
-    (void)ctx;
+    char *buf;
+    int n, slen, i, total;
     if (nargs < 2 || args[0].type != VAL_CHAR || args[1].type != VAL_NUM) {
         ctx->error = "REPLICATE requires (string, count)";
         return -1;
     }
     n = (int)args[1].num;
-    slen = strlen(args[0].str);
-    pos = 0;
-    for (i = 0; i < n && pos + slen < (int)sizeof(buf); i++) {
-        memcpy(buf + pos, args[0].str, slen);
-        pos += slen;
+    if (n < 0) n = 0;
+    slen = val_len(&args[0]);
+    total = n * slen;
+    if (total > 65535) { total = 65535; n = slen ? total / slen : 0; total = n * slen; }
+    buf = malloc((size_t)total + 1);
+    if (!buf) { ctx->error = "Out of memory"; return -1; }
+    for (i = 0; i < n; i++) memcpy(buf + (size_t)i * slen, val_text(&args[0]), (size_t)slen);
+    *result = val_strn(buf, total);
+    free(buf);
+    return 0;
+}
+
+/* PADR / PADL / PADC: the string in width columns, padded with c (a
+ * blank) or cut; the centre's extra column goes to the right */
+static int str_pad(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result, int side, const char *who) {
+    int width, slen, lpad = 0, rpad = 0, start = 0;
+    char pad = ' ', *buf;
+    if (nargs < 2 || args[0].type != VAL_CHAR || args[1].type != VAL_NUM) {
+        ctx->error = who;
+        return -1;
     }
-    buf[pos] = '\0';
-    *result = val_str(buf);
+    width = (int)args[1].num;
+    if (width < 0) width = 0;
+    if (width > 65535) width = 65535;
+    if (nargs >= 3 && args[2].type == VAL_CHAR && val_len(&args[2]) > 0) pad = val_text(&args[2])[0];
+    slen = val_len(&args[0]);
+    if (slen >= width) {
+        if (side < 0) start = slen - width;
+        else if (side == 0) start = (slen - width) / 2;
+        *result = val_strn(val_text(&args[0]) + start, width);
+        return 0;
+    }
+    if (side < 0) lpad = width - slen;
+    else if (side > 0) rpad = width - slen;
+    else { lpad = (width - slen) / 2; rpad = width - slen - lpad; }
+    buf = malloc((size_t)width + 1);
+    if (!buf) { ctx->error = "Out of memory"; return -1; }
+    memset(buf, pad, (size_t)lpad);
+    memcpy(buf + lpad, val_text(&args[0]), (size_t)slen);
+    memset(buf + lpad + slen, pad, (size_t)rpad);
+    *result = val_strn(buf, width);
+    free(buf);
     return 0;
 }
 
 static int fn_padr(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    char buf[256];
-    int width, slen, i;
-    char pad = ' ';
-    (void)ctx;
-    if (nargs < 2 || args[0].type != VAL_CHAR || args[1].type != VAL_NUM) {
-        ctx->error = "PADR requires (string, width [, char])";
-        return -1;
-    }
-    width = (int)args[1].num;
-    if (width < 0) width = 0;
-    if (width > (int)sizeof(buf) - 1) width = (int)sizeof(buf) - 1;
-    if (nargs >= 3 && args[2].type == VAL_CHAR && args[2].str[0]) pad = args[2].str[0];
-
-    slen = strlen(args[0].str);
-    if (slen >= width) {
-        memcpy(buf, args[0].str, width);
-        buf[width] = '\0';
-    } else {
-        memcpy(buf, args[0].str, slen);
-        for (i = slen; i < width; i++) buf[i] = pad;
-        buf[width] = '\0';
-    }
-    *result = val_str(buf);
-    return 0;
+    return str_pad(ctx, args, nargs, result, 1, "PADR requires (string, width [, char])");
 }
 
 static int fn_padl(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    char buf[256];
-    int width, slen, i, padlen;
-    char pad = ' ';
-    (void)ctx;
-    if (nargs < 2 || args[0].type != VAL_CHAR || args[1].type != VAL_NUM) {
-        ctx->error = "PADL requires (string, width [, char])";
-        return -1;
-    }
-    width = (int)args[1].num;
-    if (width < 0) width = 0;
-    if (width > (int)sizeof(buf) - 1) width = (int)sizeof(buf) - 1;
-    if (nargs >= 3 && args[2].type == VAL_CHAR && args[2].str[0]) pad = args[2].str[0];
-
-    slen = strlen(args[0].str);
-    if (slen >= width) {
-        memcpy(buf, args[0].str + (slen - width), width);
-        buf[width] = '\0';
-    } else {
-        padlen = width - slen;
-        for (i = 0; i < padlen; i++) buf[i] = pad;
-        memcpy(buf + padlen, args[0].str, slen);
-        buf[width] = '\0';
-    }
-    *result = val_str(buf);
-    return 0;
+    return str_pad(ctx, args, nargs, result, -1, "PADL requires (string, width [, char])");
 }
 
 static int fn_padc(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    char buf[256];
-    int width, slen, i, lpad, rpad;
-    char pad = ' ';
-    (void)ctx;
-    if (nargs < 2 || args[0].type != VAL_CHAR || args[1].type != VAL_NUM) {
-        ctx->error = "PADC requires (string, width [, char])";
-        return -1;
-    }
-    width = (int)args[1].num;
-    if (width < 0) width = 0;
-    if (width > (int)sizeof(buf) - 1) width = (int)sizeof(buf) - 1;
-    if (nargs >= 3 && args[2].type == VAL_CHAR && args[2].str[0]) pad = args[2].str[0];
-
-    slen = strlen(args[0].str);
-    if (slen >= width) {
-        lpad = (slen - width) / 2;
-        memcpy(buf, args[0].str + lpad, width);
-        buf[width] = '\0';
-    } else {
-        lpad = (width - slen) / 2;
-        rpad = width - slen - lpad;
-        for (i = 0; i < lpad; i++) buf[i] = pad;
-        memcpy(buf + lpad, args[0].str, slen);
-        for (i = 0; i < rpad; i++) buf[lpad + slen + i] = pad;
-        buf[width] = '\0';
-    }
-    *result = val_str(buf);
-    return 0;
+    return str_pad(ctx, args, nargs, result, 0, "PADC requires (string, width [, char])");
 }
 
 static int fn_left(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    char buf[256];
     int n, slen;
-    (void)ctx;
     if (nargs < 2 || args[0].type != VAL_CHAR || args[1].type != VAL_NUM) {
         ctx->error = "LEFT requires (string, count)";
         return -1;
     }
     n = (int)args[1].num;
-    slen = strlen(args[0].str);
+    slen = val_len(&args[0]);
     if (n > slen) n = slen;
     if (n < 0) n = 0;
-    if (n > (int)sizeof(buf) - 1) n = (int)sizeof(buf) - 1;
-    memcpy(buf, args[0].str, n);
-    buf[n] = '\0';
-    *result = val_str(buf);
+    *result = val_strn(val_text(&args[0]), n);
     return 0;
 }
 
 static int fn_right(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    char buf[256];
-    int n, slen, start;
-    (void)ctx;
+    int n, slen;
     if (nargs < 2 || args[0].type != VAL_CHAR || args[1].type != VAL_NUM) {
         ctx->error = "RIGHT requires (string, count)";
         return -1;
     }
     n = (int)args[1].num;
-    slen = strlen(args[0].str);
+    slen = val_len(&args[0]);
     if (n > slen) n = slen;
     if (n < 0) n = 0;
-    start = slen - n;
-    if (n > (int)sizeof(buf) - 1) n = (int)sizeof(buf) - 1;
-    memcpy(buf, args[0].str + start, n);
-    buf[n] = '\0';
-    *result = val_str(buf);
+    *result = val_strn(val_text(&args[0]) + (slen - n), n);
     return 0;
 }
 
@@ -705,25 +634,22 @@ static int fn_val(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
 }
 
 static int fn_chr(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    char buf[2];
-    (void)ctx;
+    char c;
     if (nargs < 1 || args[0].type != VAL_NUM) {
         ctx->error = "CHR requires (number)";
         return -1;
     }
-    buf[0] = (char)(int)args[0].num;
-    buf[1] = '\0';
-    *result = val_str(buf);
+    c = (char)(int)args[0].num;
+    *result = val_strn(&c, 1);   /* CHR(0) is a one-character string */
     return 0;
 }
 
 static int fn_asc(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    (void)ctx;
-    if (nargs < 1 || args[0].type != VAL_CHAR || args[0].str[0] == '\0') {
+    if (nargs < 1 || args[0].type != VAL_CHAR) {
         ctx->error = "ASC requires (string)";
         return -1;
     }
-    *result = val_num((double)(unsigned char)args[0].str[0]);
+    *result = val_num(val_len(&args[0]) > 0 ? (double)(unsigned char)val_text(&args[0])[0] : 0.0);
     return 0;
 }
 
@@ -953,9 +879,10 @@ static int fn_empty(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
     }
     switch (args[0].type) {
     case VAL_CHAR: {
-        const char *p = args[0].str;
-        while (*p == ' ') p++;
-        *result = val_logic(*p == '\0');
+        const char *p = val_text(&args[0]);
+        int n = val_len(&args[0]), i = 0;
+        while (i < n && p[i] == ' ') i++;
+        *result = val_logic(i == n);
         break;
     }
     case VAL_NUM:
@@ -1095,38 +1022,31 @@ static int fn_popup_func(expr_ctx_t *ctx, value_t *args, int nargs, value_t *res
 
 /* ---- STUFF(str, start, delete, insert) ---- */
 static int fn_stuff(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    char buf[512];
-    const char *s;
-    int start, del, slen, ilen;
-    (void)ctx;
+    const char *s, *ins;
+    int start, del, slen, ilen, total;
+    char *buf;
     if (nargs < 4 || args[0].type != VAL_CHAR || args[3].type != VAL_CHAR) {
         *result = val_str("");
         return 0;
     }
-    s = args[0].str;
+    s = val_text(&args[0]);
+    slen = val_len(&args[0]);
+    ins = val_text(&args[3]);
+    ilen = val_len(&args[3]);
     start = (int)args[1].num;
     del = (int)args[2].num;
-    slen = strlen(s);
-    ilen = strlen(args[3].str);
     if (start < 1) start = 1;
     if (start > slen + 1) start = slen + 1;
     if (del < 0) del = 0;
     if (start - 1 + del > slen) del = slen - (start - 1);
-    /* Copy prefix */
-    if (start - 1 > 0 && start - 1 < (int)sizeof(buf))
-        memcpy(buf, s, start - 1);
-    /* Copy insert string */
-    if (start - 1 + ilen < (int)sizeof(buf))
-        memcpy(buf + start - 1, args[3].str, ilen);
-    /* Copy suffix */
-    {
-        int suffix_start = start - 1 + del;
-        int suffix_len = slen - suffix_start;
-        if (suffix_len > 0 && start - 1 + ilen + suffix_len < (int)sizeof(buf))
-            memcpy(buf + start - 1 + ilen, s + suffix_start, suffix_len);
-        buf[start - 1 + ilen + (suffix_len > 0 ? suffix_len : 0)] = '\0';
-    }
-    *result = val_str(buf);
+    total = slen - del + ilen;
+    buf = malloc((size_t)total + 1);
+    if (!buf) { ctx->error = "Out of memory"; return -1; }
+    memcpy(buf, s, (size_t)(start - 1));
+    memcpy(buf + start - 1, ins, (size_t)ilen);
+    memcpy(buf + start - 1 + ilen, s + start - 1 + del, (size_t)(slen - (start - 1) - del));
+    *result = val_strn(buf, total);
+    free(buf);
     return 0;
 }
 
@@ -1673,26 +1593,22 @@ static int fn_occurs(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result)
 }
 
 static int fn_rat(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    (void)ctx;
+    const char *sub, *s;
+    int sublen, slen, i;
     if (nargs < 2 || args[0].type != VAL_CHAR || args[1].type != VAL_CHAR) {
         ctx->error = "RAT requires (substring, string)";
         return -1;
     }
-    {
-        const char *sub = args[0].str;
-        const char *s = args[1].str;
-        int sublen = strlen(sub);
-        int slen = strlen(s);
-        int i;
-        if (sublen == 0 || sublen > slen) { *result = val_num(0); return 0; }
-        for (i = slen - sublen; i >= 0; i--) {
-            if (memcmp(s + i, sub, sublen) == 0) {
-                *result = val_num((double)(i + 1));
-                return 0;
-            }
+    sub = val_text(&args[0]); sublen = val_len(&args[0]);
+    s = val_text(&args[1]); slen = val_len(&args[1]);
+    if (sublen == 0 || sublen > slen) { *result = val_num(0); return 0; }
+    for (i = slen - sublen; i >= 0; i--) {
+        if (memcmp(s + i, sub, (size_t)sublen) == 0) {
+            *result = val_num((double)(i + 1));
+            return 0;
         }
-        *result = val_num(0);
     }
+    *result = val_num(0);
     return 0;
 }
 
@@ -1723,44 +1639,35 @@ static int fn_proper(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result)
 }
 
 static int fn_strtran(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    char buf[512];
-    int pos = 0;
-    (void)ctx;
+    const char *s, *from, *to;
+    int slen, fromlen, tolen, i, pos = 0, cap;
+    char *buf;
     if (nargs < 3 || args[0].type != VAL_CHAR || args[1].type != VAL_CHAR || args[2].type != VAL_CHAR) {
         ctx->error = "STRTRAN requires (string, from, to)";
         return -1;
     }
-    {
-        const char *s = args[0].str;
-        const char *from = args[1].str;
-        const char *to = args[2].str;
-        int fromlen = strlen(from);
-        int tolen = strlen(to);
-        const char *p;
-        if (fromlen == 0) { *result = val_str(s); return 0; }
-        while (*s && pos < (int)sizeof(buf) - 1) {
-            p = strstr(s, from);
-            if (p) {
-                int chunk = (int)(p - s);
-                if (pos + chunk > (int)sizeof(buf) - 1) chunk = (int)sizeof(buf) - 1 - pos;
-                memcpy(buf + pos, s, chunk);
-                pos += chunk;
-                if (pos + tolen <= (int)sizeof(buf) - 1) {
-                    memcpy(buf + pos, to, tolen);
-                    pos += tolen;
-                }
-                s = p + fromlen;
-            } else {
-                int rest = strlen(s);
-                if (pos + rest > (int)sizeof(buf) - 1) rest = (int)sizeof(buf) - 1 - pos;
-                memcpy(buf + pos, s, rest);
-                pos += rest;
-                break;
-            }
+    s = val_text(&args[0]); slen = val_len(&args[0]);
+    from = val_text(&args[1]); fromlen = val_len(&args[1]);
+    to = val_text(&args[2]); tolen = val_len(&args[2]);
+    if (fromlen == 0) { *result = args[0]; return 0; }
+    cap = slen + 16;
+    buf = malloc((size_t)cap + 1);
+    if (!buf) { ctx->error = "Out of memory"; return -1; }
+    for (i = 0; i < slen; ) {
+        int hit = i + fromlen <= slen && memcmp(s + i, from, (size_t)fromlen) == 0;
+        int need = hit ? tolen : 1;
+        if (pos + need > cap) {
+            char *grown;
+            cap = (pos + need) * 2;
+            grown = realloc(buf, (size_t)cap + 1);
+            if (!grown) { free(buf); ctx->error = "Out of memory"; return -1; }
+            buf = grown;
         }
-        buf[pos] = '\0';
+        if (hit) { memcpy(buf + pos, to, (size_t)tolen); pos += tolen; i += fromlen; }
+        else buf[pos++] = s[i++];
     }
-    *result = val_str(buf);
+    *result = val_strn(buf, pos);
+    free(buf);
     return 0;
 }
 

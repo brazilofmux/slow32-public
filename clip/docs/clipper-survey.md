@@ -403,9 +403,32 @@ people who wrote Clipper.
   `tests/clipper/ca/blocked/`.  FREAD has Clipper's by-reference form
   for reads that fit (probe fn-fread-ref).
 
-Not driven yet: the label runner (the same wall), DBU's Utility Append /
-Pack / Zap and the Create flow past its first screen, and GETSYS.PRG's
-and ERRORSYS.PRG's dialogue paths under a terminal (Alert()).
+- **Strings of any length, NULs inside** (2026-10-30).  A character
+  value keeps its 255-character inline array and gains a heap buffer and
+  a length beside it; `val_text()` and `val_len()` see the whole value,
+  `val_strn()` makes one, and every character value is made by one of
+  them, so the fields are always set.  The operators (+ == = < $) and the
+  string functions (LEN SUBSTR LEFT RIGHT AT RAT CHR ASC SPACE REPLICATE
+  TRIM LTRIM ALLTRIM UPPER LOWER PADL PADR PADC STUFF STRTRAN EMPTY), the
+  binary conversions (BIN2x / x2BIN round-trip through zero bytes now),
+  FREAD / FREADSTR / FWRITE / MEMOREAD / MEMOWRIT, the memo-line family
+  and both `?` paths work on the whole text; a reader not yet converted
+  sees the first 255 characters.  Probe fn-long-strings, Harbour
+  agreeing on every line; the one dBASE test that recorded the 255 cut
+  re-recorded.  With it, **CA's REPORT FORM runner** (FRMRUN.PRG,
+  FRMBACK.PRG) prints the whole report over a form our CREATE REPORT
+  wrote, byte for byte with Harbour (driver ca-frmrun, out of blocked/);
+  the last thing it needed was `a[i, j, k]`, three subscripts in one
+  bracket, which the parser stopped at two.  **CA's LABEL FORM runner** (LBLRUN.PRG, LBLBACK.PRG) prints the
+  labels over a form our CREATE LABEL wrote, the same way (driver
+  ca-lblrun; the .lbl layout already matched).  A driver is a
+  PROCEDURE Main of its own now: as an implicit main after the hoisted
+  preambles, Harbour took the sources' file-wide STATICs for the main's
+  own.
+
+Not driven yet: DBU's Utility Append / Pack / Zap and the Create flow
+past its first screen, and GETSYS.PRG's and ERRORSYS.PRG's dialogue
+paths under a terminal (Alert()).
 
 ## The order of work proposed
 

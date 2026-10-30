@@ -630,10 +630,14 @@ int clip_call(expr_ctx_t *c, const char *name, value_t *args, int nargs, value_t
 
 void clip_qv(const value_t *v, int first) {
     char buf[256];
-    val_to_display(v, buf, sizeof(buf));
     if (!first) {
         cmd_output(" ");
     }
+    if (v->type == VAL_CHAR) {   /* the whole text, however long */
+        cmd_output(val_text(v));
+        return;
+    }
+    val_to_display(v, buf, sizeof(buf));
     cmd_output(buf);
 }
 

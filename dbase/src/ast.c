@@ -739,11 +739,26 @@ static ast_node_t *ast_parse_primary(lexer_t *l, memvar_store_t *store, const ch
                     if (!idx2) { ast_free(idx1); return NULL; }
                 }
 
-                if (lex_peek(l) == end_type) {
-                    lex_next(l);
+                {
+                    /* a[i, j, k ...]: the subscripts past the second index
+                     * the value in turn (FRMBACK's aReportData[11, nCol, 4]) */
+                    ast_node_t *acc = node_array(name, idx1, idx2);
+                    while (acc && lex_peek(l) == TOK_COMMA) {
+                        ast_node_t *idx, *n;
+                        lex_next(l);
+                        idx = ast_parse_expr(l, store, error);
+                        if (!idx) { ast_free(acc); return NULL; }
+                        n = node_alloc(AST_INDEX);
+                        if (!n) { ast_free(acc); ast_free(idx); *error = "Out of memory"; return NULL; }
+                        n->index.base = acc;
+                        n->index.index = idx;
+                        acc = n;
+                    }
+                    if (lex_peek(l) == end_type) {
+                        lex_next(l);
+                    }
+                    return acc;
                 }
-
-                return node_array(name, idx1, idx2);
             }
         }
 
@@ -970,6 +985,17 @@ static value_t num_result(ast_op_t op, double r, const value_t *left, const valu
     }
 }
 
+/* The first position (0-based) of needle in hay at or after from, bytes
+ * compared, lengths honoured; -1 when absent */
+int val_find(const value_t *hay, const value_t *needle, int from) {
+    int hl = val_len(hay), nl = val_len(needle), i;
+    const char *h = val_text(hay), *n = val_text(needle);
+    if (nl == 0) return hl > 0 ? 0 : -1;
+    for (i = from < 0 ? 0 : from; i + nl <= hl; i++)
+        if (h[i] == n[0] && memcmp(h + i, n, (size_t)nl) == 0) return i;
+    return -1;
+}
+
 int ast_eval_binop(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const value_t *right,
                    value_t *result) {
     switch (op) {
@@ -979,20 +1005,14 @@ int ast_eval_binop(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const valu
         if (left->type == VAL_NUM && right->type == VAL_NUM) {
             *result = num_result(op, left->num + right->num, left, right);
         } else if (left->type == VAL_CHAR && right->type == VAL_CHAR) {
-            /* String concatenation (truncate if too long) */
-            char buf[256];
-            str_copy(buf, left->str, sizeof(buf));
-            {
-                int len = strlen(buf);
-                int rlen = strlen(right->str);
-                int avail = (int)sizeof(buf) - 1 - len;
-                if (avail > 0) {
-                    if (rlen > avail) rlen = avail;
-                    memcpy(buf + len, right->str, rlen);
-                    buf[len + rlen] = '\0';
-                }
-            }
-            *result = val_str(buf);
+            /* String concatenation, any length */
+            int ll = val_len(left), rl = val_len(right);
+            char *buf = malloc((size_t)ll + (size_t)rl + 1);
+            if (!buf) { ctx->error = "Out of memory"; return -1; }
+            memcpy(buf, val_text(left), (size_t)ll);
+            memcpy(buf + ll, val_text(right), (size_t)rl);
+            *result = val_strn(buf, ll + rl);
+            free(buf);
         } else if (left->type == VAL_DATE && right->type == VAL_NUM) {
             *result = val_date(left->date + (int32_t)right->num);
         } else if (left->type == VAL_NUM && right->type == VAL_DATE) {
@@ -1095,7 +1115,7 @@ int ast_eval_binop(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const valu
         if (left->type != VAL_CHAR || right->type != VAL_CHAR) {
             ctx->error = "$ requires strings"; return -1;
         }
-        *result = val_logic(strstr(right->str, left->str) != NULL);
+        *result = val_logic(val_find(right, left, 0) >= 0);
         return 0;
 
     /* ---- Comparison ---- */
@@ -1117,12 +1137,24 @@ int ast_eval_binop(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const valu
             double d = left->num - right->num;
             cmp = (d < 0) ? -1 : (d > 0) ? 1 : 0;
         } else if (left->type == VAL_CHAR && right->type == VAL_CHAR) {
-            if (op == OP_EXACT_EQ)
-                cmp = str_icmp(left->str, right->str);
-            else if (ctx->opts && !((set_options_t *)ctx->opts)->exact)
-                cmp = str_nicmp(left->str, right->str, strlen(right->str));
-            else
-                cmp = str_icmp(left->str, right->str);
+            if (!left->ext && !right->ext) {   /* inline texts: as before */
+                if (op == OP_EXACT_EQ)
+                    cmp = str_icmp(left->str, right->str);
+                else if (ctx->opts && !((set_options_t *)ctx->opts)->exact)
+                    cmp = str_nicmp(left->str, right->str, strlen(right->str));
+                else
+                    cmp = str_icmp(left->str, right->str);
+            } else {   /* long or NUL-holding texts: byte for byte, by length */
+                int ll = val_len(left), rl = val_len(right);
+                int n = ll < rl ? ll : rl;
+                cmp = memcmp(val_text(left), val_text(right), (size_t)n);
+                if (cmp == 0) {
+                    if (op != OP_EXACT_EQ && ctx->opts && !((set_options_t *)ctx->opts)->exact)
+                        cmp = ll < rl ? -1 : 0;   /* = compares the right's length */
+                    else
+                        cmp = ll - rl;
+                }
+            }
         } else if (left->type == VAL_DATE && right->type == VAL_DATE) {
             int32_t d = left->date - right->date;
             cmp = (d < 0) ? -1 : (d > 0) ? 1 : 0;

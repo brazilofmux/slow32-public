@@ -16,6 +16,12 @@ typedef struct {
      * width, ten columns or the digits and one more) */
     short ndec;
     short nwidth;
+    /* A character value longer than 255 bytes, or holding a NUL, lives in
+     * ext (len bytes, NUL-terminated too); str then holds its first 255
+     * characters for readers that still take the inline text.  val_text()
+     * and val_len() see the whole value; val_strn() makes one. */
+    char *ext;
+    int32_t len;
     union {
         char str[256];
         double num;
@@ -81,6 +87,9 @@ extern int val_set_fixed;
 /* Value constructors */
 value_t val_num(double n);
 value_t val_str(const char *s);
+value_t val_strn(const char *s, int n);         /* n bytes, NULs among them allowed */
+const char *val_text(const value_t *v);         /* a character value's whole text */
+int val_len(const value_t *v);                  /* its length, NULs counted */
 value_t val_logic(int b);
 value_t val_date(int32_t jdn);
 value_t val_nil(void);

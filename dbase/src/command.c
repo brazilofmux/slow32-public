@@ -3355,13 +3355,15 @@ void cmd_qout(const value_t *vals, int n, int newline) {
     }
     for (i = 0; i < n; i++) {
         char buf[256];
-        val_to_display(&vals[i], buf, sizeof(buf));
+        const char *text = buf;
+        if (vals[i].type == VAL_CHAR) text = val_text(&vals[i]);   /* the whole text, however long */
+        else val_to_display(&vals[i], buf, sizeof(buf));
         if (i > 0) {
             if (is_print) screen_print_text(" ");
             else cmd_output(" ");
         }
-        if (is_print) screen_print_text(buf);
-        else cmd_output(buf);
+        if (is_print) screen_print_text(text);
+        else cmd_output(text);
     }
 }
 
