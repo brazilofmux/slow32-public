@@ -26,13 +26,13 @@ SLOW-32
 dBASE III Clone 1.0
 . 
 . . 
-OFF
+.F.
 . 
-OFF
+         2
 . 
-ON
+.T.
 . 
-SCREEN
+.T.
 . . . . . . . . . 
 Denver
 . 

@@ -132,7 +132,15 @@ the including file's directory, then `-I` directories, then the
 compiler's include/ beside the s32-clip binary.  With them INKEY()'s
 function keys took the standard codes (F1 28, F2 to F10 -1 to -9,
 Shift-Tab 271), which dBASE III also used; the terminal reader keeps a
-value of its own for "no key" now that -1 is a key.  Not provided:
+value of its own for "no key" now that -1 is a key.  SET() follows
+set.ch's numbering and Clipper's types (a logical for the ON/OFF
+settings, numbers, strings; the date format as "dd/mm/yyyy"; the value
+before the change returned) -- it had a numbering of its own with "ON"
+strings; the settings this interpreter does not act on (TYPEAHEAD,
+SCOREBOARD, INTENSITY ...) are remembered so they round-trip.  A
+command word written as a function with no blank before the
+parenthesis -- SET(...), SELECT(...) -- is the function on both
+engines (it was the command, and "Unknown SET option").  Not provided:
 std.ch (the commands are built in), and 5.3's headers.
 
 ## The order of work proposed

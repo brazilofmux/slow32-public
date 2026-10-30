@@ -17,6 +17,7 @@
 
 #include "lex.h"
 #include "command.h"
+#include "func.h"
 #include "ast.h"   /* dbase's own parser: expressions are parsed here, at compile time */
 
 #define MAX_LINE  512
@@ -832,11 +833,16 @@ static int emit_expr_stmt(emit_t *e, const char *p) {
             word[k++] = *q++;
         }
         word[k] = '\0';
-        q = skip_ws(q);
-        if (*q == '(') {
-            if (cmd_is_command_word(word)) {
-                return 0;
+        {
+            int no_blank = *q == '(';   /* SET(...) is the function, SET (...) the command */
+            q = skip_ws(q);
+            if (*q == '(') {
+                if (cmd_is_command_word(word) && !(no_blank && func_is_builtin(word))) {
+                    return 0;
+                }
             }
+        }
+        if (*q == '(') {
         } else if (!(q[0] == ':' && q[1] == '=') && !(q[1] == '=' && strchr("+-*/%^", q[0])) &&
                    !(q[0] == '+' && q[1] == '+') && !(q[0] == '-' && q[1] == '-') &&
                    !(q[0] == '-' && q[1] == '>') && q[0] != '[' &&

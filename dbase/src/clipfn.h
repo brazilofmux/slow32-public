@@ -16,4 +16,7 @@ typedef struct {
 
 extern const clipfn_entry_t clipfn_table[];   /* ends with a NULL name */
 
+/* SET(n [, new]) by set.ch's numbering (func.c's table names it) */
+int clipfn_set(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
+
 #endif

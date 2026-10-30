@@ -984,6 +984,154 @@ static int fn_memoedit(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
     return 0;
 }
 
+/* ---- SET(): set.ch's numbering, Clipper's types ---- */
+
+typedef struct { int code; const char *name; char kind; } set_entry_t;
+static const set_entry_t set_entries[] = {
+    { 1, "EXACT", 'L' }, { 2, "FIXED", 'L' }, { 3, "DECIMALS", 'N' }, { 4, "DATEFORMAT", 'C' },
+    { 5, "EPOCH", 'N' }, { 6, "PATH", 'C' }, { 7, "DEFAULT", 'C' }, { 8, "EXCLUSIVE", 'L' },
+    { 9, "SOFTSEEK", 'L' }, { 10, "UNIQUE", 'L' }, { 11, "DELETED", 'L' }, { 12, "CANCEL", 'L' },
+    { 13, "DEBUG", 'L' }, { 14, "TYPEAHEAD", 'N' }, { 15, "COLOR", 'C' }, { 16, "CURSOR", 'N' },
+    { 17, "CONSOLE", 'L' }, { 18, "ALTERNATE", 'L' }, { 19, "ALTFILE", 'C' }, { 20, "DEVICE", 'C' },
+    { 21, "EXTRA", 'L' }, { 22, "EXTRAFILE", 'C' }, { 23, "PRINTER", 'L' }, { 24, "PRINTFILE", 'C' },
+    { 25, "MARGIN", 'N' }, { 26, "BELL", 'L' }, { 27, "CONFIRM", 'L' }, { 28, "ESCAPE", 'L' },
+    { 29, "INSERT", 'L' }, { 30, "EXIT", 'L' }, { 31, "INTENSITY", 'L' }, { 32, "SCOREBOARD", 'L' },
+    { 33, "DELIMITERS", 'L' }, { 34, "DELIMCHARS", 'C' }, { 35, "WRAP", 'L' }, { 36, "MESSAGE", 'N' },
+    { 37, "MCENTER", 'L' }, { 38, "SCROLLBREAK", 'L' }, { 0, NULL, 0 } };
+
+/* Settings this interpreter does not act on are remembered here */
+static value_t set_shadow[40];
+static int set_shadow_ready;
+
+static void set_shadow_init(void) {
+    if (set_shadow_ready) return;
+    set_shadow_ready = 1;
+    set_shadow[7] = val_str("");
+    set_shadow[8] = val_logic(1);
+    set_shadow[13] = val_logic(0);
+    set_shadow[14] = vnum(50);
+    set_shadow[19] = val_str("");
+    set_shadow[21] = val_logic(0);
+    set_shadow[22] = val_str("");
+    set_shadow[23] = val_logic(0);
+    set_shadow[24] = val_str("");
+    set_shadow[31] = val_logic(1);
+    set_shadow[32] = val_logic(1);
+    set_shadow[33] = val_logic(0);
+    set_shadow[34] = val_str("::");
+    set_shadow[37] = val_logic(0);
+    set_shadow[38] = val_logic(1);
+}
+
+/* The format as Clipper spells it: "mm/dd/yy", "dd.mm.yyyy" ... */
+static const char *date_format_text(const set_options_t *o, char *buf, int size) {
+    static const char *const two[] = { "mm/dd/yy", "yy.mm.dd", "dd/mm/yy", "dd/mm/yy", "dd.mm.yy", "dd-mm-yy", "yy/mm/dd" };
+    static const char *const four[] = { "mm/dd/yyyy", "yyyy.mm.dd", "dd/mm/yyyy", "dd/mm/yyyy", "dd.mm.yyyy", "dd-mm-yyyy", "yyyy/mm/dd" };
+    int i = (int)o->date_format;
+    if (i < 0 || i > 6) i = 0;
+    snprintf(buf, (size_t)size, "%s", o->century ? four[i] : two[i]);
+    return buf;
+}
+
+static value_t set_current(expr_ctx_t *ctx, const set_entry_t *e) {
+    const set_options_t *o = cmd_get_set_opts();
+    char buf[64];
+    value_t v;
+    switch (e->code) {
+    case 1: return val_logic(o->exact);
+    case 2: return val_logic(o->fixed);
+    case 3: return vnum(o->decimals);
+    case 4: return val_str(date_format_text(o, buf, (int)sizeof(buf)));
+    case 5: return vnum(o->epoch ? o->epoch : 1900);
+    case 6: return val_str(o->path);
+    case 9: return val_logic(o->softseek);
+    case 10: return val_logic(o->unique);
+    case 11: return val_logic(o->deleted);
+    case 12: func_call(ctx, "SETCANCEL", NULL, 0, &v); return v;
+    case 15: return val_str(screen_color_spec());
+    case 16: func_call(ctx, "SETCURSOR", NULL, 0, &v); return v;
+    case 17: return val_logic(o->console);
+    case 18: return val_logic(o->alternate_on);
+    case 20: return val_str(o->device ? "PRINTER" : "SCREEN");
+    case 25: return vnum(o->margin);
+    case 26: return val_logic(o->bell);
+    case 27: return val_logic(o->confirm);
+    case 28: return val_logic(o->escape);
+    case 29: func_call(ctx, "READINSERT", NULL, 0, &v); return v;
+    case 30: func_call(ctx, "READEXIT", NULL, 0, &v); return v;
+    case 35: return val_logic(o->wrap);
+    case 36: return vnum(o->message_row < 0 ? 0 : o->message_row);
+    default: return set_shadow[e->code];
+    }
+}
+
+static int truth_arg(const value_t *v) {
+    if (v->type == VAL_LOGIC) return v->logic;
+    if (v->type == VAL_CHAR) return strcasecmp(v->str, "ON") == 0;
+    return 0;
+}
+
+static void set_apply(expr_ctx_t *ctx, const set_entry_t *e, value_t *v) {
+    char buf[300];
+    value_t r;
+    switch (e->code) {
+    case 1: case 2: case 9: case 10: case 11: case 17: case 18: case 26: case 27: case 28: case 35:
+        run_cmd("SET %s %s", e->name, truth_arg(v) ? "ON" : "OFF");
+        return;
+    case 3: case 5: case 25: case 36:
+        if (v->type == VAL_NUM) run_cmd("SET %s TO %d", e->name, (int)v->num);
+        return;
+    case 4: {   /* "dd/mm/yyyy" and the like, to the named format */
+        static const struct { const char *text; const char *name; } fm[] = {
+            { "mm/dd/yy", "AMERICAN" }, { "yy.mm.dd", "ANSI" }, { "dd/mm/yy", "BRITISH" }, { "dd.mm.yy", "GERMAN" },
+            { "dd-mm-yy", "ITALIAN" }, { "yy/mm/dd", "JAPAN" }, { "mm/dd/yyyy", "AMERICAN" }, { "yyyy.mm.dd", "ANSI" },
+            { "dd/mm/yyyy", "BRITISH" }, { "dd.mm.yyyy", "GERMAN" }, { "dd-mm-yyyy", "ITALIAN" }, { "yyyy/mm/dd", "JAPAN" },
+            { NULL, NULL } };
+        int i;
+        if (v->type != VAL_CHAR) return;
+        for (i = 0; fm[i].text; i++) {
+            if (strcasecmp(fm[i].text, v->str) == 0) {
+                run_cmd("SET DATE %s", fm[i].name);
+                run_cmd("SET CENTURY %s", strstr(v->str, "yyyy") || strstr(v->str, "YYYY") ? "ON" : "OFF");
+                return;
+            }
+        }
+        return;
+    }
+    case 6: if (v->type == VAL_CHAR) run_cmd("SET PATH TO %s", v->str); return;
+    case 12: func_call(ctx, "SETCANCEL", v, 1, &r); return;
+    case 15: if (v->type == VAL_CHAR) run_cmd("SET COLOR TO %s", v->str); return;
+    case 16: func_call(ctx, "SETCURSOR", v, 1, &r); return;
+    case 20: if (v->type == VAL_CHAR) run_cmd("SET DEVICE TO %s", strcasecmp(v->str, "PRINTER") == 0 ? "PRINT" : v->str); return;
+    case 29: func_call(ctx, "READINSERT", v, 1, &r); return;
+    case 30: func_call(ctx, "READEXIT", v, 1, &r); return;
+    default:
+        if (e->kind == 'L') set_shadow[e->code] = val_logic(truth_arg(v));
+        else set_shadow[e->code] = *v;
+        (void)buf;
+        return;
+    }
+}
+
+int clipfn_set(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    const set_entry_t *e;
+    int code;
+    if (nargs < 1 || args[0].type != VAL_NUM) {
+        ctx->error = "SET requires (setting [, new value])";
+        return -1;
+    }
+    set_shadow_init();
+    code = (int)args[0].num;
+    for (e = set_entries; e->name && e->code != code; e++) {}
+    if (!e->name) {
+        *result = val_nil();
+        return 0;
+    }
+    *result = set_current(ctx, e);
+    if (nargs >= 2 && args[1].type != VAL_NIL) set_apply(ctx, e, &args[1]);
+    return 0;
+}
+
 const clipfn_entry_t clipfn_table[] = {
     { "DBAPPEND", fn_dbappend }, { "DBCLEARFIL", fn_dbclearfil }, { "DBCLEARIND", fn_dbclearind },
     { "DBCLEARREL", fn_dbclearrel }, { "DBCLOSEALL", fn_dbcloseall }, { "DBCLOSEAREA", fn_dbclosearea },

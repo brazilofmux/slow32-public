@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <dirent.h>
@@ -2326,53 +2327,6 @@ static int fn_sys(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
 }
 
 /* ---- Tier 3: SET() ---- */
-static int fn_set(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    int num;
-    const set_options_t *opts;
-    (void)ctx;
-    if (nargs < 1 || args[0].type != VAL_NUM) {
-        ctx->error = "SET requires (number)";
-        return -1;
-    }
-    num = (int)args[0].num;
-    opts = cmd_get_set_opts();
-    switch (num) {
-    case 1:  *result = val_str(opts->talk ? "ON" : "OFF"); break;
-    case 2:  *result = val_str(opts->heading ? "ON" : "OFF"); break;
-    case 3:  *result = val_str(opts->exact ? "ON" : "OFF"); break;
-    case 4:  *result = val_str(opts->deleted ? "ON" : "OFF"); break;
-    case 5:  *result = val_str(opts->confirm ? "ON" : "OFF"); break;
-    case 6:  *result = val_str(opts->bell ? "ON" : "OFF"); break;
-    case 7:  *result = val_str(opts->safety ? "ON" : "OFF"); break;
-    case 8:  *result = val_str(opts->console ? "ON" : "OFF"); break;
-    case 9:  *result = val_str(opts->escape ? "ON" : "OFF"); break;
-    case 10: {
-        const char *names[] = {"AMERICAN","ANSI","BRITISH","FRENCH","GERMAN","ITALIAN","JAPAN"};
-        int idx = (int)opts->date_format;
-        if (idx >= 0 && idx < 7) *result = val_str(names[idx]);
-        else *result = val_str("AMERICAN");
-        break;
-    }
-    case 11: { char b[8]; snprintf(b,sizeof(b),"%d",opts->decimals); *result = val_str(b); break; }
-    case 12: *result = val_str(opts->century ? "ON" : "OFF"); break;
-    case 13: *result = val_str(opts->unique ? "ON" : "OFF"); break;
-    case 14: *result = val_str(opts->softseek ? "ON" : "OFF"); break;
-    case 15: *result = val_str(opts->path); break;
-    case 16: *result = val_str(opts->alternate_on ? "ON" : "OFF"); break;
-    case 17: *result = val_str(opts->device ? "PRINT" : "SCREEN"); break;
-    case 18: { char b[8]; snprintf(b,sizeof(b),"%d",opts->margin); *result = val_str(b); break; }
-    case 19: { char b[8]; snprintf(b,sizeof(b),"%d",opts->memowidth); *result = val_str(b); break; }
-    case 20: { char b[8]; snprintf(b,sizeof(b),"%d",opts->epoch); *result = val_str(b); break; }
-    case 21: {
-        if (opts->mark) { char b[2]; b[0] = opts->mark; b[1] = '\0'; *result = val_str(b); }
-        else *result = val_str("");
-        break;
-    }
-    case 22: *result = val_str(opts->wrap ? "ON" : "OFF"); break;
-    default: *result = val_str(""); break;
-    }
-    return 0;
-}
 
 /* ---- Tier 3: DBSTRUCT() ---- */
 static int fn_dbstruct(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
@@ -2569,7 +2523,7 @@ static const func_entry_t func_table[] = {
     /* Tier 3: Compatibility */
     { "LOOKUP",    fn_lookup },
     { "SYS",       fn_sys },
-    { "SET",       fn_set },
+    { "SET",       clipfn_set },   /* set.ch's numbering (clipfn.c) */
     { "DBSTRUCT",  fn_dbstruct },
     { NULL, NULL }
 };
@@ -2629,6 +2583,17 @@ int func_call_refs(expr_ctx_t *ctx, const char *name, value_t *args, int nargs,
     rc = func_call(ctx, name, args, nargs, result);
     pending_refs = NULL;
     return rc;
+}
+
+int func_is_builtin(const char *name) {
+    char upper[64];
+    const clipfn_entry_t *c;
+    int i;
+    for (i = 0; name[i] && i < (int)sizeof(upper) - 1; i++) upper[i] = (char)toupper((unsigned char)name[i]);
+    upper[i] = '\0';
+    if (func_lookup(upper)) return 1;
+    for (c = clipfn_table; c->name; c++) if (strcmp(c->name, upper) == 0) return 1;
+    return 0;
 }
 
 int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value_t *result) {

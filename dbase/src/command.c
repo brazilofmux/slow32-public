@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include <time.h>
@@ -7236,9 +7237,14 @@ static int try_expression_statement(const lexer_t *l, const char *p) {
         lex_next(&t);
         second = t.current.type;
         if (second == TOK_LPAREN) {
-            /* f(...): only a name that is no command */
-            if (cmd_table_exact(l->current.text) >= 0 ||
-                cmd_table_abbrev(l->current.text, &ambiguous) >= 0)
+            /* f(...): a name that is no command -- or a command word
+             * written as a function, SET(...), with no blank before the
+             * parenthesis (Clipper's SET() beside its SET command) */
+            const char *q = p;
+            while (isalnum((unsigned char)*q) || *q == '_') q++;
+            if ((cmd_table_exact(l->current.text) >= 0 ||
+                 cmd_table_abbrev(l->current.text, &ambiguous) >= 0) &&
+                !(*q == '(' && func_is_builtin(l->current.text)))
                 return 0;
         } else if (!is_assign_tok(second) && second != TOK_ARROW && second != TOK_LBRACKET &&
                    second != TOK_COLON) {   /* o:ivar := e, o:method() */
