@@ -123,11 +123,11 @@ void date_to_display(int32_t jdn, char *buf, date_format_t fmt, int century, cha
     char sep;
 
     if (jdn == 0) {
-        /* Blank date: use appropriate separator and width */
-        int w = century ? 10 : 8;
-        int i;
-        for (i = 0; i < w; i++) buf[i] = ' ';
-        buf[w] = '\0';
+        /* The blank date keeps the format's separators, "  /  /  " (Clipper):
+         * a date formatted, its digits blanked */
+        char *q;
+        date_to_display(2451545, buf, fmt, century, mark);   /* 2000-01-01 */
+        for (q = buf; *q; q++) if (*q >= '0' && *q <= '9') *q = ' ';
         return;
     }
 

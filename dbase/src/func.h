@@ -7,6 +7,8 @@
 int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value_t *result);
 /* 1 when a built-in function of this name exists (any case) */
 int func_is_builtin(const char *name);
+/* A program's function that takes a built-in's name (asked first from then on) */
+void func_register_override(const char *name);
 /* name(@x, ...): refs[i] is the variable argument i was passed by
  * reference from (NULL or "" for a value); a user function writes its
  * parameter's final value back */

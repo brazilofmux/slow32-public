@@ -176,6 +176,7 @@ void clip_register_fn(const char *name, clip_fn_t fn) {
     if (clip_nfn >= CLIP_MAX_FNS) {
         return;
     }
+    func_register_override(upper);   /* a built-in's name: the program's wins */
     str_copy(clip_fns[clip_nfn].name, upper, MEMVAR_NAMELEN);
     clip_fns[clip_nfn].fn = fn;
     clip_nfn++;

@@ -1,0 +1,18 @@
+* CA: SAMPLE/STACK.PRG SAMPLE/DICT.PRG
+#include "dict.ch"
+LOCAL s := StackNew(), d := DictNew()
+? StackIsEmpty(s)
+StackPush(s, 1)
+StackPush(s, "two")
+StackPush(s, .T.)
+? StackIsEmpty(s), StackTop(s), StackPop(s), StackPop(s), StackTop(s)
+DictPut(d, "one", 1)
+DictPut(d, "two", 2)
+DictPut(d, "three", 3)
+DictPutPair(d, {"four", 4})
+? DictAt(d, "two"), DictAt(d, "four"), VALTYPE(DictAt(d, "none"))
+DictPut(d, "two", 22)
+? DictAt(d, "two")
+DictRemove(d, "one")
+? VALTYPE(DictAt(d, "one")), DictAt(d, "three")
+DictEval(d, {|a| QOUT(a[DI_KEY], a[DI_VAL])})

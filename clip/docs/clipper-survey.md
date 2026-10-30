@@ -181,6 +181,48 @@ Not probed yet: @ SAY / GET's clauses beyond PICTURE / VALID / WHEN /
 RANGE, SET RELATION ADDITIVE, JOIN / UPDATE's forms, REPORT / LABEL
 FORM, the console commands that need a terminal.
 
+## CA's own sources (2026-10-29)
+
+The sources CA shipped with Clipper 5.2 -- SOURCE/SAMPLE (forty small
+library programs), SOURCE/SYS (the Get reader GETSYS.PRG, the default
+error handler ERRORSYS.PRG, the report and label runners), DBU, PE and
+RL -- are held beside the guides in `~/refs/clipper/source` (reference
+material, CA's copyright, never into this tree).  They are the
+compliance test probes cannot be: real Clipper code, written by the
+people who wrote Clipper.
+
+- **All 45 SAMPLE and SYS programs compile** with s32-clip (27 did at the
+  first try).  What they needed: a load-time normalizer shared by both
+  loaders (STATIC FUNCTION, FUNC / PROC, WHILE without DO, a bare END
+  closing the innermost IF / DO WHILE / DO CASE / BEGIN SEQUENCE / FOR);
+  FOR, WHILE and NEXT as variable names when = or := follows (DOT.PRG,
+  Summer '87 style); `;` as a statement separator in a #command result;
+  common.ch and assert.ch; 512 functions in a file; set.ch read for
+  every program, as Clipper's std.ch included it; long identifiers kept
+  whole (ten characters were significant: STACKISEMPTY and STACKISEMP
+  were one name on one side of a lookup).
+- **Drivers** (`tests/clipper/ca/ca-*.prg`, harness `run-ca.sh`): our own
+  programs that call the CA functions with fixed inputs; driver and
+  sources concatenated (the sources' file-wide preambles first, where
+  Clipper wants file-wide STATICs), run under Harbour and under s32-clip,
+  outputs diffed; SKIP without the sources.  Ten drivers pass: StrZero /
+  Mod / LenNum, the time family, Date, String, Num, Stack and Dict,
+  Iterator, Environ, Array, and ASRTDEMO as a whole program.  Found by
+  them: a program's own function with a built-in's name replaces the
+  built-in (CA's STRING.PRG defines PROPER, MOD.PRG MOD -- Clipper's
+  linker took the program's symbol); EMPTY() of an array is its
+  emptiness; SUBSTR() with a negative start counts from the end; `n % 0`
+  is 0 (CA's MOD.PRG computes it before testing the divisor); YEAR() is
+  five wide, MONTH() and DAY() three; TRANSFORM() of a number fills the
+  template's digit positions from the right ("99/" of 3 is " 3/", too
+  wide is asterisks, @( @B @C @X @Z @E); the blank date shows its
+  separators ("  /  /  ").
+
+Not driven yet: GETSYS.PRG and ERRORSYS.PRG as replacements for the
+built-in Get reader and error handler (they compile; running them in
+place of ours needs the keyboard), the report and label runners
+(need .frm / .lbl files), DBU as an application (interactive).
+
 ## The order of work proposed
 
 Each step closes probes and is gated by both oracles (Harbour for the

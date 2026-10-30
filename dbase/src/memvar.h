@@ -4,7 +4,7 @@
 #include "expr.h"
 
 #define MEMVAR_MAX     256
-#define MEMVAR_NAMELEN  11
+#define MEMVAR_NAMELEN  33   /* Clipper made ten significant; long names stay distinct here, as Harbour keeps them */
 
 /* An array, as Clipper has them: one dimension, any values (arrays too, so
  * a[i][j] and DECLARE a[r,c] nest), resizable, shared by reference --

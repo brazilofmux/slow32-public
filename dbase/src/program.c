@@ -882,6 +882,7 @@ static int find_procedure(program_t *prog, const char *name) {
             while (is_ident_char(*rest) && j < 63) prog->procs[prog->nprocs].name[j++] = *rest++;
             prog->procs[prog->nprocs].name[j] = '\0';
             prog->procs[prog->nprocs].line = i;
+            func_register_override(prog->procs[prog->nprocs].name);
             prog->nprocs++;
         }
     }

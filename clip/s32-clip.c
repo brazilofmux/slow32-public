@@ -2872,12 +2872,15 @@ int main(int argc, char **argv) {
             inputs[ninputs++] = argv[i];
         }
     }
-    {   /* the compiler's own headers, beside the binary */
-        static char own[600];
+    {   /* the compiler's own headers, beside the binary; set.ch read first
+         * for every program, as Clipper's std.ch included it */
+        static char own[600], setch[700];
         char dir[512];
         path_dir(argv[0], dir, (int)sizeof(dir));
         snprintf(own, sizeof(own), "%s/include", dir);
         if (g_nincdirs < MAX_INCDIRS) g_incdirs[g_nincdirs++] = own;
+        snprintf(setch, sizeof(setch), "%s/set.ch", own);
+        if (file_exists(setch) && load_prg(setch) != 0) return 1;
     }
     if (ninputs < 1 || !outpath) {
         fprintf(stderr, "Usage: s32-clip input.prg [more.prg ...] -o output.c\n");

@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 #include <ctype.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -286,6 +287,7 @@ static int fn_substr(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result)
     }
     slen = strlen(args[0].str);
     start = (int)args[1].num - 1; /* 1-based to 0-based */
+    if ((int)args[1].num < 0) start = slen + (int)args[1].num;   /* from the end (Clipper) */
     if (start < 0) start = 0;
     if (start >= slen) { *result = val_str(""); return 0; }
 
@@ -837,7 +839,7 @@ static int fn_day(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         return -1;
     }
     date_from_jdn(args[0].date, &y, &m, &d);
-    *result = val_num((double)d);
+    *result = val_num_dec((double)d, 0, 3);
     return 0;
 }
 
@@ -849,7 +851,7 @@ static int fn_month(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
         return -1;
     }
     date_from_jdn(args[0].date, &y, &m, &d);
-    *result = val_num((double)m);
+    *result = val_num_dec((double)m, 0, 3);
     return 0;
 }
 
@@ -861,7 +863,7 @@ static int fn_year(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         return -1;
     }
     date_from_jdn(args[0].date, &y, &m, &d);
-    *result = val_num((double)y);
+    *result = val_num_dec((double)y, 0, 5);
     return 0;
 }
 
@@ -919,6 +921,8 @@ static int fn_empty(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
     case VAL_DATE:
         *result = val_logic(args[0].date == 0);
         break;
+    case VAL_ARRAY: *result = val_logic(!args[0].array || args[0].array->len == 0); return 0;
+    case VAL_BLOCK: case VAL_OBJECT: *result = val_logic(0); return 0;
     default:
         *result = val_logic(1);
         break;
@@ -1081,10 +1085,113 @@ static int fn_stuff(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
 }
 
 /* ---- TRANSFORM(expr, picture) ---- */
+/* TRANSFORM of a number: the picture's functions (@B left, @( negatives
+ * in parentheses, @C / @X "CR" / "DB" after, @Z zero as blanks, @E
+ * European), then the template -- the digits right-justified into the
+ * 9 / # / * / $ positions, '.' the point, ',' kept (blank before the
+ * first digit), other characters literal; a number too wide fills the
+ * positions with asterisks.  No template: the number's own display. */
+static void transform_number(const value_t *v, const char *picture, char *out, int size) {
+    const char *tpl = picture;
+    int left = 0, paren = 0, cr = 0, db = 0, zero_blank = 0, euro = 0;
+    int ndig = 0, ndec = 0, seen = 0, i, o = 0, neg = v->num < 0;
+    char num[128], digits[128];
+    const char *q;
+    if (*tpl == '@') {
+        for (tpl++; *tpl && *tpl != ' '; tpl++) {
+            switch (toupper((unsigned char)*tpl)) {
+            case 'B': left = 1; break;
+            case '(': paren = 1; break;
+            case 'C': cr = 1; break;
+            case 'X': db = 1; break;
+            case 'Z': zero_blank = 1; break;
+            case 'E': euro = 1; break;
+            default: break;
+            }
+        }
+        tpl = skip_ws(tpl);
+    }
+    for (q = tpl; *q; q++) {
+        if (*q == '.' && !seen) seen = 1;
+        else if (*q == '9' || *q == '#' || *q == '*' || *q == '$') { if (seen) ndec++; else ndig++; }
+    }
+    if (ndig + ndec == 0) {   /* functions only: the number's own display */
+        val_to_display(v, num, sizeof(num));
+        q = skip_ws(num);
+        if (paren && neg) snprintf(out, (size_t)size, "(%s)", q[0] == '-' ? q + 1 : q);
+        else snprintf(out, (size_t)size, "%s", left ? q : num);
+        return;
+    }
+    /* the digits, as many as the template has, the sign taken by the picture */
+    snprintf(num, sizeof(num), "%.*f", ndec, (paren || cr || db) ? fabs(v->num) : v->num);
+    {
+        char *dot = strchr(num, '.');
+        int intlen = dot ? (int)(dot - num) : (int)strlen(num);
+        if (intlen > ndig) {   /* too wide: asterisks */
+            memset(digits, '*', (size_t)(ndig + ndec));
+            digits[ndig + ndec] = '\0';
+        } else {
+            memset(digits, ' ', (size_t)(ndig - intlen));
+            memcpy(digits + ndig - intlen, num, (size_t)intlen);
+            if (ndec > 0) memcpy(digits + ndig, dot + 1, (size_t)ndec);
+            digits[ndig + ndec] = '\0';
+        }
+    }
+    if (zero_blank && v->num == 0) memset(digits, ' ', strlen(digits));
+    {
+        int di = 0, started = 0;
+        for (q = tpl; *q && o < size - 1; q++) {
+            if (*q == '9' || *q == '#' || *q == '*' || *q == '$') {
+                char c = digits[di++];
+                if (c != ' ') started = 1;
+                else if (*q == '*' || *q == '$') c = *q;
+                out[o++] = c;
+            } else if (*q == '.' && !started && di <= ndig) {
+                out[o++] = euro ? ',' : '.';
+                started = 1;
+            } else if (*q == '.') {
+                out[o++] = euro ? ',' : '.';
+            } else if (*q == ',') {
+                out[o++] = started ? (euro ? '.' : ',') : ' ';
+            } else {
+                out[o++] = *q;
+            }
+        }
+        out[o] = '\0';
+    }
+    if (paren && neg) {   /* the sign as parentheses around the digits */
+        char tmp[256];
+        char *first = out;
+        while (*first == ' ') first++;
+        if (first > out) first--;
+        *first = '(';
+        snprintf(tmp, sizeof(tmp), "%s)", out);
+        snprintf(out, (size_t)size, "%s", tmp);
+    } else if (cr && neg) {
+        strncat(out, " CR", (size_t)size - strlen(out) - 1);
+    } else if (db && neg) {
+        strncat(out, " DB", (size_t)size - strlen(out) - 1);
+    }
+    if (left) {
+        char *first = out;
+        while (*first == ' ') first++;
+        if (first > out) {
+            size_t n = strlen(first);
+            memmove(out, first, n);
+            memset(out + n, ' ', (size_t)(first - out));
+        }
+    }
+}
+
 static int fn_transform(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     char buf[256], formatted[256];
     (void)ctx;
     if (nargs < 2) { *result = val_str(""); return 0; }
+    if (args[0].type == VAL_NUM) {
+        transform_number(&args[0], args[1].type == VAL_CHAR ? args[1].str : "", formatted, (int)sizeof(formatted));
+        *result = val_str(formatted);
+        return 0;
+    }
     val_to_string(&args[0], buf, sizeof(buf));
     /* Reuse apply_picture logic inline */
     {
@@ -2585,6 +2692,28 @@ int func_call_refs(expr_ctx_t *ctx, const char *name, value_t *args, int nargs,
     return rc;
 }
 
+/* A program's own function with a built-in's name replaces the built-in,
+ * as the linker did for Clipper (CA's STRING.PRG defines PROPER); the
+ * names so taken are kept here and asked of the UDF callback first */
+static char override_names[64][MEMVAR_NAMELEN];
+static int noverrides;
+
+void func_register_override(const char *name) {
+    char upper[MEMVAR_NAMELEN];
+    int i;
+    for (i = 0; name[i] && i < MEMVAR_NAMELEN - 1; i++) upper[i] = (char)toupper((unsigned char)name[i]);
+    upper[i] = '\0';
+    if (!func_is_builtin(upper)) return;
+    for (i = 0; i < noverrides; i++) if (strcmp(override_names[i], upper) == 0) return;
+    if (noverrides < 64) strcpy(override_names[noverrides++], upper);
+}
+
+static int func_is_overridden(const char *upper) {
+    int i;
+    for (i = 0; i < noverrides; i++) if (strcmp(override_names[i], upper) == 0) return 1;
+    return 0;
+}
+
 int func_is_builtin(const char *name) {
     char upper[64];
     const clipfn_entry_t *c;
@@ -2609,6 +2738,15 @@ int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value
     }
     upper[i] = '\0';
 
+    if (noverrides > 0 && udf_callback && func_is_overridden(upper)) {
+        int urc = udf_callback(upper, args, nargs, result);
+        if (urc == 0) return 0;
+        if (urc < 0) {
+            const char *msg = prog_get_error_message();
+            ctx->error = msg && msg[0] ? msg : "User-defined function failed";
+            return -1;
+        }
+    }
     e = func_lookup(upper);
     if (e) {
         pending_refs = NULL;   /* a built-in takes values */

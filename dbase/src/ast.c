@@ -1040,7 +1040,7 @@ int ast_eval_binop(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const valu
         if (left->type != VAL_NUM || right->type != VAL_NUM) {
             ctx->error = "Type mismatch in %"; return -1;
         }
-        if (right->num == 0.0) { ctx->error = "Division by zero"; return -1; }
+        if (right->num == 0.0) { *result = val_num_dec(0, 0, 0); return 0; }   /* n % 0 is 0 (Clipper; CA's own MOD.PRG counts on it) */
         *result = num_result(OP_MOD, fmod(left->num, right->num), left, right);
         return 0;
 
