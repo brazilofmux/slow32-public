@@ -34,6 +34,9 @@ typedef struct {
     int summary_only;       /* 1 = no detail lines */
     int eject_after;        /* 1 = page eject after */
     int plain;              /* 1 = no page headers (runtime only, not stored) */
+    int frm_plain;          /* the option byte's plain-page bit (Clipper) */
+    int no_eject_before;    /* the option byte's "no eject before" bit */
+    int group_eject;        /* page eject after each group (the PE byte) */
 
     /* Columns */
     frm_column_t columns[FRM_MAX_COLUMNS];
@@ -45,6 +48,18 @@ void frm_init(frm_def_t *def);
 /* Read/write binary .FRM file (return 0=ok, -1=error) */
 int frm_read(const char *filename, frm_def_t *def);
 int frm_write(const char *filename, const frm_def_t *def);
+
+/* The layout REPORT FORM prints: dBASE III's (0, the interpreter's) or
+ * CA-Clipper 5.2's (1, set by a compiled Clipper program's runtime) */
+void report_set_clipper_layout(int on);
+int report_clipper_layout(void);
+
+/* Clipper's REPORT FORM: CA's FRMRUN layout (Summer '87 compatible, as
+ * CA built it); to_printer turns page breaks into form feeds */
+void report_generate_clipper(frm_def_t *def, dbf_t *db, expr_ctx_t *ectx,
+                             const char *for_cond, const char *heading,
+                             int plain, int summary, int noeject, int to_printer,
+                             FILE *outfile);
 
 /* Generate report output */
 void report_generate(frm_def_t *def, dbf_t *db, expr_ctx_t *ectx,

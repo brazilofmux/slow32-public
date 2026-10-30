@@ -555,8 +555,38 @@ people who wrote Clipper.
   FRMRUN (driver ca-frmrun) matches Harbour; the built-in one prints
   dBASE III's layout, which the dbase tests record.
 
-Not driven yet: RL's Label side; our REPORT FORM in Clipper's layout;
-GETSYS.PRG's and ERRORSYS.PRG's dialogue paths under a terminal
+- **REPORT FORM in Clipper's layout** (2026-10-30).  A compiled Clipper
+  program's runtime now prints CA-Clipper 5.2's REPORT FORM layout
+  (report.c `report_generate_clipper`, switched on in clip_init); the
+  interpreter keeps dBASE III's, which the dbase tests record.  The
+  rules are those of CA's FRMRUN as CA built it, with S87_COMPAT
+  defined: an empty line before the first page, "Page No." + STR(n,6),
+  the date, the title lines centred, an empty line, the column
+  headings (numeric ones right-aligned, a trailing `;` adding a line),
+  two empty lines; character columns wrapped to their width through
+  MEMOLINE with the text trimmed before counting; group and subgroup
+  headers, "** Subtotal **" / "* Subsubtotal *" and "*** Total ***"
+  above their lines of totals; form feeds only to a printer; a PLAIN
+  report still prints its first header and counts that page's lines.
+  The .frm reader keeps three option bits it dropped (plain page, no
+  eject before, eject after each group).  Checked three ways: Harbour on
+  plain, summary, NOEJECT, HEADING and FOR variants and on grouped
+  forms (probe cmd-report-form, which writes its own .frm); and CA's
+  FRMRUN compiled by s32-clip under our runtime over grouped and
+  double-spaced forms, line for line.  Harbour departs from CA's code
+  in one place: a double-spaced record at a page's last line goes to
+  the next page in Harbour and stays in CA's; we follow CA.
+  On the way: TRANSFORM() on characters, dates and logicals took no
+  picture functions at all; it has the guide's (@! @R @S<n> @D @E, the
+  template's A N X 9 # ! and inserted or overwriting literals, L and Y
+  for logicals; @L and @Y are GET functions and ignored, as Harbour
+  ignores them) -- probe fn-transform-pictures.  MLCOUNT("") is 0, and
+  MEMOLINE() past the last line is blanks the width wide -- probe
+  fn-memoline-edges.  The runtime's command buffer is 2047 characters,
+  matching s32-clip's statements.
+
+Not driven yet: RL's Label side; GETSYS.PRG's and ERRORSYS.PRG's
+dialogue paths under a terminal
 (ERRORSYS reaches Alert() only for open and append-lock errors with a
 retry or default on offer).
 

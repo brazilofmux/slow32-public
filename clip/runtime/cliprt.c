@@ -1,4 +1,5 @@
 #include "cliprt.h"
+#include "report.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -197,6 +198,7 @@ void clip_init(void) {
     prog_set_procname_hook(clip_procname);
     strcpy(line, "SET TALK OFF");
     cmd_execute(&clip_db, line);
+    report_set_clipper_layout(1);   /* REPORT FORM prints CA-Clipper's layout */
 }
 
 void clip_fini(void) {
@@ -207,7 +209,7 @@ void clip_fini(void) {
 static int clip_trace_on(void);
 
 void clip_cmd(const char *line) {
-    char buf[512];
+    char buf[2048];   /* s32-clip's joined-statement limit (RL's PRIVATE list runs to 700) */
     strncpy(buf, line, sizeof(buf) - 1);
     buf[sizeof(buf) - 1] = '\0';
     if (clip_trace_on()) fprintf(stderr, "  cmd: %s\n", buf);

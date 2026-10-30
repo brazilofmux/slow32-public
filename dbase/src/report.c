@@ -5,6 +5,8 @@
 #include "report.h"
 #include "date.h"
 #include "util.h"
+#include "func.h"
+#include "memvar.h"
 
 void frm_init(frm_def_t *def) {
     memset(def, 0, sizeof(*def));
@@ -90,6 +92,9 @@ int frm_read(const char *filename, frm_def_t *def) {
     def->double_space  = yes_byte(buf[1964 + 20]);
     def->summary_only  = yes_byte(buf[1964 + 21]);
     def->eject_after   = (buf[1964 + 23] & 2) != 0;
+    def->frm_plain     = (buf[1964 + 23] & 4) != 0;
+    def->no_eject_before = (buf[1964 + 23] & 1) != 0;
+    def->group_eject   = yes_byte(buf[1964 + 22]);
 
     if (def->num_columns > FRM_MAX_COLUMNS)
         def->num_columns = FRM_MAX_COLUMNS;
@@ -541,4 +546,467 @@ void report_generate(frm_def_t *def, dbf_t *db, expr_ctx_t *ectx,
     /* Eject after */
     if (!noeject && def->eject_after)
         fputc('\f', outfile);
+}
+
+
+/* ==== CA-Clipper's REPORT FORM layout ====
+ * The rules of CA's FRMRUN.PRG / FRMBACK.PRG (built with S87_COMPAT, as CA
+ * shipped them): an empty line before the first page; a page header of
+ * "Page No." + STR(n,6) (with a HEADING, centred lines from column 15 with
+ * the page number stuffed over the first), the date, the form's title
+ * lines centred, an empty line, the column headings (numeric ones right
+ * aligned), two empty lines; every line printed as text then a newline,
+ * the left margin before it; character columns wrapped to their width;
+ * "** Subtotal **" / "* Subsubtotal *" and "*** Total ***" each above a
+ * line of totals; a page eject is a form feed to a printer only. */
+
+static int clipper_layout;
+void report_set_clipper_layout(int on) { clipper_layout = on; }
+int report_clipper_layout(void) { return clipper_layout; }
+
+#define CR_LINE 1024
+#define CR_MAXHDR 64
+
+typedef struct {
+    frm_def_t *def;
+    expr_ctx_t *ectx;
+    FILE *fp;
+    int plain, formfeeds, summary, spacing;
+    int page, lines_left, max_lines_avail;
+    char heading[256];
+    char title[4][61];
+    int ntitle;
+    char coltype[FRM_MAX_COLUMNS];
+    char colpict[FRM_MAX_COLUMNS][64];
+    char colhdr[FRM_MAX_COLUMNS][8][256];
+    int ncolhdr[FRM_MAX_COLUMNS];
+} crep_t;
+
+static void cr_print(crep_t *r, const char *text) {
+    int i;
+    if (text) {
+        for (i = 0; i < r->def->left_margin; i++) fputc(' ', r->fp);
+        fputs(text, r->fp);
+    }
+    fputc('\n', r->fp);
+}
+
+static void cr_eject(crep_t *r) { if (r->formfeeds) fputc('\f', r->fp); }
+
+static int cr_call(crep_t *r, const char *fn, value_t *args, int n, value_t *out) {
+    if (func_call(r->ectx, fn, args, n, out) != 0) { r->ectx->error = NULL; *out = val_str(""); return -1; }
+    return 0;
+}
+
+/* XMLCOUNT / XMEMOLINE: MLCOUNT and MEMOLINE with a tab of 4 and wrapping */
+static int cr_mlcount(crep_t *r, const char *s, int width) {
+    value_t a[4], out;
+    char t[CR_LINE];
+    str_copy(t, s, sizeof(t));
+    trim_right(t);   /* XMLCOUNT counts the trimmed text */
+    a[0] = val_str(t); a[1] = val_num(width); a[2] = val_num(4 >= width ? width - 1 : 4); a[3] = val_logic(1);
+    if (cr_call(r, "MLCOUNT", a, 4, &out) != 0 || out.type != VAL_NUM) return 1;
+    return (int)out.num;
+}
+
+static void cr_memoline(crep_t *r, const char *s, int width, int n, char *out, int size) {
+    value_t a[5], v;
+    a[0] = val_str(s); a[1] = val_num(width); a[2] = val_num(n); a[3] = val_num(4 >= width ? width - 1 : 4); a[4] = val_logic(1);
+    cr_call(r, "MEMOLINE", a, 5, &v);
+    str_copy(out, v.type == VAL_CHAR ? val_text(&v) : "", size);
+}
+
+static void cr_transform(crep_t *r, const value_t *v, const char *pict, char *out, int size) {
+    value_t a[2], res;
+    a[0] = *v; a[1] = val_str(pict);
+    cr_call(r, "TRANSFORM", a, 2, &res);
+    str_copy(out, res.type == VAL_CHAR ? val_text(&res) : "", size);
+}
+
+static void pad_right(char *s, int width, int size) {
+    int n = (int)strlen(s);
+    if (n > width) { s[width] = '\0'; return; }
+    while (n < width && n < size - 1) s[n++] = ' ';
+    s[n] = '\0';
+}
+
+static void ltrim_copy(char *dst, const char *src, int size) {
+    while (*src == ' ') src++;
+    str_copy(dst, src, size);
+}
+
+/* MakeAStr: a group value as text */
+static void cr_group_text(const value_t *v, char *out, int size) {
+    switch (v->type) {
+    case VAL_DATE: val_to_string(v, out, size); break;
+    case VAL_LOGIC: str_copy(out, v->logic ? "T" : "F", size); break;
+    case VAL_NUM: snprintf(out, (size_t)size, "%10.*f", v->ndec > 0 ? v->ndec : 0, v->num); break;
+    case VAL_CHAR: str_copy(out, val_text(v), size); break;
+    default: str_copy(out, "INVALID EXPRESSION", size); break;
+    }
+}
+
+static int cr_eval(crep_t *r, const char *expr, value_t *out) {
+    if (!expr[0] || ast_eval_dynamic(expr, r->ectx, out) != 0) { r->ectx->error = NULL; *out = val_nil(); return -1; }
+    return 0;
+}
+
+/* ParseHeader: up to n items of at most 60 characters, ';' ending an item */
+static int cr_parse_header(const char *src, int n, char items[][61]) {
+    int k;
+    for (k = 0; k < n; k++) {
+        char item[61];
+        const char *semi;
+        int len;
+        str_copy(item, src, sizeof(item));
+        semi = strchr(item, ';');
+        if (semi) {
+            len = (int)(semi - item);
+            memcpy(items[k], item, (size_t)len);
+            items[k][len] = '\0';
+            src += len + 1 <= (int)strlen(src) ? len + 1 : (int)strlen(src);
+        } else {
+            str_copy(items[k], item, 61);
+            { int t = (int)strlen(items[k]); while (t > 0 && items[k][t - 1] == ' ') t--; if (t == 0) items[k][0] = '\0'; }
+            src += strlen(src) < 60 ? strlen(src) : 60;
+        }
+    }
+    return n;
+}
+
+static void cr_header(crep_t *r) {
+    static char lines[CR_MAXHDR][CR_LINE];
+    int n = 0, i, k, maxcol = 0;
+    frm_def_t *def = r->def;
+    int head_len = def->page_width - def->left_margin - 30;
+    int rpage = def->page_width - def->right_margin;
+    if (head_len < 1) head_len = 1;
+    if (!r->plain) {
+        if (!r->heading[0]) {
+            snprintf(lines[n++], CR_LINE, "Page No.%6d", r->page);
+        } else {
+            char items[16][61];
+            int nitems = 1, first = n;
+            const char *c;
+            for (c = r->heading; *c; c++) if (*c == ';') nitems++;
+            if (nitems > 16) nitems = 16;
+            cr_parse_header(r->heading, nitems, items);
+            for (k = 0; k < nitems; k++) {
+                char lt[256];
+                int cnt, hl;
+                ltrim_copy(lt, items[k], sizeof(lt));
+                cnt = cr_mlcount(r, lt, head_len);
+                if (cnt < 1) cnt = 1;
+                for (hl = 1; hl <= cnt && n < CR_MAXHDR - 1; hl++) {
+                    char seg[256];
+                    int sl, left;
+                    cr_memoline(r, lt, head_len, hl, seg, sizeof(seg));
+                    trim_right(seg);
+                    sl = (int)strlen(seg);
+                    left = sl < head_len ? (head_len - sl) / 2 : 0;
+                    snprintf(lines[n++], CR_LINE, "%15s%*s%s%*s", "", left, "", seg,
+                             sl < head_len ? head_len - sl - left : 0, "");
+                }
+            }
+            {
+                char pg[16];
+                snprintf(pg, sizeof(pg), "Page No.%6d", r->page);
+                memcpy(lines[first], pg, 14);
+            }
+        }
+        {
+            value_t d = val_date(date_today());
+            val_to_string(&d, lines[n++], CR_LINE);
+        }
+    }
+    for (k = 0; k < r->ntitle; k++) {
+        char lt[256];
+        int cnt, hl;
+        ltrim_copy(lt, r->title[k], sizeof(lt));
+        cnt = cr_mlcount(r, lt, rpage);
+        if (cnt < 1) cnt = 1;
+        for (hl = 1; hl <= cnt && n < CR_MAXHDR - 1; hl++) {
+            char seg[256];
+            int pad;
+            cr_memoline(r, lt, rpage, hl, seg, sizeof(seg));
+            trim_right(seg);
+            pad = (rpage - def->left_margin - (int)strlen(seg)) / 2;
+            if (pad < 0) pad = 0;
+            snprintf(lines[n++], CR_LINE, "%*s%s", pad, "", seg);
+        }
+    }
+    lines[n++][0] = '\0';   /* S87_COMPAT */
+    for (i = 0; i < def->num_columns; i++) if (r->ncolhdr[i] > maxcol) maxcol = r->ncolhdr[i];
+    for (k = 0; k < maxcol && n < CR_MAXHDR; k++) {
+        char *ln = lines[n++];
+        ln[0] = '\0';
+        for (i = 0; i < def->num_columns; i++) {
+            char cell[256];
+            int w = def->columns[i].width;
+            if (i > 0) strncat(ln, " ", CR_LINE - strlen(ln) - 1);
+            if (k < r->ncolhdr[i]) {
+                if (r->coltype[i] == 'N') {
+                    int hl = (int)strlen(r->colhdr[i][k]);
+                    if (hl >= w) { str_copy(cell, r->colhdr[i][k], sizeof(cell)); cell[w] = '\0'; }
+                    else snprintf(cell, sizeof(cell), "%*s%s", w - hl, "", r->colhdr[i][k]);
+                } else {
+                    str_copy(cell, r->colhdr[i][k], sizeof(cell));
+                    pad_right(cell, w, sizeof(cell));
+                }
+            } else {
+                cell[0] = '\0';
+                pad_right(cell, w, sizeof(cell));
+            }
+            strncat(ln, cell, CR_LINE - strlen(ln) - 1);
+        }
+    }
+    if (n < CR_MAXHDR) lines[n++][0] = '\0';
+    if (n < CR_MAXHDR) lines[n++][0] = '\0';
+    for (i = 0; i < n; i++) cr_print(r, lines[i]);
+    r->page++;
+    r->lines_left = def->lines_per_page - n;
+    r->max_lines_avail = def->lines_per_page - n;
+}
+
+static void cr_new_page(crep_t *r) {
+    cr_eject(r);
+    if (r->plain) r->lines_left = 1000;
+    else cr_header(r);
+}
+
+/* the totals line: each column's total through its picture, or spaces */
+static void cr_totals_line(crep_t *r, const double *totals, char *out, int size) {
+    int i;
+    out[0] = '\0';
+    for (i = 0; i < r->def->num_columns; i++) {
+        char cell[256];
+        if (i > 0) strncat(out, " ", (size_t)(size - (int)strlen(out) - 1));
+        if (r->def->columns[i].totals) {
+            value_t v = val_num(totals[i]);
+            cr_transform(r, &v, r->colpict[i], cell, sizeof(cell));
+        } else {
+            cell[0] = '\0';
+            pad_right(cell, r->def->columns[i].width, sizeof(cell));
+        }
+        strncat(out, cell, (size_t)(size - (int)strlen(out) - 1));
+    }
+}
+
+void report_generate_clipper(frm_def_t *def, dbf_t *db, expr_ctx_t *ectx,
+                             const char *for_cond, const char *heading,
+                             int plain, int summary, int noeject, int to_printer,
+                             FILE *outfile) {
+    crep_t *r = calloc(1, sizeof(crep_t));
+    double totals[3][FRM_MAX_COLUMNS];
+    char group_val[2][256];
+    const char *group_expr[2];
+    const char *group_hdr[2];
+    int ngroups = 0, any_totals = 0, first_pass = 1, i, g;
+    uint32_t rec;
+    char line[CR_LINE];
+    if (!r) return;
+    memset(totals, 0, sizeof(totals));
+    r->def = def; r->ectx = ectx; r->fp = outfile;
+    r->formfeeds = to_printer;
+    r->plain = def->frm_plain;
+    r->summary = def->summary_only || summary;
+    r->spacing = def->double_space ? 2 : 1;
+    if (plain) { r->plain = 1; r->formfeeds = 0; heading = NULL; }
+    str_copy(r->heading, heading ? heading : "", sizeof(r->heading));
+    {
+        /* the title: four items, trailing empty ones dropped */
+        char items[4][61];
+        int k = 4;
+        cr_parse_header(def->title, 4, items);
+        while (k > 0 && !items[k - 1][0]) k--;
+        for (i = 0; i < k; i++) str_copy(r->title[i], items[i], 61);
+        r->ntitle = k;
+    }
+    if (def->group_expr[0]) { group_expr[ngroups] = def->group_expr; group_hdr[ngroups] = def->group_header; ngroups++; }
+    if (def->subgroup_expr[0]) { group_expr[ngroups] = def->subgroup_expr; group_hdr[ngroups] = def->subgroup_header; ngroups++; }
+    for (g = 0; g < 2; g++) group_val[g][0] = '\0';
+    /* each column's type (from its value at the current record), picture
+     * and heading lines */
+    for (i = 0; i < def->num_columns; i++) {
+        frm_column_t *c = &def->columns[i];
+        value_t v;
+        const char *h = c->header;
+        int k = 0;
+        cr_eval(r, c->content, &v);
+        r->coltype[i] = v.type == VAL_NUM ? 'N' : v.type == VAL_DATE ? 'D' : v.type == VAL_LOGIC ? 'L' : 'C';
+        switch (r->coltype[i]) {
+        case 'N':
+            if (c->decimals > 0 && c->width - c->decimals - 1 > 0) {
+                int a = c->width - c->decimals - 1, j, p = 0;
+                for (j = 0; j < a && p < 60; j++) r->colpict[i][p++] = '9';
+                r->colpict[i][p++] = '.';
+                for (j = 0; j < c->decimals && p < 62; j++) r->colpict[i][p++] = '9';
+                r->colpict[i][p] = '\0';
+            } else {
+                int j;
+                for (j = 0; j < c->width && j < 63; j++) r->colpict[i][j] = '9';
+                r->colpict[i][j] = '\0';
+            }
+            break;
+        case 'D': str_copy(r->colpict[i], "@D", 64); break;
+        case 'L': { int j; r->colpict[i][0] = '@'; r->colpict[i][1] = 'L'; for (j = 0; j < c->width - 1 && j < 60; j++) r->colpict[i][2 + j] = 'X'; r->colpict[i][2 + j] = '\0'; } break;
+        default: { int j; for (j = 0; j < c->width && j < 63; j++) r->colpict[i][j] = 'X'; r->colpict[i][j] = '\0'; } break;
+        }
+        if (c->totals) any_totals = 1;
+        /* ListAsArray(header, ";"): a trailing ';' adds an empty item */
+        while (*h && k < 8) {
+            const char *semi = strchr(h, ';');
+            int len = semi ? (int)(semi - h) : (int)strlen(h);
+            if (len > 255) len = 255;
+            memcpy(r->colhdr[i][k], h, (size_t)len);
+            r->colhdr[i][k][len] = '\0';
+            k++;
+            if (!semi) { h += strlen(h); break; }
+            h = semi + 1;
+            if (!*h && k < 8) { r->colhdr[i][k++][0] = '\0'; }
+        }
+        r->ncolhdr[i] = k;
+    }
+    r->page = 1;
+    r->lines_left = def->lines_per_page;
+    r->max_lines_avail = def->lines_per_page;
+    cr_print(r, NULL);                       /* S87_COMPAT: an extra line on the first page */
+    if (!def->no_eject_before && !noeject) cr_eject(r);
+    cr_header(r);   /* the first header always, plain or not, and its line budget (FRMRUN's) */
+
+    for (rec = 1; rec <= db->record_count; rec++) {
+        char hdr_lines[8][CR_LINE];
+        int nhdr = 0, eject_grp = 0;
+        if (dbf_read_record(db, rec) < 0) continue;
+        if (db->record_buf[0] == '*') continue;
+        if (for_cond && for_cond[0]) {
+            value_t cond;
+            if (ast_eval_dynamic(for_cond, ectx, &cond) != 0) { ectx->error = NULL; continue; }
+            if (cond.type != VAL_LOGIC || !cond.logic) continue;
+        }
+        for (i = 0; i < def->num_columns; i++) {
+            if (def->columns[i].totals) {
+                value_t v;
+                if (cr_eval(r, def->columns[i].content, &v) == 0 && v.type == VAL_NUM) totals[0][i] += v.num;
+            }
+        }
+        /* subtotals of the groups that changed, innermost first */
+        if (!first_pass && any_totals) {
+            for (g = ngroups - 1; g >= 0; g--) {
+                value_t gv;
+                char now[256];
+                cr_eval(r, group_expr[g], &gv);
+                cr_group_text(&gv, now, sizeof(now));
+                if (strcmp(now, group_val[g]) != 0 && nhdr < 7) {
+                    str_copy(hdr_lines[nhdr++], g == 0 ? "** Subtotal **" : "* Subsubtotal *", CR_LINE);
+                    cr_totals_line(r, totals[g + 1], hdr_lines[nhdr++], CR_LINE);
+                    for (i = 0; i < def->num_columns; i++) if (def->columns[i].totals) totals[g + 1][i] = 0;
+                    if (g == 0) eject_grp = def->group_eject;
+                }
+            }
+        }
+        first_pass = 0;
+        if (nhdr > 0 && eject_grp) {
+            if (nhdr > r->lines_left) cr_new_page(r);
+            for (i = 0; i < nhdr; i++) cr_print(r, hdr_lines[i]);
+            nhdr = 0;
+            cr_new_page(r);
+        }
+        for (g = 0; g < ngroups; g++) {
+            value_t gv;
+            char now[256];
+            cr_eval(r, group_expr[g], &gv);
+            cr_group_text(&gv, now, sizeof(now));
+            if (strcmp(now, group_val[g]) != 0 && nhdr < 7) {
+                hdr_lines[nhdr++][0] = '\0';
+                snprintf(hdr_lines[nhdr++], CR_LINE, "%s%s %s", g == 0 ? "** " : "* ", group_hdr[g], now);
+            }
+        }
+        if (nhdr > 0) {
+            if (nhdr > r->lines_left) cr_new_page(r);
+            for (i = 0; i < nhdr; i++) cr_print(r, hdr_lines[i]);
+            r->lines_left -= nhdr;
+            if (r->lines_left == 0) cr_new_page(r);
+        }
+        for (i = 0; i < def->num_columns; i++) {
+            if (def->columns[i].totals) {
+                value_t v;
+                if (cr_eval(r, def->columns[i].content, &v) == 0 && v.type == VAL_NUM)
+                    for (g = 0; g < ngroups; g++) totals[g + 1][i] += v.num;
+            }
+        }
+        for (g = 0; g < ngroups; g++) {
+            value_t gv;
+            cr_eval(r, group_expr[g], &gv);
+            cr_group_text(&gv, group_val[g], sizeof(group_val[g]));
+        }
+        if (!r->summary) {
+            /* the record's lines: character columns wrapped to their width */
+            static char rec_lines[64][CR_LINE];
+            int nlines = 1, ln;
+            value_t vals[FRM_MAX_COLUMNS];
+            for (i = 0; i < def->num_columns; i++) {
+                cr_eval(r, def->columns[i].content, &vals[i]);
+                if (r->coltype[i] == 'C' && vals[i].type == VAL_CHAR) {
+                    int cnt = cr_mlcount(r, val_text(&vals[i]), def->columns[i].width);
+                    if (cnt > nlines) nlines = cnt;
+                }
+            }
+            if (nlines > 64) nlines = 64;
+            for (ln = 0; ln < nlines; ln++) rec_lines[ln][0] = '\0';
+            for (i = 0; i < def->num_columns; i++) {
+                int w = def->columns[i].width;
+                for (ln = 0; ln < nlines; ln++) {
+                    char cell[CR_LINE];
+                    if (r->coltype[i] == 'C') {
+                        char tr[CR_LINE];
+                        str_copy(tr, vals[i].type == VAL_CHAR ? val_text(&vals[i]) : "", sizeof(tr));
+                        trim_right(tr);
+                        cr_memoline(r, tr, w, ln + 1, cell, sizeof(cell));
+                    } else if (ln == 0) {
+                        cr_transform(r, &vals[i], r->colpict[i], cell, sizeof(cell));
+                    } else {
+                        cell[0] = '\0';
+                    }
+                    pad_right(cell, w, sizeof(cell));
+                    if (i > 0) strncat(rec_lines[ln], " ", CR_LINE - strlen(rec_lines[ln]) - 1);
+                    strncat(rec_lines[ln], cell, CR_LINE - strlen(rec_lines[ln]) - 1);
+                }
+            }
+            if (nlines > r->lines_left) {
+                if (nlines > r->max_lines_avail) {
+                    for (ln = 0; ln < nlines - 1; ln++) {
+                        cr_print(r, rec_lines[ln]);
+                        if (--r->lines_left == 0) cr_new_page(r);
+                    }
+                } else {
+                    cr_new_page(r);
+                    for (ln = 0; ln < nlines; ln++) cr_print(r, rec_lines[ln]);
+                    r->lines_left -= nlines;
+                }
+            } else {
+                for (ln = 0; ln < nlines; ln++) cr_print(r, rec_lines[ln]);
+                r->lines_left -= nlines;
+            }
+            if (r->lines_left == 0) cr_new_page(r);
+            if (r->spacing > 1 && r->lines_left > r->spacing - 1) {
+                for (ln = 2; ln <= r->spacing; ln++) { cr_print(r, NULL); r->lines_left--; }
+            }
+        }
+    }
+    /* the last subtotals, innermost first, then the grand total */
+    if (any_totals) {
+        for (g = ngroups - 1; g >= 0; g--) {
+            if (r->lines_left < 2) cr_new_page(r);
+            cr_print(r, g == 0 ? "** Subtotal **" : "* Subsubtotal *");
+            cr_totals_line(r, totals[g + 1], line, sizeof(line));
+            cr_print(r, line);
+        }
+        if (r->lines_left < 2) cr_new_page(r);
+        cr_print(r, "*** Total ***");
+        cr_totals_line(r, totals[0], line, sizeof(line));
+        cr_print(r, line);
+    }
+    if (def->eject_after && !noeject) cr_eject(r);
+    free(r);
 }

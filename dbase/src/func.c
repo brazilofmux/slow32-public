@@ -1158,34 +1158,97 @@ static int fn_transform(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resu
         *result = val_str(formatted);
         return 0;
     }
-    val_to_string(&args[0], buf, sizeof(buf));
-    /* Reuse apply_picture logic inline */
     {
-        const char *value = buf;
-        const char *picture = (args[1].type == VAL_CHAR) ? args[1].str : "";
-        int plen = strlen(picture);
-        int vlen = strlen(value);
-        int vi = 0, i;
-        if (plen == 0) {
+        /* Character, date and logical values: the guide's function string
+         * ('@' and letters, a space, then the template) and its template.
+         * Character: @! upper-cases, @R inserts the template's literal
+         * characters (without it they overwrite), @S<n> keeps n
+         * characters; A N X 9 # take a character as it is and ! upper-cases
+         * it.  Without @R the result is no longer than the value; with it,
+         * as long as the template.  Date: @E is the British order, else
+         * DTOC().  Logical: the template's first L or Y is T/F or Y/N, its
+         * other characters copied (Harbour's results where the guide is
+         * silent) */
+        const char *pic = args[1].type == VAL_CHAR ? val_text(&args[1]) : "";
+        char funcs[32] = "";
+        const char *tmpl = pic;
+        int upper = 0, insert = 0, scroll = 0, british = 0;
+        if (*pic == '@') {
+            int k = 0;
+            const char *p = pic + 1;
+            while (*p && *p != ' ' && k < (int)sizeof(funcs) - 1) funcs[k++] = *p++;
+            funcs[k] = '\0';
+            tmpl = *p == ' ' ? p + 1 : p;
+            for (p = funcs; *p; p++) {
+                char fc = (char)toupper((unsigned char)*p);
+                if (fc == '!') upper = 1;
+                else if (fc == 'R') insert = 1;
+                else if (fc == 'E') british = 1;
+                else if (fc == 'S') { scroll = atoi(p + 1); while (p[1] >= '0' && p[1] <= '9') p++; }
+            }
+        }
+        if (args[0].type == VAL_DATE) {
+            val_to_string(&args[0], buf, sizeof(buf));
+            if (british && strlen(buf) >= 8 && buf[2] == '/' && buf[5] == '/') {
+                char t[3] = { buf[0], buf[1], 0 };
+                buf[0] = buf[3]; buf[1] = buf[4]; buf[3] = t[0]; buf[4] = t[1];
+            }
             *result = val_str(buf);
             return 0;
         }
-        for (i = 0; i < plen && i < (int)sizeof(formatted) - 1; i++) {
-            char pc = picture[i];
-            char vc = (vi < vlen) ? value[vi] : ' ';
-            switch (pc) {
-            case '!': if (vc >= 'a' && vc <= 'z') vc -= 32; formatted[i] = vc; vi++; break;
-            case '9': formatted[i] = (vc >= '0' && vc <= '9') ? vc : ' '; vi++; break;
-            case 'A': formatted[i] = ((vc >= 'A' && vc <= 'Z') || (vc >= 'a' && vc <= 'z')) ? vc : ' '; vi++; break;
-            case 'X': formatted[i] = vc; vi++; break;
-            case '#': formatted[i] = (vc >= '0' && vc <= '9' || vc == ' ' || vc == '+' || vc == '-') ? vc : ' '; vi++; break;
-            default: formatted[i] = pc; break;
+        if (args[0].type == VAL_LOGIC) {
+            int i = 0, done = 0;
+            const char *t;
+            if (!*tmpl) { *result = val_str(args[0].logic ? "T" : "F"); return 0; }
+            for (t = tmpl; *t && i < (int)sizeof(formatted) - 1; t++) {
+                char tc = (char)toupper((unsigned char)*t);
+                if (tc == 'L' || tc == 'Y') {
+                    if (!done) formatted[i++] = tc == 'L' ? (args[0].logic ? 'T' : 'F') : (args[0].logic ? 'Y' : 'N');
+                    done = 1;
+                } else formatted[i++] = *t;
             }
+            formatted[i] = '\0';
+            *result = val_str(formatted);
+            return 0;
         }
-        formatted[i] = '\0';
+        if (args[0].type != VAL_CHAR) {
+            val_to_string(&args[0], buf, sizeof(buf));
+            *result = val_str(buf);
+            return 0;
+        }
+        {
+            const char *v = val_text(&args[0]);
+            int vlen = val_len(&args[0]), tlen = (int)strlen(tmpl);
+            int cap = (vlen > tlen ? vlen : tlen) + 1;
+            char *out = malloc((size_t)cap + 1);
+            int o = 0, vi = 0, t;
+            if (!out) { ctx->error = "Out of memory"; return -1; }
+            if (!tlen) {
+                memcpy(out, v, (size_t)vlen);
+                o = vlen;
+                if (upper) for (t = 0; t < o; t++) out[t] = (char)toupper((unsigned char)out[t]);
+            } else {
+                for (t = 0; t < tlen; t++) {
+                    char tc = tmpl[t];
+                    int symbol = strchr("ANX9#!anx", tc) != NULL;
+                    if (!insert && vi >= vlen) break;
+                    if (symbol) {
+                        char c = vi < vlen ? v[vi] : ' ';
+                        vi++;
+                        if (tc == '!' || upper) c = (char)toupper((unsigned char)c);
+                        out[o++] = c;
+                    } else {
+                        out[o++] = tc;
+                        if (!insert) vi++;
+                    }
+                }
+            }
+            if (scroll > 0 && o > scroll) o = scroll;
+            *result = val_strn(out, o);
+            free(out);
+        }
+        return 0;
     }
-    *result = val_str(formatted);
-    return 0;
 }
 
 /* ---- ISALPHA / ISUPPER / ISLOWER ---- */

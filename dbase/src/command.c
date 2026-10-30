@@ -5360,9 +5360,14 @@ static void cmd_report_form(dbf_t *db, lexer_t *l) {
 
     ctx_setup();
     /* Note: currently report_generate ignores WHILE/scope, passing them would require signature change */
-    report_generate(def, db, &expr_ctx, c.for_cond[0] ? c.for_cond : NULL,
-                    c.heading[0] ? c.heading : NULL,
-                    c.plain, c.summary, c.noeject, outfile);
+    if (report_clipper_layout())
+        report_generate_clipper(def, db, &expr_ctx, c.for_cond[0] ? c.for_cond : NULL,
+                                c.heading[0] ? c.heading : NULL,
+                                c.plain, c.summary, c.noeject, c.to_print, outfile);
+    else
+        report_generate(def, db, &expr_ctx, c.for_cond[0] ? c.for_cond : NULL,
+                        c.heading[0] ? c.heading : NULL,
+                        c.plain, c.summary, c.noeject, outfile);
 
     free(def);
     if (outfile != stdout)

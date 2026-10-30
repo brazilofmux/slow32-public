@@ -612,6 +612,7 @@ static int memo_line(const char *s, int width, int n, const char **start, int *l
 static int memo_lines(const char *s, int width) {
     const char *st;
     int len, n = 0;
+    if (!*s) return 0;   /* MLCOUNT("") is 0 */
     while (memo_line(s, width, n + 1, &st, &len)) n++;
     return n;
 }
@@ -624,9 +625,12 @@ static int fn_memoline(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
     if (memo_line(val_text(&args[0]), width, n, &st, &len)) {
         snprintf(r.str, sizeof(r.str), "%.*s", len, st);
         len = (int)strlen(r.str);
-        while (len < width && len < (int)sizeof(r.str) - 1) r.str[len++] = ' ';   /* padded to the width */
-        r.str[len] = '\0';
+    } else {
+        len = 0;   /* past the last line: blanks, the width wide */
     }
+    while (len < width && len < (int)sizeof(r.str) - 1) r.str[len++] = ' ';   /* padded to the width */
+    r.str[len] = '\0';
+    r = val_str(r.str);
     *result = r;
     return 0;
 }
