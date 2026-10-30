@@ -1,0 +1,11 @@
+// achoice.ch -- ACHOICE()'s user-function modes and answers
+#define AC_IDLE       0
+#define AC_HITTOP     1
+#define AC_HITBOTTOM  2
+#define AC_EXCEPT     3
+#define AC_NOITEM     4
+#define AC_ABORT      0
+#define AC_SELECT     1
+#define AC_CONT       2
+#define AC_GOTO       3
+#define AC_REDRAW     4

@@ -61,21 +61,77 @@ void prog_break_landed(void) {
 /* The Error class as the guide lists it: args, canDefault, canRetry,
  * canSubstitute, cargo, description, filename, genCode, operation,
  * osCode, severity, subCode, subSystem, tries */
+/* Clipper's view of one of our errors: the generic code (error.ch's EG_*)
+ * and description, the operation the message names, and the BASE
+ * subcode where it is known; a message this does not know keeps its own
+ * text as the description */
+static void clipper_error_class(int code, const char *msg, int *gen, const char **desc,
+                                char *op, int opsz, int *sub) {
+    static const struct { const char *op; int sub; } arith[] = {
+        { "+", 1081 }, { "-", 1082 }, { "*", 1083 }, { "/", 1084 }, { "%", 1085 }, { "**", 1088 },
+        { "^", 1088 }, { "=", 1070 }, { "<>", 1071 }, { "<", 1072 }, { "<=", 1073 }, { ">", 1074 },
+        { ">=", 1075 }, { "==", 1076 }, { "$", 1109 }, { ".NOT.", 1077 }, { ".AND.", 1078 }, { ".OR.", 1079 },
+        { NULL, 0 } };
+    int i;
+    *gen = 0;
+    *desc = msg;
+    op[0] = '\0';
+    *sub = 0;
+    if (strncmp(msg, "Type mismatch in ", 17) == 0) {
+        const char *what = msg + 17;
+        *gen = 1;
+        *desc = "Argument error";
+        if (strcmp(what, "comparison") == 0) what = "=";
+        else if (strcmp(what, "* or /") == 0) what = "*";
+        str_copy(op, what, opsz);
+        for (i = 0; arith[i].op; i++) if (strcmp(arith[i].op, what) == 0) *sub = arith[i].sub;
+        return;
+    }
+    if (strstr(msg, "ivision by zero")) { *gen = 5; *desc = "Zero divisor"; str_copy(op, "/", opsz); *sub = 1340; return; }
+    if (strncmp(msg, "Variable not found: ", 20) == 0 || strncmp(msg, "Field not found: ", 17) == 0) {
+        *gen = 14;
+        *desc = "Variable does not exist";
+        str_copy(op, msg[0] == 'V' ? msg + 20 : msg + 17, opsz);
+        str_upper(op);   /* the symbol, as Clipper names it */
+        *sub = 1003;
+        return;
+    }
+    if (strncmp(msg, "Unknown function: ", 18) == 0) { *gen = 12; *desc = "Function does not exist"; str_copy(op, msg + 18, opsz); return; }
+    if (strncmp(msg, "No exported method: ", 20) == 0) { *gen = 13; *desc = "No exported method"; str_copy(op, msg + 20, opsz); *sub = 1004; return; }
+    if (strncmp(msg, "No exported variable: ", 22) == 0) { *gen = 16; *desc = "No exported variable"; str_copy(op, msg + 22, opsz); *sub = 1005; return; }
+    if (strstr(msg, "out of bounds") || strstr(msg, "out of range")) { *gen = 2; *desc = "Bound error"; str_copy(op, "array access", opsz); *sub = 1132; return; }
+    switch (code) {
+    case ERR_FILE_NOT_FOUND: case ERR_CANNOT_OPEN: *gen = 21; *desc = "Open error"; *sub = 1001; break;
+    case ERR_CANNOT_CREATE: *gen = 20; *desc = "Create error"; *sub = 1004; break;
+    case ERR_FILE_IO: *gen = 23; *desc = "Read error"; break;
+    case ERR_OUT_OF_MEMORY: case ERR_TOO_MANY_VARS: *gen = 11; *desc = "Memory low"; break;
+    case ERR_NO_DATABASE: *gen = 35; *desc = "Workarea not in use"; *sub = 1020; break;
+    case ERR_ALIAS_NOT_FOUND: *gen = 15; *desc = "Alias does not exist"; *sub = 1002; break;
+    case ERR_STACK_OVERFLOW: *gen = 8; *desc = "Complexity error"; break;
+    case ERR_SYNTAX: case ERR_UNRECOGNIZED: *gen = 7; break;   /* our text says which */
+    default: break;
+    }
+}
+
 object_t *prog_new_error_object(int code, const char *description) {
     object_t *o = object_new("ERROR");
+    int gen, sub;
+    const char *desc;
+    char op[128];
     if (!o) return NULL;
+    clipper_error_class(code, description, &gen, &desc, op, (int)sizeof(op), &sub);
     *object_ivar(o, "args", 1) = val_nil();
     *object_ivar(o, "canDefault", 1) = val_logic(0);
     *object_ivar(o, "canRetry", 1) = val_logic(0);
     *object_ivar(o, "canSubstitute", 1) = val_logic(0);
     *object_ivar(o, "cargo", 1) = val_nil();
-    *object_ivar(o, "description", 1) = val_str(description);
+    *object_ivar(o, "description", 1) = val_str(desc);
     *object_ivar(o, "filename", 1) = val_str("");
-    *object_ivar(o, "genCode", 1) = val_num_dec((double)code, 0, 0);
-    *object_ivar(o, "operation", 1) = val_str("");
+    *object_ivar(o, "genCode", 1) = val_num_dec((double)gen, 0, 0);
+    *object_ivar(o, "operation", 1) = val_str(op);
     *object_ivar(o, "osCode", 1) = val_num_dec(0, 0, 0);
     *object_ivar(o, "severity", 1) = val_num_dec(2, 0, 0);
-    *object_ivar(o, "subCode", 1) = val_num_dec(0, 0, 0);
+    *object_ivar(o, "subCode", 1) = val_num_dec((double)sub, 0, 0);
     *object_ivar(o, "subSystem", 1) = val_str("BASE");
     *object_ivar(o, "tries", 1) = val_num_dec(0, 0, 0);
     return o;

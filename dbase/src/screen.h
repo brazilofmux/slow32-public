@@ -7,6 +7,7 @@
 struct ast_node;
 
 #define MAX_GETS 64
+#define KEY_NONE (-9999)   /* read_dbase_key(): no key (F2 is -1) */
 #define MAX_PROMPTS 20
 
 typedef struct {

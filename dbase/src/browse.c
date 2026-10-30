@@ -205,7 +205,7 @@ static int edit_cell(browse_state_t *bs, int field_idx,
         term_end_update();
 
         key = read_dbase_key();
-        if (key < 0) break;
+        if (key == KEY_NONE) break;
 
         if (key == 27) { /* Escape - cancel */
             str_copy(buf, original, sizeof(buf));
@@ -472,7 +472,7 @@ static void cmd_edit_impl(dbf_t *db, const char *args)
         term_end_update();
 
         key = read_dbase_key();
-        if (key < 0) break;
+        if (key == KEY_NONE) break;
 
         if (key == 27 || key == 23) break; /* Esc or Ctrl-W */
 
@@ -785,7 +785,7 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
 
     for (;;) {
         int key = read_dbase_key();
-        if (key < 0) break;
+        if (key == KEY_NONE) break;
         if (key == 27 || key == 23) break; /* Esc or Ctrl-W */
 
         if (key == DBASE_KEY_UP) {

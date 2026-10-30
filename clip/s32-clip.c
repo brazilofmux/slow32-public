@@ -1376,6 +1376,19 @@ static int g_nrules;
 
 static int load_prg(const char *path);
 
+/* #include's search: the including file's directory, then -I directories,
+ * then the compiler's own include/ (beside the s32-clip binary) */
+#define MAX_INCDIRS 16
+static const char *g_incdirs[MAX_INCDIRS];
+static int g_nincdirs;
+
+static int file_exists(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+    fclose(f);
+    return 1;
+}
+
 static int pp_find_def(const char *name, int n) {
     int i;
     for (i = g_ndefs - 1; i >= 0; i--) {
@@ -1674,8 +1687,18 @@ static int pp_directive(const char *path, int lineno, const char *p, int *cond, 
         file[k] = '\0';
         path_dir(path, dir, (int)sizeof(dir));
         snprintf(full, sizeof(full), "%s/%s", dir, file);
+        if (!file_exists(full)) {
+            int d;
+            for (d = 0; d < g_nincdirs; d++) {
+                snprintf(full, sizeof(full), "%s/%s", g_incdirs[d], file);
+                if (file_exists(full)) break;
+            }
+            if (d == g_nincdirs) {
+                fprintf(stderr, "%s:%d: #include %s: not found\n", path, lineno, file);
+                return -1;
+            }
+        }
         if (load_prg(full) != 0) {
-            fprintf(stderr, "%s:%d: #include %s: not found\n", path, lineno, file);
             return -1;
         }
         return 0;
@@ -2489,6 +2512,9 @@ int main(int argc, char **argv) {
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
             outpath = argv[++i];
+        } else if (strncmp(argv[i], "-I", 2) == 0) {
+            const char *d = argv[i][2] ? argv[i] + 2 : (i + 1 < argc ? argv[++i] : NULL);
+            if (d && g_nincdirs < MAX_INCDIRS - 1) g_incdirs[g_nincdirs++] = d;
         } else if (argv[i][0] != '-') {
             if (ninputs >= MAX_FILES) {
                 fprintf(stderr, "too many input files\n");
@@ -2496,6 +2522,13 @@ int main(int argc, char **argv) {
             }
             inputs[ninputs++] = argv[i];
         }
+    }
+    {   /* the compiler's own headers, beside the binary */
+        static char own[600];
+        char dir[512];
+        path_dir(argv[0], dir, (int)sizeof(dir));
+        snprintf(own, sizeof(own), "%s/include", dir);
+        if (g_nincdirs < MAX_INCDIRS) g_incdirs[g_nincdirs++] = own;
     }
     if (ninputs < 1 || !outpath) {
         fprintf(stderr, "Usage: s32-clip input.prg [more.prg ...] -o output.c\n");

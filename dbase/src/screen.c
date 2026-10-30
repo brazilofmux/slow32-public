@@ -53,17 +53,19 @@ static int in_key_handler;  /* re-entrancy guard */
 #define DBASE_KEY_DEL    7
 
 /* Extended key codes (above ASCII range) */
-#define DBASE_KEY_SHIFT_TAB 256
-#define DBASE_KEY_F1   257
-#define DBASE_KEY_F2   258
-#define DBASE_KEY_F3   259
-#define DBASE_KEY_F4   260
-#define DBASE_KEY_F5   261
-#define DBASE_KEY_F6   262
-#define DBASE_KEY_F7   263
-#define DBASE_KEY_F8   264
-#define DBASE_KEY_F9   265
-#define DBASE_KEY_F10  266
+/* Function keys as dBASE III and Clipper number them (inkey.ch): F1 is
+ * 28, F2 to F10 are -1 to -9 */
+#define DBASE_KEY_SHIFT_TAB 271
+#define DBASE_KEY_F1   28
+#define DBASE_KEY_F2   -1
+#define DBASE_KEY_F3   -2
+#define DBASE_KEY_F4   -3
+#define DBASE_KEY_F5   -4
+#define DBASE_KEY_F6   -5
+#define DBASE_KEY_F7   -6
+#define DBASE_KEY_F8   -7
+#define DBASE_KEY_F9   -8
+#define DBASE_KEY_F10  -9
 
 void screen_init(void) {
     memset(&scr, 0, sizeof(scr));
@@ -456,8 +458,8 @@ void screen_read(void) {
 
             for (;;) {
                 key = read_dbase_key();
-                if (key > 0 && screen_check_key_handler(key)) continue;
-                if (key == '\r' || key == '\n' || key == -1) {
+                if (key != KEY_NONE && key != 0 && screen_check_key_handler(key)) continue;
+                if (key == '\r' || key == '\n' || key == KEY_NONE) {
                     last_key = 13;
                     break;
                 }
@@ -866,7 +868,7 @@ int screen_menu_to(void) {
             term_end_update();
 
             key = read_dbase_key();
-            if (key > 0 && screen_check_key_handler(key)) continue;
+            if (key != KEY_NONE && key != 0 && screen_check_key_handler(key)) continue;
 
             if (key == '\r' || key == '\n') {
                 last_key = 13;
@@ -1271,7 +1273,7 @@ void screen_print_text(const char *s) {
 #if HAS_TERM
 int read_dbase_key(void) {
     int ch = term_getkey();
-    if (ch < 0) return -1;
+    if (ch < 0) return KEY_NONE;
     if (ch == 27) {
         /* Possible escape sequence — check if more bytes follow */
         if (!term_kbhit()) return 27;  /* bare Escape */
@@ -1388,7 +1390,7 @@ int screen_inkey(double timeout) {
             last_key = key;
             if (screen_check_key_handler(key)) return 0;
         }
-        return (key < 0) ? 0 : key;
+        return (key == KEY_NONE) ? 0 : key;
     }
 #endif
     /* Fallback: use getchar (blocking only, no timeout) */

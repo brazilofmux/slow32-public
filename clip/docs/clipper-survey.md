@@ -122,6 +122,19 @@ Approximations, by design or by this implementation's limits:
   ISPRINTER / DOSERROR answer for a single user with no printer; SETMODE
   is true for 25 x 80 only.
 
+## The standard headers (2026-10-29)
+
+`clip/include/*.ch`: inkey.ch, set.ch, error.ch, getexit.ch,
+setcurs.ch, box.ch, dbstruct.ch, directry.ch, fileio.ch, achoice.ch,
+dbedit.ch, memoedit.ch -- this project's own text, the names and values
+the language defines (checked against Harbour's).  `#include` looks in
+the including file's directory, then `-I` directories, then the
+compiler's include/ beside the s32-clip binary.  With them INKEY()'s
+function keys took the standard codes (F1 28, F2 to F10 -1 to -9,
+Shift-Tab 271), which dBASE III also used; the terminal reader keeps a
+value of its own for "no key" now that -1 is a key.  Not provided:
+std.ch (the commands are built in), and 5.3's headers.
+
 ## The order of work proposed
 
 Each step closes probes and is gated by both oracles (Harbour for the
@@ -203,12 +216,16 @@ The severe ones are marked.
    object and gives it to the handler; the handler BREAKs to the nearest
    RECOVER, or returns and the failed statement is abandoned; with no
    handler the sequence is recovered as before, RECOVER USING receiving
-   the object.  Not Clipper's yet: description and genCode are this
-   implementation's texts and codes, not the guide's ("argument error",
-   EG_ARG); operation and args are blank; canRetry / canSubstitute are
-   always false, so a handler's return value substitutes nothing;
-   ERRORBLOCK() with none posted returns NIL where Clipper returns the
-   default handler's block.
+   the object.  Since the header batch (below) the object carries
+   Clipper's genCode (error.ch's EG_*), description ("Argument error",
+   "Zero divisor", "Bound error", "Variable does not exist" ...), the
+   operation ("+", the variable's name, "array access") and the BASE
+   subCode (1081 for +, 1003, 1132 ...) -- probe fn-error-codes matches
+   Harbour on all of them; an error this mapping does not know keeps its
+   own text as the description.  Still not Clipper's: args is NIL;
+   canRetry / canSubstitute are always false, so a handler's return value
+   substitutes nothing; ERRORBLOCK() with none posted returns NIL where
+   Clipper returns the default handler's block.
 9. **The Get system, TBrowse** -- done 2026-10-29, interpreter and clip
    alike (dbase/src/getsys.c).  *Get:* GETNEW(row, col, block, name,
    picture, color) and the class's variables (buffer, changed, original,
