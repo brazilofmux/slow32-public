@@ -18,12 +18,13 @@
 #include "lex.h"
 #include "command.h"
 #include "func.h"
+#include "program.h"
 #include "ast.h"   /* dbase's own parser: expressions are parsed here, at compile time */
 
 #define MAX_LINE  512
 #define MAX_NEST  32
 #define MAX_LINES 4000
-#define MAX_FUNCS 64
+#define MAX_FUNCS 512
 #define MAX_FILES 64
 #define MAX_PARAMS 16
 #define MAX_NAME  32
@@ -2085,6 +2086,7 @@ static int load_prg(const char *path) {
     int in_text = 0;
     int in_block = 0;
     int cond[32], depth = 0, active, k;
+    prog_block_stack_t blocks = { { 0 }, 0 };   /* bare END, WHILE, STATIC FUNCTION (program.c) */
 
     if (already_loaded(path)) {
         return 0;
@@ -2139,16 +2141,33 @@ static int load_prg(const char *path) {
         }
         strip_comment(buf);
         pp_expand(buf);
-        p = skip_ws(buf);
-        if (*p == '\0') {
-            continue;
-        }
-        if (store_line(path, p, lineno, 0) != 0) {
-            fclose(in);
-            return -1;
-        }
-        if (is_kw(p, "TEXT")) {
-            in_text = 1;
+        /* A rule's result may hold several statements, ; between them
+         * (Clipper's preprocessor writes them so); each is a line here */
+        {
+            char *piece = buf, *q;
+            char quote = 0;
+            int more = 1;
+            while (more) {
+                char norm[MAX_LINE];
+                for (q = piece; *q; q++) {
+                    if (quote) { if (*q == quote) quote = 0; }
+                    else if (*q == '"' || *q == '\'') quote = *q;
+                    else if (*q == ';') break;
+                }
+                more = *q == ';';
+                *q = '\0';
+                p = skip_ws(prog_normalize_line(piece, &blocks, norm, (int)sizeof(norm)));
+                if (*p) {
+                    if (store_line(path, p, lineno, 0) != 0) {
+                        fclose(in);
+                        return -1;
+                    }
+                    if (is_kw(p, "TEXT")) {
+                        in_text = 1;
+                    }
+                }
+                piece = q + 1;
+            }
         }
     }
     fclose(in);
@@ -2391,7 +2410,7 @@ static int emit_stmt(emit_t *e, const char *p) {
         fprintf(e->out, is_kw(p, "EXIT") ? "break;\n" : "continue;\n");
         return 0;
     }
-    if (is_kw(p, "FOR")) {
+    if (is_kw(p, "FOR") && (isalpha((unsigned char)*skip_ws(p + 3)) || *skip_ws(p + 3) == '_')) {   /* FOR = x assigns a variable named FOR */
         if (open_block(e, 'F') != 0) {
             return -1;
         }
@@ -2403,7 +2422,7 @@ static int emit_stmt(emit_t *e, const char *p) {
         fprintf(e->out, "))) do {\n");
         return 0;
     }
-    if (is_kw(p, "NEXT")) {
+    if (is_kw(p, "NEXT") && (*skip_ws(p + 4) != '=' && !(skip_ws(p + 4)[0] == ':' && skip_ws(p + 4)[1] == '='))) {   /* NEXT = x: a variable named NEXT */
         if (close_block(e, 'F', "NEXT without FOR") != 0) {
             return -1;
         }
@@ -2832,7 +2851,7 @@ int main(int argc, char **argv) {
     const char *inputs[MAX_FILES];
     int ninputs = 0;
     FILE *out;
-    func_t fns[MAX_FUNCS];
+    static func_t fns[MAX_FUNCS];   /* 512 of them: off the stack */
     int nfns = 0;
     emit_t e;
     int top_stmts;

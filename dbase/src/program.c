@@ -12,6 +12,7 @@
 #include "ast.h"
 #include "screen.h"
 #include <ctype.h>
+#include <strings.h>
 
 static prog_state_t state;
 
@@ -334,6 +335,95 @@ void prog_get_compiled_loc(const char **file, int *line) {
     *line = compiled_line;
 }
 
+/* ---- Clipper's spellings at load time (program.h) ---- */
+
+static int kw_here(const char *p, const char *kw, const char **after) {
+    size_t n = strlen(kw);
+    if (strncasecmp(p, kw, n) != 0) return 0;
+    if (isalnum((unsigned char)p[n]) || p[n] == '_') return 0;
+    if (after) *after = skip_ws(p + n);
+    return 1;
+}
+
+/* The line ends here, or a comment does */
+static int line_ends(const char *p) {
+    p = skip_ws(p);
+    return *p == '\0' || (p[0] == '&' && p[1] == '&') || (p[0] == '/' && p[1] == '/');
+}
+
+static void block_push(prog_block_stack_t *st, char k) {
+    if (st->depth < (int)sizeof(st->kind)) st->kind[st->depth] = k;
+    st->depth++;
+}
+
+static void block_pop(prog_block_stack_t *st) {
+    if (st->depth > 0) st->depth--;
+}
+
+const char *prog_normalize_line(const char *line, prog_block_stack_t *st, char *out, int outsz) {
+    const char *p = skip_ws(line), *q;
+    size_t lead = (size_t)(p - line);
+
+    /* STATIC FUNCTION name / STATIC PROCEDURE name: file-local in Clipper;
+     * one file here.  FUNC and PROC are the headers' four-letter forms. */
+    {
+        const char *h = p;
+        int is_static = kw_here(p, "STATIC", &q);
+        if (is_static) h = q;
+        if (kw_here(h, "FUNCTION", &q) || kw_here(h, "FUNC", &q)) {
+            snprintf(out, (size_t)outsz, "%.*sFUNCTION %s", (int)lead, line, q);
+            st->depth = 0;
+            return out;
+        }
+        if (kw_here(h, "PROCEDURE", &q) || kw_here(h, "PROC", &q)) {
+            snprintf(out, (size_t)outsz, "%.*sPROCEDURE %s", (int)lead, line, q);
+            st->depth = 0;
+            return out;
+        }
+    }
+    /* WHILE cond, without DO (WHILE = x assigns a variable named WHILE) */
+    if (kw_here(p, "WHILE", &q) && *q && *q != '=' && !(q[0] == ':' && q[1] == '=')) {
+        snprintf(out, (size_t)outsz, "%.*sDO %s", (int)lead, line, p);
+        block_push(st, 'W');
+        return out;
+    }
+    if (kw_here(p, "DO", &q)) {
+        if (kw_here(q, "WHILE", NULL)) block_push(st, 'W');
+        else if (kw_here(q, "CASE", NULL)) block_push(st, 'C');
+        return line;
+    }
+    if (kw_here(p, "IF", &q) && *q) { block_push(st, 'I'); return line; }
+    /* FOR i = ... opens a loop; FOR = .T. assigns a variable named FOR */
+    if (kw_here(p, "FOR", &q) && (isalpha((unsigned char)*q) || *q == '_') && !kw_here(q, "EACH", NULL)) {
+        block_push(st, 'F');
+        return line;
+    }
+    if (kw_here(p, "BEGIN", &q) && kw_here(q, "SEQUENCE", NULL)) { block_push(st, 'Q'); return line; }
+    if (kw_here(p, "ENDIF", NULL) || kw_here(p, "ENDDO", NULL) || kw_here(p, "ENDCASE", NULL) ||
+        (kw_here(p, "NEXT", &q) && *q != '=' && !(q[0] == ':' && q[1] == '='))) {   /* NEXT = x: a variable */
+        block_pop(st);
+        return line;
+    }
+    if (kw_here(p, "END", &q)) {
+        if (kw_here(q, "SEQUENCE", NULL)) { block_pop(st); return line; }
+        if (line_ends(q)) {   /* bare END: the innermost block's own closer */
+            const char *closer = "END SEQUENCE";
+            char k = st->depth > 0 && st->depth <= (int)sizeof(st->kind) ? st->kind[st->depth - 1] : 'Q';
+            switch (k) {
+            case 'I': closer = "ENDIF"; break;
+            case 'W': closer = "ENDDO"; break;
+            case 'C': closer = "ENDCASE"; break;
+            case 'F': closer = "NEXT"; break;
+            default: break;
+            }
+            block_pop(st);
+            snprintf(out, (size_t)outsz, "%.*s%s%s", (int)lead, line, closer, q);
+            return out;
+        }
+    }
+    return line;
+}
+
 void prog_error(int code, const char *message) {
     error_state.code = code;
     str_copy(error_state.message, message, sizeof(error_state.message));
@@ -585,6 +675,7 @@ static program_t *prog_load(const char *filename) {
         return NULL;
     }
 
+    prog_block_stack_t blocks = { { 0 }, 0 };   /* for bare END (prog_normalize_line) */
     while (fgets(line, sizeof(line), fp)) {
         trim_right(line);
 
@@ -612,7 +703,10 @@ static program_t *prog_load(const char *filename) {
             break;
         }
 
-        prog->lines[prog->nlines] = strdup(line);
+        {
+            char norm[MAX_LINE_LEN];
+            prog->lines[prog->nlines] = strdup(prog_normalize_line(line, &blocks, norm, (int)sizeof(norm)));
+        }
         prog->nlines++;
     }
 
@@ -919,9 +1013,9 @@ static int scan_next(program_t *prog, int from) {
         str_copy(line, prog->lines[i], MAX_LINE_LEN);
         prog_preprocess(line, cmd_get_memvar_store());
         p = skip_ws(line);
-        if (line_is_kw(p, "FOR"))
+        if (line_is_kw(p, "FOR") && (isalpha((unsigned char)*skip_ws(p + 3)) || *skip_ws(p + 3) == '_'))
             depth++;
-        else if (line_is_kw(p, "NEXT")) {
+        else if (line_is_kw(p, "NEXT") && (*skip_ws(p + 4) != '=' && !(skip_ws(p + 4)[0] == ':' && skip_ws(p + 4)[1] == '='))) {
             depth--;
             if (depth == 0) return i;
         }
@@ -2878,7 +2972,7 @@ int prog_execute_line(char *line) {
         return 0;
     }
 
-    if (str_imatch(p, "FOR")) {
+    if (str_imatch(p, "FOR") && (isalpha((unsigned char)*skip_ws(p + 3)) || *skip_ws(p + 3) == '_')) {   /* FOR = x: a variable named FOR */
         prog_for(skip_ws(p + 3));
         return 0;
     }
@@ -2893,7 +2987,7 @@ int prog_execute_line(char *line) {
         return 0;
     }
 
-    if (str_imatch(p, "NEXT")) {
+    if (str_imatch(p, "NEXT") && (*skip_ws(p + 4) != '=' && !(skip_ws(p + 4)[0] == ':' && skip_ws(p + 4)[1] == '='))) {   /* NEXT = x: a variable named NEXT */
         prog_next();
         return 0;
     }

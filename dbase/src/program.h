@@ -224,4 +224,16 @@ memvar_store_t *prog_get_memvar_store(void);
 /* Pre-process line: handle comments and macro substitution */
 void prog_preprocess(char *line, memvar_store_t *store);
 
+/* Clipper's spellings, resolved as a file is loaded (both loaders call
+ * this on each logical line): STATIC FUNCTION / PROCEDURE lose the
+ * STATIC, WHILE alone is DO WHILE, and a bare END closes the innermost
+ * IF / DO WHILE / DO CASE / BEGIN SEQUENCE / FOR, which a stack of open
+ * blocks remembers (a FUNCTION or PROCEDURE header empties it).
+ * Returns out, or line itself when nothing changed. */
+typedef struct {
+    char kind[64];
+    int depth;
+} prog_block_stack_t;
+const char *prog_normalize_line(const char *line, prog_block_stack_t *st, char *out, int outsz);
+
 #endif
