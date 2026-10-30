@@ -22,6 +22,7 @@ for prg in "${PROBES[@]}"; do
     n=$(basename "$prg" .prg)
     w=$(mktemp -d "$OUT/w.XXXX")
     cp "$prg" "$w/"
+    cp "$HERE"/probes/*.ch "$w/" 2>/dev/null   # headers a probe #includes
     podman run --rm -v "$w":/work slow32:harbour-oracle "$n.prg" > "$OUT/$n.hb" 2>&1
     rc=$?
     if [ $rc -eq 2 ] && grep -q ORACLE-COMPILE-FAIL "$OUT/$n.hb"; then

@@ -31,7 +31,7 @@ speed.  Summer '87 programs are the subset they are.
 | Commands | 110 | nearly all by first word; their clauses not yet checked |
 | Statements | 22 | the dBASE ones (DO, IF, FOR, PRIVATE, PUBLIC, PARAMETERS, RETURN, BEGIN SEQUENCE, LOCAL in part) |
 | Operators | 28 | the dBASE ones |
-| Directives (preprocessor) | 10 | none |
+| Directives (preprocessor) | 10 | all ten in s32-clip (step 7); the interpreter has none |
 | Classes (Error, Get, TBrowse, TBColumn) | 4 | none |
 | Get System | 10 | none (dbase has its own @ SAY/GET/READ) |
 | Drivers (RDD) | 31 | DBF/NDX2 only, by design (NDX ruling 2026-10-29) |
@@ -142,8 +142,19 @@ The severe ones are marked.
    body names, taken when it was made and kept up to date by the block --
    two blocks sharing one detached local do not see each other's changes
    (Clipper's do).  Compiled blocks are C functions.
-7. **The preprocessor** -- #define, #include, #ifdef first; #command and
-   #translate are a subsystem of their own.
+7. **The preprocessor** -- done 2026-10-29, in s32-clip's loader (a
+   Clipper program is compiled; the interpreter does not preprocess):
+   #define (case-sensitive constants and NAME(a, b) pseudofunctions),
+   #undef, #ifdef / #ifndef / #else / #endif, #include "file" (beside
+   the including file), #error, #stdout, and #command / #xcommand /
+   #translate / #xtranslate with literal words (any case) and `<name>`
+   markers that take the text up to the next literal, `<"name">` and
+   `#<name>` stringifying; lines expand until nothing changes.  `//` and
+   `/* */` comments go first.  Not yet: optional clauses `[...]`, list
+   and restricted markers (`<x,...>`, `<x: A, B>`), the 4-letter
+   abbreviation rule that #command (not #xcommand) allows, and the
+   standard header STD.CH (the built-in commands are still parsed, not
+   rules).
 8. **The error system** -- ERRORBLOCK, error objects, BREAK(value): needs
    the `:` send operator and objects -- severe.
 9. **The Get system, TBrowse** -- objects again; after 8.

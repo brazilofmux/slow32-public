@@ -1301,6 +1301,385 @@ static int store_line(const char *path, const char *text, int lineno, int is_tex
     return 0;
 }
 
+/* ---- The preprocessor (Clipper's, the part programs lean on):
+ * #define (constants, case-sensitive, and NAME(a, b) pseudofunctions),
+ * #undef, #ifdef / #ifndef / #else / #endif, #include, #error, #stdout,
+ * #command / #xcommand (a statement's shape: literal words and <name>
+ * markers that take the text up to the next literal) and #translate /
+ * #xtranslate (the same anywhere in a line).  Lines are expanded as they
+ * are loaded, until nothing changes. ---- */
+
+#define PP_MAX_DEFS 512
+#define PP_MAX_RULES 256
+typedef struct {
+    char name[64];
+    int nparams;          /* -1: a constant, else a pseudofunction */
+    char params[8][32];
+    char body[MAX_LINE];
+} pp_define_t;
+typedef struct {
+    int anywhere;         /* #translate: not only at the start of a line */
+    char pattern[MAX_LINE];
+    char result[MAX_LINE];
+} pp_rule_t;
+static pp_define_t g_defs[PP_MAX_DEFS];
+static int g_ndefs;
+static pp_rule_t g_rules[PP_MAX_RULES];
+static int g_nrules;
+
+static int load_prg(const char *path);
+
+static int pp_find_def(const char *name, int n) {
+    int i;
+    for (i = g_ndefs - 1; i >= 0; i--) {
+        if ((int)strlen(g_defs[i].name) == n && strncmp(g_defs[i].name, name, (size_t)n) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static const char *pp_word(const char *p, char *w, int n) {
+    int i = 0;
+    p = skip_ws(p);
+    while ((isalnum((unsigned char)*p) || *p == '_') && i < n - 1) {
+        w[i++] = *p++;
+    }
+    w[i] = '\0';
+    return p;
+}
+
+/* #define NAME body / NAME(a, b) body */
+static int pp_define(const char *p) {
+    pp_define_t *d;
+    if (g_ndefs >= PP_MAX_DEFS) {
+        return -1;
+    }
+    d = &g_defs[g_ndefs];
+    memset(d, 0, sizeof(*d));
+    p = pp_word(p, d->name, (int)sizeof(d->name));
+    if (!d->name[0]) {
+        return -1;
+    }
+    d->nparams = -1;
+    if (*p == '(') {   /* no space before (: a pseudofunction */
+        d->nparams = 0;
+        p++;
+        while (*(p = skip_ws(p)) && *p != ')') {
+            if (d->nparams >= 8) {
+                return -1;
+            }
+            p = pp_word(p, d->params[d->nparams++], 32);
+            p = skip_ws(p);
+            if (*p == ',') p++;
+        }
+        if (*p == ')') p++;
+    }
+    snprintf(d->body, sizeof(d->body), "%s", skip_ws(p));
+    rtrim(d->body);
+    g_ndefs++;
+    return 0;
+}
+
+/* Identifiers named by #define, replaced outside strings; 1 if anything was */
+static int pp_apply_defines(char *line) {
+    char out[MAX_LINE];
+    const char *p = line;
+    int o = 0, changed = 0;
+    char quote = 0;
+    while (*p && o < MAX_LINE - 1) {
+        if (quote) {
+            if (*p == quote) quote = 0;
+            out[o++] = *p++;
+            continue;
+        }
+        if (*p == '"' || *p == '\'') {
+            quote = *p;
+            out[o++] = *p++;
+            continue;
+        }
+        if ((isalpha((unsigned char)*p) || *p == '_') && (p == line || !(isalnum((unsigned char)p[-1]) || p[-1] == '_'))) {
+            const char *s = p;
+            int d;
+            while (isalnum((unsigned char)*p) || *p == '_') p++;
+            d = pp_find_def(s, (int)(p - s));
+            if (d >= 0 && g_defs[d].nparams < 0) {
+                o += snprintf(out + o, (size_t)(MAX_LINE - o), "%s", g_defs[d].body);
+                changed = 1;
+            } else if (d >= 0 && *skip_ws(p) == '(') {
+                /* a pseudofunction: its arguments, top-level commas */
+                char args[8][MAX_LINE];
+                int na = 0, depth = 0, k = 0;
+                const char *q = skip_ws(p) + 1, *b;
+                char aq = 0;
+                memset(args, 0, sizeof(args));
+                while (*q && (depth > 0 || aq || *q != ')')) {
+                    if (aq) { if (*q == aq) aq = 0; }
+                    else if (*q == '"' || *q == '\'') aq = *q;
+                    else if (*q == '(' || *q == '[' || *q == '{') depth++;
+                    else if (*q == ')' || *q == ']' || *q == '}') depth--;
+                    if (!aq && depth == 0 && *q == ',') {
+                        na++;
+                        k = 0;
+                        q++;
+                        continue;
+                    }
+                    if (na < 8 && k < MAX_LINE - 1) args[na][k++] = *q;
+                    q++;
+                }
+                if (*q == ')') q++;
+                if (k > 0 || na > 0) na++;
+                for (b = g_defs[d].body; *b && o < MAX_LINE - 1;) {
+                    if (isalpha((unsigned char)*b) || *b == '_') {
+                        const char *w = b;
+                        int pi, done = 0;
+                        while (isalnum((unsigned char)*b) || *b == '_') b++;
+                        for (pi = 0; pi < g_defs[d].nparams; pi++) {
+                            if ((int)strlen(g_defs[d].params[pi]) == (int)(b - w) &&
+                                !strncmp(g_defs[d].params[pi], w, (size_t)(b - w))) {
+                                char a[MAX_LINE];
+                                snprintf(a, sizeof(a), "%s", skip_ws(pi < na ? args[pi] : ""));
+                                rtrim(a);
+                                o += snprintf(out + o, (size_t)(MAX_LINE - o), "%s", a);
+                                done = 1;
+                                break;
+                            }
+                        }
+                        if (!done) o += snprintf(out + o, (size_t)(MAX_LINE - o), "%.*s", (int)(b - w), w);
+                    } else {
+                        out[o++] = *b++;
+                    }
+                }
+                p = q;
+                changed = 1;
+            } else {
+                o += snprintf(out + o, (size_t)(MAX_LINE - o), "%.*s", (int)(p - s), s);
+            }
+            continue;
+        }
+        out[o++] = *p++;
+    }
+    out[o < MAX_LINE ? o : MAX_LINE - 1] = '\0';
+    if (changed) strcpy(line, out);
+    return changed;
+}
+
+/* A #command / #translate pattern against text: literal words (any case),
+ * other characters as they are, <name> markers taking the text up to the
+ * next literal (or the end).  The matched markers' text into vals. */
+#define PP_MAX_MARKERS 16
+static int pp_match(const char *pat, const char *text, char names[][32], char vals[][MAX_LINE],
+                    int *nm, const char **end) {
+    const char *p = skip_ws(pat), *t = skip_ws(text);
+    *nm = 0;
+    while (*p) {
+        if (*p == '<') {   /* a marker */
+            const char *close = strchr(p, '>');
+            const char *lit;
+            char litw[64];
+            int li = 0, depth = 0;
+            char q = 0;
+            const char *v = t;
+            if (!close || *nm >= PP_MAX_MARKERS) return 0;
+            snprintf(names[*nm], 32, "%.*s", (int)(close - p - 1), p + 1);
+            p = skip_ws(close + 1);
+            lit = p;   /* the next literal, if any */
+            while ((isalnum((unsigned char)*lit) || *lit == '_') && li < 63) litw[li++] = *lit++;
+            litw[li] = '\0';
+            if (!li && *p && *p != '<') { litw[0] = *p; litw[1] = '\0'; li = 1; }
+            while (*t) {
+                if (!q && depth == 0 && li) {
+                    if (isalpha((unsigned char)litw[0])) {
+                        if ((t == v || !(isalnum((unsigned char)t[-1]) || t[-1] == '_')) &&
+                            !strncasecmp(t, litw, (size_t)li) && !(isalnum((unsigned char)t[li]) || t[li] == '_'))
+                            break;
+                    } else if (*t == litw[0]) {
+                        break;
+                    }
+                }
+                if (q) { if (*t == q) q = 0; }
+                else if (*t == '"' || *t == '\'') q = *t;
+                else if (*t == '(' || *t == '[' || *t == '{') depth++;
+                else if (*t == ')' || *t == ']' || *t == '}') depth--;
+                t++;
+            }
+            snprintf(vals[*nm], MAX_LINE, "%.*s", (int)(t - v), v);
+            rtrim(vals[*nm]);
+            if (!vals[*nm][0]) return 0;
+            (*nm)++;
+            continue;
+        }
+        if (isalpha((unsigned char)*p) || *p == '_') {   /* a literal word */
+            const char *w = p;
+            int n;
+            while (isalnum((unsigned char)*p) || *p == '_') p++;
+            n = (int)(p - w);
+            if (strncasecmp(t, w, (size_t)n) != 0 || isalnum((unsigned char)t[n]) || t[n] == '_') return 0;
+            t = skip_ws(t + n);
+            p = skip_ws(p);
+            continue;
+        }
+        if (*t != *p) return 0;   /* punctuation */
+        t = skip_ws(t + 1);
+        p = skip_ws(p + 1);
+    }
+    *end = t;
+    return 1;
+}
+
+static void pp_result(const char *res, char names[][32], char vals[][MAX_LINE], int nm, char *out, int size) {
+    int o = 0;
+    while (*res && o < size - 1) {
+        int stringify = 0, i;
+        const char *r = res;
+        if (r[0] == '<' && r[1] == '"') { stringify = 1; r += 2; }
+        else if (r[0] == '#' && r[1] == '<') { stringify = 1; r += 2; }
+        else if (r[0] == '<') { r += 1; }
+        else { out[o++] = *res++; continue; }
+        for (i = 0; i < nm; i++) {
+            int n = (int)strlen(names[i]);
+            if (!strncmp(r, names[i], (size_t)n) && (r[n] == '>' || (stringify && r[n] == '"' && r[n + 1] == '>'))) {
+                o += snprintf(out + o, (size_t)(size - o), stringify ? "\"%s\"" : "%s", vals[i]);
+                res = r + n + (r[n] == '"' ? 2 : 1);
+                break;
+            }
+        }
+        if (i == nm) out[o++] = *res++;
+    }
+    out[o < size ? o : size - 1] = '\0';
+}
+
+/* #command rules at the start of the line, #translate rules anywhere */
+static int pp_apply_rules(char *line) {
+    int i;
+    for (i = g_nrules - 1; i >= 0; i--) {
+        char names[PP_MAX_MARKERS][32];
+        char vals[PP_MAX_MARKERS][MAX_LINE];
+        int nm;
+        const char *end;
+        const char *at = skip_ws(line);
+        for (;;) {
+            if (pp_match(g_rules[i].pattern, at, names, vals, &nm, &end) &&
+                (g_rules[i].anywhere || *skip_ws(end) == '\0')) {
+                char res[MAX_LINE], out[MAX_LINE];
+                pp_result(g_rules[i].result, names, vals, nm, res, (int)sizeof(res));
+                snprintf(out, sizeof(out), "%.*s%s%s", (int)(at - line), line, res, end);
+                strcpy(line, out);
+                return 1;
+            }
+            if (!g_rules[i].anywhere || !*at) break;
+            at++;
+        }
+    }
+    return 0;
+}
+
+static void pp_expand(char *line) {
+    int n;
+    for (n = 0; n < 32 && (pp_apply_defines(line) | pp_apply_rules(line)); n++) {}
+}
+
+/* A directive line (#...); cond/depth: the #if stack of this file */
+static int pp_directive(const char *path, int lineno, const char *p, int *cond, int *depth) {
+    char w[32];
+    int active = 1, i;
+    for (i = 0; i < *depth; i++) active = active && cond[i];
+    p = pp_word(p + 1, w, (int)sizeof(w));
+    for (i = 0; w[i]; i++) w[i] = (char)tolower((unsigned char)w[i]);
+    if (!strcmp(w, "ifdef") || !strcmp(w, "ifndef")) {
+        char name[64];
+        pp_word(p, name, (int)sizeof(name));
+        if (*depth >= 32) return -1;
+        cond[(*depth)++] = (pp_find_def(name, (int)strlen(name)) >= 0) == (w[2] == 'd');
+        return 0;
+    }
+    if (!strcmp(w, "else")) {
+        if (*depth < 1) { fprintf(stderr, "%s:%d: #else without #ifdef\n", path, lineno); return -1; }
+        cond[*depth - 1] = !cond[*depth - 1];
+        return 0;
+    }
+    if (!strcmp(w, "endif")) {
+        if (*depth < 1) { fprintf(stderr, "%s:%d: #endif without #ifdef\n", path, lineno); return -1; }
+        (*depth)--;
+        return 0;
+    }
+    if (!active) return 0;
+    if (!strcmp(w, "define")) {
+        if (pp_define(p) != 0) { fprintf(stderr, "%s:%d: bad #define\n", path, lineno); return -1; }
+        return 0;
+    }
+    if (!strcmp(w, "undef")) {
+        char name[64];
+        int d;
+        pp_word(p, name, (int)sizeof(name));
+        while ((d = pp_find_def(name, (int)strlen(name))) >= 0) {
+            g_defs[d] = g_defs[--g_ndefs];
+        }
+        return 0;
+    }
+    if (!strcmp(w, "include")) {
+        char file[256], dir[256], full[600];
+        const char *q = skip_ws(p);
+        char close = *q == '<' ? '>' : '"';
+        int k = 0;
+        if (*q == '"' || *q == '<') q++;
+        while (*q && *q != close && k < 255) file[k++] = *q++;
+        file[k] = '\0';
+        path_dir(path, dir, (int)sizeof(dir));
+        snprintf(full, sizeof(full), "%s/%s", dir, file);
+        if (load_prg(full) != 0) {
+            fprintf(stderr, "%s:%d: #include %s: not found\n", path, lineno, file);
+            return -1;
+        }
+        return 0;
+    }
+    if (!strcmp(w, "error")) {
+        fprintf(stderr, "%s:%d: #error %s\n", path, lineno, skip_ws(p));
+        return -1;
+    }
+    if (!strcmp(w, "stdout")) {
+        printf("%s\n", skip_ws(p));
+        return 0;
+    }
+    if (!strcmp(w, "command") || !strcmp(w, "xcommand") || !strcmp(w, "translate") || !strcmp(w, "xtranslate")) {
+        const char *arrow = strstr(p, "=>");
+        if (!arrow || g_nrules >= PP_MAX_RULES) { fprintf(stderr, "%s:%d: bad #%s\n", path, lineno, w); return -1; }
+        g_rules[g_nrules].anywhere = strstr(w, "translate") != NULL;
+        p = skip_ws(p);
+        snprintf(g_rules[g_nrules].pattern, MAX_LINE, "%.*s", (int)(arrow - p), p);
+        rtrim(g_rules[g_nrules].pattern);
+        snprintf(g_rules[g_nrules].result, MAX_LINE, "%s", skip_ws(arrow + 2));
+        g_nrules++;
+        return 0;
+    }
+    fprintf(stderr, "%s:%d: unknown directive #%s\n", path, lineno, w);
+    return -1;
+}
+
+/* Clipper's comments: // to the end of the line, and block comments, which
+ * may span lines (*in_block carries one over); quotes respected */
+static void strip_clipper_comments(char *line, int *in_block) {
+    char *r = line, *w = line;
+    char quote = 0;
+    while (*r) {
+        if (*in_block) {
+            if (r[0] == '*' && r[1] == '/') { *in_block = 0; r += 2; }
+            else r++;
+            continue;
+        }
+        if (quote) {
+            if (*r == quote) quote = 0;
+            *w++ = *r++;
+            continue;
+        }
+        if (*r == '"' || *r == '\'') { quote = *r; *w++ = *r++; continue; }
+        if (r[0] == '/' && r[1] == '/') break;
+        if (r[0] == '/' && r[1] == '*') { *in_block = 1; r += 2; continue; }
+        *w++ = *r++;
+    }
+    *w = '\0';
+}
+
 /* Lines as the interpreter's prog_load reads them: trailing blanks off, a
  * line ending in ; joined to the next, numbered by logical line. */
 static int load_prg(const char *path) {
@@ -1309,6 +1688,8 @@ static int load_prg(const char *path) {
     char next[MAX_LINE];
     int lineno = 0;
     int in_text = 0;
+    int in_block = 0;
+    int cond[32], depth = 0, active, k;
 
     if (already_loaded(path)) {
         return 0;
@@ -1348,7 +1729,21 @@ static int load_prg(const char *path) {
             }
             continue;
         }
+        strip_clipper_comments(buf, &in_block);
+        p = skip_ws(buf);
+        if (*p == '#') {
+            if (pp_directive(path, lineno, p, cond, &depth) != 0) {
+                fclose(in);
+                return -1;
+            }
+            continue;
+        }
+        for (active = 1, k = 0; k < depth; k++) active = active && cond[k];
+        if (!active) {
+            continue;
+        }
         strip_comment(buf);
+        pp_expand(buf);
         p = skip_ws(buf);
         if (*p == '\0') {
             continue;
