@@ -1,7 +1,8 @@
 dBASE III Clone for SLOW-32
 Stage 9: AST Expressions
 
-. Factorial 5:        120
+. 
+Factorial 5:        120
 Fib 4:          3
 Fib 5:          5
 Iterative 12!:  479001600

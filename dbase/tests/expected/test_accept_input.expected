@@ -1,7 +1,10 @@
 dBASE III Clone for SLOW-32
 Stage 9: AST Expressions
 
-. Enter name: . World
-. Enter value: .         42
-.         50
+. Enter name: . 
+World
+. Enter value: . 
+        42
+. 
+        50
 . 

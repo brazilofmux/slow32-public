@@ -1,6 +1,9 @@
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdarg.h>
+#include <stdlib.h>
+#define UTIL_NO_PRINTF_WRAP
 #include "util.h"
 
 void str_upper(char *s) {
@@ -150,4 +153,41 @@ int str_like(const char *text, const char *pattern) {
         }
         return 0;
     }
+}
+
+/* ---- Console output (see util.h) ---- */
+
+static int g_at_bol = 1;
+
+int  out_at_line_start(void)     { return g_at_bol; }
+void out_set_line_start(int bol) { g_at_bol = bol; }
+
+int out_printf(const char *fmt, ...) {
+    char small[1024];
+    char *buf = small;
+    va_list ap;
+    int len;
+
+    va_start(ap, fmt);
+    len = vsnprintf(small, sizeof(small), fmt, ap);
+    va_end(ap);
+    if (len < 0)
+        return len;
+    if (len >= (int)sizeof(small)) {
+        buf = malloc((size_t)len + 1);
+        if (!buf)
+            return -1;
+        va_start(ap, fmt);
+        vsnprintf(buf, (size_t)len + 1, fmt, ap);
+        va_end(ap);
+    }
+    if (len > 0) {
+        if (!g_at_bol && buf[len - 1] == '\n' && buf[0] != '\n')
+            fputc('\n', stdout);
+        fputs(buf, stdout);
+        g_at_bol = buf[len - 1] == '\n';
+    }
+    if (buf != small)
+        free(buf);
+    return len;
 }

@@ -199,41 +199,36 @@ int clip_truth(const char *expr) {
     return 0;
 }
 
+void clip_qv(const value_t *v, int first);
+
 void clip_q(const char *expr, int newline) {
     const char *p = expr;
-    int first = 1;
     expr_ctx_t *ctx;
+    value_t vals[MAX_FUNC_ARGS];
+    int n = 0, i;
 
     cmd_ctx_setup();
     ctx = cmd_get_expr_ctx();
-    while (*p) {
-        value_t val;
-        char buf[256];
-        while (*p == ' ' || *p == '\t') {
-            p++;
-        }
-        if (*p == '\0') {
-            break;
-        }
-        if (expr_eval(ctx, &p, &val) != 0) {
+    /* QOUT(): the arguments first, then the new line and the output */
+    while (*p == ' ' || *p == '\t') p++;
+    while (*p && n < MAX_FUNC_ARGS) {
+        if (expr_eval(ctx, &p, &vals[n]) != 0) {
             expr_failed(ctx);
             return;
         }
-        val_to_display(&val, buf, sizeof(buf));
-        if (!first) {
-            cmd_output(" ");
+        n++;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p != ',') {
+            break;
         }
-        cmd_output(buf);
-        first = 0;
-        while (*p == ' ' || *p == '\t') {
-            p++;
-        }
-        if (*p == ',') {
-            p++;
-        }
+        p++;
+        while (*p == ' ' || *p == '\t') p++;
     }
     if (newline) {
         cmd_output("\n");
+    }
+    for (i = 0; i < n; i++) {
+        clip_qv(&vals[i], i == 0);
     }
 }
 

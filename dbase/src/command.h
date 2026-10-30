@@ -73,6 +73,8 @@ int cmd_get_unique(void);
 FILE *cmd_get_alternate_fp(void);
 int   cmd_get_alternate_on(void);
 void  cmd_output(const char *s);
+int   cmd_output_at_line_start(void);
+void  cmd_output_set_line_start(int bol);
 void  cmd_output_fmt(const char *fmt, ...);
 
 /* SET options access */

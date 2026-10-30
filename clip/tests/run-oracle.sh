@@ -33,7 +33,9 @@ else
 fi
 
 # Banner (3 lines), then the prompts ". " for SET TALK OFF and DO, the
-# program's output, and the prompt for QUIT: strip exactly those.
+# program's output, and the prompt for QUIT: strip exactly those.  ? starts
+# its line, so the program may end mid-line, and the QUIT prompt then
+# starts one of its own: trailing newlines are not compared (either side).
 strip_interp() {
     python3 -c '
 import sys
@@ -42,7 +44,7 @@ lines = s.split(b"\n", 3)
 s = lines[3] if len(lines) > 3 else b""
 if s.startswith(b". . "): s = s[4:]
 if s.endswith(b". "): s = s[:-2]
-sys.stdout.buffer.write(s)'
+sys.stdout.buffer.write(s.rstrip(b"\n"))'
 }
 
 # The lines of the first dbase test script in dir that DOes name, up to it
@@ -83,7 +85,8 @@ for prg in "${CORPUS[@]}"; do
     fi
     (cd "$wi" && printf 'SET TALK OFF\nDO %s\nQUIT\n' "$(basename "$prg")" |
         timeout 60 "$EMU" -q --deny term "$DBASE" 2>&1 | strip_interp) > "$OUT/$name.interp"
-    (cd "$wc" && timeout 60 "$EMU" -q --deny term "$OUT/$name.s32x" </dev/null 2>&1) > "$OUT/$name.clip"
+    (cd "$wc" && timeout 60 "$EMU" -q --deny term "$OUT/$name.s32x" </dev/null 2>&1) |
+        python3 -c 'import sys; sys.stdout.buffer.write(sys.stdin.buffer.read().rstrip(b"\n"))' > "$OUT/$name.clip"
     rm -rf "$wi" "$wc"
     if cmp -s "$OUT/$name.interp" "$OUT/$name.clip"; then
         printf '%-28s AGREE\n' "$name"; agree=$((agree+1))

@@ -8,10 +8,6 @@
 #
 # Verdicts: PASS (same output); DIFFER; NOCOMPILE (s32-clip refuses it);
 # ORACLE (Harbour refuses it: the probe is wrong).
-#
-# Normalization, one rule: Clipper's ? writes its newline BEFORE the
-# values, the dBASE dialect's after; Harbour's leading newline is moved to
-# the end so the probes compare content (behaviour point BP-Q1).
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CLIP="$(cd "$HERE/../.." && pwd)"
@@ -31,12 +27,6 @@ for prg in "${PROBES[@]}"; do
     if [ $rc -eq 2 ] && grep -q ORACLE-COMPILE-FAIL "$OUT/$n.hb"; then
         printf '%-36s ORACLE (Harbour refuses it)\n' "$n"; oracle=$((oracle+1)); rm -rf "$w"; continue
     fi
-    python3 - "$OUT/$n.hb" <<'PY'
-import sys
-p = sys.argv[1]; s = open(p, 'rb').read()
-if s.startswith(b"\n"): s = s[1:] + b"\n"
-open(p, 'wb').write(s)
-PY
     if ! bash "$CLIP/compile-prg.sh" "$prg" "$OUT/$n.s32x" > "$OUT/$n.cc.log" 2>&1; then
         printf '%-36s NOCOMPILE %s\n' "$n" "$(grep -m1 -E ': ' "$OUT/$n.cc.log" | sed 's/^[^:]*:[0-9]*: //' | cut -c1-50)"
         nocomp=$((nocomp+1)); rm -rf "$w"; continue

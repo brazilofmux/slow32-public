@@ -548,10 +548,15 @@ static int emit_print(emit_t *e, const char *list, int newline) {
         {
             sb_t code = {0}, decl = {0};
             g_decl = &decl;
+            /* QOUT(): every argument first, then the new line and the output */
             for (i = 0; i < n; i++) {
                 res[i] = gen_expr(&code, &ntmp, nodes[i]);
-                sb_printf(&code, "if (!e) clip_qv(&t%d, %d); ", res[i], i == 0);
             }
+            sb_printf(&code, "if (!e) { %s", newline ? "clip_qnl(); " : "");
+            for (i = 0; i < n; i++) {
+                sb_printf(&code, "clip_qv(&t%d, %d); ", res[i], i == 0);
+            }
+            sb_printf(&code, "} ");
             if (decl.buf) {
                 sb_printf(&b, "%s", decl.buf);
                 free(decl.buf);
@@ -570,8 +575,7 @@ static int emit_print(emit_t *e, const char *list, int newline) {
         }
     }
     emit_indent(e->out, e->depth);
-    fprintf(e->out, "{ %sif (e) clip_fail(c);%s }\n", b.buf ? b.buf : "",
-            newline ? " else clip_qnl();" : "");
+    fprintf(e->out, "{ %sif (e) clip_fail(c); }\n", b.buf ? b.buf : "");
     free(b.buf);
     for (i = 0; i < n; i++) {
         ast_free(nodes[i]);

@@ -9,10 +9,14 @@ Popup FILEPOP:
   1. New
   2. Open
   3. Quit
-. PAD(): P_FILE
-. POPUP(): FILEPOP
-. BAR():          1
-. PROMPT(): New
+. 
+PAD(): P_FILE
+. 
+POPUP(): FILEPOP
+. 
+BAR():          1
+. 
+PROMPT(): New
 . . . Menu not defined: mainbar
 . . . . . . . Menu not defined: bar1
 . Menu not defined: bar2

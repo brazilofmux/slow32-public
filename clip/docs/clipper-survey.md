@@ -66,8 +66,13 @@ Everything else differs, and for a few causes, not 28:
 - **BP-Q1, `?`'s newline.**  Clipper writes the newline before the values
   (`?` is QOUT: new line, then the list); the dBASE dialect here writes it
   after.  The probe harness moves Harbour's to the end so the probes
-  compare content.  To decide: whether clip's Clipper mode writes it
-  first, as Clipper does.
+  compare content.  **Decided 2026-10-29: newline first everywhere**
+  (user), the interpreter and clip alike -- dBASE III did the same.  ?
+  is QOUT(): its arguments are evaluated first, then the new line, then
+  the output (so `? PCOL()` sees the column the last output left); a
+  failing argument prints nothing.  Console messages (text that ends a
+  line, through dbase's printf wrapper) start a line of their own when ?
+  left one open, and so does the dot prompt.
 - **BP-N1, numbers carry a width and decimals.**  Clipper prints `? 5` in
   ten columns (`         5`), a literal keeps its decimals (`1.5` prints
   `1.5`), and division takes SET DECIMALS (`10/4` prints `2.50`).  dBASE

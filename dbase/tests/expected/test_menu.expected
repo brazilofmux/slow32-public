@@ -30,16 +30,23 @@ PATH      = (none)
 
 
 
-         Option A. 
-         Option B. 
-         Option C. . Menu: 1. Option A  2. Option B  3. Option C  
-. Choice:          1
+         Option A
+. 
+         Option B
+. 
+         Option C
+. . Menu: 1. Option A  2. Option B  3. Option C  
+. 
+Choice:          1
 . . 
 
 
-    Alpha. 
-    Beta. Menu: 1. Alpha  2. Beta  
-. Pick:          1
+    Alpha
+. 
+    Beta
+. Menu: 1. Alpha  2. Beta  
+. 
+Pick:          1
 . . . . TALK      = OFF
 DELETED   = OFF
 EXACT     = OFF

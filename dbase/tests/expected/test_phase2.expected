@@ -1,14 +1,21 @@
 dBASE III Clone for SLOW-32
 Stage 9: AST Expressions
 
-. . . . Hello . World.  Done
-. . .          0
-.          0
+. . . . Hello 
+. World
+. 
+ Done
+. . . 
+         0
+. 
+         0
 . . . . Report Title.         Page 1. 
-============.          1
-.          0
-. . . . 
+============. 
+         1. 
+        10. . . . 
 --- PAGE ---
-.          0
-.          0
+. 
+         0
+. 
+         0
 . . . . . . 

@@ -18,7 +18,10 @@ int main(void) {
     prog_init();
 
     for (;;) {
+        if (!cmd_output_at_line_start())
+            printf("\n");   /* ? leaves the line open: the prompt starts its own */
         printf(". ");
+        cmd_output_set_line_start(1);
         if (read_line(line, sizeof(line)) < 0)
             break;
         trim_right(line);

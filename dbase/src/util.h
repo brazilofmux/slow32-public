@@ -1,6 +1,18 @@
 #ifndef UTIL_H
 #define UTIL_H
 
+#include <stdio.h>
+
+/* Console output, all through one place: whether it stands at the start
+ * of a line, so that a message (text that ends a line) begins on a line of
+ * its own when ? left one open -- as dBASE III and Clipper show them. */
+int  out_printf(const char *fmt, ...);
+int  out_at_line_start(void);
+void out_set_line_start(int bol);
+#ifndef UTIL_NO_PRINTF_WRAP
+#define printf out_printf
+#endif
+
 /* In-place uppercase */
 void str_upper(char *s);
 

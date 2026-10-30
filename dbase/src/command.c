@@ -3089,49 +3089,41 @@ static void cmd_wait(const char *arg) {
 /* ---- ? / ?? (print expressions) ---- */
 static void cmd_print_expr(const char *arg, int newline) {
     const char *p;
-    int first = 1;
     int is_print = (cmd_get_device() == 1);
+    value_t vals[MAX_FUNC_ARGS];
+    int n = 0, i;
 
+    /* ? is QOUT(): its arguments are evaluated first, then it starts a new
+     * line and prints them (dBASE III and Clipper alike); ?? the same
+     * without the new line.  An argument that fails prints nothing. */
     p = skip_ws(arg);
-
-    if (*p == '\0') {
-        if (newline) {
-            if (is_print) screen_print_newline();
-            else cmd_output("\n");
-        }
-        return;
-    }
-
-    while (*p) {
-        value_t val;
-        char buf[256];
-
-        p = skip_ws(p);
-        if (*p == '\0') break;
-
-        if (ast_eval_adv(&expr_ctx, &p, &val) != 0) {
+    while (*p && n < MAX_FUNC_ARGS) {
+        if (ast_eval_adv(&expr_ctx, &p, &vals[n]) != 0) {
             report_expr_error();
             return;
         }
-
-        val_to_display(&val, buf, sizeof(buf));
-        if (!first) {
-            if (is_print) screen_print_text(" ");
-            else cmd_output(" ");
-        }
-        if (is_print) screen_print_text(buf);
-        else cmd_output(buf);
-        first = 0;
-
+        n++;
         p = skip_ws(p);
         if (*p == ',') {
-            p++;
+            p = skip_ws(p + 1);
+        } else {
+            break;
         }
     }
 
     if (newline) {
         if (is_print) screen_print_newline();
         else cmd_output("\n");
+    }
+    for (i = 0; i < n; i++) {
+        char buf[256];
+        val_to_display(&vals[i], buf, sizeof(buf));
+        if (i > 0) {
+            if (is_print) screen_print_text(" ");
+            else cmd_output(" ");
+        }
+        if (is_print) screen_print_text(buf);
+        else cmd_output(buf);
     }
 }
 
@@ -5351,6 +5343,9 @@ const set_options_t *cmd_get_set_opts(void) {
 const char *cmd_get_path(void) {
     return set_opts.path;
 }
+
+int  cmd_output_at_line_start(void)     { return out_at_line_start(); }
+void cmd_output_set_line_start(int bol) { out_set_line_start(bol); }
 
 void cmd_output(const char *s) {
     printf("%s", s);

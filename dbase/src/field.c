@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "field.h"
+#include "util.h"
 #include "date.h"
 #include "command.h"
 

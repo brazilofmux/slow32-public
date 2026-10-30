@@ -1,11 +1,16 @@
 dBASE III Clone for SLOW-32
 Stage 9: AST Expressions
 
-. .         42
-. . Hello
-. .         50
-. .        100
-. . .T.
+. . 
+        42
+. . 
+Hello
+. . 
+        50
+. . 
+       100
+. . 
+.T.
 . X           N  100
 MSG         C  "Hello"
 FLAG        L  .T.
