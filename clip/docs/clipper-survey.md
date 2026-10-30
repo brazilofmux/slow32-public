@@ -366,10 +366,46 @@ people who wrote Clipper.
   Retry, then "Called from" lines) is not driven: Harbour's CGI
   terminal renders Alert() at exit, in its own way.
 
-Not driven yet: GETSYS.PRG as the replacement for the built-in Get
-reader (it compiles; running it needs the whole Get class behind it),
-the report and label runners (need .frm / .lbl files), and DBU's
-Utility Append / Pack / Zap and the Create flow past its first screen.
+- **GETSYS.PRG as the Get reader.**  DBU and CA's GETSYS.PRG compiled as
+  one program (the scratch build; no harness, it needs the keyboard):
+  DBU's Filter dialog takes "AGE > 40" and a Browse cell takes its new
+  value through CA's ReadModal() / GetReader() / GetApplyKey() over our
+  Get class, Browse showing the result either way.  What it took:
+  Clipper's compiler gives every function a LOCAL GetList := {} of its
+  own, so `@ GET` makes one at the current depth when none is visible;
+  READ runs ReadModal(GetList) when the program supplies ReadModal()
+  (the override rule: a program's function replaces the built-in),
+  then clears the list and the recorded GETs; SET() acts on its
+  settings directly (it went through the functions by name, and
+  GETSYS.PRG's own ReadInsert() calls Set(_SET_INSERT): a loop until
+  the stack ran out); SET SCOREBOARD is kept, since GETSYS paints Ins
+  at row 0, column 60 unless it is off (DBU's menu bar lost "Mo").  The
+  Get class gained the word moves and deletions GETSYS binds (probe
+  cls-get-words, Harbour's rules).
+
+- **The report runner, and the wall it found.**  A driver over CA's
+  FRMRUN.PRG and FRMBACK.PRG with a form our CREATE REPORT wrote.  First
+  the form: Clipper's reader (dBASE III's layout, FRMDEF.CH) wants
+  0-based expression pointers with 65535 for none, lengths that count
+  the NUL ending each text, the column's totals as a Y/N byte at offset
+  5 with decimals at 6, Y/N bytes for spacing and summary, and -- "dBASE
+  skips first 12 byte fields block" -- the columns from the second
+  12-byte slot.  Ours had 1-based pointers, no NULs, the words in other
+  places and the columns one slot early; Harbour read every expression a
+  character short and the columns one off.  Writer and reader now follow
+  Clipper's, the dBASE suite agreeing with itself as before, and Harbour
+  prints the whole report over our form (the heading, the column
+  headings, the detail lines, the total; the summary form).  Our runtime
+  cannot run it: FRMBACK reads the 1,990-byte form with one FREAD into
+  one string, and a string value here holds 255 characters and ends at
+  the first NUL.  That is the string-capacity debt, with its first hard
+  case; the driver, the form and Harbour's output wait in
+  `tests/clipper/ca/blocked/`.  FREAD has Clipper's by-reference form
+  for reads that fit (probe fn-fread-ref).
+
+Not driven yet: the label runner (the same wall), DBU's Utility Append /
+Pack / Zap and the Create flow past its first screen, and GETSYS.PRG's
+and ERRORSYS.PRG's dialogue paths under a terminal (Alert()).
 
 ## The order of work proposed
 

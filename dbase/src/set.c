@@ -11,6 +11,7 @@ void set_init(set_options_t *opts) {
     opts->exact = 0;      /* OFF = prefix matching */
     opts->heading = 0;   /* Clipper's LIST has no heading; SET HEADING ON gives dBASE III's */
     opts->cursor = 1;
+    opts->scoreboard = 1;
     opts->confirm = 0;
     opts->bell = 1;
     opts->safety = 1;
@@ -205,7 +206,8 @@ void set_execute(set_options_t *opts, const char *arg) {
         return;
     }
     if (str_imatch(p, "SCOREBOARD")) {
-        parse_on_off(p + 10);
+        val = parse_on_off(p + 10);
+        if (val >= 0) opts->scoreboard = val;
         return;
     }
     if (str_imatch(p, "TYPEAHEAD")) {

@@ -588,14 +588,39 @@ value_t getsys_note_get(int row, int col, const char *varname, const char *pictu
         iv_set(o, "preBlock", block_from_text(ctx, text));
     }
     v = val_object(o);
-    /* GETLIST, when the program keeps one, collects the Gets as Clipper's does */
-    if (memvar_find(store, "GETLIST", &list) == 0 && list.type == VAL_ARRAY && list.array) {
+    /* GETLIST collects the Gets as Clipper's does; Clipper's compiler gives
+     * every function a LOCAL GetList := {} of its own, so one that is not
+     * visible here is made, a LOCAL of this depth (a program's ReadModal --
+     * CA's GETSYS.PRG -- reads it) */
+    if (memvar_find(store, "GETLIST", &list) != 0 || list.type != VAL_ARRAY || !list.array) {
+        if (ast_make_array(ctx, NULL, 0, &list) != 0) return v;
+        memvar_set_local(store, "GETLIST", &list);
+    }
+    {
         value_t a[2], r;
         a[0] = list;
         a[1] = v;
         func_call(ctx, "AADD", a, 2, &r);
     }
     return v;
+}
+
+/* READ when the program supplies ReadModal() (CA's GETSYS.PRG linked in):
+ * ReadModal(GetList) runs the Gets through it, then the list and the
+ * recorded GETs are cleared.  1 when it did; 0 for the built-in reader. */
+int getsys_read_through_program(void) {
+    expr_ctx_t *ctx = cmd_get_expr_ctx();
+    memvar_store_t *store = cmd_get_memvar_store();
+    value_t list, r, empty;
+    if (!func_is_overridden("READMODAL")) return 0;
+    if (memvar_find(store, "GETLIST", &list) != 0 || list.type != VAL_ARRAY) {
+        if (ast_make_array(ctx, NULL, 0, &list) != 0) return 0;
+        memvar_set_local(store, "GETLIST", &list);
+    }
+    if (func_call(ctx, "READMODAL", &list, 1, &r) != 0) { ctx->error = NULL; }
+    screen_clear_gets();
+    if (ast_make_array(ctx, NULL, 0, &empty) == 0) memvar_set(store, "GETLIST", &empty);
+    return 1;
 }
 
 /* ---- READ around the Gets ---- */

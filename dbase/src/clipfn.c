@@ -18,6 +18,7 @@
 #include "command.h"
 #include "program.h"
 #include "screen.h"
+#include "getsys.h"
 #include "keys.h"
 #include "memvar.h"
 #include "util.h"
@@ -1221,6 +1222,8 @@ static int fn_memoedit(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
     return 0;
 }
 
+static int fn_setcancel(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
+
 /* ---- SET(): set.ch's numbering, Clipper's types ---- */
 
 typedef struct { int code; const char *name; char kind; } set_entry_t;
@@ -1284,9 +1287,9 @@ static value_t set_current(expr_ctx_t *ctx, const set_entry_t *e) {
     case 9: return val_logic(o->softseek);
     case 10: return val_logic(o->unique);
     case 11: return val_logic(o->deleted);
-    case 12: func_call(ctx, "SETCANCEL", NULL, 0, &v); return v;
+    case 12: fn_setcancel(ctx, NULL, 0, &v); return v;
     case 15: return val_str(screen_color_spec());
-    case 16: func_call(ctx, "SETCURSOR", NULL, 0, &v); return v;
+    case 16: fn_setcursor(ctx, NULL, 0, &v); return v;
     case 17: return val_logic(o->console);
     case 18: return val_logic(o->alternate_on);
     case 20: return val_str(o->device ? "PRINTER" : "SCREEN");
@@ -1294,8 +1297,9 @@ static value_t set_current(expr_ctx_t *ctx, const set_entry_t *e) {
     case 26: return val_logic(o->bell);
     case 27: return val_logic(o->confirm);
     case 28: return val_logic(o->escape);
-    case 29: func_call(ctx, "READINSERT", NULL, 0, &v); return v;
-    case 30: func_call(ctx, "READEXIT", NULL, 0, &v); return v;
+    case 32: return val_logic(o->scoreboard);
+    case 29: fn_readinsert(ctx, NULL, 0, &v); return v;
+    case 30: fn_readexit(ctx, NULL, 0, &v); return v;
     case 35: return val_logic(o->wrap);
     case 36: return vnum(o->message_row < 0 ? 0 : o->message_row);
     default: return set_shadow[e->code];
@@ -1312,7 +1316,7 @@ static void set_apply(expr_ctx_t *ctx, const set_entry_t *e, value_t *v) {
     char buf[300];
     value_t r;
     switch (e->code) {
-    case 1: case 2: case 9: case 10: case 11: case 17: case 18: case 26: case 27: case 28: case 35:
+    case 1: case 2: case 9: case 10: case 11: case 17: case 18: case 26: case 27: case 28: case 32: case 35:
         run_cmd("SET %s %s", e->name, truth_arg(v) ? "ON" : "OFF");
         return;
     case 3: case 5: case 25: case 36:
@@ -1336,12 +1340,12 @@ static void set_apply(expr_ctx_t *ctx, const set_entry_t *e, value_t *v) {
         return;
     }
     case 6: if (v->type == VAL_CHAR) run_cmd("SET PATH TO %s", v->str); return;
-    case 12: func_call(ctx, "SETCANCEL", v, 1, &r); return;
+    case 12: fn_setcancel(ctx, v, 1, &r); return;
     case 15: if (v->type == VAL_CHAR) run_cmd("SET COLOR TO %s", v->str); return;
-    case 16: func_call(ctx, "SETCURSOR", v, 1, &r); return;
+    case 16: fn_setcursor(ctx, v, 1, &r); return;
     case 20: if (v->type == VAL_CHAR) run_cmd("SET DEVICE TO %s", strcasecmp(v->str, "PRINTER") == 0 ? "PRINT" : v->str); return;
-    case 29: func_call(ctx, "READINSERT", v, 1, &r); return;
-    case 30: func_call(ctx, "READEXIT", v, 1, &r); return;
+    case 29: fn_readinsert(ctx, v, 1, &r); return;
+    case 30: fn_readexit(ctx, v, 1, &r); return;
     default:
         if (e->kind == 'L') set_shadow[e->code] = val_logic(truth_arg(v));
         else set_shadow[e->code] = *v;

@@ -25,17 +25,23 @@ static void write_le16(unsigned char *p, uint16_t v) {
     p[1] = (v >> 8) & 0xFF;
 }
 
+/* The expression table, as dBASE III wrote it and Clipper's FRMBACK.PRG
+ * reads it (CA's SYS sources): lengths at 4 + idx*2 (each counting the
+ * NUL that ends the text), offsets at 114 + idx*2, the texts at 224,
+ * NUL-terminated; pointers to expressions are 0-based, 65535 for none.
+ * (Ours were 1-based with lengths that left the NUL out: Clipper read
+ * every expression one character short and one entry off.) */
+#define FRM_NONE 0xFFFF
+
 static void extract_expr(const unsigned char *buf, int idx, char *out, int outsize) {
-    /* Expression table: lengths at 4+idx*2, offsets at 114+idx*2 */
-    uint16_t len = read_le16(buf + 4 + idx * 2);
-    uint16_t off = read_le16(buf + 114 + idx * 2);
-
+    uint16_t len, off;
     out[0] = '\0';
-    if (len == 0 || off == 0xFFFF) return;
-
-    /* Expression data starts at offset 224 in the file */
+    if (idx == FRM_NONE || idx >= FRM_MAX_EXPRS) return;
+    len = read_le16(buf + 4 + idx * 2);
+    off = read_le16(buf + 114 + idx * 2);
+    if (len == 0 || off == FRM_NONE) return;
+    if (len > 0 && buf[224 + off + len - 1] == '\0') len--;   /* the NUL counted */
     if (off + len > FRM_EXPR_BUF_SIZE) return;
-
     {
         int n = (len < outsize - 1) ? len : outsize - 1;
         memcpy(out, buf + 224 + off, n);
@@ -43,6 +49,8 @@ static void extract_expr(const unsigned char *buf, int idx, char *out, int outsi
         trim_right(out);
     }
 }
+
+static int yes_byte(unsigned char c) { return c == 'Y' || c == 'y' || c == 1; }
 
 int frm_read(const char *filename, frm_def_t *def) {
     unsigned char buf[FRM_FILE_SIZE];
@@ -64,58 +72,38 @@ int frm_read(const char *filename, frm_def_t *def) {
 
     frm_init(def);
 
-    /* Extract parameter expressions (1-based, stored at param offsets) */
-    /* Params at 1964: 12 pairs of 2-byte values */
-    /* Param[0]=title expr#, Param[1]=group expr#, Param[2]=subgroup expr#,
-       Param[3]=group hdr expr#, Param[4]=subgroup hdr expr# */
-    {
-        uint16_t title_idx     = read_le16(buf + 1964 + 0);
-        uint16_t group_idx     = read_le16(buf + 1964 + 2);
-        uint16_t subgroup_idx  = read_le16(buf + 1964 + 4);
-        uint16_t grp_hdr_idx   = read_le16(buf + 1964 + 6);
-        uint16_t subgrp_hdr_idx= read_le16(buf + 1964 + 8);
+    /* The parameter block at 1964: expression pointers for the page
+     * heading, group, sub-group and their headings; then the numbers;
+     * then Y/N bytes for double spacing, summary and group eject, and
+     * an option byte (1 plain, 2 eject after, 4 no eject before) */
+    extract_expr(buf, read_le16(buf + 1964 + 0), def->title, sizeof(def->title));
+    extract_expr(buf, read_le16(buf + 1964 + 2), def->group_expr, sizeof(def->group_expr));
+    extract_expr(buf, read_le16(buf + 1964 + 4), def->subgroup_expr, sizeof(def->subgroup_expr));
+    extract_expr(buf, read_le16(buf + 1964 + 6), def->group_header, sizeof(def->group_header));
+    extract_expr(buf, read_le16(buf + 1964 + 8), def->subgroup_header, sizeof(def->subgroup_header));
 
-        if (title_idx != 0xFFFF && title_idx > 0)
-            extract_expr(buf, title_idx - 1, def->title, sizeof(def->title));
-        if (group_idx != 0xFFFF && group_idx > 0)
-            extract_expr(buf, group_idx - 1, def->group_expr, sizeof(def->group_expr));
-        if (subgroup_idx != 0xFFFF && subgroup_idx > 0)
-            extract_expr(buf, subgroup_idx - 1, def->subgroup_expr, sizeof(def->subgroup_expr));
-        if (grp_hdr_idx != 0xFFFF && grp_hdr_idx > 0)
-            extract_expr(buf, grp_hdr_idx - 1, def->group_header, sizeof(def->group_header));
-        if (subgrp_hdr_idx != 0xFFFF && subgrp_hdr_idx > 0)
-            extract_expr(buf, subgrp_hdr_idx - 1, def->subgroup_header, sizeof(def->subgroup_header));
-    }
-
-    /* Numeric params */
     def->page_width    = read_le16(buf + 1964 + 10);
     def->lines_per_page= read_le16(buf + 1964 + 12);
     def->left_margin   = read_le16(buf + 1964 + 14);
     def->right_margin  = read_le16(buf + 1964 + 16);
     def->num_columns   = read_le16(buf + 1964 + 18);
-    def->double_space  = read_le16(buf + 1964 + 20);
-    def->summary_only  = read_le16(buf + 1964 + 22);
+    def->double_space  = yes_byte(buf[1964 + 20]);
+    def->summary_only  = yes_byte(buf[1964 + 21]);
+    def->eject_after   = (buf[1964 + 23] & 2) != 0;
 
     if (def->num_columns > FRM_MAX_COLUMNS)
         def->num_columns = FRM_MAX_COLUMNS;
 
-    /* Column definitions: 25 columns x 12 bytes at offset 1664 */
+    /* Column definitions: 12 bytes each from offset 1676 (slot 0 unused): the width,
+     * a Y/N totals byte at 5, decimals at 6, the content and heading
+     * expression pointers at 8 and 10 */
     for (i = 0; i < def->num_columns; i++) {
-        int coff = 1664 + i * 12;
-        uint16_t content_idx, header_idx;
-
+        int coff = 1676 + i * 12;   /* the first 12-byte slot is unused: dBASE skips it, so Clipper's reader does */
         def->columns[i].width    = read_le16(buf + coff + 0);
-        def->columns[i].decimals = read_le16(buf + coff + 2);
-        def->columns[i].totals   = read_le16(buf + coff + 4);
-
-        /* Bytes 6-7: reserved/unused in some formats */
-        content_idx = read_le16(buf + coff + 8);
-        header_idx  = read_le16(buf + coff + 10);
-
-        if (content_idx != 0xFFFF && content_idx > 0)
-            extract_expr(buf, content_idx - 1, def->columns[i].content, sizeof(def->columns[i].content));
-        if (header_idx != 0xFFFF && header_idx > 0)
-            extract_expr(buf, header_idx - 1, def->columns[i].header, sizeof(def->columns[i].header));
+        def->columns[i].totals   = yes_byte(buf[coff + 5]);
+        def->columns[i].decimals = read_le16(buf + coff + 6);
+        extract_expr(buf, read_le16(buf + coff + 8), def->columns[i].content, sizeof(def->columns[i].content));
+        extract_expr(buf, read_le16(buf + coff + 10), def->columns[i].header, sizeof(def->columns[i].header));
     }
 
     return 0;
@@ -140,20 +128,20 @@ int frm_write(const char *filename, const frm_def_t *def) {
        1: title, 2: group, 3: subgroup, 4: group_hdr, 5: subgroup_hdr
        Then 2 per column (content, header) */
 
-    /* Helper: store an expression */
+    /* Helper: store an expression, NUL-terminated, its length counting
+     * the NUL, its pointer 0-based (FRM_NONE for an empty one) */
     #define STORE_EXPR(str, idx_out) do { \
-        int _len = strlen(str); \
-        if (_len > 0 && data_offset + _len <= FRM_EXPR_BUF_SIZE) { \
-            write_le16(buf + 4 + expr_count * 2, _len); \
-            write_le16(buf + 114 + expr_count * 2, data_offset); \
+        int _len = (int)strlen(str); \
+        if (_len > 0 && expr_count < FRM_MAX_EXPRS && data_offset + _len + 1 <= FRM_EXPR_BUF_SIZE) { \
+            write_le16(buf + 4 + expr_count * 2, (uint16_t)(_len + 1)); \
+            write_le16(buf + 114 + expr_count * 2, (uint16_t)data_offset); \
             memcpy(buf + 224 + data_offset, str, _len); \
-            data_offset += _len; \
+            buf[224 + data_offset + _len] = '\0'; \
+            data_offset += _len + 1; \
+            idx_out = (uint16_t)expr_count; \
             expr_count++; \
-            idx_out = expr_count; /* 1-based */ \
-        } else if (_len == 0) { \
-            idx_out = 0xFFFF; \
         } else { \
-            idx_out = 0xFFFF; \
+            idx_out = FRM_NONE; \
         } \
     } while(0)
 
@@ -166,24 +154,18 @@ int frm_write(const char *filename, const frm_def_t *def) {
         STORE_EXPR(def->group_header, grp_hdr_idx);
         STORE_EXPR(def->subgroup_header, subgrp_hdr_idx);
 
-        /* Store column expressions */
         for (i = 0; i < def->num_columns; i++) {
             uint16_t cidx, hidx;
+            int coff = 1676 + i * 12;   /* the first 12-byte slot is unused: dBASE skips it, so Clipper's reader does */
             STORE_EXPR(def->columns[i].content, cidx);
             STORE_EXPR(def->columns[i].header, hidx);
-
-            {
-                int coff = 1664 + i * 12;
-                write_le16(buf + coff + 0, def->columns[i].width);
-                write_le16(buf + coff + 2, def->columns[i].decimals);
-                write_le16(buf + coff + 4, def->columns[i].totals);
-                write_le16(buf + coff + 6, 0);
-                write_le16(buf + coff + 8, cidx);
-                write_le16(buf + coff + 10, hidx);
-            }
+            write_le16(buf + coff + 0, (uint16_t)def->columns[i].width);
+            buf[coff + 5] = def->columns[i].totals ? 'Y' : 'N';
+            write_le16(buf + coff + 6, (uint16_t)def->columns[i].decimals);
+            write_le16(buf + coff + 8, cidx);
+            write_le16(buf + coff + 10, hidx);
         }
 
-        /* Write parameters */
         write_le16(buf + 1964 + 0, title_idx);
         write_le16(buf + 1964 + 2, group_idx);
         write_le16(buf + 1964 + 4, subgroup_idx);
@@ -193,13 +175,15 @@ int frm_write(const char *filename, const frm_def_t *def) {
 
     #undef STORE_EXPR
 
-    write_le16(buf + 1964 + 10, def->page_width);
-    write_le16(buf + 1964 + 12, def->lines_per_page);
-    write_le16(buf + 1964 + 14, def->left_margin);
-    write_le16(buf + 1964 + 16, def->right_margin);
-    write_le16(buf + 1964 + 18, def->num_columns);
-    write_le16(buf + 1964 + 20, def->double_space);
-    write_le16(buf + 1964 + 22, def->summary_only);
+    write_le16(buf + 1964 + 10, (uint16_t)def->page_width);
+    write_le16(buf + 1964 + 12, (uint16_t)def->lines_per_page);
+    write_le16(buf + 1964 + 14, (uint16_t)def->left_margin);
+    write_le16(buf + 1964 + 16, (uint16_t)def->right_margin);
+    write_le16(buf + 1964 + 18, (uint16_t)def->num_columns);
+    buf[1964 + 20] = def->double_space ? 'Y' : 'N';
+    buf[1964 + 21] = def->summary_only ? 'Y' : 'N';
+    buf[1964 + 22] = 'N';
+    buf[1964 + 23] = (unsigned char)(def->eject_after ? 2 : 0);
 
     /* End marker */
     write_le16(buf + 1988, 0x0002);

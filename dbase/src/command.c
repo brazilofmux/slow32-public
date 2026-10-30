@@ -16,6 +16,7 @@
 #include "set.h"
 #include "program.h"
 #include "screen.h"
+#include "getsys.h"
 #include "index.h"
 #include "report.h"
 #include "label.h"
@@ -5851,7 +5852,7 @@ static void h_rename(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(
 static void h_accept(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_accept(arg); }
 static void h_input(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_input(arg); }
 static void h_wait(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_wait(arg); }
-static void h_read(dbf_t *db, lexer_t *l) { (void)db; (void)l; screen_read(); }
+static void h_read(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (!getsys_read_through_program()) screen_read(); }
 
 /* KEYBOARD <cString>: clear the typeahead buffer, stuff the string */
 static void h_keyboard(dbf_t *db, lexer_t *l) {

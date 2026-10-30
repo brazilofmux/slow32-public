@@ -24,7 +24,8 @@ typedef struct set_options {
     int console;
     int decimals;
     int fixed;        /* SET FIXED: every number shown with SET DECIMALS places */
-    int cursor;       /* SET CURSOR ON/OFF, SETCURSOR(): 0 none, 1 normal (Clipper's shapes) */
+    int cursor;
+    int scoreboard;     /* SET SCOREBOARD: Clipper's reader shows Ins at row 0 when on */       /* SET CURSOR ON/OFF, SETCURSOR(): 0 none, 1 normal (Clipper's shapes) */
     date_format_t date_format;
     int device;       /* 0 = SCREEN, 1 = PRINT */
     int century;      /* 0=OFF (2-digit year), 1=ON (4-digit year) */

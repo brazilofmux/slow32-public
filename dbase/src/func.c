@@ -122,13 +122,37 @@ static int fn_freadstr(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
 }
 
 static int fn_fread(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    int h, count;
     (void)ctx;
+    /* Clipper's FREAD(handle, @buffer, bytes) --> bytes read, the buffer
+     * filled (as far as a string here reaches: 255 characters, to the
+     * first NUL).  FREAD(handle, count) --> the text is this interpreter's
+     * own form. */
+    if (nargs >= 3 && args[0].type == VAL_NUM && args[1].type == VAL_CHAR && args[2].type == VAL_NUM) {
+        const char *const *refs = func_take_refs();
+        char buf[256];
+        size_t n = 0;
+        h = (int)args[0].num - 1;
+        count = (int)args[2].num;
+        if (count > 255) count = 255;
+        if (h >= 0 && h < MAX_LL_FILES && ll_files[h] && count > 0) {
+            n = fread(buf, 1, (size_t)count, ll_files[h]);
+            ll_error = ferror(ll_files[h]) ? 1 : 0;
+        }
+        buf[n] = '\0';
+        if (refs && refs[1]) {
+            value_t v = val_str(buf);
+            ast_store_name(ctx, refs[1], &v);
+        }
+        *result = val_num((double)n);
+        return 0;
+    }
     if (nargs < 2 || args[0].type != VAL_NUM || args[1].type != VAL_NUM) {
         ctx->error = "FREAD requires (handle, count)";
         return -1;
     }
-    int h = (int)args[0].num - 1;
-    int count = (int)args[1].num;
+    h = (int)args[0].num - 1;
+    count = (int)args[1].num;
     if (count > 255) count = 255;
     if (h >= 0 && h < MAX_LL_FILES && ll_files[h] && count > 0) {
         char *buf = (char *)malloc(count + 1);
@@ -2757,7 +2781,7 @@ void func_register_override(const char *name) {
     if (noverrides < 64) strcpy(override_names[noverrides++], upper);
 }
 
-static int func_is_overridden(const char *upper) {
+int func_is_overridden(const char *upper) {
     int i;
     for (i = 0; i < noverrides; i++) if (strcmp(override_names[i], upper) == 0) return 1;
     return 0;
@@ -2798,15 +2822,19 @@ int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value
     }
     e = func_lookup(upper);
     if (e) {
-        pending_refs = NULL;   /* a built-in takes values */
-        return e->fn(ctx, args, nargs, result);
+        /* a built-in takes values; one that wants the names of @ arguments
+         * (FREAD's buffer) takes them itself, before this clears them */
+        int rc = e->fn(ctx, args, nargs, result);
+        pending_refs = NULL;
+        return rc;
     }
     {   /* the rest of Clipper's set (clipfn.c) */
         const clipfn_entry_t *c;
         for (c = clipfn_table; c->name; c++) {
             if (strcmp(c->name, upper) == 0) {
+                int rc = c->fn(ctx, args, nargs, result);
                 pending_refs = NULL;
-                return c->fn(ctx, args, nargs, result);
+                return rc;
             }
         }
     }

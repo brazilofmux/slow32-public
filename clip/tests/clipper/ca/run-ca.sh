@@ -36,6 +36,8 @@ for drv in "${DRIVERS[@]}"; do
         for s in $srcs; do echo; tr -d '\r' < "$CA/$s" | awk 'BEGIN{on=0} tolower($0) ~ /^[ \t]*(static[ \t]+)?(function|procedure|func|proc)[ \t]/ {on=1} on {print}'; done
     } > "$w/$n.prg"
     cp "$CA"/SAMPLE/*.CH "$CA"/SYS/*.CH "$w/" 2>/dev/null
+    # a driver's data files, named after it (ca-x.frm beside ca-x.prg)
+    for d in "$HERE/$n".*; do case "$d" in *.prg) ;; *) [ -f "$d" ] && cp "$d" "$w/";; esac; done
     for h in "$w"/*.CH; do mv "$h" "$w/$(basename "$h" | tr 'A-Z' 'a-z')"; done
     # our standard headers, under the spellings CA's sources use (Harbour's
     # file system is case-sensitive; ours finds them on its include path)
