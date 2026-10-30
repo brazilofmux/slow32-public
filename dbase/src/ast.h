@@ -18,7 +18,8 @@ typedef enum {
     AST_ASSIGN,         /* target := value, target op= value */
     AST_INCDEC,         /* ++target, target++, --target, target-- */
     AST_ARRAY_LIT,      /* { a, b, ... } */
-    AST_INDEX           /* expr[i] -- on any value, so a[3][2] */
+    AST_INDEX,          /* expr[i] -- on any value, so a[3][2] */
+    AST_BLOCK           /* {|p, q| e1, e2, ...} */
 } ast_type_t;
 
 typedef enum {
@@ -50,6 +51,8 @@ typedef struct ast_node {
         struct { struct ast_node **elems; int n; } list;        /* AST_ARRAY_LIT */
         struct { struct ast_node *base;
                  struct ast_node *index; } index;               /* AST_INDEX */
+        struct { char (*params)[MEMVAR_NAMELEN]; int nparams;
+                 struct ast_node **exprs; int n; } block;       /* AST_BLOCK */
     };
 } ast_node_t;
 
@@ -99,6 +102,34 @@ int ast_store_alias_field(expr_ctx_t *ctx, const char *alias, const char *field,
 int ast_make_array(expr_ctx_t *ctx, const value_t *vals, int n, value_t *result);
 int ast_eval_index(expr_ctx_t *ctx, const value_t *base, const value_t *index, value_t *result);
 int ast_store_index(expr_ctx_t *ctx, const value_t *base, const value_t *index, const value_t *val);
+
+/* A code block value: its parameters, the call depth it was made at (EVAL
+ * runs it there, so it sees its maker's LOCALs, not its caller's), and
+ * its body -- a copy of the tree (the interpreter) or a C function
+ * (compiled code).  Parameters are bound as PRIVATEs are: saved, set,
+ * restored.  Blocks are not freed (as arrays). */
+#define MAX_BLOCK_PARAMS 16
+#define MAX_BLOCK_CAPTURES 16
+typedef struct block_s {
+    int nparams;
+    char params[MAX_BLOCK_PARAMS][MEMVAR_NAMELEN];
+    int depth;
+    /* The variables its body names, as they were when it was made: used
+     * only when one is gone at EVAL (its function returned -- Clipper's
+     * detached local), and kept up to date with what the block does */
+    int ncap;
+    char cap_names[MAX_BLOCK_CAPTURES][MEMVAR_NAMELEN];
+    value_t cap_vals[MAX_BLOCK_CAPTURES];
+    struct ast_node *body;                          /* AST_BLOCK, or NULL */
+    int (*fn)(expr_ctx_t *ctx, value_t *result);    /* compiled, or NULL */
+} block_t;
+
+int ast_make_block(expr_ctx_t *ctx, int (*fn)(expr_ctx_t *, value_t *), int nparams,
+                   const char *const *params, int nfree, const char *const *free_names,
+                   value_t *result);
+int ast_block_free_names(const ast_node_t *blk, char (*out)[MEMVAR_NAMELEN]);
+/* EVAL(block, args...) */
+int ast_eval_block(expr_ctx_t *ctx, const value_t *block, value_t *args, int nargs, value_t *result);
 
 /* Free AST recursively.  Safe to call with NULL. */
 void ast_free(ast_node_t *node);

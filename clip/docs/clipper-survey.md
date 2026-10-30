@@ -125,7 +125,15 @@ The severe ones are marked.
    cannot see, so anything that reaches it (a macro) needs a bridge.
 6. **Code blocks** -- severe: closures over LOCALs ("detached locals");
    a new value type, compiled blocks as C functions with an environment,
-   macro-built blocks through the evaluator.
+   macro-built blocks through the evaluator.  Done 2026-10-29: VAL_BLOCK
+   (VALTYPE B), `{|p| e1, e2}`; EVAL, AEVAL, ASCAN with a block; the NIL
+   literal (NIL equals only NIL).  A block runs at the call depth it was
+   made at, so it sees its maker's LOCALs wherever it is EVALed; its
+   parameters are bound as PRIVATEs are.  A detached local (the maker
+   returned) is served from the block's own copy of the variables its
+   body names, taken when it was made and kept up to date by the block --
+   two blocks sharing one detached local do not see each other's changes
+   (Clipper's do).  Compiled blocks are C functions.
 7. **The preprocessor** -- #define, #include, #ifdef first; #command and
    #translate are a subsystem of their own.
 8. **The error system** -- ERRORBLOCK, error objects, BREAK(value): needs

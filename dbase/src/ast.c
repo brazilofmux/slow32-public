@@ -159,6 +159,12 @@ void ast_free(ast_node_t *node) {
         ast_free(node->index.base);
         ast_free(node->index.index);
         break;
+    case AST_BLOCK:
+        for (i = 0; i < node->block.n; i++)
+            ast_free(node->block.exprs[i]);
+        free(node->block.exprs);
+        free(node->block.params);
+        break;
     }
     free(node);
 }
@@ -183,6 +189,96 @@ static int is_lvalue(const ast_node_t *n) {
     return n && (n->type == AST_MEMVAR || n->type == AST_ARRAY_ACCESS ||
                  n->type == AST_ALIAS_FIELD || n->type == AST_FIELD ||
                  n->type == AST_INDEX);
+}
+
+/* {| p, q | e1, e2, ... }, with the { taken: the parameters, then the
+ * expressions (the value is the last) */
+static ast_node_t *parse_block(lexer_t *l, memvar_store_t *store, const char **error) {
+    ast_node_t *node = node_alloc(AST_BLOCK);
+    int cap = 0;
+    if (!node) { *error = "Out of memory"; return NULL; }
+    node->block.params = calloc(MAX_BLOCK_PARAMS, MEMVAR_NAMELEN);
+    if (!node->block.params) { free(node); *error = "Out of memory"; return NULL; }
+    lex_next(l);   /* | */
+    while (lex_peek(l) == TOK_IDENT) {
+        if (node->block.nparams >= MAX_BLOCK_PARAMS) { *error = "Too many block parameters"; ast_free(node); return NULL; }
+        str_copy(node->block.params[node->block.nparams], l->current.text, MEMVAR_NAMELEN);
+        str_upper(node->block.params[node->block.nparams]);
+        node->block.nparams++;
+        lex_next(l);
+        if (lex_peek(l) == TOK_COMMA) lex_next(l);
+    }
+    if (lex_peek(l) != TOK_PIPE) { *error = "Missing | in code block"; ast_free(node); return NULL; }
+    lex_next(l);
+    for (;;) {
+        ast_node_t *e = ast_parse_expr(l, store, error);
+        if (!e) { ast_free(node); return NULL; }
+        if (node->block.n == cap) {
+            ast_node_t **g;
+            cap = cap ? cap * 2 : 4;
+            g = realloc(node->block.exprs, (size_t)cap * sizeof(*g));
+            if (!g) { ast_free(e); ast_free(node); *error = "Out of memory"; return NULL; }
+            node->block.exprs = g;
+        }
+        node->block.exprs[node->block.n++] = e;
+        if (lex_peek(l) == TOK_COMMA) { lex_next(l); continue; }
+        break;
+    }
+    if (lex_peek(l) != TOK_RBRACE) { *error = "Missing } in code block"; ast_free(node); return NULL; }
+    lex_next(l);
+    return node;
+}
+
+/* A deep copy of a tree: a block value keeps its body past the expression
+ * (and the expression cache) that made it */
+static ast_node_t *ast_clone(const ast_node_t *n) {
+    ast_node_t *c;
+    int i;
+    if (!n) return NULL;
+    c = malloc(sizeof(*c));
+    if (!c) return NULL;
+    *c = *n;
+    switch (n->type) {
+    case AST_ARRAY_ACCESS:
+        c->array.index1 = ast_clone(n->array.index1);
+        c->array.index2 = ast_clone(n->array.index2);
+        break;
+    case AST_BINOP:
+        c->binop.left = ast_clone(n->binop.left);
+        c->binop.right = ast_clone(n->binop.right);
+        break;
+    case AST_UNOP:
+        c->unop.child = ast_clone(n->unop.child);
+        break;
+    case AST_FUNC_CALL:
+        c->call.args = n->call.nargs ? malloc((size_t)n->call.nargs * sizeof(ast_node_t *)) : NULL;
+        for (i = 0; i < n->call.nargs; i++) c->call.args[i] = ast_clone(n->call.args[i]);
+        break;
+    case AST_ASSIGN:
+        c->assign.target = ast_clone(n->assign.target);
+        c->assign.value = ast_clone(n->assign.value);
+        break;
+    case AST_INCDEC:
+        c->incdec.target = ast_clone(n->incdec.target);
+        break;
+    case AST_ARRAY_LIT:
+        c->list.elems = n->list.n ? malloc((size_t)n->list.n * sizeof(ast_node_t *)) : NULL;
+        for (i = 0; i < n->list.n; i++) c->list.elems[i] = ast_clone(n->list.elems[i]);
+        break;
+    case AST_INDEX:
+        c->index.base = ast_clone(n->index.base);
+        c->index.index = ast_clone(n->index.index);
+        break;
+    case AST_BLOCK:
+        c->block.params = malloc(MAX_BLOCK_PARAMS * MEMVAR_NAMELEN);
+        if (c->block.params) memcpy(c->block.params, n->block.params, MAX_BLOCK_PARAMS * MEMVAR_NAMELEN);
+        c->block.exprs = malloc((size_t)(n->block.n ? n->block.n : 1) * sizeof(ast_node_t *));
+        for (i = 0; i < n->block.n; i++) c->block.exprs[i] = ast_clone(n->block.exprs[i]);
+        break;
+    default:
+        break;
+    }
+    return c;
 }
 
 /* primary [ i ] [ i, j ] ...: x[i,j] is x[i][j] */
@@ -463,6 +559,8 @@ static ast_node_t *ast_parse_primary(lexer_t *l, memvar_store_t *store, const ch
         int n = 0, cap = 0;
         ast_node_t *node;
         lex_next(l);
+        if (lex_peek(l) == TOK_PIPE)
+            return parse_block(l, store, error);
         while (lex_peek(l) != TOK_RBRACE) {
             ast_node_t *e = ast_parse_expr(l, store, error);
             if (!e || n >= 4096) {
@@ -520,6 +618,11 @@ static ast_node_t *ast_parse_primary(lexer_t *l, memvar_store_t *store, const ch
         char name[64];
         str_copy(name, t.text, sizeof(name));
         lex_next(l);
+
+        /* NIL, Clipper's literal (not a call, alias or element) */
+        if (str_icmp(name, "NIL") == 0 && lex_peek(l) != TOK_LPAREN &&
+            lex_peek(l) != TOK_ARROW && lex_peek(l) != TOK_LBRACKET)
+            return node_literal(val_nil());
 
         /* Check for array indexed access: name[i] or name(i) */
         {
@@ -903,6 +1006,14 @@ int ast_eval_binop(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const valu
     case OP_LT: case OP_GT: case OP_LE: case OP_GE: {
         int cmp = 0;
 
+        /* NIL equals NIL and nothing else (Clipper) */
+        if ((left->type == VAL_NIL || right->type == VAL_NIL) &&
+            (op == OP_EQ || op == OP_EXACT_EQ || op == OP_NE)) {
+            int same = left->type == right->type;
+            *result = val_logic(op == OP_NE ? !same : same);
+            return 0;
+        }
+
         if (left->type == VAL_NUM && right->type == VAL_NUM) {
             double d = left->num - right->num;
             cmp = (d < 0) ? -1 : (d > 0) ? 1 : 0;
@@ -989,6 +1100,119 @@ int ast_store_alias_field(expr_ctx_t *ctx, const char *alias, const char *field,
         return -1;
     }
     return 0;
+}
+
+/* The variable names a block body uses, other than its parameters */
+static void free_names(const ast_node_t *n, const ast_node_t *blk, char (*out)[MEMVAR_NAMELEN], int *count) {
+    int i;
+    const char *name = NULL;
+    if (!n) return;
+    switch (n->type) {
+    case AST_MEMVAR:       name = n->name; break;
+    case AST_ARRAY_ACCESS: name = n->array.name;
+                           free_names(n->array.index1, blk, out, count);
+                           free_names(n->array.index2, blk, out, count); break;
+    case AST_BINOP:        free_names(n->binop.left, blk, out, count);
+                           free_names(n->binop.right, blk, out, count); break;
+    case AST_UNOP:         free_names(n->unop.child, blk, out, count); break;
+    case AST_FUNC_CALL:    for (i = 0; i < n->call.nargs; i++) free_names(n->call.args[i], blk, out, count); break;
+    case AST_ASSIGN:       free_names(n->assign.target, blk, out, count);
+                           free_names(n->assign.value, blk, out, count); break;
+    case AST_INCDEC:       free_names(n->incdec.target, blk, out, count); break;
+    case AST_ARRAY_LIT:    for (i = 0; i < n->list.n; i++) free_names(n->list.elems[i], blk, out, count); break;
+    case AST_INDEX:        free_names(n->index.base, blk, out, count);
+                           free_names(n->index.index, blk, out, count); break;
+    case AST_BLOCK:        for (i = 0; i < n->block.n; i++) free_names(n->block.exprs[i], blk, out, count); break;
+    default: break;
+    }
+    if (name && *count < MAX_BLOCK_CAPTURES) {
+        char u[MEMVAR_NAMELEN];
+        str_copy(u, name, sizeof(u));
+        str_upper(u);
+        for (i = 0; i < blk->block.nparams; i++) if (strcmp(blk->block.params[i], u) == 0) return;
+        for (i = 0; i < *count; i++) if (strcmp(out[i], u) == 0) return;
+        str_copy(out[(*count)++], u, MEMVAR_NAMELEN);
+    }
+}
+
+/* s32-clip collects the same names at compile time */
+int ast_block_free_names(const ast_node_t *blk, char (*out)[MEMVAR_NAMELEN]) {
+    int i, count = 0;
+    for (i = 0; i < blk->block.n; i++) free_names(blk->block.exprs[i], blk, out, &count);
+    return count;
+}
+
+static int make_block(expr_ctx_t *ctx, ast_node_t *body, int (*fn)(expr_ctx_t *, value_t *),
+                      int nparams, const char *const *params, int nfree,
+                      const char *const *names, value_t *result) {
+    block_t *b = calloc(1, sizeof(block_t));
+    int i;
+    if (!b) { ctx->error = "Out of memory"; return -1; }
+    b->nparams = nparams > MAX_BLOCK_PARAMS ? MAX_BLOCK_PARAMS : nparams;
+    for (i = 0; i < b->nparams; i++) str_copy(b->params[i], params[i], MEMVAR_NAMELEN);
+    for (i = 0; i < nfree && b->ncap < MAX_BLOCK_CAPTURES; i++) {
+        if (ctx->vars && memvar_find(ctx->vars, names[i], &b->cap_vals[b->ncap]) == 0)
+            str_copy(b->cap_names[b->ncap++], names[i], MEMVAR_NAMELEN);
+    }
+    b->depth = ctx->vars ? ctx->vars->current_depth : 0;
+    b->body = body;
+    b->fn = fn;
+    *result = val_nil();
+    result->type = VAL_BLOCK;
+    result->block = b;
+    return 0;
+}
+
+int ast_make_block(expr_ctx_t *ctx, int (*fn)(expr_ctx_t *, value_t *), int nparams,
+                   const char *const *params, int nfree, const char *const *names,
+                   value_t *result) {
+    return make_block(ctx, NULL, fn, nparams, params, nfree, names, result);
+}
+
+int ast_eval_block(expr_ctx_t *ctx, const value_t *bv, value_t *args, int nargs, value_t *result) {
+    block_t *b;
+    memvar_store_t *store = ctx->vars;
+    value_t saved[MAX_BLOCK_PARAMS];
+    int had[MAX_BLOCK_PARAMS];
+    int bound[MAX_BLOCK_CAPTURES];
+    int depth, i, rc = 0;
+
+    if (bv->type != VAL_BLOCK || !bv->block) { ctx->error = "EVAL requires a code block"; return -1; }
+    b = bv->block;
+    depth = store->current_depth;
+    store->current_depth = b->depth;   /* the maker's LOCALs, not the caller's */
+    for (i = 0; i < b->ncap; i++) {    /* a variable gone with its function */
+        value_t probe;
+        bound[i] = memvar_find(store, b->cap_names[i], &probe) != 0;
+        if (bound[i]) memvar_set(store, b->cap_names[i], &b->cap_vals[i]);
+    }
+    for (i = 0; i < b->nparams; i++) {
+        value_t v = i < nargs ? args[i] : val_nil();
+        had[i] = memvar_find(store, b->params[i], &saved[i]) == 0;
+        memvar_set(store, b->params[i], &v);
+    }
+    *result = val_nil();
+    if (b->fn) {
+        rc = b->fn(ctx, result);
+    } else {
+        for (i = 0; i < b->body->block.n; i++) {
+            store->current_depth = b->depth;
+            if (ast_eval(b->body->block.exprs[i], ctx, result) != 0) { rc = -1; break; }
+        }
+    }
+    store->current_depth = b->depth;
+    for (i = b->nparams - 1; i >= 0; i--) {
+        if (had[i]) memvar_set(store, b->params[i], &saved[i]);
+        else memvar_release(store, b->params[i]);
+    }
+    for (i = 0; i < b->ncap; i++) {
+        if (bound[i]) {   /* keep what the block made of it */
+            memvar_find(store, b->cap_names[i], &b->cap_vals[i]);
+            memvar_release(store, b->cap_names[i]);
+        }
+    }
+    store->current_depth = depth;
+    return rc;
 }
 
 int ast_make_array(expr_ctx_t *ctx, const value_t *vals, int n, value_t *result) {
@@ -1159,6 +1383,19 @@ int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
         rc = ast_make_array(ctx, vals, node->list.n, result);
         free(vals);
         return rc;
+    }
+
+    case AST_BLOCK: {
+        const char *names[MAX_BLOCK_PARAMS];
+        char frees[MAX_BLOCK_CAPTURES][MEMVAR_NAMELEN];
+        const char *fp[MAX_BLOCK_CAPTURES];
+        int i, nf;
+        ast_node_t *copy = ast_clone(node);
+        if (!copy) { ctx->error = "Out of memory"; return -1; }
+        for (i = 0; i < node->block.nparams; i++) names[i] = node->block.params[i];
+        nf = ast_block_free_names(node, frees);
+        for (i = 0; i < nf; i++) fp[i] = frees[i];
+        return make_block(ctx, copy, NULL, node->block.nparams, names, nf, fp, result);
     }
 
     case AST_INDEX: {

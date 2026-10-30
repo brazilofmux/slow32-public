@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <time.h>
 #include "func.h"
+#include "ast.h"
 #include "date.h"
 #include "command.h"
 #include "screen.h"
@@ -558,6 +559,7 @@ static int fn_valtype(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result
         case VAL_DATE:  t = "D"; break;
         case VAL_LOGIC: t = "L"; break;
         case VAL_ARRAY: t = "A"; break;
+        case VAL_BLOCK: t = "B"; break;
         default:        t = "U"; break;
         }
     }
@@ -1766,6 +1768,15 @@ static int fn_ascan(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
     start = num_arg(args, nargs, 2, 1);
     count = num_arg(args, nargs, 3, a->len - start + 1);
     for (i = start - 1; i >= 0 && i < a->len && i < start - 1 + count; i++) {
+        if (args[1].type == VAL_BLOCK) {   /* ASCAN(a, {|e| ...}): the first .T. */
+            value_t r;
+            if (ast_eval_block(ctx, &args[1], &a->el[i], 1, &r) != 0) return -1;
+            if (r.type == VAL_LOGIC && r.logic) {
+                *result = val_num((double)(i + 1));
+                return 0;
+            }
+            continue;
+        }
         if (val_compare(&a->el[i], &args[1]) == 0) {
             *result = val_num((double)(i + 1));
             return 0;
@@ -1841,6 +1852,34 @@ static int fn_adel(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     if (n < 0 || n >= a->len) { ctx->error = "ADEL element out of range"; return -1; }
     for (i = n; i < a->len - 1; i++) a->el[i] = a->el[i + 1];
     a->el[a->len - 1] = val_nil();
+    *result = args[0];
+    return 0;
+}
+
+/* EVAL(block, args...) */
+static int fn_eval(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    if (nargs < 1 || args[0].type != VAL_BLOCK) {
+        ctx->error = "EVAL requires (block [, args...])";
+        return -1;
+    }
+    return ast_eval_block(ctx, &args[0], args + 1, nargs - 1, result);
+}
+
+/* AEVAL(a, block [, start [, count]]): the block with each element and its
+ * index; returns the array */
+static int fn_aeval(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    array_t *a = arg_array(ctx, args, nargs, 2, "AEVAL requires (array, block)");
+    int i, start, count;
+    if (!a) return -1;
+    if (args[1].type != VAL_BLOCK) { ctx->error = "AEVAL requires (array, block)"; return -1; }
+    start = num_arg(args, nargs, 2, 1);
+    count = num_arg(args, nargs, 3, a->len - start + 1);
+    for (i = start - 1; i >= 0 && i < a->len && i < start - 1 + count; i++) {
+        value_t ev[2], r;
+        ev[0] = a->el[i];
+        ev[1] = val_num((double)(i + 1));
+        if (ast_eval_block(ctx, &args[1], ev, 2, &r) != 0) return -1;
+    }
     *result = args[0];
     return 0;
 }
@@ -2441,7 +2480,7 @@ static const func_entry_t func_table[] = {
     { "SEEK",      fn_seek_func },
     /* Tier 2: Array functions */
     { "ALEN",      fn_alen },
-    { "ARRAY",     fn_array },  { "AADD", fn_aadd },   { "ASIZE", fn_asize },
+    { "ARRAY",     fn_array },  { "EVAL", fn_eval },   { "AEVAL", fn_aeval },  { "AADD", fn_aadd },   { "ASIZE", fn_asize },
     { "ATAIL",     fn_atail },  { "AFILL", fn_afill }, { "ACLONE", fn_aclone },
     { "ASCAN",     fn_ascan },
     { "ASORT",     fn_asort },

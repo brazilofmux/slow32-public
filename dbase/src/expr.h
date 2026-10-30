@@ -3,9 +3,10 @@
 
 #include "dbf.h"
 
-typedef enum { VAL_NIL, VAL_NUM, VAL_CHAR, VAL_DATE, VAL_LOGIC, VAL_ARRAY } val_type_t;
+typedef enum { VAL_NIL, VAL_NUM, VAL_CHAR, VAL_DATE, VAL_LOGIC, VAL_ARRAY, VAL_BLOCK } val_type_t;
 
 struct array_s;
+struct block_s;
 
 typedef struct {
     val_type_t type;
@@ -20,6 +21,7 @@ typedef struct {
         int32_t date;   /* JDN */
         int logic;      /* 0 or 1 */
         struct array_s *array;
+        struct block_s *block;   /* VAL_BLOCK: a code block (ast.h) */
     };
 } value_t;
 

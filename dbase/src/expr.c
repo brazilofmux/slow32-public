@@ -112,6 +112,9 @@ void val_to_string(const value_t *v, char *buf, int size) {
     case VAL_ARRAY:
         snprintf(buf, size, "{...}");   /* as Clipper shows an array */
         return;
+    case VAL_BLOCK:
+        snprintf(buf, size, "{||...}");
+        return;
     case VAL_NUM: {
         /* Print integer if no fractional part, else strip trailing zeros */
         double n = v->num;
