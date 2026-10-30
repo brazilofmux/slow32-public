@@ -351,11 +351,25 @@ people who wrote Clipper.
     dBASE III shares for a string argument; a non-string argument still
     answers its own type, as those tests have it.
 
-Not driven yet: GETSYS.PRG and ERRORSYS.PRG as replacements for the
-built-in Get reader and error handler (they compile; running them in
-place of ours needs the keyboard), the report and label runners
-(need .frm / .lbl files), DBU's other menus (Create, Utility, Move,
-Set) and editing inside Browse.
+- **ERRORSYS.PRG as the error handler** (driver ca-errorsys): CA's
+  ErrorSys() posts its DefError() over ours; its own `#command ? ... =>
+  ?? Chr(13) + Chr(10) ; ?? <list>` and `?? <list,...> => OutErr(<list>)`
+  take over output, and a zero divisor, which DefError() answers with 0,
+  gives the expression 0 (Harbour: the same).  Two things it took: a
+  rule's result holding several statements (`;` between them) is split
+  before any later rule sees it (the `??` rule had taken "Chr(13) +
+  Chr(10) ; ?? cMessage" as its list); and an error the operation can
+  take a substitute for runs the handler at the point of failure, with
+  canSubstitute set, and uses a value it returns (the handler ran only
+  at statement level before, after the expression was already lost).
+  Probe fn-error-substitute.  Its dialogue path (Alert() with Quit /
+  Retry, then "Called from" lines) is not driven: Harbour's CGI
+  terminal renders Alert() at exit, in its own way.
+
+Not driven yet: GETSYS.PRG as the replacement for the built-in Get
+reader (it compiles; running it needs the whole Get class behind it),
+the report and label runners (need .frm / .lbl files), and DBU's
+Utility Append / Pack / Zap and the Create flow past its first screen.
 
 ## The order of work proposed
 

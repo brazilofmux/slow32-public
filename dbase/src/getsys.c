@@ -403,6 +403,98 @@ static int m_get_backspace(expr_ctx_t *ctx, object_t *o, value_t *self, value_t 
     return 0;
 }
 
+/* The word moves and deletions GETSYS.PRG's reader binds to Ctrl-Left,
+ * Ctrl-Right, Ctrl-Backspace, Ctrl-T and Ctrl-Y: a word is a run of
+ * non-blanks */
+static int word_start_before(const char *buf, int len, int pos) {   /* 1-based pos; the start of the word before it */
+    int i = pos - 1;   /* 0-based index just left of the cursor */
+    if (i > len) i = len;
+    while (i > 0 && buf[i - 1] == ' ') i--;
+    while (i > 0 && buf[i - 1] != ' ') i--;
+    return i + 1;
+}
+
+static int word_start_after(const char *buf, int len, int pos) {
+    int i = pos - 1;
+    while (i < len && buf[i] != ' ') i++;
+    while (i < len && buf[i] == ' ') i++;
+    return i < len ? i + 1 : len;
+}
+
+static int m_get_wordleft(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
+    int pos, len;
+    char *buf = edit_buf(o, &pos, &len);
+    (void)ctx; (void)args; (void)nargs;
+    if (buf) iv_set(o, "pos", vnum(word_start_before(buf, len, pos)));
+    iv_set(o, "typeOut", val_logic(0));
+    *result = *self;
+    return 0;
+}
+
+static int m_get_wordright(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
+    int pos, len;
+    char *buf = edit_buf(o, &pos, &len);
+    (void)ctx; (void)args; (void)nargs;
+    if (buf) iv_set(o, "pos", vnum(word_start_after(buf, len, pos)));
+    iv_set(o, "typeOut", val_logic(0));
+    *result = *self;
+    return 0;
+}
+
+static int m_get_delwordleft(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
+    int pos, len;
+    char *buf = edit_buf(o, &pos, &len);
+    (void)ctx; (void)args; (void)nargs;
+    if (buf && pos > 1) {
+        /* Harbour's rule: a blank just before the cursor goes first, then
+         * the run of non-blanks before that */
+        if (buf[pos - 2] == ' ') {
+            memmove(buf + pos - 2, buf + pos - 1, (size_t)(len - pos + 1));
+            buf[len - 1] = ' ';
+            pos--;
+        }
+        while (pos > 1 && buf[pos - 2] != ' ') {
+            memmove(buf + pos - 2, buf + pos - 1, (size_t)(len - pos + 1));
+            buf[len - 1] = ' ';
+            pos--;
+        }
+        iv_set(o, "pos", vnum(pos));
+        iv_set(o, "changed", val_logic(1));
+    }
+    *result = *self;
+    return 0;
+}
+
+static int m_get_delwordright(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
+    int pos, len;
+    char *buf = edit_buf(o, &pos, &len);
+    (void)ctx; (void)args; (void)nargs;
+    if (buf && pos <= len) {
+        /* Harbour's rule: through the first blank after the cursor (the
+         * word and one blank; on a blank, that blank alone) */
+        int n = 0;
+        while (pos - 1 + n < len && buf[pos - 1 + n] != ' ') n++;
+        if (pos - 1 + n < len) n++;
+        memmove(buf + pos - 1, buf + pos - 1 + n, (size_t)(len - pos + 1 - n));
+        memset(buf + len - n, ' ', (size_t)n);
+        iv_set(o, "changed", val_logic(1));
+    }
+    *result = *self;
+    return 0;
+}
+
+static int m_get_delend(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
+    int pos, len;
+    char *buf = edit_buf(o, &pos, &len);
+    (void)ctx; (void)args; (void)nargs;
+    if (buf && pos <= len) {
+        memset(buf + pos - 1, ' ', (size_t)(len - pos + 1));
+        iv_set(o, "changed", val_logic(1));
+    }
+    *result = *self;
+    return 0;
+}
+
 static int m_get_home(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
     (void)ctx; (void)args; (void)nargs;
     iv_set(o, "pos", vnum(1));
@@ -463,7 +555,7 @@ static const method_t get_methods[] = {
     { "SETFOCUS", m_get_setfocus }, { "KILLFOCUS", m_get_killfocus }, { "ASSIGN", m_get_assign },
     { "RESET", m_get_reset }, { "UNDO", m_get_undo }, { "UPDATEBUFFER", m_get_updatebuffer },
     { "UNTRANSFORM", m_get_untransform }, { "OVERSTRIKE", m_get_overstrike }, { "INSERT", m_get_insert },
-    { "DELETE", m_get_delete }, { "BACKSPACE", m_get_backspace }, { "HOME", m_get_home },
+    { "DELETE", m_get_delete }, { "BACKSPACE", m_get_backspace }, { "HOME", m_get_home }, { "WORDLEFT", m_get_wordleft }, { "WORDRIGHT", m_get_wordright }, { "DELWORDLEFT", m_get_delwordleft }, { "DELWORDRIGHT", m_get_delwordright }, { "DELEND", m_get_delend },
     { "END", m_get_end }, { "LEFT", m_get_left }, { "RIGHT", m_get_right }, { "TODECPOS", m_get_todecpos },
     { NULL, NULL }
 };

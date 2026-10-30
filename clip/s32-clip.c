@@ -1974,9 +1974,54 @@ static int pp_apply_rules(char *line) {
     return 0;
 }
 
-static void pp_expand(char *line) {
+/* The offset of a ; outside quotes, or -1: a rule's result writes several
+ * statements that way */
+static int pp_top_semicolon(const char *line) {
+    char quote = 0;
+    const char *q;
+    for (q = line; *q; q++) {
+        if (quote) { if (*q == quote) quote = 0; }
+        else if (*q == '"' || *q == '\'') quote = *q;
+        else if (*q == ';') return (int)(q - line);
+    }
+    return -1;
+}
+
+/* Defines and rules until nothing changes.  A result holding several
+ * statements (; between them) is split first and each statement expanded
+ * on its own: a later rule must not match across the ; (ERRORSYS.PRG's
+ * "#command ? <list,...> => ?? Chr(13) + Chr(10) ; ?? <list>" had the ??
+ * rule take "Chr(13) + Chr(10) ; ?? cMessage" as its list). */
+static void pp_expand_depth(char *line, int depth) {
     int n;
-    for (n = 0; n < 32 && (pp_apply_defines(line) | pp_apply_rules(line)); n++) {}
+    for (n = 0; n < 32; n++) {
+        if (!(pp_apply_defines(line) | pp_apply_rules(line))) return;
+        if (depth < 8 && pp_top_semicolon(line) >= 0) {
+            char out[MAX_LINE], piece[MAX_LINE];
+            const char *p = line;
+            out[0] = '\0';
+            for (;;) {
+                int at = pp_top_semicolon(p);
+                size_t len = at >= 0 ? (size_t)at : strlen(p);
+                if (len >= sizeof(piece)) len = sizeof(piece) - 1;
+                memcpy(piece, p, len);
+                piece[len] = '\0';
+                pp_expand_depth(piece, depth + 1);
+                if (strlen(out) + strlen(piece) + 4 < sizeof(out)) {
+                    if (out[0]) strcat(out, " ; ");
+                    strcat(out, piece);
+                }
+                if (at < 0) break;
+                p += at + 1;
+            }
+            strcpy(line, out);
+            return;
+        }
+    }
+}
+
+static void pp_expand(char *line) {
+    pp_expand_depth(line, 0);
 }
 
 /* A directive line (#...); cond/depth: the #if stack of this file */

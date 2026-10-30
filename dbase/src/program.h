@@ -138,6 +138,7 @@ void prog_set_break_value(const value_t *v);
 value_t prog_break_value(void);
 void prog_break_landed(void);
 struct object_s *prog_new_error_object(int code, const char *description);
+int prog_error_substitute(expr_ctx_t *ctx, int code, const char *description, value_t *out);   /* the handler at the point of failure */
 
 /* Check if program is running */
 int prog_is_running(void);

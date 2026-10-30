@@ -12,6 +12,7 @@
 #include <math.h>
 #include <errno.h>
 #include "ast.h"
+#include "program.h"
 #include "getsys.h"
 #include "command.h"
 #include "func.h"
@@ -1058,7 +1059,11 @@ int ast_eval_binop(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const valu
         if (left->type != VAL_NUM || right->type != VAL_NUM) {
             ctx->error = "Type mismatch in * or /"; return -1;
         }
-        if (right->num == 0.0) { ctx->error = "Division by zero"; return -1; }
+        if (right->num == 0.0) {
+            if (prog_error_substitute(ctx, ERR_DIV_ZERO, "Division by zero", result)) return 0;
+            ctx->error = "Division by zero";
+            return -1;
+        }
         *result = num_result(op, left->num / right->num, left, right);
         return 0;
 

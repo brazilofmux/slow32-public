@@ -27,6 +27,7 @@ static struct {
     char program[64];       /* program filename, ""=interactive */
     char on_error_proc[64]; /* ON ERROR handler procedure name, ""=none */
     int in_handler;         /* 1 = currently inside error handler */
+    int block_ran;          /* the handler ran at the point of failure: not again at statement level */
     int retry;              /* set by RETRY command inside handler */
 } error_state;
 
@@ -89,6 +90,23 @@ static void clipper_error_class(int code, const char *msg, int *gen, const char 
         return;
     }
     if (strstr(msg, "ivision by zero")) { *gen = 5; *desc = "Zero divisor"; str_copy(op, "/", opsz); *sub = 1340; return; }
+    {   /* "UPPER requires (string)": a function's argument complaint is
+         * Clipper's argument error, the function its operation */
+        const char *r = strstr(msg, " requires ");
+        if (r && r > msg && r - msg < opsz - 1) {
+            const char *w;
+            for (w = msg; w < r; w++) if (!isalnum((unsigned char)*w) && *w != '_') break;
+            if (w == r) {
+                memcpy(op, msg, (size_t)(r - msg));
+                op[r - msg] = '\0';
+                str_upper(op);
+                *gen = 1;
+                *desc = "Argument error";
+                *sub = 1074;
+                return;
+            }
+        }
+    }
     if (strncmp(msg, "Variable not found: ", 20) == 0 || strncmp(msg, "Field not found: ", 17) == 0) {
         *gen = 14;
         *desc = "Variable does not exist";
@@ -112,6 +130,30 @@ static void clipper_error_class(int code, const char *msg, int *gen, const char 
     case ERR_SYNTAX: case ERR_UNRECOGNIZED: *gen = 7; break;   /* our text says which */
     default: break;
     }
+}
+
+/* An error the operation can take a substitute for (a zero divisor:
+ * Clipper's DefError answers 0 and the division is 0): the handler runs
+ * here, at the point of failure, with canSubstitute set.  1 and *out
+ * when it returned a value, which the operation uses; 0 when it returned
+ * a logical or there is no handler, and the error goes on as before (the
+ * handler not run a second time). */
+int prog_error_substitute(expr_ctx_t *ctx, int code, const char *description, value_t *out) {
+    object_t *o;
+    value_t arg, r;
+    if (error_block.type != VAL_BLOCK || error_state.in_handler) return 0;
+    o = prog_new_error_object(code, description);
+    if (!o) return 0;
+    *object_ivar(o, "canSubstitute", 1) = val_logic(1);
+    arg = val_object(o);
+    error_state.in_handler = 1;
+    r = val_nil();
+    (void)ast_eval_block(ctx, &error_block, &arg, 1, &r);
+    error_state.in_handler = 0;
+    if (break_pending) return 0;
+    if (r.type != VAL_NIL && r.type != VAL_LOGIC) { *out = r; return 1; }
+    error_state.block_ran = 1;
+    return 0;
 }
 
 object_t *prog_new_error_object(int code, const char *description) {
@@ -469,8 +511,11 @@ void prog_error(int code, const char *message) {
     }
 
     /* ERRORBLOCK()'s handler: it BREAKs to a RECOVER, or it returns and
-     * the statement that failed is abandoned */
-    if (error_block.type == VAL_BLOCK && !error_state.in_handler) {
+     * the statement that failed is abandoned (unless it already ran for
+     * this error at the point of failure, prog_error_substitute) */
+    if (error_state.block_ran) {
+        error_state.block_ran = 0;
+    } else if (error_block.type == VAL_BLOCK && !error_state.in_handler) {
         value_t arg = break_value, r;
         expr_ctx_t *ctx;
         cmd_ctx_setup();
