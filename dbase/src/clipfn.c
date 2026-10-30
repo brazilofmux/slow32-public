@@ -18,6 +18,7 @@
 #include "command.h"
 #include "program.h"
 #include "screen.h"
+#include "keys.h"
 #include "memvar.h"
 #include "util.h"
 #include "date.h"
@@ -950,18 +951,249 @@ static int fn_alert(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
     return 0;
 }
 
-/* ACHOICE(top, left, bottom, right, items, ...): the list shown; the
- * first item chosen when there is no terminal to pick from */
-static int fn_achoice(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    array_t *items = nargs > 4 && args[4].type == VAL_ARRAY ? args[4].array : NULL;
-    int i, top = arg_num(args, nargs, 0, 0), left = arg_num(args, nargs, 1, 0);
-    (void)ctx;
-    if (!items) { *result = vnum(0); return 0; }
-    for (i = 0; i < items->len; i++) {
-        if (items->el[i].type == VAL_CHAR) screen_out_at(top + i, left, items->el[i].str);
+/* ---- ACHOICE(): the pop-up menu ---- */
+
+/* achoice.ch: the modes the user function is called with, its answers */
+enum { AC_IDLE = 0, AC_HITTOP = 1, AC_HITBOTTOM = 2, AC_EXCEPT = 3, AC_NOITEM = 4 };
+enum { AC_ABORT = 0, AC_SELECT = 1, AC_CONT = 2, AC_GOTO = 3 };
+
+typedef struct {
+    expr_ctx_t *ctx;
+    int top, left, bottom, right;
+    array_t *items;
+    int nitems;             /* up to the first null string: "stops displaying" */
+    const value_t *sel;     /* parallel array, one logical, or NULL */
+    const char *userfunc;   /* a function name, or NULL */
+    int cur;                /* the highlighted item, 0-based */
+    int first;              /* the item on the window's first row */
+    int rows, width;
+} achoice_t;
+
+static int achoice_selectable(achoice_t *a, int i) {
+    const value_t *s = a->sel;
+    value_t v;
+    if (i < 0 || i >= a->nitems) return 0;
+    if (!s) return 1;
+    if (s->type == VAL_LOGIC) return s->logic;
+    if (s->type != VAL_ARRAY) return 1;
+    if (i >= s->array->len) return 1;
+    v = s->array->el[i];
+    if (v.type == VAL_LOGIC) return v.logic;
+    if (v.type == VAL_CHAR) {
+        value_t r;
+        if (ast_eval_dynamic(v.str, a->ctx, &r) != 0) { a->ctx->error = NULL; return 1; }
+        return r.type == VAL_LOGIC ? r.logic : 1;
     }
-    *result = vnum(items->len > 0 ? 1 : 0);
-    return 0;
+    return 1;
+}
+
+/* The nearest selectable item from i stepping by dir; -1 when none */
+static int achoice_near(achoice_t *a, int i, int dir) {
+    for (; i >= 0 && i < a->nitems; i += dir)
+        if (achoice_selectable(a, i)) return i;
+    return -1;
+}
+
+static void achoice_paint(achoice_t *a) {
+    int r;
+    char line[256];
+    if (!screen_term_available()) return;
+    for (r = 0; r < a->rows; r++) {
+        int i = a->first + r;
+        int len = 0;
+        if (i < a->nitems && a->items->el[i].type == VAL_CHAR) {
+            const char *t = a->items->el[i].str;
+            len = (int)strlen(t);
+            if (len > a->width) len = a->width;
+            memcpy(line, t, len);
+        }
+        memset(line + len, ' ', a->width - len);
+        line[a->width] = '\0';
+        screen_color_pair(i == a->cur ? 2 : (i < a->nitems && !achoice_selectable(a, i)) ? 5 : 1);
+        screen_out_at(a->top + r, a->left, line);
+    }
+    screen_color_pair(1);
+}
+
+/* Keep the highlight inside the window */
+static void achoice_scroll(achoice_t *a) {
+    if (a->cur < a->first) a->first = a->cur;
+    if (a->cur >= a->first + a->rows) a->first = a->cur - a->rows + 1;
+    if (a->first < 0) a->first = 0;
+}
+
+/* The user function, with the mode, the current element (1-based) and the
+ * relative row; its answer, AC_CONT when it has none */
+static int achoice_call(achoice_t *a, int mode) {
+    char call[160];
+    value_t r;
+    if (!a->userfunc) return AC_CONT;
+    snprintf(call, sizeof(call), "%s(%d, %d, %d)", a->userfunc, mode, a->cur + 1, a->cur - a->first);
+    if (ast_eval_dynamic(call, a->ctx, &r) != 0) { a->ctx->error = NULL; return AC_ABORT; }
+    return r.type == VAL_NUM ? (int)r.num : AC_CONT;
+}
+
+/* The next selectable item (wrapping) whose first letter is key */
+static int achoice_letter(achoice_t *a, int key) {
+    int n, i;
+    if (key < 32 || key > 255) return -1;
+    for (n = 1; n <= a->nitems; n++) {
+        i = (a->cur + n) % a->nitems;
+        if (a->items->el[i].type == VAL_CHAR && achoice_selectable(a, i) &&
+            toupper((unsigned char)a->items->el[i].str[0]) == toupper(key))
+            return i;
+    }
+    return -1;
+}
+
+/* ACHOICE(top, left, bottom, right, items, [selectable], [userfunc],
+ * [initial], [windowrow]) --> the position chosen, 0 when aborted.
+ * The guide's two key sets: without a user function Home/End, Return,
+ * Esc, the side arrows and first letters are ACHOICE's; with one, only
+ * the vertical movement is, and every other key is an exception the
+ * function answers. */
+static int fn_achoice(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    achoice_t a;
+    int i, init, winrow, idle_zero = 0, mode, key = 0;
+
+    memset(&a, 0, sizeof(a));
+    a.ctx = ctx;
+    a.top = arg_num(args, nargs, 0, 0);
+    a.left = arg_num(args, nargs, 1, 0);
+    a.bottom = arg_num(args, nargs, 2, a.top);
+    a.right = arg_num(args, nargs, 3, a.left);
+    a.items = nargs > 4 && args[4].type == VAL_ARRAY ? args[4].array : NULL;
+    if (!a.items || a.bottom < a.top || a.right < a.left) { *result = vnum(0); return 0; }
+    for (i = 0; i < a.items->len; i++)
+        if (a.items->el[i].type != VAL_CHAR || a.items->el[i].str[0] == '\0') break;
+    a.nitems = i;
+    a.sel = nargs > 5 && (args[5].type == VAL_ARRAY || args[5].type == VAL_LOGIC) ? &args[5] : NULL;
+    a.userfunc = nargs > 6 && args[6].type == VAL_CHAR && args[6].str[0] ? args[6].str : NULL;
+    init = arg_num(args, nargs, 7, 0);
+    winrow = arg_num(args, nargs, 8, -1);
+    a.rows = a.bottom - a.top + 1;
+    a.width = a.right - a.left + 1;
+    if (a.width > 255) a.width = 255;
+
+    a.cur = (init >= 1 && achoice_selectable(&a, init - 1)) ? init - 1 : achoice_near(&a, 0, 1);
+    if (a.cur < 0) {
+        a.cur = -1;             /* the user function sees element 0, row -1 */
+        mode = AC_NOITEM;
+    } else {
+        if (winrow >= 0 && winrow < a.rows) a.first = a.cur - winrow;
+        else a.first = a.nitems - a.rows;   /* no empty rows at the bottom */
+        if (a.first > a.cur) a.first = a.cur;
+        if (a.first < 0) a.first = 0;
+        mode = AC_IDLE;
+    }
+
+    /* One pass per key: read it (an exception or the no-item state keeps
+     * the key it has), act on it, then tell the user function the mode the
+     * pass ended in.  Its answer AC_GOTO replays the key as a first-letter
+     * search; AC_CONT reads on. */
+    for (;;) {
+        int rc, next;
+        if (mode != AC_EXCEPT && mode != AC_NOITEM) {
+            achoice_scroll(&a);
+            achoice_paint(&a);
+            key = screen_inkey(-1.0);
+            if (key == 0 && ++idle_zero >= 2) { *result = vnum(0); return 0; }  /* input gone */
+            if (key) idle_zero = 0;
+            mode = AC_IDLE;
+        }
+        if (mode == AC_NOITEM && !a.userfunc) { *result = vnum(0); return 0; }
+        if (mode != AC_NOITEM) switch (key) {
+        case K_ESC:
+            if (!a.userfunc) { *result = vnum(0); return 0; }
+            mode = AC_EXCEPT;
+            break;
+        case K_UP:
+            next = achoice_near(&a, a.cur - 1, -1);
+            if (next >= 0) a.cur = next; else mode = AC_HITTOP;
+            break;
+        case K_DOWN:
+            next = achoice_near(&a, a.cur + 1, 1);
+            if (next >= 0) a.cur = next; else mode = AC_HITBOTTOM;
+            break;
+        case K_CTRL_HOME:
+            next = achoice_near(&a, a.first, 1);
+            if (next >= 0 && next < a.first + a.rows && next != a.cur) a.cur = next;
+            else if (a.cur == achoice_near(&a, 0, 1)) mode = AC_HITTOP;
+            break;
+        case K_CTRL_END:
+            i = a.first + a.rows - 1;
+            if (i >= a.nitems) i = a.nitems - 1;
+            next = achoice_near(&a, i, -1);
+            if (next >= a.first && next != a.cur) a.cur = next;
+            else if (a.cur == achoice_near(&a, a.nitems - 1, -1)) mode = AC_HITBOTTOM;
+            break;
+        case K_PGUP:
+            if (a.cur == achoice_near(&a, 0, 1)) { mode = AC_HITTOP; break; }
+            next = achoice_near(&a, a.first, 1);
+            if (next >= 0 && next < a.cur) { a.cur = next; break; }
+            a.first -= a.rows;
+            if (a.first < 0) a.first = 0;
+            next = achoice_near(&a, a.first, 1);
+            if (next >= 0) a.cur = next;
+            break;
+        case K_PGDN:
+            if (a.cur == achoice_near(&a, a.nitems - 1, -1)) { mode = AC_HITBOTTOM; break; }
+            i = a.first + a.rows - 1;
+            if (i >= a.nitems) i = a.nitems - 1;
+            next = achoice_near(&a, i, -1);
+            if (next > a.cur) { a.cur = next; break; }
+            a.first += a.rows;
+            if (a.first > a.nitems - a.rows) a.first = a.nitems - a.rows;
+            if (a.first < 0) a.first = 0;
+            i = a.first + a.rows - 1;
+            if (i >= a.nitems) i = a.nitems - 1;
+            next = achoice_near(&a, i, -1);
+            if (next >= 0) a.cur = next;
+            break;
+        case K_CTRL_PGUP:
+            next = achoice_near(&a, 0, 1);
+            if (next >= 0) { a.cur = next; a.first = 0; }
+            break;
+        case K_CTRL_PGDN:
+            next = achoice_near(&a, a.nitems - 1, -1);
+            if (next >= 0) { a.cur = next; a.first = a.nitems - a.rows; }
+            break;
+        case K_ENTER:
+            if (!a.userfunc) { *result = vnum(a.cur + 1); return 0; }
+            mode = AC_EXCEPT;
+            break;
+        case K_LEFT: case K_RIGHT:
+            if (!a.userfunc) { *result = vnum(0); return 0; }
+            mode = AC_EXCEPT;
+            break;
+        case K_HOME:
+            if (!a.userfunc) { next = achoice_near(&a, 0, 1); if (next >= 0) a.cur = next; break; }
+            mode = AC_EXCEPT;
+            break;
+        case K_END:
+            if (!a.userfunc) { next = achoice_near(&a, a.nitems - 1, -1); if (next >= 0) a.cur = next; break; }
+            mode = AC_EXCEPT;
+            break;
+        default:
+            if (key >= 32 && key <= 255 && (!a.userfunc || mode == AC_EXCEPT)) {
+                next = achoice_letter(&a, key);
+                if (next >= 0) a.cur = next;
+                mode = AC_IDLE;
+            } else if (mode == AC_EXCEPT) {
+                mode = AC_IDLE;
+            } else {
+                mode = key == 0 ? AC_IDLE : AC_EXCEPT;
+            }
+            break;
+        }
+        if (!a.userfunc) continue;
+        if (mode != AC_EXCEPT) { achoice_scroll(&a); achoice_paint(&a); }
+        rc = achoice_call(&a, mode);
+        if (rc == AC_ABORT) { *result = vnum(0); return 0; }
+        if (rc == AC_SELECT) { *result = vnum(a.cur < 0 ? 0 : a.cur + 1); return 0; }
+        if (rc == AC_GOTO) mode = AC_EXCEPT;
+        else if (rc == AC_CONT) { if (mode != AC_NOITEM) mode = AC_IDLE; }
+    }
 }
 
 static int fn_browse(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {

@@ -202,10 +202,13 @@ void clip_fini(void) {
     screen_shutdown();
 }
 
+static int clip_trace_on(void);
+
 void clip_cmd(const char *line) {
     char buf[512];
     strncpy(buf, line, sizeof(buf) - 1);
     buf[sizeof(buf) - 1] = '\0';
+    if (clip_trace_on()) fprintf(stderr, "  cmd: %s\n", buf);
     /* cmd_execute returns 1 on QUIT (including QUIT inside DO file). */
     if (cmd_execute(&clip_db, buf)) {
         clip_fini();
@@ -227,8 +230,22 @@ void clip_static_bind(clip_scope_t *s, const char *name, value_t *storage) {
     }
 }
 
+/* CLIP_TRACE=1 in the environment: every statement (its function and
+ * source line) and every command handed to the interpreter, on stderr --
+ * the way to see where a compiled program went before it stopped. */
+static int clip_trace_on(void) {
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("CLIP_TRACE");
+        on = e && *e && *e != '0';
+    }
+    return on;
+}
+
 void clip_at(const char *file, int line) {
     prog_set_compiled_loc(file, line);
+    if (clip_trace_on())
+        fprintf(stderr, "[%s %d]\n", clip_scope_top && clip_scope_top->name ? clip_scope_top->name : "-", line);
 }
 
 /* An expression error, reported as the interpreter reports one */

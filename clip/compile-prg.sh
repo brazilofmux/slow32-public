@@ -69,7 +69,10 @@ echo "  compile cliprt + generated"
 "$ASM" "$CLIP_DIR/out/${BASE}.s" "$CLIP_DIR/out/${BASE}.s32o"
 
 echo "  link $OUT"
-"$LD" --mmio 64K --stack-size 128K --data-size 8M --heap-size 64M -o "$OUT" \
+# A Clipper program nests deep (a command through the interpreter, its
+# expressions through the AST, a user function back into the program ...):
+# DBU's main screen overflowed 128K.
+"$LD" --mmio 64K --stack-size "${STACK_SIZE:-1M}" --data-size 8M --heap-size 64M -o "$OUT" \
     "$ROOT/runtime/crt0.s32o" \
     "$CLIP_DIR/out/${BASE}.s32o" \
     "$CLIP_DIR/out/cliprt.s32o" \

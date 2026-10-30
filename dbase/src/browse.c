@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "browse.h"
+#include "keys.h"
 #include "command.h"
 #include "program.h"
 #include "screen.h"
@@ -18,17 +19,6 @@
 #endif
 
 /* dBase III key codes (must match screen.c definitions) */
-#define DBASE_KEY_UP     5
-#define DBASE_KEY_DOWN  24
-#define DBASE_KEY_LEFT  19
-#define DBASE_KEY_RIGHT  4
-#define DBASE_KEY_PGUP  18
-#define DBASE_KEY_PGDN   3
-#define DBASE_KEY_HOME   1
-#define DBASE_KEY_END    6
-#define DBASE_KEY_INS   22
-#define DBASE_KEY_DEL    7
-#define DBASE_KEY_SHIFT_TAB 256
 
 /* ------------------------------------------------------------------ */
 /*  Shared helpers                                                     */
@@ -225,7 +215,7 @@ static int edit_cell(browse_state_t *bs, int field_idx,
         }
 
         if (key == 13 || key == 10 || key == 9 ||
-            key == DBASE_KEY_UP || key == DBASE_KEY_DOWN) {
+            key == K_UP || key == K_DOWN) {
             /* Accept — restore normal attribute before returning */
             term_set_attr(0);
             break;
@@ -239,17 +229,17 @@ static int edit_cell(browse_state_t *bs, int field_idx,
             continue;
         }
 
-        if (key == DBASE_KEY_LEFT) {
+        if (key == K_LEFT) {
             if (pos > 0) pos--;
             continue;
         }
-        if (key == DBASE_KEY_RIGHT) {
+        if (key == K_RIGHT) {
             if (pos < (int)strlen(buf)) pos++;
             continue;
         }
-        if (key == DBASE_KEY_HOME) { pos = 0; continue; }
-        if (key == DBASE_KEY_END)  { pos = strlen(buf); continue; }
-        if (key == DBASE_KEY_DEL) {
+        if (key == K_HOME) { pos = 0; continue; }
+        if (key == K_END)  { pos = strlen(buf); continue; }
+        if (key == K_DEL) {
             len = strlen(buf);
             if (pos < len) {
                 memmove(buf + pos, buf + pos + 1, len - pos);
@@ -476,17 +466,17 @@ static void cmd_edit_impl(dbf_t *db, const char *args)
 
         if (key == 27 || key == 23) break; /* Esc or Ctrl-W */
 
-        if (key == DBASE_KEY_UP) {
+        if (key == K_UP) {
             if (bs.cur_field > 0) bs.cur_field--;
-        } else if (key == DBASE_KEY_DOWN || key == 9) { /* Down or Tab */
+        } else if (key == K_DOWN || key == 9) { /* Down or Tab */
             if (bs.cur_field < nf - 1) bs.cur_field++;
-        } else if (key == DBASE_KEY_PGDN) {
+        } else if (key == K_PGDN) {
             uint32_t save = db->current_record;
             if (nav_next(&bs) != 0)
                 dbf_read_record(db, save);
             else
                 cmd_follow_relations();
-        } else if (key == DBASE_KEY_PGUP) {
+        } else if (key == K_PGUP) {
             uint32_t save = db->current_record;
             if (nav_prev(&bs) != 0)
                 dbf_read_record(db, save);
@@ -788,7 +778,7 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
         if (key == KEY_NONE) break;
         if (key == 27 || key == 23) break; /* Esc or Ctrl-W */
 
-        if (key == DBASE_KEY_UP) {
+        if (key == K_UP) {
             if (bs.cur_row > 0) {
                 int old_row = bs.cur_row;
                 bs.cur_row--;
@@ -817,7 +807,7 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
                     dbf_read_record(db, first);
                 }
             }
-        } else if (key == DBASE_KEY_DOWN) {
+        } else if (key == K_DOWN) {
             if (bs.cur_row < bs.visible_count - 1) {
                 int old_row = bs.cur_row;
                 bs.cur_row++;
@@ -845,7 +835,7 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
                     dbf_read_record(db, last);
                 }
             }
-        } else if (key == DBASE_KEY_LEFT || key == DBASE_KEY_SHIFT_TAB) {
+        } else if (key == K_LEFT || key == K_SH_TAB) {
             if (bs.cur_field > 0) {
                 int old_col = bs.cur_field - bs.first_field;
                 bs.cur_field--;
@@ -862,7 +852,7 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
                 browse_paint_status(&bs);
                 term_end_update();
             }
-        } else if (key == DBASE_KEY_RIGHT || key == 9) { /* Right or Tab */
+        } else if (key == K_RIGHT || key == 9) { /* Right or Tab */
             if (bs.cur_field < nf - 1) {
                 int old_col = bs.cur_field - bs.first_field;
                 bs.cur_field++;
@@ -879,7 +869,7 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
                 browse_paint_status(&bs);
                 term_end_update();
             }
-        } else if (key == DBASE_KEY_HOME) {
+        } else if (key == K_HOME) {
             if (bs.cur_field != 0 || bs.first_field != 0) {
                 bs.cur_field = 0;
                 bs.first_field = 0;
@@ -890,7 +880,7 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
                 browse_paint_status(&bs);
                 term_end_update();
             }
-        } else if (key == DBASE_KEY_END) {
+        } else if (key == K_END) {
             if (bs.cur_field != nf - 1) {
                 bs.cur_field = nf - 1;
                 /* Adjust first_field so cur_field is visible */
@@ -920,7 +910,7 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
                     term_end_update();
                 }
             }
-        } else if (key == DBASE_KEY_PGDN) {
+        } else if (key == K_PGDN) {
             /* Page down */
             if (bs.visible_count > 0) {
                 uint32_t last = bs.visible_recnos[bs.visible_count - 1];
@@ -946,7 +936,7 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
                     dbf_read_record(db, last);
                 }
             }
-        } else if (key == DBASE_KEY_PGUP) {
+        } else if (key == K_PGUP) {
             /* Page up: walk backward from first visible */
             if (bs.visible_count > 0) {
                 uint32_t first = bs.visible_recnos[0];

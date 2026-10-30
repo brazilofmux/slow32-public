@@ -632,6 +632,17 @@ static void cmd_select(const char *arg) {
         return;
     }
 
+    /* SELECT (expr): a number or an alias name computed at run time */
+    char computed[64];
+    if (*p == '(') {
+        value_t v;
+        if (ast_eval_dynamic(p, &expr_ctx, &v) != 0) { report_expr_error(); return; }
+        if (v.type == VAL_NUM) snprintf(computed, sizeof(computed), "%d", (int)v.num);
+        else if (v.type == VAL_CHAR) str_copy(computed, v.str, sizeof(computed));
+        else { prog_error(ERR_ALIAS_NOT_FOUND, "Invalid work area"); return; }
+        p = computed;
+    }
+
     if (p[0] == '0' && (p[1] == '\0' || p[1] == ' ')) {   /* SELECT 0: the lowest unused area (Clipper) */
         for (idx = 0; idx < MAX_AREAS; idx++) {
             if (!dbf_is_open(&area_get(idx)->db)) {
@@ -691,6 +702,33 @@ static int check_filter(dbf_t *db) {
 /* ---- USE ---- */
 static void cmd_go(dbf_t *db, const char *arg);
 
+/* A file or alias name in a command: a bare word, or (expr) evaluated at
+ * run time, as Clipper allows wherever a name goes.  -1 after an error
+ * (reported); the name is trimmed, a padded field being a usual source. */
+static int cmd_name_arg(const char **pp, char *out, int size) {
+    const char *p = skip_ws(*pp);
+    out[0] = '\0';
+    if (*p == '(') {
+        value_t v;
+        int n;
+        if (ast_eval_adv(&expr_ctx, &p, &v) != 0 || v.type != VAL_CHAR) {
+            if (expr_ctx.error) report_expr_error();
+            else prog_error(ERR_SYNTAX, "A name was expected");
+            *pp = p;
+            return -1;
+        }
+        str_copy(out, skip_ws(v.str), size);
+        n = (int)strlen(out);
+        while (n > 0 && (out[n - 1] == ' ' || out[n - 1] == '\t')) out[--n] = '\0';
+    } else {
+        int i = 0;
+        while (*p && *p != ' ' && *p != '\t' && *p != ',' && i < size - 1) out[i++] = *p++;
+        out[i] = '\0';
+    }
+    *pp = p;
+    return 0;
+}
+
 static void cmd_use(dbf_t *db, const char *arg) {
     char filename[320];   /* a resolved path, not a bare name (it was 64: a long directory truncated it) */
     const char *p;
@@ -713,12 +751,12 @@ static void cmd_use(dbf_t *db, const char *arg) {
         return;
     }
 
-    /* Parse filename (up to whitespace) */
+    /* The name, then Clipper's clauses in any order: NEW (the lowest free
+     * area), SHARED / EXCLUSIVE / READONLY (one user here), VIA driver (one
+     * driver here), INDEX list, ALIAS name.  Any name may be (expr),
+     * computed at run time: DBU's USE (cDatabase) ALIAS (cAlias) EXCLUSIVE. */
     p = arg;
-    i = 0;
-    while (*p && *p != ' ' && *p != '\t' && i < (int)sizeof(filename) - 5)
-        filename[i++] = *p++;
-    filename[i] = '\0';
+    if (cmd_name_arg(&p, filename, sizeof(filename)) != 0) return;
     if (filename[0] == '\0') {
         printf("Syntax: USE [filename] [INDEX idx] [ALIAS alias]\n");
         return;
@@ -732,84 +770,77 @@ static void cmd_use(dbf_t *db, const char *arg) {
             str_copy(filename, resolved, sizeof(filename));
     }
 
-    /* Clipper's clauses, in any order before INDEX / ALIAS: NEW (the
-     * lowest free area), SHARED / EXCLUSIVE / READONLY (one user here),
-     * VIA driver (one driver here) */
-    for (;;) {
-        p = skip_ws(p);
-        if (str_imatch(p, "NEW")) {
-            int k;
-            p += 3;
-            for (k = 0; k < MAX_AREAS; k++) {
-                if (!dbf_is_open(&area_get(k)->db)) { area_set_current_idx(k); break; }
-            }
-            wa = cur_wa();
-            db = &wa->db;
-        } else if (str_imatch(p, "SHARED")) p += 6;
-        else if (str_imatch(p, "EXCLUSIVE")) p += 9;
-        else if (str_imatch(p, "READONLY")) p += 8;
-        else if (str_imatch(p, "VIA")) {
-            p = skip_ws(p + 3);
-            while (*p && *p != ' ' && *p != '\t') p++;
-        } else break;
-    }
-
-    if (dbf_is_open(db)) {   /* the area the file goes into, now that NEW has had its say */
-        dbf_close(db);
-        close_all_indexes(wa);
-        wa->alias[0] = '\0';
-    }
-
-    if (dbf_open(db, filename) < 0) {
-        file_not_found(filename);
-        return;
-    }
-
-    /* Set alias to filename stem */
-    filename_stem(filename, wa->alias, sizeof(wa->alias));
-
-    /* Parse optional INDEX clause */
-    p = skip_ws(p);
-    if (str_imatch(p, "INDEX")) {
-        p = skip_ws(p + 5);
-        while (*p && !str_imatch(p, "ALIAS") && wa->num_indexes < MAX_INDEXES) {
-            char ndxfile[64];
-            i = 0;
-            while (*p && *p != ' ' && *p != '\t' && *p != ',' && i < 63)
-                ndxfile[i++] = *p++;
-            ndxfile[i] = '\0';
-
-            if (ndxfile[0]) {
-                ensure_ndx_ext(ndxfile, sizeof(ndxfile));
-                {
-                    int slot = wa->num_indexes;
-                    if (index_read(&wa->indexes[slot], ndxfile) == 0) {
-                        index_compile_key_ast(&wa->indexes[slot], &memvar_store);
-                        wa->num_indexes++;
-                    } else {
-                        prog_error_fmt(ERR_CANNOT_OPEN, "Cannot open index: %s", ndxfile);
-                    }
-                }
-            }
-
+    {
+        char alias_name[DBF_MAX_FIELD_NAME];
+        char index_names[MAX_INDEXES][64];
+        int nindex = 0, k;
+        alias_name[0] = '\0';
+        for (;;) {
             p = skip_ws(p);
-            if (*p == ',') { p++; p = skip_ws(p); }
-            else break;
+            if (*p == '\0') break;
+            if (str_imatch(p, "NEW")) {
+                p += 3;
+                for (k = 0; k < MAX_AREAS; k++) {
+                    if (!dbf_is_open(&area_get(k)->db)) { area_set_current_idx(k); break; }
+                }
+                wa = cur_wa();
+                db = &wa->db;
+            } else if (str_imatch(p, "SHARED")) p += 6;
+            else if (str_imatch(p, "EXCLUSIVE")) p += 9;
+            else if (str_imatch(p, "READONLY")) p += 8;
+            else if (str_imatch(p, "VIA")) {
+                char driver[64];
+                p = skip_ws(p + 3);
+                if (cmd_name_arg(&p, driver, sizeof(driver)) != 0) return;
+            } else if (str_imatch(p, "INDEX")) {
+                p = skip_ws(p + 5);
+                for (;;) {
+                    char nm[64];
+                    if (cmd_name_arg(&p, nm, sizeof(nm)) != 0) return;
+                    if (nm[0] && nindex < MAX_INDEXES) str_copy(index_names[nindex++], nm, sizeof(index_names[0]));
+                    p = skip_ws(p);
+                    if (*p == ',') { p++; continue; }
+                    break;
+                }
+            } else if (str_imatch(p, "ALIAS")) {
+                p = skip_ws(p + 5);
+                if (cmd_name_arg(&p, alias_name, sizeof(alias_name)) != 0) return;
+            } else break;
         }
 
+        if (dbf_is_open(db)) {   /* the area the file goes into, now that NEW has had its say */
+            dbf_close(db);
+            close_all_indexes(wa);
+            wa->alias[0] = '\0';
+        }
+
+        if (dbf_open(db, filename) < 0) {
+            file_not_found(filename);
+            return;
+        }
+
+        /* Set alias to filename stem */
+        filename_stem(filename, wa->alias, sizeof(wa->alias));
+
+        for (k = 0; k < nindex && wa->num_indexes < MAX_INDEXES; k++) {
+            char ndxfile[64];
+            int slot = wa->num_indexes;
+            str_copy(ndxfile, index_names[k], sizeof(ndxfile));
+            ensure_ndx_ext(ndxfile, sizeof(ndxfile));
+            if (index_read(&wa->indexes[slot], ndxfile) == 0) {
+                index_compile_key_ast(&wa->indexes[slot], &memvar_store);
+                wa->num_indexes++;
+            } else {
+                prog_error_fmt(ERR_CANNOT_OPEN, "Cannot open index: %s", ndxfile);
+            }
+        }
         if (wa->num_indexes > 0)
             wa->order = 1;
-    }
 
-    /* Parse optional ALIAS clause */
-    p = skip_ws(p);
-    if (str_imatch(p, "ALIAS")) {
-        p = skip_ws(p + 5);
-        i = 0;
-        while (*p && *p != ' ' && *p != '\t' && i < DBF_MAX_FIELD_NAME - 1)
-            wa->alias[i++] = *p++;
-        wa->alias[i] = '\0';
-        str_upper(wa->alias);
+        if (alias_name[0]) {
+            str_copy(wa->alias, alias_name, sizeof(wa->alias));
+            str_upper(wa->alias);
+        }
     }
 
     /* Reset navigation state */
@@ -5718,6 +5749,19 @@ static void h_input(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l
 static void h_wait(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_wait(arg); }
 static void h_read(dbf_t *db, lexer_t *l) { (void)db; (void)l; screen_read(); }
 
+/* KEYBOARD <cString>: clear the typeahead buffer, stuff the string */
+static void h_keyboard(dbf_t *db, lexer_t *l) {
+    char arg[512];
+    value_t v;
+    (void)db;
+    lex_next(l);
+    lex_get_remaining(l, arg, sizeof(arg));
+    if (ast_eval_dynamic(arg, &expr_ctx, &v) == 0 && v.type == VAL_CHAR)
+        screen_keyboard(v.str);
+    else
+        screen_clear_typeahead();
+}
+
 static void h_menu(dbf_t *db, lexer_t *l) {
     char varname[MEMVAR_NAMELEN];
     (void)db;
@@ -5988,6 +6032,9 @@ static void h_clear(dbf_t *db, lexer_t *l) {
         lex_next(l);
     } else if (cmd_kw(l, "GETS")) {
         screen_clear_gets();
+        lex_next(l);
+    } else if (cmd_kw(l, "TYPEAHEAD")) {
+        screen_clear_typeahead();
         lex_next(l);
     } else {
         screen_clear();
@@ -7231,7 +7278,7 @@ static cmd_entry_t cmd_table[] = {
     { "ERASE", h_erase }, { "FIND", h_find },
     { "GATHER", h_gather }, { "GO", h_go }, { "GOTO", h_go },
     { "IF", h_if }, { "INDEX", h_index },
-    { "INPUT", h_input }, { "JOIN", h_join },
+    { "INPUT", h_input }, { "JOIN", h_join }, { "KEYBOARD", h_keyboard },
     { "LABEL", h_label }, { "LIST", h_list },
     { "LOCATE", h_locate }, { "LOOP", h_loop },
     { "MENU", h_menu }, { "MODIFY", h_modify }, { "ON", h_on },
@@ -7256,10 +7303,21 @@ static cmd_entry_t cmd_table[] = {
 };
 
 /* ---- Command dispatch helpers ---- */
+static int cmd_entry_cmp(const void *a, const void *b) {
+    return str_icmp(((const cmd_entry_t *)a)->name, ((const cmd_entry_t *)b)->name);
+}
+
+/* The searches below are binary: the table is sorted once, on first use,
+ * so an entry added out of order (KEYBOARD beside CLEAR, once) cannot
+ * make DO or anything after it vanish. */
 static int cmd_table_count(void) {
-    int i = 0;
-    while (cmd_table[i].name) i++;
-    return i;
+    static int n = -1;
+    if (n < 0) {
+        n = 0;
+        while (cmd_table[n].name) n++;
+        qsort(cmd_table, (size_t)n, sizeof(cmd_table[0]), cmd_entry_cmp);
+    }
+    return n;
 }
 
 static int cmd_table_exact(const char *ident) {
@@ -7377,6 +7435,18 @@ int cmd_execute(dbf_t *db, char *line) {
     p = skip_ws(line);
     if (*p == '\0') return 0;
     if (*p == '*') return 0;
+    if (p[0] == '&' && p[1] == '&') return 0;
+    if (*p == '&') {
+        /* A statement that begins with a macro (&el[M->page] = 1, &cmd):
+         * the text the macro stands for is the statement */
+        char expanded[1024];
+        lex_macro_expand(p, expr_ctx.vars, expanded, sizeof(expanded));
+        if (expanded[0] == '&' || strcmp(expanded, p) == 0) {
+            prog_error(ERR_UNRECOGNIZED, "Unrecognized command");
+            return 0;
+        }
+        return cmd_execute(db, expanded);
+    }
 
     lexer_init_ext(&l, p, expr_ctx.vars);
     if (cmd_kw(&l, "NOTE")) return 0;
@@ -7388,6 +7458,34 @@ int cmd_execute(dbf_t *db, char *line) {
         if (p[1] == '?') cmd_print_expr(p + 2, 0);
         else cmd_print_expr(p + 1, 1);
         return 0;
+    }
+
+    /* Qualified assignment: M->name = expr, FIELD->name := expr, alias->field = expr */
+    if (is_ident_start(p[0])) {
+        lexer_t al;
+        lexer_init_ext(&al, p, expr_ctx.vars);
+        if (al.current.type == TOK_IDENT) {
+            char alias[MEMVAR_NAMELEN];
+            str_copy(alias, al.current.text, sizeof(alias));
+            lex_next(&al);
+            if (al.current.type == TOK_ARROW) {
+                lex_next(&al);
+                if (al.current.type == TOK_IDENT) {
+                    char field[MEMVAR_NAMELEN];
+                    str_copy(field, al.current.text, sizeof(field));
+                    lex_next(&al);
+                    if (al.current.type == TOK_EQ || al.current.type == TOK_ASSIGN) {
+                        value_t val;
+                        const char *next_p = al.token_start + (al.current.type == TOK_EQ ? 1 : 2);
+                        if (ast_eval_adv(&expr_ctx, &next_p, &val) != 0 ||
+                            ast_store_alias_field(&expr_ctx, alias, field, &val) != 0) {
+                            report_expr_error();
+                        }
+                        return 0;
+                    }
+                }
+            }
+        }
     }
 
     /* Variable assignment: identifier[idx] = expr */

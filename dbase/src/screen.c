@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "screen.h"
+#include "keys.h"
 #include "command.h"
 #include "program.h"
 #include "util.h"
@@ -41,31 +42,10 @@ static int in_key_handler;  /* re-entrancy guard */
 #define SCREEN_COLS 80
 
 /* dBase III key codes for special keys */
-#define DBASE_KEY_UP     5
-#define DBASE_KEY_DOWN  24
-#define DBASE_KEY_LEFT  19
-#define DBASE_KEY_RIGHT  4
-#define DBASE_KEY_PGUP  18
-#define DBASE_KEY_PGDN   3
-#define DBASE_KEY_HOME   1
-#define DBASE_KEY_END    6
-#define DBASE_KEY_INS   22
-#define DBASE_KEY_DEL    7
 
 /* Extended key codes (above ASCII range) */
 /* Function keys as dBASE III and Clipper number them (inkey.ch): F1 is
  * 28, F2 to F10 are -1 to -9 */
-#define DBASE_KEY_SHIFT_TAB 271
-#define DBASE_KEY_F1   28
-#define DBASE_KEY_F2   -1
-#define DBASE_KEY_F3   -2
-#define DBASE_KEY_F4   -3
-#define DBASE_KEY_F5   -4
-#define DBASE_KEY_F6   -5
-#define DBASE_KEY_F7   -6
-#define DBASE_KEY_F8   -7
-#define DBASE_KEY_F9   -8
-#define DBASE_KEY_F10  -9
 
 void screen_init(void) {
     memset(&scr, 0, sizeof(scr));
@@ -910,29 +890,29 @@ int screen_menu_to(void) {
                 cur = -1;
                 break;
             }
-            if (key == DBASE_KEY_UP) {
+            if (key == K_UP) {
                 if (cur > 0) {
                     cur--;
                 } else if (wrap) {
                     cur = n - 1;
                 }
-            } else if (key == DBASE_KEY_DOWN) {
+            } else if (key == K_DOWN) {
                 if (cur < n - 1) {
                     cur++;
                 } else if (wrap) {
                     cur = 0;
                 }
-            } else if (key == DBASE_KEY_HOME) {
+            } else if (key == K_HOME) {
                 cur = 0;
-            } else if (key == DBASE_KEY_END) {
+            } else if (key == K_END) {
                 cur = n - 1;
-            } else if (key == DBASE_KEY_LEFT) {
+            } else if (key == K_LEFT) {
                 if (cur > 0) {
                     cur--;
                 } else if (wrap) {
                     cur = n - 1;
                 }
-            } else if (key == DBASE_KEY_RIGHT) {
+            } else if (key == K_RIGHT) {
                 if (cur < n - 1) {
                     cur++;
                 } else if (wrap) {
@@ -977,53 +957,45 @@ int screen_menu_to(void) {
 }
 
 /* ---- SET COLOR TO ---- */
-void screen_set_color(const char *spec) {
-    str_copy(color_spec, skip_ws(spec), sizeof(color_spec));   /* SETCOLOR() gives it back */
-    /* Parse color spec: "fg/bg" or "fg"
-       Colors: W(hite), N(black), R(ed), G(reen), B(lue),
-               GR(gray), BG(bright green), etc.
-       Attributes: U=underline, I=inverse, +=bold, *=blink (treated as bold) */
-    const char *p = skip_ws(spec);
+
+/* One colour of a pair: a letter run (N B G BG R RB GR W, U underline,
+ * I inverse, X blank), then + or * for intensity */
+static const char *parse_one_color(const char *p, int *color, int *bold, int *underline, int *inverse) {
+    char run[4];
+    int n = 0;
+    while (*p && ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z'))) {
+        if (n < 3) run[n++] = (char)((*p >= 'a') ? *p - 32 : *p);
+        p++;
+    }
+    run[n] = '\0';
+    if (!strcmp(run, "N") || !strcmp(run, "X")) *color = 0;
+    else if (!strcmp(run, "B")) *color = 4;
+    else if (!strcmp(run, "G")) *color = 2;
+    else if (!strcmp(run, "BG")) *color = 6;
+    else if (!strcmp(run, "R")) *color = 1;
+    else if (!strcmp(run, "RB")) *color = 5;
+    else if (!strcmp(run, "GR")) *color = 3;
+    else if (!strcmp(run, "W")) *color = 7;
+    else if (!strcmp(run, "U")) { *color = 7; *underline = 1; }
+    else if (!strcmp(run, "I")) { *color = 7; *inverse = 1; }
+    while (*p == '+' || *p == '*') { *bold = 1; p++; }
+    return p;
+}
+
+/* Apply one "fg/bg" pair to the terminal */
+static void apply_color_pair(const char *p) {
     int fg = 7, bg = 0;
     int bold = 0, underline = 0, inverse = 0;
-
-    /* Check for attribute-only foreground specifiers */
-    if (*p == 'U' || *p == 'u') {
-        underline = 1; fg = 7; p++;
-    } else if (*p == 'I' || *p == 'i') {
-        inverse = 1; fg = 7; p++;
-    } else {
-        /* Parse foreground color */
-        switch (*p) {
-        case 'N': case 'n': fg = 0; p++; break; /* black */
-        case 'B': case 'b': fg = 4; p++; break; /* blue */
-        case 'G': case 'g': fg = 2; p++; break; /* green */
-        case 'R': case 'r': fg = 1; p++; break; /* red */
-        case 'W': case 'w': fg = 7; p++; break; /* white */
-        default: if (*p && *p != '/' && *p != '+' && *p != '*') p++; break;
-        }
-    }
-
-    /* Check for '+' (bold/high intensity) or '*' (blink, treated as bold) */
-    if (*p == '+') { bold = 1; p++; }
-    else if (*p == '*') { bold = 1; p++; }
-
-    /* Parse background after '/' */
+    int dummy = 0;
+    p = skip_ws(p);
+    p = parse_one_color(p, &fg, &bold, &underline, &inverse);
+    p = skip_ws(p);
     if (*p == '/') {
-        p++;
-        switch (*p) {
-        case 'N': case 'n': bg = 0; p++; break;
-        case 'B': case 'b': bg = 4; p++; break;
-        case 'G': case 'g': bg = 2; p++; break;
-        case 'R': case 'r': bg = 1; p++; break;
-        case 'W': case 'w': bg = 7; p++; break;
-        default: if (*p) p++; break;
-        }
+        p = skip_ws(p + 1);
+        p = parse_one_color(p, &bg, &dummy, &dummy, &dummy);
     }
-
     scr.fg_color = fg;
     scr.bg_color = bg;
-
 #if HAS_TERM
     if (scr.term_available) {
         term_set_attr(0);  /* reset all attributes */
@@ -1033,7 +1005,28 @@ void screen_set_color(const char *spec) {
         term_set_color(fg, bg);
     }
 #endif
-    (void)p;
+}
+
+/* The n-th pair (1 standard, 2 enhanced, 3 border, 4 background, 5
+ * unselected) of the current setting; Clipper's defaults for a pair the
+ * setting leaves empty */
+void screen_color_pair(int n) {
+    static const char *dflt[] = { "W/N", "N/W", "N", "N", "N/W" };
+    const char *p = color_spec;
+    int i;
+    for (i = 1; i < n && *p; i++) {
+        const char *c = strchr(p, ',');
+        if (!c) { p = ""; break; }
+        p = c + 1;
+    }
+    p = skip_ws(p);
+    if (*p == '\0' || *p == ',') p = (n >= 1 && n <= 5) ? dflt[n - 1] : "W/N";
+    apply_color_pair(p);
+}
+
+void screen_set_color(const char *spec) {
+    str_copy(color_spec, skip_ws(spec), sizeof(color_spec));   /* SETCOLOR() gives it back */
+    apply_color_pair(color_spec);
 }
 
 /* ---- Parse @ command ---- */
@@ -1327,64 +1320,79 @@ int read_dbase_key(void) {
     int ch = term_getkey();
     if (ch < 0) return KEY_NONE;
     if (ch == 27) {
-        /* Possible escape sequence — check if more bytes follow */
+        int ch2;
+        /* Possible escape sequence -- check if more bytes follow */
         if (!term_kbhit()) return 27;  /* bare Escape */
-        int ch2 = term_getkey();
+        ch2 = term_getkey();
         if (ch2 == '[') {
-            int ch3 = term_getkey();
-            /* Letter sequences */
-            switch (ch3) {
-            case 'A': return DBASE_KEY_UP;
-            case 'B': return DBASE_KEY_DOWN;
-            case 'C': return DBASE_KEY_RIGHT;
-            case 'D': return DBASE_KEY_LEFT;
-            case 'H': return DBASE_KEY_HOME;
-            case 'F': return DBASE_KEY_END;
-            case 'Z': return DBASE_KEY_SHIFT_TAB;
-            }
-            /* Numeric sequences: ESC [ <num> ~ */
-            if (ch3 >= '0' && ch3 <= '9') {
-                int num = ch3 - '0';
-                if (term_kbhit()) {
-                    int ch4 = term_getkey();
-                    if (ch4 >= '0' && ch4 <= '9') {
-                        num = num * 10 + (ch4 - '0');
-                        if (term_kbhit()) term_getkey(); /* consume ~ */
-                    }
-                    /* else ch4 is '~', already consumed */
+            /* CSI: parameters (digits and ;) then a final byte.  The
+             * second parameter is the modifier: 5 is Ctrl (xterm). */
+            int params[4] = { 0, 0, 0, 0 };
+            int np = 0, have = 0, final = 0, ctrl;
+            for (;;) {
+                int c;
+                if (!term_kbhit()) return 0;   /* a torn sequence: nothing */
+                c = term_getkey();
+                if (c >= '0' && c <= '9') {
+                    if (np < 4) params[np] = params[np] * 10 + (c - '0');
+                    have = 1;
+                } else if (c == ';') {
+                    if (np < 3) np++;
+                    have = 1;
+                } else {
+                    final = c;
+                    break;
                 }
-                switch (num) {
-                case 1:  return DBASE_KEY_HOME;
-                case 2:  return DBASE_KEY_INS;
-                case 3:  return DBASE_KEY_DEL;
-                case 4:  return DBASE_KEY_END;
-                case 5:  return DBASE_KEY_PGUP;
-                case 6:  return DBASE_KEY_PGDN;
-                case 11: return DBASE_KEY_F1;
-                case 12: return DBASE_KEY_F2;
-                case 13: return DBASE_KEY_F3;
-                case 14: return DBASE_KEY_F4;
-                case 15: return DBASE_KEY_F5;
-                case 17: return DBASE_KEY_F6;
-                case 18: return DBASE_KEY_F7;
-                case 19: return DBASE_KEY_F8;
-                case 20: return DBASE_KEY_F9;
-                case 21: return DBASE_KEY_F10;
+            }
+            if (have) np++;
+            ctrl = np >= 2 && params[1] == 5;
+            switch (final) {
+            case 'A': return K_UP;
+            case 'B': return K_DOWN;
+            case 'C': return ctrl ? K_CTRL_RIGHT : K_RIGHT;
+            case 'D': return ctrl ? K_CTRL_LEFT : K_LEFT;
+            case 'H': return ctrl ? K_CTRL_HOME : K_HOME;
+            case 'F': return ctrl ? K_CTRL_END : K_END;
+            case 'Z': return K_SH_TAB;
+            case '~':
+                switch (params[0]) {
+                case 1:  return ctrl ? K_CTRL_HOME : K_HOME;
+                case 2:  return K_INS;
+                case 3:  return K_DEL;
+                case 4:  return ctrl ? K_CTRL_END : K_END;
+                case 5:  return ctrl ? K_CTRL_PGUP : K_PGUP;
+                case 6:  return ctrl ? K_CTRL_PGDN : K_PGDN;
+                case 7:  return K_HOME;
+                case 8:  return K_END;
+                case 11: return K_F1;
+                case 12: return K_F2;
+                case 13: return K_F3;
+                case 14: return K_F4;
+                case 15: return K_F5;
+                case 17: return K_F6;
+                case 18: return K_F7;
+                case 19: return K_F8;
+                case 20: return K_F9;
+                case 21: return K_F10;
+                case 23: return K_F11;
+                case 24: return K_F12;
                 default: return 0;
                 }
+            default:
+                return 0;   /* an unknown sequence is no key */
             }
-            return ch3; /* unknown sequence — return last byte */
         } else if (ch2 == 'O') {
             /* SS3 sequences: F1-F4 on some terminals */
+            int ch3;
             if (!term_kbhit()) return ch2;
-            int ch3 = term_getkey();
+            ch3 = term_getkey();
             switch (ch3) {
-            case 'P': return DBASE_KEY_F1;
-            case 'Q': return DBASE_KEY_F2;
-            case 'R': return DBASE_KEY_F3;
-            case 'S': return DBASE_KEY_F4;
-            case 'H': return DBASE_KEY_HOME;
-            case 'F': return DBASE_KEY_END;
+            case 'P': return K_F1;
+            case 'Q': return K_F2;
+            case 'R': return K_F3;
+            case 'S': return K_F4;
+            case 'H': return K_HOME;
+            case 'F': return K_END;
             default: return ch3;
             }
         }
@@ -1398,8 +1406,47 @@ int read_dbase_key(void) {
 
 static int pushed_key;   /* a key NEXTKEY() read and left for the next INKEY() */
 
+/* The typeahead buffer KEYBOARD fills: read before the terminal by every
+ * wait state, cleared by CLEAR TYPEAHEAD and by KEYBOARD itself.  Each
+ * byte of the string is one key, 0..255 as Clipper (and Harbour) have it:
+ * CHR(252) comes back as 252, not F5. */
+#define TYPEAHEAD_MAX 256
+static int typeahead[TYPEAHEAD_MAX];
+static int typeahead_head, typeahead_len;
+
+void screen_keyboard(const char *s) {
+    typeahead_head = typeahead_len = 0;
+    pushed_key = 0;
+    while (*s && typeahead_len < TYPEAHEAD_MAX) typeahead[typeahead_len++] = (unsigned char)*s++;
+}
+
+void screen_clear_typeahead(void) {
+    typeahead_head = typeahead_len = 0;
+    pushed_key = 0;
+}
+
+/* A key waiting, anywhere: NEXTKEY's pushback, the typeahead buffer, the
+ * terminal.  The user interface functions call their user function with
+ * the idle mode when there is none. */
+int screen_key_pending(void) {
+    if (pushed_key > 0 || typeahead_head < typeahead_len) return 1;
+#if HAS_TERM
+    if (scr.term_available) {
+        int hit;
+        term_set_raw(1);
+        hit = term_kbhit();
+        term_set_raw(0);
+        return hit;
+    }
+#endif
+    return 0;
+}
+
 int screen_nextkey(void) {
-    if (pushed_key <= 0) pushed_key = screen_inkey(0.0);
+    if (pushed_key <= 0) {
+        if (typeahead_head < typeahead_len) return typeahead[typeahead_head];
+        pushed_key = screen_inkey(0.0);
+    }
     return pushed_key > 0 ? pushed_key : 0;
 }
 
@@ -1413,6 +1460,12 @@ int screen_inkey(double timeout) {
         int k = pushed_key;
         pushed_key = 0;
         last_key = k;
+        return k;
+    }
+    if (typeahead_head < typeahead_len) {
+        int k = typeahead[typeahead_head++];
+        last_key = k;
+        if (screen_check_key_handler(k)) return 0;
         return k;
     }
 #if HAS_TERM

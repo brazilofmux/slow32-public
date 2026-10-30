@@ -130,6 +130,9 @@ void ast_free(ast_node_t *node) {
         break;
     case AST_ALIAS_FIELD:
         break;
+    case AST_MACRO:
+        ast_free(node->macro.expr);
+        break;
     case AST_ARRAY_ACCESS:
         ast_free(node->array.index1);
         ast_free(node->array.index2);
@@ -278,6 +281,9 @@ static ast_node_t *ast_clone(const ast_node_t *n) {
     case AST_INDEX:
         c->index.base = ast_clone(n->index.base);
         c->index.index = ast_clone(n->index.index);
+        break;
+    case AST_MACRO:
+        c->macro.expr = ast_clone(n->macro.expr);
         break;
     case AST_SEND:
         c->send.base = ast_clone(n->send.base);
@@ -660,9 +666,29 @@ static ast_node_t *ast_parse_primary(lexer_t *l, memvar_store_t *store, const ch
         return node;
     }
 
-    case TOK_MACRO:
-        *error = "Expected identifier after &";
-        return NULL;
+    case TOK_MACRO: {
+        /* &name was expanded by the lexer; &(expr) is a run-time macro:
+         * the string the expression gives, compiled when evaluated */
+        ast_node_t *inner, *node;
+        lex_next(l);
+        if (lex_peek(l) != TOK_LPAREN) {
+            *error = "Expected identifier after &";
+            return NULL;
+        }
+        lex_next(l);
+        inner = ast_parse_expr(l, store, error);
+        if (!inner) return NULL;
+        if (lex_peek(l) != TOK_RPAREN) {
+            *error = "Missing closing parenthesis";
+            ast_free(inner);
+            return NULL;
+        }
+        lex_next(l);
+        node = node_alloc(AST_MACRO);
+        if (!node) { ast_free(inner); *error = "Out of memory"; return NULL; }
+        node->macro.expr = inner;
+        return node;
+    }
 
     case TOK_LPAREN: {
         ast_node_t *inner;
@@ -1192,6 +1218,7 @@ static void free_names(const ast_node_t *n, const ast_node_t *blk, char (*out)[M
                            free_names(n->index.index, blk, out, count); break;
     case AST_SEND:         free_names(n->send.base, blk, out, count);
                            for (i = 0; i < n->send.nargs; i++) free_names(n->send.args[i], blk, out, count); break;
+    case AST_MACRO:        free_names(n->macro.expr, blk, out, count); break;
     case AST_BLOCK:        for (i = 0; i < n->block.n; i++) free_names(n->block.exprs[i], blk, out, count); break;
     default: break;
     }
@@ -1417,6 +1444,12 @@ int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
     case AST_ALIAS_FIELD:
         return ast_eval_alias_field(ctx, node->alias_field.alias, node->alias_field.field, result);
 
+    case AST_MACRO: {
+        value_t text;
+        if (ast_eval(node->macro.expr, ctx, &text) != 0) return -1;
+        return ast_eval_macro_value(ctx, &text, result);
+    }
+
     case AST_ARRAY_ACCESS: {
         value_t row_v, col_v;
         if (ast_eval(node->array.index1, ctx, &row_v) != 0) return -1;
@@ -1614,8 +1647,30 @@ static ast_node_t *ast_cached(const char *text, memvar_store_t *store, int adv, 
     }
 }
 
+/* Text with a macro in it: the lexer expands &name from the variables as
+ * it reads, so the tree depends on their values -- compiled afresh each
+ * time and never cached.  (These used to fall back to expr.c's evaluator,
+ * which knows no M->, arrays or blocks: DBU's &el[M->page] failed.) */
+static int ast_eval_macro_text(const char *expr, expr_ctx_t *ctx, value_t *result) {
+    const char *error;
+    ast_node_t *ast = ast_compile(expr, ctx->vars, &error);
+    int rc;
+    if (!ast) return expr_eval_str(ctx, expr, result);
+    rc = ast_eval(ast, ctx, result);
+    ast_free(ast);
+    return rc;
+}
+
+/* &(expr) once expr is a value: the string compiled and evaluated (the
+ * interpreter's AST_MACRO and the compiled program both come here) */
+int ast_eval_macro_value(expr_ctx_t *ctx, const value_t *text, value_t *result) {
+    if (text->type != VAL_CHAR) { ctx->error = "Macro expression must be a string"; return -1; }
+    return ast_eval_dynamic(text->str, ctx, result);
+}
+
 int ast_eval_dynamic(const char *expr, expr_ctx_t *ctx, value_t *result) {
     ast_node_t *ast = ast_cached(expr, ctx->vars, 0, NULL);
+    if (!ast && strchr(expr, '&')) return ast_eval_macro_text(expr, ctx, result);
     if (!ast) return expr_eval_str(ctx, expr, result);
     return ast_eval(ast, ctx, result);
 }
@@ -1625,6 +1680,17 @@ int ast_eval_adv(expr_ctx_t *ctx, const char **pp, value_t *result) {
     int used = 0;
     ast_node_t *ast = ast_cached(*pp, ctx->vars, 1, &used);
     int rc;
+    if (!ast && strchr(*pp, '&')) {
+        const char *error, *q = *pp;
+        ast = ast_compile_adv(&q, ctx->vars, &error);
+        if (!ast) return expr_eval(ctx, pp, result);
+        ctx->error = NULL;
+        *result = val_nil();
+        rc = ast_eval(ast, ctx, result);
+        ast_free(ast);
+        *pp = q;
+        return rc;
+    }
     if (!ast) return expr_eval(ctx, pp, result);
     ctx->error = NULL;
     *result = val_nil();

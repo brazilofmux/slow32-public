@@ -21,7 +21,8 @@ typedef enum {
     AST_INDEX,          /* expr[i] -- on any value, so a[3][2] */
     AST_BLOCK,          /* {|p, q| e1, e2, ...} */
     AST_REF,            /* @name: an argument passed by reference */
-    AST_SEND            /* obj:name, obj:name(args): the send operator */
+    AST_SEND,           /* obj:name, obj:name(args): the send operator */
+    AST_MACRO           /* &(expr): the string compiled and evaluated at run time */
 } ast_type_t;
 
 typedef enum {
@@ -57,6 +58,7 @@ typedef struct ast_node {
                  struct ast_node **exprs; int n; } block;       /* AST_BLOCK */
         struct { struct ast_node *base; char name[64]; struct ast_node **args;
                  int nargs; int is_call; } send;                 /* AST_SEND */
+        struct { struct ast_node *expr; } macro;                /* AST_MACRO */
     };
 } ast_node_t;
 
@@ -75,6 +77,7 @@ int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result);
 /* Compile, evaluate, and free a fresh AST in one shot.
    Used for expressions containing &macros that must re-expand each time. */
 int ast_eval_dynamic(const char *expr, expr_ctx_t *ctx, value_t *result);
+int ast_eval_macro_value(expr_ctx_t *ctx, const value_t *text, value_t *result);   /* &(expr), expr evaluated */
 
 /* Evaluate the expression at *pp through the compiled-expression cache and
    advance *pp past it (the advancing form of ast_eval_dynamic). */

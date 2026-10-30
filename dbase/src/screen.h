@@ -141,6 +141,10 @@ void screen_setpos(int row, int col);
 void screen_out(const char *text);
 void screen_apply_picture(char *out, const char *value, const char *picture, int outsize);
 const char *screen_color_spec(void);
+void screen_color_pair(int n);          /* apply pair n of SET COLOR: 1 standard, 2 enhanced, 5 unselected */
+void screen_keyboard(const char *s);    /* KEYBOARD: clear the typeahead, stuff the string */
+void screen_clear_typeahead(void);
+int screen_key_pending(void);           /* a key waiting in any buffer or at the terminal */
 const char *screen_read_var(void);   /* the GET being read; "" outside a READ */
 int screen_read_updated(void);       /* UPDATED(): a GET changed in the last READ */
 value_t screen_active_get(void);     /* GETACTIVE(): its Get object, or NIL */

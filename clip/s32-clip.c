@@ -524,6 +524,10 @@ static int gen_expr(sb_t *b, int *ntmp, ast_node_t *node) {
         r = gen_expr(b, ntmp, node->index.index);
         sb_printf(b, "e = e || ast_eval_index(c, &t%d, &t%d, &t%d); ", l, r, t);
         return t;
+    case AST_MACRO:   /* &(expr): the string it gives, compiled at run time */
+        l = gen_expr(b, ntmp, node->macro.expr);
+        sb_printf(b, "e = e || ast_eval_macro_value(c, &t%d, &t%d); ", l, t);
+        return t;
     case AST_SEND:
         l = gen_expr(b, ntmp, node->send.base);
         a = -1;

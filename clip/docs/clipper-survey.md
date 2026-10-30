@@ -229,10 +229,60 @@ people who wrote Clipper.
   it (s32-clip's lines grow on demand; the runtime's function table held
   64 and dropped the rest without a word).
 
+- **DBU driven with keys** (later the same day).  Keys go in through
+  the terminal service as the dbase INKEY tests feed them (bytes on
+  stdin with short pauses; `scratchpad/vt.py` renders the escape stream
+  as the final 25x80 screen).  Esc then Y leaves DBU cleanly; F2 Open,
+  Enter (Database), Enter on PEOPLE.DBF in the file pane, Enter on Ok
+  opens the table and shows it under Files; F5 Browse, Enter paints the
+  records through TBrowse and the arrows move the highlight (Record
+  3/5).  What that took, each found by tracing the compiled program
+  (`CLIP_TRACE=1` prints every statement and every command handed to
+  the interpreter on stderr):
+  - **ACHOICE()** was a stub (print the items, answer 1): DBU's menus run
+    on it, so the main screen spun calling it.  Now the guide's two key
+    sets (no user function: Home / End / Return / Esc / side arrows /
+    first letters are its own; with one, only vertical movement is, and
+    every other key is an exception the function answers), scrolling,
+    the parallel selectable array (logicals or macro strings), the
+    initial item and window row, AC_IDLE / HITTOP / HITBOTTOM / EXCEPT /
+    NOITEM and the answers ABORT / SELECT / CONT / GOTO, Harbour's
+    calling sequence exactly (one user-function call per pass; GOTO
+    replays the key as a first-letter search).  Probe fn-achoice.  The
+    one point where Harbour departs from the guide (an unselectable
+    initial item stays) is tests/achoice.prg, under the interpreter
+    oracle, with the guide's rule.
+  - **KEYBOARD** and **CLEAR TYPEAHEAD** (a typeahead buffer read before
+    the terminal by every wait state; each byte one key 0..255, so
+    CHR(252) is 252 -- Harbour's answer, and DBU's menu_key() expects
+    exactly that); SET TYPEAHEAD accepted.  The key codes live in one
+    header, `dbase/src/keys.h` (screen.c, menu.c and browse.c each had a
+    copy; browse's Shift-Tab was 256, the others' 271).
+  - **Macros through the AST.**  An expression containing `&` never
+    reached the AST evaluator (its cache refused the text) and fell to
+    expr.c's old one, which knows no M->, arrays or blocks: DBU's
+    `&el[M->page]` failed, `&el[M->page] = 1` was an unrecognized
+    command, and the error loop filled a 64 MB heap in two seconds (so
+    the first symptom was "Out of memory").  Macro texts are compiled
+    afresh each time, uncached; a statement that begins with a macro is
+    expanded and executed; **`&(expr)`** is a node of its own, the
+    string compiled when evaluated (DBU builds its column blocks that
+    way).  Probe dir-macro-forms.
+  - **SELECT (expr)**, `M->name = value` / `alias->field := value` as
+    statements, **USE (expr) ALIAS (expr)** with the clauses in any order
+    (DBU's NetUse), and **ADIR()** filling its arrays (names, sizes,
+    dates, times, attributes -- it only counted, so DIRECTORY() was
+    empty too and the file pane blank).
+  - The command table is binary-searched: an entry added out of order
+    made DO vanish.  It sorts itself on first use now.
+  - The compiled program's stack is 1 MB (`STACK_SIZE` overrides): DBU's
+    main screen overflowed 128 KB.
+
 Not driven yet: GETSYS.PRG and ERRORSYS.PRG as replacements for the
 built-in Get reader and error handler (they compile; running them in
 place of ours needs the keyboard), the report and label runners
-(need .frm / .lbl files), DBU past its first screen (keys).
+(need .frm / .lbl files), DBU's other menus (Create, Utility, Move,
+Set) and editing inside Browse.
 
 ## The order of work proposed
 
@@ -371,5 +421,5 @@ The severe ones are marked.
    yet: READMODAL() reads the GETs recorded by @ GET, not the Gets in the
    array it is given; the Get's reader and exitState are inert; a
    column's colorBlock, footing painting, TBrowse freeze and horizontal
-   panning are accepted and ignored; NEXTKEY, KEYBOARD and SETMODE are
-   absent.
+   panning are accepted and ignored; SETMODE is absent (NEXTKEY and
+   KEYBOARD came with the DBU round below).

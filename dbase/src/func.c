@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <dirent.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <time.h>
 #include "func.h"
@@ -1263,6 +1264,14 @@ static int fn_curdir(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result)
     return 0;
 }
 
+/* ADIR([spec], [names], [sizes], [dates], [times], [attributes]) --> the
+ * count of matching files, the arrays (as far as they reach) filled with
+ * each file's name, size, date, "HH:MM:SS" and attribute ("A", "D" for a
+ * directory) -- DIRECTORY() is built on this */
+static void adir_put(value_t *arr, int i, value_t v) {
+    if (arr->type == VAL_ARRAY && arr->array && i < arr->array->len) arr->array->el[i] = v;
+}
+
 static int fn_adir(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     int count = 0;
     DIR *dir;
@@ -1283,11 +1292,26 @@ static int fn_adir(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         if (ent->d_name[0] == '.' && (ent->d_name[1] == '\0' ||
             (ent->d_name[1] == '.' && ent->d_name[2] == '\0')))
             continue;  /* skip . and .. */
-        if (pattern) {
-            if (str_like(ent->d_name, pattern)) count++;
-        } else {
-            count++;
+        if (pattern && !str_like(ent->d_name, pattern)) continue;
+        if (nargs >= 2) {
+            struct stat st;
+            int have = stat(ent->d_name, &st) == 0;
+            adir_put(&args[1], count, val_str(ent->d_name));
+            if (nargs >= 3) adir_put(&args[2], count, val_num(have ? (double)st.st_size : 0));
+            if (nargs >= 4 || nargs >= 5) {
+                struct tm *tm = have ? localtime(&st.st_mtime) : NULL;
+                if (nargs >= 4)
+                    adir_put(&args[3], count, tm ? val_date(date_to_jdn(tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday)) : val_date(0));
+                if (nargs >= 5) {
+                    char hms[16];
+                    if (tm) snprintf(hms, sizeof(hms), "%02d:%02d:%02d", tm->tm_hour, tm->tm_min, tm->tm_sec);
+                    else str_copy(hms, "00:00:00", sizeof(hms));
+                    adir_put(&args[4], count, val_str(hms));
+                }
+            }
+            if (nargs >= 6) adir_put(&args[5], count, val_str(have && S_ISDIR(st.st_mode) ? "D" : "A"));
         }
+        count++;
     }
     closedir(dir);
 

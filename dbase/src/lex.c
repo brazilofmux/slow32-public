@@ -166,6 +166,11 @@ static void macro_expand_into(const char *src, memvar_store_t *store,
     }
     *d = '\0';
 }
+
+/* The text with its macros expanded, for a statement that begins with one */
+void lex_macro_expand(const char *src, memvar_store_t *store, char *out, int size) {
+    macro_expand_into(src, store, out, size, 0);
+}
 token_type_t lex_next(lexer_t *l) {
     char c;
     token_t *t = &l->current;

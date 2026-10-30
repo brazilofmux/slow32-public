@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "menu.h"
+#include "keys.h"
 #include "screen.h"
 #include "command.h"
 #include "expr.h"
@@ -16,12 +17,6 @@
 #endif
 
 /* Key codes — same as screen.c / browse.c */
-#define DBASE_KEY_UP     5
-#define DBASE_KEY_DOWN  24
-#define DBASE_KEY_LEFT  19
-#define DBASE_KEY_RIGHT  4
-#define DBASE_KEY_HOME   1
-#define DBASE_KEY_END    6
 
 /* ---- Popup Registry ---- */
 static popup_t popups[MAX_POPUPS];
@@ -281,17 +276,17 @@ int menu_activate_popup_ex(const char *name, int from_menubar) {
                 cur = -1;
                 break;
             }
-            if (key == DBASE_KEY_UP) {
+            if (key == K_UP) {
                 cur = next_selectable(p, cur, -1, wrap);
-            } else if (key == DBASE_KEY_DOWN) {
+            } else if (key == K_DOWN) {
                 cur = next_selectable(p, cur, 1, wrap);
-            } else if (key == DBASE_KEY_HOME) {
+            } else if (key == K_HOME) {
                 int f = first_selectable(p);
                 if (f >= 0) cur = f;
-            } else if (key == DBASE_KEY_END) {
+            } else if (key == K_END) {
                 int l = last_selectable(p);
                 if (l >= 0) cur = l;
-            } else if (from_menubar && key == DBASE_KEY_LEFT) {
+            } else if (from_menubar && key == K_LEFT) {
                 /* Close popup, return -1 = move left in menu bar */
                 term_set_attr(0);
                 if (msg_row >= 0) {
@@ -305,7 +300,7 @@ int menu_activate_popup_ex(const char *name, int from_menubar) {
                 term_set_raw(0);
                 screen_clear_region(r1, c1, r2, c2);
                 return -1;
-            } else if (from_menubar && key == DBASE_KEY_RIGHT) {
+            } else if (from_menubar && key == K_RIGHT) {
                 /* Close popup, return -2 = move right in menu bar */
                 term_set_attr(0);
                 if (msg_row >= 0) {
@@ -568,11 +563,11 @@ int menu_activate_menu(const char *name) {
                 screen_set_lastkey(27);
                 break;
             }
-            if (key == DBASE_KEY_LEFT) {
+            if (key == K_LEFT) {
                 cur = (cur - 1 + m->npad) % m->npad;
-            } else if (key == DBASE_KEY_RIGHT) {
+            } else if (key == K_RIGHT) {
                 cur = (cur + 1) % m->npad;
-            } else if (key == '\r' || key == '\n' || key == DBASE_KEY_DOWN) {
+            } else if (key == '\r' || key == '\n' || key == K_DOWN) {
                 /* Open attached popup */
                 if (m->pads[cur].popup_name[0]) {
                     int result;

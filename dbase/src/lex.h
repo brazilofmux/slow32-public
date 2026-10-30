@@ -102,6 +102,7 @@ token_type_t lex_peek(lexer_t *l);
 /* Return remaining unconsumed input, expanding macros if necessary.
    Result is stored in out_buf. */
 void lex_get_remaining(lexer_t *l, char *out_buf, int size);
+void lex_macro_expand(const char *src, memvar_store_t *store, char *out, int size);
 
 /* Helper to check for keywords with 4-char rule */
 int is_keyword(const char *ident, const char *kw);

@@ -208,6 +208,9 @@ void set_execute(set_options_t *opts, const char *arg) {
         parse_on_off(p + 10);
         return;
     }
+    if (str_imatch(p, "TYPEAHEAD")) {
+        return;   /* SET TYPEAHEAD TO n: the buffer here has one size */
+    }
     if (str_imatch(p, "ESCAPE")) {
         val = parse_on_off(p + 6);
         if (val >= 0) opts->escape = val;
