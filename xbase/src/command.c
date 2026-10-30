@@ -501,6 +501,21 @@ static void upper_basename(char *path) {
     str_upper(base ? base + 1 : path);
 }
 
+/* The file a command names, as typed or else as this interpreter writes
+ * data files, the base name upper-cased.  DOS never told the two apart:
+ * a program that does CREATE strux.ext and later ERASE strux.ext made a
+ * file that is STRUX.EXT on a case-sensitive file system (the Mac's
+ * default one hid this). */
+static void existing_case(char *path) {
+    char up[260];
+    FILE *fp = fopen(path, "rb");
+    if (fp) { fclose(fp); return; }
+    str_copy(up, path, sizeof(up));
+    upper_basename(up);
+    fp = fopen(up, "rb");
+    if (fp) { fclose(fp); str_copy(path, up, (int)strlen(path) + 1); }
+}
+
 /* ---- Helper: ensure filename has .DBF extension ---- */
 /* A base name with an extension of its own keeps it (DBU's ddbbuuuu.ext
  * became DDBBUUUU.EXT.DBF) */
@@ -4645,6 +4660,7 @@ static void cmd_erase(const char *arg) {
         return;
     }
     path_normalize(filename);
+    existing_case(filename);
     if (remove(filename) != 0) {
         file_not_found(filename);
     } else if (set_opts.talk) {
@@ -4661,6 +4677,7 @@ static void cmd_rename(const char *arg) {
         oldname[i++] = *p++;
     oldname[i] = '\0';
     path_normalize(oldname);
+    existing_case(oldname);
     p = skip_ws(p);
     if (!str_imatch(p, "TO")) {
         printf("Syntax: RENAME <oldfile> TO <newfile>\n");
