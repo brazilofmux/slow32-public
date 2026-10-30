@@ -1080,9 +1080,14 @@ static int fn_achoice(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result
         a.cur = -1;             /* the user function sees element 0, row -1 */
         mode = AC_NOITEM;
     } else {
-        if (winrow >= 0 && winrow < a.rows) a.first = a.cur - winrow;
+        /* The window is placed by the initial item as given (the guide:
+         * nWindowRow is the row that item appears on), even when the
+         * highlight moved on to the first selectable one; DBU's Set menu
+         * starts on an unselectable Relation that must stay in view */
+        int base = (init >= 1 && init <= a.nitems) ? init - 1 : a.cur;
+        if (winrow >= 0 && winrow < a.rows) a.first = base - winrow;
         else a.first = a.nitems - a.rows;   /* no empty rows at the bottom */
-        if (a.first > a.cur) a.first = a.cur;
+        if (a.first > base) a.first = base;
         if (a.first < 0) a.first = 0;
         mode = AC_IDLE;
     }

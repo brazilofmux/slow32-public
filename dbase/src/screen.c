@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include "screen.h"
 #include "keys.h"
 #include "command.h"
@@ -88,6 +90,197 @@ void screen_restore(void) {
 
 int screen_term_available(void) { return scr.term_available; }
 
+#if !HAS_TERM
+/* No terminal service (a host build): the shadow is still kept; output
+ * is the stream */
+static void term_gotoxy(int row, int col) { (void)row; (void)col; }
+static void term_puts(const char *s) { fputs(s, stdout); }
+static void term_putc(int ch) { putchar(ch); }
+static void term_set_attr(int attr) { (void)attr; }
+static void term_set_color(int fg, int bg) { (void)fg; (void)bg; }
+static void term_clear(int mode) { (void)mode; }
+static void term_begin_update(void) { }
+static void term_end_update(void) { }
+#endif
+
+/* ---- The shadow screen ----
+ * The terminal's cells live in the host (the term service keeps them);
+ * a Clipper program's SAVESCREEN() / RESTSCREEN() need them here.  Every
+ * write dbase makes to the terminal goes through these wrappers and
+ * lands in the shadow too: a cell is its character and an attribute
+ * byte (bit 7 set, bold, background, foreground).  A saved region is
+ * kept here and handed to the program as a short handle string (a
+ * value_t string holds 255 characters; a screen is 4,000 cells). */
+#define SHADOW_ROWS 25
+#define SHADOW_COLS 80
+typedef struct { unsigned char ch, attr; } shadow_cell_t;
+static shadow_cell_t shadow[SHADOW_ROWS][SHADOW_COLS];
+static int shadow_row, shadow_col;
+static int shadow_fg = 7, shadow_bg = 0, shadow_bold, shadow_inverse;
+static int shadow_ready;
+
+static unsigned char shadow_attr(void) {
+    int fg = shadow_inverse ? shadow_bg : shadow_fg;
+    int bg = shadow_inverse ? shadow_fg : shadow_bg;
+    return (unsigned char)(0x80 | (shadow_bold ? 0x40 : 0) | ((bg & 7) << 3) | (fg & 7));
+}
+
+static void shadow_init(void) {
+    int r, c;
+    if (shadow_ready) return;
+    shadow_ready = 1;
+    for (r = 0; r < SHADOW_ROWS; r++)
+        for (c = 0; c < SHADOW_COLS; c++) { shadow[r][c].ch = ' '; shadow[r][c].attr = 0x87; }
+}
+
+static void shadow_put(int ch) {
+    shadow_init();
+    if (shadow_row >= 0 && shadow_row < SHADOW_ROWS && shadow_col >= 0 && shadow_col < SHADOW_COLS) {
+        shadow[shadow_row][shadow_col].ch = (unsigned char)ch;
+        shadow[shadow_row][shadow_col].attr = shadow_attr();
+    }
+    if (++shadow_col >= SHADOW_COLS) {
+        shadow_col = 0;
+        if (shadow_row < SHADOW_ROWS - 1) shadow_row++;
+    }
+}
+
+void screen_tgoto(int row, int col) {
+    shadow_init();
+    shadow_row = row;
+    shadow_col = col;
+    term_gotoxy(row, col);
+}
+
+void screen_tputs(const char *s) {
+    const char *p;
+    for (p = s; *p; p++) {
+        if (*p == '\n') { shadow_col = 0; if (shadow_row < SHADOW_ROWS - 1) shadow_row++; }
+        else if (*p == '\r') shadow_col = 0;
+        else shadow_put((unsigned char)*p);
+    }
+    term_puts(s);
+}
+
+void screen_tputc(int ch) {
+    if (ch == '\n') { shadow_col = 0; if (shadow_row < SHADOW_ROWS - 1) shadow_row++; }
+    else if (ch == '\r') shadow_col = 0;
+    else shadow_put(ch);
+    term_putc(ch);
+}
+
+void screen_tattr(int attr) {
+    if (attr == 0) { shadow_bold = 0; shadow_inverse = 0; shadow_fg = 7; shadow_bg = 0; }
+    else if (attr == 1) shadow_bold = 1;
+    else if (attr == 7) shadow_inverse = 1;
+    term_set_attr(attr);
+}
+
+void screen_tcolor(int fg, int bg) {
+    shadow_fg = fg;
+    shadow_bg = bg;
+    term_set_color(fg, bg);
+}
+
+void screen_tclear(int mode) {
+    unsigned char a;
+    int r, c;
+    shadow_init();
+    a = shadow_attr();
+    if (mode == 0) {
+        for (r = 0; r < SHADOW_ROWS; r++)
+            for (c = 0; c < SHADOW_COLS; c++) { shadow[r][c].ch = ' '; shadow[r][c].attr = a; }
+        shadow_row = shadow_col = 0;
+    } else if (shadow_row >= 0 && shadow_row < SHADOW_ROWS) {
+        for (c = shadow_col > 0 ? shadow_col : 0; c < SHADOW_COLS; c++) { shadow[shadow_row][c].ch = ' '; shadow[shadow_row][c].attr = a; }
+        if (mode == 2)
+            for (r = shadow_row + 1; r < SHADOW_ROWS; r++)
+                for (c = 0; c < SHADOW_COLS; c++) { shadow[r][c].ch = ' '; shadow[r][c].attr = a; }
+    }
+    term_clear(mode);
+}
+
+/* Saved regions: a ring of 64, each handed out as "\1SCR<slot>.<gen>" */
+#define SAVED_MAX 64
+typedef struct { unsigned gen; int rows, cols; shadow_cell_t *cells; } saved_region_t;
+static saved_region_t saved_regions[SAVED_MAX];
+static unsigned saved_gen;
+static int saved_next;
+
+static void region_clamp(int *t, int *l, int *b, int *r) {
+    if (*t < 0) *t = 0;
+    if (*l < 0) *l = 0;
+    if (*b >= SHADOW_ROWS) *b = SHADOW_ROWS - 1;
+    if (*r >= SHADOW_COLS) *r = SHADOW_COLS - 1;
+}
+
+value_t screen_save_region(int t, int l, int b, int r) {
+    saved_region_t *s;
+    int rows, cols, i, j;
+    char handle[32];
+    shadow_init();
+    region_clamp(&t, &l, &b, &r);
+    rows = b - t + 1;
+    cols = r - l + 1;
+    if (rows <= 0 || cols <= 0) return val_str("");
+    s = &saved_regions[saved_next];
+    free(s->cells);
+    s->cells = malloc((size_t)rows * (size_t)cols * sizeof(shadow_cell_t));
+    if (!s->cells) return val_str("");
+    s->rows = rows;
+    s->cols = cols;
+    s->gen = ++saved_gen;
+    for (i = 0; i < rows; i++)
+        for (j = 0; j < cols; j++) s->cells[i * cols + j] = shadow[t + i][l + j];
+    snprintf(handle, sizeof(handle), "\001SCR%d.%u", saved_next, s->gen);
+    saved_next = (saved_next + 1) % SAVED_MAX;
+    return val_str(handle);
+}
+
+void screen_restore_region(int t, int l, int b, int r, const value_t *saved) {
+    int slot, rows, cols, i, j;
+    unsigned gen;
+    saved_region_t *s;
+    int keep_row = shadow_row, keep_col = shadow_col;
+    int keep_fg = shadow_fg, keep_bg = shadow_bg, keep_bold = shadow_bold, keep_inverse = shadow_inverse;
+    unsigned char cur = 0;
+    if (!saved || saved->type != VAL_CHAR || sscanf(saved->str, "\001SCR%d.%u", &slot, &gen) != 2) return;
+    if (slot < 0 || slot >= SAVED_MAX) return;
+    s = &saved_regions[slot];
+    if (!s->cells || s->gen != gen) return;
+    shadow_init();
+    region_clamp(&t, &l, &b, &r);
+    rows = b - t + 1;
+    cols = r - l + 1;
+    if (rows > s->rows) rows = s->rows;
+    if (cols > s->cols) cols = s->cols;
+    for (i = 0; i < rows; i++) {
+        shadow_row = t + i;
+        shadow_col = l;
+        term_gotoxy(t + i, l);
+        for (j = 0; j < cols; j++) {
+            shadow_cell_t cell = s->cells[i * s->cols + j];
+            if (cell.attr != cur) {
+                cur = cell.attr;
+                term_set_attr(0);
+                if (cur & 0x40) term_set_attr(1);
+                term_set_color(cur & 7, (cur >> 3) & 7);
+            }
+            shadow[t + i][l + j] = cell;
+            term_putc(cell.ch);
+        }
+    }
+    /* the program's own colour and cursor back */
+    shadow_fg = keep_fg; shadow_bg = keep_bg; shadow_bold = keep_bold; shadow_inverse = keep_inverse;
+    term_set_attr(0);
+    if (shadow_bold) term_set_attr(1);
+    if (shadow_inverse) term_set_attr(7);
+    term_set_color(shadow_fg, shadow_bg);
+    shadow_row = keep_row;
+    shadow_col = keep_col;
+    term_gotoxy(keep_row, keep_col);
+}
+
 /* ---- Apply PICTURE mask to a string ---- */
 void screen_apply_picture(char *out, const char *value, const char *picture, int outsize) {
     int i;
@@ -139,7 +332,7 @@ void screen_apply_picture(char *out, const char *value, const char *picture, int
 static void goto_pos(int row, int col) {
 #if HAS_TERM
     if (scr.term_available) {
-        term_gotoxy(row, col);
+        screen_tgoto(row, col);
         return;
     }
 #endif
@@ -191,7 +384,7 @@ void screen_out_at(int row, int col, const char *text) {
     goto_pos(row, col);
 #if HAS_TERM
     if (scr.term_available)
-        term_puts(text);
+        screen_tputs(text);
     else
 #endif
         printf("%s", text);
@@ -263,7 +456,7 @@ void screen_say(int row, int col, const char *expr_str, const char *picture) {
         goto_pos(row, col);
 #if HAS_TERM
         if (scr.term_available)
-            term_puts(formatted);
+            screen_tputs(formatted);
         else
 #endif
             printf("%s", formatted);
@@ -367,7 +560,7 @@ void screen_get(int row, int col, const char *varname, const char *picture,
     goto_pos(row, col);
 #if HAS_TERM
     if (scr.term_available)
-        term_puts(scr.gets[scr.ngets].initial);
+        screen_tputs(scr.gets[scr.ngets].initial);
     else
 #endif
         printf("%s", scr.gets[scr.ngets].initial);
@@ -379,6 +572,118 @@ void screen_get(int row, int col, const char *varname, const char *picture,
 #if HAS_TERM
 int read_dbase_key(void);
 #endif
+
+/* A GET from a Get object (READMODAL over its array): the value it shows
+ * comes with it, and the editor stores back through the object (its block
+ * when it has one) rather than by name */
+void screen_get_object(int row, int col, const char *name, const char *picture,
+                       const value_t *initial, const value_t *obj) {
+    get_entry_t *g;
+    if (scr.ngets >= MAX_GETS) {
+        prog_error(ERR_SYNTAX, "Too many GETs");
+        return;
+    }
+    g = &scr.gets[scr.ngets];
+    memset(g, 0, sizeof(*g));
+    g->row = row;
+    g->col = col;
+    str_copy(g->varname, name ? name : "", MEMVAR_NAMELEN);
+    str_copy(g->picture, picture ? picture : "", sizeof(g->picture));
+    g->field_index = -1;
+    g->getobj = *obj;
+    val_to_string(initial, g->initial, sizeof(g->initial));
+    g->type = initial->type;
+    g->width = (int)strlen(g->initial);
+    if (g->width < 1) g->width = 1;
+    goto_pos(row, col);
+#if HAS_TERM
+    if (scr.term_available)
+        screen_tputs(g->initial);
+    else
+#endif
+        printf("%s", g->initial);
+    screen_update_pos(row, col, (int)strlen(g->initial));
+    scr.ngets++;
+}
+
+/* The edited value back where it came from: the Get object\x27s block when
+ * the entry carries one, else the variable by name */
+static void get_store_value(get_entry_t *g, const value_t *v) {
+    if (g->getobj.type == VAL_OBJECT && getsys_has_block(&g->getobj)) {
+        getsys_varput(&g->getobj, v);
+        return;
+    }
+    if (g->varname[0]) memvar_set(cmd_get_memvar_store(), g->varname, v);
+}
+
+
+/* ---- The GET editor's picture ---- */
+typedef struct {
+    int clear, upper, alpha, scroll, literal_r;
+    char tmpl[64];
+} get_picture_t;
+
+static int get_insert_mode;   /* toggled by Ins; SET INSERT is not kept here */
+
+static void parse_get_picture(const char *p, get_picture_t *pic) {
+    memset(pic, 0, sizeof(*pic));
+    if (!p) return;
+    if (*p == '@') {
+        p++;
+        while (*p && *p != ' ') {
+            switch (toupper((unsigned char)*p)) {
+            case 'K': pic->clear = 1; break;
+            case '!': pic->upper = 1; break;
+            case 'A': pic->alpha = 1; break;
+            case 'R': pic->literal_r = 1; break;
+            case 'S':
+                pic->scroll = atoi(p + 1);
+                while (p[1] >= '0' && p[1] <= '9') p++;
+                break;
+            default: break;   /* B C D E N X Z J: formats this editor does not shape */
+            }
+            p++;
+        }
+        p = skip_ws(p);
+    }
+    str_copy(pic->tmpl, p, sizeof(pic->tmpl));
+}
+
+/* A template position that is a literal (not one of the characters a key
+ * fills) */
+static int get_picture_literal(const get_picture_t *pic, int pos) {
+    char t = pic->tmpl[pos];
+    return t && !strchr("9#ANXL!Y", t);
+}
+
+/* The character a key puts at pos under the picture, 0 to refuse it */
+static int get_picture_accept(const get_picture_t *pic, int pos, int key) {
+    char t = pic->tmpl[0] && pos < (int)strlen(pic->tmpl) ? pic->tmpl[pos] : 'X';
+    int is_alpha = isalpha(key), is_digit = isdigit(key);
+    if (pic->upper || t == '!') key = toupper(key);
+    if (pic->alpha && !is_alpha && key != ' ') return 0;
+    switch (t) {
+    case '9': return is_digit ? key : 0;
+    case '#': return (is_digit || key == ' ' || key == '.' || key == '+' || key == '-') ? key : 0;
+    case 'A': return (is_alpha || key == ' ') ? key : 0;
+    case 'N': return (is_alpha || is_digit || key == ' ') ? key : 0;
+    case 'L': case 'Y': return strchr("TFYNtfyn", key) ? toupper(key) : 0;
+    case 'X': case '!': return key;
+    default:  return key;   /* a literal: typed over, stepped past after */
+    }
+}
+
+static void get_paint(const get_entry_t *g, const char *buf, int fwidth, int dwidth, int win, int pos) {
+    int fi;
+    term_begin_update();
+    screen_tgoto(g->row, g->col);
+    for (fi = 0; fi < dwidth; fi++) {
+        int k = win + fi;
+        screen_tputc(k < fwidth ? buf[k] : ' ');
+    }
+    screen_tgoto(g->row, g->col + (pos - win));
+    term_end_update();
+}
 
 /* ---- READ ---- */
 void screen_read(void) {
@@ -394,7 +699,7 @@ void screen_read(void) {
 
         for (i = 0; i < scr.ngets && !escaped; i++) {
             char buf[256];
-            int pos, len, key;
+            int pos, len, key, nav = 0;   /* nav: -1 the GET before, 1 the READ is done */
             str_copy(read_var, scr.gets[i].varname, sizeof(read_var));
             active_get = i;
 
@@ -412,12 +717,20 @@ void screen_read(void) {
             }
 
             for (;;) {
-            int fwidth = scr.gets[i].width;
-            /* PICTURE length determines field width if available */
-            if (scr.gets[i].picture[0]) {
-                int plen = strlen(scr.gets[i].picture);
-                if (plen > 0) fwidth = plen;
-            }
+            /* The picture: functions after @ (K clear on the first key,
+             * S<n> a scrolling window, ! upper case, A letters only, R
+             * literals shown but not kept), then the template.  Its
+             * length is the field's width (it was the whole string's, so
+             * "@KS30" made a field four wide). */
+            get_picture_t pic;
+            int fwidth, dwidth, win = 0, first_key = 1;
+            parse_get_picture(scr.gets[i].picture, &pic);
+            fwidth = scr.gets[i].width;
+            if (pic.tmpl[0]) fwidth = (int)strlen(pic.tmpl);
+            if (fwidth > 255) fwidth = 255;
+            if (fwidth < 1) fwidth = 1;
+            dwidth = (pic.scroll > 0 && pic.scroll < fwidth) ? pic.scroll : fwidth;
+            nav = 0;
 
             str_copy(buf, scr.gets[i].initial, sizeof(buf));
             /* Pad to field width */
@@ -426,60 +739,69 @@ void screen_read(void) {
             buf[len] = '\0';
             pos = 0;  /* cursor at start of field (dBase convention) */
 
-            term_begin_update();
-            term_gotoxy(scr.gets[i].row, scr.gets[i].col);
-            {
-                int fi;
-                for (fi = 0; fi < fwidth; fi++)
-                    term_putc(fi < len ? buf[fi] : ' ');
-            }
-            term_gotoxy(scr.gets[i].row, scr.gets[i].col);
-            term_end_update();
+            get_paint(&scr.gets[i], buf, fwidth, dwidth, win, pos);
 
             for (;;) {
-                key = read_dbase_key();
+                key = screen_getkey();
                 if (key != KEY_NONE && key != 0 && screen_check_key_handler(key)) continue;
-                if (key == '\r' || key == '\n' || key == KEY_NONE) {
-                    last_key = 13;
-                    break;
-                }
-                if (key == 27) { /* Escape - cancel READ */
+                if (key == K_ENTER || key == '\n' || key == KEY_NONE) { last_key = 13; break; }
+                if (key == K_ESC) { /* Escape - cancel READ */
                     last_key = 27;
                     escaped = 1;
                     str_copy(buf, scr.gets[i].initial, sizeof(buf));
                     break;
                 }
-                if (key == 8 || key == 127) { /* Backspace */
+                if (key == K_UP || key == K_SH_TAB) { last_key = key; nav = -1; break; }
+                if (key == K_DOWN || key == K_TAB) { last_key = key; nav = 0; break; }
+                if (key == K_PGUP || key == K_PGDN || key == K_CTRL_W) { last_key = key; nav = 1; break; }
+                if (key == K_LEFT) { if (pos > 0) pos--; }
+                else if (key == K_RIGHT) { if (pos < fwidth - 1) pos++; }
+                else if (key == K_HOME) pos = 0;
+                else if (key == K_END) {
+                    int e = fwidth;
+                    while (e > 0 && buf[e - 1] == ' ') e--;
+                    pos = e < fwidth ? e : fwidth - 1;
+                } else if (key == K_INS) get_insert_mode = !get_insert_mode;
+                else if (key == K_DEL) {
+                    memmove(buf + pos, buf + pos + 1, (size_t)(fwidth - pos - 1));
+                    buf[fwidth - 1] = ' ';
+                } else if (key == K_BS || key == 127) {
                     if (pos > 0) {
                         pos--;
-                        buf[pos] = ' ';
-                        term_gotoxy(scr.gets[i].row, scr.gets[i].col + pos);
-                        term_putc(' ');
-                        term_gotoxy(scr.gets[i].row, scr.gets[i].col + pos);
+                        memmove(buf + pos, buf + pos + 1, (size_t)(fwidth - pos - 1));
+                        buf[fwidth - 1] = ' ';
                     }
-                    continue;
-                }
-                if (key >= 32 && key < 127 && pos < fwidth) {
-                    /* Apply PICTURE mask if any */
-                    if (scr.gets[i].picture[0] && pos < (int)strlen(scr.gets[i].picture)) {
-                        char pc = scr.gets[i].picture[pos];
-                        if (pc == '9' && (key < '0' || key > '9')) continue;
-                        if (pc == 'A' && !((key >= 'A' && key <= 'Z') || (key >= 'a' && key <= 'z'))) continue;
-                        if (pc == '!' && key >= 'a' && key <= 'z') key -= 32;
+                } else if (key == K_CTRL_Y) {
+                    memset(buf + pos, ' ', (size_t)(fwidth - pos));
+                } else if (key == K_CTRL_U) {
+                    str_copy(buf, scr.gets[i].initial, sizeof(buf));
+                    len = strlen(buf);
+                    while (len < fwidth) buf[len++] = ' ';
+                    buf[len] = '\0';
+                } else if (key >= 32 && key <= 255) {
+                    int ch = get_picture_accept(&pic, pos, key);
+                    if (ch == 0) continue;   /* the template refuses it */
+                    if (first_key && pic.clear) { memset(buf, ' ', (size_t)fwidth); pos = 0; }
+                    first_key = 0;
+                    if (get_insert_mode) {
+                        memmove(buf + pos + 1, buf + pos, (size_t)(fwidth - pos - 1));
                     }
-                    /* Overwrite mode */
-                    buf[pos] = (char)key;
-                    term_putc((char)key);
+                    buf[pos] = (char)ch;
                     pos++;
+                    /* a literal in the template is stepped over */
+                    while (pos < fwidth && pic.tmpl[0] && get_picture_literal(&pic, pos)) pos++;
                     if (pos >= fwidth) {
                         if (!cmd_get_confirm()) {
                             last_key = 13;
                             break;  /* auto-advance: field full, CONFIRM OFF */
                         }
-                        /* Field full — position at end */
-                        term_gotoxy(scr.gets[i].row, scr.gets[i].col + fwidth - 1);
+                        pos = fwidth - 1;
                     }
                 }
+                first_key = 0;
+                if (pos < win) win = pos;
+                if (pos >= win + dwidth) win = pos - dwidth + 1;
+                get_paint(&scr.gets[i], buf, fwidth, dwidth, win, pos);
             }
 
             if (escaped) break;  /* Escape exits READ without storing */
@@ -501,13 +823,13 @@ void screen_read(void) {
                     if (n < lo || n > hi) {
                         char rmsg[80];
                         snprintf(rmsg, sizeof(rmsg), "Range: %g to %g", lo, hi);
-                        term_gotoxy(24, 1);
-                        term_puts(rmsg);
+                        screen_tgoto(24, 1);
+                        screen_tputs(rmsg);
                         term_getkey();  /* wait for acknowledgment */
-                        term_gotoxy(24, 1);
+                        screen_tgoto(24, 1);
                         {
                             int ri;
-                            for (ri = 0; ri < 40; ri++) term_putc(' ');
+                            for (ri = 0; ri < 40; ri++) screen_tputc(' ');
                         }
                         continue;  /* reject, keep current value */
                     }
@@ -517,7 +839,7 @@ void screen_read(void) {
                     value_t old_val, res;
                     int had_old = (memvar_find(store, scr.gets[i].varname, &old_val) == 0);
                     int ok;
-                    memvar_set(store, scr.gets[i].varname, &v);
+                    get_store_value(&scr.gets[i], &v);
                     if (scr.gets[i].valid_ast)
                         ok = (ast_eval(scr.gets[i].valid_ast, cmd_get_expr_ctx(), &res) == 0 &&
                               res.type == VAL_LOGIC && res.logic);
@@ -526,18 +848,18 @@ void screen_read(void) {
                               res.type == VAL_LOGIC && res.logic);
                     if (!ok) {
                         if (had_old) memvar_set(store, scr.gets[i].varname, &old_val);
-                        term_gotoxy(24, 1);
-                        term_puts("Invalid entry.");
+                        screen_tgoto(24, 1);
+                        screen_tputs("Invalid entry.");
                         term_getkey();  /* wait for acknowledgment */
-                        term_gotoxy(24, 1);
+                        screen_tgoto(24, 1);
                         {
                             int ri;
-                            for (ri = 0; ri < 40; ri++) term_putc(' ');
+                            for (ri = 0; ri < 40; ri++) screen_tputc(' ');
                         }
                         continue;  /* re-edit field */
                     }
                 } else {
-                    memvar_set(store, scr.gets[i].varname, &v);
+                    get_store_value(&scr.gets[i], &v);
                 }
                 {   /* UPDATED() */
                     char nv[256];
@@ -558,6 +880,8 @@ void screen_read(void) {
                 break;  /* accepted */
             }
             } /* for (;;) */
+            if (nav < 0 && i > 0) i -= 2;
+            else if (nav > 0) break;
         }
 
         term_set_raw(0);
@@ -618,7 +942,7 @@ void screen_read(void) {
                     value_t old_val, res;
                     int had_old = (memvar_find(store, scr.gets[i].varname, &old_val) == 0);
                     int ok;
-                    memvar_set(store, scr.gets[i].varname, &v);
+                    get_store_value(&scr.gets[i], &v);
                     if (scr.gets[i].valid_ast)
                         ok = (ast_eval(scr.gets[i].valid_ast, cmd_get_expr_ctx(), &res) == 0 &&
                               res.type == VAL_LOGIC && res.logic);
@@ -631,7 +955,7 @@ void screen_read(void) {
                         continue;
                     }
                 } else {
-                    memvar_set(store, scr.gets[i].varname, &v);
+                    get_store_value(&scr.gets[i], &v);
                 }
                 {   /* UPDATED() */
                     char nv[256];
@@ -682,10 +1006,10 @@ void screen_clear_region(int r1, int c1, int r2, int c2) {
         if (w <= 0) return;
         for (r = r1; r <= r2; r++) {
             int i;
-            term_gotoxy(r, c1);
-            for (i = 0; i < w; i++) term_putc(' ');
+            screen_tgoto(r, c1);
+            for (i = 0; i < w; i++) screen_tputc(' ');
         }
-        term_gotoxy(r1, c1);
+        screen_tgoto(r1, c1);
         return;
     }
 #endif
@@ -712,20 +1036,20 @@ void screen_box(int r1, int c1, int r2, int c2, int dbl) {
     if (scr.term_available) {
         int r, c;
         /* Top */
-        term_gotoxy(r1, c1);
-        term_putc(tl);
-        for (c = c1 + 1; c < c2; c++) term_putc(h);
-        term_putc(tr);
+        screen_tgoto(r1, c1);
+        screen_tputc(tl);
+        for (c = c1 + 1; c < c2; c++) screen_tputc(h);
+        screen_tputc(tr);
         /* Sides */
         for (r = r1 + 1; r < r2; r++) {
-            term_gotoxy(r, c1); term_putc(v);
-            term_gotoxy(r, c2); term_putc(v);
+            screen_tgoto(r, c1); screen_tputc(v);
+            screen_tgoto(r, c2); screen_tputc(v);
         }
         /* Bottom */
-        term_gotoxy(r2, c1);
-        term_putc(bl);
-        for (c = c1 + 1; c < c2; c++) term_putc(h);
-        term_putc(br);
+        screen_tgoto(r2, c1);
+        screen_tputc(bl);
+        for (c = c1 + 1; c < c2; c++) screen_tputc(h);
+        screen_tputc(br);
         return;
     }
 #endif
@@ -744,21 +1068,21 @@ void screen_box_frame(int r1, int c1, int r2, int c2, const char *frame) {
 #if HAS_TERM
     if (scr.term_available) {
         int r, c;
-        term_gotoxy(r1, c1);
-        term_putc(f[0]);
-        for (c = c1 + 1; c < c2; c++) term_putc(f[1]);
-        term_putc(f[2]);
+        screen_tgoto(r1, c1);
+        screen_tputc(f[0]);
+        for (c = c1 + 1; c < c2; c++) screen_tputc(f[1]);
+        screen_tputc(f[2]);
         for (r = r1 + 1; r < r2; r++) {
-            term_gotoxy(r, c1);
-            term_putc(f[7]);
-            if (f[8]) for (c = c1 + 1; c < c2; c++) term_putc(f[8]);
-            term_gotoxy(r, c2);
-            term_putc(f[3]);
+            screen_tgoto(r, c1);
+            screen_tputc(f[7]);
+            if (f[8]) for (c = c1 + 1; c < c2; c++) screen_tputc(f[8]);
+            screen_tgoto(r, c2);
+            screen_tputc(f[3]);
         }
-        term_gotoxy(r2, c1);
-        term_putc(f[6]);
-        for (c = c1 + 1; c < c2; c++) term_putc(f[5]);
-        term_putc(f[4]);
+        screen_tgoto(r2, c1);
+        screen_tputc(f[6]);
+        for (c = c1 + 1; c < c2; c++) screen_tputc(f[5]);
+        screen_tputc(f[4]);
         return;
     }
 #endif
@@ -769,8 +1093,8 @@ void screen_box_frame(int r1, int c1, int r2, int c2, const char *frame) {
 void screen_clear(void) {
 #if HAS_TERM
     if (scr.term_available) {
-        term_clear(0);
-        term_gotoxy(1, 1);
+        screen_tclear(0);
+        screen_tgoto(0, 0);
         return;
     }
 #endif
@@ -815,7 +1139,7 @@ void screen_prompt(int row, int col, const char *text, const char *message) {
     goto_pos(row, col);
 #if HAS_TERM
     if (scr.term_available)
-        term_puts(text);
+        screen_tputs(text);
     else
 #endif
         printf("%s", text);
@@ -847,38 +1171,38 @@ int screen_menu_to(void) {
             /* Redraw all prompts: current in reverse, others normal */
             term_begin_update();
             for (i = 0; i < n; i++) {
-                term_gotoxy(scr.prompts[i].row, scr.prompts[i].col);
+                screen_tgoto(scr.prompts[i].row, scr.prompts[i].col);
                 if (i == cur)
-                    term_set_attr(7);  /* reverse */
+                    screen_tattr(7);  /* reverse */
                 else
-                    term_set_attr(0);  /* normal */
-                term_puts(scr.prompts[i].text);
+                    screen_tattr(0);  /* normal */
+                screen_tputs(scr.prompts[i].text);
             }
 
             /* Show MESSAGE for current selection if SET MESSAGE is active */
             if (msg_row >= 0) {
                 char blank[81];
                 int len;
-                term_gotoxy(msg_row, 0);
-                term_set_attr(0);
+                screen_tgoto(msg_row, 0);
+                screen_tattr(0);
                 /* Clear the message row */
                 len = 80;
                 if (len > (int)sizeof(blank) - 1) len = (int)sizeof(blank) - 1;
                 memset(blank, ' ', len);
                 blank[len] = '\0';
-                term_puts(blank);
+                screen_tputs(blank);
                 /* Display current message centered */
                 if (scr.prompts[cur].message[0]) {
                     int mlen = (int)strlen(scr.prompts[cur].message);
                     int mcol = (80 - mlen) / 2;
                     if (mcol < 0) mcol = 0;
-                    term_gotoxy(msg_row, mcol);
-                    term_puts(scr.prompts[cur].message);
+                    screen_tgoto(msg_row, mcol);
+                    screen_tputs(scr.prompts[cur].message);
                 }
             }
             term_end_update();
 
-            key = read_dbase_key();
+            key = screen_getkey();
             if (key != KEY_NONE && key != 0 && screen_check_key_handler(key)) continue;
 
             if (key == '\r' || key == '\n') {
@@ -922,10 +1246,10 @@ int screen_menu_to(void) {
         }
 
         /* Restore normal display for all prompts */
-        term_set_attr(0);
+        screen_tattr(0);
         for (i = 0; i < n; i++) {
-            term_gotoxy(scr.prompts[i].row, scr.prompts[i].col);
-            term_puts(scr.prompts[i].text);
+            screen_tgoto(scr.prompts[i].row, scr.prompts[i].col);
+            screen_tputs(scr.prompts[i].text);
         }
 
         /* Clear message row */
@@ -935,8 +1259,8 @@ int screen_menu_to(void) {
             if (len > (int)sizeof(blank) - 1) len = (int)sizeof(blank) - 1;
             memset(blank, ' ', len);
             blank[len] = '\0';
-            term_gotoxy(msg_row, 0);
-            term_puts(blank);
+            screen_tgoto(msg_row, 0);
+            screen_tputs(blank);
         }
 
         term_set_raw(0);
@@ -998,11 +1322,11 @@ static void apply_color_pair(const char *p) {
     scr.bg_color = bg;
 #if HAS_TERM
     if (scr.term_available) {
-        term_set_attr(0);  /* reset all attributes */
-        if (bold) term_set_attr(1);
-        if (underline) term_set_attr(4);
-        if (inverse) term_set_attr(7);
-        term_set_color(fg, bg);
+        screen_tattr(0);  /* reset all attributes */
+        if (bold) screen_tattr(1);
+        if (underline) screen_tattr(4);
+        if (inverse) screen_tattr(7);
+        screen_tcolor(fg, bg);
     }
 #endif
 }
@@ -1140,7 +1464,10 @@ void screen_at_cmd(const char *line) {
 
         p = skip_ws(p + 3);
 
-        /* Parse variable name */
+        /* Parse variable name; M-> and MEMVAR-> say what it is anyway
+         * (DBU's @ r, c GET M->wk_str) */
+        if (strncasecmp(p, "M->", 3) == 0) p += 3;
+        else if (strncasecmp(p, "MEMVAR->", 8) == 0) p += 8;
         while (is_ident_char(*p) && i < MEMVAR_NAMELEN - 1)
             varname[i++] = *p++;
         varname[i] = '\0';
@@ -1157,6 +1484,14 @@ void screen_at_cmd(const char *line) {
                         picture[i++] = *p++;
                     picture[i] = '\0';
                     if (*p) p++;
+                } else {
+                    /* an expression: PICTURE M->pfunc */
+                    value_t pv;
+                    expr_ctx_t *ctx = cmd_get_expr_ctx();
+                    if (ast_eval_adv(ctx, &p, &pv) == 0 && pv.type == VAL_CHAR)
+                        str_copy(picture, pv.str, sizeof(picture));
+                    else
+                        ctx->error = NULL;
                 }
             } else if (str_imatch(p, "RANGE")) {
                 expr_ctx_t *ctx = cmd_get_expr_ctx();
@@ -1278,8 +1613,21 @@ void screen_at_cmd(const char *line) {
     }
 }
 
-int screen_get_row(void) { return scr.last_row; }
-int screen_get_col(void) { return scr.last_col; }
+/* ROW() / COL(): with a terminal, the shadow's cursor, which every write
+ * and move keeps (last_row/last_col trail @ SAY only: DBU's GetNew(Row(),
+ * Col(), ...) after a TBrowse hilite landed its GET at the screen edge) */
+int screen_get_row(void) {
+#if HAS_TERM
+    if (scr.term_available) return shadow_row;
+#endif
+    return scr.last_row;
+}
+int screen_get_col(void) {
+#if HAS_TERM
+    if (scr.term_available) return shadow_col;
+#endif
+    return scr.last_col;
+}
 int screen_get_prow(void) { return print_row; }
 int screen_get_pcol(void) { return print_col; }
 
@@ -1405,6 +1753,7 @@ int read_dbase_key(void) {
 #endif
 
 static int pushed_key;   /* a key NEXTKEY() read and left for the next INKEY() */
+static int typeahead_next(void);
 
 /* The typeahead buffer KEYBOARD fills: read before the terminal by every
  * wait state, cleared by CLEAR TYPEAHEAD and by KEYBOARD itself.  Each
@@ -1440,6 +1789,27 @@ int screen_key_pending(void) {
     }
 #endif
     return 0;
+}
+
+/* The next key: NEXTKEY's pushback, then the typeahead buffer; 0 when
+ * neither has one */
+static int typeahead_next(void) {
+    int k;
+    if (pushed_key > 0) { k = pushed_key; pushed_key = 0; return k; }
+    if (typeahead_head < typeahead_len) return typeahead[typeahead_head++];
+    return 0;
+}
+
+/* A key for an editor's loop (READ, MENU TO, BROWSE): the buffers first,
+ * KEYBOARD's stuffing included, then the terminal */
+int screen_getkey(void) {
+    int k = typeahead_next();
+    if (k) { last_key = k; return k; }
+#if HAS_TERM
+    return read_dbase_key();
+#else
+    return 0;
+#endif
 }
 
 int screen_nextkey(void) {

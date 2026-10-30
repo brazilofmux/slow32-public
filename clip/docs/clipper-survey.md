@@ -277,6 +277,68 @@ people who wrote Clipper.
     made DO vanish.  It sorts itself on first use now.
   - The compiled program's stack is 1 MB (`STACK_SIZE` overrides): DBU's
     main screen overflowed 128 KB.
+  - **SAVESCREEN() / RESTSCREEN()** are real: the terminal's cells live in
+    the host, so screen.c keeps a shadow of the screen (every write dbase
+    makes goes through its wrappers; menu.c and browse.c no longer touch
+    the terminal directly) and a saved region is handed out as a short
+    handle (a string value holds 255 characters, a screen is 4,000
+    cells).  Leaving Browse puts DBU's view back; the Set menu drops
+    down over it afterwards.
+  - A `;` continuation joins the next line with its indentation reduced
+    to one blank (it was none: `22` then `.AND.` on the next line became
+    the number `22.`), and the lexer ends a number before `.AND.` /
+    `.OR.` / `.NOT.` / `.T.` / `.F.`, as Harbour's does.  Probe
+    dir-continuation.
+  - TYPE() evaluates its text (it answered "C" for every string, so
+    DBU's "is the filter logical?" could never be true): C N D L A B O,
+    U for an undefined name, UE for text that does not compile.  Probe
+    fn-type.  AFIELDS() fills its four parallel arrays; TBrowse answers
+    forceStable.
+  - An ACHOICE() window is placed by the initial item as given, even when
+    the highlight moves on to the first selectable one (DBU's Set menu
+    starts on an unselectable Relation that must stay in view).
+  - **Scope depth under a block.**  A block is evaluated at its maker's
+    depth (so the maker's LOCALs are visible); a function called from
+    inside it then took maker + 1 -- a live frame's own depth -- and
+    leaving released that frame's LOCALs.  DBU's freshOrder() lost its
+    nRec across oB:forceStable(), whose column blocks call functions.  A
+    call now takes a depth above every live frame (`live_max` in the
+    store, saved and restored by the compiled scope).  Probe
+    dir-block-locals, Harbour agreeing, detached locals included.
+  - **The GET editor** has Clipper's keys (Left / Right / Home / End,
+    Ins toggling insert, Del, Backspace, Ctrl-Y, Ctrl-U, Up / Shift-Tab
+    to the GET before, Down / Tab on, PgUp / PgDn / Ctrl-W ending the
+    READ, Esc) and the picture's functions (@K clear on the first key,
+    @S<n> a scrolling window, @!, @A, @R) apart from its template, whose
+    length is the field's width -- the whole string's was, so "@KS30"
+    made a field four wide.  `@ r, c GET M->var` names the variable
+    (the recorded name was "M"), `PICTURE M->pfunc` is an expression,
+    and READ, MENU TO and BROWSE read their keys through the typeahead
+    buffer, so the key DBU's dialog re-stuffs with KEYBOARD reaches the
+    field.  With those, Set / Filter takes "AGE > 40" and Browse shows
+    the three records under DBU's "<Filter>" mark.
+  - **Editing a Browse cell** (Enter on it, type, Enter) took four more
+    rules, each with a Harbour probe: PCOUNT() inside a block counts the
+    block's own arguments (CA's set/get idiom `{|x| if(PCount() == 0,
+    var, var := x)}`; probe dir-block-pcount); `.AND.` and `.OR.` leave
+    the right side alone when the left decides (DBU tests a Get's type
+    before LEN() of its value; probe dir-short-circuit); a Get over a
+    set/get block reads and writes through it (probe fn-get-setget); and
+    READMODAL() reads the Gets in its array, each shown with its value
+    and stored back through its block (it read the GETs recorded by @
+    GET).  ROW() and COL() answer the shadow's cursor under a terminal.
+    Ada's city becomes Paris, on screen and in the file.
+  - **CREATE** in a program is Clipper's: `CREATE <file>` makes the
+    structure-extended file (FIELD_NAME, FIELD_TYPE, FIELD_LEN,
+    FIELD_DEC) and USEs it, `CREATE <file> FROM <ext> [ALIAS a] [NEW]`
+    builds the file it describes; the dot prompt keeps dBASE III's
+    dialogue.  A name that has an extension keeps it (DBU's ddbbuuuu.ext
+    became DDBBUUUU.EXT.DBF, and the Open dialog then listed it).  F3
+    Create paints DBU's structure editor.
+  - TYPE() took dBASE III's semantics in three of the dBASE tests (the
+    type of the string argument itself); re-recorded to Clipper's, which
+    dBASE III shares for a string argument; a non-string argument still
+    answers its own type, as those tests have it.
 
 Not driven yet: GETSYS.PRG and ERRORSYS.PRG as replacements for the
 built-in Get reader and error handler (they compile; running them in

@@ -459,6 +459,18 @@ static int gen_expr(sb_t *b, int *ntmp, ast_node_t *node) {
         return t;
     case AST_BINOP:
         l = gen_expr(b, ntmp, node->binop.left);
+        if (node->binop.op == OP_AND || node->binop.op == OP_OR) {
+            /* short-circuit: the right side only when the left leaves the
+             * answer open (the temporaries are declared up front, so the
+             * right side's code may sit inside the else) */
+            int is_and = node->binop.op == OP_AND;
+            sb_printf(b, "if (!e && t%d.type == VAL_LOGIC && %st%d.logic) { t%d = t%d; } else { ",
+                      l, is_and ? "!" : "", l, t, l);
+            r = gen_expr(b, ntmp, node->binop.right);
+            sb_printf(b, "e = e || ast_eval_binop(c, %s, &t%d, &t%d, &t%d); } ",
+                      op_name(node->binop.op), l, r, t);
+            return t;
+        }
         r = gen_expr(b, ntmp, node->binop.right);
         sb_printf(b, "e = e || ast_eval_binop(c, %s, &t%d, &t%d, &t%d); ",
                   op_name(node->binop.op), l, r, t);
@@ -2118,7 +2130,9 @@ static int load_prg(const char *path) {
                 break;
             }
             rtrim(next);
-            if (strlen(buf) + strlen(skip_ws(next)) < MAX_LINE - 1) {
+            if (strlen(buf) + 1 + strlen(skip_ws(next)) < MAX_LINE - 1) {
+                size_t n = strlen(buf);
+                if (n > 0 && buf[n - 1] != ' ' && buf[n - 1] != '\t') strcat(buf, " ");   /* the indentation separates the tokens */
                 strcat(buf, skip_ws(next));
             }
         }

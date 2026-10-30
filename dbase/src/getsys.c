@@ -510,8 +510,46 @@ value_t getsys_note_get(int row, int col, const char *varname, const char *pictu
 
 static int read_exit_flag, read_insert_flag = 0, read_kill_flag;
 
+/* The Get object's value and its store, for screen.c's editor */
+int getsys_has_block(const value_t *obj) {
+    value_t *b = obj->type == VAL_OBJECT ? object_ivar(obj->obj, "block", 0) : NULL;
+    return b && b->type == VAL_BLOCK;
+}
+
+int getsys_varget(const value_t *obj, value_t *out) {
+    if (obj->type != VAL_OBJECT) { *out = val_nil(); return -1; }
+    return get_varget(cmd_get_expr_ctx(), obj->obj, out);
+}
+
+int getsys_varput(const value_t *obj, const value_t *v) {
+    if (obj->type != VAL_OBJECT) return -1;
+    return get_varput(cmd_get_expr_ctx(), obj->obj, v);
+}
+
+/* READMODAL(aGets): the Gets in the array are read, in order, by the
+ * editor READ uses -- each shown at its row and column with its current
+ * value, each stored back through its block.  Without an array, the GETs
+ * recorded by @ ... GET, as READ runs them. */
 int fn_readmodal(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    (void)ctx; (void)args; (void)nargs;
+    if (nargs >= 1 && args[0].type == VAL_ARRAY && args[0].array) {
+        array_t *a = args[0].array;
+        int i;
+        screen_clear_gets();
+        for (i = 0; i < a->len; i++) {
+            value_t *o = &a->el[i], v;
+            if (o->type != VAL_OBJECT) continue;
+            if (get_varget(ctx, o->obj, &v) != 0) { ctx->error = NULL; v = val_nil(); }
+            screen_get_object((int)iv_num(o->obj, "row"), (int)iv_num(o->obj, "col"),
+                              iv_str(o->obj, "name"), iv_str(o->obj, "picture"), &v, o);
+        }
+        screen_read();
+        for (i = 0; i < a->len; i++) {
+            if (a->el[i].type == VAL_OBJECT) iv_set(a->el[i].obj, "changed", val_logic(screen_read_updated()));
+        }
+        screen_clear_gets();
+        *result = val_logic(screen_read_updated());
+        return 0;
+    }
     screen_read();   /* the GETs recorded so far, as READ runs them */
     *result = val_logic(screen_read_updated());
     return 0;
@@ -635,14 +673,23 @@ int fn_dispbox(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
 
 /* SAVESCREEN / RESTSCREEN: no screen memory to copy; the string is empty
  * and restoring it paints nothing */
+/* SAVESCREEN([t, l, b, r]) --> the region's cells, as a handle string;
+ * RESTSCREEN([t, l, b, r], saved) paints them back.  The whole screen
+ * when the corners are omitted. */
 int fn_savescreen(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    (void)ctx; (void)args; (void)nargs;
-    *result = val_str("");
+    (void)ctx;
+    *result = screen_save_region(arg_num(args, nargs, 0, 0), arg_num(args, nargs, 1, 0),
+                                 arg_num(args, nargs, 2, 24), arg_num(args, nargs, 3, 79));
     return 0;
 }
 
 int fn_restscreen(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    (void)ctx; (void)args; (void)nargs;
+    (void)ctx;
+    if (nargs >= 5)
+        screen_restore_region(arg_num(args, nargs, 0, 0), arg_num(args, nargs, 1, 0),
+                              arg_num(args, nargs, 2, 24), arg_num(args, nargs, 3, 79), &args[4]);
+    else if (nargs >= 1)
+        screen_restore_region(0, 0, 24, 79, &args[nargs - 1]);
     *result = val_nil();
     return 0;
 }
@@ -1128,21 +1175,13 @@ static void center_to(char *s, int width, int size) {
  * painted (a browse repainted into a stream of lines says nothing, and
  * Clipper's own stream output drops positioned text); the source is
  * still placed and the row position settled. */
-static int m_tb_stabilize(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
+/* The columns' widths: a column's own, or the longer of its heading and
+ * its current cell; heads says whether any column has a heading */
+static int tb_widths(expr_ctx_t *ctx, object_t *o, int *width, int ncol, int *heads) {
     array_t *cols = tb_columns(o);
-    int ncol = cols ? cols->len : 0;
-    int rows = (int)iv_num(o, "rowCount"), rowpos = (int)iv_num(o, "rowPos");
-    int top = (int)iv_num(o, "nTop"), left = (int)iv_num(o, "nLeft"), right = (int)iv_num(o, "nRight");
-    int width[64], heads = 0, i, r, moved, painted, y;
-    char cell[256], line[512];
-    int paint = screen_term_available();
-    (void)args; (void)nargs;
-    *result = val_logic(1);
-    if (iv_logic(o, "stable")) return 0;
-    tb_settle_hits(o);
-    if (ncol > 64) ncol = 64;
-
-    /* widths: the column's, or the longer of heading and current cell */
+    char cell[256];
+    int i;
+    *heads = 0;
     for (i = 0; i < ncol; i++) {
         object_t *c = cols->el[i].type == VAL_OBJECT ? cols->el[i].obj : NULL;
         value_t *w = c ? object_ivar(c, "width", 0) : NULL;
@@ -1155,8 +1194,80 @@ static int m_tb_stabilize(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *
             width[i] = (int)strlen(cell);
             if ((int)strlen(iv_str(c, "heading")) > width[i]) width[i] = (int)strlen(iv_str(c, "heading"));
         }
-        if (iv_str(c, "heading")[0]) heads = 1;
+        if (iv_str(c, "heading")[0]) *heads = 1;
     }
+    return 0;
+}
+
+/* The screen column of the current column's cell */
+static int tb_cell_x(object_t *o, const int *width, int ncol) {
+    int x = (int)iv_num(o, "nLeft"), colpos = (int)iv_num(o, "colPos"), i;
+    int seplen = (int)strlen(iv_str(o, "colSep"));
+    for (i = 0; i < colpos - 1 && i < ncol; i++) x += width[i] + seplen;
+    return x;
+}
+
+/* The screen row of the current row's cell */
+static int tb_cell_y(object_t *o, int heads) {
+    int y = (int)iv_num(o, "nTop") + (int)iv_num(o, "rowPos") - 1;
+    if (heads) y += 1 + (iv_str(o, "headSep")[0] ? 1 : 0);
+    return y;
+}
+
+/* hilite() / deHilite(): the current cell in the enhanced (or standard)
+ * colour, the cursor on it -- DBU makes its editing GET at ROW(), COL()
+ * after hilite() */
+static int tb_hilite_cell(expr_ctx_t *ctx, object_t *o, int enhanced) {
+    array_t *cols = tb_columns(o);
+    int ncol = cols ? cols->len : 0, colpos = (int)iv_num(o, "colPos");
+    int width[64], heads, x, y;
+    char cell[256];
+    if (!screen_term_available() || ncol == 0 || colpos < 1 || colpos > ncol) return 0;
+    if (ncol > 64) ncol = 64;
+    if (tb_widths(ctx, o, width, ncol, &heads) != 0) return -1;
+    if (tb_cell(ctx, cols->el[colpos - 1].obj, cell, sizeof(cell)) != 0) return -1;
+    pad_to(cell, width[colpos - 1], sizeof(cell));
+    x = tb_cell_x(o, width, ncol);
+    y = tb_cell_y(o, heads);
+    screen_color_pair(enhanced ? 2 : 1);
+    screen_out_at(y, x, cell);
+    screen_color_pair(1);
+    screen_setpos(y, x);
+    return 0;
+}
+
+static int m_tb_hilite(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
+    (void)args; (void)nargs;
+    *result = *self;
+    return tb_hilite_cell(ctx, o, 1);
+}
+
+static int m_tb_dehilite(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
+    (void)args; (void)nargs;
+    *result = *self;
+    return tb_hilite_cell(ctx, o, 0);
+}
+
+static int m_tb_stabilize(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
+    array_t *cols = tb_columns(o);
+    int ncol = cols ? cols->len : 0;
+    int rows = (int)iv_num(o, "rowCount"), rowpos = (int)iv_num(o, "rowPos");
+    int top = (int)iv_num(o, "nTop"), left = (int)iv_num(o, "nLeft"), right = (int)iv_num(o, "nRight");
+    int width[64], heads = 0, i, r, moved, painted, y;
+    char cell[256], line[512];
+    int paint = screen_term_available();
+    (void)args; (void)nargs;
+    *result = val_logic(1);
+    if (iv_logic(o, "stable")) {
+        /* nothing to paint, but the cursor goes back to the current cell
+         * each time, as Clipper's does: DBU writes its status line and
+         * calls stabilize() again before making a GET at ROW(), COL() */
+        return tb_hilite_cell(ctx, o, 1);
+    }
+    tb_settle_hits(o);
+    if (ncol > 64) ncol = 64;
+
+    if (tb_widths(ctx, o, width, ncol, &heads) != 0) return -1;
 
     y = top;
     if (heads) {
@@ -1212,9 +1323,9 @@ static int m_tb_stabilize(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *
         pad_to(line, right - left + 1, sizeof(line));
         screen_out_at(y + r, left, line);
     }
-    /* back to the current row */
+    /* back to the current row, the cursor on the current cell */
     if (tb_skip(ctx, o, rowpos - painted, &moved) != 0) return -1;
-    if (paint) screen_setpos(y + rowpos - 1, left);
+    if (paint) screen_setpos(y + rowpos - 1, tb_cell_x(o, width, ncol));
     iv_set(o, "stable", val_logic(1));
     *result = val_logic(1);
     (void)self;
@@ -1228,9 +1339,9 @@ static const method_t tbrowse_methods[] = {
     { "PAGEUP", m_tb_pageup }, { "PAGEDOWN", m_tb_pagedown }, { "HOME", m_tb_home }, { "END", m_tb_end },
     { "LEFT", m_tb_left }, { "RIGHT", m_tb_right }, { "PANLEFT", m_tb_left }, { "PANRIGHT", m_tb_right },
     { "PANHOME", m_tb_panhome }, { "PANEND", m_tb_panend },
-    { "STABILIZE", m_tb_stabilize }, { "REFRESHALL", m_tb_invalidate }, { "REFRESHCURRENT", m_tb_invalidate },
+    { "STABILIZE", m_tb_stabilize }, { "FORCESTABLE", m_tb_stabilize }, { "REFRESHALL", m_tb_invalidate }, { "REFRESHCURRENT", m_tb_invalidate },
     { "INVALIDATE", m_tb_invalidate }, { "CONFIGURE", m_tb_configure },
-    { "HILITE", m_tb_self }, { "DEHILITE", m_tb_self }, { "COLORRECT", m_tb_self },
+    { "HILITE", m_tb_hilite }, { "DEHILITE", m_tb_dehilite }, { "COLORRECT", m_tb_self },
     { NULL, NULL }
 };
 

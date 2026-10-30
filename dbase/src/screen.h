@@ -54,6 +54,8 @@ void screen_shutdown(void);
 void screen_say(int row, int col, const char *expr_str, const char *picture);
 
 /* @GET command (range_lo/range_hi = NULL if no RANGE) */
+void screen_get_object(int row, int col, const char *name, const char *picture,
+                       const value_t *initial, const value_t *obj);   /* a Get object's GET (READMODAL) */
 void screen_get(int row, int col, const char *varname, const char *picture,
                 const value_t *range_lo, const value_t *range_hi,
                 const char *valid_expr, const char *when_expr);
@@ -126,6 +128,18 @@ void screen_restore(void);
 /* Check if terminal service is available */
 int screen_term_available(void);
 
+/* The terminal through screen.c: each write also lands in the shadow
+ * screen, which SAVESCREEN / RESTSCREEN read (menu.c and browse.c paint
+ * through these, never term_* directly) */
+void screen_tgoto(int row, int col);
+void screen_tputs(const char *s);
+void screen_tputc(int ch);
+void screen_tattr(int attr);
+void screen_tcolor(int fg, int bg);
+void screen_tclear(int mode);
+value_t screen_save_region(int t, int l, int b, int r);                 /* a handle string */
+void screen_restore_region(int t, int l, int b, int r, const value_t *saved);
+
 /* Key handler support (SET KEY / ON KEY) */
 void screen_set_key_handler(int keycode, const char *procname);
 void screen_clear_key_handlers(void);
@@ -145,6 +159,7 @@ void screen_color_pair(int n);          /* apply pair n of SET COLOR: 1 standard
 void screen_keyboard(const char *s);    /* KEYBOARD: clear the typeahead, stuff the string */
 void screen_clear_typeahead(void);
 int screen_key_pending(void);           /* a key waiting in any buffer or at the terminal */
+int screen_getkey(void);                /* an editor's next key: the buffers, then the terminal */
 const char *screen_read_var(void);   /* the GET being read; "" outside a READ */
 int screen_read_updated(void);       /* UPDATED(): a GET changed in the last READ */
 value_t screen_active_get(void);     /* GETACTIVE(): its Get object, or NIL */

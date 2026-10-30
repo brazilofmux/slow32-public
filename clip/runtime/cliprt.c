@@ -355,7 +355,11 @@ void clip_enter(clip_scope_t *s) {
     s->prev = clip_scope_top;
     clip_scope_top = s;
     prog_get_compiled_loc(&s->at_file, &s->at_line);
-    store->current_depth++;
+    /* A fresh depth above every live frame (see memvar_store_t.live_max) */
+    s->prev_depth = store->current_depth;
+    s->prev_live_max = store->live_max;
+    if (store->live_max < store->current_depth) store->live_max = store->current_depth;
+    store->current_depth = ++store->live_max;
 }
 
 void clip_param(clip_scope_t *s, const char *name, value_t *args, int nargs, int idx) {
@@ -420,9 +424,8 @@ void clip_leave(clip_scope_t *s) {
         }
     }
     s->count = 0;
-    if (store->current_depth > 0) {
-        store->current_depth--;
-    }
+    store->current_depth = s->prev_depth;
+    store->live_max = s->prev_live_max;
     prog_set_compiled_loc(s->at_file, s->at_line);
 }
 

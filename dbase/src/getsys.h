@@ -21,6 +21,9 @@ value_t getsys_note_get(int row, int col, const char *varname, const char *pictu
 
 /* The functions, for func.c's table */
 int fn_getnew(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
+int getsys_has_block(const value_t *obj);          /* the Get reads and writes through a block */
+int getsys_varget(const value_t *obj, value_t *out);
+int getsys_varput(const value_t *obj, const value_t *v);
 int fn_readmodal(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
 int fn_readvar(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
 int fn_updated(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);

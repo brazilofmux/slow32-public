@@ -43,6 +43,7 @@ struct clip_scope {
     char pnames[MAX_FUNC_ARGS][MEMVAR_NAMELEN];  /* parameter names by position */
     int npnames;
     clip_scope_t *prev;    /* the scope that called this one */
+    int prev_depth, prev_live_max;   /* the store's depths on entry, back on leave */
     int nargs;             /* PCOUNT() */
     const char *name;      /* PROCNAME() */
     int nstatics;          /* STATICs bound in this call, written back on return */

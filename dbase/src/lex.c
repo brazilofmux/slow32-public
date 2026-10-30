@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include "lex.h"
@@ -216,6 +217,13 @@ token_type_t lex_next(lexer_t *l) {
         int i = 0;
         t->text[i++] = c;
         while ((isdigit((unsigned char)(c = lex_get_char(l))) || c == '.') && i < (int)sizeof(t->text) - 1) {
+            /* 22.AND. is the number 22 and an operator (Harbour reads it so;
+             * a joined continuation can write it) */
+            if (c == '.' && l->macro_depth == 0 &&
+                (strncasecmp(l->p, "AND.", 4) == 0 || strncasecmp(l->p, "OR.", 3) == 0 ||
+                 strncasecmp(l->p, "NOT.", 4) == 0 || strncasecmp(l->p, "T.", 2) == 0 ||
+                 strncasecmp(l->p, "F.", 2) == 0))
+                break;
             t->text[i++] = c;
         }
         t->text[i] = '\0';

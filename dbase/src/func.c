@@ -624,8 +624,9 @@ static int fn_procline(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
 }
 
 static int fn_pcount(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    int n = ast_block_pcount();   /* inside a block: the block's arguments */
     (void)ctx; (void)args; (void)nargs;
-    *result = val_num(prog_pcount());
+    *result = val_num(n >= 0 ? n : prog_pcount());
     return 0;
 }
 
@@ -702,19 +703,39 @@ static int fn_asc(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     return 0;
 }
 
+/* TYPE(cExp): the type of what the expression text evaluates to (it was
+ * the type of the text itself, "C" for everything -- DBU's "is the filter
+ * logical?" could never be true): C N D L A B O M, U for an undefined
+ * name (or NIL), UE when the text does not compile. */
 static int fn_type(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    (void)ctx;
+    value_t v;
+    const char *saved_error;
     if (nargs < 1) {
         *result = val_str("U");
         return 0;
     }
-    switch (args[0].type) {
-    case VAL_NUM:   *result = val_str("N"); break;
-    case VAL_CHAR:  *result = val_str("C"); break;
+    if (args[0].type != VAL_CHAR) {   /* dBASE III took a value: its type */
+        return func_call(ctx, "VALTYPE", args, 1, result);
+    }
+    saved_error = ctx->error;
+    ctx->error = NULL;
+    if (ast_eval_dynamic(args[0].str, ctx, &v) != 0) {
+        const char *msg = ctx->error ? ctx->error : "";
+        int undefined = strstr(msg, "not found") != NULL || strstr(msg, "Cannot resolve") != NULL;
+        ctx->error = saved_error;
+        *result = val_str(undefined ? "U" : "UE");
+        return 0;
+    }
+    ctx->error = saved_error;
+    switch (v.type) {
+    case VAL_NUM:    *result = val_str("N"); break;
+    case VAL_CHAR:   *result = val_str("C"); break;
+    case VAL_DATE:   *result = val_str("D"); break;
+    case VAL_LOGIC:  *result = val_str("L"); break;
+    case VAL_ARRAY:  *result = val_str("A"); break;
+    case VAL_BLOCK:  *result = val_str("B"); break;
     case VAL_OBJECT: *result = val_str("O"); break;
-    case VAL_DATE:  *result = val_str("D"); break;
-    case VAL_LOGIC: *result = val_str("L"); break;
-    default:        *result = val_str("U"); break;
+    default:         *result = val_str("U"); break;
     }
     return 0;
 }
@@ -2161,10 +2182,10 @@ static int fn_afields(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result
     fc = ctx->db->field_count;
     for (i = 0; i < fc && i < a->len; i++) {
         const dbf_field_t *f = &ctx->db->fields[i];
+        char t[2];
+        t[0] = f->type; t[1] = '\0';
         if (a->el[i].type == VAL_ARRAY && a->el[i].array && a->el[i].array->len >= 4) {
             array_t *row = a->el[i].array;
-            char t[2];
-            t[0] = f->type; t[1] = '\0';
             row->el[0] = val_str(f->name);
             row->el[1] = val_str(t);
             row->el[2] = val_num((double)f->length);
@@ -2172,6 +2193,10 @@ static int fn_afields(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result
         } else {
             a->el[i] = val_str(f->name);
         }
+        /* Clipper's AFIELDS(aNames, aTypes, aLens, aDecs): the parallel arrays */
+        if (nargs >= 2 && args[1].type == VAL_ARRAY && args[1].array && i < args[1].array->len) args[1].array->el[i] = val_str(t);
+        if (nargs >= 3 && args[2].type == VAL_ARRAY && args[2].array && i < args[2].array->len) args[2].array->el[i] = val_num((double)f->length);
+        if (nargs >= 4 && args[3].type == VAL_ARRAY && args[3].array && i < args[3].array->len) args[3].array->el[i] = val_num((double)f->decimals);
     }
     *result = val_num((double)fc);
     return 0;

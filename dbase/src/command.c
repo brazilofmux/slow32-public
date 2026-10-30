@@ -66,6 +66,9 @@ static void cmd_continue(dbf_t *db);
 static void cmd_store(dbf_t *db, lexer_t *l);
 
 static void report_expr_error(void);
+static int cmd_name_arg(const char **pp, char *out, int size);
+static void cmd_use(dbf_t *db, const char *arg);
+static void file_not_found(const char *filename);
 static int skip_deleted(const char *rec_buf);
 static int check_filter(dbf_t *db);
 
@@ -498,23 +501,23 @@ static void upper_basename(char *path) {
 }
 
 /* ---- Helper: ensure filename has .DBF extension ---- */
+/* A base name with an extension of its own keeps it (DBU's ddbbuuuu.ext
+ * became DDBBUUUU.EXT.DBF) */
+static int has_extension(const char *filename);
+
 static void ensure_dbf_ext(char *filename, int size) {
     upper_basename(filename);
     trim_right(filename);
-    if (strlen(filename) < 5 || str_icmp(filename + strlen(filename) - 4, ".DBF") != 0) {
-        if ((int)strlen(filename) + 4 < size)
-            strcat(filename, ".DBF");
-    }
+    if (!has_extension(filename) && (int)strlen(filename) + 4 < size)
+        strcat(filename, ".DBF");
 }
 
 /* ---- Helper: ensure filename has .NDX extension ---- */
 static void ensure_ndx_ext(char *filename, int size) {
     upper_basename(filename);
     trim_right(filename);
-    if (strlen(filename) < 5 || str_icmp(filename + strlen(filename) - 4, ".NDX") != 0) {
-        if ((int)strlen(filename) + 4 < size)
-            strcat(filename, ".NDX");
-    }
+    if (!has_extension(filename) && (int)strlen(filename) + 4 < size)
+        strcat(filename, ".NDX");
 }
 
 /* ---- Helper: parse filename from arg ---- */
@@ -620,6 +623,100 @@ static void cmd_create(dbf_t *db, const char *arg) {
     }
 
     printf("Database %s created with %d field(s).\n", filename, nfields);
+}
+
+/* Clipper's CREATE, in a program (the dot prompt keeps dBASE III's
+ * dialogue): CREATE <file> [NEW] [ALIAS a] makes a structure-extended
+ * file (FIELD_NAME, FIELD_TYPE, FIELD_LEN, FIELD_DEC) and USEs it;
+ * CREATE <file> FROM <ext> [NEW] [ALIAS a] builds the file the extended
+ * one describes and USEs that.  Names may be (expr) or &macro (expanded
+ * before this).  1 when handled. */
+static int cmd_create_clipper(dbf_t *db, const char *arg) {
+    char name[320], from[320], alias[DBF_MAX_FIELD_NAME], use_line[720];
+    const char *p = arg;
+    int is_new = 0;
+    (void)db;
+    from[0] = alias[0] = '\0';
+    if (cmd_name_arg(&p, name, sizeof(name)) != 0 || name[0] == '\0') return 1;
+    for (;;) {
+        p = skip_ws(p);
+        if (*p == '\0') break;
+        if (str_imatch(p, "FROM")) {
+            p = skip_ws(p + 4);
+            if (cmd_name_arg(&p, from, sizeof(from)) != 0) return 1;
+        } else if (str_imatch(p, "ALIAS")) {
+            p = skip_ws(p + 5);
+            if (cmd_name_arg(&p, alias, sizeof(alias)) != 0) return 1;
+        } else if (str_imatch(p, "NEW")) {
+            p += 3;
+            is_new = 1;
+        } else if (str_imatch(p, "VIA")) {
+            char driver[64];
+            p = skip_ws(p + 3);
+            if (cmd_name_arg(&p, driver, sizeof(driver)) != 0) return 1;
+        } else break;
+    }
+    if (from[0] == '\0' && !prog_in_program()) return 0;   /* the dialogue */
+
+    ensure_dbf_ext(name, sizeof(name));
+    if (from[0]) {
+        dbf_t ext;
+        dbf_field_t fields[DBF_MAX_FIELDS];
+        int n = 0, fi_name, fi_type, fi_len, fi_dec;
+        uint32_t r;
+        ensure_dbf_ext(from, sizeof(from));
+        dbf_init(&ext);
+        if (dbf_open(&ext, from) < 0) { file_not_found(from); return 1; }
+        fi_name = dbf_find_field(&ext, "FIELD_NAME");
+        fi_type = dbf_find_field(&ext, "FIELD_TYPE");
+        fi_len = dbf_find_field(&ext, "FIELD_LEN");
+        fi_dec = dbf_find_field(&ext, "FIELD_DEC");
+        if (fi_name < 0 || fi_type < 0 || fi_len < 0) {
+            dbf_close(&ext);
+            prog_error_fmt(ERR_CANNOT_OPEN, "Not a structure-extended file: %s", from);
+            return 1;
+        }
+        for (r = 1; r <= ext.record_count && n < DBF_MAX_FIELDS; r++) {
+            char raw[256];
+            if (dbf_read_record(&ext, r) < 0) break;
+            if (ext.record_buf[0] == '*') continue;
+            dbf_get_field_raw(&ext, fi_name, raw, sizeof(raw));
+            trim_right(raw);
+            if (raw[0] == '\0') continue;
+            str_upper(raw);
+            str_copy(fields[n].name, raw, DBF_MAX_FIELD_NAME);
+            dbf_get_field_raw(&ext, fi_type, raw, sizeof(raw));
+            fields[n].type = (char)toupper((unsigned char)raw[0]);
+            dbf_get_field_raw(&ext, fi_len, raw, sizeof(raw));
+            fields[n].length = atoi(raw);
+            fields[n].decimals = 0;
+            if (fi_dec >= 0) { dbf_get_field_raw(&ext, fi_dec, raw, sizeof(raw)); fields[n].decimals = atoi(raw); }
+            if (fields[n].type == 'D') fields[n].length = 8;
+            if (fields[n].type == 'L') fields[n].length = 1;
+            if (fields[n].type == 'M') fields[n].length = 10;
+            if (fields[n].length < 1) fields[n].length = 1;
+            fields[n].offset = 0;
+            n++;
+        }
+        dbf_close(&ext);
+        if (n == 0) { prog_error(ERR_CANNOT_CREATE, "No fields defined"); return 1; }
+        if (dbf_create(name, fields, n) < 0) { prog_error_fmt(ERR_CANNOT_CREATE, "Error creating %s", name); return 1; }
+        {
+            int mi;
+            for (mi = 0; mi < n; mi++) if (fields[mi].type == 'M') { dbf_memo_create(name); break; }
+        }
+    } else {
+        dbf_field_t ext_fields[4];
+        memset(ext_fields, 0, sizeof(ext_fields));
+        str_copy(ext_fields[0].name, "FIELD_NAME", DBF_MAX_FIELD_NAME); ext_fields[0].type = 'C'; ext_fields[0].length = 10;
+        str_copy(ext_fields[1].name, "FIELD_TYPE", DBF_MAX_FIELD_NAME); ext_fields[1].type = 'C'; ext_fields[1].length = 1;
+        str_copy(ext_fields[2].name, "FIELD_LEN", DBF_MAX_FIELD_NAME);  ext_fields[2].type = 'N'; ext_fields[2].length = 3;
+        str_copy(ext_fields[3].name, "FIELD_DEC", DBF_MAX_FIELD_NAME);  ext_fields[3].type = 'N'; ext_fields[3].length = 3;
+        if (dbf_create(name, ext_fields, 4) < 0) { prog_error_fmt(ERR_CANNOT_CREATE, "Error creating %s", name); return 1; }
+    }
+    snprintf(use_line, sizeof(use_line), "%s%s%s%s", name, is_new ? " NEW" : "", alias[0] ? " ALIAS " : "", alias);
+    cmd_use(cur_db(), use_line);
+    return 1;
 }
 
 /* ---- SELECT ---- */
@@ -5929,7 +6026,7 @@ static void h_create(dbf_t *db, lexer_t *l) {
         cmd_create_label(arg);
     } else {
         char arg[256]; lex_get_remaining(l, arg, sizeof(arg));
-        cmd_create(db, arg);
+        if (!cmd_create_clipper(db, arg)) cmd_create(db, arg);
     }
 }
 

@@ -142,6 +142,7 @@ int ast_make_block(expr_ctx_t *ctx, int (*fn)(expr_ctx_t *, value_t *), int npar
 int ast_block_free_names(const ast_node_t *blk, char (*out)[MEMVAR_NAMELEN]);
 /* EVAL(block, args...) */
 int ast_eval_block(expr_ctx_t *ctx, const value_t *block, value_t *args, int nargs, value_t *result);
+int ast_block_pcount(void);   /* the block being evaluated: its argument count; -1 outside one */
 
 /* Free AST recursively.  Safe to call with NULL. */
 void ast_free(ast_node_t *node);

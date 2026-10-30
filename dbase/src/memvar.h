@@ -42,6 +42,10 @@ typedef struct memvar_store {
     int count;
     int hw;             /* slots at or above this index are unused: a lookup walks hw slots, not 256 */
     int current_depth;  /* updated on push/pop frame */
+    int live_max;       /* the deepest live frame: a block is evaluated at its
+                           maker's depth, so a call made from it takes a depth
+                           above every live frame, not maker + 1 (which was a
+                           live frame's own, and leaving released its LOCALs) */
 } memvar_store_t;
 
 /* Bumped whenever an array is declared or freed: name(...) resolves to an array

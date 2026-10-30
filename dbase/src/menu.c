@@ -215,17 +215,17 @@ int menu_activate_popup_ex(const char *name, int from_menubar) {
             for (i = 0; i < p->nbar; i++) {
                 int row = r1 + 1 + i;
                 int j, plen;
-                term_gotoxy(row, c1 + 1);
+                screen_tgoto(row, c1 + 1);
                 if (i == cur)
-                    term_set_attr(7);  /* reverse */
+                    screen_tattr(7);  /* reverse */
                 else
-                    term_set_attr(0);  /* normal */
+                    screen_tattr(0);  /* normal */
                 /* Space padding + prompt + space padding */
-                term_putc(' ');
-                term_puts(p->bars[i].prompt);
+                screen_tputc(' ');
+                screen_tputs(p->bars[i].prompt);
                 plen = (int)strlen(p->bars[i].prompt);
                 for (j = plen + 1; j < c2 - c1; j++)
-                    term_putc(' ');
+                    screen_tputc(' ');
             }
 
             /* Show MESSAGE for current bar */
@@ -235,20 +235,20 @@ int menu_activate_popup_ex(const char *name, int from_menubar) {
                 if (len > (int)sizeof(blank) - 1) len = (int)sizeof(blank) - 1;
                 memset(blank, ' ', len);
                 blank[len] = '\0';
-                term_gotoxy(msg_row, 0);
-                term_set_attr(0);
-                term_puts(blank);
+                screen_tgoto(msg_row, 0);
+                screen_tattr(0);
+                screen_tputs(blank);
                 if (p->bars[cur].message[0]) {
                     int mlen = (int)strlen(p->bars[cur].message);
                     int mcol = (80 - mlen) / 2;
                     if (mcol < 0) mcol = 0;
-                    term_gotoxy(msg_row, mcol);
-                    term_puts(p->bars[cur].message);
+                    screen_tgoto(msg_row, mcol);
+                    screen_tputs(p->bars[cur].message);
                 }
             }
             term_end_update();
 
-            key = read_dbase_key();
+            key = screen_getkey();
             if (screen_check_key_handler(key)) continue;
 
             if (deactivate_flag) {
@@ -288,28 +288,28 @@ int menu_activate_popup_ex(const char *name, int from_menubar) {
                 if (l >= 0) cur = l;
             } else if (from_menubar && key == K_LEFT) {
                 /* Close popup, return -1 = move left in menu bar */
-                term_set_attr(0);
+                screen_tattr(0);
                 if (msg_row >= 0) {
                     char blank[81];
                     int len = 80;
                     memset(blank, ' ', len);
                     blank[len] = '\0';
-                    term_gotoxy(msg_row, 0);
-                    term_puts(blank);
+                    screen_tgoto(msg_row, 0);
+                    screen_tputs(blank);
                 }
                 term_set_raw(0);
                 screen_clear_region(r1, c1, r2, c2);
                 return -1;
             } else if (from_menubar && key == K_RIGHT) {
                 /* Close popup, return -2 = move right in menu bar */
-                term_set_attr(0);
+                screen_tattr(0);
                 if (msg_row >= 0) {
                     char blank[81];
                     int len = 80;
                     memset(blank, ' ', len);
                     blank[len] = '\0';
-                    term_gotoxy(msg_row, 0);
-                    term_puts(blank);
+                    screen_tgoto(msg_row, 0);
+                    screen_tputs(blank);
                 }
                 term_set_raw(0);
                 screen_clear_region(r1, c1, r2, c2);
@@ -318,7 +318,7 @@ int menu_activate_popup_ex(const char *name, int from_menubar) {
         }
 
         /* Restore display */
-        term_set_attr(0);
+        screen_tattr(0);
 
         /* Clear message row */
         if (msg_row >= 0) {
@@ -327,8 +327,8 @@ int menu_activate_popup_ex(const char *name, int from_menubar) {
             if (len > (int)sizeof(blank) - 1) len = (int)sizeof(blank) - 1;
             memset(blank, ' ', len);
             blank[len] = '\0';
-            term_gotoxy(msg_row, 0);
-            term_puts(blank);
+            screen_tgoto(msg_row, 0);
+            screen_tputs(blank);
         }
 
         term_set_raw(0);
@@ -525,16 +525,16 @@ int menu_activate_menu(const char *name) {
             /* Draw pad bar */
             term_begin_update();
             for (i = 0; i < m->npad; i++) {
-                term_gotoxy(m->pads[i].row, m->pads[i].col);
+                screen_tgoto(m->pads[i].row, m->pads[i].col);
                 if (i == cur)
-                    term_set_attr(7);  /* reverse */
+                    screen_tattr(7);  /* reverse */
                 else
-                    term_set_attr(0);
-                term_putc(' ');
-                term_puts(m->pads[i].prompt);
-                term_putc(' ');
+                    screen_tattr(0);
+                screen_tputc(' ');
+                screen_tputs(m->pads[i].prompt);
+                screen_tputc(' ');
             }
-            term_set_attr(0);
+            screen_tattr(0);
 
             /* Show MESSAGE for current pad */
             if (msg_row >= 0) {
@@ -542,19 +542,19 @@ int menu_activate_menu(const char *name) {
                 int len = 80;
                 memset(blank, ' ', len);
                 blank[len] = '\0';
-                term_gotoxy(msg_row, 0);
-                term_puts(blank);
+                screen_tgoto(msg_row, 0);
+                screen_tputs(blank);
                 if (m->pads[cur].message[0]) {
                     int mlen = (int)strlen(m->pads[cur].message);
                     int mcol = (80 - mlen) / 2;
                     if (mcol < 0) mcol = 0;
-                    term_gotoxy(msg_row, mcol);
-                    term_puts(m->pads[cur].message);
+                    screen_tgoto(msg_row, mcol);
+                    screen_tputs(m->pads[cur].message);
                 }
             }
             term_end_update();
 
-            key = read_dbase_key();
+            key = screen_getkey();
             if (screen_check_key_handler(key)) continue;
 
             if (menu_deactivate_flag) break;
@@ -598,16 +598,16 @@ int menu_activate_menu(const char *name) {
                                 {
                                     int j;
                                     for (j = 0; j < m->npad; j++) {
-                                        term_gotoxy(m->pads[j].row, m->pads[j].col);
+                                        screen_tgoto(m->pads[j].row, m->pads[j].col);
                                         if (j == cur)
-                                            term_set_attr(7);
+                                            screen_tattr(7);
                                         else
-                                            term_set_attr(0);
-                                        term_putc(' ');
-                                        term_puts(m->pads[j].prompt);
-                                        term_putc(' ');
+                                            screen_tattr(0);
+                                        screen_tputc(' ');
+                                        screen_tputs(m->pads[j].prompt);
+                                        screen_tputc(' ');
                                     }
-                                    term_set_attr(0);
+                                    screen_tattr(0);
                                 }
                                 result = menu_activate_popup_ex(
                                     m->pads[cur].popup_name, 1);
@@ -646,16 +646,16 @@ int menu_activate_menu(const char *name) {
                                 {
                                     int j;
                                     for (j = 0; j < m->npad; j++) {
-                                        term_gotoxy(m->pads[j].row, m->pads[j].col);
+                                        screen_tgoto(m->pads[j].row, m->pads[j].col);
                                         if (j == cur)
-                                            term_set_attr(7);
+                                            screen_tattr(7);
                                         else
-                                            term_set_attr(0);
-                                        term_putc(' ');
-                                        term_puts(m->pads[j].prompt);
-                                        term_putc(' ');
+                                            screen_tattr(0);
+                                        screen_tputc(' ');
+                                        screen_tputs(m->pads[j].prompt);
+                                        screen_tputc(' ');
                                     }
-                                    term_set_attr(0);
+                                    screen_tattr(0);
                                 }
                                 result = menu_activate_popup_ex(
                                     m->pads[cur].popup_name, 1);
@@ -693,22 +693,22 @@ int menu_activate_menu(const char *name) {
 
 done_term:
         /* Restore */
-        term_set_attr(0);
+        screen_tattr(0);
         if (msg_row >= 0) {
             char blank[81];
             int len = 80;
             memset(blank, ' ', len);
             blank[len] = '\0';
-            term_gotoxy(msg_row, 0);
-            term_puts(blank);
+            screen_tgoto(msg_row, 0);
+            screen_tputs(blank);
         }
         /* Clear pad bar region */
         for (i = 0; i < m->npad; i++) {
             int plen = (int)strlen(m->pads[i].prompt) + 2;
             int j;
-            term_gotoxy(m->pads[i].row, m->pads[i].col);
+            screen_tgoto(m->pads[i].row, m->pads[i].col);
             for (j = 0; j < plen; j++)
-                term_putc(' ');
+                screen_tputc(' ');
         }
         term_set_raw(0);
     } else

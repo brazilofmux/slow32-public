@@ -1266,7 +1266,29 @@ int ast_make_block(expr_ctx_t *ctx, int (*fn)(expr_ctx_t *, value_t *), int npar
     return make_block(ctx, NULL, fn, nparams, params, nfree, names, result);
 }
 
+/* PCOUNT() inside a block counts the block's arguments (the set/get idiom
+ * {|x| if(PCount() == 0, var, var := x)} of CA's own code depends on it);
+ * -1 when no block is being evaluated, and PCOUNT() is the function's */
+#define BLOCK_CALL_MAX 128
+static int block_call_nargs[BLOCK_CALL_MAX];
+static int block_call_depth;
+
+static int ast_eval_block_in(expr_ctx_t *ctx, const value_t *bv, value_t *args, int nargs, value_t *result);
+
+int ast_block_pcount(void) {
+    return block_call_depth > 0 ? block_call_nargs[block_call_depth - 1] : -1;
+}
+
 int ast_eval_block(expr_ctx_t *ctx, const value_t *bv, value_t *args, int nargs, value_t *result) {
+    int rc;
+    if (block_call_depth < BLOCK_CALL_MAX) block_call_nargs[block_call_depth] = nargs;
+    block_call_depth++;
+    rc = ast_eval_block_in(ctx, bv, args, nargs, result);
+    block_call_depth--;
+    return rc;
+}
+
+static int ast_eval_block_in(expr_ctx_t *ctx, const value_t *bv, value_t *args, int nargs, value_t *result) {
     block_t *b;
     memvar_store_t *store = ctx->vars;
     value_t saved[MAX_BLOCK_PARAMS];
@@ -1517,6 +1539,14 @@ int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
     case AST_BINOP: {
         value_t left, right;
         if (ast_eval(node->binop.left, ctx, &left) != 0) return -1;
+        /* .AND. / .OR. decide on the left alone when they can: the right
+         * side is not evaluated (Clipper; DBU tests a Get's type before
+         * taking LEN() of its value) */
+        if (left.type == VAL_LOGIC &&
+            ((node->binop.op == OP_AND && !left.logic) || (node->binop.op == OP_OR && left.logic))) {
+            *result = left;
+            return 0;
+        }
         if (ast_eval(node->binop.right, ctx, &right) != 0) return -1;
         return ast_eval_binop(ctx, node->binop.op, &left, &right, result);
     }

@@ -141,6 +141,7 @@ struct object_s *prog_new_error_object(int code, const char *description);
 
 /* Check if program is running */
 int prog_is_running(void);
+int prog_in_program(void);   /* running a program, interpreted or compiled */
 
 /* Error handling */
 #define ERR_FILE_NOT_FOUND  1

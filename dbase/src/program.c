@@ -613,6 +613,12 @@ int prog_is_running(void) {
     return state.running;
 }
 
+/* Inside a program, interpreted or compiled: commands with a dialogue at
+ * the dot prompt (CREATE) take Clipper's form here */
+int prog_in_program(void) {
+    return state.running || compiled_file != NULL;
+}
+
 memvar_store_t *prog_get_memvar_store(void) {
     return cmd_get_memvar_store();
 }
@@ -701,11 +707,16 @@ static program_t *prog_load(const char *filename) {
             char next[MAX_LINE_LEN]; /* remove ; */
             if (!fgets(next, sizeof(next), fp)) break;
             trim_right(next);
-            /* Skip leading whitespace of continuation */
+            /* The continuation's indentation is one blank: it separates the
+             * tokens ("22" then ".AND." on the next line; joined tight they
+             * lexed as the number 22. and a word) */
             {
                 char *np = skip_ws(next);
-                if (strlen(line) + strlen(np) < MAX_LINE_LEN - 1)
+                size_t n = strlen(line);
+                if (n + 1 + strlen(np) < MAX_LINE_LEN - 1) {
+                    if (n > 0 && line[n - 1] != ' ' && line[n - 1] != '\t') strcat(line, " ");
                     strcat(line, np);
+                }
             }
         }
 
@@ -1220,6 +1231,7 @@ static int seq_unwind(void) {
     state.loop_depth = f->loop_depth;
     state.current_prog = f->prog;
     cmd_get_memvar_store()->current_depth = state.call_depth;
+    cmd_get_memvar_store()->live_max = state.call_depth;
 
     target = scan_sequence_end(f->prog, f->pc, 0);
     if (target >= 0) {
@@ -1338,6 +1350,7 @@ static int push_frame(program_t *new_prog, int start_line) {
 
     /* Update memvar scope depth so new variables are tagged to this frame */
     cmd_get_memvar_store()->current_depth = state.call_depth;
+    if (cmd_get_memvar_store()->live_max < state.call_depth) cmd_get_memvar_store()->live_max = state.call_depth;
 
     return 0;
 }
@@ -1399,6 +1412,7 @@ static void pop_frame(void) {
 
     /* Restore memvar scope depth to caller's level */
     store->current_depth = state.call_depth;
+    store->live_max = state.call_depth;
 
     /* Write back by-reference parameters to caller's variables */
     for (i = 0; i < frame->with_argc; i++) {
