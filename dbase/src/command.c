@@ -912,9 +912,15 @@ static void cmd_use(dbf_t *db, const char *arg) {
             wa->alias[0] = '\0';
         }
 
-        if (dbf_open(db, filename) < 0) {
+        while (dbf_open(db, filename) < 0) {
+            /* Clipper's open error: DBFNTX/1001 on the file, the DOS error,
+             * Retry and Default on offer; the handler's .T. tries again */
+            char upper[260];
+            str_copy(upper, filename, sizeof(upper));
+            str_upper(upper);
+            prog_error_detail("DBFNTX", 21, 1001, "Open error", upper, 2, 1, 1);
             file_not_found(filename);
-            return;
+            if (!prog_error_retry()) return;
         }
 
         /* Set alias to filename stem */

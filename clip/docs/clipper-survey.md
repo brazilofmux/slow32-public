@@ -612,10 +612,55 @@ people who wrote Clipper.
   Harbour.  SAMPLE still takes the dBASE path; Harbour's waits for
   "Do you want more samples?" and is not probed.
 
-Not driven yet: GETSYS.PRG's and ERRORSYS.PRG's dialogue paths under
-a terminal
-(ERRORSYS reaches Alert() only for open and append-lock errors with a
-retry or default on offer).
+- **ERRORSYS and GETSYS under a terminal** (2026-10-30).  Both of CA's
+  dialogue paths run from keys, and the built-in reader behaves as
+  GETSYS does.
+  ERRORSYS: every error but a zero divide reaches Alert() -- Quit, and
+  Retry / Default when the error allows them.  What it needed: a
+  program's ErrorSys() is run at startup, as Clipper runs it (s32-clip
+  emits clip_startup() after the functions are registered), so its
+  error block is posted; a failed USE raises Clipper's open error
+  (DBFNTX/1001 "Open error" on the file, DOS error 2, canRetry and
+  canDefault), and the handler's .T. opens the file again
+  (prog_error_detail / prog_error_retry, for any command to use); Quit
+  prints the message and "Called from MAIN(9)" and exits with
+  ERRORLEVEL() -- QUIT and the end of a program now exit with it
+  (they gave 0).  PROCNAME()/PROCLINE() now count a code block being
+  evaluated as a level, "(b)NAME" on the line it is written on
+  (compiled blocks push a frame; RECOVER drops the frames a BREAK
+  left), and report nothing below Main when the program's top level is
+  declarations only -- probe fn-procname-levels.
+  GETSYS: Clipper's READ is GETSYS, so in a compiled program the
+  built-in reader does what it does: with SET SCOREBOARD on, row 0
+  from column 60 shows "Ins" while inserting, "Invalid Date" for a date
+  that is not one and "Range: lo - hi" for an edited value out of its
+  RANGE; a message stays until a key waits (not taken) and is wiped; a
+  VALID refusal says nothing; a refused entry is edited again as typed,
+  the cursor home.  On the way, in both readers: a date GET edits
+  through its date format with the separators fixed, and a date or
+  logical GET stores a date or a logical (both stored strings); a
+  template's literals stand in the field; a string GET is its own
+  length wide (it was ten at least); an accepted number shows through
+  its picture (" 50"); the last character before an auto-advance is
+  painted; end of input after a refusal ends the READ instead of
+  re-editing forever.  CA's own GETSYS.PRG now reads the same GETs to
+  the same results: the Get class sets `clear` in setFocus() for a
+  number or @K and the first key blanks the buffer; typing steps over
+  template literals; a focused Get repaints itself and parks the
+  cursor after each message; killFocus() shows the variable again;
+  badDate() is a method judged on the buffer (an empty date is not
+  bad); reset() keeps `changed` (GETSYS's RangeCheck asks it after the
+  reset); a variable's Get reads and assigns through Clipper's block,
+  so GETSYS reaches a LOCAL; RANGE becomes VALID
+  {|_1| RangeCheck(_1,, lo, hi)} when the program reads, and
+  RANGECHECK() is built in (GETSYS's own replaces it).
+  The date functions on an empty date give 0, "" and blanks (YEAR()
+  gave -4713), DOW() is three wide -- probe fn-empty-date.
+
+Not driven yet: nothing from the list.  Retry exists for USE only; the
+other commands' errors offer Quit (and Default where they did).  A
+terminal oracle for GETSYS would need Harbour driven through a pty,
+which the probe harness does not do.
 
 ## The order of work proposed
 

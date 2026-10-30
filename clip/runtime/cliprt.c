@@ -1,5 +1,6 @@
 #include "cliprt.h"
 #include "report.h"
+int clip_errorlevel(void);
 
 #include <ctype.h>
 #include <stdio.h>
@@ -41,22 +42,60 @@ void clip_main_name(const char *name) {
 
 /* PROCNAME(level) / PROCLINE(level) for compiled code: the scopes from the
  * innermost, then the main program */
+static clip_bframe_t *clip_bframe_top;
+
+void clip_bframe_push(clip_bframe_t *f, const char *name, int def_line) {
+    const char *file;
+    f->prev = clip_bframe_top;
+    f->under = clip_scope_top;
+    f->name = name;
+    f->def_line = def_line;
+    prog_get_compiled_loc(&file, &f->call_line);
+    clip_bframe_top = f;
+}
+
+void clip_bframe_pop(clip_bframe_t *f) {
+    clip_bframe_top = f->prev;
+}
+
+/* Level n of the call stack: the scopes and the blocks evaluated under
+ * them, innermost first; a scope's line is where it called the level
+ * inside it, a block's the line it is written on (Clipper's "(b)NAME") */
 static const char *clip_procname(int level, int *line) {
     clip_scope_t *s = clip_scope_top;
+    clip_bframe_t *b = clip_bframe_top;
     const char *file;
-    int cur;
-    prog_get_compiled_loc(&file, &cur);
-    *line = cur;
-    while (level > 0) {
-        if (!s) {
+    int pending, main_done = 0;
+    prog_get_compiled_loc(&file, &pending);
+    for (;;) {
+        const char *name;
+        int ln, next;
+        if (b && b->under == s) {
+            name = b->name;
+            ln = b->def_line;
+            next = b->call_line;
+            b = b->prev;
+        } else if (s) {
+            name = s->name ? s->name : "";
+            ln = pending;
+            next = s->at_line;
+            s = s->prev;
+        } else if (!main_done && clip_main) {
+            name = clip_main;
+            ln = pending;
+            next = 0;
+            main_done = 1;
+        } else {
             *line = 0;
             return "";
         }
-        *line = s->at_line;
-        s = s->prev;
+        if (level == 0) {
+            *line = ln;
+            return name;
+        }
         level--;
+        pending = next;
     }
-    return s ? (s->name ? s->name : "") : (clip_main ? clip_main : "");
 }
 
 static int clip_pcount(void) {
@@ -166,6 +205,20 @@ static int clip_do_hook(const char *name, value_t *args, int nargs,
     return 1;
 }
 
+/* Clipper runs ErrorSys() before the program (CA's ERRORSYS.PRG:
+ * "automatically executes at startup"); a program that supplies its own
+ * gets its error block posted this way */
+void clip_startup(void) {
+    int i;
+    for (i = 0; i < clip_nfn; i++) {
+        if (strcmp(clip_fns[i].name, "ERRORSYS") == 0) {
+            value_t r;
+            clip_fns[i].fn(NULL, 0, &r);
+            return;
+        }
+    }
+}
+
 void clip_register_fn(const char *name, clip_fn_t fn) {
     char upper[MEMVAR_NAMELEN];
     int i;
@@ -216,7 +269,7 @@ void clip_cmd(const char *line) {
     /* cmd_execute returns 1 on QUIT (including QUIT inside DO file). */
     if (cmd_execute(&clip_db, buf)) {
         clip_fini();
-        exit(0);
+        exit(clip_errorlevel());
     }
 }
 
@@ -527,6 +580,7 @@ int clip_for_next(clip_for_t *f) {
 jmp_buf *clip_seq_begin(clip_seq_t *q) {
     q->prev = clip_seq_top;
     q->scope = clip_scope_top;
+    q->bframe = clip_bframe_top;
     clip_seq_top = q;
     return &q->jb;
 }
@@ -544,6 +598,7 @@ static void clip_seq_jump(void) {
     while (clip_scope_top && clip_scope_top != q->scope) {
         clip_leave(clip_scope_top);
     }
+    clip_bframe_top = q->bframe;   /* the blocks a BREAK left */
     prog_break_landed();
     longjmp(q->jb, 1);
 }

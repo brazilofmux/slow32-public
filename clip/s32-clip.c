@@ -270,6 +270,8 @@ static sb_t *g_decl;
  * reached through clip_blocks[] (declared at the top of the output) */
 static sb_t g_blockfuns;
 static int g_nblocks;
+static char g_blk_fn[MAX_NAME + 4] = "";   /* the function a block is written in, for PROCNAME()'s "(b)NAME" */
+static int g_blk_line;                      /* and its line */
 
 static int gen_expr(sb_t *b, int *ntmp, ast_node_t *node);
 
@@ -491,7 +493,8 @@ static int gen_expr(sb_t *b, int *ntmp, ast_node_t *node) {
             for (i2 = 0; i2 < ntmp2; i2++) sb_printf(&g_blockfuns, "%s t%d", i2 ? "," : "", i2);
             sb_printf(&g_blockfuns, ";");
         }
-        sb_printf(&g_blockfuns, "\n    %s\n    if (!e) *result = t%d;\n    return e ? -1 : 0;\n}\n\n",
+        sb_printf(&g_blockfuns, "\n    clip_bframe_t bfr; clip_bframe_push(&bfr, \"(b)%s\", %d);", g_blk_fn, g_blk_line);
+        sb_printf(&g_blockfuns, "\n    %s\n    clip_bframe_pop(&bfr);\n    if (!e) *result = t%d;\n    return e ? -1 : 0;\n}\n\n",
                   code.buf ? code.buf : "", last);
         free(code.buf);
         free(decl.buf);
@@ -2453,9 +2456,9 @@ static int emit_stmt(emit_t *e, const char *p) {
         fprintf(e->out, "clip_fini();\n");
         emit_indent(e->out, e->depth);
         if (e->in_fn) {
-            fprintf(e->out, "exit(0);\n");
+            fprintf(e->out, "exit(clip_errorlevel());\n");   /* ERRORSYS: ErrorLevel(1); QUIT */
         } else {
-            fprintf(e->out, "return 0;\n");
+            fprintf(e->out, "return clip_errorlevel();\n");
             if (e->depth == 0) {
                 e->ended = 1;
             }
@@ -2857,6 +2860,7 @@ static int emit_stmt(emit_t *e, const char *p) {
 }
 
 static int emit_line(emit_t *e, const src_line_t *ln) {
+    g_blk_line = ln->lineno;
     if (ln->is_text) {
         emit_indent(e->out, e->depth);
         fprintf(e->out, "clip_text(");
@@ -2889,6 +2893,7 @@ static int emit_function(FILE *out, const func_t *fn) {
     e.out = out;
     e.in_fn = 1;
     e.param_i = 0;
+    snprintf(g_blk_fn, sizeof(g_blk_fn), "%s", fn->name);
 
     fprintf(out, "static int clip_fn_%s(value_t *args, int nargs, value_t *result) {\n",
             fn->name);
@@ -3079,11 +3084,13 @@ int main(int argc, char **argv) {
         label[strlen(label) - 4] = '\0';   /* no .PRG */
         for (k = 0; label[k]; k++) label[k] = (char)toupper((unsigned char)label[k]);
         fprintf(out, "    clip_main_name(\"%s\");\n", label);
+        snprintf(g_blk_fn, sizeof(g_blk_fn), "%s", label);
     }
     for (i = 0; i < nfns; i++) {
         fprintf(out, "    clip_register_fn(\"%s\", clip_fn_%s);\n",
                 fns[i].name, fns[i].name);
     }
+    fprintf(out, "    clip_startup();\n");   /* the program's ErrorSys(), as Clipper runs it */
 
     memset(&e, 0, sizeof(e));
     e.out = out;
@@ -3119,13 +3126,14 @@ int main(int argc, char **argv) {
             }
         }
         if (first >= 0) {
+            fprintf(out, "    clip_main_name(NULL);   /* no main program below the first procedure */\n");
             fprintf(out, "    { expr_ctx_t *c = clip_ctx(); value_t r; static clip_site_t site; "
                          "if (clip_call(c, \"%s\", NULL, 0, &r, &site)) clip_fail(c); }\n", fns[first].name);
         }
     }
     if (!e.ended) {
         fprintf(out, "    clip_fini();\n");
-        fprintf(out, "    return 0;\n");
+        fprintf(out, "    return clip_errorlevel();\n");
     }
     fprintf(out, "}\n");
     if (g_nblocks > 0) {

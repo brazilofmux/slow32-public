@@ -802,6 +802,7 @@ static int fn_directory(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resu
 }
 
 static int errorlevel_value;
+int clip_errorlevel(void) { return errorlevel_value; }   /* the exit status QUIT and the end of the program give */
 
 static int fn_errorlevel(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx;
@@ -1473,7 +1474,7 @@ const clipfn_entry_t clipfn_table[] = {
     { "SETCANCEL", fn_setcancel }, { "SETBLINK", fn_setblink }, { "NOSNOW", fn_nosnow }, { "SETMODE", fn_setmode },
     { "FKMAX", fn_fkmax }, { "FKLABEL", fn_fklabel }, { "ALTD", fn_nil }, { "COLORSELECT", fn_nil },
     { "DISPCOUNT", fn_zero },
-    { "ALERT", fn_alert }, { "ACHOICE", fn_achoice }, { "BROWSE", fn_browse }, { "DBEDIT", fn_dbedit },
+    { "ALERT", fn_alert }, { "RANGECHECK", fn_rangecheck }, { "ACHOICE", fn_achoice }, { "BROWSE", fn_browse }, { "DBEDIT", fn_dbedit },
     { "MEMOEDIT", fn_memoedit },
     { NULL, NULL }
 };

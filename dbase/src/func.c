@@ -810,6 +810,7 @@ static int fn_day(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         ctx->error = "DAY requires (date)";
         return -1;
     }
+    if (args[0].date == 0) { *result = val_num_dec(0, 0, 3); return 0; }
     date_from_jdn(args[0].date, &y, &m, &d);
     *result = val_num_dec((double)d, 0, 3);
     return 0;
@@ -822,6 +823,7 @@ static int fn_month(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
         ctx->error = "MONTH requires (date)";
         return -1;
     }
+    if (args[0].date == 0) { *result = val_num_dec(0, 0, 3); return 0; }
     date_from_jdn(args[0].date, &y, &m, &d);
     *result = val_num_dec((double)m, 0, 3);
     return 0;
@@ -834,6 +836,7 @@ static int fn_year(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         ctx->error = "YEAR requires (date)";
         return -1;
     }
+    if (args[0].date == 0) { *result = val_num_dec(0, 0, 5); return 0; }   /* an empty date has no year */
     date_from_jdn(args[0].date, &y, &m, &d);
     *result = val_num_dec((double)y, 0, 5);
     return 0;
@@ -845,7 +848,7 @@ static int fn_dow(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         ctx->error = "DOW requires (date)";
         return -1;
     }
-    *result = val_num((double)date_dow(args[0].date));
+    *result = val_num_dec(args[0].date == 0 ? 0 : (double)date_dow(args[0].date), 0, 3);   /* three wide, as YEAR()'s family */
     return 0;
 }
 
@@ -855,7 +858,7 @@ static int fn_cdow(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         ctx->error = "CDOW requires (date)";
         return -1;
     }
-    *result = val_str(date_dow_name(date_dow(args[0].date)));
+    *result = val_str(args[0].date == 0 ? "" : date_dow_name(date_dow(args[0].date)));
     return 0;
 }
 
@@ -866,6 +869,7 @@ static int fn_cmonth(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result)
         ctx->error = "CMONTH requires (date)";
         return -1;
     }
+    if (args[0].date == 0) { *result = val_str(""); return 0; }
     date_from_jdn(args[0].date, &y, &m, &d);
     *result = val_str(date_month_name(m));
     return 0;
@@ -955,6 +959,7 @@ static int fn_dtos(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         ctx->error = "DTOS requires (date)";
         return -1;
     }
+    if (args[0].date == 0) { *result = val_str("        "); return 0; }   /* eight blanks */
     date_from_jdn(args[0].date, &y, &m, &d);
     buf[0] = '0' + (y / 1000) % 10;
     buf[1] = '0' + (y / 100) % 10;

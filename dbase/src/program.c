@@ -157,6 +157,34 @@ int prog_error_substitute(expr_ctx_t *ctx, int code, const char *description, va
     return 0;
 }
 
+/* A command's own account of the error it is about to raise (USE's open
+ * error: DBFNTX/1001 on the file, DOS error 2, Retry and Default on
+ * offer), taken by the next error object; and the handler's answer */
+static struct {
+    int set, gen, sub, oscode, can_retry, can_default;
+    char subsystem[16], desc[64], filename[260];
+} err_detail;
+static int err_retry;
+
+void prog_error_detail(const char *subsystem, int gen, int sub, const char *desc,
+                       const char *filename, int oscode, int can_retry, int can_default) {
+    err_detail.set = 1;
+    str_copy(err_detail.subsystem, subsystem, sizeof(err_detail.subsystem));
+    err_detail.gen = gen;
+    err_detail.sub = sub;
+    str_copy(err_detail.desc, desc, sizeof(err_detail.desc));
+    str_copy(err_detail.filename, filename ? filename : "", sizeof(err_detail.filename));
+    err_detail.oscode = oscode;
+    err_detail.can_retry = can_retry;
+    err_detail.can_default = can_default;
+}
+
+int prog_error_retry(void) {
+    int r = err_retry;
+    err_retry = 0;
+    return r;
+}
+
 object_t *prog_new_error_object(int code, const char *description) {
     object_t *o = object_new("ERROR");
     int gen, sub;
@@ -178,6 +206,18 @@ object_t *prog_new_error_object(int code, const char *description) {
     *object_ivar(o, "subCode", 1) = val_num_dec((double)sub, 0, 0);
     *object_ivar(o, "subSystem", 1) = val_str("BASE");
     *object_ivar(o, "tries", 1) = val_num_dec(0, 0, 0);
+    if (err_detail.set) {
+        *object_ivar(o, "subSystem", 1) = val_str(err_detail.subsystem);
+        *object_ivar(o, "genCode", 1) = val_num_dec((double)err_detail.gen, 0, 0);
+        *object_ivar(o, "subCode", 1) = val_num_dec((double)err_detail.sub, 0, 0);
+        *object_ivar(o, "description", 1) = val_str(err_detail.desc);
+        *object_ivar(o, "filename", 1) = val_str(err_detail.filename);
+        *object_ivar(o, "operation", 1) = val_str("");
+        *object_ivar(o, "osCode", 1) = val_num_dec((double)err_detail.oscode, 0, 0);
+        *object_ivar(o, "canRetry", 1) = val_logic(err_detail.can_retry);
+        *object_ivar(o, "canDefault", 1) = val_logic(err_detail.can_default);
+        err_detail.set = 0;
+    }
     return o;
 }
 
@@ -522,9 +562,16 @@ void prog_error(int code, const char *message) {
         cmd_ctx_setup();
         ctx = cmd_get_expr_ctx();
         error_state.in_handler = 1;
+        r = val_nil();
         (void)ast_eval_block(ctx, &error_block, &arg, 1, &r);
         error_state.in_handler = 0;
         if (break_pending) goto recover;
+        /* .T. from the handler asks for the operation again, where the
+         * error allowed it (canRetry) */
+        if (r.type == VAL_LOGIC && r.logic && arg.type == VAL_OBJECT) {
+            value_t *cr = object_ivar(arg.obj, "canRetry", 0);
+            if (cr && cr->type == VAL_LOGIC && cr->logic) err_retry = 1;
+        }
         return;
     }
 

@@ -61,10 +61,23 @@ int clip_for_next(clip_for_t *f);
 
 /* BEGIN SEQUENCE ... [RECOVER ...] END: BREAK, or an error inside, comes
  * back to the setjmp with the scopes entered since unwound */
+/* A compiled code block being evaluated: PROCNAME()'s "(b)NAME" level,
+ * between the scope it runs under and what it calls */
+typedef struct clip_bframe {
+    struct clip_bframe *prev;
+    clip_scope_t *under;   /* the scope that was innermost when it began */
+    const char *name;      /* "(b)" and the function it is written in */
+    int def_line;          /* the line it is written on */
+    int call_line;         /* the line it was evaluated from */
+} clip_bframe_t;
+void clip_bframe_push(clip_bframe_t *f, const char *name, int def_line);
+void clip_bframe_pop(clip_bframe_t *f);
+
 typedef struct clip_seq {
     jmp_buf jb;
     struct clip_seq *prev;
     clip_scope_t *scope;
+    clip_bframe_t *bframe;
 } clip_seq_t;
 jmp_buf *clip_seq_begin(clip_seq_t *q);
 void clip_seq_end(void);
@@ -105,6 +118,8 @@ void clip_static_bind(clip_scope_t *s, const char *name, value_t *storage);
 void clip_main_name(const char *name);
 
 void clip_register_fn(const char *name, clip_fn_t fn);
+void clip_startup(void);
+int clip_errorlevel(void);   /* ERRORLEVEL(): the program's exit status */   /* after the functions are registered: ErrorSys() when the program has one */
 void clip_do(const char *name);
 void clip_enter(clip_scope_t *s);
 void clip_param(clip_scope_t *s, const char *name, value_t *args, int nargs, int idx);

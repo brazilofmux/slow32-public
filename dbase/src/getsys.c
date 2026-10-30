@@ -160,7 +160,12 @@ static value_t get_untransform(expr_ctx_t *ctx, object_t *o) {
     case 'D':
         a = val_str(buf);
         if (func_call(ctx, "CTOD", &a, 1, &v) == 0) {
-            iv_set(o, "badDate", val_logic(v.type != VAL_DATE || v.date == 0));
+            {
+                const char *p;
+                int digits = 0;
+                for (p = buf; *p; p++) if (*p >= '0' && *p <= '9') digits = 1;
+                iv_set(o, "badDate", val_logic(digits && (v.type != VAL_DATE || v.date == 0)));   /* an empty date is a date */
+            }
             return v;
         }
         return val_nil();
@@ -224,6 +229,7 @@ static object_t *get_new(expr_ctx_t *ctx, int row, int col, const value_t *block
     iv_set(o, "original", val_nil());
     iv_set(o, "changed", val_logic(0));
     iv_set(o, "pos", vnum(0));
+    iv_set(o, "clear", val_logic(0));
     iv_set(o, "decPos", vnum(0));
     iv_set(o, "minus", val_logic(0));
     iv_set(o, "typeOut", val_logic(0));
@@ -246,6 +252,8 @@ static int m_get_varput(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *ar
     return 0;
 }
 
+static int step_editable(object_t *o, int pos, int len);
+
 static int m_get_display(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
     value_t *b = object_ivar(o, "buffer", 0);
     (void)args; (void)nargs;
@@ -267,14 +275,27 @@ static int m_get_setfocus(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *
     iv_set(o, "changed", val_logic(0));
     iv_set(o, "rejected", val_logic(0));
     iv_set(o, "typeOut", val_logic(0));
-    iv_set(o, "pos", vnum(1));
+    {
+        /* Get:clear for a number or @K (the guide); the cursor on the first
+         * position a key fills */
+        const char *pic = iv_str(o, "picture");
+        int k = 0;
+        if (pic[0] == '@') { const char *p; for (p = pic + 1; *p && *p != ' '; p++) if (*p == 'K' || *p == 'k') k = 1; }
+        iv_set(o, "clear", val_logic(iv_str(o, "type")[0] == 'N' || k));
+        iv_set(o, "pos", vnum(step_editable(o, 1, (int)strlen(iv_str(o, "buffer")))));
+    }
     *result = *self;
     return 0;
 }
 
 static int m_get_killfocus(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
-    (void)ctx; (void)args; (void)nargs;
+    (void)args; (void)nargs;
     iv_set(o, "hasFocus", val_logic(0));
+    iv_set(o, "clear", val_logic(0));
+    if (get_update_buffer(ctx, o) != 0)
+        ctx->error = NULL;
+    else if (screen_term_available())   /* the variable shown as it now is, on a screen */
+        screen_out_at((int)iv_num(o, "row"), (int)iv_num(o, "col"), iv_str(o, "buffer"));
     *result = *self;
     return 0;
 }
@@ -292,10 +313,12 @@ static int m_get_assign(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *ar
 static int m_get_reset(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
     (void)args; (void)nargs;
     if (get_update_buffer(ctx, o) != 0) return -1;
-    iv_set(o, "changed", val_logic(0));
+    /* the buffer from the variable, the cursor on the first editable
+     * position (the guide); changed stays as it is -- GETSYS's RangeCheck
+     * asks it after GetPostValidate has reset the Get */
     iv_set(o, "rejected", val_logic(0));
     iv_set(o, "typeOut", val_logic(0));
-    iv_set(o, "pos", vnum(1));
+    iv_set(o, "pos", vnum(step_editable(o, 1, (int)strlen(iv_str(o, "buffer")))));
     *result = *self;
     return 0;
 }
@@ -323,6 +346,49 @@ static int m_get_untransform(expr_ctx_t *ctx, object_t *o, value_t *self, value_
 }
 
 /* The editing methods work on the buffer at pos (1-based) */
+/* The Get's template: the picture's, or one made from the buffer -- a
+ * date's digits and separators, a number's digits, a string's X's */
+static void get_template(object_t *o, char *t, int size) {
+    const char *pic = iv_str(o, "picture");
+    const char *buf = iv_str(o, "buffer");
+    const char *type = iv_str(o, "type");
+    int k;
+    if (pic[0] == '@') { pic = strchr(pic, ' '); pic = pic ? pic + 1 : ""; }
+    if (*pic) { str_copy(t, pic, size); return; }
+    for (k = 0; buf[k] && k < size - 1; k++) {
+        if (type[0] == 'D') t[k] = (buf[k] == '/' || buf[k] == '.' || buf[k] == '-') ? buf[k] : '9';
+        else if (type[0] == 'N') t[k] = buf[k] == '.' ? '.' : '9';
+        else t[k] = 'X';
+    }
+    t[k] = '\0';
+}
+
+static int tmpl_literal(const char *t, int pos) {   /* pos is 1-based */
+    int n = (int)strlen(t);
+    if (pos < 1 || pos > n) return 0;
+    return !strchr("9#ANXLY!anxly", t[pos - 1]);
+}
+
+/* the cursor onto an editable position, from pos forward */
+static int step_editable(object_t *o, int pos, int len) {
+    char t[256];
+    get_template(o, t, sizeof(t));
+    while (pos <= len && tmpl_literal(t, pos)) pos++;
+    return pos;
+}
+
+/* Get:clear, set by setFocus() for a number or @K: the first character
+ * typed blanks the buffer, the template's literals kept */
+static void get_apply_clear(object_t *o, char *buf, int len, int *pos) {
+    char t[256];
+    int k;
+    if (!iv_logic(o, "clear")) return;
+    get_template(o, t, sizeof(t));
+    for (k = 1; k <= len; k++) buf[k - 1] = tmpl_literal(t, k) ? t[k - 1] : ' ';
+    *pos = step_editable(o, 1, len);
+    iv_set(o, "clear", val_logic(0));
+}
+
 static char *edit_buf(object_t *o, int *pos, int *len) {
     value_t *b = object_ivar(o, "buffer", 0);
     if (!b || b->type != VAL_CHAR) return NULL;
@@ -350,13 +416,16 @@ static int m_get_overstrike(expr_ctx_t *ctx, object_t *o, value_t *self, value_t
     char *buf = edit_buf(o, &pos, &len);
     (void)ctx;
     if (buf && nargs >= 1 && args[0].type == VAL_CHAR && args[0].str[0]) {
+        get_apply_clear(o, buf, len, &pos);
+        pos = step_editable(o, pos, len);
         if (pos > len) {
             iv_set(o, "typeOut", val_logic(1));
         } else {
             buf[pos - 1] = edit_char(o, args[0].str);
-            iv_set(o, "pos", vnum(pos + 1));
+            pos = step_editable(o, pos + 1, len);   /* a literal is stepped over */
+            iv_set(o, "pos", vnum(pos));
             iv_set(o, "changed", val_logic(1));
-            if (pos + 1 > len) iv_set(o, "typeOut", val_logic(1));
+            if (pos > len) iv_set(o, "typeOut", val_logic(1));
         }
     }
     *result = *self;
@@ -368,14 +437,17 @@ static int m_get_insert(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *ar
     char *buf = edit_buf(o, &pos, &len);
     (void)ctx;
     if (buf && nargs >= 1 && args[0].type == VAL_CHAR && args[0].str[0]) {
+        get_apply_clear(o, buf, len, &pos);
+        pos = step_editable(o, pos, len);
         if (pos > len) {
             iv_set(o, "typeOut", val_logic(1));
         } else {
             memmove(buf + pos, buf + pos - 1, (size_t)(len - pos));
             buf[pos - 1] = edit_char(o, args[0].str);
-            iv_set(o, "pos", vnum(pos + 1));
+            pos = step_editable(o, pos + 1, len);   /* a literal is stepped over */
+            iv_set(o, "pos", vnum(pos));
             iv_set(o, "changed", val_logic(1));
-            if (pos + 1 > len) iv_set(o, "typeOut", val_logic(1));
+            if (pos > len) iv_set(o, "typeOut", val_logic(1));
         }
     }
     *result = *self;
@@ -552,8 +624,25 @@ static int m_get_todecpos(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *
     return 0;
 }
 
+/* badDate(): the buffer of a date Get holds digits that make no date */
+static int m_get_baddate(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
+    const char *buf = iv_str(o, "buffer"), *p;
+    int digits = 0, bad = 0;
+    (void)self; (void)args; (void)nargs;
+    if (iv_str(o, "type")[0] == 'D') {
+        for (p = buf; *p; p++) if (*p >= '0' && *p <= '9') digits = 1;
+        if (digits) {
+            value_t a = val_str(buf), v;
+            if (func_call(ctx, "CTOD", &a, 1, &v) != 0) { ctx->error = NULL; bad = 1; }
+            else bad = v.type != VAL_DATE || v.date == 0;
+        }
+    }
+    *result = val_logic(bad);
+    return 0;
+}
+
 static const method_t get_methods[] = {
-    { "VARGET", m_get_vargetm }, { "VARPUT", m_get_varput }, { "DISPLAY", m_get_display },
+    { "VARGET", m_get_vargetm }, { "BADDATE", m_get_baddate }, { "VARPUT", m_get_varput }, { "DISPLAY", m_get_display },
     { "SETFOCUS", m_get_setfocus }, { "KILLFOCUS", m_get_killfocus }, { "ASSIGN", m_get_assign },
     { "RESET", m_get_reset }, { "UNDO", m_get_undo }, { "UPDATEBUFFER", m_get_updatebuffer },
     { "UNTRANSFORM", m_get_untransform }, { "OVERSTRIKE", m_get_overstrike }, { "INSERT", m_get_insert },
@@ -655,6 +744,37 @@ void getsys_release_getlist(void) {
     if (memvar_find(store, "GETLIST", &list) == 0 && list.type == VAL_ARRAY) {
         if (ast_make_array(ctx, NULL, 0, &empty) == 0) memvar_set(store, "GETLIST", &empty);
     }
+}
+
+/* A Get's postBlock from text (RANGE's VALID {|_1| RangeCheck(...)}) */
+void getsys_set_postblock(value_t *obj, const char *text) {
+    if (obj->type == VAL_OBJECT && obj->obj) iv_set(obj->obj, "postBlock", block_from_text(cmd_get_expr_ctx(), text));
+}
+
+/* RANGECHECK(oGet, , lo, hi): RANGE's VALID -- an unedited value passes;
+ * an edited one outside lo..hi gets "Range: lo - hi" on the scoreboard and
+ * fails (GETSYS's own; a program's RangeCheck replaces it) */
+int fn_rangecheck(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    value_t v, lt, gt, a[2], t;
+    char lo[64], hi[64], msg[160];
+    *result = val_logic(1);
+    if (nargs < 4 || args[0].type != VAL_OBJECT) return 0;
+    if (!iv_logic(args[0].obj, "changed")) return 0;
+    if (get_varget(ctx, args[0].obj, &v) != 0) { ctx->error = NULL; return 0; }
+    if (ast_eval_binop(ctx, OP_GE, &v, &args[2], &lt) == 0 && lt.type == VAL_LOGIC && lt.logic &&
+        ast_eval_binop(ctx, OP_LE, &v, &args[3], &gt) == 0 && gt.type == VAL_LOGIC && gt.logic) return 0;
+    ctx->error = NULL;
+    a[1] = val_str("");
+    a[0] = args[2];
+    if (func_call(ctx, "TRANSFORM", a, 2, &t) == 0 && t.type == VAL_CHAR) str_copy(lo, val_text(&t), sizeof(lo)); else lo[0] = '\0';
+    a[0] = args[3];
+    if (func_call(ctx, "TRANSFORM", a, 2, &t) == 0 && t.type == VAL_CHAR) str_copy(hi, val_text(&t), sizeof(hi)); else hi[0] = '\0';
+    ctx->error = NULL;
+    snprintf(msg, sizeof(msg), "Range: %s - %s", skip_ws(lo), skip_ws(hi));
+    msg[79] = '\0';
+    scoreboard_message(msg);
+    *result = val_logic(0);
+    return 0;
 }
 
 /* READ when the program supplies ReadModal() (CA's GETSYS.PRG linked in):
@@ -1549,7 +1669,22 @@ int object_send(expr_ctx_t *ctx, const value_t *base, const char *name, value_t 
     o = base->obj;
     m = str_icmp(name, "CLASSNAME") == 0 ? m_classname : find_method(o, name);
     p = object_ivar(o, name, 0);
-    if (is_call && m) return m(ctx, o, &self, args, nargs, result);
+    if (is_call && m) {
+        int rc = m(ctx, o, &self, args, nargs, result);
+        if (rc == 0 && str_icmp(o->cls, "GET") == 0 && iv_logic(o, "hasFocus") && screen_term_available()) {
+            /* a focused Get keeps its field on the screen as it edits */
+            value_t *b = object_ivar(o, "buffer", 0);
+            int row = (int)iv_num(o, "row"), col = (int)iv_num(o, "col");
+            if (b && b->type == VAL_CHAR) {
+                int pos = (int)iv_num(o, "pos"), len = (int)strlen(b->str);
+                screen_out_at(row, col, b->str);
+                if (pos < 1) pos = 1;
+                if (pos > len) pos = len;
+                screen_setpos(row, col + pos - 1);
+            }
+        }
+        return rc;
+    }
     if (p) {
         *result = *p;
         return 0;

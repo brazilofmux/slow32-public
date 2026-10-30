@@ -12,8 +12,10 @@
 #include "expr.h"
 #include "ast.h"
 #include "lex.h"
-#include "getsys.h"
+#include "report.h"
+#include "date.h"
 #include "func.h"
+#include "getsys.h"
 
 #ifdef __slow32__
 #include <term.h>
@@ -519,14 +521,24 @@ void screen_get(int row, int col, const char *varname, const char *picture,
 
     scr.gets[scr.ngets].is_field = 0;
     scr.gets[scr.ngets].field_index = -1;
-    scr.gets[scr.ngets].getobj = getsys_note_get(row, col, varname, picture, valid_expr, when_expr);
+    /* A variable's Get reads and assigns through a block, as Clipper's
+     * preprocessor writes it -- a LOCAL stays reachable from a program's
+     * reader (CA's GETSYS.PRG); a field's Get has no block, the editor
+     * writes the record */
+    if (memvar_find(store, varname, &val) == 0)
+        scr.gets[scr.ngets].getobj = getsys_note_get_expr(row, col, varname, picture, valid_expr, when_expr);
+    else
+        scr.gets[scr.ngets].getobj = getsys_note_get(row, col, varname, picture, valid_expr, when_expr);
 
     /* Get current value for display */
     if (memvar_find(store, varname, &val) == 0) {
         val_to_string(&val, scr.gets[scr.ngets].initial, sizeof(scr.gets[scr.ngets].initial));
         scr.gets[scr.ngets].type = val.type;
         scr.gets[scr.ngets].width = strlen(scr.gets[scr.ngets].initial);
-        if (scr.gets[scr.ngets].width < 10) scr.gets[scr.ngets].width = 10;
+        /* a number's field is ten wide at least (STR()'s width); a string's
+         * is its own length, as Clipper's Get makes it ("abc" is three) */
+        if (val.type == VAL_NUM && scr.gets[scr.ngets].width < 10) scr.gets[scr.ngets].width = 10;
+        if (scr.gets[scr.ngets].width < 1) scr.gets[scr.ngets].width = 1;
     } else {
         /* Try database field */
         expr_ctx_t *ctx = cmd_get_expr_ctx();
@@ -771,6 +783,83 @@ static void get_paint(const get_entry_t *g, const char *buf, int fwidth, int dwi
     term_end_update();
 }
 
+/* An accepted value shown again in its field, through its picture -- a
+ * Get displays its variable after assigning it ("050" typed is " 50") */
+static void get_show_value(const get_entry_t *g, const value_t *v) {
+    value_t a[2], r;
+    char shown[256];
+    int w;
+    a[0] = *v;
+    a[1] = val_str(g->picture);
+    if (func_call(cmd_get_expr_ctx(), "TRANSFORM", a, 2, &r) != 0 || r.type != VAL_CHAR) {
+        cmd_get_expr_ctx()->error = NULL;
+        return;
+    }
+    str_copy(shown, val_text(&r), sizeof(shown));
+    w = get_picture_window(g->picture, (int)strlen(shown));
+    if (w < (int)strlen(shown)) shown[w] = '\0';
+    screen_tgoto(g->row, g->col);
+    screen_tputs(shown);
+}
+
+/* ---- GETSYS's scoreboard (Clipper's READ) ----
+ * With SET SCOREBOARD on, row 0 from column 60 says "Ins" while inserting,
+ * "Invalid Date" for a date that is not one, "Range: lo - hi" for a value
+ * outside a RANGE; a message stays until a key is waiting -- the key is
+ * not taken, the editor gets it -- and is then wiped. */
+static int getsys_style(void) { return report_clipper_layout(); }
+
+static int scoreboard_on(void) {
+    const set_options_t *o = cmd_get_set_opts();
+    return o && o->scoreboard;
+}
+
+static void scoreboard_say(int col, const char *text) {
+    int r = shadow_row, c = shadow_col;
+    screen_tgoto(0, col);
+    screen_tputs(text);
+    screen_tgoto(r, c);
+}
+
+static void scoreboard_insert(int inserting) {
+    if (getsys_style() && scoreboard_on()) scoreboard_say(60, inserting ? "Ins" : "   ");
+}
+
+void scoreboard_message(const char *msg) {
+    int len = (int)strlen(msg), col = 79 - len < 60 ? 79 - len : 60, k;
+    char blank[96];
+    if (!scoreboard_on()) return;
+    if (col < 0) col = 0;
+    scoreboard_say(col, msg);
+#if HAS_TERM
+    while (!screen_key_pending()) term_wait_key(250);
+#endif
+    for (k = 0; k < len && k < (int)sizeof(blank) - 1; k++) blank[k] = ' ';
+    blank[k] = '\0';
+    scoreboard_say(col, blank);
+}
+
+/* The text edited back into a value of the GET's own type: a date through
+ * SET DATE (*bad set when the text is not a date), a logical from T/Y */
+static value_t get_text_value(const get_entry_t *g, const char *buf, int *bad) {
+    *bad = 0;
+    if (g->type == VAL_NUM) return val_num(atof(buf));
+    if (g->type == VAL_DATE) {
+        int32_t d = date_from_display(buf, cmd_get_date_format(), cmd_get_epoch());
+        const char *p;
+        int digits = 0;
+        for (p = buf; *p; p++) if (*p >= '0' && *p <= '9') digits = 1;
+        if (d == 0 && digits) *bad = 1;
+        return val_date(d);
+    }
+    if (g->type == VAL_LOGIC) {
+        const char *p = buf;
+        while (*p == ' ') p++;
+        return val_logic(*p == 'T' || *p == 't' || *p == 'Y' || *p == 'y');
+    }
+    return val_str(buf);
+}
+
 /* ---- READ ---- */
 void screen_read(void) {
     memvar_store_t *store = cmd_get_memvar_store();
@@ -786,6 +875,8 @@ void screen_read(void) {
         for (i = 0; i < scr.ngets && !escaped; i++) {
             char buf[256];
             int pos, len, key, nav = 0;   /* nav: -1 the GET before, 1 the READ is done */
+            char kept_edit[256];
+            int have_kept, refused = 0;
             str_copy(read_var, scr.gets[i].varname, sizeof(read_var));
             active_get = i;
 
@@ -802,6 +893,8 @@ void screen_read(void) {
                     continue;
             }
 
+            kept_edit[0] = '\0';
+            have_kept = 0;
             for (;;) {
             /* The picture: functions after @ (K clear on the first key,
              * S<n> a scrolling window, ! upper case, A letters only, R
@@ -811,6 +904,15 @@ void screen_read(void) {
             get_picture_t pic;
             int fwidth, dwidth, win = 0, first_key = 1;
             parse_get_picture(scr.gets[i].picture, &pic);
+            if (scr.gets[i].type == VAL_DATE && !pic.tmpl[0]) {
+                /* a date edits through the date format: digits where the
+                 * date has them, its separators fixed ("99/99/99") */
+                const char *t = scr.gets[i].initial;
+                int k;
+                for (k = 0; t[k] && k < (int)sizeof(pic.tmpl) - 1; k++)
+                    pic.tmpl[k] = (t[k] == '/' || t[k] == '.' || t[k] == '-') ? t[k] : '9';
+                pic.tmpl[k] = '\0';
+            }
             fwidth = scr.gets[i].width;
             if (pic.tmpl[0]) fwidth = (int)strlen(pic.tmpl);
             if (fwidth > 255) fwidth = 255;
@@ -834,7 +936,24 @@ void screen_read(void) {
             /* Pad to field width */
             while (len < fwidth && len < 255) { buf[len++] = ' '; }
             buf[len] = '\0';
+            if (pic.tmpl[0]) {
+                /* the template's literals stand in the field ("  /  /  ") */
+                int k;
+                for (k = 0; k < fwidth && pic.tmpl[k]; k++)
+                    if (get_picture_literal(&pic, k)) buf[k] = pic.tmpl[k];
+            }
+            if (have_kept) {
+                /* edited again after a refused value: the text as it was
+                 * typed, the cursor home (GETSYS's oGet:home()) */
+                str_copy(buf, kept_edit, sizeof(buf));
+                len = (int)strlen(buf);
+                while (len < fwidth && len < 255) buf[len++] = ' ';
+                buf[len] = '\0';
+                first_key = 0;
+                have_kept = 0;
+            }
             pos = 0;  /* cursor at start of field (dBase convention) */
+            while (pos < fwidth && pic.tmpl[0] && get_picture_literal(&pic, pos)) pos++;
 
             get_paint(&scr.gets[i], buf, fwidth, dwidth, win, pos);
 
@@ -846,6 +965,7 @@ void screen_read(void) {
                     if (scr.ngets == 0) { last_key = key; escaped = 1; nav = 1; break; }
                     continue;
                 }
+                if (key == KEY_NONE && refused) key = K_ESC;   /* input gone after a refusal: no endless re-edit */
                 if (key == K_ENTER || key == '\n' || key == KEY_NONE) { last_key = 13; break; }
                 if (key == K_ESC) { /* Escape - cancel READ */
                     last_key = 27;
@@ -863,7 +983,7 @@ void screen_read(void) {
                     int e = fwidth;
                     while (e > 0 && buf[e - 1] == ' ') e--;
                     pos = e < fwidth ? e : fwidth - 1;
-                } else if (key == K_INS) get_insert_mode = !get_insert_mode;
+                } else if (key == K_INS) { get_insert_mode = !get_insert_mode; scoreboard_insert(get_insert_mode); }
                 else if (key == K_DEL) {
                     memmove(buf + pos, buf + pos + 1, (size_t)(fwidth - pos - 1));
                     buf[fwidth - 1] = ' ';
@@ -895,6 +1015,7 @@ void screen_read(void) {
                     if (pos >= fwidth) {
                         if (!cmd_get_confirm()) {
                             last_key = 13;
+                            get_paint(&scr.gets[i], buf, fwidth, dwidth, win, fwidth - 1);   /* the last character shows */
                             break;  /* auto-advance: field full, CONFIRM OFF */
                         }
                         pos = fwidth - 1;
@@ -912,13 +1033,38 @@ void screen_read(void) {
             {
                 value_t v;
                 trim_right(buf);
-                if (scr.gets[i].type == VAL_NUM) {
-                    v = val_num(atof(buf));
-                } else {
-                    v = val_str(buf);
+                {
+                    int bad;
+                    v = get_text_value(&scr.gets[i], buf, &bad);
+                    if (bad) {
+                        if (getsys_style()) { scoreboard_message("Invalid Date"); scoreboard_insert(get_insert_mode); }
+                        { str_copy(kept_edit, buf, sizeof(kept_edit)); have_kept = 1; refused = 1; continue; }   /* GETSYS: oGet:badDate(), the GET is edited again */
+                    }
                 }
                 /* RANGE validation (match line-mode behavior) */
-                if (scr.gets[i].has_range && v.type == VAL_NUM) {
+                if (getsys_style() && scr.gets[i].has_range) {
+                    /* GETSYS's RangeCheck: only an edited value, the message
+                     * on the scoreboard, the key left for the editor */
+                    char now[256];
+                    value_t lt, gt;
+                    val_to_string(&v, now, sizeof(now));
+                    if (strcmp(now, scr.gets[i].initial) != 0 &&
+                        (ast_eval_binop(cmd_get_expr_ctx(), OP_LT, &v, &scr.gets[i].range_lo, &lt) != 0 || (lt.type == VAL_LOGIC && lt.logic) ||
+                         ast_eval_binop(cmd_get_expr_ctx(), OP_GT, &v, &scr.gets[i].range_hi, &gt) != 0 || (gt.type == VAL_LOGIC && gt.logic))) {
+                        char rmsg[160], a[64], b[64];
+                        value_t ta[2], tr;
+                        cmd_get_expr_ctx()->error = NULL;
+                        ta[0] = scr.gets[i].range_lo; ta[1] = val_str("");
+                        if (func_call(cmd_get_expr_ctx(), "TRANSFORM", ta, 2, &tr) == 0 && tr.type == VAL_CHAR) str_copy(a, val_text(&tr), sizeof(a)); else a[0] = '\0';
+                        ta[0] = scr.gets[i].range_hi;
+                        if (func_call(cmd_get_expr_ctx(), "TRANSFORM", ta, 2, &tr) == 0 && tr.type == VAL_CHAR) str_copy(b, val_text(&tr), sizeof(b)); else b[0] = '\0';
+                        cmd_get_expr_ctx()->error = NULL;
+                        snprintf(rmsg, sizeof(rmsg), "Range: %s - %s", skip_ws(a), skip_ws(b));
+                        rmsg[79] = '\0';
+                        scoreboard_message(rmsg);
+                        { str_copy(kept_edit, buf, sizeof(kept_edit)); have_kept = 1; refused = 1; continue; }
+                    }
+                } else if (scr.gets[i].has_range && v.type == VAL_NUM) {
                     double n = v.num;
                     double lo = scr.gets[i].range_lo.num;
                     double hi = scr.gets[i].range_hi.num;
@@ -933,7 +1079,7 @@ void screen_read(void) {
                             int ri;
                             for (ri = 0; ri < 40; ri++) screen_tputc(' ');
                         }
-                        continue;  /* reject, keep current value */
+                        { str_copy(kept_edit, buf, sizeof(kept_edit)); have_kept = 1; refused = 1; continue; }  /* reject, keep current value */
                     }
                 }
                 /* VALID validation — set memvar temporarily, restore on failure */
@@ -951,6 +1097,7 @@ void screen_read(void) {
                     if (!ok) {
                         if (had_old) memvar_set(store, scr.gets[i].varname, &old_val);
                         else if (scr.gets[i].is_field) get_store_initial(&scr.gets[i]);
+                        if (getsys_style()) { str_copy(kept_edit, buf, sizeof(kept_edit)); have_kept = 1; refused = 1; continue; }   /* GETSYS says nothing: the GET is edited again */
                         screen_tgoto(24, 1);
                         screen_tputs("Invalid entry.");
                         term_getkey();  /* wait for acknowledgment */
@@ -959,7 +1106,7 @@ void screen_read(void) {
                             int ri;
                             for (ri = 0; ri < 40; ri++) screen_tputc(' ');
                         }
-                        continue;  /* re-edit field */
+                        { str_copy(kept_edit, buf, sizeof(kept_edit)); have_kept = 1; refused = 1; continue; }  /* re-edit field */
                     }
                 } else {
                     get_store_value(&scr.gets[i], &v);
@@ -969,6 +1116,7 @@ void screen_read(void) {
                     val_to_string(&v, nv, sizeof(nv));
                     if (strcmp(nv, scr.gets[i].initial) != 0) read_updated = 1;
                 }
+                if (getsys_style() && v.type == VAL_NUM) get_show_value(&scr.gets[i], &v);
                 break;  /* accepted */
             }
             } /* for (;;) */
@@ -1008,14 +1156,15 @@ void screen_read(void) {
 
                 if (read_line(line, sizeof(line)) < 0) break;
                 
-                if (line[0] == '\0') {
-                    /* Keep current value */
-                    if (scr.gets[i].type == VAL_NUM) v = val_num(atof(scr.gets[i].initial));
-                    else v = val_str(scr.gets[i].initial);
-                } else {
-                    trim_right(line);
-                    if (scr.gets[i].type == VAL_NUM) v = val_num(atof(line));
-                    else v = val_str(line);
+                {
+                    int bad;
+                    if (line[0] == '\0') {
+                        v = get_text_value(&scr.gets[i], scr.gets[i].initial, &bad);   /* keep current value */
+                    } else {
+                        trim_right(line);
+                        v = get_text_value(&scr.gets[i], line, &bad);
+                        if (bad) { printf("\nInvalid date\n"); continue; }
+                    }
                 }
 
                 /* RANGE validation */
@@ -1452,6 +1601,7 @@ static void at_get_clause(int row, int col, const char *p) {
     char when_expr[256] = "";
     char target[512] = "";   /* an array element or alias->field: read and stored through a block */
     char expanded[1024];
+    char range_text[300] = "";   /* "lo, hi" as written */
     int i = 0;
     int has_range = 0;
     value_t range_lo, range_hi;
@@ -1509,13 +1659,20 @@ static void at_get_clause(int row, int col, const char *p) {
             }
         } else if (str_imatch(p, "RANGE")) {
             expr_ctx_t *ctx = cmd_get_expr_ctx();
+            const char *r0;
             p = skip_ws(p + 5);
+            r0 = p;
             if (ast_eval_adv(ctx, &p, &range_lo) == 0) {
                 p = skip_ws(p);
                 if (*p == ',') p++;
                 p = skip_ws(p);
                 if (ast_eval_adv(ctx, &p, &range_hi) == 0) {
+                    int len = (int)(p - r0);
                     has_range = 1;
+                    if (len > (int)sizeof(range_text) - 1) len = (int)sizeof(range_text) - 1;
+                    memcpy(range_text, r0, (size_t)len);
+                    range_text[len] = '\0';
+                    trim_right(range_text);
                 }
             }
         } else if (str_imatch(p, "VALID")) {
@@ -1563,7 +1720,13 @@ static void at_get_clause(int row, int col, const char *p) {
                    has_range ? &range_lo : NULL,
                    has_range ? &range_hi : NULL,
                    valid_expr, when_expr);
-
+    if (has_range && !valid_expr[0] && scr.ngets > 0 && func_is_overridden("READMODAL")) {
+        /* Clipper's std.ch: RANGE lo, hi is VALID {|_1| RangeCheck(_1,, lo, hi)}
+         * -- a program's reader (CA's GETSYS) checks it through the Get */
+        char text[400];
+        snprintf(text, sizeof(text), "{|_1| RangeCheck(_1,, %s)}", range_text);
+        getsys_set_postblock(&scr.gets[scr.ngets - 1].getobj, text);
+    }
 }
 
 /* ---- Parse @ command ---- */

@@ -161,7 +161,8 @@ const char *screen_color_spec(void);
 void screen_color_pair(int n);          /* apply pair n of SET COLOR: 1 standard, 2 enhanced, 5 unselected */
 void screen_keyboard(const char *s);    /* KEYBOARD: clear the typeahead, stuff the string */
 void screen_clear_typeahead(void);
-int screen_key_pending(void);           /* a key waiting in any buffer or at the terminal */
+int screen_key_pending(void);
+void scoreboard_message(const char *msg);   /* GETSYS's row-0 message, until a key waits */           /* a key waiting in any buffer or at the terminal */
 int screen_getkey(void);                /* an editor's next key: the buffers, then the terminal */
 const char *screen_read_var(void);   /* the GET being read; "" outside a READ */
 int screen_read_updated(void);       /* UPDATED(): a GET changed in the last READ */

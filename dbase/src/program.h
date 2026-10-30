@@ -142,7 +142,13 @@ int prog_error_substitute(expr_ctx_t *ctx, int code, const char *description, va
 
 /* Check if program is running */
 int prog_is_running(void);
-int prog_in_program(void);   /* running a program, interpreted or compiled */
+int prog_in_program(void);
+/* before prog_error: the error object's subsystem, codes, file, DOS error
+ * and what the handler may answer; prog_error_retry() after it: whether the
+ * handler asked for the operation again (and clears that) */
+void prog_error_detail(const char *subsystem, int gen, int sub, const char *desc,
+                       const char *filename, int oscode, int can_retry, int can_default);
+int prog_error_retry(void);   /* running a program, interpreted or compiled */
 
 /* Error handling */
 #define ERR_FILE_NOT_FOUND  1

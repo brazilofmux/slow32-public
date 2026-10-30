@@ -24,7 +24,8 @@ value_t getsys_note_get_expr(int row, int col, const char *target, const char *p
 /* The functions, for func.c's table */
 int fn_getnew(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
 int getsys_read_through_program(void);
-void getsys_release_getlist(void);   /* READ via a program's ReadModal(), when it has one */
+void getsys_release_getlist(void);
+void getsys_set_postblock(value_t *obj, const char *text);   /* READ via a program's ReadModal(), when it has one */
 int getsys_has_block(const value_t *obj);          /* the Get reads and writes through a block */
 int getsys_varget(const value_t *obj, value_t *out);
 int getsys_varput(const value_t *obj, const value_t *v);
@@ -54,6 +55,7 @@ int fn_tbrowsenew(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
 int fn_tbrowsedb(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
 int fn_tbcolumnnew(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
 int fn_dbedit(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
+int fn_rangecheck(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
 int fn_dbgotop(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
 int fn_dbgobottom(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
 int fn_dbskip(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
