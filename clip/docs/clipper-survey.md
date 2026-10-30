@@ -335,6 +335,17 @@ people who wrote Clipper.
     dialogue.  A name that has an extension keeps it (DBU's ddbbuuuu.ext
     became DDBBUUUU.EXT.DBF, and the Open dialog then listed it).  F3
     Create paints DBU's structure editor.
+  - **Move and Utility.**  Inside Browse, F7 Goto 4 lands on record 4,
+    Locate NAME = "Grace" on record 2, Skip -1 back one; Utility / Copy
+    writes a second table with the five records; the Replace dialog
+    paints its field list.  Needed: GO and SKIP taking expressions
+    (DBU's `goto nWhich`, `skip -nStep`; they read a number only); a GET
+    shown at @ GET time cut to its picture's window (a 127-wide value
+    painted whole ran over the dialog's frame); TBrowse hilite() and
+    deHilite() painting the current cell and parking the cursor on it,
+    and a stabilize() with nothing left to paint parking it too (DBU
+    writes its status line, calls stabilize() again, then makes its
+    editing GET at ROW(), COL()).
   - TYPE() took dBASE III's semantics in three of the dBASE tests (the
     type of the string argument itself); re-recorded to Clipper's, which
     dBASE III shares for a string argument; a non-string argument still

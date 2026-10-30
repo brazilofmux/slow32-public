@@ -1077,9 +1077,13 @@ static void cmd_go(dbf_t *db, const char *arg) {
         return;
     }
 
-    /* GO n */
+    /* GO [RECORD] n -- n an expression (DBU's goto nWhich) */
     {
-        int n = atoi(p);
+        int n;
+        value_t v;
+        if (str_imatch(p, "RECORD")) p = skip_ws(p + 6);
+        if (ast_eval_dynamic(p, &expr_ctx, &v) == 0 && v.type == VAL_NUM) n = (int)v.num;
+        else { expr_ctx.error = NULL; n = atoi(p); }
         if (n < 1 || (uint32_t)n > db->record_count) {
             prog_error(ERR_RECORD_RANGE, "Record out of range");
             return;
@@ -1101,10 +1105,13 @@ static void cmd_skip(dbf_t *db, const char *arg) {
     }
 
     p = skip_ws(arg);
-    if (*p == '\0')
+    if (*p == '\0') {
         n = 1;
-    else
-        n = atoi(p);
+    } else {
+        value_t v;   /* an expression: SKIP -nStep */
+        if (ast_eval_dynamic(p, &expr_ctx, &v) == 0 && v.type == VAL_NUM) n = (int)v.num;
+        else { expr_ctx.error = NULL; n = atoi(p); }
+    }
 
     /* Index-ordered skip */
     {

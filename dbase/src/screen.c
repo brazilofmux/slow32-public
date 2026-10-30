@@ -465,6 +465,8 @@ void screen_say(int row, int col, const char *expr_str, const char *picture) {
 }
 
 /* ---- @GET ---- */
+static void get_show_initial(const get_entry_t *g);
+
 void screen_get(int row, int col, const char *varname, const char *picture,
                 const value_t *range_lo, const value_t *range_hi,
                 const char *valid_expr, const char *when_expr) {
@@ -556,22 +558,35 @@ void screen_get(int row, int col, const char *varname, const char *picture,
         }
     }
 
-    /* Display the field */
-    goto_pos(row, col);
-#if HAS_TERM
-    if (scr.term_available)
-        screen_tputs(scr.gets[scr.ngets].initial);
-    else
-#endif
-        printf("%s", scr.gets[scr.ngets].initial);
-    screen_update_pos(row, col, (int)strlen(scr.gets[scr.ngets].initial));
-
+    /* Display the field, as wide as the picture lets it be (@S<n> is a
+     * window; a 127-wide value painted whole ran over DBU's dialog) */
+    get_show_initial(&scr.gets[scr.ngets]);
     scr.ngets++;
 }
 
 #if HAS_TERM
 int read_dbase_key(void);
 #endif
+
+typedef struct get_picture get_picture_t;
+static void parse_get_picture(const char *p, get_picture_t *pic);
+static int get_picture_window(const char *picture, int value_width);
+
+/* The GET's value shown where it sits, cut to the picture's window */
+static void get_show_initial(const get_entry_t *g) {
+    char shown[256];
+    int w = get_picture_window(g->picture, (int)strlen(g->initial));
+    str_copy(shown, g->initial, sizeof(shown));
+    if (w < (int)strlen(shown)) shown[w] = '\0';
+    goto_pos(g->row, g->col);
+#if HAS_TERM
+    if (scr.term_available)
+        screen_tputs(shown);
+    else
+#endif
+        printf("%s", shown);
+    screen_update_pos(g->row, g->col, (int)strlen(shown));
+}
 
 /* A GET from a Get object (READMODAL over its array): the value it shows
  * comes with it, and the editor stores back through the object (its block
@@ -595,14 +610,7 @@ void screen_get_object(int row, int col, const char *name, const char *picture,
     g->type = initial->type;
     g->width = (int)strlen(g->initial);
     if (g->width < 1) g->width = 1;
-    goto_pos(row, col);
-#if HAS_TERM
-    if (scr.term_available)
-        screen_tputs(g->initial);
-    else
-#endif
-        printf("%s", g->initial);
-    screen_update_pos(row, col, (int)strlen(g->initial));
+    get_show_initial(g);
     scr.ngets++;
 }
 
@@ -618,10 +626,21 @@ static void get_store_value(get_entry_t *g, const value_t *v) {
 
 
 /* ---- The GET editor's picture ---- */
-typedef struct {
+struct get_picture {
     int clear, upper, alpha, scroll, literal_r;
     char tmpl[64];
-} get_picture_t;
+};
+
+/* The columns a GET occupies on screen: the template's length, or the
+ * @S window, else the value's own width */
+static int get_picture_window(const char *picture, int value_width) {
+    get_picture_t pic;
+    int w = value_width;
+    parse_get_picture(picture, &pic);
+    if (pic.tmpl[0]) w = (int)strlen(pic.tmpl);
+    if (pic.scroll > 0 && pic.scroll < w) w = pic.scroll;
+    return w;
+}
 
 static int get_insert_mode;   /* toggled by Ins; SET INSERT is not kept here */
 
