@@ -14,10 +14,13 @@
 # cannot build them yet: xbase uses arrays of three dimensions, selfhost
 # ISSUES-102), and only the results are layered onto base.
 #
-# cc.s32x comes from slow32:kit, the self-hosted toolchain: a clean clone
-# has no cc.s32x to build (see scripts/build-kit-image.sh), so this image
-# carries the kit's.  It needs a kit from batch 51 (2026-10-30) or later:
-# earlier compilers miscompile calls into the clang-built runtime.
+# cc.s32x comes from slow32:kit, the self-hosted toolchain, so this image
+# carries the same compiler the kit ships.  (A clean clone can bootstrap
+# it too -- `make` in selfhost/stage00..stage08 reproduces the kit's
+# cc.s32x byte for byte, in under a minute once tools/dbt is built, since
+# stage00 links s32-emu to the DBT -- but the kit is the released one.)
+# It needs a kit from batch 51 (2026-10-30) or later: earlier compilers
+# miscompile calls into the clang-built runtime.
 ARG BASE_IMAGE=slow32:base
 ARG TOOLCHAIN_IMAGE=slow32:toolchain
 ARG KIT_IMAGE=slow32:kit
