@@ -1058,10 +1058,11 @@ void screen_box(int r1, int c1, int r2, int c2, int dbl) {
     /* Box characters: single vs double */
     char h, v, tl, tr, bl, br;
 
+    /* the line-drawing set the terminal shows DBU's frames with (CP437) */
     if (dbl) {
-        h = '='; v = '|'; tl = '+'; tr = '+'; bl = '+'; br = '+';
+        h = (char)0xCD; v = (char)0xBA; tl = (char)0xC9; tr = (char)0xBB; bl = (char)0xC8; br = (char)0xBC;
     } else {
-        h = '-'; v = '|'; tl = '+'; tr = '+'; bl = '+'; br = '+';
+        h = (char)0xC4; v = (char)0xB3; tl = (char)0xDA; tr = (char)0xBF; bl = (char)0xC0; br = (char)0xD9;
     }
 
 #if HAS_TERM
@@ -1889,6 +1890,7 @@ int screen_inkey(double timeout) {
         } else if (timeout < 0.0) {
             /* Wait forever (INKEY(0) in dBase = wait forever) */
             key = read_dbase_key();
+            if (key_trace) fprintf(stderr, "[inkey wait read %d]\n", key);
         } else {
             /* Wait up to timeout seconds: a timer beside the keyboard in
              * the host, whichever comes first (term_wait_key).  This was

@@ -4,6 +4,8 @@
 #include "set.h"
 #include "expr.h"
 #include "util.h"
+#include "ast.h"
+#include "command.h"
 
 void set_init(set_options_t *opts) {
     opts->talk = 1;
@@ -151,8 +153,8 @@ void set_execute(set_options_t *opts, const char *arg) {
         else printf("Syntax: SET CONSOLE ON/OFF\n");
         return;
     }
-    if (str_imatch(p, "DECIMALS")) {
-        p = skip_ws(p + 8);
+    if (str_imatch(p, "DECIMALS") || str_imatch(p, "DECIMAL")) {
+        p = skip_ws(p + (str_imatch(p, "DECIMALS") ? 8 : 7));
         if (str_imatch(p, "TO")) p = skip_ws(p + 2);
         val = atoi(p);
         if (val >= 0 && val <= 18) {
@@ -340,6 +342,47 @@ void set_execute(set_options_t *opts, const char *arg) {
             opts->device = 0;
         else if (str_imatch(p, "PRINT"))
             opts->device = 1;
+        return;
+    }
+
+    /* Clipper's and dBASE III's, accepted and kept: a program that sets
+     * them (CA's DOT.PRG resets every setting at its prompt) is not told
+     * they are unknown.  DEFAULT is a directory like PATH's; DELIMITERS,
+     * EXCLUSIVE and FORMAT change nothing here. */
+    if (str_imatch(p, "DEFAULT")) {
+        p = skip_ws(p + 7);
+        if (str_imatch(p, "TO")) p = skip_ws(p + 2);
+        str_copy(opts->default_dir, p, sizeof(opts->default_dir));
+        trim_right(opts->default_dir);
+        return;
+    }
+    if (str_imatch(p, "DELIMITERS")) {
+        p = skip_ws(p + 10);
+        if (str_imatch(p, "TO")) {
+            p = skip_ws(p + 2);
+            if (str_imatch(p, "DEFAULT") || *p == '\0') opts->delimiters[0] = '\0';
+            else {
+                value_t v;
+                expr_ctx_t *ctx = cmd_get_expr_ctx();
+                if (ast_eval_dynamic(p, ctx, &v) == 0 && v.type == VAL_CHAR) str_copy(opts->delimiters, val_text(&v), sizeof(opts->delimiters));
+                else ctx->error = NULL;
+            }
+            return;
+        }
+        val = parse_on_off(p);
+        if (val >= 0) opts->delimiters_on = val;
+        return;
+    }
+    if (str_imatch(p, "EXCLUSIVE")) {
+        val = parse_on_off(p + 9);
+        if (val >= 0) opts->exclusive = val;
+        return;
+    }
+    if (str_imatch(p, "FORMAT")) {
+        p = skip_ws(p + 6);
+        if (str_imatch(p, "TO")) p = skip_ws(p + 2);
+        str_copy(opts->format, p, sizeof(opts->format));
+        trim_right(opts->format);
         return;
     }
 

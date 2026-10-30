@@ -42,6 +42,10 @@ typedef struct set_options {
     FILE *alternate_fp;   /* file for SET ALTERNATE TO (NULL if none) */
     int alternate_on;     /* 1 = actively logging */
     char path[256];       /* SET PATH TO directories (semicolon-separated) */
+    char default_dir[256];  /* SET DEFAULT TO: kept, not yet used in file searches */
+    char delimiters[8];     /* SET DELIMITERS TO: kept */
+    char format[256];       /* SET FORMAT TO: kept */
+    int delimiters_on, exclusive;   /* SET DELIMITERS / EXCLUSIVE ON|OFF: kept */
 } set_options_t;
 
 void set_init(set_options_t *opts);

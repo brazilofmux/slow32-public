@@ -484,8 +484,28 @@ people who wrote Clipper.
   200).  `DBASE_KEY_TRACE=1` prints what INKEY() sees, beside
   `CLIP_TRACE`.
 
-Not driven yet: Append with the right keys, and GETSYS.PRG's and
-ERRORSYS.PRG's dialogue paths under a terminal.
+- **Append, and the view's panes** (2026-10-30, later).  Utility /
+  Append from a second file: "Append completed", seven records.  The
+  keys were the lesson: a DBU dialog opens with its file list focused,
+  Enter takes the highlighted file and moves on, and a letter typed on
+  the dialog's elements is a first-letter jump between them (so "O",
+  Enter reaches Ok) -- the File element is typed into only after Enter
+  on it.  The view's Fields pane was blank after Open: DBU lists it
+  with `ACHOICE(..., .F., "", top_el)`, nothing selectable and no user
+  function, which Clipper paints and returns from at once; ours
+  returned without painting.  Also: the five SET options DOT.PRG
+  resets at its prompt that we called unknown -- DECIMAL (the
+  abbreviation), DEFAULT TO, DELIMITERS ON/OFF/TO, EXCLUSIVE, FORMAT TO
+  -- are accepted and kept (probe cmd-set-kept); the box ALERT() and
+  `@ ... TO` draw has the terminal's line glyphs instead of `+-|`.
+  CA's DOT.PRG (the dot-prompt sample, dated 1986) is not a driver:
+  it declares `PROCEDURE at` and then calls `at(...)`; Harbour refuses
+  the file ("Redefinition of predefined function AT"), and with us the
+  procedure shadows the function, as a linker override would.
+
+Not driven yet: GETSYS.PRG's and ERRORSYS.PRG's dialogue paths under a
+terminal (ERRORSYS reaches Alert() only for open and append-lock
+errors with a retry or default on offer).
 
 ## The order of work proposed
 
