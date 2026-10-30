@@ -194,14 +194,14 @@ slow-32/
 ├── dfsort/             # Sort utility (s32sort)
 ├── lua/                # Lua
 ├── zork/               # Z-machine
-├── dbase/              # dBase III clone
+├── dbase/              # SLOW-32 xBase: the interpreter (dot prompt)
 ├── sbasic/             # BASIC
 ├── forth/              # Forth kernel (SLOW-32 assembly)
 ├── forthc/             # AOT Forth compiler (written in Forth)
 ├── islisp/             # ISLISP (ISO Lisp)
 ├── prolog/             # Prolog
 ├── command/            # COMMAND.COM-shaped shell
-├── clip/               # Clipper (.prg → .s32x)
+├── clip/               # SLOW-32 xBase: the compiler (.prg → .s32x)
 ├── sheet/              # Spreadsheet
 ├── nano/               # Editor
 ├── rogue/              # Rogue
@@ -309,9 +309,9 @@ int main() {
   headless journaling via `S32_TUBE_DUMP`, two host viewers, and bindings in
   both SBASIC and Forth — see [docs/TUBE.md](docs/TUBE.md)
 - ✅ **Applications** - DOOM, Rogue, Asteroids, SQLite, Lua, PCRE2, a
-  Z-machine, dBase III clone, editor, BASIC, Forth (plus `forthc`, an AOT
+  Z-machine, an xBase interpreter and compiler, editor, BASIC, Forth (plus `forthc`, an AOT
   Forth compiler written in Forth), ISLISP (passes the eisl verification
-  suite), Prolog, COMMAND.COM-shaped shell, Clipper, spreadsheet, sort, BBS,
+  suite), Prolog, COMMAND.COM-shaped shell, spreadsheet, sort, BBS,
   Kermit, and IPv4 TCP examples under their own directories
 - ✅ **Testing** - 138 tests in `regression/tests/`, run on every engine
   by `regression/run-differential.sh`; further differentials run the
@@ -361,7 +361,7 @@ make runtime      # Builds crt0.s32o, locales.s32o, libs32.s32a, libc_debug.s32a
 - [The 1987 Desk](docs/plans/1987-desk.md) - Period software we should (and should not) import
 - [The hose](docs/plans/hose.md) - How two SLOW-32 programs talk (sockets, not shared memory)
 - [Engine Room](docs/plans/engine-room.md) - DBT and codegen performance work
-- [COBOL](cobol/README.md), [Fortran 77](fortran/README.md), [Forth](forth/README.md), [Self-hosting](selfhost/README.md) - the larger fronts each have their own README, as do the interpreters: [dBase](dbase/README.md), [SLOW BASIC](sbasic/README.md), [Lua](lua/README.md), [Prolog](prolog/README.md), [ISLISP](islisp/README.md)
+- [COBOL](cobol/README.md), [Fortran 77](fortran/README.md), [Forth](forth/README.md), [Self-hosting](selfhost/README.md) - the larger fronts each have their own README, as do the interpreters: [xBase](dbase/README.md) (and its compiler, [s32-clip](clip/README.md)), [SLOW BASIC](sbasic/README.md), [Lua](lua/README.md), [Prolog](prolog/README.md), [ISLISP](islisp/README.md)
 - [CLAUDE.md](CLAUDE.md) - AI assistant instructions and quick reference, including the main test harnesses
 
 ## History
@@ -396,3 +396,9 @@ zlib; `islisp/lib/test.lsp` is adapted from Easy-ISLisp (BSD-2); the
 Unicode and CLDR data the COBOL runtime, C runtime and `common/` carry
 (through libutf) is under the Unicode License V3.  Doom under `doom/` (doomgeneric) is GPLv2 and stands alone:
 it is a separate program, and nothing under MIT here links against it.
+
+## Trademarks
+
+dBASE and Clipper (CA-Clipper) are trademarks of their respective owners.
+SLOW-32 xBase is not affiliated with or endorsed by them; the names appear
+here only to say which programs and files it is compatible with.

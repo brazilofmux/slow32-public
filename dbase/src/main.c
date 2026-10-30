@@ -14,8 +14,8 @@ int main(void) {
 
     gc_set_stack_base(line + sizeof(line));   /* the collector scans the stack up to here */
 
-    printf("dBASE III Clone for SLOW-32\n");
-    printf("Stage 9: AST Expressions\n\n");
+    printf("SLOW-32 xBase\n");
+    printf("xBase interpreter 1.0\n\n");
 
     dbf_init(&current_db);
     prog_init();

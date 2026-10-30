@@ -1,7 +1,8 @@
-# dbase — a dBASE III Plus interpreter for SLOW-32
+# SLOW-32 xBase — the interpreter
 
-A dot-prompt interpreter for the dBASE III Plus language (Ashton-Tate,
-1986), with a number of Clipper and FoxPro additions: `LOCAL`, arrays
+A dot-prompt interpreter for the xBase language, compatible with dBASE
+III Plus (Ashton-Tate, 1986), with a number of additions from CA-Clipper
+and FoxPro: `LOCAL`, arrays
 (`DECLARE`/`DIMENSION` and the `A*()` functions), the low-level file
 functions (`FOPEN`, `FREAD`, ...), `SCAN`/`ENDSCAN`, `SCATTER`/`GATHER`,
 `DEFINE MENU`/`POPUP`. It is written in C, compiled by clang for
@@ -105,3 +106,9 @@ memory variables with `PRIVATE`/`PUBLIC`/`LOCAL`, macro substitution,
   -- an earlier plan, superseded by ROADMAP.md.
 - [ISSUES.md](ISSUES.md) -- open and resolved items, including the
   2026-09-05 performance rounds.
+
+## Trademarks
+
+dBASE and Clipper (CA-Clipper) are trademarks of their respective owners.
+SLOW-32 xBase is not affiliated with or endorsed by them; the names appear
+here only to say which programs and files it is compatible with.

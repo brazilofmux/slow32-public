@@ -1,4 +1,4 @@
-# clip against CA-Clipper 5.2: the first survey
+# SLOW-32 xBase against CA-Clipper 5.2: the compatibility survey
 
 Status: survey, 2026-10-29.  The goal (user, 2026-10-29): a tool someone
 who used Clipper would recognize -- Clipper 5.2 behaviour, not COBOL

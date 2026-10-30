@@ -1,14 +1,15 @@
-# s32-clip
+# s32-clip — the SLOW-32 xBase compiler
 
-Clipper for SLOW-32: a `.prg` becomes a `.s32x`.  The plan:
+A `.prg` becomes a `.s32x`: xBase compiled for SLOW-32, aiming at
+CA-Clipper 5.2 compatibility.  The plan:
 [docs/plans/clipper.md](../docs/plans/clipper.md) (steps 0-2 done, 4
 under way).
 
-s32-clip parses the program with dbase's own parser at compile time and
+s32-clip parses the program with the interpreter's own parser at compile time and
 writes C: control flow is C, and expressions are C calls on the
 interpreter's own operations (`ast_eval_binop`, `ast_eval_name`, ...),
 so `STR`, `MOD`, dates and field names keep interpreter semantics by
-construction.  The generated program links the dBase sources minus the
+construction.  The generated program links the interpreter's sources minus the
 REPL, which runs what is not compiled yet (most commands) and what never
 can be (macros).
 
@@ -83,3 +84,9 @@ nested `DO reports_all` overflows the interpreter's IF stack; the
 compiled driver matches a standalone `DO activity`. Workdirs and
 `.prn` files stay in `out/` (gitignored). Do not copy private
 datasets into this tree.
+
+## Trademarks
+
+dBASE and Clipper (CA-Clipper) are trademarks of their respective owners.
+SLOW-32 xBase is not affiliated with or endorsed by them; the names appear
+here only to say which programs and files it is compatible with.

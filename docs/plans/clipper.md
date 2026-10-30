@@ -1,4 +1,4 @@
-# Clipper: growing s32-clip into the dBase compiler
+# Growing s32-clip into the SLOW-32 xBase compiler
 
 Status 2026-10-29: steps 0-2 done -- the oracle harness
 (`clip/tests/run-oracle.sh`: 45 of 45 compiling programs agree), the

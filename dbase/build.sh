@@ -13,7 +13,7 @@ CFLAGS="-target $TARGET -S -emit-llvm -nostdinc -fno-builtin -I../runtime/includ
 # Optimization level
 OPT="${OPT:--O1}"
 
-echo "=== Building dBASE III Clone ==="
+echo "=== Building SLOW-32 xBase (the interpreter) ==="
 
 # Auto-discover all .c files in src/
 OBJECTS=""

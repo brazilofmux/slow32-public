@@ -1354,7 +1354,7 @@ static int fn_adir(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
 
 static int fn_version(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx; (void)args; (void)nargs;
-    *result = val_str("dBASE III Clone");
+    *result = val_str("SLOW-32 xBase 1.0");
     return 0;
 }
 
@@ -2475,7 +2475,7 @@ static int fn_sys(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         break;
     }
     case 17:   *result = val_str("SLOW-32"); break;
-    case 2001: *result = val_str("dBASE III Clone 1.0"); break;
+    case 2001: *result = val_str("SLOW-32 xBase 1.0"); break;
     default:   *result = val_str(""); break;
     }
     return 0;
