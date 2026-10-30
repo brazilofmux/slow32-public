@@ -218,10 +218,21 @@ people who wrote Clipper.
   wide is asterisks, @( @B @C @X @Z @E); the blank date shows its
   separators ("  /  /  ").
 
+- **The applications.**  DBU (eleven files, 6,000 lines, 152 functions)
+  compiles to a SLOW-32 binary, starts, paints its key bar and menu
+  (Help Open Create Save Browse Utility Move Set) and waits for a key.
+  PE and RL compile.  What DBU needed: the command layer evaluating
+  through the AST (FOR bounds, @ coordinates, DECLARE dimensions --
+  expr.c's older evaluator knew no M-> or arrays), `;` continuations
+  followed by a comment, `@ t,l,b,r BOX frame`, `@ r,c` alone, DECLARE
+  with expression and zero dimensions, SET CURSOR, and tables that hold
+  it (s32-clip's lines grow on demand; the runtime's function table held
+  64 and dropped the rest without a word).
+
 Not driven yet: GETSYS.PRG and ERRORSYS.PRG as replacements for the
 built-in Get reader and error handler (they compile; running them in
 place of ours needs the keyboard), the report and label runners
-(need .frm / .lbl files), DBU as an application (interactive).
+(need .frm / .lbl files), DBU past its first screen (keys).
 
 ## The order of work proposed
 
