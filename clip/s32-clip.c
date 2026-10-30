@@ -1801,6 +1801,7 @@ static int emit_function(FILE *out, const func_t *fn) {
     fprintf(out, "    clip_scope_t scope;\n");
     fprintf(out, "    clip_enter(&scope);\n");
     fprintf(out, "    scope.nargs = nargs;\n");
+    fprintf(out, "    scope.name = \"%s\";\n", fn->name);
     for (i = 0; i < fn->nparams; i++) {
         fprintf(out, "    clip_param(&scope, ");
         c_escape(out, fn->params[i]);
@@ -1953,6 +1954,14 @@ int main(int argc, char **argv) {
 
     fprintf(out, "int main(void) {\n");
     fprintf(out, "    clip_init();\n");
+    {
+        char label[64];
+        int k;
+        file_label(inputs[0], label, (int)sizeof(label));
+        label[strlen(label) - 4] = '\0';   /* no .PRG */
+        for (k = 0; label[k]; k++) label[k] = (char)toupper((unsigned char)label[k]);
+        fprintf(out, "    clip_main_name(\"%s\");\n", label);
+    }
     for (i = 0; i < nfns; i++) {
         fprintf(out, "    clip_register_fn(\"%s\", clip_fn_%s);\n",
                 fns[i].name, fns[i].name);

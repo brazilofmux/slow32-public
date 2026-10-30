@@ -165,6 +165,11 @@ void prog_set_compiled_recover(int (*recover)(void));
 /* PCOUNT(): the arguments the running procedure was given; compiled code
  * answers through the hook when no interpreted program runs */
 int  prog_pcount(void);
+/* PROCNAME(level) / PROCLINE(level): the procedure running `level` calls
+ * up and its line (the main program is named for its file); "" and 0
+ * past the outermost.  Compiled code answers through the hook. */
+const char *prog_procname(int level, int *line);
+void prog_set_procname_hook(const char *(*hook)(int level, int *line));
 void prog_set_pcount_hook(int (*hook)(void));
 
 /* SCAN ... ENDSCAN for compiled code: open positions on the first record

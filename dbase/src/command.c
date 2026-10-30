@@ -3089,9 +3089,8 @@ static void cmd_wait(const char *arg) {
 /* ---- ? / ?? (print expressions) ---- */
 static void cmd_print_expr(const char *arg, int newline) {
     const char *p;
-    int is_print = (cmd_get_device() == 1);
     value_t vals[MAX_FUNC_ARGS];
-    int n = 0, i;
+    int n = 0;
 
     /* ? is QOUT(): its arguments are evaluated first, then it starts a new
      * line and prints them (dBASE III and Clipper alike); ?? the same
@@ -3111,6 +3110,14 @@ static void cmd_print_expr(const char *arg, int newline) {
         }
     }
 
+    cmd_qout(vals, n, newline);
+}
+
+/* QOUT / QQOUT: a new line (QOUT), then the values, a space apart, to the
+ * console or the printer as SET DEVICE says */
+void cmd_qout(const value_t *vals, int n, int newline) {
+    int is_print = (cmd_get_device() == 1);
+    int i;
     if (newline) {
         if (is_print) screen_print_newline();
         else cmd_output("\n");

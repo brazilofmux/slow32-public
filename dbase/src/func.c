@@ -543,6 +543,54 @@ static int fn_right(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
     return 0;
 }
 
+/* VALTYPE(value): its type as a letter, the value itself (TYPE() takes text) */
+static int fn_valtype(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    const char *t = "U";
+    (void)ctx;
+    if (nargs >= 1) {
+        switch (args[0].type) {
+        case VAL_NUM:   t = "N"; break;
+        case VAL_CHAR:  t = "C"; break;
+        case VAL_DATE:  t = "D"; break;
+        case VAL_LOGIC: t = "L"; break;
+        case VAL_ARRAY: t = "A"; break;
+        default:        t = "U"; break;
+        }
+    }
+    *result = val_str(t);
+    return 0;
+}
+
+/* QOUT / QQOUT: what ? and ?? are */
+static int fn_qout(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    cmd_qout(args, nargs, 1);
+    *result = val_nil();
+    return 0;
+}
+
+static int fn_qqout(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    cmd_qout(args, nargs, 0);
+    *result = val_nil();
+    return 0;
+}
+
+static int fn_procname(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    int line;
+    (void)ctx;
+    *result = val_str(prog_procname(nargs >= 1 && args[0].type == VAL_NUM ? (int)args[0].num : 0, &line));
+    return 0;
+}
+
+static int fn_procline(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    int line;
+    (void)ctx;
+    prog_procname(nargs >= 1 && args[0].type == VAL_NUM ? (int)args[0].num : 0, &line);
+    *result = val_num(line);
+    return 0;
+}
+
 static int fn_pcount(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx; (void)args; (void)nargs;
     *result = val_num(prog_pcount());
@@ -2298,7 +2346,7 @@ static const func_entry_t func_table[] = {
     { "FERROR",    fn_ferror },
     /* Misc */
     { "EMPTY",     fn_empty },
-    { "IIF",       fn_iif }, { "IF", fn_iif }, { "PCOUNT", fn_pcount },
+    { "IIF",       fn_iif }, { "IF", fn_iif }, { "PCOUNT", fn_pcount }, { "VALTYPE", fn_valtype }, { "QOUT", fn_qout }, { "QQOUT", fn_qqout }, { "PROCNAME", fn_procname }, { "PROCLINE", fn_procline },
     /* System */
     { "VERSION",   fn_version },
     { "OS",        fn_os },

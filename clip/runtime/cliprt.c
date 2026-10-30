@@ -30,6 +30,32 @@ static clip_seq_t *clip_seq_top;      /* the innermost BEGIN SEQUENCE */
 
 static int clip_recover(void);
 
+static const char *clip_main;
+
+void clip_main_name(const char *name) {
+    clip_main = name;
+}
+
+/* PROCNAME(level) / PROCLINE(level) for compiled code: the scopes from the
+ * innermost, then the main program */
+static const char *clip_procname(int level, int *line) {
+    clip_scope_t *s = clip_scope_top;
+    const char *file;
+    int cur;
+    prog_get_compiled_loc(&file, &cur);
+    *line = cur;
+    while (level > 0) {
+        if (!s) {
+            *line = 0;
+            return "";
+        }
+        *line = s->at_line;
+        s = s->prev;
+        level--;
+    }
+    return s ? (s->name ? s->name : "") : (clip_main ? clip_main : "");
+}
+
 static int clip_pcount(void) {
     return clip_scope_top ? clip_scope_top->nargs : 0;
 }
@@ -138,6 +164,7 @@ void clip_init(void) {
     prog_set_do_hook(clip_do_hook);
     prog_set_compiled_recover(clip_recover);
     prog_set_pcount_hook(clip_pcount);
+    prog_set_procname_hook(clip_procname);
     strcpy(line, "SET TALK OFF");
     cmd_execute(&clip_db, line);
 }
@@ -262,6 +289,7 @@ void clip_enter(clip_scope_t *s) {
     s->count = 0;
     s->npnames = 0;
     s->nargs = 0;
+    s->name = NULL;
     s->call = clip_next_call;
     clip_next_call = NULL;
     s->prev = clip_scope_top;

@@ -150,6 +150,55 @@ void prog_set_do_hook(prog_do_hook_t hook) {
 
 static int (*compiled_recover)(void);
 static int (*pcount_hook)(void);
+static const char *(*procname_hook)(int level, int *line);
+static int find_procedure(program_t *prog, const char *name);
+
+void prog_set_procname_hook(const char *(*hook)(int level, int *line)) {
+    procname_hook = hook;
+}
+
+/* The name of the procedure holding line (0-based) of prog, upper case */
+static const char *proc_at(program_t *prog, int line) {
+    static char name[64];
+    int i, best = -1;
+    const char *b, *dot;
+    int n;
+    find_procedure(prog, "");   /* builds the table of definitions */
+    for (i = 0; prog->procs && i < prog->nprocs; i++)
+        if (prog->procs[i].line <= line && (best < 0 || prog->procs[i].line > prog->procs[best].line))
+            best = i;
+    if (best >= 0) {
+        str_copy(name, prog->procs[best].name, sizeof(name));
+    } else {
+        b = strrchr(prog->filename, '/');
+        b = b ? b + 1 : prog->filename;
+        dot = strrchr(b, '.');
+        n = dot ? (int)(dot - b) : (int)strlen(b);
+        if (n > (int)sizeof(name) - 1) n = (int)sizeof(name) - 1;
+        memcpy(name, b, n);
+        name[n] = '\0';
+    }
+    str_upper(name);
+    return name;
+}
+
+const char *prog_procname(int level, int *line) {
+    program_t *prog;
+    int pc, d;
+    *line = 0;
+    if (!state.running || !state.current_prog)
+        return procname_hook ? procname_hook(level, line) : "";
+    prog = state.current_prog;
+    pc = state.pc;
+    for (d = state.call_depth; level > 0; level--, d--) {
+        if (d <= 0 || !state.call_stack[d - 1].caller_prog)
+            return "";
+        prog = state.call_stack[d - 1].caller_prog;
+        pc = state.call_stack[d - 1].caller_line;
+    }
+    *line = pc + 1;
+    return proc_at(prog, pc);
+}
 
 void prog_set_pcount_hook(int (*hook)(void)) {
     pcount_hook = hook;

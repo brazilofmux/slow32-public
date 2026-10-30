@@ -43,6 +43,7 @@ struct clip_scope {
     int npnames;
     clip_scope_t *prev;    /* the scope that called this one */
     int nargs;             /* PCOUNT() */
+    const char *name;      /* PROCNAME() */
 };
 
 /* FOR var = start TO end [STEP step] ... NEXT */
@@ -87,6 +88,8 @@ void clip_text(const char *line);
 
 /* Where the program is: the file and line the next statement came from */
 void clip_at(const char *file, int line);
+/* The main program's name for PROCNAME(): its file's, upper case */
+void clip_main_name(const char *name);
 
 void clip_register_fn(const char *name, clip_fn_t fn);
 void clip_do(const char *name);
