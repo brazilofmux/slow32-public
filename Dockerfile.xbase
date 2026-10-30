@@ -1,0 +1,55 @@
+# SLOW-32 xBase Image: the interpreter and the xbc compiler on slow32:base.
+#
+#   slow32:base   emulators + as/ld/ar/utilities + runtime
+#     -> slow32:xbase   + xbase.s32x (the interpreter), s32-xbc (host
+#                       compiler, .prg to C), libxbase.s32a (the
+#                       interpreter's runtime, compiled ahead of time),
+#                       the .ch headers, stage08 cc, and two launchers:
+#                       `xbase` and `s32xbc`.
+#
+# s32-xbc writes C; stage08 cc (cc.s32x, a SLOW-32 program run on the
+# emulator) compiles each program's C, and it links against
+# libxbase.s32a, so the image needs no LLVM.  The interpreter and its
+# library are built by clang in a stage FROM slow32:toolchain (stage08
+# cannot build them yet: xbase uses arrays of three dimensions, selfhost
+# ISSUES-102), and only the results are layered onto base.
+#
+# cc.s32x comes from slow32:kit, the self-hosted toolchain: a clean clone
+# has no cc.s32x to build (see scripts/build-kit-image.sh), so this image
+# carries the kit's.  It needs a kit from batch 51 (2026-10-30) or later:
+# earlier compilers miscompile calls into the clang-built runtime.
+ARG BASE_IMAGE=slow32:base
+ARG TOOLCHAIN_IMAGE=slow32:toolchain
+ARG KIT_IMAGE=slow32:kit
+
+FROM ${KIT_IMAGE} AS kit
+
+# Stage 1: the interpreter, its library and s32-xbc, with the toolchain image
+FROM ${TOOLCHAIN_IMAGE} AS xbase-builder
+WORKDIR /build
+COPY xbase/build.sh /build/xbase/
+COPY xbase/src /build/xbase/src
+COPY xbc/build.sh xbc/build-lib.sh xbc/compile-prg.sh xbc/s32-xbc.c /build/xbc/
+COPY xbc/runtime /build/xbc/runtime
+COPY xbc/include /build/xbc/include
+ENV LLVM_BIN=/opt/llvm/bin S32_AS=/opt/slow32/bin/slow32asm S32_LD=/opt/slow32/bin/s32-ld \
+    S32_AR=/opt/slow32/bin/s32-ar S32_RT=/opt/slow32/lib S32_RT_INCLUDE=/opt/slow32/include
+RUN bash xbase/build.sh >/dev/null && bash xbc/build.sh && bash xbc/build-lib.sh && \
+    mkdir -p /build/c-include && \
+    cp xbase/src/*.h xbc/runtime/cliprt.h /build/c-include/
+
+# Stage 2: layer onto base
+FROM ${BASE_IMAGE}
+COPY --from=xbase-builder /build/xbc/s32-xbc /opt/slow32/bin/
+COPY --from=xbase-builder /build/xbase/xbase.s32x /build/xbc/out/libxbase.s32a \
+     /build/xbc/compile-prg.sh /opt/slow32/xbase/
+COPY --from=xbase-builder /build/c-include /opt/slow32/xbase/c-include
+COPY --from=xbase-builder /build/xbc/include /opt/slow32/xbase/include
+COPY --from=kit /opt/slow32/kit/cc.s32x /opt/slow32/xbase/
+COPY docker/bin/xbase docker/bin/s32xbc /opt/slow32/bin/
+RUN chmod +x /opt/slow32/bin/xbase /opt/slow32/bin/s32xbc
+
+# Usage:  xbase                      the dot prompt, in the current directory
+#         s32xbc main.prg [out.s32x] [more.prg ...]
+#         s32run main.s32x
+WORKDIR /data

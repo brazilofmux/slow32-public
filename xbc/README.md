@@ -30,6 +30,33 @@ procedures -- and prints the same reports, leaving identical tables,
 ./tests/run-tests.sh
 ```
 
+Two C compilers can compile a program's C: clang (the default) or
+stage08 cc, the self-hosted one, run on the emulator
+(`XBC_CC=stage08`).  The interpreter's runtime is clang-built either
+way; `build-lib.sh` makes it one archive, which `XBASE_LIB` hands to
+`compile-prg.sh` so nothing of it is recompiled per program.  The
+stage08 route is also a calling-convention gate: stage08 code calling
+into clang code, every program, every value passed and returned
+(it found three stage08 defects, selfhost ISSUES-102).
+
+```bash
+./build-lib.sh                       # out/libxbase.s32a
+XBC_CC=stage08 XBASE_LIB=$PWD/out/libxbase.s32a ./tests/run-oracle.sh
+```
+
+The `slow32:xbase` image (Dockerfile.xbase) is that arrangement
+installed, with no LLVM: `xbase` is the interpreter in the current
+directory, `s32xbc prog.prg [out.s32x]` compiles, and `s32run` (or
+`slow32-fast -q`) runs the result.  Its gates are the interpreter's
+suite, this oracle and `tests/smoke.sh`, run inside the image:
+
+```bash
+podman run --rm -v $PWD/..:/ws -w /ws slow32:xbase bash -c '
+  XBASE=/opt/slow32/xbase/xbase.s32x EMU=slow32-fast bash xbase/tests/run-tests.sh &&
+  XBASE=/opt/slow32/xbase/xbase.s32x XBC_COMPILE=s32xbc EMU=slow32-fast bash xbc/tests/run-oracle.sh &&
+  bash xbc/tests/smoke.sh'
+```
+
 Cwd matters the same way it does for the interpreter: `DO file` loads
 `.prg` files from the current directory. `SET PROCEDURE TO foo` inlines
 `foo.prg` from the source directory at compile time when that file

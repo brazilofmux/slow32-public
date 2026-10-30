@@ -15,16 +15,30 @@
 # NOCOMPILE (s32-xbc refuses it -- the progress measure, not a failure);
 # SKIP (the program reads the keyboard, which this harness does not feed).
 # Exit status 1 when anything DIFFERs.
+#
+# Programs compile through compile-prg.sh, whose environment picks the
+# compiler (XBC_CC=stage08 has stage08 cc compile the generated C against
+# the clang-built runtime: a calling-convention gate as much as a
+# compiler one).  An installed copy runs it with
+#   XBASE      the interpreter (default ../xbase/xbase.s32x)
+#   XBC_COMPILE the compile command, taking prog.prg out.s32x
+#              (default: this tree's compile-prg.sh; the image's is s32xbc)
+#   EMU        the engine both run on
 set -u
 
 CLIP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(dirname "$CLIP_DIR")"
 EMU="${EMU:-$ROOT/tools/emulator/slow32-fast}"
-DBASE="$ROOT/xbase/xbase.s32x"
+DBASE="${XBASE:-$ROOT/xbase/xbase.s32x}"
 OUT="$CLIP_DIR/out/oracle"
 mkdir -p "$OUT"
 
-(cd "$CLIP_DIR" && bash build.sh >/dev/null) || { echo "s32-xbc build failed"; exit 2; }
+if [ -z "${XBC_COMPILE:-}" ]; then
+    (cd "$CLIP_DIR" && bash build.sh >/dev/null) || { echo "s32-xbc build failed"; exit 2; }
+    compile() { bash "$CLIP_DIR/compile-prg.sh" "$@"; }
+else
+    compile() { $XBC_COMPILE "$@"; }
+fi
 
 if [ $# -gt 0 ]; then
     CORPUS=("$@")
@@ -32,19 +46,37 @@ else
     CORPUS=("$CLIP_DIR"/tests/*.prg "$ROOT"/xbase/tests/*.PRG)
 fi
 
+# Byte work in the shell's own tools: the slow32:xbase image, where this
+# also runs, carries no python.
+#
+# rstrip_nl FILE: its bytes without trailing newlines
+rstrip_nl() {
+    local n; n=$(($(wc -c < "$1")))      # macOS pads the count with spaces
+    while [ "$n" -gt 0 ] &&
+          [ "$(tail -c +"$n" "$1" | head -c 1 | od -An -c | tr -d ' ')" = '\n' ]; do
+        n=$((n - 1))
+    done
+    head -c "$n" "$1"
+}
+
 # Banner (3 lines), then the prompts ". " for SET TALK OFF and DO, the
 # program's output, and the prompt for QUIT: strip exactly those.  ? starts
 # its line, so the program may end mid-line, and the QUIT prompt then
 # starts one of its own: trailing newlines are not compared (either side).
 strip_interp() {
-    python3 -c '
-import sys
-s = sys.stdin.buffer.read()
-lines = s.split(b"\n", 3)
-s = lines[3] if len(lines) > 3 else b""
-if s.startswith(b". . "): s = s[4:]
-if s.endswith(b". "): s = s[:-2]
-sys.stdout.buffer.write(s.rstrip(b"\n"))'
+    local t u n
+    t=$(mktemp "$OUT/s.XXXXXX"); u=$(mktemp "$OUT/s.XXXXXX")
+    cat > "$t"
+    tail -n +4 "$t" > "$u"
+    if [ "$(head -c 4 "$u")" = ". . " ]; then tail -c +5 "$u" > "$t"; else cat "$u" > "$t"; fi
+    n=$(($(wc -c < "$t")))
+    if [ "$n" -ge 2 ] && [ "$(tail -c 2 "$t")" = ". " ]; then
+        head -c $((n - 2)) "$t" > "$u"
+    else
+        cat "$t" > "$u"
+    fi
+    rstrip_nl "$u"
+    rm -f "${t:?}" "${u:?}"
 }
 
 # The lines of the first xbase test script in dir that DOes name, up to it
@@ -70,11 +102,15 @@ for prg in "${CORPUS[@]}"; do
     if grep -qiE '^[[:space:]]*(ACCEPT|INPUT|WAIT|READ)\b|INKEY\(' "$prg"; then
         printf '%-28s SKIP (reads the keyboard)\n' "$name"; skip=$((skip+1)); continue
     fi
-    if ! bash "$CLIP_DIR/compile-prg.sh" "$prg" "$OUT/$name.s32x" >"$OUT/$name.cc.log" 2>&1; then
+    if ! compile "$prg" "$OUT/$name.s32x" >"$OUT/$name.cc.log" 2>&1; then
         printf '%-28s NOCOMPILE %s\n' "$name" "$(grep -m1 -E 'unlowered|error|not supported|SUSPEND' "$OUT/$name.cc.log" | sed 's/.*: //' | cut -c1-60)"
         nocomp=$((nocomp+1)); continue
     fi
-    wi=$(mktemp -d "$OUT/i.XXXX"); wc=$(mktemp -d "$OUT/c.XXXX")
+    # without its two copies a program would run wherever this was started
+    # (busybox mktemp refused a short template once, and the corpus wrote
+    # its tables into the caller's directory)
+    wi=$(mktemp -d "$OUT/i.XXXXXX") && wc=$(mktemp -d "$OUT/c.XXXXXX") &&
+        [ -d "$wi" ] && [ -d "$wc" ] || { echo "run-oracle: mktemp failed"; exit 2; }
     cp -R "$dir/." "$wi/"; cp -R "$dir/." "$wc/"
     setup=$(setup_for "$dir" "$name")
     if [ -n "$setup" ]; then
@@ -85,8 +121,8 @@ for prg in "${CORPUS[@]}"; do
     fi
     (cd "$wi" && printf 'SET TALK OFF\nDO %s\nQUIT\n' "$(basename "$prg")" |
         timeout 60 "$EMU" -q --deny term "$DBASE" 2>&1 | strip_interp) > "$OUT/$name.interp"
-    (cd "$wc" && timeout 60 "$EMU" -q --deny term "$OUT/$name.s32x" </dev/null 2>&1) |
-        python3 -c 'import sys; sys.stdout.buffer.write(sys.stdin.buffer.read().rstrip(b"\n"))' > "$OUT/$name.clip"
+    (cd "$wc" && timeout 60 "$EMU" -q --deny term "$OUT/$name.s32x" </dev/null 2>&1) > "$OUT/$name.clipraw"
+    rstrip_nl "$OUT/$name.clipraw" > "$OUT/$name.clip"
     rm -rf "$wi" "$wc"
     if cmp -s "$OUT/$name.interp" "$OUT/$name.clip"; then
         printf '%-28s AGREE\n' "$name"; agree=$((agree+1))

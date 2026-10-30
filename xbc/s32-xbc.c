@@ -2963,8 +2963,10 @@ int main(int argc, char **argv) {
          * for every program, as Clipper's std.ch included it */
         static char own[600], setch[700];
         char dir[512];
+        const char *env = getenv("XBC_INCLUDE");   /* an installed compiler's headers elsewhere */
         path_dir(argv[0], dir, (int)sizeof(dir));
-        snprintf(own, sizeof(own), "%s/include", dir);
+        if (env && *env) snprintf(own, sizeof(own), "%s", env);
+        else snprintf(own, sizeof(own), "%s/include", dir);
         if (g_nincdirs < MAX_INCDIRS) g_incdirs[g_nincdirs++] = own;
         snprintf(setch, sizeof(setch), "%s/set.ch", own);
         if (file_exists(setch) && load_prg(setch) != 0) return 1;

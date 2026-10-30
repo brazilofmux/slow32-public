@@ -1,0 +1,7 @@
+#!/bin/bash
+# xbase -- the SLOW-32 xBase interpreter (slow32:xbase), working in the
+# current directory: its .dbf, .prg and .ntx files are the ones here.
+#   xbase              the dot prompt
+#   xbase < cmds.txt   commands from a file
+# S32_XBASE_EMU picks the engine (default slow32-fast).
+exec "${S32_XBASE_EMU:-slow32-fast}" -q /opt/slow32/xbase/xbase.s32x "$@"

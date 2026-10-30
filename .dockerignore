@@ -63,6 +63,16 @@
 !forthc/forthc.fth
 !forthc/prelude-fc.fth
 
+# xBase image (Dockerfile.xbase): the interpreter's sources and xbc's.
+!xbase/build.sh
+!xbase/src/
+!xbc/build.sh
+!xbc/build-lib.sh
+!xbc/compile-prg.sh
+!xbc/s32-xbc.c
+!xbc/runtime/
+!xbc/include/
+
 # Emulator build needs:
 !tools/emulator/
 !tools/dbt/
@@ -109,6 +119,14 @@ cobol/libcob/*.s
 fortran/runtime/*.s32o
 fortran/runtime/*.ll
 fortran/runtime/*.s
+
+# xBase outputs (rebuilt in the xbase-builder stage with the image's clang)
+xbase/src/*.s32o
+xbase/src/*.ll
+xbase/src/*.s
+xbc/runtime/*.s32o
+xbc/runtime/*.ll
+xbc/runtime/*.s
 
 # Self-host build outputs (rebuilt fresh in-container for musl/Alpine)
 selfhost/stage08-cross-x64/out/

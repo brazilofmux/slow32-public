@@ -1,0 +1,32 @@
+#!/bin/bash
+# s32xbc -- compile xBase (.prg) to a SLOW-32 executable inside slow32:xbase.
+#   s32xbc main.prg [out.s32x] [more.prg ...]
+# s32-xbc turns the program into C, stage08 cc (cc.s32x, on the emulator)
+# compiles that C, and it links with the interpreter's runtime, built ahead
+# of time (libxbase.s32a).  Then `s32run out.s32x`, or slow32-fast.
+# The output defaults to main.s32x in the current directory.
+X=/opt/slow32/xbase
+export XBC_CC=stage08
+export S32_CC_S32X=$X/cc.s32x
+export S32_CC_EMU="${S32_CC_EMU:-slow32-dbt}"
+export S32_XBC=/opt/slow32/bin/s32-xbc
+export XBC_INCLUDE=$X/include                 # the .ch headers
+export XBASE_INCLUDE=$X/c-include             # the C headers the generated C includes
+export XBASE_LIB=$X/libxbase.s32a
+export S32_AS=/opt/slow32/bin/slow32asm
+export S32_LD=/opt/slow32/bin/s32-ld
+export S32_RT=/opt/slow32/lib
+export S32_RT_INCLUDE=/opt/slow32/include
+if [ $# -lt 1 ]; then
+    echo "usage: s32xbc main.prg [out.s32x] [more.prg ...]" >&2
+    exit 1
+fi
+prg=$1; shift
+case "${1:-}" in
+    ""|*.prg|*.PRG) b=$(basename "$prg"); out="./${b%.*}.s32x" ;;
+    *) out=$1; shift ;;
+esac
+XBC_WORK=$(mktemp -d "${TMPDIR:-/tmp}/s32xbc.XXXXXX") || exit 1
+export XBC_WORK
+trap 'rm -rf "$XBC_WORK"' EXIT
+bash $X/compile-prg.sh "$prg" "$out" "$@"

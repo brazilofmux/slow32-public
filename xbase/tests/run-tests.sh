@@ -1,11 +1,19 @@
 #!/bin/bash
-# Run dBASE III clone test suite
+# The interpreter's test suite: each tests/*.txt typed at the dot prompt,
+# the output compared with tests/expected/.
+#
+# EMU names the engine and XBASE the interpreter, so an installed copy
+# runs it too (the slow32:xbase image:
+# XBASE=/opt/slow32/xbase/xbase.s32x EMU=slow32-fast).
 set -e
 
 BASDIR="$(cd "$(dirname "$0")/.." && pwd)"
 EMU="${EMU:-$BASDIR/../tools/emulator/slow32-fast}"
-EMU_ARGS="${EMU_ARGS---deny term}"
-DBASE="$BASDIR/xbase.s32x"
+# -q: the engine's own notices off.  The filter below drops them by line,
+# but "MMIO enabled" comes at exit, and on Linux it lands after a last
+# prompt that has no newline, on the prompt's line.
+EMU_ARGS="${EMU_ARGS--q --deny term}"
+DBASE="${XBASE:-$BASDIR/xbase.s32x}"
 
 if [ ! -f "$DBASE" ]; then
     echo "Error: xbase.s32x not found. Run build.sh first."

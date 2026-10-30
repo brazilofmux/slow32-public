@@ -105,6 +105,17 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-30 (`e48f818e`).  `cc.s32x` only; the libc, crt0,
+include and tools rebuild identical.  Three defects found compiling
+C against clang-built objects (selfhost ISSUES-102), live in every
+earlier kit: a call returning a struct too big for r1:r2 read the
+result's address from r1, which an LLVM-built callee does not set;
+inside a statement expression `({ ... })` no implicit conversion was
+made, so `({ t = f(3); t; })` passed the int 3 to a double parameter;
+and `extern int (*tab[])(int);` followed by its definition was refused,
+and a use before the definition loaded the table's first word as its
+address.
+
 Rebuilt 2026-10-29 (`269d7c29`).  `cc.s32x`, `libc.s32a`, `crt0.s32o`
 and `include/`; the tools rebuild identical.  The C11 compliance pass:
 the compiler takes every valid probe of the survey (320) and refuses
