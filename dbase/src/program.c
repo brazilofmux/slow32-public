@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include "program.h"
+#include "gc.h"
 #include "command.h"
 #include "func.h"
 #include "util.h"
@@ -3021,6 +3022,8 @@ void prog_cancel(void) {
 int prog_execute_line(char *line) {
     char *p = skip_ws(line);
     int result;
+
+    gc_safepoint();   /* a statement boundary: collect when due */
 
     /* Check for program-specific commands first */
     if (str_imatch(p, "DO")) {

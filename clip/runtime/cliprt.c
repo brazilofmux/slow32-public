@@ -10,6 +10,7 @@
 #include "program.h"
 #include "screen.h"
 #include "expr.h"
+#include "gc.h"
 #include "ast.h"
 #include "memvar.h"
 #include "func.h"
@@ -185,6 +186,7 @@ void clip_register_fn(const char *name, clip_fn_t fn) {
 
 void clip_init(void) {
     char line[32];
+    gc_set_stack_base(line + sizeof(line));   /* the collector scans the stack up to here (main holds no values) */
     dbf_init(&clip_db);
     prog_init();
     clip_prev_udf = func_get_udf_callback();
@@ -244,6 +246,7 @@ static int clip_trace_on(void) {
 
 void clip_at(const char *file, int line) {
     prog_set_compiled_loc(file, line);
+    gc_safepoint();   /* a statement boundary: collect when due */
     if (clip_trace_on())
         fprintf(stderr, "[%s %d]\n", clip_scope_top && clip_scope_top->name ? clip_scope_top->name : "-", line);
 }

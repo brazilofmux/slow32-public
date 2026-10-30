@@ -2,6 +2,7 @@
 #include <string.h>
 #include "dbf.h"
 #include "command.h"
+#include "gc.h"
 #include "program.h"
 #include "screen.h"
 #include "util.h"
@@ -10,6 +11,8 @@ static dbf_t current_db;
 
 int main(void) {
     char line[256];
+
+    gc_set_stack_base(line + sizeof(line));   /* the collector scans the stack up to here */
 
     printf("dBASE III Clone for SLOW-32\n");
     printf("Stage 9: AST Expressions\n\n");

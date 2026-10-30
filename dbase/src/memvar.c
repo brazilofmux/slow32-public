@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "memvar.h"
+#include "gc.h"
 #include "program.h"
 #include "util.h"
 
@@ -23,6 +24,7 @@ array_t *array_new(int len) {
     a->cap = len > 4 ? len : 4;
     a->el = calloc((size_t)a->cap, sizeof(value_t));
     if (!a->el) { free(a); return NULL; }
+    gc_register(a, GC_ARRAY, sizeof(array_t) + (size_t)a->cap * sizeof(value_t));
     for (i = 0; i < len; i++) a->el[i] = val_nil();
     a->len = len;
     return a;
@@ -155,8 +157,6 @@ int memvar_set(memvar_store_t *store, const char *name, const value_t *val) {
     /* Update existing: the LOCAL of this depth if there is one, else the PRIVATE/PUBLIC */
     i = memvar_slot(store, uname, h);
     if (i >= 0) {
-        if (store->vars[i].val.type == VAL_ARRAY)
-            array_free(store->vars[i].val.array);
         store->vars[i].val = *val;
         return 0;
     }
@@ -192,8 +192,6 @@ int memvar_set_local(memvar_store_t *store, const char *name, const value_t *val
      * PUBLIC of the name is left alone, shadowed until memvar_release_locals. */
     i = memvar_slot(store, uname, name_hash(uname));
     if (i >= 0 && store->vars[i].is_local) {
-        if (store->vars[i].val.type == VAL_ARRAY)
-            array_free(store->vars[i].val.array);
         store->vars[i].val = *val;
         return 0;
     }
@@ -225,8 +223,6 @@ int memvar_release(memvar_store_t *store, const char *name) {
     str_upper(uname);
     i = memvar_slot(store, uname, name_hash(uname));
     if (i < 0) return -1;
-    if (store->vars[i].val.type == VAL_ARRAY)
-        array_free(store->vars[i].val.array);
     slot_free(store, i);
     store->count--;
     hw_shrink(store);
@@ -239,8 +235,6 @@ void memvar_release_locals(memvar_store_t *store, int depth) {
     for (i = 0; i < store->hw; i++) {
         if (!store->vars[i].used || !store->vars[i].is_local ||
             store->vars[i].scope_depth != depth) continue;
-        if (store->vars[i].val.type == VAL_ARRAY)
-            array_free(store->vars[i].val.array);
         slot_free(store, i);
         store->count--;
     }
@@ -253,8 +247,6 @@ void memvar_release_all(memvar_store_t *store) {
         if (!store->vars[i].used) continue;
         /* Only release variables created at or below current scope */
         if (store->vars[i].scope_depth < store->current_depth) continue;
-        if (store->vars[i].val.type == VAL_ARRAY)
-            array_free(store->vars[i].val.array);
         slot_free(store, i);
         store->count--;
     }
@@ -274,8 +266,6 @@ int memvar_release_matching(memvar_store_t *store, const char *pattern, int like
         if (store->vars[i].scope_depth < store->current_depth) continue;
         int matches = pattern_match(store->vars[i].name, pattern);
         if ((like && matches) || (!like && !matches)) {
-            if (store->vars[i].val.type == VAL_ARRAY)
-                array_free(store->vars[i].val.array);
             slot_free(store, i);
             store->count--;
             count++;

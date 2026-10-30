@@ -4,6 +4,7 @@
 #include <math.h>
 #include <errno.h>
 #include "expr.h"
+#include "gc.h"
 #include "memvar.h"
 #include "set.h"
 #include "date.h"
@@ -99,6 +100,7 @@ value_t val_strn(const char *s, int n) {
     }
     v.ext = malloc((size_t)n + 1);
     if (!v.ext) { v.str[0] = '\0'; return v; }
+    gc_register(v.ext, GC_TEXT, (size_t)n + 1);
     memcpy(v.ext, s, (size_t)n);
     v.ext[n] = '\0';
     v.len = n;
@@ -163,6 +165,7 @@ value_t val_object(object_t *o) {
 
 object_t *object_new(const char *cls) {
     object_t *o = calloc(1, sizeof(*o));
+    gc_register(o, GC_OBJECT, sizeof(*o));
     if (o) snprintf(o->cls, sizeof(o->cls), "%s", cls);
     return o;
 }
@@ -565,17 +568,19 @@ static int parse_primary(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
                 ctx->error = "Out of memory";
                 return -1;
             }
+            memset(args, 0, MAX_FUNC_ARGS * sizeof(value_t));
+            gc_push_roots(args, MAX_FUNC_ARGS);   /* popped with every free(args) below */
             lex_next(l); /* skip ( */
 
             if (lex_peek(l) != TOK_RPAREN) {
                 for (;;) {
                     if (nargs >= MAX_FUNC_ARGS) {
-                        free(args);
+                        gc_pop_roots(); free(args);
                         ctx->error = "Too many function arguments";
                         return -1;
                     }
                     if (parse_expr(ctx, l, &args[nargs]) != 0) {
-                        free(args);
+                        gc_pop_roots(); free(args);
                         return -1;
                     }
                     nargs++;
@@ -588,14 +593,14 @@ static int parse_primary(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
             }
 
             if (lex_peek(l) != TOK_RPAREN) {
-                free(args);
+                gc_pop_roots(); free(args);
                 ctx->error = "Missing ) in function call";
                 return -1;
             }
             lex_next(l);
 
             rc = func_call(ctx, name, args, nargs, result);
-            free(args);
+            gc_pop_roots(); free(args);
             return rc;
         }
 

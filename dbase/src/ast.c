@@ -12,6 +12,7 @@
 #include <math.h>
 #include <errno.h>
 #include "ast.h"
+#include "gc.h"
 #include "program.h"
 #include "getsys.h"
 #include "command.h"
@@ -38,6 +39,7 @@ static ast_node_t *node_alloc(ast_type_t type) {
 static ast_node_t *node_literal(value_t val) {
     ast_node_t *n = node_alloc(AST_LITERAL);
     if (n) n->literal = val;
+    if (val.type == VAL_CHAR && val.ext) gc_pin(val.ext);   /* a tree's text lives as long as the tree */
     return n;
 }
 
@@ -1282,6 +1284,7 @@ static int make_block(expr_ctx_t *ctx, ast_node_t *body, int (*fn)(expr_ctx_t *,
     block_t *b = calloc(1, sizeof(block_t));
     int i;
     if (!b) { ctx->error = "Out of memory"; return -1; }
+    gc_register(b, GC_BLOCK, sizeof(block_t));
     b->nparams = nparams > MAX_BLOCK_PARAMS ? MAX_BLOCK_PARAMS : nparams;
     for (i = 0; i < b->nparams; i++) str_copy(b->params[i], params[i], MEMVAR_NAMELEN);
     for (i = 0; i < nfree && b->ncap < MAX_BLOCK_CAPTURES; i++) {
@@ -1541,15 +1544,16 @@ int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
             return -1;
         }
         if (node->call.nargs > 0) {
-            args = (value_t *)malloc(node->call.nargs * sizeof(value_t));
+            args = (value_t *)calloc((size_t)node->call.nargs, sizeof(value_t));
             if (!args) {
                 ctx->error = "Out of memory";
                 return -1;
             }
+            gc_push_roots(args, node->call.nargs);   /* a heap buffer the collector cannot see */
         }
         for (i = 0; i < node->call.nargs; i++) {
             if (ast_eval(node->call.args[i], ctx, &args[i]) != 0) {
-                if (args) free(args);
+                if (args) { gc_pop_roots(); free(args); }
                 return -1;
             }
         }
@@ -1563,7 +1567,7 @@ int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
             rc = any ? func_call_refs(ctx, node->call.name, args, node->call.nargs, refs, result)
                      : func_call(ctx, node->call.name, args, node->call.nargs, result);
         }
-        if (args) free(args);
+        if (args) { gc_pop_roots(); free(args); }
         return rc;
     }
 
@@ -1596,13 +1600,15 @@ int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
         value_t *vals = NULL;
         int i, rc;
         if (node->list.n > 0) {
-            vals = malloc((size_t)node->list.n * sizeof(value_t));
+            vals = calloc((size_t)node->list.n, sizeof(value_t));
             if (!vals) { ctx->error = "Out of memory"; return -1; }
+            gc_push_roots(vals, node->list.n);
         }
         for (i = 0; i < node->list.n; i++) {
-            if (ast_eval(node->list.elems[i], ctx, &vals[i]) != 0) { free(vals); return -1; }
+            if (ast_eval(node->list.elems[i], ctx, &vals[i]) != 0) { if (vals) gc_pop_roots(); free(vals); return -1; }
         }
         rc = ast_make_array(ctx, vals, node->list.n, result);
+        if (vals) gc_pop_roots();
         free(vals);
         return rc;
     }
@@ -1634,13 +1640,15 @@ int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
         if (node->send.nargs > MAX_FUNC_ARGS) { ctx->error = "Too many function arguments"; return -1; }
         if (ast_eval(node->send.base, ctx, &base) != 0) return -1;
         if (node->send.nargs > 0) {
-            args = malloc((size_t)node->send.nargs * sizeof(value_t));
+            args = calloc((size_t)node->send.nargs, sizeof(value_t));
             if (!args) { ctx->error = "Out of memory"; return -1; }
+            gc_push_roots(args, node->send.nargs);
         }
         for (i = 0; i < node->send.nargs; i++) {
-            if (ast_eval(node->send.args[i], ctx, &args[i]) != 0) { free(args); return -1; }
+            if (ast_eval(node->send.args[i], ctx, &args[i]) != 0) { if (args) gc_pop_roots(); free(args); return -1; }
         }
         rc = ast_eval_send(ctx, &base, node->send.name, args, node->send.nargs, node->send.is_call, result);
+        if (args) gc_pop_roots();
         free(args);
         return rc;
     }

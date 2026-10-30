@@ -426,6 +426,31 @@ people who wrote Clipper.
   preambles, Harbour took the sources' file-wide STATICs for the main's
   own.
 
+- **Memory is collected** (2026-10-30, `dbase/src/gc.c`).  Nothing a
+  program made was ever freed: arrays, blocks, objects, and now long
+  strings' buffers.  A collector with conservative roots and precise
+  contents: every such allocation is registered; at a statement boundary
+  (compiled `clip_at`, interpreted `prog_execute_line`), once 4 MB have
+  been allocated since the last round, the data and bss segments and
+  the C stack (registers spilled by setjmp first) are scanned for
+  registered addresses, what they name is marked, marking follows the
+  values inside arrays, blocks and objects, and the rest is freed.  No
+  root list to maintain: the variable store, the compiled scopes, the
+  interpreter's frames, a built-in's arguments and a compiled
+  statement's temporaries are all in those segments or on that stack.
+  The one holder neither scan sees, a heap buffer of values an
+  evaluator owns for a moment (its argument arrays), is pushed as a
+  root while it lives; a parser's literal text is pinned with its tree.
+  The explicit frees the variable store did on release are gone (they
+  freed an array a second variable still shared).  A SLOW-32 build
+  collects; a host build registers and keeps everything, as before.
+  Checked by stress programs: 200,000 iterations making five values each
+  run in the 64 MB heap collecting ~1,300 at a time, with values kept
+  across collections intact; temporaries held across a call that
+  collects (an array literal waiting as an argument while the callee
+  allocates past the threshold) survive in both the interpreter and
+  compiled code.  `DBASE_GC_TRACE=1` prints each round.
+
 Not driven yet: DBU's Utility Append / Pack / Zap and the Create flow
 past its first screen, and GETSYS.PRG's and ERRORSYS.PRG's dialogue
 paths under a terminal (Alert()).
