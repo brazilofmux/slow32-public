@@ -63,7 +63,7 @@ bootstrap assets and host-agnostic across little-endian machines.
   - `runtime/libc_debug.s32a`, `runtime/libc_mmio.s32a`, `runtime/libs32.s32a`,
     `runtime/libs32cxx.s32a`
 - Also tracked, ready-to-run builds of some apps: `doom`,
-  `dbase`, `lua`, `nano`, `prolog`, `sbasic`, `zork`, `ppu-reel/reel` and
+  `xbase`, `lua`, `nano`, `prolog`, `sbasic`, `zork`, `ppu-reel/reel` and
   `forthc/demo/ship` (`.s32x`)
 - Not tracked:
   - Host-native tool executables (for example `selfhost/stage00/s32-emu`,
@@ -194,14 +194,14 @@ slow-32/
 ├── dfsort/             # Sort utility (s32sort)
 ├── lua/                # Lua
 ├── zork/               # Z-machine
-├── dbase/              # SLOW-32 xBase: the interpreter (dot prompt)
+├── xbase/              # SLOW-32 xBase: the interpreter (dot prompt)
 ├── sbasic/             # BASIC
 ├── forth/              # Forth kernel (SLOW-32 assembly)
 ├── forthc/             # AOT Forth compiler (written in Forth)
 ├── islisp/             # ISLISP (ISO Lisp)
 ├── prolog/             # Prolog
 ├── command/            # COMMAND.COM-shaped shell
-├── clip/               # SLOW-32 xBase: the compiler (.prg → .s32x)
+├── xbc/               # SLOW-32 xBase: the compiler (.prg → .s32x)
 ├── sheet/              # Spreadsheet
 ├── nano/               # Editor
 ├── rogue/              # Rogue
@@ -361,7 +361,7 @@ make runtime      # Builds crt0.s32o, locales.s32o, libs32.s32a, libc_debug.s32a
 - [The 1987 Desk](docs/plans/1987-desk.md) - Period software we should (and should not) import
 - [The hose](docs/plans/hose.md) - How two SLOW-32 programs talk (sockets, not shared memory)
 - [Engine Room](docs/plans/engine-room.md) - DBT and codegen performance work
-- [COBOL](cobol/README.md), [Fortran 77](fortran/README.md), [Forth](forth/README.md), [Self-hosting](selfhost/README.md) - the larger fronts each have their own README, as do the interpreters: [xBase](dbase/README.md) (and its compiler, [s32-clip](clip/README.md)), [SLOW BASIC](sbasic/README.md), [Lua](lua/README.md), [Prolog](prolog/README.md), [ISLISP](islisp/README.md)
+- [COBOL](cobol/README.md), [Fortran 77](fortran/README.md), [Forth](forth/README.md), [Self-hosting](selfhost/README.md) - the larger fronts each have their own README, as do the interpreters: [xBase](xbase/README.md) (and its compiler, [s32-xbc](xbc/README.md)), [SLOW BASIC](sbasic/README.md), [Lua](lua/README.md), [Prolog](prolog/README.md), [ISLISP](islisp/README.md)
 - [CLAUDE.md](CLAUDE.md) - AI assistant instructions and quick reference, including the main test harnesses
 
 ## History

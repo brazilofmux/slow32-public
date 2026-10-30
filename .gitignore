@@ -127,9 +127,9 @@ sheet/src/*.s
 bbs/src/*.s
 bbs/bbs.port
 
-# clip compiler output and host binary
-clip/s32-clip
-clip/out/
+# xBase compiler output and host binary
+xbc/s32-xbc
+xbc/out/
 
 # Temporary LLVM files
 *.ll.tmp
@@ -187,12 +187,12 @@ stringutil.cpp
 stringutil.h
 
 # Akron
-./dbase/akron
+./xbase/akron
 
 # dBase test artifacts
-dbase/*.DBF
-dbase/src/*.s
-dbase/tests/RESULT*.TXT
+xbase/*.DBF
+xbase/src/*.s
+xbase/tests/RESULT*.TXT
 
 # Auto-memory / agent state (Claude Code)
 .claude/

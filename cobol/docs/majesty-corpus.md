@@ -72,7 +72,7 @@ The single image is a `cobcrun` packaging choice. Retirement replaces
 **from the majesty directory**, because every `ASSIGN` is relative
 (`data/…`, `tmp/…`, `reports_cobol/…`) and the emulator's file service
 opens paths against the host's cwd. The precedent is already in the
-tree: `run_dbase_s32.sh` does `(cd "$workdir" && slow32-dbt … dbase.s32x)`.
+tree: `run_dbase_s32.sh` does `(cd "$workdir" && slow32-dbt … xbase.s32x)`.
 Each `.s32x` links the subprograms its `CALL` literals name and the
 SLOW-32 build of `dateutil.c`.
 

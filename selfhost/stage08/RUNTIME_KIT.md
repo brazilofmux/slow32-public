@@ -408,7 +408,7 @@ Rebuilt 2026-10-21 (tree at `59a6c7e2`).  The clang-built apps only;
 `cc.s32x`, the tools, `crt0.s32o`, every `libc.s32a` member and
 `include/` rebuild byte-identical.  The apps carry the runtime's
 `fma`/`fmaf` (one rounding), getenv keeping more than 64 names, and
-`nanosleep` rejecting a bad interval; `dbase.s32x` also gains the
+`nanosleep` rejecting a bad interval; `xbase.s32x` also gains the
 LOCAL fix (a LOCAL no longer releases the variable it shadows).
 
 Fixed later 2026-10-20 (`f9e2301f`).  In `libc.s32a` (`malloc.s32o`, the

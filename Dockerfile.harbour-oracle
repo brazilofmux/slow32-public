@@ -1,7 +1,7 @@
 # SLOW-32 Clipper Oracle Image
 #
 # Harbour, the open-source compiler that aims at CA-Clipper 5.2/5.3
-# compatibility, used ONLY as a differential oracle while clip/ (s32-clip,
+# compatibility, used ONLY as a differential oracle while xbc/ (s32-xbc,
 # Clipper for SLOW-32) grows toward Clipper's behaviour -- the way
 # gfortran serves fortran/ and GnuCOBOL serves cobol/.  The CA-Clipper 5.2
 # guides decide disputed points; this answers the small questions by

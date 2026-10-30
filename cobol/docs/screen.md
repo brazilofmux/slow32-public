@@ -41,7 +41,7 @@ clear, attributes, color, getkey, kbhit, save/restore screen,
 begin/end buffered update. Nano and dBase speak it. SCREEN SECTION
 paints through that service, not a private curses.
 
-dBase Stage 4 (`dbase/docs/STAGE4-terminal-ui.md`) is the ACCEPT
+dBase Stage 4 (`xbase/docs/STAGE4-terminal-ui.md`) is the ACCEPT
 loop we would otherwise invent:
 
 - GET buffer list (row, col, picture, width, display buffer, edit
@@ -120,7 +120,7 @@ screen does on those systems, and what this one should grow into:
 That set is reachable with dBase today, but dBase makes the program
 manage it by hand; the point of the SCREEN SECTION is that the
 compiler does. (dBase note: the user's 1986 teacher's-pet code still
-runs on `dbase/`.)
+runs on `xbase/`.)
 
 ## As built (Stage 8)
 

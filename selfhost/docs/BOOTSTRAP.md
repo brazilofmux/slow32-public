@@ -122,7 +122,7 @@ the permitted seeds:
 - `forth/prelude.fth` — the Forth prelude
 
 Note `forth/` is **top-level** in the repository, a peer of the applications
-(`dbase`, `lua`, `sbasic`, …), not a subdirectory of `selfhost/`. The kernel is
+(`xbase`, `lua`, `sbasic`, …), not a subdirectory of `selfhost/`. The kernel is
 both a bootstrap seed and a shipped program.
 
 **What this model does and does not claim.** It claims the opaque surface is

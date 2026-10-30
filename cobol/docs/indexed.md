@@ -13,7 +13,7 @@ cannot store. That is expected. File-level compatibility is a
 nice-to-have, implemented later as a **filter on the FD**, not as
 the default writer.
 
-## What to reuse from `dbase/`
+## What to reuse from `xbase/`
 
 Machinery, not the file format:
 
@@ -34,7 +34,7 @@ Do not reuse:
 
 The dBase engine is a guest program. This compiler's indexed runtime
 is `libcob`, linked into the COBOL program. Sharing *source* with
-`dbase/src` is a later engineering choice; sharing *format* is not
+`xbase/src` is a later engineering choice; sharing *format* is not
 required. If the btree implementation is copied, stamp a provenance
 comment the way f77 stamps `hir_*.h`.
 
@@ -192,7 +192,7 @@ An FD-level restriction, named in a diagnostic if violated:
 - leading delete byte, dBase header, `.NDX` keys from field
   expressions
 
-Then, and only then, `USE` in `dbase/` is a test. Failure of that
+Then, and only then, `USE` in `xbase/` is a test. Failure of that
 test against a default indexed file is not a compiler bug.
 
 ## First acceptance test

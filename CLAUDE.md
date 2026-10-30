@@ -448,7 +448,7 @@ trees carry this file, so this section is addressed to that session
 as much as to sessions here.
 
 The private side of this tree is `~/majesty` (the user's own ledger)
-and what `cobol/`, `clip/` and `dbase/` learned from it. The project
+and what `cobol/`, `xbc/` and `xbase/` learned from it. The project
 name and `~/majesty/...` paths are already public and fine. What must
 not cross, in files **or commit messages**:
 
