@@ -27,7 +27,7 @@ speed.  Summer '87 programs are the subset they are.
 
 | Section | Entries | Present in clip/dbase by name |
 |---|---|---|
-| Functions | 220 | 93 (127 missing) |
+| Functions | 220 | all 219 names by 2026-10-29 (the batch after step 9; the approximations are listed below) |
 | Commands | 110 | nearly all by first word; their clauses not yet checked |
 | Statements | 22 | the dBASE ones (DO, IF, FOR, PRIVATE, PUBLIC, PARAMETERS, RETURN, BEGIN SEQUENCE, LOCAL in part) |
 | Operators | 28 | the dBASE ones |
@@ -87,6 +87,40 @@ Everything else differs, and for a few causes, not 28:
   decimals (`STR(1.5)` is `         2`); Clipper gives the number's own
   width and decimals (`       1.5`).  Taken Clipper's (2026-10-29); a
   width too small fills with asterisks, as Clipper does.
+
+## The function batch (after step 9, 2026-10-29)
+
+The 83 names the guide lists that were still missing, in
+`dbase/src/clipfn.c`: the DB*() forms route through the commands they
+stand for (DBSETFILTER builds SET FILTER TO from its text argument,
+DBSETINDEX re-issues SET INDEX TO with the list, DBUSEAREA is SELECT 0
+and USE ... ALIAS, DBCREATEIND is INDEX ON); DBCREATE builds the file
+from the structure array; DBEVAL walks the scope; FIELDBLOCK /
+FIELDWBLOCK / MEMVARBLOCK are set-get blocks over the reference; the
+binary conversions, the memo-line family (MEMOLINE keeps a hard return
+in its line, as MEMOTRAN expects), DESCEND, HARDCR, MEMOREAD / MEMOWRIT
+(Ctrl-Z written and stripped), FERASE / FRENAME / DIRECTORY, ERRORLEVEL,
+NEXTKEY (a one-key pushback INKEY honours), SETPRC, the flags SETCANCEL
+/ SETBLINK / NOSNOW / SETMODE.  Probes fn-misc-batch and fn-db-batch
+pass against Harbour.  Found on the way: an omitted argument (`f(a, ,
+c)`) is NIL now; SELECT 0 picks the lowest free area; SET ORDER's
+messages come under SET TALK like the rest.
+
+Approximations, by design or by this implementation's limits:
+
+- A string ends at a NUL: I2BIN / L2BIN give the bytes up to the first
+  zero byte and BIN2x read the missing ones as zero, so a value with a
+  zero byte between non-zero ones does not round-trip; MEMOREAD returns
+  at most 255 characters (a value_t string).
+- DBSETFILTER needs the condition's text (the block alone cannot be
+  turned back into one); DBSETRELAT likewise.
+- The interactive ones answer for a stream: ALERT prints the message and
+  options and returns 1; ACHOICE shows the items and returns 1; BROWSE()
+  and DBEDIT run the BROWSE command; MEMOEDIT returns its text
+  unchanged.  SAVESCREEN is empty and RESTSCREEN paints nothing.
+- DBSETDRIVER answers DBFNDX; DBUNLOCK / DBUNLOCKALL / NETERR / NETNAME /
+  ISPRINTER / DOSERROR answer for a single user with no printer; SETMODE
+  is true for 25 x 80 only.
 
 ## The order of work proposed
 

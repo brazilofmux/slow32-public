@@ -1342,7 +1342,25 @@ int read_dbase_key(void) {
 }
 #endif
 
+static int pushed_key;   /* a key NEXTKEY() read and left for the next INKEY() */
+
+int screen_nextkey(void) {
+    if (pushed_key <= 0) pushed_key = screen_inkey(0.0);
+    return pushed_key > 0 ? pushed_key : 0;
+}
+
+void screen_set_printer_pos(int row, int col) {
+    print_row = row;
+    print_col = col;
+}
+
 int screen_inkey(double timeout) {
+    if (pushed_key > 0) {
+        int k = pushed_key;
+        pushed_key = 0;
+        last_key = k;
+        return k;
+    }
 #if HAS_TERM
     if (scr.term_available) {
         int key;

@@ -319,7 +319,7 @@ static ast_node_t *parse_postfix_index(lexer_t *l, memvar_store_t *store, const 
                 n->send.is_call = 1;
                 lex_next(l);
                 while (lex_peek(l) != TOK_RPAREN) {
-                    ast_node_t *arg = ast_parse_expr(l, store, error);
+                    ast_node_t *arg = lex_peek(l) == TOK_COMMA ? node_literal(val_nil()) : ast_parse_expr(l, store, error);
                     ast_node_t **grown;
                     if (!arg) { ast_free(base); return NULL; }
                     grown = realloc(n->send.args, (size_t)(n->send.nargs + 1) * sizeof(ast_node_t *));
@@ -743,7 +743,9 @@ static ast_node_t *ast_parse_primary(lexer_t *l, memvar_store_t *store, const ch
 
             if (lex_peek(l) != TOK_RPAREN) {
                 for (;;) {
-                    ast_node_t *arg = ast_parse_expr(l, store, error);
+                    /* an omitted argument -- f(a, , c) or f(a, ) -- is NIL (Clipper) */
+                    ast_node_t *arg = (lex_peek(l) == TOK_COMMA || lex_peek(l) == TOK_RPAREN)
+                                      ? node_literal(val_nil()) : ast_parse_expr(l, store, error);
                     if (!arg) {
                         int j;
                         for (j = 0; j < nargs; j++) ast_free(args[j]);

@@ -1,0 +1,1016 @@
+/* The rest of Clipper 5.2's functions (clipfn.h).  Where a dBASE command
+ * already does the work, the function builds the command line and runs
+ * it, so the two forms cannot drift apart; the queries read the work
+ * area directly. */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+#include <ctype.h>
+#include <math.h>
+#include <stdarg.h>
+#include <unistd.h>
+#include "clipfn.h"
+#include "ast.h"
+#include "func.h"
+#include "area.h"
+#include "command.h"
+#include "program.h"
+#include "screen.h"
+#include "memvar.h"
+#include "util.h"
+#include "date.h"
+
+static value_t vnum(double n) {
+    return val_num_dec(n, 0, 0);
+}
+
+static int arg_num(value_t *args, int nargs, int i, int dflt) {
+    return i < nargs && args[i].type == VAL_NUM ? (int)args[i].num : dflt;
+}
+
+static const char *arg_str(value_t *args, int nargs, int i, const char *dflt) {
+    return i < nargs && args[i].type == VAL_CHAR ? args[i].str : dflt;
+}
+
+static int arg_logic(value_t *args, int nargs, int i, int dflt) {
+    return i < nargs && args[i].type == VAL_LOGIC ? args[i].logic : dflt;
+}
+
+/* A command line run as the interpreter runs one */
+static int run_cmd(const char *fmt, ...) {
+    char line[1024];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    return cmd_execute(NULL, line);
+}
+
+static int nil_result(value_t *result) {
+    *result = val_nil();
+    return 0;
+}
+
+/* The work area an alias or number names; the current one when none */
+static work_area_t *area_arg(value_t *args, int nargs, int i) {
+    if (i < nargs && args[i].type == VAL_CHAR) {
+        int idx = area_resolve_alias(args[i].str);
+        return idx >= 0 ? area_get(idx) : NULL;
+    }
+    if (i < nargs && args[i].type == VAL_NUM) {
+        int idx = (int)args[i].num - 1;
+        return idx >= 0 && idx < MAX_AREAS ? area_get(idx) : NULL;
+    }
+    return area_get_current();
+}
+
+static dbf_t *cur_db_open(expr_ctx_t *ctx) {
+    work_area_t *wa = area_get_current();
+    if (!wa || !dbf_is_open(&wa->db)) {
+        ctx->error = "No database in use";
+        return NULL;
+    }
+    return &wa->db;
+}
+
+/* ---- the DB*() forms ---- */
+
+static int fn_dbappend(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    cmd_api_append_blank();
+    return nil_result(result);
+}
+
+static int fn_dbclearfil(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    run_cmd("SET FILTER TO");
+    return nil_result(result);
+}
+
+static int fn_dbclearind(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    run_cmd("SET INDEX TO");
+    return nil_result(result);
+}
+
+static int fn_dbclearrel(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    run_cmd("SET RELATION TO");
+    return nil_result(result);
+}
+
+static int fn_dbcloseall(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    run_cmd("CLOSE DATABASES");
+    return nil_result(result);
+}
+
+static int fn_dbclosearea(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    run_cmd("USE");
+    return nil_result(result);
+}
+
+static int fn_dbcommit(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    work_area_t *wa = area_get_current();
+    (void)ctx; (void)args; (void)nargs;
+    if (wa && dbf_is_open(&wa->db)) {
+        dbf_flush_record(&wa->db);
+        dbf_write_header_counts(&wa->db);
+        fflush(wa->db.fp);
+    }
+    return nil_result(result);
+}
+
+static int fn_dbcommitall(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    int i;
+    (void)ctx; (void)args; (void)nargs;
+    for (i = 0; i < MAX_AREAS; i++) {
+        work_area_t *wa = area_get(i);
+        if (wa && dbf_is_open(&wa->db)) {
+            dbf_flush_record(&wa->db);
+            dbf_write_header_counts(&wa->db);
+            fflush(wa->db.fp);
+        }
+    }
+    return nil_result(result);
+}
+
+/* DBCREATE(file, {{name, type, len, dec}, ...}) */
+static int fn_dbcreate(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    dbf_field_t fields[DBF_MAX_FIELDS];
+    array_t *a;
+    char name[300];
+    int i, n = 0;
+    if (nargs < 2 || args[0].type != VAL_CHAR || args[1].type != VAL_ARRAY || !args[1].array) {
+        ctx->error = "DBCREATE requires (filename, structure array)";
+        return -1;
+    }
+    a = args[1].array;
+    for (i = 0; i < a->len && n < DBF_MAX_FIELDS; i++) {
+        array_t *f = a->el[i].type == VAL_ARRAY ? a->el[i].array : NULL;
+        if (!f || f->len < 2 || f->el[0].type != VAL_CHAR || f->el[1].type != VAL_CHAR) {
+            ctx->error = "DBCREATE: each field is {name, type, length, decimals}";
+            return -1;
+        }
+        memset(&fields[n], 0, sizeof(fields[n]));
+        snprintf(fields[n].name, sizeof(fields[n].name), "%s", f->el[0].str);
+        str_upper(fields[n].name);
+        trim_right(fields[n].name);
+        fields[n].type = (char)toupper((unsigned char)f->el[1].str[0]);
+        fields[n].length = (uint8_t)(f->len > 2 && f->el[2].type == VAL_NUM ? f->el[2].num : 10);
+        fields[n].decimals = (uint8_t)(f->len > 3 && f->el[3].type == VAL_NUM ? f->el[3].num : 0);
+        if (fields[n].type == 'D') fields[n].length = 8;
+        if (fields[n].type == 'L') fields[n].length = 1;
+        if (fields[n].type == 'M') fields[n].length = 10;
+        n++;
+    }
+    snprintf(name, sizeof(name), "%s", args[0].str);
+    if (!strchr(name, '.')) strcat(name, ".DBF");
+    if (dbf_create(name, fields, n) != 0) {
+        ctx->error = "DBCREATE: cannot create the file";
+        return -1;
+    }
+    for (i = 0; i < n; i++) {
+        if (fields[i].type == 'M') {   /* a memo field: its file beside */
+            dbf_memo_create(name);
+            break;
+        }
+    }
+    return nil_result(result);
+}
+
+/* DBCREATEIND(file, keytext, [block], [unique]) */
+static int fn_dbcreateind(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    if (nargs < 2 || args[0].type != VAL_CHAR || args[1].type != VAL_CHAR) {
+        ctx->error = "DBCREATEIND requires (filename, key expression)";
+        return -1;
+    }
+    run_cmd("INDEX ON %s TO %s%s", args[1].str, args[0].str, arg_logic(args, nargs, 3, 0) ? " UNIQUE" : "");
+    return nil_result(result);
+}
+
+static int fn_dbdelete(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    run_cmd("DELETE");
+    return nil_result(result);
+}
+
+static int fn_dbrecall(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    run_cmd("RECALL");
+    return nil_result(result);
+}
+
+static int at_end(expr_ctx_t *ctx, const char *fn) {
+    value_t v;
+    return func_call(ctx, fn, NULL, 0, &v) == 0 && v.type == VAL_LOGIC && v.logic;
+}
+
+static int block_truth(expr_ctx_t *ctx, value_t *b, int *truth) {
+    value_t r;
+    if (!b || b->type != VAL_BLOCK) { *truth = 1; return 0; }
+    if (ast_eval_block(ctx, b, NULL, 0, &r) != 0) return -1;
+    *truth = r.type == VAL_LOGIC && r.logic;
+    return 0;
+}
+
+/* DBEVAL(block, [for], [while], [next], [record], [rest]): the block for
+ * each record in the scope that meets the conditions */
+static int fn_dbeval(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    value_t *b, *bfor, *bwhile, r;
+    int next = -1, rest, truth, count = 0;
+    char n[32];
+    if (nargs < 1 || args[0].type != VAL_BLOCK) {
+        ctx->error = "DBEVAL requires (block [, for, while, next, record, rest])";
+        return -1;
+    }
+    if (!cur_db_open(ctx)) return -1;
+    b = &args[0];
+    bfor = nargs > 1 && args[1].type == VAL_BLOCK ? &args[1] : NULL;
+    bwhile = nargs > 2 && args[2].type == VAL_BLOCK ? &args[2] : NULL;
+    if (nargs > 3 && args[3].type == VAL_NUM) next = (int)args[3].num;
+    rest = arg_logic(args, nargs, 5, 0);
+    if (nargs > 4 && args[4].type == VAL_NUM) {   /* one record */
+        snprintf(n, sizeof(n), "%d", (int)args[4].num);
+        cmd_api_go(n);
+        if (block_truth(ctx, bfor, &truth) != 0) return -1;
+        if (truth && ast_eval_block(ctx, b, NULL, 0, &r) != 0) return -1;
+        return nil_result(result);
+    }
+    if (next < 0 && !rest && !bwhile) cmd_api_go("TOP");
+    while (!at_end(ctx, "EOF") && (next < 0 || count < next)) {
+        if (block_truth(ctx, bwhile, &truth) != 0) return -1;
+        if (!truth) break;
+        if (block_truth(ctx, bfor, &truth) != 0) return -1;
+        if (truth && ast_eval_block(ctx, b, NULL, 0, &r) != 0) return -1;
+        count++;
+        cmd_api_skip("1");
+    }
+    return nil_result(result);
+}
+
+static int fn_dbfilter(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    work_area_t *wa = area_get_current();
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_str(wa ? wa->filter_cond : "");
+    return 0;
+}
+
+static int fn_dbgoto(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    char n[32];
+    if (nargs < 1 || args[0].type != VAL_NUM) {
+        ctx->error = "DBGOTO requires a record number";
+        return -1;
+    }
+    snprintf(n, sizeof(n), "%d", (int)args[0].num);
+    cmd_api_go(n);
+    return nil_result(result);
+}
+
+static int fn_dbreindex(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    run_cmd("REINDEX");
+    return nil_result(result);
+}
+
+static int fn_dbrelation(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    work_area_t *wa = area_get_current();
+    (void)ctx;
+    *result = val_str(wa && arg_num(args, nargs, 0, 1) == 1 ? wa->relation_expr : "");
+    return 0;
+}
+
+static int fn_dbrselect(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    work_area_t *wa = area_get_current();
+    (void)ctx;
+    *result = vnum(wa && wa->relation_expr[0] && arg_num(args, nargs, 0, 1) == 1 ? wa->relation_target + 1 : 0);
+    return 0;
+}
+
+/* DBSEEK(value, [softseek]): FOUND() */
+static int fn_dbseek(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    value_t f;
+    if (nargs < 1) {
+        ctx->error = "DBSEEK requires a key value";
+        return -1;
+    }
+    if (!cmd_api_seek_ready()) {
+        ctx->error = "DBSEEK: no controlling index";
+        return -1;
+    }
+    cmd_api_seek_value(&args[0]);
+    func_call(ctx, "FOUND", NULL, 0, &f);
+    *result = f;
+    return 0;
+}
+
+static int fn_dbselectar(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    char a[64];
+    (void)ctx;
+    if (nargs >= 1 && args[0].type == VAL_NUM) snprintf(a, sizeof(a), "%d", (int)args[0].num);
+    else snprintf(a, sizeof(a), "%s", arg_str(args, nargs, 0, "1"));
+    cmd_api_select(a);
+    return nil_result(result);
+}
+
+static int fn_dbsetdriver(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_str("DBFNDX");   /* the one driver: DBF with NDX indexes */
+    return 0;
+}
+
+/* DBSETFILTER(block, [text]): the text is what the filter is (the block
+ * is what Clipper keeps; here the condition is compiled from its text) */
+static int fn_dbsetfilter(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    const char *text = arg_str(args, nargs, 1, NULL);
+    if (!text) {
+        ctx->error = "DBSETFILTER needs the condition's text (block, text)";
+        return -1;
+    }
+    run_cmd("SET FILTER TO %s", text);
+    return nil_result(result);
+}
+
+static int fn_dbsetindex(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    work_area_t *wa = area_get_current();
+    char list[600] = "";
+    int i;
+    if (nargs < 1 || args[0].type != VAL_CHAR) {
+        ctx->error = "DBSETINDEX requires an index file name";
+        return -1;
+    }
+    /* added to the list: SET INDEX TO replaces it, so the old ones go first */
+    for (i = 0; wa && i < wa->num_indexes; i++) {
+        snprintf(list + strlen(list), sizeof(list) - strlen(list), "%s%s", i ? ", " : "", wa->indexes[i].filename);
+    }
+    run_cmd("SET INDEX TO %s%s%s", list, list[0] ? ", " : "", args[0].str);
+    return nil_result(result);
+}
+
+static int fn_dbsetorder(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    run_cmd("SET ORDER TO %d", arg_num(args, nargs, 0, 0));
+    return nil_result(result);
+}
+
+/* DBSETRELAT(area, block, [text]) */
+static int fn_dbsetrelat(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    const char *text = arg_str(args, nargs, 2, NULL);
+    char target[64];
+    if (nargs < 1 || !text) {
+        ctx->error = "DBSETRELAT needs (area, block, text)";
+        return -1;
+    }
+    if (args[0].type == VAL_NUM) snprintf(target, sizeof(target), "%d", (int)args[0].num);
+    else snprintf(target, sizeof(target), "%s", arg_str(args, nargs, 0, ""));
+    run_cmd("SET RELATION TO %s INTO %s", text, target);
+    return nil_result(result);
+}
+
+static int fn_dbunlock(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    return nil_result(result);   /* single user: nothing is locked */
+}
+
+/* DBUSEAREA([new], [driver], file, [alias], [shared], [readonly]) */
+static int fn_dbusearea(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    const char *file = arg_str(args, nargs, 2, NULL);
+    const char *alias = arg_str(args, nargs, 3, NULL);
+    if (!file) {
+        ctx->error = "DBUSEAREA requires the file name (new, driver, file, alias)";
+        return -1;
+    }
+    if (arg_logic(args, nargs, 0, 0)) cmd_api_select("0");
+    if (alias && alias[0]) run_cmd("USE %s ALIAS %s", file, alias);
+    else run_cmd("USE %s", file);
+    return nil_result(result);
+}
+
+/* DESCEND(x): the value whose order is the reverse of x's */
+static int fn_descend(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    if (nargs < 1) { ctx->error = "DESCEND requires an argument"; return -1; }
+    switch (args[0].type) {
+    case VAL_CHAR: {
+        value_t v = args[0];
+        char *p;
+        for (p = v.str; *p; p++) *p = (char)(256 - (unsigned char)*p);
+        *result = v;
+        return 0;
+    }
+    case VAL_NUM:
+        *result = val_num_dec(-args[0].num, val_set_decimals, 0);   /* a computed value: SET DECIMALS */
+        return 0;
+    case VAL_DATE:
+        *result = vnum(5231808 - args[0].date);   /* Clipper's: a number counting down */
+        return 0;
+    case VAL_LOGIC:
+        *result = val_logic(!args[0].logic);
+        return 0;
+    default:
+        *result = args[0];
+        return 0;
+    }
+}
+
+/* ---- fields ---- */
+
+static int field_index_arg(expr_ctx_t *ctx, value_t *args, int nargs, dbf_t **dbp) {
+    dbf_t *db = cur_db_open(ctx);
+    int n;
+    if (!db) return -1;
+    if (nargs < 1 || args[0].type != VAL_NUM) {
+        ctx->error = "A field number is required";
+        return -1;
+    }
+    n = (int)args[0].num;
+    if (n < 1 || n > db->field_count) {
+        ctx->error = "Field number out of range";
+        return -1;
+    }
+    *dbp = db;
+    return n - 1;
+}
+
+static int fn_fieldname(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    return func_call(ctx, "FIELD", args, nargs, result);
+}
+
+static int fn_fieldget(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    dbf_t *db;
+    int i = field_index_arg(ctx, args, nargs, &db);
+    if (i < 0) return -1;
+    return ast_eval_alias_field(ctx, "FIELD", db->fields[i].name, result);
+}
+
+static int fn_fieldput(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    dbf_t *db;
+    int i = field_index_arg(ctx, args, nargs, &db);
+    if (i < 0) return -1;
+    if (nargs < 2) { ctx->error = "FIELDPUT requires (number, value)"; return -1; }
+    if (ast_store_alias_field(ctx, "FIELD", db->fields[i].name, &args[1]) != 0) return -1;
+    *result = args[1];
+    return 0;
+}
+
+/* The set-get blocks: {|x| IF(x == NIL, ref, ref := x)} over a field, a
+ * field of another work area, or a memory variable */
+static int setget_block(expr_ctx_t *ctx, const char *ref, value_t *result) {
+    char text[400];
+    snprintf(text, sizeof(text), "{|x| IIF(x == NIL, %s, %s := x)}", ref, ref);
+    return ast_eval_dynamic(text, ctx, result);
+}
+
+static int fn_fieldblock(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    char ref[200];
+    if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "FIELDBLOCK requires a field name"; return -1; }
+    snprintf(ref, sizeof(ref), "FIELD->%s", args[0].str);
+    return setget_block(ctx, ref, result);
+}
+
+static int fn_fieldwblock(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    char ref[200];
+    work_area_t *wa;
+    if (nargs < 2 || args[0].type != VAL_CHAR) { ctx->error = "FIELDWBLOCK requires (field name, work area)"; return -1; }
+    wa = area_arg(args, nargs, 1);
+    if (!wa || !wa->alias[0]) { ctx->error = "FIELDWBLOCK: no such work area"; return -1; }
+    snprintf(ref, sizeof(ref), "%s->%s", wa->alias, args[0].str);
+    return setget_block(ctx, ref, result);
+}
+
+static int fn_memvarblock(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    char ref[200];
+    if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MEMVARBLOCK requires a variable name"; return -1; }
+    snprintf(ref, sizeof(ref), "M->%s", args[0].str);
+    return setget_block(ctx, ref, result);
+}
+
+/* ---- indexes and work areas ---- */
+
+static int fn_indexext(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_str(".NDX");
+    return 0;
+}
+
+static int fn_indexkey(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    work_area_t *wa = area_get_current();
+    int n = arg_num(args, nargs, 0, 0);
+    (void)ctx;
+    if (wa && n == 0) n = wa->order;
+    if (!wa || n < 1 || n > wa->num_indexes) { *result = val_str(""); return 0; }
+    *result = val_str(wa->indexes[n - 1].key_expr);
+    return 0;
+}
+
+static int fn_indexord(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    work_area_t *wa = area_get_current();
+    (void)ctx; (void)args; (void)nargs;
+    *result = vnum(wa && wa->num_indexes > 0 ? wa->order : 0);
+    return 0;
+}
+
+static int fn_lastrec(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    return func_call(ctx, "RECCOUNT", args, nargs, result);
+}
+
+static int fn_neterr(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_logic(0);
+    return 0;
+}
+
+/* ---- binary conversions (little-endian, as Clipper's) ---- */
+
+static int fn_bin2i(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    const unsigned char *s;
+    if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "BIN2I requires a string"; return -1; }
+    s = (const unsigned char *)args[0].str;
+    *result = vnum((int16_t)(s[0] | (s[0] ? s[1] : 0) << 8));
+    return 0;
+}
+
+static int fn_bin2w(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    const unsigned char *s;
+    if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "BIN2W requires a string"; return -1; }
+    s = (const unsigned char *)args[0].str;
+    *result = vnum((uint16_t)(s[0] | (s[0] ? s[1] : 0) << 8));
+    return 0;
+}
+
+static int fn_bin2l(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    const unsigned char *s;
+    uint32_t v = 0;
+    int i;
+    if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "BIN2L requires a string"; return -1; }
+    s = (const unsigned char *)args[0].str;
+    for (i = 0; i < 4 && (i == 0 || s[i - 1]); i++) v |= (uint32_t)s[i] << (8 * i);
+    *result = vnum((int32_t)v);
+    return 0;
+}
+
+/* The bytes, little-endian, up to the first zero byte: a string here ends
+ * at a NUL, so a value whose high bytes are zero comes back shorter and
+ * BIN2x reads the missing bytes as zero (a zero byte between non-zero
+ * ones is the one case that does not round-trip) */
+static int bin_string(int32_t v, int bytes, value_t *result) {
+    value_t r = val_str("");
+    int i;
+    for (i = 0; i < bytes; i++) {
+        unsigned char c = (unsigned char)((uint32_t)v >> (8 * i));
+        if (!c) break;
+        r.str[i] = (char)c;
+    }
+    r.str[i] = '\0';
+    *result = r;
+    return 0;
+}
+
+static int fn_i2bin(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    if (nargs < 1 || args[0].type != VAL_NUM) { ctx->error = "I2BIN requires a number"; return -1; }
+    return bin_string((int32_t)args[0].num, 2, result);
+}
+
+static int fn_l2bin(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    if (nargs < 1 || args[0].type != VAL_NUM) { ctx->error = "L2BIN requires a number"; return -1; }
+    return bin_string((int32_t)args[0].num, 4, result);
+}
+
+/* ---- memo text: lines of a string under a width ---- */
+
+/* The start and length of line n (1-based) of s wrapped at width, words
+ * kept whole; a hard return (CR LF, or LF) ends a line.  0 when there is
+ * no such line. */
+static int memo_line(const char *s, int width, int n, const char **start, int *len) {
+    const char *p = s;
+    int line = 0;
+    if (width < 4) width = 4;
+    while (*p || line == 0) {
+        const char *e = p, *brk = NULL;
+        int col = 0;
+        while (*e && *e != '\r' && *e != '\n' && col < width) {
+            if (*e == ' ') brk = e;
+            e++;
+            col++;
+        }
+        if (*e && *e != '\r' && *e != '\n') {   /* wrapped: back to the last blank */
+            if (brk && brk > p) e = brk;
+        }
+        line++;
+        if (line == n) {
+            *start = p;
+            *len = (int)(e - p) + (*e == '\r' ? 1 : 0);   /* a hard return stays in its line (MEMOTRAN takes it out) */
+            return 1;
+        }
+        p = e;
+        if (*p == ' ') p++;
+        if (*p == '\r') p++;
+        if (*p == '\n') p++;
+        if (!*p) break;
+    }
+    return 0;
+}
+
+static int memo_lines(const char *s, int width) {
+    const char *st;
+    int len, n = 0;
+    while (memo_line(s, width, n + 1, &st, &len)) n++;
+    return n;
+}
+
+static int fn_memoline(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    const char *st;
+    int len, width = arg_num(args, nargs, 1, 79), n = arg_num(args, nargs, 2, 1);
+    value_t r = val_str("");
+    if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MEMOLINE requires a string"; return -1; }
+    if (memo_line(args[0].str, width, n, &st, &len)) {
+        snprintf(r.str, sizeof(r.str), "%.*s", len, st);
+        len = (int)strlen(r.str);
+        while (len < width && len < (int)sizeof(r.str) - 1) r.str[len++] = ' ';   /* padded to the width */
+        r.str[len] = '\0';
+    }
+    *result = r;
+    return 0;
+}
+
+static int fn_mlcount(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MLCOUNT requires a string"; return -1; }
+    *result = vnum(memo_lines(args[0].str, arg_num(args, nargs, 1, 79)));
+    return 0;
+}
+
+static int fn_mlpos(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    const char *st;
+    int len;
+    if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MLPOS requires (string, width, line)"; return -1; }
+    if (memo_line(args[0].str, arg_num(args, nargs, 1, 79), arg_num(args, nargs, 2, 1), &st, &len))
+        *result = vnum((int)(st - args[0].str) + 1);
+    else
+        *result = vnum((int)strlen(args[0].str) + 1);
+    return 0;
+}
+
+static int fn_mlctopos(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    const char *st;
+    int len;
+    if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MLCTOPOS requires (string, width, line, col)"; return -1; }
+    if (memo_line(args[0].str, arg_num(args, nargs, 1, 79), arg_num(args, nargs, 2, 1), &st, &len))
+        *result = vnum((int)(st - args[0].str) + 1 + arg_num(args, nargs, 3, 0));
+    else
+        *result = vnum((int)strlen(args[0].str) + 1);
+    return 0;
+}
+
+/* MPOSTOLC(string, width, pos): {line, col} */
+static int fn_mpostolc(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    const char *st;
+    int len, n = 1, pos = arg_num(args, nargs, 2, 1), width = arg_num(args, nargs, 1, 79);
+    value_t lc[2];
+    if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MPOSTOLC requires (string, width, pos)"; return -1; }
+    lc[0] = vnum(1);
+    lc[1] = vnum(0);
+    while (memo_line(args[0].str, width, n, &st, &len)) {
+        int off = (int)(st - args[0].str) + 1;
+        if (pos >= off && pos <= off + len) {
+            lc[0] = vnum(n);
+            lc[1] = vnum(pos - off);
+            break;
+        }
+        n++;
+    }
+    return ast_make_array(ctx, lc, 2, result);
+}
+
+/* HARDCR: soft returns (141 10) made hard (13 10) */
+static int fn_hardcr(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    value_t r;
+    char *p;
+    if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "HARDCR requires a string"; return -1; }
+    r = args[0];
+    for (p = r.str; *p; p++) {
+        if ((unsigned char)*p == 141) *p = '\r';
+    }
+    *result = r;
+    return 0;
+}
+
+/* MEMOTRAN(string, [hard], [soft]): CR LF pairs replaced, hard ones by ;
+ * and soft ones by a blank, as the guide has it */
+static int fn_memotran(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    value_t r = val_str("");
+    const char *s, *hard = arg_str(args, nargs, 1, ";"), *soft = arg_str(args, nargs, 2, " ");
+    int o = 0;
+    if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MEMOTRAN requires a string"; return -1; }
+    for (s = args[0].str; *s && o < (int)sizeof(r.str) - 1; s++) {
+        if ((*s == '\r' || (unsigned char)*s == 141) && s[1] == '\n') {
+            r.str[o++] = (*s == '\r' ? hard : soft)[0];
+            s++;
+        } else {
+            r.str[o++] = *s;
+        }
+    }
+    r.str[o] = '\0';
+    *result = r;
+    return 0;
+}
+
+static int fn_memoread(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    FILE *f;
+    value_t r = val_str("");
+    size_t n;
+    if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MEMOREAD requires a file name"; return -1; }
+    f = fopen(args[0].str, "rb");
+    if (f) {
+        n = fread(r.str, 1, sizeof(r.str) - 1, f);   /* a value_t string: 255 characters at most */
+        if (n > 0 && r.str[n - 1] == 26) n--;        /* the Ctrl-Z MEMOWRIT ends a file with */
+        r.str[n] = '\0';
+        fclose(f);
+    }
+    *result = r;
+    return 0;
+}
+
+static int fn_memowrit(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    FILE *f;
+    if (nargs < 2 || args[0].type != VAL_CHAR || args[1].type != VAL_CHAR) {
+        ctx->error = "MEMOWRIT requires (file name, string)";
+        return -1;
+    }
+    f = fopen(args[0].str, "wb");
+    if (f) {
+        fputs(args[1].str, f);
+        fputc(26, f);   /* Clipper ends the file with Ctrl-Z */
+        fclose(f);
+    }
+    *result = val_logic(f != NULL);
+    return 0;
+}
+
+/* ---- files and the environment ---- */
+
+static int fn_ferase(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "FERASE requires a file name"; return -1; }
+    *result = vnum(unlink(args[0].str) == 0 ? 0 : -1);
+    return 0;
+}
+
+static int fn_frename(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    if (nargs < 2 || args[0].type != VAL_CHAR || args[1].type != VAL_CHAR) {
+        ctx->error = "FRENAME requires (old name, new name)";
+        return -1;
+    }
+    *result = vnum(rename(args[0].str, args[1].str) == 0 ? 0 : -1);
+    return 0;
+}
+
+/* DIRECTORY([spec], [attributes]): ADIR's listing as {{name, size, date, time, attr}, ...} */
+static int fn_directory(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    value_t names, sizes, dates, times, count, spec, a[5];
+    array_t *out;
+    int n, i;
+    spec = val_str(arg_str(args, nargs, 0, "*.*"));
+    if (func_call(ctx, "ARRAY", &(value_t){ .type = VAL_NUM, .num = 1024 }, 1, &names) != 0) return -1;
+    if (func_call(ctx, "ARRAY", &(value_t){ .type = VAL_NUM, .num = 1024 }, 1, &sizes) != 0) return -1;
+    if (func_call(ctx, "ARRAY", &(value_t){ .type = VAL_NUM, .num = 1024 }, 1, &dates) != 0) return -1;
+    if (func_call(ctx, "ARRAY", &(value_t){ .type = VAL_NUM, .num = 1024 }, 1, &times) != 0) return -1;
+    a[0] = spec; a[1] = names; a[2] = sizes; a[3] = dates; a[4] = times;
+    if (func_call(ctx, "ADIR", a, 5, &count) != 0) return -1;
+    n = count.type == VAL_NUM ? (int)count.num : 0;
+    if (ast_make_array(ctx, NULL, 0, result) != 0) return -1;
+    out = result->array;
+    for (i = 0; i < n && i < 1024; i++) {
+        value_t row[5], rv, add[2], r;
+        row[0] = names.array->el[i];
+        row[1] = sizes.array->el[i];
+        row[2] = dates.array->el[i];
+        row[3] = times.array->el[i];
+        row[4] = val_str("A");
+        if (ast_make_array(ctx, row, 5, &rv) != 0) return -1;
+        add[0] = *result;
+        add[1] = rv;
+        if (func_call(ctx, "AADD", add, 2, &r) != 0) return -1;
+    }
+    (void)out;
+    return 0;
+}
+
+static int errorlevel_value;
+
+static int fn_errorlevel(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    *result = vnum(errorlevel_value);
+    if (nargs >= 1 && args[0].type == VAL_NUM) errorlevel_value = (int)args[0].num;
+    return 0;
+}
+
+static int fn_doserror(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = vnum(0);
+    return 0;
+}
+
+static int fn_netname(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_str("");
+    return 0;
+}
+
+static int fn_isprinter(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_logic(0);
+    return 0;
+}
+
+static int fn_isdigit(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    *result = val_logic(nargs >= 1 && args[0].type == VAL_CHAR && isdigit((unsigned char)args[0].str[0]));
+    return 0;
+}
+
+static int fn_exp(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    if (nargs < 1 || args[0].type != VAL_NUM) { ctx->error = "EXP requires a number"; return -1; }
+    *result = val_num_dec(exp(args[0].num), val_set_decimals, 0);
+    return 0;
+}
+
+static int fn_log(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    if (nargs < 1 || args[0].type != VAL_NUM || args[0].num <= 0) { ctx->error = "LOG requires a positive number"; return -1; }
+    *result = val_num_dec(log(args[0].num), val_set_decimals, 0);
+    return 0;
+}
+
+static int fn_word(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    *result = nargs >= 1 ? args[0] : val_nil();
+    return 0;
+}
+
+/* DEVOUTPICT(value, picture): TRANSFORM, then DISPOUT */
+static int fn_devoutpict(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    value_t t;
+    if (nargs < 2) { ctx->error = "DEVOUTPICT requires (value, picture)"; return -1; }
+    if (func_call(ctx, "TRANSFORM", args, 2, &t) != 0) return -1;
+    return func_call(ctx, "DISPOUT", &t, 1, result);
+}
+
+static int fn_setprc(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    screen_set_printer_pos(arg_num(args, nargs, 0, 0), arg_num(args, nargs, 1, 0));
+    return nil_result(result);
+}
+
+static int fn_nextkey(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = vnum(screen_nextkey());
+    return 0;
+}
+
+static int flag_setting(int *flag, value_t *args, int nargs, value_t *result) {
+    *result = val_logic(*flag);
+    if (nargs >= 1 && args[0].type == VAL_LOGIC) *flag = args[0].logic;
+    return 0;
+}
+
+static int setcancel_flag = 1, setblink_flag = 1, nosnow_flag;
+
+static int fn_setcancel(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    return flag_setting(&setcancel_flag, args, nargs, result);
+}
+
+static int fn_setblink(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    return flag_setting(&setblink_flag, args, nargs, result);
+}
+
+static int fn_nosnow(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    return flag_setting(&nosnow_flag, args, nargs, result);
+}
+
+static int fn_setmode(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    *result = val_logic(arg_num(args, nargs, 0, 25) == 25 && arg_num(args, nargs, 1, 80) == 80);
+    return 0;
+}
+
+static int fn_fkmax(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = vnum(40);
+    return 0;
+}
+
+static int fn_fklabel(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    int n = arg_num(args, nargs, 0, 0);
+    char buf[16];
+    (void)ctx;
+    if (n >= 1 && n <= 40) snprintf(buf, sizeof(buf), "F%d", n);
+    else buf[0] = '\0';
+    *result = val_str(buf);
+    return 0;
+}
+
+static int fn_nil(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    return nil_result(result);
+}
+
+static int fn_zero(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = vnum(0);
+    return 0;
+}
+
+/* ---- the interactive ones, as far as a stream allows ---- */
+
+/* ALERT(message, [options]): the message with its options; the first
+ * option is chosen (1) when no terminal can offer the choice */
+static int fn_alert(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    char line[512];
+    const char *msg = arg_str(args, nargs, 0, "");
+    (void)ctx;
+    snprintf(line, sizeof(line), "%s", msg);
+    if (nargs >= 2 && args[1].type == VAL_ARRAY && args[1].array) {
+        array_t *o = args[1].array;
+        int i;
+        strncat(line, "  ", sizeof(line) - strlen(line) - 1);
+        for (i = 0; i < o->len; i++) {
+            if (o->el[i].type == VAL_CHAR) {
+                strncat(line, i ? "  " : "", sizeof(line) - strlen(line) - 1);
+                strncat(line, o->el[i].str, sizeof(line) - strlen(line) - 1);
+            }
+        }
+    }
+    screen_print_newline();
+    screen_print_text(line);
+    screen_print_newline();
+    *result = vnum(1);
+    return 0;
+}
+
+/* ACHOICE(top, left, bottom, right, items, ...): the list shown; the
+ * first item chosen when there is no terminal to pick from */
+static int fn_achoice(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    array_t *items = nargs > 4 && args[4].type == VAL_ARRAY ? args[4].array : NULL;
+    int i, top = arg_num(args, nargs, 0, 0), left = arg_num(args, nargs, 1, 0);
+    (void)ctx;
+    if (!items) { *result = vnum(0); return 0; }
+    for (i = 0; i < items->len; i++) {
+        if (items->el[i].type == VAL_CHAR) screen_out_at(top + i, left, items->el[i].str);
+    }
+    *result = vnum(items->len > 0 ? 1 : 0);
+    return 0;
+}
+
+static int fn_browse(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)args; (void)nargs;
+    if (!cur_db_open(ctx)) { *result = val_logic(0); return 0; }
+    run_cmd("BROWSE");
+    *result = val_logic(1);
+    return 0;
+}
+
+static int fn_dbedit(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    return fn_browse(ctx, args, nargs, result);
+}
+
+/* MEMOEDIT(string, ...): the text, shown and returned as it is -- there
+ * is no editor to change it in */
+static int fn_memoedit(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    *result = nargs >= 1 && args[0].type == VAL_CHAR ? args[0] : val_str("");
+    return 0;
+}
+
+const clipfn_entry_t clipfn_table[] = {
+    { "DBAPPEND", fn_dbappend }, { "DBCLEARFIL", fn_dbclearfil }, { "DBCLEARIND", fn_dbclearind },
+    { "DBCLEARREL", fn_dbclearrel }, { "DBCLOSEALL", fn_dbcloseall }, { "DBCLOSEAREA", fn_dbclosearea },
+    { "DBCOMMIT", fn_dbcommit }, { "DBCOMMITALL", fn_dbcommitall }, { "DBCREATE", fn_dbcreate },
+    { "DBCREATEIND", fn_dbcreateind }, { "DBDELETE", fn_dbdelete }, { "DBEVAL", fn_dbeval },
+    { "DBFILTER", fn_dbfilter }, { "DBGOTO", fn_dbgoto }, { "DBRECALL", fn_dbrecall },
+    { "DBREINDEX", fn_dbreindex }, { "DBRELATION", fn_dbrelation }, { "DBRSELECT", fn_dbrselect },
+    { "DBSEEK", fn_dbseek }, { "DBSELECTAR", fn_dbselectar }, { "DBSETDRIVER", fn_dbsetdriver },
+    { "DBSETFILTER", fn_dbsetfilter }, { "DBSETINDEX", fn_dbsetindex }, { "DBSETORDER", fn_dbsetorder },
+    { "DBSETRELAT", fn_dbsetrelat }, { "DBUNLOCK", fn_dbunlock }, { "DBUNLOCKALL", fn_dbunlock },
+    { "DBUSEAREA", fn_dbusearea }, { "DESCEND", fn_descend },
+    { "FIELDBLOCK", fn_fieldblock }, { "FIELDGET", fn_fieldget }, { "FIELDNAME", fn_fieldname },
+    { "FIELDPUT", fn_fieldput }, { "FIELDWBLOCK", fn_fieldwblock }, { "MEMVARBLOCK", fn_memvarblock },
+    { "INDEXEXT", fn_indexext }, { "INDEXKEY", fn_indexkey }, { "INDEXORD", fn_indexord },
+    { "LASTREC", fn_lastrec }, { "NETERR", fn_neterr },
+    { "BIN2I", fn_bin2i }, { "BIN2W", fn_bin2w }, { "BIN2L", fn_bin2l }, { "I2BIN", fn_i2bin }, { "L2BIN", fn_l2bin },
+    { "MEMOLINE", fn_memoline }, { "MLCOUNT", fn_mlcount }, { "MLPOS", fn_mlpos }, { "MLCTOPOS", fn_mlctopos },
+    { "MPOSTOLC", fn_mpostolc }, { "HARDCR", fn_hardcr }, { "MEMOTRAN", fn_memotran },
+    { "MEMOREAD", fn_memoread }, { "MEMOWRIT", fn_memowrit },
+    { "FERASE", fn_ferase }, { "FRENAME", fn_frename }, { "DIRECTORY", fn_directory },
+    { "ERRORLEVEL", fn_errorlevel }, { "DOSERROR", fn_doserror }, { "NETNAME", fn_netname },
+    { "ISPRINTER", fn_isprinter }, { "ISDIGIT", fn_isdigit }, { "EXP", fn_exp }, { "LOG", fn_log },
+    { "WORD", fn_word }, { "DEVOUTPICT", fn_devoutpict }, { "SETPRC", fn_setprc }, { "NEXTKEY", fn_nextkey },
+    { "SETCANCEL", fn_setcancel }, { "SETBLINK", fn_setblink }, { "NOSNOW", fn_nosnow }, { "SETMODE", fn_setmode },
+    { "FKMAX", fn_fkmax }, { "FKLABEL", fn_fklabel }, { "ALTD", fn_nil }, { "COLORSELECT", fn_nil },
+    { "DISPCOUNT", fn_zero },
+    { "ALERT", fn_alert }, { "ACHOICE", fn_achoice }, { "BROWSE", fn_browse }, { "DBEDIT", fn_dbedit },
+    { "MEMOEDIT", fn_memoedit },
+    { NULL, NULL }
+};

@@ -7,6 +7,7 @@
 #include <time.h>
 #include "func.h"
 #include "getsys.h"
+#include "clipfn.h"
 #include "ast.h"
 #include "date.h"
 #include "command.h"
@@ -95,6 +96,25 @@ static int fn_fclose(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result)
     } else {
         *result = val_logic(0);
     }
+    return 0;
+}
+
+/* FREADSTR(handle, count): up to count characters, stopping at a NUL */
+static int fn_freadstr(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    int h, count, i = 0, c;
+    value_t r = val_str("");
+    if (nargs < 2 || args[0].type != VAL_NUM || args[1].type != VAL_NUM) {
+        ctx->error = "FREADSTR requires (handle, count)";
+        return -1;
+    }
+    h = (int)args[0].num - 1;
+    count = (int)args[1].num;
+    if (count > 255) count = 255;
+    if (h >= 0 && h < MAX_LL_FILES && ll_files[h]) {
+        while (i < count && (c = fgetc(ll_files[h])) != EOF && c != 0) r.str[i++] = (char)c;
+    }
+    r.str[i] = '\0';
+    *result = r;
     return 0;
 }
 
@@ -2462,7 +2482,7 @@ static const func_entry_t func_table[] = {
     { "FOPEN",     fn_fopen },
     { "FCREATE",   fn_fcreate },
     { "FCLOSE",    fn_fclose },
-    { "FREAD",     fn_fread },
+    { "FREAD",     fn_fread }, { "FREADSTR", fn_freadstr },
     { "FWRITE",    fn_fwrite },
     { "FSEEK",     fn_fseek },
     { "FERROR",    fn_ferror },
@@ -2628,6 +2648,15 @@ int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value
     if (e) {
         pending_refs = NULL;   /* a built-in takes values */
         return e->fn(ctx, args, nargs, result);
+    }
+    {   /* the rest of Clipper's set (clipfn.c) */
+        const clipfn_entry_t *c;
+        for (c = clipfn_table; c->name; c++) {
+            if (strcmp(c->name, upper) == 0) {
+                pending_refs = NULL;
+                return c->fn(ctx, args, nargs, result);
+            }
+        }
     }
 
     /* Try user-defined function.

@@ -10,16 +10,11 @@ Database IDXTST.DBF created with 2 field(s).
 First: NAME  1    20
 Last: NAME 20     1
 --- REPLACE indexed key ---
-Natural record order.
-Order set to 1 (IDXNAME.NDX).
-
 New first: RN  1
 New last: RN 20
 Seek RN  1: .T.
 Seek RN 20: .T.
 --- Multiple indexes ---
-Order set to 1 (IDXNAME.NDX).
-
 Order 1 top: RN  1
 Order 2 top: RN  1
 --- Unique index ---

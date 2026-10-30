@@ -140,5 +140,7 @@ const char *screen_color_spec(void);
 const char *screen_read_var(void);   /* the GET being read; "" outside a READ */
 int screen_read_updated(void);       /* UPDATED(): a GET changed in the last READ */
 value_t screen_active_get(void);     /* GETACTIVE(): its Get object, or NIL */
+int screen_nextkey(void);            /* NEXTKEY(): the pending key, left pending */
+void screen_set_printer_pos(int row, int col);   /* SETPRC() */
 
 #endif

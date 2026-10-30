@@ -586,6 +586,17 @@ static void cmd_select(const char *arg) {
         return;
     }
 
+    if (p[0] == '0' && (p[1] == '\0' || p[1] == ' ')) {   /* SELECT 0: the lowest unused area (Clipper) */
+        for (idx = 0; idx < MAX_AREAS; idx++) {
+            if (!dbf_is_open(&area_get(idx)->db)) {
+                area_set_current_idx(idx);
+                return;
+            }
+        }
+        prog_error(ERR_ALIAS_NOT_FOUND, "No free work area");
+        return;
+    }
+
     idx = area_resolve_alias(p);
     if (idx >= 0) {
         area_set_current_idx(idx);
@@ -5939,8 +5950,10 @@ static void h_set(dbf_t *db, lexer_t *l) {
                 int n = (int)l->current.num_val;
                 if (n >= 0 && n <= cur_wa()->num_indexes) {
                     cur_wa()->order = n;
-                    if (n == 0) printf("Natural record order.\n");
-                    else printf("Order set to %d (%s).\n", n, cur_wa()->indexes[n - 1].filename);
+                    if (set_opts.talk) {
+                        if (n == 0) printf("Natural record order.\n");
+                        else printf("Order set to %d (%s).\n", n, cur_wa()->indexes[n - 1].filename);
+                    }
                 }
                 lex_next(l);
             }
