@@ -515,16 +515,10 @@ int clip_cond(expr_ctx_t *c, int failed, const value_t *v) {
     return v->type == VAL_LOGIC && v->logic != 0;
 }
 
-/* name = value, refusing an array as the interpreter's assignment and
- * STORE do */
+/* name = value (an array variable is replaced, as Clipper's assignment
+ * replaces it) */
 void clip_setv(const char *name, value_t *v) {
-    memvar_store_t *store = cmd_get_memvar_store();
-    value_t mv;
-    if (memvar_find(store, name, &mv) == 0 && mv.type == VAL_ARRAY) {
-        prog_error(ERR_SYNTAX, "Array assignment requires index");
-        return;
-    }
-    memvar_set(store, name, v);
+    memvar_set(cmd_get_memvar_store(), name, v);
 }
 
 /* name(args): an element when name is an array, else a call.  The

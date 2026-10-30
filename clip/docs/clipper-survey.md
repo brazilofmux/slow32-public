@@ -110,7 +110,16 @@ The severe ones are marked.
    literals with a whole quotient fold to an integer at compile time
    (10/5 shows 2).
 3. **Function calls as statements, formal parameters, PCOUNT(), `@`.**
-4. **Literal arrays and the array functions.**
+4. **Literal arrays and the array functions.**  Done 2026-10-29: arrays
+   are Clipper's -- one dimension, nested (DECLARE a[r,c] and a[i,j] are
+   a[i][j]), resizable, shared by reference, not collected yet (a known
+   debt: they live until the program ends); `{...}` literals, `[]` on
+   any value, readable and assignable; ARRAY, AADD, ASIZE, ATAIL, AFILL,
+   ACLONE, LEN(array), and the old ones on the new form (ASORT, AINS,
+   ADEL, ACOPY return the array; the vacated element is NIL); LOCAL /
+   PRIVATE / PUBLIC a[n]; assignment replaces an array (dBASE IV refused
+   it without an index).  `{MM/DD/YY}` stays a date literal when the
+   braces hold a date and nothing else.
 5. **LOCAL and STATIC as Clipper has them** -- severe: lexical, not
    dynamic; compiled to C variables, which the interpreter's evaluator
    cannot see, so anything that reaches it (a macro) needs a bridge.

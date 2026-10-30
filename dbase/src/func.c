@@ -373,6 +373,10 @@ static int fn_at(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
 
 static int fn_len(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx;
+    if (nargs >= 1 && args[0].type == VAL_ARRAY && args[0].array) {   /* Clipper: an array's length */
+        *result = val_num((double)args[0].array->len);
+        return 0;
+    }
     if (nargs < 1 || args[0].type != VAL_CHAR) {
         ctx->error = "LEN requires (string)";
         return -1;
@@ -1726,175 +1730,225 @@ static int val_compare(const value_t *a, const value_t *b) {
     return (int)a->type - (int)b->type;
 }
 
-/* ---- Array functions ---- */
+/* ---- Array functions (Clipper's arrays: one dimension, nested) ---- */
 
+static array_t *arg_array(expr_ctx_t *ctx, value_t *args, int nargs, int need, const char *err) {
+    if (nargs < need || args[0].type != VAL_ARRAY || !args[0].array) {
+        ctx->error = err;
+        return NULL;
+    }
+    return args[0].array;
+}
+
+static int num_arg(value_t *args, int nargs, int i, int dflt) {
+    return (i < nargs && args[i].type == VAL_NUM) ? (int)args[i].num : dflt;
+}
+
+/* ALEN(a [, dim]): dBASE IV's -- dim 1 the rows, 2 the columns of a
+ * DECLAREd table, none the elements of both */
 static int fn_alen(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    if (nargs < 1 || args[0].type != VAL_ARRAY || !args[0].array) {
-        ctx->error = "ALEN requires (array[,dim])";
-        return -1;
-    }
-    {
-        array_t *arr = args[0].array;
-        int dim = (nargs >= 2 && args[1].type == VAL_NUM) ? (int)args[1].num : 0;
-        if (dim == 1)
-            *result = val_num((double)arr->rows);
-        else if (dim == 2)
-            *result = val_num((double)arr->cols);
-        else
-            *result = val_num((double)(arr->rows * (arr->cols > 0 ? arr->cols : 1)));
-    }
+    array_t *a = arg_array(ctx, args, nargs, 1, "ALEN requires (array[,dim])");
+    int dim, cols;
+    if (!a) return -1;
+    dim = num_arg(args, nargs, 1, 0);
+    cols = (a->len > 0 && a->el[0].type == VAL_ARRAY && a->el[0].array) ? a->el[0].array->len : 0;
+    if (dim == 1) *result = val_num((double)a->len);
+    else if (dim == 2) *result = val_num((double)cols);
+    else *result = val_num((double)(a->len * (cols > 0 ? cols : 1)));
     return 0;
 }
 
+/* ASCAN(a, value [, start [, count]]): the first matching element's index */
 static int fn_ascan(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    if (nargs < 2 || args[0].type != VAL_ARRAY || !args[0].array) {
-        ctx->error = "ASCAN requires (array, value)";
-        return -1;
-    }
-    {
-        array_t *arr = args[0].array;
-        int total = arr->rows * (arr->cols > 0 ? arr->cols : 1);
-        int i;
-        for (i = 0; i < total; i++) {
-            if (val_compare(&arr->elements[i], &args[1]) == 0) {
-                *result = val_num((double)(i + 1));
-                return 0;
-            }
+    array_t *a = arg_array(ctx, args, nargs, 2, "ASCAN requires (array, value)");
+    int i, start, count;
+    if (!a) return -1;
+    start = num_arg(args, nargs, 2, 1);
+    count = num_arg(args, nargs, 3, a->len - start + 1);
+    for (i = start - 1; i >= 0 && i < a->len && i < start - 1 + count; i++) {
+        if (val_compare(&a->el[i], &args[1]) == 0) {
+            *result = val_num((double)(i + 1));
+            return 0;
         }
-        *result = val_num(0);
     }
+    *result = val_num(0);
     return 0;
 }
 
+/* ASORT(a [, start [, count]]): in place, ascending; returns the array */
 static int fn_asort(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    if (nargs < 1 || args[0].type != VAL_ARRAY || !args[0].array) {
-        ctx->error = "ASORT requires (array)";
-        return -1;
-    }
-    {
-        array_t *arr = args[0].array;
-        int total = arr->rows * (arr->cols > 0 ? arr->cols : 1);
-        int i, j;
-        /* Insertion sort — stable, in-place */
-        for (i = 1; i < total; i++) {
-            value_t tmp = arr->elements[i];
-            j = i - 1;
-            while (j >= 0 && val_compare(&arr->elements[j], &tmp) > 0) {
-                arr->elements[j + 1] = arr->elements[j];
-                j--;
-            }
-            arr->elements[j + 1] = tmp;
+    array_t *a = arg_array(ctx, args, nargs, 1, "ASORT requires (array)");
+    int i, j, start, end;
+    if (!a) return -1;
+    start = num_arg(args, nargs, 1, 1) - 1;
+    end = start + num_arg(args, nargs, 2, a->len - start);
+    if (start < 0) start = 0;
+    if (end > a->len) end = a->len;
+    for (i = start + 1; i < end; i++) {   /* insertion sort: stable */
+        value_t tmp = a->el[i];
+        j = i - 1;
+        while (j >= start && val_compare(&a->el[j], &tmp) > 0) {
+            a->el[j + 1] = a->el[j];
+            j--;
         }
-        *result = val_num((double)total);
+        a->el[j + 1] = tmp;
     }
+    *result = args[0];
     return 0;
 }
 
+/* ACOPY(src, dst [, start [, count [, dstart]]]) */
 static int fn_acopy(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    if (nargs < 2 || args[0].type != VAL_ARRAY || !args[0].array ||
-        args[1].type != VAL_ARRAY || !args[1].array) {
+    array_t *src = arg_array(ctx, args, nargs, 2, "ACOPY requires (source, dest[, start, count, dstart])");
+    array_t *dst;
+    int start, count, dstart, i;
+    if (!src) return -1;
+    if (args[1].type != VAL_ARRAY || !args[1].array) {
         ctx->error = "ACOPY requires (source, dest[, start, count, dstart])";
         return -1;
     }
-    {
-        array_t *src = args[0].array;
-        array_t *dst = args[1].array;
-        int src_total = src->rows * (src->cols > 0 ? src->cols : 1);
-        int dst_total = dst->rows * (dst->cols > 0 ? dst->cols : 1);
-        int start  = (nargs >= 3 && args[2].type == VAL_NUM) ? (int)args[2].num : 1;
-        int count  = (nargs >= 4 && args[3].type == VAL_NUM) ? (int)args[3].num : (src_total - start + 1);
-        int dstart = (nargs >= 5 && args[4].type == VAL_NUM) ? (int)args[4].num : 1;
-        int copied = 0, i;
-
-        for (i = 0; i < count; i++) {
-            int si = start - 1 + i;
-            int di = dstart - 1 + i;
-            if (si < 0 || si >= src_total) break;
-            if (di < 0 || di >= dst_total) break;
-            dst->elements[di] = src->elements[si];
-            copied++;
-        }
-        *result = val_num((double)copied);
+    dst = args[1].array;
+    start = num_arg(args, nargs, 2, 1);
+    count = num_arg(args, nargs, 3, src->len - start + 1);
+    dstart = num_arg(args, nargs, 4, 1);
+    for (i = 0; i < count; i++) {
+        int si = start - 1 + i, di = dstart - 1 + i;
+        if (si < 0 || si >= src->len || di < 0 || di >= dst->len) break;
+        dst->el[di] = src->el[si];
     }
+    *result = args[1];
     return 0;
 }
 
+/* AINS(a, n) / ADEL(a, n): shift, the vacated element NIL; return the array */
 static int fn_ains(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    if (nargs < 2 || args[0].type != VAL_ARRAY || !args[0].array ||
-        args[1].type != VAL_NUM) {
-        ctx->error = "AINS requires (array, element)";
-        return -1;
-    }
-    {
-        array_t *arr = args[0].array;
-        int total = arr->rows * (arr->cols > 0 ? arr->cols : 1);
-        int n = (int)args[1].num - 1;  /* 0-based */
-        int i;
-        if (n < 0 || n >= total) {
-            ctx->error = "AINS element out of range";
-            return -1;
-        }
-        for (i = total - 1; i > n; i--)
-            arr->elements[i] = arr->elements[i - 1];
-        arr->elements[n] = val_str("");
-        *result = val_logic(1);
-    }
+    array_t *a = arg_array(ctx, args, nargs, 2, "AINS requires (array, element)");
+    int n, i;
+    if (!a) return -1;
+    n = num_arg(args, nargs, 1, 0) - 1;
+    if (n < 0 || n >= a->len) { ctx->error = "AINS element out of range"; return -1; }
+    for (i = a->len - 1; i > n; i--) a->el[i] = a->el[i - 1];
+    a->el[n] = val_nil();
+    *result = args[0];
     return 0;
 }
 
 static int fn_adel(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    if (nargs < 2 || args[0].type != VAL_ARRAY || !args[0].array ||
-        args[1].type != VAL_NUM) {
-        ctx->error = "ADEL requires (array, element)";
-        return -1;
-    }
-    {
-        array_t *arr = args[0].array;
-        int total = arr->rows * (arr->cols > 0 ? arr->cols : 1);
-        int n = (int)args[1].num - 1;  /* 0-based */
-        int i;
-        if (n < 0 || n >= total) {
-            ctx->error = "ADEL element out of range";
-            return -1;
-        }
-        for (i = n; i < total - 1; i++)
-            arr->elements[i] = arr->elements[i + 1];
-        arr->elements[total - 1] = val_str("");
-        *result = val_logic(1);
-    }
+    array_t *a = arg_array(ctx, args, nargs, 2, "ADEL requires (array, element)");
+    int n, i;
+    if (!a) return -1;
+    n = num_arg(args, nargs, 1, 0) - 1;
+    if (n < 0 || n >= a->len) { ctx->error = "ADEL element out of range"; return -1; }
+    for (i = n; i < a->len - 1; i++) a->el[i] = a->el[i + 1];
+    a->el[a->len - 1] = val_nil();
+    *result = args[0];
     return 0;
 }
 
-static int fn_afields(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    if (nargs < 1 || args[0].type != VAL_ARRAY || !args[0].array) {
-        ctx->error = "AFIELDS requires (array)";
+/* ARRAY(n [, m]): n NIL elements, or n arrays of m */
+static int fn_array(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    array_t *a;
+    if (nargs < 1 || args[0].type != VAL_NUM || args[0].num < 0) {
+        ctx->error = "ARRAY requires (dimension [, dimension])";
         return -1;
     }
+    a = array_new_dims((int)args[0].num, num_arg(args, nargs, 1, 0));
+    if (!a) { ctx->error = "Out of memory"; return -1; }
+    *result = val_array(a);
+    return 0;
+}
+
+/* AADD(a, value): appended; returns the value */
+static int fn_aadd(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    array_t *a = arg_array(ctx, args, nargs, 2, "AADD requires (array, value)");
+    if (!a) return -1;
+    if (array_add(a, &args[1]) != 0) { ctx->error = "Out of memory"; return -1; }
+    *result = args[1];
+    return 0;
+}
+
+/* ASIZE(a, n): grown (NIL) or shrunk; returns the array */
+static int fn_asize(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    array_t *a = arg_array(ctx, args, nargs, 2, "ASIZE requires (array, length)");
+    if (!a) return -1;
+    if (array_resize(a, num_arg(args, nargs, 1, a->len)) != 0) { ctx->error = "Out of memory"; return -1; }
+    *result = args[0];
+    return 0;
+}
+
+/* ATAIL(a): the last element (NIL when empty) */
+static int fn_atail(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    array_t *a = arg_array(ctx, args, nargs, 1, "ATAIL requires (array)");
+    if (!a) return -1;
+    *result = a->len > 0 ? a->el[a->len - 1] : val_nil();
+    return 0;
+}
+
+/* AFILL(a, value [, start [, count]]): returns the array */
+static int fn_afill(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    array_t *a = arg_array(ctx, args, nargs, 2, "AFILL requires (array, value)");
+    int i, start, count;
+    if (!a) return -1;
+    start = num_arg(args, nargs, 2, 1);
+    count = num_arg(args, nargs, 3, a->len - start + 1);
+    for (i = start - 1; i >= 0 && i < a->len && i < start - 1 + count; i++) a->el[i] = args[1];
+    *result = args[0];
+    return 0;
+}
+
+/* ACLONE(a): a copy, nested arrays copied too */
+static array_t *clone_array(const array_t *a) {
+    array_t *c = array_new(a->len);
+    int i;
+    if (!c) return NULL;
+    for (i = 0; i < a->len; i++) {
+        if (a->el[i].type == VAL_ARRAY && a->el[i].array) {
+            array_t *sub = clone_array(a->el[i].array);
+            if (!sub) return NULL;
+            c->el[i] = val_array(sub);
+        } else {
+            c->el[i] = a->el[i];
+        }
+    }
+    return c;
+}
+
+static int fn_aclone(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    array_t *a = arg_array(ctx, args, nargs, 1, "ACLONE requires (array)");
+    array_t *c;
+    if (!a) return -1;
+    c = clone_array(a);
+    if (!c) { ctx->error = "Out of memory"; return -1; }
+    *result = val_array(c);
+    return 0;
+}
+
+/* AFIELDS(a): field names into a 1-D array; a DECLAREd table [n,4] gets
+ * name, type, length, decimals per row */
+static int fn_afields(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    array_t *a = arg_array(ctx, args, nargs, 1, "AFIELDS requires (array)");
+    int fc, i;
+    if (!a) return -1;
     if (!ctx->db || !dbf_is_open(ctx->db)) {
         *result = val_num(0);
         return 0;
     }
-    {
-        array_t *arr = args[0].array;
-        int fc = ctx->db->field_count;
-        int total = arr->rows * (arr->cols > 0 ? arr->cols : 1);
-        int is_2d = (arr->cols >= 4);
-        int i;
-        for (i = 0; i < fc && i < (is_2d ? arr->rows : total); i++) {
-            if (is_2d) {
-                arr->elements[i * arr->cols + 0] = val_str(ctx->db->fields[i].name);
-                {
-                    char t[2]; t[0] = ctx->db->fields[i].type; t[1] = '\0';
-                    arr->elements[i * arr->cols + 1] = val_str(t);
-                }
-                arr->elements[i * arr->cols + 2] = val_num((double)ctx->db->fields[i].length);
-                arr->elements[i * arr->cols + 3] = val_num((double)ctx->db->fields[i].decimals);
-            } else {
-                arr->elements[i] = val_str(ctx->db->fields[i].name);
-            }
+    fc = ctx->db->field_count;
+    for (i = 0; i < fc && i < a->len; i++) {
+        const dbf_field_t *f = &ctx->db->fields[i];
+        if (a->el[i].type == VAL_ARRAY && a->el[i].array && a->el[i].array->len >= 4) {
+            array_t *row = a->el[i].array;
+            char t[2];
+            t[0] = f->type; t[1] = '\0';
+            row->el[0] = val_str(f->name);
+            row->el[1] = val_str(t);
+            row->el[2] = val_num((double)f->length);
+            row->el[3] = val_num((double)f->decimals);
+        } else {
+            a->el[i] = val_str(f->name);
         }
-        *result = val_num((double)fc);
     }
+    *result = val_num((double)fc);
     return 0;
 }
 
@@ -2229,31 +2283,26 @@ static int fn_set(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
 
 /* ---- Tier 3: DBSTRUCT() ---- */
 static int fn_dbstruct(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    array_t *a;
+    int fc, i;
     (void)args; (void)nargs;
     if (!ctx->db || !dbf_is_open(ctx->db)) {
         *result = val_num(0);
         return 0;
     }
-    {
-        int fc = ctx->db->field_count;
-        int i;
-        array_t *arr = (array_t *)calloc(1, sizeof(array_t));
-        if (!arr) { *result = val_num(0); return 0; }
-        arr->rows = fc;
-        arr->cols = 4;
-        arr->elements = (value_t *)calloc(fc * 4, sizeof(value_t));
-        if (!arr->elements) { free(arr); *result = val_num(0); return 0; }
-        for (i = 0; i < fc; i++) {
-            char t[2];
-            arr->elements[i * 4 + 0] = val_str(ctx->db->fields[i].name);
-            t[0] = ctx->db->fields[i].type; t[1] = '\0';
-            arr->elements[i * 4 + 1] = val_str(t);
-            arr->elements[i * 4 + 2] = val_num((double)ctx->db->fields[i].length);
-            arr->elements[i * 4 + 3] = val_num((double)ctx->db->fields[i].decimals);
-        }
-        result->type = VAL_ARRAY;
-        result->array = arr;
+    fc = ctx->db->field_count;
+    a = array_new_dims(fc, 4);
+    if (!a) { *result = val_num(0); return 0; }
+    for (i = 0; i < fc; i++) {
+        array_t *row = a->el[i].array;
+        char t[2];
+        t[0] = ctx->db->fields[i].type; t[1] = '\0';
+        row->el[0] = val_str(ctx->db->fields[i].name);
+        row->el[1] = val_str(t);
+        row->el[2] = val_num((double)ctx->db->fields[i].length);
+        row->el[3] = val_num((double)ctx->db->fields[i].decimals);
     }
+    *result = val_array(a);
     return 0;
 }
 
@@ -2392,6 +2441,8 @@ static const func_entry_t func_table[] = {
     { "SEEK",      fn_seek_func },
     /* Tier 2: Array functions */
     { "ALEN",      fn_alen },
+    { "ARRAY",     fn_array },  { "AADD", fn_aadd },   { "ASIZE", fn_asize },
+    { "ATAIL",     fn_atail },  { "AFILL", fn_afill }, { "ACLONE", fn_aclone },
     { "ASCAN",     fn_ascan },
     { "ASORT",     fn_asort },
     { "ACOPY",     fn_acopy },

@@ -268,6 +268,9 @@ static int gen_expr(sb_t *b, int *ntmp, ast_node_t *node);
  * element indexes (already computed) when it is an element */
 static void gen_target_read(sb_t *b, ast_node_t *t, int r, int c, int cur) {
     switch (t->type) {
+    case AST_INDEX:
+        sb_printf(b, "e = e || ast_eval_index(c, &t%d, &t%d, &t%d); ", r, c, cur);
+        break;
     case AST_MEMVAR:
         sb_printf(b, "e = e || ast_eval_name(c, ");
         sb_cstr(b, t->name);
@@ -296,6 +299,9 @@ static void gen_target_read(sb_t *b, ast_node_t *t, int r, int c, int cur) {
 
 static void gen_target_store(sb_t *b, ast_node_t *t, int r, int c, int val) {
     switch (t->type) {
+    case AST_INDEX:
+        sb_printf(b, "e = e || ast_store_index(c, &t%d, &t%d, &t%d); ", r, c, val);
+        break;
     case AST_MEMVAR:
         sb_printf(b, "e = e || ast_store_name(c, ");
         sb_cstr(b, t->name);
@@ -411,6 +417,29 @@ static int gen_expr(sb_t *b, int *ntmp, ast_node_t *node) {
         sb_printf(b, "e = e || ast_eval_binop(c, %s, &t%d, &t%d, &t%d); ",
                   op_name(node->binop.op), l, r, t);
         return t;
+    case AST_ARRAY_LIT:
+        if (node->list.n > 0) {
+            int vals[4096];
+            int k;
+            for (k = 0; k < node->list.n && k < 4096; k++) {
+                vals[k] = gen_expr(b, ntmp, node->list.elems[k]);
+            }
+            a = (*ntmp)++;
+            sb_printf(g_decl, "value_t a%d[%d]; ", a, node->list.n);
+            sb_printf(b, "{ value_t *av = a%d; ", a);
+            for (k = 0; k < node->list.n; k++) {
+                sb_printf(b, "av[%d] = t%d; ", k, vals[k]);
+            }
+            sb_printf(b, "} e = e || ast_make_array(c, a%d, %d, &t%d); ", a, node->list.n, t);
+        } else {
+            sb_printf(b, "e = e || ast_make_array(c, NULL, 0, &t%d); ", t);
+        }
+        return t;
+    case AST_INDEX:
+        l = gen_expr(b, ntmp, node->index.base);
+        r = gen_expr(b, ntmp, node->index.index);
+        sb_printf(b, "e = e || ast_eval_index(c, &t%d, &t%d, &t%d); ", l, r, t);
+        return t;
     case AST_ASSIGN:
     case AST_INCDEC: {
         /* as ast.c's eval_store: indexes once, then the current value
@@ -420,6 +449,9 @@ static int gen_expr(sb_t *b, int *ntmp, ast_node_t *node) {
         if (tg->type == AST_ARRAY_ACCESS) {
             ri = gen_expr(b, ntmp, tg->array.index1);
             if (tg->array.index2) ci = gen_expr(b, ntmp, tg->array.index2);
+        } else if (tg->type == AST_INDEX) {   /* ri: the array, ci: the index */
+            ri = gen_expr(b, ntmp, tg->index.base);
+            ci = gen_expr(b, ntmp, tg->index.index);
         }
         if (node->type == AST_ASSIGN && node->assign.op == OP_NONE) {
             nv = gen_expr(b, ntmp, node->assign.value);
@@ -759,14 +791,14 @@ static int emit_decl(emit_t *e, const char *kw, const char *list) {
             items[n][k++] = *p;
         }
     }
-    for (i = 0; i < n; i++) {   /* only names and := initializers here */
+    for (i = 0; i < n; i++) {   /* names, name[dims], := initializers */
         const char *q = skip_ws(items[i]);
         if (!isalpha((unsigned char)*q) && *q != '_') {
             return 0;
         }
         while (isalnum((unsigned char)*q) || *q == '_') q++;
         q = skip_ws(q);
-        if (*q && !(q[0] == ':' && q[1] == '=')) {
+        if (*q && !(q[0] == ':' && q[1] == '=') && q[0] != '[') {
             return 0;
         }
     }
@@ -779,6 +811,20 @@ static int emit_decl(emit_t *e, const char *kw, const char *list) {
         }
         name[m] = '\0';
         q = skip_ws(q);
+        if (q[0] == '[') {   /* name[d1, d2]: name := ARRAY(d1, d2) */
+            const char *close = strrchr(q, ']');
+            char *r;
+            if (!close) {
+                return 0;
+            }
+            {
+                char tmp[MAX_LINE];
+                snprintf(tmp, sizeof(tmp), ":= ARRAY(%.*s)", (int)(close - q - 1), q + 1);
+                r = items[i] + (q - items[i]);
+                snprintf(r, (size_t)(MAX_LINE - (r - items[i])), "%s", tmp);
+                q = r;
+            }
+        }
         emit_indent(e->out, e->depth);
         if (!strcmp(kw, "LOCAL")) {
             fprintf(e->out, e->in_fn ? "clip_local(&scope, " : "clip_local(NULL, ");
@@ -1346,7 +1392,7 @@ static int emit_stmt(emit_t *e, const char *p) {
     }
     if (is_kw(p, "LOCAL") || is_kw(p, "PRIVATE") || is_kw(p, "PUBLIC")) {
         const char *kw = is_kw(p, "LOCAL") ? "LOCAL" : is_kw(p, "PRIVATE") ? "PRIVATE" : "PUBLIC";
-        if (strstr(p, ":=")) {
+        if (strstr(p, ":=") || strchr(p, '[')) {
             int rc = emit_decl(e, kw, skip_ws(p + strlen(kw)));
             if (rc != 0) {
                 return rc < 0 ? -1 : 0;

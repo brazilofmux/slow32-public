@@ -2548,6 +2548,34 @@ static void prog_declare(lexer_t *l, int kind) {
         }
 
         lex_next(l);
+        if (l->current.type == TOK_LBRACKET) {   /* name[d1, d2]: an ARRAY(d1, d2) */
+            const char *open = l->token_start, *q = open + 1;
+            const char *err = NULL;
+            char expr[MAX_LINE_LEN];
+            int depth = 1;
+            ast_node_t *n;
+            value_t v;
+            while (*q && depth > 0) {
+                if (*q == '[') depth++;
+                else if (*q == ']') depth--;
+                if (depth > 0) q++;
+            }
+            if (*q != ']') {
+                prog_error(ERR_SYNTAX, "Missing ]");
+                return;
+            }
+            snprintf(expr, sizeof(expr), "ARRAY(%.*s)", (int)(q - open - 1), open + 1);
+            n = ast_compile(expr, store, &err);
+            if (!n || ast_eval(n, cmd_get_expr_ctx(), &v) != 0) {
+                ast_free(n);
+                prog_error(ERR_SYNTAX, cmd_get_expr_ctx()->error ? cmd_get_expr_ctx()->error : "Invalid array dimensions");
+                return;
+            }
+            ast_free(n);
+            if (kind == 'L' && framed) memvar_set_local(store, name, &v);
+            else memvar_set(store, name, &v);
+            lexer_init_ext(l, q + 1, store);
+        }
         if (l->current.type == TOK_ASSIGN) {
             const char *pp = l->token_start + 2;   /* past := */
             const char *err = NULL;

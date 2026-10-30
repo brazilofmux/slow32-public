@@ -150,6 +150,15 @@ void ast_free(ast_node_t *node) {
     case AST_INCDEC:
         ast_free(node->incdec.target);
         break;
+    case AST_ARRAY_LIT:
+        for (i = 0; i < node->list.n; i++)
+            ast_free(node->list.elems[i]);
+        free(node->list.elems);
+        break;
+    case AST_INDEX:
+        ast_free(node->index.base);
+        ast_free(node->index.index);
+        break;
     }
     free(node);
 }
@@ -172,7 +181,35 @@ static ast_node_t *ast_parse_primary(lexer_t *l, memvar_store_t *store, const ch
 
 static int is_lvalue(const ast_node_t *n) {
     return n && (n->type == AST_MEMVAR || n->type == AST_ARRAY_ACCESS ||
-                 n->type == AST_ALIAS_FIELD || n->type == AST_FIELD);
+                 n->type == AST_ALIAS_FIELD || n->type == AST_FIELD ||
+                 n->type == AST_INDEX);
+}
+
+/* primary [ i ] [ i, j ] ...: x[i,j] is x[i][j] */
+static ast_node_t *parse_postfix_index(lexer_t *l, memvar_store_t *store, const char **error,
+                                       ast_node_t *base) {
+    while (base && lex_peek(l) == TOK_LBRACKET) {
+        lex_next(l);
+        for (;;) {
+            ast_node_t *idx = ast_parse_expr(l, store, error);
+            ast_node_t *n;
+            if (!idx) { ast_free(base); return NULL; }
+            n = node_alloc(AST_INDEX);
+            if (!n) { ast_free(base); ast_free(idx); *error = "Out of memory"; return NULL; }
+            n->index.base = base;
+            n->index.index = idx;
+            base = n;
+            if (lex_peek(l) != TOK_COMMA) break;
+            lex_next(l);
+        }
+        if (lex_peek(l) != TOK_RBRACKET) {
+            *error = "Missing ]";
+            ast_free(base);
+            return NULL;
+        }
+        lex_next(l);
+    }
+    return base;
 }
 
 /* expr → or_expr [ (:= | += | -= | *= | /= | %= | ^=) expr ]  (right associative) */
@@ -383,13 +420,13 @@ static ast_node_t *ast_parse_unary(lexer_t *l, memvar_store_t *store, const char
     if (op == TOK_INC || op == TOK_DEC) {   /* prefix ++ / -- */
         ast_node_t *target;
         lex_next(l);
-        target = ast_parse_primary(l, store, error);
+        target = parse_postfix_index(l, store, error, ast_parse_primary(l, store, error));
         if (!target) return NULL;
         return node_incdec(op == TOK_INC ? 1 : -1, 1, target, error);
     }
 
     {
-        ast_node_t *n = ast_parse_primary(l, store, error);
+        ast_node_t *n = parse_postfix_index(l, store, error, ast_parse_primary(l, store, error));
         if (n && (lex_peek(l) == TOK_INC || lex_peek(l) == TOK_DEC) && is_lvalue(n)) {
             int delta = lex_peek(l) == TOK_INC ? 1 : -1;   /* postfix */
             lex_next(l);
@@ -420,6 +457,46 @@ static ast_node_t *ast_parse_primary(lexer_t *l, memvar_store_t *store, const ch
     case TOK_DATE:
         lex_next(l);
         return node_literal(val_date(t.date_val));
+
+    case TOK_LBRACE: {   /* { a, b, ... } */
+        ast_node_t **elems = NULL;
+        int n = 0, cap = 0;
+        ast_node_t *node;
+        lex_next(l);
+        while (lex_peek(l) != TOK_RBRACE) {
+            ast_node_t *e = ast_parse_expr(l, store, error);
+            if (!e || n >= 4096) {
+                int k;
+                for (k = 0; k < n; k++) ast_free(elems[k]);
+                free(elems);
+                ast_free(e);
+                if (!*error) *error = "Too many array elements";
+                return NULL;
+            }
+            if (n == cap) {
+                ast_node_t **g;
+                cap = cap ? cap * 2 : 8;
+                g = realloc(elems, (size_t)cap * sizeof(*elems));
+                if (!g) { ast_free(e); *error = "Out of memory"; return NULL; }
+                elems = g;
+            }
+            elems[n++] = e;
+            if (lex_peek(l) == TOK_COMMA) { lex_next(l); continue; }
+            if (lex_peek(l) != TOK_RBRACE) {
+                int k;
+                for (k = 0; k < n; k++) ast_free(elems[k]);
+                free(elems);
+                *error = "Missing }";
+                return NULL;
+            }
+        }
+        lex_next(l);
+        node = node_alloc(AST_ARRAY_LIT);
+        if (!node) { *error = "Out of memory"; return NULL; }
+        node->list.elems = elems;
+        node->list.n = n;
+        return node;
+    }
 
     case TOK_MACRO:
         *error = "Expected identifier after &";
@@ -657,7 +734,7 @@ int ast_eval_alias_field(expr_ctx_t *ctx, const char *alias, const char *field, 
 
 int ast_eval_elem(expr_ctx_t *ctx, const char *name, const value_t *row_v,
                   const value_t *col_v, value_t *result) {
-    int row, col = 1, res;
+    int row, col = -1, res;   /* col -1: no second index */
     if (row_v->type != VAL_NUM) { ctx->error = "Array index must be numeric"; return -1; }
     row = (int)row_v->num;
     if (col_v) {
@@ -889,7 +966,7 @@ int ast_store_name(expr_ctx_t *ctx, const char *name, const value_t *val) {
 
 int ast_store_elem(expr_ctx_t *ctx, const char *name, const value_t *row_v,
                    const value_t *col_v, const value_t *val) {
-    int row, col = 1, res;
+    int row, col = -1, res;   /* col -1: no second index */
     if (row_v->type != VAL_NUM || (col_v && col_v->type != VAL_NUM)) {
         ctx->error = "Array index must be numeric";
         return -1;
@@ -914,9 +991,42 @@ int ast_store_alias_field(expr_ctx_t *ctx, const char *alias, const char *field,
     return 0;
 }
 
+int ast_make_array(expr_ctx_t *ctx, const value_t *vals, int n, value_t *result) {
+    array_t *a = array_new(n);
+    int i;
+    if (!a) { ctx->error = "Out of memory"; return -1; }
+    for (i = 0; i < n; i++) a->el[i] = vals[i];
+    *result = val_array(a);
+    return 0;
+}
+
+static value_t *index_ref(expr_ctx_t *ctx, const value_t *base, const value_t *index) {
+    int i;
+    if (base->type != VAL_ARRAY || !base->array) { ctx->error = "Value is not an array"; return NULL; }
+    if (index->type != VAL_NUM) { ctx->error = "Array index must be numeric"; return NULL; }
+    i = (int)index->num;
+    if (i < 1 || i > base->array->len) { ctx->error = "Array index out of bounds"; return NULL; }
+    return &base->array->el[i - 1];
+}
+
+int ast_eval_index(expr_ctx_t *ctx, const value_t *base, const value_t *index, value_t *result) {
+    value_t *p = index_ref(ctx, base, index);
+    if (!p) return -1;
+    *result = *p;
+    return 0;
+}
+
+int ast_store_index(expr_ctx_t *ctx, const value_t *base, const value_t *index, const value_t *val) {
+    value_t *p = index_ref(ctx, base, index);
+    if (!p) return -1;
+    *p = *val;
+    return 0;
+}
+
 static int store_to(ast_node_t *t, expr_ctx_t *ctx, const value_t *row, const value_t *col,
                     const value_t *val) {
     switch (t->type) {
+    case AST_INDEX:        return ast_store_index(ctx, row, col, val);
     case AST_MEMVAR:       return ast_store_name(ctx, t->name, val);
     case AST_FIELD:        return ast_store_alias_field(ctx, "FIELD", t->name, val);
     case AST_ALIAS_FIELD:  return ast_store_alias_field(ctx, t->alias_field.alias, t->alias_field.field, val);
@@ -936,12 +1046,18 @@ static int eval_store(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
             if (ast_eval(t->array.index2, ctx, &col) != 0) return -1;
             has_col = 1;
         }
+    } else if (t->type == AST_INDEX) {   /* row: the array, col: the index */
+        if (ast_eval(t->index.base, ctx, &row) != 0) return -1;
+        if (ast_eval(t->index.index, ctx, &col) != 0) return -1;
+        has_col = 1;
     }
     if (node->type == AST_ASSIGN && node->assign.op == OP_NONE) {
         if (ast_eval(node->assign.value, ctx, &nv) != 0) return -1;
     } else {
         if (t->type == AST_ARRAY_ACCESS) {
             if (ast_eval_elem(ctx, t->array.name, &row, has_col ? &col : NULL, &cur) != 0) return -1;
+        } else if (t->type == AST_INDEX) {
+            if (ast_eval_index(ctx, &row, &col, &cur) != 0) return -1;
         } else if (ast_eval(t, ctx, &cur) != 0) return -1;
         if (node->type == AST_ASSIGN) {
             if (ast_eval(node->assign.value, ctx, &rhs) != 0) return -1;
@@ -1029,6 +1145,28 @@ int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
     case AST_ASSIGN:
     case AST_INCDEC:
         return eval_store(node, ctx, result);
+
+    case AST_ARRAY_LIT: {
+        value_t *vals = NULL;
+        int i, rc;
+        if (node->list.n > 0) {
+            vals = malloc((size_t)node->list.n * sizeof(value_t));
+            if (!vals) { ctx->error = "Out of memory"; return -1; }
+        }
+        for (i = 0; i < node->list.n; i++) {
+            if (ast_eval(node->list.elems[i], ctx, &vals[i]) != 0) { free(vals); return -1; }
+        }
+        rc = ast_make_array(ctx, vals, node->list.n, result);
+        free(vals);
+        return rc;
+    }
+
+    case AST_INDEX: {
+        value_t base, idx;
+        if (ast_eval(node->index.base, ctx, &base) != 0) return -1;
+        if (ast_eval(node->index.index, ctx, &idx) != 0) return -1;
+        return ast_eval_index(ctx, &base, &idx, result);
+    }
 
     } /* end switch(node->type) */
 

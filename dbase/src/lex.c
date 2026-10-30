@@ -261,15 +261,33 @@ token_type_t lex_next(lexer_t *l) {
             buf[i++] = c;
         }
         if (c == '}') {
+            /* {MM/DD/YY} only when it is date-shaped: digits and
+             * separators; anything else is Clipper's { (an array, a
+             * code block) */
+            int k, digits = 0, seps = 0, other = 0;
+            char sep = 0;
             buf[i] = '\0';
-            t->date_val = date_from_mdy(buf);
-            t->type = TOK_DATE;
-            return t->type;
+            for (k = 0; k < i; k++) {
+                if (buf[k] >= '0' && buf[k] <= '9') digits++;
+                else if (buf[k] == '/' || buf[k] == '-' || buf[k] == '.') {
+                    if (sep && buf[k] != sep) other++;
+                    sep = buf[k];
+                    seps++;
+                }
+                else if (buf[k] != ' ') other++;
+            }
+            /* two like separators, as 10/29/26: {1.5} and {} are arrays */
+            if (seps == 2 && !other) {   /* {  /  /  } too: the blank date */
+                t->date_val = date_from_mdy(buf);
+                t->type = TOK_DATE;
+                return t->type;
+            }
         }
-        /* backtrack if not a proper date literal */
+        /* not a date literal: give the text back, { is a brace */
+        if (c != '\0') lex_unget_char(l, c);
         while (i > 0) lex_unget_char(l, buf[--i]);
-        lex_unget_char(l, c);
-        c = '{';
+        t->type = TOK_LBRACE;
+        return t->type;
     }
 
     /* Multi-character operators */
@@ -303,7 +321,7 @@ token_type_t lex_next(lexer_t *l) {
         case ')': t->type = TOK_RPAREN; break;
         case '[':
             /* After identifier/rparen/rbracket: array index. Otherwise: string literal. */
-            if (prev == TOK_IDENT || prev == TOK_RPAREN || prev == TOK_RBRACKET) {
+            if (prev == TOK_IDENT || prev == TOK_RPAREN || prev == TOK_RBRACKET || prev == TOK_RBRACE) {
                 t->type = TOK_LBRACKET;
             } else {
                 int i = 0;
@@ -321,6 +339,8 @@ token_type_t lex_next(lexer_t *l) {
         case '#': t->type = TOK_NE; break;
         case '$': t->type = TOK_SUBSTR; break;
         case '%': t->type = TOK_MOD; break;
+        case '}': t->type = TOK_RBRACE; break;
+        case '|': t->type = TOK_PIPE; break;
         case '&': t->type = TOK_MACRO; break;
         case '^': t->type = TOK_POWER; break;
         case '!': t->type = TOK_NOT; break;

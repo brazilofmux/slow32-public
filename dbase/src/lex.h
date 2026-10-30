@@ -55,6 +55,9 @@ typedef enum {
     TOK_INC,        /* ++ */
     TOK_DEC,        /* -- */
     TOK_MOD,        /* % */
+    TOK_LBRACE,     /* { : an array literal or a code block */
+    TOK_RBRACE,     /* } */
+    TOK_PIPE,       /* | */
 
     /* Macro */
     TOK_MACRO,      /* & */

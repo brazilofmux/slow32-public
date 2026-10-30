@@ -16,7 +16,9 @@ typedef enum {
     AST_UNOP,           /* OP child (negate, .NOT.) */
     AST_FUNC_CALL,      /* name(args...) */
     AST_ASSIGN,         /* target := value, target op= value */
-    AST_INCDEC          /* ++target, target++, --target, target-- */
+    AST_INCDEC,         /* ++target, target++, --target, target-- */
+    AST_ARRAY_LIT,      /* { a, b, ... } */
+    AST_INDEX           /* expr[i] -- on any value, so a[3][2] */
 } ast_type_t;
 
 typedef enum {
@@ -45,6 +47,9 @@ typedef struct ast_node {
                  struct ast_node *value; } assign;              /* AST_ASSIGN */
         struct { int delta; int prefix;
                  struct ast_node *target; } incdec;             /* AST_INCDEC */
+        struct { struct ast_node **elems; int n; } list;        /* AST_ARRAY_LIT */
+        struct { struct ast_node *base;
+                 struct ast_node *index; } index;               /* AST_INDEX */
     };
 } ast_node_t;
 
@@ -89,6 +94,11 @@ int ast_store_elem(expr_ctx_t *ctx, const char *name, const value_t *row,
                    const value_t *col, const value_t *val);
 int ast_store_alias_field(expr_ctx_t *ctx, const char *alias, const char *field,
                           const value_t *val);
+
+/* Arrays: a new array of n values; base[index] read and stored */
+int ast_make_array(expr_ctx_t *ctx, const value_t *vals, int n, value_t *result);
+int ast_eval_index(expr_ctx_t *ctx, const value_t *base, const value_t *index, value_t *result);
+int ast_store_index(expr_ctx_t *ctx, const value_t *base, const value_t *index, const value_t *val);
 
 /* Free AST recursively.  Safe to call with NULL. */
 void ast_free(ast_node_t *node);

@@ -7,11 +7,65 @@
 
 unsigned memvar_array_gen;
 
+/* Arrays are shared by reference and not collected: "freeing" one (its
+ * variable released or overwritten) leaves it to whoever else holds it.
+ * The generation still moves, as name(...) may now parse differently. */
 static void array_free(array_t *arr) {
+    (void)arr;
     memvar_array_gen++;
-    if (!arr) return;
-    if (arr->elements) free(arr->elements);
-    free(arr);
+}
+
+array_t *array_new(int len) {
+    array_t *a = calloc(1, sizeof(array_t));
+    int i;
+    if (!a) return NULL;
+    if (len < 0) len = 0;
+    a->cap = len > 4 ? len : 4;
+    a->el = calloc((size_t)a->cap, sizeof(value_t));
+    if (!a->el) { free(a); return NULL; }
+    for (i = 0; i < len; i++) a->el[i] = val_nil();
+    a->len = len;
+    return a;
+}
+
+array_t *array_new_dims(int rows, int cols) {
+    array_t *a = array_new(rows);
+    int i;
+    if (!a || cols <= 0) return a;
+    for (i = 0; i < rows; i++) {
+        array_t *row = array_new(cols);
+        if (!row) return NULL;
+        a->el[i] = val_array(row);
+    }
+    return a;
+}
+
+int array_resize(array_t *a, int len) {
+    int i;
+    if (len < 0) len = 0;
+    if (len > a->cap) {
+        int cap = a->cap * 2 > len ? a->cap * 2 : len;
+        value_t *n = realloc(a->el, (size_t)cap * sizeof(value_t));
+        if (!n) return -1;
+        a->el = n;
+        a->cap = cap;
+    }
+    for (i = a->len; i < len; i++) a->el[i] = val_nil();
+    a->len = len;
+    return 0;
+}
+
+int array_add(array_t *a, const value_t *v) {
+    if (array_resize(a, a->len + 1) != 0) return -1;
+    a->el[a->len - 1] = *v;
+    return 0;
+}
+
+value_t val_array(array_t *a) {
+    value_t v = val_nil();
+    v.type = VAL_ARRAY;
+    v.array = a;
+    return v;
 }
 
 /* FNV-1a over the upper-case name.  Slots are ~300 bytes, so a lookup that
@@ -233,65 +287,48 @@ int memvar_release_matching(memvar_store_t *store, const char *pattern, int like
 
 int memvar_declare_array(memvar_store_t *store, const char *name, int rows, int cols) {
     value_t v;
-    int i, size;
     array_t *arr;
 
-    if (cols < 1) cols = 1;
-    if (rows < 1 || rows > 8192 || cols > 8192) return -1;
-    size = rows * cols;
-    if (size > 8192) return -1;
-
-    arr = (array_t *)calloc(1, sizeof(array_t));
+    if (rows < 1 || rows > 65536 || cols > 65536) return -1;
+    arr = array_new_dims(rows, cols);
     if (!arr) return -1;
-    arr->rows = rows;
-    arr->cols = cols;
-    arr->elements = (value_t *)calloc(size, sizeof(value_t));
-    if (!arr->elements) { free(arr); return -1; }
-
-    for (i = 0; i < size; i++) arr->elements[i] = val_nil();
-
-    v.type = VAL_ARRAY;
-    v.array = arr;
+    v = val_array(arr);
     memvar_array_gen++;
-    if (memvar_set(store, name, &v) < 0) {
-        free(arr->elements);
-        free(arr);
-        return -1;
-    }
-    return 0;
+    return memvar_set(store, name, &v) < 0 ? -1 : 0;
+}
+
+/* The element row (1-based) of the array name, or with col >= 0, element
+ * col of that element (a nested array): name[row] / name[row,col]; col
+ * < 0 means no second index */
+static value_t *elem_ref(const memvar_store_t *store, const char *name, int row, int col, int *err) {
+    value_t mv;
+    array_t *arr;
+    *err = -1;
+    if (memvar_find(store, name, &mv) != 0 || mv.type != VAL_ARRAY || !mv.array) return NULL;
+    arr = mv.array;
+    *err = -2;
+    if (row < 1 || row > arr->len) return NULL;
+    if (col < 0) return &arr->el[row - 1];
+    if (arr->el[row - 1].type != VAL_ARRAY || !arr->el[row - 1].array) return NULL;
+    arr = arr->el[row - 1].array;
+    if (col < 1 || col > arr->len) return NULL;
+    return &arr->el[col - 1];
 }
 
 int memvar_set_elem(memvar_store_t *store, const char *name, int row, int col, const value_t *val) {
-    int i;
-    for (i = 0; i < MEMVAR_MAX; i++) {
-        if (store->vars[i].used && str_icmp(store->vars[i].name, name) == 0) {
-            if (store->vars[i].val.type != VAL_ARRAY) return -1;
-            array_t *arr = store->vars[i].val.array;
-            /* 1-based indexing in dBase */
-            int r = row - 1;
-            int c = col - 1;
-            if (r < 0 || r >= arr->rows || c < 0 || c >= arr->cols) return -2;
-            arr->elements[r * arr->cols + c] = *val;
-            return 0;
-        }
-    }
-    return -1;
+    int err;
+    value_t *p = elem_ref(store, name, row, col, &err);
+    if (!p) return err;
+    *p = *val;
+    return 0;
 }
 
 int memvar_get_elem(const memvar_store_t *store, const char *name, int row, int col, value_t *val) {
-    int i;
-    for (i = 0; i < MEMVAR_MAX; i++) {
-        if (store->vars[i].used && str_icmp(store->vars[i].name, name) == 0) {
-            if (store->vars[i].val.type != VAL_ARRAY) return -1;
-            array_t *arr = store->vars[i].val.array;
-            int r = row - 1;
-            int c = col - 1;
-            if (r < 0 || r >= arr->rows || c < 0 || c >= arr->cols) return -2;
-            *val = arr->elements[r * arr->cols + c];
-            return 0;
-        }
-    }
-    return -1;
+    int err;
+    value_t *p = elem_ref(store, name, row, col, &err);
+    if (!p) return err;
+    *val = *p;
+    return 0;
 }
 
 void memvar_display(const memvar_store_t *store) {
@@ -317,10 +354,10 @@ void memvar_display(const memvar_store_t *store) {
             break;
         case VAL_ARRAY: {
             array_t *arr = store->vars[i].val.array;
-            if (arr->cols > 1)
-                printf("%-10s  A  [%d,%d]\n", store->vars[i].name, arr->rows, arr->cols);
+            if (arr->len > 0 && arr->el[0].type == VAL_ARRAY && arr->el[0].array)
+                printf("%-10s  A  [%d,%d]\n", store->vars[i].name, arr->len, arr->el[0].array->len);
             else
-                printf("%-10s  A  [%d]\n", store->vars[i].name, arr->rows);
+                printf("%-10s  A  [%d]\n", store->vars[i].name, arr->len);
             break;
         }
         default:

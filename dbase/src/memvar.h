@@ -6,11 +6,21 @@
 #define MEMVAR_MAX     256
 #define MEMVAR_NAMELEN  11
 
+/* An array, as Clipper has them: one dimension, any values (arrays too, so
+ * a[i][j] and DECLARE a[r,c] nest), resizable, shared by reference --
+ * copying a value_t copies the reference.  Arrays live until the program
+ * ends (no collector yet: a known debt). */
 typedef struct array_s {
-    int rows;
-    int cols;
-    value_t *elements;
+    int len;
+    int cap;
+    value_t *el;
 } array_t;
+
+array_t *array_new(int len);                  /* len elements, NIL */
+array_t *array_new_dims(int rows, int cols);  /* cols > 0: rows arrays of cols */
+int  array_resize(array_t *a, int len);       /* grow with NIL, or shrink */
+int  array_add(array_t *a, const value_t *v);
+value_t val_array(array_t *a);
 
 typedef struct {
     char name[MEMVAR_NAMELEN];

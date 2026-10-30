@@ -109,6 +109,9 @@ value_t val_nil(void) {
 
 void val_to_string(const value_t *v, char *buf, int size) {
     switch (v->type) {
+    case VAL_ARRAY:
+        snprintf(buf, size, "{...}");   /* as Clipper shows an array */
+        return;
     case VAL_NUM: {
         /* Print integer if no fractional part, else strip trailing zeros */
         double n = v->num;
@@ -402,7 +405,7 @@ static int parse_primary(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
             token_type_t end_type = (l->current.type == TOK_LPAREN) ? TOK_RPAREN : TOK_RBRACKET;
             const char *next_p = l->token_start + 1; /* skip [ or ( */
             value_t row_v, col_v;
-            int row = 0, col = 1;
+            int row = 0, col = -1;   /* col -1: no second index */
 
             if (expr_eval(ctx, &next_p, &row_v) != 0) return -1;
             if (row_v.type != VAL_NUM) { ctx->error = "Array index must be numeric"; return -1; }

@@ -2679,17 +2679,14 @@ static void cmd_store(dbf_t *db, lexer_t *l) {
     if (memvar_find(&memvar_store, name, &mv) == 0 && mv.type == VAL_ARRAY)
         is_array = 1;
 
-    if (is_array && tmp.current.type != TOK_LPAREN && tmp.current.type != TOK_LBRACKET) {
-        prog_error(ERR_SYNTAX, "Array assignment requires index");
-        return;
-    }
-
+    /* STORE x TO arr replaces the array, as Clipper's assignment does
+     * (dBASE IV refused it) */
     if ((is_array && (tmp.current.type == TOK_LPAREN || tmp.current.type == TOK_LBRACKET)) ||
         (tmp.current.type == TOK_LBRACKET)) {
         token_type_t end_type = (tmp.current.type == TOK_LPAREN) ? TOK_RPAREN : TOK_RBRACKET;
         const char *next_p = tmp.token_start + 1; /* skip [ or ( */
         value_t row_v, col_v;
-        int row = 0, col = 1;
+        int row = 0, col = -1;   /* col -1: no second index */
         if (expr_eval(&expr_ctx, &next_p, &row_v) == 0 && row_v.type == VAL_NUM) {
             row = (int)row_v.num;
             lexer_init_ext(&tmp, next_p, expr_ctx.vars);
@@ -5430,7 +5427,7 @@ static void h_declare(dbf_t *db, lexer_t *l) {
     lex_next(l); /* skip DECLARE */
     while (l->current.type == TOK_IDENT) {
         char name[MEMVAR_NAMELEN];
-        int rows = 0, cols = 1;
+        int rows = 0, cols = 0;   /* cols 0: one dimension */
         str_copy(name, l->current.text, sizeof(name));
         lex_next(l);
         if (l->current.type == TOK_LPAREN || l->current.type == TOK_LBRACKET) {
@@ -7278,7 +7275,7 @@ int cmd_execute(dbf_t *db, char *line) {
             str_copy(name, al.current.text, sizeof(name));
             lex_next(&al);
             int is_indexed = 0;
-            int row = 0, col = 1;
+            int row = 0, col = -1;   /* col -1: no second index */
 
             int is_array = 0;
             value_t mv;
@@ -7323,9 +7320,9 @@ int cmd_execute(dbf_t *db, char *line) {
                     if (memvar_set_elem(&memvar_store, name, row, col, &val) == -2) {
                         prog_error(ERR_RECORD_RANGE, "Array index out of bounds");
                     }
-                } else if (is_array) {
-                    prog_error(ERR_SYNTAX, "Array assignment requires index");
                 } else {
+                    /* arrays are values: the assignment replaces one (Clipper;
+                     * dBASE IV refused it without an index) */
                     memvar_set(&memvar_store, name, &val);
                 }
                 return 0;
