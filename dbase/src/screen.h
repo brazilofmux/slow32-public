@@ -59,6 +59,9 @@ void screen_get_object(int row, int col, const char *name, const char *picture,
 void screen_get(int row, int col, const char *varname, const char *picture,
                 const value_t *range_lo, const value_t *range_hi,
                 const char *valid_expr, const char *when_expr);
+void screen_get_expr(int row, int col, const char *target, const char *picture,
+                     const value_t *range_lo, const value_t *range_hi,
+                     const char *valid_expr, const char *when_expr);
 
 /* @CLEAR TO command */
 void screen_clear_region(int r1, int c1, int r2, int c2);

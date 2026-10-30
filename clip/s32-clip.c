@@ -21,7 +21,7 @@
 #include "program.h"
 #include "ast.h"   /* dbase's own parser: expressions are parsed here, at compile time */
 
-#define MAX_LINE  512
+#define MAX_LINE  2048   /* a statement with its continuations joined (RL's PRIVATE runs to 700 characters) */
 #define MAX_NEST  32
 #define MAX_LINES 4000   /* the first allocation; the table grows */
 #define MAX_FUNCS 512
@@ -2179,6 +2179,8 @@ static int load_prg(const char *path) {
                 size_t n = strlen(buf);
                 if (n > 0 && buf[n - 1] != ' ' && buf[n - 1] != '\t') strcat(buf, " ");   /* the indentation separates the tokens */
                 strcat(buf, skip_ws(next));
+            } else {
+                fprintf(stderr, "%s(%d): statement longer than %d characters; the rest is dropped\n", path, lineno + 1, MAX_LINE - 1);
             }
         }
         lineno++;

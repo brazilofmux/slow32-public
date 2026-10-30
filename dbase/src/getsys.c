@@ -605,6 +605,56 @@ value_t getsys_note_get(int row, int col, const char *varname, const char *pictu
     return v;
 }
 
+/* @ GET on something that is not a plain variable -- an array element, an
+ * alias->field -- gets the block Clipper's preprocessor would give it,
+ * {|x| IIF(PCOUNT() == 0, <target>, <target> := x)}, reading and storing
+ * through the expression each time (RL's @ 11,09 GET chdr_lines[ar_index]) */
+value_t getsys_note_get_expr(int row, int col, const char *target, const char *picture,
+                             const char *valid_expr, const char *when_expr) {
+    expr_ctx_t *ctx = cmd_get_expr_ctx();
+    memvar_store_t *store = cmd_get_memvar_store();
+    char text[1200];
+    value_t block, v, list;
+    object_t *o;
+    snprintf(text, sizeof(text), "{|x| IIF(PCOUNT() == 0, %s, %s := x)}", target, target);
+    block = block_from_text(ctx, text);
+    o = get_new(ctx, row, col, block.type == VAL_BLOCK ? &block : NULL, target, picture, NULL);
+    if (!o) return val_nil();
+    if (valid_expr && valid_expr[0]) {
+        snprintf(text, sizeof(text), "{|| %s}", valid_expr);
+        iv_set(o, "postBlock", block_from_text(ctx, text));
+    }
+    if (when_expr && when_expr[0]) {
+        snprintf(text, sizeof(text), "{|| %s}", when_expr);
+        iv_set(o, "preBlock", block_from_text(ctx, text));
+    }
+    v = val_object(o);
+    if (memvar_find(store, "GETLIST", &list) != 0 || list.type != VAL_ARRAY || !list.array) {
+        if (ast_make_array(ctx, NULL, 0, &list) != 0) return v;
+        memvar_set_local(store, "GETLIST", &list);
+    }
+    {
+        value_t a[2], r;
+        a[0] = list;
+        a[1] = v;
+        func_call(ctx, "AADD", a, 2, &r);
+    }
+    return v;
+}
+
+/* After READ: Clipper's READ is ReadModal(GetList) then GetList := {}, so
+ * the Gets read are released; left in the array they accumulated -- RL's
+ * editor loop issues eight GETs a pass, and 8 KB Get objects piled up to
+ * the heap's end */
+void getsys_release_getlist(void) {
+    expr_ctx_t *ctx = cmd_get_expr_ctx();
+    memvar_store_t *store = cmd_get_memvar_store();
+    value_t list, empty;
+    if (memvar_find(store, "GETLIST", &list) == 0 && list.type == VAL_ARRAY) {
+        if (ast_make_array(ctx, NULL, 0, &empty) == 0) memvar_set(store, "GETLIST", &empty);
+    }
+}
+
 /* READ when the program supplies ReadModal() (CA's GETSYS.PRG linked in):
  * ReadModal(GetList) runs the Gets through it, then the list and the
  * recorded GETs are cleared.  1 when it did; 0 for the built-in reader. */

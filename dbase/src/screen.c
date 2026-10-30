@@ -149,7 +149,7 @@ void screen_tgoto(int row, int col) {
     shadow_init();
     shadow_row = row;
     shadow_col = col;
-    term_gotoxy(row, col);
+    term_gotoxy(row + 1, col + 1);   /* the terminal's rows and columns count from 1; ours from 0 */
 }
 
 void screen_tputs(const char *s) {
@@ -257,7 +257,7 @@ void screen_restore_region(int t, int l, int b, int r, const value_t *saved) {
     for (i = 0; i < rows; i++) {
         shadow_row = t + i;
         shadow_col = l;
-        term_gotoxy(t + i, l);
+        term_gotoxy(t + i + 1, l + 1);
         for (j = 0; j < cols; j++) {
             shadow_cell_t cell = s->cells[i * s->cols + j];
             if (cell.attr != cur) {
@@ -278,7 +278,7 @@ void screen_restore_region(int t, int l, int b, int r, const value_t *saved) {
     term_set_color(shadow_fg, shadow_bg);
     shadow_row = keep_row;
     shadow_col = keep_col;
-    term_gotoxy(keep_row, keep_col);
+    term_gotoxy(keep_row + 1, keep_col + 1);
 }
 
 /* ---- Apply PICTURE mask to a string ---- */
@@ -614,6 +614,41 @@ void screen_get_object(int row, int col, const char *name, const char *picture,
     scr.ngets++;
 }
 
+/* @ GET <expression target>: the value shown comes from evaluating it, and
+ * the editor stores back through the Get object's block (getsys makes one
+ * around the expression) */
+void screen_get_expr(int row, int col, const char *target, const char *picture,
+                     const value_t *range_lo, const value_t *range_hi,
+                     const char *valid_expr, const char *when_expr) {
+    get_entry_t *g;
+    value_t v;
+    expr_ctx_t *ctx = cmd_get_expr_ctx();
+    if (scr.ngets >= MAX_GETS) {
+        prog_error(ERR_SYNTAX, "Too many GETs");
+        return;
+    }
+    g = &scr.gets[scr.ngets];
+    memset(g, 0, sizeof(*g));
+    g->row = row;
+    g->col = col;
+    str_copy(g->varname, target, MEMVAR_NAMELEN);
+    str_copy(g->picture, picture ? picture : "", sizeof(g->picture));
+    g->field_index = -1;
+    if (range_lo && range_hi) { g->has_range = 1; g->range_lo = *range_lo; g->range_hi = *range_hi; }
+    if (valid_expr) str_copy(g->valid_expr, valid_expr, sizeof(g->valid_expr));
+    if (when_expr) str_copy(g->when_expr, when_expr, sizeof(g->when_expr));
+    if (g->valid_expr[0] && !strchr(g->valid_expr, '&')) { const char *e; g->valid_ast = ast_compile(g->valid_expr, cmd_get_memvar_store(), &e); }
+    if (g->when_expr[0] && !strchr(g->when_expr, '&')) { const char *e; g->when_ast = ast_compile(g->when_expr, cmd_get_memvar_store(), &e); }
+    g->getobj = getsys_note_get_expr(row, col, target, picture, valid_expr, when_expr);
+    if (ast_eval_dynamic(target, ctx, &v) != 0) { ctx->error = NULL; v = val_str(""); }
+    val_to_string(&v, g->initial, sizeof(g->initial));
+    g->type = v.type;
+    g->width = (int)strlen(g->initial);
+    if (g->width < 1) g->width = 1;
+    get_show_initial(g);
+    scr.ngets++;
+}
+
 /* The edited value back where it came from: the Get object\x27s block when
  * the entry carries one, else the variable by name */
 static void get_store_value(get_entry_t *g, const value_t *v) {
@@ -795,7 +830,12 @@ void screen_read(void) {
 
             for (;;) {
                 key = screen_getkey();
-                if (key != KEY_NONE && key != 0 && screen_check_key_handler(key)) continue;
+                if (key != KEY_NONE && key != 0 && screen_check_key_handler(key)) {
+                    /* a SET KEY handler ran; CLEAR GETS in it ends the READ,
+                     * as Clipper's does (RL's F10: CLEAR GETS, exit_status := .T.) */
+                    if (scr.ngets == 0) { last_key = key; escaped = 1; nav = 1; break; }
+                    continue;
+                }
                 if (key == K_ENTER || key == '\n' || key == KEY_NONE) { last_key = 13; break; }
                 if (key == K_ESC) { /* Escape - cancel READ */
                     last_key = 27;
@@ -1068,6 +1108,12 @@ void screen_box(int r1, int c1, int r2, int c2, int dbl) {
 #if HAS_TERM
     if (scr.term_available) {
         int r, c;
+        if (r1 == r2 || c1 == c2) {
+            /* a line, not a box: @ 1,0 TO 1,MAXCOL() rules a row across */
+            if (r1 == r2) { screen_tgoto(r1, c1); for (c = c1; c <= c2; c++) screen_tputc(h); }
+            else for (r = r1; r <= r2; r++) { screen_tgoto(r, c1); screen_tputc(v); }
+            return;
+        }
         /* Top */
         screen_tgoto(r1, c1);
         screen_tputc(tl);
@@ -1386,107 +1432,10 @@ void screen_set_color(const char *spec) {
     apply_color_pair(color_spec);
 }
 
-/* ---- Parse @ command ---- */
-void screen_at_cmd(const char *line) {
-    const char *p = skip_ws(line);
-    int row, col;
-    expr_ctx_t *ctx = cmd_get_expr_ctx();
-    value_t v;
-
-    /* Skip @ */
-    if (*p != '@') return;
-    p++;
-    p = skip_ws(p);
-
-    /* Parse row (expression) */
-    {
-        if (ast_eval_adv(ctx, &p, &v) != 0 || v.type != VAL_NUM) {
-            printf("Syntax: @ row,col SAY|GET|CLEAR TO|TO ...\n");
-            return;
-        }
-        row = (int)v.num;
-        p = skip_ws(p);
-        if (*p == ',') p++;
-        p = skip_ws(p);
-        if (ast_eval_adv(ctx, &p, &v) != 0 || v.type != VAL_NUM) {
-            printf("Syntax: @ row,col SAY|GET|CLEAR TO|TO ...\n");
-            return;
-        }
-        col = (int)v.num;
-        p = skip_ws(p);
-    }
-
-    /* @ top, left, bottom, right BOX frame (Clipper) */
-    if (*p == ',') {
-        int r2, c2;
-        value_t fv;
-        p = skip_ws(p + 1);
-        if (ast_eval_adv(ctx, &p, &v) != 0 || v.type != VAL_NUM) { printf("Syntax: @ t,l,b,r BOX frame\n"); return; }
-        r2 = (int)v.num;
-        p = skip_ws(p);
-        if (*p == ',') p++;
-        p = skip_ws(p);
-        if (ast_eval_adv(ctx, &p, &v) != 0 || v.type != VAL_NUM) { printf("Syntax: @ t,l,b,r BOX frame\n"); return; }
-        c2 = (int)v.num;
-        p = skip_ws(p);
-        if (!str_imatch(p, "BOX")) { printf("Syntax: @ t,l,b,r BOX frame\n"); return; }
-        p = skip_ws(p + 3);
-        if (ast_eval_adv(ctx, &p, &fv) != 0 || fv.type != VAL_CHAR) { printf("Syntax: @ t,l,b,r BOX frame\n"); return; }
-        screen_box_frame(row, col, r2, c2, fv.str);
-        return;
-    }
-
-    /* Sub-command */
-    if (str_imatch(p, "SAY")) {
-        char picture[64] = "";
-        const char *pic_pos;
-        char expr_str[256];
-
-        p = skip_ws(p + 3);
-
-        /* Find PICTURE clause */
-        pic_pos = p;
-        {
-            const char *f = p;
-            const char *found = NULL;
-            while (*f) {
-                if (str_imatch(f, "PICTURE")) {
-                    found = f;
-                    break;
-                }
-                /* Skip string literals */
-                if (*f == '"' || *f == '\'') {
-                    char q = *f++;
-                    while (*f && *f != q) f++;
-                    if (*f) f++;
-                    continue;
-                }
-                f++;
-            }
-            if (found) {
-                int len = (int)(found - p);
-                if (len > (int)sizeof(expr_str) - 1) len = (int)sizeof(expr_str) - 1;
-                memcpy(expr_str, p, len);
-                expr_str[len] = '\0';
-                trim_right(expr_str);
-                found = skip_ws(found + 7);
-                /* Picture is quoted string */
-                if (*found == '"' || *found == '\'') {
-                    char q = *found++;
-                    int i = 0;
-                    while (*found && *found != q && i < 63)
-                        picture[i++] = *found++;
-                    picture[i] = '\0';
-                }
-            } else {
-                str_copy(expr_str, p, sizeof(expr_str));
-                trim_right(expr_str);
-            }
-        }
-
-        screen_say(row, col, expr_str, picture);
-
-    } else if (str_imatch(p, "GET")) {
+/* The GET clause of @ ... GET and of @ ... SAY ... GET: the target (a
+ * variable, an array element, an alias->field), PICTURE, RANGE, VALID,
+ * WHEN; p is the text after the word GET */
+static void at_get_clause(int row, int col, const char *p) {
         char varname[MEMVAR_NAMELEN];
         char picture[64] = "";
         char valid_expr[256] = "";
@@ -1495,15 +1444,30 @@ void screen_at_cmd(const char *line) {
         int has_range = 0;
         value_t range_lo, range_hi;
 
-        p = skip_ws(p + 3);
+        char target[512] = "";   /* an array element or alias->field: read and stored through a block */
+        p = skip_ws(p);
 
         /* Parse variable name; M-> and MEMVAR-> say what it is anyway
          * (DBU's @ r, c GET M->wk_str) */
         if (strncasecmp(p, "M->", 3) == 0) p += 3;
         else if (strncasecmp(p, "MEMVAR->", 8) == 0) p += 8;
-        while (is_ident_char(*p) && i < MEMVAR_NAMELEN - 1)
-            varname[i++] = *p++;
-        varname[i] = '\0';
+        {
+            const char *tstart = p;
+            while (is_ident_char(*p) && i < MEMVAR_NAMELEN - 1)
+                varname[i++] = *p++;
+            varname[i] = '\0';
+            if (*p == '[' || (p[0] == '-' && p[1] == '>')) {
+                const char *ast_err, *q = tstart;
+                ast_node_t *tmp = ast_compile_adv(&q, cmd_get_memvar_store(), &ast_err);
+                int len = (int)(q - tstart);
+                ast_free(tmp);
+                if (len > (int)sizeof(target) - 1) len = (int)sizeof(target) - 1;
+                memcpy(target, tstart, len);
+                target[len] = '\0';
+                trim_right(target);
+                p = q;
+            }
+        }
 
         /* Parse optional clauses */
         for (;;) {
@@ -1572,10 +1536,148 @@ void screen_at_cmd(const char *line) {
             }
         }
 
-        screen_get(row, col, varname, picture,
-                   has_range ? &range_lo : NULL,
-                   has_range ? &range_hi : NULL,
-                   valid_expr, when_expr);
+        if (target[0])
+            screen_get_expr(row, col, target, picture,
+                            has_range ? &range_lo : NULL,
+                            has_range ? &range_hi : NULL,
+                            valid_expr, when_expr);
+        else
+            screen_get(row, col, varname, picture,
+                       has_range ? &range_lo : NULL,
+                       has_range ? &range_hi : NULL,
+                       valid_expr, when_expr);
+
+}
+
+/* ---- Parse @ command ---- */
+void screen_at_cmd(const char *line) {
+    const char *p = skip_ws(line);
+    int row, col;
+    expr_ctx_t *ctx = cmd_get_expr_ctx();
+    value_t v;
+
+    /* Skip @ */
+    if (*p != '@') return;
+    p++;
+    p = skip_ws(p);
+
+    /* Parse row (expression) */
+    {
+        if (ast_eval_adv(ctx, &p, &v) != 0 || v.type != VAL_NUM) {
+            printf("Syntax: @ row,col SAY|GET|CLEAR TO|TO ...\n");
+            return;
+        }
+        row = (int)v.num;
+        p = skip_ws(p);
+        if (*p == ',') p++;
+        p = skip_ws(p);
+        if (ast_eval_adv(ctx, &p, &v) != 0 || v.type != VAL_NUM) {
+            printf("Syntax: @ row,col SAY|GET|CLEAR TO|TO ...\n");
+            return;
+        }
+        col = (int)v.num;
+        p = skip_ws(p);
+    }
+
+    /* @ top, left, bottom, right BOX frame (Clipper) */
+    if (*p == ',') {
+        int r2, c2;
+        value_t fv;
+        p = skip_ws(p + 1);
+        if (ast_eval_adv(ctx, &p, &v) != 0 || v.type != VAL_NUM) { printf("Syntax: @ t,l,b,r BOX frame\n"); return; }
+        r2 = (int)v.num;
+        p = skip_ws(p);
+        if (*p == ',') p++;
+        p = skip_ws(p);
+        if (ast_eval_adv(ctx, &p, &v) != 0 || v.type != VAL_NUM) { printf("Syntax: @ t,l,b,r BOX frame\n"); return; }
+        c2 = (int)v.num;
+        p = skip_ws(p);
+        if (!str_imatch(p, "BOX")) { printf("Syntax: @ t,l,b,r BOX frame\n"); return; }
+        p = skip_ws(p + 3);
+        if (ast_eval_adv(ctx, &p, &fv) != 0 || fv.type != VAL_CHAR) { printf("Syntax: @ t,l,b,r BOX frame\n"); return; }
+        screen_box_frame(row, col, r2, c2, fv.str);
+        return;
+    }
+
+    /* Sub-command */
+    if (str_imatch(p, "SAY")) {
+        char picture[64] = "";
+        const char *pic_pos;
+        char expr_str[256];
+        char say_text[512];
+        const char *get_clause = NULL;
+
+        p = skip_ws(p + 3);
+        {
+            /* @ r,c SAY ... GET ...: the GET follows the text, one column on
+             * (RL's @ 19,10 SAY "Width" GET m_width PICTURE "99"); it was
+             * handed to the expression and lost, and its PICTURE taken as
+             * the SAY's */
+            const char *g = p;
+            int depth = 0;
+            while (*g) {
+                if (*g == '"' || *g == '\'') { char q = *g++; while (*g && *g != q) g++; if (*g) g++; continue; }
+                if (*g == '[' && (g == p || !is_ident_char(g[-1]))) { while (*g && *g != ']') g++; if (*g) g++; continue; }
+                if (*g == '(' || *g == '[') depth++;
+                else if (*g == ')' || *g == ']') depth--;
+                else if (depth == 0 && (g == p || !is_ident_char(g[-1])) && strncasecmp(g, "GET", 3) == 0 && (g[3] == ' ' || g[3] == '\t')) { get_clause = g + 3; break; }
+                g++;
+            }
+            if (get_clause) {
+                int len = (int)(g - p);
+                if (len > (int)sizeof(say_text) - 1) len = (int)sizeof(say_text) - 1;
+                memcpy(say_text, p, (size_t)len);
+                say_text[len] = '\0';
+                trim_right(say_text);
+                p = say_text;
+            }
+        }
+
+        /* Find PICTURE clause */
+        pic_pos = p;
+        {
+            const char *f = p;
+            const char *found = NULL;
+            while (*f) {
+                if (str_imatch(f, "PICTURE")) {
+                    found = f;
+                    break;
+                }
+                /* Skip string literals */
+                if (*f == '"' || *f == '\'') {
+                    char q = *f++;
+                    while (*f && *f != q) f++;
+                    if (*f) f++;
+                    continue;
+                }
+                f++;
+            }
+            if (found) {
+                int len = (int)(found - p);
+                if (len > (int)sizeof(expr_str) - 1) len = (int)sizeof(expr_str) - 1;
+                memcpy(expr_str, p, len);
+                expr_str[len] = '\0';
+                trim_right(expr_str);
+                found = skip_ws(found + 7);
+                /* Picture is quoted string */
+                if (*found == '"' || *found == '\'') {
+                    char q = *found++;
+                    int i = 0;
+                    while (*found && *found != q && i < 63)
+                        picture[i++] = *found++;
+                    picture[i] = '\0';
+                }
+            } else {
+                str_copy(expr_str, p, sizeof(expr_str));
+                trim_right(expr_str);
+            }
+        }
+
+        screen_say(row, col, expr_str, picture);
+        if (get_clause) at_get_clause(shadow_row, shadow_col + 1, get_clause);
+
+    } else if (str_imatch(p, "GET")) {
+        at_get_clause(row, col, p + 3);
 
     } else if (str_imatch(p, "CLEAR")) {
         int r2 = 24, c2 = 79;
@@ -1605,35 +1707,24 @@ void screen_at_cmd(const char *line) {
         screen_box(row, col, r2, c2, dbl);
 
     } else if (str_imatch(p, "PROMPT")) {
+        /* @ row, col PROMPT <cExp> [MESSAGE <cExp>]: expressions, as the
+         * guide has them (RL's menu is PROMPT aMainMenu[1]; a quoted
+         * literal was all this read) */
         char text[80] = "";
         char message[160] = "";
-        int i = 0;
         p = skip_ws(p + 6);
-
-        /* Parse prompt text (quoted string) */
-        if (*p == '"' || *p == '\'') {
-            char q = *p++;
-            while (*p && *p != q && i < 79)
-                text[i++] = *p++;
-            text[i] = '\0';
-            if (*p) p++;
+        if (ast_eval_adv(ctx, &p, &v) == 0 && v.type == VAL_CHAR) {
+            str_copy(text, val_text(&v), sizeof(text));
         } else {
-            printf("Syntax: @ row,col PROMPT \"text\" [MESSAGE \"help\"]\n");
+            if (ctx->error) ctx->error = NULL;
+            printf("Syntax: @ row,col PROMPT <text> [MESSAGE <help>]\n");
             return;
         }
-
-        /* Parse optional MESSAGE clause */
         p = skip_ws(p);
         if (str_imatch(p, "MESSAGE")) {
             p = skip_ws(p + 7);
-            if (*p == '"' || *p == '\'') {
-                char q = *p++;
-                i = 0;
-                while (*p && *p != q && i < 159)
-                    message[i++] = *p++;
-                message[i] = '\0';
-                if (*p) p++;
-            }
+            if (ast_eval_adv(ctx, &p, &v) == 0 && v.type == VAL_CHAR) str_copy(message, val_text(&v), sizeof(message));
+            else if (ctx->error) ctx->error = NULL;
         }
 
         screen_prompt(row, col, text, message);

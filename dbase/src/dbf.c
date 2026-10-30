@@ -144,8 +144,8 @@ int dbf_create(const char *filename, const dbf_field_t *fields, int nfields) {
         memset(fdesc, 0, 32);
         str_copy((char *)fdesc, fields[i].name, 11);
         fdesc[11] = fields[i].type;
-        fdesc[16] = fields[i].length;
-        fdesc[17] = fields[i].decimals;
+        fdesc[16] = (uint8_t)(fields[i].length & 0xFF);
+        fdesc[17] = fields[i].type == 'C' && fields[i].length > 255 ? (uint8_t)(fields[i].length >> 8) : fields[i].decimals;
         fwrite(fdesc, 1, 32, fp);
     }
 
@@ -206,8 +206,14 @@ int dbf_open(dbf_t *db, const char *filename) {
         db->fields[i].type = fdesc[11];
         db->fields[i].length = fdesc[16];
         db->fields[i].decimals = fdesc[17];
+        if (db->fields[i].type == 'C' && fdesc[17]) {
+            /* Clipper's character field over 255 wide: the decimals byte is
+             * the length's high byte (RL's HEADER C 260) */
+            db->fields[i].length = (uint16_t)(fdesc[16] + 256 * fdesc[17]);
+            db->fields[i].decimals = 0;
+        }
         db->fields[i].offset = offset;
-        offset += fdesc[16];
+        offset += db->fields[i].length;
     }
 
     db->current_record = 0;

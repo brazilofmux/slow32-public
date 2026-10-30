@@ -503,9 +503,62 @@ people who wrote Clipper.
   the file ("Redefinition of predefined function AT"), and with us the
   procedure shadows the function, as a linker override would.
 
-Not driven yet: GETSYS.PRG's and ERRORSYS.PRG's dialogue paths under a
-terminal (ERRORSYS reaches Alert() only for open and append-lock
-errors with a retry or default on offer).
+- **RL, the report and label designer** (2026-10-30).  CA's RL
+  (RLFRONT, RLDIALG, RLBACK concatenated) runs from keys: the Report /
+  Label / Quit menu, the file dialog, the column editor with two
+  columns typed in, F10, "Save Changes To File TEST?", Ok -- and the
+  TEST.FRM it writes prints the same report under Harbour's REPORT FORM
+  and ours.  Eleven things stood in the way, none of them RL's:
+  - every cursor move was one row and one column off: the terminal
+    service counts from 1 and screen.c sent 0-based positions, so row 0
+    and row 1 landed together (DBU's and RL's top lines overlapped
+    without anyone noticing, since both start at row 0);
+  - `@ ... PROMPT` took only a quoted literal (RL's is
+    `PROMPT aMainMenu[1]`), and `@ r,c TO r,c2` on one row drew a box's
+    bottom edge instead of a line;
+  - `REPLACE alias->field WITH ...` was "Field not found" (RL edits its
+    work file as `form_dbf->contents`); it writes the other area's
+    current record now;
+  - `@ ... GET a[i]` and `@ ... GET alias->field` were read as a
+    variable named `a`; they get the block Clipper's preprocessor makes,
+    `{|x| IIF(PCOUNT() == 0, a[i], a[i] := x)}`, and the editor stores
+    through it;
+  - `@ r,c SAY ... GET ...` handed the GET to the SAY's expression and
+    took its PICTURE as the SAY's; the GET follows the text now;
+  - READ never emptied GetList, so RL's editor loop piled eight Gets a
+    pass into it until the heap ran out (the collector could free
+    nothing still referenced); READ releases them as Clipper's
+    `GetList := {}` does;
+  - a character field over 255 wide (RL's HEADER C 260) keeps its high
+    byte in the decimals slot, as Clipper writes it; we read 4;
+  - SAVE took only `SAVE TO f ALL LIKE s` (RL writes
+    `SAVE ALL LIKE frm_* TO &mem_file`), RESTORE only `RESTORE FROM f
+    ADDITIVE` (RL also writes `RESTORE ADDITIVE FROM`), and the .MEM was
+    our own layout; it is dBASE III's / Clipper's now (32-byte heads,
+    name, type with the high bit, length; 0x1A at the end) -- probe
+    cmd-save-restore;
+  - a memory variable's name is ten characters significant, as
+    Clipper's identifiers are: the .MEM holds FRM_PAGEHD, and RL reads
+    `frm_pagehdr` after restoring it.  Harbour keeps long names distinct,
+    so here we follow Clipper over the oracle;
+  - a SET KEY handler's CLEAR GETS ended nothing: the READ went on with
+    no Gets (RL's F10 is `CLEAR GETS; exit_status := .T.`);
+  - CLOSE DATABASES closed the FOPEN/FCREATE handles too, and RL closes
+    its databases between writing a report's columns and its last 24
+    bytes; the guide's CLOSE is about work areas.
+  The s32-clip statement limit went from 511 to 2047 characters (RL's
+  PRIVATE list joined from nine lines was cut, and the rest ran as a
+  command); a longer one is reported, not dropped silently.
+  Our own REPORT FORM, over the form RL wrote, differs from Harbour's in
+  layout: no leading blank line, the page number one column wider, the
+  heading's blank lines and the totals line placed differently.  CA's
+  FRMRUN (driver ca-frmrun) matches Harbour; the built-in one prints
+  dBASE III's layout, which the dbase tests record.
+
+Not driven yet: RL's Label side; our REPORT FORM in Clipper's layout;
+GETSYS.PRG's and ERRORSYS.PRG's dialogue paths under a terminal
+(ERRORSYS reaches Alert() only for open and append-lock errors with a
+retry or default on offer).
 
 ## The order of work proposed
 

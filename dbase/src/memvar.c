@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h>
 #include <stdlib.h>
 #include "memvar.h"
 #include "gc.h"
@@ -73,6 +74,15 @@ value_t val_array(array_t *a) {
 /* FNV-1a over the upper-case name.  Slots are ~300 bytes, so a lookup that
  * walked all 256 with a case-insensitive compare touched 77KB; now it walks
  * the live prefix and compares one word per slot. */
+
+/* A name as the store keeps it: upper case, and ten characters, as Clipper
+ * keeps them (RL's frm_pagehdr is the FRM_PAGEHD its .MEM file holds) */
+void memvar_norm(char *dst, const char *name) {
+    int i = 0;
+    while (name[i] && i < MEMVAR_SIGNIFICANT) { dst[i] = (char)toupper((unsigned char)name[i]); i++; }
+    dst[i] = '\0';
+}
+
 static unsigned name_hash(const char *s) {
     unsigned h = 2166136261u;
     while (*s) { h ^= (unsigned char)*s++; h *= 16777619u; }
@@ -136,8 +146,7 @@ int memvar_find(const memvar_store_t *store, const char *name, value_t *val) {
      * upper-casing of the query and a first-byte reject replace a
      * case-insensitive compare against every used slot. */
     unsigned h;
-    str_copy(uname, name, sizeof(uname));
-    str_upper(uname);
+    memvar_norm(uname, name);
     h = name_hash(uname);
     i = memvar_slot(store, uname, h);
     if (i < 0) return -1;
@@ -149,8 +158,7 @@ int memvar_set(memvar_store_t *store, const char *name, const value_t *val) {
     int i;
     char uname[MEMVAR_NAMELEN];
 
-    str_copy(uname, name, MEMVAR_NAMELEN);
-    str_upper(uname);
+    memvar_norm(uname, name);
 
     unsigned h = name_hash(uname);
 
@@ -185,8 +193,7 @@ int memvar_set_local(memvar_store_t *store, const char *name, const value_t *val
     int i;
     char uname[MEMVAR_NAMELEN];
 
-    str_copy(uname, name, MEMVAR_NAMELEN);
-    str_upper(uname);
+    memvar_norm(uname, name);
 
     /* A second LOCAL of the name at this depth resets it; a PRIVATE or
      * PUBLIC of the name is left alone, shadowed until memvar_release_locals. */
@@ -219,8 +226,7 @@ int memvar_set_local(memvar_store_t *store, const char *name, const value_t *val
 int memvar_release(memvar_store_t *store, const char *name) {
     int i;
     char uname[64];
-    str_copy(uname, name, sizeof(uname));
-    str_upper(uname);
+    memvar_norm(uname, name);
     i = memvar_slot(store, uname, name_hash(uname));
     if (i < 0) return -1;
     slot_free(store, i);
@@ -254,7 +260,7 @@ void memvar_release_all(memvar_store_t *store) {
 }
 
 /* Case-insensitive wildcard match: '*' and '?' */
-static int pattern_match(const char *name, const char *pat) {
+int memvar_pattern_match(const char *name, const char *pat) {
     return str_like(name, pat);
 }
 
@@ -264,7 +270,7 @@ int memvar_release_matching(memvar_store_t *store, const char *pattern, int like
         if (!store->vars[i].used) continue;
         /* Only release variables created at or below current scope */
         if (store->vars[i].scope_depth < store->current_depth) continue;
-        int matches = pattern_match(store->vars[i].name, pattern);
+        int matches = memvar_pattern_match(store->vars[i].name, pattern);
         if ((like && matches) || (!like && !matches)) {
             slot_free(store, i);
             store->count--;

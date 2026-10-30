@@ -2067,6 +2067,7 @@ static void cmd_calculate(dbf_t *db, lexer_t *l) {
 #define MAX_REPLACE_PAIRS 32
 typedef struct {
     int field_idx;
+    dbf_t *target;       /* another work area's file when the field is alias->name; NULL for this one */
     char expr[256];      /* captured expression string */
     ast_node_t *ast;     /* pre-compiled AST, NULL if contains &macro */
 } replace_pair_t;
@@ -2245,6 +2246,19 @@ static int replace_cb(dbf_t *db, uint32_t recno, void *userdata) {
                 return REC_ERROR;
             }
         }
+        if (rctx->pairs[p].target) {
+            /* the other area's current record, written at once (its indexes
+             * are not maintained here: cmd_replace's state is this area's) */
+            dbf_t *t = rctx->pairs[p].target;
+            replace_state_t ts;
+            if (t->current_record < 1 || t->current_record > t->record_count) continue;
+            ts.has_indexes = 0;
+            ts.memo_snap.valid = 0;
+            ts.nfields = 0;
+            replace_set(t, &ts, rctx->pairs[p].field_idx, &val);
+            dbf_flush_record(t);
+            continue;
+        }
         replace_set(db, &st, rctx->pairs[p].field_idx, &val);
     }
     replace_finish(db, &st);
@@ -2278,12 +2292,30 @@ static int parse_replace_pairs(dbf_t *db, const char *body, const char *extra_st
             return -1;
         }
 
-        /* Field name lookup (once) */
+        /* Field name lookup (once); alias->name writes another work
+         * area's current record (RL's REPLACE form_dbf->contents WITH ...) */
         str_copy(field_name, parse_l.current.text, sizeof(field_name));
         str_upper(field_name);
         lex_next(&parse_l);
+        rp->target = NULL;
+        if (parse_l.current.type == TOK_ARROW) {
+            dbf_t *other = area_lookup_dbf(field_name);
+            lex_next(&parse_l);
+            if (!other || !dbf_is_open(other)) {
+                prog_error_fmt(ERR_ALIAS_NOT_FOUND, "Alias not found: %s", field_name);
+                return -1;
+            }
+            if (parse_l.current.type != TOK_IDENT) {
+                prog_error(ERR_SYNTAX, "Field name expected after ->");
+                return -1;
+            }
+            str_copy(field_name, parse_l.current.text, sizeof(field_name));
+            str_upper(field_name);
+            lex_next(&parse_l);
+            if (other != db) rp->target = other;
+        }
 
-        rp->field_idx = dbf_find_field(db, field_name);
+        rp->field_idx = dbf_find_field(rp->target ? rp->target : db, field_name);
         if (rp->field_idx < 0) {
             prog_error_fmt(ERR_SYNTAX, "Field not found: %s", field_name);
             return -1;
@@ -5081,7 +5113,9 @@ void cmd_close_all(void) {
         wa->relation_target = -1;
     }
     area_set_current_idx(0);
-    ll_close_all();
+    /* FOPEN/FCREATE handles stay open: CLOSE DATABASES and CLOSE ALL are
+     * about work areas (the guide), and RL closes its databases between
+     * the column and parameter writes of the .FRM it holds open */
 }
 
 /* ---- Helper: ensure filename has .FRM extension ---- */
@@ -5854,7 +5888,7 @@ static void h_rename(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(
 static void h_accept(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_accept(arg); }
 static void h_input(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_input(arg); }
 static void h_wait(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_wait(arg); }
-static void h_read(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (!getsys_read_through_program()) screen_read(); }
+static void h_read(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (!getsys_read_through_program()) { screen_read(); getsys_release_getlist(); } }
 
 /* KEYBOARD <cString>: clear the typeahead buffer, stuff the string */
 static void h_keyboard(dbf_t *db, lexer_t *l) {
@@ -6315,90 +6349,192 @@ static void h_modify(dbf_t *db, lexer_t *l) {
     if (cmd_kw(&t, "REPORT") || cmd_kw(&t, "LABEL")) printf("MODIFY not implemented.\n");
 }
 
+/* SAVE TO <file> [ALL [LIKE | EXCEPT <skeleton>]] and Clipper's other
+ * order, SAVE ALL [LIKE | EXCEPT <skeleton>] TO <file> (RL: SAVE ALL LIKE
+ * frm_* TO &mem_file).  The file is dBASE III's .MEM: a 32-byte head per
+ * variable -- the name, the type letter with its high bit set, the
+ * length -- then the value; 0x1A at the end.  Arrays, blocks and objects
+ * are not saved, as Clipper does not save them. */
+static int mem_name_matches(const char *name, const char *skel, int like) {
+    if (!skel[0]) return 1;
+    return like ? memvar_pattern_match(name, skel) : !memvar_pattern_match(name, skel);
+}
+
+static void mem_file_name(char *fname, int size, const char *given) {
+    str_copy(fname, given, size);
+    trim_right(fname);
+    if (!has_extension(fname)) { if ((int)strlen(fname) + 4 < size) strcat(fname, ".MEM"); }
+    path_normalize(fname);
+}
+
 static void h_save(dbf_t *db, lexer_t *l) {
+    char fname[320] = "", skel[MEMVAR_NAMELEN] = "";
+    int like = 1, all = 0;
+    FILE *fp;
+    int j;
     (void)db;
     lex_next(l); /* skip SAVE */
     if (cmd_kw(l, "SCREEN")) {
         screen_save();
         return;
     }
-    if (cmd_kw(l, "TO")) {
-        lex_next(l);
-        char fname[128];
-        FILE *fp;
-        fname[0] = '\0';
-        while (l->current.type != TOK_EOF && !cmd_kw(l, "ALL")) {
-            strncat(fname, l->current.text, sizeof(fname) - strlen(fname) - 1);
+    while (l->current.type != TOK_EOF) {
+        if (cmd_kw(l, "TO")) {
+            const char *p;
+            char rest[320];
             lex_next(l);
-        }
-        str_upper(fname);
-        if (strlen(fname) < 4 || str_icmp(fname + strlen(fname) - 4, ".MEM") != 0) strcat(fname, ".MEM");
-        fp = fopen(fname, "wb");
-        if (!fp) { prog_error_fmt(ERR_CANNOT_CREATE, "Cannot create %s", fname); return; }
-        {
-            int nv = 0, j;
-            for (j = 0; j < MEMVAR_MAX; j++) { if (memvar_store.vars[j].used) nv++; }
-            fwrite(&nv, 4, 1, fp);
-            for (j = 0; j < MEMVAR_MAX; j++) {
-                if (!memvar_store.vars[j].used) continue;
-                fwrite(memvar_store.vars[j].name, MEMVAR_NAMELEN, 1, fp);
-                fwrite(&memvar_store.vars[j].val.type, 4, 1, fp);
-                if (memvar_store.vars[j].val.type == VAL_NUM) fwrite(&memvar_store.vars[j].val.num, 8, 1, fp);
-                else if (memvar_store.vars[j].val.type == VAL_CHAR) {
-                    int len = strlen(memvar_store.vars[j].val.str);
-                    fwrite(&len, 4, 1, fp); fwrite(memvar_store.vars[j].val.str, len, 1, fp);
-                } else if (memvar_store.vars[j].val.type == VAL_DATE) fwrite(&memvar_store.vars[j].val.date, 4, 1, fp);
-                else if (memvar_store.vars[j].val.type == VAL_LOGIC) fwrite(&memvar_store.vars[j].val.logic, 4, 1, fp);
+            lex_get_remaining(l, rest, sizeof(rest));
+            p = rest;
+            if (cmd_name_arg(&p, fname, sizeof(fname)) != 0) return;
+            lexer_init_ext(l, p, expr_ctx.vars);   /* reads the first token */
+        } else if (cmd_kw(l, "ALL")) {
+            all = 1;
+            lex_next(l);
+            if (cmd_kw(l, "LIKE") || cmd_kw(l, "EXCEPT")) {
+                like = cmd_kw(l, "LIKE");
+                lex_next(l);
+                {
+                    const char *p = l->token_src ? l->token_src : l->token_start;
+                    int i = 0;
+                    while (p && *p && *p != ' ' && *p != '\t' && i < MEMVAR_NAMELEN - 1) skel[i++] = *p++;
+                    skel[i] = '\0';
+                    str_upper(skel);
+                    lexer_init_ext(l, p ? p : "", expr_ctx.vars);
+                }
             }
+        } else {
+            prog_error(ERR_SYNTAX, "SAVE: TO <file> expected");
+            return;
         }
-        fclose(fp);
     }
+    (void)all;
+    if (!fname[0]) { prog_error(ERR_SYNTAX, "SAVE: TO <file> expected"); return; }
+    mem_file_name(fname, sizeof(fname), fname);
+    fp = fopen(fname, "wb");
+    if (!fp) { prog_error_fmt(ERR_CANNOT_CREATE, "Cannot create %s", fname); return; }
+    for (j = 0; j < MEMVAR_MAX; j++) {
+        const memvar_t *mv = &memvar_store.vars[j];
+        unsigned char head[32];
+        if (!mv->used || !mem_name_matches(mv->name, skel, like)) continue;
+        if (mv->val.type != VAL_CHAR && mv->val.type != VAL_NUM && mv->val.type != VAL_DATE && mv->val.type != VAL_LOGIC) continue;
+        memset(head, 0, sizeof(head));
+        strncpy((char *)head, mv->name, 10);
+        switch (mv->val.type) {
+        case VAL_CHAR: {
+            int32_t n = val_len(&mv->val) + 1;   /* the NUL counts */
+            head[11] = 'C' | 0x80;
+            head[16] = (unsigned char)(n & 0xFF);
+            head[17] = (unsigned char)((n >> 8) & 0xFF);
+            fwrite(head, 1, 32, fp);
+            fwrite(val_text(&mv->val), 1, (size_t)(n - 1), fp);
+            fputc(0, fp);
+            break;
+        }
+        case VAL_NUM: {
+            double d = mv->val.num;
+            head[11] = 'N' | 0x80;
+            head[16] = (unsigned char)(mv->val.nwidth > 0 ? mv->val.nwidth : 10);
+            head[17] = (unsigned char)(mv->val.ndec >= 0 ? mv->val.ndec : 0);
+            fwrite(head, 1, 32, fp);
+            fwrite(&d, 1, 8, fp);
+            break;
+        }
+        case VAL_DATE: {
+            double d = (double)mv->val.date;
+            head[11] = 'D' | 0x80;
+            head[16] = 1;
+            fwrite(head, 1, 32, fp);
+            fwrite(&d, 1, 8, fp);
+            break;
+        }
+        case VAL_LOGIC: {
+            head[11] = 'L' | 0x80;
+            head[16] = 1;
+            fwrite(head, 1, 32, fp);
+            fputc(mv->val.logic ? 1 : 0, fp);
+            break;
+        }
+        default: break;
+        }
+    }
+    fputc(0x1A, fp);
+    fclose(fp);
 }
 
+/* RESTORE FROM <file> [ADDITIVE]: the variables of a .MEM, as PRIVATEs of
+ * this level; without ADDITIVE every memory variable goes first */
 static void h_restore(dbf_t *db, lexer_t *l) {
+    char fname[320] = "";
+    int additive = 0;
+    FILE *fp;
     (void)db;
     lex_next(l); /* skip RESTORE */
     if (cmd_kw(l, "SCREEN")) {
         screen_restore();
         return;
     }
-    if (cmd_kw(l, "FROM")) {
+    if (cmd_kw(l, "ADDITIVE")) { additive = 1; lex_next(l); }   /* RL: RESTORE ADDITIVE FROM &mem_file */
+    if (!cmd_kw(l, "FROM")) { prog_error(ERR_SYNTAX, "RESTORE: FROM <file> expected"); return; }
+    {
+        const char *p;
+        char rest[320];
         lex_next(l);
-        char fname[128];
-        int additive = 0;
-        FILE *fp;
-        fname[0] = '\0';
-        while (l->current.type != TOK_EOF && !cmd_kw(l, "ADDITIVE")) {
-            strncat(fname, l->current.text, sizeof(fname) - strlen(fname) - 1);
-            lex_next(l);
-        }
-        if (cmd_kw(l, "ADDITIVE")) {
-            additive = 1;
-            lex_next(l);
-        }
-        str_upper(fname);
-        if (strlen(fname) < 4 || str_icmp(fname + strlen(fname) - 4, ".MEM") != 0) strcat(fname, ".MEM");
-        fp = fopen(fname, "rb");
-        if (!fp) { file_not_found(fname); return; }
-        if (!additive) memvar_release_all(&memvar_store);
-        {
-            int nv = 0, j; fread(&nv, 4, 1, fp);
-            for (j = 0; j < nv; j++) {
-                char name[MEMVAR_NAMELEN]; int type; value_t v;
-                fread(name, MEMVAR_NAMELEN, 1, fp); fread(&type, 4, 1, fp);
-                v.type = type;
-                if (type == VAL_NUM) { double d = 0; fread(&d, 8, 1, fp); v = val_num(d); }
-                else if (type == VAL_CHAR) {
-                    int len = 0; fread(&len, 4, 1, fp);
-                    if (len >= (int)sizeof(v.str)) len = sizeof(v.str) - 1;
-                    fread(v.str, len, 1, fp); v.str[len] = '\0';
-                } else if (type == VAL_DATE) fread(&v.date, 4, 1, fp);
-                else if (type == VAL_LOGIC) fread(&v.logic, 4, 1, fp);
-                memvar_set(&memvar_store, name, &v);
-            }
-        }
-        fclose(fp);
+        lex_get_remaining(l, rest, sizeof(rest));
+        p = rest;
+        if (cmd_name_arg(&p, fname, sizeof(fname)) != 0) return;
+        p = skip_ws(p);
+        if (str_imatch(p, "ADDITIVE")) additive = 1;
     }
+    mem_file_name(fname, sizeof(fname), fname);
+    fp = fopen(fname, "rb");
+    if (!fp) { file_not_found(fname); return; }
+    if (!additive) memvar_release_all(&memvar_store);
+    for (;;) {
+        unsigned char head[32];
+        char name[MEMVAR_NAMELEN];
+        value_t v;
+        int type;
+        if (fread(head, 1, 32, fp) != 32 || head[0] == 0x1A) break;
+        memcpy(name, head, 10);
+        name[10] = '\0';
+        str_upper(name);
+        type = head[11] & 0x7F;
+        if (type == 'C') {
+            int32_t n = head[16] + 256 * head[17];
+            char *buf = n > 0 ? malloc((size_t)n) : NULL;
+            if (!buf || fread(buf, 1, (size_t)n, fp) != (size_t)n) { free(buf); break; }
+            v = val_strn(buf, n > 0 && buf[n - 1] == '\0' ? n - 1 : n);
+            free(buf);
+        } else if (type == 'N') {
+            double d;
+            if (fread(&d, 1, 8, fp) != 8) break;
+            v = val_num(d);
+        } else if (type == 'D') {
+            double d;
+            if (fread(&d, 1, 8, fp) != 8) break;
+            v = val_date((int32_t)d);
+        } else if (type == 'L') {
+            int c = fgetc(fp);
+            if (c == EOF) break;
+            v = val_logic(c != 0);
+        } else break;
+        {
+            /* the file holds ten characters of a name, which is all Clipper
+             * keeps apart; a variable of ours whose first ten match (RL's
+             * frm_pagehdr, frm_colcount) is the one restored */
+            int j, found = 0;
+            for (j = 0; j < MEMVAR_MAX; j++) {
+                if (memvar_store.vars[j].used && strncasecmp(memvar_store.vars[j].name, name, 10) == 0 &&
+                    (strlen(name) < 10 ? str_icmp(memvar_store.vars[j].name, name) == 0 : 1)) {
+                    memvar_set(&memvar_store, memvar_store.vars[j].name, &v);
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) memvar_set(&memvar_store, name, &v);
+        }
+    }
+    fclose(fp);
 }
 
 /* ---- TYPE <filename> ---- */

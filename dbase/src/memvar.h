@@ -4,7 +4,8 @@
 #include "expr.h"
 
 #define MEMVAR_MAX     256
-#define MEMVAR_NAMELEN  33   /* Clipper made ten significant; long names stay distinct here, as Harbour keeps them */
+#define MEMVAR_NAMELEN  33
+#define MEMVAR_SIGNIFICANT 10   /* Clipper keeps ten characters of a name, and programs lean on it (RL's frm_pagehdr is its .MEM's FRM_PAGEHD) */
 
 /* An array, as Clipper has them: one dimension, any values (arrays too, so
  * a[i][j] and DECLARE a[r,c] nest), resizable, shared by reference --
@@ -63,6 +64,8 @@ int  memvar_release(memvar_store_t *store, const char *name);
 void memvar_release_locals(memvar_store_t *store, int depth);
 void memvar_release_all(memvar_store_t *store);
 int  memvar_release_matching(memvar_store_t *store, const char *pattern, int like);
+int  memvar_pattern_match(const char *name, const char *pat);   /* * and ? in pat */
+void memvar_norm(char *dst, const char *name);   /* upper case, ten characters; dst holds MEMVAR_NAMELEN */
 void memvar_display(const memvar_store_t *store);
 
 #endif

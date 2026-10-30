@@ -11,7 +11,7 @@
 typedef struct {
     char name[DBF_MAX_FIELD_NAME];  /* NUL-terminated, uppercased */
     char type;                       /* 'C', 'N', 'D', 'L' */
-    uint8_t length;
+    uint16_t length;                 /* a character field may be longer than 255: Clipper keeps the high byte in the decimals slot */
     uint8_t decimals;
     uint16_t offset;                 /* byte offset within record (after deletion flag) */
 } dbf_field_t;
