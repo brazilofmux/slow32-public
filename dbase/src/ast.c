@@ -12,6 +12,7 @@
 #include <math.h>
 #include <errno.h>
 #include "ast.h"
+#include "getsys.h"
 #include "command.h"
 #include "func.h"
 #include "memvar.h"
@@ -1330,26 +1331,7 @@ static value_t *ivar_ref(expr_ctx_t *ctx, const value_t *base, const char *name)
 
 int ast_eval_send(expr_ctx_t *ctx, const value_t *base, const char *name, value_t *args, int nargs,
                   int is_call, value_t *result) {
-    value_t *p;
-    (void)args;
-    (void)nargs;
-    if (is_call) {
-        if (base->type != VAL_OBJECT || !base->obj) {
-            ctx->error = "Not an object";
-            return -1;
-        }
-        if (str_icmp(name, "CLASSNAME") == 0) {   /* every object's */
-            *result = val_str(base->obj->cls);
-            return 0;
-        }
-        snprintf(ctx->err_msg, sizeof(ctx->err_msg), "No exported method: %s", name);
-        ctx->error = ctx->err_msg;
-        return -1;
-    }
-    p = ivar_ref(ctx, base, name);
-    if (!p) return -1;
-    *result = *p;
-    return 0;
+    return object_send(ctx, base, name, args, nargs, is_call, result);   /* getsys.c: the classes */
 }
 
 int ast_store_send(expr_ctx_t *ctx, const value_t *base, const char *name, const value_t *val) {
@@ -1449,6 +1431,17 @@ int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
         int i;
         int rc;
 
+        /* IIF() takes one branch only (Clipper): the other is not evaluated */
+        if (node->call.nargs == 3 &&
+            (str_icmp(node->call.name, "IIF") == 0 || str_icmp(node->call.name, "IF") == 0)) {
+            value_t cond;
+            int truth;
+            if (ast_eval(node->call.args[0], ctx, &cond) != 0) return -1;
+            if (cond.type == VAL_LOGIC) truth = cond.logic;
+            else if (cond.type == VAL_NUM) truth = cond.num != 0.0;
+            else truth = 0;
+            return ast_eval(node->call.args[truth ? 1 : 2], ctx, result);
+        }
         if (node->call.nargs > MAX_FUNC_ARGS) {
             ctx->error = "Too many function arguments";
             return -1;

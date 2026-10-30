@@ -32,8 +32,8 @@ speed.  Summer '87 programs are the subset they are.
 | Statements | 22 | the dBASE ones (DO, IF, FOR, PRIVATE, PUBLIC, PARAMETERS, RETURN, BEGIN SEQUENCE, LOCAL in part) |
 | Operators | 28 | the dBASE ones |
 | Directives (preprocessor) | 10 | all ten in s32-clip (step 7); the interpreter has none |
-| Classes (Error, Get, TBrowse, TBColumn) | 4 | Error (step 8); the `:` send operator |
-| Get System | 10 | none (dbase has its own @ SAY/GET/READ) |
+| Classes (Error, Get, TBrowse, TBColumn) | 4 | all four (steps 8, 9); the `:` send operator |
+| Get System | 10 | the Get class, GETNEW, READMODAL, READVAR, UPDATED, READEXIT / READINSERT / READKILL, GETACTIVE over dbase's @ SAY/GET/READ (step 9) |
 | Drivers (RDD) | 31 | DBF/NDX2 only, by design (NDX ruling 2026-10-29) |
 
 The missing functions fall in clusters: arrays (AADD, ASIZE, ATAIL,
@@ -175,4 +175,44 @@ The severe ones are marked.
    always false, so a handler's return value substitutes nothing;
    ERRORBLOCK() with none posted returns NIL where Clipper returns the
    default handler's block.
-9. **The Get system, TBrowse** -- objects again; after 8.
+9. **The Get system, TBrowse** -- done 2026-10-29, interpreter and clip
+   alike (dbase/src/getsys.c).  *Get:* GETNEW(row, col, block, name,
+   picture, color) and the class's variables (buffer, changed, original,
+   pos, hasFocus, type, exitState, cargo, pre/postBlock, decPos, minus,
+   typeOut, badDate, rejected ...), varGet / varPut through the block or
+   the variable's name, setFocus / killFocus, assign, undo, reset,
+   updateBuffer, unTransform, display, and the editing methods
+   (overstrike, insert, delete, backSpace, home, end, left, right,
+   toDecPos) on the buffer under the picture (@! upper, templates,
+   numeric widths).  `@ r,c GET var` makes a Get beside the GET it
+   records (VALID and WHEN as postBlock / preBlock) and AADDs it to a
+   GETLIST array when the program keeps one; READ and READMODAL() run
+   dbase's editor over the GETs recorded; READVAR(), UPDATED(),
+   GETACTIVE() answer during and after it.  *TBrowse / TBColumn:*
+   TBROWSENEW, TBROWSEDB (the three blocks on the work area through
+   DBGOTOP / DBGOBOTTOM / DBSKIPPER, added with DBSKIP), TBCOLUMNNEW;
+   add / ins / del / get / setColumn, goTop, goBottom, up, down, pageUp,
+   pageDown, home, end, left, right, pan*, stabilize, refreshAll /
+   refreshCurrent / invalidate, configure, hilite / deHilite; rowCount
+   from the window less heading, headSep, footing rows; hitTop /
+   hitBottom settled at stabilize() over the movement requested since
+   the last one, as Clipper's deferred movement makes them (three up()
+   from row 3 hit nothing); a column's width from its own or the longer
+   of heading and the current cell.  stabilize() paints the whole window
+   at once, with a terminal only (Clipper's stream output drops
+   positioned text too; a browse repainted into a line stream says
+   nothing); the current row is not highlighted.  *Screen functions:*
+   SETPOS / DEVPOS, DISPOUT / DEVOUT, MAXROW, MAXCOL, SETCOLOR (returns
+   the spec), SETCURSOR, SCROLL (clears the region), DISPBOX, SAVESCREEN /
+   RESTSCREEN (no screen memory: empty, and nothing), SETKEY with a block
+   (procname, line, readvar), OUTSTD, OUTERR, TONE, DISPBEGIN / DISPEND,
+   ISCOLOR.  Also from this step: IIF() evaluates one branch only (both
+   were, so `{|x| IF(x == NIL, v, v := x)}` cleared v); a file whose top
+   level is declarations only runs its first procedure, as Clipper does;
+   USE positions at the first record (it left none, and a field read
+   before any movement failed as an unknown variable).  Not Clipper's
+   yet: READMODAL() reads the GETs recorded by @ GET, not the Gets in the
+   array it is given; the Get's reader and exitState are inert; a
+   column's colorBlock, footing painting, TBrowse freeze and horizontal
+   panning are accepted and ignored; NEXTKEY, KEYBOARD and SETMODE are
+   absent.

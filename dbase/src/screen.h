@@ -24,6 +24,7 @@ typedef struct {
     struct ast_node *when_ast;
     int is_field;    /* 1 if variable is a database field */
     int field_index; /* field index in db (valid when is_field=1) */
+    value_t getobj;  /* the Get object beside it (getsys.c), or NIL */
 } get_entry_t;
 
 typedef struct {
@@ -125,5 +126,19 @@ int screen_term_available(void);
 void screen_set_key_handler(int keycode, const char *procname);
 void screen_clear_key_handlers(void);
 int  screen_check_key_handler(int keycode);  /* returns 1 if handler fired */
+/* SETKEY(): a block as the handler (NULL removes it); the one before */
+value_t screen_set_key_block(int keycode, const value_t *block);
+
+/* For the Get system (getsys.c): text at a position in either mode, the
+ * cursor moved, text at the cursor, the picture mask, the colour spec as
+ * SETCOLOR() gave it, and the READ in progress */
+void screen_out_at(int row, int col, const char *text);
+void screen_setpos(int row, int col);
+void screen_out(const char *text);
+void screen_apply_picture(char *out, const char *value, const char *picture, int outsize);
+const char *screen_color_spec(void);
+const char *screen_read_var(void);   /* the GET being read; "" outside a READ */
+int screen_read_updated(void);       /* UPDATED(): a GET changed in the last READ */
+value_t screen_active_get(void);     /* GETACTIVE(): its Get object, or NIL */
 
 #endif

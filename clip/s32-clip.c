@@ -401,6 +401,18 @@ static int gen_expr(sb_t *b, int *ntmp, ast_node_t *node) {
         }
         return t;
     case AST_FUNC_CALL:
+        if (node->call.nargs == 3 &&
+            (strcasecmp(node->call.name, "IIF") == 0 || strcasecmp(node->call.name, "IF") == 0)) {
+            /* one branch only, as ast.c evaluates it */
+            l = gen_expr(b, ntmp, node->call.args[0]);
+            sb_printf(b, "if (!e) { if ((t%d.type == VAL_LOGIC && t%d.logic) || (t%d.type == VAL_NUM && t%d.num != 0.0)) { ",
+                      l, l, l, l);
+            r = gen_expr(b, ntmp, node->call.args[1]);
+            sb_printf(b, "if (!e) t%d = t%d; } else { ", t, r);
+            r = gen_expr(b, ntmp, node->call.args[2]);
+            sb_printf(b, "if (!e) t%d = t%d; } } ", t, r);
+            return t;
+        }
         a = -1;
         if (node->call.nargs > 0) {
             int args[MAX_FUNC_ARGS];
@@ -2410,6 +2422,20 @@ static int emit_line(emit_t *e, const src_line_t *ln) {
     return emit_stmt(e, ln->text);
 }
 
+/* A line that declares and runs nothing: what Clipper allows before the
+ * first procedure of a file */
+static int is_declaration(const char *text) {
+    static const char *const words[] = { "STATIC", "LOCAL", "PRIVATE", "PUBLIC", "MEMVAR", "FIELD",
+                                         "PARAMETERS", "DECLARE", "ANNOUNCE", "REQUEST", "EXTERNAL", NULL };
+    const char *p = skip_ws(text);
+    int i;
+    if (*p == '\0' || *p == '*' || is_kw(p, "NOTE")) return 1;
+    for (i = 0; words[i]; i++) {
+        if (is_kw(p, words[i])) return 1;
+    }
+    return 0;
+}
+
 static int emit_function(FILE *out, const func_t *fn) {
     emit_t e;
     int i;
@@ -2456,6 +2482,7 @@ int main(int argc, char **argv) {
     func_t fns[MAX_FUNCS];
     int nfns = 0;
     emit_t e;
+    int top_stmts;
     int i, j;
     int scan;
 
@@ -2593,9 +2620,13 @@ int main(int argc, char **argv) {
 
     memset(&e, 0, sizeof(e));
     e.out = out;
+    top_stmts = 0;
     for (i = 0; i < g_nlines; i++) {
         if (line_in_func(i, fns, nfns)) {
             continue;
+        }
+        if (!is_declaration(g_lines[i].text)) {
+            top_stmts++;
         }
         e.inpath = g_lines[i].src;
         e.lineno = g_lines[i].lineno;
@@ -2608,6 +2639,22 @@ int main(int argc, char **argv) {
         fprintf(stderr, "%s: unclosed block\n", inputs[0]);
         fclose(out);
         return 1;
+    }
+    /* Clipper's entry point: the main file's first procedure, when the
+     * top level is declarations only (top-level statements are the dBASE
+     * form of a main program, and run as one) */
+    if (top_stmts == 0 && !e.ended) {
+        int first = -1;
+        for (i = 0; i < nfns; i++) {
+            if (strcmp(g_lines[fns[i].header].src, inputs[0]) == 0 &&
+                (first < 0 || fns[i].header < fns[first].header)) {
+                first = i;
+            }
+        }
+        if (first >= 0) {
+            fprintf(out, "    { expr_ctx_t *c = clip_ctx(); value_t r; static clip_site_t site; "
+                         "if (clip_call(c, \"%s\", NULL, 0, &r, &site)) clip_fail(c); }\n", fns[first].name);
+        }
     }
     if (!e.ended) {
         fprintf(out, "    clip_fini();\n");

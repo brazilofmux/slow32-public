@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <time.h>
 #include "func.h"
+#include "getsys.h"
 #include "ast.h"
 #include "date.h"
 #include "command.h"
@@ -2514,6 +2515,17 @@ static const func_entry_t func_table[] = {
     /* Tier 2: Array functions */
     { "ALEN",      fn_alen },
     { "ERRORBLOCK", fn_errorblock }, { "ERRORNEW", fn_errornew }, { "BREAK", fn_break },
+    /* The Get system, TBrowse and the screen functions (getsys.c) */
+    { "GETNEW", fn_getnew }, { "READMODAL", fn_readmodal }, { "READVAR", fn_readvar }, { "UPDATED", fn_updated },
+    { "READEXIT", fn_readexit }, { "READINSERT", fn_readinsert }, { "READKILL", fn_readkill },
+    { "GETACTIVE", fn_getactive }, { "SETPOS", fn_setpos }, { "DEVPOS", fn_setpos }, { "DISPOUT", fn_dispout },
+    { "DEVOUT", fn_dispout }, { "MAXROW", fn_maxrow }, { "MAXCOL", fn_maxcol }, { "SETCOLOR", fn_setcolor },
+    { "SETCURSOR", fn_setcursor }, { "SCROLL", fn_scroll }, { "DISPBOX", fn_dispbox },
+    { "SAVESCREEN", fn_savescreen }, { "RESTSCREEN", fn_restscreen }, { "SETKEY", fn_setkey },
+    { "OUTSTD", fn_outstd }, { "OUTERR", fn_outerr }, { "TONE", fn_noop_nil }, { "DISPBEGIN", fn_noop_nil },
+    { "DISPEND", fn_noop_nil }, { "ISCOLOR", fn_iscolor },
+    { "TBROWSENEW", fn_tbrowsenew }, { "TBROWSEDB", fn_tbrowsedb }, { "TBCOLUMNNEW", fn_tbcolumnnew },
+    { "DBGOTOP", fn_dbgotop }, { "DBGOBOTTOM", fn_dbgobottom }, { "DBSKIP", fn_dbskip }, { "DBSKIPPER", fn_dbskipper },
     { "ARRAY",     fn_array },  { "EVAL", fn_eval },   { "AEVAL", fn_aeval },  { "AADD", fn_aadd },   { "ASIZE", fn_asize },
     { "ATAIL",     fn_atail },  { "AFILL", fn_afill }, { "ACLONE", fn_aclone },
     { "ASCAN",     fn_ascan },

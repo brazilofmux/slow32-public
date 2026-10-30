@@ -8,6 +8,8 @@
 #include "memvar.h"
 #include "expr.h"
 #include "ast.h"
+#include "getsys.h"
+#include "func.h"
 
 #ifdef __slow32__
 #include <term.h>
@@ -20,12 +22,17 @@ static screen_state_t scr;
 static int print_row, print_col;   /* printer position tracking */
 static int last_key;               /* last key from INKEY/READ/WAIT */
 static int read_exit_key;          /* how user exited last READ */
+static char read_var[MEMVAR_NAMELEN];   /* the GET being read */
+static int read_updated;           /* a GET changed in the last READ */
+static int active_get = -1;        /* its index while a READ runs */
+static char color_spec[64] = "W/N,N/W,N,N,N/W";
 
 /* Key handler state (SET KEY / ON KEY) */
 #define MAX_KEY_HANDLERS 32
 static struct {
     int keycode;
     char procedure[64];
+    value_t block;      /* SETKEY()'s handler, when the entry is one */
 } key_handlers[MAX_KEY_HANDLERS];
 static int key_handler_count;
 static int in_key_handler;  /* re-entrancy guard */
@@ -100,7 +107,7 @@ void screen_restore(void) {
 int screen_term_available(void) { return scr.term_available; }
 
 /* ---- Apply PICTURE mask to a string ---- */
-static void apply_picture(char *out, const char *value, const char *picture, int outsize) {
+void screen_apply_picture(char *out, const char *value, const char *picture, int outsize) {
     int i;
     int vi = 0;
     int vlen = strlen(value);
@@ -197,6 +204,44 @@ static void screen_update_pos(int row, int col, int len) {
     scr.last_col = end_col;  /* 1-based: cursor is AT this column */
 }
 
+/* ---- Text at a position, for the Get system and TBrowse ---- */
+void screen_out_at(int row, int col, const char *text) {
+    goto_pos(row, col);
+#if HAS_TERM
+    if (scr.term_available)
+        term_puts(text);
+    else
+#endif
+        printf("%s", text);
+    screen_update_pos(row, col, (int)strlen(text));
+}
+
+void screen_setpos(int row, int col) {
+    goto_pos(row, col);
+    screen_update_pos(row, col, 0);
+}
+
+void screen_out(const char *text) {
+    screen_out_at(scr.last_row, scr.last_col, text);
+}
+
+const char *screen_color_spec(void) {
+    return color_spec;
+}
+
+const char *screen_read_var(void) {
+    return read_var;
+}
+
+int screen_read_updated(void) {
+    return read_updated;
+}
+
+value_t screen_active_get(void) {
+    if (active_get >= 0 && active_get < scr.ngets) return scr.gets[active_get].getobj;
+    return val_nil();
+}
+
 /* ---- @SAY ---- */
 void screen_say(int row, int col, const char *expr_str, const char *picture) {
     expr_ctx_t *ctx = cmd_get_expr_ctx();
@@ -212,7 +257,7 @@ void screen_say(int row, int col, const char *expr_str, const char *picture) {
     val_to_string(&val, buf, sizeof(buf));
 
     if (picture && picture[0]) {
-        apply_picture(formatted, buf, picture, sizeof(formatted));
+        screen_apply_picture(formatted, buf, picture, sizeof(formatted));
     } else {
         str_copy(formatted, buf, sizeof(formatted));
     }
@@ -296,6 +341,7 @@ void screen_get(int row, int col, const char *varname, const char *picture,
 
     scr.gets[scr.ngets].is_field = 0;
     scr.gets[scr.ngets].field_index = -1;
+    scr.gets[scr.ngets].getobj = getsys_note_get(row, col, varname, picture, valid_expr, when_expr);
 
     /* Get current value for display */
     if (memvar_find(store, varname, &val) == 0) {
@@ -356,6 +402,7 @@ int read_dbase_key(void);
 void screen_read(void) {
     memvar_store_t *store = cmd_get_memvar_store();
     int i;
+    read_updated = 0;
 
 #if HAS_TERM
     if (scr.term_available) {
@@ -366,6 +413,8 @@ void screen_read(void) {
         for (i = 0; i < scr.ngets && !escaped; i++) {
             char buf[256];
             int pos, len, key;
+            str_copy(read_var, scr.gets[i].varname, sizeof(read_var));
+            active_get = i;
 
             /* WHEN — skip field if false */
             if (scr.gets[i].when_ast) {
@@ -508,6 +557,11 @@ void screen_read(void) {
                 } else {
                     memvar_set(store, scr.gets[i].varname, &v);
                 }
+                {   /* UPDATED() */
+                    char nv[256];
+                    val_to_string(&v, nv, sizeof(nv));
+                    if (strcmp(nv, scr.gets[i].initial) != 0) read_updated = 1;
+                }
                 /* Write back to database field if applicable */
                 if (scr.gets[i].is_field) {
                     expr_ctx_t *fctx = cmd_get_expr_ctx();
@@ -597,6 +651,11 @@ void screen_read(void) {
                 } else {
                     memvar_set(store, scr.gets[i].varname, &v);
                 }
+                {   /* UPDATED() */
+                    char nv[256];
+                    val_to_string(&v, nv, sizeof(nv));
+                    if (strcmp(nv, scr.gets[i].initial) != 0) read_updated = 1;
+                }
                 /* Write back to database field if applicable */
                 if (scr.gets[i].is_field) {
                     expr_ctx_t *fctx = cmd_get_expr_ctx();
@@ -615,6 +674,9 @@ void screen_read(void) {
         last_key = 13;
         read_exit_key = 12;
     }
+
+    read_var[0] = '\0';
+    active_get = -1;
 
     /* Free ASTs */
     {
@@ -883,6 +945,7 @@ int screen_menu_to(void) {
 
 /* ---- SET COLOR TO ---- */
 void screen_set_color(const char *spec) {
+    str_copy(color_spec, skip_ws(spec), sizeof(color_spec));   /* SETCOLOR() gives it back */
     /* Parse color spec: "fg/bg" or "fg"
        Colors: W(hite), N(black), R(ed), G(reen), B(lue),
                GR(gray), BG(bright green), etc.
@@ -1360,8 +1423,28 @@ void screen_set_key_handler(int keycode, const char *procname) {
         key_handlers[key_handler_count].keycode = keycode;
         str_copy(key_handlers[key_handler_count].procedure, procname,
                  sizeof(key_handlers[key_handler_count].procedure));
+        key_handlers[key_handler_count].block = val_nil();
         key_handler_count++;
     }
+}
+
+value_t screen_set_key_block(int keycode, const value_t *block) {
+    int i;
+    value_t prev = val_nil();
+    for (i = 0; i < key_handler_count; i++) {
+        if (key_handlers[i].keycode == keycode) {
+            prev = key_handlers[i].block;
+            break;
+        }
+    }
+    screen_set_key_handler(keycode, NULL);   /* out, then in again with the block */
+    if (block && key_handler_count < MAX_KEY_HANDLERS) {
+        key_handlers[key_handler_count].keycode = keycode;
+        key_handlers[key_handler_count].procedure[0] = '\0';
+        key_handlers[key_handler_count].block = *block;
+        key_handler_count++;
+    }
+    return prev;
 }
 
 void screen_clear_key_handlers(void) {
@@ -1374,7 +1457,17 @@ int screen_check_key_handler(int keycode) {
     for (i = 0; i < key_handler_count; i++) {
         if (key_handlers[i].keycode == keycode) {
             in_key_handler = 1;
-            prog_do(key_handlers[i].procedure);
+            if (key_handlers[i].block.type == VAL_BLOCK) {   /* SETKEY(): (procname, line, readvar) */
+                expr_ctx_t *ctx = cmd_get_expr_ctx();
+                value_t a[3], r;
+                func_call(ctx, "PROCNAME", NULL, 0, &a[0]);
+                func_call(ctx, "PROCLINE", NULL, 0, &a[1]);
+                a[2] = val_str(read_var);
+                if (ast_eval_block(ctx, &key_handlers[i].block, a, 3, &r) != 0 && ctx->error)
+                    prog_error(expr_error_code(ctx->error), ctx->error);
+            } else {
+                prog_do(key_handlers[i].procedure);
+            }
             in_key_handler = 0;
             return 1;
         }

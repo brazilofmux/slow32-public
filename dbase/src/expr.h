@@ -30,7 +30,7 @@ typedef struct {
 /* An object (Clipper's Error class, so far): its class name and instance
  * variables, reached with the : send operator; shared by reference, as
  * arrays are, and not collected (the same debt) */
-#define OBJECT_MAX_IVARS 16
+#define OBJECT_MAX_IVARS 32
 typedef struct object_s {
     char cls[32];
     int n;

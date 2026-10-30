@@ -632,8 +632,10 @@ static int check_filter(dbf_t *db) {
 }
 
 /* ---- USE ---- */
+static void cmd_go(dbf_t *db, const char *arg);
+
 static void cmd_use(dbf_t *db, const char *arg) {
-    char filename[64];
+    char filename[320];   /* a resolved path, not a bare name (it was 64: a long directory truncated it) */
     const char *p;
     int i;
     work_area_t *wa = cur_wa();
@@ -663,7 +665,7 @@ static void cmd_use(dbf_t *db, const char *arg) {
     /* Parse filename (up to whitespace) */
     p = arg;
     i = 0;
-    while (*p && *p != ' ' && *p != '\t' && i < 63)
+    while (*p && *p != ' ' && *p != '\t' && i < (int)sizeof(filename) - 5)
         filename[i++] = *p++;
     filename[i] = '\0';
     if (filename[0] == '\0') {
@@ -737,6 +739,12 @@ static void cmd_use(dbf_t *db, const char *arg) {
     expr_ctx.found = 0;
     wa->locate_cond[0] = '\0';
     wa->locate_last_rec = 0;
+
+    /* USE positions at the first record (in index order), as dBASE does;
+     * it used to leave no current record, and a field read before any
+     * movement failed as an unknown variable */
+    if (db->record_count > 0)
+        cmd_go(db, "TOP");
 
     if (set_opts.talk)
         printf("Database %s opened with %d record(s).\n",
