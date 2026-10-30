@@ -93,6 +93,32 @@ int drive_cmut(void) {
  * int argument bound to a 64-bit parameter must widen to a full pair
  * (sign- or zero-extended); before the fix only the low word was
  * marshalled and the high word was whatever the register held. */
+/* A struct too big for r1:r2 comes back through the hidden pointer the
+ * caller passes in r3.  The LLVM callee leaves r1 alone, so the caller
+ * must take the result from its own temporary, not from r1 (stage08 used
+ * r1 -- a stage08 callee returns the pointer there, an LLVM one does not;
+ * found compiling SLOW-32 xBase's generated C against its clang runtime) */
+extern struct Big mkbig(int k);
+int drive_mkbig(void) {
+    struct Big b; int i;
+    b = mkbig(3);
+    for (i = 0; i < 6; i++) if (b.a[i] != 3 * 10 + i) return i + 1;
+    if (mkbig(4).a[5] != 45) return 7;
+    return 0;
+}
+/* The same with a double parameter given an int, inside a statement
+ * expression, the shape xBase's generated C has: the hidden pointer in
+ * r3, the double in the aligned pair r5:r6 after it, converted from 3.
+ * stage08 skipped every conversion inside ({ ... }) and passed the int 3
+ * in r4. */
+extern struct Big mkbigd(double d, int k);
+int drive_mkbigd(void) {
+    struct Big b;
+    ({ b = mkbigd(3, 5); 0; });
+    if (b.a[0] != 30 || b.a[1] != 5) return 1;
+    if (({ struct Big t; t = mkbigd(2.5, 6); t.a[0] + t.a[1]; }) != 31) return 2;
+    return 0;
+}
 extern long long negate64(long long v);
 int drive_promote(void) {
     int k; int m;
@@ -125,6 +151,10 @@ extern int bitslayout(struct Bits *b);
 extern int drive_cmut(void);
 extern int drive_promote(void);
 long long negate64(long long v) { return -v; }
+struct Big mkbig(int k) { struct Big b; int i; for (i = 0; i < 6; i++) b.a[i] = k * 10 + i; return b; }
+extern int drive_mkbig(void);
+struct Big mkbigd(double d, int k) { struct Big b; int i; for (i = 0; i < 6; i++) b.a[i] = 0; b.a[0] = (int)(d * 10); b.a[1] = k; return b; }
+extern int drive_mkbigd(void);
 int cmut(struct Pt p) { p.x = p.x + 100; return p.x + p.y; }
 int cb(int x) { return x * 10; }
 int main(void) {
@@ -143,6 +173,8 @@ int main(void) {
     if (bigmix(1,2,3,4,5,6,7,8, bg, 10, 11) != 73) { fail = 1; printf("GATE struct-stack-mix FAIL\n"); }
     if (drive_cmut() != 111) { fail = 1; printf("GATE struct-byval-copy FAIL\n"); }
     if (drive_promote() != 0) { fail = 1; printf("GATE arg-promote FAIL (%d)\n", drive_promote()); }
+    if (drive_mkbig() != 0) { fail = 1; printf("GATE struct-ret-big FAIL (%d)\n", drive_mkbig()); }
+    if (drive_mkbigd() != 0) { fail = 1; printf("GATE struct-ret-double FAIL (%d)\n", drive_mkbigd()); }
     struct Mix mx; mx.c = 'x'; mx.d = 2.5; mx.t = 77;
     if (sizeof(struct Mix) != 16 || mixlayout(&mx) != 0 || mx.t != 78) {
         fail = 1; printf("GATE struct-layout FAIL\n");

@@ -9562,6 +9562,16 @@ declarators:
             goto array_after_brackets;
         }
         if (fp_is_arr) {
+            /* the declaration's type, for the redeclaration check below
+             * to compare: left stale, extern int (*tab[])(int); and its
+             * definition were "a different type" */
+            /* no size and no initializer: an extern reference or a
+             * tentative definition, one element, as any array's (with a
+             * size of 0 it was taken for a pointer, and a use loaded the
+             * table's first word as its address) */
+            if (fp_count < 0 && lex_tok != TK_ASSIGN) fp_count = ps_tentative_count(is_static);
+            ps_fnptr_nstar = fp_nstars;
+            ps_type_cty = ct_array(ps_fnptr_cty(ret_cty), fp_count);
             if (lex_tok == TK_ASSIGN) {
                 next();
                 if (lex_tok != TK_LBRACE) { p_error("expected { in fn ptr array init"); return NULL; }
@@ -9573,8 +9583,7 @@ declarators:
                 ps_ginit_ensure_len(idx, ps_gsize[idx]);
                 ps_ginit_finish(idx);
             } else {
-                if (fp_count < 0 && !is_extern) { p_error("array size required without initializer"); return NULL; }
-                if (is_extern) idx = add_extern_global(nm, TY_INT + TY_PTR, 4 * (fp_count > 0 ? fp_count : 0));
+                if (is_extern) idx = add_extern_global(nm, TY_INT + TY_PTR, 4 * fp_count);
                 else           idx = add_defined_global(nm, TY_INT + TY_PTR, 4 * fp_count);
                 if (is_static) ps_glocal[idx] = 1;
             }

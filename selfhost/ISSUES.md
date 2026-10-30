@@ -3700,3 +3700,38 @@ longer grows with the output, and no path keeps dead code quietly.
 Output with the attributes is byte-identical to before them.  The heap
 margin itself is still thin (a SQLite-sized compile runs near 64 MB);
 the static tables (185 MB of BSS) are where room would come from.
+
+### 102. [RESOLVED 2026-10-30] Statement expressions skipped sema; a function-pointer array declared then defined was "a different type"
+
+Found compiling SLOW-32 xBase's generated C with stage08 cc against its
+clang-built runtime (`XBC_CC=stage08` in xbc/compile-prg.sh), three
+defects, every one invisible while stage08 compiled both sides:
+
+1. After a call returning a struct through the hidden pointer, stage08
+   took the struct's address from r1.  A stage08 callee returns it
+   there; an LLVM one leaves r1 alone.  The caller now uses its own
+   temporary, whose address it passed in r3 (hir_lower.h).
+2. `sema_expr` never descended into a GNU statement expression's
+   statements, so every conversion sema makes was missing inside
+   `({ ... })`: `({ t = val_num_dec(3, 0, 0); ... })` passed the int 3
+   in r4 where the double belongs in the pair r5:r6.  xbc writes every
+   Clipper expression in that shape.
+3. `extern int (*const tab[])(int);` then its definition: the
+   function-pointer-array path ran the redeclaration check before
+   setting the declaration's type, and compared a stale one.  With that
+   fixed, a use while the size was unknown loaded the table's first word
+   as its address: the unsized declaration was registered with size 0,
+   a pointer's, where every other unsized array gets one tentative
+   element (`ps_tentative_count`).
+
+Gates: `run-interop-llvm.sh` gains struct-ret-big and struct-ret-double
+(each fails on the old compiler); tests/test_stmt_expr_conv.c and
+tests/test_fnptr_array_redecl.c.  The xbc oracle with stage08 compiling
+the programs went from 37 agree to 50, as with clang.
+
+Still open: arrays of more than two dimensions are refused ("arrays of
+more than 2 dimensions unsupported", locals, globals, parameters).
+xbase's label.c and report.c each declare one, so stage08 cannot build
+the interpreter's library; clang builds it.  A missing diagnostic seen
+on the way: `extern int a[2]; int a[3] = {...};` is accepted (the
+initialized definition is checked with size 0).

@@ -87,6 +87,7 @@ static void sema_constraints(Node *n);
 static int sema_compat(int a, int b);
 static int sema_callee_cty(Node *n);
 static void sema_call_check(Node *n, int ft);
+static void sema_stmt(Node *n);
 
 /* Is C type t _Bool? */
 static int sema_is_bool(int t) {
@@ -141,7 +142,12 @@ static void sema_expr_mty(Node *n) {
 
     if (!n) return;
 
-    /* Recurse into children first (post-order) */
+    /* Recurse into children first (post-order).  A GNU statement
+     * expression's statements are children too: without them every
+     * conversion sema makes (a call's arguments to its prototype, an
+     * assignment's right side) was missing inside ({ ... }), and
+     * ({ t = f(3); t; }) handed a double parameter the integer 3. */
+    if (n->kind == ND_STMT_EXPR) sema_stmt(n->body);
     sema_expr(n->lhs);
     sema_expr(n->rhs);
     sema_expr(n->cond);

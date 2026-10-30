@@ -4136,7 +4136,12 @@ static int hl_expr(Node *n) {
             phys_count = phys_count + 1;
             i = hi_emit(HI_CALL, HL_ADDR_TY, -1, -1, phys_count, n->name);
             h_cbase[i] = carg_base;
-            return i;  /* returns the retptr (address of temp struct) */
+            /* The struct is in the temporary whose address went in as the
+             * hidden argument: take it from there, not from r1.  A stage08
+             * callee returns the pointer, an LLVM one does not (SLOW-32
+             * xBase's generated C, linked with its clang-built runtime,
+             * got garbage from every value_t-returning call) */
+            return tmp_alloca;
         }
         /* Pass ret_ty as h_ty (not the historical TY_INT placeholder) so
          * codegen / regalloc can route the result to V0 for float returns
