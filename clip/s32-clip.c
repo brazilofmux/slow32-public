@@ -3075,7 +3075,8 @@ int main(int argc, char **argv) {
         }
     }
 
-    fprintf(out, "int main(void) {\n");
+    fprintf(out, "int main(int argc, char **argv) {\n");
+    fprintf(out, "    (void)argc; (void)argv;\n");
     fprintf(out, "    clip_init();\n");
     {
         char label[64];
@@ -3127,8 +3128,10 @@ int main(int argc, char **argv) {
         }
         if (first >= 0) {
             fprintf(out, "    clip_main_name(NULL);   /* no main program below the first procedure */\n");
-            fprintf(out, "    { expr_ctx_t *c = clip_ctx(); value_t r; static clip_site_t site; "
-                         "if (clip_call(c, \"%s\", NULL, 0, &r, &site)) clip_fail(c); }\n", fns[first].name);
+            /* the command line's words are its parameters, as Clipper passes them */
+            fprintf(out, "    { expr_ctx_t *c = clip_ctx(); value_t r, a[16]; int k, na = 0; static clip_site_t site; "
+                         "for (k = 1; k < argc && na < 16; k++) a[na++] = val_str(argv[k]); "
+                         "if (clip_call(c, \"%s\", na ? a : NULL, na, &r, &site)) clip_fail(c); }\n", fns[first].name);
         }
     }
     if (!e.ended) {

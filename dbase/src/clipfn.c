@@ -19,6 +19,7 @@
 #include "program.h"
 #include "screen.h"
 #include "getsys.h"
+#include "memoedit.h"
 #include "keys.h"
 #include "memvar.h"
 #include "util.h"
@@ -576,23 +577,31 @@ static int fn_l2bin(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
 
 /* ---- memo text: lines of a string under a width ---- */
 
+/* the lWrap argument at index i: word wrap unless .F. is given */
+static int arg_wrap(const value_t *args, int nargs, int i) {
+    return !(nargs > i && args[i].type == VAL_LOGIC && !args[i].logic);
+}
+
 /* The start and length of line n (1-based) of s wrapped at width, words
  * kept whole; a hard return (CR LF, or LF) ends a line.  0 when there is
  * no such line. */
-static int memo_line(const char *s, int width, int n, const char **start, int *len) {
+static int memo_line(const char *s, int width, int n, const char **start, int *len, int wrap) {
     const char *p = s;
     int line = 0;
     if (width < 4) width = 4;
     while (*p || line == 0) {
         const char *e = p, *brk = NULL;
-        int col = 0;
+        int col = 0, broke = 0;
         while (*e && *e != '\r' && *e != '\n' && col < width) {
             if (*e == ' ') brk = e;
             e++;
             col++;
         }
-        if (*e && *e != '\r' && *e != '\n') {   /* wrapped: back to the last blank */
-            if (brk && brk > p) e = brk;
+        if (*e && *e != '\r' && *e != '\n') {
+            /* wrapped: back to the last blank -- or, lWrap .F., right at
+             * the width (Harbour's reading; the guide says only "off") */
+            if (wrap && brk && brk > p) e = brk;
+            broke = !wrap;
         }
         line++;
         if (line == n) {
@@ -601,7 +610,7 @@ static int memo_line(const char *s, int width, int n, const char **start, int *l
             return 1;
         }
         p = e;
-        if (*p == ' ') p++;
+        if (*p == ' ' && !broke) p++;
         if (*p == '\r') p++;
         if (*p == '\n') p++;
         if (!*p) break;
@@ -609,11 +618,11 @@ static int memo_line(const char *s, int width, int n, const char **start, int *l
     return 0;
 }
 
-static int memo_lines(const char *s, int width) {
+static int memo_lines(const char *s, int width, int wrap) {
     const char *st;
     int len, n = 0;
     if (!*s) return 0;   /* MLCOUNT("") is 0 */
-    while (memo_line(s, width, n + 1, &st, &len)) n++;
+    while (memo_line(s, width, n + 1, &st, &len, wrap)) n++;
     return n;
 }
 
@@ -622,7 +631,7 @@ static int fn_memoline(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
     int len, width = arg_num(args, nargs, 1, 79), n = arg_num(args, nargs, 2, 1);
     value_t r = val_str("");
     if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MEMOLINE requires a string"; return -1; }
-    if (memo_line(val_text(&args[0]), width, n, &st, &len)) {
+    if (memo_line(val_text(&args[0]), width, n, &st, &len, arg_wrap(args, nargs, 4))) {
         snprintf(r.str, sizeof(r.str), "%.*s", len, st);
         len = (int)strlen(r.str);
     } else {
@@ -637,7 +646,7 @@ static int fn_memoline(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
 
 static int fn_mlcount(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MLCOUNT requires a string"; return -1; }
-    *result = vnum(memo_lines(val_text(&args[0]), arg_num(args, nargs, 1, 79)));
+    *result = vnum(memo_lines(val_text(&args[0]), arg_num(args, nargs, 1, 79), arg_wrap(args, nargs, 3)));
     return 0;
 }
 
@@ -645,7 +654,7 @@ static int fn_mlpos(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
     const char *st;
     int len;
     if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MLPOS requires (string, width, line)"; return -1; }
-    if (memo_line(val_text(&args[0]), arg_num(args, nargs, 1, 79), arg_num(args, nargs, 2, 1), &st, &len))
+    if (memo_line(val_text(&args[0]), arg_num(args, nargs, 1, 79), arg_num(args, nargs, 2, 1), &st, &len, arg_wrap(args, nargs, 4)))
         *result = vnum((int)(st - val_text(&args[0])) + 1);
     else
         *result = vnum((int)strlen(val_text(&args[0])) + 1);
@@ -656,7 +665,7 @@ static int fn_mlctopos(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
     const char *st;
     int len;
     if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MLCTOPOS requires (string, width, line, col)"; return -1; }
-    if (memo_line(val_text(&args[0]), arg_num(args, nargs, 1, 79), arg_num(args, nargs, 2, 1), &st, &len))
+    if (memo_line(val_text(&args[0]), arg_num(args, nargs, 1, 79), arg_num(args, nargs, 2, 1), &st, &len, arg_wrap(args, nargs, 5)))
         *result = vnum((int)(st - val_text(&args[0])) + 1 + arg_num(args, nargs, 3, 0));
     else
         *result = vnum((int)strlen(val_text(&args[0])) + 1);
@@ -671,7 +680,7 @@ static int fn_mpostolc(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
     if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MPOSTOLC requires (string, width, pos)"; return -1; }
     lc[0] = vnum(1);
     lc[1] = vnum(0);
-    while (memo_line(val_text(&args[0]), width, n, &st, &len)) {
+    while (memo_line(val_text(&args[0]), width, n, &st, &len, arg_wrap(args, nargs, 4))) {
         int off = (int)(st - val_text(&args[0])) + 1;
         if (pos >= off && pos <= off + len) {
             lc[0] = vnum(n);
@@ -1289,13 +1298,6 @@ static int fn_browse(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result)
 }
 
 
-/* MEMOEDIT(string, ...): the text, shown and returned as it is -- there
- * is no editor to change it in */
-static int fn_memoedit(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    (void)ctx;
-    *result = nargs >= 1 && args[0].type == VAL_CHAR ? args[0] : val_str("");
-    return 0;
-}
 
 static int fn_setcancel(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
 

@@ -6196,6 +6196,10 @@ static void h_clear(dbf_t *db, lexer_t *l) {
     }
 }
 
+/* CLS: Clipper's CLEAR SCREEN -- the screen cleared, the cursor home; the
+ * GETs stay (CA's PE clears with it) */
+static void h_cls(dbf_t *db, lexer_t *l) { (void)db; (void)l; screen_clear(); }
+
 static void h_set(dbf_t *db, lexer_t *l) {
     lex_next(l); /* skip SET */
     if (cmd_kw(l, "COLOR")) {
@@ -7523,7 +7527,7 @@ static cmd_entry_t cmd_table[] = {
     { "AVERAGE", h_average }, { "BLANK", h_blank }, { "BROWSE", h_browse },
     { "CALCULATE", h_calculate },
     { "CANCEL", h_cancel }, { "CASE", h_case },
-    { "CHANGE", h_edit }, { "CLEAR", h_clear },
+    { "CHANGE", h_edit }, { "CLEAR", h_clear }, { "CLS", h_cls },
     { "CLOSE", h_close }, { "CONTINUE", h_continue },
     { "COPY", h_copy }, { "COUNT", h_count },
     { "CREATE", h_create },

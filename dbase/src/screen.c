@@ -142,6 +142,10 @@ static void shadow_put(int ch) {
         shadow[shadow_row][shadow_col].ch = (unsigned char)ch;
         shadow[shadow_row][shadow_col].attr = shadow_attr();
     }
+    if (shadow_row == SHADOW_ROWS - 1 && shadow_col == SHADOW_COLS - 1) {
+        shadow_col = SHADOW_COLS;   /* the screen's last cell: nothing follows it (see shadow_full) */
+        return;
+    }
     if (++shadow_col >= SHADOW_COLS) {
         shadow_col = 0;
         if (shadow_row < SHADOW_ROWS - 1) shadow_row++;
@@ -155,11 +159,25 @@ void screen_tgoto(int row, int col) {
     term_gotoxy(row + 1, col + 1);   /* the terminal's rows and columns count from 1; ours from 0 */
 }
 
+/* Past the screen's last cell: Clipper writes the screen as video memory
+ * and what runs off the bottom-right corner is lost; a terminal would wrap
+ * and scroll the whole screen up (PE's status line ends one past column 79) */
+static int shadow_full(void) {
+    return shadow_row == SHADOW_ROWS - 1 && shadow_col >= SHADOW_COLS;
+}
+
 void screen_tputs(const char *s) {
     const char *p;
     for (p = s; *p; p++) {
         if (*p == '\n') { shadow_col = 0; if (shadow_row < SHADOW_ROWS - 1) shadow_row++; }
         else if (*p == '\r') shadow_col = 0;
+        else if (shadow_full()) {
+            /* the rest of the string falls off the screen */
+            size_t keep = (size_t)(p - s);
+            char *head = keep ? malloc(keep + 1) : NULL;
+            if (head) { memcpy(head, s, keep); head[keep] = '\0'; term_puts(head); free(head); }
+            return;
+        }
         else shadow_put((unsigned char)*p);
     }
     term_puts(s);
@@ -168,6 +186,7 @@ void screen_tputs(const char *s) {
 void screen_tputc(int ch) {
     if (ch == '\n') { shadow_col = 0; if (shadow_row < SHADOW_ROWS - 1) shadow_row++; }
     else if (ch == '\r') shadow_col = 0;
+    else if (shadow_full()) return;
     else shadow_put(ch);
     term_putc(ch);
 }
@@ -2047,6 +2066,14 @@ int read_dbase_key(void) {
             case 'F': return K_END;
             default: return ch3;
             }
+        }
+        if ((ch2 >= 'a' && ch2 <= 'z') || (ch2 >= 'A' && ch2 <= 'Z')) {
+            /* Alt and a letter, as a terminal sends it (ESC, the letter):
+             * Clipper's code, 256 and the PC scan code (Alt-W is 273) */
+            static const short alt[26] = {
+                286, 304, 302, 288, 274, 289, 290, 291, 279, 292, 293, 294, 306,
+                305, 280, 281, 272, 275, 287, 276, 278, 303, 273, 301, 277, 300 };
+            return alt[(ch2 | 0x20) - 'a'];
         }
         return ch2; /* ESC + something else */
     }

@@ -657,6 +657,41 @@ people who wrote Clipper.
   The date functions on an empty date give 0, "" and blanks (YEAR()
   gave -4713), DOW() is three wide -- probe fn-empty-date.
 
+- **PE, the program editor** (2026-10-30).  CA's PE edits files from
+  keys: `pe sample` opens sample.prg, typing, Enter, Ctrl-Y, Ctrl-Home,
+  PgDn, Alt-W (write and go on), Ctrl-W (write and quit), Alt-S search
+  and Alt-A search-again, Esc with its "Abandon ... [ynw]?" question.
+  What it needed:
+  - MEMOEDIT() was a stub that returned its string.  It is the guide's
+    now (dbase/src/memoedit.c): lines ending hard (CR LF) or soft
+    (CHR(141) LF, inserted by word wrap with the blanks kept on the
+    earlier line, as CA-Clipper does), a window that follows the cursor
+    both ways, the navigation and editing keys, insert and overstrike
+    through READINSERT(), the user function called with ME_INIT until it
+    answers 0, at each idle moment, and with ME_UNKEY / ME_UNKEYX for
+    configurable and unknown keys, and its answers obeyed (ME_DEFAULT,
+    1-31 as key actions, 2 a reform, ME_IGNORE, ME_DATA, the toggles,
+    ME_WORDRIGHT, ME_BOTTOMRIGHT); the start row and column and the
+    window position honoured; Ctrl-W returns the buffer, Esc the
+    original (asking "Abort Edit? (Y/N)" on the scoreboard when the text
+    changed and SET SCOREBOARD is on).  Where Clipper's codes coincide
+    the code decides, as it did there: 23 is Ctrl-W and Ctrl-End (save),
+    2 is Ctrl-Right and Ctrl-B (a word right from the keyboard, a reform
+    when the user function answers 2).  No Harbour terminal oracle: the
+    behaviour is checked against the guide and through PE;
+  - a compiled program's first procedure gets the command line's words
+    as parameters (`func pe(cFile)`);
+  - CLS (CLEAR SCREEN without releasing the GETs);
+  - Alt and a letter, as a terminal sends it (ESC, the letter), is
+    Clipper's Alt code (Alt-W is 273);
+  - positioned output that runs off the screen's last cell is lost, as
+    on Clipper's video memory, instead of wrapping the terminal and
+    scrolling the whole screen up (PE's status line ends one past
+    column 79);
+  - MLCOUNT/MEMOLINE/MLPOS/MLCTOPOS/MPOSTOLC take lWrap: off, a long line
+    breaks at exactly the width (Harbour's reading; the guide says only
+    "off") -- probe fn-mlc-wrap; PE's search uses them with wrap off.
+
 Not driven yet: nothing from the list.  Retry exists for USE only; the
 other commands' errors offer Quit (and Default where they did).  A
 terminal oracle for GETSYS would need Harbour driven through a pty,
