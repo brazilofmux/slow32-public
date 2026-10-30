@@ -1364,10 +1364,34 @@ typedef struct {
     char params[8][32];
     char body[MAX_LINE];
 } pp_define_t;
+/* A #command / #translate rule, parsed: the match pattern and the result
+ * as item lists.  Match items: a literal word (four letters match under
+ * #command, exact under #xcommand), punctuation, a marker -- regular
+ * <x>, list <x,...>, restricted <x:A,B>, wild <*x*>, extended <(x)> --
+ * or an optional group [ ... ], which may come in any order with its
+ * neighbours.  Result items: text, a marker -- regular <x>, dumb #<x>,
+ * normal <"x">, smart <(x)>, blockify <{x}>, logify <.x.> -- or a group
+ * [ ... ] written only when a marker in it matched. */
+typedef enum { PI_WORD, PI_PUNCT, PI_MARKER, PI_GROUP, PI_TEXT } pp_kind_t;
+typedef enum { MK_REGULAR, MK_LIST, MK_RESTRICTED, MK_WILD, MK_EXTENDED,
+               RK_REGULAR, RK_DUMB, RK_NORMAL, RK_SMART, RK_BLOCK, RK_LOGIFY } pp_marker_t;
+typedef struct pp_item {
+    pp_kind_t kind;
+    pp_marker_t mk;
+    char text[MAX_LINE];        /* word, punctuation, or result text */
+    char name[32];
+    char words[8][32];          /* a restricted marker's choices */
+    int nwords;
+    struct pp_item *sub;        /* a group's items */
+    int nsub;
+} pp_item_t;
 typedef struct {
     int anywhere;         /* #translate: not only at the start of a line */
-    char pattern[MAX_LINE];
-    char result[MAX_LINE];
+    int exact;            /* #xcommand / #xtranslate: whole keywords */
+    pp_item_t *pat;
+    int npat;
+    pp_item_t *res;
+    int nres;
 } pp_rule_t;
 static pp_define_t g_defs[PP_MAX_DEFS];
 static int g_ndefs;
@@ -1524,110 +1548,395 @@ static int pp_apply_defines(char *line) {
     return changed;
 }
 
-/* A #command / #translate pattern against text: literal words (any case),
- * other characters as they are, <name> markers taking the text up to the
- * next literal (or the end).  The matched markers' text into vals. */
-#define PP_MAX_MARKERS 16
-static int pp_match(const char *pat, const char *text, char names[][32], char vals[][MAX_LINE],
-                    int *nm, const char **end) {
-    const char *p = skip_ws(pat), *t = skip_ws(text);
-    *nm = 0;
+/* ---- parsing a rule's two sides ---- */
+
+static pp_item_t *pp_items_grow(pp_item_t **items, int *n) {
+    pp_item_t *g = realloc(*items, (size_t)(*n + 1) * sizeof(pp_item_t));
+    if (!g) return NULL;
+    *items = g;
+    memset(&g[*n], 0, sizeof(pp_item_t));
+    return &g[(*n)++];
+}
+
+/* <...>: the marker's kind and name; p at '<', returns past '>' */
+static const char *pp_parse_marker(const char *p, pp_item_t *it, int in_result) {
+    const char *close;
+    char inner[MAX_LINE];
+    int n;
+    it->kind = PI_MARKER;
+    if (in_result && *p == '#') { it->mk = RK_DUMB; p++; }
+    close = strchr(p, '>');
+    if (!close) return NULL;
+    /* <"x"> and <.x.> and <{x}> and <(x)> close with the matching mark before > */
+    n = (int)(close - p - 1);
+    snprintf(inner, sizeof(inner), "%.*s", n, p + 1);
+    rtrim(inner);
+    if (in_result) {
+        if (it->mk != RK_DUMB) it->mk = RK_REGULAR;
+        if (inner[0] == '"' && inner[strlen(inner) - 1] == '"') { it->mk = RK_NORMAL; inner[strlen(inner) - 1] = 0; memmove(inner, inner + 1, strlen(inner)); }
+        else if (inner[0] == '(' && inner[strlen(inner) - 1] == ')') { it->mk = RK_SMART; inner[strlen(inner) - 1] = 0; memmove(inner, inner + 1, strlen(inner)); }
+        else if (inner[0] == '{' && inner[strlen(inner) - 1] == '}') { it->mk = RK_BLOCK; inner[strlen(inner) - 1] = 0; memmove(inner, inner + 1, strlen(inner)); }
+        else if (inner[0] == '.' && inner[strlen(inner) - 1] == '.') { it->mk = RK_LOGIFY; inner[strlen(inner) - 1] = 0; memmove(inner, inner + 1, strlen(inner)); }
+        snprintf(it->name, sizeof(it->name), "%s", skip_ws(inner));
+        rtrim(it->name);
+    } else {
+        char *c;
+        it->mk = MK_REGULAR;
+        if (inner[0] == '*' && inner[strlen(inner) - 1] == '*') { it->mk = MK_WILD; inner[strlen(inner) - 1] = 0; memmove(inner, inner + 1, strlen(inner)); }
+        else if (inner[0] == '(' && inner[strlen(inner) - 1] == ')') { it->mk = MK_EXTENDED; inner[strlen(inner) - 1] = 0; memmove(inner, inner + 1, strlen(inner)); }
+        else if ((c = strstr(inner, ",...")) != NULL) { it->mk = MK_LIST; *c = 0; }
+        else if ((c = strchr(inner, ':')) != NULL) {
+            char *w;
+            it->mk = MK_RESTRICTED;
+            *c++ = 0;
+            for (w = strtok(c, ", "); w && it->nwords < 8; w = strtok(NULL, ", ")) {
+                snprintf(it->words[it->nwords++], 32, "%s", w);
+            }
+        }
+        snprintf(it->name, sizeof(it->name), "%s", skip_ws(inner));
+        rtrim(it->name);
+    }
+    return close + 1;
+}
+
+static const char *pp_parse_items(const char *p, pp_item_t **items, int *n, int in_result, int depth);
+
+/* The items of a pattern or result up to the end or a closing ] */
+static const char *pp_parse_items(const char *p, pp_item_t **items, int *n, int in_result, int depth) {
     while (*p) {
-        if (*p == '<') {   /* a marker */
-            const char *close = strchr(p, '>');
-            const char *lit;
-            char litw[64];
-            int li = 0, depth = 0;
-            char q = 0;
-            const char *v = t;
-            if (!close || *nm >= PP_MAX_MARKERS) return 0;
-            snprintf(names[*nm], 32, "%.*s", (int)(close - p - 1), p + 1);
-            p = skip_ws(close + 1);
-            lit = p;   /* the next literal, if any */
-            while ((isalnum((unsigned char)*lit) || *lit == '_') && li < 63) litw[li++] = *lit++;
-            litw[li] = '\0';
-            if (!li && *p && *p != '<') { litw[0] = *p; litw[1] = '\0'; li = 1; }
-            while (*t) {
-                if (!q && depth == 0 && li) {
-                    if (isalpha((unsigned char)litw[0])) {
-                        if ((t == v || !(isalnum((unsigned char)t[-1]) || t[-1] == '_')) &&
-                            !strncasecmp(t, litw, (size_t)li) && !(isalnum((unsigned char)t[li]) || t[li] == '_'))
-                            break;
-                    } else if (*t == litw[0]) {
+        pp_item_t *it;
+        if (!in_result) p = skip_ws(p);
+        if (!*p) break;
+        if (*p == ']' && depth > 0) return p + 1;
+        if (*p == '[') {
+            it = pp_items_grow(items, n);
+            if (!it) return NULL;
+            it->kind = PI_GROUP;
+            p = pp_parse_items(p + 1, &it->sub, &it->nsub, in_result, depth + 1);
+            if (!p) return NULL;
+            continue;
+        }
+        if (*p == '<' || (in_result && *p == '#' && p[1] == '<')) {
+            it = pp_items_grow(items, n);
+            if (!it) return NULL;
+            p = pp_parse_marker(p, it, in_result);
+            if (!p) return NULL;
+            continue;
+        }
+        if (in_result) {   /* text up to the next marker or bracket */
+            int k = 0;
+            it = pp_items_grow(items, n);
+            if (!it) return NULL;
+            it->kind = PI_TEXT;
+            while (*p && *p != '<' && !(*p == '#' && p[1] == '<') && *p != '[' && !(*p == ']' && depth > 0) && k < MAX_LINE - 1) {
+                it->text[k++] = *p++;
+            }
+            it->text[k] = 0;
+            continue;
+        }
+        it = pp_items_grow(items, n);
+        if (!it) return NULL;
+        if (isalpha((unsigned char)*p) || *p == '_') {
+            int k = 0;
+            it->kind = PI_WORD;
+            while ((isalnum((unsigned char)*p) || *p == '_') && k < 63) it->text[k++] = (char)toupper((unsigned char)*p++);
+            it->text[k] = 0;
+        } else {
+            it->kind = PI_PUNCT;
+            it->text[0] = *p++;
+            it->text[1] = 0;
+        }
+    }
+    return p;
+}
+
+/* ---- matching ---- */
+
+#define PP_MAX_BIND 32
+typedef struct {
+    char name[32];
+    int matched;
+    int nvals;
+    char vals[16][MAX_LINE];   /* one, or a list's elements */
+} pp_bind_t;
+typedef struct {
+    pp_bind_t b[PP_MAX_BIND];
+    int n;
+} pp_binds_t;
+
+static pp_bind_t *pp_bind(pp_binds_t *bs, const char *name) {
+    int i;
+    for (i = 0; i < bs->n; i++) if (strcasecmp(bs->b[i].name, name) == 0) return &bs->b[i];
+    if (bs->n >= PP_MAX_BIND) return NULL;
+    snprintf(bs->b[bs->n].name, 32, "%s", name);
+    bs->b[bs->n].matched = 0;
+    bs->b[bs->n].nvals = 0;
+    return &bs->b[bs->n++];
+}
+
+/* A keyword of the text against a pattern word: whole, or its first four
+ * letters or more under #command */
+static int pp_word_at(const char *t, const char *word, int exact, int *len) {
+    int n = 0;
+    while (isalnum((unsigned char)t[n]) || t[n] == '_') n++;
+    if (n == 0) return 0;
+    *len = n;
+    if (n == (int)strlen(word) && strncasecmp(t, word, (size_t)n) == 0) return 1;
+    if (!exact && n >= 4 && n < (int)strlen(word) && strncasecmp(t, word, (size_t)n) == 0) return 1;
+    return 0;
+}
+
+/* The words and punctuation that can follow item i: the next required
+ * item's, and the first of each optional group before it */
+static int pp_stops(const pp_item_t *items, int n, int i, const char **stops, int *nstops, int max) {
+    for (; i < n && *nstops < max; i++) {
+        const pp_item_t *it = &items[i];
+        if (it->kind == PI_WORD || it->kind == PI_PUNCT) { stops[(*nstops)++] = it->text; return 1; }
+        if (it->kind == PI_GROUP) {
+            if (it->nsub > 0 && (it->sub[0].kind == PI_WORD || it->sub[0].kind == PI_PUNCT)) stops[(*nstops)++] = it->sub[0].text;
+            else if (it->nsub > 0 && it->sub[0].kind == PI_MARKER && it->sub[0].mk == MK_RESTRICTED) {
+                int k;
+                for (k = 0; k < it->sub[0].nwords && *nstops < max; k++) stops[(*nstops)++] = it->sub[0].words[k];
+            }
+            continue;   /* optional: what follows it can follow too */
+        }
+        return 0;   /* a marker: no stop of its own */
+    }
+    return 0;
+}
+
+static int pp_at_stop(const char *t, const char *start, const char **stops, int nstops, int exact) {
+    int k, len;
+    for (k = 0; k < nstops; k++) {
+        if (isalpha((unsigned char)stops[k][0])) {
+            if ((t == start || !(isalnum((unsigned char)t[-1]) || t[-1] == '_')) && pp_word_at(t, stops[k], exact, &len)) return 1;
+        } else if (*t == stops[k][0]) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Text from t to the first top-level stop (or a top-level comma when
+ * comma_stops), quotes and brackets respected */
+static const char *pp_scan_expr(const char *t, const char *start, const char **stops, int nstops, int exact, int comma_stops) {
+    int depth = 0;
+    char q = 0;
+    while (*t) {
+        if (!q && depth == 0) {
+            if (comma_stops && *t == ',') break;
+            if (pp_at_stop(t, start, stops, nstops, exact)) break;
+        }
+        if (q) { if (*t == q) q = 0; }
+        else if (*t == '"' || *t == '\'') q = *t;
+        else if (*t == '(' || *t == '[' || *t == '{') depth++;
+        else if (*t == ')' || *t == ']' || *t == '}') depth--;
+        t++;
+    }
+    return t;
+}
+
+/* outer: the stops of the enclosing context -- a marker that runs to the
+ * end of its group still stops at the other groups' keywords and at what
+ * follows the run */
+static int pp_match_items(const pp_item_t *items, int n, const char **tp, pp_binds_t *bs, int exact,
+                          const char **outer, int nouter);
+
+static int pp_match_items(const pp_item_t *items, int n, const char **tp, pp_binds_t *bs, int exact,
+                          const char **outer, int nouter) {
+    const char *t = *tp;
+    int i;
+    for (i = 0; i < n; i++) {
+        const pp_item_t *it = &items[i];
+        int len;
+        t = skip_ws(t);
+        switch (it->kind) {
+        case PI_WORD:
+            if (!pp_word_at(t, it->text, exact, &len)) return 0;
+            t += len;
+            break;
+        case PI_PUNCT:
+            if (*t != it->text[0]) return 0;
+            t++;
+            break;
+        case PI_MARKER: {
+            pp_bind_t *b = pp_bind(bs, it->name);
+            const char *stops[32];
+            int nstops = 0, k;
+            if (!b) return 0;
+            if (!pp_stops(items, n, i + 1, stops, &nstops, 32)) {
+                for (k = 0; k < nouter && nstops < 32; k++) stops[nstops++] = outer[k];
+            }
+            if (it->mk == MK_WILD) {
+                snprintf(b->vals[0], MAX_LINE, "%s", t);
+                rtrim(b->vals[0]);
+                b->nvals = 1;
+                b->matched = 1;
+                t += strlen(t);
+                break;
+            }
+            if (it->mk == MK_RESTRICTED) {
+                for (k = 0; k < it->nwords; k++) {
+                    if (pp_word_at(t, it->words[k], exact, &len)) break;
+                }
+                if (k == it->nwords) return 0;
+                snprintf(b->vals[0], MAX_LINE, "%s", it->words[k]);
+                b->nvals = 1;
+                b->matched = 1;
+                t += len;
+                break;
+            }
+            if (it->mk == MK_LIST) {
+                b->nvals = 0;
+                for (;;) {
+                    const char *e = pp_scan_expr(t, t, stops, nstops, exact, 1);
+                    if (e == t) return 0;
+                    if (b->nvals < 16) {
+                        snprintf(b->vals[b->nvals], MAX_LINE, "%.*s", (int)(e - t), t);
+                        rtrim(b->vals[b->nvals]);
+                        b->nvals++;
+                    }
+                    t = skip_ws(e);
+                    if (*t != ',') break;
+                    t = skip_ws(t + 1);
+                }
+                b->matched = 1;
+                break;
+            }
+            {   /* regular and extended */
+                const char *e = pp_scan_expr(t, t, stops, nstops, exact, 0);
+                if (e == t) return 0;
+                snprintf(b->vals[0], MAX_LINE, "%.*s", (int)(e - t), t);
+                rtrim(b->vals[0]);
+                b->nvals = 1;
+                b->matched = 1;
+                t = e;
+            }
+            break;
+        }
+        case PI_GROUP: {
+            /* a run of optional groups: each may match, in any order */
+            int j = i, used[64] = {0}, any, k;
+            const char *gstops[64];
+            int ngstops = 0;
+            while (j < n && items[j].kind == PI_GROUP) j++;
+            /* what a group's marker may run into: the run's keywords, then what follows the run */
+            for (k = i; k < j; k++) pp_stops(items, n, k, gstops, &ngstops, 48);
+            if (!pp_stops(items, n, j, gstops, &ngstops, 56)) {
+                for (k = 0; k < nouter && ngstops < 64; k++) gstops[ngstops++] = outer[k];
+            }
+            do {
+                any = 0;
+                for (k = i; k < j; k++) {
+                    const char *tt = t;
+                    pp_binds_t saved = *bs;
+                    if (used[k - i]) continue;
+                    if (pp_match_items(items[k].sub, items[k].nsub, &tt, bs, exact, gstops, ngstops)) {
+                        t = tt;
+                        used[k - i] = 1;
+                        any = 1;
                         break;
                     }
+                    *bs = saved;
                 }
-                if (q) { if (*t == q) q = 0; }
-                else if (*t == '"' || *t == '\'') q = *t;
-                else if (*t == '(' || *t == '[' || *t == '{') depth++;
-                else if (*t == ')' || *t == ']' || *t == '}') depth--;
-                t++;
-            }
-            snprintf(vals[*nm], MAX_LINE, "%.*s", (int)(t - v), v);
-            rtrim(vals[*nm]);
-            if (!vals[*nm][0]) return 0;
-            (*nm)++;
-            continue;
+            } while (any);
+            i = j - 1;
+            break;
         }
-        if (isalpha((unsigned char)*p) || *p == '_') {   /* a literal word */
-            const char *w = p;
-            int n;
-            while (isalnum((unsigned char)*p) || *p == '_') p++;
-            n = (int)(p - w);
-            if (strncasecmp(t, w, (size_t)n) != 0 || isalnum((unsigned char)t[n]) || t[n] == '_') return 0;
-            t = skip_ws(t + n);
-            p = skip_ws(p);
-            continue;
+        default:
+            break;
         }
-        if (*t != *p) return 0;   /* punctuation */
-        t = skip_ws(t + 1);
-        p = skip_ws(p + 1);
     }
-    *end = t;
+    *tp = t;
     return 1;
 }
 
-static void pp_result(const char *res, char names[][32], char vals[][MAX_LINE], int nm, char *out, int size) {
-    int o = 0;
-    while (*res && o < size - 1) {
-        int stringify = 0, i;
-        const char *r = res;
-        if (r[0] == '<' && r[1] == '"') { stringify = 1; r += 2; }
-        else if (r[0] == '#' && r[1] == '<') { stringify = 1; r += 2; }
-        else if (r[0] == '<') { r += 1; }
-        else { out[o++] = *res++; continue; }
-        for (i = 0; i < nm; i++) {
-            int n = (int)strlen(names[i]);
-            if (!strncmp(r, names[i], (size_t)n) && (r[n] == '>' || (stringify && r[n] == '"' && r[n + 1] == '>'))) {
-                o += snprintf(out + o, (size_t)(size - o), stringify ? "\"%s\"" : "%s", vals[i]);
-                res = r + n + (r[n] == '"' ? 2 : 1);
+/* ---- the result ---- */
+
+static void pp_out(char *out, int size, const char *s) {
+    size_t have = strlen(out);
+    snprintf(out + have, (size_t)size - have, "%s", s);
+}
+
+static void pp_quote(char *dst, int size, const char *s) {
+    if (strchr(s, '"')) snprintf(dst, (size_t)size, "'%s'", s);
+    else snprintf(dst, (size_t)size, "\"%s\"", s);
+}
+
+static int pp_group_matched(const pp_item_t *items, int n, const pp_binds_t *bs) {
+    int i, k;
+    for (i = 0; i < n; i++) {
+        if (items[i].kind == PI_MARKER) {
+            for (k = 0; k < bs->n; k++) {
+                if (strcasecmp(bs->b[k].name, items[i].name) == 0 && bs->b[k].matched) return 1;
+            }
+        } else if (items[i].kind == PI_GROUP && pp_group_matched(items[i].sub, items[i].nsub, bs)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void pp_emit(const pp_item_t *items, int n, const pp_binds_t *bs, char *out, int size) {
+    int i, k, v;
+    for (i = 0; i < n; i++) {
+        const pp_item_t *it = &items[i];
+        const pp_bind_t *b = NULL;
+        if (it->kind == PI_TEXT) { pp_out(out, size, it->text); continue; }
+        if (it->kind == PI_GROUP) {
+            if (pp_group_matched(it->sub, it->nsub, bs)) pp_emit(it->sub, it->nsub, bs, out, size);
+            continue;
+        }
+        if (it->kind != PI_MARKER) continue;
+        for (k = 0; k < bs->n; k++) if (strcasecmp(bs->b[k].name, it->name) == 0) b = &bs->b[k];
+        if (it->mk == RK_LOGIFY) { pp_out(out, size, b && b->matched ? ".T." : ".F."); continue; }
+        if (!b || !b->matched) continue;
+        for (v = 0; v < b->nvals; v++) {
+            char piece[MAX_LINE + 8];
+            const char *s = b->vals[v];
+            size_t len = strlen(s);
+            if (v) pp_out(out, size, ", ");
+            switch (it->mk) {
+            case RK_DUMB: case RK_NORMAL:
+                pp_quote(piece, sizeof(piece), s);
+                break;
+            case RK_SMART:   /* parenthesized or already a string: as it is */
+                if (len >= 2 && s[0] == '(' && s[len - 1] == ')') snprintf(piece, sizeof(piece), "%s", s);
+                else if (len >= 2 && (s[0] == '"' || s[0] == '\'') && s[len - 1] == s[0]) snprintf(piece, sizeof(piece), "%s", s);
+                else pp_quote(piece, sizeof(piece), s);
+                break;
+            case RK_BLOCK:
+                snprintf(piece, sizeof(piece), "{|| %s}", s);
+                break;
+            default:
+                snprintf(piece, sizeof(piece), "%s", s);
                 break;
             }
+            pp_out(out, size, piece);
         }
-        if (i == nm) out[o++] = *res++;
     }
-    out[o < size ? o : size - 1] = '\0';
 }
 
 /* #command rules at the start of the line, #translate rules anywhere */
 static int pp_apply_rules(char *line) {
     int i;
     for (i = g_nrules - 1; i >= 0; i--) {
-        char names[PP_MAX_MARKERS][32];
-        char vals[PP_MAX_MARKERS][MAX_LINE];
-        int nm;
-        const char *end;
+        const pp_rule_t *r = &g_rules[i];
         const char *at = skip_ws(line);
         for (;;) {
-            if (pp_match(g_rules[i].pattern, at, names, vals, &nm, &end) &&
-                (g_rules[i].anywhere || *skip_ws(end) == '\0')) {
+            pp_binds_t bs;
+            const char *end = at;
+            bs.n = 0;
+            if (pp_match_items(r->pat, r->npat, &end, &bs, r->exact, NULL, 0) &&
+                (r->anywhere || *skip_ws(end) == '\0')) {
                 char res[MAX_LINE], out[MAX_LINE];
-                pp_result(g_rules[i].result, names, vals, nm, res, (int)sizeof(res));
+                res[0] = 0;
+                pp_emit(r->res, r->nres, &bs, res, (int)sizeof(res));
                 snprintf(out, sizeof(out), "%.*s%s%s", (int)(at - line), line, res, end);
                 strcpy(line, out);
                 return 1;
             }
-            if (!g_rules[i].anywhere || !*at) break;
+            if (!r->anywhere || !*at) break;
             at++;
         }
     }
@@ -1714,12 +2023,22 @@ static int pp_directive(const char *path, int lineno, const char *p, int *cond, 
     if (!strcmp(w, "command") || !strcmp(w, "xcommand") || !strcmp(w, "translate") || !strcmp(w, "xtranslate")) {
         const char *arrow = strstr(p, "=>");
         if (!arrow || g_nrules >= PP_MAX_RULES) { fprintf(stderr, "%s:%d: bad #%s\n", path, lineno, w); return -1; }
-        g_rules[g_nrules].anywhere = strstr(w, "translate") != NULL;
-        p = skip_ws(p);
-        snprintf(g_rules[g_nrules].pattern, MAX_LINE, "%.*s", (int)(arrow - p), p);
-        rtrim(g_rules[g_nrules].pattern);
-        snprintf(g_rules[g_nrules].result, MAX_LINE, "%s", skip_ws(arrow + 2));
-        g_nrules++;
+        {
+            pp_rule_t *r = &g_rules[g_nrules];
+            char pat[MAX_LINE];
+            memset(r, 0, sizeof(*r));
+            r->anywhere = strstr(w, "translate") != NULL;
+            r->exact = w[0] == 'x';
+            p = skip_ws(p);
+            snprintf(pat, sizeof(pat), "%.*s", (int)(arrow - p), p);
+            rtrim(pat);
+            if (!pp_parse_items(pat, &r->pat, &r->npat, 0, 0) ||
+                !pp_parse_items(skip_ws(arrow + 2), &r->res, &r->nres, 1, 0)) {
+                fprintf(stderr, "%s:%d: bad #%s\n", path, lineno, w);
+                return -1;
+            }
+            g_nrules++;
+        }
         return 0;
     }
     fprintf(stderr, "%s:%d: unknown directive #%s\n", path, lineno, w);

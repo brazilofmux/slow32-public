@@ -61,6 +61,10 @@ value_t val_num_literal(double n, const char *text) {
 }
 
 void val_to_display(const value_t *v, char *buf, int size) {
+    if (v->type == VAL_ARRAY || v->type == VAL_BLOCK || v->type == VAL_OBJECT) {
+        buf[0] = '\0';   /* ? shows nothing for these (Clipper) */
+        return;
+    }
     if (v->type == VAL_NUM) {
         int dec = val_set_fixed ? val_set_decimals : v->ndec;
         int width = v->nwidth;

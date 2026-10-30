@@ -31,7 +31,7 @@ speed.  Summer '87 programs are the subset they are.
 | Commands | 110 | nearly all by first word; their clauses not yet checked |
 | Statements | 22 | the dBASE ones (DO, IF, FOR, PRIVATE, PUBLIC, PARAMETERS, RETURN, BEGIN SEQUENCE, LOCAL in part) |
 | Operators | 28 | the dBASE ones |
-| Directives (preprocessor) | 10 | all ten in s32-clip (step 7); the interpreter has none |
+| Directives (preprocessor) | 10 | all ten in s32-clip (step 7), #command's full grammar; the interpreter has none |
 | Classes (Error, Get, TBrowse, TBColumn) | 4 | all four (steps 8, 9); the `:` send operator |
 | Get System | 10 | the Get class, GETNEW, READMODAL, READVAR, UPDATED, READEXIT / READINSERT / READKILL, GETACTIVE over dbase's @ SAY/GET/READ (step 9) |
 | Drivers (RDD) | 31 | DBF/NDX2 only, by design (NDX ruling 2026-10-29) |
@@ -197,11 +197,18 @@ The severe ones are marked.
    #translate / #xtranslate with literal words (any case) and `<name>`
    markers that take the text up to the next literal, `<"name">` and
    `#<name>` stringifying; lines expand until nothing changes.  `//` and
-   `/* */` comments go first.  Not yet: optional clauses `[...]`, list
-   and restricted markers (`<x,...>`, `<x: A, B>`), the 4-letter
-   abbreviation rule that #command (not #xcommand) allows, and the
-   standard header STD.CH (the built-in commands are still parsed, not
-   rules).
+   `/* */` comments go first.  The full grammar followed the same day:
+   optional clauses `[...]`, any number of them in any order; list
+   `<x,...>`, restricted `<x:A,B>`, wild `<*x*>` and extended `<(x)>`
+   match markers; the result forms `<x>`, `#<x>`, `<"x">`, smart `<(x)>`
+   (a parenthesized or quoted argument as it is), blockify `<{x}>`,
+   logify `<.x.>` and result groups `[...]` written only when a marker
+   in them matched; the four-letter keyword abbreviation under #command
+   / #translate, whole words under the x forms (probe dir-command-grammar,
+   against Harbour's own expansions).  Not provided: STD.CH -- the
+   built-in commands are parsed, not rules -- so a program's result text
+   cannot run into them by abbreviation as it can in Clipper (`Display(`
+   is the DISPLAY command there).
 8. **The error system** -- done 2026-10-29, interpreter and clip alike:
    a value type for objects (VALTYPE O; shared by reference like arrays,
    not collected -- the same debt), the `:` send operator (`o:name` reads
