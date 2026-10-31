@@ -117,10 +117,16 @@ keys_for() {
 # (user ruling, 2026-10-30).  Such a pair agrees "to its error" when the
 # two print the same up to it -- the interpreter's "*** " report, the
 # compiled program's Alert -- and the compiled one ends with its calls.
+# The byte offset of the first match of ERE in FILE; nothing when none.
+# (grep -b would do it, but BusyBox's grep, the Alpine images', has no -b.)
+match_offset() {   # match_offset FILE ERE
+    LC_ALL=C awk -v re="$2" '{ if (match($0, re)) { print n + RSTART - 1; exit } n += length($0) + 1 }' "$1"
+}
+
 upto_error() {   # upto_error INTERP CLIP: 0 when they agree to the first error
     local i c ni nc t
-    ni=$(grep -b -o -m1 '\*\*\* ' "$1" | head -1 | cut -d: -f1)
-    nc=$(grep -b -o -m1 -E 'Error [A-Za-z]+/[0-9]+  ' "$2" | head -1 | cut -d: -f1)
+    ni=$(match_offset "$1" '[*][*][*] ')
+    nc=$(match_offset "$2" 'Error [A-Za-z]+/[0-9]+  ')
     [ -n "$ni" ] && [ -n "$nc" ] || return 1
     grep -q '^Called from ' "$2" || return 1
     t=$(mktemp "$OUT/u.XXXXXX")
@@ -138,7 +144,7 @@ upto_error() {   # upto_error INTERP CLIP: 0 when they agree to the first error
 stops_as_listed() {   # stops_as_listed NAME INTERP CLIP
     local nc t c
     grep -qE "^$1([[:space:]]|\$)" "$CLIP_DIR/tests/oracle-stops.txt" 2>/dev/null || return 1
-    nc=$(grep -b -o -m1 -E 'Error [A-Za-z]+/[0-9]+  ' "$3" | head -1 | cut -d: -f1)
+    nc=$(match_offset "$3" 'Error [A-Za-z]+/[0-9]+  ')
     [ -n "$nc" ] && grep -q '^Called from ' "$3" || return 1
     t=$(mktemp "$OUT/u.XXXXXX")
     if [ "$nc" -gt 0 ]; then head -c "$nc" "$3" > "$t"; else : > "$t"; fi
