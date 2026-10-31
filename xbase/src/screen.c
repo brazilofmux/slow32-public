@@ -17,6 +17,8 @@
 #include "func.h"
 #include "getsys.h"
 
+static int input_ended;   /* the terminal's input has ended: screen_input_ended() */
+
 #ifdef __slow32__
 #include <term.h>
 #define HAS_TERM 1
@@ -2130,7 +2132,7 @@ void screen_print_at(int row, int col, const char *s) {
 #if HAS_TERM
 int read_dbase_key(void) {
     int ch = term_getkey();
-    if (ch < 0) return KEY_NONE;
+    if (ch < 0) { input_ended = 1; return KEY_NONE; }
     if (ch == 27) {
         int ch2;
         /* Possible escape sequence -- check if more bytes follow */
@@ -2274,6 +2276,10 @@ static int typeahead_next(void) {
 
 /* A key for an editor's loop (READ, MENU TO, BROWSE): the buffers first,
  * KEYBOARD's stuffing included, then the terminal */
+/* The terminal's input has ended (piped keys run out): a key loop waiting
+ * for one would wait forever */
+int screen_input_ended(void) { return input_ended; }
+
 int screen_getkey(void) {
     int k = typeahead_next();
     if (k) { last_key = k; return k; }

@@ -102,6 +102,26 @@ static int is_kw(const char *p, const char *kw) {
     return p[n] == '\0' || isspace((unsigned char)p[n]) || p[n] == '(';
 }
 
+/* kw or an abbreviation of it to four letters (PARA for PARAMETERS), as
+ * dBASE and Clipper take a command word; the length matched, 0 when not */
+static int kw_abbrev(const char *p, const char *kw) {
+    int n = 0;
+    while (kw[n] && p[n] && toupper((unsigned char)p[n]) == kw[n]) n++;
+    if (n < 4 && kw[n]) return 0;
+    if (isalnum((unsigned char)p[n]) || p[n] == '_') return 0;
+    return n;
+}
+
+/* PARAMETERS (abbreviated or not) followed by a name: "para = 5" is an
+ * assignment */
+static int kw_parameters(const char *p) {
+    int n = kw_abbrev(p, "PARAMETERS");
+    const char *q = p + n;
+    if (n == 0) return 0;
+    while (*q == ' ' || *q == '\t') q++;
+    return isalpha((unsigned char)*q) || *q == '_' ? n : 0;
+}
+
 static const char *skip_ws(const char *p) {
     while (*p && isspace((unsigned char)*p)) {
         p++;
@@ -2405,8 +2425,8 @@ static int emit_stmt(emit_t *e, const char *p) {
     char names[MAX_PARAMS][MAX_NAME];
     int n, i;
 
-    if (is_kw(p, "PARAMETERS") || is_kw(p, "PARAMETER")) {
-        p = skip_ws(p + (is_kw(p, "PARAMETERS") ? 10 : 9));
+    if ((n = kw_parameters(p)) > 0) {
+        p = skip_ws(p + n);
         n = parse_namelist(p, names, MAX_PARAMS);
         if (!e->in_fn) {   /* the main program's: the command line's words, as Clipper passes them */
             for (i = 0; i < n; i++) {

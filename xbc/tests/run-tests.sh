@@ -49,6 +49,18 @@ run_one ifnum || fail=1
 run_one funccase || fail=1
 run_one money || fail=1
 
+# The default handler with no key to come: the terminal service on, input
+# closed.  It must quit (status 1), not wait (the timeout's 124).
+echo "=== errquit ==="
+rm -f "$CLIP_DIR/out/errquit.s32x"
+if bash "$CLIP_DIR/compile-prg.sh" "$CLIP_DIR/tests/errquit.prg" "$CLIP_DIR/out/errquit.s32x" >/dev/null; then
+    rc=0
+    (cd "$CLIP_DIR/out" && timeout 30 "$EMU" -q "$CLIP_DIR/out/errquit.s32x" </dev/null >/dev/null 2>&1) || rc=$?
+    if [ "$rc" -eq 1 ]; then echo "  OK  errquit"; else echo "  FAIL errquit (status $rc)"; fail=1; fi
+else
+    echo "  FAIL errquit (does not compile)"; fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
     echo "=== TESTS FAILED ==="
     exit 1

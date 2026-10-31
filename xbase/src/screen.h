@@ -174,6 +174,7 @@ void screen_clear_typeahead(void);
 int screen_key_pending(void);
 void scoreboard_message(const char *msg);   /* GETSYS's row-0 message, until a key waits */           /* a key waiting in any buffer or at the terminal */
 int screen_getkey(void);                /* an editor's next key: the buffers, then the terminal */
+int screen_input_ended(void);           /* the terminal's input has ended: no key will come */
 const char *screen_read_var(void);   /* the GET being read; "" outside a READ */
 int screen_read_updated(void);       /* UPDATED(): a GET changed in the last READ */
 value_t screen_active_get(void);     /* GETACTIVE(): its Get object, or NIL */

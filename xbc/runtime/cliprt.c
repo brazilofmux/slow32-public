@@ -222,6 +222,16 @@ static value_t deferr_ivar(object_t *o, const char *name) {
     return v ? *v : val_nil();
 }
 
+/* A line of the report, on standard error as CA's ERRORSYS.PRG puts it
+ * ("? ... => OutErr()"): SET CONSOLE OFF does not hide it */
+static void deferr_line(expr_ctx_t *c, value_t *w, int n) {
+    value_t nl = val_str("\n"), r;
+    fflush(stdout);   /* what the program printed comes first */
+    (void)func_call(c, "OUTERR", &nl, 1, &r);
+    (void)func_call(c, "OUTERR", w, n, &r);
+    fflush(stderr);
+}
+
 static int clip_deferror(expr_ctx_t *c, value_t *result) {
     value_t e, gen, osc, desc, sub, ssys, fname, op, cr, cd, cs, v, r;
     object_t *o;
@@ -292,9 +302,10 @@ static int clip_deferror(expr_ctx_t *c, value_t *result) {
         av[0] = val_str(alert_msg);
         av[1] = val_array(opts);
         choice = 0;
-        while (choice == 0) {
+        while (choice == 0) {   /* CA's: asked until answered -- unless no key will come, then Quit */
             if (func_call(c, "ALERT", av, 2, &r) != 0) break;
             choice = r.type == VAL_NUM ? (int)r.num : 1;
+            if (choice == 0 && screen_input_ended()) choice = 1;
         }
         if (choice > 1 && choice <= opts->len) {
             const char *pick = val_text(&opts->el[choice - 1]);
@@ -304,7 +315,7 @@ static int clip_deferror(expr_ctx_t *c, value_t *result) {
     }
     /* Quit: the message, where it happened, and the end of the program */
     v = val_str(msg);
-    (void)func_call(c, "QOUT", &v, 1, &r);
+    deferr_line(c, &v, 1);
     {   /* a function written in C the error was raised in, at line 0 */
         const char *cf = prog_error_cfunc_of(o);
         if (cf) {
@@ -313,7 +324,7 @@ static int clip_deferror(expr_ctx_t *c, value_t *result) {
             snprintf(where, sizeof(where), "%s(0)  ", cf);
             w[0] = val_str("Called from");
             w[1] = val_str(where);
-            (void)func_call(c, "QOUT", w, 2, &r);
+            deferr_line(c, w, 2);
         }
     }
     for (i = 0;; i++) {
@@ -324,7 +335,7 @@ static int clip_deferror(expr_ctx_t *c, value_t *result) {
         snprintf(where, sizeof(where), "%s(%d)  ", pn, line);
         w[0] = val_str("Called from");
         w[1] = val_str(where);
-        (void)func_call(c, "QOUT", w, 2, &r);
+        deferr_line(c, w, 2);
     }
     v = val_num_dec(1, 0, 0);
     (void)func_call(c, "ERRORLEVEL", &v, 1, &r);

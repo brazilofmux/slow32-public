@@ -1046,7 +1046,7 @@ static int fn_alert(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
             }
             screen_color_pair(1);
             key = screen_getkey();
-            if (key == K_ESC) { cur = -1; break; }
+            if (key == K_ESC || (key == KEY_NONE && screen_input_ended())) { cur = -1; break; }   /* no key will come: Esc */
             if (key == K_ENTER || key == 0) break;
             if (key == K_LEFT || key == K_SH_TAB) cur = cur > 0 ? cur - 1 : nopt - 1;
             else if (key == K_RIGHT || key == K_TAB || key == K_SPACE) cur = (cur + 1) % nopt;

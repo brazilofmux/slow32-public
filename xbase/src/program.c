@@ -3465,11 +3465,18 @@ int prog_execute_line(char *line) {
         return 0;
     }
 
-    if (str_imatch(p, "PARAMETERS")) {
-        lexer_t l;
-        lexer_init_ext(&l, skip_ws(p + 10), cmd_get_memvar_store());
-        prog_parameters(&l);
-        return 0;
+    {   /* PARAMETERS, or as dBASE takes it, any abbreviation to four
+         * letters (PARAMETER, PARA): prog_parameters steps past the line
+         * itself, so the general command dispatch would step twice and
+         * skip the line after it */
+        int n = 0;
+        while (n < 10 && p[n] && toupper((unsigned char)p[n]) == "PARAMETERS"[n]) n++;
+        if (n >= 4 && !is_ident_char(p[n]) && is_ident_start(*skip_ws(p + n))) {   /* a name follows: "para = 5" assigns */
+            lexer_t l;
+            lexer_init_ext(&l, skip_ws(p + n), cmd_get_memvar_store());
+            prog_parameters(&l);
+            return 0;
+        }
     }
 
     if (str_imatch(p, "PRIVATE")) {
