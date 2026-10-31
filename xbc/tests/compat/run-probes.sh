@@ -37,7 +37,10 @@ for prg in "${PROBES[@]}"; do
         printf '%-36s NOCOMPILE %s\n' "$n" "$(grep -m1 -E ': ' "$OUT/$n.cc.log" | sed 's/^[^:]*:[0-9]*: //' | cut -c1-50)"
         nocomp=$((nocomp+1)); rm -rf "$w"; continue
     fi
-    (cd "$w" && timeout 30 "$EMU" -q --deny term "$OUT/$n.s32x" </dev/null > "$OUT/$n.clip" 2>&1)
+    # positioned output dropped without a terminal, as Harbour's stream
+    # renderer drops it (screen.c screen_stream_quiet): a probe that READs
+    # compares what it prints with ?, as Harbour shows it
+    (cd "$w" && XBASE_STREAM_SCREEN=none timeout 30 "$EMU" -q --deny term "$OUT/$n.s32x" </dev/null > "$OUT/$n.clip" 2>&1)
     rm -rf "$w"
     if cmp -s "$OUT/$n.hb" "$OUT/$n.clip"; then
         printf '%-36s PASS\n' "$n"; pass=$((pass+1))

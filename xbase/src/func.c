@@ -2647,6 +2647,8 @@ static const func_entry_t func_table[] = {
     /* The Get system, TBrowse and the screen functions (getsys.c) */
     { "GETNEW", fn_getnew }, { "READMODAL", fn_readmodal }, { "READVAR", fn_readvar }, { "UPDATED", fn_updated },
     { "READEXIT", fn_readexit }, { "READINSERT", fn_readinsert }, { "READKILL", fn_readkill },
+    { "GETREADER", fn_getreader }, { "GETAPPLYKEY", fn_getapplykey },
+    { "GETPREVALIDATE", fn_getprevalidate }, { "GETPOSTVALIDATE", fn_getpostvalidate },
     { "GETACTIVE", fn_getactive }, { "SETPOS", fn_setpos }, { "DEVPOS", fn_setpos }, { "DISPOUT", fn_dispout },
     { "DEVOUT", fn_dispout }, { "MAXROW", fn_maxrow }, { "MAXCOL", fn_maxcol }, { "SETCOLOR", fn_setcolor },
     { "SETCURSOR", fn_setcursor }, { "SCROLL", fn_scroll }, { "DISPBOX", fn_dispbox },

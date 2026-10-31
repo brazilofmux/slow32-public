@@ -358,6 +358,7 @@ static void goto_pos(int row, int col) {
         return;
     }
 #endif
+    if (screen_stream_quiet()) return;
     /* Fallback: track last SAY/GET row to merge same-row output.
      * We can't track absolute cursor position because other printf
      * calls (dot prompt, ? output, etc.) move the cursor without
@@ -409,6 +410,7 @@ void screen_out_at(int row, int col, const char *text) {
         screen_tputs(text);
     else
 #endif
+    if (!screen_stream_quiet())
         printf("%s", text);
     screen_update_pos(row, col, (int)strlen(text));
 }
@@ -434,9 +436,33 @@ int screen_read_updated(void) {
     return read_updated;
 }
 
+static value_t modal_get;          /* READMODAL's loop: the Get it is reading (NIL: none) */
+
 value_t screen_active_get(void) {
+    if (modal_get.type == VAL_OBJECT) return modal_get;
     if (active_get >= 0 && active_get < scr.ngets) return scr.gets[active_get].getobj;
     return val_nil();
+}
+
+void screen_set_modal_get(const value_t *get, const char *varname) {
+    modal_get = get ? *get : val_nil();
+    str_copy(read_var, varname ? varname : "", sizeof(read_var));
+}
+
+void screen_set_read_updated(int updated) {
+    read_updated = updated;
+}
+
+int screen_stream_quiet(void) {
+    static int quiet = -1;
+    if (quiet < 0) {
+        const char *e = getenv("XBASE_STREAM_SCREEN");
+        quiet = e && strcmp(e, "none") == 0;
+    }
+#if HAS_TERM
+    if (scr.term_available) return 0;
+#endif
+    return quiet;
 }
 
 /* ---- @SAY ---- */
@@ -481,6 +507,7 @@ void screen_say(int row, int col, const char *expr_str, const char *picture) {
             screen_tputs(formatted);
         else
 #endif
+        if (!screen_stream_quiet())
             printf("%s", formatted);
     }
     screen_update_pos(row, col, (int)strlen(formatted));
@@ -625,6 +652,7 @@ static void get_show_initial(const get_entry_t *g) {
         screen_tputs(shown);
     else
 #endif
+    if (!screen_stream_quiet())
         printf("%s", shown);
     screen_update_pos(g->row, g->col, (int)strlen(shown));
 }
@@ -1415,6 +1443,7 @@ void screen_prompt(int row, int col, const char *text, const char *message) {
         screen_tputs(text);
     else
 #endif
+    if (!screen_stream_quiet())
         printf("%s", text);
     screen_update_pos(row, col, (int)strlen(text));
 

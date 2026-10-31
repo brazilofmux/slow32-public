@@ -167,6 +167,14 @@ int screen_getkey(void);                /* an editor's next key: the buffers, th
 const char *screen_read_var(void);   /* the GET being read; "" outside a READ */
 int screen_read_updated(void);       /* UPDATED(): a GET changed in the last READ */
 value_t screen_active_get(void);     /* GETACTIVE(): its Get object, or NIL */
+/* READMODAL's own loop (getsys.c) keeps the READ state these report:
+ * the Get being read (NIL outside), its variable's name, UPDATED() */
+void screen_set_modal_get(const value_t *get, const char *varname);
+void screen_set_read_updated(int updated);
+/* XBASE_STREAM_SCREEN=none: with no terminal, positioned output (@ SAY,
+ * a GET's field, SETPOS) is dropped, as Harbour's stream renderer drops
+ * it; ? output still prints.  For comparing against Harbour. */
+int screen_stream_quiet(void);
 int screen_nextkey(void);            /* NEXTKEY(): the pending key, left pending */
 void screen_set_printer_pos(int row, int col);   /* SETPRC() */
 

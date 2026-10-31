@@ -155,7 +155,14 @@ static value_t get_untransform(expr_ctx_t *ctx, object_t *o) {
             if (*p == '.') seen = 1;
             else if (seen && (*p == '9' || *p == '#')) d++;
         }
-        return val_num_dec(atof(buf), seen ? d : (strchr(buf, '.') ? (int)strlen(strchr(buf, '.') + 1) : 0), 0);
+        /* as wide as the edit buffer, as the field shows it (Harbour,
+         * Clipper: a "999" field gives back a number three wide); nwidth
+         * counts the digits before the point, as VAL's does */
+        {
+            int dec = seen ? d : (strchr(buf, '.') ? (int)strlen(strchr(buf, '.') + 1) : 0);
+            int w = (int)strlen(buf) - (dec > 0 ? dec + 1 : 0);
+            return val_num_dec(atof(buf), dec, w > 0 ? w : 1);
+        }
     }
     case 'D':
         a = val_str(buf);
@@ -797,8 +804,6 @@ int getsys_read_through_program(void) {
 
 /* ---- READ around the Gets ---- */
 
-static int read_exit_flag, read_insert_flag = 0, read_kill_flag;
-
 /* The Get object's value and its store, for screen.c's editor */
 int getsys_has_block(const value_t *obj) {
     value_t *b = obj->type == VAL_OBJECT ? object_ivar(obj->obj, "block", 0) : NULL;
@@ -815,32 +820,297 @@ int getsys_varput(const value_t *obj, const value_t *v) {
     return get_varput(cmd_get_expr_ctx(), obj->obj, v);
 }
 
-/* READMODAL(aGets): the Gets in the array are read, in order, by the
- * editor READ uses -- each shown at its row and column with its current
- * value, each stored back through its block.  Without an array, the GETs
- * recorded by @ ... GET, as READ runs them. */
+/* ---- The Get system: READMODAL and the functions a reader uses ----
+ *
+ * Clipper's READ is a loop over the Get objects of a GetList: each is
+ * handed to its own reader block, or to the standard reader, and where
+ * the read goes next is the exitState that reader leaves.  The standard
+ * reader is GetPreValidate (WHEN), keys through GetApplyKey until an
+ * exit, then GetPostValidate (assign, VALID).  These are written here
+ * from the Get system's documented behaviour, and a program's own reader
+ * calls the same functions, as Clipper programs do to extend it. */
+
+#define GE_NOEXIT 0
+#define GE_UP     1
+#define GE_DOWN   2
+#define GE_TOP    3
+#define GE_BOTTOM 4
+#define GE_ENTER  5
+#define GE_WRITE  6
+#define GE_ESCAPE 7
+#define GE_WHEN   8
+
+static int gs_send(expr_ctx_t *ctx, value_t *g, const char *method, value_t *args, int nargs,
+                   value_t *result) {
+    value_t r;
+    if (!result) result = &r;
+    if (object_send(ctx, g, method, args, nargs, 1, result) != 0) { ctx->error = NULL; return -1; }
+    return 0;
+}
+
+static int gs_exit_state(object_t *o) {
+    value_t *v = object_ivar(o, "exitState", 0);
+    return v && v->type == VAL_NUM ? (int)v->num : GE_NOEXIT;
+}
+
+static void gs_set_exit(object_t *o, int state) {
+    iv_set(o, "exitState", vnum(state));
+}
+
+static int gs_updated;   /* UPDATED() of the READMODAL running */
+
+/* GETPREVALIDATE(oGet): its WHEN (preBlock); .F. leaves exitState GE_WHEN */
+static int gs_prevalidate(expr_ctx_t *ctx, value_t *g) {
+    object_t *o = g->obj;
+    value_t *pre = object_ivar(o, "preBlock", 0), r;
+    int when = 1;
+    gs_set_exit(o, GE_NOEXIT);
+    if (pre && pre->type == VAL_BLOCK) {
+        value_t arg = *g;
+        if (ast_eval_block(ctx, pre, &arg, 1, &r) != 0) { ctx->error = NULL; r = val_logic(1); }
+        when = r.type != VAL_LOGIC || r.logic;
+        gs_send(ctx, g, "DISPLAY", NULL, 0, NULL);
+    }
+    if (!when) gs_set_exit(o, GE_WHEN);
+    return when;
+}
+
+/* GETPOSTVALIDATE(oGet): a date that is not one is refused; a changed
+ * buffer is assigned (UPDATED() turns true); then its VALID (postBlock) */
+static int gs_postvalidate(expr_ctx_t *ctx, value_t *g) {
+    object_t *o = g->obj;
+    value_t *post, r, bad;
+    int valid = 1;
+    if (gs_exit_state(o) == GE_ESCAPE) return 1;
+    if (gs_send(ctx, g, "BADDATE", NULL, 0, &bad) == 0 && bad.type == VAL_LOGIC && bad.logic) {
+        gs_send(ctx, g, "HOME", NULL, 0, NULL);
+        scoreboard_message("Invalid Date");
+        return 0;
+    }
+    if (iv_logic(o, "changed")) {
+        gs_send(ctx, g, "ASSIGN", NULL, 0, NULL);
+        gs_updated = 1;
+        screen_set_read_updated(1);
+    }
+    gs_send(ctx, g, "RESET", NULL, 0, NULL);
+    post = object_ivar(o, "postBlock", 0);
+    if (post && post->type == VAL_BLOCK) {
+        value_t arg = *g;
+        gs_send(ctx, g, "DISPLAY", NULL, 0, NULL);
+        if (ast_eval_block(ctx, post, &arg, 1, &r) != 0) { ctx->error = NULL; r = val_logic(1); }
+        valid = r.type != VAL_LOGIC || r.logic;
+        gs_send(ctx, g, "UPDATEBUFFER", NULL, 0, NULL);
+    }
+    return valid;
+}
+
+/* GETAPPLYKEY(oGet, nKey): one key, as the standard reader takes it */
+static void gs_applykey(expr_ctx_t *ctx, value_t *g, int key) {
+    object_t *o = g->obj;
+    const set_options_t *so = cmd_get_set_opts();
+    value_t k = vnum(key), blk, r;
+    /* a key SET KEY has given a block: the block, not the Get */
+    if (func_call(ctx, "SETKEY", &k, 1, &blk) == 0 && blk.type == VAL_BLOCK) {
+        value_t a[3];
+        a[0] = val_str(screen_read_var());   /* procedure, line, variable: as SET KEY's */
+        a[1] = vnum(0);
+        a[2] = val_str(screen_read_var());
+        (void)ast_eval_block(ctx, &blk, a, 3, &r);
+        ctx->error = NULL;
+        return;
+    }
+    ctx->error = NULL;
+    switch (key) {
+    case 5:   /* K_UP */
+    case 271: /* K_SH_TAB */
+        gs_set_exit(o, GE_UP); return;
+    case 24:  /* K_DOWN */
+    case 9:   /* K_TAB */
+        gs_set_exit(o, GE_DOWN); return;
+    case 13:  /* K_ENTER */
+        gs_set_exit(o, GE_ENTER); return;
+    case 27:  /* K_ESC */
+        if (so && so->escape) {
+            gs_send(ctx, g, "UNDO", NULL, 0, NULL);
+            gs_set_exit(o, GE_ESCAPE);
+        }
+        return;
+    case 18:  /* K_PGUP */
+    case 3:   /* K_PGDN */
+    case 23:  /* K_CTRL_W */
+        gs_set_exit(o, GE_WRITE); return;
+    case 29:  /* K_CTRL_HOME */
+        gs_set_exit(o, GE_TOP); return;
+    case 22:  /* K_INS */
+        {
+            value_t on;
+            (void)func_call(ctx, "READINSERT", NULL, 0, &on);
+            on = val_logic(!(on.type == VAL_LOGIC && on.logic));
+            (void)func_call(ctx, "READINSERT", &on, 1, &r);
+        }
+        return;
+    case 21:  /* K_CTRL_U */ gs_send(ctx, g, "UNDO", NULL, 0, NULL); return;
+    case 1:   /* K_HOME */   gs_send(ctx, g, "HOME", NULL, 0, NULL); return;
+    case 6:   /* K_END */    gs_send(ctx, g, "END", NULL, 0, NULL); return;
+    case 4:   /* K_RIGHT */  gs_send(ctx, g, "RIGHT", NULL, 0, NULL); return;
+    case 19:  /* K_LEFT */   gs_send(ctx, g, "LEFT", NULL, 0, NULL); return;
+    case 2:   /* K_CTRL_RIGHT */ gs_send(ctx, g, "WORDRIGHT", NULL, 0, NULL); return;
+    case 26:  /* K_CTRL_LEFT */  gs_send(ctx, g, "WORDLEFT", NULL, 0, NULL); return;
+    case 8:   /* K_BS */     gs_send(ctx, g, "BACKSPACE", NULL, 0, NULL); return;
+    case 7:   /* K_DEL */    gs_send(ctx, g, "DELETE", NULL, 0, NULL); return;
+    case 20:  /* K_CTRL_T */ gs_send(ctx, g, "DELWORDRIGHT", NULL, 0, NULL); return;
+    case 25:  /* K_CTRL_Y */ gs_send(ctx, g, "DELEND", NULL, 0, NULL); return;
+    case 127: /* K_CTRL_BS */ gs_send(ctx, g, "DELWORDLEFT", NULL, 0, NULL); return;
+    default:
+        break;
+    }
+    if (key >= 32 && key <= 255) {
+        const char *type = iv_str(o, "type");
+        if (type[0] == 'N' && (key == '.' || key == ',')) {
+            gs_send(ctx, g, "TODECPOS", NULL, 0, NULL);
+        } else {
+            char c[2];
+            value_t on, a;
+            c[0] = (char)key;
+            c[1] = '\0';
+            a = val_str(c);
+            (void)func_call(ctx, "READINSERT", NULL, 0, &on);
+            ctx->error = NULL;
+            gs_send(ctx, g, on.type == VAL_LOGIC && on.logic ? "INSERT" : "OVERSTRIKE", &a, 1, NULL);
+            if (iv_logic(o, "typeOut")) {
+                /* past the field's end: on to the next, unless SET CONFIRM */
+                if (!(so && so->confirm)) gs_set_exit(o, GE_ENTER);
+            }
+        }
+    }
+}
+
+/* GETREADER(oGet): the standard reader */
+static void gs_reader(expr_ctx_t *ctx, value_t *g) {
+    object_t *o = g->obj;
+    if (!gs_prevalidate(ctx, g)) return;
+    gs_send(ctx, g, "SETFOCUS", NULL, 0, NULL);
+    while (gs_exit_state(o) == GE_NOEXIT) {
+        if (iv_logic(o, "typeOut")) gs_set_exit(o, GE_ENTER);   /* nothing to edit */
+        while (gs_exit_state(o) == GE_NOEXIT) {
+            int key = screen_inkey(-1.0);
+            if (key == 0 && !screen_term_available()) key = 27;   /* the end of the input: Esc */
+            gs_applykey(ctx, g, key);
+        }
+        if (!gs_postvalidate(ctx, g)) gs_set_exit(o, GE_NOEXIT);
+    }
+    gs_send(ctx, g, "KILLFOCUS", NULL, 0, NULL);
+}
+
+static int read_exit_flag, read_insert_flag = 0, read_kill_flag;
+
+/* Where READMODAL goes after the Get at pos (1-based): 0 to end the READ */
+static int gs_settle(array_t *a, int pos, int *last_dir) {
+    object_t *o = a->el[pos - 1].obj;
+    int st = gs_exit_state(o);
+    if (st == GE_ESCAPE || st == GE_WRITE) return 0;
+    if (st == GE_WHEN) st = *last_dir;   /* skipped: on the way it was going */
+    else if (st != GE_NOEXIT) *last_dir = st;
+    switch (st) {
+    case GE_UP:     pos--; break;
+    case GE_DOWN:   pos++; break;
+    case GE_TOP:    pos = 1; break;
+    case GE_BOTTOM: pos = a->len; break;
+    case GE_ENTER:  pos++; break;
+    default:        break;   /* GE_NOEXIT: the same Get again */
+    }
+    if (pos < 1) {
+        if (read_exit_flag) return 0;   /* above the first: out only with READEXIT() */
+        pos = 1;
+        *last_dir = GE_DOWN;
+    }
+    if (pos > a->len) {
+        if (st == GE_ENTER || read_exit_flag) return 0;   /* Enter past the last ends the READ */
+        pos = a->len;
+        *last_dir = GE_UP;
+    }
+    return pos;
+}
+
+/* READMODAL(aGetList [, nPos]): the Gets read in turn, each by its own
+ * reader block or the standard reader, moving as each one's exitState
+ * says.  Answers UPDATED().  Without an array, the GETs recorded by
+ * @ ... GET, as READ runs them. */
 int fn_readmodal(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     if (nargs >= 1 && args[0].type == VAL_ARRAY && args[0].array) {
         array_t *a = args[0].array;
-        int i;
-        screen_clear_gets();
-        for (i = 0; i < a->len; i++) {
-            value_t *o = &a->el[i], v;
-            if (o->type != VAL_OBJECT) continue;
-            if (get_varget(ctx, o->obj, &v) != 0) { ctx->error = NULL; v = val_nil(); }
-            screen_get_object((int)iv_num(o->obj, "row"), (int)iv_num(o->obj, "col"),
-                              iv_str(o->obj, "name"), iv_str(o->obj, "picture"), &v, o);
+        value_t saved_get = screen_active_get();
+        char saved_var[MEMVAR_NAMELEN];
+        int saved_updated = gs_updated, pos, last_dir = GE_DOWN, i, guard = 0;
+        str_copy(saved_var, screen_read_var(), sizeof(saved_var));
+        gs_updated = 0;
+        read_kill_flag = 0;
+        screen_set_read_updated(0);
+        pos = (nargs >= 2 && args[1].type == VAL_NUM) ? (int)args[1].num : 1;
+        if (pos < 1 || pos > a->len) pos = 1;
+        for (i = 0; i < a->len; i++)   /* the fields as they stand, as @ ... GET shows them */
+            if (a->el[i].type == VAL_OBJECT) gs_send(ctx, &a->el[i], "DISPLAY", NULL, 0, NULL);
+        while (pos >= 1 && pos <= a->len && guard++ < 100000) {
+            value_t *g = &a->el[pos - 1], *rd;
+            if (g->type != VAL_OBJECT) {   /* not a Get: past it */
+                pos = last_dir == GE_UP ? pos - 1 : pos + 1;
+                continue;
+            }
+            {
+                char var[MEMVAR_NAMELEN];
+                int k;
+                str_copy(var, iv_str(g->obj, "name"), sizeof(var));
+                for (k = 0; var[k]; k++) var[k] = (char)toupper((unsigned char)var[k]);
+                screen_set_modal_get(g, var);
+            }
+            rd = object_ivar(g->obj, "reader", 0);
+            if (rd && rd->type == VAL_BLOCK) {
+                value_t arg = *g, r;
+                if (ast_eval_block(ctx, rd, &arg, 1, &r) != 0) {
+                    screen_set_modal_get(&saved_get, saved_var);
+                    return -1;
+                }
+            } else {
+                gs_reader(ctx, g);
+            }
+            if (read_kill_flag) break;
+            pos = gs_settle(a, pos, &last_dir);
         }
-        screen_read();
-        for (i = 0; i < a->len; i++) {
-            if (a->el[i].type == VAL_OBJECT) iv_set(a->el[i].obj, "changed", val_logic(screen_read_updated()));
-        }
-        screen_clear_gets();
-        *result = val_logic(screen_read_updated());
+        *result = val_logic(gs_updated);
+        screen_set_read_updated(gs_updated);
+        gs_updated = saved_updated || gs_updated;
+        screen_set_modal_get(&saved_get, saved_var);
         return 0;
     }
     screen_read();   /* the GETs recorded so far, as READ runs them */
     *result = val_logic(screen_read_updated());
+    return 0;
+}
+
+static int gs_get_arg(value_t *args, int nargs) {
+    return nargs >= 1 && args[0].type == VAL_OBJECT && args[0].obj;
+}
+
+int fn_getreader(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    *result = val_nil();
+    if (gs_get_arg(args, nargs)) gs_reader(ctx, &args[0]);
+    return 0;
+}
+
+int fn_getapplykey(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    *result = val_nil();
+    if (gs_get_arg(args, nargs) && nargs >= 2 && args[1].type == VAL_NUM)
+        gs_applykey(ctx, &args[0], (int)args[1].num);
+    return 0;
+}
+
+int fn_getprevalidate(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    *result = val_logic(gs_get_arg(args, nargs) ? gs_prevalidate(ctx, &args[0]) : 1);
+    return 0;
+}
+
+int fn_getpostvalidate(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    *result = val_logic(gs_get_arg(args, nargs) ? gs_postvalidate(ctx, &args[0]) : 1);
     return 0;
 }
 

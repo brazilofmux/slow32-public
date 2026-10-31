@@ -845,8 +845,30 @@ The severe ones are marked.
    level is declarations only runs its first procedure, as Clipper does;
    USE positions at the first record (it left none, and a field read
    before any movement failed as an unknown variable).  Not Clipper's
-   yet: READMODAL() reads the GETs recorded by @ GET, not the Gets in the
-   array it is given; the Get's reader and exitState are inert; a
-   column's colorBlock, footing painting, TBrowse freeze and horizontal
+   yet: a column's colorBlock, footing painting, TBrowse freeze and horizontal
    panning are accepted and ignored; SETMODE is absent (NEXTKEY and
    KEYBOARD came with the DBU round below).
+
+## The Get system's loop (2026-10-30)
+
+READMODAL(aGetList [, nPos]) is Clipper's loop now, written in C from
+the Get system's documented behaviour (xbase/src/getsys.c): each Get is
+handed to its own reader block, or to the standard reader, and where the
+READ goes next is the exitState it leaves -- Up and Down, Enter (past
+the last Get it ends the READ), PgUp / PgDn / Ctrl-W write, Ctrl-Home
+the first, Esc undoes and ends; a Get whose WHEN refuses is passed in the
+direction the read was going; above the first or below the last it ends
+only with READEXIT(.T.).  The standard reader is GETPREVALIDATE (WHEN),
+keys through GETAPPLYKEY until an exit, then GETPOSTVALIDATE (an
+impossible date refused, a changed buffer assigned and UPDATED() set,
+VALID); GETREADER, GETAPPLYKEY, GETPREVALIDATE and GETPOSTVALIDATE are
+there for a program's own reader to call, as Clipper programs extend the
+Get system.  GETAPPLYKEY takes a SET KEY block first, inserts or
+overstrikes by READINSERT(), moves to the decimal point on . or , in a
+number, and goes on to the next Get when typing fills a field, unless SET
+CONFIRM.  A number a Get assigns is as wide as its edit buffer (it had
+the default ten).  Probes cls-get-reader, cls-readmodal-nav,
+cls-get-assign-width, run from KEYBOARD's keys; the probe harness sets
+XBASE_STREAM_SCREEN=none, under which positioned output is dropped
+without a terminal, as Harbour's stream renderer drops it.  READ itself
+keeps the built-in reader (which behaves as GETSYS does).
