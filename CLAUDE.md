@@ -345,6 +345,15 @@ cd ~/slow-32/regression && ./run-stage07-differential.sh
 # still 60/60. ~2 minutes.
 cd ~/slow-32/sqlite && ./check-stage08.sh
 
+# Its companion: SLOW-32 xBase built entirely by stage08 (the interpreter,
+# and the runtime plus generated C of every compiled program), held to the
+# clang build -- the xbase suite on the stage08 interpreter, the xbc oracle
+# on stage08 programs.  ~30,000 lines stage08 sees nowhere else, and
+# stage08 code calling clang code at every call: it found the three
+# defects of selfhost ISSUES-102 and the missing >2-D arrays (ISSUES-103).
+# ~30 seconds.
+cd ~/slow-32 && bash xbc/tests/run-stage08.sh
+
 # And for a C LIBRARY change -- either one: the tree has two, runtime/
 # (clang-built programs) and selfhost/stage08/libc (the kit's), with some
 # sources built into both (printf, dtoa, time_std.c, strerror.c).  Each

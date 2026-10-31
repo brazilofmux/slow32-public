@@ -44,6 +44,10 @@ into clang code, every program, every value passed and returned
 XBC_CC=stage08 XBASE_LIB=$PWD/out/libxbase.s32a ./tests/run-oracle.sh
 ```
 
+`tests/run-stage08.sh` goes all the way: the interpreter, the runtime
+library and every program built by stage08, the xbase suite run on that
+interpreter and the oracle on those programs (selfhost ISSUES-103).
+
 The `slow32:xbase` image (Dockerfile.xbase) is that arrangement
 installed, with no LLVM: `xbase` is the interpreter in the current
 directory, `s32xbc prog.prg [out.s32x]` compiles, and `s32run` (or

@@ -37,7 +37,7 @@ rstrip_nl() {   # FILE: its bytes without trailing newlines
           [ "$(tail -c +"$n" "$1" | head -c 1 | od -An -c | tr -d ' ')" = '\n' ]; do
         n=$((n - 1))
     done
-    head -c "$n" "$1"
+    if [ "$n" -gt 0 ]; then head -c "$n" "$1"; fi      # macOS head refuses -c 0
 }
 
 fail=0
@@ -55,7 +55,8 @@ printf 'SET TALK OFF\nDO SMOKE\nQUIT\n' | $XBASE_CMD > got.i 2>&1
 tail -n +4 got.i > t1
 if [ "$(head -c 4 t1)" = ". . " ]; then tail -c +5 t1 > t2; else cat t1 > t2; fi
 n=$(($(wc -c < t2)))
-if [ "$n" -ge 2 ] && [ "$(tail -c 2 t2)" = ". " ]; then head -c $((n - 2)) t2 > t1; else cat t2 > t1; fi
+if [ "$n" -gt 2 ] && [ "$(tail -c 2 t2)" = ". " ]; then head -c $((n - 2)) t2 > t1;
+elif [ "$n" -eq 2 ] && [ "$(cat t2)" = ". " ]; then : > t1; else cat t2 > t1; fi
 rstrip_nl t1 > got.in
 if cmp -s want got.in; then echo "smoke: interpreter OK"; else
     echo "smoke: interpreter DIFFER"; od -c got.i | head -20; fail=1

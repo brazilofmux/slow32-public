@@ -10,9 +10,10 @@
 # s32-xbc writes C; stage08 cc (cc.s32x, a SLOW-32 program run on the
 # emulator) compiles each program's C, and it links against
 # libxbase.s32a, so the image needs no LLVM.  The interpreter and its
-# library are built by clang in a stage FROM slow32:toolchain (stage08
-# cannot build them yet: xbase uses arrays of three dimensions, selfhost
-# ISSUES-102), and only the results are layered onto base.
+# library are built by clang in a stage FROM slow32:toolchain, and only
+# the results are layered onto base.  (stage08 builds them too since
+# selfhost ISSUES-103; xbc/tests/run-stage08.sh holds the two builds to
+# the same answers.)
 #
 # cc.s32x comes from slow32:kit, the self-hosted toolchain, so this image
 # carries the same compiler the kit ships.  (A clean clone can bootstrap

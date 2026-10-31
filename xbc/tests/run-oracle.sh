@@ -56,7 +56,7 @@ rstrip_nl() {
           [ "$(tail -c +"$n" "$1" | head -c 1 | od -An -c | tr -d ' ')" = '\n' ]; do
         n=$((n - 1))
     done
-    head -c "$n" "$1"
+    if [ "$n" -gt 0 ]; then head -c "$n" "$1"; fi      # macOS head refuses -c 0
 }
 
 # Banner (3 lines), then the prompts ". " for SET TALK OFF and DO, the
@@ -71,7 +71,7 @@ strip_interp() {
     if [ "$(head -c 4 "$u")" = ". . " ]; then tail -c +5 "$u" > "$t"; else cat "$u" > "$t"; fi
     n=$(($(wc -c < "$t")))
     if [ "$n" -ge 2 ] && [ "$(tail -c 2 "$t")" = ". " ]; then
-        head -c $((n - 2)) "$t" > "$u"
+        if [ "$n" -gt 2 ]; then head -c $((n - 2)) "$t" > "$u"; else : > "$u"; fi
     else
         cat "$t" > "$u"
     fi
