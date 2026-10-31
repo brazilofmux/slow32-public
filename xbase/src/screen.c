@@ -492,7 +492,8 @@ void screen_say(int row, int col, const char *expr_str, const char *picture) {
         return;
     }
 
-    val_to_string(&val, buf, sizeof(buf));
+    if (val.type == VAL_NUM && !(picture && picture[0])) val_to_display(&val, buf, sizeof(buf));
+    else val_to_string(&val, buf, sizeof(buf));
 
     if (picture && picture[0]) {
         screen_apply_picture(formatted, buf, picture, sizeof(formatted));
@@ -501,20 +502,7 @@ void screen_say(int row, int col, const char *expr_str, const char *picture) {
     }
 
     if (cmd_get_device() == 1) {
-        /* PRINT mode: advance with newlines/spaces to requested position */
-        if (row < print_row) {
-            screen_eject();
-        }
-        while (print_row < row) {
-            printf("\n");
-            print_row++;
-            print_col = 0;
-        }
-        while (print_col < col) {
-            putchar(' ');
-            print_col++;
-        }
-        screen_print_text(formatted);
+        screen_print_at(row, col, formatted);
     } else {
         goto_pos(row, col);
 #if HAS_TERM
@@ -2026,31 +2014,42 @@ int screen_get_col(void) {
 int screen_get_prow(void) { return print_row; }
 int screen_get_pcol(void) { return print_col; }
 
+/* EJECT: a form feed to a printer file; on the console, which has no
+ * pages, a line that says where one would be */
 void screen_eject(void) {
-    printf("\n--- PAGE ---\n");
+    FILE *fp = cmd_get_printer_fp();
+    if (fp) fputs("\f\r", fp);
+    else printf("\n--- PAGE ---\n");
     print_row = 0;
     print_col = 0;
 }
 
-void screen_print_newline(void) {
-    printf("\n");
-    print_row++;
-    print_col = 0;
+void screen_print_stream(const char *s, int write) {
+    const char *p;
+    if (!s) return;
+    for (p = s; *p; p++) {
+        if (*p == '\n') { print_row++; print_col = 0; }
+        else if (*p == '\r') print_col = 0;
+        else print_col++;
+    }
+    if (!write) return;
+    if (cmd_get_printer_fp()) fputs(s, cmd_get_printer_fp());
+    else printf("%s", s);
 }
 
 void screen_print_text(const char *s) {
-    if (!s) return;
-    while (*s) {
-        if (*s == '\n') {
-            printf("\n");
-            print_row++;
-            print_col = 0;
-            s++;
-            continue;
-        }
-        putchar(*s++);
-        print_col++;
-    }
+    screen_print_stream(s, 1);
+}
+
+/* To a place on the page: a row above the head's is the next page (Clipper
+ * ejects), then new lines to the row; a column behind the head is a
+ * carriage return, then spaces to the column */
+void screen_print_at(int row, int col, const char *s) {
+    if (row < print_row) screen_eject();
+    while (print_row < row) screen_print_text("\n");
+    if (col < print_col) screen_print_text("\r");
+    while (print_col < col) screen_print_text(" ");
+    screen_print_text(s);
 }
 
 /* ---- Keyboard functions ---- */

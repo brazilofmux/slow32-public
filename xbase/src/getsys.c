@@ -1174,6 +1174,25 @@ int fn_dispout(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     return 0;
 }
 
+/* DEVPOS / DEVOUT: SETPOS and DISPOUT on the device SET DEVICE names --
+ * on the printer, the head moves and the text goes to the page */
+int fn_devpos(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    if (cmd_get_device() != 1) return fn_setpos(ctx, args, nargs, result);
+    screen_print_at(arg_num(args, nargs, 0, 0), arg_num(args, nargs, 1, 0), "");
+    *result = val_nil();
+    return 0;
+}
+
+int fn_devout(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    char buf[512];
+    if (cmd_get_device() != 1 || nargs < 1) return fn_dispout(ctx, args, nargs, result);
+    if (args[0].type == VAL_NUM) val_to_display(&args[0], buf, sizeof(buf));
+    else val_to_string(&args[0], buf, sizeof(buf));
+    screen_print_text(buf);
+    *result = val_nil();
+    return 0;
+}
+
 int fn_maxrow(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx; (void)args; (void)nargs;
     *result = vnum(screen_maxrow());

@@ -888,7 +888,7 @@ static int fn_devoutpict(expr_ctx_t *ctx, value_t *args, int nargs, value_t *res
     value_t t;
     if (nargs < 2) { ctx->error = "DEVOUTPICT requires (value, picture)"; return -1; }
     if (func_call(ctx, "TRANSFORM", args, 2, &t) != 0) return -1;
-    return func_call(ctx, "DISPOUT", &t, 1, result);
+    return func_call(ctx, "DEVOUT", &t, 1, result);
 }
 
 static int fn_setprc(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
@@ -1013,7 +1013,7 @@ static int fn_alert(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
             strncat(line, optv[i], sizeof(line) - strlen(line) - 1);
         }
         strncat(line, ") ", sizeof(line) - strlen(line) - 1);
-        screen_print_text(line);
+        printf("%s", line);
         *result = vnum(1);
         return 0;
     }
@@ -1398,6 +1398,7 @@ static value_t set_current(expr_ctx_t *ctx, const set_entry_t *e) {
     case 17: return val_logic(o->console);
     case 18: return val_logic(o->alternate_on);
     case 20: return val_str(o->device ? "PRINTER" : "SCREEN");
+    case 23: return val_logic(o->printer_on);
     case 25: return vnum(o->margin);
     case 26: return val_logic(o->bell);
     case 27: return val_logic(o->confirm);
@@ -1421,7 +1422,7 @@ static void set_apply(expr_ctx_t *ctx, const set_entry_t *e, value_t *v) {
     char buf[300];
     value_t r;
     switch (e->code) {
-    case 1: case 2: case 9: case 10: case 11: case 17: case 18: case 26: case 27: case 28: case 32: case 35:
+    case 1: case 2: case 9: case 10: case 11: case 17: case 18: case 23: case 26: case 27: case 28: case 32: case 35:
         run_cmd("SET %s %s", e->name, truth_arg(v) ? "ON" : "OFF");
         return;
     case 3: case 5: case 25: case 36:

@@ -969,3 +969,35 @@ past it is refused (Harbour's terminal takes any size above zero).  The
 terminal itself is not resized: a program that asks for 50 rows wants
 a terminal that has them.  The mode at start is Clipper's, 25 by 80
 (Harbour's oracle, with no terminal, starts at 24 rows).
+
+## The printer (2026-10-30)
+
+There was no printer: SET PRINTER was unknown ("Unknown SET option"),
+SET DEVICE TO PRINTER was taken for nothing (only PRINT, the dBASE
+word, matched), and with DEVICE at PRINT, ? and QOUT went to the page
+instead of the console.  Now (probe cmd-set-printer, Harbour's page byte
+for byte):
+
+- SET PRINTER TO <file> [ADDITIVE] opens the printer's file (.prn when
+  no extension is given; .txt for SET ALTERNATE TO, which takes ADDITIVE
+  too, through the same code), TERM/2014 when it cannot be made; SET
+  PRINTER TO alone closes it.  Without a file the console stands in for
+  the printer, an EJECT on it a line that says so.
+- SET PRINTER ON sends the console stream -- ?, ??, QOUT, QQOUT -- to the
+  printer as well, and SET CONSOLE OFF keeps it off the screen (it was
+  accepted and did nothing).  SET DEVICE is @ ... SAY's alone, and
+  DEVPOS / DEVOUT / DEVOUTPICT's (they were SETPOS and DISPOUT).
+- On the page, a row above the head's ejects, new lines move down, a
+  column behind the head is a carriage return and spaces; EJECT is a
+  form feed and a carriage return.  PROW() and PCOL() follow everything
+  written to the printer.  REPORT FORM TO PRINTER writes to the printer's
+  file.  SET(_SET_PRINTER) reads and sets the flag.
+- Found on the way: @ ... SAY of a number with no picture showed its
+  digits alone ("42"); it has the number's display width, as on the
+  console ("        42").
+
+Not yet: LIST, DISPLAY and the other commands that print records write
+the console directly, so they reach neither the printer nor the
+alternate file, and their TO PRINTER is accepted and ignored; SET
+MARGIN is kept, not applied; REPORT FORM TO PRINTER does not also show
+the report on the console.

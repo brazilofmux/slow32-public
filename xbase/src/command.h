@@ -75,6 +75,7 @@ int cmd_get_unique(void);
 
 /* SET ALTERNATE output wrappers */
 FILE *cmd_get_alternate_fp(void);
+FILE *cmd_get_printer_fp(void);   /* NULL: the console is the printer */
 int   cmd_get_alternate_on(void);
 void  cmd_output(const char *s);
 void  cmd_qout(const value_t *vals, int n, int newline);

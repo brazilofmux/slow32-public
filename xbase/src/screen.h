@@ -107,9 +107,12 @@ int screen_get_pcol(void);
 /* EJECT command (form feed / reset printer position) */
 void screen_eject(void);
 
-/* Printer output helpers that track PROW()/PCOL() */
-void screen_print_newline(void);
+/* The printer: SET PRINTER TO's file, or the console standing in for it.
+ * Everything written to it moves PROW()/PCOL(); print_stream with write
+ * 0 only moves them (the text is on the console already). */
+void screen_print_stream(const char *s, int write);
 void screen_print_text(const char *s);
+void screen_print_at(int row, int col, const char *s);   /* @ ... SAY, DEVPOS / DEVOUT */
 
 /* Keyboard functions */
 int  screen_inkey(double timeout);  /* INKEY(): <0=wait forever, 0=poll, >0=timeout secs */

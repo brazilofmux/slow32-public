@@ -3464,25 +3464,17 @@ static void cmd_print_expr(const char *arg, int newline) {
 }
 
 /* QOUT / QQOUT: a new line (QOUT), then the values, a space apart, to the
- * console or the printer as SET DEVICE says */
+ * console stream (SET DEVICE is @ ... SAY's alone) */
 void cmd_qout(const value_t *vals, int n, int newline) {
-    int is_print = (cmd_get_device() == 1);
     int i;
-    if (newline) {
-        if (is_print) screen_print_newline();
-        else cmd_output("\n");
-    }
+    if (newline) cmd_output("\n");
     for (i = 0; i < n; i++) {
         char buf[256];
         const char *text = buf;
         if (vals[i].type == VAL_CHAR) text = val_text(&vals[i]);   /* the whole text, however long */
         else val_to_display(&vals[i], buf, sizeof(buf));
-        if (i > 0) {
-            if (is_print) screen_print_text(" ");
-            else cmd_output(" ");
-        }
-        if (is_print) screen_print_text(text);
-        else cmd_output(text);
+        if (i > 0) cmd_output(" ");
+        cmd_output(text);
     }
 }
 
@@ -5403,6 +5395,7 @@ static char *report_find_next_kw(char *p) {
 static void cmd_report_form(dbf_t *db, lexer_t *l) {
     char filename[64];
     FILE *outfile = NULL;
+    int own;
     frm_def_t *def;
     clause_t c;
 
@@ -5446,9 +5439,11 @@ static void cmd_report_form(dbf_t *db, lexer_t *l) {
         return;
     }
 
-    /* Determine output destination */
+    /* Determine output destination: TO FILE's, TO PRINTER's (SET PRINTER
+     * TO's file; the console without one), or the console */
+    own = outfile != NULL;
     if (!outfile)
-        outfile = stdout;
+        outfile = c.to_print && set_opts.printer_fp ? set_opts.printer_fp : stdout;
 
     ctx_setup();
     /* Note: currently report_generate ignores WHILE/scope, passing them would require signature change */
@@ -5462,7 +5457,7 @@ static void cmd_report_form(dbf_t *db, lexer_t *l) {
                         c.plain, c.summary, c.noeject, outfile);
 
     free(def);
-    if (outfile != stdout)
+    if (own)
         fclose(outfile);
 }
 
@@ -5727,22 +5722,38 @@ const char *cmd_get_path(void) {
 int  cmd_output_at_line_start(void)     { return out_at_line_start(); }
 void cmd_output_set_line_start(int bol) { out_set_line_start(bol); }
 
+FILE *cmd_get_printer_fp(void) {
+    return set_opts.printer_fp;
+}
+
+/* The console stream (?, ??, QOUT): the screen unless SET CONSOLE is off,
+ * the printer under SET PRINTER ON, the alternate file under SET
+ * ALTERNATE ON.  With no SET PRINTER TO file the console stands in for
+ * the printer, and text already on it is not written twice. */
 void cmd_output(const char *s) {
-    printf("%s", s);
+    if (set_opts.console) printf("%s", s);
+    if (set_opts.printer_on) screen_print_stream(s, set_opts.printer_fp || !set_opts.console);
     if (set_opts.alternate_on && set_opts.alternate_fp)
         fprintf(set_opts.alternate_fp, "%s", s);
 }
 
 void cmd_output_fmt(const char *fmt, ...) {
+    char small[1024];
+    char *buf = small;
     va_list ap;
+    int len;
     va_start(ap, fmt);
-    vprintf(fmt, ap);
+    len = vsnprintf(small, sizeof(small), fmt, ap);
     va_end(ap);
-    if (set_opts.alternate_on && set_opts.alternate_fp) {
+    if (len < 0) return;
+    if (len >= (int)sizeof(small)) {
+        if (!(buf = malloc((size_t)len + 1))) return;
         va_start(ap, fmt);
-        vfprintf(set_opts.alternate_fp, fmt, ap);
+        vsnprintf(buf, (size_t)len + 1, fmt, ap);
         va_end(ap);
     }
+    cmd_output(buf);
+    if (buf != small) free(buf);
 }
 
 int cmd_resolve_file(const char *name, char *resolved, int size) {
@@ -6285,6 +6296,29 @@ static void h_clear(dbf_t *db, lexer_t *l) {
  * GETs stay (CA's PE clears with it) */
 static void h_cls(dbf_t *db, lexer_t *l) { (void)db; (void)l; screen_clear(); }
 
+/* SET ALTERNATE / PRINTER TO [<file> [ADDITIVE]]: the file opened (the
+ * extension given when it has none), or closed when none is named; a
+ * file that cannot be made is TERM's create error, Retry on offer */
+static void set_file_to(lexer_t *l, FILE **fp, const char *ext, int subcode) {
+    char fname[128];
+    int additive = 0;
+    if (*fp) {
+        fclose(*fp);
+        *fp = NULL;
+    }
+    fname[0] = '\0';
+    while (l->current.type != TOK_EOF) {
+        if (cmd_kw(l, "ADDITIVE")) { additive = 1; lex_next(l); continue; }
+        strncat(fname, l->current.text, sizeof(fname) - strlen(fname) - 1);
+        lex_next(l);
+    }
+    trim_right(fname);
+    if (!fname[0]) return;
+    if (!strchr(fname, '.')) strncat(fname, ext, sizeof(fname) - strlen(fname) - 1);
+    while (!(*fp = fopen(fname, additive ? "a" : "w")))
+        if (!create_error("TERM", subcode, fname)) break;
+}
+
 static void h_set(dbf_t *db, lexer_t *l) {
     lex_next(l); /* skip SET */
     if (cmd_kw(l, "COLOR")) {
@@ -6406,39 +6440,15 @@ static void h_set(dbf_t *db, lexer_t *l) {
                 lex_next(l);
             }
         }
-    } else if (cmd_kw(l, "ALTERNATE")) {
+    } else if (cmd_kw(l, "ALTERNATE") && cmd_peek_kw(l, "TO")) {
         lex_next(l);
-        if (cmd_kw(l, "TO")) {
-            lex_next(l);
-            if (l->current.type == TOK_EOF) {
-                /* SET ALTERNATE TO (no file) — close alternate */
-                if (set_opts.alternate_fp) {
-                    fclose(set_opts.alternate_fp);
-                    set_opts.alternate_fp = NULL;
-                }
-                set_opts.alternate_on = 0;
-            } else {
-                char fname[128];
-                fname[0] = '\0';
-                while (l->current.type != TOK_EOF) {
-                    strncat(fname, l->current.text, sizeof(fname) - strlen(fname) - 1);
-                    lex_next(l);
-                }
-                trim_right(fname);
-                if (set_opts.alternate_fp) {
-                    fclose(set_opts.alternate_fp);
-                    set_opts.alternate_fp = NULL;
-                }
-                while (!(set_opts.alternate_fp = fopen(fname, "w")))
-                    if (!create_error("TERM", 2013, fname)) break;
-            }
-        } else {
-            /* SET ALTERNATE ON/OFF */
-            char arg[256];
-            snprintf(arg, sizeof(arg), "ALTERNATE %s", l->current.text);
-            while (l->current.type != TOK_EOF) lex_next(l);
-            set_execute(&set_opts, arg);
-        }
+        lex_next(l);
+        set_file_to(l, &set_opts.alternate_fp, ".txt", 2013);
+        if (!set_opts.alternate_fp) set_opts.alternate_on = 0;
+    } else if (cmd_kw(l, "PRINTER") && cmd_peek_kw(l, "TO")) {
+        lex_next(l);
+        lex_next(l);
+        set_file_to(l, &set_opts.printer_fp, ".prn", 2014);
     } else {
         char arg[256];
         lex_get_remaining(l, arg, sizeof(arg));

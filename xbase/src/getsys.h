@@ -42,6 +42,8 @@ int fn_readkill(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
 int fn_getactive(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
 int fn_setpos(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
 int fn_dispout(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
+int fn_devpos(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
+int fn_devout(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
 int fn_maxrow(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
 int fn_maxcol(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
 int fn_setcolor(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);

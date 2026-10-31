@@ -38,6 +38,8 @@ void set_init(set_options_t *opts) {
     opts->mark = '\0';
     opts->alternate_fp = NULL;
     opts->alternate_on = 0;
+    opts->printer_fp = NULL;
+    opts->printer_on = 0;
     opts->path[0] = '\0';
 }
 
@@ -244,8 +246,10 @@ void set_execute(set_options_t *opts, const char *arg) {
         /* SET FUNCTION <n> TO <string> — just skip */
         return;
     }
-    if (str_imatch(p, "PRINT")) {
-        parse_on_off(p + 5);
+    if (str_imatch(p, "PRINTER") || str_imatch(p, "PRINT")) {
+        val = parse_on_off(p + (str_imatch(p, "PRINTER") ? 7 : 5));
+        if (val >= 0) opts->printer_on = val;
+        else printf("Syntax: SET PRINTER ON/OFF or SET PRINTER TO [<file>]\n");
         return;
     }
     if (str_imatch(p, "HELP")) {
@@ -341,7 +345,7 @@ void set_execute(set_options_t *opts, const char *arg) {
         if (str_imatch(p, "TO")) p = skip_ws(p + 2);
         if (str_imatch(p, "SCREEN"))
             opts->device = 0;
-        else if (str_imatch(p, "PRINT"))
+        else if (str_imatch(p, "PRINTER") || str_imatch(p, "PRINT"))
             opts->device = 1;
         return;
     }

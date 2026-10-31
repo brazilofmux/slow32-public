@@ -41,6 +41,8 @@ typedef struct set_options {
     char mark;        /* date separator override; '\0' = use format default */
     FILE *alternate_fp;   /* file for SET ALTERNATE TO (NULL if none) */
     int alternate_on;     /* 1 = actively logging */
+    FILE *printer_fp;     /* SET PRINTER TO's file (NULL: the console stands in) */
+    int printer_on;       /* SET PRINTER ON: the console stream goes to it too */
     char path[256];       /* SET PATH TO directories (semicolon-separated) */
     char default_dir[256];  /* SET DEFAULT TO: kept, not yet used in file searches */
     char delimiters[8];     /* SET DELIMITERS TO: kept */
