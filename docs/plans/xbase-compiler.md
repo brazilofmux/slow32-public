@@ -1,46 +1,31 @@
 # Growing s32-xbc into the SLOW-32 xBase compiler
 
-Status 2026-10-29: steps 0-2 done -- the oracle harness
-(`xbc/tests/run-oracle.sh`: 45 of 45 compiling programs agree), the
-rest of the control flow, and compiled expressions (7.6x the
-interpreter's speed under slow32-dbt on `xbc/tests/bench1.prg` scaled
-up).  Step 4 under way: program files reached by DO compile in, and
-SELECT, SKIP, GO, APPEND BLANK, SEEK and REPLACE are direct calls; a real
-report suite runs 2.9x-3.6x faster per phase than interpreted, same
-output.  Variable lookup became a hash index in the interpreter itself
-(both gain).  The plan as written follows.
+Status 2026-10-30: the plan's steps are done but one (typed LOCALs,
+waiting on a measurement), and the goal moved past it.  On 2026-10-29 the user set the bar at CA-Clipper 5.2 -- "a tool
+someone who used Clipper would recognize" -- so the work since is
+compliance, tracked in `xbc/docs/compat-survey.md` against the CA
+guides with Harbour as the oracle.  This page keeps the plan as it was
+written, with what became of each step; the survey is where the open
+work is.
 
-xbase/ is a well-developed dBASE III Plus interpreter (23K lines, 109
-tests, Clipper and FoxPro additions, the last dBASE III Plus stubs
-closed 2026-10-29), and it only interprets.  In the period, compiling
-dBase programs was what Clipper was for.  `xbc/` (s32-xbc) is the
-first slice of that: a `.prg` becomes a `.s32x`.  This plan grows it
-into the compiler, one piece at a time, with the interpreter as the
-oracle throughout.
+## Where it stands (2026-10-30)
 
-COBOL stays the main tool for the user's own work; dBase is what you
-use when you have no COBOL.  So the bar is "compiles real dBase
-programs and runs them faster, with the same answers", not "complete
-Clipper 5".
-
-## Where it stands
-
-s32-xbc (951 lines, host C) reads a `.prg` line by line and writes C,
-which clang compiles for SLOW-32 and links with the xbase sources minus
-the REPL (`xbc/runtime/cliprt.c` is the glue):
-
-- Compiled: assignment, `STORE`, `?`/`??`, `IF/ELSEIF`, `DO WHILE`,
-  `DO CASE`, `EXIT`/`LOOP`, `FUNCTION`/`PROCEDURE` with
-  `PARAMETERS`/`PRIVATE`/`LOCAL`/`RETURN`, `SET PROCEDURE TO` inlined.
-- Not compiled: every expression is still a string handed to the
-  evaluator at run time (`clip_let(name, "expr")`, `clip_truth("expr")`),
-  and every other command rides `clip_cmd()`, the interpreter's own
-  command dispatch, re-lexed each time it runs.
-- Compile errors: `FOR`, `SCAN`, `TEXT`, `BEGIN SEQUENCE`, `DO ... WITH`.
-
-The real-program check so far: eleven of twelve of the user's report
-programs give byte-identical output compiled and interpreted (the
-twelfth hits an interpreter IF-stack limit, not a compiler fault).
+- **s32-xbc** (3,200 lines of host C, plus `xbc/runtime/cliprt.c`)
+  compiles a whole program -- the files it DOes, SET PROCEDURE, the
+  preprocessor (all ten directives, #command's full grammar), code
+  blocks, objects (Error, Get, TBrowse, TBColumn) -- to C, linked with
+  the interpreter's runtime.  CA's own utilities run compiled: DBU, RL
+  (reports and labels), PE (MEMOEDIT), with ERRORSYS and GETSYS.
+- **The interpreter** (xbase/, 33,000 lines) is the oracle for the
+  dBASE side and runs the same runtime; `report_clipper_layout()` gives
+  compiled programs Clipper's REPORT FORM, LABEL FORM and READ.
+- **Gates:** the xbase suite (110), the xbc oracle (54 agree;
+  `xbc/tests/run-oracle.sh`, which now types keys for programs that read
+  the keyboard), the compat probes against Harbour (68), CA's driver
+  programs (13), and the stage08 build (`xbc/tests/run-stage08.sh`).
+- **Use:** the user's ledger (majesty) runs its dBASE drivers compiled
+  since 2026-10-30, 14.5 s to 3.6 s; `slow32:xbase` is published, the
+  interpreter and `s32xbc` on base with stage08 cc and no LLVM.
 
 ## The shape it grows into
 
@@ -75,7 +60,10 @@ twelfth hits an interpreter IF-stack limit, not a compiler fault).
 ## Steps
 
 Each step ends with the oracle green: every program in the corpus
-gives the same output compiled as interpreted.
+gives the same output compiled as interpreted.  Steps 0-4 and 6 are
+done (6: stage08 builds the whole of xBase since selfhost ISSUES-103,
+held to clang by `xbc/tests/run-stage08.sh`); 5 is not started, and
+waits for a measurement that asks for it.
 
 0. **The oracle harness.**  Corpus: `xbc/tests`, the 36 `.PRG` files
    in `xbase/tests`, and the xbase test scripts that are plain command
@@ -111,8 +99,9 @@ gives the same output compiled as interpreted.
 
 - `.NDX` compatibility with real dBASE: our NDX2 is fine, and reindexing
   is the interchange, as it was in the period (ruled 2026-10-29).
-- Clipper 5's code blocks, objects and preprocessor, until a real
-  program needs one.
+- (Clipper 5's code blocks, objects and preprocessor were listed here
+  "until a real program needs one"; the Clipper bar of 2026-10-29 made
+  them in scope, and all three are done.)
 - Changing the interpreter to suit the compiler: where they disagree,
   the interpreter's answer is the definition, unless it is a bug, which
   is then fixed in both.
