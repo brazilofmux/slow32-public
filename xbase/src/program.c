@@ -1009,6 +1009,10 @@ static program_t *prog_load(const char *filename) {
     }
 
     fclose(fp);
+    /* its routines known now, before the first call: one named as a
+     * built-in is the program's from the start (func_register_override),
+     * not only after some other routine's call has built the table */
+    find_procedure(prog, "");
     return prog;
 }
 

@@ -1090,3 +1090,14 @@ COPY FILE and RENAME said "File copied." / "File renamed." always --
 in a compiled program too, where Clipper says nothing; they are SET
 TALK's now, as ERASE's was.  SET TYPEAHEAD TO n was accepted and lost;
 SET(_SET_TYPEAHEAD) answers it (the keyboard buffer keeps one size).
+
+## A routine named as a built-in (2026-10-31)
+
+A program's routine named as a built-in (BAR, PAD, the dBASE IV popup
+functions among them) is the program's, interpreted as compiled -- but
+the interpreter learned the program's routines only at the first call
+of one, so a first call that was the clashing name itself, as a
+statement, ran the built-in: `Bar()` returned the menu's last bar and
+the procedure never ran, which looked like an error inside it being
+swallowed.  The routines are known as the program loads.  Oracle test
+ownbuiltin.
