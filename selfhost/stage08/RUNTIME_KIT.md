@@ -105,6 +105,14 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-30 again (`0b0382d7`).  `cc.s32x` only; the libc,
+crt0, include and tools rebuild identical.  Arrays of any number of
+dimensions (three or more were refused), multi-dimensional designators
+(`[i][j] = ...`), a multi-dimensional member in a local struct's
+initializer, compound literals of array type (`(int[][2]){...}`), and
+casts to a pointer to an array (`(int (*)[4])p`), all refused or
+wrong before (selfhost ISSUES-103).
+
 Rebuilt 2026-10-30 (`e48f818e`).  `cc.s32x` only; the libc, crt0,
 include and tools rebuild identical.  Three defects found compiling
 C against clang-built objects (selfhost ISSUES-102), live in every
