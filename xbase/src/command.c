@@ -1058,9 +1058,9 @@ static void cmd_use(dbf_t *db, const char *arg) {
 
     /* USE positions at the first record (in index order), as dBASE does;
      * it used to leave no current record, and a field read before any
-     * movement failed as an unknown variable */
-    if (db->record_count > 0)
-        cmd_go(db, "TOP");
+     * movement failed as an unknown variable.  An empty table opens on the
+     * record past the end, EOF() and BOF() both true */
+    cmd_go(db, "TOP");
 
     if (set_opts.talk)
         printf("Database %s opened with %d record(s).\n",
@@ -1100,10 +1100,10 @@ static void cmd_go(dbf_t *db, const char *arg) {
     p = skip_ws(arg);
 
     if (str_imatch(p, "TOP")) {
-        if (db->record_count == 0) {
+        if (db->record_count == 0) {   /* no error: the record past the end, EOF() and BOF() */
+            dbf_move_eof(db);
             expr_ctx.eof_flag = 1;
             expr_ctx.bof_flag = 1;
-            prog_error(ERR_RECORD_RANGE, "No records");
             return;
         }
         {
@@ -1145,10 +1145,10 @@ static void cmd_go(dbf_t *db, const char *arg) {
     }
 
     if (str_imatch(p, "BOTTOM")) {
-        if (db->record_count == 0) {
+        if (db->record_count == 0) {   /* no error: the record past the end, EOF() and BOF() */
+            dbf_move_eof(db);
             expr_ctx.eof_flag = 1;
             expr_ctx.bof_flag = 1;
-            prog_error(ERR_RECORD_RANGE, "No records");
             return;
         }
         {
@@ -1932,8 +1932,12 @@ static void cmd_average(dbf_t *db, lexer_t *l) {
             value_t tv = val_num_dec(actx.total / count, set_opts.decimals, 0);   /* a computed value */
             memvar_set(&memvar_store, c.to_var, &tv);
         }
-    } else if (count == 0) {
-        prog_error(ERR_RECORD_RANGE, "No records");
+    } else if (count == 0) {   /* none: 0, no error (Clipper's AVERAGE, Harbour's) */
+        if (set_opts.talk) printf("0 record(s) averaged\n");
+        if (c.to_var[0]) {
+            value_t tv = val_num_dec(0, 0, 0);   /* the plain 0 nothing was divided into */
+            memvar_set(&memvar_store, c.to_var, &tv);
+        }
     }
 }
 

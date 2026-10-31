@@ -19,8 +19,14 @@ int32_t date_to_jdn(int year, int month, int day) {
     return day + (153 * m + 2) / 5 + 365 * y + y / 4 - y / 100 + y / 400 - 32045;
 }
 
+/* Below the year 0 (an empty date's arithmetic: CTOD("") + 2) there is no
+ * calendar date: year, month and day 0, printed "00/00/00", as Harbour's
+ * hb_dateDecode gives them; 0 and below print blank, as the empty date */
+#define DATE_JDN_BASE 1721060
+
 void date_from_jdn(int32_t jdn, int *year, int *month, int *day) {
     int32_t a, b, c, d, e, m;
+    if (jdn < DATE_JDN_BASE) { *year = *month = *day = 0; return; }
     a = jdn + 32044;
     b = (4 * a + 3) / 146097;
     c = a - (146097 * b) / 4;
@@ -52,7 +58,7 @@ int32_t date_from_dbf(const char *raw) {
 
 void date_to_dbf(int32_t jdn, char *buf) {
     int y, m, d;
-    if (jdn == 0) {
+    if (jdn <= 0) {
         memcpy(buf, "        ", 8);
         buf[8] = '\0';
         return;
@@ -95,7 +101,7 @@ int32_t date_from_mdy(const char *s) {
 
 void date_to_mdy(int32_t jdn, char *buf) {
     int y, m, d;
-    if (jdn == 0) {
+    if (jdn <= 0) {
         memcpy(buf, "  /  /  ", 8);
         buf[8] = '\0';
         return;
@@ -122,7 +128,7 @@ void date_to_display(int32_t jdn, char *buf, date_format_t fmt, int century, cha
     int y, m, d;
     char sep;
 
-    if (jdn == 0) {
+    if (jdn <= 0) {
         /* The blank date keeps the format's separators, "  /  /  " (Clipper):
          * a date formatted, its digits blanked */
         char *q;
