@@ -1140,3 +1140,41 @@ The cost: a name asks whether it is a LOCAL only while some LOCAL
 lives (the store counts them), so a dBASE program, which has none,
 pays nothing for it; majesty's interpreted runs are within 1% of
 before, its output identical.
+
+## A real program from 1986: Teacher's Pet (2026-10-31)
+
+Teacher's Pet, a dBASE III gradebook from 1986 (18 programs, nine tables,
+macro-built variable names, index-ordered reports, printer output), was
+compiled whole with s32-xbc and driven screen by screen beside the
+interpreter, the same keys piped to both.  Its sources had been through a
+later maintenance pass that the shipped Clipper build predates, so the
+build's strings settled what the original said; the program is a test
+here, not a thing to improve.  It ran into fourteen defects of ours, none
+of which the probes, the oracle or majesty had reached:
+
+- @ SAY ... PICTURE had a character mask of its own (14137 under "##"
+  printed "14"); it formats through TRANSFORM now.  TRANSFORM's @( put
+  "(" against the digits and, with no room, over one.
+- INDEX ON and REINDEX skipped a record whose key failed, silently.
+- Line numbers lost one per continuation line above them, in both
+  engines; a continued statement is its last line now.
+- s32-xbc compiled a file twice when it was named and also reached by
+  SET PROCEDURE; a file named after the first is the procedure of its
+  name; a main program's PARAMETERS are the command line's words.
+- With an index in control, CONTINUE found the same record forever, and
+  SKIP after GO n stepped from the index's last place: they step from the
+  current record now (index_sync).
+- PARAMETER, the singular (and PARA), skipped the line after it in the
+  interpreter: the procedure's first statement never ran.
+- The default handler's report went through ?, so SET CONSOLE OFF hid it;
+  it is on standard error, as CA's ERRORSYS.PRG writes it.  ALERT, and the
+  handler around it, waited forever once input had ended.
+- RUN had been DO of a same-named program; it is the command processor's.
+- GO TOP on an empty table raised "No records"; USE left EOF() false;
+  AVERAGE over no records raised it too; arithmetic on the empty date
+  printed characters that are not digits.
+
+Every screen the menus reach now runs alike compiled and interpreted, the
+data files it leaves byte-identical.  The defects that remain are the
+program's own: a DELETE FOR on a field the tests file does not have, and
+the later pass's character + date keys.
