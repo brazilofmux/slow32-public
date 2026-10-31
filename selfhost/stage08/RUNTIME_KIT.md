@@ -105,6 +105,13 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-10-30, third time (`c2d4fc50`).  `cc.s32x` only.  A
+`?:` of two structures was typed int (selfhost ISSUES-104): a function
+returning `c ? s1 : s2` handed back the chosen arm's address without
+copying it into the caller's buffer, and such a `?:` passed by value
+sent one word.  With the second kit of the day the first of those is
+visible -- its caller reads its own buffer -- so take this one.
+
 Rebuilt 2026-10-30 again (`0b0382d7`).  `cc.s32x` only; the libc,
 crt0, include and tools rebuild identical.  Arrays of any number of
 dimensions (three or more were refused), multi-dimensional designators
