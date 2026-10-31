@@ -6513,8 +6513,17 @@ static void h_save(dbf_t *db, lexer_t *l) {
     int j;
     (void)db;
     lex_next(l); /* skip SAVE */
-    if (cmd_kw(l, "SCREEN")) {
-        screen_save();
+    if (cmd_kw(l, "SCREEN")) {   /* SAVE SCREEN [TO v]: v := SAVESCREEN() of the whole screen */
+        lex_next(l);
+        if (cmd_kw(l, "TO")) {
+            char expr[MEMVAR_NAMELEN + 64];
+            value_t v;
+            lex_next(l);
+            snprintf(expr, sizeof(expr), "%s := SAVESCREEN(0, 0, MAXROW(), MAXCOL())", l->current.text);
+            if (ast_eval_dynamic(expr, &expr_ctx, &v) != 0) report_expr_error();
+        } else {
+            screen_save();
+        }
         return;
     }
     while (l->current.type != TOK_EOF) {
@@ -6608,8 +6617,18 @@ static void h_restore(dbf_t *db, lexer_t *l) {
     FILE *fp;
     (void)db;
     lex_next(l); /* skip RESTORE */
-    if (cmd_kw(l, "SCREEN")) {
-        screen_restore();
+    if (cmd_kw(l, "SCREEN")) {   /* RESTORE SCREEN [FROM e]: RESTSCREEN() of the whole screen */
+        lex_next(l);
+        if (cmd_kw(l, "FROM")) {
+            char rest[320], expr[400];
+            value_t v;
+            lex_next(l);
+            lex_get_remaining(l, rest, sizeof(rest));
+            snprintf(expr, sizeof(expr), "RESTSCREEN(0, 0, MAXROW(), MAXCOL(), %s)", rest);
+            if (ast_eval_dynamic(expr, &expr_ctx, &v) != 0) report_expr_error();
+        } else {
+            screen_restore();
+        }
         return;
     }
     if (cmd_kw(l, "ADDITIVE")) { additive = 1; lex_next(l); }   /* RL: RESTORE ADDITIVE FROM &mem_file */

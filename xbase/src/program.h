@@ -266,6 +266,12 @@ typedef struct {
     int depth;
 } prog_block_stack_t;
 const char *prog_normalize_line(const char *line, prog_block_stack_t *st, char *out, int outsz);
+/* 'I' for an INIT PROCEDURE, 'E' an EXIT PROCEDURE (as prog_normalize_line
+ * met them), 0 any other routine */
+char prog_routine_kind(const char *name);
+/* The line declares and runs nothing (comments, STATIC, LOCAL, MEMVAR,
+ * ANNOUNCE, REQUEST, EXTERNAL ...) */
+int prog_is_declaration(const char *text);
 /* 1 when the line ends in a continuation ; (a trailing && or // comment
  * after it allowed, as Clipper allows): the ; and the comment are cut */
 int prog_cut_continuation(char *line);

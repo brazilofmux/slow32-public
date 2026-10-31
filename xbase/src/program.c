@@ -581,9 +581,61 @@ static void block_pop(prog_block_stack_t *st) {
     if (st->depth > 0) st->depth--;
 }
 
+/* INIT and EXIT PROCEDUREs, by name, as the loaders meet them: the
+ * normalized header is a plain PROCEDURE, and this says which it was */
+#define MAX_INIT_EXIT 64
+static struct { char kind; char name[MEMVAR_NAMELEN]; } init_exit[MAX_INIT_EXIT];
+static int n_init_exit;
+
+static void note_init_exit(char kind, const char *p) {
+    char name[MEMVAR_NAMELEN];
+    int i = 0;
+    while ((isalnum((unsigned char)*p) || *p == '_') && i < MEMVAR_NAMELEN - 1)
+        name[i++] = (char)toupper((unsigned char)*p++);
+    name[i] = '\0';
+    if (!name[0] || prog_routine_kind(name) || n_init_exit >= MAX_INIT_EXIT) return;
+    init_exit[n_init_exit].kind = kind;
+    str_copy(init_exit[n_init_exit].name, name, MEMVAR_NAMELEN);
+    n_init_exit++;
+}
+
+char prog_routine_kind(const char *name) {
+    int i;
+    for (i = 0; i < n_init_exit; i++)
+        if (strcasecmp(init_exit[i].name, name) == 0) return init_exit[i].kind;
+    return 0;
+}
+
+/* A line that declares and runs nothing: what Clipper allows before the
+ * first procedure of a file (the entry point is that procedure then) */
+int prog_is_declaration(const char *text) {
+    static const char *const words[] = { "STATIC", "LOCAL", "PRIVATE", "PUBLIC", "MEMVAR", "FIELD",
+                                         "PARAMETERS", "DECLARE", "ANNOUNCE", "REQUEST", "EXTERNAL", NULL };
+    const char *p = skip_ws(text);
+    int i;
+    if (*p == '\0' || *p == '*' || kw_here(p, "NOTE", NULL) || (p[0] == '&' && p[1] == '&') ||
+        (p[0] == '/' && p[1] == '/'))
+        return 1;
+    for (i = 0; words[i]; i++)
+        if (kw_here(p, words[i], NULL)) return 1;
+    return 0;
+}
+
 const char *prog_normalize_line(const char *line, prog_block_stack_t *st, char *out, int outsz) {
     const char *p = skip_ws(line), *q;
     size_t lead = (size_t)(p - line);
+
+    /* INIT PROCEDURE name / EXIT PROCEDURE name: a procedure, noted (EXIT
+     * alone leaves a loop) */
+    if (kw_here(p, "INIT", &q) || kw_here(p, "EXIT", &q)) {
+        const char *r;
+        if (kw_here(q, "PROCEDURE", &r) || kw_here(q, "PROC", &r)) {
+            note_init_exit((char)toupper((unsigned char)*p), r);
+            snprintf(out, (size_t)outsz, "%.*sPROCEDURE %s", (int)lead, line, r);
+            st->depth = 0;
+            return out;
+        }
+    }
 
     /* STATIC FUNCTION name / STATIC PROCEDURE name: file-local in Clipper;
      * one file here.  FUNC and PROC are the headers' four-letter forms. */
@@ -1172,6 +1224,17 @@ static int find_procedure(program_t *prog, const char *name) {
     return -1;
 }
 
+/* PROCEDURE name / FUNCTION name: the name, upper case, in out */
+static const char *header_name(const char *line, char *out) {
+    const char *p = skip_ws(line);
+    int i = 0;
+    while (is_ident_char(*p)) p++;   /* PROCEDURE */
+    p = skip_ws(p);
+    while (is_ident_char(*p) && i < MEMVAR_NAMELEN - 1) out[i++] = (char)toupper((unsigned char)*p++);
+    out[i] = '\0';
+    return out;
+}
+
 static int line_is_kw(const char *line, const char *kw) {
     char tok[32];
     int i = 0;
@@ -1739,6 +1802,7 @@ static void prog_run(void) {
     int run_slot = state.call_depth;
     char *line;
     char *prev;
+    char name_buf[MEMVAR_NAMELEN];
     char *line2;
 
     if (run_slot < 0) run_slot = 0;
@@ -1793,15 +1857,22 @@ static void prog_run(void) {
            (Clipper convention — first PROCEDURE is the entry point),
            just skip the declaration line and execute the body. */
         if (lk == LK_PROC) {
-            if (state.call_depth == 0) {
-                /* Check if all prior lines were comments/blank */
-                int all_comments = 1;
+            /* an INIT or EXIT PROCEDURE is never the entry point */
+            if (state.call_depth == 0 && !prog_routine_kind(header_name(p, name_buf))) {
+                /* Check if all prior lines only declare (an INIT or EXIT
+                 * PROCEDURE's body among them is not the program's) */
+                int all_comments = 1, in_init_exit = 0;
                 int j;
                 for (j = 0; j < state.pc; j++) {
                     char *pp;
                     str_copy(prev, state.current_prog->lines[j], MAX_LINE_LEN);
                     pp = skip_ws(prev);
-                    if (*pp != '\0' && *pp != '*' && !str_imatch(pp, "NOTE")) {
+                    if (line_is_kw(pp, "PROCEDURE") || line_is_kw(pp, "FUNCTION")) {
+                        in_init_exit = prog_routine_kind(header_name(pp, name_buf)) != 0;
+                        if (!in_init_exit) { all_comments = 0; break; }
+                        continue;
+                    }
+                    if (!in_init_exit && !prog_is_declaration(pp)) {
                         all_comments = 0;
                         break;
                     }

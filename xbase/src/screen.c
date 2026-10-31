@@ -76,20 +76,21 @@ void screen_shutdown(void) {
 #endif
 }
 
+/* SAVE SCREEN / RESTORE SCREEN without a variable: one buffer, the
+ * whole screen's cells (its handle kept as text, which no collection
+ * sweeps) */
+static char whole_screen[32];
+
 void screen_save(void) {
-#if HAS_TERM
-    if (scr.term_available) {
-        term_save_screen();
-    }
-#endif
+    value_t h = screen_save_region(0, 0, scr_rows - 1, scr_cols - 1);
+    str_copy(whole_screen, h.type == VAL_CHAR ? val_text(&h) : "", sizeof(whole_screen));
 }
 
 void screen_restore(void) {
-#if HAS_TERM
-    if (scr.term_available) {
-        term_restore_screen();
-    }
-#endif
+    value_t h;
+    if (!whole_screen[0]) return;
+    h = val_str(whole_screen);
+    screen_restore_region(0, 0, scr_rows - 1, scr_cols - 1, &h);
 }
 
 int screen_term_available(void) { return scr.term_available; }
@@ -281,6 +282,7 @@ void screen_restore_region(int t, int l, int b, int r, const value_t *saved) {
     int keep_row = shadow_row, keep_col = shadow_col;
     int keep_fg = shadow_fg, keep_bg = shadow_bg, keep_bold = shadow_bold, keep_inverse = shadow_inverse;
     unsigned char cur = 0;
+    int paint = scr.term_available;   /* without a terminal the shadow alone (a stream shows none of it) */
     if (!saved || saved->type != VAL_CHAR || sscanf(saved->str, "\001SCR%d.%u", &slot, &gen) != 2) return;
     if (slot < 0 || slot >= SAVED_MAX) return;
     s = &saved_regions[slot];
@@ -294,9 +296,13 @@ void screen_restore_region(int t, int l, int b, int r, const value_t *saved) {
     for (i = 0; i < rows; i++) {
         shadow_row = t + i;
         shadow_col = l;
-        term_gotoxy(t + i + 1, l + 1);
+        if (paint) term_gotoxy(t + i + 1, l + 1);
         for (j = 0; j < cols; j++) {
             shadow_cell_t cell = s->cells[i * s->cols + j];
+            if (!paint) {
+                shadow[t + i][l + j] = cell;
+                continue;
+            }
             if (cell.attr != cur) {
                 cur = cell.attr;
                 term_set_attr(0);
@@ -309,12 +315,13 @@ void screen_restore_region(int t, int l, int b, int r, const value_t *saved) {
     }
     /* the program's own colour and cursor back */
     shadow_fg = keep_fg; shadow_bg = keep_bg; shadow_bold = keep_bold; shadow_inverse = keep_inverse;
+    shadow_row = keep_row;
+    shadow_col = keep_col;
+    if (!paint) return;
     term_set_attr(0);
     if (shadow_bold) term_set_attr(1);
     if (shadow_inverse) term_set_attr(7);
     term_set_color(shadow_fg, shadow_bg);
-    shadow_row = keep_row;
-    shadow_col = keep_col;
     term_gotoxy(keep_row + 1, keep_col + 1);
 }
 

@@ -2874,20 +2874,6 @@ static int emit_line(emit_t *e, const src_line_t *ln) {
     return emit_stmt(e, ln->text);
 }
 
-/* A line that declares and runs nothing: what Clipper allows before the
- * first procedure of a file */
-static int is_declaration(const char *text) {
-    static const char *const words[] = { "STATIC", "LOCAL", "PRIVATE", "PUBLIC", "MEMVAR", "FIELD",
-                                         "PARAMETERS", "DECLARE", "ANNOUNCE", "REQUEST", "EXTERNAL", NULL };
-    const char *p = skip_ws(text);
-    int i;
-    if (*p == '\0' || *p == '*' || is_kw(p, "NOTE")) return 1;
-    for (i = 0; words[i]; i++) {
-        if (is_kw(p, words[i])) return 1;
-    }
-    return 0;
-}
-
 static int emit_function(FILE *out, const func_t *fn) {
     emit_t e;
     int i;
@@ -2934,6 +2920,19 @@ static int emit_function(FILE *out, const func_t *fn) {
     fprintf(out, "    return 0;\n");
     fprintf(out, "}\n\n");
     return 0;
+}
+
+/* The INIT PROCEDUREs, each given the command line's words: after the
+ * top level's declarations (its STATICs are made as the program loads),
+ * before its first statement or the entry procedure */
+static void emit_inits(FILE *out, const func_t *fns, int nfns) {
+    int i;
+    for (i = 0; i < nfns; i++) {
+        if (prog_routine_kind(fns[i].name) == 'I')
+            fprintf(out, "    { value_t r, a[16]; int k, na = 0; "
+                         "for (k = 1; k < argc && na < 16; k++) a[na++] = val_str(argv[k]); "
+                         "clip_fn_%s(na ? a : NULL, na, &r); }\n", fns[i].name);
+    }
 }
 
 int main(int argc, char **argv) {
@@ -3097,6 +3096,11 @@ int main(int argc, char **argv) {
                 fns[i].name, fns[i].name);
     }
     fprintf(out, "    clip_startup();\n");   /* the program's ErrorSys(), as Clipper runs it */
+    /* The EXIT PROCEDUREs, run as the program ends (the main file's first) */
+    for (i = 0; i < nfns; i++) {
+        if (prog_routine_kind(fns[i].name) == 'E')
+            fprintf(out, "    clip_exit_proc(clip_fn_%s);\n", fns[i].name);
+    }
 
     memset(&e, 0, sizeof(e));
     e.out = out;
@@ -3105,8 +3109,8 @@ int main(int argc, char **argv) {
         if (line_in_func(i, fns, nfns)) {
             continue;
         }
-        if (!is_declaration(g_lines[i].text)) {
-            top_stmts++;
+        if (!prog_is_declaration(g_lines[i].text)) {
+            if (top_stmts++ == 0) emit_inits(out, fns, nfns);
         }
         e.inpath = g_lines[i].src;
         e.lineno = g_lines[i].lineno;
@@ -3120,13 +3124,14 @@ int main(int argc, char **argv) {
         fclose(out);
         return 1;
     }
+    if (top_stmts == 0) emit_inits(out, fns, nfns);
     /* Clipper's entry point: the main file's first procedure, when the
      * top level is declarations only (top-level statements are the dBASE
      * form of a main program, and run as one) */
     if (top_stmts == 0 && !e.ended) {
         int first = -1;
         for (i = 0; i < nfns; i++) {
-            if (strcmp(g_lines[fns[i].header].src, inputs[0]) == 0 &&
+            if (strcmp(g_lines[fns[i].header].src, inputs[0]) == 0 && !prog_routine_kind(fns[i].name) &&
                 (first < 0 || fns[i].header < fns[first].header)) {
                 first = i;
             }

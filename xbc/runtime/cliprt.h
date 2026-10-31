@@ -20,6 +20,7 @@ void clip_cmd(const char *line);
 #define CLIP_SCOPE_MAX 32
 
 typedef int (*clip_fn_t)(value_t *args, int nargs, value_t *result);
+void clip_exit_proc(clip_fn_t fn);   /* an EXIT PROCEDURE, run by clip_fini */
 
 /* A DO ... WITH call: which arguments came from variables (by reference),
  * and the callee's final values of those parameters, for the write-back */

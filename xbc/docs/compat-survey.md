@@ -1037,3 +1037,34 @@ compiled alike, and said nothing -- the scope taken for the end of the
 field list, the list then "ALL f WITH e".  Only the scope written last
 (REPLACE f WITH e ALL) worked.  A scope first is read first now, unless
 the word is a field's name (REPLACE NEXT WITH 1).
+
+## INIT and EXIT PROCEDURE, and the lines above the first (2026-10-31)
+
+Compiled, INIT PROCEDUREs run before the program's first statement --
+after the top level's declarations, so a file-wide STATIC is there --
+each given the command line's words; EXIT PROCEDUREs run as the program
+ends, by RETURN, QUIT or an error that ends it, each once, the main
+file's first (probe stmt-init-exit; their order among themselves is
+open, the guide says).  Both were unknown: "EXIT outside a loop".  The
+line normalizer, shared by the loaders, notes the two kinds and makes
+them plain procedures; neither is ever the entry point.  The
+interpreter, dBASE's, keeps them as procedures and runs neither.
+
+The interpreter took the first procedure for the entry point only when
+the lines above it were comments, so a file that began ANNOUNCE,
+REQUEST, EXTERNAL, MEMVAR or STATIC ran nothing at all.  One test of a
+declaration now serves both (prog_is_declaration; the compiler had its
+own), and the lines of an INIT or EXIT PROCEDURE above the entry do not
+count against it.  Oracle test entrydecl.
+
+## SAVE SCREEN TO, RESTORE SCREEN FROM (2026-10-31)
+
+SAVE SCREEN TO v is v := SAVESCREEN() of the whole screen -- v a PRIVATE
+when there is none, a LOCAL kept as one -- and RESTORE SCREEN FROM e its
+RESTSCREEN() (probe cmd-save-screen); both ignored their variable, so a
+program's RESTORE SCREEN FROM failed on a variable never made.  Without
+one they keep and repaint the whole screen in a buffer of their own, on
+the same shadow SAVESCREEN reads (it was the terminal's own save, which
+the shadow never saw).  Found on the way: RESTSCREEN() without a
+terminal wrote the region's characters to the stream -- two thousand
+blanks for a whole screen; it restores the shadow alone there.

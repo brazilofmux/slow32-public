@@ -390,7 +390,26 @@ void clip_init(void) {
     report_set_clipper_layout(1);   /* REPORT FORM prints CA-Clipper's layout */
 }
 
+/* EXIT PROCEDUREs: run as the program ends -- its RETURN, QUIT, an error
+ * that ends it -- each once; one that fails ends the program, the rest
+ * not run (the guide's EXIT PROCEDURE) */
+#define CLIP_MAX_EXIT 32
+static clip_fn_t clip_exits[CLIP_MAX_EXIT];
+static int clip_nexit, clip_exiting;
+
+void clip_exit_proc(clip_fn_t fn) {
+    if (clip_nexit < CLIP_MAX_EXIT) clip_exits[clip_nexit++] = fn;
+}
+
 void clip_fini(void) {
+    if (!clip_exiting) {
+        int i;
+        clip_exiting = 1;
+        for (i = 0; i < clip_nexit; i++) {
+            value_t r;
+            clip_exits[i](NULL, 0, &r);
+        }
+    }
     cmd_close_all();
     screen_shutdown();
 }
