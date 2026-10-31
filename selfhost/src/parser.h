@@ -16,6 +16,7 @@ static int pc_hi_of(int lo);
 static int ps_rowptr_cty(int elem_ty, int cols);
 static void ps_local_rows_cty(int li);
 static void next(void);
+static void expect(int tok);
 static void skip_gnu_attributes(void);
 
 static int is_gnu_qual_ident(void) {
@@ -253,6 +254,120 @@ static int ps_tok_volatile(void) {
     return lex_tok == TK_IDENT && strncmp(lex_str, "__volatile", 10) == 0;
 }
 
+/* --- Arrays of more than two dimensions (ast.h ast_sub_cols) --- */
+
+/* The stride entry of the array declarator just read, for its caller to
+ * record beside the row width (parse_local_array_dims, the global and
+ * parameter declarators). */
+static int ps_dims_sub;
+
+/* A compound literal's array type (T[N][M]...): the elements its first
+ * subscript steps over, 0 for one dimension, and the strides below. */
+static int ps_cl_cols;
+static int ps_cl_sub;
+
+/* The entry for a subscript stepping over cols elements, the one after
+ * it next: shared when it already exists. */
+static int ps_sub(int cols, int nxt) {
+    int i;
+    i = 1;
+    while (i < ast_nsubs) {
+        if (ast_sub_cols[i] == cols && ast_sub_next[i] == nxt) return i;
+        i = i + 1;
+    }
+    if (ast_nsubs >= AST_MAX_SUBS) {
+        p_error("too many array shapes");
+        return 0;
+    }
+    ast_sub_cols[ast_nsubs] = cols;
+    ast_sub_next[ast_nsubs] = nxt;
+    ast_nsubs = ast_nsubs + 1;
+    return ast_nsubs - 1;
+}
+
+/* The dimensions after an array's first, dims[0..nd-1]: the elements
+ * the first subscript steps over (their product; 0 when there are
+ * none), and in *psub the entry for the subscripts below it. */
+static int ps_dims_shape(int *dims, int nd, int *psub) {
+    int k;
+    int prod;
+    int sub;
+    sub = 0;
+    prod = 1;
+    k = nd - 1;
+    while (k >= 1) {
+        prod = prod * dims[k];
+        sub = ps_sub(prod, sub);
+        k = k - 1;
+    }
+    *psub = sub;
+    if (nd == 0) return 0;
+    return prod * dims[0];
+}
+
+/* The dimensions after an array's first, the cursor on the `[` of the
+ * second (or past the last): each must be sized.  extra, when > 0, is
+ * a typedef'd array's own dimension, the innermost.  Returns what
+ * ps_dims_shape does. */
+static int ps_inner_dims(int extra, int *psub) {
+    int dims[16];
+    int nd;
+    nd = 0;
+    while (lex_tok == TK_LBRACK) {
+        next();
+        if (lex_tok == TK_RBRACK) {
+            p_error("array size required without initializer");
+            dims[0] = 1;
+        } else if (nd < 15) {
+            dims[nd] = parse_const_int();
+            nd = nd + 1;
+        } else {
+            p_error("too many array dimensions");
+            parse_const_int();
+        }
+        expect(TK_RBRACK);
+    }
+    if (extra > 0) {
+        dims[nd] = extra;
+        nd = nd + 1;
+    }
+    return ps_dims_shape(dims, nd, psub);
+}
+
+/* The C type of an object of cols elements elem shaped by sub: a row of
+ * cols for sub 0, else an array of the rows sub describes. */
+static int ps_rows_cty(int elem, int cols, int sub) {
+    if (sub <= 0) return ct_array(elem, cols);
+    return ct_array(ps_rows_cty(elem, ast_sub_cols[sub], ast_sub_next[sub]),
+                    cols / ast_sub_cols[sub]);
+}
+
+/* The scalars an object of C type c holds, through all its array
+ * dimensions (1 for one that is not an array). */
+static int ps_cty_scalars(int c) {
+    int n;
+    n = 1;
+    while (c > 0 && ct_is_array(c)) {
+        n = n * ct_countof(c);
+        c = ct_baseof(c);
+    }
+    return n;
+}
+
+/* Is c an array of arrays, its rows of known size (a multi-dimensional
+ * array, by its C type)? */
+static int ps_cty_rows(int c) {
+    return c > 0 && ct_is_array(c) && ct_is_array(ct_baseof(c)) &&
+           ct_countof(ct_baseof(c)) > 0;
+}
+
+/* The stride entry of the rows inside an array type x: 0 when its
+ * element is not itself an array.  int [3][4] has rows of 4, {4, 0}. */
+static int ps_cty_sub(int x) {
+    if (!ps_cty_rows(x)) return 0;
+    return ps_sub(ps_cty_scalars(ct_baseof(x)), ps_cty_sub(ct_baseof(x)));
+}
+
 /* A struct member's C type, from what its registration recorded: an
  * array of its element (a row of arr_cols for a 2-D one), or the
  * object type -- the one parse_type built when it agrees (ps_obj_cty). */
@@ -266,7 +381,8 @@ static int ps_member_cty(int mi) {
          * through the function-pointer path, so the pending C type is a
          * function pointer's) */
         ps_pending_member_cty = 0;
-        return ps_rowptr_cty(ty_deref(stm_type[mi]), stm_arr_cols[mi]);
+        return ct_ptr(ps_rows_cty(ct_from_mty(ty_deref(stm_type[mi]), 0),
+                                  stm_arr_cols[mi], stm_arr_sub[mi]));
     }
     if (ps_pending_member_cty > 0 && !stm_is_arr[mi]) {
         t = ps_pending_member_cty;
@@ -279,7 +395,8 @@ static int ps_member_cty(int mi) {
     esz = ty_size(ty_deref(stm_type[mi]));
     count = (esz > 0 && stm_arr_size[mi] > 0) ? stm_arr_size[mi] / esz : -1;
     if (stm_arr_cols[mi] > 0 && count > 0)
-        return ct_array(ct_array(elem, stm_arr_cols[mi]), count / stm_arr_cols[mi]);
+        return ct_array(ps_rows_cty(elem, stm_arr_cols[mi], stm_arr_sub[mi]),
+                        count / stm_arr_cols[mi]);
     return ct_array(elem, count);
 }
 
@@ -448,6 +565,7 @@ static int   ps_ltype[P_MAX_LOCALS];  /* local var types */
 static int   ps_lcty[P_MAX_LOCALS];   /* ... their C types (ctype.h) */
 static int   ps_larr[P_MAX_LOCALS];   /* 1 if array (addr, no load) */
 static int   ps_lcols[P_MAX_LOCALS];  /* 2D arrays: last-dim count (0 = 1D) */
+static int   ps_lsub[P_MAX_LOCALS];   /* past 2 dimensions: ast_sub_cols entry */
 static int   ps_lsize[P_MAX_LOCALS];  /* total byte size (arrays: elem_sz*count) */
 static int   ps_lstatic[P_MAX_LOCALS]; /* 1 = static local, 0 = normal */
 static char *ps_lsname[P_MAX_LOCALS];  /* mangled name (static locals only) */
@@ -487,6 +605,7 @@ static int   ps_gstr[P_MAX_GLOBALS];  /* string init: pool index, -1 if none */
 static int   ps_glocal[P_MAX_GLOBALS]; /* 1 = static local (suppress .global) */
 static int   ps_gextern[P_MAX_GLOBALS]; /* 1 = declaration only, no storage */
 static int   ps_gcols[P_MAX_GLOBALS];   /* 2D arrays: last-dim count (0 = 1D) */
+static int   ps_gsub[P_MAX_GLOBALS];    /* past 2 dimensions: ast_sub_cols entry */
 static int   ps_ghasinit[P_MAX_GLOBALS]; /* 1 = completed initializer (incl. = 0) */
 static int   ps_gfpbase[P_MAX_GLOBALS]; /* function-pointer global: base into ps_fptypes */
 static int   ps_gfpn[P_MAX_GLOBALS];
@@ -1404,6 +1523,7 @@ static void add_anonymous_aggregate_members(int owner_si, int nested_ty, int bas
             stm_is_arr[stm_count] = stm_is_arr[i];
             stm_arr_size[stm_count] = stm_arr_size[i];
             stm_arr_cols[stm_count] = stm_arr_cols[i];
+            stm_arr_sub[stm_count] = stm_arr_sub[i];
             stm_owner[stm_count] = owner_si;
             stm_synth[stm_count] = 1;
             stm_bit_off[stm_count] = stm_bit_off[i];
@@ -1640,6 +1760,8 @@ static int parse_type(void) {
     int arr_count;
     int arr_ndims;
     int arr_last;
+    int arr_dims[16];      /* a member array's dimensions, as written */
+    int arr_sub;
     int val;
     int flex_member;
     int first_decl;
@@ -1977,6 +2099,7 @@ static int parse_type(void) {
                         /* typedef byte sha1_digest_t[20]; member of that
                          * type is a real array member (net_defs). */
                         arr_count = mtdac;
+                        arr_dims[0] = mtdac;
                         arr_ndims = 1;
                         member_ty = ty_deref(member_ty);
                     } else if (mtdac > 0 && member_ty == mty) {
@@ -2016,18 +2139,24 @@ static int parse_type(void) {
                         if (arr_count == 0) arr_count = 1;
                         arr_last = parse_const_int();
                         arr_count = arr_count * arr_last;
+                        if (arr_ndims < 16) arr_dims[arr_ndims] = arr_last;
                         arr_ndims = arr_ndims + 1;
                         expect(TK_RBRACK);
                     }
                     if (td_inner > 0 && !flex_member) {
                         arr_count = arr_count * td_inner;
                         arr_last = td_inner;
+                        if (arr_ndims < 16) arr_dims[arr_ndims] = arr_last;
                         arr_ndims = arr_ndims + 1;
                     }
-                    if (arr_ndims > 2) {
-                        p_error("arrays of more than 2 dimensions unsupported");
+                    /* past the first dimension: the elements the first
+                     * subscript steps over, and the strides below */
+                    arr_sub = 0;
+                    if (arr_ndims > 16) {
+                        p_error("too many array dimensions");
                         return TY_INT;
                     }
+                    if (arr_ndims >= 2) arr_last = ps_dims_shape(&arr_dims[1], arr_ndims - 1, &arr_sub);
                     skip_gnu_decl_suffixes();
                     if (arr_count > 0) {
                         require_complete_type(member_ty, "incomplete struct member");
@@ -2045,7 +2174,8 @@ static int parse_type(void) {
                         stm_type[stm_count] = member_ty + TY_PTR;
                         stm_vol[stm_count] = ps_type_volb;
                         stm_is_arr[stm_count] = 1;
-                        stm_arr_cols[stm_count] = (arr_ndims == 2) ? arr_last : 0;
+                        stm_arr_cols[stm_count] = (arr_ndims >= 2) ? arr_last : 0;
+                        stm_arr_sub[stm_count] = arr_sub;
                         stm_arr_size[stm_count] = flex_member ? 0 : ty_size(member_ty) * arr_count;
                         stm_off[stm_count] = off;
                         stm_synth[stm_count] = 0;
@@ -2057,6 +2187,7 @@ static int parse_type(void) {
                         stm_vol[stm_count] = ps_type_volb;
                         stm_is_arr[stm_count] = 0;
                         stm_arr_cols[stm_count] = ptr_row_cols;
+                        stm_arr_sub[stm_count] = 0;
                         stm_arr_size[stm_count] = 0;
                         stm_off[stm_count] = off;
                         stm_synth[stm_count] = 0;
@@ -2520,6 +2651,7 @@ static int add_local(char *name, int ty) {
     ps_lcty[idx] = ps_obj_cty(ty);
     ps_larr[idx] = 0;
     ps_lcols[idx] = 0;
+    ps_lsub[idx] = 0;
     ps_lsize[idx] = sz;
     ps_lstatic[idx] = 0;
     ps_lsname[idx] = NULL;
@@ -2551,6 +2683,7 @@ static int ps_add_local_alias_cty(char *name, int ty, char *sym, int cty) {
     ps_lcty[idx] = cty;
     ps_larr[idx] = 0;
     ps_lcols[idx] = 0;
+    ps_lsub[idx] = 0;
     ps_lstatic[idx] = 1;
     ps_lsname[idx] = strdup(sym);
     ps_lfpbase[idx] = -1;
@@ -2577,6 +2710,7 @@ static int ps_add_static_array_alias(char *name, int elem_ty, int cols, int gi) 
     if (idx < 0) return -1;
     ps_larr[idx] = 1;
     ps_lcols[idx] = cols;
+    ps_lsub[idx] = cols > 0 ? ps_gsub[gi] : 0;
     ps_local_rows_cty(idx);     /* its initializer is data, already written */
     return idx;
 }
@@ -2598,6 +2732,7 @@ static void ps_bind_var(Node *n, int li) {
     n->slot_id = ps_lslot[li];
     n->is_array = ps_larr[li];
     n->arr_cols = ps_lcols[li];
+    n->arr_sub = ps_lsub[li];
 }
 
 /* The C type of T (*name)[cols]: a pointer to an array of cols T.  The
@@ -2617,17 +2752,16 @@ static Node *ps_local_rowptr(char *nm, int ty, int nstars, int is_static) {
     int li;
     Node *n;
     if (ps_vla_ahead()) return ps_local_vm_ptr(nm, ty, nstars, is_static);
-    next();
-    cols = parse_const_int();
-    expect(TK_RBRACK);
-    if (lex_tok == TK_LBRACK || nstars != 1 || is_static) {
+    cols = ps_inner_dims(0, &ps_dims_sub);     /* T (*name)[M][K]: rows of rows */
+    if (nstars != 1 || is_static) {
         p_error("pointer to array: only a local T (*name)[N] is supported");
         return nd_num(0);
     }
     off = add_local(nm, ty + TY_PTR);
     li = ps_nlocals - 1;
     ps_lcols[li] = cols;
-    ps_lcty[li] = ps_rowptr_cty(ty, cols);
+    ps_lsub[li] = ps_dims_sub;
+    ps_lcty[li] = ct_ptr(ps_rows_cty(ct_from_mty(ty, 0), cols, ps_dims_sub));
     if (lex_tok != TK_ASSIGN) {
         expect(TK_SEMI);
         return nd_block(NULL);
@@ -2694,6 +2828,7 @@ static int add_local_array(char *name, int elem_ty, int count) {
     ps_lcty[idx] = ct_array(ps_obj_cty(elem_ty), count);
     ps_larr[idx] = 1;
     ps_lcols[idx] = 0;
+    ps_lsub[idx] = 0;
     ps_lsize[idx] = total;
     /* The table is reused across functions: without this clear, a
      * local array landing on a slot a previous function used for a
@@ -2717,10 +2852,11 @@ static int add_local_array(char *name, int elem_ty, int count) {
 }
 
 /* An array of elem: count elements (-1 unknown); with cols, count is the
- * flattened total of a 2-D array of rows of cols. */
-static int ps_array_cty(int elem, int count, int cols) {
+ * flattened total of an array of rows of cols, themselves shaped by sub
+ * past two dimensions. */
+static int ps_array_cty(int elem, int count, int cols, int sub) {
     if (cols > 0)
-        return ct_array(ct_array(elem, cols), count > 0 ? count / cols : -1);
+        return ct_array(ps_rows_cty(elem, cols, sub), count > 0 ? count / cols : -1);
     return ct_array(elem, count > 0 ? count : -1);
 }
 
@@ -2730,7 +2866,7 @@ static void ps_fix_global_array(int idx, int count, int cols) {
     elem = ps_gcty[idx];
     if (!ct_is_array(elem)) return;
     while (ct_is_array(elem)) elem = ct_baseof(elem);
-    ps_gcty[idx] = ps_array_cty(elem, count, cols);
+    ps_gcty[idx] = ps_array_cty(elem, count, cols, ps_gsub[idx]);
 }
 
 /* Local li, a 2-D array with rows of ps_lcols[li]: give its C type the
@@ -2745,7 +2881,7 @@ static void ps_local_rows_cty(int li) {
     if (ps_lcols[li] <= 0 || elem <= 0 || !ct_is_array(elem) ||
         ct_is_array(ct_baseof(elem))) return;
     count = ct_countof(elem);
-    ps_lcty[li] = ps_array_cty(ct_baseof(elem), count, ps_lcols[li]);
+    ps_lcty[li] = ps_array_cty(ct_baseof(elem), count, ps_lcols[li], ps_lsub[li]);
 }
 
 /* A global's C type: an array when the parser records one (a pointer
@@ -2796,6 +2932,7 @@ static int add_global(char *name, int ty, int size_bytes) {
     ps_glocal[idx] = 0;
     ps_gextern[idx] = 0;
     ps_gcols[idx] = 0;
+    ps_gsub[idx] = 0;
     ps_ghasinit[idx] = 0;
     ps_gfpbase[idx] = -1;
     ps_gfpn[idx] = 0;
@@ -3488,32 +3625,28 @@ static void ps_vla_gotos(void) {
  * regal's CSV callback passed the first row's bytes to strcasecmp as
  * a pointer.  Returns the row width (0 when not 2D). */
 static int ps_parse_param_dims(int *pty) {
-    int ndims;
-    int last;
+    int cols;
+    ps_dims_sub = 0;
     if (ps_vla_ahead()) return ps_vla_param_dims(pty);
-    ndims = 0;
-    last = 0;
-    while (lex_tok == TK_LBRACK) {
+    if (lex_tok != TK_LBRACK) return 0;
+    next();
+    /* a[restrict static 1], a[const]: the qualifiers of the pointer
+     * the parameter becomes, and static's promise of at least that
+     * many elements (6.7.6.3p7) -- nothing to emit */
+    while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE || lex_tok == TK_RESTRICT ||
+           lex_tok == TK_STATIC || is_gnu_qual_ident())
         next();
-        last = 0;
-        /* a[restrict static 1], a[const]: the qualifiers of the pointer
-         * the parameter becomes, and static's promise of at least that
-         * many elements (6.7.6.3p7) -- nothing to emit */
-        while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE || lex_tok == TK_RESTRICT ||
-               lex_tok == TK_STATIC || is_gnu_qual_ident())
-            next();
-        if (lex_tok != TK_RBRACK) last = parse_const_int();
-        expect(TK_RBRACK);
-        ndims = ndims + 1;
-    }
-    if (ndims > 2) p_error("parameter arrays of more than 2 dimensions unsupported");
-    if (ndims > 0) *pty = *pty + TY_PTR;
+    if (lex_tok != TK_RBRACK) parse_const_int();
+    expect(TK_RBRACK);
+    /* the dimensions after the first make the row it points to, with
+     * the strides below in ps_dims_sub past two dimensions */
+    cols = ps_inner_dims(0, &ps_dims_sub);
+    *pty = *pty + TY_PTR;
     /* the C type too: a parameter declared as an array is a pointer to
-     * its element, a row of `last` for T a[][M] (6.7.6.3p7) */
-    if (ndims == 2) ps_type_cty = ct_ptr(ct_array(ps_type_cty, last));
-    else if (ndims == 1) ps_type_cty = ct_ptr(ps_type_cty);
-    if (ndims == 2) return last;
-    return 0;
+     * its element, a row for T a[][M] (6.7.6.3p7) */
+    if (cols > 0) ps_type_cty = ct_ptr(ps_rows_cty(ps_type_cty, cols, ps_dims_sub));
+    else ps_type_cty = ct_ptr(ps_type_cty);
+    return cols;
 }
 
 /* Build mangled name for a static local: funcname.varname.N */
@@ -4964,7 +5097,7 @@ static void ps_ptr_init_at(int gidx, int ty) {
 static void parse_global_init_value(int ty, int gidx);
 static void parse_global_init_value_at(int ty, int arr_count, int gidx, int rel_off);
 static int parse_global_init_array_at(int elem_ty, int count, int gidx, int base_rel);
-static int parse_global_init_array2d_at(int elem_ty, int rows, int cols, int gidx, int base_rel);
+static int parse_global_init_array2d_at(int elem_ty, int rows, int cols, int sub, int gidx, int base_rel);
 static void parse_global_init_struct_at(int ty, int gidx, int base_rel);
 
 /* Initializers checked as assignments are (6.7.9p11): each scalar an
@@ -5082,6 +5215,17 @@ static void parse_global_init_designator(int base_ty, int base_arr_count,
             expect(TK_RBRACK);
             if (!ty_is_ptr(ty) || arr_count == 0)
                 p_error("array designator on non-array");
+            if (ps_cty_rows(ps_desig_cty)) {
+                /* a row of a multi-dimensional array, held flat: the
+                 * step is a whole row, and the row is what remains */
+                if (ct_countof(ps_desig_cty) > 0 && idx >= ct_countof(ps_desig_cty))
+                    p_error("array designator out of range");
+                ps_desig_cty = ct_baseof(ps_desig_cty);
+                rel = rel + idx * ct_sizeof(ps_desig_cty);
+                arr_count = ps_cty_scalars(ps_desig_cty);
+                if (*root_out < 0) *root_out = idx;
+                continue;
+            }
             if (arr_count > 0 && idx >= arr_count) p_error("array designator out of range");
             elem_ty = ty_deref(ty);
             rel = rel + (idx * ty_size(elem_ty));
@@ -5112,6 +5256,19 @@ static void parse_global_init_designator(int base_ty, int base_arr_count,
     *ty_out = ty;
     *arr_count_out = arr_count;
     ps_init_cty = ps_desig_cty;         /* the designated object's */
+}
+
+/* A brace-elided initializer ends before a designator: `, [i] =` or
+ * `, .m =` names a subobject of the enclosing braced list, not of the
+ * elided one (6.7.9p17, p20).  Is one next, past a comma? */
+static int ps_comma_then_designator(void) {
+    int r;
+    if (lex_tok != TK_COMMA) return 0;
+    ps_lex_mark();
+    next();
+    r = lex_tok == TK_LBRACK || lex_tok == TK_DOT;
+    ps_lex_rewind();
+    return r;
 }
 
 static int parse_global_init_array_at(int elem_ty, int count, int gidx, int base_rel) {
@@ -5161,6 +5318,7 @@ static int parse_global_init_array_at(int elem_ty, int count, int gidx, int base
                 if (lex_tok == TK_RBRACE) break;
             } else {
                 if (lex_tok != TK_COMMA) break;
+                if (ps_comma_then_designator()) break;
                 expect(TK_COMMA);
             }
         }
@@ -5196,30 +5354,80 @@ static int parse_global_init_array_at(int elem_ty, int count, int gidx, int base
  * rows and C99 brace-elided flat rows.  Returns the row count (rows
  * may come in as -1 for an inferred first dimension, as in
  * vecscope's `static const int ship[][2] = {...}`). */
-static int parse_global_init_array2d_at(int elem_ty, int rows, int cols, int gidx, int base_rel) {
-    int i;
-    int row_sz;
-    int ec;
+/* One subobject of a multi-dimensional global's initializer: n elements
+ * elem_ty shaped by sub.  In braces and itself an array of rows, read
+ * as one; otherwise n elements, braced or flat (6.7.9p20). */
+static void ps_ginit_shaped(int elem_ty, int n, int sub, int gidx, int rel) {
+    if (sub > 0 && lex_tok == TK_LBRACE)
+        parse_global_init_array2d_at(elem_ty, n / ast_sub_cols[sub], ast_sub_cols[sub],
+                                     ast_sub_next[sub], gidx, rel);
+    else
+        parse_global_init_array_at(elem_ty, n, gidx, rel);
+}
 
-    row_sz = ty_size(elem_ty) * cols;
+/* A braced initializer for rows of cols elements elem_ty (rows -1:
+ * as many as it has), each row shaped by sub past two dimensions.  The
+ * position is kept in elements: a designator ([i], [i][j] ... by the
+ * array's C type) moves it past the subobject it names, and what
+ * follows continues there (6.7.9p17), mid-row if it lands there --
+ * a braced sub-row at a sub-row's start, else elements flat to the
+ * row's end.  Returns the rows. */
+static int parse_global_init_array2d_at(int elem_ty, int rows, int cols, int sub, int gidx, int base_rel) {
+    int pos;
+    int max_pos;
+    int first;
+    int esz;
+    int ec;
+    int rel;
+    int tty;
+    int tac;
+    int root;
+    int rc;             /* a row's C type, for designators */
+    int in_row;
+
+    esz = ty_size(elem_ty);
     ec = ps_init_elem_cty(ps_init_take());
+    rc = ps_rows_cty(ec > 0 ? ec : ps_obj_cty(elem_ty), cols, sub);
     expect(TK_LBRACE);
-    i = 0;
+    pos = 0;
+    max_pos = 0;
+    first = 1;
     while (lex_tok != TK_EOF) {
         if (lex_tok == TK_RBRACE) break;
-        if (i > 0) {
+        if (!first) {
             expect(TK_COMMA);
             if (lex_tok == TK_RBRACE) break;
         }
-        if (rows >= 0 && i >= rows) p_error("too many 2D initializer rows");
-        ps_init_cty = ec;
-        parse_global_init_array_at(elem_ty, cols, gidx, base_rel + i * row_sz);
-        i = i + 1;
+        first = 0;
+        in_row = pos % cols;
+        if (lex_tok == TK_LBRACK) {
+            ps_init_cty = ct_array(rc, rows);
+            parse_global_init_designator(elem_ty + TY_PTR, rows >= 0 ? rows * cols : -1,
+                                         &rel, &tty, &tac, &root);
+            expect(TK_ASSIGN);
+            parse_global_init_value_at(tty, tac, gidx, base_rel + rel);
+            pos = (rel + (tac > 0 ? tac : 1) * esz) / esz;
+        } else if (in_row != 0 && sub > 0 && lex_tok == TK_LBRACE &&
+                   in_row % ast_sub_cols[sub] == 0) {
+            ps_init_cty = ec;
+            ps_ginit_shaped(elem_ty, ast_sub_cols[sub], ast_sub_next[sub], gidx, base_rel + pos * esz);
+            pos = pos + ast_sub_cols[sub];
+        } else if (in_row != 0) {
+            ps_init_cty = ec;
+            parse_global_init_array_at(elem_ty, cols - in_row, gidx, base_rel + pos * esz);
+            pos = pos + cols - in_row;
+        } else {
+            if (rows >= 0 && pos / cols >= rows) p_error("too many 2D initializer rows");
+            ps_init_cty = ec;
+            ps_ginit_shaped(elem_ty, cols, sub, gidx, base_rel + pos * esz);
+            pos = pos + cols;
+        }
+        if (pos > max_pos) max_pos = pos;
     }
     if (lex_tok == TK_COMMA) next();
     expect(TK_RBRACE);
-    if (rows < 0) rows = i;
-    ps_ginit_ensure_len(gidx, base_rel + rows * row_sz);
+    if (rows < 0) rows = (max_pos + cols - 1) / cols;
+    ps_ginit_ensure_len(gidx, base_rel + rows * cols * esz);
     return rows;
 }
 
@@ -5284,7 +5492,7 @@ static void parse_global_init_struct_at(int ty, int gidx, int base_rel) {
             if (stm_arr_cols[mi] > 0 && lex_tok == TK_LBRACE) {
                 /* 2D member array: rows of cols elements */
                 parse_global_init_array2d_at(ty_deref(field_ty),
-                    arr_count / stm_arr_cols[mi], stm_arr_cols[mi],
+                    arr_count / stm_arr_cols[mi], stm_arr_cols[mi], stm_arr_sub[mi],
                     gidx, base_rel + stm_off[mi]);
             } else {
                 parse_global_init_value_at(field_ty, arr_count, gidx, base_rel + stm_off[mi]);
@@ -5550,6 +5758,14 @@ static void parse_global_init_value_at(int ty, int arr_count, int gidx, int rel_
     }
     skip_init_cast();
 
+    if (ps_cty_rows(c) && ty_is_ptr(ty) && lex_tok == TK_LBRACE) {
+        /* an array of arrays in braces (a designated row of a bigger
+         * one, a member's): its rows */
+        ps_init_cty = c;
+        parse_global_init_array2d_at(ty_deref(ty), ct_countof(c), ps_cty_scalars(ct_baseof(c)),
+                                     ps_cty_sub(ct_baseof(c)), gidx, rel_off);
+        return;
+    }
     if (arr_count != 0 && ty_is_ptr(ty)) {
         ps_init_cty = c;
         parse_global_init_array_at(ty_deref(ty), arr_count, gidx, rel_off);
@@ -5979,7 +6195,6 @@ static Node *parse_primary(void) {
     int v;
     int ty;
     int arr_count;
-    int count2;
     char nm[256];
     Node *head;
     Node *tail;
@@ -6093,6 +6308,7 @@ static Node *parse_primary(void) {
                 n->is_local = 0;
                 n->is_array = ps_larr[li];
                 n->arr_cols = ps_lcols[li];
+                n->arr_sub = ps_lsub[li];
             } else {
                 n = nd_var(nm, ps_loff[li], ps_ltype[li]);
                 ps_var_vol(n, ps_ltype[li], ps_larr[li], ps_lvolb[li], ps_lvolp[li]);
@@ -6118,6 +6334,7 @@ static Node *parse_primary(void) {
             n->is_local = 0;
             n->is_array = (ps_gsize[gi] > 0) ? 1 : 0;
             n->arr_cols = ps_gcols[gi];
+            n->arr_sub = ps_gsub[gi];
             if (ps_gfpbase[gi] >= 0) {
                 n->is_fnptr = 1;
                 n->val = ps_gfpbase[gi];
@@ -6339,17 +6556,17 @@ static Node *parse_primary(void) {
             ty = parse_type();
             cast_vol = ps_type_volb;
             arr_count = 0;
-            while (lex_tok == TK_LBRACK) {
+            ps_cl_cols = 0;
+            if (lex_tok == TK_LBRACK) {
+                /* (T[N][M]...): flattened, its rows recorded for the
+                 * literal (ps_cl_cols, ps_cl_sub); N may be left to the
+                 * initializer */
                 next();
-                count2 = -1;
-                if (lex_tok != TK_RBRACK) count2 = parse_const_int();
+                arr_count = -1;
+                if (lex_tok != TK_RBRACK) arr_count = parse_const_int();
                 expect(TK_RBRACK);
-                if (arr_count == 0) arr_count = count2;
-                else {
-                    if (arr_count < 0 || count2 < 0)
-                        p_error("array size required in compound literal type");
-                    arr_count = arr_count * count2;
-                }
+                ps_cl_cols = ps_inner_dims(0, &ps_cl_sub);
+                if (arr_count > 0 && ps_cl_cols > 0) arr_count = arr_count * ps_cl_cols;
             }
             ty = ps_abstract_fnptr(ty);   /* (int (**)(sqlite3_vtab *))p */
             ps_no_rowptr_value();
@@ -6487,10 +6704,25 @@ static Node *parse_postfix_from(Node *n) {
                  * scaling of both additions stays in codegen. */
                 {
                     int row_cols;
+                    int row_sub;
                     row_cols = n->arr_cols;
+                    row_sub = n->arr_sub;
                     idx = nd_binop(TK_STAR, idx, nd_num(row_cols));
                     n = nd_binop(TK_PLUS, n, idx);
                     n->arr_cols = row_cols;     /* sizeof a[i] is a row, not a pointer */
+                    n->arr_sub = row_sub;
+                }
+            } else if (n->kind == ND_BINOP && n->op == TK_PLUS && n->arr_sub > 0) {
+                /* A subscript of a row that is itself an array of rows
+                 * (int a[2][3][4]: a[i] and then [j]): again an address,
+                 * stepping over the rows below it. */
+                {
+                    int sub;
+                    sub = n->arr_sub;
+                    idx = nd_binop(TK_STAR, idx, nd_num(ast_sub_cols[sub]));
+                    n = nd_binop(TK_PLUS, n, idx);
+                    n->arr_cols = ast_sub_cols[sub];
+                    n->arr_sub = ast_sub_next[sub];
                 }
             } else if ((n->kind == ND_MEMBER || n->kind == ND_VAR) && !n->is_array &&
                        n->arr_cols > 0 && ty_is_ptr(n->ty)) {
@@ -6500,10 +6732,13 @@ static Node *parse_postfix_from(Node *n) {
                  * sizeof(p[i]) reports the row size. */
                 {
                     int row_cols;
+                    int row_sub;
                     row_cols = n->arr_cols;
+                    row_sub = n->arr_sub;
                     idx = nd_binop(TK_STAR, idx, nd_num(row_cols));
                     n = nd_binop(TK_PLUS, n, idx);
                     n->arr_cols = row_cols;
+                    n->arr_sub = row_sub;
                 }
             } else {
                 /* n[idx] → *(n + idx)  — codegen handles pointer arithmetic scaling.
@@ -6550,6 +6785,7 @@ static Node *parse_postfix_from(Node *n) {
             n->nparams = stm_fpn[mi];
             n->is_fnptr = stm_isfp[mi];
             n->arr_cols = stm_arr_cols[mi];
+            n->arr_sub = stm_arr_sub[mi];
         } else if (lex_tok == TK_ARROW) {
             next();
             if (lex_tok != TK_IDENT) {
@@ -6579,6 +6815,7 @@ static Node *parse_postfix_from(Node *n) {
             n->nparams = stm_fpn[mi];
             n->is_fnptr = stm_isfp[mi];
             n->arr_cols = stm_arr_cols[mi];
+            n->arr_sub = stm_arr_sub[mi];
         } else if (lex_tok == TK_INC) {
             next();
             pi = nd_new(ND_POST_INC);
@@ -6608,7 +6845,7 @@ static Node *ps_row_address(Node *n) {
     t = ct_baseof(t);
     while (ct_is_array(t)) t = ct_baseof(t);
     n = nd_cast(n, n->ty);
-    n->cty = ct_ptr(ct_array(t, n->lhs->arr_cols));
+    n->cty = ct_ptr(ps_rows_cty(t, n->lhs->arr_cols, n->lhs->arr_sub));
     return n;
 }
 
@@ -7126,6 +7363,7 @@ static int parse_local_init_array_at(int elem_ty, int count, int rel_off) {
                 if (lex_tok == TK_RBRACE) break;
             } else {
                 if (lex_tok != TK_COMMA) break;
+                if (ps_comma_then_designator()) break;
                 expect(TK_COMMA);
             }
         }
@@ -7153,6 +7391,81 @@ static int parse_local_init_array_at(int elem_ty, int count, int rel_off) {
     }
     if (count < 0) count = max_i;
     return count;
+}
+
+static void ps_local_init_rows(int elem_ty, int cols, int sub, int rel_off);
+
+/* The inside of a braced local initializer for an array of rows, its
+ * `{` read: cols elements elem_ty in all (-1: as many rows as it has),
+ * rows shaped by sub (ast_sub_cols), at rel_off.  Positions are kept in
+ * elements, as parse_global_init_array2d_at keeps them: a designator
+ * (by the array's C type) moves past the subobject it names and the
+ * next initializer continues there (6.7.9p17).  Returns the rows. */
+static int ps_local_init_rows_in(int elem_ty, int cols, int sub, int rel_off) {
+    int pos;
+    int max_pos;
+    int first;
+    int rowc;
+    int rsub;
+    int nrows;
+    int esz;
+    int rel;
+    int tty;
+    int tac;
+    int root;
+    int agg;
+    int in_row;
+    rowc = ast_sub_cols[sub];
+    rsub = ast_sub_next[sub];
+    nrows = cols >= 0 ? cols / rowc : -1;
+    esz = ty_size(elem_ty);
+    agg = ct_array(ps_rows_cty(ps_obj_cty(elem_ty), rowc, rsub), nrows);
+    pos = 0;
+    max_pos = 0;
+    first = 1;
+    while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
+        if (!first) {
+            expect(TK_COMMA);
+            if (lex_tok == TK_RBRACE) break;
+        }
+        first = 0;
+        in_row = pos % rowc;
+        if (lex_tok == TK_LBRACK) {
+            ps_init_cty = agg;
+            parse_global_init_designator(elem_ty + TY_PTR, cols, &rel, &tty, &tac, &root);
+            expect(TK_ASSIGN);
+            parse_local_init_value_at(tty, tac, rel_off + rel);
+            pos = (rel + (tac > 0 ? tac : 1) * esz) / esz;
+        } else if (in_row != 0 && rsub > 0 && lex_tok == TK_LBRACE &&
+                   in_row % ast_sub_cols[rsub] == 0) {
+            ps_local_init_rows(elem_ty, ast_sub_cols[rsub], ast_sub_next[rsub], rel_off + pos * esz);
+            pos = pos + ast_sub_cols[rsub];
+        } else if (in_row != 0) {
+            parse_local_init_array_at(elem_ty, rowc - in_row, rel_off + pos * esz);
+            pos = pos + rowc - in_row;
+        } else {
+            if (nrows >= 0 && pos / rowc >= nrows) p_error("too many initializers");
+            ps_local_init_rows(elem_ty, rowc, rsub, rel_off + pos * esz);
+            pos = pos + rowc;
+        }
+        if (pos > max_pos) max_pos = pos;
+    }
+    if (lex_tok == TK_COMMA) next();
+    expect(TK_RBRACE);
+    return (max_pos + rowc - 1) / rowc;
+}
+
+/* One row of a local multi-dimensional array: cols elements elem_ty
+ * shaped by sub, at rel_off.  In braces and itself an array of rows,
+ * read as one; otherwise cols elements, braced or flat (6.7.9p20), as a
+ * 2-D array's row. */
+static void ps_local_init_rows(int elem_ty, int cols, int sub, int rel_off) {
+    if (sub <= 0 || lex_tok != TK_LBRACE) {
+        parse_local_init_array_at(elem_ty, cols, rel_off);
+        return;
+    }
+    next();
+    ps_local_init_rows_in(elem_ty, cols, sub, rel_off);
 }
 
 static void parse_local_init_struct_at(int ty, int rel_off) {
@@ -7226,6 +7539,14 @@ static void parse_local_init_value_at(int ty, int arr_count, int rel_off) {
     Node *a;
     int c;
     c = ps_init_take();
+    if (ps_cty_rows(c) && ty_is_ptr(ty) && lex_tok == TK_LBRACE) {
+        /* an array of arrays in braces (a struct's member, a designated
+         * row of a bigger one): its rows, as a declared one's */
+        next();
+        ps_local_init_rows_in(ty_deref(ty), ps_cty_scalars(c),
+                              ps_sub(ps_cty_scalars(ct_baseof(c)), ps_cty_sub(ct_baseof(c))), rel_off);
+        return;
+    }
     if (arr_count != 0 && ty_is_ptr(ty)) {
         ps_init_cty = c;
         parse_local_init_array_at(ty_deref(ty), arr_count, rel_off);
@@ -7324,7 +7645,12 @@ static Node *ps_file_compound_literal(int ty, int arr_count) {
     int cnt;
     int k;
     int v;
+    int cols;
+    int sub;
     Node *n;
+    cols = ps_cl_cols;
+    sub = ps_cl_sub;
+    ps_cl_cols = 0;
     /* "__fclit." and the number */
     memcpy(nm, "__fclit.", 9);
     k = 8;
@@ -7339,9 +7665,16 @@ static Node *ps_file_compound_literal(int ty, int arr_count) {
         gi = add_defined_global(nm, ty + TY_PTR, 0);
         ps_glocal[gi] = 1;
         ps_ginit_begin(gi);
-        cnt = parse_global_init_array_at(ty, arr_count, gi, 0);
+        if (cols > 0) {
+            ps_gcols[gi] = cols;
+            ps_gsub[gi] = sub;
+            cnt = cols * parse_global_init_array2d_at(ty, arr_count > 0 ? arr_count / cols : -1,
+                                                      cols, sub, gi, 0);
+        } else {
+            cnt = parse_global_init_array_at(ty, arr_count, gi, 0);
+        }
         ps_gsize[gi] = ty_size(ty) * cnt;
-        ps_gcty[gi] = ct_array(ct_from_mty(ty, 0), cnt);
+        ps_gcty[gi] = ps_array_cty(ct_from_mty(ty, 0), cnt, cols, sub);
         ps_ginit_ensure_len(gi, ps_gsize[gi]);
         ps_ginit_finish(gi);
     } else if (ty_is_struct(ty)) {
@@ -7362,6 +7695,8 @@ static Node *ps_file_compound_literal(int ty, int arr_count) {
     n->cty = ps_gcty[gi];
     n->is_local = 0;
     n->is_array = arr_count != 0;
+    n->arr_cols = ps_gcols[gi];
+    n->arr_sub = ps_gsub[gi];
     return n;
 }
 
@@ -7381,8 +7716,13 @@ static Node *parse_compound_literal_expr(int ty, int arr_count) {
     int sv_base_is_array;
     Node *sv_head;
     Node *sv_tail;
+    int cols;
+    int sub;
 
     if (!ps_in_body) return ps_file_compound_literal(ty, arr_count);
+    cols = ps_cl_cols;      /* before the initializer: it may hold another literal */
+    sub = ps_cl_sub;
+    ps_cl_cols = 0;
     sv_name = ps_li_name;
     sv_off = ps_li_off;
     sv_slot = ps_li_slot;
@@ -7397,9 +7737,20 @@ static Node *parse_compound_literal_expr(int ty, int arr_count) {
         expr = ps_cl_string(nm, ty, arr_count);
     } else if (arr_count != 0) {
         local_init_begin(nm, 0, ty + TY_PTR, 1);
-        arr_count = parse_local_init_array_at(ty, arr_count, 0);
+        if (cols > 0) {
+            /* (T[N][M]){...}: its rows */
+            expect(TK_LBRACE);
+            arr_count = cols * ps_local_init_rows_in(ty, arr_count, ps_sub(cols, sub), 0);
+        } else {
+            arr_count = parse_local_init_array_at(ty, arr_count, 0);
+        }
         head = ps_li_head;
         off = add_local_array(nm, ty, arr_count);
+        if (cols > 0) {
+            ps_lcols[ps_nlocals - 1] = cols;
+            ps_lsub[ps_nlocals - 1] = sub;
+            ps_local_rows_cty(ps_nlocals - 1);
+        }
         local_init_patch_offsets(head, nm, off);
 
         local_init_begin(nm, off, ty + TY_PTR, 1);
@@ -7449,11 +7800,11 @@ static Node *parse_compound_literal_expr(int ty, int arr_count) {
 /* --- Block-scope declarators --- */
 
 /* The dimensions of a block-scope array declarator, cursor on `[`.
- * Two dimensions at most; a second one must be sized. */
-
+ * After the first, each must be sized; past two, the stride entry of
+ * the rest is left in ps_dims_sub (ast.h ast_sub_cols) for the caller
+ * to record beside the row width. */
 static void parse_local_array_dims(int *pcount, int *plcols2) {
     int count;
-    int count2;
     int lcols2;
     int inner;
 
@@ -7463,6 +7814,7 @@ static void parse_local_array_dims(int *pcount, int *plcols2) {
      * the declarator's own it is the innermost. */
     inner = ps_decl_inner;
     ps_decl_inner = 0;
+    ps_dims_sub = 0;
     if (lex_tok != TK_LBRACK) {
         *pcount = inner;
         *plcols2 = 0;
@@ -7474,32 +7826,17 @@ static void parse_local_array_dims(int *pcount, int *plcols2) {
         count = parse_const_int();
     }
     expect(TK_RBRACK);
-    lcols2 = 0;
-    while (lex_tok == TK_LBRACK) {
-        next();
-        count2 = -1;
-        if (lex_tok != TK_RBRACK) {
-            count2 = parse_const_int();
-        }
-        expect(TK_RBRACK);
-        if (count2 < 0) {
-            p_error("array size required without initializer");
-        }
-        if (lcols2 != 0) {
-            p_error("arrays of more than 2 dimensions unsupported");
-        }
-        lcols2 = count2;
-        if (count >= 0) count = count * count2;
-    }
-    if (inner > 0) {
-        if (lcols2 != 0) {
-            p_error("arrays of more than 2 dimensions unsupported");
-        }
-        lcols2 = inner;
-        if (count >= 0) count = count * inner;
-    }
+    lcols2 = ps_inner_dims(inner, &ps_dims_sub);
+    if (count >= 0 && lcols2 > 0) count = count * lcols2;
     *pcount = count;
     *plcols2 = lcols2;
+}
+
+/* Global gi takes the row width of an array declarator just read, and
+ * its stride entry (ps_dims_sub). */
+static void ps_set_gcols(int gi, int cols) {
+    ps_gcols[gi] = cols;
+    ps_gsub[gi] = cols > 0 ? ps_dims_sub : 0;
 }
 
 /* One non-static block-scope declarator after its name and stars:
@@ -7534,6 +7871,7 @@ static Node *ps_local_declarator_body(char *nm, int ty) {
     int off;
     int count;
     int lcols2;
+    int lsub;
     int ci;
     int cv;
     int sp_idx;
@@ -7543,6 +7881,7 @@ static Node *ps_local_declarator_body(char *nm, int ty) {
     if (ps_vla_object_ahead()) return ps_local_vla(nm, ps_type_cty);
     if (lex_tok == TK_LBRACK || ps_decl_inner > 0) {
         parse_local_array_dims(&count, &lcols2);
+        lsub = ps_dims_sub;     /* before an initializer can declare arrays of its own */
         head = NULL;
         if (lex_tok == TK_ASSIGN) {
             next();
@@ -7597,28 +7936,13 @@ static Node *ps_local_declarator_body(char *nm, int ty) {
                      * below, zero-filled first.  A row may elide its
                      * braces (bounded by M). */
                     local_init_begin(nm, 0, ty + TY_PTR, 1);
-                    ci = 0;
-                    cv = 0;   /* rows seen */
-                    while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
-                        if (ci > 0) {
-                            expect(TK_COMMA);
-                            if (lex_tok == TK_RBRACE) break;
-                        }
-                        if (count >= 0 && ci * lcols2 >= count) {
-                            p_error("too many initializers");
-                            return nd_num(0);
-                        }
-                        parse_local_init_array_at(ty, lcols2, ci * lcols2 * ty_size(ty));
-                        ci = ci + 1;
-                        cv = ci;
-                    }
-                    if (lex_tok == TK_COMMA) next();
-                    expect(TK_RBRACE);
+                    cv = ps_local_init_rows_in(ty, count, ps_sub(lcols2, lsub), 0);   /* rows seen */
                     if (count < 0) count = cv * lcols2;
                     head = ps_li_head;
                     tail = ps_li_tail;
                     off = add_local_array(nm, ty, count);
                     ps_lcols[ps_nlocals - 1] = lcols2;
+                ps_lsub[ps_nlocals - 1] = lsub;
                     local_init_patch_offsets(head, nm, off);
                     local_init_begin(nm, off, ty + TY_PTR, 1);
                     local_init_zero_at(ty + TY_PTR, count, 0);
@@ -7641,6 +7965,7 @@ static Node *ps_local_declarator_body(char *nm, int ty) {
                 }
                 off = add_local_array(nm, ty, count);
                 ps_lcols[ps_nlocals - 1] = lcols2;
+                ps_lsub[ps_nlocals - 1] = lsub;
                 head = NULL;
                 tail = NULL;
                 ci = 0;
@@ -7704,6 +8029,7 @@ static Node *ps_local_declarator_body(char *nm, int ty) {
             }
             off = add_local_array(nm, ty, count);
             ps_lcols[ps_nlocals - 1] = lcols2;
+            ps_lsub[ps_nlocals - 1] = lsub;
         }
         return head;
     }
@@ -8603,7 +8929,7 @@ static_array_decl:
             sl_gi = add_global(ps_sl_buf, ty + TY_PTR,
                                (count >= 0) ? ty_size(ty) * count : 0);
             ps_glocal[sl_gi] = 1;
-            ps_gcols[sl_gi] = lcols2;
+            ps_set_gcols(sl_gi, lcols2);
             if (sp_idx >= 0) {
                 sp = lex_strpool + lex_str_off[sp_idx];
                 slen = lex_str_len[sp_idx];
@@ -8622,7 +8948,7 @@ static_array_decl:
                 ps_ginit_begin(sl_gi);
                 if (lcols2 > 0) {
                     count = parse_global_init_array2d_at(ty,
-                        (count >= 0) ? count / lcols2 : -1, lcols2, sl_gi, 0);
+                        (count >= 0) ? count / lcols2 : -1, lcols2, ps_gsub[sl_gi], sl_gi, 0);
                     count = count * lcols2;
                 } else {
                     count = parse_global_init_array_at(ty, count, sl_gi, 0);
@@ -8965,15 +9291,12 @@ static int ps_decl_paren_next(void) {
 static void ps_global_rowptr(char *nm, int ty, int is_static, int is_extern) {
     int cols;
     int idx;
-    next();
-    cols = parse_const_int();
-    expect(TK_RBRACK);
-    if (lex_tok == TK_LBRACK) p_error("pointer to array: only T (*name)[N] is supported");
+    cols = ps_inner_dims(0, &ps_dims_sub);     /* T (*name)[M][K]: rows of rows */
     if (is_extern) idx = add_extern_global(nm, ty + TY_PTR, 0);
     else           idx = add_defined_global(nm, ty + TY_PTR, 0);
     if (is_static) ps_glocal[idx] = 1;
-    ps_gcols[idx] = cols;
-    ps_gcty[idx] = ps_rowptr_cty(ty, cols);
+    ps_set_gcols(idx, cols);
+    ps_gcty[idx] = ct_ptr(ps_rows_cty(ct_from_mty(ty, 0), cols, ps_gsub[idx]));
     if (lex_tok == TK_ASSIGN) {
         next();
         ps_scalar_global_init(idx, ty + TY_PTR);
@@ -9125,17 +9448,17 @@ static Node *ps_function_decl(char *nm, int ty, int ret_cty, int is_static, int 
                 /* T (*name)[M]: a pointer to a row of M elements -- the
                  * spelled-out form of `T name[][M]`.  Retype the local
                  * (added above as a word) and record the row width. */
-                next();
-                pcols = parse_const_int();
-                expect(TK_RBRACK);
-                if (lex_tok == TK_LBRACK) p_error("parameter arrays of more than 2 dimensions unsupported");
+                pcols = ps_inner_dims(0, &ps_dims_sub);   /* T (*name)[M][K]: rows of rows */
                 pty = pty + TY_PTR;
                 if (p != NULL) {
                     ps_ltype[ps_nlocals - 1] = pty;
                     ps_lcols[ps_nlocals - 1] = pcols;
-                    ps_lcty[ps_nlocals - 1] = ps_rowptr_cty(ty_deref(pty), pcols);
+                    ps_lsub[ps_nlocals - 1] = ps_dims_sub;
+                    ps_lcty[ps_nlocals - 1] = ct_ptr(ps_rows_cty(ct_from_mty(ty_deref(pty), 0),
+                                                                 pcols, ps_dims_sub));
                     p->ty = pty;
                     p->arr_cols = pcols;
+                    p->arr_sub = ps_dims_sub;
                     p->cty = ps_lcty[ps_nlocals - 1];
                 }
             } else {
@@ -9167,6 +9490,7 @@ static Node *ps_function_decl(char *nm, int ty, int ret_cty, int is_static, int 
             pcols = ps_parse_param_dims(&pty);
             off = add_local(pnm, pty);      /* ps_parse_param_dims adjusted ps_type_cty */
             ps_lcols[ps_nlocals - 1] = pcols;
+            ps_lsub[ps_nlocals - 1] = ps_dims_sub;
             p = nd_var(pnm, off, pty);
             ps_bind_var(p, ps_nlocals - 1);
             }
@@ -9229,17 +9553,17 @@ static Node *ps_function_decl(char *nm, int ty, int ret_cty, int is_static, int 
                     /* T (*name)[M]: a pointer to a row of M elements -- the
                      * spelled-out form of `T name[][M]`.  Retype the local
                      * (added above as a word) and record the row width. */
-                    next();
-                    pcols = parse_const_int();
-                    expect(TK_RBRACK);
-                    if (lex_tok == TK_LBRACK) p_error("parameter arrays of more than 2 dimensions unsupported");
+                    pcols = ps_inner_dims(0, &ps_dims_sub);   /* T (*name)[M][K]: rows of rows */
                     pty = pty + TY_PTR;
                     if (p != NULL) {
                         ps_ltype[ps_nlocals - 1] = pty;
                         ps_lcols[ps_nlocals - 1] = pcols;
-                        ps_lcty[ps_nlocals - 1] = ps_rowptr_cty(ty_deref(pty), pcols);
+                        ps_lsub[ps_nlocals - 1] = ps_dims_sub;
+                        ps_lcty[ps_nlocals - 1] = ct_ptr(ps_rows_cty(ct_from_mty(ty_deref(pty), 0),
+                                                                     pcols, ps_dims_sub));
                         p->ty = pty;
                         p->arr_cols = pcols;
+                        p->arr_sub = ps_dims_sub;
                         p->cty = ps_lcty[ps_nlocals - 1];
                     }
                 } else {
@@ -9288,6 +9612,7 @@ static Node *ps_function_decl(char *nm, int ty, int ret_cty, int is_static, int 
                 pcols = ps_parse_param_dims(&pty);
                 off = add_local(pnm, pty);
                 ps_lcols[ps_nlocals - 1] = pcols;
+                ps_lsub[ps_nlocals - 1] = ps_dims_sub;
                 p = nd_var(pnm, off, pty);
                 ps_bind_var(p, ps_nlocals - 1);
                 }
@@ -9638,6 +9963,7 @@ plain_name:
         else           idx = add_defined_global(nm, ty, ty_size(ty_deref(ty)) * g2cols);
         if (is_static) ps_glocal[idx] = 1;
         ps_gcols[idx] = 0;
+        ps_gsub[idx] = 0;
         next();
         return NULL;
     }
@@ -9743,41 +10069,24 @@ plain_name:
             count = ps_array_size();
         }
         expect(TK_RBRACK);
-        g2cols = 0;
-        while (lex_tok == TK_LBRACK) {
-            /* Global 2D array: flatten to rows*cols elements; record the
-             * column count so the first subscript scales by a whole row.
-             * The first dimension may be omitted when an initializer
-             * infers it (T a[][C] = {...}). */
-            next();
-            if (g2cols != 0) {
-                p_error("arrays of more than 2 dimensions unsupported");
-                return NULL;
-            }
-            g2cols = parse_const_int();
-            if (count >= 0) count = count * g2cols;
-            expect(TK_RBRACK);
-        }
-        if (gtdac > 0 && xty == ty) {
-            /* An array of a typedef'd array type -- jmp_buf handlers[4]
-             * -- is a two-dimensional array of the typedef's element
-             * type, its dimension the inner one.  (It was taken for an
-             * array of pointers: sixteen bytes for four jmp_bufs.) */
-            if (g2cols != 0) {
-                p_error("arrays of more than 2 dimensions unsupported");
-                return NULL;
-            }
-            g2cols = gtdac;
-            if (count >= 0) count = count * g2cols;
-            xty = ty_deref(ty);
-        }
+        /* A multi-dimensional global: flattened, the elements the first
+         * subscript steps over recorded so it scales by a whole row, and
+         * past two dimensions the strides below (ps_dims_sub).  The first
+         * dimension may be omitted when an initializer infers it
+         * (T a[][C] = {...}).  An array of a typedef'd array type --
+         * jmp_buf handlers[4] -- has the typedef's dimension innermost.
+         * (It was taken for an array of pointers: sixteen bytes for four
+         * jmp_bufs.) */
+        g2cols = ps_inner_dims((gtdac > 0 && xty == ty) ? gtdac : 0, &ps_dims_sub);
+        if (gtdac > 0 && xty == ty) xty = ty_deref(ty);
+        if (count >= 0 && g2cols > 0) count = count * g2cols;
         skip_gnu_decl_suffixes();
 array_after_brackets:
         ps_decl_objconst = decl_const;
         /* An array's C type before it is registered: an initializer may
          * fix its length after add_*_global has run (T a[] = {...}), and
          * a size-0 registration would look like a pointer. */
-        ps_type_cty = ps_array_cty(ps_cty_quiet(xty), count, g2cols);
+        ps_type_cty = ps_array_cty(ps_cty_quiet(xty), count, g2cols, g2cols > 0 ? ps_dims_sub : 0);
         if (g2cols > 0 && lex_tok == TK_ASSIGN) {
             next();
             if (lex_tok != TK_LBRACE) {
@@ -9787,10 +10096,10 @@ array_after_brackets:
             require_complete_type(xty, "incomplete element type");
             idx = add_defined_global(nm, xty + TY_PTR, 0);
             if (is_static) ps_glocal[idx] = 1; /* file-scope static: TU-local */
-            ps_gcols[idx] = g2cols;
+            ps_set_gcols(idx, g2cols);
             ps_ginit_begin(idx);
             count = parse_global_init_array2d_at(xty, (count >= 0) ? count / g2cols : -1,
-                                                 g2cols, idx, 0);
+                                                 g2cols, ps_gsub[idx], idx, 0);
             count = count * g2cols;
             ps_gsize[idx] = ty_size(xty) * count;
             ps_fix_global_array(idx, count, g2cols);
@@ -9848,7 +10157,7 @@ array_after_brackets:
             if (is_extern) idx = add_extern_global(nm, xty + TY_PTR, ty_size(xty) * count);
             else           idx = add_defined_global(nm, xty + TY_PTR, ty_size(xty) * count);
             if (is_static) ps_glocal[idx] = 1; /* file-scope static: TU-local */
-            ps_gcols[idx] = g2cols;
+            ps_set_gcols(idx, g2cols);
             ps_fix_global_array(idx, count, g2cols);   /* its rows, as an initialized one has */
         }
         if (lex_tok != TK_COMMA) {

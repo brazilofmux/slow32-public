@@ -49,6 +49,18 @@ static int   stm_off[ST_MAX_MEMBERS];
 static int   stm_is_arr[ST_MAX_MEMBERS]; /* 1 if array member (address, no load) */
 static int   stm_arr_size[ST_MAX_MEMBERS]; /* total byte size for array members */
 static int   stm_arr_cols[ST_MAX_MEMBERS]; /* 2D members: last-dim count (0 = 1D) */
+static int   stm_arr_sub[ST_MAX_MEMBERS];  /* more than 2 dimensions: ast_sub_cols entry */
+
+/* Arrays of more than two dimensions.  An array is held flat; its node's
+ * arr_cols is the elements one subscript steps over, and arr_sub names
+ * an entry here for the subscript after that: ast_sub_cols, the
+ * elements it steps over, and ast_sub_next, the entry for the one after
+ * (0: that subscript reaches the element).  int a[2][3][4] has arr_cols
+ * 12 and arr_sub -> {4, 0}; a 2-D array has arr_sub 0. */
+#define AST_MAX_SUBS 512
+static int   ast_sub_cols[AST_MAX_SUBS];
+static int   ast_sub_next[AST_MAX_SUBS];
+static int   ast_nsubs = 1;               /* entry 0 is "none" */
 static int   stm_owner[ST_MAX_MEMBERS]; /* owning struct index for this member */
 static int   stm_synth[ST_MAX_MEMBERS]; /* 1 = lookup alias from anonymous aggregate */
 /* Bit-field metadata.  stm_bit_width[mi]==0 means "not a bit-field" — the
@@ -246,6 +258,7 @@ struct Node {
                          (so a dereference of it is a volatile lvalue) */
     int is_fnptr;     /* MEMBER: a function-pointer member; (*p->m)(args) strips the star */
     int arr_cols;     /* VAR/MEMBER: 2D array column count (0 = 1D/scalar) */
+    int arr_sub;      /* ... past 2 dimensions, the next subscript's stride (ast_sub_cols) */
     int nparams;      /* FUNC: number of parameters */
     int is_varargs;   /* FUNC: 1 if variadic (...); CALL_PTR: through a variadic signature */
     int is_static;    /* FUNC: 1 if `static` storage class — emit STB_LOCAL */

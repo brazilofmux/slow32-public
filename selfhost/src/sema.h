@@ -441,7 +441,7 @@ static void sema_cty_node(Node *n) {
          * declaration may hold the array flattened, the width beside it */
         l = ct_baseof(sema_cty_of(n->lhs));
         while (ct_is_array(l)) l = ct_baseof(l);
-        n->cty = ct_array(l, n->arr_cols);
+        n->cty = ps_rows_cty(l, n->arr_cols, n->arr_sub);
     } else if (n->kind == ND_BINOP) {
         l = ct_decay(sema_cty_of(n->lhs));
         r = ct_decay(sema_cty_of(n->rhs));

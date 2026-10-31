@@ -243,6 +243,7 @@
 6.5.2.1-subscript PASS
 6.5.2.1-subscript-bad DIAG
 6.5.2.1-subscript-commuted PASS
+6.5.2.1-subscript-rows PASS
 6.5.2.2-call PASS
 6.5.2.2-call-argcount DIAG
 6.5.2.2-call-argtype DIAG
@@ -258,6 +259,7 @@
 6.5.2.5-compound-literal PASS
 6.5.2.5-compound-literal-string PASS
 6.5.2.5-compound-loop PASS
+6.5.2.5-compound-multidim PASS
 6.5.2.5-compound-vla DIAG
 6.5.3-unary-chain PASS
 6.5.3.1-prefix-bad DIAG
@@ -360,6 +362,7 @@
 6.7.2.1-flexible-array PASS
 6.7.2.1-function-member DIAG
 6.7.2.1-incomplete-member DIAG
+6.7.2.1-member-multidim PASS
 6.7.2.1-struct-layout PASS
 6.7.2.2-enum PASS
 6.7.2.2-enum-nonconst DIAG
@@ -404,6 +407,7 @@
 6.7.6.1-pointers PASS
 6.7.6.2-array-of-functions DIAG
 6.7.6.2-arrays PASS
+6.7.6.2-arrays-3d PASS
 6.7.6.2-incomplete-completed PASS
 6.7.6.2-negative-size DIAG
 6.7.6.2-static-outside-param DIAG
@@ -437,11 +441,14 @@
 6.7.9-bad-member-designator DIAG
 6.7.9-braced-string PASS
 6.7.9-designated PASS
+6.7.9-designator-continue PASS
 6.7.9-designator-range DIAG
 6.7.9-eval-order-side PASS
 6.7.9-init-element-int-to-ptr DIAG
 6.7.9-init-member-incompatible DIAG
 6.7.9-init-scalar-int-to-ptr DIAG
+6.7.9-multidim-designator PASS
+6.7.9-multidim-init PASS
 6.7.9-scalar-aggregate PASS
 6.7.9-static-address-arith PASS
 6.7.9-static-address-const PASS

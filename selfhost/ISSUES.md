@@ -3729,9 +3729,47 @@ Gates: `run-interop-llvm.sh` gains struct-ret-big and struct-ret-double
 tests/test_fnptr_array_redecl.c.  The xbc oracle with stage08 compiling
 the programs went from 37 agree to 50, as with clang.
 
-Still open: arrays of more than two dimensions are refused ("arrays of
-more than 2 dimensions unsupported", locals, globals, parameters).
-xbase's label.c and report.c each declare one, so stage08 cannot build
-the interpreter's library; clang builds it.  A missing diagnostic seen
+Still open then: arrays of more than two dimensions were refused
+(resolved in ISSUES-103).  A missing diagnostic seen
 on the way: `extern int a[2]; int a[3] = {...};` is accepted (the
 initialized definition is checked with size 0).
+
+### 103. [RESOLVED 2026-10-30] Arrays of more than two dimensions; multi-dimensional designators, member initializers and compound literals
+
+ISSUES-102 left this open: stage08 refused every array of three or more
+dimensions ("arrays of more than 2 dimensions unsupported"), at block
+scope, file scope, as members, as parameters and as pointers to them.
+SLOW-32 xBase declares two (label.c's row buffer, report.c's column
+headers), so stage08 could not build it.  The C11 probes had no such
+array and recorded no gap.
+
+An array stays held flat.  Its node's `arr_cols` is still the elements
+the first subscript steps over, so every existing reader (sizeof, the
+row a subscript yields, the lowering's own scaling) is unchanged; past
+two dimensions `arr_sub` names an entry in ast.h's `ast_sub_cols` /
+`ast_sub_next`, the stride of the next subscript and the one after.  A
+subscript of a row with an `arr_sub` is again an address.  One reader,
+`ps_inner_dims`, now parses the dimensions after the first everywhere
+(locals, globals, members, parameters, `T (*p)[M][K]`, compound-literal
+types), and `ps_rows_cty` builds the nested C type, so `a[i] + 1`,
+`*a[i]` and `&a[i]` scale by C type as for two dimensions.
+
+Initializers: rows of rows read recursively, a braced row as rows and an
+unbraced one flat (6.7.9p20).  Three forms failed for two dimensions too
+and work now: a multi-dimensional member in a local struct's
+initializer (the value reader asks the target's C type), designators
+into rows (`[i][j]`, stepping whole rows by C type; the position is
+kept in elements, so what follows a designator continues mid-row,
+6.7.9p17), and compound literals of array type (`(int[][2]){...}`, the
+first dimension now inferred).  A brace-elided aggregate ends before a
+designator, which belongs to the enclosing list (`{ 1, .b = 3 }`).
+
+Gates: seven new C11 probes, all PASS (327 PASS, 0 worse);
+tests/test_ndim_arrays.c; xbc/tests/run-stage08.sh, which builds the
+interpreter and the compiled-program runtime with stage08 and requires
+the xbase suite (110/110) and the xbc oracle (50 agree) -- the majesty
+reports from the stage08 interpreter are byte-identical to clang's.
+
+Still open: a cast to a pointer-to-array type name, `(int (*)[4])p`, is
+refused ("pointer-to-array type name unsupported here"), for two
+dimensions as before; a declared pointer works.
