@@ -56,6 +56,7 @@ void cmd_api_select(const char *arg);
 void cmd_api_skip(const char *arg);
 void cmd_api_go(const char *arg);
 void cmd_api_append_blank(void);
+int  cmd_create_table(const char *filename, dbf_field_t *fields, int nfields);   /* with Clipper's create error */
 struct block_s;
 void cmd_api_set_filter(struct block_s *blk, const char *text);
 void cmd_api_set_relation(int target, struct block_s *blk, const char *text);

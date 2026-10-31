@@ -78,6 +78,8 @@ typedef struct clip_seq {
     struct clip_seq *prev;
     clip_scope_t *scope;
     clip_bframe_t *bframe;
+    int depth;             /* the LOCALs' depth: a BREAK out of a block (an
+                              error handler's) skips its evaluation's reset */
 } clip_seq_t;
 jmp_buf *clip_seq_begin(clip_seq_t *q);
 void clip_seq_end(void);

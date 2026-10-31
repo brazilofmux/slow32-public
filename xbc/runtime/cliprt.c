@@ -717,6 +717,7 @@ jmp_buf *clip_seq_begin(clip_seq_t *q) {
     q->prev = clip_seq_top;
     q->scope = clip_scope_top;
     q->bframe = clip_bframe_top;
+    q->depth = clip_ctx()->vars->current_depth;
     clip_seq_top = q;
     return &q->jb;
 }
@@ -735,6 +736,7 @@ static void clip_seq_jump(void) {
         clip_leave(clip_scope_top);
     }
     clip_bframe_top = q->bframe;   /* the blocks a BREAK left */
+    clip_ctx()->vars->current_depth = q->depth;
     prog_break_landed();
     longjmp(q->jb, 1);
 }

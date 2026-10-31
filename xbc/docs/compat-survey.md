@@ -810,7 +810,8 @@ The severe ones are marked.
    answer is reported and the program goes on, where Clipper's prints
    "Called from" and quits (a behaviour point, open); a program's ON
    ERROR outranks the default handler (ONERR2 counts on the dBASE
-   error); canRetry stays false outside USE's open error.
+   error); canRetry stays false outside USE's open error (closed
+   2026-10-30, below).
 9. **The Get system, TBrowse** -- done 2026-10-29, interpreter and clip
    alike (xbase/src/getsys.c).  *Get:* GETNEW(row, col, block, name,
    picture, color) and the class's variables (buffer, changed, original,
@@ -918,3 +919,37 @@ set.  Found on the way, each a departure from Clipper before this:
   CA's sources section above has them.
 
 Probe fn-db-block-filter.
+
+## Retry, and the interpreter's calls (2026-10-30)
+
+canRetry is set where Clipper sets it, Harbour's fields the measure
+(probe fn-error-retry): a table that cannot be created is DBFNTX/1004
+"Create error" (DBCREATE, CREATE, COPY TO, COPY STRUCTURE, SORT, JOIN
+and the rest that make one), an index DBFNTX/1006, SET ALTERNATE's file
+TERM/2013 -- each with Retry and Default on offer, the handler's .T.
+trying again; and a variable that does not exist (BASE/1003), the
+handler run where the name is looked up, so one that makes the variable
+and returns .T. has the expression go on with it.  TYPE() evaluates
+with no handler: an error there is its answer.
+
+Found on the way, each older than this work:
+
+- The interpreter did not bind a routine's declared parameters,
+  FUNCTION f(a, b): the body began after the header, and only
+  PARAMETERS bound anything.  No test in xbase's suite or the oracle
+  declared them (majesty uses PARAMETERS), so it went unseen; they are
+  LOCALs of the call now, bound at its first statement, NIL past the
+  arguments.  Oracle test declparam.
+- A BREAK to a caller's sequence, out of a function an expression called
+  or out of an error raised inside a built-in (a USE that DBUSEAREA
+  runs), unwound where it was raised and left the statement half done:
+  "BREAK without BEGIN SEQUENCE" followed.  The function ends, or the
+  built-in's call fails, and the caller's statement takes the BREAK.
+- A compiled BREAK out of an error handler skipped the block
+  evaluation's reset of the LOCALs' depth, and after RECOVER the
+  program's LOCALs were not found.  The sequence keeps the depth it
+  began at and restores it.
+- A field of a table with no records was no field at all, so a LOCATE
+  FOR over an empty table failed its lookup (and went on quietly).  It
+  reads blank now, as Clipper's does; majesty's profit-and-loss run,
+  which LOCATEs before its first APPEND, is where the handler showed it.

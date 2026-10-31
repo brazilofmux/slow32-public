@@ -902,12 +902,18 @@ ast_node_t *ast_compile_adv(const char **pp, memvar_store_t *store, const char *
 
 static int eval_field_from_db(dbf_t *db, const char *name, value_t *result) {
     int idx;
-    if (!db || !dbf_is_open(db) || db->current_record == 0) return -1;
+    if (!db || !dbf_is_open(db)) return -1;
     idx = dbf_find_field(db, name);
     if (idx < 0) return -1;
     {
         char raw[256];
-        dbf_get_field_raw(db, idx, raw, sizeof(raw));
+        if (db->current_record == 0) {   /* no record (an empty table): the field blank */
+            int w = db->fields[idx].length < (int)sizeof(raw) - 1 ? db->fields[idx].length : (int)sizeof(raw) - 1;
+            memset(raw, ' ', (size_t)w);
+            raw[w] = '\0';
+        } else {
+            dbf_get_field_raw(db, idx, raw, sizeof(raw));
+        }
         switch (db->fields[idx].type) {
         case 'C': *result = val_str(raw); return 0;
         case 'F':
@@ -946,13 +952,15 @@ int ast_eval_field(expr_ctx_t *ctx, const char *name, value_t *result) {
 }
 
 int ast_eval_name(expr_ctx_t *ctx, const char *name, value_t *result) {
-    /* Field-first lookup, then memvar — matches parse_primary in expr.c */
-    if (eval_field_from_db(ctx->db, name, result) == 0) return 0;
-    /* memvar_find writes *result only when it finds the name */
-    if (ctx->vars && memvar_find(ctx->vars, name, result) == 0)
-        return 0;
-    snprintf(ctx->err_msg, sizeof(ctx->err_msg), "Variable not found: %s", name);
-    ctx->error = ctx->err_msg;
+    do {
+        /* Field-first lookup, then memvar — matches parse_primary in expr.c */
+        if (eval_field_from_db(ctx->db, name, result) == 0) return 0;
+        /* memvar_find writes *result only when it finds the name */
+        if (ctx->vars && memvar_find(ctx->vars, name, result) == 0)
+            return 0;
+        snprintf(ctx->err_msg, sizeof(ctx->err_msg), "Variable not found: %s", name);
+        ctx->error = ctx->err_msg;
+    } while (prog_error_retry_here(ctx, ERR_VAR_NOT_FOUND, ctx->error));   /* the handler may make it */
     return -1;
 }
 

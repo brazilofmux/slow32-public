@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
@@ -649,8 +650,7 @@ static void cmd_create(dbf_t *db, const char *arg) {
         return;
     }
 
-    if (dbf_create(filename, fields, nfields) < 0) {
-        prog_error_fmt(ERR_CANNOT_CREATE, "Error creating %s", filename);
+    if (cmd_create_table(filename, fields, nfields) < 0) {
         return;
     }
 
@@ -743,7 +743,7 @@ static int cmd_create_clipper(dbf_t *db, const char *arg) {
         }
         dbf_close(&ext);
         if (n == 0) { prog_error(ERR_CANNOT_CREATE, "No fields defined"); return 1; }
-        if (dbf_create(name, fields, n) < 0) { prog_error_fmt(ERR_CANNOT_CREATE, "Error creating %s", name); return 1; }
+        if (cmd_create_table(name, fields, n) < 0) return 1;
         {
             int mi;
             for (mi = 0; mi < n; mi++) if (fields[mi].type == 'M') { dbf_memo_create(name); break; }
@@ -755,7 +755,7 @@ static int cmd_create_clipper(dbf_t *db, const char *arg) {
         str_copy(ext_fields[1].name, "FIELD_TYPE", DBF_MAX_FIELD_NAME); ext_fields[1].type = 'C'; ext_fields[1].length = 1;
         str_copy(ext_fields[2].name, "FIELD_LEN", DBF_MAX_FIELD_NAME);  ext_fields[2].type = 'N'; ext_fields[2].length = 3;
         str_copy(ext_fields[3].name, "FIELD_DEC", DBF_MAX_FIELD_NAME);  ext_fields[3].type = 'N'; ext_fields[3].length = 3;
-        if (dbf_create(name, ext_fields, 4) < 0) { prog_error_fmt(ERR_CANNOT_CREATE, "Error creating %s", name); return 1; }
+        if (cmd_create_table(name, ext_fields, 4) < 0) return 1;
     }
     snprintf(use_line, sizeof(use_line), "%s%s%s%s", name, is_new ? " NEW" : "", alias[0] ? " ALIAS " : "", alias);
     cmd_use(cur_db(), use_line);
@@ -808,6 +808,24 @@ static void file_not_found(const char *filename) {
     char buf[128];
     snprintf(buf, sizeof(buf), "File not found: %s", filename);
     prog_error(ERR_FILE_NOT_FOUND, buf);
+}
+
+/* Clipper's create error on a file (DBFNTX/1004 a table, 1006 an index;
+ * TERM/2013 SET ALTERNATE's), the DOS error from errno, Retry and Default
+ * on offer: 1 when the handler's .T. asks to try again */
+static int create_error(const char *subsystem, int subcode, const char *filename) {
+    int os = errno == EACCES ? 5 : errno == ENOENT ? 2 : errno == ENOTDIR ? 3 : 29;
+    prog_error_detail(subsystem, 20, subcode, "Create error", filename, os, 1, 1);
+    prog_error_fmt(ERR_CANNOT_CREATE, "Cannot create %s", filename);
+    return prog_error_retry();
+}
+
+/* dbf_create, a failure Clipper's create error: -1 when the table was not
+ * made (the error raised, or the handler's default taken) */
+int cmd_create_table(const char *filename, dbf_field_t *fields, int nfields) {
+    while (dbf_create(filename, fields, nfields) < 0)
+        if (!create_error("DBFNTX", 1004, filename)) return -1;
+    return 0;
 }
 
 /* ---- Helper: report expression error via prog_error ---- */
@@ -3784,8 +3802,7 @@ static void cmd_copy_to(dbf_t *db, const char *arg) {
         }
     }
 
-    if (dbf_create(filename, dest_fields, dest_nfields) < 0) {
-        prog_error_fmt(ERR_CANNOT_CREATE, "Error creating %s", filename);
+    if (cmd_create_table(filename, dest_fields, dest_nfields) < 0) {
         return;
     }
 
@@ -3882,8 +3899,7 @@ static void cmd_copy_structure(dbf_t *db, const char *arg) {
             fields[f].offset = off;
             off += fields[f].length;
         }
-        if (dbf_create(filename, fields, db->field_count) < 0) {
-            prog_error_fmt(ERR_CANNOT_CREATE, "Error creating %s", filename);
+        if (cmd_create_table(filename, fields, db->field_count) < 0) {
             return;
         }
 
@@ -3942,8 +3958,7 @@ static void cmd_copy_structure_extended(dbf_t *db, const char *arg) {
     ext_fields[3].decimals = 0;
     ext_fields[3].offset = 14;
 
-    if (dbf_create(filename, ext_fields, 4) < 0) {
-        prog_error_fmt(ERR_CANNOT_CREATE, "Error creating %s", filename);
+    if (cmd_create_table(filename, ext_fields, 4) < 0) {
         return;
     }
 
@@ -4593,8 +4608,7 @@ static void cmd_sort(dbf_t *db, const char *arg) {
             fields[f].offset = off;
             off += fields[f].length;
         }
-        if (dbf_create(filename, fields, db->field_count) < 0) {
-            prog_error_fmt(ERR_CANNOT_CREATE, "Error creating %s", filename);
+        if (cmd_create_table(filename, fields, db->field_count) < 0) {
             free(sort_entries);
             cleanup_sort_chunks(chunk_names, nchunks);
             return;
@@ -4901,6 +4915,13 @@ static void cmd_index_on(dbf_t *db, lexer_t *l) {
     if (filename[0] == '\0' || str_icmp(filename, ".NDX") == 0) {
         printf("Syntax: INDEX [UNIQUE] ON <expr> TO <filename> [UNIQUE]\n");
         return;
+    }
+
+    {   /* the file first, as Clipper makes it: a create error before the build */
+        FILE *fp;
+        while (!(fp = fopen(filename, "wb")))
+            if (!create_error("DBFNTX", 1006, filename)) return;
+        fclose(fp);
     }
 
     /* Close all existing indexes and build fresh */
@@ -6408,10 +6429,8 @@ static void h_set(dbf_t *db, lexer_t *l) {
                     fclose(set_opts.alternate_fp);
                     set_opts.alternate_fp = NULL;
                 }
-                set_opts.alternate_fp = fopen(fname, "w");
-                if (!set_opts.alternate_fp) {
-                    prog_error_fmt(ERR_CANNOT_CREATE, "Cannot create %s", fname);
-                }
+                while (!(set_opts.alternate_fp = fopen(fname, "w")))
+                    if (!create_error("TERM", 2013, fname)) break;
             }
         } else {
             /* SET ALTERNATE ON/OFF */
@@ -6735,8 +6754,7 @@ static int create_and_open(dbf_t *dest, char *filename, dbf_field_t *fields, int
         fields[f].offset = off;
         off += fields[f].length;
     }
-    if (dbf_create(filename, fields, nfields) < 0) {
-        prog_error_fmt(ERR_CANNOT_CREATE, "Error creating %s", filename);
+    if (cmd_create_table(filename, fields, nfields) < 0) {
         return -1;
     }
     dbf_init(dest);

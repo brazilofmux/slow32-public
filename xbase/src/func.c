@@ -660,6 +660,7 @@ static int fn_asc(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
 static int fn_type(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     value_t v;
     const char *saved_error;
+    int rc;
     if (nargs < 1) {
         *result = val_str("U");
         return 0;
@@ -669,7 +670,10 @@ static int fn_type(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     }
     saved_error = ctx->error;
     ctx->error = NULL;
-    if (ast_eval_dynamic(args[0].str, ctx, &v) != 0) {
+    prog_error_hush(1);
+    rc = ast_eval_dynamic(args[0].str, ctx, &v);
+    prog_error_hush(0);
+    if (rc != 0) {
         const char *msg = ctx->error ? ctx->error : "";
         int undefined = strstr(msg, "not found") != NULL || strstr(msg, "Cannot resolve") != NULL;
         ctx->error = saved_error;
@@ -2826,6 +2830,19 @@ static func_impl_t builtin_lookup(const char *upper, size_t n) {
     return NULL;
 }
 
+/* A built-in's run: a BREAK an error inside it raised (a USE's, its
+ * handler BREAKing) fails the call, and its statement takes the BREAK */
+static int builtin_run(func_impl_t fn, expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    int rc;
+    prog_builtin_enter();
+    rc = fn(ctx, args, nargs, result);
+    if (prog_builtin_leave() && rc == 0) {
+        ctx->error = "BREAK";
+        rc = -1;
+    }
+    return rc;
+}
+
 int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value_t *result) {
     func_impl_t fn;
     char upper[64];
@@ -2851,7 +2868,7 @@ int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value
     if ((fn = builtin_lookup(upper, 0)) != NULL) {
         /* a built-in takes values; one that wants the names of @ arguments
          * (FREAD's buffer) takes them itself, before this clears them */
-        int rc = fn(ctx, args, nargs, result);
+        int rc = builtin_run(fn, ctx, args, nargs, result);
         pending_refs = NULL;
         return fn_arg_error(ctx, upper, args, nargs, result, rc);
     }
@@ -2873,7 +2890,7 @@ int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value
     /* Clipper keeps the first 10 characters of a name: DBCLEARFILTER()
      * is DBCLEARFIL() */
     if (strlen(upper) > 10 && (fn = builtin_lookup(upper, 10)) != NULL) {
-        int rc = fn(ctx, args, nargs, result);
+        int rc = builtin_run(fn, ctx, args, nargs, result);
         pending_refs = NULL;
         return fn_arg_error(ctx, upper, args, nargs, result, rc);
     }

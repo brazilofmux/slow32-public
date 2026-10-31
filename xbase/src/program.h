@@ -56,6 +56,9 @@ typedef struct {
     /* STATICs bound in this call: written back to their storage on return */
     int nstatics;
     short statics[16];
+    /* The routine's header, FUNCTION f(a, b), whose parameters are bound
+     * as LOCALs at its first statement, once the arguments are in; -1 none */
+    int decl_line;
 } call_frame_t;
 
 /* Loop stack entry (DO WHILE / ENDDO / FOR / NEXT / SCAN / ENDSCAN) */
@@ -139,6 +142,10 @@ value_t prog_break_value(void);
 void prog_break_landed(void);
 struct object_s *prog_new_error_object(int code, const char *description);
 int prog_error_substitute(expr_ctx_t *ctx, int code, const char *description, value_t *out);   /* the handler at the point of failure */
+int prog_error_retry_here(expr_ctx_t *ctx, int code, const char *description);
+void prog_error_hush(int on);
+void prog_builtin_enter(void);   /* func_call around a built-in */
+int  prog_builtin_leave(void);   /* TYPE(): errors are the answer, no handler */
 /* The failing operation's operands or arguments, its name and its BASE
  * subcode (0: by the message), for the error object made for the error
  * whose message is msg (args, operation, subCode); another error's

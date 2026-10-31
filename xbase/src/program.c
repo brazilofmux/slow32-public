@@ -184,29 +184,55 @@ static void clipper_error_class(int code, const char *msg, int *gen, const char 
     }
 }
 
-/* An error the operation can take a substitute for (a zero divisor:
- * Clipper's DefError answers 0 and the division is 0): the handler runs
- * here, at the point of failure, with canSubstitute set.  1 and *out
- * when it returned a value, which the operation uses; 0 when it returned
- * a logical or there is no handler, and the error goes on as before (the
- * handler not run a second time). */
-int prog_error_substitute(expr_ctx_t *ctx, int code, const char *description, value_t *out) {
+/* TYPE()'s evaluation: an error there is its answer, not the handler's */
+static int error_hushed;
+
+void prog_error_hush(int on) {
+    error_hushed += on ? 1 : -1;
+}
+
+/* ERRORBLOCK()'s handler run at the point of failure, the error object's
+ * `can` (canSubstitute, canRetry) set: 1 and *r its answer when it ran
+ * and did not BREAK; 0 when there is no handler to run */
+static int handler_at_failure(expr_ctx_t *ctx, int code, const char *description,
+                              const char *can, value_t *r) {
     object_t *o;
-    value_t arg, r;
-    if (error_block.type != VAL_BLOCK || error_state.in_handler) return 0;
+    value_t arg;
+    if (error_block.type != VAL_BLOCK || error_state.in_handler || error_hushed) return 0;
     /* a program's own ON ERROR is its handler, as a block it posted
      * would be: the default one does not answer over it */
     if (error_block_default && error_state.on_error_proc[0]) return 0;
     o = prog_new_error_object(code, description);
     if (!o) return 0;
-    *object_ivar(o, "canSubstitute", 1) = val_logic(1);
+    *object_ivar(o, can, 1) = val_logic(1);
     arg = val_object(o);
     error_state.in_handler = 1;
-    r = val_nil();
-    (void)ast_eval_block(ctx, &error_block, &arg, 1, &r);
+    *r = val_nil();
+    (void)ast_eval_block(ctx, &error_block, &arg, 1, r);
     error_state.in_handler = 0;
-    if (break_pending) return 0;
+    return !break_pending;
+}
+
+/* An error the operation can take a substitute for (a zero divisor:
+ * Clipper's DefError answers 0 and the division is 0).  1 and *out
+ * when the handler returned a value, which the operation uses; 0 when it
+ * returned a logical or there is no handler, and the error goes on as
+ * before (the handler not run a second time). */
+int prog_error_substitute(expr_ctx_t *ctx, int code, const char *description, value_t *out) {
+    value_t r;
+    if (!handler_at_failure(ctx, code, description, "canSubstitute", &r)) return 0;
     if (r.type != VAL_NIL && r.type != VAL_LOGIC) { *out = r; return 1; }
+    error_state.block_ran = 1;
+    return 0;
+}
+
+/* An error the operation can try again (a variable that does not exist:
+ * the handler may make it): 1 when the handler returned .T., and the
+ * operation is tried again; else 0, as for a substitute */
+int prog_error_retry_here(expr_ctx_t *ctx, int code, const char *description) {
+    value_t r;
+    if (!handler_at_failure(ctx, code, description, "canRetry", &r)) return 0;
+    if (r.type == VAL_LOGIC && r.logic) return 1;
     error_state.block_ran = 1;
     return 0;
 }
@@ -309,6 +335,16 @@ static int udf_active;          /* >0 when executing a UDF call */
 static value_t udf_return_val;  /* return value from FUNCTION */
 static int udf_depth;           /* call_depth at UDF entry */
 static int udf_call_nesting;    /* host C recursion depth through UDF callbacks */
+static int builtin_depth;       /* built-ins running (func_call) in this routine */
+
+void prog_builtin_enter(void) { builtin_depth++; }
+
+/* The built-in done: 1 when a BREAK waits on it (prog_error), which its
+ * call then fails with */
+int prog_builtin_leave(void) {
+    builtin_depth--;
+    return break_pending;
+}
 static int prog_udf_call(const char *name, value_t *args, int nargs, value_t *result);
 #define MAX_UDF_CALL_NESTING 8
 
@@ -341,6 +377,8 @@ typedef struct {
 static sequence_frame_t seq_stack[MAX_SEQUENCE_DEPTH];
 static int seq_depth;
 static int seq_unwind(void);
+static int break_to_caller(void);
+static void pop_frame(void);
 
 /* ---- Synchronous procedure call support ---- */
 /* When prog_call_sync is active, pop_frame stops execution when
@@ -682,6 +720,10 @@ recover:
        Note: prog_execute_line does state.pc++ after cmd_execute returns,
        so we set pc to the target line; the increment lands on target+1. */
     if (seq_depth > 0 && state.running) {
+        /* raised inside a built-in (a USE that DBUSEAREA runs): the BREAK
+         * waits, the call fails with it (func_call), and the statement
+         * takes it here, where unwinding leaves nothing half done */
+        if (builtin_depth > 0 || break_to_caller()) return;
         state.pc = seq_unwind();
         return;
     }
@@ -963,6 +1005,7 @@ static int prog_udf_call(const char *name, value_t *args, int nargs, value_t *re
     program_t *target_prog = NULL;
     int func_line = -1;
     int slot = state.call_depth;
+    int saved_builtin_depth;
     udf_saved_state_t *sv;
 
     if (slot < 0) slot = 0;
@@ -1035,7 +1078,10 @@ static int prog_udf_call(const char *name, value_t *args, int nargs, value_t *re
 
     /* Execute the function body — prog_run will stop when RETURN sets running=0 */
     udf_call_nesting++;
+    saved_builtin_depth = builtin_depth;
+    builtin_depth = 0;   /* its statements are statements: a BREAK unwinds there */
     prog_run();
+    builtin_depth = saved_builtin_depth;
     udf_call_nesting--;
 
     /* Capture return value */
@@ -1044,7 +1090,7 @@ static int prog_udf_call(const char *name, value_t *args, int nargs, value_t *re
     /* Restore lightweight state — pop_frame already restored call stack properly */
     udf_restore_state(sv);
 
-    return 0;
+    return break_pending ? -1 : 0;   /* a BREAK to a caller's sequence */
 
 restore_error:
     /* Restore state on failed UDF setup (e.g. stack overflow) */
@@ -1441,12 +1487,23 @@ static int seq_unwind(void) {
     return target >= 0 ? target : f->pc;
 }
 
+/* A BREAK whose sequence is a caller's, past a function an expression
+ * called: the function ends here, and its call fails with the BREAK
+ * (prog_udf_call), for the caller's statement to take.  1 when so. */
+static int break_to_caller(void) {
+    if (!udf_active || seq_stack[seq_depth - 1].call_depth >= udf_depth) return 0;
+    while (state.call_depth >= udf_depth) pop_frame();
+    state.running = 0;
+    return 1;
+}
+
 void prog_break(void) {
     if (seq_depth <= 0) {
         prog_break_landed();
         prog_error(ERR_SYNTAX, "BREAK without BEGIN SEQUENCE");
         return;
     }
+    if (break_to_caller()) return;
     state.pc = seq_unwind() + 1;   /* the line after RECOVER or END SEQUENCE */
 }
 
@@ -1514,6 +1571,12 @@ static int push_frame(program_t *new_prog, int start_line) {
     frame->prog = new_prog;
     frame->return_line = start_line;
     frame->private_count = 0;
+    frame->decl_line = -1;
+    if (new_prog && start_line > 0 && start_line <= new_prog->nlines) {
+        const char *h = skip_ws(new_prog->lines[start_line - 1]);
+        if (line_is_kw(h, "FUNCTION") || line_is_kw(h, "PROCEDURE"))
+            frame->decl_line = start_line - 1;
+    }
 
     frame->if_skip = if_skip;
     frame->if_depth = if_depth;
@@ -2931,6 +2994,35 @@ void prog_procedure(lexer_t *l) {
     state.pc++;
 }
 
+/* FUNCTION f(a, b) / PROCEDURE p(a, b): the declared parameters, LOCALs
+ * of the call (Clipper), given the arguments in order and NIL past them */
+static void bind_declared_params(call_frame_t *frame) {
+    memvar_store_t *store = cmd_get_memvar_store();
+    const char *p = skip_ws(frame->prog->lines[frame->decl_line]);
+    int i = 0;
+    frame->decl_line = -1;
+    while (is_ident_char(*p)) p++;                 /* FUNCTION */
+    p = skip_ws(p);
+    while (is_ident_char(*p)) p++;                 /* its name */
+    p = skip_ws(p);
+    if (*p != '(') return;
+    p = skip_ws(p + 1);
+    while (is_ident_start(*p) && i < MAX_FUNC_ARGS) {
+        char name[MEMVAR_NAMELEN];
+        value_t v = i < frame->with_argc ? frame->with_args[i] : val_nil();
+        int j = 0;
+        while (is_ident_char(*p) && j < MEMVAR_NAMELEN - 1) name[j++] = *p++;
+        name[j] = '\0';
+        str_upper(name);
+        str_copy(frame->param_names[i], name, MEMVAR_NAMELEN);   /* f(@x) written back */
+        memvar_set_local(store, name, &v);
+        i++;
+        p = skip_ws(p);
+        if (*p != ',') break;
+        p = skip_ws(p + 1);
+    }
+}
+
 /* ---- PARAMETERS ---- */
 void prog_parameters(lexer_t *l) {
     memvar_store_t *store = cmd_get_memvar_store();
@@ -3165,6 +3257,9 @@ int prog_execute_line(char *line) {
     int result;
 
     gc_safepoint();   /* a statement boundary: collect when due */
+
+    if (state.call_depth > 0 && state.call_stack[state.call_depth - 1].decl_line >= 0)
+        bind_declared_params(&state.call_stack[state.call_depth - 1]);
 
     /* Check for program-specific commands first */
     if (str_imatch(p, "DO")) {

@@ -172,10 +172,8 @@ static int fn_dbcreate(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
     }
     snprintf(name, sizeof(name), "%s", args[0].str);
     if (!strchr(name, '.')) strcat(name, ".DBF");
-    if (dbf_create(name, fields, n) != 0) {
-        ctx->error = "DBCREATE: cannot create the file";
-        return -1;
-    }
+    if (cmd_create_table(name, fields, n) != 0)
+        return nil_result(result);   /* the create error raised, or defaulted */
     for (i = 0; i < n; i++) {
         if (fields[i].type == 'M') {   /* a memo field: its file beside */
             dbf_memo_create(name);
