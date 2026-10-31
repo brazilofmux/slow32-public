@@ -671,7 +671,9 @@ static int fn_type(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     saved_error = ctx->error;
     ctx->error = NULL;
     prog_error_hush(1);
+    memvar_locals_hidden++;   /* the text is a macro's: LOCALs are not there (Clipper's TYPE("x") of a LOCAL is "U") */
     rc = ast_eval_dynamic(args[0].str, ctx, &v);
+    memvar_locals_hidden--;
     prog_error_hush(0);
     if (rc != 0) {
         const char *msg = ctx->error ? ctx->error : "";
@@ -2835,6 +2837,20 @@ static int builtin_run(func_impl_t fn, expr_ctx_t *ctx, value_t *args, int nargs
     return rc;
 }
 
+/* A routine's call that failed: its error is the call's (a BREAK on its
+ * way) -- or, -2, it was reported already, and the caller's expression
+ * stops saying nothing more */
+static int udf_call_failed(expr_ctx_t *ctx, int urc) {
+    const char *msg;
+    if (urc == -2) {
+        ctx->error = NULL;
+        return -1;
+    }
+    msg = prog_get_error_message();
+    ctx->error = msg && msg[0] ? msg : "User-defined function failed";
+    return -1;
+}
+
 int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value_t *result) {
     func_impl_t fn;
     char upper[64];
@@ -2851,11 +2867,7 @@ int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value
     if (noverrides > 0 && udf_callback && func_is_overridden(upper)) {
         int urc = udf_callback(upper, args, nargs, result);
         if (urc == 0) return 0;
-        if (urc < 0) {
-            const char *msg = prog_get_error_message();
-            ctx->error = msg && msg[0] ? msg : "User-defined function failed";
-            return -1;
-        }
+        if (urc < 0) return udf_call_failed(ctx, urc);
     }
     if ((fn = builtin_lookup(upper, 0)) != NULL) {
         /* a built-in takes values; one that wants the names of @ arguments
@@ -2871,12 +2883,7 @@ int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value
         int urc = udf_callback(upper, args, nargs, result);
         if (urc == 0)
             return 0;
-        if (urc < 0) {
-            const char *msg = prog_get_error_message();
-            if (msg && msg[0]) ctx->error = msg;
-            else ctx->error = "User-defined function failed";
-            return -1;
-        }
+        if (urc < 0) return udf_call_failed(ctx, urc);
     }
 
     /* Clipper keeps the first 10 characters of a name: DBCLEARFILTER()

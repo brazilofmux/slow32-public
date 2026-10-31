@@ -953,7 +953,12 @@ int ast_eval_field(expr_ctx_t *ctx, const char *name, value_t *result) {
 
 int ast_eval_name(expr_ctx_t *ctx, const char *name, value_t *result) {
     do {
-        /* Field-first lookup, then memvar — matches parse_primary in expr.c */
+        /* The routine's LOCAL first -- declared, it is no field (Clipper's
+         * compiler binds it); then field-first, then memvar, as
+         * parse_primary in expr.c */
+        if (ctx->vars && ctx->vars->nlocal && memvar_local_here(ctx->vars, name) &&
+            memvar_find(ctx->vars, name, result) == 0)
+            return 0;
         if (eval_field_from_db(ctx->db, name, result) == 0) return 0;
         /* memvar_find writes *result only when it finds the name */
         if (ctx->vars && memvar_find(ctx->vars, name, result) == 0)
@@ -965,8 +970,12 @@ int ast_eval_name(expr_ctx_t *ctx, const char *name, value_t *result) {
 }
 
 int ast_eval_alias_field(expr_ctx_t *ctx, const char *alias, const char *field, value_t *result) {
-    if (str_icmp(alias, "M") == 0 || str_icmp(alias, "MEMVAR") == 0) {
-        if (ctx->vars && memvar_find(ctx->vars, field, result) == 0) return 0;
+    if (str_icmp(alias, "M") == 0 || str_icmp(alias, "MEMVAR") == 0) {   /* a memory variable: no LOCAL */
+        int found;
+        memvar_locals_hidden++;
+        found = ctx->vars && memvar_find(ctx->vars, field, result) == 0;
+        memvar_locals_hidden--;
+        if (found) return 0;
         snprintf(ctx->err_msg, sizeof(ctx->err_msg), "Variable not found: %s", field);
         ctx->error = ctx->err_msg;
         return -1;
@@ -1268,8 +1277,13 @@ int ast_store_elem(expr_ctx_t *ctx, const char *name, const value_t *row_v,
 
 int ast_store_alias_field(expr_ctx_t *ctx, const char *alias, const char *field,
                           const value_t *val) {
-    if (str_icmp(alias, "M") == 0 || str_icmp(alias, "MEMVAR") == 0)
-        return ast_store_name(ctx, field, val);
+    if (str_icmp(alias, "M") == 0 || str_icmp(alias, "MEMVAR") == 0) {   /* beside a LOCAL of the name, not it */
+        int rc;
+        memvar_locals_hidden++;
+        rc = ast_store_name(ctx, field, val);
+        memvar_locals_hidden--;
+        return rc;
+    }
     if (cmd_api_field_assign(str_icmp(alias, "FIELD") == 0 ? NULL : alias, field, val) != 0) {
         snprintf(ctx->err_msg, sizeof(ctx->err_msg), "Cannot assign %s->%s", alias, field);
         ctx->error = ctx->err_msg;
@@ -1345,6 +1359,7 @@ static int make_block(expr_ctx_t *ctx, ast_node_t *body, int (*fn)(expr_ctx_t *,
     }
     b->depth = ctx->vars ? ctx->vars->current_depth : 0;
     b->serial = memvar_frame_serial(b->depth);
+    b->macro = memvar_locals_hidden > 0;
     b->body = body;
     b->fn = fn;
     *result = val_nil();
@@ -1393,6 +1408,7 @@ static int ast_eval_block_in(expr_ctx_t *ctx, const value_t *bv, value_t *args, 
 
     if (bv->type != VAL_BLOCK || !bv->block) { ctx->error = "EVAL requires a code block"; return -1; }
     b = bv->block;
+    if (b->macro) memvar_locals_hidden++;
     depth = store->current_depth;
     store->current_depth = b->depth;   /* the maker's LOCALs, not the caller's */
     alive = memvar_frame_serial(b->depth) == b->serial;   /* its maker's call still running */
@@ -1447,6 +1463,7 @@ static int ast_eval_block_in(expr_ctx_t *ctx, const value_t *bv, value_t *args, 
         memvar_release(store, b->cap_names[i]);
     }
     store->current_depth = depth;
+    if (b->macro) memvar_locals_hidden--;
     return rc;
 }
 
@@ -1815,8 +1832,12 @@ static int ast_eval_macro_text(const char *expr, expr_ctx_t *ctx, value_t *resul
 /* &(expr) once expr is a value: the string compiled and evaluated (the
  * interpreter's AST_MACRO and the compiled program both come here) */
 int ast_eval_macro_value(expr_ctx_t *ctx, const value_t *text, value_t *result) {
+    int rc;
     if (text->type != VAL_CHAR) { ctx->error = "Macro expression must be a string"; return -1; }
-    return ast_eval_dynamic(text->str, ctx, result);
+    memvar_locals_hidden++;   /* compiled at run time: the LOCALs are the compiler's */
+    rc = ast_eval_dynamic(text->str, ctx, result);
+    memvar_locals_hidden--;
+    return rc;
 }
 
 int ast_eval_dynamic(const char *expr, expr_ctx_t *ctx, value_t *result) {

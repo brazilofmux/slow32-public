@@ -1101,3 +1101,42 @@ statement, ran the built-in: `Bar()` returned the menu's last bar and
 the procedure never ran, which looked like an error inside it being
 swallowed.  The routines are known as the program loads.  Oracle test
 ownbuiltin.
+
+## LOCALs are their routine's alone (2026-10-31)
+
+A LOCAL is still a variable of the store marked with its call's depth,
+but it is now seen the way Clipper's lexical one is (probe
+stmt-local-scope, Harbour's answers throughout; oracle test
+localscope):
+
+- A macro cannot see one: TYPE() of a LOCAL is "U", &(text) naming one
+  finds nothing, and a block a macro makes -- &("{|| ...}") -- keeps not
+  seeing them when it is evaluated later.  One counter in the store,
+  memvar_locals_hidden, is raised for each (a BEGIN SEQUENCE keeps it,
+  as it keeps the LOCALs' depth, against a BREAK out of a macro).
+- A LOCAL is no field: a routine's LOCAL TAG is the LOCAL though the
+  table has a field TAG (the field came first).
+- M->name is a memory variable, never the LOCAL of the name: M->x := v
+  makes or sets a PRIVATE beside LOCAL x (it overwrote the LOCAL).
+- The interpreter's top level has LOCALs: an entry procedure, or a main
+  program, runs at depth 0, where LOCAL used to declare nothing -- the
+  name became an ordinary variable, and every routine it called saw it.
+  They are released as the run ends; at the prompt LOCAL is as it was.
+
+Not done: a macro the lexer expands in a statement's text (&cName,
+not &(...)) still sees LOCALs -- the text is substituted before the
+statement is read, so nothing marks where the macro's part ends.
+TYPE(), &() and macro-made blocks, the forms programs use to ask
+whether a variable exists, are Clipper's.
+
+Found on the way: RETURN <expr> whose expression failed returned NIL
+and said nothing; the error is reported now, as any statement's, and
+the function's call fails with it -- said once, the caller's expression
+going no further (a recursion past its limit reported the overflow,
+then nothing else; test_udf_overflow's `? RECURSE(40)` prints nothing
+now, where it printed the NIL the failure left).
+
+The cost: a name asks whether it is a LOCAL only while some LOCAL
+lives (the store counts them), so a dBASE program, which has none,
+pays nothing for it; majesty's interpreted runs are within 1% of
+before, its output identical.

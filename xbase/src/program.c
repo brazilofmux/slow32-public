@@ -333,6 +333,7 @@ object_t *prog_new_error_object(int code, const char *description) {
 /* User-defined FUNCTION support */
 static int udf_active;          /* >0 when executing a UDF call */
 static value_t udf_return_val;  /* return value from FUNCTION */
+static int udf_failed;          /* its RETURN's expression failed, the error reported */
 static int udf_depth;           /* call_depth at UDF entry */
 static int udf_call_nesting;    /* host C recursion depth through UDF callbacks */
 static int builtin_depth;       /* built-ins running (func_call) in this routine */
@@ -1100,7 +1101,7 @@ static int prog_udf_call(const char *name, value_t *args, int nargs, value_t *re
     if (udf_call_nesting >= MAX_UDF_CALL_NESTING) {
         prog_error(ERR_STACK_OVERFLOW, "UDF recursion overflow");
         if (result) *result = val_nil();
-        return -1;
+        return break_pending ? -1 : -2;   /* reported: the callers' expressions stop there */
     }
 
     /* Set up UDF execution */
@@ -1146,6 +1147,10 @@ static int prog_udf_call(const char *name, value_t *args, int nargs, value_t *re
     /* Restore lightweight state — pop_frame already restored call stack properly */
     udf_restore_state(sv);
 
+    if (udf_failed) {   /* its RETURN failed, the error reported */
+        udf_failed = 0;
+        return -2;
+    }
     return break_pending ? -1 : 0;   /* a BREAK to a caller's sequence */
 
 restore_error:
@@ -1172,6 +1177,12 @@ static int find_procedure(program_t *prog, const char *name) {
             char line[MAX_LINE_LEN];
             char *p, *rest;
             int j, is_func;
+            {   /* a header begins PROCEDURE or FUNCTION as loaded (prog_normalize_line),
+                 * unless a macro makes it: the rest are not read further */
+                const char *raw = skip_ws(prog->lines[i]);
+                if (toupper((unsigned char)*raw) != 'P' && toupper((unsigned char)*raw) != 'F' && *raw != '&')
+                    continue;
+            }
             str_copy(line, prog->lines[i], MAX_LINE_LEN);
             prog_preprocess(line, cmd_get_memvar_store());
             p = skip_ws(line);
@@ -2034,6 +2045,13 @@ static void prog_run(void) {
 }
 
 /* ---- DO command: DO <file> or DO WHILE <cond> ---- */
+/* A program run from the prompt: its top level's LOCALs (the entry
+ * procedure's, a main program's) go when it ends, as a frame's do */
+static void prog_run_top(void) {
+    prog_run();
+    memvar_release_locals(cmd_get_memvar_store(), 0);
+}
+
 void prog_do(const char *arg) {
     const char *p = skip_ws(arg);
 
@@ -2208,7 +2226,7 @@ void prog_do(const char *arg) {
                             frame->caller_prog = NULL;
                         }
                     }
-                    prog_run();
+                    prog_run_top();
                     return;
                 }
                 prog_free(in_prog);
@@ -2272,7 +2290,7 @@ void prog_do(const char *arg) {
                         frame->caller_prog = NULL;
                     }
                 }
-                prog_run();
+                prog_run_top();
                 return;
             }
         }
@@ -2315,7 +2333,7 @@ void prog_do(const char *arg) {
                     frame->caller_prog = NULL;
                 }
             }
-            prog_run();
+            prog_run_top();
         }
     }
 }
@@ -3035,6 +3053,17 @@ void prog_return(const char *arg) {
         value_t val;
         if (ast_eval_dynamic(arg, ctx, &val) == 0) {
             udf_return_val = val;
+        } else {   /* reported, as any statement's (it was dropped: the value NIL, not a word) */
+            udf_return_val = val_nil();
+            if (ctx->error) {
+                prog_error(expr_error_code(ctx->error), ctx->error);
+                ctx->error = NULL;
+            }
+            if (break_pending) return;   /* a handler's BREAK: the sequence takes it */
+            /* the function's call fails with it, said once: the caller's
+             * expression goes no further (NIL + 1 a second error, and a
+             * third, up a recursion) */
+            if (udf_active && state.call_depth <= udf_depth) udf_failed = 1;
         }
     }
 
@@ -3158,6 +3187,9 @@ static void prog_declare(lexer_t *l, int kind) {
     memvar_store_t *store = cmd_get_memvar_store();
     char name[MEMVAR_NAMELEN];
     int framed = state.running && state.call_depth > 0;
+    /* a LOCAL of a running program is one at its top level too (the entry
+     * procedure, a main program), released as the run ends */
+    int local_ok = state.running;
 
     while (l->current.type == TOK_IDENT) {
         str_copy(name, l->current.text, sizeof(name));
@@ -3180,7 +3212,7 @@ static void prog_declare(lexer_t *l, int kind) {
                 value_t v = val_logic(0); /* PUBLIC vars default to .F. */
                 memvar_set(store, name, &v);
             }
-        } else if (kind == 'L' && framed) {
+        } else if (kind == 'L' && local_ok) {
             /* A fresh LOCAL at this depth.  It shadows a PRIVATE or PUBLIC of
              * the name without touching it, and pop_frame releases it; it
              * used to release the outer variable, so a callee saw nothing and
@@ -3250,7 +3282,7 @@ static void prog_declare(lexer_t *l, int kind) {
                 return;
             }
             ast_free(n);
-            if (kind == 'L' && framed) memvar_set_local(store, name, &v);
+            if (kind == 'L' && local_ok) memvar_set_local(store, name, &v);
             else memvar_set(store, name, &v);
             lexer_init_ext(l, q + 1, store);
         }
@@ -3270,7 +3302,7 @@ static void prog_declare(lexer_t *l, int kind) {
                 return;
             }
             ast_free(n);
-            if (kind == 'L' && framed) memvar_set_local(store, name, &v);
+            if (kind == 'L' && local_ok) memvar_set_local(store, name, &v);
             else memvar_set(store, name, &v);
             lexer_init_ext(l, pp, store);
         }

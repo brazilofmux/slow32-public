@@ -102,6 +102,7 @@ static void slot_free(memvar_store_t *store, int i) {
         if (*pp == i) { *pp = store->next[i]; break; }
         pp = &store->next[*pp];
     }
+    if (store->vars[i].is_local) store->nlocal--;
     store->vars[i].used = 0;
 }
 
@@ -116,6 +117,7 @@ void memvar_init(memvar_store_t *store) {
         store->bucket[i] = -1;
     store->count = 0;
     store->hw = 0;
+    store->nlocal = 0;
 }
 
 /* The slot an upper-cased name resolves to at the current depth: a LOCAL
@@ -123,13 +125,15 @@ void memvar_init(memvar_store_t *store) {
  * depth is invisible; otherwise the first PRIVATE/PUBLIC.  -1 if none.
  * (LOCAL used to release the variable it shadowed, so a callee saw nothing
  * and the caller's value was gone on return: GitHub issue 113.) */
-static int memvar_slot(const memvar_store_t *store, const char *uname, unsigned h) {
+int memvar_locals_hidden;
+
+static int memvar_slot_ex(const memvar_store_t *store, const char *uname, unsigned h, int locals) {
     int i, best = -1, local = -1;
     /* The chain is in no particular order, so "first" is the lowest slot */
     for (i = store->bucket[h & (MEMVAR_BUCKETS - 1)]; i >= 0; i = store->next[i]) {
         if (store->vars[i].hash == h && strcmp(store->vars[i].name, uname) == 0) {
             if (store->vars[i].is_local) {
-                if (store->vars[i].scope_depth == store->current_depth &&
+                if (locals && store->vars[i].scope_depth == store->current_depth &&
                     (local < 0 || i < local)) local = i;
                 continue;
             }
@@ -137,6 +141,12 @@ static int memvar_slot(const memvar_store_t *store, const char *uname, unsigned 
         }
     }
     return local >= 0 ? local : best;
+}
+
+/* What a name means here: the LOCAL unless LOCALs are hidden (a macro,
+ * M->), else the PRIVATE or PUBLIC */
+static int memvar_slot(const memvar_store_t *store, const char *uname, unsigned h) {
+    return memvar_slot_ex(store, uname, h, !memvar_locals_hidden);
 }
 
 int memvar_find(const memvar_store_t *store, const char *name, value_t *val) {
@@ -197,7 +207,7 @@ int memvar_set_local(memvar_store_t *store, const char *name, const value_t *val
 
     /* A second LOCAL of the name at this depth resets it; a PRIVATE or
      * PUBLIC of the name is left alone, shadowed until memvar_release_locals. */
-    i = memvar_slot(store, uname, name_hash(uname));
+    i = memvar_slot_ex(store, uname, name_hash(uname), 1);
     if (i >= 0 && store->vars[i].is_local) {
         store->vars[i].val = *val;
         return 0;
@@ -213,6 +223,7 @@ int memvar_set_local(memvar_store_t *store, const char *name, const value_t *val
             slot_link(store, i);
             store->vars[i].scope_depth = store->current_depth;
             store->vars[i].is_local = 1;
+            store->nlocal++;
             store->count++;
             hw_grow(store, i);
             return 0;
@@ -261,6 +272,7 @@ unsigned memvar_frame_serial(int depth) {
 int memvar_local_here(const memvar_store_t *store, const char *name) {
     char uname[64];
     int i;
+    if (!store->nlocal) return 0;
     memvar_norm(uname, name);
     i = memvar_slot(store, uname, name_hash(uname));
     return i >= 0 && store->vars[i].is_local && store->vars[i].scope_depth == store->current_depth;

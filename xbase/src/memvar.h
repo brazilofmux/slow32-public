@@ -43,6 +43,8 @@ typedef struct memvar_store {
     int count;
     int hw;             /* slots at or above this index are unused: a lookup walks hw slots, not 256 */
     int current_depth;  /* updated on push/pop frame */
+    int nlocal;         /* LOCAL slots in use: none (a dBASE program's case), and a
+                           name is never asked whether it is one */
     int live_max;       /* the deepest live frame: a block is evaluated at its
                            maker's depth, so a call made from it takes a depth
                            above every live frame, not maker + 1 (which was a
@@ -59,6 +61,10 @@ void memvar_init(memvar_store_t *store);
  * share for that LOCAL (NULL: none to be had) */
 unsigned memvar_frame_serial(int depth);
 int memvar_local_here(const memvar_store_t *store, const char *name);
+/* Above zero, LOCALs are out of sight: what a macro compiles, TYPE(),
+ * M->name see the PRIVATEs and PUBLICs alone, as Clipper's do (its
+ * LOCALs are the compiler's, and a macro is compiled at run time) */
+extern int memvar_locals_hidden;
 array_t *memvar_capture_cell(memvar_store_t *store, const char *name, const value_t *now);
 int  memvar_find(const memvar_store_t *store, const char *name, value_t *val);
 int  memvar_set(memvar_store_t *store, const char *name, const value_t *val);

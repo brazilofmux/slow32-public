@@ -139,6 +139,7 @@ typedef struct block_s {
      * (memvar_frame_serial) */
     unsigned char cap_shared[MAX_BLOCK_CAPTURES];
     unsigned serial;
+    int macro;      /* made by a macro, &("{|| ...}"): no LOCAL in sight when evaluated either */
     struct ast_node *body;                          /* AST_BLOCK, or NULL */
     int (*fn)(expr_ctx_t *ctx, value_t *result);    /* compiled, or NULL */
 } block_t;

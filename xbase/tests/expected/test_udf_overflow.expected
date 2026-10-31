@@ -2,8 +2,6 @@ SLOW-32 xBase
 xBase interpreter 1.0
 
 . . . *** UDF recursion overflow in UDFDEPTH.PRG line 6
-
-NIL
 . 
 AFTER
 . 

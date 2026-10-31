@@ -81,6 +81,7 @@ typedef struct clip_seq {
     clip_bframe_t *bframe;
     int depth;             /* the LOCALs' depth: a BREAK out of a block (an
                               error handler's) skips its evaluation's reset */
+    int locals_hidden;     /* likewise memvar_locals_hidden, out of a macro */
 } clip_seq_t;
 jmp_buf *clip_seq_begin(clip_seq_t *q);
 void clip_seq_end(void);
