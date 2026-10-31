@@ -133,6 +133,12 @@ typedef struct block_s {
     int ncap;
     char cap_names[MAX_BLOCK_CAPTURES][MEMVAR_NAMELEN];
     value_t cap_vals[MAX_BLOCK_CAPTURES];
+    /* A LOCAL of the call that made it is shared instead: cap_vals holds
+     * the cell (a one-element array) every block of that call holds for
+     * the name, used once the call has returned -- serial says which call
+     * (memvar_frame_serial) */
+    unsigned char cap_shared[MAX_BLOCK_CAPTURES];
+    unsigned serial;
     struct ast_node *body;                          /* AST_BLOCK, or NULL */
     int (*fn)(expr_ctx_t *ctx, value_t *result);    /* compiled, or NULL */
 } block_t;

@@ -235,9 +235,87 @@ int memvar_release(memvar_store_t *store, const char *name) {
     return 0;
 }
 
+/* ---- LOCALs a code block outlives (Clipper's detached locals) ----
+ * Each call is told apart from the next at the same depth by a serial.
+ * The blocks one call makes share one cell per LOCAL they name (a
+ * one-element array, which the collector traces through the blocks and,
+ * while the call runs, through this table in bss); when the call
+ * returns, each LOCAL's last value goes into its cell, so the blocks go
+ * on sharing the variable -- one's change is the other's. */
+#define CAP_DEPTHS 4096
+#define CAP_MAX    1024
+static unsigned cap_serial_at[CAP_DEPTHS];   /* the call now at each depth */
+static unsigned cap_next = 1;
+static struct {
+    int depth;
+    unsigned serial;
+    char name[MEMVAR_NAMELEN];
+    array_t *cell;
+} cap_reg[CAP_MAX];
+static int ncap_reg;
+
+unsigned memvar_frame_serial(int depth) {
+    return depth >= 0 && depth < CAP_DEPTHS ? cap_serial_at[depth] : 0;
+}
+
+int memvar_local_here(const memvar_store_t *store, const char *name) {
+    char uname[64];
+    int i;
+    memvar_norm(uname, name);
+    i = memvar_slot(store, uname, name_hash(uname));
+    return i >= 0 && store->vars[i].is_local && store->vars[i].scope_depth == store->current_depth;
+}
+
+array_t *memvar_capture_cell(memvar_store_t *store, const char *name, const value_t *now) {
+    int depth = store->current_depth, i;
+    unsigned serial;
+    char uname[64];
+    if (depth < 0 || depth >= CAP_DEPTHS) return NULL;
+    serial = cap_serial_at[depth];
+    memvar_norm(uname, name);
+    for (i = 0; i < ncap_reg; i++)
+        if (cap_reg[i].depth == depth && cap_reg[i].serial == serial &&
+            strcmp(cap_reg[i].name, uname) == 0) return cap_reg[i].cell;
+    if (ncap_reg >= CAP_MAX) return NULL;   /* full: the block keeps a copy of its own */
+    {
+        array_t *cell = array_new(1);
+        if (!cell) return NULL;
+        cell->el[0] = *now;
+        cap_reg[ncap_reg].depth = depth;
+        cap_reg[ncap_reg].serial = serial;
+        str_copy(cap_reg[ncap_reg].name, uname, MEMVAR_NAMELEN);
+        cap_reg[ncap_reg].cell = cell;
+        ncap_reg++;
+        return cell;
+    }
+}
+
+/* The call at depth is returning: its captured LOCALs' last values into
+ * their cells, and the next call there a new serial */
+static void capture_detach(memvar_store_t *store, int depth) {
+    int i, j = 0, saved = store->current_depth;
+    unsigned serial;
+    if (depth < 0 || depth >= CAP_DEPTHS) return;
+    serial = cap_serial_at[depth];
+    store->current_depth = depth;
+    for (i = 0; i < ncap_reg; i++) {
+        if (cap_reg[i].depth == depth && cap_reg[i].serial == serial) {
+            value_t v;
+            if (memvar_find(store, cap_reg[i].name, &v) == 0) cap_reg[i].cell->el[0] = v;
+            continue;   /* dropped from the table: the blocks hold the cell now */
+        }
+        cap_reg[j++] = cap_reg[i];
+    }
+    for (i = j; i < ncap_reg; i++) cap_reg[i].cell = NULL;
+    ncap_reg = j;
+    store->current_depth = saved;
+    cap_serial_at[depth] = cap_next++;
+}
+
 /* The LOCALs of a scope, on its RETURN. */
 void memvar_release_locals(memvar_store_t *store, int depth) {
     int i;
+    capture_detach(store, depth);
     for (i = 0; i < store->hw; i++) {
         if (!store->vars[i].used || !store->vars[i].is_local ||
             store->vars[i].scope_depth != depth) continue;

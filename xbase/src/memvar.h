@@ -54,6 +54,12 @@ typedef struct memvar_store {
 extern unsigned memvar_array_gen;
 
 void memvar_init(memvar_store_t *store);
+/* Detached locals (memvar.c): which call is now at a depth; whether name
+ * is a LOCAL of the current one; the cell the blocks of the current call
+ * share for that LOCAL (NULL: none to be had) */
+unsigned memvar_frame_serial(int depth);
+int memvar_local_here(const memvar_store_t *store, const char *name);
+array_t *memvar_capture_cell(memvar_store_t *store, const char *name, const value_t *now);
 int  memvar_find(const memvar_store_t *store, const char *name, value_t *val);
 int  memvar_set(memvar_store_t *store, const char *name, const value_t *val);
 int  memvar_declare_array(memvar_store_t *store, const char *name, int rows, int cols);

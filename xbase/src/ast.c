@@ -1294,10 +1294,20 @@ static int make_block(expr_ctx_t *ctx, ast_node_t *body, int (*fn)(expr_ctx_t *,
     b->nparams = nparams > MAX_BLOCK_PARAMS ? MAX_BLOCK_PARAMS : nparams;
     for (i = 0; i < b->nparams; i++) str_copy(b->params[i], params[i], MEMVAR_NAMELEN);
     for (i = 0; i < nfree && b->ncap < MAX_BLOCK_CAPTURES; i++) {
-        if (ctx->vars && memvar_find(ctx->vars, names[i], &b->cap_vals[b->ncap]) == 0)
+        if (ctx->vars && memvar_find(ctx->vars, names[i], &b->cap_vals[b->ncap]) == 0) {
+            if (memvar_local_here(ctx->vars, names[i])) {
+                /* a LOCAL: the cell this call's blocks share for it */
+                array_t *cell = memvar_capture_cell(ctx->vars, names[i], &b->cap_vals[b->ncap]);
+                if (cell) {
+                    b->cap_vals[b->ncap] = val_array(cell);
+                    b->cap_shared[b->ncap] = 1;
+                }
+            }
             str_copy(b->cap_names[b->ncap++], names[i], MEMVAR_NAMELEN);
+        }
     }
     b->depth = ctx->vars ? ctx->vars->current_depth : 0;
+    b->serial = memvar_frame_serial(b->depth);
     b->body = body;
     b->fn = fn;
     *result = val_nil();
@@ -1340,14 +1350,31 @@ static int ast_eval_block_in(expr_ctx_t *ctx, const value_t *bv, value_t *args, 
     value_t saved[MAX_BLOCK_PARAMS];
     int had[MAX_BLOCK_PARAMS];
     int bound[MAX_BLOCK_CAPTURES];
-    int depth, i, rc = 0;
+    value_t shadowed[MAX_BLOCK_CAPTURES];   /* a newer call's LOCAL of the name, set aside */
+    int shadow[MAX_BLOCK_CAPTURES];
+    int depth, i, rc = 0, alive;
 
     if (bv->type != VAL_BLOCK || !bv->block) { ctx->error = "EVAL requires a code block"; return -1; }
     b = bv->block;
     depth = store->current_depth;
     store->current_depth = b->depth;   /* the maker's LOCALs, not the caller's */
+    alive = memvar_frame_serial(b->depth) == b->serial;   /* its maker's call still running */
     for (i = 0; i < b->ncap; i++) {    /* a variable gone with its function */
         value_t probe;
+        shadow[i] = 0;
+        if (b->cap_shared[i]) {
+            /* the shared cell, once the call is gone: as a LOCAL here for
+             * the evaluation, a newer call's LOCAL of the name set aside */
+            bound[i] = !alive && b->cap_vals[i].type == VAL_ARRAY && b->cap_vals[i].array;
+            if (bound[i]) {
+                if (memvar_local_here(store, b->cap_names[i])) {
+                    shadow[i] = 1;
+                    memvar_find(store, b->cap_names[i], &shadowed[i]);
+                }
+                memvar_set_local(store, b->cap_names[i], &b->cap_vals[i].array->el[0]);
+            }
+            continue;
+        }
         bound[i] = memvar_find(store, b->cap_names[i], &probe) != 0;
         if (bound[i]) memvar_set(store, b->cap_names[i], &b->cap_vals[i]);
     }
@@ -1371,10 +1398,16 @@ static int ast_eval_block_in(expr_ctx_t *ctx, const value_t *bv, value_t *args, 
         else memvar_release(store, b->params[i]);
     }
     for (i = 0; i < b->ncap; i++) {
-        if (bound[i]) {   /* keep what the block made of it */
-            memvar_find(store, b->cap_names[i], &b->cap_vals[i]);
-            memvar_release(store, b->cap_names[i]);
+        if (!bound[i]) continue;
+        if (b->cap_shared[i]) {   /* back into the cell the other blocks share */
+            memvar_find(store, b->cap_names[i], &b->cap_vals[i].array->el[0]);
+            if (shadow[i]) memvar_set_local(store, b->cap_names[i], &shadowed[i]);
+            else memvar_release(store, b->cap_names[i]);
+            continue;
         }
+        /* keep what the block made of it */
+        memvar_find(store, b->cap_names[i], &b->cap_vals[i]);
+        memvar_release(store, b->cap_names[i]);
     }
     store->current_depth = depth;
     return rc;

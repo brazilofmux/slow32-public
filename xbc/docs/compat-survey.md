@@ -747,10 +747,12 @@ The severe ones are marked.
    literal (NIL equals only NIL).  A block runs at the call depth it was
    made at, so it sees its maker's LOCALs wherever it is EVALed; its
    parameters are bound as PRIVATEs are.  A detached local (the maker
-   returned) is served from the block's own copy of the variables its
-   body names, taken when it was made and kept up to date by the block --
-   two blocks sharing one detached local do not see each other's changes
-   (Clipper's do).  Compiled blocks are C functions.
+   returned) is shared, as Clipper's is: the blocks one call makes hold
+   one cell per LOCAL they name, the variable's last value goes into it
+   when the call returns, and one block's change is the other's
+   (2026-10-30, probe op-block-shared-local; each block had kept a copy
+   of its own, and one evaluated after its call could see a newer call's
+   LOCAL of the same name at the same depth).  Compiled blocks are C functions.
 7. **The preprocessor** -- done 2026-10-29, in s32-xbc's loader (a
    Clipper program is compiled; the interpreter does not preprocess):
    #define (case-sensitive constants and NAME(a, b) pseudofunctions),
