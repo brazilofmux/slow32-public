@@ -926,9 +926,11 @@ static int fn_nosnow(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result)
     return flag_setting(&nosnow_flag, args, nargs, result);
 }
 
+/* SETMODE([rows], [cols]): a size not given (or not a number) stays */
 static int fn_setmode(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx;
-    *result = val_logic(arg_num(args, nargs, 0, 25) == 25 && arg_num(args, nargs, 1, 80) == 80);
+    *result = val_logic(screen_setmode(arg_num(args, nargs, 0, screen_maxrow() + 1),
+                                       arg_num(args, nargs, 1, screen_maxcol() + 1)));
     return 0;
 }
 
@@ -1017,8 +1019,8 @@ static int fn_alert(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
     }
     height = nlines + 4;
     if (width > 76) width = 76;
-    top = (25 - height) / 2;
-    left = (80 - (width + 4)) / 2;
+    top = (screen_maxrow() + 1 - height) / 2;
+    left = (screen_maxcol() + 1 - (width + 4)) / 2;
     {
         value_t saved = screen_save_region(top, left, top + height - 1, left + width + 3);
         screen_color_pair(2);

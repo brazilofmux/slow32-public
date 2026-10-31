@@ -119,8 +119,8 @@ first recorded; those marked Closed were closed in later rounds):
   CA's PE runs on it -- and SAVESCREEN / RESTSCREEN keep and repaint a
   region.  Without a terminal they still answer for a stream.)
 - DBSETDRIVER answers DBFNDX; DBUNLOCK / DBUNLOCKALL / NETERR / NETNAME /
-  ISPRINTER / DOSERROR answer for a single user with no printer; SETMODE
-  is true for 25 x 80 only.
+  ISPRINTER / DOSERROR answer for a single user with no printer.  (SETMODE
+  was true for 25 x 80 only; closed 2026-10-30, below.)
 
 ## The standard headers (2026-10-29)
 
@@ -848,7 +848,7 @@ The severe ones are marked.
    level is declarations only runs its first procedure, as Clipper does;
    USE positions at the first record (it left none, and a field read
    before any movement failed as an unknown variable).  Not Clipper's
-   yet: SETMODE is absent (NEXTKEY and
+   yet: SETMODE is absent (closed 2026-10-30; NEXTKEY and
    KEYBOARD came with the DBU round below).
 
 ## The Get system's loop (2026-10-30)
@@ -953,3 +953,19 @@ Found on the way, each older than this work:
   FOR over an empty table failed its lookup (and went on quietly).  It
   reads blank now, as Clipper's does; majesty's profit-and-loss run,
   which LOCATEs before its first APPEND, is where the handler showed it.
+
+## SETMODE (2026-10-30)
+
+SETMODE(nRows, nCols) changes the display mode, and MAXROW() and
+MAXCOL() follow it (probe fn-setmode); a size left out, or not a number,
+stays as it is, as Harbour's does.  The screen was 25 by 80 throughout
+-- the shadow SAVESCREEN reads, the defaults of SCROLL, SAVESCREEN,
+RESTSCREEN and TBrowseNew, the box ALERT centres, the SET MESSAGE row
+MENU TO blanks and centres on (one helper now, screen_message, for the
+seven copies menu.c and screen.c had), @ ... CLEAR's corner -- and every
+one reads the mode now.  Clipper asked the display hardware; here the
+hardware's limit is the shadow's, 128 rows by 256 columns, and a mode
+past it is refused (Harbour's terminal takes any size above zero).  The
+terminal itself is not resized: a program that asks for 50 rows wants
+a terminal that has them.  The mode at start is Clipper's, 25 by 80
+(Harbour's oracle, with no terminal, starts at 24 rows).

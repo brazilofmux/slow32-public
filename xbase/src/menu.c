@@ -230,21 +230,8 @@ int menu_activate_popup_ex(const char *name, int from_menubar) {
 
             /* Show MESSAGE for current bar */
             if (msg_row >= 0) {
-                char blank[81];
-                int len = 80;
-                if (len > (int)sizeof(blank) - 1) len = (int)sizeof(blank) - 1;
-                memset(blank, ' ', len);
-                blank[len] = '\0';
-                screen_tgoto(msg_row, 0);
                 screen_tattr(0);
-                screen_tputs(blank);
-                if (p->bars[cur].message[0]) {
-                    int mlen = (int)strlen(p->bars[cur].message);
-                    int mcol = (80 - mlen) / 2;
-                    if (mcol < 0) mcol = 0;
-                    screen_tgoto(msg_row, mcol);
-                    screen_tputs(p->bars[cur].message);
-                }
+                screen_message(msg_row, p->bars[cur].message);
             }
             term_end_update();
 
@@ -290,12 +277,7 @@ int menu_activate_popup_ex(const char *name, int from_menubar) {
                 /* Close popup, return -1 = move left in menu bar */
                 screen_tattr(0);
                 if (msg_row >= 0) {
-                    char blank[81];
-                    int len = 80;
-                    memset(blank, ' ', len);
-                    blank[len] = '\0';
-                    screen_tgoto(msg_row, 0);
-                    screen_tputs(blank);
+                    screen_message(msg_row, "");
                 }
                 term_set_raw(0);
                 screen_clear_region(r1, c1, r2, c2);
@@ -304,12 +286,7 @@ int menu_activate_popup_ex(const char *name, int from_menubar) {
                 /* Close popup, return -2 = move right in menu bar */
                 screen_tattr(0);
                 if (msg_row >= 0) {
-                    char blank[81];
-                    int len = 80;
-                    memset(blank, ' ', len);
-                    blank[len] = '\0';
-                    screen_tgoto(msg_row, 0);
-                    screen_tputs(blank);
+                    screen_message(msg_row, "");
                 }
                 term_set_raw(0);
                 screen_clear_region(r1, c1, r2, c2);
@@ -322,13 +299,7 @@ int menu_activate_popup_ex(const char *name, int from_menubar) {
 
         /* Clear message row */
         if (msg_row >= 0) {
-            char blank[81];
-            int len = 80;
-            if (len > (int)sizeof(blank) - 1) len = (int)sizeof(blank) - 1;
-            memset(blank, ' ', len);
-            blank[len] = '\0';
-            screen_tgoto(msg_row, 0);
-            screen_tputs(blank);
+            screen_message(msg_row, "");
         }
 
         term_set_raw(0);
@@ -538,19 +509,7 @@ int menu_activate_menu(const char *name) {
 
             /* Show MESSAGE for current pad */
             if (msg_row >= 0) {
-                char blank[81];
-                int len = 80;
-                memset(blank, ' ', len);
-                blank[len] = '\0';
-                screen_tgoto(msg_row, 0);
-                screen_tputs(blank);
-                if (m->pads[cur].message[0]) {
-                    int mlen = (int)strlen(m->pads[cur].message);
-                    int mcol = (80 - mlen) / 2;
-                    if (mcol < 0) mcol = 0;
-                    screen_tgoto(msg_row, mcol);
-                    screen_tputs(m->pads[cur].message);
-                }
+                screen_message(msg_row, m->pads[cur].message);
             }
             term_end_update();
 
@@ -695,12 +654,7 @@ done_term:
         /* Restore */
         screen_tattr(0);
         if (msg_row >= 0) {
-            char blank[81];
-            int len = 80;
-            memset(blank, ' ', len);
-            blank[len] = '\0';
-            screen_tgoto(msg_row, 0);
-            screen_tputs(blank);
+            screen_message(msg_row, "");
         }
         /* Clear pad bar region */
         for (i = 0; i < m->npad; i++) {

@@ -143,6 +143,12 @@ void screen_tclear(int mode);
 value_t screen_save_region(int t, int l, int b, int r);                 /* a handle string */
 void screen_restore_region(int t, int l, int b, int r, const value_t *saved);
 
+/* The display mode: MAXROW(), MAXCOL(); SETMODE() (0 when refused) */
+int screen_maxrow(void);
+int screen_maxcol(void);
+int screen_setmode(int rows, int cols);
+void screen_message(int row, const char *msg);   /* a SET MESSAGE row, blanked, msg centred */
+
 /* Key handler support (SET KEY / ON KEY) */
 void screen_set_key_handler(int keycode, const char *procname);
 void screen_clear_key_handlers(void);

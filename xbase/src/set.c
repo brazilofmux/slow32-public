@@ -6,6 +6,7 @@
 #include "util.h"
 #include "ast.h"
 #include "command.h"
+#include "screen.h"
 
 void set_init(set_options_t *opts) {
     opts->talk = 1;
@@ -290,10 +291,10 @@ void set_execute(set_options_t *opts, const char *arg) {
         if (str_imatch(p, "TO")) p = skip_ws(p + 2);
         if (*p >= '0' && *p <= '9') {
             val = atoi(p);
-            if (val >= 0 && val <= 24)
+            if (val >= 0 && val <= screen_maxrow())
                 opts->message_row = val;
             else
-                printf("MESSAGE row must be 0-24.\n");
+                printf("MESSAGE row must be 0-%d.\n", screen_maxrow());
         } else {
             opts->message_row = -1;  /* disable */
         }

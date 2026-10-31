@@ -1176,13 +1176,13 @@ int fn_dispout(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
 
 int fn_maxrow(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx; (void)args; (void)nargs;
-    *result = vnum(24);
+    *result = vnum(screen_maxrow());
     return 0;
 }
 
 int fn_maxcol(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx; (void)args; (void)nargs;
-    *result = vnum(79);
+    *result = vnum(screen_maxcol());
     return 0;
 }
 
@@ -1210,7 +1210,7 @@ int fn_setcursor(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
 int fn_scroll(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx;
     screen_clear_region(arg_num(args, nargs, 0, 0), arg_num(args, nargs, 1, 0),
-                        arg_num(args, nargs, 2, 24), arg_num(args, nargs, 3, 79));
+                        arg_num(args, nargs, 2, screen_maxrow()), arg_num(args, nargs, 3, screen_maxcol()));
     *result = val_nil();
     return 0;
 }
@@ -1238,7 +1238,7 @@ int fn_dispbox(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
 int fn_savescreen(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx;
     *result = screen_save_region(arg_num(args, nargs, 0, 0), arg_num(args, nargs, 1, 0),
-                                 arg_num(args, nargs, 2, 24), arg_num(args, nargs, 3, 79));
+                                 arg_num(args, nargs, 2, screen_maxrow()), arg_num(args, nargs, 3, screen_maxcol()));
     return 0;
 }
 
@@ -1246,9 +1246,9 @@ int fn_restscreen(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx;
     if (nargs >= 5)
         screen_restore_region(arg_num(args, nargs, 0, 0), arg_num(args, nargs, 1, 0),
-                              arg_num(args, nargs, 2, 24), arg_num(args, nargs, 3, 79), &args[4]);
+                              arg_num(args, nargs, 2, screen_maxrow()), arg_num(args, nargs, 3, screen_maxcol()), &args[4]);
     else if (nargs >= 1)
-        screen_restore_region(0, 0, 24, 79, &args[nargs - 1]);
+        screen_restore_region(0, 0, screen_maxrow(), screen_maxcol(), &args[nargs - 1]);
     *result = val_nil();
     return 0;
 }
@@ -1440,7 +1440,7 @@ static object_t *tbrowse_new(int t, int l, int b, int r) {
 
 int fn_tbrowsenew(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     object_t *o = tbrowse_new(arg_num(args, nargs, 0, 0), arg_num(args, nargs, 1, 0),
-                              arg_num(args, nargs, 2, 24), arg_num(args, nargs, 3, 79));
+                              arg_num(args, nargs, 2, screen_maxrow()), arg_num(args, nargs, 3, screen_maxcol()));
     if (!o) { ctx->error = "Out of memory"; return -1; }
     *result = val_object(o);
     return 0;

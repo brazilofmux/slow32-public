@@ -43,8 +43,9 @@ static struct {
 static int key_handler_count;
 static int in_key_handler;  /* re-entrancy guard */
 
-/* Assume 80-column screen for cursor tracking */
-#define SCREEN_COLS 80
+/* The display mode: 25 by 80 until SETMODE() asks for another */
+static int scr_rows = 25, scr_cols = 80;
+
 
 /* dBase III key codes for special keys */
 
@@ -114,13 +115,27 @@ static void term_end_update(void) { }
  * byte (bit 7 set, bold, background, foreground).  A saved region is
  * kept here and handed to the program as a short handle string (a
  * value_t string holds 255 characters; a screen is 4,000 cells). */
-#define SHADOW_ROWS 25
-#define SHADOW_COLS 80
+#define SHADOW_MAX_ROWS 128
+#define SHADOW_MAX_COLS 256
 typedef struct { unsigned char ch, attr; } shadow_cell_t;
-static shadow_cell_t shadow[SHADOW_ROWS][SHADOW_COLS];
+static shadow_cell_t shadow[SHADOW_MAX_ROWS][SHADOW_MAX_COLS];
 static int shadow_row, shadow_col;
 static int shadow_fg = 7, shadow_bg = 0, shadow_bold, shadow_inverse;
 static int shadow_ready;
+
+int screen_maxrow(void) { return scr_rows - 1; }
+int screen_maxcol(void) { return scr_cols - 1; }
+
+/* SETMODE(): the display hardware Clipper drove is the terminal here, and
+ * the shadow's size is the hardware's limit */
+int screen_setmode(int rows, int cols) {
+    if (rows < 1 || rows > SHADOW_MAX_ROWS || cols < 1 || cols > SHADOW_MAX_COLS) return 0;
+    scr_rows = rows;
+    scr_cols = cols;
+    if (shadow_row >= scr_rows) shadow_row = scr_rows - 1;
+    if (shadow_col > scr_cols) shadow_col = scr_cols;
+    return 1;
+}
 
 static unsigned char shadow_attr(void) {
     int fg = shadow_inverse ? shadow_bg : shadow_fg;
@@ -132,23 +147,23 @@ static void shadow_init(void) {
     int r, c;
     if (shadow_ready) return;
     shadow_ready = 1;
-    for (r = 0; r < SHADOW_ROWS; r++)
-        for (c = 0; c < SHADOW_COLS; c++) { shadow[r][c].ch = ' '; shadow[r][c].attr = 0x87; }
+    for (r = 0; r < SHADOW_MAX_ROWS; r++)
+        for (c = 0; c < SHADOW_MAX_COLS; c++) { shadow[r][c].ch = ' '; shadow[r][c].attr = 0x87; }
 }
 
 static void shadow_put(int ch) {
     shadow_init();
-    if (shadow_row >= 0 && shadow_row < SHADOW_ROWS && shadow_col >= 0 && shadow_col < SHADOW_COLS) {
+    if (shadow_row >= 0 && shadow_row < scr_rows && shadow_col >= 0 && shadow_col < scr_cols) {
         shadow[shadow_row][shadow_col].ch = (unsigned char)ch;
         shadow[shadow_row][shadow_col].attr = shadow_attr();
     }
-    if (shadow_row == SHADOW_ROWS - 1 && shadow_col == SHADOW_COLS - 1) {
-        shadow_col = SHADOW_COLS;   /* the screen's last cell: nothing follows it (see shadow_full) */
+    if (shadow_row == scr_rows - 1 && shadow_col == scr_cols - 1) {
+        shadow_col = scr_cols;   /* the screen's last cell: nothing follows it (see shadow_full) */
         return;
     }
-    if (++shadow_col >= SHADOW_COLS) {
+    if (++shadow_col >= scr_cols) {
         shadow_col = 0;
-        if (shadow_row < SHADOW_ROWS - 1) shadow_row++;
+        if (shadow_row < scr_rows - 1) shadow_row++;
     }
 }
 
@@ -163,13 +178,13 @@ void screen_tgoto(int row, int col) {
  * and what runs off the bottom-right corner is lost; a terminal would wrap
  * and scroll the whole screen up (PE's status line ends one past column 79) */
 static int shadow_full(void) {
-    return shadow_row == SHADOW_ROWS - 1 && shadow_col >= SHADOW_COLS;
+    return shadow_row == scr_rows - 1 && shadow_col >= scr_cols;
 }
 
 void screen_tputs(const char *s) {
     const char *p;
     for (p = s; *p; p++) {
-        if (*p == '\n') { shadow_col = 0; if (shadow_row < SHADOW_ROWS - 1) shadow_row++; }
+        if (*p == '\n') { shadow_col = 0; if (shadow_row < scr_rows - 1) shadow_row++; }
         else if (*p == '\r') shadow_col = 0;
         else if (shadow_full()) {
             /* the rest of the string falls off the screen */
@@ -184,7 +199,7 @@ void screen_tputs(const char *s) {
 }
 
 void screen_tputc(int ch) {
-    if (ch == '\n') { shadow_col = 0; if (shadow_row < SHADOW_ROWS - 1) shadow_row++; }
+    if (ch == '\n') { shadow_col = 0; if (shadow_row < scr_rows - 1) shadow_row++; }
     else if (ch == '\r') shadow_col = 0;
     else if (shadow_full()) return;
     else shadow_put(ch);
@@ -210,14 +225,14 @@ void screen_tclear(int mode) {
     shadow_init();
     a = shadow_attr();
     if (mode == 0) {
-        for (r = 0; r < SHADOW_ROWS; r++)
-            for (c = 0; c < SHADOW_COLS; c++) { shadow[r][c].ch = ' '; shadow[r][c].attr = a; }
+        for (r = 0; r < scr_rows; r++)
+            for (c = 0; c < scr_cols; c++) { shadow[r][c].ch = ' '; shadow[r][c].attr = a; }
         shadow_row = shadow_col = 0;
-    } else if (shadow_row >= 0 && shadow_row < SHADOW_ROWS) {
-        for (c = shadow_col > 0 ? shadow_col : 0; c < SHADOW_COLS; c++) { shadow[shadow_row][c].ch = ' '; shadow[shadow_row][c].attr = a; }
+    } else if (shadow_row >= 0 && shadow_row < scr_rows) {
+        for (c = shadow_col > 0 ? shadow_col : 0; c < scr_cols; c++) { shadow[shadow_row][c].ch = ' '; shadow[shadow_row][c].attr = a; }
         if (mode == 2)
-            for (r = shadow_row + 1; r < SHADOW_ROWS; r++)
-                for (c = 0; c < SHADOW_COLS; c++) { shadow[r][c].ch = ' '; shadow[r][c].attr = a; }
+            for (r = shadow_row + 1; r < scr_rows; r++)
+                for (c = 0; c < scr_cols; c++) { shadow[r][c].ch = ' '; shadow[r][c].attr = a; }
     }
     term_clear(mode);
 }
@@ -232,8 +247,8 @@ static int saved_next;
 static void region_clamp(int *t, int *l, int *b, int *r) {
     if (*t < 0) *t = 0;
     if (*l < 0) *l = 0;
-    if (*b >= SHADOW_ROWS) *b = SHADOW_ROWS - 1;
-    if (*r >= SHADOW_COLS) *r = SHADOW_COLS - 1;
+    if (*b >= scr_rows) *b = scr_rows - 1;
+    if (*r >= scr_cols) *r = scr_cols - 1;
 }
 
 value_t screen_save_region(int t, int l, int b, int r) {
@@ -393,10 +408,10 @@ static void screen_update_pos(int row, int col, int len) {
     if (col < 1) col = 1;
     if (len < 0) len = 0;
     end_col = col + len;
-    /* Handle wrap past SCREEN_COLS */
-    if (end_col > SCREEN_COLS + 1) {
-        row += (end_col - 1) / SCREEN_COLS;
-        end_col = ((end_col - 1) % SCREEN_COLS) + 1;
+    /* Handle wrap past scr_cols */
+    if (end_col > scr_cols + 1) {
+        row += (end_col - 1) / scr_cols;
+        end_col = ((end_col - 1) % scr_cols) + 1;
     }
     scr.last_row = row;
     scr.last_col = end_col;  /* 1-based: cursor is AT this column */
@@ -873,7 +888,7 @@ static void scoreboard_insert(int inserting) {
 }
 
 void scoreboard_message(const char *msg) {
-    int len = (int)strlen(msg), col = 79 - len < 60 ? 79 - len : 60, k;
+    int len = (int)strlen(msg), col = scr_cols - 1 - len < 60 ? scr_cols - 1 - len : 60, k;
     char blank[96];
     if (!scoreboard_on()) return;
     if (col < 0) col = 0;
@@ -1133,10 +1148,10 @@ void screen_read(void) {
                     if (n < lo || n > hi) {
                         char rmsg[80];
                         snprintf(rmsg, sizeof(rmsg), "Range: %g to %g", lo, hi);
-                        screen_tgoto(24, 1);
+                        screen_tgoto(scr_rows - 1, 1);
                         screen_tputs(rmsg);
                         term_getkey();  /* wait for acknowledgment */
-                        screen_tgoto(24, 1);
+                        screen_tgoto(scr_rows - 1, 1);
                         {
                             int ri;
                             for (ri = 0; ri < 40; ri++) screen_tputc(' ');
@@ -1160,10 +1175,10 @@ void screen_read(void) {
                         if (had_old) memvar_set(store, scr.gets[i].varname, &old_val);
                         else if (scr.gets[i].is_field) get_store_initial(&scr.gets[i]);
                         if (getsys_style()) { str_copy(kept_edit, buf, sizeof(kept_edit)); have_kept = 1; refused = 1; continue; }   /* GETSYS says nothing: the GET is edited again */
-                        screen_tgoto(24, 1);
+                        screen_tgoto(scr_rows - 1, 1);
                         screen_tputs("Invalid entry.");
                         term_getkey();  /* wait for acknowledgment */
-                        screen_tgoto(24, 1);
+                        screen_tgoto(scr_rows - 1, 1);
                         {
                             int ri;
                             for (ri = 0; ri < 40; ri++) screen_tputc(' ');
@@ -1315,6 +1330,22 @@ void screen_clear_region(int r1, int c1, int r2, int c2) {
     }
 }
 
+/* A message row (SET MESSAGE): blanked across the screen, the message
+ * centred on it */
+void screen_message(int row, const char *msg) {
+    char blank[SHADOW_MAX_COLS + 1];
+    int mlen = (int)strlen(msg), mcol;
+    memset(blank, ' ', (size_t)scr_cols);
+    blank[scr_cols] = '\0';
+    screen_tgoto(row, 0);
+    screen_tputs(blank);
+    if (!mlen) return;
+    mcol = (scr_cols - mlen) / 2;
+    if (mcol < 0) mcol = 0;
+    screen_tgoto(row, mcol);
+    screen_tputs(msg);
+}
+
 /* ---- @TO (box drawing) ---- */
 void screen_box(int r1, int c1, int r2, int c2, int dbl) {
     /* Box characters: single vs double */
@@ -1399,10 +1430,10 @@ void screen_clear(void) {
         return;
     }
 #endif
-    /* Fallback: print 24 newlines */
+    /* Fallback: a screen of newlines */
     {
         int i;
-        for (i = 0; i < 24; i++) printf("\n");
+        for (i = 0; i < scr_rows - 1; i++) printf("\n");
     }
     scr.last_row = 0;
     scr.last_col = 1;
@@ -1483,24 +1514,8 @@ int screen_menu_to(void) {
 
             /* Show MESSAGE for current selection if SET MESSAGE is active */
             if (msg_row >= 0) {
-                char blank[81];
-                int len;
-                screen_tgoto(msg_row, 0);
                 screen_tattr(0);
-                /* Clear the message row */
-                len = 80;
-                if (len > (int)sizeof(blank) - 1) len = (int)sizeof(blank) - 1;
-                memset(blank, ' ', len);
-                blank[len] = '\0';
-                screen_tputs(blank);
-                /* Display current message centered */
-                if (scr.prompts[cur].message[0]) {
-                    int mlen = (int)strlen(scr.prompts[cur].message);
-                    int mcol = (80 - mlen) / 2;
-                    if (mcol < 0) mcol = 0;
-                    screen_tgoto(msg_row, mcol);
-                    screen_tputs(scr.prompts[cur].message);
-                }
+                screen_message(msg_row, scr.prompts[cur].message);
             }
             term_end_update();
 
@@ -1556,13 +1571,7 @@ int screen_menu_to(void) {
 
         /* Clear message row */
         if (msg_row >= 0) {
-            char blank[81];
-            int len = 80;
-            if (len > (int)sizeof(blank) - 1) len = (int)sizeof(blank) - 1;
-            memset(blank, ' ', len);
-            blank[len] = '\0';
-            screen_tgoto(msg_row, 0);
-            screen_tputs(blank);
+            screen_message(msg_row, "");
         }
 
         term_set_raw(0);
@@ -1942,7 +1951,7 @@ void screen_at_cmd(const char *line) {
         at_get_clause(row, col, p + 3);
 
     } else if (str_imatch(p, "CLEAR")) {
-        int r2 = 24, c2 = 79;
+        int r2 = scr_rows - 1, c2 = scr_cols - 1;
         p = skip_ws(p + 5);
         if (str_imatch(p, "TO")) {   /* the corner: expressions */
             p = skip_ws(p + 2);
@@ -1992,7 +2001,7 @@ void screen_at_cmd(const char *line) {
         screen_prompt(row, col, text, message);
 
     } else if (*p == '\0') {   /* @ row, col alone: the line cleared from there, the cursor left there */
-        screen_clear_region(row, col, row, SCREEN_COLS - 1);
+        screen_clear_region(row, col, row, scr_cols - 1);
         screen_setpos(row, col);
     } else {
         printf("Syntax: @ row,col SAY|GET|PROMPT|CLEAR TO|TO ...\n");
