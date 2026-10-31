@@ -1423,6 +1423,8 @@ static object_t *tbrowse_new(int t, int l, int b, int r) {
     iv_set(o, "cargo", val_nil());
     iv_set(o, "colorSpec", val_str(screen_color_spec()));
     iv_set(o, "freeze", vnum(0));
+    iv_set(o, "leftVisible", vnum(0));    /* set by the layout (tb_set_left) */
+    iv_set(o, "rightVisible", vnum(0));
     iv_set(o, "colPos", vnum(1));
     iv_set(o, "rowPos", vnum(1));
     iv_set(o, "hitTop", val_logic(0));
@@ -1621,55 +1623,12 @@ static int m_tb_pagedown(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *a
     return 0;
 }
 
-static int m_tb_home(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
-    int moved;
-    (void)args; (void)nargs;
-    if (tb_skip(ctx, o, -((int)iv_num(o, "rowPos") - 1), &moved) != 0) return -1;
-    iv_set(o, "rowPos", vnum(iv_num(o, "rowPos") + moved));
-    tb_moved(o, 0, 0);
-    *result = *self;
-    return 0;
-}
 
-static int m_tb_end(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
-    int moved;
-    (void)args; (void)nargs;
-    if (tb_skip(ctx, o, (int)iv_num(o, "rowCount") - (int)iv_num(o, "rowPos"), &moved) != 0) return -1;
-    iv_set(o, "rowPos", vnum(iv_num(o, "rowPos") + moved));
-    tb_moved(o, 0, 0);
-    *result = *self;
-    return 0;
-}
 
-static int tb_colmove(object_t *o, int to, value_t *self, value_t *result) {
-    int n = (int)iv_num(o, "colCount");
-    if (to < 1) to = 1;
-    if (to > n) to = n > 0 ? n : 1;
-    iv_set(o, "colPos", vnum(to));
-    iv_set(o, "stable", val_logic(0));
-    *result = *self;
-    return 0;
-}
 
-static int m_tb_left(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
-    (void)ctx; (void)args; (void)nargs;
-    return tb_colmove(o, (int)iv_num(o, "colPos") - 1, self, result);
-}
 
-static int m_tb_right(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
-    (void)ctx; (void)args; (void)nargs;
-    return tb_colmove(o, (int)iv_num(o, "colPos") + 1, self, result);
-}
 
-static int m_tb_panhome(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
-    (void)ctx; (void)args; (void)nargs;
-    return tb_colmove(o, 1, self, result);
-}
 
-static int m_tb_panend(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
-    (void)ctx; (void)args; (void)nargs;
-    return tb_colmove(o, (int)iv_num(o, "colCount"), self, result);
-}
 
 static int m_tb_invalidate(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
     (void)ctx; (void)args; (void)nargs;
@@ -1758,12 +1717,165 @@ static int tb_widths(expr_ctx_t *ctx, object_t *o, int *width, int ncol, int *he
     return 0;
 }
 
-/* The screen column of the current column's cell */
-static int tb_cell_x(object_t *o, const int *width, int ncol) {
-    int x = (int)iv_num(o, "nLeft"), colpos = (int)iv_num(o, "colPos"), i;
+/* ---- Columns on the screen ----
+ * The frozen columns (1 .. freeze) always, then from leftVisible as many
+ * as fit the window with the separators between them; rightVisible is
+ * the last of those.  The column moves keep colPos among them, panning
+ * as Harbour's TBrowse does (and Clipper's). */
+static int tb_freeze(object_t *o, int ncol) {
+    int f = (int)iv_num(o, "freeze");
+    if (f < 0) f = 0;
+    if (f > ncol) f = ncol;
+    return f;
+}
+
+/* the last column that fits when lv is the first scrolling one */
+static int tb_right_from(object_t *o, const int *width, int ncol, int lv) {
+    int avail = (int)iv_num(o, "nRight") - (int)iv_num(o, "nLeft") + 1;
+    int sep = (int)strlen(iv_str(o, "colSep")), used = 0, nvis = 0, i, rv = lv;
+    int freeze = tb_freeze(o, ncol);
+    for (i = 0; i < freeze; i++) { used += (nvis ? sep : 0) + width[i]; nvis++; }
+    for (i = lv; i <= ncol; i++) {
+        int add = (nvis ? sep : 0) + width[i - 1];
+        if (used + add > avail && i > lv) break;
+        used += add;
+        nvis++;
+        rv = i;
+    }
+    return rv;
+}
+
+static void tb_set_left(object_t *o, const int *width, int ncol, int lv) {
+    int freeze = tb_freeze(o, ncol);
+    if (freeze >= ncol) {   /* all frozen: nothing scrolls */
+        iv_set(o, "leftVisible", vnum(ncol));
+        iv_set(o, "rightVisible", vnum(ncol));
+        return;
+    }
+    if (lv < freeze + 1) lv = freeze + 1;
+    if (lv > ncol) lv = ncol;
+    iv_set(o, "leftVisible", vnum(lv));
+    iv_set(o, "rightVisible", vnum(tb_right_from(o, width, ncol, lv)));
+}
+
+/* colPos on the screen: a scrolling column left of the window brings
+ * the window to it, one right of it moves the window on until it fits */
+static void tb_show_col(object_t *o, const int *width, int ncol) {
+    int c = (int)iv_num(o, "colPos"), guard = 0;
+    if (c <= tb_freeze(o, ncol)) return;
+    if (c < (int)iv_num(o, "leftVisible")) tb_set_left(o, width, ncol, c);
+    while (c > (int)iv_num(o, "rightVisible") && guard++ < 64)
+        tb_set_left(o, width, ncol, (int)iv_num(o, "leftVisible") + 1);
+}
+
+/* the widths, and the layout made good for them (a frozen count or a
+ * column changed since): 0, or -1 on an error */
+static int tb_layout(expr_ctx_t *ctx, object_t *o, int *width, int *ncol, int *heads) {
+    array_t *cols = tb_columns(o);
+    int n = cols ? cols->len : 0;
+    if (n > 64) n = 64;
+    *ncol = n;
+    if (n == 0) return 0;
+    if (tb_widths(ctx, o, width, n, heads) != 0) return -1;
+    tb_set_left(o, width, n, (int)iv_num(o, "leftVisible"));
+    tb_show_col(o, width, n);
+    return 0;
+}
+
+static int tb_col_method(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *result, int which) {
+    int width[64], ncol, heads, c, lv, rv, freeze;
+    *result = *self;
+    if (tb_layout(ctx, o, width, &ncol, &heads) != 0) return -1;
+    if (ncol == 0) return 0;
+    c = (int)iv_num(o, "colPos");
+    lv = (int)iv_num(o, "leftVisible");
+    rv = (int)iv_num(o, "rightVisible");
+    freeze = tb_freeze(o, ncol);
+    switch (which) {
+    case 'L': if (c > 1) c--; break;                         /* left() */
+    case 'R': if (c < ncol) c++; break;                      /* right() */
+    case 'h': c = lv; break;                                 /* home(): the leftmost scrolling column on the screen */
+    case 'e': c = rv; break;                                 /* end(): the rightmost */
+    case 'H':                                                /* panHome() */
+        c = 1;
+        tb_set_left(o, width, ncol, freeze + 1);
+        break;
+    case 'E':                                                /* panEnd() */
+        c = ncol;
+        lv = ncol;
+        while (lv - 1 >= freeze + 1 && tb_right_from(o, width, ncol, lv - 1) >= ncol) lv--;
+        tb_set_left(o, width, ncol, lv);
+        break;
+    case '<':                                                /* panLeft() */
+        if (lv > freeze + 1) tb_set_left(o, width, ncol, lv - 1);
+        if (c > (int)iv_num(o, "rightVisible")) c = (int)iv_num(o, "rightVisible");
+        break;
+    case '>':                                                /* panRight() */
+        if (rv < ncol) tb_set_left(o, width, ncol, lv + 1);
+        if (c < (int)iv_num(o, "leftVisible")) c = (int)iv_num(o, "leftVisible");
+        if (c > (int)iv_num(o, "rightVisible")) c = (int)iv_num(o, "rightVisible");
+        break;
+    }
+    if (c < 1) c = 1;
+    if (c > ncol) c = ncol;
+    iv_set(o, "colPos", vnum(c));
+    tb_show_col(o, width, ncol);
+    iv_set(o, "stable", val_logic(0));
+    return 0;
+}
+
+static int m_tb_left(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
+    (void)args; (void)nargs;
+    return tb_col_method(ctx, o, self, result, 'L');
+}
+static int m_tb_right(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
+    (void)args; (void)nargs;
+    return tb_col_method(ctx, o, self, result, 'R');
+}
+static int m_tb_home(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
+    (void)args; (void)nargs;
+    return tb_col_method(ctx, o, self, result, 'h');
+}
+static int m_tb_end(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
+    (void)args; (void)nargs;
+    return tb_col_method(ctx, o, self, result, 'e');
+}
+static int m_tb_panhome(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
+    (void)args; (void)nargs;
+    return tb_col_method(ctx, o, self, result, 'H');
+}
+static int m_tb_panend(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
+    (void)args; (void)nargs;
+    return tb_col_method(ctx, o, self, result, 'E');
+}
+static int m_tb_panleft(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
+    (void)args; (void)nargs;
+    return tb_col_method(ctx, o, self, result, '<');
+}
+static int m_tb_panright(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
+    (void)args; (void)nargs;
+    return tb_col_method(ctx, o, self, result, '>');
+}
+
+/* The columns on the screen, in order: the frozen ones, then
+ * leftVisible .. rightVisible.  Returns how many. */
+static int tb_visible(object_t *o, int ncol, int *vis) {
+    int n = 0, i, freeze = tb_freeze(o, ncol);
+    int lv = (int)iv_num(o, "leftVisible"), rv = (int)iv_num(o, "rightVisible");
+    for (i = 1; i <= freeze; i++) vis[n++] = i;
+    for (i = lv > freeze ? lv : freeze + 1; i <= rv && i <= ncol; i++) vis[n++] = i;
+    return n;
+}
+
+/* The screen column of column col's cell (nLeft when it is not shown) */
+static int tb_col_x(object_t *o, const int *width, int ncol, int col) {
+    int vis[64], nvis = tb_visible(o, ncol, vis), x = (int)iv_num(o, "nLeft"), i;
     int seplen = (int)strlen(iv_str(o, "colSep"));
-    for (i = 0; i < colpos - 1 && i < ncol; i++) x += width[i] + seplen;
-    return x;
+    for (i = 0; i < nvis; i++) {
+        if (vis[i] == col) return x;
+        x += width[vis[i] - 1] + seplen;
+    }
+    return (int)iv_num(o, "nLeft");
 }
 
 /* The screen row of the current row's cell */
@@ -1773,22 +1885,38 @@ static int tb_cell_y(object_t *o, int heads) {
     return y;
 }
 
+/* The colour pair a cell is shown in: its column's colorBlock, given the
+ * cell's value, answers {standard, enhanced} -- else the column's
+ * defColor, else 1 and 2.  which: 1 standard, 2 enhanced. */
+static int tb_cell_color(expr_ctx_t *ctx, object_t *c, int which) {
+    value_t *cb = object_ivar(c, "colorBlock", 0), *dc = object_ivar(c, "defColor", 0), r, v;
+    if (cb && cb->type == VAL_BLOCK && eval_block(ctx, c, "block", NULL, 0, &v) == 0 &&
+        ast_eval_block(ctx, cb, &v, 1, &r) == 0 && r.type == VAL_ARRAY && r.array &&
+        r.array->len >= which && r.array->el[which - 1].type == VAL_NUM)
+        return (int)r.array->el[which - 1].num;
+    ctx->error = NULL;
+    if (dc && dc->type == VAL_ARRAY && dc->array && dc->array->len >= which &&
+        dc->array->el[which - 1].type == VAL_NUM)
+        return (int)dc->array->el[which - 1].num;
+    return which;
+}
+
 /* hilite() / deHilite(): the current cell in the enhanced (or standard)
  * colour, the cursor on it -- DBU makes its editing GET at ROW(), COL()
  * after hilite() */
 static int tb_hilite_cell(expr_ctx_t *ctx, object_t *o, int enhanced) {
     array_t *cols = tb_columns(o);
-    int ncol = cols ? cols->len : 0, colpos = (int)iv_num(o, "colPos");
+    int ncol, colpos = (int)iv_num(o, "colPos");
     int width[64], heads, x, y;
     char cell[256];
-    if (!screen_term_available() || ncol == 0 || colpos < 1 || colpos > ncol) return 0;
-    if (ncol > 64) ncol = 64;
-    if (tb_widths(ctx, o, width, ncol, &heads) != 0) return -1;
+    if (!screen_term_available() || !cols || cols->len == 0) return 0;
+    if (tb_layout(ctx, o, width, &ncol, &heads) != 0) return -1;
+    if (colpos < 1 || colpos > ncol) return 0;
     if (tb_cell(ctx, cols->el[colpos - 1].obj, cell, sizeof(cell)) != 0) return -1;
     pad_to(cell, width[colpos - 1], sizeof(cell));
-    x = tb_cell_x(o, width, ncol);
+    x = tb_col_x(o, width, ncol, colpos);
     y = tb_cell_y(o, heads);
-    screen_color_pair(enhanced ? 2 : 1);
+    screen_color_pair(tb_cell_color(ctx, cols->el[colpos - 1].obj, enhanced ? 2 : 1));
     screen_out_at(y, x, cell);
     screen_color_pair(1);
     screen_setpos(y, x);
@@ -1807,13 +1935,57 @@ static int m_tb_dehilite(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *a
     return tb_hilite_cell(ctx, o, 0);
 }
 
+/* A separator row (headSep, footSep) across the window: its last
+ * character repeats */
+static void tb_sep_row(object_t *o, const char *ivar, int y) {
+    const char *sep = iv_str(o, ivar);
+    int left = (int)iv_num(o, "nLeft"), w = (int)iv_num(o, "nRight") - left + 1, n = (int)strlen(sep), i;
+    char line[512];
+    for (i = 0; i < w && i < (int)sizeof(line) - 1; i++) line[i] = sep[i < n ? i : n - 1];
+    line[i] = '\0';
+    screen_out_at(y, left, line);
+}
+
+/* A row of the window built from the visible columns: text(i) for column
+ * i, padded or centred to its width, the colSep between; painted cell by
+ * cell in colours[] when given */
+static void tb_paint_row(object_t *o, int y, const int *vis, int nvis, const int *width,
+                         char cells[][256], const int *colours) {
+    int left = (int)iv_num(o, "nLeft"), right = (int)iv_num(o, "nRight");
+    int x = left, i;
+    const char *sep = iv_str(o, "colSep");
+    for (i = 0; i < nvis; i++) {
+        char cell[256];
+        if (i) {
+            screen_color_pair(1);
+            screen_out_at(y, x, sep);
+            x += (int)strlen(sep);
+        }
+        snprintf(cell, sizeof(cell), "%s", cells[i]);
+        pad_to(cell, width[vis[i] - 1], sizeof(cell));
+        if (x + (int)strlen(cell) > right + 1) cell[right + 1 - x > 0 ? right + 1 - x : 0] = '\0';
+        screen_color_pair(colours ? colours[i] : 1);
+        screen_out_at(y, x, cell);
+        x += (int)strlen(cell);
+    }
+    screen_color_pair(1);
+    if (x <= right) {   /* the rest of the row, blank */
+        char blank[512];
+        int n = right - x + 1;
+        if (n > (int)sizeof(blank) - 1) n = (int)sizeof(blank) - 1;
+        memset(blank, ' ', (size_t)n);
+        blank[n] = '\0';
+        screen_out_at(y, x, blank);
+    }
+}
+
 static int m_tb_stabilize(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
     array_t *cols = tb_columns(o);
-    int ncol = cols ? cols->len : 0;
+    int ncol = 0;
     int rows = (int)iv_num(o, "rowCount"), rowpos = (int)iv_num(o, "rowPos");
-    int top = (int)iv_num(o, "nTop"), left = (int)iv_num(o, "nLeft"), right = (int)iv_num(o, "nRight");
-    int width[64], heads = 0, i, r, moved, painted, y;
-    char cell[256], line[512];
+    int top = (int)iv_num(o, "nTop");
+    int width[64], heads = 0, foots = 0, i, r, moved, painted, y, vis[64], nvis, colours[64];
+    static char cells[64][256];
     int paint = screen_term_available();
     (void)args; (void)nargs;
     *result = val_logic(1);
@@ -1824,32 +1996,32 @@ static int m_tb_stabilize(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *
         return tb_hilite_cell(ctx, o, 1);
     }
     tb_settle_hits(o);
-    if (ncol > 64) ncol = 64;
-
-    if (tb_widths(ctx, o, width, ncol, &heads) != 0) return -1;
+    /* headings, footings and separators may have changed since the
+     * columns were added: rowCount follows them (as configure() would) */
+    tb_configure(o);
+    rows = (int)iv_num(o, "rowCount");
+    if (rowpos > rows) {
+        rowpos = rows;
+        iv_set(o, "rowPos", vnum(rowpos));
+    }
+    if (tb_layout(ctx, o, width, &ncol, &heads) != 0) return -1;
+    nvis = tb_visible(o, ncol, vis);
+    for (i = 0; i < ncol; i++) {
+        object_t *c = cols->el[i].type == VAL_OBJECT ? cols->el[i].obj : NULL;
+        if (c && iv_str(c, "footing")[0]) foots = 1;
+    }
 
     y = top;
     if (heads) {
-        line[0] = '\0';
-        for (i = 0; i < ncol; i++) {
-            object_t *c = cols->el[i].obj;
-            snprintf(cell, sizeof(cell), "%s", iv_str(c, "heading"));
-            center_to(cell, width[i], sizeof(cell));
-            if (i) strncat(line, iv_str(o, "colSep"), sizeof(line) - strlen(line) - 1);
-            strncat(line, cell, sizeof(line) - strlen(line) - 1);
+        for (i = 0; i < nvis; i++) {
+            object_t *c = cols->el[vis[i] - 1].obj;
+            snprintf(cells[i], sizeof(cells[i]), "%s", iv_str(c, "heading"));
+            center_to(cells[i], width[vis[i] - 1], sizeof(cells[i]));
         }
-        pad_to(line, right - left + 1, sizeof(line));
-        if (paint) screen_out_at(y, left, line);
+        if (paint) tb_paint_row(o, y, vis, nvis, width, cells, NULL);
         y++;
         if (iv_str(o, "headSep")[0]) {
-            const char *sep = iv_str(o, "headSep");
-            int n = (int)strlen(sep), k = 0;
-            for (i = 0; i < right - left + 1 && i < (int)sizeof(line) - 1; i++) {
-                line[i] = sep[n > 1 ? (k < n - 1 ? k : n - 1) : 0];
-                if (n > 1) k = 0;   /* the last char repeats across the row */
-            }
-            line[i] = '\0';
-            if (paint) screen_out_at(y, left, line);
+            if (paint) tb_sep_row(o, "headSep", y);
             y++;
         }
     }
@@ -1866,28 +2038,39 @@ static int m_tb_stabilize(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *
             if (tb_skip(ctx, o, 1, &moved) != 0) return -1;
             if (moved == 0) break;
         }
-        line[0] = '\0';
-        for (i = 0; i < ncol; i++) {
-            if (tb_cell(ctx, cols->el[i].obj, cell, sizeof(cell)) != 0) return -1;
-            pad_to(cell, width[i], sizeof(cell));
-            if (i) strncat(line, iv_str(o, "colSep"), sizeof(line) - strlen(line) - 1);
-            strncat(line, cell, sizeof(line) - strlen(line) - 1);
+        for (i = 0; i < nvis; i++) {
+            object_t *c = cols->el[vis[i] - 1].obj;
+            if (tb_cell(ctx, c, cells[i], sizeof(cells[i])) != 0) return -1;
+            colours[i] = paint ? tb_cell_color(ctx, c, 1) : 1;
         }
-        pad_to(line, right - left + 1, sizeof(line));
-        if (paint) screen_out_at(y + r, left, line);
+        if (paint) tb_paint_row(o, y + r, vis, nvis, width, cells, colours);
         painted = r + 1;
     }
     for (; paint && r < rows; r++) {   /* the rows below the data, blank */
-        line[0] = '\0';
-        pad_to(line, right - left + 1, sizeof(line));
-        screen_out_at(y + r, left, line);
+        for (i = 0; i < nvis; i++) cells[i][0] = '\0';
+        tb_paint_row(o, y + r, vis, nvis, width, cells, NULL);
+    }
+    if (foots) {   /* the footSep row, then the footings */
+        int fy = y + rows;
+        if (iv_str(o, "footSep")[0]) {
+            if (paint) tb_sep_row(o, "footSep", fy);
+            fy++;
+        }
+        for (i = 0; i < nvis; i++) {
+            object_t *c = cols->el[vis[i] - 1].obj;
+            snprintf(cells[i], sizeof(cells[i]), "%s", iv_str(c, "footing"));
+            center_to(cells[i], width[vis[i] - 1], sizeof(cells[i]));
+        }
+        if (paint) tb_paint_row(o, fy, vis, nvis, width, cells, NULL);
     }
     /* back to the current row, the cursor on the current cell */
     if (tb_skip(ctx, o, rowpos - painted, &moved) != 0) return -1;
-    if (paint) screen_setpos(y + rowpos - 1, tb_cell_x(o, width, ncol));
+    if (paint) screen_setpos(y + rowpos - 1, tb_col_x(o, width, ncol, (int)iv_num(o, "colPos")));
     iv_set(o, "stable", val_logic(1));
     *result = val_logic(1);
     (void)self;
+    /* stable, the current cell shown highlighted unless autoLite is off */
+    if (paint && iv_logic(o, "autoLite")) return tb_hilite_cell(ctx, o, 1);
     return 0;
 }
 
@@ -1896,7 +2079,7 @@ static const method_t tbrowse_methods[] = {
     { "GETCOLUMN", m_tb_getcolumn }, { "SETCOLUMN", m_tb_setcolumn },
     { "GOTOP", m_tb_gotop }, { "GOBOTTOM", m_tb_gobottom }, { "UP", m_tb_up }, { "DOWN", m_tb_down },
     { "PAGEUP", m_tb_pageup }, { "PAGEDOWN", m_tb_pagedown }, { "HOME", m_tb_home }, { "END", m_tb_end },
-    { "LEFT", m_tb_left }, { "RIGHT", m_tb_right }, { "PANLEFT", m_tb_left }, { "PANRIGHT", m_tb_right },
+    { "LEFT", m_tb_left }, { "RIGHT", m_tb_right }, { "PANLEFT", m_tb_panleft }, { "PANRIGHT", m_tb_panright },
     { "PANHOME", m_tb_panhome }, { "PANEND", m_tb_panend },
     { "STABILIZE", m_tb_stabilize }, { "FORCESTABLE", m_tb_stabilize }, { "REFRESHALL", m_tb_invalidate }, { "REFRESHCURRENT", m_tb_invalidate },
     { "INVALIDATE", m_tb_invalidate }, { "CONFIGURE", m_tb_configure },

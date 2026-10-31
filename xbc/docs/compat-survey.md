@@ -845,8 +845,7 @@ The severe ones are marked.
    level is declarations only runs its first procedure, as Clipper does;
    USE positions at the first record (it left none, and a field read
    before any movement failed as an unknown variable).  Not Clipper's
-   yet: a column's colorBlock, footing painting, TBrowse freeze and horizontal
-   panning are accepted and ignored; SETMODE is absent (NEXTKEY and
+   yet: SETMODE is absent (NEXTKEY and
    KEYBOARD came with the DBU round below).
 
 ## The Get system's loop (2026-10-30)
@@ -872,3 +871,21 @@ cls-get-assign-width, run from KEYBOARD's keys; the probe harness sets
 XBASE_STREAM_SCREEN=none, under which positioned output is dropped
 without a terminal, as Harbour's stream renderer drops it.  READ itself
 keeps the built-in reader (which behaves as GETSYS does).
+
+## TBrowse across the window (2026-10-30)
+
+A browse wider than its window scrolls now: the frozen columns (freeze)
+stay at the left, then from leftVisible as many columns as fit, the last
+of them rightVisible.  right() and left() move the window to keep the
+cursor's column on it; home() and end() go to the leftmost and
+rightmost scrolling column on the screen (they had moved to the
+window's first and last row); panHome() and panEnd() to the first and
+last column; panLeft() and panRight() move the window a column and keep
+the cursor on it -- each as Harbour has it, probe cls-tbrowse-pan.
+rowCount follows headings, footings and both separators when they are
+set after the columns (it was fixed when a column was added).  Painted:
+the footSep row and the footings under the data, each cell in the
+colours its column's colorBlock answers for its value (else defColor),
+and the current cell highlighted when stabilize() finishes, unless
+autoLite is off.  Checked under the terminal service (a frozen column
+with three scrolled ones, a footing, alternating colours).
