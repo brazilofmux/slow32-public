@@ -67,6 +67,20 @@ static struct {
     char msg[128];      /* the error they belong to */
 } err_args;
 
+/* The C-level function an error is raised in (prog_error_cfunc): pending,
+ * then the object it went to */
+static struct { char name[32], msg[128]; } cfunc_pending;
+static struct { const object_t *obj; char name[32]; } cfunc_made;
+
+void prog_error_cfunc(const char *name, const char *msg) {
+    str_copy(cfunc_pending.name, name ? name : "", sizeof(cfunc_pending.name));
+    str_copy(cfunc_pending.msg, msg ? msg : "", sizeof(cfunc_pending.msg));
+}
+
+const char *prog_error_cfunc_of(const object_t *o) {
+    return o && o == cfunc_made.obj && cfunc_made.name[0] ? cfunc_made.name : NULL;
+}
+
 void prog_error_args(const value_t *a, int n, const char *operation, int subcode, const char *msg) {
     int i;
     if (n > ERR_MAX_ARGS) n = ERR_MAX_ARGS;
@@ -146,7 +160,14 @@ static void clipper_error_class(int code, const char *msg, int *gen, const char 
         *sub = 1003;
         return;
     }
-    if (strncmp(msg, "Unknown function: ", 18) == 0) { *gen = 12; *desc = "Function does not exist"; str_copy(op, msg + 18, opsz); return; }
+    if (strncmp(msg, "Unknown function: ", 18) == 0) {
+        *gen = 12;
+        *desc = "Undefined function";
+        str_copy(op, msg + 18, opsz);
+        str_upper(op);
+        *sub = 1001;
+        return;
+    }
     if (strncmp(msg, "No exported method: ", 20) == 0) { *gen = 13; *desc = "No exported method"; str_copy(op, msg + 20, opsz); *sub = 1004; return; }
     if (strncmp(msg, "No exported variable: ", 22) == 0) { *gen = 16; *desc = "No exported variable"; str_copy(op, msg + 22, opsz); *sub = 1005; return; }
     if (strstr(msg, "out of bounds") || strstr(msg, "out of range")) { *gen = 2; *desc = "Bound error"; str_copy(op, "array access", opsz); *sub = 1132; return; }
@@ -239,6 +260,13 @@ object_t *prog_new_error_object(int code, const char *description) {
     *object_ivar(o, "subCode", 1) = val_num_dec((double)sub, 0, 0);
     *object_ivar(o, "subSystem", 1) = val_str("BASE");
     *object_ivar(o, "tries", 1) = val_num_dec(0, 0, 0);
+    if (cfunc_pending.name[0]) {
+        if (strcmp(cfunc_pending.msg, description ? description : "") == 0) {
+            cfunc_made.obj = o;
+            str_copy(cfunc_made.name, cfunc_pending.name, sizeof(cfunc_made.name));
+        }
+        cfunc_pending.name[0] = '\0';
+    }
     if ((err_args.op[0] || err_args.n > 0) && strcmp(err_args.msg, description ? description : "") != 0) {
         err_args.n = 0;         /* another error's: an expression TYPE() tried, say */
         err_args.op[0] = '\0';
@@ -611,7 +639,8 @@ void prog_error(int code, const char *message) {
      * this error at the point of failure, prog_error_substitute) */
     if (error_state.block_ran) {
         error_state.block_ran = 0;
-    } else if (error_block.type == VAL_BLOCK && !error_block_default && !error_state.in_handler) {
+    } else if (error_block.type == VAL_BLOCK && !error_state.in_handler &&
+               !(error_block_default && error_state.on_error_proc[0])) {
         value_t arg = break_value, r;
         expr_ctx_t *ctx;
         cmd_ctx_setup();

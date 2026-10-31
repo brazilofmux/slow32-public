@@ -1,0 +1,9 @@
+# Programs the interpreter carries past an error and a compiled program
+# stops at (user ruling, 2026-10-30: compiled programs are Clipper's, the
+# interpreter is dBASE's), where the interpreter prints no "***" report
+# to line the two up by.  tests/run-oracle.sh lets each agree when the
+# compiled one prints what the interpreter does up to its error and then
+# stops with the default handler's report.
+#
+# name     why
+T3SEQ      an error inside BEGIN SEQUENCE: the interpreter RECOVERs; in Clipper only a BREAK reaches RECOVER, and with no error block of the program's the default handler quits

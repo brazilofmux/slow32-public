@@ -844,6 +844,7 @@ static int cmd_name_arg(const char **pp, char *out, int size) {
 
 static void cmd_use(dbf_t *db, const char *arg) {
     char filename[320];   /* a resolved path, not a bare name (it was 64: a long directory truncated it) */
+    char typed[320];
     const char *p;
     int i;
     work_area_t *wa = cur_wa();
@@ -870,6 +871,7 @@ static void cmd_use(dbf_t *db, const char *arg) {
      * computed at run time: DBU's USE (cDatabase) ALIAS (cAlias) EXCLUSIVE. */
     p = arg;
     if (cmd_name_arg(&p, filename, sizeof(filename)) != 0) return;
+    str_copy(typed, filename, sizeof(typed));   /* the name as written, for an open error */
     if (filename[0] == '\0') {
         printf("Syntax: USE [filename] [INDEX idx] [ALIAS alias]\n");
         return;
@@ -930,10 +932,17 @@ static void cmd_use(dbf_t *db, const char *arg) {
         while (dbf_open(db, filename) < 0) {
             /* Clipper's open error: DBFNTX/1001 on the file, the DOS error,
              * Retry and Default on offer; the handler's .T. tries again */
-            char upper[260];
-            str_copy(upper, filename, sizeof(upper));
-            str_upper(upper);
-            prog_error_detail("DBFNTX", 21, 1001, "Open error", upper, 2, 1, 1);
+            /* the file as the program named it, .dbf added when it has no
+             * extension (Harbour's account, and Clipper's), raised in
+             * DBUSEAREA(), the function Clipper's USE becomes */
+            char named[340];
+            snprintf(named, sizeof(named), "%s%s", typed, has_extension(typed) ? "" : ".dbf");
+            prog_error_detail("DBFNTX", 21, 1001, "Open error", named, 2, 1, 1);
+            {
+                char msg[128];
+                snprintf(msg, sizeof(msg), "File not found: %s", filename);
+                prog_error_cfunc("DBUSEAREA", msg);
+            }
             file_not_found(filename);
             if (!prog_error_retry()) return;
         }

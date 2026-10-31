@@ -978,14 +978,19 @@ static int fn_alert(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
     for (i = 0; i < nopt; i++) optw += (int)strlen(optv[i]) + 2 + (i ? 2 : 0);
     if (optw > width) width = optw;
     if (!screen_term_available()) {
+        /* No screen: the message, its ; as line breaks, then the choices
+         * in parentheses, and the first is taken -- as Harbour renders
+         * an Alert() to a stream, so the two can be compared */
+        char *s;
         snprintf(line, sizeof(line), "%s", msg);
+        for (s = line; *s; s++) if (*s == ';') *s = '\n';
+        strncat(line, " (", sizeof(line) - strlen(line) - 1);
         for (i = 0; i < nopt; i++) {
-            strncat(line, i ? "  " : "  ", sizeof(line) - strlen(line) - 1);
+            if (i) strncat(line, ", ", sizeof(line) - strlen(line) - 1);
             strncat(line, optv[i], sizeof(line) - strlen(line) - 1);
         }
-        screen_print_newline();
+        strncat(line, ") ", sizeof(line) - strlen(line) - 1);
         screen_print_text(line);
-        screen_print_newline();
         *result = vnum(1);
         return 0;
     }

@@ -111,6 +111,42 @@ keys_for() {
     return 1
 }
 
+# A compiled program stops at an error no handler of its own answers, as
+# Clipper's does (the default handler prints "Error BASE/1020 ..." and the
+# calls, and quits); the interpreter reports it and goes on, as dBASE does
+# (user ruling, 2026-10-30).  Such a pair agrees "to its error" when the
+# two print the same up to it -- the interpreter's "*** " report, the
+# compiled program's Alert -- and the compiled one ends with its calls.
+upto_error() {   # upto_error INTERP CLIP: 0 when they agree to the first error
+    local i c ni nc t
+    ni=$(grep -b -o -m1 '\*\*\* ' "$1" | head -1 | cut -d: -f1)
+    nc=$(grep -b -o -m1 -E 'Error [A-Za-z]+/[0-9]+  ' "$2" | head -1 | cut -d: -f1)
+    [ -n "$ni" ] && [ -n "$nc" ] || return 1
+    grep -q '^Called from ' "$2" || return 1
+    t=$(mktemp "$OUT/u.XXXXXX")
+    if [ "$ni" -gt 0 ]; then head -c "$ni" "$1" > "$t"; else : > "$t"; fi
+    i=$(rstrip_nl "$t")
+    if [ "$nc" -gt 0 ]; then head -c "$nc" "$2" > "$t"; else : > "$t"; fi
+    c=$(rstrip_nl "$t")
+    rm -f "${t:?}"
+    [ "$i" = "$c" ]
+}
+
+# A program in tests/oracle-stops.txt: the compiled one stopped with the
+# default handler's report, and what it printed before is how the
+# interpreter's output begins
+stops_as_listed() {   # stops_as_listed NAME INTERP CLIP
+    local nc t c
+    grep -qE "^$1([[:space:]]|\$)" "$CLIP_DIR/tests/oracle-stops.txt" 2>/dev/null || return 1
+    nc=$(grep -b -o -m1 -E 'Error [A-Za-z]+/[0-9]+  ' "$3" | head -1 | cut -d: -f1)
+    [ -n "$nc" ] && grep -q '^Called from ' "$3" || return 1
+    t=$(mktemp "$OUT/u.XXXXXX")
+    if [ "$nc" -gt 0 ]; then head -c "$nc" "$3" > "$t"; else : > "$t"; fi
+    c=$(rstrip_nl "$t")
+    rm -f "${t:?}"
+    [ "$(head -c ${#c} "$2")" = "$c" ]
+}
+
 agree=0; differ=0; nocomp=0; skip=0
 for prg in "${CORPUS[@]}"; do
     name=$(basename "$prg"); name="${name%.*}"
@@ -160,6 +196,10 @@ for prg in "${CORPUS[@]}"; do
     rm -rf "$wi" "$wc"
     if cmp -s "$OUT/$name.interp" "$OUT/$name.clip"; then
         printf '%-28s AGREE\n' "$name"; agree=$((agree+1))
+    elif upto_error "$OUT/$name.interp" "$OUT/$name.clip"; then
+        printf '%-28s AGREE (to its error)\n' "$name"; agree=$((agree+1))
+    elif stops_as_listed "$name" "$OUT/$name.interp" "$OUT/$name.clip"; then
+        printf '%-28s AGREE (stops, as Clipper does)\n' "$name"; agree=$((agree+1))
     else
         printf '%-28s DIFFER (diff %s/%s.{interp,clip})\n' "$name" "$OUT" "$name"; differ=$((differ+1))
     fi

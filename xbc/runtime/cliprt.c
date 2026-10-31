@@ -206,21 +206,130 @@ static int clip_do_hook(const char *name, value_t *args, int nargs,
 }
 
 /* The default handler's block, posted when the program has no ErrorSys()
- * of its own (Clipper links one into every program): a zero divisor that
- * can take a substitute gets 0, as Clipper's default handler answers it;
- * anything else it leaves alone (.F.), and the error is reported as it is
- * with no handler (prog_post_default_errorblock) */
+ * of its own: what Clipper's default handler does, written here.
+ *   - a zero divisor that can take a substitute gets 0;
+ *   - a sharing violation on open, or a failed append lock, that can be
+ *     defaulted sets NETERR() and is defaulted (.F.);
+ *   - anything else: "Error BASE/1081  Argument error: +" offered with
+ *     Quit (and Retry / Default where the error allows them) through
+ *     Alert(); Retry answers .T., Default .F., and Quit prints the
+ *     message, a "Called from NAME(line)" line for each level, and ends
+ *     the program with ERRORLEVEL() 1.
+ * An interpreted program has no such handler: its errors are dBASE's,
+ * reported and gone past (user ruling, 2026-10-30). */
+static value_t deferr_ivar(object_t *o, const char *name) {
+    value_t *v = object_ivar(o, name, 0);
+    return v ? *v : val_nil();
+}
+
 static int clip_deferror(expr_ctx_t *c, value_t *result) {
-    value_t e;
+    value_t e, gen, osc, desc, sub, ssys, fname, op, cr, cd, cs, v, r;
+    object_t *o;
+    char msg[512], alert_msg[560], num[32];
+    array_t *opts;
+    int choice, i, line;
     *result = val_logic(0);
     if (ast_eval_name(c, "E", &e) != 0 || e.type != VAL_OBJECT) return 0;
-    {
-        value_t *gen = object_ivar(e.obj, "genCode", 0);
-        value_t *subst = object_ivar(e.obj, "canSubstitute", 0);
-        if (gen && gen->type == VAL_NUM && gen->num == 5 &&
-            subst && subst->type == VAL_LOGIC && subst->logic)
-            *result = val_num_dec(0, 0, 0);
+    o = e.obj;
+    gen = deferr_ivar(o, "genCode");
+    osc = deferr_ivar(o, "osCode");
+    cr = deferr_ivar(o, "canRetry");
+    cd = deferr_ivar(o, "canDefault");
+    cs = deferr_ivar(o, "canSubstitute");
+    if (gen.type == VAL_NUM && gen.num == 5 && cs.type == VAL_LOGIC && cs.logic) {
+        *result = val_num_dec(0, 0, 0);
+        return 0;
     }
+    if (gen.type == VAL_NUM && cd.type == VAL_LOGIC && cd.logic &&
+        ((gen.num == 21 && osc.type == VAL_NUM && osc.num == 32) || gen.num == 40)) {
+        v = val_logic(1);
+        (void)func_call(c, "NETERR", &v, 1, &r);
+        return 0;
+    }
+    /* the message */
+    ssys = deferr_ivar(o, "subSystem");
+    sub = deferr_ivar(o, "subCode");
+    desc = deferr_ivar(o, "description");
+    fname = deferr_ivar(o, "filename");
+    op = deferr_ivar(o, "operation");
+    snprintf(msg, sizeof(msg), "Error %s", ssys.type == VAL_CHAR ? val_text(&ssys) : "???");
+    if (sub.type == VAL_NUM) snprintf(num, sizeof(num), "/%d", (int)sub.num);
+    else snprintf(num, sizeof(num), "/???");
+    strncat(msg, num, sizeof(msg) - strlen(msg) - 1);
+    if (desc.type == VAL_CHAR) {
+        strncat(msg, "  ", sizeof(msg) - strlen(msg) - 1);
+        strncat(msg, val_text(&desc), sizeof(msg) - strlen(msg) - 1);
+    }
+    if (fname.type == VAL_CHAR && val_len(&fname) > 0) {
+        strncat(msg, ": ", sizeof(msg) - strlen(msg) - 1);
+        strncat(msg, val_text(&fname), sizeof(msg) - strlen(msg) - 1);
+    } else if (op.type == VAL_CHAR && val_len(&op) > 0) {
+        strncat(msg, ": ", sizeof(msg) - strlen(msg) - 1);
+        strncat(msg, val_text(&op), sizeof(msg) - strlen(msg) - 1);
+    }
+    /* Quit, Retry, Default; the DOS error on a line of its own */
+    {
+        char dos[48];
+        dos[0] = '\0';
+        if (osc.type == VAL_NUM && osc.num != 0) snprintf(dos, sizeof(dos), "(DOS Error %d)", (int)osc.num);
+        strncpy(alert_msg, msg, sizeof(alert_msg) - 1);
+        alert_msg[sizeof(alert_msg) - 1] = '\0';
+        if (dos[0]) {
+            strncat(alert_msg, ";", sizeof(alert_msg) - strlen(alert_msg) - 1);
+            strncat(alert_msg, dos, sizeof(alert_msg) - strlen(alert_msg) - 1);
+            strncat(msg, " ", sizeof(msg) - strlen(msg) - 1);
+            strncat(msg, dos, sizeof(msg) - strlen(msg) - 1);
+        }
+    }
+    opts = array_new(0);
+    if (!opts) return 0;
+    v = val_str("Quit");
+    array_add(opts, &v);
+    if (cr.type == VAL_LOGIC && cr.logic) { v = val_str("Retry"); array_add(opts, &v); }
+    if (cd.type == VAL_LOGIC && cd.logic) { v = val_str("Default"); array_add(opts, &v); }
+    {
+        value_t av[2];
+        av[0] = val_str(alert_msg);
+        av[1] = val_array(opts);
+        choice = 0;
+        while (choice == 0) {
+            if (func_call(c, "ALERT", av, 2, &r) != 0) break;
+            choice = r.type == VAL_NUM ? (int)r.num : 1;
+        }
+        if (choice > 1 && choice <= opts->len) {
+            const char *pick = val_text(&opts->el[choice - 1]);
+            *result = val_logic(strcmp(pick, "Retry") == 0);
+            return 0;
+        }
+    }
+    /* Quit: the message, where it happened, and the end of the program */
+    v = val_str(msg);
+    (void)func_call(c, "QOUT", &v, 1, &r);
+    {   /* a function written in C the error was raised in, at line 0 */
+        const char *cf = prog_error_cfunc_of(o);
+        if (cf) {
+            char where[64];
+            value_t w[2];
+            snprintf(where, sizeof(where), "%s(0)  ", cf);
+            w[0] = val_str("Called from");
+            w[1] = val_str(where);
+            (void)func_call(c, "QOUT", w, 2, &r);
+        }
+    }
+    for (i = 0;; i++) {
+        const char *pn = prog_procname(i, &line);
+        char where[160];
+        value_t w[2];
+        if (!pn || !pn[0]) break;
+        snprintf(where, sizeof(where), "%s(%d)  ", pn, line);
+        w[0] = val_str("Called from");
+        w[1] = val_str(where);
+        (void)func_call(c, "QOUT", w, 2, &r);
+    }
+    v = val_num_dec(1, 0, 0);
+    (void)func_call(c, "ERRORLEVEL", &v, 1, &r);
+    clip_fini();
+    exit(clip_errorlevel());
     return 0;
 }
 

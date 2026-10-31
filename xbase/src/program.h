@@ -149,6 +149,12 @@ void prog_error_args(const value_t *a, int n, const char *operation, int subcode
  * gets 0 from it, and an error it does not answer is reported as with
  * no handler at all */
 void prog_post_default_errorblock(const value_t *block);
+/* The function the error is raised in, as Clipper's call stack shows a
+ * function written in C ("Called from DBUSEAREA(0)"): name pending for
+ * the error object made for the error whose message is msg, and asked of
+ * that object afterwards (NULL: none) */
+void prog_error_cfunc(const char *name, const char *msg);
+const char *prog_error_cfunc_of(const struct object_s *o);
 
 /* Check if program is running */
 int prog_is_running(void);

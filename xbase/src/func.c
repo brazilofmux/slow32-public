@@ -2798,6 +2798,7 @@ static int fn_arg_error(expr_ctx_t *ctx, const char *upper, value_t *args, int n
                         value_t *result, int rc) {
     if (rc == 0 || !ctx->error || !strstr(ctx->error, " requires ")) return rc;
     prog_error_args(args, nargs, upper, fn_subcode(upper), ctx->error);
+    prog_error_cfunc(upper, ctx->error);
     if (prog_error_substitute(ctx, ERR_TYPE_MISMATCH, ctx->error, result)) {
         ctx->error = NULL;
         return 0;
@@ -2863,6 +2864,14 @@ int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value
     {
         snprintf(ctx->err_msg, sizeof(ctx->err_msg), "Unknown function: %s", name);
         ctx->error = ctx->err_msg;
+    }
+    /* Clipper's undefined function (a macro's call, at run time): the
+     * name its operation, and a value the error handler returns stands
+     * in for the call's */
+    prog_error_args(NULL, 0, upper, 1001, ctx->error);
+    if (prog_error_substitute(ctx, ERR_TYPE_MISMATCH, ctx->error, result)) {
+        ctx->error = NULL;
+        return 0;
     }
     return -1;
 }
