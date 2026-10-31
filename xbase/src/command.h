@@ -60,6 +60,8 @@ int  cmd_create_table(const char *filename, dbf_field_t *fields, int nfields);  
 struct block_s;
 void cmd_api_set_filter(struct block_s *blk, const char *text);
 void cmd_api_set_relation(int target, struct block_s *blk, const char *text);
+/* SEEK's miss: SOFTSEEK's next record, or the record past the end */
+void cmd_seek_missed(dbf_t *db, index_t *idx);
 int  cmd_api_seek_ready(void);
 void cmd_api_seek_value(const value_t *val);
 typedef struct cmd_replace_state cmd_replace_state_t;

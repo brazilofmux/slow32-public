@@ -1873,15 +1873,7 @@ static int fn_seek_func(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resu
         *result = val_logic(1);
     } else {
         ctx->found = 0;
-        if (cmd_get_softseek()) {
-            uint32_t rec = index_current_recno(idx);
-            if (rec > 0 && ctx->db) {
-                dbf_read_record(ctx->db, rec);
-                ctx->eof_flag = 0;
-            } else {
-                ctx->eof_flag = 1;
-            }
-        }
+        if (ctx->db) cmd_seek_missed(ctx->db, idx);
         *result = val_logic(0);
     }
     return 0;

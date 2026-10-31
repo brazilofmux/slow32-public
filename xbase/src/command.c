@@ -417,7 +417,10 @@ static void list_cell(dbf_t *db, int f, char *raw, char *display, int width, cha
         snprintf(out, (size_t)room, " %-*s", width, display);
         break;
     case 'F': case 'N':
-        field_display_numeric(display, raw, db->fields[f].length);
+        if (!*skip_ws(raw))   /* a blank number is 0, as the field reads */
+            snprintf(display, 256, "%.*f", db->fields[f].decimals, 0.0);
+        else
+            field_display_numeric(display, raw, db->fields[f].length);
         snprintf(out, (size_t)room, " %*s", width, display);
         break;
     case 'D':
@@ -1545,11 +1548,11 @@ static int process_records(dbf_t *db, clause_t *c, int flags, record_callback_t 
             if (cb_result == REC_STOP) break;
         }
 
-        /* Advance */
+        /* Advance: past the last, the record past the end */
         if (idx) {
-            if (index_next(idx) < 0) expr_ctx.eof_flag = 1;
+            if (index_next(idx) < 0) { expr_ctx.eof_flag = 1; dbf_move_eof(db); }
         } else {
-            if (current_rec >= db->record_count) expr_ctx.eof_flag = 1;
+            if (current_rec >= db->record_count) { expr_ctx.eof_flag = 1; dbf_move_eof(db); }
             else dbf_read_record(db, current_rec + 1);
         }
         if (c->scope.type == SCOPE_RECORD) break;
@@ -1666,6 +1669,7 @@ static void cmd_locate(dbf_t *db, lexer_t *l) {
     if (count == 0) {
         expr_ctx.found = 0;
         expr_ctx.eof_flag = 1;
+        dbf_move_eof(db);
         cur_wa()->locate_last_rec = 0;
         if (set_opts.talk) printf("End of LOCATE scope\n");
     }
@@ -2443,7 +2447,14 @@ static void cmd_replace(dbf_t *db, lexer_t *l) {
     c.scope.type = SCOPE_NEXT;
     c.scope.count = 1;
 
-    /* For REPLACE, the field list/expression must come first, before clauses */
+    /* A scope may come first, REPLACE ALL f WITH e (Clipper's clauses go
+     * in any order) -- unless the word is a field's name, f WITH e */
+    if ((cmd_kw(l, "ALL") || cmd_kw(l, "REST") || cmd_kw(l, "NEXT") || cmd_kw(l, "RECORD")) &&
+        !cmd_peek_kw(l, "WITH")) {
+        if (parse_clauses(l, &c) < 0) return;
+    }
+
+    /* The field list/expression, then the clauses */
     const char *body_start = l->token_start;
 
     /* To find the end of the field list, we need to scan ahead for FOR/WHILE/ALL/NEXT etc. */
@@ -2690,10 +2701,10 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
     index_t *idx = controlling_index();
     uint32_t remaining = 0xFFFFFFFF;
     int has_limit = 0;
-    uint32_t orig_rec = db->current_record;
-    int orig_eof = expr_ctx.eof_flag;
-    int orig_bof = expr_ctx.bof_flag;
-    uint32_t last_rec = 0;
+    int past_end;   /* DISPLAY at the end of the file: the record past it, blank */
+    /* Clipper's LIST and DISPLAY are a list of expressions, and an empty
+     * one shows the record numbers alone; dBASE's show every field */
+    int numbers_only = report_clipper_layout();
 
     if (!dbf_is_open(db)) {
         prog_error(ERR_NO_DATABASE, "No database in use");
@@ -2763,11 +2774,12 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
 
     /* DISPLAY without ALL/RECORD scope requires a current record */
     if (is_display && c.scope.type != SCOPE_ALL && c.scope.type != SCOPE_RECORD) {
-        if (db->current_record == 0 || expr_ctx.eof_flag) {
+        if (db->current_record == 0) {
             prog_error(ERR_RECORD_RANGE, "No current record");
             return;
         }
     }
+    past_end = is_display && !c.has_scope && db->current_record > db->record_count;
 
     if (c.to_file[0]) {   /* .txt when the name has no extension */
         if (!strchr(c.to_file, '.')) strncat(c.to_file, ".txt", sizeof(c.to_file) - strlen(c.to_file) - 1);
@@ -2812,12 +2824,12 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
         }
     }
 
-    expr_ctx.eof_flag = 0;
-    while (!expr_ctx.eof_flag && (!has_limit || remaining > 0)) {
-        uint32_t current_rec = idx ? index_current_recno(idx) : db->current_record;
-        if (current_rec == 0 || current_rec > db->record_count) break;
+    if (!past_end) expr_ctx.eof_flag = 0;
+    while ((past_end || !expr_ctx.eof_flag) && (!has_limit || remaining > 0)) {
+        uint32_t current_rec = idx && !past_end ? index_current_recno(idx) : db->current_record;
+        if (current_rec == 0 || (current_rec > db->record_count && !past_end)) break;
 
-        dbf_read_record(db, current_rec);
+        if (!past_end) dbf_read_record(db, current_rec);
 
         int matched = 1;
         if (skip_deleted(db->record_buf) || !check_filter(db)) matched = 0;
@@ -2842,7 +2854,7 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
                 printf("\r                           \r");
             }
 
-            if (is_display && use_all_fields) {
+            if (is_display && use_all_fields && !numbers_only) {
                 PRINT_TO(to_file, "Record# %d\n", (int)current_rec);
                 for (f = 0; f < db->field_count; f++)
                     print_field_value(db, f, raw, display, to_file, 0, 0);
@@ -2853,7 +2865,7 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
                 char row[1024];
                 if (c.off) snprintf(row, sizeof(row), "\n");
                 else snprintf(row, sizeof(row), "\n%7d ", (int)current_rec);
-                if (use_all_fields) {
+                if (use_all_fields && !numbers_only) {
                     for (f = 0; f < db->field_count; f++)
                         list_cell(db, f, raw, display, list_value_width(db, f), row, (int)sizeof(row));
                 } else {
@@ -2862,32 +2874,26 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
                 }
                 PRINT_TO(to_file, "%s ", row);
             }
-            last_rec = current_rec;
             row_count++;
         }
+        if (past_end) break;
 
-        /* NEXT N counts records examined, not records matched */
-        if (has_limit) remaining--;
+        /* NEXT N counts records examined, not records matched; the last
+         * of them is where the pointer stays */
+        if (has_limit && --remaining == 0) break;
 
-        /* Advance */
+        /* Advance: past the last, the record past the end */
         if (idx) {
-            if (index_next(idx) < 0) expr_ctx.eof_flag = 1;
+            if (index_next(idx) < 0) { expr_ctx.eof_flag = 1; dbf_move_eof(db); }
         } else {
-            if (db->current_record >= db->record_count) expr_ctx.eof_flag = 1;
+            if (db->current_record >= db->record_count) { expr_ctx.eof_flag = 1; dbf_move_eof(db); }
             else dbf_read_record(db, db->current_record + 1);
         }
         if (c.scope.type == SCOPE_RECORD) break;
     }
 
     if (to_file) fclose(to_file);
-
-    /* Restore current record to last displayed, preserving pre-list flags. */
-    if (last_rec > 0)
-        dbf_read_record(db, last_rec);
-    else if (orig_rec > 0)
-        dbf_read_record(db, orig_rec);
-    expr_ctx.eof_flag = orig_eof;
-    expr_ctx.bof_flag = orig_bof;
+    /* the pointer stays where the walk ended: after ALL, the end of the file */
 }
 
 static void cmd_list(dbf_t *db, lexer_t *l) {
@@ -5033,6 +5039,20 @@ static index_t *seek_index(dbf_t *db) {
     return idx;
 }
 
+/* A key not found: under SET SOFTSEEK the record of the next key, when
+ * there is one; otherwise the end of the file, the record past the end */
+void cmd_seek_missed(dbf_t *db, index_t *idx) {
+    uint32_t rec = set_opts.softseek ? index_current_recno(idx) : 0;
+    expr_ctx.found = 0;
+    if (rec > 0) {
+        dbf_read_record(db, rec);
+        expr_ctx.eof_flag = 0;
+    } else {
+        dbf_move_eof(db);
+        expr_ctx.eof_flag = 1;
+    }
+}
+
 static void seek_value(dbf_t *db, index_t *idx, const value_t *val) {
     char key[MAX_INDEX_KEY + 1];
 
@@ -5055,16 +5075,7 @@ static void seek_value(dbf_t *db, index_t *idx, const value_t *val) {
             expr_ctx.bof_flag = 0;
         }
     } else {
-        expr_ctx.found = 0;
-        if (set_opts.softseek) {
-            uint32_t rec = index_current_recno(idx);
-            if (rec > 0) {
-                dbf_read_record(db, rec);
-                expr_ctx.eof_flag = 0;
-            } else {
-                expr_ctx.eof_flag = 1;
-            }
-        }
+        cmd_seek_missed(db, idx);
         if (set_opts.talk && !set_opts.softseek) printf("Not found.\n");
     }
     } /* match_len scope */
@@ -5115,16 +5126,7 @@ static void cmd_find(dbf_t *db, const char *arg) {
             expr_ctx.bof_flag = 0;
         }
     } else {
-        expr_ctx.found = 0;
-        if (set_opts.softseek) {
-            uint32_t rec = index_current_recno(idx);
-            if (rec > 0) {
-                dbf_read_record(db, rec);
-                expr_ctx.eof_flag = 0;
-            } else {
-                expr_ctx.eof_flag = 1;
-            }
-        }
+        cmd_seek_missed(db, idx);
         if (set_opts.talk) printf("Not found.\n");
     }
     } /* match_len scope */

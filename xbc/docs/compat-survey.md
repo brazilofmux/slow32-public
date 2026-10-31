@@ -1005,10 +1005,35 @@ name without an extension.  SET MARGIN opens every line the printer
 writes on (@ ... SAY's included) and counts in PCOL(), as the guide's
 LIST note and Harbour have it.
 
-Not yet: the record past the end.  At the end of the file Clipper's
-pointer is on LASTREC() + 1, RECNO() says so and every field reads
-blank; here RECNO() keeps the last record's number and the fields its
-values (after SKIP and LOCATE alike), DISPLAY there is "No current
-record", and LIST puts the pointer back on the last record it showed
-where Clipper leaves it at the end of the file.  REPORT FORM TO PRINTER
-does not also show the report on the console.
+Not yet: REPORT FORM TO PRINTER does not also show the report on the
+console.
+
+## The record past the end (2026-10-31)
+
+At the end of the file Clipper's pointer is on the record past the
+last: RECNO() is LASTREC() + 1 and every field reads blank (a number 0).
+SKIP went there and kept the last record's values in the buffer; the
+rest stopped short (probe cmd-eof-record, Harbour's numbers throughout):
+
+- A SEEK, FIND or DBSEEK that missed left the pointer where it was, EOF()
+  false -- `SEEK x` then `IF EOF()` took the wrong branch.  A miss is the
+  end of the file now, or under SET SOFTSEEK the next key's record (one
+  helper for the three, where three copies were).
+- A scoped walk that ran off the end (SUM, COUNT, REPLACE ALL, COPY TO
+  ...), and a LOCATE that found nothing, set EOF() and stayed on the last
+  record.  They are on the record past the end.
+- LIST put the pointer back on the last record it showed; it stays where
+  its walk ended -- after ALL the end of the file, after NEXT n its last
+  record.  DISPLAY there shows the blank record (it was "No current
+  record").  A blank number in a LIST row is 0.
+- Nothing is kept from the record past the end: a REPLACE there is
+  dropped, where the flush would have written past the file's records.
+- Compiled, LIST and DISPLAY with no expressions show the record numbers
+  alone -- Clipper's are a list of expressions, an empty one prints none;
+  the interpreter keeps dBASE's every field.
+
+Found on the way: REPLACE ALL f WITH e did nothing, interpreted and
+compiled alike, and said nothing -- the scope taken for the end of the
+field list, the list then "ALL f WITH e".  Only the scope written last
+(REPLACE f WITH e ALL) worked.  A scope first is read first now, unless
+the word is a field's name (REPLACE NEXT WITH 1).

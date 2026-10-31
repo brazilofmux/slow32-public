@@ -402,10 +402,14 @@ int dbf_read_record(dbf_t *db, uint32_t recno) {
 /* Move to EOF (the phantom record past the last).  A dirty record is written
  * first: with REPLACE no longer flushing eagerly, a bare assignment here would
  * leave the record to be flushed at the EOF position on close. */
+/* The record past the end: RECNO() is LASTREC() + 1 and every field
+ * reads blank, as Clipper's (and dBASE's) end of file is */
 void dbf_move_eof(dbf_t *db) {
     if (db->record_dirty)
         dbf_flush_record(db);
     db->current_record = db->record_count + 1;
+    memset(db->record_buf, ' ', db->record_size);
+    db->record_buf[db->record_size] = '\0';
 }
 
 int dbf_flush_record(dbf_t *db) {
@@ -413,6 +417,10 @@ int dbf_flush_record(dbf_t *db) {
 
     if (!db->fp || !db->record_dirty || db->current_record == 0)
         return 0;
+    if (db->current_record > db->record_count) {   /* the record past the end: nothing to keep */
+        db->record_dirty = 0;
+        return 0;
+    }
 
     pos = db->header_size + (long)(db->current_record - 1) * db->record_size;
     /* Sequential writes (the merge join, an import) land where the last one

@@ -10,9 +10,9 @@ Database ALLTYPE.DBF created with 4 field(s).
 . . 
       1  Jones              1234.56 03/15/99 T. 
       2  Smith             99999.99 12/01/05 F. 
-. Record# 2
-      NAME: Smith
-    AMOUNT:   99999.99
-     HIRED: 12/01/05
+. Record# 3
+      NAME: 
+    AMOUNT:           
+     HIRED:   /  /  
     ACTIVE: .F.
 . 
