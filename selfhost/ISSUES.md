@@ -3770,6 +3770,9 @@ interpreter and the compiled-program runtime with stage08 and requires
 the xbase suite (110/110) and the xbc oracle (50 agree) -- the majesty
 reports from the stage08 interpreter are byte-identical to clang's.
 
-Still open: a cast to a pointer-to-array type name, `(int (*)[4])p`, is
-refused ("pointer-to-array type name unsupported here"), for two
-dimensions as before; a declared pointer works.
+A cast to a pointer-to-array type name, `(int (*)[4])p`, was refused
+("pointer-to-array type name unsupported here", a stopgap from W11: the
+machine type cannot say how far p[1] is).  Now the cast, and `va_arg`
+of such a type, take the row width and strides from the C type
+(`ps_rowptr_value`), and subscripting one is a declared pointer's.
+Probe 6.5.4-cast-pointer-to-array (328 PASS).

@@ -284,6 +284,7 @@
 6.5.3.4-sizeof-size-t PASS
 6.5.3.4-sizeof-vla PASS
 6.5.4-cast-bool PASS
+6.5.4-cast-pointer-to-array PASS
 6.5.4-cast-ptr-float DIAG
 6.5.4-cast-struct DIAG
 6.5.4-casts PASS

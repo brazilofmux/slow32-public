@@ -3913,15 +3913,24 @@ static int ps_abstract_dims(int elem) {
 
 /* After a type in a cast or sizeof: a parenthesized abstract declarator.
  * T (*)(params) or T (**)(params) -- SQLite's (void(*)(void*))0 -- is an
- * opaque pointer here; T (*)[N] is a pointer to an array, one pointer
+ * opaque pointer here; T (*)[N]... is a pointer to an array, one pointer
  * wide (the [N] was left for sizeof to multiply: sizeof(int (*)[3]) was
- * 12, W11).  Its machine type is a pointer to the element, which cannot
- * say how far p[1] is from p, so ps_abs_rowptr tells a caller making a
- * value of it to refuse: only sizeof may use one yet. */
+ * 12, W11).  Its machine type is a pointer to the element; the C type
+ * says how far p[1] is from p, and ps_rowptr_value gives a value of it
+ * the row width and strides a declared T (*p)[N]... has. */
 static int ps_abs_rowptr;
 
-static void ps_no_rowptr_value(void) {
-    if (ps_abs_rowptr) p_error("pointer-to-array type name unsupported here");
+/* n, a value whose C type the cast or va_arg just read: when that is a
+ * pointer to an array, the elements one step moves (arr_cols) and the
+ * strides below (arr_sub), so n[i] is a row as p[i] is on a declared
+ * pointer to an array.  Refused until 2026-10-30. */
+static void ps_rowptr_value(Node *n) {
+    int x;
+    if (!ps_abs_rowptr || n->cty <= 0 || !ct_is_ptr(n->cty)) return;
+    x = ct_baseof(n->cty);
+    if (!ct_is_array(x) || ps_cty_scalars(x) <= 0) return;
+    n->arr_cols = ps_cty_scalars(x);
+    n->arr_sub = ps_cty_sub(x);
 }
 
 static int ps_abstract_fnptr(int ty) {
@@ -6191,6 +6200,7 @@ static Node *ps_c11_primary(void) {
 static Node *parse_primary(void) {
     int cast_cty;
     int cast_vol;
+    int cast_rowptr;
     Node *n;
     int v;
     int ty;
@@ -6371,13 +6381,13 @@ static Node *parse_primary(void) {
             ty = parse_type();
             ty = ps_declarator_stars(ty, ps_type_cty);
             ty = ps_abstract_fnptr(ty);
-            ps_no_rowptr_value();
             skip_decl_qualifiers();
             expect(TK_RPAREN);
             n = nd_new(ND_VA_ARG);
             n->lhs = arg;
             n->ty = ty;
             n->cty = ps_type_cty;   /* va_arg(ap, fnptr_t) was an int */
+            ps_rowptr_value(n);
             return n;
         }
 
@@ -6569,7 +6579,7 @@ static Node *parse_primary(void) {
                 if (arr_count > 0 && ps_cl_cols > 0) arr_count = arr_count * ps_cl_cols;
             }
             ty = ps_abstract_fnptr(ty);   /* (int (**)(sqlite3_vtab *))p */
-            ps_no_rowptr_value();
+            cast_rowptr = ps_abs_rowptr;
             cast_cty = ps_type_cty;       /* before the operand runs parse_type again */
             skip_decl_qualifiers();
             expect(TK_RPAREN);
@@ -6581,6 +6591,8 @@ static Node *parse_primary(void) {
             n = nd_cast(n, ty);
             n->cty = cast_cty;
             if (cast_vol && ty_is_ptr(ty)) n->is_volptr = 1;   /* (volatile u8 *)REG */
+            ps_abs_rowptr = cast_rowptr;
+            ps_rowptr_value(n);         /* (int (*)[4])p: a pointer to rows */
             return n;
         }
         n = parse_expr();
@@ -6724,7 +6736,8 @@ static Node *parse_postfix_from(Node *n) {
                     n->arr_cols = ast_sub_cols[sub];
                     n->arr_sub = ast_sub_next[sub];
                 }
-            } else if ((n->kind == ND_MEMBER || n->kind == ND_VAR) && !n->is_array &&
+            } else if ((n->kind == ND_MEMBER || n->kind == ND_VAR || n->kind == ND_CAST ||
+                        n->kind == ND_VA_ARG) && !n->is_array &&
                        n->arr_cols > 0 && ty_is_ptr(n->ty)) {
                 /* Pointer-to-array member: p[i] selects row i — scale
                  * by the row width, keep the value a row pointer (no

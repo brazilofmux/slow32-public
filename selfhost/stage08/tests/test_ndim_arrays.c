@@ -2,7 +2,8 @@
  * of more than 2 dimensions unsupported"; SLOW-32 xBase's label.c and
  * report.c each declare one), and the multi-dimensional initializer
  * forms that failed even for two: a 2-D member in a local struct's
- * initializer, designators into rows, compound literals of array type.
+ * initializer, designators into rows, compound literals of array type,
+ * and casts to a pointer to an array.
  * Each array is held flat; arr_cols is what the first subscript steps
  * over and arr_sub (ast.h ast_sub_cols) the strides below it. */
 struct T { int t; short m[2][2][3]; int u; };
@@ -56,5 +57,8 @@ int main(void) {
     if (lt.m[0][0][1] != 22 || lt.m[1][0][0] != 31 || lt.m[1][1][1] != 42 || lt.u != 77 || lt.m[0][1][0] != 0) return 11;
     if (l2.m2[0][1] != 2 || l2.m2[1][0] != 3 || l2.m2[1][1] != 0) return 12;
     if (fp[1][1][0] != 7 || fp[0][1][1] != 4 || lc[1][0][1] != 7 || lc[0][1][1] != 0) return 13;
+    /* casts to a pointer to an array (refused before) */
+    if (((int (*)[4])part)[1][1] != 3 || ((int (*)[2][2])flat)[1][0][1] != 6 ||
+        (*((int (*)[3][4])g + 1))[2][3] != 123 || sizeof *(int (*)[5])g != 20) return 14;
     return 0;
 }
