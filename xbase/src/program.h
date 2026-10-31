@@ -139,6 +139,16 @@ value_t prog_break_value(void);
 void prog_break_landed(void);
 struct object_s *prog_new_error_object(int code, const char *description);
 int prog_error_substitute(expr_ctx_t *ctx, int code, const char *description, value_t *out);   /* the handler at the point of failure */
+/* The failing operation's operands or arguments, its name and its BASE
+ * subcode (0: by the message), for the error object made for the error
+ * whose message is msg (args, operation, subCode); another error's
+ * object ignores them */
+void prog_error_args(const value_t *a, int n, const char *operation, int subcode, const char *msg);
+/* Clipper's default handler, posted at a compiled program's start when it
+ * has no ErrorSys() of its own: ERRORBLOCK() answers it, a zero divisor
+ * gets 0 from it, and an error it does not answer is reported as with
+ * no handler at all */
+void prog_post_default_errorblock(const value_t *block);
 
 /* Check if program is running */
 int prog_is_running(void);

@@ -2773,6 +2773,38 @@ int func_is_builtin(const char *name) {
     return 0;
 }
 
+/* A built-in's argument error, as Clipper's error system has it: the
+ * arguments are the error's args, the function its operation, with its
+ * own BASE subcode (Harbour's, which keeps Clipper's), and the call can
+ * take a substitute -- a value the error handler returns is the call's
+ * result (prog_error_substitute) */
+static int fn_subcode(const char *upper) {
+    static const struct { const char *name; int sub; } t[] = {
+        { "ABS", 1089 }, { "INT", 1090 }, { "MIN", 1092 }, { "MAX", 1093 }, { "ROUND", 1094 },
+        { "LOG", 1095 }, { "EXP", 1096 }, { "SQRT", 1097 }, { "VAL", 1098 }, { "STR", 1099 },
+        { "TRIM", 1100 }, { "RTRIM", 1100 }, { "LTRIM", 1101 }, { "UPPER", 1102 }, { "LOWER", 1103 },
+        { "CHR", 1104 }, { "SPACE", 1105 }, { "REPLICATE", 1106 }, { "ASC", 1107 }, { "AT", 1108 },
+        { "SUBSTR", 1110 }, { "LEN", 1111 }, { "YEAR", 1112 }, { "MONTH", 1113 }, { "DAY", 1114 },
+        { "DOW", 1115 }, { "CMONTH", 1116 }, { "CDOW", 1117 }, { "DTOC", 1118 }, { "CTOD", 1119 },
+        { "DTOS", 1120 }, { "TRANSFORM", 1122 }, { "AADD", 1123 }, { "LEFT", 1124 },
+        { "STRTRAN", 1126 }, { "ALLTRIM", 2022 },
+        { NULL, 0 } };
+    int i;
+    for (i = 0; t[i].name; i++) if (strcmp(t[i].name, upper) == 0) return t[i].sub;
+    return 0;
+}
+
+static int fn_arg_error(expr_ctx_t *ctx, const char *upper, value_t *args, int nargs,
+                        value_t *result, int rc) {
+    if (rc == 0 || !ctx->error || !strstr(ctx->error, " requires ")) return rc;
+    prog_error_args(args, nargs, upper, fn_subcode(upper), ctx->error);
+    if (prog_error_substitute(ctx, ERR_TYPE_MISMATCH, ctx->error, result)) {
+        ctx->error = NULL;
+        return 0;
+    }
+    return rc;
+}
+
 int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value_t *result) {
     const func_entry_t *e;
     char upper[64];
@@ -2801,7 +2833,7 @@ int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value
          * (FREAD's buffer) takes them itself, before this clears them */
         int rc = e->fn(ctx, args, nargs, result);
         pending_refs = NULL;
-        return rc;
+        return fn_arg_error(ctx, upper, args, nargs, result, rc);
     }
     {   /* the rest of Clipper's set (clipfn.c) */
         const clipfn_entry_t *c;
@@ -2809,7 +2841,7 @@ int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value
             if (strcmp(c->name, upper) == 0) {
                 int rc = c->fn(ctx, args, nargs, result);
                 pending_refs = NULL;
-                return rc;
+                return fn_arg_error(ctx, upper, args, nargs, result, rc);
             }
         }
     }

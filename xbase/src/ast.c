@@ -961,7 +961,7 @@ int ast_eval_elem(expr_ctx_t *ctx, const char *name, const value_t *row_v,
     return -1;
 }
 
-int ast_eval_unop(expr_ctx_t *ctx, ast_op_t op, const value_t *child, value_t *result) {
+static int unop_core(expr_ctx_t *ctx, ast_op_t op, const value_t *child, value_t *result) {
     if (op == OP_NEGATE) {
         if (child->type != VAL_NUM) { ctx->error = "Unary minus requires number"; return -1; }
         *result = val_num_dec(-child->num, child->ndec, child->nwidth);
@@ -998,8 +998,8 @@ int val_find(const value_t *hay, const value_t *needle, int from) {
     return -1;
 }
 
-int ast_eval_binop(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const value_t *right,
-                   value_t *result) {
+static int binop_core(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const value_t *right,
+                      value_t *result) {
     switch (op) {
 
     /* ---- Arithmetic ---- */
@@ -1082,6 +1082,12 @@ int ast_eval_binop(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const valu
             ctx->error = "Type mismatch in * or /"; return -1;
         }
         if (right->num == 0.0) {
+            {   /* the operands, for the error's args */
+                value_t ops[2];
+                ops[0] = *left;
+                ops[1] = *right;
+                prog_error_args(ops, 2, "/", 1340, "Division by zero");
+            }
             if (prog_error_substitute(ctx, ERR_DIV_ZERO, "Division by zero", result)) return 0;
             ctx->error = "Division by zero";
             return -1;
@@ -1772,4 +1778,76 @@ int ast_eval_adv(expr_ctx_t *ctx, const char **pp, value_t *result) {
     rc = ast_eval(ast, ctx, result);
     *pp += used;
     return rc;
+}
+
+/* ---- Argument errors, as Clipper's error system has them ----
+ *
+ * An operator given the wrong types is Clipper's argument error: the
+ * operands are the error's args, the operator its operation, each its
+ * own BASE subcode, and the operation can take a substitute -- the error
+ * handler runs at the point of failure and a value it returns is the
+ * result (prog_error_substitute; a zero divisor works the same way).
+ * The operator's name and subcode, as Harbour reports them. */
+static void op_class(ast_op_t op, int unary, const char **name, int *sub) {
+    *name = "";
+    *sub = 0;
+    switch (op) {
+    case OP_ADD:      *name = "+"; *sub = 1081; break;
+    case OP_SUB:      *name = "-"; *sub = 1082; break;
+    case OP_MUL:      *name = "*"; *sub = 1083; break;
+    case OP_DIV:      *name = "/"; *sub = 1084; break;
+    case OP_MOD:      *name = "%"; *sub = 1085; break;
+    case OP_POWER:    *name = "^"; *sub = 1088; break;
+    case OP_EXACT_EQ: *name = "=="; *sub = 1070; break;
+    case OP_EQ:       *name = "="; *sub = 1071; break;
+    case OP_NE:       *name = "<>"; *sub = 1072; break;
+    case OP_LT:       *name = "<"; *sub = 1073; break;
+    case OP_LE:       *name = "<="; *sub = 1074; break;
+    case OP_GT:       *name = ">"; *sub = 1075; break;
+    case OP_GE:       *name = ">="; *sub = 1076; break;
+    case OP_SUBSTR:   *name = "$"; *sub = 1109; break;
+    case OP_NOT:      *name = ".NOT."; *sub = 1077; break;
+    case OP_AND:      *name = ".AND."; *sub = 1078; break;
+    case OP_OR:       *name = ".OR."; *sub = 1079; break;
+    case OP_NEGATE:   *name = "-"; *sub = 1080; break;
+    default: break;
+    }
+    (void)unary;
+}
+
+/* An operand-type complaint (not a zero divisor, which substitutes on
+ * its own, nor an overflow) */
+static int arg_error_text(const char *e) {
+    return e && (strncmp(e, "Type mismatch in ", 17) == 0 || strstr(e, " requires ") != NULL);
+}
+
+static int op_arg_error(expr_ctx_t *ctx, ast_op_t op, int unary, const value_t *a, int n,
+                        value_t *result) {
+    const char *name;
+    int sub;
+    value_t ops[2];
+    if (!arg_error_text(ctx->error)) return -1;
+    op_class(op, unary, &name, &sub);
+    ops[0] = a[0];
+    if (n > 1) ops[1] = a[1];
+    prog_error_args(ops, n, name, sub, ctx->error);
+    if (prog_error_substitute(ctx, ERR_TYPE_MISMATCH, ctx->error, result)) {
+        ctx->error = NULL;
+        return 0;
+    }
+    return -1;
+}
+
+int ast_eval_binop(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const value_t *right,
+                   value_t *result) {
+    value_t ops[2];
+    if (binop_core(ctx, op, left, right, result) == 0) return 0;
+    ops[0] = *left;
+    ops[1] = *right;
+    return op_arg_error(ctx, op, 0, ops, 2, result);
+}
+
+int ast_eval_unop(expr_ctx_t *ctx, ast_op_t op, const value_t *child, value_t *result) {
+    if (unop_core(ctx, op, child, result) == 0) return 0;
+    return op_arg_error(ctx, op, 1, child, 1, result);
 }

@@ -43,8 +43,38 @@ value_t prog_get_errorblock(void) {
     return error_block;
 }
 
+/* The default handler is posted (prog_post_default_errorblock) */
+static int error_block_default;
+
 void prog_set_errorblock(const value_t *block) {
     error_block = block && block->type == VAL_BLOCK ? *block : val_nil();
+    error_block_default = 0;
+}
+
+void prog_post_default_errorblock(const value_t *block) {
+    prog_set_errorblock(block);
+    error_block_default = error_block.type == VAL_BLOCK;
+}
+
+/* The failing operation's operands, name and subcode, for the next error
+ * object (prog_error_args) */
+#define ERR_MAX_ARGS 8
+static struct {
+    int n;
+    value_t a[ERR_MAX_ARGS];
+    char op[32];
+    int sub;
+    char msg[128];      /* the error they belong to */
+} err_args;
+
+void prog_error_args(const value_t *a, int n, const char *operation, int subcode, const char *msg) {
+    int i;
+    if (n > ERR_MAX_ARGS) n = ERR_MAX_ARGS;
+    err_args.n = a ? n : 0;
+    for (i = 0; i < err_args.n; i++) err_args.a[i] = a[i];
+    str_copy(err_args.op, operation ? operation : "", sizeof(err_args.op));
+    err_args.sub = subcode;
+    str_copy(err_args.msg, msg ? msg : "", sizeof(err_args.msg));
 }
 
 void prog_set_break_value(const value_t *v) {
@@ -72,8 +102,8 @@ static void clipper_error_class(int code, const char *msg, int *gen, const char 
                                 char *op, int opsz, int *sub) {
     static const struct { const char *op; int sub; } arith[] = {
         { "+", 1081 }, { "-", 1082 }, { "*", 1083 }, { "/", 1084 }, { "%", 1085 }, { "**", 1088 },
-        { "^", 1088 }, { "=", 1070 }, { "<>", 1071 }, { "<", 1072 }, { "<=", 1073 }, { ">", 1074 },
-        { ">=", 1075 }, { "==", 1076 }, { "$", 1109 }, { ".NOT.", 1077 }, { ".AND.", 1078 }, { ".OR.", 1079 },
+        { "^", 1088 }, { "==", 1070 }, { "=", 1071 }, { "<>", 1072 }, { "<", 1073 }, { "<=", 1074 },
+        { ">", 1075 }, { ">=", 1076 }, { "$", 1109 }, { ".NOT.", 1077 }, { ".AND.", 1078 }, { ".OR.", 1079 },
         { NULL, 0 } };
     int i;
     *gen = 0;
@@ -143,6 +173,9 @@ int prog_error_substitute(expr_ctx_t *ctx, int code, const char *description, va
     object_t *o;
     value_t arg, r;
     if (error_block.type != VAL_BLOCK || error_state.in_handler) return 0;
+    /* a program's own ON ERROR is its handler, as a block it posted
+     * would be: the default one does not answer over it */
+    if (error_block_default && error_state.on_error_proc[0]) return 0;
     o = prog_new_error_object(code, description);
     if (!o) return 0;
     *object_ivar(o, "canSubstitute", 1) = val_logic(1);
@@ -206,6 +239,28 @@ object_t *prog_new_error_object(int code, const char *description) {
     *object_ivar(o, "subCode", 1) = val_num_dec((double)sub, 0, 0);
     *object_ivar(o, "subSystem", 1) = val_str("BASE");
     *object_ivar(o, "tries", 1) = val_num_dec(0, 0, 0);
+    if ((err_args.op[0] || err_args.n > 0) && strcmp(err_args.msg, description ? description : "") != 0) {
+        err_args.n = 0;         /* another error's: an expression TYPE() tried, say */
+        err_args.op[0] = '\0';
+        err_args.sub = 0;
+    }
+    if (err_args.op[0] || err_args.n > 0) {
+        /* the operation's own account (ast_eval_binop, func_call): its
+         * operands as args, its name, its subcode */
+        if (err_args.n > 0) {
+            array_t *arr = array_new(err_args.n);
+            int i;
+            if (arr) {
+                for (i = 0; i < err_args.n; i++) arr->el[i] = err_args.a[i];
+                *object_ivar(o, "args", 1) = val_array(arr);
+            }
+        }
+        if (err_args.op[0]) *object_ivar(o, "operation", 1) = val_str(err_args.op);
+        if (err_args.sub) *object_ivar(o, "subCode", 1) = val_num_dec((double)err_args.sub, 0, 0);
+        err_args.n = 0;
+        err_args.op[0] = '\0';
+        err_args.sub = 0;
+    }
     if (err_detail.set) {
         *object_ivar(o, "subSystem", 1) = val_str(err_detail.subsystem);
         *object_ivar(o, "genCode", 1) = val_num_dec((double)err_detail.gen, 0, 0);
@@ -556,7 +611,7 @@ void prog_error(int code, const char *message) {
      * this error at the point of failure, prog_error_substitute) */
     if (error_state.block_ran) {
         error_state.block_ran = 0;
-    } else if (error_block.type == VAL_BLOCK && !error_state.in_handler) {
+    } else if (error_block.type == VAL_BLOCK && !error_block_default && !error_state.in_handler) {
         value_t arg = break_value, r;
         expr_ctx_t *ctx;
         cmd_ctx_setup();

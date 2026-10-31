@@ -106,18 +106,18 @@ pass against Harbour.  Found on the way: an omitted argument (`f(a, ,
 c)`) is NIL now; SELECT 0 picks the lowest free area; SET ORDER's
 messages come under SET TALK like the rest.
 
-Approximations, by design or by this implementation's limits:
+Approximations, by design or by this implementation's limits (as
+first recorded; those marked Closed were closed in later rounds):
 
-- A string ends at a NUL: I2BIN / L2BIN give the bytes up to the first
-  zero byte and BIN2x read the missing ones as zero, so a value with a
-  zero byte between non-zero ones does not round-trip; MEMOREAD returns
-  at most 255 characters (a value_t string).
+- (Closed: a character value longer than 255 bytes or holding a NUL
+  now lives outside the value, expr.h's ext, so strings of any length
+  and binary strings round-trip, and MEMOREAD reads the whole file.)
 - DBSETFILTER needs the condition's text (the block alone cannot be
   turned back into one); DBSETRELAT likewise.
-- The interactive ones answer for a stream: ALERT prints the message and
-  options and returns 1; ACHOICE shows the items and returns 1; BROWSE()
-  and DBEDIT run the BROWSE command; MEMOEDIT returns its text
-  unchanged.  SAVESCREEN is empty and RESTSCREEN paints nothing.
+- (Closed, all under a terminal: ALERT draws its box and takes a choice,
+  ACHOICE paints and moves, DBEDIT runs on TBrowse, MEMOEDIT edits --
+  CA's PE runs on it -- and SAVESCREEN / RESTSCREEN keep and repaint a
+  region.  Without a terminal they still answer for a stream.)
 - DBSETDRIVER answers DBFNDX; DBUNLOCK / DBUNLOCKALL / NETERR / NETNAME /
   ISPRINTER / DOSERROR answer for a single user with no printer; SETMODE
   is true for 25 x 80 only.
@@ -724,8 +724,8 @@ The severe ones are marked.
    (the frame's with_ref_names, as DO ... WITH) and compiled alike.
 4. **Literal arrays and the array functions.**  Done 2026-10-29: arrays
    are Clipper's -- one dimension, nested (DECLARE a[r,c] and a[i,j] are
-   a[i][j]), resizable, shared by reference, not collected yet (a known
-   debt: they live until the program ends); `{...}` literals, `[]` on
+   a[i][j]), resizable, shared by reference (collected since, by
+   xbase/src/gc.c); `{...}` literals, `[]` on
    any value, readable and assignable; ARRAY, AADD, ASIZE, ATAIL, AFILL,
    ACLONE, LEN(array), and the old ones on the new form (ASORT, AINS,
    ADEL, ACOPY return the array; the vacated element is NIL); LOCAL /
@@ -773,7 +773,7 @@ The severe ones are marked.
    is the DISPLAY command there).
 8. **The error system** -- done 2026-10-29, interpreter and clip alike:
    a value type for objects (VALTYPE O; shared by reference like arrays,
-   not collected -- the same debt), the `:` send operator (`o:name` reads
+   collected as arrays are), the `:` send operator (`o:name` reads
    an exported variable, `o:name := e` assigns one, `o:name()` calls a
    method; `:className()` on any object), ERRORBLOCK() posting a handler
    block (returns the previous; NIL when none was), ERRORNEW(), the Error
@@ -791,10 +791,24 @@ The severe ones are marked.
    operation ("+", the variable's name, "array access") and the BASE
    subCode (1081 for +, 1003, 1132 ...) -- probe fn-error-codes matches
    Harbour on all of them; an error this mapping does not know keeps its
-   own text as the description.  Still not Clipper's: args is NIL;
-   canRetry / canSubstitute are always false, so a handler's return value
-   substitutes nothing; ERRORBLOCK() with none posted returns NIL where
-   Clipper returns the default handler's block.
+   own text as the description.  Completed 2026-10-30 (probes
+   fn-error-args, fn-error-subst-arg, fn-errorblock-default): an
+   operator or a built-in given the wrong types is Clipper's argument
+   error -- args holds the operands or the arguments, operation names
+   the operator or function, subCode is its own (the comparisons were
+   one off: = 1071, == 1070, <> 1072, < 1073 ... as Harbour has them;
+   SUBSTR 1110, UPPER 1102, LEN 1111 and the rest of the common ones,
+   where 1074 stood for all), and canSubstitute is set: the handler runs
+   at the point of failure and a value it returns is the result, as for
+   a zero divisor.  A compiled program without an ErrorSys() of its own
+   has the default handler's block posted at startup, so ERRORBLOCK()
+   answers a block (it answered NIL) and a zero divisor gives 0 through
+   it, also when a program's handler hands the error on with
+   Eval(bOld, e).  Kept as it was: an error the default handler does not
+   answer is reported and the program goes on, where Clipper's prints
+   "Called from" and quits (a behaviour point, open); a program's ON
+   ERROR outranks the default handler (ONERR2 counts on the dBASE
+   error); canRetry stays false outside USE's open error.
 9. **The Get system, TBrowse** -- done 2026-10-29, interpreter and clip
    alike (xbase/src/getsys.c).  *Get:* GETNEW(row, col, block, name,
    picture, color) and the class's variables (buffer, changed, original,

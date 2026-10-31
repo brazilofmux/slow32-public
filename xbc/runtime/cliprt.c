@@ -205,9 +205,29 @@ static int clip_do_hook(const char *name, value_t *args, int nargs,
     return 1;
 }
 
+/* The default handler's block, posted when the program has no ErrorSys()
+ * of its own (Clipper links one into every program): a zero divisor that
+ * can take a substitute gets 0, as Clipper's default handler answers it;
+ * anything else it leaves alone (.F.), and the error is reported as it is
+ * with no handler (prog_post_default_errorblock) */
+static int clip_deferror(expr_ctx_t *c, value_t *result) {
+    value_t e;
+    *result = val_logic(0);
+    if (ast_eval_name(c, "E", &e) != 0 || e.type != VAL_OBJECT) return 0;
+    {
+        value_t *gen = object_ivar(e.obj, "genCode", 0);
+        value_t *subst = object_ivar(e.obj, "canSubstitute", 0);
+        if (gen && gen->type == VAL_NUM && gen->num == 5 &&
+            subst && subst->type == VAL_LOGIC && subst->logic)
+            *result = val_num_dec(0, 0, 0);
+    }
+    return 0;
+}
+
 /* Clipper runs ErrorSys() before the program (CA's ERRORSYS.PRG:
  * "automatically executes at startup"); a program that supplies its own
- * gets its error block posted this way */
+ * gets its error block posted this way, and one that does not gets the
+ * default handler's */
 void clip_startup(void) {
     int i;
     for (i = 0; i < clip_nfn; i++) {
@@ -216,6 +236,13 @@ void clip_startup(void) {
             clip_fns[i].fn(NULL, 0, &r);
             return;
         }
+    }
+    {
+        static const char *const params[] = { "E", 0 };
+        static const char *const names[] = { 0 };
+        value_t blk;
+        if (ast_make_block(clip_ctx(), clip_deferror, 1, params, 0, names, &blk) == 0)
+            prog_post_default_errorblock(&blk);
     }
 }
 
