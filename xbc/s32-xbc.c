@@ -2406,13 +2406,19 @@ static int emit_stmt(emit_t *e, const char *p) {
     int n, i;
 
     if (is_kw(p, "PARAMETERS") || is_kw(p, "PARAMETER")) {
-        if (!e->in_fn) {
-            fprintf(stderr, "%s:%d: PARAMETERS outside FUNCTION\n",
-                    e->inpath, e->lineno);
-            return -1;
-        }
         p = skip_ws(p + (is_kw(p, "PARAMETERS") ? 10 : 9));
         n = parse_namelist(p, names, MAX_PARAMS);
+        if (!e->in_fn) {   /* the main program's: the command line's words, as Clipper passes them */
+            for (i = 0; i < n; i++) {
+                emit_indent(e->out, e->depth);
+                fprintf(e->out, "{ value_t v = argc > %d ? val_str(argv[%d]) : val_nil(); clip_setv(",
+                        e->param_i + 1, e->param_i + 1);
+                c_escape(e->out, names[i]);
+                fprintf(e->out, ", &v); }\n");
+                e->param_i++;
+            }
+            return 0;
+        }
         for (i = 0; i < n; i++) {
             emit_indent(e->out, e->depth);
             fprintf(e->out, "clip_param(&scope, ");

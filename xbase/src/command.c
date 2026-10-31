@@ -180,6 +180,24 @@ static int eval_index_key(index_t *idx, char *keybuf) {
     return 0;
 }
 
+/* The index's cursor onto the current record, where GO n, a LOCATE's or a
+ * relation's move left it elsewhere: what SKIP and CONTINUE step from.  The
+ * record's key found, then the entries with that key walked to its own */
+static void index_sync(index_t *idx, dbf_t *db) {
+    char key[MAX_INDEX_KEY + 1];
+    uint32_t want = db->current_record;
+    uint32_t n;
+    if (!idx || want == 0 || want > db->record_count) return;
+    if (index_current_recno(idx) == want) return;
+    if (eval_index_key(idx, key) != 0) { expr_ctx.error = NULL; return; }
+    index_seek(idx, key, 0);
+    for (n = 0; index_current_recno(idx) != want && n < db->record_count; n++) {
+        /* keys are stored ascending; a descending index walks them backwards */
+        if ((idx->descending ? index_prev(idx) : index_next(idx)) < 0) break;
+    }
+    if (index_current_recno(idx) != want) index_seek(idx, key, 0);
+}
+
 /* Insert current record into all active indexes for current work area */
 static void indexes_insert_current(dbf_t *db) {
     work_area_t *wa = cur_wa();
@@ -1211,6 +1229,8 @@ static void cmd_skip(dbf_t *db, const char *arg) {
         int i, found;
         uint32_t rec;
 
+        if (!expr_ctx.eof_flag) index_sync(idx, db);
+
         if (n > 0) {
             for (i = 0; i < n; i++) {
                 found = 0;
@@ -1498,6 +1518,8 @@ static int process_records(dbf_t *db, clause_t *c, int flags, record_callback_t 
         remaining = c->scope.count;
         has_limit = 1;
     }
+    if (idx && c->scope.type != SCOPE_ALL && !expr_ctx.eof_flag)
+        index_sync(idx, db);   /* REST and NEXT begin at the current record */
 
     while (!expr_ctx.eof_flag && (!has_limit || remaining > 0)) {
         uint32_t current_rec = idx ? index_current_recno(idx) : db->current_record;
@@ -1695,26 +1717,31 @@ static void cmd_continue(dbf_t *db) {
     c.has_scope = 1;
     str_copy(c.for_cond, cur_wa()->locate_cond, sizeof(c.for_cond));
 
-    /* CONTINUE starts from NEXT record; a miss leaves the pointer at EOF */
-    if (db->current_record < db->record_count) {
-        dbf_read_record(db, db->current_record + 1);
-    } else {
-        dbf_move_eof(db);
-        expr_ctx.eof_flag = 1;
-        expr_ctx.found = 0;
-        if (set_opts.talk) printf("End of LOCATE scope\n");
-        return;
+    /* CONTINUE starts from the NEXT record, in the index's order when one
+     * controls; a miss leaves the pointer at EOF */
+    {
+        index_t *idx = controlling_index();
+        int at_end = db->current_record == 0 || db->current_record > db->record_count;
+        if (idx && !at_end) {
+            index_sync(idx, db);
+            at_end = index_next(idx) < 0;
+            if (!at_end) dbf_read_record(db, index_current_recno(idx));
+        } else if (!idx && !at_end) {
+            at_end = db->current_record >= db->record_count;
+            if (!at_end) dbf_read_record(db, db->current_record + 1);
+        }
+        if (!at_end) {
+            expr_ctx.eof_flag = 0;
+            expr_ctx.found = 0;
+            count = process_records(db, &c, PROC_USE_FILTER | PROC_SKIP_DELETED_SET | PROC_LEAVE_ON_MATCH, locate_cb, NULL);
+            if (count < 0) return;
+            if (count > 0) return;
+        }
     }
-
+    dbf_move_eof(db);
     expr_ctx.found = 0;
-    count = process_records(db, &c, PROC_USE_FILTER | PROC_SKIP_DELETED_SET | PROC_LEAVE_ON_MATCH, locate_cb, NULL);
-    if (count < 0) return;
-    if (count == 0) {
-        dbf_move_eof(db);
-        expr_ctx.found = 0;
-        expr_ctx.eof_flag = 1;
-        if (set_opts.talk) printf("End of LOCATE scope\n");
-    }
+    expr_ctx.eof_flag = 1;
+    if (set_opts.talk) printf("End of LOCATE scope\n");
 }
 
 /* ---- COUNT [scope] [FOR cond] ---- */
