@@ -76,20 +76,22 @@ void screen_shutdown(void) {
 #endif
 }
 
-/* SAVE SCREEN / RESTORE SCREEN without a variable: one buffer, the
- * whole screen's cells (its handle kept as text, which no collection
- * sweeps) */
-static char whole_screen[32];
+/* SAVE SCREEN / RESTORE SCREEN without a variable: one buffer of the
+ * whole screen's cells (a copy of the bytes, which no collection sweeps) */
+static char *whole_screen;
+static int whole_len;
 
 void screen_save(void) {
     value_t h = screen_save_region(0, 0, scr_rows - 1, scr_cols - 1);
-    str_copy(whole_screen, h.type == VAL_CHAR ? val_text(&h) : "", sizeof(whole_screen));
+    free(whole_screen);
+    whole_len = val_len(&h);
+    if ((whole_screen = malloc((size_t)whole_len + 1)) != NULL) memcpy(whole_screen, val_text(&h), (size_t)whole_len);
 }
 
 void screen_restore(void) {
     value_t h;
-    if (!whole_screen[0]) return;
-    h = val_str(whole_screen);
+    if (!whole_screen) return;
+    h = val_strn(whole_screen, whole_len);
     screen_restore_region(0, 0, scr_rows - 1, scr_cols - 1, &h);
 }
 
@@ -238,12 +240,19 @@ void screen_tclear(int mode) {
     term_clear(mode);
 }
 
-/* Saved regions: a ring of 64, each handed out as "\1SCR<slot>.<gen>" */
-#define SAVED_MAX 64
-typedef struct { unsigned gen; int rows, cols; shadow_cell_t *cells; } saved_region_t;
-static saved_region_t saved_regions[SAVED_MAX];
-static unsigned saved_gen;
-static int saved_next;
+/* Screen strings, as Clipper's SAVESCREEN() makes them: two bytes a cell,
+ * row by row -- the character, then the attribute as the CGA byte
+ * (background in the high nibble, intensity bit 3).  The terminal counts
+ * its colours red 1, blue 4, the CGA the other way round. */
+static int cga_swap(int c) { return (c & 2) | ((c & 1) << 2) | ((c & 4) >> 2); }
+
+static unsigned char attr_to_cga(unsigned char a) {
+    return (unsigned char)((cga_swap((a >> 3) & 7) << 4) | (a & 0x40 ? 8 : 0) | cga_swap(a & 7));
+}
+
+static unsigned char attr_from_cga(unsigned char c) {
+    return (unsigned char)(0x80 | (c & 8 ? 0x40 : 0) | (cga_swap((c >> 4) & 7) << 3) | cga_swap(c & 7));
+}
 
 static void region_clamp(int *t, int *l, int *b, int *r) {
     if (*t < 0) *t = 0;
@@ -253,76 +262,92 @@ static void region_clamp(int *t, int *l, int *b, int *r) {
 }
 
 value_t screen_save_region(int t, int l, int b, int r) {
-    saved_region_t *s;
-    int rows, cols, i, j;
-    char handle[32];
+    int rows, cols, i, j, k = 0;
+    char *buf;
+    value_t v;
     shadow_init();
     region_clamp(&t, &l, &b, &r);
     rows = b - t + 1;
     cols = r - l + 1;
     if (rows <= 0 || cols <= 0) return val_str("");
-    s = &saved_regions[saved_next];
-    free(s->cells);
-    s->cells = malloc((size_t)rows * (size_t)cols * sizeof(shadow_cell_t));
-    if (!s->cells) return val_str("");
-    s->rows = rows;
-    s->cols = cols;
-    s->gen = ++saved_gen;
+    if (!(buf = malloc((size_t)rows * (size_t)cols * 2))) return val_str("");
     for (i = 0; i < rows; i++)
-        for (j = 0; j < cols; j++) s->cells[i * cols + j] = shadow[t + i][l + j];
-    snprintf(handle, sizeof(handle), "\001SCR%d.%u", saved_next, s->gen);
-    saved_next = (saved_next + 1) % SAVED_MAX;
-    return val_str(handle);
+        for (j = 0; j < cols; j++) {
+            buf[k++] = (char)shadow[t + i][l + j].ch;
+            buf[k++] = (char)attr_to_cga(shadow[t + i][l + j].attr);
+        }
+    v = val_strn(buf, k);
+    free(buf);
+    return v;
 }
 
-void screen_restore_region(int t, int l, int b, int r, const value_t *saved) {
-    int slot, rows, cols, i, j;
-    unsigned gen;
-    saved_region_t *s;
-    int keep_row = shadow_row, keep_col = shadow_col;
-    int keep_fg = shadow_fg, keep_bg = shadow_bg, keep_bold = shadow_bold, keep_inverse = shadow_inverse;
+/* The shadow's cells of a region onto the terminal, when there is one (a
+ * stream shows none of them); the program's colour and cursor kept */
+static void paint_region(int t, int l, int b, int r) {
+    int i, j;
     unsigned char cur = 0;
-    int paint = scr.term_available;   /* without a terminal the shadow alone (a stream shows none of it) */
-    if (!saved || saved->type != VAL_CHAR || sscanf(saved->str, "\001SCR%d.%u", &slot, &gen) != 2) return;
-    if (slot < 0 || slot >= SAVED_MAX) return;
-    s = &saved_regions[slot];
-    if (!s->cells || s->gen != gen) return;
-    shadow_init();
-    region_clamp(&t, &l, &b, &r);
-    rows = b - t + 1;
-    cols = r - l + 1;
-    if (rows > s->rows) rows = s->rows;
-    if (cols > s->cols) cols = s->cols;
-    for (i = 0; i < rows; i++) {
-        shadow_row = t + i;
-        shadow_col = l;
-        if (paint) term_gotoxy(t + i + 1, l + 1);
-        for (j = 0; j < cols; j++) {
-            shadow_cell_t cell = s->cells[i * s->cols + j];
-            if (!paint) {
-                shadow[t + i][l + j] = cell;
-                continue;
-            }
+    if (!scr.term_available) return;
+    for (i = t; i <= b; i++) {
+        term_gotoxy(i + 1, l + 1);
+        for (j = l; j <= r; j++) {
+            shadow_cell_t cell = shadow[i][j];
             if (cell.attr != cur) {
                 cur = cell.attr;
                 term_set_attr(0);
                 if (cur & 0x40) term_set_attr(1);
                 term_set_color(cur & 7, (cur >> 3) & 7);
             }
-            shadow[t + i][l + j] = cell;
             term_putc(cell.ch);
         }
     }
-    /* the program's own colour and cursor back */
-    shadow_fg = keep_fg; shadow_bg = keep_bg; shadow_bold = keep_bold; shadow_inverse = keep_inverse;
-    shadow_row = keep_row;
-    shadow_col = keep_col;
-    if (!paint) return;
     term_set_attr(0);
     if (shadow_bold) term_set_attr(1);
     if (shadow_inverse) term_set_attr(7);
     term_set_color(shadow_fg, shadow_bg);
-    term_gotoxy(keep_row + 1, keep_col + 1);
+    term_gotoxy(shadow_row + 1, shadow_col + 1);
+}
+
+/* RESTSCREEN(): the string's cells laid row by row across the region, as
+ * far as the string goes */
+void screen_restore_region(int t, int l, int b, int r, const value_t *saved) {
+    const unsigned char *p;
+    int n, cols, i, j, k = 0;
+    if (!saved || saved->type != VAL_CHAR) return;
+    shadow_init();
+    region_clamp(&t, &l, &b, &r);
+    cols = r - l + 1;
+    if (b < t || cols <= 0) return;
+    p = (const unsigned char *)val_text(saved);
+    n = val_len(saved) / 2;
+    for (i = t; i <= b && k < n; i++)
+        for (j = l; j <= r && k < n; j++, k++) {
+            shadow[i][j].ch = p[2 * k];
+            shadow[i][j].attr = attr_from_cga(p[2 * k + 1]);
+        }
+    paint_region(t, l, b, r);
+}
+
+/* SCROLL(): the region's rows moved up n (down for a negative n), the
+ * rows left behind blank in the current colour; 0, or n past the
+ * region's height, clears it */
+void screen_scroll_region(int t, int l, int b, int r, int n) {
+    int i, j, h;
+    unsigned char a;
+    shadow_init();
+    region_clamp(&t, &l, &b, &r);
+    h = b - t + 1;
+    if (h <= 0 || r < l) return;
+    a = shadow_attr();
+    if (n >= h || -n >= h) n = 0;
+    for (i = 0; i < h; i++) {
+        int row = n >= 0 ? t + i : b - i;     /* filled in the order that reads rows not yet moved */
+        int from = row + n;
+        for (j = l; j <= r; j++) {
+            if (n != 0 && from >= t && from <= b) shadow[row][j] = shadow[from][j];
+            else { shadow[row][j].ch = ' '; shadow[row][j].attr = a; }
+        }
+    }
+    paint_region(t, l, b, r);
 }
 
 /* ---- Apply PICTURE mask to a string ---- */

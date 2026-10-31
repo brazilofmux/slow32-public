@@ -1224,12 +1224,13 @@ int fn_setcursor(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     return 0;
 }
 
-/* SCROLL([top], [left], [bottom], [right], [n]): the region cleared (the
- * rows a scroll would vacate are not kept apart) */
+/* SCROLL([top], [left], [bottom], [right], [n]): the region's rows moved
+ * up n (down, negative), or cleared when n is 0 or left out */
 int fn_scroll(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx;
-    screen_clear_region(arg_num(args, nargs, 0, 0), arg_num(args, nargs, 1, 0),
-                        arg_num(args, nargs, 2, screen_maxrow()), arg_num(args, nargs, 3, screen_maxcol()));
+    screen_scroll_region(arg_num(args, nargs, 0, 0), arg_num(args, nargs, 1, 0),
+                         arg_num(args, nargs, 2, screen_maxrow()), arg_num(args, nargs, 3, screen_maxcol()),
+                         arg_num(args, nargs, 4, 0));
     *result = val_nil();
     return 0;
 }
@@ -1249,9 +1250,8 @@ int fn_dispbox(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     return 0;
 }
 
-/* SAVESCREEN / RESTSCREEN: no screen memory to copy; the string is empty
- * and restoring it paints nothing */
-/* SAVESCREEN([t, l, b, r]) --> the region's cells, as a handle string;
+/* SAVESCREEN([t, l, b, r]) --> the region's cells, as Clipper's screen
+ * string (a character and its CGA attribute each);
  * RESTSCREEN([t, l, b, r], saved) paints them back.  The whole screen
  * when the corners are omitted. */
 int fn_savescreen(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {

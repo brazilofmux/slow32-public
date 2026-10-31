@@ -1068,3 +1068,25 @@ the same shadow SAVESCREEN reads (it was the terminal's own save, which
 the shadow never saw).  Found on the way: RESTSCREEN() without a
 terminal wrote the region's characters to the stream -- two thousand
 blanks for a whole screen; it restores the shadow alone there.
+
+## Screen strings, SCROLL, and three small ones (2026-10-31)
+
+SAVESCREEN() returns Clipper's screen string now -- the cells
+themselves, a character and its colour as the CGA byte each (GR+/B is
+1E), row by row -- and RESTSCREEN() lays any such string over its region
+row by row, as far as the string goes (probe fn-screen-string, Harbour's
+bytes).  It was a handle, "\1SCR<slot>.<gen>", into a ring of 64 saved
+regions: a program that kept a screen across 64 saves restored nothing,
+and one that built or changed the string (the drop-shadow idiom: the
+attribute bytes rewritten) had nothing to change.  SAVE SCREEN's own
+buffer keeps a copy of the bytes.
+
+SCROLL(t, l, b, r, n) scrolls: the rows move up n, down for a negative
+n, the rows left behind blank in the current colour; with no n, or one
+past the region's height, it clears.  It cleared the region whatever n
+was.
+
+COPY FILE and RENAME said "File copied." / "File renamed." always --
+in a compiled program too, where Clipper says nothing; they are SET
+TALK's now, as ERASE's was.  SET TYPEAHEAD TO n was accepted and lost;
+SET(_SET_TYPEAHEAD) answers it (the keyboard buffer keeps one size).

@@ -40,6 +40,7 @@ void set_init(set_options_t *opts) {
     opts->alternate_on = 0;
     opts->printer_fp = NULL;
     opts->printer_on = 0;
+    opts->typeahead = 50;
     opts->path[0] = '\0';
 }
 
@@ -215,8 +216,11 @@ void set_execute(set_options_t *opts, const char *arg) {
         if (val >= 0) opts->scoreboard = val;
         return;
     }
-    if (str_imatch(p, "TYPEAHEAD")) {
-        return;   /* SET TYPEAHEAD TO n: the buffer here has one size */
+    if (str_imatch(p, "TYPEAHEAD")) {   /* SET TYPEAHEAD TO n: kept for SET(); the buffer here has one size */
+        p = skip_ws(p + 9);
+        if (str_imatch(p, "TO")) p = skip_ws(p + 2);
+        if (*p >= '0' && *p <= '9') opts->typeahead = atoi(p);
+        return;
     }
     if (str_imatch(p, "ESCAPE")) {
         val = parse_on_off(p + 6);

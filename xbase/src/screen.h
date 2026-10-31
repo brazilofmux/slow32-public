@@ -143,8 +143,9 @@ void screen_tputc(int ch);
 void screen_tattr(int attr);
 void screen_tcolor(int fg, int bg);
 void screen_tclear(int mode);
-value_t screen_save_region(int t, int l, int b, int r);                 /* a handle string */
+value_t screen_save_region(int t, int l, int b, int r);   /* Clipper's screen string: char, CGA attribute */
 void screen_restore_region(int t, int l, int b, int r, const value_t *saved);
+void screen_scroll_region(int t, int l, int b, int r, int n);   /* SCROLL(): up n, down -n, 0 clears */
 
 /* The display mode: MAXROW(), MAXCOL(); SETMODE() (0 when refused) */
 int screen_maxrow(void);

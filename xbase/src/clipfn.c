@@ -1354,7 +1354,6 @@ static void set_shadow_init(void) {
     set_shadow[7] = val_str("");
     set_shadow[8] = val_logic(1);
     set_shadow[13] = val_logic(0);
-    set_shadow[14] = vnum(50);
     set_shadow[19] = val_str("");
     set_shadow[21] = val_logic(0);
     set_shadow[22] = val_str("");
@@ -1399,6 +1398,7 @@ static value_t set_current(expr_ctx_t *ctx, const set_entry_t *e) {
     case 18: return val_logic(o->alternate_on);
     case 20: return val_str(o->device ? "PRINTER" : "SCREEN");
     case 23: return val_logic(o->printer_on);
+    case 14: return vnum(o->typeahead);
     case 25: return vnum(o->margin);
     case 26: return val_logic(o->bell);
     case 27: return val_logic(o->confirm);
@@ -1425,7 +1425,7 @@ static void set_apply(expr_ctx_t *ctx, const set_entry_t *e, value_t *v) {
     case 1: case 2: case 9: case 10: case 11: case 17: case 18: case 23: case 26: case 27: case 28: case 32: case 35:
         run_cmd("SET %s %s", e->name, truth_arg(v) ? "ON" : "OFF");
         return;
-    case 3: case 5: case 25: case 36:
+    case 3: case 5: case 14: case 25: case 36:
         if (v->type == VAL_NUM) run_cmd("SET %s TO %d", e->name, (int)v->num);
         return;
     case 4: {   /* "dd/mm/yyyy" and the like, to the named format */

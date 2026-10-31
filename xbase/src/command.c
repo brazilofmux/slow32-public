@@ -4776,8 +4776,8 @@ static void cmd_rename(const char *arg) {
             fclose(fout);
             remove(oldname);
         }
-        printf("File renamed.\n");
-    } else {
+        if (set_opts.talk) printf("File renamed.\n");   /* SET TALK's, as ERASE's (Clipper says nothing) */
+    } else if (set_opts.talk) {
         printf("File renamed.\n");
     }
 }
@@ -4825,7 +4825,7 @@ static void cmd_copy_file(const char *arg) {
         fwrite(buf, 1, n, fout);
     fclose(fin);
     fclose(fout);
-    printf("File copied.\n");
+    if (set_opts.talk) printf("File copied.\n");   /* SET TALK's, as ERASE's (Clipper says nothing) */
 }
 
 /* ---- INDEX [UNIQUE] ON <expr> TO <file> [UNIQUE] ---- */
