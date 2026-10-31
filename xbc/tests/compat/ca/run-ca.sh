@@ -16,6 +16,11 @@ CLIP="$(cd "$HERE/../../.." && pwd)"
 ROOT="$(dirname "$CLIP")"
 EMU="${EMU:-$ROOT/tools/emulator/slow32-fast}"
 CA="${CLIPPER_SRC:-$HOME/refs/clipper/source}"
+# Harbour runs in a container whose clock is UTC; the host's offset, as a
+# POSIX TZ the container needs no zone files for, keeps DATE() the same
+# day on both sides (a REPORT FORM header differed after 6 pm Mountain)
+z=$(date +%z)
+HB_TZ="LOC$([ "${z:0:1}" = "-" ] && echo + || echo -)${z:1:2}:${z:3:2}"
 OUT="$CLIP/out/compat/ca"
 mkdir -p "$OUT"
 if [ ! -d "$CA/SAMPLE" ]; then echo "ca drivers: SKIP (no $CA)"; exit 0; fi
@@ -44,7 +49,7 @@ for drv in "${DRIVERS[@]}"; do
     for h in "$CLIP"/include/*.ch; do
         b=$(basename "$h"); cp "$h" "$w/$(echo "${b:0:1}" | tr 'a-z' 'A-Z')${b:1}"
     done
-    podman run --rm -v "$w":/work slow32:harbour-oracle "$n.prg" > "$OUT/$n.hb" 2>&1
+    podman run --rm -e TZ="$HB_TZ" -v "$w":/work slow32:harbour-oracle "$n.prg" > "$OUT/$n.hb" 2>&1
     rc=$?
     if [ $rc -eq 2 ] && grep -q ORACLE-COMPILE-FAIL "$OUT/$n.hb"; then
         printf '%-28s ORACLE (Harbour refuses it)\n' "$n"; oracle=$((oracle+1)); rm -rf "$w"; continue

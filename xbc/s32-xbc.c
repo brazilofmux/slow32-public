@@ -167,8 +167,10 @@ static void emit_cmd(FILE *out, int depth, const char *p) {
     fprintf(out, "); /* interp */\n");
 }
 
-/* The program name the interpreter would report: the file's base name, as
- * DO would have it, with .PRG */
+/* The program name the interpreter reports: the file's own name, the
+ * one DO opens -- its base name and its extension as they are on disk
+ * (ui.prg is ui.prg, as the interpreter names it wherever case counts),
+ * .PRG added only when it has none */
 static void file_label(const char *path, char *buf, int n) {
     const char *b = strrchr(path, '/');
     const char *dot;
@@ -180,7 +182,8 @@ static void file_label(const char *path, char *buf, int n) {
         len = n - 5;
     }
     memcpy(buf, b, (size_t)len);
-    strcpy(buf + len, ".PRG");
+    if (dot && strlen(dot) == 4) strcpy(buf + len, dot);
+    else strcpy(buf + len, ".PRG");
 }
 
 /* clip_at(file, line) as an expression, for a condition's front */

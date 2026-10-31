@@ -12,6 +12,11 @@ set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CLIP="$(cd "$HERE/../.." && pwd)"
 EMU="${EMU:-$CLIP/../tools/emulator/slow32-fast}"
+# Harbour runs in a container whose clock is UTC; the host's offset, as a
+# POSIX TZ the container needs no zone files for, keeps DATE() the same
+# day on both sides (a REPORT FORM header differed after 6 pm Mountain)
+z=$(date +%z)
+HB_TZ="LOC$([ "${z:0:1}" = "-" ] && echo + || echo -)${z:1:2}:${z:3:2}"
 OUT="$CLIP/out/compat"
 mkdir -p "$OUT"
 bash "$CLIP/build.sh" >/dev/null || exit 2
@@ -23,7 +28,7 @@ for prg in "${PROBES[@]}"; do
     w=$(mktemp -d "$OUT/w.XXXX")
     cp "$prg" "$w/"
     cp "$HERE"/probes/*.ch "$w/" 2>/dev/null   # headers a probe #includes
-    podman run --rm -v "$w":/work slow32:harbour-oracle "$n.prg" > "$OUT/$n.hb" 2>&1
+    podman run --rm -e TZ="$HB_TZ" -v "$w":/work slow32:harbour-oracle "$n.prg" > "$OUT/$n.hb" 2>&1
     rc=$?
     if [ $rc -eq 2 ] && grep -q ORACLE-COMPILE-FAIL "$OUT/$n.hb"; then
         printf '%-36s ORACLE (Harbour refuses it)\n' "$n"; oracle=$((oracle+1)); rm -rf "$w"; continue

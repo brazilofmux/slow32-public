@@ -91,6 +91,26 @@ setup_for() {
     done
 }
 
+# The keys a program that reads the keyboard is given: NAME.keys beside
+# it, else the lines an xbase test script types after DOing it (up to its
+# QUIT).  Under --deny term the interpreter reads them from its command
+# stream after the DO line and the compiled program from its stdin; a key
+# a program leaves unread becomes an interpreter command, so that differs
+# too.  Empty, with status 1, when there are none.
+keys_for() {
+    local prg=$1 dir=$2 name=$3 t
+    if [ -f "${prg%.*}.keys" ]; then cat "${prg%.*}.keys"; return 0; fi
+    for t in "$dir"/*.txt; do
+        [ -f "$t" ] || continue
+        if grep -qiE "^[[:space:]]*DO[[:space:]]+$name(\.PRG)?[[:space:]]*\$" "$t"; then
+            awk -v n="$name" 'BEGIN{IGNORECASE=1} on && toupper($0) ~ "^[ \t]*QUIT[ \t]*$" {exit}
+                on {print} toupper($0) ~ "^[ \t]*DO[ \t]+" toupper(n) "(\\.PRG)?[ \t]*$" {on=1}' "$t"
+            return 0
+        fi
+    done
+    return 1
+}
+
 agree=0; differ=0; nocomp=0; skip=0
 for prg in "${CORPUS[@]}"; do
     name=$(basename "$prg"); name="${name%.*}"
@@ -99,8 +119,13 @@ for prg in "${CORPUS[@]}"; do
     if echo "$first" | grep -qiE '^[[:space:]]*(FUNCTION|PROCEDURE)\b'; then
         printf '%-28s SKIP (a library: reached through its caller)\n' "$name"; skip=$((skip+1)); continue
     fi
+    haskeys=0
     if grep -qiE '^[[:space:]]*(ACCEPT|INPUT|WAIT|READ)\b|INKEY\(' "$prg"; then
-        printf '%-28s SKIP (reads the keyboard)\n' "$name"; skip=$((skip+1)); continue
+        # a file, not a variable: $(...) would drop a last empty line
+        if ! keys_for "$prg" "$dir" "$name" > "$OUT/$name.keysin"; then
+            printf '%-28s SKIP (reads the keyboard; no keys for it)\n' "$name"; skip=$((skip+1)); continue
+        fi
+        haskeys=1
     fi
     if ! compile "$prg" "$OUT/$name.s32x" >"$OUT/$name.cc.log" 2>&1; then
         printf '%-28s NOCOMPILE %s\n' "$name" "$(grep -m1 -E 'unlowered|error|not supported|SUSPEND' "$OUT/$name.cc.log" | sed 's/.*: //' | cut -c1-60)"
@@ -119,9 +144,18 @@ for prg in "${CORPUS[@]}"; do
                 timeout 60 "$EMU" -q --deny term "$DBASE" >/dev/null 2>&1)
         done
     fi
-    (cd "$wi" && printf 'SET TALK OFF\nDO %s\nQUIT\n' "$(basename "$prg")" |
+    # DO by the file's own name: the interpreter then names the program as
+    # the compiled one does, on any file system (and `DO case` would be
+    # the start of a DO CASE)
+    (cd "$wi" && { printf 'SET TALK OFF\nDO %s\n' "$(basename "$prg")"
+                   [ "$haskeys" = 1 ] && cat "$OUT/$name.keysin"
+                   printf 'QUIT\n'; } |
         timeout 60 "$EMU" -q --deny term "$DBASE" 2>&1 | strip_interp) > "$OUT/$name.interp"
-    (cd "$wc" && timeout 60 "$EMU" -q --deny term "$OUT/$name.s32x" </dev/null 2>&1) > "$OUT/$name.clipraw"
+    if [ "$haskeys" = 1 ]; then
+        (cd "$wc" && timeout 60 "$EMU" -q --deny term "$OUT/$name.s32x" < "$OUT/$name.keysin" 2>&1) > "$OUT/$name.clipraw"
+    else
+        (cd "$wc" && timeout 60 "$EMU" -q --deny term "$OUT/$name.s32x" </dev/null 2>&1) > "$OUT/$name.clipraw"
+    fi
     rstrip_nl "$OUT/$name.clipraw" > "$OUT/$name.clip"
     rm -rf "$wi" "$wc"
     if cmp -s "$OUT/$name.interp" "$OUT/$name.clip"; then
