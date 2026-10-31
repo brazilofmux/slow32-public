@@ -7,13 +7,16 @@ SET
 @ 5,10 PROMPT "Option A" MESSAGE "First option"
 @ 6,10 PROMPT "Option B" MESSAGE "Second option"
 @ 7,10 PROMPT "Option C"
-* MENU TO in non-terminal mode picks first option
+* MENU TO without a terminal reads a line: a choice's number ...
 MENU TO choice
+2
 ? "Choice:", choice
 * Clear and test again with different prompts
 @ 10,5 PROMPT "Alpha"
 @ 11,5 PROMPT "Beta"
+* ... or the first letter of a prompt
 MENU TO pick
+b
 ? "Pick:", pick
 * Test SET MESSAGE TO (disable)
 SET MESSAGE TO

@@ -879,6 +879,21 @@ static value_t get_text_value(const get_entry_t *g, const char *buf, int *bad) {
     return val_str(buf);
 }
 
+/* A line typed for a character GET when there is no terminal: what the
+ * picture's case rules make of it, as the full-screen editor makes of
+ * each key -- every letter upper case under @!, and those at a template's
+ * ! positions.  (Keys a template would refuse have no line-mode meaning
+ * and are kept.) */
+static void get_line_case(const get_entry_t *g, char *line) {
+    get_picture_t pic;
+    int k;
+    if (g->type != VAL_CHAR) return;
+    parse_get_picture(g->picture, &pic);
+    for (k = 0; line[k]; k++)
+        if (pic.upper || (k < (int)strlen(pic.tmpl) && pic.tmpl[k] == '!'))
+            line[k] = (char)toupper((unsigned char)line[k]);
+}
+
 /* ---- READ ---- */
 void screen_read(void) {
     memvar_store_t *store = cmd_get_memvar_store();
@@ -1181,6 +1196,7 @@ void screen_read(void) {
                         v = get_text_value(&scr.gets[i], scr.gets[i].initial, &bad);   /* keep current value */
                     } else {
                         trim_right(line);
+                        get_line_case(&scr.gets[i], line);
                         v = get_text_value(&scr.gets[i], line, &bad);
                         if (bad) { printf("\nInvalid date\n"); continue; }
                     }
@@ -1524,13 +1540,31 @@ int screen_menu_to(void) {
     } else
 #endif
     {
-        /* Non-terminal fallback: just pick first option */
+        /* No terminal: the choices listed, and a line read for the
+         * choice -- its number, or a letter that starts a prompt (the
+         * full-screen menu's first-letter key); an empty line (Enter) or
+         * the end of input keeps the current one, 0 is Esc. */
+        char line[64];
+        const char *p;
         printf("Menu: ");
         for (i = 0; i < n; i++) {
             printf("%d. %s  ", i + 1, scr.prompts[i].text);
         }
         printf("\n");
         cur = 0;
+        if (read_line(line, sizeof(line)) >= 0) {
+            p = skip_ws(line);
+            if (*p >= '0' && *p <= '9') {
+                int k = atoi(p);
+                if (k == 0) cur = -1;
+                else if (k <= n) cur = k - 1;
+            } else if (*p) {
+                for (i = 0; i < n; i++) {
+                    const char *t = skip_ws(scr.prompts[i].text);
+                    if (toupper((unsigned char)*t) == toupper((unsigned char)*p)) { cur = i; break; }
+                }
+            }
+        }
     }
 
     scr.nprompts = 0;  /* consume prompts after MENU TO */
