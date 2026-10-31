@@ -1,0 +1,6 @@
+SET TALK OFF
+* RUN is the command processor's (none on SLOW-32): never DO of a .PRG
+* of the same name, as TPBP.BAT is not TPBP.PRG
+RUN PARAMAB
+? "after RUN"
+QUIT

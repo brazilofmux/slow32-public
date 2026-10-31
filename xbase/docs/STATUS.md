@@ -175,7 +175,7 @@ Verified against the verb table in `src/command.c`, `src/program.c` and
 | Menus | `@ ... PROMPT` / `MENU TO`; `DEFINE MENU`/`PAD`/`POPUP`/`BAR`, `ACTIVATE`, `DEACTIVATE`, `ON SELECTION POPUP`/`PAD ... DO` |
 | Records | `SCATTER` / `GATHER`, `CALCULATE`, `SCAN` / `ENDSCAN`, `JOIN WITH`, `TOTAL ON`, `UPDATE ON` |
 | Files | `APPEND FROM ... DELIMITED`, `COPY TO ... DELIMITED`, `LIST STRUCTURE`, `COPY STRUCTURE EXTENDED TO`, `TYPE`, memo fields (.DBT) |
-| Programs | `TEXT` ... `ENDTEXT`, `DECLARE` / `DIMENSION` arrays, `LOCAL` (shadows, does not destroy, the outer variable), `DO ... WITH` by reference, `SET KEY TO` / `ON KEY`, `RUN` (runs `DO`) |
+| Programs | `TEXT` ... `ENDTEXT`, `DECLARE` / `DIMENSION` arrays, `LOCAL` (shadows, does not destroy, the outer variable), `DO ... WITH` by reference, `SET KEY TO` / `ON KEY`, `RUN` (the command processor's, through `system()`: none on SLOW-32, so it fails quietly -- never `DO` of a same-named `.PRG`) |
 | Runtime errors | about 40 error sites go through `ON ERROR` |
 
 Functions added (the February list is below): `ALLTRIM`, `EMPTY`,

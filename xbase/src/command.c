@@ -5928,7 +5928,19 @@ static void h_retry(dbf_t *db, lexer_t *l) { (void)db; (void)l; prog_retry(); }
 static void h_suspend(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_running()) prog_suspend(); else printf("Not in program.\n"); }
 static void h_resume(dbf_t *db, lexer_t *l) { (void)db; (void)l; prog_resume(); }
 static void h_eject(dbf_t *db, lexer_t *l) { (void)db; (void)l; screen_eject(); }
-static void h_run(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); prog_do(arg); }
+/* RUN <command>: the operating system's command, through its command
+ * processor (TPBP.BAT, Teacher's Pet's copy to drive A -- not TPBP.PRG,
+ * which DO would run again).  SLOW-32 has none, so system() fails and RUN
+ * goes on, as a failed RUN does; what a DOS RUN showed then was
+ * COMMAND.COM's message, and there is no COMMAND.COM to say it. */
+static void h_run(dbf_t *db, lexer_t *l) {
+    char arg[256];
+    (void)db;
+    lex_next(l);
+    lex_get_remaining(l, arg, sizeof(arg));
+    fflush(stdout);
+    (void)system(arg);
+}
 static void h_select(dbf_t *db, lexer_t *l) {
     (void)db;
     char arg[256];

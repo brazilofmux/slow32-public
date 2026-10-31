@@ -21,8 +21,7 @@ Database TEST.DBF created with 1 field(s).
  Bob        
 . 
  Bob        
-. . . *** File not found: dir.prg
-. . . 2 record(s) totalled
+. . . . . . 2 record(s) totalled
 2 record(s) generated
 . *** JOIN WITH: no database open under that alias
 . . . File erased.
