@@ -207,11 +207,30 @@ static int is_lvalue(const ast_node_t *n) {
                  (n->type == AST_SEND && !n->send.is_call));
 }
 
+/* A block's expressions, e1, e2 ..., into node */
+static int parse_block_exprs(lexer_t *l, memvar_store_t *store, const char **error,
+                             ast_node_t *node) {
+    int cap = 0;
+    for (;;) {
+        ast_node_t *e = ast_parse_expr(l, store, error);
+        if (!e) return -1;
+        if (node->block.n == cap) {
+            ast_node_t **g;
+            cap = cap ? cap * 2 : 4;
+            g = realloc(node->block.exprs, (size_t)cap * sizeof(*g));
+            if (!g) { ast_free(e); *error = "Out of memory"; return -1; }
+            node->block.exprs = g;
+        }
+        node->block.exprs[node->block.n++] = e;
+        if (lex_peek(l) == TOK_COMMA) { lex_next(l); continue; }
+        return 0;
+    }
+}
+
 /* {| p, q | e1, e2, ... }, with the { taken: the parameters, then the
  * expressions (the value is the last) */
 static ast_node_t *parse_block(lexer_t *l, memvar_store_t *store, const char **error) {
     ast_node_t *node = node_alloc(AST_BLOCK);
-    int cap = 0;
     if (!node) { *error = "Out of memory"; return NULL; }
     node->block.params = calloc(MAX_BLOCK_PARAMS, MEMVAR_NAMELEN);
     if (!node->block.params) { free(node); *error = "Out of memory"; return NULL; }
@@ -226,23 +245,32 @@ static ast_node_t *parse_block(lexer_t *l, memvar_store_t *store, const char **e
     }
     if (lex_peek(l) != TOK_PIPE) { *error = "Missing | in code block"; ast_free(node); return NULL; }
     lex_next(l);
-    for (;;) {
-        ast_node_t *e = ast_parse_expr(l, store, error);
-        if (!e) { ast_free(node); return NULL; }
-        if (node->block.n == cap) {
-            ast_node_t **g;
-            cap = cap ? cap * 2 : 4;
-            g = realloc(node->block.exprs, (size_t)cap * sizeof(*g));
-            if (!g) { ast_free(e); ast_free(node); *error = "Out of memory"; return NULL; }
-            node->block.exprs = g;
-        }
-        node->block.exprs[node->block.n++] = e;
-        if (lex_peek(l) == TOK_COMMA) { lex_next(l); continue; }
-        break;
-    }
+    if (parse_block_exprs(l, store, error, node) != 0) { ast_free(node); return NULL; }
     if (lex_peek(l) != TOK_RBRACE) { *error = "Missing } in code block"; ast_free(node); return NULL; }
     lex_next(l);
     return node;
+}
+
+/* alias->(e1, e2 ...), the ( taken: the expressions evaluated in the
+ * alias's work area, the value the last's.  It is made a call of
+ * __ALIASEVAL (clipfn.c) with the alias and a block of the expressions,
+ * so that the LOCALs they name are a block's, in a block or out */
+static ast_node_t *parse_alias_expr(lexer_t *l, memvar_store_t *store, const char **error,
+                                    const char *alias) {
+    ast_node_t *node = node_alloc(AST_BLOCK), **args;
+    if (!node) { *error = "Out of memory"; return NULL; }
+    node->block.params = calloc(MAX_BLOCK_PARAMS, MEMVAR_NAMELEN);
+    if (!node->block.params) { free(node); *error = "Out of memory"; return NULL; }
+    lex_next(l);   /* ( */
+    if (parse_block_exprs(l, store, error, node) != 0) { ast_free(node); return NULL; }
+    if (lex_peek(l) != TOK_RPAREN) { *error = "Missing ) in aliased expression"; ast_free(node); return NULL; }
+    lex_next(l);
+    args = malloc(2 * sizeof(*args));
+    if (!args || !(args[0] = node_literal(val_str(alias)))) {
+        free(args); ast_free(node); *error = "Out of memory"; return NULL;
+    }
+    args[1] = node;
+    return node_call("__ALIASEVAL", args, 2);
 }
 
 /* A deep copy of a tree: a block value keeps its body past the expression
@@ -768,6 +796,7 @@ static ast_node_t *ast_parse_primary(lexer_t *l, memvar_store_t *store, const ch
         if (lex_peek(l) == TOK_ARROW) {
             char field_name[64];
             lex_next(l);
+            if (lex_peek(l) == TOK_LPAREN) return parse_alias_expr(l, store, error, name);
             if (lex_peek(l) != TOK_IDENT) {
                 *error = "Expected field name after ->";
                 return NULL;

@@ -15,11 +15,17 @@ typedef struct {
     uint32_t locate_last_rec;
     char filter_cond[256];
     struct ast_node *filter_ast;
+    struct block_s *filter_block;   /* DBSETFILTER's block: the condition, and
+                                       filter_cond only its text */
     index_t indexes[MAX_INDEXES];
     int num_indexes;
     int order;
     char relation_expr[256];
+    struct block_s *relation_block; /* DBSETRELAT's block, likewise */
     int relation_target;
+    int eof_flag, bof_flag, found;  /* EOF(), BOF(), FOUND() while another
+                                       area is current (the expression
+                                       context holds the current one's) */
 } work_area_t;
 
 void area_init_all(void);
@@ -27,6 +33,10 @@ int area_get_current_idx(void);
 void area_set_current_idx(int idx);
 work_area_t *area_get(int idx);
 work_area_t *area_get_current(void);
+
+/* Called at each change of the current area, with the area left and the
+ * area entered (command.c: the expression context's flags are the area's) */
+void area_set_switch_hook(void (*hook)(work_area_t *from, work_area_t *to));
 
 /* Resolve alias (including A-J and 1-10) to area index. Returns -1 if not found. */
 int area_resolve_alias(const char *alias);

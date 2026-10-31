@@ -78,9 +78,22 @@ static dbf_t *cur_db(void) { return &area_get_current()->db; }
 
 /* ---- Helper: initialize expr_ctx ---- */
 static int screen_initialized;
+/* EOF(), BOF() and FOUND() are the current area's: kept in the area while
+ * another is current */
+static void area_switched(work_area_t *from, work_area_t *to) {
+    from->eof_flag = expr_ctx.eof_flag;
+    from->bof_flag = expr_ctx.bof_flag;
+    from->found = expr_ctx.found;
+    expr_ctx.eof_flag = to->eof_flag;
+    expr_ctx.bof_flag = to->bof_flag;
+    expr_ctx.found = to->found;
+    expr_ctx.db = &to->db;
+}
+
 static void ctx_setup(void) {
     if (!stage3_initialized) {
         area_init_all();
+        area_set_switch_hook(area_switched);
         memvar_init(&memvar_store);
         set_init(&set_opts);
         stage3_initialized = 1;
@@ -276,15 +289,30 @@ static void indexes_clear_all(void) {
     }
 }
 
+/* A block held in a work area (DBSETFILTER, DBSETRELAT), as a value */
+static value_t block_value(struct block_s *blk) {
+    value_t v = val_nil();
+    v.type = VAL_BLOCK;
+    v.block = blk;
+    return v;
+}
+
 /* ---- SET RELATION: follow child area ---- */
 static void follow_relations(void) {
     work_area_t *wa = cur_wa();
-    if (wa->relation_expr[0] && wa->relation_target >= 0) {
+    if ((wa->relation_block || wa->relation_expr[0]) && wa->relation_target >= 0) {
         int saved_area = area_get_current_idx();
-        value_t key;
+        value_t key, b;
+        int rc;
         /* Evaluate relation expression in parent context */
         ctx_setup();
-        if (ast_eval_dynamic(wa->relation_expr, &expr_ctx, &key) == 0) {
+        if (wa->relation_block) {
+            b = block_value(wa->relation_block);
+            rc = ast_eval_block(&expr_ctx, &b, NULL, 0, &key);
+        } else {
+            rc = ast_eval_dynamic(wa->relation_expr, &expr_ctx, &key);
+        }
+        if (rc == 0) {
             char buf[256];
             val_to_string(&key, buf, sizeof(buf));
             /* Switch to child, seek */
@@ -292,26 +320,25 @@ static void follow_relations(void) {
             {
                 work_area_t *child = cur_wa();
                 index_t *idx = NULL;
+                uint32_t rec;
                 if (child->order > 0 && child->order <= child->num_indexes)
                     idx = &child->indexes[child->order - 1];
                 if (idx && idx->active) {
                     index_format_key_value(idx->key_type, &key, buf, sizeof(buf));
-                    index_seek(idx, buf, 0);
-                    {
-                        uint32_t rec = index_current_recno(idx);
-                        if (rec > 0)
-                            dbf_read_record(&child->db, rec);
-                        else
-                            dbf_move_eof(&child->db);
-                    }
+                    /* a key the child lacks leaves it at EOF */
+                    rec = index_seek(idx, buf, 0) ? index_current_recno(idx) : 0;
                 } else {
                     /* No index: record number search */
-                    uint32_t rec = (uint32_t)atoi(buf); 
-                    if (rec >= 1 && rec <= child->db.record_count)
-                        dbf_read_record(&child->db, rec);
-                    else
-                        dbf_move_eof(&child->db);
+                    rec = (uint32_t)atoi(buf);
+                    if (rec > child->db.record_count) rec = 0;
                 }
+                if (rec > 0)
+                    dbf_read_record(&child->db, rec);
+                else
+                    dbf_move_eof(&child->db);
+                expr_ctx.eof_flag = rec == 0;
+                expr_ctx.bof_flag = 0;
+                expr_ctx.found = rec > 0;
             }
         }
         area_set_current_idx(saved_area);
@@ -795,11 +822,24 @@ static int skip_deleted(const char *rec_buf) {
     return (rec_buf[0] == '*' && set_opts.deleted);
 }
 
+/* No filter in the area: neither SET FILTER's text nor DBSETFILTER's block */
+static void clear_filter(work_area_t *wa) {
+    wa->filter_cond[0] = '\0';
+    if (wa->filter_ast) { ast_free(wa->filter_ast); wa->filter_ast = NULL; }
+    wa->filter_block = NULL;
+}
+
 /* ---- Helper: check if current record passes SET FILTER ---- */
 /* Returns 1 if record passes (or no filter set), 0 if filtered out */
 static int check_filter(dbf_t *db) {
     value_t cond;
     (void)db;
+    if (cur_wa()->filter_block) {
+        value_t b = block_value(cur_wa()->filter_block);
+        if (ast_eval_block(&expr_ctx, &b, NULL, 0, &cond) != 0)
+            return 1;  /* on error, pass through */
+        return (cond.type == VAL_LOGIC && cond.logic);
+    }
     if (cur_wa()->filter_cond[0] == '\0')
         return 1;
     if (cur_wa()->filter_ast) {
@@ -858,8 +898,7 @@ static void cmd_use(dbf_t *db, const char *arg) {
             wa->alias[0] = '\0';
             wa->locate_cond[0] = '\0';
             wa->locate_last_rec = 0;
-            wa->filter_cond[0] = '\0';
-            if (wa->filter_ast) { ast_free(wa->filter_ast); wa->filter_ast = NULL; }
+            clear_filter(wa);
             if (set_opts.talk) printf("Database closed.\n");
         }
         return;
@@ -5139,9 +5178,9 @@ void cmd_close_all(void) {
         wa->alias[0] = '\0';
         wa->locate_cond[0] = '\0';
         wa->locate_last_rec = 0;
-        wa->filter_cond[0] = '\0';
-        if (wa->filter_ast) { ast_free(wa->filter_ast); wa->filter_ast = NULL; }
+        clear_filter(wa);
         wa->relation_expr[0] = '\0';
+        wa->relation_block = NULL;
         wa->relation_target = -1;
     }
     area_set_current_idx(0);
@@ -6194,8 +6233,7 @@ static void h_close(dbf_t *db, lexer_t *l) {
         dbf_close(db);
         close_all_indexes(cur_wa());
         cur_wa()->alias[0] = '\0';
-        cur_wa()->filter_cond[0] = '\0';
-        if (cur_wa()->filter_ast) { ast_free(cur_wa()->filter_ast); cur_wa()->filter_ast = NULL; }
+        clear_filter(cur_wa());
         cur_wa()->order = 0;
         cur_wa()->num_indexes = 0;
     }
@@ -6256,13 +6294,12 @@ static void h_set(dbf_t *db, lexer_t *l) {
             lex_next(l);
             char arg[256]; lex_get_remaining(l, arg, sizeof(arg));
             if (arg[0] == '\0') {
-                cur_wa()->filter_cond[0] = '\0';
-                if (cur_wa()->filter_ast) { ast_free(cur_wa()->filter_ast); cur_wa()->filter_ast = NULL; }
+                clear_filter(cur_wa());
                 if (set_opts.talk) printf("Filter removed.\n");
             } else {
                 const char *ast_err;
+                clear_filter(cur_wa());
                 str_copy(cur_wa()->filter_cond, arg, sizeof(cur_wa()->filter_cond));
-                if (cur_wa()->filter_ast) { ast_free(cur_wa()->filter_ast); cur_wa()->filter_ast = NULL; }
                 if (!strchr(cur_wa()->filter_cond, '&'))
                     cur_wa()->filter_ast = ast_compile(cur_wa()->filter_cond, &memvar_store, &ast_err);
                 trim_right(arg);
@@ -6316,6 +6353,7 @@ static void h_set(dbf_t *db, lexer_t *l) {
             lex_next(l);
             if (l->current.type == TOK_EOF) {
                 cur_wa()->relation_expr[0] = '\0';
+                cur_wa()->relation_block = NULL;
                 cur_wa()->relation_target = -1;
             } else {
                 const char *expr_start = l->token_start;
@@ -6333,6 +6371,7 @@ static void h_set(dbf_t *db, lexer_t *l) {
                 memcpy(cur_wa()->relation_expr, expr_start, len);
                 cur_wa()->relation_expr[len] = '\0';
                 trim_right(cur_wa()->relation_expr);
+                cur_wa()->relation_block = NULL;
                 
                 lex_next(l); /* skip INTO */
                 if (l->current.type != TOK_IDENT && l->current.type != TOK_NUMBER) {
@@ -7209,6 +7248,23 @@ void cmd_api_select(const char *arg)    { ctx_setup(); cmd_select(arg); }
 void cmd_api_skip(const char *arg)      { ctx_setup(); cmd_skip(cur_db(), arg); follow_relations(); }
 void cmd_api_go(const char *arg)        { ctx_setup(); cmd_go(cur_db(), arg); follow_relations(); }
 void cmd_api_append_blank(void)         { ctx_setup(); cmd_append_blank(cur_db()); }
+
+/* DBSETFILTER(block, [text]): the block is the condition, the text only
+ * what DBFILTER() reports */
+void cmd_api_set_filter(struct block_s *blk, const char *text) {
+    work_area_t *wa = cur_wa();
+    clear_filter(wa);
+    wa->filter_block = blk;
+    str_copy(wa->filter_cond, text ? text : "", sizeof(wa->filter_cond));
+}
+
+/* DBSETRELAT(area, block, [text]) into area index `target` */
+void cmd_api_set_relation(int target, struct block_s *blk, const char *text) {
+    work_area_t *wa = cur_wa();
+    wa->relation_block = blk;
+    str_copy(wa->relation_expr, text ? text : "", sizeof(wa->relation_expr));
+    wa->relation_target = target;
+}
 
 int cmd_api_seek_ready(void) {
     ctx_setup();

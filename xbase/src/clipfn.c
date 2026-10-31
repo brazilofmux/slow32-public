@@ -289,8 +289,27 @@ static int fn_dbrelation(expr_ctx_t *ctx, value_t *args, int nargs, value_t *res
 static int fn_dbrselect(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     work_area_t *wa = area_get_current();
     (void)ctx;
-    *result = vnum(wa && wa->relation_expr[0] && arg_num(args, nargs, 0, 1) == 1 ? wa->relation_target + 1 : 0);
+    *result = vnum(wa && (wa->relation_expr[0] || wa->relation_block) && arg_num(args, nargs, 0, 1) == 1 ? wa->relation_target + 1 : 0);
     return 0;
+}
+
+/* __ALIASEVAL(alias, block): alias->(e1, e2 ...) (ast.c parse_alias_expr),
+ * the block evaluated with the alias's work area current */
+static int fn_aliaseval(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    int area, saved = area_get_current_idx(), rc;
+    if (nargs < 2 || args[1].type != VAL_BLOCK) {
+        ctx->error = "__ALIASEVAL requires (alias, block)";
+        return -1;
+    }
+    if ((area = area_resolve_alias(arg_str(args, nargs, 0, ""))) < 0) {
+        snprintf(ctx->err_msg, sizeof(ctx->err_msg), "Alias does not exist: %s", arg_str(args, nargs, 0, ""));
+        ctx->error = ctx->err_msg;
+        return -1;
+    }
+    area_set_current_idx(area);
+    rc = ast_eval_block(ctx, &args[1], NULL, 0, result);
+    area_set_current_idx(saved);
+    return rc;
 }
 
 /* DBSEEK(value, [softseek]): FOUND() */
@@ -325,15 +344,14 @@ static int fn_dbsetdriver(expr_ctx_t *ctx, value_t *args, int nargs, value_t *re
     return 0;
 }
 
-/* DBSETFILTER(block, [text]): the text is what the filter is (the block
- * is what Clipper keeps; here the condition is compiled from its text) */
+/* DBSETFILTER(block, [text]): the block is the condition; the text is
+ * what DBFILTER() reports */
 static int fn_dbsetfilter(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    const char *text = arg_str(args, nargs, 1, NULL);
-    if (!text) {
-        ctx->error = "DBSETFILTER needs the condition's text (block, text)";
+    if (nargs < 1 || args[0].type != VAL_BLOCK) {
+        ctx->error = "DBSETFILTER requires (block [, text])";
         return -1;
     }
-    run_cmd("SET FILTER TO %s", text);
+    cmd_api_set_filter(args[0].block, arg_str(args, nargs, 1, ""));
     return nil_result(result);
 }
 
@@ -359,17 +377,22 @@ static int fn_dbsetorder(expr_ctx_t *ctx, value_t *args, int nargs, value_t *res
     return nil_result(result);
 }
 
-/* DBSETRELAT(area, block, [text]) */
+/* DBSETRELAT(area, block, [text]): the block is the key, as DBSETFILTER's
+ * is the condition */
 static int fn_dbsetrelat(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    const char *text = arg_str(args, nargs, 2, NULL);
     char target[64];
-    if (nargs < 1 || !text) {
-        ctx->error = "DBSETRELAT needs (area, block, text)";
+    int area;
+    if (nargs < 2 || args[1].type != VAL_BLOCK) {
+        ctx->error = "DBSETRELAT requires (area, block [, text])";
         return -1;
     }
     if (args[0].type == VAL_NUM) snprintf(target, sizeof(target), "%d", (int)args[0].num);
     else snprintf(target, sizeof(target), "%s", arg_str(args, nargs, 0, ""));
-    run_cmd("SET RELATION TO %s INTO %s", text, target);
+    if ((area = area_resolve_alias(target)) < 0) {
+        prog_error(ERR_ALIAS_NOT_FOUND, "Invalid work area");
+        return -1;
+    }
+    cmd_api_set_relation(area, args[1].block, arg_str(args, nargs, 2, ""));
     return nil_result(result);
 }
 
@@ -1456,6 +1479,7 @@ int clipfn_set(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
 }
 
 const clipfn_entry_t clipfn_table[] = {
+    { "__ALIASEVAL", fn_aliaseval },   /* alias->(expr) */
     { "DBAPPEND", fn_dbappend }, { "DBCLEARFIL", fn_dbclearfil }, { "DBCLEARIND", fn_dbclearind },
     { "DBCLEARREL", fn_dbclearrel }, { "DBCLOSEALL", fn_dbcloseall }, { "DBCLOSEAREA", fn_dbclosearea },
     { "DBCOMMIT", fn_dbcommit }, { "DBCOMMITALL", fn_dbcommitall }, { "DBCREATE", fn_dbcreate },

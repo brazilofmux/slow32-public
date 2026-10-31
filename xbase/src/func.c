@@ -2808,8 +2808,26 @@ static int fn_arg_error(expr_ctx_t *ctx, const char *upper, value_t *args, int n
     return rc;
 }
 
-int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value_t *result) {
+/* The built-in named `upper`: the whole name (n 0), or the first n
+ * characters of it and of the built-in's */
+static func_impl_t builtin_lookup(const char *upper, size_t n) {
     const func_entry_t *e;
+    const clipfn_entry_t *c;
+    if (n == 0) {
+        if ((e = func_lookup(upper)) != NULL) return e->fn;
+        for (c = clipfn_table; c->name; c++)   /* the rest of Clipper's set (clipfn.c) */
+            if (strcmp(c->name, upper) == 0) return c->fn;
+        return NULL;
+    }
+    for (e = func_table; e->name; e++)
+        if (strncmp(e->name, upper, n) == 0) return e->fn;
+    for (c = clipfn_table; c->name; c++)
+        if (strncmp(c->name, upper, n) == 0) return c->fn;
+    return NULL;
+}
+
+int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value_t *result) {
+    func_impl_t fn;
     char upper[64];
     int i;
 
@@ -2830,23 +2848,12 @@ int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value
             return -1;
         }
     }
-    e = func_lookup(upper);
-    if (e) {
+    if ((fn = builtin_lookup(upper, 0)) != NULL) {
         /* a built-in takes values; one that wants the names of @ arguments
          * (FREAD's buffer) takes them itself, before this clears them */
-        int rc = e->fn(ctx, args, nargs, result);
+        int rc = fn(ctx, args, nargs, result);
         pending_refs = NULL;
         return fn_arg_error(ctx, upper, args, nargs, result, rc);
-    }
-    {   /* the rest of Clipper's set (clipfn.c) */
-        const clipfn_entry_t *c;
-        for (c = clipfn_table; c->name; c++) {
-            if (strcmp(c->name, upper) == 0) {
-                int rc = c->fn(ctx, args, nargs, result);
-                pending_refs = NULL;
-                return fn_arg_error(ctx, upper, args, nargs, result, rc);
-            }
-        }
     }
 
     /* Try user-defined function.
@@ -2861,6 +2868,14 @@ int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value
             else ctx->error = "User-defined function failed";
             return -1;
         }
+    }
+
+    /* Clipper keeps the first 10 characters of a name: DBCLEARFILTER()
+     * is DBCLEARFIL() */
+    if (strlen(upper) > 10 && (fn = builtin_lookup(upper, 10)) != NULL) {
+        int rc = fn(ctx, args, nargs, result);
+        pending_refs = NULL;
+        return fn_arg_error(ctx, upper, args, nargs, result, rc);
     }
 
     {

@@ -6,6 +6,11 @@
 
 static work_area_t areas[MAX_AREAS];
 static int current_area_idx = 0;
+static void (*switch_hook)(work_area_t *from, work_area_t *to);
+
+void area_set_switch_hook(void (*hook)(work_area_t *from, work_area_t *to)) {
+    switch_hook = hook;
+}
 
 void area_init_all(void) {
     int i;
@@ -22,7 +27,8 @@ int area_get_current_idx(void) {
 }
 
 void area_set_current_idx(int idx) {
-    if (idx >= 0 && idx < MAX_AREAS) {
+    if (idx >= 0 && idx < MAX_AREAS && idx != current_area_idx) {
+        if (switch_hook) switch_hook(&areas[current_area_idx], &areas[idx]);
         current_area_idx = idx;
     }
 }

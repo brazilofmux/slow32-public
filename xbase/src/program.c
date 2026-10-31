@@ -1294,7 +1294,17 @@ static int scan_clause_matches(clause_t *c, dbf_t *db, int *stop_scan) {
 
     if (db->record_buf[0] == '*' && ctx->opts->deleted) return 0;
 
-    if (area_get_current()->filter_cond[0]) {
+    if (area_get_current()->filter_block) {
+        value_t b, res;
+        b = val_nil();
+        b.type = VAL_BLOCK;
+        b.block = area_get_current()->filter_block;
+        if (ast_eval_block(ctx, &b, NULL, 0, &res) != 0) {
+            if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);
+            return -1;
+        }
+        if (!(res.type == VAL_LOGIC && res.logic)) return 0;
+    } else if (area_get_current()->filter_cond[0]) {
         if (area_get_current()->filter_ast) {
             if (eval_ast_logical(ctx, area_get_current()->filter_ast, &ok) < 0) return -1;
         } else {

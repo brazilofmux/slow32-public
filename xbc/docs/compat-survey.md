@@ -92,7 +92,7 @@ Everything else differs, and for a few causes, not 28:
 
 The 83 names the guide lists that were still missing, in
 `xbase/src/clipfn.c`: the DB*() forms route through the commands they
-stand for (DBSETFILTER builds SET FILTER TO from its text argument,
+stand for (DBSETFILTER kept SET FILTER TO from its text argument then,
 DBSETINDEX re-issues SET INDEX TO with the list, DBUSEAREA is SELECT 0
 and USE ... ALIAS, DBCREATEIND is INDEX ON); DBCREATE builds the file
 from the structure array; DBEVAL walks the scope; FIELDBLOCK /
@@ -112,8 +112,8 @@ first recorded; those marked Closed were closed in later rounds):
 - (Closed: a character value longer than 255 bytes or holding a NUL
   now lives outside the value, expr.h's ext, so strings of any length
   and binary strings round-trip, and MEMOREAD reads the whole file.)
-- DBSETFILTER needs the condition's text (the block alone cannot be
-  turned back into one); DBSETRELAT likewise.
+- (Closed 2026-10-30: DBSETFILTER and DBSETRELAT keep the block and use
+  it, the text only what DBFILTER() and DBRELATION() report.)
 - (Closed, all under a terminal: ALERT draws its box and takes a choice,
   ACHOICE paints and moves, DBEDIT runs on TBrowse, MEMOEDIT edits --
   CA's PE runs on it -- and SAVESCREEN / RESTSCREEN keep and repaint a
@@ -891,3 +891,30 @@ colours its column's colorBlock answers for its value (else defColor),
 and the current cell highlighted when stabilize() finishes, unless
 autoLite is off.  Checked under the terminal service (a frozen column
 with three scrolled ones, a footing, alternating colours).
+
+## Filters and relations by block (2026-10-30)
+
+DBSETFILTER(block, [text]) and DBSETRELAT(area, block, [text]) keep the
+block in the work area, and it is the condition or the key: a block over
+a LOCAL filters by the LOCAL's value of the moment, and one a function
+made and returned filters by the LOCAL it captured.  The text is only
+what DBFILTER() and DBRELATION() give back ("" without one, as the guide
+has DBFILTER(); Harbour's DBRELATION() is NIL there, so the probe leaves
+it out).  SET FILTER TO and SET RELATION TO drop a block the functions
+set.  Found on the way, each a departure from Clipper before this:
+
+- `alias->(e1, e2)`, the aliased expression, did not parse.  It is a
+  call of __ALIASEVAL with the alias and a block of the expressions now
+  (ast.c), so the LOCALs it names are captured as a block's are.
+- EOF(), BOF() and FOUND() were one set of flags for the whole program:
+  after SELECT another area, EOF() still answered for the area left.
+  They are each area's now, kept in the area while another is current.
+- A relation whose key the child lacks left the child on the next key's
+  record; it is at EOF now, FOUND() false.
+- A built-in called by a name longer than ten characters
+  (DBCLEARFILTER, DBCLEARRELATION) was undefined: only the first ten
+  are significant, so it is DBCLEARFIL.  Built-ins only; the full name
+  is tried first, and user functions keep their long names whole, as
+  CA's sources section above has them.
+
+Probe fn-db-block-filter.
