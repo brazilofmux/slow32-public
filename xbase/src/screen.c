@@ -2019,22 +2019,49 @@ int screen_get_pcol(void) { return print_col; }
 void screen_eject(void) {
     FILE *fp = cmd_get_printer_fp();
     if (fp) fputs("\f\r", fp);
-    else printf("\n--- PAGE ---\n");
+    else out_console("\n--- PAGE ---\n");
     print_row = 0;
     print_col = 0;
 }
 
-void screen_print_stream(const char *s, int write) {
-    const char *p;
-    if (!s) return;
-    for (p = s; *p; p++) {
-        if (*p == '\n') { print_row++; print_col = 0; }
-        else if (*p == '\r') print_col = 0;
-        else print_col++;
+/* SET MARGIN's columns open every line the printer writes on, and count
+ * in PCOL() */
+static void printer_put(const char *s, size_t n, int write) {
+    char buf[256];
+    FILE *fp = cmd_get_printer_fp();
+    if (!write || !n) return;
+    if (fp) { fwrite(s, 1, n, fp); return; }
+    while (n) {
+        size_t k = n < sizeof(buf) - 1 ? n : sizeof(buf) - 1;
+        memcpy(buf, s, k);
+        buf[k] = '\0';
+        out_console(buf);
+        s += k;
+        n -= k;
     }
-    if (!write) return;
-    if (cmd_get_printer_fp()) fputs(s, cmd_get_printer_fp());
-    else printf("%s", s);
+}
+
+void screen_print_stream(const char *s, int write) {
+    static const char spaces[] = "                                ";
+    const char *run;
+    if (!s) return;
+    for (run = s; *s; s++) {
+        if (*s == '\n') { print_row++; print_col = 0; continue; }
+        if (*s == '\r') { print_col = 0; continue; }
+        if (print_col == 0 && cmd_get_margin() > 0) {
+            int m = cmd_get_margin();
+            printer_put(run, (size_t)(s - run), write);
+            run = s;
+            print_col = m;
+            while (m > 0) {
+                int k = m < (int)sizeof(spaces) - 1 ? m : (int)sizeof(spaces) - 1;
+                printer_put(spaces, (size_t)k, write);
+                m -= k;
+            }
+        }
+        print_col++;
+    }
+    printer_put(run, (size_t)(s - run), write);
 }
 
 void screen_print_text(const char *s) {
@@ -2045,10 +2072,13 @@ void screen_print_text(const char *s) {
  * ejects), then new lines to the row; a column behind the head is a
  * carriage return, then spaces to the column */
 void screen_print_at(int row, int col, const char *s) {
+    int margin = cmd_get_margin(), need;
     if (row < print_row) screen_eject();
     while (print_row < row) screen_print_text("\n");
-    if (col < print_col) screen_print_text("\r");
-    while (print_col < col) screen_print_text(" ");
+    if (col + margin < print_col) screen_print_text("\r");
+    /* at the line's start the first character written brings the margin */
+    need = print_col == 0 ? col : col + margin - print_col;
+    while (need-- > 0) screen_print_text(" ");
     screen_print_text(s);
 }
 

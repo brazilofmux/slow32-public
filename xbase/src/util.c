@@ -158,9 +158,20 @@ int str_like(const char *text, const char *pattern) {
 /* ---- Console output (see util.h) ---- */
 
 static int g_at_bol = 1;
+static void (*g_route)(const char *s);
 
 int  out_at_line_start(void)     { return g_at_bol; }
 void out_set_line_start(int bol) { g_at_bol = bol; }
+void out_set_route(void (*route)(const char *s)) { g_route = route; }
+
+void out_console(const char *s) {
+    size_t len = strlen(s);
+    if (!len) return;
+    if (!g_at_bol && s[len - 1] == '\n' && s[0] != '\n')
+        fputc('\n', stdout);
+    fputs(s, stdout);
+    g_at_bol = s[len - 1] == '\n';
+}
 
 int out_printf(const char *fmt, ...) {
     char small[1024];
@@ -182,10 +193,8 @@ int out_printf(const char *fmt, ...) {
         va_end(ap);
     }
     if (len > 0) {
-        if (!g_at_bol && buf[len - 1] == '\n' && buf[0] != '\n')
-            fputc('\n', stdout);
-        fputs(buf, stdout);
-        g_at_bol = buf[len - 1] == '\n';
+        if (g_route) g_route(buf);
+        else out_console(buf);
     }
     if (buf != small)
         free(buf);

@@ -9,6 +9,12 @@
 int  out_printf(const char *fmt, ...);
 int  out_at_line_start(void);
 void out_set_line_start(int bol);
+/* The screen alone, bypassing any route */
+void out_console(const char *s);
+/* While a console-stream command runs (LIST, DISPLAY), printf goes
+ * through route -- the screen, the printer, the alternate file as the
+ * SETs say; NULL puts it back on the screen */
+void out_set_route(void (*route)(const char *s));
 #ifndef UTIL_NO_PRINTF_WRAP
 #define printf out_printf
 #endif

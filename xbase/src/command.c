@@ -2769,7 +2769,8 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
         }
     }
 
-    if (c.to_file[0]) {
+    if (c.to_file[0]) {   /* .txt when the name has no extension */
+        if (!strchr(c.to_file, '.')) strncat(c.to_file, ".txt", sizeof(c.to_file) - strlen(c.to_file) - 1);
         to_file = fopen(c.to_file, "w");
     }
 
@@ -5726,15 +5727,35 @@ FILE *cmd_get_printer_fp(void) {
     return set_opts.printer_fp;
 }
 
-/* The console stream (?, ??, QOUT): the screen unless SET CONSOLE is off,
- * the printer under SET PRINTER ON, the alternate file under SET
- * ALTERNATE ON.  With no SET PRINTER TO file the console stands in for
- * the printer, and text already on it is not written twice. */
+/* The console stream (?, ??, QOUT, LIST, DISPLAY): the screen unless SET
+ * CONSOLE is off, the printer under SET PRINTER ON or a command's TO
+ * PRINTER, the alternate file under SET ALTERNATE ON.  With no SET
+ * PRINTER TO file the console stands in for the printer, and text
+ * already on it is not written twice. */
+static int stream_to_printer;
+
 void cmd_output(const char *s) {
-    if (set_opts.console) printf("%s", s);
-    if (set_opts.printer_on) screen_print_stream(s, set_opts.printer_fp || !set_opts.console);
+    if (set_opts.console) out_console(s);
+    if (set_opts.printer_on || stream_to_printer)
+        screen_print_stream(s, set_opts.printer_fp || !set_opts.console);
     if (set_opts.alternate_on && set_opts.alternate_fp)
-        fprintf(set_opts.alternate_fp, "%s", s);
+        fputs(s, set_opts.alternate_fp);
+}
+
+/* A command's own lines through the stream, TO PRINTER read from its
+ * clauses (l stands on the command word) */
+static void stream_begin(const lexer_t *l) {
+    lexer_t t = *l;
+    while (t.current.type != TOK_EOF) {
+        if (cmd_kw(&t, "TO") && cmd_peek_kw(&t, "PRINTER")) stream_to_printer = 1;
+        lex_next(&t);
+    }
+    out_set_route(cmd_output);
+}
+
+static void stream_end(void) {
+    out_set_route(NULL);
+    stream_to_printer = 0;
 }
 
 void cmd_output_fmt(const char *fmt, ...) {
@@ -5877,6 +5898,7 @@ static void h_replace(dbf_t *db, lexer_t *l) { lex_next(l); cmd_replace(db, l); 
 static void h_scatter(dbf_t *db, lexer_t *l) { lex_next(l); cmd_scatter(db, l); }
 static void h_gather(dbf_t *db, lexer_t *l) { lex_next(l); cmd_gather(db, l); }
 static void h_list(dbf_t *db, lexer_t *l) {
+    stream_begin(l);
     if (cmd_peek_kw(l, "STRUCTURE")) {
         lex_next(l); /* skip LIST */
         lex_next(l); /* skip STRUCTURE */
@@ -5913,8 +5935,10 @@ static void h_list(dbf_t *db, lexer_t *l) {
         lex_next(l);
         cmd_list(db, l);
     }
+    stream_end();
 }
 static void h_display(dbf_t *db, lexer_t *l) {
+    stream_begin(l);
     if (cmd_peek_kw(l, "STRUCTURE")) {
         lex_next(l); /* skip DISPLAY */
         lex_next(l); /* skip STRUCTURE */
@@ -5931,6 +5955,7 @@ static void h_display(dbf_t *db, lexer_t *l) {
         lex_next(l);
         cmd_display(db, l);
     }
+    stream_end();
 }
 static void h_store(dbf_t *db, lexer_t *l) { lex_next(l); cmd_store(db, l); }
 static void h_release(dbf_t *db, lexer_t *l) {

@@ -996,8 +996,19 @@ for byte):
   digits alone ("42"); it has the number's display width, as on the
   console ("        42").
 
-Not yet: LIST, DISPLAY and the other commands that print records write
-the console directly, so they reach neither the printer nor the
-alternate file, and their TO PRINTER is accepted and ignored; SET
-MARGIN is kept, not applied; REPORT FORM TO PRINTER does not also show
-the report on the console.
+Then LIST and DISPLAY (probe cmd-list-printer): their lines go through
+the console stream like ?'s -- to the alternate file under SET
+ALTERNATE ON, off the screen under SET CONSOLE OFF, to the printer
+under SET PRINTER ON or their own TO PRINTER (accepted and ignored
+before, as the alternate file never saw them); TO FILE adds .txt to a
+name without an extension.  SET MARGIN opens every line the printer
+writes on (@ ... SAY's included) and counts in PCOL(), as the guide's
+LIST note and Harbour have it.
+
+Not yet: the record past the end.  At the end of the file Clipper's
+pointer is on LASTREC() + 1, RECNO() says so and every field reads
+blank; here RECNO() keeps the last record's number and the fields its
+values (after SKIP and LOCATE alike), DISPLAY there is "No current
+record", and LIST puts the pointer back on the last record it showed
+where Clipper leaves it at the end of the file.  REPORT FORM TO PRINTER
+does not also show the report on the console.
