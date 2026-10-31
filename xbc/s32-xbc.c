@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "lex.h"
 #include "command.h"
@@ -66,6 +67,7 @@ static src_line_t *g_lines;
 static int g_lines_cap;
 static int g_nlines;
 static char g_loaded[MAX_FILES][256];
+static struct { dev_t dev; ino_t ino; int ok; } g_loaded_id[MAX_FILES];   /* the file itself */
 static int g_nloaded;
 static char g_inlined[MAX_FILES][MAX_NAME];
 static int g_ninlined;
@@ -1324,9 +1326,17 @@ static void mark_compiled_fn(const char *name) {
     g_ncompiled_fn++;
 }
 
+/* A file loaded already, by its identity rather than its spelling:
+ * tplib.prg named on the command line is ./TPLIB.prg when SET PROCEDURE
+ * finds it on a filesystem that ignores case */
 static int already_loaded(const char *path) {
     int i;
+    struct stat st;
+    int ok = stat(path, &st) == 0;
     for (i = 0; i < g_nloaded; i++) {
+        if (ok && g_loaded_id[i].ok && g_loaded_id[i].dev == st.st_dev && g_loaded_id[i].ino == st.st_ino) {
+            return 1;
+        }
         if (strcmp(g_loaded[i], path) == 0) {
             return 1;
         }
@@ -1337,6 +1347,14 @@ static int already_loaded(const char *path) {
 static void mark_loaded(const char *path) {
     if (g_nloaded >= MAX_FILES || already_loaded(path)) {
         return;
+    }
+    {
+        struct stat st;
+        g_loaded_id[g_nloaded].ok = stat(path, &st) == 0;
+        if (g_loaded_id[g_nloaded].ok) {
+            g_loaded_id[g_nloaded].dev = st.st_dev;
+            g_loaded_id[g_nloaded].ino = st.st_ino;
+        }
     }
     strncpy(g_loaded[g_nloaded], path, 255);
     g_loaded[g_nloaded][255] = '\0';
@@ -2176,20 +2194,23 @@ static int load_prg(const char *path) {
         const char *p;
         int rc;
         rtrim(buf);
+        lineno++;
+        /* a continued statement is known by its last line, as Clipper
+         * numbers it; each line it took is counted */
         while (prog_cut_continuation(buf)) {   /* a ; before a trailing comment continues too */
             if (!fgets(next, sizeof(next), in)) {
                 break;
             }
+            lineno++;
             rtrim(next);
             if (strlen(buf) + 1 + strlen(skip_ws(next)) < MAX_LINE - 1) {
                 size_t n = strlen(buf);
                 if (n > 0 && buf[n - 1] != ' ' && buf[n - 1] != '\t') strcat(buf, " ");   /* the indentation separates the tokens */
                 strcat(buf, skip_ws(next));
             } else {
-                fprintf(stderr, "%s(%d): statement longer than %d characters; the rest is dropped\n", path, lineno + 1, MAX_LINE - 1);
+                fprintf(stderr, "%s(%d): statement longer than %d characters; the rest is dropped\n", path, lineno, MAX_LINE - 1);
             }
         }
-        lineno++;
         if (in_text) {
             p = skip_ws(buf);
             if (is_kw(p, "ENDTEXT")) {
@@ -2289,11 +2310,34 @@ typedef struct {
 static progfile_t g_progs[MAX_FILES];
 static int g_nprogs;
 
+/* A program file as procedure NAME (nothing when it is loaded already) */
+static int load_progfile(const char *path, const char *name) {
+    int k;
+    if (already_loaded(path)) {
+        return 0;
+    }
+    if (g_nprogs >= MAX_FILES) {
+        fprintf(stderr, "%s: too many program files\n", path);
+        return -1;
+    }
+    g_progs[g_nprogs].start = g_nlines;
+    if (load_prg(path) != 0) {
+        return -1;
+    }
+    g_progs[g_nprogs].end = g_nlines;
+    for (k = 0; name[k] && k < MAX_NAME - 1; k++) {
+        g_progs[g_nprogs].name[k] = (char)toupper((unsigned char)name[k]);
+    }
+    g_progs[g_nprogs].name[k] = '\0';
+    g_nprogs++;
+    return 0;
+}
+
 static int try_load_prog(const char *from_src, const char *name) {
     char dir[256];
     char path[512];
     const char *exts[] = {".prg", ".PRG", NULL};
-    int i, k;
+    int i;
 
     path_dir(from_src, dir, (int)sizeof(dir));
     for (i = 0; exts[i]; i++) {
@@ -2304,24 +2348,7 @@ static int try_load_prog(const char *from_src, const char *name) {
             continue;
         }
         fclose(fp);
-        if (already_loaded(path)) {
-            return 0;
-        }
-        if (g_nprogs >= MAX_FILES) {
-            fprintf(stderr, "%s: too many program files\n", path);
-            return -1;
-        }
-        g_progs[g_nprogs].start = g_nlines;
-        if (load_prg(path) != 0) {
-            return -1;
-        }
-        g_progs[g_nprogs].end = g_nlines;
-        for (k = 0; name[k] && k < MAX_NAME - 1; k++) {
-            g_progs[g_nprogs].name[k] = (char)toupper((unsigned char)name[k]);
-        }
-        g_progs[g_nprogs].name[k] = '\0';
-        g_nprogs++;
-        return 0;
+        return load_progfile(path, name);
     }
     return 0;
 }
@@ -2978,8 +3005,18 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    for (i = 0; i < ninputs; i++) {
-        if (load_prg(inputs[i]) != 0) {
+    /* The first file is the main program; each other one a procedure named
+     * after its file, as Clipper compiles a file named on the command line */
+    if (load_prg(inputs[0]) != 0) {
+        return 1;
+    }
+    for (i = 1; i < ninputs; i++) {
+        char label[MAX_NAME];
+        int n;
+        file_label(inputs[i], label, (int)sizeof(label));
+        n = (int)strlen(label);
+        if (n >= 4 && icmp_n(label + n - 4, ".PRG", 4) == 0) label[n - 4] = '\0';
+        if (load_progfile(inputs[i], label) != 0) {
             return 1;
         }
     }

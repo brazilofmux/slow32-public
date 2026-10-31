@@ -1431,6 +1431,7 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
     int nentries = 0;
     ndx_page_t **leaf_pages = NULL;
     ndx_page_t **current_level = NULL;
+    int status = -1;   /* -2: the key or FOR expression failed, ctx->error says why */
 
     if (!dbf_is_open(db)) return -1;
 
@@ -1523,15 +1524,15 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
         /* Apply FOR filter */
         if (idx->for_ast) {
             value_t fcond;
-            if (ast_eval(idx->for_ast, ctx, &fcond) != 0) continue;
+            if (ast_eval(idx->for_ast, ctx, &fcond) != 0) { status = -2; goto fail; }
             if (fcond.type == VAL_LOGIC && !fcond.logic) continue;
             if (fcond.type == VAL_NUM && fcond.num == 0.0) continue;
         }
 
         if (idx->key_ast) {
-            if (ast_eval(idx->key_ast, ctx, &val) != 0) continue;
+            if (ast_eval(idx->key_ast, ctx, &val) != 0) { status = -2; goto fail; }
         } else {
-            if (ast_eval_dynamic(key_expr, ctx, &val) != 0) continue;
+            if (ast_eval_dynamic(key_expr, ctx, &val) != 0) { status = -2; goto fail; }
         }
 
         if (!key_type_set) {
@@ -1724,7 +1725,7 @@ fail:
     if (leaf_pages) free(leaf_pages);
     free_all_pages(idx);
     ctx->db = saved_db;
-    return -1;
+    return status;
 }
 
 /* ---- Write index to file ---- */

@@ -1068,6 +1068,19 @@ static int fn_stuff(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
  * 9 / # / * / $ positions, '.' the point, ',' kept (blank before the
  * first digit), other characters literal; a number too wide fills the
  * positions with asterisks.  No template: the number's own display. */
+/* @( on a negative number's field: "(" takes the field's first place and
+ * ")" follows it; with a digit in that place there is no room, and the
+ * digits are stars (Harbour's "( 12)", "(***)") */
+static void paren_field(char *f, int size) {
+    if (f[0] != ' ') {
+        char *c;
+        for (c = f; *c; c++)
+            if (isdigit((unsigned char)*c)) *c = '*';
+    }
+    if (f[0]) f[0] = '(';
+    strncat(f, ")", (size_t)size - strlen(f) - 1);
+}
+
 static void transform_number(const value_t *v, const char *picture, char *out, int size) {
     const char *tpl = picture;
     int left = 0, paren = 0, cr = 0, db = 0, zero_blank = 0, euro = 0;
@@ -1093,10 +1106,16 @@ static void transform_number(const value_t *v, const char *picture, char *out, i
         else if (*q == '9' || *q == '#' || *q == '*' || *q == '$') { if (seen) ndec++; else ndig++; }
     }
     if (ndig + ndec == 0) {   /* functions only: the number's own display */
+        if (paren && neg) {   /* its magnitude's display, in parentheses */
+            value_t a = *v;
+            a.num = fabs(v->num);
+            val_to_display(&a, out, size);
+            paren_field(out, size);
+            return;
+        }
         val_to_display(v, num, sizeof(num));
         q = skip_ws(num);
-        if (paren && neg) snprintf(out, (size_t)size, "(%s)", q[0] == '-' ? q + 1 : q);
-        else snprintf(out, (size_t)size, "%s", left ? q : num);
+        snprintf(out, (size_t)size, "%s", left ? q : num);
         return;
     }
     /* the digits, as many as the template has, the sign taken by the picture */
@@ -1136,14 +1155,8 @@ static void transform_number(const value_t *v, const char *picture, char *out, i
         }
         out[o] = '\0';
     }
-    if (paren && neg) {   /* the sign as parentheses around the digits */
-        char tmp[256];
-        char *first = out;
-        while (*first == ' ') first++;
-        if (first > out) first--;
-        *first = '(';
-        snprintf(tmp, sizeof(tmp), "%s)", out);
-        snprintf(out, (size_t)size, "%s", tmp);
+    if (paren && neg) {   /* the sign as parentheses */
+        paren_field(out, size);
     } else if (cr && neg) {
         strncat(out, " CR", (size_t)size - strlen(out) - 1);
     } else if (db && neg) {

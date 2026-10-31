@@ -1,0 +1,15 @@
+* @ SAY ... PICTURE formats as TRANSFORM() does
+n = 14137
+@ 1,1 SAY n PICTURE "##"
+?
+@ 2,1 SAY 12.5 PICTURE "###.##"
+?
+@ 3,1 SAY -5 PICTURE "@( 999"
+?
+@ 4,1 SAY "abc" PICTURE "@!"
+?
+@ 5,1 SAY "5551234" PICTURE "@R 999-9999"
+?
+@ 6,1 SAY 1234567 PICTURE "@E 9,999,999"
+?
+QUIT

@@ -524,12 +524,20 @@ void screen_say(int row, int col, const char *expr_str, const char *picture) {
         return;
     }
 
-    if (val.type == VAL_NUM && !(picture && picture[0])) val_to_display(&val, buf, sizeof(buf));
-    else val_to_string(&val, buf, sizeof(buf));
-
     if (picture && picture[0]) {
-        screen_apply_picture(formatted, buf, picture, sizeof(formatted));
+        /* PICTURE is TRANSFORM's: a number too wide for it is stars, the
+         * '@' functions apply, decimals line up */
+        value_t args[2], t;
+        args[0] = val;
+        args[1] = val_str(picture);
+        if (func_call(ctx, "TRANSFORM", args, 2, &t) != 0) {
+            if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);
+            return;
+        }
+        str_copy(formatted, t.type == VAL_CHAR ? val_text(&t) : "", sizeof(formatted));
     } else {
+        if (val.type == VAL_NUM) val_to_display(&val, buf, sizeof(buf));
+        else val_to_string(&val, buf, sizeof(buf));
         str_copy(formatted, buf, sizeof(formatted));
     }
 

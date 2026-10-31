@@ -1,0 +1,10 @@
+SLOW-32 xBase
+xBase interpreter 1.0
+
+. . Enter field definitions (blank name to finish):
+Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Field name: 
+Database IDXERRT.DBF created with 2 field(s).
+. *** Type mismatch in + in IDXERR.PRG line 9
+
+after
+. 

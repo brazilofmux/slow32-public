@@ -17,6 +17,8 @@ struct lexer;
 /* A loaded program */
 typedef struct {
     char **lines;           /* malloc'd array of strdup'd lines */
+    int *srcline;           /* each one's line in the file: a continued
+                             * statement's last, as Clipper numbers it */
     int nlines;
     char filename[64];
     /* PROCEDURE/FUNCTION definitions, found once on the first lookup (the

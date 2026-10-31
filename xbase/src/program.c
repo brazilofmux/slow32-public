@@ -15,6 +15,8 @@
 #include <ctype.h>
 #include <strings.h>
 
+static int prog_srcline(const program_t *prog, int pc);
+
 static prog_state_t state;
 
 /* SET PROCEDURE TO file — resident procedure library */
@@ -512,7 +514,7 @@ const char *prog_procname(int level, int *line) {
         prog = state.call_stack[d - 1].caller_prog;
         pc = state.call_stack[d - 1].caller_line;
     }
-    *line = pc + 1;
+    *line = prog_srcline(prog, pc);
     return proc_at(prog, pc);
 }
 
@@ -704,7 +706,7 @@ void prog_error(int code, const char *message) {
 
     /* Capture line number and program name */
     if (state.running && state.current_prog) {
-        error_state.lineno = state.pc + 1;  /* 1-based */
+        error_state.lineno = prog_srcline(state.current_prog, state.pc);
         str_copy(error_state.program, state.current_prog->filename,
                  sizeof(error_state.program));
     } else if (compiled_line > 0 && compiled_file) {
@@ -964,20 +966,26 @@ static program_t *prog_load(const char *filename) {
     memset(prog, 0, sizeof(program_t));
     str_copy(prog->filename, path, sizeof(prog->filename));
     prog->lines = (char **)malloc(capacity * sizeof(char *));
-    if (!prog->lines) {
+    prog->srcline = (int *)malloc(capacity * sizeof(int));
+    if (!prog->lines || !prog->srcline) {
+        free(prog->lines);
+        free(prog->srcline);
         free(prog);
         fclose(fp);
         return NULL;
     }
 
     prog_block_stack_t blocks = { { 0 }, 0 };   /* for bare END (prog_normalize_line) */
+    int fileline = 0;
     while (fgets(line, sizeof(line), fp)) {
         trim_right(line);
+        fileline++;
 
         /* Line continuation: ; at end */
         while (prog_cut_continuation(line)) {   /* a ; before a trailing comment continues too */
             char next[MAX_LINE_LEN]; /* remove ; */
             if (!fgets(next, sizeof(next), fp)) break;
+            fileline++;
             trim_right(next);
             /* The continuation's indentation is one blank: it separates the
              * tokens ("22" then ".AND." on the next line; joined tight they
@@ -996,6 +1004,7 @@ static program_t *prog_load(const char *filename) {
             capacity *= 2;
             if (capacity > MAX_PROGRAM_LINES) capacity = MAX_PROGRAM_LINES;
             prog->lines = (char **)realloc(prog->lines, capacity * sizeof(char *));
+            prog->srcline = (int *)realloc(prog->srcline, capacity * sizeof(int));
         }
         if (prog->nlines >= MAX_PROGRAM_LINES) {
             printf("Program too long (max %d lines).\n", MAX_PROGRAM_LINES);
@@ -1005,6 +1014,7 @@ static program_t *prog_load(const char *filename) {
         {
             char norm[MAX_LINE_LEN];
             prog->lines[prog->nlines] = strdup(prog_normalize_line(line, &blocks, norm, (int)sizeof(norm)));
+            prog->srcline[prog->nlines] = fileline;
         }
         prog->nlines++;
     }
@@ -1027,7 +1037,14 @@ static void prog_free(program_t *prog) {
             free(prog->lines[i]);
         free(prog->lines);
     }
+    free(prog->srcline);
     free(prog);
+}
+
+/* Statement pc's line in its file, 1-based */
+static int prog_srcline(const program_t *prog, int pc) {
+    if (prog && prog->srcline && pc >= 0 && pc < prog->nlines) return prog->srcline[pc];
+    return pc + 1;
 }
 
 const char *prog_get_procedure_name(void) {
@@ -1853,7 +1870,7 @@ static void prog_run(void) {
 
         /* SET ECHO: show command line during program execution */
         if (cmd_get_echo() && *p != '\0' && *p != '*')
-            printf("[%s:%d] %s\n", state.current_prog->filename, state.pc + 1, p);
+            printf("[%s:%d] %s\n", state.current_prog->filename, prog_srcline(state.current_prog, state.pc), p);
 
         /* Full-line comment: * or NOTE */
         if (lk == LK_COMMENT) {

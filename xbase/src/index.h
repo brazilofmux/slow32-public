@@ -89,6 +89,8 @@ typedef struct {
 void index_init(index_t *idx);
 
 /* Build index from database using key expression */
+/* 0, or -1 on a file error, or -2 when the key or FOR expression failed on
+ * a record (ctx->error holds its message; nothing is built) */
 int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, const char *filename,
                 const char *for_expr, int descending);
 

@@ -4928,9 +4928,16 @@ static void cmd_index_on(dbf_t *db, lexer_t *l) {
 
     /* Build the index in slot 0 */
     cur_wa()->indexes[0].unique = is_unique;
-    if (index_build(&cur_wa()->indexes[0], db, &expr_ctx, key_expr, filename, for_cond, is_descending) < 0) {
-        prog_error(ERR_FILE_IO, "Error building index");
-        return;
+    {
+        int rc = index_build(&cur_wa()->indexes[0], db, &expr_ctx, key_expr, filename, for_cond, is_descending);
+        if (rc == -2 && expr_ctx.error) {   /* the key or FOR failed on a record */
+            prog_error(expr_error_code(expr_ctx.error), expr_ctx.error);
+            return;
+        }
+        if (rc < 0) {
+            prog_error(ERR_FILE_IO, "Error building index");
+            return;
+        }
     }
 
     /* Write to file */
@@ -5154,10 +5161,17 @@ static void cmd_reindex(dbf_t *db) {
         str_copy(key_expr, idx->key_expr, sizeof(key_expr));
         str_copy(filename, idx->filename, sizeof(filename));
 
-        if (index_build(idx, db, &expr_ctx, key_expr, filename,
-                        idx->for_expr, idx->descending) < 0) {
-            prog_error_fmt(ERR_FILE_IO, "Error rebuilding index %s", filename);
-            return;
+        {
+            int rc = index_build(idx, db, &expr_ctx, key_expr, filename,
+                                 idx->for_expr, idx->descending);
+            if (rc == -2 && expr_ctx.error) {
+                prog_error(expr_error_code(expr_ctx.error), expr_ctx.error);
+                return;
+            }
+            if (rc < 0) {
+                prog_error_fmt(ERR_FILE_IO, "Error rebuilding index %s", filename);
+                return;
+            }
         }
 
         if (index_write(idx) < 0) {
