@@ -246,7 +246,12 @@ static void sema_expr_mty(Node *n) {
         n->rhs = sema_bf_operand(n->rhs);
         lty = n->lhs ? n->lhs->ty : TY_INT;
         rty = n->rhs ? n->rhs->ty : TY_INT;
-        n->ty = sema_arith_type(lty, rty);
+        /* two structures: the result is that structure (6.5.15p5), not
+         * an arithmetic type -- c ? s1 : s2 became an int, so a struct
+         * return gave back an address and no copy, and a by-value
+         * argument passed one word */
+        if (ty_is_struct(lty) && lty == rty) n->ty = lty;
+        else n->ty = sema_arith_type(lty, rty);
         return;
     }
 

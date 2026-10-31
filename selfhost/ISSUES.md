@@ -3776,3 +3776,29 @@ machine type cannot say how far p[1] is).  Now the cast, and `va_arg`
 of such a type, take the row width and strides from the C type
 (`ps_rowptr_value`), and subscripting one is a declared pointer's.
 Probe 6.5.4-cast-pointer-to-array (328 PASS).
+
+### 104. [RESOLVED 2026-10-30] A ?: of two structures was typed int: struct returns copied nothing, by-value arguments passed one word
+
+Found by xbc/tests/run-stage08.sh the same day it went in: SLOW-32
+xBase's runtime built by stage08 printed "Error ???/???" for every error
+its default handler reported, where the clang build printed "Error
+BASE/1020 ...".  The handler reads the error object's fields through
+`static value_t deferr_ivar(...)`, whose body is `return v ? *v :
+val_nil();`.
+
+sema typed every ?: with the usual arithmetic conversions, and two
+structures came out int.  A struct-returning function's `return c ? s1 :
+s2` then took the scalar path: the chosen arm's address back in r1, no
+copy into the hidden buffer the caller passed in r3 -- the arm could be
+the callee's own dead local, and r3 was even reused.  Until ISSUES-102
+the stage08 caller copied from r1 at once and mostly got away with it;
+since ISSUES-102 it reads its own buffer, as the clang convention says,
+and found it empty.  An LLVM caller always did.  The same int type made
+a ?: passed by value one word, not a copy (wrong before ISSUES-102 too).
+
+sema now keeps a structure as the ?: type (6.5.15p5), hl_addr takes a
+struct ?: as its chosen arm's address, and a struct return always
+copies into the hidden buffer.  Gates: run-interop-llvm.sh gains
+struct-ret-cond and struct-arg-cond (both fail on the compiler before
+this); tests/test_struct_cond.c (fails on both earlier compilers, at
+different checks).

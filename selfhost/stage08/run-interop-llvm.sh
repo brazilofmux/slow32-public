@@ -111,6 +111,25 @@ int drive_mkbig(void) {
  * r3, the double in the aligned pair r5:r6 after it, converted from 3.
  * stage08 skipped every conversion inside ({ ... }) and passed the int 3
  * in r4. */
+/* A struct-returning stage08 function whose return is a ?: of two
+ * structures, called by LLVM code: the result must be copied into the
+ * caller's hidden buffer.  sema typed `c ? s1 : s2` as an int, so the
+ * return gave back the chosen arm's address and copied nothing -- an
+ * LLVM caller read an untouched buffer.  The same cause passed one word
+ * for a ?: given by value (drive_condarg, to LLVM's sumbig). */
+struct Big pickbig(int k) {
+    struct Big x, y;
+    int i;
+    for (i = 0; i < 6; i++) { x.a[i] = i + 1; y.a[i] = i + 11; }
+    return k ? x : y;
+}
+extern int sumbig(struct Big b);
+int drive_condarg(int k) {
+    struct Big x, y;
+    int i;
+    for (i = 0; i < 6; i++) { x.a[i] = i + 1; y.a[i] = i + 11; }
+    return sumbig(k ? x : y);
+}
 extern struct Big mkbigd(double d, int k);
 int drive_mkbigd(void) {
     struct Big b;
@@ -152,6 +171,9 @@ extern int drive_cmut(void);
 extern int drive_promote(void);
 long long negate64(long long v) { return -v; }
 struct Big mkbig(int k) { struct Big b; int i; for (i = 0; i < 6; i++) b.a[i] = k * 10 + i; return b; }
+extern struct Big pickbig(int k);
+extern int drive_condarg(int k);
+int sumbig(struct Big b) { int s = 0, i; for (i = 0; i < 6; i++) s += b.a[i]; return s; }
 extern int drive_mkbig(void);
 struct Big mkbigd(double d, int k) { struct Big b; int i; for (i = 0; i < 6; i++) b.a[i] = 0; b.a[0] = (int)(d * 10); b.a[1] = k; return b; }
 extern int drive_mkbigd(void);
@@ -175,6 +197,8 @@ int main(void) {
     if (drive_promote() != 0) { fail = 1; printf("GATE arg-promote FAIL (%d)\n", drive_promote()); }
     if (drive_mkbig() != 0) { fail = 1; printf("GATE struct-ret-big FAIL (%d)\n", drive_mkbig()); }
     if (drive_mkbigd() != 0) { fail = 1; printf("GATE struct-ret-double FAIL (%d)\n", drive_mkbigd()); }
+    if (pickbig(1).a[5] != 6 || pickbig(0).a[0] != 11) { fail = 1; printf("GATE struct-ret-cond FAIL\n"); }
+    if (drive_condarg(1) != 21 || drive_condarg(0) != 81) { fail = 1; printf("GATE struct-arg-cond FAIL\n"); }
     struct Mix mx; mx.c = 'x'; mx.d = 2.5; mx.t = 77;
     if (sizeof(struct Mix) != 16 || mixlayout(&mx) != 0 || mx.t != 78) {
         fail = 1; printf("GATE struct-layout FAIL\n");

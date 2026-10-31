@@ -1115,8 +1115,8 @@ static int hl_addr(Node *n) {
      * caller temp and yields its address (the retptr), so the "address of"
      * a struct call is just its value.  Covers `return val_integer(0);`
      * and member access on a call result. */
-    if ((n->kind == ND_CALL || n->kind == ND_CALL_PTR) && ty_is_struct(n->ty)) {
-        return hl_expr(n);
+    if ((n->kind == ND_CALL || n->kind == ND_CALL_PTR || n->kind == ND_TERNARY) && ty_is_struct(n->ty)) {
+        return hl_expr(n);     /* a struct ?: is the chosen arm's address, as a call's result is */
     }
 
     /* Struct assignment used as a value (a = b = c chains, or taking a
@@ -4397,8 +4397,14 @@ static void hl_stmt(Node *n) {
             hi_emit(HI_BR, 0, -1, -1, hl_inl_ret_blk, NULL);
             return;
         }
-        if (n->lhs && hl_struct_ret && ty_is_struct(n->lhs->ty)) {
-            /* Struct return: copy struct to hidden __retptr, then return ptr */
+        if (n->lhs && hl_struct_ret) {
+            /* Struct return: copy struct to hidden __retptr, then return ptr.
+             * Always copied, as the clang convention has it.  sema typed
+             * `c ? s1 : s2` as an int until 2026-10-30, and the return then
+             * went the scalar way: the chosen arm's address back in r1 and
+             * nothing copied, an empty buffer for an LLVM caller (selfhost
+             * ISSUES-104).  An expression not typed as the struct is still
+             * taken as its address and copied. */
             {
                 int src_addr;
                 int dst_addr;
@@ -4407,7 +4413,7 @@ static void hl_stmt(Node *n) {
                 int tmp;
                 int src_off;
                 int dst_off;
-                src_addr = hl_addr(n->lhs);
+                src_addr = ty_is_struct(n->lhs->ty) ? hl_addr(n->lhs) : hl_expr(n->lhs);
                 dst_addr = hi_emit(HI_LOAD, HL_ADDR_TY, hl_retptr_alloca, -1, 0, NULL);
                 copy_sz = hl_ret_size;
                 copy_i = copy_sz;
