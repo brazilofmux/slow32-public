@@ -138,6 +138,10 @@ int text_sz;
 int data_sz;
 int rodata_sz;
 int bss_sz;
+/* the largest alignment a .bss contribution asked for: contributions are
+ * aligned relative to the section's start, so the start must be aligned
+ * to the largest of them (selfhost ISSUES-106) */
+int bss_maxalign;
 
 int init_array_base;
 int init_array_end_off;
@@ -587,6 +591,8 @@ void merge_sections() {
                 base = 0;
             }
 
+            if (merge_type == SEC_BSS && salign > bss_maxalign) bss_maxalign = salign;
+
             /* Record base for symbol/reloc adjustment (per section index) */
             if (i < MAX_OBJ_SEC) {
                 sec_base_by_idx[i] = base;
@@ -999,6 +1005,8 @@ void layout_sections() {
     t = page_align(rodata_va + rodata_sz);
     data_va = t;
     t = data_va + data_sz;
+    t = align_to(t, 4);
+    if (bss_maxalign > 4) t = align_to(t, bss_maxalign);
     bss_va = t;
     t = bss_va + bss_sz;
     bss_end_va = t;

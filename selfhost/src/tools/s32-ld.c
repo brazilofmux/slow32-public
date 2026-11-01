@@ -144,6 +144,12 @@ int text_sz;
 int data_sz;
 int rodata_sz;
 int bss_sz;
+/* the largest alignment a contribution to each merged section asked for:
+ * contributions are aligned relative to the section's start, so the start
+ * must be aligned to the largest of them (layout_sections) */
+int data_maxalign;
+int rodata_maxalign;
+int bss_maxalign;
 
 /* JAL veneer islands.  Same geometry as the host linker: 32KB at the
  * start and end of .text, plus interior islands between input units
@@ -636,6 +642,10 @@ void merge_sections() {
                 base = 0;
             }
 
+            if (merge_type == SEC_DATA && salign > data_maxalign) data_maxalign = salign;
+            if (merge_type == SEC_RODATA && salign > rodata_maxalign) rodata_maxalign = salign;
+            if (merge_type == SEC_BSS && salign > bss_maxalign) bss_maxalign = salign;
+
             /* Record base for symbol/reloc adjustment (per section index) */
             if (i < MAX_OBJ_SEC) {
                 sec_base_by_idx[i] = base;
@@ -1071,8 +1081,10 @@ void layout_sections() {
             if (t < CODE_LIMIT_MIN) t = CODE_LIMIT_MIN;
         }
     }
+    if (rodata_maxalign > 4096) t = align_to(t, rodata_maxalign);
     rodata_va = t;
     t = page_align(rodata_va + rodata_sz);
+    if (data_maxalign > 4096) t = align_to(t, data_maxalign);
     data_va = t;
     t = data_va + data_sz;
     /* Align the BSS BASE, not merely each contribution's offset within
@@ -1083,8 +1095,11 @@ void layout_sections() {
      * and a real link put .bss at 0x2384D.  It went unnoticed because
      * nothing enforces alignment: every engine permits unaligned word
      * access, and the emulator's S32_TRAP_ON_UNALIGNED is defined but
-     * never referenced. */
+     * never referenced.  Four was not enough either: the base must take
+     * the largest alignment of any contribution -- _Alignas(64) in .bss
+     * landed 16 bytes off (selfhost ISSUES-106). */
     t = align4(t);
+    if (bss_maxalign > 4) t = align_to(t, bss_maxalign);
     bss_va = t;
     t = bss_va + bss_sz;
     bss_end_va = t;

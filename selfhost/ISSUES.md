@@ -3802,3 +3802,59 @@ copies into the hidden buffer.  Gates: run-interop-llvm.sh gains
 struct-ret-cond and struct-arg-cond (both fail on the compiler before
 this); tests/test_struct_cond.c (fails on both earlier compilers, at
 different checks).
+
+### 105. [RESOLVED 2026-11-01] A cast or sizeof(type) in an array's dimension took the declaration's type away from it
+
+Found while building runtime/locales.c with stage08 for the selfhost
+locale layer: `static const utf_collator *found[N_NAMED_LOCALES];`
+drew "conversion discards qualifiers" on every store into it, and
+N_NAMED_LOCALES is `((int)(sizeof named_locales / sizeof
+named_locales[0]))`.  `const char *a[(int)2]`, or `[sizeof(int)]`,
+declared an array of `char *`.
+
+parse_type leaves the type it read in globals -- the C type
+(ps_type_cty), the const and volatile bits, the stars, a function-pointer
+typedef's signature (ps_type_fpbase/fpn), and the declaration's
+`_Alignas` and `register` -- and the declaration reads them after its
+declarator.  A cast or a sizeof of a type name inside the dimension
+runs parse_type again, and its state was what the declaration then read;
+ps_obj_cty saw a C type that did not match and fell back to one built
+from the machine type, unqualified.  Three paths reach a dimension:
+file scope and static locals through parse_const_int, automatic locals
+through ps_vla_ahead's look-ahead, which rewinds the tokens it read but
+not the globals.  So the loss reached the alignment of `_Alignas(64)
+char b[(int)8]` and the signature of `dfn table[(int)3]` as well as
+const.
+
+Both now save the eighteen globals and put them back
+(ps_type_state_save/restore, a local array, so nesting holds).
+tests/test_dim_type_state.c checks const through _Generic at the three
+scopes, two-dimensional and sizeof forms, calls through a
+function-pointer typedef array, and two _Alignas buffers; it does not
+compile on the compiler before.
+
+### 106. [RESOLVED 2026-11-01] The self-hosted s32-ld aligned .bss to 4, whatever its objects asked
+
+Found by tests/test_dim_type_state.c the day it was written (ISSUES-105):
+its `_Alignas(64) char aligned[8]` at file scope came out 16 bytes off
+under the stage08 tools and right under the host linker.  The object
+file said `.bss` align 64 (and the c-conformance probes 6.2.8 and 6.7.5,
+which had passed since they were written, turned WRONG the same day,
+when the selfhost library's .data grew and moved .bss).
+
+merge_sections places each object's contribution at an offset aligned
+for it -- relative to the merged section's start.  .rodata and .data
+start on a page, so alignments up to 4096 held; .bss started at the
+end of .data rounded to 4, so anything stricter held by luck.  The host
+linker aligns each contribution's absolute address.
+
+merge_sections now keeps the largest alignment asked of each merged
+section, and layout_sections starts .bss on it (and .rodata or .data, in
+the unlikely case one asks for more than a page).
+
+stage07's tools, which stage08's run-tests.sh builds its tests with, had
+it worse: the linker did not even round .bss to 4, and the assembler wrote
+4 into every section header whatever .align said, so no alignment above 4
+reached an object at all.  Both are repaired in place -- the assembler
+with stage08's note_sec_align/sec_align, the linker's .bss as here -- and
+the test passes under both tool sets.

@@ -3204,11 +3204,64 @@ static Node *ps_vla_hidden(void) {
 /* Does a declarator's dimension list, at the cursor, hold one that is
  * not an integer constant expression -- or [*]?  Read ahead and put
  * back; `[ number ]` and `[]` are taken without parsing. */
+/* The type state parse_type leaves in globals for the declaration it
+ * began.  A constant expression inside a declarator -- an array's
+ * dimension, a bit-field's width -- can hold a cast or a sizeof of a type
+ * name, and reading that type name runs parse_type again; the declaration
+ * gets its own state back when the constant is read.  It did not:
+ * const char *a[(int)2], or [sizeof(int)], declared an array of char *,
+ * and the same overwrite took _Alignas, register and a function-pointer
+ * typedef's signature from the declaration. */
+#define PS_TYPE_STATE 18
+static void ps_type_state_save(int *s) {
+    s[0] = ps_type_cty;
+    s[1] = ps_type_nostar_cty;
+    s[2] = ps_type_nostar;
+    s[3] = ps_type_constb;
+    s[4] = ps_type_constp;
+    s[5] = ps_type_volb;
+    s[6] = ps_type_volp;
+    s[7] = ps_type_nstar;
+    s[8] = ps_type_arrcount;
+    s[9] = ps_type_fpbase;
+    s[10] = ps_type_fpn;
+    s[11] = ps_type_alignas;
+    s[12] = ps_decl_register;
+    s[13] = ps_lead_const;
+    s[14] = ps_lead_restrict;
+    s[15] = ps_skipq_const;
+    s[16] = ps_skipq_cq;
+    s[17] = ps_fnptr_nstar;
+}
+
+static void ps_type_state_restore(int *s) {
+    ps_type_cty = s[0];
+    ps_type_nostar_cty = s[1];
+    ps_type_nostar = s[2];
+    ps_type_constb = s[3];
+    ps_type_constp = s[4];
+    ps_type_volb = s[5];
+    ps_type_volp = s[6];
+    ps_type_nstar = s[7];
+    ps_type_arrcount = s[8];
+    ps_type_fpbase = s[9];
+    ps_type_fpn = s[10];
+    ps_type_alignas = s[11];
+    ps_decl_register = s[12];
+    ps_lead_const = s[13];
+    ps_lead_restrict = s[14];
+    ps_skipq_const = s[15];
+    ps_skipq_cq = s[16];
+    ps_fnptr_nstar = s[17];
+}
+
 static int ps_vla_ahead(void) {
     int vm;
     Node *e;
+    int st[PS_TYPE_STATE];
     if (lex_tok != TK_LBRACK) return 0;
     vm = 0;
+    ps_type_state_save(st);     /* a cast or sizeof in a dimension runs parse_type */
     ps_lex_mark();
     while (lex_tok == TK_LBRACK && !vm) {
         next();
@@ -3232,6 +3285,7 @@ static int ps_vla_ahead(void) {
         next();
     }
     ps_lex_rewind();
+    ps_type_state_restore(st);
     return vm;
 }
 
@@ -4680,7 +4734,7 @@ static int ps_enum_value(void) {
 
 /* Parse a compile-time constant integer (for initializers and array
  * sizes).  pc_wide/pc_hi carry the high word to parse_const_ll_hi. */
-static int parse_const_int(void) {
+static int parse_const_int_here(void) {
     int lo;
     int hi;
     if (ps_const_typed(&lo, &hi)) {
@@ -4690,6 +4744,15 @@ static int parse_const_int(void) {
         return lo;
     }
     return parse_const_cond();
+}
+
+static int parse_const_int(void) {
+    int st[PS_TYPE_STATE];
+    int v;
+    ps_type_state_save(st);
+    v = parse_const_int_here();
+    ps_type_state_restore(st);
+    return v;
 }
 
 /* a constant for an 8-byte integer initializer: one long long literal's
