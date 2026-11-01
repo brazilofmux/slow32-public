@@ -183,6 +183,13 @@ def one(name, exe):
         return name, 'SB-TIMEOUT', 0
     if isinstance(qb, str):
         return name, 'QB-' + qb, 0
+    # a program left waiting for more keys than its .in has: QBasic sits at
+    # the prompt (its cursor, an arrow, ends the transcript) and sbasic
+    # stops with "Input past end"; compare what came before
+    if qb and qb[-1].endswith('\u2192'):
+        qb = qb[:-1] + [qb[-1][:-1].rstrip()]
+    if sb and sb[-1] == 'Error: Input past end':
+        sb = sb[:-1]
     if sb == qb:
         return name, 'SAME', 0
     diff = list(difflib.unified_diff(qb, sb, 'qbasic', 'sbasic', lineterm='', n=1))
@@ -216,4 +223,5 @@ def main():
     print('  '.join('%s %d' % (k, counts[k]) for k in sorted(counts)), '(of %d)' % len(res))
 
 
-main()
+if __name__ == '__main__':
+    main()

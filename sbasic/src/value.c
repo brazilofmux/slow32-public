@@ -79,6 +79,17 @@ value_t val_double(double v) {
     return r;
 }
 
+value_t val_single(double v) {
+    value_t r;
+    r.type = VAL_SINGLE;
+    r.dval = v;
+    return r;
+}
+
+double single_round(double v) {
+    return (double)(float)v;
+}
+
 value_t val_string(const char *s, int len) {
     value_t r;
     r.type = VAL_STRING;
@@ -97,6 +108,7 @@ value_t val_default(val_type_t type) {
     switch (type) {
         case VAL_INTEGER: return val_integer(0);
         case VAL_DOUBLE:  return val_double(0.0);
+        case VAL_SINGLE:  return val_single(0.0);
         case VAL_STRING:  return val_string_cstr("");
         case VAL_RECORD:  return val_integer(0); /* records created via record_alloc */
     }
@@ -140,17 +152,24 @@ void val_assign(value_t *dst, const value_t *src) {
 static double val_as_double(const value_t *v) {
     switch (v->type) {
         case VAL_INTEGER: return (double)v->ival;
-        case VAL_DOUBLE:  return v->dval;
+        case VAL_DOUBLE:
+        case VAL_SINGLE:  return v->dval;
         case VAL_STRING:  return atof(v->sval->data);
         case VAL_RECORD:  return 0.0;
     }
     return 0.0;
 }
 
+/* QuickBASIC's conversion to an integer: rounded, a half to even */
+static int round_even(double d) {
+    return (int)rint(d);
+}
+
 static int val_as_int(const value_t *v) {
     switch (v->type) {
         case VAL_INTEGER: return v->ival;
-        case VAL_DOUBLE:  return (int)v->dval;
+        case VAL_DOUBLE:
+        case VAL_SINGLE:  return round_even(v->dval);
         case VAL_STRING:  return atoi(v->sval->data);
         case VAL_RECORD:  return 0;
     }
@@ -160,9 +179,9 @@ static int val_as_int(const value_t *v) {
 error_t val_to_integer(const value_t *v, int *out) {
     if (v->type == VAL_STRING || v->type == VAL_RECORD)
         return ERR_TYPE_MISMATCH;
-    if (v->type == VAL_DOUBLE) {
+    if (VAL_IS_FLOAT(v->type)) {
         double d = v->dval;
-        if (d > 2147483647.0 || d < -2147483648.0)
+        if (!(d < 2147483647.5 && d >= -2147483648.5))
             return ERR_OVERFLOW;
     }
     *out = val_as_int(v);
@@ -186,12 +205,90 @@ error_t val_to_string(const value_t *v, char *buf, int bufsize) {
             snprintf(buf, bufsize, "%d", v->ival);
             break;
         case VAL_DOUBLE:
-            snprintf(buf, bufsize, "%g", v->dval);
+        case VAL_SINGLE:
+            val_format_number(v, buf, bufsize);
             break;
         case VAL_RECORD:
             return ERR_TYPE_MISMATCH;
     }
     return ERR_NONE;
+}
+
+error_t val_coerce(value_t *v, val_type_t t) {
+    if (v->type == t && t != VAL_SINGLE) return ERR_NONE;
+    if (t == VAL_STRING || v->type == VAL_STRING)
+        return (t == VAL_STRING && v->type == VAL_STRING) ? ERR_NONE : ERR_TYPE_MISMATCH;
+    if (t == VAL_RECORD || v->type == VAL_RECORD)
+        return t == v->type ? ERR_NONE : ERR_TYPE_MISMATCH;
+    if (t == VAL_INTEGER) {
+        int i;
+        error_t err = val_to_integer(v, &i);
+        if (err != ERR_NONE) return err;
+        *v = val_integer(i);
+        return ERR_NONE;
+    }
+    double d = val_as_double(v);
+    if (t == VAL_SINGLE) {
+        if (fabs(d) > 3.4028234663852886e38 && !isinf(d))
+            return ERR_OVERFLOW;
+        *v = val_single(single_round(d));
+    } else {
+        *v = val_double(d);
+    }
+    return ERR_NONE;
+}
+
+void val_format_number(const value_t *v, char *buf, int bufsize) {
+    char digits[40], out[64];
+    int prec, n, e, i, o = 0;
+    double d;
+    if (v->type == VAL_INTEGER) {
+        snprintf(buf, bufsize, "%d", v->ival);
+        return;
+    }
+    d = v->dval;
+    prec = v->type == VAL_DOUBLE ? 16 : 7;
+    if (d == 0.0 || d != d) {           /* zero (never -0) */
+        snprintf(buf, bufsize, "0");
+        return;
+    }
+    if (d < 0) { out[o++] = '-'; d = -d; }
+    /* the significant digits, rounded to prec: d = 0.DIGITS x 10^e */
+    {
+        char tmp[48];
+        snprintf(tmp, sizeof(tmp), "%.*e", prec - 1, d);
+        n = 0;
+        for (i = 0; tmp[i] && tmp[i] != 'e'; i++)
+            if (tmp[i] >= '0' && tmp[i] <= '9') digits[n++] = tmp[i];
+        e = atoi(tmp + i + 1) + 1;
+        while (n > 1 && digits[n - 1] == '0') n--;
+        digits[n] = '\0';
+    }
+    if (e <= prec && n - e <= prec) {
+        /* fixed: no leading 0 before the point */
+        if (e <= 0) {
+            out[o++] = '.';
+            for (i = 0; i < -e; i++) out[o++] = '0';
+            for (i = 0; i < n; i++) out[o++] = digits[i];
+        } else {
+            for (i = 0; i < e; i++) out[o++] = i < n ? digits[i] : '0';
+            if (n > e) {
+                out[o++] = '.';
+                for (i = e; i < n; i++) out[o++] = digits[i];
+            }
+        }
+        out[o] = '\0';
+    } else {
+        out[o++] = digits[0];
+        if (n > 1) {
+            out[o++] = '.';
+            for (i = 1; i < n; i++) out[o++] = digits[i];
+        }
+        snprintf(out + o, sizeof(out) - o, "%c%c%02d",
+                 v->type == VAL_DOUBLE ? 'D' : 'E', e - 1 < 0 ? '-' : '+',
+                 e - 1 < 0 ? 1 - e : e - 1);
+    }
+    snprintf(buf, bufsize, "%s", out);
 }
 
 const char *val_cstr(const value_t *v) {
@@ -204,10 +301,18 @@ const char *val_cstr(const value_t *v) {
 
 #define INT_RANGE(x) ((x) >= -2147483648LL && (x) <= 2147483647LL)
 
-/* Promote two numeric values to a common type for arithmetic */
+/* Promote two numeric values to a common type for arithmetic: 1 if
+ * either is a single or a double, 0 if both are integers */
 static int promote(const value_t *a, const value_t *b) {
-    /* Returns 1 if either is double, 0 if both int */
-    return (a->type == VAL_DOUBLE || b->type == VAL_DOUBLE);
+    return VAL_IS_FLOAT(a->type) || VAL_IS_FLOAT(b->type);
+}
+
+/* a floating result, typed as the wider of the operands (a single unless
+ * a double is among them: integer / integer is a single) */
+static value_t val_float(const value_t *a, const value_t *b, double d) {
+    if (a->type == VAL_DOUBLE || (b && b->type == VAL_DOUBLE))
+        return val_double(d);
+    return val_single(d);
 }
 
 error_t val_add(const value_t *a, const value_t *b, value_t *result) {
@@ -229,7 +334,7 @@ error_t val_add(const value_t *a, const value_t *b, value_t *result) {
     if (a->type == VAL_STRING || b->type == VAL_STRING)
         return ERR_TYPE_MISMATCH;
     if (promote(a, b)) {
-        *result = val_double(val_as_double(a) + val_as_double(b));
+        *result = val_float(a, b, val_as_double(a) + val_as_double(b));
     } else {
         long long r = (long long)a->ival + (long long)b->ival;
         if (INT_RANGE(r)) *result = val_integer((int)r);
@@ -243,7 +348,7 @@ error_t val_sub(const value_t *a, const value_t *b, value_t *result) {
         a->type == VAL_RECORD || b->type == VAL_RECORD)
         return ERR_TYPE_MISMATCH;
     if (promote(a, b)) {
-        *result = val_double(val_as_double(a) - val_as_double(b));
+        *result = val_float(a, b, val_as_double(a) - val_as_double(b));
     } else {
         long long r = (long long)a->ival - (long long)b->ival;
         if (INT_RANGE(r)) *result = val_integer((int)r);
@@ -257,7 +362,7 @@ error_t val_mul(const value_t *a, const value_t *b, value_t *result) {
         a->type == VAL_RECORD || b->type == VAL_RECORD)
         return ERR_TYPE_MISMATCH;
     if (promote(a, b)) {
-        *result = val_double(val_as_double(a) * val_as_double(b));
+        *result = val_float(a, b, val_as_double(a) * val_as_double(b));
     } else {
         long long r = (long long)a->ival * (long long)b->ival;
         if (INT_RANGE(r)) *result = val_integer((int)r);
@@ -272,7 +377,7 @@ error_t val_div(const value_t *a, const value_t *b, value_t *result) {
         return ERR_TYPE_MISMATCH;
     double db = val_as_double(b);
     if (db == 0.0) return ERR_DIVISION_BY_ZERO;
-    *result = val_double(val_as_double(a) / db);
+    *result = val_float(a, b, val_as_double(a) / db);
     return ERR_NONE;
 }
 
@@ -320,9 +425,9 @@ error_t val_pow(const value_t *a, const value_t *b, value_t *result) {
         if (!overflow)
             *result = val_integer((int)r);
         else
-            *result = val_double(pow(val_as_double(a), val_as_double(b)));
+            *result = val_float(a, b, pow(val_as_double(a), val_as_double(b)));
     } else {
-        *result = val_double(pow(val_as_double(a), val_as_double(b)));
+        *result = val_float(a, b, pow(val_as_double(a), val_as_double(b)));
     }
     return ERR_NONE;
 }
@@ -336,7 +441,7 @@ error_t val_neg(const value_t *a, value_t *result) {
         else
             *result = val_integer(-a->ival);
     } else
-        *result = val_double(-a->dval);
+        *result = val_float(a, NULL, -a->dval);
     return ERR_NONE;
 }
 
@@ -364,7 +469,8 @@ error_t val_compare(const value_t *a, const value_t *b, int *out) {
 int val_is_true(const value_t *v) {
     switch (v->type) {
         case VAL_INTEGER: return v->ival != 0;
-        case VAL_DOUBLE:  return v->dval != 0.0;
+        case VAL_DOUBLE:
+        case VAL_SINGLE:  return v->dval != 0.0;
         case VAL_STRING:  return v->sval && v->sval->len > 0;
         case VAL_RECORD:  return v->rval != NULL;
     }
@@ -374,8 +480,9 @@ int val_is_true(const value_t *v) {
 val_type_t type_from_suffix(char suffix) {
     switch (suffix) {
         case '%': return VAL_INTEGER;
+        case '&': return VAL_INTEGER;
         case '#': return VAL_DOUBLE;
         case '$': return VAL_STRING;
-        default:  return VAL_DOUBLE;
+        default:  return VAL_SINGLE;
     }
 }

@@ -46,9 +46,10 @@ static val_type_t var_type_from_name(const char *name) {
         char last = name[len - 1];
         if (last == '$') return VAL_STRING;
         if (last == '%') return VAL_INTEGER;
+        if (last == '&') return VAL_INTEGER;
         if (last == '#') return VAL_DOUBLE;
     }
-    return VAL_DOUBLE;
+    return VAL_SINGLE;
 }
 
 /* --- Expression parsing (precedence climbing) --- */
@@ -62,7 +63,7 @@ static expr_t *parse_primary(parser_t *p) {
     }
     if (tok->type == TOK_DOUBLE_LIT) {
         token_t t = lexer_next(&p->lex);
-        return expr_literal(val_double(t.dval), t.line);
+        return expr_literal(t.suffix == '#' ? val_double(t.dval) : val_single(single_round(t.dval)), t.line);
     }
     if (tok->type == TOK_STRING_LIT) {
         token_t t = lexer_next(&p->lex);
@@ -537,17 +538,21 @@ static stmt_t *parse_input(parser_t *p) {
     if (lexer_check(&p->lex, TOK_HASH))
         return parse_input_file(p);
     char *prompt = NULL;
+    int no_question = 0, same_line = lexer_match(&p->lex, TOK_SEMICOLON);
     if (lexer_check(&p->lex, TOK_STRING_LIT)) {
         token_t t = lexer_next(&p->lex);
         prompt = strdup(t.text);
         if (!prompt) {
             parser_error(p, ERR_OUT_OF_MEMORY); return NULL;
         }
-        if (!lexer_match(&p->lex, TOK_SEMICOLON))
-            lexer_match(&p->lex, TOK_COMMA);
+        if (!lexer_match(&p->lex, TOK_SEMICOLON) && lexer_match(&p->lex, TOK_COMMA))
+            no_question = 1;
     }
     stmt_t *s = stmt_input(prompt, line);
     free(prompt);
+    if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+    s->input.no_question = no_question;
+    s->input.same_line = same_line;
     do {
         if (!parse_target(p, s, stmt_input_add_target)) { stmt_free(s); return NULL; }
     } while (lexer_match(&p->lex, TOK_COMMA));
@@ -1061,20 +1066,23 @@ static stmt_t *parse_shared(parser_t *p) {
     return s;
 }
 
-/* Parse SUB name(params) ... END SUB */
-static stmt_t *parse_sub(parser_t *p) {
-    int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume SUB */
-    if (!lexer_check(&p->lex, TOK_IDENT)) {
-        parser_error(p, ERR_SYNTAX); return NULL;
-    }
-    token_t name = lexer_next(&p->lex);
-    stmt_t *s = stmt_proc_def(STMT_SUB_DEF, name.text, line);
+/* AS INTEGER | LONG | SINGLE | DOUBLE | STRING: 1 with *t set, or 0
+ * when the name is none of them */
+static int as_type(const char *name, val_type_t *t) {
+    if (strcmp(name, "INTEGER") == 0 || strcmp(name, "LONG") == 0) *t = VAL_INTEGER;
+    else if (strcmp(name, "SINGLE") == 0) *t = VAL_SINGLE;
+    else if (strcmp(name, "DOUBLE") == 0) *t = VAL_DOUBLE;
+    else if (strcmp(name, "STRING") == 0) *t = VAL_STRING;
+    else return 0;
+    return 1;
+}
 
-    /* Parameters */
-    if (lexer_match(&p->lex, TOK_LPAREN)) {
-        if (!lexer_check(&p->lex, TOK_RPAREN)) {
-            /* Skip optional BYVAL/BYREF */
+/* A SUB's or FUNCTION's parameters, if there is a list:
+ * ( [BYVAL|BYREF] name[()] [AS type], ... ) */
+static int parse_params(parser_t *p, stmt_t *s) {
+    if (!lexer_match(&p->lex, TOK_LPAREN)) return 1;
+    if (!lexer_check(&p->lex, TOK_RPAREN)) {
+        do {
             if (lexer_check(&p->lex, TOK_IDENT) &&
                 (strcmp(lexer_peek(&p->lex)->text, "BYVAL") == 0 ||
                  strcmp(lexer_peek(&p->lex)->text, "BYREF") == 0))
@@ -1085,32 +1093,25 @@ static stmt_t *parse_sub(parser_t *p) {
             val_type_t ptype = var_type_from_name(param.text);
             if (lexer_match(&p->lex, TOK_AS)) {
                 token_t tn = lexer_next(&p->lex);
-                if (strcmp(tn.text, "INTEGER") == 0 || strcmp(tn.text, "LONG") == 0) ptype = VAL_INTEGER;
-                else if (strcmp(tn.text, "DOUBLE") == 0 || strcmp(tn.text, "SINGLE") == 0) ptype = VAL_DOUBLE;
-                else if (strcmp(tn.text, "STRING") == 0) ptype = VAL_STRING;
+                as_type(tn.text, &ptype);
             }
             stmt_proc_add_param(s, param.text, ptype);
-            while (lexer_match(&p->lex, TOK_COMMA)) {
-                /* Skip optional BYVAL/BYREF */
-                if (lexer_check(&p->lex, TOK_IDENT) &&
-                    (strcmp(lexer_peek(&p->lex)->text, "BYVAL") == 0 ||
-                     strcmp(lexer_peek(&p->lex)->text, "BYREF") == 0))
-                    lexer_next(&p->lex);
-                param = lexer_next(&p->lex);
-                /* Skip optional () for array params */
-                if (lexer_match(&p->lex, TOK_LPAREN)) lexer_match(&p->lex, TOK_RPAREN);
-                ptype = var_type_from_name(param.text);
-                if (lexer_match(&p->lex, TOK_AS)) {
-                    token_t tn = lexer_next(&p->lex);
-                    if (strcmp(tn.text, "INTEGER") == 0 || strcmp(tn.text, "LONG") == 0) ptype = VAL_INTEGER;
-                    else if (strcmp(tn.text, "DOUBLE") == 0 || strcmp(tn.text, "SINGLE") == 0) ptype = VAL_DOUBLE;
-                    else if (strcmp(tn.text, "STRING") == 0) ptype = VAL_STRING;
-                }
-                stmt_proc_add_param(s, param.text, ptype);
-            }
-        }
-        expect(p, TOK_RPAREN);
+        } while (lexer_match(&p->lex, TOK_COMMA));
     }
+    return expect(p, TOK_RPAREN);
+}
+
+/* Parse SUB name(params) ... END SUB */
+static stmt_t *parse_sub(parser_t *p) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_next(&p->lex); /* consume SUB */
+    if (!lexer_check(&p->lex, TOK_IDENT)) {
+        parser_error(p, ERR_SYNTAX); return NULL;
+    }
+    token_t name = lexer_next(&p->lex);
+    stmt_t *s = stmt_proc_def(STMT_SUB_DEF, name.text, line);
+
+    if (!parse_params(p, s)) { stmt_free(s); return NULL; }
 
     stmt_t *body = parse_block(p, BLK_END_SUB);
     stmt_proc_set_body(s, body);
@@ -1128,46 +1129,7 @@ static stmt_t *parse_function(parser_t *p) {
     stmt_t *s = stmt_proc_def(STMT_FUNC_DEF, name.text, line);
     s->proc_def.return_type = var_type_from_name(name.text);
 
-    /* Parameters */
-    if (lexer_match(&p->lex, TOK_LPAREN)) {
-        if (!lexer_check(&p->lex, TOK_RPAREN)) {
-            /* Skip optional BYVAL/BYREF */
-            if (lexer_check(&p->lex, TOK_IDENT) &&
-                (strcmp(lexer_peek(&p->lex)->text, "BYVAL") == 0 ||
-                 strcmp(lexer_peek(&p->lex)->text, "BYREF") == 0))
-                lexer_next(&p->lex);
-            token_t param = lexer_next(&p->lex);
-            /* Skip optional () for array params */
-            if (lexer_match(&p->lex, TOK_LPAREN)) lexer_match(&p->lex, TOK_RPAREN);
-            val_type_t ptype = var_type_from_name(param.text);
-            if (lexer_match(&p->lex, TOK_AS)) {
-                token_t tn = lexer_next(&p->lex);
-                if (strcmp(tn.text, "INTEGER") == 0 || strcmp(tn.text, "LONG") == 0) ptype = VAL_INTEGER;
-                else if (strcmp(tn.text, "DOUBLE") == 0 || strcmp(tn.text, "SINGLE") == 0) ptype = VAL_DOUBLE;
-                else if (strcmp(tn.text, "STRING") == 0) ptype = VAL_STRING;
-            }
-            stmt_proc_add_param(s, param.text, ptype);
-            while (lexer_match(&p->lex, TOK_COMMA)) {
-                /* Skip optional BYVAL/BYREF */
-                if (lexer_check(&p->lex, TOK_IDENT) &&
-                    (strcmp(lexer_peek(&p->lex)->text, "BYVAL") == 0 ||
-                     strcmp(lexer_peek(&p->lex)->text, "BYREF") == 0))
-                    lexer_next(&p->lex);
-                param = lexer_next(&p->lex);
-                /* Skip optional () for array params */
-                if (lexer_match(&p->lex, TOK_LPAREN)) lexer_match(&p->lex, TOK_RPAREN);
-                ptype = var_type_from_name(param.text);
-                if (lexer_match(&p->lex, TOK_AS)) {
-                    token_t tn = lexer_next(&p->lex);
-                    if (strcmp(tn.text, "INTEGER") == 0 || strcmp(tn.text, "LONG") == 0) ptype = VAL_INTEGER;
-                    else if (strcmp(tn.text, "DOUBLE") == 0 || strcmp(tn.text, "SINGLE") == 0) ptype = VAL_DOUBLE;
-                    else if (strcmp(tn.text, "STRING") == 0) ptype = VAL_STRING;
-                }
-                stmt_proc_add_param(s, param.text, ptype);
-            }
-        }
-        expect(p, TOK_RPAREN);
-    }
+    if (!parse_params(p, s)) { stmt_free(s); return NULL; }
 
     stmt_t *body = parse_block(p, BLK_END_FUNC);
     stmt_proc_set_body(s, body);
@@ -1276,23 +1238,14 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int line) 
         }
         token_t tname = lexer_next(&p->lex);
         /* Check if it's a primitive type name — declare scalar variable */
-        if (strcmp(tname.text, "INTEGER") == 0 ||
-            strcmp(tname.text, "LONG") == 0 ||
-            strcmp(tname.text, "DOUBLE") == 0 ||
-            strcmp(tname.text, "SINGLE") == 0 ||
-            strcmp(tname.text, "STRING") == 0) {
+        val_type_t st;
+        if (as_type(tname.text, &st)) {
             stmt_t *s = stmt_alloc(STMT_DIM_SCALAR, line);
             if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
             strncpy(s->dim_scalar.name, name.text, 63);
             s->dim_scalar.name[63] = '\0';
-            if (strcmp(tname.text, "INTEGER") == 0 ||
-                strcmp(tname.text, "LONG") == 0)
-                s->dim_scalar.scalar_type = VAL_INTEGER;
-            else if (strcmp(tname.text, "DOUBLE") == 0 ||
-                     strcmp(tname.text, "SINGLE") == 0)
-                s->dim_scalar.scalar_type = VAL_DOUBLE;
-            else {
-                s->dim_scalar.scalar_type = VAL_STRING;
+            s->dim_scalar.scalar_type = st;
+            if (st == VAL_STRING) {
                 /* Accept STRING * n (fixed-length) syntax — treat as regular string */
                 if (lexer_match(&p->lex, TOK_STAR)) {
                     expr_t *e = parse_expr(p);
@@ -1341,12 +1294,7 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int line) 
             return NULL;
         }
         token_t tn = lexer_next(&p->lex);
-        if (strcmp(tn.text, "INTEGER") == 0 || strcmp(tn.text, "LONG") == 0)
-            type = VAL_INTEGER;
-        else if (strcmp(tn.text, "DOUBLE") == 0 || strcmp(tn.text, "SINGLE") == 0)
-            type = VAL_DOUBLE;
-        else if (strcmp(tn.text, "STRING") == 0) type = VAL_STRING;
-        else {
+        if (!as_type(tn.text, &type)) {
             parser_error(p, ERR_SYNTAX);
             for (int i = 0; i < ndims; i++) expr_free(dims[i]);
             return NULL;
@@ -1742,10 +1690,7 @@ static stmt_t *parse_type_def(parser_t *p) {
         }
         token_t tname = lexer_next(&p->lex);
         val_type_t ft;
-        if (strcmp(tname.text, "INTEGER") == 0) ft = VAL_INTEGER;
-        else if (strcmp(tname.text, "DOUBLE") == 0) ft = VAL_DOUBLE;
-        else if (strcmp(tname.text, "STRING") == 0) ft = VAL_STRING;
-        else {
+        if (!as_type(tname.text, &ft)) {
             parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
         }
         stmt_type_def_add_field(s, fname.text, ft);
@@ -2146,7 +2091,7 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_ERROR:    return parse_error_stmt(p);
         case TOK_DEFINT:   return parse_deftype(p, VAL_INTEGER);
         case TOK_DEFDBL:   return parse_deftype(p, VAL_DOUBLE);
-        case TOK_DEFSNG:   return parse_deftype(p, VAL_DOUBLE);
+        case TOK_DEFSNG:   return parse_deftype(p, VAL_SINGLE);
         case TOK_DEFSTR:   return parse_deftype(p, VAL_STRING);
 
         case TOK_BEEP:

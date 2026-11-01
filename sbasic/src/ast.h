@@ -222,6 +222,8 @@ typedef struct stmt {
             struct expr **targets;  /* an array element's lvalue, or NULL */
             int nvars;
             int var_cap;
+            int no_question;        /* INPUT "p", v: no "? " after the prompt */
+            int same_line;          /* INPUT; v: the cursor stays on the line */
         } input;
 
         /* STMT_LOCATE */
@@ -335,6 +337,7 @@ typedef struct stmt {
             int ndims;
             struct expr *dims[8];   /* upper bound per dimension */
             int is_redim;
+            int is_static;       /* constant bounds: made before the run (QuickBASIC's static arrays) */
             int preserve;
         } dim_stmt;
 

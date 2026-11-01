@@ -11,8 +11,14 @@ typedef enum {
     VAL_INTEGER,
     VAL_DOUBLE,
     VAL_STRING,
-    VAL_RECORD
+    VAL_RECORD,
+    VAL_SINGLE      /* in dval: QuickBASIC computes in the 8087's wider
+                       format and rounds to single only when it stores,
+                       so a SINGLE value mid-expression is not rounded;
+                       the type decides storage and how it prints */
 } val_type_t;
+
+#define VAL_IS_FLOAT(t) ((t) == VAL_SINGLE || (t) == VAL_DOUBLE)
 
 /* Reference-counted string */
 typedef struct sb_string {
@@ -57,6 +63,8 @@ void record_unref(sb_record_t *r);
 /* Value constructors */
 value_t val_integer(int v);
 value_t val_double(double v);
+value_t val_single(double v);           /* not rounded: an intermediate */
+double single_round(double v);          /* to the nearest single */
 value_t val_string(const char *s, int len);
 value_t val_string_cstr(const char *s);
 value_t val_default(val_type_t type);
@@ -69,6 +77,16 @@ value_t val_copy(const value_t *v);
 
 /* Assign src to dst, clearing old dst */
 void val_assign(value_t *dst, const value_t *src);
+
+/* v made the type of a variable of type t, for storing in it: to an
+ * integer by rounding half to even (Overflow out of range), to a single
+ * by rounding to one; a string to or from a number is a Type mismatch */
+error_t val_coerce(value_t *v, val_type_t t);
+
+/* A number as QuickBASIC writes it, with no space around it: -.5,
+ * .3333333, 1E+07, 1.234567890123457D+16 -- 7 significant digits for an
+ * integer or single, 16 for a double, fixed point when that fits */
+void val_format_number(const value_t *v, char *buf, int bufsize);
 
 /* Type coercion */
 error_t val_to_integer(const value_t *v, int *out);

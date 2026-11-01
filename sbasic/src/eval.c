@@ -117,7 +117,7 @@ static int is_trappable_error(error_t err) {
     }
 }
 
-/* DEFTYPE letter-to-type map: 26 letters A-Z, default VAL_DOUBLE */
+/* DEFTYPE letter-to-type map: 26 letters A-Z, default VAL_SINGLE */
 static val_type_t deftype_map[26];
 
 static val_type_t deftype_lookup(char first_letter) {
@@ -125,12 +125,12 @@ static val_type_t deftype_lookup(char first_letter) {
         return deftype_map[first_letter - 'A'];
     if (first_letter >= 'a' && first_letter <= 'z')
         return deftype_map[first_letter - 'a'];
-    return VAL_DOUBLE;
+    return VAL_SINGLE;
 }
 
 static void deftype_init(void) {
     for (int i = 0; i < 26; i++)
-        deftype_map[i] = VAL_DOUBLE;
+        deftype_map[i] = VAL_SINGLE;
     env_deftype_hook = deftype_lookup;
 }
 
@@ -141,7 +141,7 @@ static val_type_t resolve_var_type(const char *name) {
     if (len > 0) {
         char last = name[len - 1];
         if (last == '$') return VAL_STRING;
-        if (last == '%') return VAL_INTEGER;
+        if (last == '%' || last == '&') return VAL_INTEGER;
         if (last == '#') return VAL_DOUBLE;
     }
     return deftype_lookup(name[0]);
@@ -181,28 +181,31 @@ static int find_label(const char *name) {
 
 static error_t run_code(env_t *env, code_t *c, int is_main);
 static error_t resolve_lvalue(env_t *env, expr_t *e, value_t **out);
+static int data_number(const char *t, double *out);
+
+/* A store: v made the type of the variable or element it goes into.
+ * Every variable is created with its type (its suffix, DEFtype, DIM ...
+ * AS), and so is every array element, so the slot's type is the rule. */
+static error_t store_into(value_t *slot, const value_t *v) {
+    value_t c;
+    error_t err;
+    if (!slot) return ERR_OUT_OF_MEMORY;
+    c = val_copy(v);
+    err = val_coerce(&c, slot->type);
+    if (err != ERR_NONE) { val_clear(&c); return err; }
+    val_clear(slot);
+    *slot = c;
+    return ERR_NONE;
+}
 
 /* READ's and INPUT's store: to the variable, or to the array element the
- * target expression names (an INTEGER array's element made an integer) */
+ * target expression names */
 static error_t store_target(env_t *env, expr_t *target, const char *name, value_t *v) {
     value_t *slot;
-    if (!target) {
-        env_set(env, name, v);
-        return ERR_NONE;
-    }
+    if (!target)
+        return store_into(env_get(env, name), v);
     EVAL_CHECK(resolve_lvalue(env, target, &slot));
-    if (slot->type == VAL_INTEGER && v->type == VAL_DOUBLE) {
-        int iv;
-        EVAL_CHECK(val_to_integer(v, &iv));
-        val_clear(slot);
-        *slot = val_integer(iv);
-        return ERR_NONE;
-    }
-    if ((slot->type == VAL_STRING) != (v->type == VAL_STRING))
-        return ERR_TYPE_MISMATCH;
-    val_clear(slot);
-    *slot = val_copy(v);
-    return ERR_NONE;
+    return store_into(slot, v);
 }
 
 static int find_label_data_offset(const char *name) {
@@ -248,6 +251,34 @@ static error_t array_elem_read(env_t *env, expr_t *e, sb_array_t *arr, value_t *
     EVAL_CHECK(array_get(e->call.name, indices, e->call.nargs, &elem));
     *out = val_copy(elem);
     return ERR_NONE;
+}
+
+/* DEF FN: its body evaluated with its parameters bound in a scope of
+ * their own (typed by their names), the result made the type of the
+ * function's name */
+static error_t call_def_fn(env_t *env, stmt_t *def, expr_t **args, int nargs, value_t *out) {
+    error_t err = ERR_NONE;
+    if (nargs != def->def_fn.nparams)
+        return ERR_ILLEGAL_FUNCTION_CALL;
+    env_t *fn_env = env_create(env);
+    if (!fn_env) return ERR_OUT_OF_MEMORY;
+    for (int i = 0; i < nargs && err == ERR_NONE; i++) {
+        value_t av, d = val_default(resolve_var_type(def->def_fn.params[i]));
+        err = eval_expr(env, args[i], &av);
+        if (err != ERR_NONE) break;
+        env_set(fn_env, def->def_fn.params[i], &d);
+        val_clear(&d);
+        err = store_into(env_get(fn_env, def->def_fn.params[i]), &av);
+        val_clear(&av);
+    }
+    if (err == ERR_NONE)
+        err = eval_expr(fn_env, def->def_fn.body, out);
+    env_destroy(fn_env);
+    if (err == ERR_NONE) {
+        err = val_coerce(out, resolve_var_type(def->def_fn.name));
+        if (err != ERR_NONE) val_clear(out);
+    }
+    return err;
 }
 
 /* --- User-defined procedure call --- */
@@ -328,7 +359,7 @@ static error_t call_proc(env_t *caller_env, proc_entry_t *proc,
             if (retval)
                 *out = val_copy(retval);
             else
-                *out = val_double(0.0);
+                *out = val_default(def->proc_def.return_type);
         }
     }
 
@@ -374,6 +405,12 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
             if (!env_exists(env, e->var.name) && builtin_exists(e->var.name)) {
                 if (builtin_call(e->var.name, NULL, 0, out) == ERR_NONE)
                     return ERR_NONE;
+            }
+            /* DEF FNM = 123: FNM, no parentheses, calls it */
+            if (strncmp(e->var.name, "FN", 2) == 0) {
+                proc_entry_t *fp = find_proc(e->var.name);
+                if (fp && fp->def->type == STMT_DEF_FN)
+                    return call_def_fn(env, fp->def, NULL, 0, out);
             }
             value_t *v = env_get(env, e->var.name);
             if (!v) return ERR_OUT_OF_MEMORY;
@@ -503,23 +540,8 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
             proc_entry_t *proc = find_proc(e->call.name);
             if (proc && proc->def->type == STMT_FUNC_DEF)
                 return call_proc(env, proc, e->call.args, e->call.nargs, out);
-            if (proc && proc->def->type == STMT_DEF_FN) {
-                /* DEF FN: evaluate body expression with params bound */
-                stmt_t *def = proc->def;
-                if (e->call.nargs != def->def_fn.nparams)
-                    return ERR_ILLEGAL_FUNCTION_CALL;
-                env_t *fn_env = env_create(env);
-                for (int i = 0; i < def->def_fn.nparams; i++) {
-                    value_t av;
-                    error_t err = eval_expr(env, e->call.args[i], &av);
-                    if (err != ERR_NONE) { env_destroy(fn_env); return err; }
-                    env_set(fn_env, def->def_fn.params[i], &av);
-                    val_clear(&av);
-                }
-                error_t err = eval_expr(fn_env, def->def_fn.body, out);
-                env_destroy(fn_env);
-                return err;
-            }
+            if (proc && proc->def->type == STMT_DEF_FN)
+                return call_def_fn(env, proc->def, e->call.args, e->call.nargs, out);
 
             /* 2. Check for array element access */
             sb_array_t *arr = array_find(e->call.name);
@@ -1061,13 +1083,14 @@ static error_t print_items(env_t *env, print_item_t *items, int nitems, int widt
             EVAL_CHECK(eval_expr(env, item->expr, &v));
             switch (v.type) {
                 case VAL_INTEGER:
-                    if (v.ival >= 0) col_printf(" %d", v.ival);
-                    else col_printf("%d", v.ival);
-                    break;
                 case VAL_DOUBLE:
-                    if (v.dval >= 0) col_printf(" %g", v.dval);
-                    else col_printf("%g", v.dval);
+                case VAL_SINGLE: {
+                    /* a space or the minus sign before, a space after */
+                    char buf[64];
+                    val_format_number(&v, buf, sizeof(buf));
+                    col_printf("%s%s ", buf[0] == '-' ? "" : " ", buf);
                     break;
+                }
                 case VAL_STRING:
                     col_puts(v.sval->data);
                     break;
@@ -1135,53 +1158,117 @@ static error_t exec_lprint(env_t *env, stmt_t *s) {
     return err;
 }
 
-static error_t exec_input(env_t *env, stmt_t *s) {
-    if (s->input.prompt)
-        col_puts(s->input.prompt);
-    else
-        col_puts("? ");
-
-    char line[1024];
-    int pos = 0;
-    int ch;
+/* A line from the keyboard.  When stdin is not a terminal the line is
+ * echoed, so that a run's output reads as QBasic's screen does with the
+ * same keys typed.  -1 at the end of input with nothing read. */
+static int read_input_line(char *line, int size) {
+    int pos = 0, ch;
+    fflush(stdout);
     while ((ch = getchar()) != EOF && ch != '\n') {
-        if (pos < 1023)
+        if (ch == '\r') continue;
+        if (pos < size - 1)
             line[pos++] = (char)ch;
     }
     line[pos] = '\0';
-
-    print_col = 0; /* newline consumed by getchar */
-
     if (ch == EOF && pos == 0)
-        return ERR_INPUT_PAST_END;
+        return -1;
+    if (!isatty(0))
+        col_puts(line);
+    return pos;
+}
 
-    const char *p = line;
-    for (int i = 0; i < s->input.nvars; i++) {
+/* One field of an INPUT line for a variable of type t: a quoted string or
+ * text to the next comma for a string, a number (or nothing, 0) for a
+ * number.  0 when the field does not fit -- "Redo from start". */
+static int input_field(const char **pp, val_type_t t, value_t *out) {
+    const char *p = *pp, *start;
+    int len;
+    while (*p == ' ') p++;
+    if (t == VAL_STRING && *p == '"') {
+        start = ++p;
+        while (*p && *p != '"') p++;
+        len = (int)(p - start);
+        if (*p == '"') p++;
+        while (*p == ' ') p++;
+        if (*p && *p != ',') return 0;
+        *out = val_string(start, len);
+    } else {
+        start = p;
+        while (*p && *p != ',') p++;
+        len = (int)(p - start);
+        while (len > 0 && start[len - 1] == ' ') len--;
+        if (t == VAL_STRING) {
+            *out = val_string(start, len);
+        } else {
+            char buf[256];
+            double d;
+            if (len >= (int)sizeof(buf)) return 0;
+            memcpy(buf, start, len);
+            buf[len] = '\0';
+            if (!data_number(buf, &d)) return 0;
+            *out = val_double(d);
+        }
+    }
+    *pp = p;
+    return 1;
+}
+
+/* INPUT [;] ["prompt" {;|,}] v, ...: QuickBASIC's.  The whole line is
+ * taken before anything is stored; a field that is not of its variable's
+ * type, or too few or too many of them, is "Redo from start" and the
+ * prompt again. */
+static error_t exec_input(env_t *env, stmt_t *s) {
+    char line[1024];
+    value_t vals[64];
+    int n = s->input.nvars;
+    if (n > 64) return ERR_SYNTAX;
+    for (int i = 0; i < n; i++)
         if (env_is_const(env, s->input.varnames[i]))
             return ERR_CONST_REASSIGN;
-        while (*p == ' ') p++;
-
-        if (s->input.vartypes[i] == VAL_STRING) {
-            const char *start = p;
-            while (*p && *p != ',') p++;
-            int len = (int)(p - start);
-            while (len > 0 && start[len - 1] == ' ') len--;
-            value_t v = val_string(start, len);
-            error_t err = store_target(env, s->input.targets[i], s->input.varnames[i], &v);
-            val_clear(&v);
-            if (err != ERR_NONE) return err;
-        } else {
-            char *endp;
-            double d = strtod(p, &endp);
-            if (endp == p) d = 0.0;
-            p = endp;
-            value_t v = s->input.vartypes[i] == VAL_INTEGER ? val_integer((int)d) : val_double(d);
-            EVAL_CHECK(store_target(env, s->input.targets[i], s->input.varnames[i], &v));
+    while (1) {
+        const char *p;
+        int i, ok = 1;
+        if (s->input.prompt) col_puts(s->input.prompt);
+        if (!s->input.prompt || !s->input.no_question) col_puts("? ");
+        if (read_input_line(line, sizeof(line)) < 0) {
+            col_puts("\n");
+            return ERR_INPUT_PAST_END;
         }
-
-        if (*p == ',') p++;
+        /* the Enter: on a terminal it moved the cursor itself */
+        if (isatty(0))
+            print_col = 0;
+        else if (!s->input.same_line)
+            col_puts("\n");
+        p = line;
+        for (i = 0; i < n && ok; i++) {
+            val_type_t t = s->input.vartypes[i];
+            if (s->input.targets[i] == NULL) {
+                value_t *cur = env_get(env, s->input.varnames[i]);
+                if (cur) t = cur->type == VAL_STRING ? VAL_STRING : VAL_DOUBLE;
+            }
+            if (i > 0) {
+                if (*p != ',') { ok = 0; break; }
+                p++;
+            }
+            if (!input_field(&p, t, &vals[i])) { ok = 0; break; }
+        }
+        while (ok && *p == ' ') p++;
+        if (ok && *p) ok = 0;            /* more fields than variables */
+        if (!ok) {
+            for (int j = 0; j < i; j++) val_clear(&vals[j]);
+            col_puts("\nRedo from start\n");
+            continue;
+        }
+        break;
     }
-
+    for (int i = 0; i < n; i++) {
+        error_t err = store_target(env, s->input.targets[i], s->input.varnames[i], &vals[i]);
+        val_clear(&vals[i]);
+        if (err != ERR_NONE) {
+            for (int j = i + 1; j < n; j++) val_clear(&vals[j]);
+            return err;
+        }
+    }
     return ERR_NONE;
 }
 
@@ -1384,24 +1471,9 @@ static error_t exec_assign(env_t *env, stmt_t *s) {
     value_t v;
     EVAL_CHECK(eval_expr(env, s->assign.value, &v));
 
-    val_type_t vt = resolve_var_type(s->assign.name);
-    if (vt == VAL_INTEGER && v.type != VAL_INTEGER) {
-        int iv;
-        error_t err = val_to_integer(&v, &iv);
-        val_clear(&v);
-        if (err != ERR_NONE) return err;
-        v = val_integer(iv);
-    } else if (vt == VAL_STRING && v.type != VAL_STRING) {
-        char buf[256];
-        error_t err = val_to_string(&v, buf, sizeof(buf));
-        val_clear(&v);
-        if (err != ERR_NONE) return err;
-        v = val_string_cstr(buf);
-    }
-
-    env_set(env, s->assign.name, &v);
+    error_t err = store_into(env_get(env, s->assign.name), &v);
     val_clear(&v);
-    return ERR_NONE;
+    return err;
 }
 
 /* FOR, as GW-BASIC and QuickBASIC run it: the limit and the step are
@@ -1416,9 +1488,9 @@ static int for_in_range(double v, const for_slot_t *f) {
     return f->step >= 0 ? v <= f->limit : v >= f->limit;
 }
 
-static void for_set(env_t *env, stmt_t *s, double v) {
-    value_t nv = s->for_stmt.var_type == VAL_INTEGER ? val_integer((int)v) : val_double(v);
-    env_set(env, s->for_stmt.var_name, &nv);
+static error_t for_set(env_t *env, stmt_t *s, double v) {
+    value_t nv = val_double(v);
+    return store_into(env_get(env, s->for_stmt.var_name), &nv);
 }
 
 static error_t for_start(env_t *env, stmt_t *s, for_slot_t *f, int *runs) {
@@ -1439,6 +1511,7 @@ static error_t for_start(env_t *env, stmt_t *s, for_slot_t *f, int *runs) {
         step_val = val_integer(1);
     }
     double counter;
+    value_t *cv;
     error_t cerr = val_to_double(&start_val, &counter);
     if (cerr == ERR_NONE) cerr = val_to_double(&end_val, &f->limit);
     if (cerr == ERR_NONE) cerr = val_to_double(&step_val, &f->step);
@@ -1446,7 +1519,9 @@ static error_t for_start(env_t *env, stmt_t *s, for_slot_t *f, int *runs) {
     val_clear(&end_val);
     val_clear(&step_val);
     if (cerr != ERR_NONE) return cerr;
-    for_set(env, s, counter);
+    EVAL_CHECK(for_set(env, s, counter));
+    cv = env_get(env, s->for_stmt.var_name);
+    if (cv) val_to_double(cv, &counter);
     *runs = for_in_range(counter, f);
     return ERR_NONE;
 }
@@ -1455,16 +1530,18 @@ static error_t for_next(env_t *env, stmt_t *s, const for_slot_t *f, int *again) 
     value_t *cv = env_get(env, s->for_stmt.var_name);
     double v = 0.0;
     /* the variable as FOR made it: stepped where it lives */
-    if (cv && cv->type == VAL_INTEGER && s->for_stmt.var_type == VAL_INTEGER) {
-        v = (double)cv->ival + f->step;
-        cv->ival = (int)v;
-    } else if (cv && cv->type == VAL_DOUBLE && s->for_stmt.var_type != VAL_INTEGER) {
+    if (cv && cv->type == VAL_DOUBLE) {
         v = cv->dval + f->step;
+        cv->dval = v;
+    } else if (cv && cv->type == VAL_SINGLE) {
+        v = single_round(cv->dval + f->step);
         cv->dval = v;
     } else {
         if (cv) EVAL_CHECK(val_to_double(cv, &v));
         v += f->step;
-        for_set(env, s, v);
+        EVAL_CHECK(for_set(env, s, v));
+        cv = env_get(env, s->for_stmt.var_name);
+        if (cv) EVAL_CHECK(val_to_double(cv, &v));
     }
     *again = for_in_range(v, f);
     return ERR_NONE;
@@ -1546,18 +1623,14 @@ static error_t exec_const(env_t *env, stmt_t *s) {
     value_t v;
     EVAL_CHECK(eval_expr(env, s->const_stmt.value, &v));
 
-    if (s->const_stmt.var_type == VAL_INTEGER && v.type != VAL_INTEGER) {
-        int iv;
-        error_t err = val_to_integer(&v, &iv);
-        val_clear(&v);
-        if (err != ERR_NONE) return err;
-        v = val_integer(iv);
-    } else if (s->const_stmt.var_type == VAL_STRING && v.type != VAL_STRING) {
-        char buf[256];
-        error_t err = val_to_string(&v, buf, sizeof(buf));
-        val_clear(&v);
-        if (err != ERR_NONE) return err;
-        v = val_string_cstr(buf);
+    /* CONST takes its value's type, unless its name has a suffix */
+    {
+        const char *nm = s->const_stmt.name;
+        int len = (int)strlen(nm);
+        if (len > 0 && strchr("%&!#$", nm[len - 1])) {
+            error_t err = val_coerce(&v, s->const_stmt.var_type);
+            if (err != ERR_NONE) { val_clear(&v); return err; }
+        }
     }
 
     env_set_const(env, s->const_stmt.name, &v);
@@ -1586,6 +1659,10 @@ static error_t exec_call_stmt(env_t *env, stmt_t *s) {
 
 static error_t exec_dim(env_t *env, stmt_t *s) {
     int sizes[MAX_ARRAY_DIMS];
+    /* a static array was made before the run; DIM is then a declaration
+     * (unless ERASE took it away) */
+    if (s->dim_stmt.is_static && array_find(s->dim_stmt.name))
+        return ERR_NONE;
     for (int i = 0; i < s->dim_stmt.ndims; i++) {
         value_t dv;
         EVAL_CHECK(eval_expr(env, s->dim_stmt.dims[i], &dv));
@@ -1628,22 +1705,11 @@ static error_t exec_array_assign(env_t *env, stmt_t *s) {
         return ERR_UNDEFINED_VAR;
     }
 
-    if (arr->elem_type == VAL_INTEGER && v.type != VAL_INTEGER) {
-        int iv;
-        error_t err = val_to_integer(&v, &iv);
-        val_clear(&v);
-        if (err != ERR_NONE) return err;
-        v = val_integer(iv);
-    } else if (arr->elem_type == VAL_STRING && v.type != VAL_STRING) {
-        char buf[256];
-        error_t err = val_to_string(&v, buf, sizeof(buf));
-        val_clear(&v);
-        if (err != ERR_NONE) return err;
-        v = val_string_cstr(buf);
-    }
-
-    error_t err = array_set(s->array_assign.name, indices,
-                            s->array_assign.nindices, &v);
+    value_t *slot;
+    error_t err = array_get(s->array_assign.name, indices,
+                            s->array_assign.nindices, &slot);
+    if (err == ERR_NONE)
+        err = store_into(slot, &v);
     val_clear(&v);
     return err;
 }
@@ -1699,20 +1765,6 @@ static error_t exec_read(env_t *env, stmt_t *s) {
             val_clear(&v);
             if (!ok) return ERR_SYNTAX;
             v = val_double(d);
-        }
-
-        if (s->read_stmt.vartypes[i] == VAL_INTEGER && v.type != VAL_INTEGER) {
-            int iv;
-            error_t err = val_to_integer(&v, &iv);
-            val_clear(&v);
-            if (err != ERR_NONE) return err;
-            v = val_integer(iv);
-        } else if (s->read_stmt.vartypes[i] == VAL_STRING && v.type != VAL_STRING) {
-            char buf[256];
-            error_t err = val_to_string(&v, buf, sizeof(buf));
-            val_clear(&v);
-            if (err != ERR_NONE) return err;
-            v = val_string_cstr(buf);
         }
 
         error_t err = store_target(env, s->read_stmt.targets[i], s->read_stmt.varnames[i], &v);
@@ -1837,7 +1889,13 @@ static error_t exec_write_file(env_t *env, stmt_t *s) {
             EVAL_CHECK(eval_expr(env, item->expr, &v));
             switch (v.type) {
                 case VAL_INTEGER: fprintf(fp, "%d", v.ival); break;
-                case VAL_DOUBLE: fprintf(fp, "%g", v.dval); break;
+                case VAL_DOUBLE:
+                case VAL_SINGLE: {
+                    char buf[64];
+                    val_format_number(&v, buf, sizeof(buf));
+                    fputs(buf, fp);
+                    break;
+                }
                 case VAL_STRING: fprintf(fp, "\"%s\"", v.sval->data); break;
                 case VAL_RECORD: break;
             }
@@ -1889,16 +1947,10 @@ static error_t exec_input_file(env_t *env, stmt_t *s) {
 
         /* Assign to variable */
         val_type_t vtype = s->input_file.vartypes[i];
-        value_t val;
-        if (vtype == VAL_STRING) {
-            val = val_string_cstr(buf);
-        } else if (vtype == VAL_INTEGER) {
-            val = val_integer(atoi(buf));
-        } else {
-            val = val_double(atof(buf));
-        }
-        env_set(env, s->input_file.varnames[i], &val);
+        value_t val = vtype == VAL_STRING ? val_string_cstr(buf) : val_double(atof(buf));
+        err = store_into(env_get(env, s->input_file.varnames[i]), &val);
         val_clear(&val);
+        if (err != ERR_NONE) return err;
     }
     return ERR_NONE;
 }
@@ -1974,9 +2026,10 @@ static error_t exec_write_console(env_t *env, stmt_t *s) {
                     col_puts(buf);
                     break;
                 }
-                case VAL_DOUBLE: {
+                case VAL_DOUBLE:
+                case VAL_SINGLE: {
                     char buf[64];
-                    snprintf(buf, sizeof(buf), "%g", v.dval);
+                    val_format_number(&v, buf, sizeof(buf));
                     col_puts(buf);
                     break;
                 }
@@ -2062,6 +2115,10 @@ static error_t exec_get(env_t *env, stmt_t *s) {
         double dval = 0.0;
         fread(&dval, 8, 1, fp);
         result = val_double(dval);
+    } else if (vt == VAL_SINGLE) {
+        float fval = 0.0f;
+        fread(&fval, 4, 1, fp);
+        result = val_single(fval);
     } else if (vt == VAL_STRING) {
         /* String GET: read LEN(var$) bytes */
         value_t *sv = env_get(env, s->get_put_stmt.varname);
@@ -2124,6 +2181,9 @@ static error_t exec_put(env_t *env, stmt_t *s) {
     } else if (v->type == VAL_DOUBLE) {
         double dval = v->dval;
         fwrite(&dval, 8, 1, fp);
+    } else if (v->type == VAL_SINGLE) {
+        float fval = (float)v->dval;
+        fwrite(&fval, 4, 1, fp);
     } else if (v->type == VAL_STRING) {
         int len = v->sval->len;
         fwrite(v->sval->data, 1, len, fp);
@@ -2382,13 +2442,24 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         }
 
         case STMT_RANDOMIZE: {
-            int seed = 42;
+            double seed = 0.0;
             if (s->randomize.seed) {
                 value_t v;
                 EVAL_CHECK(eval_expr(env, s->randomize.seed, &v));
-                error_t cerr = val_to_integer(&v, &seed);
+                error_t cerr = val_to_double(&v, &seed);
                 val_clear(&v);
                 if (cerr != ERR_NONE) return cerr;
+            } else {
+                /* no seed given: QuickBASIC asks for one */
+                char line[128];
+                col_puts("Random-number seed (-32768 to 32767)? ");
+                if (read_input_line(line, sizeof(line)) < 0) {
+                    col_puts("\n");
+                    return ERR_INPUT_PAST_END;
+                }
+                if (isatty(0)) print_col = 0;
+                else col_puts("\n");
+                seed = atof(line);
             }
             builtin_randomize(seed);
             return ERR_NONE;
@@ -2666,13 +2737,7 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
 
         case STMT_DIM_SCALAR: {
             /* Declare scalar variable with default value */
-            value_t def;
-            if (s->dim_scalar.scalar_type == VAL_INTEGER)
-                def = val_integer(0);
-            else if (s->dim_scalar.scalar_type == VAL_DOUBLE)
-                def = val_double(0.0);
-            else
-                def = val_string_cstr("");
+            value_t def = val_default(s->dim_scalar.scalar_type);
             env_set(env, s->dim_scalar.name, &def);
             val_clear(&def);
             return ERR_NONE;
@@ -2749,7 +2814,32 @@ static void data_pool_clear(void) {
  * DATA, and SUB/FUNCTION defs. */
 static error_t scan_stmt_list(stmt_t *s);
 
+/* DIM with constant bounds in the main program: QuickBASIC makes such an
+ * array when it compiles, so it exists from the start and a reference
+ * may come before the DIM.  OPTION BASE counts in source order. */
+static void scan_static_dim(stmt_t *s) {
+    int sizes[MAX_ARRAY_DIMS];
+    s->dim_stmt.is_static = 0;
+    if (s->dim_stmt.is_redim) return;
+    for (int i = 0; i < s->dim_stmt.ndims; i++) {
+        expr_t *d = s->dim_stmt.dims[i];
+        int upper;
+        if (!d || d->type != EXPR_LITERAL || d->literal.type == VAL_STRING) return;
+        if (val_to_integer(&d->literal, &upper) != ERR_NONE) return;
+        sizes[i] = upper - option_base + 1;
+        if (sizes[i] <= 0) return;
+    }
+    if (array_find(s->dim_stmt.name)) return;
+    if (array_dim(s->dim_stmt.name, s->dim_stmt.elem_type, sizes,
+                  s->dim_stmt.ndims, option_base) == ERR_NONE)
+        s->dim_stmt.is_static = 1;
+}
+
 static error_t scan_one_stmt(stmt_t *s) {
+    if (s->type == STMT_OPTION_BASE)
+        option_base = s->option_base.base;
+    if (s->type == STMT_DIM)
+        scan_static_dim(s);
     if (s->type == STMT_LABEL) {
         if (label_count == label_cap) {
             int cap = label_cap ? label_cap * 2 : 256;
@@ -2970,6 +3060,7 @@ error_t eval_program(env_t *env, stmt_t *program) {
     /* Initialize program state */
     program_global_env = env;
     option_base = 0;
+    builtin_rnd_reset();
     array_clear_all();
     data_pool_clear();
     fileio_init();

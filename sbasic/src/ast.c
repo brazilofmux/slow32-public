@@ -168,8 +168,9 @@ int stmt_input_add_var(stmt_t *s, const char *name, val_type_t type) {
 static val_type_t suffix_type(const char *name) {
     int len = (int)strlen(name);
     if (len > 0 && name[len - 1] == '$') return VAL_STRING;
-    if (len > 0 && name[len - 1] == '%') return VAL_INTEGER;
-    return VAL_DOUBLE;
+    if (len > 0 && (name[len - 1] == '%' || name[len - 1] == '&')) return VAL_INTEGER;
+    if (len > 0 && name[len - 1] == '#') return VAL_DOUBLE;
+    return VAL_SINGLE;
 }
 
 /* a READ or INPUT target: a variable, or an array element, whose
@@ -323,7 +324,7 @@ stmt_t *stmt_proc_def(stmt_type_t type, const char *name, int line) {
     if (!s) return NULL;
     name_copy(s->proc_def.name, name);
     s->proc_def.nparams = 0;
-    s->proc_def.return_type = VAL_DOUBLE;
+    s->proc_def.return_type = VAL_SINGLE;
     return s;
 }
 

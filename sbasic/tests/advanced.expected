@@ -2,8 +2,7 @@ Branch 2
 Subroutine 1
 After ON GOSUB
 Out of range continues
- 6
-Custom error:  42
+ 6 
+Custom error:  42 
 After ERROR 42
 Done
-

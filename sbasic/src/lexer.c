@@ -281,7 +281,7 @@ static token_t scan_token(lexer_t *lex) {
     /* Number */
     if (isdigit(c) || (c == '.' && isdigit(lex->src[lex->pos + 1]))) {
         int len = 0;
-        int is_double = 0;
+        int is_double = 0, dexp = 0;
         while (isdigit(peek_char(lex))) {
             if (len < 255) tok.text[len++] = next_char(lex);
             else next_char(lex);
@@ -304,6 +304,7 @@ static token_t scan_token(lexer_t *lex) {
             if (*q == '+' || *q == '-') q++;
             if (isdigit((unsigned char)*q)) {
                 is_double = 1;
+                dexp = (peek_char(lex) == 'd' || peek_char(lex) == 'D');
                 next_char(lex);
                 if (len < 255) tok.text[len++] = 'E';
                 if (peek_char(lex) == '+' || peek_char(lex) == '-') {
@@ -317,17 +318,27 @@ static token_t scan_token(lexer_t *lex) {
             }
         }
         tok.text[len] = '\0';
-        /* Type suffix on number */
-        if (peek_char(lex) == '%') {
-            next_char(lex);
-            is_double = 0;
-        } else if (peek_char(lex) == '#' || peek_char(lex) == '!') {
-            next_char(lex);
-            is_double = 1;
+        /* A literal's type, as QuickBASIC gives it: % or & an integer,
+         * # or a D exponent a double, ! a single; otherwise an integer
+         * when it is one that fits, else a single unless its mantissa has
+         * more than 7 digits, leading zeros counted (0.0000001 is a double
+         * and 1234567. a single: QBasic's editor shows it, adding the #).
+         * tok.suffix says which float: '#' or '!'. */
+        {
+            char sfx = 0;
+            int sig = 0;
+            if (peek_char(lex) == '%' || peek_char(lex) == '&' ||
+                peek_char(lex) == '#' || peek_char(lex) == '!')
+                sfx = next_char(lex);
+            for (int i = 0; i < len && tok.text[i] != 'E'; i++)
+                if (tok.text[i] != '.') sig++;
+            if (sfx == '%' || sfx == '&') is_double = 0;
+            if (sfx == '#' || sfx == '!') is_double = 1;
+            if (!is_double && (len > 10 || atof(tok.text) > 2147483647.0))
+                is_double = 1;
+            if (is_double)
+                tok.suffix = (sfx == '#' || (sfx != '!' && (dexp || sig > 7))) ? '#' : '!';
         }
-        /* an integer too big for one is a double */
-        if (!is_double && (len > 10 || atof(tok.text) > 2147483647.0))
-            is_double = 1;
         if (is_double) {
             tok.type = TOK_DOUBLE_LIT;
             tok.dval = atof(tok.text);
@@ -373,12 +384,17 @@ static token_t scan_token(lexer_t *lex) {
 
         /* Check for type suffix */
         if (peek_char(lex) == '$' || peek_char(lex) == '%' ||
-            peek_char(lex) == '#' || peek_char(lex) == '!') {
+            peek_char(lex) == '#' || peek_char(lex) == '!' ||
+            (peek_char(lex) == '&' && toupper(lex->src[lex->pos + 1]) != 'H' &&
+             toupper(lex->src[lex->pos + 1]) != 'O')) {
             tok.suffix = next_char(lex);
-            /* Treat ! (single) same as # (double) since we only have double */
-            if (tok.suffix == '!') tok.suffix = '#';
-            tok.text[len] = tok.suffix;
-            tok.text[len + 1] = '\0';
+            /* A! is A: SINGLE is the default type, and the name is kept
+             * without its ! (DEFDBL A makes A a double and A! a single in
+             * QuickBASIC; here they stay one variable, a single) */
+            if (tok.suffix != '!') {
+                tok.text[len] = tok.suffix;
+                tok.text[len + 1] = '\0';
+            }
         }
 
         /* GO TO and GO SUB, spaced (ECMA-55 allows it, GW-BASIC too) */
@@ -418,7 +434,7 @@ static token_t scan_token(lexer_t *lex) {
 
         /* Store upper-cased name for case-insensitive lookup */
         strcpy(tok.text, upper);
-        if (tok.suffix) {
+        if (tok.suffix && tok.suffix != '!') {
             int ulen = (int)strlen(tok.text);
             tok.text[ulen] = tok.suffix;
             tok.text[ulen + 1] = '\0';

@@ -12,6 +12,7 @@ error_t builtin_call(const char *name, value_t *args, int nargs, value_t *out);
 int builtin_exists(const char *name);
 
 /* Set RNG seed (for RANDOMIZE statement) */
-void builtin_randomize(int seed);
+void builtin_randomize(double seed);
+void builtin_rnd_reset(void);
 
 #endif

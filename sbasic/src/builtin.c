@@ -12,14 +12,14 @@
 #include <unistd.h>
 #include <slow32_args.h>
 
-/* Simple LCG random number generator */
-static unsigned int rng_state = 12345;
-static double last_rnd_val = 0.0;
+/* QuickBASIC's generator, so a program's random numbers are QBasic's: a
+ * 24-bit linear congruence from 0x50000, RND = seed / 2^24 (QBasic 1.1's
+ * first values .7055475, .533424, .5795186 checked) */
+static unsigned int rnd_seed = 0x50000;
 
 static double sb_rnd(void) {
-    rng_state = rng_state * 1103515245 + 12345;
-    last_rnd_val = (double)(rng_state & 0x7FFFFFFF) / 2147483648.0;
-    return last_rnd_val;
+    rnd_seed = (rnd_seed * 16598013u + 12820163u) & 0xFFFFFF;
+    return rnd_seed / 16777216.0;
 }
 
 /* ================================================================
@@ -27,6 +27,7 @@ static double sb_rnd(void) {
  * ================================================================ */
 static error_t get_num(value_t *v, double *out) {
     if (v->type == VAL_STRING) return ERR_TYPE_MISMATCH;
+    if (v->type == VAL_RECORD) return ERR_TYPE_MISMATCH;
     *out = (v->type == VAL_INTEGER) ? (double)v->ival : v->dval;
     return ERR_NONE;
 }
@@ -51,7 +52,9 @@ static error_t fn_abs(value_t *args, int nargs, value_t *out) {
 static error_t fn_int(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     double v; EVAL_CHECK(get_num(&args[0], &v));
-    *out = val_integer((int)floor(v));
+    /* INT and FIX keep their argument's type (INT(1E+10) is a single) */
+    if (args[0].type == VAL_INTEGER) *out = args[0];
+    else { *out = args[0]; out->dval = floor(v); }
     return ERR_NONE;
 }
 
@@ -75,15 +78,17 @@ static error_t fn_sqr(value_t *args, int nargs, value_t *out) {
 static error_t fn_fix(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     double v; EVAL_CHECK(get_num(&args[0], &v));
-    *out = val_integer((int)v); /* truncate toward zero */
+    /* truncated toward zero, the argument's type kept */
+    if (args[0].type == VAL_INTEGER) *out = args[0];
+    else { *out = args[0]; out->dval = trunc(v); }
     return ERR_NONE;
 }
 
 static error_t fn_cint(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     double v; EVAL_CHECK(get_num(&args[0], &v));
-    /* Round to nearest integer (banker's rounding not needed for BASIC) */
-    double rounded = v + (v >= 0.0 ? 0.5 : -0.5);
+    /* to the nearest integer, a half to even (QuickBASIC: CINT(2.5) = 2) */
+    double rounded = rint(v);
     if (rounded > 2147483647.0 || rounded < -2147483648.0)
         return ERR_OVERFLOW;
     *out = val_integer((int)rounded);
@@ -94,6 +99,13 @@ static error_t fn_cdbl(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     double v; EVAL_CHECK(get_num(&args[0], &v));
     *out = val_double(v);
+    return ERR_NONE;
+}
+
+static error_t fn_csng(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    double v; EVAL_CHECK(get_num(&args[0], &v));
+    *out = val_single(single_round(v));
     return ERR_NONE;
 }
 
@@ -247,21 +259,24 @@ static error_t fn_round(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
+/* RND, RND(n): n > 0 the next number, 0 the last one again, n < 0 a
+ * new seed from the bits of n as a single, then the next */
 static error_t fn_rnd(value_t *args, int nargs, value_t *out) {
     if (nargs > 1) return ERR_ILLEGAL_FUNCTION_CALL;
     if (nargs == 1) {
-        int seed;
-        EVAL_CHECK(val_to_integer(&args[0], &seed));
-        if (seed < 0) {
-            rng_state = (unsigned int)(-seed);
-            *out = val_double(sb_rnd());
-            return ERR_NONE;
-        } else if (seed == 0) {
-            *out = val_double(last_rnd_val);
+        double n;
+        EVAL_CHECK(get_num(&args[0], &n));
+        if (n == 0.0) {
+            *out = val_single(rnd_seed / 16777216.0);
             return ERR_NONE;
         }
+        if (n < 0.0) {
+            union { float f; unsigned int u; } b;
+            b.f = (float)n;
+            rnd_seed = ((b.u & 0xFFFFFF) + (b.u >> 24)) & 0xFFFFFF;
+        }
     }
-    *out = val_double(sb_rnd());
+    *out = val_single(sb_rnd());
     return ERR_NONE;
 }
 
@@ -297,8 +312,12 @@ static error_t fn_asc(value_t *args, int nargs, value_t *out) {
 static error_t fn_str(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     char buf[64];
-    EVAL_CHECK(val_to_string(&args[0], buf, sizeof(buf)));
-    *out = val_string_cstr(buf);
+    if (args[0].type == VAL_STRING || args[0].type == VAL_RECORD)
+        return ERR_TYPE_MISMATCH;
+    /* as PRINT writes it, with the sign's place: STR$(5) is " 5" */
+    buf[0] = ' ';
+    val_format_number(&args[0], buf + 1, sizeof(buf) - 1);
+    *out = val_string_cstr(buf[1] == '-' ? buf + 1 : buf);
     return ERR_NONE;
 }
 
@@ -911,20 +930,23 @@ static error_t fn_time_str(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
-/* TAB(n) - return spaces to reach absolute column n (1-based) */
+/* TAB(n): to column n (1-based); a column already passed is on the next
+ * line, and n below 1 is 1 (QuickBASIC, GW-BASIC) */
 static error_t fn_tab(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
-    int n;
+    int n, nl = 0;
     EVAL_CHECK(val_to_integer(&args[0], &n));
+    if (n < 1) n = 1;
     n--;  /* convert 1-based column to 0-based */
     int spaces = n - *active_print_col;
-    if (spaces < 0) spaces = 0;
-    if (spaces > MAX_STRING_LEN) spaces = MAX_STRING_LEN;
-    char *buf = malloc(spaces + 1);
+    if (spaces < 0) { nl = 1; spaces = n; }
+    if (spaces > MAX_STRING_LEN - 1) spaces = MAX_STRING_LEN - 1;
+    char *buf = malloc(spaces + 2);
     if (!buf) return ERR_OUT_OF_MEMORY;
-    memset(buf, ' ', spaces);
-    buf[spaces] = '\0';
-    *out = val_string(buf, spaces);
+    if (nl) buf[0] = '\n';
+    memset(buf + nl, ' ', spaces);
+    buf[spaces + nl] = '\0';
+    *out = val_string(buf, spaces + nl);
     free(buf);
     return ERR_NONE;
 }
@@ -1257,8 +1279,20 @@ static error_t fn_reverse(value_t *args, int nargs, value_t *out) {
  * RANDOMIZE support (called from eval, not dispatch table)
  * ================================================================ */
 
-void builtin_randomize(int seed) {
-    rng_state = (unsigned int)seed;
+/* RANDOMIZE n: the high word of n as a double, folded to 16 bits, is the
+ * seed's upper two bytes (QuickBASIC's way; the low byte is kept) */
+void builtin_randomize(double seed) {
+    union { double d; unsigned int w[2]; } b;
+    unsigned int m;
+    b.d = seed;
+    m = b.w[1];
+    m ^= m >> 16;
+    rnd_seed = ((m & 0xFFFF) << 8) | (rnd_seed & 0xFF);
+}
+
+/* a new run starts the sequence over */
+void builtin_rnd_reset(void) {
+    rnd_seed = 0x50000;
 }
 
 /* ================================================================
@@ -1280,7 +1314,7 @@ static const builtin_entry_t builtins[] = {
     { "CINT",     fn_cint },
     { "CLNG",     fn_cint },
     { "CDBL",     fn_cdbl },
-    { "CSNG",     fn_cdbl },
+    { "CSNG",     fn_csng },
     { "SIN",      fn_sin },
     { "COS",      fn_cos },
     { "TAN",      fn_tan },
@@ -1377,10 +1411,21 @@ int builtin_exists(const char *name) {
     return 0;
 }
 
+/* A numeric function's result is a double when an argument is one, a
+ * single otherwise (SQR(2) prints 1.414214); CDBL and VAL say double */
 error_t builtin_call(const char *name, value_t *args, int nargs, value_t *out) {
     for (int i = 0; builtins[i].name; i++) {
-        if (strcmp(builtins[i].name, name) == 0)
-            return builtins[i].fn(args, nargs, out);
+        if (strcmp(builtins[i].name, name) == 0) {
+            error_t err = builtins[i].fn(args, nargs, out);
+            if (err == ERR_NONE && out->type == VAL_DOUBLE &&
+                strcmp(name, "CDBL") != 0 && strcmp(name, "VAL") != 0) {
+                int dbl = 0;
+                for (int j = 0; j < nargs; j++)
+                    if (args[j].type == VAL_DOUBLE) dbl = 1;
+                if (!dbl) out->type = VAL_SINGLE;
+            }
+            return err;
+        }
     }
     return ERR_ILLEGAL_FUNCTION_CALL;
 }

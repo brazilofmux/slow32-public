@@ -1,4 +1,3 @@
-In Handler, ERR= 39
+In Handler, ERR= 39 
 Caught File Not Found, creating file and RESUME
 PASS: Successfully opened file
-

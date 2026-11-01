@@ -6,6 +6,11 @@ BASDIR="$(cd "$(dirname "$0")/.." && pwd)"
 EMU="${EMU:-$BASDIR/../tools/emulator/slow32-fast}"
 SBASIC="$BASDIR/sbasic.s32x"
 FILTER_FAULTS="${FILTER_FAULTS:-1}"
+# --update: write each test's output over its .expected (after a change
+# whose new output has been checked, e.g. against QBasic with
+# tests/nbs.py's oracle); review the git diff before committing
+UPDATE=0
+if [ "${1:-}" = "--update" ]; then UPDATE=1; fi
 STRICT_FAULTS="${STRICT_FAULTS:-0}"
 
 if [ ! -f "$SBASIC" ]; then
@@ -60,6 +65,13 @@ for testfile in "$BASDIR"/tests/*.bas; do
         printf '%s\n' "$raw_output" | grep -E "^Error: Read out of bounds|^Error: Write out of bounds|^DBT: Memory fault at PC=" | head -1 | sed 's/^/      /'
         FAIL=$((FAIL + 1))
         continue
+    fi
+
+    if [ -f "$expected" ] && [ "$UPDATE" = "1" ]; then
+        if [ "$actual" != "$(cat "$expected")" ]; then
+            printf '%s\n' "$actual" > "$expected"
+            echo "  UPDATED: $name"
+        fi
     fi
 
     if [ -f "$expected" ]; then
