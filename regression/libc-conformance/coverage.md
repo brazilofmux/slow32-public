@@ -28,10 +28,13 @@ are built into both), so one defect usually shows in both columns.
 Ranked by harm: wrong answers in programs that are correct first.
 
 **Compilers (found here, belong to clause 6)**
-1. A structure passed through `...` cannot be fetched with `va_arg` --
-   both compilers, the LLVM backend included (7.16.1.1).
-2. stage08's `va_start` lands on the wrong argument after a `long long`
-   or `double` last parameter, or nine or more named ones (7.16.1.4).
+1. *Fixed 2026-11-01.* A structure passed through `...` could not be
+   fetched with `va_arg` -- both compilers, the LLVM backend included
+   (7.16.1.1).  Now it travels as the address of the caller's copy in
+   the next slot, in both compilers (interop-gated both ways).
+2. *Fixed 2026-11-01.* stage08's `va_start` landed on the wrong argument
+   after a `long long` or `double` last parameter, or nine or more
+   named words (7.16.1.4).
 3. stage08 `offsetof` refuses `s.b` and `a[3]` designators (7.19p3).
 4. stage08 converts the constant `1e23` to the other neighbouring double
    than `strtod` does.  6.4.4.2p3 allows either, but 6.4.4.2p5

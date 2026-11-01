@@ -83,10 +83,10 @@
 7.16-va-list-pointer PASS PASS
 7.16.1-macros PASS DIFFER
 7.16.1.1-va-arg-many PASS PASS
-7.16.1.1-va-arg-struct DIFFER DIFFER
+7.16.1.1-va-arg-struct PASS PASS
 7.16.1.1-va-arg-types PASS PASS
 7.16.1.2-va-copy PASS PASS
-7.16.1.4-va-start-param-types PASS DIFFER
+7.16.1.4-va-start-param-types PASS PASS
 7.16.1.4-va-start-twice PASS PASS
 7.18-stdbool PASS PASS
 7.18-undef-bool PASS PASS

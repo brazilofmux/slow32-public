@@ -1082,6 +1082,21 @@ static int find_func_varargs(char *name) {
     return 0;
 }
 
+/* The number of declared (fixed) parameters of a function, -1 when
+ * it is unknown or has no prototype. */
+static int find_func_nparams(char *name) {
+    int i;
+    i = ps_nfuncs - 1;
+    while (i >= 0) {
+        if (strcmp(name, ps_fname[i]) == 0) {
+            if (ps_fpbase[i] < 0) return -1;
+            return ps_fpn[i];
+        }
+        i = i - 1;
+    }
+    return -1;
+}
+
 /* A parameter-type list: machine types, and C types beside them (pctys
  * 0: rebuilt from the machine types). */
 static int ps_fp_store(int *ptys, int *pctys, int np) {

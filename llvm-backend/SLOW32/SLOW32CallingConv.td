@@ -52,7 +52,13 @@ def CC_SLOW32_VarArg : CallingConv<[
 // This is the same approach RISC-V uses: sequential packing with boundary
 // splitting, giving maximum register utilization with no gaps.
 def CC_SLOW32_VarArgCall : CallingConv<[
-  CCIfByVal<CCPassByVal<4, 4>>,
+  // A structure passed through the ellipsis travels by reference: the
+  // caller's copy (LowerCall makes one for every byval argument) is passed
+  // as a pointer in the next slot, which is what va_arg fetches (clang
+  // lowers va_arg of an aggregate as a pointer load).  CCPassByVal would
+  // put it in stack space of its own, out of the slot order va_arg walks.
+  // A fixed structure parameter keeps the byval convention.
+  CCIfByVal<CCIfArgFixed<CCPassByVal<4, 4>>>,
   CCIfType<[f64], CCCustom<"CC_SLOW32_VarArg_F64">>,
   CCIfType<[f32], CCAssignToReg<[R3, R4, R5, R6, R7, R8, R9, R10]>>,
   CCIfType<[i32], CCAssignToReg<[R3, R4, R5, R6, R7, R8, R9, R10]>>,

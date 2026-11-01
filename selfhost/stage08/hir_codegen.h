@@ -4776,7 +4776,7 @@ static void hcg_func(Node *fn) {
         int nfixed;
         int nsave;
         int j;
-        nfixed = fn->nparams;
+        nfixed = hl_nparams;    /* words: long long and double count two */
         nsave = 8 - nfixed;
         if (nsave < 0) nsave = 0;
         if (nsave > 0) {

@@ -47,6 +47,19 @@ int vsum(int n, ...) {
     return s;
 }
 double dmul(double a, double b) { return a * b; }
+/* A structure through the ellipsis: the address of the caller's copy in
+ * the next word slot, in both directions. */
+struct Tri { int a; int b; int c; };
+int vtri(int n, ...) {
+    va_list ap; struct Tri t; int after;
+    __builtin_va_start(ap, n);
+    t = __builtin_va_arg(ap, struct Tri);
+    after = __builtin_va_arg(ap, int);
+    __builtin_va_end(ap);
+    return n * 1000 + t.a * 100 + t.b * 10 + t.c + after;
+}
+extern int cvtri(int n, ...);
+int drive_vtri(void) { struct Tri t; t.a = 7; t.b = 8; t.c = 9; return cvtri(1, t, 42); }
 struct Pt { int x; int y; };
 int ptsum(struct Pt p) { return p.x + p.y; }
 struct Pt mkpt(int x, int y) { struct Pt p; p.x = x; p.y = y; return p; }
@@ -157,6 +170,18 @@ extern unsigned long long mul64(unsigned long long, unsigned int);
 extern int call_back_twice(int);
 extern int vsum(int, ...);
 extern double dmul(double, double);
+#include <stdarg.h>
+struct Tri { int a; int b; int c; };
+extern int vtri(int, ...);
+extern int drive_vtri(void);
+int cvtri(int n, ...) {
+    va_list ap; struct Tri t; int after;
+    va_start(ap, n);
+    t = va_arg(ap, struct Tri);
+    after = va_arg(ap, int);
+    va_end(ap);
+    return n * 1000 + t.a * 100 + t.b * 10 + t.c + after;
+}
 struct Pt { int x; int y; };
 extern int ptsum(struct Pt);
 extern struct Pt mkpt(int x, int y);
@@ -187,6 +212,9 @@ int main(void) {
     if (call_back_twice(4) != 90) { fail = 1; printf("GATE callback FAIL\n"); }
     if (vsum(3, 10, 20, 30) != 60) { fail = 1; printf("GATE varargs FAIL\n"); }
     if (dmul(2.5, 4.0) != 10.0) { fail = 1; printf("GATE double FAIL\n"); }
+    struct Tri tr = { 7, 8, 9 };
+    if (vtri(1, tr, 42) != 1831) { fail = 1; printf("GATE varargs-struct clang->stage08 FAIL\n"); }
+    if (drive_vtri() != 1831) { fail = 1; printf("GATE varargs-struct stage08->clang FAIL\n"); }
     struct Pt p; p.x = 30; p.y = 12;
     if (ptsum(p) != 42) { fail = 1; printf("GATE struct-arg FAIL\n"); }
     struct Pt q = mkpt(7, 8);

@@ -1189,6 +1189,48 @@ static int hl_byval_arg(int src_addr, int sz) {
     hl_copy_block(tmp, src_addr, sz);
     return tmp;
 }
+
+/* How a structure argument travels: as a byval slot of its size, as
+ * clang passes it -- or, past a variadic callee's fixed parameters, as
+ * the address of the caller's copy in an ordinary word slot, which is
+ * what both compilers' va_arg fetches (clang lowers va_arg of an
+ * aggregate as a pointer load; the backend's CC_SLOW32_VarArgCall
+ * agrees).  Returns the h_carg tag. */
+static int hl_struct_arg_tag(char *callee, int idx, int sz) {
+    int np;
+    if (callee && find_func_varargs(callee)) {
+        np = find_func_nparams(callee);
+        if (np >= 0 && idx >= np) return 0;
+    }
+    return HI_TAG_BYVAL + (sz + 3) / 4;
+}
+
+/* va_arg(ap, struct T): the slot holds the address of the caller's
+ * copy (hl_struct_arg_tag); the structure's value is that address. */
+static int hl_va_arg_struct(int ap_addr) {
+    int ap_val;
+    int ptr;
+    int new_ap;
+    ap_val = hi_emit(HI_LOAD, TY_INT, ap_addr, -1, 0, NULL);
+    ptr = hi_emit(HI_LOAD, TY_INT, ap_val, -1, 0, NULL);
+    new_ap = hi_emit(HI_ADDI, TY_INT, ap_val, -1, 4, NULL);
+    hi_emit(HI_STORE, TY_INT, ap_addr, new_ap, 0, NULL);
+    return ptr;
+}
+
+/* va_start: the first variadic word.  The prologue saves the argument
+ * registers the fixed parameters leave (r3 + hl_nparams .. r10) just
+ * below the caller's stack arguments, so the walk is contiguous from
+ * the frame's incoming-argument base; fixed parameters past the eighth
+ * register word are on the stack, and are skipped.  hl_nparams counts
+ * words: a long long or double parameter is two. */
+static int hl_va_start_val(void) {
+    int fp;
+    fp = hi_emit(HI_GETFP, TY_INT, -1, -1, 0, NULL);
+    if (hl_nparams > 8)
+        return hi_emit(HI_ADDI, TY_INT, fp, -1, (hl_nparams - 8) * 4, NULL);
+    return fp;
+}
 #endif
 
 #ifndef S12CC_X64_HOST
@@ -3987,7 +4029,7 @@ static int hl_expr(Node *n) {
     /* SLOW-32: va_start(ap, last) → ap = __getfp() */
     if (n->kind == ND_VA_START) {
         addr = hl_addr(n->lhs);
-        val = hi_emit(HI_GETFP, TY_INT, -1, -1, 0, NULL);
+        val = hl_va_start_val();
         hi_emit(HI_STORE, TY_INT, addr, val, 0, NULL);
         return val;
     }
@@ -3997,6 +4039,7 @@ static int hl_expr(Node *n) {
         int ap_val;
         int new_ap;
         addr = hl_addr(n->lhs);
+        if (ty_is_struct(n->ty)) return hl_va_arg_struct(addr);
         ap_val = hi_emit(HI_LOAD, TY_INT, addr, -1, 0, NULL);
         if (ty_is_llong(n->ty) || ty_is_double(n->ty)) {
             /* 64-bit: load lo and hi words, advance ap by 8 */
@@ -4077,7 +4120,7 @@ static int hl_expr(Node *n) {
                     /* clang byval: pass the address of a private copy in
                      * a size-reserving stack slot (hl_byval_arg). */
                     av[nargs] = hl_byval_arg(av[nargs], ty_size(a->ty));
-                    is64[nargs] = HI_TAG_BYVAL + (ty_size(a->ty) + 3) / 4;
+                    is64[nargs] = hl_struct_arg_tag(n->name, nargs, ty_size(a->ty));
                 }
 #endif
             }
