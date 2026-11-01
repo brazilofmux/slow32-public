@@ -47,9 +47,27 @@ The optional parts are left out: `<complex.h>`, `<stdatomic.h>`,
 not the library's) and `<uchar.h>` (macOS has none), which is how the
 tool was checked.
 
-## Step 2: behaviour (next)
+## Step 2: behaviour
 
-Probes per subclause, each built against both libraries and run, its
-output compared with what two host libraries print (macOS's and glibc's,
-the latter in a Linux container); where those two disagree the probe
-carries a ruling.  Not started.
+    python3 tools/probe.py [-v] [probes/7.21.*.c ...]   # every probe if none named
+    python3 tools/probe.py --check                      # the gate: against verdicts.txt
+    python3 tools/probe.py --update                     # record this run
+    python3 tools/ngram.py n1570.txt probes/*.c *.md    # nothing copied from the standard
+
+A probe (`probes/<clause>-<slug>.c`, first line naming the clause) is
+built and run four ways: clang + the runtime and stage08 + the selfhost
+library, both on the reference emulator; the host's cc and libc; and gcc
+with glibc in a Linux container (podman, `docker.io/library/gcc`; one
+container run for every probe not already in `~/.cache`).  The expected
+output is what macOS's and glibc's libraries both print; where they
+differ, a `<probe>.expect` holds the ruling and the page says why.
+Output is stdout plus `[exit N]`; every leg runs with
+`TZ=America/Chicago`, `LC_ALL=C`, stdin from `<probe>.in` or nothing.
+
+| verdict, per library | meaning |
+|---|---|
+| PASS | prints what the oracle prints |
+| DIFFER | builds, prints something else: wrong behaviour |
+| NOBUILD | does not compile or link: usually something the library lacks |
+| TIMEOUT | did not finish in 60 s |
+| ORACLE-SPLIT | the two host libraries disagree and no ruling is recorded |
