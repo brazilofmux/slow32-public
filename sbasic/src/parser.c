@@ -134,6 +134,37 @@ static expr_t *parse_primary(parser_t *p) {
     return NULL;
 }
 
+/* The operators, tightest first, as QuickBASIC and GW-BASIC have them
+ * (ECMA-55 agrees where it has them): ^ (left to right, so 2^3^2 is
+ * 64); negation (-2^2 is -4, 2^-1 is .5); * and /; \; MOD; + and -;
+ * the comparisons (left to right); NOT; AND; OR; XOR; EQV; IMP. */
+
+/* ^'s right operand: a primary, or a signed one */
+static expr_t *parse_pow_operand(parser_t *p) {
+    if (lexer_check(&p->lex, TOK_MINUS)) {
+        token_t t = lexer_next(&p->lex);
+        expr_t *operand = parse_pow_operand(p);
+        if (!operand) return NULL;
+        return expr_unary(OP_NEG, operand, t.line);
+    }
+    if (lexer_match(&p->lex, TOK_PLUS))
+        return parse_pow_operand(p);
+    return parse_primary(p);
+}
+
+static expr_t *parse_power(parser_t *p) {
+    expr_t *left = parse_primary(p);
+    if (!left) return NULL;
+    while (lexer_check(&p->lex, TOK_CARET)) {
+        int line = lexer_peek(&p->lex)->line;
+        lexer_next(&p->lex);
+        expr_t *right = parse_pow_operand(p);
+        if (!right) { expr_free(left); return NULL; }
+        left = expr_binary(OP_POW, left, right, line);
+    }
+    return left;
+}
+
 static expr_t *parse_unary(parser_t *p) {
     if (lexer_check(&p->lex, TOK_MINUS)) {
         token_t t = lexer_next(&p->lex);
@@ -141,49 +172,56 @@ static expr_t *parse_unary(parser_t *p) {
         if (!operand) return NULL;
         return expr_unary(OP_NEG, operand, t.line);
     }
-    if (lexer_check(&p->lex, TOK_NOT)) {
-        token_t t = lexer_next(&p->lex);
-        expr_t *operand = parse_unary(p);
-        if (!operand) return NULL;
-        return expr_unary(OP_NOT, operand, t.line);
-    }
-    return parse_primary(p);
-}
-
-static expr_t *parse_power(parser_t *p) {
-    expr_t *left = parse_unary(p);
-    if (!left) return NULL;
-    if (lexer_check(&p->lex, TOK_CARET)) {
-        int line = lexer_peek(&p->lex)->line;
-        lexer_next(&p->lex);
-        expr_t *right = parse_power(p);
-        if (!right) { expr_free(left); return NULL; }
-        return expr_binary(OP_POW, left, right, line);
-    }
-    return left;
+    if (lexer_match(&p->lex, TOK_PLUS))
+        return parse_unary(p);
+    return parse_power(p);
 }
 
 static expr_t *parse_mul(parser_t *p) {
-    expr_t *left = parse_power(p);
+    expr_t *left = parse_unary(p);
     if (!left) return NULL;
     while (1) {
         binop_t op;
         if (lexer_check(&p->lex, TOK_STAR))           op = OP_MUL;
         else if (lexer_check(&p->lex, TOK_SLASH))     op = OP_DIV;
-        else if (lexer_check(&p->lex, TOK_BACKSLASH)) op = OP_IDIV;
-        else if (lexer_check(&p->lex, TOK_MOD))       op = OP_MOD;
         else break;
         int line = lexer_peek(&p->lex)->line;
         lexer_next(&p->lex);
-        expr_t *right = parse_power(p);
+        expr_t *right = parse_unary(p);
         if (!right) { expr_free(left); return NULL; }
         left = expr_binary(op, left, right, line);
     }
     return left;
 }
 
-static expr_t *parse_add(parser_t *p) {
+static expr_t *parse_idiv(parser_t *p) {
     expr_t *left = parse_mul(p);
+    if (!left) return NULL;
+    while (lexer_check(&p->lex, TOK_BACKSLASH)) {
+        int line = lexer_peek(&p->lex)->line;
+        lexer_next(&p->lex);
+        expr_t *right = parse_mul(p);
+        if (!right) { expr_free(left); return NULL; }
+        left = expr_binary(OP_IDIV, left, right, line);
+    }
+    return left;
+}
+
+static expr_t *parse_mod(parser_t *p) {
+    expr_t *left = parse_idiv(p);
+    if (!left) return NULL;
+    while (lexer_check(&p->lex, TOK_MOD)) {
+        int line = lexer_peek(&p->lex)->line;
+        lexer_next(&p->lex);
+        expr_t *right = parse_idiv(p);
+        if (!right) { expr_free(left); return NULL; }
+        left = expr_binary(OP_MOD, left, right, line);
+    }
+    return left;
+}
+
+static expr_t *parse_add(parser_t *p) {
+    expr_t *left = parse_mod(p);
     if (!left) return NULL;
     while (lexer_check(&p->lex, TOK_PLUS) || lexer_check(&p->lex, TOK_MINUS) ||
            lexer_check(&p->lex, TOK_AMPERSAND)) {
@@ -193,7 +231,7 @@ static expr_t *parse_add(parser_t *p) {
         else op = OP_SUB;
         int line = lexer_peek(&p->lex)->line;
         lexer_next(&p->lex);
-        expr_t *right = parse_mul(p);
+        expr_t *right = parse_mod(p);
         if (!right) { expr_free(left); return NULL; }
         left = expr_binary(op, left, right, line);
     }
@@ -203,15 +241,15 @@ static expr_t *parse_add(parser_t *p) {
 static expr_t *parse_comparison(parser_t *p) {
     expr_t *left = parse_add(p);
     if (!left) return NULL;
-    cmpop_t op;
-    int found = 0;
-    if (lexer_check(&p->lex, TOK_EQ))      { op = CMP_EQ; found = 1; }
-    else if (lexer_check(&p->lex, TOK_NE))  { op = CMP_NE; found = 1; }
-    else if (lexer_check(&p->lex, TOK_LT))  { op = CMP_LT; found = 1; }
-    else if (lexer_check(&p->lex, TOK_GT))  { op = CMP_GT; found = 1; }
-    else if (lexer_check(&p->lex, TOK_LE))  { op = CMP_LE; found = 1; }
-    else if (lexer_check(&p->lex, TOK_GE))  { op = CMP_GE; found = 1; }
-    if (found) {
+    while (1) {
+        cmpop_t op;
+        if (lexer_check(&p->lex, TOK_EQ))       op = CMP_EQ;
+        else if (lexer_check(&p->lex, TOK_NE))  op = CMP_NE;
+        else if (lexer_check(&p->lex, TOK_LT))  op = CMP_LT;
+        else if (lexer_check(&p->lex, TOK_GT))  op = CMP_GT;
+        else if (lexer_check(&p->lex, TOK_LE))  op = CMP_LE;
+        else if (lexer_check(&p->lex, TOK_GE))  op = CMP_GE;
+        else break;
         int line = lexer_peek(&p->lex)->line;
         lexer_next(&p->lex);
         expr_t *right = parse_add(p);
@@ -221,13 +259,23 @@ static expr_t *parse_comparison(parser_t *p) {
     return left;
 }
 
+static expr_t *parse_not(parser_t *p) {
+    if (lexer_check(&p->lex, TOK_NOT)) {
+        token_t t = lexer_next(&p->lex);
+        expr_t *operand = parse_not(p);
+        if (!operand) return NULL;
+        return expr_unary(OP_NOT, operand, t.line);
+    }
+    return parse_comparison(p);
+}
+
 static expr_t *parse_and(parser_t *p) {
-    expr_t *left = parse_comparison(p);
+    expr_t *left = parse_not(p);
     if (!left) return NULL;
     while (lexer_check(&p->lex, TOK_AND)) {
         int line = lexer_peek(&p->lex)->line;
         lexer_next(&p->lex);
-        expr_t *right = parse_comparison(p);
+        expr_t *right = parse_not(p);
         if (!right) { expr_free(left); return NULL; }
         left = expr_binary(OP_AND, left, right, line);
     }
@@ -398,6 +446,34 @@ static stmt_t *parse_block(parser_t *p, int flags) {
 
 /* --- Statement parsing --- */
 
+/* PRINT's items: expressions, each followed by ; or , or nothing.  An
+ * item may be empty (PRINT ,"A" and PRINT "A",,B), and two side by side
+ * have a ; between them (PRINT "A" B), as in GW-BASIC and QuickBASIC. */
+static int parse_print_items(parser_t *p, stmt_t *s, int (*add)(stmt_t *, expr_t *, char)) {
+    while (!at_stmt_end(p)) {
+        expr_t *e = NULL;
+        char sep;
+        if (!lexer_check(&p->lex, TOK_SEMICOLON) && !lexer_check(&p->lex, TOK_COMMA)) {
+            e = parse_expr(p);
+            if (!e || p->error != ERR_NONE) {
+                expr_free(e);
+                return 0;
+            }
+        }
+        if (lexer_match(&p->lex, TOK_SEMICOLON)) sep = ';';
+        else if (lexer_match(&p->lex, TOK_COMMA)) sep = ',';
+        else if (at_stmt_end(p)) sep = '\0';
+        else sep = ';';
+        if (add(s, e, sep) < 0) {
+            expr_free(e);
+            parser_error(p, ERR_OUT_OF_MEMORY);
+            return 0;
+        }
+        if (sep == '\0') break;
+    }
+    return 1;
+}
+
 static stmt_t *parse_print(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
     lexer_next(&p->lex);
@@ -429,23 +505,29 @@ static stmt_t *parse_print(parser_t *p) {
             parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
         }
     }
-    while (1) {
-        expr_t *e = parse_expr(p);
-        if (!e || p->error != ERR_NONE) {
-            expr_free(e); stmt_free(s); return NULL;
-        }
-        char sep = '\0';
-        if (lexer_check(&p->lex, TOK_SEMICOLON)) {
-            lexer_next(&p->lex); sep = ';';
-        } else if (lexer_check(&p->lex, TOK_COMMA)) {
-            lexer_next(&p->lex); sep = ',';
-        }
-        if (stmt_print_add(s, e, sep) < 0) {
-            parser_error(p, ERR_OUT_OF_MEMORY); stmt_free(s); return NULL;
-        }
-        if (sep == '\0' || at_stmt_end(p)) break;
-    }
+    if (!parse_print_items(p, s, stmt_print_add)) { stmt_free(s); return NULL; }
     return s;
+}
+
+/* A READ or INPUT target: a variable, or an array element */
+static int parse_target(parser_t *p, stmt_t *s, int (*add)(stmt_t *, expr_t *)) {
+    if (!lexer_check(&p->lex, TOK_IDENT)) {
+        parser_error_detail(p, ERR_SYNTAX, "Expected variable");
+        return 0;
+    }
+    expr_t *e = parse_primary(p);
+    if (!e) return 0;
+    if (e->type != EXPR_VARIABLE && e->type != EXPR_CALL) {
+        expr_free(e);
+        parser_error_detail(p, ERR_SYNTAX, "Expected variable");
+        return 0;
+    }
+    if (add(s, e) < 0) {
+        expr_free(e);
+        parser_error(p, ERR_OUT_OF_MEMORY);
+        return 0;
+    }
+    return 1;
 }
 
 static stmt_t *parse_input(parser_t *p) {
@@ -466,22 +548,9 @@ static stmt_t *parse_input(parser_t *p) {
     }
     stmt_t *s = stmt_input(prompt, line);
     free(prompt);
-    if (!lexer_check(&p->lex, TOK_IDENT)) {
-        parser_error_detail(p, ERR_SYNTAX, "Expected variable after INPUT"); stmt_free(s); return NULL;
-    }
-    token_t t = lexer_next(&p->lex);
-    if (stmt_input_add_var(s, t.text, var_type_from_name(t.text)) < 0) {
-        parser_error(p, ERR_OUT_OF_MEMORY); stmt_free(s); return NULL;
-    }
-    while (lexer_match(&p->lex, TOK_COMMA)) {
-        if (!lexer_check(&p->lex, TOK_IDENT)) {
-            parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
-        }
-        t = lexer_next(&p->lex);
-        if (stmt_input_add_var(s, t.text, var_type_from_name(t.text)) < 0) {
-            parser_error(p, ERR_OUT_OF_MEMORY); stmt_free(s); return NULL;
-        }
-    }
+    do {
+        if (!parse_target(p, s, stmt_input_add_target)) { stmt_free(s); return NULL; }
+    } while (lexer_match(&p->lex, TOK_COMMA));
     return s;
 }
 
@@ -683,20 +752,54 @@ static stmt_t *parse_assign(parser_t *p, const char *name) {
     return stmt_assign(name, vt, val, line);
 }
 
+/* A single-line IF's THEN or ELSE: the statements to the end of the
+ * line (or to the ELSE), separated by colons.  A line number there is a
+ * GOTO, not a label as it is at the start of a line. */
+static stmt_t *parse_if_branch(parser_t *p) {
+    stmt_t *head = NULL, *tail = NULL;
+    while (1) {
+        token_t *tok = lexer_peek(&p->lex);
+        stmt_t *s;
+        if (tok->type == TOK_INTEGER_LIT) {
+            char target[64];
+            int line = tok->line;
+            snprintf(target, sizeof(target), "%d", tok->ival);
+            lexer_next(&p->lex);
+            s = stmt_goto(target, line);
+        } else {
+            s = parse_stmt(p);
+        }
+        if (!s) {
+            if (p->error != ERR_NONE) { stmt_free(head); return NULL; }
+        } else {
+            stmt_append(&head, &tail, s);
+        }
+        if (!lexer_check(&p->lex, TOK_COLON)) break;
+        lexer_next(&p->lex);
+        if (lexer_check(&p->lex, TOK_EOL) || lexer_check(&p->lex, TOK_EOF) ||
+            lexer_check(&p->lex, TOK_ELSE))
+            break;
+    }
+    return head;
+}
+
 static stmt_t *parse_if(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
     lexer_next(&p->lex);
     expr_t *cond = parse_expr(p);
     if (!cond) return NULL;
-    if (!expect(p, TOK_THEN)) { expr_free(cond); return NULL; }
+    /* IF c THEN ..., or IF c GOTO n (GW-BASIC, QuickBASIC) */
+    if (!lexer_check(&p->lex, TOK_GOTO) && !expect(p, TOK_THEN)) {
+        expr_free(cond); return NULL;
+    }
 
     /* Single-line form: not followed by EOL */
     if (!lexer_check(&p->lex, TOK_EOL) && !lexer_check(&p->lex, TOK_EOF)) {
-        stmt_t *then_body = parse_stmt(p);
+        stmt_t *then_body = parse_if_branch(p);
         stmt_t *else_body = NULL;
         if (lexer_check(&p->lex, TOK_ELSE)) {
             lexer_next(&p->lex);
-            else_body = parse_stmt(p);
+            else_body = parse_if_branch(p);
         }
         return stmt_if(cond, then_body, else_body, line);
     }
@@ -1135,6 +1238,9 @@ static stmt_t *parse_implicit_call(parser_t *p, const char *name, int line) {
 
 /* --- Stage 3 parsing --- */
 
+static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int line);
+
+/* DIM a(...) [, b(...) ...]: one statement per name, chained */
 static stmt_t *parse_dim_or_redim(parser_t *p, int is_redim) {
     int line = lexer_peek(&p->lex)->line;
     lexer_next(&p->lex); /* consume DIM or REDIM */
@@ -1147,7 +1253,16 @@ static stmt_t *parse_dim_or_redim(parser_t *p, int is_redim) {
             preserve = 1;
         }
     }
+    stmt_t *head = NULL, *tail = NULL;
+    do {
+        stmt_t *s = parse_dim_one(p, is_redim, preserve, line);
+        if (!s) { stmt_free(head); return NULL; }
+        stmt_append(&head, &tail, s);
+    } while (lexer_match(&p->lex, TOK_COMMA));
+    return head;
+}
 
+static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int line) {
     if (!lexer_check(&p->lex, TOK_IDENT)) {
         parser_error_detail(p, ERR_SYNTAX, "Expected variable name after DIM"); return NULL;
     }
@@ -1260,47 +1375,23 @@ static stmt_t *parse_erase(parser_t *p) {
     return s;
 }
 
+/* DATA: raw items, kept as the text they are (READ decides what they
+ * mean, by its variable's type: GW-BASIC and QuickBASIC both) */
 static stmt_t *parse_data(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume DATA */
+    lexer_next(&p->lex); /* consume DATA; nothing is peeked after it */
     stmt_t *s = stmt_data(line);
-
-    while (1) {
-        int rc = 0;
-        if (lexer_check(&p->lex, TOK_STRING_LIT)) {
-            token_t t = lexer_next(&p->lex);
-            value_t v = val_string_cstr(t.text);
-            rc = stmt_data_add(s, v);
-            val_clear(&v);
-        } else if (lexer_check(&p->lex, TOK_MINUS)) {
-            lexer_next(&p->lex);
-            if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
-                token_t t = lexer_next(&p->lex);
-                value_t v = val_integer(-t.ival);
-                rc = stmt_data_add(s, v);
-            } else if (lexer_check(&p->lex, TOK_DOUBLE_LIT)) {
-                token_t t = lexer_next(&p->lex);
-                value_t v = val_double(-t.dval);
-                rc = stmt_data_add(s, v);
-            } else {
-                parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
-            }
-        } else if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
-            token_t t = lexer_next(&p->lex);
-            value_t v = val_integer(t.ival);
-            rc = stmt_data_add(s, v);
-        } else if (lexer_check(&p->lex, TOK_DOUBLE_LIT)) {
-            token_t t = lexer_next(&p->lex);
-            value_t v = val_double(t.dval);
-            rc = stmt_data_add(s, v);
-        } else {
-            break;
-        }
+    char item[256];
+    int more;
+    do {
+        more = lexer_data_item(&p->lex, item, sizeof(item));
+        value_t v = val_string_cstr(item);
+        int rc = stmt_data_add(s, v);
+        val_clear(&v);
         if (rc < 0) {
             parser_error(p, ERR_OUT_OF_MEMORY); stmt_free(s); return NULL;
         }
-        if (!lexer_match(&p->lex, TOK_COMMA)) break;
-    }
+    } while (more);
     return s;
 }
 
@@ -1308,22 +1399,9 @@ static stmt_t *parse_read(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
     lexer_next(&p->lex); /* consume READ */
     stmt_t *s = stmt_read(line);
-    if (!lexer_check(&p->lex, TOK_IDENT)) {
-        parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
-    }
-    token_t t = lexer_next(&p->lex);
-    if (stmt_read_add_var(s, t.text, var_type_from_name(t.text)) < 0) {
-        parser_error(p, ERR_OUT_OF_MEMORY); stmt_free(s); return NULL;
-    }
-    while (lexer_match(&p->lex, TOK_COMMA)) {
-        if (!lexer_check(&p->lex, TOK_IDENT)) {
-            parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
-        }
-        t = lexer_next(&p->lex);
-        if (stmt_read_add_var(s, t.text, var_type_from_name(t.text)) < 0) {
-            parser_error(p, ERR_OUT_OF_MEMORY); stmt_free(s); return NULL;
-        }
-    }
+    do {
+        if (!parse_target(p, s, stmt_read_add_target)) { stmt_free(s); return NULL; }
+    } while (lexer_match(&p->lex, TOK_COMMA));
     return s;
 }
 
@@ -1427,19 +1505,7 @@ static stmt_t *parse_print_file(parser_t *p) {
             parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
         }
     }
-    while (!at_stmt_end(p)) {
-        expr_t *e = parse_expr(p);
-        if (!e || p->error != ERR_NONE) {
-            expr_free(e); stmt_free(s); return NULL;
-        }
-        char sep = '\0';
-        if (lexer_check(&p->lex, TOK_SEMICOLON)) { lexer_next(&p->lex); sep = ';'; }
-        else if (lexer_check(&p->lex, TOK_COMMA)) { lexer_next(&p->lex); sep = ','; }
-        if (stmt_print_file_add(s, e, sep) < 0) {
-            parser_error(p, ERR_OUT_OF_MEMORY); stmt_free(s); return NULL;
-        }
-        if (sep == '\0' || at_stmt_end(p)) break;
-    }
+    if (!parse_print_items(p, s, stmt_print_file_add)) { stmt_free(s); return NULL; }
     return s;
 }
 
@@ -1918,6 +1984,29 @@ static stmt_t *parse_paren_dispatch(parser_t *p, const char *name, int line) {
     for (int i = 0; i < nargs; i++)
         stmt_call_add_arg(s, args[i]);
     return s;
+}
+
+/* What follows an assignment's target name, with or without LET:
+ * = expr, .field = expr, or (subscripts) = expr -- the last parsed by
+ * parse_paren_dispatch, so name(args) with no = comes back as a call.
+ * NULL, with no error set, when none of the three follows. */
+static stmt_t *parse_assignment(parser_t *p, token_t *var) {
+    if (lexer_check(&p->lex, TOK_EQ))
+        return parse_assign(p, var->text);
+    if (lexer_check(&p->lex, TOK_DOT)) {
+        lexer_next(&p->lex); /* consume . */
+        if (!lexer_check(&p->lex, TOK_IDENT)) {
+            parser_error(p, ERR_SYNTAX); return NULL;
+        }
+        token_t field = lexer_next(&p->lex);
+        if (!expect(p, TOK_EQ)) return NULL;
+        expr_t *val = parse_expr(p);
+        if (!val) return NULL;
+        return stmt_field_assign(var->text, field.text, val, var->line);
+    }
+    if (lexer_check(&p->lex, TOK_LPAREN))
+        return parse_paren_dispatch(p, var->text, var->line);
+    return NULL;
 }
 
 static stmt_t *parse_option(parser_t *p, int line) {
@@ -2485,7 +2574,14 @@ static stmt_t *parse_stmt(parser_t *p) {
                 parser_error(p, ERR_SYNTAX); return NULL;
             }
             token_t var = lexer_next(&p->lex);
-            return parse_assign(p, var.text);
+            stmt_t *as = parse_assignment(p, &var);
+            if (as && as->type == STMT_CALL) {   /* LET F(1) with no = */
+                stmt_free(as);
+                as = NULL;
+            }
+            if (!as && p->error == ERR_NONE)
+                parser_error(p, ERR_SYNTAX);
+            return as;
         }
 
         case TOK_END: {
@@ -2511,29 +2607,19 @@ static stmt_t *parse_stmt(parser_t *p) {
 
         case TOK_IDENT: {
             token_t var = lexer_next(&p->lex);
-            /* Assignment: ident = expr */
-            if (lexer_check(&p->lex, TOK_EQ))
-                return parse_assign(p, var.text);
-            /* Field assignment: ident.field = expr */
-            if (lexer_check(&p->lex, TOK_DOT)) {
-                lexer_next(&p->lex); /* consume . */
-                if (!lexer_check(&p->lex, TOK_IDENT)) {
-                    parser_error(p, ERR_SYNTAX); return NULL;
-                }
-                token_t field = lexer_next(&p->lex);
-                if (!expect(p, TOK_EQ)) return NULL;
-                expr_t *val = parse_expr(p);
-                if (!val) return NULL;
-                return stmt_field_assign(var.text, field.text, val, var.line);
-            }
+            /* ident = expr, ident.field = expr, ident(...) [= expr] */
+            if (lexer_check(&p->lex, TOK_EQ) || lexer_check(&p->lex, TOK_DOT) ||
+                lexer_check(&p->lex, TOK_LPAREN))
+                return parse_assignment(p, &var);
             /* Label: ident: */
             if (lexer_check(&p->lex, TOK_COLON)) {
                 lexer_next(&p->lex);
                 return stmt_label(var.text, var.line);
             }
-            /* Array assignment or paren call: ident(...) */
-            if (lexer_check(&p->lex, TOK_LPAREN))
-                return parse_paren_dispatch(p, var.text, var.line);
+            /* STOP and SYSTEM: a program run from a file ends, as at END
+             * (STOP's "Break" is the QuickBASIC editor's) */
+            if (strcmp(var.text, "STOP") == 0 || strcmp(var.text, "SYSTEM") == 0)
+                return stmt_end(var.line);
             /* OPTION BASE */
             if (strcmp(var.text, "OPTION") == 0)
                 return parse_option(p, var.line);

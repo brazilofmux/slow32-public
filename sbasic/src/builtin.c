@@ -723,11 +723,12 @@ static error_t fn_sadd(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
-/* LPOS(n) - printer column position (stub, returns 0) */
+/* LPOS(n) - the printer's column, 1-based */
 static error_t fn_lpos(value_t *args, int nargs, value_t *out) {
+    extern int lprint_col;
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     (void)args;
-    *out = val_integer(0);
+    *out = val_integer(lprint_col + 1);
     return ERR_NONE;
 }
 

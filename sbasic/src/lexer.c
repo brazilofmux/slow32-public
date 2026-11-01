@@ -286,7 +286,8 @@ static token_t scan_token(lexer_t *lex) {
             if (len < 255) tok.text[len++] = next_char(lex);
             else next_char(lex);
         }
-        if (peek_char(lex) == '.' && isdigit(lex->src[lex->pos + 1])) {
+        /* a fraction, possibly empty: "3." is a number */
+        if (peek_char(lex) == '.') {
             is_double = 1;
             if (len < 255) tok.text[len++] = next_char(lex);
             else next_char(lex);
@@ -295,18 +296,24 @@ static token_t scan_token(lexer_t *lex) {
                 else next_char(lex);
             }
         }
-        /* Exponent */
-        if (peek_char(lex) == 'e' || peek_char(lex) == 'E') {
-            is_double = 1;
-            if (len < 255) tok.text[len++] = next_char(lex);
-            else next_char(lex);
-            if (peek_char(lex) == '+' || peek_char(lex) == '-') {
-                if (len < 255) tok.text[len++] = next_char(lex);
-                else next_char(lex);
-            }
-            while (isdigit(peek_char(lex))) {
-                if (len < 255) tok.text[len++] = next_char(lex);
-                else next_char(lex);
+        /* Exponent: E or D (GW-BASIC's double), then [+-] and digits; an
+         * E that is not followed by them is not part of the number */
+        if (peek_char(lex) == 'e' || peek_char(lex) == 'E' ||
+            peek_char(lex) == 'd' || peek_char(lex) == 'D') {
+            const char *q = lex->src + lex->pos + 1;
+            if (*q == '+' || *q == '-') q++;
+            if (isdigit((unsigned char)*q)) {
+                is_double = 1;
+                next_char(lex);
+                if (len < 255) tok.text[len++] = 'E';
+                if (peek_char(lex) == '+' || peek_char(lex) == '-') {
+                    if (len < 255) tok.text[len++] = next_char(lex);
+                    else next_char(lex);
+                }
+                while (isdigit(peek_char(lex))) {
+                    if (len < 255) tok.text[len++] = next_char(lex);
+                    else next_char(lex);
+                }
             }
         }
         tok.text[len] = '\0';
@@ -318,6 +325,9 @@ static token_t scan_token(lexer_t *lex) {
             next_char(lex);
             is_double = 1;
         }
+        /* an integer too big for one is a double */
+        if (!is_double && (len > 10 || atof(tok.text) > 2147483647.0))
+            is_double = 1;
         if (is_double) {
             tok.type = TOK_DOUBLE_LIT;
             tok.dval = atof(tok.text);
@@ -369,6 +379,26 @@ static token_t scan_token(lexer_t *lex) {
             if (tok.suffix == '!') tok.suffix = '#';
             tok.text[len] = tok.suffix;
             tok.text[len + 1] = '\0';
+        }
+
+        /* GO TO and GO SUB, spaced (ECMA-55 allows it, GW-BASIC too) */
+        if (!tok.suffix && strcmp(upper, "GO") == 0) {
+            int save_pos = lex->pos, n = 0;
+            char w[4];
+            while (peek_char(lex) == ' ' || peek_char(lex) == '\t')
+                next_char(lex);
+            while (isalpha(peek_char(lex)) && n < 3)
+                w[n++] = toupper(next_char(lex));
+            w[n] = '\0';
+            if (!isalnum(peek_char(lex)) && strcmp(w, "TO") == 0) {
+                tok.type = TOK_GOTO;
+                return tok;
+            }
+            if (!isalnum(peek_char(lex)) && strcmp(w, "SUB") == 0) {
+                tok.type = TOK_GOSUB;
+                return tok;
+            }
+            lex->pos = save_pos;
         }
 
         /* Check for keyword (only if no suffix) */
@@ -433,6 +463,36 @@ static token_t scan_token(lexer_t *lex) {
             break;
     }
     return tok;
+}
+
+int lexer_data_item(lexer_t *lex, char *buf, int size) {
+    int n = 0;
+    char c;
+    while (peek_char(lex) == ' ' || peek_char(lex) == '\t')
+        next_char(lex);
+    if (peek_char(lex) == '"') {
+        next_char(lex);
+        while ((c = peek_char(lex)) && c != '"' && c != '\n' && c != '\r') {
+            next_char(lex);
+            if (n < size - 1) buf[n++] = c;
+        }
+        if (peek_char(lex) == '"') next_char(lex);
+        while (peek_char(lex) == ' ' || peek_char(lex) == '\t')
+            next_char(lex);
+    } else {
+        while ((c = peek_char(lex)) && c != ',' && c != ':' && c != '\n' && c != '\r') {
+            next_char(lex);
+            if (n < size - 1) buf[n++] = c;
+        }
+        while (n > 0 && (buf[n - 1] == ' ' || buf[n - 1] == '\t'))
+            n--;
+    }
+    buf[n] = '\0';
+    if (peek_char(lex) == ',') {
+        next_char(lex);
+        return 1;
+    }
+    return 0;
 }
 
 token_t *lexer_peek(lexer_t *lex) {

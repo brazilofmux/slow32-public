@@ -152,12 +152,50 @@ int stmt_input_add_var(stmt_t *s, const char *name, val_type_t type) {
         void *tmp2 = realloc(s->input.vartypes, newcap * sizeof(s->input.vartypes[0]));
         if (!tmp2) return -1;
         s->input.vartypes = tmp2;
+        void *tmp3 = realloc(s->input.targets, newcap * sizeof(s->input.targets[0]));
+        if (!tmp3) return -1;
+        s->input.targets = tmp3;
         s->input.var_cap = newcap;
     }
+    s->input.targets[n] = NULL;
     name_copy(s->input.varnames[n], name);
     s->input.vartypes[n] = type;
     s->input.nvars = n + 1;
     return 0;
+}
+
+/* a name's type by its suffix (the parser's rule) */
+static val_type_t suffix_type(const char *name) {
+    int len = (int)strlen(name);
+    if (len > 0 && name[len - 1] == '$') return VAL_STRING;
+    if (len > 0 && name[len - 1] == '%') return VAL_INTEGER;
+    return VAL_DOUBLE;
+}
+
+/* a READ or INPUT target: a variable, or an array element, whose
+ * expression is kept (and owned) for the subscripts */
+static int add_target(stmt_t *s, expr_t *e,
+                      int (*add)(stmt_t *, const char *, val_type_t),
+                      expr_t **(*targets)(stmt_t *), int *nvars) {
+    const char *name = e->type == EXPR_VARIABLE ? e->var.name : e->call.name;
+    if (add(s, name, e->type == EXPR_VARIABLE ? e->var.var_type : suffix_type(name)) < 0)
+        return -1;
+    if (e->type == EXPR_CALL)
+        targets(s)[*nvars - 1] = e;
+    else
+        expr_free(e);
+    return 0;
+}
+
+static expr_t **input_targets(stmt_t *s) { return s->input.targets; }
+static expr_t **read_targets(stmt_t *s) { return s->read_stmt.targets; }
+
+int stmt_input_add_target(stmt_t *s, expr_t *e) {
+    return add_target(s, e, stmt_input_add_var, input_targets, &s->input.nvars);
+}
+
+int stmt_read_add_target(stmt_t *s, expr_t *e) {
+    return add_target(s, e, stmt_read_add_var, read_targets, &s->read_stmt.nvars);
 }
 
 stmt_t *stmt_cls(int line) {
@@ -412,6 +450,12 @@ void case_clause_free(case_clause_t *c) {
 
 /* --- Statement destructor --- */
 
+static void free_targets(expr_t **t, int n) {
+    if (!t) return;
+    for (int i = 0; i < n; i++) expr_free(t[i]);
+    free(t);
+}
+
 void stmt_free(stmt_t *s) {
     while (s) {
         stmt_t *next = s->next;
@@ -428,6 +472,7 @@ void stmt_free(stmt_t *s) {
                 free(s->input.prompt);
                 free(s->input.varnames);
                 free(s->input.vartypes);
+                free_targets(s->input.targets, s->input.nvars);
                 break;
             case STMT_CLS:
                 break;
@@ -509,6 +554,7 @@ void stmt_free(stmt_t *s) {
             case STMT_READ:
                 free(s->read_stmt.varnames);
                 free(s->read_stmt.vartypes);
+                free_targets(s->read_stmt.targets, s->read_stmt.nvars);
                 break;
             case STMT_SWAP:
                 expr_free(s->swap_stmt.lhs);
@@ -560,6 +606,8 @@ void stmt_free(stmt_t *s) {
                 expr_free(s->seek_stmt.seek_position);
                 break;
             case STMT_TYPE_DEF:
+                free(s->type_def.fields);
+                break;
             case STMT_DIM_AS_TYPE:
             case STMT_ON_ERROR:
             case STMT_RESUME:
@@ -593,6 +641,7 @@ void stmt_free(stmt_t *s) {
                 free(s->input.prompt);
                 free(s->input.varnames);
                 free(s->input.vartypes);
+                free_targets(s->input.targets, s->input.nvars);
                 break;
             case STMT_WRITE_CONSOLE:
                 for (int i = 0; i < s->print.nitems; i++)
@@ -720,8 +769,12 @@ int stmt_read_add_var(stmt_t *s, const char *name, val_type_t type) {
         void *tmp2 = realloc(s->read_stmt.vartypes, newcap * sizeof(s->read_stmt.vartypes[0]));
         if (!tmp2) return -1;
         s->read_stmt.vartypes = tmp2;
+        void *tmp3 = realloc(s->read_stmt.targets, newcap * sizeof(s->read_stmt.targets[0]));
+        if (!tmp3) return -1;
+        s->read_stmt.targets = tmp3;
         s->read_stmt.var_cap = newcap;
     }
+    s->read_stmt.targets[n] = NULL;
     name_copy(s->read_stmt.varnames[n], name);
     s->read_stmt.vartypes[n] = type;
     s->read_stmt.nvars = n + 1;
@@ -909,15 +962,20 @@ stmt_t *stmt_type_def(const char *name, int line) {
     stmt_t *s = stmt_alloc(STMT_TYPE_DEF, line);
     if (!s) return NULL;
     name_copy(s->type_def.name, name);
+    s->type_def.fields = NULL;
     s->type_def.nfields = 0;
     return s;
 }
 
 void stmt_type_def_add_field(stmt_t *s, const char *name, val_type_t type) {
     int n = s->type_def.nfields;
+    struct type_field *f;
     if (n >= 32) return;
-    name_copy(s->type_def.field_names[n], name);
-    s->type_def.field_types[n] = type;
+    f = realloc(s->type_def.fields, (n + 1) * sizeof(*f));
+    if (!f) return;
+    s->type_def.fields = f;
+    name_copy(f[n].name, name);
+    f[n].type = type;
     s->type_def.nfields = n + 1;
 }
 

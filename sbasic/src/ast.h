@@ -219,6 +219,7 @@ typedef struct stmt {
             char *prompt;
             char (*varnames)[64];
             val_type_t *vartypes;
+            struct expr **targets;  /* an array element's lvalue, or NULL */
             int nvars;
             int var_cap;
         } input;
@@ -367,6 +368,7 @@ typedef struct stmt {
         struct {
             char (*varnames)[64];
             val_type_t *vartypes;
+            struct expr **targets;  /* an array element's lvalue, or NULL */
             int nvars;
             int var_cap;
         } read_stmt;
@@ -451,8 +453,11 @@ typedef struct stmt {
         /* STMT_TYPE_DEF */
         struct {
             char name[64];
-            char field_names[32][64];
-            val_type_t field_types[32];
+            struct type_field {
+                char name[64];
+                val_type_t type;
+            } *fields;          /* nfields of them, allocated: a TYPE's
+                                   fields would make every stmt_t 2K */
             int nfields;
         } type_def;
 
@@ -586,6 +591,8 @@ stmt_t *stmt_print(int line);
 int stmt_print_add(stmt_t *s, expr_t *expr, char sep);
 stmt_t *stmt_input(const char *prompt, int line);
 int stmt_input_add_var(stmt_t *s, const char *name, val_type_t type);
+/* a variable or an array element (the expression is kept) */
+int stmt_input_add_target(stmt_t *s, expr_t *target);
 stmt_t *stmt_cls(int line);
 stmt_t *stmt_locate(expr_t *row, expr_t *col, int line);
 stmt_t *stmt_color(expr_t *fg, expr_t *bg, int has_fg, int has_bg, int line);
@@ -642,6 +649,7 @@ stmt_t *stmt_data(int line);
 int stmt_data_add(stmt_t *s, value_t val);
 stmt_t *stmt_read(int line);
 int stmt_read_add_var(stmt_t *s, const char *name, val_type_t type);
+int stmt_read_add_target(stmt_t *s, expr_t *target);
 stmt_t *stmt_restore(const char *label, int line);
 
 /* Stage 4 constructors */
