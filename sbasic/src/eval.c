@@ -447,10 +447,12 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
             if (e->unary.op == OP_NEG) {
                 err = val_neg(&operand, out);
             } else {
-                double dv;
-                err = val_to_double(&operand, &dv);
+                /* NOT, AND, ...: on the operands as integers, rounded
+                 * half to even (3.1 AND -1.5 is 3 AND -2) */
+                int iv;
+                err = val_to_integer(&operand, &iv);
                 if (err == ERR_NONE)
-                    *out = val_integer(~(int)dv);
+                    *out = val_integer(~iv);
             }
             val_clear(&operand);
             return err;
@@ -509,11 +511,10 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
                 case OP_MOD:  err = val_mod(&left, &right, out); break;
                 case OP_POW:  err = val_pow(&left, &right, out); break;
                 case OP_AND: case OP_OR: case OP_XOR: case OP_IMP: case OP_EQV: {
-                    double dl, dr;
-                    err = val_to_double(&left, &dl);
-                    if (err == ERR_NONE) err = val_to_double(&right, &dr);
+                    int il, ir;
+                    err = val_to_integer(&left, &il);
+                    if (err == ERR_NONE) err = val_to_integer(&right, &ir);
                     if (err == ERR_NONE) {
-                        int il = (int)dl, ir = (int)dr;
                         if (e->binary.op == OP_AND) *out = val_integer(il & ir);
                         else if (e->binary.op == OP_OR) *out = val_integer(il | ir);
                         else if (e->binary.op == OP_XOR) *out = val_integer(il ^ ir);

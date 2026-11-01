@@ -1381,6 +1381,9 @@ static stmt_t *parse_restore(parser_t *p) {
     if (lexer_check(&p->lex, TOK_IDENT)) {
         token_t t = lexer_next(&p->lex);
         strncpy(label, t.text, 63);
+    } else if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
+        token_t t = lexer_next(&p->lex);    /* RESTORE 150: a line number */
+        snprintf(label, sizeof(label), "%d", t.ival);
     }
     return stmt_restore(label, line);
 }
