@@ -22,16 +22,19 @@ echo "sha256: $(shasum -a 256 "musl-$V.tar.gz" | cut -d' ' -f1)"
 mkdir src
 tar -xzf "musl-$V.tar.gz" -C src
 M="src/musl-$V"
-old="$(cd "$HERE/musl/src/math" && ls | sort)"
-new="$(cd "$M/src/math" && ls -p | grep -v / | sort)"
-echo "--- files gone:";  comm -23 <(echo "$old") <(echo "$new") || true
-echo "--- files new:";   comm -13 <(echo "$old") <(echo "$new") || true
+for d in math complex; do
+    old="$(cd "$HERE/musl/src/$d" && ls | sort)"
+    new="$(cd "$M/src/$d" && ls -p | grep -v / | sort)"
+    echo "--- src/$d files gone:";  comm -23 <(echo "$old") <(echo "$new") || true
+    echo "--- src/$d files new:";   comm -13 <(echo "$old") <(echo "$new") || true
+done
 
 # replace the snapshot: the same set of paths, from the new release
 NEWTREE="$W/musl"
-mkdir -p "$NEWTREE/src/math" "$NEWTREE/src/internal" "$NEWTREE/arch/generic"
+mkdir -p "$NEWTREE/src/math" "$NEWTREE/src/complex" "$NEWTREE/src/internal" "$NEWTREE/arch/generic"
 cp "$M"/src/math/*.c "$M"/src/math/*.h "$NEWTREE/src/math/"
-cp "$M/src/internal/libm.h" "$NEWTREE/src/internal/"
+cp "$M"/src/complex/*.c "$NEWTREE/src/complex/"
+cp "$M/src/internal/libm.h" "$M/src/internal/complex_impl.h" "$NEWTREE/src/internal/"
 cp "$M/arch/generic/fp_arch.h" "$NEWTREE/arch/generic/"
 cp "$M/COPYRIGHT" "$NEWTREE/"
 OLDTREE="$HERE/musl.old.$$"

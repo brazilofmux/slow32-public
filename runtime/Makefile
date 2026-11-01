@@ -34,6 +34,9 @@ COMPILER_RT_OBJS = intrinsics.s32o intrinsics_extra.s32o \
 # sets errno, which libc defines, and libs32 links after libc.
 LIBM_SRCS := $(filter-out fabs.c fabsf.c,$(shell cat libm/sources.txt))
 LIBM_OBJS := $(patsubst %.c,libm/obj/m_%.s32o,$(LIBM_SRCS)) libm/obj/m_errno.s32o libm/obj/m_legacy.s32o
+# <complex.h>: musl's too (libm/musl/src/complex), objects mc_<name>
+LIBMC_SRCS := $(shell cat libm/complex_sources.txt)
+LIBM_OBJS += $(patsubst %.c,libm/obj/mc_%.s32o,$(LIBMC_SRCS))
 LIBM_CFLAGS = -fno-builtin -Ilibm/musl/src/math -Ilibm/musl/src/internal \
               -Ilibm/musl/arch/generic -Ilibm/include
 
@@ -48,7 +51,7 @@ LIBC_CORE_OBJS = string.s32o string_extra.s32o \
                  unwind.s32o unwind_asm.s32o posix_extra.s32o locale.s32o locale_state.s32o \
                  netdb.s32o process.s32o getpid.s32o mman.s32o environ.s32o \
                  fenv.s32o math_hw.s32o math_cordic.s32o strtof.s32o assert.s32o inttypes.s32o quick_exit.s32o timespec_get.s32o \
-                 wchar.s32o wctype.s32o wcs.s32o $(LIBM_OBJS)
+                 wchar.s32o wctype.s32o wcs.s32o complex_rt.s32o $(LIBM_OBJS)
 
 # The C++ run time for freestanding C++ (libs32cxx.s32a): guards, new/delete,
 # exceptions, RTTI and the std:: exception classes.  Not in libc: a program
@@ -107,7 +110,7 @@ C_SOURCES = printf_enhanced.c convert.c builtins.c string.c malloc.c stdlib_util
             exec_mmio.c exec_stub.c tube_mmio.c tube_stub.c dpc_mmio.c \
             sched_mmio.c poll.c crypto_mmio.c \
             math_hw.c math_cordic.c fenv.c strtof.c assert.c inttypes.c quick_exit.c timespec_get.c \
-            wchar.c wctype.c wcs.c wstdio.c \
+            wchar.c wctype.c wcs.c wstdio.c complex_rt.c \
             unwind.c posix_extra.c locale.c locale_state.c locales.c netdb.c process.c getpid.c mman.c environ.c \
             cxa_support.c cxa_exception.c cxa_personality.c cxa_typeinfo.c
 
@@ -178,6 +181,10 @@ libm/obj/m_%.c: libm/musl/src/math/%.c libm/compat.h libm/rename.h | libm/obj
 # a static pattern rule: GNU make 3.81 (macOS's) would otherwise take the
 # generic %.ll: %.c above, without LIBM_CFLAGS
 $(patsubst %.c,libm/obj/m_%.ll,$(LIBM_SRCS)): libm/obj/m_%.ll: libm/obj/m_%.c
+	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $(LIBM_CFLAGS) $< -o $@
+libm/obj/mc_%.c: libm/musl/src/complex/%.c libm/compat.h libm/rename.h | libm/obj
+	printf '#include "../compat.h"\n#include "../musl/src/complex/%s"\n' $*.c > $@
+$(patsubst %.c,libm/obj/mc_%.ll,$(LIBMC_SRCS)): libm/obj/mc_%.ll: libm/obj/mc_%.c
 	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $(LIBM_CFLAGS) $< -o $@
 libm/obj/m_errno.ll: libm/errno.c | libm/obj
 	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@

@@ -5,6 +5,7 @@
 
 Writes, beside this script:
   sources.txt  the musl files both libraries build (see SKIP below)
+  complex_sources.txt  the <complex.h> files (musl/src/complex), all of them
   rename.h     each C11 function musl defines, renamed __musl_<name>; the
                build compiles every musl file behind it (compat.h), so
                musl's functions -- and its calls between them -- carry no
@@ -22,6 +23,7 @@ import re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MATH = os.path.join(HERE, 'musl', 'src', 'math')
+COMPLEX = os.path.join(HERE, 'musl', 'src', 'complex')
 HDR = os.path.join(HERE, '..', 'include', 'math.h')
 
 # musl's square roots are software; SLOW-32 has FSQRT (math_hw.c, which
@@ -60,6 +62,9 @@ def main():
     srcs = sorted(f for f in os.listdir(MATH) if f.endswith('.c') and f not in SKIP)
     with open(os.path.join(HERE, 'sources.txt'), 'w') as o:
         o.write(''.join(f + '\n' for f in srcs))
+    csrcs = sorted(f for f in os.listdir(COMPLEX) if f.endswith('.c'))
+    with open(os.path.join(HERE, 'complex_sources.txt'), 'w') as o:
+        o.write(''.join(f + '\n' for f in csrcs))
 
     wrapped = []
     for ret, name, params in protos:
@@ -112,7 +117,7 @@ static void s32_merr(double r, int nan_in, int all_finite) {
             else:
                 o.write('%s %s(%s) {\n    return __musl_%s(%s);\n}\n\n'
                         % (ret, name, ', '.join(decl) or 'void', name, ', '.join(args)))
-    print('%d sources, %d functions wrapped' % (len(srcs), len(wrapped)))
+    print('%d sources, %d complex sources, %d functions wrapped' % (len(srcs), len(csrcs), len(wrapped)))
 
 
 main()

@@ -301,6 +301,9 @@
 7.29.5.1-wcsftime PASS PASS
 7.29.6-utf8-conversions PASS PASS
 7.29.6.3-mbrtowc-wcrtomb PASS PASS
+7.3-complex-arithmetic PASS NOBUILD
+7.3-complex-conversions PASS NOBUILD
+7.3-complex-functions PASS NOBUILD
 7.30-utf8-classes PASS PASS
 7.30.2-iswctype PASS PASS
 7.30.3-towctrans PASS PASS
