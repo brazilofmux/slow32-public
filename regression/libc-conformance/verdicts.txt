@@ -93,7 +93,7 @@
 7.19-max-align-t PASS PASS
 7.19-null PASS PASS
 7.19-offsetof PASS PASS
-7.19-offsetof-designators PASS NOBUILD
+7.19-offsetof-designators PASS PASS
 7.19-types PASS PASS
 7.19-wchar-t DIFFER PASS
 7.2-ndebug-no-eval PASS PASS

@@ -35,10 +35,16 @@ Ranked by harm: wrong answers in programs that are correct first.
 2. *Fixed 2026-11-01.* stage08's `va_start` landed on the wrong argument
    after a `long long` or `double` last parameter, or nine or more
    named words (7.16.1.4).
-3. stage08 `offsetof` refuses `s.b` and `a[3]` designators (7.19p3).
-4. stage08 converts the constant `1e23` to the other neighbouring double
-   than `strtod` does.  6.4.4.2p3 allows either, but 6.4.4.2p5
-   recommends they agree.
+3. *Fixed 2026-11-01.* stage08 `offsetof` refused `s.b` and `a[3]`
+   designators (7.19p3).
+4. *Deferred (quality).* stage08 converts the constant `1e23` to the
+   other neighbouring double than `strtod` does.  6.4.4.2p3 allows
+   either, but 6.4.4.2p5 recommends they agree.  The lexer's
+   double-double conversion is documented exact except within ~2^-50
+   ulp of a halfway point, and 1e23 is such a point; exactness wants a
+   big-integer tiebreak in the lexer (calling strtod is not open: the
+   first bootstrap generation has none, and stage07 cannot return a
+   double).
 
 **Formatted I/O (shared `sscanf.c`, `printf_enhanced.c`)**
 5. `sscanf`: no `%[`, never returns EOF, `%hhd`/`%hd` store a whole int

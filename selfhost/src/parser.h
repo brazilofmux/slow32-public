@@ -3858,9 +3858,54 @@ static int pc_cast_ty;
 /* After the offsetof keyword: ( type , member ) -> the member's byte
  * offset.  Shared by the expression parser and the constant evaluator
  * (SQLite sizes an array with offsetof(KeyInfo,aColl)). */
+/* offsetof's member designator past its first name: any number of
+ * `.member` and `[constant]` (7.19p3), each adding its offset -- a
+ * member's, or an element's.  cty is the C type reached so far. */
+static int ps_offsetof_tail(int cty, int off) {
+    int omi;
+    int idx;
+    int elem;
+    char omn[256];
+    while (lex_tok == TK_DOT || lex_tok == TK_LBRACK) {
+        if (lex_tok == TK_DOT) {
+            next();
+            if (lex_tok != TK_IDENT || !ct_is_record(cty)) {
+                p_error("expected a member of a structure in offsetof");
+                return off;
+            }
+            memcpy(omn, lex_str, lex_slen + 1);
+            next();
+            omi = find_member(ct_mty(cty), omn);
+            if (omi < 0) {
+                p_error("unknown member in offsetof");
+                return off;
+            }
+            if (stm_bit_width[omi] > 0) {
+                p_error("offsetof of bit-field is not allowed");
+                return off;
+            }
+            off = off + stm_off[omi];
+            cty = ct_unqual(stm_cty[omi]);
+        } else {
+            next();
+            idx = parse_const_int();
+            expect(TK_RBRACK);
+            if (!ct_is_array(cty)) {
+                p_error("subscript of a member that is not an array in offsetof");
+                return off;
+            }
+            elem = ct_unqual(ct_baseof(cty));
+            off = off + idx * ct_sizeof(elem);
+            cty = elem;
+        }
+    }
+    return off;
+}
+
 static int parse_offsetof_value(void) {
     int oty;
     int omi;
+    int off;
     char omn[256];
     expect(TK_LPAREN);
     oty = parse_type();
@@ -3884,8 +3929,9 @@ static int parse_offsetof_value(void) {
         p_error("offsetof of bit-field is not allowed");
         return 0;
     }
+    off = ps_offsetof_tail(ct_unqual(stm_cty[omi]), stm_off[omi]);
     expect(TK_RPAREN);
-    return stm_off[omi];
+    return off;
 }
 
 /* sizeof ( type-name ), cursor after the type parse_type read (ty, and
