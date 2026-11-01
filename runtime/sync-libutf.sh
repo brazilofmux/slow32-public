@@ -1,6 +1,8 @@
 #!/bin/bash
 # Vendor the libutf units the named locales need (locales.c): collation
-# (UCA over DUCET, the CLDR tailorings), NFC, and the tables they read --
+# (UCA over DUCET, the CLDR tailorings), NFC, and the tables they read, and
+# regenerate the wide-character tables (utf/gen-wctype.py) from the same
+# Unicode data --
 # the same units cobol/libcob/sync-libutf.sh takes for the COBOL runtime.
 # libutf is MIT (its LICENSE comes along); the tables are Unicode data
 # under the Unicode License V3, whose notice goes with every copy
@@ -24,5 +26,7 @@ done
     echo "libutf $(git -C "$UTF" describe --always --dirty 2>/dev/null) ($(git -C "$UTF" log -1 --format=%cs 2>/dev/null))"
     echo "copied $(date +%F) by runtime/sync-libutf.sh: the units collation needs, nothing else"
 } > "$D/SOURCE"
+# the <wctype.h> tables come from the same Unicode data (gen/data)
+python3 "$D/gen-wctype.py" "$UTF"
 cat "$D/SOURCE"
 du -sk "$D" | cut -f1 | sed 's/$/ KB/'

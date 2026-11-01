@@ -15,24 +15,52 @@
  * Every conversion (d i o u x X a A e E f F g G c s [ p n %) and every
  * length modifier (hh h l ll j z t L) is taken.  long double is double
  * here; intmax_t is long long; size_t, ptrdiff_t and long are 32 bits.
- * %lc, %ls and %l[ store wide characters as the "C" locale has them,
- * one byte each.  Integers convert as strtoll/strtoull would; a value
+ * %lc, %ls and %l[ store the wide characters of the multibyte characters
+ * read (mbrtowc), their field widths counting those characters, as glibc's
+ * and the BSDs' do.  Integers convert as strtoll/strtoull would; a value
  * out of range is undefined behaviour (p10), and wraps.  Floating
- * items go through strtod. */
+ * items go through strtod.
+ *
+ * The wide family (7.29.2.2, .4, .6, .8, .10, .12) is the same scanner
+ * over wide characters: a wide format, a wide string or a stream read with
+ * fgetwc, white space as iswspace has it, field widths and %n counting
+ * wide characters, and %c, %s and %[ without l storing multibyte forms
+ * (wcrtomb).  Its entry points are wstdio.c's, which hand this file the
+ * wide functions it needs (__s32_vwscan), so that a program scanning only
+ * bytes does not link the Unicode tables. */
 
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
+#include <wchar.h>
 
 /* --- the source --- */
 
 struct scan_src {
     const char *str;    /* a string source, or NULL */
+    const wchar_t *wstr;    /* a wide string source, or NULL */
     FILE *fp;           /* a stream source */
     int count;          /* characters consumed, for %n */
     int ahead;          /* a character read and pushed back, or -2 */
+    int wide;           /* the wide family: what follows is set */
+    wint_t (*wget)(FILE *);             /* fgetwc */
+    wint_t (*wunget)(wint_t, FILE *);   /* ungetwc */
+    int (*wspace)(wint_t);              /* iswspace */
 };
+
+static void src_init(struct scan_src *s) {
+    s->str = NULL;
+    s->wstr = NULL;
+    s->fp = NULL;
+    s->count = 0;
+    s->ahead = -2;
+    s->wide = 0;
+    s->wget = NULL;
+    s->wunget = NULL;
+    s->wspace = NULL;
+}
 
 static int src_get(struct scan_src *s) {
     int c;
@@ -43,6 +71,13 @@ static int src_get(struct scan_src *s) {
         c = (unsigned char)*s->str;
         if (c == 0) c = EOF;
         else s->str++;
+    } else if (s->wstr) {
+        c = (int)*s->wstr;
+        if (c == 0) c = EOF;
+        else s->wstr++;
+    } else if (s->wide) {
+        wint_t w = s->wget(s->fp);
+        c = (w == WEOF) ? EOF : (int)w;
     } else {
         c = fgetc(s->fp);
     }
@@ -61,12 +96,38 @@ static void src_unget(struct scan_src *s, int c) {
 /* At the end of a call the pushed-back character goes back to the
  * stream (a string needs nothing). */
 static void src_done(struct scan_src *s) {
-    if (s->ahead != -2 && s->fp && s->ahead != EOF) ungetc(s->ahead, s->fp);
+    if (s->ahead != -2 && s->fp && s->ahead != EOF) {
+        if (s->wide) s->wunget((wint_t)s->ahead, s->fp);
+        else ungetc(s->ahead, s->fp);
+    }
     s->ahead = -2;
 }
 
 static int sc_space(int c) {
     return c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r';
+}
+
+/* white space in the input or the format: a wide one is iswspace's */
+static int sc_white(struct scan_src *s, int c) {
+    if (c == EOF) return 0;
+    if (s->wide && c >= 0x80) return s->wspace((wint_t)c);
+    return sc_space(c);
+}
+
+/* --- the format: bytes, or wide characters --- */
+
+struct scan_fmt {
+    const unsigned char *n;     /* narrow, or NULL */
+    const wchar_t *w;           /* wide */
+};
+
+static int fch(const struct scan_fmt *f, int k) {
+    return f->w ? (int)f->w[k] : (int)f->n[k];
+}
+
+static void fadv(struct scan_fmt *f, int k) {
+    if (f->w) f->w += k;
+    else f->n += k;
 }
 
 static int sc_digit_value(int c) {
@@ -82,7 +143,7 @@ static int sc_skip_space(struct scan_src *s) {
     int c;
     do {
         c = src_get(s);
-    } while (c != EOF && sc_space(c));
+    } while (c != EOF && sc_white(s, c));
     src_unget(s, c);
     return c;
 }
@@ -314,75 +375,110 @@ static void store_int(va_list *ap, int len, unsigned long long v) {
 
 /* --- the scanset of %[ --- */
 
-/* Parse the scanset after "%[" into set (256 flags); returns the format
- * past the closing ']', or NULL when there is none. */
-static const unsigned char *sc_scanset(const unsigned char *f, char *set) {
+/* Is c in the scanset that begins at f (just after "%[")?  With c ==
+ * EOF, only find the set's end: f is moved past the closing ']', and the
+ * answer is whether there is one.  The set is read again for each
+ * character, so it may hold any wide character. */
+static int sc_scanset(struct scan_fmt *f, int c) {
     int neg = 0;
-    int i;
+    int in = 0;
     int prev = -1;
-    for (i = 0; i < 256; i++) set[i] = 0;
-    if (*f == '^') { neg = 1; f++; }
-    if (*f == ']') { set[']'] = 1; prev = ']'; f++; }
-    while (*f && *f != ']') {
+    struct scan_fmt p = *f;
+    if (fch(&p, 0) == '^') { neg = 1; fadv(&p, 1); }
+    if (fch(&p, 0) == ']') { in |= (c == ']'); prev = ']'; fadv(&p, 1); }
+    while (fch(&p, 0) && fch(&p, 0) != ']') {
+        int x = fch(&p, 0);
         /* a-z: a range (implementation-defined, 7.21.6.2p12) when '-'
          * stands between two characters, low to high */
-        if (*f == '-' && prev >= 0 && f[1] && f[1] != ']' && f[1] >= prev) {
-            int hi = f[1];
-            for (i = prev; i <= hi; i++) set[i] = 1;
+        if (x == '-' && prev >= 0 && fch(&p, 1) && fch(&p, 1) != ']' && fch(&p, 1) >= prev) {
+            in |= (c >= prev && c <= fch(&p, 1));
             prev = -1;
-            f += 2;
+            fadv(&p, 2);
             continue;
         }
-        set[*f] = 1;
-        prev = *f;
-        f++;
+        in |= (c == x);
+        prev = x;
+        fadv(&p, 1);
     }
-    if (*f != ']') return NULL;
-    if (neg) for (i = 0; i < 256; i++) set[i] = !set[i];
-    return f + 1;
+    if (c == EOF) {
+        if (fch(&p, 0) != ']') return 0;
+        fadv(&p, 1);
+        *f = p;
+        return 1;
+    }
+    return neg ? !in : in;
 }
 
 /* --- the scanner --- */
 
-static int sc_vscan(struct scan_src *s, const char *format, va_list ap0) {
-    const unsigned char *f = (const unsigned char *)format;
+/* Store one character c of %c, %s or %[: into the char array out at *at
+ * (as itself, or in the wide family as its multibyte form), or into the
+ * wchar_t array wout at *wat (as itself in the wide family, or decoded
+ * from the bytes of a multibyte character).  0 on an encoding error. */
+static int sc_store(struct scan_src *s, int c, char *out, int *at, wchar_t *wout, int *wat, mbstate_t *st,
+                    int *pending) {
+    if (s->wide) {
+        if (out) {
+            size_t r = wcrtomb(out + *at, (wchar_t)c, st);
+            if (r == (size_t)-1) return 0;
+            *at += (int)r;
+        }
+        if (wout) wout[(*wat)++] = (wchar_t)c;
+        return 1;
+    }
+    if (out) out[(*at)++] = (char)c;
+    if (wout || pending) {
+        char ch = (char)c;
+        wchar_t wc;
+        size_t r = mbrtowc(&wc, &ch, 1, st);
+        if (r == (size_t)-1) return 0;
+        if (r == (size_t)-2) {
+            *pending = 1;
+            return 1;
+        }
+        *pending = 0;
+        if (wout) wout[(*wat)++] = wc;
+    }
+    return 1;
+}
+
+static int sc_vscan(struct scan_src *s, struct scan_fmt *f, va_list ap0) {
     int assigned = 0;
     int converted = 0;      /* a conversion has completed (for EOF) */
     int c;
     va_list ap;
-    char set[256];
 
     va_copy(ap, ap0);
-    while (*f) {
-        if (sc_space(*f)) {
-            while (sc_space(*f)) f++;
+    while (fch(f, 0)) {
+        if (sc_white(s, fch(f, 0))) {
+            while (sc_white(s, fch(f, 0))) fadv(f, 1);
             sc_skip_space(s);
             continue;
         }
-        if (*f != '%') {
+        if (fch(f, 0) != '%') {
             c = src_get(s);
             if (c == EOF) goto input_failure;
-            if (c != *f) { src_unget(s, c); goto done; }
-            f++;
+            if (c != fch(f, 0)) { src_unget(s, c); goto done; }
+            fadv(f, 1);
             continue;
         }
-        f++;
+        fadv(f, 1);
         {
             int suppress = 0;
             int width = 0;
             int len = LEN_NONE;
             int conv;
-            if (*f == '*') { suppress = 1; f++; }
-            while (*f >= '0' && *f <= '9') { width = width * 10 + (*f - '0'); f++; }
-            if (*f == 'h') { f++; if (*f == 'h') { f++; len = LEN_HH; } else len = LEN_H; }
-            else if (*f == 'l') { f++; if (*f == 'l') { f++; len = LEN_LL; } else len = LEN_L; }
-            else if (*f == 'j') { f++; len = LEN_J; }
-            else if (*f == 'z') { f++; len = LEN_Z; }
-            else if (*f == 't') { f++; len = LEN_T; }
-            else if (*f == 'L') { f++; len = LEN_BIGL; }
-            conv = *f;
+            if (fch(f, 0) == '*') { suppress = 1; fadv(f, 1); }
+            while (fch(f, 0) >= '0' && fch(f, 0) <= '9') { width = width * 10 + (fch(f, 0) - '0'); fadv(f, 1); }
+            if (fch(f, 0) == 'h') { fadv(f, 1); if (fch(f, 0) == 'h') { fadv(f, 1); len = LEN_HH; } else len = LEN_H; }
+            else if (fch(f, 0) == 'l') { fadv(f, 1); if (fch(f, 0) == 'l') { fadv(f, 1); len = LEN_LL; } else len = LEN_L; }
+            else if (fch(f, 0) == 'j') { fadv(f, 1); len = LEN_J; }
+            else if (fch(f, 0) == 'z') { fadv(f, 1); len = LEN_Z; }
+            else if (fch(f, 0) == 't') { fadv(f, 1); len = LEN_T; }
+            else if (fch(f, 0) == 'L') { fadv(f, 1); len = LEN_BIGL; }
+            conv = fch(f, 0);
             if (conv == 0) goto done;
-            f++;
+            fadv(f, 1);
             if (conv != '[' && conv != 'c' && conv != 'n') {
                 if (sc_skip_space(s) == EOF && conv != '%') goto input_failure;
             }
@@ -430,53 +526,44 @@ static int sc_vscan(struct scan_src *s, const char *format, va_list ap0) {
                 converted = 1;
                 break;
             }
-            case 'c': {
-                int n = width > 0 ? width : 1;
-                int i;
-                char *out = NULL;
-                int *wout = NULL;
-                if (!suppress) {
-                    if (len == LEN_L) wout = va_arg(ap, int *);
-                    else out = va_arg(ap, char *);
-                }
-                for (i = 0; i < n; i++) {
-                    c = src_get(s);
-                    if (c == EOF) goto input_failure;
-                    if (out) out[i] = (char)c;
-                    if (wout) wout[i] = c;
-                }
-                if (!suppress) assigned++;
-                converted = 1;
-                break;
-            }
+            case 'c':
             case 's':
             case '[': {
-                int n = width > 0 ? width : 0x7FFFFFFF;
-                int got = 0;
+                /* %c: exactly width characters (1 without one), white
+                 * space included; %s and %[: a nonempty run, at most
+                 * width, of non-white-space or of the scanset's */
+                int n = width > 0 ? width : (conv == 'c' ? 1 : 0x7FFFFFFF);
+                int got = 0, at = 0, wat = 0, pending = 0;
                 char *out = NULL;
-                int *wout = NULL;
-                if (conv == '[') {
-                    f = sc_scanset(f, set);
-                    if (!f) goto done;
-                }
+                wchar_t *wout = NULL;
+                struct scan_fmt set = *f;
+                mbstate_t st;
+                memset(&st, 0, sizeof st);
+                if (conv == '[' && !sc_scanset(f, EOF)) goto done;
                 if (!suppress) {
-                    if (len == LEN_L) wout = va_arg(ap, int *);
+                    if (len == LEN_L) wout = va_arg(ap, wchar_t *);
                     else out = va_arg(ap, char *);
                 }
                 while (got < n) {
                     c = src_get(s);
                     if (c == EOF) break;
-                    if (conv == 's' ? sc_space(c) : !set[c]) { src_unget(s, c); break; }
-                    if (out) out[got] = (char)c;
-                    if (wout) wout[got] = c;
-                    got++;
+                    if (conv == 's' ? sc_white(s, c) : conv == '[' ? !sc_scanset(&set, c) : 0) {
+                        src_unget(s, c);
+                        break;
+                    }
+                    if (!sc_store(s, c, out, &at, wout, &wat, &st, len == LEN_L ? &pending : NULL))
+                        goto done;      /* an encoding error */
+                    if (!pending) got++;    /* the width counts whole characters */
                 }
-                if (got == 0) {
+                if (got == 0 || (conv == 'c' && got < n)) {
                     if (c == EOF) goto input_failure;
                     goto done;
                 }
-                if (out) out[got] = 0;
-                if (wout) wout[got] = 0;
+                if (pending) goto done;     /* the last multibyte character is cut off */
+                if (conv != 'c') {
+                    if (out) out[at] = 0;
+                    if (wout) wout[wat] = 0;
+                }
                 if (!suppress) assigned++;
                 converted = 1;
                 break;
@@ -498,20 +585,40 @@ input_failure:
 
 int vsscanf(const char *str, const char *format, va_list ap) {
     struct scan_src s;
+    struct scan_fmt f;
+    src_init(&s);
     s.str = str;
-    s.fp = NULL;
-    s.count = 0;
-    s.ahead = -2;
-    return sc_vscan(&s, format, ap);
+    f.n = (const unsigned char *)format;
+    f.w = NULL;
+    return sc_vscan(&s, &f, ap);
 }
 
 int vfscanf(FILE *stream, const char *format, va_list ap) {
     struct scan_src s;
-    s.str = NULL;
+    struct scan_fmt f;
+    src_init(&s);
     s.fp = stream;
-    s.count = 0;
-    s.ahead = -2;
-    return sc_vscan(&s, format, ap);
+    f.n = (const unsigned char *)format;
+    f.w = NULL;
+    return sc_vscan(&s, &f, ap);
+}
+
+/* The wide family's scanner (wstdio.c): a wide string str, or the stream
+ * fp, read with the wide functions given. */
+int __s32_vwscan(const wchar_t *str, FILE *fp, const wchar_t *format, va_list ap,
+                 wint_t (*wget)(FILE *), wint_t (*wunget)(wint_t, FILE *), int (*wspace)(wint_t)) {
+    struct scan_src s;
+    struct scan_fmt f;
+    src_init(&s);
+    s.wide = 1;
+    s.wget = wget;
+    s.wunget = wunget;
+    s.wspace = wspace;
+    if (str) s.wstr = str;
+    else s.fp = fp;
+    f.n = NULL;
+    f.w = format;
+    return sc_vscan(&s, &f, ap);
 }
 
 int vscanf(const char *format, va_list ap) {

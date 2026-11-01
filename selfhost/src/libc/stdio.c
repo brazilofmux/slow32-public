@@ -92,6 +92,12 @@ struct _FILE {
     int mode;
     int unget;      /* a character put back, or -1 */
     int ownbuf;     /* the buffer is malloc's, to be freed */
+    /* the wide state, struct __s32_wstate of <stdio.h> (runtime/wstdio.c):
+     * these four, in this order */
+    int worient;    /* 1 wide, -1 byte, 0 neither yet */
+    int wbytes;     /* a byte function has used the stream */
+    int wnback;     /* ungetwc's character is held */
+    int wback;
 };
 
 typedef struct _FILE FILE;
@@ -125,6 +131,15 @@ static void s_init(FILE *fp, int fd, int flags, int mode) {
     fp->mode = mode;
     fp->unget = -1;
     fp->ownbuf = 0;
+    fp->worient = 0;
+    fp->wbytes = 0;
+    fp->wnback = 0;
+    fp->wback = 0;
+}
+
+/* the stream's wide state, as struct __s32_wstate * */
+int *__s32_wstate(FILE *fp) {
+    return &fp->worient;
 }
 
 void __stdio_init(void) {
@@ -340,6 +355,7 @@ static int s_tell(FILE *fp) {
 static int s_seek(FILE *fp, int offset, int whence) {
     int rc;
     if (s_flush(fp) < 0) return -1;
+    fp->wnback = 0;     /* ungetwc's character goes too */
     /* from here means from where the program is, and the host is past
      * whatever was read ahead */
     if (whence == SEEK_CUR) offset = offset - s_drop_input(fp);
@@ -566,6 +582,7 @@ int fclose(FILE *fp) {
 
 int fputc(int c, FILE *fp) {
     char ch;
+    fp->wbytes = 1;     /* byte oriented, unless already wide (runtime/wstdio.c) */
     /* room in the buffer, nothing read ahead, and no line to end: store it */
     if (fp->buf && fp->blen == 0 && fp->unget < 0 && fp->bpos < fp->bsize - 1 &&
         (fp->mode == BUF_FULL || (fp->mode == BUF_LINE && c != 10))) {
@@ -581,6 +598,7 @@ int fputc(int c, FILE *fp) {
 int fgetc(FILE *fp) {
     char ch;
     int c;
+    fp->wbytes = 1;
     if (fp->unget < 0 && fp->bpos < fp->blen) {
         if (fp == stdin) s_before_input(fp);
         c = fp->buf[fp->bpos] & 255;
@@ -610,6 +628,7 @@ int getchar(void) {
 unsigned int fwrite(const char *ptr, unsigned int size, unsigned int nmemb, FILE *fp) {
     unsigned int total;
     int n;
+    fp->wbytes = 1;
     total = size * nmemb;
     if (total == 0) return 0;
     n = s_write(fp, ptr, (int)total);
@@ -619,6 +638,7 @@ unsigned int fwrite(const char *ptr, unsigned int size, unsigned int nmemb, FILE
 unsigned int fread(char *ptr, unsigned int size, unsigned int nmemb, FILE *fp) {
     unsigned int total;
     int n;
+    fp->wbytes = 1;
     total = size * nmemb;
     if (total == 0) return 0;
     n = s_read(fp, ptr, (int)total);
@@ -664,6 +684,7 @@ char *fgets(char *buf, int n, FILE *fp) {
 
 int fputs(const char *s, FILE *fp) {
     int len;
+    fp->wbytes = 1;
     len = (int)strlen(s);
     if (s_write(fp, s, len) != len) return -1;
     return 0;
@@ -699,6 +720,7 @@ int fileno(FILE *fp) {
 /* one character back: the next read gets it first */
 int ungetc(int c, FILE *fp) {
     if (c == -1 || !fp || fp->unget >= 0) return -1;
+    fp->wbytes = 1;
     fp->unget = c & 255;
     fp->eof = 0;
     return c & 255;

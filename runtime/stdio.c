@@ -229,6 +229,7 @@ FILE *freopen(const char *pathname, const char *mode, FILE *stream) {
     stream->buf_pos = 0;
     stream->buf_len = 0;
     stream->ungetc_char = -1;
+    memset(&stream->wide, 0, sizeof stream->wide);     /* no orientation (7.21.5.4p4) */
     if (!stream->buffer) {
         stream->buffer = malloc(STDIO_BUF_SIZE);
         stream->buf_size = stream->buffer ? STDIO_BUF_SIZE : 0;
@@ -273,6 +274,7 @@ static __attribute__((noinline)) size_t fwrite_more(const void *ptr, size_t size
 }
 
 size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
+    if (stream) stream->wide.bytes = 1;     /* byte oriented, unless already wide (wstdio.c) */
     if (size == 1 && nmemb == 1 && stream && ptr && stream->mode == _IOFBF && stream->buffer &&
         stream->buf_len == 0 && !(stream->flags & FLAG_MEMSTREAM)) {
         size_t pos = stream->buf_pos;
@@ -446,6 +448,7 @@ static __attribute__((noinline)) size_t fread_more(void *ptr, size_t size, size_
 }
 
 size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
+    if (stream) stream->wide.bytes = 1;
     if (size == 1 && nmemb == 1 && stream && ptr && stream->ungetc_char < 0 &&
         stream->buf_pos < stream->buf_len && !(stream->flags & FLAG_MEMSTREAM)) {
         *(char *)ptr = stream->buffer[stream->buf_pos++];
@@ -574,6 +577,7 @@ static __attribute__((noinline)) int fgetc_slow(FILE *stream) {
 int fgetc(FILE *stream) {
     /* the buffered byte is the common case: no fread, no memcpy, no divide,
      * and no frame -- the slow path is a separate function */
+    stream->wide.bytes = 1;
     if (stream->ungetc_char < 0 && stream->buf_pos < stream->buf_len && !(stream->flags & FLAG_MEMSTREAM))
         return (unsigned char)stream->buffer[stream->buf_pos++];
     return fgetc_slow(stream);
@@ -592,6 +596,7 @@ static __attribute__((noinline)) int fputc_general(int c, FILE *stream) {
 
 int fputc(int c, FILE *stream) {
     /* a byte into a buffer with room for more than one (see fwrite) */
+    stream->wide.bytes = 1;
     if (stream->mode == _IOFBF && stream->buffer && stream->buf_len == 0 && !(stream->flags & FLAG_MEMSTREAM)) {
         size_t pos = stream->buf_pos;
         if (pos + 1 < stream->buf_size) {
@@ -641,6 +646,7 @@ int puts(const char *s) {
 
 int fseek(FILE *stream, long offset, int whence) {
     if (!stream) return -1;
+    stream->wide.nback = 0;     /* and ungetwc's character */
     if (stream->flags & FLAG_MEMSTREAM)
         return __memstream_seek(stream, offset, whence);
 
@@ -737,8 +743,13 @@ void perror(const char *s) {
 /* One byte of pushback is guaranteed (7.21.7.10p3), and this stream has
  * one: a second before the first is read fails rather than replacing it
  * (it reported success, and the first byte was lost). */
+struct __s32_wstate *__s32_wstate(FILE *stream) {
+    return &stream->wide;
+}
+
 int ungetc(int c, FILE *stream) {
     if (c == EOF || !stream || stream->ungetc_char >= 0) return EOF;
+    stream->wide.bytes = 1;
     stream->ungetc_char = (unsigned char)c;
     stream->eof = 0;
     return (unsigned char)c;

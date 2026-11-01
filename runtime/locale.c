@@ -5,8 +5,8 @@
  * strcoll and strxfrm, which read it, are locale_state.c's.
  *
  * A locale object holds a constant record per category (locale_impl.h).
- * libc has the C locale's, which is also "POSIX" (and "C.UTF-8": the
- * bytes are the same).  The named locales are in locales.s32o, which
+ * libc has the C locale's, which is also "POSIX", and "C.UTF-8"'s, the C
+ * locale with UTF-8 for its encoding.  The named locales are in locales.s32o, which
  * a program links to have them; without it, another name is refused --
  * setlocale returns NULL, newlocale fails with ENOENT -- rather than
  * answered with "C" as if it had been found.
@@ -22,10 +22,12 @@
  * order in C); LC_TIME strftime's names and %c %x %X %r %p (time_std.c,
  * built with S32_LOCALE_STRFTIME); LC_NUMERIC the radix of printf
  * (S32_PRINTF_LOCALE) and of strtod (dtoa.c's USE_LOCALE), and with
- * LC_MONETARY what localeconv gives; LC_CTYPE only nl_langinfo(CODESET),
- * since the ctype functions classify bytes and every locale's characters
- * past ASCII are UTF-8 sequences, in no byte class; LC_MESSAGES only
- * YESEXPR and NOEXPR.
+ * LC_MONETARY what localeconv gives; LC_CTYPE the encoding -- single
+ * bytes, ASCII, in "C" and "POSIX", UTF-8 in every other locale -- and
+ * with it the wide characters (wchar.c, wctype.c) and nl_langinfo(CODESET),
+ * but not the ctype functions, which classify bytes: past ASCII a byte is
+ * part of a UTF-8 sequence, in no class; LC_MESSAGES only YESEXPR and
+ * NOEXPR.
  */
 
 #include <ctype.h>
@@ -47,8 +49,11 @@ static const char *const cat_name[N_CAT] = {
 };
 
 static int is_c_name(const char *name) {
-    return strcmp(name, "C") == 0 || strcmp(name, "POSIX") == 0 ||
-           strcmp(name, "C.UTF-8") == 0 || strcmp(name, "C.utf8") == 0;
+    return strcmp(name, "C") == 0 || strcmp(name, "POSIX") == 0;
+}
+
+static int is_c_utf8_name(const char *name) {
+    return strcmp(name, "C.UTF-8") == 0 || strcmp(name, "C.utf8") == 0;
 }
 
 /* the record for a name, or null with errno set */
@@ -59,6 +64,7 @@ static const struct __s32_locdata *lookup(const char *name) {
         return NULL;
     }
     if (is_c_name(name)) return &__s32_c_data;
+    if (is_c_utf8_name(name)) return &__s32_c_utf8_data;
     if (__s32_locale_find) d = __s32_locale_find(name);
     if (!d) errno = ENOENT;
     return d;

@@ -86,8 +86,17 @@ unsigned long strtoul_l(const char *nptr, char **endptr, int base, locale_t l);
 long long strtoll_l(const char *nptr, char **endptr, int base, locale_t l);
 unsigned long long strtoull_l(const char *nptr, char **endptr, int base, locale_t l);
 
-/* The longest multibyte character: the C locale has single bytes */
-#define MB_CUR_MAX ((size_t)1)
+/* The longest multibyte character in LC_CTYPE's encoding: 1 in "C" and
+ * "POSIX", 4 in the UTF-8 locales (wchar.c) */
+size_t __s32_mb_cur_max(void);
+#define MB_CUR_MAX (__s32_mb_cur_max())
+
+/* 7.22.7, 7.22.8 */
+int mblen(const char *s, size_t n);
+int mbtowc(wchar_t *pwc, const char *s, size_t n);
+int wctomb(char *s, wchar_t wc);
+size_t mbstowcs(wchar_t *pwcs, const char *s, size_t n);
+size_t wcstombs(char *s, const wchar_t *pwcs, size_t n);
 
 #ifdef __cplusplus
 }

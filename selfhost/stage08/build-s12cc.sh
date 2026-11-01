@@ -274,7 +274,9 @@ for name in errno legacy; do
     compile_gen1 "$LIBM_DIR/${name}.c" "$WORKDIR/g1_m_${name}.s" "$WORKDIR/g1_m_${name}.cc.log" "-I$SCRIPT_DIR/include"
     assemble_gen1 "$WORKDIR/g1_m_${name}.s" "$LIBC_OUT_DIR/m_${name}.s32o" "$WORKDIR/g1_m_${name}.as.log"
 done
-for name in assert inttypes quick_exit timespec_get; do
+# the wide characters (runtime/wchar.c, wctype.c, wcs.c, wstdio.c): the
+# encoding is LC_CTYPE's, which locale_c.c says (__s32_mb_utf8)
+for name in assert inttypes quick_exit timespec_get wchar wctype wcs wstdio; do
     compile_gen1 "$RUNTIME_DIR/${name}.c" "$WORKDIR/g1_${name}.s" "$WORKDIR/g1_${name}.cc.log" "-I$SCRIPT_DIR/include"
     assemble_gen1 "$WORKDIR/g1_${name}.s" "$LIBC_OUT_DIR/${name}.s32o" "$WORKDIR/g1_${name}.as.log"
 done
@@ -333,7 +335,7 @@ link_exe "$WORKDIR/smoke.link.log" -o "$WORKDIR/smoke.s32x" --mmio 64K \
     "$LIBC_OUT_DIR/ctype.s32o" "$LIBC_OUT_DIR/convert.s32o" \
     "$LIBC_OUT_DIR/stdio.s32o" "$LIBC_OUT_DIR/malloc.s32o" \
     "$LIBC_OUT_DIR/dtoa.s32o" "$LIBC_OUT_DIR/printf_enhanced.s32o" \
-    "$LIBC_OUT_DIR/convert_rt.s32o"
+    "$LIBC_OUT_DIR/convert_rt.s32o" "$LIBC_OUT_DIR/wchar.s32o" "$LIBC_OUT_DIR/locale_c.s32o"
 
 set +e
 timeout "${SELFHOST_TIMEOUT:-1200}" "$EMU" "$WORKDIR/smoke.s32x" > "$WORKDIR/smoke.out" 2>&1

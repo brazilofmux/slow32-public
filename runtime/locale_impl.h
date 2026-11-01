@@ -29,9 +29,14 @@ struct __s32_locale {
 
 /* locale_state.c: the C locale's record, newlocale's object for "C", the
  * global locale, and uselocale's (null: the global one) */
-extern const struct __s32_locdata __s32_c_data;
+extern const struct __s32_locdata __s32_c_data, __s32_c_utf8_data;
 extern struct __s32_locale __s32_c_locale, __s32_global_locale;
 extern locale_t __s32_current_locale;
+
+/* C's record, or C.UTF-8's, which differs only in the encoding */
+static inline int __s32_is_c_data(const struct __s32_locdata *d) {
+    return d == &__s32_c_data || d == &__s32_c_utf8_data;
+}
 
 static inline struct __s32_locale *__s32_cur(void) {
     return __s32_current_locale ? __s32_current_locale : &__s32_global_locale;

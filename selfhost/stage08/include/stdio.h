@@ -17,6 +17,18 @@
 
 typedef struct _file FILE;
 
+/* A stream's wide-character state (runtime/wstdio.c, for both C libraries;
+ * each library's FILE has one): its orientation -- 1 wide, -1 byte, 0 not
+ * yet (fwide) -- whether a byte function has used it, which makes it byte
+ * oriented, and a wide character ungetwc put back. */
+struct __s32_wstate {
+    int orient;
+    int bytes;
+    int nback;
+    unsigned int back;
+};
+struct __s32_wstate *__s32_wstate(FILE *stream);
+
 extern FILE *stdin;
 extern FILE *stdout;
 extern FILE *stderr;

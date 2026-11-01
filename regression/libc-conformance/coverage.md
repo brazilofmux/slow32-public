@@ -10,6 +10,10 @@ libraries both print (or a recorded ruling).  Totals as recorded in `verdicts.tx
 | rt: clang + `runtime/` | 248 | 48 | 43 |
 | sh: stage08 cc + the selfhost library | 210 | 47 | 82 |
 
+After the fixes below (still 2026-11-01), `verdicts.txt` holds 343
+probes -- the four UTF-8 ones added -- and every one is PASS in both
+libraries.
+
 | page | probes | rt PASS / DIFFER / NOBUILD | sh PASS / DIFFER / NOBUILD |
 |---|---|---|---|
 | [7.1-7.20](c11-7.1-7.20.md) small headers | 87 | 70 / 6 / 11 | 53 / 9 / 25 |
@@ -119,6 +123,21 @@ Ranked by harm: wrong answers in programs that are correct first.
     `aligned_alloc`, `lldiv`, `MB_CUR_MAX`, a "C"-only `<locale.h>`;
     both `quick_exit`/`at_quick_exit` and `timespec_get`/`TIME_UTC`.
 
+**Wide characters** -- *fixed 2026-11-01*
+16. `<wchar.h>`, `<wctype.h>` and `<uchar.h>` are one file each for both
+    libraries, and every function in them exists in both, from shared
+    sources: `runtime/wchar.c` (the conversions, `<stdlib.h>`'s five,
+    `<uchar.h>`'s four), `wctype.c`, `wcs.c` (the wide strings,
+    `wcstod`-family through the narrow ones, `wcsftime`, `wcscoll`,
+    `wcsxfrm`), `wstdio.c` (fwide, wide character I/O, the wprintf and
+    wscanf families over the narrow engines' wide modes).  LC_CTYPE says
+    the encoding: single bytes in "C"/"POSIX", UTF-8 in "C.UTF-8" (new,
+    in both libraries) and every named locale; `MB_CUR_MAX` follows it.
+    The Unicode tables are generated from libutf's Unicode 16 data and
+    equal glibc's C.UTF-8 at every code point.  Four probes run in a
+    UTF-8 locale.  Narrow `printf`'s `%ls`/`%lc` and `scanf`'s `%l` forms
+    convert properly now (they were one byte per character).
+
 ## Rulings
 
 The survey recorded eight `.expect` files.  Two depart from both host
@@ -127,6 +146,11 @@ libraries; both were confirmed on 2026-11-01:
 - `7.27.3.5-strftime-zone-isdst`: `%z` follows `tm_gmtoff`, as POSIX.1-2024
   specifies (C's text, read strictly, follows `tm_isdst`).  glibc's
   output is the expect file; both libraries already do this.
+- `7.29.6-utf8-conversions` and `7.30-utf8-classes` (2026-11-01):
+  macOS has no `<uchar.h>` and its wide classes break 7.30.2.1's own
+  relations, so glibc is the oracle -- except that a five-byte UTF-8
+  form, which glibc still decodes, is EILSEQ (RFC 3629; `MB_CUR_MAX`
+  4).  [c11-7.27-7.30.md](c11-7.27-7.30.md) has the detail.
 - `7.21.6.2-sscanf-prefix-not-match`: `"25exp"` with `%lf` is a matching
   failure, by 7.21.6.2p9-10 and the standard's own worked case; both
   hosts convert the prefix, and so do both our libraries (item 5).

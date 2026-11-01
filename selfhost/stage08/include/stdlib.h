@@ -32,7 +32,17 @@ lldiv_t lldiv(long long numer, long long denom);
 int at_quick_exit(void (*func)(void));
 _Noreturn void quick_exit(int status);
 void *aligned_alloc(size_t alignment, size_t size);
-#define MB_CUR_MAX 1    /* bytes in a character: the "C" locale is the only one */
+/* The longest multibyte character in LC_CTYPE's encoding: 1 in "C" and
+ * "POSIX", 4 in the UTF-8 locales (runtime/wchar.c) */
+size_t __s32_mb_cur_max(void);
+#define MB_CUR_MAX (__s32_mb_cur_max())
+
+/* 7.22.7, 7.22.8 */
+int mblen(const char *s, size_t n);
+int mbtowc(wchar_t *pwc, const char *s, size_t n);
+int wctomb(char *s, wchar_t wc);
+size_t mbstowcs(wchar_t *pwcs, const char *s, size_t n);
+size_t wcstombs(char *s, const wchar_t *pwcs, size_t n);
 
 int atoi(const char *nptr);
 long atol(const char *nptr);

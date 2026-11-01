@@ -8,6 +8,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <errno.h>
+#include <wchar.h>
 #include "convert.h"
 
 /* The radix character: LC_NUMERIC's in the runtime, which builds this
@@ -363,10 +365,58 @@ static char *format_float_alloc(double val, char spec, int precision, bool has_p
 }
 
 // Enhanced vsnprintf with width, precision, and flags
-size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, va_list ap) {
+/* The multibyte form of the wide string ws, at most max bytes of it
+ * (whole characters; max < 0 is no limit) or, counting characters, at most
+ * max characters (by_chars).  Returns a malloc'd string, its length in
+ * *len and its characters in *chars; NULL when a wide character is not
+ * one the encoding has (errno EILSEQ) or memory runs out. */
+static char *wide_to_mb(const wchar_t *ws, long max, bool by_chars, size_t *len, size_t *chars) {
+    size_t n = 0, cap = 16, nc = 0;
+    char *out = (char *)malloc(cap);
+    mbstate_t st;
+    memset(&st, 0, sizeof st);
+    if (!out) return NULL;
+    for (; *ws; ws++) {
+        char tmp[8];
+        size_t r;
+        if (by_chars && max >= 0 && nc >= (size_t)max) break;
+        r = wcrtomb(tmp, *ws, &st);
+        if (r == (size_t)-1) {
+            free(out);
+            return NULL;
+        }
+        if (!by_chars && max >= 0 && n + r > (size_t)max) break;
+        if (n + r + 1 > cap) {
+            char *q;
+            cap = cap * 2 + r;
+            q = (char *)realloc(out, cap);
+            if (!q) {
+                free(out);
+                return NULL;
+            }
+            out = q;
+        }
+        memcpy(out + n, tmp, r);
+        n += r;
+        nc++;
+    }
+    out[n] = 0;
+    *len = n;
+    *chars = nc;
+    return out;
+}
+
+/* The engine.  wide: the wide family's formatting (wstdio.c) -- the format
+ * is the multibyte form of the wide one, and field widths, precisions of
+ * %s and %ls, and %n count characters, not bytes.  Returns the bytes
+ * formatted (the characters in *nchars), or (size_t)-1 with errno EILSEQ
+ * when an argument holds a character the encoding has not. */
+static size_t vformat(char *buffer, size_t buffer_size, const char *format, va_list ap,
+                      bool wide, size_t *nchars) {
     size_t limit = 0;
     size_t write_idx = 0;
     size_t total_idx = 0;
+    size_t total_chars = 0;
     bool can_write = (buffer != NULL && buffer_size > 0);
     if (can_write) {
         limit = buffer_size - 1;
@@ -377,6 +427,7 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
         if (*fmt != '%') {
             // Ordinary character
             total_idx++;
+            if (((unsigned char)*fmt & 0xC0) != 0x80) total_chars++;
             if (can_write && write_idx < limit) {
                 buffer[write_idx++] = *fmt;
             }
@@ -498,6 +549,7 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
         bool hexfloat = false;
         bool int_zero = false;      // the integer converted was 0 (for #x)
         char *conv_alloc = NULL;
+        size_t conv_cols = (size_t)-1;      // characters, where not conv_len
 
         switch (spec) {
             case 'd':
@@ -622,39 +674,60 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
 
             case 'c': {
                 int ch = va_arg(ap, int);   // %lc: a wint_t, the same width
-                conv_buf[0] = (char)ch;
-                conv_buf[1] = '\0';
-                conv_len = 1;
+                if (length_mod == 1) {
+                    // %lc: the character's multibyte form (7.21.6.1p8)
+                    mbstate_t st;
+                    size_t r;
+                    memset(&st, 0, sizeof st);
+                    r = wcrtomb(conv_buf, (wchar_t)ch, &st);
+                    if (r == (size_t)-1) goto encoding_error;
+                    conv_len = r;
+                } else {
+                    conv_buf[0] = (char)ch;
+                    conv_len = 1;
+                }
+                conv_buf[conv_len] = '\0';
+                conv_cols = 1;
                 break;
             }
 
             case 's': {
                 if (length_mod == 1) {
-                    // %ls: a wide string, converted as wcrtomb would in
-                    // the "C" locale -- one byte per wide character; the
-                    // precision limits the bytes written (7.21.6.1p8)
-                    const int *ws = va_arg(ap, const int *);
-                    size_t wn = 0;
+                    // %ls: a wide string, converted as by wcrtomb; the
+                    // precision limits the bytes written, whole characters
+                    // only (7.21.6.1p8) -- or, in the wide family, the
+                    // characters (7.29.2.1p8)
+                    const wchar_t *ws = va_arg(ap, const wchar_t *);
                     if (ws == NULL) {
                         conv_str = "(null)";
                         conv_len = 6;
                         break;
                     }
-                    while (ws[wn] && (!has_precision || wn < (size_t)precision)) wn++;
-                    conv_alloc = (char *)malloc(wn + 1);
-                    if (conv_alloc == NULL) {
-                        conv_len = 0;
-                        break;
-                    }
-                    for (size_t wi = 0; wi < wn; wi++) conv_alloc[wi] = (char)ws[wi];
-                    conv_alloc[wn] = '\0';
+                    conv_alloc = wide_to_mb(ws, has_precision ? (long)precision : -1L, wide,
+                                            &conv_len, &conv_cols);
+                    if (conv_alloc == NULL) goto encoding_error;
                     conv_str = conv_alloc;
-                    conv_len = wn;
                     break;
                 }
                 conv_str = va_arg(ap, char*);
                 if (conv_str == NULL) {
                     conv_str = "(null)";
+                }
+                if (wide) {
+                    // a multibyte string, the precision counting its
+                    // characters (7.29.2.1p8)
+                    mbstate_t st;
+                    size_t at = 0, nc = 0;
+                    memset(&st, 0, sizeof st);
+                    while (conv_str[at] && (!has_precision || nc < (size_t)precision)) {
+                        size_t r = mbrlen(conv_str + at, (size_t)-1, &st);
+                        if (r == (size_t)-1 || r == (size_t)-2) goto encoding_error;
+                        at += r;
+                        nc++;
+                    }
+                    conv_len = at;
+                    conv_cols = nc;
+                    break;
                 }
                 conv_len = strlen(conv_str);
                 if (has_precision && (size_t)precision < conv_len) {
@@ -697,7 +770,7 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
 
             case 'n': {
                 // the count of characters so far, stored; nothing printed
-                int cnt = (int)total_idx;
+                int cnt = (int)(wide ? total_chars : total_idx);
                 switch (length_mod) {
                 case -2: *va_arg(ap, signed char *) = (signed char)cnt; break;
                 case -1: *va_arg(ap, short *) = (short)cnt; break;
@@ -809,7 +882,8 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
             prefix[prefix_len++] = '0';
         }
 
-        field_width = conv_len + prefix_len;
+        if (!wide || conv_cols == (size_t)-1) conv_cols = conv_len;
+        field_width = conv_cols + prefix_len;
 
         if (has_width && (size_t)width > field_width) {
             padding = width - field_width;
@@ -822,14 +896,17 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
         if (zero_pad && !left_justify) {
             if (is_negative && conv_str[0] == '-') {
                 total_idx++;
+                total_chars++;
                 if (can_write && write_idx < limit) {
                     buffer[write_idx++] = '-';
                 }
                 conv_str++;
                 conv_len--;
+                conv_cols--;
             }
             if (prefix_len > 0) {
                 total_idx += prefix_len;
+                total_chars += prefix_len;
                 if (can_write) {
                     size_t copy_len = prefix_len;
                     if (write_idx + copy_len > limit) {
@@ -848,6 +925,7 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
         if (!left_justify && padding > 0) {
             size_t pad_count = padding;
             total_idx += pad_count;
+            total_chars += pad_count;
             if (can_write) {
                 if (write_idx + pad_count > limit) {
                     pad_count = limit - write_idx;
@@ -861,6 +939,7 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
         // Prefix
         if (prefix_len > 0) {
             total_idx += prefix_len;
+            total_chars += prefix_len;
             if (can_write) {
                 size_t copy_len = prefix_len;
                 if (write_idx + copy_len > limit) {
@@ -876,6 +955,7 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
         // Main content
         if (conv_len > 0) {
             total_idx += conv_len;
+            total_chars += conv_cols;
             if (can_write && write_idx < limit) {
                 size_t copy_len = conv_len;
                 if (write_idx + copy_len > limit) {
@@ -890,6 +970,7 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
         if (left_justify && padding > 0) {
             size_t pad_count = padding;
             total_idx += pad_count;
+            total_chars += pad_count;
             if (can_write) {
                 if (write_idx + pad_count > limit) {
                     pad_count = limit - write_idx;
@@ -910,7 +991,25 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
     if (can_write) {
         buffer[write_idx] = '\0';
     }
+    if (nchars) *nchars = total_chars;
     return total_idx;
+
+encoding_error:
+    if (can_write) {
+        buffer[write_idx] = '\0';
+    }
+    errno = EILSEQ;
+    return (size_t)-1;
+}
+
+size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, va_list ap) {
+    return vformat(buffer, buffer_size, format, ap, false, NULL);
+}
+
+/* the wide family's (wstdio.c) */
+size_t __s32_vformat_wide(char *buffer, size_t buffer_size, const char *format, va_list ap,
+                          size_t *nchars) {
+    return vformat(buffer, buffer_size, format, ap, true, nchars);
 }
 
 // sprintf - format to buffer (no size limit)
@@ -974,6 +1073,10 @@ int printf(const char *format, ...) {
     va_copy(ap_copy, ap);
     size_t needed = vsnprintf_enhanced(NULL, 0, format, ap_copy);
     va_end(ap_copy);
+    if (needed == (size_t)-1) {
+        va_end(ap);
+        return -1;      // EILSEQ: %ls or %lc
+    }
 
     size_t buffer_size = needed + 1;
     if (buffer_size > sizeof(stack_buffer)) {
@@ -1006,6 +1109,7 @@ int vprintf(const char *format, va_list ap) {
     va_copy(ap_copy, ap);
     size_t needed = vsnprintf_enhanced(NULL, 0, format, ap_copy);
     va_end(ap_copy);
+    if (needed == (size_t)-1) return -1;    // EILSEQ: %ls or %lc
 
     size_t buffer_size = needed + 1;
     if (buffer_size > sizeof(stack_buffer)) {
@@ -1037,6 +1141,7 @@ int vfprintf(FILE *stream, const char *format, va_list ap) {
     va_copy(ap_copy, ap);
     size_t needed = vsnprintf_enhanced(NULL, 0, format, ap_copy);
     va_end(ap_copy);
+    if (needed == (size_t)-1) return -1;    // EILSEQ: %ls or %lc
 
     size_t buffer_size = needed + 1;
     if (buffer_size > sizeof(stack_buffer)) {

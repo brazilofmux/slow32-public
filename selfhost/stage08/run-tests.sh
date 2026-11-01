@@ -436,9 +436,10 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
     echo "=== Step 2b: Recompile libc with gen1_cc (HIR/SSA ABI) ==="
 
     # printf comes from Gay dtoa + printf_enhanced + runtime convert
-    # (same trio as build-s12cc.sh's gen1 lib; printf_varargs retired)
-    G1_RT_SRCS="dtoa printf_enhanced convert_rt"
-    for name in string_extra string_more ctype convert stdio malloc posix_fs posix_time posix_math posix_proc $G1_RT_SRCS; do
+    # (same trio as build-s12cc.sh's gen1 lib; printf_varargs retired),
+    # and %ls/%lc from wchar.c, whose encoding locale_c.c says
+    G1_RT_SRCS="dtoa printf_enhanced convert_rt wchar"
+    for name in string_extra string_more ctype convert stdio malloc posix_fs posix_time posix_math posix_proc locale_c $G1_RT_SRCS; do
         case "$name" in
           dtoa)
             run_exe "$GEN1_CC_EXE" "$WORKDIR/g1_${name}.cc.log" \
@@ -450,6 +451,9 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
           convert_rt)
             run_exe "$GEN1_CC_EXE" "$WORKDIR/g1_${name}.cc.log" \
                 "-I$SCRIPT_DIR/include" "$SELFHOST_DIR/../runtime/convert.c" "$WORKDIR/g1_${name}.s" ;;
+          wchar)
+            run_exe "$GEN1_CC_EXE" "$WORKDIR/g1_${name}.cc.log" \
+                "-I$SCRIPT_DIR/include" "$SELFHOST_DIR/../runtime/wchar.c" "$WORKDIR/g1_${name}.s" ;;
           *)
             run_exe "$GEN1_CC_EXE" "$WORKDIR/g1_${name}.cc.log" "$LIBC_DIR/${name}.c" "$WORKDIR/g1_${name}.s" ;;
         esac

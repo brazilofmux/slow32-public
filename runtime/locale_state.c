@@ -17,36 +17,39 @@
 extern int __s32_locale_strcoll(const struct __s32_locdata *d, const char *a, const char *b) __attribute__((weak));
 extern size_t __s32_locale_strxfrm(const struct __s32_locdata *d, char *dest, const char *src, size_t n) __attribute__((weak));
 
-const struct __s32_locdata __s32_c_data = {
-    "C",
-    {
-        [CODESET] = "ANSI_X3.4-1968",
-        [D_T_FMT] = "%a %b %e %H:%M:%S %Y",
-        [D_FMT] = "%m/%d/%y",
-        [T_FMT] = "%H:%M:%S",
-        [T_FMT_AMPM] = "%I:%M:%S %p",
-        [AM_STR] = "AM", [PM_STR] = "PM",
-        [DAY_1] = "Sunday", [DAY_2] = "Monday", [DAY_3] = "Tuesday",
-        [DAY_4] = "Wednesday", [DAY_5] = "Thursday", [DAY_6] = "Friday",
-        [DAY_7] = "Saturday",
-        [ABDAY_1] = "Sun", [ABDAY_2] = "Mon", [ABDAY_3] = "Tue", [ABDAY_4] = "Wed",
-        [ABDAY_5] = "Thu", [ABDAY_6] = "Fri", [ABDAY_7] = "Sat",
-        [MON_1] = "January", [MON_2] = "February", [MON_3] = "March",
-        [MON_4] = "April", [MON_5] = "May", [MON_6] = "June", [MON_7] = "July",
-        [MON_8] = "August", [MON_9] = "September", [MON_10] = "October",
-        [MON_11] = "November", [MON_12] = "December",
-        [ABMON_1] = "Jan", [ABMON_2] = "Feb", [ABMON_3] = "Mar", [ABMON_4] = "Apr",
-        [ABMON_5] = "May", [ABMON_6] = "Jun", [ABMON_7] = "Jul", [ABMON_8] = "Aug",
-        [ABMON_9] = "Sep", [ABMON_10] = "Oct", [ABMON_11] = "Nov", [ABMON_12] = "Dec",
-        [RADIXCHAR] = ".", [THOUSEP] = "",
-        [YESEXPR] = "^[yY]", [NOEXPR] = "^[nN]", [CRNCYSTR] = "-",
-    },
-    {
-        ".", "", "", "", "", "", "", "", "", "",
-        CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX,
-        CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX
+/* The C locale's record, and C.UTF-8's: the same but for the encoding
+ * (LC_CTYPE: wchar.c, wctype.c -- __s32_mb_utf8 below) */
+#define C_DATA_INIT(codeset) \
+    { \
+        [CODESET] = codeset, \
+        [D_T_FMT] = "%a %b %e %H:%M:%S %Y", \
+        [D_FMT] = "%m/%d/%y", \
+        [T_FMT] = "%H:%M:%S", \
+        [T_FMT_AMPM] = "%I:%M:%S %p", \
+        [AM_STR] = "AM", [PM_STR] = "PM", \
+        [DAY_1] = "Sunday", [DAY_2] = "Monday", [DAY_3] = "Tuesday", \
+        [DAY_4] = "Wednesday", [DAY_5] = "Thursday", [DAY_6] = "Friday", \
+        [DAY_7] = "Saturday", \
+        [ABDAY_1] = "Sun", [ABDAY_2] = "Mon", [ABDAY_3] = "Tue", [ABDAY_4] = "Wed", \
+        [ABDAY_5] = "Thu", [ABDAY_6] = "Fri", [ABDAY_7] = "Sat", \
+        [MON_1] = "January", [MON_2] = "February", [MON_3] = "March", \
+        [MON_4] = "April", [MON_5] = "May", [MON_6] = "June", [MON_7] = "July", \
+        [MON_8] = "August", [MON_9] = "September", [MON_10] = "October", \
+        [MON_11] = "November", [MON_12] = "December", \
+        [ABMON_1] = "Jan", [ABMON_2] = "Feb", [ABMON_3] = "Mar", [ABMON_4] = "Apr", \
+        [ABMON_5] = "May", [ABMON_6] = "Jun", [ABMON_7] = "Jul", [ABMON_8] = "Aug", \
+        [ABMON_9] = "Sep", [ABMON_10] = "Oct", [ABMON_11] = "Nov", [ABMON_12] = "Dec", \
+        [RADIXCHAR] = ".", [THOUSEP] = "", \
+        [YESEXPR] = "^[yY]", [NOEXPR] = "^[nN]", [CRNCYSTR] = "-", \
+    }, \
+    { \
+        ".", "", "", "", "", "", "", "", "", "", \
+        CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, \
+        CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX, CHAR_MAX \
     }
-};
+
+const struct __s32_locdata __s32_c_data = { "C", C_DATA_INIT("ANSI_X3.4-1968") };
+const struct __s32_locdata __s32_c_utf8_data = { "C.UTF-8", C_DATA_INIT("UTF-8") };
 
 #define C_LOCALE_INIT { \
     { 0, &__s32_c_data, &__s32_c_data, &__s32_c_data, &__s32_c_data, &__s32_c_data, &__s32_c_data }, \
@@ -100,13 +103,13 @@ char *nl_langinfo(nl_item item) {
 
 int strcoll_l(const char *a, const char *b, locale_t l) {
     const struct __s32_locdata *d = __s32_obj(l)->data[LC_COLLATE];
-    if (d != &__s32_c_data && __s32_locale_strcoll) return __s32_locale_strcoll(d, a, b);
+    if (!__s32_is_c_data(d) && __s32_locale_strcoll) return __s32_locale_strcoll(d, a, b);
     return strcmp(a, b);
 }
 
 size_t strxfrm_l(char *dest, const char *src, size_t n, locale_t l) {
     const struct __s32_locdata *d = __s32_obj(l)->data[LC_COLLATE];
-    if (d != &__s32_c_data && __s32_locale_strxfrm) return __s32_locale_strxfrm(d, dest, src, n);
+    if (!__s32_is_c_data(d) && __s32_locale_strxfrm) return __s32_locale_strxfrm(d, dest, src, n);
     size_t len = strlen(src);
     if (n > 0) {
         size_t i = 0;
@@ -114,6 +117,13 @@ size_t strxfrm_l(char *dest, const char *src, size_t n, locale_t l) {
         dest[i] = '\0';
     }
     return len;
+}
+
+/* ---------------------------------------------------------------- */
+/* LC_CTYPE: the encoding is UTF-8 in every locale but "C" and "POSIX" */
+
+int __s32_mb_utf8(void) {
+    return __s32_cur()->data[LC_CTYPE] != &__s32_c_data;
 }
 
 int strcoll(const char *a, const char *b) { return strcoll_l(a, b, __s32_cur()); }

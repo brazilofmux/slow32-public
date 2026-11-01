@@ -1,7 +1,9 @@
-/* setlocale and localeconv (C11 7.11) for the self-hosted library, whose one
- * locale is "C": "C" and "POSIX" name it, and "" -- the native locale --
- * is it too.  Any other name is refused (a null pointer, the locale
- * unchanged).  localeconv gives the "C" locale's values (7.11.2.1p3). */
+/* setlocale and localeconv (C11 7.11) for the self-hosted library, whose
+ * locales are "C" -- "C" and "POSIX" name it, and "" (the native locale)
+ * is it too -- and "C.UTF-8", the C locale with UTF-8 for its encoding
+ * (LC_CTYPE: runtime/wchar.c, wctype.c).  Any other name is refused (a
+ * null pointer, the locale unchanged).  localeconv gives the "C" locale's
+ * values (7.11.2.1p3). */
 #include <limits.h>
 #include <locale.h>
 #include <string.h>
@@ -9,12 +11,24 @@
 static char lc_empty[1];
 static char lc_point[2] = ".";
 static char lc_c[2] = "C";
+static char lc_c_utf8[8] = "C.UTF-8";
+static int ctype_utf8;      /* LC_CTYPE is C.UTF-8 */
+
+int __s32_mb_utf8(void) {
+    return ctype_utf8;
+}
 
 char *setlocale(int category, const char *locale) {
+    int utf8;
     if (category < LC_ALL || category > LC_TIME) return (char *)0;
-    if (!locale) return lc_c;
-    if (locale[0] == 0 || strcmp(locale, "C") == 0 || strcmp(locale, "POSIX") == 0) return lc_c;
-    return (char *)0;
+    if (locale) {
+        if (locale[0] == 0 || strcmp(locale, "C") == 0 || strcmp(locale, "POSIX") == 0) utf8 = 0;
+        else if (strcmp(locale, "C.UTF-8") == 0 || strcmp(locale, "C.utf8") == 0) utf8 = 1;
+        else return (char *)0;
+        if (category == LC_ALL || category == LC_CTYPE) ctype_utf8 = utf8;
+    }
+    if ((category == LC_ALL || category == LC_CTYPE) && ctype_utf8) return lc_c_utf8;
+    return lc_c;
 }
 
 struct lconv *localeconv(void) {

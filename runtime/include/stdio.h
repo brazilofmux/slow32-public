@@ -27,6 +27,17 @@ extern "C" {
 #define FOPEN_MAX 64
 #define P_tmpdir "/tmp"
 
+/* A stream's wide-character state (runtime/wstdio.c, for both C libraries;
+ * each library's FILE has one): its orientation -- 1 wide, -1 byte, 0 not
+ * yet (fwide) -- whether a byte function has used it, which makes it byte
+ * oriented, and a wide character ungetwc put back. */
+struct __s32_wstate {
+    int orient;
+    int bytes;
+    int nback;
+    unsigned int back;
+};
+
 typedef struct FILE {
     // Fields used by stdio_buffered.c (line-buffered output via flush callback)
     char *buffer;
@@ -48,7 +59,11 @@ typedef struct FILE {
     void *mem_cookie;
     // The next open stream (stdio.c): exit sends what each still holds
     struct FILE *next_open;
+    // fwide's orientation, and ungetwc's character (wstdio.c)
+    struct __s32_wstate wide;
 } FILE;
+
+struct __s32_wstate *__s32_wstate(FILE *stream);
 
 /* For a caller that writes very many very small records and cannot afford
  * a call for each (the COBOL runtime's WRITE of a one-byte record, four

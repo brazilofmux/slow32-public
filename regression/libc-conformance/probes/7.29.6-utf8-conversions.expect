@@ -1,0 +1,19 @@
+MB_CUR_MAX at least 4: 1
+to wide: 5, done 1: U+0071 U+00F1 U+221E U+1D11E U+002E
+back: 11 same 1
+five bytes hold 3, stopped at element 2
+length only: 11
+split: -2 initial 0, then 2 U+1D11E initial 1
+malformed 0: -1 EILSEQ 1
+malformed 1: -1 EILSEQ 1
+malformed 2: -1 EILSEQ 1
+malformed 3: -1 EILSEQ 1
+malformed 4: -1 EILSEQ 1
+malformed 5: -1 EILSEQ 1
+lone surrogate out: -1 EILSEQ 1
+mblen 3 -1, mbtowc 4, wctomb 3
+btowc of a lead byte is WEOF: 1, wctob of U+00F1 is EOF: 1
+mbrtoc16: 4 D834 then -3 DD1E then 1 002E
+c16rtomb high 0, low 4 [F09D849E]
+c32rtomb 4, mbrtoc32 4 U+1D11E
+[exit 0]

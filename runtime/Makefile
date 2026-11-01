@@ -47,7 +47,8 @@ LIBC_CORE_OBJS = string.s32o string_extra.s32o \
                  setjmp.s32o emutls.s32o atomic.s32o \
                  unwind.s32o unwind_asm.s32o posix_extra.s32o locale.s32o locale_state.s32o \
                  netdb.s32o process.s32o getpid.s32o mman.s32o environ.s32o \
-                 fenv.s32o math_hw.s32o math_cordic.s32o strtof.s32o assert.s32o inttypes.s32o quick_exit.s32o timespec_get.s32o $(LIBM_OBJS)
+                 fenv.s32o math_hw.s32o math_cordic.s32o strtof.s32o assert.s32o inttypes.s32o quick_exit.s32o timespec_get.s32o \
+                 wchar.s32o wctype.s32o wcs.s32o $(LIBM_OBJS)
 
 # The C++ run time for freestanding C++ (libs32cxx.s32a): guards, new/delete,
 # exceptions, RTTI and the std:: exception classes.  Not in libc: a program
@@ -61,7 +62,7 @@ CXXRT_OBJS = cxa_support.s32o cxa_exception.s32o cxa_personality.s32o \
 STDIO_DEBUG_OBJS = putchar.s32o stdio_minimal.s32o
 
 # I/O objects for MMIO version (buffered, ring buffer)
-STDIO_MMIO_OBJS = stdio.s32o stdio_buffered.s32o flush_mmio.s32o memstream.s32o sscanf.s32o
+STDIO_MMIO_OBJS = stdio.s32o stdio_buffered.s32o flush_mmio.s32o memstream.s32o sscanf.s32o wstdio.s32o
 
 # MMIO-only helpers
 LIBC_MMIO_EXTRA_OBJS = mmio_request.s32o time_mmio.s32o \
@@ -106,6 +107,7 @@ C_SOURCES = printf_enhanced.c convert.c builtins.c string.c malloc.c stdlib_util
             exec_mmio.c exec_stub.c tube_mmio.c tube_stub.c dpc_mmio.c \
             sched_mmio.c poll.c crypto_mmio.c \
             math_hw.c math_cordic.c fenv.c strtof.c assert.c inttypes.c quick_exit.c timespec_get.c \
+            wchar.c wctype.c wcs.c wstdio.c \
             unwind.c posix_extra.c locale.c locale_state.c locales.c netdb.c process.c getpid.c mman.c environ.c \
             cxa_support.c cxa_exception.c cxa_personality.c cxa_typeinfo.c
 
@@ -194,6 +196,9 @@ dtoa.ll: dtoa.c
 # hooks are the runtime's alone (locale.c says what each does)
 time_std.ll: time_std.c
 	$(CLANG) $(CFLAGS) -DS32_LOCALE_STRFTIME $< -o $@
+
+wctype.ll: wctype.c utf/wctype_tables.h
+	$(CLANG) $(CFLAGS) $< -o $@
 
 locale.ll: locale.c locale_impl.h
 	$(CLANG) $(CFLAGS) $< -o $@

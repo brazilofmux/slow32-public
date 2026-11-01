@@ -1,0 +1,36 @@
+U+00C5 alpha 1 upper 1 lower 0 digit 0 space 0 blank 0 cntrl 0 punct 0 graph 1 print 1 upper-> 00C5 lower-> 00E5
+U+00E5 alpha 1 upper 0 lower 1 digit 0 space 0 blank 0 cntrl 0 punct 0 graph 1 print 1 upper-> 00C5 lower-> 00E5
+U+0130 alpha 1 upper 1 lower 0 digit 0 space 0 blank 0 cntrl 0 punct 0 graph 1 print 1 upper-> 0130 lower-> 0069
+U+0131 alpha 1 upper 0 lower 1 digit 0 space 0 blank 0 cntrl 0 punct 0 graph 1 print 1 upper-> 0049 lower-> 0131
+U+01C5 alpha 1 upper 1 lower 1 digit 0 space 0 blank 0 cntrl 0 punct 0 graph 1 print 1 upper-> 01C4 lower-> 01C6
+U+03A3 alpha 1 upper 1 lower 0 digit 0 space 0 blank 0 cntrl 0 punct 0 graph 1 print 1 upper-> 03A3 lower-> 03C3
+U+03C2 alpha 1 upper 0 lower 1 digit 0 space 0 blank 0 cntrl 0 punct 0 graph 1 print 1 upper-> 03A3 lower-> 03C2
+U+0416 alpha 1 upper 1 lower 0 digit 0 space 0 blank 0 cntrl 0 punct 0 graph 1 print 1 upper-> 0416 lower-> 0436
+U+0436 alpha 1 upper 0 lower 1 digit 0 space 0 blank 0 cntrl 0 punct 0 graph 1 print 1 upper-> 0416 lower-> 0436
+U+0561 alpha 1 upper 0 lower 1 digit 0 space 0 blank 0 cntrl 0 punct 0 graph 1 print 1 upper-> 0531 lower-> 0561
+U+05D0 alpha 1 upper 0 lower 0 digit 0 space 0 blank 0 cntrl 0 punct 0 graph 1 print 1 upper-> 05D0 lower-> 05D0
+U+0663 alpha 1 upper 0 lower 0 digit 0 space 0 blank 0 cntrl 0 punct 0 graph 1 print 1 upper-> 0663 lower-> 0663
+U+0E01 alpha 1 upper 0 lower 0 digit 0 space 0 blank 0 cntrl 0 punct 0 graph 1 print 1 upper-> 0E01 lower-> 0E01
+U+1680 alpha 0 upper 0 lower 0 digit 0 space 1 blank 1 cntrl 0 punct 0 graph 0 print 1 upper-> 1680 lower-> 1680
+U+2003 alpha 0 upper 0 lower 0 digit 0 space 1 blank 1 cntrl 0 punct 0 graph 0 print 1 upper-> 2003 lower-> 2003
+U+200B alpha 0 upper 0 lower 0 digit 0 space 0 blank 0 cntrl 0 punct 1 graph 1 print 1 upper-> 200B lower-> 200B
+U+2029 alpha 0 upper 0 lower 0 digit 0 space 1 blank 0 cntrl 1 punct 0 graph 0 print 0 upper-> 2029 lower-> 2029
+U+2160 alpha 1 upper 1 lower 0 digit 0 space 0 blank 0 cntrl 0 punct 0 graph 1 print 1 upper-> 2160 lower-> 2170
+U+24B6 alpha 1 upper 1 lower 0 digit 0 space 0 blank 0 cntrl 0 punct 0 graph 1 print 1 upper-> 24B6 lower-> 24D0
+U+3000 alpha 0 upper 0 lower 0 digit 0 space 1 blank 1 cntrl 0 punct 0 graph 0 print 1 upper-> 3000 lower-> 3000
+U+30A2 alpha 1 upper 0 lower 0 digit 0 space 0 blank 0 cntrl 0 punct 0 graph 1 print 1 upper-> 30A2 lower-> 30A2
+U+AC00 alpha 1 upper 0 lower 0 digit 0 space 0 blank 0 cntrl 0 punct 0 graph 1 print 1 upper-> AC00 lower-> AC00
+U+FF21 alpha 1 upper 1 lower 0 digit 0 space 0 blank 0 cntrl 0 punct 0 graph 1 print 1 upper-> FF21 lower-> FF41
+U+FF41 alpha 1 upper 0 lower 1 digit 0 space 0 blank 0 cntrl 0 punct 0 graph 1 print 1 upper-> FF21 lower-> FF41
+U+FEFF alpha 0 upper 0 lower 0 digit 0 space 0 blank 0 cntrl 0 punct 1 graph 1 print 1 upper-> FEFF lower-> FEFF
+U+10400 alpha 1 upper 1 lower 0 digit 0 space 0 blank 0 cntrl 0 punct 0 graph 1 print 1 upper-> 10400 lower-> 10428
+U+10428 alpha 1 upper 0 lower 1 digit 0 space 0 blank 0 cntrl 0 punct 0 graph 1 print 1 upper-> 10400 lower-> 10428
+U+1D400 alpha 1 upper 1 lower 0 digit 0 space 0 blank 0 cntrl 0 punct 0 graph 1 print 1 upper-> 1D400 lower-> 1D400
+U+1F4A9 alpha 0 upper 0 lower 0 digit 0 space 0 blank 0 cntrl 0 punct 1 graph 1 print 1 upper-> 1F4A9 lower-> 1F4A9
+U+F0000 alpha 0 upper 0 lower 0 digit 0 space 0 blank 0 cntrl 0 punct 1 graph 1 print 1 upper-> F0000 lower-> F0000
+relations broken: 0
+alpha 50282 upper 1205 punct 11683
+wctype: 1 0 1, none 1
+wctrans: 0416 0436, none 1
+WEOF: alpha 0, upper-> same 1
+[exit 0]
