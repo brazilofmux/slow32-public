@@ -3870,3 +3870,43 @@ bits, did the same for a negative zero or subnormal (`-0.0f` through any
 float rounding).  Writing `-a` does not help: stage07, which compiles
 stage08, lowers it as the subtraction.  Both now flip the sign bit
 (sema_dneg), as does the complex constant folder that found them.
+
+### 108. [RESOLVED 2026-11-01] Decimal constants one ulp off near a halfway point; float constants rounded twice; subnormal floats in static initializers 0
+
+The C11 library survey (regression/libc-conformance, item 4) found
+stage08 converting `1e23` to 0x44b52d02c7e14af7 where strtod -- and
+clang -- give ...af6.  The lexer's conversion is exact on its fast path
+(at most 18 digits, |exp10| <= 22, one rounding) and otherwise a
+double-double ladder within a fraction of an ulp: on the wrong side of a
+halfway point when the decimal lies within that fraction of one, as
+1e23 does.  Past 18 significant digits the digits were dropped too.  A
+float constant was the double converted to float -- rounded twice.
+
+lex_round_exact does what David Gay's strtod does after its first
+approximation: compare the decimal, exactly, with the halfway points
+either side of the candidate, in big integers, and step across or stay
+(ties to even), at the precision of the constant's type -- a float
+constant is rounded once, from the decimal.  Gay's strtod itself
+(runtime/dtoa.c) cannot be called: the compiler is stage07's build,
+linked with stage07's library, and stage07 cannot compile it (it returns
+doubles).  So the arithmetic is 16-bit limbs in file-scope arrays, and
+the float result goes out as bits.
+
+That last point found the other bug.  stage07's conversions between
+float and double flush subnormals to zero, and the compiler made float
+constants with them twice: storing a static float initializer
+(ps_fp_init_store_at's (float)) and folding (sema_round_float, and
+sema_float_bits, whose 2^-149 is a constant stage07's lexer wrote).  So
+`static float b = 1e-45f;` was 0.  All three are integer arithmetic on
+the bits now (ps_d2f_bits).
+
+A first version handed back the previous float constant's bits for a
+float zero -- `I`, __builtin_complex(0.0f, 1.0f), was 1 + 1i -- caught by
+the 7.3 probes; the test now has that shape.
+
+Gates: tests/test_fp_literals.c (1e23, ties, subnormals at both edges,
+the overflow threshold, 2.2250738585072012e-308, float ties and
+subnormal statics, a float zero after a float); 3,040 random and 5,122
+adversarial constants (exact ties, near-ties at the 40th and 60th
+digit, truncations, an 1100-digit string) bit-identical to clang, as
+static initializers and as locals.

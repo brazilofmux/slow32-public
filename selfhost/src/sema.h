@@ -1699,8 +1699,27 @@ static void sema_float_bits(int fb, double *out) {
     int w[2];
     e = (fb >> 23) & 255;
     if (e == 0) {
-        /* zero or subnormal: the 23-bit fraction times 2^-149, exact */
-        *out = (double)(fb & 0x7FFFFF) * 1.401298464324817070923729583289916e-45;
+        /* zero or subnormal: the 23-bit fraction times 2^-149, exact --
+         * assembled as bits (a constant 2^-149 written here would be the
+         * bootstrap lexer's, stage07's, and that one is not exact) */
+        int m;
+        int k;
+        m = fb & 0x7FFFFF;
+        w[0] = 0;
+        w[1] = 0;
+        if (m != 0) {
+            k = 22;
+            while (((m >> k) & 1) == 0) k = k - 1;    /* the leading 1 */
+            m = m & ((1 << k) - 1);                 /* below it: 52 bits' top k */
+            /* the double's fraction is m << (52 - k), across the words */
+            if (k <= 20) {
+                w[1] = ((k - 149 + 1023) << 20) | (m << (20 - k));
+            } else {
+                w[1] = ((k - 149 + 1023) << 20) | (m >> (k - 20));
+                w[0] = m << (32 - (k - 20));
+            }
+        }
+        memcpy(out, w, 8);
         if (fb < 0) sema_dneg(out);     /* -0.0f stays -0 */
         return;
     }
@@ -1711,16 +1730,15 @@ static void sema_float_bits(int fb, double *out) {
     memcpy(out, w, 8);
 }
 
-/* *a rounded to float.  The narrowing is a (float) cast; the widening
- * goes through the bits.  (No function here returns a double: stage07,
+/* *a rounded to float.  The narrowing is integer arithmetic on the bits
+ * (stage07's (float) cast flushes subnormals); the widening goes through
+ * the bits.  (No function here returns a double: stage07,
  * which builds this compiler, cannot, c_lexer.rl says -- the first
  * version did, and every float constant came back 0.) */
 static void sema_round_float(double *a) {
-    float f;
-    int fb;
-    f = (float)*a;
-    memcpy(&fb, &f, 4);
-    sema_float_bits(fb, a);
+    int w[2];
+    memcpy(w, a, 8);
+    sema_float_bits(ps_d2f_bits(w[0], w[1]), a);    /* subnormals too (parser.h) */
 }
 
 /* An integer constant's value as a double in *out (6.3.1.4p2): its two

@@ -460,8 +460,10 @@ static void lex_parse_num(char *ts, char *te) {
  * exactly representable for k <= 22, so a literal with <= 15-16
  * significant digits and |exp10| <= 22 rounds exactly once --
  * bit-identical to a correctly-rounded strtod (clang's parse).
- * Larger |exp10| takes one rounding per 10^22 ladder step (a few ulp
- * near 1e+-300). */
+ * Off that path the double-double ladder below comes within a fraction
+ * of an ulp, and lex_round_exact settles the last bit against the
+ * halfway points exactly: every decimal constant, double or float, is
+ * the nearest one, ties to even (selfhost ISSUES-108). */
 
 static double lex_p10[23];
 static double lex_p5[23];     /* 5^k, exact for k <= 22 */
@@ -520,6 +522,334 @@ static void lex_two_prod(void) {
     bh = t - (t - lex_tp_b);
     bl = lex_tp_b - bh;
     lex_tp_err = ((ah * bh - lex_tp_x) + ah * bl + al * bh) + al * bl;
+}
+
+/* === Correct rounding: the decimal against the halfway points ===
+ *
+ * The conversion below is exact on its fast path and otherwise within a
+ * small fraction of an ulp -- which is one ulp wrong when the decimal
+ * lies just across a halfway point: 1e23 came out 0x44b52d02c7e14af7,
+ * strtod's is ...af6.  So, as David Gay's strtod corrects its first
+ * approximation: with the candidate in hand, the decimal is compared,
+ * exactly and in big integers, with the halfway points either side of
+ * it, and the candidate steps across (or stays: a tie goes to the even
+ * one).  A float literal is rounded this way at float's precision,
+ * once -- (float) of the double rounded twice.
+ *
+ * Gay's strtod itself (runtime/dtoa.c) is in the library programs link,
+ * not in this compiler's: stage07 builds the compiler and its library,
+ * and cannot compile it (it returns doubles).  Hence 16-bit limbs in
+ * file-scope arrays, values through statics, as the rest of this file. */
+#define LEX_BN 700                    /* limbs: 11,200 bits */
+#define LEX_DEC_MAXDIG 780            /* digits kept; past them, a sticky 1 */
+static int lex_bnd[LEX_BN];           /* the decimal's digits, an integer */
+static int lex_bnd_n;
+static int lex_bnx[LEX_BN];
+static int lex_bnx_n;
+static int lex_bny[LEX_BN];
+static int lex_bny_n;
+static int lex_dec_e;                 /* the decimal is lex_bnd * 10^lex_dec_e */
+static int lex_dec_mag;               /* its magnitude: about 10^lex_dec_mag */
+static double lex_fix_d;              /* the candidate in, a double result out */
+static int lex_fix_fbits;             /* a float result, its bits */
+
+/* w = w * m + a, m and a below 2^16 */
+static void lex_bn_muladd(int *w, int *n, int m, int a) {
+    long long carry;
+    long long t;
+    int i;
+    carry = a;
+    i = 0;
+    while (i < *n) {
+        t = (long long)w[i] * m + carry;
+        w[i] = (int)(t & 65535);
+        carry = t >> 16;
+        i = i + 1;
+    }
+    while (carry != 0 && *n < LEX_BN) {
+        w[*n] = (int)(carry & 65535);
+        carry = carry >> 16;
+        *n = *n + 1;
+    }
+}
+
+static void lex_bn_mulpow5(int *w, int *n, int e) {
+    int m;
+    while (e >= 6) {
+        lex_bn_muladd(w, n, 15625, 0);      /* 5^6 */
+        e = e - 6;
+    }
+    m = 1;
+    while (e > 0) {
+        m = m * 5;
+        e = e - 1;
+    }
+    if (m > 1) lex_bn_muladd(w, n, m, 0);
+}
+
+static void lex_bn_shl(int *w, int *n, int s) {
+    int words;
+    int bits;
+    int carry;
+    int v;
+    int i;
+    if (*n == 0) return;
+    words = s / 16;
+    bits = s % 16;
+    if (bits) {
+        carry = 0;
+        i = 0;
+        while (i < *n) {
+            v = w[i];
+            w[i] = ((v << bits) | carry) & 65535;
+            carry = v >> (16 - bits);
+            i = i + 1;
+        }
+        if (carry && *n < LEX_BN) {
+            w[*n] = carry;
+            *n = *n + 1;
+        }
+    }
+    if (words) {
+        if (*n + words > LEX_BN) words = LEX_BN - *n;
+        i = *n - 1;
+        while (i >= 0) {
+            w[i + words] = w[i];
+            i = i - 1;
+        }
+        i = 0;
+        while (i < words) {
+            w[i] = 0;
+            i = i + 1;
+        }
+        *n = *n + words;
+    }
+}
+
+static int lex_bn_cmp(int *x, int xn, int *y, int yn) {
+    int i;
+    while (xn > 0 && x[xn - 1] == 0) xn = xn - 1;
+    while (yn > 0 && y[yn - 1] == 0) yn = yn - 1;
+    if (xn != yn) return xn < yn ? -1 : 1;
+    i = xn - 1;
+    while (i >= 0) {
+        if (x[i] != y[i]) return x[i] < y[i] ? -1 : 1;
+        i = i - 1;
+    }
+    return 0;
+}
+
+/* The decimal floating constant in ts..te, exactly: lex_bnd, lex_dec_e,
+ * lex_dec_mag (the sign is not read: the caller has it) */
+static void lex_dec_scan(char *ts, char *te) {
+    char *p;
+    int ch;
+    int nd;
+    int frac;
+    int ex;
+    int eneg;
+    int saw_dot;
+    int sticky;
+    p = ts;
+    nd = 0;
+    frac = 0;
+    ex = 0;
+    saw_dot = 0;
+    sticky = 0;
+    lex_bnd_n = 0;
+    lex_dec_e = 0;
+    if (p < te && (*p == 45 || *p == 43)) p = p + 1;
+    while (p < te) {
+        ch = *p & 255;
+        if (ch == 46) {
+            saw_dot = 1;
+        } else if (ch >= 48 && ch <= 57) {
+            if (nd == 0 && ch == 48) {
+                if (saw_dot) frac = frac + 1;       /* a leading zero: scale only */
+            } else if (nd < LEX_DEC_MAXDIG) {
+                lex_bn_muladd(lex_bnd, &lex_bnd_n, 10, ch - 48);
+                nd = nd + 1;
+                if (saw_dot) frac = frac + 1;
+            } else {
+                if (ch != 48) sticky = 1;
+                if (!saw_dot) lex_dec_e = lex_dec_e + 1;
+            }
+        } else {
+            break;
+        }
+        p = p + 1;
+    }
+    if (p < te && (*p == 101 || *p == 69)) {
+        p = p + 1;
+        eneg = 0;
+        if (p < te && *p == 45) { eneg = 1; p = p + 1; }
+        else if (p < te && *p == 43) { p = p + 1; }
+        while (p < te && *p >= 48 && *p <= 57) {
+            if (ex < 100000000) ex = ex * 10 + (*p - 48);
+            p = p + 1;
+        }
+        if (eneg) ex = 0 - ex;
+    }
+    if (sticky) {
+        /* digits past the kept ones, not all zero: a 1 after the last
+         * kept stands for them -- above the truncation, below the next */
+        lex_bn_muladd(lex_bnd, &lex_bnd_n, 10, 1);
+        nd = nd + 1;
+        lex_dec_e = lex_dec_e - 1;
+    }
+    lex_dec_e = lex_dec_e + ex - frac;
+    lex_dec_mag = nd + lex_dec_e - 1;
+}
+
+/* the sign of (the decimal) - M * 2^K */
+static int lex_dec_cmp(long long m, int k) {
+    int i;
+    int ax;
+    int ay;
+    i = 0;
+    while (i < lex_bnd_n) {
+        lex_bnx[i] = lex_bnd[i];
+        i = i + 1;
+    }
+    lex_bnx_n = lex_bnd_n;
+    lex_bny_n = 0;
+    while (m != 0) {
+        lex_bny[lex_bny_n] = (int)(m & 65535);
+        lex_bny_n = lex_bny_n + 1;
+        m = m >> 16;
+    }
+    if (lex_dec_e >= 0) {
+        lex_bn_mulpow5(lex_bnx, &lex_bnx_n, lex_dec_e);
+        ax = lex_dec_e;
+        ay = k;
+    } else {
+        lex_bn_mulpow5(lex_bny, &lex_bny_n, 0 - lex_dec_e);
+        ax = 0;
+        ay = k - lex_dec_e;
+    }
+    if (ax > ay) lex_bn_shl(lex_bnx, &lex_bnx_n, ax - ay);
+    else if (ay > ax) lex_bn_shl(lex_bny, &lex_bny_n, ay - ax);
+    return lex_bn_cmp(lex_bnx, lex_bnx_n, lex_bny, lex_bny_n);
+}
+
+/* lex_fix_d: the correctly rounded value of the decimal in ts..te, a
+ * double or (is_float) a float, from the candidate lex_fix_d holds --
+ * positive, a close approximation, inf when it overflowed.  The value is
+ * sig * 2^e2 at precision p (a normal one has sig >= 2^(p-1)).  A float
+ * is made from the double's bits and handed back as bits: stage07's
+ * conversions between float and double lose subnormals. */
+static void lex_round_exact(char *ts, char *te, int is_float) {
+    int p;
+    int emin;
+    int emax;
+    int bias;
+    int mbits;
+    int e2;
+    int biased;
+    int inf;
+    int steps;
+    int c;
+    int w[2];
+    int drop;
+    long long sig;
+    long long top;
+    long long mant;
+    lex_dec_scan(ts, te);
+    lex_fix_fbits = 0;
+    if (lex_bnd_n == 0) { lex_fix_d = 0.0; return; }
+    p = is_float ? 24 : 53;
+    mbits = p - 1;
+    bias = is_float ? 127 : 1023;
+    emin = 2 - bias - p;                  /* -1074, -149: a subnormal's */
+    emax = bias - mbits;                  /* 971, 104: the largest finite's */
+    top = 1;
+    top = top << mbits;                   /* 2^(p-1) */
+    inf = 0;
+    if (lex_dec_mag > 310) inf = 1;
+    if (lex_dec_mag < -330) { lex_fix_d = 0.0; return; }
+    /* the candidate, as sig and e2: the double's, and for a float the
+     * double's significand cut to 24 bits (within an ulp: the steps
+     * below finish it) */
+    memcpy(w, &lex_fix_d, 8);
+    biased = (w[1] >> 20) & 2047;
+    mant = (long long)(w[1] & 0xFFFFF);
+    mant = (mant << 16) | (long long)((w[0] >> 16) & 65535);
+    mant = (mant << 16) | (long long)(w[0] & 65535);
+    if (biased == 2047) inf = 1;
+    if (biased == 0) {
+        sig = mant;
+        e2 = -1074;
+    } else {
+        sig = 1;
+        sig = (sig << 52) | mant;
+        e2 = biased - 1075;
+    }
+    if (is_float && !inf && sig != 0) {
+        drop = 29;
+        if (e2 + drop < emin) drop = emin - e2;
+        if (drop > 62) {
+            sig = 0;
+            e2 = emin;
+        } else {
+            sig = sig >> drop;
+            e2 = e2 + drop;
+        }
+        if (sig == 0) e2 = emin;
+        if (e2 > emax) inf = 1;
+    }
+    if (inf) {                            /* the largest finite, to be tested */
+        sig = top + top - 1;
+        e2 = emax;
+    }
+    steps = 0;
+    while (steps < 8) {
+        steps = steps + 1;
+        /* above the halfway point to the next one up: step up */
+        c = lex_dec_cmp(sig + sig + 1, e2 - 1);
+        if (c > 0 || (c == 0 && (sig & 1))) {
+            sig = sig + 1;
+            if (sig == top + top) {
+                sig = top;
+                e2 = e2 + 1;
+            }
+            if (e2 > emax) { inf = 1; break; }
+            inf = 0;
+            continue;
+        }
+        inf = 0;
+        if (sig == 0) break;
+        /* below the halfway point to the next one down: step down */
+        if (sig == top && e2 > emin) c = lex_dec_cmp(sig * 4 - 1, e2 - 2);
+        else c = lex_dec_cmp(sig + sig - 1, e2 - 1);
+        if (c < 0 || (c == 0 && (sig & 1))) {
+            if (sig == top && e2 > emin) {
+                sig = top + top - 1;
+                e2 = e2 - 1;
+            } else {
+                sig = sig - 1;
+            }
+            continue;
+        }
+        break;
+    }
+    /* the result's bits */
+    mant = sig & (top - 1);
+    if (inf) {
+        biased = bias + bias + 1;
+        mant = 0;
+    } else if (sig >= top) {
+        biased = e2 + bias + mbits;
+    } else {
+        biased = 0;
+    }
+    if (is_float) {
+        lex_fix_fbits = (biased << 23) | (int)mant;
+        return;
+    }
+    w[1] = (biased << 20) | (int)((mant >> 32) & 0xFFFFF);
+    w[0] = (int)((mant >> 16) & 65535);
+    w[0] = (w[0] << 16) | (int)(mant & 65535);
+    memcpy(&lex_fix_d, w, 8);
 }
 
 /* === Helper: parse float literal from ts..te === */
@@ -622,7 +952,11 @@ static void lex_parse_fnum(char *ts, char *te) {
     int eval;
     int e;
     int *pw;
+    int once;       /* the conversion rounded exactly once: no correction */
+    int dropped;    /* a nonzero digit past the 18 kept */
 
+    once = 0;
+    dropped = 0;
     sig = 0;
     ndig = 0;
     exp10 = 0;
@@ -661,6 +995,7 @@ static void lex_parse_fnum(char *ts, char *te) {
             } else {
                 /* excess significant digits: drop, keep the scale */
                 if (!saw_dot) exp10 = exp10 + 1;
+                if (ch != 48) dropped = 1;
             }
             np = np + 1;
         } else {
@@ -705,10 +1040,10 @@ static void lex_parse_fnum(char *ts, char *te) {
      * (10^e exact) is ONE rounding -- bit-identical to a correctly
      * rounded strtod.  Otherwise the scale 10^|exp10| is accumulated
      * as a double-double (sh + sl) with twoProd-compensated ladder
-     * steps and sig's conversion residue rides along, so the result
-     * stays correct to the last bit except within ~2^-50 ulp of a
-     * rounding halfway point, in the split-overflow band above
-     * ~6.7e300, and deep in the denormal range. */
+     * steps and sig's conversion residue rides along, so the result is
+     * within a fraction of an ulp -- off by one only near a halfway
+     * point, in the split-overflow band above ~6.7e300, and deep in the
+     * denormal range, which lex_round_exact then corrects. */
     if (!lex_p10_ready) lex_p10_build();
     if (exp10 > 400) exp10 = 400;
     if (exp10 < -400) exp10 = -400;
@@ -725,10 +1060,13 @@ static void lex_parse_fnum(char *ts, char *te) {
         sigerr = (double)(sig - (long long)d);
         if (exp10 == 0) {
             /* d is the single-rounded conversion of sig: done */
+            once = 1;
         } else if (exp10 > 0 && exp10 <= 22 && sigerr == 0.0) {
             d = d * lex_p10[exp10];
+            once = 1;
         } else if (exp10 < 0 && exp10 >= -22 && sigerr == 0.0) {
             d = d / lex_p10[0 - exp10];
+            once = 1;
         } else {
             /* 10^e = 5^e * 2^e.  5^|e| stays in the normal range for
              * |e| <= 400 (5^400 ~ 1.5e280), so the compensated ladder
@@ -783,12 +1121,17 @@ static void lex_parse_fnum(char *ts, char *te) {
         }
     }
 
+    /* Off the one-rounding path, or a float (whose (float)d would round
+     * a second time): the decimal against the halfway points */
+    if (is_float || dropped || !once) {
+        lex_fix_d = d;
+        lex_round_exact(ts, te, is_float);
+        d = lex_fix_d;
+    }
+
     /* Emit IEEE bits (sign applied by bit flip so -0.0 works) */
     if (is_float) {
-        float fv;
-        fv = (float)d;
-        pw = (int *)&fv;
-        lex_val = pw[0];
+        lex_val = lex_fix_fbits;      /* lex_round_exact's, always for a float */
         if (neg) lex_val = lex_val ^ (1 << 31);
         lex_fval_hi = 0;
         lex_fty = 5;  /* TY_FLOAT */

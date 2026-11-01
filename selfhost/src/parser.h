@@ -5848,6 +5848,62 @@ static int ps_fp_const_typed(double *d) {
     return 1;
 }
 
+/* The float nearest a double, as bits, given the double's (lo, hi):
+ * round to nearest, ties to even, subnormals included -- in integers,
+ * because stage07, which builds this compiler, converts a double to float
+ * with the subnormals flushed to zero (static float b = 1e-45f was 0). */
+static int ps_d2f_bits(int lo, int hi) {
+    int sign;
+    int be;
+    int e;
+    int ef;
+    int sh;
+    int biased;
+    long long m;
+    long long q;
+    long long rem;
+    long long half;
+    long long one;
+    sign = hi & (1 << 31);
+    be = (hi >> 20) & 2047;
+    m = (long long)(hi & 0xFFFFF);
+    m = (m << 16) | (long long)((lo >> 16) & 65535);
+    m = (m << 16) | (long long)(lo & 65535);
+    if (be == 2047) {
+        if (m != 0) return sign | 0x7FC00000;     /* a NaN, quiet */
+        return sign | 0x7F800000;
+    }
+    if (be == 0 && m == 0) return sign;
+    one = 1;
+    if (be != 0) {
+        m = m | (one << 52);
+        e = be - 1075;
+    } else {
+        e = -1074;
+    }
+    sh = 29;                    /* 53 bits to 24 */
+    ef = e + sh;
+    if (ef < -149) {            /* a float subnormal: fewer bits kept */
+        sh = -149 - e;
+        ef = -149;
+    }
+    if (sh > 54) return sign;   /* below half the least subnormal */
+    q = m >> sh;
+    rem = m & ((one << sh) - 1);
+    half = one << (sh - 1);
+    if (rem > half || (rem == half && (q & 1))) q = q + 1;
+    if (q == (one << 24)) {
+        q = q >> 1;
+        ef = ef + 1;
+    }
+    if (q >= (one << 23)) {
+        biased = ef + 150;
+        if (biased >= 255) return sign | 0x7F800000;
+        return sign | (biased << 23) | (int)(q - (one << 23));
+    }
+    return sign | (int)q;
+}
+
 static void ps_fp_init_store_at(int ty, int gidx, int rel_off) {
     int fneg;
     int flo;
@@ -5916,12 +5972,7 @@ store:
             i = i + 1;
         }
     } else {
-        float ff;
-        fw[0] = flo;
-        fw[1] = fhi;
-        memcpy(&fd, fw, 8);
-        ff = (float)fd;
-        memcpy(&flo, &ff, 4);
+        flo = ps_d2f_bits(flo, fhi);
         i = 0;
         while (i < 4) {
             ps_ginit_store_byte_at(gidx, rel_off + i, (flo >> (i * 8)) & 255);

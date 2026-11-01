@@ -41,14 +41,15 @@ Ranked by harm: wrong answers in programs that are correct first.
    named words (7.16.1.4).
 3. *Fixed 2026-11-01.* stage08 `offsetof` refused `s.b` and `a[3]`
    designators (7.19p3).
-4. *Deferred (quality).* stage08 converts the constant `1e23` to the
-   other neighbouring double than `strtod` does.  6.4.4.2p3 allows
-   either, but 6.4.4.2p5 recommends they agree.  The lexer's
-   double-double conversion is documented exact except within ~2^-50
-   ulp of a halfway point, and 1e23 is such a point; exactness wants a
-   big-integer tiebreak in the lexer (calling strtod is not open: the
-   first bootstrap generation has none, and stage07 cannot return a
-   double).
+4. *Fixed 2026-11-01.* stage08 converted the constant `1e23` to the
+   other neighbouring double than `strtod` does (6.4.4.2p3 allows
+   either; p5 recommends they agree).  The lexer now settles the last
+   bit as Gay's strtod does, against the halfway points in big integers
+   (calling strtod itself is not open: stage07 builds the compiler and
+   cannot compile it), and rounds a float constant once.  5,122
+   adversarial literals -- ties, near-ties at the 40th and 60th digit,
+   subnormals, the overflow threshold, 2.2250738585072012e-308 -- and
+   3,040 random ones agree with clang to the bit (selfhost ISSUES-108).
 
 **Formatted I/O (shared `sscanf.c`, `printf_enhanced.c`)**
 5. *Fixed 2026-11-01.* `sscanf` had no `%[`, never returned EOF,
