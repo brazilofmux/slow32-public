@@ -27,7 +27,12 @@ int main(void) {
     static long long stamps[] = {0, 1, 59, 86399, 86400, 68169600, 951782399, 951782400, 951868800,
                                  978307200, 1078012800, 1709164800, 1719792000, 1735689599, 1741507199,
                                  1741507200,
-                                 1762065000, 1762066799, 1762066800, 1762068600, 2147483647};
+                                 1762065000, 1762066799, 1762066800, 1762068600, 2147483647,
+                                 /* past 32 bits, both ways: time_t is signed and 64 bits */
+                                 2147483648LL, 4102444800LL /* 2100 */, 253402300799LL /* 9999 */,
+                                 -1, -86401, -2147483648LL};
+    /* (local times before 1901 are time_wide.c's: the host's mktime
+     * refuses them, and its %z does not see local mean time) */
     static const char *fmts[] = {"%a|%A|%b|%B|%h", "%c", "%C|%y|%Y|%G|%g", "%d|%e|%j", "%D|%F", "%H|%I|%M|%S|%p",
                                  "%r|%R|%T", "%u|%w|%U|%V|%W", "%x|%X", "%n|%t|%%", "plain text", ""};
     char buf[128];
@@ -96,6 +101,21 @@ int main(void) {
     mk(1970, 1, 2, 0, 0, 0);
     mk(2000, 1, 1, 0, 0, 100000);
     mk(2038, 1, 18, 0, 0, 0);
+
+    mk(1969, 12, 31, 23, 59, 59);
+    mk(2100, 3, 1, 0, 0, 0);
+
+    /* a year tm_year cannot hold is no broken-down time at all */
+    {
+        static long long wide[] = {67768036191676799LL, 67768036191676800LL, -67768040609740800LL,
+                                   -67768040609740801LL};
+        for (i = 0; i < (int)(sizeof wide / sizeof wide[0]); i++) {
+            tt = (time_t)wide[i];
+            g = gmtime(&tt);
+            if (g) printf("gmtime(%lld) = year %lld\n", wide[i], (long long)g->tm_year + 1900);
+            else printf("gmtime(%lld) = NULL\n", wide[i]);
+        }
+    }
 
     printf("difftime %.1f %.1f %.1f\n", difftime((time_t)1000, (time_t)400), difftime((time_t)400, (time_t)1000),
            difftime((time_t)86400, (time_t)86400));

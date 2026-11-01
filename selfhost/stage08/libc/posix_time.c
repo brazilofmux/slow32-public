@@ -13,16 +13,19 @@ int s32_mmio_request(unsigned int opcode, unsigned int length,
 
 extern int errno;
 
-/* The reply is seconds_lo, seconds_hi, nanoseconds, reserved. */
-long time(long *t) {
-    unsigned int *p;
-    long secs;
+/* The reply is seconds_lo, seconds_hi, nanoseconds, reserved.  time_t
+ * is long long: signed, 64 bits. */
+static long long pm_seconds(unsigned int *p) {
+    return (long long)(((unsigned long long)p[1] << 32) | (unsigned long long)p[0]);
+}
+
+long long time(long long *t) {
+    long long secs;
     if (s32_mmio_request(MMIO_OP_GETTIME, 16, 0, 0) == -1) {
         if (t) *t = -1;
         return -1;
     }
-    p = (unsigned int *)MMIO_DATA;
-    secs = (long)p[0];
+    secs = pm_seconds((unsigned int *)MMIO_DATA);
     if (t) *t = secs;
     return secs;
 }
@@ -43,67 +46,74 @@ struct tm {                 /* must match include/time.h */
     const char *tm_zone;
 };
 
-static int pm_days_in_month[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
 static struct tm pm_tm;
 static char pm_zone[8];
 
-static int pm_is_leap(int y) {
+static int pm_is_leap(long long y) {
     return (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
 }
 
-static struct tm *pm_gmtime_r(long t, struct tm *r) {
-    long days;
-    long rem;
-    int year;
-    int ylen;
-    int m;
-    int d;
-    int dim;
-    int wday;
-    days = t / 86400;
-    rem = t % 86400;
-    if (rem < 0) {
-        rem = rem + 86400;
+static int pm_days_before_month[12] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
+
+/* a / b rounded down, for times before 1970 */
+static long long pm_floor_div(long long a, long long b) {
+    long long q;
+    q = a / b;
+    if (a % b != 0 && (a < 0) != (b < 0)) q = q - 1;
+    return q;
+}
+
+/* The broken-down UTC time of t + off seconds (off is a zone offset,
+ * under a day either way, added after the split so the sum cannot
+ * overflow).  The civil date comes straight from the day count, through
+ * 400-year eras (Howard Hinnant's), so every time takes the same few
+ * steps.  A year tm_year's int cannot hold is EOVERFLOW. */
+static struct tm *pm_gmtime_r(long long t, long off, struct tm *r) {
+    long long days;
+    long long secs;
+    long long z;
+    long long era;
+    long long doe;
+    long long yoe;
+    long long doy;
+    long long mp;
+    long long year;
+    int mday;
+    int mon;
+    days = pm_floor_div(t, 86400);
+    secs = t - days * 86400 + off;
+    if (secs < 0) {
+        secs = secs + 86400;
         days = days - 1;
+    } else if (secs >= 86400) {
+        secs = secs - 86400;
+        days = days + 1;
     }
-    wday = (int)((days + 4) % 7);     /* 1970-01-01 was a Thursday */
-    if (wday < 0) wday = wday + 7;
-    year = 1970;
-    if (days >= 0) {
-        while (1) {
-            ylen = 365;
-            if (pm_is_leap(year)) ylen = 366;
-            if (days < ylen) break;
-            days = days - ylen;
-            year = year + 1;
-        }
-    } else {
-        while (days < 0) {
-            year = year - 1;
-            ylen = 365;
-            if (pm_is_leap(year)) ylen = 366;
-            days = days + ylen;
-        }
+    z = days + 719468;                  /* days since 0000-03-01 */
+    era = pm_floor_div(z, 146097);
+    doe = z - era * 146097;
+    yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    doy = doe - (365 * yoe + yoe / 4 - yoe / 100);     /* from March 1 */
+    mp = (5 * doy + 2) / 153;                          /* March is 0 */
+    mday = (int)(doy - (153 * mp + 2) / 5 + 1);
+    if (mp < 10) mon = (int)(mp + 2);
+    else mon = (int)(mp - 10);
+    year = yoe + era * 400;
+    if (mon < 2) year = year + 1;
+    if (year - 1900 < -2147483647 - 1 || year - 1900 > 2147483647) {
+        errno = 75;                     /* EOVERFLOW */
+        return 0;
     }
-    r->tm_year = year - 1900;
-    r->tm_yday = (int)days;
-    d = (int)days;
-    m = 0;
-    while (m < 12) {
-        dim = pm_days_in_month[m];
-        if (m == 1 && pm_is_leap(year)) dim = dim + 1;
-        if (d < dim) break;
-        d = d - dim;
-        m = m + 1;
-    }
-    r->tm_mon = m;
-    r->tm_mday = d + 1;
-    r->tm_hour = (int)(rem / 3600);
-    rem = rem % 3600;
-    r->tm_min = (int)(rem / 60);
-    r->tm_sec = (int)(rem % 60);
+    r->tm_year = (int)(year - 1900);
+    r->tm_mon = mon;
+    r->tm_mday = mday;
+    r->tm_yday = pm_days_before_month[mon] + mday - 1;
+    if (mon >= 2 && pm_is_leap(year)) r->tm_yday = r->tm_yday + 1;
+    r->tm_hour = (int)(secs / 3600);
+    r->tm_min = (int)(secs / 60 % 60);
+    r->tm_sec = (int)(secs % 60);
+    r->tm_wday = (int)(days + 4 - pm_floor_div(days + 4, 7) * 7);  /* 1970-01-01 was a Thursday */
     r->tm_isdst = 0;
-    r->tm_wday = wday;
     r->tm_gmtoff = 0;
     r->tm_zone = "UTC";
     return r;
@@ -111,15 +121,14 @@ static struct tm *pm_gmtime_r(long t, struct tm *r) {
 
 /* The query is a timepair (seconds lo/hi, nanoseconds, reserved); the
  * reply is gmtoff_sec, is_dst, abbrev[8]. */
-int __s32_query_tz(long when, long *gmtoff, int *isdst, char *abbrev) {
+int __s32_query_tz(long long when, long *gmtoff, int *isdst, char *abbrev) {
     unsigned int *p;
     int *q;
     char *a;
     int i;
     p = (unsigned int *)MMIO_DATA;
     p[0] = (unsigned int)when;
-    p[1] = 0;
-    if (when < 0) p[1] = 0xFFFFFFFF;
+    p[1] = (unsigned int)((unsigned long long)when >> 32);
     p[2] = 0;
     p[3] = 0;
     if (s32_mmio_request(MMIO_OP_GETTZ, 16, 0, 0) == -1) return -1;
@@ -136,17 +145,17 @@ int __s32_query_tz(long when, long *gmtoff, int *isdst, char *abbrev) {
     return 0;
 }
 
-struct tm *gmtime_r(const long *t, struct tm *r) {
-    return pm_gmtime_r(*t, r);
+struct tm *gmtime_r(const long long *t, struct tm *r) {
+    return pm_gmtime_r(*t, 0, r);
 }
 
-struct tm *gmtime(const long *t) {
-    return pm_gmtime_r(*t, &pm_tm);
+struct tm *gmtime(const long long *t) {
+    return pm_gmtime_r(*t, 0, &pm_tm);
 }
 
 /* the zone's name is kept in one place for every result: it is the
  * zone's, not the call's (tzname, where there is one, is the same) */
-struct tm *localtime_r(const long *t, struct tm *r) {
+struct tm *localtime_r(const long long *t, struct tm *r) {
     long gmtoff;
     int isdst;
     char abbrev[8];
@@ -155,9 +164,9 @@ struct tm *localtime_r(const long *t, struct tm *r) {
     isdst = 0;
     abbrev[0] = 0;
     if (__s32_query_tz(*t, &gmtoff, &isdst, abbrev) != 0) {
-        return pm_gmtime_r(*t, r);           /* no zone service: UTC */
+        return pm_gmtime_r(*t, 0, r);        /* no zone service: UTC */
     }
-    pm_gmtime_r(*t + gmtoff, r);
+    if (pm_gmtime_r(*t, gmtoff, r) == 0) return 0;
     r->tm_isdst = isdst;
     r->tm_gmtoff = gmtoff;
     if (abbrev[0]) {
@@ -174,11 +183,11 @@ struct tm *localtime_r(const long *t, struct tm *r) {
     return r;
 }
 
-struct tm *localtime(const long *t) {
+struct tm *localtime(const long long *t) {
     return localtime_r(t, &pm_tm);
 }
 
-struct pm_timeval { long tv_sec; long tv_usec; };
+struct pm_timeval { long long tv_sec; long tv_usec; };
 struct pm_rusage { struct pm_timeval ru_utime; struct pm_timeval ru_stime; };
 
 /* getrusage: no per-process accounting on the host side; zero
@@ -200,13 +209,13 @@ int gettimeofday(struct pm_timeval *tv, void *tz) {
     if (s32_mmio_request(MMIO_OP_GETTIME, 16, 0, 0) == -1) return -1;
     p = (unsigned int *)MMIO_DATA;
     if (tv) {
-        tv->tv_sec = (long)p[0];
+        tv->tv_sec = pm_seconds(p);
         tv->tv_usec = (long)(p[2] / 1000u);
     }
     return 0;
 }
 
-struct pm_timespec { long tv_sec; long tv_nsec; };
+struct pm_timespec { long long tv_sec; long tv_nsec; };
 
 /* one clock: the host's, by the same request as time() */
 int clock_gettime(int clk, struct pm_timespec *ts) {
@@ -215,7 +224,7 @@ int clock_gettime(int clk, struct pm_timespec *ts) {
     if (s32_mmio_request(MMIO_OP_GETTIME, 16, 0, 0) == -1) return -1;
     p = (unsigned int *)MMIO_DATA;
     if (ts) {
-        ts->tv_sec = (long)p[0];
+        ts->tv_sec = pm_seconds(p);
         ts->tv_nsec = (long)p[2];
     }
     return 0;
@@ -228,7 +237,7 @@ int clock_gettime(int clk, struct pm_timespec *ts) {
  * (CLOCKS_PER_SEC is 1000000), wrapping after about 71 minutes as
  * POSIX's 32-bit clock_t does. */
 static int pm_clock_set;
-static long pm_clock_sec;
+static long long pm_clock_sec;
 static long pm_clock_nsec;
 
 unsigned long clock(void) {
@@ -247,7 +256,7 @@ int usleep(unsigned int usec);
 /* nanosleep and sleep over usleep (mmio_no_start.s); nothing interrupts a
  * sleep here, so nothing is ever left over */
 int nanosleep(const struct pm_timespec *req, struct pm_timespec *rem) {
-    long sec;
+    long long sec;
     if (!req || req->tv_sec < 0 || req->tv_nsec < 0 || req->tv_nsec >= 1000000000) {
         errno = 22;
         return -1;

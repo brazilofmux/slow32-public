@@ -2,79 +2,58 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <limits.h>
+#include <errno.h>
 
-static int is_leap(int year) {
+static int is_leap(long long year) {
     return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
 }
 
-static const int days_in_month[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+static const short days_before_month[12] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
 
-// The caller's struct tm instead of the library's
+// floor division and its remainder, for times before the epoch
+static long long floor_div(long long a, long long b) {
+    long long q = a / b;
+    if ((a % b != 0) && ((a < 0) != (b < 0))) q--;
+    return q;
+}
+
+// The caller's struct tm instead of the library's.  time_t is signed: a
+// time before 1970 is a negative count.  The date is computed directly
+// from the day count (days to the civil date through 400-year eras), so
+// every time_t takes the same few steps; one whose year does not fit
+// tm_year's int is EOVERFLOW, as POSIX has it.
 struct tm *gmtime_r(const time_t *timer, struct tm *result) {
-    int64_t t = (int64_t)*timer;
-    int64_t t_total = t;
-    int year = 1970;
-    
-    // Calculate year
-    if (t >= 0) {
-        while (1) {
-            int days = is_leap(year) ? 366 : 365;
-            int64_t sec_in_year = (int64_t)days * 86400LL;
-            if (t < sec_in_year) break;
-            t -= sec_in_year;
-            year++;
-        }
-    } else {
-        while (t < 0) {
-            year--;
-            int days = is_leap(year) ? 366 : 365;
-            int64_t sec_in_year = (int64_t)days * 86400LL;
-            t += sec_in_year;
-        }
-    }
-    result->tm_year = year - 1900;
-    
-    // Calculate day of year
-    result->tm_yday = (int)(t / 86400LL);
-    t %= 86400LL;
-    
-    // Calculate month and day of month
-    int d = result->tm_yday;
-    int m = 0;
-    int leap = is_leap(year);
-    while (m < 12) {
-        int dim = days_in_month[m];
-        if (m == 1 && leap) dim++;
-        if (d < dim) break;
-        d -= dim;
-        m++;
-    }
-    result->tm_mon = m;
-    result->tm_mday = d + 1;
-    
-    // Calculate time
-    result->tm_hour = (int)(t / 3600ULL);
-    t %= 3600ULL;
-    result->tm_min = (int)(t / 60ULL);
-    result->tm_sec = (int)(t % 60ULL);
-    
-    result->tm_isdst = 0;
-    
-    // Calculate day of week (1970-01-01 was Thursday=4)
-    // Total days from epoch
-    int64_t total_days = t_total / 86400LL;
-    int64_t rem = t_total % 86400LL;
-    if (rem < 0) {
-        rem += 86400LL;
-        total_days -= 1;
-    }
-    int wday = (int)((total_days + 4) % 7);
-    if (wday < 0) wday += 7;
-    result->tm_wday = wday;
+    long long t = (long long)*timer;
+    long long days = floor_div(t, 86400LL);
+    long long secs = t - days * 86400LL;
 
+    // days since 0000-03-01, split into 400-year eras of 146097 days
+    long long z = days + 719468LL;
+    long long era = floor_div(z, 146097LL);
+    long long doe = z - era * 146097LL;                                   // [0, 146096]
+    long long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // [0, 399]
+    long long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);              // [0, 365], from March 1
+    long long mp = (5 * doy + 2) / 153;                                   // [0, 11], March = 0
+    int mday = (int)(doy - (153 * mp + 2) / 5 + 1);
+    int mon = (int)(mp < 10 ? mp + 2 : mp - 10);                          // [0, 11], January = 0
+    long long year = yoe + era * 400 + (mon < 2 ? 1 : 0);
+
+    if (year - 1900 < INT_MIN || year - 1900 > INT_MAX) {
+        errno = EOVERFLOW;
+        return NULL;
+    }
+    result->tm_year = (int)(year - 1900);
+    result->tm_mon = mon;
+    result->tm_mday = mday;
+    result->tm_yday = days_before_month[mon] + mday - 1 + ((mon >= 2 && is_leap(year)) ? 1 : 0);
+    result->tm_hour = (int)(secs / 3600);
+    result->tm_min = (int)(secs / 60 % 60);
+    result->tm_sec = (int)(secs % 60);
+    result->tm_wday = (int)(days - floor_div(days + 4, 7LL) * 7 + 4);     // 1970-01-01 was a Thursday
+    result->tm_isdst = 0;
     result->tm_gmtoff = 0;
     result->tm_zone = "UTC";
-
     return result;
 }
 
@@ -101,10 +80,16 @@ struct tm *localtime_r(const time_t *timer, struct tm *result) {
         return gmtime_r(timer, result);
     }
 
-    // Local wall-clock = gmtime(UTC + offset). Compute via signed math so a
-    // westward (negative) offset is applied correctly to the unsigned time_t.
-    time_t local = (time_t)((long long)*timer + (long long)gmtoff);
-    gmtime_r(&local, result);
+    // Local wall-clock = gmtime(UTC + offset).  The sum cannot leave
+    // time_t's range for any time whose year gmtime_r can represent.
+    if ((gmtoff > 0 && *timer > LLONG_MAX - gmtoff) || (gmtoff < 0 && *timer < LLONG_MIN - gmtoff)) {
+        errno = EOVERFLOW;
+        return NULL;
+    }
+    time_t local = *timer + gmtoff;
+    if (gmtime_r(&local, result) == NULL) {
+        return NULL;
+    }
 
     result->tm_isdst = isdst;
     result->tm_gmtoff = gmtoff;

@@ -4,14 +4,16 @@
 
 #include <stddef.h>
 
-typedef long time_t;
+/* signed and 64 bits, as the clang runtime's: before 1970 is negative,
+ * and 2038 is nothing special */
+typedef long long time_t;
 
 /* microseconds since the program first asked (libc/posix_time.c) */
 typedef unsigned long clock_t;
 #define CLOCKS_PER_SEC ((clock_t)1000000)
 
 struct timespec {
-    long tv_sec;
+    time_t tv_sec;
     long tv_nsec;
 };
 

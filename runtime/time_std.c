@@ -3,9 +3,8 @@
  * One source for both C libraries: the clang runtime builds it into
  * libc_mmio/libc_debug, and the self-hosted library compiles it with
  * stage08 cc (selfhost/stage08/build-s12cc.sh), each against its own
- * <time.h>.  So it assumes nothing about time_t but that it is an
- * integer -- 64 bits unsigned on one side, 32 signed on the other --
- * and does its own arithmetic in long long.
+ * <time.h>.  time_t is long long in both (signed: a time before 1970
+ * is negative), and the arithmetic here is long long throughout.
  *
  * What it needs from the library it is built into: localtime,
  * localtime_r, and __s32_query_tz (the host's zone rules for an
@@ -21,10 +20,18 @@ static int is_leap(long long y) {
     return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
 }
 
-/* the leap years before year y, counted from year 1 */
+/* a / b rounded down (C's / rounds toward zero) */
+static long long floor_div(long long a, long long b) {
+    long long q = a / b;
+    if (a % b != 0 && (a < 0) != (b < 0)) q--;
+    return q;
+}
+
+/* the leap years before year y, counted from year 1 (negative for a
+ * year before that: year 0 is a leap year) */
 static long long leaps_before(long long y) {
     y = y - 1;
-    return y / 4 - y / 100 + y / 400;
+    return floor_div(y, 4) - floor_div(y, 100) + floor_div(y, 400);
 }
 
 /* days from 1970-01-01 to the first day of month m (0..11) of year y */

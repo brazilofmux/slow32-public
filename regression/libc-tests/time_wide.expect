@@ -1,0 +1,21 @@
+-2208988800 gmtime 1900-01-01 00:00:00 wday=1 yday=0 isdst=0 gmtoff=0
+  localtime 1899-12-31 18:00:00 wday=0 yday=364 isdst=0 gmtoff=-21600
+  [CST -0600|Sun Dec 31 18:00:00 1899]
+  mktime of it -2208988800
+-2717647201 gmtime 1883-11-18 17:59:59 wday=0 yday=321 isdst=0 gmtoff=0
+  localtime 1883-11-18 12:09:23 wday=0 yday=321 isdst=0 gmtoff=-21036
+  [LMT -0550|Sun Nov 18 12:09:23 1883]
+  mktime of it -2717647201
+-2717646600 gmtime 1883-11-18 18:10:00 wday=0 yday=321 isdst=0 gmtoff=0
+  localtime 1883-11-18 12:10:00 wday=0 yday=321 isdst=0 gmtoff=-21600
+  [CST -0600|Sun Nov 18 12:10:00 1883]
+  mktime of it -2717646600
+-4294967294 gmtime 1833-11-24 17:31:46 wday=0 yday=327 isdst=0 gmtoff=0
+  localtime 1833-11-24 11:41:10 wday=0 yday=327 isdst=0 gmtoff=-21036
+  [LMT -0550|Sun Nov 24 11:41:10 1833]
+  mktime of it -4294967294
+-62135596800 gmtime 0001-01-01 00:00:00 wday=1 yday=0 isdst=0 gmtoff=0
+  localtime 0000-12-31 18:09:24 wday=0 yday=365 isdst=0 gmtoff=-21036
+  [LMT -0550|Sun Dec 31 18:09:24 0]
+  mktime of it -62135596800
+mktime(1833-11-24 11:41:10) = -4294967294 ->  1833-11-24 11:41:10 wday=0 yday=327 isdst=0 gmtoff=-21036

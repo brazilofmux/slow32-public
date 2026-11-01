@@ -1992,7 +1992,7 @@ static void pp_set_source_file(char *path) {
 #ifdef S12CC_HOSTED
 #include <time.h>
 #else
-long time(long *t);
+long long time(long long *t);
 #endif
 
 /* __DATE__ "Mmm dd yyyy" and __TIME__ "hh:mm:ss" (6.10.8.1), from the
@@ -2002,7 +2002,7 @@ long time(long *t);
 static char pp_months[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
 static void pp_install_date_time(void) {
     char *e;
-    long t;
+    long long t;
     int days;
     int secs;
     int z;

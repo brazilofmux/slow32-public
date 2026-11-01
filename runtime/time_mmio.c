@@ -131,9 +131,9 @@ time_t time(time_t *t) {
 
     if (read_time_words(S32_MMIO_CLOCK_REALTIME, &seconds, &nanos) != 0) {
         if (t) {
-            *t = (time_t)(~(time_t)0);
+            *t = (time_t)-1;
         }
-        return (time_t)(~(time_t)0);
+        return (time_t)-1;
     }
 
     if (t) {
@@ -147,7 +147,7 @@ int nanosleep(const struct timespec *req, struct timespec *rem) {
         errno = EINVAL;
         return -1;
     }
-    if (req->tv_nsec >= S32_NSEC_PER_SEC) {
+    if (req->tv_sec < 0 || req->tv_nsec >= S32_NSEC_PER_SEC) {
         errno = EINVAL;
         return -1;
     }
