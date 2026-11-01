@@ -3858,3 +3858,15 @@ it worse: the linker did not even round .bss to 4, and the assembler wrote
 reached an object at all.  Both are repaired in place -- the assembler
 with stage08's note_sec_align/sec_align, the linker's .bss as here -- and
 the test passes under both tool sets.
+
+### 107. [RESOLVED 2026-11-01] -(0.0) and -0.0f in a static initializer were +0
+
+Found by the complex torture test: `double complex g3 = -I;` at file
+scope had a real part of +0, where clang's is -0.  Two folds lost the
+sign of a zero.  sema_fp_const negated as `a = 0.0 - a`, and 0.0 - 0.0
+is +0 (so `static double y = -(0.0);` was +0; the literal `-0.0` is read
+whole and was right); and sema_float_bits, widening a float constant's
+bits, did the same for a negative zero or subnormal (`-0.0f` through any
+float rounding).  Writing `-a` does not help: stage07, which compiles
+stage08, lowers it as the subtraction.  Both now flip the sign bit
+(sema_dneg), as does the complex constant folder that found them.

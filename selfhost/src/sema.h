@@ -88,6 +88,10 @@ static int sema_compat(int a, int b);
 static int sema_callee_cty(Node *n);
 static void sema_call_check(Node *n, int ft);
 static void sema_stmt(Node *n);
+static void sema_violation(Node *n, char *msg);
+static Node *sema_cplx_truth(Node *e);
+static int sema_cplx_is(Node *e);
+static int sema_in_func;
 
 /* Is C type t _Bool? */
 static int sema_is_bool(int t) {
@@ -101,6 +105,7 @@ static int sema_is_bool(int t) {
 static Node *sema_to_bool(Node *e) {
     Node *n;
     if (!e || sema_is_bool(e->cty)) return e;
+    if (sema_in_func && sema_cplx_is(e)) return sema_cplx_truth(e);
     n = nd_binop(TK_NE, e, nd_num(0));
     n->ty = TY_INT;
     n->cty = ct_basic[CT_INT];
@@ -127,6 +132,475 @@ static Node *sema_bf_operand(Node *e) {
     e->next = NULL;
     sema_attr_node(n);
     return n;
+}
+
+/* --- Complex arithmetic (6.2.5p11, 6.3.1.6-6.3.1.8, 6.5) ---
+ *
+ * A complex value is the machine's structure of two parts (ctype.h
+ * ct_complex), so what C does with one as a whole -- copy it, pass it,
+ * return it, store it in a union -- is what it does with a structure,
+ * and clang's ABI is the structure's.  Its arithmetic is rewritten here,
+ * in the function walk (sema_in_func), into what the lowering already
+ * does on every target: reads and writes of the parts, as members, and
+ * real arithmetic on them, the values kept in numbered temporaries
+ * (ND_CTEMP; hir_lower.h gives each a stack slot).  So
+ *
+ *     a + b   ->  (T1 = a, T2 = b, R.re = T1.re + T2.re, R.im = T1.im + T2.im, R)
+ *     a * b   ->  (T1 = a, T2 = b, __muldc3(T1.re, T1.im, T2.re, T2.im))
+ *
+ * and as clang does it, so the two compilers agree to the bit: a real
+ * operand stays real (r * z is r*z.re, r*z.im; r - z negates z.im),
+ * products and quotients of two complex numbers are runtime/complex_rt.c's
+ * (clang multiplies inline and falls back to __muldc3 when both parts are
+ * NaN, which gives the same), r / z is __divdc3(r, 0, ...), and z == r
+ * compares z.im with zero.  A conversion to complex makes the parts; one
+ * from complex takes the real part; to _Bool, and a complex condition, is
+ * z != 0.  Outside a function -- a file-scope initializer, sizeof,
+ * _Generic at parse time -- the nodes are typed and left as they are. */
+/* sema_in_func: in the function walk (sema), not the parse */
+static int sema_ctemp_n;        /* temporaries numbered across the unit */
+
+static int sema_cplx_is(Node *e) {
+    return e && e->cty > 0 && ct_is_complex(ct_unqual(e->cty));
+}
+
+static Node *sema_typed(Node *n, int cty) {
+    n->cty = cty;
+    n->ty = ct_mty(cty);
+    sema_attr_node(n);
+    return n;
+}
+
+/* a leaf again: a temporary, a variable or a constant used once more */
+static Node *sema_dup(Node *n) {
+    Node *m;
+    m = nd_new(n->kind);
+    memcpy(m, n, sizeof(struct Node));
+    m->next = NULL;
+    return m;
+}
+
+/* n becomes m, keeping its place in an argument list */
+static void sema_become(Node *n, Node *m) {
+    Node *nx;
+    nx = n->next;
+    memcpy(n, m, sizeof(struct Node));
+    n->next = nx;
+}
+
+static Node *sema_ctemp(int cty) {
+    Node *n;
+    n = nd_new(ND_CTEMP);
+    n->val = sema_ctemp_n;
+    sema_ctemp_n = sema_ctemp_n + 1;
+    n->cty = cty;
+    n->ty = ct_mty(cty);
+    n->attr = AT_LV | AT_MOD;
+    return n;
+}
+
+/* a then b, as one expression with b's value */
+static Node *sema_seq(Node *a, Node *b) {
+    Node *n;
+    if (!a) return b;
+    n = nd_comma(a, b);
+    n->cty = b->cty;
+    n->ty = b->ty;
+    n->attr = 0;
+    return n;
+}
+
+static Node *sema_set(Node *l, Node *r) {
+    Node *n;
+    n = nd_assign(l, r);
+    return sema_typed(n, ct_unqual(l->cty));
+}
+
+/* part 0 (real) or 1 (imaginary) of complex v, a leaf */
+static Node *sema_part(Node *v, int im) {
+    int real;
+    Node *n;
+    real = ct_baseof(ct_unqual(v->cty));
+    n = nd_member(sema_dup(v), im ? ct_sizeof(real) : 0, ct_mty(real), 0, 0, 0, 0);
+    n->cty = real;
+    n->attr = v->attr & AT_LV;
+    if (n->attr) n->attr = n->attr | AT_MOD;
+    return n;
+}
+
+static Node *sema_zero(int real) {
+    Node *n;
+    n = nd_fnum(0, 0, ct_kindof(real) == CT_FLOAT ? TY_FLOAT : TY_DOUBLE);
+    return sema_typed(n, real);
+}
+
+/* e converted to real (or integer) type t */
+static Node *sema_conv_to(Node *e, int t) {
+    Node *n;
+    t = ct_unqual(t);
+    if (ct_unqual(e->cty) == t) return e;
+    n = nd_cast(e, ct_mty(t));
+    return sema_typed(n, t);
+}
+
+/* Keep e's value for more than one use: a leaf as it is; a complex value
+ * in a temporary; a real one in a temporary's real part.  The store goes
+ * on *pre. */
+static Node *sema_hold(Node *e, Node **pre) {
+    Node *t;
+    if (e->kind == ND_CTEMP || e->kind == ND_NUM || e->kind == ND_FNUM ||
+        (e->kind == ND_VAR && !e->is_vol))
+        return e;
+    if (e->kind == ND_MEMBER && e->lhs && e->lhs->kind == ND_CTEMP) return e;
+    if (sema_cplx_is(e)) {
+        t = sema_ctemp(ct_unqual(e->cty));
+        *pre = sema_seq(*pre, sema_set(t, e));
+        return t;
+    }
+    t = sema_ctemp(ct_complex(ct_real_of(ct_unqual(e->cty))));
+    t = sema_part(t, 0);
+    *pre = sema_seq(*pre, sema_set(t, e));
+    return t;
+}
+
+/* the complex value of parts re and im, of complex type c */
+static Node *sema_make(Node *re, Node *im, int c) {
+    Node *r;
+    Node *s;
+    r = sema_ctemp(c);
+    s = sema_set(sema_part(r, 0), re);
+    s = sema_seq(s, sema_set(sema_part(r, 1), im));
+    return sema_seq(s, r);
+}
+
+static Node *sema_rbin(int op, Node *a, Node *b, int real) {
+    Node *n;
+    n = nd_binop(op, a, b);
+    if (sema_is_cmp(op) || op == TK_LAND || op == TK_LOR) return sema_typed(n, ct_basic[CT_INT]);
+    return sema_typed(n, real);
+}
+
+/* e (complex or real) as complex type c */
+static Node *sema_to_cplx(Node *e, int c) {
+    Node *pre;
+    Node *h;
+    int real;
+    c = ct_unqual(c);
+    if (ct_unqual(e->cty) == c) return e;
+    real = ct_baseof(c);
+    pre = NULL;
+    if (!sema_cplx_is(e)) return sema_make(sema_conv_to(e, real), sema_zero(real), c);
+    h = sema_hold(e, &pre);
+    return sema_seq(pre, sema_make(sema_conv_to(sema_part(h, 0), real),
+                                   sema_conv_to(sema_part(h, 1), real), c));
+}
+
+/* the real part of complex e (for a conversion to a real type) */
+static Node *sema_real_part(Node *e) {
+    Node *pre;
+    Node *h;
+    pre = NULL;
+    h = sema_hold(e, &pre);
+    return sema_seq(pre, sema_part(h, 0));
+}
+
+/* e as type t, as if by assignment (6.5.16.1p2): complex to complex or
+ * real, real to complex; anything else as it is */
+static Node *sema_cplx_conv(Node *e, int t) {
+    t = ct_unqual(t);
+    if (!e || t <= 0 || !sema_in_func) return e;
+    if (ct_is_complex(t)) {
+        if (ct_is_arith(ct_unqual(e->cty)) || sema_cplx_is(e)) return sema_to_cplx(e, t);
+        return e;
+    }
+    if (sema_cplx_is(e) && ct_is_arith(t) && ct_kindof(t) != CT_BOOL) return sema_real_part(e);
+    return e;
+}
+
+/* The support routine for a product or quotient: float's __mulsc3, the
+ * others' (long double is double) __muldc3, declared on first use. */
+static Node *sema_cplx_call(int op, Node *a, Node *b, Node *c, Node *d, int ct) {
+    char *nm;
+    int real;
+    int pt[4];
+    int pc[4];
+    int i;
+    int sv_var;
+    int sv_rb;
+    int sv_rn;
+    int sv_ti;
+    int sv_ts;
+    Node *n;
+    real = ct_baseof(ct);
+    if (ct_kindof(real) == CT_FLOAT) nm = op == TK_STAR ? "__mulsc3" : "__divsc3";
+    else nm = op == TK_STAR ? "__muldc3" : "__divdc3";
+    if (find_func_cty(nm) <= 0) {
+        i = 0;
+        while (i < 4) {
+            pt[i] = ct_mty(real);
+            pc[i] = real;
+            i = i + 1;
+        }
+        sv_var = ps_is_varargs;
+        sv_rb = ps_pending_retfpbase;
+        sv_rn = ps_pending_retfpn;
+        sv_ti = ps_top_inline;
+        sv_ts = ps_top_static;
+        ps_is_varargs = 0;
+        ps_pending_retfpbase = -1;
+        ps_pending_retfpn = 0;
+        add_func_type(nm, ct_mty(ct), pt, pc, 4, ct);
+        ps_is_varargs = sv_var;
+        ps_pending_retfpbase = sv_rb;
+        ps_pending_retfpn = sv_rn;
+        ps_top_inline = sv_ti;
+        ps_top_static = sv_ts;
+    }
+    a->next = b;
+    b->next = c;
+    c->next = d;
+    d->next = NULL;
+    n = nd_call(nm, a, 4);
+    return sema_typed(n, ct);
+}
+
+/* + - * / with a complex operand */
+static Node *sema_cplx_arith(Node *n, int ct) {
+    Node *pre;
+    Node *a;
+    Node *b;
+    Node *re;
+    Node *im;
+    int lc;
+    int rc;
+    int real;
+    real = ct_baseof(ct);
+    lc = sema_cplx_is(n->lhs);
+    rc = sema_cplx_is(n->rhs);
+    pre = NULL;
+    a = sema_hold(lc ? sema_to_cplx(n->lhs, ct) : sema_conv_to(n->lhs, real), &pre);
+    b = sema_hold(rc ? sema_to_cplx(n->rhs, ct) : sema_conv_to(n->rhs, real), &pre);
+    if (n->op == TK_STAR && lc && rc)
+        return sema_seq(pre, sema_cplx_call(TK_STAR, sema_part(a, 0), sema_part(a, 1), sema_part(b, 0), sema_part(b, 1), ct));
+    if (n->op == TK_SLASH && rc)
+        return sema_seq(pre, sema_cplx_call(TK_SLASH, lc ? sema_part(a, 0) : sema_dup(a),
+                                            lc ? sema_part(a, 1) : sema_zero(real),
+                                            sema_part(b, 0), sema_part(b, 1), ct));
+    if (lc && rc) {
+        re = sema_rbin(n->op, sema_part(a, 0), sema_part(b, 0), real);
+        im = sema_rbin(n->op, sema_part(a, 1), sema_part(b, 1), real);
+    } else if (lc) {
+        re = sema_rbin(n->op, sema_part(a, 0), sema_dup(b), real);
+        im = (n->op == TK_STAR || n->op == TK_SLASH) ? sema_rbin(n->op, sema_part(a, 1), sema_dup(b), real)
+                                                     : sema_part(a, 1);
+    } else {
+        re = sema_rbin(n->op, sema_dup(a), sema_part(b, 0), real);
+        if (n->op == TK_STAR) im = sema_rbin(TK_STAR, sema_dup(a), sema_part(b, 1), real);
+        else if (n->op == TK_MINUS) im = sema_typed(nd_unary(TK_MINUS, sema_part(b, 1)), real);
+        else im = sema_part(b, 1);
+    }
+    return sema_seq(pre, sema_make(re, im, ct));
+}
+
+/* == and != with a complex operand: both parts equal (a real operand's
+ * imaginary part zero) */
+static Node *sema_cplx_eq(Node *n) {
+    Node *pre;
+    Node *a;
+    Node *b;
+    Node *re;
+    Node *im;
+    int ct;
+    int real;
+    int lc;
+    int rc;
+    ct = ct_usual(n->lhs->cty, n->rhs->cty);
+    real = ct_baseof(ct);
+    lc = sema_cplx_is(n->lhs);
+    rc = sema_cplx_is(n->rhs);
+    pre = NULL;
+    a = sema_hold(lc ? sema_to_cplx(n->lhs, ct) : sema_conv_to(n->lhs, real), &pre);
+    b = sema_hold(rc ? sema_to_cplx(n->rhs, ct) : sema_conv_to(n->rhs, real), &pre);
+    re = sema_rbin(n->op, lc ? sema_part(a, 0) : sema_dup(a), rc ? sema_part(b, 0) : sema_dup(b), real);
+    im = sema_rbin(n->op, lc ? sema_part(a, 1) : sema_zero(real), rc ? sema_part(b, 1) : sema_zero(real), real);
+    return sema_seq(pre, sema_rbin(n->op == TK_EQ ? TK_LAND : TK_LOR, re, im, real));
+}
+
+/* complex e as a truth value: e != 0 */
+static Node *sema_cplx_truth(Node *e) {
+    Node *n;
+    n = nd_binop(TK_NE, e, sema_zero(ct_baseof(ct_unqual(e->cty))));
+    n->cty = ct_basic[CT_INT];
+    return sema_cplx_eq(n);
+}
+
+/* a op= b with a complex operand: through a pointer to a, unless a is a
+ * variable, so a is evaluated once (6.5.16.2p3) */
+static Node *sema_cplx_compound(Node *n) {
+    Node *pre;
+    Node *lv;
+    Node *p;
+    Node *v;
+    int lt;
+    int ct;
+    pre = NULL;
+    lt = ct_unqual(n->lhs->cty);
+    if (n->lhs->kind == ND_VAR && !n->lhs->is_vol) {
+        lv = n->lhs;
+    } else {
+        p = sema_ctemp(ct_ptr(n->lhs->cty));
+        v = nd_unary(TK_AMP, n->lhs);
+        v = sema_typed(v, ct_ptr(n->lhs->cty));
+        pre = sema_set(p, v);
+        lv = sema_typed(nd_unary(TK_STAR, sema_dup(p)), n->lhs->cty);
+        lv->attr = AT_LV | AT_MOD;
+    }
+    v = nd_binop(n->op, sema_dup(lv), n->rhs);
+    ct = ct_usual(lt, n->rhs->cty);
+    v = sema_cplx_arith(v, ct);
+    v = sema_cplx_conv(v, lt);
+    v = sema_conv_to(v, lt);
+    return sema_seq(pre, sema_set(sema_dup(lv), v));
+}
+
+/* The node's complex rewrite, its operands done: 1 when it was a complex
+ * operation (the node typed, and in a function rewritten), else 0. */
+static int sema_cplx(Node *n) {
+    int k;
+    int ct;
+    int lc;
+    int rc;
+    int op;
+    int i;
+    int ft;
+    Node *a;
+    Node *h;
+    k = n->kind;
+    if (k == ND_CPART && n->lhs) {
+        if (sema_cplx_is(n->lhs)) {
+            ct = ct_baseof(ct_unqual(n->lhs->cty));
+            if (!sema_in_func) { n->cty = ct; n->ty = ct_mty(ct); return 1; }
+            a = n->lhs;
+            if (a->kind != ND_VAR && a->kind != ND_MEMBER && a->kind != ND_CTEMP &&
+                !(a->kind == ND_UNARY && a->op == TK_STAR)) {
+                h = NULL;
+                a = sema_hold(a, &h);
+                sema_become(n, sema_seq(h, sema_part(a, n->val)));
+                return 1;
+            }
+            h = nd_member(a, n->val ? ct_sizeof(ct) : 0, ct_mty(ct), 0, 0, 0, 0);
+            h->cty = ct;
+            h->attr = a->attr & AT_LV;
+            if (h->attr) h->attr = h->attr | AT_MOD;
+            sema_become(n, h);
+            return 1;
+        }
+        /* a real operand: itself, or a zero of its type after it */
+        ct = ct_unqual(n->lhs->cty);
+        if (!sema_in_func) { n->cty = ct; n->ty = n->lhs->ty; return 1; }
+        if (!n->val) sema_become(n, n->lhs);
+        else sema_become(n, sema_seq(n->lhs, sema_conv_to(sema_typed(nd_num(0), ct_basic[CT_INT]), ct)));
+        return 1;
+    }
+    if (k == ND_CPLX) {
+        ct = ct_complex(ct_real_of(ct_usual(n->lhs->cty, n->rhs->cty)));
+        if (!ct_is_arith(ct_unqual(n->lhs->cty)) || !ct_is_arith(ct_unqual(n->rhs->cty)))
+            sema_violation(n, "__builtin_complex requires real operands");
+        if (!sema_in_func) { n->cty = ct; n->ty = ct_mty(ct); return 1; }
+        sema_become(n, sema_make(sema_conv_to(n->lhs, ct_baseof(ct)), sema_conv_to(n->rhs, ct_baseof(ct)), ct));
+        return 1;
+    }
+    if (k == ND_BINOP && n->lhs && n->rhs) {
+        lc = sema_cplx_is(n->lhs);
+        rc = sema_cplx_is(n->rhs);
+        if (!lc && !rc) return 0;
+        op = n->op;
+        if (op == TK_LAND || op == TK_LOR) {
+            if (!sema_in_func) return 0;
+            if (lc) n->lhs = sema_cplx_truth(n->lhs);
+            if (rc) n->rhs = sema_cplx_truth(n->rhs);
+            return 0;
+        }
+        if (op != TK_PLUS && op != TK_MINUS && op != TK_STAR && op != TK_SLASH && op != TK_EQ && op != TK_NE)
+            return 0;   /* the constraints say what is wrong */
+        if ((!lc && !ct_is_arith(ct_unqual(n->lhs->cty))) || (!rc && !ct_is_arith(ct_unqual(n->rhs->cty))))
+            sema_violation(n, "invalid operands to a complex operation");
+        ct = ct_usual(n->lhs->cty, n->rhs->cty);
+        if (op == TK_EQ || op == TK_NE) {
+            if (!sema_in_func) { n->cty = ct_basic[CT_INT]; n->ty = TY_INT; return 1; }
+            sema_become(n, sema_cplx_eq(n));
+            return 1;
+        }
+        if (!sema_in_func) { n->cty = ct; n->ty = ct_mty(ct); return 1; }
+        sema_become(n, sema_cplx_arith(n, ct));
+        return 1;
+    }
+    if (k == ND_UNARY && sema_cplx_is(n->lhs)) {
+        if (n->op == TK_BANG) {
+            if (sema_in_func) n->lhs = sema_cplx_truth(n->lhs);
+            return 0;
+        }
+        if (n->op != TK_MINUS) return 0;
+        ct = ct_unqual(n->lhs->cty);
+        if (!sema_in_func) { n->cty = ct; n->ty = ct_mty(ct); return 1; }
+        a = NULL;
+        h = sema_hold(n->lhs, &a);
+        sema_become(n, sema_seq(a, sema_make(sema_typed(nd_unary(TK_MINUS, sema_part(h, 0)), ct_baseof(ct)),
+                                             sema_typed(nd_unary(TK_MINUS, sema_part(h, 1)), ct_baseof(ct)), ct)));
+        return 1;
+    }
+    if (k == ND_CAST && n->lhs && n->cty > 0 && (ct_is_complex(ct_unqual(n->cty)) || sema_cplx_is(n->lhs))) {
+        ct = ct_unqual(n->cty);
+        if (!sema_in_func) {
+            if (ct_is_complex(ct)) n->ty = ct_mty(ct);
+            return 1;
+        }
+        if (ct_is_complex(ct)) {
+            sema_become(n, sema_to_cplx(n->lhs, ct));
+            return 1;
+        }
+        if (ct_kindof(ct) == CT_BOOL) n->lhs = sema_cplx_truth(n->lhs);
+        else if (ct_kindof(ct) != CT_VOID) n->lhs = sema_real_part(n->lhs);
+        return 0;
+    }
+    if (!sema_in_func) return 0;
+    if (k == ND_ASSIGN && n->lhs && n->rhs && (sema_cplx_is(n->lhs) || sema_cplx_is(n->rhs))) {
+        if (!sema_is_bool(n->lhs->cty)) n->rhs = sema_cplx_conv(n->rhs, n->lhs->cty);
+        return 0;
+    }
+    if (k == ND_COMP_ASSIGN && n->lhs && n->rhs && (sema_cplx_is(n->lhs) || sema_cplx_is(n->rhs))) {
+        op = n->op;
+        if (op != TK_PLUS && op != TK_MINUS && op != TK_STAR && op != TK_SLASH) return 0;
+        if (!ct_is_arith(ct_unqual(n->lhs->cty)) && !sema_cplx_is(n->lhs)) return 0;
+        sema_become(n, sema_cplx_compound(n));
+        return 1;
+    }
+    if (k == ND_TERNARY && n->lhs && n->rhs) {
+        if (sema_cplx_is(n->cond)) n->cond = sema_cplx_truth(n->cond);
+        if (sema_cplx_is(n->lhs) || sema_cplx_is(n->rhs)) {
+            if ((ct_is_arith(ct_unqual(n->lhs->cty)) || sema_cplx_is(n->lhs)) &&
+                (ct_is_arith(ct_unqual(n->rhs->cty)) || sema_cplx_is(n->rhs))) {
+                ct = ct_usual(n->lhs->cty, n->rhs->cty);
+                n->lhs = sema_to_cplx(n->lhs, ct);
+                n->rhs = sema_to_cplx(n->rhs, ct);
+            }
+        }
+        return 0;
+    }
+    if ((k == ND_CALL || k == ND_CALL_PTR) && n->args) {
+        ft = sema_callee_cty(n);
+        if (ft <= 0 || ct_nparms(ft) <= 0) return 0;
+        i = 0;
+        a = n->args;
+        while (a && i < ct_nparms(ft)) {
+            if (sema_cplx_is(a) || ct_is_complex(ct_unqual(ct_parmty(ft, i))))
+                sema_become(a, sema_cplx_conv(sema_dup(a), ct_parmty(ft, i)));
+            i = i + 1;
+            a = a->next;
+        }
+        return 0;
+    }
+    return 0;
 }
 
 static void sema_call_by_cty(Node *n);   /* below: wants sema_cty_of */
@@ -160,6 +634,9 @@ static void sema_expr_mty(Node *n) {
         sema_expr(a);
         a = a->next;
     }
+
+    /* A complex operation is rewritten into real ones (sema_cplx) */
+    if (sema_cplx(n)) return;
 
     /* Its operands typed, the node's constraints -- before the
      * conversions below hide the operands' own types in casts. */
@@ -1208,6 +1685,15 @@ static void sema_call_check(Node *n, int ft) {
 }
 
 /* Float bits fb widened to a double in *out, on the bits: exact. */
+/* -*a, as a flip of the sign bit: 0.0 - a (and -a, which stage07 compiles
+ * as that) makes -(0.0) +0 where it is -0 (6.5.3.3p3, IEC 60559) */
+static void sema_dneg(double *a) {
+    int w[2];
+    memcpy(w, a, 8);
+    w[1] = w[1] ^ (int)0x80000000;
+    memcpy(a, w, 8);
+}
+
 static void sema_float_bits(int fb, double *out) {
     int e;
     int w[2];
@@ -1215,7 +1701,7 @@ static void sema_float_bits(int fb, double *out) {
     if (e == 0) {
         /* zero or subnormal: the 23-bit fraction times 2^-149, exact */
         *out = (double)(fb & 0x7FFFFF) * 1.401298464324817070923729583289916e-45;
-        if (fb < 0) *out = 0.0 - *out;
+        if (fb < 0) sema_dneg(out);     /* -0.0f stays -0 */
         return;
     }
     w[1] = (fb & (1 << 31)) | ((fb >> 3) & 0xFFFFF);
@@ -1274,7 +1760,7 @@ static int sema_fp_const(Node *n, double *out) {
         if (!sema_fp_const(n->lhs, &a)) return 0;
     } else if (n->kind == ND_UNARY && n->op == TK_MINUS) {
         if (!sema_fp_const(n->lhs, &a)) return 0;
-        a = 0.0 - a;
+        sema_dneg(&a);
     } else if (n->kind == ND_BINOP && (n->op == TK_PLUS || n->op == TK_MINUS ||
                                        n->op == TK_STAR || n->op == TK_SLASH)) {
         if (!sema_fp_const(n->lhs, &a) || !sema_fp_const(n->rhs, &b)) return 0;
@@ -1293,6 +1779,50 @@ static int sema_fp_const(Node *n, double *out) {
     if (n->cty <= 0 || !ct_is_arith(n->cty) || ct_is_integer(n->cty)) return 0;
     if (ct_kindof(ct_unqual(n->cty)) == CT_FLOAT) sema_round_float(&a);
     *out = a;
+    return 1;
+}
+
+/* A constant complex value, for a static initializer: its parts, or 0
+ * when it is not one this can read -- a real constant (its imaginary part
+ * zero), __builtin_complex of two, a conversion of one, unary minus, and
+ * + - * of two (/ by a real one). */
+static int sema_cplx_const(Node *n, double *re, double *im) {
+    double a;
+    double b;
+    double c;
+    double d;
+    if (!n) return 0;
+    if (!sema_cplx_is(n)) {
+        if (!sema_fp_const(n, re)) return 0;
+        *im = 0.0;
+        return 1;
+    }
+    if (n->kind == ND_CPLX) {
+        if (!sema_fp_const(n->lhs, re) || !sema_fp_const(n->rhs, im)) return 0;
+    } else if (n->kind == ND_CAST) {
+        if (!sema_cplx_const(n->lhs, re, im)) return 0;
+    } else if (n->kind == ND_UNARY && n->op == TK_MINUS) {
+        if (!sema_cplx_const(n->lhs, &a, &b)) return 0;
+        sema_dneg(&a);  /* -I's real part is -0 */
+        sema_dneg(&b);
+        *re = a;
+        *im = b;
+    } else if (n->kind == ND_BINOP && (n->op == TK_PLUS || n->op == TK_MINUS || n->op == TK_STAR ||
+                                       (n->op == TK_SLASH && !sema_cplx_is(n->rhs)))) {
+        if (!sema_cplx_const(n->lhs, &a, &b) || !sema_cplx_const(n->rhs, &c, &d)) return 0;
+        if (n->op == TK_PLUS) { *re = a + c; *im = b + d; }
+        else if (n->op == TK_MINUS) { *re = a - c; *im = b - d; }
+        else if (n->op == TK_SLASH) { *re = a / c; *im = b / c; }
+        else if (!sema_cplx_is(n->lhs)) { *re = a * c; *im = a * d; }
+        else if (!sema_cplx_is(n->rhs)) { *re = a * c; *im = b * c; }
+        else { *re = a * c - b * d; *im = a * d + b * c; }
+    } else {
+        return 0;
+    }
+    if (ct_kindof(ct_baseof(ct_unqual(n->cty))) == CT_FLOAT) {
+        sema_round_float(re);
+        sema_round_float(im);
+    }
     return 1;
 }
 
@@ -1338,6 +1868,10 @@ static int sema_switch_depth;   /* switch statements around the one walked */
 /* A controlling expression: if, while, do and for need a scalar
  * (6.8.4.1p1, 6.8.5p2); if (v) on a structure was taken. */
 static void sema_scalar_cond(Node *c) {
+    if (c && sema_in_func && sema_cplx_is(c)) {
+        sema_become(c, sema_cplx_truth(sema_dup(c)));   /* z != 0 */
+        return;
+    }
     if (c && !ct_is_scalar(sema_vty(c)))
         sema_violation(c, "statement requires expression of scalar type");
     sema_bool_ctx(c);
@@ -1430,6 +1964,7 @@ static void sema_stmt(Node *n) {
 
     if (n->kind == ND_RETURN) {
         sema_expr(n->lhs);
+        if (n->lhs && sema_ret_cty > 0) n->lhs = sema_cplx_conv(n->lhs, sema_ret_cty);
         sema_return_check(n);
         if (n->lhs && sema_is_bool(sema_ret_cty)) n->lhs = sema_to_bool(n->lhs);
         /* The value's marshalling class must be the function's: a 32-bit
@@ -1517,7 +2052,9 @@ static void sema(Node *prog) {
             sema_ret_ty = fn->ty;
             sema_ret_cty = find_func_cty(fn->name);
             if (sema_ret_cty > 0) sema_ret_cty = ct_baseof(sema_ret_cty);
+            sema_in_func = 1;
             sema_stmt(fn->body);
+            sema_in_func = 0;
         }
         fn = fn->next;
     }

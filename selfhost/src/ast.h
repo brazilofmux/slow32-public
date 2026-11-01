@@ -39,6 +39,9 @@ static int   st_nfields[ST_MAX_STRUCTS];
 static int   st_first[ST_MAX_STRUCTS];
 static int   st_size[ST_MAX_STRUCTS];
 static int   st_is_union[ST_MAX_STRUCTS]; /* 1 if union, 0 if struct */
+/* a complex type's machine form (ctype.h CT_COMPLEX): the CT_ kind of its
+ * parts, CT_FLOAT or CT_DOUBLE; 0 for every structure a program declares */
+static int   st_cplx[ST_MAX_STRUCTS];
 static int   st_count;
 
 static char *stm_name[ST_MAX_MEMBERS];
@@ -220,6 +223,16 @@ static int ty_is_unsigned(int ty) {
  * lhs  = the final expression (its value is the value of the whole construct);
  * ty   = lhs->ty. */
 #define ND_STMT_EXPR 37  /* GNU statement expression ({ stmts; expr; }) */
+/* Complex arithmetic (sema.h): __builtin_complex(re, im), lhs and rhs,
+ * which sema rewrites in a function and a static initializer reads; and
+ * a temporary of complex type the rewritten expressions keep values in,
+ * val its number in the function, which the lowering gives a stack slot
+ * (hir_lower.h hl_ctemp_addr). */
+#define ND_CPLX     38
+#define ND_CTEMP    39
+/* __real__ or __imag__ (val 0 or 1) of lhs, an operand whose type the
+ * parser did not know yet: sema makes it a member or a real value */
+#define ND_CPART    40
 
 /* Inline asm templates recognized by the AArch64 / x86-64 backends. */
 #define ASM_GENERIC             0

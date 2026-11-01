@@ -2074,14 +2074,15 @@ static void pp_install_predefs(void) {
     pp_add_cmdline_def("__STDC_VERSION__", "201112L");
     pp_install_date_time();
     /* complex types and variable length arrays are optional in C11:
-     * complex types are not implemented, and VLAs only for SLOW-32 (the
-     * cross targets' back ends do not move sp) -- say so, as 6.10.8.3
+     * both are SLOW-32's only -- the cross targets' back ends do not move
+     * sp, and their libraries have no <complex.h> -- say so, as 6.10.8.3
      * has an implementation do */
-    pp_add("__STDC_NO_COMPLEX__", 1);
 #ifdef S12CC_TARGET_X64
+    pp_add("__STDC_NO_COMPLEX__", 1);
     pp_add("__STDC_NO_VLA__", 1);
 #endif
 #ifdef S12CC_TARGET_A64
+    pp_add("__STDC_NO_COMPLEX__", 1);
     pp_add("__STDC_NO_VLA__", 1);
 #endif
     pp_add("__S12CC__", 1);

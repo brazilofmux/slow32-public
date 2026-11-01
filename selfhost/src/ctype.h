@@ -40,7 +40,10 @@
 #define CT_STRUCT  23    /* count: the st_* struct index */
 #define CT_UNION   24    /* count: the st_* struct index */
 #define CT_ATOMIC  25    /* base: the type, _Atomic(T) */
-#define CT_NKINDS  26
+/* CT_COMPLEX: base, the real type (float, double, long double); count,
+ * the st_* structure that is its machine form */
+#define CT_COMPLEX 26
+#define CT_NKINDS  27
 
 /* --- Qualifiers: the handle's low bits --- */
 #define CQ_CONST    1
@@ -161,6 +164,19 @@ static int ct_atomic(int t)           { return ct_intern(CT_ATOMIC, t, 0, 0, 0, 
 static int ct_struct(int si)          { return ct_intern(st_is_union[si] ? CT_UNION : CT_STRUCT, 0, si, 0, 0, 0); }
 static int ct_enum(int tag)           { return ct_intern(CT_ENUM, 0, tag, 0, 0, 0); }
 
+/* T _Complex (6.2.5p11): stored as an array of two T, real part first
+ * (p13), which to the machine is a structure of two members -- one made
+ * at the start of each translation unit for float and one for double and
+ * long double (parser.h ps_cplx_struct), so a complex value is copied,
+ * passed and returned as that structure is, which is clang's ABI too.
+ * real is the unqualified real floating type. */
+static int ps_cplx_struct(int kind);
+static int ct_complex(int real) {
+    int k;
+    k = ct_kindof(real) == CT_FLOAT ? CT_FLOAT : CT_DOUBLE;
+    return ct_intern(CT_COMPLEX, real & ~CQ_MASK, ps_cplx_struct(k), 0, 0, 0);
+}
+
 /* Qualifiers on an array type qualify its element (6.7.3p9). */
 static int ct_qualify(int t, int q) {
     if (ct_kindof(t) == CT_ARRAY)
@@ -212,10 +228,13 @@ static int ct_is_floating(int t) {
 }
 static int ct_is_arith(int t)  { return ct_is_integer(t) || ct_is_floating(t); }
 static int ct_is_ptr(int t)    { return ct_kindof(t) == CT_PTR; }
-static int ct_is_scalar(int t) { return ct_is_arith(t) || ct_is_ptr(t); }
+static int ct_is_scalar(int t) { return ct_is_arith(t) || ct_is_ptr(t) || ct_kindof(t) == CT_COMPLEX; }
 static int ct_is_array(int t)  { return ct_kindof(t) == CT_ARRAY; }
 static int ct_is_func(int t)   { return ct_kindof(t) == CT_FUNC; }
 static int ct_is_record(int t) { return ct_kindof(t) == CT_STRUCT || ct_kindof(t) == CT_UNION; }
+static int ct_is_complex(int t) { return t > 0 && ct_kindof(t) == CT_COMPLEX; }
+/* the real type a complex type is made of; any other type, unqualified */
+static int ct_real_of(int t) { return ct_is_complex(t) ? ct_baseof(t) : (t & ~CQ_MASK); }
 
 /* --- To the machine type --- */
 
@@ -243,7 +262,7 @@ static int ct_mty(int t) {
     if (k == CT_UI128) return TY_I128 | TY_UNSIGNED;
     if (k == CT_FLOAT) return TY_FLOAT;
     if (k == CT_DOUBLE || k == CT_LDOUBLE) return TY_DOUBLE;
-    if (k == CT_STRUCT || k == CT_UNION) return TY_STRUCT_BASE + ct_countof(t);
+    if (k == CT_STRUCT || k == CT_UNION || k == CT_COMPLEX) return TY_STRUCT_BASE + ct_countof(t);
     if (k == CT_ATOMIC) return ct_mty(ct_baseof(t));
     if (k == CT_ARRAY) {
         /* the machine flattens: an array of arrays is its innermost
@@ -274,7 +293,9 @@ static int ct_from_mty(int ty, int hint) {
     base = ty & TY_BASE_MASK;
     depth = (ty & TY_PTR_MASK) / TY_PTR;
     uns = (ty & TY_UNSIGNED) != 0;
-    if (base >= TY_STRUCT_BASE) t = ct_struct(base - TY_STRUCT_BASE);
+    if (base >= TY_STRUCT_BASE && st_cplx[base - TY_STRUCT_BASE])
+        t = ct_complex(ct_basic[st_cplx[base - TY_STRUCT_BASE]]);
+    else if (base >= TY_STRUCT_BASE) t = ct_struct(base - TY_STRUCT_BASE);
     else if (base == TY_VOID) t = ct_basic[CT_VOID];
     else if (base == TY_CHAR) {
         if (uns) t = ct_basic[CT_UCHAR];
@@ -355,10 +376,14 @@ static int ct_promote(int t) {
     return t;
 }
 
-/* The usual arithmetic conversions (6.3.1.8p1): the common real type. */
+/* The usual arithmetic conversions (6.3.1.8p1): the common real type --
+ * and complex when either operand is (the type domain), the real type
+ * the corresponding real types' common one. */
 static int ct_usual(int a, int b) {
     int ka;
     int kb;
+    if (ct_is_complex(ct_unqual(a)) || ct_is_complex(ct_unqual(b)))
+        return ct_complex(ct_usual(ct_real_of(ct_unqual(a)), ct_real_of(ct_unqual(b))));
     a = ct_promote(a);
     b = ct_promote(b);
     ka = ct_kindof(a);
@@ -438,6 +463,7 @@ static int ct_sizeof(int t) {
     }
     if (k == CT_PTR) return ty_ptr_size;
     if (k == CT_STRUCT || k == CT_UNION) return ty_size(TY_STRUCT_BASE + ct_countof(t));
+    if (k == CT_COMPLEX) return 2 * ct_sizeof(ct_baseof(t));
     if (k == CT_VOID || k == CT_FUNC) return 1;   /* a GNU extension; a constraint violation in C */
     if (ct_is_integer(t)) return k == CT_BOOL ? 1 : ct_int_bytes(t);
     if (k == CT_FLOAT) return 4;

@@ -858,6 +858,25 @@ compilers share the front end but not this back end: there
 optimizer needs no list of them: CSE takes only an allow-list of kinds,
 and DCE keeps every kind with no value.
 
+`_Complex` (2026-11-01).  `CT_COMPLEX` is a kind whose base is the
+real type and whose machine form is a structure of two parts, made for
+float and for double (and long double) when the unit begins
+(`ps_cplx_struct`; `st_cplx` marks them), so every place a structure is
+copied, passed, returned, put in a union or brace-initialized takes a
+complex value too, and clang's ABI is the structure's.  The arithmetic
+is sema's (`sema_cplx`, in the function walk): each operation becomes
+real arithmetic on the parts, read as members of numbered temporaries
+(`ND_CTEMP`, which the lowering gives slots) -- the code generators and
+HIR are untouched.  The rules are clang's, so the two agree to the bit:
+a real operand stays real, `*` and `/` of two complex numbers call
+`__muldc3`/`__divdc3`, `r / z` calls `__divdc3(r, 0, ...)`, a
+conversion to complex makes the parts, from complex takes the real
+part, and to `_Bool` (or in a condition) is `z != 0`.  `__builtin_complex`
+(`ND_CPLX`), `__real__` and `__imag__` (members, or `ND_CPART` until sema
+knows the operand's type) are what `<complex.h>`'s macros are written
+with; a static initializer folds `+ - *` of constants
+(`sema_cplx_const`).  The cross compilers keep `__STDC_NO_COMPLEX__`.
+
 ## Constraints on the work
 
 - stage07 builds stage08: the new code keeps stage07's dialect (ints

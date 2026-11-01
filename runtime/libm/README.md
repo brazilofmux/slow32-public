@@ -3,8 +3,7 @@
 Both C libraries -- the clang runtime (`runtime/`, `runtime/Makefile`) and
 the self-hosted one (`selfhost/stage08/build-s12cc.sh`) -- build their
 `<math.h>` from this directory: musl's libm, taken verbatim.  `<complex.h>`'s
-functions are musl's too (`musl/src/complex`); the clang runtime builds
-them, and the self-hosted library will once stage08 compiles `_Complex`.
+functions are musl's too (`musl/src/complex`), in both libraries.
 
 | | |
 |---|---|
@@ -34,8 +33,8 @@ known by its base name, and libm's `errno.c` would otherwise displace the
 runtime's.
 
 `<math.h>`, `<float.h>`, `<fenv.h>` and `<tgmath.h>` are one file each,
-the same in `runtime/include` and `selfhost/stage08/include`, and so will
-`<complex.h>` be.  The prototypes in `<math.h>` and `<complex.h>` are
+the same in `runtime/include` and `selfhost/stage08/include`, and so is
+`<complex.h>`.  The prototypes in `<math.h>` and `<complex.h>` are
 musl's.  The complex multiplication and division the compilers call
 (`__muldc3` and the rest) are `runtime/complex_rt.c`, not musl's (musl
 leaves them to the compiler's support library).

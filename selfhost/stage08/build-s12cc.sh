@@ -270,6 +270,13 @@ while read -r f; do
     compile_gen1 "$WORKDIR/m_${b}.c" "$WORKDIR/g1_m_${b}.s" "$WORKDIR/g1_m_${b}.cc.log" $LIBM_FLAGS
     assemble_gen1 "$WORKDIR/g1_m_${b}.s" "$LIBC_OUT_DIR/m_${b}.s32o" "$WORKDIR/g1_m_${b}.as.log"
 done < "$LIBM_DIR/sources.txt"
+# <complex.h>'s functions, musl's too (mc_<file>, as the runtime names them)
+while read -r f; do
+    b="${f%.c}"
+    printf '#include "compat.h"\n#include "musl/src/complex/%s"\n' "$f" > "$WORKDIR/mc_${b}.c"
+    compile_gen1 "$WORKDIR/mc_${b}.c" "$WORKDIR/g1_mc_${b}.s" "$WORKDIR/g1_mc_${b}.cc.log" $LIBM_FLAGS
+    assemble_gen1 "$WORKDIR/g1_mc_${b}.s" "$LIBC_OUT_DIR/mc_${b}.s32o" "$WORKDIR/g1_mc_${b}.as.log"
+done < "$LIBM_DIR/complex_sources.txt"
 for name in errno legacy; do
     compile_gen1 "$LIBM_DIR/${name}.c" "$WORKDIR/g1_m_${name}.s" "$WORKDIR/g1_m_${name}.cc.log" "-I$SCRIPT_DIR/include"
     assemble_gen1 "$WORKDIR/g1_m_${name}.s" "$LIBC_OUT_DIR/m_${name}.s32o" "$WORKDIR/g1_m_${name}.as.log"
@@ -279,7 +286,7 @@ done
 # "POSIX", "C.UTF-8", the locale objects, nl_langinfo), with
 # locale_none.c standing in for locales.s32o (runtime/locale_impl.h)
 rm -f "$LIBC_OUT_DIR/locale_c.s32o"
-for name in assert inttypes quick_exit timespec_get wchar wctype wcs wstdio locale locale_state locale_none; do
+for name in assert inttypes quick_exit timespec_get wchar wctype wcs wstdio locale locale_state locale_none complex_rt; do
     compile_gen1 "$RUNTIME_DIR/${name}.c" "$WORKDIR/g1_${name}.s" "$WORKDIR/g1_${name}.cc.log" "-I$SCRIPT_DIR/include"
     assemble_gen1 "$WORKDIR/g1_${name}.s" "$LIBC_OUT_DIR/${name}.s32o" "$WORKDIR/g1_${name}.as.log"
 done

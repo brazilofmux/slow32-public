@@ -13,9 +13,10 @@ LIBC_SRCS = $(wildcard libc/*.c) \
             $(addprefix ../../runtime/,dtoa.c printf_enhanced.c convert.c sscanf.c convert_extra.c \
                 strerror.c getopt.c time_std.c setjmp.s fenv.c math_cordic.c strtof.c assert.c inttypes.c quick_exit.c timespec_get.c \
                 wchar.c wctype.c wcs.c wstdio.c utf/wctype_tables.h \
-                locale.c locale_state.c locale_none.c locale_impl.h locales.c locales_data.h) \
+                locale.c locale_state.c locale_none.c locale_impl.h locales.c locales_data.h complex_rt.c) \
             $(wildcard ../../runtime/libm/*.c ../../runtime/libm/*.h ../../runtime/libm/sources.txt \
-                ../../runtime/libm/include/*.h ../../runtime/libm/musl/src/math/*) \
+                ../../runtime/libm/include/*.h ../../runtime/libm/musl/src/math/* \
+                ../../runtime/libm/complex_sources.txt ../../runtime/libm/musl/src/complex/*) \
             $(wildcard include/*.h include/sys/*.h)
 RUNTIME_SRCS = crt0.s mmio_no_start.s
 TOOL_SRCS = tools/s32-as.c tools/s32_formats_min.h tools/s32-ar.c tools/s32ar_min.h tools/s32-ld.c tools/s32util_min.h tools/slow32dump.c tools/slow32dis.c

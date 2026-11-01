@@ -343,7 +343,7 @@
 6.7.10-static-assert-nonconst DIAG
 6.7.2-bad-combo DIAG
 6.7.2-bool-object PASS
-6.7.2-complex OPTIONAL
+6.7.2-complex PASS
 6.7.2-no-type-specifier DIAG
 6.7.2-specifier-order PASS
 6.7.2-type-specifier-combos PASS

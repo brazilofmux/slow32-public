@@ -12,7 +12,8 @@
 # struct into its own frame and passes the copy's address in a stack
 # slot that reserves the struct's full rounded size — never an argument
 # register — with stack slots laid out in argument order; struct RETURN
-# uses the shared hidden-pointer-in-r3 sret convention).
+# uses the shared hidden-pointer-in-r3 sret convention), and _Complex
+# (a structure of its parts to both, closed 2026-11-01).
 #
 # Link recipe: the s12cc side needs selfhost/stage08/builtins64.s (__muldi3;
 # clang inlines MUL via UMUL_LOHI) and builtins_fp64.s (__fp64_mul etc.;
@@ -57,6 +58,20 @@ int vtri(int n, ...) {
     after = __builtin_va_arg(ap, int);
     __builtin_va_end(ap);
     return n * 1000 + t.a * 100 + t.b * 10 + t.c + after;
+}
+/* _Complex: a structure of its two parts to both compilers -- clang
+ * passes, returns and varargs it as one; the product here is
+ * runtime/complex_rt.c's __muldc3 */
+double _Complex cmulc(double _Complex a, double _Complex b) { return a * b + 1.0; }
+float _Complex cfneg(float _Complex z) { return -z; }
+extern double _Complex cjoin(double r, double i);
+double drive_cjoin(void) { double _Complex z = cjoin(1.5, -2.5); return __real__ z * 10 + __imag__ z; }
+double vcsum(int n, ...) {
+    va_list ap; double _Complex acc = 0; int i;
+    __builtin_va_start(ap, n);
+    for (i = 0; i < n; i++) acc += __builtin_va_arg(ap, double _Complex);
+    __builtin_va_end(ap);
+    return __real__ acc * 100 + __imag__ acc;
 }
 extern int cvtri(int n, ...);
 int drive_vtri(void) { struct Tri t; t.a = 7; t.b = 8; t.c = 9; return cvtri(1, t, 42); }
@@ -204,6 +219,11 @@ struct Big mkbigd(double d, int k) { struct Big b; int i; for (i = 0; i < 6; i++
 extern int drive_mkbigd(void);
 int cmut(struct Pt p) { p.x = p.x + 100; return p.x + p.y; }
 int cb(int x) { return x * 10; }
+extern double _Complex cmulc(double _Complex a, double _Complex b);
+extern float _Complex cfneg(float _Complex z);
+extern double drive_cjoin(void);
+extern double vcsum(int n, ...);
+double _Complex cjoin(double r, double i) { return __builtin_complex(r, i); }
 int main(void) {
     int fail = 0;
     if (add3(1,2,3) != 6) { fail = 1; printf("GATE add3 FAIL\n"); }
@@ -236,6 +256,14 @@ int main(void) {
     if (sizeof(struct Bits) != 16 || bitslayout(&bt) != 0 || bt.c != 'b' || bt.a != 2 ||
         bt.f != 1 || bt.h != 511 || bt.e != 'e' || bt.w != 1 || bt.s != 7) {
         fail = 1; printf("GATE bit-field-layout FAIL\n");
+    }
+    double _Complex cm = cmulc(__builtin_complex(1.0, 2.0), __builtin_complex(3.0, -1.0));
+    if (__real__ cm != 6.0 || __imag__ cm != 5.0) { fail = 1; printf("GATE complex-arg-ret FAIL\n"); }
+    float _Complex cf = cfneg(__builtin_complex(1.0f, -2.0f));
+    if (__real__ cf != -1.0f || __imag__ cf != 2.0f) { fail = 1; printf("GATE complex-float FAIL\n"); }
+    if (drive_cjoin() != 12.5) { fail = 1; printf("GATE complex-ret stage08->clang FAIL\n"); }
+    if (vcsum(2, __builtin_complex(1.0, 2.0), __builtin_complex(3.0, 4.0)) != 406.0) {
+        fail = 1; printf("GATE complex-varargs FAIL\n");
     }
     if (!fail) printf("INTEROP OK\n");
     return fail;

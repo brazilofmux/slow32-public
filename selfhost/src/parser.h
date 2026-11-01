@@ -96,6 +96,12 @@ static void skip_balanced_parens(void) {
     }
 }
 
+/* _Complex, or GNU's __complex__, as a type specifier (6.7.2) */
+static int ps_is_cplx_word(void) {
+    return lex_tok == TK_IDENT && lex_str[0] == 95 &&
+           (strcmp(lex_str, "_Complex") == 0 || strcmp(lex_str, "__complex__") == 0);
+}
+
 static int gnu_float_ident_ty(void) {
     if (lex_tok != TK_IDENT) return -1;
     if (strcmp(lex_str, "_Float32") == 0) return TY_FLOAT;
@@ -803,10 +809,11 @@ static void next(void) {
                 ps_pragma_operator();
                 continue;
             }
-            /* keywords (6.4.1) of the complex types, which are not
-             * implemented: as names they were taken as identifiers */
-            if (lex_str[0] == 95 && (strcmp(lex_str, "_Imaginary") == 0 || strcmp(lex_str, "_Complex") == 0))
-                p_error("_Complex and _Imaginary are not supported");
+            /* _Imaginary (6.4.1), which is not implemented: as a name it
+             * was taken as an identifier.  (Annex G's imaginary types are
+             * optional, and __STDC_IEC_559_COMPLEX__ is not defined.) */
+            if (lex_str[0] == 95 && strcmp(lex_str, "_Imaginary") == 0)
+                p_error("_Imaginary is not supported");
             di = pp_find(lex_str);
             if (di >= 0 && pp_disabled(di, (int)(lex_rp - lex_src) - lex_slen)) di = -1;
             if (di >= 0) {
@@ -991,6 +998,7 @@ static int is_type(void) {
     if (lex_tok == TK_CONST) return 1;
     if (lex_tok == TK_VOLATILE) return 1;
     if (gnu_float_ident_ty() >= 0) return 1;
+    if (ps_is_cplx_word()) return 1;
     if (is_c11_atomic_ident()) return 1;
     if (is_gnu_extension_ident()) return 1;
     if (is_gnu_qual_ident()) return 1;
@@ -1391,6 +1399,146 @@ static int add_struct(char *name) {
     st_depth[idx] = ps_block_depth;
     st_count = st_count + 1;
     return idx;
+}
+
+/* --- _Complex (6.2.5p11-13) ---
+ *
+ * A complex type's machine form is a structure of its two parts, real
+ * then imaginary (ctype.h ct_complex): one for float, one for double and
+ * long double, made when the translation unit begins, at file scope and
+ * before any the program declares (a block's structures are hidden by
+ * walking back to the first that is not the block's).  The members'
+ * names are GNU's operators', which no program can spell as a member. */
+static int ps_cplx_sif;     /* the float structure's index, plus one */
+static int ps_cplx_sid;     /* the double one's */
+
+static void ps_cplx_member(int si, char *nm, int ty, int cty, int off) {
+    stm_name[stm_count] = strdup(nm);
+    stm_fpbase[stm_count] = -1;
+    stm_fpn[stm_count] = 0;
+    stm_isfp[stm_count] = 0;
+    stm_type[stm_count] = ty;
+    stm_vol[stm_count] = 0;
+    stm_off[stm_count] = off;
+    stm_is_arr[stm_count] = 0;
+    stm_arr_cols[stm_count] = 0;
+    stm_arr_sub[stm_count] = 0;
+    stm_arr_size[stm_count] = 0;
+    stm_owner[stm_count] = si;
+    stm_synth[stm_count] = 0;
+    stm_cty[stm_count] = cty;
+    stm_count = stm_count + 1;
+    st_nfields[si] = st_nfields[si] + 1;
+}
+
+static int ps_cplx_struct(int kind) {
+    int si;
+    int ty;
+    int esz;
+    if (kind == CT_FLOAT && ps_cplx_sif > 0) return ps_cplx_sif - 1;
+    if (kind != CT_FLOAT && ps_cplx_sid > 0) return ps_cplx_sid - 1;
+    if (stm_count + 2 > ST_MAX_MEMBERS) p_error("too many struct members");
+    ty = kind == CT_FLOAT ? TY_FLOAT : TY_DOUBLE;
+    esz = kind == CT_FLOAT ? 4 : 8;
+    si = add_struct(kind == CT_FLOAT ? "complex float" : "complex double");
+    st_depth[si] = 0;
+    ps_cplx_member(si, "__real__", ty, ct_basic[kind], 0);
+    ps_cplx_member(si, "__imag__", ty, ct_basic[kind], esz);
+    st_size[si] = 2 * esz;
+    st_align[si] = ty_align(ty);
+    st_cplx[si] = kind;
+    if (kind == CT_FLOAT) ps_cplx_sif = si + 1;
+    else ps_cplx_sid = si + 1;
+    return si;
+}
+
+/* Is machine type ty a complex type's structure? */
+static int ty_is_cplx(int ty) {
+    return ty_is_struct(ty) && st_cplx[ty_struct_idx(ty)] != 0;
+}
+
+/* parse_type, the base type read: the _Complex words after it, and the
+ * qualifiers among them (double _Complex const), and the complex type of
+ * that real type -- float, double, long double, or a typedef of one.
+ * *td_cty becomes the complex C type; the machine type is returned. */
+static int ps_type_cplx;    /* a _Complex was read before the base type */
+static int ps_cplx_finish(int ty, int hint, int *td_cty) {
+    int kind;
+    int c;
+    while (1) {
+        if (ps_is_cplx_word()) { ps_type_cplx = 1; next(); continue; }
+        if (ps_type_cplx && (lex_tok == TK_CONST || lex_tok == TK_VOLATILE || is_gnu_qual_ident())) {
+            if (ps_tok_volatile()) ps_type_volb = 1;
+            if (lex_tok == TK_CONST) ps_type_constb = 1;
+            next();
+            continue;
+        }
+        break;
+    }
+    if (!ps_type_cplx) return ty;
+    ps_type_cplx = 0;
+    if (*td_cty >= 0) {
+        if (!ct_is_floating(*td_cty)) p_error("_Complex requires a real floating type");
+        kind = ct_kindof(*td_cty);
+    } else if (ty == TY_FLOAT) {
+        kind = CT_FLOAT;
+    } else if (ty == TY_DOUBLE) {
+        kind = hint == CT_LDOUBLE ? CT_LDOUBLE : CT_DOUBLE;
+    } else {
+        p_error("_Complex requires float, double or long double");
+        return ty;
+    }
+    c = ct_complex(ct_basic[kind]);
+    *td_cty = c;
+    return ct_mty(c);
+}
+
+/* __builtin_complex(re, im): the complex number of those parts (the GNU
+ * and clang builtin <complex.h>'s CMPLX and _Complex_I are written with).
+ * sema types it and rewrites it; this reads it.  nm is the name read. */
+static Node *ps_cplx_builtin(char *nm) {
+    Node *n;
+    if (strcmp(nm, "__builtin_complex") != 0) return NULL;
+    expect(TK_LPAREN);
+    n = nd_new(ND_CPLX);
+    n->lhs = parse_assign();
+    expect(TK_COMMA);
+    n->rhs = parse_assign();
+    expect(TK_RPAREN);
+    n->cty = ct_complex(ct_basic[ty_is_float(n->lhs->ty) && ty_is_float(n->rhs->ty) ? CT_FLOAT : CT_DOUBLE]);
+    n->ty = ct_mty(n->cty);
+    return n;
+}
+
+/* GNU's __real__ and __imag__, at the cursor: the parts of a complex
+ * operand -- members of its structure, so an lvalue's parts are lvalues
+ * -- and of a real one, the operand itself and a zero. */
+static Node *parse_unary(void);
+static int ps_is_part_word(void) {
+    return lex_tok == TK_IDENT && lex_str[0] == 95 &&
+           (strcmp(lex_str, "__real__") == 0 || strcmp(lex_str, "__imag__") == 0);
+}
+
+static Node *ps_cplx_part(void) {
+    int im;
+    int kind;
+    Node *e;
+    Node *n;
+    im = strcmp(lex_str, "__imag__") == 0;
+    next();
+    e = parse_unary();
+    if (!ty_is_cplx(e->ty)) {
+        /* an expression's type is sema's to know: it decides */
+        n = nd_new(ND_CPART);
+        n->lhs = e;
+        n->val = im;
+        n->ty = e->ty;
+        return n;
+    }
+    kind = st_cplx[ty_struct_idx(e->ty)];
+    n = nd_member(e, im ? (kind == CT_FLOAT ? 4 : 8) : 0, kind == CT_FLOAT ? TY_FLOAT : TY_DOUBLE, 0, 0, 0, 0);
+    n->cty = e->cty > 0 && ct_is_complex(ct_unqual(e->cty)) ? ct_baseof(ct_unqual(e->cty)) : ct_basic[kind];
+    return n;
 }
 
 static void require_complete_type(int ty, char *msg) {
@@ -1808,8 +1956,10 @@ static int parse_type(void) {
     ckhint = 0;
     td_cty = -1;
     saw_signed = 0;
+    ps_type_cplx = 0;
     /* Skip const/volatile/signed/restrict qualifiers */
     while (1) {
+        if (ps_is_cplx_word()) { ps_type_cplx = 1; next(); continue; }
         if (lex_tok == TK_IDENT && strcmp(lex_str, "_Alignas") == 0) {
             ps_pend_alignas = ps_type_alignas;
             ps_read_alignas();
@@ -2548,6 +2698,7 @@ static int parse_type(void) {
         if (lex_tok == TK_CONST) ps_type_constb = 1;
         next();
     }
+    ty = ps_cplx_finish(ty, ckhint, &td_cty);
     ps_type_cty = ps_base_cty(ty, ckhint, td_cty, ps_type_constb, ps_type_volb);
     if (ps_lead_restrict && !ct_is_ptr(ps_type_cty))
         p_error("restrict requires a pointer type");
@@ -5872,6 +6023,36 @@ static int init_string_wrappers(void) {
     return -1;
 }
 
+/* A complex object with static storage, initialized by one expression:
+ * a constant (6.6) -- a real one, __builtin_complex (CMPLX, I), and
+ * + - * of those -- whose parts are stored (sema_cplx_const). */
+static int sema_cplx_const(Node *n, double *re, double *im);
+static void ps_cplx_init_store_at(int ty, int gidx, int rel_off) {
+    Node *e;
+    double re;
+    double im;
+    float f;
+    int w[2];
+    e = parse_assign();
+    sema_expr(e);
+    if (!sema_cplx_const(e, &re, &im)) p_error("initializer element is not a compile-time constant");
+    if (st_cplx[ty_struct_idx(ty)] == CT_FLOAT) {
+        f = (float)re;
+        memcpy(w, &f, 4);
+        ps_ginit_store_int_at(gidx, rel_off, w[0], 4);
+        f = (float)im;
+        memcpy(w, &f, 4);
+        ps_ginit_store_int_at(gidx, rel_off + 4, w[0], 4);
+        return;
+    }
+    memcpy(w, &re, 8);
+    ps_ginit_store_int_at(gidx, rel_off, w[0], 4);
+    ps_ginit_store_int_at(gidx, rel_off + 4, w[1], 4);
+    memcpy(w, &im, 8);
+    ps_ginit_store_int_at(gidx, rel_off + 8, w[0], 4);
+    ps_ginit_store_int_at(gidx, rel_off + 12, w[1], 4);
+}
+
 static void parse_global_init_value_at(int ty, int arr_count, int gidx, int rel_off) {
     int v;
     int sp_idx;
@@ -5907,6 +6088,10 @@ static void parse_global_init_value_at(int ty, int arr_count, int gidx, int rel_
     if (arr_count != 0 && ty_is_ptr(ty)) {
         ps_init_cty = c;
         parse_global_init_array_at(ty_deref(ty), arr_count, gidx, rel_off);
+        return;
+    }
+    if (ty_is_cplx(ty) && lex_tok != TK_LBRACE) {
+        ps_cplx_init_store_at(ty, gidx, rel_off);
         return;
     }
     if (ty_is_struct(ty)) {
@@ -6489,6 +6674,9 @@ static Node *parse_primary(void) {
             return nd_num(ps_cval[ci]);
         }
 
+        n = ps_cplx_builtin(nm);
+        if (n) return n;
+
         /* va_start(ap, last) */
         if (strcmp(nm, "va_start") == 0 || strcmp(nm, "__builtin_va_start") == 0) {
             expect(TK_LPAREN);
@@ -6994,6 +7182,7 @@ static Node *ps_row_address(Node *n) {
 static Node *parse_unary(void) {
     Node *n;
 
+    if (ps_is_part_word()) return ps_cplx_part();
     if (lex_tok == TK_PLUS) {
         /* unary plus: the operand, promoted (6.5.3.3p2) -- a char or
          * short operand becomes int, so sizeof(+c) is int's size */
@@ -7694,7 +7883,10 @@ static void parse_local_init_value_at(int ty, int arr_count, int rel_off) {
         parse_local_init_array_at(ty_deref(ty), arr_count, rel_off);
         return;
     }
-    if (ty_is_struct(ty)) {
+    /* a complex target is a scalar (6.2.5p21): one expression, assigned,
+     * which sema converts; {re, im} in braces is its parts (clang's and
+     * GCC's extension) */
+    if (ty_is_struct(ty) && !(ty_is_cplx(ty) && lex_tok != TK_LBRACE)) {
         ps_init_cty = c;
         parse_local_init_struct_at(ty, rel_off);
         return;
@@ -8418,6 +8610,13 @@ static int ps_tentative_count(int is_static) {
     return 1;
 }
 
+/* A static local's structure initializer, or a complex one's (an
+ * expression, ps_cplx_init_store_at); parse_stmt is kept from growing. */
+static void ps_static_struct_init(int ty, int gidx) {
+    if (ty_is_cplx(ty) && lex_tok != TK_LBRACE) ps_cplx_init_store_at(ty, gidx, 0);
+    else parse_global_init_struct_at(ty, gidx, 0);
+}
+
 static Node *parse_stmt(void) {
     int tdac;
     int td_elem;
@@ -8950,7 +9149,7 @@ static_scalar_decl:
                     /* static event_t st_notify = { ev_keyup, ... }
                      * (am_map) — full struct initializer machinery. */
                     ps_ginit_begin(sl_gi);
-                    parse_global_init_struct_at(ty, sl_gi, 0);
+                    ps_static_struct_init(ty, sl_gi);
                     ps_ginit_finish(sl_gi);
                 } else if (ty_is_llong(ty)) {
                     int glo;
@@ -10145,8 +10344,9 @@ plain_name:
             if (lex_tok == TK_ASSIGN) {
                 next();
                 ps_init_check(ps_gcty[idx], xty);
-                if (lex_tok == TK_LBRACE && ty_is_struct(xty)) {
-                    /* Struct initializer: struct S s = { ... }; */
+                if ((lex_tok == TK_LBRACE || ty_is_cplx(xty)) && ty_is_struct(xty)) {
+                    /* Struct initializer: struct S s = { ... }; -- and a
+                     * complex one's, braced or not */
                     ps_ginit_begin(idx);
                     parse_global_init_value(xty, idx);
                     ps_ginit_finish(idx);
@@ -10350,6 +10550,8 @@ static Node *parse_program(void) {
     ps_ngirelocs = 0;
     ps_comp_lit_id = 0;
     ct_init();
+    ps_cplx_struct(CT_FLOAT);       /* before any structure the program declares */
+    ps_cplx_struct(CT_DOUBLE);
     pp_install_predefs();
 #ifdef S12CC_TARGET_A64
     pp_add("__aarch64__", 1);

@@ -1061,8 +1061,40 @@ static int hl_bf_unit_ty(int member_ty) {
 
 /* --- Address computation (lvalue → HIR addr instruction) --- */
 
+/* sema's complex temporaries (ND_CTEMP): a stack slot each, by number,
+ * the first time the function's lowering meets it -- the way a structure
+ * return gets its slot.  A complex one's value is its address, as any
+ * structure's is; the one other kind, a pointer, is loaded. */
+#define HL_MAX_CTEMP 1024
+static int hl_ctemp_num[HL_MAX_CTEMP];
+static int hl_ctemp_inst[HL_MAX_CTEMP];
+static int hl_nctemp;
+
+static int hl_ctemp_addr(Node *n) {
+    int i;
+    int sz;
+    i = 0;
+    while (i < hl_nctemp) {
+        if (hl_ctemp_num[i] == n->val) return hl_ctemp_inst[i];
+        i = i + 1;
+    }
+    if (hl_nctemp >= HL_MAX_CTEMP) {
+        p_error("too many complex temporaries in one function");
+        return -1;
+    }
+    sz = ty_size(n->ty);
+    sz = ((sz + 7) / 8) * 8;
+    hl_temp_stack = hl_temp_stack + sz;
+    hl_ctemp_num[hl_nctemp] = n->val;
+    hl_ctemp_inst[hl_nctemp] = hl_emit_temp_alloca(HL_ADDR_TY, 0 - hl_temp_stack);
+    hl_nctemp = hl_nctemp + 1;
+    return hl_ctemp_inst[hl_nctemp - 1];
+}
+
 static int hl_addr(Node *n) {
     int addr;
+
+    if (n->kind == ND_CTEMP) return hl_ctemp_addr(n);
 
     /* A volatile lvalue's address is marked (h_voladdr), and every
      * LOAD and STORE through it, or through an ADDI off it, is a volatile
@@ -2439,7 +2471,22 @@ static int hl_postincdec_f64(int addr, int old_lo, int inc) {
 }
 #endif
 
+/* hl_expr, with sema's complex temporaries before it (its body is the
+ * compiler's largest function, and is kept from growing) */
+static int hl_expr_main(Node *n);
 static int hl_expr(Node *n) {
+    if (n && n->kind == ND_CTEMP) {
+        if (ty_is_struct(n->ty)) return hl_ctemp_addr(n);
+        return hi_emit(HI_LOAD, n->ty, hl_ctemp_addr(n), -1, 0, NULL);
+    }
+    if (n && (n->kind == ND_CPLX || n->kind == ND_CPART)) {
+        p_error("a complex operation outside a function needs constant operands");
+        return -1;
+    }
+    return hl_expr_main(n);
+}
+
+static int hl_expr_main(Node *n) {
     int lv;
     int rv;
     int cv;
@@ -4871,6 +4918,7 @@ static void hl_func(Node *fn) {
 
     hir_reset();
     hl_nalloca = 0;
+    hl_nctemp = 0;
     hl_inl_caller_sz = 0;
     if (hl_inline_max > 0) hl_inl_caller_sz = hl_inl_size(fn->body, hl_inl_huge + 1);
     hl_nparams = fn->nparams;  /* will be updated by param expansion for llong */

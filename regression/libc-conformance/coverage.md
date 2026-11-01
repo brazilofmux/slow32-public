@@ -10,9 +10,9 @@ libraries both print (or a recorded ruling).  Totals as recorded in `verdicts.tx
 | rt: clang + `runtime/` | 248 | 48 | 43 |
 | sh: stage08 cc + the selfhost library | 210 | 47 | 82 |
 
-After the fixes below (still 2026-11-01), `verdicts.txt` holds 343
-probes -- the four UTF-8 ones added -- and every one is PASS in both
-libraries.
+After the fixes below (still 2026-11-01), `verdicts.txt` holds 346
+probes -- four UTF-8 ones and three for `<complex.h>` added -- and every
+one is PASS in both libraries.
 
 | page | probes | rt PASS / DIFFER / NOBUILD | sh PASS / DIFFER / NOBUILD |
 |---|---|---|---|
@@ -137,6 +137,18 @@ Ranked by harm: wrong answers in programs that are correct first.
     equal glibc's C.UTF-8 at every code point.  Four probes run in a
     UTF-8 locale.  Narrow `printf`'s `%ls`/`%lc` and `scanf`'s `%l` forms
     convert properly now (they were one byte per character).
+
+**Complex** -- *done 2026-11-01*
+17. `<complex.h>` in both libraries: musl's 22 functions in three
+    precisions, `runtime/complex_rt.c`'s `__mulsc3`/`__muldc3`/`__divsc3`/
+    `__divdc3` (clang called `__divdc3` with no definition anywhere), and
+    `_Complex` in stage08: a structure of its two parts to the machine, so
+    clang's ABI for free, and its arithmetic rewritten by sema into real
+    arithmetic on the parts, as clang does it -- the two compilers agree
+    to the bit on every probe and a 48-line torture test.  Neither
+    compiler predefines `__STDC_NO_COMPLEX__` any more (the cross
+    compilers do).  Found on the way: stage08 folded `-(0.0)` and `-0.0f`
+    in static initializers to +0 (selfhost ISSUES-107).
 
 ## Rulings
 
