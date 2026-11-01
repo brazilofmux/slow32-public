@@ -1138,6 +1138,11 @@ static int ps_fp_get_ret(int base) {
 static int ps_fp_ret_of_callee(Node *lhs) {
     int fpb;
     if (!lhs) return TY_INT;
+    /* a function designator in an expression -- (f)(x), and what a
+     * _Generic selects, _Generic(x, float: f, default: g)(x): its
+     * declared return type (it was int, and a float result came back as
+     * the float's bits; <tgmath.h> is all such calls) */
+    if (lhs->kind == ND_FUNC_REF && lhs->name) return find_func_type(lhs->name);
     fpb = -1;
     if (lhs->kind == ND_MEMBER && lhs->offset >= 0) fpb = lhs->offset;
     else if (lhs->is_fnptr) fpb = lhs->val;

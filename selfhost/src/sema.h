@@ -129,6 +129,8 @@ static Node *sema_bf_operand(Node *e) {
     return n;
 }
 
+static void sema_call_by_cty(Node *n);   /* below: wants sema_cty_of */
+
 static void sema_expr_mty(Node *n) {
     Node *a;
     Node *prev;
@@ -348,9 +350,59 @@ static void sema_expr_mty(Node *n) {
             return;
         }
     }
-    /* ND_CALL_PTR otherwise: stays TY_INT (no return type info) */
+    /* ND_CALL_PTR otherwise -- (f)(x), _Generic(...)(x), (c ? f : g)(x):
+     * the callee's C type says how each argument converts and what
+     * comes back (sema_call_by_cty) */
+    if (n->kind == ND_CALL_PTR && n->lhs) {
+        sema_call_by_cty(n);
+        return;
+    }
     /* ND_CAST: preserve parser-assigned type */
     /* ND_MEMBER: preserve member type */
+}
+
+/* A call through an expression whose signature the parser did not record:
+ * the callee's C type -- a function, or a pointer to one -- gives each
+ * argument's conversion (6.5.2.2p7, the default promotions past the
+ * prototype or without one) and the result's type.  Without it,
+ * (f)(9) passed f(double) an int, and a float came back as int bits. */
+static int sema_cty_of(Node *c);
+static void sema_call_by_cty(Node *n) {
+    int ft;
+    int np;
+    int idx;
+    int pt;
+    Node *a;
+    Node *prev;
+    Node *cast;
+    ft = ct_decay(sema_cty_of(n->lhs));
+    if (!ct_is_ptr(ft) || !ct_is_func(ct_baseof(ft))) return;
+    ft = ct_baseof(ft);
+    np = ct_nparms(ft);
+    if (ct_variadic(ft)) n->is_varargs = 1;
+    idx = 0;
+    prev = NULL;
+    a = n->args;
+    while (a) {
+        pt = -1;
+        if (np >= 0 && idx < np) pt = ct_mty(ct_unqual(ct_parmty(ft, idx)));
+        if (pt < 0 && ty_is_float(a->ty)) pt = TY_DOUBLE;
+        if (pt < 0) pt = nd_bf_promoted(a);
+        if (pt >= 0 &&
+            sema_arg_class(a->ty) != sema_arg_class(pt) &&
+            sema_arg_class(a->ty) != 4 && sema_arg_class(pt) != 4) {
+            cast = nd_cast(a, pt);
+            cast->next = a->next;
+            a->next = NULL;
+            if (prev) prev->next = cast;
+            else n->args = cast;
+            a = cast;
+        }
+        prev = a;
+        idx = idx + 1;
+        a = a->next;
+    }
+    n->ty = ct_mty(ct_unqual(ct_baseof(ft)));
 }
 
 /* --- C types: the attribute grammar's cty (docs/TYPES.md S2) --- */
