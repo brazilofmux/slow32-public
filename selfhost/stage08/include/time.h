@@ -39,6 +39,8 @@ int clock_gettime(clockid_t clk, struct timespec *ts);
 int nanosleep(const struct timespec *req, struct timespec *rem);
 clock_t clock(void);
 time_t time(time_t *t);
+#define TIME_UTC 1
+int timespec_get(struct timespec *ts, int base);
 double difftime(time_t later, time_t earlier);
 struct tm *gmtime(const time_t *t);
 struct tm *localtime(const time_t *t);   /* host zone via the MMIO GETTZ op */

@@ -11,7 +11,7 @@ typedef long long time_t;
 
 struct timespec {
     time_t tv_sec;
-    unsigned int tv_nsec;
+    long tv_nsec;
 };
 
 struct tm {
@@ -42,6 +42,8 @@ clock_t clock(void);
 // Time retrieval
 int clock_gettime(int clock_id, struct timespec *ts);
 time_t time(time_t *t);
+#define TIME_UTC 1
+int timespec_get(struct timespec *ts, int base);
 
 // Sleep functions
 int nanosleep(const struct timespec *req, struct timespec *rem);

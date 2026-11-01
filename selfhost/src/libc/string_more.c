@@ -1,12 +1,14 @@
 /* string_more.c -- additional string/memory functions for selfhost libc
- * Written for cc-min subset-C compatibility. */
+ * Written for cc-min subset-C compatibility.  Counts are size_t's, unsigned
+ * int here: an int n took (size_t)-1 as -1, and strncat(d, s, (size_t)-1)
+ * appended nothing (libc-conformance 7.24.3.2-strncat-large-n). */
 
 int strlen(char *s);
 char *memcpy(char *dst, char *src, int n);
 char *malloc(int size);
 
-int memcmp(char *s1, char *s2, int n) {
-    int i;
+int memcmp(char *s1, char *s2, unsigned int n) {
+    unsigned int i;
     i = 0;
     while (i < n) {
         if (s1[i] != s2[i]) {
@@ -18,8 +20,8 @@ int memcmp(char *s1, char *s2, int n) {
     return 0;
 }
 
-char *memchr(char *s, int c, int n) {
-    int i;
+char *memchr(char *s, int c, unsigned int n) {
+    unsigned int i;
     i = 0;
     while (i < n) {
         if (s[i] == (char)c) return s + i;
@@ -50,9 +52,9 @@ char *strcat(char *dst, char *src) {
     return dst;
 }
 
-char *strncat(char *dst, char *src, int n) {
+char *strncat(char *dst, char *src, unsigned int n) {
     int dlen;
-    int i;
+    unsigned int i;
     dlen = strlen(dst);
     i = 0;
     while (i < n && src[i] != 0) {
@@ -100,8 +102,8 @@ char *strcpy(char *dst, char *src) {
     return dst;
 }
 
-char *strncpy(char *dst, char *src, int n) {
-    int i;
+char *strncpy(char *dst, char *src, unsigned int n) {
+    unsigned int i;
     i = 0;
     while (i < n && src[i] != 0) {
         dst[i] = src[i];

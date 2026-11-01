@@ -90,18 +90,40 @@ time_t mktime(struct tm *tm) {
         /* else no instant has this local time (the clocks skipped it): t stands */
     }
     if (tm->tm_isdst >= 0 && (dst != 0) != (tm->tm_isdst != 0)) {
+        int found = 0;
         for (k = -1; k <= 1; k += 2) {
             c = t + k * 3600;
             if (c + zone_at(c, &cdst) == local && (cdst != 0) == (tm->tm_isdst != 0)) {
                 t = c;
+                found = 1;
                 break;
+            }
+        }
+        /* Not the hour the clocks repeat: the caller says daylight (or
+         * standard) time where the zone keeps the other.  The time is read
+         * as the caller says, by the offset the zone has when it keeps
+         * that kind -- 12:00 "daylight" in January is 11:00 standard
+         * (footnote 320; glibc and macOS do so).  A zone with no such
+         * time in the year around leaves t as it is. */
+        for (k = 1; !found && k <= 12; k++) {
+            int side;
+            for (side = -1; side <= 1; side += 2) {
+                long other;
+                c = t + side * (long long)k * 30 * 86400;
+                other = zone_at(c, &cdst);
+                if ((cdst != 0) == (tm->tm_isdst != 0)) {
+                    t = local - other;
+                    found = 1;
+                    break;
+                }
             }
         }
     }
 
     result = (time_t)t;
     if ((long long)result != t) return (time_t)-1;
-    localtime_r(&result, tm);
+    /* the normalized year must fit tm_year (7.27.2.3p3: else -1) */
+    if (localtime_r(&result, tm) == NULL) return (time_t)-1;
     return result;
 }
 
@@ -244,12 +266,15 @@ static void sf_conv(struct sf_out *o, int c, const struct tm *tm) {
     case 'h': sf_mon(o, in_range(tm->tm_mon, 12), 1); break;
     case 'B': sf_mon(o, in_range(tm->tm_mon, 12), 0); break;
     case 'c': sf_format(o, SF_LOCALE_FMT(D_T_FMT, "%a %b %e %H:%M:%S %Y"), tm); break;
-    case 'C': sf_num(o, (year - in_range((int)(year % 100), 100)) / 100, 2, '0'); break;
+    /* %C, %y, %g (7.27.3.5p3): the year divided by 100 and truncated, and
+     * its last two digits -- for a year at or below 0 as well (-1 is %C 00,
+     * %y 01), by the standard's words; glibc floors (ruled 2026-11-01) */
+    case 'C': sf_num(o, year / 100, 2, '0'); break;
     case 'd': sf_num(o, tm->tm_mday, 2, '0'); break;
     case 'D': sf_format(o, "%m/%d/%y", tm); break;
     case 'e': sf_num(o, tm->tm_mday, 2, ' '); break;
     case 'F': sf_format(o, "%Y-%m-%d", tm); break;
-    case 'g': iso_week(tm, &iso_year); sf_num(o, in_range((int)(iso_year % 100), 100), 2, '0'); break;
+    case 'g': iso_week(tm, &iso_year); sf_num(o, iso_year % 100 < 0 ? -(iso_year % 100) : iso_year % 100, 2, '0'); break;
     case 'G': iso_week(tm, &iso_year); sf_num(o, iso_year, 1, '0'); break;
     case 'H': sf_num(o, tm->tm_hour, 2, '0'); break;
     case 'I': h = tm->tm_hour % 12; sf_num(o, h == 0 ? 12 : h, 2, '0'); break;
@@ -270,7 +295,7 @@ static void sf_conv(struct sf_out *o, int c, const struct tm *tm) {
     case 'W': sf_num(o, (tm->tm_yday + 7 - in_range(tm->tm_wday + 6, 7)) / 7, 2, '0'); break;  /* on Monday */
     case 'x': sf_format(o, SF_LOCALE_FMT(D_FMT, "%m/%d/%y"), tm); break;
     case 'X': sf_format(o, SF_LOCALE_FMT(T_FMT, "%H:%M:%S"), tm); break;
-    case 'y': sf_num(o, in_range((int)(year % 100), 100), 2, '0'); break;
+    case 'y': sf_num(o, year % 100 < 0 ? -(year % 100) : year % 100, 2, '0'); break;
     case 'Y': sf_num(o, year, 1, '0'); break;
     case 'z':
         off = tm->tm_gmtoff;
@@ -333,6 +358,11 @@ char *ctime(const time_t *timer) {
     return asctime(localtime(timer));
 }
 
+/* later - earlier, rounded once (7.27.2.2).  Subtracted as unsigned, where
+ * the difference of any two time_t fits; the signed subtraction overflowed
+ * (difftime(LLONG_MAX, LLONG_MIN) was -1). */
 double difftime(time_t later, time_t earlier) {
-    return (double)((long long)later - (long long)earlier);
+    unsigned long long a = (unsigned long long)later, b = (unsigned long long)earlier;
+    if (later >= earlier) return (double)(a - b);
+    return -(double)(b - a);
 }

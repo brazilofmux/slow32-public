@@ -53,6 +53,8 @@ typedef struct { long long quot; long long rem; } lldiv_t;
 div_t div(int numer, int denom);
 ldiv_t ldiv(long numer, long denom);
 lldiv_t lldiv(long long numer, long long denom);
+int at_quick_exit(void (*func)(void));
+__attribute__((noreturn)) void quick_exit(int status);
 /* The absolute path, with . and .. and repeated slashes resolved; the
  * path must exist.  Symbolic links are not resolved -- the machine cannot
  * read one (posix_extra.c). */

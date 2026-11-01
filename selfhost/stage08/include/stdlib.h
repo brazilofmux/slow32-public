@@ -27,6 +27,12 @@ typedef struct { int quot; int rem; } div_t;
 typedef struct { long quot; long rem; } ldiv_t;
 div_t div(int numer, int denom);
 ldiv_t ldiv(long numer, long denom);
+typedef struct { long long quot; long long rem; } lldiv_t;
+lldiv_t lldiv(long long numer, long long denom);
+int at_quick_exit(void (*func)(void));
+_Noreturn void quick_exit(int status);
+void *aligned_alloc(size_t alignment, size_t size);
+#define MB_CUR_MAX 1    /* bytes in a character: the "C" locale is the only one */
 
 int atoi(const char *nptr);
 long atol(const char *nptr);

@@ -177,12 +177,49 @@ void free(char *ptr) {
     list_add(blk);
 }
 
-char *calloc(int nmemb, int size) {
+/* Memory aligned to a power of two (7.22.3.1).  Up to ALIGNMENT, malloc's
+ * own.  Past it, a block with room to spare is taken and split in two:
+ * the lead (at least a minimum block, so it can stand alone) is freed,
+ * and the rest, whose payload starts on the boundary, is the caller's --
+ * an ordinary block with header and footer, so free takes it as any. */
+char *aligned_alloc(unsigned int alignment, unsigned int size) {
+    char *raw;
+    char *blk;
+    char *nblk;
     int total;
+    int al;
+    int want;
+    int lead;
+    if (alignment == 0 || (alignment & (alignment - 1)) != 0) return (char *)0;
+    if (alignment <= ALIGNMENT) return malloc((int)size);
+    if (size > MAX_REQ || alignment > MAX_REQ) return (char *)0;
+    al = (int)alignment;
+    raw = malloc((int)size + al + MIN_BLK);
+    if (!raw) return (char *)0;
+    blk = raw - HDR_SIZE;
+    total = blk_size(blk);
+    want = ((int)raw + MIN_BLK + al - 1) & (0 - al);
+    lead = want - (int)raw;
+    nblk = blk + lead;
+    *((int *)nblk) = (total - lead) | ALLOC_BIT;
+    set_footer(nblk, total - lead);
+    *((int *)blk) = lead | ALLOC_BIT;
+    set_footer(blk, lead);
+    free(blk + HDR_SIZE);
+    return nblk + HDR_SIZE;
+}
+
+/* nmemb * size, refused when the product does not fit (7.22.3.2) -- in
+ * unsigned arithmetic: with int, calloc(SIZE_MAX, SIZE_MAX) was
+ * (-1)*(-1) = 1, which passed the test and gave one byte.  More than an
+ * int's worth is more than malloc here takes. */
+char *calloc(unsigned int nmemb, unsigned int size) {
+    unsigned int total;
     char *ptr;
+    if (size != 0 && nmemb > 0xFFFFFFFFu / size) return (char *)0;
     total = nmemb * size;
-    if (nmemb != 0 && total / nmemb != size) return (char *)0;
-    ptr = malloc(total);
+    if (total > 0x7FFFFFFFu) return (char *)0;
+    ptr = malloc((int)total);
     if (ptr) memset(ptr, 0, total);
     return ptr;
 }

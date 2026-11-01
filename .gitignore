@@ -72,6 +72,8 @@ runtime/fenv.s
 runtime/strtof.s
 runtime/assert.s
 runtime/inttypes.s
+runtime/quick_exit.s
+runtime/timespec_get.s
 runtime/math_hw.s
 runtime/math_cordic.s
 runtime/builtins.s

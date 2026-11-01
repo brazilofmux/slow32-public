@@ -108,12 +108,16 @@ Ranked by harm: wrong answers in programs that are correct first.
 13. Missing headers and families are the inventory's list
     ([inventory.md](inventory.md)).
 
-**Smaller**
-14. sh `strncat` and `calloc` take `int` sizes: a huge `n` appends
-    nothing, `calloc(SIZE_MAX, SIZE_MAX)` returns one byte.
-15. `difftime` overflows in long long; `mktime` ignores a `tm_isdst`
-    that disagrees with the zone and does not fail when the year
-    overflows; `strftime %y %g %C` for years at or before 0.
+**Smaller** -- *fixed 2026-11-01*
+14. sh `memcmp`, `memchr`, `strncat`, `strncpy` and `calloc` take their
+    counts unsigned (size_t); calloc's overflow test is unsigned.
+15. `difftime` subtracts unsigned (no overflow); `mktime` reads a
+    `tm_isdst` the zone disagrees with by that kind's offset, and is -1
+    when the normalized year does not fit; `%C` truncates and `%y`/`%g`
+    are the last two digits for years at or below 0 (ruled 2026-11-01:
+    the standard's "truncated", not glibc's floor).  Also new: sh
+    `aligned_alloc`, `lldiv`, `MB_CUR_MAX`, a "C"-only `<locale.h>`;
+    both `quick_exit`/`at_quick_exit` and `timespec_get`/`TIME_UTC`.
 
 ## Rulings
 

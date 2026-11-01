@@ -30,6 +30,13 @@ ldiv_t ldiv(long num, long den) {
     return r;
 }
 
+lldiv_t lldiv(long long num, long long den) {
+    lldiv_t r;
+    r.quot = num / den;
+    r.rem = num % den;
+    return r;
+}
+
 /* The generator is the clang runtime's (runtime/stdlib_utils.c), number
  * for number: a program prints the same sequence whichever compiler
  * built it.  The top bits of a 32-bit linear congruential state, which

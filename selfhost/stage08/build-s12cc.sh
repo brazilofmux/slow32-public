@@ -210,7 +210,7 @@ rm -f "$LIBC_OUT_DIR/posix_more.s32o"
 # string_std, stdlib_std, stdio_std: the rest of <string.h>, <stdlib.h> and
 # <stdio.h> (selfhost ISSUES-75).  Phase 2 only, like string_case and qsort:
 # nothing the compiler or the tools call.
-for name in string_extra string_more ctype convert stdio malloc posix_fs posix_time posix_proc string_case qsort math_hw string_std stdlib_std stdio_std system termios; do
+for name in string_extra string_more ctype convert stdio malloc posix_fs posix_time posix_proc string_case qsort math_hw string_std stdlib_std stdio_std system termios locale_c; do
     compile_gen1 "$LIBC_DIR/${name}.c" "$WORKDIR/g1_${name}.s" "$WORKDIR/g1_${name}.cc.log"
     assemble_gen1 "$WORKDIR/g1_${name}.s" "$LIBC_OUT_DIR/${name}.s32o" "$WORKDIR/g1_${name}.as.log"
 done
@@ -274,7 +274,7 @@ for name in errno legacy; do
     compile_gen1 "$LIBM_DIR/${name}.c" "$WORKDIR/g1_m_${name}.s" "$WORKDIR/g1_m_${name}.cc.log" "-I$SCRIPT_DIR/include"
     assemble_gen1 "$WORKDIR/g1_m_${name}.s" "$LIBC_OUT_DIR/m_${name}.s32o" "$WORKDIR/g1_m_${name}.as.log"
 done
-for name in assert inttypes; do
+for name in assert inttypes quick_exit timespec_get; do
     compile_gen1 "$RUNTIME_DIR/${name}.c" "$WORKDIR/g1_${name}.s" "$WORKDIR/g1_${name}.cc.log" "-I$SCRIPT_DIR/include"
     assemble_gen1 "$WORKDIR/g1_${name}.s" "$LIBC_OUT_DIR/${name}.s32o" "$WORKDIR/g1_${name}.as.log"
 done
