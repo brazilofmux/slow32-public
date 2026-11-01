@@ -290,7 +290,7 @@
 7.27.3.5-strftime-negative-year DIFFER DIFFER
 7.27.3.5-strftime-week-numbers PASS PASS
 7.27.3.5-strftime-zone PASS PASS
-7.27.3.5-strftime-zone-isdst DIFFER DIFFER
+7.27.3.5-strftime-zone-isdst PASS PASS
 7.28.1-mbrtoc16-c16rtomb NOBUILD NOBUILD
 7.29.2-swprintf NOBUILD NOBUILD
 7.29.2-wprintf NOBUILD NOBUILD

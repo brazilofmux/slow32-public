@@ -2,13 +2,13 @@
 
 The first behaviour survey: 339 probes over clause 7, every probe built
 against both libraries and judged against what macOS's and glibc's
-libraries both print (or a recorded ruling).  Totals from one run of
-`tools/probe.py`, recorded in `verdicts.txt`:
+libraries both print (or a recorded ruling).  Totals as recorded in `verdicts.txt`
+(after the `%z` ruling):
 
 | library | PASS | DIFFER | NOBUILD |
 |---|---|---|---|
-| rt: clang + `runtime/` | 247 | 49 | 43 |
-| sh: stage08 cc + the selfhost library | 209 | 48 | 82 |
+| rt: clang + `runtime/` | 248 | 48 | 43 |
+| sh: stage08 cc + the selfhost library | 210 | 47 | 82 |
 
 | page | probes | rt PASS / DIFFER / NOBUILD | sh PASS / DIFFER / NOBUILD |
 |---|---|---|---|
@@ -17,7 +17,7 @@ libraries both print (or a recorded ruling).  Totals from one run of
 | [7.11, 7.14, 7.24](c11-7.11-7.14-7.24.md) strings, locale, signals | 41 | 41 / 0 / 0 | 33 / 1 / 7 |
 | [7.21](c11-7.21.md) input/output | 62 | 36 / 23 / 3 | 40 / 18 / 4 |
 | [7.22](c11-7.22.md) general utilities | 55 | 49 / 3 / 3 | 43 / 3 / 9 |
-| [7.27-7.30](c11-7.27-7.30.md) time, wide characters | 40 | 25 / 5 / 10 | 25 / 5 / 10 |
+| [7.27-7.30](c11-7.27-7.30.md) time, wide characters | 40 | 26 / 4 / 10 | 26 / 4 / 10 |
 
 No probe is ORACLE-SPLIT or TIMEOUT.  Much of the code is shared
 (`printf_enhanced.c`, `sscanf.c`, `dtoa.c`, `math_soft.c`, `time_std.c`
@@ -83,13 +83,14 @@ Ranked by harm: wrong answers in programs that are correct first.
     that disagrees with the zone and does not fail when the year
     overflows; `strftime %y %g %C` for years at or before 0.
 
-## Rulings to confirm
+## Rulings
 
 The survey recorded eight `.expect` files.  Two depart from both host
-libraries and want a decision:
+libraries; both were confirmed on 2026-11-01:
 
-- `7.27.3.5-strftime-zone-isdst`: by 7.27.3.5p3 `%z` follows
-  `tm_isdst`; glibc and both our libraries follow `tm_gmtoff` (POSIX).
-  Delete the `.expect` to rule for POSIX.
-- `7.21.6.2-sscanf-prefix-not-match`: `"25exp"` with `%lf` is a
-  matching failure by 7.21.6.2p9-10; both hosts convert the prefix.
+- `7.27.3.5-strftime-zone-isdst`: `%z` follows `tm_gmtoff`, as POSIX.1-2024
+  specifies (C's text, read strictly, follows `tm_isdst`).  glibc's
+  output is the expect file; both libraries already do this.
+- `7.21.6.2-sscanf-prefix-not-match`: `"25exp"` with `%lf` is a matching
+  failure, by 7.21.6.2p9-10 and the standard's own worked case; both
+  hosts convert the prefix, and so do both our libraries (item 5).
