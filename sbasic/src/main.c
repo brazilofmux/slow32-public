@@ -338,7 +338,7 @@ static void exec_direct(const char *line) {
     if (s) {
         if (!global_env)
             global_env = env_create(NULL);
-        error_t err = eval_stmt(global_env, s);
+        error_t err = eval_stmts(global_env, s);
         if (err != ERR_NONE && err != ERR_EXIT)
             error_print(err, 0);
         stmt_free(s);

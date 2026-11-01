@@ -10,7 +10,6 @@ typedef struct {
     error_t error;
     int error_line;
     char error_detail[128];
-    int pending_next;   /* NEXT J, I: the I closes the enclosing FOR */
 } parser_t;
 
 /* Initialize parser */

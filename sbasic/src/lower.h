@@ -16,8 +16,13 @@ typedef enum {
     OP_STMT,     /* s: one simple statement */
     OP_JUMP,     /* to target */
     OP_JFALSE,   /* cond false (true, when invert) -> target, else on */
-    OP_FOR,      /* s: start the loop in slot; when it runs no times -> target */
-    OP_NEXT,     /* s (the FOR): step slot's loop; while it runs -> target */
+    OP_FOR,      /* s: push its loop's frame; when it runs no times ->
+                    target (past its NEXT in the text) */
+    OP_NEXT,     /* s (the FOR it closes in the text, at op slot), invert
+                    1 when it names no variable: step the frame of that
+                    variable (or the top one) and go back into its body
+                    while it runs */
+    OP_EXITFOR,  /* pop the top frame -> target (past its FOR's NEXT) */
     OP_SELECT    /* s: to targets[the clause that matches], or the last */
 } op_kind_t;
 

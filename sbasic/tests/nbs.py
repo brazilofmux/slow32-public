@@ -2,7 +2,13 @@
 """The NBS Minimal BASIC test programs (NBS SP 500-70) on SLOW BASIC,
 held to QBasic 1.1 -- the QuickBASIC interpreter, run on dos-monster.
 
-    sbasic/tests/nbs.py [-v] [-j N] [P001 P056 ...]     (default: all)
+    sbasic/tests/nbs.py [-v] [-j N] [--dir DIR] [P001 P056 ...]  (default: all)
+
+With --dir, any directory of BASIC programs (*.bas or *.BAS, each with
+an optional sibling .in or .input of keys) is run the same way: e.g.
+the BASIC Computer Games of the same collection,
+~/refs/basic/nbs-ecma55-test/basic_computer_games (their .output files
+are another interpreter's, and are not used).
 
 The suite is NOT in this tree.  It is the 208 programs of the
 8bitworkshop transcription (github.com/sehugg/nbs-ecma55-test, NBS/),
@@ -174,10 +180,20 @@ def run_qbasic(src, inp, exe):
         shutil.rmtree(d, ignore_errors=True)
 
 
+def program_path(name):
+    for ext in ('.BAS', '.bas'):
+        if os.path.exists(os.path.join(NBS, name + ext)):
+            return os.path.join(NBS, name + ext)
+    return os.path.join(NBS, name + '.BAS')
+
+
 def one(name, exe):
-    src = os.path.join(NBS, name + '.BAS')
-    inp_path = os.path.join(NBS, name + '.in')
-    inp = open(inp_path, 'rb').read() if os.path.exists(inp_path) else b''
+    src = program_path(name)
+    inp = b''
+    for ext in ('.in', '.input'):
+        if os.path.exists(os.path.join(NBS, name + ext)):
+            inp = open(os.path.join(NBS, name + ext), 'rb').read()
+            break
     sb = run_sbasic(src, inp)
     qb = run_qbasic(open(src, 'rb').read(), inp, exe)
     open(os.path.join(OUT, name + '.sb'), 'w').write('\n'.join(sb or ['<timeout>']) + '\n')
@@ -217,7 +233,14 @@ def one(name, exe):
 
 
 def main():
+    global NBS, OUT
     args = sys.argv[1:]
+    if '--dir' in args:
+        i = args.index('--dir')
+        NBS = os.path.abspath(os.path.expanduser(args[i + 1]))
+        del args[i:i + 2]
+        if 'OUT' not in os.environ:
+            OUT = '/tmp/sbasic-' + os.path.basename(NBS.rstrip('/'))
     verbose = '-v' in args
     jobs = 8
     if '-j' in args:

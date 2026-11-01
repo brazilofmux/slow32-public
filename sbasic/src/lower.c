@@ -15,6 +15,8 @@ typedef struct {
     } loops[MAX_LOOP_DEPTH];
     int depth;
     int basic_line;     /* the last line number passed */
+    int fors[MAX_LOOP_DEPTH];   /* the FORs open in the text (op indices) */
+    int nfors;
 } lower_t;
 
 static int emit(lower_t *L, op_kind_t kind, stmt_t *s, int line) {
@@ -73,7 +75,13 @@ static void loop_close(lower_t *L) {
  * none around it, the statement stays, and is an error when it runs */
 static void lower_exit(lower_t *L, stmt_t *s) {
     exit_type_t k = s->exit_stmt.what;
-    if (k == EXIT_FOR || k == EXIT_WHILE || k == EXIT_DO) {
+    if (k == EXIT_FOR && L->nfors > 0) {
+        /* to past the innermost open FOR's NEXT (set in match_fors) */
+        int j = emit(L, OP_EXITFOR, s, s->line);
+        L->c->ops[j].slot = L->fors[L->nfors - 1];
+        return;
+    }
+    if (k == EXIT_WHILE || k == EXIT_DO) {
         for (int d = L->depth - 1; d >= 0; d--) {
             if (L->loops[d].kind != k) continue;
             int j = emit(L, OP_JUMP, s, s->line);
@@ -125,19 +133,37 @@ static void lower_stmt(lower_t *L, stmt_t *s) {
                 c->ops[j].target = c->nops;
             }
             return;
-        case STMT_FOR: {
-            int slot = c->nfor++;
+        case STMT_FOR:
+            /* FOR and NEXT pair up in the text, wherever the NEXT stands
+             * (IF c THEN ...: NEXT Z); the pairing says where a loop that
+             * runs no times goes, and EXIT FOR.  Which loop a NEXT steps
+             * is settled when it runs (run_code). */
             j = emit(L, OP_FOR, s, s->line);
-            c->ops[j].slot = slot;
-            loop_open(L, EXIT_FOR);
-            lower_list(L, s->for_stmt.body);
-            n = emit(L, OP_NEXT, s, s->line);
-            c->ops[n].slot = slot;
-            c->ops[n].target = j + 1;
-            c->ops[j].target = c->nops;
-            loop_close(L);
+            c->ops[j].slot = c->nfor++;
+            if (L->nfors >= MAX_LOOP_DEPTH) { L->err = ERR_STACK_OVERFLOW; return; }
+            L->fors[L->nfors++] = j;
             return;
-        }
+        case STMT_NEXT:
+            /* NEXT J, I is NEXT J then NEXT I; each takes the innermost
+             * open FOR of its variable (closing any inside it), or the
+             * innermost of all when it names none */
+            for (int k = 0; k < (s->next_stmt.nvars ? s->next_stmt.nvars : 1); k++) {
+                int f = -1;
+                while (L->nfors > 0) {
+                    int cand = L->fors[--L->nfors];
+                    if (s->next_stmt.nvars == 0 ||
+                        strcmp(c->ops[cand].s->for_stmt.var_name, s->next_stmt.vars[k]) == 0) {
+                        f = cand;
+                        break;
+                    }
+                }
+                if (f < 0) { L->err = ERR_NEXT_WITHOUT_FOR; return; }
+                n = emit(L, OP_NEXT, c->ops[f].s, s->line);
+                c->ops[n].invert = s->next_stmt.nvars == 0;
+                c->ops[n].slot = f;
+                c->ops[f].target = n + 1;
+            }
+            return;
         case STMT_WHILE:
             top = c->nops;
             j = emit(L, OP_JFALSE, s, s->line);
@@ -203,6 +229,24 @@ static void lower_list(lower_t *L, stmt_t *s) {
         lower_stmt(L, s);
 }
 
+/* A FOR the text left open (its loop closed by another FOR's NEXT, as in
+ * awari) skips, when it runs no times, past the next NEXT of its
+ * variable.  EXIT FOR goes where its FOR goes then: past the NEXT. */
+static void match_exits(code_t *c) {
+    for (int i = 0; i < c->nops; i++) {
+        if (c->ops[i].kind != OP_FOR || c->ops[i].target >= 0) continue;
+        for (int j = i + 1; j < c->nops; j++)
+            if (c->ops[j].kind == OP_NEXT &&
+                strcmp(c->ops[j].s->for_stmt.var_name, c->ops[i].s->for_stmt.var_name) == 0) {
+                c->ops[i].target = j + 1;
+                break;
+            }
+    }
+    for (int i = 0; i < c->nops; i++)
+        if (c->ops[i].kind == OP_EXITFOR)
+            c->ops[i].target = c->ops[c->ops[i].slot].target;
+}
+
 static code_t *lower(stmt_t *s, int just_one, error_t *err) {
     lower_t L;
     memset(&L, 0, sizeof(L));
@@ -211,6 +255,18 @@ static code_t *lower(stmt_t *s, int just_one, error_t *err) {
     if (just_one) { if (s) lower_stmt(&L, s); }
     else lower_list(&L, s);
     while (L.depth > 0) loop_close(&L);
+    /* a FOR still open at the end is an error only when no NEXT of its
+     * variable comes after it at all (QBasic: awari's FOR at 230 leans
+     * on another loop's NEXT and loads; P050's FOR with none does not) */
+    for (int k = 0; k < L.nfors && L.err == ERR_NONE; k++) {
+        int f = L.fors[k], found = 0;
+        for (int j = f + 1; j < L.c->nops && !found; j++)
+            found = L.c->ops[j].kind == OP_NEXT &&
+                    strcmp(L.c->ops[j].s->for_stmt.var_name,
+                           L.c->ops[f].s->for_stmt.var_name) == 0;
+        if (!found) L.err = ERR_FOR_WITHOUT_NEXT;
+    }
+    match_exits(L.c);
     *err = L.err;
     if (L.err != ERR_NONE) { code_free(L.c); return NULL; }
     return L.c;

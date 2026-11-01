@@ -396,7 +396,6 @@ static void consume_end_keyword(parser_t *p, token_type_t kw) {
 #define BLK_END_IF   0x01
 #define BLK_ELSE     0x02
 #define BLK_WEND     0x04
-#define BLK_NEXT     0x08
 #define BLK_LOOP     0x10
 #define BLK_CASE     0x20
 #define BLK_END_SUB  0x40
@@ -431,7 +430,6 @@ static stmt_t *parse_block(parser_t *p, int flags) {
         }
         if ((flags & BLK_ELSE) && (tt == TOK_ELSE || tt == TOK_ELSEIF)) break;
         if ((flags & BLK_WEND) && tt == TOK_WEND) break;
-        if ((flags & BLK_NEXT) && (tt == TOK_NEXT || p->pending_next)) break;
         if ((flags & BLK_LOOP) && tt == TOK_LOOP) break;
         if ((flags & BLK_CASE) && (tt == TOK_CASE || check_end_keyword(p, TOK_SELECT)))
             break;
@@ -469,14 +467,18 @@ static int parse_print_items(parser_t *p, stmt_t *s, int (*add)(stmt_t *, expr_t
         }
         if (lexer_match(&p->lex, TOK_SEMICOLON)) sep = ';';
         else if (lexer_match(&p->lex, TOK_COMMA)) sep = ',';
-        else if (at_stmt_end(p)) sep = '\0';
+        else if (at_stmt_end(p)) {
+            /* a PRINT that ends with TAB() or SPC() ends no line */
+            sep = (e && e->type == EXPR_CALL && (strcmp(e->call.name, "TAB") == 0 ||
+                                                 strcmp(e->call.name, "SPC") == 0)) ? ';' : '\0';
+        }
         else sep = ';';
         if (add(s, e, sep) < 0) {
             expr_free(e);
             parser_error(p, ERR_OUT_OF_MEMORY);
             return 0;
         }
-        if (sep == '\0') break;
+        if (sep == '\0' || at_stmt_end(p)) break;
     }
     return 1;
 }
@@ -847,28 +849,29 @@ static stmt_t *parse_for(parser_t *p) {
         step = parse_expr(p);
         if (!step) { expr_free(start); expr_free(end); return NULL; }
     }
-    stmt_t *body = parse_block(p, BLK_NEXT);
-    if (p->pending_next) {
-        p->pending_next = 0;            /* the NEXT before was ours too */
-    } else if (!lexer_check(&p->lex, TOK_NEXT)) {
-        parser_error(p, ERR_FOR_WITHOUT_NEXT);
-        expr_free(start); expr_free(end); expr_free(step);
-        stmt_free(body); return NULL;
-    } else {
-        lexer_next(&p->lex);
-    }
+    /* the loop's body is what runs until its NEXT does: FOR and NEXT
+     * are statements, matched when they run (see lower.c) */
+    return stmt_for(var.text, vt, start, end, step, NULL, line);
+}
+
+/* NEXT [v [, v ...]] */
+static stmt_t *parse_next(parser_t *p) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_next(&p->lex);
+    stmt_t *s = stmt_next(line);
+    if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
     if (lexer_check(&p->lex, TOK_IDENT)) {
-        /* NEXT names the FOR's variable, or it is NEXT without FOR */
-        token_t nv = lexer_next(&p->lex);
-        if (strcmp(nv.text, var.text) != 0) {
-            parser_error(p, ERR_NEXT_WITHOUT_FOR);
-            expr_free(start); expr_free(end); expr_free(step);
-            stmt_free(body); return NULL;
-        }
-        if (lexer_match(&p->lex, TOK_COMMA))
-            p->pending_next = 1;
+        do {
+            if (!lexer_check(&p->lex, TOK_IDENT) || s->next_stmt.nvars >= 8) {
+                parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+            }
+            token_t v = lexer_next(&p->lex);
+            strncpy(s->next_stmt.vars[s->next_stmt.nvars], v.text, 63);
+            s->next_stmt.vars[s->next_stmt.nvars][63] = '\0';
+            s->next_stmt.nvars++;
+        } while (lexer_match(&p->lex, TOK_COMMA));
     }
-    return stmt_for(var.text, vt, start, end, step, body, line);
+    return s;
 }
 
 static stmt_t *parse_while(parser_t *p) {
@@ -2014,6 +2017,7 @@ static stmt_t *parse_stmt(parser_t *p) {
 
     switch (tok->type) {
         case TOK_PRINT:    return parse_print(p);
+        case TOK_NEXT:     return parse_next(p);
         case TOK_LPRINT: {
             /* LPRINT: like PRINT but to stderr. Reuse parse_print, change type. */
             stmt_t *s = parse_print(p);
@@ -2609,7 +2613,6 @@ void parser_init(parser_t *p, const char *src, int start_line) {
     p->error = ERR_NONE;
     p->error_line = 0;
     p->error_detail[0] = '\0';
-    p->pending_next = 0;
 }
 
 stmt_t *parser_parse(parser_t *p) {
@@ -2632,10 +2635,18 @@ stmt_t *parser_parse(parser_t *p) {
     return head;
 }
 
+/* the statements of one typed line, colons between them, chained (a
+ * FOR and its NEXT can share the line) */
 stmt_t *parser_parse_line(parser_t *p) {
+    stmt_t *head = NULL, *tail = NULL;
     skip_eol(p);
-    if (lexer_check(&p->lex, TOK_EOF)) return NULL;
-    return parse_stmt(p);
+    while (!lexer_check(&p->lex, TOK_EOF) && !lexer_check(&p->lex, TOK_EOL)) {
+        stmt_t *s = parse_stmt(p);
+        if (p->error != ERR_NONE) { stmt_free(s); stmt_free(head); return NULL; }
+        if (s) stmt_append(&head, &tail, s);
+        if (!lexer_match(&p->lex, TOK_COLON)) break;
+    }
+    return head;
 }
 
 int parser_had_error(parser_t *p) {

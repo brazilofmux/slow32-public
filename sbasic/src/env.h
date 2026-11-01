@@ -46,6 +46,10 @@ int env_has_local(env_t *env, const char *name);
 /* Check if variable exists in any scope (without auto-creating) */
 int env_exists(env_t *env, const char *name);
 
+/* The variable's value if it exists in any scope, else NULL (nothing
+ * created) */
+value_t *env_lookup(env_t *env, const char *name);
+
 /* Set variable as const (creates and marks const) */
 void env_set_const(env_t *env, const char *name, const value_t *val);
 

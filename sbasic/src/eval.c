@@ -6,6 +6,7 @@
 #include "graphics.h"
 #include "lower.h"
 #include <stdio.h>
+#include <math.h>
 #include <ctype.h>
 #include <string.h>
 #include <stdlib.h>
@@ -84,7 +85,7 @@ static char resume_label[64] = "";   /* target label for RESUME label */
 static char return_label[64] = "";   /* target label for RETURN label */
 
 /* Recursion depth limit (guards against C stack overflow) */
-#define MAX_EVAL_DEPTH 48
+#define MAX_EVAL_DEPTH 1024   /* with the 1 MB stack build.sh gives */
 static int eval_depth = 0;
 
 /* TRACE mode: print line numbers as they execute */
@@ -192,6 +193,19 @@ static error_t store_into(value_t *slot, const value_t *v) {
     value_t c;
     error_t err;
     if (!slot) return ERR_OUT_OF_MEMORY;
+    /* the common cases, a number into its own kind of slot */
+    if (slot->type == v->type) {
+        if (v->type == VAL_INTEGER || v->type == VAL_DOUBLE) {
+            if (v->type == VAL_DOUBLE && !(fabs(v->dval) <= 1.7976931348623157e308))
+                return ERR_OVERFLOW;
+            *slot = *v;
+            return ERR_NONE;
+        }
+        if (v->type == VAL_SINGLE && fabs(v->dval) <= 3.4028234663852886e38) {
+            slot->dval = single_round(v->dval);
+            return ERR_NONE;
+        }
+    }
     c = val_copy(v);
     err = val_coerce(&c, slot->type);
     if (err != ERR_NONE) { val_clear(&c); return err; }
@@ -404,7 +418,12 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
             /* Bare niladic builtins, the GW way (k$ = INKEY$, t = TIMER):
                only when no variable of that name exists; any builtin
                error falls through to the plain-variable path */
-            if (!env_exists(env, e->var.name) && builtin_exists(e->var.name)) {
+            value_t *found = env_lookup(env, e->var.name);
+            if (found) {
+                *out = val_copy(found);
+                return ERR_NONE;
+            }
+            if (builtin_exists(e->var.name)) {
                 if (builtin_call(e->var.name, NULL, 0, out) == ERR_NONE)
                     return ERR_NONE;
             }
@@ -713,12 +732,48 @@ static void update_col(int *col, const char *s) {
 static FILE *col_output_fp = NULL;
 int lprint_col = 0;
 
+/* The screen, as QBasic's behaves (checked): a character past the last
+ * column goes to the next line first (the 80th leaves the wrap pending,
+ * so a newline there makes no blank line); CR and LF are new lines; TAB
+ * goes to the next stop of 8; BEL beeps, so it reaches a terminal and
+ * nothing else; other control characters take no column. */
+static int screen_tty = -1;
+
+static void screen_putc(char c) {
+    extern int console_width;
+    if (c == '\n' || c == '\r') {
+        putchar('\n');
+        print_col = 0;
+        print_row++;
+    } else if (c == '\a') {
+        if (screen_tty < 0) screen_tty = isatty(1);
+        if (screen_tty) putchar(c);
+    } else if (c == '\t') {
+        do screen_putc(' '); while (print_col % 8);
+    } else if ((unsigned char)c < 32) {
+        putchar(c);
+    } else {
+        if (console_width > 0 && print_col >= console_width) {
+            putchar('\n');
+            print_col = 0;
+            print_row++;
+        }
+        putchar(c);
+        print_col++;
+    }
+}
+
+static int on_screen(void) {
+    return active_print_col == &print_col && (!col_output_fp || col_output_fp == stdout);
+}
+
 static void col_puts(const char *s) {
     FILE *fp = col_output_fp ? col_output_fp : stdout;
+    if (on_screen()) {
+        for (; *s; s++) screen_putc(*s);
+        return;
+    }
     fputs(s, fp);
-    if (active_print_col == &print_col)
-        for (const char *t = s; *t; t++)
-            if (*t == '\n') print_row++;
     update_col(active_print_col, s);
 }
 
@@ -1079,6 +1134,19 @@ static void print_comma(int width) {
     col_puts(buf);
 }
 
+/* PRINT's TAB(n) and SPC(n) */
+static int is_tab_spc(const expr_t *e) {
+    return e && e->type == EXPR_CALL &&
+           (strcmp(e->call.name, "TAB") == 0 || strcmp(e->call.name, "SPC") == 0);
+}
+
+/* An item that does not fit in what is left of the line starts the next
+ * one (unless the line is empty): QBasic, numbers and strings alike */
+static void print_fit(int len, int width) {
+    if (width > 0 && *active_print_col > 0 && *active_print_col + len > width)
+        col_puts("\n");
+}
+
 /* The items of PRINT, LPRINT or PRINT #, to col_output_fp; width is the
  * line's, 0 for a file */
 static error_t print_items(env_t *env, print_item_t *items, int nitems, int width) {
@@ -1093,14 +1161,18 @@ static error_t print_items(env_t *env, print_item_t *items, int nitems, int widt
                 case VAL_DOUBLE:
                 case VAL_SINGLE: {
                     /* a space or the minus sign before, a space after */
-                    char buf[64];
+                    char buf[64], item[72];
                     error_t rerr = val_check_range(&v);
                     if (rerr != ERR_NONE) return rerr;
                     val_format_number(&v, buf, sizeof(buf));
-                    col_printf("%s%s ", buf[0] == '-' ? "" : " ", buf);
+                    snprintf(item, sizeof(item), "%s%s ", buf[0] == '-' ? "" : " ", buf);
+                    print_fit((int)strlen(item), width);
+                    col_puts(item);
                     break;
                 }
                 case VAL_STRING:
+                    if (!is_tab_spc(item->expr))  /* TAB and SPC place, not fit */
+                        print_fit(v.sval->len, width);
                     col_puts(v.sval->data);
                     break;
                 case VAL_RECORD:
@@ -1486,11 +1558,18 @@ static error_t exec_assign(env_t *env, stmt_t *s) {
 }
 
 /* FOR, as GW-BASIC and QuickBASIC run it: the limit and the step are
- * evaluated once, into the activation's slot; the control variable is
- * the counter, so the body may change it, and NEXT adds the step to
- * whatever it holds. */
+ * evaluated once, into a frame on the activation's FOR stack; the control
+ * variable is the counter, so the body may change it, and NEXT adds the
+ * step to whatever it holds.  NEXT steps the topmost frame of its
+ * variable (the top frame if it names none), dropping those above it --
+ * loops left by GOTO -- so two FORs may share a NEXT (checkers).  A FOR
+ * replaces only a frame of its own, with those above it (a loop entered
+ * again by GOTO): an inner FOR of the same variable leaves the outer
+ * loop running, as in QBasic (NBS P054). */
 typedef struct {
+    stmt_t *s;          /* the FOR */
     double limit, step;
+    int body_pc;        /* the op after the FOR */
 } for_slot_t;
 
 static int for_in_range(double v, const for_slot_t *f) {
@@ -1539,7 +1618,16 @@ static error_t for_next(env_t *env, stmt_t *s, const for_slot_t *f, int *again) 
     value_t *cv = env_get(env, s->for_stmt.var_name);
     double v = 0.0;
     /* the variable as FOR made it: stepped where it lives */
-    if (cv && cv->type == VAL_DOUBLE) {
+    if (cv && cv->type == VAL_INTEGER) {
+        v = (double)cv->ival + f->step;
+        if (v != (double)(int)v || v > 2147483647.0 || v < -2147483648.0) {
+            EVAL_CHECK(for_set(env, s, v));       /* rounds, or overflows */
+            cv = env_get(env, s->for_stmt.var_name);
+            if (cv) EVAL_CHECK(val_to_double(cv, &v));
+        } else {
+            cv->ival = (int)v;
+        }
+    } else if (cv && cv->type == VAL_DOUBLE) {
         v = cv->dval + f->step;
         cv->dval = v;
     } else if (cv && cv->type == VAL_SINGLE) {
@@ -2370,6 +2458,9 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         case STMT_LOCATE:       return exec_locate(env, s);
         case STMT_COLOR:        return exec_color(env, s);
         case STMT_ASSIGN:       return exec_assign(env, s);
+        case STMT_NEXT:
+            /* a NEXT outside a lowered unit has no FOR to find */
+            return ERR_NEXT_WITHOUT_FOR;
         case STMT_IF:
         case STMT_FOR:
         case STMT_WHILE:
@@ -2944,16 +3035,13 @@ static error_t run_code(env_t *env, code_t *c, int is_main) {
         return ERR_STACK_OVERFLOW;
     }
     code_t *saved_code = cur_code;
-    for_slot_t *slots = NULL;
+    for_slot_t *fors = NULL;
+    int nfors = 0, cap_fors = 0;
     int gosub_base = gosub_top;
     int pc = 0;
     error_t result = ERR_NONE;
 
     cur_code = c;
-    if (c->nfor) {
-        slots = calloc(c->nfor, sizeof(for_slot_t));
-        if (!slots) { result = ERR_OUT_OF_MEMORY; pc = c->nops; }
-    }
     while (pc < c->nops) {
         op_t *op = &c->ops[pc];
         error_t err;
@@ -2971,15 +3059,61 @@ static error_t run_code(env_t *env, code_t *c, int is_main) {
                 pc = (yes != op->invert) ? pc + 1 : op->target;
                 continue;
             }
-            case OP_FOR:
-                err = for_start(env, op->s, &slots[op->slot], &yes);
+            case OP_FOR: {
+                for_slot_t f;
+                int k;
+                err = for_start(env, op->s, &f, &yes);
                 if (err != ERR_NONE) break;
-                pc = yes ? pc + 1 : op->target;
+                for (k = nfors - 1; k >= 0; k--)
+                    if (fors[k].s == op->s) { nfors = k; break; }
+                if (!yes) {
+                    if (op->target < 0) { err = ERR_FOR_WITHOUT_NEXT; break; }
+                    pc = op->target;
+                    continue;
+                }
+                if (nfors == cap_fors) {
+                    int cap = cap_fors ? cap_fors * 2 : 8;
+                    for_slot_t *t = realloc(fors, cap * sizeof(*t));
+                    if (!t) { err = ERR_OUT_OF_MEMORY; break; }
+                    fors = t;
+                    cap_fors = cap;
+                }
+                f.s = op->s;
+                f.body_pc = pc + 1;
+                fors[nfors++] = f;
+                pc++;
                 continue;
-            case OP_NEXT:
-                err = for_next(env, op->s, &slots[op->slot], &yes);
+            }
+            case OP_NEXT: {
+                int k = nfors - 1;
+                if (!op->invert)
+                    while (k >= 0 && strcmp(fors[k].s->for_stmt.var_name,
+                                            op->s->for_stmt.var_name) != 0)
+                        k--;
+                if (k < 0) {
+                    /* no loop running (a GOTO into its body): QBasic's
+                     * NEXT then steps by 0 to a limit of 0, the FOR's
+                     * own slot never set (NBS P055) */
+                    for_slot_t z = { op->s, 0.0, 0.0, op->slot + 1 };
+                    err = for_next(env, op->s, &z, &yes);
+                    if (err != ERR_NONE) break;
+                    pc = yes ? z.body_pc : pc + 1;
+                    continue;
+                }
+                nfors = k + 1;
+                err = for_next(env, fors[k].s, &fors[k], &yes);
                 if (err != ERR_NONE) break;
-                pc = yes ? op->target : pc + 1;
+                if (yes) {
+                    pc = fors[k].body_pc;
+                } else {
+                    nfors = k;
+                    pc++;
+                }
+                continue;
+            }
+            case OP_EXITFOR:
+                if (nfors > 0) nfors--;
+                pc = op->target;
                 continue;
             case OP_SELECT:
                 err = select_match(env, op->s, &yes);
@@ -3063,7 +3197,7 @@ static error_t run_code(env_t *env, code_t *c, int is_main) {
         break;
     }
     if (gosub_top > gosub_base) gosub_top = gosub_base;
-    free(slots);
+    free(fors);
     cur_code = saved_code;
     eval_depth--;
     return result;

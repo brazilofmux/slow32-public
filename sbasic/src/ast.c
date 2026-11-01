@@ -353,6 +353,10 @@ void stmt_call_add_arg(stmt_t *s, expr_t *arg) {
         s->call_stmt.args[s->call_stmt.nargs++] = arg;
 }
 
+stmt_t *stmt_next(int line) {
+    return stmt_alloc(STMT_NEXT, line);
+}
+
 stmt_t *stmt_exit(exit_type_t what, int line) {
     stmt_t *s = stmt_alloc(STMT_EXIT, line);
     if (!s) return NULL;
@@ -461,6 +465,8 @@ void stmt_free(stmt_t *s) {
     while (s) {
         stmt_t *next = s->next;
         switch (s->type) {
+            case STMT_NEXT:
+                break;
             case STMT_PRINT:
             case STMT_LPRINT:
                 for (int i = 0; i < s->print.nitems; i++)

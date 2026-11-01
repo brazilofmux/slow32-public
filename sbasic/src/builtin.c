@@ -937,6 +937,11 @@ static error_t fn_tab(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     int n, nl = 0;
     EVAL_CHECK(val_to_integer(&args[0], &n));
+    {
+        extern int print_col;   /* on the screen, past the width wraps */
+        if (active_print_col == &print_col && console_width > 0 && n > console_width)
+            n = (n - 1) % console_width + 1;
+    }
     if (n < 1) n = 1;
     n--;  /* convert 1-based column to 0-based */
     int spaces = n - *active_print_col;

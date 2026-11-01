@@ -170,6 +170,7 @@ typedef enum {
     STMT_CIRCLE,
     STMT_PAINT,
     STMT_PALETTE,
+    STMT_NEXT,
 } stmt_type_t;
 
 /* Print item: expression + separator */
@@ -316,6 +317,13 @@ typedef struct stmt {
         struct {
             exit_type_t what;
         } exit_stmt;
+
+        /* STMT_NEXT: NEXT [v [, v ...]] -- matched to its FOR when it
+         * runs, as GW-BASIC and QBasic do */
+        struct {
+            char vars[8][64];
+            int nvars;
+        } next_stmt;
 
         /* STMT_CONST */
         struct {
@@ -623,6 +631,7 @@ void stmt_proc_set_body(stmt_t *s, stmt_t *body);
 stmt_t *stmt_call(const char *name, int line);
 void stmt_call_add_arg(stmt_t *s, expr_t *arg);
 stmt_t *stmt_exit(exit_type_t what, int line);
+stmt_t *stmt_next(int line);
 stmt_t *stmt_const(const char *name, val_type_t type, expr_t *value, int line);
 stmt_t *stmt_shared(int line);
 void stmt_shared_add(stmt_t *s, const char *name);

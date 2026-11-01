@@ -75,6 +75,14 @@ static var_entry_t *create_entry(env_t *env, const char *name) {
     return e;
 }
 
+value_t *env_lookup(env_t *env, const char *name) {
+    for (env_t *scope = env; scope; scope = scope->parent) {
+        var_entry_t *e = find_entry(scope, name);
+        if (e) return e->link ? e->link : &e->value;
+    }
+    return NULL;
+}
+
 value_t *env_get(env_t *env, const char *name) {
     /* Search up the scope chain */
     env_t *scope = env;
