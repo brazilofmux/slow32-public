@@ -165,6 +165,88 @@ static size_t build_e(char *out, const char *digits, size_t len, int decpt,
 }
 
 __attribute__((noinline))
+/* %a / %A (7.21.6.1p8): [-]0xh.hhhhp+d -- the "0x" left to the caller's
+ * prefix, so that the '0' flag pads between it and the digits as it does
+ * for %#x.  A normal number has the leading digit 1; a denormal, 0 with
+ * exponent -1022 (glibc's form; the choice is unspecified).  No
+ * precision: exactly the digits the value needs; a precision rounds the
+ * hexadecimal fraction to nearest, ties to even (a carry out of it makes
+ * the leading digit 2, as glibc's does).  inf and nan as %e has them,
+ * with no prefix (*hex stays false). */
+static char *format_hexfloat_alloc(double val, int precision, bool has_precision, bool alt_form,
+                                   bool upper, size_t *out_len, bool *neg, bool *hex) {
+    uint64_t bits;
+    uint64_t frac;
+    unsigned lead;
+    int exp2;
+    int ndig;
+    char *out;
+    size_t n = 0;
+    const char *digits = upper ? "0123456789ABCDEF" : "0123456789abcdef";
+    int i;
+
+    memcpy(&bits, &val, sizeof bits);
+    *neg = (bits >> 63) != 0;
+    *hex = false;
+    out = (char *)malloc(64 + (has_precision && precision > 13 ? (size_t)precision : 0));
+    if (out == NULL) return NULL;
+    {
+        int e = (int)((bits >> 52) & 0x7FF);
+        frac = bits & 0xFFFFFFFFFFFFFull;
+        if (e == 0x7FF) {
+            const char *w = frac ? (upper ? "NAN" : "nan") : (upper ? "INF" : "inf");
+            strcpy(out, w);
+            *out_len = 3;
+            return out;
+        }
+        if (e == 0) {
+            lead = 0;
+            exp2 = frac ? -1022 : 0;
+        } else {
+            lead = 1;
+            exp2 = e - 1023;
+        }
+    }
+    *hex = true;
+    if (!has_precision) {
+        ndig = 13;
+        while (ndig > 0 && ((frac >> (4 * (13 - ndig))) & 0xF) == 0) ndig--;
+    } else {
+        ndig = precision;
+        if (ndig < 13) {
+            int drop = 4 * (13 - ndig);
+            uint64_t rest = frac & ((1ull << drop) - 1);
+            uint64_t half = 1ull << (drop - 1);
+            frac >>= drop;
+            if (rest > half || (rest == half && (frac & 1))) {
+                frac++;
+                if (ndig == 0 ? frac > 0 : (frac >> (4 * ndig)) != 0) {
+                    lead++;
+                    frac &= (ndig == 0) ? 0 : ((1ull << (4 * ndig)) - 1);
+                }
+            }
+            frac <<= drop;
+        }
+    }
+    out[n++] = digits[lead];
+    if (ndig > 0 || alt_form) out[n++] = '.';
+    for (i = 0; i < ndig; i++) {
+        out[n++] = (i < 13) ? digits[(frac >> (4 * (12 - i))) & 0xF] : '0';
+    }
+    out[n++] = upper ? 'P' : 'p';
+    out[n++] = exp2 < 0 ? '-' : '+';
+    {
+        char eb[8];
+        int en = 0;
+        unsigned ue = (unsigned)(exp2 < 0 ? -exp2 : exp2);
+        do { eb[en++] = (char)('0' + ue % 10); ue /= 10; } while (ue);
+        while (en) out[n++] = eb[--en];
+    }
+    out[n] = '\0';
+    *out_len = n;
+    return out;
+}
+
 static char *format_float_alloc(double val, char spec, int precision, bool has_precision,
                                 bool alt_form, bool upper, size_t *out_len,
                                 bool *out_is_negative) {
@@ -373,7 +455,7 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
         }
 
         // Parse length modifiers
-        int length_mod = 0; // 0=default, 1=long, 2=long long
+        int length_mod = 0; // 0=default, 1=long, 2=long long, -1=h, -2=hh, 3=z, 4=t
         if (*fmt == 'l') {
             length_mod++;
             fmt++;
@@ -382,7 +464,9 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
                 fmt++;
             }
         } else if (*fmt == 'z' || *fmt == 't') {
-            // size_t, ptrdiff_t: 32 bits, the default width
+            // size_t, ptrdiff_t: 32 bits, the default width for values;
+            // %zn and %tn store through their own pointer types
+            length_mod = (*fmt == 'z') ? 3 : 4;
             fmt++;
         } else if (*fmt == 'j') {
             // intmax_t: long long
@@ -393,10 +477,12 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
             // conversion of it is a double's (libc++'s put_money is %.0Lf)
             fmt++;
         } else if (*fmt == 'h') {
-            // Short modifier
+            // short, and hh char: the argument arrives promoted to int and
+            // is converted back before printing (7.21.6.1p7)
+            length_mod = -1;
             fmt++;
             if (*fmt == 'h') {
-                // char modifier
+                length_mod = -2;
                 fmt++;
             }
         }
@@ -409,12 +495,14 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
 
         int spec = (unsigned char)*fmt;
         bool pointer_format = false;
+        bool hexfloat = false;
+        bool int_zero = false;      // the integer converted was 0 (for #x)
         char *conv_alloc = NULL;
 
         switch (spec) {
             case 'd':
             case 'i': {
-                if (length_mod >= 2) {
+                if (length_mod == 2) {
                     long long val = va_arg(ap, long long);
                     conv_len = slow32_ltoa64(val, conv_buf);
                     if (val < 0) {
@@ -431,6 +519,8 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
                     }
                 } else {
                     int val = va_arg(ap, int);
+                    if (length_mod == -1) val = (short)val;
+                    else if (length_mod == -2) val = (signed char)val;
                     conv_len = slow32_ltoa(val, conv_buf);
                     if (val < 0) is_negative = true;
                 }
@@ -438,8 +528,9 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
             }
 
             case 'u': {
-                if (length_mod >= 2) {
+                if (length_mod == 2) {
                     unsigned long long val = va_arg(ap, unsigned long long);
+                    int_zero = (val == 0);
                     conv_len = slow32_utoa64(val, conv_buf);
                 } else if (length_mod == 1) {
                     unsigned long val = va_arg(ap, unsigned long);
@@ -450,6 +541,9 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
                     }
                 } else {
                     unsigned val = va_arg(ap, unsigned);
+                    if (length_mod == -1) val = (unsigned short)val;
+                    else if (length_mod == -2) val = (unsigned char)val;
+                    int_zero = (val == 0);
                     conv_len = slow32_utoa(val, conv_buf);
                 }
                 break;
@@ -458,8 +552,9 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
             case 'x':
             case 'X': {
                 bool uppercase = (spec == 'X');
-                if (length_mod >= 2) {
+                if (length_mod == 2) {
                     unsigned long long val = va_arg(ap, unsigned long long);
+                    int_zero = (val == 0);
                     conv_len = slow32_utox64((uint64_t)val, conv_buf, uppercase);
                 } else if (length_mod == 1) {
                     unsigned long val = va_arg(ap, unsigned long);
@@ -470,14 +565,18 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
                     }
                 } else {
                     unsigned val = va_arg(ap, unsigned);
+                    if (length_mod == -1) val = (unsigned short)val;
+                    else if (length_mod == -2) val = (unsigned char)val;
+                    int_zero = (val == 0);
                     conv_len = slow32_utox(val, conv_buf, uppercase);
                 }
                 break;
             }
 
             case 'o': {
-                if (length_mod >= 2) {
+                if (length_mod == 2) {
                     unsigned long long val = va_arg(ap, unsigned long long);
+                    int_zero = (val == 0);
                     conv_len = slow32_utoo64(val, conv_buf);
                 } else if (length_mod == 1) {
                     unsigned long val = va_arg(ap, unsigned long);
@@ -488,6 +587,9 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
                     }
                 } else {
                     unsigned val = va_arg(ap, unsigned);
+                    if (length_mod == -1) val = (unsigned short)val;
+                    else if (length_mod == -2) val = (unsigned char)val;
+                    int_zero = (val == 0);
                     conv_len = slow32_utoo(val, conv_buf);
                 }
                 break;
@@ -502,16 +604,24 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
 #else
                 conv_len = slow32_utox((uint32_t)val, conv_buf, false);
 #endif
-                if (!has_width || (size_t)width < (2 + sizeof(uintptr_t) * 2)) {
-                    width = (int)(2 + sizeof(uintptr_t) * 2);
-                    has_width = true;
+                // 0x and every digit of the pointer (implementation-
+                // defined form); a field width pads it like any other
+                // conversion, with spaces
+                {
+                    size_t full = sizeof(uintptr_t) * 2;
+                    if (conv_len < full) {
+                        size_t z = full - conv_len;
+                        memmove(conv_buf + z, conv_buf, conv_len + 1);
+                        memset(conv_buf, '0', z);
+                        conv_len = full;
+                    }
                 }
-                zero_pad = true;
+                zero_pad = false;
                 break;
             }
 
             case 'c': {
-                int ch = va_arg(ap, int);
+                int ch = va_arg(ap, int);   // %lc: a wint_t, the same width
                 conv_buf[0] = (char)ch;
                 conv_buf[1] = '\0';
                 conv_len = 1;
@@ -519,6 +629,29 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
             }
 
             case 's': {
+                if (length_mod == 1) {
+                    // %ls: a wide string, converted as wcrtomb would in
+                    // the "C" locale -- one byte per wide character; the
+                    // precision limits the bytes written (7.21.6.1p8)
+                    const int *ws = va_arg(ap, const int *);
+                    size_t wn = 0;
+                    if (ws == NULL) {
+                        conv_str = "(null)";
+                        conv_len = 6;
+                        break;
+                    }
+                    while (ws[wn] && (!has_precision || wn < (size_t)precision)) wn++;
+                    conv_alloc = (char *)malloc(wn + 1);
+                    if (conv_alloc == NULL) {
+                        conv_len = 0;
+                        break;
+                    }
+                    for (size_t wi = 0; wi < wn; wi++) conv_alloc[wi] = (char)ws[wi];
+                    conv_alloc[wn] = '\0';
+                    conv_str = conv_alloc;
+                    conv_len = wn;
+                    break;
+                }
                 conv_str = va_arg(ap, char*);
                 if (conv_str == NULL) {
                     conv_str = "(null)";
@@ -551,6 +684,42 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
                 conv_alloc = format_float_alloc(val, (char)spec, precision, has_precision,
                                                 alt_form, upper, &flen, &neg);
                 if (conv_alloc == NULL || flen == 0) {
+                    conv_buf[0] = '?';
+                    conv_buf[1] = '\0';
+                    conv_len = 1;
+                } else {
+                    conv_str = conv_alloc;
+                    conv_len = flen;
+                }
+                is_negative = neg;
+                break;
+            }
+
+            case 'n': {
+                // the count of characters so far, stored; nothing printed
+                int cnt = (int)total_idx;
+                switch (length_mod) {
+                case -2: *va_arg(ap, signed char *) = (signed char)cnt; break;
+                case -1: *va_arg(ap, short *) = (short)cnt; break;
+                case 1:  *va_arg(ap, long *) = cnt; break;
+                case 2:  *va_arg(ap, long long *) = cnt; break;
+                case 3:  *va_arg(ap, size_t *) = (size_t)cnt; break;
+                case 4:  *va_arg(ap, ptrdiff_t *) = cnt; break;
+                default: *va_arg(ap, int *) = cnt; break;
+                }
+                fmt++;
+                continue;
+            }
+
+            case 'a':
+            case 'A': {
+                double val = va_arg(ap, double);
+                bool upper = (spec == 'A');
+                bool neg = false;
+                size_t flen = 0;
+                conv_alloc = format_hexfloat_alloc(val, precision, has_precision, alt_form,
+                                                   upper, &flen, &neg, &hexfloat);
+                if (conv_alloc == NULL) {
                     conv_buf[0] = '?';
                     conv_buf[1] = '\0';
                     conv_len = 1;
@@ -618,7 +787,7 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
             (spec == 'd' || spec == 'i' ||
              spec == 'f' || spec == 'F' ||
              spec == 'e' || spec == 'E' ||
-             spec == 'g' || spec == 'G');
+             spec == 'g' || spec == 'G' || spec == 'a' || spec == 'A');
         if (is_negative && conv_str[0] == '-') {
             // Already has minus sign
         } else if (is_negative && is_signed_conv) {
@@ -630,10 +799,10 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
         }
 
         // Add 0x prefix for alt form hex
-        if (pointer_format) {
+        if (pointer_format || hexfloat) {
             prefix[prefix_len++] = '0';
-            prefix[prefix_len++] = 'x';
-        } else if (alt_form && (spec == 'x' || spec == 'X') && conv_str[0] != '0') {
+            prefix[prefix_len++] = (spec == 'A') ? 'X' : 'x';
+        } else if (alt_form && (spec == 'x' || spec == 'X') && !int_zero) {
             prefix[prefix_len++] = '0';
             prefix[prefix_len++] = (spec == 'X') ? 'X' : 'x';
         } else if (alt_form && spec == 'o' && conv_str[0] != '0') {

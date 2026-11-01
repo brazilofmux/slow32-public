@@ -47,13 +47,15 @@ Ranked by harm: wrong answers in programs that are correct first.
    double).
 
 **Formatted I/O (shared `sscanf.c`, `printf_enhanced.c`)**
-5. `sscanf`: no `%[`, never returns EOF, `%hhd`/`%hd` store a whole int
-   (memory corruption), no `j z t L`, `%p`, `%a`, no float field width,
-   a prefix that is not a matching sequence is converted.  No `scanf`,
-   `fscanf`, `vscanf`, `vfscanf` at all.
-6. `printf`: `hh`/`h` ignored, no `%n`, no `%a` (which then misaligns
-   every later argument), `#x` decides on the prefix after padding,
-   `%Np` zero-fills, `%ls` prints one character.
+5. *Fixed 2026-11-01.* `sscanf` had no `%[`, never returned EOF,
+   stored a whole int for `%hhd`/`%hd`, knew no `j z t L`, `%p`, `%a`,
+   ignored float field widths and converted prefixes that are not
+   matching sequences; there was no `scanf`, `fscanf`, `vscanf` or
+   `vfscanf`.  `runtime/sscanf.c` is now one scanner over a string or
+   a stream, with every conversion and length modifier.
+6. *Fixed 2026-11-01.* `printf` ignored `hh`/`h`, had no `%n` and no
+   `%a` (which misaligned every later argument), decided `#x`'s prefix
+   after padding, zero-filled `%Np`, printed one character of `%ls`.
 
 **Mathematics (shared `math_soft.c`)**
 7. `round` is `floor(x + 0.5)`; `modf` loses negative zeros; `pow` of a

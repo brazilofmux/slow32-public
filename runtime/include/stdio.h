@@ -117,6 +117,8 @@ int scanf(const char *format, ...);
 int fscanf(FILE *stream, const char *format, ...);
 int sscanf(const char *str, const char *format, ...);
 int vsscanf(const char *str, const char *format, va_list ap);
+int vscanf(const char *format, va_list ap);
+int vfscanf(FILE *stream, const char *format, va_list ap);
 int fseek(FILE *stream, long offset, int whence);
 long ftell(FILE *stream);
 void rewind(FILE *stream);

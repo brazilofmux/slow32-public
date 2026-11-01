@@ -78,6 +78,10 @@ int   vfprintf(FILE *f, const char *fmt, va_list ap);
 int   vsprintf(char *str, const char *fmt, va_list ap);
 int   vsnprintf(char *buf, size_t size, const char *fmt, va_list ap);
 int   vsscanf(const char *str, const char *fmt, va_list ap);
+int   scanf(const char *fmt, ...);
+int   fscanf(FILE *f, const char *fmt, ...);
+int   vscanf(const char *fmt, va_list ap);
+int   vfscanf(FILE *f, const char *fmt, va_list ap);
 
 /* POSIX: a whole line, the buffer grown to fit */
 #ifndef _SSIZE_T_DEFINED
