@@ -53,8 +53,14 @@ typedef enum {
     ERR_ON_ERROR_GOTO,       /* flow control: error trapped */
     ERR_STACK_OVERFLOW,
     ERR_INTERNAL,
+    ERR_WRONG_DIMS,
+    ERR_ARG_COUNT,
+    ERR_FUNC_NOT_DEFINED,
     ERR_COUNT
 } error_t;
+
+/* QuickBASIC's number for an error (what ERR returns) */
+int error_qb_code(error_t err);
 
 /* Return the message string for an error code */
 const char *error_message(error_t err);

@@ -364,6 +364,7 @@ typedef struct stmt {
         /* STMT_DATA */
         struct {
             value_t *values;
+            unsigned char *quoted;  /* the item was a quoted string */
             int nvalues;
         } data_stmt;
 
@@ -649,7 +650,7 @@ stmt_t *stmt_option_base(int base, int line);
 stmt_t *stmt_erase(int line);
 void stmt_erase_add(stmt_t *s, const char *name);
 stmt_t *stmt_data(int line);
-int stmt_data_add(stmt_t *s, value_t val);
+int stmt_data_add(stmt_t *s, value_t val, int quoted);
 stmt_t *stmt_read(int line);
 int stmt_read_add_var(stmt_t *s, const char *name, val_type_t type);
 int stmt_read_add_target(stmt_t *s, expr_t *target);

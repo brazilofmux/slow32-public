@@ -8,7 +8,7 @@ END
 
 Handler:
 PRINT "In Handler, ERR="; ERR
-IF ERR <> 39 THEN
+IF ERR <> 53 THEN
     PRINT "Unexpected error "; ERR
     END
 END IF

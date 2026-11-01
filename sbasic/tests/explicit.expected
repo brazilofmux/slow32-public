@@ -2,5 +2,5 @@ Before explicit: 42
 Declared: 100 
 String: hello
 Double: 3.141590118408203 
-Caught error: 3 
+Caught error: 5 
 Explicit OK

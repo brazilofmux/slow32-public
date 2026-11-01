@@ -118,7 +118,7 @@ int lexer_match(lexer_t *lex, token_type_t type);
  * or the end of the line) with the spaces around it dropped.  Call with
  * no token peeked.  Returns 1 when a comma followed it (consumed), 0 at
  * the end of the statement (left for the next token). */
-int lexer_data_item(lexer_t *lex, char *buf, int size);
+int lexer_data_item(lexer_t *lex, char *buf, int size, int *quoted);
 
 /* Return the keyword name for a token type (or NULL) */
 const char *token_type_name(token_type_t type);

@@ -84,7 +84,7 @@ error_t array_get(const char *name, int *indices, int nindices,
     sb_array_t *arr = array_find(name);
     if (!arr) return ERR_UNDEFINED_VAR;
     int flat = calc_flat_index(arr, indices, nindices);
-    if (flat < 0) return ERR_SUBSCRIPT_OUT_OF_RANGE;
+    if (flat < 0) return nindices != arr->ndims ? ERR_WRONG_DIMS : ERR_SUBSCRIPT_OUT_OF_RANGE;
     *out = &arr->data[flat];
     return ERR_NONE;
 }
@@ -94,7 +94,7 @@ error_t array_set(const char *name, int *indices, int nindices,
     sb_array_t *arr = array_find(name);
     if (!arr) return ERR_UNDEFINED_VAR;
     int flat = calc_flat_index(arr, indices, nindices);
-    if (flat < 0) return ERR_SUBSCRIPT_OUT_OF_RANGE;
+    if (flat < 0) return nindices != arr->ndims ? ERR_WRONG_DIMS : ERR_SUBSCRIPT_OUT_OF_RANGE;
     val_assign(&arr->data[flat], val);
     return ERR_NONE;
 }

@@ -24,6 +24,7 @@ typedef enum {
 typedef struct {
     op_kind_t kind;
     int line;
+    int basic_line;     /* the line number before it in the source (ERL), or 0 */
     stmt_t *s;
     expr_t *cond;
     int invert;

@@ -14,6 +14,7 @@ typedef struct {
         int nexits, cap;
     } loops[MAX_LOOP_DEPTH];
     int depth;
+    int basic_line;     /* the last line number passed */
 } lower_t;
 
 static int emit(lower_t *L, op_kind_t kind, stmt_t *s, int line) {
@@ -30,6 +31,7 @@ static int emit(lower_t *L, op_kind_t kind, stmt_t *s, int line) {
     op->kind = kind;
     op->s = s;
     op->line = line;
+    op->basic_line = L->basic_line;
     op->target = -1;
     return c->nops++;
 }
@@ -95,9 +97,14 @@ static void lower_stmt(lower_t *L, stmt_t *s) {
     code_t *c = L->c;
     int j, n, top;
     switch (s->type) {
-        case STMT_LABEL:
-            add_label(L, s->label.name);
+        case STMT_LABEL: {
+            const char *q = s->label.name;
+            add_label(L, q);
+            while (*q >= '0' && *q <= '9') q++;
+            if (*q == '\0' && q != s->label.name)
+                L->basic_line = atoi(s->label.name);
             return;
+        }
         case STMT_REM:
         case STMT_SUB_DEF:
         case STMT_FUNC_DEF:

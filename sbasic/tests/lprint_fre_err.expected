@@ -4,5 +4,5 @@ LPRINT output
 ERR before = 0 
 ERL before = 0 
 ERR = 5 
-ERL = 8 
+ERL = 0 
 After error

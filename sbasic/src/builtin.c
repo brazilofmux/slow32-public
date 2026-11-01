@@ -314,6 +314,7 @@ static error_t fn_str(value_t *args, int nargs, value_t *out) {
     char buf[64];
     if (args[0].type == VAL_STRING || args[0].type == VAL_RECORD)
         return ERR_TYPE_MISMATCH;
+    EVAL_CHECK(val_check_range(&args[0]));
     /* as PRINT writes it, with the sign's place: STR$(5) is " 5" */
     buf[0] = ' ';
     val_format_number(&args[0], buf + 1, sizeof(buf) - 1);

@@ -83,6 +83,10 @@ void val_assign(value_t *dst, const value_t *src);
  * by rounding to one; a string to or from a number is a Type mismatch */
 error_t val_coerce(value_t *v, val_type_t t);
 
+/* Overflow when a single or double is out of its range (or not a
+ * number): QBasic checks when a value becomes one, to print or store */
+error_t val_check_range(const value_t *v);
+
 /* A number as QuickBASIC writes it, with no space around it: -.5,
  * .3333333, 1E+07, 1.234567890123457D+16 -- 7 significant digits for an
  * integer or single, 16 for a double, fixed point when that fits */

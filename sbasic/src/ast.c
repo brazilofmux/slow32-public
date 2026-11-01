@@ -547,6 +547,7 @@ void stmt_free(stmt_t *s) {
                 for (int i = 0; i < s->data_stmt.nvalues; i++)
                     val_clear(&s->data_stmt.values[i]);
                 free(s->data_stmt.values);
+                free(s->data_stmt.quoted);
                 break;
             case STMT_OPTION_BASE:
             case STMT_ERASE:
@@ -746,11 +747,15 @@ stmt_t *stmt_data(int line) {
     return stmt_alloc(STMT_DATA, line);
 }
 
-int stmt_data_add(stmt_t *s, value_t val) {
+int stmt_data_add(stmt_t *s, value_t val, int quoted) {
     int n = s->data_stmt.nvalues;
     value_t *tmp = realloc(s->data_stmt.values, (n + 1) * sizeof(value_t));
     if (!tmp) return -1;
     s->data_stmt.values = tmp;
+    unsigned char *q = realloc(s->data_stmt.quoted, n + 1);
+    if (!q) return -1;
+    s->data_stmt.quoted = q;
+    q[n] = (unsigned char)quoted;
     s->data_stmt.values[n] = val_copy(&val);
     s->data_stmt.nvalues = n + 1;
     return 0;

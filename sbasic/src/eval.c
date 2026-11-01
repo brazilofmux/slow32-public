@@ -53,6 +53,7 @@ static int option_base = 0;
 
 /* DATA pool */
 static value_t *data_pool = NULL;
+static unsigned char *data_quoted = NULL;   /* each item: was it quoted */
 static int data_pool_cap = 0;
 static int data_pool_count = 0;
 static int data_read_ptr = 0;
@@ -75,6 +76,7 @@ static int on_error_label_idx = -1;  /* -1 = no handler */
 static int on_error_active = 0;      /* currently handling an error? */
 static int on_error_err_code = 0;    /* ERR value */
 static int on_error_err_line = 0;    /* ERL value */
+static int cur_basic_line = 0;       /* the running op's line number, for ERROR n */
 static int on_error_resume_pc = 0;   /* PC to RESUME to */
 static int on_error_resume_next_pc = 0; /* PC for RESUME NEXT */
 static int resume_is_next = 0;       /* set by RESUME stmt for eval_program: 0=retry, 1=next, 2=label */
@@ -238,7 +240,7 @@ static sb_array_t *array_implicit(const char *name, int ndims) {
 static error_t array_elem_read(env_t *env, expr_t *e, sb_array_t *arr, value_t *out) {
     int indices[MAX_ARRAY_DIMS];
     if (e->call.nargs != arr->ndims)
-        return ERR_SUBSCRIPT_OUT_OF_RANGE;
+        return ERR_WRONG_DIMS;
     for (int i = 0; i < e->call.nargs; i++) {
         value_t iv;
         error_t err = eval_expr(env, e->call.args[i], &iv);
@@ -259,7 +261,7 @@ static error_t array_elem_read(env_t *env, expr_t *e, sb_array_t *arr, value_t *
 static error_t call_def_fn(env_t *env, stmt_t *def, expr_t **args, int nargs, value_t *out) {
     error_t err = ERR_NONE;
     if (nargs != def->def_fn.nparams)
-        return ERR_ILLEGAL_FUNCTION_CALL;
+        return ERR_ARG_COUNT;
     env_t *fn_env = env_create(env);
     if (!fn_env) return ERR_OUT_OF_MEMORY;
     for (int i = 0; i < nargs && err == ERR_NONE; i++) {
@@ -289,7 +291,7 @@ static error_t call_proc(env_t *caller_env, proc_entry_t *proc,
     int is_function = (def->type == STMT_FUNC_DEF);
 
     if (nargs != def->proc_def.nparams)
-        return ERR_ILLEGAL_FUNCTION_CALL;
+        return ERR_ARG_COUNT;
 
     value_t arg_vals[16];
     for (int i = 0; i < nargs; i++) {
@@ -411,6 +413,7 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
                 proc_entry_t *fp = find_proc(e->var.name);
                 if (fp && fp->def->type == STMT_DEF_FN)
                     return call_def_fn(env, fp->def, NULL, 0, out);
+                if (!fp) return ERR_FUNC_NOT_DEFINED;
             }
             value_t *v = env_get(env, e->var.name);
             if (!v) return ERR_OUT_OF_MEMORY;
@@ -630,6 +633,10 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
                 free(buf);
                 return ERR_NONE;
             }
+
+            /* an FN name is a DEF FN's or nothing: no array, no builtin */
+            if (!proc && strncmp(e->call.name, "FN", 2) == 0)
+                return ERR_FUNC_NOT_DEFINED;
 
             /* 4. An array not DIMmed yet */
             if (!proc && (arr = array_implicit(e->call.name, e->call.nargs)) != NULL)
@@ -1087,6 +1094,8 @@ static error_t print_items(env_t *env, print_item_t *items, int nitems, int widt
                 case VAL_SINGLE: {
                     /* a space or the minus sign before, a space after */
                     char buf[64];
+                    error_t rerr = val_check_range(&v);
+                    if (rerr != ERR_NONE) return rerr;
                     val_format_number(&v, buf, sizeof(buf));
                     col_printf("%s%s ", buf[0] == '-' ? "" : " ", buf);
                     break;
@@ -1756,12 +1765,14 @@ static error_t exec_read(env_t *env, stmt_t *s) {
         if (data_read_ptr >= data_pool_count)
             return ERR_OUT_OF_DATA;
 
+        int quoted = data_quoted[data_read_ptr];
         value_t v = val_copy(&data_pool[data_read_ptr++]);
 
-        /* a DATA item is text; read into a number, it has to be one */
+        /* a DATA item is text; read into a number, it has to be one, and
+         * not a quoted string */
         if (s->read_stmt.vartypes[i] != VAL_STRING && v.type == VAL_STRING) {
             double d;
-            int ok = data_number(v.sval->data, &d);
+            int ok = !quoted && data_number(v.sval->data, &d);
             val_clear(&v);
             if (!ok) return ERR_SYNTAX;
             v = val_double(d);
@@ -2684,7 +2695,7 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             val_clear(&v);
             if (cerr != ERR_NONE) return cerr;
             on_error_err_code = code;
-            on_error_err_line = s->line;
+            on_error_err_line = cur_basic_line;
             return ERR_ON_ERROR_GOTO;
         }
 
@@ -2860,8 +2871,12 @@ static error_t scan_one_stmt(stmt_t *s) {
                 value_t *t = realloc(data_pool, cap * sizeof(*t));
                 if (!t) return ERR_OUT_OF_MEMORY;
                 data_pool = t;
+                unsigned char *q = realloc(data_quoted, cap);
+                if (!q) return ERR_OUT_OF_MEMORY;
+                data_quoted = q;
                 data_pool_cap = cap;
             }
+            data_quoted[data_pool_count] = s->data_stmt.quoted[j];
             data_pool[data_pool_count++] =
                 val_copy(&s->data_stmt.values[j]);
         }
@@ -2972,6 +2987,7 @@ static error_t run_code(env_t *env, code_t *c, int is_main) {
                 pc = op->targets[yes];
                 continue;
             default:
+                cur_basic_line = op->basic_line;
                 err = eval_stmt(env, op->s);
                 if (err == ERR_NONE) { pc++; continue; }
                 break;
@@ -3034,8 +3050,8 @@ static error_t run_code(env_t *env, code_t *c, int is_main) {
            trappable error, jump to the handler */
         if (on_error_label_idx >= 0 && !on_error_active &&
             is_trappable_error(err)) {
-            on_error_err_code = (int)err;
-            on_error_err_line = op->line;
+            on_error_err_code = error_qb_code(err);
+            on_error_err_line = op->basic_line;
             on_error_active = 1;
             on_error_resume_pc = pc;
             on_error_resume_next_pc = pc + 1;

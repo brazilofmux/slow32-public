@@ -229,12 +229,22 @@ error_t val_coerce(value_t *v, val_type_t t) {
     }
     double d = val_as_double(v);
     if (t == VAL_SINGLE) {
-        if (fabs(d) > 3.4028234663852886e38 && !isinf(d))
+        if (!(fabs(d) <= 3.4028234663852886e38))
             return ERR_OVERFLOW;
         *v = val_single(single_round(d));
     } else {
+        if (!(fabs(d) <= 1.7976931348623157e308))
+            return ERR_OVERFLOW;
         *v = val_double(d);
     }
+    return ERR_NONE;
+}
+
+error_t val_check_range(const value_t *v) {
+    if (v->type == VAL_SINGLE && !(fabs(v->dval) <= 3.4028234663852886e38))
+        return ERR_OVERFLOW;
+    if (v->type == VAL_DOUBLE && !(fabs(v->dval) <= 1.7976931348623157e308))
+        return ERR_OVERFLOW;
     return ERR_NONE;
 }
 
@@ -405,6 +415,13 @@ error_t val_pow(const value_t *a, const value_t *b, value_t *result) {
     if (a->type == VAL_STRING || b->type == VAL_STRING ||
         a->type == VAL_RECORD || b->type == VAL_RECORD)
         return ERR_TYPE_MISMATCH;
+    {
+        /* 0 to a negative power, and a negative number to a fractional
+         * one, are Illegal function calls (QBasic) */
+        double x = val_as_double(a), y = val_as_double(b);
+        if ((x == 0.0 && y < 0.0) || (x < 0.0 && y != floor(y)))
+            return ERR_ILLEGAL_FUNCTION_CALL;
+    }
     /* Integer power for integer^positive-integer */
     if (a->type == VAL_INTEGER && b->type == VAL_INTEGER && b->ival >= 0) {
         long long base = a->ival;

@@ -481,12 +481,13 @@ static token_t scan_token(lexer_t *lex) {
     return tok;
 }
 
-int lexer_data_item(lexer_t *lex, char *buf, int size) {
+int lexer_data_item(lexer_t *lex, char *buf, int size, int *quoted) {
     int n = 0;
     char c;
     while (peek_char(lex) == ' ' || peek_char(lex) == '\t')
         next_char(lex);
-    if (peek_char(lex) == '"') {
+    *quoted = peek_char(lex) == '"';
+    if (*quoted) {
         next_char(lex);
         while ((c = peek_char(lex)) && c != '"' && c != '\n' && c != '\r') {
             next_char(lex);

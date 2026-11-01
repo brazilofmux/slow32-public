@@ -63,7 +63,13 @@ static expr_t *parse_primary(parser_t *p) {
     }
     if (tok->type == TOK_DOUBLE_LIT) {
         token_t t = lexer_next(&p->lex);
-        return expr_literal(t.suffix == '#' ? val_double(t.dval) : val_single(single_round(t.dval)), t.line);
+        value_t lv = t.suffix == '#' ? val_double(t.dval) : val_single(single_round(t.dval));
+        /* a literal out of its type's range: QBasic's Overflow on loading */
+        if (val_check_range(&lv) != ERR_NONE) {
+            parser_error(p, ERR_OVERFLOW);
+            return NULL;
+        }
+        return expr_literal(lv, t.line);
     }
     if (tok->type == TOK_STRING_LIT) {
         token_t t = lexer_next(&p->lex);
@@ -425,7 +431,7 @@ static stmt_t *parse_block(parser_t *p, int flags) {
         }
         if ((flags & BLK_ELSE) && (tt == TOK_ELSE || tt == TOK_ELSEIF)) break;
         if ((flags & BLK_WEND) && tt == TOK_WEND) break;
-        if ((flags & BLK_NEXT) && tt == TOK_NEXT) break;
+        if ((flags & BLK_NEXT) && (tt == TOK_NEXT || p->pending_next)) break;
         if ((flags & BLK_LOOP) && tt == TOK_LOOP) break;
         if ((flags & BLK_CASE) && (tt == TOK_CASE || check_end_keyword(p, TOK_SELECT)))
             break;
@@ -842,14 +848,26 @@ static stmt_t *parse_for(parser_t *p) {
         if (!step) { expr_free(start); expr_free(end); return NULL; }
     }
     stmt_t *body = parse_block(p, BLK_NEXT);
-    if (!lexer_check(&p->lex, TOK_NEXT)) {
+    if (p->pending_next) {
+        p->pending_next = 0;            /* the NEXT before was ours too */
+    } else if (!lexer_check(&p->lex, TOK_NEXT)) {
         parser_error(p, ERR_FOR_WITHOUT_NEXT);
         expr_free(start); expr_free(end); expr_free(step);
         stmt_free(body); return NULL;
-    }
-    lexer_next(&p->lex);
-    if (lexer_check(&p->lex, TOK_IDENT))
+    } else {
         lexer_next(&p->lex);
+    }
+    if (lexer_check(&p->lex, TOK_IDENT)) {
+        /* NEXT names the FOR's variable, or it is NEXT without FOR */
+        token_t nv = lexer_next(&p->lex);
+        if (strcmp(nv.text, var.text) != 0) {
+            parser_error(p, ERR_NEXT_WITHOUT_FOR);
+            expr_free(start); expr_free(end); expr_free(step);
+            stmt_free(body); return NULL;
+        }
+        if (lexer_match(&p->lex, TOK_COMMA))
+            p->pending_next = 1;
+    }
     return stmt_for(var.text, vt, start, end, step, body, line);
 }
 
@@ -1330,11 +1348,11 @@ static stmt_t *parse_data(parser_t *p) {
     lexer_next(&p->lex); /* consume DATA; nothing is peeked after it */
     stmt_t *s = stmt_data(line);
     char item[256];
-    int more;
+    int more, quoted;
     do {
-        more = lexer_data_item(&p->lex, item, sizeof(item));
+        more = lexer_data_item(&p->lex, item, sizeof(item), &quoted);
         value_t v = val_string_cstr(item);
-        int rc = stmt_data_add(s, v);
+        int rc = stmt_data_add(s, v, quoted);
         val_clear(&v);
         if (rc < 0) {
             parser_error(p, ERR_OUT_OF_MEMORY); stmt_free(s); return NULL;
@@ -2591,6 +2609,7 @@ void parser_init(parser_t *p, const char *src, int start_line) {
     p->error = ERR_NONE;
     p->error_line = 0;
     p->error_detail[0] = '\0';
+    p->pending_next = 0;
 }
 
 stmt_t *parser_parse(parser_t *p) {

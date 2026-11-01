@@ -22,6 +22,9 @@ keys, lines ended by CR).  QBasic's outputs are cached by content in
 
 Verdicts, per program:
   SAME        sbasic prints what QBasic prints (trailing blanks aside)
+  SAME-ERROR(m) both stop on the error m (QBasic's output before its
+              dialog is not compared: the dialog is over it)
+  BOTH-REJECT(m) both refuse the program's syntax, in their own words
   DIFF(n)     n lines differ
   QB-ERROR(m) QBasic stopped on an error, its dialog's message m: a
               program it refuses on loading, or a run-time error
@@ -182,6 +185,21 @@ def one(name, exe):
     if sb is None:
         return name, 'SB-TIMEOUT', 0
     if isinstance(qb, str):
+        # QBasic stopped on an error: does sbasic stop on the same one?
+        # (QBasic's output screen is gone under its dialog, so only the
+        # message is compared)
+        if qb.startswith('ERROR(') and sb:
+            msg = qb[len('ERROR('):-1]
+            last = re.sub(r'^Error in line \d+: ', 'Error: ', sb[-1])
+            last = re.sub(r' \(.*\)$', '', last)
+            if last.endswith('Error: ' + msg):
+                return name, 'SAME-ERROR(' + msg + ')', 0
+            # both refuse the program as written: QBasic when it loads it
+            # (its "Expected: ..." and syntax messages), sbasic when it
+            # parses it ("Error in line N: ...") -- in their own words
+            if (msg.startswith('Expected') or msg == 'Syntax error') and \
+                    re.match(r'Error in line \d+: ', sb[-1]):
+                return name, 'BOTH-REJECT(' + msg + ')', 0
         return name, 'QB-' + qb, 0
     # a program left waiting for more keys than its .in has: QBasic sits at
     # the prompt (its cursor, an arrow, ends the transcript) and sbasic
