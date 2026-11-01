@@ -1,0 +1,9 @@
+mbrtoc16 'A' -> 1, value 65
+mbrtoc16 'z' -> 1, value 122
+mbrtoc16 '9' -> 1, value 57
+mbrtoc16 ' ' -> 1, value 32
+mbrtoc16 '~' -> 1, value 126
+mbrtoc16 '0' -> 0, value 0
+c16rtomb Q -> 1 [Q]
+char16_t is unsigned 16+: 1
+[exit 0]

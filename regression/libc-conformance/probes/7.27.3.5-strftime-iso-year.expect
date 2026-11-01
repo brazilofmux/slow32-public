@@ -1,0 +1,13 @@
+2000: Jan 1 Sat V52 G1999 g99
+2000: Jun 15 Thu V24 G2000 g00
+1000: Jan 1 Wed V01 G1000 g00
+1000: Jun 15 Sun V24 G1000 g00
+999: Jan 1 Tue V01 G999 g99
+999: Jun 15 Sat V24 G999 g99
+100: Jan 1 Fri V53 G99 g99
+100: Jun 15 Tue V24 G100 g00
+10: Jan 1 Fri V53 G9 g09
+10: Jun 15 Tue V24 G10 g10
+1: Jan 1 Mon V01 G1 g01
+1: Jun 15 Fri V24 G1 g01
+[exit 0]

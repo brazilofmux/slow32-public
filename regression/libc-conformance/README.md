@@ -1,5 +1,9 @@
 # C11 clause 7: the two C libraries
 
+> Status 2026-11-01: inventory and first behaviour survey done -- 339
+> probes; rt 247 PASS / 49 DIFFER / 43 NOBUILD, sh 209 / 48 / 82.
+> The ranked work list is [coverage.md](coverage.md).  Nothing fixed yet.
+
 How far SLOW-32's two C libraries are from C11's clause 7, the standard
 library: `runtime/` (what clang-built programs link) and
 `selfhost/stage08/libc` with `selfhost/stage08/include` (the kit's, what
