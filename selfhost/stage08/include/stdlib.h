@@ -37,6 +37,8 @@ unsigned long strtoul(const char *nptr, char **endptr, int base);
 long long strtoll(const char *s, char **end, int base);
 unsigned long long strtoull(const char *s, char **end, int base);
 double strtod(const char *s, char **end);
+float  strtof(const char *s, char **end);
+long double strtold(const char *s, char **end);   /* long double is double */
 
 /* rand's values are the top 16 bits of its state, as the clang runtime's are */
 #define RAND_MAX 0xFFFF

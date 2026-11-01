@@ -3072,7 +3072,12 @@ gethex(const char **sp, U *rvp, int rounding, int sign MTd)
 			 || ((n = nbits & kmask) !=0
 			     && hi0bits(x[k-1]) < 32-n))) {
 				rshift(b,1);
-				if (++e > Emax)
+				/* SLOW-32: emax, not Emax.  e is the exponent of the
+				 * low bit here (it is compared with emax above);
+				 * Emax is the top bit's, 52 more, so a carry out of
+				 * DBL_MAX ("0x1.fffffffffffff8p1023") became infinity
+				 * without ERANGE. */
+				if (++e > emax)
 					goto ovfl;
 				}
 			}

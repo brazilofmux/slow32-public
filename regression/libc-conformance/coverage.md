@@ -83,11 +83,16 @@ Ranked by harm: wrong answers in programs that are correct first.
     `fgetc(stdin)`, so `freopen` of stdin, `ungetc` on it and
     `feof(stdin)` all hold.  sh gained `tmpnam`, `L_tmpnam`, `TMP_MAX`.
 
-**Numeric conversion**
-11. rt `strtof` rounds twice and never sets ERANGE; rt hex `strtod`
-    rounding past DBL_MAX misses ERANGE; sh `strtod` never sets ERANGE
-    and refuses `NAN(...)` (its `dtoa.c` is built `-DNO_ERRNO
-    -DNo_Hex_NaN`).
+**Numeric conversion** -- *fixed 2026-11-01*
+11. `strtof` (runtime/strtof.c, both libraries) rounds once: on the one
+    case "(float)strtod" can get wrong -- the double lands on a midpoint
+    between two floats -- it compares the input's digits with the
+    midpoint exactly; ERANGE on overflow and underflow.  A 3000-input
+    differential against the host (regression/libc-tests/strtof_hard)
+    finds no difference; the old runtime differed 540 times.  dtoa.c's
+    gethex compared a carry past DBL_MAX with Emax, not emax (one
+    token).  The selfhost library's dtoa is built with errno and
+    NAN(...) at last, and it has strtof and strtold.
 
 **Headers and types**
 12. sh `PRI*PTR` are the 64-bit forms on a 32-bit target (shifts every

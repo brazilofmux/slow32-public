@@ -227,7 +227,7 @@ assemble_gen1 "$WORKDIR/g1_start.s" "$LIBC_OUT_DIR/start.s32o" "$WORKDIR/g1_star
 # printf_varargs.c in the gen1 lib (the phase-1 compiler binary keeps
 # the small printf; it never prints floats).
 RUNTIME_DIR="$ROOT_DIR/runtime"
-DTOA_FLAGS="-DIEEE_8087 -DOmit_Private_Memory -DNo_Hex_NaN -DNO_ERRNO -DBad_float_h"
+DTOA_FLAGS="-DIEEE_8087 -DOmit_Private_Memory -DBad_float_h"   # errno and NAN(...) since 2026-11-01
 compile_gen1 "$RUNTIME_DIR/dtoa.c" "$WORKDIR/g1_dtoa.s" "$WORKDIR/g1_dtoa.cc.log"     $DTOA_FLAGS "-I$SCRIPT_DIR/include"
 assemble_gen1 "$WORKDIR/g1_dtoa.s" "$LIBC_OUT_DIR/dtoa.s32o" "$WORKDIR/g1_dtoa.as.log"
 compile_gen1 "$RUNTIME_DIR/printf_enhanced.c" "$WORKDIR/g1_pe.s" "$WORKDIR/g1_pe.cc.log"     "-I$SCRIPT_DIR/include"
@@ -274,6 +274,8 @@ for name in errno legacy; do
     compile_gen1 "$LIBM_DIR/${name}.c" "$WORKDIR/g1_m_${name}.s" "$WORKDIR/g1_m_${name}.cc.log" "-I$SCRIPT_DIR/include"
     assemble_gen1 "$WORKDIR/g1_m_${name}.s" "$LIBC_OUT_DIR/m_${name}.s32o" "$WORKDIR/g1_m_${name}.as.log"
 done
+compile_gen1 "$RUNTIME_DIR/strtof.c" "$WORKDIR/g1_strtof.s" "$WORKDIR/g1_strtof.cc.log"     "-I$SCRIPT_DIR/include"
+assemble_gen1 "$WORKDIR/g1_strtof.s" "$LIBC_OUT_DIR/strtof.s32o" "$WORKDIR/g1_strtof.as.log"
 compile_gen1 "$RUNTIME_DIR/fenv.c" "$WORKDIR/g1_fenv.s" "$WORKDIR/g1_fenv.cc.log"     "-I$SCRIPT_DIR/include"
 assemble_gen1 "$WORKDIR/g1_fenv.s" "$LIBC_OUT_DIR/fenv.s32o" "$WORKDIR/g1_fenv.as.log"
 rm -f "$LIBC_OUT_DIR/math_soft.s32o" "$LIBC_OUT_DIR/posix_math.s32o"
