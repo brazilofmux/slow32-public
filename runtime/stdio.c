@@ -22,7 +22,7 @@ _Static_assert(FLAG_MEMSTREAM == __S32_FLAG_MEM, "stdio.h: __S32_FLAG_MEM");
 #define STDIO_BUF_SIZE 4096
 
 // Initializers must match struct FILE layout in stdio.h
-static FILE _stdin  = { .fd = 0, .flags = FLAG_READ, .mode = _IONBF, .ungetc_char = -1 };
+static FILE _stdin  = { .fd = 0, .flags = FLAG_READ | FLAG_CONSOLE, .mode = _IONBF, .ungetc_char = -1 };
 static FILE _stdout = { .fd = 1, .flags = FLAG_WRITE, .mode = _IOLBF, .ungetc_char = -1 };
 static FILE _stderr = { .fd = 2, .flags = FLAG_WRITE, .mode = _IONBF, .ungetc_char = -1 };
 
@@ -132,6 +132,7 @@ static int mode_to_flags(const char *mode) {
     if (strchr(mode, 'w')) flags |= FLAG_WRITE | FLAG_CREATE | FLAG_TRUNC;
     if (strchr(mode, 'a')) flags |= FLAG_WRITE | FLAG_APPEND | FLAG_CREATE;
     if (strchr(mode, '+')) flags |= FLAG_READ | FLAG_WRITE;
+    if (strchr(mode, 'x')) flags |= FLAG_EXCL;      /* 7.21.5.3p5 */
     return flags;
 }
 
@@ -409,15 +410,23 @@ static size_t fread_fill_buffer(FILE *stream) {
     return bytes_read;
 }
 
-int getchar(void) {
+/* One byte from the console: GETCHAR says end of input as an error status
+ * with no errno, which the request helper turns into EIO -- end of input
+ * is not an error. */
+static int console_getc(void) {
     flush_before_input();
-    /* GETCHAR says end of input as an error status with no errno, which
-     * the request helper turns into EIO: end of input is not an error */
     int saved_errno = errno;
     unsigned int result = (unsigned int)s32_mmio_request(S32_MMIO_OP_GETCHAR, 0u, 0u, 0u);
     if (result == 0xFFFFFFFF) { errno = saved_errno; return EOF; }
     volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
     return (int)data_buffer[0];
+}
+
+/* getc(stdin) (7.21.7.6): through the stream, so a pushed-back byte comes
+ * first and end of input sets the indicator.  It went to the console
+ * directly, past freopen and ungetc, and feof(stdin) never became true. */
+int getchar(void) {
+    return fgetc(stdin);
 }
 
 static size_t fread_general(void *ptr, size_t size, size_t nmemb, FILE *stream);
@@ -466,9 +475,14 @@ static size_t fread_general(void *ptr, size_t size, size_t nmemb, FILE *stream) 
             return size == 1 ? bytes_copied : bytes_copied / size;
     }
 
-    if (stream == stdin) {
+    /* the end-of-file indicator stays set until clearerr, ungetc or a
+     * seek clears it, and a read meanwhile is at end of file (7.21.7.1p3):
+     * a file that grew after it was reached read on */
+    if (stream->eof) return size == 1 ? bytes_copied : bytes_copied / size;
+
+    if (stream->flags & FLAG_CONSOLE) {
         for (size_t i = 0; i < remaining; i++) {
-            int c = getchar();
+            int c = console_getc();
             if (c == EOF) {
                 stream->eof = 1;
                 return (bytes_copied + i) / size;
@@ -569,10 +583,11 @@ int getc(FILE *stream) {
     return fgetc(stream);
 }
 
+/* fputc returns the byte written, as an unsigned char (7.21.7.3p3) */
 static __attribute__((noinline)) int fputc_general(int c, FILE *stream) {
     unsigned char ch = c;
     if (fwrite_general(&ch, 1, 1, stream) != 1) return EOF;
-    return c;
+    return ch;
 }
 
 int fputc(int c, FILE *stream) {
@@ -582,7 +597,7 @@ int fputc(int c, FILE *stream) {
         if (pos + 1 < stream->buf_size) {
             stream->buffer[pos] = (char)c;
             stream->buf_pos = pos + 1;
-            return c;
+            return (unsigned char)c;
         }
     }
     return fputc_general(c, stream);
@@ -719,8 +734,11 @@ void perror(const char *s) {
     fputc('\n', stderr);
 }
 
+/* One byte of pushback is guaranteed (7.21.7.10p3), and this stream has
+ * one: a second before the first is read fails rather than replacing it
+ * (it reported success, and the first byte was lost). */
 int ungetc(int c, FILE *stream) {
-    if (c == EOF || !stream) return EOF;
+    if (c == EOF || !stream || stream->ungetc_char >= 0) return EOF;
     stream->ungetc_char = (unsigned char)c;
     stream->eof = 0;
     return (unsigned char)c;

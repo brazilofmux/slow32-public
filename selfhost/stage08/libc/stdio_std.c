@@ -107,3 +107,26 @@ void setbuf(FILE *fp, char *buf) {
     if (buf) setvbuf(fp, buf, _IOFBF, BUFSIZ);
     else setvbuf(fp, 0, _IONBF, 0);
 }
+
+/* A name that is not an existing file and that no earlier call gave
+ * (7.21.4.4), as the clang runtime makes them: the clock and a serial
+ * number, under P_tmpdir.  The name can be taken by another program
+ * between this call and its use -- tmpfile has no such window. */
+char *tmpnam(char *s) {
+    static char buf[L_tmpnam];
+    static unsigned int serial;
+    char *out;
+    int tries;
+    struct timespec ts;
+    out = s ? s : buf;
+    for (tries = 0; tries < 64; tries++) {
+        ts.tv_sec = 0;
+        ts.tv_nsec = 0;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        serial++;
+        snprintf(out, L_tmpnam, "%s/s32-%08lx-%06x", P_tmpdir, (unsigned long)ts.tv_sec,
+                 (unsigned)((unsigned long)ts.tv_nsec / 1000ul + serial) & 0xffffffu);
+        if (access(out, F_OK) != 0) return out;
+    }
+    return NULL;
+}

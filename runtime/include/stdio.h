@@ -22,6 +22,9 @@ extern "C" {
 
 #define L_tmpnam 32
 #define TMP_MAX  238328
+/* files open at once (7.21.1p3): the host interface has 128 descriptor
+ * slots, shared with sockets and directories */
+#define FOPEN_MAX 64
 #define P_tmpdir "/tmp"
 
 typedef struct FILE {

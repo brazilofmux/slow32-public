@@ -14,5 +14,6 @@ int open(const char *path, int flags, ...);
 #define O_APPEND 0x04
 #define O_CREAT  0x08
 #define O_TRUNC  0x10
+#define O_EXCL   0x20
 
 #endif

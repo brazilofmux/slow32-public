@@ -73,10 +73,15 @@ Ranked by harm: wrong answers in programs that are correct first.
    `_Generic(...)(x)` -- took the result as int and left its arguments
    unconverted (fixed in the same commit).
 
-**Streams**
-9. Both: end-of-file is not sticky (7.21.7.1p3); `fopen` ignores `x`.
-10. rt: `fputc` returns `c` unconverted; a second `ungetc` overwrites
-    the first; `freopen` of stdin and `feof(stdin)` bypass the stream.
+**Streams** -- *fixed 2026-11-01*
+9. Both: the end-of-file indicator is sticky now (7.21.7.1p3); `fopen`
+   takes `x` (the host interface gained an EXCL open flag, docs/SPEC.md
+   §8); `FOPEN_MAX` is 64 in both, and the selfhost library's stream
+   pool and descriptor table grew to hold that many.
+10. rt: `fputc`/`putchar` return the byte as unsigned char; a second
+    `ungetc` fails instead of replacing the first; `getchar` is
+    `fgetc(stdin)`, so `freopen` of stdin, `ungetc` on it and
+    `feof(stdin)` all hold.  sh gained `tmpnam`, `L_tmpnam`, `TMP_MAX`.
 
 **Numeric conversion**
 11. rt `strtof` rounds twice and never sets ERANGE; rt hex `strtod`

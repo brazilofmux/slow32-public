@@ -547,8 +547,9 @@ static int slow32_mmio_translate_open_flags(uint32_t guest_flags,
     const uint32_t flag_append = 0x04u;
     const uint32_t flag_create = 0x08u;
     const uint32_t flag_trunc = 0x10u;
+    const uint32_t flag_excl = 0x20u;   /* C11 fopen "x" (docs/SPEC.md) */
     const uint32_t known = flag_read | flag_write | flag_append |
-                           flag_create | flag_trunc;
+                           flag_create | flag_trunc | flag_excl;
 
     if ((guest_flags & ~known) == 0u) {
         int flags = (guest_flags & flag_write)
@@ -562,6 +563,9 @@ static int slow32_mmio_translate_open_flags(uint32_t guest_flags,
         }
         if (guest_flags & flag_trunc) {
             flags |= O_TRUNC;
+        }
+        if (guest_flags & flag_excl) {
+            flags |= O_EXCL;
         }
         *needs_mode = (flags & O_CREAT) != 0;
         return flags;

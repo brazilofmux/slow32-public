@@ -910,7 +910,7 @@ no binary targets one.
 | Data in | path at `off`, `length` bytes; the host appends a NUL, so the guest's own NUL is optional |
 | Action | host `open(path, flags, 0644)` (mode only with CREAT; subject to the host umask) |
 | Response | `status` = new guest fd |
-| Errors | `EINVAL` (`length` = 0, `length` > CAP, `off + length` > CAP, a flag bit outside `0x1F`); `EMFILE` (no free slot); open errno |
+| Errors | `EINVAL` (`length` = 0, `length` > CAP, `off + length` > CAP, a flag bit outside `0x3F`); `EMFILE` (no free slot); open errno |
 
 SLOW-32 open flags (`runtime/include/fcntl.h`):
 
@@ -921,9 +921,11 @@ SLOW-32 open flags (`runtime/include/fcntl.h`):
 | `0x04` | APPEND | `O_APPEND` |
 | `0x08` | CREAT | `O_CREAT`, mode 0644 |
 | `0x10` | TRUNC | `O_TRUNC` |
+| `0x20` | EXCL | `O_EXCL`: with CREAT, fail (`EEXIST`) if the file exists |
 
-There is no EXCL. `fopen` maps `"r"` → 0x01, `"w"` → 0x1A, `"a"` → 0x0E,
-and `"+"` adds 0x03.
+`fopen` maps `"r"` → 0x01, `"w"` → 0x1A, `"a"` → 0x0E; `"+"` adds 0x03,
+and C11's `"x"` (`"wx"`, `"w+x"`) adds 0x20.  (EXCL was added 2026-11-01;
+an older host refuses the bit with `EINVAL`.)
 
 
 #### 0x06 CLOSE
@@ -1817,7 +1819,7 @@ writing).
   they are `status = 0xFFFFFFFF` with `length = errno`. PUTCHAR always writes
   host stdout and returns 0. GETCHAR returns `status` 0, `length` 1 (EOF:
   `status 0xFFFFFFFF`, `length` 0). OPEN takes SLOW-32 flags (0x01 READ, 0x02
-  WRITE, 0x04 APPEND, 0x08 CREAT, 0x10 TRUNC), not host `O_*`. SEEK's payload
+  WRITE, 0x04 APPEND, 0x08 CREAT, 0x10 TRUNC, 0x20 EXCL), not host `O_*`. SEEK's payload
   is whence byte at +0 and i32 distance at +4. FLUSH ignores the fd and only
   flushes host stdio; it never fails. TIMER_START/CANCEL/POLL are implemented
   (DPC ring), not "future"/"HP ring". Sockets do not "follow Linux socket

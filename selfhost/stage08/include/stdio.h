@@ -25,6 +25,13 @@ extern FILE *stderr;
 #define _IOLBF 1
 #define _IONBF 2
 #define BUFSIZ 1024
+/* as the clang runtime's <stdio.h> has them: files open at once (the host
+ * interface has 128 descriptor slots, shared with sockets and
+ * directories), and tmpnam's names */
+#define FOPEN_MAX 64
+#define L_tmpnam  32
+#define TMP_MAX   238328
+#define P_tmpdir  "/tmp"
 
 FILE *fopen(const char *path, const char *mode);
 FILE *fdopen(int fd, const char *mode);
@@ -82,6 +89,7 @@ int   scanf(const char *fmt, ...);
 int   fscanf(FILE *f, const char *fmt, ...);
 int   vscanf(const char *fmt, va_list ap);
 int   vfscanf(FILE *f, const char *fmt, va_list ap);
+char *tmpnam(char *s);
 
 /* POSIX: a whole line, the buffer grown to fit */
 #ifndef _SSIZE_T_DEFINED

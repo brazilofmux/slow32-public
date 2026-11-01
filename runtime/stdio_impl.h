@@ -12,6 +12,12 @@
 #define FLAG_APPEND   0x04
 #define FLAG_CREATE   0x08
 #define FLAG_TRUNC    0x10
+/* C11's "x": create the file, failing if it exists (the host's O_EXCL) */
+#define FLAG_EXCL     0x20
+/* stdin as the program started it, read through the console's GETCHAR
+ * request; freopen gives stdin flags of a file, and this bit with them
+ * goes.  Never sent to the host. */
+#define FLAG_CONSOLE  0x40
 /* Stream is backed by guest memory, not an MMIO fd (memstream.c). Every
  * stdio entry point that would touch the fd must dispatch on this first. */
 #define FLAG_MEMSTREAM 0x80
