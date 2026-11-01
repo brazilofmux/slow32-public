@@ -4,6 +4,17 @@
 #include <math.h>
 #include <stdio.h>
 
+/* the FE_ exception macros exist only where the exceptions do (7.6p6) */
+#ifndef FE_INVALID
+#define FE_INVALID 0
+#endif
+#ifndef FE_DIVBYZERO
+#define FE_DIVBYZERO 0
+#endif
+#ifndef FE_OVERFLOW
+#define FE_OVERFLOW 0
+#endif
+
 static int reported(int e, int flag) {
     int r = 0;
     if ((math_errhandling & MATH_ERRNO) && errno == e) r = 1;

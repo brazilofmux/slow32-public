@@ -68,6 +68,9 @@ runtime/flush_debug.s
 runtime/printf_enhanced.s
 runtime/convert.s
 runtime/convert_extra.s
+runtime/fenv.s
+runtime/math_hw.s
+runtime/math_cordic.s
 runtime/builtins.s
 runtime/builtins_hk.s
 runtime/malloc.s

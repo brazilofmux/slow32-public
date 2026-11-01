@@ -210,7 +210,7 @@ rm -f "$LIBC_OUT_DIR/posix_more.s32o"
 # string_std, stdlib_std, stdio_std: the rest of <string.h>, <stdlib.h> and
 # <stdio.h> (selfhost ISSUES-75).  Phase 2 only, like string_case and qsort:
 # nothing the compiler or the tools call.
-for name in string_extra string_more ctype convert stdio malloc posix_fs posix_time posix_math posix_proc string_case qsort math_hw string_std stdlib_std stdio_std system termios; do
+for name in string_extra string_more ctype convert stdio malloc posix_fs posix_time posix_proc string_case qsort math_hw string_std stdlib_std stdio_std system termios; do
     compile_gen1 "$LIBC_DIR/${name}.c" "$WORKDIR/g1_${name}.s" "$WORKDIR/g1_${name}.cc.log"
     assemble_gen1 "$WORKDIR/g1_${name}.s" "$LIBC_OUT_DIR/${name}.s32o" "$WORKDIR/g1_${name}.as.log"
 done
@@ -255,11 +255,28 @@ assemble_gen1 "$WORKDIR/g1_time_std.s" "$LIBC_OUT_DIR/time_std.s32o" "$WORKDIR/g
 # assembly that saves the registers a callee keeps, which are the same
 # r11-r28 under both compilers.
 assemble_gen1 "$RUNTIME_DIR/setjmp.s" "$LIBC_OUT_DIR/setjmp.s32o" "$WORKDIR/g1_setjmp.as.log"
-# Soft-float transcendentals (pow, exp, log, sin, ...) and their CORDIC
-# core, from the clang runtime: regal calls pow.  slow32-dbt hot-swaps
-# these by name where it has native versions.
-compile_gen1 "$RUNTIME_DIR/math_soft.c" "$WORKDIR/g1_math_soft.s" "$WORKDIR/g1_math_soft.cc.log"     "-I$SCRIPT_DIR/include"
-assemble_gen1 "$WORKDIR/g1_math_soft.s" "$LIBC_OUT_DIR/math_soft.s32o" "$WORKDIR/g1_math_soft.as.log"
+# The math library: musl's libm, the clang runtime's too (runtime/libm,
+# runtime/Makefile).  Each musl source is compiled through a stub of two
+# #includes that puts compat.h ahead of it; errno.c is the public face
+# (math_errhandling == MATH_ERRNO).  The square roots are math_hw.c's
+# hardware ones; fabs and fabsf are musl's here (posix_math.c's fabs, and
+# math_soft.c, are gone from this library).  slow32-dbt hot-swaps math
+# functions by name where it has native versions.
+LIBM_DIR="$RUNTIME_DIR/libm"
+LIBM_FLAGS="-I$SCRIPT_DIR/include -I$LIBM_DIR -I$LIBM_DIR/musl/src/math -I$LIBM_DIR/musl/src/internal -I$LIBM_DIR/musl/arch/generic -I$LIBM_DIR/include"
+while read -r f; do
+    b="${f%.c}"
+    printf '#include "compat.h"\n#include "musl/src/math/%s"\n' "$f" > "$WORKDIR/m_${b}.c"
+    compile_gen1 "$WORKDIR/m_${b}.c" "$WORKDIR/g1_m_${b}.s" "$WORKDIR/g1_m_${b}.cc.log" $LIBM_FLAGS
+    assemble_gen1 "$WORKDIR/g1_m_${b}.s" "$LIBC_OUT_DIR/m_${b}.s32o" "$WORKDIR/g1_m_${b}.as.log"
+done < "$LIBM_DIR/sources.txt"
+for name in errno legacy; do
+    compile_gen1 "$LIBM_DIR/${name}.c" "$WORKDIR/g1_m_${name}.s" "$WORKDIR/g1_m_${name}.cc.log" "-I$SCRIPT_DIR/include"
+    assemble_gen1 "$WORKDIR/g1_m_${name}.s" "$LIBC_OUT_DIR/m_${name}.s32o" "$WORKDIR/g1_m_${name}.as.log"
+done
+compile_gen1 "$RUNTIME_DIR/fenv.c" "$WORKDIR/g1_fenv.s" "$WORKDIR/g1_fenv.cc.log"     "-I$SCRIPT_DIR/include"
+assemble_gen1 "$WORKDIR/g1_fenv.s" "$LIBC_OUT_DIR/fenv.s32o" "$WORKDIR/g1_fenv.as.log"
+rm -f "$LIBC_OUT_DIR/math_soft.s32o" "$LIBC_OUT_DIR/posix_math.s32o"
 compile_gen1 "$RUNTIME_DIR/math_cordic.c" "$WORKDIR/g1_math_cordic.s" "$WORKDIR/g1_math_cordic.cc.log"     "-I$SCRIPT_DIR/include"
 assemble_gen1 "$WORKDIR/g1_math_cordic.s" "$LIBC_OUT_DIR/math_cordic.s32o" "$WORKDIR/g1_math_cordic.as.log"
 assemble_gen1 "$WORKDIR/g1_strtod.s" "$LIBC_OUT_DIR/strtod.s32o" "$WORKDIR/g1_strtod.as.log"

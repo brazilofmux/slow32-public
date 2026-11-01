@@ -57,15 +57,21 @@ Ranked by harm: wrong answers in programs that are correct first.
    `%a` (which misaligned every later argument), decided `#x`'s prefix
    after padding, zero-filled `%Np`, printed one character of `%ls`.
 
-**Mathematics (shared `math_soft.c`)**
-7. `round` is `floor(x + 0.5)`; `modf` loses negative zeros; `pow` of a
-   negative base fails for integral exponents beyond int, and loses
-   exact tiny results; `exp`/`sinh`/`cosh` overflow below DBL_MAX's
-   logarithm; `log(+inf)` never returns.  Large-argument trigonometry is
-   inaccurate (quality, 5.2.4.2.2p6).
-8. No `math_errhandling` and no `errno` from math functions (7.12p9),
-   and the C99 additions are missing (inventory).  The classification
-   macros are functions.
+**Mathematics** -- *fixed 2026-11-01: the library is musl's libm*
+(runtime/libm, MIT, verbatim; both libraries build it)
+7. `math_soft.c` is gone: `round` was `floor(x + 0.5)`, `modf` lost
+   negative zeros, `pow` failed for negative bases with large integral
+   exponents and lost exact tiny results, `exp` overflowed early,
+   `log(+inf)` never returned, and large-argument trigonometry was
+   inaccurate.
+8. `math_errhandling` is `MATH_ERRNO`, and errno is set
+   (runtime/libm/errno.c); every C99 function is there, `float` and
+   `long double` forms included; the classification and comparison
+   macros are macros; `<tgmath.h>`, `<float.h>` and `<fenv.h>` exist in
+   both libraries.  Building `<tgmath.h>` found a stage08 bug: a call
+   whose callee is an expression designating a function -- `(f)(x)`,
+   `_Generic(...)(x)` -- took the result as int and left its arguments
+   unconverted (fixed in the same commit).
 
 **Streams**
 9. Both: end-of-file is not sticky (7.21.7.1p3); `fopen` ignores `x`.

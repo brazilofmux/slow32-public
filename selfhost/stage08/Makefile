@@ -11,7 +11,9 @@ COMPILER_SRCS = s12cc.c c_lexer_gen.c ast.h ctype.h parser.h sema.h optimize.h p
 # to it left the old one in place)
 LIBC_SRCS = $(wildcard libc/*.c) \
             $(addprefix ../../runtime/,dtoa.c printf_enhanced.c convert.c sscanf.c convert_extra.c \
-                strerror.c getopt.c time_std.c setjmp.s math_soft.c math_cordic.c) \
+                strerror.c getopt.c time_std.c setjmp.s fenv.c math_cordic.c) \
+            $(wildcard ../../runtime/libm/*.c ../../runtime/libm/*.h ../../runtime/libm/sources.txt \
+                ../../runtime/libm/include/*.h ../../runtime/libm/musl/src/math/*) \
             $(wildcard include/*.h include/sys/*.h)
 RUNTIME_SRCS = crt0.s mmio_no_start.s
 TOOL_SRCS = tools/s32-as.c tools/s32_formats_min.h tools/s32-ar.c tools/s32ar_min.h tools/s32-ld.c tools/s32util_min.h tools/slow32dump.c tools/slow32dis.c

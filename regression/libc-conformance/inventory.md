@@ -1,5 +1,10 @@
 # Clause 7 inventory, 2026-11-01
 
+> Rerun the same evening after musl's libm went in (and `<float.h>`,
+> `<fenv.h>`, `<tgmath.h>`, the scanf family): rt 638, sh 553 of 898.
+> The table and lists below are the morning's survey as taken;
+> `inventory.tsv` is the current answer.
+
 Which of the identifiers Annex B lists does each library provide?  Method
 and answers: [README](README.md); per identifier: `inventory.tsv`.  The
 tree at d47d9f47 (both libraries' `time_t` signed and 64 bits).  Optional

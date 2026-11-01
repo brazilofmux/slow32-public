@@ -1,8 +1,8 @@
 # C11 clause 7: the two C libraries
 
-> Status 2026-11-01: inventory and first behaviour survey done -- 339
-> probes; rt 248 PASS / 48 DIFFER / 43 NOBUILD, sh 210 / 47 / 82.
-> The ranked work list is [coverage.md](coverage.md).  Nothing fixed yet.
+> Status 2026-11-01 (evening): rt 296 PASS / 19 DIFFER / 24 NOBUILD, sh
+> 276 / 17 / 46, of 339 probes; coverage.md marks what is fixed.  The
+> inventory: rt 638, sh 553 of 898 identifiers (morning: 445, 301).
 
 How far SLOW-32's two C libraries are from C11's clause 7, the standard
 library: `runtime/` (what clang-built programs link) and

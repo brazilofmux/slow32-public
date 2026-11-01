@@ -3,14 +3,11 @@
  * inline, so each wrapper is one instruction.  Built in phase 2 only:
  * the stage07 bootstrap compiler does not know these names.  regal's
  * pow (runtime/math_soft.c) reaches sqrt through asin. */
+#include <errno.h>
 double __fp64_sqrt(double x);
 float __fp32_sqrt(float x);
-double sqrt(double x) { return __fp64_sqrt(x); }
-float sqrtf(float x) { return __fp32_sqrt(x); }
-
-/* fabsf beside fabs (posix_math.c); -0.0f comes back positive */
-float fabsf(float x) {
-    if (x < 0) return -x;
-    if (x == 0) return 0.0f;
-    return x;
-}
+/* a negative argument is a domain error (7.12.7.5p2; math_errhandling is
+ * MATH_ERRNO); NaN and -0 are not less than 0.  fabs and fabsf are
+ * musl's (runtime/libm). */
+double sqrt(double x) { if (x < 0) errno = EDOM; return __fp64_sqrt(x); }
+float sqrtf(float x) { if (x < 0) errno = EDOM; return __fp32_sqrt(x); }

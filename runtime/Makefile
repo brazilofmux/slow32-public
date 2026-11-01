@@ -21,9 +21,21 @@ CXXFLAGS = -target $(TARGET) -S -emit-llvm -Iinclude -funwind-tables \
 
 # Compiler runtime objects (always needed, linked last)
 # These provide compiler support functions like division, intrinsics
-COMPILER_RT_OBJS = intrinsics.s32o intrinsics_extra.s32o math_hw.s32o math_soft.s32o math_fma.s32o \
-                   math_cordic.s32o builtins.s32o builtins_hk.s32o divsi3.s32o \
+COMPILER_RT_OBJS = intrinsics.s32o intrinsics_extra.s32o \
+                   builtins.s32o builtins_hk.s32o divsi3.s32o \
                    debug_char.s32o
+
+# The math library (C11 7.12): musl's libm, verbatim in libm/musl (MIT;
+# libm/README.md), each file compiled through a two-line stub that puts
+# libm/compat.h ahead of it; libm/errno.c is the public face (errno per
+# math_errhandling == MATH_ERRNO).  The hardware's square root and
+# absolute value (math_hw.c) stand in for musl's.  libm/gen.py makes the
+# glue (sources.txt, rename.h, errno.c).  In libc, not libs32: errno.c
+# sets errno, which libc defines, and libs32 links after libc.
+LIBM_SRCS := $(filter-out fabs.c fabsf.c,$(shell cat libm/sources.txt))
+LIBM_OBJS := $(patsubst %.c,libm/obj/m_%.s32o,$(LIBM_SRCS)) libm/obj/m_errno.s32o libm/obj/m_legacy.s32o
+LIBM_CFLAGS = -fno-builtin -Ilibm/musl/src/math -Ilibm/musl/src/internal \
+              -Ilibm/musl/arch/generic -Ilibm/include
 
 # Core C library objects (common to all libc versions)
 LIBC_CORE_OBJS = string.s32o string_extra.s32o \
@@ -34,7 +46,8 @@ LIBC_CORE_OBJS = string.s32o string_extra.s32o \
                  strerror.s32o getopt.s32o signal.s32o system.s32o \
                  setjmp.s32o emutls.s32o atomic.s32o \
                  unwind.s32o unwind_asm.s32o posix_extra.s32o locale.s32o locale_state.s32o \
-                 netdb.s32o process.s32o getpid.s32o mman.s32o environ.s32o
+                 netdb.s32o process.s32o getpid.s32o mman.s32o environ.s32o \
+                 fenv.s32o math_hw.s32o math_cordic.s32o $(LIBM_OBJS)
 
 # The C++ run time for freestanding C++ (libs32cxx.s32a): guards, new/delete,
 # exceptions, RTTI and the std:: exception classes.  Not in libc: a program
@@ -63,8 +76,6 @@ LIBC_DEBUG_EXTRA_OBJS = stat_stub.s32o args_stub.s32o exit_debug.s32o \
                         term_stub.s32o time_tz_stub.s32o net_stub.s32o \
                         exec_stub.s32o tube_stub.s32o
 
-# Math library: math_hw + math_soft in COMPILER_RT_OBJS (replaces float_intrinsics.s32o)
-# Real soft-float implementations in math_soft.c replace the old HALT stubs.
 
 # Startup code (linked first, not in any archive)
 STARTUP_OBJ = crt0.s32o
@@ -94,7 +105,7 @@ C_SOURCES = printf_enhanced.c convert.c builtins.c string.c malloc.c stdlib_util
             term_mmio.c term_stub.c net_mmio.c net_stub.c \
             exec_mmio.c exec_stub.c tube_mmio.c tube_stub.c dpc_mmio.c \
             sched_mmio.c poll.c crypto_mmio.c \
-            math_hw.c math_soft.c math_fma.c math_cordic.c \
+            math_hw.c math_cordic.c fenv.c \
             unwind.c posix_extra.c locale.c locale_state.c locales.c netdb.c process.c getpid.c mman.c environ.c \
             cxa_support.c cxa_exception.c cxa_personality.c cxa_typeinfo.c
 
@@ -154,13 +165,22 @@ math_hw.ll: OPT_LEVEL = -O2
 math_hw.ll: math_hw.c
 	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) -fno-builtin -fno-math-errno $< -o $@
 
-math_soft.ll: OPT_LEVEL = -O2
-math_soft.ll: math_soft.c
-	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) -fno-builtin $< -o $@
-
-math_fma.ll: OPT_LEVEL = -O2
-math_fma.ll: math_fma.c
-	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) -fno-builtin $< -o $@
+# musl's libm (see LIBM_OBJS): a stub per file, then the usual chain.
+# Every object is m_<name>: an archive member is known by its base name,
+# and libm's errno.c beside the runtime's errno.c replaced the definition
+# of errno.
+libm/obj:
+	mkdir -p libm/obj
+libm/obj/m_%.c: libm/musl/src/math/%.c libm/compat.h libm/rename.h | libm/obj
+	printf '#include "../compat.h"\n#include "../musl/src/math/%s"\n' $*.c > $@
+# a static pattern rule: GNU make 3.81 (macOS's) would otherwise take the
+# generic %.ll: %.c above, without LIBM_CFLAGS
+$(patsubst %.c,libm/obj/m_%.ll,$(LIBM_SRCS)): libm/obj/m_%.ll: libm/obj/m_%.c
+	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $(LIBM_CFLAGS) $< -o $@
+libm/obj/m_errno.ll: libm/errno.c | libm/obj
+	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
+libm/obj/m_legacy.ll: libm/legacy.c | libm/obj
+	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
 
 math_cordic.ll: OPT_LEVEL = -O2
 math_cordic.ll: math_cordic.c
@@ -280,6 +300,7 @@ libs32cxx.s32a: $(CXXRT_OBJS)
 # clean-build: remove intermediate build artifacts but preserve checked-in archives
 clean-build:
 	rm -f *.s32o *.ll
+	rm -rf libm/obj
 	# Clean generated .s files (but keep hand-written assembly sources)
 	@for src in $(C_SOURCES); do \
 		base=$$(basename $$src .c); \
