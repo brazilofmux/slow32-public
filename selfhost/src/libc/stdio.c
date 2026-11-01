@@ -62,6 +62,7 @@ void free(char *ptr);
 #define O_S32_APPEND 4
 #define O_S32_CREATE 8
 #define O_S32_TRUNC  16
+#define O_S32_EXCL   32     /* C11 "x": fail if the file exists */
 
 /* buffering, as <stdio.h> numbers it for setvbuf */
 #define BUF_FULL 0
@@ -69,8 +70,10 @@ void free(char *ptr);
 #define BUF_NONE 2
 
 #define STDIO_BUFSZ 4096
-#define FILE_POOL_SIZE 32
-#define FD_TABLE_SIZE 64
+/* FOPEN_MAX (<stdio.h>) streams at once; the descriptor table as wide as
+ * the host interface's 128 slots */
+#define FILE_POOL_SIZE 64
+#define FD_TABLE_SIZE 128
 
 /* bpos and blen say what the buffer holds:
  *   blen == 0, bpos > 0   bpos bytes written and not yet sent
@@ -281,6 +284,10 @@ static int s_read(FILE *fp, char *p, int n) {
         fp->unget = -1;
         done = 1;
     }
+    /* the end-of-file indicator stays set until clearerr, ungetc or a
+     * seek clears it, and a read meanwhile is at end of file
+     * (7.21.7.1p3): a file that grew after it was reached read on */
+    if (fp->eof) return done;
     if (fp->blen == 0 && fp->bpos > 0) s_flush(fp);     /* what was written goes first */
     while (done < n) {
         avail = fp->blen - fp->bpos;
@@ -421,15 +428,19 @@ static void s_flush_all(void) {
     }
 }
 
-/* r, w, a, each with or without +: the stream's directions and the host's flags */
+/* r, w, a, each with or without + (and b, which changes nothing), and x
+ * after w (7.21.5.3p5): the stream's directions and the host's flags */
 static int s_mode(const char *mode, int *oflags) {
     int flags;
     int plus;
+    int excl;
     int i;
     plus = 0;
+    excl = 0;
     i = 1;
     while (mode[0] && mode[i]) {
         if (mode[i] == '+') plus = 1;
+        if (mode[i] == 'x') excl = 1;
         i = i + 1;
     }
     if (mode[0] == 'r') {
@@ -448,6 +459,7 @@ static int s_mode(const char *mode, int *oflags) {
         flags = FLAG_READ | FLAG_WRITE;
         *oflags = *oflags | O_S32_READ | O_S32_WRITE;
     }
+    if (excl) *oflags = *oflags | O_S32_EXCL;
     return flags;
 }
 
