@@ -226,6 +226,6 @@ lldiv_t lldiv(long long numer, long long denom) {
 /* assert()'s failure path (include/assert.h); the message is what the
  * macro printed itself before. */
 void __s32_assert_fail(const char *expr, const char *file, int line) {
-    printf("Assertion failed: %s, file %s, line %d\n", expr, file, line);
+    fprintf(stderr, "Assertion failed: %s, file %s, line %d\n", expr, file, line);   /* old objects' entry; <assert.h> calls __s32_assert_func */
     abort();
 }

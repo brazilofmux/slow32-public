@@ -13,4 +13,12 @@
 
 typedef char *va_list;
 
+/* C makes these macros (7.16.1).  The compiler knows the names (parser
+ * intrinsics), so each macro is itself: #ifdef va_arg is true, and the
+ * expansion is the intrinsic. */
+#define va_start(ap, last) va_start(ap, last)
+#define va_arg(ap, type)   va_arg(ap, type)
+#define va_end(ap)         va_end(ap)
+#define va_copy(dst, src)  va_copy(dst, src)
+
 #endif

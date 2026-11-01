@@ -274,6 +274,10 @@ for name in errno legacy; do
     compile_gen1 "$LIBM_DIR/${name}.c" "$WORKDIR/g1_m_${name}.s" "$WORKDIR/g1_m_${name}.cc.log" "-I$SCRIPT_DIR/include"
     assemble_gen1 "$WORKDIR/g1_m_${name}.s" "$LIBC_OUT_DIR/m_${name}.s32o" "$WORKDIR/g1_m_${name}.as.log"
 done
+for name in assert inttypes; do
+    compile_gen1 "$RUNTIME_DIR/${name}.c" "$WORKDIR/g1_${name}.s" "$WORKDIR/g1_${name}.cc.log" "-I$SCRIPT_DIR/include"
+    assemble_gen1 "$WORKDIR/g1_${name}.s" "$LIBC_OUT_DIR/${name}.s32o" "$WORKDIR/g1_${name}.as.log"
+done
 compile_gen1 "$RUNTIME_DIR/strtof.c" "$WORKDIR/g1_strtof.s" "$WORKDIR/g1_strtof.cc.log"     "-I$SCRIPT_DIR/include"
 assemble_gen1 "$WORKDIR/g1_strtof.s" "$LIBC_OUT_DIR/strtof.s32o" "$WORKDIR/g1_strtof.as.log"
 compile_gen1 "$RUNTIME_DIR/fenv.c" "$WORKDIR/g1_fenv.s" "$WORKDIR/g1_fenv.cc.log"     "-I$SCRIPT_DIR/include"

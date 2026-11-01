@@ -1,21 +1,27 @@
-/* assert.h -- s12cc-compatible stub
+/* assert.h -- C11 7.2, for both SLOW-32 C libraries (runtime/include and
+ * selfhost/stage08/include hold the same file).
  *
- * Defines `assert(cond)` that hits abort() on false.  Static-assert
- * support is via the C11 `_Static_assert` keyword if used at all.
- */
-#ifndef _ASSERT_H
-#define _ASSERT_H
-
-void abort(void);
-
+ * No include guard around assert: each inclusion defines it by NDEBUG as
+ * it stands there (7.2p1).  A failing assert writes the expression, the
+ * function, the file and the line to stderr and calls abort (7.2.1.1p2;
+ * runtime/assert.c). */
+#undef assert
 #ifdef NDEBUG
-#define assert(cond) ((void)0)
+#define assert(ignore) ((void)0)
 #else
-void __assert_fail(const char *expr, const char *file, int line);
-/* Says which assertion, and where (the line is the preprocessor's count,
- * which runs ahead of the source in a big file -- the expression text is
- * what to grep for). */
-#define assert(cond) ((cond) ? (void)0 : __assert_fail(#cond, __FILE__, __LINE__))
+#ifdef __cplusplus
+extern "C" __attribute__((noreturn))
+#else
+_Noreturn
+#endif
+void __s32_assert_func(const char *expr, const char *file, int line, const char *func);
+#define assert(expr) \
+    ((expr) ? (void)0 : __s32_assert_func(#expr, __FILE__, __LINE__, __func__))
 #endif
 
+#ifndef _ASSERT_H
+#define _ASSERT_H
+#ifndef __cplusplus
+#define static_assert _Static_assert
+#endif
 #endif

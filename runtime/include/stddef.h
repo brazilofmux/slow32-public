@@ -7,7 +7,7 @@ typedef unsigned int size_t;
 typedef int ssize_t;    // POSIX (sys/types.h there); kept here beside size_t
 typedef int ptrdiff_t;
 #ifndef __cplusplus
-typedef int wchar_t;            // a keyword in C++
+typedef unsigned int wchar_t;   // a keyword in C++; L'x' is unsigned int (clang's __WCHAR_TYPE__)
 #endif
 
 // The strictest alignment of any scalar type (C11, C++11)

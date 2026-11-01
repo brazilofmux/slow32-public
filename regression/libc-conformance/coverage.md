@@ -94,12 +94,17 @@ Ranked by harm: wrong answers in programs that are correct first.
     token).  The selfhost library's dtoa is built with errno and
     NAN(...) at last, and it has strtof and strtold.
 
-**Headers and types**
-12. sh `PRI*PTR` are the 64-bit forms on a 32-bit target (shifts every
-    later printf argument); sh `LONG_*` are int-typed; sh `int8_t` is
-    plain char; rt `wchar_t` is int where clang makes wide literals
-    unsigned; `assert` re-inclusion ignores a changed NDEBUG; rt's
-    assertion message goes to stdout; neither names the function.
+**Headers and types** -- *fixed 2026-11-01*
+12. `<assert.h>`, `<stdint.h>`, `<inttypes.h>` are one file each for both
+    libraries: assert redefined at every inclusion by NDEBUG, naming the
+    function, on stderr (runtime/assert.c), and `static_assert`; every
+    least/fast/pointer/size limit and `INTn_C`, `int8_t` signed char;
+    every PRI/SCN macro, PTR ones by pointer size; `imaxabs`, `imaxdiv`,
+    `strtoimax`, `strtoumax` (runtime/inttypes.c).  sh: `LONG_*` typed
+    long, `MB_LEN_MAX`, the `va_*` macros, `<iso646.h>`.  rt: `wchar_t`
+    and `wint_t` unsigned int, as clang's `L'x'` is.  clang predefines
+    `__STDC_NO_COMPLEX__` and `__STDC_NO_THREADS__` (not atomics, which
+    work).
 13. Missing headers and families are the inventory's list
     ([inventory.md](inventory.md)).
 

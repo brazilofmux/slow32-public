@@ -32,4 +32,11 @@ void SLOW32TargetInfo::getTargetDefines(const LangOptions &Opts,
                                         MacroBuilder &Builder) const {
   Builder.defineMacro("__SLOW32__");
   Builder.defineMacro("__slow32__");
+  // C11's optional parts this implementation (compiler and runtime/) does
+  // not have (6.10.8.3): <complex.h> and <threads.h>.  Atomics it has:
+  // <stdatomic.h> works, one thread being trivially lock-free.
+  if (!Opts.CPlusPlus) {
+    Builder.defineMacro("__STDC_NO_COMPLEX__");
+    Builder.defineMacro("__STDC_NO_THREADS__");
+  }
 }

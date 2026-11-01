@@ -13,9 +13,18 @@
 #define INT_MIN (-2147483647-1)
 #define INT_MAX 2147483647
 #define UINT_MAX 4294967295U
-#define LONG_MIN INT_MIN
-#define LONG_MAX INT_MAX
-#define ULONG_MAX UINT_MAX
+/* long's own: 32 bits on SLOW-32, 64 where pointers are (the cross compilers);
+ * typed long, as 5.2.4.2.1p1 has them */
+#if __SIZEOF_POINTER__ == 8
+#define LONG_MIN (-9223372036854775807L-1)
+#define LONG_MAX 9223372036854775807L
+#define ULONG_MAX 18446744073709551615UL
+#else
+#define LONG_MIN (-2147483647L-1)
+#define LONG_MAX 2147483647L
+#define ULONG_MAX 4294967295UL
+#endif
+#define MB_LEN_MAX 1          /* the "C" locale is the only one */
 #define LLONG_MIN (-9223372036854775807LL-1)
 #define LLONG_MAX 9223372036854775807LL
 #define ULLONG_MAX 18446744073709551615ULL

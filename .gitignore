@@ -70,6 +70,8 @@ runtime/convert.s
 runtime/convert_extra.s
 runtime/fenv.s
 runtime/strtof.s
+runtime/assert.s
+runtime/inttypes.s
 runtime/math_hw.s
 runtime/math_cordic.s
 runtime/builtins.s

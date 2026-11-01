@@ -47,7 +47,7 @@ LIBC_CORE_OBJS = string.s32o string_extra.s32o \
                  setjmp.s32o emutls.s32o atomic.s32o \
                  unwind.s32o unwind_asm.s32o posix_extra.s32o locale.s32o locale_state.s32o \
                  netdb.s32o process.s32o getpid.s32o mman.s32o environ.s32o \
-                 fenv.s32o math_hw.s32o math_cordic.s32o strtof.s32o $(LIBM_OBJS)
+                 fenv.s32o math_hw.s32o math_cordic.s32o strtof.s32o assert.s32o inttypes.s32o $(LIBM_OBJS)
 
 # The C++ run time for freestanding C++ (libs32cxx.s32a): guards, new/delete,
 # exceptions, RTTI and the std:: exception classes.  Not in libc: a program
@@ -105,7 +105,7 @@ C_SOURCES = printf_enhanced.c convert.c builtins.c string.c malloc.c stdlib_util
             term_mmio.c term_stub.c net_mmio.c net_stub.c \
             exec_mmio.c exec_stub.c tube_mmio.c tube_stub.c dpc_mmio.c \
             sched_mmio.c poll.c crypto_mmio.c \
-            math_hw.c math_cordic.c fenv.c strtof.c \
+            math_hw.c math_cordic.c fenv.c strtof.c assert.c inttypes.c \
             unwind.c posix_extra.c locale.c locale_state.c locales.c netdb.c process.c getpid.c mman.c environ.c \
             cxa_support.c cxa_exception.c cxa_personality.c cxa_typeinfo.c
 

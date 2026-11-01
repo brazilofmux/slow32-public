@@ -8,7 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-typedef int wint_t;
+typedef unsigned int wint_t;   /* clang's __WINT_TYPE__; WINT_MIN/MAX in <stdint.h> */
 typedef struct { unsigned int __count; unsigned int __value; } mbstate_t;
 
 #define WEOF ((wint_t)-1)
