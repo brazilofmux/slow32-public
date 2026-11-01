@@ -105,6 +105,17 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-11-01 (`d47d9f47`).  `cc.s32x`, `libc.s32a` and
+`include/time.h`, `include/sys/time.h`; the tools and crt0 rebuild
+identical.  `time_t` is `long long` -- signed, 64 bits -- as in the clang
+runtime, and so is `tv_sec` in `struct timespec` and `struct timeval`.
+The kit's was `long`, 32 bits, so a time past 2038 did not fit, and the
+two libraries' `time_t` were different types (the clang runtime's was
+unsigned).  `gmtime`/`localtime` now reach any year an `int` holds
+(beyond that, NULL and `EOVERFLOW`), and `mktime` of a year at or before
+0 is no longer a day off.  Objects that store or pass a `time_t` or a
+`timespec`/`timeval` must be rebuilt with these headers.
+
 Rebuilt 2026-10-30, third time (`c2d4fc50`).  `cc.s32x` only.  A
 `?:` of two structures was typed int (selfhost ISSUES-104): a function
 returning `c ? s1 : s2` handed back the chosen arm's address without
