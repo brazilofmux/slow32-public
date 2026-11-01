@@ -41,8 +41,8 @@
 #include <time.h>
 #include "locale_impl.h"
 
-/* locales.s32o's, when a program links it: null otherwise */
-extern const struct __s32_locdata *__s32_locale_find(const char *name) __attribute__((weak));
+/* locales.s32o's, when a program links it (locale_impl.h) */
+extern const struct __s32_locdata *__s32_locale_find(const char *name) __S32_LOCALES_WEAK;
 
 static const char *const cat_name[N_CAT] = {
     "LC_ALL", "LC_COLLATE", "LC_CTYPE", "LC_MONETARY", "LC_NUMERIC", "LC_TIME", "LC_MESSAGES"
@@ -65,7 +65,7 @@ static const struct __s32_locdata *lookup(const char *name) {
     }
     if (is_c_name(name)) return &__s32_c_data;
     if (is_c_utf8_name(name)) return &__s32_c_utf8_data;
-    if (__s32_locale_find) d = __s32_locale_find(name);
+    if (__S32_HAVE_LOCALES(__s32_locale_find)) d = __s32_locale_find(name);
     if (!d) errno = ENOENT;
     return d;
 }

@@ -210,7 +210,7 @@ rm -f "$LIBC_OUT_DIR/posix_more.s32o"
 # string_std, stdlib_std, stdio_std: the rest of <string.h>, <stdlib.h> and
 # <stdio.h> (selfhost ISSUES-75).  Phase 2 only, like string_case and qsort:
 # nothing the compiler or the tools call.
-for name in string_extra string_more ctype convert stdio malloc posix_fs posix_time posix_proc string_case qsort math_hw string_std stdlib_std stdio_std system termios locale_c; do
+for name in string_extra string_more ctype convert stdio malloc posix_fs posix_time posix_proc string_case qsort math_hw string_std stdlib_std stdio_std system termios; do
     compile_gen1 "$LIBC_DIR/${name}.c" "$WORKDIR/g1_${name}.s" "$WORKDIR/g1_${name}.cc.log"
     assemble_gen1 "$WORKDIR/g1_${name}.s" "$LIBC_OUT_DIR/${name}.s32o" "$WORKDIR/g1_${name}.as.log"
 done
@@ -227,10 +227,10 @@ assemble_gen1 "$WORKDIR/g1_start.s" "$LIBC_OUT_DIR/start.s32o" "$WORKDIR/g1_star
 # printf_varargs.c in the gen1 lib (the phase-1 compiler binary keeps
 # the small printf; it never prints floats).
 RUNTIME_DIR="$ROOT_DIR/runtime"
-DTOA_FLAGS="-DIEEE_8087 -DOmit_Private_Memory -DBad_float_h"   # errno and NAN(...) since 2026-11-01
+DTOA_FLAGS="-DIEEE_8087 -DOmit_Private_Memory -DBad_float_h -DUSE_LOCALE -DNO_LOCALE_CACHE"   # errno and NAN(...), LC_NUMERIC's radix, since 2026-11-01
 compile_gen1 "$RUNTIME_DIR/dtoa.c" "$WORKDIR/g1_dtoa.s" "$WORKDIR/g1_dtoa.cc.log"     $DTOA_FLAGS "-I$SCRIPT_DIR/include"
 assemble_gen1 "$WORKDIR/g1_dtoa.s" "$LIBC_OUT_DIR/dtoa.s32o" "$WORKDIR/g1_dtoa.as.log"
-compile_gen1 "$RUNTIME_DIR/printf_enhanced.c" "$WORKDIR/g1_pe.s" "$WORKDIR/g1_pe.cc.log"     "-I$SCRIPT_DIR/include"
+compile_gen1 "$RUNTIME_DIR/printf_enhanced.c" "$WORKDIR/g1_pe.s" "$WORKDIR/g1_pe.cc.log"     -DS32_PRINTF_LOCALE "-I$SCRIPT_DIR/include"
 assemble_gen1 "$WORKDIR/g1_pe.s" "$LIBC_OUT_DIR/printf_enhanced.s32o" "$WORKDIR/g1_pe.as.log"
 compile_gen1 "$RUNTIME_DIR/convert.c" "$WORKDIR/g1_convert_rt.s" "$WORKDIR/g1_convert_rt.cc.log"     "-I$SCRIPT_DIR/include"
 assemble_gen1 "$WORKDIR/g1_convert_rt.s" "$LIBC_OUT_DIR/convert_rt.s32o" "$WORKDIR/g1_convert_rt.as.log"
@@ -249,7 +249,7 @@ assemble_gen1 "$WORKDIR/g1_strerror.s" "$LIBC_OUT_DIR/strerror.s32o" "$WORKDIR/g
 # getopt / getopt_long, the same way (tapemgr wanted getopt_long)
 compile_gen1 "$RUNTIME_DIR/getopt.c" "$WORKDIR/g1_getopt.s" "$WORKDIR/g1_getopt.cc.log"     "-I$SCRIPT_DIR/include"
 assemble_gen1 "$WORKDIR/g1_getopt.s" "$LIBC_OUT_DIR/getopt.s32o" "$WORKDIR/g1_getopt.as.log"
-compile_gen1 "$RUNTIME_DIR/time_std.c" "$WORKDIR/g1_time_std.s" "$WORKDIR/g1_time_std.cc.log"     "-I$SCRIPT_DIR/include"
+compile_gen1 "$RUNTIME_DIR/time_std.c" "$WORKDIR/g1_time_std.s" "$WORKDIR/g1_time_std.cc.log"     -DS32_LOCALE_STRFTIME "-I$SCRIPT_DIR/include"
 assemble_gen1 "$WORKDIR/g1_time_std.s" "$LIBC_OUT_DIR/time_std.s32o" "$WORKDIR/g1_time_std.as.log"
 # setjmp / longjmp: the clang runtime's, as it stands -- hand-written
 # assembly that saves the registers a callee keeps, which are the same
@@ -274,12 +274,22 @@ for name in errno legacy; do
     compile_gen1 "$LIBM_DIR/${name}.c" "$WORKDIR/g1_m_${name}.s" "$WORKDIR/g1_m_${name}.cc.log" "-I$SCRIPT_DIR/include"
     assemble_gen1 "$WORKDIR/g1_m_${name}.s" "$LIBC_OUT_DIR/m_${name}.s32o" "$WORKDIR/g1_m_${name}.as.log"
 done
-# the wide characters (runtime/wchar.c, wctype.c, wcs.c, wstdio.c): the
-# encoding is LC_CTYPE's, which locale_c.c says (__s32_mb_utf8)
-for name in assert inttypes quick_exit timespec_get wchar wctype wcs wstdio; do
+# the wide characters (runtime/wchar.c, wctype.c, wcs.c, wstdio.c), and
+# the locales: the clang runtime's locale.c and locale_state.c ("C",
+# "POSIX", "C.UTF-8", the locale objects, nl_langinfo), with
+# locale_none.c standing in for locales.s32o (runtime/locale_impl.h)
+rm -f "$LIBC_OUT_DIR/locale_c.s32o"
+for name in assert inttypes quick_exit timespec_get wchar wctype wcs wstdio locale locale_state locale_none; do
     compile_gen1 "$RUNTIME_DIR/${name}.c" "$WORKDIR/g1_${name}.s" "$WORKDIR/g1_${name}.cc.log" "-I$SCRIPT_DIR/include"
     assemble_gen1 "$WORKDIR/g1_${name}.s" "$LIBC_OUT_DIR/${name}.s32o" "$WORKDIR/g1_${name}.as.log"
 done
+# The 53 named locales with libutf's collation (runtime/locales.c), as the
+# clang runtime has them: an object beside the library, not in it, for a
+# program to link ahead of it (and --rodata-size 2M: the collation tables
+# are most of a megabyte).  Not in lib/, whose every object goes into the
+# kit's archive -- there it would race locale_none.s32o for the symbols.
+compile_gen1 "$RUNTIME_DIR/locales.c" "$WORKDIR/g1_locales.s" "$WORKDIR/g1_locales.cc.log" "-I$SCRIPT_DIR/include" "-I$RUNTIME_DIR/utf/include"
+assemble_gen1 "$WORKDIR/g1_locales.s" "$SCRIPT_DIR/locales.s32o" "$WORKDIR/g1_locales.as.log"
 compile_gen1 "$RUNTIME_DIR/strtof.c" "$WORKDIR/g1_strtof.s" "$WORKDIR/g1_strtof.cc.log"     "-I$SCRIPT_DIR/include"
 assemble_gen1 "$WORKDIR/g1_strtof.s" "$LIBC_OUT_DIR/strtof.s32o" "$WORKDIR/g1_strtof.as.log"
 compile_gen1 "$RUNTIME_DIR/fenv.c" "$WORKDIR/g1_fenv.s" "$WORKDIR/g1_fenv.cc.log"     "-I$SCRIPT_DIR/include"
@@ -335,7 +345,8 @@ link_exe "$WORKDIR/smoke.link.log" -o "$WORKDIR/smoke.s32x" --mmio 64K \
     "$LIBC_OUT_DIR/ctype.s32o" "$LIBC_OUT_DIR/convert.s32o" \
     "$LIBC_OUT_DIR/stdio.s32o" "$LIBC_OUT_DIR/malloc.s32o" \
     "$LIBC_OUT_DIR/dtoa.s32o" "$LIBC_OUT_DIR/printf_enhanced.s32o" \
-    "$LIBC_OUT_DIR/convert_rt.s32o" "$LIBC_OUT_DIR/wchar.s32o" "$LIBC_OUT_DIR/locale_c.s32o"
+    "$LIBC_OUT_DIR/convert_rt.s32o" "$LIBC_OUT_DIR/wchar.s32o" \
+    "$LIBC_OUT_DIR/locale_state.s32o" "$LIBC_OUT_DIR/locale_none.s32o"
 
 set +e
 timeout "${SELFHOST_TIMEOUT:-1200}" "$EMU" "$WORKDIR/smoke.s32x" > "$WORKDIR/smoke.out" 2>&1

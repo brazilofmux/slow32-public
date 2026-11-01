@@ -2,10 +2,16 @@
  * locales.c share (private to the runtime; not installed).
  *
  * A locale's data is one constant record; a locale object (locale_t)
- * holds one per category.  libc has the C locale's record.  The named
- * ones are in locales.s32o, which a program links when it wants them:
- * libc reaches them only through the weak references below, so without
- * that object every name but "C" and "POSIX" is refused. */
+ * holds one per category.  libc has the records of "C" and "C.UTF-8".
+ * The named ones are in locales.s32o, which a program links when it wants
+ * them; without that object every other name is refused.
+ *
+ * Both C libraries build locale.c and locale_state.c.  The clang
+ * runtime reaches locales.s32o through weak references, null when it is
+ * not linked.  stage08 has no weak symbols, so the self-hosted library
+ * has an archive member instead, locale_none.c, that defines the same
+ * three functions as finding nothing; a program that links locales.s32o
+ * ahead of the library has them already and never pulls it in. */
 #ifndef S32_LOCALE_IMPL_H
 #define S32_LOCALE_IMPL_H
 #include <langinfo.h>
@@ -44,6 +50,14 @@ static inline struct __s32_locale *__s32_cur(void) {
 static inline struct __s32_locale *__s32_obj(locale_t l) {
     return l == LC_GLOBAL_LOCALE || !l ? &__s32_global_locale : l;
 }
+
+#ifdef __clang__
+#define __S32_LOCALES_WEAK __attribute__((weak))
+#define __S32_HAVE_LOCALES(f) ((f) != 0)
+#else
+#define __S32_LOCALES_WEAK
+#define __S32_HAVE_LOCALES(f) 1     /* locale_none.c's, if not locales.c's */
+#endif
 
 /* locales.c: the record for a locale name, or null when there is none */
 const struct __s32_locdata *__s32_locale_find(const char *name);

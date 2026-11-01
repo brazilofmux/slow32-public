@@ -1,9 +1,12 @@
-/* runtime/include/locale.h (SLOW-32)
+/* locale.h -- C11 7.11 and the POSIX 2008 locale objects (newlocale,
+ * uselocale), for both SLOW-32 C libraries (runtime/include and
+ * selfhost/stage08/include hold the same file; runtime/locale.c and
+ * locale_state.c are built into both).
  *
- * C locales and the POSIX 2008 locale objects (newlocale, uselocale).
- * The "C" locale, also called "POSIX", is the one there is: any other
- * name is refused (setlocale returns NULL, newlocale fails with ENOENT).
- * Implementation: locale.c.
+ * The C library has "C" (also "POSIX") and "C.UTF-8"; the 53 named
+ * locales are in locales.s32o, which a program links when it wants them.
+ * Without it any other name is refused (setlocale returns NULL, newlocale
+ * fails with ENOENT).
  */
 #ifndef _LOCALE_H
 #define _LOCALE_H

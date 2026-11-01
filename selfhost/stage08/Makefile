@@ -12,7 +12,8 @@ COMPILER_SRCS = s12cc.c c_lexer_gen.c ast.h ctype.h parser.h sema.h optimize.h p
 LIBC_SRCS = $(wildcard libc/*.c) \
             $(addprefix ../../runtime/,dtoa.c printf_enhanced.c convert.c sscanf.c convert_extra.c \
                 strerror.c getopt.c time_std.c setjmp.s fenv.c math_cordic.c strtof.c assert.c inttypes.c quick_exit.c timespec_get.c \
-                wchar.c wctype.c wcs.c wstdio.c utf/wctype_tables.h) \
+                wchar.c wctype.c wcs.c wstdio.c utf/wctype_tables.h \
+                locale.c locale_state.c locale_none.c locale_impl.h locales.c locales_data.h) \
             $(wildcard ../../runtime/libm/*.c ../../runtime/libm/*.h ../../runtime/libm/sources.txt \
                 ../../runtime/libm/include/*.h ../../runtime/libm/musl/src/math/*) \
             $(wildcard include/*.h include/sys/*.h)

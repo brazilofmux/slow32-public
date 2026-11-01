@@ -37,4 +37,13 @@ void *memrchr(const void *s, int c, size_t n);
 int strcasecmp(const char *s1, const char *s2);
 int strncasecmp(const char *s1, const char *s2, size_t n);
 char *strcasestr(const char *haystack, const char *needle);
+#ifndef _SLOW32_LOCALE_T
+#define _SLOW32_LOCALE_T
+typedef struct __s32_locale *locale_t;
+#endif
+
+/* The POSIX 2008 forms that take a locale (runtime/locale.c) */
+int strcoll_l(const char *s1, const char *s2, locale_t l);
+size_t strxfrm_l(char *dest, const char *src, size_t n, locale_t l);
+
 #endif

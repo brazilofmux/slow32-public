@@ -1,5 +1,6 @@
-/* runtime/include/langinfo.h (SLOW-32)
- * nl_langinfo: a locale's names and formats (locale.c). */
+/* langinfo.h -- nl_langinfo, a locale's names and formats
+ * (runtime/locale_state.c), for both SLOW-32 C libraries (runtime/include
+ * and selfhost/stage08/include hold the same file). */
 #ifndef _LANGINFO_H
 #define _LANGINFO_H
 

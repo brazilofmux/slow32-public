@@ -56,4 +56,12 @@ size_t strftime(char *s, size_t max, const char *format, const struct tm *tm);
  * is no zone service (then local time is UTC). */
 int __s32_query_tz(time_t when, long *gmtoff, int *isdst, char *abbrev);
 
+#ifndef _SLOW32_LOCALE_T
+#define _SLOW32_LOCALE_T
+typedef struct __s32_locale *locale_t;
+#endif
+
+/* strftime in a given locale (runtime/locale.c) */
+size_t strftime_l(char *s, size_t maxsize, const char *format, const struct tm *tm, locale_t l);
+
 #endif

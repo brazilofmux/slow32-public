@@ -1,5 +1,7 @@
-/* The rest of <string.h>: strnlen, strpbrk, strtok, strtok_r, memrchr,
- * strcoll, strxfrm.  The library had none of them (selfhost ISSUES-75).
+/* The rest of <string.h>: strnlen, strpbrk, strtok, strtok_r, memrchr.
+ * The library had none of them (selfhost ISSUES-75).  strcoll and
+ * strxfrm, which were here for the one locale "C", are
+ * runtime/locale_state.c's now, LC_COLLATE's.
  * Built in phase 2 only -- nothing the compiler or the tools use. */
 #include <string.h>
 
@@ -57,20 +59,4 @@ void *memrchr(const void *s, int c, size_t n) {
         if (*p == (unsigned char)c) return (void *)p;
     }
     return 0;
-}
-
-/* The one locale is "C": collation is the order of the bytes, and a
- * string's transformed form is the string. */
-int strcoll(const char *a, const char *b) {
-    return strcmp(a, b);
-}
-
-size_t strxfrm(char *dst, const char *src, size_t n) {
-    size_t len = strlen(src);
-    size_t i;
-    if (n > 0) {
-        for (i = 0; i < n - 1 && i < len; i++) dst[i] = src[i];
-        dst[i] = 0;
-    }
-    return len;
 }

@@ -13,9 +13,9 @@
 #include <string.h>
 #include "locale_impl.h"
 
-/* locales.s32o's, when a program links it: null otherwise */
-extern int __s32_locale_strcoll(const struct __s32_locdata *d, const char *a, const char *b) __attribute__((weak));
-extern size_t __s32_locale_strxfrm(const struct __s32_locdata *d, char *dest, const char *src, size_t n) __attribute__((weak));
+/* locales.s32o's, when a program links it (locale_impl.h) */
+extern int __s32_locale_strcoll(const struct __s32_locdata *d, const char *a, const char *b) __S32_LOCALES_WEAK;
+extern size_t __s32_locale_strxfrm(const struct __s32_locdata *d, char *dest, const char *src, size_t n) __S32_LOCALES_WEAK;
 
 /* The C locale's record, and C.UTF-8's: the same but for the encoding
  * (LC_CTYPE: wchar.c, wctype.c -- __s32_mb_utf8 below) */
@@ -103,13 +103,13 @@ char *nl_langinfo(nl_item item) {
 
 int strcoll_l(const char *a, const char *b, locale_t l) {
     const struct __s32_locdata *d = __s32_obj(l)->data[LC_COLLATE];
-    if (!__s32_is_c_data(d) && __s32_locale_strcoll) return __s32_locale_strcoll(d, a, b);
+    if (!__s32_is_c_data(d) && __S32_HAVE_LOCALES(__s32_locale_strcoll)) return __s32_locale_strcoll(d, a, b);
     return strcmp(a, b);
 }
 
 size_t strxfrm_l(char *dest, const char *src, size_t n, locale_t l) {
     const struct __s32_locdata *d = __s32_obj(l)->data[LC_COLLATE];
-    if (!__s32_is_c_data(d) && __s32_locale_strxfrm) return __s32_locale_strxfrm(d, dest, src, n);
+    if (!__s32_is_c_data(d) && __S32_HAVE_LOCALES(__s32_locale_strxfrm)) return __s32_locale_strxfrm(d, dest, src, n);
     size_t len = strlen(src);
     if (n > 0) {
         size_t i = 0;

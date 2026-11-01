@@ -75,4 +75,18 @@ char *realpath(const char *path, char *resolved);
 char *realpath(const char *path, char *resolved);
 #endif
 
+#ifndef _SLOW32_LOCALE_T
+#define _SLOW32_LOCALE_T
+typedef struct __s32_locale *locale_t;
+#endif
+
+/* The POSIX 2008 forms that take a locale (runtime/locale.c) */
+double strtod_l(const char *nptr, char **endptr, locale_t l);
+float strtof_l(const char *nptr, char **endptr, locale_t l);
+long double strtold_l(const char *nptr, char **endptr, locale_t l);
+long strtol_l(const char *nptr, char **endptr, int base, locale_t l);
+unsigned long strtoul_l(const char *nptr, char **endptr, int base, locale_t l);
+long long strtoll_l(const char *nptr, char **endptr, int base, locale_t l);
+unsigned long long strtoull_l(const char *nptr, char **endptr, int base, locale_t l);
+
 #endif

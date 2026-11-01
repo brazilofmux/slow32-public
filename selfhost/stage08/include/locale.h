@@ -1,36 +1,21 @@
-/* locale.h -- C11 7.11 for the self-hosted library, whose one locale is
- * "C" (libc/locale_c.c).  The clang runtime has more (runtime/locale.c). */
+/* locale.h -- C11 7.11 and the POSIX 2008 locale objects (newlocale,
+ * uselocale), for both SLOW-32 C libraries (runtime/include and
+ * selfhost/stage08/include hold the same file; runtime/locale.c and
+ * locale_state.c are built into both).
+ *
+ * The C library has "C" (also "POSIX") and "C.UTF-8"; the 53 named
+ * locales are in locales.s32o, which a program links when it wants them.
+ * Without it any other name is refused (setlocale returns NULL, newlocale
+ * fails with ENOENT).
+ */
 #ifndef _LOCALE_H
 #define _LOCALE_H
 
 #include <stddef.h>
 
-struct lconv {
-    char *decimal_point;
-    char *thousands_sep;
-    char *grouping;
-    char *mon_decimal_point;
-    char *mon_thousands_sep;
-    char *mon_grouping;
-    char *positive_sign;
-    char *negative_sign;
-    char *currency_symbol;
-    char frac_digits;
-    char p_cs_precedes;
-    char n_cs_precedes;
-    char p_sep_by_space;
-    char n_sep_by_space;
-    char p_sign_posn;
-    char n_sign_posn;
-    char *int_curr_symbol;
-    char int_frac_digits;
-    char int_p_cs_precedes;
-    char int_n_cs_precedes;
-    char int_p_sep_by_space;
-    char int_n_sep_by_space;
-    char int_p_sign_posn;
-    char int_n_sign_posn;
-};
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #define LC_ALL      0
 #define LC_COLLATE  1
@@ -38,8 +23,63 @@ struct lconv {
 #define LC_MONETARY 3
 #define LC_NUMERIC  4
 #define LC_TIME     5
+#define LC_MESSAGES 6
+
+/* newlocale's category masks */
+#define LC_COLLATE_MASK  (1 << LC_COLLATE)
+#define LC_CTYPE_MASK    (1 << LC_CTYPE)
+#define LC_MONETARY_MASK (1 << LC_MONETARY)
+#define LC_NUMERIC_MASK  (1 << LC_NUMERIC)
+#define LC_TIME_MASK     (1 << LC_TIME)
+#define LC_MESSAGES_MASK (1 << LC_MESSAGES)
+#define LC_ALL_MASK      (LC_COLLATE_MASK | LC_CTYPE_MASK | LC_MONETARY_MASK | \
+                          LC_NUMERIC_MASK | LC_TIME_MASK | LC_MESSAGES_MASK)
+
+struct lconv {
+    char *decimal_point;
+    char *thousands_sep;
+    char *grouping;
+    char *int_curr_symbol;
+    char *currency_symbol;
+    char *mon_decimal_point;
+    char *mon_thousands_sep;
+    char *mon_grouping;
+    char *positive_sign;
+    char *negative_sign;
+    char int_frac_digits;
+    char frac_digits;
+    char p_cs_precedes;
+    char p_sep_by_space;
+    char n_cs_precedes;
+    char n_sep_by_space;
+    char p_sign_posn;
+    char n_sign_posn;
+    char int_p_cs_precedes;
+    char int_p_sep_by_space;
+    char int_n_cs_precedes;
+    char int_n_sep_by_space;
+    char int_p_sign_posn;
+    char int_n_sign_posn;
+};
+
+#ifndef _SLOW32_LOCALE_T
+#define _SLOW32_LOCALE_T
+typedef struct __s32_locale *locale_t;
+#endif
+
+/* uselocale()'s "the global locale", and its answer when none is set */
+#define LC_GLOBAL_LOCALE ((locale_t)-1)
 
 char *setlocale(int category, const char *locale);
 struct lconv *localeconv(void);
 
+locale_t newlocale(int category_mask, const char *locale, locale_t base);
+locale_t duplocale(locale_t locobj);
+void freelocale(locale_t locobj);
+locale_t uselocale(locale_t newloc);
+
+#ifdef __cplusplus
+}
 #endif
+
+#endif /* _LOCALE_H */
