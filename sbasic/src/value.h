@@ -75,6 +75,9 @@ value_t val_default(val_type_t type);
 
 /* Value destruction (unrefs strings) */
 void val_clear(value_t *v);
+/* the same, the call made only for what holds a reference */
+#define VAL_CLEAR(v) do { if ((v)->type == VAL_STRING || (v)->type == VAL_RECORD) val_clear(v); \
+                          else (v)->type = VAL_INTEGER; } while (0)
 
 /* Copy a value (refs strings) */
 value_t val_copy(const value_t *v);

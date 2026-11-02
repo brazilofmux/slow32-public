@@ -32,6 +32,8 @@ typedef struct {
     stmt_t *s;
     double limit, step;
     int body_pc;
+    value_t *var;       /* the variable's value, while gen is env_generation */
+    unsigned gen;
 } for_slot_t;
 
 /* an activation of a unit: its FOR stack and GOSUB base */
@@ -65,6 +67,9 @@ extern int trace_enabled;
 extern int cur_basic_line;      /* the running statement's line number */
 void eval_trace(const stmt_t *s);
 error_t eval_variable(env_t *env, const char *name, value_t *out);
+value_t *eval_var_slot(env_t *env, const char *name);
+value_t *eval_assign_slot(env_t *env, const char *name);
+error_t eval_store(value_t *slot, const value_t *v);
 error_t eval_unary(unaryop_t op, value_t *operand, value_t *out);
 error_t eval_binary(binop_t op, value_t *left, value_t *right, value_t *out);
 error_t eval_compare(cmpop_t op, value_t *left, value_t *right, value_t *out);

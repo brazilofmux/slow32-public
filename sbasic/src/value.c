@@ -430,7 +430,9 @@ error_t val_idiv(const value_t *a, const value_t *b, value_t *result) {
     if ((err = val_to_integer(a, &ia)) != ERR_NONE) return err;
     if ((err = val_to_integer(b, &ib)) != ERR_NONE) return err;
     if (ib == 0) return ERR_DIVISION_BY_ZERO;
-    return int_result(int_kind(a, ia), int_kind(b, ib), (long long)ia / ib, result);
+    /* 32-bit division but where it overflows (INT_MIN \ -1) */
+    return int_result(int_kind(a, ia), int_kind(b, ib),
+                      ib == -1 ? -(long long)ia : (long long)(ia / ib), result);
 }
 
 error_t val_mod(const value_t *a, const value_t *b, value_t *result) {
@@ -442,7 +444,8 @@ error_t val_mod(const value_t *a, const value_t *b, value_t *result) {
     if ((err = val_to_integer(a, &ia)) != ERR_NONE) return err;
     if ((err = val_to_integer(b, &ib)) != ERR_NONE) return err;
     if (ib == 0) return ERR_DIVISION_BY_ZERO;
-    return int_result(int_kind(a, ia), int_kind(b, ib), (long long)ia % ib, result);
+    return int_result(int_kind(a, ia), int_kind(b, ib),
+                      ib == -1 ? 0 : (long long)(ia % ib), result);
 }
 
 error_t val_pow(const value_t *a, const value_t *b, value_t *result) {

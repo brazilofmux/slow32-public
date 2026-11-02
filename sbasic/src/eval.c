@@ -437,6 +437,26 @@ error_t eval_variable(env_t *env, const char *name, value_t *out) {
     return eval_variable_impl(env, name, out);
 }
 
+/* The value eval_variable reads when it reads the variable itself (it
+ * exists; not ERR or ERL), else NULL */
+value_t *eval_var_slot(env_t *env, const char *name) {
+    if (strcmp(name, "ERR") == 0 || strcmp(name, "ERL") == 0)
+        return NULL;
+    return env_lookup(env, name);
+}
+
+/* The value X = e stores into, after eval_assign_check passed: NULL
+ * when it is not one to keep (a CONST) */
+value_t *eval_assign_slot(env_t *env, const char *name) {
+    if (env_is_const(env, name))
+        return NULL;
+    return env_get(env, name);
+}
+
+error_t eval_store(value_t *slot, const value_t *v) {
+    return store_into(slot, v);
+}
+
 static inline __attribute__((always_inline)) error_t eval_unary_in(unaryop_t op, value_t *operand, value_t *out) {
     error_t err;
     if (op == OP_NEG) {
@@ -1650,8 +1670,14 @@ static error_t for_start(env_t *env, stmt_t *s, for_slot_t *f, int *runs) {
     return ERR_NONE;
 }
 
-static error_t for_next(env_t *env, stmt_t *s, const for_slot_t *f, int *again) {
-    value_t *cv = env_get(env, s->for_stmt.var_name);
+static error_t for_next(env_t *env, stmt_t *s, for_slot_t *f, int *again) {
+    value_t *cv;
+    if (f->var && f->gen == env_generation) {
+        cv = f->var;
+    } else {
+        cv = f->var = env_get(env, s->for_stmt.var_name);
+        f->gen = env_generation;
+    }
     double v = 0.0;
     /* the variable as FOR made it: stepped where it lives */
     if (cv && VAL_IS_INT(cv->type)) {
@@ -3148,6 +3174,7 @@ static inline __attribute__((always_inline)) error_t act_step_in(act_t *a, int *
             }
             f.s = op->s;
             f.body_pc = pc + 1;
+            f.var = NULL;
             a->fors[a->nfors++] = f;
             *ppc = pc + 1;
             return ERR_NONE;
@@ -3155,14 +3182,15 @@ static inline __attribute__((always_inline)) error_t act_step_in(act_t *a, int *
         case OP_NEXT: {
             int k = a->nfors - 1;
             if (!op->invert)
-                while (k >= 0 && strcmp(a->fors[k].s->for_stmt.var_name,
-                                        op->s->for_stmt.var_name) != 0)
+                while (k >= 0 && a->fors[k].s != op->s &&
+                       strcmp(a->fors[k].s->for_stmt.var_name,
+                              op->s->for_stmt.var_name) != 0)
                     k--;
             if (k < 0) {
                 /* no loop running (a GOTO into its body): QBasic's NEXT
                  * then steps by 0 to a limit of 0, the FOR's own slot
                  * never set (NBS P055) */
-                for_slot_t z = { op->s, 0.0, 0.0, op->slot + 1 };
+                for_slot_t z = { op->s, 0.0, 0.0, op->slot + 1, NULL, 0 };
                 EVAL_CHECK(for_next(env, op->s, &z, &yes));
                 *ppc = yes ? z.body_pc : pc + 1;
                 return ERR_NONE;

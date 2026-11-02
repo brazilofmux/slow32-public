@@ -23,5 +23,7 @@ keys on stdin.  The corpus is sbasic's tests and the NBS, games and
 feature collections in `~/refs/basic/nbs-ecma55-test` (outside the
 tree).  2026-11-01, milestone 1 (expressions, assignments, PRINT, IF
 conditions, GOTO and GOSUB compiled; the rest the executor's): 391
-agree, 25 refused by both, of 416; nested loops 495M -> 419M
-instructions against the interpreter.
+agree, 25 refused by both, of 416.  Variables are reached through
+cached pointers to their values (good while `env_generation` holds):
+nested loops 161M instructions against the interpreter's 443M, the sieve
+3.15M against 4.50M.

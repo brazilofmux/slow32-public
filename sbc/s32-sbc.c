@@ -57,6 +57,22 @@ static void emit_goto(FILE *out, const code_t *c, int t) {
 static int ntemp, maxtemp;
 static int cur_op;
 
+/* the variables named, each with a cached pointer to its value (V[i],
+ * good while VG[i] == env_generation) */
+static char **vars;
+static int nvars, capvars;
+
+static int var_index(const char *name) {
+    for (int i = 0; i < nvars; i++)
+        if (strcmp(vars[i], name) == 0) return i;
+    if (nvars == capvars) {
+        capvars = capvars ? capvars * 2 : 32;
+        vars = realloc(vars, capvars * sizeof(char *));
+    }
+    vars[nvars] = strdup(name);
+    return nvars++;
+}
+
 static int new_temp(void) {
     if (++ntemp > maxtemp) maxtemp = ntemp;
     return ntemp - 1;
@@ -88,7 +104,7 @@ static int emit_call(FILE *out, const expr_t *e, const char *path, int t) {
         char sub[1024];
         snprintf(sub, sizeof sub, "%s->call.args[%d]", path, i);
         int u = emit_expr(out, e->call.args[i], sub);
-        fprintf(out, "    err = val_to_integer(&T[%d], &ix[%d]); val_clear(&T[%d]); " CHECK "\n", u, i, u);
+        fprintf(out, "    err = val_to_integer(&T[%d], &ix[%d]); VAL_CLEAR(&T[%d]); " CHECK "\n", u, i, u);
     }
     fprintf(out, "    err = eval_array_read(ar, %d, ix, &T[%d]); " CHECK " }\n", e->call.nargs, t);
     fprintf(out, "      else { err = eval_expr(env, %s, &T[%d]); " CHECK " } }\n", path, t);
@@ -115,15 +131,20 @@ static int emit_expr(FILE *out, const expr_t *e, const char *path) {
                 fprintf(out, "    err = eval_expr(env, %s, &T[%d]); " CHECK "\n", path, t);
             return t;
         }
-        case EXPR_VARIABLE:
-            fprintf(out, "    err = eval_variable(env, ");
+        case EXPR_VARIABLE: {
+            int v = var_index(e->var.name);
+            fprintf(out, "    if (VG[%d] != env_generation || !V[%d]) { V[%d] = eval_var_slot(env, ", v, v, v);
             emit_cstring(out, e->var.name, (int)strlen(e->var.name));
-            fprintf(out, ", &T[%d]); " CHECK "\n", t);
+            fprintf(out, "); VG[%d] = env_generation; }\n", v);
+            fprintf(out, "    if (V[%d]) T[%d] = val_copy(V[%d]); else { err = eval_variable(env, ", v, t, v);
+            emit_cstring(out, e->var.name, (int)strlen(e->var.name));
+            fprintf(out, ", &T[%d]); " CHECK " }\n", t);
             return t;
+        }
         case EXPR_UNARY: {
             snprintf(l, sizeof l, "%s->unary.operand", path);
             int u = emit_expr(out, e->unary.operand, l);
-            fprintf(out, "    err = eval_unary(%d, &T[%d], &T[%d]); val_clear(&T[%d]); " CHECK "\n",
+            fprintf(out, "    err = eval_unary(%d, &T[%d], &T[%d]); VAL_CLEAR(&T[%d]); " CHECK "\n",
                     (int)e->unary.op, u, t, u);
             return t;
         }
@@ -134,7 +155,7 @@ static int emit_expr(FILE *out, const expr_t *e, const char *path) {
             snprintf(r, sizeof r, "%s->%s.right", path, bin ? "binary" : "compare");
             int u = emit_expr(out, bin ? e->binary.left : e->compare.left, l);
             int w = emit_expr(out, bin ? e->binary.right : e->compare.right, r);
-            fprintf(out, "    err = eval_%s(%d, &T[%d], &T[%d], &T[%d]); val_clear(&T[%d]); val_clear(&T[%d]); " CHECK "\n",
+            fprintf(out, "    err = eval_%s(%d, &T[%d], &T[%d], &T[%d]); VAL_CLEAR(&T[%d]); VAL_CLEAR(&T[%d]); " CHECK "\n",
                     bin ? "binary" : "compare", bin ? (int)e->binary.op : (int)e->compare.op,
                     u, w, t, u, w);
             return t;
@@ -162,15 +183,22 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
     char path[1024];
     switch (s->type) {
         case STMT_ASSIGN: {
+            /* the checks (CONST, OPTION EXPLICIT) before the value, as
+             * the executor; a variable that passed them once (and is
+             * kept) passes them for good */
+            int v = var_index(s->assign.name);
             emit_preamble(out, op, k);
-            fprintf(out, "    err = eval_assign_check(env, ");
+            fprintf(out, "    if (VG[%d] != env_generation || !V[%d]) { err = eval_assign_check(env, ", v, v);
             emit_cstring(out, s->assign.name, (int)strlen(s->assign.name));
-            fprintf(out, "); " CHECK "\n");
+            fprintf(out, "); " CHECK " }\n");
             snprintf(path, sizeof path, "c->ops[%d].s->assign.value", k);
             int t = emit_expr(out, s->assign.value, path);
-            fprintf(out, "    err = eval_assign_store(env, ");
+            fprintf(out, "    if (VG[%d] != env_generation || !V[%d]) { V[%d] = eval_assign_slot(env, ", v, v, v);
             emit_cstring(out, s->assign.name, (int)strlen(s->assign.name));
-            fprintf(out, ", &T[%d]); val_clear(&T[%d]); " CHECK "\n", t, t);
+            fprintf(out, "); VG[%d] = env_generation; }\n", v);
+            fprintf(out, "    if (V[%d]) err = eval_store(V[%d], &T[%d]); else err = eval_assign_store(env, ", v, v, t);
+            emit_cstring(out, s->assign.name, (int)strlen(s->assign.name));
+            fprintf(out, ", &T[%d]);\n    VAL_CLEAR(&T[%d]); " CHECK "\n", t, t);
             return 1;
         }
         case STMT_ARRAY_ASSIGN: {
@@ -180,13 +208,13 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
             for (int i = 0; i < n; i++) {
                 snprintf(path, sizeof path, "c->ops[%d].s->array_assign.indices[%d]", k, i);
                 int u = emit_expr(out, s->array_assign.indices[i], path);
-                fprintf(out, "    err = val_to_integer(&T[%d], &ix[%d]); val_clear(&T[%d]); " CHECK "\n", u, i, u);
+                fprintf(out, "    err = val_to_integer(&T[%d], &ix[%d]); VAL_CLEAR(&T[%d]); " CHECK "\n", u, i, u);
             }
             snprintf(path, sizeof path, "c->ops[%d].s->array_assign.value", k);
             int t = emit_expr(out, s->array_assign.value, path);
             fprintf(out, "    err = eval_array_store(");
             emit_cstring(out, s->array_assign.name, (int)strlen(s->array_assign.name));
-            fprintf(out, ", %d, ix, &T[%d]); val_clear(&T[%d]); " CHECK " }\n", n, t, t);
+            fprintf(out, ", %d, ix, &T[%d]); VAL_CLEAR(&T[%d]); " CHECK " }\n", n, t, t);
             return 1;
         }
         case STMT_PRINT: {
@@ -200,7 +228,7 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
                     int t = emit_expr(out, it->expr, path);
                     int tabspc = it->expr->type == EXPR_CALL &&
                         (strcmp(it->expr->call.name, "TAB") == 0 || strcmp(it->expr->call.name, "SPC") == 0);
-                    fprintf(out, "    err = print_value(&T[%d], %d, console_width); val_clear(&T[%d]); " CHECK "\n",
+                    fprintf(out, "    err = print_value(&T[%d], %d, console_width); VAL_CLEAR(&T[%d]); " CHECK "\n",
                             t, tabspc, t);
                 }
                 if (it->sep == ';') nl = 0;
@@ -248,7 +276,7 @@ static void emit_main(FILE *out, const code_t *c) {
             snprintf(path, sizeof path, "c->ops[%d].cond", k);
             fprintf(b, "    pc = %d;\n", k);
             int t = emit_expr(b, op->cond, path);
-            fprintf(b, "    { int y = val_is_true(&T[%d]); val_clear(&T[%d]);\n      if (y %s 0) ",
+            fprintf(b, "    { int y = val_is_true(&T[%d]); VAL_CLEAR(&T[%d]);\n      if (y %s 0) ",
                     t, t, op->invert ? "==" : "!=");
             emit_goto(b, c, k + 1);
             fprintf(b, " else ");
@@ -267,6 +295,7 @@ static void emit_main(FILE *out, const code_t *c) {
     }
     fclose(b);
     if (maxtemp == 0) maxtemp = 1;
+    fprintf(out, "static value_t *V[%d];\nstatic unsigned VG[%d];\n\n", nvars ? nvars : 1, nvars ? nvars : 1);
     fprintf(out,
             "static error_t sbc_main(env_t *env, code_t *c) {\n"
             "    act_t a;\n"
@@ -280,7 +309,7 @@ static void emit_main(FILE *out, const code_t *c) {
     fprintf(out,
             "    goto done;\n"
             "fail:\n"
-            "    for (int i = 0; i < %d; i++) val_clear(&T[i]);\n"
+            "    for (int i = 0; i < %d; i++) VAL_CLEAR(&T[i]);\n"
             "    if (!act_transfer(&a, err, &pc, &result)) goto done;\n"
             "dispatch:\n"
             "    switch (pc) {\n", maxtemp);

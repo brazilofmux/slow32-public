@@ -25,6 +25,11 @@ typedef struct env {
    for a bare variable name (no $/%/# suffix).  First letter is passed. */
 extern val_type_t (*env_deftype_hook)(char first_letter);
 
+/* Bumped whenever variables may be freed (env_clear, env_destroy): a
+ * pointer to a variable's value stays good while it is unchanged
+ * (compiled programs cache them) */
+extern unsigned env_generation;
+
 /* Create/destroy/clear environment */
 env_t *env_create(env_t *parent);
 void env_destroy(env_t *env);

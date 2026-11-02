@@ -26,8 +26,11 @@ void env_destroy(env_t *env) {
     free(env);
 }
 
+unsigned env_generation = 0;
+
 void env_clear(env_t *env) {
     if (!env) return;
+    env_generation++;
     for (int i = 0; i < ENV_HASH_SIZE; i++) {
         var_entry_t *e = env->table[i];
         while (e) {
