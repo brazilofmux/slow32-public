@@ -71,6 +71,15 @@ the oracle.
   a statement is 216 bytes, not 1,184.  The 97 games, in
   instructions: interpreted 964M -> 530M, compiled 506M -> 298M
   (loading 96M of it).
+- **FOR, RETURN, rounding (2026-11-01):** FOR is native (bounds, the
+  counter stored as for_set stores it, the frame through
+  `act_for_enter`, shared with the executor), so is a plain RETURN
+  (`act_return`); a float becomes an integer through `val_rint`, not
+  libm's rint (a quarter of compiled Mastermind); the C is built at
+  -O2.  A compiled assignment to a CONST was stored (the cache it
+  trusted is the reads'), and an interpreter NEXT stepped a CONST:
+  both fixed, `tests/constset`.  The 97 games: interpreted 530M,
+  compiled 236M (Mastermind 165M / 34M).
 - **Open:** native procedures with arrays, strings, PRINT; the loop
   bodies' own constraints (GOTO in a procedure keeps it on the env path).
   PRINT of values; `FOR` itself (only `NEXT` is native).

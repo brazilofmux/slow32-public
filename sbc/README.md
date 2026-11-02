@@ -31,8 +31,9 @@ Milestone 2 (started): a numeric assignment or IF condition has a native
 version -- C `long long` and `double`, the interpreter's rules for each
 type written out -- run when its guard holds (every variable it names
 cached and of the type its name predicts), its generic version
-otherwise.  NEXT steps its own loop natively when that loop is on top
-and its variable cached; elements of the arrays the program DIMs are
+otherwise.  FOR evaluates its bounds and enters its loop natively, and
+NEXT steps its own loop natively when that loop is on top and its
+variable cached; a plain RETURN returns natively; elements of the arrays the program DIMs are
 read and stored natively too (pointers cached while `array_generation`
 holds); calls of the program's FUNCTIONs and SUBs take their arguments
 from the C (native ones too) and go straight to the call
