@@ -91,7 +91,7 @@ def expr(r, depth):
         return '(' + sexpr(r, 1) + ' ' + r.choice(['=', '<>', '<', '>', '<=', '>=']) + ' ' + sexpr(r, 1) + ')'
     if k < 0.3 and k >= 0.22:
         return r.choice(['ABS', 'INT', 'FIX', 'SGN', 'SQR', 'SIN', 'COS', 'TAN', 'ATN', 'EXP',
-                         'LOG', 'CINT', 'CLNG', 'CSNG', 'CDBL']) + '(' + expr(r, depth - 1) + ')'
+                         'LOG', 'CINT', 'CLNG', 'CSNG', 'CDBL', 'RND', 'RND']) + '(' + expr(r, depth - 1) + ')'
     if k < 0.22:
         name, nargs = r.choice([('F1%', 2), ('F2#', 1), ('F3!', 1), ('F4!', 1)])
         if name == 'F4!' and r.random() < 0.6:

@@ -466,7 +466,7 @@ static int nat_is_float(int t) { return t == N_SINGLE || t == N_DOUBLE; }
  * builtin (the interpreter's order: procedure, array, builtin) */
 static const char *nat_builtins[] = {
     "ABS", "INT", "FIX", "SGN", "SQR", "SIN", "COS", "TAN", "ATN", "EXP", "LOG",
-    "CINT", "CLNG", "CSNG", "CDBL", NULL
+    "CINT", "CLNG", "CSNG", "CDBL", "RND", NULL
 };
 
 static int nat_builtin(const expr_t *e) {
@@ -491,6 +491,7 @@ static int nat_builtin_type(const expr_t *e) {
     if (!strcmp(n, "CLNG")) return N_LONG;
     if (!strcmp(n, "CSNG")) return N_SINGLE;
     if (!strcmp(n, "CDBL")) return N_DOUBLE;
+    if (!strcmp(n, "RND")) return N_SINGLE;     /* fn_rnd's single, whatever n is */
     return a == N_DOUBLE ? N_DOUBLE : N_SINGLE;
 }
 
@@ -976,6 +977,8 @@ static int nat_emit(FILE *out, const expr_t *e, char *name) {
                     fprintf(out, "    long long %s = (int)%s_r;\n", name, name);
                 } else if (!strcmp(fn, "CSNG")) {
                     fprintf(out, "    double %s = (double)(float)(double)%s;\n", name, a);
+                } else if (!strcmp(fn, "RND")) {
+                    fprintf(out, "    double %s = sb_rnd_of((double)%s, 1);\n", name, a);
                 } else if (!strcmp(fn, "CDBL")) {
                     fprintf(out, "    double %s = (double)%s;\n", name, a);
                 } else if (!strcmp(fn, "SQR")) {

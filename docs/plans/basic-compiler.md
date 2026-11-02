@@ -102,6 +102,9 @@ the oracle.
   call before the DEF is the interpreter's error.  The fuzzer defines
   four (shadowing globals, nested, one reading a string).  Salvo 7.9M ->
   4.6M; the 97 games compiled 204M.
+- **RND (2026-11-02):** RND(n) is native, through `sb_rnd_of` (the
+  generator's one entry, fn_rnd's too); 66 of the 97 games use it.  The
+  97 games compiled 196M.
 - **Open:** native procedures with arrays, strings, PRINT; the loop
   bodies' own constraints (GOTO in a procedure keeps it on the env path);
   loading (a third of a short game: the source is parsed at start).

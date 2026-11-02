@@ -276,22 +276,26 @@ static error_t fn_round(value_t *args, int nargs, value_t *out) {
 
 /* RND, RND(n): n > 0 the next number, 0 the last one again, n < 0 a
  * new seed from the bits of n as a single, then the next */
-static error_t fn_rnd(value_t *args, int nargs, value_t *out) {
-    if (nargs > 1) return ERR_ILLEGAL_FUNCTION_CALL;
-    if (nargs == 1) {
-        double n;
-        EVAL_CHECK(get_num(&args[0], &n));
-        if (n == 0.0) {
-            *out = val_single(rnd_seed / 16777216.0);
-            return ERR_NONE;
-        }
+/* RND(n) of a number (has_n 0: RND alone), the value of the single it
+ * makes; for the compiler too */
+double sb_rnd_of(double n, int has_n) {
+    if (has_n) {
+        if (n == 0.0)
+            return rnd_seed / 16777216.0;
         if (n < 0.0) {
             union { float f; unsigned int u; } b;
             b.f = (float)n;
             rnd_seed = ((b.u & 0xFFFFFF) + (b.u >> 24)) & 0xFFFFFF;
         }
     }
-    *out = val_single(sb_rnd());
+    return sb_rnd();
+}
+
+static error_t fn_rnd(value_t *args, int nargs, value_t *out) {
+    if (nargs > 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    double n = 0.0;
+    if (nargs == 1) EVAL_CHECK(get_num(&args[0], &n));
+    *out = val_single(sb_rnd_of(n, nargs == 1));
     return ERR_NONE;
 }
 
