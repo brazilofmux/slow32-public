@@ -1960,6 +1960,10 @@ static error_t for_next(env_t *env, stmt_t *s, for_slot_t *f, int *again) {
     if (f->var && f->gen == env_generation) {
         cv = f->var;
     } else {
+        /* (a NEXT with no loop running reaches a CONST the failed FOR
+         * did not count: it must not step it either) */
+        if (env_is_const(env, s->for_stmt.var_name))
+            return ERR_CONST_REASSIGN;
         cv = f->var = env_get(env, s->for_stmt.var_name);
         f->gen = env_generation;
     }

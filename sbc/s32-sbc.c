@@ -86,6 +86,8 @@ static int is_array_name(const char *name) {
 static struct { const char *name; int nparams, is_function; } procs[1024];
 static int nprocs_known;
 static int has_deftype;         /* DEF*: a name's type is not its suffix's */
+static const char *consts[256]; /* the names CONST defines anywhere: never */
+static int nconsts;             /* stored natively (a store is the error) */
 static int nat_local;           /* writing a native procedure (see below) */
 static const stmt_t *ldef;      /* that procedure */
 static int native_ok_proc[1024];        /* procs[j] has a native version */
@@ -100,9 +102,18 @@ static int proc_index(const char *name) {
     return -1;
 }
 
+/* a name CONST defines somewhere (or too many CONSTs to tell) */
+static int is_const_name(const char *name) {
+    if (nconsts >= 256) return 1;
+    for (int i = 0; i < nconsts; i++)
+        if (strcasecmp(consts[i], name) == 0) return 1;
+    return 0;
+}
+
 static void scan_program(const stmt_t *s, int top) {
     for (; s; s = s->next) {
         if (s->type == STMT_DEFTYPE) has_deftype = 1;
+        if (s->type == STMT_CONST && nconsts < 256) consts[nconsts++] = s->const_stmt.name;
         if (top && (s->type == STMT_SUB_DEF || s->type == STMT_FUNC_DEF) && nprocs_known < 1024) {
             procs[nprocs_known].name = s->proc_def.name;
             procs[nprocs_known].nparams = s->proc_def.nparams;
@@ -1228,9 +1239,14 @@ static void emit_generic_assign(FILE *out, const stmt_t *s, int k) {
     {
             /* the checks (CONST, OPTION EXPLICIT) before the value, as
              * the executor; a variable that passed them once (and is
-             * kept) passes them for good */
+             * kept) passes them for good -- but V[] is the reads' cache
+             * too, and a CONST read is cached: a name some CONST defines
+             * is checked every time */
             int v = var_index(s->assign.name);
-            fprintf(out, "    if (VG[%d] != env_generation || !V[%d]) { err = eval_assign_check(env, ", v, v);
+            if (is_const_name(s->assign.name))
+                fprintf(out, "    { err = eval_assign_check(env, ");
+            else
+                fprintf(out, "    if (VG[%d] != env_generation || !V[%d]) { err = eval_assign_check(env, ", v, v);
             emit_cstring(out, s->assign.name, (int)strlen(s->assign.name));
             fprintf(out, "); " CHECK " }\n");
             snprintf(path, sizeof path, "c->ops[%d].s->assign.value", k);
@@ -1269,7 +1285,8 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
     switch (s->type) {
         case STMT_ASSIGN: {
             int st = predict_name(s->assign.name), vt = nat_type(s->assign.value);
-            if (st != N_NONE && vt != N_NONE && (st == N_STRING) == (vt == N_STRING)) {
+            if (st != N_NONE && vt != N_NONE && (st == N_STRING) == (vt == N_STRING) &&
+                !is_const_name(s->assign.name)) {
                 uses_t u;
                 u.nv = u.na = 0;
                 u.v[u.nv++] = var_index(s->assign.name);
@@ -1520,6 +1537,9 @@ static void emit_unit(FILE *out, const code_t *c, const char *fname, int is_main
             fprintf(b, "\n        } } }\n");
         }
         fprintf(b, "    pc = %d; if ((err = act_step(&a, &pc)) != ERR_NONE) goto fail;", k);
+        /* (which kind of op and statement the executor runs, for the
+         * reader of the C) */
+        fprintf(b, " /* op %d stmt %d */", (int)op->kind, op->s ? (int)op->s->type : -1);
         /* a simple statement goes on to the next op; anything else to
          * whichever op it chose */
         if (op->kind != OP_STMT)
