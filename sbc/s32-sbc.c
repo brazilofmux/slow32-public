@@ -131,9 +131,11 @@ static void scan_program(const stmt_t *s, int top) {
  * reference, is the interpreter's to pass (it may be one only at run
  * time) */
 static int is_function_call(const expr_t *e);
+static int nat_builtin(const expr_t *e);
 static int args_compilable(expr_t *const *args, int n) {
     for (int i = 0; i < n; i++)
-        if (args[i]->type == EXPR_CALL && !args[i]->paren && !is_function_call(args[i]))
+        if (args[i]->type == EXPR_CALL && !args[i]->paren && !is_function_call(args[i]) &&
+            !nat_builtin(args[i]))
             return 0;
     return 1;
 }
@@ -156,6 +158,16 @@ static void scan_array_names(const stmt_t *s) {
         switch (s->type) {
             case STMT_DIM: note_array_name(s->dim_stmt.name); break;
             case STMT_ARRAY_ASSIGN: note_array_name(s->array_assign.name); break;
+            case STMT_READ:
+                for (int i = 0; i < s->read_stmt.nvars; i++)
+                    if (s->read_stmt.targets && s->read_stmt.targets[i])
+                        note_array_name(s->read_stmt.varnames[i]);
+                break;
+            case STMT_INPUT:
+                for (int i = 0; i < s->input.nvars; i++)
+                    if (s->input.targets && s->input.targets[i])
+                        note_array_name(s->input.varnames[i]);
+                break;
             case STMT_IF:
                 scan_array_names(s->if_stmt.then_body);
                 scan_array_names(s->if_stmt.else_body);
@@ -377,6 +389,39 @@ static int predict_name(const char *name) {
 
 static int nat_is_float(int t) { return t == N_SINGLE || t == N_DOUBLE; }
 
+/* The numeric builtins written natively, as builtin.c computes them: a
+ * name(x) the program does not make an array or a procedure is the
+ * builtin (the interpreter's order: procedure, array, builtin) */
+static const char *nat_builtins[] = {
+    "ABS", "INT", "FIX", "SGN", "SQR", "SIN", "COS", "TAN", "ATN", "EXP", "LOG",
+    "CINT", "CLNG", "CSNG", "CDBL", NULL
+};
+
+static int nat_builtin(const expr_t *e) {
+    if (e->type != EXPR_CALL || e->call.nargs != 1 || is_array_name(e->call.name) ||
+        proc_index(e->call.name) >= 0)
+        return 0;
+    for (int i = 0; nat_builtins[i]; i++)
+        if (strcmp(nat_builtins[i], e->call.name) == 0) return 1;
+    return 0;
+}
+
+static int nat_type(const expr_t *e);
+
+/* its result's type, from its argument's (builtin_call's retag: a double
+ * from a function is a single unless the argument was a double) */
+static int nat_builtin_type(const expr_t *e) {
+    const char *n = e->call.name;
+    int a = nat_type(e->call.args[0]);
+    if (a < 0) return -1;
+    if (!strcmp(n, "ABS") || !strcmp(n, "INT") || !strcmp(n, "FIX")) return a;
+    if (!strcmp(n, "SGN") || !strcmp(n, "CINT")) return N_INT;
+    if (!strcmp(n, "CLNG")) return N_LONG;
+    if (!strcmp(n, "CSNG")) return N_SINGLE;
+    if (!strcmp(n, "CDBL")) return N_DOUBLE;
+    return a == N_DOUBLE ? N_DOUBLE : N_SINGLE;
+}
+
 /* a variable's native type: in a native procedure a parameter's is its
  * declaration's (AS, or its name's), anything else its name's */
 static int var_ntype(const char *name) {
@@ -402,6 +447,8 @@ static int nat_type(const expr_t *e) {
         case EXPR_VARIABLE:
             return var_ntype(e->var.name);
         case EXPR_CALL:
+            if (nat_builtin(e))
+                return nat_builtin_type(e);
             if (is_function_call(e)) {
                 /* its value's type is its name's, unless DEF* is about */
                 if (has_deftype || !args_compilable(e->call.args, e->call.nargs)) return N_NONE;
@@ -458,7 +505,7 @@ static void nat_uses(const expr_t *e, uses_t *u);
 static void nat_vars(const expr_t *e, int *list, int *n);
 
 static void nat_uses(const expr_t *e, uses_t *u) {
-    if (e->type == EXPR_CALL && is_function_call(e)) {
+    if (e->type == EXPR_CALL && (is_function_call(e) || nat_builtin(e))) {
         for (int i = 0; i < e->call.nargs; i++) nat_uses(e->call.args[i], u);
         return;
     }
@@ -612,6 +659,47 @@ static int nat_emit(FILE *out, const expr_t *e, char *name) {
             fprintf(out, "    %s %s = %s->%s;\n", ct, name, var_ptr(e->var.name), nat_is_float(t) ? "dval" : "ival");
             return t;
         case EXPR_CALL:
+            if (nat_builtin(e)) {
+                const char *fn = e->call.name;
+                int xt = nat_emit(out, e->call.args[0], a);
+                if (!strcmp(fn, "ABS")) {
+                    if (nat_is_float(xt)) fprintf(out, "    double %s = fabs(%s);\n", name, a);
+                    else {
+                        fprintf(out, "    long long %s = %s < 0 ? -%s : %s;\n", name, a, a, a);
+                        nat_range(out, name, xt);
+                    }
+                } else if (!strcmp(fn, "INT") || !strcmp(fn, "FIX")) {
+                    if (nat_is_float(xt))
+                        fprintf(out, "    double %s = %s(%s);\n", name, !strcmp(fn, "INT") ? "floor" : "trunc", a);
+                    else fprintf(out, "    long long %s = %s;\n", name, a);
+                } else if (!strcmp(fn, "SGN")) {
+                    fprintf(out, "    long long %s = (double)%s > 0 ? 1 : (double)%s < 0 ? -1 : 0;\n", name, a, a);
+                } else if (!strcmp(fn, "CINT")) {
+                    fprintf(out, "    double %s_r = rint((double)%s);\n", name, a);
+                    fprintf(out, "    if (!(%s_r >= -32768 && %s_r <= 32767)) { err = ERR_OVERFLOW; goto fail; }\n", name, name);
+                    fprintf(out, "    long long %s = (int)%s_r;\n", name, name);
+                } else if (!strcmp(fn, "CLNG")) {
+                    fprintf(out, "    double %s_r = rint((double)%s);\n", name, a);
+                    fprintf(out, "    if (%s_r > 2147483647.0 || %s_r < -2147483648.0) { err = ERR_OVERFLOW; goto fail; }\n", name, name);
+                    fprintf(out, "    long long %s = (int)%s_r;\n", name, name);
+                } else if (!strcmp(fn, "CSNG")) {
+                    fprintf(out, "    double %s = (double)(float)(double)%s;\n", name, a);
+                } else if (!strcmp(fn, "CDBL")) {
+                    fprintf(out, "    double %s = (double)%s;\n", name, a);
+                } else if (!strcmp(fn, "SQR")) {
+                    fprintf(out, "    if ((double)%s < 0) { err = ERR_ILLEGAL_FUNCTION_CALL; goto fail; }\n", a);
+                    fprintf(out, "    double %s = sqrt((double)%s);\n", name, a);
+                } else if (!strcmp(fn, "LOG")) {
+                    fprintf(out, "    if ((double)%s <= 0.0) { err = ERR_ILLEGAL_FUNCTION_CALL; goto fail; }\n", a);
+                    fprintf(out, "    double %s = log((double)%s);\n", name, a);
+                } else {
+                    char lc[8];
+                    for (int i = 0; fn[i] && i < 7; i++) { lc[i] = (char)(fn[i] - 'A' + 'a'); lc[i + 1] = 0; }
+                    if (!strcmp(lc, "atn")) strcpy(lc, "atan");
+                    fprintf(out, "    double %s = %s((double)%s);\n", name, lc, a);
+                }
+                return t;
+            }
             if (is_function_call(e)) {
                 int n = e->call.nargs, at[16];
                 char as[16][32];

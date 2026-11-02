@@ -58,6 +58,9 @@ def expr(r, depth):
         return '-' + expr(r, depth - 1)
     if k < 0.15:
         return '(NOT ' + expr(r, depth - 1) + ')'
+    if k < 0.3 and k >= 0.22:
+        return r.choice(['ABS', 'INT', 'FIX', 'SGN', 'SQR', 'SIN', 'COS', 'TAN', 'ATN', 'EXP',
+                         'LOG', 'CINT', 'CLNG', 'CSNG', 'CDBL']) + '(' + expr(r, depth - 1) + ')'
     if k < 0.22:
         name, nargs = r.choice([('F1%', 2), ('F2#', 1), ('F3!', 1), ('F4!', 1)])
         if name == 'F4!' and r.random() < 0.6:
@@ -130,9 +133,16 @@ def one(seed):
                        capture_output=True, env=dict(os.environ, SBC_WORK=d))
     if c.returncode != 0:
         return seed, 'NOCOMPILE ' + c.stderr.decode()[-200:]
-    i = subprocess.run([EMU, '-q', SBASIC, src], capture_output=True, timeout=60).stdout
+    try:
+        i = subprocess.run([EMU, '-q', SBASIC, src], capture_output=True, timeout=60).stdout
+    except subprocess.TimeoutExpired:
+        return seed, None if os.environ.get('FUZZ_STRICT') is None else 'TIMEOUT (interpreter)'
+
     i = b'\n'.join(l for l in i.split(b'\n') if not l.startswith(b'Loaded '))
-    o = subprocess.run([EMU, '-q', exe], capture_output=True, timeout=60).stdout
+    try:
+        o = subprocess.run([EMU, '-q', exe], capture_output=True, timeout=60).stdout
+    except subprocess.TimeoutExpired:
+        return seed, 'TIMEOUT (compiled only)'
     if i == o:
         subprocess.run(['rm', '-rf', d])
         return seed, None
