@@ -138,6 +138,8 @@ bbs/bbs.port
 # xBase compiler output and host binary
 xbc/s32-xbc
 xbc/out/
+sbc/s32-sbc
+sbc/out/
 
 # Temporary LLVM files
 *.ll.tmp

@@ -1569,11 +1569,7 @@ static error_t exec_assign(env_t *env, stmt_t *s) {
  * replaces only a frame of its own, with those above it (a loop entered
  * again by GOTO): an inner FOR of the same variable leaves the outer
  * loop running, as in QBasic (NBS P054). */
-typedef struct {
-    stmt_t *s;          /* the FOR */
-    double limit, step;
-    int body_pc;        /* the op after the FOR */
-} for_slot_t;
+/* for_slot_t: eval.h */
 
 static int for_in_range(double v, const for_slot_t *f) {
     return f->step >= 0 ? v <= f->limit : v >= f->limit;
@@ -3028,186 +3024,215 @@ static error_t scan_stmt_list(stmt_t *s) {
     return ERR_NONE;
 }
 
-/* Run a unit's code.  The transfers of control -- GOTO, GOSUB, RETURN,
- * ON ... GOTO/GOSUB -- come back from eval_stmt as error codes naming a
- * target in this unit.  Only the main program traps errors (ON ERROR's
- * handler is there); an error in a procedure comes out of its CALL, and
- * RESUME returns to that. */
-static error_t run_code(env_t *env, code_t *c, int is_main) {
+error_t act_begin(act_t *a, env_t *env, code_t *c, int is_main) {
     if (++eval_depth > MAX_EVAL_DEPTH) {
         eval_depth--;
         return ERR_STACK_OVERFLOW;
     }
-    code_t *saved_code = cur_code;
-    for_slot_t *fors = NULL;
-    int nfors = 0, cap_fors = 0;
-    int gosub_base = gosub_top;
-    int pc = 0;
-    error_t result = ERR_NONE;
-
+    a->env = env;
+    a->c = c;
+    a->is_main = is_main;
+    a->saved_code = cur_code;
+    a->fors = NULL;
+    a->nfors = a->cap_fors = 0;
+    a->gosub_base = gosub_top;
     cur_code = c;
-    while (pc < c->nops) {
-        op_t *op = &c->ops[pc];
-        error_t err;
-        int yes;
-        switch (op->kind) {
-            case OP_JUMP:
-                pc = op->target;
-                continue;
-            case OP_JFALSE: {
-                value_t cond;
-                err = eval_expr(env, op->cond, &cond);
-                if (err != ERR_NONE) break;
-                yes = val_is_true(&cond);
-                val_clear(&cond);
-                pc = (yes != op->invert) ? pc + 1 : op->target;
-                continue;
-            }
-            case OP_FOR: {
-                for_slot_t f;
-                int k;
-                err = for_start(env, op->s, &f, &yes);
-                if (err != ERR_NONE) break;
-                for (k = nfors - 1; k >= 0; k--)
-                    if (fors[k].s == op->s) { nfors = k; break; }
-                if (!yes) {
-                    if (op->target < 0) { err = ERR_FOR_WITHOUT_NEXT; break; }
-                    pc = op->target;
-                    continue;
-                }
-                if (nfors == cap_fors) {
-                    int cap = cap_fors ? cap_fors * 2 : 8;
-                    for_slot_t *t = realloc(fors, cap * sizeof(*t));
-                    if (!t) { err = ERR_OUT_OF_MEMORY; break; }
-                    fors = t;
-                    cap_fors = cap;
-                }
-                f.s = op->s;
-                f.body_pc = pc + 1;
-                fors[nfors++] = f;
-                pc++;
-                continue;
-            }
-            case OP_NEXT: {
-                int k = nfors - 1;
-                if (!op->invert)
-                    while (k >= 0 && strcmp(fors[k].s->for_stmt.var_name,
-                                            op->s->for_stmt.var_name) != 0)
-                        k--;
-                if (k < 0) {
-                    /* no loop running (a GOTO into its body): QBasic's
-                     * NEXT then steps by 0 to a limit of 0, the FOR's
-                     * own slot never set (NBS P055) */
-                    for_slot_t z = { op->s, 0.0, 0.0, op->slot + 1 };
-                    err = for_next(env, op->s, &z, &yes);
-                    if (err != ERR_NONE) break;
-                    pc = yes ? z.body_pc : pc + 1;
-                    continue;
-                }
-                nfors = k + 1;
-                err = for_next(env, fors[k].s, &fors[k], &yes);
-                if (err != ERR_NONE) break;
-                if (yes) {
-                    pc = fors[k].body_pc;
-                } else {
-                    nfors = k;
-                    pc++;
-                }
-                continue;
-            }
-            case OP_EXITFOR:
-                if (nfors > 0) nfors--;
-                pc = op->target;
-                continue;
-            case OP_SELECT:
-                err = select_match(env, op->s, &yes);
-                if (err != ERR_NONE) break;
-                pc = op->targets[yes];
-                continue;
-            default:
-                cur_basic_line = op->basic_line;
-                err = eval_stmt(env, op->s);
-                if (err == ERR_NONE) { pc++; continue; }
-                break;
-        }
+    return ERR_NONE;
+}
 
-        if (err == ERR_GOTO) {
-            pc = goto_target;
-            continue;
-        }
-        if (err == ERR_GOSUB) {
-            if (gosub_top >= MAX_GOSUB_DEPTH) { result = ERR_STACK_OVERFLOW; break; }
-            gosub_stack[gosub_top++] = pc + 1;
-            pc = goto_target;
-            continue;
-        }
-        if (err == ERR_RETURN) {
-            if (gosub_top <= gosub_base) { result = ERR_RETURN_WITHOUT_GOSUB; break; }
-            gosub_top--;
-            if (return_label[0]) {
-                /* RETURN label -- to the label instead of the caller */
-                int idx = find_label(return_label);
-                return_label[0] = '\0';
-                if (idx < 0) { result = ERR_UNDEFINED_LABEL; break; }
-                pc = idx;
-            } else {
-                pc = gosub_stack[gosub_top];
-            }
-            continue;
-        }
-        if (!is_main || err == ERR_EXIT) {
-            result = err;
-            break;
-        }
-
-        /* RESUME / RESUME NEXT / RESUME label (from error handler) */
-        if (err == ERR_RESUME_WITHOUT_ERROR && on_error_active) {
-            on_error_active = 0;
-            if (resume_is_next == 1)
-                pc = on_error_resume_next_pc;
-            else if (resume_is_next == 2) {
-                int idx = find_label(resume_label);
-                if (idx < 0) { result = ERR_UNDEFINED_LABEL; break; }
-                pc = idx;
-            } else
-                pc = on_error_resume_pc;
-            continue;
-        }
-
-        /* ON ERROR GOTO triggered by ERROR n statement */
-        if (err == ERR_ON_ERROR_GOTO && on_error_label_idx >= 0 &&
-            !on_error_active) {
-            on_error_active = 1;
-            on_error_resume_pc = pc;
-            on_error_resume_next_pc = pc + 1;
-            pc = on_error_label_idx;
-            continue;
-        }
-
-        /* Error trapping: if ON ERROR GOTO is active and this is a
-           trappable error, jump to the handler */
-        if (on_error_label_idx >= 0 && !on_error_active &&
-            is_trappable_error(err)) {
-            on_error_err_code = error_qb_code(err);
-            on_error_err_line = op->basic_line;
-            on_error_active = 1;
-            on_error_resume_pc = pc;
-            on_error_resume_next_pc = pc + 1;
-            pc = on_error_label_idx;
-            continue;
-        }
-
-        result = err;
-        break;
-    }
-    if (gosub_top > gosub_base) gosub_top = gosub_base;
-    free(fors);
-    cur_code = saved_code;
+void act_end(act_t *a) {
+    if (gosub_top > a->gosub_base) gosub_top = a->gosub_base;
+    free(a->fors);
+    cur_code = a->saved_code;
     eval_depth--;
+}
+
+/* one op; inlined into the executor's loop, called by compiled code */
+static inline __attribute__((always_inline)) error_t act_step_in(act_t *a, int *ppc) {
+    env_t *env = a->env;
+    int pc = *ppc;
+    op_t *op = &a->c->ops[pc];
+    error_t err;
+    int yes;
+    switch (op->kind) {
+        case OP_JUMP:
+            *ppc = op->target;
+            return ERR_NONE;
+        case OP_JFALSE: {
+            value_t cond;
+            EVAL_CHECK(eval_expr(env, op->cond, &cond));
+            yes = val_is_true(&cond);
+            val_clear(&cond);
+            *ppc = (yes != op->invert) ? pc + 1 : op->target;
+            return ERR_NONE;
+        }
+        case OP_FOR: {
+            for_slot_t f;
+            int k;
+            EVAL_CHECK(for_start(env, op->s, &f, &yes));
+            for (k = a->nfors - 1; k >= 0; k--)
+                if (a->fors[k].s == op->s) { a->nfors = k; break; }
+            if (!yes) {
+                if (op->target < 0) return ERR_FOR_WITHOUT_NEXT;
+                *ppc = op->target;
+                return ERR_NONE;
+            }
+            if (a->nfors == a->cap_fors) {
+                int cap = a->cap_fors ? a->cap_fors * 2 : 8;
+                for_slot_t *t = realloc(a->fors, cap * sizeof(*t));
+                if (!t) return ERR_OUT_OF_MEMORY;
+                a->fors = t;
+                a->cap_fors = cap;
+            }
+            f.s = op->s;
+            f.body_pc = pc + 1;
+            a->fors[a->nfors++] = f;
+            *ppc = pc + 1;
+            return ERR_NONE;
+        }
+        case OP_NEXT: {
+            int k = a->nfors - 1;
+            if (!op->invert)
+                while (k >= 0 && strcmp(a->fors[k].s->for_stmt.var_name,
+                                        op->s->for_stmt.var_name) != 0)
+                    k--;
+            if (k < 0) {
+                /* no loop running (a GOTO into its body): QBasic's NEXT
+                 * then steps by 0 to a limit of 0, the FOR's own slot
+                 * never set (NBS P055) */
+                for_slot_t z = { op->s, 0.0, 0.0, op->slot + 1 };
+                EVAL_CHECK(for_next(env, op->s, &z, &yes));
+                *ppc = yes ? z.body_pc : pc + 1;
+                return ERR_NONE;
+            }
+            a->nfors = k + 1;
+            EVAL_CHECK(for_next(env, a->fors[k].s, &a->fors[k], &yes));
+            if (yes) {
+                *ppc = a->fors[k].body_pc;
+            } else {
+                a->nfors = k;
+                *ppc = pc + 1;
+            }
+            return ERR_NONE;
+        }
+        case OP_EXITFOR:
+            if (a->nfors > 0) a->nfors--;
+            *ppc = op->target;
+            return ERR_NONE;
+        case OP_SELECT:
+            EVAL_CHECK(select_match(env, op->s, &yes));
+            *ppc = op->targets[yes];
+            return ERR_NONE;
+        default:
+            cur_basic_line = op->basic_line;
+            err = eval_stmt(env, op->s);
+            if (err == ERR_NONE) *ppc = pc + 1;
+            return err;
+    }
+}
+
+error_t act_step(act_t *a, int *ppc) {
+    return act_step_in(a, ppc);
+}
+
+int act_transfer(act_t *a, error_t err, int *ppc, error_t *result) {
+    int pc = *ppc;
+    op_t *op = &a->c->ops[pc];
+    if (err == ERR_GOTO) {
+        *ppc = goto_target;
+        return 1;
+    }
+    if (err == ERR_GOSUB) {
+        if (gosub_top >= MAX_GOSUB_DEPTH) { *result = ERR_STACK_OVERFLOW; return 0; }
+        gosub_stack[gosub_top++] = pc + 1;
+        *ppc = goto_target;
+        return 1;
+    }
+    if (err == ERR_RETURN) {
+        if (gosub_top <= a->gosub_base) { *result = ERR_RETURN_WITHOUT_GOSUB; return 0; }
+        gosub_top--;
+        if (return_label[0]) {
+            /* RETURN label -- to the label instead of the caller */
+            int idx = find_label(return_label);
+            return_label[0] = '\0';
+            if (idx < 0) { *result = ERR_UNDEFINED_LABEL; return 0; }
+            *ppc = idx;
+        } else {
+            *ppc = gosub_stack[gosub_top];
+        }
+        return 1;
+    }
+    if (!a->is_main || err == ERR_EXIT) {
+        *result = err;
+        return 0;
+    }
+
+    /* RESUME / RESUME NEXT / RESUME label (from error handler) */
+    if (err == ERR_RESUME_WITHOUT_ERROR && on_error_active) {
+        on_error_active = 0;
+        if (resume_is_next == 1)
+            *ppc = on_error_resume_next_pc;
+        else if (resume_is_next == 2) {
+            int idx = find_label(resume_label);
+            if (idx < 0) { *result = ERR_UNDEFINED_LABEL; return 0; }
+            *ppc = idx;
+        } else
+            *ppc = on_error_resume_pc;
+        return 1;
+    }
+
+    /* ON ERROR GOTO triggered by ERROR n statement */
+    if (err == ERR_ON_ERROR_GOTO && on_error_label_idx >= 0 &&
+        !on_error_active) {
+        on_error_active = 1;
+        on_error_resume_pc = pc;
+        on_error_resume_next_pc = pc + 1;
+        *ppc = on_error_label_idx;
+        return 1;
+    }
+
+    /* Error trapping: if ON ERROR GOTO is active and this is a
+       trappable error, jump to the handler */
+    if (on_error_label_idx >= 0 && !on_error_active &&
+        is_trappable_error(err)) {
+        on_error_err_code = error_qb_code(err);
+        on_error_err_line = op->basic_line;
+        on_error_active = 1;
+        on_error_resume_pc = pc;
+        on_error_resume_next_pc = pc + 1;
+        *ppc = on_error_label_idx;
+        return 1;
+    }
+
+    *result = err;
+    return 0;
+}
+
+/* Run a unit's code: each op by act_step, the transfers of control --
+ * GOTO, GOSUB, RETURN, ON ... GOTO/GOSUB -- and errors by act_transfer.
+ * Only the main program traps errors (ON ERROR's handler is there); an
+ * error in a procedure comes out of its CALL, and RESUME returns to
+ * that.  A compiled program (s32-sbc) calls the same two for what it
+ * does not do itself. */
+static error_t run_code(env_t *env, code_t *c, int is_main) {
+    act_t a;
+    error_t result = act_begin(&a, env, c, is_main);
+    int pc = 0;
+    if (result != ERR_NONE) return result;
+    while (pc < c->nops) {
+        error_t err = act_step_in(&a, &pc);
+        if (err != ERR_NONE && !act_transfer(&a, err, &pc, &result))
+            break;
+    }
+    act_end(&a);
     return result;
 }
 
 error_t eval_program(env_t *env, stmt_t *program) {
+    return eval_program_with(env, program, NULL);
+}
+
+error_t eval_program_with(env_t *env, stmt_t *program, main_fn_t main_fn) {
     int i;
     if (!program) return ERR_NONE;
 
@@ -3247,7 +3272,7 @@ error_t eval_program(env_t *env, stmt_t *program) {
     main_code = lower_stmts(program, &result);
     if (main_code) {
         gosub_top = 0;
-        result = run_code(env, main_code, 1);
+        result = main_fn ? main_fn(env, main_code) : run_code(env, main_code, 1);
         if (result == ERR_EXIT) result = ERR_NONE;
     }
 

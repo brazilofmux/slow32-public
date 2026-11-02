@@ -6,7 +6,7 @@ typed variables (`%` 16-bit INTEGER, `&` LONG, `!` or none SINGLE, `#`
 DOUBLE, `$` STRING), TYPE records, ON ERROR, file I/O, and the GW-BASIC
 graphics statements drawn on the tube.  **[LANGUAGE.md](LANGUAGE.md)
 is the dialect, rule by rule**, with QBasic 1.1 as its authority.  It is
-an interpreter of about 11,000 lines of C in `src/`: each program unit
+an interpreter of about 12,800 lines of C in `src/`: each program unit
 is lowered to flat code (`src/lower.c`) and run; built with clang for
 SLOW-32 and linked against the MMIO libc, so it runs on any of the
 emulators.  The design and the stage-by-stage record are in
