@@ -277,7 +277,7 @@ static error_t call_def_fn(env_t *env, stmt_t *def, expr_t **args, int nargs, va
     error_t err = ERR_NONE;
     if (nargs != def->def_fn.nparams)
         return ERR_ARG_COUNT;
-    env_t *fn_env = env_create(env);
+    env_t *fn_env = env_create_sized(env, 8);
     if (!fn_env) return ERR_OUT_OF_MEMORY;
     for (int i = 0; i < nargs && err == ERR_NONE; i++) {
         value_t av, d = val_default(resolve_var_type(def->def_fn.params[i]));
@@ -296,6 +296,33 @@ static error_t call_def_fn(env_t *env, stmt_t *def, expr_t **args, int nargs, va
         if (err != ERR_NONE) val_clear(out);
     }
     return err;
+}
+
+/* SUBs and FUNCTIONs a compiled program has as C (s32-sbc), by name */
+typedef struct {
+    const char *name;
+    main_fn_t fn;
+    int nops;
+} compiled_proc_t;
+
+static compiled_proc_t *compiled_procs;
+static int ncompiled_procs;
+
+void eval_compiled_proc(const char *name, main_fn_t fn, int nops) {
+    compiled_proc_t *t = realloc(compiled_procs, (ncompiled_procs + 1) * sizeof(*t));
+    if (!t) return;                     /* it is then interpreted */
+    compiled_procs = t;
+    t[ncompiled_procs].name = name;
+    t[ncompiled_procs].fn = fn;
+    t[ncompiled_procs].nops = nops;
+    ncompiled_procs++;
+}
+
+static const compiled_proc_t *find_compiled(const char *name) {
+    for (int i = 0; i < ncompiled_procs; i++)
+        if (strcmp(compiled_procs[i].name, name) == 0)
+            return &compiled_procs[i];
+    return NULL;
 }
 
 /* --- User-defined procedure call --- */
@@ -317,7 +344,7 @@ static error_t call_proc(env_t *caller_env, proc_entry_t *proc,
         }
     }
 
-    env_t *local = env_create(NULL);
+    env_t *local = env_create_sized(NULL, 16);
 
     for (int i = 0; i < nargs; i++) {
         env_set(local, def->proc_def.params[i], &arg_vals[i]);
@@ -364,8 +391,15 @@ static error_t call_proc(env_t *caller_env, proc_entry_t *proc,
     error_t err = ERR_NONE;
     if (!proc->code)
         proc->code = lower_stmts(def->proc_def.body, &err);
-    if (err == ERR_NONE)
-        err = run_code(local, proc->code, 0);
+    if (err == ERR_NONE) {
+        const compiled_proc_t *cp = find_compiled(def->proc_def.name);
+        if (!cp)
+            err = run_code(local, proc->code, 0);
+        else if (cp->nops != proc->code->nops)
+            err = ERR_INTERNAL;         /* not the ops its C was written from */
+        else
+            err = cp->fn(local, proc->code);
+    }
 
     if (err == ERR_EXIT_SUB && !is_function) err = ERR_NONE;
     if (err == ERR_EXIT_FUNCTION && is_function) err = ERR_NONE;

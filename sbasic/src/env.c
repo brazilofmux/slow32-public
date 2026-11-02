@@ -4,20 +4,25 @@
 
 val_type_t (*env_deftype_hook)(char first_letter) = NULL;
 
-static unsigned int hash_name(const char *name) {
+static unsigned int hash_name(const env_t *env, const char *name) {
     unsigned int h = 0;
     while (*name) {
         h = h * 31 + (unsigned char)*name;
         name++;
     }
-    return h % ENV_HASH_SIZE;
+    return h % env->nbuckets;
+}
+
+env_t *env_create_sized(env_t *parent, unsigned nbuckets) {
+    env_t *env = calloc(1, sizeof(env_t) + nbuckets * sizeof(var_entry_t *));
+    if (!env) return NULL;
+    env->parent = parent;
+    env->nbuckets = nbuckets;
+    return env;
 }
 
 env_t *env_create(env_t *parent) {
-    env_t *env = calloc(1, sizeof(env_t));
-    if (!env) return NULL;
-    env->parent = parent;
-    return env;
+    return env_create_sized(parent, ENV_HASH_SIZE);
 }
 
 void env_destroy(env_t *env) {
@@ -31,7 +36,7 @@ unsigned env_generation = 0;
 void env_clear(env_t *env) {
     if (!env) return;
     env_generation++;
-    for (int i = 0; i < ENV_HASH_SIZE; i++) {
+    for (unsigned i = 0; i < env->nbuckets; i++) {
         var_entry_t *e = env->table[i];
         while (e) {
             var_entry_t *next = e->next;
@@ -45,7 +50,7 @@ void env_clear(env_t *env) {
 
 /* Find entry in a single scope */
 static var_entry_t *find_entry(env_t *env, const char *name) {
-    unsigned int h = hash_name(name);
+    unsigned int h = hash_name(env, name);
     var_entry_t *e = env->table[h];
     while (e) {
         if (strcmp(e->name, name) == 0)
@@ -57,12 +62,20 @@ static var_entry_t *find_entry(env_t *env, const char *name) {
 
 /* Create entry in a scope */
 static var_entry_t *create_entry(env_t *env, const char *name) {
-    unsigned int h = hash_name(name);
-    var_entry_t *e = calloc(1, sizeof(var_entry_t));
+    unsigned int h = hash_name(env, name);
+    var_entry_t *e = malloc(sizeof(var_entry_t));
     if (!e) return NULL;
-    strncpy(e->name, name, 63);
-    /* Default value based on suffix, or DEFTYPE for bare names */
+    /* the fields set one by one: an entry is made for every variable of
+     * every call, and clearing the whole name buffer twice was a fifth
+     * of a FUNCTION call */
     int len = (int)strlen(name);
+    if (len > 63) len = 63;
+    memcpy(e->name, name, len);
+    e->name[len] = '\0';
+    e->is_const = 0;
+    e->link = NULL;
+    len = (int)strlen(name);
+    /* Default value based on suffix, or DEFTYPE for bare names */
     if (len > 0 && name[len - 1] == '$')
         e->value = val_string_cstr("");
     else if (len > 0 && name[len - 1] == '%')

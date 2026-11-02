@@ -17,8 +17,9 @@ typedef struct var_entry {
 
 /* Environment (scope) */
 typedef struct env {
-    var_entry_t *table[ENV_HASH_SIZE];
     struct env *parent;    /* enclosing scope (NULL for global) */
+    unsigned nbuckets;     /* ENV_HASH_SIZE, or fewer for a call's scope */
+    var_entry_t *table[];
 } env_t;
 
 /* Hook for DEFTYPE: if set, called to determine the default type
@@ -32,6 +33,9 @@ extern unsigned env_generation;
 
 /* Create/destroy/clear environment */
 env_t *env_create(env_t *parent);
+/* a scope of few variables (a SUB's call, a DEF FN's): a small table,
+ * quick to make and to free */
+env_t *env_create_sized(env_t *parent, unsigned nbuckets);
 void env_destroy(env_t *env);
 void env_clear(env_t *env);
 

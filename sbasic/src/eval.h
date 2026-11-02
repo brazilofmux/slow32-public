@@ -25,6 +25,10 @@ error_t eval_program(env_t *env, stmt_t *program);
 typedef error_t (*main_fn_t)(env_t *env, code_t *main_code);
 error_t eval_program_with(env_t *env, stmt_t *program, main_fn_t main_fn);
 
+/* a SUB's or FUNCTION's body as C, run in place of the executor when it
+ * is called (its lowered body must have nops ops) */
+void eval_compiled_proc(const char *name, main_fn_t fn, int nops);
+
 /* --- The executor, op by op, for compiled programs --- */
 
 /* a running loop: its FOR, limit, step, and the op its body starts at */
