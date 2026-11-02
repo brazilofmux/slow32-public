@@ -64,6 +64,13 @@ the oracle.
   `builtin_call`, no env lookups).  The 97 games: 964M instructions
   interpreted, 506M compiled (530M before strings); Mastermind 364M /
   68M (92M before).
+- **Loading (2026-11-01):** a compiled program parses and lowers its
+  source at start, so loading is the interpreter's: a third of a short
+  game's run.  The lexer scans in place and hashes keywords; labels,
+  builtins and procedures are found by hash (labels were quadratic);
+  a statement is 216 bytes, not 1,184.  The 97 games: 964M
+  instructions interpreted, 298M compiled (loading 96M of it); the
+  interpreter itself 530M.
 - **Open:** native procedures with arrays, strings, PRINT; the loop
   bodies' own constraints (GOTO in a procedure keeps it on the env path).
   PRINT of values; `FOR` itself (only `NEXT` is native).
