@@ -86,6 +86,13 @@ static int is_array_name(const char *name) {
 static struct { const char *name; int nparams, is_function; } procs[1024];
 static int nprocs_known;
 static int has_deftype;         /* DEF*: a name's type is not its suffix's */
+static int nat_local;           /* writing a native procedure (see below) */
+static const stmt_t *ldef;      /* that procedure */
+static int native_ok_proc[1024];        /* procs[j] has a native version */
+static const char *nat_valtype(int t);
+static int n_of_val(val_type_t t);
+static const stmt_t *cur_program;
+static int nf_nnames[1024];     /* the names a native procedure's variables have */
 
 static int proc_index(const char *name) {
     for (int i = 0; i < nprocs_known; i++)
@@ -286,6 +293,27 @@ static int emit_expr(FILE *out, const expr_t *e, const char *path) {
                 char base[1024];
                 snprintf(base, sizeof base, "%s->call.args", path);
                 int rid = emit_args(out, e->call.args, n, base, ta, e->call.name, proc_index(e->call.name));
+                int pj = proc_index(e->call.name);
+                if (native_ok_proc[pj]) {
+                    /* its native version when it may run: references as
+                     * eval_arg_ref gave them, values converted to the
+                     * parameters' types as call_proc_values converts them */
+                    fprintf(out, "    if (!trace_enabled && (NFOK[%d] > 0 || (NFOK[%d] == 0 && (NFOK[%d] = eval_names_plain(NFN%d, (int)(sizeof NFN%d / sizeof NFN%d[0]) - 1) ? 1 : -1) > 0))) {\n",
+                            pj, pj, pj, pj, pj, pj);
+                    fprintf(out, "      value_t *pp[%d];\n", n ? n : 1);
+                    for (int i = 0; i < n; i++) {
+                        const stmt_t *pd = NULL;
+                        for (const stmt_t *d = cur_program; d; d = d->next)
+                            if ((d->type == STMT_FUNC_DEF || d->type == STMT_SUB_DEF) &&
+                                strcmp(d->proc_def.name, e->call.name) == 0) { pd = d; break; }
+                        fprintf(out, "      if (R%d[%d]) pp[%d] = R%d[%d]; else { err = val_coerce(&T[%d], %s); " CHECK " pp[%d] = &T[%d]; }\n",
+                                rid, i, i, rid, i, ta[i], nat_valtype(n_of_val(pd->proc_def.param_types[i])), i, ta[i]);
+                    }
+                    fprintf(out, "      err = NF%d(pp, &T[%d]);\n", pj, t);
+                    for (int i = 0; i < n; i++)
+                        fprintf(out, "      VAL_CLEAR(&T[%d]);\n", ta[i]);
+                    fprintf(out, "      " CHECK "\n    } else\n");
+                }
                 fprintf(out, "    { value_t av[%d];\n", n ? n : 1);
                 for (int i = 0; i < n; i++)
                     fprintf(out, "      av[%d] = T[%d]; T[%d].type = VAL_INTEGER;\n", i, ta[i], ta[i]);
@@ -349,6 +377,16 @@ static int predict_name(const char *name) {
 
 static int nat_is_float(int t) { return t == N_SINGLE || t == N_DOUBLE; }
 
+/* a variable's native type: in a native procedure a parameter's is its
+ * declaration's (AS, or its name's), anything else its name's */
+static int var_ntype(const char *name) {
+    if (nat_local)
+        for (int i = 0; i < ldef->proc_def.nparams; i++)
+            if (strcmp(ldef->proc_def.params[i], name) == 0)
+                return n_of_val(ldef->proc_def.param_types[i]);
+    return predict_name(name);
+}
+
 /* the native type of e, or N_NONE when it is not done natively */
 static int nat_type(const expr_t *e) {
     int l, r;
@@ -362,7 +400,7 @@ static int nat_type(const expr_t *e) {
                 default:          return N_NONE;
             }
         case EXPR_VARIABLE:
-            return predict_name(e->var.name);
+            return var_ntype(e->var.name);
         case EXPR_CALL:
             if (is_function_call(e)) {
                 /* its value's type is its name's, unless DEF* is about */
@@ -371,7 +409,7 @@ static int nat_type(const expr_t *e) {
                     if (nat_type(e->call.args[i]) == N_NONE) return N_NONE;
                 return predict_name(e->call.name);
             }
-            if (!is_array_name(e->call.name) || e->call.nargs < 1 || e->call.nargs > 8)
+            if (nat_local || !is_array_name(e->call.name) || e->call.nargs < 1 || e->call.nargs > 8)
                 return N_NONE;
             for (int i = 0; i < e->call.nargs; i++)
                 if (nat_type(e->call.args[i]) == N_NONE) return N_NONE;
@@ -464,6 +502,46 @@ static const char *nat_valtype(int t) {
 
 static int nnat;
 
+/* Writing a native procedure (nat_local: its variables C locals, no
+ * env): its parameters are p[i] (value_t *), its other variables L<n> */
+static char *lnames[256];
+static int nlnames;
+
+static int local_index(const char *name) {
+    for (int i = 0; i < nlnames; i++)
+        if (strcmp(lnames[i], name) == 0) return i;
+    if (nlnames < 256) lnames[nlnames] = strdup(name);
+    return nlnames++;
+}
+
+/* the C expression of a variable's value_t * */
+static const char *var_ptr(const char *name) {
+    static char buf[8][48];
+    static int k;
+    char *b = buf[k++ & 7];
+    if (nat_local) {
+        for (int i = 0; i < ldef->proc_def.nparams; i++)
+            if (strcmp(ldef->proc_def.params[i], name) == 0) {
+                sprintf(b, "p[%d]", i);
+                return b;
+            }
+        sprintf(b, "(&L%d)", local_index(name));
+        return b;
+    }
+    sprintf(b, "V[%d]", var_index(name));
+    return b;
+}
+
+static int n_of_val(val_type_t t) {
+    switch (t) {
+        case VAL_INTEGER: return N_INT;
+        case VAL_LONG:    return N_LONG;
+        case VAL_SINGLE:  return N_SINGLE;
+        case VAL_DOUBLE:  return N_DOUBLE;
+        default:          return N_NONE;
+    }
+}
+
 /* an integer range check of a long long r for type t */
 static void nat_range(FILE *out, const char *r, int t) {
     if (t == N_INT)
@@ -517,6 +595,8 @@ static void nat_revalidate(FILE *out) {
                  "      sg = env_generation; sa = array_generation;\n    }\n");
 }
 
+static void nat_store(FILE *out, const char *slot, int st, const char *x, int t);
+
 /* code computing e into a fresh C local; its name in *name */
 static int nat_emit(FILE *out, const expr_t *e, char *name) {
     int t = nat_type(e), id = nnat++;
@@ -528,11 +608,9 @@ static int nat_emit(FILE *out, const expr_t *e, char *name) {
             if (nat_is_float(t)) fprintf(out, "    double %s = %a;\n", name, e->literal.dval);
             else fprintf(out, "    long long %s = %d;\n", name, e->literal.ival);
             return t;
-        case EXPR_VARIABLE: {
-            int v = var_index(e->var.name);
-            fprintf(out, "    %s %s = V[%d]->%s;\n", ct, name, v, nat_is_float(t) ? "dval" : "ival");
+        case EXPR_VARIABLE:
+            fprintf(out, "    %s %s = %s->%s;\n", ct, name, var_ptr(e->var.name), nat_is_float(t) ? "dval" : "ival");
             return t;
-        }
         case EXPR_CALL:
             if (is_function_call(e)) {
                 int n = e->call.nargs, at[16];
@@ -544,9 +622,39 @@ static int nat_emit(FILE *out, const expr_t *e, char *name) {
                         /* by reference: its type checked as it is reached */
                         fprintf(out, "    err = eval_arg_check(");
                         emit_cstring(out, e->call.name, (int)strlen(e->call.name));
-                        fprintf(out, ", &P[%d], %d, V[%d]); " CHECK "\n", proc_index(e->call.name), i,
-                                var_index(a->var.name));
+                        fprintf(out, ", &P[%d], %d, %s); " CHECK "\n", proc_index(e->call.name), i,
+                                var_ptr(a->var.name));
                     }
+                }
+                int pj = proc_index(e->call.name);
+                fprintf(out, "    %s %s;\n", ct, name);
+                if (native_ok_proc[pj]) {
+                    /* its native version, when it may run (no TRACE, its
+                     * variables' names no builtin's): arguments by
+                     * reference as pointers, by value converted to the
+                     * parameter's type as call_proc_values converts them */
+                    const stmt_t *pd = NULL;
+                    for (const stmt_t *d = cur_program; d; d = d->next)
+                        if ((d->type == STMT_FUNC_DEF || d->type == STMT_SUB_DEF) &&
+                            strcmp(d->proc_def.name, e->call.name) == 0) { pd = d; break; }
+                    fprintf(out, "    if (!trace_enabled && (NFOK[%d] > 0 || (NFOK[%d] == 0 && (NFOK[%d] = eval_names_plain(NFN%d, (int)(sizeof NFN%d / sizeof NFN%d[0]) - 1) ? 1 : -1) > 0))) {\n",
+                            pj, pj, pj, pj, pj, pj);
+                    fprintf(out, "    value_t q%d[%d], *pp%d[%d], r%d;\n", id, n ? n : 1, id, n ? n : 1, id);
+                    for (int i = 0; i < n; i++) {
+                        const expr_t *a = e->call.args[i];
+                        if (a->type == EXPR_VARIABLE && !a->paren) {
+                            fprintf(out, "    pp%d[%d] = %s;\n", id, i, var_ptr(a->var.name));
+                        } else {
+                            int pt = n_of_val(pd->proc_def.param_types[i]);
+                            char slot[48];
+                            sprintf(slot, "(&q%d[%d])", id, i);
+                            fprintf(out, "    q%d[%d].type = %s;\n", id, i, nat_valtype(pt));
+                            nat_store(out, slot, pt, as[i], at[i]);
+                            fprintf(out, "    pp%d[%d] = &q%d[%d];\n", id, i, id, i);
+                        }
+                    }
+                    fprintf(out, "    err = NF%d(pp%d, &r%d); " CHECK "\n", pj, id, id);
+                    fprintf(out, "    %s = r%d.%s;\n    } else {\n", name, id, nat_is_float(t) ? "dval" : "ival");
                 }
                 fprintf(out, "    value_t av%d[%d], rv%d, *rf%d[%d];\n", id, n ? n : 1, id, id, n ? n : 1);
                 for (int i = 0; i < n; i++) {
@@ -556,7 +664,7 @@ static int nat_emit(FILE *out, const expr_t *e, char *name) {
                     /* a variable not in parentheses: by reference (the
                      * guard has it cached, of its type) */
                     if (a->type == EXPR_VARIABLE && !a->paren)
-                        fprintf(out, "    rf%d[%d] = V[%d];\n", id, i, var_index(a->var.name));
+                        fprintf(out, "    rf%d[%d] = %s;\n", id, i, var_ptr(a->var.name));
                     else
                         fprintf(out, "    rf%d[%d] = NULL;\n", id, i);
                 }
@@ -565,8 +673,9 @@ static int nat_emit(FILE *out, const expr_t *e, char *name) {
                 fprintf(out, ", &P[%d], av%d, rf%d, %d, &rv%d); " CHECK "\n", proc_index(e->call.name), id, id, n, id);
                 fprintf(out, "    if (rv%d.type != %s) { VAL_CLEAR(&rv%d); err = ERR_INTERNAL; goto fail; }\n",
                         id, nat_valtype(t), id);
-                fprintf(out, "    %s %s = rv%d.%s;\n", ct, name, id, nat_is_float(t) ? "dval" : "ival");
-                nat_revalidate(out);
+                fprintf(out, "    %s = rv%d.%s;\n", name, id, nat_is_float(t) ? "dval" : "ival");
+                if (native_ok_proc[pj]) fprintf(out, "    }\n");
+                if (!nat_local) nat_revalidate(out);
                 return t;
             }
             {
@@ -719,6 +828,188 @@ static void nat_store(FILE *out, const char *slot, int st, const char *x, int t)
         fprintf(out, "    { double q = (double)%s; if (!(fabs(q) <= 1.7976931348623157e308)) { err = ERR_OVERFLOW; goto fail; }\n"
                      "      %s->dval = q; }\n", x, slot);
     }
+}
+
+
+/* --- Native procedures: a FUNCTION or SUB whose body is all native --
+ * numeric assignments, conditions, FOR/NEXT, EXIT, calls -- gets a C
+ * version with its variables in C (NF<j>), beside the env one.  No DEF*
+ * in the program, numeric parameters, no GOTO, GOSUB, SHARED, STATIC,
+ * arrays, strings, I/O.  Native call sites run it when they may (no
+ * TRACE, none of its variables named as a builtin), the env version
+ * otherwise; what it does is what the env version does. --- */
+
+static int native_eligible(const stmt_t *def, const code_t *c) {
+    int ok = 1;
+    if (has_deftype) return 0;
+    for (int i = 0; i < def->proc_def.nparams; i++)
+        if (n_of_val(def->proc_def.param_types[i]) == N_NONE ||
+            predict_name(def->proc_def.params[i]) == N_NONE ||
+            strncmp(def->proc_def.params[i], "FN", 2) == 0)
+            return 0;
+    if (def->type == STMT_FUNC_DEF && predict_name(def->proc_def.name) == N_NONE) return 0;
+    nat_local = 1;
+    ldef = def;
+    for (int k = 0; k < c->nops && ok; k++) {
+        const op_t *op = &c->ops[k];
+        const stmt_t *s = op->s;
+        switch (op->kind) {
+            case OP_JUMP: case OP_EXITFOR: case OP_NEXT:
+                break;
+            case OP_JFALSE:
+                ok = nat_type(op->cond) != N_NONE;
+                break;
+            case OP_FOR:
+                ok = op->target >= 0 && var_ntype(s->for_stmt.var_name) != N_NONE &&
+                     strncmp(s->for_stmt.var_name, "FN", 2) != 0 &&
+                     nat_type(s->for_stmt.start) != N_NONE && nat_type(s->for_stmt.end) != N_NONE &&
+                     (!s->for_stmt.step || nat_type(s->for_stmt.step) != N_NONE);
+                break;
+            case OP_STMT:
+                if (s->type == STMT_ASSIGN)
+                    ok = var_ntype(s->assign.name) != N_NONE &&
+                         strncmp(s->assign.name, "FN", 2) != 0 &&
+                         nat_type(s->assign.value) != N_NONE;
+                else if (s->type == STMT_EXIT)
+                    ok = s->exit_stmt.what == EXIT_FUNCTION || s->exit_stmt.what == EXIT_SUB;
+                else
+                    ok = 0;
+                break;
+            default:
+                ok = 0;
+        }
+    }
+    nat_local = 0;
+    return ok;
+}
+
+static void nat_goto(FILE *out, const code_t *c, int t) {
+    if (t < 0 || t >= c->nops) fprintf(out, "goto done;");
+    else fprintf(out, "goto NL%d;", t);
+}
+
+static void emit_native_proc(FILE *out, int j, const stmt_t *def, const code_t *c) {
+    char *body = NULL;
+    size_t blen = 0;
+    FILE *b = open_memstream(&body, &blen);
+    nat_local = 1;
+    ldef = def;
+    for (int i = 0; i < nlnames; i++) free(lnames[i]);
+    nlnames = 0;
+    if (def->type == STMT_FUNC_DEF) local_index(def->proc_def.name);   /* L0: its value */
+    for (int k = 0; k < c->nops; k++) {
+        const op_t *op = &c->ops[k];
+        const stmt_t *s = op->s;
+        char x[32], y[32], z[32];
+        fprintf(b, "NL%d:;\n", k);
+        switch (op->kind) {
+            case OP_JUMP:
+                fprintf(b, "    "); nat_goto(b, c, op->target); fprintf(b, "\n");
+                break;
+            case OP_EXITFOR:
+                fprintf(b, "    "); nat_goto(b, c, op->target); fprintf(b, "\n");
+                break;
+            case OP_JFALSE:
+                nat_emit(b, op->cond, x);
+                fprintf(b, "    if ((%s != 0) %s 0) ", x, op->invert ? "==" : "!=");
+                nat_goto(b, c, k + 1);
+                fprintf(b, " else ");
+                nat_goto(b, c, op->target);
+                fprintf(b, "\n");
+                break;
+            case OP_STMT:
+                if (s->type == STMT_ASSIGN) {
+                    int t = nat_emit(b, s->assign.value, x);
+                    nat_store(b, var_ptr(s->assign.name), var_ntype(s->assign.name), x, t);
+                } else {
+                    fprintf(b, "    goto done;\n");          /* EXIT FUNCTION/SUB */
+                }
+                break;
+            case OP_FOR: {
+                /* as for_start: start, limit, step evaluated, each as a
+                 * double; the variable set (converted to its type) and
+                 * read back; the test */
+                const char *vp = var_ptr(s->for_stmt.var_name);
+                int vt = var_ntype(s->for_stmt.var_name);
+                int t0 = nat_emit(b, s->for_stmt.start, x);
+                int t1 = nat_emit(b, s->for_stmt.end, y);
+                int t2 = N_INT;
+                if (s->for_stmt.step) t2 = nat_emit(b, s->for_stmt.step, z);
+                else strcpy(z, "1");
+                (void)t1; (void)t2;
+                fprintf(b, "    FL%d = (double)%s; FS%d = (double)%s;\n", k, y, k, z);
+                fprintf(b, "    { double st%d = (double)%s;\n", k, x);
+                char sv[32];
+                sprintf(sv, "st%d", k);
+                nat_store(b, vp, vt, sv, N_DOUBLE);
+                fprintf(b, "    double cnt = (double)%s->%s;\n", vp, nat_is_float(vt) ? "dval" : "ival");
+                fprintf(b, "    if (!(FS%d >= 0 ? cnt <= FL%d : cnt >= FL%d)) ", k, k, k);
+                nat_goto(b, c, op->target);
+                fprintf(b, " }\n");
+                (void)t0;
+                break;
+            }
+            case OP_NEXT: {
+                /* as for_next, by the variable's type */
+                int f = op->slot;
+                const stmt_t *fs = c->ops[f].s;
+                const char *vp = var_ptr(fs->for_stmt.var_name);
+                int vt = var_ntype(fs->for_stmt.var_name);
+                fprintf(b, "    { double v;\n");
+                if (vt == N_INT || vt == N_LONG) {
+                    fprintf(b, "    v = (double)%s->ival + FS%d;\n", vp, f);
+                    fprintf(b, "    if (v == (double)(int)v && v <= 2147483647.0 && v >= -2147483648.0%s) %s->ival = (int)v;\n",
+                            vt == N_INT ? " && v >= -32768.0 && v <= 32767.0" : "", vp);
+                    fprintf(b, "    else {\n");
+                    nat_store(b, vp, vt, "v", N_DOUBLE);
+                    fprintf(b, "    v = (double)%s->ival; }\n", vp);
+                } else if (vt == N_SINGLE) {
+                    fprintf(b, "    v = (double)(float)(%s->dval + FS%d); %s->dval = v;\n", vp, f, vp);
+                } else {
+                    fprintf(b, "    v = %s->dval + FS%d; %s->dval = v;\n", vp, f, vp);
+                }
+                fprintf(b, "    if (FS%d >= 0 ? v <= FL%d : v >= FL%d) ", f, f, f);
+                nat_goto(b, c, f + 1);
+                fprintf(b, " }\n");
+                break;
+            }
+            default:
+                break;
+        }
+    }
+    fclose(b);
+    fprintf(out, "static error_t NF%d(value_t **p, value_t *ret) {\n    error_t err = eval_enter();\n", j);
+    fprintf(out, "    if (err != ERR_NONE) return err;\n");
+    for (int i = 0; i < nlnames && i < 256; i++) {
+        int t = predict_name(lnames[i]);
+        fprintf(out, "    value_t L%d; L%d.type = %s; L%d.%s = 0;\n", i, i, nat_valtype(t), i,
+                nat_is_float(t) ? "dval" : "ival");
+    }
+    for (int k = 0; k < c->nops; k++)
+        if (c->ops[k].kind == OP_FOR) fprintf(out, "    double FL%d = 0, FS%d = 0;\n", k, k);
+    fprintf(out, "    (void)p; (void)ret;\n");
+    fwrite(body, 1, blen, out);
+    free(body);
+    fprintf(out, "done:\n");
+    if (def->type == STMT_FUNC_DEF) fprintf(out, "    *ret = L0;\n");
+    fprintf(out, "    eval_leave();\n    return ERR_NONE;\nfail:\n    eval_leave();\n    return err;\n}\n\n");
+    nat_local = 0;
+}
+
+/* the names a native procedure's variables have, for eval_names_plain */
+static void emit_native_names(FILE *out, int j, const stmt_t *def) {
+    int n = 0;
+    fprintf(out, "static const char *const NFN%d[] = {", j);
+    for (int i = 0; i < def->proc_def.nparams; i++, n++) {
+        emit_cstring(out, def->proc_def.params[i], (int)strlen(def->proc_def.params[i]));
+        fprintf(out, ", ");
+    }
+    for (int i = 0; i < nlnames && i < 256; i++, n++) {
+        emit_cstring(out, lnames[i], (int)strlen(lnames[i]));
+        fprintf(out, ", ");
+    }
+    fprintf(out, "\"\" };\n");
+    nf_nnames[j] = n;
 }
 
 /* --- Statements --- */
@@ -1062,6 +1353,7 @@ int main(int argc, char **argv) {
     error_t err;
     scan_array_names(program);
     scan_program(program, 1);
+    cur_program = program;
     code_t *c = lower_stmts(program, &err);
     if (!c) {
         fprintf(stderr, "%s: %s\n", in, error_message(err));
@@ -1072,8 +1364,47 @@ int main(int argc, char **argv) {
     if (!out) { fprintf(stderr, "s32-sbc: cannot write %s\n", outpath); return 1; }
     fprintf(out, "/* generated by s32-sbc from %s */\n#include \"sbcrt.h\"\n#include <string.h>\n#include <math.h>\n\n", in);
     emit_source(out, text);
-    fprintf(out, "static void *P[%d];   /* each SUB's and FUNCTION's entry, found once */\n\n",
+    fprintf(out, "static void *P[%d];   /* each SUB's and FUNCTION's entry, found once */\n",
             nprocs_known ? nprocs_known : 1);
+    fprintf(out, "static int NFOK[%d];  /* native version usable: 0 not known yet, 1, -1 */\n\n",
+            nprocs_known ? nprocs_known : 1);
+    /* which procedures have a native version; their names and prototypes,
+     * written first (any unit may call them) */
+    code_t *pcodes[1024];
+    {
+        int jx = 0;
+        for (stmt_t *d = program; d; d = d->next) {
+            if (d->type != STMT_SUB_DEF && d->type != STMT_FUNC_DEF) continue;
+            if (jx >= 1024) break;
+            pcodes[jx] = lower_stmts(d->proc_def.body, &err);
+            if (!pcodes[jx]) {
+                fprintf(stderr, "%s: %s: %s\n", in, d->proc_def.name, error_message(err));
+                return 1;
+            }
+            native_ok_proc[jx] = native_eligible(d, pcodes[jx]);
+            jx++;
+        }
+        /* the native bodies: written to a buffer now (their names known
+         * before any call site is written), emitted after the prototypes */
+        jx = 0;
+        char *nbody = NULL;
+        size_t nlen = 0;
+        FILE *nb = open_memstream(&nbody, &nlen);
+        for (stmt_t *d = program; d; d = d->next) {
+            if (d->type != STMT_SUB_DEF && d->type != STMT_FUNC_DEF) continue;
+            if (jx >= 1024) break;
+            if (native_ok_proc[jx]) {
+                fprintf(out, "static error_t NF%d(value_t **p, value_t *ret);\n", jx);
+                emit_native_proc(nb, jx, d, pcodes[jx]);
+                emit_native_names(out, jx, d);
+            }
+            jx++;
+        }
+        fclose(nb);
+        fprintf(out, "\n");
+        fwrite(nbody, 1, nlen, out);
+        free(nbody);
+    }
     emit_unit(out, c, "sbc_main", 1);
     /* each SUB and FUNCTION: its body lowered as the runtime will */
     int nprocs = 0, procnops[1024];

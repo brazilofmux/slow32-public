@@ -37,11 +37,15 @@ read and stored natively too (pointers cached while `array_generation`
 holds); calls of the program's FUNCTIONs and SUBs take their arguments
 from the C (native ones too) and go straight to the call
 (`eval_call_proc`).  Nested loops: 36M instructions against the
-interpreter's 443M; the sieve 1.26M against 4.50M; fib(20) 55.4M
+interpreter's 443M; the sieve 1.26M against 4.50M; fib(20) 2.27M
 against 69.3M.  Arguments are passed as QBasic passes them: a variable by
 reference (`eval_arg_ref`, its type checked as it is reached), anything
 else by value; a call with an array element among its arguments is the
-interpreter's.
+interpreter's.  A FUNCTION or SUB whose body is all native (numeric
+assignments, conditions, FOR/NEXT, EXIT, calls; no DEF* in the program,
+no GOTO, GOSUB, SHARED, STATIC, arrays, strings or I/O) also gets a C
+version with its variables in C and no env (NF<n>), which a call site
+runs when it may (no TRACE, none of its variables named as a builtin).
 
 ```bash
 python3 tests/fuzz.py -n 1000      # random typed arithmetic, compiled vs interpreted

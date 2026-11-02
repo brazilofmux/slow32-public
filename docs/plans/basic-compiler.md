@@ -51,9 +51,14 @@ the oracle.
   no longer invalidates the caller's caches.  fib(20): 100M (the
   interpreter, before) -> 69M interpreted, 55M compiled (with the
   by-reference parameters).
-- **Open:** a call is still a scope of named variables (parameters
-  bound by name, the value read back by name); locals in C would be the
-  next step, where a body has no statement the executor must run.
+- **Native procedures (2026-11-01):** a FUNCTION or SUB whose body is
+  all native also has a C version, variables in C, parameters as
+  `value_t *` (by reference the caller's variable, by value a converted
+  temporary), FOR/NEXT paired in the text; the env version stays for
+  everything else.  fib(20): 2.27M instructions compiled, 69.3M
+  interpreted.
+- **Open:** native procedures with arrays, strings, PRINT; the loop
+  bodies' own constraints (GOTO in a procedure keeps it on the env path).
   Parameters are by reference now, as QBasic's (variables linked,
   elements copied in and out), in both.  Strings;
   PRINT of numbers; builtin calls (`ABS`, `INT`, `SQR`) in native

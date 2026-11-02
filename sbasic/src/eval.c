@@ -3391,6 +3391,31 @@ error_t act_begin(act_t *a, env_t *env, code_t *c, int is_main) {
     return ERR_NONE;
 }
 
+/* a native procedure's activation (s32-sbc): the depth and the stack,
+ * as act_begin counts them */
+error_t eval_enter(void) {
+    if (++eval_depth > MAX_EVAL_DEPTH || stack_exhausted()) {
+        eval_depth--;
+        return ERR_STACK_OVERFLOW;
+    }
+    return ERR_NONE;
+}
+
+void eval_leave(void) {
+    eval_depth--;
+}
+
+/* none of these names is read as anything but its variable: not a
+ * builtin's, not ERR or ERL (a native procedure keeps its variables in
+ * C, where a builtin's name would be a variable) */
+int eval_names_plain(const char *const *names, int n) {
+    for (int i = 0; i < n; i++)
+        if (builtin_exists(names[i]) || strcmp(names[i], "ERR") == 0 ||
+            strcmp(names[i], "ERL") == 0 || strncmp(names[i], "FN", 2) == 0)
+            return 0;
+    return 1;
+}
+
 void act_end(act_t *a) {
     if (gosub_top > a->gosub_base) gosub_top = a->gosub_base;
     free(a->fors);

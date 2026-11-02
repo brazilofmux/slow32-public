@@ -53,6 +53,9 @@ typedef struct {
 
 error_t act_begin(act_t *a, env_t *env, code_t *c, int is_main);
 void act_end(act_t *a);
+error_t eval_enter(void);
+void eval_leave(void);
+int eval_names_plain(const char *const *names, int n);
 /* run op *pc: ERR_NONE with *pc the next op, or the op's error (*pc
  * unchanged) */
 error_t act_step(act_t *a, int *pc);
