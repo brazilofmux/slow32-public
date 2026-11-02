@@ -46,7 +46,7 @@ static val_type_t var_type_from_name(const char *name) {
         char last = name[len - 1];
         if (last == '$') return VAL_STRING;
         if (last == '%') return VAL_INTEGER;
-        if (last == '&') return VAL_INTEGER;
+        if (last == '&') return VAL_LONG;
         if (last == '#') return VAL_DOUBLE;
     }
     return VAL_SINGLE;
@@ -59,7 +59,13 @@ static expr_t *parse_primary(parser_t *p) {
 
     if (tok->type == TOK_INTEGER_LIT) {
         token_t t = lexer_next(&p->lex);
-        return expr_literal(val_integer(t.ival), t.line);
+        /* an integer literal: INTEGER to 32767, LONG beyond (or with &);
+         * a % that does not fit is an Overflow */
+        if (t.suffix == '%' && !INT16_OK(t.ival)) {
+            parser_error(p, ERR_OVERFLOW);
+            return NULL;
+        }
+        return expr_literal(t.suffix == '&' ? val_long(t.ival) : val_integer(t.ival), t.line);
     }
     if (tok->type == TOK_DOUBLE_LIT) {
         token_t t = lexer_next(&p->lex);
@@ -1090,7 +1096,8 @@ static stmt_t *parse_shared(parser_t *p) {
 /* AS INTEGER | LONG | SINGLE | DOUBLE | STRING: 1 with *t set, or 0
  * when the name is none of them */
 static int as_type(const char *name, val_type_t *t) {
-    if (strcmp(name, "INTEGER") == 0 || strcmp(name, "LONG") == 0) *t = VAL_INTEGER;
+    if (strcmp(name, "INTEGER") == 0) *t = VAL_INTEGER;
+    else if (strcmp(name, "LONG") == 0) *t = VAL_LONG;
     else if (strcmp(name, "SINGLE") == 0) *t = VAL_SINGLE;
     else if (strcmp(name, "DOUBLE") == 0) *t = VAL_DOUBLE;
     else if (strcmp(name, "STRING") == 0) *t = VAL_STRING;
@@ -2115,6 +2122,7 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_RESUME:   return parse_resume(p);
         case TOK_ERROR:    return parse_error_stmt(p);
         case TOK_DEFINT:   return parse_deftype(p, VAL_INTEGER);
+        case TOK_DEFLNG:   return parse_deftype(p, VAL_LONG);
         case TOK_DEFDBL:   return parse_deftype(p, VAL_DOUBLE);
         case TOK_DEFSNG:   return parse_deftype(p, VAL_SINGLE);
         case TOK_DEFSTR:   return parse_deftype(p, VAL_STRING);

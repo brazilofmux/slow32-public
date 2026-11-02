@@ -168,7 +168,8 @@ int stmt_input_add_var(stmt_t *s, const char *name, val_type_t type) {
 static val_type_t suffix_type(const char *name) {
     int len = (int)strlen(name);
     if (len > 0 && name[len - 1] == '$') return VAL_STRING;
-    if (len > 0 && (name[len - 1] == '%' || name[len - 1] == '&')) return VAL_INTEGER;
+    if (len > 0 && name[len - 1] == '%') return VAL_INTEGER;
+    if (len > 0 && name[len - 1] == '&') return VAL_LONG;
     if (len > 0 && name[len - 1] == '#') return VAL_DOUBLE;
     return VAL_SINGLE;
 }

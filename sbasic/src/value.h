@@ -12,13 +12,16 @@ typedef enum {
     VAL_DOUBLE,
     VAL_STRING,
     VAL_RECORD,
-    VAL_SINGLE      /* in dval: QuickBASIC computes in the 8087's wider
+    VAL_SINGLE,     /* in dval: QuickBASIC computes in the 8087's wider
                        format and rounds to single only when it stores,
                        so a SINGLE value mid-expression is not rounded;
                        the type decides storage and how it prints */
+    VAL_LONG        /* in ival, 32 bits; VAL_INTEGER is 16 (QB's % and &) */
 } val_type_t;
 
 #define VAL_IS_FLOAT(t) ((t) == VAL_SINGLE || (t) == VAL_DOUBLE)
+#define VAL_IS_INT(t)   ((t) == VAL_INTEGER || (t) == VAL_LONG)
+#define INT16_OK(x)     ((x) >= -32768 && (x) <= 32767)
 
 /* Reference-counted string */
 typedef struct sb_string {
@@ -61,7 +64,8 @@ void record_ref(sb_record_t *r);
 void record_unref(sb_record_t *r);
 
 /* Value constructors */
-value_t val_integer(int v);
+value_t val_integer(int v);             /* an INTEGER, or a LONG past 16 bits */
+value_t val_long(int v);
 value_t val_double(double v);
 value_t val_single(double v);           /* not rounded: an intermediate */
 double single_round(double v);          /* to the nearest single */

@@ -1,10 +1,10 @@
- 3.5   7.2 
+ 3.5   7.199999809265137 
 Alice age  30  score  95.5 
 After birthday:  31 
 -1   0 
-Sum:  10.7 
+Sum:  10.69999980926514 
 In SUB:  100   200 
-After SUB:  3.5   7.2 
+After SUB:  3.5   7.199999809265137 
 Loop done, last:  200   400 
 In ModifyShared:  43   85 
 After ModifyShared:  43   85 

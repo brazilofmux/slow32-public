@@ -28,7 +28,7 @@ static double sb_rnd(void) {
 static error_t get_num(value_t *v, double *out) {
     if (v->type == VAL_STRING) return ERR_TYPE_MISMATCH;
     if (v->type == VAL_RECORD) return ERR_TYPE_MISMATCH;
-    *out = (v->type == VAL_INTEGER) ? (double)v->ival : v->dval;
+    *out = VAL_IS_INT(v->type) ? (double)v->ival : v->dval;
     return ERR_NONE;
 }
 
@@ -39,12 +39,17 @@ static error_t get_num(value_t *v, double *out) {
 static error_t fn_abs(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     if (args[0].type == VAL_STRING) return ERR_TYPE_MISMATCH;
-    if (args[0].type == VAL_INTEGER) {
-        int v = args[0].ival;
-        *out = val_integer(v < 0 ? -v : v);
+    /* the argument's type kept: ABS(-32768) is an Overflow */
+    if (VAL_IS_INT(args[0].type)) {
+        long long v = args[0].ival;
+        if (v < 0) v = -v;
+        if (args[0].type == VAL_INTEGER ? !INT16_OK(v) : v > 2147483647LL)
+            return ERR_OVERFLOW;
+        *out = args[0];
+        out->ival = (int)v;
     } else {
-        double v = args[0].dval;
-        *out = val_double(v < 0 ? -v : v);
+        *out = args[0];
+        out->dval = fabs(args[0].dval);
     }
     return ERR_NONE;
 }
@@ -53,7 +58,7 @@ static error_t fn_int(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     double v; EVAL_CHECK(get_num(&args[0], &v));
     /* INT and FIX keep their argument's type (INT(1E+10) is a single) */
-    if (args[0].type == VAL_INTEGER) *out = args[0];
+    if (VAL_IS_INT(args[0].type)) *out = args[0];
     else { *out = args[0]; out->dval = floor(v); }
     return ERR_NONE;
 }
@@ -79,7 +84,7 @@ static error_t fn_fix(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     double v; EVAL_CHECK(get_num(&args[0], &v));
     /* truncated toward zero, the argument's type kept */
-    if (args[0].type == VAL_INTEGER) *out = args[0];
+    if (VAL_IS_INT(args[0].type)) *out = args[0];
     else { *out = args[0]; out->dval = trunc(v); }
     return ERR_NONE;
 }
@@ -89,9 +94,19 @@ static error_t fn_cint(value_t *args, int nargs, value_t *out) {
     double v; EVAL_CHECK(get_num(&args[0], &v));
     /* to the nearest integer, a half to even (QuickBASIC: CINT(2.5) = 2) */
     double rounded = rint(v);
-    if (rounded > 2147483647.0 || rounded < -2147483648.0)
+    if (!INT16_OK(rounded))
         return ERR_OVERFLOW;
     *out = val_integer((int)rounded);
+    return ERR_NONE;
+}
+
+static error_t fn_clng(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    double v; EVAL_CHECK(get_num(&args[0], &v));
+    double rounded = rint(v);
+    if (rounded > 2147483647.0 || rounded < -2147483648.0)
+        return ERR_OVERFLOW;
+    *out = val_long((int)rounded);
     return ERR_NONE;
 }
 
@@ -1318,7 +1333,7 @@ static const builtin_entry_t builtins[] = {
     { "SQR",      fn_sqr },
     { "FIX",      fn_fix },
     { "CINT",     fn_cint },
-    { "CLNG",     fn_cint },
+    { "CLNG",     fn_clng },
     { "CDBL",     fn_cdbl },
     { "CSNG",     fn_csng },
     { "SIN",      fn_sin },

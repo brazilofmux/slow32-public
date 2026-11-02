@@ -62,8 +62,10 @@ static var_entry_t *create_entry(env_t *env, const char *name) {
     int len = (int)strlen(name);
     if (len > 0 && name[len - 1] == '$')
         e->value = val_string_cstr("");
-    else if (len > 0 && (name[len - 1] == '%' || name[len - 1] == '&'))
+    else if (len > 0 && name[len - 1] == '%')
         e->value = val_integer(0);
+    else if (len > 0 && name[len - 1] == '&')
+        e->value = val_long(0);
     else if (len > 0 && name[len - 1] == '#')
         e->value = val_double(0.0);
     else if (len > 0 && env_deftype_hook)

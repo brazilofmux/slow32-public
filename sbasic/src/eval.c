@@ -144,7 +144,8 @@ static val_type_t resolve_var_type(const char *name) {
     if (len > 0) {
         char last = name[len - 1];
         if (last == '$') return VAL_STRING;
-        if (last == '%' || last == '&') return VAL_INTEGER;
+        if (last == '%') return VAL_INTEGER;
+        if (last == '&') return VAL_LONG;
         if (last == '#') return VAL_DOUBLE;
     }
     return deftype_lookup(name[0]);
@@ -195,7 +196,7 @@ static error_t store_into(value_t *slot, const value_t *v) {
     if (!slot) return ERR_OUT_OF_MEMORY;
     /* the common cases, a number into its own kind of slot */
     if (slot->type == v->type) {
-        if (v->type == VAL_INTEGER || v->type == VAL_DOUBLE) {
+        if (VAL_IS_INT(v->type) || v->type == VAL_DOUBLE) {
             if (v->type == VAL_DOUBLE && !(fabs(v->dval) <= 1.7976931348623157e308))
                 return ERR_OVERFLOW;
             *slot = *v;
@@ -451,8 +452,10 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
                  * half to even (3.1 AND -1.5 is 3 AND -2) */
                 int iv;
                 err = val_to_integer(&operand, &iv);
-                if (err == ERR_NONE)
+                if (err == ERR_NONE) {
                     *out = val_integer(~iv);
+                    if (operand.type == VAL_LONG) out->type = VAL_LONG;
+                }
             }
             val_clear(&operand);
             return err;
@@ -477,21 +480,15 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
                     if (left.type == VAL_STRING) {
                         ls = left.sval ? left.sval->data : "";
                         llen = left.sval ? left.sval->len : 0;
-                    } else if (left.type == VAL_INTEGER) {
-                        snprintf(lbuf, sizeof(lbuf), "%d", left.ival);
-                        ls = lbuf; llen = (int)strlen(lbuf);
                     } else {
-                        snprintf(lbuf, sizeof(lbuf), "%g", left.dval);
+                        val_format_number(&left, lbuf, sizeof(lbuf));
                         ls = lbuf; llen = (int)strlen(lbuf);
                     }
                     if (right.type == VAL_STRING) {
                         rs = right.sval ? right.sval->data : "";
                         rlen = right.sval ? right.sval->len : 0;
-                    } else if (right.type == VAL_INTEGER) {
-                        snprintf(rbuf, sizeof(rbuf), "%d", right.ival);
-                        rs = rbuf; rlen = (int)strlen(rbuf);
                     } else {
-                        snprintf(rbuf, sizeof(rbuf), "%g", right.dval);
+                        val_format_number(&right, rbuf, sizeof(rbuf));
                         rs = rbuf; rlen = (int)strlen(rbuf);
                     }
                     int total = llen + rlen;
@@ -520,6 +517,10 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
                         else if (e->binary.op == OP_XOR) *out = val_integer(il ^ ir);
                         else if (e->binary.op == OP_IMP) *out = val_integer(~il | ir);
                         else *out = val_integer(~(il ^ ir));
+                        /* a LONG operand (or one past 16 bits) makes a LONG */
+                        if (left.type == VAL_LONG || right.type == VAL_LONG ||
+                            !INT16_OK(il) || !INT16_OK(ir))
+                            out->type = VAL_LONG;
                     }
                     break;
                 }
@@ -1159,6 +1160,7 @@ static error_t print_items(env_t *env, print_item_t *items, int nitems, int widt
             EVAL_CHECK(eval_expr(env, item->expr, &v));
             switch (v.type) {
                 case VAL_INTEGER:
+                case VAL_LONG:
                 case VAL_DOUBLE:
                 case VAL_SINGLE: {
                     /* a space or the minus sign before, a space after */
@@ -1619,9 +1621,10 @@ static error_t for_next(env_t *env, stmt_t *s, const for_slot_t *f, int *again) 
     value_t *cv = env_get(env, s->for_stmt.var_name);
     double v = 0.0;
     /* the variable as FOR made it: stepped where it lives */
-    if (cv && cv->type == VAL_INTEGER) {
+    if (cv && VAL_IS_INT(cv->type)) {
         v = (double)cv->ival + f->step;
-        if (v != (double)(int)v || v > 2147483647.0 || v < -2147483648.0) {
+        if (v != (double)(int)v || v > 2147483647.0 || v < -2147483648.0 ||
+            (cv->type == VAL_INTEGER && !INT16_OK(v))) {
             EVAL_CHECK(for_set(env, s, v));       /* rounds, or overflows */
             cv = env_get(env, s->for_stmt.var_name);
             if (cv) EVAL_CHECK(val_to_double(cv, &v));
@@ -1988,7 +1991,8 @@ static error_t exec_write_file(env_t *env, stmt_t *s) {
             value_t v;
             EVAL_CHECK(eval_expr(env, item->expr, &v));
             switch (v.type) {
-                case VAL_INTEGER: fprintf(fp, "%d", v.ival); break;
+                case VAL_INTEGER:
+                case VAL_LONG: fprintf(fp, "%d", v.ival); break;
                 case VAL_DOUBLE:
                 case VAL_SINGLE: {
                     char buf[64];
@@ -2120,7 +2124,8 @@ static error_t exec_write_console(env_t *env, stmt_t *s) {
             value_t v;
             EVAL_CHECK(eval_expr(env, item->expr, &v));
             switch (v.type) {
-                case VAL_INTEGER: {
+                case VAL_INTEGER:
+                case VAL_LONG: {
                     char buf[32];
                     snprintf(buf, sizeof(buf), "%d", v.ival);
                     col_puts(buf);
@@ -2208,9 +2213,13 @@ static error_t exec_get(env_t *env, stmt_t *s) {
     val_type_t vt = s->get_put_stmt.vartype;
     value_t result;
     if (vt == VAL_INTEGER) {
+        short sval = 0;                 /* QB: an INTEGER is 2 bytes */
+        fread(&sval, 2, 1, fp);
+        result = val_integer(sval);
+    } else if (vt == VAL_LONG) {
         int ival = 0;
         fread(&ival, 4, 1, fp);
-        result = val_integer(ival);
+        result = val_long(ival);
     } else if (vt == VAL_DOUBLE) {
         double dval = 0.0;
         fread(&dval, 8, 1, fp);
@@ -2276,6 +2285,9 @@ static error_t exec_put(env_t *env, stmt_t *s) {
     if (!v) return ERR_UNDEFINED_VAR;
 
     if (v->type == VAL_INTEGER) {
+        short sval = (short)v->ival;
+        fwrite(&sval, 2, 1, fp);
+    } else if (v->type == VAL_LONG) {
         int ival = v->ival;
         fwrite(&ival, 4, 1, fp);
     } else if (v->type == VAL_DOUBLE) {
@@ -2369,18 +2381,9 @@ static error_t exec_field_assign(env_t *env, stmt_t *s) {
     value_t v;
     EVAL_CHECK(eval_expr(env, s->field_assign.value, &v));
     /* Coerce to field type */
-    if (td->field_types[fi] == VAL_INTEGER && v.type != VAL_INTEGER) {
-        int iv;
-        error_t err = val_to_integer(&v, &iv);
-        val_clear(&v);
-        if (err != ERR_NONE) return err;
-        v = val_integer(iv);
-    } else if (td->field_types[fi] == VAL_STRING && v.type != VAL_STRING) {
-        char buf[256];
-        error_t err = val_to_string(&v, buf, sizeof(buf));
-        val_clear(&v);
-        if (err != ERR_NONE) return err;
-        v = val_string_cstr(buf);
+    {
+        error_t err = val_coerce(&v, td->field_types[fi]);
+        if (err != ERR_NONE) { val_clear(&v); return err; }
     }
     val_assign(&inst->rval->fields[fi], &v);
     val_clear(&v);
@@ -2574,7 +2577,7 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
                 value_t v;
                 EVAL_CHECK(eval_expr(env, s->sleep_stmt.duration, &v));
                 if (v.type == VAL_STRING) { val_clear(&v); return ERR_TYPE_MISMATCH; }
-                secs = (v.type == VAL_INTEGER) ? (double)v.ival : v.dval;
+                if (val_to_double(&v, &secs) != ERR_NONE) secs = 0.0;
                 val_clear(&v);
                 if (secs < 0) return ERR_ILLEGAL_FUNCTION_CALL;
             }

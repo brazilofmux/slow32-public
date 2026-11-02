@@ -77,6 +77,7 @@ static const keyword_t keywords[] = {
     { "ERROR",  TOK_ERROR },
     { "RESUME", TOK_RESUME },
     { "DEFINT", TOK_DEFINT },
+    { "DEFLNG", TOK_DEFLNG },
     { "DEFDBL", TOK_DEFDBL },
     { "DEFSTR", TOK_DEFSTR },
     { "DEFSNG", TOK_DEFSNG },
@@ -267,10 +268,22 @@ static token_t scan_token(lexer_t *lex) {
                 else next_char(lex);
             }
             tok.text[len] = '\0';
-            /* Optional trailing % suffix (already integer) */
-            if (peek_char(lex) == '%') next_char(lex);
-            tok.type = TOK_INTEGER_LIT;
-            tok.ival = (len > 0) ? (int)strtol(tok.text, NULL, base) : 0;
+            /* &H, &O, &B: up to &HFFFF an INTEGER, its 16 bits signed
+             * (&HFFFF is -1), beyond that a LONG's 32 (QBasic) */
+            {
+                unsigned long u = (len > 0) ? strtoul(tok.text, NULL, base) : 0;
+                char sfx = 0;
+                if (peek_char(lex) == '%' || peek_char(lex) == '&')
+                    sfx = next_char(lex);
+                tok.type = TOK_INTEGER_LIT;
+                if (u <= 0xFFFF && sfx != '&') {
+                    tok.ival = (int)(short)(unsigned short)u;
+                    tok.suffix = '%';
+                } else {
+                    tok.ival = (int)(unsigned int)u;
+                    tok.suffix = '&';
+                }
+            }
             return tok;
         }
         /* Bare '&' → string concatenation operator */
@@ -332,7 +345,7 @@ static token_t scan_token(lexer_t *lex) {
                 sfx = next_char(lex);
             for (int i = 0; i < len && tok.text[i] != 'E'; i++)
                 if (tok.text[i] != '.') sig++;
-            if (sfx == '%' || sfx == '&') is_double = 0;
+            if (sfx == '%' || sfx == '&') { is_double = 0; tok.suffix = sfx; }
             if (sfx == '#' || sfx == '!') is_double = 1;
             if (!is_double && (len > 10 || atof(tok.text) > 2147483647.0))
                 is_double = 1;
