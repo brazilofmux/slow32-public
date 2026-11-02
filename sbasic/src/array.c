@@ -19,10 +19,24 @@ void array_clear_all(void) {
     array_count = 0;
 }
 
+/* A name is looked up from the same place (the same AST string) again
+ * and again: a small cache by the name's address, good while
+ * array_generation holds, each hit checked by one comparison */
+#define FIND_CACHE 64
+static struct { const char *name; unsigned gen; sb_array_t *arr; } find_cache[FIND_CACHE];
+
 sb_array_t *array_find(const char *name) {
+    unsigned h = (unsigned)((unsigned long)name >> 2) % FIND_CACHE;
+    if (find_cache[h].name == name && find_cache[h].gen == array_generation &&
+        strcmp(find_cache[h].arr->name, name) == 0)
+        return find_cache[h].arr;
     for (int i = 0; i < array_count; i++) {
-        if (arrays[i].active && strcmp(arrays[i].name, name) == 0)
+        if (arrays[i].active && strcmp(arrays[i].name, name) == 0) {
+            find_cache[h].name = name;          /* hits only are kept */
+            find_cache[h].gen = array_generation;
+            find_cache[h].arr = &arrays[i];
             return &arrays[i];
+        }
     }
     return NULL;
 }

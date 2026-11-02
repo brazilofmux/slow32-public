@@ -171,6 +171,8 @@ static double val_as_double(const value_t *v) {
 
 /* QuickBASIC's conversion to an integer: rounded, a half to even */
 static int round_even(double d) {
+    int i = (int)d;             /* in range: val_to_integer checked */
+    if ((double)i == d) return i;       /* whole already: no rint */
     return (int)rint(d);
 }
 

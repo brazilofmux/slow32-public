@@ -1424,19 +1424,35 @@ static const builtin_entry_t builtins[] = {
     { NULL, NULL }
 };
 
+/* The builtin of a name, or -1: the table searched once per name's
+ * address (the same AST string, again and again), each hit checked by
+ * one comparison */
+#define BUILTIN_CACHE 64
+static struct { const char *name; int idx; } builtin_cache[BUILTIN_CACHE];
+
+static int builtin_index(const char *name) {
+    unsigned h = (unsigned)((unsigned long)name >> 2) % BUILTIN_CACHE;
+    if (builtin_cache[h].name == name && strcmp(builtins[builtin_cache[h].idx].name, name) == 0)
+        return builtin_cache[h].idx;
+    for (int i = 0; builtins[i].name; i++)
+        if (strcmp(builtins[i].name, name) == 0) {
+            builtin_cache[h].name = name;       /* hits only are kept */
+            builtin_cache[h].idx = i;
+            return i;
+        }
+    return -1;
+}
+
 int builtin_exists(const char *name) {
-    for (int i = 0; builtins[i].name; i++) {
-        if (strcmp(builtins[i].name, name) == 0)
-            return 1;
-    }
-    return 0;
+    return builtin_index(name) >= 0;
 }
 
 /* A numeric function's result is a double when an argument is one, a
  * single otherwise (SQR(2) prints 1.414214); CDBL and VAL say double */
 error_t builtin_call(const char *name, value_t *args, int nargs, value_t *out) {
-    for (int i = 0; builtins[i].name; i++) {
-        if (strcmp(builtins[i].name, name) == 0) {
+    int i = builtin_index(name);
+    if (i >= 0) {
+        {
             error_t err = builtins[i].fn(args, nargs, out);
             if (err == ERR_NONE && out->type == VAL_DOUBLE &&
                 strcmp(name, "CDBL") != 0 && strcmp(name, "VAL") != 0) {
