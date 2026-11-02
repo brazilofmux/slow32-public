@@ -3828,7 +3828,7 @@ static void ra_region_rewire_block(int b, int old, int nw) {
  * The variable then has two definitions, v at d and the region copy m
  * at e, and gets a phi wherever paths from the two meet -- the
  * iterated dominance frontier of e, pruned to the blocks v is live
- * into (ssa_df, built with the SSA and unchanged since: nothing after
+ * into (ssa_dfv, built with the SSA and unchanged since: nothing after
  * it alters the CFG).  A join's argument from a region exit is m (the
  * phi copy reloads it: the reload at the region exit, as a value);
  * from anywhere else, whatever definition reaches that predecessor.
@@ -3974,7 +3974,7 @@ static int ra_region_commit(int v, int e, int forwhom) {
         x = ra_dom_wl[nwl];
         i = 0;
         while (i < ssa_dfc[x]) {
-            f = ssa_df[(x * SSA_DF_W) + i];
+            f = ssa_dfv[ssa_dfo[x] + i];
             i = i + 1;
             if (f < 0 || f >= bb_nblk || ra_idf_seen[f]) continue;
             ra_idf_seen[f] = 1;

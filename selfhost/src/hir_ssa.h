@@ -34,22 +34,19 @@ static int ssa_rpo_cnt;
 /* --- Dominators --- */
 static int ssa_idom[HIR_MAX_BLOCK];
 
-/* --- Dominance frontier (fixed width per block) --- */
-/* Per-block dominance-frontier width, and the flat array it indexes as
- * block * SSA_DF_W.  The two must be raised together: SSA_DF_SZ is
- * exactly HIR_MAX_BLOCK * SSA_DF_W, so bumping the width alone silently
- * shortens how many blocks are addressable.
- *
- * Raised 32 -> 64 because stage08 could no longer compile its own
- * source: some block in s12cc.c has a dominance frontier wider than 32,
- * and gen1 died with "too many dominance-frontier entries", failing the
- * (opt-in) fixed-point gate.  Dropping the entry instead would cost a
- * phi and silently produce a wrong reaching definition, so stopping is
- * right -- the ceiling just has to be big enough. */
-#define SSA_DF_W 64
-#define SSA_DF_SZ 1048576   /* HIR_MAX_BLOCK * SSA_DF_W; was 524288 at W=32 */
-static int ssa_df[SSA_DF_SZ];
+/* --- Dominance frontier --- */
+/* Block b's frontier is ssa_dfc[b] entries at ssa_dfv + ssa_dfo[b], in
+ * the order they are found.  The entries live in one array grown to fit
+ * (it was a fixed 64 per block, 4MB of it: "too many dominance-frontier
+ * entries" stopped stage08 on generated C -- s32-sbc's programs, whose
+ * dispatch loop gives blocks frontiers of hundreds -- and dropping an
+ * entry would cost a phi, a wrong reaching definition nothing notices).
+ * ssa_dfst stamps the blocks b has been added to, for the duplicates. */
+static int *ssa_dfv;
+static int ssa_dfvcap;
+static int ssa_dfo[HIR_MAX_BLOCK];
 static int ssa_dfc[HIR_MAX_BLOCK];
+static int ssa_dfst[HIR_MAX_BLOCK];
 
 /* --- Promotable variables --- */
 #define SSA_MAX_PROMO 4096   /* was 256 */
@@ -447,21 +444,21 @@ static void ssa_compute_idom(void) {
 /* Step 4: Compute dominance frontiers                           */
 /* ------------------------------------------------------------ */
 
-static void ssa_compute_df(void) {
+/* One pass of the frontier walk (Cooper, Harvey, Kennedy): fill 0
+ * counts each block's entries into ssa_dfc, fill 1 stores them at
+ * ssa_dfo, in the same order. */
+static void ssa_df_walk(int fill) {
     int b;
     int j;
     int p;
     int runner;
-    int base;
-    int di;
-    int dup;
 
     b = 0;
     while (b < bb_nblk) {
         ssa_dfc[b] = 0;
+        ssa_dfst[b] = 0;
         b = b + 1;
     }
-
     b = 0;
     while (b < bb_nblk) {
         if (ssa_npred[b] < 2) { b = b + 1; continue; }
@@ -471,25 +468,10 @@ static void ssa_compute_df(void) {
             p = ssa_pred[ssa_pbase[b] + j];
             runner = p;
             while (runner >= 0 && runner != ssa_idom[b]) {
-                /* Add b to DF(runner), check dups */
-                base = runner * SSA_DF_W;
-                dup = 0;
-                di = 0;
-                while (di < ssa_dfc[runner]) {
-                    if (ssa_df[base + di] == b) { dup = 1; }
-                    di = di + 1;
-                }
-                if (!dup) {
-                    if (ssa_dfc[runner] >= SSA_DF_W) {
-                        /* Dropping the entry costs a phi, and a missing
-                         * phi is a wrong reaching definition that nothing
-                         * downstream can notice -- the one ceiling in this
-                         * file that used to fail silently (GitHub issue
-                         * 53).  Every other one stops here. */
-                        fdputs("s12cc: too many dominance-frontier entries\n", 2);
-                        exit(1);
-                    }
-                    ssa_df[base + ssa_dfc[runner]] = b;
+                /* b into DF(runner), once */
+                if (ssa_dfst[runner] != b + 1) {
+                    ssa_dfst[runner] = b + 1;
+                    if (fill) ssa_dfv[ssa_dfo[runner] + ssa_dfc[runner]] = b;
                     ssa_dfc[runner] = ssa_dfc[runner] + 1;
                 }
                 /* Stop at root (self-dominating entry node) */
@@ -500,6 +482,32 @@ static void ssa_compute_df(void) {
         }
         b = b + 1;
     }
+}
+
+static void ssa_compute_df(void) {
+    int b;
+    int total;
+
+    ssa_df_walk(0);
+    total = 0;
+    b = 0;
+    while (b < bb_nblk) {
+        ssa_dfo[b] = total;
+        total = total + ssa_dfc[b];
+        b = b + 1;
+    }
+    if (total > ssa_dfvcap) {
+        int cap;
+        cap = ssa_dfvcap ? ssa_dfvcap : 4096;
+        while (cap < total) cap = cap * 2;
+        ssa_dfv = (int *)realloc(ssa_dfv, (unsigned long)cap * sizeof(int));
+        if (!ssa_dfv) {
+            fdputs("s12cc: out of memory (dominance frontiers)\n", 2);
+            exit(1);
+        }
+        ssa_dfvcap = cap;
+    }
+    ssa_df_walk(1);
 }
 
 /* ------------------------------------------------------------ */
@@ -756,7 +764,7 @@ static void ssa_insert_phis(void) {
             wh = wh + 1;
             di = 0;
             while (di < ssa_dfc[b]) {
-                d = ssa_df[b * SSA_DF_W + di];
+                d = ssa_dfv[ssa_dfo[b] + di];
                 if (!ssa_tmp2[d] && ssa_rpo[d] >= 0) {
                     ssa_tmp2[d] = 1;
                     /* Emit PHI, pre-allocate arg slots */
