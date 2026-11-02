@@ -28,6 +28,27 @@ the oracle.
   (`act_*` in eval.c), so the compiled program cannot drift from the
   interpreter in what it does not compile itself.
 
+## Where it stands (2026-11-01)
+
+- **M0 and M1 done.**  The pipeline (a5094b24); expressions, assignment,
+  PRINT, IF conditions, GOTO and GOSUB compiled on the interpreter's
+  operations (83d15a36); variables through cached value pointers, with
+  `env_generation` saying when they go stale (ba609dd4); SUB and FUNCTION
+  bodies as C functions (38228235).
+- **M2 under way.**  Numeric assignments, IF conditions, NEXT and array
+  elements have native versions behind type guards (c10647ba, 624e186f,
+  657a1ea2).  Instructions, interpreter against compiled: nested loops
+  443M / 35M, the sieve 4.50M / 1.24M, fib(20) 71.6M / 71.5M.
+- **Gates:** `sbc/tests/run-oracle.py` (391 agree, 25 refused by both, of
+  416: sbasic's tests and the NBS, games and feature collections), and
+  `sbc/tests/fuzz.py` (random typed arithmetic, loops and arrays over
+  edge values; 2000 of 2000; mutations of the native code caught).
+- **Open:** a native calling convention (a FUNCTION call is still the
+  interpreter's `call_proc`: a scope made, arguments through `eval_expr`,
+  the caches fetched again each call -- fib does not speed up); strings;
+  PRINT of numbers; builtin calls (`ABS`, `INT`, `SQR`) in native
+  expressions; `FOR` itself (only `NEXT` is native).
+
 ## Milestones
 
 - **M0 -- the pipeline.**  The main unit's ops as labelled C; each
