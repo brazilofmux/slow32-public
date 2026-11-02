@@ -128,6 +128,8 @@ def program(seed):
         if r.random() < 0.08:
             a = r.choice(['A%', 'B%', 'P%(2)', '(A%)', 'C&', A_EXPR(r)])
             lines.append('CALL S2(%s, %s): PRINT "S2"; A%%; B%%; P%%(2)' % (a, r.choice(['A%', 'B%', '3'])))
+        if r.random() < 0.06:
+            lines.append('GOSUB 800: PRINT "G"; B%; C&')
         if r.random() < 0.3:
             lines.append('IF %s THEN PRINT "t%d" ELSE PRINT "f%d"' % (expr(r, 2), i, i))
         if r.random() < 0.25:
@@ -146,6 +148,9 @@ def program(seed):
             lines.append('NEXT %s' % v)
             lines.append('PRINT "L"; K&; %s' % v)
     lines.append('END')
+    lines.append('800 C& = C& + 1: IF C& MOD 3 = 0 THEN GOSUB 810')
+    lines.append('RETURN')
+    lines.append('810 B% = B% XOR 5: RETURN')
     lines.append('900 PRINT "E"; ERR: RESUME NEXT')
     # procedures: typed parameters and values, recursion (bounded), SHARED
     lines += ['FUNCTION F1%(a%, b!)', 'F1% = a% * 2 + b!', 'END FUNCTION',

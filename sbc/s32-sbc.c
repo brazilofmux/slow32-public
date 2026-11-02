@@ -1452,6 +1452,13 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
             fprintf(out, "\n");
             return 1;
         }
+        case STMT_RETURN:
+            /* a plain RETURN to its GOSUB's next op; anything else (a
+             * label, no GOSUB open) the executor's, which follows */
+            if (s->goto_stmt.label[0]) return 0;
+            emit_preamble(out, op, k);
+            fprintf(out, "    if (act_return(&a, &pc)) goto dispatch;\n");
+            return 0;
         default:
             return 0;
     }

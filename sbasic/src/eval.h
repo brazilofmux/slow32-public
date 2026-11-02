@@ -67,6 +67,9 @@ int act_transfer(act_t *a, error_t err, int *pc, error_t *result);
  * running loop dropped, a frame pushed when runs */
 error_t act_for_enter(act_t *a, stmt_t *s, int runs, double limit, double step,
                       int body_pc, value_t *var);
+/* a RETURN without a label: 1 and *pc its target, or 0 (no GOSUB open:
+ * the executor's) */
+int act_return(act_t *a, int *pc);
 /* GOSUB, its return op pushed (the jump is the caller's) */
 error_t act_gosub(act_t *a, int return_pc);
 

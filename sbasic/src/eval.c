@@ -2900,8 +2900,8 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         }
 
         case STMT_RETURN:
-            strncpy(return_label, s->goto_stmt.label, 63);
-            return_label[63] = '\0';
+            if (s->goto_stmt.label[0]) ast_name_copy(return_label, s->goto_stmt.label);
+            else return_label[0] = '\0';
             return ERR_RETURN;
 
         case STMT_SWAP: {
@@ -3439,6 +3439,15 @@ void act_end(act_t *a) {
 }
 
 /* one op; inlined into the executor's loop, called by compiled code */
+/* A plain RETURN (no label), when a GOSUB of this activation is open:
+ * 1, *pc the op after it, as act_transfer returns; 0 when it is not
+ * (RETURN without GOSUB is the executor's to report) */
+int act_return(act_t *a, int *pc) {
+    if (gosub_top <= a->gosub_base) return 0;
+    *pc = gosub_stack[--gosub_top];
+    return 1;
+}
+
 /* A FOR reached, its counter set: its own loop's frame, if it is
  * running (entered again by GOTO), and every loop above that, dropped;
  * a new frame on top when the loop runs */
