@@ -55,6 +55,21 @@ def program(seed):
         lines.append('PRINT "%d"; %s' % (i, target))
         if r.random() < 0.3:
             lines.append('IF %s THEN PRINT "t%d" ELSE PRINT "f%d"' % (expr(r, 2), i, i))
+        if r.random() < 0.25:
+            # a loop: every type of variable, edge bounds and steps, at
+            # most 25 turns (EXIT FOR), nested now and then
+            v = r.choice(VARS)
+            step = r.choice(['', ' STEP 1', ' STEP -1', ' STEP .5', ' STEP 2.5', ' STEP -.1',
+                             ' STEP 0', ' STEP 1E+38', ' STEP 7', ' STEP ' + r.choice(VARS)])
+            lines.append('K& = 0')
+            lines.append('FOR %s = %s TO %s%s' % (v, r.choice(EDGE + VARS), r.choice(EDGE + VARS), step))
+            lines.append('K& = K& + 1: PRINT %s;' % v)
+            if r.random() < 0.3:
+                w = r.choice([x for x in VARS if x != v])
+                lines.append('FOR %s = 1 TO 3: PRINT %s;: NEXT %s' % (w, w, w))
+            lines.append('IF K& > 25 THEN EXIT FOR')
+            lines.append('NEXT %s' % v)
+            lines.append('PRINT "L"; K&; %s' % v)
     lines.append('END')
     lines.append('900 PRINT "E"; ERR: RESUME NEXT')
     return '\n'.join(lines) + '\n'

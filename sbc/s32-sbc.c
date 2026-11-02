@@ -300,8 +300,10 @@ static int nat_emit(FILE *out, const expr_t *e, char *name) {
             static const char *ops[] = { "==", "!=", "<", ">", "<=", ">=" };
             nat_emit(out, e->compare.left, a);
             nat_emit(out, e->compare.right, b);
-            fprintf(out, "    long long %s = ((double)%s %s (double)%s) ? -1 : 0;\n",
-                    name, a, ops[e->compare.op], b);
+            /* as val_compare: less, greater, or else equal -- so a NaN
+             * compares equal to everything, as in the interpreter */
+            fprintf(out, "    long long %s = (((double)%s < (double)%s) ? -1 : ((double)%s > (double)%s) ? 1 : 0) %s 0 ? -1 : 0;\n",
+                    name, a, b, a, b, ops[e->compare.op]);
             return t;
         }
         case EXPR_BINARY: {
@@ -329,10 +331,12 @@ static int nat_emit(FILE *out, const expr_t *e, char *name) {
                     return t;
                 case OP_IDIV: case OP_MOD:
                     fprintf(out, "    if (%s == 0) { err = ERR_DIVISION_BY_ZERO; goto fail; }\n", b);
+                    /* 32-bit division (the operands are 32-bit integers);
+                     * -1 apart, for INT_MIN \ -1 */
                     if (e->binary.op == OP_IDIV)
-                        fprintf(out, "    long long %s = %s == -1 ? -%s : %s / %s;\n", name, b, a, a, b);
+                        fprintf(out, "    long long %s = %s == -1 ? -%s : (long long)((int)%s / (int)%s);\n", name, b, a, a, b);
                     else
-                        fprintf(out, "    long long %s = %s == -1 ? 0 : %s %% %s;\n", name, b, a, b);
+                        fprintf(out, "    long long %s = %s == -1 ? 0 : (long long)((int)%s %% (int)%s);\n", name, b, a, b);
                     nat_range(out, name, t);
                     return t;
                 case OP_AND: fprintf(out, "    long long %s = (int)%s & (int)%s;\n", name, a, b); return t;
@@ -541,6 +545,29 @@ static void emit_unit(FILE *out, const code_t *c, const char *fname, int is_main
         }
         if (op->kind == OP_STMT && emit_stmt(b, c, op, k))
             continue;
+        if (op->kind == OP_NEXT) {
+            /* the loop on top is this NEXT's own FOR, its variable's
+             * value cached: stepped here as for_next steps it, by the
+             * variable's type; anything else is the executor's */
+            fprintf(b, "    { for_slot_t *fr = a.nfors ? &a.fors[a.nfors - 1] : NULL;\n"
+                       "      if (fr && fr->s == c->ops[%d].s && fr->var && fr->gen == env_generation) {\n"
+                       "        value_t *cv = fr->var; double v; int go = 0;\n"
+                       "        if (cv->type == VAL_INTEGER || cv->type == VAL_LONG) {\n"
+                       "          v = (double)cv->ival + fr->step;\n"
+                       "          if (v == (double)(int)v && v <= 2147483647.0 && v >= -2147483648.0 &&\n"
+                       "              (cv->type == VAL_LONG || (v >= -32768.0 && v <= 32767.0))) { cv->ival = (int)v; go = 1; }\n"
+                       "        } else if (cv->type == VAL_SINGLE) {\n"
+                       "          v = (double)(float)(cv->dval + fr->step); cv->dval = v; go = 1;\n"
+                       "        } else if (cv->type == VAL_DOUBLE) {\n"
+                       "          v = cv->dval + fr->step; cv->dval = v; go = 1;\n"
+                       "        }\n"
+                       "        if (go) {\n"
+                       "          if (fr->step >= 0 ? v <= fr->limit : v >= fr->limit) ", k);
+            emit_goto(b, c, op->slot + 1);
+            fprintf(b, "\n          a.nfors--; ");
+            emit_goto(b, c, k + 1);
+            fprintf(b, "\n        } } }\n");
+        }
         fprintf(b, "    pc = %d; if ((err = act_step(&a, &pc)) != ERR_NONE) goto fail;", k);
         /* a simple statement goes on to the next op; anything else to
          * whichever op it chose */
