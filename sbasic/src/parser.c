@@ -18,6 +18,18 @@ static void parser_error(parser_t *p, error_t err) {
     }
 }
 
+/* a line number as a label's name (snprintf "%d", which a program's
+ * every GOTO and numbered line paid for) */
+static void int_label(char *buf, int n) {
+    char tmp[12];
+    int i = 0;
+    unsigned u = n < 0 ? 0u - (unsigned)n : (unsigned)n;
+    do { tmp[i++] = (char)('0' + u % 10); u /= 10; } while (u);
+    if (n < 0) *buf++ = '-';
+    while (i) *buf++ = tmp[--i];
+    *buf = '\0';
+}
+
 static void parser_error_detail(parser_t *p, error_t err, const char *detail) {
     if (p->error == ERR_NONE) {
         p->error = err;
@@ -783,7 +795,7 @@ static stmt_t *parse_if_branch(parser_t *p) {
         if (tok->type == TOK_INTEGER_LIT) {
             char target[64];
             int line = tok->line;
-            snprintf(target, sizeof(target), "%d", tok->ival);
+            int_label(target, tok->ival);
             lexer_skip(&p->lex);
             s = stmt_goto(target, line);
         } else {
@@ -1389,7 +1401,7 @@ static stmt_t *parse_restore(parser_t *p) {
         strncpy(label, t.text, 63);
     } else if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
         token_t t = lexer_next(&p->lex);    /* RESTORE 150: a line number */
-        snprintf(label, sizeof(label), "%d", t.ival);
+        int_label(label, t.ival);
     }
     return stmt_restore(label, line);
 }
@@ -1749,7 +1761,7 @@ static stmt_t *parse_on(parser_t *p) {
         char err_label[64];
         if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
             token_t num = lexer_next(&p->lex);
-            snprintf(err_label, sizeof(err_label), "%d", num.ival);
+            int_label(err_label, num.ival);
         } else if (lexer_check(&p->lex, TOK_IDENT)) {
             token_t label = lexer_next(&p->lex);
             strncpy(err_label, label.text, 63);
@@ -1811,7 +1823,7 @@ static stmt_t *parse_on(parser_t *p) {
         char lbl[64];
         if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
             token_t num = lexer_next(&p->lex);
-            snprintf(lbl, sizeof(lbl), "%d", num.ival);
+            int_label(lbl, num.ival);
         } else if (lexer_check(&p->lex, TOK_IDENT)) {
             token_t label = lexer_next(&p->lex);
             strncpy(lbl, label.text, 63); lbl[63] = '\0';
@@ -1824,7 +1836,7 @@ static stmt_t *parse_on(parser_t *p) {
         char lbl[64];
         if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
             token_t num = lexer_next(&p->lex);
-            snprintf(lbl, sizeof(lbl), "%d", num.ival);
+            int_label(lbl, num.ival);
         } else if (lexer_check(&p->lex, TOK_IDENT)) {
             token_t label = lexer_next(&p->lex);
             strncpy(lbl, label.text, 63); lbl[63] = '\0';
@@ -1848,7 +1860,7 @@ static stmt_t *parse_resume(parser_t *p) {
     if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
         token_t num = lexer_next(&p->lex);
         char label[64];
-        snprintf(label, sizeof(label), "%d", num.ival);
+        int_label(label, num.ival);
         return stmt_resume(2, label, line);
     }
     /* RESUME label */
@@ -2018,7 +2030,7 @@ static stmt_t *parse_stmt(parser_t *p) {
     /* Line number at start of statement → label only (body parsed by caller) */
     if (tok->type == TOK_INTEGER_LIT) {
         char label_name[64];
-        snprintf(label_name, sizeof(label_name), "%d", tok->ival);
+        int_label(label_name, tok->ival);
         int line = tok->line;
         lexer_skip(&p->lex);
         return stmt_label(label_name, line);
@@ -2499,7 +2511,7 @@ static stmt_t *parse_stmt(parser_t *p) {
             char label_name[64];
             if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
                 token_t num = lexer_next(&p->lex);
-                snprintf(label_name, sizeof(label_name), "%d", num.ival);
+                int_label(label_name, num.ival);
             } else if (lexer_check(&p->lex, TOK_IDENT)) {
                 token_t label = lexer_next(&p->lex);
                 strncpy(label_name, label.text, 63);
@@ -2516,7 +2528,7 @@ static stmt_t *parse_stmt(parser_t *p) {
             char label_name[64];
             if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
                 token_t num = lexer_next(&p->lex);
-                snprintf(label_name, sizeof(label_name), "%d", num.ival);
+                int_label(label_name, num.ival);
             } else if (lexer_check(&p->lex, TOK_IDENT)) {
                 token_t label = lexer_next(&p->lex);
                 strncpy(label_name, label.text, 63);

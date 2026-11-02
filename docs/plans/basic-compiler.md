@@ -88,7 +88,11 @@ the oracle.
   nothing; a string comparison is `strcmp` with a same-pointer
   shortcut; a string store moves its reference; `val_copy` and
   `VAL_CLEAR`'s string case are inline.  The 97 games: interpreted
-  523M, compiled 224M (Mastermind 161M / 20M).
+  523M, compiled 224M (Mastermind 161M / 20M).  Loading, again: the lexer's character classes inline (each was a
+  libc call), a line number's value without strtod, a label's name
+  without snprintf: 96M -> 82M over the 97 games (the token streams of
+  1,930 programs byte-identical before and after); interpreted 509M,
+  compiled 210M.
 - **Open:** native procedures with arrays, strings, PRINT; the loop
   bodies' own constraints (GOTO in a procedure keeps it on the env path);
   loading (a third of a short game: the source is parsed at start).

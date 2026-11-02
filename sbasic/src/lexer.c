@@ -3,6 +3,14 @@
 #include <stdlib.h>
 #include <ctype.h>
 
+/* ASCII classes, inline: the C locale's, without a call for every
+ * character of the program (and safe for a negative char) */
+static inline int lx_isdigit(int c) { return c >= '0' && c <= '9'; }
+static inline int lx_isalpha(int c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
+static inline int lx_isalnum(int c) { return lx_isdigit(c) || lx_isalpha(c); }
+static inline int lx_isxdigit(int c) { return lx_isdigit(c) || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f'); }
+static inline int lx_toupper(int c) { return c >= 'a' && c <= 'z' ? c - 32 : c; }
+
 /* Keyword table: uppercase name -> token type */
 typedef struct {
     const char *name;
@@ -269,7 +277,7 @@ static void scan_token(lexer_t *lex, token_t *tok) {
     /* Hex/Octal/Binary literal: &HFF, &O77, &B1010 */
     if (c == '&') {
         next_char(lex); /* consume '&' */
-        char prefix = toupper(peek_char(lex));
+        char prefix = lx_toupper(peek_char(lex));
         int base = 0;
         if (prefix == 'H') { base = 16; next_char(lex); }
         else if (prefix == 'O') { base = 8; next_char(lex); }
@@ -280,7 +288,7 @@ static void scan_token(lexer_t *lex, token_t *tok) {
             while (1) {
                 char d = peek_char(lex);
                 int valid = 0;
-                if (base == 16) valid = isxdigit(d);
+                if (base == 16) valid = lx_isxdigit(d);
                 else if (base == 8) valid = (d >= '0' && d <= '7');
                 else valid = (d == '0' || d == '1');
                 if (!valid) break;
@@ -312,10 +320,10 @@ static void scan_token(lexer_t *lex, token_t *tok) {
     }
 
     /* Number */
-    if (isdigit(c) || (c == '.' && isdigit(lex->src[lex->pos + 1]))) {
+    if (lx_isdigit(c) || (c == '.' && lx_isdigit(lex->src[lex->pos + 1]))) {
         int len = 0;
         int is_double = 0, dexp = 0;
-        while (isdigit(peek_char(lex))) {
+        while (lx_isdigit(peek_char(lex))) {
             if (len < 255) tok->text[len++] = next_char(lex);
             else next_char(lex);
         }
@@ -324,7 +332,7 @@ static void scan_token(lexer_t *lex, token_t *tok) {
             is_double = 1;
             if (len < 255) tok->text[len++] = next_char(lex);
             else next_char(lex);
-            while (isdigit(peek_char(lex))) {
+            while (lx_isdigit(peek_char(lex))) {
                 if (len < 255) tok->text[len++] = next_char(lex);
                 else next_char(lex);
             }
@@ -335,7 +343,7 @@ static void scan_token(lexer_t *lex, token_t *tok) {
             peek_char(lex) == 'd' || peek_char(lex) == 'D') {
             const char *q = lex->src + lex->pos + 1;
             if (*q == '+' || *q == '-') q++;
-            if (isdigit((unsigned char)*q)) {
+            if (lx_isdigit((unsigned char)*q)) {
                 is_double = 1;
                 dexp = (peek_char(lex) == 'd' || peek_char(lex) == 'D');
                 next_char(lex);
@@ -344,7 +352,7 @@ static void scan_token(lexer_t *lex, token_t *tok) {
                     if (len < 255) tok->text[len++] = next_char(lex);
                     else next_char(lex);
                 }
-                while (isdigit(peek_char(lex))) {
+                while (lx_isdigit(peek_char(lex))) {
                     if (len < 255) tok->text[len++] = next_char(lex);
                     else next_char(lex);
                 }
@@ -367,6 +375,22 @@ static void scan_token(lexer_t *lex, token_t *tok) {
                 if (tok->text[i] != '.') sig++;
             if (sfx == '%' || sfx == '&') { is_double = 0; tok->suffix = sfx; }
             if (sfx == '#' || sfx == '!') is_double = 1;
+            if (!is_double && len <= 10) {
+                /* digits alone (a line number, a count): their value here,
+                 * not strtod's; "1.5%" and the like below */
+                long long v = 0;
+                int i = 0;
+                while (i < len && tok->text[i] >= '0' && tok->text[i] <= '9')
+                    v = v * 10 + (tok->text[i++] - '0');
+                if (i == len) {
+                    if (v > 2147483647LL) is_double = 1;
+                    else {
+                        tok->type = TOK_INTEGER_LIT;
+                        tok->ival = (int)v;
+                        return;
+                    }
+                }
+            }
             if (!is_double && (len > 10 || atof(tok->text) > 2147483647.0))
                 is_double = 1;
             if (is_double)
@@ -401,14 +425,14 @@ static void scan_token(lexer_t *lex, token_t *tok) {
     }
 
     /* Identifier or keyword */
-    if (isalpha(c) || c == '_') {
+    if (lx_isalpha(c) || c == '_') {
         int len = 0;
         char upper[256];
-        while (isalnum(peek_char(lex)) || peek_char(lex) == '_') {
+        while (lx_isalnum(peek_char(lex)) || peek_char(lex) == '_') {
             char ch = next_char(lex);
             if (len < 255) {
                 tok->text[len] = ch;
-                upper[len] = toupper(ch);
+                upper[len] = lx_toupper(ch);
                 len++;
             }
         }
@@ -418,8 +442,8 @@ static void scan_token(lexer_t *lex, token_t *tok) {
         /* Check for type suffix */
         if (peek_char(lex) == '$' || peek_char(lex) == '%' ||
             peek_char(lex) == '#' || peek_char(lex) == '!' ||
-            (peek_char(lex) == '&' && toupper(lex->src[lex->pos + 1]) != 'H' &&
-             toupper(lex->src[lex->pos + 1]) != 'O')) {
+            (peek_char(lex) == '&' && lx_toupper(lex->src[lex->pos + 1]) != 'H' &&
+             lx_toupper(lex->src[lex->pos + 1]) != 'O')) {
             tok->suffix = next_char(lex);
             /* A! is A: SINGLE is the default type, and the name is kept
              * without its ! (DEFDBL A makes A a double and A! a single in
@@ -436,14 +460,14 @@ static void scan_token(lexer_t *lex, token_t *tok) {
             char w[4];
             while (peek_char(lex) == ' ' || peek_char(lex) == '\t')
                 next_char(lex);
-            while (isalpha(peek_char(lex)) && n < 3)
-                w[n++] = toupper(next_char(lex));
+            while (lx_isalpha(peek_char(lex)) && n < 3)
+                w[n++] = lx_toupper(next_char(lex));
             w[n] = '\0';
-            if (!isalnum(peek_char(lex)) && strcmp(w, "TO") == 0) {
+            if (!lx_isalnum(peek_char(lex)) && strcmp(w, "TO") == 0) {
                 tok->type = TOK_GOTO;
                 return;
             }
-            if (!isalnum(peek_char(lex)) && strcmp(w, "SUB") == 0) {
+            if (!lx_isalnum(peek_char(lex)) && strcmp(w, "SUB") == 0) {
                 tok->type = TOK_GOSUB;
                 return;
             }
@@ -562,9 +586,13 @@ token_t lexer_next(lexer_t *lex) {
     lex->has_cur = 0;
     t.type = lex->cur.type;
     t.line = lex->cur.line;
-    memcpy(&t.dval, &lex->cur.dval, sizeof t.dval);   /* ival or dval, bits */
+    t.dval = lex->cur.dval;     /* ival or dval: the bits (no NaN either way) */
     t.suffix = lex->cur.suffix;
-    memcpy(t.text, lex->cur.text, strlen(lex->cur.text) + 1);
+    {   /* a few characters, as a rule: copied here, not by two calls */
+        char *d = t.text;
+        const char *q = lex->cur.text;
+        while ((*d++ = *q++) != '\0') ;
+    }
     return t;
 }
 
