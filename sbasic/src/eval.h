@@ -56,6 +56,8 @@ void act_end(act_t *a);
 error_t eval_enter(void);
 void eval_leave(void);
 int eval_names_plain(const char *const *names, int n);
+/* name is a DEF FN whose DEF has run (s32-sbc's inlined calls) */
+int eval_def_fn_defined(const char *name);
 /* run op *pc: ERR_NONE with *pc the next op, or the op's error (*pc
  * unchanged) */
 error_t act_step(act_t *a, int *pc);

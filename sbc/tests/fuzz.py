@@ -83,6 +83,10 @@ def expr(r, depth):
         return '(NOT ' + expr(r, depth - 1) + ')'
     if k < 0.34 and k >= 0.3:
         return r.choice(['LEN(%s)', 'ASC(%s)', 'INSTR(%s, %s)']).replace('%s', sexpr(r, 1), 1).replace('%s', sexpr(r, 1), 1)
+    if k < 0.43 and k >= 0.38:
+        # a DEF FN (it may not be defined yet: ON ERROR reports it)
+        name, nargs = r.choice([('FNP', 1), ('FNQ%', 2), ('FNR#', 1), ('FNS', 1)])
+        return name + '(' + ', '.join(expr(r, depth - 1) for _ in range(nargs)) + ')'
     if k < 0.38 and k >= 0.34:
         return '(' + sexpr(r, 1) + ' ' + r.choice(['=', '<>', '<', '>', '<=', '>=']) + ' ' + sexpr(r, 1) + ')'
     if k < 0.3 and k >= 0.22:
@@ -107,7 +111,14 @@ def program(seed):
              'S$ = "abc": U$ = "Hello": W$(1) = "x": I% = 2']
     for v in VARS:
         lines.append('%s = %s' % (v, r.choice(EDGE)))
+    defn = r.randint(0, 6)
     for i in range(40):
+        if i == defn:
+            # parameters shadowing globals (X, A%), a nested call, a string
+            lines.append('DEF FNP(X) = X * 2 + Y')
+            lines.append('DEF FNQ%(A%, Z#) = A% \\ 3 + Z# * B%')
+            lines.append('DEF FNR#(N) = FNP(N) - N / 7')
+            lines.append('DEF FNS(K&) = LEN(S$) + K& MOD 5')
         if r.random() < 0.2:
             st = r.choice(SVARS[:4])
             lines.append('%s = %s' % (st, sexpr(r, 3)))

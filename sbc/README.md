@@ -47,7 +47,8 @@ assignments, conditions, FOR/NEXT, EXIT, calls; no DEF* in the program,
 no GOTO, GOSUB, SHARED, STATIC, arrays, strings or I/O) also gets a C
 version with its variables in C and no env (NF<n>), which a call site
 runs when it may (no TRACE, none of its variables named as a builtin).
-Numeric builtins (ABS, INT, SQR, SIN, CINT, ...) are C in native code;
+A call of a numeric DEF FN is inlined (its parameters C locals, its
+body native).  Numeric builtins (ABS, INT, SQR, SIN, CINT, ...) are C in native code;
 strings are native too: a string variable or element is read as a copy,
 literals are made once, `+` is the interpreter's `val_add`, a
 comparison is `strcmp` (one string equal to itself without it), a store

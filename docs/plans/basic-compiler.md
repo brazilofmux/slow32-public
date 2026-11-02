@@ -93,6 +93,15 @@ the oracle.
   without snprintf: 96M -> 82M over the 97 games (the token streams of
   1,930 programs byte-identical before and after); interpreted 509M,
   compiled 210M.
+- **DEF FN (2026-11-02):** a call of a numeric DEF FN defined once is
+  inlined in native expressions: each argument stored into its
+  parameter (a C local, converted as an assignment converts), the body
+  evaluated with the parameters in scope over the unit's variables, the
+  value converted as `val_coerce` converts it; the guard asks
+  `eval_def_fn_defined` (cached until `array_generation` moves), so a
+  call before the DEF is the interpreter's error.  The fuzzer defines
+  four (shadowing globals, nested, one reading a string).  Salvo 7.9M ->
+  4.6M; the 97 games compiled 204M.
 - **Open:** native procedures with arrays, strings, PRINT; the loop
   bodies' own constraints (GOTO in a procedure keeps it on the env path);
   loading (a third of a short game: the source is parsed at start).

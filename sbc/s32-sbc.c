@@ -110,9 +110,31 @@ static int is_const_name(const char *name) {
     return 0;
 }
 
+enum { N_NONE = -1, N_INT = 0, N_LONG, N_SINGLE, N_DOUBLE, N_STRING };
+
+/* The program's DEF FNs, by name (one defined twice is never inlined),
+ * and the ones being inlined, innermost last: their parameters are C
+ * locals fp<id>_<i> (id -1 while only types are asked) */
+static struct { const char *name; const stmt_t *def; int dup; } deffns[64];
+static int ndeffns;
+static struct { const stmt_t *def; int id; } fnctx[8];
+static int nfnctx;
+
+static void note_deffn(const stmt_t *s) {
+    for (int i = 0; i < ndeffns; i++)
+        if (strcmp(deffns[i].name, s->def_fn.name) == 0) { deffns[i].dup = 1; return; }
+    if (ndeffns < 64) {
+        deffns[ndeffns].name = s->def_fn.name;
+        deffns[ndeffns].def = s;
+        deffns[ndeffns].dup = 0;
+        ndeffns++;
+    }
+}
+
 static void scan_program(const stmt_t *s, int top) {
     for (; s; s = s->next) {
         if (s->type == STMT_DEFTYPE) has_deftype = 1;
+        if (s->type == STMT_DEF_FN) note_deffn(s);
         if (s->type == STMT_CONST && nconsts < 256) consts[nconsts++] = s->const_stmt.name;
         if (top && (s->type == STMT_SUB_DEF || s->type == STMT_FUNC_DEF) && nprocs_known < 1024) {
             procs[nprocs_known].name = s->proc_def.name;
@@ -155,6 +177,46 @@ static int is_function_call(const expr_t *e) {
     int j = proc_index(e->call.name);
     return j >= 0 && procs[j].is_function && procs[j].nparams == e->call.nargs &&
            e->call.nargs <= 16 && !is_array_name(e->call.name);
+}
+
+/* name(args) that is a call of a DEF FN to inline: one definition, as
+ * many arguments as it takes, numbers in and out (types by their names:
+ * no DEF*), not recursive; in the main program or an env procedure,
+ * where its body's other variables are the unit's (call_def_fn's scope
+ * is the caller's env, its parameters bound in a child of it) */
+static int is_const_name(const char *name);
+static int predict_name(const char *name);
+static int deffn_index(const expr_t *e) {
+    if (e->type != EXPR_CALL || nat_local || has_deftype || nfnctx >= 8 ||
+        is_array_name(e->call.name) || proc_index(e->call.name) >= 0)
+        return -1;
+    for (int i = 0; i < ndeffns; i++) {
+        if (strcmp(deffns[i].name, e->call.name) != 0) continue;
+        const stmt_t *d = deffns[i].def;
+        if (deffns[i].dup || d->def_fn.nparams != e->call.nargs) return -1;
+        for (int k = 0; k < nfnctx; k++) if (fnctx[k].def == d) return -1;
+        int ft = predict_name(d->def_fn.name);
+        if (ft == N_NONE || ft == N_STRING) return -1;
+        for (int k = 0; k < d->def_fn.nparams; k++) {
+            int pt = predict_name(d->def_fn.params[k]);
+            if (pt == N_NONE || pt == N_STRING || is_const_name(d->def_fn.params[k]) ||
+                strncmp(d->def_fn.params[k], "FN", 2) == 0)
+                return -1;
+        }
+        return i;
+    }
+    return -1;
+}
+
+/* name a parameter of a DEF FN being inlined: its context and index */
+static int fn_param(const char *name, int *ctx, int *idx) {
+    for (int k = nfnctx - 1; k >= 0; k--)
+        for (int i = 0; i < fnctx[k].def->def_fn.nparams; i++)
+            if (strcmp(fnctx[k].def->def_fn.params[i], name) == 0) {
+                *ctx = k; *idx = i;
+                return 1;
+            }
+    return 0;
 }
 
 /* the arguments of a call into T, a variable not in parentheses as its
@@ -385,7 +447,6 @@ static int emit_args(FILE *out, expr_t *const *args, int n, const char *base, in
  * A statement's native version runs when its guard holds -- every
  * variable it names cached, of the type its name predicts -- and its
  * generic version otherwise.  Types: */
-enum { N_NONE = -1, N_INT = 0, N_LONG, N_SINGLE, N_DOUBLE, N_STRING };
 
 static int predict_name(const char *name) {
     size_t n = strlen(name);
@@ -479,6 +540,8 @@ static int nat_strfn(const expr_t *e) {
 /* a variable's native type: in a native procedure a parameter's is its
  * declaration's (AS, or its name's), anything else its name's */
 static int var_ntype(const char *name) {
+    int fc, fi;
+    if (fn_param(name, &fc, &fi)) return predict_name(name);
     if (nat_local)
         for (int i = 0; i < ldef->proc_def.nparams; i++)
             if (strcmp(ldef->proc_def.params[i], name) == 0)
@@ -509,7 +572,20 @@ static int nat_type_(const expr_t *e) {
             }
         case EXPR_VARIABLE:
             return var_ntype(e->var.name);
-        case EXPR_CALL:
+        case EXPR_CALL: {
+            int fx = deffn_index(e);
+            if (fx >= 0) {
+                for (int i = 0; i < e->call.nargs; i++) {
+                    int at = nat_type(e->call.args[i]);
+                    if (at == N_NONE || at == N_STRING) return N_NONE;
+                }
+                fnctx[nfnctx].def = deffns[fx].def; fnctx[nfnctx].id = -1; nfnctx++;
+                int bt = nat_type(deffns[fx].def->def_fn.body);
+                nfnctx--;
+                if (bt == N_NONE || bt == N_STRING) return N_NONE;
+                return predict_name(deffns[fx].def->def_fn.name);
+            }
+            }
             if (nat_builtin(e)) {
                 if (nat_type(e->call.args[0]) == N_STRING) return N_NONE;
                 return nat_builtin_type(e);
@@ -574,6 +650,7 @@ static int nat_type_(const expr_t *e) {
 typedef struct {
     int v[64], nv;              /* variables (nv past 64: go generic) */
     int a[16], an[16], na;      /* arrays, with the subscripts they take */
+    int f[16], nf;              /* DEF FNs inlined (deffns[]): defined yet? */
 } uses_t;
 
 static void nat_uses(const expr_t *e, uses_t *u);
@@ -581,6 +658,20 @@ static void nat_uses(const expr_t *e, uses_t *u);
 static void nat_vars(const expr_t *e, int *list, int *n);
 
 static void nat_uses(const expr_t *e, uses_t *u) {
+    int fx = e->type == EXPR_CALL ? deffn_index(e) : -1;
+    if (fx >= 0) {
+        for (int i = 0; i < e->call.nargs; i++) nat_uses(e->call.args[i], u);
+        int seen = 0;
+        for (int i = 0; i < u->nf; i++) if (u->f[i] == fx) seen = 1;
+        if (!seen) {
+            if (u->nf == 16) { u->nv = 1000; return; }   /* too many: generic */
+            u->f[u->nf++] = fx;
+        }
+        fnctx[nfnctx].def = deffns[fx].def; fnctx[nfnctx].id = -1; nfnctx++;
+        nat_uses(deffns[fx].def->def_fn.body, u);
+        nfnctx--;
+        return;
+    }
     if (e->type == EXPR_CALL && (is_function_call(e) || nat_builtin(e) || rt_builtin_type(e) != N_NONE)) {
         for (int i = 0; i < e->call.nargs; i++) nat_uses(e->call.args[i], u);
         return;
@@ -605,6 +696,8 @@ static void nat_uses(const expr_t *e, uses_t *u) {
 static void nat_vars(const expr_t *e, int *list, int *n) {
     switch (e->type) {
         case EXPR_VARIABLE: {
+            int fc, fi;
+            if (fn_param(e->var.name, &fc, &fi)) return;    /* a C local */
             int v = var_index(e->var.name);
             for (int i = 0; i < *n; i++) if (list[i] == v) return;
             if (*n < 64) list[*n] = v;
@@ -642,6 +735,11 @@ static const char *var_ptr(const char *name) {
     static char buf[8][48];
     static int k;
     char *b = buf[k++ & 7];
+    int fc, fi;
+    if (fn_param(name, &fc, &fi)) {
+        sprintf(b, "(&fp%d_%d)", fnctx[fc].id, fi);
+        return b;
+    }
     if (nat_local) {
         for (int i = 0; i < ldef->proc_def.nparams; i++)
             if (strcmp(ldef->proc_def.params[i], name) == 0) {
@@ -763,6 +861,36 @@ static int nat_emit(FILE *out, const expr_t *e, char *name) {
             fprintf(out, "    %s %s = %s->%s;\n", ct, name, var_ptr(e->var.name), nat_is_float(t) ? "dval" : "ival");
             return t;
         case EXPR_CALL:
+            if (deffn_index(e) >= 0) {
+                /* a DEF FN inlined, as call_def_fn runs it: each argument
+                 * evaluated and stored into its parameter (a C local, of
+                 * its name's type) in turn, the body evaluated with the
+                 * parameters in scope, the value made the function's type
+                 * as val_coerce makes it */
+                int fx = deffn_index(e);
+                const stmt_t *d = deffns[fx].def;
+                for (int i = 0; i < e->call.nargs; i++) {
+                    int pt = predict_name(d->def_fn.params[i]);
+                    int at = nat_emit(out, e->call.args[i], a);
+                    char slot[40];
+                    sprintf(slot, "(&fp%d_%d)", id, i);
+                    fprintf(out, "    value_t fp%d_%d; fp%d_%d.type = %s;\n", id, i, id, i, nat_valtype(pt));
+                    nat_store(out, slot, pt, a, at);
+                }
+                fnctx[nfnctx].def = d; fnctx[nfnctx].id = id; nfnctx++;
+                int bt = nat_emit(out, d->def_fn.body, b);
+                nfnctx--;
+                if (t == N_DOUBLE && bt == N_DOUBLE)
+                    fprintf(out, "    double %s = %s;\n", name, b);
+                else {
+                    char slot[40];
+                    sprintf(slot, "(&fr%d)", id);
+                    fprintf(out, "    value_t fr%d; fr%d.type = %s;\n", id, id, nat_valtype(t));
+                    nat_store(out, slot, t, b, bt);
+                    fprintf(out, "    %s %s = fr%d.%s;\n", ct, name, id, nat_is_float(t) ? "dval" : "ival");
+                }
+                return t;
+            }
             if (nat_strfn(e)) {
                 /* LEN, ASC, CHR$, LEFT$, RIGHT$, MID$ through their
                  * typed entries: the arguments evaluated in order, then
@@ -1042,7 +1170,14 @@ static void nat_guard(FILE *out, const uses_t *u) {
         emit_cstring(out, vars[u->v[i]], (int)strlen(vars[u->v[i]]));
         fprintf(out, "); VG[%d] = env_generation; }\n", u->v[i]);
     }
+    for (int i = 0; i < u->nf; i++) {
+        fprintf(out, "    if (FDG[%d] != array_generation + 1u) { FD[%d] = eval_def_fn_defined(", u->f[i], u->f[i]);
+        emit_cstring(out, deffns[u->f[i]].name, (int)strlen(deffns[u->f[i]].name));
+        fprintf(out, "); FDG[%d] = array_generation + 1u; }\n", u->f[i]);
+    }
     fprintf(out, "    if (1");
+    for (int i = 0; i < u->nf; i++)
+        fprintf(out, " && FD[%d]", u->f[i]);
     for (int i = 0; i < u->nv; i++)
         fprintf(out, " && V[%d] && V[%d]->type == %s",
                 u->v[i], u->v[i], nat_valtype(predict_name(vars[u->v[i]])));
@@ -1345,7 +1480,7 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
             if (st != N_NONE && vt != N_NONE && (st == N_STRING) == (vt == N_STRING) &&
                 !is_const_name(s->assign.name)) {
                 uses_t u;
-                u.nv = u.na = 0;
+                u.nv = u.na = u.nf = 0;
                 u.v[u.nv++] = var_index(s->assign.name);
                 nat_uses(s->assign.value, &u);
                 if (u.nv <= 64 && u.na <= 16) {
@@ -1382,7 +1517,7 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
                 /* the subscripts, then the value, then the bounds, as
                  * exec_array_assign and eval_array_store */
                 uses_t u;
-                u.nv = u.na = 0;
+                u.nv = u.na = u.nf = 0;
                 int j = arr_index(s->array_assign.name);
                 u.a[u.na] = j; u.an[u.na] = n; u.na++;
                 for (int i = 0; i < n; i++) nat_uses(s->array_assign.indices[i], &u);
@@ -1430,7 +1565,7 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
              * evaluated and printed in turn, as exec_print */
             uses_t u;
             int native = s->print.nitems > 0;
-            u.nv = u.na = 0;
+            u.nv = u.na = u.nf = 0;
             for (int i = 0; native && i < s->print.nitems; i++)
                 if (s->print.items[i].expr) {
                     if (nat_type(s->print.items[i].expr) == N_NONE) native = 0;
@@ -1535,7 +1670,7 @@ static void emit_native_for(FILE *out, const code_t *c, const op_t *op, int k) {
     for (int i = 0; i < 3; i++)
         if (ex[i] && (nat_type(ex[i]) == N_NONE || nat_type(ex[i]) == N_STRING)) return;
     uses_t u;
-    u.nv = u.na = 0;
+    u.nv = u.na = u.nf = 0;
     u.v[u.nv++] = var_index(var);
     for (int i = 0; i < 3; i++)
         if (ex[i]) nat_uses(ex[i], &u);
@@ -1595,7 +1730,7 @@ static void emit_unit(FILE *out, const code_t *c, const char *fname, int is_main
             snprintf(path, sizeof path, "c->ops[%d].cond", k);
             fprintf(b, "    pc = %d;\n", k);
             uses_t u;
-            u.nv = u.na = 0;
+            u.nv = u.na = u.nf = 0;
             int ct0 = nat_type(op->cond);
             if (ct0 != N_NONE && ct0 != N_STRING)
                 nat_uses(op->cond, &u);
@@ -1744,6 +1879,8 @@ int main(int argc, char **argv) {
             nprocs_known ? nprocs_known : 1);
     fprintf(out, "static int NFOK[%d];  /* native version usable: 0 not known yet, 1, -1 */\n\n",
             nprocs_known ? nprocs_known : 1);
+    fprintf(out, "static int FD[%d];        /* each DEF FN inlined: defined (as of FDG - 1) */\n"
+                 "static unsigned FDG[%d];\n\n", ndeffns ? ndeffns : 1, ndeffns ? ndeffns : 1);
     /* which procedures have a native version; their names and prototypes,
      * written first (any unit may call them) */
     code_t *pcodes[1024];

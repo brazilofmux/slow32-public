@@ -350,6 +350,13 @@ static error_t call_def_fn(env_t *env, stmt_t *def, expr_t **args, int nargs, va
     return err;
 }
 
+/* name is a DEF FN its DEF has defined (s32-sbc inlines the body; the
+ * answer holds until array_generation moves) */
+int eval_def_fn_defined(const char *name) {
+    proc_entry_t *p = find_proc(name);
+    return p && p->def->type == STMT_DEF_FN;
+}
+
 /* SUBs and FUNCTIONs a compiled program has as C (s32-sbc), by name */
 struct compiled_proc {
     const char *name;
