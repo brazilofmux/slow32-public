@@ -1457,6 +1457,52 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
     }
 }
 
+/* A FOR whose counter and bounds have native types: what for_start
+ * does -- start, limit and step evaluated in turn, the start stored in
+ * the counter as for_set stores it, the counter read back -- natively,
+ * and act_for_enter's frame; the executor's when the guard fails (the
+ * generic op follows) */
+static void emit_native_for(FILE *out, const code_t *c, const op_t *op, int k) {
+    const stmt_t *s = op->s;
+    const char *var = s->for_stmt.var_name;
+    int st = predict_name(var);
+    if (st == N_NONE || st == N_STRING || is_const_name(var) || op->target < 0) return;
+    const expr_t *ex[3] = { s->for_stmt.start, s->for_stmt.end, s->for_stmt.step };
+    for (int i = 0; i < 3; i++)
+        if (ex[i] && (nat_type(ex[i]) == N_NONE || nat_type(ex[i]) == N_STRING)) return;
+    uses_t u;
+    u.nv = u.na = 0;
+    u.v[u.nv++] = var_index(var);
+    for (int i = 0; i < 3; i++)
+        if (ex[i]) nat_uses(ex[i], &u);
+    if (u.nv > 64 || u.na > 16) return;
+    emit_preamble(out, op, k);
+    nat_guard(out, &u);
+    fprintf(out, ") {\n");
+    fprintf(out, "    unsigned sg = env_generation, sa = array_generation; (void)sg; (void)sa;\n");
+    cur_uses = &u;
+    char x[3][32], slot[32];
+    for (int i = 0; i < 3; i++)
+        if (ex[i]) {
+            nat_emit(out, ex[i], x[i]);
+            fprintf(out, "    double fd%d_%d = (double)%s;\n", k, i, x[i]);
+            sprintf(x[i], "fd%d_%d", k, i);
+        }
+    if (!ex[2]) strcpy(x[2], "1.0");
+    sprintf(slot, "V[%d]", u.v[0]);
+    nat_store(out, slot, st, x[0], N_DOUBLE);
+    fprintf(out, st == N_INT || st == N_LONG ? "    { double fc = (double)V[%d]->ival;\n"
+                                             : "    { double fc = V[%d]->dval;\n", u.v[0]);
+    fprintf(out, "      int runs = %s >= 0 ? fc <= %s : fc >= %s;\n", x[2], x[1], x[1]);
+    fprintf(out, "      err = act_for_enter(&a, c->ops[%d].s, runs, %s, %s, %d, V[%d]); " CHECK "\n",
+            k, x[1], x[2], k + 1, u.v[0]);
+    fprintf(out, "      if (!runs) ");
+    emit_goto(out, c, op->target);
+    fprintf(out, " else ");
+    emit_goto(out, c, k + 1);
+    fprintf(out, " }\n    }\n");
+}
+
 /* one unit, the main program or a SUB's or FUNCTION's body, as a C
  * function with the executor's signature (main_fn_t); its variable
  * caches are its own, per call (a recursive call has its own variables) */
@@ -1513,6 +1559,8 @@ static void emit_unit(FILE *out, const code_t *c, const char *fname, int is_main
         }
         if (op->kind == OP_STMT && emit_stmt(b, c, op, k))
             continue;
+        if (op->kind == OP_FOR)
+            emit_native_for(b, c, op, k);
         if (op->kind == OP_NEXT) {
             /* the loop on top is this NEXT's own FOR, its variable's
              * value cached: stepped here as for_next steps it, by the

@@ -3439,6 +3439,31 @@ void act_end(act_t *a) {
 }
 
 /* one op; inlined into the executor's loop, called by compiled code */
+/* A FOR reached, its counter set: its own loop's frame, if it is
+ * running (entered again by GOTO), and every loop above that, dropped;
+ * a new frame on top when the loop runs */
+error_t act_for_enter(act_t *a, stmt_t *s, int runs, double limit, double step,
+                      int body_pc, value_t *var) {
+    for (int k = a->nfors - 1; k >= 0; k--)
+        if (a->fors[k].s == s) { a->nfors = k; break; }
+    if (!runs) return ERR_NONE;
+    if (a->nfors == a->cap_fors) {
+        int cap = a->cap_fors ? a->cap_fors * 2 : 8;
+        for_slot_t *t = realloc(a->fors, cap * sizeof(*t));
+        if (!t) return ERR_OUT_OF_MEMORY;
+        a->fors = t;
+        a->cap_fors = cap;
+    }
+    for_slot_t *f = &a->fors[a->nfors++];
+    f->s = s;
+    f->limit = limit;
+    f->step = step;
+    f->body_pc = body_pc;
+    f->var = var;               /* the counter's value, as of now */
+    f->gen = env_generation;
+    return ERR_NONE;
+}
+
 static inline __attribute__((always_inline)) error_t act_step_in(act_t *a, int *ppc) {
     env_t *env = a->env;
     int pc = *ppc;
@@ -3459,26 +3484,13 @@ static inline __attribute__((always_inline)) error_t act_step_in(act_t *a, int *
         }
         case OP_FOR: {
             for_slot_t f;
-            int k;
             EVAL_CHECK(for_start(env, op->s, &f, &yes));
-            for (k = a->nfors - 1; k >= 0; k--)
-                if (a->fors[k].s == op->s) { a->nfors = k; break; }
+            EVAL_CHECK(act_for_enter(a, op->s, yes, f.limit, f.step, pc + 1, NULL));
             if (!yes) {
                 if (op->target < 0) return ERR_FOR_WITHOUT_NEXT;
                 *ppc = op->target;
                 return ERR_NONE;
             }
-            if (a->nfors == a->cap_fors) {
-                int cap = a->cap_fors ? a->cap_fors * 2 : 8;
-                for_slot_t *t = realloc(a->fors, cap * sizeof(*t));
-                if (!t) return ERR_OUT_OF_MEMORY;
-                a->fors = t;
-                a->cap_fors = cap;
-            }
-            f.s = op->s;
-            f.body_pc = pc + 1;
-            f.var = NULL;
-            a->fors[a->nfors++] = f;
             *ppc = pc + 1;
             return ERR_NONE;
         }

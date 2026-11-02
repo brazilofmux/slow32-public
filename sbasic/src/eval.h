@@ -63,6 +63,10 @@ error_t act_step(act_t *a, int *pc);
  * ERROR traps) sets *pc and is 1; anything else ends the unit with
  * *result, 0 */
 int act_transfer(act_t *a, error_t err, int *pc, error_t *result);
+/* a FOR reached, its counter set (var: its value, or NULL): its own
+ * running loop dropped, a frame pushed when runs */
+error_t act_for_enter(act_t *a, stmt_t *s, int runs, double limit, double step,
+                      int body_pc, value_t *var);
 /* GOSUB, its return op pushed (the jump is the caller's) */
 error_t act_gosub(act_t *a, int return_pc);
 
