@@ -1230,8 +1230,15 @@ static void layout_sections(linker_state_t *ld) {
     if (ld->mmio_size > 0) {
         // Leave some space for heap growth
         uint32_t heap_space = ld->heap_size ? ld->heap_size : 0x100000;  // 1MB heap space by default
-        ld->mmio_base = ld->heap_base + heap_space;
-        ld->mmio_base = (ld->mmio_base + 0xFFF) & ~0xFFF;  // Page align
+        if (ld->heap_size == UINT32_MAX) {
+            // --heap-size max: the MMIO window just below the stack, the
+            // heap everything between the end of BSS and it
+            ld->mmio_base = (ld->stack_base - ld->stack_size - ld->mmio_size) & ~0xFFFu;
+            if (ld->mmio_base < ld->heap_base) ld->mmio_base = ld->heap_base;   // reported below
+        } else {
+            ld->mmio_base = ld->heap_base + heap_space;
+            ld->mmio_base = (ld->mmio_base + 0xFFF) & ~0xFFF;  // Page align
+        }
     } else {
         ld->mmio_base = 0;
     }
@@ -3095,7 +3102,7 @@ static void print_usage(const char *prog) {
     fprintf(stderr, "  --rodata-size SIZE Max rodata size (default: 1MB)\n");
     fprintf(stderr, "  --data-size SIZE  Max data+bss size (default: 1MB)\n");
     fprintf(stderr, "  --stack-size SIZE Stack size (default: 64KB)\n");
-    fprintf(stderr, "  --heap-size SIZE  Heap space before MMIO (default: 1MB)\n");
+    fprintf(stderr, "  --heap-size SIZE  Heap space before MMIO (default: 1MB; max: up to the stack)\n");
     fprintf(stderr, "  --mmio SIZE       Reserve SIZE bytes for MMIO region\n");
     fprintf(stderr, "  --pack-sections   Pack sections tightly to minimize gaps (default)\n");
     fprintf(stderr, "  --no-pack-sections Disable tight packing; use fixed region sizes\n");
@@ -3194,7 +3201,8 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--stack-size") == 0 && i + 1 < argc) {
             ld.stack_size = parse_size(argv[++i]);
         } else if (strcmp(argv[i], "--heap-size") == 0 && i + 1 < argc) {
-            ld.heap_size = parse_size(argv[++i]);
+            i++;
+            ld.heap_size = strcmp(argv[i], "max") == 0 ? UINT32_MAX : parse_size(argv[i]);
         } else if (strcmp(argv[i], "--mmio") == 0 && i + 1 < argc) {
             ld.mmio_size = parse_size(argv[++i]);
         } else if (strcmp(argv[i], "--pack-sections") == 0) {

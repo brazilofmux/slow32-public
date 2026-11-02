@@ -90,7 +90,7 @@ link_exe() {
     local log="$1"
     shift
     set +e
-    timeout "${SELFHOST_TIMEOUT:-1200}" "$EMU" "$STAGE7_LD" "$@" >"$log" 2>&1
+    timeout "${SELFHOST_TIMEOUT:-1200}" "$EMU" "${LINK_LD:-$STAGE7_LD}" "$@" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
@@ -145,6 +145,19 @@ assemble "$WORKDIR/g1-s32-as.s" "$WORKDIR/g1-s32-as.s32o" "$WORKDIR/g1-s32-as.as
     $LIBC_OBJS >"$WORKDIR/g1-s32-as.ld.log" 2>&1
 [[ -s "$STAGE8_AS" ]] || { echo "failed to build stage08 assembler for gen1 output" >&2; exit 1; }
 
+# And the stage08 linker, the same way: cc.s32x is linked with
+# --heap-size max (the heap from the end of its data to the MMIO window
+# under the stack).  Its per-function tables grow on the heap, and
+# stage07's linker leaves a fixed 64MB gap.
+STAGE8_LD="$WORKDIR/g1-s32-ld.s32x"
+"$EMU" "$STAGE7_CC" "-I$SCRIPT_DIR/include" "$SCRIPT_DIR/tools/s32-ld.c" "$WORKDIR/g1-s32-ld.s" >"$WORKDIR/g1-s32-ld.cc.log" 2>&1
+assemble "$WORKDIR/g1-s32-ld.s" "$WORKDIR/g1-s32-ld.s32o" "$WORKDIR/g1-s32-ld.as.log"
+"$EMU" "$STAGE7_LD" -o "$STAGE8_LD" --mmio 64K \
+    "$WORKDIR/crt0.s32o" "$WORKDIR/g1-s32-ld.s32o" "$WORKDIR/start.s32o" \
+    "$WORKDIR/mmio_no_start.s32o" "$WORKDIR/builtins64.s32o" "$WORKDIR/builtins_fp64.s32o" \
+    $LIBC_OBJS >"$WORKDIR/g1-s32-ld.ld.log" 2>&1
+[[ -s "$STAGE8_LD" ]] || { echo "failed to build stage08 linker for cc.s32x" >&2; exit 1; }
+
 assemble_gen1() {
     local src="$1" obj="$2" log="$3"
     # set +e around the run: under -e a failing assembler ended the script
@@ -168,7 +181,7 @@ assemble_gen1 "$WORKDIR/s12cc.s" "$WORKDIR/s12cc.s32o" "$WORKDIR/s12cc.as.log"
 
 # --- Link cc.s32x ---
 echo "[4/6] Link cc.s32x (gen1, tree-walk ABI)"
-link_exe "$WORKDIR/link.log" -o "$OUT_EXE" --mmio 64K \
+LINK_LD="$STAGE8_LD" link_exe "$WORKDIR/link.log" -o "$OUT_EXE" --mmio 64K --heap-size max \
     "$WORKDIR/crt0.s32o" "$WORKDIR/s12cc.s32o" "$WORKDIR/start.s32o" \
     "$WORKDIR/mmio_no_start.s32o" \
     $BUILTINS64_OBJ $BUILTINS_FP64_OBJ $LIBC_OBJS

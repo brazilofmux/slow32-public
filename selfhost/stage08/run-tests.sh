@@ -367,6 +367,20 @@ run_exe "$LD_EXE" "$WORKDIR/big-s32-as.ld.log" -o "$BIG_AS" --mmio 64K \
     $BUILTINS64_OBJ $BUILTINS_FP64_OBJ $LIBC_OBJS
 [[ -s "$BIG_AS" ]] || { echo "failed to link the big assembler" >&2; exit 1; }
 
+# And the stage08 linker, the same way: a compiler binary (gen1, gen2,
+# gen3) is linked with --heap-size max -- its per-function tables grow on
+# the heap, and stage07's linker leaves a fixed 64MB gap.  build-s12cc.sh
+# links cc.s32x so too.
+BIG_LD="$WORKDIR/big-s32-ld.s32x"
+run_exe "$STAGE7_CC" "$WORKDIR/big-s32-ld.cc.log" "$TOOL_INC" "$SCRIPT_DIR/tools/s32-ld.c" "$WORKDIR/big-s32-ld.s"
+[[ -s "$WORKDIR/big-s32-ld.s" ]] || { echo "failed to compile tools/s32-ld.c for the big linker" >&2; exit 1; }
+run_exe "$AS_EXE" "$WORKDIR/big-s32-ld.as.log" "$WORKDIR/big-s32-ld.s" "$WORKDIR/big-s32-ld.s32o"
+[[ -s "$WORKDIR/big-s32-ld.s32o" ]] || { echo "failed to assemble the big linker" >&2; exit 1; }
+run_exe "$LD_EXE" "$WORKDIR/big-s32-ld.ld.log" -o "$BIG_LD" --mmio 64K \
+    "$RUNTIME_CRT0" "$WORKDIR/big-s32-ld.s32o" "$WORKDIR/start.s32o" "$RUNTIME_MMIO_NO_START_OBJ" \
+    $BUILTINS64_OBJ $BUILTINS_FP64_OBJ $LIBC_OBJS
+[[ -s "$BIG_LD" ]] || { echo "failed to link the big linker" >&2; exit 1; }
+
 LIBC_START_OBJ="$WORKDIR/start.s32o"
 STAGE7_LIBC_OBJS="$LIBC_OBJS"
 STAGE7_LIBC_START_OBJ="$LIBC_START_OBJ"
@@ -405,8 +419,8 @@ else
         printf "  %-30s FAIL (assemble)\n" "gen1_cc-build:"
         FAIL=$((FAIL + 1))
     else
-        run_exe "$LD_EXE" "$WORKDIR/gen1_cc-link.log" \
-            -o "$WORKDIR/gen1_cc.s32x" --mmio 64K \
+        run_exe "$BIG_LD" "$WORKDIR/gen1_cc-link.log" \
+            -o "$WORKDIR/gen1_cc.s32x" --mmio 64K --heap-size max \
             "$RUNTIME_CRT0" "$WORKDIR/gen1_cc.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
             $BUILTINS64_OBJ $BUILTINS_FP64_OBJ $LIBC_OBJS
         if [[ ! -s "$WORKDIR/gen1_cc.s32x" ]]; then
@@ -1178,8 +1192,8 @@ if [[ "$RUN_FIXED_POINT" -eq 1 && -s "$GEN1_CC_EXE" ]]; then
             printf "  %-30s FAIL (assemble)\n" "fixed-point:"
             FAIL=$((FAIL + 1))
         else
-            run_exe "$LD_EXE" "$WORKDIR/fp-gen2-link.log" \
-                -o "$WORKDIR/fp-gen2.s32x" --mmio 64K \
+            run_exe "$BIG_LD" "$WORKDIR/fp-gen2-link.log" \
+                -o "$WORKDIR/fp-gen2.s32x" --mmio 64K --heap-size max \
                 "$RUNTIME_CRT0" "$WORKDIR/fp-gen2.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
                 $BUILTINS64_OBJ $BUILTINS_FP64_OBJ $LIBC_OBJS
             if [[ ! -s "$WORKDIR/fp-gen2.s32x" ]]; then
@@ -1200,8 +1214,8 @@ if [[ "$RUN_FIXED_POINT" -eq 1 && -s "$GEN1_CC_EXE" ]]; then
                         printf "  %-30s FAIL (gen3 assemble)\n" "fixed-point:"
                         FAIL=$((FAIL + 1))
                     else
-                        run_exe "$LD_EXE" "$WORKDIR/fp-gen3-link.log" \
-                            -o "$WORKDIR/fp-gen3.s32x" --mmio 64K \
+                        run_exe "$BIG_LD" "$WORKDIR/fp-gen3-link.log" \
+                            -o "$WORKDIR/fp-gen3.s32x" --mmio 64K --heap-size max \
                             "$RUNTIME_CRT0" "$WORKDIR/fp-gen3.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
                             $BUILTINS64_OBJ $BUILTINS_FP64_OBJ $LIBC_OBJS
                         if [[ ! -s "$WORKDIR/fp-gen3.s32x" ]]; then
