@@ -366,8 +366,33 @@ static error_t proc_prepare(proc_entry_t *proc) {
     return ERR_NONE;
 }
 
-/* A call, its arguments evaluated (and taken: they are cleared) */
-static error_t call_proc_values(proc_entry_t *proc, value_t *arg_vals, int nargs, value_t *out) {
+/* An argument passed by reference, as QBasic passes a variable or an
+ * array element: a variable's value is linked to the parameter; an
+ * element is copied in and back out when the call returns (the array may
+ * be REDIMmed meanwhile: copied back only where it still is) */
+typedef struct {
+    value_t *ref;               /* a variable's value */
+    const char *arr;            /* an element's array, by name ... */
+    int nidx, idx[MAX_ARRAY_DIMS];
+} arg_ref_t;
+
+/* A parameter's type: its AS, or its name's -- under DEF*, as the
+ * variable will be made (the parser knew suffixes, not DEF*) */
+static val_type_t param_type(const stmt_t *def, int i) {
+    const char *name = def->proc_def.params[i];
+    size_t n = strlen(name);
+    val_type_t t = def->proc_def.param_types[i];
+    int suffixed = n && strchr("%&!#$", name[n - 1]);
+    if (!suffixed && t == VAL_SINGLE)       /* no AS (or AS SINGLE) */
+        return resolve_var_type(name);
+    return t;
+}
+
+/* A call, its arguments evaluated (and taken: they are cleared); refs,
+ * if not NULL, says which are passed by reference (a by-value one is
+ * converted to its parameter's type) */
+static error_t call_proc_values(proc_entry_t *proc, value_t *arg_vals, const arg_ref_t *refs,
+                                int nargs, value_t *out) {
     stmt_t *def = proc->def;
     int is_function = (def->type == STMT_FUNC_DEF);
     error_t err = proc_prepare(proc);
@@ -383,13 +408,27 @@ static error_t call_proc_values(proc_entry_t *proc, value_t *arg_vals, int nargs
     }
 
     for (int i = 0; i < nargs; i++) {
-        /* a parameter named twice is the parser's to refuse; bind the
-         * first as env_set did */
+        const char *pname = def->proc_def.params[i];
+        if (refs && refs[i].ref) {
+            env_link(local, pname, refs[i].ref);
+            continue;
+        }
+        if (!(refs && refs[i].arr)) {
+            /* by value: the parameter's type */
+            err = val_coerce(&arg_vals[i], param_type(def, i));
+            if (err != ERR_NONE) {
+                for (int j = i; j < nargs; j++) val_clear(&arg_vals[j]);
+                env_destroy(local);
+                return err;
+            }
+        }
+        /* a parameter named twice is the parser's to refuse; the first
+         * is bound as env_set did */
         int dup = 0;
         for (int j = 0; j < i; j++)
-            if (strcmp(def->proc_def.params[j], def->proc_def.params[i]) == 0) dup = 1;
-        if (dup) env_set(local, def->proc_def.params[i], &arg_vals[i]);
-        else env_bind(local, def->proc_def.params[i], &arg_vals[i]);
+            if (strcmp(def->proc_def.params[j], pname) == 0) dup = 1;
+        if (dup) env_set(local, pname, &arg_vals[i]);
+        else env_bind(local, pname, &arg_vals[i]);
         val_clear(&arg_vals[i]);
     }
 
@@ -428,8 +467,64 @@ static error_t call_proc_values(proc_entry_t *proc, value_t *arg_vals, int nargs
         }
     }
 
+    /* elements passed by reference: their values back */
+    for (int i = 0; refs && i < nargs; i++) {
+        if (!refs[i].arr) continue;
+        value_t *pv = env_lookup(local, def->proc_def.params[i]), *slot;
+        sb_array_t *arr = array_find(refs[i].arr);
+        if (pv && arr && arr->ndims == refs[i].nidx &&
+            array_get(refs[i].arr, (int *)refs[i].idx, refs[i].nidx, &slot) == ERR_NONE) {
+            error_t e2 = store_into(slot, pv);
+            if (err == ERR_NONE) err = e2;
+        }
+    }
+
     env_destroy(local);
     return err;
+}
+
+/* How argument e is passed to a parameter of type pt: by reference (a
+ * variable, an array element, not in parentheses -- *r filled, an
+ * element's value in *v) or by value (*r empty, nothing evaluated) */
+static error_t arg_by_ref(env_t *env, expr_t *e, val_type_t pt, arg_ref_t *r, value_t *v) {
+    memset(r, 0, sizeof(*r));
+    if (e->paren) return ERR_NONE;
+    if (e->type == EXPR_VARIABLE) {
+        const char *name = e->var.name;
+        value_t *slot = eval_var_slot(env, name);
+        if (!slot) {
+            /* not a variable yet: a builtin's name, an FN or ERR/ERL is
+             * a value; anything else becomes the variable */
+            if (strcmp(name, "ERR") == 0 || strcmp(name, "ERL") == 0 ||
+                strncmp(name, "FN", 2) == 0 || builtin_exists(name))
+                return ERR_NONE;
+            slot = env_get(env, name);
+            if (!slot) return ERR_OUT_OF_MEMORY;
+        }
+        if (slot->type != pt) return ERR_PARAM_MISMATCH;
+        r->ref = slot;
+        return ERR_NONE;
+    }
+    if (e->type == EXPR_CALL) {
+        sb_array_t *arr = eval_call_array(e->call.name);
+        value_t *elem;
+        if (!arr) return ERR_NONE;
+        if (e->call.nargs != arr->ndims) return ERR_WRONG_DIMS;
+        for (int i = 0; i < e->call.nargs; i++) {
+            value_t iv;
+            EVAL_CHECK(eval_expr(env, e->call.args[i], &iv));
+            error_t err = val_to_integer(&iv, &r->idx[i]);
+            val_clear(&iv);
+            if (err != ERR_NONE) return err;
+        }
+        EVAL_CHECK(array_get(e->call.name, r->idx, e->call.nargs, &elem));
+        if (elem->type != pt) return ERR_PARAM_MISMATCH;
+        r->arr = e->call.name;
+        r->nidx = e->call.nargs;
+        *v = val_copy(elem);
+        return ERR_NONE;
+    }
+    return ERR_NONE;
 }
 
 static error_t call_proc(env_t *caller_env, proc_entry_t *proc,
@@ -439,20 +534,56 @@ static error_t call_proc(env_t *caller_env, proc_entry_t *proc,
     if (nargs != def->proc_def.nparams)
         return ERR_ARG_COUNT;
 
-    value_t arg_vals[16];
+    /* sized to the call: a recursion's frames are these (the depth limit
+     * must come before the stack's end) */
+    if (nargs > 16) return ERR_ARG_COUNT;
+    value_t arg_vals[nargs ? nargs : 1];
+    arg_ref_t refs[nargs ? nargs : 1];
     for (int i = 0; i < nargs; i++) {
-        error_t err = eval_expr(caller_env, arg_exprs[i], &arg_vals[i]);
+        error_t err;
+        arg_vals[i] = val_integer(0);
+        err = arg_by_ref(caller_env, arg_exprs[i], param_type(def, i), &refs[i], &arg_vals[i]);
+        if (err == ERR_NONE && !refs[i].ref && !refs[i].arr)
+            err = eval_expr(caller_env, arg_exprs[i], &arg_vals[i]);
         if (err != ERR_NONE) {
-            for (int j = 0; j < i; j++) val_clear(&arg_vals[j]);
+            for (int j = 0; j <= i; j++) val_clear(&arg_vals[j]);
             return err;
         }
     }
-    return call_proc_values(proc, arg_vals, nargs, out);
+    return call_proc_values(proc, arg_vals, refs, nargs, out);
+}
+
+/* A variable argument of compiled code: its value if it is passed by
+ * reference (as arg_by_ref decides), NULL if by value */
+value_t *eval_arg_ref(env_t *env, const char *name) {
+    value_t *slot = eval_var_slot(env, name);
+    if (slot) return slot;
+    if (strcmp(name, "ERR") == 0 || strcmp(name, "ERL") == 0 ||
+        strncmp(name, "FN", 2) == 0 || builtin_exists(name))
+        return NULL;
+    return env_get(env, name);
+}
+
+/* Compiled code's check of argument i passed by reference, made when
+ * the interpreter makes it: as the argument is reached, before the next
+ * one is evaluated */
+error_t eval_arg_check(const char *name, void **cache, int i, const value_t *ref) {
+    proc_entry_t *proc = *cache;
+    if (!proc) {
+        proc = find_proc(name);
+        if (!proc || (proc->def->type != STMT_FUNC_DEF && proc->def->type != STMT_SUB_DEF))
+            return proc ? ERR_INTERNAL : ERR_UNDEFINED_PROC;
+        *cache = proc;
+    }
+    if (i < proc->def->proc_def.nparams && ref->type != param_type(proc->def, i))
+        return ERR_PARAM_MISMATCH;
+    return ERR_NONE;
 }
 
 /* A FUNCTION's call (or a SUB's, out NULL) from compiled code, its
  * arguments evaluated by it; *cache keeps the procedure found */
-error_t eval_call_proc(const char *name, void **cache, value_t *args, int nargs, value_t *out) {
+error_t eval_call_proc(const char *name, void **cache, value_t *args, value_t **vrefs,
+                       int nargs, value_t *out) {
     proc_entry_t *proc = *cache;
     if (!proc) {
         proc = find_proc(name);
@@ -470,14 +601,26 @@ error_t eval_call_proc(const char *name, void **cache, value_t *args, int nargs,
         for (int i = 0; i < nargs; i++) val_clear(&args[i]);
         return ERR_INTERNAL;
     }
+    if (nargs > 16) return ERR_ARG_COUNT;
+    arg_ref_t refs[nargs ? nargs : 1];
+    for (int i = 0; i < nargs; i++) {
+        memset(&refs[i], 0, sizeof(refs[i]));
+        if (vrefs && vrefs[i]) {
+            if (vrefs[i]->type != param_type(proc->def, i)) {
+                for (int j = 0; j < nargs; j++) val_clear(&args[j]);
+                return ERR_PARAM_MISMATCH;
+            }
+            refs[i].ref = vrefs[i];
+        }
+    }
     if (!out && proc->def->type == STMT_FUNC_DEF) {
         /* CALL of a FUNCTION: its value dropped */
         value_t r;
-        error_t err = call_proc_values(proc, args, nargs, &r);
+        error_t err = call_proc_values(proc, args, refs, nargs, &r);
         if (err == ERR_NONE) val_clear(&r);
         return err;
     }
-    return call_proc_values(proc, args, nargs, out);
+    return call_proc_values(proc, args, refs, nargs, out);
 }
 
 /* --- Expression evaluation --- */

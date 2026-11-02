@@ -55,6 +55,7 @@ static const char *error_messages[ERR_COUNT] = {
     "Wrong number of dimensions",
     "Argument-count mismatch",
     "Function not defined",
+    "Parameter type mismatch",
 };
 
 int error_qb_code(error_t err) {
@@ -70,7 +71,8 @@ int error_qb_code(error_t err) {
     case ERR_SUBSCRIPT_OUT_OF_RANGE: return 9;
     case ERR_DUPLICATE_DIM:          return 10;
     case ERR_DIVISION_BY_ZERO:       return 11;
-    case ERR_TYPE_MISMATCH:          return 13;
+    case ERR_TYPE_MISMATCH:
+    case ERR_PARAM_MISMATCH:         return 13;
     case ERR_STRING_TOO_LONG:        return 15;
     case ERR_FUNC_NOT_DEFINED:       return 18;
     case ERR_RESUME_WITHOUT_ERROR:   return 20;

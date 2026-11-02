@@ -164,6 +164,19 @@ number before the statement that failed, 0 in a program without line
 numbers.  `ON ERROR GOTO` traps in the main program; an error in a
 procedure comes out of its `CALL`.
 
+## SUB and FUNCTION parameters
+
+As in QBasic: a variable or an array element passed as an argument is
+passed **by reference** -- the procedure's parameter is that variable,
+and assigning it changes the caller's (`CALL S(A, A)` makes both
+parameters `A`).  An argument in parentheses, `CALL S((A))`, or any
+other expression is passed by value, converted to the parameter's type.
+A variable whose type is not the parameter's is `Parameter type
+mismatch`.  (An element passed by reference is copied in and back out
+when the call returns, rather than aliased: the same unless the
+procedure also reaches the element another way.)  `DEF FN` parameters
+are by value.
+
 `DEF FN` functions are global; `FNM` with no parentheses calls a
 `DEF FNM` with no parameters, and an `FN` name with no `DEF FN` is
 `Function not defined`.

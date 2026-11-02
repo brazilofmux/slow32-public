@@ -37,8 +37,11 @@ read and stored natively too (pointers cached while `array_generation`
 holds); calls of the program's FUNCTIONs and SUBs take their arguments
 from the C (native ones too) and go straight to the call
 (`eval_call_proc`).  Nested loops: 36M instructions against the
-interpreter's 443M; the sieve 1.26M against 4.50M; fib(20) 50.4M
-against 61.3M.
+interpreter's 443M; the sieve 1.26M against 4.50M; fib(20) 55.4M
+against 69.3M.  Arguments are passed as QBasic passes them: a variable by
+reference (`eval_arg_ref`, its type checked as it is reached), anything
+else by value; a call with an array element among its arguments is the
+interpreter's.
 
 ```bash
 python3 tests/fuzz.py -n 1000      # random typed arithmetic, compiled vs interpreted

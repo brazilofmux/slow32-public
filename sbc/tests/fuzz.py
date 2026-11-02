@@ -59,9 +59,16 @@ def expr(r, depth):
     if k < 0.15:
         return '(NOT ' + expr(r, depth - 1) + ')'
     if k < 0.22:
-        name, nargs = r.choice([('F1%', 2), ('F2#', 1), ('F3!', 1)])
+        name, nargs = r.choice([('F1%', 2), ('F2#', 1), ('F3!', 1), ('F4!', 1)])
+        if name == 'F4!' and r.random() < 0.6:
+            # by reference: a SINGLE variable or element, or a copy
+            return 'F4!(' + r.choice(['E!', 'F!', 'X', 'Y', '(E!)', 'R!(1, 2)', 'A%']) + ')'
         return name + '(' + ', '.join(expr(r, depth - 1) for _ in range(nargs)) + ')'
     return '(' + expr(r, depth - 1) + ' ' + r.choice(BINOPS) + ' ' + expr(r, depth - 1) + ')'
+
+
+def A_EXPR(r):
+    return expr(r, 1)
 
 
 def program(seed):
@@ -80,6 +87,9 @@ def program(seed):
             lines.append(r.choice(['ERASE S#', 'REDIM S#(5)', 'ERASE T', 'REDIM P%(20)', 'ERASE Q&: DIM Q&(3)']))
         if r.random() < 0.08:
             lines.append('CALL S1(%s): PRINT "S"; Y' % expr(r, 2))
+        if r.random() < 0.08:
+            a = r.choice(['A%', 'B%', 'P%(2)', '(A%)', 'C&', A_EXPR(r)])
+            lines.append('CALL S2(%s, %s): PRINT "S2"; A%%; B%%; P%%(2)' % (a, r.choice(['A%', 'B%', '3'])))
         if r.random() < 0.3:
             lines.append('IF %s THEN PRINT "t%d" ELSE PRINT "f%d"' % (expr(r, 2), i, i))
         if r.random() < 0.25:
@@ -104,7 +114,9 @@ def program(seed):
               'FUNCTION F2#(x#)', 'F2# = x# / 3 + 1', 'END FUNCTION',
               'FUNCTION F3!(n%)', 'IF n% > 3 OR n% < -3 THEN F3! = .5 ELSE F3! = n% * F3!(n% + 1) + 1',
               'END FUNCTION',
-              'SUB S1(a!)', 'SHARED Y', 'Y = Y + a!', 'END SUB']
+              'SUB S1(a!)', 'SHARED Y', 'Y = Y + a!', 'END SUB',
+              'FUNCTION F4!(z!)', 'z! = z! + 1', 'F4! = z! * 2', 'END FUNCTION',
+              'SUB S2(a%, b%)', 'a% = a% + b%', 'END SUB']
     return '\n'.join(lines) + '\n'
 
 

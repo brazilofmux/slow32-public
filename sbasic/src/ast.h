@@ -34,6 +34,7 @@ typedef enum {
 typedef struct expr {
     expr_type_t type;
     int line;
+    int paren;          /* written in parentheses: (A) is passed by value */
     union {
         /* EXPR_LITERAL */
         value_t literal;

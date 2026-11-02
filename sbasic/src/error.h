@@ -56,6 +56,7 @@ typedef enum {
     ERR_WRONG_DIMS,
     ERR_ARG_COUNT,
     ERR_FUNC_NOT_DEFINED,
+    ERR_PARAM_MISMATCH,
     ERR_COUNT
 } error_t;
 

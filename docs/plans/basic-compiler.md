@@ -49,12 +49,13 @@ the oracle.
   and goes to `eval_call_proc`; a call's scope and entries come from a
   pool, its setup is done once per procedure, and ending a call's scope
   no longer invalidates the caller's caches.  fib(20): 100M (the
-  interpreter, before) -> 61M interpreted, 50M compiled.
+  interpreter, before) -> 69M interpreted, 55M compiled (with the
+  by-reference parameters).
 - **Open:** a call is still a scope of named variables (parameters
   bound by name, the value read back by name); locals in C would be the
   next step, where a body has no statement the executor must run.
-  Parameters are passed by value, where QBasic passes variables by
-  reference -- a dialect gap to close in both.  Strings;
+  Parameters are by reference now, as QBasic's (variables linked,
+  elements copied in and out), in both.  Strings;
   PRINT of numbers; builtin calls (`ABS`, `INT`, `SQR`) in native
   expressions; `FOR` itself (only `NEXT` is native).
 

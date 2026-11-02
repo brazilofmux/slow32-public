@@ -135,6 +135,7 @@ static expr_t *parse_primary(parser_t *p) {
         expr_t *e = parse_expr(p);
         if (!e) return NULL;
         if (!expect(p, TOK_RPAREN)) { expr_free(e); return NULL; }
+        e->paren = 1;
         return e;
     }
 

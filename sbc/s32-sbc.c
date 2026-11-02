@@ -119,11 +119,30 @@ static void scan_program(const stmt_t *s, int top) {
 /* name(args) that is a call of one of the program's FUNCTIONs, with the
  * right number of arguments (a wrong number is the executor's error,
  * before any argument is evaluated) */
+/* arguments the C passes itself: no name(args) that is not in
+ * parentheses and not a FUNCTION call -- an array element, passed by
+ * reference, is the interpreter's to pass (it may be one only at run
+ * time) */
+static int is_function_call(const expr_t *e);
+static int args_compilable(expr_t *const *args, int n) {
+    for (int i = 0; i < n; i++)
+        if (args[i]->type == EXPR_CALL && !args[i]->paren && !is_function_call(args[i]))
+            return 0;
+    return 1;
+}
+
 static int is_function_call(const expr_t *e) {
     int j = proc_index(e->call.name);
     return j >= 0 && procs[j].is_function && procs[j].nparams == e->call.nargs &&
            e->call.nargs <= 16 && !is_array_name(e->call.name);
 }
+
+/* the arguments of a call into T, a variable not in parentheses as its
+ * reference (R[i], if eval_arg_ref says it is passed so) */
+static int emit_args(FILE *out, expr_t *const *args, int n, const char *base, int *ta,
+                     const char *proc, int pj);
+static int nrefs;               /* R<n> arrays: unique in the file */
+
 
 static void scan_array_names(const stmt_t *s) {
     for (; s; s = s->next) {
@@ -261,20 +280,18 @@ static int emit_expr(FILE *out, const expr_t *e, const char *path) {
             return t;
         }
         case EXPR_CALL:
-            if (is_function_call(e)) {
+            if (is_function_call(e) && args_compilable(e->call.args, e->call.nargs)) {
                 /* the arguments here, then the call: as call_proc */
                 int n = e->call.nargs, ta[16];
-                for (int i = 0; i < n; i++) {
-                    char sub[1024];
-                    snprintf(sub, sizeof sub, "%s->call.args[%d]", path, i);
-                    ta[i] = emit_expr(out, e->call.args[i], sub);
-                }
+                char base[1024];
+                snprintf(base, sizeof base, "%s->call.args", path);
+                int rid = emit_args(out, e->call.args, n, base, ta, e->call.name, proc_index(e->call.name));
                 fprintf(out, "    { value_t av[%d];\n", n ? n : 1);
                 for (int i = 0; i < n; i++)
                     fprintf(out, "      av[%d] = T[%d]; T[%d].type = VAL_INTEGER;\n", i, ta[i], ta[i]);
                 fprintf(out, "      err = eval_call_proc(");
                 emit_cstring(out, e->call.name, (int)strlen(e->call.name));
-                fprintf(out, ", &P[%d], av, %d, &T[%d]); " CHECK " }\n", proc_index(e->call.name), n, t);
+                fprintf(out, ", &P[%d], av, R%d, %d, &T[%d]); " CHECK " }\n", proc_index(e->call.name), rid, n, t);
                 return t;
             }
             if (e->call.nargs >= 1 && e->call.nargs <= 8)
@@ -284,6 +301,32 @@ static int emit_expr(FILE *out, const expr_t *e, const char *path) {
             fprintf(out, "    err = eval_expr(env, %s, &T[%d]); " CHECK "\n", path, t);
             return t;
     }
+}
+
+static int emit_args(FILE *out, expr_t *const *args, int n, const char *base, int *ta,
+                     const char *proc, int pj) {
+    int id = nrefs++;
+    fprintf(out, "    value_t *R%d[%d];\n", id, n ? n : 1);
+    for (int i = 0; i < n; i++) {
+        char sub[1100];
+        const expr_t *a = args[i];
+        snprintf(sub, sizeof sub, "%s[%d]", base, i);
+        if (a->type == EXPR_VARIABLE && !a->paren) {
+            ta[i] = new_temp();
+            fprintf(out, "    R%d[%d] = eval_arg_ref(env, ", id, i);
+            emit_cstring(out, a->var.name, (int)strlen(a->var.name));
+            fprintf(out, ");\n    if (!R%d[%d]) { err = eval_variable(env, ", id, i);
+            emit_cstring(out, a->var.name, (int)strlen(a->var.name));
+            fprintf(out, ", &T[%d]); " CHECK " }\n", ta[i]);
+            fprintf(out, "    else { err = eval_arg_check(");
+            emit_cstring(out, proc, (int)strlen(proc));
+            fprintf(out, ", &P[%d], %d, R%d[%d]); " CHECK " }\n", pj, i, id, i);
+        } else {
+            ta[i] = emit_expr(out, a, sub);
+            fprintf(out, "    R%d[%d] = NULL;\n", id, i);
+        }
+    }
+    return id;
 }
 
 /* --- Native code (milestone 2): a numeric expression on C long long and
@@ -323,7 +366,7 @@ static int nat_type(const expr_t *e) {
         case EXPR_CALL:
             if (is_function_call(e)) {
                 /* its value's type is its name's, unless DEF* is about */
-                if (has_deftype) return N_NONE;
+                if (has_deftype || !args_compilable(e->call.args, e->call.nargs)) return N_NONE;
                 for (int i = 0; i < e->call.nargs; i++)
                     if (nat_type(e->call.args[i]) == N_NONE) return N_NONE;
                 return predict_name(e->call.name);
@@ -431,6 +474,19 @@ static void nat_range(FILE *out, const char *r, int t) {
 
 static void nat_index(FILE *out, int j, const char **ix, const int *ixt, int n, const char *flat);
 
+/* subscript x of type t, converted as val_to_integer converts it -- at
+ * once, as the interpreter does, before the next subscript is evaluated;
+ * the integer's C name into conv */
+static void nat_subscript(FILE *out, const char *x, int t, char *conv) {
+    if (nat_is_float(t)) {
+        fprintf(out, "    if (!(%s < 2147483647.5 && %s >= -2147483648.5)) { err = ERR_OVERFLOW; goto fail; }\n", x, x);
+        sprintf(conv, "%s_c", x);
+        fprintf(out, "    long long %s = (long long)rint(%s);\n", conv, x);
+    } else {
+        strcpy(conv, x);
+    }
+}
+
 /* the uses of the native statement being written: after a call (which
  * may CLEAR, ERASE, REDIM) its cached pointers are fetched again and
  * the guard's condition checked again -- an internal error if it no
@@ -481,14 +537,32 @@ static int nat_emit(FILE *out, const expr_t *e, char *name) {
             if (is_function_call(e)) {
                 int n = e->call.nargs, at[16];
                 char as[16][32];
-                for (int i = 0; i < n; i++) at[i] = nat_emit(out, e->call.args[i], as[i]);
-                fprintf(out, "    value_t av%d[%d], rv%d;\n", id, n ? n : 1, id);
-                for (int i = 0; i < n; i++)
+                for (int i = 0; i < n; i++) {
+                    const expr_t *a = e->call.args[i];
+                    at[i] = nat_emit(out, a, as[i]);
+                    if (a->type == EXPR_VARIABLE && !a->paren) {
+                        /* by reference: its type checked as it is reached */
+                        fprintf(out, "    err = eval_arg_check(");
+                        emit_cstring(out, e->call.name, (int)strlen(e->call.name));
+                        fprintf(out, ", &P[%d], %d, V[%d]); " CHECK "\n", proc_index(e->call.name), i,
+                                var_index(a->var.name));
+                    }
+                }
+                fprintf(out, "    value_t av%d[%d], rv%d, *rf%d[%d];\n", id, n ? n : 1, id, id, n ? n : 1);
+                for (int i = 0; i < n; i++) {
+                    const expr_t *a = e->call.args[i];
                     fprintf(out, "    av%d[%d].type = %s; av%d[%d].%s = %s;\n", id, i, nat_valtype(at[i]),
                             id, i, nat_is_float(at[i]) ? "dval" : "ival", as[i]);
+                    /* a variable not in parentheses: by reference (the
+                     * guard has it cached, of its type) */
+                    if (a->type == EXPR_VARIABLE && !a->paren)
+                        fprintf(out, "    rf%d[%d] = V[%d];\n", id, i, var_index(a->var.name));
+                    else
+                        fprintf(out, "    rf%d[%d] = NULL;\n", id, i);
+                }
                 fprintf(out, "    err = eval_call_proc(");
                 emit_cstring(out, e->call.name, (int)strlen(e->call.name));
-                fprintf(out, ", &P[%d], av%d, %d, &rv%d); " CHECK "\n", proc_index(e->call.name), id, n, id);
+                fprintf(out, ", &P[%d], av%d, rf%d, %d, &rv%d); " CHECK "\n", proc_index(e->call.name), id, id, n, id);
                 fprintf(out, "    if (rv%d.type != %s) { VAL_CLEAR(&rv%d); err = ERR_INTERNAL; goto fail; }\n",
                         id, nat_valtype(t), id);
                 fprintf(out, "    %s %s = rv%d.%s;\n", ct, name, id, nat_is_float(t) ? "dval" : "ival");
@@ -497,11 +571,13 @@ static int nat_emit(FILE *out, const expr_t *e, char *name) {
             }
             {
             int j = arr_index(e->call.name), n = e->call.nargs, ixt[8];
-            char ixs[8][32], flat[32];
+            char ixs[8][32], cvs[8][40], flat[32];
             const char *ix[8];
             for (int i = 0; i < n; i++) {
-                ixt[i] = nat_emit(out, e->call.args[i], ixs[i]);
-                ix[i] = ixs[i];
+                int it = nat_emit(out, e->call.args[i], ixs[i]);
+                nat_subscript(out, ixs[i], it, cvs[i]);
+                ix[i] = cvs[i];
+                ixt[i] = N_LONG;
             }
             sprintf(flat, "f%d", id);
             nat_index(out, j, ix, ixt, n, flat);
@@ -748,22 +824,15 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
                     fprintf(out, ") {\n");
                     fprintf(out, "    unsigned sg = env_generation, sa = array_generation; (void)sg; (void)sa;\n");
                     cur_uses = &u;
-                    for (int i = 0; i < n; i++) {
-                        ixt[i] = nat_emit(out, s->array_assign.indices[i], ixs[i]);
-                        ix[i] = ixs[i];
-                    }
-                    /* the subscripts' conversions come before the value */
-                    char cv[8][32];
+                    /* each subscript converted as it is evaluated, all before
+                     * the value */
+                    char cv[8][40];
                     const char *cix[8];
                     int cixt[8];
                     for (int i = 0; i < n; i++) {
-                        if (nat_is_float(ixt[i])) {
-                            fprintf(out, "    if (!(%s < 2147483647.5 && %s >= -2147483648.5)) { err = ERR_OVERFLOW; goto fail; }\n", ix[i], ix[i]);
-                            sprintf(cv[i], "%s_c", ix[i]);
-                            fprintf(out, "    long long %s = (long long)rint(%s);\n", cv[i], ix[i]);
-                        } else {
-                            strcpy(cv[i], ix[i]);
-                        }
+                        ixt[i] = nat_emit(out, s->array_assign.indices[i], ixs[i]);
+                        ix[i] = ixs[i];
+                        nat_subscript(out, ix[i], ixt[i], cv[i]);
                         cix[i] = cv[i];
                         cixt[i] = N_LONG;
                     }
@@ -808,17 +877,16 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
              * argument count right (else the executor's error first) */
             int j = proc_index(s->call_stmt.name), n = s->call_stmt.nargs, ta[16];
             if (j < 0 || procs[j].nparams != n || n > 16) return 0;
+            if (!args_compilable(s->call_stmt.args, n)) return 0;
             emit_preamble(out, op, k);
-            for (int i = 0; i < n; i++) {
-                snprintf(path, sizeof path, "c->ops[%d].s->call_stmt.args[%d]", k, i);
-                ta[i] = emit_expr(out, s->call_stmt.args[i], path);
-            }
+            snprintf(path, sizeof path, "c->ops[%d].s->call_stmt.args", k);
+            int rid = emit_args(out, s->call_stmt.args, n, path, ta, s->call_stmt.name, j);
             fprintf(out, "    { value_t av[%d];\n", n ? n : 1);
             for (int i = 0; i < n; i++)
                 fprintf(out, "      av[%d] = T[%d]; T[%d].type = VAL_INTEGER;\n", i, ta[i], ta[i]);
             fprintf(out, "      err = eval_call_proc(");
             emit_cstring(out, s->call_stmt.name, (int)strlen(s->call_stmt.name));
-            fprintf(out, ", &P[%d], av, %d, NULL); " CHECK " }\n", j, n);
+            fprintf(out, ", &P[%d], av, R%d, %d, NULL); " CHECK " }\n", j, rid, n);
             return 1;
         }
         case STMT_GOTO:

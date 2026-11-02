@@ -82,8 +82,14 @@ error_t eval_assign_store(env_t *env, const char *name, const value_t *v);
 error_t eval_array_store(const char *name, int nidx, int *indices, const value_t *v);
 sb_array_t *eval_call_array(const char *name);
 /* a FUNCTION's call (out its value) or a SUB's (out NULL) with its
- * arguments evaluated, which it takes; *cache keeps the procedure */
-error_t eval_call_proc(const char *name, void **cache, value_t *args, int nargs, value_t *out);
+ * arguments evaluated, which it takes -- refs[i], when not NULL, the
+ * variable passed by reference instead; *cache keeps the procedure */
+error_t eval_call_proc(const char *name, void **cache, value_t *args, value_t **refs,
+                       int nargs, value_t *out);
+/* a variable argument's value when it is passed by reference, else NULL */
+value_t *eval_arg_ref(env_t *env, const char *name);
+/* the check of argument i's type, passed by reference, as it is reached */
+error_t eval_arg_check(const char *name, void **cache, int i, const value_t *ref);
 error_t eval_array_read(sb_array_t *arr, int nidx, int *indices, value_t *out);
 error_t print_value(const value_t *v, int tab_spc, int width);
 void print_comma(int width);
