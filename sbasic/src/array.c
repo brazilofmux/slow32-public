@@ -28,8 +28,8 @@ static struct { const char *name; unsigned gen; sb_array_t *arr; } find_cache[FI
 sb_array_t *array_find(const char *name) {
     unsigned h = (unsigned)((unsigned long)name >> 2) % FIND_CACHE;
     if (find_cache[h].name == name && find_cache[h].gen == array_generation &&
-        strcmp(find_cache[h].arr->name, name) == 0)
-        return find_cache[h].arr;
+        (find_cache[h].arr->name == name || strcmp(find_cache[h].arr->name, name) == 0))
+        return find_cache[h].arr;       /* (the array's own name: no compare) */
     for (int i = 0; i < array_count; i++) {
         if (arrays[i].active && strcmp(arrays[i].name, name) == 0) {
             find_cache[h].name = name;          /* hits only are kept */
