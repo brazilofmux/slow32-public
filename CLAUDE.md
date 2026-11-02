@@ -152,6 +152,10 @@ substituted 1:1.
   tube words, plus forthc, the native Forth compiler. `s32forth` is the
   interactive kernel (`podman run -i`), `s32forthc [--hosted] prog.fth`
   compiles a closed-world program to a standalone `.s32x`.
+- `slow32:basic` (FROM base): SLOW BASIC -- `sbasic` (the interpreter,
+  sbasic.s32x) and `s32sbc prog.bas [out.s32x]` (s32-sbc writes C,
+  stage08 cc.s32x from slow32:kit compiles it on the emulator, linked
+  with libsbasic.s32a; no LLVM).  Gate: sbc/tests/run-stage08.sh.
 - `slow32:kit` (FROM base): + `/opt/slow32/kit`, the self-hosted kit
   (`~/s32x`: cc.s32x, s32-as/ld/ar.s32x, selfhost libc, and the built apps)
   and `s32kcc`, C to `.s32x` through that toolchain on the emulator. The
@@ -167,6 +171,7 @@ podman build -t slow32:toolchain -f Dockerfile.toolchain .
 podman build -t slow32:cobol     -f Dockerfile.cobol     .
 podman build -t slow32:fortran   -f Dockerfile.fortran   .
 podman build -t slow32:forth     -f Dockerfile.forth     .
+podman build -t slow32:basic     -f Dockerfile.basic     .   # needs slow32:kit
 scripts/build-kit-image.sh   # slow32:kit, context = staged ~/s32x, gated
 
 # Run programs with the emulator container (easy wrapper script;

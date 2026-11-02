@@ -1,0 +1,30 @@
+#!/bin/bash
+# s32sbc -- compile SLOW BASIC (.bas) to a SLOW-32 executable inside
+# slow32:basic.
+#   s32sbc prog.bas [out.s32x]
+# s32-sbc turns the program into C, stage08 cc (cc.s32x, on the emulator)
+# compiles that C, and it links with the interpreter's runtime, built ahead
+# of time (libsbasic.s32a).  Then `s32run out.s32x`, or slow32-fast.
+# The output defaults to prog.s32x in the current directory.
+X=/opt/slow32/basic
+export SBC_CC=stage08
+export S32_CC_S32X=$X/cc.s32x
+export S32_CC_EMU="${S32_CC_EMU:-slow32-dbt}"
+export S32_SBC=/opt/slow32/bin/s32-sbc
+export SBASIC_INCLUDE=$X/c-include              # the C headers the generated C includes
+export SBASIC_LIB=$X/libsbasic.s32a
+export S32_AS=/opt/slow32/bin/slow32asm
+export S32_LD=/opt/slow32/bin/s32-ld
+export S32_RT=/opt/slow32/lib
+export S32_RT_INCLUDE=/opt/slow32/include
+if [ $# -lt 1 ] || [ $# -gt 2 ]; then
+    echo "usage: s32sbc prog.bas [out.s32x]" >&2
+    exit 1
+fi
+bas=$1
+b=$(basename "$bas")
+out=${2:-./${b%.*}.s32x}
+SBC_WORK=$(mktemp -d "${TMPDIR:-/tmp}/s32sbc.XXXXXX") || exit 1
+export SBC_WORK
+trap 'rm -rf "${SBC_WORK:?}"' EXIT
+bash $X/compile-bas.sh "$bas" "$out"

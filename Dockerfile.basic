@@ -1,0 +1,55 @@
+# SLOW-32 BASIC Image: the interpreter and the s32-sbc compiler on slow32:base.
+#
+#   slow32:base   emulators + as/ld/ar/utilities + runtime
+#     -> slow32:basic   + sbasic.s32x (the interpreter), s32-sbc (host
+#                       compiler, .bas to C), libsbasic.s32a (the
+#                       interpreter's runtime, compiled ahead of time),
+#                       the C headers the generated C includes, stage08
+#                       cc, and two launchers: `sbasic` and `s32sbc`.
+#
+# s32-sbc writes C; stage08 cc (cc.s32x, a SLOW-32 program run on the
+# emulator) compiles each program's C, and it links against
+# libsbasic.s32a, so the image needs no LLVM.  The interpreter and its
+# library are built by clang in a stage FROM slow32:toolchain, and only
+# the results are layered onto base.  sbc/tests/run-stage08.sh holds
+# stage08's builds of the programs to the interpreter.
+#
+# cc.s32x comes from slow32:kit, the self-hosted toolchain, so this image
+# carries the same compiler the kit ships.  s32-sbc writes each unit as
+# chunk functions of ~32KB of C (84d9444e), which batch 55's cc.s32x
+# compiles for all 97 Ahl games; the stage08 fixes since (growable
+# dominance frontiers and block tables) are headroom.
+ARG BASE_IMAGE=slow32:base
+ARG TOOLCHAIN_IMAGE=slow32:toolchain
+ARG KIT_IMAGE=slow32:kit
+
+FROM ${KIT_IMAGE} AS kit
+
+# Stage 1: the interpreter, its library and s32-sbc, with the toolchain image
+FROM ${TOOLCHAIN_IMAGE} AS basic-builder
+WORKDIR /build
+COPY sbasic/build.sh /build/sbasic/
+COPY sbasic/src /build/sbasic/src
+COPY sbc/build.sh sbc/build-lib.sh sbc/compile-bas.sh sbc/s32-sbc.c /build/sbc/
+COPY sbc/runtime /build/sbc/runtime
+ENV LLVM_BIN=/opt/llvm/bin S32_AS=/opt/slow32/bin/slow32asm S32_LD=/opt/slow32/bin/s32-ld \
+    S32_AR=/opt/slow32/bin/s32-ar S32_RT=/opt/slow32/lib S32_RT_INCLUDE=/opt/slow32/include
+RUN bash sbasic/build.sh >/dev/null && bash sbc/build.sh && bash sbc/build-lib.sh && \
+    mkdir -p /build/c-include && \
+    cp sbasic/src/*.h sbc/runtime/sbcrt.h /build/c-include/
+
+# Stage 2: layer onto base
+FROM ${BASE_IMAGE}
+COPY --from=basic-builder /build/sbc/s32-sbc /opt/slow32/bin/
+COPY --from=basic-builder /build/sbasic/sbasic.s32x /build/sbc/out/libsbasic.s32a \
+     /build/sbc/compile-bas.sh /opt/slow32/basic/
+COPY --from=basic-builder /build/c-include /opt/slow32/basic/c-include
+COPY --from=kit /opt/slow32/kit/cc.s32x /opt/slow32/basic/
+COPY docker/bin/sbasic docker/bin/s32sbc /opt/slow32/bin/
+RUN chmod +x /opt/slow32/bin/sbasic /opt/slow32/bin/s32sbc
+
+# Usage:  sbasic prog.bas            run it with the interpreter
+#         sbasic                     the interpreter's prompt
+#         s32sbc prog.bas [out.s32x] compile it (stage08 cc, no LLVM)
+#         s32run prog.s32x
+WORKDIR /data

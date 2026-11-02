@@ -1,0 +1,7 @@
+#!/bin/bash
+# sbasic -- the SLOW BASIC interpreter (slow32:basic), working in the
+# current directory.
+#   sbasic prog.bas     run a program
+#   sbasic              the prompt
+# S32_SBASIC_EMU picks the engine (default slow32-fast).
+exec "${S32_SBASIC_EMU:-slow32-fast}" -q /opt/slow32/basic/sbasic.s32x "$@"

@@ -1862,6 +1862,7 @@ static void emit_unit(FILE *out, const code_t *c, const char *fname, int is_main
             cstart[nchunks++] = k;
         chunk[k] = nchunks - 1;
     }
+    if (nchunks == 0) cstart[nchunks++] = 0;  /* no ops: one empty chunk (an array needs one) */
     cstart[nchunks] = c->nops;
     fprintf(out, "struct %s_f {\n    act_t a;\n    value_t T[%d];\n    value_t *V[%d];\n    unsigned VG[%d];\n"
                  "    sb_array_t *AR[%d];\n    unsigned AG[%d];\n    env_t *env;\n    code_t *c;\n"

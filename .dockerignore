@@ -73,6 +73,15 @@
 !xbc/runtime/
 !xbc/include/
 
+# BASIC image (Dockerfile.basic): the interpreter's sources and s32-sbc's.
+!sbasic/build.sh
+!sbasic/src/
+!sbc/build.sh
+!sbc/build-lib.sh
+!sbc/compile-bas.sh
+!sbc/s32-sbc.c
+!sbc/runtime/
+
 # Emulator build needs:
 !tools/emulator/
 !tools/dbt/
@@ -127,6 +136,13 @@ xbase/src/*.s
 xbc/runtime/*.s32o
 xbc/runtime/*.ll
 xbc/runtime/*.s
+# BASIC outputs (rebuilt in the basic-builder stage with the image's clang)
+sbasic/src/*.s32o
+sbasic/src/*.ll
+sbasic/src/*.s
+sbc/runtime/*.s32o
+sbc/runtime/*.ll
+sbc/runtime/*.s
 
 # Self-host build outputs (rebuilt fresh in-container for musl/Alpine)
 selfhost/stage08-cross-x64/out/
