@@ -94,6 +94,18 @@ static char return_label[64] = "";   /* target label for RETURN label */
 
 /* Recursion depth limit (guards against C stack overflow) */
 #define MAX_EVAL_DEPTH 1024   /* with the 1 MB stack build.sh gives */
+
+/* The stack itself, beside the count: a frame's size depends on what is
+ * running (a call with many arguments, compiled code), so nesting deeper
+ * than STACK_LIMIT bytes below where the program started is Out of stack
+ * space too, before the stack's real end (1 MB: build.sh, compile-bas.sh) */
+#define STACK_LIMIT (900 * 1024)
+static char *stack_base;
+
+static int stack_exhausted(void) {
+    char here;
+    return stack_base && stack_base - &here > STACK_LIMIT;
+}
 static int eval_depth = 0;
 
 /* TRACE mode: print line numbers as they execute */
@@ -628,7 +640,7 @@ error_t eval_call_proc(const char *name, void **cache, value_t *args, value_t **
 static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out);
 
 error_t eval_expr(env_t *env, expr_t *e, value_t *out) {
-    if (++eval_depth > MAX_EVAL_DEPTH) {
+    if (++eval_depth > MAX_EVAL_DEPTH || stack_exhausted()) {
         eval_depth--;
         return ERR_STACK_OVERFLOW;
     }
@@ -3362,7 +3374,7 @@ static error_t scan_stmt_list(stmt_t *s) {
 }
 
 error_t act_begin(act_t *a, env_t *env, code_t *c, int is_main) {
-    if (++eval_depth > MAX_EVAL_DEPTH) {
+    if (++eval_depth > MAX_EVAL_DEPTH || stack_exhausted()) {
         eval_depth--;
         return ERR_STACK_OVERFLOW;
     }
@@ -3580,6 +3592,8 @@ error_t eval_program(env_t *env, stmt_t *program) {
 
 error_t eval_program_with(env_t *env, stmt_t *program, main_fn_t main_fn) {
     int i;
+    char base;
+    stack_base = &base;
     if (!program) return ERR_NONE;
 
     /* Initialize program state */
