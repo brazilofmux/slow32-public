@@ -105,6 +105,20 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-11-02 (tree at `031a68ac`).  Everything but `crt0.s32o`:
+the rest of C library clause 7 reaches the kit.  `libc.s32a` grows from
+34 members to 345: the mathematics is one function a member (`m_*`,
+`mc_*` for `<complex.h>`; `math_soft` and `posix_math` are gone), and
+wide characters (`wchar`, `wcs`, `wctype`, `wstdio`), locales,
+`<fenv.h>`, `strtof`, `quick_exit`, `timespec_get` are new.  `include/`
+gains `complex.h`, `fenv.h`, `float.h`, `iso646.h`, `langinfo.h`,
+`locale.h`, `tgmath.h`, `uchar.h`, `wchar.h`, `wctype.h` and changes
+others.  `cc.s32x` carries `_Complex` and decimal constants rounded
+once (1e23; selfhost ISSUES-108).  The five tools relink the new
+library.  Every clang-built app is rebuilt too (the runtime's stdio
+now takes a line-buffered stream's newline-free writes on its short
+path; SLOW BASIC's performance work).
+
 Rebuilt 2026-11-01 (`d47d9f47`).  `cc.s32x`, `libc.s32a` and
 `include/time.h`, `include/sys/time.h`; the tools and crt0 rebuild
 identical.  `time_t` is `long long` -- signed, 64 bits -- as in the clang
