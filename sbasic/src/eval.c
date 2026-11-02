@@ -1515,11 +1515,22 @@ error_t print_value(const value_t *v, int tab_spc, int width) {
         case VAL_DOUBLE:
         case VAL_SINGLE: {
             /* a space or the minus sign before, a space after */
-            char buf[64], item[72];
+            char item[72];
+            int len;
             EVAL_CHECK(val_check_range(v));
-            val_format_number(v, buf, sizeof(buf));
-            snprintf(item, sizeof(item), "%s%s ", buf[0] == '-' ? "" : " ", buf);
-            print_fit((int)strlen(item), width);
+            /* the number after the sign's place (a space, unless the
+             * '-' is there), then a space */
+            val_format_number(v, item + 1, (int)sizeof(item) - 2);
+            if (item[1] == '-') {
+                len = (int)strlen(item + 1);
+                memmove(item, item + 1, (size_t)len);
+            } else {
+                item[0] = ' ';
+                len = (int)strlen(item);
+            }
+            item[len] = ' ';
+            item[len + 1] = '\0';
+            print_fit(len + 1, width);
             col_puts(item);
             break;
         }

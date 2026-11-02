@@ -279,18 +279,37 @@ error_t val_check_range(const value_t *v) {
     return ERR_NONE;
 }
 
+/* n's decimal digits, a '-' first when negative (snprintf "%d") */
+static void format_int(long long n, char *buf, int bufsize) {
+    char tmp[24];
+    int i = 0, o = 0;
+    unsigned long long u = n < 0 ? 0ull - (unsigned long long)n : (unsigned long long)n;
+    do { tmp[i++] = (char)('0' + u % 10); u /= 10; } while (u);
+    if (n < 0 && o < bufsize - 1) buf[o++] = '-';
+    while (i && o < bufsize - 1) buf[o++] = tmp[--i];
+    buf[o] = '\0';
+}
+
 void val_format_number(const value_t *v, char *buf, int bufsize) {
     char digits[40], out[64];
     int prec, n, e, i, o = 0;
     double d;
     if (VAL_IS_INT(v->type)) {
-        snprintf(buf, bufsize, "%d", v->ival);
+        format_int(v->ival, buf, bufsize);
         return;
     }
     d = v->dval;
     prec = v->type == VAL_DOUBLE ? 16 : 7;
     if (d == 0.0 || d != d) {           /* zero (never -0) */
-        snprintf(buf, bufsize, "0");
+        format_int(0, buf, bufsize);
+        return;
+    }
+    /* a whole number of prec digits at most is its digits exactly: the
+     * rounding below leaves it, and it is written fixed (most of what a
+     * program prints) */
+    if (d > -(v->type == VAL_DOUBLE ? 1e16 : 1e7) && d < (v->type == VAL_DOUBLE ? 1e16 : 1e7) &&
+        d == (double)(long long)d) {
+        format_int((long long)d, buf, bufsize);
         return;
     }
     if (d < 0) { out[o++] = '-'; d = -d; }
@@ -329,7 +348,8 @@ void val_format_number(const value_t *v, char *buf, int bufsize) {
                  v->type == VAL_DOUBLE ? 'D' : 'E', e - 1 < 0 ? '-' : '+',
                  e - 1 < 0 ? 1 - e : e - 1);
     }
-    snprintf(buf, bufsize, "%s", out);
+    for (i = 0; out[i] && i < bufsize - 1; i++) buf[i] = out[i];
+    buf[i] = '\0';
 }
 
 const char *val_cstr(const value_t *v) {

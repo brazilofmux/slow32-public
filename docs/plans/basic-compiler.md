@@ -116,6 +116,13 @@ the oracle.
   newline-free writes on its short path: output had been ~100
   instructions a character.  The 97 games: interpreted 479M, compiled
   155M (3.09x).
+- **Numbers printed (2026-11-02):** an integer, or a float that is a
+  whole number of at most its precision's digits (7, 16), is written
+  digit by digit, not through snprintf; print_value adds the sign's
+  place without snprintf either.  Other floats keep `%.*e` for their
+  rounding.  7.5M values formatted identically before and after (host
+  differential; infinities, which every caller range-checks first,
+  aside).  The 97 games: interpreted 470M, compiled 146M (3.22x).
 - **Open:** native procedures with arrays, strings, PRINT; the loop
   bodies' own constraints (GOTO in a procedure keeps it on the env path);
   loading (a third of a short game: the source is parsed at start).
